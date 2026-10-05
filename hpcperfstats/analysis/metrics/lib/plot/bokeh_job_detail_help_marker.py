@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import html
 import math
-from typing import Any, Optional
+from typing import Any
 
 from bokeh.models import ColumnDataSource, HoverTool, Label, LogScale
 
@@ -18,13 +18,13 @@ from bokeh.models import ColumnDataSource, HoverTool, Label, LogScale
 def _span_x_numeric(plot: Any) -> Any:
   """
   Internal helper to handle span x numeric.
-  
+
   Args:
     plot (Any): Plot passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _span_x_numeric(None)  # doctest: +SKIP
   """
@@ -39,7 +39,7 @@ def _span_x_numeric(plot: Any) -> Any:
     try:
       if float(span) == 0.0:
         span = 1.0
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
       from pandas import Timedelta
 
       span = Timedelta(seconds=60)
@@ -49,13 +49,13 @@ def _span_x_numeric(plot: Any) -> Any:
 def _span_y_numeric(plot: Any) -> Any:
   """
   Internal helper to handle span y numeric.
-  
+
   Args:
     plot (Any): Plot passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _span_y_numeric(None)  # doctest: +SKIP
   """
@@ -73,15 +73,15 @@ def _corner_hit_xy(
 ) -> Any:
   """
   Return (hx, hy) in **data** coordinates near the top-right for hover hit.
-  
+
   Args:
     plot (Any): Plot passed to this helper.
     frac_x (float): Floating-point value for frac x.
     frac_y (float): Floating-point value for frac y.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _corner_hit_xy(None, 0, 0)  # doctest: +SKIP
   """
@@ -109,21 +109,21 @@ def _corner_hit_xy(
 def add_job_detail_bokeh_help_marker(
   plot: Any,
   description: str,
-  researcher_use: Optional[str] = None,
+  researcher_use: str | None = None,
 ) -> None:
   """
   Add a top-right ``?`` with HTML hover; safe to call with empty.
-  
+
     ``description``.
-  
+
   Args:
     plot (Any): Plot passed to this helper.
     description (str): String for description.
     researcher_use (Optional[str]): Researcher use, or None when absent.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> add_job_detail_bokeh_help_marker(None, "x", None)  # doctest: +SKIP
   """
@@ -131,49 +131,49 @@ def add_job_detail_bokeh_help_marker(
     return
   desc_str = str(description).strip()
   ru_str = (
-      str(researcher_use).strip()
-      if researcher_use is not None and str(researcher_use).strip()
-      else ""
+    str(researcher_use).strip()
+    if researcher_use is not None and str(researcher_use).strip()
+    else ""
   )
   inner = html.escape(desc_str)
   if ru_str:
     inner += (
-        '<hr style="margin:0.5em 0;border:0;'
-        'border-top:1px solid rgba(0,0,0,0.12);"/>'
-        f'<span style="color:#333;">{html.escape(ru_str)}</span>'
+      '<hr style="margin:0.5em 0;border:0;'
+      'border-top:1px solid rgba(0,0,0,0.12);"/>'
+      f'<span style="color:#333;">{html.escape(ru_str)}</span>'
     )
   tip = (
-      '<div style="max-width:28em; white-space:normal; font-weight:400;">'
-      f"{inner}"
-      "</div>"
+    '<div style="max-width:28em; white-space:normal; font-weight:400;">'
+    f"{inner}"
+    "</div>"
   )
 
   hx, hy = _corner_hit_xy(plot)
   hit_src = ColumnDataSource(data={"hx": [hx], "hy": [hy]})
   hit = plot.rect(
-      x="hx",
-      y="hy",
-      width=32,
-      height=28,
-      width_units="screen",
-      height_units="screen",
-      source=hit_src,
-      fill_alpha=0.0,
-      line_alpha=0.0,
-      level="overlay",
+    x="hx",
+    y="hy",
+    width=32,
+    height=28,
+    width_units="screen",
+    height_units="screen",
+    source=hit_src,
+    fill_alpha=0.0,
+    line_alpha=0.0,
+    level="overlay",
   )
   plot.add_tools(HoverTool(renderers=[hit], tooltips=tip))
 
   # Data-space Label at the same corner as the hit target (screen x=-10 was
   # clipped off the left edge after stretch_width embeds).
   lab = Label(
-      x=hx,
-      y=hy,
-      text="?",
-      text_font_size="11px",
-      text_color="#0d6efd",
-      text_align="center",
-      text_baseline="middle",
-      level="overlay",
+    x=hx,
+    y=hy,
+    text="?",
+    text_font_size="11px",
+    text_color="#0d6efd",
+    text_align="center",
+    text_baseline="middle",
+    level="overlay",
   )
   plot.add_layout(lab)

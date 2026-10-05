@@ -1,5 +1,6 @@
-import importlib
 import configparser
+import importlib
+
 import pytest
 
 
@@ -51,6 +52,7 @@ def test_resolve_postgres_wait_target_uses_ini_when_env_missing(
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
 
   import hpcperfstats.dbload.lib.conf_parser as cfg
+
   importlib.reload(cfg)
 
   from hpcperfstats.dbload.lib.dbwait import resolve_postgres_wait_target
@@ -69,13 +71,12 @@ def test_can_resolve_host_port_localhost():
 def test_can_resolve_host_port_invalid_host():
   from hpcperfstats.dbload.lib.dbwait import can_resolve_host_port
 
-  assert (
-    can_resolve_host_port("not-a-real-hostname.invalid", "5432")
-    is False
-  )
+  assert can_resolve_host_port("not-a-real-hostname.invalid", "5432") is False
 
 
-def test_resolve_postgres_wait_target_raises_when_unconfigured(monkeypatch, tmp_path):
+def test_resolve_postgres_wait_target_raises_when_unconfigured(
+  monkeypatch, tmp_path
+):
   ini = tmp_path / "missing-host-port.ini"
   ini.write_text(
     "[DEFAULT]\n"
@@ -118,10 +119,10 @@ def test_resolve_postgres_wait_target_raises_when_unconfigured(monkeypatch, tmp_
   monkeypatch.delenv("DB_PORT", raising=False)
 
   import hpcperfstats.dbload.lib.conf_parser as cfg
+
   importlib.reload(cfg)
 
   from hpcperfstats.dbload.lib.dbwait import resolve_postgres_wait_target
 
   with pytest.raises(configparser.NoOptionError):
     resolve_postgres_wait_target()
-

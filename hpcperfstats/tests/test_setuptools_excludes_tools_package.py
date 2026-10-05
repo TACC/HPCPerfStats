@@ -10,7 +10,6 @@ from __future__ import annotations
 import fnmatch
 from pathlib import Path
 
-
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -39,7 +38,9 @@ def _candidate_packages(repo_root: Path) -> list[str]:
 def test_include_glob_would_match_hpcperfstats_tools_without_exclude() -> None:
   """Prove the include glob alone would absorb the client package."""
   tools_pkg = _REPO_ROOT / "hpcperfstats-tools" / "hpcperfstats_tools"
-  assert tools_pkg.is_dir(), "expected in-tree hpcperfstats-tools/hpcperfstats_tools"
+  assert tools_pkg.is_dir(), (
+    "expected in-tree hpcperfstats-tools/hpcperfstats_tools"
+  )
   assert (tools_pkg / "__init__.py").is_file()
   assert fnmatch.fnmatch("hpcperfstats_tools", "hpcperfstats*")
 
@@ -49,10 +50,10 @@ def test_find_candidates_with_exclude_omit_hpcperfstats_tools() -> None:
   include = ["hpcperfstats*"]
   exclude = ["hpcperfstats_tools", "hpcperfstats_tools.*"]
   found = [
-      name
-      for name in _candidate_packages(_REPO_ROOT)
-      if any(fnmatch.fnmatch(name, pat) for pat in include)
-      and not any(fnmatch.fnmatch(name, pat) for pat in exclude)
+    name
+    for name in _candidate_packages(_REPO_ROOT)
+    if any(fnmatch.fnmatch(name, pat) for pat in include)
+    and not any(fnmatch.fnmatch(name, pat) for pat in exclude)
   ]
   assert "hpcperfstats_tools" not in found
   assert not any(name.startswith("hpcperfstats_tools.") for name in found)

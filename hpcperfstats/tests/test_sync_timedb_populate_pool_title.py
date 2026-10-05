@@ -1,4 +1,5 @@
 """Contract: populate-pool threads must not retitle the process with setproctitle."""
+
 from __future__ import annotations
 
 import inspect

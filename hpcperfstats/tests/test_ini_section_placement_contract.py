@@ -4,44 +4,48 @@ import pytest
 
 from hpcperfstats.dbload.lib import conf_parser as cfg
 from hpcperfstats.dbload.lib.ini_section_placement import (
-    DEFAULT_POSTGRES_OPTIONS,
-    PORTAL_WEB_TUNING_OPTIONS,
-    expected_section,
-    validate_registry_sections,
+  DEFAULT_POSTGRES_OPTIONS,
+  PORTAL_WEB_TUNING_OPTIONS,
+  expected_section,
+  validate_registry_sections,
 )
 
 
 def test_ini_option_registry_matches_section_placement_contract():
   violations = validate_registry_sections(cfg.INI_OPTION_REGISTRY)
-  assert not violations, "section placement violations: %s" % violations
+  assert not violations, f"section placement violations: {violations}"
 
 
 def test_pipeline_prefix_keys_not_in_default_or_portal():
   for section, option, _default in cfg.INI_OPTION_REGISTRY:
     if section not in ("DEFAULT", "PORTAL"):
       continue
-    if option.startswith("sync_") or option.startswith("metrics_"):
+    if option.startswith(("sync_", "metrics_")):
       pytest.fail(
-          "pipeline prefix key %r must not be under %r" % (option, section)
+        f"pipeline prefix key {option!r} must not be under {section!r}"
       )
 
 
 def test_archive_keys_not_in_portal():
   for section, option, _default in cfg.INI_OPTION_REGISTRY:
     if option.startswith("archive_") and section != "PIPELINE":
-      pytest.fail("archive key %r must be PIPELINE, got %r" % (option, section))
+      pytest.fail(f"archive key {option!r} must be PIPELINE, got {section!r}")
 
 
 def test_postgres_connection_keys_in_default():
   for option in DEFAULT_POSTGRES_OPTIONS:
     matches = [s for s, o, _d in cfg.INI_OPTION_REGISTRY if o == option]
     assert matches == ["DEFAULT"], (
-        "expected %r only in DEFAULT, got %r" % (option, matches)
+      f"expected {option!r} only in DEFAULT, got {matches!r}"
     )
 
 
 def test_portal_registry_keys_match_allowlist():
-  portal_options = {option for section, option, _d in cfg.INI_OPTION_REGISTRY if section == "PORTAL"}
+  portal_options = {
+    option
+    for section, option, _d in cfg.INI_OPTION_REGISTRY
+    if section == "PORTAL"
+  }
   assert portal_options == set(PORTAL_WEB_TUNING_OPTIONS)
 
 

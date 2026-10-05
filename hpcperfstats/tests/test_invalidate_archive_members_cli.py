@@ -1,4 +1,5 @@
 """Tests for host archive-members invalidate CLI (scripts/ + compose restart mocked)."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -9,10 +10,10 @@ from pathlib import Path
 import pytest
 
 from hpcperfstats.dbload.lib.invalidate_archive_members_ops import (
-    JOB_STORE_SNAPSHOT_RELPATH,
-    MEMBERS_STORE_DIR_RELPATH,
-    compose_argv,
-    restart_pipeline_compose,
+  JOB_STORE_SNAPSHOT_RELPATH,
+  MEMBERS_STORE_DIR_RELPATH,
+  compose_argv,
+  restart_pipeline_compose,
 )
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -22,8 +23,8 @@ _SCRIPT = _REPO / "scripts" / "invalidate_archive_members.py"
 def _load_cli():
   """Load scripts/invalidate_archive_members.py as a module (repo-root bootstrap)."""
   spec = importlib.util.spec_from_file_location(
-      "invalidate_archive_members_cli",
-      _SCRIPT,
+    "invalidate_archive_members_cli",
+    _SCRIPT,
   )
   assert spec is not None and spec.loader is not None
   mod = importlib.util.module_from_spec(spec)
@@ -37,7 +38,7 @@ def _seed_archive_sidecars(tmp_path, days=("2026-06-08",)):
   members = archive / MEMBERS_STORE_DIR_RELPATH
   members.mkdir(parents=True)
   for day in days:
-    (members / ("%s.json" % day)).write_text("{}", encoding="utf-8")
+    (members / (f"{day}.json")).write_text("{}", encoding="utf-8")
   job = archive / JOB_STORE_SNAPSHOT_RELPATH
   job.write_text("{}", encoding="utf-8")
   return archive, members, job
@@ -50,7 +51,9 @@ def cli():
 
 @pytest.fixture
 def compose_dir(tmp_path):
-  (tmp_path / "docker-compose.yaml").write_text("services: {}\n", encoding="utf-8")
+  (tmp_path / "docker-compose.yaml").write_text(
+    "services: {}\n", encoding="utf-8"
+  )
   return tmp_path
 
 
@@ -62,12 +65,12 @@ def test_script_help_imports_without_editable_install():
   """
   env = {k: v for k, v in __import__("os").environ.items() if k != "PYTHONPATH"}
   completed = subprocess.run(
-      [sys.executable, str(_SCRIPT), "--help"],
-      cwd=str(_REPO),
-      env=env,
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(_SCRIPT), "--help"],
+    cwd=str(_REPO),
+    env=env,
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert completed.returncode == 0, completed.stderr
   assert "ModuleNotFoundError" not in (completed.stderr or "")
@@ -92,18 +95,28 @@ def test_cli_import_path_avoids_print_utils():
   assert "--redis-url" not in source
   assert "_direct_members_client" not in source
   assert not re.search(
-      r"^\s*(from|import)\s+.*print_utils", source, flags=re.M,
+    r"^\s*(from|import)\s+.*print_utils",
+    source,
+    flags=re.M,
   )
   assert "invalidate_archive_members_ops" in source
   ops_path = (
-      _REPO / "hpcperfstats" / "dbload" / "lib" / "invalidate_archive_members_ops.py"
+    _REPO
+    / "hpcperfstats"
+    / "dbload"
+    / "lib"
+    / "invalidate_archive_members_ops.py"
   )
   ops_src = ops_path.read_text(encoding="utf-8")
   assert not re.search(
-      r"^\s*(from|import)\s+.*print_utils", ops_src, flags=re.M,
+    r"^\s*(from|import)\s+.*print_utils",
+    ops_src,
+    flags=re.M,
   )
   assert not re.search(
-      r"^\s*(from|import)\s+.*conf_parser", ops_src, flags=re.M,
+    r"^\s*(from|import)\s+.*conf_parser",
+    ops_src,
+    flags=re.M,
   )
   assert "invalidate_archive_members_sidecars" in ops_src
 
@@ -111,23 +124,32 @@ def test_cli_import_path_avoids_print_utils():
 def test_cli_all_without_yes_errors(cli, compose_dir, tmp_path):
   archive, _members, _job = _seed_archive_sidecars(tmp_path)
   with pytest.raises(SystemExit) as exc:
-    cli.main([
+    cli.main(
+      [
         "--all",
-        "--archive-dir", str(archive),
-        "--compose-dir", str(compose_dir),
-    ])
+        "--archive-dir",
+        str(archive),
+        "--compose-dir",
+        str(compose_dir),
+      ]
+    )
   assert exc.value.code == 2
 
 
 def test_cli_all_and_day_mutually_exclusive(cli, compose_dir, tmp_path):
   archive, _members, _job = _seed_archive_sidecars(tmp_path)
   with pytest.raises(SystemExit) as exc:
-    cli.main([
+    cli.main(
+      [
         "--all",
-        "--day", "2026-06-08",
-        "--archive-dir", str(archive),
-        "--compose-dir", str(compose_dir),
-    ])
+        "--day",
+        "2026-06-08",
+        "--archive-dir",
+        str(archive),
+        "--compose-dir",
+        str(compose_dir),
+      ]
+    )
   assert exc.value.code == 2
 
 
@@ -136,35 +158,47 @@ def test_cli_dry_run_skips_restart(cli, compose_dir, tmp_path, monkeypatch):
   day = members / "2026-06-08.json"
   calls = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.invalidate_archive_members_ops.restart_pipeline_compose",
-      lambda **kwargs: calls.append(kwargs),
+    "hpcperfstats.dbload.lib.invalidate_archive_members_ops.restart_pipeline_compose",
+    lambda **kwargs: calls.append(kwargs),
   )
-  rc = cli.main([
-      "--day", "2026-06-08",
+  rc = cli.main(
+    [
+      "--day",
+      "2026-06-08",
       "--dry-run",
-      "--archive-dir", str(archive),
-      "--compose-dir", str(compose_dir),
-  ])
+      "--archive-dir",
+      str(archive),
+      "--compose-dir",
+      str(compose_dir),
+    ]
+  )
   assert rc == 0
   assert calls == []
   assert day.is_file()
   assert job.is_file()
 
 
-def test_cli_no_restart_skips_compose_restart(cli, compose_dir, tmp_path, monkeypatch):
+def test_cli_no_restart_skips_compose_restart(
+  cli, compose_dir, tmp_path, monkeypatch
+):
   archive, members, job = _seed_archive_sidecars(tmp_path)
   day = members / "2026-06-08.json"
   calls = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.invalidate_archive_members_ops.restart_pipeline_compose",
-      lambda **kwargs: calls.append(kwargs),
+    "hpcperfstats.dbload.lib.invalidate_archive_members_ops.restart_pipeline_compose",
+    lambda **kwargs: calls.append(kwargs),
   )
-  rc = cli.main([
-      "--day", "2026-06-08",
+  rc = cli.main(
+    [
+      "--day",
+      "2026-06-08",
       "--no-restart",
-      "--archive-dir", str(archive),
-      "--compose-dir", str(compose_dir),
-  ])
+      "--archive-dir",
+      str(archive),
+      "--compose-dir",
+      str(compose_dir),
+    ]
+  )
   assert rc == 0
   assert calls == []
   assert not day.exists()
@@ -176,14 +210,19 @@ def test_cli_success_restarts_pipeline(cli, compose_dir, tmp_path, monkeypatch):
   day = members / "2026-06-08.json"
   calls = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.invalidate_archive_members_ops.restart_pipeline_compose",
-      lambda **kwargs: calls.append(kwargs),
+    "hpcperfstats.dbload.lib.invalidate_archive_members_ops.restart_pipeline_compose",
+    lambda **kwargs: calls.append(kwargs),
   )
-  rc = cli.main([
-      "--day", "2026-06-08",
-      "--archive-dir", str(archive),
-      "--compose-dir", str(compose_dir),
-  ])
+  rc = cli.main(
+    [
+      "--day",
+      "2026-06-08",
+      "--archive-dir",
+      str(archive),
+      "--compose-dir",
+      str(compose_dir),
+    ]
+  )
   assert rc == 0
   assert len(calls) == 1
   assert calls[0]["compose_dir"] == str(compose_dir)
@@ -193,23 +232,31 @@ def test_cli_success_restarts_pipeline(cli, compose_dir, tmp_path, monkeypatch):
 
 
 def test_cli_all_yes_no_restart_preserves_job_store(
-    cli, compose_dir, tmp_path, monkeypatch,
+  cli,
+  compose_dir,
+  tmp_path,
+  monkeypatch,
 ):
   archive, members, job = _seed_archive_sidecars(
-      tmp_path, days=("2026-06-08", "2026-06-09"),
+    tmp_path,
+    days=("2026-06-08", "2026-06-09"),
   )
   calls = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.invalidate_archive_members_ops.restart_pipeline_compose",
-      lambda **kwargs: calls.append(kwargs),
+    "hpcperfstats.dbload.lib.invalidate_archive_members_ops.restart_pipeline_compose",
+    lambda **kwargs: calls.append(kwargs),
   )
-  rc = cli.main([
+  rc = cli.main(
+    [
       "--all",
       "--yes",
       "--no-restart",
-      "--archive-dir", str(archive),
-      "--compose-dir", str(compose_dir),
-  ])
+      "--archive-dir",
+      str(archive),
+      "--compose-dir",
+      str(compose_dir),
+    ]
+  )
   assert rc == 0
   assert calls == []
   assert not (members / "2026-06-08.json").exists()
@@ -221,15 +268,19 @@ def test_cli_all_yes_restarts(cli, compose_dir, tmp_path, monkeypatch):
   archive, members, job = _seed_archive_sidecars(tmp_path)
   calls = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.invalidate_archive_members_ops.restart_pipeline_compose",
-      lambda **kwargs: calls.append(kwargs),
+    "hpcperfstats.dbload.lib.invalidate_archive_members_ops.restart_pipeline_compose",
+    lambda **kwargs: calls.append(kwargs),
   )
-  rc = cli.main([
+  rc = cli.main(
+    [
       "--all",
       "--yes",
-      "--archive-dir", str(archive),
-      "--compose-dir", str(compose_dir),
-  ])
+      "--archive-dir",
+      str(archive),
+      "--compose-dir",
+      str(compose_dir),
+    ]
+  )
   assert rc == 0
   assert len(calls) == 1
   assert not (members / "2026-06-08.json").exists()
@@ -237,7 +288,9 @@ def test_cli_all_yes_restarts(cli, compose_dir, tmp_path, monkeypatch):
 
 
 def test_restart_pipeline_compose_invokes_subprocess(tmp_path):
-  (tmp_path / "docker-compose.yaml").write_text("services: {}\n", encoding="utf-8")
+  (tmp_path / "docker-compose.yaml").write_text(
+    "services: {}\n", encoding="utf-8"
+  )
   seen = {}
 
   class _Result:
@@ -251,9 +304,13 @@ def test_restart_pipeline_compose_invokes_subprocess(tmp_path):
     return _Result()
 
   restart_pipeline_compose(
-      compose_dir=str(tmp_path),
-      project="hpcperfstats",
-      run_fn=_run,
+    compose_dir=str(tmp_path),
+    project="hpcperfstats",
+    run_fn=_run,
   )
-  assert seen["cmd"] == compose_argv(project="hpcperfstats") + ["restart", "pipeline"]
+  assert seen["cmd"] == [
+    *compose_argv(project="hpcperfstats"),
+    "restart",
+    "pipeline",
+  ]
   assert seen["cwd"] == str(tmp_path)

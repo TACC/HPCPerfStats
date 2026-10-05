@@ -1,4 +1,5 @@
 """Smoke tests for scripts/backfill_host_data_null_dev.sh operator helper."""
+
 from __future__ import annotations
 
 import subprocess
@@ -8,7 +9,9 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "backfill_host_data_null_dev.sh"
-THROTTLE = REPO_ROOT / "scripts" / "lib" / "backfill_host_data_null_dev_throttle.sh"
+THROTTLE = (
+  REPO_ROOT / "scripts" / "lib" / "backfill_host_data_null_dev_throttle.sh"
+)
 
 
 @pytest.mark.machine_unit_mock
@@ -21,10 +24,10 @@ def test_backfill_host_data_null_dev_script_exists_and_executable():
 @pytest.mark.machine_unit_mock
 def test_backfill_host_data_null_dev_bash_n_clean():
   completed = subprocess.run(
-      ["bash", "-n", str(SCRIPT)],
-      check=False,
-      capture_output=True,
-      text=True,
+    ["bash", "-n", str(SCRIPT)],
+    check=False,
+    capture_output=True,
+    text=True,
   )
   assert completed.returncode == 0, completed.stderr
 
@@ -33,10 +36,10 @@ def test_backfill_host_data_null_dev_bash_n_clean():
 @pytest.mark.parametrize("bad_arg", ["0", "-1", "x"])
 def test_backfill_host_data_null_dev_rejects_bad_concurrency(bad_arg):
   completed = subprocess.run(
-      [str(SCRIPT), bad_arg],
-      check=False,
-      capture_output=True,
-      text=True,
+    [str(SCRIPT), bad_arg],
+    check=False,
+    capture_output=True,
+    text=True,
   )
   assert completed.returncode == 2
   assert "usage:" in completed.stderr

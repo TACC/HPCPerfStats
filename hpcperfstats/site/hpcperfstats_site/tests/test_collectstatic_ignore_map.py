@@ -8,7 +8,7 @@ from django.apps import apps
 from django.core.management import call_command
 
 from hpcperfstats.site.hpcperfstats_site.staticfiles_config import (
-    HPCStaticFilesConfig,
+  HPCStaticFilesConfig,
 )
 
 
@@ -36,7 +36,7 @@ def test_collectstatic_skips_js_map_files(tmp_path: Path, settings):
   settings.STATICFILES_DIRS = [str(src)]
   settings.STATIC_ROOT = str(dest)
   settings.STATICFILES_FINDERS = (
-      "django.contrib.staticfiles.finders.FileSystemFinder",
+    "django.contrib.staticfiles.finders.FileSystemFinder",
   )
   call_command("collectstatic", interactive=False, verbosity=0, clear=True)
   assert (dest / "app.js").is_file()

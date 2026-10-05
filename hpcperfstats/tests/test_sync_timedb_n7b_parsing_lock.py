@@ -7,438 +7,466 @@ import os
 from hpcperfstats.dbload.lib import sync_timedb_parsing as parsing
 from hpcperfstats.dbload.lib.file_locking import LOCK_SUFFIX
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-    parse_stats_file_streaming,
-    parse_stats_file_streaming_incremental,
-    parse_stats_lines,
-    stats_payload_to_records,
+  parse_stats_file_streaming,
+  parse_stats_file_streaming_incremental,
+  parse_stats_lines,
+  stats_payload_to_records,
 )
 from hpcperfstats.tests.test_sync_timedb import _resume_schema_fixture_lines
 
 
 def test_stats_file_read_lock_unlinks_sidecar(tmp_path):
-    stats = tmp_path / "host" / "1"
-    stats.parent.mkdir(parents=True)
-    stats.write_text("1709123456 job1 cn001\n")
-    with parsing._stats_file_read_lock(str(stats)):
-        assert os.path.isfile(str(stats))
-    assert not os.path.exists(str(stats) + LOCK_SUFFIX)
+  stats = tmp_path / "host" / "1"
+  stats.parent.mkdir(parents=True)
+  stats.write_text("1709123456 job1 cn001\n")
+  with parsing._stats_file_read_lock(str(stats)):
+    assert os.path.isfile(str(stats))
+  assert not os.path.exists(str(stats) + LOCK_SUFFIX)
 
 
 def test_stats_file_read_lock_missing_file():
-    import pytest
+  import pytest
 
-    with pytest.raises(FileNotFoundError):
-        with parsing._stats_file_read_lock("/no/such/stats/file"):
-            pass
+  with pytest.raises(FileNotFoundError):
+    with parsing._stats_file_read_lock("/no/such/stats/file"):
+      pass
 
 
 def test_stats_file_read_lock_unlink_oserror(tmp_path, monkeypatch):
-    stats = tmp_path / "host" / "2"
-    stats.parent.mkdir(parents=True)
-    stats.write_text("x\n")
-    real_remove = os.remove
+  stats = tmp_path / "host" / "2"
+  stats.parent.mkdir(parents=True)
+  stats.write_text("x\n")
+  real_remove = os.remove
 
-    def _remove(path: str) -> None:
-        if str(path).endswith(LOCK_SUFFIX):
-            raise OSError("busy")
-        real_remove(path)
+  def _remove(path: str) -> None:
+    if str(path).endswith(LOCK_SUFFIX):
+      raise OSError("busy")
+    real_remove(path)
 
-    monkeypatch.setattr(parsing.os, "remove", _remove)
-    with parsing._stats_file_read_lock(str(stats)):
-        pass
+  monkeypatch.setattr(parsing.os, "remove", _remove)
+  with parsing._stats_file_read_lock(str(stats)):
+    pass
 
 
 def test_load_stats_file_lines_contents_bypass_skips_lock():
-    lines, err = parsing.load_stats_file_lines(
-        "/any", stats_file_contents=["a\n"]
-    )
-    assert err is None
-    assert lines == ["a\n"]
+  lines, err = parsing.load_stats_file_lines(
+    "/any", stats_file_contents=["a\n"]
+  )
+  assert err is None
+  assert lines == ["a\n"]
 
 
-def test_load_stats_file_lines_lock_hold_batches_readline(tmp_path, monkeypatch):
-    """Full-file load must not hold SH across the whole readline loop."""
-    stats = tmp_path / "host" / "1"
-    stats.parent.mkdir(parents=True)
-    stats.write_text("1709123456 job1 cn001\n1709123457 job1 cn001\n")
-    held = {"n": 0, "max": 0}
-    real_lock = parsing._stats_file_read_lock
+def test_load_stats_file_lines_lock_hold_batches_readline(
+  tmp_path, monkeypatch
+):
+  """Full-file load must not hold SH across the whole readline loop."""
+  stats = tmp_path / "host" / "1"
+  stats.parent.mkdir(parents=True)
+  stats.write_text("1709123456 job1 cn001\n1709123457 job1 cn001\n")
+  held = {"n": 0, "max": 0}
+  real_lock = parsing._stats_file_read_lock
 
-    from contextlib import contextmanager
+  from contextlib import contextmanager
 
-    @contextmanager
-    def tracking_lock(path):
-        held["n"] += 1
-        held["max"] = max(held["max"], held["n"])
-        try:
-            with real_lock(path):
-                yield
-        finally:
-            held["n"] -= 1
+  @contextmanager
+  def tracking_lock(path):
+    held["n"] += 1
+    held["max"] = max(held["max"], held["n"])
+    try:
+      with real_lock(path):
+        yield
+    finally:
+      held["n"] -= 1
 
-    monkeypatch.setattr(parsing, "_stats_file_read_lock", tracking_lock)
-    monkeypatch.setattr(parsing, "STREAM_PARSE_LINE_BATCH", 1)
-    lines, err = parsing.load_stats_file_lines(str(stats))
-    assert err is None
-    assert lines == ["1709123456 job1 cn001\n", "1709123457 job1 cn001\n"]
-    assert held["n"] == 0
-    assert held["max"] == 1
+  monkeypatch.setattr(parsing, "_stats_file_read_lock", tracking_lock)
+  monkeypatch.setattr(parsing, "STREAM_PARSE_LINE_BATCH", 1)
+  lines, err = parsing.load_stats_file_lines(str(stats))
+  assert err is None
+  assert lines == ["1709123456 job1 cn001\n", "1709123457 job1 cn001\n"]
+  assert held["n"] == 0
+  assert held["max"] == 1
 
 
 def test_streaming_resume_feeds_schema_prefix(tmp_path):
-    lines = _resume_schema_fixture_lines()
-    stats_file = tmp_path / "host.example.com" / "1709123456"
-    stats_file.parent.mkdir(parents=True)
-    stats_file.write_text("".join(lines), encoding="utf-8")
-    start_idx = 3
-    expected_stats, expected_proc = parse_stats_lines(lines, start_idx)
-    stream_stats, stream_proc = parse_stats_file_streaming(
-        str(stats_file),
-        start_line_idx=start_idx,
-    )
-    assert stream_stats == expected_stats
-    assert stream_proc == expected_proc
-    assert len(stream_stats) > 0
+  lines = _resume_schema_fixture_lines()
+  stats_file = tmp_path / "host.example.com" / "1709123456"
+  stats_file.parent.mkdir(parents=True)
+  stats_file.write_text("".join(lines), encoding="utf-8")
+  start_idx = 3
+  expected_stats, expected_proc = parse_stats_lines(lines, start_idx)
+  stream_stats, stream_proc = parse_stats_file_streaming(
+    str(stats_file),
+    start_line_idx=start_idx,
+  )
+  assert stream_stats == expected_stats
+  assert stream_proc == expected_proc
+  assert len(stream_stats) > 0
 
 
 def _tracking_stats_lock(held):
-    from contextlib import contextmanager
+  from contextlib import contextmanager
 
-    @contextmanager
-    def tracking_lock(_path):
-        held["n"] += 1
-        try:
-            yield
-        finally:
-            held["n"] -= 1
+  @contextmanager
+  def tracking_lock(_path):
+    held["n"] += 1
+    try:
+      yield
+    finally:
+      held["n"] -= 1
 
-    return tracking_lock
+  return tracking_lock
 
 
 def test_iter_stats_lock_hold_yields_after_shared_lock(tmp_path, monkeypatch):
-    stats = tmp_path / "host" / "1"
-    stats.parent.mkdir(parents=True)
-    stats.write_text("1709123456 job1 cn001\n1709123457 job1 cn001\n")
-    held = {"n": 0}
-    monkeypatch.setattr(
-        parsing, "_stats_file_read_lock", _tracking_stats_lock(held),
-    )
-    lines = []
-    for line in parsing.iter_stats_file_lines(str(stats)):
-        assert held["n"] == 0
-        lines.append(line)
-    assert lines == ["1709123456 job1 cn001\n", "1709123457 job1 cn001\n"]
+  stats = tmp_path / "host" / "1"
+  stats.parent.mkdir(parents=True)
+  stats.write_text("1709123456 job1 cn001\n1709123457 job1 cn001\n")
+  held = {"n": 0}
+  monkeypatch.setattr(
+    parsing,
+    "_stats_file_read_lock",
+    _tracking_stats_lock(held),
+  )
+  lines = []
+  for line in parsing.iter_stats_file_lines(str(stats)):
+    assert held["n"] == 0
+    lines.append(line)
+  assert lines == ["1709123456 job1 cn001\n", "1709123457 job1 cn001\n"]
 
 
 def test_feed_lines_lock_hold_outside_shared_lock(tmp_path, monkeypatch):
-    from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-        IncrementalStatsParser,
-    )
-    from hpcperfstats.tests.test_sync_timedb import _resume_schema_fixture_lines
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+    IncrementalStatsParser,
+  )
+  from hpcperfstats.tests.test_sync_timedb import _resume_schema_fixture_lines
 
-    stats = tmp_path / "host.example.com" / "1709123456"
-    stats.parent.mkdir(parents=True)
-    stats.write_text("".join(_resume_schema_fixture_lines()), encoding="utf-8")
-    held = {"n": 0}
-    monkeypatch.setattr(
-        parsing, "_stats_file_read_lock", _tracking_stats_lock(held),
-    )
-    real_feed = IncrementalStatsParser.feed_lines
+  stats = tmp_path / "host.example.com" / "1709123456"
+  stats.parent.mkdir(parents=True)
+  stats.write_text("".join(_resume_schema_fixture_lines()), encoding="utf-8")
+  held = {"n": 0}
+  monkeypatch.setattr(
+    parsing,
+    "_stats_file_read_lock",
+    _tracking_stats_lock(held),
+  )
+  real_feed = IncrementalStatsParser.feed_lines
 
-    def wrapped(self, batch):
-        assert held["n"] == 0
-        return real_feed(self, batch)
+  def wrapped(self, batch):
+    assert held["n"] == 0
+    return real_feed(self, batch)
 
-    monkeypatch.setattr(IncrementalStatsParser, "feed_lines", wrapped)
-    stats_list, proc_list = parse_stats_file_streaming(str(stats))
-    assert len(stats_list) > 0
+  monkeypatch.setattr(IncrementalStatsParser, "feed_lines", wrapped)
+  stats_list, _proc_list = parse_stats_file_streaming(str(stats))
+  assert len(stats_list) > 0
 
 
 def test_tail_parse_lock_hold_after_byte_snapshot(tmp_path, monkeypatch):
-    stats = tmp_path / "host" / "1"
-    stats.parent.mkdir(parents=True)
-    stats.write_text("1709123456 job1 cn001\n1709123457 job1 cn002\n")
-    held = {"n": 0}
-    monkeypatch.setattr(
-        parsing, "_stats_file_read_lock", _tracking_stats_lock(held),
-    )
-    real_ident = parsing._digit_line_identity
+  stats = tmp_path / "host" / "1"
+  stats.parent.mkdir(parents=True)
+  stats.write_text("1709123456 job1 cn001\n1709123457 job1 cn002\n")
+  held = {"n": 0}
+  monkeypatch.setattr(
+    parsing,
+    "_stats_file_read_lock",
+    _tracking_stats_lock(held),
+  )
+  real_ident = parsing._digit_line_identity
 
-    def wrapped(s):
-        assert held["n"] == 0
-        return real_ident(s)
-
-    monkeypatch.setattr(parsing, "_digit_line_identity", wrapped)
-    parsed = parsing.parse_last_timestamp_line_streaming(str(stats))
-    assert parsed == ("1709123457", "job1", "cn002")
-    collected = parsing._collect_tail_timestamp_lines(str(stats), max_lines=2)
-    assert collected
+  def wrapped(s):
     assert held["n"] == 0
+    return real_ident(s)
+
+  monkeypatch.setattr(parsing, "_digit_line_identity", wrapped)
+  parsed = parsing.parse_last_timestamp_line_streaming(str(stats))
+  assert parsed == ("1709123457", "job1", "cn002")
+  collected = parsing._collect_tail_timestamp_lines(str(stats), max_lines=2)
+  assert collected
+  assert held["n"] == 0
 
 
 def test_feed_line_lock_hold_outside_shared_lock(tmp_path, monkeypatch):
-    from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-        IncrementalStatsParser,
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+    IncrementalStatsParser,
+  )
+
+  stats = tmp_path / "host.example.com" / "1709123456"
+  stats.parent.mkdir(parents=True)
+  stats.write_text("".join(_resume_schema_fixture_lines()), encoding="utf-8")
+  held = {"n": 0}
+  monkeypatch.setattr(
+    parsing,
+    "_stats_file_read_lock",
+    _tracking_stats_lock(held),
+  )
+  real_feed = IncrementalStatsParser.feed_line
+
+  def wrapped(self, line):
+    assert held["n"] == 0
+    return real_feed(self, line)
+
+  monkeypatch.setattr(IncrementalStatsParser, "feed_line", wrapped)
+  chunks = []
+
+  def on_chunk(stats_rows, proc_rows):
+    assert held["n"] == 0
+    chunks.append(
+      (
+        stats_payload_to_records(stats_rows),
+        list(proc_rows),
+      )
     )
 
-    stats = tmp_path / "host.example.com" / "1709123456"
-    stats.parent.mkdir(parents=True)
-    stats.write_text("".join(_resume_schema_fixture_lines()), encoding="utf-8")
-    held = {"n": 0}
-    monkeypatch.setattr(
-        parsing, "_stats_file_read_lock", _tracking_stats_lock(held),
-    )
-    real_feed = IncrementalStatsParser.feed_line
-
-    def wrapped(self, line):
-        assert held["n"] == 0
-        return real_feed(self, line)
-
-    monkeypatch.setattr(IncrementalStatsParser, "feed_line", wrapped)
-    chunks = []
-
-    def on_chunk(stats_rows, proc_rows):
-        assert held["n"] == 0
-        chunks.append((
-            stats_payload_to_records(stats_rows),
-            list(proc_rows),
-        ))
-
-    parse_stats_file_streaming_incremental(
-        str(stats),
-        flush_rows=1,
-        on_chunk=on_chunk,
-        line_batch_size=1,
-    )
-    assert chunks
+  parse_stats_file_streaming_incremental(
+    str(stats),
+    flush_rows=1,
+    on_chunk=on_chunk,
+    line_batch_size=1,
+  )
+  assert chunks
 
 
 def test_on_chunk_lock_hold_outside_shared_lock(tmp_path, monkeypatch):
-    stats = tmp_path / "host.example.com" / "1709123456"
-    stats.parent.mkdir(parents=True)
-    stats.write_text("".join(_resume_schema_fixture_lines()), encoding="utf-8")
-    held = {"n": 0}
-    monkeypatch.setattr(
-        parsing, "_stats_file_read_lock", _tracking_stats_lock(held),
-    )
-    chunks = []
+  stats = tmp_path / "host.example.com" / "1709123456"
+  stats.parent.mkdir(parents=True)
+  stats.write_text("".join(_resume_schema_fixture_lines()), encoding="utf-8")
+  held = {"n": 0}
+  monkeypatch.setattr(
+    parsing,
+    "_stats_file_read_lock",
+    _tracking_stats_lock(held),
+  )
+  chunks = []
 
-    def on_chunk(stats_rows, proc_rows):
-        assert held["n"] == 0
-        chunks.append((
-            stats_payload_to_records(stats_rows),
-            list(proc_rows),
-        ))
-
-    parse_stats_file_streaming_incremental(
-        str(stats),
-        flush_rows=1,
-        on_chunk=on_chunk,
-        line_batch_size=1,
+  def on_chunk(stats_rows, proc_rows):
+    assert held["n"] == 0
+    chunks.append(
+      (
+        stats_payload_to_records(stats_rows),
+        list(proc_rows),
+      )
     )
-    assert chunks
+
+  parse_stats_file_streaming_incremental(
+    str(stats),
+    flush_rows=1,
+    on_chunk=on_chunk,
+    line_batch_size=1,
+  )
+  assert chunks
 
 
 def test_sealed_on_member_lock_hold_after_shared_lock(tmp_path, monkeypatch):
-    from contextlib import contextmanager
+  from contextlib import contextmanager
 
-    from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
 
-    path = tmp_path / "2026-01-01.tar.zst"
-    path.write_bytes(b"not-a-real-archive")
-    held = {"n": 0}
+  path = tmp_path / "2026-01-01.tar.zst"
+  path.write_bytes(b"not-a-real-archive")
+  held = {"n": 0}
 
-    @contextmanager
-    def tracking_lock(_p):
-        held["n"] += 1
-        try:
-            yield
-        finally:
-            held["n"] -= 1
+  @contextmanager
+  def tracking_lock(_p):
+    held["n"] += 1
+    try:
+      yield
+    finally:
+      held["n"] -= 1
 
-    class FakeMember:
-        def __init__(self, name, size):
-            self.name = name
-            self.size = size
+  class FakeMember:
+    def __init__(self, name, size):
+      self.name = name
+      self.size = size
 
-        def isfile(self):
-            return True
+    def isfile(self):
+      return True
 
-    @contextmanager
-    def fake_open(*_a, **_k):
-        yield object()
+  @contextmanager
+  def fake_open(*_a, **_k):
+    yield object()
 
-    monkeypatch.setattr(helpers, "_archive_file_read_lock_wait", tracking_lock)
-    monkeypatch.setattr(helpers, "_open_tarfile_for_read", fake_open)
-    monkeypatch.setattr(
-        helpers, "_iter_tar_members", lambda _tf: [FakeMember("h/1", 4)],
-    )
-    monkeypatch.setattr(helpers, "detect_compressed_format", lambda _p: "zst")
-    seen = []
+  monkeypatch.setattr(helpers, "_archive_file_read_lock_wait", tracking_lock)
+  monkeypatch.setattr(helpers, "_open_tarfile_for_read", fake_open)
+  monkeypatch.setattr(
+    helpers,
+    "_iter_tar_members",
+    lambda _tf: [FakeMember("h/1", 4)],
+  )
+  monkeypatch.setattr(helpers, "detect_compressed_format", lambda _p: "zst")
+  seen = []
 
-    def on_member(name, size):
-        assert held["n"] == 0
-        seen.append((name, size))
+  def on_member(name, size):
+    assert held["n"] == 0
+    seen.append((name, size))
 
-    readable, members, _dups, err = helpers._stream_compressed_archive_members(
-        str(path), on_member, defer_on_member=True,
-    )
-    assert err is None
-    assert readable is True
-    assert seen == [("h/1", 4)]
-    assert members == {"h/1": 4}
+  readable, members, _dups, err = helpers._stream_compressed_archive_members(
+    str(path),
+    on_member,
+    defer_on_member=True,
+  )
+  assert err is None
+  assert readable is True
+  assert seen == [("h/1", 4)]
+  assert members == {"h/1": 4}
 
 
 def test_sealed_on_member_lock_hold_in_stream_early_exit(tmp_path, monkeypatch):
-    from contextlib import contextmanager
+  from contextlib import contextmanager
 
-    from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
 
-    path = tmp_path / "2026-01-01.tar.zst"
-    path.write_bytes(b"not-a-real-archive")
-    held = {"n": 0}
+  path = tmp_path / "2026-01-01.tar.zst"
+  path.write_bytes(b"not-a-real-archive")
+  held = {"n": 0}
 
-    @contextmanager
-    def tracking_lock(_p):
-        held["n"] += 1
-        try:
-            yield
-        finally:
-            held["n"] -= 1
-
-    class FakeMember:
-        def __init__(self, name, size):
-            self.name = name
-            self.size = size
-
-        def isfile(self):
-            return True
-
-    @contextmanager
-    def fake_open(*_a, **_k):
-        yield object()
-
-    monkeypatch.setattr(helpers, "_archive_file_read_lock_wait", tracking_lock)
-    monkeypatch.setattr(helpers, "_open_tarfile_for_read", fake_open)
-    monkeypatch.setattr(
-        helpers, "_iter_tar_members", lambda _tf: [FakeMember("h/1", 4)],
-    )
-    monkeypatch.setattr(helpers, "detect_compressed_format", lambda _p: "zst")
-
-    def on_member(_name, _size):
-        assert held["n"] == 1
-        raise helpers._MemberStreamEarlyExit()
-
+  @contextmanager
+  def tracking_lock(_p):
+    held["n"] += 1
     try:
-        helpers._stream_compressed_archive_members(
-            str(path), on_member, defer_on_member=False,
-        )
-        raise AssertionError("expected _MemberStreamEarlyExit")
-    except helpers._MemberStreamEarlyExit:
-        pass
+      yield
+    finally:
+      held["n"] -= 1
+
+  class FakeMember:
+    def __init__(self, name, size):
+      self.name = name
+      self.size = size
+
+    def isfile(self):
+      return True
+
+  @contextmanager
+  def fake_open(*_a, **_k):
+    yield object()
+
+  monkeypatch.setattr(helpers, "_archive_file_read_lock_wait", tracking_lock)
+  monkeypatch.setattr(helpers, "_open_tarfile_for_read", fake_open)
+  monkeypatch.setattr(
+    helpers,
+    "_iter_tar_members",
+    lambda _tf: [FakeMember("h/1", 4)],
+  )
+  monkeypatch.setattr(helpers, "detect_compressed_format", lambda _p: "zst")
+
+  def on_member(_name, _size):
+    assert held["n"] == 1
+    raise helpers._MemberStreamEarlyExit()
+
+  try:
+    helpers._stream_compressed_archive_members(
+      str(path),
+      on_member,
+      defer_on_member=False,
+    )
+    raise AssertionError("expected _MemberStreamEarlyExit")
+  except helpers._MemberStreamEarlyExit:
+    pass
 
 
 def test_sealed_populate_scan_fn_defers_on_member():
-    """Populate sealed scan must keep defer_on_member=True (lock-hold shrink)."""
-    import inspect
+  """Populate sealed scan must keep defer_on_member=True (lock-hold shrink)."""
+  import inspect
 
-    from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
 
-    src = inspect.getsource(helpers._populate_members_from_sealed_scan)
-    assert "defer_on_member=True" in src
+  src = inspect.getsource(helpers._populate_members_from_sealed_scan)
+  assert "defer_on_member=True" in src
 
 
 def test_sealed_member_size_lookup_keeps_in_stream_callback():
-    """Early-exit size lookup must pass defer_on_member=False."""
-    import inspect
+  """Early-exit size lookup must pass defer_on_member=False."""
+  import inspect
 
-    from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
 
-    src = inspect.getsource(helpers._sealed_archive_member_has_exact_size)
-    assert "defer_on_member=False" in src
+  src = inspect.getsource(helpers._sealed_archive_member_has_exact_size)
+  assert "defer_on_member=False" in src
 
 
 def _assert_decode_outside_lock(tmp_path, monkeypatch, runner):
-    """Shared probe: ``_decode_stats_readline`` must not run under SH."""
-    stats = tmp_path / "host.example.com" / "1709123456"
-    stats.parent.mkdir(parents=True)
-    stats.write_text("".join(_resume_schema_fixture_lines()), encoding="utf-8")
-    held = {"n": 0}
-    monkeypatch.setattr(
-        parsing, "_stats_file_read_lock", _tracking_stats_lock(held),
+  """Shared probe: ``_decode_stats_readline`` must not run under SH."""
+  stats = tmp_path / "host.example.com" / "1709123456"
+  stats.parent.mkdir(parents=True)
+  stats.write_text("".join(_resume_schema_fixture_lines()), encoding="utf-8")
+  held = {"n": 0}
+  monkeypatch.setattr(
+    parsing,
+    "_stats_file_read_lock",
+    _tracking_stats_lock(held),
+  )
+  real_decode = parsing._decode_stats_readline
+
+  def wrapped(raw):
+    assert held["n"] == 0, "decode must run after SH release"
+    return real_decode(raw)
+
+  monkeypatch.setattr(parsing, "_decode_stats_readline", wrapped)
+  runner(str(stats))
+  assert held["n"] == 0
+
+
+def test_streaming_incremental_decode_outside_shared_lock(
+  tmp_path, monkeypatch
+):
+  def runner(path):
+    parse_stats_file_streaming_incremental(
+      path,
+      flush_rows=10_000,
+      on_chunk=lambda *_a: None,
+      line_batch_size=2,
     )
-    real_decode = parsing._decode_stats_readline
 
-    def wrapped(raw):
-        assert held["n"] == 0, "decode must run after SH release"
-        return real_decode(raw)
-
-    monkeypatch.setattr(parsing, "_decode_stats_readline", wrapped)
-    runner(str(stats))
-    assert held["n"] == 0
-
-
-def test_streaming_incremental_decode_outside_shared_lock(tmp_path, monkeypatch):
-    def runner(path):
-        parse_stats_file_streaming_incremental(
-            path,
-            flush_rows=10_000,
-            on_chunk=lambda *_a: None,
-            line_batch_size=2,
-        )
-
-    _assert_decode_outside_lock(tmp_path, monkeypatch, runner)
+  _assert_decode_outside_lock(tmp_path, monkeypatch, runner)
 
 
 def test_streaming_decode_outside_shared_lock(tmp_path, monkeypatch):
-    def runner(path):
-        stats_list, _proc = parse_stats_file_streaming(path, batch_size=2)
-        assert stats_list is not None
+  def runner(path):
+    stats_list, _proc = parse_stats_file_streaming(path, batch_size=2)
+    assert stats_list is not None
 
-    _assert_decode_outside_lock(tmp_path, monkeypatch, runner)
+  _assert_decode_outside_lock(tmp_path, monkeypatch, runner)
 
 
 def test_iter_decode_outside_shared_lock(tmp_path, monkeypatch):
-    def runner(path):
-        assert list(parsing.iter_stats_file_lines(path))
+  def runner(path):
+    assert list(parsing.iter_stats_file_lines(path))
 
-    _assert_decode_outside_lock(tmp_path, monkeypatch, runner)
+  _assert_decode_outside_lock(tmp_path, monkeypatch, runner)
 
 
 def test_feed_line_proc_row_peak_fields_without_intermediate_vals_dict():
-    """Proc rows keep peak fields; sample tags share one dict (alloc shrink)."""
-    from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-        IncrementalStatsParser,
-        HOST_PROC_KEYS,
-        merge_proc_row_dicts,
-    )
+  """Proc rows keep peak fields; sample tags share one dict (alloc shrink)."""
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+    HOST_PROC_KEYS,
+    IncrementalStatsParser,
+    merge_proc_row_dicts,
+  )
 
-    keys = " ".join(HOST_PROC_KEYS)
-    parser = IncrementalStatsParser(0)
-    parser.feed_line(f"!host_proc {keys}\n")
-    parser.feed_line("1709123456 job1 cn001\n")
-    assert parser.line_ctx["tags"] is parser.line_ctx["tags2"]
-    parser.feed_line(
-        "host_proc python/4242/0-7/0 "
-        "1001 9000 8000 0 7000 6000 5000 4000 3000 2000 1000 500 8\n",
-    )
-    assert len(parser.proc_stats) == 1
-    row = parser.proc_stats[0]
-    assert row["proc"] == "python"
-    assert row["vm_peak"] == 9000
-    assert row["vm_hwm"] == 7000
-    assert row["vm_stk"] == 4000
-    assert row["threads"] == 8
-    earlier = row
-    later = {
-        "vm_peak": 0,
-        "vm_hwm": 100,
-        "vm_stk": 40,
-        "vm_exe": 1,
-        "vm_lib": 2,
-        "threads": 16,
-    }
-    merged = merge_proc_row_dicts(earlier, later)
-    assert merged is earlier
-    assert earlier["vm_peak"] == 9000
-    assert earlier["threads"] == 16
+  keys = " ".join(HOST_PROC_KEYS)
+  parser = IncrementalStatsParser(0)
+  parser.feed_line(f"!host_proc {keys}\n")
+  parser.feed_line("1709123456 job1 cn001\n")
+  assert parser.line_ctx["tags"] is parser.line_ctx["tags2"]
+  parser.feed_line(
+    "host_proc python/4242/0-7/0 "
+    "1001 9000 8000 0 7000 6000 5000 4000 3000 2000 1000 500 8\n",
+  )
+  assert len(parser.proc_stats) == 1
+  row = parser.proc_stats[0]
+  assert row["proc"] == "python"
+  assert row["vm_peak"] == 9000
+  assert row["vm_hwm"] == 7000
+  assert row["vm_stk"] == 4000
+  assert row["threads"] == 8
+  earlier = row
+  later = {
+    "vm_peak": 0,
+    "vm_hwm": 100,
+    "vm_stk": 40,
+    "vm_exe": 1,
+    "vm_lib": 2,
+    "threads": 16,
+  }
+  merged = merge_proc_row_dicts(earlier, later)
+  assert merged is earlier
+  assert earlier["vm_peak"] == 9000
+  assert earlier["threads"] == 16

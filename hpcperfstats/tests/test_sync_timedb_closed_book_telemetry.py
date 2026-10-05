@@ -1,4 +1,5 @@
 """Closed-book ingest write and file-lock telemetry contracts."""
+
 from __future__ import annotations
 
 import threading
@@ -8,20 +9,20 @@ import pytest
 
 from hpcperfstats.dbload import sync_timedb as st
 from hpcperfstats.dbload.lib.file_locking import (
-    FILE_LOCK_TELEM_KEYS,
-    file_read_lock_wait,
-    file_write_lock,
-    reset_file_lock_timing,
-    snapshot_file_lock_timing,
+  FILE_LOCK_TELEM_KEYS,
+  file_read_lock_wait,
+  file_write_lock,
+  reset_file_lock_timing,
+  snapshot_file_lock_timing,
 )
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-    SyncTimedbArchiveMembersStore,
+  SyncTimedbArchiveMembersStore,
 )
 from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 from hpcperfstats.dbload.lib.sync_timedb_store_lock_timing import (
-    STORE_LOCK_TELEM_KEYS,
-    reset_store_lock_timing,
-    snapshot_store_lock_timing,
+  STORE_LOCK_TELEM_KEYS,
+  reset_store_lock_timing,
+  snapshot_store_lock_timing,
 )
 
 
@@ -45,8 +46,8 @@ def test_ingest_telemetry_env_override_enables_write_without_ini(monkeypatch):
   """HPCPERFSTATS_SYNC_INGEST_TELEMETRY=1 enables write phases without INI yes."""
   monkeypatch.setenv("HPCPERFSTATS_SYNC_INGEST_TELEMETRY", "1")
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_telemetry",
-      lambda: False,
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_telemetry",
+    lambda: False,
   )
   st._reset_ingest_write_timing(enabled=False)
   st._reset_ingest_write_timing(enabled=None)
@@ -65,8 +66,8 @@ def test_ingest_telemetry_ini_yes_enables_write_without_env(monkeypatch):
   """INI sync_ingest_telemetry=yes enables write phases when env unset."""
   monkeypatch.delenv("HPCPERFSTATS_SYNC_INGEST_TELEMETRY", raising=False)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_telemetry",
-      lambda: True,
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_telemetry",
+    lambda: True,
   )
   st._reset_ingest_write_timing(enabled=False)
   st._reset_ingest_write_timing(enabled=None)
@@ -119,18 +120,18 @@ def test_write_phase_on_ingest_log_when_telem_on(monkeypatch):
   st.log_print = _capture
   try:
     outcome = st._ingest_file_outcome_from_worker(
-        "/x",
-        False,
-        True,
-        10.0,
-        {
-            "outcome": "ingested",
-            "orm_materialize_s": 1.5,
-            "db_execute_s": 2.5,
-            "copy_s": 1.0,
-            "conflict_insert_s": 1.5,
-            "postgres_s": 4.0,
-        },
+      "/x",
+      False,
+      True,
+      10.0,
+      {
+        "outcome": "ingested",
+        "orm_materialize_s": 1.5,
+        "db_execute_s": 2.5,
+        "copy_s": 1.0,
+        "conflict_insert_s": 1.5,
+        "postgres_s": 4.0,
+      },
     )
     st._log_ingest_file_outcome(outcome)
   finally:
@@ -158,11 +159,11 @@ def test_write_phase_absent_on_ingest_log_when_telem_off(monkeypatch):
   st._reset_ingest_write_timing(enabled=False)
   try:
     outcome = st._ingest_file_outcome_from_worker(
-        "/x",
-        False,
-        True,
-        10.0,
-        {"outcome": "ingested", "postgres_s": 1.0},
+      "/x",
+      False,
+      True,
+      10.0,
+      {"outcome": "ingested", "postgres_s": 1.0},
     )
     st._log_ingest_file_outcome(outcome)
   finally:
@@ -309,10 +310,10 @@ def test_store_lock_telemetry_contended_wait_positive(tmp_path):
 def test_parse_stage_campaign_accumulates_from_worker_thread():
   """Process-global parse enable must record holds from a worker thread."""
   from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-      _held_parse_stage,
-      reset_parse_stage_timing,
-      snapshot_parse_stage_campaign_timing,
-      snapshot_parse_stage_timing,
+    _held_parse_stage,
+    reset_parse_stage_timing,
+    snapshot_parse_stage_campaign_timing,
+    snapshot_parse_stage_timing,
   )
 
   reset_parse_stage_timing(enabled=True)
@@ -324,7 +325,7 @@ def test_parse_stage_campaign_accumulates_from_worker_thread():
         reset_parse_stage_timing()
         with _held_parse_stage("feed_s"):
           time.sleep(0.02)
-      except BaseException as exc:  # noqa: BLE001 — surface in parent
+      except BaseException as exc:
         err.append(exc)
 
     thread = threading.Thread(target=_worker, daemon=True)
@@ -352,7 +353,7 @@ def test_ingest_write_campaign_accumulates_from_worker_thread():
         with st._held_ingest_write_timing():
           with st._held_ingest_write_phase("db_execute_s"):
             time.sleep(0.02)
-      except BaseException as exc:  # noqa: BLE001 — surface in parent
+      except BaseException as exc:
         err.append(exc)
 
     thread = threading.Thread(target=_worker, daemon=True)

@@ -28,13 +28,13 @@ _DCGM_INT64_BLANK_AS_FLOAT = float(DCGM_INT64_BLANK)
 def is_dcgm_fp64_blank(value: Any) -> bool:
   """
   True when ``value`` is in the DCGM FP64 blank family (``>= DCGM_FP64_BLANK``).
-  
+
   Args:
     value (Any): Value to inspect (typically a numeric scalar).
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> is_dcgm_fp64_blank(None)  # doctest: +SKIP
   """
@@ -42,7 +42,7 @@ def is_dcgm_fp64_blank(value: Any) -> bool:
     return False
   try:
     v = float(value)
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     return False
   if not np.isfinite(v):
     return False
@@ -52,17 +52,17 @@ def is_dcgm_fp64_blank(value: Any) -> bool:
 def is_dcgm_int64_blank(value: Any) -> bool:
   """
   True when ``value`` is in the DCGM INT64 blank family (``>=.
-  
+
     DCGM_INT64_BLANK``).
-  
+
   Accepts int or float storage (archives often promote i64 gauges to float64).
-  
+
   Args:
     value (Any): Value to inspect (typically a numeric scalar).
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> is_dcgm_int64_blank(None)  # doctest: +SKIP
   """
@@ -72,7 +72,7 @@ def is_dcgm_int64_blank(value: Any) -> bool:
     if isinstance(value, (int, np.integer)):
       return int(value) >= DCGM_INT64_BLANK
     v = float(value)
-  except (TypeError, ValueError, OverflowError):
+  except TypeError, ValueError, OverflowError:
     return False
   if not np.isfinite(v):
     return False
@@ -82,13 +82,13 @@ def is_dcgm_int64_blank(value: Any) -> bool:
 def is_dcgm_numeric_blank(value: Any) -> bool:
   """
   True when ``value`` is FP64- or INT64-blank family (either implies missing).
-  
+
   Args:
     value (Any): Value to inspect (typically a numeric scalar).
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> is_dcgm_numeric_blank(None)  # doctest: +SKIP
   """

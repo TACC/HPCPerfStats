@@ -1,4 +1,5 @@
 """Host unit tests for in-process sync_timedb job-store queue helpers."""
+
 from __future__ import annotations
 
 import os
@@ -9,8 +10,8 @@ import pytest
 
 from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 from hpcperfstats.dbload.lib.invalidate_archive_members_ops import (
-    JOB_STORE_SNAPSHOT_RELPATH,
-    invalidate_archive_members_sidecars,
+  JOB_STORE_SNAPSHOT_RELPATH,
+  invalidate_archive_members_sidecars,
 )
 from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 
@@ -43,8 +44,10 @@ def test_operator_census_uses_disk_sidecars_and_thread_titles():
   assert "job:v1:queue:ingest" not in stall
   assert "redis-cli -n 1 ZCARD" not in stall
   rules_path = (
-      root / "hpcperfstats" / "cursor-rules"
-      / "compose-operator-terminal-commands.mdc"
+    root
+    / "hpcperfstats"
+    / "cursor-rules"
+    / "compose-operator-terminal-commands.mdc"
   )
   rules = rules_path.read_text()
   assert ".sync_timedb_job_store.json" in rules
@@ -64,18 +67,30 @@ def test_encode_decode_hot_newest_first_catchup_oldest_first():
   id_new = "new|1|1"
   id_old = "old|1|1"
   hot_new = jq.encode_ingest_score(
-      band="hot", day=newer, today=today, identity=id_new,
+    band="hot",
+    day=newer,
+    today=today,
+    identity=id_new,
   )
   hot_old = jq.encode_ingest_score(
-      band="hot", day=older, today=today, identity=id_old,
+    band="hot",
+    day=older,
+    today=today,
+    identity=id_old,
   )
   assert hot_new < hot_old
   assert jq.decode_ingest_band(hot_new) == "hot"
   catch_old = jq.encode_ingest_score(
-      band="catchup", day=older, today=today, identity=id_old,
+    band="catchup",
+    day=older,
+    today=today,
+    identity=id_old,
   )
   catch_new = jq.encode_ingest_score(
-      band="catchup", day=newer, today=today, identity=id_new,
+    band="catchup",
+    day=newer,
+    today=today,
+    identity=id_new,
   )
   assert catch_old < catch_new
   assert jq.decode_ingest_band(catch_old) == "catchup"
@@ -96,16 +111,26 @@ def test_claim_is_exclusive_and_non_owner_ack_fails():
   jq.zadd_ingest_job(store, identity="p|1|2", score=5)
   owner = jq.make_lease_owner_token(pid=111, hostname="h", boot_id="b")
   claim = jq.claim_ingest_job(
-      store, band="hot", owner_token=owner, ttl_s=60, now_s=1000.0,
+    store,
+    band="hot",
+    owner_token=owner,
+    ttl_s=60,
+    now_s=1000.0,
   )
   assert claim is not None
   assert store.lease_token("ingest", "p|1|2") == owner
   assert not jq.ack_job(
-      store, kind="ingest", identity="p|1|2", owner_token="other:h:b:2",
+    store,
+    kind="ingest",
+    identity="p|1|2",
+    owner_token="other:h:b:2",
   )
   assert store.lease_token("ingest", "p|1|2") == owner
   assert jq.ack_job(
-      store, kind="ingest", identity="p|1|2", owner_token=owner,
+    store,
+    kind="ingest",
+    identity="p|1|2",
+    owner_token=owner,
   )
   assert store.lease_token("ingest", "p|1|2") is None
 
@@ -114,17 +139,20 @@ def test_steal_lease_when_owner_pid_dead():
   store = _store()
   jq.enqueue_list_job(store, kind="append", identity="day")
   claim = jq.claim_list_job(
-      store, kind="append", owner_token="n:host1:boot1:9", ttl_s=60,
-      now_s=1000.0,
+    store,
+    kind="append",
+    owner_token="n:host1:boot1:9",
+    ttl_s=60,
+    now_s=1000.0,
   )
   assert claim is not None
   assert jq.steal_job_lease_if_owner_dead(
-      store,
-      kind="append",
-      identity="day",
-      pid_alive_fn=lambda _p: False,
-      hostname="host1",
-      boot_id="boot1",
+    store,
+    kind="append",
+    identity="day",
+    pid_alive_fn=lambda _p: False,
+    hostname="host1",
+    boot_id="boot1",
   )
   assert store.lease_token("append", "day") is None
   assert store.queued_count("append") == 1
@@ -136,23 +164,27 @@ def test_reconcile_this_owner_orphan_lease_requeues():
   jq.zadd_ingest_job(store, identity=identity, score=5)
   owner = "n:h:b:1"
   claim = jq.claim_ingest_job(
-      store, band="hot", owner_token=owner, ttl_s=60, now_s=1000.0,
+    store,
+    band="hot",
+    owner_token=owner,
+    ttl_s=60,
+    now_s=1000.0,
   )
   assert claim is not None
   assert store.queued_count("ingest") == 0
   kept = jq.reconcile_this_owner_orphan_leases(
-      store,
-      kind=jq.JOB_KIND_INGEST,
-      local_identities=(identity,),
-      owner_token=owner,
+    store,
+    kind=jq.JOB_KIND_INGEST,
+    local_identities=(identity,),
+    owner_token=owner,
   )
   assert kept == 0
   assert store.lease_token("ingest", identity) is not None
   n = jq.reconcile_this_owner_orphan_leases(
-      store,
-      kind=jq.JOB_KIND_INGEST,
-      local_identities=(),
-      owner_token=owner,
+    store,
+    kind=jq.JOB_KIND_INGEST,
+    local_identities=(),
+    owner_token=owner,
   )
   assert n == 1
   assert store.lease_token("ingest", identity) is None
@@ -165,18 +197,24 @@ def test_ranged_claim_prefers_hot_range_without_starving_catchup():
   hot_id = "/hot"
   catch_id = "/catch"
   jq.zadd_ingest_job(
-      store,
+    store,
+    identity=hot_id,
+    score=jq.encode_ingest_score(
+      band="hot",
+      day=date(2026, 8, 23),
+      today=today,
       identity=hot_id,
-      score=jq.encode_ingest_score(
-          band="hot", day=date(2026, 8, 23), today=today, identity=hot_id,
-      ),
+    ),
   )
   jq.zadd_ingest_job(
-      store,
+    store,
+    identity=catch_id,
+    score=jq.encode_ingest_score(
+      band="catchup",
+      day=date(2026, 6, 1),
+      today=today,
       identity=catch_id,
-      score=jq.encode_ingest_score(
-          band="catchup", day=date(2026, 6, 1), today=today, identity=catch_id,
-      ),
+    ),
   )
   hot = jq.claim_ingest_job(store, band="hot", owner_token="n:h:b:1")
   assert hot is not None and hot.identity == hot_id
@@ -191,10 +229,16 @@ def test_zadd_same_member_reband_overwrites_score():
   ident = "/raw/a"
   today = date(2026, 8, 24)
   hot = jq.encode_ingest_score(
-      band="hot", day=date(2026, 8, 23), today=today, identity=ident,
+    band="hot",
+    day=date(2026, 8, 23),
+    today=today,
+    identity=ident,
   )
   catch = jq.encode_ingest_score(
-      band="catchup", day=date(2026, 6, 1), today=today, identity=ident,
+    band="catchup",
+    day=date(2026, 6, 1),
+    today=today,
+    identity=ident,
   )
   jq.zadd_ingest_job(store, identity=ident, score=hot)
   jq.zadd_ingest_job(store, identity=ident, score=catch)
@@ -226,8 +270,8 @@ def test_invalidate_protects_job_store_sidecar(tmp_path):
   other = members / "2026-08-02.json"
   other.write_text("{}", encoding="utf-8")
   result = invalidate_archive_members_sidecars(
-      archive_dir=str(archive),
-      day_tokens=["2026-08-01"],
+    archive_dir=str(archive),
+    day_tokens=["2026-08-01"],
   )
   assert result["deleted"] == 1
   assert not day.exists()
@@ -250,19 +294,19 @@ def test_reconstruct_never_ingested_enqueues_ingest_and_append():
 
   client = _store()
   plan = jr.classify_closed_raw_path(
-      "/archive/host/raw",
-      tgz_archive_dir="/daily",
-      size=100,
-      mtime_ns=200,
-      calendar_day=date(2026, 8, 20),
-      ingest_is_complete_fn=lambda **_k: False,
-      append_is_complete_fn=lambda **_k: False,
+    "/archive/host/raw",
+    tgz_archive_dir="/daily",
+    size=100,
+    mtime_ns=200,
+    calendar_day=date(2026, 8, 20),
+    ingest_is_complete_fn=lambda **_k: False,
+    append_is_complete_fn=lambda **_k: False,
   )
   assert plan.kinds_to_enqueue() == ("ingest", "append")
   enqueued = jr.enqueue_reconstruct_jobs_for_closed_path(
-      client,
-      plan,
-      today=date(2026, 8, 24),
+    client,
+    plan,
+    today=date(2026, 8, 24),
   )
   assert enqueued == {"ingest": True, "append": True}
   assert client.ingest_score(plan.identity) is not None
@@ -274,19 +318,19 @@ def test_reconstruct_ingested_not_in_tar_enqueues_append_only():
 
   client = _store()
   plan = jr.classify_closed_raw_path(
-      "/archive/host/raw",
-      tgz_archive_dir="/daily",
-      size=100,
-      mtime_ns=200,
-      calendar_day=date(2026, 6, 2),
-      ingest_is_complete_fn=lambda **_k: True,
-      append_is_complete_fn=lambda **_k: False,
+    "/archive/host/raw",
+    tgz_archive_dir="/daily",
+    size=100,
+    mtime_ns=200,
+    calendar_day=date(2026, 6, 2),
+    ingest_is_complete_fn=lambda **_k: True,
+    append_is_complete_fn=lambda **_k: False,
   )
   assert plan.kinds_to_enqueue() == ("append",)
   enqueued = jr.enqueue_reconstruct_jobs_for_closed_path(
-      client,
-      plan,
-      today=date(2026, 8, 24),
+    client,
+    plan,
+    today=date(2026, 8, 24),
   )
   assert enqueued == {"ingest": False, "append": True}
   assert client.ingest_score(plan.identity) is None
@@ -298,19 +342,19 @@ def test_reconstruct_skips_zadd_when_both_complete():
 
   client = _store()
   plan = jr.classify_closed_raw_path(
-      "/archive/host/raw",
-      tgz_archive_dir="/daily",
-      size=100,
-      mtime_ns=200,
-      calendar_day=date(2026, 8, 20),
-      ingest_is_complete_fn=lambda **_k: True,
-      append_is_complete_fn=lambda **_k: True,
+    "/archive/host/raw",
+    tgz_archive_dir="/daily",
+    size=100,
+    mtime_ns=200,
+    calendar_day=date(2026, 8, 20),
+    ingest_is_complete_fn=lambda **_k: True,
+    append_is_complete_fn=lambda **_k: True,
   )
   assert plan.kinds_to_enqueue() == ()
   enqueued = jr.enqueue_reconstruct_jobs_for_closed_path(
-      client,
-      plan,
-      today=date(2026, 8, 24),
+    client,
+    plan,
+    today=date(2026, 8, 24),
   )
   assert enqueued == {"ingest": False, "append": False}
   assert not client.ingest_identities()
@@ -323,23 +367,23 @@ def test_reconstruct_ghost_phase_done_still_enqueues_day_close():
   client = _store()
   tar = "/daily/2026-08-01.tar"
   did = jr.enqueue_day_close_if_needed(
-      client,
-      tar,
-      calendar_day=date(2026, 8, 1),
-      phase_name="done",
-      filesystem_complete=False,
-      min_age_elapsed=True,
+    client,
+    tar,
+    calendar_day=date(2026, 8, 1),
+    phase_name="done",
+    filesystem_complete=False,
+    min_age_elapsed=True,
   )
   assert did is True
   assert client.list_slice("day_close", 0, -1) == [tar]
   client2 = _store()
   skipped = jr.enqueue_day_close_if_needed(
-      client2,
-      tar,
-      calendar_day=date(2026, 8, 1),
-      phase_name="done",
-      filesystem_complete=True,
-      min_age_elapsed=True,
+    client2,
+    tar,
+    calendar_day=date(2026, 8, 1),
+    phase_name="done",
+    filesystem_complete=True,
+    min_age_elapsed=True,
   )
   assert skipped is False
   assert client2.queued_count("day_close") == 0
@@ -349,35 +393,35 @@ def test_reconstruct_ingest_complete_ignores_head_tail_when_listend_on():
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 
   assert (
-      jr.ingest_is_complete(
-          "/x",
-          listend_enabled=True,
-          has_file_complete_fn=lambda _p: False,
-          has_zero_host_fn=lambda _p: False,
-          head_tail_ready_fn=lambda _p: True,
-      )
-      is False
+    jr.ingest_is_complete(
+      "/x",
+      listend_enabled=True,
+      has_file_complete_fn=lambda _p: False,
+      has_zero_host_fn=lambda _p: False,
+      head_tail_ready_fn=lambda _p: True,
+    )
+    is False
   )
   assert (
-      jr.ingest_is_complete(
-          "/x",
-          listend_enabled=False,
-          has_file_complete_fn=lambda _p: False,
-          has_zero_host_fn=lambda _p: False,
-          head_tail_ready_fn=lambda _p: True,
-      )
-      is True
+    jr.ingest_is_complete(
+      "/x",
+      listend_enabled=False,
+      has_file_complete_fn=lambda _p: False,
+      has_zero_host_fn=lambda _p: False,
+      head_tail_ready_fn=lambda _p: True,
+    )
+    is True
   )
 
 
 def test_streaming_parse_yields_before_final_chunk():
   from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
-      iter_find_printf_records_streaming,
+    iter_find_printf_records_streaming,
   )
 
   chunks = [
-      b"/a\x001.0\x0010\x001\x00",
-      b"/b\x002.0\x0020\x002\x00",
+    b"/a\x001.0\x0010\x001\x00",
+    b"/b\x002.0\x0020\x002\x00",
   ]
   it = iter_find_printf_records_streaming(iter(chunks))
   first = next(it)
@@ -401,13 +445,13 @@ def test_streaming_discover_enqueues_before_iterator_exhausts():
     yield FindStatsRecord(path="/archive/h/b", mtime=2.0, size=20, inode=2)
 
   stats = jd.stream_enqueue_ingest_from_find_records(
-      client,
-      _gen(),
-      tgz_archive_dir="/daily",
-      today=date(2026, 8, 24),
-      calendar_day_fn=lambda _r: date(2026, 8, 20),
-      ingest_is_complete_fn=lambda **_k: False,
-      append_is_complete_fn=lambda **_k: True,
+    client,
+    _gen(),
+    tgz_archive_dir="/daily",
+    today=date(2026, 8, 24),
+    calendar_day_fn=lambda _r: date(2026, 8, 20),
+    ingest_is_complete_fn=lambda **_k: False,
+    append_is_complete_fn=lambda **_k: True,
   )
   assert mid_seen_ingest == [True]
   assert stats.seen == 2
@@ -421,12 +465,12 @@ def test_streaming_discover_skips_complete_identities():
 
   client = _store()
   stats = jd.stream_enqueue_ingest_from_find_stdout_chunks(
-      client,
-      [b"/archive/h/done\x001.0\x0010\x001\x00"],
-      tgz_archive_dir="/daily",
-      today=date(2026, 8, 24),
-      ingest_is_complete_fn=lambda **_k: True,
-      append_is_complete_fn=lambda **_k: True,
+    client,
+    [b"/archive/h/done\x001.0\x0010\x001\x00"],
+    tgz_archive_dir="/daily",
+    today=date(2026, 8, 24),
+    ingest_is_complete_fn=lambda **_k: True,
+    append_is_complete_fn=lambda **_k: True,
   )
   assert stats.seen == 1
   assert stats.enqueued_ingest == 0
@@ -439,7 +483,11 @@ def test_claim_is_atomic_pop_and_lease():
   store = _store()
   jq.zadd_ingest_job(store, identity="/raw/a", score=5)
   claim = jq.claim_ingest_job(
-      store, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    store,
+    band="hot",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
   assert claim is not None
   assert claim.identity == "/raw/a"
@@ -456,7 +504,11 @@ def test_lease_conflict_leaves_identity_on_map():
   store._inflight[jq.JOB_KIND_INGEST]["held"] = (2000.0, "other:h:b:2", 5.0)
   store._ingest.pop("held", None)
   claim = jq.claim_ingest_job(
-      store, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    store,
+    band="hot",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
   assert claim is not None and claim.identity == "free"
   assert "held" in jq.read_inflight_entries(store, kind="ingest")
@@ -466,10 +518,17 @@ def test_inflight_reaped_on_expired_deadline():
   store = _store()
   jq.zadd_ingest_job(store, identity="/raw/a", score=5)
   jq.claim_ingest_job(
-      store, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    store,
+    band="hot",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
   recovered = jq.reap_expired_inflight(
-      store, kind="ingest", now_s=2000.0, ttl_s=60,
+    store,
+    kind="ingest",
+    now_s=2000.0,
+    ttl_s=60,
   )
   assert recovered == ["/raw/a"]
   assert store.ingest_score("/raw/a") is not None
@@ -486,23 +545,27 @@ def test_steal_refuses_foreign_host():
   store = _store()
   store._leases[(jq.JOB_KIND_INGEST, "/raw/a")] = "n:other:boot:9"
   assert not jq.steal_job_lease_if_owner_dead(
-      store,
-      kind="ingest",
-      identity="/raw/a",
-      pid_alive_fn=lambda _p: False,
-      hostname="host1",
-      boot_id="boot1",
+    store,
+    kind="ingest",
+    identity="/raw/a",
+    pid_alive_fn=lambda _p: False,
+    hostname="host1",
+    boot_id="boot1",
   )
   assert store.lease_token("ingest", "/raw/a") == "n:other:boot:9"
 
 
 def test_lease_ttl_matches_oq1_per_file_max(monkeypatch):
   monkeypatch.setattr(
-      jq.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 86400,
+    jq.cfg,
+    "get_sync_ingest_per_file_timeout_max_s",
+    lambda: 86400,
   )
   assert jq.job_lease_ttl_seconds() == 86400
   monkeypatch.setattr(
-      jq.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 10,
+    jq.cfg,
+    "get_sync_ingest_per_file_timeout_max_s",
+    lambda: 10,
   )
   assert jq.job_lease_ttl_seconds() == jq.JOB_LEASE_TTL_FLOOR_S
 
@@ -511,20 +574,30 @@ def test_renew_lease_extends_deadline():
   store = _store()
   jq.zadd_ingest_job(store, identity="/raw/a", score=5)
   claim = jq.claim_ingest_job(
-      store, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    store,
+    band="hot",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
   assert claim is not None
   assert jq.renew_job_lease(
+    store,
+    kind="ingest",
+    identity="/raw/a",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1150.0,
+  )
+  assert (
+    jq.reap_expired_inflight(
       store,
       kind="ingest",
-      identity="/raw/a",
-      owner_token="n:h:b:1",
+      now_s=1200.0,
       ttl_s=60,
-      now_s=1150.0,
+    )
+    == []
   )
-  assert jq.reap_expired_inflight(
-      store, kind="ingest", now_s=1200.0, ttl_s=60,
-  ) == []
 
 
 def test_lease_identity_excludes_fingerprint():
@@ -534,10 +607,16 @@ def test_lease_identity_excludes_fingerprint():
   assert first == second
   store = _store()
   jq.zadd_ingest_job(
-      store, identity=first, score=1, fingerprint=jq.ingest_fingerprint(10, 1),
+    store,
+    identity=first,
+    score=1,
+    fingerprint=jq.ingest_fingerprint(10, 1),
   )
   jq.zadd_ingest_job(
-      store, identity=second, score=2, fingerprint=jq.ingest_fingerprint(20, 2),
+    store,
+    identity=second,
+    score=2,
+    fingerprint=jq.ingest_fingerprint(20, 2),
   )
   assert store.queued_count("ingest") == 1
 
@@ -556,7 +635,10 @@ def test_fingerprint_revalidated_at_dispatch(tmp_path):
 def test_future_day_score_is_poppable():
   today = date(2026, 8, 24)
   score = jq.encode_ingest_score(
-      band="hot", day=date(2026, 8, 25), today=today, identity="x",
+    band="hot",
+    day=date(2026, 8, 25),
+    today=today,
+    identity="x",
   )
   lo, hi = jq.ingest_score_range("hot")
   assert lo <= score <= hi
@@ -565,10 +647,10 @@ def test_future_day_score_is_poppable():
 
 def test_discover_resolves_calendar_day_and_bands_catchup():
   score = jq.encode_ingest_score(
-      band="catchup",
-      day=date(2026, 6, 1),
-      today=date(2026, 8, 24),
-      identity="/archive/h/a",
+    band="catchup",
+    day=date(2026, 6, 1),
+    today=date(2026, 8, 24),
+    identity="/archive/h/a",
   )
   assert jq.decode_ingest_band(score) == "catchup"
 
@@ -579,13 +661,13 @@ def test_unresolved_day_skips_ingest_enqueue():
 
   store = _store()
   stats = jd.stream_enqueue_ingest_from_find_records(
-      store,
-      [FindStatsRecord(path="/archive/h/a", mtime=1.0, size=10, inode=1)],
-      tgz_archive_dir="/daily",
-      today=date(2026, 8, 24),
-      calendar_day_fn=lambda _r: None,
-      ingest_is_complete_fn=lambda **_k: False,
-      append_is_complete_fn=lambda **_k: True,
+    store,
+    [FindStatsRecord(path="/archive/h/a", mtime=1.0, size=10, inode=1)],
+    tgz_archive_dir="/daily",
+    today=date(2026, 8, 24),
+    calendar_day_fn=lambda _r: None,
+    ingest_is_complete_fn=lambda **_k: False,
+    append_is_complete_fn=lambda **_k: True,
   )
   assert stats.enqueued_ingest == 0
   assert not store.ingest_identities()
@@ -596,7 +678,11 @@ def test_persist_omits_inflight_and_leases(tmp_path):
   jq.zadd_ingest_job(store, identity="/raw/a", score=1)
   jq.enqueue_list_job(store, kind="append", identity="/raw/a", dedupe=True)
   jq.claim_ingest_job(
-      store, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    store,
+    band="hot",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
   store.persist(force=True)
   reloaded = SyncTimedbJobStore(str(tmp_path / "archive"))
@@ -610,13 +696,22 @@ def test_queue_max_size_blocks_new_zadd(monkeypatch):
   store = _store()
   today = date(2026, 8, 24)
   catch_a = jq.encode_ingest_score(
-      band="catchup", day=date(2026, 6, 1), today=today, identity="/a",
+    band="catchup",
+    day=date(2026, 6, 1),
+    today=today,
+    identity="/a",
   )
   catch_b = jq.encode_ingest_score(
-      band="catchup", day=date(2026, 6, 1), today=today, identity="/b",
+    band="catchup",
+    day=date(2026, 6, 1),
+    today=today,
+    identity="/b",
   )
   catch_c = jq.encode_ingest_score(
-      band="catchup", day=date(2026, 6, 1), today=today, identity="/c",
+    band="catchup",
+    day=date(2026, 6, 1),
+    today=today,
+    identity="/c",
   )
   assert jq.zadd_ingest_job(store, identity="/a", score=catch_a) == 1
   assert jq.zadd_ingest_job(store, identity="/b", score=catch_b) == 1
@@ -632,13 +727,22 @@ def test_zadd_ingest_hot_bypasses_member_cap(monkeypatch):
   store = _store()
   today = date(2026, 9, 14)
   catch_a = jq.encode_ingest_score(
-      band="catchup", day=date(2026, 6, 1), today=today, identity="/old/a",
+    band="catchup",
+    day=date(2026, 6, 1),
+    today=today,
+    identity="/old/a",
   )
   catch_b = jq.encode_ingest_score(
-      band="catchup", day=date(2026, 6, 1), today=today, identity="/old/b",
+    band="catchup",
+    day=date(2026, 6, 1),
+    today=today,
+    identity="/old/b",
   )
   hot = jq.encode_ingest_score(
-      band="hot", day=today, today=today, identity="/hot/a",
+    band="hot",
+    day=today,
+    today=today,
+    identity="/hot/a",
   )
   assert jq.zadd_ingest_job(store, identity="/old/a", score=catch_a) == 1
   assert jq.zadd_ingest_job(store, identity="/old/b", score=catch_b) == 1
@@ -661,13 +765,13 @@ def test_classify_active_current_hardlink_skips_ingest(tmp_path):
     pytest.skip("hard links not supported on this filesystem")
   st = epoch.stat()
   plan = jr.classify_closed_raw_path(
-      str(epoch),
-      tgz_archive_dir=str(tmp_path / "daily"),
-      size=st.st_size,
-      mtime_ns=st.st_mtime_ns,
-      calendar_day=date(2026, 9, 14),
-      ingest_is_complete_fn=lambda **_k: False,
-      append_is_complete_fn=lambda **_k: False,
+    str(epoch),
+    tgz_archive_dir=str(tmp_path / "daily"),
+    size=st.st_size,
+    mtime_ns=st.st_mtime_ns,
+    calendar_day=date(2026, 9, 14),
+    ingest_is_complete_fn=lambda **_k: False,
+    append_is_complete_fn=lambda **_k: False,
   )
   assert plan.needs_ingest is False
   assert plan.needs_append is False
@@ -675,12 +779,24 @@ def test_classify_active_current_hardlink_skips_ingest(tmp_path):
 
 def test_append_list_dedupe_skips_queued_identity():
   store = _store()
-  assert jq.enqueue_list_job(
-      store, kind="append", identity="/raw/a", dedupe=True,
-  ) == 1
-  assert jq.enqueue_list_job(
-      store, kind="append", identity="/raw/a", dedupe=True,
-  ) == 0
+  assert (
+    jq.enqueue_list_job(
+      store,
+      kind="append",
+      identity="/raw/a",
+      dedupe=True,
+    )
+    == 1
+  )
+  assert (
+    jq.enqueue_list_job(
+      store,
+      kind="append",
+      identity="/raw/a",
+      dedupe=True,
+    )
+    == 0
+  )
   assert store.queued_count("append") == 1
 
 
@@ -688,7 +804,11 @@ def test_census_counts_queued_and_inflight():
   store = _store()
   jq.zadd_ingest_job(store, identity="/a", score=1)
   jq.claim_ingest_job(
-      store, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    store,
+    band="hot",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
   census = jq.queue_census(store)
   assert census["ingest"]["inflight"] == 1
@@ -706,12 +826,19 @@ def test_list_claim_lease_conflict_keeps_other_identity():
   jq.enqueue_list_job(store, kind="append", identity="a")
   jq.enqueue_list_job(store, kind="append", identity="b")
   first = jq.claim_list_job(
-      store, kind="append", owner_token="n:other:boot:1", ttl_s=60,
-      now_s=1000.0,
+    store,
+    kind="append",
+    owner_token="n:other:boot:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
   assert first is not None and first.identity == "a"
   claim = jq.claim_list_job(
-      store, kind="append", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    store,
+    kind="append",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
   assert claim is not None and claim.identity == "b"
   remaining = store.list_slice("append", 0, -1)
@@ -723,19 +850,23 @@ def test_reconstruct_append_dedupes_list():
 
   store = _store()
   plan = jr.classify_closed_raw_path(
-      "/archive/host/raw",
-      tgz_archive_dir="/daily",
-      size=100,
-      mtime_ns=200,
-      calendar_day=date(2026, 6, 2),
-      ingest_is_complete_fn=lambda **_k: True,
-      append_is_complete_fn=lambda **_k: False,
+    "/archive/host/raw",
+    tgz_archive_dir="/daily",
+    size=100,
+    mtime_ns=200,
+    calendar_day=date(2026, 6, 2),
+    ingest_is_complete_fn=lambda **_k: True,
+    append_is_complete_fn=lambda **_k: False,
   )
   jr.enqueue_reconstruct_jobs_for_closed_path(
-      store, plan, today=date(2026, 8, 24),
+    store,
+    plan,
+    today=date(2026, 8, 24),
   )
   jr.enqueue_reconstruct_jobs_for_closed_path(
-      store, plan, today=date(2026, 8, 24),
+    store,
+    plan,
+    today=date(2026, 8, 24),
   )
   assert store.queued_count("append") == 1
 
@@ -750,8 +881,9 @@ def test_rc8b_claim_returns_fingerprint(tmp_path):
   identity = jq.ingest_identity(str(raw), st.st_size, st.st_mtime_ns)
   jq.zadd_ingest_job(store, identity=identity, score=1.0, fingerprint=fp)
   claim = jq.claim_ingest_job(
-      store, band="hot",
-      owner_token=jq.make_lease_owner_token(pid=1, hostname="h", boot_id="b"),
+    store,
+    band="hot",
+    owner_token=jq.make_lease_owner_token(pid=1, hostname="h", boot_id="b"),
   )
   assert claim is not None
   assert claim.fingerprint == fp
@@ -765,16 +897,16 @@ def test_rc8c_multi_claim_fills_free_slots(tmp_path):
     raw.write_bytes(b"x" * (idx + 1))
     st = raw.stat()
     jq.zadd_ingest_job(
-        store,
-        identity=jq.ingest_identity(str(raw), st.st_size, st.st_mtime_ns),
-        score=float(idx),
-        fingerprint=jq.ingest_fingerprint(st.st_size, st.st_mtime_ns),
+      store,
+      identity=jq.ingest_identity(str(raw), st.st_size, st.st_mtime_ns),
+      score=float(idx),
+      fingerprint=jq.ingest_fingerprint(st.st_size, st.st_mtime_ns),
     )
   claims = jq.claim_ingest_jobs(
-      store,
-      band="hot",
-      owner_token=jq.make_lease_owner_token(pid=1, hostname="h", boot_id="b"),
-      max_n=2,
+    store,
+    band="hot",
+    owner_token=jq.make_lease_owner_token(pid=1, hostname="h", boot_id="b"),
+    max_n=2,
   )
   assert len(claims) == 2
 
@@ -785,15 +917,19 @@ def test_rc8d_steal_does_not_require_hgetall():
   jq.zadd_ingest_job(store, identity=identity, score=1.0)
   owner = "n:host1:boot1:9"
   jq.claim_ingest_job(
-      store, band="hot", owner_token=owner, ttl_s=60, now_s=1000.0,
+    store,
+    band="hot",
+    owner_token=owner,
+    ttl_s=60,
+    now_s=1000.0,
   )
   assert jq.steal_job_lease_if_owner_dead(
-      store,
-      kind="ingest",
-      identity=identity,
-      pid_alive_fn=lambda _p: False,
-      hostname="host1",
-      boot_id="boot1",
+    store,
+    kind="ingest",
+    identity=identity,
+    pid_alive_fn=lambda _p: False,
+    hostname="host1",
+    boot_id="boot1",
   )
   assert store.ingest_score(identity) is not None
 

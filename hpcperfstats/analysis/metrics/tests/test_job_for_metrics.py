@@ -1,10 +1,9 @@
 import contextlib
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 import pytest
-from types import SimpleNamespace
-
 from django.db.utils import OperationalError
 
 from hpcperfstats.analysis.metrics.lib import metrics
@@ -20,15 +19,69 @@ class _FakeJidTable:
     # Two hosts share two wall-clock times: global distinct times = 2,
     # per-host distinct sum = 2 + 2 = 4 (invalidation / metrics_distinct_time_count).
     data = [
-        {"host": "host1", "time": "2024-01-01T00:00:00Z", "type": "cpu", "event": "user", "value": 10},
-        {"host": "host1", "time": "2024-01-01T00:00:00Z", "type": "cpu", "event": "system", "value": 5},
-        {"host": "host1", "time": "2024-01-01T00:05:00Z", "type": "cpu", "event": "user", "value": 11},
-        {"host": "host1", "time": "2024-01-01T00:05:00Z", "type": "cpu", "event": "system", "value": 6},
-        {"host": "host2", "time": "2024-01-01T00:00:00Z", "type": "cpu", "event": "user", "value": 20},
-        {"host": "host2", "time": "2024-01-01T00:00:00Z", "type": "cpu", "event": "system", "value": 10},
-        {"host": "host2", "time": "2024-01-01T00:05:00Z", "type": "cpu", "event": "user", "value": 21},
-        {"host": "host2", "time": "2024-01-01T00:05:00Z", "type": "cpu", "event": "system", "value": 11},
-        {"host": "host1", "time": "2024-01-01T00:00:00Z", "type": "mem", "event": "used", "value": 100},
+      {
+        "host": "host1",
+        "time": "2024-01-01T00:00:00Z",
+        "type": "cpu",
+        "event": "user",
+        "value": 10,
+      },
+      {
+        "host": "host1",
+        "time": "2024-01-01T00:00:00Z",
+        "type": "cpu",
+        "event": "system",
+        "value": 5,
+      },
+      {
+        "host": "host1",
+        "time": "2024-01-01T00:05:00Z",
+        "type": "cpu",
+        "event": "user",
+        "value": 11,
+      },
+      {
+        "host": "host1",
+        "time": "2024-01-01T00:05:00Z",
+        "type": "cpu",
+        "event": "system",
+        "value": 6,
+      },
+      {
+        "host": "host2",
+        "time": "2024-01-01T00:00:00Z",
+        "type": "cpu",
+        "event": "user",
+        "value": 20,
+      },
+      {
+        "host": "host2",
+        "time": "2024-01-01T00:00:00Z",
+        "type": "cpu",
+        "event": "system",
+        "value": 10,
+      },
+      {
+        "host": "host2",
+        "time": "2024-01-01T00:05:00Z",
+        "type": "cpu",
+        "event": "user",
+        "value": 21,
+      },
+      {
+        "host": "host2",
+        "time": "2024-01-01T00:05:00Z",
+        "type": "cpu",
+        "event": "system",
+        "value": 11,
+      },
+      {
+        "host": "host1",
+        "time": "2024-01-01T00:00:00Z",
+        "type": "mem",
+        "event": "used",
+        "value": 100,
+      },
     ]
     df = pd.DataFrame(data)
     # Ensure only requested columns are returned; fill missing (e.g. arc).
@@ -48,14 +101,34 @@ class _FakeJidTableSparseSlowTier:
 
   def get_full_host_data_df(self, columns):
     data = [
-        {"host": "host1", "time": "2024-01-01T00:00:00Z",
-         "type": "host_tt", "event": "a", "value": 1000.0},
-        {"host": "host1", "time": "2024-01-01T00:00:30Z",
-         "type": "host_tt", "event": "a", "value": 1100.0},
-        {"host": "host1", "time": "2024-01-01T00:10:00Z",
-         "type": "host_tt", "event": "a", "value": 2000.0},
-        {"host": "host1", "time": "2024-01-01T00:10:00Z",
-         "type": "host_tt", "event": "b", "value": 2500.0},
+      {
+        "host": "host1",
+        "time": "2024-01-01T00:00:00Z",
+        "type": "host_tt",
+        "event": "a",
+        "value": 1000.0,
+      },
+      {
+        "host": "host1",
+        "time": "2024-01-01T00:00:30Z",
+        "type": "host_tt",
+        "event": "a",
+        "value": 1100.0,
+      },
+      {
+        "host": "host1",
+        "time": "2024-01-01T00:10:00Z",
+        "type": "host_tt",
+        "event": "a",
+        "value": 2000.0,
+      },
+      {
+        "host": "host1",
+        "time": "2024-01-01T00:10:00Z",
+        "type": "host_tt",
+        "event": "b",
+        "value": 2500.0,
+      },
     ]
     df = pd.DataFrame(data)
     for col in columns:
@@ -118,14 +191,34 @@ class _FakeJidTableListyLabels:
 
   def get_full_host_data_df(self, columns):
     data = [
-        {"host": "host1", "time": "2024-01-01T00:00:00Z",
-         "type": ["cpu", "lane"], "event": ["user"], "value": 10.0},
-        {"host": "host1", "time": "2024-01-01T00:00:00Z",
-         "type": ["cpu", "lane"], "event": ["system"], "value": 5.0},
-        {"host": "host1", "time": "2024-01-01T00:05:00Z",
-         "type": ["cpu", "lane"], "event": ["user"], "value": 11.0},
-        {"host": "host1", "time": "2024-01-01T00:05:00Z",
-         "type": ["cpu", "lane"], "event": ["system"], "value": 6.0},
+      {
+        "host": "host1",
+        "time": "2024-01-01T00:00:00Z",
+        "type": ["cpu", "lane"],
+        "event": ["user"],
+        "value": 10.0,
+      },
+      {
+        "host": "host1",
+        "time": "2024-01-01T00:00:00Z",
+        "type": ["cpu", "lane"],
+        "event": ["system"],
+        "value": 5.0,
+      },
+      {
+        "host": "host1",
+        "time": "2024-01-01T00:05:00Z",
+        "type": ["cpu", "lane"],
+        "event": ["user"],
+        "value": 11.0,
+      },
+      {
+        "host": "host1",
+        "time": "2024-01-01T00:05:00Z",
+        "type": ["cpu", "lane"],
+        "event": ["system"],
+        "value": 6.0,
+      },
     ]
     df = pd.DataFrame(data)
     for col in columns:
@@ -149,14 +242,16 @@ def test_coerce_metrics_identity_str_stable():
 
 
 def test_sanitize_metrics_compute_rows_coerces_list_identity_fields():
-  rows = [{
+  rows = [
+    {
       "jid": "j1",
       "type": ["procstat"],
       "metric": ["wallclock"],
       "units": [],
       "value": 1.0,
       "no_data_reason": None,
-  }]
+    }
+  ]
   out = metrics._sanitize_metrics_compute_rows(rows)
   assert len(out) == 1
   assert out[0]["jid"] == "j1"
@@ -173,7 +268,11 @@ def test_coerced_catalog_metric_is_hashable_for_set_membership():
 
 
 def test_coerced_metric_name_set_normalizes_unhashable_metric_names():
-  metric_names = [["detail_gpu_count"], "avg_gpuutil", ("detail_fsio_llite_read_mb",)]
+  metric_names = [
+    ["detail_gpu_count"],
+    "avg_gpuutil",
+    ("detail_fsio_llite_read_mb",),
+  ]
   out = metrics._coerced_metric_name_set(metric_names)
   assert "detail_gpu_count" in out
   assert "avg_gpuutil" in out
@@ -198,11 +297,11 @@ def test_drain_metrics_imap_times_out_when_no_worker_progress():
   pool = _FakePoolTimeout()
   with pytest.raises(TimeoutError):
     metrics._drain_metrics_imap(
-        pool,
-        tasks=[("m", "j1")],
-        chunksize=8,
-        poll_timeout_s=0.0,
-        stall_timeout_s=0.0,
+      pool,
+      tasks=[("m", "j1")],
+      chunksize=8,
+      poll_timeout_s=0.0,
+      stall_timeout_s=0.0,
     )
   assert pool.seen_chunksize == 1
 
@@ -217,11 +316,11 @@ def test_drain_metrics_imap_supports_generator_without_next():
 
   # Should not raise AttributeError("'generator' object has no attribute 'next'").
   metrics._drain_metrics_imap(
-      _FakePoolGenerator(),
-      tasks=[("m", "j1")],
-      chunksize=1,
-      poll_timeout_s=0.0,
-      stall_timeout_s=0.5,
+    _FakePoolGenerator(),
+    tasks=[("m", "j1")],
+    chunksize=1,
+    poll_timeout_s=0.0,
+    stall_timeout_s=0.5,
   )
 
 
@@ -229,21 +328,25 @@ def test_drain_metrics_imap_returns_explicit_worker_failure_outcome():
   class _FakePoolWorkerFailure:
     def imap_unordered(self, fn, tasks, chunksize=1):
       del fn, tasks, chunksize
-      return iter([{
-          "jid": "j-worker",
-          "status": "worker_db_error",
-          "rows": [],
-          "distinct_time_count": None,
-          "error_type": "OperationalError",
-          "error_message": "lost synchronization with server",
-      }])
+      return iter(
+        [
+          {
+            "jid": "j-worker",
+            "status": "worker_db_error",
+            "rows": [],
+            "distinct_time_count": None,
+            "error_type": "OperationalError",
+            "error_message": "lost synchronization with server",
+          }
+        ]
+      )
 
   out = metrics._drain_metrics_imap(
-      _FakePoolWorkerFailure(),
-      tasks=[("m", "j-worker")],
-      chunksize=1,
-      poll_timeout_s=0.0,
-      stall_timeout_s=0.5,
+    _FakePoolWorkerFailure(),
+    tasks=[("m", "j-worker")],
+    chunksize=1,
+    poll_timeout_s=0.0,
+    stall_timeout_s=0.5,
   )
   assert len(out) == 1
   assert out[0]["jid"] == "j-worker"
@@ -263,9 +366,9 @@ def test_unwrap_returns_worker_compute_error_on_value_error(monkeypatch):
 
   monkeypatch.setattr(metrics, "run_with_db_retry", lambda fn, attempts=2: fn())
   monkeypatch.setattr(
-      metrics,
-      "_pg_session_statement_timeout_for_metrics_worker",
-      contextlib.nullcontext,
+    metrics,
+    "_pg_session_statement_timeout_for_metrics_worker",
+    contextlib.nullcontext,
   )
   out = metrics._unwrap((_Metrics(), _Job()))
   assert out["status"] == "worker_compute_error"
@@ -278,21 +381,25 @@ def test_drain_metrics_imap_returns_worker_compute_error_outcome():
   class _FakePoolWorkerComputeFailure:
     def imap_unordered(self, fn, tasks, chunksize=1):
       del fn, tasks, chunksize
-      return iter([{
-          "jid": "j-compute",
-          "status": "worker_compute_error",
-          "rows": [],
-          "distinct_time_count": None,
-          "error_type": "ValueError",
-          "error_message": "cannot convert float NaN to integer",
-      }])
+      return iter(
+        [
+          {
+            "jid": "j-compute",
+            "status": "worker_compute_error",
+            "rows": [],
+            "distinct_time_count": None,
+            "error_type": "ValueError",
+            "error_message": "cannot convert float NaN to integer",
+          }
+        ]
+      )
 
   out = metrics._drain_metrics_imap(
-      _FakePoolWorkerComputeFailure(),
-      tasks=[("m", "j-compute")],
-      chunksize=1,
-      poll_timeout_s=0.0,
-      stall_timeout_s=0.5,
+    _FakePoolWorkerComputeFailure(),
+    tasks=[("m", "j-compute")],
+    chunksize=1,
+    poll_timeout_s=0.0,
+    stall_timeout_s=0.5,
   )
   assert len(out) == 1
   assert out[0]["jid"] == "j-compute"
@@ -305,21 +412,27 @@ def test_drain_metrics_imap_returns_parent_persist_timeout_outcome(monkeypatch):
   class _FakePoolPersistTimeout:
     def imap_unordered(self, fn, tasks, chunksize=1):
       del fn, tasks, chunksize
-      return iter([{
-          "jid": "j-persist",
-          "status": "ok",
-          "rows": [{
-              "jid": "j-persist",
-              "type": "cpu",
-              "metric": "avg_cpuusage",
-              "units": "#cores",
-              "value": 1.0,
-              "no_data_reason": None,
-          }],
-          "distinct_time_count": 2,
-          "error_type": None,
-          "error_message": None,
-      }])
+      return iter(
+        [
+          {
+            "jid": "j-persist",
+            "status": "ok",
+            "rows": [
+              {
+                "jid": "j-persist",
+                "type": "cpu",
+                "metric": "avg_cpuusage",
+                "units": "#cores",
+                "value": 1.0,
+                "no_data_reason": None,
+              }
+            ],
+            "distinct_time_count": 2,
+            "error_type": None,
+            "error_message": None,
+          }
+        ]
+      )
 
   monkeypatch.setattr(metrics, "run_with_db_retry", lambda fn, attempts=2: fn())
 
@@ -330,11 +443,11 @@ def test_drain_metrics_imap_returns_parent_persist_timeout_outcome(monkeypatch):
   monkeypatch.setattr(metrics, "_persist_metrics_batch", _raise_timeout)
 
   out = metrics._drain_metrics_imap(
-      _FakePoolPersistTimeout(),
-      tasks=[("m", "j-persist")],
-      chunksize=1,
-      poll_timeout_s=0.0,
-      stall_timeout_s=0.5,
+    _FakePoolPersistTimeout(),
+    tasks=[("m", "j-persist")],
+    chunksize=1,
+    poll_timeout_s=0.0,
+    stall_timeout_s=0.5,
   )
   assert len(out) == 1
   assert out[0]["jid"] == "j-persist"
@@ -350,12 +463,12 @@ def test_drain_metrics_imap_stall_clock_waits_for_persist(monkeypatch):
   persist_started_at = []
 
   payload = {
-      "jid": "j1",
-      "status": "ok",
-      "rows": [],
-      "distinct_time_count": 1,
-      "error_type": None,
-      "error_message": None,
+    "jid": "j1",
+    "status": "ok",
+    "rows": [],
+    "distinct_time_count": 1,
+    "error_type": None,
+    "error_message": None,
   }
 
   class _It:
@@ -384,11 +497,11 @@ def test_drain_metrics_imap_stall_clock_waits_for_persist(monkeypatch):
 
   with pytest.raises(metrics.MetricsRunWorkerStallError) as ei:
     metrics._drain_metrics_imap(
-        _Pool(),
-        tasks=[("m", "j1"), ("m", "j2")],
-        chunksize=1,
-        poll_timeout_s=0.05,
-        stall_timeout_s=1.0,
+      _Pool(),
+      tasks=[("m", "j1"), ("m", "j2")],
+      chunksize=1,
+      poll_timeout_s=0.05,
+      stall_timeout_s=1.0,
     )
   assert persist_started_at == [1000.0]
   # Progress clock starts after the 10s persist, so stall needs ~1s more.
@@ -398,12 +511,15 @@ def test_drain_metrics_imap_stall_clock_waits_for_persist(monkeypatch):
   assert ei.value.partial_outcomes[0]["jid"] == "j1"
 
 
-def test_metrics_run_stall_with_owned_pool_returns_partial_outcomes(monkeypatch):
+def test_metrics_run_stall_with_owned_pool_returns_partial_outcomes(
+  monkeypatch,
+):
   fake_calls = {"terminate": 0}
 
   class _OwnedPool:
     def __init__(self, **kwargs):
       del kwargs
+
     def terminate(self):
       fake_calls["terminate"] += 1
 
@@ -416,22 +532,26 @@ def test_metrics_run_stall_with_owned_pool_returns_partial_outcomes(monkeypatch)
   monkeypatch.setattr(metrics, "SyncTimedbThreadPool", _OwnedPool)
 
   partial = [
-      metrics._metrics_run_outcome("j-done", ok=True, status="ok", persisted_rows=3),
+    metrics._metrics_run_outcome(
+      "j-done", ok=True, status="ok", persisted_rows=3
+    ),
   ]
 
   def _raise_stall(*args, **kwargs):
     raise metrics.MetricsRunWorkerStallError(
-        stalled_for_s=999.0,
-        message="stall",
-        pool_reset_confirmed=False,
-        partial_outcomes=partial,
-        pending_jobs=[SimpleNamespace(jid="j-pending")],
+      stalled_for_s=999.0,
+      message="stall",
+      pool_reset_confirmed=False,
+      partial_outcomes=partial,
+      pending_jobs=[SimpleNamespace(jid="j-pending")],
     )
 
   monkeypatch.setattr(metrics, "_drain_metrics_imap", _raise_stall)
 
   m = metrics.Metrics()
-  outcomes = m.run([SimpleNamespace(jid="j-done"), SimpleNamespace(jid="j-pending")])
+  outcomes = m.run(
+    [SimpleNamespace(jid="j-done"), SimpleNamespace(jid="j-pending")]
+  )
   assert fake_calls["terminate"] >= 1
   assert len(outcomes) == 2
   by_jid = {o["jid"]: o for o in outcomes}
@@ -440,12 +560,15 @@ def test_metrics_run_stall_with_owned_pool_returns_partial_outcomes(monkeypatch)
   assert by_jid["j-pending"]["status"] == "worker_stall_timeout"
 
 
-def test_metrics_run_stall_with_owned_pool_raises_when_no_partial_outcomes(monkeypatch):
+def test_metrics_run_stall_with_owned_pool_raises_when_no_partial_outcomes(
+  monkeypatch,
+):
   fake_calls = {"terminate": 0}
 
   class _OwnedPool:
     def __init__(self, **kwargs):
       del kwargs
+
     def terminate(self):
       fake_calls["terminate"] += 1
 
@@ -459,9 +582,9 @@ def test_metrics_run_stall_with_owned_pool_raises_when_no_partial_outcomes(monke
 
   def _raise_stall(*args, **kwargs):
     raise metrics.MetricsRunWorkerStallError(
-        stalled_for_s=999.0,
-        message="stall",
-        pool_reset_confirmed=False,
+      stalled_for_s=999.0,
+      message="stall",
+      pool_reset_confirmed=False,
     )
 
   monkeypatch.setattr(metrics, "_drain_metrics_imap", _raise_stall)
@@ -491,18 +614,18 @@ def test_reset_pool_hard_detaches_and_cancels_pending_threads():
 
 
 def test_metrics_pool_worker_finally_closes_all_thread_local_connections(
-    monkeypatch,
+  monkeypatch,
 ):
   """Detached pool threads must close Django backends (CONN_MAX_AGE never fires)."""
   calls = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_session_executor.connections.close_all",
-      lambda: calls.append("close_all"),
+    "hpcperfstats.dbload.lib.sync_timedb_session_executor.connections.close_all",
+    lambda: calls.append("close_all"),
   )
   monkeypatch.setattr(
-      metrics.cfg,
-      "get_metrics_pool_processes",
-      lambda: 1,
+    metrics.cfg,
+    "get_metrics_pool_processes",
+    lambda: 1,
   )
   m = metrics.Metrics()
   pool = m.ensure_pool(pool_kind="metrics-pool")
@@ -518,16 +641,16 @@ def test_metrics_run_stall_with_shared_pool_calls_reset(monkeypatch):
     pass
 
   partial = [
-      metrics._metrics_run_outcome("j2", ok=True, status="ok", persisted_rows=1),
+    metrics._metrics_run_outcome("j2", ok=True, status="ok", persisted_rows=1),
   ]
 
   def _raise_stall(*args, **kwargs):
     raise metrics.MetricsRunWorkerStallError(
-        stalled_for_s=321.0,
-        message="stall",
-        pool_reset_confirmed=False,
-        partial_outcomes=partial,
-        pending_jobs=[SimpleNamespace(jid="j3")],
+      stalled_for_s=321.0,
+      message="stall",
+      pool_reset_confirmed=False,
+      partial_outcomes=partial,
+      pending_jobs=[SimpleNamespace(jid="j3")],
     )
 
   monkeypatch.setattr(metrics, "_drain_metrics_imap", _raise_stall)
@@ -541,15 +664,17 @@ def test_metrics_run_stall_with_shared_pool_calls_reset(monkeypatch):
   monkeypatch.setattr(m, "reset_pool_hard", _reset)
 
   outcomes = m.run(
-      [SimpleNamespace(jid="j2"), SimpleNamespace(jid="j3")],
-      pool=_SharedPool(),
+    [SimpleNamespace(jid="j2"), SimpleNamespace(jid="j3")],
+    pool=_SharedPool(),
   )
   assert called["n"] == 1
   assert len(outcomes) == 2
   assert outcomes[1]["status"] == "worker_stall_timeout"
 
 
-def test_pg_session_statement_timeout_for_metrics_worker_disables_when_zero(monkeypatch):
+def test_pg_session_statement_timeout_for_metrics_worker_disables_when_zero(
+  monkeypatch,
+):
   executed = []
 
   class _Cursor:
@@ -569,9 +694,11 @@ def test_pg_session_statement_timeout_for_metrics_worker_disables_when_zero(monk
       return _Cursor()
 
   monkeypatch.setattr(
-      metrics.cfg, "get_metrics_worker_statement_timeout_ms", lambda: 0
+    metrics.cfg, "get_metrics_worker_statement_timeout_ms", lambda: 0
   )
-  monkeypatch.setattr(metrics.cfg, "get_db_statement_timeout_ms", lambda: 120000)
+  monkeypatch.setattr(
+    metrics.cfg, "get_db_statement_timeout_ms", lambda: 120000
+  )
   monkeypatch.setattr(metrics, "connections", {"default": _Conn()})
   with metrics._pg_session_statement_timeout_for_metrics_worker():
     pass
@@ -579,7 +706,9 @@ def test_pg_session_statement_timeout_for_metrics_worker_disables_when_zero(monk
   assert executed[-1] == ("SET statement_timeout = %s", [120000])
 
 
-def test_pg_session_statement_timeout_for_metrics_worker_sets_positive_ms(monkeypatch):
+def test_pg_session_statement_timeout_for_metrics_worker_sets_positive_ms(
+  monkeypatch,
+):
   executed = []
 
   class _Cursor:
@@ -599,9 +728,11 @@ def test_pg_session_statement_timeout_for_metrics_worker_sets_positive_ms(monkey
       return _Cursor()
 
   monkeypatch.setattr(
-      metrics.cfg, "get_metrics_worker_statement_timeout_ms", lambda: 600000
+    metrics.cfg, "get_metrics_worker_statement_timeout_ms", lambda: 600000
   )
-  monkeypatch.setattr(metrics.cfg, "get_db_statement_timeout_ms", lambda: 120000)
+  monkeypatch.setattr(
+    metrics.cfg, "get_db_statement_timeout_ms", lambda: 120000
+  )
   monkeypatch.setattr(metrics, "connections", {"default": _Conn()})
   with metrics._pg_session_statement_timeout_for_metrics_worker():
     pass
@@ -610,7 +741,7 @@ def test_pg_session_statement_timeout_for_metrics_worker_sets_positive_ms(monkey
 
 
 def test_pg_session_statement_timeout_for_metrics_worker_restore_swallows_db_error(
-    monkeypatch,
+  monkeypatch,
 ):
   class _Cursor:
     def __init__(self, fail_restore=False):
@@ -640,17 +771,21 @@ def test_pg_session_statement_timeout_for_metrics_worker_restore_swallows_db_err
       return _Cursor(fail_restore=self._cursors > 1)
 
   monkeypatch.setattr(
-      metrics.cfg, "get_metrics_worker_statement_timeout_ms", lambda: 0
+    metrics.cfg, "get_metrics_worker_statement_timeout_ms", lambda: 0
   )
-  monkeypatch.setattr(metrics.cfg, "get_db_statement_timeout_ms", lambda: 120000)
+  monkeypatch.setattr(
+    metrics.cfg, "get_db_statement_timeout_ms", lambda: 120000
+  )
   monkeypatch.setattr(metrics, "connections", {"default": _Conn()})
   with metrics._pg_session_statement_timeout_for_metrics_worker():
     pass
 
 
-def test_host_data_metric_rows_with_host_chunk_retry_splits_on_timeout(monkeypatch):
+def test_host_data_metric_rows_with_host_chunk_retry_splits_on_timeout(
+  monkeypatch,
+):
   """48-host / single-batch style: timeout on full chunk → halve and succeed."""
-  hosts = ["h{0}.example.com".format(i) for i in range(8)]
+  hosts = [f"h{i}.example.com" for i in range(8)]
   seen = []
 
   class _QS:
@@ -682,29 +817,37 @@ def test_host_data_metric_rows_with_host_chunk_retry_splits_on_timeout(monkeypat
 
   _HD.objects.filter = _filter
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.models.host_data",
-      _HD,
+    "hpcperfstats.site.lib.machine.models.host_data",
+    _HD,
   )
   monkeypatch.setattr(metrics, "close_old_connections", lambda: None)
   out = metrics._host_data_metric_rows_with_host_chunk_retry(
-      hosts,
-      {"time__gte": "a", "time__lte": "b"},
-      "cpu",
-      ["user"],
-      "value",
+    hosts,
+    {"time__gte": "a", "time__lte": "b"},
+    "cpu",
+    ["user"],
+    "value",
   )
   assert seen == [8, 4, 4]
   assert len(out) == 8
 
 
 def test_metric_type_events_feasible_skips_impossible_types():
-  assert metrics._metric_type_events_feasible({}, "amd64_pmc", ["FLOPS"]) is True
-  assert metrics._metric_type_events_feasible(
+  assert (
+    metrics._metric_type_events_feasible({}, "amd64_pmc", ["FLOPS"]) is True
+  )
+  assert (
+    metrics._metric_type_events_feasible(
       {"cpu": ["user", "system"]}, "amd64_pmc", ["FLOPS"]
-  ) is False
-  assert metrics._metric_type_events_feasible(
+    )
+    is False
+  )
+  assert (
+    metrics._metric_type_events_feasible(
       {"cpu": ["user", "system"]}, "cpu", ["user"]
-  ) is True
+    )
+    is True
+  )
 
 
 def test_job_arc_skips_orm_when_schema_rules_out_type(monkeypatch):
@@ -713,12 +856,12 @@ def test_job_arc_skips_orm_when_schema_rules_out_type(monkeypatch):
 
   t0 = django_tz.now()
   jt = SimpleNamespace(
-      schema={"cpu": ["user", "system", "idle"]},
-      _base_filter={
-          "time__gte": t0,
-          "time__lte": t0,
-          "host__in": ["h1.x"],
-      },
+    schema={"cpu": ["user", "system", "idle"]},
+    _base_filter={
+      "time__gte": t0,
+      "time__lte": t0,
+      "host__in": ["h1.x"],
+    },
   )
   filter_calls = []
 
@@ -727,22 +870,26 @@ def test_job_arc_skips_orm_when_schema_rules_out_type(monkeypatch):
 
   def _filter(**kwargs):
     filter_calls.append(kwargs)
-    raise AssertionError("job_arc must not query host_data for impossible types")
+    raise AssertionError(
+      "job_arc must not query host_data for impossible types"
+    )
 
   _HD.objects.filter = _filter
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.models.host_data",
-      _HD,
+    "hpcperfstats.site.lib.machine.models.host_data",
+    _HD,
   )
   m = metrics.Metrics()
-  assert m.job_arc(jt, typename="amd64_pmc", events=["FLOPS"], conv=1e-9) is None
+  assert (
+    m.job_arc(jt, typename="amd64_pmc", events=["FLOPS"], conv=1e-9) is None
+  )
   assert filter_calls == []
 
 
 def test_host_data_metric_rows_batched_uses_metrics_host_batch(monkeypatch):
   """~48-host jobs must not issue a single 64-host query by default."""
   n = metrics.METRICS_HOST_QUERY_BATCH + 2
-  hosts = ["h{0}.x".format(i) for i in range(n)]
+  hosts = [f"h{i}.x" for i in range(n)]
   chunk_sizes = []
 
   class _QS:
@@ -769,16 +916,16 @@ def test_host_data_metric_rows_batched_uses_metrics_host_batch(monkeypatch):
 
   _HD.objects.filter = _filter
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.models.host_data",
-      _HD,
+    "hpcperfstats.site.lib.machine.models.host_data",
+    _HD,
   )
   monkeypatch.setattr(metrics, "close_old_connections", lambda: None)
   rows = metrics._host_data_metric_rows_batched(
-      {"time__gte": "a", "time__lte": "b"},
-      hosts,
-      "net",
-      ["rx_bytes"],
-      "arc",
+    {"time__gte": "a", "time__lte": "b"},
+    hosts,
+    "net",
+    ["rx_bytes"],
+    "arc",
   )
   assert rows == []
   assert chunk_sizes == [metrics.METRICS_HOST_QUERY_BATCH, 2]
@@ -795,6 +942,7 @@ def test_ensure_pool_creates_titled_in_process_threads(monkeypatch):
     assert pool.is_active is True
   finally:
     m.close_pool()
+
 
 def test_ensure_pool_reuses_full_width_pool(monkeypatch):
   monkeypatch.setattr(metrics.cfg, "get_metrics_pool_processes", lambda: 2)
@@ -823,11 +971,9 @@ def test_ensure_pool_switches_thread_role_with_fresh_executor(monkeypatch):
 def test_ensure_pool_logs_configured_and_alive_after_create(monkeypatch):
   logs = []
 
+  monkeypatch.setattr(metrics.cfg, "get_metrics_pool_processes", lambda: 24)
   monkeypatch.setattr(
-      metrics.cfg, "get_metrics_pool_processes", lambda: 24
-  )
-  monkeypatch.setattr(
-      metrics, "log_print", lambda msg, flush=False: logs.append(str(msg))
+    metrics, "log_print", lambda msg, flush=False: logs.append(str(msg))
   )
 
   m = metrics.Metrics()
@@ -838,4 +984,3 @@ def test_ensure_pool_logs_configured_and_alive_after_create(monkeypatch):
     assert "pool_kind=metrics-pool" in joined
   finally:
     m.close_pool()
-

@@ -10,7 +10,7 @@ import pytest
 from pandas import isna as pd_isna
 
 from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
-    _add_node_power_est_column,
+  _add_node_power_est_column,
 )
 
 
@@ -64,20 +64,20 @@ def _add_node_power_est_column_loop_reference(df: pd.DataFrame) -> pd.DataFrame:
 @pytest.mark.machine_unit_mock
 def test_add_node_power_est_column_matches_iloc_priority() -> None:
   df = pd.DataFrame(
-      {
-          "nv_module_power_w": [700.0, 0.0, np.nan, np.nan, np.nan, np.nan],
-          "dcg_cpu_power_w": [np.nan, 45.0, np.nan, np.nan, np.nan, np.nan],
-          "watts": [10.0, 11.0, 80.0, np.nan, np.nan, np.nan],
-          "amd_pkg_w": [20.0, 21.0, 22.0, 90.0, np.nan, np.nan],
-          "nv_power_w": [5.0, 6.0, 7.0, 8.0, 30.0, np.nan],
-      }
+    {
+      "nv_module_power_w": [700.0, 0.0, np.nan, np.nan, np.nan, np.nan],
+      "dcg_cpu_power_w": [np.nan, 45.0, np.nan, np.nan, np.nan, np.nan],
+      "watts": [10.0, 11.0, 80.0, np.nan, np.nan, np.nan],
+      "amd_pkg_w": [20.0, 21.0, 22.0, 90.0, np.nan, np.nan],
+      "nv_power_w": [5.0, 6.0, 7.0, 8.0, 30.0, np.nan],
+    }
   )
   expected = _add_node_power_est_column_loop_reference(df.copy())
   got = _add_node_power_est_column(df.copy())
   pd.testing.assert_series_equal(
-      got["node_power_est_w"],
-      expected["node_power_est_w"],
-      check_names=False,
+    got["node_power_est_w"],
+    expected["node_power_est_w"],
+    check_names=False,
   )
 
 
@@ -91,7 +91,7 @@ def test_add_node_power_est_column_empty_and_missing_columns() -> None:
   expected = _add_node_power_est_column_loop_reference(cpu_only.copy())
   got = _add_node_power_est_column(cpu_only.copy())
   pd.testing.assert_series_equal(
-      got["node_power_est_w"],
-      expected["node_power_est_w"],
-      check_names=False,
+    got["node_power_est_w"],
+    expected["node_power_est_w"],
+    check_names=False,
   )

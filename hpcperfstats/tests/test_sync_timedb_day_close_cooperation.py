@@ -200,9 +200,7 @@ def test_janitor_yield_backoff_and_skip_tars():
   tar = "/daily/2020-01-01.tar"
   tracker.record_yield_backoff(tar)
   assert tracker.yield_backoff_active(tar, now=time.time()) is True
-  assert (
-    tracker.yield_backoff_active("/missing.tar", now=time.time()) is False
-  )
+  assert tracker.yield_backoff_active("/missing.tar", now=time.time()) is False
   skipped = tracker.write_lock_backoff_skip_tars([tar, ""], now=time.time())
   assert skipped == set()  # yield backoff is not write_lock backoff
   tracker.record_defer(tar, reason="write_lock_contended")
@@ -281,12 +279,8 @@ def test_daily_tar_janitor_chunk_in_progress_day(monkeypatch):
 
 
 def test_log_helpers_none_log_fn_no_raise():
-  coop.log_janitor_day_close_defer(
-    "/t", phase="seal", reason="x", log_fn=None
-  )
-  coop.log_janitor_day_close_yield(
-    "/t", phase="seal", reason="x", log_fn=None
-  )
+  coop.log_janitor_day_close_defer("/t", phase="seal", reason="x", log_fn=None)
+  coop.log_janitor_day_close_yield("/t", phase="seal", reason="x", log_fn=None)
   logs = []
   coop.log_janitor_day_close_defer(
     "/t",

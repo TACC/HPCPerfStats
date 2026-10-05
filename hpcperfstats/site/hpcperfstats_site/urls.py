@@ -17,35 +17,40 @@ rule: ``hpcperfstats/cursor-rules/nginx-django-route-allowlist-sync.mdc``.
 Attributes:
   urlpatterns: Attribute.
 """
+
 from __future__ import annotations
 
 from django.http import HttpResponseRedirect
 from django.urls import include, path
 from django.views.generic import RedirectView
+
+from hpcperfstats.site.hpcperfstats_site.views import (
+  csp_report,
+)
 from hpcperfstats.site.lib.machine.oauth2 import (
-    login_oauth,
-    login_prompt,
-    logout,
-    oauth_callback,
+  login_oauth,
+  login_prompt,
+  logout,
+  oauth_callback,
 )
 from hpcperfstats.site.lib.machine.test_login import test_login_page
-from hpcperfstats.site.hpcperfstats_site.views import (
-    csp_report,
-)
 
 urlpatterns = [
-    path("api/", include("hpcperfstats.site.lib.machine.api_urls")),
-    path("csp-report/", csp_report, name="csp_report"),
-    path("", lambda r: HttpResponseRedirect("/machine/")),
-    path(
-        "api-key/",
-        RedirectView.as_view(url="/machine/api-key", permanent=False),
-        name="api_key_redirect",
-    ),
-    path("admin_monitor/", lambda r: HttpResponseRedirect("/machine/admin_monitor/")),
-    path("login/", login_oauth, name="login"),
-    path("test-login/", test_login_page, name="test_login"),
-    path("login_prompt", login_prompt, name="login_prompt"),
-    path("logout/", logout, name="logout"),
-    path("oauth_callback/", oauth_callback, name="oauth_callback"),
+  path("api/", include("hpcperfstats.site.lib.machine.api_urls")),
+  path("csp-report/", csp_report, name="csp_report"),
+  path("", lambda r: HttpResponseRedirect("/machine/")),
+  path(
+    "api-key/",
+    RedirectView.as_view(url="/machine/api-key", permanent=False),
+    name="api_key_redirect",
+  ),
+  path(
+    "admin_monitor/",
+    lambda r: HttpResponseRedirect("/machine/admin_monitor/"),
+  ),
+  path("login/", login_oauth, name="login"),
+  path("test-login/", test_login_page, name="test_login"),
+  path("login_prompt", login_prompt, name="login_prompt"),
+  path("logout/", logout, name="logout"),
+  path("oauth_callback/", oauth_callback, name="oauth_callback"),
 ]

@@ -6,11 +6,14 @@ during ``@dynamic_cache_page`` wrapping.
 """
 
 from contextlib import contextmanager
-from datetime import datetime, timezone as dt_timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
-from django.test import RequestFactory as DjangoRequestFactory, override_settings
+from django.test import (
+  RequestFactory as DjangoRequestFactory,
+  override_settings,
+)
 from rest_framework.test import APIRequestFactory
 
 from .csrf_test_utils import csrf_headers
@@ -18,13 +21,13 @@ from .csrf_test_utils import csrf_headers
 pytestmark = pytest.mark.django_db(databases=[])
 
 _API_COVERAGE_GAP_SETTINGS = {
-    "ALLOWED_HOSTS": ["testserver", "example.com", "localhost", "127.0.0.1"],
-    "CACHES": {
-        "default": {
-            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-            "LOCATION": "api-coverage-gap-tests",
-        }
-    },
+  "ALLOWED_HOSTS": ["testserver", "example.com", "localhost", "127.0.0.1"],
+  "CACHES": {
+    "default": {
+      "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+      "LOCATION": "api-coverage-gap-tests",
+    }
+  },
 }
 
 
@@ -37,7 +40,7 @@ def _api_coverage_gap_settings():
 def _plain_post(path, body: bytes):
   """POST with raw body (sacct-style); pass bare HttpRequest into ``@api_view``."""
   return DjangoRequestFactory().post(
-      path, data=body, content_type="text/plain", **csrf_headers()
+    path, data=body, content_type="text/plain", **csrf_headers()
   )
 
 
@@ -68,10 +71,10 @@ class TestInvalidateCacheForPage:
 
     factory = APIRequestFactory()
     request = factory.post(
-        "/api/cache/invalidate-page/",
-        {"page_path": "/machine/"},
-        format="json",
-        HTTP_X_CSRFTOKEN="test-csrf-token",
+      "/api/cache/invalidate-page/",
+      {"page_path": "/machine/"},
+      format="json",
+      HTTP_X_CSRFTOKEN="test-csrf-token",
     )
     denied = api.Response({"detail": "no"}, status=403)
     with patch.object(api, "_require_staff", return_value=denied):
@@ -83,10 +86,10 @@ class TestInvalidateCacheForPage:
 
     factory = APIRequestFactory()
     request = factory.post(
-        "/api/cache/invalidate-page/",
-        {},
-        format="json",
-        HTTP_X_CSRFTOKEN="test-csrf-token",
+      "/api/cache/invalidate-page/",
+      {},
+      format="json",
+      HTTP_X_CSRFTOKEN="test-csrf-token",
     )
     with patch.object(api, "_require_staff", return_value=None):
       response = api.invalidate_cache_for_page(request)
@@ -98,14 +101,15 @@ class TestInvalidateCacheForPage:
 
     factory = APIRequestFactory()
     request = factory.post(
-        "/api/cache/invalidate-page/",
-        {"page_path": "jobs"},
-        format="json",
-        HTTP_X_CSRFTOKEN="test-csrf-token",
+      "/api/cache/invalidate-page/",
+      {"page_path": "jobs"},
+      format="json",
+      HTTP_X_CSRFTOKEN="test-csrf-token",
     )
     request.META["HTTP_HOST"] = "testserver"
-    with patch.object(api, "_require_staff", return_value=None), patch.object(
-        api, "_get_redis_cache_client", return_value=object()
+    with (
+      patch.object(api, "_require_staff", return_value=None),
+      patch.object(api, "_get_redis_cache_client", return_value=object()),
     ):
       response = api.invalidate_cache_for_page(request)
     assert response.status_code == 200
@@ -116,10 +120,10 @@ class TestInvalidateCacheForPage:
 
     factory = APIRequestFactory()
     request = factory.post(
-        "/api/cache/invalidate-page/",
-        {"page_path": "/machine"},
-        format="json",
-        HTTP_X_CSRFTOKEN="test-csrf-token",
+      "/api/cache/invalidate-page/",
+      {"page_path": "/machine"},
+      format="json",
+      HTTP_X_CSRFTOKEN="test-csrf-token",
     )
     request.META["HTTP_HOST"] = "testserver"
 
@@ -136,8 +140,9 @@ class TestInvalidateCacheForPage:
         return 1
 
     fake = _FakeRedis()
-    with patch.object(api, "_require_staff", return_value=None), patch.object(
-        api, "_get_redis_cache_client", return_value=fake
+    with (
+      patch.object(api, "_require_staff", return_value=None),
+      patch.object(api, "_get_redis_cache_client", return_value=fake),
     ):
       response = api.invalidate_cache_for_page(request)
     assert response.status_code == 200
@@ -154,8 +159,8 @@ class TestHostPlotApi:
 
     factory = APIRequestFactory()
     request = factory.get(
-        "/api/host_plot/",
-        {"host": "n1", "end_time__gte": "2024-01-01T00:00:00+00:00"},
+      "/api/host_plot/",
+      {"host": "n1", "end_time__gte": "2024-01-01T00:00:00+00:00"},
     )
     denied = api.Response({"detail": "no"}, status=401)
     with patch.object(api, "_require_auth", return_value=denied):
@@ -177,18 +182,20 @@ class TestHostPlotApi:
 
     factory = APIRequestFactory()
     request = factory.get(
-        "/api/host_plot/",
-        {
-            "host": "n1.example.com",
-            "end_time__gte": "2026-08-01T12:00:00Z",
-            "end_time__lte": "2026-08-01T13:00:00Z",
-        },
+      "/api/host_plot/",
+      {
+        "host": "n1.example.com",
+        "end_time__gte": "2026-08-01T12:00:00Z",
+        "end_time__lte": "2026-08-01T13:00:00Z",
+      },
     )
     request.session = {"is_staff": True}
     fake_item = {"type": "object", "name": "test_plot"}
-    with patch.object(api, "_require_auth", return_value=None), patch.object(
-        api, "cached_orm", return_value=fake_item
-    ), patch.object(api, "get_site_content_cache_timeout", return_value=60):
+    with (
+      patch.object(api, "_require_auth", return_value=None),
+      patch.object(api, "cached_orm", return_value=fake_item),
+      patch.object(api, "get_site_content_cache_timeout", return_value=60),
+    ):
       response = api.host_plot(request)
     assert response.status_code == 200
     assert response.data["plot_item"] == fake_item
@@ -199,12 +206,12 @@ class TestHostPlotApi:
 
     factory = APIRequestFactory()
     request = factory.get(
-        "/api/host_plot/",
-        {
-            "host": "n1.example.com",
-            "end_time__gte": "2026-08-01T12:00:00Z",
-            "end_time__lte": "2026-08-01T13:00:00Z",
-        },
+      "/api/host_plot/",
+      {
+        "host": "n1.example.com",
+        "end_time__gte": "2026-08-01T12:00:00Z",
+        "end_time__lte": "2026-08-01T13:00:00Z",
+      },
     )
     request.session = {"username": "u", "is_staff": False}
     seen = {"timeout": False}
@@ -218,16 +225,20 @@ class TestHostPlotApi:
       # Exercise the real host_plot builder body (timeout + host_data path).
       return fn()
 
-    with patch.object(api, "_require_auth", return_value=None), patch.object(
-        api, "get_site_content_cache_timeout", return_value=60
-    ), patch.object(api, "_pg_host_plot_statement_timeout", _fake_timeout), patch.object(
-        api, "HostDataProvider", return_value=MagicMock()
-    ), patch.object(
+    with (
+      patch.object(api, "_require_auth", return_value=None),
+      patch.object(api, "get_site_content_cache_timeout", return_value=60),
+      patch.object(api, "_pg_host_plot_statement_timeout", _fake_timeout),
+      patch.object(api, "HostDataProvider", return_value=MagicMock()),
+      patch.object(
         api.plots,
         "SummaryPlot",
-        return_value=MagicMock(plot=MagicMock(return_value=MagicMock(name="plot"))),
-    ), patch.object(api, "json_item", return_value={"ok": True}), patch.object(
-        api, "cached_orm", side_effect=_cached_orm
+        return_value=MagicMock(
+          plot=MagicMock(return_value=MagicMock(name="plot"))
+        ),
+      ),
+      patch.object(api, "json_item", return_value={"ok": True}),
+      patch.object(api, "cached_orm", side_effect=_cached_orm),
     ):
       response = api.host_plot(request)
     assert response.status_code == 200
@@ -255,8 +266,9 @@ class TestJobMonitorApi:
     request = factory.get("/api/job_monitor/", {"days": "9999"})
     jd = MagicMock()
     jd.objects.filter.return_value = _EmptyQueryChain()
-    with patch.object(api, "_require_staff", return_value=None), patch.object(
-        api, "job_data", jd
+    with (
+      patch.object(api, "_require_staff", return_value=None),
+      patch.object(api, "job_data", jd),
     ):
       response = api.job_monitor(request)
     assert response.status_code == 200
@@ -301,8 +313,8 @@ class TestJobMonitorGpuForUserApi:
 
           return R1()
         if (
-            kw.get("metric") == "detail_gpu_active"
-            and kw.get("value__isnull") is False
+          kw.get("metric") == "detail_gpu_active"
+          and kw.get("value__isnull") is False
         ):
 
           class Ra:
@@ -311,8 +323,8 @@ class TestJobMonitorGpuForUserApi:
 
           return Ra()
         if (
-            kw.get("metric") == "detail_gpu_count"
-            and kw.get("value__isnull") is False
+          kw.get("metric") == "detail_gpu_count"
+          and kw.get("value__isnull") is False
         ):
 
           class Rc:
@@ -331,11 +343,12 @@ class TestJobMonitorGpuForUserApi:
 
     factory = APIRequestFactory()
     request = factory.get("/api/job_monitor/gpu/", {"username": "alice"})
-    with patch.object(api, "_require_staff", return_value=None), patch.object(
-        api, "get_site_content_cache_timeout", return_value=60
-    ), patch.object(
-        api, "cached_orm", side_effect=lambda _k, _t, fn: fn()
-    ), patch.object(api, "metrics_data", MD):
+    with (
+      patch.object(api, "_require_staff", return_value=None),
+      patch.object(api, "get_site_content_cache_timeout", return_value=60),
+      patch.object(api, "cached_orm", side_effect=lambda _k, _t, fn: fn()),
+      patch.object(api, "metrics_data", MD),
+    ):
       response = api.job_monitor_gpu_for_user(request)
     assert response.status_code == 200
     assert response.data["gpu_active_total"] == 3
@@ -367,13 +380,13 @@ class TestJobMonitorGpuForUserApi:
     factory = APIRequestFactory()
     request = factory.get("/api/job_monitor/gpu/", {"username": "alice"})
 
-    with patch.object(api, "_require_staff", return_value=None), patch.object(
-        api, "get_site_content_cache_timeout", return_value=60
-    ), patch.object(
-        api, "cached_orm", side_effect=lambda _k, _t, fn: fn()
-    ), patch.object(api, "metrics_data", _MD), patch.object(
-        api, "_compute_job_gpu_stats"
-    ) as mock_compute:
+    with (
+      patch.object(api, "_require_staff", return_value=None),
+      patch.object(api, "get_site_content_cache_timeout", return_value=60),
+      patch.object(api, "cached_orm", side_effect=lambda _k, _t, fn: fn()),
+      patch.object(api, "metrics_data", _MD),
+      patch.object(api, "_compute_job_gpu_stats") as mock_compute,
+    ):
       response = api.job_monitor_gpu_for_user(request)
 
     assert response.status_code == 200
@@ -398,9 +411,12 @@ class TestSacctIngestApi:
     from hpcperfstats.site.lib.machine import api
 
     request = _plain_post("/api/sacct/ingest/?date=2024-01-02", b"  \n")
-    with patch.object(api, "_require_staff", return_value=None), patch.object(
+    with (
+      patch.object(api, "_require_staff", return_value=None),
+      patch.object(
         api, "persist_accounting_daily_file", return_value=False
-    ) as mock_persist:
+      ) as mock_persist,
+    ):
       response = api.sacct_ingest(request)
     assert response.status_code == 200
     assert response.data["inserted"] == 0
@@ -411,18 +427,21 @@ class TestSacctIngestApi:
     from hpcperfstats.site.lib.machine import api
 
     request = _plain_post(
-        "/api/sacct/ingest/?date=2024-01-02",
-        b"JobID|User\n",
+      "/api/sacct/ingest/?date=2024-01-02",
+      b"JobID|User\n",
     )
     jd = MagicMock()
     vs = MagicMock()
     vs.iterator.return_value = iter([])
     jd.objects.filter.return_value.values_list.return_value = vs
-    with patch.object(api, "_require_staff", return_value=None), patch.object(
+    with (
+      patch.object(api, "_require_staff", return_value=None),
+      patch.object(
         api, "persist_accounting_daily_file", return_value=False
-    ) as mock_persist, patch.object(
-        api, "sync_acct_from_content", return_value=0
-    ) as mock_sync, patch.object(api, "job_data", jd):
+      ) as mock_persist,
+      patch.object(api, "sync_acct_from_content", return_value=0) as mock_sync,
+      patch.object(api, "job_data", jd),
+    ):
       response = api.sacct_ingest(request)
     assert response.status_code == 200
     assert response.data["inserted"] == 0
@@ -459,8 +478,8 @@ class TestSacctIngestApi:
 
     body = "JobID|State\n123|COMPLETED\n"
     request = _plain_post(
-        "/api/sacct/ingest/?date=2024-06-15",
-        body.encode("utf-8"),
+      "/api/sacct/ingest/?date=2024-06-15",
+      body.encode("utf-8"),
     )
     jd = MagicMock()
     vs = MagicMock()
@@ -476,11 +495,16 @@ class TestSacctIngestApi:
       call_order.append("sync")
       return 3
 
-    with patch.object(api, "_require_staff", return_value=None), patch.object(
+    with (
+      patch.object(api, "_require_staff", return_value=None),
+      patch.object(
         api, "persist_accounting_daily_file", side_effect=_persist
-    ) as mock_persist, patch.object(
+      ) as mock_persist,
+      patch.object(
         api, "sync_acct_from_content", side_effect=_sync
-    ) as mock_sync, patch.object(api, "job_data", jd):
+      ) as mock_sync,
+      patch.object(api, "job_data", jd),
+    ):
       response = api.sacct_ingest(request)
     assert response.status_code == 200
     assert response.data["inserted"] == 3
@@ -495,13 +519,15 @@ class TestSacctIngestApi:
 
     body = "JobID|State\n123|COMPLETED\n"
     request = _plain_post(
-        "/api/sacct/ingest/?date=2024-06-15",
-        body.encode("utf-8"),
+      "/api/sacct/ingest/?date=2024-06-15",
+      body.encode("utf-8"),
     )
     shrink = AccountingFileShrinkError("/acct/2024-06-15.txt", 5, 2)
-    with patch.object(api, "_require_staff", return_value=None), patch.object(
-        api, "persist_accounting_daily_file", side_effect=shrink
-    ), patch.object(api, "sync_acct_from_content") as mock_sync:
+    with (
+      patch.object(api, "_require_staff", return_value=None),
+      patch.object(api, "persist_accounting_daily_file", side_effect=shrink),
+      patch.object(api, "sync_acct_from_content") as mock_sync,
+    ):
       response = api.sacct_ingest(request)
     assert response.status_code == 409
     assert response.data["error"] == "Accounting file would shrink"
@@ -545,15 +571,21 @@ class TestJobListQueueWaitAggregates:
     ser = MagicMock()
     ser.data = [{"jid": "j1"}]
 
-    with patch.object(api, "_require_auth", return_value=None), patch.object(
+    with (
+      patch.object(api, "_require_auth", return_value=None),
+      patch.object(
         api,
         "_build_job_list_queryset_from_request",
         return_value=(mock_qs, {}, None, "-end_time"),
-    ), patch.object(api, "Paginator", return_value=paginator_inst), patch.object(
+      ),
+      patch.object(api, "Paginator", return_value=paginator_inst),
+      patch.object(
         api,
         "aggregate_queue_wait_seconds_stats",
         return_value={"mean_wait_s": 3600.0},
-    ) as mock_wait, patch.object(api, "JobListSerializer", return_value=ser):
+      ) as mock_wait,
+      patch.object(api, "JobListSerializer", return_value=ser),
+    ):
       response = api.job_list(request)
 
     assert response.status_code == 200
@@ -585,13 +617,17 @@ class TestJobListQueueWaitAggregates:
     ser = MagicMock()
     ser.data = [{"jid": "j1"}]
 
-    with patch.object(api, "_require_auth", return_value=None), patch.object(
+    with (
+      patch.object(api, "_require_auth", return_value=None),
+      patch.object(
         api,
         "_build_job_list_queryset_from_request",
         return_value=(mock_qs, {}, None, "-end_time"),
-    ), patch.object(api, "Paginator", return_value=paginator_inst), patch.object(
-        api, "aggregate_queue_wait_seconds_stats"
-    ) as mock_wait, patch.object(api, "JobListSerializer", return_value=ser):
+      ),
+      patch.object(api, "Paginator", return_value=paginator_inst),
+      patch.object(api, "aggregate_queue_wait_seconds_stats") as mock_wait,
+      patch.object(api, "JobListSerializer", return_value=ser),
+    ):
       response = api.job_list(request)
 
     assert response.status_code == 200
@@ -605,8 +641,8 @@ class TestJobDetailApi:
   def _job_mock(self):
     job = MagicMock()
     job.jid = "jid-99"
-    job.start_time = datetime(2024, 3, 1, tzinfo=dt_timezone.utc)
-    job.end_time = datetime(2024, 3, 2, tzinfo=dt_timezone.utc)
+    job.start_time = datetime(2024, 3, 1, tzinfo=UTC)
+    job.end_time = datetime(2024, 3, 2, tzinfo=UTC)
     job.metrics_distinct_time_count = 3
     return job
 
@@ -616,8 +652,13 @@ class TestJobDetailApi:
     request = DjangoRequestFactory().get("/api/jobs/jid-99/")
     request.session = {"username": "u", "is_staff": True}
     err = api.Response({"error": "Job not found"}, status=404)
-    with patch.object(api, "_require_auth", return_value=None), patch.object(
-        api, "_get_visible_job_or_error_response", return_value=(None, err)
+    with (
+      patch.object(api, "_require_auth", return_value=None),
+      patch.object(
+        api,
+        "_get_visible_job_or_error_response",
+        return_value=(None, err),
+      ),
     ):
       response = api.job_detail(request, "jid-99")
     assert response.status_code == 404
@@ -628,8 +669,13 @@ class TestJobDetailApi:
     request = DjangoRequestFactory().get("/api/jobs/jid-99/")
     request.session = {"username": "u", "is_staff": False}
     err = api.Response({"error": "Not allowed to view this job"}, status=403)
-    with patch.object(api, "_require_auth", return_value=None), patch.object(
-        api, "_get_visible_job_or_error_response", return_value=(None, err)
+    with (
+      patch.object(api, "_require_auth", return_value=None),
+      patch.object(
+        api,
+        "_get_visible_job_or_error_response",
+        return_value=(None, err),
+      ),
     ):
       response = api.job_detail(request, "jid-99")
     assert response.status_code == 403
@@ -644,15 +690,21 @@ class TestJobDetailApi:
     jt.acct_host_list = []
     jt.start_time = job.start_time
     jt.end_time = job.end_time
-    with patch.object(api, "_require_auth", return_value=None), patch.object(
-        api, "_get_visible_job_or_error_response", return_value=(job, None)
-    ), patch.object(
-        api, "_job_for_detail_list_serializer", return_value=job
-    ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "load_job_detail_artifact", return_value={}), patch.object(
-        api, "compute_detail_input_fingerprint", return_value="fp"
-    ), patch.object(api, "build_job_metrics_display_list", return_value=[]), patch.object(
-        api, "JobListSerializer"
-    ) as mock_ser, patch.object(api, "_get_small_executor") as mock_exec:
+    with (
+      patch.object(api, "_require_auth", return_value=None),
+      patch.object(
+        api,
+        "_get_visible_job_or_error_response",
+        return_value=(job, None),
+      ),
+      patch.object(api, "_job_for_detail_list_serializer", return_value=job),
+      patch.object(api, "get_site_content_cache_timeout", return_value=60),
+      patch.object(api, "load_job_detail_artifact", return_value={}),
+      patch.object(api, "compute_detail_input_fingerprint", return_value="fp"),
+      patch.object(api, "build_job_metrics_display_list", return_value=[]),
+      patch.object(api, "JobListSerializer") as mock_ser,
+      patch.object(api, "_get_small_executor") as mock_exec,
+    ):
       mock_ser.return_value.data = {"jid": "jid-99"}
       response = api.job_detail(request, "jid-99")
     assert response.status_code == 200
@@ -668,12 +720,17 @@ class TestJobPlotsApi:
     from hpcperfstats.site.lib.machine import api
 
     request = DjangoRequestFactory().get(
-        "/api/jobs/j1/plots/", {"plot": "not_a_plot"}
+      "/api/jobs/j1/plots/", {"plot": "not_a_plot"}
     )
     request.session = {"username": "u", "is_staff": True}
     job = MagicMock(jid="j1")
-    with patch.object(api, "_require_auth", return_value=None), patch.object(
-        api, "_get_visible_job_or_error_response", return_value=(job, None)
+    with (
+      patch.object(api, "_require_auth", return_value=None),
+      patch.object(
+        api,
+        "_get_visible_job_or_error_response",
+        return_value=(job, None),
+      ),
     ):
       response = api.job_plots(request, "j1")
     assert response.status_code == 400
@@ -683,12 +740,18 @@ class TestJobPlotsApi:
     from hpcperfstats.site.lib.machine import api
 
     request = DjangoRequestFactory().get(
-        "/api/jobs/j1/plots/",
-        {"progressive": "true"},
+      "/api/jobs/j1/plots/",
+      {"progressive": "true"},
     )
     request.session = {"username": "u", "is_staff": True}
     job = MagicMock(jid="j1")
-    ready = {"plot_item": {"root_id": "x", "doc": {"roots": {"root_ids": ["x"]}}}, "unavailable_reason": None}
+    ready = {
+      "plot_item": {
+        "root_id": "x",
+        "doc": {"roots": {"root_ids": ["x"]}},
+      },
+      "unavailable_reason": None,
+    }
 
     def _cache_get(key, default=None):
       key_s = str(key)
@@ -699,21 +762,26 @@ class TestJobPlotsApi:
     pending_future = MagicMock()
     pending_future.done.return_value = False
 
-    with patch.object(api, "_require_auth", return_value=None), patch.object(
-        api, "_get_visible_job_or_error_response", return_value=(job, None)
-    ), patch.object(api, "get_site_content_cache_timeout", return_value=60), patch.object(api, "compute_plot_input_fingerprint", return_value="fp"), patch.object(
-        api.cache, "get", side_effect=_cache_get
-    ), patch.object(api, "load_cached_job_plot_entry", return_value=None), patch.object(
-        api, "_get_small_executor"
-    ) as mock_exec:
+    with (
+      patch.object(api, "_require_auth", return_value=None),
+      patch.object(
+        api,
+        "_get_visible_job_or_error_response",
+        return_value=(job, None),
+      ),
+      patch.object(api, "get_site_content_cache_timeout", return_value=60),
+      patch.object(api, "compute_plot_input_fingerprint", return_value="fp"),
+      patch.object(api.cache, "get", side_effect=_cache_get),
+      patch.object(api, "load_cached_job_plot_entry", return_value=None),
+      patch.object(api, "_get_small_executor") as mock_exec,
+    ):
       mock_exec.return_value.submit.return_value = pending_future
       response = api.job_plots(request, "j1")
     assert response.status_code == 200
     assert response.data["status"] == "partial"
     assert response.data["progressive"] is True
     assert response.data["rplot_item"] == ready["plot_item"]
-    assert "summary_plot" in response.data["loading_plots"] or len(
-        response.data["loading_plots"]
-    ) >= 1
-
-
+    assert (
+      "summary_plot" in response.data["loading_plots"]
+      or len(response.data["loading_plots"]) >= 1
+    )

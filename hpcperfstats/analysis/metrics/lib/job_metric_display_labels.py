@@ -13,127 +13,127 @@ Attributes:
 from __future__ import annotations
 
 JOB_METRIC_SHORT_LABELS: dict[str, str] = {
-    "avg_blockbw": "Average local block-device throughput",
-    "avg_cpuusage": "Average CPU cores in use",
-    "avg_sharedfs_iops": "Average shared filesystem operation rate",
-    "avg_sharedfs_bw": "Average shared filesystem read+write bandwidth",
-    "avg_ibbw": "Average high-speed fabric bandwidth",
-    "avg_fabric_mb_per_gflops": "Fabric traffic per floating-point work",
-    "avg_tensor_active": "Average GPU tensor-pipe activity",
-    "avg_tensor_imma_active": "Average GPU tensor IMMA (INT8/INT4) activity",
-    "avg_tensor_hmma_active": "Average GPU tensor HMMA (FP16/BF16) activity",
-    "avg_tensor_dfma_active": "Average GPU tensor DFMA (FP64) activity",
-    "avg_fp16_active": "Average GPU FP16 pipeline activity",
-    "avg_fp32_active": "Average GPU FP32 pipeline activity",
-    "avg_fp64_active": "Average GPU FP64 pipeline activity",
-    "avg_gpu_mem_bw_gbps": "Average GPU memory bandwidth",
-    "avg_fabric_mb_per_avg_tensor": "Fabric bandwidth per tensor activity",
-    "avg_flops": "Average floating-point throughput",
-    "avg_flops64b": "Average double-precision FLOP rate",
-    "avg_flops32b": "Average single-precision FLOP rate",
-    "avg_arm_int8_ops": "Average CPU INT8 operation rate",
-    "avg_arm_int16_ops": "Average CPU INT16 operation rate",
-    "avg_mbw": "Average DRAM memory bandwidth",
-    "avg_freq": "Average effective CPU frequency",
-    "avg_ethbw": "Average Ethernet bandwidth",
-    "detail_gpu_active": "GPUs with non-zero utilization",
-    "detail_gpu_util_max": "Sum of per-GPU peak utilization",
-    "detail_gpu_util_mean": "Sum of per-GPU mean utilization",
-    "detail_gpu_count": "Total GPUs on job",
-    "detail_fsio_llite_read_mb": "Total Lustre client read volume",
-    "detail_fsio_llite_write_mb": "Total Lustre client write volume",
-    "detail_fsio_llite_peak_mb_s": "Peak Lustre client read+write rate",
-    "detail_fsio_llite_peak_iops": "Peak Lustre client metadata operation rate",
-    "detail_fsio_nfs_read_mb": "Total NFS client read volume",
-    "detail_fsio_nfs_write_mb": "Total NFS client write volume",
-    "detail_fsio_nfs_peak_mb_s": "Peak NFS client read+write rate",
-    "detail_fsio_nfs_peak_iops": "Peak NFS client I/O operation rate",
-    "detail_fsio_beegfs_read_mb": "Total BeeGFS client read volume",
-    "detail_fsio_beegfs_write_mb": "Total BeeGFS client write volume",
-    "detail_fsio_beegfs_peak_mb_s": "Peak BeeGFS client read+write rate",
-    "detail_fsio_beegfs_peak_iops": "Peak BeeGFS client metadata operation rate",
-    "avg_gpuutil": "Job GPU utilization (aggregate)",
-    "avg_packetsize": "Mean fabric packet payload size",
-    "max_fabricbw": "Peak fabric data rate",
-    "max_lnetbw": "Peak Lustre LNET client data rate",
-    "max_mds": "Peak shared filesystem metadata operation rate",
-    "max_packetrate": "Peak fabric packet rate",
-    "max_opa_congestion_rate": "Peak Omni-Path congestion event rate",
-    "max_numa_remote_rate": "Peak non-local NUMA memory access rate",
-    "max_gpu_power": "Maximum GPU power draw",
-    "max_node_power_est_w": "Peak estimated node power",
-    "avg_node_power_est_w": "Mean estimated node power",
-    "job_cpu_gpu_watt_hours": "CPU+GPU watt-hours for job",
-    "max_gpu_link_gbps": "Peak GPU PCIe and NVLink data rate",
-    "max_gpu_clock_event_reasons": "Peak GPU clock throttling reasons",
-    "mem_hwm": "Peak process resident memory (high water mark)",
-    "node_imbalance": "CPU utilization imbalance across nodes",
-    "time_imbalance": "CPU rate imbalance over job timeline",
-    "flops_node_imbalance": "Floating-point rate imbalance across nodes",
-    "fabric_node_imbalance": "Fabric bandwidth imbalance across nodes",
-    "dram_bw_node_imbalance": "DRAM bandwidth imbalance across nodes",
-    "lnet_node_imbalance": "LNET bandwidth imbalance across nodes",
-    "gpu_util_node_imbalance": "GPU utilization imbalance across nodes",
-    "tensor_node_imbalance": "Tensor-pipe activity imbalance across nodes",
-    "vecpercent_64b": "Double-precision vector FLOP share (%)",
-    "avg_vector_width_64b": "Effective vector width (double precision)",
-    "vecpercent_32b": "Single-precision vector FLOP share (%)",
-    "avg_vector_width_32b": "Effective vector width (single precision)",
+  "avg_blockbw": "Average local block-device throughput",
+  "avg_cpuusage": "Average CPU cores in use",
+  "avg_sharedfs_iops": "Average shared filesystem operation rate",
+  "avg_sharedfs_bw": "Average shared filesystem read+write bandwidth",
+  "avg_ibbw": "Average high-speed fabric bandwidth",
+  "avg_fabric_mb_per_gflops": "Fabric traffic per floating-point work",
+  "avg_tensor_active": "Average GPU tensor-pipe activity",
+  "avg_tensor_imma_active": "Average GPU tensor IMMA (INT8/INT4) activity",
+  "avg_tensor_hmma_active": "Average GPU tensor HMMA (FP16/BF16) activity",
+  "avg_tensor_dfma_active": "Average GPU tensor DFMA (FP64) activity",
+  "avg_fp16_active": "Average GPU FP16 pipeline activity",
+  "avg_fp32_active": "Average GPU FP32 pipeline activity",
+  "avg_fp64_active": "Average GPU FP64 pipeline activity",
+  "avg_gpu_mem_bw_gbps": "Average GPU memory bandwidth",
+  "avg_fabric_mb_per_avg_tensor": "Fabric bandwidth per tensor activity",
+  "avg_flops": "Average floating-point throughput",
+  "avg_flops64b": "Average double-precision FLOP rate",
+  "avg_flops32b": "Average single-precision FLOP rate",
+  "avg_arm_int8_ops": "Average CPU INT8 operation rate",
+  "avg_arm_int16_ops": "Average CPU INT16 operation rate",
+  "avg_mbw": "Average DRAM memory bandwidth",
+  "avg_freq": "Average effective CPU frequency",
+  "avg_ethbw": "Average Ethernet bandwidth",
+  "detail_gpu_active": "GPUs with non-zero utilization",
+  "detail_gpu_util_max": "Sum of per-GPU peak utilization",
+  "detail_gpu_util_mean": "Sum of per-GPU mean utilization",
+  "detail_gpu_count": "Total GPUs on job",
+  "detail_fsio_llite_read_mb": "Total Lustre client read volume",
+  "detail_fsio_llite_write_mb": "Total Lustre client write volume",
+  "detail_fsio_llite_peak_mb_s": "Peak Lustre client read+write rate",
+  "detail_fsio_llite_peak_iops": "Peak Lustre client metadata operation rate",
+  "detail_fsio_nfs_read_mb": "Total NFS client read volume",
+  "detail_fsio_nfs_write_mb": "Total NFS client write volume",
+  "detail_fsio_nfs_peak_mb_s": "Peak NFS client read+write rate",
+  "detail_fsio_nfs_peak_iops": "Peak NFS client I/O operation rate",
+  "detail_fsio_beegfs_read_mb": "Total BeeGFS client read volume",
+  "detail_fsio_beegfs_write_mb": "Total BeeGFS client write volume",
+  "detail_fsio_beegfs_peak_mb_s": "Peak BeeGFS client read+write rate",
+  "detail_fsio_beegfs_peak_iops": "Peak BeeGFS client metadata operation rate",
+  "avg_gpuutil": "Job GPU utilization (aggregate)",
+  "avg_packetsize": "Mean fabric packet payload size",
+  "max_fabricbw": "Peak fabric data rate",
+  "max_lnetbw": "Peak Lustre LNET client data rate",
+  "max_mds": "Peak shared filesystem metadata operation rate",
+  "max_packetrate": "Peak fabric packet rate",
+  "max_opa_congestion_rate": "Peak Omni-Path congestion event rate",
+  "max_numa_remote_rate": "Peak non-local NUMA memory access rate",
+  "max_gpu_power": "Maximum GPU power draw",
+  "max_node_power_est_w": "Peak estimated node power",
+  "avg_node_power_est_w": "Mean estimated node power",
+  "job_cpu_gpu_watt_hours": "CPU+GPU watt-hours for job",
+  "max_gpu_link_gbps": "Peak GPU PCIe and NVLink data rate",
+  "max_gpu_clock_event_reasons": "Peak GPU clock throttling reasons",
+  "mem_hwm": "Peak process resident memory (high water mark)",
+  "node_imbalance": "CPU utilization imbalance across nodes",
+  "time_imbalance": "CPU rate imbalance over job timeline",
+  "flops_node_imbalance": "Floating-point rate imbalance across nodes",
+  "fabric_node_imbalance": "Fabric bandwidth imbalance across nodes",
+  "dram_bw_node_imbalance": "DRAM bandwidth imbalance across nodes",
+  "lnet_node_imbalance": "LNET bandwidth imbalance across nodes",
+  "gpu_util_node_imbalance": "GPU utilization imbalance across nodes",
+  "tensor_node_imbalance": "Tensor-pipe activity imbalance across nodes",
+  "vecpercent_64b": "Double-precision vector FLOP share (%)",
+  "avg_vector_width_64b": "Effective vector width (double precision)",
+  "vecpercent_32b": "Single-precision vector FLOP share (%)",
+  "avg_vector_width_32b": "Effective vector width (single precision)",
 }
 
 
 def job_has_gpu_for_watt_hours_label(gpu_count: int) -> bool:
-    """
-    True when job GPU count is a positive number (watt-hours title wording).
-    
-    Args:
-      gpu_count (int): Integer value for gpu count.
-    
-    Returns:
-      bool: True or False for this check.
-    
-    Examples:
-      >>> job_has_gpu_for_watt_hours_label(0)  # doctest: +SKIP
-    """
-    if gpu_count is None or gpu_count == "":
-        return False
-    try:
-        return float(gpu_count) > 0
-    except (TypeError, ValueError):
-        return False
+  """
+  True when job GPU count is a positive number (watt-hours title wording).
+
+  Args:
+    gpu_count (int): Integer value for gpu count.
+
+  Returns:
+    bool: True or False for this check.
+
+  Examples:
+    >>> job_has_gpu_for_watt_hours_label(0)  # doctest: +SKIP
+  """
+  if gpu_count is None or gpu_count == "":
+    return False
+  try:
+    return float(gpu_count) > 0
+  except TypeError, ValueError:
+    return False
 
 
 def get_job_watt_hours_short_label(has_gpu: bool) -> str:
-    """
-    Metrics-table short label: omit +GPU when the job has no GPUs.
-    
-    Args:
-      has_gpu (bool): Whether to enable has gpu.
-    
-    Returns:
-      str: str produced by this call.
-    
-    Examples:
-      >>> get_job_watt_hours_short_label(True)  # doctest: +SKIP
-    """
-    if has_gpu:
-        return "CPU+GPU watt-hours for job"
-    return "CPU watt-hours for job"
+  """
+  Metrics-table short label: omit +GPU when the job has no GPUs.
+
+  Args:
+    has_gpu (bool): Whether to enable has gpu.
+
+  Returns:
+    str: str produced by this call.
+
+  Examples:
+    >>> get_job_watt_hours_short_label(True)  # doctest: +SKIP
+  """
+  if has_gpu:
+    return "CPU+GPU watt-hours for job"
+  return "CPU watt-hours for job"
 
 
 def get_job_watt_hours_resources_title(has_gpu: bool) -> str:
-    """
-    Resources card title: omit +GPU when the job has no GPUs.
-    
-    Args:
-      has_gpu (bool): Whether to enable has gpu.
-    
-    Returns:
-      str: str produced by this call.
-    
-    Examples:
-      >>> get_job_watt_hours_resources_title(True)  # doctest: +SKIP
-    """
-    if has_gpu:
-        return "CPU+GPU Watt Hours for Job"
-    return "CPU Watt Hours for Job"
+  """
+  Resources card title: omit +GPU when the job has no GPUs.
+
+  Args:
+    has_gpu (bool): Whether to enable has gpu.
+
+  Returns:
+    str: str produced by this call.
+
+  Examples:
+    >>> get_job_watt_hours_resources_title(True)  # doctest: +SKIP
+  """
+  if has_gpu:
+    return "CPU+GPU Watt Hours for Job"
+  return "CPU Watt Hours for Job"

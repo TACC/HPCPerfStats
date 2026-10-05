@@ -30,35 +30,34 @@ Attributes:
   _log_print_lock: Attribute.
   _log_role: Attribute.
 """
-from __future__ import annotations
 
-from typing import Any, Iterator
+from __future__ import annotations
 
 import contextvars
 import inspect
 import io
 import sys
 import threading
-from contextlib import contextmanager
 from collections import deque
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any
 
 _log_role: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "hpc_log_role",
-    default=None,
+  "hpc_log_role",
+  default=None,
 )
 _janitorial_depth: contextvars.ContextVar[int] = contextvars.ContextVar(
-    "hpc_janitorial_logging",
-    default=0,
+  "hpc_janitorial_logging",
+  default=0,
 )
 _ingest_depth: contextvars.ContextVar[int] = contextvars.ContextVar(
-    "hpc_ingest_logging",
-    default=0,
+  "hpc_ingest_logging",
+  default=0,
 )
 _log_print_lock = threading.Lock()
 _log_drain_cond = threading.Condition(_log_print_lock)
-_log_drain_queue: deque[
-    tuple[Any, str, bool, threading.Event | None]
-] = deque()
+_log_drain_queue: deque[tuple[Any, str, bool, threading.Event | None]] = deque()
 _log_drain_started = False
 
 _JANITOR_BODY_PREFIX = "janitor:"
@@ -82,9 +81,9 @@ def _ensure_log_drain_thread() -> None:
       return
     _log_drain_started = True
     thread = threading.Thread(
-        target=_log_drain_loop,
-        name="hps-log-drain",
-        daemon=True,
+      target=_log_drain_loop,
+      name="hps-log-drain",
+      daemon=True,
     )
     thread.start()
 
@@ -146,13 +145,13 @@ def flush_log_print_queue(timeout_s: float = 30.0) -> None:
 def set_log_role(role: str | None) -> None:
   """
   Set the log prefix role for the current context (thread or process).
-  
+
   Args:
     role (str | None): One of ``str``, ``None``.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> set_log_role(None)  # doctest: +SKIP
   """
@@ -162,10 +161,10 @@ def set_log_role(role: str | None) -> None:
 def get_log_role() -> str | None:
   """
   Return the current log role, or None when unset.
-  
+
   Returns:
     str | None: One of ``str``, ``None`` depending on inputs/branch.
-  
+
   Examples:
     >>> get_log_role()  # doctest: +SKIP
   """
@@ -176,12 +175,12 @@ def get_log_role() -> str | None:
 def janitorial_logging() -> Iterator[Any]:
   """
   Mark nested log_print calls as janitorial (body ``janitor:`` rules).
-  
+
   Yields:
     Iterator[Any]: Open return polymorphism from ``janitorial_logging``:
     concrete type depends on inputs and branch (mapping, scalar, handle, or
     ``None``-like empty).
-  
+
   Examples:
     >>> janitorial_logging()  # doctest: +SKIP
   """
@@ -196,12 +195,12 @@ def janitorial_logging() -> Iterator[Any]:
 def ingest_logging() -> Iterator[Any]:
   """
   Mark nested log_print calls as MainThread ingest/pre-work (body ``ingest:``).
-  
+
   Yields:
     Iterator[Any]: Open return polymorphism from ``ingest_logging``: concrete
     type depends on inputs and branch (mapping, scalar, handle, or
     ``None``-like empty).
-  
+
   Examples:
     >>> ingest_logging()  # doctest: +SKIP
   """
@@ -215,16 +214,16 @@ def ingest_logging() -> Iterator[Any]:
 def _script_prefix() -> Any:
   """
   Return [scriptname] for the original entry point (__main__), not the.
-  
+
     immediate.
-  
+
     caller.
-  
+
   Returns:
     Any: Open return polymorphism from ``_script_prefix``: concrete type
     depends on inputs and branch (mapping, scalar, handle, or ``None``-like
     empty).
-  
+
   Examples:
     >>> _script_prefix()  # doctest: +SKIP
   """
@@ -261,30 +260,32 @@ def format_log_prefix() -> str:
 def _script_name_from_bracket_prefix(prefix: str) -> str:
   """
   Extract script basename from ``[script]`` or ``[script:role]``.
-  
+
   Args:
     prefix (str): String for prefix.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> _script_name_from_bracket_prefix("x")  # doctest: +SKIP
   """
-  inner = prefix[1:-1] if prefix.startswith("[") and prefix.endswith("]") else prefix
+  inner = (
+    prefix[1:-1] if prefix.startswith("[") and prefix.endswith("]") else prefix
+  )
   return inner.split(":", 1)[0]
 
 
 def _role_has_janitor(role: str | None) -> bool:
   """
   Internal helper to handle role has janitor.
-  
+
   Args:
     role (str | None): One of ``str``, ``None``.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> _role_has_janitor(None)  # doctest: +SKIP
   """
@@ -294,13 +295,13 @@ def _role_has_janitor(role: str | None) -> bool:
 def _role_is_main_thread(role: str | None) -> bool:
   """
   Supervisor MainThread: explicit ``main`` or unset (pre-title / tests).
-  
+
   Args:
     role (str | None): One of ``str``, ``None``.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> _role_is_main_thread(None)  # doctest: +SKIP
   """
@@ -310,14 +311,14 @@ def _role_is_main_thread(role: str | None) -> bool:
 def _strip_leading_token(text: str, token: str) -> str:
   """
   Strip ``token`` or ``token `` from the start of ``text`` (case-sensitive).
-  
+
   Args:
     text (str): String for text.
     token (str): String for token.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> _strip_leading_token("x", "x")  # doctest: +SKIP
   """
@@ -332,18 +333,18 @@ def _strip_leading_token(text: str, token: str) -> str:
 def _body_has_leading_token(text: str, token: str) -> bool:
   """
   Internal helper to handle body has leading token.
-  
+
   Args:
     text (str): String for text.
     token (str): String for token.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> _body_has_leading_token("x", "x")  # doctest: +SKIP
   """
-  return text.startswith(token + " ") or text == token or text.startswith(token)
+  return text.startswith((token + " ", token)) or text == token
 
 
 def _normalize_log_body_args(
@@ -356,17 +357,17 @@ def _normalize_log_body_args(
 ) -> tuple:
   """
   Internal helper to normalize the log body args.
-  
+
   Args:
     args (tuple): Sequence for args.
     script_name (str): String for script name.
     role (str | None): One of ``str``, ``None``.
     janitorial (bool): Boolean flag for janitorial.
     ingest (bool): Boolean flag for ingest.
-  
+
   Returns:
     tuple: tuple produced by this call.
-  
+
   Examples:
     >>> _normalize_log_body_args([], "x", None, True, True)  # doctest: +SKIP
   """
@@ -384,12 +385,14 @@ def _normalize_log_body_args(
       if _body_has_leading_token(first, _JANITOR_BODY_PREFIX):
         first = _strip_leading_token(first, _JANITOR_BODY_PREFIX)
     elif not _body_has_leading_token(first, _JANITOR_BODY_PREFIX):
-      first = f"{_JANITOR_BODY_PREFIX} {first}" if first else _JANITOR_BODY_PREFIX
+      first = (
+        f"{_JANITOR_BODY_PREFIX} {first}" if first else _JANITOR_BODY_PREFIX
+      )
   elif ingest and _role_is_main_thread(role):
     if not _body_has_leading_token(first, _INGEST_BODY_PREFIX):
       first = f"{_INGEST_BODY_PREFIX} {first}" if first else _INGEST_BODY_PREFIX
 
-  return (first,) + args[1:]
+  return (first, *args[1:])
 
 
 def log_print(*args: Any, **kwargs: Any) -> None:
@@ -429,18 +432,20 @@ def log_print(*args: Any, **kwargs: Any) -> None:
   flush = bool(kwargs.pop("flush", False))
   if kwargs:
     unexpected = ", ".join(sorted(kwargs))
-    raise TypeError(f"log_print() got unexpected keyword arguments: {unexpected}")
+    raise TypeError(
+      f"log_print() got unexpected keyword arguments: {unexpected}"
+    )
   prefix = format_log_prefix()
   script_name = _script_name_from_bracket_prefix(prefix)
   role = get_log_role()
   janitorial = oneshot_janitorial or _janitorial_depth.get() > 0
   ingest = oneshot_ingest or _ingest_depth.get() > 0
   args = _normalize_log_body_args(
-      args,
-      script_name=script_name,
-      role=role,
-      janitorial=janitorial,
-      ingest=ingest,
+    args,
+    script_name=script_name,
+    role=role,
+    janitorial=janitorial,
+    ingest=ingest,
   )
   stream = sys.stdout if file is None else file
   line = sep.join(str(part) for part in (prefix, *args)) + end

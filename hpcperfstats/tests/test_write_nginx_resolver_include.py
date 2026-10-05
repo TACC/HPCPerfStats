@@ -14,7 +14,9 @@ def _repo_root() -> Path:
 
 def _load_resolver_mod():
   path = _repo_root() / "services-conf" / "write_nginx_resolver_include.py"
-  spec = importlib.util.spec_from_file_location("write_nginx_resolver_include", path)
+  spec = importlib.util.spec_from_file_location(
+    "write_nginx_resolver_include", path
+  )
   assert spec and spec.loader
   mod = importlib.util.module_from_spec(spec)
   spec.loader.exec_module(mod)
@@ -24,15 +26,15 @@ def _load_resolver_mod():
 def test_parse_resolv_nameservers_dedupes_and_skips_invalid():
   mod = _load_resolver_mod()
   text = "\n".join(
-      [
-          "# comment",
-          "nameserver 127.0.0.11",
-          "nameserver 127.0.0.11",
-          "nameserver not-an-ip",
-          "nameserver 1.1.1.1",
-          "search example.test",
-          "",
-      ]
+    [
+      "# comment",
+      "nameserver 127.0.0.11",
+      "nameserver 127.0.0.11",
+      "nameserver not-an-ip",
+      "nameserver 1.1.1.1",
+      "search example.test",
+      "",
+    ]
   )
   assert mod.parse_resolv_nameservers(text) == ["127.0.0.11", "1.1.1.1"]
 
@@ -59,12 +61,14 @@ def test_write_nginx_resolver_include_roundtrip(tmp_path: Path):
 
 def test_nginx_conf_and_proxy_dockerfile_complete_ocsp_contract():
   example = (_repo_root() / "services-conf" / "nginx.conf").read_text(
-      encoding="utf-8"
+    encoding="utf-8"
   )
-  assert "ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;" in example
+  assert (
+    "ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;" in example
+  )
   assert "include /etc/nginx/nginx-resolver.inc;" in example
   dockerfile = (_repo_root() / "services-conf" / "proxy.Dockerfile").read_text(
-      encoding="utf-8"
+    encoding="utf-8"
   )
   assert "ca-certificates" in dockerfile
   assert "write_nginx_resolver_include.py" in dockerfile

@@ -16,7 +16,9 @@ def test_verify_uncompressed_tar_readable_uses_devnull_not_capture():
   assert "DEVNULL" in src
 
 
-def test_decompress_to_path_does_not_dontneed_output_before_verify(monkeypatch, tmp_path):
+def test_decompress_to_path_does_not_dontneed_output_before_verify(
+  monkeypatch, tmp_path
+):
   """DONTNEED must not drop the decompress output before verify re-reads it."""
   compressed = tmp_path / "day.tar.zst"
   compressed.write_bytes(b"fake-zst")
@@ -34,9 +36,9 @@ def test_decompress_to_path_does_not_dontneed_output_before_verify(monkeypatch, 
   monkeypatch.setattr(z, "_advise_sequential_read", lambda _p: None)
   monkeypatch.setattr(z, "_run_zstd", _fake_run)
   monkeypatch.setattr(
-      z,
-      "zstd_drop_page_cache_for_paths",
-      lambda *paths: dropped.extend(str(p) for p in paths),
+    z,
+    "zstd_drop_page_cache_for_paths",
+    lambda *paths: dropped.extend(str(p) for p in paths),
   )
 
   z._decompress_to_path(str(compressed), str(output), 1)

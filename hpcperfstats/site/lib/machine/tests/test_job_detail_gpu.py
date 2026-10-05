@@ -1,27 +1,34 @@
 """Tests for job_detail GPU utilization (DB aggregate path; no DB required)."""
+
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 from django.test import RequestFactory
 
 from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-    TYPE_DETAIL_HOST_QUERY_BATCH,
+  TYPE_DETAIL_HOST_QUERY_BATCH,
 )
-from hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary import gpu_count_total_for_job_window
-from hpcperfstats.site.lib.machine import cache_utils as cu
-from hpcperfstats.site.lib.machine import job_detail_artifacts as job_detail_artifacts_mod
+from hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary import (
+  gpu_count_total_for_job_window,
+)
+from hpcperfstats.site.lib.machine import (
+  cache_utils as cu,
+  job_detail_artifacts as job_detail_artifacts_mod,
+)
 
 pytestmark = pytest.mark.django_db(databases=[])
+
+
 def _patch_job_detail_context(api_module, jid, gpu_agg, gpu_count_cached=None):
   """Return context manager that stubs job_detail dependencies (no ORM)."""
   mock_j = MagicMock()
   mock_j.acct_host_list = ["n1.example.com"]
   mock_j.schema = {}
   mock_j.get_llite_delta_by_event.return_value = MagicMock(empty=True)
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
   mock_j.start_time = t0
   mock_j.end_time = t0
 
@@ -47,54 +54,65 @@ def _patch_job_detail_context(api_module, jid, gpu_agg, gpu_count_cached=None):
   vis = MagicMock()
   vis.exists.return_value = True
   detail_payload = {
-      "host_list": mock_j.acct_host_list,
-      "schema": {},
-      "fsio": {},
-      "gpu_active": None,
-      "gpu_utilization_max": None,
-      "gpu_utilization_mean": None,
-      "gpu_count": gpu_count_cached,
+    "host_list": mock_j.acct_host_list,
+    "schema": {},
+    "fsio": {},
+    "gpu_active": None,
+    "gpu_utilization_max": None,
+    "gpu_utilization_mean": None,
+    "gpu_count": gpu_count_cached,
   }
   multiprecision_payload = {
-      "cpu_plot_item": None,
-      "cpu_unavailable_reason": (
-          "Missing CPU busy-ops mix metrics in job metrics "
-          "(need positive avg_flops64b / avg_flops32b / avg_arm_int16_ops / "
-          "avg_arm_int8_ops shares)."
-      ),
-      "gpu_plot_item": None,
-      "gpu_unavailable_reason": (
-          "Missing GPU precision-width mix metrics in job metrics "
-          "(need positive avg_*_active shares)."
-      ),
+    "cpu_plot_item": None,
+    "cpu_unavailable_reason": (
+      "Missing CPU busy-ops mix metrics in job metrics "
+      "(need positive avg_flops64b / avg_flops32b / avg_arm_int16_ops / "
+      "avg_arm_int8_ops shares)."
+    ),
+    "gpu_plot_item": None,
+    "gpu_unavailable_reason": (
+      "Missing GPU precision-width mix metrics in job metrics "
+      "(need positive avg_*_active shares)."
+    ),
   }
   if gpu_agg and gpu_agg.get("cnt", 0) > 2:
-    detail_payload["gpu_active"] = 3 if float(gpu_agg.get("vmax", 0.0) or 0.0) > 0.0 else 0
-    detail_payload["gpu_utilization_max"] = float(gpu_agg.get("vmax", 0.0) or 0.0)
-    detail_payload["gpu_utilization_mean"] = float(gpu_agg.get("vmean", 0.0) or 0.0)
+    detail_payload["gpu_active"] = (
+      3 if float(gpu_agg.get("vmax", 0.0) or 0.0) > 0.0 else 0
+    )
+    detail_payload["gpu_utilization_max"] = float(
+      gpu_agg.get("vmax", 0.0) or 0.0
+    )
+    detail_payload["gpu_utilization_mean"] = float(
+      gpu_agg.get("vmean", 0.0) or 0.0
+    )
   return (
-      patch.object(api_module, "_require_auth", return_value=None),
-      patch.object(
-          api_module, "_apply_non_staff_job_visibility", return_value=vis
-      ),
-      patch.object(api_module, "get_site_content_cache_timeout", return_value=3600),
-      patch.object(api_module, "build_job_metrics_display_list", return_value=[]),
-      patch.object(api_module.cfg, "get_xalt_user", return_value=""),
-      patch.object(api_module.cfg, "get_host_name_ext", return_value=""),
-      patch.object(api_module, "cached_orm", side_effect=cached_se),
-      patch.object(api_module, "load_job_detail_artifact", side_effect=[
-          detail_payload, multiprecision_payload]),
-      patch.object(
-          api_module,
-          "_job_for_detail_list_serializer",
-          return_value=job_mock,
-      ),
-      patch.object(
-          api_module,
-          "JobListSerializer",
-          return_value=MagicMock(data={"jid": jid, "username": "u1"}),
-      ),
-      patch.object(api_module, "local_timezone", timezone.utc),
+    patch.object(api_module, "_require_auth", return_value=None),
+    patch.object(
+      api_module, "_apply_non_staff_job_visibility", return_value=vis
+    ),
+    patch.object(
+      api_module, "get_site_content_cache_timeout", return_value=3600
+    ),
+    patch.object(api_module, "build_job_metrics_display_list", return_value=[]),
+    patch.object(api_module.cfg, "get_xalt_user", return_value=""),
+    patch.object(api_module.cfg, "get_host_name_ext", return_value=""),
+    patch.object(api_module, "cached_orm", side_effect=cached_se),
+    patch.object(
+      api_module,
+      "load_job_detail_artifact",
+      side_effect=[detail_payload, multiprecision_payload],
+    ),
+    patch.object(
+      api_module,
+      "_job_for_detail_list_serializer",
+      return_value=job_mock,
+    ),
+    patch.object(
+      api_module,
+      "JobListSerializer",
+      return_value=MagicMock(data={"jid": jid, "username": "u1"}),
+    ),
+    patch.object(api_module, "local_timezone", UTC),
   )
 
 
@@ -110,12 +128,13 @@ def test_job_detail_gpu_stats_from_aggregate_dict():
   gpu_agg = {"cnt": 4, "vmax": 250.0, "vmean": 80.0}
   ctx = _patch_job_detail_context(api, jid, gpu_agg, gpu_count_cached=8)
 
-  with ThreadPoolExecutor(max_workers=4) as executor:
-    with ExitStack() as stack:
-      stack.enter_context(patch.object(api, "_get_small_executor", return_value=executor))
-      for cm in ctx:
-        stack.enter_context(cm)
-      response = api.job_detail(request, jid)
+  with ThreadPoolExecutor(max_workers=4) as executor, ExitStack() as stack:
+    stack.enter_context(
+      patch.object(api, "_get_small_executor", return_value=executor)
+    )
+    for cm in ctx:
+      stack.enter_context(cm)
+    response = api.job_detail(request, jid)
 
   assert response.status_code == 200
   data = response.data
@@ -139,12 +158,13 @@ def test_job_detail_gpu_stats_none_when_two_or_fewer_samples():
   gpu_agg = {"cnt": 2, "vmax": 60.0, "vmean": 55.0}
   ctx = _patch_job_detail_context(api, jid, gpu_agg)
 
-  with ThreadPoolExecutor(max_workers=4) as executor:
-    with ExitStack() as stack:
-      stack.enter_context(patch.object(api, "_get_small_executor", return_value=executor))
-      for cm in ctx:
-        stack.enter_context(cm)
-      response = api.job_detail(request, jid)
+  with ThreadPoolExecutor(max_workers=4) as executor, ExitStack() as stack:
+    stack.enter_context(
+      patch.object(api, "_get_small_executor", return_value=executor)
+    )
+    for cm in ctx:
+      stack.enter_context(cm)
+    response = api.job_detail(request, jid)
 
   assert response.status_code == 200
   assert response.data["gpu_active"] is None
@@ -160,7 +180,7 @@ def test_compute_job_gpu_stats_helper_matches_job_detail_gpu_logic():
   job = MagicMock()
   job.jid = "test-gpu-jid-helper"
   j = MagicMock()
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
   j.start_time = t0
   j.end_time = t0
   j.acct_host_list = ["n1.example.com"]
@@ -169,14 +189,23 @@ def test_compute_job_gpu_stats_helper_matches_job_detail_gpu_logic():
     del timeout, fn
     if key.startswith(f"{cu.KEY_GPU_AGG}:"):
       return [
-          {"host": "n1.example.com", "dev": "0", "event": "gpu_util", "cnt": 4, "vmax": 250.0, "vmean": 80.0},
+        {
+          "host": "n1.example.com",
+          "dev": "0",
+          "event": "gpu_util",
+          "cnt": 4,
+          "vmax": 250.0,
+          "vmean": 80.0,
+        },
       ]
     if key.startswith(f"{cu.KEY_GPU_COUNT}:"):
       return 8
     return None
 
   with patch.object(api, "cached_orm", side_effect=cached_se):
-    gpu_active, gpu_max, gpu_mean, gpu_count = api._compute_job_gpu_stats(job, j, 3600)
+    gpu_active, gpu_max, gpu_mean, gpu_count = api._compute_job_gpu_stats(
+      job, j, 3600
+    )
 
   assert gpu_max == 250.0
   assert gpu_active == 1
@@ -191,7 +220,7 @@ def test_compute_job_gpu_stats_helper_uses_host_device_aware_active_count():
   job = MagicMock()
   job.jid = "test-gpu-jid-host-aware"
   j = MagicMock()
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
   j.start_time = t0
   j.end_time = t0
   j.acct_host_list = ["n1.example.com", "n2.example.com"]
@@ -200,16 +229,39 @@ def test_compute_job_gpu_stats_helper_uses_host_device_aware_active_count():
     del timeout, fn
     if key.startswith(f"{cu.KEY_GPU_AGG}:"):
       return [
-        {"host": "n1.example.com", "dev": "0", "event": "gpu_util", "cnt": 4, "vmax": 90.0, "vmean": 50.0},
-        {"host": "n1.example.com", "dev": "1", "event": "gpu_util", "cnt": 4, "vmax": 0.0, "vmean": 0.0},
-        {"host": "n2.example.com", "dev": "0", "event": "gpu_util", "cnt": 4, "vmax": 70.0, "vmean": 40.0},
+        {
+          "host": "n1.example.com",
+          "dev": "0",
+          "event": "gpu_util",
+          "cnt": 4,
+          "vmax": 90.0,
+          "vmean": 50.0,
+        },
+        {
+          "host": "n1.example.com",
+          "dev": "1",
+          "event": "gpu_util",
+          "cnt": 4,
+          "vmax": 0.0,
+          "vmean": 0.0,
+        },
+        {
+          "host": "n2.example.com",
+          "dev": "0",
+          "event": "gpu_util",
+          "cnt": 4,
+          "vmax": 70.0,
+          "vmean": 40.0,
+        },
       ]
     if key.startswith(f"{cu.KEY_GPU_COUNT}:"):
       return 3
     return None
 
   with patch.object(api, "cached_orm", side_effect=cached_se):
-    gpu_active, gpu_max, gpu_mean, gpu_count = api._compute_job_gpu_stats(job, j, 3600)
+    gpu_active, gpu_max, gpu_mean, gpu_count = api._compute_job_gpu_stats(
+      job, j, 3600
+    )
 
   assert gpu_active == 2
   assert gpu_max == 160.0
@@ -221,12 +273,12 @@ def test_gpu_agg_rows_for_job_batches_host__in():
   """GPU aggregate ORM path uses type-detail-sized host__in chunks."""
   from hpcperfstats.site.lib.machine import api
 
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
   j = MagicMock()
   j.start_time = t0
   j.end_time = t0
   n = TYPE_DETAIL_HOST_QUERY_BATCH + 2
-  j.acct_host_list = ["h{0}.x".format(i) for i in range(n)]
+  j.acct_host_list = [f"h{i}.x" for i in range(n)]
   chunk_sizes = []
 
   class Qs:
@@ -236,14 +288,14 @@ def test_gpu_agg_rows_for_job_batches_host__in():
     def annotate(self, **kwargs):
       # Non-empty so nvidia_gpu wins and later vendors are not queried.
       return [
-          {
-              "host": "h0.x",
-              "dev": "0",
-              "event": "gpu_util",
-              "cnt": 4,
-              "vmax": 1.0,
-              "vmean": 1.0,
-          }
+        {
+          "host": "h0.x",
+          "dev": "0",
+          "event": "gpu_util",
+          "cnt": 4,
+          "vmax": 1.0,
+          "vmean": 1.0,
+        }
       ]
 
     def __iter__(self):
@@ -255,8 +307,8 @@ def test_gpu_agg_rows_for_job_batches_host__in():
       return Qs()
 
   with patch(
-      "hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.host_data.objects",
-      Mgr(),
+    "hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.host_data.objects",
+    Mgr(),
   ):
     api._gpu_agg_rows_for_job(j)
   assert chunk_sizes == [TYPE_DETAIL_HOST_QUERY_BATCH, 2]
@@ -277,17 +329,17 @@ def test_job_detail_gpu_from_metrics_data_skips_host_data_cache():
       self.value = value
 
   gpu_rows = [
-      _MRow("detail_gpu_active", 2.0),
-      _MRow("detail_gpu_util_max", 99.5),
-      _MRow("detail_gpu_util_mean", 45.25),
-      _MRow("detail_gpu_count", 4.0),
+    _MRow("detail_gpu_active", 2.0),
+    _MRow("detail_gpu_util_max", 99.5),
+    _MRow("detail_gpu_util_mean", 45.25),
+    _MRow("detail_gpu_count", 4.0),
   ]
 
   mock_j = MagicMock()
   mock_j.acct_host_list = ["n1.example.com"]
   mock_j.schema = {}
   mock_j.get_llite_delta_by_event.return_value = MagicMock(empty=True)
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
   mock_j.start_time = t0
   mock_j.end_time = t0
 
@@ -303,9 +355,7 @@ def test_job_detail_gpu_from_metrics_data_skips_host_data_cache():
   def cached_se(key, timeout, fn):
     if key.startswith(f"{cu.KEY_JOB}:"):
       return job_mock
-    if key.startswith(f"{cu.KEY_GPU_AGG}:") or key.startswith(
-        f"{cu.KEY_GPU_COUNT}:"
-    ):
+    if key.startswith((f"{cu.KEY_GPU_AGG}:", f"{cu.KEY_GPU_COUNT}:")):
       gpu_cache_calls.append(key)
       return fn()
     if key.startswith(f"{cu.KEY_PROC_LIST}:"):
@@ -315,47 +365,46 @@ def test_job_detail_gpu_from_metrics_data_skips_host_data_cache():
   vis = MagicMock()
   vis.exists.return_value = True
   ctx = (
-      patch.object(api, "_require_auth", return_value=None),
-      patch.object(
-          api, "_apply_non_staff_job_visibility", return_value=vis
-      ),
-      patch.object(api, "get_site_content_cache_timeout", return_value=3600),
-      patch.object(api, "build_job_metrics_display_list", return_value=[]),
-      patch.object(api.cfg, "get_xalt_user", return_value=""),
-      patch.object(api.cfg, "get_host_name_ext", return_value=""),
-      patch.object(api, "cached_orm", side_effect=cached_se),
-      patch.object(
-          api,
-          "load_job_detail_artifact",
-          return_value={
-              "host_list": mock_j.acct_host_list,
-              "schema": {},
-              "fsio": {},
-              "gpu_active": 2,
-              "gpu_utilization_max": 99.5,
-              "gpu_utilization_mean": 45.25,
-              "gpu_count": 4,
-          },
-      ),
-      patch.object(
-          api,
-          "_job_for_detail_list_serializer",
-          return_value=job_mock,
-      ),
-      patch.object(
-          api,
-          "JobListSerializer",
-          return_value=MagicMock(data={"jid": jid, "username": "u1"}),
-      ),
-      patch.object(api, "local_timezone", timezone.utc),
+    patch.object(api, "_require_auth", return_value=None),
+    patch.object(api, "_apply_non_staff_job_visibility", return_value=vis),
+    patch.object(api, "get_site_content_cache_timeout", return_value=3600),
+    patch.object(api, "build_job_metrics_display_list", return_value=[]),
+    patch.object(api.cfg, "get_xalt_user", return_value=""),
+    patch.object(api.cfg, "get_host_name_ext", return_value=""),
+    patch.object(api, "cached_orm", side_effect=cached_se),
+    patch.object(
+      api,
+      "load_job_detail_artifact",
+      return_value={
+        "host_list": mock_j.acct_host_list,
+        "schema": {},
+        "fsio": {},
+        "gpu_active": 2,
+        "gpu_utilization_max": 99.5,
+        "gpu_utilization_mean": 45.25,
+        "gpu_count": 4,
+      },
+    ),
+    patch.object(
+      api,
+      "_job_for_detail_list_serializer",
+      return_value=job_mock,
+    ),
+    patch.object(
+      api,
+      "JobListSerializer",
+      return_value=MagicMock(data={"jid": jid, "username": "u1"}),
+    ),
+    patch.object(api, "local_timezone", UTC),
   )
 
-  with ThreadPoolExecutor(max_workers=4) as executor:
-    with ExitStack() as stack:
-      stack.enter_context(patch.object(api, "_get_small_executor", return_value=executor))
-      for cm in ctx:
-        stack.enter_context(cm)
-      response = api.job_detail(request, jid)
+  with ThreadPoolExecutor(max_workers=4) as executor, ExitStack() as stack:
+    stack.enter_context(
+      patch.object(api, "_get_small_executor", return_value=executor)
+    )
+    for cm in ctx:
+      stack.enter_context(cm)
+    response = api.job_detail(request, jid)
 
   assert response.status_code == 200
   assert response.data["gpu_active"] == 2
@@ -366,7 +415,7 @@ def test_job_detail_gpu_from_metrics_data_skips_host_data_cache():
 
 
 def test_gpu_count_total_prefers_nvidia_gpu_over_amd_gpu():
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
   j = MagicMock()
   j.start_time = t0
   j.end_time = t0
@@ -392,12 +441,15 @@ def test_gpu_count_total_prefers_nvidia_gpu_over_amd_gpu():
         return _Query([{"host": "n1.example.com", "mv": 1.0}])
       return _Query([])
 
-  with patch("hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.host_data.objects", _Mgr()):
+  with patch(
+    "hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.host_data.objects",
+    _Mgr(),
+  ):
     assert gpu_count_total_for_job_window(j) == 8
 
 
 def test_gpu_count_total_uses_intel_when_nvidia_and_amd_absent():
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
   j = MagicMock()
   j.start_time = t0
   j.end_time = t0
@@ -419,27 +471,30 @@ def test_gpu_count_total_uses_intel_when_nvidia_and_amd_absent():
         return _Query([{"host": "n1.example.com", "mv": 2.0}])
       return _Query([])
 
-  with patch("hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.host_data.objects", _Mgr()):
+  with patch(
+    "hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.host_data.objects",
+    _Mgr(),
+  ):
     assert gpu_count_total_for_job_window(j) == 2
 
 
 def test_gpu_detail_from_metric_values_all_null_falls_through():
   """All-null detail_gpu_* must not block host_data GPU fallback."""
   assert (
-      job_detail_artifacts_mod._gpu_detail_from_metric_values(
-          {
-              "detail_gpu_active": None,
-              "detail_gpu_util_max": None,
-              "detail_gpu_util_mean": None,
-              "detail_gpu_count": None,
-          }
-      )
-      is None
+    job_detail_artifacts_mod._gpu_detail_from_metric_values(
+      {
+        "detail_gpu_active": None,
+        "detail_gpu_util_max": None,
+        "detail_gpu_util_mean": None,
+        "detail_gpu_count": None,
+      }
+    )
+    is None
   )
 
 
 def test_gpu_count_total_returns_none_when_no_gpu_rows_exist():
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
   j = MagicMock()
   j.start_time = t0
   j.end_time = t0
@@ -456,14 +511,16 @@ def test_gpu_count_total_returns_none_when_no_gpu_rows_exist():
     def filter(self, **kwargs):
       return _Query()
 
-  with patch("hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.host_data.objects", _Mgr()):
+  with patch(
+    "hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.host_data.objects",
+    _Mgr(),
+  ):
     assert gpu_count_total_for_job_window(j) is None
 
 
 def test_compute_job_gpu_stats_degrades_when_cache_set_fails():
   """Real ``cached_orm``: cache miss + set error still returns aggregate + count from DB fns."""
-  from hpcperfstats.site.lib.machine import api
-  from hpcperfstats.site.lib.machine import cache_utils as cu
+  from hpcperfstats.site.lib.machine import api, cache_utils as cu
 
   mock_cache = MagicMock()
   mock_cache.get.side_effect = lambda key, default=None: default
@@ -472,30 +529,30 @@ def test_compute_job_gpu_stats_degrades_when_cache_set_fails():
   job = MagicMock()
   job.jid = "j-gpu-cache-set-fail"
   j = MagicMock()
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
   j.start_time = t0
   j.end_time = t0
   j.acct_host_list = ["n1.example.com"]
 
   fake_agg = [
-      {
-          "host": "n1.example.com",
-          "dev": "0",
-          "event": "gpu_util",
-          "cnt": 4,
-          "vmax": 250.0,
-          "vmean": 80.0,
-      },
+    {
+      "host": "n1.example.com",
+      "dev": "0",
+      "event": "gpu_util",
+      "cnt": 4,
+      "vmax": 250.0,
+      "vmean": 80.0,
+    },
   ]
 
   with patch.object(cu, "cache", mock_cache):
     with patch.object(api, "_gpu_agg_rows_for_job", return_value=fake_agg):
       with patch(
-          "hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.gpu_count_total_for_job_window",
-          return_value=6,
+        "hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.gpu_count_total_for_job_window",
+        return_value=6,
       ):
         gpu_active, gpu_max, gpu_mean, gpu_count = api._compute_job_gpu_stats(
-            job, j, 3600
+          job, j, 3600
         )
 
   assert gpu_max == 250.0
@@ -507,8 +564,7 @@ def test_compute_job_gpu_stats_degrades_when_cache_set_fails():
 
 def test_compute_job_gpu_stats_degrades_when_cache_get_raises():
   """Real ``cached_orm``: cache.get failure skips set and still runs query fns."""
-  from hpcperfstats.site.lib.machine import api
-  from hpcperfstats.site.lib.machine import cache_utils as cu
+  from hpcperfstats.site.lib.machine import api, cache_utils as cu
 
   mock_cache = MagicMock()
   mock_cache.get.side_effect = ConnectionError("redis down")
@@ -516,30 +572,30 @@ def test_compute_job_gpu_stats_degrades_when_cache_get_raises():
   job = MagicMock()
   job.jid = "j-gpu-cache-get-fail"
   j = MagicMock()
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
   j.start_time = t0
   j.end_time = t0
   j.acct_host_list = ["n1.example.com"]
 
   fake_agg = [
-      {
-          "host": "n1.example.com",
-          "dev": "0",
-          "event": "gpu_util",
-          "cnt": 4,
-          "vmax": 100.0,
-          "vmean": 50.0,
-      },
+    {
+      "host": "n1.example.com",
+      "dev": "0",
+      "event": "gpu_util",
+      "cnt": 4,
+      "vmax": 100.0,
+      "vmean": 50.0,
+    },
   ]
 
   with patch.object(cu, "cache", mock_cache):
     with patch.object(api, "_gpu_agg_rows_for_job", return_value=fake_agg):
       with patch(
-          "hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.gpu_count_total_for_job_window",
-          return_value=2,
+        "hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.gpu_count_total_for_job_window",
+        return_value=2,
       ):
         gpu_active, gpu_max, gpu_mean, gpu_count = api._compute_job_gpu_stats(
-            job, j, 3600
+          job, j, 3600
         )
 
   assert gpu_max == 100.0
@@ -567,11 +623,11 @@ def test_multiprecision_pie_uses_category10_colors_and_inset_layout():
   import json
 
   item, reason = job_detail_artifacts_mod._pie_item_from_precision_mix(
-      precision_mix={"FP32": 60.0, "FP64": 40.0},
-      title="CPU Multiprecision Mix",
-      empty_reason="empty",
-      help_plot_key="jobDetailPlot_multiprecision_cpu",
-      label_order=job_detail_artifacts_mod._CPU_PRECISION_LABEL_ORDER,
+    precision_mix={"FP32": 60.0, "FP64": 40.0},
+    title="CPU Multiprecision Mix",
+    empty_reason="empty",
+    help_plot_key="jobDetailPlot_multiprecision_cpu",
+    label_order=job_detail_artifacts_mod._CPU_PRECISION_LABEL_ORDER,
   )
   assert reason is None
   assert item is not None
@@ -589,18 +645,19 @@ def test_multiprecision_mix_payload_does_not_query_host_data(monkeypatch):
   host_data argument and renders the GPU pie from persisted ``avg_*_active``
   metric values. Backs the host-data-read-boundary policy for prewarm."""
   metric_values = {
-      "avg_flops64b": 30.0,
-      "avg_flops32b": 70.0,
-      "avg_tensor_active": 12.0,
-      "avg_fp16_active": 24.0,
-      "avg_fp32_active": 36.0,
-      "avg_fp64_active": 28.0,
+    "avg_flops64b": 30.0,
+    "avg_flops32b": 70.0,
+    "avg_tensor_active": 12.0,
+    "avg_fp16_active": 24.0,
+    "avg_fp32_active": 36.0,
+    "avg_fp64_active": 28.0,
   }
   payload = job_detail_artifacts_mod._multiprecision_mix_payload(metric_values)
   assert payload["cpu_unavailable_reason"] is None
   assert payload["gpu_unavailable_reason"] is None
   assert payload["cpu_plot_item"] is not None
   assert payload["gpu_plot_item"] is not None
-  assert not hasattr(job_detail_artifacts_mod, "gpu_precision_mix_rows_for_job_window")
+  assert not hasattr(
+    job_detail_artifacts_mod, "gpu_precision_mix_rows_for_job_window"
+  )
   assert not hasattr(job_detail_artifacts_mod, "reduce_gpu_precision_mix")
-

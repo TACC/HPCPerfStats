@@ -4,6 +4,7 @@ Dedicated populate-pool threads for in-process sealed/tar member streaming.
 Attributes:
   _POPULATE_POOL_CONTROLLER: Process-wide populate controller, or None.
 """
+
 from __future__ import annotations
 
 import threading
@@ -13,13 +14,13 @@ from typing import Any
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-    clear_worker_stage,
-    record_worker_stage,
-    set_worker_diagnostics_registry,
-    set_worker_pool_kind,
+  clear_worker_stage,
+  record_worker_stage,
+  set_worker_diagnostics_registry,
+  set_worker_pool_kind,
 )
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
-    create_sync_timedb_thread_pool,
+  create_sync_timedb_thread_pool,
 )
 
 _POPULATE_POOL_CONTROLLER = None
@@ -114,7 +115,7 @@ class PopulatePoolController:
       False
     """
     return self._pool is not None and any(
-        not result.ready() for result in self._results
+      not result.ready() for result in self._results
     )
 
   def start(self, *, script_name: Any, registry: Any) -> None:
@@ -138,22 +139,21 @@ class PopulatePoolController:
     self._registry = registry
     self._shutdown = threading.Event()
     self._pool = create_sync_timedb_thread_pool(
-        max_workers=n_workers,
-        thread_role="populate-pool",
-        process_title=str(script_name or "sync_timedb.py"),
+      max_workers=n_workers,
+      thread_role="populate-pool",
+      process_title=str(script_name or "sync_timedb.py"),
     )
     self._results = []
     for _index in range(n_workers):
       self._results.append(
-          self._pool.apply_async(
-              _populate_pool_worker_entry,
-              (self._script_name, self._registry, self._shutdown),
-          )
+        self._pool.apply_async(
+          _populate_pool_worker_entry,
+          (self._script_name, self._registry, self._shutdown),
+        )
       )
     log_print(
-        "populate-pool started workers=%d"
-        % len(self._results),
-        flush=True,
+      "populate-pool started workers=%d" % len(self._results),
+      flush=True,
     )
 
   def stop(self, *, force: bool = False) -> None:
@@ -206,16 +206,15 @@ class PopulatePoolController:
     restarted = 0
     while len(kept) < n_workers:
       kept.append(
-          self._pool.apply_async(
-              _populate_pool_worker_entry,
-              (self._script_name, self._registry, self._shutdown),
-          )
+        self._pool.apply_async(
+          _populate_pool_worker_entry,
+          (self._script_name, self._registry, self._shutdown),
+        )
       )
       restarted += 1
       log_print(
-          "WARN: populate-pool worker restarted index=%d"
-          % restarted,
-          flush=True,
+        "WARN: populate-pool worker restarted index=%d" % restarted,
+        flush=True,
       )
     self._results = kept
     return restarted
@@ -245,13 +244,13 @@ def _populate_pool_worker_entry(
   del script_name
   set_worker_pool_kind("populate-pool")
   set_worker_diagnostics_registry(registry)
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      archive_members_populate_queue_claim,
-      complete_populate_queue_job,
-      requeue_populate_queue_job,
-  )
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      execute_archive_members_populate_for_canonical,
+    execute_archive_members_populate_for_canonical,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+    archive_members_populate_queue_claim,
+    complete_populate_queue_job,
+    requeue_populate_queue_job,
   )
 
   while not shutdown.is_set():
@@ -270,15 +269,16 @@ def _populate_pool_worker_entry(
       complete_populate_queue_job(job)
     except Exception as exc:
       log_print(
-          "ERROR: populate-pool scan failed canonical=%s day=%s: %s"
-          % (canonical, day_token or "?", exc),
-          flush=True,
+        "ERROR: populate-pool scan failed canonical={} day={}: {}".format(
+          canonical, day_token or "?", exc
+        ),
+        flush=True,
       )
       requeue_populate_queue_job(job)
     finally:
       clear_worker_stage()
       from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
-          release_spawn_pool_worker_memory,
+        release_spawn_pool_worker_memory,
       )
 
       release_spawn_pool_worker_memory()

@@ -11,22 +11,24 @@ Attributes:
   _STAGE_DDL (str): TEMP staging table DDL (ON COMMIT DROP).
   _STAGE_INSERT (str): INSERT…SELECT…ON CONFLICT DO NOTHING SQL.
 """
+
 from __future__ import annotations
 
 import os
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 HOST_DATA_COPY_COLUMNS: tuple[str, ...] = (
-    "time",
-    "host",
-    "jid",
-    "type",
-    "dev",
-    "event",
-    "unit",
-    "value",
-    "delta",
-    "arc",
+  "time",
+  "host",
+  "jid",
+  "type",
+  "dev",
+  "event",
+  "unit",
+  "value",
+  "delta",
+  "arc",
 )
 
 _STAGE_DDL = """
@@ -74,7 +76,9 @@ def host_insert_arm() -> str:
   if raw in ("baseline", "candidate"):
     return raw
   # Opt-out of retained COPY default (A/B baseline re-runs).
-  copy_flag = os.environ.get("HPCPERFSTATS_SYNC_HOST_DATA_COPY", "").strip().lower()
+  copy_flag = (
+    os.environ.get("HPCPERFSTATS_SYNC_HOST_DATA_COPY", "").strip().lower()
+  )
   if copy_flag in ("0", "false", "no", "baseline"):
     return "baseline"
   # Default ON after Podman A/B retain (host_data_insert_ab_fde1031c…).
@@ -116,15 +120,12 @@ def _sql_literal(value: Any) -> str:
     return "t" if value else "f"
   # datetime / date → ISO for timestamptz COPY
   iso = getattr(value, "isoformat", None)
-  if callable(iso):
-    text = iso()
-  else:
-    text = str(value)
+  text = iso() if callable(iso) else str(value)
   return (
-      text.replace("\\", "\\\\")
-      .replace("\t", "\\t")
-      .replace("\n", "\\n")
-      .replace("\r", "\\r")
+    text.replace("\\", "\\\\")
+    .replace("\t", "\\t")
+    .replace("\n", "\\n")
+    .replace("\r", "\\r")
   )
 
 
@@ -176,25 +177,21 @@ def bulk_insert_host_data_ignore_conflicts(objs: Sequence[Any]) -> None:
 
   payload = host_data_objs_to_copy_bytes(objs)
   col_list = ", ".join(HOST_DATA_COPY_COLUMNS)
-  copy_sql = (
-      f"COPY host_data_ingest_stage ({col_list}) FROM STDIN"
-  )
+  copy_sql = f"COPY host_data_ingest_stage ({col_list}) FROM STDIN"
   from hpcperfstats.dbload import sync_timedb as st
 
   telem = bool(getattr(st, "_ingest_write_telem_on", False))
   copy_cm = st._held_ingest_write_phase("copy_s") if telem else nullcontext()
   conflict_cm = (
-      st._held_ingest_write_phase("conflict_insert_s") if telem else nullcontext()
+    st._held_ingest_write_phase("conflict_insert_s") if telem else nullcontext()
   )
   # Django defaults to autocommit; keep TEMP visible for COPY + INSERT.
-  with transaction.atomic():
-    with connection.cursor() as cursor:
-      cursor.execute(_STAGE_DDL)
-      with copy_cm:
-        with cursor.copy(copy_sql) as copy:
-          copy.write(payload)
-      with conflict_cm:
-        cursor.execute(_STAGE_INSERT)
+  with transaction.atomic(), connection.cursor() as cursor:
+    cursor.execute(_STAGE_DDL)
+    with copy_cm, cursor.copy(copy_sql) as copy:
+      copy.write(payload)
+    with conflict_cm:
+      cursor.execute(_STAGE_INSERT)
 
 
 def bulk_create_host_data_ignore_conflicts(objs: Sequence[Any]) -> None:
@@ -212,7 +209,9 @@ def bulk_create_host_data_ignore_conflicts(objs: Sequence[Any]) -> None:
   """
   if not objs:
     return
-  from hpcperfstats.site.lib.machine.models import host_data as host_data_model
+  from hpcperfstats.site.lib.machine.models import (
+    host_data as host_data_model,
+  )
 
   host_data_model.objects.bulk_create(list(objs), ignore_conflicts=True)
 

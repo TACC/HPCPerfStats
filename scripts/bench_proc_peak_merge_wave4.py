@@ -4,15 +4,16 @@
 Compares the merge strategy only (same row construction cost), not ASCII
 feed_line parsing — that cost is identical before/after Wave 4.
 """
+
 from __future__ import annotations
 
 import time
 from typing import Any
 
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-    HOST_PROC_PEAK_KEYS,
-    dedupe_proc_stats_peak_merge,
-    merge_proc_row_dicts,
+  HOST_PROC_PEAK_KEYS,
+  dedupe_proc_stats_peak_merge,
+  merge_proc_row_dicts,
 )
 
 
@@ -32,17 +33,17 @@ def _make_row(i: int, p: int) -> dict[str, Any]:
     'proc1'
   """
   row: dict[str, Any] = {
-      "time": float(1_700_000_000 + i),
-      "host": "cn001",
-      "jid": "job1",
-      "proc": f"proc{p}",
-      "device": f"proc{p}/{p}/0/0",
-      "vm_peak": 1000 + (i % 50),
-      "vm_hwm": 500 + (i % 50),
-      "vm_stk": 10,
-      "vm_exe": 1,
-      "vm_lib": 2,
-      "threads": 1 + (i % 8),
+    "time": float(1_700_000_000 + i),
+    "host": "cn001",
+    "jid": "job1",
+    "proc": f"proc{p}",
+    "device": f"proc{p}/{p}/0/0",
+    "vm_peak": 1000 + (i % 50),
+    "vm_hwm": 500 + (i % 50),
+    "vm_stk": 10,
+    "vm_exe": 1,
+    "vm_lib": 2,
+    "threads": 1 + (i % 8),
   }
   for k in HOST_PROC_PEAK_KEYS:
     row.setdefault(k, 0)
@@ -141,23 +142,22 @@ def main() -> None:
   assert len(out) == n_procs
   speedup = legacy_s / online_s if online_s > 0 else float("inf")
   print(
-      "legacy_copy_s=%.4f online_own_s=%.4f helper_own_s=%.4f "
-      "speedup=%.2fx rows=%d unique=%d"
-      % (
-          legacy_s,
-          online_s,
-          helper_s,
-          speedup,
-          n_samples * n_procs,
-          n_procs,
-      ),
+    "legacy_copy_s=%.4f online_own_s=%.4f helper_own_s=%.4f "
+    "speedup=%.2fx rows=%d unique=%d"
+    % (
+      legacy_s,
+      online_s,
+      helper_s,
+      speedup,
+      n_samples * n_procs,
+      n_procs,
+    ),
   )
   if online_s < legacy_s:
     print("SPEEDUP_OK")
   else:
     raise SystemExit(
-        "SPEEDUP_FAIL online_own_s=%.4f legacy_copy_s=%.4f"
-        % (online_s, legacy_s),
+      f"SPEEDUP_FAIL online_own_s={online_s:.4f} legacy_copy_s={legacy_s:.4f}",
     )
 
 

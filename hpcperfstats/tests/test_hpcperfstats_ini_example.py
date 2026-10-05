@@ -7,7 +7,7 @@ import pytest
 
 from hpcperfstats.dbload.lib import conf_parser as cfg
 from hpcperfstats.dbload.lib.ini_section_placement import (
-    validate_registry_sections,
+  validate_registry_sections,
 )
 
 
@@ -17,11 +17,11 @@ def _repo_ini_example_path():
 
 
 _OPTION_LINE_RE = re.compile(
-    r"^\s*#?\s*([A-Za-z_][A-Za-z0-9_]*)\s*=",
+  r"^\s*#?\s*([A-Za-z_][A-Za-z0-9_]*)\s*=",
 )
 
 _ACTIVE_OPTION_LINE_RE = re.compile(
-    r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$",
+  r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$",
 )
 
 
@@ -33,7 +33,7 @@ def _ini_values_equal_registry_default(example_value, registry_default):
     return True
   try:
     return float(example_value) == float(registry_default)
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     return False
 
 
@@ -77,7 +77,9 @@ def _parse_documented_ini_options(path):
 
 def test_ssl_certs_dir_removed_from_registry_and_example():
   """TLS authority moved to docker-compose.settings.yaml proxy_ssl_source volume."""
-  registry_options = {option for _section, option, _default in cfg.INI_OPTION_REGISTRY}
+  registry_options = {
+    option for _section, option, _default in cfg.INI_OPTION_REGISTRY
+  }
   assert "ssl_certs_dir" not in registry_options
   text = _repo_ini_example_path().read_text(encoding="utf-8")
   assert "ssl_certs_dir" not in text
@@ -86,43 +88,44 @@ def test_ssl_certs_dir_removed_from_registry_and_example():
 def test_dead_day_close_knobs_removed_from_registry_and_example():
   """Startup inflight, days_per_tick, and dead seal/defer/wait knobs stay gone."""
   dead = {
-      "sync_startup_day_close_max_inflight",
-      "archive_janitor_days_per_tick",
-      "archive_seal_idle_seconds",
-      "archive_maintenance_max_defer_seconds",
-      "sync_day_close_raw_removal_wait_seconds",
-      "sync_cold_path_max_concurrent_seals",
-      "sync_dispatch_step_size",
-      "metrics_scheduler_compute_threads",
-      "sync_archive_require_db_head_ingest",
-      "sync_day_close_async_stale_seconds",
-      "archive_pool_process_cap",
-      "sync_archive_pool_process_cap",
-      "sync_budget_archive_ratio",
-      "sync_budget_min_archive_percent",
-      "sync_overprovision_archive_multiplier",
+    "sync_startup_day_close_max_inflight",
+    "archive_janitor_days_per_tick",
+    "archive_seal_idle_seconds",
+    "archive_maintenance_max_defer_seconds",
+    "sync_day_close_raw_removal_wait_seconds",
+    "sync_cold_path_max_concurrent_seals",
+    "sync_dispatch_step_size",
+    "metrics_scheduler_compute_threads",
+    "sync_archive_require_db_head_ingest",
+    "sync_day_close_async_stale_seconds",
+    "archive_pool_process_cap",
+    "sync_archive_pool_process_cap",
+    "sync_budget_archive_ratio",
+    "sync_budget_min_archive_percent",
+    "sync_overprovision_archive_multiplier",
   }
-  registry_options = {option for _section, option, _default in cfg.INI_OPTION_REGISTRY}
+  registry_options = {
+    option for _section, option, _default in cfg.INI_OPTION_REGISTRY
+  }
   assert not (dead & registry_options)
   path = _repo_ini_example_path()
   text = path.read_text(encoding="utf-8")
   for key in dead:
     # Word-boundary match so ``archive_pool_process_cap`` does not hit
     # ``sync_archive_pool_processes``.
-    assert not re.search(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(key), text), (
-        "dead key still documented in example: %s" % key
-    )
+    assert not re.search(
+      rf"(?<![A-Za-z0-9_]){re.escape(key)}(?![A-Za-z0-9_])", text
+    ), f"dead key still documented in example: {key}"
 
 
 def test_ini_example_documents_every_registry_option():
   path = _repo_ini_example_path()
-  assert path.is_file(), "missing %s" % path
+  assert path.is_file(), f"missing {path}"
   documented = _parse_documented_ini_options(path)
   registry = cfg.ini_option_registry_set()
   missing = registry - documented
   assert not missing, (
-      "hpcperfstats.ini.example missing documented keys: %s"
-      % sorted(missing)
+    f"hpcperfstats.ini.example missing documented keys: {sorted(missing)}"
   )
 
 
@@ -132,8 +135,7 @@ def test_ini_example_has_no_unknown_options():
   registry = cfg.ini_option_registry_set()
   extra = documented - registry
   assert not extra, (
-      "hpcperfstats.ini.example documents unknown keys: %s"
-      % sorted(extra)
+    f"hpcperfstats.ini.example documents unknown keys: {sorted(extra)}"
   )
 
 
@@ -154,8 +156,7 @@ def test_sync_archive_require_db_ingest_under_pipeline_not_portal():
     if "sync_archive_require_db_ingest" not in line:
       continue
     assert current == "PIPELINE", (
-        "sync_archive_require_db_ingest must be under [PIPELINE], not [%s]"
-        % current
+      f"sync_archive_require_db_ingest must be under [PIPELINE], not [{current}]"
     )
 
 
@@ -165,19 +166,26 @@ def test_no_duplicate_options_across_sections_in_example():
   by_option = {}
   for section, option in documented:
     by_option.setdefault(option, set()).add(section)
-  duplicates = {opt: sections for opt, sections in by_option.items() if len(sections) > 1}
-  assert not duplicates, "options documented in multiple sections: %s" % duplicates
+  duplicates = {
+    opt: sections for opt, sections in by_option.items() if len(sections) > 1
+  }
+  assert not duplicates, (
+    f"options documented in multiple sections: {duplicates}"
+  )
 
 
 def test_ini_option_registry_defaults_are_strings_or_none():
   """Registry third element is None (required key) or a str code default."""
   for section, option, default in cfg.INI_OPTION_REGISTRY:
     assert default is None or isinstance(default, str), (
-        "%s.%s default must be None or str, got %r" % (section, option, default)
+      f"{section}.{option} default must be None or str, got {default!r}"
     )
-  assert cfg.ini_registry_default("sync_archive_members_populate_pool_processes") == "4"
+  assert (
+    cfg.ini_registry_default("sync_archive_members_populate_pool_processes")
+    == "4"
+  )
   assert cfg.ini_option_registry_set() == {
-      (section, option) for section, option, _default in cfg.INI_OPTION_REGISTRY
+    (section, option) for section, option, _default in cfg.INI_OPTION_REGISTRY
   }
 
 
@@ -194,11 +202,10 @@ def test_ini_example_option_blocks_have_preceding_comment():
     if not match or not section:
       continue
     if idx == 0:
-      pytest.fail("first key line without comment: %s" % line)
+      pytest.fail(f"first key line without comment: {line}")
     prev = lines[idx - 1].strip()
     assert prev.startswith("#"), (
-        "expected comment immediately above %s in section %s, got: %r"
-        % (match.group(1), section, prev)
+      f"expected comment immediately above {match.group(1)} in section {section}, got: {prev!r}"
     )
 
 
@@ -207,17 +214,17 @@ def test_ini_example_active_keys_do_not_equal_registry_defaults():
   path = _repo_ini_example_path()
   active = _parse_active_ini_options(path)
   defaults = {
-      (section, option): default
-      for section, option, default in cfg.INI_OPTION_REGISTRY
+    (section, option): default
+    for section, option, default in cfg.INI_OPTION_REGISTRY
   }
   redundant = []
   for key, value in sorted(active.items()):
     default = defaults.get(key)
     if _ini_values_equal_registry_default(value, default):
-      redundant.append("%s.%s=%s (default %r)" % (key[0], key[1], value, default))
+      redundant.append(f"{key[0]}.{key[1]}={value} (default {default!r})")
   assert not redundant, (
-      "hpcperfstats.ini.example has active keys at registry default "
-      "(comment them out): %s" % redundant
+    "hpcperfstats.ini.example has active keys at registry default "
+    f"(comment them out): {redundant}"
   )
 
 
@@ -233,16 +240,15 @@ def test_ini_example_has_no_pipeline_interpreter_abi_keys():
   path = _repo_ini_example_path()
   text = path.read_text(encoding="utf-8")
   forbidden = (
-      "listend_interpreter",
-      "sync_timedb_interpreter",
-      "update_metrics_interpreter",
-      "pipeline_interpreter",
+    "listend_interpreter",
+    "sync_timedb_interpreter",
+    "update_metrics_interpreter",
+    "pipeline_interpreter",
   )
   for key in forbidden:
     assert key not in text, key
   registry_options = {
-      option for _section, option, _default in cfg.INI_OPTION_REGISTRY
+    option for _section, option, _default in cfg.INI_OPTION_REGISTRY
   }
   for key in forbidden:
     assert key not in registry_options, key
-

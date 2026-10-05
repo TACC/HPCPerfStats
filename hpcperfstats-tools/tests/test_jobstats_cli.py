@@ -5,11 +5,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from hpcperfstats_tools.jobstats_cli import (
-    _bar,
-    _compute_metrics,
-    _format_timedelta,
-    main,
-    print_jobstats,
+  _bar,
+  _compute_metrics,
+  _format_timedelta,
+  main,
+  print_jobstats,
 )
 
 
@@ -33,8 +33,15 @@ def test_compute_metrics_cpu_util():
 
 def test_main_returns_1_without_api_key(monkeypatch, capsys):
   monkeypatch.delenv("HPCPERFSTATS_TOOLS_INI", raising=False)
-  with patch("hpcperfstats_tools.jobstats_cli.load_cached_api_key", return_value=None), patch(
-      "hpcperfstats_tools.jobstats_cli.api_key_help_url", return_value="http://x/api-key/"
+  with (
+    patch(
+      "hpcperfstats_tools.jobstats_cli.load_cached_api_key",
+      return_value=None,
+    ),
+    patch(
+      "hpcperfstats_tools.jobstats_cli.api_key_help_url",
+      return_value="http://x/api-key/",
+    ),
   ):
     code = main(["--api-url", "http://localhost:8000/api/", "12345"])
   assert code == 1
@@ -49,14 +56,14 @@ def test_print_jobstats_auth_failure_prints_display_cache_path(capsys):
 
   client = MagicMock()
   client.get_json.return_value = MagicMock(
-      status_code=401, ok=False, data=None, error="unauthorized"
+    status_code=401, ok=False, data=None, error="unauthorized"
   )
   with patch(
-      "hpcperfstats_tools.jobstats_cli.api_key_help_url",
-      return_value="http://x/api-key/",
+    "hpcperfstats_tools.jobstats_cli.api_key_help_url",
+    return_value="http://x/api-key/",
   ):
     data, code = _get_json(
-        client, "http://localhost:8000/api/", "jobs/1/", True, "bad-key"
+      client, "http://localhost:8000/api/", "jobs/1/", True, "bad-key"
     )
   assert data is None
   assert code == 401
@@ -72,22 +79,24 @@ def test_print_jobstats_auth_failure_prints_display_cache_path(capsys):
 
 def test_print_jobstats_returns_0(capsys):
   detail = {
-      "job_data": {
-          "jid": "9",
-          "username": "u",
-          "account": "a",
-          "state": "COMPLETED",
-          "nhosts": 1,
-          "ncores": 4,
-          "runtime": 3600.0,
-          "timelimit": 7200.0,
-      },
-      "metrics_list": [{"metric": "avg_cpuusage", "value": 2.0, "units": ""}],
+    "job_data": {
+      "jid": "9",
+      "username": "u",
+      "account": "a",
+      "state": "COMPLETED",
+      "nhosts": 1,
+      "ncores": 4,
+      "runtime": 3600.0,
+      "timelimit": 7200.0,
+    },
+    "metrics_list": [{"metric": "avg_cpuusage", "value": 2.0, "units": ""}],
   }
   client = MagicMock()
   client.get_json.side_effect = [
-      MagicMock(status_code=200, ok=True, data=detail, error=None),
-      MagicMock(status_code=200, ok=True, data={"machine_name": "test"}, error=None),
+    MagicMock(status_code=200, ok=True, data=detail, error=None),
+    MagicMock(
+      status_code=200, ok=True, data={"machine_name": "test"}, error=None
+    ),
   ]
   with patch("hpcperfstats_tools.jobstats_cli.ApiClient", return_value=client):
     code = print_jobstats("9", "http://localhost:8000/api/", True, "key")

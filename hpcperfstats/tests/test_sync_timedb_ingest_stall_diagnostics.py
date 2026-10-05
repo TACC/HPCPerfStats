@@ -2,8 +2,8 @@ import os
 
 from hpcperfstats.dbload import sync_timedb as st
 from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-    clear_dispatch_worker_stages,
-    seed_dispatch_worker_stages,
+  clear_dispatch_worker_stages,
+  seed_dispatch_worker_stages,
 )
 
 
@@ -11,7 +11,7 @@ def test_clear_dispatch_worker_stages_removes_placeholders():
   registry = {}
   path = "/data/host.example/1700000000"
   seed_dispatch_worker_stages(registry, [path])
-  key = "dispatch:%s" % os.path.normpath(path)
+  key = f"dispatch:{os.path.normpath(path)}"
   assert key in registry
   clear_dispatch_worker_stages(registry, [path])
   assert key not in registry
@@ -20,19 +20,21 @@ def test_clear_dispatch_worker_stages_removes_placeholders():
 def test_add_stats_file_to_db_records_worker_entry_before_ingest(monkeypatch):
   recorded = []
 
-  def fake_record(path, stage, *, substage=None, lookup_mode=None, timeout_s=None):
+  def fake_record(
+    path, stage, *, substage=None, lookup_mode=None, timeout_s=None
+  ):
     recorded.append((path, stage, substage, lookup_mode, timeout_s))
 
   monkeypatch.setattr(st, "record_worker_stage", fake_record)
   monkeypatch.setattr(
-      st,
-      "_run_ingest_timed",
-      lambda stats_file, stage, fn, **kwargs: fn(),
+    st,
+    "_run_ingest_timed",
+    lambda stats_file, stage, fn, **kwargs: fn(),
   )
   monkeypatch.setattr(
-      st,
-      "_add_stats_file_to_db_impl",
-      lambda *_a, **_k: ("/tmp/f", True, True, 0.0),
+    st,
+    "_add_stats_file_to_db_impl",
+    lambda *_a, **_k: ("/tmp/f", True, True, 0.0),
   )
   st.add_stats_file_to_db("/tmp/f")
   assert recorded[0] == ("/tmp/f", "ingest", "worker_entry", None, None)
@@ -49,19 +51,26 @@ def test_raise_if_ingest_per_file_deadline_exceeded_is_noop(monkeypatch):
     prog.end_ingest_progress(toks)
 
 
-
 def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
   monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_stall_idle_s", lambda: 1800.0,
+    st.cfg,
+    "get_sync_ingest_stall_idle_s",
+    lambda: 1800.0,
   )
   monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 14400.0,
+    st.cfg,
+    "get_sync_ingest_per_file_timeout_max_s",
+    lambda: 14400.0,
   )
   monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_pool_processes", lambda: 16,
+    st.cfg,
+    "get_sync_ingest_pool_processes",
+    lambda: 16,
   )
   monkeypatch.setattr(
-      st, "_ingest_stall_defer_state", lambda _day, _state, **kwargs: (False, "store_warm"),
+    st,
+    "_ingest_stall_defer_state",
+    lambda _day, _state, **kwargs: (False, "store_warm"),
   )
   diag = st.IngestStallDiagnostics()
   diag.current_imap_batch_max_timeout_s = 900.0
@@ -73,13 +82,13 @@ def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
   diag.current_imap_batch_size = 10
   diag.chunk_prewarm_summary = "2026-05-20:store_warm"
   suffix = st._build_ingest_stall_log_suffix(
-      sample=["/data/host.example/1716163200"],
-      day_hint="2026-05-20",
-      stall_diagnostics=diag,
-      progress_state={},
-      alive_workers=16,
-      consecutive=60,
-      poll_timeout_s=5.0,
+    sample=["/data/host.example/1716163200"],
+    day_hint="2026-05-20",
+    stall_diagnostics=diag,
+    progress_state={},
+    alive_workers=16,
+    consecutive=60,
+    poll_timeout_s=5.0,
   )
   assert "stall_defer=off defer_reason=store_warm" in suffix
   assert "sync_ingest_per_file_timeout_s=" not in suffix
@@ -97,22 +106,22 @@ def test_build_ingest_stall_log_suffix_includes_defer_and_pipeline(monkeypatch):
 def test_ingest_stall_defer_state_worker_progress_active(monkeypatch):
   monkeypatch.setattr(st.cfg, "get_sync_ingest_stall_idle_s", lambda: 1800.0)
   registry = {
-      "4242": {
-          "path": "/data/host.example/1700000000",
-          "stage": "ingest",
-          "substage": "db_write",
-          "t0": __import__("time").monotonic(),
-      },
+    "4242": {
+      "path": "/data/host.example/1700000000",
+      "stage": "ingest",
+      "substage": "db_write",
+      "t0": __import__("time").monotonic(),
+    },
   }
   diag = st.IngestStallDiagnostics()
   diag.worker_registry = registry
   diag.ingest_pipeline = "sealed_archive_backfill"
   defer_on, reason = st._ingest_stall_defer_state(
-      "",
-      {},
-      stall_diagnostics=diag,
-      consecutive_timeouts=500,
-      sample=["/data/daily/2024-01-01.tar.zst"],
+    "",
+    {},
+    stall_diagnostics=diag,
+    consecutive_timeouts=500,
+    sample=["/data/daily/2024-01-01.tar.zst"],
   )
   assert defer_on is True
   assert reason == "worker_progress_active"
@@ -124,55 +133,59 @@ def test_ingest_stall_defer_state_no_day_hint():
   assert reason == "no_day_hint"
 
 
-def test_ingest_stall_defer_long_budget_when_effective_exceeds_stall_wall(monkeypatch):
+def test_ingest_stall_defer_long_budget_when_effective_exceeds_stall_wall(
+  monkeypatch,
+):
   import time
 
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
   registry = {
-      "1001": {
-          "path": "/data/host.example/1700000000",
-          "stage": "parse",
-          "substage": "head",
-          "timeout_s": "14400.0",
-          "t0": time.monotonic(),
-      },
+    "1001": {
+      "path": "/data/host.example/1700000000",
+      "stage": "parse",
+      "substage": "head",
+      "timeout_s": "14400.0",
+      "t0": time.monotonic(),
+    },
   }
   diag = st.IngestStallDiagnostics()
   diag.worker_registry = registry
   diag.current_imap_batch_max_timeout_s = 900.0
   defer_on, reason = st._ingest_stall_defer_state(
-      "",
-      {},
-      stall_diagnostics=diag,
-      consecutive_timeouts=100,
+    "",
+    {},
+    stall_diagnostics=diag,
+    consecutive_timeouts=100,
   )
   assert defer_on is True
   assert reason == "long_ingest_budget"
 
 
-def test_ingest_stall_defer_long_budget_off_when_effective_matches_batch(monkeypatch):
+def test_ingest_stall_defer_long_budget_off_when_effective_matches_batch(
+  monkeypatch,
+):
   import time
 
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
   monkeypatch.setattr(st.cfg, "get_sync_ingest_stall_idle_s", lambda: 1800.0)
   registry = {
-      "1001": {
-          "path": "/data/host.example/1700000000",
-          "stage": "parse",
-          "substage": "head",
-          "timeout_s": "900.0",
-          # Stale stage so worker_progress_active does not defer.
-          "t0": time.monotonic() - 10000.0,
-      },
+    "1001": {
+      "path": "/data/host.example/1700000000",
+      "stage": "parse",
+      "substage": "head",
+      "timeout_s": "900.0",
+      # Stale stage so worker_progress_active does not defer.
+      "t0": time.monotonic() - 10000.0,
+    },
   }
   diag = st.IngestStallDiagnostics()
   diag.worker_registry = registry
   diag.current_imap_batch_max_timeout_s = 900.0
   defer_on, reason = st._ingest_stall_defer_state(
-      "",
-      {},
-      stall_diagnostics=diag,
-      consecutive_timeouts=200,
+    "",
+    {},
+    stall_diagnostics=diag,
+    consecutive_timeouts=200,
   )
   assert defer_on is False
   assert reason == "no_day_hint"
@@ -183,35 +196,40 @@ def test_ingest_stall_defer_state_idle_pool_ghost_suppresses_defer(monkeypatch):
 
   monkeypatch.setattr(st, "pool_workers_all_idle", lambda _pool: True)
   monkeypatch.setattr(
-      st, "worker_registry_shows_recent_progress", lambda *_a, **_k: False,
+    st,
+    "worker_registry_shows_recent_progress",
+    lambda *_a, **_k: False,
   )
   monkeypatch.setattr(
-      st, "worker_registry_shows_member_match_wait", lambda *_a, **_k: False,
+    st,
+    "worker_registry_shows_member_match_wait",
+    lambda *_a, **_k: False,
   )
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
   registry = {
-      "1001": {
-          "path": "/data/host.example/1700000000",
-          "stage": "parse",
-          "substage": "head",
-          # Match batch max so long_ingest_budget does not defer.
-          "timeout_s": "900.0",
-          "t0": time.monotonic() - 10000.0,
-      },
+    "1001": {
+      "path": "/data/host.example/1700000000",
+      "stage": "parse",
+      "substage": "head",
+      # Match batch max so long_ingest_budget does not defer.
+      "timeout_s": "900.0",
+      "t0": time.monotonic() - 10000.0,
+    },
   }
   diag = st.IngestStallDiagnostics()
   diag.worker_registry = registry
   diag.current_imap_batch_max_timeout_s = 900.0
   defer_on, reason = st._ingest_stall_defer_state(
-      "",
-      {},
-      stall_diagnostics=diag,
-      consecutive_timeouts=50,
-      pool=object(),
-      sample=["/data/host.example/1700000000"],
+    "",
+    {},
+    stall_diagnostics=diag,
+    consecutive_timeouts=50,
+    pool=object(),
+    sample=["/data/host.example/1700000000"],
   )
   assert defer_on is False
   assert reason == "idle_pool_ghost_inflight"
+
 
 def test_ingest_stall_defer_state_long_budget_when_workers_busy(monkeypatch):
   import time
@@ -219,59 +237,65 @@ def test_ingest_stall_defer_state_long_budget_when_workers_busy(monkeypatch):
   monkeypatch.setattr(st, "pool_workers_all_idle", lambda _pool: False)
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
   registry = {
-      "1001": {
-          "path": "/data/host.example/1700000000",
-          "stage": "parse",
-          "substage": "head",
-          "timeout_s": "14400.0",
-          "t0": time.monotonic(),
-      },
+    "1001": {
+      "path": "/data/host.example/1700000000",
+      "stage": "parse",
+      "substage": "head",
+      "timeout_s": "14400.0",
+      "t0": time.monotonic(),
+    },
   }
   diag = st.IngestStallDiagnostics()
   diag.worker_registry = registry
   diag.current_imap_batch_max_timeout_s = 900.0
   defer_on, reason = st._ingest_stall_defer_state(
-      "",
-      {},
-      stall_diagnostics=diag,
-      consecutive_timeouts=100,
-      pool=object(),
-      sample=["/data/host.example/1700000000"],
+    "",
+    {},
+    stall_diagnostics=diag,
+    consecutive_timeouts=100,
+    pool=object(),
+    sample=["/data/host.example/1700000000"],
   )
   assert defer_on is True
   assert reason == "long_ingest_budget"
 
 
-def test_build_ingest_stall_log_suffix_includes_worker_registry_counts(monkeypatch):
+def test_build_ingest_stall_log_suffix_includes_worker_registry_counts(
+  monkeypatch,
+):
   import time
 
   registry = {
-      "1001": {
-          "path": "/data/host.example/1700000000",
-          "stage": "parse",
-          "substage": "duplicate_scan_streaming",
-          "timeout_s": "5183.0",
-          "t0": time.monotonic(),
-      },
+    "1001": {
+      "path": "/data/host.example/1700000000",
+      "stage": "parse",
+      "substage": "duplicate_scan_streaming",
+      "timeout_s": "5183.0",
+      "t0": time.monotonic(),
+    },
   }
   diag = st.IngestStallDiagnostics()
   diag.worker_registry = registry
   monkeypatch.setattr(st.cfg, "get_sync_ingest_stall_idle_s", lambda: 1800.0)
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 14400.0)
   monkeypatch.setattr(
-      st, "_ingest_stall_defer_state", lambda _d, _s, **kwargs: (False, "store_warm"),
+    st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 14400.0
+  )
+  monkeypatch.setattr(
+    st,
+    "_ingest_stall_defer_state",
+    lambda _d, _s, **kwargs: (False, "store_warm"),
   )
   suffix = st._build_ingest_stall_log_suffix(
-      sample=[
-          "/data/host.example/1700000000",
-          "/data/host.example/1700000001",
-      ],
-      day_hint="2026-05-20",
-      stall_diagnostics=diag,
-      progress_state={},
-      alive_workers=16,
-      consecutive=60,
-      poll_timeout_s=5.0,
+    sample=[
+      "/data/host.example/1700000000",
+      "/data/host.example/1700000001",
+    ],
+    day_hint="2026-05-20",
+    stall_diagnostics=diag,
+    progress_state={},
+    alive_workers=16,
+    consecutive=60,
+    poll_timeout_s=5.0,
   )
   assert "worker_registry_n=1" in suffix
   assert "in_flight_n=2" in suffix
@@ -283,11 +307,16 @@ def test_build_ingest_stall_log_suffix_includes_worker_registry_counts(monkeypat
 def _stall_defer_poll_fn(monkeypatch, defer_reason):
   """Build on_stall_poll with a fixed defer reason for throttle tests."""
   monkeypatch.setattr(
-      st, "_ingest_stall_defer_state",
-      lambda *_a, **_k: (True, defer_reason),
+    st,
+    "_ingest_stall_defer_state",
+    lambda *_a, **_k: (True, defer_reason),
   )
-  monkeypatch.setattr(st, "_max_effective_ingest_timeout_from_registry", lambda *_a: 3290.8)
-  monkeypatch.setattr(st, "format_worker_stages_snapshot", lambda *_a, **_k: "stages")
+  monkeypatch.setattr(
+    st, "_max_effective_ingest_timeout_from_registry", lambda *_a: 3290.8
+  )
+  monkeypatch.setattr(
+    st, "format_worker_stages_snapshot", lambda *_a, **_k: "stages"
+  )
   monkeypatch.setattr(st, "_dynamic_stall_wall_seconds", lambda *_a: 3295.0)
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
   diag = st.IngestStallDiagnostics()
@@ -300,10 +329,13 @@ def test_stall_defer_warn_throttled_by_interval(monkeypatch):
   mono = {"t": 1000.0}
   monkeypatch.setattr(st.time, "monotonic", lambda: mono["t"])
   monkeypatch.setattr(
-      st, "log_print",
-      lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
+    st,
+    "log_print",
+    lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
   )
-  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_defer_log_interval_s", lambda: 60.0)
+  monkeypatch.setattr(
+    st.cfg, "get_sync_pool_stall_defer_log_interval_s", lambda: 60.0
+  )
   on_stall_poll = _stall_defer_poll_fn(monkeypatch, "long_ingest_budget")
   ctx = {"active_pool": None}
 
@@ -323,22 +355,32 @@ def test_stall_defer_warn_logs_immediately_on_reason_change(monkeypatch):
   mono = {"t": 2000.0}
   monkeypatch.setattr(st.time, "monotonic", lambda: mono["t"])
   monkeypatch.setattr(
-      st, "log_print",
-      lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
+    st,
+    "log_print",
+    lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
   )
-  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_defer_log_interval_s", lambda: 60.0)
+  monkeypatch.setattr(
+    st.cfg, "get_sync_pool_stall_defer_log_interval_s", lambda: 60.0
+  )
   reasons = iter(["long_ingest_budget", "worker_progress_active"])
   monkeypatch.setattr(
-      st, "_ingest_stall_defer_state",
-      lambda *_a, **_k: (True, next(reasons)),
+    st,
+    "_ingest_stall_defer_state",
+    lambda *_a, **_k: (True, next(reasons)),
   )
-  monkeypatch.setattr(st, "_max_effective_ingest_timeout_from_registry", lambda *_a: 3290.8)
-  monkeypatch.setattr(st, "format_worker_stages_snapshot", lambda *_a, **_k: "stages")
+  monkeypatch.setattr(
+    st, "_max_effective_ingest_timeout_from_registry", lambda *_a: 3290.8
+  )
+  monkeypatch.setattr(
+    st, "format_worker_stages_snapshot", lambda *_a, **_k: "stages"
+  )
   monkeypatch.setattr(st, "_dynamic_stall_wall_seconds", lambda *_a: 3295.0)
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
   diag = st.IngestStallDiagnostics()
   diag.current_imap_batch_max_timeout_s = 3290.8
-  on_stall_poll = st._make_ingest_stall_poll_fn(None, {}, stall_diagnostics=diag)
+  on_stall_poll = st._make_ingest_stall_poll_fn(
+    None, {}, stall_diagnostics=diag
+  )
   ctx = {"active_pool": None}
 
   on_stall_poll(0, "ctx", ctx)
@@ -352,10 +394,13 @@ def test_stall_defer_warn_logs_immediately_on_reason_change(monkeypatch):
 def test_stall_defer_warn_interval_zero_logs_every_poll(monkeypatch):
   logs = []
   monkeypatch.setattr(
-      st, "log_print",
-      lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
+    st,
+    "log_print",
+    lambda *args, **kwargs: logs.append(" ".join(str(a) for a in args)),
   )
-  monkeypatch.setattr(st.cfg, "get_sync_pool_stall_defer_log_interval_s", lambda: 0.0)
+  monkeypatch.setattr(
+    st.cfg, "get_sync_pool_stall_defer_log_interval_s", lambda: 0.0
+  )
   on_stall_poll = _stall_defer_poll_fn(monkeypatch, "long_ingest_budget")
   ctx = {"active_pool": None}
 
@@ -368,8 +413,9 @@ def test_stall_defer_warn_interval_zero_logs_every_poll(monkeypatch):
 def test_ingest_stall_poll_triggers_throttled_reap(monkeypatch):
   reap_calls = []
   monkeypatch.setattr(
-      st, "_ingest_stall_defer_state",
-      lambda *_a, **_k: (False, ""),
+    st,
+    "_ingest_stall_defer_state",
+    lambda *_a, **_k: (False, ""),
   )
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
 
@@ -377,9 +423,9 @@ def test_ingest_stall_poll_triggers_throttled_reap(monkeypatch):
     reap_calls.append(True)
 
   on_stall_poll = st._make_ingest_stall_poll_fn(
-      None,
-      {},
-      supervisor_reap_fn=_reap,
+    None,
+    {},
+    supervisor_reap_fn=_reap,
   )
   on_stall_poll(1, "ctx", {"active_pool": None})
   assert reap_calls == [True]
@@ -397,20 +443,38 @@ def test_reap_supervisor_pool_children_throttled(monkeypatch):
   mono = {"t": 1000.0}
   monkeypatch.setattr(st.time, "monotonic", lambda: mono["t"])
 
-  assert st._maybe_reap_supervisor_pool_children_throttled(
-      object(), object(), None, context="unit",
-  ) is True
+  assert (
+    st._maybe_reap_supervisor_pool_children_throttled(
+      object(),
+      object(),
+      None,
+      context="unit",
+    )
+    is True
+  )
   assert len(reap_calls) == 1
 
-  assert st._maybe_reap_supervisor_pool_children_throttled(
-      object(), object(), None, context="unit",
-  ) is False
+  assert (
+    st._maybe_reap_supervisor_pool_children_throttled(
+      object(),
+      object(),
+      None,
+      context="unit",
+    )
+    is False
+  )
   assert len(reap_calls) == 1
 
   mono["t"] = 1061.0
-  assert st._maybe_reap_supervisor_pool_children_throttled(
-      object(), object(), None, context="unit",
-  ) is True
+  assert (
+    st._maybe_reap_supervisor_pool_children_throttled(
+      object(),
+      object(),
+      None,
+      context="unit",
+    )
+    is True
+  )
   assert len(reap_calls) == 2
 
 
@@ -433,22 +497,25 @@ def test_reap_supervisor_pool_children_isolates_pool_reap_failure(monkeypatch):
   monkeypatch.setattr(st, "reap_pool_worker_pids", _boom_reap)
   monkeypatch.setattr(st, "reap_zombie_children_of_self", _reap_zombies)
   monkeypatch.setattr(st, "warn_unreaped_zombie_children", _warn)
-  monkeypatch.setattr(st, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(
+    st, "log_print", lambda msg, **kwargs: logs.append(str(msg))
+  )
 
   st._reap_supervisor_pool_children(
-      object(), object(), None, context="fault_iso",
+    object(),
+    object(),
+    None,
+    context="fault_iso",
   )
   assert zombie_calls == ["fault_iso"]
   assert warn_calls == ["fault_iso"]
   assert any(
-      "WARN: supervisor child hygiene step failed step=reap_ingest_pool"
-      in line
-      for line in logs
+    "WARN: supervisor child hygiene step failed step=reap_ingest_pool" in line
+    for line in logs
   )
   assert any(
-      "WARN: supervisor child hygiene step failed step=reap_archive_pool"
-      in line
-      for line in logs
+    "WARN: supervisor child hygiene step failed step=reap_archive_pool" in line
+    for line in logs
   )
 
 
@@ -456,24 +523,26 @@ def test_ingest_stall_defer_store_populate_before_idle_ghost(monkeypatch):
   """store_populate_active must win over idle_pool_ghost during members-store wait."""
   monkeypatch.setattr(st, "pool_workers_all_idle", lambda _pool: True)
   monkeypatch.setattr(
-      st, "worker_registry_shows_recent_progress", lambda *_a, **_k: False,
+    st,
+    "worker_registry_shows_recent_progress",
+    lambda *_a, **_k: False,
   )
   monkeypatch.setattr(
-      st,
-      "archive_members_populate_shows_progress_for_day",
-      lambda *_a, **_k: True,
+    st,
+    "archive_members_populate_shows_progress_for_day",
+    lambda *_a, **_k: True,
   )
   monkeypatch.setattr(st.cfg, "get_sync_pool_poll_timeout_s", lambda: 5.0)
   diag = st.IngestStallDiagnostics()
   diag.worker_registry = {}
   diag.current_imap_batch_max_timeout_s = 900.0
   defer_on, reason = st._ingest_stall_defer_state(
-      "2026-06-05",
-      {},
-      stall_diagnostics=diag,
-      consecutive_timeouts=50,
-      pool=object(),
-      sample=["/data/host.example/1700000000"],
+    "2026-06-05",
+    {},
+    stall_diagnostics=diag,
+    consecutive_timeouts=50,
+    pool=object(),
+    sample=["/data/host.example/1700000000"],
   )
   assert defer_on is True
   assert reason == "store_populate_active"
@@ -483,34 +552,34 @@ def test_ingest_stall_defer_member_match_wait_despite_store_warm(monkeypatch):
   import time
 
   monkeypatch.setattr(
-      st,
-      "members_cache_is_fully_warm",
-      lambda *_a, **_k: True,
+    st,
+    "members_cache_is_fully_warm",
+    lambda *_a, **_k: True,
   )
   monkeypatch.setattr(
-      st,
-      "archive_members_populate_shows_progress_for_day",
-      lambda *_a, **_k: False,
+    st,
+    "archive_members_populate_shows_progress_for_day",
+    lambda *_a, **_k: False,
   )
   monkeypatch.setattr(st, "pool_workers_all_idle", lambda _pool: False)
   registry = {
-      "4242": {
-          "path": "/data/host.example/1700000000",
-          "stage": "ingest",
-          "substage": "archive_member_lookup",
-          "lookup_mode": "store_wait",
-          "t0": time.monotonic(),
-      },
+    "4242": {
+      "path": "/data/host.example/1700000000",
+      "stage": "ingest",
+      "substage": "archive_member_lookup",
+      "lookup_mode": "store_wait",
+      "t0": time.monotonic(),
+    },
   }
   diag = st.IngestStallDiagnostics()
   diag.worker_registry = registry
   diag.ingest_pipeline = "combined"
   defer_on, reason = st._ingest_stall_defer_state(
-      "2026-07-17",
-      {},
-      stall_diagnostics=diag,
-      consecutive_timeouts=100,
-      sample=["/data/host.example/1700000000"],
+    "2026-07-17",
+    {},
+    stall_diagnostics=diag,
+    consecutive_timeouts=100,
+    sample=["/data/host.example/1700000000"],
   )
   assert defer_on is True
   assert reason == "member_match_wait"
@@ -520,34 +589,34 @@ def test_ingest_stall_defer_worker_progress_combined_pipeline(monkeypatch):
   import time
 
   monkeypatch.setattr(
-      st,
-      "archive_members_populate_shows_progress_for_day",
-      lambda *_a, **_k: False,
+    st,
+    "archive_members_populate_shows_progress_for_day",
+    lambda *_a, **_k: False,
   )
   monkeypatch.setattr(
-      st,
-      "members_cache_is_fully_warm",
-      lambda *_a, **_k: True,
+    st,
+    "members_cache_is_fully_warm",
+    lambda *_a, **_k: True,
   )
   monkeypatch.setattr(st.cfg, "get_sync_ingest_stall_idle_s", lambda: 1800.0)
   registry = {
-      "4242": {
-          "path": "/data/host.example/1700000000",
-          "stage": "ingest",
-          "substage": "parse",
-          "t0": time.monotonic(),
-          "timeout_s": "900.0",
-      },
+    "4242": {
+      "path": "/data/host.example/1700000000",
+      "stage": "ingest",
+      "substage": "parse",
+      "t0": time.monotonic(),
+      "timeout_s": "900.0",
+    },
   }
   diag = st.IngestStallDiagnostics()
   diag.worker_registry = registry
   diag.ingest_pipeline = "combined"
   defer_on, reason = st._ingest_stall_defer_state(
-      "2026-07-17",
-      {},
-      stall_diagnostics=diag,
-      consecutive_timeouts=50,
-      sample=["/data/host.example/1700000000"],
+    "2026-07-17",
+    {},
+    stall_diagnostics=diag,
+    consecutive_timeouts=50,
+    sample=["/data/host.example/1700000000"],
   )
   assert defer_on is True
   assert reason == "worker_progress_active"
@@ -555,10 +624,10 @@ def test_ingest_stall_defer_worker_progress_combined_pipeline(monkeypatch):
 
 def test_record_worker_stage_publishes_timeout_s():
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-      clear_worker_stage,
-      record_worker_stage,
-      set_worker_diagnostics_registry,
-      worker_registry_key,
+    clear_worker_stage,
+    record_worker_stage,
+    set_worker_diagnostics_registry,
+    worker_registry_key,
   )
 
   registry = {}

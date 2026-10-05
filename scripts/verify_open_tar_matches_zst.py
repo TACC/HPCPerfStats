@@ -26,15 +26,16 @@ Examples (from checkout root)::
 Attributes:
   _REPO_ROOT: Attribute.
 """
-from __future__ import annotations
 
-from typing import Any, Iterator
+from __future__ import annotations
 
 import argparse
 import json
 import os
 import sys
+from collections.abc import Iterator
 from datetime import date, datetime
+from typing import Any
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -62,7 +63,7 @@ def _parse_day(value: str) -> date:
     return datetime.strptime(value, "%Y-%m-%d").date()
   except ValueError as exc:
     raise argparse.ArgumentTypeError(
-        "expected YYYY-MM-DD, got %r" % value,
+      f"expected YYYY-MM-DD, got {value!r}",
     ) from exc
 
 
@@ -89,14 +90,14 @@ def _member_map_diff(
   tar_only = sorted(tar_names - zst_names)
   zst_only = sorted(zst_names - tar_names)
   size_mismatch = sorted(
-      name
-      for name in tar_names & zst_names
-      if tar_members[name] != zst_members[name]
+    name
+    for name in tar_names & zst_names
+    if tar_members[name] != zst_members[name]
   )
   return {
-      "tar_only": tar_only,
-      "zst_only": zst_only,
-      "size_mismatch": size_mismatch,
+    "tar_only": tar_only,
+    "zst_only": zst_only,
+    "size_mismatch": size_mismatch,
   }
 
 
@@ -117,26 +118,27 @@ def _format_diff_detail(
     str: Multi-line detail (may be empty).
 
   Examples:
-    >>> _format_diff_detail({}, {}, {"tar_only": [], "zst_only": [], "size_mismatch": []})
+    >>> _format_diff_detail(
+    ...   {}, {}, {"tar_only": [], "zst_only": [], "size_mismatch": []}
+    ... )
     ''
   """
   lines: list[str] = []
   for name in diff["tar_only"][:20]:
-    lines.append("  tar_only %s size=%s" % (name, tar_members.get(name)))
+    lines.append(f"  tar_only {name} size={tar_members.get(name)}")
   for name in diff["zst_only"][:20]:
-    lines.append("  zst_only %s size=%s" % (name, zst_members.get(name)))
+    lines.append(f"  zst_only {name} size={zst_members.get(name)}")
   for name in diff["size_mismatch"][:20]:
     lines.append(
-        "  size_mismatch %s tar=%s zst=%s"
-        % (name, tar_members.get(name), zst_members.get(name))
+      f"  size_mismatch {name} tar={tar_members.get(name)} zst={zst_members.get(name)}"
     )
   extra = (
-      len(diff["tar_only"])
-      + len(diff["zst_only"])
-      + len(diff["size_mismatch"])
-      - min(20, len(diff["tar_only"]))
-      - min(20, len(diff["zst_only"]))
-      - min(20, len(diff["size_mismatch"]))
+    len(diff["tar_only"])
+    + len(diff["zst_only"])
+    + len(diff["size_mismatch"])
+    - min(20, len(diff["tar_only"]))
+    - min(20, len(diff["zst_only"]))
+    - min(20, len(diff["size_mismatch"]))
   )
   if extra > 0:
     lines.append("  ... (%d more diff entries)" % extra)
@@ -163,16 +165,20 @@ def _iter_tar_paths_for_args(
     Iterator[str]: Absolute paths to open daily tars.
 
   Examples:
-    >>> list(_iter_tar_paths_for_args("/tmp", day=date(2026, 1, 1), since=None, until=None))  # doctest: +SKIP
+    >>> list(
+    ...   _iter_tar_paths_for_args(
+    ...     "/tmp", day=date(2026, 1, 1), since=None, until=None
+    ...   )
+    ... )  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      iter_daily_tar_paths,
+    iter_daily_tar_paths,
   )
 
   if day is not None:
     candidate = os.path.join(
-        daily_archive_dir,
-        day.strftime("%Y-%m-%d") + ".tar",
+      daily_archive_dir,
+      day.strftime("%Y-%m-%d") + ".tar",
     )
     if os.path.isfile(candidate):
       yield candidate
@@ -204,7 +210,7 @@ def _archive_date_from_tar_path(tar_path: str) -> date | None:
     datetime.date(2026, 6, 7)
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      parse_archive_date_from_daily_tar_path,
+    parse_archive_date_from_daily_tar_path,
   )
 
   parsed = parse_archive_date_from_daily_tar_path(tar_path)
@@ -233,25 +239,32 @@ def _check_one_tar(
     dict[str, Any]: Result record with ``status`` and diagnostic fields.
 
   Examples:
-    >>> _check_one_tar("/no/such.tar", use_store=False, skip_sealed_dirty=False, strict=False)  # doctest: +SKIP
+    >>> _check_one_tar(
+    ...   "/no/such.tar",
+    ...   use_store=False,
+    ...   skip_sealed_dirty=False,
+    ...   strict=False,
+    ... )  # doctest: +SKIP
   """
-  from hpcperfstats.dbload.lib.archive_compress import compressed_sibling_paths
+  from hpcperfstats.dbload.lib.archive_compress import (
+    compressed_sibling_paths,
+  )
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      _scan_compressed_archive_members_and_readable,
-      _sealed_archive_members_via_store_or_scan,
-      get_mutable_tar_authority_member_map,
-      is_daily_tar_sealed_dirty,
-      verify_tar_archive_readable,
+    _scan_compressed_archive_members_and_readable,
+    _sealed_archive_members_via_store_or_scan,
+    get_mutable_tar_authority_member_map,
+    is_daily_tar_sealed_dirty,
+    verify_tar_archive_readable,
   )
 
   tar_path = os.path.normpath(tar_path)
   day_token = os.path.basename(tar_path).replace(".tar", "")
   zst_path, gz_path = compressed_sibling_paths(tar_path)
   result: dict[str, Any] = {
-      "day": day_token,
-      "tar_path": tar_path,
-      "zst_path": zst_path,
-      "status": "ok",
+    "day": day_token,
+    "tar_path": tar_path,
+    "zst_path": zst_path,
+    "status": "ok",
   }
 
   if not os.path.isfile(zst_path):
@@ -275,10 +288,12 @@ def _check_one_tar(
     return result
 
   if use_store:
-    zst_readable, zst_members = _sealed_archive_members_via_store_or_scan(zst_path)
+    zst_readable, zst_members = _sealed_archive_members_via_store_or_scan(
+      zst_path
+    )
   else:
     zst_readable, zst_members = _scan_compressed_archive_members_and_readable(
-        zst_path,
+      zst_path,
     )
   if not zst_readable:
     result["status"] = "zst_unreadable"
@@ -317,75 +332,75 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     >>> _build_arg_parser()  # doctest: +SKIP
   """
   parser = argparse.ArgumentParser(
-      description=(
-          "Confirm open daily .tar files match sibling .tar.zst member maps "
-          "(names and byte sizes)."
-      ),
+    description=(
+      "Confirm open daily .tar files match sibling .tar.zst member maps "
+      "(names and byte sizes)."
+    ),
   )
   parser.add_argument(
-      "--ini",
-      default="",
-      help="Path to hpcperfstats.ini (sets HPCPERFSTATS_INI for this run).",
+    "--ini",
+    default="",
+    help="Path to hpcperfstats.ini (sets HPCPERFSTATS_INI for this run).",
   )
   parser.add_argument(
-      "--daily-archive-dir",
-      default="",
-      help="Override [PIPELINE] daily_archive_dir from ini.",
+    "--daily-archive-dir",
+    default="",
+    help="Override [PIPELINE] daily_archive_dir from ini.",
   )
   parser.add_argument(
-      "--day",
-      type=_parse_day,
-      default=None,
-      metavar="YYYY-MM-DD",
-      help="Check one calendar day only.",
+    "--day",
+    type=_parse_day,
+    default=None,
+    metavar="YYYY-MM-DD",
+    help="Check one calendar day only.",
   )
   parser.add_argument(
-      "--since",
-      type=_parse_day,
-      default=None,
-      metavar="YYYY-MM-DD",
-      help="Only check days on or after this date.",
+    "--since",
+    type=_parse_day,
+    default=None,
+    metavar="YYYY-MM-DD",
+    help="Only check days on or after this date.",
   )
   parser.add_argument(
-      "--until",
-      type=_parse_day,
-      default=None,
-      metavar="YYYY-MM-DD",
-      help="Only check days on or before this date.",
+    "--until",
+    type=_parse_day,
+    default=None,
+    metavar="YYYY-MM-DD",
+    help="Only check days on or before this date.",
   )
   parser.add_argument(
-      "--skip-sealed-dirty",
-      action="store_true",
-      help=(
-          "Skip days whose .tar mtime is newer than .tar.zst (active append / "
-          "pending re-seal)."
-      ),
+    "--skip-sealed-dirty",
+    action="store_true",
+    help=(
+      "Skip days whose .tar mtime is newer than .tar.zst (active append / "
+      "pending re-seal)."
+    ),
   )
   parser.add_argument(
-      "--strict",
-      action="store_true",
-      help=(
-          "Treat sealed-dirty days as failure even when member maps match "
-          "(default: warn only)."
-      ),
+    "--strict",
+    action="store_true",
+    help=(
+      "Treat sealed-dirty days as failure even when member maps match "
+      "(default: warn only)."
+    ),
   )
   parser.add_argument(
-      "--use-store",
-      action="store_true",
-      help=(
-          "Read sealed members via the in-process members store "
-          "(matches ingest single-flight; default is a direct zstd stream)."
-      ),
+    "--use-store",
+    action="store_true",
+    help=(
+      "Read sealed members via the in-process members store "
+      "(matches ingest single-flight; default is a direct zstd stream)."
+    ),
   )
   parser.add_argument(
-      "--verbose",
-      action="store_true",
-      help="Print one line per checked day.",
+    "--verbose",
+    action="store_true",
+    help="Print one line per checked day.",
   )
   parser.add_argument(
-      "--json",
-      action="store_true",
-      help="Emit machine-readable JSON summary on stdout.",
+    "--json",
+    action="store_true",
+    help="Emit machine-readable JSON summary on stdout.",
   )
   return parser
 
@@ -413,49 +428,50 @@ def main(argv: list[str] | None = None) -> int:
 
   import hpcperfstats.dbload.lib.conf_parser as cfg_mod
 
-  daily_archive_dir = args.daily_archive_dir or cfg_mod.get_daily_archive_dir_path()
+  daily_archive_dir = (
+    args.daily_archive_dir or cfg_mod.get_daily_archive_dir_path()
+  )
   daily_archive_dir = os.path.normpath(str(daily_archive_dir))
   if not os.path.isdir(daily_archive_dir):
     print(
-        "ERROR: daily_archive_dir is not a directory: %s" % daily_archive_dir,
-        file=sys.stderr,
+      f"ERROR: daily_archive_dir is not a directory: {daily_archive_dir}",
+      file=sys.stderr,
     )
     return 1
 
   tar_paths = list(
-      _iter_tar_paths_for_args(
-          daily_archive_dir,
-          day=args.day,
-          since=args.since,
-          until=args.until,
-      )
+    _iter_tar_paths_for_args(
+      daily_archive_dir,
+      day=args.day,
+      since=args.since,
+      until=args.until,
+    )
   )
   if not tar_paths:
     print(
-        "No open daily .tar files matched under %s" % daily_archive_dir,
-        file=sys.stderr,
+      f"No open daily .tar files matched under {daily_archive_dir}",
+      file=sys.stderr,
     )
     return 0
 
   results: list[dict[str, Any]] = []
   for tar_path in tar_paths:
     result = _check_one_tar(
-        tar_path,
-        use_store=args.use_store,
-        skip_sealed_dirty=args.skip_sealed_dirty,
-        strict=args.strict,
+      tar_path,
+      use_store=args.use_store,
+      skip_sealed_dirty=args.skip_sealed_dirty,
+      strict=args.strict,
     )
     results.append(result)
     if args.verbose and not args.json:
       print(
-          "%(day)s status=%(status)s tar_members=%(tar_member_count)s "
-          "zst_members=%(zst_member_count)s"
-          % {
-              "day": result.get("day", "?"),
-              "status": result.get("status", "?"),
-              "tar_member_count": result.get("tar_member_count", "-"),
-              "zst_member_count": result.get("zst_member_count", "-"),
-          }
+        "{day} status={status} tar_members={tar_member_count} "
+        "zst_members={zst_member_count}".format(
+          day=result.get("day", "?"),
+          status=result.get("status", "?"),
+          tar_member_count=result.get("tar_member_count", "-"),
+          zst_member_count=result.get("zst_member_count", "-"),
+        )
       )
       diff_detail = result.get("diff_detail")
       if diff_detail:
@@ -467,47 +483,47 @@ def main(argv: list[str] | None = None) -> int:
     counts[status] = counts.get(status, 0) + 1
 
   hard_fail_statuses = {
-      "missing_zst",
-      "tar_unreadable",
-      "zst_unreadable",
-      "tar_empty",
-      "zst_empty",
-      "mismatch",
-      "sealed_dirty",
+    "missing_zst",
+    "tar_unreadable",
+    "zst_unreadable",
+    "tar_empty",
+    "zst_empty",
+    "mismatch",
+    "sealed_dirty",
   }
   failures = [
-      result for result in results
-      if result.get("status") in hard_fail_statuses
+    result for result in results if result.get("status") in hard_fail_statuses
   ]
 
   summary = {
-      "daily_archive_dir": daily_archive_dir,
-      "checked": len(results),
-      "counts": counts,
-      "failures": [
-          {
-              "day": item.get("day"),
-              "status": item.get("status"),
-              "tar_path": item.get("tar_path"),
-              "zst_path": item.get("zst_path"),
-              "diff": item.get("diff"),
-              "diff_detail": item.get("diff_detail"),
-          }
-          for item in failures
-      ],
+    "daily_archive_dir": daily_archive_dir,
+    "checked": len(results),
+    "counts": counts,
+    "failures": [
+      {
+        "day": item.get("day"),
+        "status": item.get("status"),
+        "tar_path": item.get("tar_path"),
+        "zst_path": item.get("zst_path"),
+        "diff": item.get("diff"),
+        "diff_detail": item.get("diff_detail"),
+      }
+      for item in failures
+    ],
   }
 
   if args.json:
     print(json.dumps(summary, indent=2, sort_keys=True))
   else:
     print(
-        "daily_archive_dir=%s checked=%d counts=%s"
-        % (daily_archive_dir, len(results), counts)
+      "daily_archive_dir=%s checked=%d counts=%s"
+      % (daily_archive_dir, len(results), counts)
     )
     for item in failures:
       print(
-          "FAIL %(day)s status=%(status)s tar=%(tar_path)s zst=%(zst_path)s"
-          % item
+        "FAIL {day} status={status} tar={tar_path} zst={zst_path}".format(
+          **item
+        )
       )
       diff_detail = item.get("diff_detail")
       if diff_detail:

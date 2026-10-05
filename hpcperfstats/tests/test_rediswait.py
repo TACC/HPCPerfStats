@@ -9,10 +9,10 @@ def test_redis_url_uses_unix_socket_detects_unix_schemes():
   from hpcperfstats.dbload.lib import rediswait
 
   assert rediswait.redis_url_uses_unix_socket(
-      "unix:///run/redis/redis.sock?db=1"
+    "unix:///run/redis/redis.sock?db=1"
   )
   assert rediswait.redis_url_uses_unix_socket(
-      "redis+unix:///run/redis/redis.sock?db=1"
+    "redis+unix:///run/redis/redis.sock?db=1"
   )
   assert not rediswait.redis_url_uses_unix_socket("redis://redis:6379/1")
   assert not rediswait.redis_url_uses_unix_socket("redis://127.0.0.1:6379/1")
@@ -34,10 +34,10 @@ def test_wait_for_redis_available_unix_skips_dns_wait(monkeypatch):
 
   monkeypatch.setattr(redis.Redis, "from_url", lambda *a, **k: FakeClient())
   rediswait.wait_for_redis_available(
-      "unix:///run/redis/redis.sock?db=1",
-      timeout_seconds=1,
-      interval_seconds=0.01,
-      ping_timeout_seconds=0.01,
+    "unix:///run/redis/redis.sock?db=1",
+    timeout_seconds=1,
+    interval_seconds=0.01,
+    ping_timeout_seconds=0.01,
   )
 
 
@@ -144,9 +144,9 @@ def test_redis_wait_url_prefers_ini_then_compose_unix(monkeypatch):
   from hpcperfstats.dbload.lib import rediswait
 
   monkeypatch.setattr(
-      rediswait,
-      "_ini_redis_location",
-      lambda: "redis://example:6379/2",
+    rediswait,
+    "_ini_redis_location",
+    lambda: "redis://example:6379/2",
   )
   assert rediswait.redis_wait_url() == "redis://example:6379/2"
 
@@ -165,15 +165,15 @@ def test_redis_wait_url_remaps_compose_hostname_redis_to_unix(monkeypatch):
   from hpcperfstats.dbload.lib import rediswait
 
   assert rediswait.compose_redis_tcp_wait_should_use_unix(
-      "redis://redis:6379/1"
+    "redis://redis:6379/1"
   )
   assert not rediswait.compose_redis_tcp_wait_should_use_unix(
-      "redis://example:6379/1"
+    "redis://example:6379/1"
   )
   monkeypatch.setattr(
-      rediswait,
-      "_ini_redis_location",
-      lambda: "redis://redis:6379/1",
+    rediswait,
+    "_ini_redis_location",
+    lambda: "redis://redis:6379/1",
   )
   assert rediswait.redis_wait_url() == rediswait.COMPOSE_REDIS_UNIX_URL
 
@@ -196,7 +196,7 @@ def test_django_startup_compresses_static_sidecars_after_heal():
   collect_idx = content.index("collectstatic --noinput --clear")
   heal_idx = content.index("ensure_spa_shells_from_django_settings")
   compress_idx = content.index(
-      "-m hpcperfstats.site.lib.compress_static_sidecars"
+    "-m hpcperfstats.site.lib.compress_static_sidecars"
   )
   gunicorn_idx = content.index("gunicorn")
   assert collect_idx < heal_idx < compress_idx < gunicorn_idx
@@ -211,22 +211,22 @@ def test_django_startup_publishes_ram_after_compress():
   collect_idx = content.index("collectstatic --noinput --clear")
   heal_idx = content.index("ensure_spa_shells_from_django_settings")
   compress_idx = content.index(
-      "-m hpcperfstats.site.lib.compress_static_sidecars"
+    "-m hpcperfstats.site.lib.compress_static_sidecars"
   )
   static_idx = content.index(
-      "-m hpcperfstats.site.lib.staticfiles_ram_publish --kind static"
+    "-m hpcperfstats.site.lib.staticfiles_ram_publish --kind static"
   )
   media_idx = content.index(
-      "-m hpcperfstats.site.lib.staticfiles_ram_publish --kind media"
+    "-m hpcperfstats.site.lib.staticfiles_ram_publish --kind media"
   )
   gunicorn_idx = content.index("/usr/local/bin/gunicorn")
   assert (
-      collect_idx
-      < heal_idx
-      < compress_idx
-      < static_idx
-      < media_idx
-      < gunicorn_idx
+    collect_idx
+    < heal_idx
+    < compress_idx
+    < static_idx
+    < media_idx
+    < gunicorn_idx
   )
   assert "manage.py makemigrations" not in content
 
@@ -241,4 +241,3 @@ def test_django_startup_does_not_run_makemigrations():
   assert "manage.py migrate" in content
   # Comments may mention the forbidden command; the manage.py invocation must not.
   assert "manage.py makemigrations" not in content
-

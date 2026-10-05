@@ -1,4 +1,5 @@
 """A1/A2: tar existence is decided inside the write lock; appends group per tar."""
+
 from __future__ import annotations
 
 import inspect
@@ -6,8 +7,10 @@ import os
 import tarfile
 
 from hpcperfstats.dbload import sync_timedb as st
-from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
-from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+from hpcperfstats.dbload.lib import (
+  sync_timedb_job_store as jq,
+  sync_timedb_queue_orchestrator as qo,
+)
 from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 
 
@@ -44,17 +47,22 @@ def test_append_jobs_group_per_daily_tar(monkeypatch):
   class _Pool:
     def apply_async(self, fn, args):
       submitted.append(args[0])
+
       class _Pending:
         def ready(self):
           return False
+
       return _Pending()
 
   monkeypatch.setattr(
-      qo.cfg, "get_sync_timedb_tar_append_batch_size", lambda: 8,
+    qo.cfg,
+    "get_sync_timedb_tar_append_batch_size",
+    lambda: 8,
   )
   monkeypatch.setattr(
-      qo, "daily_tar_path_for_stats_path",
-      lambda path, daily: "/daily/2026-08-01.tar",
+    qo,
+    "daily_tar_path_for_stats_path",
+    lambda path, daily: "/daily/2026-08-01.tar",
   )
   qo.reset_append_day_lists_for_tests()
   client = SyncTimedbJobStore("")
@@ -69,12 +77,12 @@ def test_append_jobs_group_per_daily_tar(monkeypatch):
   inflight = {}
   claims = {}
   n = qo._fill_append_slots(
-      client,
-      cap=4,
-      inflight=inflight,
-      claims=claims,
-      archive_pool=_Pool(),
-      tgz_archive_dir="/daily",
+    client,
+    cap=4,
+    inflight=inflight,
+    claims=claims,
+    archive_pool=_Pool(),
+    tgz_archive_dir="/daily",
   )
   assert n == 1
   assert len(submitted) == 1
@@ -91,13 +99,17 @@ def test_fill_append_slots_interleaved_days_batches_same_tar(monkeypatch):
   class _Pool:
     def apply_async(self, fn, args):
       submitted.append(args[0])
+
       class _Pending:
         def ready(self):
           return False
+
       return _Pending()
 
   monkeypatch.setattr(
-      qo.cfg, "get_sync_timedb_tar_append_batch_size", lambda: 4,
+    qo.cfg,
+    "get_sync_timedb_tar_append_batch_size",
+    lambda: 4,
   )
 
   def _tar_for(path, daily):
@@ -110,14 +122,14 @@ def test_fill_append_slots_interleaved_days_batches_same_tar(monkeypatch):
   client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   identities = [
-      "/raw/d1/a",
-      "/raw/d2/a",
-      "/raw/d1/b",
-      "/raw/d2/b",
-      "/raw/d1/c",
-      "/raw/d2/c",
-      "/raw/d1/d",
-      "/raw/d2/d",
+    "/raw/d1/a",
+    "/raw/d2/a",
+    "/raw/d1/b",
+    "/raw/d2/b",
+    "/raw/d1/c",
+    "/raw/d2/c",
+    "/raw/d1/d",
+    "/raw/d2/d",
   ]
   for name in identities:
     jq.enqueue_list_job(client, kind="append", identity=name, dedupe=True)
@@ -129,21 +141,27 @@ def test_fill_append_slots_interleaved_days_batches_same_tar(monkeypatch):
   inflight = {}
   claims = {}
   n = qo._fill_append_slots(
-      client,
-      cap=2,
-      inflight=inflight,
-      claims=claims,
-      archive_pool=_Pool(),
-      tgz_archive_dir="/daily",
+    client,
+    cap=2,
+    inflight=inflight,
+    claims=claims,
+    archive_pool=_Pool(),
+    tgz_archive_dir="/daily",
   )
   assert n == 2
   assert len(submitted) == 2
   by_tar = {item[0]: item[1] for item in submitted}
   assert by_tar["/daily/2026-08-01.tar"] == [
-      "/raw/d1/a", "/raw/d1/b", "/raw/d1/c", "/raw/d1/d",
+    "/raw/d1/a",
+    "/raw/d1/b",
+    "/raw/d1/c",
+    "/raw/d1/d",
   ]
   assert by_tar["/daily/2026-08-02.tar"] == [
-      "/raw/d2/a", "/raw/d2/b", "/raw/d2/c", "/raw/d2/d",
+    "/raw/d2/a",
+    "/raw/d2/b",
+    "/raw/d2/c",
+    "/raw/d2/d",
   ]
 
 
@@ -154,17 +172,22 @@ def test_fill_append_slots_holds_claims_when_tar_inflight(monkeypatch):
   class _Pool:
     def apply_async(self, fn, args):
       submitted.append(args[0])
+
       class _Pending:
         def ready(self):
           return False
+
       return _Pending()
 
   monkeypatch.setattr(
-      qo.cfg, "get_sync_timedb_tar_append_batch_size", lambda: 2,
+    qo.cfg,
+    "get_sync_timedb_tar_append_batch_size",
+    lambda: 2,
   )
   monkeypatch.setattr(
-      qo, "daily_tar_path_for_stats_path",
-      lambda path, daily: "/daily/2026-08-01.tar",
+    qo,
+    "daily_tar_path_for_stats_path",
+    lambda path, daily: "/daily/2026-08-01.tar",
   )
   qo.reset_append_day_lists_for_tests()
   client = SyncTimedbJobStore("")
@@ -179,14 +202,13 @@ def test_fill_append_slots_holds_claims_when_tar_inflight(monkeypatch):
   inflight = {"/daily/2026-08-01.tar": object()}
   claims = {}
   n = qo._fill_append_slots(
-      client,
-      cap=4,
-      inflight=inflight,
-      claims=claims,
-      archive_pool=_Pool(),
-      tgz_archive_dir="/daily",
+    client,
+    cap=4,
+    inflight=inflight,
+    claims=claims,
+    archive_pool=_Pool(),
+    tgz_archive_dir="/daily",
   )
   assert n == 0
   assert submitted == []
   assert qo._APPEND_DAY_LISTS.peek_len("2026-08-01") == 2
-

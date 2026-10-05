@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Fail when a live plan YAML frontmatter still has pending todos."""
+
 from __future__ import annotations
 
 import sys
@@ -27,18 +28,18 @@ def main(argv: list[str] | None = None) -> int:
   path = Path(args[0])
   text = path.read_text(encoding="utf-8")
   if not text.startswith("---"):
-    print("no YAML frontmatter: %s" % path)
+    print(f"no YAML frontmatter: {path}")
     return 1
   rest = text[3:]
   end = rest.find("\n---")
   if end < 0:
-    print("unclosed YAML frontmatter: %s" % path)
+    print(f"unclosed YAML frontmatter: {path}")
     return 1
   front = rest[:end]
   pending = [
-      line.strip()
-      for line in front.splitlines()
-      if line.strip() == "status: pending"
+    line.strip()
+    for line in front.splitlines()
+    if line.strip() == "status: pending"
   ]
   if pending:
     print("pending todos remain: %d" % len(pending))

@@ -20,7 +20,9 @@ def _load_inv():
   Returns:
     module: ``python_def_inventory``.
   """
-  spec = importlib.util.spec_from_file_location("python_def_inventory", INV_PATH)
+  spec = importlib.util.spec_from_file_location(
+    "python_def_inventory", INV_PATH
+  )
   assert spec and spec.loader
   mod = importlib.util.module_from_spec(spec)
   sys.modules["python_def_inventory"] = mod
@@ -28,9 +30,19 @@ def _load_inv():
   return mod
 
 
-@pytest.mark.skipif(not INV_PATH.is_file(), reason="HPCPerfStats inventory script missing")
+@pytest.mark.skipif(
+  not INV_PATH.is_file(), reason="HPCPerfStats inventory script missing"
+)
 def test_tools_package_inventory_check_green():
   """All hpcperfstats_tools defs pass the Google docstring + hint gate."""
   inv = _load_inv()
-  rc = inv.main(["--root", str(TOOLS_ROOT), "--check", "--path-filter", "hpcperfstats_tools"])
+  rc = inv.main(
+    [
+      "--root",
+      str(TOOLS_ROOT),
+      "--check",
+      "--path-filter",
+      "hpcperfstats_tools",
+    ]
+  )
   assert rc == 0

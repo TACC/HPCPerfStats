@@ -14,15 +14,15 @@ Attributes:
   MEMBERS_STORE_DIR_RELPATH: Day-member sidecar directory basename.
   PIPELINE_SERVICE: Compose service restarted to drop process L1 caches.
 """
-from __future__ import annotations
 
-from typing import Any, Iterable
+from __future__ import annotations
 
 import datetime
 import os
 import shlex
 import subprocess
-
+from collections.abc import Iterable
+from typing import Any
 
 DEFAULT_COMPOSE_PROJECT = "hpcperfstats"
 PIPELINE_SERVICE = "pipeline"
@@ -89,30 +89,31 @@ def restart_pipeline_compose(
   cmd.extend(["restart", PIPELINE_SERVICE])
   try:
     completed = runner(
-        cmd,
-        cwd=str(compose_dir),
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=float(timeout_s),
+      cmd,
+      cwd=str(compose_dir),
+      check=False,
+      capture_output=True,
+      text=True,
+      timeout=float(timeout_s),
     )
   except FileNotFoundError as exc:
     raise RuntimeError(
-        "docker compose not found on PATH; cannot restart pipeline",
+      "docker compose not found on PATH; cannot restart pipeline",
     ) from exc
   except subprocess.TimeoutExpired as exc:
     raise RuntimeError(
-        "docker compose restart pipeline timed out after %.0fs" % timeout_s,
+      f"docker compose restart pipeline timed out after {timeout_s:.0f}s",
     ) from exc
   if getattr(completed, "returncode", 1) != 0:
     err = (
-        getattr(completed, "stderr", None)
-        or getattr(completed, "stdout", None)
-        or ""
+      getattr(completed, "stderr", None)
+      or getattr(completed, "stdout", None)
+      or ""
     ).strip()
     raise RuntimeError(
-        "docker compose restart pipeline failed (exit %s): %s"
-        % (getattr(completed, "returncode", "?"), err or "(no output)"),
+      "docker compose restart pipeline failed (exit {}): {}".format(
+        getattr(completed, "returncode", "?"), err or "(no output)"
+      ),
     )
 
 
@@ -156,11 +157,11 @@ def _normalize_bulk_day_tokens(day_tokens: Any) -> list[str] | None:
   for raw in day_tokens:
     token = str(raw or "").strip()
     if not token or token == "unknown":
-      raise ValueError("day token must be YYYY-MM-DD, got %r" % (raw,))
+      raise ValueError(f"day token must be YYYY-MM-DD, got {raw!r}")
     try:
       datetime.date.fromisoformat(token)
     except ValueError as exc:
-      raise ValueError("day token must be YYYY-MM-DD, got %r" % (token,)) from exc
+      raise ValueError(f"day token must be YYYY-MM-DD, got {token!r}") from exc
     normalized.append(token)
   return sorted(set(normalized))
 
@@ -234,7 +235,7 @@ def _sidecar_paths_for_days(
         found.append(path)
     return found
   for day in days:
-    path = os.path.join(store_dir, "%s.json" % day)
+    path = os.path.join(store_dir, f"{day}.json")
     if os.path.realpath(path) == job_store:
       continue
     if os.path.isfile(path):
@@ -269,7 +270,8 @@ def invalidate_archive_members_sidecars(
 
   Examples:
     >>> invalidate_archive_members_sidecars(
-    ...   archive_dir="/missing", dry_run=True,
+    ...   archive_dir="/missing",
+    ...   dry_run=True,
     ... )["deleted"]
     0
   """
@@ -279,11 +281,11 @@ def invalidate_archive_members_sidecars(
   days = _normalize_bulk_day_tokens(day_tokens)
   paths = _sidecar_paths_for_days(root, days)
   result = {
-      "scanned": len(paths),
-      "deleted": 0,
-      "dry_run": bool(dry_run),
-      "days": list(days) if days is not None else [],
-      "paths": list(paths),
+    "scanned": len(paths),
+    "deleted": 0,
+    "dry_run": bool(dry_run),
+    "days": list(days) if days is not None else [],
+    "paths": list(paths),
   }
   if dry_run or not paths:
     return result
@@ -322,13 +324,14 @@ def invalidate_archive_members_bulk(
 
   Examples:
     >>> invalidate_archive_members_bulk(
-    ...   archive_dir="/missing", dry_run=True,
+    ...   archive_dir="/missing",
+    ...   dry_run=True,
     ... )["dry_run"]
     True
   """
   del client
   return invalidate_archive_members_sidecars(
-      archive_dir=archive_dir,
-      day_tokens=day_tokens,
-      dry_run=dry_run,
+    archive_dir=archive_dir,
+    day_tokens=day_tokens,
+    dry_run=dry_run,
   )

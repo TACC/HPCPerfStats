@@ -17,15 +17,15 @@ from __future__ import annotations
 from hpcperfstats.lib.dcgm_blank import is_dcgm_numeric_blank
 
 DCGM_CLOCK_THROTTLE_REASON_FLAGS: tuple[tuple[int, str], ...] = (
-    (0x1, "GPU idle"),
-    (0x2, "Application clocks setting"),
-    (0x4, "SW power cap"),
-    (0x8, "HW slowdown (temp/power/Pstate)"),
-    (0x10, "Sync boost"),
-    (0x20, "SW thermal slowdown"),
-    (0x40, "HW thermal slowdown"),
-    (0x80, "HW power brake"),
-    (0x100, "Display clocks setting"),
+  (0x1, "GPU idle"),
+  (0x2, "Application clocks setting"),
+  (0x4, "SW power cap"),
+  (0x8, "HW slowdown (temp/power/Pstate)"),
+  (0x10, "Sync boost"),
+  (0x20, "SW thermal slowdown"),
+  (0x40, "HW thermal slowdown"),
+  (0x80, "HW power brake"),
+  (0x100, "Display clocks setting"),
 )
 
 _KNOWN_BITS_MASK = 0
@@ -36,16 +36,16 @@ for _bit, _ in DCGM_CLOCK_THROTTLE_REASON_FLAGS:
 def format_gpu_clock_throttle_reasons(mask: float | int | None) -> str:
   """
   Format a DCGM clock-throttle bitmask as comma-separated flag names.
-  
+
   Returns ``""`` for missing / non-finite / zero / blank / no-known-bit masks.
   Known bits only — residual garbage hex is never shown.
-  
+
   Args:
     mask (float | int | None): One of ``float``, ``int``, ``None``.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> format_gpu_clock_throttle_reasons(None)  # doctest: +SKIP
   """
@@ -55,7 +55,7 @@ def format_gpu_clock_throttle_reasons(mask: float | int | None) -> str:
     return ""
   try:
     value = float(mask)
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     return ""
   if value != value:  # NaN
     return ""

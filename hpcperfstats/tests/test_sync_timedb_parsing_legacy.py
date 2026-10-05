@@ -1,7 +1,8 @@
 """Legacy stats-file CTL/CTR decode (sync_timedb_parsing_legacy)."""
+
 from hpcperfstats.dbload.lib.sync_timedb_parsing_legacy import (
-    EVENTMAPS_BY_TYPE,
-    map_hardware_counter_vals,
+  EVENTMAPS_BY_TYPE,
+  map_hardware_counter_vals,
 )
 
 
@@ -9,7 +10,9 @@ def test_map_hardware_counter_vals_fixed_ctr():
   schema_events = ["FIXED_CTR0,W=48", "FIXED_CTR1,W=48"]
   eventmap = {"FIXED_CTR0": "INST_RETIRED,W=48", "FIXED_CTR1": "APERF,W=48"}
   vals = [100, 200]
-  result = map_hardware_counter_vals("intel_8pmc3", schema_events, vals, eventmap)
+  result = map_hardware_counter_vals(
+    "intel_8pmc3", schema_events, vals, eventmap
+  )
   assert result["INST_RETIRED,W=48"] == 100
   assert result["APERF,W=48"] == 200
 

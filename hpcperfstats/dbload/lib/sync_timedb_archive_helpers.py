@@ -48,6 +48,7 @@ Attributes:
   RECONCILE_STAGE_PROGRESS_LOG_INTERVAL_S: Attribute.
   _reconcile_stage_progress_log_state: Attribute.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -55,7 +56,7 @@ from typing import Any, Iterator
 
 import contextlib
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
-    iter_bounded_thread_pool,
+  iter_bounded_thread_pool,
 )
 import os
 import re
@@ -70,36 +71,38 @@ from datetime import date, datetime, time as dt_time, timedelta
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.archive_compress import (
-    DAILY_ARCHIVE_GZ_SUFFIX,
-    DAILY_ARCHIVE_ZST_SUFFIX,
-    archive_gz_members_contained_in_zst,
-    archive_member_maps_equivalent,
-    archive_member_maps_union,
-    classify_daily_tar_zst_reconcile,
-    compressed_sibling_paths,
-    daily_compressed_path_for_date,
-    daily_tar_path_from_compressed,
-    detect_compressed_format,
-    normalize_daily_compressed_path,
-    sum_member_bytes,
+  DAILY_ARCHIVE_GZ_SUFFIX,
+  DAILY_ARCHIVE_ZST_SUFFIX,
+  archive_gz_members_contained_in_zst,
+  archive_member_maps_equivalent,
+  archive_member_maps_union,
+  classify_daily_tar_zst_reconcile,
+  compressed_sibling_paths,
+  daily_compressed_path_for_date,
+  daily_tar_path_from_compressed,
+  detect_compressed_format,
+  normalize_daily_compressed_path,
+  sum_member_bytes,
 )
 from hpcperfstats.dbload.lib.zstd_cli import (
-    _tar_dest_is_nonempty,
-    decompress_compressed_to_tar,
-    zstd_compressed_archive_pipe_readable,
-    zstd_decompress_stdout,
-    drop_page_cache_for_paths,
-    zstd_gzip_decompress_stdout,
-    zstd_gzip_supported,
-    zstd_compress_tar_to_file,
-    zstd_test,
+  _tar_dest_is_nonempty,
+  decompress_compressed_to_tar,
+  zstd_compressed_archive_pipe_readable,
+  zstd_decompress_stdout,
+  drop_page_cache_for_paths,
+  zstd_gzip_decompress_stdout,
+  zstd_gzip_supported,
+  zstd_compress_tar_to_file,
+  zstd_test,
 )
-from hpcperfstats.dbload.lib.sync_timedb_parsing import parse_first_timestamp_line
+from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+  parse_first_timestamp_line,
+)
 from hpcperfstats.dbload.lib.file_locking import (
-    LOCK_EXPIRY_SECONDS,
-    LOCK_SUFFIX,
-    file_read_lock_wait,
-    file_write_lock,
+  LOCK_EXPIRY_SECONDS,
+  LOCK_SUFFIX,
+  file_read_lock_wait,
+  file_write_lock,
 )
 from hpcperfstats.dbload.lib.print_utils import janitorial_logging, log_print
 
@@ -109,14 +112,14 @@ _DAY_SCOPED_CLOSED_RAW_COLLECT_LOCK = threading.Lock()
 def get_archive_zstd_thread_count() -> Any:
   """
   Current archive zstd ``-T`` setting (0 → ``-T0``). Read at call time for ini.
-  
+
     freshness.
-  
+
   Returns:
     Any: Open return polymorphism from ``get_archive_zstd_thread_count``:
     concrete type depends on inputs and branch (mapping, scalar, handle, or
     ``None``-like empty).
-  
+
   Examples:
     >>> get_archive_zstd_thread_count()  # doctest: +SKIP
   """
@@ -126,12 +129,12 @@ def get_archive_zstd_thread_count() -> Any:
 def get_ingest_zstd_thread_count() -> Any:
   """
   Current ingest/populate zstd ``-T`` setting (default 4 → ``-T4``).
-  
+
   Returns:
     Any: Open return polymorphism from ``get_ingest_zstd_thread_count``:
     concrete type depends on inputs and branch (mapping, scalar, handle, or
     ``None``-like empty).
-  
+
   Examples:
     >>> get_ingest_zstd_thread_count()  # doctest: +SKIP
   """
@@ -141,15 +144,15 @@ def get_ingest_zstd_thread_count() -> Any:
 def zstd_thread_count_for_wrap(apply_priority_wrap: Any) -> Any:
   """
   Niced archive paths use ``archive_zstd_threads``; un-niced ingest uses.
-  
+
     ``ingest_zstd_threads``.
-  
+
   Args:
     apply_priority_wrap (Any): Apply priority wrap passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> zstd_thread_count_for_wrap(None)  # doctest: +SKIP
   """
@@ -161,13 +164,13 @@ def zstd_thread_count_for_wrap(apply_priority_wrap: Any) -> Any:
 def _normalize_daily_tar_path_set(paths: Any) -> Any:
   """
   Return a frozenset of normalized daily ``.tar`` paths (empty for None).
-  
+
   Args:
     paths (Any): Iterable of filesystem paths as strings.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _normalize_daily_tar_path_set(None)  # doctest: +SKIP
   """
@@ -184,15 +187,15 @@ def daily_tar_path_in_maintenance_scope(
 ) -> Any:
   """
   True when ``tar_path`` should be included in a scoped maintenance pass.
-  
+
   Args:
     tar_path (str): String for tar path.
     skip_daily_tar_paths (Any | None): One of ``Any``, ``None``.
     only_daily_tar_paths (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> daily_tar_path_in_maintenance_scope("x", None, None)  # doctest: +SKIP
   """
@@ -209,15 +212,15 @@ def daily_tar_path_in_maintenance_scope(
 def daily_tar_paths_for_archive_job_tasks(deferred_paths: Any) -> Any:
   """
   Daily ``.tar`` paths for an in-flight ``archive_pool`` job.
-  
+
     (``archive_job_deferred_paths``).
-  
+
   Args:
     deferred_paths (Any): Iterable of filesystem paths as strings.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> daily_tar_paths_for_archive_job_tasks(None)  # doctest: +SKIP
   """
@@ -234,7 +237,9 @@ def daily_tar_paths_for_archive_job_tasks(deferred_paths: Any) -> Any:
     compressed_path = archive_info[0]
     if not compressed_path:
       continue
-    tar_paths.add(os.path.normpath(daily_tar_path_from_compressed(compressed_path)))
+    tar_paths.add(
+      os.path.normpath(daily_tar_path_from_compressed(compressed_path))
+    )
   return frozenset(tar_paths)
 
 
@@ -243,18 +248,18 @@ def daily_tar_paths_from_pending_archive_tasks(
 ) -> Any:
   """
   Daily ``.tar`` paths for every queued archive task (heap entries or item.
-  
+
     dicts).
-  
+
   Accepts the supervisor ``pending_archive_tasks`` heap (tuples of
   ``(retry_at, attempt, seq, item)``) or a plain iterable of item dicts.
-  
+
   Args:
     pending_archive_tasks (Any): Pending archive tasks passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> daily_tar_paths_from_pending_archive_tasks(None)  # doctest: +SKIP
   """
@@ -275,68 +280,68 @@ def _derive_stats_path_date(
 ) -> Any:
   """
   Best-effort calendar date for a raw stats file.
-  
+
   Prefers the parsed first timestamp (same value archival buckets by), then the
   numeric filename epoch, then file mtime. Returns ``None`` if none resolve.
-  
+
   Args:
     stats_path (str): String for stats path.
     first_ts (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _derive_stats_path_date("x", None)  # doctest: +SKIP
   """
   if first_ts is not None:
     try:
       return datetime.fromtimestamp(float(first_ts)).date()
-    except (TypeError, ValueError, OSError, OverflowError):
+    except TypeError, ValueError, OSError, OverflowError:
       pass
   try:
     return datetime.fromtimestamp(int(os.path.basename(stats_path))).date()
-  except (TypeError, ValueError, OSError, OverflowError):
+  except TypeError, ValueError, OSError, OverflowError:
     pass
   try:
     return datetime.fromtimestamp(int(os.path.getmtime(stats_path))).date()
-  except (OSError, OverflowError, ValueError):
+  except OSError, OverflowError, ValueError:
     return None
 
 
 def _daily_tar_path_for_date(tgz_archive_dir: str, file_date: Any) -> Any:
   """
   Normalized ``YYYY-MM-DD.tar`` path for ``file_date`` under.
-  
+
     ``tgz_archive_dir``.
-  
+
   Args:
     tgz_archive_dir (str): String for tgz archive dir.
     file_date (Any): File date passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _daily_tar_path_for_date("x", None)  # doctest: +SKIP
   """
   return os.path.normpath(
-      daily_tar_path_from_compressed(
-          daily_compressed_path_for_date(tgz_archive_dir, file_date),
-      )
+    daily_tar_path_from_compressed(
+      daily_compressed_path_for_date(tgz_archive_dir, file_date),
+    )
   )
 
 
 def calendar_date_from_daily_tar_path(tar_path: str) -> Any:
   """
   Return ``date`` parsed from ``YYYY-MM-DD.tar`` basename, or ``None``.
-  
+
   Args:
     tar_path (str): String for tar path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> calendar_date_from_daily_tar_path("x")  # doctest: +SKIP
   """
@@ -360,14 +365,14 @@ def partition_paths_by_ustar_member_limit(
 ) -> Any:
   """
   Split paths into (within_limit, oversized) by ``os.path.getsize``.
-  
+
   Args:
     paths (Any): Iterable of filesystem paths as strings.
     limit (int): Integer value for limit.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> partition_paths_by_ustar_member_limit(None, 0)  # doctest: +SKIP
   """
@@ -389,13 +394,13 @@ def partition_paths_by_ustar_member_limit(
 def classify_daily_tar_file_label(tar_path: str) -> Any:
   """
   Return ``file -b`` label for a daily ``.tar`` (empty string on failure).
-  
+
   Args:
     tar_path (str): String for tar path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> classify_daily_tar_file_label("x")  # doctest: +SKIP
   """
@@ -404,13 +409,13 @@ def classify_daily_tar_file_label(tar_path: str) -> Any:
   file_bin = shutil.which("file") or "file"
   try:
     result = subprocess.run(
-        [file_bin, "-b", tar_path],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=60,
+      [file_bin, "-b", tar_path],
+      capture_output=True,
+      text=True,
+      check=False,
+      timeout=60,
     )
-  except (OSError, subprocess.TimeoutExpired):
+  except OSError, subprocess.TimeoutExpired:
     return ""
   return (result.stdout or "").strip()
 
@@ -418,13 +423,13 @@ def classify_daily_tar_file_label(tar_path: str) -> Any:
 def tar_file_label_is_gnu(label: Any) -> Any:
   """
   True when ``file`` label indicates GNU tar (``--posix`` unlocks giants).
-  
+
   Args:
     label (Any): Label passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> tar_file_label_is_gnu(None)  # doctest: +SKIP
   """
@@ -438,14 +443,14 @@ def daily_tar_has_pax_extended_headers(
 ) -> Any:
   """
   True when the first ``max_members`` entries include pax extended headers.
-  
+
   Args:
     tar_path (str): String for tar path.
     max_members (int): Integer value for max members.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> daily_tar_has_pax_extended_headers("x", 0)  # doctest: +SKIP
   """
@@ -459,9 +464,12 @@ def daily_tar_has_pax_extended_headers(
         if getattr(member, "pax_headers", None):
           return True
         mtype = getattr(member, "type", None)
-        if mtype in (getattr(tarfile, "XHDTYPE", b"x"), getattr(tarfile, "XGLTYPE", b"g")):
+        if mtype in (
+          getattr(tarfile, "XHDTYPE", b"x"),
+          getattr(tarfile, "XGLTYPE", b"g"),
+        ):
           return True
-  except (OSError, tarfile.TarError):
+  except OSError, tarfile.TarError:
     return False
   return False
 
@@ -469,16 +477,16 @@ def daily_tar_has_pax_extended_headers(
 def is_pax_capable_daily_tar(tar_path: str) -> Any:
   """
   True when giant members can append without extract+pax recreate.
-  
+
   Missing tar (first create with ``--posix``) and GNU labels are capable;
   bare ``POSIX tar archive`` without pax headers is not.
-  
+
   Args:
     tar_path (str): String for tar path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> is_pax_capable_daily_tar("x")  # doctest: +SKIP
   """
@@ -493,20 +501,20 @@ def is_pax_capable_daily_tar(tar_path: str) -> Any:
 def free_bytes_for_path(path: str) -> Any:
   """
   Free bytes on the filesystem containing ``path`` (0 on error).
-  
+
   Args:
     path (str): String for path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> free_bytes_for_path("x")  # doctest: +SKIP
   """
   try:
     target = os.path.dirname(os.path.abspath(path)) or os.sep
     return int(shutil.disk_usage(target).free)
-  except (OSError, ValueError, TypeError):
+  except OSError, ValueError, TypeError:
     return 0
 
 
@@ -517,17 +525,17 @@ def convert_daily_tar_to_pax_via_extract_recreate(
 ) -> Any:
   """
   Rewrite ``tar_path`` as ``--format=pax`` via extract + recreate.
-  
+
   Holds ``file_write_lock`` for the mutate window. On any failure leaves the
   original tar untouched and returns ``False``.
-  
+
   Args:
     tar_path (str): String for tar path.
     log_fn (Any): Callable invoked by this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> convert_daily_tar_to_pax_via_extract_recreate("x", None)
   """
@@ -539,10 +547,9 @@ def convert_daily_tar_to_pax_via_extract_recreate(
   if free < tar_size:
     if log_fn:
       log_fn(
-          "WARNING: convert_fail reason=insufficient_free_space tar=%s "
-          "size=%d free=%d"
-          % (tar_path, tar_size, free),
-          flush=True,
+        "WARNING: convert_fail reason=insufficient_free_space tar=%s "
+        "size=%d free=%d" % (tar_path, tar_size, free),
+        flush=True,
       )
     return False
   tar_bin = shutil.which("tar") or "/bin/tar"
@@ -555,100 +562,100 @@ def convert_daily_tar_to_pax_via_extract_recreate(
     with file_write_lock(tar_path):
       if log_fn:
         log_fn(
-            "INFO: convert_start phase=extract tar=%s" % tar_path,
-            flush=True,
+          "INFO: convert_start phase=extract tar=%s" % tar_path,
+          flush=True,
         )
       extract = subprocess.run(
-          [tar_bin, "-xf", tar_path, "-C", extract_dir],
-          capture_output=True,
-          text=True,
-          check=False,
+        [tar_bin, "-xf", tar_path, "-C", extract_dir],
+        capture_output=True,
+        text=True,
+        check=False,
       )
       if extract.returncode != 0:
         if log_fn:
           log_fn(
-              "WARNING: convert_fail phase=extract tar=%s rc=%s stderr=%s"
-              % (
-                  tar_path,
-                  extract.returncode,
-                  (extract.stderr or "").strip(),
-              ),
-              flush=True,
+            "WARNING: convert_fail phase=extract tar=%s rc=%s stderr=%s"
+            % (
+              tar_path,
+              extract.returncode,
+              (extract.stderr or "").strip(),
+            ),
+            flush=True,
           )
         return False
       if log_fn:
         log_fn(
-            "INFO: convert_start phase=recreate tar=%s" % tar_path,
-            flush=True,
+          "INFO: convert_start phase=recreate tar=%s" % tar_path,
+          flush=True,
         )
       from hpcperfstats.dbload.lib.sync_timedb_progress_io import (
-          ProgressIdleError,
-          run_subprocess_with_progress,
+        ProgressIdleError,
+        run_subprocess_with_progress,
       )
 
       try:
         recreate = run_subprocess_with_progress(
-            [tar_bin, "--format=pax", "-cf", new_tar, "-C", extract_dir, "."],
-            progress_path=new_tar,
-            stage="pax_recreate",
-            metric="bytes",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+          [tar_bin, "--format=pax", "-cf", new_tar, "-C", extract_dir, "."],
+          progress_path=new_tar,
+          stage="pax_recreate",
+          metric="bytes",
+          stdout=subprocess.PIPE,
+          stderr=subprocess.PIPE,
+          text=True,
         )
       except ProgressIdleError as exc:
         if log_fn:
           log_fn(
-              "WARNING: convert_fail phase=recreate idle_stall tar=%s exc=%s"
-              % (tar_path, exc),
-              flush=True,
+            "WARNING: convert_fail phase=recreate idle_stall tar=%s exc=%s"
+            % (tar_path, exc),
+            flush=True,
           )
         return False
       if recreate.returncode != 0 or not os.path.isfile(new_tar):
         if log_fn:
           log_fn(
-              "WARNING: convert_fail phase=recreate tar=%s rc=%s stderr=%s"
-              % (
-                  tar_path,
-                  recreate.returncode,
-                  (recreate.stderr or "").strip(),
-              ),
-              flush=True,
+            "WARNING: convert_fail phase=recreate tar=%s rc=%s stderr=%s"
+            % (
+              tar_path,
+              recreate.returncode,
+              (recreate.stderr or "").strip(),
+            ),
+            flush=True,
           )
         return False
       line_count = {"n": 0}
 
       try:
         listed = run_subprocess_with_progress(
-            [tar_bin, "tf", new_tar],
-            progress_path=new_tar,
-            stage="pax_tf",
-            metric="lines",
-            progress_fn=lambda: int(line_count["n"]),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+          [tar_bin, "tf", new_tar],
+          progress_path=new_tar,
+          stage="pax_tf",
+          metric="lines",
+          progress_fn=lambda: int(line_count["n"]),
+          stdout=subprocess.PIPE,
+          stderr=subprocess.PIPE,
+          text=True,
         )
         # Count listed members as unit progress after completion (tf is fast).
         line_count["n"] = len((listed.stdout or "").splitlines())
       except ProgressIdleError as exc:
         if log_fn:
           log_fn(
-              "WARNING: convert_fail phase=tf idle_stall tar=%s exc=%s"
-              % (tar_path, exc),
-              flush=True,
+            "WARNING: convert_fail phase=tf idle_stall tar=%s exc=%s"
+            % (tar_path, exc),
+            flush=True,
           )
         return False
       if listed.returncode != 0:
         if log_fn:
           log_fn(
-              "WARNING: convert_fail phase=tf tar=%s rc=%s stderr=%s"
-              % (
-                  tar_path,
-                  listed.returncode,
-                  (listed.stderr or "").strip(),
-              ),
-              flush=True,
+            "WARNING: convert_fail phase=tf tar=%s rc=%s stderr=%s"
+            % (
+              tar_path,
+              listed.returncode,
+              (listed.stderr or "").strip(),
+            ),
+            flush=True,
           )
         return False
       os.replace(new_tar, tar_path)
@@ -658,8 +665,8 @@ def convert_daily_tar_to_pax_via_extract_recreate(
   except (OSError, subprocess.SubprocessError, TimeoutError) as exc:
     if log_fn:
       log_fn(
-          "WARNING: convert_fail tar=%s exc=%s" % (tar_path, exc),
-          flush=True,
+        "WARNING: convert_fail tar=%s exc=%s" % (tar_path, exc),
+        flush=True,
       )
     return False
   finally:
@@ -674,17 +681,17 @@ def prepare_paths_for_giant_member_append(
 ) -> Any:
   """
   Ensure tar can accept giants, or skip oversized paths after convert fail.
-  
+
   Returns ``(paths_to_append, skipped_oversized)``.
-  
+
   Args:
     tar_path (str): String for tar path.
     stats_files (Any): Iterable of filesystem paths as strings.
     log_fn (Any): Callable invoked by this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> prepare_paths_for_giant_member_append("x", None, None)  # doctest: +SKIP
   """
@@ -700,22 +707,22 @@ def prepare_paths_for_giant_member_append(
     except OSError:
       pass
   label = (
-      classify_daily_tar_file_label(tar_path)
-      if os.path.isfile(tar_path)
-      else "missing"
+    classify_daily_tar_file_label(tar_path)
+    if os.path.isfile(tar_path)
+    else "missing"
   )
   if log_fn:
     log_fn(
-        "INFO: must_convert tar=%s reason=size_gt_ustar_not_pax_capable "
-        "file_label=%r oversized_n=%d max_member_bytes=%d ustar_limit=%d"
-        % (
-            tar_path,
-            label,
-            len(oversized),
-            max_size,
-            USTAR_MAX_MEMBER_BYTES,
-        ),
-        flush=True,
+      "INFO: must_convert tar=%s reason=size_gt_ustar_not_pax_capable "
+      "file_label=%r oversized_n=%d max_member_bytes=%d ustar_limit=%d"
+      % (
+        tar_path,
+        label,
+        len(oversized),
+        max_size,
+        USTAR_MAX_MEMBER_BYTES,
+      ),
+      flush=True,
     )
   if not os.path.isfile(tar_path):
     # First create uses ``--posix``; no on-disk convert required.
@@ -724,13 +731,13 @@ def prepare_paths_for_giant_member_append(
     return list(stats_files or ()), []
   if log_fn:
     log_fn(
-        "WARNING: convert_fail_skip tar=%s skipped_n=%d sample_paths=%s"
-        % (
-            tar_path,
-            len(oversized),
-            [os.path.basename(p) for p in oversized[:5]],
-        ),
-        flush=True,
+      "WARNING: convert_fail_skip tar=%s skipped_n=%d sample_paths=%s"
+      % (
+        tar_path,
+        len(oversized),
+        [os.path.basename(p) for p in oversized[:5]],
+      ),
+      flush=True,
     )
   return within, list(oversized)
 
@@ -738,13 +745,13 @@ def prepare_paths_for_giant_member_append(
 def sort_archive_items_oldest_day_first(items: Any) -> Any:
   """
   Order archive tasks ``(compressed_path, paths)`` by calendar day ascending.
-  
+
   Args:
     items (Any): Items passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> sort_archive_items_oldest_day_first(None)  # doctest: +SKIP
   """
@@ -752,7 +759,7 @@ def sort_archive_items_oldest_day_first(items: Any) -> Any:
   for item in items or ():
     try:
       compressed = item[0]
-    except (TypeError, IndexError, KeyError):
+    except TypeError, IndexError, KeyError:
       keyed.append(((date.max, ""), item))
       continue
     tar = daily_tar_path_from_compressed(compressed)
@@ -765,13 +772,13 @@ def sort_archive_items_oldest_day_first(items: Any) -> Any:
 def stats_path_ingest_sort_epoch(stats_path: str) -> Any:
   """
   Oldest-first ingest sort key (numeric basename, else mtime; ``None`` last).
-  
+
   Args:
     stats_path (str): String for stats path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> stats_path_ingest_sort_epoch("x")  # doctest: +SKIP
   """
@@ -779,24 +786,24 @@ def stats_path_ingest_sort_epoch(stats_path: str) -> Any:
     return None
   try:
     return int(os.path.basename(stats_path))
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     pass
   try:
     return int(os.path.getmtime(stats_path))
-  except (OSError, OverflowError, ValueError):
+  except OSError, OverflowError, ValueError:
     return None
 
 
 def _basename_ingest_sort_epoch(stats_path: str) -> Any:
   """
   Stat-free epoch from numeric basename only (``None`` when non-numeric).
-  
+
   Args:
     stats_path (str): String for stats path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _basename_ingest_sort_epoch("x")  # doctest: +SKIP
   """
@@ -804,7 +811,7 @@ def _basename_ingest_sort_epoch(stats_path: str) -> Any:
     return None
   try:
     return int(os.path.basename(stats_path))
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     return None
 
 
@@ -815,14 +822,14 @@ def sort_pending_stats_paths_oldest_first(
 ) -> Any:
   """
   Return paths sorted by epoch, reversing for newest-first dispatch.
-  
+
   Args:
     paths (Any): Iterable of filesystem paths as strings.
     newest_first (bool): Boolean flag for newest first.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> sort_pending_stats_paths_oldest_first(None, True)  # doctest: +SKIP
   """
@@ -847,36 +854,32 @@ def pending_minus_chunk(
 ) -> Any:
   """
   Return ``pending`` paths whose normpath is not in ``chunk`` (oldest-first.
-  
+
     order).
-  
+
   Retired B chunk selection often returned a non-prefix subset of pending.
   Never advance the queue with ``pending[len(chunk):]`` — that requeues chunk
   members past index ``len(chunk)`` and drops non-chunk head paths.
-  
+
   Args:
     pending (Any): Pending passed to this helper.
     chunk (Any): Task payload for a worker (tuple/list per this helper's
     protocol).
     newest_first (bool): Boolean flag for newest first.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> pending_minus_chunk(None, None, True)  # doctest: +SKIP
   """
-  chunk_norms = {
-      os.path.normpath(str(path))
-      for path in (chunk or ())
-      if path
-  }
+  chunk_norms = {os.path.normpath(str(path)) for path in (chunk or ()) if path}
   if not chunk_norms:
     return [path for path in (pending or ()) if path]
   return [
-      path
-      for path in (pending or ())
-      if path and os.path.normpath(str(path)) not in chunk_norms
+    path
+    for path in (pending or ())
+    if path and os.path.normpath(str(path)) not in chunk_norms
   ]
 
 
@@ -889,19 +892,19 @@ def merge_rescan_discovered_into_pending(
 ) -> Any:
   """
   Union incremental rescan results with in-memory pending; oldest-first.
-  
+
   Retains still-valid ``existing_pending`` paths (on disk, not processed) when
   incremental discovery only returns a host-dir subset.
-  
+
   Args:
     existing_pending (Any): Existing pending passed to this helper.
     discovered (Any): Discovered passed to this helper.
     processed_exclude (Any | None): One of ``Any``, ``None``.
     newest_first (bool): Boolean flag for newest first.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> merge_rescan_discovered_into_pending(None, None, None, True)
   """
@@ -920,7 +923,9 @@ def merge_rescan_discovered_into_pending(
       continue
     seen.add(path)
     merged.append(path)
-  return sort_pending_stats_paths_oldest_first(merged, newest_first=newest_first)
+  return sort_pending_stats_paths_oldest_first(
+    merged, newest_first=newest_first
+  )
 
 
 def resolve_idle_rescan_closed_paths(
@@ -930,16 +935,16 @@ def resolve_idle_rescan_closed_paths(
 ) -> Any:
   """
   Return ``(closed_paths, source)`` for idle rescan; prefer coordinator.
-  
+
   Args:
     coordinator_snapshot (Any | None): One of ``Any``, ``None``.
     accrual_snapshot (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Open return polymorphism from ``resolve_idle_rescan_closed_paths``:
     concrete type depends on inputs and branch (mapping, scalar, handle, or
     ``None``-like empty).
-  
+
   Examples:
     >>> resolve_idle_rescan_closed_paths(None, None)  # doctest: +SKIP
   """
@@ -961,20 +966,20 @@ def supplement_pending_paths_from_closed_paths(
 ) -> Any:
   """
   Merge snapshot ``closed_paths`` into pending and retain mode-ordered.
-  
+
     ``max_size``.
-  
+
   Always unions ``closed_paths`` (minus exclude) even when ``paths`` is already
     at
   ``max_size``, so older snapshot entries can displace newer queue heads under
   oldest-first (and newer displace older under ``newest_first=True``).
-  
+
   Performance (RC-1): sort by the stat-free basename epoch first, then
   ``os.path.isfile`` only candidates that can enter the retained window. When
     the
   queue is already full and every candidate is on the wrong side of the cutoff,
   skip all ``isfile`` calls (zero-yield snapshot case).
-  
+
   Args:
     paths (Any): Iterable of filesystem paths as strings.
     closed_paths (Any): Iterable of filesystem paths as strings.
@@ -982,10 +987,10 @@ def supplement_pending_paths_from_closed_paths(
     processed_exclude (Any | None): One of ``Any``, ``None``.
     log_fn (Any): Callable invoked by this helper.
     newest_first (bool): Boolean flag for newest first.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> supplement_pending_paths_from_closed_paths(0)  # doctest: +SKIP
   """
@@ -1000,13 +1005,15 @@ def supplement_pending_paths_from_closed_paths(
     candidates.append(path)
   if not candidates:
     return cap_pending_stats_file_list(
-        sort_pending_stats_paths_oldest_first(before, newest_first=newest_first),
-        max_size,
-        log_fn=log_fn,
-        newest_first=newest_first,
+      sort_pending_stats_paths_oldest_first(before, newest_first=newest_first),
+      max_size,
+      log_fn=log_fn,
+      newest_first=newest_first,
     )
 
-  before_oldest = sort_pending_stats_paths_oldest_first(before, newest_first=False)
+  before_oldest = sort_pending_stats_paths_oldest_first(
+    before, newest_first=False
+  )
   retainable = candidates
   if len(before_oldest) >= max_size:
     if newest_first:
@@ -1030,29 +1037,31 @@ def supplement_pending_paths_from_closed_paths(
         retainable.append(path)
     if not retainable:
       return cap_pending_stats_file_list(
-          sort_pending_stats_paths_oldest_first(before, newest_first=newest_first),
-          max_size,
-          log_fn=log_fn,
-          newest_first=newest_first,
+        sort_pending_stats_paths_oldest_first(
+          before, newest_first=newest_first
+        ),
+        max_size,
+        log_fn=log_fn,
+        newest_first=newest_first,
       )
 
   if newest_first:
     candidates_ordered = sorted(
-        retainable,
-        key=lambda path: (
-            _basename_ingest_sort_epoch(path) is None,
-            -(_basename_ingest_sort_epoch(path) or 0),
-            path,
-        ),
+      retainable,
+      key=lambda path: (
+        _basename_ingest_sort_epoch(path) is None,
+        -(_basename_ingest_sort_epoch(path) or 0),
+        path,
+      ),
     )
   else:
     candidates_ordered = sorted(
-        retainable,
-        key=lambda path: (
-            _basename_ingest_sort_epoch(path) is None,
-            (_basename_ingest_sort_epoch(path) or 0),
-            path,
-        ),
+      retainable,
+      key=lambda path: (
+        _basename_ingest_sort_epoch(path) is None,
+        (_basename_ingest_sort_epoch(path) or 0),
+        path,
+      ),
     )
 
   result = list(before)
@@ -1062,7 +1071,9 @@ def supplement_pending_paths_from_closed_paths(
     if path in seen:
       continue
     if len(result) >= max_size:
-      result_oldest = sort_pending_stats_paths_oldest_first(result, newest_first=False)
+      result_oldest = sort_pending_stats_paths_oldest_first(
+        result, newest_first=False
+      )
       ep = _basename_ingest_sort_epoch(path)
       if ep is not None:
         if newest_first:
@@ -1080,10 +1091,10 @@ def supplement_pending_paths_from_closed_paths(
     supplemented += 1
 
   capped = cap_pending_stats_file_list(
-      sort_pending_stats_paths_oldest_first(result, newest_first=newest_first),
-      max_size,
-      log_fn=log_fn,
-      newest_first=newest_first,
+    sort_pending_stats_paths_oldest_first(result, newest_first=newest_first),
+    max_size,
+    log_fn=log_fn,
+    newest_first=newest_first,
   )
   if supplemented and log_fn is not None:
     at_max_before = len(before) >= max_size
@@ -1092,21 +1103,21 @@ def supplement_pending_paths_from_closed_paths(
       replaced = sum(1 for path in capped if path not in before_set)
       if replaced:
         log_fn(
-            "pending cap supplement replace n=%d pending=%d"
-            % (replaced, len(capped)),
-            flush=True,
+          "pending cap supplement replace n=%d pending=%d"
+          % (replaced, len(capped)),
+          flush=True,
         )
       elif supplemented:
         log_fn(
-            "pending cap supplement from snapshot n=%d pending=%d"
-            % (supplemented, len(capped)),
-            flush=True,
-        )
-    else:
-      log_fn(
           "pending cap supplement from snapshot n=%d pending=%d"
           % (supplemented, len(capped)),
           flush=True,
+        )
+    else:
+      log_fn(
+        "pending cap supplement from snapshot n=%d pending=%d"
+        % (supplemented, len(capped)),
+        flush=True,
       )
   return capped
 
@@ -1121,53 +1132,50 @@ def cap_pending_stats_with_blocked_retention(
 ) -> Any:
   """
   Cap pending while preserving blocked head paths.
-  
+
   Args:
     paths (Any): Iterable of filesystem paths as strings.
     max_size (int): Integer value for max size.
     blocked_paths (Any | None): One of ``Any``, ``None``.
     log_fn (Any): Callable invoked by this helper.
     newest_first (bool): Boolean flag for newest first.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> cap_pending_stats_with_blocked_retention(0)  # doctest: +SKIP
   """
   max_size = max(1, int(max_size))
   merged = sort_pending_stats_paths_oldest_first(
-      list(paths or ()),
-      newest_first=newest_first,
+    list(paths or ()),
+    newest_first=newest_first,
   )
   blocked = list(blocked_paths or ())
   if newest_first:
     blocked = sort_pending_stats_paths_oldest_first(
-        blocked,
-        newest_first=True,
+      blocked,
+      newest_first=True,
     )
   if not blocked:
     return cap_pending_stats_file_list(
-        merged,
-        max_size,
-        log_fn=log_fn,
-        newest_first=newest_first,
+      merged,
+      max_size,
+      log_fn=log_fn,
+      newest_first=newest_first,
     )
   reserved = list(blocked)
   reserved_set = set(reserved)
   tail_budget = max(0, max_size - len(reserved))
-  tail_paths = [
-      path for path in merged
-      if path not in reserved_set
-  ]
+  tail_paths = [path for path in merged if path not in reserved_set]
   capped = reserved + tail_paths[:tail_budget]
   if len(capped) > max_size:
     capped = capped[:max_size]
   if len(merged) > len(capped) and log_fn is not None:
     log_fn(
-        "Pending stats file list truncated pending=%d max=%d"
-        % (len(merged), max_size),
-        flush=True,
+      "Pending stats file list truncated pending=%d max=%d"
+      % (len(merged), max_size),
+      flush=True,
     )
   return capped
 
@@ -1181,25 +1189,30 @@ def chunk_was_cross_day_defer_dispatch(
 ) -> Any:
   """
   True when chunk paths are not aligned with oldest checkpoint-incomplete tar.
-  
+
   Args:
     chunk_paths (Any): Iterable of filesystem paths as strings.
     oldest_tar_norm (Any): Oldest tar norm passed to this helper.
     incomplete_n (Any): Incomplete n passed to this helper.
     tgz_archive_dir (str): String for tgz archive dir.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> chunk_was_cross_day_defer_dispatch(None, None, None, "x")
   """
-  if not oldest_tar_norm or incomplete_n <= 0 or not chunk_paths or not tgz_archive_dir:
+  if (
+    not oldest_tar_norm
+    or incomplete_n <= 0
+    or not chunk_paths
+    or not tgz_archive_dir
+  ):
     return False
   aligned = checkpoint_incomplete_paths_aligned_with_oldest_tar(
-      chunk_paths,
-      oldest_tar_norm,
-      tgz_archive_dir=tgz_archive_dir,
+    chunk_paths,
+    oldest_tar_norm,
+    tgz_archive_dir=tgz_archive_dir,
   )
   return len(aligned) < len(chunk_paths)
 
@@ -1207,13 +1220,13 @@ def chunk_was_cross_day_defer_dispatch(
 def all_ingest_outcomes_db_skip_head_tail(outcomes: Any) -> Any:
   """
   True when every recorded ingest outcome is db_skip=head_tail.
-  
+
   Args:
     outcomes (Any): Outcomes passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> all_ingest_outcomes_db_skip_head_tail(None)  # doctest: +SKIP
   """
@@ -1233,17 +1246,17 @@ def checkpoint_incomplete_paths_aligned_with_oldest_tar(
 ) -> Any:
   """
   Subset of ``blocked_paths`` whose calendar tar mapping includes.
-  
+
     ``oldest_tar``.
-  
+
   Args:
     blocked_paths (Any): Iterable of filesystem paths as strings.
     oldest_tar_norm (Any): Oldest tar norm passed to this helper.
     tgz_archive_dir (str): String for tgz archive dir.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> checkpoint_incomplete_paths_aligned_with_oldest_tar(None, None, "x")
   """
@@ -1254,8 +1267,8 @@ def checkpoint_incomplete_paths_aligned_with_oldest_tar(
     if not path:
       continue
     if oldest_tar_norm in daily_tar_paths_for_stats_paths(
-        [path],
-        tgz_archive_dir,
+      [path],
+      tgz_archive_dir,
     ):
       aligned.append(path)
   return aligned
@@ -1269,18 +1282,18 @@ def stats_path_aligned_to_daily_tar(
 ) -> Any:
   """
   True when filename/mtime calendar day for ``stats_path`` maps to ``tar_norm``.
-  
+
   Intentionally omits first-timestamp overrides so first_ts misbuckets cannot
   pin the wrong calendar day (same law as checkpoint unprocessed alignment).
-  
+
   Args:
     stats_path (str): String for stats path.
     tar_norm (Any): Tar norm passed to this helper.
     tgz_archive_dir (str): String for tgz archive dir.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> stats_path_aligned_to_daily_tar("x", None, "x")  # doctest: +SKIP
   """
@@ -1288,8 +1301,8 @@ def stats_path_aligned_to_daily_tar(
   if not tar_key or not tgz_archive_dir or not stats_path:
     return False
   return tar_key in daily_tar_paths_for_stats_paths(
-      [stats_path],
-      tgz_archive_dir,
+    [stats_path],
+    tgz_archive_dir,
   )
 
 
@@ -1301,19 +1314,19 @@ def filter_remaining_raw_aligned_to_tar(
 ) -> Any:
   """
   Keep only remaining-raw paths whose filename/mtime day maps to ``tar_norm``.
-  
+
   Census maps may key paths under a tar via first_ts while the filename epoch
   belongs to another calendar day. Those cross-day misbuckets must not block
   FS-complete / needs_work / tar-drop for the wrong day.
-  
+
   Args:
     remaining_by_gz (Any): Remaining by gz passed to this helper.
     tar_norm (Any): Tar norm passed to this helper.
     tgz_archive_dir (str): String for tgz archive dir.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> filter_remaining_raw_aligned_to_tar(None, None, "x")  # doctest: +SKIP
   """
@@ -1323,14 +1336,14 @@ def filter_remaining_raw_aligned_to_tar(
   filtered = {}
   for gz_key, raw_list in remaining_by_gz.items():
     blockers = [
-        path
-        for path in (raw_list or ())
-        if path
-        and stats_path_aligned_to_daily_tar(
-            path,
-            tar_key,
-            tgz_archive_dir=tgz_archive_dir,
-        )
+      path
+      for path in (raw_list or ())
+      if path
+      and stats_path_aligned_to_daily_tar(
+        path,
+        tar_key,
+        tgz_archive_dir=tgz_archive_dir,
+      )
     ]
     if blockers:
       filtered[gz_key] = blockers
@@ -1345,25 +1358,25 @@ def remaining_raw_on_disk_counts_for_tar(
 ) -> Any:
   """
   Return ``(aligned_on_disk_n, cross_day_on_disk_n)`` for census under ``tar``.
-  
+
   Paths keyed to this tar via first_ts but whose filename/mtime day differs are
   counted as cross-day (diagnostic only; they must not block this day).
-  
+
   Args:
     remaining_raw_by_gz (Any): Remaining raw by gz passed to this helper.
     tar_norm (Any): Tar norm passed to this helper.
     tgz_archive_dir (str): String for tgz archive dir.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> remaining_raw_on_disk_counts_for_tar(None, None, "x")  # doctest: +SKIP
   """
   aligned_paths = remaining_raw_aligned_paths_for_tar(
-      remaining_raw_by_gz,
-      tar_norm,
-      tgz_archive_dir=tgz_archive_dir,
+    remaining_raw_by_gz,
+    tar_norm,
+    tgz_archive_dir=tgz_archive_dir,
   )
   tar_key = os.path.normpath(str(tar_norm or ""))
   if not tar_key or not tgz_archive_dir:
@@ -1389,15 +1402,15 @@ def remaining_raw_aligned_paths_for_tar(
 ) -> Any:
   """
   Aligned on-disk remaining-raw paths for ``tar_norm`` (census inventory).
-  
+
   Args:
     remaining_raw_by_gz (Any): Remaining raw by gz passed to this helper.
     tar_norm (Any): Tar norm passed to this helper.
     tgz_archive_dir (str): String for tgz archive dir.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> remaining_raw_aligned_paths_for_tar(None, None, "x")  # doctest: +SKIP
   """
@@ -1414,9 +1427,9 @@ def remaining_raw_aligned_paths_for_tar(
       if not path or not os.path.isfile(path):
         continue
       if stats_path_aligned_to_daily_tar(
-          path,
-          tar_key,
-          tgz_archive_dir=tgz_archive_dir,
+        path,
+        tar_key,
+        tgz_archive_dir=tgz_archive_dir,
       ):
         aligned.append(path)
   return aligned
@@ -1429,15 +1442,15 @@ def daily_tar_path_for_stats_path(
 ) -> Any:
   """
   Normalized daily ``.tar`` path for a raw stats file.
-  
+
   Args:
     stats_path (str): String for stats path.
     tgz_archive_dir (str): String for tgz archive dir.
     first_ts (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> daily_tar_path_for_stats_path("x", "x", None)  # doctest: +SKIP
   """
@@ -1457,11 +1470,11 @@ def ingest_stream_past_calendar_day(
 ) -> Any:
   """
   True when the ingest stream has moved past ``day_date``.
-  
+
   Oldest-first (default) compares the **minimum** pending sort epoch.
   Newest-first compares the **maximum** pending sort epoch so day-close
   coupling does not treat ancient backlog as "still on" the day.
-  
+
   Args:
     day_date (Any): Day date passed to this helper.
     pending_stats_paths (Any): Iterable of filesystem paths as strings.
@@ -1469,10 +1482,10 @@ def ingest_stream_past_calendar_day(
     helper.
     first_timestamp_by_path (Any | None): One of ``Any``, ``None``.
     newest_first (bool): Boolean flag for newest first.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> ingest_stream_past_calendar_day(None, None, None, None, True)
   """
@@ -1516,7 +1529,7 @@ def daily_tar_eligible_for_day_close_submit(
 ) -> Any:
   """
   Return ``(eligible, skip_reason)`` for async ``DAY_CLOSE`` submit.
-  
+
   Args:
     tar_norm (Any): Tar norm passed to this helper.
     unprocessed_by_tar (Any): Unprocessed by tar passed to this helper.
@@ -1528,10 +1541,10 @@ def daily_tar_eligible_for_day_close_submit(
     now (Any | None): One of ``Any``, ``None``.
     day_raw_removal (Any | None): One of ``Any``, ``None``.
     tgz_archive_dir (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> daily_tar_eligible_for_day_close_submit(0)  # doctest: +SKIP
   """
@@ -1542,21 +1555,22 @@ def daily_tar_eligible_for_day_close_submit(
     return False, "missing_unprocessed_map"
   archive_dir = tgz_archive_dir or os.path.dirname(tar_norm)
   if aligned_unprocessed_tar_paths_still_on_disk(
-      unprocessed_by_tar,
-      tar_norm,
-      tgz_archive_dir=archive_dir,
+    unprocessed_by_tar,
+    tar_norm,
+    tgz_archive_dir=archive_dir,
   ):
     return False, "checkpoint_incomplete"
   disqualified = _normalize_daily_tar_path_set(disqualified_daily_tars)
   if tar_norm in disqualified:
     return False, "disqualified"
   if local_tz is not None and not daily_tar_seal_calendar_eligible(
-      tar_norm, local_tz, now=now):
+    tar_norm, local_tz, now=now
+  ):
     return False, "calendar_grace"
   if not daily_tar_needs_day_close_work(
-      tar_norm,
-      day_phases=day_phases,
-      remaining_raw_by_gz=remaining_raw_by_gz,
+    tar_norm,
+    day_phases=day_phases,
+    remaining_raw_by_gz=remaining_raw_by_gz,
   ):
     return False, "no_work"
   return True, ""
@@ -1578,10 +1592,10 @@ def find_immediate_day_close_candidates(
 ) -> Any:
   """
   Return oldest-first daily ``.tar`` paths eligible for immediate ``DAY_CLOSE``.
-  
+
   Eligibility uses checkpoint subtraction (``unprocessed_by_tar``) rather than
   the global ingest queue when ``unprocessed_by_tar`` is provided.
-  
+
   Args:
     tgz_archive_dir (str): String for tgz archive dir.
     candidate_tar_paths (Any): Iterable of filesystem paths as strings.
@@ -1595,10 +1609,10 @@ def find_immediate_day_close_candidates(
     day_phases (Any | None): One of ``Any``, ``None``.
     first_timestamp_by_path (Any | None): One of ``Any``, ``None``.
     remaining_raw_by_gz (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> find_immediate_day_close_candidates(0)  # doctest: +SKIP
   """
@@ -1615,14 +1629,14 @@ def find_immediate_day_close_candidates(
       continue
     seen.add(tar_norm)
     eligible, _reason = daily_tar_eligible_for_day_close_submit(
-        tar_norm,
-        unprocessed_by_tar=unprocessed_by_tar,
-        disqualified_daily_tars=disqualified_daily_tars,
-        day_phases=day_phases,
-        remaining_raw_by_gz=remaining_raw_by_gz,
-        local_tz=local_tz,
-        now=now,
-        tgz_archive_dir=tgz_archive_dir,
+      tar_norm,
+      unprocessed_by_tar=unprocessed_by_tar,
+      disqualified_daily_tars=disqualified_daily_tars,
+      day_phases=day_phases,
+      remaining_raw_by_gz=remaining_raw_by_gz,
+      local_tz=local_tz,
+      now=now,
+      tgz_archive_dir=tgz_archive_dir,
     )
     if not eligible:
       continue
@@ -1634,14 +1648,16 @@ def find_immediate_day_close_candidates(
   return [tar_norm for _, tar_norm in ranked]
 
 
-_DAY_CLOSE_DISQUALIFY_CODES = frozenset({
+_DAY_CLOSE_DISQUALIFY_CODES = frozenset(
+  {
     "inflight_append_path",
     "pending_append_cache",
     "in_flight_archive_job",
     "pending_archive_task",
     "unmapped_closed_raw",
     "calendar_grace",
-})
+  }
+)
 
 
 def classify_day_close_candidates(
@@ -1661,7 +1677,7 @@ def classify_day_close_candidates(
 ) -> Any:
   """
   Classify day-close universe into queued/disqualified/skipped_no_work entries.
-  
+
   Args:
     tgz_archive_dir (str): String for tgz archive dir.
     remaining_raw_by_gz (Any | None): One of ``Any``, ``None``.
@@ -1675,10 +1691,10 @@ def classify_day_close_candidates(
     newly_queued_tars (Any | None): One of ``Any``, ``None``.
     queued_reason (str): String for queued reason.
     day_raw_removal (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> classify_day_close_candidates(0)  # doctest: +SKIP
   """
@@ -1692,14 +1708,16 @@ def classify_day_close_candidates(
   universe = set()
   for tar_path in iter_daily_tar_paths(tgz_archive_dir):
     universe.add(os.path.normpath(tar_path))
-  for tar_path in (remaining_raw_by_gz or {}):
+  for tar_path in remaining_raw_by_gz or {}:
     universe.add(os.path.normpath(daily_tar_path_from_compressed(tar_path)))
   universe |= set(unprocessed.keys())
   universe |= set(disq.keys())
   universe |= async_active | debt_tars | newly_queued
   ranked = sorted(
-      universe,
-      key=lambda tar_path: calendar_date_from_daily_tar_path(tar_path) or date.max,
+    universe,
+    key=lambda tar_path: (
+      calendar_date_from_daily_tar_path(tar_path) or date.max
+    ),
   )
   entries = []
   for tar_norm in ranked:
@@ -1707,34 +1725,36 @@ def classify_day_close_candidates(
     unprocessed_list_count = len(unprocessed.get(tar_norm, ()))
     on_disk_all_n = count_unprocessed_paths_on_disk(unprocessed, tar_norm)
     unprocessed_paths = aligned_on_disk_unprocessed_paths_for_tar(
-        unprocessed,
-        tar_norm,
-        tgz_archive_dir=tgz_archive_dir,
+      unprocessed,
+      tar_norm,
+      tgz_archive_dir=tgz_archive_dir,
     )
     unprocessed_count = len(unprocessed_paths)
     cross_day_n = max(0, on_disk_all_n - unprocessed_count)
     unprocessed_norm = {
-        os.path.normpath(str(path)) for path in unprocessed_paths if path
+      os.path.normpath(str(path)) for path in unprocessed_paths if path
     }
     # Checkpoint-complete leftover = aligned remaining_raw on disk that is not
     # also in the unprocessed set (avoids double-counting when remaining_raw
     # includes checkpoint-incomplete closed raw).
-    remaining_aligned_n, processed_cross_day_n = remaining_raw_on_disk_counts_for_tar(
+    remaining_aligned_n, processed_cross_day_n = (
+      remaining_raw_on_disk_counts_for_tar(
         remaining_raw_by_gz,
         tar_norm,
         tgz_archive_dir=tgz_archive_dir,
+      )
     )
     remaining_aligned_paths = remaining_raw_aligned_paths_for_tar(
-        remaining_raw_by_gz,
-        tar_norm,
-        tgz_archive_dir=tgz_archive_dir,
+      remaining_raw_by_gz,
+      tar_norm,
+      tgz_archive_dir=tgz_archive_dir,
     )
     processed_but_on_disk = len(
-        [
-            path
-            for path in remaining_aligned_paths
-            if os.path.normpath(str(path)) not in unprocessed_norm
-        ]
+      [
+        path
+        for path in remaining_aligned_paths
+        if os.path.normpath(str(path)) not in unprocessed_norm
+      ]
     )
     # Total aligned closed-raw on disk = unprocessed + checkpoint leftover.
     on_disk_total = unprocessed_count + processed_but_on_disk
@@ -1744,24 +1764,25 @@ def classify_day_close_candidates(
     if unprocessed_count == 0:
       reasons.discard("checkpoint_incomplete")
     from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
-        day_phase_name_from_hints,
+      day_phase_name_from_hints,
     )
+
     phase_name = day_phase_name_from_hints(day_phases, tar_norm) or ""
     mutable_tar = os.path.isfile(tar_norm)
     needs_work = daily_tar_needs_day_close_work(
-        tar_norm,
-        day_phases=day_phases,
-        remaining_raw_by_gz=remaining_raw_by_gz,
+      tar_norm,
+      day_phases=day_phases,
+      remaining_raw_by_gz=remaining_raw_by_gz,
     )
     _entry = lambda status: {
-        "tar_path": tar_norm,
-        "status": status,
-        "reasons": sorted(reasons),
-        "on_disk": on_disk_total,
-        "unprocessed": unprocessed_count,
-        "phase": phase_name,
-        "mutable_tar": mutable_tar,
-        "processed_but_on_disk": processed_but_on_disk,
+      "tar_path": tar_norm,
+      "status": status,
+      "reasons": sorted(reasons),
+      "on_disk": on_disk_total,
+      "unprocessed": unprocessed_count,
+      "phase": phase_name,
+      "mutable_tar": mutable_tar,
+      "processed_but_on_disk": processed_but_on_disk,
     }
     if not needs_work:
       entry = _entry("skipped_no_work")
@@ -1816,19 +1837,19 @@ def effective_keep_uncompressed_tar(
 ) -> Any:
   """
   Whether to retain uncompressed ``.tar`` after seal for ``tar_path``.
-  
+
   When global ``archive_keep_uncompressed_tar`` is yes, always keep. Otherwise
   prior calendar days drop at seal when raw is gone; calendar-today keeps until
   local midnight plus ``archive_today_uncompressed_tar_grace_hours``.
-  
+
   Args:
     tar_path (str): String for tar path.
     local_tz (Any): Local tz passed to this helper.
     now (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> effective_keep_uncompressed_tar("x", None, None)  # doctest: +SKIP
   """
@@ -1857,21 +1878,21 @@ def daily_tar_seal_calendar_eligible(
 ) -> Any:
   """
   Whether sealing may start for ``tar_path`` by calendar policy.
-  
+
   Prior calendar days are eligible immediately (subject to dirty/disqualified
   checks elsewhere). Calendar-today is eligible only after local midnight plus
   ``archive_today_uncompressed_tar_grace_hours``. This governs **when** sealing
   may begin, distinct from ``effective_keep_uncompressed_tar`` (whether the
   uncompressed ``.tar`` is retained after seal).
-  
+
   Args:
     tar_path (str): String for tar path.
     local_tz (Any): Local tz passed to this helper.
     now (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> daily_tar_seal_calendar_eligible("x", None, None)  # doctest: +SKIP
   """
@@ -1901,13 +1922,13 @@ ARCHIVE_SKIP_DAY_INGEST_SKIP_PREFIX = "day_ingest_skip:"
 def _day_ingest_skip_archive_token(kind: Any) -> Any:
   """
   Internal helper to handle day ingest skip archive token.
-  
+
   Args:
     kind (Any): Mode or kind token selecting a code path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _day_ingest_skip_archive_token(None)  # doctest: +SKIP
   """
@@ -1922,22 +1943,22 @@ def raw_stats_path_tar_append_decision(
 ) -> Any:
   """
   Return ``(needs_append, skip_reason)`` for closed raw tar-append lookup.
-  
+
   ``skip_reason`` is empty when ``needs_append`` is True. When append is not
   needed, ``skip_reason`` is a stable token for per-file ingest logs.
-  
+
   Args:
     stats_path (str): String for stats path.
     tgz_archive_dir (str): String for tgz archive dir.
     first_ts (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     Exception: Raised when ``raw_stats_path_tar_append_decision`` hits a
     ``Exception`` failure path.
-  
+
   Examples:
     >>> raw_stats_path_tar_append_decision("x", "x", None)  # doctest: +SKIP
   """
@@ -1956,13 +1977,16 @@ def raw_stats_path_tar_append_decision(
     return True, ""
   try:
     if daily_archive_has_member_with_size(
-        compressed_path, member_name, expected_size,
+      compressed_path,
+      member_name,
+      expected_size,
     ):
       return False, ARCHIVE_SKIP_MEMBER_EXISTS
   except Exception as exc:
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-        ArchiveDayIngestSkipError,
+      ArchiveDayIngestSkipError,
     )
+
     if isinstance(exc, ArchiveDayIngestSkipError):
       _log_archive_day_ingest_skip_once(exc)
       return False, _day_ingest_skip_archive_token(exc.kind)
@@ -1978,27 +2002,27 @@ def raw_stats_path_needs_tar_append(
 ) -> Any:
   """
   True when closed raw exists on disk but is not a matching tar member.
-  
+
   Uses the same member-name and byte-size rules as
   ``filter_files_to_add_to_archive``. Returns ``False`` when the path is
   missing, active (same inode as ``current``), or its calendar day cannot be
   resolved.
-  
+
   Args:
     stats_path (str): String for stats path.
     tgz_archive_dir (str): String for tgz archive dir.
     first_ts (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> raw_stats_path_needs_tar_append("x", "x", None)  # doctest: +SKIP
   """
   needs_append, _skip_reason = raw_stats_path_tar_append_decision(
-      stats_path,
-      tgz_archive_dir,
-      first_ts=first_ts,
+    stats_path,
+    tgz_archive_dir,
+    first_ts=first_ts,
   )
   return needs_append
 
@@ -2010,15 +2034,15 @@ def daily_tar_paths_for_stats_paths(
 ) -> Any:
   """
   Map raw stats paths to the daily ``.tar`` path each would archive into.
-  
+
   Args:
     paths (Any): Iterable of filesystem paths as strings.
     tgz_archive_dir (str): String for tgz archive dir.
     first_timestamp_by_path (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> daily_tar_paths_for_stats_paths(None, "x", None)  # doctest: +SKIP
   """
@@ -2043,26 +2067,27 @@ def merge_maintenance_skip_daily_tar_paths(
 ) -> Any:
   """
   Union caller skip paths with days that have unmapped closed raw on disk.
-  
+
   Scheduled/startup maintenance must apply the same unmapped-closed-raw gate as
   ArchiveJanitor ``TAR_DROP`` ticks so a day cannot lose its ``.tar`` while
     closed raw remains.
-  
+
   Args:
     skip_daily_tar_paths (bool): Whether to enable skip daily tar paths.
     closed_paths (Any): Iterable of filesystem paths as strings.
     mapping (Any): Mapping passed to this helper.
     tgz_archive_dir (str): String for tgz archive dir.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> merge_maintenance_skip_daily_tar_paths(True, None, None, "x")
   """
   skip_set = set(_normalize_daily_tar_path_set(skip_daily_tar_paths))
   skip_set |= collect_days_with_unmapped_closed_raw(
-      closed_paths, mapping, tgz_archive_dir)
+    closed_paths, mapping, tgz_archive_dir
+  )
   return frozenset(skip_set) if skip_set else None
 
 
@@ -2082,17 +2107,17 @@ def collect_unmapped_closed_raw_daily_tars(
 ) -> Any:
   """
   Daily ``.tar`` paths with closed raw on disk not present in archive mapping.
-  
+
   Bounded scan used when the janitor has no accrual snapshot (long ingest
     backlog)
   so unmapped closed segments still disqualify seal / ``.tar`` removal.
-  
+
   When a warm ``maintenance_snapshot`` (or explicit ``closed_paths`` +
     ``mapping``)
   is provided, reuse those collections — never run a full
     ``collect_stats_files``
   discover for day-scoped/unmapped (snapshot-first guard).
-  
+
   Args:
     archive_data_dir (str): String for archive data dir.
     host_name_ext (Any): Host name ext passed to this helper.
@@ -2101,10 +2126,10 @@ def collect_unmapped_closed_raw_daily_tars(
     maintenance_snapshot (Any | None): One of ``Any``, ``None``.
     closed_paths (Any | None): One of ``Any``, ``None``.
     mapping (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> collect_unmapped_closed_raw_daily_tars(0)  # doctest: +SKIP
   """
@@ -2113,14 +2138,17 @@ def collect_unmapped_closed_raw_daily_tars(
     mapping = dict(maintenance_snapshot.mapping or {})
   if closed_paths is not None and mapping is not None:
     return collect_days_with_unmapped_closed_raw(
-        closed_paths, mapping, tgz_archive_dir)
+      closed_paths, mapping, tgz_archive_dir
+    )
   closed_paths = collect_stats_files_in_range(
-      archive_data_dir, "all", None, host_name_ext)
+    archive_data_dir, "all", None, host_name_ext
+  )
   if not closed_paths:
     return frozenset()
   mapping = build_archive_mapping(closed_paths, tgz_archive_dir)
   return collect_days_with_unmapped_closed_raw(
-      closed_paths, mapping, tgz_archive_dir)
+    closed_paths, mapping, tgz_archive_dir
+  )
 
 
 def get_unmapped_closed_raw_daily_tars_cached(
@@ -2133,32 +2161,31 @@ def get_unmapped_closed_raw_daily_tars_cached(
 ) -> Any:
   """
   TTL cache wrapper for :func:`collect_unmapped_closed_raw_daily_tars`.
-  
+
   Args:
     archive_data_dir (str): String for archive data dir.
     host_name_ext (Any): Host name ext passed to this helper.
     tgz_archive_dir (str): String for tgz archive dir.
     log_fn (Any): Callable invoked by this helper.
     ttl_s (Any): Ttl s passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> get_unmapped_closed_raw_daily_tars_cached("x", None, "x", None, None)
   """
   cache_key = (archive_data_dir, host_name_ext, tgz_archive_dir)
   now = time.time()
-  if (
-      _UNMAPPED_DISQUALIFY_CACHE.get("key") == cache_key
-      and now - float(_UNMAPPED_DISQUALIFY_CACHE.get("at", 0.0)) < float(ttl_s)
-  ):
+  if _UNMAPPED_DISQUALIFY_CACHE.get("key") == cache_key and now - float(
+    _UNMAPPED_DISQUALIFY_CACHE.get("at", 0.0)
+  ) < float(ttl_s):
     return _UNMAPPED_DISQUALIFY_CACHE["tars"]
   tars = collect_unmapped_closed_raw_daily_tars(
-      archive_data_dir,
-      host_name_ext,
-      tgz_archive_dir,
-      log_fn=log_fn,
+    archive_data_dir,
+    host_name_ext,
+    tgz_archive_dir,
+    log_fn=log_fn,
   )
   _UNMAPPED_DISQUALIFY_CACHE["key"] = cache_key
   _UNMAPPED_DISQUALIFY_CACHE["at"] = now
@@ -2173,21 +2200,21 @@ def collect_days_with_unmapped_closed_raw(
 ) -> Any:
   """
   Daily ``.tar`` paths for closed **parsable** raw stats not present in.
-  
+
     ``mapping``.
-  
+
   Unparsable closed segments are moved to DLO at ingest parse failure (see
   ``quarantine_ingest_failed_raw_path``); they do not disqualify days here.
   Parsable unmapped paths still block seal / ``.tar`` removal (data-gap safety).
-  
+
   Args:
     closed_paths (Any): Iterable of filesystem paths as strings.
     mapping (Any): Mapping passed to this helper.
     tgz_archive_dir (str): String for tgz archive dir.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> collect_days_with_unmapped_closed_raw(None, None, "x")  # doctest: +SKIP
   """
@@ -2210,7 +2237,9 @@ def collect_days_with_unmapped_closed_raw(
 
 
 SYNC_TIMEDB_UNPARSABLE_RAW_DIRNAME = ".sync_timedb_unparsable_raw"
-SYNC_TIMEDB_UNPARSABLE_RAW_MANIFEST_BASENAME = ".sync_timedb_unparsable_raw.json"
+SYNC_TIMEDB_UNPARSABLE_RAW_MANIFEST_BASENAME = (
+  ".sync_timedb_unparsable_raw.json"
+)
 UNPARSABLE_RAW_QUARANTINE_REASON = "unparsable_first_timestamp"
 INGEST_PARSE_FAILED_QUARANTINE_REASON = "ingest_parse_failed"
 
@@ -2218,48 +2247,48 @@ INGEST_PARSE_FAILED_QUARANTINE_REASON = "ingest_parse_failed"
 def quarantine_dir_for_archive(archive_data_dir: str) -> Any:
   """
   Root directory for quarantined unparsable closed raw stats.
-  
+
   Args:
     archive_data_dir (str): String for archive data dir.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> quarantine_dir_for_archive("x")  # doctest: +SKIP
   """
   return os.path.join(
-      os.path.normpath(archive_data_dir or ""),
-      SYNC_TIMEDB_UNPARSABLE_RAW_DIRNAME,
+    os.path.normpath(archive_data_dir or ""),
+    SYNC_TIMEDB_UNPARSABLE_RAW_DIRNAME,
   )
 
 
 def manifest_path_for_archive(archive_data_dir: str) -> Any:
   """
   JSON manifest path for unparsable raw quarantine moves.
-  
+
   Args:
     archive_data_dir (str): String for archive data dir.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> manifest_path_for_archive("x")  # doctest: +SKIP
   """
   return os.path.join(
-      os.path.normpath(archive_data_dir or ""),
-      SYNC_TIMEDB_UNPARSABLE_RAW_MANIFEST_BASENAME,
+    os.path.normpath(archive_data_dir or ""),
+    SYNC_TIMEDB_UNPARSABLE_RAW_MANIFEST_BASENAME,
   )
 
 
 def invalidate_unmapped_disqualify_cache() -> None:
   """
   Drop TTL cache for ``get_unmapped_closed_raw_daily_tars_cached``.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> invalidate_unmapped_disqualify_cache()  # doctest: +SKIP
   """
@@ -2279,9 +2308,9 @@ def resolve_unmapped_closed_raw_daily_tars(
 ) -> Any:
   """
   Prefer coordinator ``closed_paths``; accrual only when non-empty; else TTL.
-  
+
     collect.
-  
+
   Args:
     coordinator_snapshot (Any | None): One of ``Any``, ``None``.
     accrual_snapshot (Any | None): One of ``Any``, ``None``.
@@ -2289,47 +2318,58 @@ def resolve_unmapped_closed_raw_daily_tars(
     host_name_ext (Any): Host name ext passed to this helper.
     tgz_archive_dir (str): String for tgz archive dir.
     log_fn (Any): Callable invoked by this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> resolve_unmapped_closed_raw_daily_tars(None, None, "x", None, "x", None)
   """
   if coordinator_snapshot is not None and coordinator_snapshot.closed_paths:
-    return set(collect_days_with_unmapped_closed_raw(
+    return set(
+      collect_days_with_unmapped_closed_raw(
         coordinator_snapshot.closed_paths,
         coordinator_snapshot.mapping,
         tgz_archive_dir,
-    ) or ())
+      )
+      or ()
+    )
   if accrual_snapshot is not None and accrual_snapshot.closed_paths:
-    return set(collect_days_with_unmapped_closed_raw(
+    return set(
+      collect_days_with_unmapped_closed_raw(
         accrual_snapshot.closed_paths,
         accrual_snapshot.mapping,
         tgz_archive_dir,
-    ) or ())
-  return set(get_unmapped_closed_raw_daily_tars_cached(
+      )
+      or ()
+    )
+  return set(
+    get_unmapped_closed_raw_daily_tars_cached(
       archive_data_dir,
       host_name_ext,
       tgz_archive_dir,
       log_fn=log_fn,
-  ) or ())
+    )
+    or ()
+  )
 
 
 def _load_unparsable_raw_manifest(path: str) -> Any:
   """
   Internal helper to load the unparsable raw manifest.
-  
+
   Args:
     path (str): String for path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _load_unparsable_raw_manifest("x")  # doctest: +SKIP
   """
-  from hpcperfstats.dbload.lib.sync_timedb_persistence import load_persistence_document
+  from hpcperfstats.dbload.lib.sync_timedb_persistence import (
+    load_persistence_document,
+  )
 
   raw = load_persistence_document(path, "unparsable_raw", default=[])
   if not isinstance(raw, list):
@@ -2340,18 +2380,20 @@ def _load_unparsable_raw_manifest(path: str) -> Any:
 def _save_unparsable_raw_manifest_atomic(path: str, entries: Any) -> None:
   """
   Internal helper to save the unparsable raw manifest atomic.
-  
+
   Args:
     path (str): String for path.
     entries (Any): Entries passed to this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _save_unparsable_raw_manifest_atomic("x", None)  # doctest: +SKIP
   """
-  from hpcperfstats.dbload.lib.sync_timedb_persistence import save_persistence_document
+  from hpcperfstats.dbload.lib.sync_timedb_persistence import (
+    save_persistence_document,
+  )
 
   save_persistence_document(path, "unparsable_raw", list(entries or []))
 
@@ -2359,13 +2401,13 @@ def _save_unparsable_raw_manifest_atomic(path: str, entries: Any) -> None:
 def _quarantined_original_paths_from_manifest(manifest_entries: Any) -> Any:
   """
   Internal helper to handle quarantined original paths from manifest.
-  
+
   Args:
     manifest_entries (Any): Manifest entries passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _quarantined_original_paths_from_manifest(None)  # doctest: +SKIP
   """
@@ -2384,15 +2426,15 @@ def _quarantine_dest_path(
 ) -> Any:
   """
   Internal helper to handle quarantine dest path.
-  
+
   Args:
     archive_data_dir (str): String for archive data dir.
     quarantine_root (Any): Quarantine root passed to this helper.
     original_path (str): String for original path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _quarantine_dest_path("x", None, "x")  # doctest: +SKIP
   """
@@ -2400,7 +2442,7 @@ def _quarantine_dest_path(
   original_norm = os.path.normpath(original_path)
   prefix = archive_norm + os.sep
   if original_norm.startswith(prefix):
-    rel = original_norm[len(prefix):]
+    rel = original_norm[len(prefix) :]
   else:
     rel = os.path.basename(original_norm)
   return os.path.join(quarantine_root, rel)
@@ -2409,15 +2451,15 @@ def _quarantine_dest_path(
 def is_unparsable_closed_stats_path(path: str) -> Any:
   """
   True when ``path`` is a closed raw stats file with no parseable first.
-  
+
     timestamp.
-  
+
   Args:
     path (str): String for path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> is_unparsable_closed_stats_path("x")  # doctest: +SKIP
   """
@@ -2435,20 +2477,20 @@ def is_unparsable_closed_stats_path(path: str) -> Any:
 def _closed_raw_eligible_for_quarantine(path_norm: Any) -> Any:
   """
   True when ``path_norm`` is a closed raw stats file that may be quarantined.
-  
+
   Args:
     path_norm (Any): Path norm passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _closed_raw_eligible_for_quarantine(None)  # doctest: +SKIP
   """
   if not path_norm:
     return False
   from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
-      is_internal_archive_stats_path,
+    is_internal_archive_stats_path,
   )
 
   if is_internal_archive_stats_path(str(path_norm)):
@@ -2475,9 +2517,9 @@ def _quarantine_one_closed_raw_path(
 ) -> Any:
   """
   Move one closed raw path into DLO when present on disk. Return True if.
-  
+
     handled.
-  
+
   Args:
     path_norm (Any): Path norm passed to this helper.
     archive_data_dir (str): String for archive data dir.
@@ -2488,10 +2530,10 @@ def _quarantine_one_closed_raw_path(
     quarantine_root (Any): Quarantine root passed to this helper.
     log_fn (Any): Callable invoked by this helper.
     error_detail (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _quarantine_one_closed_raw_path(0)  # doctest: +SKIP
   """
@@ -2499,7 +2541,9 @@ def _quarantine_one_closed_raw_path(
     return True
   if not _closed_raw_eligible_for_quarantine(path_norm):
     return False
-  dest_path = _quarantine_dest_path(archive_data_dir, quarantine_root, path_norm)
+  dest_path = _quarantine_dest_path(
+    archive_data_dir, quarantine_root, path_norm
+  )
   try:
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     with file_write_lock(path_norm):
@@ -2508,9 +2552,8 @@ def _quarantine_one_closed_raw_path(
       if os.path.exists(dest_path):
         if log_fn:
           log_fn(
-              "Unparsable raw quarantine skipped existing dest: %s"
-              % dest_path,
-              flush=True,
+            "Unparsable raw quarantine skipped existing dest: %s" % dest_path,
+            flush=True,
           )
         return False
       try:
@@ -2518,16 +2561,15 @@ def _quarantine_one_closed_raw_path(
       except OSError as exc:
         if log_fn:
           log_fn(
-              "Unparsable raw quarantine failed path=%s: %s"
-              % (path_norm, exc),
-              flush=True,
+            "Unparsable raw quarantine failed path=%s: %s" % (path_norm, exc),
+            flush=True,
           )
         return False
       entry = {
-          "original_path": path_norm,
-          "quarantined_path": os.path.normpath(dest_path),
-          "quarantined_at": time.time(),
-          "reason": reason,
+        "original_path": path_norm,
+        "quarantined_path": os.path.normpath(dest_path),
+        "quarantined_at": time.time(),
+        "reason": reason,
       }
       if error_detail:
         entry["error_detail"] = str(error_detail)
@@ -2542,25 +2584,23 @@ def _quarantine_one_closed_raw_path(
           pass
         if log_fn:
           log_fn(
-              "Unparsable raw quarantine manifest save failed path=%s: %s"
-              % (path_norm, exc),
-              flush=True,
+            "Unparsable raw quarantine manifest save failed path=%s: %s"
+            % (path_norm, exc),
+            flush=True,
           )
         return False
       already_quarantined.add(path_norm)
       if log_fn:
         log_fn(
-            "Quarantined unparsable raw stats %s -> %s"
-            % (path_norm, dest_path),
-            flush=True,
+          "Quarantined unparsable raw stats %s -> %s" % (path_norm, dest_path),
+          flush=True,
         )
       return True
   except OSError as exc:
     if log_fn:
       log_fn(
-          "Unparsable raw quarantine failed path=%s: %s"
-          % (path_norm, exc),
-          flush=True,
+        "Unparsable raw quarantine failed path=%s: %s" % (path_norm, exc),
+        flush=True,
       )
     return False
 
@@ -2575,17 +2615,17 @@ def quarantine_ingest_failed_raw_path(
 ) -> Any:
   """
   Move one ingest-failed closed raw path into DLO; return True when handled.
-  
+
   Args:
     path (str): String for path.
     archive_data_dir (str): String for archive data dir.
     reason (Any): Reason passed to this helper.
     log_fn (Any): Callable invoked by this helper.
     error_detail (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> quarantine_ingest_failed_raw_path("x", "x", None, None, None)
   """
@@ -2594,19 +2634,21 @@ def quarantine_ingest_failed_raw_path(
   path_norm = os.path.normpath(path)
   manifest_path = manifest_path_for_archive(archive_data_dir)
   manifest_entries = _load_unparsable_raw_manifest(manifest_path)
-  already_quarantined = _quarantined_original_paths_from_manifest(manifest_entries)
+  already_quarantined = _quarantined_original_paths_from_manifest(
+    manifest_entries
+  )
   quarantine_root = quarantine_dir_for_archive(archive_data_dir)
   manifest_len_before = len(manifest_entries)
   handled = _quarantine_one_closed_raw_path(
-      path_norm,
-      archive_data_dir,
-      reason,
-      manifest_path=manifest_path,
-      manifest_entries=manifest_entries,
-      already_quarantined=already_quarantined,
-      quarantine_root=quarantine_root,
-      log_fn=log_fn,
-      error_detail=error_detail,
+    path_norm,
+    archive_data_dir,
+    reason,
+    manifest_path=manifest_path,
+    manifest_entries=manifest_entries,
+    already_quarantined=already_quarantined,
+    quarantine_root=quarantine_root,
+    log_fn=log_fn,
+    error_detail=error_detail,
   )
   if handled and len(manifest_entries) > manifest_len_before:
     invalidate_unmapped_disqualify_cache()
@@ -2623,19 +2665,19 @@ def quarantine_unparsable_closed_raw_paths(
 ) -> Any:
   """
   Move unparsable closed raw paths into the dead-letter office; return move.
-  
+
     count.
-  
+
   Args:
     paths (Any): Iterable of filesystem paths as strings.
     archive_data_dir (str): String for archive data dir.
     skip_paths (Any | None): One of ``Any``, ``None``.
     log_fn (Any): Callable invoked by this helper.
     max_moves (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> quarantine_unparsable_closed_raw_paths(None, "x", None, None, None)
   """
@@ -2647,14 +2689,12 @@ def quarantine_unparsable_closed_raw_paths(
   if max_moves <= 0:
     return 0
 
-  skip_norm = {
-      os.path.normpath(p)
-      for p in (skip_paths or ())
-      if p
-  }
+  skip_norm = {os.path.normpath(p) for p in (skip_paths or ()) if p}
   manifest_path = manifest_path_for_archive(archive_data_dir)
   manifest_entries = _load_unparsable_raw_manifest(manifest_path)
-  already_quarantined = _quarantined_original_paths_from_manifest(manifest_entries)
+  already_quarantined = _quarantined_original_paths_from_manifest(
+    manifest_entries
+  )
   quarantine_root = quarantine_dir_for_archive(archive_data_dir)
   moved = 0
 
@@ -2669,14 +2709,14 @@ def quarantine_unparsable_closed_raw_paths(
     if not is_unparsable_closed_stats_path(path_norm):
       continue
     if _quarantine_one_closed_raw_path(
-        path_norm,
-        archive_data_dir,
-        UNPARSABLE_RAW_QUARANTINE_REASON,
-        manifest_path=manifest_path,
-        manifest_entries=manifest_entries,
-        already_quarantined=already_quarantined,
-        quarantine_root=quarantine_root,
-        log_fn=log_fn,
+      path_norm,
+      archive_data_dir,
+      UNPARSABLE_RAW_QUARANTINE_REASON,
+      manifest_path=manifest_path,
+      manifest_entries=manifest_entries,
+      already_quarantined=already_quarantined,
+      quarantine_root=quarantine_root,
+      log_fn=log_fn,
     ):
       moved += 1
 
@@ -2689,13 +2729,13 @@ def quarantine_unparsable_closed_raw_paths(
 def raw_stats_path_fingerprint(path: str) -> Any:
   """
   Return ``{mtime, size}`` ns fingerprint for delete-time identity checks.
-  
+
   Args:
     path (str): String for path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> raw_stats_path_fingerprint("x")  # doctest: +SKIP
   """
@@ -2714,15 +2754,15 @@ def delete_raw_stats_path_if_fingerprint_unchanged(
 ) -> Any:
   """
   Delete ``path`` when on-disk fingerprint still matches ``expected_fp``.
-  
+
   Args:
     path (str): String for path.
     expected_fp (Any): Expected fp passed to this helper.
     log_fn (Any): Callable invoked by this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> delete_raw_stats_path_if_fingerprint_unchanged("x", None, None)
   """
@@ -2730,8 +2770,8 @@ def delete_raw_stats_path_if_fingerprint_unchanged(
   if expected_fp is not None and current_fp != expected_fp:
     if log_fn:
       log_fn(
-          "Skipping raw delete fingerprint changed path=%s" % path,
-          flush=True,
+        "Skipping raw delete fingerprint changed path=%s" % path,
+        flush=True,
       )
     return False
   try:
@@ -2749,18 +2789,21 @@ def delete_raw_stats_path_if_fingerprint_unchanged(
 def _checkpoint_entry_fingerprint(path: str) -> Any:
   """
   Return ``{size, mtime}`` for restart-safe checkpoint matching.
-  
+
   Args:
     path (str): String for path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _checkpoint_entry_fingerprint("x")  # doctest: +SKIP
   """
   try:
-    return {"size": int(os.path.getsize(path)), "mtime": int(os.path.getmtime(path))}
+    return {
+      "size": int(os.path.getsize(path)),
+      "mtime": int(os.path.getmtime(path)),
+    }
   except OSError:
     return None
 
@@ -2768,19 +2811,23 @@ def _checkpoint_entry_fingerprint(path: str) -> Any:
 def _load_checkpoint_entries(checkpoint_path: str) -> Any:
   """
   Load checkpoint entries (path/size/mtime); return [] on invalid.
-  
+
   Args:
     checkpoint_path (str): String for checkpoint path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _load_checkpoint_entries("x")  # doctest: +SKIP
   """
-  from hpcperfstats.dbload.lib.sync_timedb_persistence import load_persistence_document
+  from hpcperfstats.dbload.lib.sync_timedb_persistence import (
+    load_persistence_document,
+  )
 
-  raw = load_persistence_document(checkpoint_path, "ingest_checkpoint", default=[])
+  raw = load_persistence_document(
+    checkpoint_path, "ingest_checkpoint", default=[]
+  )
   if not isinstance(raw, list):
     return []
   entries = []
@@ -2795,7 +2842,7 @@ def _load_checkpoint_entries(checkpoint_path: str) -> Any:
     try:
       size = int(size)
       mtime = int(mtime)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
       continue
     entries.append({"path": path, "size": size, "mtime": mtime})
   return entries
@@ -2804,13 +2851,13 @@ def _load_checkpoint_entries(checkpoint_path: str) -> Any:
 def load_checkpoint_path_set(checkpoint_path: str) -> Any:
   """
   Return paths present in checkpoint whose on-disk size/mtime still match.
-  
+
   Args:
     checkpoint_path (str): String for checkpoint path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> load_checkpoint_path_set("x")  # doctest: +SKIP
   """
@@ -2827,19 +2874,19 @@ def load_checkpoint_path_set(checkpoint_path: str) -> Any:
 def checkpoint_entries_snapshot(checkpoint_entries: Any) -> Any:
   """
   Stable tuple copy of in-memory checkpoint entries for cross-thread reads.
-  
+
   Day-close / ingest threads append and ``popleft`` the live ``deque`` while
   main-thread finalize/reconcile may iterate it. Iterating the live deque
   raises ``RuntimeError: deque mutated during iteration`` and kills the
   supervisor (hpcperfstats01 2026-07-26 exit status 1). Snapshot with a short
   retry so a concurrent mutation during ``tuple()`` cannot crash the process.
-  
+
   Args:
     checkpoint_entries (Any): Checkpoint entries passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> checkpoint_entries_snapshot(None)  # doctest: +SKIP
   """
@@ -2859,14 +2906,14 @@ def resolved_checkpoint_path_set(
 ) -> Any:
   """
   Return checkpoint-complete paths from disk plus in-memory buffer entries.
-  
+
   Args:
     checkpoint_path (str): String for checkpoint path.
     checkpoint_entries (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> resolved_checkpoint_path_set("x", None)  # doctest: +SKIP
   """
@@ -2883,7 +2930,7 @@ def resolved_checkpoint_path_set(
     try:
       size = int(entry["size"])
       mtime = int(entry["mtime"])
-    except (KeyError, TypeError, ValueError):
+    except KeyError, TypeError, ValueError:
       continue
     if fp["size"] == size and fp["mtime"] == mtime:
       paths.add(path)
@@ -2902,7 +2949,7 @@ def build_unprocessed_raw_by_daily_tar(
 ) -> Any:
   """
   Map daily ``.tar`` paths to mapped closed raw not in the ingest checkpoint.
-  
+
   Args:
     archive_data_dir (str): String for archive data dir.
     host_name_ext (Any): Host name ext passed to this helper.
@@ -2911,16 +2958,16 @@ def build_unprocessed_raw_by_daily_tar(
     checkpoint_paths (Any | None): One of ``Any``, ``None``.
     first_timestamp_by_path (Any | None): One of ``Any``, ``None``.
     maintenance_snapshot (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> build_unprocessed_raw_by_daily_tar(0)  # doctest: +SKIP
   """
   if checkpoint_paths is None:
     checkpoint_paths = (
-        load_checkpoint_path_set(checkpoint_path) if checkpoint_path else set()
+      load_checkpoint_path_set(checkpoint_path) if checkpoint_path else set()
     )
   else:
     checkpoint_paths = set(checkpoint_paths or ())
@@ -2930,16 +2977,16 @@ def build_unprocessed_raw_by_daily_tar(
       first_timestamp_by_path = maintenance_snapshot.first_timestamp_by_path
   else:
     closed_paths = collect_stats_files_in_range(
-        archive_data_dir,
-        "all",
-        None,
-        host_name_ext,
-        force_full_scan=True,
+      archive_data_dir,
+      "all",
+      None,
+      host_name_ext,
+      force_full_scan=True,
     )
     mapping = build_archive_mapping(
-        closed_paths,
-        tgz_archive_dir,
-        first_timestamp_by_path=first_timestamp_by_path,
+      closed_paths,
+      tgz_archive_dir,
+      first_timestamp_by_path=first_timestamp_by_path,
     )
   unprocessed_by_tar = {}
   for gz_key, stats_paths in mapping.items():
@@ -2961,7 +3008,7 @@ def augment_unprocessed_by_tar_with_pending_paths(
 ) -> Any:
   """
   Union pending ingest paths not in checkpoint into ``unprocessed_by_tar``.
-  
+
   Args:
     unprocessed_by_tar (Any): Unprocessed by tar passed to this helper.
     pending_stats_paths (Any): Iterable of filesystem paths as strings.
@@ -2969,30 +3016,30 @@ def augment_unprocessed_by_tar_with_pending_paths(
     checkpoint_path (Any | None): One of ``Any``, ``None``.
     checkpoint_paths (Any | None): One of ``Any``, ``None``.
     first_timestamp_by_path (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> augment_unprocessed_by_tar_with_pending_paths(0)  # doctest: +SKIP
   """
   if checkpoint_paths is None:
     checkpoint_paths = (
-        load_checkpoint_path_set(checkpoint_path) if checkpoint_path else set()
+      load_checkpoint_path_set(checkpoint_path) if checkpoint_path else set()
     )
   else:
     checkpoint_paths = set(checkpoint_paths or ())
   result = {
-      os.path.normpath(tar_path): list(paths)
-      for tar_path, paths in (unprocessed_by_tar or {}).items()
+    os.path.normpath(tar_path): list(paths)
+    for tar_path, paths in (unprocessed_by_tar or {}).items()
   }
   for stats_path in pending_stats_paths or ():
     if stats_path in checkpoint_paths:
       continue
     tar_path = daily_tar_path_for_stats_path(
-        stats_path,
-        tgz_archive_dir,
-        first_ts=(first_timestamp_by_path or {}).get(stats_path),
+      stats_path,
+      tgz_archive_dir,
+      first_ts=(first_timestamp_by_path or {}).get(stats_path),
     )
     if not tar_path:
       continue
@@ -3009,14 +3056,14 @@ def daily_tar_path_for_calendar_day(
 ) -> Any:
   """
   Return normalized daily ``.tar`` path for ``YYYY-MM-DD``.
-  
+
   Args:
     tgz_archive_dir (str): String for tgz archive dir.
     calendar_day_iso (Any): Calendar day iso passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> daily_tar_path_for_calendar_day("x", None)  # doctest: +SKIP
   """
@@ -3029,13 +3076,13 @@ def daily_tar_path_for_calendar_day(
 def day_close_queued_reason_for_report_reason(reason: Any) -> Any:
   """
   Map janitor/startup report ``reason`` to classify queued-reason code.
-  
+
   Args:
     reason (Any): Reason passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> day_close_queued_reason_for_report_reason(None)  # doctest: +SKIP
   """
@@ -3058,24 +3105,24 @@ def day_close_filesystem_complete(
 ) -> Any:
   """
   True when sealed-only day has no mutable ``.tar`` and no blocking remaining.
-  
+
     raw.
-  
+
   When ``remaining_raw_by_gz`` is omitted and ``use_blocking_remaining`` is
     True,
   builds the quarantine-aware blocking map for ``tar_path``. Explicit remaining
   maps are filtered to filename/mtime-aligned paths only so first_ts misbuckets
   cannot keep ``fs_complete`` false for the wrong calendar day.
-  
+
   Args:
     tar_path (str): String for tar path.
     remaining_raw_by_gz (Any | None): One of ``Any``, ``None``.
     use_blocking_remaining (bool): Whether to enable use blocking remaining.
     tgz_archive_dir (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> day_close_filesystem_complete("x", None, True, None)  # doctest: +SKIP
   """
@@ -3090,15 +3137,16 @@ def day_close_filesystem_complete(
   remaining = remaining_raw_by_gz
   if remaining is None and use_blocking_remaining:
     from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
-        remaining_raw_blocking_day_incomplete,
+      remaining_raw_blocking_day_incomplete,
     )
+
     remaining = remaining_raw_blocking_day_incomplete(tar_norm)
   elif remaining:
     archive_dir = tgz_archive_dir or os.path.dirname(tar_norm)
     remaining = filter_remaining_raw_aligned_to_tar(
-        remaining,
-        tar_norm,
-        tgz_archive_dir=archive_dir,
+      remaining,
+      tar_norm,
+      tgz_archive_dir=archive_dir,
     )
   if remaining_raw_by_gz_has_paths_on_disk(remaining, zst_path):
     return False
@@ -3113,18 +3161,18 @@ def daily_tar_needs_day_close_work(
 ) -> Any:
   """
   True when cold-path seal/raw/tar work may still be required for ``tar_path``.
-  
+
   ``remaining_raw_by_gz`` is accepted for backward compatibility but **ignored**
   for decision branches; blocking map is always used after FS-complete check.
-  
+
   Args:
     tar_path (str): String for tar path.
     day_phases (Any | None): One of ``Any``, ``None``.
     remaining_raw_by_gz (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> daily_tar_needs_day_close_work("x", None, None)  # doctest: +SKIP
   """
@@ -3135,16 +3183,18 @@ def daily_tar_needs_day_close_work(
   if day_close_filesystem_complete(tar_norm):
     return False
   from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
-      day_phase_at_least,
+    day_phase_at_least,
   )
+
   if not day_phase_at_least(day_phases, tar_norm, "tar_dropped"):
     return True
   if os.path.isfile(tar_norm):
     return True
   zst_path, _gz_path = compressed_sibling_paths(tar_norm)
   from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
-      remaining_raw_blocking_day_incomplete,
+    remaining_raw_blocking_day_incomplete,
   )
+
   blocking = remaining_raw_blocking_day_incomplete(tar_norm)
   if remaining_raw_by_gz_has_paths_on_disk(blocking, zst_path):
     return True
@@ -3157,14 +3207,14 @@ def count_unprocessed_paths_on_disk(
 ) -> Any:
   """
   Count checkpoint-unprocessed paths for ``tar_norm`` that still exist on disk.
-  
+
   Args:
     unprocessed_by_tar (Any): Unprocessed by tar passed to this helper.
     tar_norm (Any): Tar norm passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> count_unprocessed_paths_on_disk(None, None)  # doctest: +SKIP
   """
@@ -3182,22 +3232,22 @@ def on_disk_unprocessed_paths_for_tar(
 ) -> Any:
   """
   Return on-disk checkpoint-unprocessed paths for ``tar_norm``.
-  
+
   Args:
     unprocessed_by_tar (Any): Unprocessed by tar passed to this helper.
     tar_norm (Any): Tar norm passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> on_disk_unprocessed_paths_for_tar(None, None)  # doctest: +SKIP
   """
   tar_key = os.path.normpath(str(tar_norm or ""))
   return [
-      path
-      for path in ((unprocessed_by_tar or {}).get(tar_key, ()) or ())
-      if os.path.isfile(path)
+    path
+    for path in ((unprocessed_by_tar or {}).get(tar_key, ()) or ())
+    if os.path.isfile(path)
   ]
 
 
@@ -3209,15 +3259,15 @@ def aligned_on_disk_unprocessed_paths_for_tar(
 ) -> Any:
   """
   On-disk unprocessed paths whose filename calendar day maps to ``tar_norm``.
-  
+
   Args:
     unprocessed_by_tar (Any): Unprocessed by tar passed to this helper.
     tar_norm (Any): Tar norm passed to this helper.
     tgz_archive_dir (str): String for tgz archive dir.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> aligned_on_disk_unprocessed_paths_for_tar(None, None, "x")
   """
@@ -3225,9 +3275,9 @@ def aligned_on_disk_unprocessed_paths_for_tar(
   if not tar_key or not tgz_archive_dir:
     return []
   return checkpoint_incomplete_paths_aligned_with_oldest_tar(
-      on_disk_unprocessed_paths_for_tar(unprocessed_by_tar, tar_key),
-      tar_key,
-      tgz_archive_dir=tgz_archive_dir,
+    on_disk_unprocessed_paths_for_tar(unprocessed_by_tar, tar_key),
+    tar_key,
+    tgz_archive_dir=tgz_archive_dir,
   )
 
 
@@ -3239,24 +3289,24 @@ def count_aligned_unprocessed_paths_on_disk(
 ) -> Any:
   """
   Count tar-aligned on-disk checkpoint-unprocessed paths for ``tar_norm``.
-  
+
   Args:
     unprocessed_by_tar (Any): Unprocessed by tar passed to this helper.
     tar_norm (Any): Tar norm passed to this helper.
     tgz_archive_dir (str): String for tgz archive dir.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> count_aligned_unprocessed_paths_on_disk(None, None, "x")
   """
   return len(
-      aligned_on_disk_unprocessed_paths_for_tar(
-          unprocessed_by_tar,
-          tar_norm,
-          tgz_archive_dir=tgz_archive_dir,
-      )
+    aligned_on_disk_unprocessed_paths_for_tar(
+      unprocessed_by_tar,
+      tar_norm,
+      tgz_archive_dir=tgz_archive_dir,
+    )
   )
 
 
@@ -3268,23 +3318,26 @@ def aligned_unprocessed_tar_paths_still_on_disk(
 ) -> Any:
   """
   True when any tar-aligned checkpoint-unprocessed path still exists.
-  
+
   Args:
     unprocessed_by_tar (Any): Unprocessed by tar passed to this helper.
     tar_norm (Any): Tar norm passed to this helper.
     tgz_archive_dir (str): String for tgz archive dir.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> aligned_unprocessed_tar_paths_still_on_disk(None, None, "x")
   """
-  return count_aligned_unprocessed_paths_on_disk(
+  return (
+    count_aligned_unprocessed_paths_on_disk(
       unprocessed_by_tar,
       tar_norm,
       tgz_archive_dir=tgz_archive_dir,
-  ) > 0
+    )
+    > 0
+  )
 
 
 def oldest_checkpoint_incomplete_tar(
@@ -3295,15 +3348,15 @@ def oldest_checkpoint_incomplete_tar(
 ) -> Any:
   """
   Return the selected daily tar with tar-aligned on-disk unprocessed paths.
-  
+
   Args:
     unprocessed_by_tar (Any): Unprocessed by tar passed to this helper.
     tgz_archive_dir (str): String for tgz archive dir.
     newest_first (bool): Boolean flag for newest first.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> oldest_checkpoint_incomplete_tar(None, "x", True)  # doctest: +SKIP
   """
@@ -3317,23 +3370,23 @@ def oldest_checkpoint_incomplete_tar(
       continue
     seen.add(tar_norm)
     if not aligned_unprocessed_tar_paths_still_on_disk(
-        unprocessed_by_tar,
-        tar_norm,
-        tgz_archive_dir=tgz_archive_dir,
+      unprocessed_by_tar,
+      tar_norm,
+      tgz_archive_dir=tgz_archive_dir,
     ):
       continue
     day_date = calendar_date_from_daily_tar_path(tar_norm)
     if day_date is None:
       continue
     ranked.append((day_date, tar_norm))
-  for tar_norm in (unprocessed_by_tar or {}):
+  for tar_norm in unprocessed_by_tar or {}:
     tar_norm = os.path.normpath(str(tar_norm or ""))
     if not tar_norm or tar_norm in seen:
       continue
     if not aligned_unprocessed_tar_paths_still_on_disk(
-        unprocessed_by_tar,
-        tar_norm,
-        tgz_archive_dir=tgz_archive_dir,
+      unprocessed_by_tar,
+      tar_norm,
+      tgz_archive_dir=tgz_archive_dir,
     ):
       continue
     day_date = calendar_date_from_daily_tar_path(tar_norm)
@@ -3362,7 +3415,7 @@ def reconcile_orphan_inflight_for_oldest_tar(
 ) -> Any:
   """
   Return blocked inflight paths with no active archive job or pending append.
-  
+
   Args:
     oldest_tar (Any): Oldest tar passed to this helper.
     blocked_paths (Any): Iterable of filesystem paths as strings.
@@ -3377,10 +3430,10 @@ def reconcile_orphan_inflight_for_oldest_tar(
     now (Any | None): One of ``Any``, ``None``.
     log_fn (Any | None): One of ``Any``, ``None``.
     newest_first (bool): Boolean flag for newest first.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> reconcile_orphan_inflight_for_oldest_tar(0)  # doctest: +SKIP
   """
@@ -3390,8 +3443,8 @@ def reconcile_orphan_inflight_for_oldest_tar(
   if not oldest_tar_norm or not blocked_paths or not inflight_archive_paths:
     return []
   active_tars = {
-      os.path.normpath(str(tar_path))
-      for tar_path in (in_flight_archive_tars or ())
+    os.path.normpath(str(tar_path))
+    for tar_path in (in_flight_archive_tars or ())
   }
   if oldest_tar_norm in active_tars:
     return []
@@ -3402,9 +3455,9 @@ def reconcile_orphan_inflight_for_oldest_tar(
   blocked_set = set(blocked_paths or ())
   mono_now = float(now if now is not None else time.monotonic())
   throttle_state = (
-      last_reclaim_monotonic_by_path
-      if last_reclaim_monotonic_by_path is not None
-      else {}
+    last_reclaim_monotonic_by_path
+    if last_reclaim_monotonic_by_path is not None
+    else {}
   )
   reclaimed = []
   cross_day_reclaimed = 0
@@ -3412,11 +3465,11 @@ def reconcile_orphan_inflight_for_oldest_tar(
     if path not in blocked_set:
       continue
     calendar_tars = {
-        os.path.normpath(str(tar_path))
-        for tar_path in daily_tar_paths_for_stats_paths(
-            [path],
-            tgz_archive_dir,
-        )
+      os.path.normpath(str(tar_path))
+      for tar_path in daily_tar_paths_for_stats_paths(
+        [path],
+        tgz_archive_dir,
+      )
     }
     if not calendar_tars:
       continue
@@ -3428,8 +3481,8 @@ def reconcile_orphan_inflight_for_oldest_tar(
       if calendar_tars & active_tars:
         continue
       if any(
-          path in set((pending_append_by_daily_tar or {}).get(tar_path, ()))
-          for tar_path in calendar_tars
+        path in set((pending_append_by_daily_tar or {}).get(tar_path, ()))
+        for tar_path in calendar_tars
       ):
         continue
     last_reclaim = float(throttle_state.get(path, 0.0))
@@ -3440,9 +3493,9 @@ def reconcile_orphan_inflight_for_oldest_tar(
     if not aligned_with_oldest:
       cross_day_reclaimed += 1
   if reclaimed and log_fn is not None:
-    msg = (
-        "orphan inflight reclaim oldest_tar=%s reclaimed_n=%d"
-        % (oldest_tar_norm, len(reclaimed))
+    msg = "orphan inflight reclaim oldest_tar=%s reclaimed_n=%d" % (
+      oldest_tar_norm,
+      len(reclaimed),
     )
     if cross_day_reclaimed:
       msg += " cross_day_n=%d detail=cross_day_bucket" % cross_day_reclaimed
@@ -3456,14 +3509,14 @@ def merge_daily_archive_members_l1_cache(
 ) -> None:
   """
   Merge appended tar members into the per-process L1 map when present.
-  
+
   Args:
     canonical (Any): Canonical passed to this helper.
     member_map (Any): Member map passed to this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> merge_daily_archive_members_l1_cache(None, None)  # doctest: +SKIP
   """
@@ -3485,13 +3538,13 @@ def merge_daily_archive_members_l1_cache(
 def build_tar_append_member_map(stats_paths: Any) -> Any:
   """
   Member name → byte size for paths successfully appended to a daily tar.
-  
+
   Args:
     stats_paths (Any): Iterable of filesystem paths as strings.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> build_tar_append_member_map(None)  # doctest: +SKIP
   """
@@ -3515,16 +3568,16 @@ def prepend_checkpoint_incomplete_paths_to_pending(
 ) -> Any:
   """
   Merge ``blocked_paths`` at the head of ``pending`` (deduped, order preserved).
-  
+
   Args:
     pending (Any): Pending passed to this helper.
     blocked_paths (Any): Iterable of filesystem paths as strings.
     exclude (Any | None): One of ``Any``, ``None``.
     newest_first (bool): Boolean flag for newest first.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> prepend_checkpoint_incomplete_paths_to_pending(None, None, None, True)
   """
@@ -3562,16 +3615,16 @@ def try_reuse_pending_reconcile_unprocessed_cache(
 ) -> Any:
   """
   Return ``(cached, oldest_tar, incomplete_n, reason)`` when skip is safe.
-  
+
   Skips a full live unprocessed rebuild when the prior reconcile fingerprint
   (target tar + incomplete_n + ordering mode) is still valid.
-  
+
   Soft ``ttl_s`` only forces a refresh when the incomplete fingerprint is
   missing or zero. A valid fingerprint (``incomplete_n > 0`` + tar) may reuse
   past soft TTL until ``hard_ceiling_s`` (default: max(soft TTL, 900s)) or the
   caller invalidates the cache — otherwise caps whose wall time exceeds soft
   TTL never amortize and rebuild forever.
-  
+
   Args:
     cached (Any): Cached passed to this helper.
     last_mono (Any): Last mono passed to this helper.
@@ -3583,31 +3636,33 @@ def try_reuse_pending_reconcile_unprocessed_cache(
     newest_first (bool): Boolean flag for newest first.
     last_newest_first (Any | None): One of ``Any``, ``None``.
     hard_ceiling_s (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> try_reuse_pending_reconcile_unprocessed_cache(0)  # doctest: +SKIP
   """
   if cached is None:
     return None
   if last_newest_first is not None and bool(last_newest_first) != bool(
-      newest_first
+    newest_first
   ):
     return None
   try:
     age = float(mono_now) - float(last_mono or 0.0)
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     return None
   try:
     last_inc = int(last_incomplete_n) if last_incomplete_n is not None else None
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     return None
   last_tar = str(last_oldest_tar or "")
   try:
-    stall_n = int(stall_incomplete_n) if stall_incomplete_n is not None else None
-  except (TypeError, ValueError):
+    stall_n = (
+      int(stall_incomplete_n) if stall_incomplete_n is not None else None
+    )
+  except TypeError, ValueError:
     stall_n = None
   soft_ttl = float(ttl_s)
   if hard_ceiling_s is None:
@@ -3639,9 +3694,9 @@ def build_live_unprocessed_by_tar_for_reconcile(
 ) -> Any:
   """
   Unprocessed map for pending reconcile; live full-tree scan only when no.
-  
+
     snapshot.
-  
+
   Args:
     archive_data_dir (str): String for archive data dir.
     host_name_ext (Any): Host name ext passed to this helper.
@@ -3650,10 +3705,10 @@ def build_live_unprocessed_by_tar_for_reconcile(
     checkpoint_paths (Any | None): One of ``Any``, ``None``.
     pending_stats_paths (Any | None): One of ``Any``, ``None``.
     maintenance_snapshot (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> build_live_unprocessed_by_tar_for_reconcile(0)  # doctest: +SKIP
   """
@@ -3661,21 +3716,21 @@ def build_live_unprocessed_by_tar_for_reconcile(
   if maintenance_snapshot is not None:
     first_timestamp_by_path = maintenance_snapshot.first_timestamp_by_path
   unprocessed_by_tar = build_unprocessed_raw_by_daily_tar(
-      archive_data_dir,
-      host_name_ext,
-      tgz_archive_dir,
-      checkpoint_path=checkpoint_path,
-      checkpoint_paths=checkpoint_paths,
-      first_timestamp_by_path=first_timestamp_by_path,
-      maintenance_snapshot=maintenance_snapshot,
+    archive_data_dir,
+    host_name_ext,
+    tgz_archive_dir,
+    checkpoint_path=checkpoint_path,
+    checkpoint_paths=checkpoint_paths,
+    first_timestamp_by_path=first_timestamp_by_path,
+    maintenance_snapshot=maintenance_snapshot,
   )
   return augment_unprocessed_by_tar_with_pending_paths(
-      unprocessed_by_tar,
-      pending_stats_paths=pending_stats_paths,
-      tgz_archive_dir=tgz_archive_dir,
-      checkpoint_path=checkpoint_path,
-      checkpoint_paths=checkpoint_paths,
-      first_timestamp_by_path=first_timestamp_by_path,
+    unprocessed_by_tar,
+    pending_stats_paths=pending_stats_paths,
+    tgz_archive_dir=tgz_archive_dir,
+    checkpoint_path=checkpoint_path,
+    checkpoint_paths=checkpoint_paths,
+    first_timestamp_by_path=first_timestamp_by_path,
   )
 
 
@@ -3690,7 +3745,7 @@ def daily_tar_filesystem_quiescent(
 ) -> Any:
   """
   True when no closed raw stats remain on disk for ``tar_norm``.
-  
+
   Args:
     tar_norm (Any): Tar norm passed to this helper.
     remaining_raw_by_gz (Any): Remaining raw by gz passed to this helper.
@@ -3698,10 +3753,10 @@ def daily_tar_filesystem_quiescent(
     host_name_ext (Any | None): One of ``Any``, ``None``.
     tgz_archive_dir (Any | None): One of ``Any``, ``None``.
     maintenance_snapshot (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> daily_tar_filesystem_quiescent(None, None, None, None, None, None)
   """
@@ -3713,12 +3768,12 @@ def daily_tar_filesystem_quiescent(
     return False
   if archive_data_dir and host_name_ext and tgz_archive_dir:
     scoped = build_remaining_raw_for_daily_tar(
-        archive_data_dir,
-        host_name_ext,
-        tgz_archive_dir,
-        tar_norm,
-        maintenance_snapshot=maintenance_snapshot,
-        allow_full_snapshot=False,
+      archive_data_dir,
+      host_name_ext,
+      tgz_archive_dir,
+      tar_norm,
+      maintenance_snapshot=maintenance_snapshot,
+      allow_full_snapshot=False,
     )
     for paths in scoped.values():
       if paths:
@@ -3741,7 +3796,7 @@ def build_disqualification_reasons_by_tar(
 ) -> Any:
   """
   Return ``{tar_path: set[reason_code]}`` for day-close candidate reporting.
-  
+
   Args:
     tgz_archive_dir (str): String for tgz archive dir.
     inflight_paths (Any | None): One of ``Any``, ``None``.
@@ -3753,10 +3808,10 @@ def build_disqualification_reasons_by_tar(
     local_tz (Any | None): One of ``Any``, ``None``.
     now (Any | None): One of ``Any``, ``None``.
     first_timestamp_by_path (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> build_disqualification_reasons_by_tar(0)  # doctest: +SKIP
   """
@@ -3770,9 +3825,9 @@ def build_disqualification_reasons_by_tar(
       reasons[os.path.normpath(tar_path)].add("pending_append_cache")
   for stats_path in inflight_paths or ():
     tar_path = daily_tar_path_for_stats_path(
-        stats_path,
-        tgz_archive_dir,
-        first_ts=(first_timestamp_by_path or {}).get(stats_path),
+      stats_path,
+      tgz_archive_dir,
+      first_ts=(first_timestamp_by_path or {}).get(stats_path),
     )
     if tar_path:
       reasons[os.path.normpath(tar_path)].add("inflight_append_path")
@@ -3784,9 +3839,9 @@ def build_disqualification_reasons_by_tar(
       if not tar_norm:
         continue
       if aligned_unprocessed_tar_paths_still_on_disk(
-          unprocessed_by_tar,
-          tar_norm,
-          tgz_archive_dir=tgz_archive_dir,
+        unprocessed_by_tar,
+        tar_norm,
+        tgz_archive_dir=tgz_archive_dir,
       ):
         reasons[tar_norm].add("checkpoint_incomplete")
   if local_tz is not None:
@@ -3814,10 +3869,10 @@ def build_day_close_disqualified_daily_tars(
 ) -> Any:
   """
   Union of daily ``.tar`` paths the janitor must not seal/verify/remove.
-  
+
   Ingest-queue ``pending_stats_paths`` is intentionally excluded (checkpoint
   drives startup/immediate day-close eligibility instead).
-  
+
   Args:
     tgz_archive_dir (str): String for tgz archive dir.
     remaining_raw_by_gz (Any | None): One of ``Any``, ``None``.
@@ -3828,29 +3883,29 @@ def build_day_close_disqualified_daily_tars(
     pending_archive_task_tars (Any | None): One of ``Any``, ``None``.
     unmapped_closed_raw_tars (Any | None): One of ``Any``, ``None``.
     first_timestamp_by_path (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> build_day_close_disqualified_daily_tars(0)  # doctest: +SKIP
   """
   del pending_stats_paths  # legacy callers may still pass; ignored
   reasons = build_disqualification_reasons_by_tar(
-      tgz_archive_dir=tgz_archive_dir,
-      inflight_paths=inflight_paths,
-      pending_append_by_daily_tar=pending_append_by_daily_tar,
-      in_flight_archive_tars=in_flight_archive_tars,
-      pending_archive_task_tars=pending_archive_task_tars,
-      unmapped_closed_raw_tars=unmapped_closed_raw_tars,
-      first_timestamp_by_path=first_timestamp_by_path,
+    tgz_archive_dir=tgz_archive_dir,
+    inflight_paths=inflight_paths,
+    pending_append_by_daily_tar=pending_append_by_daily_tar,
+    in_flight_archive_tars=in_flight_archive_tars,
+    pending_archive_task_tars=pending_archive_task_tars,
+    unmapped_closed_raw_tars=unmapped_closed_raw_tars,
+    first_timestamp_by_path=first_timestamp_by_path,
   )
   disqualified = set(reasons.keys())
   if remaining_raw_by_gz:
     for gz_key, stats_paths in remaining_raw_by_gz.items():
       if stats_paths:
         disqualified.add(
-            os.path.normpath(daily_tar_path_from_compressed(gz_key))
+          os.path.normpath(daily_tar_path_from_compressed(gz_key))
         )
   return frozenset(disqualified)
 
@@ -3879,16 +3934,16 @@ def _get_archive_validation_worker_count(
 ) -> Any:
   """
   Bounded worker count for archive read/validation fanout.
-  
+
   Args:
     total_items (Any): Total items passed to this helper.
     env_key (str): Environment override for the worker cap.
     configured_fn (Any): INI getter for the worker cap. Default is
       ``get_sync_archive_validation_max_workers``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _get_archive_validation_worker_count(None)  # doctest: +SKIP
   """
@@ -3915,20 +3970,20 @@ def _iter_archive_validation_results_stream(
 ) -> Iterator[Any]:
   """
   Yield ``(gz_path, ok, members)`` as validations complete.
-  
+
   - Keeps apply stage serial by yielding one completed result at a time.
   - Uses bounded thread fanout for read/validation only.
   - Uses shared validation_cache only on serial path (thread-safe by design).
-  
+
   Args:
     gz_paths (Any): Iterable of filesystem paths as strings.
     log_fn (Any): Callable invoked by this helper.
     validation_cache (Any | None): One of ``Any``, ``None``.
     allow_auto_seal (bool): Boolean flag for allow auto seal.
-  
+
   Yields:
     Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _iter_archive_validation_results_stream(None, None, None, True)
   """
@@ -3939,32 +3994,33 @@ def _iter_archive_validation_results_stream(
   if workers <= 1:
     for gz_path in gz_paths:
       ok, members = validate_sealed_daily_archive_for_raw_removal(
-          gz_path,
-          log_fn=log_fn,
-          validation_cache=validation_cache,
-          allow_auto_seal=allow_auto_seal,
+        gz_path,
+        log_fn=log_fn,
+        validation_cache=validation_cache,
+        allow_auto_seal=allow_auto_seal,
       )
       yield gz_path, ok, members
     return
 
   _validate_one = lambda gz_path: validate_sealed_daily_archive_for_raw_removal(
-      gz_path,
-      log_fn=log_fn,
-      validation_cache=None,
-      allow_auto_seal=allow_auto_seal,
+    gz_path,
+    log_fn=log_fn,
+    validation_cache=None,
+    allow_auto_seal=allow_auto_seal,
   )
 
   for gz_path, packed, err in iter_bounded_thread_pool(
-      gz_paths,
-      _validate_one,
-      max_workers=workers,
-      thread_role="archive-validation",
+    gz_paths,
+    _validate_one,
+    max_workers=workers,
+    thread_role="archive-validation",
   ):
     if err is not None:
       if log_fn:
         log_fn(
-            "Skipping removal: validation worker error for %s (%s)" % (gz_path, err),
-            flush=True,
+          "Skipping removal: validation worker error for %s (%s)"
+          % (gz_path, err),
+          flush=True,
         )
       ok, members = False, None
     else:
@@ -3984,7 +4040,7 @@ def _log_archive_validation_summary(
 ) -> None:
   """
   Internal helper to log the archive validation summary.
-  
+
   Args:
     log_fn (Any): Callable invoked by this helper.
     validation_targets_count (int): Integer value for validation targets
@@ -3994,43 +4050,43 @@ def _log_archive_validation_summary(
     failed_count (int): Integer value for failed count.
     validation_started (Any): Validation started passed to this helper.
     validation_cache (Any): Validation cache passed to this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _log_archive_validation_summary(None, 0, 0, 0, 0, None, None)
   """
   if not log_fn:
     return
   log_fn(
-      "Archive validation parallel summary archives=%d workers=%d success=%d failed=%d elapsed_s=%.3f"
-      % (
-          validation_targets_count,
-          workers,
-          success_count,
-          failed_count,
-          max(0.0, time.time() - validation_started),
-      ),
-      flush=True,
+    "Archive validation parallel summary archives=%d workers=%d success=%d failed=%d elapsed_s=%.3f"
+    % (
+      validation_targets_count,
+      workers,
+      success_count,
+      failed_count,
+      max(0.0, time.time() - validation_started),
+    ),
+    flush=True,
   )
   log_fn(
-      "Archive validation cache summary hits=%d misses=%d"
-      % (int(validation_cache["hits"]), int(validation_cache["misses"])),
-      flush=True,
+    "Archive validation cache summary hits=%d misses=%d"
+    % (int(validation_cache["hits"]), int(validation_cache["misses"])),
+    flush=True,
   )
 
 
 def _is_lock_file_name(name: Any) -> Any:
   """
   Return True for sidecar/advisory lock files (e.g. *.fnctl.lock).
-  
+
   Args:
     name (Any): Name passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _is_lock_file_name(None)  # doctest: +SKIP
   """
@@ -4043,13 +4099,13 @@ def _is_lock_file_name(name: Any) -> Any:
 def _remove_read_lock_sidecar(target_path: str) -> None:
   """
   Best-effort cleanup for helper read-lock sidecars.
-  
+
   Args:
     target_path (str): String for target path.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _remove_read_lock_sidecar("x")  # doctest: +SKIP
   """
@@ -4065,20 +4121,20 @@ def read_stats_file_head_identity(
 ) -> Any:
   """
   Return ``(host, timestamp_utc)`` from the first stats timestamp line in the.
-  
+
     file.
-  
+
   ``host`` is the monitor hostname token from file content (same as
     ``host_data.host``
   after ingest), not the archive subdirectory name in ``stats_fname``.
-  
+
   Args:
     stats_fname (Any): Stats fname passed to this helper.
     parse_first_ts_fn (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> read_stats_file_head_identity(None, None)  # doctest: +SKIP
   """
@@ -4110,25 +4166,25 @@ def read_stats_file_head_identity(
 def read_stats_file_tail_identity(stats_fname: Any) -> Any:
   """
   Return ``(host, timestamp_utc)`` from the last stats timestamp line (EOF-.
-  
+
     backward).
-  
+
   Uses a bounded tail read (no full-file load). ``host`` is the monitor hostname
   token from file content (same as ``host_data.host`` after ingest).
-  
+
   Args:
     stats_fname (Any): Stats fname passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> read_stats_file_tail_identity(None)  # doctest: +SKIP
   """
   from datetime import datetime, timezone
 
   from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-      parse_last_timestamp_line_streaming,
+    parse_last_timestamp_line_streaming,
   )
 
   t, _jid, host = parse_last_timestamp_line_streaming(stats_fname)
@@ -4144,18 +4200,20 @@ def _read_first_timestamp_from_stats_file(
 ) -> Any:
   """
   Read minimal file head and parse first stats timestamp string.
-  
+
   Args:
     stats_fname (Any): Stats fname passed to this helper.
     parse_first_ts_fn (Any): Callable invoked by this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _read_first_timestamp_from_stats_file(None, None)  # doctest: +SKIP
   """
-  _host, timestamp_utc = read_stats_file_head_identity(stats_fname, parse_first_ts_fn)
+  _host, timestamp_utc = read_stats_file_head_identity(
+    stats_fname, parse_first_ts_fn
+  )
   if timestamp_utc is None:
     return None
   return str(int(timestamp_utc.timestamp()))
@@ -4167,22 +4225,22 @@ def collect_lock_sidecar_stats(
 ) -> Any:
   """
   Return lock sidecar diagnostics for a directory tree.
-  
+
   Args:
     directory (Any): Directory passed to this helper.
     stale_after_seconds (int): Integer value for stale after seconds.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> collect_lock_sidecar_stats(None, 0)  # doctest: +SKIP
   """
   if not directory or not os.path.isdir(directory):
     return {
-        "lock_files": 0,
-        "stale_lock_files": 0,
-        "oldest_lock_age_seconds": 0.0,
+      "lock_files": 0,
+      "stale_lock_files": 0,
+      "oldest_lock_age_seconds": 0.0,
     }
   now = time.time()
   lock_count = 0
@@ -4202,22 +4260,22 @@ def collect_lock_sidecar_stats(
       if age > stale_after_seconds:
         stale_count += 1
   return {
-      "lock_files": lock_count,
-      "stale_lock_files": stale_count,
-      "oldest_lock_age_seconds": oldest_age,
+    "lock_files": lock_count,
+    "stale_lock_files": stale_count,
+    "oldest_lock_age_seconds": oldest_age,
   }
 
 
 def get_tar_member_name(file_path: str) -> Any:
   """
   Return the name used for a file inside a tar (path without leading slash).
-  
+
   Args:
     file_path (str): String for file path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> get_tar_member_name("x")  # doctest: +SKIP
   """
@@ -4227,16 +4285,17 @@ def get_tar_member_name(file_path: str) -> Any:
 def _tar_list_executable() -> Any:
   """
   GNU/BSD ``tar`` for ``tar tf`` integrity checks (same family as append).
-  
+
   Returns:
     Any: Open return polymorphism from ``_tar_list_executable``: concrete type
     depends on inputs and branch (mapping, scalar, handle, or ``None``-like
     empty).
-  
+
   Examples:
     >>> _tar_list_executable()  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib import zstd_cli
+
   return zstd_cli._tar_list_executable()
 
 
@@ -4249,31 +4308,31 @@ def _open_tarfile_for_read(
 ) -> Iterator[Any]:
   """
   Open a tar or compressed daily archive for sequential reads.
-  
+
   Args:
     path (str): String for path.
     num_threads (Any): Num threads passed to this helper.
     apply_priority_wrap (bool): Boolean flag for apply priority wrap.
-  
+
   Yields:
     Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _open_tarfile_for_read("x", None, True)  # doctest: +SKIP
   """
   if path.endswith(DAILY_ARCHIVE_ZST_SUFFIX) and shutil.which("zstd"):
     with zstd_decompress_stdout(
-        path,
-        num_threads,
-        apply_priority_wrap=apply_priority_wrap,
+      path,
+      num_threads,
+      apply_priority_wrap=apply_priority_wrap,
     ) as stdout:
       with tarfile.open(fileobj=stdout, mode="r|") as tf:
         yield tf
   elif path.endswith(DAILY_ARCHIVE_GZ_SUFFIX) and zstd_gzip_supported():
     with zstd_gzip_decompress_stdout(
-        path,
-        num_threads,
-        apply_priority_wrap=apply_priority_wrap,
+      path,
+      num_threads,
+      apply_priority_wrap=apply_priority_wrap,
     ) as stdout:
       with tarfile.open(fileobj=stdout, mode="r|") as tf:
         yield tf
@@ -4285,13 +4344,13 @@ def _open_tarfile_for_read(
 def _iter_tar_members(tf: Any) -> Iterator[Any]:
   """
   Yield tar members without forcing a full in-memory member list.
-  
+
   Args:
     tf (Any): Tf passed to this helper.
-  
+
   Yields:
     Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _iter_tar_members(None)  # doctest: +SKIP
   """
@@ -4310,25 +4369,25 @@ def verify_tar_archive_readable(
 ) -> Any:
   """
   Return True if ``tar_path`` is a readable archive (full scan via ``tar tf``).
-  
+
   For ``.tar.zst`` / ``.tar.gz``, uses ``zstd -d -c | tar tf -`` when zstd is
   available; otherwise ``tar tf`` on the file (or :mod:`tarfile` if ``tar`` is
   missing).
-  
+
   When ``assume_write_lock_held`` is True, skip ``file_read_lock_wait`` (caller
   holds ``file_write_lock`` on ``tar_path``).
-  
+
   Args:
     tar_path (str): String for tar path.
     assume_write_lock_held (bool): Boolean flag for assume write lock held.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     Exception: Raised when ``verify_tar_archive_readable`` hits a
     ``Exception`` failure path.
-  
+
   Examples:
     >>> verify_tar_archive_readable("x", True)  # doctest: +SKIP
   """
@@ -4337,17 +4396,18 @@ def verify_tar_archive_readable(
   tar_bin = _tar_list_executable()
 
   _locked_scan = lambda: (
-      zstd_compressed_archive_pipe_readable(
-          tar_path,
-          get_archive_zstd_thread_count(),
-      )
-      if detect_compressed_format(tar_path) in ("zst", "gz")
-      else subprocess.run(
-          [tar_bin, "tf", tar_path],
-          capture_output=True,
-          text=True,
-          check=False,
-      ).returncode == 0
+    zstd_compressed_archive_pipe_readable(
+      tar_path,
+      get_archive_zstd_thread_count(),
+    )
+    if detect_compressed_format(tar_path) in ("zst", "gz")
+    else subprocess.run(
+      [tar_bin, "tf", tar_path],
+      capture_output=True,
+      text=True,
+      check=False,
+    ).returncode
+    == 0
   )
 
   try:
@@ -4359,7 +4419,7 @@ def verify_tar_archive_readable(
     return False
   except TimeoutError:
     raise
-  except (OSError, subprocess.SubprocessError):
+  except OSError, subprocess.SubprocessError:
     return False
   return False
 
@@ -4367,16 +4427,16 @@ def verify_tar_archive_readable(
 def get_file_member_sizes_from_gzip_archive(gz_path: str) -> Any:
   """
   File member name -> size (max if duplicated), reading **only** ``.tar.gz``.
-  
+
   Does not open the sibling ``.tar``; used to compare sealed gzip to
     uncompressed tar.
-  
+
   Args:
     gz_path (str): String for gz path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> get_file_member_sizes_from_gzip_archive("x")  # doctest: +SKIP
   """
@@ -4389,13 +4449,13 @@ def get_file_member_sizes_from_gzip_archive(gz_path: str) -> Any:
 def _archive_file_identity(path: str) -> Any:
   """
   Return ``(mtime_ns, size)`` for cache keying, or ``None`` if missing.
-  
+
   Args:
     path (str): String for path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _archive_file_identity("x")  # doctest: +SKIP
   """
@@ -4408,21 +4468,21 @@ def _archive_file_identity(path: str) -> Any:
 def _build_archive_validation_cache_key(compressed_path: str) -> Any:
   """
   Internal helper to build the archive validation cache key.
-  
+
   Args:
     compressed_path (str): String for compressed path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _build_archive_validation_cache_key("x")  # doctest: +SKIP
   """
   tar_path = daily_tar_path_from_compressed(compressed_path)
   return (
-      compressed_path,
-      _archive_file_identity(compressed_path),
-      _archive_file_identity(tar_path),
+    compressed_path,
+    _archive_file_identity(compressed_path),
+    _archive_file_identity(tar_path),
   )
 
 
@@ -4554,7 +4614,10 @@ def maybe_invalidate_open_tar_store_divergence_for_append_batch(
 
   Examples:
     >>> maybe_invalidate_open_tar_store_divergence_for_append_batch(
-    ...     "", [], {}, {},
+    ...   "",
+    ...   [],
+    ...   {},
+    ...   {},
     ... )  # doctest: +SKIP
   """
   if not store_members or not stats_files:
@@ -4576,19 +4639,18 @@ def maybe_invalidate_open_tar_store_divergence_for_append_batch(
   if store_only_n <= 0 and open_only_n <= 0:
     return False
   day_date = calendar_date_from_daily_tar_path(
-      daily_tar_path_from_compressed(archive_fname),
+    daily_tar_path_from_compressed(archive_fname),
   )
   day_token = day_date.isoformat() if day_date is not None else "?"
   if log_fn:
     log_fn(
-        "INFO: archive_append open_tar_store_divergence day=%s "
-        "store_only_n=%d open_only_n=%d"
-        % (day_token, store_only_n, open_only_n),
-        flush=True,
+      "INFO: archive_append open_tar_store_divergence day=%s "
+      "store_only_n=%d open_only_n=%d" % (day_token, store_only_n, open_only_n),
+      flush=True,
     )
   invalidate_after_daily_tar_mutation(
-      archive_fname,
-      reason="open_tar_divergence",
+    archive_fname,
+    reason="open_tar_divergence",
   )
   return True
 
@@ -4596,10 +4658,10 @@ def maybe_invalidate_open_tar_store_divergence_for_append_batch(
 def clear_daily_archive_members_cache() -> None:
   """
   Clear per-process daily archive member maps (tests and worker reset).
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> clear_daily_archive_members_cache()  # doctest: +SKIP
   """
@@ -4617,13 +4679,13 @@ _DEFERRED_PREWARM_FLUSH_HOOK = None
 def set_archive_members_invalidation_hook(hook: Any) -> None:
   """
   Register supervisor callback after L1/store member cache invalidation.
-  
+
   Args:
     hook (Any): Hook passed to this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> set_archive_members_invalidation_hook(None)  # doctest: +SKIP
   """
@@ -4634,10 +4696,10 @@ def set_archive_members_invalidation_hook(hook: Any) -> None:
 def reset_archive_members_invalidation_hook_for_tests() -> None:
   """
   Clear invalidation hook (unit tests).
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> reset_archive_members_invalidation_hook_for_tests()  # doctest: +SKIP
   """
@@ -4648,13 +4710,13 @@ def reset_archive_members_invalidation_hook_for_tests() -> None:
 def set_deferred_prewarm_flush_hook(hook: Any) -> None:
   """
   Register supervisor callback after daily_tar_restore clears.
-  
+
   Args:
     hook (Any): Hook passed to this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> set_deferred_prewarm_flush_hook(None)  # doctest: +SKIP
   """
@@ -4665,10 +4727,10 @@ def set_deferred_prewarm_flush_hook(hook: Any) -> None:
 def reset_deferred_prewarm_flush_hook_for_tests() -> None:
   """
   Clear deferred-prewarm flush hook (unit tests).
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> reset_deferred_prewarm_flush_hook_for_tests()  # doctest: +SKIP
   """
@@ -4679,13 +4741,13 @@ def reset_deferred_prewarm_flush_hook_for_tests() -> None:
 def notify_daily_tar_restore_cleared(day_token: Any) -> None:
   """
   Flush deferred sync re-prewarm after restore key is cleared.
-  
+
   Args:
     day_token (Any): Day token passed to this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> notify_daily_tar_restore_cleared(None)  # doctest: +SKIP
   """
@@ -4710,15 +4772,15 @@ def _notify_archive_members_invalidation(
 ) -> None:
   """
   Internal helper to handle notify archive members invalidation.
-  
+
   Args:
     canonical (Any): Canonical passed to this helper.
     day_token (Any | None): One of ``Any``, ``None``.
     reason (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _notify_archive_members_invalidation(None, None, None)  # doctest: +SKIP
   """
@@ -4744,36 +4806,36 @@ def invalidate_after_daily_tar_mutation(
 ) -> None:
   """
   Canonical hook after mutating a daily archive (append, dedupe, seal,.
-  
+
     bootstrap, restore).
-  
+
   Accepts ``YYYY-MM-DD.tar``, ``.tar.zst``, or legacy ``.tar.gz``; invalidates
     L1
   and members-store maps for the canonical daily compressed key.
-  
+
   Args:
     daily_tar_or_compressed_path (str): daily tar or compressed path as
     ``str``.
     reason (Any | None): One of ``Any``, ``None``.
     log_fn (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> invalidate_after_daily_tar_mutation("x", None, None)  # doctest: +SKIP
   """
   if not daily_tar_or_compressed_path:
     return
   canonical = normalize_daily_compressed_path(
-      os.path.normpath(daily_tar_or_compressed_path),
+    os.path.normpath(daily_tar_or_compressed_path),
   )
   invalidate_daily_archive_members_cache(canonical, reason=reason)
   if log_fn and reason:
     log_fn(
-        "Archive members cache invalidated path=%s reason=%s"
-        % (canonical, reason),
-        flush=True,
+      "Archive members cache invalidated path=%s reason=%s"
+      % (canonical, reason),
+      flush=True,
     )
 
 
@@ -4784,14 +4846,14 @@ def invalidate_daily_archive_members_cache(
 ) -> None:
   """
   Drop cached member maps for a daily archive (append, seal, identity change).
-  
+
   Args:
     compressed_path (str): String for compressed path.
     reason (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> invalidate_daily_archive_members_cache("x", None)  # doctest: +SKIP
   """
@@ -4799,12 +4861,12 @@ def invalidate_daily_archive_members_cache(
     return
   canonical = normalize_daily_compressed_path(compressed_path)
   day_date = calendar_date_from_daily_tar_path(
-      daily_tar_path_from_compressed(canonical),
+    daily_tar_path_from_compressed(canonical),
   )
   day_token = day_date.isoformat() if day_date is not None else None
   with _DAILY_ARCHIVE_MEMBERS_CACHE_LOCK:
     drop_keys = [
-        key for key in _DAILY_ARCHIVE_MEMBERS_CACHE if key[0] == canonical
+      key for key in _DAILY_ARCHIVE_MEMBERS_CACHE if key[0] == canonical
     ]
     for key in drop_keys:
       _DAILY_ARCHIVE_MEMBERS_CACHE.pop(key, None)
@@ -4813,8 +4875,9 @@ def invalidate_daily_archive_members_cache(
     _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.pop(os.path.normpath(tar_path), None)
   try:
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-        invalidate_archive_members,
+      invalidate_archive_members,
     )
+
     for key in drop_keys:
       invalidate_archive_members(key)
     if not drop_keys:
@@ -4827,10 +4890,10 @@ def invalidate_daily_archive_members_cache(
 def _daily_archive_members_cache_enabled() -> Any:
   """
   Internal helper to handle daily archive members cache enabled.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _daily_archive_members_cache_enabled()  # doctest: +SKIP
   """
@@ -4840,10 +4903,10 @@ def _daily_archive_members_cache_enabled() -> Any:
 def _trim_daily_archive_members_cache() -> None:
   """
   Internal helper to handle trim daily archive members cache.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _trim_daily_archive_members_cache()  # doctest: +SKIP
   """
@@ -4857,13 +4920,13 @@ def _trim_daily_archive_members_cache() -> None:
 def _daily_archive_members_cache_key(canonical_zst_path: str) -> Any:
   """
   Cache key keyed by canonical ``.tar.zst`` path and on-disk archive identities.
-  
+
   Args:
     canonical_zst_path (str): String for canonical zst path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _daily_archive_members_cache_key("x")  # doctest: +SKIP
   """
@@ -4876,27 +4939,27 @@ def _daily_archive_members_cache_key(canonical_zst_path: str) -> Any:
   else:
     sealed_identity = None
   return (
-      canonical_zst_path,
-      sealed_identity,
-      _archive_file_identity(tar_path),
+    canonical_zst_path,
+    sealed_identity,
+    _archive_file_identity(tar_path),
   )
 
 
 def _resolve_sealed_daily_archive_path(compressed_path: str) -> Any:
   """
   Return on-disk sealed path (``.tar.zst`` or legacy ``.tar.gz``), if any.
-  
+
   Args:
     compressed_path (str): String for compressed path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _resolve_sealed_daily_archive_path("x")  # doctest: +SKIP
   """
   if detect_compressed_format(compressed_path) is not None and os.path.isfile(
-      compressed_path,
+    compressed_path,
   ):
     return compressed_path
   canonical = normalize_daily_compressed_path(compressed_path)
@@ -4912,13 +4975,13 @@ def _resolve_sealed_daily_archive_path(compressed_path: str) -> Any:
 def daily_archive_populate_source_exists(compressed_path: str) -> Any:
   """
   True when a calendar day has a sealed archive and/or mutable ``.tar`` on disk.
-  
+
   Args:
     compressed_path (str): String for compressed path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> daily_archive_populate_source_exists("x")  # doctest: +SKIP
   """
@@ -4931,13 +4994,13 @@ def daily_archive_populate_source_exists(compressed_path: str) -> Any:
 def _lookup_daily_archive_members_cache(compressed_path: str) -> Any:
   """
   Internal helper to handle lookup daily archive members cache.
-  
+
   Args:
     compressed_path (str): String for compressed path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _lookup_daily_archive_members_cache("x")  # doctest: +SKIP
   """
@@ -4958,14 +5021,14 @@ def _store_daily_archive_members_cache(
 ) -> None:
   """
   Internal helper to handle store daily archive members cache.
-  
+
   Args:
     compressed_path (str): String for compressed path.
     members (Any): Iterable of filesystem paths as strings.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _store_daily_archive_members_cache("x", None)  # doctest: +SKIP
   """
@@ -5003,9 +5066,9 @@ def _daily_archive_member_match_via_store(
     >>> _daily_archive_member_match_via_store(None, "x", None, 0)
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      build_archive_members_keys,
-      member_match_when_warm,
-      members_cache_is_fully_warm,
+    build_archive_members_keys,
+    member_match_when_warm,
+    members_cache_is_fully_warm,
   )
 
   if not daily_archive_populate_source_exists(compressed_path):
@@ -5013,17 +5076,17 @@ def _daily_archive_member_match_via_store(
   cache_key = _daily_archive_members_cache_key(canonical)
   keys = build_archive_members_keys(cache_key)
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-      update_worker_substage,
+    update_worker_substage,
   )
 
   update_worker_substage(
-      "archive_member_lookup",
-      lookup_mode="hget",
+    "archive_member_lookup",
+    lookup_mode="hget",
   )
   warm_match = member_match_when_warm(
-      keys,
-      member_name,
-      expected_size,
+    keys,
+    member_name,
+    expected_size,
   )
   if warm_match is not None:
     return warm_match
@@ -5033,12 +5096,12 @@ def _daily_archive_member_match_via_store(
       return False
     return None
   return _member_match_via_store_or_sealed_point(
-      canonical,
-      cache_key,
-      keys,
-      sealed_path,
-      member_name,
-      expected_size,
+    canonical,
+    cache_key,
+    keys,
+    sealed_path,
+    member_name,
+    expected_size,
   )
 
 
@@ -5049,19 +5112,19 @@ def daily_archive_has_member_with_size(
 ) -> Any:
   """
   True when the daily archive contains ``member_name`` with exact byte size.
-  
+
   Args:
     compressed_path (str): String for compressed path.
     member_name (Any): Member name passed to this helper.
     expected_size (int): Integer value for expected size.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     Exception: Raised when ``daily_archive_has_member_with_size`` hits a
     ``Exception`` failure path.
-  
+
   Examples:
     >>> daily_archive_has_member_with_size("x", None, 0)  # doctest: +SKIP
   """
@@ -5077,10 +5140,10 @@ def daily_archive_has_member_with_size(
     return members.get(member_name) == expected_size
   try:
     store_match = _daily_archive_member_match_via_store(
-        canonical,
-        compressed_path,
-        member_name,
-        expected_size,
+      canonical,
+      compressed_path,
+      member_name,
+      expected_size,
     )
     if store_match is not None:
       return store_match
@@ -5103,17 +5166,17 @@ def _sealed_archive_member_has_exact_size(
 ) -> Any:
   """
   Return ``True``/``False`` when readable; ``None`` when sealed archive.
-  
+
     unreadable.
-  
+
   Args:
     sealed_path (str): String for sealed path.
     member_name (Any): Member name passed to this helper.
     expected_size (int): Integer value for expected size.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _sealed_archive_member_has_exact_size("x", None, 0)  # doctest: +SKIP
   """
@@ -5122,18 +5185,18 @@ def _sealed_archive_member_has_exact_size(
   def on_member(name: Any, size: int) -> None:
     """
     On member.
-    
+
     Args:
       name (Any): Name passed to this helper.
       size (int): Integer value for size.
-    
+
     Returns:
       None
-    
+
     Raises:
       _MemberStreamEarlyExit: Raised when ``on_member`` hits a
       ``_MemberStreamEarlyExit`` failure path.
-    
+
     Examples:
       >>> on_member(None, 0)  # doctest: +SKIP
     """
@@ -5143,10 +5206,10 @@ def _sealed_archive_member_has_exact_size(
 
   try:
     readable, _, _, _stream_error = _stream_compressed_archive_members(
-        sealed_path,
-        on_member,
-        apply_priority_wrap=False,
-        defer_on_member=False,
+      sealed_path,
+      on_member,
+      apply_priority_wrap=False,
+      defer_on_member=False,
     )
     if not readable:
       return None
@@ -5168,13 +5231,13 @@ SKIP_KIND_READ_ERROR = "read_error"
 def _is_fnctl_read_lock_timeout_error(exc: Any) -> Any:
   """
   True when ``file_read_lock_wait`` timed out (transient append contention).
-  
+
   Args:
     exc (Any): Exception instance being classified or logged.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _is_fnctl_read_lock_timeout_error(None)  # doctest: +SKIP
   """
@@ -5189,13 +5252,13 @@ def _is_fnctl_read_lock_timeout_error(exc: Any) -> Any:
 def _is_fnctl_read_lock_timeout_detail(detail: Any) -> Any:
   """
   Internal helper to check if fnctl read lock timeout detail.
-  
+
   Args:
     detail (Any): Detail passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _is_fnctl_read_lock_timeout_detail(None)  # doctest: +SKIP
   """
@@ -5208,10 +5271,10 @@ _FNCTL_POPULATE_RETRY_DELAYS_S = (2.0, 5.0)
 def _archive_members_fnctl_read_lock_timeout_seconds() -> Any:
   """
   Internal helper to archive the members fnctl read lock timeout seconds.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _archive_members_fnctl_read_lock_timeout_seconds()  # doctest: +SKIP
   """
@@ -5222,23 +5285,23 @@ def _archive_members_fnctl_read_lock_timeout_seconds() -> Any:
 def _archive_file_read_lock_wait(target_path: str) -> Iterator[Any]:
   """
   Shared read-lock wait for archive populate/verify (INI-backed timeout).
-  
+
   Best-effort unlinks the read-lock sidecar after release (parity with tar
   populate) so sealed-stream ``*.tar.zst.fnctl.lock`` files do not accumulate.
-  
+
   Args:
     target_path (str): String for target path.
-  
+
   Yields:
     Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _archive_file_read_lock_wait("x")  # doctest: +SKIP
   """
   try:
     with file_read_lock_wait(
-        target_path,
-        timeout_seconds=_archive_members_fnctl_read_lock_timeout_seconds(),
+      target_path,
+      timeout_seconds=_archive_members_fnctl_read_lock_timeout_seconds(),
     ):
       yield
   finally:
@@ -5248,24 +5311,28 @@ def _archive_file_read_lock_wait(target_path: str) -> Iterator[Any]:
 def _populate_tar_file_read_lock_wait(target_path: str) -> Any:
   """
   Tar populate read-lock wait — bounded by populate_max_seconds when set.
-  
+
   Args:
     target_path (str): String for target path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _populate_tar_file_read_lock_wait("x")  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      wait_for_daily_tar_restore_before_populate,
+    wait_for_daily_tar_restore_before_populate,
   )
 
   wait_for_daily_tar_restore_before_populate(target_path, log_fn=log_print)
   max_s = cfg.get_sync_archive_members_populate_max_seconds()
-  timeout = float(max_s) if max_s > 0 else float(
+  timeout = (
+    float(max_s)
+    if max_s > 0
+    else float(
       _archive_members_fnctl_read_lock_timeout_seconds(),
+    )
   )
   return file_read_lock_wait(target_path, timeout_seconds=timeout)
 
@@ -5273,17 +5340,17 @@ def _populate_tar_file_read_lock_wait(target_path: str) -> Any:
 def _decompress_should_unlink_compressed(tar_path: str) -> Any:
   """
   Whether restore may unlink the sealed sibling after materialize.
-  
+
   Restore hot path must **never** build a full maintenance / remaining-raw
   census (gated prewarm stall). Day-close tar-drop owns sealed unlink after
   blocking remaining-raw is empty. While a sealed sibling exists, keep it.
-  
+
   Args:
     tar_path (str): String for tar path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _decompress_should_unlink_compressed("x")  # doctest: +SKIP
   """
@@ -5303,16 +5370,16 @@ def _populate_should_use_tar_scan(
 ) -> Any:
   """
   Return ``(use_tar, reason)`` for populate source selection.
-  
+
   Args:
     tar_path (str): String for tar path.
     zst_path (str): String for zst path.
     gz_path (str): String for gz path.
     sealed_path (str): String for sealed path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _populate_should_use_tar_scan("x", "x", "x", "x")  # doctest: +SKIP
   """
@@ -5331,53 +5398,60 @@ def _log_populate_source_decision(
 ) -> None:
   """
   Internal helper to log the populate source decision.
-  
+
   Args:
     day_token (Any): Day token passed to this helper.
     tar_path (str): String for tar path.
     zst_path (str): String for zst path.
     gz_path (str): String for gz path.
     sealed_path (str): String for sealed path.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _log_populate_source_decision(None, "x", "x", "x", "x")
   """
   use_tar, reason = _populate_should_use_tar_scan(
-      tar_path, zst_path, gz_path, sealed_path,
+    tar_path,
+    zst_path,
+    gz_path,
+    sealed_path,
   )
-  dirty = is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path) if os.path.isfile(
+  dirty = (
+    is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path)
+    if os.path.isfile(
       tar_path,
-  ) else False
+    )
+    else False
+  )
   sealed_exists = bool(sealed_path and os.path.isfile(sealed_path))
   log_print(
-      "INFO: populate_source_decision day=%s dirty=%s sealed_exists=%s "
-      "use_tar=%s reason=%s tar=%s sealed=%s"
-      % (
-          day_token,
-          dirty,
-          sealed_exists,
-          use_tar,
-          reason or ("sealed_only" if not use_tar else "tar_exists"),
-          tar_path,
-          sealed_path or "",
-      ),
-      flush=True,
+    "INFO: populate_source_decision day=%s dirty=%s sealed_exists=%s "
+    "use_tar=%s reason=%s tar=%s sealed=%s"
+    % (
+      day_token,
+      dirty,
+      sealed_exists,
+      use_tar,
+      reason or ("sealed_only" if not use_tar else "tar_exists"),
+      tar_path,
+      sealed_path or "",
+    ),
+    flush=True,
   )
 
 
 def _resolve_sealed_path_for_day_token(day_token: Any) -> Any:
   """
   Internal helper to resolve the sealed path for day token.
-  
+
   Args:
     day_token (Any): Day token passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _resolve_sealed_path_for_day_token(None)  # doctest: +SKIP
   """
@@ -5401,14 +5475,14 @@ def classify_sealed_archive_stream_failure(
 ) -> Any:
   """
   Classify sealed archive stream failure (single-flight populate winner only).
-  
+
   Args:
     sealed_path (str): String for sealed path.
     stream_error (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> classify_sealed_archive_stream_failure("x", None)  # doctest: +SKIP
   """
@@ -5420,16 +5494,17 @@ def classify_sealed_archive_stream_failure(
   if stream_error is not None:
     stream_detail = str(stream_error).strip()[:500]
 
-  is_zst = (
-      detect_compressed_format(sealed_path) == DAILY_ARCHIVE_ZST_SUFFIX
-      or str(sealed_path).endswith(DAILY_ARCHIVE_ZST_SUFFIX)
+  is_zst = detect_compressed_format(
+    sealed_path
+  ) == DAILY_ARCHIVE_ZST_SUFFIX or str(sealed_path).endswith(
+    DAILY_ARCHIVE_ZST_SUFFIX
   )
   if is_zst:
     try:
       zstd_cli.zstd_test(
-          sealed_path,
-          get_ingest_zstd_thread_count(),
-          apply_priority_wrap=False,
+        sealed_path,
+        get_ingest_zstd_thread_count(),
+        apply_priority_wrap=False,
       )
       detail = stream_detail or "tar stream unreadable"
       return SKIP_KIND_TAR_TRUNCATED, detail
@@ -5447,15 +5522,15 @@ def classify_sealed_archive_stream_failure(
     # not look like a tar archive" when the tail is shorter than one header
     # block.
     truncated_markers = (
-        "unexpected end",
-        "eof",
-        "tarerror",
-        "truncated",
-        "unrecognized archive format",
-        "rmtlseek",
-        "not stopped at a record boundary",
-        "does not look like a tar archive",
-        "error opening archive",
+      "unexpected end",
+      "eof",
+      "tarerror",
+      "truncated",
+      "unrecognized archive format",
+      "rmtlseek",
+      "not stopped at a record boundary",
+      "does not look like a tar archive",
+      "error opening archive",
     )
     if any(marker in lowered for marker in truncated_markers):
       return SKIP_KIND_TAR_TRUNCATED, stream_detail
@@ -5470,16 +5545,16 @@ def _cache_ingest_skipped_calendar_day(
 ) -> None:
   """
   Internal helper to handle cache ingest skipped calendar day.
-  
+
   Args:
     day_token (Any): Day token passed to this helper.
     kind (Any): Mode or kind token selecting a code path.
     detail (Any): Detail passed to this helper.
     sealed_path (str): String for sealed path.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _cache_ingest_skipped_calendar_day(None, None, None, "x")
   """
@@ -5497,35 +5572,42 @@ def _raise_if_ingest_day_skipped(
 ) -> None:
   """
   Internal helper to handle raise if ingest day skipped.
-  
+
   Args:
     keys (Any): Keys passed to this helper.
     sealed_path (str): String for sealed path.
     client (Any): Live handle (pool, client, or connection).
-  
+
   Returns:
     None
-  
+
   Raises:
     ArchiveDayIngestSkipError: Raised when ``_raise_if_ingest_day_skipped``
     hits a ``ArchiveDayIngestSkipError`` failure path.
-  
+
   Examples:
     >>> _raise_if_ingest_day_skipped(None, "x", None)  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      ArchiveDayIngestSkipError,
-      get_archive_day_ingest_skip,
+    ArchiveDayIngestSkipError,
+    get_archive_day_ingest_skip,
   )
 
   cached = _INGEST_SKIPPED_CALENDAR_DAYS.get(keys.day_token)
   if cached is not None:
     kind, detail, cached_path = cached
-    resolved = cached_path or sealed_path or _resolve_sealed_path_for_day_token(
+    resolved = (
+      cached_path
+      or sealed_path
+      or _resolve_sealed_path_for_day_token(
         keys.day_token,
+      )
     )
     raise ArchiveDayIngestSkipError(
-        keys.day_token, resolved, kind, detail,
+      keys.day_token,
+      resolved,
+      kind,
+      detail,
     )
   skip = get_archive_day_ingest_skip(keys)
   if skip is not None:
@@ -5547,16 +5629,16 @@ def mark_archive_day_ingest_skip_and_raise(
 ) -> None:
   """
   Mark archive day ingest skip and raise.
-  
+
   Args:
     sealed_path (str): String for sealed path.
     keys (Any): Keys passed to this helper.
     client (Any): Live handle (pool, client, or connection).
     stream_error (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     None
-  
+
   Raises:
     ArchiveDayIngestSkipError: Raised when
     ``mark_archive_day_ingest_skip_and_raise`` hits a
@@ -5564,31 +5646,33 @@ def mark_archive_day_ingest_skip_and_raise(
     ArchiveMembersStoreUnavailableError: Raised when
     ``mark_archive_day_ingest_skip_and_raise`` hits a
     ``ArchiveMembersStoreUnavailableError`` failure path.
-  
+
   Examples:
     >>> mark_archive_day_ingest_skip_and_raise("x", None, None, None)
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      ArchiveDayIngestSkipError,
-      ArchiveMembersStoreUnavailableError,
-      _SELF_INGEST_TAR_HOT_REASONS,
-      archive_append_inflight_for_day,
-      ingest_tar_hot_for_day,
-      ingest_tar_hot_reason_for_day,
-      set_archive_day_ingest_skip,
+    ArchiveDayIngestSkipError,
+    ArchiveMembersStoreUnavailableError,
+    _SELF_INGEST_TAR_HOT_REASONS,
+    archive_append_inflight_for_day,
+    ingest_tar_hot_for_day,
+    ingest_tar_hot_reason_for_day,
+    set_archive_day_ingest_skip,
   )
 
-  kind, detail = classify_sealed_archive_stream_failure(sealed_path, stream_error)
+  kind, detail = classify_sealed_archive_stream_failure(
+    sealed_path, stream_error
+  )
   if kind == SKIP_KIND_READ_ERROR and (
-      _is_fnctl_read_lock_timeout_error(stream_error)
-      or _is_fnctl_read_lock_timeout_detail(detail)
+    _is_fnctl_read_lock_timeout_error(stream_error)
+    or _is_fnctl_read_lock_timeout_detail(detail)
   ):
     raise ArchiveMembersStoreUnavailableError(
-        "transient fnctl read lock timeout during sealed populate day=%s path=%s"
-        % (keys.day_token, sealed_path or ""),
+      "transient fnctl read lock timeout during sealed populate day=%s path=%s"
+      % (keys.day_token, sealed_path or ""),
     )
   if kind == SKIP_KIND_TAR_TRUNCATED and not (
-      sealed_path and os.path.isfile(sealed_path)
+    sealed_path and os.path.isfile(sealed_path)
   ):
     day_token = keys.day_token
     tar_path = ""
@@ -5600,81 +5684,87 @@ def mark_archive_day_ingest_skip_and_raise(
     # True append (or non-self hot) → transient Unavailable; preserve no day-skip.
     if day_token and archive_append_inflight_for_day(day_token):
       raise ArchiveMembersStoreUnavailableError(
-          "transient tar populate EOF during hot/append activity day=%s"
-          % day_token,
+        "transient tar populate EOF during hot/append activity day=%s"
+        % day_token,
       )
     # Self-hot alone + sealed sibling → prefer sealed populate (not forever-transient).
-    if (
-        day_token
-        and sealed_sibling
-        and os.path.isfile(sealed_sibling)
-    ):
+    if day_token and sealed_sibling and os.path.isfile(sealed_sibling):
       raise ArchiveMembersStoreUnavailableError(
-          "tar populate EOF prefer sealed fallback day=%s" % day_token,
+        "tar populate EOF prefer sealed fallback day=%s" % day_token,
       )
     if day_token and ingest_tar_hot_for_day(day_token):
       hot_reason = ingest_tar_hot_reason_for_day(day_token)
       if hot_reason and hot_reason not in _SELF_INGEST_TAR_HOT_REASONS:
         raise ArchiveMembersStoreUnavailableError(
-            "transient tar populate EOF during hot/append activity day=%s"
-            % day_token,
+          "transient tar populate EOF during hot/append activity day=%s"
+          % day_token,
         )
       # Self-hot only without sealed: fall through to readable / sticky skip.
     if tar_path and os.path.isfile(tar_path):
       try:
         if verify_tar_archive_readable(tar_path):
           raise ArchiveMembersStoreUnavailableError(
-              "transient tar populate EOF while mutable tar readable day=%s"
-              % day_token,
+            "transient tar populate EOF while mutable tar readable day=%s"
+            % day_token,
           )
       except TimeoutError:
         raise ArchiveMembersStoreUnavailableError(
-            "transient tar populate EOF during fnctl contention day=%s"
-            % day_token,
+          "transient tar populate EOF during fnctl contention day=%s"
+          % day_token,
         ) from None
-  resolved_sealed = sealed_path or _resolve_sealed_path_for_day_token(keys.day_token)
+  resolved_sealed = sealed_path or _resolve_sealed_path_for_day_token(
+    keys.day_token
+  )
   set_archive_day_ingest_skip(keys, kind=kind, detail=detail, client=client)
   _cache_ingest_skipped_calendar_day(
-      keys.day_token, kind, detail, resolved_sealed,
+    keys.day_token,
+    kind,
+    detail,
+    resolved_sealed,
   )
   raise ArchiveDayIngestSkipError(
-      keys.day_token, resolved_sealed, kind, detail,
+    keys.day_token,
+    resolved_sealed,
+    kind,
+    detail,
   )
 
 
 def _log_archive_day_ingest_skip_once(exc: Any) -> None:
   """
   Internal helper to log the archive day ingest skip once.
-  
+
   Args:
     exc (Any): Exception instance being classified or logged.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _log_archive_day_ingest_skip_once(None)  # doctest: +SKIP
   """
-  if len(_LOGGED_ARCHIVE_DAY_INGEST_SKIP) >= _LOGGED_ARCHIVE_DAY_INGEST_SKIP_MAX:
+  if (
+    len(_LOGGED_ARCHIVE_DAY_INGEST_SKIP) >= _LOGGED_ARCHIVE_DAY_INGEST_SKIP_MAX
+  ):
     _LOGGED_ARCHIVE_DAY_INGEST_SKIP.clear()
   if exc.day_token in _LOGGED_ARCHIVE_DAY_INGEST_SKIP:
     return
   _LOGGED_ARCHIVE_DAY_INGEST_SKIP.add(exc.day_token)
   if exc.kind == SKIP_KIND_TAR_TRUNCATED:
     reason_phrase = (
-        "tar_truncated_or_unreadable (zstd -t passed; tar stream: %s)"
-        % exc.detail
+      "tar_truncated_or_unreadable (zstd -t passed; tar stream: %s)"
+      % exc.detail
     )
   elif exc.kind == SKIP_KIND_ZST_FRAME_INVALID:
     reason_phrase = "zst_frame_invalid (zstd -t failed: %s)" % exc.detail
   else:
     reason_phrase = "%s (%s)" % (exc.kind, exc.detail)
   log_print(
-      "ERROR: daily sealed archive unusable for ingest lookup: sealed_path=%s day=%s "
-      "reason=%s; skipping tar-append duplicate-check for all raw stats files on this "
-      "day until the archive is repaired"
-      % (exc.sealed_path, exc.day_token, reason_phrase),
-      flush=True,
+    "ERROR: daily sealed archive unusable for ingest lookup: sealed_path=%s day=%s "
+    "reason=%s; skipping tar-append duplicate-check for all raw stats files on this "
+    "day until the archive is repaired"
+    % (exc.sealed_path, exc.day_token, reason_phrase),
+    flush=True,
   )
 
 
@@ -5707,17 +5797,22 @@ def _member_match_via_store_or_sealed_point(
 
   Examples:
     >>> _member_match_via_store_or_sealed_point(  # doctest: +SKIP
-    ...   "x", None, None, "x", "m", 0,
+    ...   "x",
+    ...   None,
+    ...   None,
+    ...   "x",
+    ...   "m",
+    ...   0,
     ... )
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      ArchiveDayIngestSkipError,
-      ArchiveMembersStoreUnavailableError,
-      archive_members_populate_shows_progress_for_day,
-      populate_degraded_is_set,
-      member_match_when_warm,
-      request_archive_members_populate_and_wait,
-      wait_for_member_match,
+    ArchiveDayIngestSkipError,
+    ArchiveMembersStoreUnavailableError,
+    archive_members_populate_shows_progress_for_day,
+    populate_degraded_is_set,
+    member_match_when_warm,
+    request_archive_members_populate_and_wait,
+    wait_for_member_match,
   )
 
   del cache_key
@@ -5725,26 +5820,28 @@ def _member_match_via_store_or_sealed_point(
   _raise_if_ingest_day_skipped(keys, sealed_path, None)
 
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-      update_worker_substage,
+    update_worker_substage,
   )
 
   update_worker_substage(
-      "archive_member_lookup",
-      lookup_mode="hget",
+    "archive_member_lookup",
+    lookup_mode="hget",
   )
   warm_match = member_match_when_warm(
-      keys, member_name, expected_size,
+    keys,
+    member_name,
+    expected_size,
   )
   if warm_match is not None:
     return warm_match
 
   if populate_degraded_is_set(keys) or (
-      archive_members_populate_shows_progress_for_day(keys.day_token)
+    archive_members_populate_shows_progress_for_day(keys.day_token)
   ):
     _raise_if_ingest_day_skipped(keys, sealed_path, None)
     update_worker_substage(
-        "archive_member_lookup",
-        lookup_mode="store_wait",
+      "archive_member_lookup",
+      lookup_mode="store_wait",
     )
     try:
       members = request_archive_members_populate_and_wait(canonical)
@@ -5757,9 +5854,12 @@ def _member_match_via_store_or_sealed_point(
     except ArchiveMembersStoreUnavailableError:
       _raise_if_ingest_day_skipped(keys, sealed_path, None)
       return wait_for_member_match(
-          keys, member_name, expected_size, sealed_path=sealed_path,
-          respect_ingest_deadline=False,
-          canonical=canonical,
+        keys,
+        member_name,
+        expected_size,
+        sealed_path=sealed_path,
+        respect_ingest_deadline=False,
+        canonical=canonical,
       )
 
   try:
@@ -5770,9 +5870,12 @@ def _member_match_via_store_or_sealed_point(
   except ArchiveMembersStoreUnavailableError:
     _raise_if_ingest_day_skipped(keys, sealed_path, None)
     return wait_for_member_match(
-        keys, member_name, expected_size, sealed_path=sealed_path,
-        respect_ingest_deadline=False,
-        canonical=canonical,
+      keys,
+      member_name,
+      expected_size,
+      sealed_path=sealed_path,
+      respect_ingest_deadline=False,
+      canonical=canonical,
     )
 
 
@@ -5786,14 +5889,14 @@ def _stream_compressed_archive_members(
 ) -> Any:
   """
   Stream file members from a sealed archive.
-  
+
   ``on_member(name, size)`` is invoked for each file member when provided.
   Returns ``(readable, members_dict, saw_duplicate_names, stream_error)``.
 
   Full-walk / populate callers keep the default ``defer_on_member=True`` so
   callbacks run after the shared read lock is released. Size lookups that
   raise ``_MemberStreamEarlyExit`` must pass ``defer_on_member=False``.
-  
+
   Args:
     compressed_path (str): String for compressed path.
     on_member (Any | None): One of ``Any``, ``None``.
@@ -5803,33 +5906,33 @@ def _stream_compressed_archive_members(
     defer_on_member (bool): Invoke ``on_member`` after releasing the shared
       read lock (default True). Pass False when the callback may raise
       ``_MemberStreamEarlyExit``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     Exception: Raised when ``_stream_compressed_archive_members`` hits a
     ``Exception`` failure path.
-  
+
   Examples:
     >>> _stream_compressed_archive_members("x", None, True)  # doctest: +SKIP
   """
   if detect_compressed_format(compressed_path) is None or not os.path.isfile(
-      compressed_path,
+    compressed_path,
   ):
     return False, {}, False, None
   lock_cm = (
-      contextlib.nullcontext()
-      if already_locked
-      else _archive_file_read_lock_wait(compressed_path)
+    contextlib.nullcontext()
+    if already_locked
+    else _archive_file_read_lock_wait(compressed_path)
   )
   result = (False, {}, False, None)
   try:
     with lock_cm:
       with _open_tarfile_for_read(
-          compressed_path,
-          zstd_thread_count_for_wrap(apply_priority_wrap),
-          apply_priority_wrap=apply_priority_wrap,
+        compressed_path,
+        zstd_thread_count_for_wrap(apply_priority_wrap),
+        apply_priority_wrap=apply_priority_wrap,
       ) as tf:
         members: dict[str, int] = {}
         seen_names: set[str] = set()
@@ -5855,14 +5958,15 @@ def _stream_compressed_archive_members(
     raise
   except Exception as exc:
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-        ArchiveMembersStoreUnavailableError,
+      ArchiveMembersStoreUnavailableError,
     )
+
     if isinstance(exc, ArchiveMembersStoreUnavailableError):
       raise
     log_print(
-        "WARNING: sealed archive member stream failed for %s: %s"
-        % (compressed_path, exc),
-        flush=True,
+      "WARNING: sealed archive member stream failed for %s: %s"
+      % (compressed_path, exc),
+      flush=True,
     )
     return False, {}, False, exc
 
@@ -5875,23 +5979,25 @@ def _scan_compressed_archive_members_and_readable(
 ) -> Any:
   """
   Return ``(readable, members)`` from one streamed zstd/gzip pass.
-  
+
   Args:
     compressed_path (str): String for compressed path.
     apply_priority_wrap (bool): Boolean flag for apply priority wrap.
     already_locked (bool): Skip the shared fnctl wait when the caller already
     holds the exclusive write lock on ``compressed_path``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _scan_compressed_archive_members_and_readable("x", True)
   """
-  readable, members, _duplicates, _stream_error = _stream_compressed_archive_members(
+  readable, members, _duplicates, _stream_error = (
+    _stream_compressed_archive_members(
       compressed_path,
       apply_priority_wrap=apply_priority_wrap,
       already_locked=already_locked,
+    )
   )
   return readable, members
 
@@ -5940,12 +6046,13 @@ def _sealed_archive_members_via_store_or_scan(
     return False, {}
   if os.path.isfile(daily_tar_path_from_compressed(sealed_path)):
     return _scan_compressed_archive_members_and_readable(
-        sealed_path,
-        apply_priority_wrap=apply_priority_wrap,
+      sealed_path,
+      apply_priority_wrap=apply_priority_wrap,
     )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      ArchiveDayIngestSkipError,
+    ArchiveDayIngestSkipError,
   )
+
   try:
     members = get_existing_archive_members_for_daily_archive(sealed_path)
   except ArchiveDayIngestSkipError:
@@ -5964,29 +6071,29 @@ def validate_sealed_daily_archive_for_raw_removal(
 ) -> Any:
   """
   Validate uncompressed tar (if present) then sealed ``.tar.zst`` (or legacy.
-  
+
     ``.tar.gz``).
-  
+
   Order: (1) readable ``YYYY-MM-DD.tar`` and member sizes if it exists;
   (2) readable sealed archive and member sizes from compressed file only;
   (3) if both exist, dicts must be equal. Returns ``(True, members)`` for use
   with ``get_verified_files_to_remove``, or ``(False, None)``.
-  
+
   When ``allow_auto_seal`` is false (janitor raw-remove ticks, which must not
     run a
   second seal in the same pass), a missing sealed archive is not created here;
     the
   day is skipped instead.
-  
+
   Args:
     archive_compressed_path (str): String for archive compressed path.
     log_fn (Any): Callable invoked by this helper.
     validation_cache (Any | None): One of ``Any``, ``None``.
     allow_auto_seal (bool): Boolean flag for allow auto seal.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> validate_sealed_daily_archive_for_raw_removal("x", None, None, True)
   """
@@ -5994,8 +6101,8 @@ def validate_sealed_daily_archive_for_raw_removal(
   fmt = detect_compressed_format(archive_compressed_path)
   if fmt not in ("zst", "gz"):
     _log_skip(
-        "Skipping removal validation: not a daily compressed archive: %s"
-        % archive_compressed_path,
+      "Skipping removal validation: not a daily compressed archive: %s"
+      % archive_compressed_path,
     )
     return False, None
   sealed_path = archive_compressed_path
@@ -6006,22 +6113,26 @@ def validate_sealed_daily_archive_for_raw_removal(
     cached = validation_cache.get(cache_key)
     if cached is not None:
       validation_cache["hits"] = int(validation_cache.get("hits", 0)) + 1
-      cached_members = dict(cached["members"]) if cached["members"] is not None else None
+      cached_members = (
+        dict(cached["members"]) if cached["members"] is not None else None
+      )
       return bool(cached["ok"]), cached_members
     validation_cache["misses"] = int(validation_cache.get("misses", 0)) + 1
   members_tar = None
   if os.path.isfile(tar_path):
     if not restore_tar_from_sealed_if_unreadable(
-        tar_path,
-        get_archive_zstd_thread_count(),
-        log_fn=log_fn,
+      tar_path,
+      get_archive_zstd_thread_count(),
+      log_fn=log_fn,
     ):
-      _log_skip("Skipping removal: uncompressed tar failed check: %s" % tar_path)
+      _log_skip(
+        "Skipping removal: uncompressed tar failed check: %s" % tar_path
+      )
       return False, None
     members_tar = get_existing_archive_members(tar_path)
     if not members_tar:
       _log_skip(
-          "Skipping removal: uncompressed tar has no file members: %s" % tar_path,
+        "Skipping removal: uncompressed tar has no file members: %s" % tar_path,
       )
       return False, None
 
@@ -6032,48 +6143,50 @@ def validate_sealed_daily_archive_for_raw_removal(
       return False, None
     if not allow_auto_seal:
       _log_skip(
-          "Skipping removal: sealed archive missing and auto-seal disabled "
-          "(janitor seal already ran this pass): %s" % tar_path,
+        "Skipping removal: sealed archive missing and auto-seal disabled "
+        "(janitor seal already ran this pass): %s" % tar_path,
       )
       return False, None
     _log_skip(
-        "Sealed archive missing; creating from valid uncompressed tar: %s"
-        % tar_path,
+      "Sealed archive missing; creating from valid uncompressed tar: %s"
+      % tar_path,
     )
     try:
       atomic_seal_tar_to_zst(
-          tar_path,
-          zst_path,
-          num_threads=get_archive_zstd_thread_count(),
-          compress_level=cfg.get_archive_zstd_level(),
-          keep_uncompressed_tar=cfg.get_archive_keep_uncompressed_tar(),
-          log_fn=log_fn,
+        tar_path,
+        zst_path,
+        num_threads=get_archive_zstd_thread_count(),
+        compress_level=cfg.get_archive_zstd_level(),
+        keep_uncompressed_tar=cfg.get_archive_keep_uncompressed_tar(),
+        log_fn=log_fn,
       )
       sealed_path = zst_path
-      sealed_readable, members_sealed = _sealed_archive_members_via_store_or_scan(
+      sealed_readable, members_sealed = (
+        _sealed_archive_members_via_store_or_scan(
           sealed_path,
+        )
       )
       if not sealed_readable or members_sealed != members_tar:
         _log_skip(
-            "Skipping removal: auto-seal member mismatch for %s "
-            "(tar count=%s sealed count=%s)"
-            % (sealed_path, len(members_tar), len(members_sealed)),
+          "Skipping removal: auto-seal member mismatch for %s "
+          "(tar count=%s sealed count=%s)"
+          % (sealed_path, len(members_tar), len(members_sealed)),
         )
         return False, None
     except (OSError, subprocess.CalledProcessError) as exc:
       _log_skip(
-          "Skipping removal: failed to seal tar into zstd for %s (%s)"
-          % (tar_path, exc),
+        "Skipping removal: failed to seal tar into zstd for %s (%s)"
+        % (tar_path, exc),
       )
       return False, None
 
   sealed_readable, members_sealed = _sealed_archive_members_via_store_or_scan(
-      sealed_path,
+    sealed_path,
   )
   if not sealed_readable:
     _log_skip(
-        "Skipping removal: sealed archive failed integrity check: %s"
-        % sealed_path,
+      "Skipping removal: sealed archive failed integrity check: %s"
+      % sealed_path,
     )
     result = (False, None)
     if validation_cache is not None:
@@ -6083,9 +6196,9 @@ def validate_sealed_daily_archive_for_raw_removal(
   if members_tar is not None:
     if members_tar != members_sealed:
       _log_skip(
-          "Skipping removal: tar vs sealed member mismatch for %s "
-          "(uncompressed count=%s sealed count=%s)"
-          % (sealed_path, len(members_tar), len(members_sealed)),
+        "Skipping removal: tar vs sealed member mismatch for %s "
+        "(uncompressed count=%s sealed count=%s)"
+        % (sealed_path, len(members_tar), len(members_sealed)),
       )
       result = (False, None)
       if validation_cache is not None:
@@ -6093,7 +6206,10 @@ def validate_sealed_daily_archive_for_raw_removal(
       return result
     result = (True, members_tar)
     if validation_cache is not None:
-      validation_cache[cache_key] = {"ok": result[0], "members": dict(result[1])}
+      validation_cache[cache_key] = {
+        "ok": result[0],
+        "members": dict(result[1]),
+      }
     return result
 
   result = (True, members_sealed)
@@ -6110,23 +6226,23 @@ def ensure_daily_tar_restored_for_append(
 ) -> Any:
   """
   Return True when sibling ``.tar`` exists or was restored from sealed backup.
-  
+
   When no sealed ``.tar.zst`` / ``.tar.gz`` sibling exists, returns True so the
   caller may bootstrap a fresh ``.tar``. Returns False when a sealed sibling
   remains but restore did not produce ``tar_path``.
-  
+
   ``wait_for_other_owner=False`` (day-close pre_seal) returns False immediately
   when another thread holds the exclusive restore lease, so the worker can
   defer without blocking a day-close slot for the full decompress.
-  
+
   Args:
     tar_path (str): String for tar path.
     zstd_threads (Any): Zstd threads passed to this helper.
     wait_for_other_owner (bool): Boolean flag for wait for other owner.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> ensure_daily_tar_restored_for_append("x", None, True)  # doctest: +SKIP
   """
@@ -6134,30 +6250,31 @@ def ensure_daily_tar_restored_for_append(
     return True
   zst_path, gz_path = compressed_sibling_paths(tar_path)
   remove_compressed = _decompress_should_unlink_compressed(tar_path)
-  sealed = zst_path if os.path.isfile(zst_path) else (
-      gz_path if os.path.isfile(gz_path) else ""
+  sealed = (
+    zst_path
+    if os.path.isfile(zst_path)
+    else (gz_path if os.path.isfile(gz_path) else "")
   )
   if sealed:
     log_print(
-        "INFO: archive decompress restore begin tar=%s from=%s "
-        "remove_compressed=%s"
-        % (tar_path, sealed, remove_compressed),
-        flush=True,
+      "INFO: archive decompress restore begin tar=%s from=%s "
+      "remove_compressed=%s" % (tar_path, sealed, remove_compressed),
+      flush=True,
     )
   for sealed_src in (zst_path, gz_path):
     if not os.path.isfile(sealed_src):
       continue
     if decompress_compressed_to_tar(
-        sealed_src,
-        tar_path,
-        zstd_threads,
-        remove_compressed=remove_compressed,
-        wait_for_other_owner=wait_for_other_owner,
+      sealed_src,
+      tar_path,
+      zstd_threads,
+      remove_compressed=remove_compressed,
+      wait_for_other_owner=wait_for_other_owner,
     ):
       log_print(
-          "INFO: archive decompress restore tar=%s from=%s remove_compressed=%s"
-          % (tar_path, sealed_src, remove_compressed),
-          flush=True,
+        "INFO: archive decompress restore tar=%s from=%s remove_compressed=%s"
+        % (tar_path, sealed_src, remove_compressed),
+        flush=True,
       )
       return True
   if os.path.isfile(zst_path) or os.path.isfile(gz_path):
@@ -6183,16 +6300,16 @@ def replace_corrupt_tar_from_compressed_backup(
   sealed backup exists (``tar_path`` is left as-is). Returns False when a
   sealed ``.tar.zst`` or ``.tar.gz`` exists but restore did not replace
   ``tar_path``.
-  
+
   Args:
     tar_path (str): String for tar path.
     zst_path (str): String for zst path.
     gz_path (str): String for gz path.
     zstd_threads (Any): Zstd threads passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> replace_corrupt_tar_from_compressed_backup("x", "x", "x", None)
   """
@@ -6209,13 +6326,13 @@ def replace_corrupt_tar_from_compressed_backup(
       if not os.path.isfile(sealed_src):
         continue
       if decompress_compressed_to_tar(
-          sealed_src,
-          rebuild,
-          zstd_threads,
-          remove_compressed=remove_compressed,
-          restore_reason="corrupt_tar",
-          restore_caller="replace_corrupt_tar_from_compressed_backup",
-          already_locked=False,
+        sealed_src,
+        rebuild,
+        zstd_threads,
+        remove_compressed=remove_compressed,
+        restore_reason="corrupt_tar",
+        restore_caller="replace_corrupt_tar_from_compressed_backup",
+        already_locked=False,
       ):
         restored = True
         break
@@ -6247,18 +6364,18 @@ def restore_tar_from_sealed_if_unreadable(
 ) -> Any:
   """
   Verify ``tar_path`` readable; restore from sealed sibling when corrupt.
-  
+
   Returns True when ``tar_path`` is readable after (optional) restore.
   Returns False when unreadable and restore failed or tar is absent.
-  
+
   Args:
     tar_path (str): String for tar path.
     zstd_threads (Any): Zstd threads passed to this helper.
     log_fn (Any): Callable invoked by this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> restore_tar_from_sealed_if_unreadable("x", None, None)  # doctest: +SKIP
   """
@@ -6268,21 +6385,21 @@ def restore_tar_from_sealed_if_unreadable(
     return True
   zst_path, gz_path = compressed_sibling_paths(tar_path)
   if replace_corrupt_tar_from_compressed_backup(
-      tar_path,
-      zst_path,
-      gz_path,
-      zstd_threads,
+    tar_path,
+    zst_path,
+    gz_path,
+    zstd_threads,
   ) and verify_tar_archive_readable(tar_path):
     if log_fn:
       log_fn(
-          "Restored unreadable tar from sealed backup: %s" % tar_path,
-          flush=True,
+        "Restored unreadable tar from sealed backup: %s" % tar_path,
+        flush=True,
       )
     return True
   if log_fn:
     log_fn(
-        "Tar unreadable and sealed restore failed: %s" % tar_path,
-        flush=True,
+      "Tar unreadable and sealed restore failed: %s" % tar_path,
+      flush=True,
     )
   return False
 
@@ -6307,10 +6424,10 @@ def _run_gnu_tvf_file_members(
     return [], 1, ""
   tar_bin = _tar_list_executable()
   proc = subprocess.Popen(
-      [tar_bin, "tvf", tar_path],
-      stdout=subprocess.PIPE,
-      stderr=subprocess.PIPE,
-      text=True,
+    [tar_bin, "tvf", tar_path],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
   )
   occurrences: list[tuple[str, int]] = []
   try:
@@ -6349,24 +6466,27 @@ def _run_gnu_tf_member_names(archive_path: str) -> tuple[list[str], int, str]:
   fmt = detect_compressed_format(archive_path)
   if fmt in ("zst", "gz"):
     from hpcperfstats.dbload.lib.zstd_cli import (
-        _maybe_wrap_zstd_cmd,
-        _thread_args,
-        zstd_executable,
+      _maybe_wrap_zstd_cmd,
+      _thread_args,
+      zstd_executable,
     )
 
     thread_count = get_archive_zstd_thread_count()
     zstd_bin = zstd_executable()
     if fmt == "zst" and shutil.which("zstd"):
-      decompress_cmd = _maybe_wrap_zstd_cmd([
+      decompress_cmd = _maybe_wrap_zstd_cmd(
+        [
           zstd_bin,
           "-d",
           "-c",
           *_thread_args(thread_count),
           "-q",
           archive_path,
-      ])
+        ]
+      )
     elif fmt == "gz" and zstd_gzip_supported():
-      decompress_cmd = _maybe_wrap_zstd_cmd([
+      decompress_cmd = _maybe_wrap_zstd_cmd(
+        [
           zstd_bin,
           "-d",
           "--format=gzip",
@@ -6374,28 +6494,29 @@ def _run_gnu_tf_member_names(archive_path: str) -> tuple[list[str], int, str]:
           *_thread_args(thread_count),
           "-q",
           archive_path,
-      ])
+        ]
+      )
     else:
       return [], 1, "unsupported compressed archive format"
     p_decomp = subprocess.Popen(
-        decompress_cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
+      decompress_cmd,
+      stdout=subprocess.PIPE,
+      stderr=subprocess.PIPE,
+      text=True,
     )
     try:
       p_tar = subprocess.Popen(
-          [tar_bin, "tf", "-"],
-          stdin=p_decomp.stdout,
-          stdout=subprocess.PIPE,
-          stderr=subprocess.PIPE,
-          text=True,
+        [tar_bin, "tf", "-"],
+        stdin=p_decomp.stdout,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
       )
     except (FileNotFoundError, OSError) as exc:
       p_decomp.kill()
       try:
         p_decomp.wait(timeout=30)
-      except (OSError, subprocess.SubprocessError):
+      except OSError, subprocess.SubprocessError:
         pass
       return [], 1, str(exc)
     if p_decomp.stdout is not None:
@@ -6404,21 +6525,21 @@ def _run_gnu_tf_member_names(archive_path: str) -> tuple[list[str], int, str]:
     decomp_stderr = ""
     try:
       _decomp_stdout, decomp_stderr = p_decomp.communicate(timeout=30)
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
       p_decomp.kill()
       try:
         p_decomp.wait(timeout=30)
-      except (OSError, subprocess.SubprocessError):
+      except OSError, subprocess.SubprocessError:
         pass
     rc = 0 if (p_tar.returncode == 0 and p_decomp.returncode == 0) else 1
     stderr = (tar_stderr or "") + (decomp_stderr or "")
     lines = (tar_stdout or "").splitlines()
   else:
     result = subprocess.run(
-        [tar_bin, "tf", archive_path],
-        capture_output=True,
-        text=True,
-        check=False,
+      [tar_bin, "tf", archive_path],
+      capture_output=True,
+      text=True,
+      check=False,
     )
     rc = result.returncode
     stderr = result.stderr or ""
@@ -6475,10 +6596,10 @@ def _parse_tar_tvf_size_and_name(line: str) -> tuple[str, int] | None:
     size_idx = 4
     name_idx = 8
   elif (
-      len(parts) >= 8
-      and parts[1].isdigit()
-      and parts[2].isdigit()
-      and parts[3].isdigit()
+    len(parts) >= 8
+    and parts[1].isdigit()
+    and parts[2].isdigit()
+    and parts[3].isdigit()
   ):
     # BSD without the links column: mode owner group size Mon DD HH:MM name
     size_idx = 3
@@ -6500,12 +6621,12 @@ def _parse_tar_tvf_size_and_name(line: str) -> tuple[str, int] | None:
 def _read_tar_file_member_sizes_unlocked(tar_path: str) -> Any:
   """
   Read file member name -> max size from ``tar_path`` without a read lock.
-  
+
   Caller must hold ``file_write_lock(tar_path)`` or otherwise exclude writers.
-  
+
   Args:
     tar_path (str): String for tar path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
 
@@ -6520,8 +6641,8 @@ def _read_tar_file_member_sizes_unlocked(tar_path: str) -> Any:
   occurrences, rc, stderr = _run_gnu_tvf_file_members(tar_path)
   if rc != 0:
     raise RuntimeError(
-        "gnu tar tvf failed path=%s rc=%s stderr=%s"
-        % (tar_path, rc, stderr[:200])
+      "gnu tar tvf failed path=%s rc=%s stderr=%s"
+      % (tar_path, rc, stderr[:200])
     )
   by_name: dict[str, list[int]] = defaultdict(list)
   for name, size in occurrences:
@@ -6532,19 +6653,19 @@ def _read_tar_file_member_sizes_unlocked(tar_path: str) -> Any:
 def get_existing_archive_members(tar_path: str) -> Any:
   """
   Read tar at tar_path and return dict of member name -> size for **file**.
-  
+
     members.
-  
+
   If the same path appears multiple times (e.g. repeated append passes), the
   reported size is the **largest** among those entries so verification matches
   the preferred retained copy after deduplication.
-  
+
   Args:
     tar_path (str): String for tar path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> get_existing_archive_members("x")  # doctest: +SKIP
   """
@@ -6579,31 +6700,31 @@ def consume_archive_members_populate_source(
 ) -> Any:
   """
   Pop last populate source token for prewarm summary (``tar_populated`` /.
-  
+
     ``sealed_populated``).
-  
+
   Default is ``None`` so callers can distinguish a recorded populate from a
     silent miss (do not invent ``prewarmed`` when the store stayed empty).
-  
+
   Args:
     canonical (Any): Canonical passed to this helper.
     default (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> consume_archive_members_populate_source(None, None)  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-      get_process_archive_members_store,
+    get_process_archive_members_store,
   )
 
   store = get_process_archive_members_store()
   if store is None:
     return default
   value = store.consume_populate_source(
-      normalize_daily_compressed_path(canonical),
+    normalize_daily_compressed_path(canonical),
   )
   return default if value is None else value
 
@@ -6614,57 +6735,57 @@ def _record_archive_members_populate_source(
 ) -> None:
   """
   Internal helper to handle record archive members populate source.
-  
+
   Args:
     canonical (Any): Canonical passed to this helper.
     source (Any): Source passed to this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _record_archive_members_populate_source(None, None)  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-      get_process_archive_members_store,
+    get_process_archive_members_store,
   )
 
   store = get_process_archive_members_store()
   if store is None:
     return
   store.set_populate_source(
-      normalize_daily_compressed_path(canonical),
-      str(source),
+    normalize_daily_compressed_path(canonical),
+    str(source),
   )
 
 
 def _ensure_populate_scan_allowed() -> None:
   """
   Internal helper to ensure the populate scan allowed.
-  
+
   Returns:
     None
-  
+
   Raises:
     ArchiveMembersStoreUnavailableError: Raised when
     ``_ensure_populate_scan_allowed`` hits a
     ``ArchiveMembersStoreUnavailableError`` failure path.
-  
+
   Examples:
     >>> _ensure_populate_scan_allowed()  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-      get_worker_pool_kind,
-      may_run_archive_members_populate_scan,
+    get_worker_pool_kind,
+    may_run_archive_members_populate_scan,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      ArchiveMembersStoreUnavailableError,
+    ArchiveMembersStoreUnavailableError,
   )
 
   if not may_run_archive_members_populate_scan():
     raise ArchiveMembersStoreUnavailableError(
-        "archive members populate scan forbidden for pool_kind=%s"
-        % get_worker_pool_kind(),
+      "archive members populate scan forbidden for pool_kind=%s"
+      % get_worker_pool_kind(),
     )
 
 
@@ -6690,14 +6811,18 @@ def _clear_stale_day_ingest_skip_if_tar_repaired(
 
   Examples:
     >>> _clear_stale_day_ingest_skip_if_tar_repaired(  # doctest: +SKIP
-    ...   None, "x", "y", "z", "",
+    ...   None,
+    ...   "x",
+    ...   "y",
+    ...   "z",
+    ...   "",
     ... )
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      clear_archive_day_ingest_skip,
-      get_archive_day_ingest_skip,
-      get_process_archive_members_store,
-      populate_degraded_is_set,
+    clear_archive_day_ingest_skip,
+    get_archive_day_ingest_skip,
+    get_process_archive_members_store,
+    populate_degraded_is_set,
   )
 
   if keys.day_token == "unknown":
@@ -6725,10 +6850,9 @@ def _clear_stale_day_ingest_skip_if_tar_repaired(
     if store is not None:
       store.clear_degraded(keys.day_token)
   log_print(
-      "INFO: cleared stale archive_day_ingest_skip day=%s tar=%s "
-      "(sealed missing/dirty; tar readable)"
-      % (keys.day_token, tar_path),
-      flush=True,
+    "INFO: cleared stale archive_day_ingest_skip day=%s tar=%s "
+    "(sealed missing/dirty; tar readable)" % (keys.day_token, tar_path),
+    flush=True,
   )
 
 
@@ -6741,26 +6865,26 @@ def _build_populate_source_decision(
 ) -> Any:
   """
   Internal helper to build the populate source decision.
-  
+
   Args:
     day_token (Any): Day token passed to this helper.
     tar_path (str): String for tar path.
     zst_path (str): String for zst path.
     gz_path (str): String for gz path.
     sealed_path (str): String for sealed path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _build_populate_source_decision(None, "x", "x", "x", "x")
   """
   return {
-      "day_token": day_token,
-      "tar_path": tar_path,
-      "zst_path": zst_path,
-      "gz_path": gz_path,
-      "sealed_path": sealed_path or "",
+    "day_token": day_token,
+    "tar_path": tar_path,
+    "zst_path": zst_path,
+    "gz_path": gz_path,
+    "sealed_path": sealed_path or "",
   }
 
 
@@ -6771,26 +6895,26 @@ def _populate_members_from_sealed_scan(
 ) -> Any:
   """
   Internal helper to populate the members store from sealed scan.
-  
+
   Args:
     sealed_path (str): String for sealed path.
     cache_key (Any): Cache key passed to this helper.
     tar_path (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     Exception: Raised when ``_populate_members_from_sealed_scan`` hits a
     ``Exception`` failure path.
-  
+
   Examples:
     >>> _populate_members_from_sealed_scan("x", None, None)
   """
   _ensure_populate_scan_allowed()
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      build_archive_members_keys,
-      populate_archive_members,
+    build_archive_members_keys,
+    populate_archive_members,
   )
 
   keys = build_archive_members_keys(cache_key)
@@ -6800,31 +6924,36 @@ def _populate_members_from_sealed_scan(
   zst_path, gz_path = compressed_sibling_paths(tar_path)
 
   _scan_fn = lambda on_member: (
-      lambda packed: (packed[0], packed[2], packed[3])
+    lambda packed: (packed[0], packed[2], packed[3])
   )(
-      _stream_compressed_archive_members(
-          sealed_path,
-          on_member,
-          apply_priority_wrap=False,
-          defer_on_member=True,
-      )
+    _stream_compressed_archive_members(
+      sealed_path,
+      on_member,
+      apply_priority_wrap=False,
+      defer_on_member=True,
+    )
   )
 
   members = None
   try:
     members = populate_archive_members(
-        keys,
-        _scan_fn,
-        sealed_path=sealed_path,
-        source_decision=_build_populate_source_decision(
-            keys.day_token, tar_path, zst_path, gz_path, sealed_path,
-        ),
+      keys,
+      _scan_fn,
+      sealed_path=sealed_path,
+      source_decision=_build_populate_source_decision(
+        keys.day_token,
+        tar_path,
+        zst_path,
+        gz_path,
+        sealed_path,
+      ),
     )
   except Exception as exc:
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-        ArchiveDayIngestSkipError,
-        clear_archive_day_ingest_skip,
+      ArchiveDayIngestSkipError,
+      clear_archive_day_ingest_skip,
     )
+
     if not isinstance(exc, ArchiveDayIngestSkipError):
       raise
     if tar_path and os.path.isfile(tar_path):
@@ -6834,20 +6963,21 @@ def _populate_members_from_sealed_scan(
         raise
       if tar_ok:
         log_print(
-            "INFO: populate tar fallback after sealed failure day=%s "
-            "sealed=%s tar=%s reason=%s"
-            % (
-                keys.day_token,
-                sealed_path,
-                tar_path,
-                exc.detail,
-            ),
-            flush=True,
+          "INFO: populate tar fallback after sealed failure day=%s "
+          "sealed=%s tar=%s reason=%s"
+          % (
+            keys.day_token,
+            sealed_path,
+            tar_path,
+            exc.detail,
+          ),
+          flush=True,
         )
         clear_archive_day_ingest_skip(keys)
         from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-            get_process_archive_members_store,
+          get_process_archive_members_store,
         )
+
         store = get_process_archive_members_store()
         if store is not None:
           store.clear_degraded(keys.day_token)
@@ -6860,9 +6990,9 @@ def _populate_members_from_sealed_scan(
     day_token = keys.day_token if keys.day_token != "unknown" else ""
     if day_token:
       log_print(
-          "INFO: populate_source=sealed day=%s path=%s"
-          % (day_token, sealed_path),
-          flush=True,
+        "INFO: populate_source=sealed day=%s path=%s"
+        % (day_token, sealed_path),
+        flush=True,
       )
   return members
 
@@ -6870,25 +7000,25 @@ def _populate_members_from_sealed_scan(
 def _populate_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
   """
   Internal helper to populate the members store from tar scan.
-  
+
   Args:
     tar_path (str): String for tar path.
     cache_key (Any): Cache key passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     Exception: Raised when ``_populate_members_from_tar_scan`` hits a
     ``Exception`` failure path.
-  
+
   Examples:
     >>> _populate_members_from_tar_scan("x", None)  # doctest: +SKIP
   """
   _ensure_populate_scan_allowed()
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      build_archive_members_keys,
-      populate_archive_members,
+    build_archive_members_keys,
+    populate_archive_members,
   )
 
   keys = build_archive_members_keys(cache_key)
@@ -6899,17 +7029,17 @@ def _populate_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
   def _scan_fn(on_member: Any) -> Any:
     """
     Internal helper to handle scan function.
-    
+
     Args:
       on_member (Any): On member passed to this helper.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Raises:
       ArchiveMembersStoreUnavailableError: Raised when ``_scan_fn`` hits a
       ``ArchiveMembersStoreUnavailableError`` failure path.
-    
+
     Examples:
       >>> _scan_fn(None)  # doctest: +SKIP
     """
@@ -6922,12 +7052,12 @@ def _populate_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
         occurrences, rc, stderr = _run_gnu_tvf_file_members(tar_path)
       if rc != 0:
         return (
-            False,
-            False,
-            RuntimeError(
-                "gnu tar tvf failed path=%s rc=%s stderr=%s"
-                % (tar_path, rc, stderr[:200])
-            ),
+          False,
+          False,
+          RuntimeError(
+            "gnu tar tvf failed path=%s rc=%s stderr=%s"
+            % (tar_path, rc, stderr[:200])
+          ),
         )
       for name, size in occurrences:
         if name in seen_names:
@@ -6936,12 +7066,13 @@ def _populate_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
         on_member(name, size)
     except Exception as exc:
       from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-          ArchiveMembersStoreUnavailableError,
+        ArchiveMembersStoreUnavailableError,
       )
+
       if _is_fnctl_read_lock_timeout_error(exc):
         raise ArchiveMembersStoreUnavailableError(
-            "transient fnctl read lock timeout during tar populate path=%s"
-            % tar_path,
+          "transient fnctl read lock timeout during tar populate path=%s"
+          % tar_path,
         ) from exc
       return False, False, exc
     finally:
@@ -6950,18 +7081,23 @@ def _populate_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
 
   try:
     members = populate_archive_members(
-        keys,
-        _scan_fn,
-        sealed_path=None,
-        source_decision=_build_populate_source_decision(
-            keys.day_token, tar_path, zst_path, gz_path, sealed_path,
-        ),
-        scanning_mutable_tar=True,
+      keys,
+      _scan_fn,
+      sealed_path=None,
+      source_decision=_build_populate_source_decision(
+        keys.day_token,
+        tar_path,
+        zst_path,
+        gz_path,
+        sealed_path,
+      ),
+      scanning_mutable_tar=True,
     )
   except Exception as exc:
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-        ArchiveMembersStoreUnavailableError,
+      ArchiveMembersStoreUnavailableError,
     )
+
     if not isinstance(exc, ArchiveMembersStoreUnavailableError):
       raise
     if "prefer sealed fallback" not in str(exc):
@@ -6969,22 +7105,22 @@ def _populate_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
     if not (sealed_path and os.path.isfile(sealed_path)):
       raise
     log_print(
-        "INFO: populate sealed fallback after dirty-tar EOF day=%s "
-        "tar=%s sealed=%s"
-        % (keys.day_token, tar_path, sealed_path),
-        flush=True,
+      "INFO: populate sealed fallback after dirty-tar EOF day=%s "
+      "tar=%s sealed=%s" % (keys.day_token, tar_path, sealed_path),
+      flush=True,
     )
     return _populate_members_from_sealed_scan(
-        sealed_path, cache_key, tar_path=tar_path,
+      sealed_path,
+      cache_key,
+      tar_path=tar_path,
     )
   if members is not None:
     _record_archive_members_populate_source(canonical, "tar_populated")
     day_token = keys.day_token if keys.day_token != "unknown" else ""
     if day_token:
       log_print(
-          "INFO: populate_source=tar day=%s path=%s"
-          % (day_token, tar_path),
-          flush=True,
+        "INFO: populate_source=tar day=%s path=%s" % (day_token, tar_path),
+        flush=True,
       )
   return members
 
@@ -6992,41 +7128,40 @@ def _populate_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
 def execute_archive_members_populate_for_canonical(canonical: Any) -> Any:
   """
   Run store single-flight populate for one daily archive (populate-pool only).
-  
+
   Args:
     canonical (Any): Canonical passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     ArchiveMembersStoreUnavailableError: Raised when
     ``execute_archive_members_populate_for_canonical`` hits a
     ``ArchiveMembersStoreUnavailableError`` failure path.
-  
+
   Examples:
     >>> execute_archive_members_populate_for_canonical(None)  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      ArchiveMembersStoreUnavailableError,
-      build_archive_members_keys,
-      get_archive_day_ingest_skip,
-      populate_degraded_is_set,
-      lookup_full_members,
+    ArchiveMembersStoreUnavailableError,
+    build_archive_members_keys,
+    get_archive_day_ingest_skip,
+    populate_degraded_is_set,
+    lookup_full_members,
   )
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-      get_worker_pool_kind,
-      reset_worker_pool_kind,
-      set_worker_pool_kind,
+    get_worker_pool_kind,
+    reset_worker_pool_kind,
+    set_worker_pool_kind,
   )
 
   canonical = normalize_daily_compressed_path(canonical)
   kind = get_worker_pool_kind()
   if kind in ("ingest-pool", "archive-pool"):
     raise ArchiveMembersStoreUnavailableError(
-        "execute_archive_members_populate_for_canonical forbidden on %s "
-        "(use request_archive_members_populate_and_wait)"
-        % kind,
+      "execute_archive_members_populate_for_canonical forbidden on %s "
+      "(use request_archive_members_populate_and_wait)" % kind,
     )
   token = None
   if kind != "populate-pool":
@@ -7044,28 +7179,38 @@ def execute_archive_members_populate_for_canonical(canonical: Any) -> Any:
       if get_archive_day_ingest_skip(keys) is not None:
         return {}
       from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-          clear_stale_incomplete_archive_members,
+        clear_stale_incomplete_archive_members,
       )
+
       clear_stale_incomplete_archive_members(keys)
     if sealed_path is None and not os.path.isfile(tar_path):
       _store_daily_archive_members_cache(canonical, {})
       return {}
     zst_path, gz_path = compressed_sibling_paths(tar_path)
     _clear_stale_day_ingest_skip_if_tar_repaired(
-        keys, tar_path, zst_path, gz_path, sealed_path,
+      keys,
+      tar_path,
+      zst_path,
+      gz_path,
+      sealed_path,
     )
     use_tar, _reason = _populate_should_use_tar_scan(
-        tar_path, zst_path, gz_path, sealed_path,
+      tar_path,
+      zst_path,
+      gz_path,
+      sealed_path,
     )
     if use_tar:
       members = _populate_members_from_tar_scan(tar_path, cache_key)
     else:
       if sealed_path is None:
         raise ArchiveMembersStoreUnavailableError(
-            "no sealed archive for populate canonical=%s" % canonical,
+          "no sealed archive for populate canonical=%s" % canonical,
         )
       members = _populate_members_from_sealed_scan(
-          sealed_path, cache_key, tar_path=tar_path,
+        sealed_path,
+        cache_key,
+        tar_path=tar_path,
       )
     if members is not None:
       _store_daily_archive_members_cache(canonical, members)
@@ -7106,11 +7251,12 @@ def get_existing_archive_members_for_daily_archive(
   if cached is not None:
     return cached
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      request_archive_members_populate_and_wait,
+    request_archive_members_populate_and_wait,
   )
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-      may_run_archive_members_populate_scan,
+    may_run_archive_members_populate_scan,
   )
+
   if may_run_archive_members_populate_scan():
     return execute_archive_members_populate_for_canonical(canonical)
   return request_archive_members_populate_and_wait(canonical)
@@ -7123,15 +7269,15 @@ def _record_validated_day_hint(
 ) -> None:
   """
   Internal helper to handle record validated day hint.
-  
+
   Args:
     validated_days_out (Any): Validated days out passed to this helper.
     gz_path (str): String for gz path.
     members (Any): Iterable of filesystem paths as strings.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _record_validated_day_hint(None, "x", None)  # doctest: +SKIP
   """
@@ -7141,11 +7287,11 @@ def _record_validated_day_hint(
   if identity is None:
     return
   entry = {
-      "mtime_ns": identity[0],
-      "size": identity[1],
-      "ok": True,
-      "member_count": len(members),
-      "member_byte_sum": sum_member_bytes(members),
+    "mtime_ns": identity[0],
+    "size": identity[1],
+    "ok": True,
+    "member_count": len(members),
+    "member_byte_sum": sum_member_bytes(members),
   }
   tar_path = daily_tar_path_from_compressed(gz_path)
   try:
@@ -7166,15 +7312,15 @@ def classify_removable_raw_paths_for_members(
 ) -> Any:
   """
   Classify raw paths against a validated member map without deleting.
-  
+
   Args:
     stats_paths (Any): Iterable of filesystem paths as strings.
     members (Any): Iterable of filesystem paths as strings.
     ingest_ready_fn (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> classify_removable_raw_paths_for_members(None, None, None)
   """
@@ -7182,7 +7328,8 @@ def classify_removable_raw_paths_for_members(
   for stats_path in stats_paths:
     if ingest_ready_fn is not None and not ingest_ready_fn(stats_path):
       results.append(
-          (stats_path, "skipped_not_head_tail_ingested", "not_head_tail_ingested"))
+        (stats_path, "skipped_not_head_tail_ingested", "not_head_tail_ingested")
+      )
       continue
     removable = get_verified_files_to_remove([stats_path], members)
     if stats_path in removable:
@@ -7191,7 +7338,8 @@ def classify_removable_raw_paths_for_members(
     member_name = get_tar_member_name(stats_path)
     if member_name not in members:
       results.append(
-          (stats_path, "skipped_not_in_archive", "not_in_sealed_archive"))
+        (stats_path, "skipped_not_in_archive", "not_in_sealed_archive")
+      )
     else:
       results.append((stats_path, "skipped_size_mismatch", "size_mismatch"))
   return results
@@ -7228,13 +7376,13 @@ def _classify_removable_after_ok(
     return []
   if not ok or members is None:
     return [
-        (path, "skipped_seal_invalid", "seal_validation_failed")
-        for path in stats_paths
+      (path, "skipped_seal_invalid", "seal_validation_failed")
+      for path in stats_paths
     ]
   return classify_removable_raw_paths_for_members(
-      stats_paths,
-      members,
-      ingest_ready_fn=ingest_ready_fn,
+    stats_paths,
+    members,
+    ingest_ready_fn=ingest_ready_fn,
   )
 
 
@@ -7250,7 +7398,7 @@ def classify_removable_raw_paths_for_daily_gz(
 ) -> Any:
   """
   Classify raw paths for a daily compressed archive without deleting.
-  
+
   Args:
     gz_path (str): String for gz path.
     stats_paths (Any): Iterable of filesystem paths as strings.
@@ -7259,10 +7407,10 @@ def classify_removable_raw_paths_for_daily_gz(
     log_fn (Any): Callable invoked by this helper.
     validation_cache (Any | None): One of ``Any``, ``None``.
     sealed_members (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> classify_removable_raw_paths_for_daily_gz(0)  # doctest: +SKIP
   """
@@ -7270,16 +7418,16 @@ def classify_removable_raw_paths_for_daily_gz(
     ok, members = True, dict(sealed_members)
   else:
     ok, members = validate_sealed_daily_archive_for_raw_removal(
-        gz_path,
-        log_fn=log_fn,
-        validation_cache=validation_cache,
-        allow_auto_seal=allow_auto_seal,
+      gz_path,
+      log_fn=log_fn,
+      validation_cache=validation_cache,
+      allow_auto_seal=allow_auto_seal,
     )
   return _classify_removable_after_ok(
-      stats_paths,
-      ok,
-      members,
-      ingest_ready_fn=ingest_ready_fn,
+    stats_paths,
+    ok,
+    members,
+    ingest_ready_fn=ingest_ready_fn,
   )
 
 
@@ -7291,17 +7439,17 @@ def validate_open_tar_for_raw_removal(
 ) -> Any:
   """
   Validate readable open ``.tar`` and return file member map for pre-seal.
-  
+
     verify.
-  
+
   Args:
     tar_path (str): String for tar path.
     log_fn (Any): Callable invoked by this helper.
     validation_cache (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> validate_open_tar_for_raw_removal("x", None, None)  # doctest: +SKIP
   """
@@ -7310,35 +7458,35 @@ def validate_open_tar_for_raw_removal(
     return False, None
   if not os.path.isfile(tar_path):
     if not ensure_daily_tar_restored_for_append(
-        tar_path,
-        get_archive_zstd_thread_count(),
+      tar_path,
+      get_archive_zstd_thread_count(),
     ):
       if log_fn:
         log_fn(
-            "Skipping open-tar verify: cannot restore tar from sealed: %s"
-            % tar_path,
-            flush=True,
+          "Skipping open-tar verify: cannot restore tar from sealed: %s"
+          % tar_path,
+          flush=True,
         )
       return False, None
   if not restore_tar_from_sealed_if_unreadable(
-      tar_path,
-      get_archive_zstd_thread_count(),
-      log_fn=log_fn,
+    tar_path,
+    get_archive_zstd_thread_count(),
+    log_fn=log_fn,
   ):
     if log_fn:
       log_fn(
-          "Skipping open-tar verify: uncompressed tar failed check: %s"
-          % tar_path,
-          flush=True,
+        "Skipping open-tar verify: uncompressed tar failed check: %s"
+        % tar_path,
+        flush=True,
       )
     return False, None
   members = get_existing_archive_members(tar_path)
   if not members:
     if log_fn:
       log_fn(
-          "Skipping open-tar verify: uncompressed tar has no file members: %s"
-          % tar_path,
-          flush=True,
+        "Skipping open-tar verify: uncompressed tar has no file members: %s"
+        % tar_path,
+        flush=True,
       )
     return False, None
   return True, dict(members)
@@ -7355,7 +7503,7 @@ def classify_removable_raw_paths_for_open_tar(
 ) -> Any:
   """
   Classify raw paths against an open daily ``.tar`` without deleting.
-  
+
   Args:
     tar_path (str): String for tar path.
     stats_paths (Any): Iterable of filesystem paths as strings.
@@ -7363,10 +7511,10 @@ def classify_removable_raw_paths_for_open_tar(
     log_fn (Any): Callable invoked by this helper.
     validation_cache (Any | None): One of ``Any``, ``None``.
     open_tar_members (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> classify_removable_raw_paths_for_open_tar(0)  # doctest: +SKIP
   """
@@ -7374,15 +7522,15 @@ def classify_removable_raw_paths_for_open_tar(
     ok, members = True, dict(open_tar_members)
   else:
     ok, members = validate_open_tar_for_raw_removal(
-        tar_path,
-        log_fn=log_fn,
-        validation_cache=validation_cache,
+      tar_path,
+      log_fn=log_fn,
+      validation_cache=validation_cache,
     )
   return _classify_removable_after_ok(
-      stats_paths,
-      ok,
-      members,
-      ingest_ready_fn=ingest_ready_fn,
+    stats_paths,
+    ok,
+    members,
+    ingest_ready_fn=ingest_ready_fn,
   )
 
 
@@ -7394,15 +7542,15 @@ def validate_post_seal_tar_zst_parity(
 ) -> Any:
   """
   Return True when open ``.tar`` and ``.tar.zst`` member maps match.
-  
+
   Args:
     tar_path (str): String for tar path.
     log_fn (Any): Callable invoked by this helper.
     validation_cache (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> validate_post_seal_tar_zst_parity("x", None, None)  # doctest: +SKIP
   """
@@ -7411,22 +7559,21 @@ def validate_post_seal_tar_zst_parity(
   if not os.path.isfile(zst_path):
     if log_fn:
       log_fn(
-          "janitor: day_close post_seal_verify failed sealed missing: %s"
-          % zst_path,
-          flush=True,
+        "janitor: day_close post_seal_verify failed sealed missing: %s"
+        % zst_path,
+        flush=True,
       )
     return False
   ok, _members = validate_sealed_daily_archive_for_raw_removal(
-      zst_path,
-      log_fn=log_fn,
-      validation_cache=validation_cache,
-      allow_auto_seal=False,
+    zst_path,
+    log_fn=log_fn,
+    validation_cache=validation_cache,
+    allow_auto_seal=False,
   )
   if not ok and log_fn:
     log_fn(
-        "janitor: day_close post_seal_verify mismatch tar=%s"
-        % tar_path,
-        flush=True,
+      "janitor: day_close post_seal_verify mismatch tar=%s" % tar_path,
+      flush=True,
     )
   return ok
 
@@ -7451,28 +7598,28 @@ def remove_verified_archived_raw_files(
 ) -> None:
   """
   Remove raw stats files only after tar + sealed archive validation.
-  
+
   For each daily ``.tar.zst`` (or legacy ``.tar.gz``), requires: sibling
     ``.tar`` (if present) passes
   ``verify_tar_archive_readable`` and yields file member sizes; ``.tar.gz``
     passes
   the same and yields sizes from the gzip archive only; the two maps must match.
   Then deletes raw paths that match a member name and size.
-  
+
   When ``ingest_ready_fn`` is set (production: sampled timestamps in
     ``host_data``),
   bootstrap and removal apply only to paths for which it returns true.
-  
+
   Scans all closed segments under ``archive_data_dir`` (same rules as ingest).
   Run after ``seal_dirty_daily_archives``. If only ``.tar.gz`` exists (no
     sibling
   ``.tar``), gzip alone is validated and its map is used.
-  
+
   If raw files map to a day but neither ``.tar`` nor ``.tar.gz`` exists yet
   (e.g. ingest already finished and archival was never run for those paths),
   this routine bootstraps the daily archive via ``archive_stats_files`` before
   validation and removal.
-  
+
   Args:
     archive_data_dir (str): String for archive data dir.
     host_name_ext (Any): Host name ext passed to this helper.
@@ -7490,10 +7637,10 @@ def remove_verified_archived_raw_files(
     skip_raw_paths (Any | None): One of ``Any``, ``None``.
     require_fingerprint_at_delete (bool): Boolean flag for require fingerprint
     at delete.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> remove_verified_archived_raw_files(0)  # doctest: +SKIP
   """
@@ -7504,7 +7651,8 @@ def remove_verified_archived_raw_files(
     mapping = maintenance_snapshot.mapping
   else:
     paths = collect_stats_files_in_range(
-        archive_data_dir, "all", None, host_name_ext)
+      archive_data_dir, "all", None, host_name_ext
+    )
     if not paths:
       return
     mapping = build_archive_mapping(paths, tgz_archive_dir)
@@ -7516,9 +7664,7 @@ def remove_verified_archived_raw_files(
   else:
     _path_ingest_ready = lambda path: bool(ingest_ready_fn(path))
 
-  skip_raw_norm = {
-      os.path.normpath(p) for p in (skip_raw_paths or ()) if p
-  }
+  skip_raw_norm = {os.path.normpath(p) for p in (skip_raw_paths or ()) if p}
 
   if not paths:
     return
@@ -7534,50 +7680,56 @@ def remove_verified_archived_raw_files(
     if detect_compressed_format(archive_path) is not None:
       tar_path = daily_tar_path_from_compressed(archive_path)
       if not daily_tar_path_in_maintenance_scope(
-          tar_path,
-          skip_daily_tar_paths=skip_daily_tar_paths,
-          only_daily_tar_paths=only_daily_tar_paths,
+        tar_path,
+        skip_daily_tar_paths=skip_daily_tar_paths,
+        only_daily_tar_paths=only_daily_tar_paths,
       ):
         continue
-      bootstrap_ready = [
-          p for p in stats_paths if _path_ingest_ready(p)
-      ]
-      if (not os.path.isfile(archive_path) and not os.path.isfile(tar_path)
-          and bootstrap_ready):
+      bootstrap_ready = [p for p in stats_paths if _path_ingest_ready(p)]
+      if (
+        not os.path.isfile(archive_path)
+        and not os.path.isfile(tar_path)
+        and bootstrap_ready
+      ):
         _log(
-            "Bootstrapping missing daily archive from %d raw stats file(s): %s"
-            % (len(bootstrap_ready), archive_path),
+          "Bootstrapping missing daily archive from %d raw stats file(s): %s"
+          % (len(bootstrap_ready), archive_path),
         )
         if not archive_stats_files_fn((archive_path, list(bootstrap_ready))):
           _log(
-              "Skipping removal: could not bootstrap daily archive: %s"
-              % archive_path,
+            "Skipping removal: could not bootstrap daily archive: %s"
+            % archive_path,
           )
           continue
-      elif (not os.path.isfile(archive_path) and not os.path.isfile(tar_path)
-            and stats_paths and not bootstrap_ready):
+      elif (
+        not os.path.isfile(archive_path)
+        and not os.path.isfile(tar_path)
+        and stats_paths
+        and not bootstrap_ready
+      ):
         _log(
-            "Skipping bootstrap for %s: %d path(s) without sampled timestamps in DB"
-            % (archive_path, len(stats_paths)),
+          "Skipping bootstrap for %s: %d path(s) without sampled timestamps in DB"
+          % (archive_path, len(stats_paths)),
         )
     validation_targets.append((archive_path, list(stats_paths)))
 
   workers = (
-      _get_archive_validation_worker_count(len(validation_targets))
-      if validation_targets else 1
+    _get_archive_validation_worker_count(len(validation_targets))
+    if validation_targets
+    else 1
   )
   validation_started = time.time()
   success_count = 0
   failed_count = 0
   stats_paths_by_gz = {
-      gz_path: stats_paths for gz_path, stats_paths in validation_targets
+    gz_path: stats_paths for gz_path, stats_paths in validation_targets
   }
 
   for gz_path, ok, members in _iter_archive_validation_results_stream(
-      [gz_path for gz_path, _stats_paths in validation_targets],
-      log_fn=log_fn,
-      validation_cache=validation_cache if workers <= 1 else None,
-      allow_auto_seal=allow_auto_seal,
+    [gz_path for gz_path, _stats_paths in validation_targets],
+    log_fn=log_fn,
+    validation_cache=validation_cache if workers <= 1 else None,
+    allow_auto_seal=allow_auto_seal,
   ):
     if workers > 1:
       validation_cache["misses"] = int(validation_cache.get("misses", 0)) + 1
@@ -7589,24 +7741,26 @@ def remove_verified_archived_raw_files(
     deletes_this_pass = 0
     for stats_path in stats_paths_by_gz.get(gz_path, []):
       for path, status, _reason in classify_removable_raw_paths_for_members(
-          [stats_path],
-          members,
-          ingest_ready_fn=_path_ingest_ready,
+        [stats_path],
+        members,
+        ingest_ready_fn=_path_ingest_ready,
       ):
         if status != "verified":
           continue
         if os.path.normpath(path) in skip_raw_norm:
           continue
         if (
-            max_deletes_per_pass is not None
-            and deletes_this_pass >= max_deletes_per_pass
+          max_deletes_per_pass is not None
+          and deletes_this_pass >= max_deletes_per_pass
         ):
           return
         _log("removing stats file (scheduled archive maintenance): " + path)
         if require_fingerprint_at_delete:
           fp = raw_stats_path_fingerprint(path)
           if not delete_raw_stats_path_if_fingerprint_unchanged(
-              path, fp, log_fn=log_fn,
+            path,
+            fp,
+            log_fn=log_fn,
           ):
             continue
           deletes_this_pass += 1
@@ -7618,13 +7772,13 @@ def remove_verified_archived_raw_files(
         except OSError as exc:
           _log("Could not remove %s: %s" % (path, exc))
   _log_archive_validation_summary(
-      log_fn=log_fn,
-      validation_targets_count=len(validation_targets),
-      workers=workers,
-      success_count=success_count,
-      failed_count=failed_count,
-      validation_started=validation_started,
-      validation_cache=validation_cache,
+    log_fn=log_fn,
+    validation_targets_count=len(validation_targets),
+    workers=workers,
+    success_count=success_count,
+    failed_count=failed_count,
+    validation_started=validation_started,
+    validation_cache=validation_cache,
   )
 
 
@@ -7639,25 +7793,25 @@ def build_remaining_raw_stats_by_daily_gz(
 ) -> Any:
   """
   Map each daily ``.tar.zst`` to closed raw stats paths still on disk for that.
-  
+
     day.
-  
+
   Uses the same discovery and first-timestamp grouping as archival
   (``collect_stats_files_in_range`` + ``build_archive_mapping``). Not filtered
     by
   DB head-ingest readiness: not-yet-ingested closed segments still block
     ``.tar``
   removal (see ``sync-timedb-db-before-archive-contract.mdc``).
-  
+
   Files with no parseable first timestamp are omitted from the mapping and do
     not
   block removal (same as archival bootstrap).
-  
+
   When ``maintenance_snapshot`` is None and ``allow_full_snapshot`` is False,
   returns ``{}`` instead of building a full-tree maintenance snapshot
     (MainThread
   / handoff hot path must not collect head metadata for the entire archive).
-  
+
   Args:
     archive_data_dir (str): String for archive data dir.
     host_name_ext (Any): Host name ext passed to this helper.
@@ -7665,10 +7819,10 @@ def build_remaining_raw_stats_by_daily_gz(
     maintenance_snapshot (Any | None): One of ``Any``, ``None``.
     allow_full_snapshot (bool): Boolean flag for allow full snapshot.
     log_fn (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> build_remaining_raw_stats_by_daily_gz("x", None, "x", None, True, None)
   """
@@ -7678,21 +7832,21 @@ def build_remaining_raw_stats_by_daily_gz(
     if log_fn:
       with janitorial_logging():
         log_fn(
-            "remaining_raw skip full snapshot "
-            "(allow_full_snapshot=False; prefer day-scoped or published snapshot)",
-            flush=True,
+          "remaining_raw skip full snapshot "
+          "(allow_full_snapshot=False; prefer day-scoped or published snapshot)",
+          flush=True,
         )
     return {}
   from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
-      build_archive_maintenance_snapshot,
+    build_archive_maintenance_snapshot,
   )
 
   snapshot = build_archive_maintenance_snapshot(
-      archive_data_dir,
-      host_name_ext,
-      tgz_archive_dir,
-      build_ready_set=False,
-      log_fn=log_fn,
+    archive_data_dir,
+    host_name_ext,
+    tgz_archive_dir,
+    build_ready_set=False,
+    log_fn=log_fn,
   )
   return snapshot.remaining_raw_by_gz
 
@@ -7709,17 +7863,17 @@ def build_day_scoped_closed_raw_by_gz(
 ) -> Any:
   """
   Closed raw for one daily ``.tar`` without full-tree head metadata.
-  
+
   Uses date-scoped ``collect_stats_files_in_range`` plus filename/mtime
     alignment
   (``stats_path_aligned_to_daily_tar``). Does **not** call
   ``build_archive_maintenance_snapshot`` or read first-timestamp heads.
-  
+
   When ``maintenance_snapshot`` or ``closed_paths_snapshot`` is provided, filter
   those paths only — forbid a full discover/collect for that day.
   Snapshot-free full collects are process-serialized so concurrent day-close
   workers cannot fan out archive-wide walkers.
-  
+
   Args:
     archive_data_dir (str): String for archive data dir.
     host_name_ext (Any): Host name ext passed to this helper.
@@ -7728,10 +7882,10 @@ def build_day_scoped_closed_raw_by_gz(
     log_fn (Any | None): One of ``Any``, ``None``.
     maintenance_snapshot (Any | None): One of ``Any``, ``None``.
     closed_paths_snapshot (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> build_day_scoped_closed_raw_by_gz("x", None, "x", "x", None, None, None)
   """
@@ -7751,12 +7905,12 @@ def build_day_scoped_closed_raw_by_gz(
     day_end = day_start + timedelta(days=1)
     with _DAY_SCOPED_CLOSED_RAW_COLLECT_LOCK:
       paths = collect_stats_files_in_range(
-          archive_data_dir,
-          day_start,
-          day_end,
-          host_name_ext,
-          force_full_scan=True,
-          log_fn=None,
+        archive_data_dir,
+        day_start,
+        day_end,
+        host_name_ext,
+        force_full_scan=True,
+        log_fn=None,
       )
   aligned = []
   for path in paths or ():
@@ -7765,9 +7919,9 @@ def build_day_scoped_closed_raw_by_gz(
     if stats_file_is_active_segment(path):
       continue
     if not stats_path_aligned_to_daily_tar(
-        path,
-        tar_norm,
-        tgz_archive_dir=tgz_archive_dir,
+      path,
+      tar_norm,
+      tgz_archive_dir=tgz_archive_dir,
     ):
       continue
     aligned.append(path)
@@ -7777,10 +7931,10 @@ def build_day_scoped_closed_raw_by_gz(
   if log_fn:
     with janitorial_logging():
       log_fn(
-          "day-scoped closed_raw tar=%s paths=%d "
-          "(no full maintenance snapshot)"
-          % (os.path.basename(tar_norm), len(aligned)),
-          flush=True,
+        "day-scoped closed_raw tar=%s paths=%d "
+        "(no full maintenance snapshot)"
+        % (os.path.basename(tar_norm), len(aligned)),
+        flush=True,
       )
   return {zst_path: aligned}
 
@@ -7797,11 +7951,11 @@ def build_remaining_raw_for_daily_tar(
 ) -> Any:
   """
   Day-scoped ``remaining_raw_by_gz`` for one daily ``.tar`` path.
-  
+
   Prefer ``maintenance_snapshot``. When absent and ``allow_full_snapshot`` is
   False (MainThread handoff/exclude), use ``build_day_scoped_closed_raw_by_gz``
   instead of a full-tree ``build_archive_maintenance_snapshot``.
-  
+
   Args:
     archive_data_dir (str): String for archive data dir.
     host_name_ext (Any): Host name ext passed to this helper.
@@ -7810,22 +7964,22 @@ def build_remaining_raw_for_daily_tar(
     maintenance_snapshot (Any | None): One of ``Any``, ``None``.
     allow_full_snapshot (bool): Boolean flag for allow full snapshot.
     log_fn (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> build_remaining_raw_for_daily_tar("x", None, "x", "x", None, True, None)
   """
   tar_norm = os.path.normpath(tar_path)
   if maintenance_snapshot is not None:
     full = build_remaining_raw_stats_by_daily_gz(
-        archive_data_dir,
-        host_name_ext,
-        tgz_archive_dir,
-        maintenance_snapshot=maintenance_snapshot,
-        allow_full_snapshot=False,
-        log_fn=log_fn,
+      archive_data_dir,
+      host_name_ext,
+      tgz_archive_dir,
+      maintenance_snapshot=maintenance_snapshot,
+      allow_full_snapshot=False,
+      log_fn=log_fn,
     )
     scoped = {}
     for gz_key, paths in (full or {}).items():
@@ -7834,36 +7988,36 @@ def build_remaining_raw_for_daily_tar(
       if os.path.normpath(daily_tar_path_from_compressed(gz_key)) == tar_norm:
         scoped[gz_key] = paths
     filtered = filter_remaining_raw_aligned_to_tar(
-        scoped,
-        tar_norm,
-        tgz_archive_dir=tgz_archive_dir,
+      scoped,
+      tar_norm,
+      tgz_archive_dir=tgz_archive_dir,
     )
     if filtered or allow_full_snapshot:
       return filtered
     # Snapshot published but this tar has no remaining entries — day-scoped
     # refresh so unmanifested closed raw is not silently omitted (R2).
     return build_day_scoped_closed_raw_by_gz(
-        archive_data_dir,
-        host_name_ext,
-        tgz_archive_dir,
-        tar_norm,
-        log_fn=log_fn,
-    )
-  if not allow_full_snapshot:
-    return build_day_scoped_closed_raw_by_gz(
-        archive_data_dir,
-        host_name_ext,
-        tgz_archive_dir,
-        tar_norm,
-        log_fn=log_fn,
-    )
-  full = build_remaining_raw_stats_by_daily_gz(
       archive_data_dir,
       host_name_ext,
       tgz_archive_dir,
-      maintenance_snapshot=None,
-      allow_full_snapshot=True,
+      tar_norm,
       log_fn=log_fn,
+    )
+  if not allow_full_snapshot:
+    return build_day_scoped_closed_raw_by_gz(
+      archive_data_dir,
+      host_name_ext,
+      tgz_archive_dir,
+      tar_norm,
+      log_fn=log_fn,
+    )
+  full = build_remaining_raw_stats_by_daily_gz(
+    archive_data_dir,
+    host_name_ext,
+    tgz_archive_dir,
+    maintenance_snapshot=None,
+    allow_full_snapshot=True,
+    log_fn=log_fn,
   )
   scoped = {}
   for gz_key, paths in (full or {}).items():
@@ -7873,26 +8027,27 @@ def build_remaining_raw_for_daily_tar(
       scoped[gz_key] = paths
   return scoped
 
+
 def remaining_raw_by_gz_has_paths_on_disk(
   remaining_by_gz: Any,
   gz_path: Any | None = None,
 ) -> Any:
   """
   True if ``remaining_by_gz`` lists at least one raw stats path that exists on.
-  
+
     disk.
-  
+
   When ``gz_path`` is set, only paths mapped to that daily compressed archive
     are
   considered. Ghost mapping entries (listed but already deleted) return False.
-  
+
   Args:
     remaining_by_gz (Any): Remaining by gz passed to this helper.
     gz_path (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> remaining_raw_by_gz_has_paths_on_disk(None, None)  # doctest: +SKIP
   """
@@ -7921,18 +8076,18 @@ def remove_verified_uncompressed_daily_tars(
 ) -> None:
   """
   Remove ``YYYY-MM-DD.tar`` only after tar/tar.gz verification succeeds.
-  
+
   Called after ``remove_verified_archived_raw_files`` on every archive
     maintenance
   pass. Skips a day when ``remaining_raw_by_gz`` still lists closed raw stats
     for
   that calendar day (filesystem gate; not the DB head-ingest gate), unless
   ``force_remove_uncompressed_tar`` is true (startup maintenance only).
-  
+
   When ``archive_keep_uncompressed_tar`` is false, ``atomic_seal_tar_to_zst``
     may
   also unlink the ``.tar`` after sealing when no raw stats remain for that day.
-  
+
   Args:
     daily_archive_dir (str): String for daily archive dir.
     log_fn (Any): Callable invoked by this helper.
@@ -7943,10 +8098,10 @@ def remove_verified_uncompressed_daily_tars(
     validated_days_out (Any | None): One of ``Any``, ``None``.
     skip_daily_tar_paths (Any | None): One of ``Any``, ``None``.
     only_daily_tar_paths (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> remove_verified_uncompressed_daily_tars(0)  # doctest: +SKIP
   """
@@ -7959,32 +8114,35 @@ def remove_verified_uncompressed_daily_tars(
   tar_by_gz = {}
   for tar_path in sorted(iter_daily_tar_paths(daily_archive_dir)):
     if not daily_tar_path_in_maintenance_scope(
-        tar_path,
-        skip_daily_tar_paths=skip_daily_tar_paths,
-        only_daily_tar_paths=only_daily_tar_paths,
+      tar_path,
+      skip_daily_tar_paths=skip_daily_tar_paths,
+      only_daily_tar_paths=only_daily_tar_paths,
     ):
       continue
     zst_path, _gz_path = compressed_sibling_paths(tar_path)
     if not os.path.isfile(tar_path):
       continue
-    sealed_path = zst_path if os.path.isfile(zst_path) else (
-        _gz_path if os.path.isfile(_gz_path) else zst_path
+    sealed_path = (
+      zst_path
+      if os.path.isfile(zst_path)
+      else (_gz_path if os.path.isfile(_gz_path) else zst_path)
     )
     validation_targets.append(sealed_path)
     tar_by_gz[sealed_path] = tar_path
 
   workers = (
-      _get_archive_validation_worker_count(len(validation_targets))
-      if validation_targets else 1
+    _get_archive_validation_worker_count(len(validation_targets))
+    if validation_targets
+    else 1
   )
   validation_started = time.time()
   success_count = 0
   failed_count = 0
 
   for gz_path, ok, members in _iter_archive_validation_results_stream(
-      validation_targets,
-      log_fn=log_fn,
-      validation_cache=validation_cache if workers <= 1 else None,
+    validation_targets,
+    log_fn=log_fn,
+    validation_cache=validation_cache if workers <= 1 else None,
   ):
     if workers > 1:
       validation_cache["misses"] = int(validation_cache.get("misses", 0)) + 1
@@ -7995,12 +8153,12 @@ def remove_verified_uncompressed_daily_tars(
     _record_validated_day_hint(validated_days_out, gz_path, members)
     tar_path = tar_by_gz[gz_path]
     if (
-        not force_remove_uncompressed_tar
-        and remaining_raw_by_gz_has_paths_on_disk(remaining_raw_by_gz, gz_path)
+      not force_remove_uncompressed_tar
+      and remaining_raw_by_gz_has_paths_on_disk(remaining_raw_by_gz, gz_path)
     ):
       _log(
-          "Skipping removal of verified uncompressed tar (raw stats still "
-          "present for day): %s" % tar_path,
+        "Skipping removal of verified uncompressed tar (raw stats still "
+        "present for day): %s" % tar_path,
       )
       continue
     try:
@@ -8011,26 +8169,26 @@ def remove_verified_uncompressed_daily_tars(
     except OSError as exc:
       _log("Could not remove verified tar %s: %s" % (tar_path, exc))
   _log_archive_validation_summary(
-      log_fn=log_fn,
-      validation_targets_count=len(validation_targets),
-      workers=workers,
-      success_count=success_count,
-      failed_count=failed_count,
-      validation_started=validation_started,
-      validation_cache=validation_cache,
+    log_fn=log_fn,
+    validation_targets_count=len(validation_targets),
+    workers=workers,
+    success_count=success_count,
+    failed_count=failed_count,
+    validation_started=validation_started,
+    validation_cache=validation_cache,
   )
 
 
 def tar_has_duplicate_file_members(tar_path: str) -> Any:
   """
   Return True if any file member path appears more than once in archive order.
-  
+
   Args:
     tar_path (str): String for tar path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> tar_has_duplicate_file_members("x")  # doctest: +SKIP
   """
@@ -8040,10 +8198,10 @@ def tar_has_duplicate_file_members(tar_path: str) -> Any:
     with file_read_lock_wait(tar_path):
       tar_bin = _tar_list_executable()
       result = subprocess.run(
-          [tar_bin, "tvf", tar_path],
-          capture_output=True,
-          text=True,
-          check=False,
+        [tar_bin, "tvf", tar_path],
+        capture_output=True,
+        text=True,
+        check=False,
       )
       if result.returncode != 0:
         return False
@@ -8128,10 +8286,10 @@ def _gnu_tf_file_member_map_despite_fail(tar_path: str) -> dict[str, int]:
     return {}
   tar_bin = _tar_list_executable()
   result = subprocess.run(
-      [tar_bin, "tf", tar_path],
-      capture_output=True,
-      text=True,
-      check=False,
+    [tar_bin, "tf", tar_path],
+    capture_output=True,
+    text=True,
+    check=False,
   )
   members: dict[str, int] = {}
   for raw_line in (result.stdout or "").splitlines():
@@ -8238,7 +8396,7 @@ def tar_members_recoverable_via_tarfile(tar_path: str) -> bool:
         finally:
           fobj.close()
     return True
-  except (tarfile.TarError, OSError, EOFError):
+  except tarfile.TarError, OSError, EOFError:
     return False
 
 
@@ -8257,10 +8415,9 @@ def tar_members_recoverable_despite_gnu_tf_fail(tar_path: str) -> bool:
   Examples:
     >>> tar_members_recoverable_despite_gnu_tf_fail("/missing.tar")
   """
-  return (
-      tar_members_recoverable_via_partial_gnu_listing(tar_path)
-      or tar_members_recoverable_via_tarfile(tar_path)
-  )
+  return tar_members_recoverable_via_partial_gnu_listing(
+    tar_path
+  ) or tar_members_recoverable_via_tarfile(tar_path)
 
 
 def _log_truncated_tar_recoverability(
@@ -8279,7 +8436,9 @@ def _log_truncated_tar_recoverability(
     None
 
   Examples:
-    >>> _log_truncated_tar_recoverability("/no.tar", log_fn=None)  # doctest: +SKIP
+    >>> _log_truncated_tar_recoverability(
+    ...   "/no.tar", log_fn=None
+    ... )  # doctest: +SKIP
   """
   if not log_fn:
     return
@@ -8291,16 +8450,16 @@ def _log_truncated_tar_recoverability(
   except OSError:
     tar_size = -1
   log_fn(
-      "WARNING: tar_unrecoverable tar=%s size=%d gnu_members=%d tf_members=%d "
-      "tarfile_ok=%s"
-      % (
-          tar_path,
-          tar_size,
-          len(gnu_map),
-          len(tf_map),
-          tarfile_ok,
-      ),
-      flush=True,
+    "WARNING: tar_unrecoverable tar=%s size=%d gnu_members=%d tf_members=%d "
+    "tarfile_ok=%s"
+    % (
+      tar_path,
+      tar_size,
+      len(gnu_map),
+      len(tf_map),
+      tarfile_ok,
+    ),
+    flush=True,
   )
 
 
@@ -8330,9 +8489,9 @@ def _rewrite_daily_tar_largest_member_wins(
     >>> _rewrite_daily_tar_largest_member_wins("x", "y")  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
-      DayCloseYieldError,
-      check_day_close_yield_or_continue,
-      day_close_yield_requested,
+    DayCloseYieldError,
+    check_day_close_yield_or_continue,
+    day_close_yield_requested,
   )
 
   file_keep: dict[str, tuple[int, int]] = {}
@@ -8340,26 +8499,28 @@ def _rewrite_daily_tar_largest_member_wins(
   with tarfile.open(tar_path, "r") as tin:
     for idx, member in enumerate(_iter_tar_members(tin)):
       last_yield_poll, _ = check_day_close_yield_or_continue(
-          tar_path,
-          last_poll_monotonic=last_yield_poll,
-          tgz_archive_dir=tgz_archive_dir,
-          phase=yield_phase,
+        tar_path,
+        last_poll_monotonic=last_yield_poll,
+        tgz_archive_dir=tgz_archive_dir,
+        phase=yield_phase,
       )
       if not member.isfile():
         continue
       prev = file_keep.get(member.name)
-      if prev is None or member.size > prev[0] or (
-          member.size == prev[0] and idx > prev[1]
+      if (
+        prev is None
+        or member.size > prev[0]
+        or (member.size == prev[0] and idx > prev[1])
       ):
         file_keep[member.name] = (member.size, idx)
   with tarfile.open(tar_path, "r") as tin:
     with tarfile.open(tmp_path, "w") as tout:
       for idx, member in enumerate(_iter_tar_members(tin)):
         last_yield_poll, _ = check_day_close_yield_or_continue(
-            tar_path,
-            last_poll_monotonic=last_yield_poll,
-            tgz_archive_dir=tgz_archive_dir,
-            phase=yield_phase,
+          tar_path,
+          last_poll_monotonic=last_yield_poll,
+          tgz_archive_dir=tgz_archive_dir,
+          phase=yield_phase,
         )
         if member.isfile():
           keep = file_keep.get(member.name)
@@ -8375,9 +8536,9 @@ def _rewrite_daily_tar_largest_member_wins(
           continue
         tout.addfile(member)
   requested, reason = day_close_yield_requested(
-      tar_path,
-      tgz_archive_dir=tgz_archive_dir,
-      phase=yield_phase,
+    tar_path,
+    tgz_archive_dir=tgz_archive_dir,
+    phase=yield_phase,
   )
   if requested:
     raise DayCloseYieldError(tar_path, phase=yield_phase, reason=reason)
@@ -8402,24 +8563,26 @@ def _repair_truncated_daily_tar_via_extract_recreate(
     bool: True when recreate + ``tar tf`` verify succeeded.
 
   Examples:
-    >>> _repair_truncated_daily_tar_via_extract_recreate("/no.tar", {})  # doctest: +SKIP
+    >>> _repair_truncated_daily_tar_via_extract_recreate(
+    ...   "/no.tar", {}
+    ... )  # doctest: +SKIP
   """
   tar_path = os.path.abspath(str(tar_path or ""))
   if not expected_members:
     return False
   tar_size = os.path.getsize(tar_path)
   required_free = _repair_extract_recreate_required_free_bytes(
-      tar_size,
-      expected_members,
+    tar_size,
+    expected_members,
   )
   free = free_bytes_for_path(tar_path)
   if free < required_free:
     if log_fn:
       log_fn(
-          "WARNING: repair_fail reason=insufficient_free_space tar=%s "
-          "size=%d required=%d free=%d"
-          % (tar_path, tar_size, required_free, free),
-          flush=True,
+        "WARNING: repair_fail reason=insufficient_free_space tar=%s "
+        "size=%d required=%d free=%d"
+        % (tar_path, tar_size, required_free, free),
+        flush=True,
       )
     return False
   tar_bin = shutil.which("tar") or "/bin/tar"
@@ -8430,10 +8593,10 @@ def _repair_truncated_daily_tar_via_extract_recreate(
   os.makedirs(extract_dir, exist_ok=True)
   try:
     extract = subprocess.run(
-        [tar_bin, "-xf", tar_path, "-C", extract_dir],
-        capture_output=True,
-        text=True,
-        check=False,
+      [tar_bin, "-xf", tar_path, "-C", extract_dir],
+      capture_output=True,
+      text=True,
+      check=False,
     )
     extracted_count, extracted_bytes = _dir_tree_file_byte_sum(extract_dir)
     expected_count = len(expected_members)
@@ -8447,36 +8610,36 @@ def _repair_truncated_daily_tar_via_extract_recreate(
     if not extract_ok:
       if log_fn:
         log_fn(
-            "WARNING: repair_fail phase=extract tar=%s rc=%s extracted=%d "
-            "bytes=%d expected_count=%d expected_bytes=%d stderr=%s"
-            % (
-                tar_path,
-                extract.returncode,
-                extracted_count,
-                extracted_bytes,
-                expected_count,
-                expected_bytes,
-                stderr_text[:200],
-            ),
-            flush=True,
+          "WARNING: repair_fail phase=extract tar=%s rc=%s extracted=%d "
+          "bytes=%d expected_count=%d expected_bytes=%d stderr=%s"
+          % (
+            tar_path,
+            extract.returncode,
+            extracted_count,
+            extracted_bytes,
+            expected_count,
+            expected_bytes,
+            stderr_text[:200],
+          ),
+          flush=True,
         )
       return False
     recreate = subprocess.run(
-        [tar_bin, "--posix", "-cf", new_tar, "-C", extract_dir, "."],
-        capture_output=True,
-        text=True,
-        check=False,
+      [tar_bin, "--posix", "-cf", new_tar, "-C", extract_dir, "."],
+      capture_output=True,
+      text=True,
+      check=False,
     )
     if recreate.returncode != 0 or not os.path.isfile(new_tar):
       if log_fn:
         log_fn(
-            "WARNING: repair_fail phase=recreate tar=%s rc=%s stderr=%s"
-            % (
-                tar_path,
-                recreate.returncode,
-                (recreate.stderr or "").strip()[:200],
-            ),
-            flush=True,
+          "WARNING: repair_fail phase=recreate tar=%s rc=%s stderr=%s"
+          % (
+            tar_path,
+            recreate.returncode,
+            (recreate.stderr or "").strip()[:200],
+          ),
+          flush=True,
         )
       return False
     if not verify_tar_archive_readable(new_tar):
@@ -8484,8 +8647,8 @@ def _repair_truncated_daily_tar_via_extract_recreate(
     os.replace(new_tar, tar_path)
     if log_fn:
       log_fn(
-          "Repaired truncated daily tar via extract+recreate: %s" % tar_path,
-          flush=True,
+        "Repaired truncated daily tar via extract+recreate: %s" % tar_path,
+        flush=True,
       )
     return True
   except (OSError, subprocess.SubprocessError, TimeoutError) as exc:
@@ -8526,7 +8689,7 @@ def repair_truncated_daily_tar_in_place(
     >>> repair_truncated_daily_tar_in_place("/no.tar")  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
-      DayCloseYieldError,
+    DayCloseYieldError,
   )
 
   if not os.path.isfile(tar_path):
@@ -8548,18 +8711,20 @@ def repair_truncated_daily_tar_in_place(
       ok = False
       if partial_gnu:
         expected = _gnu_tvf_file_member_map_despite_fail(tar_path)
-        ok = bool(expected) and _repair_truncated_daily_tar_via_extract_recreate(
-            tar_path,
-            expected,
-            log_fn=log_fn,
+        ok = bool(
+          expected
+        ) and _repair_truncated_daily_tar_via_extract_recreate(
+          tar_path,
+          expected,
+          log_fn=log_fn,
         )
       else:
         try:
           _rewrite_daily_tar_largest_member_wins(
-              tar_path,
-              tmp_path,
-              tgz_archive_dir=tgz_archive_dir,
-              yield_phase=yield_phase,
+            tar_path,
+            tmp_path,
+            tgz_archive_dir=tgz_archive_dir,
+            yield_phase=yield_phase,
           )
           if not verify_tar_archive_readable(tmp_path):
             try:
@@ -8573,29 +8738,31 @@ def repair_truncated_daily_tar_in_place(
         except Exception as exc:
           if log_fn:
             log_fn(
-                "WARNING: repair_fail tarfile_rewrite tar=%s exc=%s"
-                % (tar_path, exc),
-                flush=True,
+              "WARNING: repair_fail tarfile_rewrite tar=%s exc=%s"
+              % (tar_path, exc),
+              flush=True,
             )
           ok = False
         if not ok and tar_members_recoverable_via_partial_gnu_listing(tar_path):
           expected = _gnu_tvf_file_member_map_despite_fail(tar_path)
-          ok = bool(expected) and _repair_truncated_daily_tar_via_extract_recreate(
-              tar_path,
-              expected,
-              log_fn=log_fn,
+          ok = bool(
+            expected
+          ) and _repair_truncated_daily_tar_via_extract_recreate(
+            tar_path,
+            expected,
+            log_fn=log_fn,
           )
       if not ok:
         return False
     invalidate_after_daily_tar_mutation(
-        tar_path,
-        reason="repair_truncated_tar",
-        log_fn=log_fn,
+      tar_path,
+      reason="repair_truncated_tar",
+      log_fn=log_fn,
     )
     if log_fn and not partial_gnu:
       log_fn(
-          "Repaired truncated daily tar in place: %s" % tar_path,
-          flush=True,
+        "Repaired truncated daily tar in place: %s" % tar_path,
+        flush=True,
       )
     return True
   except DayCloseYieldError:
@@ -8682,8 +8849,8 @@ def _gnu_tar_extract_named_member(
   """
   tar_bin = str(_tar_list_executable())
   from hpcperfstats.dbload.lib.sync_timedb_progress_io import (
-      ProgressIdleError,
-      run_subprocess_with_progress,
+    ProgressIdleError,
+    run_subprocess_with_progress,
   )
 
   if from_zst:
@@ -8694,30 +8861,31 @@ def _gnu_tar_extract_named_member(
       return False
     try:
       decomp = subprocess.Popen(
-          [zstd_bin, "-d", "-c", "-q", source_path],
-          stdout=subprocess.PIPE,
-          stderr=subprocess.PIPE,
+        [zstd_bin, "-d", "-c", "-q", source_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
       )
-    except (FileNotFoundError, OSError):
+    except FileNotFoundError, OSError:
       return False
     result = None
     try:
       if decomp.stdout is None:
         return False
       result = run_subprocess_with_progress(
-          [tar_bin, "-x", "-f", "-", "-C", extract_dir, member_name],
-          progress_path=os.path.join(
-              extract_dir, os.path.basename(member_name),
-          ),
-          stage="tar_union_extract",
-          metric="bytes",
-          stdin=decomp.stdout,
-          stdout=subprocess.PIPE,
-          stderr=subprocess.PIPE,
-          text=False,
-          env=_gnu_tar_union_env(),
+        [tar_bin, "-x", "-f", "-", "-C", extract_dir, member_name],
+        progress_path=os.path.join(
+          extract_dir,
+          os.path.basename(member_name),
+        ),
+        stage="tar_union_extract",
+        metric="bytes",
+        stdin=decomp.stdout,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=False,
+        env=_gnu_tar_union_env(),
       )
-    except (ProgressIdleError, FileNotFoundError, OSError):
+    except ProgressIdleError, FileNotFoundError, OSError:
       return False
     finally:
       if decomp.stdout is not None:
@@ -8734,21 +8902,27 @@ def _gnu_tar_extract_named_member(
     return int(getattr(result, "returncode", 1) or 0) == 0
 
   extract_cmd = [
-      tar_bin, "-x", "-f", source_path, "-C", extract_dir, member_name,
+    tar_bin,
+    "-x",
+    "-f",
+    source_path,
+    "-C",
+    extract_dir,
+    member_name,
   ]
   progress_path = os.path.join(extract_dir, os.path.basename(member_name))
   try:
     result = run_subprocess_with_progress(
-        extract_cmd,
-        progress_path=progress_path,
-        stage="tar_union_extract",
-        metric="bytes",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=_gnu_tar_union_env(),
+      extract_cmd,
+      progress_path=progress_path,
+      stage="tar_union_extract",
+      metric="bytes",
+      stdout=subprocess.PIPE,
+      stderr=subprocess.PIPE,
+      text=True,
+      env=_gnu_tar_union_env(),
     )
-  except (ProgressIdleError, FileNotFoundError, OSError):
+  except ProgressIdleError, FileNotFoundError, OSError:
     return False
   return int(getattr(result, "returncode", 1) or 0) == 0
 
@@ -8778,34 +8952,34 @@ def _gnu_tar_append_extracted_member(
   """
   tar_bin = str(_tar_list_executable())
   from hpcperfstats.dbload.lib.sync_timedb_progress_io import (
-      ProgressIdleError,
-      run_subprocess_with_progress,
+    ProgressIdleError,
+    run_subprocess_with_progress,
   )
 
   mode = "-c" if not os.path.isfile(dest_tar_path) else "-r"
   cmd = [
-      tar_bin,
-      mode,
-      "--posix",
-      "--exclude=._*",
-      "-C",
-      extract_dir,
-      "-f",
-      dest_tar_path,
-      member_rel,
+    tar_bin,
+    mode,
+    "--posix",
+    "--exclude=._*",
+    "-C",
+    extract_dir,
+    "-f",
+    dest_tar_path,
+    member_rel,
   ]
   try:
     result = run_subprocess_with_progress(
-        cmd,
-        progress_path=dest_tar_path,
-        stage="tar_union_append",
-        metric="bytes",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=_gnu_tar_union_env(),
+      cmd,
+      progress_path=dest_tar_path,
+      stage="tar_union_append",
+      metric="bytes",
+      stdout=subprocess.PIPE,
+      stderr=subprocess.PIPE,
+      text=True,
+      env=_gnu_tar_union_env(),
     )
-  except (ProgressIdleError, FileNotFoundError, OSError):
+  except ProgressIdleError, FileNotFoundError, OSError:
     return False
   return int(getattr(result, "returncode", 1) or 0) == 0
 
@@ -8835,7 +9009,11 @@ def _copy_union_member_into_tar(
 
   Examples:
     >>> _copy_union_member_into_tar(
-    ...   "/tmp/out.tar", "a", 1, tar_path="x", zst_path="y",
+    ...   "/tmp/out.tar",
+    ...   "a",
+    ...   1,
+    ...   tar_path="x",
+    ...   zst_path="y",
     ...   extract_dir="/tmp",
     ... )
     False
@@ -8847,10 +9025,10 @@ def _copy_union_member_into_tar(
     sources.append((zst_path, True))
   for source_path, from_zst in sources:
     if not _gnu_tar_extract_named_member(
-        source_path,
-        member_name,
-        extract_dir,
-        from_zst=from_zst,
+      source_path,
+      member_name,
+      extract_dir,
+      from_zst=from_zst,
     ):
       continue
     extracted = _resolved_extracted_member_path(extract_dir, member_name)
@@ -8874,7 +9052,9 @@ def _copy_union_member_into_tar(
         pass
       continue
     appended = _gnu_tar_append_extracted_member(
-        dest_tar_path, extract_dir, member_rel,
+      dest_tar_path,
+      extract_dir,
+      member_rel,
     )
     try:
       os.remove(extracted)
@@ -8939,22 +9119,28 @@ def _emit_reconcile_stage_progress(
     None
 
   Examples:
-    >>> _emit_reconcile_stage_progress("2020-01-01", members_done=0,
-    ...     members_total=1, elapsed_s=0.0, advancing=True, stuck_s=0.0,
-    ...     log_fn=lambda *a, **k: None)
+    >>> _emit_reconcile_stage_progress(
+    ...   "2020-01-01",
+    ...   members_done=0,
+    ...   members_total=1,
+    ...   elapsed_s=0.0,
+    ...   advancing=True,
+    ...   stuck_s=0.0,
+    ...   log_fn=lambda *a, **k: None,
+    ... )
   """
   if log_fn is None:
     return
   msg = (
-      "queue_orchestrator day_close stage_progress day=%s stage=reconcile_merge "
-      "members_done=%d members_total=%d elapsed_s=%.1f advancing=%s"
-      % (
-          day_token,
-          int(members_done),
-          int(members_total),
-          float(elapsed_s),
-          "true" if advancing else "false",
-      )
+    "queue_orchestrator day_close stage_progress day=%s stage=reconcile_merge "
+    "members_done=%d members_total=%d elapsed_s=%.1f advancing=%s"
+    % (
+      day_token,
+      int(members_done),
+      int(members_total),
+      float(elapsed_s),
+      "true" if advancing else "false",
+    )
   )
   if not advancing:
     msg = "%s stuck_s=%.1f" % (msg, float(stuck_s))
@@ -8962,16 +9148,16 @@ def _emit_reconcile_stage_progress(
     log_fn(msg, flush=True)
     return
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      _rate_limited_day_info_log,
+    _rate_limited_day_info_log,
   )
 
   _rate_limited_day_info_log(
-      _reconcile_stage_progress_log_state,
-      day_token,
-      msg,
-      interval_s=RECONCILE_STAGE_PROGRESS_LOG_INTERVAL_S,
-      log_fn=log_fn,
-      skip_unknown_day=False,
+    _reconcile_stage_progress_log_state,
+    day_token,
+    msg,
+    interval_s=RECONCILE_STAGE_PROGRESS_LOG_INTERVAL_S,
+    log_fn=log_fn,
+    skip_unknown_day=False,
   )
 
 
@@ -9027,19 +9213,19 @@ def rebuild_daily_tar_member_union_in_place(
     >>> rebuild_daily_tar_member_union_in_place("x", "y", {})  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
-      DayCloseYieldError,
-      check_day_close_yield_or_continue,
-      day_close_yield_requested,
+    DayCloseYieldError,
+    check_day_close_yield_or_continue,
+    day_close_yield_requested,
   )
 
   if not union_members:
     return False
   clock = monotonic_fn if callable(monotonic_fn) else time.monotonic
   warn_s = float(
-      RECONCILE_STALL_WARN_S if stall_warn_s is None else stall_warn_s,
+    RECONCILE_STALL_WARN_S if stall_warn_s is None else stall_warn_s,
   )
   yield_s = float(
-      RECONCILE_STALL_YIELD_S if stall_yield_s is None else stall_yield_s,
+    RECONCILE_STALL_YIELD_S if stall_yield_s is None else stall_yield_s,
   )
   day_token = _day_token_for_reconcile_progress(tar_path)
   members_total = len(union_members)
@@ -9083,6 +9269,23 @@ def rebuild_daily_tar_member_union_in_place(
     elapsed_s = now - merge_started
     if stuck_s >= yield_s:
       _emit_reconcile_stage_progress(
+        day_token,
+        members_done=members_done,
+        members_total=members_total,
+        elapsed_s=elapsed_s,
+        advancing=False,
+        stuck_s=stuck_s,
+        log_fn=log_fn,
+        force=True,
+      )
+      raise DayCloseYieldError(
+        tar_path,
+        phase=yield_phase,
+        reason="stall_confirmed",
+      )
+    if stuck_s >= warn_s:
+      if not warn_emitted:
+        _emit_reconcile_stage_progress(
           day_token,
           members_done=members_done,
           members_total=members_total,
@@ -9091,53 +9294,36 @@ def rebuild_daily_tar_member_union_in_place(
           stuck_s=stuck_s,
           log_fn=log_fn,
           force=True,
-      )
-      raise DayCloseYieldError(
-          tar_path,
-          phase=yield_phase,
-          reason="stall_confirmed",
-      )
-    if stuck_s >= warn_s:
-      if not warn_emitted:
-        _emit_reconcile_stage_progress(
-            day_token,
-            members_done=members_done,
-            members_total=members_total,
-            elapsed_s=elapsed_s,
-            advancing=False,
-            stuck_s=stuck_s,
-            log_fn=log_fn,
-            force=True,
         )
         warn_emitted = True
       else:
         _emit_reconcile_stage_progress(
-            day_token,
-            members_done=members_done,
-            members_total=members_total,
-            elapsed_s=elapsed_s,
-            advancing=False,
-            stuck_s=stuck_s,
-            log_fn=log_fn,
-            force=False,
+          day_token,
+          members_done=members_done,
+          members_total=members_total,
+          elapsed_s=elapsed_s,
+          advancing=False,
+          stuck_s=stuck_s,
+          log_fn=log_fn,
+          force=False,
         )
     last_yield_poll, _ = check_day_close_yield_or_continue(
-        tar_path,
-        last_poll_monotonic=last_yield_poll,
-        tgz_archive_dir=tgz_archive_dir,
-        phase=yield_phase,
+      tar_path,
+      last_poll_monotonic=last_yield_poll,
+      tgz_archive_dir=tgz_archive_dir,
+      phase=yield_phase,
     )
 
   try:
     for member_name in sorted(union_members):
       _maybe_stall_yield_at_checkpoint()
       if not _copy_union_member_into_tar(
-          tmp_path,
-          member_name,
-          union_members[member_name],
-          tar_path=tar_path,
-          zst_path=zst_path,
-          extract_dir=extract_dir,
+        tmp_path,
+        member_name,
+        union_members[member_name],
+        tar_path=tar_path,
+        zst_path=zst_path,
+        extract_dir=extract_dir,
       ):
         try:
           os.remove(tmp_path)
@@ -9150,19 +9336,21 @@ def rebuild_daily_tar_member_union_in_place(
       if callable(on_merge_progress):
         try:
           on_merge_progress(
-              members_done, members_total, last_progress_mono,
+            members_done,
+            members_total,
+            last_progress_mono,
           )
         except Exception:
           pass
       _emit_reconcile_stage_progress(
-          day_token,
-          members_done=members_done,
-          members_total=members_total,
-          elapsed_s=last_progress_mono - merge_started,
-          advancing=True,
-          stuck_s=0.0,
-          log_fn=log_fn,
-          force=False,
+        day_token,
+        members_done=members_done,
+        members_total=members_total,
+        elapsed_s=last_progress_mono - merge_started,
+        advancing=True,
+        stuck_s=0.0,
+        log_fn=log_fn,
+        force=False,
       )
     if not verify_tar_archive_readable(tmp_path):
       try:
@@ -9172,23 +9360,23 @@ def rebuild_daily_tar_member_union_in_place(
       return False
     with file_write_lock(tar_path):
       requested, reason = day_close_yield_requested(
-          tar_path,
-          tgz_archive_dir=tgz_archive_dir,
-          phase=yield_phase,
+        tar_path,
+        tgz_archive_dir=tgz_archive_dir,
+        phase=yield_phase,
       )
       if requested:
         raise DayCloseYieldError(tar_path, phase=yield_phase, reason=reason)
       os.replace(tmp_path, tar_path)
     invalidate_after_daily_tar_mutation(
-        tar_path,
-        reason="rebuild_tar_member_union",
-        log_fn=log_fn,
+      tar_path,
+      reason="rebuild_tar_member_union",
+      log_fn=log_fn,
     )
     if log_fn:
       log_fn(
-          "Rebuilt daily tar union (%d members): %s"
-          % (len(union_members), tar_path),
-          flush=True,
+        "Rebuilt daily tar union (%d members): %s"
+        % (len(union_members), tar_path),
+        flush=True,
       )
     return True
   except DayCloseYieldError:
@@ -9230,19 +9418,21 @@ def _maybe_clear_stale_day_ingest_skip_after_reconcile(
   """
   try:
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-        build_archive_members_keys,
+      build_archive_members_keys,
     )
   except Exception:
     return
-  cache_key = _daily_archive_members_cache_key(normalize_daily_compressed_path(zst_path))
+  cache_key = _daily_archive_members_cache_key(
+    normalize_daily_compressed_path(zst_path)
+  )
   keys = build_archive_members_keys(cache_key)
   sealed_path = zst_path if os.path.isfile(zst_path) else ""
   _clear_stale_day_ingest_skip_if_tar_repaired(
-      keys,
-      tar_path,
-      zst_path,
-      gz_path,
-      sealed_path,
+    keys,
+    tar_path,
+    zst_path,
+    gz_path,
+    sealed_path,
   )
 
 
@@ -9286,8 +9476,9 @@ def reconcile_open_tar_with_sealed_zst(
     DayCloseYieldError: When cooperative yield is required.
 
   Examples:
-    >>> reconcile_open_tar_with_sealed_zst("/no.tar", zstd_threads=1,
-    ...     compress_level=3)  # doctest: +SKIP
+    >>> reconcile_open_tar_with_sealed_zst(
+    ...   "/no.tar", zstd_threads=1, compress_level=3
+    ... )  # doctest: +SKIP
   """
   tar_path = os.path.normpath(str(tar_path or ""))
   if not tar_path or not os.path.isfile(tar_path):
@@ -9303,18 +9494,18 @@ def reconcile_open_tar_with_sealed_zst(
       _log_truncated_tar_recoverability(tar_path, log_fn=log_fn)
       return ReconcileResult(False, "skip", "tar_unrecoverable")
     if not repair_truncated_daily_tar_in_place(
-        tar_path,
-        log_fn=log_fn,
-        tgz_archive_dir=tgz_archive_dir,
-        yield_phase="tar_repair",
+      tar_path,
+      log_fn=log_fn,
+      tgz_archive_dir=tgz_archive_dir,
+      yield_phase="tar_repair",
     ):
       return ReconcileResult(False, "skip", "tar_repair_failed")
     tar_gnu_readable = bool(verify_tar_archive_readable(tar_path))
     if not tar_gnu_readable:
       if log_fn:
         log_fn(
-            "WARNING: tar still unreadable after repair tar=%s" % tar_path,
-            flush=True,
+          "WARNING: tar still unreadable after repair tar=%s" % tar_path,
+          flush=True,
         )
       return ReconcileResult(False, "skip", "tar_unrecoverable")
   try:
@@ -9325,15 +9516,15 @@ def reconcile_open_tar_with_sealed_zst(
   zst_readable = False
   if zst_exists:
     zst_readable, zst_members = _sealed_archive_members_via_store_or_scan(
-        zst_path,
-        apply_priority_wrap=False,
+      zst_path,
+      apply_priority_wrap=False,
     )
   action, reason = classify_daily_tar_zst_reconcile(
-      tar_members,
-      zst_members,
-      zst_exists=zst_exists,
-      zst_readable=zst_readable,
-      tar_gnu_readable=tar_gnu_readable,
+    tar_members,
+    zst_members,
+    zst_exists=zst_exists,
+    zst_readable=zst_readable,
+    tar_gnu_readable=tar_gnu_readable,
   )
   if action == "skip":
     return ReconcileResult(False, action, reason)
@@ -9342,16 +9533,16 @@ def reconcile_open_tar_with_sealed_zst(
   if action == "merge_and_seal":
     union_members = archive_member_maps_union(tar_members, zst_members)
     if not rebuild_daily_tar_member_union_in_place(
-        tar_path,
-        zst_path,
-        union_members,
-        log_fn=log_fn,
-        tgz_archive_dir=tgz_archive_dir,
-        yield_phase="tar_merge",
-        monotonic_fn=monotonic_fn,
-        stall_warn_s=stall_warn_s,
-        stall_yield_s=stall_yield_s,
-        on_merge_progress=on_merge_progress,
+      tar_path,
+      zst_path,
+      union_members,
+      log_fn=log_fn,
+      tgz_archive_dir=tgz_archive_dir,
+      yield_phase="tar_merge",
+      monotonic_fn=monotonic_fn,
+      stall_warn_s=stall_warn_s,
+      stall_yield_s=stall_yield_s,
+      on_merge_progress=on_merge_progress,
     ):
       return ReconcileResult(False, action, "merge_failed")
     tar_members = get_mutable_tar_authority_member_map(tar_path)
@@ -9363,46 +9554,50 @@ def reconcile_open_tar_with_sealed_zst(
         with file_write_lock(tar_path):
           os.remove(tar_path)
         invalidate_after_daily_tar_mutation(
-            zst_path,
-            reason="reconcile_drop_equivalent_tar",
-            log_fn=log_fn,
+          zst_path,
+          reason="reconcile_drop_equivalent_tar",
+          log_fn=log_fn,
         )
         _maybe_clear_stale_day_ingest_skip_after_reconcile(
-            tar_path, zst_path, gz_path,
+          tar_path,
+          zst_path,
+          gz_path,
         )
         return ReconcileResult(
-            True,
-            action,
-            reason,
-            sealed=True,
-            tar_removed=True,
+          True,
+          action,
+          reason,
+          sealed=True,
+          tar_removed=True,
         )
       except Exception:
         return ReconcileResult(False, action, "drop_failed")
     return ReconcileResult(True, action, reason)
   seal_snapshot = atomic_seal_tar_to_zst(
-      tar_path,
-      zst_path,
-      zstd_threads,
-      compress_level,
-      keep_uncompressed_tar=keep_uncompressed_tar,
-      log_fn=log_fn,
-      remaining_raw_by_gz=remaining_raw_by_gz,
-      force_remove_uncompressed_tar=force_remove_uncompressed_tar,
-      tgz_archive_dir=tgz_archive_dir,
+    tar_path,
+    zst_path,
+    zstd_threads,
+    compress_level,
+    keep_uncompressed_tar=keep_uncompressed_tar,
+    log_fn=log_fn,
+    remaining_raw_by_gz=remaining_raw_by_gz,
+    force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+    tgz_archive_dir=tgz_archive_dir,
   )
   if seal_snapshot is None and action in ("seal_from_tar", "merge_and_seal"):
     return ReconcileResult(False, action, "seal_failed")
   tar_removed = force_remove_uncompressed_tar and not os.path.isfile(tar_path)
   _maybe_clear_stale_day_ingest_skip_after_reconcile(
-      tar_path, zst_path, gz_path,
+    tar_path,
+    zst_path,
+    gz_path,
   )
   return ReconcileResult(
-      True,
-      action,
-      reason,
-      sealed=seal_snapshot is not None or action == "noop",
-      tar_removed=tar_removed,
+    True,
+    action,
+    reason,
+    sealed=seal_snapshot is not None or action == "noop",
+    tar_removed=tar_removed,
   )
 
 
@@ -9415,35 +9610,35 @@ def dedupe_tar_keep_largest_file_per_member(
 ) -> Any:
   """
   Rewrite ``tar_path`` so each file path appears once: keep largest size (tie:.
-  
+
     last).
-  
+
   Writes ``tar_path`` + ``.dedupe.tmp``, verifies, then ``os.replace``. Returns
   False on failure (original tar unchanged if replace never ran).
   Raises ``DayCloseYieldError`` when ingest hot signals require cooperative
     yield.
-  
+
   Args:
     tar_path (str): String for tar path.
     log_fn (Any): Callable invoked by this helper.
     tgz_archive_dir (str): String for tgz archive dir.
     yield_phase (str): String for yield phase.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     DayCloseYieldError: Raised when
     ``dedupe_tar_keep_largest_file_per_member`` hits a ``DayCloseYieldError``
     failure path.
     Exception: Raised when ``dedupe_tar_keep_largest_file_per_member`` hits a
     ``Exception`` failure path.
-  
+
   Examples:
     >>> dedupe_tar_keep_largest_file_per_member("x", None, "x", "x")
   """
   from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
-      DayCloseYieldError,
+    DayCloseYieldError,
   )
 
   if not os.path.isfile(tar_path):
@@ -9457,10 +9652,10 @@ def dedupe_tar_keep_largest_file_per_member(
   try:
     with file_write_lock(tar_path):
       _rewrite_daily_tar_largest_member_wins(
-          tar_path,
-          tmp_path,
-          tgz_archive_dir=tgz_archive_dir,
-          yield_phase=yield_phase,
+        tar_path,
+        tmp_path,
+        tgz_archive_dir=tgz_archive_dir,
+        yield_phase=yield_phase,
       )
       if not verify_tar_archive_readable(tmp_path):
         try:
@@ -9470,12 +9665,15 @@ def dedupe_tar_keep_largest_file_per_member(
         return False
       os.replace(tmp_path, tar_path)
     invalidate_after_daily_tar_mutation(
-        tar_path,
-        reason="dedupe_tar_keep_largest",
-        log_fn=log_fn,
+      tar_path,
+      reason="dedupe_tar_keep_largest",
+      log_fn=log_fn,
     )
     if log_fn:
-      log_fn("Deduplicated archive (largest wins per path): %s" % tar_path, flush=True)
+      log_fn(
+        "Deduplicated archive (largest wins per path): %s" % tar_path,
+        flush=True,
+      )
     return True
   except DayCloseYieldError:
     try:
@@ -9502,23 +9700,23 @@ def dedupe_sealed_daily_archive(
 ) -> Any:
   """
   Last resort: decompress sealed archive, dedupe ``.tar``, and re-seal.
-  
+
   Used by the archive janitor when only ``.tar.zst`` / ``.tar.gz`` exists and
   duplicate file members were detected during ingest member-cache populate.
-  
+
   Args:
     archive_compressed_path (str): String for archive compressed path.
     log_fn (Any): Callable invoked by this helper.
     keep_uncompressed_tar (Any | None): One of ``Any``, ``None``.
     tgz_archive_dir (str): String for tgz archive dir.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     Exception: Raised when ``dedupe_sealed_daily_archive`` hits a
     ``Exception`` failure path.
-  
+
   Examples:
     >>> dedupe_sealed_daily_archive("x", None, None, "x")  # doctest: +SKIP
   """
@@ -9536,65 +9734,65 @@ def dedupe_sealed_daily_archive(
     if not tar_has_duplicate_file_members(tar_path):
       return True
     if not dedupe_tar_keep_largest_file_per_member(
-        tar_path,
-        log_fn=log_fn,
-        tgz_archive_dir=tgz_archive_dir,
-        yield_phase="dedupe_sealed",
+      tar_path,
+      log_fn=log_fn,
+      tgz_archive_dir=tgz_archive_dir,
+      yield_phase="dedupe_sealed",
     ):
       return False
   else:
     if not decompress_compressed_to_tar(
-        sealed_path,
-        tar_path,
-        get_archive_zstd_thread_count(),
-        remove_compressed=False,
+      sealed_path,
+      tar_path,
+      get_archive_zstd_thread_count(),
+      remove_compressed=False,
     ):
       if log_fn:
         log_fn(
-            "dedupe_sealed_daily_archive: decompress failed for %s"
-            % sealed_path,
-            flush=True,
+          "dedupe_sealed_daily_archive: decompress failed for %s" % sealed_path,
+          flush=True,
         )
       return False
     if not dedupe_tar_keep_largest_file_per_member(
-        tar_path,
-        log_fn=log_fn,
-        tgz_archive_dir=tgz_archive_dir,
-        yield_phase="dedupe_sealed",
+      tar_path,
+      log_fn=log_fn,
+      tgz_archive_dir=tgz_archive_dir,
+      yield_phase="dedupe_sealed",
     ):
       return False
   if keep_uncompressed_tar is None:
     keep_uncompressed_tar = cfg.get_archive_keep_uncompressed_tar()
   try:
     atomic_seal_tar_to_zst(
-        tar_path,
-        zst_path if sealed_path.endswith(DAILY_ARCHIVE_ZST_SUFFIX) else zst_path,
-        num_threads=get_archive_zstd_thread_count(),
-        compress_level=cfg.get_archive_zstd_level(),
-        keep_uncompressed_tar=keep_uncompressed_tar,
-        log_fn=log_fn,
-        tgz_archive_dir=tgz_archive_dir,
+      tar_path,
+      zst_path if sealed_path.endswith(DAILY_ARCHIVE_ZST_SUFFIX) else zst_path,
+      num_threads=get_archive_zstd_thread_count(),
+      compress_level=cfg.get_archive_zstd_level(),
+      keep_uncompressed_tar=keep_uncompressed_tar,
+      log_fn=log_fn,
+      tgz_archive_dir=tgz_archive_dir,
     )
   except DayCloseYieldError:
     raise
   except (OSError, subprocess.CalledProcessError) as exc:
     if log_fn:
       log_fn(
-          "dedupe_sealed_daily_archive: re-seal failed for %s (%s)"
-          % (tar_path, exc),
-          flush=True,
+        "dedupe_sealed_daily_archive: re-seal failed for %s (%s)"
+        % (tar_path, exc),
+        flush=True,
       )
     return False
   invalidate_after_daily_tar_mutation(
-      sealed_path,
-      reason="dedupe_sealed_reseal",
-      log_fn=log_fn,
+    sealed_path,
+    reason="dedupe_sealed_reseal",
+    log_fn=log_fn,
   )
   try:
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-        clear_dedupe_hint,
-        dedupe_hint_is_set,
+      clear_dedupe_hint,
+      dedupe_hint_is_set,
     )
+
     day = calendar_date_from_daily_tar_path(tar_path)
     if day is not None and dedupe_hint_is_set(day.isoformat()):
       clear_dedupe_hint(day.isoformat())
@@ -9602,8 +9800,8 @@ def dedupe_sealed_daily_archive(
     pass
   if log_fn:
     log_fn(
-        "dedupe_sealed_daily_archive: re-sealed after dedupe %s" % sealed_path,
-        flush=True,
+      "dedupe_sealed_daily_archive: re-sealed after dedupe %s" % sealed_path,
+      flush=True,
     )
   return True
 
@@ -9611,13 +9809,13 @@ def dedupe_sealed_daily_archive(
 def resolve_preferred_archive_path_for_read(path: str) -> Any:
   """
   Prefer mutable uncompressed ``.tar`` when it and a compressed sibling exist.
-  
+
   Args:
     path (str): String for path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> resolve_preferred_archive_path_for_read("x")  # doctest: +SKIP
   """
@@ -9633,18 +9831,18 @@ def resolve_sealed_archive_path_for_ingest(
 ) -> Any:
   """
   Return on-disk sealed path (``.tar.zst`` or legacy ``.tar.gz``) for ingest.
-  
+
   Never returns uncompressed ``.tar``. Returns ``None`` when only ``.tar``
     exists
   or the day/path is missing (``sync_timedb_archive`` sealed-only backfill).
-  
+
   Args:
     archive_path_or_day (Any): Archive path or day passed to this helper.
     daily_archive_dir (str): String for daily archive dir.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> resolve_sealed_archive_path_for_ingest(None, "x")  # doctest: +SKIP
   """
@@ -9672,49 +9870,49 @@ def resolve_sealed_archive_path_for_ingest(
 def iter_sealed_daily_archive_member_lines(sealed_path: str) -> Iterator[Any]:
   """
   Yield ``(member_name, lines)`` from a sealed daily archive via in-memory zstd.
-  
+
     stream.
-  
+
   Does not read uncompressed ``.tar`` or write decompress artifacts to disk.
-  
+
   Args:
     sealed_path (str): String for sealed path.
-  
+
   Yields:
     Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     FileNotFoundError: Raised when ``iter_sealed_daily_archive_member_lines``
     hits a ``FileNotFoundError`` failure path.
     ValueError: Raised when ``iter_sealed_daily_archive_member_lines`` hits a
     ``ValueError`` failure path.
-  
+
   Examples:
     >>> iter_sealed_daily_archive_member_lines("x")  # doctest: +SKIP
   """
   fmt = detect_compressed_format(sealed_path)
   if fmt not in ("zst", "gz"):
     raise ValueError(
-        "sync_timedb_archive requires sealed archive (.tar.zst or .tar.gz): %s"
-        % sealed_path,
+      "sync_timedb_archive requires sealed archive (.tar.zst or .tar.gz): %s"
+      % sealed_path,
     )
   if not os.path.isfile(sealed_path):
     raise FileNotFoundError(sealed_path)
   max_bytes = cfg.get_sync_ingest_max_file_read_bytes()
   with file_read_lock_wait(sealed_path):
     with _open_tarfile_for_read(
-        sealed_path,
-        get_archive_zstd_thread_count(),
-        apply_priority_wrap=True,
+      sealed_path,
+      get_archive_zstd_thread_count(),
+      apply_priority_wrap=True,
     ) as archive_tar:
       for member_info in _iter_tar_members(archive_tar):
         if not member_info.isfile():
           continue
         if max_bytes > 0 and member_info.size > max_bytes:
           log_print(
-              "sync_timedb_archive: skip oversize member %s (%d bytes > %d)"
-              % (member_info.name, member_info.size, max_bytes),
-              flush=True,
+            "sync_timedb_archive: skip oversize member %s (%d bytes > %d)"
+            % (member_info.name, member_info.size, max_bytes),
+            flush=True,
           )
           continue
         fobj = archive_tar.extractfile(member_info)
@@ -9740,16 +9938,16 @@ def _archive_ingest_spool_root(
 ) -> Any:
   """
   Directory for spooling sealed tar members to disk (path-only ingest).
-  
+
   Args:
     spool_dir (Any | None): One of ``Any``, ``None``.
     sealed_path (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Open return polymorphism from ``_archive_ingest_spool_root``:
     concrete type depends on inputs and branch (mapping, scalar, handle, or
     ``None``-like empty).
-  
+
   Examples:
     >>> _archive_ingest_spool_root(None, None)  # doctest: +SKIP
   """
@@ -9757,13 +9955,14 @@ def _archive_ingest_spool_root(
     root = spool_dir
   elif sealed_path:
     root = os.path.join(
-        os.path.dirname(os.path.abspath(sealed_path)),
-        ".sync_archive_ingest_spool",
+      os.path.dirname(os.path.abspath(sealed_path)),
+      ".sync_archive_ingest_spool",
     )
   else:
     base = cfg.get_archive_dir_path() or cfg.get_daily_archive_dir_path()
     if not base:
       import tempfile
+
       base = tempfile.gettempdir()
     root = os.path.join(base, ".sync_archive_ingest_spool")
   os.makedirs(root, exist_ok=True)
@@ -9773,13 +9972,13 @@ def _archive_ingest_spool_root(
 def _member_spool_relative_path(member_name: Any) -> Any:
   """
   Return a relative path with host/filename shape for ``parse_stats_file_path``.
-  
+
   Args:
     member_name (Any): Member name passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _member_spool_relative_path(None)  # doctest: +SKIP
   """
@@ -9797,37 +9996,37 @@ def iter_sealed_daily_archive_member_paths(
 ) -> Iterator[Any]:
   """
   Yield ``(member_name, path_on_disk)`` for path-only ingest (enables streaming.
-  
+
     parse).
-  
+
   Each tar member is spooled under ``spool_dir`` (or
     ``.sync_archive_ingest_spool``).
   Callers must remove ``path_on_disk`` after ingest.
   ``on_member_skipped`` is invoked once per member not yielded (oversize,
     unreadable).
-  
+
   Args:
     sealed_path (str): String for sealed path.
     spool_dir (Any | None): One of ``Any``, ``None``.
     on_member_skipped (Any | None): One of ``Any``, ``None``.
-  
+
   Yields:
     Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     FileNotFoundError: Raised when ``iter_sealed_daily_archive_member_paths``
     hits a ``FileNotFoundError`` failure path.
     ValueError: Raised when ``iter_sealed_daily_archive_member_paths`` hits a
     ``ValueError`` failure path.
-  
+
   Examples:
     >>> iter_sealed_daily_archive_member_paths("x", None, None)
   """
   fmt = detect_compressed_format(sealed_path)
   if fmt not in ("zst", "gz"):
     raise ValueError(
-        "sync_timedb_archive requires sealed archive (.tar.zst or .tar.gz): %s"
-        % sealed_path,
+      "sync_timedb_archive requires sealed archive (.tar.zst or .tar.gz): %s"
+      % sealed_path,
     )
   if not os.path.isfile(sealed_path):
     raise FileNotFoundError(sealed_path)
@@ -9835,18 +10034,18 @@ def iter_sealed_daily_archive_member_paths(
   spool_root = _archive_ingest_spool_root(spool_dir, sealed_path=sealed_path)
   with file_read_lock_wait(sealed_path):
     with _open_tarfile_for_read(
-        sealed_path,
-        get_archive_zstd_thread_count(),
-        apply_priority_wrap=True,
+      sealed_path,
+      get_archive_zstd_thread_count(),
+      apply_priority_wrap=True,
     ) as archive_tar:
       for member_info in _iter_tar_members(archive_tar):
         if not member_info.isfile():
           continue
         if max_bytes > 0 and member_info.size > max_bytes:
           log_print(
-              "sync_timedb_archive: skip oversize member %s (%d bytes > %d)"
-              % (member_info.name, member_info.size, max_bytes),
-              flush=True,
+            "sync_timedb_archive: skip oversize member %s (%d bytes > %d)"
+            % (member_info.name, member_info.size, max_bytes),
+            flush=True,
           )
           if on_member_skipped is not None:
             on_member_skipped()
@@ -9880,14 +10079,14 @@ def iter_archive_ingest_tasks(
 ) -> Iterator[Any]:
   """
   Yield ``(STREAM_ARCHIVE_TASK, sealed_path)`` for resolved sealed archives.
-  
+
   Args:
     archive_paths (Any): Iterable of filesystem paths as strings.
     daily_archive_dir (str): String for daily archive dir.
-  
+
   Yields:
     Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> iter_archive_ingest_tasks(None, "x")  # doctest: +SKIP
   """
@@ -9896,9 +10095,8 @@ def iter_archive_ingest_tasks(
     sealed = resolve_sealed_archive_path_for_ingest(path, daily_archive_dir)
     if not sealed:
       log_print(
-          "sync_timedb_archive: skipped_tar_only (no sealed archive): %s"
-          % path,
-          flush=True,
+        "sync_timedb_archive: skipped_tar_only (no sealed archive): %s" % path,
+        flush=True,
       )
       continue
     norm = os.path.normpath(sealed)
@@ -9913,15 +10111,15 @@ def iter_daily_sealed_archive_calendar_days(
 ) -> Iterator[Any]:
   """
   Yield ``date`` objects for days with ``.tar.zst`` or legacy ``.tar.gz`` on.
-  
+
     disk.
-  
+
   Args:
     daily_archive_dir (str): String for daily archive dir.
-  
+
   Yields:
     Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> iter_daily_sealed_archive_calendar_days("x")  # doctest: +SKIP
   """
@@ -9949,21 +10147,21 @@ def collect_sealed_daily_archive_paths_in_range(
 ) -> Any:
   """
   Return ``(sealed_paths, skipped_tar_only_count)`` for the date range.
-  
+
   ``startdate`` may be ``'all'`` to scan every sealed day under
     ``daily_archive_dir``.
   Calendar-day ranges are inclusive on both ends.
-  
+
   Args:
     daily_archive_dir (str): String for daily archive dir.
     startdate (Any): Time value (``datetime``, ISO string, sentinel, or
     ``None``).
     enddate (Any): Time value (``datetime``, ISO string, sentinel, or
     ``None``).
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> collect_sealed_daily_archive_paths_in_range("x", None, None)
   """
@@ -9974,8 +10172,8 @@ def collect_sealed_daily_archive_paths_in_range(
   if startdate == "all":
     for day in iter_daily_sealed_archive_calendar_days(daily_archive_dir):
       sealed = resolve_sealed_archive_path_for_ingest(
-          day.strftime("%Y-%m-%d"),
-          daily_archive_dir,
+        day.strftime("%Y-%m-%d"),
+        daily_archive_dir,
       )
       if sealed:
         paths.append(sealed)
@@ -9997,8 +10195,8 @@ def collect_sealed_daily_archive_paths_in_range(
     elif os.path.isfile(ref_tar):
       skipped_tar_only += 1
       log_print(
-          "sync_timedb_archive: skipped_tar_only (unsealed day): %s" % ref_tar,
-          flush=True,
+        "sync_timedb_archive: skipped_tar_only (unsealed day): %s" % ref_tar,
+        flush=True,
       )
   return paths, skipped_tar_only
 
@@ -10006,13 +10204,13 @@ def collect_sealed_daily_archive_paths_in_range(
 def _compressed_backup_and_uncompressed_targets(open_path: str) -> Any:
   """
   Return ``(zst_path, gz_path, uncompressed_tar_path)`` for restore.
-  
+
   Args:
     open_path (str): String for open path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _compressed_backup_and_uncompressed_targets("x")  # doctest: +SKIP
   """
@@ -10024,24 +10222,24 @@ def _compressed_backup_and_uncompressed_targets(open_path: str) -> Any:
 def iter_tar_file_tasks(tar_path: str) -> Iterator[Any]:
   """
   Yield ``(tar_path, member_name)`` for file members only (no dirs).
-  
+
   If the tar is unreadable and a sibling ``.tar.zst`` / ``.tar.gz`` exists,
     delete the
   unreadable tar, restore from compressed backup, and retry once.
-  
+
   When both ``.tar`` and a compressed sibling exist (deferred compression), the
   uncompressed ``.tar`` is used so readers see the latest appends.
-  
+
   Args:
     tar_path (str): String for tar path.
-  
+
   Yields:
     Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     Exception: Raised when ``iter_tar_file_tasks`` hits a ``Exception``
     failure path.
-  
+
   Examples:
     >>> iter_tar_file_tasks("x")  # doctest: +SKIP
   """
@@ -10050,13 +10248,13 @@ def iter_tar_file_tasks(tar_path: str) -> Iterator[Any]:
   def _iter_members() -> Iterator[Any]:
     """
     Internal helper to iterate over the members.
-    
+
     Yields:
       Iterator[Any]: Value produced by this call (type depends on inputs).
-    
+
     Raises:
       OSError: When GNU ``tar tf`` exits non-zero for ``open_path``.
-    
+
     Examples:
       >>> _iter_members()  # doctest: +SKIP
     """
@@ -10064,18 +10262,20 @@ def iter_tar_file_tasks(tar_path: str) -> Iterator[Any]:
       names, rc, _stderr = _run_gnu_tf_member_names(open_path)
     if rc != 0:
       raise OSError(
-          "gnu tar tf failed path=%s rc=%s" % (open_path, rc),
+        "gnu tar tf failed path=%s rc=%s" % (open_path, rc),
       )
     for name in names:
       yield (open_path, name)
 
   _restore_from_compressed = lambda: (
-      lambda zst_path, gz_path, tar_out: replace_corrupt_tar_from_compressed_backup(
-          tar_out,
-          zst_path,
-          gz_path,
-          get_archive_zstd_thread_count(),
+    lambda zst_path, gz_path, tar_out: (
+      replace_corrupt_tar_from_compressed_backup(
+        tar_out,
+        zst_path,
+        gz_path,
+        get_archive_zstd_thread_count(),
       )
+    )
   )(*_compressed_backup_and_uncompressed_targets(open_path))
 
   try:
@@ -10083,13 +10283,13 @@ def iter_tar_file_tasks(tar_path: str) -> Iterator[Any]:
     return
   except OSError:
     log_print(
-        "Unable to read archive %s (possible corruption); attempting restore "
-        "from compressed backup" % open_path
+      "Unable to read archive %s (possible corruption); attempting restore "
+      "from compressed backup" % open_path
     )
     if not _restore_from_compressed():
       log_print(
-          "Archive recovery failed for %s; no usable compressed backup"
-          % open_path
+        "Archive recovery failed for %s; no usable compressed backup"
+        % open_path
       )
       raise
     log_print("Archive recovery succeeded for %s; retrying read" % open_path)
@@ -10100,15 +10300,15 @@ def iter_tar_file_tasks(tar_path: str) -> Iterator[Any]:
 def get_tar_file_tasks(tar_path: str) -> Any:
   """
   Return list of (tar_path, member_name) for file members only (no dirs).
-  
+
   Wrapper over ``iter_tar_file_tasks`` for callers/tests that need eager lists.
-  
+
   Args:
     tar_path (str): String for tar path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> get_tar_file_tasks("x")  # doctest: +SKIP
   """
@@ -10118,13 +10318,13 @@ def get_tar_file_tasks(tar_path: str) -> Any:
 def parse_archive_date_from_daily_tar_path(tar_path: str) -> Any:
   """
   Return date from ``YYYY-MM-DD.tar`` basename, or None if not matched.
-  
+
   Args:
     tar_path (str): String for tar path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> parse_archive_date_from_daily_tar_path("x")  # doctest: +SKIP
   """
@@ -10138,17 +10338,17 @@ def is_daily_tar_sealed_dirty(
 ) -> Any:
   """
   True if ``.tar`` should be re-sealed to ``.tar.zst`` (zst missing/stale or.
-  
+
     only legacy gz).
-  
+
   Args:
     tar_path (str): String for tar path.
     zst_path (str): String for zst path.
     gz_path (str): String for gz path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> is_daily_tar_sealed_dirty("x", "x", "x")  # doctest: +SKIP
   """
@@ -10172,13 +10372,13 @@ def is_daily_tar_sealed_dirty(
 def tar_day_dirty_by_mtime(tar_path: str) -> Any:
   """
   Cheap mtime check for accrual enqueue (no zstd).
-  
+
   Args:
     tar_path (str): String for tar path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> tar_day_dirty_by_mtime("x")  # doctest: +SKIP
   """
@@ -10196,11 +10396,11 @@ def should_seal_daily_tar(
 ) -> Any:
   """
   Whether to seal now: dirty tar/zst pair and idle / prior-day rules.
-  
+
   If ``seal_immediately_if_dirty`` (e.g. end of a sync_timedb ingest pass), any
   dirty pair is sealed regardless of idle. Otherwise today's archive waits until
   ``idle_seconds`` after its last mtime (prior calendar days seal when dirty).
-  
+
   Args:
     tar_path (str): String for tar path.
     zst_path (str): String for zst path.
@@ -10209,10 +10409,10 @@ def should_seal_daily_tar(
     seal_immediately_if_dirty (bool): Boolean flag for seal immediately if
     dirty.
     gz_path (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> should_seal_daily_tar("x", "x", 0, None, True, None)  # doctest: +SKIP
   """
@@ -10232,13 +10432,13 @@ def should_seal_daily_tar(
 def iter_daily_tar_paths(daily_archive_dir: str) -> Iterator[Any]:
   """
   Yield paths to ``YYYY-MM-DD.tar`` under ``daily_archive_dir``.
-  
+
   Args:
     daily_archive_dir (str): String for daily archive dir.
-  
+
   Yields:
     Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> iter_daily_tar_paths("x")  # doctest: +SKIP
   """
@@ -10254,32 +10454,29 @@ def iter_daily_tar_paths(daily_archive_dir: str) -> Iterator[Any]:
 def _is_migration_scratch_name(name: Any) -> Any:
   """
   True for transient seal/decompress artifacts in ``daily_archive_dir``.
-  
+
   Args:
     name (Any): Name passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _is_migration_scratch_name(None)  # doctest: +SKIP
   """
-  return (
-      name.endswith(".tmp")
-      or name.endswith(".decomp.tmp")
-  )
+  return name.endswith(".tmp") or name.endswith(".decomp.tmp")
 
 
 def iter_daily_gz_paths(daily_archive_dir: str) -> Iterator[Any]:
   """
   Yield paths to legacy ``YYYY-MM-DD.tar.gz`` under ``daily_archive_dir``.
-  
+
   Args:
     daily_archive_dir (str): String for daily archive dir.
-  
+
   Yields:
     Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> iter_daily_gz_paths("x")  # doctest: +SKIP
   """
@@ -10299,13 +10496,13 @@ def iter_daily_gz_paths(daily_archive_dir: str) -> Iterator[Any]:
 def parse_archive_date_from_daily_gz_path(gz_path: str) -> Any:
   """
   Return date from ``YYYY-MM-DD.tar.gz`` basename, or None if not matched.
-  
+
   Args:
     gz_path (str): String for gz path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> parse_archive_date_from_daily_gz_path("x")  # doctest: +SKIP
   """
@@ -10321,14 +10518,14 @@ def parse_archive_date_from_daily_gz_path(gz_path: str) -> Any:
 def check_archive_migration_prerequisites() -> None:
   """
   Raise ``RuntimeError`` when zstd or gzip-via-zstd support is unavailable.
-  
+
   Returns:
     None
-  
+
   Raises:
     RuntimeError: Raised when ``check_archive_migration_prerequisites`` hits a
     ``RuntimeError`` failure path.
-  
+
   Examples:
     >>> check_archive_migration_prerequisites()  # doctest: +SKIP
   """
@@ -10336,7 +10533,7 @@ def check_archive_migration_prerequisites() -> None:
     raise RuntimeError("zstd executable not found on PATH")
   if not zstd_gzip_supported():
     raise RuntimeError(
-        "zstd does not report gzip format support (required for legacy .tar.gz)",
+      "zstd does not report gzip format support (required for legacy .tar.gz)",
     )
 
 
@@ -10350,9 +10547,9 @@ def compare_compressed_archive_members(
 ) -> Any:
   """
   Return ``(gz_contained_in_zst, gz_members, zst_members)`` for migration.
-  
+
     checks.
-  
+
   Args:
     gz_path (str): String for gz path.
     zst_path (str): String for zst path.
@@ -10360,10 +10557,10 @@ def compare_compressed_archive_members(
     zst_members (Any | None): One of ``Any``, ``None``.
     already_locked (bool): Skip gzip fnctl when the caller holds the gz write
     lock.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> compare_compressed_archive_members("x", "x", None, None)
   """
@@ -10371,7 +10568,8 @@ def compare_compressed_archive_members(
     gz_ok, gz_members = True, dict(gz_members)
   else:
     gz_ok, gz_members = _scan_compressed_archive_members_and_readable(
-        gz_path, already_locked=already_locked,
+      gz_path,
+      already_locked=already_locked,
     )
   if zst_members is not None:
     zst_ok, zst_members = True, dict(zst_members)
@@ -10380,9 +10578,9 @@ def compare_compressed_archive_members(
   if not gz_ok or not zst_ok:
     return False, gz_members, zst_members
   return (
-      archive_gz_members_contained_in_zst(gz_members, zst_members),
-      gz_members,
-      zst_members,
+    archive_gz_members_contained_in_zst(gz_members, zst_members),
+    gz_members,
+    zst_members,
   )
 
 
@@ -10397,7 +10595,7 @@ def drop_legacy_gz_if_equivalent_to_zst(
 ) -> None:
   """
   Remove legacy ``.tar.gz`` when all gzip members match in ``.tar.zst``.
-  
+
   Args:
     gz_path (str): String for gz path.
     zst_path (str): String for zst path.
@@ -10406,21 +10604,23 @@ def drop_legacy_gz_if_equivalent_to_zst(
     zst_members (Any | None): One of ``Any``, ``None``.
     already_locked (bool): Skip gzip fnctl when the caller holds the gz write
     lock.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> drop_legacy_gz_if_equivalent_to_zst("x", "x", None, None, None)
   """
   if not os.path.isfile(gz_path) or not os.path.isfile(zst_path):
     return
-  gz_contained_in_zst, gz_members, zst_members = compare_compressed_archive_members(
+  gz_contained_in_zst, gz_members, zst_members = (
+    compare_compressed_archive_members(
       gz_path,
       zst_path,
       gz_members=gz_members,
       zst_members=zst_members,
       already_locked=already_locked,
+    )
   )
   if gz_contained_in_zst:
     try:
@@ -10428,26 +10628,28 @@ def drop_legacy_gz_if_equivalent_to_zst(
         os.remove(gz_path)
       if log_fn:
         log_fn(
-            "Removed legacy gzip archive after zst equivalence: %s" % gz_path,
-            flush=True,
+          "Removed legacy gzip archive after zst equivalence: %s" % gz_path,
+          flush=True,
         )
     except OSError as exc:
       if log_fn:
-        log_fn("Could not remove legacy gzip %s: %s" % (gz_path, exc), flush=True)
+        log_fn(
+          "Could not remove legacy gzip %s: %s" % (gz_path, exc), flush=True
+        )
     return
   if log_fn:
     log_fn(
-        "Keeping legacy gzip %s: member mismatch with %s "
-        "(gzip_bytes=%s zst_bytes=%s gzip_members=%s zst_members=%s)"
-        % (
-            gz_path,
-            zst_path,
-            sum_member_bytes(gz_members),
-            sum_member_bytes(zst_members),
-            len(gz_members),
-            len(zst_members),
-        ),
-        flush=True,
+      "Keeping legacy gzip %s: member mismatch with %s "
+      "(gzip_bytes=%s zst_bytes=%s gzip_members=%s zst_members=%s)"
+      % (
+        gz_path,
+        zst_path,
+        sum_member_bytes(gz_members),
+        sum_member_bytes(zst_members),
+        len(gz_members),
+        len(zst_members),
+      ),
+      flush=True,
     )
 
 
@@ -10459,21 +10661,21 @@ def _seal_skip_existing_zst_equivalent(
 ) -> Any:
   """
   Return ``(skipped, zst_members)`` for seal idempotence and shrink-guard reuse.
-  
+
   ``zst_members`` is a member map when the sealed archive was readable; ``None``
     when
   skip applies with tar absent, zst missing/unreadable, or members could not be
     loaded.
-  
+
   Args:
     tar_path (str): String for tar path.
     zst_path (str): String for zst path.
     num_threads (Any): Num threads passed to this helper.
     log_fn (Any): Callable invoked by this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _seal_skip_existing_zst_equivalent("x", "x", None, None)
   """
@@ -10481,18 +10683,18 @@ def _seal_skip_existing_zst_equivalent(
     return False, None
   try:
     zstd_test(zst_path, num_threads)
-  except (OSError, subprocess.CalledProcessError, RuntimeError):
+  except OSError, subprocess.CalledProcessError, RuntimeError:
     return False, None
   if not os.path.isfile(tar_path):
     if log_fn:
       log_fn(
-          "Seal skipped: sealed archive valid and uncompressed tar absent: %s"
-          % zst_path,
-          flush=True,
+        "Seal skipped: sealed archive valid and uncompressed tar absent: %s"
+        % zst_path,
+        flush=True,
       )
     return True, None
   existing_ok, existing_members = _sealed_archive_members_via_store_or_scan(
-      zst_path,
+    zst_path,
   )
   if not existing_ok:
     return False, None
@@ -10501,9 +10703,9 @@ def _seal_skip_existing_zst_equivalent(
   if archive_member_maps_equivalent(zst_members, tar_members):
     if log_fn:
       log_fn(
-          "Seal skipped: tar and zst already equivalent (members=%d): %s"
-          % (len(tar_members), zst_path),
-          flush=True,
+        "Seal skipped: tar and zst already equivalent (members=%d): %s"
+        % (len(tar_members), zst_path),
+        flush=True,
       )
     return True, zst_members
   return False, zst_members
@@ -10523,12 +10725,12 @@ def atomic_seal_tar_to_zst(
 ) -> Any:
   """
   Compress ``tar_path`` to ``zst_path`` using temp file, ``zstd -t``,.
-  
+
     ``os.replace``.
-  
+
   Returns a zst member map snapshot when seal skipped or compress succeeded;
     ``None`` otherwise.
-  
+
   Args:
     tar_path (str): String for tar path.
     zst_path (str): String for zst path.
@@ -10541,28 +10743,33 @@ def atomic_seal_tar_to_zst(
     uncompressed tar.
     skip_result (Any | None): One of ``Any``, ``None``.
     tgz_archive_dir (str): String for tgz archive dir.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     Exception: Raised when ``atomic_seal_tar_to_zst`` hits a ``Exception``
     failure path.
     RuntimeError: Raised when ``atomic_seal_tar_to_zst`` hits a
     ``RuntimeError`` failure path.
-  
+
   Examples:
     >>> atomic_seal_tar_to_zst(0)  # doctest: +SKIP
   """
   if not os.path.isfile(tar_path):
     if os.path.isfile(zst_path):
-      _seal_skip_existing_zst_equivalent(tar_path, zst_path, num_threads, log_fn)
+      _seal_skip_existing_zst_equivalent(
+        tar_path, zst_path, num_threads, log_fn
+      )
     return None
   if not shutil.which("zstd"):
     raise RuntimeError("zstd executable not found on PATH")
   if skip_result is None:
     skip_result = _seal_skip_existing_zst_equivalent(
-        tar_path, zst_path, num_threads, log_fn,
+      tar_path,
+      zst_path,
+      num_threads,
+      log_fn,
     )
   skipped, zst_members = skip_result
   if skipped:
@@ -10581,7 +10788,7 @@ def atomic_seal_tar_to_zst(
         existing_members = zst_members
         if existing_members is None:
           existing_ok, existing_members = (
-              _scan_compressed_archive_members_and_readable(zst_path)
+            _scan_compressed_archive_members_and_readable(zst_path)
           )
           if not existing_ok:
             existing_members = None
@@ -10589,39 +10796,39 @@ def atomic_seal_tar_to_zst(
           if len(existing_members) > len(tar_members):
             if log_fn:
               log_fn(
-                  "Seal refused: existing zst has more members than tar "
-                  "(zst=%s tar=%s): %s"
-                  % (len(existing_members), len(tar_members), zst_path),
-                  flush=True,
+                "Seal refused: existing zst has more members than tar "
+                "(zst=%s tar=%s): %s"
+                % (len(existing_members), len(tar_members), zst_path),
+                flush=True,
               )
             return None
           if sum_member_bytes(existing_members) > sum_member_bytes(tar_members):
             if log_fn:
               log_fn(
-                  "Seal refused: existing zst byte sum exceeds tar "
-                  "(zst=%s tar=%s): %s"
-                  % (
-                      sum_member_bytes(existing_members),
-                      sum_member_bytes(tar_members),
-                      zst_path,
-                  ),
-                  flush=True,
+                "Seal refused: existing zst byte sum exceeds tar "
+                "(zst=%s tar=%s): %s"
+                % (
+                  sum_member_bytes(existing_members),
+                  sum_member_bytes(tar_members),
+                  zst_path,
+                ),
+                flush=True,
               )
             return None
       if not verify_tar_archive_readable(tar_path, assume_write_lock_held=True):
         if log_fn:
           log_fn(
-              "Seal refused: tar unreadable before compress: %s" % tar_path,
-              flush=True,
+            "Seal refused: tar unreadable before compress: %s" % tar_path,
+            flush=True,
           )
         return None
       zstd_compress_tar_to_file(
-          tar_path,
-          tmp_zst,
-          num_threads,
-          compress_level,
-          tgz_archive_dir=tgz_archive_dir,
-          yield_phase="seal",
+        tar_path,
+        tmp_zst,
+        num_threads,
+        compress_level,
+        tgz_archive_dir=tgz_archive_dir,
+        yield_phase="seal",
       )
       zstd_test(tmp_zst, num_threads)
       with file_write_lock(zst_path):
@@ -10640,16 +10847,18 @@ def atomic_seal_tar_to_zst(
   zst_key = normalize_daily_compressed_path(zst_path)
   if keep_uncompressed_tar:
     if log_fn:
-      log_fn("Sealed archive retaining uncompressed tar: %s" % tar_path, flush=True)
+      log_fn(
+        "Sealed archive retaining uncompressed tar: %s" % tar_path, flush=True
+      )
   elif (
-      not force_remove_uncompressed_tar
-      and remaining_raw_by_gz_has_paths_on_disk(remaining_raw_by_gz, zst_key)
+    not force_remove_uncompressed_tar
+    and remaining_raw_by_gz_has_paths_on_disk(remaining_raw_by_gz, zst_key)
   ):
     if log_fn:
       log_fn(
-          "Sealed archive retaining uncompressed tar (raw stats still present "
-          "for day): %s" % tar_path,
-          flush=True,
+        "Sealed archive retaining uncompressed tar (raw stats still present "
+        "for day): %s" % tar_path,
+        flush=True,
       )
   else:
     try:
@@ -10657,7 +10866,9 @@ def atomic_seal_tar_to_zst(
       with file_write_lock(tar_path):
         os.remove(tar_path)
       if log_fn:
-        log_fn("Sealed archive removed uncompressed tar: %s" % tar_path, flush=True)
+        log_fn(
+          "Sealed archive removed uncompressed tar: %s" % tar_path, flush=True
+        )
     except OSError:
       pass
   return sealed_member_snapshot
@@ -10666,20 +10877,20 @@ def atomic_seal_tar_to_zst(
 def _get_archive_seal_worker_count(total_candidates: Any) -> Any:
   """
   Bounded worker count for parallel daily tar sealing.
-  
+
   Args:
     total_candidates (Any): Total candidates passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _get_archive_seal_worker_count(None)  # doctest: +SKIP
   """
   return _get_archive_validation_worker_count(
-      total_candidates,
-      env_key="SYNC_ARCHIVE_SEAL_WORKERS",
-      configured_fn=cfg.get_archive_seal_parallel_workers,
+    total_candidates,
+    env_key="SYNC_ARCHIVE_SEAL_WORKERS",
+    configured_fn=cfg.get_archive_seal_parallel_workers,
   )
 
 
@@ -10697,7 +10908,7 @@ def _seal_one_daily_tar(
 ) -> None:
   """
   Internal helper to seal the one daily tar.
-  
+
   Args:
     tar_path (str): String for tar path.
     zst_path (str): String for zst path.
@@ -10709,10 +10920,10 @@ def _seal_one_daily_tar(
     remaining_raw_by_gz (Any): Remaining raw by gz passed to this helper.
     force_remove_uncompressed_tar (bool): Whether to enable force remove
     uncompressed tar.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _seal_one_daily_tar("x", "x", "x", None, None, None, None, None, True)
   """
@@ -10721,17 +10932,20 @@ def _seal_one_daily_tar(
   set_daemon_thread_title("", script_name="sync_timedb.py", role="archive-seal")
   try:
     zst_members = atomic_seal_tar_to_zst(
-        tar_path,
-        zst_path,
-        zstd_threads,
-        compress_level,
-        keep_uncompressed_tar,
-        log_fn=log_fn,
-        remaining_raw_by_gz=remaining_raw_by_gz,
-        force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+      tar_path,
+      zst_path,
+      zstd_threads,
+      compress_level,
+      keep_uncompressed_tar,
+      log_fn=log_fn,
+      remaining_raw_by_gz=remaining_raw_by_gz,
+      force_remove_uncompressed_tar=force_remove_uncompressed_tar,
     )
     drop_legacy_gz_if_equivalent_to_zst(
-        gz_path, zst_path, log_fn=log_fn, zst_members=zst_members,
+      gz_path,
+      zst_path,
+      log_fn=log_fn,
+      zst_members=zst_members,
     )
   except (subprocess.CalledProcessError, RuntimeError, TimeoutError) as exc:
     if log_fn:
@@ -10756,13 +10970,13 @@ def seal_dirty_daily_archives(
 ) -> None:
   """
   Seal every dirty ``YYYY-MM-DD.tar`` under ``daily_archive_dir`` per policy.
-  
+
   When ``only_when_no_remaining_raw`` is true (janitor seal ticks), a dirty day
     is
   skipped while ``remaining_raw_by_gz`` still lists closed raw stats for that
     day,
   so the expensive zstd seal runs only once the day's raw stats are gone.
-  
+
   Args:
     daily_archive_dir (str): String for daily archive dir.
     local_tz (Any): Local tz passed to this helper.
@@ -10780,14 +10994,14 @@ def seal_dirty_daily_archives(
     only_daily_tar_paths (Any | None): One of ``Any``, ``None``.
     only_when_no_remaining_raw (bool): Boolean flag for only when no remaining
     raw.
-  
+
   Returns:
     None
-  
+
   Raises:
     err: Raised when ``seal_dirty_daily_archives`` hits a ``err`` failure
     path.
-  
+
   Examples:
     >>> seal_dirty_daily_archives(0)  # doctest: +SKIP
   """
@@ -10797,25 +11011,26 @@ def seal_dirty_daily_archives(
   candidates = []
   for tar_path in sorted(iter_daily_tar_paths(daily_archive_dir)):
     if not daily_tar_path_in_maintenance_scope(
-        tar_path,
-        skip_daily_tar_paths=skip_daily_tar_paths,
-        only_daily_tar_paths=only_daily_tar_paths,
+      tar_path,
+      skip_daily_tar_paths=skip_daily_tar_paths,
+      only_daily_tar_paths=only_daily_tar_paths,
     ):
       continue
     zst_path, gz_path = compressed_sibling_paths(tar_path)
     if not should_seal_daily_tar(
-        tar_path,
-        zst_path,
-        idle_seconds,
-        today_local,
-        seal_immediately_if_dirty=seal_immediately_if_dirty,
-        gz_path=gz_path,
+      tar_path,
+      zst_path,
+      idle_seconds,
+      today_local,
+      seal_immediately_if_dirty=seal_immediately_if_dirty,
+      gz_path=gz_path,
     ):
       continue
     if only_when_no_remaining_raw:
       from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
-          remaining_raw_blocking_day_incomplete,
+        remaining_raw_blocking_day_incomplete,
       )
+
       if remaining_raw_by_gz is not None:
         blocking = remaining_raw_by_gz
       else:
@@ -10823,9 +11038,9 @@ def seal_dirty_daily_archives(
       if remaining_raw_by_gz_has_paths_on_disk(blocking, zst_path):
         if log_fn:
           log_fn(
-              "Post-chunk seal deferred (raw stats still present for day): %s"
-              % tar_path,
-              flush=True,
+            "Post-chunk seal deferred (raw stats still present for day): %s"
+            % tar_path,
+            flush=True,
           )
         continue
     candidates.append((tar_path, zst_path, gz_path))
@@ -10833,12 +11048,12 @@ def seal_dirty_daily_archives(
     return
 
   seal_kwargs = dict(
-      zstd_threads=zstd_threads,
-      compress_level=compress_level,
-      keep_uncompressed_tar=keep_uncompressed_tar,
-      log_fn=log_fn,
-      remaining_raw_by_gz=remaining_raw_by_gz,
-      force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+    zstd_threads=zstd_threads,
+    compress_level=compress_level,
+    keep_uncompressed_tar=keep_uncompressed_tar,
+    log_fn=log_fn,
+    remaining_raw_by_gz=remaining_raw_by_gz,
+    force_remove_uncompressed_tar=force_remove_uncompressed_tar,
   )
   workers = _get_archive_seal_worker_count(len(candidates))
   if workers <= 1 or len(candidates) <= 1:
@@ -10847,13 +11062,13 @@ def seal_dirty_daily_archives(
     return
 
   _seal_candidate = lambda candidate: _seal_one_daily_tar(
-      candidate[0], candidate[1], candidate[2], **seal_kwargs
+    candidate[0], candidate[1], candidate[2], **seal_kwargs
   )
   for _candidate, _result, err in iter_bounded_thread_pool(
-      candidates,
-      _seal_candidate,
-      max_workers=workers,
-      thread_role="archive-seal",
+    candidates,
+    _seal_candidate,
+    max_workers=workers,
+    thread_role="archive-seal",
   ):
     if err is not None:
       raise err
@@ -10866,15 +11081,15 @@ def _planned_migrate_action_for_legacy_gz(
 ) -> Any:
   """
   Return the action ``migrate_one_daily_legacy_gz`` would take (no I/O locks).
-  
+
   Args:
     gz_path (str): String for gz path.
     tar_path (str): String for tar path.
     zst_path (str): String for zst path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _planned_migrate_action_for_legacy_gz("x", "x", "x")  # doctest: +SKIP
   """
@@ -10884,9 +11099,8 @@ def _planned_migrate_action_for_legacy_gz(
     gz_contained, _, _ = compare_compressed_archive_members(gz_path, zst_path)
     if gz_contained:
       return MIGRATE_GZ_STATUS_DROPPED_ONLY
-    if (
-        os.path.isfile(tar_path)
-        and is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path)
+    if os.path.isfile(tar_path) and is_daily_tar_sealed_dirty(
+      tar_path, zst_path, gz_path
     ):
       return MIGRATE_GZ_STATUS_CONVERTED
     return MIGRATE_GZ_STATUS_KEPT_MISMATCH
@@ -10913,7 +11127,7 @@ def _migrate_one_daily_legacy_gz_locked(
 ) -> Any:
   """
   Migrate one day while the caller holds the write lock on tar or gz.
-  
+
   Args:
     gz_path (str): String for gz path.
     tar_path (str): String for tar path.
@@ -10928,10 +11142,10 @@ def _migrate_one_daily_legacy_gz_locked(
     log_fn (Any): Callable invoked by this helper.
     gz_already_locked (bool): True when the caller holds the exclusive write
     lock on ``gz_path`` (gz-only; no sibling tar lock).
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _migrate_one_daily_legacy_gz_locked(0)  # doctest: +SKIP
   """
@@ -10941,13 +11155,13 @@ def _migrate_one_daily_legacy_gz_locked(
   def _seal_and_drop(seal_tar_path: Any | None = None) -> Any:
     """
     Internal helper to seal the and drop.
-    
+
     Args:
       seal_tar_path (Any | None): One of ``Any``, ``None``.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> _seal_and_drop(None)  # doctest: +SKIP
     """
@@ -10957,29 +11171,29 @@ def _migrate_one_daily_legacy_gz_locked(
       return MIGRATE_GZ_STATUS_FAILED
     try:
       zst_members = atomic_seal_tar_to_zst(
-          seal_tar_path,
-          zst_path,
-          zstd_threads,
-          compress_level,
-          keep_uncompressed_tar,
-          log_fn=log_fn,
-          remaining_raw_by_gz=remaining_raw_by_gz,
-          force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+        seal_tar_path,
+        zst_path,
+        zstd_threads,
+        compress_level,
+        keep_uncompressed_tar,
+        log_fn=log_fn,
+        remaining_raw_by_gz=remaining_raw_by_gz,
+        force_remove_uncompressed_tar=force_remove_uncompressed_tar,
       )
     except (subprocess.CalledProcessError, RuntimeError) as exc:
       if log_fn:
         log_fn(
-            "Migration seal failed for %s: %s" % (seal_tar_path, exc),
-            flush=True,
+          "Migration seal failed for %s: %s" % (seal_tar_path, exc),
+          flush=True,
         )
       return MIGRATE_GZ_STATUS_FAILED
     if os.path.isfile(gz_path):
       drop_legacy_gz_if_equivalent_to_zst(
-          gz_path,
-          zst_path,
-          log_fn=log_fn,
-          zst_members=zst_members,
-          already_locked=gz_already_locked,
+        gz_path,
+        zst_path,
+        log_fn=log_fn,
+        zst_members=zst_members,
+        already_locked=gz_already_locked,
       )
     if os.path.isfile(gz_path):
       return MIGRATE_GZ_STATUS_KEPT_MISMATCH
@@ -10987,30 +11201,31 @@ def _migrate_one_daily_legacy_gz_locked(
 
   if os.path.isfile(zst_path):
     gz_contained, gz_members, zst_members = compare_compressed_archive_members(
-        gz_path, zst_path, already_locked=gz_already_locked,
+      gz_path,
+      zst_path,
+      already_locked=gz_already_locked,
     )
     if gz_contained and os.path.isfile(gz_path):
       drop_legacy_gz_if_equivalent_to_zst(
-          gz_path,
-          zst_path,
-          log_fn=log_fn,
-          gz_members=gz_members,
-          zst_members=zst_members,
-          already_locked=gz_already_locked,
+        gz_path,
+        zst_path,
+        log_fn=log_fn,
+        gz_members=gz_members,
+        zst_members=zst_members,
+        already_locked=gz_already_locked,
       )
       if os.path.isfile(gz_path):
         return MIGRATE_GZ_STATUS_KEPT_MISMATCH
       return MIGRATE_GZ_STATUS_DROPPED_ONLY
-    if (
-        os.path.isfile(tar_path)
-        and is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path)
+    if os.path.isfile(tar_path) and is_daily_tar_sealed_dirty(
+      tar_path, zst_path, gz_path
     ):
       return _seal_and_drop()
     if log_fn:
       log_fn(
-          "Keeping legacy gzip (zst member mismatch or no re-sealable tar): %s"
-          % gz_path,
-          flush=True,
+        "Keeping legacy gzip (zst member mismatch or no re-sealable tar): %s"
+        % gz_path,
+        flush=True,
       )
     return MIGRATE_GZ_STATUS_KEPT_MISMATCH
 
@@ -11029,15 +11244,15 @@ def _migrate_one_daily_legacy_gz_locked(
       except OSError as exc:
         if log_fn:
           log_fn(
-              "Migration temp directory unavailable %s: %s"
-              % (decompress_tmp_dir, exc),
-              flush=True,
+            "Migration temp directory unavailable %s: %s"
+            % (decompress_tmp_dir, exc),
+            flush=True,
           )
         return MIGRATE_GZ_STATUS_FAILED
       fd, temp_tar_path = tempfile.mkstemp(
-          prefix="%s.migrate." % os.path.basename(tar_path),
-          suffix=".tar",
-          dir=decompress_tmp_dir,
+        prefix="%s.migrate." % os.path.basename(tar_path),
+        suffix=".tar",
+        dir=decompress_tmp_dir,
       )
       os.close(fd)
       remove_temp_tar_after = True
@@ -11046,15 +11261,15 @@ def _migrate_one_daily_legacy_gz_locked(
       except OSError:
         pass
     if not decompress_compressed_to_tar(
-        gz_path,
-        temp_tar_path,
-        zstd_threads,
-        remove_compressed=False,
+      gz_path,
+      temp_tar_path,
+      zstd_threads,
+      remove_compressed=False,
     ):
       if log_fn:
         log_fn(
-            "Migration decompress failed for legacy gzip: %s" % gz_path,
-            flush=True,
+          "Migration decompress failed for legacy gzip: %s" % gz_path,
+          flush=True,
         )
       if remove_temp_tar_after:
         try:
@@ -11090,14 +11305,14 @@ def migrate_one_daily_legacy_gz(
 ) -> Any:
   """
   Convert one legacy ``.tar.gz`` to canonical ``.tar.zst`` (or drop redundant.
-  
+
     gzip).
-  
+
   Returns a status string (see ``MIGRATE_GZ_STATUS_*``). When
     ``lock_timeout_seconds``
   is 0 and the advisory lock is contended, returns ``skipped_locked`` without
     waiting.
-  
+
   Args:
     gz_path (str): String for gz path.
     zstd_threads (Any): Zstd threads passed to this helper.
@@ -11110,10 +11325,10 @@ def migrate_one_daily_legacy_gz(
     log_fn (Any): Callable invoked by this helper.
     lock_timeout_seconds (int): Integer value for lock timeout seconds.
     dry_run (bool): Boolean flag for dry run.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> migrate_one_daily_legacy_gz(0)  # doctest: +SKIP
   """
@@ -11124,8 +11339,8 @@ def migrate_one_daily_legacy_gz(
     action = _planned_migrate_action_for_legacy_gz(gz_path, tar_path, zst_path)
     if log_fn and action != MIGRATE_GZ_STATUS_SKIPPED_NO_GZ:
       log_fn(
-          "Dry-run %s: %s -> %s" % (action, gz_path, zst_path),
-          flush=True,
+        "Dry-run %s: %s -> %s" % (action, gz_path, zst_path),
+        flush=True,
       )
     return action
 
@@ -11133,24 +11348,24 @@ def migrate_one_daily_legacy_gz(
     return MIGRATE_GZ_STATUS_SKIPPED_NO_GZ
 
   from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
-      daily_tar_janitor_mutation_should_defer,
-      log_janitor_day_close_defer,
+    daily_tar_janitor_mutation_should_defer,
+    log_janitor_day_close_defer,
   )
 
   tgz_archive_dir = cfg.get_daily_archive_dir_path() or ""
   defer, defer_reason = daily_tar_janitor_mutation_should_defer(
-      tar_path,
-      tgz_archive_dir=tgz_archive_dir,
-      disqualified_daily_tars=set(),
-      phase="migrate_legacy_gz",
+    tar_path,
+    tgz_archive_dir=tgz_archive_dir,
+    disqualified_daily_tars=set(),
+    phase="migrate_legacy_gz",
   )
   if defer:
     if log_fn:
       log_janitor_day_close_defer(
-          tar_path,
-          phase="migrate_legacy_gz",
-          reason=defer_reason,
-          log_fn=log_fn,
+        tar_path,
+        phase="migrate_legacy_gz",
+        reason=defer_reason,
+        log_fn=log_fn,
       )
     return MIGRATE_GZ_STATUS_SKIPPED_LOCKED
 
@@ -11158,23 +11373,23 @@ def migrate_one_daily_legacy_gz(
   try:
     with file_write_lock(primary_path, timeout_seconds=lock_timeout_seconds):
       return _migrate_one_daily_legacy_gz_locked(
-          gz_path,
-          tar_path,
-          zst_path,
-          zstd_threads=zstd_threads,
-          compress_level=compress_level,
-          keep_uncompressed_tar=keep_uncompressed_tar,
-          remaining_raw_by_gz=remaining_raw_by_gz,
-          force_remove_uncompressed_tar=force_remove_uncompressed_tar,
-          decompress_tmp_dir=decompress_tmp_dir,
-          log_fn=log_fn,
-          gz_already_locked=(primary_path == gz_path),
+        gz_path,
+        tar_path,
+        zst_path,
+        zstd_threads=zstd_threads,
+        compress_level=compress_level,
+        keep_uncompressed_tar=keep_uncompressed_tar,
+        remaining_raw_by_gz=remaining_raw_by_gz,
+        force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+        decompress_tmp_dir=decompress_tmp_dir,
+        log_fn=log_fn,
+        gz_already_locked=(primary_path == gz_path),
       )
   except TimeoutError:
     if log_fn:
       log_fn(
-          "Skipping migration (lock contended): %s" % primary_path,
-          flush=True,
+        "Skipping migration (lock contended): %s" % primary_path,
+        flush=True,
       )
     return MIGRATE_GZ_STATUS_SKIPPED_LOCKED
 
@@ -11197,12 +11412,12 @@ def migrate_legacy_daily_gz_archives(
 ) -> Any:
   """
   Migrate all legacy ``.tar.gz`` files under ``daily_archive_dir`` to.
-  
+
     ``.tar.zst``.
-  
+
   Returns a summary dict keyed by ``MIGRATE_GZ_STATUS_*`` counts plus
     ``gz_remaining``.
-  
+
   Args:
     daily_archive_dir (str): String for daily archive dir.
     zstd_threads (Any | None): One of ``Any``, ``None``.
@@ -11218,14 +11433,14 @@ def migrate_legacy_daily_gz_archives(
     since_date (Any | None): One of ``Any``, ``None``.
     limit (Any | None): One of ``Any``, ``None``.
     workers (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     err: Raised when ``migrate_legacy_daily_gz_archives`` hits a ``err``
     failure path.
-  
+
   Examples:
     >>> migrate_legacy_daily_gz_archives(0)  # doctest: +SKIP
   """
@@ -11248,28 +11463,28 @@ def migrate_legacy_daily_gz_archives(
       break
 
   summary = {
-      MIGRATE_GZ_STATUS_CONVERTED: 0,
-      MIGRATE_GZ_STATUS_DROPPED_ONLY: 0,
-      MIGRATE_GZ_STATUS_SKIPPED_LOCKED: 0,
-      MIGRATE_GZ_STATUS_SKIPPED_NO_GZ: 0,
-      MIGRATE_GZ_STATUS_FAILED: 0,
-      MIGRATE_GZ_STATUS_KEPT_MISMATCH: 0,
-      MIGRATE_GZ_STATUS_PLANNED: 0,
+    MIGRATE_GZ_STATUS_CONVERTED: 0,
+    MIGRATE_GZ_STATUS_DROPPED_ONLY: 0,
+    MIGRATE_GZ_STATUS_SKIPPED_LOCKED: 0,
+    MIGRATE_GZ_STATUS_SKIPPED_NO_GZ: 0,
+    MIGRATE_GZ_STATUS_FAILED: 0,
+    MIGRATE_GZ_STATUS_KEPT_MISMATCH: 0,
+    MIGRATE_GZ_STATUS_PLANNED: 0,
   }
   if not gz_paths:
     summary["gz_remaining"] = 0
     return summary
 
   migrate_kwargs = dict(
-      zstd_threads=zstd_threads,
-      compress_level=compress_level,
-      keep_uncompressed_tar=keep_uncompressed_tar,
-      remaining_raw_by_gz=remaining_raw_by_gz,
-      force_remove_uncompressed_tar=force_remove_uncompressed_tar,
-      decompress_tmp_dir=decompress_tmp_dir,
-      log_fn=log_fn,
-      lock_timeout_seconds=lock_timeout_seconds,
-      dry_run=dry_run,
+    zstd_threads=zstd_threads,
+    compress_level=compress_level,
+    keep_uncompressed_tar=keep_uncompressed_tar,
+    remaining_raw_by_gz=remaining_raw_by_gz,
+    force_remove_uncompressed_tar=force_remove_uncompressed_tar,
+    decompress_tmp_dir=decompress_tmp_dir,
+    log_fn=log_fn,
+    lock_timeout_seconds=lock_timeout_seconds,
+    dry_run=dry_run,
   )
 
   worker_count = workers
@@ -11279,9 +11494,9 @@ def migrate_legacy_daily_gz_archives(
 
   if dry_run:
     _run_one = lambda path: _planned_migrate_action_for_legacy_gz(
-        path,
-        daily_tar_path_from_compressed(path),
-        compressed_sibling_paths(daily_tar_path_from_compressed(path))[0],
+      path,
+      daily_tar_path_from_compressed(path),
+      compressed_sibling_paths(daily_tar_path_from_compressed(path))[0],
     )
   else:
     _run_one = lambda path: migrate_one_daily_legacy_gz(path, **migrate_kwargs)
@@ -11293,9 +11508,9 @@ def migrate_legacy_daily_gz_archives(
         summary[status] = summary.get(status, 0) + 1
   else:
     for gz_path, result, err in iter_bounded_thread_pool(
-        gz_paths,
-        _run_one,
-        max_workers=worker_count,
+      gz_paths,
+      _run_one,
+      max_workers=worker_count,
     ):
       if err is not None:
         raise err
@@ -11314,17 +11529,17 @@ def filter_files_to_add_to_archive(
 ) -> Any:
   """
   Return list of stats file paths that are not already in archive with same.
-  
+
     size.
-  
+
   Args:
     stats_files (Any): Iterable of filesystem paths as strings.
     existing_members (Any): Iterable of filesystem paths as strings.
     debug (bool): Boolean flag for debug.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> filter_files_to_add_to_archive(None, None, True)  # doctest: +SKIP
   """
@@ -11352,16 +11567,16 @@ def get_verified_files_to_remove(
 ) -> Any:
   """
   Return list of stats file paths that exist in archive with same size (safe to.
-  
+
     remove).
-  
+
   Args:
     stats_files (Any): Iterable of filesystem paths as strings.
     existing_members (Any): Iterable of filesystem paths as strings.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> get_verified_files_to_remove(None, None)  # doctest: +SKIP
   """
@@ -11381,15 +11596,15 @@ def get_verified_files_to_remove(
 def get_stats_chunk(stats_files: Any, chunk_index: Any, chunk_size: int) -> Any:
   """
   Return slice of stats_files for chunk chunk_index (0-based).
-  
+
   Args:
     stats_files (Any): Iterable of filesystem paths as strings.
     chunk_index (Any): Chunk index passed to this helper.
     chunk_size (int): Integer value for chunk size.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> get_stats_chunk(None, None, 0)  # doctest: +SKIP
   """
@@ -11401,21 +11616,21 @@ def get_stats_chunk(stats_files: Any, chunk_index: Any, chunk_size: int) -> Any:
 def stats_file_is_active_segment(stats_path: str) -> Any:
   """
   Return True if ``stats_path`` is still being appended by listend.
-  
+
   On ``$`` rotation, listend creates a new ``current`` and hard-links it to an
   epoch-named file; both names refer to the same inode until the next ``$``,
   when ``current`` is unlinked from that inode. Only then is the epoch file a
   complete, stable segment. Same-inode-as-``current`` means still active.
-  
+
   Discovery uses fd ``-X`` GNU stat inode maps (see ``sync_timedb_stats_find``); this
   helper remains for single-path checks and unit tests.
-  
+
   Args:
     stats_path (str): String for stats path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> stats_file_is_active_segment("x")  # doctest: +SKIP
   """
@@ -11443,21 +11658,21 @@ def collect_stats_files_in_range(
 ) -> Any:
   """
   Discover stats files under ``archive_dir`` via fd ``-X`` GNU stat.
-  
+
   Skips the live segment: epoch files whose inode matches host ``current`` are
   omitted so sync does not race with listend appends.
-  
+
   When ``mtime_days`` is a positive int, the walker uses ``--changed-within Nd``
   (incremental rescan). When ``None`` (or ``force_full_scan``), the full archive
   ages are scanned. ``host_scan_hints`` still tracks ``__rescan_count__`` for
   callers; per-host dir-mtime skip is retired (the walker is cheap enough).
-  
+
   When startdate is ``'all'``, ``'backlog'``, or ``'current'``, every eligible file is
     returned
   (no date filtering). Otherwise files are included if mtime or filename epoch
   falls in (startdate - 1 day, enddate]. Returns paths sorted oldest-first
   unless ``newest_first``. Empty ``host_name_ext`` returns ``[]``.
-  
+
   Args:
     directory (Any): Directory passed to this helper.
     startdate (Any): Time value (``datetime``, ISO string, sentinel, or
@@ -11470,14 +11685,16 @@ def collect_stats_files_in_range(
     log_fn (Any | None): One of ``Any``, ``None``.
     newest_first (bool): Boolean flag for newest first.
     mtime_days (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> collect_stats_files_in_range(0)  # doctest: +SKIP
   """
-  from hpcperfstats.dbload.lib.sync_timedb_stats_find import discover_stats_records
+  from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
+    discover_stats_records,
+  )
 
   suffix = (host_name_ext or "").strip()
   if not suffix:
@@ -11485,24 +11702,24 @@ def collect_stats_files_in_range(
   effective_mtime = None if force_full_scan else mtime_days
   collect_t0 = time.monotonic()
   records = discover_stats_records(
-      directory,
-      startdate,
-      enddate,
-      host_name_ext,
-      mtime_days=effective_mtime,
-      newest_first=newest_first,
-      log_fn=log_fn,
+    directory,
+    startdate,
+    enddate,
+    host_name_ext,
+    mtime_days=effective_mtime,
+    newest_first=newest_first,
+    log_fn=log_fn,
   )
   paths = [rec.path for rec in records]
   if log_fn is not None:
     log_fn(
-        "collect_stats_files_in_range: find paths=%d elapsed_s=%.3f mtime_days=%s"
-        % (
-            len(paths),
-            time.monotonic() - collect_t0,
-            "None" if effective_mtime is None else str(int(effective_mtime)),
-        ),
-        flush=True,
+      "collect_stats_files_in_range: find paths=%d elapsed_s=%.3f mtime_days=%s"
+      % (
+        len(paths),
+        time.monotonic() - collect_t0,
+        "None" if effective_mtime is None else str(int(effective_mtime)),
+      ),
+      flush=True,
     )
   return paths
 
@@ -11527,7 +11744,7 @@ def rescan_pending_stats_files(
 ) -> Any:
   """
   Return ordered files still pending after excluding processed files.
-  
+
   Args:
     directory (Any): Directory passed to this helper.
     startdate (Any): Time value (``datetime``, ISO string, sentinel, or
@@ -11546,10 +11763,10 @@ def rescan_pending_stats_files(
     mtime_days (Any | None): One of ``Any``, ``None``.
     prefer_incremental (bool): Boolean flag for prefer incremental.
     pending_pressure_n (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> rescan_pending_stats_files(0)  # doctest: +SKIP
   """
@@ -11560,11 +11777,13 @@ def rescan_pending_stats_files(
   should_force_full = True
   if isinstance(host_scan_hints, dict):
     should_force_full = (
-        int(host_scan_hints.get("__rescan_count__", 0)) % max(1, int(full_rescan_every)) == 0
+      int(host_scan_hints.get("__rescan_count__", 0))
+      % max(1, int(full_rescan_every))
+      == 0
     )
-    host_scan_hints["__rescan_count__"] = int(
-        host_scan_hints.get("__rescan_count__", 0)
-    ) + 1
+    host_scan_hints["__rescan_count__"] = (
+      int(host_scan_hints.get("__rescan_count__", 0)) + 1
+    )
   # Under high pending pressure, skip periodic full-age find (mtime incremental
   # is enough; full find is cheap but still wasteful on every Nth chunk).
   if prefer_incremental:
@@ -11572,16 +11791,16 @@ def rescan_pending_stats_files(
   elif pending_pressure_n is not None:
     try:
       pressure = int(pending_pressure_n)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
       pressure = 0
     queue_max = int(cfg.get_sync_ingest_queue_max_size())
     if pressure >= max(1, queue_max // 2):
       should_force_full = False
   use_snapshot = (
-      (should_force_full or force_snapshot_paths)
-      and startup_closed_paths is not None
-      and startdate in ("all", "backlog", "current", None, "")
-      and enddate in (None, "")
+    (should_force_full or force_snapshot_paths)
+    and startup_closed_paths is not None
+    and startdate in ("all", "backlog", "current", None, "")
+    and enddate in (None, "")
   )
   if use_snapshot:
     discovered_files = list(startup_closed_paths)
@@ -11592,15 +11811,15 @@ def rescan_pending_stats_files(
     # alone stays snapshot-only (T2 fast-path).
     if force_snapshot_paths:
       find_files = collect_stats_files_in_range(
-          directory,
-          startdate,
-          enddate,
-          host_name_ext,
-          host_scan_hints=host_scan_hints,
-          force_full_scan=should_force_full,
-          newest_first=newest_first,
-          mtime_days=None if should_force_full else mtime_days,
-          log_fn=log_fn,
+        directory,
+        startdate,
+        enddate,
+        host_name_ext,
+        host_scan_hints=host_scan_hints,
+        force_full_scan=should_force_full,
+        newest_first=newest_first,
+        mtime_days=None if should_force_full else mtime_days,
+        log_fn=log_fn,
       )
       seen = set(discovered_files)
       find_only_n = 0
@@ -11612,33 +11831,33 @@ def rescan_pending_stats_files(
         find_only_n += 1
       if log_fn is not None and find_only_n:
         log_fn(
-            "idle_rescan_merge snapshot_n=%d find_n=%d find_only_n=%d "
-            "merged_n=%d force_full=%s"
-            % (
-                len(startup_closed_paths),
-                len(find_files),
-                find_only_n,
-                len(discovered_files),
-                "yes" if should_force_full else "no",
-            ),
-            flush=True,
+          "idle_rescan_merge snapshot_n=%d find_n=%d find_only_n=%d "
+          "merged_n=%d force_full=%s"
+          % (
+            len(startup_closed_paths),
+            len(find_files),
+            find_only_n,
+            len(discovered_files),
+            "yes" if should_force_full else "no",
+          ),
+          flush=True,
         )
     if newest_first:
       discovered_files = sort_pending_stats_paths_oldest_first(
-          discovered_files,
-          newest_first=True,
+        discovered_files,
+        newest_first=True,
       )
   else:
     discovered_files = collect_stats_files_in_range(
-        directory,
-        startdate,
-        enddate,
-        host_name_ext,
-        host_scan_hints=host_scan_hints,
-        force_full_scan=should_force_full,
-        newest_first=newest_first,
-        mtime_days=None if should_force_full else mtime_days,
-        log_fn=log_fn,
+      directory,
+      startdate,
+      enddate,
+      host_name_ext,
+      host_scan_hints=host_scan_hints,
+      force_full_scan=should_force_full,
+      newest_first=newest_first,
+      mtime_days=None if should_force_full else mtime_days,
+      log_fn=log_fn,
     )
   if isinstance(processed_files, set):
     exclude = processed_files
@@ -11653,19 +11872,19 @@ def rescan_pending_stats_files(
     if path not in exclude:
       result.append(path)
     if (
-        log_fn is not None
-        and total >= 10000
-        and progress_interval > 0
-        and (index + 1) % progress_interval == 0
+      log_fn is not None
+      and total >= 10000
+      and progress_interval > 0
+      and (index + 1) % progress_interval == 0
     ):
       log_fn(
-          "pending rescan progress filtered_n=%d/%d elapsed_s=%.1f"
-          % (
-              index + 1,
-              total,
-              time.monotonic() - filter_t0,
-          ),
-          flush=True,
+        "pending rescan progress filtered_n=%d/%d elapsed_s=%.1f"
+        % (
+          index + 1,
+          total,
+          time.monotonic() - filter_t0,
+        ),
+        flush=True,
       )
   return result
 
@@ -11679,20 +11898,20 @@ def cap_pending_stats_file_list(
 ) -> Any:
   """
   Return ordered pending paths capped to ``max_size`` (memory bound).
-  
+
   When truncating, newer paths are dropped and the oldest ``max_size`` entries
   are retained by default. Newest-first mode retains the newest paths at the
   dispatch head.
-  
+
   Args:
     paths (Any): Iterable of filesystem paths as strings.
     max_size (int): Integer value for max size.
     log_fn (Any): Callable invoked by this helper.
     newest_first (bool): Boolean flag for newest first.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> cap_pending_stats_file_list(None, 0, None, True)  # doctest: +SKIP
   """
@@ -11701,9 +11920,9 @@ def cap_pending_stats_file_list(
     return list(paths)
   if log_fn is not None:
     log_fn(
-        "Pending stats file list truncated pending=%d max=%d"
-        % (len(paths), max_size),
-        flush=True,
+      "Pending stats file list truncated pending=%d max=%d"
+      % (len(paths), max_size),
+      flush=True,
     )
   if not newest_first:
     return list(paths[:max_size])
@@ -11719,20 +11938,20 @@ def build_archive_mapping(
 ) -> Any:
   """
   Group stats file paths by daily archive path (``YYYY-MM-DD.tar.zst``).
-  
+
   Uses parse_first_ts_fn to get timestamp from each file. Files with no
   parseable timestamp are skipped. Today's files are included (closed
   segments only reach this list; active segments are filtered earlier).
-  
+
   Args:
     files_to_be_archived (Any): Files to be archived passed to this helper.
     tgz_archive_dir (str): String for tgz archive dir.
     parse_first_ts_fn (Any | None): One of ``Any``, ``None``.
     first_timestamp_by_path (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> build_archive_mapping(None, "x", None, None)  # doctest: +SKIP
   """
@@ -11762,15 +11981,14 @@ def build_archive_mapping(
     ar_file_mapping[archive_fname].append(stats_fname)
   if skipped_no_ts:
     log_print(
-        "Unable to find first timestamp in %d path(s), skipping archiving "
-        "sample=%s"
-        % (skipped_no_ts, ",".join(skipped_samples) or "-"),
-        flush=True,
+      "Unable to find first timestamp in %d path(s), skipping archiving "
+      "sample=%s" % (skipped_no_ts, ",".join(skipped_samples) or "-"),
+      flush=True,
     )
   if skipped_no_ts and not ar_file_mapping:
     log_print(
-        "No files added to archive mapping (%d skipped: no timestamp)"
-        % skipped_no_ts
+      "No files added to archive mapping (%d skipped: no timestamp)"
+      % skipped_no_ts
     )
   return ar_file_mapping
 
@@ -11781,14 +11999,14 @@ def collect_first_timestamps_by_path(
 ) -> Any:
   """
   Return {path: first_timestamp_str} for files with parseable first timestamp.
-  
+
   Args:
     files_to_be_archived (Any): Files to be archived passed to this helper.
     parse_first_ts_fn (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> collect_first_timestamps_by_path(None, None)  # doctest: +SKIP
   """

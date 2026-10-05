@@ -20,21 +20,19 @@ def test_image_build_extra_is_image_only_and_pinned():
   build = proj["optional-dependencies"]["image-build"]
   names = {_pep508_name(d) for d in build}
   assert {
-      "mkl",
-      "mkl-devel",
-      "meson-python",
-      "meson",
-      "ninja",
-      "cython",
-      "setuptools",
-      "wheel",
-      "versioneer",
+    "mkl",
+    "mkl-devel",
+    "meson-python",
+    "meson",
+    "ninja",
+    "cython",
+    "setuptools",
+    "wheel",
+    "versioneer",
   } <= names
 
   runtime = {_pep508_name(d) for d in proj["dependencies"]}
-  test_names = {
-      _pep508_name(d) for d in proj["optional-dependencies"]["test"]
-  }
+  test_names = {_pep508_name(d) for d in proj["optional-dependencies"]["test"]}
   dev_names = {_pep508_name(d) for d in proj["optional-dependencies"]["dev"]}
   assert names.isdisjoint(runtime)
   assert names.isdisjoint(test_names)
@@ -77,9 +75,9 @@ def test_image_build_extra_includes_versioneer_for_pandas_meson():
   dockerfile = (_repo_root() / "Dockerfile").read_text()
   assert "versioneer" in dockerfile
   writer_assert = next(
-      line
-      for line in dockerfile.splitlines()
-      if "build_names" in line and "versioneer" in line
+    line
+    for line in dockerfile.splitlines()
+    if "build_names" in line and "versioneer" in line
   )
   assert "versioneer" in writer_assert
   assert "cython" in writer_assert
@@ -91,8 +89,8 @@ def test_dockerfile_python_build_path_exposes_image_build_scripts():
   """Meson needs cython on PATH; each ABI RUN must pin its own prefix cython."""
   dockerfile = (_repo_root() / "Dockerfile").read_text()
   assert re.search(
-      r"PATH=/usr/local/bin:/opt/zstd/bin:/opt/python3\.14/bin:/opt/python3\.14t/bin",
-      dockerfile,
+    r"PATH=/usr/local/bin:/opt/zstd/bin:/opt/python3\.14/bin:/opt/python3\.14t/bin",
+    dockerfile,
   )
   assert 'command -v cython)" = "/opt/python3.14/bin/cython"' in dockerfile
   assert 'command -v cython)" = "/opt/python3.14t/bin/cython"' in dockerfile

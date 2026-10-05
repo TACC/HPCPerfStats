@@ -24,13 +24,13 @@ Attributes:
   _DATE_ARG_RE: Attribute.
   _USAGE: Attribute.
 """
-from __future__ import annotations
 
-from typing import Any
+from __future__ import annotations
 
 import os
 import re
 import sys
+from typing import Any
 
 from hpcperfstats.dbload.lib.blas_thread_env import configure_blas_thread_env
 
@@ -52,61 +52,63 @@ configure_blas_thread_env()
 
 SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE = "sync_timedb_archive.py"
 
-from hpcperfstats.dbload.lib.process_title import set_daemon_process_title
+import contextlib
+
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.archive_compress import (
-    DAILY_ARCHIVE_GZ_SUFFIX,
-    DAILY_ARCHIVE_ZST_SUFFIX,
-    detect_compressed_format,
-)
-from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-    collect_sealed_daily_archive_paths_in_range,
-    iter_archive_ingest_tasks,
-    iter_sealed_daily_archive_member_paths,
-    resolve_sealed_archive_path_for_ingest,
-)
-from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
-    max_sealed_archive_ingest_budget_for_paths,
-    sealed_archive_member_count_hint,
-)
-from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-    clear_dispatch_worker_stages,
-    seed_dispatch_worker_stages,
+  DAILY_ARCHIVE_GZ_SUFFIX,
+  DAILY_ARCHIVE_ZST_SUFFIX,
+  detect_compressed_format,
 )
 from hpcperfstats.dbload.lib.db_unavailable import (
-    DatabaseUnavailableExit,
-    is_database_unavailable_error,
-    log_and_raise_database_unavailable,
-    reraise_database_unavailable_chain,
+  DatabaseUnavailableExit,
+  is_database_unavailable_error,
+  log_and_raise_database_unavailable,
+  reraise_database_unavailable_chain,
 )
 from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
-    MultiprocessingWorkerExitError,
-    imap_sliding_window_watch_pool,
+  MultiprocessingWorkerExitError,
+  imap_sliding_window_watch_pool,
+)
+from hpcperfstats.dbload.lib.print_utils import log_print
+from hpcperfstats.dbload.lib.process_title import set_daemon_process_title
+from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
+from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+  collect_sealed_daily_archive_paths_in_range,
+  iter_archive_ingest_tasks,
+  iter_sealed_daily_archive_member_paths,
+  resolve_sealed_archive_path_for_ingest,
+)
+from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
+  max_sealed_archive_ingest_budget_for_paths,
+  sealed_archive_member_count_hint,
+)
+from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
+  clear_dispatch_worker_stages,
+  seed_dispatch_worker_stages,
 )
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
-    create_sync_timedb_thread_pool,
+  create_sync_timedb_thread_pool,
 )
-from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 
 _DATE_ARG_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _USAGE = (
-    "usage: sync_timedb_archive.py <YYYY-MM-DD> [YYYY-MM-DD] | all | "
-    "<path.tar.zst> | <path.tar.gz>"
+  "usage: sync_timedb_archive.py <YYYY-MM-DD> [YYYY-MM-DD] | all | "
+  "<path.tar.zst> | <path.tar.gz>"
 )
 
 
 def _archive_worker_process_count() -> Any:
   """
   Archive ingest pool size (default 2); matches.
-  
+
     ``get_sync_archive_pool_processes``.
-  
+
   Returns:
     Any: Open return polymorphism from ``_archive_worker_process_count``:
     concrete type depends on inputs and branch (mapping, scalar, handle, or
     ``None``-like empty).
-  
+
   Examples:
     >>> _archive_worker_process_count()  # doctest: +SKIP
   """
@@ -119,53 +121,53 @@ def _log_archive_ingest_startup(
 ) -> None:
   """
   Internal helper to log the archive ingest startup.
-  
+
   Args:
     sealed_days (Any): Sealed days passed to this helper.
     skipped_tar_only (Any): Skipped tar only passed to this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _log_archive_ingest_startup(None, None)  # doctest: +SKIP
   """
   log_print(
-      "sync_timedb_archive: pool_processes=%d zstd_threads=%s "
-      "ionice=c%s-n%s nice=%s sealed_days=%d skipped_tar_only=%d "
-      "max_concurrent_sealed=%d"
-      % (
-          _archive_worker_process_count(),
-          cfg.get_archive_zstd_threads(),
-          cfg.get_archive_zstd_ionice_class(),
-          cfg.get_archive_zstd_ionice_level(),
-          cfg.get_archive_zstd_nice(),
-          sealed_days,
-          skipped_tar_only,
-          cfg.get_sync_timedb_archive_max_concurrent_sealed_days(),
-      ),
-      flush=True,
+    "sync_timedb_archive: pool_processes=%d zstd_threads=%s "
+    "ionice=c%s-n%s nice=%s sealed_days=%d skipped_tar_only=%d "
+    "max_concurrent_sealed=%d"
+    % (
+      _archive_worker_process_count(),
+      cfg.get_archive_zstd_threads(),
+      cfg.get_archive_zstd_ionice_class(),
+      cfg.get_archive_zstd_ionice_level(),
+      cfg.get_archive_zstd_nice(),
+      sealed_days,
+      skipped_tar_only,
+      cfg.get_sync_timedb_archive_max_concurrent_sealed_days(),
+    ),
+    flush=True,
   )
 
 
 def parse_sync_timedb_archive_argv(argv: Any) -> Any:
   """
   Parse argv into ``(mode, startdate, enddate, path_args)``.
-  
+
   ``mode`` is ``'date'`` or ``'paths'``. For ``'date'``, ``startdate`` is
   ``datetime`` or ``'all'``; ``enddate`` is ``datetime`` or ``None``
     (full sealed scan / range).
-  
+
   Args:
     argv (Any): CLI argument list (``sys.argv``-like).
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     SystemExit: Raised when ``parse_sync_timedb_archive_argv`` hits a
     ``SystemExit`` failure path.
-  
+
   Examples:
     >>> parse_sync_timedb_archive_argv(None)  # doctest: +SKIP
   """
@@ -174,8 +176,8 @@ def parse_sync_timedb_archive_argv(argv: Any) -> Any:
   args = list(argv[1:])
   if args[0] in ("backlog", "current"):
     raise SystemExit(
-        "sync_timedb_archive: CLI modes 'backlog'/'current' are retired; "
-        "use 'all' for every sealed day under daily_archive_dir"
+      "sync_timedb_archive: CLI modes 'backlog'/'current' are retired; "
+      "use 'all' for every sealed day under daily_archive_dir"
     )
   if args[0] == "all":
     if len(args) > 1:
@@ -194,16 +196,14 @@ def parse_sync_timedb_archive_argv(argv: Any) -> Any:
   for path in args:
     base = os.path.basename(path)
     if base.endswith(".tar") and not (
-        base.endswith(DAILY_ARCHIVE_ZST_SUFFIX)
-        or base.endswith(DAILY_ARCHIVE_GZ_SUFFIX)
+      base.endswith((DAILY_ARCHIVE_ZST_SUFFIX, DAILY_ARCHIVE_GZ_SUFFIX))
     ):
       raise SystemExit(
-          "sync_timedb_archive requires sealed archive (.tar.zst or .tar.gz): %s"
-          % path,
+        f"sync_timedb_archive requires sealed archive (.tar.zst or .tar.gz): {path}",
       )
     if detect_compressed_format(path) not in ("zst", "gz"):
       raise SystemExit(
-          "sync_timedb_archive requires sealed archive path: %s" % path,
+        f"sync_timedb_archive requires sealed archive path: {path}",
       )
   return "paths", None, None, args
 
@@ -216,7 +216,7 @@ def _resolve_sealed_paths_from_argv(
 ) -> Any:
   """
   Internal helper to resolve the sealed paths from argv.
-  
+
   Args:
     mode (Any): Mode or kind token selecting a code path.
     startdate (Any): Time value (``datetime``, ISO string, sentinel, or
@@ -224,19 +224,19 @@ def _resolve_sealed_paths_from_argv(
     enddate (Any): Time value (``datetime``, ISO string, sentinel, or
     ``None``).
     path_args (Any): Path args passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _resolve_sealed_paths_from_argv(None, None, None, None)
   """
   daily_dir = cfg.get_daily_archive_dir_path()
   if mode == "date":
     sealed_paths, skipped = collect_sealed_daily_archive_paths_in_range(
-        daily_dir,
-        startdate,
-        enddate,
+      daily_dir,
+      startdate,
+      enddate,
     )
     return sealed_paths, skipped
   sealed_paths = []
@@ -253,47 +253,55 @@ def _resolve_sealed_paths_from_argv(
 def _process_stream_archive(sealed_path: str) -> None:
   """
   Stream one sealed archive and ingest each member via path-only spool.
-  
+
   Args:
     sealed_path (str): String for sealed path.
-  
+
   Returns:
     None
-  
+
   Raises:
     Exception: Raised when ``_process_stream_archive`` hits a ``Exception``
     failure path.
-  
+
   Examples:
     >>> _process_stream_archive("x")  # doctest: +SKIP
   """
   _configure_blas_thread_env()
-  log_print("streaming sealed archive %s" % sealed_path, flush=True)
+  log_print(f"streaming sealed archive {sealed_path}", flush=True)
   add_stats = None
   ensure_django = None
   close_old_connections = None
   DatabaseError = None
   OperationalError = None
   from hpcperfstats.dbload.sync_timedb import (
-      advance_sealed_archive_ingest_progress,
-      clear_sealed_archive_ingest_progress,
-      set_sealed_archive_ingest_progress,
+    advance_sealed_archive_ingest_progress,
+    clear_sealed_archive_ingest_progress,
+    set_sealed_archive_ingest_progress,
   )
 
-  set_sealed_archive_ingest_progress(sealed_archive_member_count_hint(sealed_path))
+  set_sealed_archive_ingest_progress(
+    sealed_archive_member_count_hint(sealed_path)
+  )
 
   try:
-    for member_name, member_path in iter_sealed_daily_archive_member_paths(
-        sealed_path,
-        on_member_skipped=advance_sealed_archive_ingest_progress,
+    for _member_name, member_path in iter_sealed_daily_archive_member_paths(
+      sealed_path,
+      on_member_skipped=advance_sealed_archive_ingest_progress,
     ):
       if add_stats is None:
         from django.db import close_old_connections as _close
-        from django.db.utils import DatabaseError as _DBErr
-        from django.db.utils import OperationalError as _OpErr
+        from django.db.utils import (
+          DatabaseError as _DBErr,
+          OperationalError as _OpErr,
+        )
 
-        from hpcperfstats.dbload.lib.django_bootstrap import ensure_django as _ensure
-        from hpcperfstats.dbload.sync_timedb import add_stats_file_to_db as _add
+        from hpcperfstats.dbload.lib.django_bootstrap import (
+          ensure_django as _ensure,
+        )
+        from hpcperfstats.dbload.sync_timedb import (
+          add_stats_file_to_db as _add,
+        )
 
         close_old_connections = _close
         DatabaseError = _DBErr
@@ -310,14 +318,13 @@ def _process_stream_archive(sealed_path: str) -> None:
       except (OperationalError, DatabaseError) as exc:
         if is_database_unavailable_error(exc):
           log_and_raise_database_unavailable(
-              exc, context="sync_timedb_archive worker",
+            exc,
+            context="sync_timedb_archive worker",
           )
         raise
       finally:
-        try:
+        with contextlib.suppress(OSError):
           os.remove(member_path)
-        except OSError:
-          pass
         parent = os.path.dirname(member_path)
         try:
           if parent and os.path.isdir(parent) and not os.listdir(parent):
@@ -326,7 +333,7 @@ def _process_stream_archive(sealed_path: str) -> None:
           pass
   finally:
     from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
-        release_spawn_pool_worker_memory,
+      release_spawn_pool_worker_memory,
     )
 
     release_spawn_pool_worker_memory()
@@ -379,16 +386,16 @@ def _update_archive_sliding_window_stall_diagnostics(
 ) -> Any:
   """
   Internal helper to update the archive sliding window stall diagnostics.
-  
+
   Args:
     stall_diagnostics (Any): Stall diagnostics passed to this helper.
     in_flight_tasks (Any): In flight tasks passed to this helper.
     max_inflight (Any): Max inflight passed to this helper.
     log_budget (bool): Boolean flag for log budget.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _update_archive_sliding_window_stall_diagnostics(None, None, None, True)
   """
@@ -405,16 +412,16 @@ def _update_archive_sliding_window_stall_diagnostics(
     stall_diagnostics.ingest_pipeline = "sealed_archive_backfill"
   if log_budget and sealed_paths:
     log_print(
-        "sync_timedb_archive: in_flight sealed_days=%d "
-        "sealed_archive_stall_budget_s=%.1f "
-        "dynamic_stall_abort_after=%d dynamic_stall_wall_s=%.0f"
-        % (
-            len(sealed_paths),
-            batch_max_s,
-            batch_abort,
-            batch_abort * poll_s,
-        ),
-        flush=True,
+      "sync_timedb_archive: in_flight sealed_days=%d "
+      "sealed_archive_stall_budget_s=%.1f "
+      "dynamic_stall_abort_after=%d dynamic_stall_wall_s=%.0f"
+      % (
+        len(sealed_paths),
+        batch_max_s,
+        batch_abort,
+        batch_abort * poll_s,
+      ),
+      flush=True,
     )
   return batch_abort, batch_max_s
 
@@ -431,7 +438,7 @@ def _process_sealed_tasks_sliding_window(
 ) -> None:
   """
   Process sealed days with sliding-window pool dispatch (refill on completion).
-  
+
   Args:
     pool (Any): Live handle (pool, client, or connection).
     worker (Any): Callable invoked by this helper.
@@ -440,29 +447,29 @@ def _process_sealed_tasks_sliding_window(
     stall_diagnostics (Any | None): One of ``Any``, ``None``.
     stall_poll_state (Any | None): One of ``Any``, ``None``.
     worker_registry (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     None
-  
+
   Raises:
     Exception: Raised when ``_process_sealed_tasks_sliding_window`` hits a
     ``Exception`` failure path.
-  
+
   Examples:
     >>> _process_sealed_tasks_sliding_window(0)  # doctest: +SKIP
   """
   if not tasks:
     return
   from hpcperfstats.dbload.sync_timedb import (
-      IngestStallDiagnostics,
-      _build_ingest_stall_log_suffix,
-      _calendar_day_hint_from_sealed_paths,
-      _distinct_calendar_days_from_sealed_paths,
-      _format_store_populate_for_sealed_paths,
-      _handle_pool_worker_exit_fatal,
-      _make_ingest_stall_poll_fn,
-      _make_ingest_stall_warning_fn,
-      _prewarm_archive_members_for_sealed_chunk,
+    IngestStallDiagnostics,
+    _build_ingest_stall_log_suffix,
+    _calendar_day_hint_from_sealed_paths,
+    _distinct_calendar_days_from_sealed_paths,
+    _format_store_populate_for_sealed_paths,
+    _handle_pool_worker_exit_fatal,
+    _make_ingest_stall_poll_fn,
+    _make_ingest_stall_warning_fn,
+    _prewarm_archive_members_for_sealed_chunk,
   )
 
   all_sealed_paths = _sealed_paths_from_tasks(tasks)
@@ -476,9 +483,9 @@ def _process_sealed_tasks_sliding_window(
   stall_diagnostics.active_pool = pool
   stall_diagnostics.current_imap_batch_size = len(all_sealed_paths)
   log_print(
-      "sync_timedb_archive: sealed_days_total=%d max_inflight=%d"
-      % (len(all_sealed_paths), max_inflight),
-      flush=True,
+    "sync_timedb_archive: sealed_days_total=%d max_inflight=%d"
+    % (len(all_sealed_paths), max_inflight),
+    flush=True,
   )
   prewarm_summary = _prewarm_archive_members_for_sealed_chunk(all_sealed_paths)
   stall_diagnostics.chunk_prewarm_summary = prewarm_summary
@@ -490,10 +497,10 @@ def _process_sealed_tasks_sliding_window(
   def _in_flight_sample() -> Any:
     """
     Internal helper to handle in flight sample.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> _in_flight_sample()  # doctest: +SKIP
     """
@@ -502,68 +509,70 @@ def _process_sealed_tasks_sliding_window(
   def _on_in_flight_change(in_flight_tasks: Any) -> None:
     """
     Internal helper to handle on in flight change.
-    
+
     Args:
       in_flight_tasks (Any): In flight tasks passed to this helper.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> _on_in_flight_change(None)  # doctest: +SKIP
     """
     in_flight_holder["paths"] = _sealed_paths_from_tasks(in_flight_tasks)
     _update_archive_sliding_window_stall_diagnostics(
-        stall_diagnostics,
-        in_flight_tasks,
-        max_inflight,
-        log_budget=True,
+      stall_diagnostics,
+      in_flight_tasks,
+      max_inflight,
+      log_budget=True,
     )
 
   pool_health_context = {
-      "active_pool": pool,
-      "in_flight_sample_fn": _in_flight_sample,
+    "active_pool": pool,
+    "in_flight_sample_fn": _in_flight_sample,
   }
   try:
     for result in imap_sliding_window_watch_pool(
-        pool,
-        worker,
-        tasks,
-        max_inflight=max_inflight,
-        context="sync_timedb_archive pool",
-        on_in_flight_change=_on_in_flight_change,
-        on_stall_warning=_make_ingest_stall_warning_fn(
-            None,
-            pool=pool,
-            thread_count=_archive_worker_process_count(),
-            chunk_counter=0,
-            pending_count=len(all_sealed_paths),
+      pool,
+      worker,
+      tasks,
+      max_inflight=max_inflight,
+      context="sync_timedb_archive pool",
+      on_in_flight_change=_on_in_flight_change,
+      on_stall_warning=_make_ingest_stall_warning_fn(
+        None,
+        pool=pool,
+        thread_count=_archive_worker_process_count(),
+        chunk_counter=0,
+        pending_count=len(all_sealed_paths),
+        stall_diagnostics=stall_diagnostics,
+        progress_state=stall_poll_state,
+        day_hint_from_sample_fn=_calendar_day_hint_from_sealed_paths,
+        distinct_days_from_sample_fn=_distinct_calendar_days_from_sealed_paths,
+        store_populate_for_sample_fn=_format_store_populate_for_sealed_paths,
+      ),
+      on_stall_poll=_make_ingest_stall_poll_fn(
+        None,
+        stall_poll_state,
+        stall_diagnostics=stall_diagnostics,
+        day_hint_from_sample_fn=_calendar_day_hint_from_sealed_paths,
+      ),
+      pool_health_context=pool_health_context,
+      on_stall_fatal_summary=(
+        lambda consecutive, abort_after, poll_timeout_s, ctx: (
+          _build_ingest_stall_log_suffix(
+            sample=_in_flight_sample(),
+            day_hint=_calendar_day_hint_from_sealed_paths(_in_flight_sample()),
             stall_diagnostics=stall_diagnostics,
             progress_state=stall_poll_state,
-            day_hint_from_sample_fn=_calendar_day_hint_from_sealed_paths,
+            alive_workers=0,
+            consecutive=consecutive,
+            poll_timeout_s=poll_timeout_s,
             distinct_days_from_sample_fn=_distinct_calendar_days_from_sealed_paths,
             store_populate_for_sample_fn=_format_store_populate_for_sealed_paths,
-        ),
-        on_stall_poll=_make_ingest_stall_poll_fn(
-            None,
-            stall_poll_state,
-            stall_diagnostics=stall_diagnostics,
-            day_hint_from_sample_fn=_calendar_day_hint_from_sealed_paths,
-        ),
-        pool_health_context=pool_health_context,
-        on_stall_fatal_summary=(
-            lambda consecutive, abort_after, poll_timeout_s, ctx: _build_ingest_stall_log_suffix(
-                sample=_in_flight_sample(),
-                day_hint=_calendar_day_hint_from_sealed_paths(_in_flight_sample()),
-                stall_diagnostics=stall_diagnostics,
-                progress_state=stall_poll_state,
-                alive_workers=0,
-                consecutive=consecutive,
-                poll_timeout_s=poll_timeout_s,
-                distinct_days_from_sample_fn=_distinct_calendar_days_from_sealed_paths,
-                store_populate_for_sample_fn=_format_store_populate_for_sealed_paths,
-            )
-        ),
+          )
+        )
+      ),
     ):
       if result:
         clear_dispatch_worker_stages(worker_registry, [result])
@@ -577,7 +586,8 @@ def _process_sealed_tasks_sliding_window(
     raise
   except Exception as exc:
     reraise_database_unavailable_chain(
-        exc, context="sync_timedb_archive pool",
+      exc,
+      context="sync_timedb_archive pool",
     )
     raise
 
@@ -589,23 +599,30 @@ if __name__ == "__main__":
 
   from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
   from hpcperfstats.dbload.sync_timedb import (
-      IngestStallDiagnostics,
-      _handle_pool_worker_exit_fatal,
-      _reset_sync_runtime_caches,
-      database_startup,
+    IngestStallDiagnostics,
+    _handle_pool_worker_exit_fatal,
+    _reset_sync_runtime_caches,
+    database_startup,
   )
 
   try:
-    set_daemon_process_title(name=SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE, role="main")
+    set_daemon_process_title(
+      name=SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE, role="main"
+    )
     ensure_django()
     database_startup()
     _reset_sync_runtime_caches()
     close_old_connections()
     connections.close_all()
 
-    mode, startdate, enddate, path_args = parse_sync_timedb_archive_argv(sys.argv)
+    mode, startdate, enddate, path_args = parse_sync_timedb_archive_argv(
+      sys.argv
+    )
     sealed_paths, skipped_tar_only = _resolve_sealed_paths_from_argv(
-        mode, startdate, enddate, path_args,
+      mode,
+      startdate,
+      enddate,
+      path_args,
     )
     _log_archive_ingest_startup(len(sealed_paths), skipped_tar_only)
 
@@ -621,26 +638,26 @@ if __name__ == "__main__":
     stall_diagnostics.worker_registry = worker_diagnostics_registry
     stall_poll_state = {}
     pool = create_sync_timedb_thread_pool(
-        max_workers=_archive_worker_process_count(),
-        thread_role="sealed-archive-pool",
-        process_title=SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE,
+      max_workers=_archive_worker_process_count(),
+      thread_role="sealed-archive-pool",
+      process_title=SYNC_TIMEDB_ARCHIVE_PROCESS_TITLE,
     )
     try:
       tasks = list(
-          iter_archive_ingest_tasks(
-              sealed_paths,
-              cfg.get_daily_archive_dir_path(),
-          ),
+        iter_archive_ingest_tasks(
+          sealed_paths,
+          cfg.get_daily_archive_dir_path(),
+        ),
       )
       sealed_task_paths = [p for _kind, p in tasks]
       _process_sealed_tasks_sliding_window(
-          pool,
-          _process_stream_archive_task,
-          sealed_task_paths,
-          lambda _result: None,
-          stall_diagnostics=stall_diagnostics,
-          stall_poll_state=stall_poll_state,
-          worker_registry=worker_diagnostics_registry,
+        pool,
+        _process_stream_archive_task,
+        sealed_task_paths,
+        lambda _result: None,
+        stall_diagnostics=stall_diagnostics,
+        stall_poll_state=stall_poll_state,
+        worker_registry=worker_diagnostics_registry,
       )
       if shutdown_requested[0]:
         log_print("Exiting due to SIGTERM", flush=True)
@@ -649,16 +666,14 @@ if __name__ == "__main__":
     finally:
       pool.terminate()
       pool.join()
-    try:
+    with contextlib.suppress(Exception):
       connections.close_all()
-    except Exception:
-      pass
   except DatabaseUnavailableExit:
     sys.exit(2)
   except MultiprocessingWorkerExitError as exc:
     log_print(
-        "sync_timedb_archive exiting after pool worker death: %s" % exc,
-        flush=True,
+      f"sync_timedb_archive exiting after pool worker death: {exc}",
+      flush=True,
     )
     _handle_pool_worker_exit_fatal(exc)
   if shutdown_requested[0]:

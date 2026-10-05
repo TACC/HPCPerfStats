@@ -53,21 +53,23 @@ def main(argv: list[str] | None = None) -> int:
   """
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument(
-      "--frontend-root",
-      type=Path,
-      default=Path("/srv/static/frontend"),
-      help="SPA static export root (read-only HTML source on proxy)",
+    "--frontend-root",
+    type=Path,
+    default=Path("/srv/static/frontend"),
+    help="SPA static export root (read-only HTML source on proxy)",
   )
   parser.add_argument(
-      "--out-dir",
-      type=Path,
-      default=Path("/etc/nginx"),
-      help="Private directory for nginx-csp-*.inc (never under /srv/static)",
+    "--out-dir",
+    type=Path,
+    default=Path("/etc/nginx"),
+    help="Private directory for nginx-csp-*.inc (never under /srv/static)",
   )
   args = parser.parse_args(argv)
   mod = _load_spa_csp_meta()
   try:
-    machine_out, pub_out = mod.write_spa_csp_includes(args.frontend_root, args.out_dir)
+    machine_out, pub_out = mod.write_spa_csp_includes(
+      args.frontend_root, args.out_dir
+    )
   except FileNotFoundError as exc:
     print(f"write_nginx_spa_csp_includes: {exc}", file=sys.stderr)
     return 1

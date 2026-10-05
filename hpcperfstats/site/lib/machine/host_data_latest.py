@@ -10,11 +10,11 @@ Attributes:
   HOST_LAST_TIME_LOOKUP_BATCH: Hosts per LATERAL batch for per-host max
     probes.
 """
+
 from __future__ import annotations
 
-from typing import Any
-
 from datetime import datetime, timedelta
+from typing import Any
 
 from django.db import connections, transaction
 from django.db.models import Max
@@ -25,54 +25,55 @@ from hpcperfstats.site.lib.machine.models import host_data
 
 
 def list_recent_host_fqdns_from_redis() -> list[str]:
-    """
-    Return FQDNs from Django-cache Redis ``recent_host:*`` keys.
+  """
+  Return FQDNs from Django-cache Redis ``recent_host:*`` keys.
 
-    listend writes ``recent_host:<fqdn>`` into the cache Redis DB. Keys whose
-    host portion lacks a ``.`` (not an FQDN) are skipped. On Redis errors or a
-    missing client, returns an empty list.
+  listend writes ``recent_host:<fqdn>`` into the cache Redis DB. Keys whose
+  host portion lacks a ``.`` (not an FQDN) are skipped. On Redis errors or a
+  missing client, returns an empty list.
+
+  Returns:
+    list[str]: Distinct FQDNs discovered via ``SCAN``, order undefined.
+
+  Examples:
+    >>> list_recent_host_fqdns_from_redis()  # doctest: +SKIP
+    ['c101-001.example.com']
+  """
+  hosts: list[str] = []
+
+  def _decode_key(raw_key: Any) -> str:
+    """
+    Decode a Redis key to a UTF-8 string for ``recent_host:`` parsing.
+
+    Args:
+      raw_key (Any): Raw SCAN key (bytes or str).
 
     Returns:
-      list[str]: Distinct FQDNs discovered via ``SCAN``, order undefined.
+      str: Decoded key text.
 
     Examples:
-      >>> list_recent_host_fqdns_from_redis()  # doctest: +SKIP
-      ['c101-001.example.com']
+      >>> _decode_key(b"recent_host:a.example.com")
+      'recent_host:a.example.com'
     """
-    hosts: list[str] = []
+    if isinstance(raw_key, bytes):
+      return raw_key.decode("utf-8", "replace")
+    return str(raw_key)
 
-    def _decode_key(raw_key: Any) -> str:
-        """
-        Decode a Redis key to a UTF-8 string for ``recent_host:`` parsing.
+  try:
+    client = _get_redis_py_client()
+    if client is None or not hasattr(client, "scan_iter"):
+      return hosts
+    for key in client.scan_iter(match="recent_host:*", count=1000):
+      key_str = _decode_key(key)
+      if not key_str.startswith("recent_host:"):
+        continue
+      host = key_str.split("recent_host:", 1)[1]
+      if host and "." in host:
+        hosts.append(host)
+  except Exception:
+    return []
+  return hosts
 
-        Args:
-          raw_key (Any): Raw SCAN key (bytes or str).
-
-        Returns:
-          str: Decoded key text.
-
-        Examples:
-          >>> _decode_key(b"recent_host:a.example.com")
-          'recent_host:a.example.com'
-        """
-        if isinstance(raw_key, bytes):
-            return raw_key.decode("utf-8", "replace")
-        return str(raw_key)
-
-    try:
-        client = _get_redis_py_client()
-        if client is None or not hasattr(client, "scan_iter"):
-            return hosts
-        for key in client.scan_iter(match="recent_host:*", count=1000):
-            key_str = _decode_key(key)
-            if not key_str.startswith("recent_host:"):
-                continue
-            host = key_str.split("recent_host:", 1)[1]
-            if host and "." in host:
-                hosts.append(host)
-    except Exception:
-        return []
-    return hosts
 
 # PostgreSQL uses a per-host LATERAL + LIMIT 1 (index probe on (host, time))
 # inside a short transaction with parallel workers disabled for the probe.
@@ -87,152 +88,151 @@ def latest_sample_time_by_host(
   *,
   batch_size: Any | None = None,
 ) -> Any:
-    """
-    Map host -> max(host_data.time) for ``hosts``, using bounded batches.
-    
-    On PostgreSQL: ``LEFT JOIN LATERAL (... ORDER BY time DESC LIMIT 1)`` so
-    each host is an index-backed probe. Non-PostgreSQL: ``Max(time)`` with
-    ``host__in`` batches.
-    
-    Args:
-      hosts (Any): Hosts passed to this helper.
-      batch_size (Any | None): One of ``Any``, ``None``.
-    
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
-    Examples:
-      >>> latest_sample_time_by_host(None, None)  # doctest: +SKIP
-    """
-    latest_by_host = {}
-    if not hosts:
-        return latest_by_host
-    host_list = sorted(hosts)
-    batch = max(
-        1,
-        int(batch_size if batch_size is not None else HOST_LAST_TIME_LOOKUP_BATCH),
-    )
-    conn = connections["default"]
-    if conn.vendor == "postgresql":
-        ops = conn.ops
-        tbl = ops.quote_name(host_data._meta.db_table)
-        col_host = ops.quote_name("host")
-        col_time = ops.quote_name("time")
-        # DISTINCT ON + ORDER BY over many hypertable chunks can still trigger
-        # huge parallel sorts. One backward index scan per host stays bounded.
-        sql = (
-            "SELECT h.host_val, m.{t} FROM unnest(%s::text[]) AS h(host_val) "
-            "LEFT JOIN LATERAL ("
-            " SELECT d.{t} FROM {tbl} d WHERE d.{h} = h.host_val "
-            " ORDER BY d.{t} DESC LIMIT 1"
-            ") AS m ON TRUE"
-        ).format(h=col_host, t=col_time, tbl=tbl)
-        using = getattr(conn, "alias", None) or "default"
-        for i in range(0, len(host_list), batch):
-            chunk = host_list[i : i + batch]
-            with transaction.atomic(using=using):
-                with conn.cursor() as cursor:
-                    cursor.execute("SET LOCAL max_parallel_workers_per_gather = 0")
-                    cursor.execute(sql, [chunk])
-                    for row_host, row_time in cursor.fetchall():
-                        if row_time is not None:
-                            latest_by_host[row_host] = row_time
-        return latest_by_host
+  """
+  Map host -> max(host_data.time) for ``hosts``, using bounded batches.
 
-    for i in range(0, len(host_list), batch):
-        chunk = host_list[i : i + batch]
-        qs = (
-            host_data.objects.filter(host__in=chunk)
-            .values("host")
-            .annotate(last_time=Max("time"))
-        )
-        for row in qs:
-            latest_by_host[row.get("host")] = row.get("last_time")
+  On PostgreSQL: ``LEFT JOIN LATERAL (... ORDER BY time DESC LIMIT 1)`` so
+  each host is an index-backed probe. Non-PostgreSQL: ``Max(time)`` with
+  ``host__in`` batches.
+
+  Args:
+    hosts (Any): Hosts passed to this helper.
+    batch_size (Any | None): One of ``Any``, ``None``.
+
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+
+  Examples:
+    >>> latest_sample_time_by_host(None, None)  # doctest: +SKIP
+  """
+  latest_by_host = {}
+  if not hosts:
     return latest_by_host
+  host_list = sorted(hosts)
+  batch = max(
+    1,
+    int(batch_size if batch_size is not None else HOST_LAST_TIME_LOOKUP_BATCH),
+  )
+  conn = connections["default"]
+  if conn.vendor == "postgresql":
+    ops = conn.ops
+    tbl = ops.quote_name(host_data._meta.db_table)
+    col_host = ops.quote_name("host")
+    col_time = ops.quote_name("time")
+    # DISTINCT ON + ORDER BY over many hypertable chunks can still trigger
+    # huge parallel sorts. One backward index scan per host stays bounded.
+    sql = (
+      f"SELECT h.host_val, m.{col_time} FROM unnest(%s::text[]) AS h(host_val) "
+      "LEFT JOIN LATERAL ("
+      f" SELECT d.{col_time} FROM {tbl} d WHERE d.{col_host} = h.host_val "
+      f" ORDER BY d.{col_time} DESC LIMIT 1"
+      ") AS m ON TRUE"
+    )
+    using = getattr(conn, "alias", None) or "default"
+    for i in range(0, len(host_list), batch):
+      chunk = host_list[i : i + batch]
+      with transaction.atomic(using=using), conn.cursor() as cursor:
+        cursor.execute("SET LOCAL max_parallel_workers_per_gather = 0")
+        cursor.execute(sql, [chunk])
+        for row_host, row_time in cursor.fetchall():
+          if row_time is not None:
+            latest_by_host[row_host] = row_time
+    return latest_by_host
+
+  for i in range(0, len(host_list), batch):
+    chunk = host_list[i : i + batch]
+    qs = (
+      host_data.objects.filter(host__in=chunk)
+      .values("host")
+      .annotate(last_time=Max("time"))
+    )
+    for row in qs:
+      latest_by_host[row.get("host")] = row.get("last_time")
+  return latest_by_host
 
 
 def latest_sample_time_by_host_in_window(window: Any | None = None) -> Any:
-    """
-    Map host -> max(time) for hosts with samples in ``window`` (default 3h).
-    
-    Last-resort Admin Monitor path when Redis ``recent_host`` inventory is
-      empty.
-    Never use multi-day (e.g. 8d) windows here.
-    
-    Args:
-      window (Any | None): One of ``Any``, ``None``.
-    
-    Returns:
-      Any: Open return polymorphism from
-      ``latest_sample_time_by_host_in_window``: concrete type depends on
-      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-    
-    Examples:
-      >>> latest_sample_time_by_host_in_window(None)  # doctest: +SKIP
-    """
-    if window is None:
-        window = HOST_DATA_FRESHNESS_WINDOW
-    now = timezone.now()
-    time_bounds = now - window
-    latest_by_host = {}
-    qs = (
-        host_data.objects.filter(time__gte=time_bounds)
-        .values("host")
-        .annotate(last_time=Max("time"))
-    )
-    for row in qs:
-        host = row.get("host")
-        last_time = row.get("last_time")
-        if host and last_time is not None:
-            latest_by_host[host] = last_time
-    return latest_by_host
+  """
+  Map host -> max(time) for hosts with samples in ``window`` (default 3h).
+
+  Last-resort Admin Monitor path when Redis ``recent_host`` inventory is
+    empty.
+  Never use multi-day (e.g. 8d) windows here.
+
+  Args:
+    window (Any | None): One of ``Any``, ``None``.
+
+  Returns:
+    Any: Open return polymorphism from
+    ``latest_sample_time_by_host_in_window``: concrete type depends on
+    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+
+  Examples:
+    >>> latest_sample_time_by_host_in_window(None)  # doctest: +SKIP
+  """
+  if window is None:
+    window = HOST_DATA_FRESHNESS_WINDOW
+  now = timezone.now()
+  time_bounds = now - window
+  latest_by_host = {}
+  qs = (
+    host_data.objects.filter(time__gte=time_bounds)
+    .values("host")
+    .annotate(last_time=Max("time"))
+  )
+  for row in qs:
+    host = row.get("host")
+    last_time = row.get("last_time")
+    if host and last_time is not None:
+      latest_by_host[host] = last_time
+  return latest_by_host
 
 
 def newest_host_data_sample_time(window: Any | None = None) -> Any:
-    """
-    Return the newest ``host_data.time`` in ``window``, or ``None``.
-    
-    Uses ``ORDER BY time DESC LIMIT 1`` (chunk-friendly) — not ``max(time)``
-    over an unbounded table.
-    
-    Args:
-      window (Any | None): One of ``Any``, ``None``.
-    
-    Returns:
-      Any: Open return polymorphism from ``newest_host_data_sample_time``:
-      concrete type depends on inputs and branch (mapping, scalar, handle, or
-      ``None``-like empty).
-    
-    Examples:
-      >>> newest_host_data_sample_time(None)  # doctest: +SKIP
-    """
-    if window is None:
-        window = HOST_DATA_FRESHNESS_WINDOW
-    now = timezone.now()
-    time_bounds = now - window
-    return (
-        host_data.objects.filter(time__gt=time_bounds)
-        .order_by("-time")
-        .values_list("time", flat=True)
-        .first()
-    )
+  """
+  Return the newest ``host_data.time`` in ``window``, or ``None``.
+
+  Uses ``ORDER BY time DESC LIMIT 1`` (chunk-friendly) — not ``max(time)``
+  over an unbounded table.
+
+  Args:
+    window (Any | None): One of ``Any``, ``None``.
+
+  Returns:
+    Any: Open return polymorphism from ``newest_host_data_sample_time``:
+    concrete type depends on inputs and branch (mapping, scalar, handle, or
+    ``None``-like empty).
+
+  Examples:
+    >>> newest_host_data_sample_time(None)  # doctest: +SKIP
+  """
+  if window is None:
+    window = HOST_DATA_FRESHNESS_WINDOW
+  now = timezone.now()
+  time_bounds = now - window
+  return (
+    host_data.objects.filter(time__gt=time_bounds)
+    .order_by("-time")
+    .values_list("time", flat=True)
+    .first()
+  )
 
 
 def format_host_data_newest_iso(value: Any) -> Any:
-    """
-    Serialize a datetime for Admin Monitor Timescale stats, or ``None``.
-    
-    Args:
-      value (Any): Value to inspect (typically a numeric scalar).
-    
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-    
-    Examples:
-      >>> format_host_data_newest_iso(None)  # doctest: +SKIP
-    """
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value.isoformat()
-    return str(value)
+  """
+  Serialize a datetime for Admin Monitor Timescale stats, or ``None``.
+
+  Args:
+    value (Any): Value to inspect (typically a numeric scalar).
+
+  Returns:
+    Any: Value produced by this call (type depends on inputs).
+
+  Examples:
+    >>> format_host_data_newest_iso(None)  # doctest: +SKIP
+  """
+  if value is None:
+    return None
+  if isinstance(value, datetime):
+    return value.isoformat()
+  return str(value)

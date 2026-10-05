@@ -24,21 +24,23 @@ def test_dockerfile_chmods_compose_startup_scripts():
 
   for script in STARTUP_SCRIPTS:
     assert script in dockerfile
-    assert f"chmod +x" in dockerfile
+    assert "chmod +x" in dockerfile
 
 
 def test_startup_scripts_are_executable_in_git_index():
   repo_root = _repo_root()
   try:
     subprocess.run(
-        ["git", "rev-parse", "--git-dir"],
-        cwd=repo_root,
-        check=True,
-        capture_output=True,
-        text=True,
+      ["git", "rev-parse", "--git-dir"],
+      cwd=repo_root,
+      check=True,
+      capture_output=True,
+      text=True,
     )
-  except (FileNotFoundError, subprocess.CalledProcessError):
-    pytest.skip("git repository not available (e.g. compose bind mount without .git)")
+  except FileNotFoundError, subprocess.CalledProcessError:
+    pytest.skip(
+      "git repository not available (e.g. compose bind mount without .git)"
+    )
   for script in STARTUP_SCRIPTS:
     line = subprocess.check_output(
       ["git", "ls-files", "-s", script],
@@ -46,7 +48,9 @@ def test_startup_scripts_are_executable_in_git_index():
       text=True,
     ).strip()
     mode = int(line.split()[0], 8)
-    assert mode & stat.S_IXUSR, f"{script} must be executable in git index (mode {oct(mode)})"
+    assert mode & stat.S_IXUSR, (
+      f"{script} must be executable in git index (mode {oct(mode)})"
+    )
 
 
 def test_startup_scripts_are_executable_on_disk():
@@ -54,4 +58,6 @@ def test_startup_scripts_are_executable_on_disk():
   for script in STARTUP_SCRIPTS:
     path = repo_root / script
     mode = path.stat().st_mode
-    assert mode & stat.S_IXUSR, f"{script} must be executable on disk (mode {oct(mode)})"
+    assert mode & stat.S_IXUSR, (
+      f"{script} must be executable on disk (mode {oct(mode)})"
+    )

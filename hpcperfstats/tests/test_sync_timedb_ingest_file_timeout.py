@@ -24,8 +24,8 @@ def _mib_bytes(mib):
 def _patch_stats_file_size_bytes(monkeypatch, fn):
   monkeypatch.setattr(st, "stats_file_size_bytes", fn)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_parsing.stats_file_size_bytes",
-      fn,
+    "hpcperfstats.dbload.lib.sync_timedb_parsing.stats_file_size_bytes",
+    fn,
   )
 
 
@@ -37,7 +37,9 @@ _MAX_TIMEOUT_DEFAULT = 86400.0
 
 def _default_timeout_getters(monkeypatch):
   monkeypatch.setattr(
-      st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: _MAX_TIMEOUT_DEFAULT,
+    st.cfg,
+    "get_sync_ingest_per_file_timeout_max_s",
+    lambda: _MAX_TIMEOUT_DEFAULT,
   )
 
 
@@ -55,7 +57,9 @@ def test_run_ingest_timed_uses_resolved_timeout(monkeypatch, tmp_path):
   monkeypatch.setattr(st.signal, "setitimer", fake_setitimer, raising=False)
   monkeypatch.setattr(st, "record_worker_stage", lambda *_a, **_k: None)
   monkeypatch.setattr(st, "clear_worker_stage", lambda: None, raising=False)
-  monkeypatch.setattr(st, "_log_long_ingest_timeout_budget_if_needed", lambda *_a, **_k: None)
+  monkeypatch.setattr(
+    st, "_log_long_ingest_timeout_budget_if_needed", lambda *_a, **_k: None
+  )
 
   assert st._run_ingest_timed(str(stats_file), "parse", lambda: "ok") == "ok"
   assert seen == []
@@ -91,20 +95,28 @@ def test_warn_if_pool_stall_wall_helper_gone():
   assert not hasattr(st, "_warn_if_pool_stall_wall_below_ingest_timeout_max")
   assert not hasattr(st, "_stall_abort_polls_for_batch")
   assert not hasattr(ingest_timeout_mod, "stall_abort_polls_for_paths")
-  assert not hasattr(ingest_timeout_mod, "stall_abort_polls_for_sealed_archives")
+  assert not hasattr(
+    ingest_timeout_mod, "stall_abort_polls_for_sealed_archives"
+  )
 
 
 def test_calendar_day_from_sealed_archive_path(tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
-      calendar_day_from_sealed_archive_path,
+    calendar_day_from_sealed_archive_path,
   )
 
-  assert calendar_day_from_sealed_archive_path(
+  assert (
+    calendar_day_from_sealed_archive_path(
       str(tmp_path / "2024-03-15.tar.zst"),
-  ) == "2024-03-15"
-  assert calendar_day_from_sealed_archive_path(
+    )
+    == "2024-03-15"
+  )
+  assert (
+    calendar_day_from_sealed_archive_path(
       str(tmp_path / "2024-03-15.tar.gz"),
-  ) == "2024-03-15"
+    )
+    == "2024-03-15"
+  )
 
 
 def test_raise_if_ingest_per_file_deadline_idle_only(monkeypatch):
@@ -127,23 +139,21 @@ def test_ingest_remaining_count_absent():
   assert "def _ingest_remaining_count" not in inspect.getsource(st)
 
 
-
-
-
-
-
-
 def test_suspend_sigalrm_extends_deadline_monotonic(monkeypatch):
   """Suspend touches idle progress; wall deadline ContextVars are gone."""
-  from hpcperfstats.dbload.lib import sync_timedb_ingest_progress as prog
-  from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
-      suspend_ingest_sigalrm_for_populate_wait,
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_archive_members_coord as coord,
+    sync_timedb_ingest_progress as prog,
   )
-  from hpcperfstats.dbload.lib import sync_timedb_archive_members_coord as coord
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
+    suspend_ingest_sigalrm_for_populate_wait,
+  )
 
   del monkeypatch
   clock = {"t": 10.0}
-  toks = prog.begin_ingest_progress("/raw/a", idle_s=100.0, clock=lambda: clock["t"])
+  toks = prog.begin_ingest_progress(
+    "/raw/a", idle_s=100.0, clock=lambda: clock["t"]
+  )
   try:
     prog.touch_ingest_progress(clock=lambda: clock["t"])
     assert prog.get_ingest_last_progress_mono() == 10.0
@@ -169,10 +179,12 @@ def test_ingest_populate_wait_survives_sigalrm(monkeypatch, tmp_path):
     set_process_archive_members_store,
   )
 
-  monkeypatch.setattr(st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 0.15)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_cache_enabled",
-      lambda: True,
+    st.cfg, "get_sync_ingest_per_file_timeout_max_s", lambda: 0.15
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_archive_members_cache_enabled",
+    lambda: True,
   )
 
   store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
@@ -191,17 +203,19 @@ def test_ingest_populate_wait_survives_sigalrm(monkeypatch, tmp_path):
   def _finish_populate():
     time.sleep(0.35)
     store.finish_populate(
-        keys.day_token,
-        keys.identity,
-        members={"host/raw": 4},
-        complete=True,
+      keys.day_token,
+      keys.identity,
+      members={"host/raw": 4},
+      complete=True,
     )
     populate_done.set()
 
   threading.Thread(target=_finish_populate, daemon=True).start()
   monkeypatch.setattr(st, "record_worker_stage", lambda *_a, **_k: None)
   monkeypatch.setattr(st, "clear_worker_stage", lambda: None, raising=False)
-  monkeypatch.setattr(st, "_log_long_ingest_timeout_budget_if_needed", lambda *_a, **_k: None)
+  monkeypatch.setattr(
+    st, "_log_long_ingest_timeout_budget_if_needed", lambda *_a, **_k: None
+  )
 
   stats_file = tmp_path / "segment"
   stats_file.write_bytes(b"x")
@@ -209,9 +223,9 @@ def test_ingest_populate_wait_survives_sigalrm(monkeypatch, tmp_path):
 
   try:
     result = st._run_ingest_timed(
-        str(stats_file),
-        "ingest",
-        lambda: request_archive_members_populate_and_wait(str(day_gz)),
+      str(stats_file),
+      "ingest",
+      lambda: request_archive_members_populate_and_wait(str(day_gz)),
     )
     assert populate_done.wait(timeout=2.0)
     assert result.get("host/raw") == 4
@@ -224,20 +238,27 @@ def test_parse_still_times_out_without_populate_wait(monkeypatch, tmp_path):
   monkeypatch.setattr(st.cfg, "get_sync_ingest_stall_idle_s", lambda: 0.0)
   monkeypatch.setattr(st, "record_worker_stage", lambda *_a, **_k: None)
   monkeypatch.setattr(st, "clear_worker_stage", lambda: None, raising=False)
-  monkeypatch.setattr(st, "_log_long_ingest_timeout_budget_if_needed", lambda *_a, **_k: None)
+  monkeypatch.setattr(
+    st, "_log_long_ingest_timeout_budget_if_needed", lambda *_a, **_k: None
+  )
 
   stats_file = tmp_path / "segment"
   stats_file.write_bytes(b"x")
   _patch_stats_file_size_bytes(monkeypatch, lambda _p: 1024)
 
-  assert st._run_ingest_timed(
+  assert (
+    st._run_ingest_timed(
       str(stats_file),
       "parse",
       lambda: time.sleep(0.2),
-  ) is None
+    )
+    is None
+  )
 
 
-def test_ingest_timeout_during_streaming_parse_not_quarantined(monkeypatch, tmp_path):
+def test_ingest_timeout_during_streaming_parse_not_quarantined(
+  monkeypatch, tmp_path
+):
   """SIGALRM / IngestPerFileTimeoutError inside streaming parse must not DLO."""
   stats_file = tmp_path / "host.hpc" / "1784000000"
   stats_file.parent.mkdir(parents=True)
@@ -247,13 +268,15 @@ def test_ingest_timeout_during_streaming_parse_not_quarantined(monkeypatch, tmp_
 
   monkeypatch.setattr(st, "close_old_connections", lambda: None)
   monkeypatch.setattr(st.cfg, "get_archive_dir_path", lambda: str(tmp_path))
-  monkeypatch.setattr(st, "parse_stats_file_path", lambda _p: ("host.hpc", "1784000000"))
+  monkeypatch.setattr(
+    st, "parse_stats_file_path", lambda _p: ("host.hpc", "1784000000")
+  )
   monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
   monkeypatch.setattr(st, "_should_stream_stats_file", lambda *_a, **_k: True)
   monkeypatch.setattr(
-      st,
-      "_resolve_streaming_ingest_start",
-      lambda *_a, **_k: (False, (0, True)),
+    st,
+    "_resolve_streaming_ingest_start",
+    lambda *_a, **_k: (False, (0, True)),
   )
 
   def boom(*_a, **_k):
@@ -261,23 +284,29 @@ def test_ingest_timeout_during_streaming_parse_not_quarantined(monkeypatch, tmp_
 
   monkeypatch.setattr(st, "parse_stats_file_streaming_incremental", boom)
   monkeypatch.setattr(
-      st,
-      "_quarantine_failed_ingest_parse",
-      lambda path, error_detail=None: quarantine_calls.append((path, error_detail)) or True,
+    st,
+    "_quarantine_failed_ingest_parse",
+    lambda path, error_detail=None: (
+      quarantine_calls.append((path, error_detail)) or True
+    ),
   )
   monkeypatch.setattr(st, "update_worker_substage", lambda *_a, **_k: None)
   monkeypatch.setattr(st, "record_worker_stage", lambda *_a, **_k: None)
-  monkeypatch.setattr(st, "_log_long_ingest_timeout_budget_if_needed", lambda *_a, **_k: None)
-  monkeypatch.setattr(st, "_log_ingest_per_file_timeout", lambda *_a, **_k: None)
+  monkeypatch.setattr(
+    st, "_log_long_ingest_timeout_budget_if_needed", lambda *_a, **_k: None
+  )
+  monkeypatch.setattr(
+    st, "_log_ingest_per_file_timeout", lambda *_a, **_k: None
+  )
 
   result = st._parse_stats_file_payload(target)
   (
-      out_path,
-      payload,
-      need_archival,
-      ingest_ok,
-      elapsed_s,
-      meta,
+    out_path,
+    payload,
+    need_archival,
+    ingest_ok,
+    elapsed_s,
+    meta,
   ) = st._unpack_parse_payload_result(result)
   assert out_path == target
   assert payload is None
@@ -301,20 +330,24 @@ def test_parse_exception_still_quarantines_non_timeout(monkeypatch, tmp_path):
 
   monkeypatch.setattr(st, "close_old_connections", lambda: None)
   monkeypatch.setattr(st.cfg, "get_archive_dir_path", lambda: str(archive_dir))
-  monkeypatch.setattr(st, "parse_stats_file_path", lambda _p: ("host.hpc", "bad_raw"))
+  monkeypatch.setattr(
+    st, "parse_stats_file_path", lambda _p: ("host.hpc", "bad_raw")
+  )
   monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
   monkeypatch.setattr(st, "_should_stream_stats_file", lambda *_a, **_k: False)
   monkeypatch.setattr(
-      st,
-      "load_stats_file_lines",
-      lambda *_a, **_k: (["1778200758 job1 cn001\n"], None),
+    st,
+    "load_stats_file_lines",
+    lambda *_a, **_k: (["1778200758 job1 cn001\n"], None),
   )
   monkeypatch.setattr(
-      st,
-      "parse_first_timestamp_line",
-      lambda _lines: ("1778200758", "job1", "cn001"),
+    st,
+    "parse_first_timestamp_line",
+    lambda _lines: ("1778200758", "job1", "cn001"),
   )
-  monkeypatch.setattr(st, "head_timestamp_present_in_db", lambda *_a, **_k: False)
+  monkeypatch.setattr(
+    st, "head_timestamp_present_in_db", lambda *_a, **_k: False
+  )
   monkeypatch.setattr(st, "update_worker_substage", lambda *_a, **_k: None)
 
   def boom(*_a, **_k):
@@ -323,12 +356,12 @@ def test_parse_exception_still_quarantines_non_timeout(monkeypatch, tmp_path):
   monkeypatch.setattr(st, "parse_stats_lines", boom)
 
   (
-      out_path,
-      payload,
-      need_archival,
-      ingest_ok,
-      _elapsed,
-      meta,
+    out_path,
+    payload,
+    need_archival,
+    ingest_ok,
+    _elapsed,
+    meta,
   ) = st._unpack_parse_payload_result(st._parse_stats_file_payload(target))
   assert out_path == target
   assert payload is None
@@ -354,10 +387,12 @@ def test_log_ingest_per_file_timeout_includes_size_and_rate(capsys, tmp_path):
 
 def test_suspend_sigalrm_for_non_work_extends_deadline_monotonic(monkeypatch):
   """Non-work suspend must not require wall deadline ContextVars."""
-  from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
-      suspend_ingest_sigalrm_for_non_work_wait,
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_archive_members_coord as coord,
   )
-  from hpcperfstats.dbload.lib import sync_timedb_archive_members_coord as coord
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
+    suspend_ingest_sigalrm_for_non_work_wait,
+  )
 
   del monkeypatch
   with suspend_ingest_sigalrm_for_non_work_wait():
@@ -383,16 +418,16 @@ def test_ingest_file_outcome_timing_breakdown_tokens(monkeypatch):
   """Outcome log must emit parse / postgres / elapsed / timeout_s."""
   monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: 1657207171)
   outcome = st.IngestFileOutcome(
-      path="/archive/host/seg",
-      elapsed_s=12.5,
-      ingest_ok=True,
-      need_archival=False,
-      outcome="ingested",
-      parse_elapsed_s=1.5,
-      postgres_s=4.0,
-      timeout_s=8000.2,
-      stats_rows=10,
-      proc_rows=2,
+    path="/archive/host/seg",
+    elapsed_s=12.5,
+    ingest_ok=True,
+    need_archival=False,
+    outcome="ingested",
+    parse_elapsed_s=1.5,
+    postgres_s=4.0,
+    timeout_s=8000.2,
+    stats_rows=10,
+    proc_rows=2,
   )
   logged = []
 
@@ -420,16 +455,16 @@ def test_ingest_file_outcome_timing_breakdown_tokens(monkeypatch):
 def test_timeout_s_on_outcome_from_meta():
   """Packed meta timeout_s flows into IngestFileOutcome."""
   outcome = st._ingest_file_outcome_from_worker(
-      "/p",
-      False,
-      False,
-      10.0,
-      {
-          "outcome": "timeout",
-          "fail_reason": "write",
-          "timeout_s": 7200.0,
-          "postgres_s": 2.0,
-      },
+    "/p",
+    False,
+    False,
+    10.0,
+    {
+      "outcome": "timeout",
+      "fail_reason": "write",
+      "timeout_s": 7200.0,
+      "postgres_s": 2.0,
+    },
   )
   assert outcome.timeout_s == 7200.0
 
@@ -441,18 +476,22 @@ def test_idle_stall_raises_after_no_progress(monkeypatch):
   clock = {"t": 100.0}
   monkeypatch.setattr(st.cfg, "get_sync_ingest_stall_idle_s", lambda: 10.0)
   toks = prog.begin_ingest_progress(
-      "/raw/x", idle_s=10.0, clock=lambda: clock["t"],
+    "/raw/x",
+    idle_s=10.0,
+    clock=lambda: clock["t"],
   )
   try:
     prog.touch_ingest_progress(clock=lambda: clock["t"])
     clock["t"] = 109.0
     prog.raise_if_ingest_idle_stalled(
-        "/raw/x", clock=lambda: clock["t"],
+      "/raw/x",
+      clock=lambda: clock["t"],
     )
     clock["t"] = 111.0
     with pytest.raises(st.IngestPerFileTimeoutError) as ei:
       prog.raise_if_ingest_idle_stalled(
-          "/raw/x", clock=lambda: clock["t"],
+        "/raw/x",
+        clock=lambda: clock["t"],
       )
     assert ei.value.stage == "idle_stall"
   finally:
@@ -465,14 +504,17 @@ def test_idle_stall_progress_resets_window(monkeypatch):
 
   clock = {"t": 0.0}
   toks = prog.begin_ingest_progress(
-      "/raw/y", idle_s=10.0, clock=lambda: clock["t"],
+    "/raw/y",
+    idle_s=10.0,
+    clock=lambda: clock["t"],
   )
   try:
     clock["t"] = 9.0
     prog.touch_ingest_progress(clock=lambda: clock["t"])
     clock["t"] = 18.0
     prog.raise_if_ingest_idle_stalled(
-        "/raw/y", clock=lambda: clock["t"],
+      "/raw/y",
+      clock=lambda: clock["t"],
     )
   finally:
     prog.end_ingest_progress(toks)
@@ -498,12 +540,14 @@ def test_suspend_non_work_wait_touches_idle_progress(monkeypatch):
   """Lock/populate wait exit must reset idle clock (not charge wait as idle)."""
   from hpcperfstats.dbload.lib import sync_timedb_ingest_progress as prog
   from hpcperfstats.dbload.lib.sync_timedb_ingest_sigalrm import (
-      suspend_ingest_sigalrm_for_non_work_wait,
+    suspend_ingest_sigalrm_for_non_work_wait,
   )
 
   clock = {"t": 50.0}
   toks = prog.begin_ingest_progress(
-      "/raw/z", idle_s=100.0, clock=lambda: clock["t"],
+    "/raw/z",
+    idle_s=100.0,
+    clock=lambda: clock["t"],
   )
   try:
     prog.touch_ingest_progress(clock=lambda: clock["t"])

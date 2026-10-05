@@ -19,11 +19,11 @@ def _repo_root() -> Path:
 def _require_git(repo_root: Path) -> None:
   try:
     subprocess.run(
-        ["git", "rev-parse", "--git-dir"],
-        cwd=repo_root,
-        check=True,
-        capture_output=True,
-        text=True,
+      ["git", "rev-parse", "--git-dir"],
+      cwd=repo_root,
+      check=True,
+      capture_output=True,
+      text=True,
     )
   except (FileNotFoundError, subprocess.CalledProcessError) as exc:
     pytest.skip(f"git repository not available: {exc}")
@@ -38,22 +38,22 @@ def test_frontend_lib_utils_is_git_tracked():
   assert utils_path.is_file(), f"missing {_FRONTEND_LIB_UTILS}"
 
   check_ignore = subprocess.run(
-      ["git", "check-ignore", "-q", _FRONTEND_LIB_UTILS],
-      cwd=repo_root,
-      capture_output=True,
-      text=True,
+    ["git", "check-ignore", "-q", _FRONTEND_LIB_UTILS],
+    cwd=repo_root,
+    capture_output=True,
+    text=True,
   )
   assert check_ignore.returncode != 0, (
-      f"{_FRONTEND_LIB_UTILS} is gitignored; Docker COPY omits it"
+    f"{_FRONTEND_LIB_UTILS} is gitignored; Docker COPY omits it"
   )
 
   tracked = subprocess.check_output(
-      ["git", "ls-files", _FRONTEND_LIB_UTILS],
-      cwd=repo_root,
-      text=True,
+    ["git", "ls-files", _FRONTEND_LIB_UTILS],
+    cwd=repo_root,
+    text=True,
   ).strip()
   assert tracked == _FRONTEND_LIB_UTILS, (
-      f"{_FRONTEND_LIB_UTILS} must be tracked in git index"
+    f"{_FRONTEND_LIB_UTILS} must be tracked in git index"
   )
 
   text = utils_path.read_text(encoding="utf-8")
@@ -70,24 +70,28 @@ def test_generate_api_succeeds_without_prefilled_zod():
     pytest.skip("npm not on PATH")
 
   if not (frontend / "node_modules").is_dir():
-    pytest.skip("frontend node_modules missing; run npm ci in site/frontend first")
+    pytest.skip(
+      "frontend node_modules missing; run npm ci in site/frontend first"
+    )
 
   removed: list[Path] = []
   for ts_file in zod_dir.glob("*/*.ts"):
     ts_file.unlink()
     removed.append(ts_file)
-  assert removed, "expected prefilled generated-zod/*.ts to delete for regression"
+  assert removed, (
+    "expected prefilled generated-zod/*.ts to delete for regression"
+  )
 
   proc = subprocess.run(
-      ["npm", "run", "generate:api"],
-      cwd=frontend,
-      capture_output=True,
-      text=True,
-      timeout=120,
+    ["npm", "run", "generate:api"],
+    cwd=frontend,
+    capture_output=True,
+    text=True,
+    timeout=120,
   )
   assert proc.returncode == 0, (
-      "generate:api failed on clean generated-zod tree\n"
-      f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    "generate:api failed on clean generated-zod tree\n"
+    f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
   )
 
   recreated = list(zod_dir.glob("*/*.ts"))
@@ -95,4 +99,4 @@ def test_generate_api_succeeds_without_prefilled_zod():
 
   combined = proc.stdout + proc.stderr
   assert "Failed to parse provided mutator function" not in combined
-  assert "Could not resolve \"./generated-zod/" not in combined
+  assert 'Could not resolve "./generated-zod/' not in combined

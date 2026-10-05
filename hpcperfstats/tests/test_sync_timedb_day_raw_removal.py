@@ -11,21 +11,21 @@ import pytest
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-    atomic_seal_tar_to_zst,
-    daily_tar_path_from_compressed,
-    get_tar_member_name,
-    validate_sealed_daily_archive_for_raw_removal,
+  atomic_seal_tar_to_zst,
+  daily_tar_path_from_compressed,
+  get_tar_member_name,
+  validate_sealed_daily_archive_for_raw_removal,
 )
 from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
-    PHASE_DELETING,
-    PHASE_DONE,
-    PHASE_VERIFICATION_COMPLETE,
-    PHASE_VERIFYING,
-    VERIFY_STAGE_POST_SEAL,
-    VERIFY_STAGE_PRE_SEAL,
-    DayRawRemovalCoordinator,
-    _save_manifest,
-    day_removal_manifest_path,
+  PHASE_DELETING,
+  PHASE_DONE,
+  PHASE_VERIFICATION_COMPLETE,
+  PHASE_VERIFYING,
+  VERIFY_STAGE_POST_SEAL,
+  VERIFY_STAGE_PRE_SEAL,
+  DayRawRemovalCoordinator,
+  _save_manifest,
+  day_removal_manifest_path,
 )
 
 
@@ -42,31 +42,35 @@ def _make_closed_segment(tmp_path, arch_suffix, day):
 def _seal_day(tmp_path, seg, day):
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir(exist_ok=True)
-  zst_key = str(tgz_dir / ("%04d-%02d-%02d.tar.zst" % (day.year, day.month, day.day)))
+  zst_key = str(
+    tgz_dir / ("%04d-%02d-%02d.tar.zst" % (day.year, day.month, day.day))
+  )
   tar_path = daily_tar_path_from_compressed(zst_key)
   arcname = get_tar_member_name(str(seg))
   with tarfile.open(tar_path, "w") as tf:
     tf.add(str(seg), arcname=arcname)
   atomic_seal_tar_to_zst(
-      tar_path,
-      zst_key,
-      num_threads=1,
-      compress_level=6,
-      keep_uncompressed_tar=True,
-      log_fn=None,
+    tar_path,
+    zst_key,
+    num_threads=1,
+    compress_level=6,
+    keep_uncompressed_tar=True,
+    log_fn=None,
   )
   assert validate_sealed_daily_archive_for_raw_removal(zst_key, log_fn=None)[0]
   return tar_path, zst_key
 
 
-def _make_coordinator(tmp_path, arch_suffix="cluster.integration.test", **kwargs):
+def _make_coordinator(
+  tmp_path, arch_suffix="cluster.integration.test", **kwargs
+):
   defaults = {
-      "archive_data_dir": str(tmp_path),
-      "host_name_ext": arch_suffix,
-      "tgz_archive_dir": str(tmp_path / "daily"),
-      "log_fn": MagicMock(),
-      "get_quarantine_skip_paths": lambda: set(),
-      "ingest_ready_fn": lambda _p: True,
+    "archive_data_dir": str(tmp_path),
+    "host_name_ext": arch_suffix,
+    "tgz_archive_dir": str(tmp_path / "daily"),
+    "log_fn": MagicMock(),
+    "get_quarantine_skip_paths": lambda: set(),
+    "ingest_ready_fn": lambda _p: True,
   }
   defaults.update(kwargs)
   coord = DayRawRemovalCoordinator(**defaults)
@@ -89,13 +93,16 @@ def test_day_raw_removal_verifies_without_deleting(tmp_path, monkeypatch):
 
 
 def test_day_raw_removal_apply_batch_delete_removes_verified_and_tar(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   day = datetime(2022, 6, 2)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, _zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path)
-  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  monkeypatch.setattr(
+    cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0
+  )
   state = coord._get_or_create_day(tar_path)
   state._verify_body()
   coord.begin_deleting(tar_path)
@@ -107,14 +114,17 @@ def test_day_raw_removal_apply_batch_delete_removes_verified_and_tar(
 
 
 def test_apply_batch_delete_deletes_when_only_in_paths_pending_delete(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """Production skip union includes paths_pending_delete; must not self-block delete."""
   day = datetime(2022, 6, 14)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path)
-  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  monkeypatch.setattr(
+    cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0
+  )
   state = coord._get_or_create_day(tar_path)
   seg_path = str(seg)
   state._record_entry(seg_path, zst, "verified", "verified")
@@ -132,7 +142,9 @@ def test_apply_batch_delete_deletes_when_only_in_paths_pending_delete(
   assert not any("delete defer path=" in line for line in log_lines)
 
 
-def test_apply_batch_delete_skips_path_in_quarantine_skip_paths(tmp_path, monkeypatch):
+def test_apply_batch_delete_skips_path_in_quarantine_skip_paths(
+  tmp_path, monkeypatch
+):
   """Verified path in quarantine skip set must not be deleted mid-chunk."""
   day = datetime(2022, 6, 3)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
@@ -140,10 +152,12 @@ def test_apply_batch_delete_skips_path_in_quarantine_skip_paths(tmp_path, monkey
   skip_path = str(seg)
   log_lines = []
   coord = _make_coordinator(
-      tmp_path,
-      log_fn=lambda msg, **kwargs: log_lines.append(msg),
+    tmp_path,
+    log_fn=lambda msg, **kwargs: log_lines.append(msg),
   )
-  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  monkeypatch.setattr(
+    cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0
+  )
   state = coord._get_or_create_day(tar_path)
   state._record_entry(skip_path, zst, "verified", "verified")
   with state._lock:
@@ -158,20 +172,24 @@ def test_apply_batch_delete_skips_path_in_quarantine_skip_paths(tmp_path, monkey
   entry = state._manifest["entries"][skip_path]
   assert entry.get("delete_deferred") == "active_ingest"
   assert any(
-      "delete defer" in line and "active_ingest" in line and "skip_class=" in line
-      for line in log_lines
+    "delete defer" in line and "active_ingest" in line and "skip_class=" in line
+    for line in log_lines
   )
 
 
-def test_apply_batch_delete_deletes_when_not_in_skip_paths(tmp_path, monkeypatch):
+def test_apply_batch_delete_deletes_when_not_in_skip_paths(
+  tmp_path, monkeypatch
+):
   day = datetime(2022, 6, 3)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(
-      tmp_path,
-      get_quarantine_skip_paths=lambda: {"/nonexistent/active/ingest/path"},
+    tmp_path,
+    get_quarantine_skip_paths=lambda: {"/nonexistent/active/ingest/path"},
   )
-  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  monkeypatch.setattr(
+    cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0
+  )
   state = coord._get_or_create_day(tar_path)
   state._record_entry(str(seg), zst, "verified", "verified")
   with state._lock:
@@ -183,12 +201,16 @@ def test_apply_batch_delete_deletes_when_not_in_skip_paths(tmp_path, monkeypatch
   assert not seg.is_file()
 
 
-def test_day_raw_removal_apply_batch_delete_skips_fingerprint_changed(tmp_path, monkeypatch):
+def test_day_raw_removal_apply_batch_delete_skips_fingerprint_changed(
+  tmp_path, monkeypatch
+):
   day = datetime(2022, 6, 3)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, _zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path)
-  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  monkeypatch.setattr(
+    cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0
+  )
   state = coord._get_or_create_day(tar_path)
   state._verify_body()
   coord.begin_deleting(tar_path)
@@ -208,7 +230,9 @@ def test_day_raw_removal_manifest_persists_under_archive_dir(tmp_path):
   coord = _make_coordinator(tmp_path)
   state = coord._get_or_create_day(tar_path)
   state._manifest["phase"] = PHASE_VERIFYING
-  from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import _save_manifest
+  from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
+    _save_manifest,
+  )
 
   _save_manifest(state._manifest_path, state._manifest)
   manifest_file = day_removal_manifest_path(str(tmp_path), day.date())
@@ -237,10 +261,12 @@ def test_start_async_verify_runs_verify_only(tmp_path, monkeypatch):
   tar_path, _zst = _seal_day(tmp_path, seg, day)
   completed = []
   coord = _make_coordinator(
-      tmp_path,
-      on_pipeline_complete=lambda tar: completed.append(tar),
+    tmp_path,
+    on_pipeline_complete=lambda tar: completed.append(tar),
   )
-  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  monkeypatch.setattr(
+    cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0
+  )
   coord.start_async_verify(tar_path)
   state = coord._get_or_create_day(tar_path)
   state._pipeline_future.result(timeout=10.0)
@@ -299,7 +325,9 @@ def test_done_manifest_resets_when_retryable_skips_remain_on_disk(tmp_path):
   assert seg.is_file()
 
 
-def test_any_active_raw_removal_work_false_when_only_retryable_skips_remain(tmp_path):
+def test_any_active_raw_removal_work_false_when_only_retryable_skips_remain(
+  tmp_path,
+):
   day = datetime(2022, 6, 12)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, _zst = _seal_day(tmp_path, seg, day)
@@ -320,7 +348,8 @@ def test_any_active_raw_removal_work_false_when_only_retryable_skips_remain(tmp_
 
 
 def test_verification_complete_all_verified_deleted_retryable_skips_handoff(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """June-4 shape: verified deletes done; retryable skips on disk need handoff."""
   day = datetime(2026, 6, 4)
@@ -333,12 +362,16 @@ def test_verification_complete_all_verified_deleted_retryable_skips_handoff(
   os.utime(retry_seg, (ts, ts))
   tar_path, zst = _seal_day(tmp_path, verified_seg, day)
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
-  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  monkeypatch.setattr(
+    cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0
+  )
   state = coord._get_or_create_day(tar_path)
   verified_path = str(verified_seg)
   retry_path = str(retry_seg)
   state._record_entry(verified_path, zst, "verified", "verified")
-  state._record_entry(retry_path, zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  state._record_entry(
+    retry_path, zst, "skipped_not_in_archive", "not_in_sealed_archive"
+  )
   with state._lock:
     state._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
     state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
@@ -363,7 +396,8 @@ def test_verification_complete_all_verified_deleted_retryable_skips_handoff(
 
 
 def test_mixed_not_in_archive_and_quarantine_marks_done_waiting_on_ingest(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """06-07 C2: mixed retryable + quarantine must not stay verification_complete."""
   day = datetime(2026, 6, 7)
@@ -382,13 +416,17 @@ def test_mixed_not_in_archive_and_quarantine_marks_done_waiting_on_ingest(
   os.utime(quar_seg, (ts_quar, ts_quar))
   tar_path, zst = _seal_day(tmp_path, verified_seg, day)
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
-  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  monkeypatch.setattr(
+    cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0
+  )
   state = coord._get_or_create_day(tar_path)
   verified_path = str(verified_seg)
   retry_path = str(retry_seg)
   quar_path = str(quar_seg)
   state._record_entry(verified_path, zst, "verified", "verified")
-  state._record_entry(retry_path, zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  state._record_entry(
+    retry_path, zst, "skipped_not_in_archive", "not_in_sealed_archive"
+  )
   state._record_entry(quar_path, zst, "skipped_quarantine", "quarantine")
   with state._lock:
     state._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
@@ -437,7 +475,9 @@ def test_promote_phase_when_verifying_but_post_seal_complete(tmp_path):
   tar_path, zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
   state = coord._get_or_create_day(tar_path)
-  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  state._record_entry(
+    str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive"
+  )
   with state._lock:
     state._manifest["phase"] = PHASE_VERIFYING
     state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
@@ -459,7 +499,9 @@ def test_promote_phase_when_verifying_but_pre_seal_complete_sealed(tmp_path):
   tar_path, zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
   state = coord._get_or_create_day(tar_path)
-  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  state._record_entry(
+    str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive"
+  )
   with state._lock:
     state._manifest["phase"] = PHASE_VERIFYING
     state._manifest["verify_stage"] = VERIFY_STAGE_PRE_SEAL
@@ -480,7 +522,9 @@ def test_reopen_stale_done_clears_verify_stage(tmp_path):
   tar_path, zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
   state = coord._get_or_create_day(tar_path)
-  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  state._record_entry(
+    str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive"
+  )
   with state._lock:
     state._manifest["phase"] = PHASE_DONE
     state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
@@ -494,7 +538,8 @@ def test_reopen_stale_done_clears_verify_stage(tmp_path):
 
 
 def test_apply_batch_delete_marks_done_when_only_retryable_skips_remain(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """F15: only-retryable remaining must not PHASE_DONE; handoff instead.
 
@@ -505,7 +550,9 @@ def test_apply_batch_delete_marks_done_when_only_retryable_skips_remain(
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, _zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
-  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  monkeypatch.setattr(
+    cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0
+  )
   state = coord._get_or_create_day(tar_path)
   state._verify_body()
   assert not coord.paths_pending_delete()
@@ -515,19 +562,27 @@ def test_apply_batch_delete_marks_done_when_only_retryable_skips_remain(
   # F15: retryable closed raw remains → refuse PHASE_DONE.
   assert coord.phase(tar_path) != PHASE_DONE
   assert coord.phase(tar_path) == PHASE_DELETING
-  assert state._needs_retry_after_ingest() or coord.should_handoff_to_ingest(tar_path)
+  assert state._needs_retry_after_ingest() or coord.should_handoff_to_ingest(
+    tar_path
+  )
   assert seg.is_file()
 
 
-def test_skip_stuck_older_day_allows_younger_delete_in_one_pass(tmp_path, monkeypatch):
+def test_skip_stuck_older_day_allows_younger_delete_in_one_pass(
+  tmp_path, monkeypatch
+):
   day_old = datetime(2022, 6, 10)
   day_young = datetime(2022, 6, 11)
   seg_old = _make_closed_segment(tmp_path, "cluster.integration.test", day_old)
-  seg_young = _make_closed_segment(tmp_path, "cluster.integration.test", day_young)
+  seg_young = _make_closed_segment(
+    tmp_path, "cluster.integration.test", day_young
+  )
   tar_old, _zst_old = _seal_day(tmp_path, seg_old, day_old)
   tar_young, _zst_young = _seal_day(tmp_path, seg_young, day_young)
   coord = _make_coordinator(tmp_path)
-  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  monkeypatch.setattr(
+    cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0
+  )
   coord._get_or_create_day(tar_old)._verify_body()
   coord._get_or_create_day(tar_young)._verify_body()
   coord.begin_deleting(tar_old)
@@ -547,9 +602,9 @@ def test_skip_stuck_older_day_allows_younger_delete_in_one_pass(tmp_path, monkey
     deleted = coord.apply_batch_delete(tar_path)
     pass_log.append((tar_path, deleted))
     if (
-        deleted == 0
-        and coord.needs_delete_phase(tar_path)
-        and not coord.delete_phase_done(tar_path)
+      deleted == 0
+      and coord.needs_delete_phase(tar_path)
+      and not coord.delete_phase_done(tar_path)
     ):
       continue
 
@@ -561,7 +616,6 @@ def test_skip_stuck_older_day_allows_younger_delete_in_one_pass(tmp_path, monkey
   assert not coord.delete_phase_done(tar_old)
   assert seg_old.is_file()
   assert not seg_young.is_file()
-
 
 
 def test_try_finish_tar_drop_drops_tar_when_raw_gone_and_phase_done(tmp_path):
@@ -590,13 +644,16 @@ def test_try_finish_tar_drop_drops_tar_when_raw_gone_and_phase_done(tmp_path):
 
 
 def test_apply_batch_delete_drops_tar_when_retryable_manifest_but_raw_gone(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   day = datetime(2022, 6, 15)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, _zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
-  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  monkeypatch.setattr(
+    cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0
+  )
   state = coord._get_or_create_day(tar_path)
   state._verify_body()
   seg.unlink()
@@ -612,7 +669,9 @@ def test_handoff_paths_when_only_not_in_sealed_archive(tmp_path):
   tar_path, zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
   state = coord._get_or_create_day(tar_path)
-  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  state._record_entry(
+    str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive"
+  )
   with state._lock:
     state._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
     state._manifest["skipped_count"] = 1
@@ -631,12 +690,14 @@ def test_complete_handoff_marks_done_and_invokes_callback(tmp_path):
     handoffs.append((tar_norm, list(paths), reason))
 
   coord = _make_coordinator(
-      tmp_path,
-      ingest_ready_fn=lambda _p: False,
-      on_handoff_to_ingest=_on_handoff,
+    tmp_path,
+    ingest_ready_fn=lambda _p: False,
+    on_handoff_to_ingest=_on_handoff,
   )
   state = coord._get_or_create_day(tar_path)
-  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  state._record_entry(
+    str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive"
+  )
   with state._lock:
     state._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
     state._manifest["skipped_count"] = 1
@@ -654,7 +715,9 @@ def test_discover_manifest_handoffs_reads_persisted_manifest(tmp_path):
   tar_path, zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
   state = coord._get_or_create_day(tar_path)
-  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  state._record_entry(
+    str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive"
+  )
   with state._lock:
     state._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
     state._manifest["skipped_count"] = 1
@@ -673,10 +736,10 @@ def test_should_handoff_manifest_fast_when_phase_done(tmp_path, monkeypatch):
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
   state = coord._get_or_create_day(tar_path)
   state._record_entry(
-      str(seg),
-      zst,
-      "skipped_not_in_archive",
-      "not_in_sealed_archive",
+    str(seg),
+    zst,
+    "skipped_not_in_archive",
+    "not_in_sealed_archive",
   )
   with state._lock:
     state._manifest["phase"] = PHASE_DONE
@@ -685,17 +748,21 @@ def test_should_handoff_manifest_fast_when_phase_done(tmp_path, monkeypatch):
     _save_manifest(state._manifest_path, state._manifest)
 
   def _fail_full_scan(*_args, **_kwargs):
-    pytest.fail("handoff must not trigger full remaining-raw scan when phase=done")
+    pytest.fail(
+      "handoff must not trigger full remaining-raw scan when phase=done"
+    )
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
-      _fail_full_scan,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+    _fail_full_scan,
   )
   assert coord.should_handoff_to_ingest(tar_path)
   assert state.handoff_paths_for_ingest() == [str(seg)]
 
 
-def test_should_handoff_blocked_when_phase_done_verified_on_disk(tmp_path, monkeypatch):
+def test_should_handoff_blocked_when_phase_done_verified_on_disk(
+  tmp_path, monkeypatch
+):
   day = datetime(2022, 5, 23)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, zst = _seal_day(tmp_path, seg, day)
@@ -709,8 +776,10 @@ def test_should_handoff_blocked_when_phase_done_verified_on_disk(tmp_path, monke
     _save_manifest(state._manifest_path, state._manifest)
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
-      lambda *_a, **_k: pytest.fail("manifest-fast handoff must not need full scan"),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+    lambda *_a, **_k: pytest.fail(
+      "manifest-fast handoff must not need full scan"
+    ),
   )
   assert not coord.should_handoff_to_ingest(tar_path)
   assert state.handoff_paths_for_ingest() == []
@@ -732,10 +801,10 @@ def test_handoff_paths_manifest_fast_many_entries(tmp_path, monkeypatch):
   state = coord._get_or_create_day(tar_path)
   for seg in segs:
     state._record_entry(
-        str(seg),
-        zst,
-        "skipped_not_in_archive",
-        "not_in_sealed_archive",
+      str(seg),
+      zst,
+      "skipped_not_in_archive",
+      "not_in_sealed_archive",
     )
   with state._lock:
     state._manifest["phase"] = PHASE_DONE
@@ -744,8 +813,10 @@ def test_handoff_paths_manifest_fast_many_entries(tmp_path, monkeypatch):
     _save_manifest(state._manifest_path, state._manifest)
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
-      lambda *_a, **_k: pytest.fail("manifest-fast handoff must not need full scan"),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+    lambda *_a, **_k: pytest.fail(
+      "manifest-fast handoff must not need full scan"
+    ),
   )
   paths = state.handoff_paths_for_ingest()
   assert len(paths) == len(segs)
@@ -759,7 +830,7 @@ def test_build_remaining_uses_snapshot_when_wired(tmp_path, monkeypatch):
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, zst = _seal_day(tmp_path, seg, day)
   snapshot = SimpleNamespace(
-      remaining_raw_by_gz={zst: [str(seg)]},
+    remaining_raw_by_gz={zst: [str(seg)]},
   )
   captured = {}
 
@@ -768,12 +839,12 @@ def test_build_remaining_uses_snapshot_when_wired(tmp_path, monkeypatch):
     return {zst: [str(seg)]}
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
-      _capture_build,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+    _capture_build,
   )
   coord = _make_coordinator(
-      tmp_path,
-      get_maintenance_snapshot=lambda: snapshot,
+    tmp_path,
+    get_maintenance_snapshot=lambda: snapshot,
   )
   state = coord._get_or_create_day(tar_path)
   closed = state._closed_raw_paths_on_disk()
@@ -782,22 +853,25 @@ def test_build_remaining_uses_snapshot_when_wired(tmp_path, monkeypatch):
 
 
 def test_verify_uses_provided_sealed_members_without_validation_scan(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   day = datetime(2022, 6, 22)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
-  tar_path, zst = _seal_day(tmp_path, seg, day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: True)
   validate_calls = []
 
   def _fail_validate(*_a, **_k):
     validate_calls.append(True)
-    raise AssertionError("validate_sealed_daily_archive_for_raw_removal must not run")
+    raise AssertionError(
+      "validate_sealed_daily_archive_for_raw_removal must not run"
+    )
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
-      "validate_sealed_daily_archive_for_raw_removal",
-      _fail_validate,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
+    "validate_sealed_daily_archive_for_raw_removal",
+    _fail_validate,
   )
   arcname = get_tar_member_name(str(seg))
   sealed_members = {arcname: seg.stat().st_size}
@@ -811,7 +885,7 @@ def test_verify_uses_provided_sealed_members_without_validation_scan(
 def test_run_supervisor_delete_pass_tar_drop_before_chunk_wait():
   """Tar-drop must run even when batch delete waits on chunk_in_progress."""
   from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
-      run_supervisor_day_raw_removal_delete_pass,
+    run_supervisor_day_raw_removal_delete_pass,
   )
 
   delete_tar = "/tmp/daily/2025-12-03.tar"
@@ -869,14 +943,14 @@ def test_run_supervisor_delete_pass_tar_drop_before_chunk_wait():
       return True
 
   spin = run_supervisor_day_raw_removal_delete_pass(
-      _FakeDayRaw(),
-      _FakeAsync(),
-      chunk_in_progress=True,
-      finalize_day_close_delete=lambda _t: None,
-      sleep_fn=lambda _s: None,
-      log_chunk_wait=lambda blocking_tar, n: chunk_wait_logs.append(
-          (blocking_tar, n),
-      ),
+    _FakeDayRaw(),
+    _FakeAsync(),
+    chunk_in_progress=True,
+    finalize_day_close_delete=lambda _t: None,
+    sleep_fn=lambda _s: None,
+    log_chunk_wait=lambda blocking_tar, n: chunk_wait_logs.append(
+      (blocking_tar, n),
+    ),
   )
   assert spin is True
   assert tar_drop_calls == [tar_drop_tar]
@@ -895,9 +969,9 @@ def test_discover_closed_raw_handoffs_phase_done_verified(tmp_path):
     handoffs.append((tar_norm, list(paths), reason))
 
   coord = _make_coordinator(
-      tmp_path,
-      ingest_ready_fn=lambda _p: True,
-      on_handoff_to_ingest=_on_handoff,
+    tmp_path,
+    ingest_ready_fn=lambda _p: True,
+    on_handoff_to_ingest=_on_handoff,
   )
   state = coord._get_or_create_day(tar_path)
   state._record_entry(str(seg), zst, "verified", "verified")
@@ -908,9 +982,9 @@ def test_discover_closed_raw_handoffs_phase_done_verified(tmp_path):
     _save_manifest(state._manifest_path, state._manifest)
 
   coord2 = _make_coordinator(
-      tmp_path,
-      ingest_ready_fn=lambda _p: True,
-      on_handoff_to_ingest=_on_handoff,
+    tmp_path,
+    ingest_ready_fn=lambda _p: True,
+    on_handoff_to_ingest=_on_handoff,
   )
   found = coord2.discover_closed_raw_on_disk_handoffs()
   assert len(found) == 1
@@ -928,8 +1002,8 @@ def test_discover_closed_raw_handoffs_phase_done_verified(tmp_path):
 
   coord2.kick_closed_raw_unblock = _track_kick
   requeued = coord2.requeue_closed_raw_paths_for_ingest(
-      tar_path,
-      reason="unit_closed_raw",
+    tar_path,
+    reason="unit_closed_raw",
   )
   assert requeued == []
   assert handoffs == []
@@ -973,13 +1047,16 @@ def test_verify_kick_noop_regression_phase_done_uses_delete_reopen(tmp_path):
     return original_verify(tar_path, **kwargs)
 
   coord.start_async_verify = _track_verify
-  assert coord.kick_closed_raw_unblock(tar_path, reason="unit") == "delete_reopen"
+  assert (
+    coord.kick_closed_raw_unblock(tar_path, reason="unit") == "delete_reopen"
+  )
   assert verify_calls == []
   assert coord.phase(tar_path) == PHASE_DELETING
 
 
 def test_closed_raw_handoff_manifest_fast_phase_done_many_retryable_skip(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   day = datetime(2022, 5, 22)
   host = tmp_path / "n.cluster.integration.test"
@@ -996,10 +1073,10 @@ def test_closed_raw_handoff_manifest_fast_phase_done_many_retryable_skip(
   state = coord._get_or_create_day(tar_path)
   for seg in segs:
     state._record_entry(
-        str(seg),
-        zst,
-        "skipped_not_in_archive",
-        "not_in_sealed_archive",
+      str(seg),
+      zst,
+      "skipped_not_in_archive",
+      "not_in_sealed_archive",
     )
   with state._lock:
     state._manifest["phase"] = PHASE_DONE
@@ -1008,8 +1085,10 @@ def test_closed_raw_handoff_manifest_fast_phase_done_many_retryable_skip(
     _save_manifest(state._manifest_path, state._manifest)
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
-      lambda *_a, **_k: pytest.fail("manifest-fast closed raw must not full-scan when phase=done"),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+    lambda *_a, **_k: pytest.fail(
+      "manifest-fast closed raw must not full-scan when phase=done"
+    ),
   )
   coord2 = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
   found = coord2.discover_closed_raw_on_disk_handoffs()
@@ -1021,7 +1100,8 @@ def test_closed_raw_handoff_manifest_fast_phase_done_many_retryable_skip(
 
 
 def test_branch_c_reclassify_under_deleting_upgrades_before_handoff(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """Branch C (hpcperfstats03): phase=deleting + verified drained + sticky retryable.
 
@@ -1044,7 +1124,9 @@ def test_branch_c_reclassify_under_deleting_upgrades_before_handoff(
     tf.add(str(segs[1]), arcname=get_tar_member_name(str(segs[1])))
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: True)
   monkeypatch.setattr(
-      cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0,
+    cfg,
+    "get_sync_day_close_raw_removal_max_deletes_per_pass",
+    lambda: 0,
   )
   state = coord._get_or_create_day(tar_path)
   # Verified path already deleted (verified_not_deleted=0).
@@ -1054,10 +1136,10 @@ def test_branch_c_reclassify_under_deleting_upgrades_before_handoff(
     state._manifest["verified_count"] = 1
   # Sticky retryable still on disk but now in tar + DB-ready.
   state._record_entry(
-      str(segs[1]),
-      zst,
-      "skipped_not_in_archive",
-      "not_in_sealed_archive",
+    str(segs[1]),
+    zst,
+    "skipped_not_in_archive",
+    "not_in_sealed_archive",
   )
   with state._lock:
     state._manifest["phase"] = PHASE_DELETING
@@ -1073,7 +1155,7 @@ def test_branch_c_reclassify_under_deleting_upgrades_before_handoff(
   deleted = coord.apply_batch_delete(tar_path)
   entry = state._manifest["entries"][str(segs[1])]
   assert entry["status"] == "verified", (
-      "Branch C: reclassify under deleting must upgrade retryable before handoff"
+    "Branch C: reclassify under deleting must upgrade retryable before handoff"
   )
   assert deleted == 1
   assert not segs[1].is_file()
@@ -1104,9 +1186,9 @@ def test_skip_only_deleting_not_in_tar_handoffs_not_freeze(tmp_path):
     handoffs.append((tar_norm, list(paths), reason))
 
   coord = _make_coordinator(
-      tmp_path,
-      ingest_ready_fn=lambda _p: False,
-      on_handoff_to_ingest=_on_handoff,
+    tmp_path,
+    ingest_ready_fn=lambda _p: False,
+    on_handoff_to_ingest=_on_handoff,
   )
   state = coord._get_or_create_day(tar_path)
   state._record_entry(str(seg0), zst, "verified", "verified")
@@ -1114,10 +1196,10 @@ def test_skip_only_deleting_not_in_tar_handoffs_not_freeze(tmp_path):
     state._manifest["entries"][str(seg0)]["deleted"] = True
     state._manifest["verified_count"] = 1
   state._record_entry(
-      str(seg1),
-      zst,
-      "skipped_not_in_archive",
-      "not_in_sealed_archive",
+    str(seg1),
+    zst,
+    "skipped_not_in_archive",
+    "not_in_sealed_archive",
   )
   with state._lock:
     state._manifest["phase"] = PHASE_DELETING
@@ -1146,7 +1228,7 @@ def test_skip_only_deleting_not_in_tar_handoffs_not_freeze(tmp_path):
 
 
 def test_reclassify_retryable_skip_upgrades_to_verified_when_tar_member(
-    tmp_path,
+  tmp_path,
 ):
   """Reproduce hpcperfstats03 shape: phase=done + skipped_not_in_archive on disk in tar."""
   day = datetime(2026, 5, 30)
@@ -1169,10 +1251,10 @@ def test_reclassify_retryable_skip_upgrades_to_verified_when_tar_member(
     state._manifest["entries"][str(segs[0])]["deleted"] = True
     state._manifest["verified_count"] = 1
   state._record_entry(
-      str(segs[1]),
-      zst,
-      "skipped_not_in_archive",
-      "not_in_sealed_archive",
+    str(segs[1]),
+    zst,
+    "skipped_not_in_archive",
+    "not_in_sealed_archive",
   )
   with state._lock:
     state._manifest["phase"] = PHASE_DONE
@@ -1194,7 +1276,9 @@ def test_record_entry_skip_to_verified_adjusts_counts(tmp_path):
   tar_path, zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path)
   state = coord._get_or_create_day(tar_path)
-  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  state._record_entry(
+    str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive"
+  )
   assert state._manifest["skipped_count"] == 1
   assert state._manifest["verified_count"] == 0
   state._record_entry(str(seg), zst, "verified", "verified")
@@ -1207,9 +1291,13 @@ def test_reclassify_then_batch_delete_clears_blockers(tmp_path, monkeypatch):
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: True)
-  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0)
+  monkeypatch.setattr(
+    cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 0
+  )
   state = coord._get_or_create_day(tar_path)
-  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  state._record_entry(
+    str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive"
+  )
   with state._lock:
     state._manifest["phase"] = PHASE_DONE
     state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
@@ -1230,19 +1318,25 @@ def test_kick_closed_raw_reclassify_opens_delete(tmp_path):
   tar_path, zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: True)
   state = coord._get_or_create_day(tar_path)
-  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  state._record_entry(
+    str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive"
+  )
   with state._lock:
     state._manifest["phase"] = PHASE_DONE
     state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
     state._manifest["completed_at"] = time.time()
     _save_manifest(state._manifest_path, state._manifest)
 
-  assert coord.kick_closed_raw_unblock(tar_path, reason="unit") == "delete_reopen"
+  assert (
+    coord.kick_closed_raw_unblock(tar_path, reason="unit") == "delete_reopen"
+  )
   assert coord.phase(tar_path) == PHASE_DELETING
   assert state._manifest["entries"][str(seg)]["status"] == "verified"
 
 
-def test_has_active_raw_removal_work_false_when_only_verified_pending_delete(tmp_path):
+def test_has_active_raw_removal_work_false_when_only_verified_pending_delete(
+  tmp_path,
+):
   day = datetime(2025, 12, 3)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, _zst = _seal_day(tmp_path, seg, day)
@@ -1256,7 +1350,7 @@ def test_has_active_raw_removal_work_false_when_only_verified_pending_delete(tmp
 
 def test_batch_delete_runs_during_chunk_when_calendar_disjoint():
   from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
-      run_supervisor_day_raw_removal_delete_pass,
+    run_supervisor_day_raw_removal_delete_pass,
   )
 
   delete_tar = "/tmp/daily/2025-12-03.tar"
@@ -1312,15 +1406,15 @@ def test_batch_delete_runs_during_chunk_when_calendar_disjoint():
       return True
 
   spin = run_supervisor_day_raw_removal_delete_pass(
-      _FakeDayRaw(),
-      _FakeAsync(),
-      chunk_in_progress=True,
-      chunk_calendar_day_hint="2026-05-26",
-      finalize_day_close_delete=lambda _t: None,
-      sleep_fn=lambda _s: None,
-      log_chunk_wait=lambda blocking_tar, n: chunk_wait_logs.append(
-          (blocking_tar, n),
-      ),
+    _FakeDayRaw(),
+    _FakeAsync(),
+    chunk_in_progress=True,
+    chunk_calendar_day_hint="2026-05-26",
+    finalize_day_close_delete=lambda _t: None,
+    sleep_fn=lambda _s: None,
+    log_chunk_wait=lambda blocking_tar, n: chunk_wait_logs.append(
+      (blocking_tar, n),
+    ),
   )
   assert spin is True
   assert delete_calls == [delete_tar]
@@ -1328,11 +1422,12 @@ def test_batch_delete_runs_during_chunk_when_calendar_disjoint():
 
 
 def test_ghost_deleted_manifest_path_on_disk_triggers_delete_retry(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   day = datetime(2026, 5, 26)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
-  tar_path, zst = _seal_day(tmp_path, seg, day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path)
   state = coord._get_or_create_day(tar_path)
   state._verify_body()
@@ -1357,12 +1452,13 @@ def test_ghost_deleted_manifest_path_on_disk_triggers_delete_retry(
 
 
 def test_ghost_deleted_manifest_path_on_disk_triggers_delete_retry_while_phase_deleting(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """H20b: ghost retry must run while phase=deleting, not only phase=done."""
   day = datetime(2026, 5, 26)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
-  tar_path, zst = _seal_day(tmp_path, seg, day)
+  tar_path, _zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path)
   state = coord._get_or_create_day(tar_path)
   state._verify_body()
@@ -1395,10 +1491,10 @@ def test_h20c_reclassify_blocking_while_deleting_fingerprint(tmp_path):
   state = coord._get_or_create_day(tar_path)
   seg_str = str(seg)
   state._record_entry(
-      seg_str,
-      zst,
-      "skipped_fingerprint_changed",
-      "fingerprint_changed_before_delete",
+    seg_str,
+    zst,
+    "skipped_fingerprint_changed",
+    "fingerprint_changed_before_delete",
   )
   with state._lock:
     state._manifest["phase"] = PHASE_DELETING
@@ -1422,43 +1518,49 @@ def test_kick_closed_raw_unblock_no_deadlock_retryable_only(tmp_path):
   """Retryable-only must handoff (not begin_deleting) and stay fast (no lock re-entry)."""
   handoffs = []
   retry_day = datetime(2026, 5, 23)
-  retry_seg = _make_closed_segment(tmp_path, "cluster.integration.test", retry_day)
+  retry_seg = _make_closed_segment(
+    tmp_path, "cluster.integration.test", retry_day
+  )
   retry_tar_path, retry_zst = _seal_day(tmp_path, retry_seg, retry_day)
   coord = _make_coordinator(
-      tmp_path,
-      on_handoff_to_ingest=lambda tar_norm, paths, reason: handoffs.append(
-          (tar_norm, list(paths), reason),
-      ),
-      log_fn=lambda *_a, **_k: None,
-      ingest_ready_fn=lambda _p: False,
+    tmp_path,
+    on_handoff_to_ingest=lambda tar_norm, paths, reason: handoffs.append(
+      (tar_norm, list(paths), reason),
+    ),
+    log_fn=lambda *_a, **_k: None,
+    ingest_ready_fn=lambda _p: False,
   )
   state = coord._get_or_create_day(retry_tar_path)
   state._record_entry(
-      str(retry_seg),
-      retry_zst,
-      "skipped_not_in_archive",
-      "not_in_sealed_archive",
+    str(retry_seg),
+    retry_zst,
+    "skipped_not_in_archive",
+    "not_in_sealed_archive",
   )
   with state._lock:
     state._manifest["phase"] = PHASE_DONE
     _save_manifest(state._manifest_path, state._manifest)
 
   start = time.time()
-  assert coord.kick_closed_raw_unblock(retry_tar_path, reason="unit") == "handoff"
+  assert (
+    coord.kick_closed_raw_unblock(retry_tar_path, reason="unit") == "handoff"
+  )
   assert time.time() - start < 0.5
   assert coord.phase(retry_tar_path) == PHASE_DONE
   assert handoffs and str(retry_seg) in handoffs[0][1]
 
 
-def test_kick_closed_raw_unblock_empty_handoff_advances_when_has_closed(tmp_path):
+def test_kick_closed_raw_unblock_empty_handoff_advances_when_has_closed(
+  tmp_path,
+):
   """H18: has_closed with empty handoff must reopen delete (not noop)."""
   day = datetime(2026, 5, 24)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(
-      tmp_path,
-      log_fn=lambda *_a, **_k: None,
-      ingest_ready_fn=lambda _p: True,
+    tmp_path,
+    log_fn=lambda *_a, **_k: None,
+    ingest_ready_fn=lambda _p: True,
   )
   state = coord._get_or_create_day(tar_path)
   # Verified-but-not-deleted: handoff_paths empty (not retryable skip),
@@ -1472,8 +1574,8 @@ def test_kick_closed_raw_unblock_empty_handoff_advances_when_has_closed(tmp_path
   assert coord.has_closed_raw_on_disk(tar_path)
   assert coord.paths_for_closed_raw_handoff_requeue(tar_path) == []
   assert (
-      coord.kick_closed_raw_unblock(tar_path, reason="h18_unit")
-      == "delete_reopen"
+    coord.kick_closed_raw_unblock(tar_path, reason="h18_unit")
+    == "delete_reopen"
   )
 
 
@@ -1486,22 +1588,24 @@ def test_requeue_closed_raw_skips_quarantine_and_manifested(tmp_path):
   quarantine_path.write_text("bad\n")
 
   retry_day = datetime(2026, 5, 23)
-  retry_seg = _make_closed_segment(tmp_path, "cluster.integration.test", retry_day)
+  retry_seg = _make_closed_segment(
+    tmp_path, "cluster.integration.test", retry_day
+  )
   retry_tar_path, retry_zst = _seal_day(tmp_path, retry_seg, retry_day)
   coord = _make_coordinator(
-      tmp_path,
-      on_handoff_to_ingest=lambda tar_norm, paths, reason: handoffs.append(
-          (tar_norm, list(paths), reason),
-      ),
-      get_quarantine_skip_paths=lambda: {str(quarantine_path)},
-      log_fn=lambda *_a, **_k: None,
+    tmp_path,
+    on_handoff_to_ingest=lambda tar_norm, paths, reason: handoffs.append(
+      (tar_norm, list(paths), reason),
+    ),
+    get_quarantine_skip_paths=lambda: {str(quarantine_path)},
+    log_fn=lambda *_a, **_k: None,
   )
   state = coord._get_or_create_day(retry_tar_path)
   state._record_entry(
-      str(retry_seg),
-      retry_zst,
-      "skipped_not_in_archive",
-      "not_in_sealed_archive",
+    str(retry_seg),
+    retry_zst,
+    "skipped_not_in_archive",
+    "not_in_sealed_archive",
   )
   with state._lock:
     state._manifest["phase"] = PHASE_DONE
@@ -1514,22 +1618,23 @@ def test_requeue_closed_raw_skips_quarantine_and_manifested(tmp_path):
   assert str(quarantine_path) not in paths
 
   requeued = coord.requeue_closed_raw_paths_for_ingest(
-      retry_tar_path,
-      reason="janitor_closed_raw_submit_guard",
+    retry_tar_path,
+    reason="janitor_closed_raw_submit_guard",
   )
   assert str(retry_seg) in requeued
   assert str(quarantine_path) not in requeued
   assert handoffs == [
-      (
-          os.path.normpath(retry_tar_path),
-          [str(retry_seg)],
-          "janitor_closed_raw_submit_guard",
-      ),
+    (
+      os.path.normpath(retry_tar_path),
+      [str(retry_seg)],
+      "janitor_closed_raw_submit_guard",
+    ),
   ]
 
 
 def test_discover_closed_raw_lazy_skips_remaining_raw_for_done_days(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """Lazy discover must not call build_remaining_raw_for phase=done manifest days."""
   day = datetime(2026, 5, 22)
@@ -1550,8 +1655,8 @@ def test_discover_closed_raw_lazy_skips_remaining_raw_for_done_days(
     return {}
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
-      _count_build,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+    _count_build,
   )
   found = coord.discover_closed_raw_on_disk_handoffs()
   assert len(found) == 1
@@ -1583,7 +1688,9 @@ def test_discover_closed_raw_no_full_tree_scan(tmp_path):
 def test_requeue_handoff_before_kick(tmp_path):
   """Handoff paths present → kick must not run before handoff callback."""
   retry_day = datetime(2026, 5, 23)
-  retry_seg = _make_closed_segment(tmp_path, "cluster.integration.test", retry_day)
+  retry_seg = _make_closed_segment(
+    tmp_path, "cluster.integration.test", retry_day
+  )
   retry_tar_path, retry_zst = _seal_day(tmp_path, retry_seg, retry_day)
   handoffs = []
   kick_calls = []
@@ -1592,16 +1699,16 @@ def test_requeue_handoff_before_kick(tmp_path):
     handoffs.append((tar_norm, list(paths), reason))
 
   coord = _make_coordinator(
-      tmp_path,
-      on_handoff_to_ingest=_on_handoff,
-      log_fn=lambda *_a, **_k: None,
+    tmp_path,
+    on_handoff_to_ingest=_on_handoff,
+    log_fn=lambda *_a, **_k: None,
   )
   state = coord._get_or_create_day(retry_tar_path)
   state._record_entry(
-      str(retry_seg),
-      retry_zst,
-      "skipped_not_in_archive",
-      "not_in_sealed_archive",
+    str(retry_seg),
+    retry_zst,
+    "skipped_not_in_archive",
+    "not_in_sealed_archive",
   )
   with state._lock:
     state._manifest["phase"] = PHASE_DONE
@@ -1615,8 +1722,8 @@ def test_requeue_handoff_before_kick(tmp_path):
 
   coord.kick_closed_raw_unblock = _track_kick
   requeued = coord.requeue_closed_raw_paths_for_ingest(
-      retry_tar_path,
-      reason="unit_handoff_first",
+    retry_tar_path,
+    reason="unit_handoff_first",
   )
   assert str(retry_seg) in requeued
   assert handoffs
@@ -1636,7 +1743,9 @@ def test_kick_delete_reopen_at_verification_complete(tmp_path):
     state._manifest["verified_count"] = 1
     _save_manifest(state._manifest_path, state._manifest)
 
-  assert coord.kick_closed_raw_unblock(tar_path, reason="unit") == "delete_reopen"
+  assert (
+    coord.kick_closed_raw_unblock(tar_path, reason="unit") == "delete_reopen"
+  )
   assert coord.phase(tar_path) == PHASE_DELETING
 
 
@@ -1674,30 +1783,35 @@ def test_quarantine_only_manifest_not_blocking(tmp_path):
   manifest_path = day_removal_manifest_path(str(tmp_path), day.date())
   fp = {"mtime": 0, "size": int(seg.stat().st_size)}
   payload = {
-      "version": 1,
-      "tar_path": os.path.normpath(tar_path),
-      "phase": PHASE_DELETING,
-      "started_at": time.time(),
-      "completed_at": None,
-      "verified_count": 0,
-      "skipped_count": 1,
-      "deleted_count": 0,
-      "entries": {
-          str(seg): {
-              "status": "skipped_quarantine",
-              "reason": "quarantine",
-              **fp,
-          },
+    "version": 1,
+    "tar_path": os.path.normpath(tar_path),
+    "phase": PHASE_DELETING,
+    "started_at": time.time(),
+    "completed_at": None,
+    "verified_count": 0,
+    "skipped_count": 1,
+    "deleted_count": 0,
+    "entries": {
+      str(seg): {
+        "status": "skipped_quarantine",
+        "reason": "quarantine",
+        **fp,
       },
+    },
   }
   _save_manifest(manifest_path, payload)
   coord = _make_coordinator(tmp_path)
   assert not coord.has_closed_raw_on_disk(tar_path)
   assert coord.phase(tar_path) == PHASE_DONE
-  assert coord.kick_closed_raw_unblock(tar_path, reason="test") == "quarantine_terminal"
+  assert (
+    coord.kick_closed_raw_unblock(tar_path, reason="test")
+    == "quarantine_terminal"
+  )
 
 
-def test_has_closed_raw_false_when_manifest_done_no_on_disk(tmp_path, monkeypatch):
+def test_has_closed_raw_false_when_manifest_done_no_on_disk(
+  tmp_path, monkeypatch
+):
   """05-26: phase=done with no manifest blockers ignores stale remaining_raw."""
   day = datetime(2022, 5, 26)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
@@ -1710,9 +1824,9 @@ def test_has_closed_raw_false_when_manifest_done_no_on_disk(tmp_path, monkeypatc
     state._manifest["entries"] = {}
     _save_manifest(state._manifest_path, state._manifest)
   monkeypatch.setattr(
-      state,
-      "_build_remaining_raw_for_daily_tar",
-      lambda: {str(_zst): [str(seg)]},
+    state,
+    "_build_remaining_raw_for_daily_tar",
+    lambda: {str(_zst): [str(seg)]},
   )
   assert not coord.has_closed_raw_on_disk(tar_path)
 
@@ -1725,29 +1839,29 @@ def test_try_finish_tar_drop_quarantine_only_on_disk(tmp_path, monkeypatch):
   manifest_path = day_removal_manifest_path(str(tmp_path), day.date())
   fp = {"mtime": 0, "size": int(seg.stat().st_size)}
   payload = {
-      "version": 1,
-      "tar_path": os.path.normpath(tar_path),
-      "phase": PHASE_DONE,
-      "started_at": time.time(),
-      "completed_at": time.time(),
-      "verified_count": 0,
-      "skipped_count": 1,
-      "deleted_count": 0,
-      "entries": {
-          str(seg): {
-              "status": "skipped_quarantine",
-              "reason": "quarantine",
-              **fp,
-          },
+    "version": 1,
+    "tar_path": os.path.normpath(tar_path),
+    "phase": PHASE_DONE,
+    "started_at": time.time(),
+    "completed_at": time.time(),
+    "verified_count": 0,
+    "skipped_count": 1,
+    "deleted_count": 0,
+    "entries": {
+      str(seg): {
+        "status": "skipped_quarantine",
+        "reason": "quarantine",
+        **fp,
       },
+    },
   }
   _save_manifest(manifest_path, payload)
   coord = _make_coordinator(tmp_path)
   state = coord._get_or_create_day(tar_path)
   monkeypatch.setattr(
-      state,
-      "_build_remaining_raw_for_daily_tar",
-      lambda: {str(zst): [str(seg)]},
+    state,
+    "_build_remaining_raw_for_daily_tar",
+    lambda: {str(zst): [str(seg)]},
   )
   assert os.path.isfile(tar_path)
   assert seg.is_file()
@@ -1771,9 +1885,9 @@ def test_try_finish_tar_drop_manifest_done_stale_accrual(tmp_path, monkeypatch):
     _save_manifest(state._manifest_path, state._manifest)
   seg.unlink()
   monkeypatch.setattr(
-      state,
-      "_build_remaining_raw_for_daily_tar",
-      lambda: {str(zst): [str(seg)]},
+    state,
+    "_build_remaining_raw_for_daily_tar",
+    lambda: {str(zst): [str(seg)]},
   )
   assert os.path.isfile(tar_path)
   assert coord.try_finish_tar_drop_if_ready(tar_path)
@@ -1781,7 +1895,7 @@ def test_try_finish_tar_drop_manifest_done_stale_accrual(tmp_path, monkeypatch):
 
 
 def test_days_needing_delete_includes_done_with_verified_on_disk_after_reopen(
-    tmp_path,
+  tmp_path,
 ):
   day = datetime(2026, 5, 24)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
@@ -1801,7 +1915,8 @@ def test_days_needing_delete_includes_done_with_verified_on_disk_after_reopen(
 
 
 def test_any_needs_delete_phase_skips_isfile_when_no_ghost_markers(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   day = datetime(2026, 5, 24)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
@@ -1821,8 +1936,8 @@ def test_any_needs_delete_phase_skips_isfile_when_no_ghost_markers(
     return os.path.isfile(path)
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.os.path.isfile",
-      _track_isfile,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.os.path.isfile",
+    _track_isfile,
   )
   assert coord.any_needs_delete_phase()
   assert isfile_calls == []
@@ -1830,7 +1945,7 @@ def test_any_needs_delete_phase_skips_isfile_when_no_ghost_markers(
 
 def test_reopen_done_days_with_verified_on_disk_at_delete_pass_start(tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
-      run_supervisor_day_raw_removal_delete_pass,
+    run_supervisor_day_raw_removal_delete_pass,
   )
 
   day = datetime(2026, 5, 24)
@@ -1853,12 +1968,12 @@ def test_reopen_done_days_with_verified_on_disk_at_delete_pass_start(tmp_path):
 
   coord.apply_batch_delete = _track_apply
   spin = run_supervisor_day_raw_removal_delete_pass(
-      coord,
-      None,
-      chunk_in_progress=False,
-      chunk_calendar_day_hint=None,
-      finalize_day_close_delete=lambda _t: None,
-      sleep_fn=lambda _s: None,
+    coord,
+    None,
+    chunk_in_progress=False,
+    chunk_calendar_day_hint=None,
+    finalize_day_close_delete=lambda _t: None,
+    sleep_fn=lambda _s: None,
   )
   assert coord.phase(tar_path) == PHASE_DONE
   assert batch_calls == [tar_path]
@@ -1867,7 +1982,7 @@ def test_reopen_done_days_with_verified_on_disk_at_delete_pass_start(tmp_path):
 
 
 def test_advance_raw_removal_blockers_starts_verify_for_verifying_manifest(
-    tmp_path,
+  tmp_path,
 ):
   day = datetime(2026, 5, 20)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
@@ -1890,7 +2005,9 @@ def test_advance_raw_removal_blockers_starts_verify_for_verifying_manifest(
   assert verify_calls == [tar_path]
 
 
-def test_has_active_raw_removal_work_true_when_done_with_verified_pending(tmp_path):
+def test_has_active_raw_removal_work_true_when_done_with_verified_pending(
+  tmp_path,
+):
   day = datetime(2026, 5, 24)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, _zst = _seal_day(tmp_path, seg, day)
@@ -1935,11 +2052,11 @@ def test_apply_batch_delete_reopens_phase_done_verified_pending(tmp_path):
 
 
 def test_reopen_done_manifest_pending_without_files_on_disk_unblocks_gate(
-    tmp_path,
+  tmp_path,
 ):
   """Manifest-only verified pending (no isfile) must reopen and reconcile."""
   from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
-      run_supervisor_day_raw_removal_delete_pass,
+    run_supervisor_day_raw_removal_delete_pass,
   )
 
   day = datetime(2026, 5, 24)
@@ -1962,12 +2079,12 @@ def test_reopen_done_manifest_pending_without_files_on_disk_unblocks_gate(
   assert state._manifest_verified_pending_count() == 0
   assert not state.has_active_raw_removal_work()
   spin = run_supervisor_day_raw_removal_delete_pass(
-      coord,
-      None,
-      chunk_in_progress=False,
-      chunk_calendar_day_hint=None,
-      finalize_day_close_delete=lambda _t: None,
-      sleep_fn=lambda _s: None,
+    coord,
+    None,
+    chunk_in_progress=False,
+    chunk_calendar_day_hint=None,
+    finalize_day_close_delete=lambda _t: None,
+    sleep_fn=lambda _s: None,
   )
   assert not state.has_active_raw_removal_work()
   assert spin is False
@@ -1980,7 +2097,9 @@ def test_handoff_ingest_complete_triggers_delete_not_second_handoff(tmp_path):
   tar_path, zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
   state = coord._get_or_create_day(tar_path)
-  state._record_entry(str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive")
+  state._record_entry(
+    str(seg), zst, "skipped_not_in_archive", "not_in_sealed_archive"
+  )
   with state._lock:
     state._manifest["phase"] = PHASE_DONE
     state._manifest["skipped_count"] = 1
@@ -2007,7 +2126,9 @@ def test_pre_seal_verify_slices_by_paths_per_tick(tmp_path, monkeypatch):
   tar_path = str(tgz_dir / "2026-05-22.tar")
   open(tar_path, "wb").close()
   seg_paths = [str(seg) for seg in segs]
-  members = {get_tar_member_name(path): os.path.getsize(path) for path in seg_paths}
+  members = {
+    get_tar_member_name(path): os.path.getsize(path) for path in seg_paths
+  }
   monkeypatch.setattr(cfg, "get_sync_day_close_raw_paths_per_batch", lambda: 2)
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: False)
   logs = []
@@ -2016,24 +2137,24 @@ def test_pre_seal_verify_slices_by_paths_per_tick(tmp_path, monkeypatch):
     return {"host": seg_paths}
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_day_scoped_closed_raw_by_gz",
-      _remaining,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_day_scoped_closed_raw_by_gz",
+    _remaining,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
-      lambda *_a, **_k: pytest.fail("pre_seal seed must not full-scan remaining"),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+    lambda *_a, **_k: pytest.fail("pre_seal seed must not full-scan remaining"),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.ensure_daily_tar_restored_for_append",
-      lambda *_a, **_k: True,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.ensure_daily_tar_restored_for_append",
+    lambda *_a, **_k: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.validate_open_tar_for_raw_removal",
-      lambda *_a, **_k: (True, dict(members)),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.validate_open_tar_for_raw_removal",
+    lambda *_a, **_k: (True, dict(members)),
   )
   coord = _make_coordinator(
-      tmp_path,
-      log_fn=lambda msg, **kw: logs.append(str(msg)),
+    tmp_path,
+    log_fn=lambda msg, **kw: logs.append(str(msg)),
   )
   assert coord.run_pre_seal_verify_sync(tar_path) is True
   state = coord._get_or_create_day(tar_path)
@@ -2046,7 +2167,9 @@ def test_pre_seal_verify_slices_by_paths_per_tick(tmp_path, monkeypatch):
   assert not any("budget exhausted" in line for line in logs)
 
 
-def test_pre_seal_verify_completes_large_day_without_budget_log(tmp_path, monkeypatch):
+def test_pre_seal_verify_completes_large_day_without_budget_log(
+  tmp_path, monkeypatch
+):
   day = datetime(2026, 6, 2)
   n_paths = 2500
   host = tmp_path / "n.cluster.integration.test"
@@ -2061,9 +2184,13 @@ def test_pre_seal_verify_completes_large_day_without_budget_log(tmp_path, monkey
   tgz_dir.mkdir()
   tar_path = str(tgz_dir / "2026-06-02.tar")
   open(tar_path, "wb").close()
-  members = {get_tar_member_name(path): os.path.getsize(path) for path in seg_paths}
+  members = {
+    get_tar_member_name(path): os.path.getsize(path) for path in seg_paths
+  }
   paths_per_tick = 1000
-  monkeypatch.setattr(cfg, "get_sync_day_close_raw_paths_per_batch", lambda: paths_per_tick)
+  monkeypatch.setattr(
+    cfg, "get_sync_day_close_raw_paths_per_batch", lambda: paths_per_tick
+  )
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: False)
   logs = []
 
@@ -2075,28 +2202,28 @@ def test_pre_seal_verify_completes_large_day_without_budget_log(tmp_path, monkey
       yield path, "verified", "ok"
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_day_scoped_closed_raw_by_gz",
-      _remaining,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_day_scoped_closed_raw_by_gz",
+    _remaining,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
-      lambda *_a, **_k: pytest.fail("pre_seal seed must not full-scan remaining"),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+    lambda *_a, **_k: pytest.fail("pre_seal seed must not full-scan remaining"),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.ensure_daily_tar_restored_for_append",
-      lambda *_a, **_k: True,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.ensure_daily_tar_restored_for_append",
+    lambda *_a, **_k: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.validate_open_tar_for_raw_removal",
-      lambda *_a, **_k: (True, dict(members)),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.validate_open_tar_for_raw_removal",
+    lambda *_a, **_k: (True, dict(members)),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.classify_removable_raw_paths_for_open_tar",
-      _classify,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.classify_removable_raw_paths_for_open_tar",
+    _classify,
   )
   coord = _make_coordinator(
-      tmp_path,
-      log_fn=lambda msg, **kw: logs.append(str(msg)),
+    tmp_path,
+    log_fn=lambda msg, **kw: logs.append(str(msg)),
   )
   assert coord.run_pre_seal_verify_sync(tar_path) is True
   state = coord._get_or_create_day(tar_path)
@@ -2109,7 +2236,9 @@ def test_pre_seal_verify_completes_large_day_without_budget_log(tmp_path, monkey
   assert not any("budget exhausted" in line for line in logs)
 
 
-def test_rescan_exclude_skips_day_scoped_before_ingest_going(tmp_path, monkeypatch):
+def test_rescan_exclude_skips_day_scoped_before_ingest_going(
+  tmp_path, monkeypatch
+):
   """Pre-ingest: no day-scoped closed_raw census when allow flag is false."""
   day = datetime(2022, 7, 1)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
@@ -2121,8 +2250,8 @@ def test_rescan_exclude_skips_day_scoped_before_ingest_going(tmp_path, monkeypat
     return {}
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
-      spy_day_scoped,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+    spy_day_scoped,
   )
   # Prefer gating before helper: allow=False + no snapshot must short-circuit.
   coord = _make_coordinator(tmp_path)
@@ -2138,7 +2267,8 @@ def test_rescan_exclude_skips_day_scoped_before_ingest_going(tmp_path, monkeypat
 
 
 def test_skip_only_apply_batch_delete_memos_day_scoped_closed_raw(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """One apply_batch_delete + handoff pass must census closed_raw at most once."""
   day = datetime(2026, 6, 2)
@@ -2164,17 +2294,17 @@ def test_skip_only_apply_batch_delete_memos_day_scoped_closed_raw(
     return real_build(*args, **kwargs)
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
-      spy_build,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+    spy_build,
   )
 
   def _on_handoff(tar_norm, paths, reason):
     return None
 
   coord = _make_coordinator(
-      tmp_path,
-      ingest_ready_fn=lambda _p: False,
-      on_handoff_to_ingest=_on_handoff,
+    tmp_path,
+    ingest_ready_fn=lambda _p: False,
+    on_handoff_to_ingest=_on_handoff,
   )
   state = coord._get_or_create_day(tar_path)
   state._record_entry(str(seg0), zst, "verified", "verified")
@@ -2182,10 +2312,10 @@ def test_skip_only_apply_batch_delete_memos_day_scoped_closed_raw(
     state._manifest["entries"][str(seg0)]["deleted"] = True
     state._manifest["verified_count"] = 1
   state._record_entry(
-      str(seg1),
-      zst,
-      "skipped_not_in_archive",
-      "not_in_sealed_archive",
+    str(seg1),
+    zst,
+    "skipped_not_in_archive",
+    "not_in_sealed_archive",
   )
   with state._lock:
     state._manifest["phase"] = PHASE_DELETING
@@ -2197,8 +2327,8 @@ def test_skip_only_apply_batch_delete_memos_day_scoped_closed_raw(
   deleted = coord.apply_batch_delete(tar_path)
   assert deleted == 0
   assert len(census_calls) <= 1, (
-      "skip-only delete/handoff must memoize day-scoped closed_raw "
-      "(got %d censuses)" % len(census_calls)
+    "skip-only delete/handoff must memoize day-scoped closed_raw "
+    "(got %d censuses)" % len(census_calls)
   )
 
 
@@ -2224,13 +2354,13 @@ def test_day_close_job_scoped_closed_raw_pass_memo(tmp_path, monkeypatch):
     return real_build(*args, **kwargs)
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
-      spy_build,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+    spy_build,
   )
 
   coord = _make_coordinator(
-      tmp_path,
-      ingest_ready_fn=lambda _p: False,
+    tmp_path,
+    ingest_ready_fn=lambda _p: False,
   )
   state = coord._get_or_create_day(tar_path)
   state._begin_closed_raw_pass_memo()
@@ -2242,13 +2372,14 @@ def test_day_close_job_scoped_closed_raw_pass_memo(tmp_path, monkeypatch):
   finally:
     state._clear_closed_raw_pass_memo()
   assert len(census_calls) == 1, (
-      "job-scoped memo must census once across pre_seal/seal probes "
-      "(got %d)" % len(census_calls)
+    "job-scoped memo must census once across pre_seal/seal probes "
+    "(got %d)" % len(census_calls)
   )
 
 
 def test_manifest_fast_no_full_remaining_handoff_verification_complete(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """T1b: handoff probes after verify must not call build_remaining_raw."""
   day = datetime(2026, 7, 28)
@@ -2257,10 +2388,10 @@ def test_manifest_fast_no_full_remaining_handoff_verification_complete(
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
   state = coord._get_or_create_day(tar_path)
   state._record_entry(
-      str(seg),
-      zst,
-      "skipped_not_in_archive",
-      "not_in_sealed_archive",
+    str(seg),
+    zst,
+    "skipped_not_in_archive",
+    "not_in_sealed_archive",
   )
   with state._lock:
     state._manifest["phase"] = PHASE_DELETING
@@ -2269,8 +2400,8 @@ def test_manifest_fast_no_full_remaining_handoff_verification_complete(
     _save_manifest(state._manifest_path, state._manifest)
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
-      lambda *_a, **_k: pytest.fail("manifest-fast handoff must not full-scan"),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+    lambda *_a, **_k: pytest.fail("manifest-fast handoff must not full-scan"),
   )
   assert state._only_waiting_on_ingest_blocks_completion()
   assert coord.should_handoff_to_ingest(tar_path)
@@ -2284,7 +2415,9 @@ def test_manifest_fast_no_full_remaining_delete_tar_drop(tmp_path, monkeypatch):
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, zst = _seal_day(tmp_path, seg, day)
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: True)
-  monkeypatch.setattr(cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 10)
+  monkeypatch.setattr(
+    cfg, "get_sync_day_close_raw_removal_max_deletes_per_pass", lambda: 10
+  )
   state = coord._get_or_create_day(tar_path)
   state._record_entry(str(seg), zst, "verified", "verified")
   with state._lock:
@@ -2299,8 +2432,8 @@ def test_manifest_fast_no_full_remaining_delete_tar_drop(tmp_path, monkeypatch):
     _save_manifest(state._manifest_path, state._manifest)
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
-      lambda *_a, **_k: pytest.fail("delete tar_drop must not full-scan"),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+    lambda *_a, **_k: pytest.fail("delete tar_drop must not full-scan"),
   )
   deleted = coord.apply_batch_delete(tar_path)
   assert deleted == 0
@@ -2309,7 +2442,8 @@ def test_manifest_fast_no_full_remaining_delete_tar_drop(tmp_path, monkeypatch):
 
 
 def test_pre_seal_first_seed_uses_day_scoped_not_full_remaining(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """Oct-1 3F: first pre_seal claim must not call build_remaining_raw_for_daily_tar."""
   day = datetime(2026, 8, 16)
@@ -2323,12 +2457,12 @@ def test_pre_seal_first_seed_uses_day_scoped_not_full_remaining(
     return {"z": [str(seg)]}
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_day_scoped_closed_raw_by_gz",
-      _day_scoped,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_day_scoped_closed_raw_by_gz",
+    _day_scoped,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
-      lambda *_a, **_k: pytest.fail("pre_seal first seed must not full-scan"),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+    lambda *_a, **_k: pytest.fail("pre_seal first seed must not full-scan"),
   )
   assert coord.run_pre_seal_verify_sync(tar_path) is True
   assert day_scoped_calls == []
@@ -2353,20 +2487,24 @@ def test_pre_seal_many_tar_members_no_day_scoped_collect(tmp_path, monkeypatch):
   members = {get_tar_member_name(p): os.path.getsize(p) for p in seg_paths}
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: False)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.ensure_daily_tar_restored_for_append",
-      lambda *_a, **_k: True,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.ensure_daily_tar_restored_for_append",
+    lambda *_a, **_k: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.validate_open_tar_for_raw_removal",
-      lambda *_a, **_k: (True, dict(members)),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.validate_open_tar_for_raw_removal",
+    lambda *_a, **_k: (True, dict(members)),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.collect_stats_files_in_range",
-      lambda *_a, **_k: pytest.fail("3G must not day-wide collect on first pre_seal seed"),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.collect_stats_files_in_range",
+    lambda *_a, **_k: pytest.fail(
+      "3G must not day-wide collect on first pre_seal seed"
+    ),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_day_scoped_closed_raw_by_gz",
-      lambda *_a, **_k: pytest.fail("3G must not day_scoped when members resolve"),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_day_scoped_closed_raw_by_gz",
+    lambda *_a, **_k: pytest.fail(
+      "3G must not day_scoped when members resolve"
+    ),
   )
 
   def _classify(_tar, paths, **_k):
@@ -2374,14 +2512,16 @@ def test_pre_seal_many_tar_members_no_day_scoped_collect(tmp_path, monkeypatch):
       yield path, "verified", "ok"
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.classify_removable_raw_paths_for_open_tar",
-      _classify,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.classify_removable_raw_paths_for_open_tar",
+    _classify,
   )
   coord = _make_coordinator(tmp_path)
   assert coord.run_pre_seal_verify_sync(tar_path) is True
 
 
-def test_closed_raw_on_disk_manifest_fast_when_verifying_complete(tmp_path, monkeypatch):
+def test_closed_raw_on_disk_manifest_fast_when_verifying_complete(
+  tmp_path, monkeypatch
+):
   """3H: delete/handoff probes must not full-scan when verification_complete."""
   day = datetime(2026, 8, 6)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
@@ -2396,8 +2536,10 @@ def test_closed_raw_on_disk_manifest_fast_when_verifying_complete(tmp_path, monk
     _save_manifest(state._manifest_path, state._manifest)
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
-      lambda *_a, **_k: pytest.fail("verification_complete closed_raw must be manifest-fast"),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+    lambda *_a, **_k: pytest.fail(
+      "verification_complete closed_raw must be manifest-fast"
+    ),
   )
   assert state._closed_raw_paths_on_disk() == [str(seg)]
 
@@ -2424,16 +2566,19 @@ def test_pre_seal_classify_paths_cache_skips_second_find(tmp_path, monkeypatch):
     _save_manifest(state._manifest_path, state._manifest)
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_day_scoped_closed_raw_by_gz",
-      lambda *_a, **_k: pytest.fail("cached pre_seal must not day-scoped seed"),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_day_scoped_closed_raw_by_gz",
+    lambda *_a, **_k: pytest.fail("cached pre_seal must not day-scoped seed"),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
-      lambda *_a, **_k: pytest.fail("cached pre_seal must not full-scan"),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.build_remaining_raw_for_daily_tar",
+    lambda *_a, **_k: pytest.fail("cached pre_seal must not full-scan"),
   )
   monkeypatch.setattr(cfg, "get_sync_day_close_raw_paths_per_batch", lambda: 1)
-  assert coord.run_pre_seal_verify_sync(tar_path, max_classify_batches=1) is False
+  assert (
+    coord.run_pre_seal_verify_sync(tar_path, max_classify_batches=1) is False
+  )
   assert int(state._manifest.get("pre_seal_classify_index", 0)) == 1
-  assert coord.run_pre_seal_verify_sync(tar_path, max_classify_batches=1) is True
+  assert (
+    coord.run_pre_seal_verify_sync(tar_path, max_classify_batches=1) is True
+  )
   assert "pre_seal_classify_paths" not in state._manifest
-

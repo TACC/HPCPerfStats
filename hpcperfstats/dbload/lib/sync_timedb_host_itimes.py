@@ -16,18 +16,21 @@ Attributes:
   _ITIMES_TIMEOUT_WARNED: Attribute.
   _ITIMES_TIMEOUT_WARNED_LOCK: FT-safe RLock for timeout-warned set.
 """
+
 from __future__ import annotations
 
-from typing import Any, Iterator
-
-import time
-from datetime import datetime, timedelta, timezone
 import threading
+import time
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from django.db.utils import DatabaseError, OperationalError
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from hpcperfstats.dbload.lib.db_unavailable import is_query_bounded_failure_error
+from hpcperfstats.dbload.lib.db_unavailable import (
+  is_query_bounded_failure_error,
+)
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.site.lib.machine.models import host_data
 
@@ -53,10 +56,10 @@ _HOST_ITIMES_SET_OVERFLOW = HOST_ITIMES_SET_OVERFLOW
 def reset_host_itimes_caches() -> None:
   """
   Clear per-process itimes caches between sync_timedb sessions.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> reset_host_itimes_caches()  # doctest: +SKIP
   """
@@ -76,16 +79,16 @@ def _log_itimes_query_bounded_failure(
 ) -> None:
   """
   Internal helper to log the itimes query bounded failure.
-  
+
   Args:
     hostname (Any): Hostname passed to this helper.
     ts_low (Any): Ts low passed to this helper.
     ts_high (Any): Ts high passed to this helper.
     exc (Any): Exception instance being classified or logged.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _log_itimes_query_bounded_failure(None, None, None, None)
   """
@@ -95,23 +98,22 @@ def _log_itimes_query_bounded_failure(
       return
     _ITIMES_TIMEOUT_WARNED.add(warn_key)
   log_print(
-      "WARN: host_itimes scan query bounded failure host=%s window=%s..%s: %s"
-      % (hostname, ts_low.isoformat(), ts_high.isoformat(), exc),
-      flush=True,
+    f"WARN: host_itimes scan query bounded failure host={hostname} window={ts_low.isoformat()}..{ts_high.isoformat()}: {exc}",
+    flush=True,
   )
 
 
 def _iter_host_itimes_chunk_bounds(ts_low: Any, ts_high: Any) -> Iterator[Any]:
   """
   Yield ``(chunk_low, chunk_high)`` pairs covering ``[ts_low, ts_high)``.
-  
+
   Args:
     ts_low (Any): Ts low passed to this helper.
     ts_high (Any): Ts high passed to this helper.
-  
+
   Yields:
     Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _iter_host_itimes_chunk_bounds(None, None)  # doctest: +SKIP
   """
@@ -135,38 +137,38 @@ def _collect_distinct_unix_seconds(
 ) -> Any:
   """
   Populate ``itimes_set`` from DB; return ``HOST_ITIMES_SET_OVERFLOW`` when.
-  
+
     over.
-  
+
     cap.
-  
+
   Args:
     hostname (Any): Hostname passed to this helper.
     ts_low (Any): Ts low passed to this helper.
     ts_high (Any): Ts high passed to this helper.
     itimes_set (Any): Itimes set passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _collect_distinct_unix_seconds(None, None, None, None)  # doctest: +SKIP
   """
   qs_times = (
-      host_data.objects.filter(
-          host=hostname,
-          time__gte=ts_low,
-          time__lt=ts_high,
-      )
-      .values_list("time", flat=True)
-      .distinct()
+    host_data.objects.filter(
+      host=hostname,
+      time__gte=ts_low,
+      time__lt=ts_high,
+    )
+    .values_list("time", flat=True)
+    .distinct()
   )
   max_timestamps = cfg.get_sync_host_itimes_cache_max_timestamps_per_entry()
   for dt in qs_times.iterator():
     if dt is None:
       continue
     if dt.tzinfo is None:
-      dt = dt.replace(tzinfo=timezone.utc)
+      dt = dt.replace(tzinfo=UTC)
     itimes_set.add(int(dt.timestamp()))
     if len(itimes_set) > max_timestamps:
       return HOST_ITIMES_SET_OVERFLOW
@@ -180,19 +182,19 @@ def host_recent_timestamps_cached(
 ) -> Any:
   """
   Return cached distinct Unix seconds for ``hostname`` in ``[ts_low, ts_high)``.
-  
+
   Args:
     hostname (Any): Hostname passed to this helper.
     ts_low (Any): Ts low passed to this helper.
     ts_high (Any): Ts high passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     Exception: Raised when ``host_recent_timestamps_cached`` hits a
     ``Exception`` failure path.
-  
+
   Examples:
     >>> host_recent_timestamps_cached(None, None, None)  # doctest: +SKIP
   """
@@ -200,13 +202,20 @@ def host_recent_timestamps_cached(
   now = time.time()
   with _HOST_ITIMES_CACHE_LOCK:
     cached = _HOST_ITIMES_CACHE.get(key)
-    if cached and (now - cached["checked_at"] <= _HOST_ITIMES_CACHE_REFRESH_SECONDS):
+    if cached and (
+      now - cached["checked_at"] <= _HOST_ITIMES_CACHE_REFRESH_SECONDS
+    ):
       return set(cached["times"])
   itimes_set = set()
   try:
-    for chunk_low, chunk_high in _iter_host_itimes_chunk_bounds(ts_low, ts_high):
+    for chunk_low, chunk_high in _iter_host_itimes_chunk_bounds(
+      ts_low, ts_high
+    ):
       overflow = _collect_distinct_unix_seconds(
-          hostname, chunk_low, chunk_high, itimes_set,
+        hostname,
+        chunk_low,
+        chunk_high,
+        itimes_set,
       )
       if overflow is HOST_ITIMES_SET_OVERFLOW:
         return HOST_ITIMES_SET_OVERFLOW
@@ -218,11 +227,14 @@ def host_recent_timestamps_cached(
   max_timestamps = cfg.get_sync_host_itimes_cache_max_timestamps_per_entry()
   with _HOST_ITIMES_CACHE_LOCK:
     if len(itimes_set) <= max_timestamps:
-      _HOST_ITIMES_CACHE[key] = {"times": tuple(itimes_set), "checked_at": now}
+      _HOST_ITIMES_CACHE[key] = {
+        "times": tuple(itimes_set),
+        "checked_at": now,
+      }
     if len(_HOST_ITIMES_CACHE) > _HOST_ITIMES_CACHE_MAX_ENTRIES:
       oldest_keys = sorted(
-          _HOST_ITIMES_CACHE.keys(),
-          key=lambda k: _HOST_ITIMES_CACHE[k]["checked_at"],
+        _HOST_ITIMES_CACHE.keys(),
+        key=lambda k: _HOST_ITIMES_CACHE[k]["checked_at"],
       )[:100]
       for drop_key in oldest_keys:
         _HOST_ITIMES_CACHE.pop(drop_key, None)
@@ -232,14 +244,14 @@ def host_recent_timestamps_cached(
 def host_timestamp_second_present_in_db(host: Any, unix_second: Any) -> Any:
   """
   Per-(host, second) exists probe when host_itimes cache overflows.
-  
+
   Args:
     host (Any): Host passed to this helper.
     unix_second (Any): Unix second passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> host_timestamp_second_present_in_db(None, None)  # doctest: +SKIP
   """
@@ -249,19 +261,19 @@ def host_timestamp_second_present_in_db(host: Any, unix_second: Any) -> Any:
     cached = _HOST_SECOND_PRESENT_CACHE.get(key)
     if cached and (now - cached[1] <= _HOST_SECOND_PRESENT_CACHE_TTL_S):
       return cached[0]
-  ts_low = datetime.fromtimestamp(int(unix_second), tz=timezone.utc)
+  ts_low = datetime.fromtimestamp(int(unix_second), tz=UTC)
   ts_high = ts_low + timedelta(seconds=1)
   present = host_data.objects.filter(
-      host=key[0],
-      time__gte=ts_low,
-      time__lt=ts_high,
+    host=key[0],
+    time__gte=ts_low,
+    time__lt=ts_high,
   ).exists()
   with _HOST_SECOND_PRESENT_CACHE_LOCK:
     _HOST_SECOND_PRESENT_CACHE[key] = (present, now)
     if len(_HOST_SECOND_PRESENT_CACHE) > _HOST_SECOND_PRESENT_CACHE_MAX_ENTRIES:
       oldest = sorted(
-          _HOST_SECOND_PRESENT_CACHE.keys(),
-          key=lambda k: _HOST_SECOND_PRESENT_CACHE[k][1],
+        _HOST_SECOND_PRESENT_CACHE.keys(),
+        key=lambda k: _HOST_SECOND_PRESENT_CACHE[k][1],
       )[:1000]
       for drop_key in oldest:
         _HOST_SECOND_PRESENT_CACHE.pop(drop_key, None)
@@ -274,16 +286,16 @@ def host_sampled_timestamp_seconds_all_present(
 ) -> Any:
   """
   Return whether every Unix second in ``unix_seconds`` exists for ``host`` in.
-  
+
     DB.
-  
+
   Args:
     host (Any): Host passed to this helper.
     unix_seconds (int): Integer value for unix seconds.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> host_sampled_timestamp_seconds_all_present(None, 0)  # doctest: +SKIP
   """
@@ -291,8 +303,8 @@ def host_sampled_timestamp_seconds_all_present(
     return False
   host_key = str(host).strip()
   seconds = {int(s) for s in unix_seconds}
-  ts_low = datetime.fromtimestamp(min(seconds), tz=timezone.utc)
-  ts_high = datetime.fromtimestamp(max(seconds), tz=timezone.utc) + timedelta(seconds=1)
+  ts_low = datetime.fromtimestamp(min(seconds), tz=UTC)
+  ts_high = datetime.fromtimestamp(max(seconds), tz=UTC) + timedelta(seconds=1)
   itimes_set = host_recent_timestamps_cached(host_key, ts_low, ts_high)
   if itimes_set is HOST_ITIMES_SET_OVERFLOW:
     for unix_second in seconds:

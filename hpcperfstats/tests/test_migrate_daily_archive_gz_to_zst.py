@@ -1,4 +1,5 @@
 """Regression: migrate_daily_archive_gz_to_zst bootstraps Django before ORM paths."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -10,8 +11,8 @@ _SCRIPT = _REPO / "scripts" / "migrate_daily_archive_gz_to_zst.py"
 
 def _load_migrate_script():
   spec = importlib.util.spec_from_file_location(
-      "migrate_daily_archive_gz_to_zst",
-      _SCRIPT,
+    "migrate_daily_archive_gz_to_zst",
+    _SCRIPT,
   )
   assert spec is not None and spec.loader is not None
   mod = importlib.util.module_from_spec(spec)
@@ -26,7 +27,9 @@ def test_migrate_script_source_calls_ensure_django():
   assert "django_bootstrap" in source
 
 
-def test_migrate_main_calls_ensure_django_before_remaining_raw(monkeypatch, tmp_path):
+def test_migrate_main_calls_ensure_django_before_remaining_raw(
+  monkeypatch, tmp_path
+):
   """Regression: bare ``python3 ./scripts/migrate_daily_archive_gz_to_zst.py`` must
   call ensure_django before build_remaining_raw_stats_by_daily_gz (ORM import).
   """
@@ -36,20 +39,20 @@ def test_migrate_main_calls_ensure_django_before_remaining_raw(monkeypatch, tmp_
   order = []
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser._ensure_cfg_loaded",
-      lambda: None,
+    "hpcperfstats.dbload.lib.conf_parser._ensure_cfg_loaded",
+    lambda: None,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_daily_archive_dir_path",
-      lambda: str(daily),
+    "hpcperfstats.dbload.lib.conf_parser.get_daily_archive_dir_path",
+    lambda: str(daily),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_archive_dir_path",
-      lambda: str(tmp_path / "archive"),
+    "hpcperfstats.dbload.lib.conf_parser.get_archive_dir_path",
+    lambda: str(tmp_path / "archive"),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_host_name_ext",
-      lambda: "example.com",
+    "hpcperfstats.dbload.lib.conf_parser.get_host_name_ext",
+    lambda: "example.com",
   )
 
   def fake_ensure():
@@ -62,30 +65,30 @@ def test_migrate_main_calls_ensure_django_before_remaining_raw(monkeypatch, tmp_
   def fake_migrate(*_a, **_k):
     order.append("migrate")
     return {
-        "converted": 0,
-        "dropped_only": 0,
-        "failed": 0,
-        "gz_remaining": 0,
+      "converted": 0,
+      "dropped_only": 0,
+      "failed": 0,
+      "gz_remaining": 0,
     }
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.django_bootstrap.ensure_django",
-      fake_ensure,
+    "hpcperfstats.dbload.lib.django_bootstrap.ensure_django",
+    fake_ensure,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
-      "check_archive_migration_prerequisites",
-      lambda: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
+    "check_archive_migration_prerequisites",
+    lambda: None,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
-      "build_remaining_raw_stats_by_daily_gz",
-      fake_remaining,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
+    "build_remaining_raw_stats_by_daily_gz",
+    fake_remaining,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
-      "migrate_legacy_daily_gz_archives",
-      fake_migrate,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
+    "migrate_legacy_daily_gz_archives",
+    fake_migrate,
   )
 
   rc = mod.main(["--daily-archive-dir", str(daily), "--dry-run"])
@@ -97,8 +100,8 @@ def test_migrate_main_calls_ensure_django_before_remaining_raw(monkeypatch, tmp_
 def test_migrate_cli_installs_archive_members_store(monkeypatch, tmp_path):
   """CLI must install the in-process members store from INI archive_dir."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-      get_process_archive_members_store,
-      set_process_archive_members_store,
+    get_process_archive_members_store,
+    set_process_archive_members_store,
   )
 
   mod = _load_migrate_script()
@@ -109,49 +112,49 @@ def test_migrate_cli_installs_archive_members_store(monkeypatch, tmp_path):
   seen = {"during": None}
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser._ensure_cfg_loaded",
-      lambda: None,
+    "hpcperfstats.dbload.lib.conf_parser._ensure_cfg_loaded",
+    lambda: None,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_daily_archive_dir_path",
-      lambda: str(daily),
+    "hpcperfstats.dbload.lib.conf_parser.get_daily_archive_dir_path",
+    lambda: str(daily),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_archive_dir_path",
-      lambda: str(archive),
+    "hpcperfstats.dbload.lib.conf_parser.get_archive_dir_path",
+    lambda: str(archive),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_host_name_ext",
-      lambda: "example.com",
+    "hpcperfstats.dbload.lib.conf_parser.get_host_name_ext",
+    lambda: "example.com",
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.django_bootstrap.ensure_django",
-      lambda: None,
+    "hpcperfstats.dbload.lib.django_bootstrap.ensure_django",
+    lambda: None,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
-      "check_archive_migration_prerequisites",
-      lambda: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
+    "check_archive_migration_prerequisites",
+    lambda: None,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
-      "build_remaining_raw_stats_by_daily_gz",
-      lambda *_a, **_k: {},
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
+    "build_remaining_raw_stats_by_daily_gz",
+    lambda *_a, **_k: {},
   )
 
   def fake_migrate(*_a, **_k):
     seen["during"] = get_process_archive_members_store()
     return {
-        "converted": 0,
-        "dropped_only": 0,
-        "failed": 0,
-        "gz_remaining": 0,
+      "converted": 0,
+      "dropped_only": 0,
+      "failed": 0,
+      "gz_remaining": 0,
     }
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
-      "migrate_legacy_daily_gz_archives",
-      fake_migrate,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
+    "migrate_legacy_daily_gz_archives",
+    fake_migrate,
   )
   set_process_archive_members_store(None)
   try:
@@ -173,8 +176,8 @@ def test_build_archive_maintenance_snapshot_ensures_django(monkeypatch):
     order.append("ensure_django")
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.django_bootstrap.ensure_django",
-      fake_ensure,
+    "hpcperfstats.dbload.lib.django_bootstrap.ensure_django",
+    fake_ensure,
   )
 
   class _FakeReady:
@@ -188,36 +191,40 @@ def test_build_archive_maintenance_snapshot_ensures_django(monkeypatch):
   fake_mod = types.ModuleType("sync_timedb_ingest_readiness")
   fake_mod.build_head_ingest_ready_set = _FakeReady.build_head_ingest_ready_set
   monkeypatch.setitem(
-      __import__("sys").modules,
-      "hpcperfstats.dbload.lib.sync_timedb_ingest_readiness",
-      fake_mod,
+    __import__("sys").modules,
+    "hpcperfstats.dbload.lib.sync_timedb_ingest_readiness",
+    fake_mod,
   )
 
   monkeypatch.setattr(maint, "load_archive_maint_hints", lambda *_a, **_k: {})
   monkeypatch.setattr(
-      maint, "collect_stats_files_in_range", lambda *_a, **_k: [],
+    maint,
+    "collect_stats_files_in_range",
+    lambda *_a, **_k: [],
   )
   monkeypatch.setattr(
-      maint,
-      "collect_head_metadata_for_paths",
-      lambda *_a, **_k: ({}, {}, {}),
+    maint,
+    "collect_head_metadata_for_paths",
+    lambda *_a, **_k: ({}, {}, {}),
   )
   monkeypatch.setattr(
-      maint,
-      "collect_gate_identities_for_paths",
-      lambda *_a, **_k: ({}, {}),
+    maint,
+    "collect_gate_identities_for_paths",
+    lambda *_a, **_k: ({}, {}),
   )
   monkeypatch.setattr(maint, "build_archive_mapping", lambda *_a, **_k: {})
   monkeypatch.setattr(
-      maint, "remaining_raw_by_gz_from_mapping", lambda *_a, **_k: {},
+    maint,
+    "remaining_raw_by_gz_from_mapping",
+    lambda *_a, **_k: {},
   )
 
   snap = maint.build_archive_maintenance_snapshot(
-      "/tmp/archive",
-      "example.com",
-      "/tmp/daily",
-      build_ready_set=True,
-      log_fn=None,
+    "/tmp/archive",
+    "example.com",
+    "/tmp/daily",
+    build_ready_set=True,
+    log_fn=None,
   )
   assert order[0] == "ensure_django"
   assert snap is not None

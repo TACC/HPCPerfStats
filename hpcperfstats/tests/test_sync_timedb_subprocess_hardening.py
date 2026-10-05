@@ -1,13 +1,16 @@
 """A3-A9: pipe drain, nested write-lock, timeouts, and pax post-replace verify."""
+
 from __future__ import annotations
 
 import inspect
 import io
 from types import SimpleNamespace
 
-from hpcperfstats.dbload.lib import file_locking
-from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
-from hpcperfstats.dbload.lib import zstd_cli
+from hpcperfstats.dbload.lib import (
+  file_locking,
+  sync_timedb_archive_helpers as helpers,
+  zstd_cli,
+)
 
 
 def test_compress_poll_loop_drains_pipes():
@@ -17,13 +20,13 @@ def test_compress_poll_loop_drains_pipes():
   stdout = io.BytesIO(b"x" * 200000)
   stderr = io.BytesIO(b"y" * 200000)
   proc = SimpleNamespace(
-      stdout=stdout,
-      stderr=stderr,
-      poll=lambda: 0,
-      returncode=0,
-      wait=lambda timeout=None: 0,
-      kill=lambda: None,
-      terminate=lambda: None,
+    stdout=stdout,
+    stderr=stderr,
+    poll=lambda: 0,
+    returncode=0,
+    wait=lambda timeout=None: 0,
+    kill=lambda: None,
+    terminate=lambda: None,
   )
   out, err = zstd_cli.drain_subprocess_pipes(proc, timeout_s=1.0)
   assert len(out) >= 1 or proc.poll() == 0
@@ -51,7 +54,9 @@ def test_file_write_lock_already_held_skips_acquire(tmp_path):
 
 def test_pax_convert_verifies_tar_before_replace():
   """A8: pax recreate must tar-tf the new archive before os.replace."""
-  source = inspect.getsource(helpers.convert_daily_tar_to_pax_via_extract_recreate)
+  source = inspect.getsource(
+    helpers.convert_daily_tar_to_pax_via_extract_recreate
+  )
   tf_idx = source.find('"tf"')
   if tf_idx < 0:
     tf_idx = source.find("'tf'")

@@ -1,4 +1,5 @@
 """Unit tests for proc_data COPY upsert arm routing."""
+
 from __future__ import annotations
 
 from hpcperfstats.dbload.lib import sync_timedb_proc_data_insert as pdi
@@ -6,25 +7,25 @@ from hpcperfstats.site.lib.machine.models import proc_data
 
 
 def _obj(**overrides):
-  base = dict(
-      jid="1",
-      host="h",
-      proc="bash",
-      device="bash/1",
-      uid=1000,
-      vm_peak=1,
-      vm_size=1,
-      vm_lck=0,
-      vm_hwm=1,
-      vm_rss=1,
-      vm_data=1,
-      vm_stk=1,
-      vm_exe=1,
-      vm_lib=1,
-      vm_pte=1,
-      vm_swap=0,
-      threads=1,
-  )
+  base = {
+    "jid": "1",
+    "host": "h",
+    "proc": "bash",
+    "device": "bash/1",
+    "uid": 1000,
+    "vm_peak": 1,
+    "vm_size": 1,
+    "vm_lck": 0,
+    "vm_hwm": 1,
+    "vm_rss": 1,
+    "vm_data": 1,
+    "vm_stk": 1,
+    "vm_exe": 1,
+    "vm_lib": 1,
+    "vm_pte": 1,
+    "vm_swap": 0,
+    "threads": 1,
+  }
   base.update(overrides)
   return proc_data(**base)
 
@@ -38,11 +39,15 @@ def test_proc_insert_arm_default_candidate_after_retain(monkeypatch):
 def test_proc_insert_routes_candidate(monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_PROC_INSERT_ARM", "candidate")
   seen = []
-  monkeypatch.setattr(pdi, "bulk_insert_proc_data_update_conflicts", lambda o: seen.append(len(o)))
   monkeypatch.setattr(
-      pdi,
-      "bulk_create_proc_data_update_conflicts",
-      lambda _o: (_ for _ in ()).throw(AssertionError("bulk")),
+    pdi,
+    "bulk_insert_proc_data_update_conflicts",
+    lambda o: seen.append(len(o)),
+  )
+  monkeypatch.setattr(
+    pdi,
+    "bulk_create_proc_data_update_conflicts",
+    lambda _o: (_ for _ in ()).throw(AssertionError("bulk")),
   )
   pdi.insert_proc_data_batch([_obj()])
   assert seen == [1]
@@ -62,14 +67,14 @@ def test_proc_copy_bytes_coerces_float_bigint_fields():
   ``\"0.0\"`` / ``\"236948.0\"`` for ``uid`` / ``vm_swap`` / ``vm_size``.
   """
   payload = pdi.proc_data_objs_to_copy_bytes(
-      [
-          _obj(
-              uid=0.0,
-              vm_swap=0.0,
-              vm_size=236948.0,
-              threads=1.0,
-          )
-      ]
+    [
+      _obj(
+        uid=0.0,
+        vm_swap=0.0,
+        vm_size=236948.0,
+        threads=1.0,
+      )
+    ]
   ).decode("utf-8")
   fields = payload.strip().split("\t")
   # PROC_DATA_COPY_COLUMNS: jid host proc device uid … vm_size … vm_swap threads
@@ -89,7 +94,9 @@ def test_proc_field_or_none_coerces_float_keeps_device_str():
   from hpcperfstats.dbload import sync_timedb as st
   from hpcperfstats.dbload.lib import listend_db_ingest as ldi
 
-  row = SimpleNamespace(uid=0.0, vm_size=236948.0, device="bash/1", bog=float("nan"))
+  row = SimpleNamespace(
+    uid=0.0, vm_size=236948.0, device="bash/1", bog=float("nan")
+  )
   assert st._proc_field_or_none(row, "uid") == 0
   assert st._proc_field_or_none(row, "vm_size") == 236948
   assert st._proc_field_or_none(row, "device") == "bash/1"
@@ -99,7 +106,7 @@ def test_proc_field_or_none_coerces_float_keeps_device_str():
 
 
 def test_bulk_insert_proc_copy_s_and_conflict_insert_under_write_telem(
-    monkeypatch,
+  monkeypatch,
 ):
   """COPY upsert must accumulate copy_s and conflict_insert_s when write telem on."""
   from hpcperfstats.dbload import sync_timedb as st
@@ -143,9 +150,9 @@ def test_bulk_insert_proc_copy_s_and_conflict_insert_under_write_telem(
 
   monkeypatch.setattr(django_db, "connection", _Conn())
   monkeypatch.setattr(
-      django_db,
-      "transaction",
-      type("T", (), {"atomic": staticmethod(lambda: _Atomic())})(),
+    django_db,
+    "transaction",
+    type("T", (), {"atomic": staticmethod(lambda: _Atomic())})(),
   )
   st._reset_ingest_write_timing(enabled=True)
   try:

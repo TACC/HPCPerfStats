@@ -1,6 +1,7 @@
 """
 Management command: print PostgreSQL session counts from pg_stat_activity.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -19,7 +20,9 @@ class Command(BaseCommand):
   Invoke: ``manage.py pg_connection_stats``.
   """
 
-  help = "Print connection counts from pg_stat_activity (default database only)."
+  help = (
+    "Print connection counts from pg_stat_activity (default database only)."
+  )
 
   def handle(self, *args: Any, **options: Any) -> None:
     """Run the command body (override of ``BaseCommand.handle``).
@@ -45,7 +48,7 @@ class Command(BaseCommand):
       return
     with connection.cursor() as cursor:
       cursor.execute(
-          """
+        """
           SELECT
             count(*) AS total,
             count(*) FILTER (WHERE state = 'active') AS active,
@@ -57,7 +60,7 @@ class Command(BaseCommand):
       )
       row = cursor.fetchone()
       cursor.execute(
-          """
+        """
           SELECT
             COALESCE(NULLIF(application_name, ''), '(unset)')
               AS application_name,
@@ -76,11 +79,10 @@ class Command(BaseCommand):
       return
     total, active, idle, idle_in_tx = row
     self.stdout.write(
-        "pg_stat_activity for current_database(): "
-        "total=%s active=%s idle=%s idle_in_transaction=%s"
-        % (total, active, idle, idle_in_tx))
+      "pg_stat_activity for current_database(): "
+      f"total={total} active={active} idle={idle} idle_in_transaction={idle_in_tx}"
+    )
     for app_name, app_total, app_active, app_idle in groups:
       self.stdout.write(
-          "  application_name=%s total=%s active=%s idle=%s"
-          % (app_name, app_total, app_active, app_idle)
+        f"  application_name={app_name} total={app_total} active={app_active} idle={app_idle}"
       )

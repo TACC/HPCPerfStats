@@ -15,777 +15,782 @@ _SCRIPT = _REPO / "scripts" / "measure_pipeline_ingest_rate.py"
 
 
 def _load_module():
-    name = "measure_pipeline_ingest_rate"
-    spec = importlib.util.spec_from_file_location(name, _SCRIPT)
-    assert spec and spec.loader
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+  name = "measure_pipeline_ingest_rate"
+  spec = importlib.util.spec_from_file_location(name, _SCRIPT)
+  assert spec and spec.loader
+  mod = importlib.util.module_from_spec(spec)
+  sys.modules[name] = mod
+  spec.loader.exec_module(mod)
+  return mod
 
 
 @pytest.fixture
 def mod():
-    return _load_module()
+  return _load_module()
 
 
 def _ts(minutes_from_start: int, second: int = 0) -> str:
-    hour = 10 + minutes_from_start // 60
-    minute = minutes_from_start % 60
-    return "2026-07-08T%02d:%02d:%02dZ hpcperfstats_pipeline_1 | " % (hour, minute, second)
+  hour = 10 + minutes_from_start // 60
+  minute = minutes_from_start % 60
+  return "2026-07-08T%02d:%02d:%02dZ hpcperfstats_pipeline_1 | " % (
+    hour,
+    minute,
+    second,
+  )
 
 
 FIXTURE_WINNING = [
-    _ts(0) + "Messages consumed in the last 10 minutes: 100; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 5",
-    _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+  _ts(0)
+  + "Messages consumed in the last 10 minutes: 100; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 5",
+  _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
 ]
 FIXTURE_WINNING += [
-    _ts(10 + i) + (
-        "ingest file path=/arch/host/%d outcome=ingested elapsed_s=1.0 "
-        "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10"
-    ) % (100 + i)
-    for i in range(12)
+  _ts(10 + i)
+  + (
+    "ingest file path=/arch/host/%d outcome=ingested elapsed_s=1.0 "
+    "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10"
+  )
+  % (100 + i)
+  for i in range(12)
 ]
 FIXTURE_WINNING += [
-    _ts(50) + "Pending stats file list truncated pending=900 max=2000",
-    _ts(50) + "Throughput telemetry: active_workers=4 backlog=900 chunk_size=1000 bulk_create_batch=10000",
-    _ts(55) + "sync_timedb: chunk ingest summary chunk=0 ingested_this_chunk=12 checkpoint_immediate_n=8 archive_deferred_n=4",
-    _ts(56) + "sync_timedb: checkpoint deferred archive finalize count=4",
-    _ts(60) + "Messages consumed in the last 10 minutes: 100; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 5",
+  _ts(50) + "Pending stats file list truncated pending=900 max=2000",
+  _ts(50)
+  + "Throughput telemetry: active_workers=4 backlog=900 chunk_size=1000 bulk_create_batch=10000",
+  _ts(55)
+  + "sync_timedb: chunk ingest summary chunk=0 ingested_this_chunk=12 checkpoint_immediate_n=8 archive_deferred_n=4",
+  _ts(56) + "sync_timedb: checkpoint deferred archive finalize count=4",
+  _ts(60)
+  + "Messages consumed in the last 10 minutes: 100; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 5",
 ]
 
 
 FIXTURE_LOSING = [
-    _ts(0) + "sync_timedb: pending rescan done pending=500 elapsed_s=1.0",
-    _ts(10) + "Messages consumed in the last 10 minutes: 50; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 50",
-    _ts(70) + "ingest file path=/arch/host/200 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
-    _ts(71) + "ingest file path=/arch/host/201 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
-    _ts(80) + "Pending stats file list truncated pending=550 max=2000",
-    _ts(80) + "Throughput telemetry: active_workers=4 backlog=550 chunk_size=1000 bulk_create_batch=10000",
+  _ts(0) + "sync_timedb: pending rescan done pending=500 elapsed_s=1.0",
+  _ts(10)
+  + "Messages consumed in the last 10 minutes: 50; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 50",
+  _ts(70)
+  + "ingest file path=/arch/host/200 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
+  _ts(71)
+  + "ingest file path=/arch/host/201 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
+  _ts(80) + "Pending stats file list truncated pending=550 max=2000",
+  _ts(80)
+  + "Throughput telemetry: active_workers=4 backlog=550 chunk_size=1000 bulk_create_batch=10000",
 ]
 
 
 def test_parse_leading_rfc3339_timestamp(mod):
-    line = (
-        "2026-07-07T08:38:46.381101000-05:00 [update_metrics:thread:readiness-producer] "
-        "metrics_deferred_coverage jid=809643 start_ok=False"
-    )
-    ts, body = mod._strip_log_prefix(line)
-    assert ts is not None
-    assert ts.year == 2026 and ts.month == 7 and ts.day == 7
-    assert "[update_metrics:thread:readiness-producer]" in body
+  line = (
+    "2026-07-07T08:38:46.381101000-05:00 [update_metrics:thread:readiness-producer] "
+    "metrics_deferred_coverage jid=809643 start_ok=False"
+  )
+  ts, body = mod._strip_log_prefix(line)
+  assert ts is not None
+  assert ts.year == 2026 and ts.month == 7 and ts.day == 7
+  assert "[update_metrics:thread:readiness-producer]" in body
 
 
 def test_parse_nanosecond_timestamp_python39_compatible(mod):
-    ts = mod._parse_log_timestamp("2026-07-07T08:38:46.381101000-05:00")
-    assert ts is not None
-    assert ts.microsecond == 381101
+  ts = mod._parse_log_timestamp("2026-07-07T08:38:46.381101000-05:00")
+  assert ts is not None
+  assert ts.microsecond == 381101
 
 
 def test_parse_container_pipe_timestamp(mod):
-    line = (
-        "hpcperfstats_pipeline_1  | 2026-07-07T08:38:46.381101000-05:00 "
-        "[sync_timedb:main] sync_timedb: pending rescan done pending=1000 elapsed_s=1.0"
-    )
-    ts, body = mod._strip_log_prefix(line)
-    assert ts is not None
-    assert "pending rescan done pending=1000" in body
+  line = (
+    "hpcperfstats_pipeline_1  | 2026-07-07T08:38:46.381101000-05:00 "
+    "[sync_timedb:main] sync_timedb: pending rescan done pending=1000 elapsed_s=1.0"
+  )
+  ts, body = mod._strip_log_prefix(line)
+  assert ts is not None
+  assert "pending rescan done pending=1000" in body
 
 
 def test_parse_container_first_timestamp(mod):
-    line = (
-        "hpcperfstats_pipeline_1 2026-07-07T08:38:51.004115000-05:00 "
-        "[sync_timedb:main] sync_timedb: pending rescan done pending=1000 elapsed_s=1.0"
-    )
-    ts, body = mod._strip_log_prefix(line)
-    assert ts is not None
-    assert "pending rescan done pending=1000" in body
-    metrics = mod.parse_log_lines([line])
-    assert metrics.backlog_rescan_samples[0][1] == 1000
+  line = (
+    "hpcperfstats_pipeline_1 2026-07-07T08:38:51.004115000-05:00 "
+    "[sync_timedb:main] sync_timedb: pending rescan done pending=1000 elapsed_s=1.0"
+  )
+  ts, body = mod._strip_log_prefix(line)
+  assert ts is not None
+  assert "pending rescan done pending=1000" in body
+  metrics = mod.parse_log_lines([line])
+  assert metrics.backlog_rescan_samples[0][1] == 1000
 
 
 def test_parse_full_ingest_and_listend(mod):
-    metrics = mod.parse_log_lines(FIXTURE_WINNING)
-    assert metrics.listend_unlink_sum == 10
-    assert metrics.full_ingest_count == 12
-    assert metrics.archive_immediate_sum == 8
-    assert metrics.archive_finalize_sum == 4
+  metrics = mod.parse_log_lines(FIXTURE_WINNING)
+  assert metrics.listend_unlink_sum == 10
+  assert metrics.full_ingest_count == 12
+  assert metrics.archive_immediate_sum == 8
+  assert metrics.archive_finalize_sum == 4
 
 
 def test_unknown_backlog_eta_is_na(mod):
-    """Unknown disk backlog must not invent a zero-hour finish at log end."""
-    lines = [
-        _ts(0)
-        + "Messages consumed in the last 10 minutes: 1; messages waiting to be "
-        "consumed: 0; current file unlinks (last 10 minutes): 1",
-        _ts(10)
-        + (
-            "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 "
-            "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10"
-        ),
-        _ts(20)
-        + "Throughput telemetry: active_workers=4 backlog=10 chunk_size=1000 "
-        "bulk_create_batch=10000",
-    ]
-    outcomes = mod.analyze_lines(lines)
-    assert outcomes["backlog_at_start"] == "N/A"
-    assert outcomes["backlog_latest"] == "N/A"
-    assert outcomes["eta_hours_empirical"] == "N/A"
-    assert outcomes["eta_hours_full_ingest"] == "N/A"
-    assert outcomes["eta_hours_archive_done"] == "N/A"
-    assert outcomes["estimated_finish_local"] == "N/A"
-    assert outcomes["estimated_finish_basis"] == "N/A"
+  """Unknown disk backlog must not invent a zero-hour finish at log end."""
+  lines = [
+    _ts(0)
+    + "Messages consumed in the last 10 minutes: 1; messages waiting to be "
+    "consumed: 0; current file unlinks (last 10 minutes): 1",
+    _ts(10)
+    + (
+      "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 "
+      "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10"
+    ),
+    _ts(20)
+    + "Throughput telemetry: active_workers=4 backlog=10 chunk_size=1000 "
+    "bulk_create_batch=10000",
+  ]
+  outcomes = mod.analyze_lines(lines)
+  assert outcomes["backlog_at_start"] == "N/A"
+  assert outcomes["backlog_latest"] == "N/A"
+  assert outcomes["eta_hours_empirical"] == "N/A"
+  assert outcomes["eta_hours_full_ingest"] == "N/A"
+  assert outcomes["eta_hours_archive_done"] == "N/A"
+  assert outcomes["estimated_finish_local"] == "N/A"
+  assert outcomes["estimated_finish_basis"] == "N/A"
 
 
 def test_overlapping_listend_windows_not_double_counted(mod):
-    """Rolling last-10-minute listend reports must not be summed as arrivals."""
-    lines = [
-        _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
-    ]
-    # Every minute for an hour, listend reports the same rolling 10-minute count.
-    for minute in range(0, 61):
-        lines.append(
-            _ts(minute)
-            + "Messages consumed in the last 10 minutes: 0; messages waiting "
-            "to be consumed: 0; current file unlinks (last 10 minutes): 10"
-        )
+  """Rolling last-10-minute listend reports must not be summed as arrivals."""
+  lines = [
+    _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+  ]
+  # Every minute for an hour, listend reports the same rolling 10-minute count.
+  for minute in range(61):
     lines.append(
-        _ts(60)
-        + "Pending stats file list truncated pending=940 max=2000"
+      _ts(minute)
+      + "Messages consumed in the last 10 minutes: 0; messages waiting "
+      "to be consumed: 0; current file unlinks (last 10 minutes): 10"
     )
-    for i in range(60):
-        lines.append(
-            _ts(1 + i)
-            + (
-                "ingest file path=/arch/host/%d outcome=ingested elapsed_s=1.0 "
-                "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 "
-                "stats_rows=10"
-            )
-            % (1000 + i)
-        )
-    outcomes = mod.analyze_lines(lines, since_minutes=None, exclude_startup=False)
-    # Non-overlapping keep: t=0,10,20,30,40,50,60 → 7 * 10 = 70 over ~60 min.
-    assert float(outcomes["window_minutes"]) == pytest.approx(60.0, abs=0.1)
-    assert float(outcomes["listend_closed_per_min"]) == pytest.approx(
-        70.0 / 60.0,
-        rel=1e-3,
+  lines.append(
+    _ts(60) + "Pending stats file list truncated pending=940 max=2000"
+  )
+  for i in range(60):
+    lines.append(
+      _ts(1 + i)
+      + (
+        "ingest file path=/arch/host/%d outcome=ingested elapsed_s=1.0 "
+        "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 "
+        "stats_rows=10"
+      )
+      % (1000 + i)
     )
-    # Naive sum of every overlapping report would be 61*10=610 → ~10.17/min.
-    assert float(outcomes["listend_closed_per_min"]) < 2.0
+  outcomes = mod.analyze_lines(lines, since_minutes=None, exclude_startup=False)
+  # Non-overlapping keep: t=0,10,20,30,40,50,60 → 7 * 10 = 70 over ~60 min.
+  assert float(outcomes["window_minutes"]) == pytest.approx(60.0, abs=0.1)
+  assert float(outcomes["listend_closed_per_min"]) == pytest.approx(
+    70.0 / 60.0,
+    rel=1e-3,
+  )
+  # Naive sum of every overlapping report would be 61*10=610 → ~10.17/min.
+  assert float(outcomes["listend_closed_per_min"]) < 2.0
 
 
 def test_winning_verdict_and_eta(mod):
-    outcomes = mod.analyze_lines(FIXTURE_WINNING)
-    assert outcomes["verdict_full_ingest"] == "WINNING"
-    assert float(outcomes["ratio_listend_over_full_ingest"]) < 1.0
-    assert outcomes["backlog_at_start"] == "1000"
-    assert outcomes["backlog_latest"] == "900"
-    assert outcomes["backlog_drained_since_start"] == "100"
-    assert outcomes["ingest_queue_depth_at_start"] == "900"
-    assert outcomes["ingest_queue_depth_latest"] == "900"
-    assert outcomes["eta_hours_full_ingest"] != "N/A"
-    assert float(outcomes["eta_hours_full_ingest"]) > 0
-    assert outcomes["estimated_finish_local"] != "N/A"
-    assert outcomes["estimated_finish_basis"] in (
-        "eta_hours_empirical",
-        "eta_hours_full_ingest",
-        "eta_hours_archive_done",
-    )
-    # Local stamp: YYYY-MM-DD HH:MM:SS ±HHMM
-    assert re.match(
-        r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{4}$",
-        outcomes["estimated_finish_local"],
-    )
+  outcomes = mod.analyze_lines(FIXTURE_WINNING)
+  assert outcomes["verdict_full_ingest"] == "WINNING"
+  assert float(outcomes["ratio_listend_over_full_ingest"]) < 1.0
+  assert outcomes["backlog_at_start"] == "1000"
+  assert outcomes["backlog_latest"] == "900"
+  assert outcomes["backlog_drained_since_start"] == "100"
+  assert outcomes["ingest_queue_depth_at_start"] == "900"
+  assert outcomes["ingest_queue_depth_latest"] == "900"
+  assert outcomes["eta_hours_full_ingest"] != "N/A"
+  assert float(outcomes["eta_hours_full_ingest"]) > 0
+  assert outcomes["estimated_finish_local"] != "N/A"
+  assert outcomes["estimated_finish_basis"] in (
+    "eta_hours_empirical",
+    "eta_hours_full_ingest",
+    "eta_hours_archive_done",
+  )
+  # Local stamp: YYYY-MM-DD HH:MM:SS ±HHMM
+  assert re.match(
+    r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{4}$",
+    outcomes["estimated_finish_local"],
+  )
 
 
 def test_losing_verdict_and_eta_na(mod):
-    outcomes = mod.analyze_lines(FIXTURE_LOSING)
-    assert outcomes["verdict_full_ingest"] == "LOSING"
-    assert float(outcomes["ratio_listend_over_full_ingest"]) > 1.0
-    assert outcomes["eta_hours_full_ingest"] == "N/A"
-    assert outcomes["estimated_finish_local"] == "N/A"
-    assert outcomes["estimated_finish_basis"] == "N/A"
+  outcomes = mod.analyze_lines(FIXTURE_LOSING)
+  assert outcomes["verdict_full_ingest"] == "LOSING"
+  assert float(outcomes["ratio_listend_over_full_ingest"]) > 1.0
+  assert outcomes["eta_hours_full_ingest"] == "N/A"
+  assert outcomes["estimated_finish_local"] == "N/A"
+  assert outcomes["estimated_finish_basis"] == "N/A"
 
 
 def test_db_skip_not_counted_as_full_ingest(mod):
-    lines = [
-        _ts(0) + "ingest file path=/arch/host/1 outcome=db_skip elapsed_s=0.1 ingest_ok=yes archive=member_exists db_skip=head_tail size_bytes=1000",
-        _ts(61) + "ingest file path=/arch/host/2 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
-    ]
-    metrics = mod.parse_log_lines(lines)
-    assert metrics.full_ingest_count == 1
+  lines = [
+    _ts(0)
+    + "ingest file path=/arch/host/1 outcome=db_skip elapsed_s=0.1 ingest_ok=yes archive=member_exists db_skip=head_tail size_bytes=1000",
+    _ts(61)
+    + "ingest file path=/arch/host/2 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
+  ]
+  metrics = mod.parse_log_lines(lines)
+  assert metrics.full_ingest_count == 1
 
 
 def test_mixed_rescan_and_throughput_does_not_invent_drain(mod):
-    """Prod signature: uncapped rescan + capped throughput must not invent drain."""
-    lines = [
-        _ts(0) + "sync_timedb: pending rescan done pending=286501 elapsed_s=63.0",
-        _ts(10) + "Messages consumed in the last 10 minutes: 0; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 1",
-        _ts(30) + "Throughput telemetry: active_workers=24 backlog=2000 chunk_size=1000 bulk_create_batch=10000",
-        _ts(61) + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
-    ]
-    outcomes = mod.analyze_lines(lines)
-    assert outcomes["backlog_at_start"] == "286501"
-    assert outcomes["backlog_latest"] == "286501"
-    assert outcomes["backlog_drained_since_start"] == "N/A"
-    assert outcomes["pct_complete_since_start"] == "N/A"
-    assert outcomes["empirical_drain_per_min"] == "0.0000"
-    assert outcomes["eta_hours_empirical"] == "N/A"
-    assert outcomes["ingest_queue_depth_latest"] == "2000"
-    assert outcomes["ingest_queue_depth_at_start"] == "2000"
-    drained_fake = 286501 - 2000
-    assert outcomes["backlog_drained_since_start"] != str(drained_fake)
-    assert outcomes["backlog_latest"] != "2000"
+  """Prod signature: uncapped rescan + capped throughput must not invent drain."""
+  lines = [
+    _ts(0) + "sync_timedb: pending rescan done pending=286501 elapsed_s=63.0",
+    _ts(10)
+    + "Messages consumed in the last 10 minutes: 0; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 1",
+    _ts(30)
+    + "Throughput telemetry: active_workers=24 backlog=2000 chunk_size=1000 bulk_create_batch=10000",
+    _ts(61)
+    + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
+  ]
+  outcomes = mod.analyze_lines(lines)
+  assert outcomes["backlog_at_start"] == "286501"
+  assert outcomes["backlog_latest"] == "286501"
+  assert outcomes["backlog_drained_since_start"] == "N/A"
+  assert outcomes["pct_complete_since_start"] == "N/A"
+  assert outcomes["empirical_drain_per_min"] == "0.0000"
+  assert outcomes["eta_hours_empirical"] == "N/A"
+  assert outcomes["ingest_queue_depth_latest"] == "2000"
+  assert outcomes["ingest_queue_depth_at_start"] == "2000"
+  drained_fake = 286501 - 2000
+  assert outcomes["backlog_drained_since_start"] != str(drained_fake)
+  assert outcomes["backlog_latest"] != "2000"
 
 
 def test_truncate_line_is_disk_pending_sample(mod):
-    lines = [
-        _ts(0) + "sync_timedb: pending rescan done pending=286501 elapsed_s=63.0",
-        _ts(10) + "Messages consumed in the last 10 minutes: 0; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 1",
-        _ts(40) + "Pending stats file list truncated pending=285607 max=2000",
-        _ts(41) + "Throughput telemetry: active_workers=24 backlog=2000 chunk_size=1000 bulk_create_batch=10000",
-        _ts(61) + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
-    ]
-    outcomes = mod.analyze_lines(lines)
-    assert outcomes["backlog_at_start"] == "286501"
-    assert outcomes["backlog_latest"] == "285607"
-    assert outcomes["backlog_drained_since_start"] == "894"
-    assert outcomes["ingest_queue_depth_latest"] == "2000"
-    assert float(outcomes["empirical_drain_per_min"]) > 0
-    assert outcomes["eta_hours_empirical"] != "N/A"
+  lines = [
+    _ts(0) + "sync_timedb: pending rescan done pending=286501 elapsed_s=63.0",
+    _ts(10)
+    + "Messages consumed in the last 10 minutes: 0; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 1",
+    _ts(40) + "Pending stats file list truncated pending=285607 max=2000",
+    _ts(41)
+    + "Throughput telemetry: active_workers=24 backlog=2000 chunk_size=1000 bulk_create_batch=10000",
+    _ts(61)
+    + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
+  ]
+  outcomes = mod.analyze_lines(lines)
+  assert outcomes["backlog_at_start"] == "286501"
+  assert outcomes["backlog_latest"] == "285607"
+  assert outcomes["backlog_drained_since_start"] == "894"
+  assert outcomes["ingest_queue_depth_latest"] == "2000"
+  assert float(outcomes["empirical_drain_per_min"]) > 0
+  assert outcomes["eta_hours_empirical"] != "N/A"
 
 
 def test_boot_only_skips_pre_boot_lines(mod):
-    lines = [
-        _ts(0) + "sync_timedb: pending rescan done pending=9999 elapsed_s=1.0",
-        _ts(5) + "startup ingest gate cleared; ingest may begin",
-        _ts(10) + "sync_timedb: pending rescan done pending=100 elapsed_s=1.0",
-        _ts(10) + "Messages consumed in the last 10 minutes: 0; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 1",
-        _ts(40) + "Pending stats file list truncated pending=80 max=2000",
-        _ts(70) + "Throughput telemetry: active_workers=4 backlog=80 chunk_size=1000 bulk_create_batch=10000",
-        _ts(71) + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
-        _ts(72) + "ingest file path=/arch/host/2 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
-    ]
-    # Default excludes startup; --boot-only remains an explicit alias.
-    outcomes = mod.analyze_lines(lines)
-    assert outcomes["backlog_at_start"] == "100"
-    assert outcomes["backlog_latest"] == "80"
-    assert outcomes["ingest_queue_depth_latest"] == "80"
-    assert "T10:05:00" in outcomes["ingest_start_utc"] or outcomes["ingest_start_utc"].endswith(
-        "10:05:00+00:00"
-    )
+  lines = [
+    _ts(0) + "sync_timedb: pending rescan done pending=9999 elapsed_s=1.0",
+    _ts(5) + "startup ingest gate cleared; ingest may begin",
+    _ts(10) + "sync_timedb: pending rescan done pending=100 elapsed_s=1.0",
+    _ts(10)
+    + "Messages consumed in the last 10 minutes: 0; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 1",
+    _ts(40) + "Pending stats file list truncated pending=80 max=2000",
+    _ts(70)
+    + "Throughput telemetry: active_workers=4 backlog=80 chunk_size=1000 bulk_create_batch=10000",
+    _ts(71)
+    + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
+    _ts(72)
+    + "ingest file path=/arch/host/2 outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
+  ]
+  # Default excludes startup; --boot-only remains an explicit alias.
+  outcomes = mod.analyze_lines(lines)
+  assert outcomes["backlog_at_start"] == "100"
+  assert outcomes["backlog_latest"] == "80"
+  assert outcomes["ingest_queue_depth_latest"] == "80"
+  assert "T10:05:00" in outcomes["ingest_start_utc"] or outcomes[
+    "ingest_start_utc"
+  ].endswith("10:05:00+00:00")
 
 
 def test_measurement_window_starts_at_ingest_gate_not_startup(mod):
-    """Elapsed window must begin at gate cleared, not supervisor startup lines."""
-    lines = [
-        _ts(0) + "sync_timedb: startup maintenance pass reason=startup",
-        _ts(30) + "sync_timedb: pending rescan done pending=5000 elapsed_s=120.0",
-        _ts(60) + "startup ingest gate cleared; ingest may begin",
-        _ts(61) + "sync_timedb: pending rescan done pending=4000 elapsed_s=1.0",
-        _ts(90) + "Pending stats file list truncated pending=3500 max=2000",
-        _ts(120)
-        + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 "
-        "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
-    ]
-    outcomes = mod.analyze_lines(lines)
-    # 60 min of startup must not inflate the window: gate@60 → last@120 = 60 min.
-    assert float(outcomes["window_minutes"]) == pytest.approx(60.0, abs=0.1)
-    assert outcomes["backlog_at_start"] == "4000"
-    assert float(outcomes["elapsed_hours"]) == pytest.approx(1.0, abs=0.01)
+  """Elapsed window must begin at gate cleared, not supervisor startup lines."""
+  lines = [
+    _ts(0) + "sync_timedb: startup maintenance pass reason=startup",
+    _ts(30) + "sync_timedb: pending rescan done pending=5000 elapsed_s=120.0",
+    _ts(60) + "startup ingest gate cleared; ingest may begin",
+    _ts(61) + "sync_timedb: pending rescan done pending=4000 elapsed_s=1.0",
+    _ts(90) + "Pending stats file list truncated pending=3500 max=2000",
+    _ts(120) + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 "
+    "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
+  ]
+  outcomes = mod.analyze_lines(lines)
+  # 60 min of startup must not inflate the window: gate@60 → last@120 = 60 min.
+  assert float(outcomes["window_minutes"]) == pytest.approx(60.0, abs=0.1)
+  assert outcomes["backlog_at_start"] == "4000"
+  assert float(outcomes["elapsed_hours"]) == pytest.approx(1.0, abs=0.01)
 
 
 def test_later_pending_rescans_do_not_move_ingest_start(mod):
-    """Catch-up pending rescans must not reset the measurement window."""
-    lines = [
-        _ts(0) + "startup ingest gate cleared; ingest may begin",
-        _ts(1) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
-        _ts(30) + "sync_timedb: pending rescan done pending=800 elapsed_s=1.0",
-        _ts(60) + "sync_timedb: pending rescan done pending=600 elapsed_s=1.0",
-        _ts(90)
-        + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 "
-        "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
-    ]
-    outcomes = mod.analyze_lines(lines)
-    assert float(outcomes["window_minutes"]) == pytest.approx(90.0, abs=0.1)
-    assert outcomes["backlog_at_start"] == "1000"
+  """Catch-up pending rescans must not reset the measurement window."""
+  lines = [
+    _ts(0) + "startup ingest gate cleared; ingest may begin",
+    _ts(1) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+    _ts(30) + "sync_timedb: pending rescan done pending=800 elapsed_s=1.0",
+    _ts(60) + "sync_timedb: pending rescan done pending=600 elapsed_s=1.0",
+    _ts(90) + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 "
+    "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
+  ]
+  outcomes = mod.analyze_lines(lines)
+  assert float(outcomes["window_minutes"]) == pytest.approx(90.0, abs=0.1)
+  assert outcomes["backlog_at_start"] == "1000"
 
 
 def test_include_startup_keeps_pre_gate_window(mod):
-    lines = [
-        _ts(0) + "sync_timedb: pending rescan done pending=9999 elapsed_s=1.0",
-        _ts(60) + "startup ingest gate cleared; ingest may begin",
-        _ts(90) + "sync_timedb: pending rescan done pending=100 elapsed_s=1.0",
-        _ts(120)
-        + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 "
-        "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
-    ]
-    outcomes = mod.analyze_lines(lines, exclude_startup=False)
-    assert float(outcomes["window_minutes"]) == pytest.approx(120.0, abs=0.1)
-    assert outcomes["backlog_at_start"] == "9999"
+  lines = [
+    _ts(0) + "sync_timedb: pending rescan done pending=9999 elapsed_s=1.0",
+    _ts(60) + "startup ingest gate cleared; ingest may begin",
+    _ts(90) + "sync_timedb: pending rescan done pending=100 elapsed_s=1.0",
+    _ts(120) + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 "
+    "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
+  ]
+  outcomes = mod.analyze_lines(lines, exclude_startup=False)
+  assert float(outcomes["window_minutes"]) == pytest.approx(120.0, abs=0.1)
+  assert outcomes["backlog_at_start"] == "9999"
 
 
 def test_since_minutes_window(mod):
-    lines = [
-        _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
-    ]
-    lines += [
-        _ts(130 + i)
-        + (
-            "ingest file path=/arch/host/%d outcome=ingested elapsed_s=1.0 "
-            "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10"
-        )
-        % (300 + i)
-        for i in range(12)
-    ]
-    lines.append(
-        _ts(200)
-        + "Messages consumed in the last 10 minutes: 0; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 1",
+  lines = [
+    _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+  ]
+  lines += [
+    _ts(130 + i)
+    + (
+      "ingest file path=/arch/host/%d outcome=ingested elapsed_s=1.0 "
+      "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10"
     )
-    outcomes = mod.analyze_lines(lines, since_minutes=90)
-    assert float(outcomes["window_minutes"]) == 90.0
-    assert float(outcomes["sync_full_ingest_per_min"]) == pytest.approx(12 / 90.0, rel=1e-3)
+    % (300 + i)
+    for i in range(12)
+  ]
+  lines.append(
+    _ts(200)
+    + "Messages consumed in the last 10 minutes: 0; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 1",
+  )
+  outcomes = mod.analyze_lines(lines, since_minutes=90)
+  assert float(outcomes["window_minutes"]) == 90.0
+  assert float(outcomes["sync_full_ingest_per_min"]) == pytest.approx(
+    12 / 90.0, rel=1e-3
+  )
 
 
 def test_empty_log_raises(mod):
-    with pytest.raises(ValueError, match="insufficient log window"):
-        mod.analyze_lines([])
+  with pytest.raises(ValueError, match="insufficient log window"):
+    mod.analyze_lines([])
 
 
 def test_no_timestamps_fallback_window(mod):
-    lines = [
-        "Messages consumed in the last 10 minutes: 1; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 5",
-        "Messages consumed in the last 10 minutes: 1; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 5",
-    ]
-    outcomes = mod.analyze_lines(lines)
-    assert float(outcomes["window_minutes"]) == 20.0
-    assert float(outcomes["listend_closed_per_min"]) == 0.5
+  lines = [
+    "Messages consumed in the last 10 minutes: 1; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 5",
+    "Messages consumed in the last 10 minutes: 1; messages waiting to be consumed: 0; current file unlinks (last 10 minutes): 5",
+  ]
+  outcomes = mod.analyze_lines(lines)
+  assert float(outcomes["window_minutes"]) == 20.0
+  assert float(outcomes["listend_closed_per_min"]) == 0.5
 
 
 def test_stdout_only_key_count(mod):
-    outcomes = mod.analyze_lines(FIXTURE_WINNING)
-    text = mod.format_stdout(outcomes)
-    lines = text.splitlines()
-    assert all("=" in line for line in lines)
-    assert lines[0].startswith("window_minutes=")
-    # Base keys + mid/decision pack + per-tier elapsed/postgres/frac + selected phases
-    assert len(lines) >= 42
-    assert "decision_next=" in text
-    assert "mid_tier_median_postgres_frac=" in text
-    assert "sync_full_ingest_mib_per_min=" in text
-    assert "tier_lt_8mib_count=" in text
-    assert "tier_8mib_64mib_count=" in text
-    assert "ingest_queue_depth_latest=" in text
-    assert "ingest_queue_depth_at_start=" in text
-    assert "ingest_start_utc=" in text
-    assert "estimated_finish_local=" in text
-    assert "estimated_finish_basis=" in text
-    assert "container_start_utc=" not in text
+  outcomes = mod.analyze_lines(FIXTURE_WINNING)
+  text = mod.format_stdout(outcomes)
+  lines = text.splitlines()
+  assert all("=" in line for line in lines)
+  assert lines[0].startswith("window_minutes=")
+  # Base keys + mid/decision pack + per-tier elapsed/postgres/frac + selected phases
+  assert len(lines) >= 42
+  assert "decision_next=" in text
+  assert "mid_tier_median_postgres_frac=" in text
+  assert "sync_full_ingest_mib_per_min=" in text
+  assert "tier_lt_8mib_count=" in text
+  assert "tier_8mib_64mib_count=" in text
+  assert "ingest_queue_depth_latest=" in text
+  assert "ingest_queue_depth_at_start=" in text
+  assert "ingest_start_utc=" in text
+  assert "estimated_finish_local=" in text
+  assert "estimated_finish_basis=" in text
+  assert "container_start_utc=" not in text
 
 
 def test_full_ingest_mib_per_min_and_size_tiers(mod):
-    """MiB/min and size-tier medians from known size_bytes / elapsed / postgres."""
-    mib = 1024 * 1024
-    gib = 1024 * mib
-    lines = [
-        _ts(0)
-        + "Messages consumed in the last 10 minutes: 1; messages waiting to "
-        "be consumed: 0; current file unlinks (last 10 minutes): 1",
-        _ts(0) + "sync_timedb: pending rescan done pending=10 elapsed_s=1.0",
-        # lt_8mib — unordered tokens (postgres before size before elapsed)
-        _ts(10)
-        + (
-            "ingest file path=/arch/a outcome=ingested postgres_s=10.0 "
-            "ingest_ok=yes db_skip=no size_bytes=%d elapsed_s=40.0 archive=yes"
-            % (4 * mib)
-        ),
-        # 8mib_64mib (Horizon dense mid-tier)
-        _ts(15)
-        + (
-            "ingest file path=/arch/a2 outcome=ingested postgres_s=12.0 "
-            "ingest_ok=yes db_skip=no size_bytes=%d elapsed_s=45.0 archive=yes"
-            % (16 * mib)
-        ),
-        # 64mib_1gib
-        _ts(20)
-        + (
-            "ingest file path=/arch/b outcome=ingested elapsed_s=100.0 "
-            "ingest_ok=yes archive=yes db_skip=no size_bytes=%d postgres_s=50.0"
-            % (128 * mib)
-        ),
-        # 1_4gib
-        _ts(30)
-        + (
-            "ingest file path=/arch/c outcome=ingested size_bytes=%d "
-            "ingest_ok=yes db_skip=no elapsed_s=200.0 postgres_s=80.0 archive=yes"
-            % (2 * gib)
-        ),
-        # ge_4gib
-        _ts(40)
-        + (
-            "ingest file path=/arch/d outcome=ingested elapsed_s=300.0 "
-            "postgres_s=120.0 size_bytes=%d ingest_ok=yes archive=yes db_skip=no"
-            % (5 * gib)
-        ),
-        _ts(60)
-        + "Messages consumed in the last 10 minutes: 1; messages waiting to "
-        "be consumed: 0; current file unlinks (last 10 minutes): 1",
-        _ts(60) + "Pending stats file list truncated pending=6 max=2000",
-    ]
-    outcomes = mod.analyze_lines(lines)
-    # (4+16+128) MiB + 2 GiB + 5 GiB = 148 MiB + 7168 MiB = 7316 MiB / 60 min
-    expected_mib = (4 + 16 + 128 + 2 * 1024 + 5 * 1024) / 60.0
-    assert float(outcomes["sync_full_ingest_mib_per_min"]) == pytest.approx(
-        expected_mib, rel=1e-6,
-    )
-    assert outcomes["tier_lt_8mib_count"] == "1"
-    assert outcomes["tier_lt_8mib_median_elapsed_s"] == "40.000"
-    assert outcomes["tier_lt_8mib_median_postgres_s"] == "10.000"
-    assert outcomes["tier_8mib_64mib_count"] == "1"
-    assert outcomes["tier_8mib_64mib_median_elapsed_s"] == "45.000"
-    assert outcomes["tier_8mib_64mib_median_postgres_s"] == "12.000"
-    assert outcomes["tier_64mib_1gib_count"] == "1"
-    assert outcomes["tier_64mib_1gib_median_elapsed_s"] == "100.000"
-    assert outcomes["tier_64mib_1gib_median_postgres_s"] == "50.000"
-    assert outcomes["tier_1_4gib_count"] == "1"
-    assert outcomes["tier_ge_4gib_count"] == "1"
-    assert outcomes["tier_ge_4gib_median_elapsed_s"] == "300.000"
-    assert outcomes["tier_ge_4gib_median_postgres_s"] == "120.000"
+  """MiB/min and size-tier medians from known size_bytes / elapsed / postgres."""
+  mib = 1024 * 1024
+  gib = 1024 * mib
+  lines = [
+    _ts(0) + "Messages consumed in the last 10 minutes: 1; messages waiting to "
+    "be consumed: 0; current file unlinks (last 10 minutes): 1",
+    _ts(0) + "sync_timedb: pending rescan done pending=10 elapsed_s=1.0",
+    # lt_8mib — unordered tokens (postgres before size before elapsed)
+    _ts(10)
+    + (
+      "ingest file path=/arch/a outcome=ingested postgres_s=10.0 "
+      "ingest_ok=yes db_skip=no size_bytes=%d elapsed_s=40.0 archive=yes"
+      % (4 * mib)
+    ),
+    # 8mib_64mib (Horizon dense mid-tier)
+    _ts(15)
+    + (
+      "ingest file path=/arch/a2 outcome=ingested postgres_s=12.0 "
+      "ingest_ok=yes db_skip=no size_bytes=%d elapsed_s=45.0 archive=yes"
+      % (16 * mib)
+    ),
+    # 64mib_1gib
+    _ts(20)
+    + (
+      "ingest file path=/arch/b outcome=ingested elapsed_s=100.0 "
+      "ingest_ok=yes archive=yes db_skip=no size_bytes=%d postgres_s=50.0"
+      % (128 * mib)
+    ),
+    # 1_4gib
+    _ts(30)
+    + (
+      "ingest file path=/arch/c outcome=ingested size_bytes=%d "
+      "ingest_ok=yes db_skip=no elapsed_s=200.0 postgres_s=80.0 archive=yes"
+      % (2 * gib)
+    ),
+    # ge_4gib
+    _ts(40)
+    + (
+      "ingest file path=/arch/d outcome=ingested elapsed_s=300.0 "
+      "postgres_s=120.0 size_bytes=%d ingest_ok=yes archive=yes db_skip=no"
+      % (5 * gib)
+    ),
+    _ts(60)
+    + "Messages consumed in the last 10 minutes: 1; messages waiting to "
+    "be consumed: 0; current file unlinks (last 10 minutes): 1",
+    _ts(60) + "Pending stats file list truncated pending=6 max=2000",
+  ]
+  outcomes = mod.analyze_lines(lines)
+  # (4+16+128) MiB + 2 GiB + 5 GiB = 148 MiB + 7168 MiB = 7316 MiB / 60 min
+  expected_mib = (4 + 16 + 128 + 2 * 1024 + 5 * 1024) / 60.0
+  assert float(outcomes["sync_full_ingest_mib_per_min"]) == pytest.approx(
+    expected_mib,
+    rel=1e-6,
+  )
+  assert outcomes["tier_lt_8mib_count"] == "1"
+  assert outcomes["tier_lt_8mib_median_elapsed_s"] == "40.000"
+  assert outcomes["tier_lt_8mib_median_postgres_s"] == "10.000"
+  assert outcomes["tier_8mib_64mib_count"] == "1"
+  assert outcomes["tier_8mib_64mib_median_elapsed_s"] == "45.000"
+  assert outcomes["tier_8mib_64mib_median_postgres_s"] == "12.000"
+  assert outcomes["tier_64mib_1gib_count"] == "1"
+  assert outcomes["tier_64mib_1gib_median_elapsed_s"] == "100.000"
+  assert outcomes["tier_64mib_1gib_median_postgres_s"] == "50.000"
+  assert outcomes["tier_1_4gib_count"] == "1"
+  assert outcomes["tier_ge_4gib_count"] == "1"
+  assert outcomes["tier_ge_4gib_median_elapsed_s"] == "300.000"
+  assert outcomes["tier_ge_4gib_median_postgres_s"] == "120.000"
 
 
 def test_unordered_size_elapsed_postgres_tokens(mod):
-    """Named-field regex must not require size_bytes before elapsed_s."""
-    body = (
-        "ingest file path=/x outcome=ingested postgres_s=1.5 "
-        "ingest_ok=yes db_skip=no elapsed_s=9.0 size_bytes=1024 archive=yes"
-    )
-    metrics = mod.LogMetrics()
-    mod._record_full_ingest(metrics, body)
-    assert metrics.full_ingest_count == 1
-    assert metrics.full_ingest_bytes == 1024
-    assert metrics.full_ingest_count_by_tier["lt_8mib"] == 1
-    assert metrics.full_ingest_elapsed_by_tier["lt_8mib"] == [9.0]
-    assert metrics.full_ingest_postgres_by_tier["lt_8mib"] == [1.5]
+  """Named-field regex must not require size_bytes before elapsed_s."""
+  body = (
+    "ingest file path=/x outcome=ingested postgres_s=1.5 "
+    "ingest_ok=yes db_skip=no elapsed_s=9.0 size_bytes=1024 archive=yes"
+  )
+  metrics = mod.LogMetrics()
+  mod._record_full_ingest(metrics, body)
+  assert metrics.full_ingest_count == 1
+  assert metrics.full_ingest_bytes == 1024
+  assert metrics.full_ingest_count_by_tier["lt_8mib"] == 1
+  assert metrics.full_ingest_elapsed_by_tier["lt_8mib"] == [9.0]
+  assert metrics.full_ingest_postgres_by_tier["lt_8mib"] == [1.5]
 
 
 def test_overnight_pack_prefers_dense_8mib_when_64mib_empty(mod):
-    """When 64mib_1gib is empty, decision pack must use 8mib_64mib (not lt_8mib)."""
-    mib = 1024 * 1024
-    lines = [
-        _ts(0)
-        + "Messages consumed in the last 10 minutes: 100; messages waiting "
-        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
-        _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
-    ]
-    for i in range(6):
-        # Tiny files — must not drive mid_tier when dense samples exist.
-        lines.append(
-            _ts(5 + i)
-            + (
-                "ingest file path=/arch/tiny/%d outcome=ingested elapsed_s=20.0 "
-                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-                "postgres_s=1.0 db_execute_s=0.5 copy_s=0.2 "
-                "orm_materialize_s=0.2 feed_s=15.0 collapse_gpu_s=1.0 "
-                "parse_unaccounted_s=1.0"
-                % (i, 2 * mib)
-            ),
-        )
-    for i in range(12):
-        lines.append(
-            _ts(20 + i * 5)
-            + (
-                "ingest file path=/arch/dense/%d outcome=ingested elapsed_s=100.0 "
-                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-                "postgres_s=5.0 db_execute_s=2.0 copy_s=1.0 "
-                "orm_materialize_s=1.0 feed_s=10.0 collapse_gpu_s=70.0 "
-                "parse_unaccounted_s=5.0"
-                % (i, 16 * mib)
-            ),
-        )
+  """When 64mib_1gib is empty, decision pack must use 8mib_64mib (not lt_8mib)."""
+  mib = 1024 * 1024
+  lines = [
+    _ts(0) + "Messages consumed in the last 10 minutes: 100; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+    _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+  ]
+  for i in range(6):
+    # Tiny files — must not drive mid_tier when dense samples exist.
     lines.append(
-        _ts(90)
-        + "Messages consumed in the last 10 minutes: 100; messages waiting "
-        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+      _ts(5 + i)
+      + (
+        "ingest file path=/arch/tiny/%d outcome=ingested elapsed_s=20.0 "
+        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+        "postgres_s=1.0 db_execute_s=0.5 copy_s=0.2 "
+        "orm_materialize_s=0.2 feed_s=15.0 collapse_gpu_s=1.0 "
+        "parse_unaccounted_s=1.0" % (i, 2 * mib)
+      ),
     )
+  for i in range(12):
     lines.append(
-        _ts(90) + "Pending stats file list truncated pending=900 max=2000",
+      _ts(20 + i * 5)
+      + (
+        "ingest file path=/arch/dense/%d outcome=ingested elapsed_s=100.0 "
+        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+        "postgres_s=5.0 db_execute_s=2.0 copy_s=1.0 "
+        "orm_materialize_s=1.0 feed_s=10.0 collapse_gpu_s=70.0 "
+        "parse_unaccounted_s=5.0" % (i, 16 * mib)
+      ),
     )
-    outcomes = mod.analyze_lines(lines)
-    assert outcomes["mid_tier_name"] == "8mib_64mib"
-    assert outcomes["decision_next"] == "parse_hold_collapse_gpu_s"
-    assert outcomes["mid_tier_top_parse_hold"] == "collapse_gpu_s"
-    assert outcomes["tier_lt_8mib_count"] == "6"
-    assert outcomes["tier_8mib_64mib_count"] == "12"
+  lines.append(
+    _ts(90) + "Messages consumed in the last 10 minutes: 100; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+  )
+  lines.append(
+    _ts(90) + "Pending stats file list truncated pending=900 max=2000",
+  )
+  outcomes = mod.analyze_lines(lines)
+  assert outcomes["mid_tier_name"] == "8mib_64mib"
+  assert outcomes["decision_next"] == "parse_hold_collapse_gpu_s"
+  assert outcomes["mid_tier_top_parse_hold"] == "collapse_gpu_s"
+  assert outcomes["tier_lt_8mib_count"] == "6"
+  assert outcomes["tier_8mib_64mib_count"] == "12"
 
 
 def test_dense_tier_below_min_samples_warns_not_decision_grade(mod, capsys):
-    """Tail admit-starvation (n<12 dense) must label decision_next_dense not decision-grade."""
-    mib = 1024 * 1024
-    lines = [
-        _ts(0)
-        + "Messages consumed in the last 10 minutes: 100; messages waiting "
-        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
-        _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
-    ]
-    for i in range(3):
-        lines.append(
-            _ts(10 + i * 5)
-            + (
-                "ingest file path=/arch/dense/%d outcome=ingested elapsed_s=100.0 "
-                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-                "postgres_s=5.0 feed_s=80.0 collapse_gpu_s=70.0 "
-                "parse_unaccounted_s=2.0"
-                % (i, 16 * mib)
-            ),
-        )
+  """Tail admit-starvation (n<12 dense) must label decision_next_dense not decision-grade."""
+  mib = 1024 * 1024
+  lines = [
+    _ts(0) + "Messages consumed in the last 10 minutes: 100; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+    _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+  ]
+  for i in range(3):
     lines.append(
-        _ts(40)
-        + "Messages consumed in the last 10 minutes: 100; messages waiting "
-        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+      _ts(10 + i * 5)
+      + (
+        "ingest file path=/arch/dense/%d outcome=ingested elapsed_s=100.0 "
+        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+        "postgres_s=5.0 feed_s=80.0 collapse_gpu_s=70.0 "
+        "parse_unaccounted_s=2.0" % (i, 16 * mib)
+      ),
     )
-    lines.append(
-        _ts(40) + "Pending stats file list truncated pending=900 max=2000",
-    )
-    outcomes = mod.analyze_lines(lines)
-    assert outcomes["tier_8mib_64mib_count"] == "3"
-    assert outcomes["decision_next_dense"] == "parse_hold_feed_s"
-    err = capsys.readouterr().err
-    assert "tier_8mib_64mib_count=3 below min 12" in err
-    assert "not decision-grade" in err
+  lines.append(
+    _ts(40) + "Messages consumed in the last 10 minutes: 100; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+  )
+  lines.append(
+    _ts(40) + "Pending stats file list truncated pending=900 max=2000",
+  )
+  outcomes = mod.analyze_lines(lines)
+  assert outcomes["tier_8mib_64mib_count"] == "3"
+  assert outcomes["decision_next_dense"] == "parse_hold_feed_s"
+  err = capsys.readouterr().err
+  assert "tier_8mib_64mib_count=3 below min 12" in err
+  assert "not decision-grade" in err
 
 
 def test_overnight_pack_prefers_dense_when_64mib_sparse(mod):
-    """Four 64mib files must not beat twelve dense 8–64 MiB samples."""
-    mib = 1024 * 1024
-    lines = [
-        _ts(0)
-        + "Messages consumed in the last 10 minutes: 100; messages waiting "
-        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
-        _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
-    ]
-    for i in range(4):
-        lines.append(
-            _ts(5 + i)
-            + (
-                "ingest file path=/arch/big/%d outcome=ingested elapsed_s=2000.0 "
-                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-                "postgres_s=1000.0 db_execute_s=100.0 copy_s=10.0 "
-                "orm_materialize_s=900.0 feed_s=50.0"
-                % (i, 128 * mib)
-            ),
-        )
-    for i in range(12):
-        lines.append(
-            _ts(30 + i * 5)
-            + (
-                "ingest file path=/arch/dense/%d outcome=ingested elapsed_s=800.0 "
-                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-                "postgres_s=200.0 db_execute_s=50.0 copy_s=5.0 "
-                "orm_materialize_s=30.0 feed_s=40.0 delta_s=120.0 "
-                "jid_invalidate_s=130.0 collapse_gpu_s=90.0 "
-                "parse_unaccounted_s=2.0"
-                % (i, 16 * mib)
-            ),
-        )
+  """Four 64mib files must not beat twelve dense 8–64 MiB samples."""
+  mib = 1024 * 1024
+  lines = [
+    _ts(0) + "Messages consumed in the last 10 minutes: 100; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+    _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+  ]
+  for i in range(4):
     lines.append(
-        _ts(120)
-        + "Messages consumed in the last 10 minutes: 100; messages waiting "
-        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+      _ts(5 + i)
+      + (
+        "ingest file path=/arch/big/%d outcome=ingested elapsed_s=2000.0 "
+        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+        "postgres_s=1000.0 db_execute_s=100.0 copy_s=10.0 "
+        "orm_materialize_s=900.0 feed_s=50.0" % (i, 128 * mib)
+      ),
     )
+  for i in range(12):
     lines.append(
-        _ts(120) + "Pending stats file list truncated pending=900 max=2000",
+      _ts(30 + i * 5)
+      + (
+        "ingest file path=/arch/dense/%d outcome=ingested elapsed_s=800.0 "
+        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+        "postgres_s=200.0 db_execute_s=50.0 copy_s=5.0 "
+        "orm_materialize_s=30.0 feed_s=40.0 delta_s=120.0 "
+        "jid_invalidate_s=130.0 collapse_gpu_s=90.0 "
+        "parse_unaccounted_s=2.0" % (i, 16 * mib)
+      ),
     )
-    outcomes = mod.analyze_lines(lines)
-    assert outcomes["mid_tier_name"] == "8mib_64mib"
-    assert outcomes["decision_next_dense"] == "parse_hold_jid_invalidate_s"
-    assert outcomes["dense_tier_top_parse_hold"] == "jid_invalidate_s"
+  lines.append(
+    _ts(120)
+    + "Messages consumed in the last 10 minutes: 100; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+  )
+  lines.append(
+    _ts(120) + "Pending stats file list truncated pending=900 max=2000",
+  )
+  outcomes = mod.analyze_lines(lines)
+  assert outcomes["mid_tier_name"] == "8mib_64mib"
+  assert outcomes["decision_next_dense"] == "parse_hold_jid_invalidate_s"
+  assert outcomes["dense_tier_top_parse_hold"] == "jid_invalidate_s"
 
 
 def test_overnight_pack_decision_next_write_path(mod):
-    """High mid-tier postgres_frac must yield write_timescale_path."""
-    mib = 1024 * 1024
-    lines = [
-        _ts(0)
-        + "Messages consumed in the last 10 minutes: 100; messages waiting "
-        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
-        _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
-    ]
-    for i in range(12):
-        lines.append(
-            _ts(10 + i * 5)
-            + (
-                "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
-                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-                "postgres_s=50.0 db_execute_s=40.0 copy_s=25.0 "
-                "conflict_insert_s=15.0 orm_materialize_s=5.0 feed_s=10.0"
-                % (i, 128 * mib)
-            ),
-        )
+  """High mid-tier postgres_frac must yield write_timescale_path."""
+  mib = 1024 * 1024
+  lines = [
+    _ts(0) + "Messages consumed in the last 10 minutes: 100; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+    _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+  ]
+  for i in range(12):
     lines.append(
-        _ts(70)
-        + "Messages consumed in the last 10 minutes: 100; messages waiting "
-        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+      _ts(10 + i * 5)
+      + (
+        "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
+        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+        "postgres_s=50.0 db_execute_s=40.0 copy_s=25.0 "
+        "conflict_insert_s=15.0 orm_materialize_s=5.0 feed_s=10.0"
+        % (i, 128 * mib)
+      ),
     )
-    lines.append(
-        _ts(70) + "Pending stats file list truncated pending=900 max=2000",
-    )
-    outcomes = mod.analyze_lines(lines)
-    assert outcomes["decision_next"] == "write_timescale_path"
-    assert outcomes["mid_tier_write_exec_dominates"] == "yes"
-    assert float(outcomes["mid_tier_median_postgres_frac"]) == pytest.approx(
-        0.5, rel=1e-3,
-    )
+  lines.append(
+    _ts(70) + "Messages consumed in the last 10 minutes: 100; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+  )
+  lines.append(
+    _ts(70) + "Pending stats file list truncated pending=900 max=2000",
+  )
+  outcomes = mod.analyze_lines(lines)
+  assert outcomes["decision_next"] == "write_timescale_path"
+  assert outcomes["mid_tier_write_exec_dominates"] == "yes"
+  assert float(outcomes["mid_tier_median_postgres_frac"]) == pytest.approx(
+    0.5,
+    rel=1e-3,
+  )
 
 
 def test_overnight_pack_decision_next_parse_hold(mod):
-    """Low postgres frac with dominant feed_s must yield parse_hold_feed_s."""
-    mib = 1024 * 1024
-    lines = [
-        _ts(0)
-        + "Messages consumed in the last 10 minutes: 100; messages waiting "
-        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
-        _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
-    ]
-    for i in range(12):
-        lines.append(
-            _ts(10 + i * 5)
-            + (
-                "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
-                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-                "postgres_s=5.0 db_execute_s=2.0 copy_s=1.0 "
-                "orm_materialize_s=1.0 feed_s=70.0 collapse_s=10.0 "
-                "parse_unaccounted_s=5.0"
-                % (i, 128 * mib)
-            ),
-        )
+  """Low postgres frac with dominant feed_s must yield parse_hold_feed_s."""
+  mib = 1024 * 1024
+  lines = [
+    _ts(0) + "Messages consumed in the last 10 minutes: 100; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+    _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+  ]
+  for i in range(12):
     lines.append(
-        _ts(70)
-        + "Messages consumed in the last 10 minutes: 100; messages waiting "
-        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+      _ts(10 + i * 5)
+      + (
+        "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
+        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+        "postgres_s=5.0 db_execute_s=2.0 copy_s=1.0 "
+        "orm_materialize_s=1.0 feed_s=70.0 collapse_s=10.0 "
+        "parse_unaccounted_s=5.0" % (i, 128 * mib)
+      ),
     )
-    lines.append(
-        _ts(70) + "Pending stats file list truncated pending=900 max=2000",
-    )
-    outcomes = mod.analyze_lines(lines)
-    assert outcomes["decision_next"] == "parse_hold_feed_s"
-    assert outcomes["mid_tier_top_parse_hold"] == "feed_s"
-    assert outcomes["mid_tier_parse_unaccounted_dominates"] == "no"
+  lines.append(
+    _ts(70) + "Messages consumed in the last 10 minutes: 100; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+  )
+  lines.append(
+    _ts(70) + "Pending stats file list truncated pending=900 max=2000",
+  )
+  outcomes = mod.analyze_lines(lines)
+  assert outcomes["decision_next"] == "parse_hold_feed_s"
+  assert outcomes["mid_tier_top_parse_hold"] == "feed_s"
+  assert outcomes["mid_tier_parse_unaccounted_dominates"] == "no"
 
 
 def test_overnight_pack_decision_next_parse_unaccounted(mod):
-    """Unaccounted median ≥ top named hold → parse_unaccounted_investigate."""
-    mib = 1024 * 1024
-    lines = [
-        _ts(0)
-        + "Messages consumed in the last 10 minutes: 100; messages waiting "
-        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
-        _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
-    ]
-    for i in range(12):
-        lines.append(
-            _ts(10 + i * 5)
-            + (
-                "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
-                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-                "postgres_s=5.0 db_execute_s=2.0 copy_s=1.0 "
-                "orm_materialize_s=1.0 feed_s=20.0 collapse_s=10.0 "
-                "parse_unaccounted_s=80.0"
-                % (i, 128 * mib)
-            ),
-        )
+  """Unaccounted median ≥ top named hold → parse_unaccounted_investigate."""
+  mib = 1024 * 1024
+  lines = [
+    _ts(0) + "Messages consumed in the last 10 minutes: 100; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+    _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+  ]
+  for i in range(12):
     lines.append(
-        _ts(70)
-        + "Messages consumed in the last 10 minutes: 100; messages waiting "
-        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+      _ts(10 + i * 5)
+      + (
+        "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
+        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+        "postgres_s=5.0 db_execute_s=2.0 copy_s=1.0 "
+        "orm_materialize_s=1.0 feed_s=20.0 collapse_s=10.0 "
+        "parse_unaccounted_s=80.0" % (i, 128 * mib)
+      ),
     )
-    lines.append(
-        _ts(70) + "Pending stats file list truncated pending=900 max=2000",
-    )
-    outcomes = mod.analyze_lines(lines)
-    assert outcomes["decision_next"] == "parse_unaccounted_investigate"
-    assert outcomes["mid_tier_parse_unaccounted_dominates"] == "yes"
-    assert outcomes["mid_tier_top_parse_hold"] == "feed_s"
+  lines.append(
+    _ts(70) + "Messages consumed in the last 10 minutes: 100; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+  )
+  lines.append(
+    _ts(70) + "Pending stats file list truncated pending=900 max=2000",
+  )
+  outcomes = mod.analyze_lines(lines)
+  assert outcomes["decision_next"] == "parse_unaccounted_investigate"
+  assert outcomes["mid_tier_parse_unaccounted_dominates"] == "yes"
+  assert outcomes["mid_tier_top_parse_hold"] == "feed_s"
 
 
 def test_overnight_pack_decision_next_telem_incomplete(mod, capsys):
-    """Parse holds without write-phase tokens → telem_incomplete_re_soak."""
-    mib = 1024 * 1024
-    lines = [
-        _ts(0)
-        + "Messages consumed in the last 10 minutes: 100; messages waiting "
-        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
-        _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
-    ]
-    for i in range(12):
-        lines.append(
-            _ts(10 + i * 5)
-            + (
-                "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
-                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-                "postgres_s=5.0 feed_s=70.0 collapse_s=10.0 "
-                "parse_unaccounted_s=5.0"
-                % (i, 128 * mib)
-            ),
-        )
+  """Parse holds without write-phase tokens → telem_incomplete_re_soak."""
+  mib = 1024 * 1024
+  lines = [
+    _ts(0) + "Messages consumed in the last 10 minutes: 100; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+    _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+  ]
+  for i in range(12):
     lines.append(
-        _ts(70)
-        + "Messages consumed in the last 10 minutes: 100; messages waiting "
-        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+      _ts(10 + i * 5)
+      + (
+        "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
+        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+        "postgres_s=5.0 feed_s=70.0 collapse_s=10.0 "
+        "parse_unaccounted_s=5.0" % (i, 128 * mib)
+      ),
     )
-    lines.append(
-        _ts(70) + "Pending stats file list truncated pending=900 max=2000",
-    )
-    outcomes = mod.analyze_lines(lines)
-    assert outcomes["decision_next"] == "telem_incomplete_re_soak"
-    assert outcomes["mid_tier_telem_incomplete"] == "yes"
-    err = capsys.readouterr().err
-    assert "telem_incomplete_re_soak" in err or "write-phase" in err or "telem incomplete" in err
+  lines.append(
+    _ts(70) + "Messages consumed in the last 10 minutes: 100; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+  )
+  lines.append(
+    _ts(70) + "Pending stats file list truncated pending=900 max=2000",
+  )
+  outcomes = mod.analyze_lines(lines)
+  assert outcomes["decision_next"] == "telem_incomplete_re_soak"
+  assert outcomes["mid_tier_telem_incomplete"] == "yes"
+  err = capsys.readouterr().err
+  assert (
+    "telem_incomplete_re_soak" in err
+    or "write-phase" in err
+    or "telem incomplete" in err
+  )
 
 
 def test_overnight_pack_decision_next_telem_all_phases_absent(mod, capsys):
-    """Mid-tier files with no parse and no write phase tokens → incomplete."""
-    mib = 1024 * 1024
-    lines = [
-        _ts(0)
-        + "Messages consumed in the last 10 minutes: 100; messages waiting "
-        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
-        _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
-    ]
-    for i in range(12):
-        lines.append(
-            _ts(10 + i * 5)
-            + (
-                "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
-                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-                "postgres_s=5.0"
-                % (i, 128 * mib)
-            ),
-        )
+  """Mid-tier files with no parse and no write phase tokens → incomplete."""
+  mib = 1024 * 1024
+  lines = [
+    _ts(0) + "Messages consumed in the last 10 minutes: 100; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+    _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+  ]
+  for i in range(12):
     lines.append(
-        _ts(70)
-        + "Messages consumed in the last 10 minutes: 100; messages waiting "
-        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+      _ts(10 + i * 5)
+      + (
+        "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
+        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+        "postgres_s=5.0" % (i, 128 * mib)
+      ),
     )
-    lines.append(
-        _ts(70) + "Pending stats file list truncated pending=900 max=2000",
-    )
-    outcomes = mod.analyze_lines(lines)
-    assert outcomes["decision_next"] == "telem_incomplete_re_soak"
-    assert outcomes["mid_tier_telem_incomplete"] == "yes"
-    err = capsys.readouterr().err
-    assert "telem_incomplete" in err or "telem incomplete" in err
+  lines.append(
+    _ts(70) + "Messages consumed in the last 10 minutes: 100; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+  )
+  lines.append(
+    _ts(70) + "Pending stats file list truncated pending=900 max=2000",
+  )
+  outcomes = mod.analyze_lines(lines)
+  assert outcomes["decision_next"] == "telem_incomplete_re_soak"
+  assert outcomes["mid_tier_telem_incomplete"] == "yes"
+  err = capsys.readouterr().err
+  assert "telem_incomplete" in err or "telem incomplete" in err
 
 
 def test_cli_script_runs_from_repo(tmp_path):
-    log_path = tmp_path / "pipeline.log"
-    log_path.write_text("\n".join(FIXTURE_WINNING) + "\n", encoding="utf-8")
-    proc = subprocess.run(
-        [sys.executable, str(_SCRIPT), "--log-file", str(log_path)],
-        cwd=str(_REPO),
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert proc.returncode == 0, proc.stderr
-    assert "verdict_full_ingest=WINNING" in proc.stdout
-    assert "ERROR:" not in proc.stdout
+  log_path = tmp_path / "pipeline.log"
+  log_path.write_text("\n".join(FIXTURE_WINNING) + "\n", encoding="utf-8")
+  proc = subprocess.run(
+    [sys.executable, str(_SCRIPT), "--log-file", str(log_path)],
+    cwd=str(_REPO),
+    check=False,
+    capture_output=True,
+    text=True,
+  )
+  assert proc.returncode == 0, proc.stderr
+  assert "verdict_full_ingest=WINNING" in proc.stdout
+  assert "ERROR:" not in proc.stdout

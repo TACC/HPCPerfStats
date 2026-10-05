@@ -1,7 +1,9 @@
 """Unit tests for roofline plot diagnostics and fallbacks."""
+
+from unittest.mock import MagicMock
+
 import pandas as pd
 import pytest
-from unittest.mock import MagicMock
 
 from hpcperfstats.analysis.metrics.lib.plot.roofline import (
   GPU_ROOFLINE_BW_AXIS_LINK,
@@ -25,9 +27,9 @@ def _agg_frame(rows, *, group_by_dev=False):
   """
   if not rows:
     cols = (
-        ["host", "time", "dev", "sum_val"]
-        if group_by_dev
-        else ["host", "time", "sum_val"]
+      ["host", "time", "dev", "sum_val"]
+      if group_by_dev
+      else ["host", "time", "sum_val"]
     )
     return pd.DataFrame(columns=cols)
   first = rows[0]
@@ -71,36 +73,43 @@ def test_roofline_reports_missing_counter_reason():
 def test_roofline_reports_missing_reason_when_only_value_counters_exist():
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   jt = _make_jt(
-      [("n1.cluster", t0)],
-      {
-          ("amd64_pmc", "value"): [("n1.cluster", t0, 1000.0)],
-          ("amd64_df", "value"): [("n1.cluster", t0, 100.0)],
-      },
+    [("n1.cluster", t0)],
+    {
+      ("amd64_pmc", "value"): [("n1.cluster", t0, 1000.0)],
+      ("amd64_df", "value"): [("n1.cluster", t0, 100.0)],
+    },
   )
   fig, reason = plot_and_reason_roofline_from_jid_table(jt)
   assert fig is None
   assert reason is not None
   assert "Missing roofline counters in host_data" in reason
 
+
 def test_roofline_intel_succeeds_with_non_skx_imc_bandwidth():
   """Intel roofline uses first IMC type in INTEL_IMC_STATS_TYPES with CAS data (e.g. HSW)."""
-  import pandas as pd
   from unittest.mock import MagicMock
-  from hpcperfstats.analysis.metrics.lib.plot.roofline import plot_and_reason_roofline_from_jid_table
-  from hpcperfstats.dbload.lib.monitor_naming.resolve import imc_types_probe_order
+
+  import pandas as pd
+
+  from hpcperfstats.analysis.metrics.lib.plot.roofline import (
+    plot_and_reason_roofline_from_jid_table,
+  )
+  from hpcperfstats.dbload.lib.monitor_naming.resolve import (
+    imc_types_probe_order,
+  )
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
   hsw_canon = "intel_x86_uncore_imc_hsw"
   hsw_legacy = "intel_hsw_imc"
   cas_pairs = (
-      ("dram_cas_reads", "dram_cas_writes"),
-      ("CAS_READS", "CAS_WRITES"),
+    ("dram_cas_reads", "dram_cas_writes"),
+    ("CAS_READS", "CAS_WRITES"),
   )
   core_pmcs = (
-      "intel_x86_pmc_gpr8",
-      "intel_8pmc3",
-      "intel_4pmc3",
+    "intel_x86_pmc_gpr8",
+    "intel_8pmc3",
+    "intel_4pmc3",
   )
 
   def get_aggregate_df(typ, val_col, events, conv=1.0, group_by_dev=False):
@@ -111,18 +120,24 @@ def test_roofline_intel_succeeds_with_non_skx_imc_bandwidth():
       return empty
     if typ in core_pmcs:
       if len(events) > 3:
-        return pd.DataFrame([("n1.cluster", t0, 3.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 3.0)],
+          columns=["host", "time", "sum_val"],
+        )
       return empty
     if typ in (hsw_canon, hsw_legacy):
       ev = list(events)
       if any(ev == list(rw) for rw in cas_pairs):
-        return pd.DataFrame([("n1.cluster", t0, 0.5)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 0.5)],
+          columns=["host", "time", "sum_val"],
+        )
     return empty
 
   jt = MagicMock()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = pd.DataFrame(
-      [("n1.cluster", t0)], columns=["host", "time"]
+    [("n1.cluster", t0)], columns=["host", "time"]
   )
   jt.get_aggregate_df.side_effect = get_aggregate_df
 
@@ -134,11 +149,13 @@ def test_roofline_intel_succeeds_with_non_skx_imc_bandwidth():
 
 def test_roofline_spr_hbm_cas_only_yields_bandwidth():
   """SPR with only hbm_cas_* still produces Intel roofline BW."""
-  import pandas as pd
   from unittest.mock import MagicMock
+
+  import pandas as pd
+
   from hpcperfstats.analysis.metrics.lib.plot.roofline import (
-      _intel_imc_bw_gb,
-      plot_and_reason_roofline_from_jid_table,
+    _intel_imc_bw_gb,
+    plot_and_reason_roofline_from_jid_table,
   )
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
@@ -154,16 +171,21 @@ def test_roofline_spr_hbm_cas_only_yields_bandwidth():
       return empty
     if typ in core_pmcs:
       if len(events) > 3:
-        return pd.DataFrame([("n1.cluster", t0, 3.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 3.0)],
+          columns=["host", "time", "sum_val"],
+        )
       return empty
     if typ == spr and list(events) == ["hbm_cas_reads", "hbm_cas_writes"]:
-      return pd.DataFrame([("n1.cluster", t0, 0.75)], columns=["host", "time", "sum_val"])
+      return pd.DataFrame(
+        [("n1.cluster", t0, 0.75)], columns=["host", "time", "sum_val"]
+      )
     return empty
 
   jt = MagicMock()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = pd.DataFrame(
-      [("n1.cluster", t0)], columns=["host", "time"]
+    [("n1.cluster", t0)], columns=["host", "time"]
   )
   jt.get_aggregate_df.side_effect = get_aggregate_df
 
@@ -178,8 +200,10 @@ def test_roofline_spr_hbm_cas_only_yields_bandwidth():
 
 def test_roofline_spr_sums_dram_and_hbm_cas_bandwidth():
   """SPR with both CAS families sums DDR+HBM for measured BW."""
-  import pandas as pd
   from unittest.mock import MagicMock
+
+  import pandas as pd
+
   from hpcperfstats.analysis.metrics.lib.plot.roofline import _intel_imc_bw_gb
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
@@ -191,9 +215,13 @@ def test_roofline_spr_sums_dram_and_hbm_cas_bandwidth():
     if typ != spr:
       return empty
     if list(events) == ["dram_cas_reads", "dram_cas_writes"]:
-      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+      return pd.DataFrame(
+        [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+      )
     if list(events) == ["hbm_cas_reads", "hbm_cas_writes"]:
-      return pd.DataFrame([("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"])
+      return pd.DataFrame(
+        [("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"]
+      )
     return empty
 
   jt = MagicMock()
@@ -205,7 +233,9 @@ def test_roofline_spr_sums_dram_and_hbm_cas_bandwidth():
 
 def test_roofline_succeeds_with_cpu_counter_metrics_flops_and_imc_bw():
   """Intel roofline FLOPS can come from cpu_counter_metrics (aligned with avg_flops)."""
-  from hpcperfstats.dbload.lib.monitor_naming.canonical import INTEL_FP_ARITH_ALL_EVENTS
+  from hpcperfstats.dbload.lib.monitor_naming.canonical import (
+    INTEL_FP_ARITH_ALL_EVENTS,
+  )
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
@@ -223,11 +253,11 @@ def test_roofline_succeeds_with_cpu_counter_metrics_flops_and_imc_bw():
       return empty
     if typ == "cpu_counter_metrics" and list(events) == fp_events:
       return pd.DataFrame(
-          [("n1.cluster", t0, 4.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 4.0)], columns=["host", "time", "sum_val"]
       )
     if typ == hsw and list(events) == ["CAS_READS", "CAS_WRITES"]:
       return pd.DataFrame(
-          [("n1.cluster", t0, 0.5)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 0.5)], columns=["host", "time", "sum_val"]
       )
     return empty
 
@@ -243,7 +273,9 @@ def test_roofline_succeeds_with_cpu_counter_metrics_flops_and_imc_bw():
 
 def test_roofline_succeeds_with_arm_dcgm_approx_metrics():
   """ARM fallback uses host_cpu_hw arm_est_flops + arm_dram_bw_bytes."""
-  from hpcperfstats.dbload.lib.monitor_naming.resolve import arm_dram_bw_event_names
+  from hpcperfstats.dbload.lib.monitor_naming.resolve import (
+    arm_dram_bw_event_names,
+  )
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
@@ -256,11 +288,11 @@ def test_roofline_succeeds_with_arm_dcgm_approx_metrics():
       return empty
     if typ == "cpu_counter_metrics" and list(events) == ["ARM_EST_FLOPS"]:
       return pd.DataFrame(
-          [("n1.cluster", t0, 6.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 6.0)], columns=["host", "time", "sum_val"]
       )
     if typ == "cpu_counter_metrics" and list(events) == dram_events:
       return pd.DataFrame(
-          [("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"]
       )
     return empty
 
@@ -285,16 +317,17 @@ def test_roofline_succeeds_with_arm_dcgm_lowercase_dram_bw_only():
     if val_col != "arc":
       return empty
     if typ in ("host_cpu_hw", "cpu_counter_metrics") and list(events) == [
-        "arm_est_flops"
+      "arm_est_flops"
     ]:
       return pd.DataFrame(
-          [("n1.cluster", t0, 6.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 6.0)], columns=["host", "time", "sum_val"]
       )
-    if typ in ("host_cpu_hw", "cpu_counter_metrics") and "arm_dram_bw_bytes" in list(
-        events
-    ):
+    if typ in (
+      "host_cpu_hw",
+      "cpu_counter_metrics",
+    ) and "arm_dram_bw_bytes" in list(events):
       return pd.DataFrame(
-          [("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"]
       )
     return empty
 
@@ -310,7 +343,9 @@ def test_roofline_succeeds_with_arm_dcgm_lowercase_dram_bw_only():
 
 def test_roofline_uses_arm_imc_cas_bandwidth_when_present():
   """ARM path accepts arm_imc CAS counters for bandwidth."""
-  from hpcperfstats.dbload.lib.monitor_naming.canonical import INTEL_FP_ARITH_ALL_EVENTS
+  from hpcperfstats.dbload.lib.monitor_naming.canonical import (
+    INTEL_FP_ARITH_ALL_EVENTS,
+  )
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
@@ -323,11 +358,11 @@ def test_roofline_uses_arm_imc_cas_bandwidth_when_present():
       return empty
     if typ == "cpu_counter_metrics" and list(events) == fp_events:
       return pd.DataFrame(
-          [("n1.cluster", t0, 5.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 5.0)], columns=["host", "time", "sum_val"]
       )
     if typ == "arm_imc" and list(events) == ["CAS_READS", "CAS_WRITES"]:
       return pd.DataFrame(
-          [("n1.cluster", t0, 0.75)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 0.75)], columns=["host", "time", "sum_val"]
       )
     return empty
 
@@ -348,9 +383,15 @@ def test_gpu_roofline_succeeds_with_nvidia_arc_counters():
 
   def get_aggregate_df(typ, val_col, events, conv=1.0, group_by_dev=False):
     del conv
-    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]:
+    if (
+      typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]
+    ):
       return _agg_frame([("n1.cluster", t0, 20.0)], group_by_dev=group_by_dev)
-    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_io_link_total_bytes"]:
+    if (
+      typ == "nvidia_gpu"
+      and val_col == "arc"
+      and list(events) == ["gpu_io_link_total_bytes"]
+    ):
       return _agg_frame([("n1.cluster", t0, 5.0)], group_by_dev=group_by_dev)
     return _agg_frame([], group_by_dev=group_by_dev)
 
@@ -370,24 +411,28 @@ def test_gpu_roofline_two_devices_yield_two_scatter_points():
   def get_aggregate_df(typ, val_col, events, conv=1.0, group_by_dev=False):
     del conv
     assert group_by_dev is True
-    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]:
+    if (
+      typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]
+    ):
       return _agg_frame(
-          [
-              ("n1.cluster", t0, "0", 10.0),
-              ("n1.cluster", t0, "1", 30.0),
-          ],
-          group_by_dev=True,
+        [
+          ("n1.cluster", t0, "0", 10.0),
+          ("n1.cluster", t0, "1", 30.0),
+        ],
+        group_by_dev=True,
       )
-    if typ == "nvidia_gpu" and val_col == "value" and list(events) == [
-        "gpu_mem_bw_bytes_rate"
-    ]:
+    if (
+      typ == "nvidia_gpu"
+      and val_col == "value"
+      and list(events) == ["gpu_mem_bw_bytes_rate"]
+    ):
       # Mock ignores ``conv``; return already-scaled GiB/s like link-path fixtures.
       return _agg_frame(
-          [
-              ("n1.cluster", t0, "0", 2.0),
-              ("n1.cluster", t0, "1", 4.0),
-          ],
-          group_by_dev=True,
+        [
+          ("n1.cluster", t0, "0", 2.0),
+          ("n1.cluster", t0, "1", 4.0),
+        ],
+        group_by_dev=True,
       )
     return _agg_frame([], group_by_dev=True)
 
@@ -413,20 +458,24 @@ def test_gpu_roofline_blank_dev_still_one_point_per_host_time():
 
   def get_aggregate_df(typ, val_col, events, conv=1.0, group_by_dev=False):
     del conv
-    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]:
+    if (
+      typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]
+    ):
       return _agg_frame(
-          [("n1.cluster", t0, "", 20.0)], group_by_dev=group_by_dev
+        [("n1.cluster", t0, "", 20.0)], group_by_dev=group_by_dev
       )
-    if typ == "nvidia_gpu" and val_col == "value" and list(events) == [
-        "gpu_mem_bw_bytes_rate"
-    ]:
+    if (
+      typ == "nvidia_gpu"
+      and val_col == "value"
+      and list(events) == ["gpu_mem_bw_bytes_rate"]
+    ):
       return _agg_frame(
-          [("n1.cluster", t0, "", 5.0)], group_by_dev=group_by_dev
+        [("n1.cluster", t0, "", 5.0)], group_by_dev=group_by_dev
       )
     return _agg_frame([], group_by_dev=group_by_dev)
 
   jt.get_aggregate_df.side_effect = get_aggregate_df
-  fig, reason, bw_axis = plot_and_reason_gpu_roofline_from_jid_table(jt)
+  fig, reason, _bw_axis = plot_and_reason_gpu_roofline_from_jid_table(jt)
   assert fig is not None
   assert reason is None
   job_source = fig.renderers[1].data_source.data
@@ -438,19 +487,19 @@ def test_gpu_roofline_blank_dev_still_one_point_per_host_time():
 def test_assemble_sum_val_parts_keeps_dev_group_cols():
   """Per-device assemble must not re-collapse devices into host×time."""
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      _assemble_sum_val_parts_bounded,
+    _assemble_sum_val_parts_bounded,
   )
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   part = pd.DataFrame(
-      [
-          ("n1.cluster", t0, "0", 1.0),
-          ("n1.cluster", t0, "1", 2.0),
-      ],
-      columns=["host", "time", "dev", "sum_val"],
+    [
+      ("n1.cluster", t0, "0", 1.0),
+      ("n1.cluster", t0, "1", 2.0),
+    ],
+    columns=["host", "time", "dev", "sum_val"],
   )
   out = _assemble_sum_val_parts_bounded(
-      [part], 1.0, 100, group_cols=("host", "time", "dev")
+    [part], 1.0, 100, group_cols=("host", "time", "dev")
   )
   assert list(out.columns) == ["host", "time", "dev", "sum_val"]
   assert len(out) == 2
@@ -464,14 +513,24 @@ def test_gpu_roofline_prefers_mem_bw_when_both_mem_and_link_present():
 
   def get_aggregate_df(typ, val_col, events, conv=1.0, group_by_dev=False):
     del conv
-    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]:
+    if (
+      typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]
+    ):
       return _agg_frame([("n1.cluster", t0, 20.0)], group_by_dev=group_by_dev)
-    if typ == "nvidia_gpu" and val_col == "value" and list(events) == ["gpu_mem_bw_bytes_rate"]:
+    if (
+      typ == "nvidia_gpu"
+      and val_col == "value"
+      and list(events) == ["gpu_mem_bw_bytes_rate"]
+    ):
       return _agg_frame(
-          [("n1.cluster", t0, 5.0 * (1024**3))],
-          group_by_dev=group_by_dev,
+        [("n1.cluster", t0, 5.0 * (1024**3))],
+        group_by_dev=group_by_dev,
       )
-    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_io_link_total_bytes"]:
+    if (
+      typ == "nvidia_gpu"
+      and val_col == "arc"
+      and list(events) == ["gpu_io_link_total_bytes"]
+    ):
       return _agg_frame([("n1.cluster", t0, 8.0)], group_by_dev=group_by_dev)
     return _agg_frame([], group_by_dev=group_by_dev)
 
@@ -490,17 +549,23 @@ def test_gpu_roofline_uses_flops_rate_when_gpu_flops_arc_absent():
 
   def get_aggregate_df(typ, val_col, events, conv=1.0, group_by_dev=False):
     del conv
-    if typ == "nvidia_gpu" and val_col == "value" and list(events) == ["gpu_flops_rate"]:
+    if (
+      typ == "nvidia_gpu"
+      and val_col == "value"
+      and list(events) == ["gpu_flops_rate"]
+    ):
       return pd.DataFrame(
-          [("n1.cluster", t0, 20.0e9)],
-          columns=["host", "time", "sum_val"],
+        [("n1.cluster", t0, 20.0e9)],
+        columns=["host", "time", "sum_val"],
       )
-    if typ == "nvidia_gpu" and val_col == "value" and list(events) == [
-        "gpu_mem_bw_bytes_rate"
-    ]:
+    if (
+      typ == "nvidia_gpu"
+      and val_col == "value"
+      and list(events) == ["gpu_mem_bw_bytes_rate"]
+    ):
       return pd.DataFrame(
-          [("n1.cluster", t0, 5.0 * (1024**3))],
-          columns=["host", "time", "sum_val"],
+        [("n1.cluster", t0, 5.0 * (1024**3))],
+        columns=["host", "time", "sum_val"],
       )
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
@@ -516,18 +581,24 @@ def test_gpu_roofline_falls_back_to_directional_link_when_aggregate_missing():
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   jt = _make_jt([("n1.cluster", t0)], {})
   directional = [
-      "gpu_pcie_tx_bytes",
-      "gpu_pcie_rx_bytes",
-      "gpu_nvlink_tx_bytes",
-      "gpu_nvlink_rx_bytes",
+    "gpu_pcie_tx_bytes",
+    "gpu_pcie_rx_bytes",
+    "gpu_nvlink_tx_bytes",
+    "gpu_nvlink_rx_bytes",
   ]
 
   def get_aggregate_df(typ, val_col, events, conv=1.0, group_by_dev=False):
     del conv
-    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]:
-      return pd.DataFrame([("n1.cluster", t0, 20.0)], columns=["host", "time", "sum_val"])
+    if (
+      typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 20.0)], columns=["host", "time", "sum_val"]
+      )
     if typ == "nvidia_gpu" and val_col == "arc" and list(events) == directional:
-      return pd.DataFrame([("n1.cluster", t0, 4.0)], columns=["host", "time", "sum_val"])
+      return pd.DataFrame(
+        [("n1.cluster", t0, 4.0)], columns=["host", "time", "sum_val"]
+      )
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -544,11 +615,17 @@ def test_gpu_roofline_amd_mem_only_path():
   def get_aggregate_df(typ, val_col, events, conv=1.0, group_by_dev=False):
     del conv
     if typ == "amd_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]:
-      return pd.DataFrame([("n1.cluster", t0, 15.0)], columns=["host", "time", "sum_val"])
-    if typ == "amd_gpu" and val_col == "value" and list(events) == ["gpu_mem_bw_bytes_rate"]:
       return pd.DataFrame(
-          [("n1.cluster", t0, 3.0 * (1024**3))],
-          columns=["host", "time", "sum_val"],
+        [("n1.cluster", t0, 15.0)], columns=["host", "time", "sum_val"]
+      )
+    if (
+      typ == "amd_gpu"
+      and val_col == "value"
+      and list(events) == ["gpu_mem_bw_bytes_rate"]
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 3.0 * (1024**3))],
+        columns=["host", "time", "sum_val"],
       )
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
@@ -565,8 +642,12 @@ def test_gpu_roofline_reports_missing_reason_when_bw_missing():
 
   def get_aggregate_df(typ, val_col, events, conv=1.0, group_by_dev=False):
     del conv
-    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]:
-      return pd.DataFrame([("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"])
+    if (
+      typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"]
+      )
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -574,7 +655,9 @@ def test_gpu_roofline_reports_missing_reason_when_bw_missing():
   assert fig is None
   assert "Missing strict GPU roofline counters in host_data" in reason
   assert bw_axis is None
-  assert "gpu_mem_bw_bytes_rate" in reason or "gpu_io_link_total_bytes" in reason
+  assert (
+    "gpu_mem_bw_bytes_rate" in reason or "gpu_io_link_total_bytes" in reason
+  )
 
 
 def test_gpu_roofline_succeeds_for_nvidia_when_flops_and_link_arc_present():
@@ -586,18 +669,24 @@ def test_gpu_roofline_succeeds_for_nvidia_when_flops_and_link_arc_present():
     if val_col != "arc":
       return pd.DataFrame(columns=["host", "time", "sum_val"])
     if typ == "nvidia_gpu" and list(events) == ["gpu_flops"]:
-      return pd.DataFrame([("n1.cluster", t0, 40.0)], columns=["host", "time", "sum_val"])
+      return pd.DataFrame(
+        [("n1.cluster", t0, 40.0)], columns=["host", "time", "sum_val"]
+      )
     if typ == "nvidia_gpu" and list(events) == ["gpu_io_link_total_bytes"]:
-      return pd.DataFrame([("n1.cluster", t0, 8.0)], columns=["host", "time", "sum_val"])
+      return pd.DataFrame(
+        [("n1.cluster", t0, 8.0)], columns=["host", "time", "sum_val"]
+      )
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
   jt.get_aggregate_df.side_effect = get_aggregate_df
-  fig, reason, bw_axis = plot_and_reason_gpu_roofline_from_jid_table(jt)
+  fig, reason, _bw_axis = plot_and_reason_gpu_roofline_from_jid_table(jt)
   assert fig is not None
   assert reason is None
 
 
-def test_gpu_roofline_uses_inferred_peaks_when_explicit_args_missing(monkeypatch):
+def test_gpu_roofline_uses_inferred_peaks_when_explicit_args_missing(
+  monkeypatch,
+):
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   jt = _make_jt([("n1.cluster", t0)], {})
 
@@ -606,16 +695,20 @@ def test_gpu_roofline_uses_inferred_peaks_when_explicit_args_missing(monkeypatch
     if val_col != "arc":
       return pd.DataFrame(columns=["host", "time", "sum_val"])
     if typ == "nvidia_gpu" and list(events) == ["gpu_flops"]:
-      return pd.DataFrame([("n1.cluster", t0, 40.0)], columns=["host", "time", "sum_val"])
+      return pd.DataFrame(
+        [("n1.cluster", t0, 40.0)], columns=["host", "time", "sum_val"]
+      )
     if typ == "nvidia_gpu" and list(events) == ["gpu_io_link_total_bytes"]:
-      return pd.DataFrame([("n1.cluster", t0, 8.0)], columns=["host", "time", "sum_val"])
+      return pd.DataFrame(
+        [("n1.cluster", t0, 8.0)], columns=["host", "time", "sum_val"]
+      )
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
   jt.get_aggregate_df.side_effect = get_aggregate_df
 
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.plot.roofline.infer_gpu_roofline_peak_flops_and_bw_gbps",
-      lambda _jt, bw_axis=None: (321.0, 12.5),
+    "hpcperfstats.analysis.metrics.lib.plot.roofline.infer_gpu_roofline_peak_flops_and_bw_gbps",
+    lambda _jt, bw_axis=None: (321.0, 12.5),
   )
   fig = plot_gpu_roofline_from_jid_table(jt)
   assert fig is not None
@@ -632,17 +725,23 @@ def test_gpu_roofline_explicit_peak_args_override_inferred_peaks(monkeypatch):
     if val_col != "arc":
       return pd.DataFrame(columns=["host", "time", "sum_val"])
     if typ == "nvidia_gpu" and list(events) == ["gpu_flops"]:
-      return pd.DataFrame([("n1.cluster", t0, 40.0)], columns=["host", "time", "sum_val"])
+      return pd.DataFrame(
+        [("n1.cluster", t0, 40.0)], columns=["host", "time", "sum_val"]
+      )
     if typ == "nvidia_gpu" and list(events) == ["gpu_io_link_total_bytes"]:
-      return pd.DataFrame([("n1.cluster", t0, 8.0)], columns=["host", "time", "sum_val"])
+      return pd.DataFrame(
+        [("n1.cluster", t0, 8.0)], columns=["host", "time", "sum_val"]
+      )
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
   jt.get_aggregate_df.side_effect = get_aggregate_df
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.plot.roofline.infer_gpu_roofline_peak_flops_and_bw_gbps",
-      lambda _jt, bw_axis=None: (321.0, 12.5),
+    "hpcperfstats.analysis.metrics.lib.plot.roofline.infer_gpu_roofline_peak_flops_and_bw_gbps",
+    lambda _jt, bw_axis=None: (321.0, 12.5),
   )
-  fig = plot_gpu_roofline_from_jid_table(jt, peak_flops_gf=111.0, peak_bw_gb=7.0)
+  fig = plot_gpu_roofline_from_jid_table(
+    jt, peak_flops_gf=111.0, peak_bw_gb=7.0
+  )
   assert fig is not None
   roof_renderer = fig.renderers[0]
   assert max(roof_renderer.data_source.data["perf"]) == pytest.approx(111.0)
@@ -660,25 +759,37 @@ def test_gpu_roofline_no_traceback_when_hw_peak_bw_is_zero():
     if typ == "roofline_hw_peak" and val_col == "value":
       if evl == ["gpu_peak_fp64_flops_per_s"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 4_000_000_000_000.0)],
-            columns=["host", "time", "sum_val"],
+          [("n1.cluster", t0, 4_000_000_000_000.0)],
+          columns=["host", "time", "sum_val"],
         )
       if evl == ["gpu_peak_io_link_bw_bytes_per_s"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 0.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 0.0)],
+          columns=["host", "time", "sum_val"],
         )
       if evl == ["gpu_peak_mem_bw_bytes_per_s"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 0.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 0.0)],
+          columns=["host", "time", "sum_val"],
         )
-    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]:
-      return pd.DataFrame([("n1.cluster", t0, 20.0)], columns=["host", "time", "sum_val"])
-    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_io_link_total_bytes"]:
-      return pd.DataFrame([("n1.cluster", t0, 5.0)], columns=["host", "time", "sum_val"])
+    if (
+      typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 20.0)], columns=["host", "time", "sum_val"]
+      )
+    if (
+      typ == "nvidia_gpu"
+      and val_col == "arc"
+      and list(events) == ["gpu_io_link_total_bytes"]
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 5.0)], columns=["host", "time", "sum_val"]
+      )
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
   jt.get_aggregate_df.side_effect = get_aggregate_df
-  fig, reason, bw_axis = plot_and_reason_gpu_roofline_from_jid_table(jt)
+  fig, reason, _bw_axis = plot_and_reason_gpu_roofline_from_jid_table(jt)
   assert fig is not None
   assert reason is None
 
@@ -689,15 +800,25 @@ def test_plot_and_reason_gpu_rejects_explicit_zero_peak_bw():
 
   def get_aggregate_df(typ, val_col, events, conv=1.0, group_by_dev=False):
     del conv
-    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]:
-      return pd.DataFrame([("n1.cluster", t0, 20.0)], columns=["host", "time", "sum_val"])
-    if typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_io_link_total_bytes"]:
-      return pd.DataFrame([("n1.cluster", t0, 5.0)], columns=["host", "time", "sum_val"])
+    if (
+      typ == "nvidia_gpu" and val_col == "arc" and list(events) == ["gpu_flops"]
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 20.0)], columns=["host", "time", "sum_val"]
+      )
+    if (
+      typ == "nvidia_gpu"
+      and val_col == "arc"
+      and list(events) == ["gpu_io_link_total_bytes"]
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 5.0)], columns=["host", "time", "sum_val"]
+      )
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
   jt.get_aggregate_df.side_effect = get_aggregate_df
-  fig, reason, bw_axis = plot_and_reason_gpu_roofline_from_jid_table(
-      jt, peak_flops_gf=100.0, peak_bw_gb=0.0
+  fig, reason, _bw_axis = plot_and_reason_gpu_roofline_from_jid_table(
+    jt, peak_flops_gf=100.0, peak_bw_gb=0.0
   )
   assert fig is None
   assert reason == ROOFLINE_NOMINAL_PEAKS_INVALID_REASON
@@ -705,7 +826,9 @@ def test_plot_and_reason_gpu_rejects_explicit_zero_peak_bw():
 
 def test_plot_and_reason_cpu_rejects_explicit_zero_peak_bw():
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  from hpcperfstats.dbload.lib.monitor_naming.canonical import INTEL_FP_ARITH_ALL_EVENTS
+  from hpcperfstats.dbload.lib.monitor_naming.canonical import (
+    INTEL_FP_ARITH_ALL_EVENTS,
+  )
 
   base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
@@ -722,11 +845,11 @@ def test_plot_and_reason_cpu_rejects_explicit_zero_peak_bw():
       return empty
     if typ == "cpu_counter_metrics" and list(events) == fp_events:
       return pd.DataFrame(
-          [("n1.cluster", t0, 4.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 4.0)], columns=["host", "time", "sum_val"]
       )
     if typ == hsw and list(events) == ["CAS_READS", "CAS_WRITES"]:
       return pd.DataFrame(
-          [("n1.cluster", t0, 0.5)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 0.5)], columns=["host", "time", "sum_val"]
       )
     return empty
 
@@ -736,7 +859,7 @@ def test_plot_and_reason_cpu_rejects_explicit_zero_peak_bw():
   jt.get_aggregate_df.side_effect = get_aggregate_df
 
   fig, reason = plot_and_reason_roofline_from_jid_table(
-      jt, peak_flops_gf=500.0, peak_bw_gb=0.0
+    jt, peak_flops_gf=500.0, peak_bw_gb=0.0
   )
   assert fig is None
   assert reason == ROOFLINE_NOMINAL_PEAKS_INVALID_REASON
@@ -745,24 +868,30 @@ def test_plot_and_reason_cpu_rejects_explicit_zero_peak_bw():
 def test_build_roofline_figure_returns_none_for_nonpositive_peaks():
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   df = pd.DataFrame(
-      {
-          "host": ["n1.cluster"],
-          "time": [t0],
-          "flops_gf": [10.0],
-          "bw_gb": [2.0],
-      }
+    {
+      "host": ["n1.cluster"],
+      "time": [t0],
+      "flops_gf": [10.0],
+      "bw_gb": [2.0],
+    }
   )
-  assert _build_roofline_figure(
+  assert (
+    _build_roofline_figure(
       df,
       peak_flops_gf=100.0,
       peak_bw_gb=0.0,
       title="t",
       help_plot_key="jobDetailPlot_roofline_cpu",
-  ) is None
-  assert _build_roofline_figure(
+    )
+    is None
+  )
+  assert (
+    _build_roofline_figure(
       df,
       peak_flops_gf=float("nan"),
       peak_bw_gb=10.0,
       title="t",
       help_plot_key="jobDetailPlot_roofline_cpu",
-  ) is None
+    )
+    is None
+  )

@@ -7,13 +7,13 @@ orchestrators (or two greenfield processes) is forbidden.
 Attributes:
   ORCHESTRATOR_LOCK_BASENAME: Lock sidecar name under ``archive_dir``.
 """
+
 from __future__ import annotations
 
-from typing import Iterator
-
-from contextlib import contextmanager
-from fcntl import LOCK_EX, LOCK_NB, LOCK_UN, flock
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
+from fcntl import LOCK_EX, LOCK_NB, LOCK_UN, flock
 
 ORCHESTRATOR_LOCK_BASENAME = ".sync_timedb_orchestrator.fnctl.lock"
 
@@ -90,11 +90,7 @@ def exclusive_archive_dir_flock(
   try:
     yield fd
   finally:
-    try:
+    with suppress(OSError):
       flock(fd, LOCK_UN)
-    except OSError:
-      pass
-    try:
+    with suppress(OSError):
       os.close(fd)
-    except OSError:
-      pass

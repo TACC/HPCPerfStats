@@ -29,14 +29,20 @@ def _write(path: Path, data: bytes) -> None:
 def test_should_write_skips_spa_html_and_tiny_files():
   big = SIDECAR_MIN_BYTES + 64
   assert should_write_static_sidecars("rest_framework/js/api.js", big) is True
-  assert should_write_static_sidecars(
+  assert (
+    should_write_static_sidecars(
       "frontend/_next/static/chunks/app-abc123.js",
       big,
-  ) is True
-  assert should_write_static_sidecars(
+    )
+    is True
+  )
+  assert (
+    should_write_static_sidecars(
       "frontend/machine/index.html",
       big,
-  ) is False
+    )
+    is False
+  )
   assert should_write_static_sidecars("frontend/pub/index.html", big) is False
   assert should_write_static_sidecars("machine/index.html", big) is False
   assert should_write_static_sidecars("pub/nested/shell.html", big) is False
@@ -47,8 +53,8 @@ def test_should_write_skips_spa_html_and_tiny_files():
 
 def test_compress_writes_br_gz_and_round_trips(tmp_path: Path):
   static_root = tmp_path / "staticfiles"
-  js_path = static_root / "frontend" / "_next" / "static" / "chunks" / (
-      "app-abc123.js"
+  js_path = (
+    static_root / "frontend" / "_next" / "static" / "chunks" / ("app-abc123.js")
   )
   css_path = static_root / "admin" / "css" / "base.css"
   spa_html = static_root / "frontend" / "machine" / "index.html"
@@ -78,7 +84,7 @@ def test_compress_writes_br_gz_and_round_trips(tmp_path: Path):
 
 
 def test_compress_skips_fresh_sidecars_then_rewrites_on_newer_source(
-    tmp_path: Path,
+  tmp_path: Path,
 ):
   static_root = tmp_path / "staticfiles"
   js_path = static_root / "frontend" / "_next" / "app.js"
@@ -103,23 +109,25 @@ def test_compress_skips_fresh_sidecars_then_rewrites_on_newer_source(
 
 
 def test_compress_fails_closed_without_brotli(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+  tmp_path: Path,
+  monkeypatch: pytest.MonkeyPatch,
 ):
   def _boom() -> object:
     raise RuntimeError(
-        "Python brotli package is required to write static sidecars"
+      "Python brotli package is required to write static sidecars"
     )
 
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.compress_static_sidecars._load_brotli",
-      _boom,
+    "hpcperfstats.site.lib.compress_static_sidecars._load_brotli",
+    _boom,
   )
   with pytest.raises(RuntimeError, match="brotli"):
     compress_static_sidecars(tmp_path / "missing-root")
 
 
-def test_main_uses_argv_root(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+def test_main_uses_argv_root(
+  tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
   js_path = tmp_path / "chunk.js"
   _write(js_path, _payload(300))
   assert main([str(tmp_path)]) == 0

@@ -10,9 +10,9 @@ import pytest
 
 from hpcperfstats.site.lib import staticfiles_ram_publish as ram_publish
 from hpcperfstats.site.lib.staticfiles_ram_publish import (
-    REQUIRED_STATIC_RELPATHS,
-    main,
-    publish_tree_to_ram,
+  REQUIRED_STATIC_RELPATHS,
+  main,
+  publish_tree_to_ram,
 )
 
 
@@ -47,8 +47,9 @@ def test_publish_mirrors_frontend_and_sidecars(tmp_path: Path):
   assert js.read_bytes() == src_js.read_bytes()
   assert Path(f"{js}.br").read_bytes() == b"fake-br"
   assert hashlib.sha256(machine.read_bytes()).hexdigest() == (
-      hashlib.sha256((src / "frontend" / "machine" / "index.html").read_bytes())
-      .hexdigest()
+    hashlib.sha256(
+      (src / "frontend" / "machine" / "index.html").read_bytes()
+    ).hexdigest()
   )
 
 
@@ -60,12 +61,10 @@ def test_publish_is_atomic_on_preexisting_dest(tmp_path: Path):
   publish_tree_to_ram(src, dest, required_relpaths=REQUIRED_STATIC_RELPATHS)
   assert not (dest / "frontend" / "stale-vite.js").exists()
   assert (dest / "frontend" / "machine" / "index.html").read_text(
-      encoding="utf-8"
+    encoding="utf-8"
   ) == "machine-shell"
   leftovers = [
-      p.name
-      for p in dest.iterdir()
-      if p.name.startswith((".publish-", ".bak-"))
+    p.name for p in dest.iterdir() if p.name.startswith((".publish-", ".bak-"))
   ]
   assert leftovers == []
 
@@ -80,31 +79,29 @@ def test_publish_fail_closed_missing_shells(tmp_path: Path):
     publish_tree_to_ram(src, dest, required_relpaths=REQUIRED_STATIC_RELPATHS)
   assert exc.value.code == 1
   assert (dest / "frontend" / "machine" / "index.html").read_text(
-      encoding="utf-8"
+    encoding="utf-8"
   ) == "keep-me"
   assert (dest / "frontend" / "pub" / "index.html").read_text(
-      encoding="utf-8"
+    encoding="utf-8"
   ) == "keep-pub"
 
 
 def test_publish_fail_closed_unwritable(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+  tmp_path: Path,
+  monkeypatch: pytest.MonkeyPatch,
 ):
   src = _static_src(tmp_path)
   dest = tmp_path / "staticfiles-ram"
   dest.mkdir()
   monkeypatch.setattr(ram_publish.os, "access", lambda *_args: False)
   with pytest.raises(SystemExit) as exc:
-    publish_tree_to_ram(
-        src, dest, required_relpaths=REQUIRED_STATIC_RELPATHS
-    )
+    publish_tree_to_ram(src, dest, required_relpaths=REQUIRED_STATIC_RELPATHS)
   assert exc.value.code == 1
 
 
 def test_publish_fail_closed_enospc(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+  tmp_path: Path,
+  monkeypatch: pytest.MonkeyPatch,
 ):
   src = _static_src(tmp_path)
   dest = tmp_path / "staticfiles-ram"
@@ -114,18 +111,14 @@ def test_publish_fail_closed_enospc(
 
   monkeypatch.setattr(ram_publish.shutil, "copytree", raise_enospc)
   with pytest.raises(SystemExit) as exc:
-    publish_tree_to_ram(
-        src, dest, required_relpaths=REQUIRED_STATIC_RELPATHS
-    )
+    publish_tree_to_ram(src, dest, required_relpaths=REQUIRED_STATIC_RELPATHS)
   assert exc.value.code == 1
 
 
 def test_publish_src_equals_dest_fails(tmp_path: Path):
   src = _static_src(tmp_path)
   with pytest.raises(SystemExit) as exc:
-    publish_tree_to_ram(
-        src, src, required_relpaths=REQUIRED_STATIC_RELPATHS
-    )
+    publish_tree_to_ram(src, src, required_relpaths=REQUIRED_STATIC_RELPATHS)
   assert exc.value.code == 1
 
 
@@ -147,12 +140,12 @@ def test_publish_media_mirrors_file(tmp_path: Path):
   dest_file = dest / "uploads" / "note.txt"
   assert dest_file.read_bytes() == payload
   assert hashlib.sha256(dest_file.read_bytes()).hexdigest() == (
-      hashlib.sha256(payload).hexdigest()
+    hashlib.sha256(payload).hexdigest()
   )
 
 
 def test_main_kind_static_and_media_use_env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
   static_src = _static_src(tmp_path)
   static_dest = tmp_path / "static-ram"

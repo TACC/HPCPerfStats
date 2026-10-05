@@ -12,9 +12,9 @@ def _repo_root() -> Path:
 
 def _stage_body(dockerfile: str, stage_name: str) -> str:
   match = re.search(
-      rf"^FROM .* AS {re.escape(stage_name)}\s*\n(.*?)(?=^FROM |\Z)",
-      dockerfile,
-      flags=re.MULTILINE | re.DOTALL,
+    rf"^FROM .* AS {re.escape(stage_name)}\s*\n(.*?)(?=^FROM |\Z)",
+    dockerfile,
+    flags=re.MULTILINE | re.DOTALL,
   )
   assert match, f"{stage_name} stage not found in Dockerfile"
   return match.group(1)
@@ -23,9 +23,9 @@ def _stage_body(dockerfile: str, stage_name: str) -> str:
 def _run_instructions(stage: str) -> list[str]:
   """Return each RUN instruction body from a Dockerfile stage."""
   return re.findall(
-      r"^RUN /bin/bash -o pipefail -c '((?:\\'|[^'])*)'",
-      stage,
-      flags=re.MULTILINE | re.DOTALL,
+    r"^RUN /bin/bash -o pipefail -c '((?:\\'|[^'])*)'",
+    stage,
+    flags=re.MULTILINE | re.DOTALL,
   )
 
 
@@ -40,7 +40,9 @@ def test_builder_apt_has_mkl_compile_tools_not_openblas_dev():
   assert "cmake" in build
   assert "libopenblas-dev" not in build
   assert "libatlas-base-dev" not in build
-  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base")
+  base = _stage_body(
+    (_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base"
+  )
   assert "gfortran" not in base
   assert "ninja-build" not in base
   assert "cmake" not in base
@@ -59,49 +61,63 @@ def test_mkl_source_stack_run_order_and_flags():
     raise AssertionError("matching RUN not found")
 
   gil_build_i, gil_build = _find(
-      lambda b: "-r /tmp/requirements-build.txt" in b
+    lambda b: (
+      "-r /tmp/requirements-build.txt" in b
       and "python3.14t" not in b
       and "--no-binary" not in b
+    )
   )
   # Regression: one pip resolve of numpy+numexpr under --no-build-isolation fails
   # because numexpr setup imports numpy during metadata generation.
   gil_compile_i, gil_compile = _find(
-      lambda b: "--no-binary numpy" in b
+    lambda b: (
+      "--no-binary numpy" in b
       and "ne.use_vml" in b
       and "--no-binary pandas" in b
       and "python3.14t" not in b
+    )
   )
   gil_rest_i, gil_rest = _find(
-      lambda b: "-r /tmp/requirements-rest.txt" in b
+    lambda b: (
+      "-r /tmp/requirements-rest.txt" in b
       and "python3.14t" not in b
       and "--constraint /tmp/requirements-mkl-src.txt" in b
+    )
   )
   ft_build_i, ft_build = _find(
-      lambda b: "python3.14t" in b
+    lambda b: (
+      "python3.14t" in b
       and "-r /tmp/requirements-build.txt" in b
       and "--no-binary" not in b
+    )
   )
   ft_compile_i, ft_compile = _find(
-      lambda b: "python3.14t" in b
+    lambda b: (
+      "python3.14t" in b
       and "--no-binary numpy" in b
       and "ne.use_vml" in b
       and "--no-binary pandas" in b
+    )
   )
   ft_rest_i, ft_rest = _find(
-      lambda b: "python3.14t" in b
+    lambda b: (
+      "python3.14t" in b
       and "-r /tmp/requirements-rest.txt" in b
       and "--constraint /tmp/requirements-mkl-src.txt" in b
+    )
   )
 
   gil_brotli_i, gil_brotli = _find(
-      lambda b: "--no-binary brotli" in b
+    lambda b: (
+      "--no-binary brotli" in b
       and "import brotli" in b
       and "python3.14t" not in b
+    )
   )
   ft_brotli_i, ft_brotli = _find(
-      lambda b: "--no-binary brotli" in b
-      and "import brotli" in b
-      and "python3.14t" in b
+    lambda b: (
+      "--no-binary brotli" in b and "import brotli" in b and "python3.14t" in b
+    )
   )
 
   assert gil_build_i < gil_compile_i < gil_rest_i
@@ -132,9 +148,9 @@ def test_mkl_source_stack_run_order_and_flags():
     assert "scipy" not in compile_body
     # Regression: default show_config() returns None; mode=dicts returns the MKL map.
     assert 'show_config(mode="dicts")' in compile_body or (
-        'show_config(mode=\\"dicts\\")' in compile_body
+      'show_config(mode=\\"dicts\\")' in compile_body
     )
-    assert 'c=str(np.show_config())' not in compile_body
+    assert "c=str(np.show_config())" not in compile_body
     # numexpr Intel VML: inject site.cfg into unpacked sdist (setup.py USE_VML).
     assert "site.cfg" in compile_body
     assert "libraries = mkl_rt" in compile_body
@@ -149,12 +165,15 @@ def test_mkl_source_stack_run_order_and_flags():
     assert "--no-build-isolation" in dl_region
     assert "ne.use_vml" in compile_body
     # Regression: GNU ld cannot find -lmkl_rt when only libmkl_rt.so.N exists.
-    assert 'libmkl_rt.so.*' in compile_body
+    assert "libmkl_rt.so.*" in compile_body
     assert "LIBRARY_PATH" in compile_body
     assert "ln -s" in compile_body
     # mkl 2026+ has no importable Python module; discover via sysconfig data prefix.
     assert "sysconfig.get_path" in compile_body
-    assert 'glob("mkl-*.pc")' in compile_body or 'glob(\\"mkl-*.pc\\")' in compile_body
+    assert (
+      'glob("mkl-*.pc")' in compile_body
+      or 'glob(\\"mkl-*.pc\\")' in compile_body
+    )
     assert "libmkl_rt.so" in compile_body
     assert "mkl.h" in compile_body
     assert "import pathlib,mkl" not in compile_body
@@ -171,18 +190,22 @@ def test_mkl_source_stack_run_order_and_flags():
     assert "-Dlapack=mkl" not in after_numpy_install
     # Regression: numexpr/pandas without --no-deps reinstall manylinux numpy over MKL.
     assert "--no-deps" in compile_body
-    numexpr_install_idx = compile_body.index('pip install', compile_body.index("site.cfg"))
+    numexpr_install_idx = compile_body.index(
+      "pip install", compile_body.index("site.cfg")
+    )
     numexpr_install_end = compile_body.index("ne.use_vml", numexpr_install_idx)
     numexpr_region = compile_body[numexpr_install_idx:numexpr_install_end]
     assert "--no-deps" in numexpr_region
     # MKL assert after numexpr (before pandas) — prod log: numexpr replaced MKL numpy.
-    after_numexpr = compile_body[numexpr_install_end: compile_body.index(pandas_marker)]
+    after_numexpr = compile_body[
+      numexpr_install_end : compile_body.index(pandas_marker)
+    ]
     assert "show_config" in after_numexpr
     assert "mkl" in after_numexpr.lower()
     pandas_pip_idx = compile_body.index(pandas_marker)
     pandas_region = compile_body[
-        compile_body.rfind("pip", 0, pandas_pip_idx) : pandas_pip_idx
-        + len(pandas_marker)
+      compile_body.rfind("pip", 0, pandas_pip_idx) : pandas_pip_idx
+      + len(pandas_marker)
     ]
     assert "--no-deps" in pandas_region
     # dateutil is a rest-layer dep (pyproject); do not install it in the compile RUN.
@@ -228,7 +251,7 @@ def test_numexpr_link_creates_unversioned_mkl_rt_so():
 def test_show_config_assert_uses_dicts_mode_not_none_return():
   """Regression: str(np.show_config()) is 'None' even when MKL linked (numpy 2.5)."""
   base = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
-  assert 'c=str(np.show_config())' not in base
+  assert "c=str(np.show_config())" not in base
   assert "mode=" in base and "dicts" in base
   assert "ne.use_vml" in base
   assert "site.cfg" in base
@@ -248,9 +271,11 @@ def test_numexpr_install_uses_no_deps_to_preserve_mkl_numpy():
   base = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
   runs = _run_instructions(base)
   compile_runs = [
-      body
-      for body in runs
-      if "ne.use_vml" in body and "site.cfg" in body and "--no-binary pandas" in body
+    body
+    for body in runs
+    if "ne.use_vml" in body
+    and "site.cfg" in body
+    and "--no-binary pandas" in body
   ]
   assert len(compile_runs) == 2  # GIL + free-threaded
   for body in compile_runs:
@@ -270,9 +295,10 @@ def test_pandas_install_uses_no_deps_to_preserve_mkl_numpy():
   base = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
   runs = _run_instructions(base)
   compile_runs = [
-      body
-      for body in runs
-      if "--no-binary pandas" in body and "-r /tmp/requirements-mkl-pandas.txt" in body
+    body
+    for body in runs
+    if "--no-binary pandas" in body
+    and "-r /tmp/requirements-mkl-pandas.txt" in body
   ]
   assert len(compile_runs) == 2  # GIL + free-threaded
   for body in compile_runs:
@@ -291,47 +317,51 @@ def test_dockerfile_pip_argv_has_no_hardcoded_scientific_or_mkl_pins():
   """Versions and MKL/toolchain packages come from pyproject -r files only."""
   base = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
   pip_runs = [
-      body
-      for body in _run_instructions(base)
-      if "pip install" in body or "python3.14t -m pip" in body
+    body
+    for body in _run_instructions(base)
+    if "pip install" in body or "python3.14t -m pip" in body
   ]
   forbidden_literals = (
-      "numpy==",
-      "pandas==",
-      "numexpr==",
-      "mkl==",
-      "mkl-devel==",
-      "meson-python==",
-      "meson==",
-      "ninja==",
-      "cython==",
+    "numpy==",
+    "pandas==",
+    "numexpr==",
+    "mkl==",
+    "mkl-devel==",
+    "meson-python==",
+    "meson==",
+    "ninja==",
+    "cython==",
   )
   for body in pip_runs:
     for lit in forbidden_literals:
       assert lit not in body, lit
     # Bare package names on pip argv (MKLROOT uses sysconfig, not import mkl).
     pip_lines = [
-        line
-        for line in body.splitlines()
-        if "pip install" in line or "-m pip install" in line
+      line
+      for line in body.splitlines()
+      if "pip install" in line or "-m pip install" in line
     ]
     joined = "\n".join(pip_lines)
     for bare in (
-        " mkl ",
-        " mkl-devel ",
-        " meson-python ",
-        " meson ",
-        " ninja ",
-        " cython ",
+      " mkl ",
+      " mkl-devel ",
+      " meson-python ",
+      " meson ",
+      " ninja ",
+      " cython ",
     ):
       assert bare not in f" {joined} ", bare
 
 
-def test_writer_run_payload_executes_against_real_pyproject(tmp_path, monkeypatch):
+def test_writer_run_payload_executes_against_real_pyproject(
+  tmp_path, monkeypatch
+):
   """Extract and exec the tomllib writer so quoting regressions fail on host."""
   base = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
   runs = _run_instructions(base)
-  writer = next(body for body in runs if "tomllib" in body and "image-build" in body)
+  writer = next(
+    body for body in runs if "tomllib" in body and "image-build" in body
+  )
   match = re.search(r'python3 -c "(.*)"\s*\Z', writer, flags=re.DOTALL)
   assert match, "writer python3 -c payload not found"
   # Bash double-quote unescape of the -c argument (\" -> ", \\ -> \).
@@ -350,7 +380,9 @@ def test_writer_run_payload_executes_against_real_pyproject(tmp_path, monkeypatc
   numpy_only = (out / "requirements-mkl-numpy.txt").read_text().splitlines()
   numexpr_only = (out / "requirements-mkl-numexpr.txt").read_text().splitlines()
   pandas_only = (out / "requirements-mkl-pandas.txt").read_text().splitlines()
-  after_numpy = (out / "requirements-mkl-after-numpy.txt").read_text().splitlines()
+  after_numpy = (
+    (out / "requirements-mkl-after-numpy.txt").read_text().splitlines()
+  )
   rest = (out / "requirements-rest.txt").read_text().splitlines()
   all_deps = (out / "requirements.txt").read_text().splitlines()
 

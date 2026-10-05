@@ -10,10 +10,11 @@ import pytest
 @pytest.fixture(scope="module", autouse=True)
 def _django_setup():
   os.environ.setdefault(
-      "DJANGO_SETTINGS_MODULE",
-      "hpcperfstats.site.hpcperfstats_site.settings",
+    "DJANGO_SETTINGS_MODULE",
+    "hpcperfstats.site.hpcperfstats_site.settings",
   )
   import django
+
   django.setup()
 
 
@@ -24,13 +25,13 @@ def test_pg_connection_stats_outputs_counts():
   mock_conn.vendor = "postgresql"
   inner = MagicMock()
   inner.fetchone.side_effect = [
-      (5, 1, 2, 0),
-      ("update_metrics.py [thread:metrics-pool]", 4, 0, 4),
-      ("gunicorn: worker", 1, 1, 0),
+    (5, 1, 2, 0),
+    ("update_metrics.py [thread:metrics-pool]", 4, 0, 4),
+    ("gunicorn: worker", 1, 1, 0),
   ]
   inner.fetchall.return_value = [
-      ("update_metrics.py [thread:metrics-pool]", 4, 0, 4),
-      ("gunicorn: worker", 1, 1, 0),
+    ("update_metrics.py [thread:metrics-pool]", 4, 0, 4),
+    ("gunicorn: worker", 1, 1, 0),
   ]
   cm = MagicMock()
   cm.__enter__.return_value = inner

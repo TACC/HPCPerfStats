@@ -1,16 +1,17 @@
 """Dual-read helpers for canonical + legacy monitor names."""
+
 from pathlib import Path
 
 from hpcperfstats.dbload.lib.monitor_naming.legacy import (
-    INGEST_LEGACY_KNL_IMC_TYPE,
-    MONITOR_LEGACY_KNL_IMC_TYPE,
+  INGEST_LEGACY_KNL_IMC_TYPE,
+  MONITOR_LEGACY_KNL_IMC_TYPE,
 )
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
-    dram_cas_read_write_pairs,
-    events_probe_names,
-    hbm_cas_read_write_pairs,
-    imc_types_probe_order,
-    type_probe_names,
+  dram_cas_read_write_pairs,
+  events_probe_names,
+  hbm_cas_read_write_pairs,
+  imc_types_probe_order,
+  type_probe_names,
 )
 
 
@@ -18,8 +19,12 @@ def test_monitor_variable_rename_map_yaml_drift():
   repo_root = Path(__file__).resolve().parents[2]
   docs_yaml = repo_root / "docs" / "monitor_variable_rename_map.yaml"
   pkg_yaml = (
-      repo_root / "hpcperfstats" / "dbload" / "lib" / "monitor_naming"
-      / "monitor_variable_rename_map.yaml"
+    repo_root
+    / "hpcperfstats"
+    / "dbload"
+    / "lib"
+    / "monitor_naming"
+    / "monitor_variable_rename_map.yaml"
   )
   assert docs_yaml.is_file()
   assert pkg_yaml.is_file()
@@ -34,11 +39,11 @@ def test_type_probe_names_canonical_then_legacy():
 
 def test_arm_int_ops_event_names_dual_read():
   from hpcperfstats.dbload.lib.monitor_naming.resolve import (
-      arm_dram_bw_event_names,
-      arm_int16_ops_event_names,
-      arm_int8_ops_event_names,
-      grace_fp_scalar_double_event_names,
-      grace_fp_scalar_single_event_names,
+    arm_dram_bw_event_names,
+    arm_int8_ops_event_names,
+    arm_int16_ops_event_names,
+    grace_fp_scalar_double_event_names,
+    grace_fp_scalar_single_event_names,
   )
 
   assert arm_int8_ops_event_names()[0] == "arm_int8_ops"
@@ -48,10 +53,10 @@ def test_arm_int_ops_event_names_dual_read():
   assert arm_dram_bw_event_names()[0] == "arm_dram_bw_bytes"
   assert "ARM_DRAM_BW_BYTES" in arm_dram_bw_event_names()
   assert grace_fp_scalar_double_event_names() == (
-      "fp_arith_inst_retired_scalar_double",
+    "fp_arith_inst_retired_scalar_double",
   )
   assert grace_fp_scalar_single_event_names() == (
-      "fp_arith_inst_retired_scalar_single",
+    "fp_arith_inst_retired_scalar_single",
   )
 
 
@@ -71,8 +76,8 @@ def test_events_probe_names_gpu_mem_util_includes_legacy_alias():
 def test_lustre_llite_type_scoped_event_probes():
   """type_events.lustre_llite dual-reads without polluting global open/read."""
   from hpcperfstats.dbload.lib.monitor_naming.resolve import (
-      event_probe_names,
-      event_probe_names_for_type,
+    event_probe_names,
+    event_probe_names_for_type,
   )
 
   names = event_probe_names_for_type("lustre_llite", "read_bytes")
@@ -98,7 +103,9 @@ def test_lustre_llite_type_scoped_event_probes():
 
 
 def test_events_probe_names_with_typ_expands_llite_bytes():
-  names = events_probe_names(["vfs_read_bytes", "vfs_write_bytes"], typ="lustre_llite")
+  names = events_probe_names(
+    ["vfs_read_bytes", "vfs_write_bytes"], typ="lustre_llite"
+  )
   assert "vfs_read_bytes" in names
   assert "read_bytes" in names
   assert "vfs_write_bytes" in names
@@ -121,7 +128,9 @@ def test_imc_types_probe_order_includes_legacy_knl_after_canonical():
   assert "intel_x86_uncore_imc_skx" in order
   assert INGEST_LEGACY_KNL_IMC_TYPE in order
   assert MONITOR_LEGACY_KNL_IMC_TYPE in order
-  assert order.index("intel_x86_uncore_imc_skx") < order.index(INGEST_LEGACY_KNL_IMC_TYPE)
+  assert order.index("intel_x86_uncore_imc_skx") < order.index(
+    INGEST_LEGACY_KNL_IMC_TYPE
+  )
 
 
 def test_imc_types_probe_order_includes_icx_spr_short_forms():
@@ -131,7 +140,9 @@ def test_imc_types_probe_order_includes_icx_spr_short_forms():
 
 
 def test_amd_df_types_probe_order_family_before_historical():
-  from hpcperfstats.dbload.lib.monitor_naming.resolve import amd_df_types_probe_order
+  from hpcperfstats.dbload.lib.monitor_naming.resolve import (
+    amd_df_types_probe_order,
+  )
 
   order = amd_df_types_probe_order()
   assert order[0] == "amd_x86_uncore_df_rome"
@@ -140,7 +151,9 @@ def test_amd_df_types_probe_order_family_before_historical():
   assert "amd_x86_uncore_df_turin" in order
   assert "amd_x86_uncore_df" in order
   assert "amd64_df" in order
-  assert order.index("amd_x86_uncore_df_rome") < order.index("amd_x86_uncore_df")
+  assert order.index("amd_x86_uncore_df_rome") < order.index(
+    "amd_x86_uncore_df"
+  )
 
 
 def test_type_probe_names_bare_amd_df_expands_to_family():

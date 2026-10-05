@@ -1,4 +1,5 @@
 """Regression tests for columnar parse, DCGM numpy collapse, and packed carry."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,32 +8,34 @@ import numpy as np
 import pandas as pd
 
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-    HOST_PROC_KEYS,
-    IncrementalStatsParser,
-    OnlineMergedProcRows,
-    _cluster_mean_sum_sorted,
-    _compile_schema_token,
-    _nullable_int_max,
-    _nvidia_bitwise_or_values,
-    build_stats_dataframes,
-    compute_deltas_and_arc,
-    compute_deltas_and_arc_chunk,
-    dedupe_proc_stats_peak_merge,
-    exclude_types,
-    parse_stats_file_streaming_incremental,
-    parse_stats_lines,
-    reset_parse_stage_timing,
-    snapshot_parse_stage_timing,
-    stats_payload_row_count,
-    stats_payload_to_records,
+  HOST_PROC_KEYS,
+  IncrementalStatsParser,
+  OnlineMergedProcRows,
+  _cluster_mean_sum_sorted,
+  _compile_schema_token,
+  _nullable_int_max,
+  _nvidia_bitwise_or_values,
+  build_stats_dataframes,
+  compute_deltas_and_arc,
+  compute_deltas_and_arc_chunk,
+  dedupe_proc_stats_peak_merge,
+  exclude_types,
+  parse_stats_file_streaming_incremental,
+  parse_stats_lines,
+  reset_parse_stage_timing,
+  snapshot_parse_stage_timing,
+  stats_payload_row_count,
+  stats_payload_to_records,
 )
-from hpcperfstats.lib.dcgm_blank import DCGM_FP64_BLANK, nan_out_dcgm_numeric_blanks
-
+from hpcperfstats.lib.dcgm_blank import (
+  DCGM_FP64_BLANK,
+  nan_out_dcgm_numeric_blanks,
+)
 
 _MINIMAL_LINES = [
-    "1709123456 job1 cn001\n",
-    "!cpu user,W=48 sys,W=48\n",
-    "cpu 0 100 200\n",
+  "1709123456 job1 cn001\n",
+  "!cpu user,W=48 sys,W=48\n",
+  "cpu 0 100 200\n",
 ]
 
 
@@ -55,20 +58,22 @@ def test_compile_schema_is_idempotent_on_bang_replay():
   """Re-feeding the same ``!`` line must not change compiled fields."""
   parser = IncrementalStatsParser(0)
   parser.feed_line("!cpu user,W=48 sys,W=48\n")
-  first = {
-      k: list(v) for k, v in parser.schema_compiled["cpu"].items()
-  }
+  first = {k: list(v) for k, v in parser.schema_compiled["cpu"].items()}
   parser.feed_line("!cpu user,W=48 sys,W=48\n")
-  assert {
-      k: list(v) for k, v in parser.schema_compiled["cpu"].items()
-  } == first
+  assert {k: list(v) for k, v in parser.schema_compiled["cpu"].items()} == first
 
 
 def test_compile_schema_soa_has_no_per_line_zip_in_append():
   """Approach C: emit must extend SoA columns without ``zip(*compiled)``."""
-  text = Path(__file__).resolve().parents[1].joinpath(
+  text = (
+    Path(__file__)
+    .resolve()
+    .parents[1]
+    .joinpath(
       "dbload/lib/sync_timedb_parsing.py",
-  ).read_text(encoding="utf-8")
+    )
+    .read_text(encoding="utf-8")
+  )
   start = text.index("def _append_compiled_stats_columns(")
   end = text.index("\ndef ", start + 1)
   body = text[start:end]
@@ -86,7 +91,7 @@ def test_proc_bare_names_compiled_at_bang_not_per_sample():
   from hpcperfstats.dbload.lib.sync_timedb_parsing import HOST_PROC_KEYS
 
   keys = " ".join(
-      f"{k},U=kB" if k.startswith("vm_") else k for k in HOST_PROC_KEYS
+    f"{k},U=kB" if k.startswith("vm_") else k for k in HOST_PROC_KEYS
   )
   parser = IncrementalStatsParser(0)
   parser.feed_line(f"!host_proc {keys}\n")
@@ -111,17 +116,23 @@ def test_parse_stats_lines_records_adapter_matches_columnar_builder():
   from_cols, _ = build_stats_dataframes(cols, [])
   from_records, _ = build_stats_dataframes(stats_list, [])
   pd.testing.assert_frame_equal(
-      from_cols.reset_index(drop=True),
-      from_records.reset_index(drop=True),
-      check_dtype=False,
+    from_cols.reset_index(drop=True),
+    from_records.reset_index(drop=True),
+    check_dtype=False,
   )
 
 
 def test_hardware_parser_source_has_no_per_event_rec_spread():
   """Approach A: hardware emit must not copy tags via ``{**rec``."""
-  text = Path(__file__).resolve().parents[1].joinpath(
+  text = (
+    Path(__file__)
+    .resolve()
+    .parents[1]
+    .joinpath(
       "dbload/lib/sync_timedb_parsing.py",
-  ).read_text(encoding="utf-8")
+    )
+    .read_text(encoding="utf-8")
+  )
   assert "{**rec" not in text
 
 
@@ -174,9 +185,12 @@ def test_nan_out_dcgm_numeric_blanks_can_mutate_in_place():
 
 def test_groupby_sum_min_count_keeps_all_nan_as_nan():
   """``sum(min_count=1)`` must not turn an all-NaN group into 0."""
-  from hpcperfstats.dbload.lib.sync_timedb_parsing import _groupby_sum_min_count
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+    _groupby_sum_min_count,
+  )
 
-  df = pd.DataFrame({
+  df = pd.DataFrame(
+    {
       "host": ["h", "h"],
       "type": ["cpu", "cpu"],
       "event": ["user", "user"],
@@ -185,9 +199,11 @@ def test_groupby_sum_min_count_keeps_all_nan_as_nan():
       "value": [np.nan, np.nan],
       "delta": [np.nan, np.nan],
       "jid": ["j", "j"],
-  })
+    }
+  )
   out = _groupby_sum_min_count(
-      df, ["host", "type", "event", "unit", "time"],
+    df,
+    ["host", "type", "event", "unit", "time"],
   )
   assert len(out) == 1
   assert pd.isna(out.iloc[0]["value"])
@@ -198,18 +214,42 @@ def test_groupby_sum_min_count_keeps_all_nan_as_nan():
 def test_packed_carry_tuple_matches_full_file_delta():
   """Packed carry values must keep wrap/delta continuity across flushes."""
   rows = [
-      {
-          "host": "h", "type": "t", "dev": "d", "event": "e", "unit": "#",
-          "time": 100.0, "value": 10.0, "wid": 8, "mult": 1.0, "jid": "j",
-      },
-      {
-          "host": "h", "type": "t", "dev": "d", "event": "e", "unit": "#",
-          "time": 110.0, "value": 20.0, "wid": 8, "mult": 1.0, "jid": "j",
-      },
-      {
-          "host": "h", "type": "t", "dev": "d", "event": "e", "unit": "#",
-          "time": 120.0, "value": 5.0, "wid": 8, "mult": 1.0, "jid": "j",
-      },
+    {
+      "host": "h",
+      "type": "t",
+      "dev": "d",
+      "event": "e",
+      "unit": "#",
+      "time": 100.0,
+      "value": 10.0,
+      "wid": 8,
+      "mult": 1.0,
+      "jid": "j",
+    },
+    {
+      "host": "h",
+      "type": "t",
+      "dev": "d",
+      "event": "e",
+      "unit": "#",
+      "time": 110.0,
+      "value": 20.0,
+      "wid": 8,
+      "mult": 1.0,
+      "jid": "j",
+    },
+    {
+      "host": "h",
+      "type": "t",
+      "dev": "d",
+      "event": "e",
+      "unit": "#",
+      "time": 120.0,
+      "value": 5.0,
+      "wid": 8,
+      "mult": 1.0,
+      "jid": "j",
+    },
   ]
   full = compute_deltas_and_arc(pd.DataFrame(rows))
   from hpcperfstats.dbload.lib.sync_timedb_parsing import DeltaCarryState
@@ -219,9 +259,9 @@ def test_packed_carry_tuple_matches_full_file_delta():
   part2 = compute_deltas_and_arc_chunk(pd.DataFrame(rows[1:]), carry=carry)
   combined = pd.concat([part1, part2], ignore_index=True)
   pd.testing.assert_series_equal(
-      combined.sort_values("time")["delta"].reset_index(drop=True),
-      full.sort_values("time")["delta"].reset_index(drop=True),
-      check_names=False,
+    combined.sort_values("time")["delta"].reset_index(drop=True),
+    full.sort_values("time")["delta"].reset_index(drop=True),
+    check_names=False,
   )
   raw_val = next(iter(carry.raw.values()))
   assert isinstance(raw_val, tuple)
@@ -233,31 +273,33 @@ def test_incremental_flush_holds_compiled_schema(tmp_path):
   stats_file = tmp_path / "host.example.com" / "1709123456"
   stats_file.parent.mkdir(parents=True)
   stats_file.write_text(
-      "!cpu user sys\n"
-      "1709123456 job1 host.example.com\n"
-      "cpu 0 1 2\n"
-      "1709123457 job1 host.example.com\n"
-      "cpu 0 3 4\n",
-      encoding="utf-8",
+    "!cpu user sys\n"
+    "1709123456 job1 host.example.com\n"
+    "cpu 0 1 2\n"
+    "1709123457 job1 host.example.com\n"
+    "cpu 0 3 4\n",
+    encoding="utf-8",
   )
   chunks = []
 
   def on_chunk(stats_payload, proc_payload):
-    chunks.append((
+    chunks.append(
+      (
         stats_payload_to_records(stats_payload),
         list(proc_payload),
-    ))
+      )
+    )
 
   parse_stats_file_streaming_incremental(
-      str(stats_file),
-      flush_rows=1,
-      on_chunk=on_chunk,
+    str(stats_file),
+    flush_rows=1,
+    on_chunk=on_chunk,
   )
   assert len(chunks) >= 2
   assert stats_payload_row_count(chunks[0][0]) >= 1
   expected, _ = parse_stats_lines(
-      stats_file.read_text(encoding="utf-8").splitlines(keepends=True),
-      0,
+    stats_file.read_text(encoding="utf-8").splitlines(keepends=True),
+    0,
   )
   got = [row for stats, _proc in chunks for row in stats]
   assert got == expected
@@ -270,17 +312,14 @@ def test_listend_one_sample_matches_chunk_kernel():
 
   schema = {"cpu": ["user,W=48", "sys,W=48"]}
   schema_fast = {"cpu": ["user,W=48", "sys,W=48"]}
-  sample = (
-      "1710000001.0 job42 host.example.edu\n"
-      "cpu 0 10 20\n"
-  )
+  sample = "1710000001.0 job42 host.example.edu\ncpu 0 10 20\n"
   carry = DeltaCarryState()
   host_objs, proc_objs = ldi._process_sample_to_orm(
-      sample,
-      host="host.example.edu",
-      schema=schema,
-      schema_fast=schema_fast,
-      carry=carry,
+    sample,
+    host="host.example.edu",
+    schema=schema,
+    schema_fast=schema_fast,
+    carry=carry,
   )
   assert proc_objs == []
   assert host_objs
@@ -307,9 +346,15 @@ def test_host_microbench_parse_fixture_runs():
 
 def test_append_compiled_stats_value_extend_is_materialized_list():
   """Approach A: value column extend must use a list, not a float generator."""
-  text = Path(__file__).resolve().parents[1].joinpath(
+  text = (
+    Path(__file__)
+    .resolve()
+    .parents[1]
+    .joinpath(
       "dbload/lib/sync_timedb_parsing.py",
-  ).read_text(encoding="utf-8")
+    )
+    .read_text(encoding="utf-8")
+  )
   start = text.index("def _append_compiled_stats_columns(")
   end = text.index("\ndef ", start + 1)
   body = text[start:end]
@@ -320,16 +365,15 @@ def test_append_compiled_stats_value_extend_is_materialized_list():
 def test_sparse_host_proc_omits_missing_keys():
   """Approach B: host_proc rows omit unparsed HOST_PROC_KEYS (no None prefill)."""
   keys = (
-      "uid,R=S vm_peak,U=kB vm_size,U=kB vm_lck,U=kB,R=S vm_hwm,U=kB,R=S "
-      "vm_rss,U=kB vm_data,U=kB vm_stk,U=kB vm_exe,U=kB vm_lib,U=kB "
-      "vm_pte,U=kB,R=S vm_swap,U=kB threads"
+    "uid,R=S vm_peak,U=kB vm_size,U=kB vm_lck,U=kB,R=S vm_hwm,U=kB,R=S "
+    "vm_rss,U=kB vm_data,U=kB vm_stk,U=kB vm_exe,U=kB vm_lib,U=kB "
+    "vm_pte,U=kB,R=S vm_swap,U=kB threads"
   )
   parser = IncrementalStatsParser(0)
   parser.feed_line(f"!host_proc {keys}\n")
   parser.feed_line("1709123456 job1 cn001\n")
   parser.feed_line(
-      "host_proc python/1/0/0 @fast "
-      "9000 8000 6000 5000 4000 3000 2000 500 8\n",
+    "host_proc python/1/0/0 @fast 9000 8000 6000 5000 4000 3000 2000 500 8\n",
   )
   row = parser.proc_stats[0]
   for slow in ("uid", "vm_lck", "vm_hwm", "vm_pte"):
@@ -340,32 +384,38 @@ def test_sparse_host_proc_omits_missing_keys():
 
 def test_build_stats_dataframes_peak_merge_without_to_dict_roundtrip():
   """Approach C: peak-merge list-native; no DataFrame.to_dict in builder."""
-  text = Path(__file__).resolve().parents[1].joinpath(
+  text = (
+    Path(__file__)
+    .resolve()
+    .parents[1]
+    .joinpath(
       "dbload/lib/sync_timedb_parsing.py",
-  ).read_text(encoding="utf-8")
+    )
+    .read_text(encoding="utf-8")
+  )
   start = text.index("def build_stats_dataframes(")
   end = text.index("\ndef ", start + 1)
   body = text[start:end]
   assert 'to_dict(orient="records")' not in body
   proc_list = [
-      {
-          "time": 1,
-          "host": "h",
-          "jid": "j",
-          "proc": "p",
-          "device": "p/1",
-          "vm_peak": 10,
-          "vm_hwm": 5,
-      },
-      {
-          "time": 2,
-          "host": "h",
-          "jid": "j",
-          "proc": "p",
-          "device": "p/1",
-          "vm_peak": 20,
-          "vm_hwm": 3,
-      },
+    {
+      "time": 1,
+      "host": "h",
+      "jid": "j",
+      "proc": "p",
+      "device": "p/1",
+      "vm_peak": 10,
+      "vm_hwm": 5,
+    },
+    {
+      "time": 2,
+      "host": "h",
+      "jid": "j",
+      "proc": "p",
+      "device": "p/1",
+      "vm_peak": 20,
+      "vm_hwm": 3,
+    },
   ]
   _stats_df, proc_df = build_stats_dataframes([], proc_list)
   assert len(proc_df) == 1
@@ -375,7 +425,7 @@ def test_build_stats_dataframes_peak_merge_without_to_dict_roundtrip():
 
 def _host_proc_schema_line() -> str:
   keys = " ".join(
-      f"{k},U=kB" if k.startswith("vm_") else k for k in HOST_PROC_KEYS
+    f"{k},U=kB" if k.startswith("vm_") else k for k in HOST_PROC_KEYS
   )
   return f"!host_proc {keys}\n"
 
@@ -397,13 +447,13 @@ def test_online_proc_merge_equals_batch_dedupe():
   """Wave 4: online (jid,host,proc) merge must match batch peak-merge."""
   schema = _host_proc_schema_line()
   lines = [
-      schema,
-      "1709123456 job1 cn001\n",
-      f"host_proc python/1/0/0 {_host_proc_vals(vm_peak=9000, threads=1)}\n",
-      "1709123457 job1 cn001\n",
-      f"host_proc python/1/0/0 {_host_proc_vals(vm_peak=8000, threads=8)}\n",
-      "1709123458 job1 cn001\n",
-      f"host_proc other/2/0/0 {_host_proc_vals(vm_peak=100, threads=2)}\n",
+    schema,
+    "1709123456 job1 cn001\n",
+    f"host_proc python/1/0/0 {_host_proc_vals(vm_peak=9000, threads=1)}\n",
+    "1709123457 job1 cn001\n",
+    f"host_proc python/1/0/0 {_host_proc_vals(vm_peak=8000, threads=8)}\n",
+    "1709123458 job1 cn001\n",
+    f"host_proc other/2/0/0 {_host_proc_vals(vm_peak=100, threads=2)}\n",
   ]
   parser = IncrementalStatsParser(0)
   parser.feed_lines(lines)
@@ -415,33 +465,33 @@ def test_online_proc_merge_equals_batch_dedupe():
   assert by_proc["python"]["threads"] == 8
   assert by_proc["other"]["vm_peak"] == 100
   explicit = [
-      {
-          "time": 1709123456.0,
-          "host": "cn001",
-          "jid": "job1",
-          "proc": "python",
-          "device": "python/1/0/0",
-          "vm_peak": 9000,
-          "threads": 1,
-      },
-      {
-          "time": 1709123457.0,
-          "host": "cn001",
-          "jid": "job1",
-          "proc": "python",
-          "device": "python/1/0/0",
-          "vm_peak": 8000,
-          "threads": 8,
-      },
-      {
-          "time": 1709123458.0,
-          "host": "cn001",
-          "jid": "job1",
-          "proc": "other",
-          "device": "other/2/0/0",
-          "vm_peak": 100,
-          "threads": 2,
-      },
+    {
+      "time": 1709123456.0,
+      "host": "cn001",
+      "jid": "job1",
+      "proc": "python",
+      "device": "python/1/0/0",
+      "vm_peak": 9000,
+      "threads": 1,
+    },
+    {
+      "time": 1709123457.0,
+      "host": "cn001",
+      "jid": "job1",
+      "proc": "python",
+      "device": "python/1/0/0",
+      "vm_peak": 8000,
+      "threads": 8,
+    },
+    {
+      "time": 1709123458.0,
+      "host": "cn001",
+      "jid": "job1",
+      "proc": "other",
+      "device": "other/2/0/0",
+      "vm_peak": 100,
+      "threads": 2,
+    },
   ]
   batch_by = {r["proc"]: r for r in dedupe_proc_stats_peak_merge(explicit)}
   assert by_proc["python"]["vm_peak"] == batch_by["python"]["vm_peak"]
@@ -452,20 +502,20 @@ def test_online_proc_merge_equals_batch_dedupe():
 def test_online_merged_rows_skip_timed_dedupe_frame_parity():
   """OnlineMergedProcRows must skip batch dedupe but match DataFrame peaks."""
   raw = [
-      {
-          "jid": "j",
-          "host": "h",
-          "proc": "python",
-          "vm_peak": 9000,
-          "threads": 1,
-      },
-      {
-          "jid": "j",
-          "host": "h",
-          "proc": "python",
-          "vm_peak": 8000,
-          "threads": 8,
-      },
+    {
+      "jid": "j",
+      "host": "h",
+      "proc": "python",
+      "vm_peak": 9000,
+      "threads": 1,
+    },
+    {
+      "jid": "j",
+      "host": "h",
+      "proc": "python",
+      "vm_peak": 8000,
+      "threads": 8,
+    },
   ]
   online = OnlineMergedProcRows(dedupe_proc_stats_peak_merge(raw))
   _s1, proc_online = build_stats_dataframes([], online)
@@ -480,11 +530,11 @@ def test_columnar_take_proc_frame_equals_records():
   """take_proc_stats_columns SoA frame must match OnlineMergedProcRows frame."""
   schema = _host_proc_schema_line()
   lines = [
-      schema,
-      "1709123456 job1 cn001\n",
-      f"host_proc python/1/0/0 {_host_proc_vals(vm_peak=9000, threads=1)}\n",
-      "1709123457 job1 cn001\n",
-      f"host_proc python/1/0/0 {_host_proc_vals(vm_peak=8000, threads=8)}\n",
+    schema,
+    "1709123456 job1 cn001\n",
+    f"host_proc python/1/0/0 {_host_proc_vals(vm_peak=9000, threads=1)}\n",
+    "1709123457 job1 cn001\n",
+    f"host_proc python/1/0/0 {_host_proc_vals(vm_peak=8000, threads=8)}\n",
   ]
   parser_a = IncrementalStatsParser(0)
   parser_a.feed_lines(lines)

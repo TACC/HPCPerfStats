@@ -5,24 +5,24 @@ from __future__ import annotations
 import pytest
 
 from hpcperfstats.site.lib.machine.openapi_serializers import (
-    SessionInfoSerializer,
-    TestLoginUserSerializer,
+  SessionInfoSerializer,
+  TestLoginUserSerializer,
 )
 
 pytestmark = pytest.mark.machine_unit_mock
 
 SESSION_WIRE = {
-    "logged_in": True,
-    "username": "alice",
-    "is_staff": True,
-    "machine_name": "cluster.test",
-    "separate_test_login": True,
+  "logged_in": True,
+  "username": "alice",
+  "is_staff": True,
+  "machine_name": "cluster.test",
+  "separate_test_login": True,
 }
 
 TEST_LOGIN_USER_WIRE = {
-    "configured": True,
-    "username": "qa",
-    "login_url": "/test-login/",
+  "configured": True,
+  "username": "qa",
+  "login_url": "/test-login/",
 }
 
 

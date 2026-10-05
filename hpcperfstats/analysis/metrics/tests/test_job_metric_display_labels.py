@@ -16,20 +16,22 @@ def test_job_metric_short_labels_non_empty_strings():
 def test_job_watt_hours_labels_omit_gpu_when_absent():
   assert job_metric_display_labels.job_has_gpu_for_watt_hours_label(4) is True
   assert job_metric_display_labels.job_has_gpu_for_watt_hours_label(0) is False
-  assert job_metric_display_labels.job_has_gpu_for_watt_hours_label(None) is False
   assert (
-      job_metric_display_labels.get_job_watt_hours_short_label(False)
-      == "CPU watt-hours for job"
+    job_metric_display_labels.job_has_gpu_for_watt_hours_label(None) is False
   )
   assert (
-      job_metric_display_labels.get_job_watt_hours_resources_title(False)
-      == "CPU Watt Hours for Job"
+    job_metric_display_labels.get_job_watt_hours_short_label(False)
+    == "CPU watt-hours for job"
   )
   assert (
-      job_metric_display_labels.get_job_watt_hours_short_label(True)
-      == "CPU+GPU watt-hours for job"
+    job_metric_display_labels.get_job_watt_hours_resources_title(False)
+    == "CPU Watt Hours for Job"
   )
   assert (
-      job_metric_display_labels.get_job_watt_hours_resources_title(True)
-      == "CPU+GPU Watt Hours for Job"
+    job_metric_display_labels.get_job_watt_hours_short_label(True)
+    == "CPU+GPU watt-hours for job"
+  )
+  assert (
+    job_metric_display_labels.get_job_watt_hours_resources_title(True)
+    == "CPU+GPU Watt Hours for Job"
   )

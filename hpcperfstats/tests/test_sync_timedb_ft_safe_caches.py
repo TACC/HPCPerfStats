@@ -1,4 +1,5 @@
 """Concurrent regression coverage for FT-safe process-local caches."""
+
 from __future__ import annotations
 
 import threading
@@ -11,9 +12,9 @@ def test_mark_entries_cache_concurrent_get_set_clear(tmp_path: Path) -> None:
   Concurrent load/clear of mark entries must not raise or corrupt entries.
   """
   from hpcperfstats.dbload.lib.sync_timedb_mark_entries_cache import (
-      clear_mark_entries_cache,
-      load_cached_mark_entries,
-      reset_mark_entries_cache_for_tests,
+    clear_mark_entries_cache,
+    load_cached_mark_entries,
+    reset_mark_entries_cache_for_tests,
   )
 
   mark = tmp_path / "mark.json"
@@ -27,18 +28,18 @@ def test_mark_entries_cache_concurrent_get_set_clear(tmp_path: Path) -> None:
       barrier.wait(timeout=5)
       for _ in range(40):
         entries = load_cached_mark_entries(
-            str(mark),
-            load_uncached=lambda _p: {"a": {"ok": True}},
+          str(mark),
+          load_uncached=lambda _p: {"a": {"ok": True}},
         )
         assert entries.get("a", {}).get("ok") is True
         if idx % 2 == 0:
           clear_mark_entries_cache(str(mark))
-    except BaseException as exc:  # noqa: BLE001 — collect for assertion
+    except BaseException as exc:
       errors.append(exc)
 
   threads = [
-      threading.Thread(target=_worker, args=(i,), name="mark-cache-%d" % i)
-      for i in range(8)
+    threading.Thread(target=_worker, args=(i,), name="mark-cache-%d" % i)
+    for i in range(8)
   ]
   for thread in threads:
     thread.start()
@@ -69,20 +70,26 @@ def test_ingest_readiness_caches_expose_ft_safe_locks() -> None:
         key = ("host%d" % (idx % 3), n % 10)
         now = time.time()
         with ready._HEAD_DB_CACHE_LOCK:
-          ready._HEAD_DB_CACHE[key] = {"present": True, "checked_at": now}
+          ready._HEAD_DB_CACHE[key] = {
+            "present": True,
+            "checked_at": now,
+          }
           ready._trim_head_db_cache()
         fp = ("/tmp/p%d" % (idx % 4), n, n)
         with ready._PATH_READY_CACHE_LOCK:
-          ready._PATH_READY_CACHE[fp] = {"ready": True, "checked_at": now}
+          ready._PATH_READY_CACHE[fp] = {
+            "ready": True,
+            "checked_at": now,
+          }
           ready._trim_path_ready_cache()
         if n % 7 == 0:
           ready.reset_sync_ingest_readiness_caches()
-    except BaseException as exc:  # noqa: BLE001
+    except BaseException as exc:
       errors.append(exc)
 
   threads = [
-      threading.Thread(target=_worker, args=(i,), name="ready-cache-%d" % i)
-      for i in range(8)
+    threading.Thread(target=_worker, args=(i,), name="ready-cache-%d" % i)
+    for i in range(8)
   ]
   for thread in threads:
     thread.start()
@@ -102,8 +109,8 @@ def test_host_itimes_caches_expose_ft_safe_locks() -> None:
 
   assert isinstance(itimes._HOST_ITIMES_CACHE_LOCK, type(threading.RLock()))
   assert isinstance(
-      itimes._HOST_SECOND_PRESENT_CACHE_LOCK,
-      type(threading.RLock()),
+    itimes._HOST_SECOND_PRESENT_CACHE_LOCK,
+    type(threading.RLock()),
   )
   itimes.reset_host_itimes_caches()
   errors: list[BaseException] = []
@@ -117,8 +124,8 @@ def test_host_itimes_caches_expose_ft_safe_locks() -> None:
         now = time.time()
         with itimes._HOST_ITIMES_CACHE_LOCK:
           itimes._HOST_ITIMES_CACHE[key] = {
-              "times": (n,),
-              "checked_at": now,
+            "times": (n,),
+            "checked_at": now,
           }
           if len(itimes._HOST_ITIMES_CACHE) > 10:
             drop = next(iter(itimes._HOST_ITIMES_CACHE))
@@ -127,12 +134,12 @@ def test_host_itimes_caches_expose_ft_safe_locks() -> None:
           itimes._HOST_SECOND_PRESENT_CACHE[("h", n)] = (True, now)
         if n % 11 == 0:
           itimes.reset_host_itimes_caches()
-    except BaseException as exc:  # noqa: BLE001
+    except BaseException as exc:
       errors.append(exc)
 
   threads = [
-      threading.Thread(target=_worker, args=(i,), name="itimes-cache-%d" % i)
-      for i in range(8)
+    threading.Thread(target=_worker, args=(i,), name="itimes-cache-%d" % i)
+    for i in range(8)
   ]
   for thread in threads:
     thread.start()
@@ -142,7 +149,9 @@ def test_host_itimes_caches_expose_ft_safe_locks() -> None:
   itimes.reset_host_itimes_caches()
 
 
-def test_daily_archive_members_l1_cache_concurrent(monkeypatch, tmp_path: Path) -> None:
+def test_daily_archive_members_l1_cache_concurrent(
+  monkeypatch, tmp_path: Path
+) -> None:
   """
   Concurrent L1 members get/set/invalidate/merge must not raise.
   """
@@ -152,19 +161,19 @@ def test_daily_archive_members_l1_cache_concurrent(monkeypatch, tmp_path: Path) 
   day = tmp_path / "2024-01-01.tar.zst"
   day.write_bytes(b"x")
   monkeypatch.setattr(
-      helpers,
-      "_daily_archive_members_cache_enabled",
-      lambda: True,
+    helpers,
+    "_daily_archive_members_cache_enabled",
+    lambda: True,
   )
   monkeypatch.setattr(
-      helpers,
-      "_daily_archive_members_cache_key",
-      lambda canonical: (canonical, "id"),
+    helpers,
+    "_daily_archive_members_cache_key",
+    lambda canonical: (canonical, "id"),
   )
   monkeypatch.setattr(
-      helpers,
-      "normalize_daily_compressed_path",
-      lambda path: str(path),
+    helpers,
+    "normalize_daily_compressed_path",
+    lambda path: str(path),
   )
   errors: list[BaseException] = []
   barrier = threading.Barrier(8)
@@ -175,24 +184,24 @@ def test_daily_archive_members_l1_cache_concurrent(monkeypatch, tmp_path: Path) 
       barrier.wait(timeout=5)
       for n in range(40):
         helpers._store_daily_archive_members_cache(
-            path,
-            {"m%d" % n: n + idx},
+          path,
+          {"m%d" % n: n + idx},
         )
         helpers._lookup_daily_archive_members_cache(path)
         helpers.merge_daily_archive_members_l1_cache(
-            path,
-            {"m%d" % n: n + 1},
+          path,
+          {"m%d" % n: n + 1},
         )
         if n % 5 == 0:
           helpers.invalidate_daily_archive_members_cache(path, reason="test")
         if n % 9 == 0:
           helpers.clear_daily_archive_members_cache()
-    except BaseException as exc:  # noqa: BLE001
+    except BaseException as exc:
       errors.append(exc)
 
   threads = [
-      threading.Thread(target=_worker, args=(i,), name="l1-cache-%d" % i)
-      for i in range(8)
+    threading.Thread(target=_worker, args=(i,), name="l1-cache-%d" % i)
+    for i in range(8)
   ]
   for thread in threads:
     thread.start()
@@ -218,10 +227,10 @@ def test_daily_archive_members_l1_exposes_ft_safe_lock() -> None:
   from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
 
   assert isinstance(
-      helpers._DAILY_ARCHIVE_MEMBERS_CACHE_LOCK,
-      type(threading.RLock()),
+    helpers._DAILY_ARCHIVE_MEMBERS_CACHE_LOCK,
+    type(threading.RLock()),
   )
   assert isinstance(
-      helpers._MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE_LOCK,
-      type(threading.RLock()),
+    helpers._MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE_LOCK,
+    type(threading.RLock()),
   )

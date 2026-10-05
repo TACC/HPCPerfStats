@@ -8,7 +8,7 @@ from pathlib import Path
 # PR #860 HEAD used for the cargo pin (honglei/py-spy). Bump with the Dockerfile.
 _PYSPY_PIN_SHA = "ee757909a5698526a7df04687ecbe6d4daad5f8b"
 _PYSPY_TARBALL_SHA256 = (
-    "aad4fc01436299b68001120c414d15e88b6c9c53270ea9f9a31ffb060604adce"
+  "aad4fc01436299b68001120c414d15e88b6c9c53270ea9f9a31ffb060604adce"
 )
 
 
@@ -18,9 +18,9 @@ def _repo_root() -> Path:
 
 def _stage_body(dockerfile: str, stage_name: str) -> str:
   match = re.search(
-      rf"^FROM .* AS {re.escape(stage_name)}\s*\n(.*?)(?=^FROM |\Z)",
-      dockerfile,
-      flags=re.MULTILINE | re.DOTALL,
+    rf"^FROM .* AS {re.escape(stage_name)}\s*\n(.*?)(?=^FROM |\Z)",
+    dockerfile,
+    flags=re.MULTILINE | re.DOTALL,
   )
   assert match, f"{stage_name} stage not found in Dockerfile"
   return match.group(1)
@@ -32,20 +32,22 @@ def _python_build() -> str:
 
 def _hpcperfstats_base() -> str:
   return _stage_body(
-      (_repo_root() / "Dockerfile").read_text(),
-      "hpcperfstats-base",
+    (_repo_root() / "Dockerfile").read_text(),
+    "hpcperfstats-base",
   )
 
 
 def test_python_build_does_not_pip_install_unpinned_pyspy():
   """Released PyPI 0.4.2 cannot see libpython3.14t; do not install it via pip."""
   build = _python_build()
-  assert "python3 -m pip install --no-cache-dir pyinstrument py-spy" not in build
+  assert (
+    "python3 -m pip install --no-cache-dir pyinstrument py-spy" not in build
+  )
   assert "python3 -m pip install --no-cache-dir pyinstrument" in build
   pip_lines = [
-      ln
-      for ln in build.splitlines()
-      if "python3 -m pip install" in ln and "pyinstrument" in ln
+    ln
+    for ln in build.splitlines()
+    if "python3 -m pip install" in ln and "pyinstrument" in ln
   ]
   assert pip_lines
   assert all("py-spy" not in ln for ln in pip_lines)
@@ -86,7 +88,9 @@ def test_python_build_pyspy_dump_smoke_covers_gil_and_314t_without_gil_flag():
   assert "py-spy dump --pid" in build
   assert "Failed to find python version" in build
   assert "PYSPY_BUILD_PTRACE_UNAVAILABLE" in build
-  assert "grep -aF libpython3.14t /opt/python3.14/bin/py-spy >/dev/null" not in build
+  assert (
+    "grep -aF libpython3.14t /opt/python3.14/bin/py-spy >/dev/null" not in build
+  )
   assert "python3" in build
   assert "/opt/python3.14t/bin/python" in build
   dump_lines = [ln for ln in build.splitlines() if "py-spy dump" in ln]
@@ -94,8 +98,8 @@ def test_python_build_pyspy_dump_smoke_covers_gil_and_314t_without_gil_flag():
   assert all("--gil" not in ln for ln in dump_lines)
   assert "time.sleep" in build
   assert "py-spy --version" in build
-  assert "|| { echo \"$gout\"; kill" not in build
-  assert "|| { echo \"$tout\"; kill" not in build
+  assert '|| { echo "$gout"; kill' not in build
+  assert '|| { echo "$tout"; kill' not in build
   assert "$label no python frame" not in build
 
 
@@ -103,7 +107,7 @@ def test_python_build_wipes_pyspy_src_and_rustup_before_stage_end():
   """rustc/cargo must not leak via leftover trees; runtime COPY is /opt only."""
   build = _python_build()
   assert "test ! -d /usr/src/py-spy" in build
-  assert 'rm -rf /usr/src/py-spy' in build or "rm -rf /usr/src/py-spy " in build
+  assert "rm -rf /usr/src/py-spy" in build or "rm -rf /usr/src/py-spy " in build
   assert "$HOME/.cargo" in build
   assert "$HOME/.rustup" in build
 
@@ -121,9 +125,12 @@ def test_hpcperfstats_base_has_libunwind8_not_rustc_or_libunwind_dev():
   assert re.search(r"\blibunwind8\b", base_apt), base_apt
   assert "libunwind-dev" in build
   copies = [
-      ln.strip()
-      for ln in base.splitlines()
-      if ln.strip().startswith("COPY --from=python-build")
+    ln.strip()
+    for ln in base.splitlines()
+    if ln.strip().startswith("COPY --from=python-build")
   ]
-  assert any(ln.endswith("/opt/python3.14") or "/opt/python3.14 /opt/python3.14" in ln for ln in copies)
+  assert any(
+    ln.endswith("/opt/python3.14") or "/opt/python3.14 /opt/python3.14" in ln
+    for ln in copies
+  )
   assert all("/usr/src" not in ln and ".cargo" not in ln for ln in copies)

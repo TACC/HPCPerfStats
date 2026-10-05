@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 import sys
+from pathlib import Path
 
 
 def _load_runner():
@@ -16,23 +16,25 @@ def _load_runner():
   return module
 
 
-def test_no_django_excludes_db_markers_and_bounds_default_collection(monkeypatch):
+def test_no_django_excludes_db_markers_and_bounds_default_collection(
+  monkeypatch,
+):
   runner = _load_runner()
   captured = {}
   monkeypatch.setattr(sys, "argv", ["run_tests.py", "--no-django"])
   monkeypatch.setattr(
-      "pytest.main",
-      lambda args: captured.setdefault("args", args) or 0,
+    "pytest.main",
+    lambda args: captured.setdefault("args", args) or 0,
   )
 
   runner.main()
 
   assert captured["args"] == [
-      "--ignore=hpcperfstats/site/lib/machine/tests",
-      "-m",
-      "not django_db",
-      "-q",
-      "hpcperfstats",
+    "--ignore=hpcperfstats/site/lib/machine/tests",
+    "-m",
+    "not django_db",
+    "-q",
+    "hpcperfstats",
   ]
 
 
@@ -42,8 +44,8 @@ def test_no_django_preserves_explicit_targets(monkeypatch):
   target = "hpcperfstats/tests/test_file_locking.py"
   monkeypatch.setattr(sys, "argv", ["run_tests.py", "--no-django", target])
   monkeypatch.setattr(
-      "pytest.main",
-      lambda args: captured.setdefault("args", args) or 0,
+    "pytest.main",
+    lambda args: captured.setdefault("args", args) or 0,
   )
 
   runner.main()

@@ -27,6 +27,7 @@ Attributes:
   _PUBLIC_METRICS_INVALIDATE_STATEMENT_TIMEOUT_MS: Attribute.
   logger: Attribute.
 """
+
 from __future__ import annotations
 
 import gzip
@@ -36,15 +37,21 @@ import logging
 import math
 import time
 from collections import defaultdict
+from collections.abc import Iterable, Iterator, Sequence
 from datetime import date, datetime
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
+from typing import (
+  Any,
+)
 
 from django.db import connection, transaction
 from django.db.models import F, Max, Min, Q
 from django.db.utils import OperationalError
 from django.utils import timezone as dj_tz
 
-from hpcperfstats.site.lib.machine.models import job_data, public_metrics_artifact
+from hpcperfstats.site.lib.machine.models import (
+  job_data,
+  public_metrics_artifact,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,47 +73,47 @@ _PUBLIC_EF_KIND_MONTH = "month"
 _PUBLIC_EF_KIND_YEAR = "year"
 
 # Upper-exclusive EF histogram bin edges (last bucket captures overflow).
-EF_HIST_BIN_EDGES: Tuple[float, ...] = (
-    0.0,
-    0.5,
-    1.0,
-    1.25,
-    1.5,
-    2.0,
-    2.5,
-    3.0,
-    4.0,
-    5.0,
-    7.0,
-    10.0,
-    15.0,
-    20.0,
-    30.0,
-    50.0,
-    100.0,
+EF_HIST_BIN_EDGES: tuple[float, ...] = (
+  0.0,
+  0.5,
+  1.0,
+  1.25,
+  1.5,
+  2.0,
+  2.5,
+  3.0,
+  4.0,
+  5.0,
+  7.0,
+  10.0,
+  15.0,
+  20.0,
+  30.0,
+  50.0,
+  100.0,
 )
 
 
 def compute_scheduler_expansion_factor_seconds(
-  submit_time: Optional[datetime],
-  start_time: Optional[datetime],
-  runtime_seconds: Optional[float],
-  ncores: Optional[int],
-) -> Optional[float]:
+  submit_time: datetime | None,
+  start_time: datetime | None,
+  runtime_seconds: float | None,
+  ncores: int | None,
+) -> float | None:
   """
   Return EF as (queue_wait + runtime) / (ncores * runtime); ``None`` when.
-  
+
     invalid.
-  
+
   Args:
     submit_time (Optional[datetime]): Submit time, or None when absent.
     start_time (Optional[datetime]): Start time, or None when absent.
     runtime_seconds (Optional[float]): Runtime seconds, or None when absent.
     ncores (Optional[int]): Ncores, or None when absent.
-  
+
   Returns:
     Optional[float]: Optional[float] — the result, or None when unavailable.
-  
+
   Examples:
     >>> compute_scheduler_expansion_factor_seconds(None, None, None, None)
   """
@@ -126,17 +133,17 @@ def compute_scheduler_expansion_factor_seconds(
   return (qw + float(runtime_seconds)) / denom
 
 
-def _histogram_counts(values: Sequence[float]) -> Tuple[List[float], List[int]]:
+def _histogram_counts(values: Sequence[float]) -> tuple[list[float], list[int]]:
   """
   Internal helper to handle histogram counts.
-  
+
   Args:
     values (Sequence[float]): Sequence for values.
-  
+
   Returns:
     Tuple[List[float], List[int]]: Tuple[List[float], List[int]] produced by
     this call.
-  
+
   Examples:
     >>> _histogram_counts([])  # doctest: +SKIP
   """
@@ -163,10 +170,10 @@ def _histogram_counts(values: Sequence[float]) -> Tuple[List[float], List[int]]:
 def _eligible_jobs_filter() -> Q:
   """
   Internal helper to handle eligible jobs filter.
-  
+
   Returns:
     Q: Q produced by this call.
-  
+
   Examples:
     >>> _eligible_jobs_filter()  # doctest: +SKIP
   """
@@ -176,14 +183,14 @@ def _eligible_jobs_filter() -> Q:
 def _iter_queryset_rows(qs: Any, *, chunk_size: int = 2048) -> Iterator[Any]:
   """
   Iterate ``qs`` without server-side cursors when Django tests forbid them.
-  
+
   Args:
     qs (Any): Qs passed to this helper.
     chunk_size (int): Integer value for chunk size.
-  
+
   Yields:
     Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _iter_queryset_rows(None, 0)  # doctest: +SKIP
   """
@@ -203,14 +210,14 @@ def _iter_queryset_rows(qs: Any, *, chunk_size: int = 2048) -> Iterator[Any]:
 def _streaming_jid_epoch_fingerprint(prefix: str, qs: Any) -> str:
   """
   Stable fingerprint over sorted ``(jid, end_time)`` pairs.
-  
+
   Args:
     prefix (str): String for prefix.
     qs (Any): Qs passed to this helper.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> _streaming_jid_epoch_fingerprint("x", None)  # doctest: +SKIP
   """
@@ -231,17 +238,17 @@ def _streaming_jid_epoch_fingerprint(prefix: str, qs: Any) -> str:
   return h.hexdigest()[:64]
 
 
-def _period_month_bounds(year_month: str) -> Tuple[datetime, datetime]:
+def _period_month_bounds(year_month: str) -> tuple[datetime, datetime]:
   """
   Internal helper to handle period month bounds.
-  
+
   Args:
     year_month (str): String for year month.
-  
+
   Returns:
     Tuple[datetime, datetime]: Tuple[datetime, datetime] produced by this
     call.
-  
+
   Examples:
     >>> _period_month_bounds("x")  # doctest: +SKIP
   """
@@ -256,17 +263,17 @@ def _period_month_bounds(year_month: str) -> Tuple[datetime, datetime]:
   return start, end
 
 
-def _period_year_bounds(year: int) -> Tuple[datetime, datetime]:
+def _period_year_bounds(year: int) -> tuple[datetime, datetime]:
   """
   Internal helper to handle period year bounds.
-  
+
   Args:
     year (int): Integer value for year.
-  
+
   Returns:
     Tuple[datetime, datetime]: Tuple[datetime, datetime] produced by this
     call.
-  
+
   Examples:
     >>> _period_year_bounds(0)  # doctest: +SKIP
   """
@@ -275,26 +282,25 @@ def _period_year_bounds(year: int) -> Tuple[datetime, datetime]:
   return start, end
 
 
-def _month_keys_present() -> List[str]:
+def _month_keys_present() -> list[str]:
   """
   Internal helper to check if the month keys is present.
-  
+
   Returns:
     List[str]: List[str] produced by this call.
-  
+
   Examples:
     >>> _month_keys_present()  # doctest: +SKIP
   """
-  qs = (
-      job_data.objects.filter(_eligible_jobs_filter())
-      .aggregate(mn=Min("end_time"), mx=Max("end_time"))
+  qs = job_data.objects.filter(_eligible_jobs_filter()).aggregate(
+    mn=Min("end_time"), mx=Max("end_time")
   )
   mn, mx = qs.get("mn"), qs.get("mx")
   if mn is None or mx is None:
     return []
   cur = date(mn.year, mn.month, 1)
   last = date(mx.year, mx.month, 1)
-  keys: List[str] = []
+  keys: list[str] = []
   while cur <= last:
     keys.append(f"{cur.year:04d}-{cur.month:02d}")
     if cur.month == 12:
@@ -304,19 +310,19 @@ def _month_keys_present() -> List[str]:
   return keys
 
 
-def _year_keys_present() -> List[str]:
+def _year_keys_present() -> list[str]:
   """
   Internal helper to check if the year keys is present.
-  
+
   Returns:
     List[str]: List[str] produced by this call.
-  
+
   Examples:
     >>> _year_keys_present()  # doctest: +SKIP
   """
   qs = job_data.objects.filter(_eligible_jobs_filter()).aggregate(
-      mn=Min("end_time"),
-      mx=Max("end_time"),
+    mn=Min("end_time"),
+    mx=Max("end_time"),
   )
   mn, mx = qs.get("mn"), qs.get("mx")
   if mn is None or mx is None:
@@ -324,71 +330,71 @@ def _year_keys_present() -> List[str]:
   return [str(y) for y in range(mn.year, mx.year + 1)]
 
 
-def _payload_from_daily_means(daily_means: List[float]) -> Dict[str, Any]:
+def _payload_from_daily_means(daily_means: list[float]) -> dict[str, Any]:
   """
   Internal helper to handle payload from daily means.
-  
+
   Args:
     daily_means (List[float]): Sequence for daily means.
-  
+
   Returns:
     Dict[str, Any]: Dict[str, Any] produced by this call.
-  
+
   Examples:
     >>> _payload_from_daily_means([])  # doctest: +SKIP
   """
   edges, counts = _histogram_counts(daily_means)
   return {
-      "scheduler_expansion_factor_daily_means_in_month_count": len(daily_means),
-      "histogram_bin_edges": edges,
-      "histogram_counts": counts,
-      "expansion_factor_definition": (
-          "(queue_wait_seconds + runtime_seconds) / (ncores * runtime_seconds)"
-      ),
+    "scheduler_expansion_factor_daily_means_in_month_count": len(daily_means),
+    "histogram_bin_edges": edges,
+    "histogram_counts": counts,
+    "expansion_factor_definition": (
+      "(queue_wait_seconds + runtime_seconds) / (ncores * runtime_seconds)"
+    ),
   }
 
 
-def _payload_from_weekly_means(weekly_means: List[float]) -> Dict[str, Any]:
+def _payload_from_weekly_means(weekly_means: list[float]) -> dict[str, Any]:
   """
   Internal helper to handle payload from weekly means.
-  
+
   Args:
     weekly_means (List[float]): Sequence for weekly means.
-  
+
   Returns:
     Dict[str, Any]: Dict[str, Any] produced by this call.
-  
+
   Examples:
     >>> _payload_from_weekly_means([])  # doctest: +SKIP
   """
   edges, counts = _histogram_counts(weekly_means)
   return {
-      "scheduler_expansion_factor_weekly_means_in_year_count": len(weekly_means),
-      "histogram_bin_edges": edges,
-      "histogram_counts": counts,
-      "expansion_factor_definition": (
-          "(queue_wait_seconds + runtime_seconds) / (ncores * runtime_seconds)"
-      ),
+    "scheduler_expansion_factor_weekly_means_in_year_count": len(weekly_means),
+    "histogram_bin_edges": edges,
+    "histogram_counts": counts,
+    "expansion_factor_definition": (
+      "(queue_wait_seconds + runtime_seconds) / (ncores * runtime_seconds)"
+    ),
   }
 
 
 def _attach_ef_histogram_bokeh_item(
-  payload: Dict[str, Any],
+  payload: dict[str, Any],
   *,
   period_key: str,
   subtitle: str,
 ) -> None:
   """
   Internal helper to handle attach ef histogram bokeh item.
-  
+
   Args:
     payload (Dict[str, Any]): Mapping for payload.
     period_key (str): String for period key.
     subtitle (str): String for subtitle.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _attach_ef_histogram_bokeh_item({}, "x", "x")  # doctest: +SKIP
   """
@@ -397,46 +403,46 @@ def _attach_ef_histogram_bokeh_item(
   if not isinstance(edges, list) or not isinstance(counts, list):
     return
   from hpcperfstats.site.lib.machine.public_metrics_bokeh import (
-      build_public_expansion_factor_histogram_json_item,
+    build_public_expansion_factor_histogram_json_item,
   )
 
   bokeh_item = build_public_expansion_factor_histogram_json_item(
-      period_key=period_key,
-      period_kind=subtitle,
-      edges=edges,
-      counts=counts,
+    period_key=period_key,
+    period_kind=subtitle,
+    edges=edges,
+    counts=counts,
   )
   if bokeh_item is not None:
     payload["bokeh_histogram_json_item"] = bokeh_item
 
 
-def _build_month_daily_payload(year_month: str) -> Dict[str, Any]:
+def _build_month_daily_payload(year_month: str) -> dict[str, Any]:
   """
   Internal helper to build the month daily payload.
-  
+
   Args:
     year_month (str): String for year month.
-  
+
   Returns:
     Dict[str, Any]: Dict[str, Any] produced by this call.
-  
+
   Examples:
     >>> _build_month_daily_payload("x")  # doctest: +SKIP
   """
   start, end = _period_month_bounds(year_month)
   qs = (
-      job_data.objects.filter(_eligible_jobs_filter())
-      .filter(end_time__gte=start, end_time__lt=end)
-      .only("jid", "submit_time", "start_time", "runtime", "ncores", "end_time")
+    job_data.objects.filter(_eligible_jobs_filter())
+    .filter(end_time__gte=start, end_time__lt=end)
+    .only("jid", "submit_time", "start_time", "runtime", "ncores", "end_time")
   )
-  day_sum: Dict[date, float] = defaultdict(float)
-  day_cnt: Dict[date, int] = defaultdict(int)
+  day_sum: dict[date, float] = defaultdict(float)
+  day_cnt: dict[date, int] = defaultdict(int)
   for row in _iter_queryset_rows(qs):
     ef = compute_scheduler_expansion_factor_seconds(
-        row.submit_time,
-        row.start_time,
-        row.runtime,
-        row.ncores,
+      row.submit_time,
+      row.start_time,
+      row.runtime,
+      row.ncores,
     )
     if ef is None:
       continue
@@ -454,41 +460,41 @@ def _build_month_daily_payload(year_month: str) -> Dict[str, Any]:
   payload = _payload_from_daily_means(daily_means)
   payload["year_month"] = year_month
   _attach_ef_histogram_bokeh_item(
-      payload,
-      period_key=year_month,
-      subtitle="histogram of daily mean EF (days in month)",
+    payload,
+    period_key=year_month,
+    subtitle="histogram of daily mean EF (days in month)",
   )
   return payload
 
 
-def _build_year_weekly_payload(year_str: str) -> Dict[str, Any]:
+def _build_year_weekly_payload(year_str: str) -> dict[str, Any]:
   """
   Internal helper to build the year weekly payload.
-  
+
   Args:
     year_str (str): String for year str.
-  
+
   Returns:
     Dict[str, Any]: Dict[str, Any] produced by this call.
-  
+
   Examples:
     >>> _build_year_weekly_payload("x")  # doctest: +SKIP
   """
   year = int(year_str)
   start, end = _period_year_bounds(year)
   qs = (
-      job_data.objects.filter(_eligible_jobs_filter())
-      .filter(end_time__gte=start, end_time__lt=end)
-      .only("jid", "submit_time", "start_time", "runtime", "ncores", "end_time")
+    job_data.objects.filter(_eligible_jobs_filter())
+    .filter(end_time__gte=start, end_time__lt=end)
+    .only("jid", "submit_time", "start_time", "runtime", "ncores", "end_time")
   )
-  week_sum: Dict[Tuple[int, int], float] = defaultdict(float)
-  week_cnt: Dict[Tuple[int, int], int] = defaultdict(int)
+  week_sum: dict[tuple[int, int], float] = defaultdict(float)
+  week_cnt: dict[tuple[int, int], int] = defaultdict(int)
   for row in _iter_queryset_rows(qs):
     ef = compute_scheduler_expansion_factor_seconds(
-        row.submit_time,
-        row.start_time,
-        row.runtime,
-        row.ncores,
+      row.submit_time,
+      row.start_time,
+      row.runtime,
+      row.ncores,
     )
     if ef is None:
       continue
@@ -499,7 +505,7 @@ def _build_year_weekly_payload(year_str: str) -> Dict[str, Any]:
     key = (iso_year, iso_week)
     week_sum[key] += ef
     week_cnt[key] += 1
-  weekly_means: List[float] = []
+  weekly_means: list[float] = []
   for key in sorted(week_sum.keys()):
     n = week_cnt[key]
     if n <= 0:
@@ -508,9 +514,9 @@ def _build_year_weekly_payload(year_str: str) -> Dict[str, Any]:
   payload = _payload_from_weekly_means(weekly_means)
   payload["calendar_year"] = year_str
   _attach_ef_histogram_bokeh_item(
-      payload,
-      period_key=year_str,
-      subtitle="histogram of weekly mean EF (ISO weeks in year)",
+    payload,
+    period_key=year_str,
+    subtitle="histogram of weekly mean EF (ISO weeks in year)",
   )
   return payload
 
@@ -519,50 +525,52 @@ def _upsert_row(
   scope: str,
   period_key: str,
   fingerprint: str,
-  payload: Dict[str, Any],
+  payload: dict[str, Any],
 ) -> None:
   """
   Internal helper to handle upsert row.
-  
+
   Args:
     scope (str): String for scope.
     period_key (str): String for period key.
     fingerprint (str): String for fingerprint.
     payload (Dict[str, Any]): Mapping for payload.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _upsert_row("x", "x", "x", {})  # doctest: +SKIP
   """
-  blob = gzip.compress(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+  blob = gzip.compress(
+    json.dumps(payload, separators=(",", ":")).encode("utf-8")
+  )
   public_metrics_artifact.objects.update_or_create(
-      scope=scope,
-      period_key=period_key,
-      defaults={
-          "payload_compressed": blob,
-          "payload_encoding": PAYLOAD_ENCODING_GZIP_JSON,
-          "input_fingerprint": fingerprint,
-          "rebuild_required": False,
-      },
+    scope=scope,
+    period_key=period_key,
+    defaults={
+      "payload_compressed": blob,
+      "payload_encoding": PAYLOAD_ENCODING_GZIP_JSON,
+      "input_fingerprint": fingerprint,
+      "rebuild_required": False,
+    },
   )
 
 
-def decompress_public_payload(row: public_metrics_artifact) -> Dict[str, Any]:
+def decompress_public_payload(row: public_metrics_artifact) -> dict[str, Any]:
   """
   Decompress public payload.
-  
+
   Args:
     row (public_metrics_artifact): Row.
-  
+
   Returns:
     Dict[str, Any]: Dict[str, Any] produced by this call.
-  
+
   Raises:
     ValueError: Raised when ``decompress_public_payload`` hits a
     ``ValueError`` failure path.
-  
+
   Examples:
     >>> decompress_public_payload(None)  # doctest: +SKIP
   """
@@ -578,16 +586,16 @@ def _prune_orphan_public_ef_rows(
 ) -> None:
   """
   Remove persisted rows for periods with no backing job_data (retention /.
-  
+
     deletes).
-  
+
   Args:
     months (Sequence[str]): Sequence for months.
     years (Sequence[str]): Sequence for years.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _prune_orphan_public_ef_rows([], [])  # doctest: +SKIP
   """
@@ -603,37 +611,37 @@ def _prune_orphan_public_ef_rows(
     year_qs.delete()
 
 
-def _sync_reconcile_public_ef_month(ym: str) -> Dict[str, int]:
+def _sync_reconcile_public_ef_month(ym: str) -> dict[str, int]:
   """
   Fingerprint check + optional rebuild for one ``YYYY-MM`` period (any process).
-  
+
   Args:
     ym (str): String for ym.
-  
+
   Returns:
     Dict[str, int]: Dict[str, int] produced by this call.
-  
+
   Examples:
     >>> _sync_reconcile_public_ef_month("x")  # doctest: +SKIP
   """
   start, end = _period_month_bounds(ym)
   qs = (
-      job_data.objects.filter(_eligible_jobs_filter())
-      .filter(end_time__gte=start, end_time__lt=end)
-      .only("jid", "end_time")
+    job_data.objects.filter(_eligible_jobs_filter())
+    .filter(end_time__gte=start, end_time__lt=end)
+    .only("jid", "end_time")
   )
   fp = _streaming_jid_epoch_fingerprint(f"{PUBLIC_EF_MONTH_DAILY}:{ym}", qs)
   meta = (
-      public_metrics_artifact.objects.filter(
-          scope=PUBLIC_EF_MONTH_DAILY, period_key=ym
-      )
-      .values("input_fingerprint", "rebuild_required")
-      .first()
+    public_metrics_artifact.objects.filter(
+      scope=PUBLIC_EF_MONTH_DAILY, period_key=ym
+    )
+    .values("input_fingerprint", "rebuild_required")
+    .first()
   )
   if (
-      meta is not None
-      and not meta["rebuild_required"]
-      and meta["input_fingerprint"] == fp
+    meta is not None
+    and not meta["rebuild_required"]
+    and meta["input_fingerprint"] == fp
   ):
     return {"rebuilt_month_periods": 0, "skipped_month_periods": 1}
   payload = _build_month_daily_payload(ym)
@@ -641,40 +649,40 @@ def _sync_reconcile_public_ef_month(ym: str) -> Dict[str, int]:
   return {"rebuilt_month_periods": 1, "skipped_month_periods": 0}
 
 
-def _sync_reconcile_public_ef_year(ys: str) -> Dict[str, int]:
+def _sync_reconcile_public_ef_year(ys: str) -> dict[str, int]:
   """
   Fingerprint check + optional rebuild for one calendar year period (any.
-  
+
     process).
-  
+
   Args:
     ys (str): String for ys.
-  
+
   Returns:
     Dict[str, int]: Dict[str, int] produced by this call.
-  
+
   Examples:
     >>> _sync_reconcile_public_ef_year("x")  # doctest: +SKIP
   """
   year_int = int(ys)
   start, end = _period_year_bounds(year_int)
   qs = (
-      job_data.objects.filter(_eligible_jobs_filter())
-      .filter(end_time__gte=start, end_time__lt=end)
-      .only("jid", "end_time")
+    job_data.objects.filter(_eligible_jobs_filter())
+    .filter(end_time__gte=start, end_time__lt=end)
+    .only("jid", "end_time")
   )
   fp = _streaming_jid_epoch_fingerprint(f"{PUBLIC_EF_YEAR_WEEKLY}:{ys}", qs)
   meta = (
-      public_metrics_artifact.objects.filter(
-          scope=PUBLIC_EF_YEAR_WEEKLY, period_key=ys
-      )
-      .values("input_fingerprint", "rebuild_required")
-      .first()
+    public_metrics_artifact.objects.filter(
+      scope=PUBLIC_EF_YEAR_WEEKLY, period_key=ys
+    )
+    .values("input_fingerprint", "rebuild_required")
+    .first()
   )
   if (
-      meta is not None
-      and not meta["rebuild_required"]
-      and meta["input_fingerprint"] == fp
+    meta is not None
+    and not meta["rebuild_required"]
+    and meta["input_fingerprint"] == fp
   ):
     return {"rebuilt_year_periods": 0, "skipped_year_periods": 1}
   payload = _build_year_weekly_payload(ys)
@@ -682,16 +690,16 @@ def _sync_reconcile_public_ef_year(ys: str) -> Dict[str, int]:
   return {"rebuilt_year_periods": 1, "skipped_year_periods": 0}
 
 
-def _public_ef_period_worker(task: Tuple[str, str]) -> Dict[str, int]:
+def _public_ef_period_worker(task: tuple[str, str]) -> dict[str, int]:
   """
   Reconcile exactly one month or year period in a metrics thread.
-  
+
   Args:
     task (Tuple[str, str]): Sequence for task.
-  
+
   Returns:
     Dict[str, int]: Dict[str, int] produced by this call.
-  
+
   Examples:
     >>> _public_ef_period_worker([])  # doctest: +SKIP
   """
@@ -717,36 +725,34 @@ def refresh_public_expansion_factor_artifacts_parallel(
   poll_timeout_s: float = 5.0,
   no_progress_timeout_s: float = 120.0,
   progress_callback: Any | None = None,
-) -> Dict[str, int]:
+) -> dict[str, int]:
   """
   Recompute stale month/year EF rows using ``pool`` (one period per task).
-  
+
   Callers typically pass ``Metrics.ensure_pool()`` from ``update_metrics`` so
   /pub aggregates finish before the same pool runs per-job metrics.
-  
+
   Args:
     pool (Any): Live handle (pool, client, or connection).
     poll_timeout_s (float): Floating-point value for poll timeout s.
     no_progress_timeout_s (float): Floating-point value for no progress
     timeout s.
     progress_callback (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Dict[str, int]: Dict[str, int] produced by this call.
-  
+
   Examples:
     >>> refresh_public_expansion_factor_artifacts_parallel(None, 0, 0, None)
   """
   months = _month_keys_present()
   years = _year_keys_present()
-  totals: Dict[str, int] = defaultdict(int)
+  totals: dict[str, int] = defaultdict(int)
   totals["month_periods_total"] = len(months)
   totals["year_periods_total"] = len(years)
-  tasks: List[Tuple[str, str]] = [
-      (_PUBLIC_EF_KIND_MONTH, ym) for ym in months
-  ] + [
-      (_PUBLIC_EF_KIND_YEAR, ys) for ys in years
-  ]
+  tasks: list[tuple[str, str]] = [
+    (_PUBLIC_EF_KIND_MONTH, ym) for ym in months
+  ] + [(_PUBLIC_EF_KIND_YEAR, ys) for ys in years]
   totals["tasks_total"] = len(tasks)
   if not tasks:
     totals["tasks_completed"] = 0
@@ -773,13 +779,17 @@ def refresh_public_expansion_factor_artifacts_parallel(
     except TimeoutError:
       stalled_for_s = max(0.0, time.monotonic() - last_progress_at)
       if callable(progress_callback):
-        progress_callback({
+        progress_callback(
+          {
             "tasks_total": len(tasks),
             "tasks_completed": completed,
             "pending_tasks": max(0, len(tasks) - completed),
             "stalled_for_s": stalled_for_s,
-        })
-      if stalled_for_s >= max(float(poll_timeout_s), float(no_progress_timeout_s)):
+          }
+        )
+      if stalled_for_s >= max(
+        float(poll_timeout_s), float(no_progress_timeout_s)
+      ):
         totals["watchdog_timeouts"] += 1
         if callable(iterator_close):
           iterator_close()
@@ -795,30 +805,30 @@ def refresh_public_expansion_factor_artifacts_parallel(
   totals["tasks_completed"] = completed
   totals["pending_tasks"] = max(0, len(tasks) - completed)
   totals["degraded"] = int(
-      totals.get("worker_exceptions", 0) > 0
-      or totals.get("watchdog_timeouts", 0) > 0
-      or totals["pending_tasks"] > 0
+    totals.get("worker_exceptions", 0) > 0
+    or totals.get("watchdog_timeouts", 0) > 0
+    or totals["pending_tasks"] > 0
   )
 
   _prune_orphan_public_ef_rows(months, years)
   return dict(totals)
 
 
-def refresh_public_expansion_factor_artifacts() -> Dict[str, int]:
+def refresh_public_expansion_factor_artifacts() -> dict[str, int]:
   """
   Recompute stale monthly/yearly expansion-factor histogram artifacts.
-  
+
     (sequential).
-  
+
   Returns:
     Dict[str, int]: Dict[str, int] produced by this call.
-  
+
   Examples:
     >>> refresh_public_expansion_factor_artifacts()  # doctest: +SKIP
   """
   months = _month_keys_present()
   years = _year_keys_present()
-  totals: Dict[str, int] = defaultdict(int)
+  totals: dict[str, int] = defaultdict(int)
   totals["month_periods_total"] = len(months)
   totals["year_periods_total"] = len(years)
 
@@ -836,10 +846,10 @@ def refresh_public_expansion_factor_artifacts() -> Dict[str, int]:
 def refresh_public_expansion_factor_artifacts_safe() -> None:
   """
   Refresh public expansion factor artifacts safe.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> refresh_public_expansion_factor_artifacts_safe()  # doctest: +SKIP
   """
@@ -853,62 +863,62 @@ def refresh_public_expansion_factor_artifacts_safe() -> None:
 HOST_PLOT_MAX_WINDOW_DAYS = 7
 
 
-def assemble_public_dashboard_meta_bundle() -> Dict[str, Any]:
+def assemble_public_dashboard_meta_bundle() -> dict[str, Any]:
   """
   Return dashboard status and period keys without decompressing histogram.
-  
+
     payloads.
-  
+
   Returns:
     Dict[str, Any]: Dict[str, Any] produced by this call.
-  
+
   Examples:
     >>> assemble_public_dashboard_meta_bundle()  # doctest: +SKIP
   """
   monthly_keys = list(
-      public_metrics_artifact.objects.filter(
-          scope=PUBLIC_EF_MONTH_DAILY, rebuild_required=False
-      )
-      .order_by("period_key")
-      .values_list("period_key", flat=True)
+    public_metrics_artifact.objects.filter(
+      scope=PUBLIC_EF_MONTH_DAILY, rebuild_required=False
+    )
+    .order_by("period_key")
+    .values_list("period_key", flat=True)
   )
   yearly_keys = list(
-      public_metrics_artifact.objects.filter(
-          scope=PUBLIC_EF_YEAR_WEEKLY, rebuild_required=False
-      )
-      .order_by("period_key")
-      .values_list("period_key", flat=True)
+    public_metrics_artifact.objects.filter(
+      scope=PUBLIC_EF_YEAR_WEEKLY, rebuild_required=False
+    )
+    .order_by("period_key")
+    .values_list("period_key", flat=True)
   )
   ready = bool(monthly_keys or yearly_keys)
   return {
-      "status": "ready" if ready else "loading",
-      "detail": None if ready else "dashboard_metrics_not_ready",
-      "retry_hint": None if ready else "retry_after_pipeline_refresh",
-      "schema_version": APP_PUBLIC_METRICS_SCHEMA_VERSION,
-      "sections": {
-          "expansion_factor": {
-              "monthly_period_keys": monthly_keys,
-              "yearly_period_keys": yearly_keys,
-          },
+    "status": "ready" if ready else "loading",
+    "detail": None if ready else "dashboard_metrics_not_ready",
+    "retry_hint": None if ready else "retry_after_pipeline_refresh",
+    "schema_version": APP_PUBLIC_METRICS_SCHEMA_VERSION,
+    "sections": {
+      "expansion_factor": {
+        "monthly_period_keys": monthly_keys,
+        "yearly_period_keys": yearly_keys,
       },
+    },
   }
 
 
 def load_public_expansion_factor_period(
   grouping: str,
   period_key: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
   """
   Load one expansion-factor histogram block for ``grouping`` (monthly|yearly).
-  
+
   Args:
     grouping (str): String for grouping.
     period_key (str): String for period key.
-  
+
   Returns:
     Optional[Dict[str, Any]]: Optional[Dict[str, Any]] — the result, or None
     when unavailable.
-  
+
   Examples:
     >>> load_public_expansion_factor_period("x", "x")  # doctest: +SKIP
   """
@@ -922,75 +932,72 @@ def load_public_expansion_factor_period(
   period = (period_key or "").strip()
   if not period:
     return None
-  row = (
-      public_metrics_artifact.objects.filter(
-          scope=scope,
-          period_key=period,
-          rebuild_required=False,
-      )
-      .first()
-  )
+  row = public_metrics_artifact.objects.filter(
+    scope=scope,
+    period_key=period,
+    rebuild_required=False,
+  ).first()
   if row is None:
     return None
   return decompress_public_payload(row)
 
 
-def assemble_public_monthly_metrics_bundle() -> Dict[str, Any]:
+def assemble_public_monthly_metrics_bundle() -> dict[str, Any]:
   """
   Merge persisted artifacts into one JSON-safe bundle for the public API.
-  
+
   Omits periods with ``rebuild_required`` so stale histograms are not served
   after invalidation until the scheduler recomputes them.
-  
+
   Returns:
     Dict[str, Any]: Dict[str, Any] produced by this call.
-  
+
   Examples:
     >>> assemble_public_monthly_metrics_bundle()  # doctest: +SKIP
   """
-  monthly_histograms: Dict[str, Any] = {}
-  yearly_histograms: Dict[str, Any] = {}
+  monthly_histograms: dict[str, Any] = {}
+  yearly_histograms: dict[str, Any] = {}
   for row in public_metrics_artifact.objects.filter(
-      scope=PUBLIC_EF_MONTH_DAILY, rebuild_required=False
+    scope=PUBLIC_EF_MONTH_DAILY, rebuild_required=False
   ).order_by("period_key"):
     monthly_histograms[row.period_key] = decompress_public_payload(row)
   for row in public_metrics_artifact.objects.filter(
-      scope=PUBLIC_EF_YEAR_WEEKLY, rebuild_required=False
+    scope=PUBLIC_EF_YEAR_WEEKLY, rebuild_required=False
   ).order_by("period_key"):
     yearly_histograms[row.period_key] = decompress_public_payload(row)
   ready = bool(monthly_histograms or yearly_histograms)
   return {
-      "status": "ready" if ready else "loading",
-      "detail": None if ready else "dashboard_metrics_not_ready",
-      "retry_hint": None if ready else "retry_after_pipeline_refresh",
-      "schema_version": APP_PUBLIC_METRICS_SCHEMA_VERSION,
-      "sections": {
-          "expansion_factor": {
-              "monthly_daily_histograms": monthly_histograms,
-              "yearly_weekly_histograms": yearly_histograms,
-          },
+    "status": "ready" if ready else "loading",
+    "detail": None if ready else "dashboard_metrics_not_ready",
+    "retry_hint": None if ready else "retry_after_pipeline_refresh",
+    "schema_version": APP_PUBLIC_METRICS_SCHEMA_VERSION,
+    "sections": {
+      "expansion_factor": {
+        "monthly_daily_histograms": monthly_histograms,
+        "yearly_weekly_histograms": yearly_histograms,
       },
+    },
   }
 
 
 def invalidate_public_metrics_artifacts_for_jids(jids: Iterable[str]) -> None:
   """
   Mark EF aggregates stale for calendar periods touched by the given accounting.
-  
+
     rows.
-  
+
   Updates one primary key at a time under a short PostgreSQL ``lock_timeout`` so
   concurrent ``update_or_create`` / refresh holds do not wait until the session
   ``statement_timeout`` (which previously logged ERROR with a full traceback).
   Locked or timed-out rows are skipped with a warning; other periods still
     update.
-  
+
   Args:
     jids (Iterable[str]): Jids.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> invalidate_public_metrics_artifacts_for_jids(None)  # doctest: +SKIP
   """
@@ -999,7 +1006,9 @@ def invalidate_public_metrics_artifacts_for_jids(jids: Iterable[str]) -> None:
     return
   months: set[str] = set()
   years: set[str] = set()
-  for et in job_data.objects.filter(jid__in=jid_list).values_list("end_time", flat=True):
+  for et in job_data.objects.filter(jid__in=jid_list).values_list(
+    "end_time", flat=True
+  ):
     if et is None:
       continue
     months.add(f"{et.year:04d}-{et.month:02d}")
@@ -1007,31 +1016,38 @@ def invalidate_public_metrics_artifacts_for_jids(jids: Iterable[str]) -> None:
   try:
     if months:
       _mark_public_metrics_rebuild_required(
-          PUBLIC_EF_MONTH_DAILY, sorted(months),
+        PUBLIC_EF_MONTH_DAILY,
+        sorted(months),
       )
     if years:
       _mark_public_metrics_rebuild_required(
-          PUBLIC_EF_YEAR_WEEKLY, sorted(years),
+        PUBLIC_EF_YEAR_WEEKLY,
+        sorted(years),
       )
   except Exception:
-    logger.exception("failed to mark public_metrics_artifact rows stale for jids")
+    logger.exception(
+      "failed to mark public_metrics_artifact rows stale for jids"
+    )
 
 
 def invalidate_all_public_metrics_artifacts() -> None:
   """
   Mark every prewarmed public dashboard artifact row for rebuild.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> invalidate_all_public_metrics_artifacts()  # doctest: +SKIP
   """
   try:
     pks = list(
-        public_metrics_artifact.objects.filter(rebuild_required=False).values_list(
-            "pk", flat=True,
-        )
+      public_metrics_artifact.objects.filter(
+        rebuild_required=False
+      ).values_list(
+        "pk",
+        flat=True,
+      )
     )
     _mark_public_metrics_rebuild_required_by_pks(pks)
   except Exception:
@@ -1044,25 +1060,25 @@ def _mark_public_metrics_rebuild_required(
 ) -> int:
   """
   Mark matching non-stale rows ``rebuild_required``; return rows updated.
-  
+
   Args:
     scope (str): String for scope.
     period_keys (Sequence[str]): Sequence for period keys.
-  
+
   Returns:
     int: int produced by this call.
-  
+
   Examples:
     >>> _mark_public_metrics_rebuild_required("x", [])  # doctest: +SKIP
   """
   if not period_keys:
     return 0
   pks = list(
-      public_metrics_artifact.objects.filter(
-          scope=scope,
-          period_key__in=list(period_keys),
-          rebuild_required=False,
-      ).values_list("pk", flat=True)
+    public_metrics_artifact.objects.filter(
+      scope=scope,
+      period_key__in=list(period_keys),
+      rebuild_required=False,
+    ).values_list("pk", flat=True)
   )
   return _mark_public_metrics_rebuild_required_by_pks(pks)
 
@@ -1070,13 +1086,13 @@ def _mark_public_metrics_rebuild_required(
 def _mark_public_metrics_rebuild_required_by_pks(pks: Sequence[int]) -> int:
   """
   Per-pk rebuild flag updates with short lock/statement timeouts (Postgres).
-  
+
   Args:
     pks (Sequence[int]): Sequence for pks.
-  
+
   Returns:
     int: int produced by this call.
-  
+
   Examples:
     >>> _mark_public_metrics_rebuild_required_by_pks([])  # doctest: +SKIP
   """
@@ -1088,9 +1104,9 @@ def _mark_public_metrics_rebuild_required_by_pks(pks: Sequence[int]) -> int:
     except OperationalError as exc:
       # Expected under concurrent refresh holding the row; do not ERROR+traceback.
       logger.warning(
-          "public_metrics_artifact rebuild mark skipped pk=%s: %s",
-          pk,
-          exc,
+        "public_metrics_artifact rebuild mark skipped pk=%s: %s",
+        pk,
+        exc,
       )
   return updated_n
 
@@ -1098,17 +1114,17 @@ def _mark_public_metrics_rebuild_required_by_pks(pks: Sequence[int]) -> int:
 def _update_public_metrics_rebuild_required_one(pk: int) -> bool:
   """
   Return True when the row was marked ``rebuild_required``.
-  
+
   Args:
     pk (int): Integer value for pk.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Raises:
     Exception: Raised when ``_update_public_metrics_rebuild_required_one``
     hits a ``Exception`` failure path.
-  
+
   Examples:
     >>> _update_public_metrics_rebuild_required_one(0)  # doctest: +SKIP
   """
@@ -1118,12 +1134,12 @@ def _update_public_metrics_rebuild_required_one(pk: int) -> bool:
       try:
         with connection.cursor() as cursor:
           cursor.execute(
-              "SET LOCAL lock_timeout = %s",
-              [_PUBLIC_METRICS_INVALIDATE_LOCK_TIMEOUT_MS],
+            "SET LOCAL lock_timeout = %s",
+            [_PUBLIC_METRICS_INVALIDATE_LOCK_TIMEOUT_MS],
           )
           cursor.execute(
-              "SET LOCAL statement_timeout = %s",
-              [_PUBLIC_METRICS_INVALIDATE_STATEMENT_TIMEOUT_MS],
+            "SET LOCAL statement_timeout = %s",
+            [_PUBLIC_METRICS_INVALIDATE_STATEMENT_TIMEOUT_MS],
           )
       except Exception as exc:
         from django.test.testcases import DatabaseOperationForbidden
@@ -1131,6 +1147,7 @@ def _update_public_metrics_rebuild_required_one(pk: int) -> bool:
         if not isinstance(exc, DatabaseOperationForbidden):
           raise
     n = public_metrics_artifact.objects.filter(
-        pk=pk, rebuild_required=False,
+      pk=pk,
+      rebuild_required=False,
     ).update(rebuild_required=True)
   return int(n or 0) > 0

@@ -44,37 +44,47 @@ Attributes:
   exclude_types: Attribute.
   map_hardware_counter_vals: Attribute.
 """
+
 from __future__ import annotations
 
 import contextvars
+import os
 import threading
 import time
-from contextlib import contextmanager
-from typing import Any, Iterator, Sequence
-
-import os
 import warnings
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager, suppress
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from pandas import DataFrame, concat
 
 from hpcperfstats.dbload.lib import sync_timedb_parsing_legacy as legacy_parsing
-from hpcperfstats.dbload.lib.file_locking import LOCK_SUFFIX, file_read_lock_wait
-from hpcperfstats.dbload.lib.monitor_naming.canonical import (
-    DCGM_CPU_POWER_LIMIT_W,
-    DCGM_CPU_POWER_UTIL_W,
-    HOST_CPU_HW_TYPE,
+from hpcperfstats.dbload.lib.file_locking import (
+  LOCK_SUFFIX,
+  file_read_lock_wait,
 )
-from hpcperfstats.dbload.lib.monitor_naming.legacy import LEGACY_HOST_CPU_HW_TYPE
-from hpcperfstats.dbload.lib.monitor_naming.resolve import schema_needs_legacy_hardware_decode
+from hpcperfstats.dbload.lib.monitor_naming.canonical import (
+  DCGM_CPU_POWER_LIMIT_W,
+  DCGM_CPU_POWER_UTIL_W,
+  HOST_CPU_HW_TYPE,
+)
+from hpcperfstats.dbload.lib.monitor_naming.legacy import (
+  LEGACY_HOST_CPU_HW_TYPE,
+)
+from hpcperfstats.dbload.lib.monitor_naming.resolve import (
+  schema_needs_legacy_hardware_decode,
+)
 from hpcperfstats.lib.dcgm_blank import (
-    DCGM_FP64_BLANK,
-    is_dcgm_numeric_blank,
-    nan_out_dcgm_numeric_blanks,
+  DCGM_FP64_BLANK,
+  is_dcgm_numeric_blank,
+  nan_out_dcgm_numeric_blanks,
 )
 
 # Types skipped on ingest (canonical monitor names).
-exclude_types = frozenset({
+exclude_types = frozenset(
+  {
     "intel_x86_uncore_cha_skx",
     "host_ps",
     "host_sysv_shm",
@@ -88,24 +98,25 @@ exclude_types = frozenset({
     "sysv_shm",
     "tmpfs",
     "vfs",
-})
+  }
+)
 
 # Default host_proc KEYS matching monitor/src/proc.c. Proc-field ingest is a
 # T0 smoke contract (docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md), not a stall fix.
 HOST_PROC_KEYS = (
-    "uid",
-    "vm_peak",
-    "vm_size",
-    "vm_lck",
-    "vm_hwm",
-    "vm_rss",
-    "vm_data",
-    "vm_stk",
-    "vm_exe",
-    "vm_lib",
-    "vm_pte",
-    "vm_swap",
-    "threads",
+  "uid",
+  "vm_peak",
+  "vm_size",
+  "vm_lck",
+  "vm_hwm",
+  "vm_rss",
+  "vm_data",
+  "vm_stk",
+  "vm_exe",
+  "vm_lib",
+  "vm_pte",
+  "vm_swap",
+  "threads",
 )
 _HOST_PROC_KEY_SET = frozenset(HOST_PROC_KEYS)
 
@@ -113,49 +124,52 @@ _HOST_PROC_KEY_SET = frozenset(HOST_PROC_KEYS)
 # Hold keys are timed; build_df_s / collapse_s / stages_sum_s /
 # parse_unaccounted_s are derived (collapse_s = sum of COLLAPSE_PARTS).
 PARSE_STAGE_COLLAPSE_PARTS: tuple[str, ...] = (
-    "collapse_normalize_s",
-    "collapse_host_sum_s",
-    "collapse_ccm_s",
-    "collapse_gpu_s",
-    "collapse_concat_s",
-    "collapse_sort_s",
+  "collapse_normalize_s",
+  "collapse_host_sum_s",
+  "collapse_ccm_s",
+  "collapse_gpu_s",
+  "collapse_concat_s",
+  "collapse_sort_s",
 )
 PARSE_STAGE_HOLD_KEYS: tuple[str, ...] = (
-    "lock_s",
-    "decode_s",
-    "feed_s",
-    "proc_merge_s",
-    "hw_df_s",
-    "proc_df_s",
-    "delta_s",
-    *PARSE_STAGE_COLLAPSE_PARTS,
-    "arc_s",
-    "concat_s",
-    "start_s",
-    "chunk_setup_s",
-    "take_cols_s",
-    "heap_release_s",
-    "jid_invalidate_s",
+  "lock_s",
+  "decode_s",
+  "feed_s",
+  "proc_merge_s",
+  "hw_df_s",
+  "proc_df_s",
+  "delta_s",
+  *PARSE_STAGE_COLLAPSE_PARTS,
+  "arc_s",
+  "concat_s",
+  "start_s",
+  "chunk_setup_s",
+  "take_cols_s",
+  "heap_release_s",
+  "jid_invalidate_s",
 )
 PARSE_STAGE_BUILD_DF_PARTS: tuple[str, ...] = (
-    "proc_merge_s",
-    "hw_df_s",
-    "proc_df_s",
+  "proc_merge_s",
+  "hw_df_s",
+  "proc_df_s",
 )
-PARSE_STAGE_LOG_KEYS: tuple[str, ...] = PARSE_STAGE_HOLD_KEYS + (
-    "build_df_s",
-    "collapse_s",
-    "stages_sum_s",
-    "parse_unaccounted_s",
+PARSE_STAGE_LOG_KEYS: tuple[str, ...] = (
+  *PARSE_STAGE_HOLD_KEYS,
+  "build_df_s",
+  "collapse_s",
+  "stages_sum_s",
+  "parse_unaccounted_s",
 )
 _parse_stage_telem_on = False
-_parse_stage_campaign: dict[str, float] = {
-    key: 0.0 for key in PARSE_STAGE_HOLD_KEYS
-}
+_parse_stage_campaign: dict[str, float] = dict.fromkeys(
+  PARSE_STAGE_HOLD_KEYS, 0.0
+)
 _parse_stage_campaign_lock = threading.Lock()
-_parse_stage_s: contextvars.ContextVar[dict[str, float]] = contextvars.ContextVar(
+_parse_stage_s: contextvars.ContextVar[dict[str, float]] = (
+  contextvars.ContextVar(
     "parse_stage_s",
     default={},
+  )
 )
 
 
@@ -205,6 +219,7 @@ def reset_parse_stage_timing(*, enabled: bool | None = None) -> None:
   if enabled is None:
     if not _parse_stage_telem_on:
       from hpcperfstats.dbload.lib import conf_parser as cfg
+
       with _parse_stage_campaign_lock:
         if cfg.ingest_telemetry_enabled_from_env():
           _parse_stage_telem_on = True
@@ -218,7 +233,7 @@ def reset_parse_stage_timing(*, enabled: bool | None = None) -> None:
       _parse_stage_telem_on = bool(enabled)
       for key in PARSE_STAGE_HOLD_KEYS:
         _parse_stage_campaign[key] = 0.0
-  _parse_stage_s.set({key: 0.0 for key in PARSE_STAGE_HOLD_KEYS})
+  _parse_stage_s.set(dict.fromkeys(PARSE_STAGE_HOLD_KEYS, 0.0))
 
 
 def snapshot_parse_stage_timing() -> dict[str, float]:
@@ -270,7 +285,7 @@ def attach_parse_unaccounted(meta: dict[str, Any]) -> dict[str, Any]:
 
   Examples:
     >>> attach_parse_unaccounted(
-    ...     {"parse_elapsed_s": 10.0, "stages_sum_s": 3.0, "postgres_s": 2.0},
+    ...   {"parse_elapsed_s": 10.0, "stages_sum_s": 3.0, "postgres_s": 2.0},
     ... )["parse_unaccounted_s"]
     5.0
   """
@@ -308,7 +323,7 @@ def _add_parse_stage_s(stage: str, delta_s: float) -> None:
   _parse_stage_s.set(acc)
   with _parse_stage_campaign_lock:
     _parse_stage_campaign[stage] = (
-        float(_parse_stage_campaign.get(stage, 0.0)) + delta
+      float(_parse_stage_campaign.get(stage, 0.0)) + delta
     )
 
 
@@ -337,17 +352,20 @@ def _held_parse_stage(stage: str) -> Iterator[None]:
   finally:
     _add_parse_stage_s(stage, time.perf_counter() - t0)
 
+
 # Instantaneous gauges and kernel peaks retained as high-water marks across
 # samples / upserts for the same ``(jid, host, proc)`` name. Includes kernel
 # VmPeak/VmHWM so a later zero or lower sample (or new PID same name) cannot
 # erase the job-level high water.
-HOST_PROC_PEAK_KEYS = frozenset({
+HOST_PROC_PEAK_KEYS = frozenset(
+  {
     "vm_peak",
     "vm_hwm",
     "vm_stk",
     "vm_exe",
     "vm_lib",
-})
+  }
+)
 
 
 def schema_key_basename(token: str) -> str:
@@ -399,11 +417,11 @@ def _nullable_int_max(left: Any, right: Any) -> Any:
   right_ok: int | None
   try:
     left_ok = None if left is None else int(left)
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     left_ok = None
   try:
     right_ok = None if right is None else int(right)
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     right_ok = None
   if left_ok is None:
     return right_ok
@@ -413,8 +431,8 @@ def _nullable_int_max(left: Any, right: Any) -> Any:
 
 
 def merge_proc_row_dicts(
-    earlier: dict[str, Any],
-    later: dict[str, Any],
+  earlier: dict[str, Any],
+  later: dict[str, Any],
 ) -> dict[str, Any]:
   """
   Merge two host_proc row dicts for the same ``(jid, host, proc)``.
@@ -432,18 +450,18 @@ def merge_proc_row_dicts(
 
   Examples:
     >>> merge_proc_row_dicts(
-    ...     {"vm_stk": 100, "vm_peak": 900, "threads": 1},
-    ...     {"vm_stk": 50, "vm_peak": 800, "threads": 4},
+    ...   {"vm_stk": 100, "vm_peak": 900, "threads": 1},
+    ...   {"vm_stk": 50, "vm_peak": 800, "threads": 4},
     ... )["vm_stk"]
     100
     >>> merge_proc_row_dicts(
-    ...     {"vm_stk": 100, "vm_peak": 900, "threads": 1},
-    ...     {"vm_stk": 50, "vm_peak": 800, "threads": 4},
+    ...   {"vm_stk": 100, "vm_peak": 900, "threads": 1},
+    ...   {"vm_stk": 50, "vm_peak": 800, "threads": 4},
     ... )["vm_peak"]
     900
     >>> merge_proc_row_dicts(
-    ...     {"vm_hwm": 7000, "threads": 1},
-    ...     {"vm_hwm": 0, "threads": 4},
+    ...   {"vm_hwm": 7000, "threads": 1},
+    ...   {"vm_hwm": 0, "threads": 4},
     ... )["vm_hwm"]
     7000
   """
@@ -456,7 +474,7 @@ def merge_proc_row_dicts(
 
 
 def dedupe_proc_stats_peak_merge(
-    proc_stats_list: list[dict[str, Any]],
+  proc_stats_list: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
   """
   Collapse duplicate ``(jid, host, proc)`` rows with peak-aware merge.
@@ -468,10 +486,24 @@ def dedupe_proc_stats_peak_merge(
     list[dict[str, Any]]: One row per unique key; peaks retained across samples.
 
   Examples:
-    >>> rows = dedupe_proc_stats_peak_merge([
-    ...     {"jid": "j", "host": "h", "proc": "p", "vm_stk": 9, "threads": 1},
-    ...     {"jid": "j", "host": "h", "proc": "p", "vm_stk": 3, "threads": 8},
-    ... ])
+    >>> rows = dedupe_proc_stats_peak_merge(
+    ...   [
+    ...     {
+    ...       "jid": "j",
+    ...       "host": "h",
+    ...       "proc": "p",
+    ...       "vm_stk": 9,
+    ...       "threads": 1,
+    ...     },
+    ...     {
+    ...       "jid": "j",
+    ...       "host": "h",
+    ...       "proc": "p",
+    ...       "vm_stk": 3,
+    ...       "threads": 8,
+    ...     },
+    ...   ]
+    ... )
     >>> rows[0]["vm_stk"], rows[0]["threads"]
     (9, 8)
   """
@@ -496,7 +528,7 @@ class OnlineMergedProcRows(list):
 
 
 def _proc_rows_to_columns(
-    rows: Sequence[dict[str, Any]],
+  rows: Sequence[dict[str, Any]],
 ) -> dict[str, list[Any]]:
   """
   Convert sparse host_proc row dicts into a columnar SoA payload.
@@ -541,8 +573,12 @@ def apply_proc_peak_attrs_from_earlier(earlier: Any, later: Any) -> Any:
 
   Examples:
     >>> from types import SimpleNamespace
-    >>> a = SimpleNamespace(vm_peak=9000, vm_hwm=7000, vm_stk=10, vm_exe=1, vm_lib=2)
-    >>> b = SimpleNamespace(vm_peak=0, vm_hwm=100, vm_stk=3, vm_exe=9, vm_lib=None)
+    >>> a = SimpleNamespace(
+    ...   vm_peak=9000, vm_hwm=7000, vm_stk=10, vm_exe=1, vm_lib=2
+    ... )
+    >>> b = SimpleNamespace(
+    ...   vm_peak=0, vm_hwm=100, vm_stk=3, vm_exe=9, vm_lib=None
+    ... )
     >>> apply_proc_peak_attrs_from_earlier(a, b).vm_peak
     9000
     >>> b.vm_hwm
@@ -560,9 +596,9 @@ def apply_proc_peak_attrs_from_earlier(earlier: Any, later: Any) -> Any:
 
 
 def peak_merge_proc_objs_with_existing(
-    proc_objs: list,
-    *,
-    lookup_chunk_size: int | None = None,
+  proc_objs: list,
+  *,
+  lookup_chunk_size: int | None = None,
 ) -> list:
   """
   Raise peak fields on ``proc_objs`` from matching ``proc_data`` DB rows.
@@ -614,7 +650,7 @@ def peak_merge_proc_objs_with_existing(
     for i in range(0, len(procs), chunk_size):
       part = procs[i : i + chunk_size]
       for row in proc_data.objects.filter(
-          jid=jid, host=host, proc__in=part
+        jid=jid, host=host, proc__in=part
       ).only("jid", "host", "proc", *HOST_PROC_PEAK_KEYS):
         existing[(row.jid, row.host, row.proc)] = row
 
@@ -631,7 +667,8 @@ def peak_merge_proc_objs_with_existing(
 EVENTMAPS_BY_TYPE = legacy_parsing.EVENTMAPS_BY_TYPE
 map_hardware_counter_vals = legacy_parsing.map_hardware_counter_vals
 
-_NVIDIA_GPU_SUM_EVENTS = frozenset({
+_NVIDIA_GPU_SUM_EVENTS = frozenset(
+  {
     "gpu_util",
     "gpu_io_link_total_bytes",
     "mem_util",
@@ -647,23 +684,28 @@ _NVIDIA_GPU_SUM_EVENTS = frozenset({
     "sm_occupancy",
     "tensor_active",
     "power_usage",
-})
-_NVIDIA_GPU_MAX_EVENTS = frozenset({
+  }
+)
+_NVIDIA_GPU_MAX_EVENTS = frozenset(
+  {
     "module_power_usage",
     "sysio_power_usage",
     # Node GPU count is emitted on every device row; MAX avoids N×N when
     # identity collapses without a distinct ``dev`` (legacy / empty-dev path).
     "gpu_count",
-})
+  }
+)
 _NVIDIA_GPU_MEAN_EVENTS = frozenset({"temperature"})
 _NVIDIA_GPU_OR_EVENTS = frozenset({"clocks_event_reasons"})
 
-_DCGM_CPU_POWER_SOCKET_GAUGE_EVENTS = frozenset({
+_DCGM_CPU_POWER_SOCKET_GAUGE_EVENTS = frozenset(
+  {
     DCGM_CPU_POWER_UTIL_W,
     DCGM_CPU_POWER_LIMIT_W,
     "DCGM_CPU_POWER_UTIL_W",
     "DCGM_CPU_POWER_LIMIT_W",
-})
+  }
+)
 
 _HOST_CPU_HW_TYPES = frozenset({HOST_CPU_HW_TYPE, LEGACY_HOST_CPU_HW_TYPE})
 _GPU_STATS_TYPES = frozenset({"nvidia_gpu", "amd_gpu", "intel_gpu"})
@@ -684,15 +726,15 @@ _TIER_MARKERS = frozenset({"@fast", "@full"})
 def _schema_token_is_slow_tier(token: str) -> bool:
   """
   True when a schema entry is marked slow-tier via ,R=S (monitor two-tier.
-  
+
     collect).
-  
+
   Args:
     token (str): String for token.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> _schema_token_is_slow_tier("x")  # doctest: +SKIP
   """
@@ -702,13 +744,13 @@ def _schema_token_is_slow_tier(token: str) -> bool:
 def _fast_schema_keys(full_events: list[str]) -> list[str]:
   """
   Fast-tier schema keys in order (entries without ,R=S).
-  
+
   Args:
     full_events (list[str]): Sequence for full events.
-  
+
   Returns:
     list[str]: list[str] produced by this call.
-  
+
   Examples:
     >>> _fast_schema_keys([])  # doctest: +SKIP
   """
@@ -716,16 +758,16 @@ def _fast_schema_keys(full_events: list[str]) -> list[str]:
 
 
 _STATS_COL_NAMES = (
-    "time",
-    "host",
-    "jid",
-    "type",
-    "dev",
-    "event",
-    "value",
-    "wid",
-    "mult",
-    "unit",
+  "time",
+  "host",
+  "jid",
+  "type",
+  "dev",
+  "event",
+  "value",
+  "wid",
+  "mult",
+  "unit",
 )
 
 
@@ -773,14 +815,10 @@ def _compile_schema_token(token: str) -> tuple[str, int, float, str]:
       width = int(ele.lstrip("W="))
     if "U=" in ele:
       ele = ele.lstrip("U=")
-      try:
+      with suppress(Exception):
         mult = float("".join(filter(str.isdigit, ele)))
-      except Exception:
-        pass
-      try:
+      with suppress(Exception):
         unit = "".join(filter(str.isalpha, ele))
-      except Exception:
-        pass
   return eve_parts[0], width, mult, unit
 
 
@@ -937,9 +975,19 @@ def _append_compiled_stats_columns(
   Examples:
     >>> cols = _empty_stats_columns()
     >>> _append_compiled_stats_columns(
-    ...     cols, time=1.0, host="h", jid="j", typ="cpu", dev="0",
-    ...     compiled={"events": ["user"], "wids": [48], "mults": [1],
-    ...               "units": ["#"]}, vals=["10"],
+    ...   cols,
+    ...   time=1.0,
+    ...   host="h",
+    ...   jid="j",
+    ...   typ="cpu",
+    ...   dev="0",
+    ...   compiled={
+    ...     "events": ["user"],
+    ...     "wids": [48],
+    ...     "mults": [1],
+    ...     "units": ["#"],
+    ...   },
+    ...   vals=["10"],
     ... )
     >>> cols["event"], cols["value"]
     (['user'], [10.0])
@@ -948,9 +996,9 @@ def _append_compiled_stats_columns(
   n = len(events)
   if len(vals) != n:
     warnings.warn(
-        "stats line value count %d != schema key count %d for type=%s dev=%s"
-        % (len(vals), n, typ, dev),
-        stacklevel=3,
+      "stats line value count %d != schema key count %d for type=%s dev=%s"
+      % (len(vals), n, typ, dev),
+      stacklevel=3,
     )
     return
   cols["time"].extend((time,) * n)
@@ -1006,20 +1054,21 @@ def _read_stats_line_batch_decode_after_lock(
     >>> _read_stats_line_batch_decode_after_lock(None, "x", 1)  # doctest: +SKIP
   """
   raw_batch: list[bytes] = []
-  with _held_parse_stage("lock_s"):
-    with _stats_file_read_lock(stats_file):
-      for _ in range(int(batch_size)):
-        raw = fd.readline()
-        if not raw:
-          break
-        raw_batch.append(raw)
-      if raw_batch:
-        from hpcperfstats.dbload.lib.zstd_cli import drop_page_cache_for_fd
+  with _held_parse_stage("lock_s"), _stats_file_read_lock(stats_file):
+    for _ in range(int(batch_size)):
+      raw = fd.readline()
+      if not raw:
+        break
+      raw_batch.append(raw)
+    if raw_batch:
+      from hpcperfstats.dbload.lib.zstd_cli import (
+        drop_page_cache_for_fd,
+      )
 
-        chunk_bytes = sum(len(raw) for raw in raw_batch)
-        if chunk_bytes > 0:
-          end_pos = fd.tell()
-          drop_page_cache_for_fd(fd, end_pos - chunk_bytes, chunk_bytes)
+      chunk_bytes = sum(len(raw) for raw in raw_batch)
+      if chunk_bytes > 0:
+        end_pos = fd.tell()
+        drop_page_cache_for_fd(fd, end_pos - chunk_bytes, chunk_bytes)
   with _held_parse_stage("decode_s"):
     return [_decode_stats_readline(raw) for raw in raw_batch]
 
@@ -1032,42 +1081,42 @@ def _zip_schema_vals(
 ) -> Any:
   """
   Zip value tokens to schema keys; None when counts disagree (no silent.
-  
+
     truncation).
-  
+
   Args:
     schema_keys (Any): Schema keys passed to this helper.
     vals (Any): Vals passed to this helper.
     typ (Any | None): One of ``Any``, ``None``.
     dev (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _zip_schema_vals(None, None, None, None)  # doctest: +SKIP
   """
   if len(vals) != len(schema_keys):
     warnings.warn(
-        "stats line value count %d != schema key count %d for type=%s dev=%s"
-        % (len(vals), len(schema_keys), typ, dev),
-        stacklevel=3,
+      "stats line value count %d != schema key count %d for type=%s dev=%s"
+      % (len(vals), len(schema_keys), typ, dev),
+      stacklevel=3,
     )
     return None
-  return dict(zip(schema_keys, vals))
+  return dict(zip(schema_keys, vals, strict=False))
 
 
 def _cluster_mean_sum_sorted(values: Any, gap_threshold: Any) -> Any:
   """
   Internal helper to handle cluster mean sum sorted.
-  
+
   Args:
     values (Any): Values passed to this helper.
     gap_threshold (Any): Gap threshold passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _cluster_mean_sum_sorted(None, None)  # doctest: +SKIP
   """
@@ -1091,13 +1140,13 @@ def _cluster_mean_sum_sorted(values: Any, gap_threshold: Any) -> Any:
 def _dcg_delta_gap_threshold(dvals: Any) -> Any:
   """
   Dynamic delta clustering gap for DCGM CPU power gauge collapse.
-  
+
   Args:
     dvals (Any): Dvals passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _dcg_delta_gap_threshold(None)  # doctest: +SKIP
   """
@@ -1114,13 +1163,13 @@ def _dcg_delta_gap_threshold(dvals: Any) -> Any:
 def _collapse_dcg_cpu_power_gauge_group(group: Any) -> Any:
   """
   Apply-reference DCGM collapse; production path uses vectorized helper.
-  
+
   Args:
     group (Any): Group passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _collapse_dcg_cpu_power_gauge_group(None)  # doctest: +SKIP
   """
@@ -1134,14 +1183,14 @@ def _collapse_dcg_cpu_power_gauge_group(group: Any) -> Any:
 def _collapse_dcg_cpu_power_vectorized(ccm_df: Any, gcols: Any) -> Any:
   """
   Collapse DCGM CPU power gauges via explicit group loop (not groupby.apply).
-  
+
   Args:
     ccm_df (Any): Ccm df passed to this helper.
     gcols (Any): Gcols passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _collapse_dcg_cpu_power_vectorized(None, None)  # doctest: +SKIP
   """
@@ -1150,9 +1199,11 @@ def _collapse_dcg_cpu_power_vectorized(ccm_df: Any, gcols: Any) -> Any:
     vals = group["value"].to_numpy(dtype=np.float64, copy=False)
     dvals = group["delta"].to_numpy(dtype=np.float64, copy=False)
     key_tuple = key if isinstance(key, tuple) else (key,)
-    row = dict(zip(gcols, key_tuple))
+    row = dict(zip(gcols, key_tuple, strict=False))
     row["value"] = _cluster_mean_sum_sorted(vals, 1.0)
-    row["delta"] = _cluster_mean_sum_sorted(dvals, _dcg_delta_gap_threshold(dvals))
+    row["delta"] = _cluster_mean_sum_sorted(
+      dvals, _dcg_delta_gap_threshold(dvals)
+    )
     if "jid" in group.columns and len(group):
       row["jid"] = group["jid"].iloc[0]
     rows.append(row)
@@ -1164,13 +1215,13 @@ def _collapse_dcg_cpu_power_vectorized(ccm_df: Any, gcols: Any) -> Any:
 def _collapse_nvidia_gpu_group(group: Any) -> Any:
   """
   Apply-reference NVIDIA collapse; production path uses vectorized helper.
-  
+
   Args:
     group (Any): Group passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _collapse_nvidia_gpu_group(None)  # doctest: +SKIP
   """
@@ -1180,46 +1231,58 @@ def _collapse_nvidia_gpu_group(group: Any) -> Any:
   else:
     key = group.name
     event_name = (
-        key[_NVIDIA_GROUP_KEY_EVENT_INDEX] if isinstance(key, tuple) else key
+      key[_NVIDIA_GROUP_KEY_EVENT_INDEX] if isinstance(key, tuple) else key
     )
   group = group.copy()
-  group["value"] = nan_out_dcgm_numeric_blanks(group["value"].to_numpy(dtype=np.float64))
+  group["value"] = nan_out_dcgm_numeric_blanks(
+    group["value"].to_numpy(dtype=np.float64)
+  )
   if event_name in _NVIDIA_GPU_MAX_EVENTS:
-    return pd.Series({
+    return pd.Series(
+      {
         "value": float(group["value"].max()),
         "delta": group["delta"].mean(),
-    })
+      }
+    )
   if event_name in _NVIDIA_GPU_SUM_EVENTS:
-    return pd.Series({
+    return pd.Series(
+      {
         "value": group["value"].sum(min_count=1),
         "delta": group["delta"].sum(min_count=1),
-    })
+      }
+    )
   if event_name in _NVIDIA_GPU_MEAN_EVENTS:
-    return pd.Series({
+    return pd.Series(
+      {
         "value": group["value"].mean(),
         "delta": group["delta"].mean(),
-    })
+      }
+    )
   if event_name in _NVIDIA_GPU_OR_EVENTS:
     acc = 0
     mask64 = (1 << 64) - 1
     for v in group["value"]:
       if pd.notna(v) and not is_dcgm_numeric_blank(v):
         acc |= int(v) & mask64
-    return pd.Series({
+    return pd.Series(
+      {
         "value": float(acc & mask64),
         "delta": group["delta"].sum(min_count=1),
-    })
-  return pd.Series({
+      }
+    )
+  return pd.Series(
+    {
       "value": group["value"].sum(min_count=1),
       "delta": group["delta"].sum(min_count=1),
-  })
+    }
+  )
 
 
 _NVIDIA_GPU_KNOWN_EVENTS = frozenset().union(
-    _NVIDIA_GPU_SUM_EVENTS,
-    _NVIDIA_GPU_MAX_EVENTS,
-    _NVIDIA_GPU_MEAN_EVENTS,
-    _NVIDIA_GPU_OR_EVENTS,
+  _NVIDIA_GPU_SUM_EVENTS,
+  _NVIDIA_GPU_MAX_EVENTS,
+  _NVIDIA_GPU_MEAN_EVENTS,
+  _NVIDIA_GPU_OR_EVENTS,
 )
 # Single-pass event→class map for NVIDIA collapse (0=sum/default, 1=max,
 # 2=mean, 3=OR). Unknown events stay sum/default (legacy behavior).
@@ -1228,25 +1291,25 @@ _NVIDIA_EVENT_CLASS_MAX = 1
 _NVIDIA_EVENT_CLASS_MEAN = 2
 _NVIDIA_EVENT_CLASS_OR = 3
 _NVIDIA_EVENT_TO_CLASS: dict[str, int] = {
-    **{name: _NVIDIA_EVENT_CLASS_SUM for name in _NVIDIA_GPU_SUM_EVENTS},
-    **{name: _NVIDIA_EVENT_CLASS_MAX for name in _NVIDIA_GPU_MAX_EVENTS},
-    **{name: _NVIDIA_EVENT_CLASS_MEAN for name in _NVIDIA_GPU_MEAN_EVENTS},
-    **{name: _NVIDIA_EVENT_CLASS_OR for name in _NVIDIA_GPU_OR_EVENTS},
+  **dict.fromkeys(_NVIDIA_GPU_SUM_EVENTS, _NVIDIA_EVENT_CLASS_SUM),
+  **dict.fromkeys(_NVIDIA_GPU_MAX_EVENTS, _NVIDIA_EVENT_CLASS_MAX),
+  **dict.fromkeys(_NVIDIA_GPU_MEAN_EVENTS, _NVIDIA_EVENT_CLASS_MEAN),
+  **dict.fromkeys(_NVIDIA_GPU_OR_EVENTS, _NVIDIA_EVENT_CLASS_OR),
 }
 
 
 def _nvidia_bitwise_or_values(series: Any) -> Any:
   """
   Bitwise OR of finite non-blank ``clocks_event_reasons`` within one collapse.
-  
+
     group.
-  
+
   Args:
     series (Any): Series passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _nvidia_bitwise_or_values(pd.Series([1.0, 2.0]))
     3.0
@@ -1313,7 +1376,7 @@ def _groupby_sum_min_count(
     return _empty_delta_arc_frame()
   # Identity groups: groupby.factorize dominates Horizon-sized unique frames.
   if not assume_duplicates and not df.duplicated(gcols).any():
-    keep = list(gcols) + ["value", "delta"]
+    keep = [*list(gcols), "value", "delta"]
     if "jid" in getattr(df, "columns", ()):
       keep.append("jid")
     return df.loc[:, keep].reset_index(drop=True)
@@ -1332,13 +1395,13 @@ def _groupby_sum_min_count(
 def _nvidia_nan_out_dcgm_blanks(nv_df: Any) -> Any:
   """
   Replace DCGM blank-family ``value`` entries with NaN before NVIDIA collapse.
-  
+
   Args:
     nv_df (Any): Nv df passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _nvidia_nan_out_dcgm_blanks(None)  # doctest: +SKIP
   """
@@ -1383,10 +1446,10 @@ def _collapse_nvidia_gpu_vectorized(nv_df: Any, gcols: Any) -> Any:
       nv_df[col] = nv_df[col].astype("category")
   # One map pass: unknown events → sum/default (class 0).
   event_class = (
-      nv_df["event"]
-      .map(_NVIDIA_EVENT_TO_CLASS)
-      .fillna(_NVIDIA_EVENT_CLASS_SUM)
-      .to_numpy(dtype=np.int8, copy=False)
+    nv_df["event"]
+    .map(_NVIDIA_EVENT_TO_CLASS)
+    .fillna(_NVIDIA_EVENT_CLASS_SUM)
+    .to_numpy(dtype=np.int8, copy=False)
   )
   parts = []
   sum_df = nv_df.loc[event_class == _NVIDIA_EVENT_CLASS_SUM]
@@ -1396,32 +1459,42 @@ def _collapse_nvidia_gpu_vectorized(nv_df: Any, gcols: Any) -> Any:
   max_df = nv_df.loc[event_class == _NVIDIA_EVENT_CLASS_MAX]
   if not max_df.empty:
     parts.append(
-        max_df.groupby(gcols, observed=True, sort=False).agg(
-            value=("value", "max"),
-            delta=("delta", "mean"),
-            **_optional_jid_first_agg(max_df),
-        ).reset_index()
+      max_df.groupby(gcols, observed=True, sort=False)
+      .agg(
+        value=("value", "max"),
+        delta=("delta", "mean"),
+        **_optional_jid_first_agg(max_df),
+      )
+      .reset_index()
     )
 
   mean_df = nv_df.loc[event_class == _NVIDIA_EVENT_CLASS_MEAN]
   if not mean_df.empty:
     parts.append(
-        mean_df.groupby(gcols, observed=True, sort=False).agg(
-            value=("value", "mean"),
-            delta=("delta", "mean"),
-            **_optional_jid_first_agg(mean_df),
-        ).reset_index()
+      mean_df.groupby(gcols, observed=True, sort=False)
+      .agg(
+        value=("value", "mean"),
+        delta=("delta", "mean"),
+        **_optional_jid_first_agg(mean_df),
+      )
+      .reset_index()
     )
 
   or_df = nv_df.loc[event_class == _NVIDIA_EVENT_CLASS_OR]
   if not or_df.empty:
-    or_collapsed = or_df.groupby(gcols, observed=True, sort=False).agg(
+    or_collapsed = (
+      or_df.groupby(gcols, observed=True, sort=False)
+      .agg(
         value=("value", _nvidia_bitwise_or_values),
         delta=("delta", "sum"),
         _delta_n=("delta", "count"),
         **_optional_jid_first_agg(or_df),
-    ).reset_index()
-    or_collapsed["delta"] = or_collapsed["delta"].where(or_collapsed["_delta_n"] > 0)
+      )
+      .reset_index()
+    )
+    or_collapsed["delta"] = or_collapsed["delta"].where(
+      or_collapsed["_delta_n"] > 0
+    )
     parts.append(or_collapsed.drop(columns=["_delta_n"]))
 
   if not parts:
@@ -1441,7 +1514,7 @@ def _vals_dict_from_line(
 ) -> Any:
   """
   Internal helper to handle vals dict from line.
-  
+
   Args:
     typ (Any): Typ passed to this helper.
     schema (Any): Schema passed to this helper.
@@ -1449,10 +1522,10 @@ def _vals_dict_from_line(
     vals (Any): Vals passed to this helper.
     use_legacy_decode (bool): Whether to enable use legacy decode.
     dev (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _vals_dict_from_line(None, None, None, None, True, None)
   """
@@ -1493,8 +1566,13 @@ def _append_vals_dict_columns(
   Examples:
     >>> cols = _empty_stats_columns()
     >>> _append_vals_dict_columns(
-    ...     cols, time=1.0, host="h", jid="j", typ="cpu", dev="0",
-    ...     vals_dict={"user,W=48": 10},
+    ...   cols,
+    ...   time=1.0,
+    ...   host="h",
+    ...   jid="j",
+    ...   typ="cpu",
+    ...   dev="0",
+    ...   vals_dict={"user,W=48": 10},
     ... )
     >>> cols["event"], cols["wid"], cols["value"]
     (['user'], [48], [10.0])
@@ -1503,27 +1581,27 @@ def _append_vals_dict_columns(
     return
   compiled = _compile_schema_tokens(list(vals_dict.keys()))
   _append_compiled_stats_columns(
-      cols,
-      time=time,
-      host=host,
-      jid=jid,
-      typ=typ,
-      dev=dev,
-      compiled=compiled,
-      vals=[str(v) for v in vals_dict.values()],
+    cols,
+    time=time,
+    host=host,
+    jid=jid,
+    typ=typ,
+    dev=dev,
+    compiled=compiled,
+    vals=[str(v) for v in vals_dict.values()],
   )
 
 
 def parse_stats_file_path(stats_file: str) -> Any:
   """
   Parse the stats file path.
-  
+
   Args:
     stats_file (str): String for stats file.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> parse_stats_file_path("x")  # doctest: +SKIP
   """
@@ -1539,13 +1617,13 @@ STREAM_PARSE_LINE_BATCH = 50000
 def stats_file_size_bytes(stats_file: str) -> Any:
   """
   Return on-disk size in bytes (0 when missing or unreadable).
-  
+
   Args:
     stats_file (str): String for stats file.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> stats_file_size_bytes("x")  # doctest: +SKIP
   """
@@ -1577,8 +1655,8 @@ def _maybe_raise_ingest_read_deadline(line_idx: Any, bytes_read: Any) -> None:
     >>> _maybe_raise_ingest_read_deadline(None, None)  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_ingest_progress import (
-      raise_if_ingest_idle_stalled,
-      touch_ingest_progress,
+    raise_if_ingest_idle_stalled,
+    touch_ingest_progress,
   )
 
   if line_idx and line_idx % _READ_LOOP_DEADLINE_EVERY_LINES == 0:
@@ -1612,11 +1690,9 @@ def _stats_file_read_lock(stats_file: str) -> Iterator[None]:
     with file_read_lock_wait(stats_file):
       yield
   finally:
-    lock_path = "%s%s" % (stats_file, LOCK_SUFFIX)
-    try:
+    lock_path = f"{stats_file}{LOCK_SUFFIX}"
+    with suppress(OSError):
       os.remove(lock_path)
-    except OSError:
-      pass
 
 
 def load_stats_file_lines(
@@ -1625,14 +1701,14 @@ def load_stats_file_lines(
 ) -> Any:
   """
   Load the stats file lines.
-  
+
   Args:
     stats_file (str): String for stats file.
     stats_file_contents (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> load_stats_file_lines("x", None)  # doctest: +SKIP
   """
@@ -1641,7 +1717,7 @@ def load_stats_file_lines(
   lines = []
   bytes_read = 0
   try:
-    with open(stats_file, "r") as fd:
+    with open(stats_file) as fd:
       line_idx = 0
       while True:
         batch: list[str] = []
@@ -1660,7 +1736,7 @@ def load_stats_file_lines(
           lines.append(line)
     return lines, None
   except FileNotFoundError:
-    return None, "Stats file disappeared: %s" % stats_file
+    return None, f"Stats file disappeared: {stats_file}"
 
 
 def iter_stats_file_lines(stats_file: str) -> Iterator[Any]:
@@ -1683,7 +1759,9 @@ def iter_stats_file_lines(stats_file: str) -> Iterator[Any]:
       bytes_read = 0
       while True:
         batch = _read_stats_line_batch_decode_after_lock(
-            fd, stats_file, STREAM_PARSE_LINE_BATCH,
+          fd,
+          stats_file,
+          STREAM_PARSE_LINE_BATCH,
         )
         if not batch:
           break
@@ -1699,16 +1777,16 @@ def iter_stats_file_lines(stats_file: str) -> Iterator[Any]:
 def _digit_line_identity(s: Any) -> Any:
   """
   Return ``(t, jid, host)`` from a digit-leading line, or ``None`` if malformed.
-  
+
   Accepts extra trailing tokens (monitor lines may carry more than three
     fields).
-  
+
   Args:
     s (Any): S passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _digit_line_identity(None)  # doctest: +SKIP
   """
@@ -1717,20 +1795,20 @@ def _digit_line_identity(s: Any) -> Any:
     if len(parts) < 3:
       return None
     return (parts[0], parts[1], parts[2])
-  except (TypeError, ValueError, AttributeError):
+  except TypeError, ValueError, AttributeError:
     return None
 
 
 def _digit_line_unix_second(s: Any) -> Any:
   """
   Return unix-second from a digit-leading line, or ``None`` if malformed.
-  
+
   Args:
     s (Any): S passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _digit_line_unix_second(None)  # doctest: +SKIP
   """
@@ -1739,20 +1817,20 @@ def _digit_line_unix_second(s: Any) -> Any:
     return None
   try:
     return int(float(parsed[0]))
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     return None
 
 
 def parse_first_timestamp_line(lines: Any) -> Any:
   """
   Parse the first timestamp line.
-  
+
   Args:
     lines (Any): Lines passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> parse_first_timestamp_line(None)  # doctest: +SKIP
   """
@@ -1776,13 +1854,13 @@ def parse_first_timestamp_line(lines: Any) -> Any:
 def parse_last_timestamp_line(lines: Any) -> Any:
   """
   Return last digit-leading stats line identity from an in-memory line list.
-  
+
   Args:
     lines (Any): Lines passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> parse_last_timestamp_line(None)  # doctest: +SKIP
   """
@@ -1810,19 +1888,19 @@ def parse_last_timestamp_line_streaming(
 ) -> Any:
   """
   Return last digit-leading stats line identity without a full-file scan.
-  
+
   Args:
     stats_file (str): String for stats file.
     tail_read_bytes (int): Integer value for tail read bytes.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> parse_last_timestamp_line_streaming("x", 0)  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-      update_worker_substage,
+    update_worker_substage,
   )
 
   update_worker_substage("parse:tail")
@@ -1835,14 +1913,13 @@ def parse_last_timestamp_line_streaming(
   chunk_size = max(4096, int(tail_read_bytes))
   pieces: list[tuple[int, bytes]] = []
   try:
-    with _stats_file_read_lock(stats_file):
-      with open(stats_file, "rb") as fd:
-        offset = size
-        while offset > 0:
-          read_size = min(chunk_size, offset)
-          offset -= read_size
-          fd.seek(offset)
-          pieces.append((offset, fd.read(read_size)))
+    with _stats_file_read_lock(stats_file), open(stats_file, "rb") as fd:
+      offset = size
+      while offset > 0:
+        read_size = min(chunk_size, offset)
+        offset -= read_size
+        fd.seek(offset)
+        pieces.append((offset, fd.read(read_size)))
   except FileNotFoundError:
     return (None, None, None)
   carry = b""
@@ -1877,15 +1954,15 @@ def _timestamp_present_for_duplicate(
 ) -> Any:
   """
   Internal helper to handle timestamp present for duplicate.
-  
+
   Args:
     itimes_set (Any): Itimes set passed to this helper.
     timestamp_present (Any): Timestamp present passed to this helper.
     unix_second (Any): Unix second passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _timestamp_present_for_duplicate(None, None, None)  # doctest: +SKIP
   """
@@ -1901,15 +1978,15 @@ def find_processing_start_index(
 ) -> Any:
   """
   Find the processing start index.
-  
+
   Args:
     lines (Any): Lines passed to this helper.
     itimes_set (Any): Itimes set passed to this helper.
     timestamp_present (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> find_processing_start_index(None, None, None)  # doctest: +SKIP
   """
@@ -1919,7 +1996,7 @@ def find_processing_start_index(
   for i, line in enumerate(lines):
     if i and i % 1000 == 0:
       from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-          update_worker_substage,
+        update_worker_substage,
       )
 
       update_worker_substage("duplicate_scan_lines")
@@ -1933,7 +2010,8 @@ def find_processing_start_index(
       if unix_sec is None:
         continue
       if not _timestamp_present_for_duplicate(
-          itimes_set, timestamp_present, unix_sec):
+        itimes_set, timestamp_present, unix_sec
+      ):
         start_idx = last_idx
         need_archival = True
         break
@@ -1949,20 +2027,20 @@ def find_processing_start_index_streaming(
 ) -> Any:
   """
   Scan a stats file without loading it into memory.
-  
+
   Args:
     stats_file (str): String for stats file.
     itimes_set (Any): Itimes set passed to this helper.
     timestamp_present (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> find_processing_start_index_streaming("x", None, None)  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-      update_worker_substage,
+    update_worker_substage,
   )
 
   update_worker_substage("duplicate_scan_streaming")
@@ -1985,7 +2063,8 @@ def find_processing_start_index_streaming(
         line_idx += 1
         continue
       if not _timestamp_present_for_duplicate(
-          itimes_set, timestamp_present, unix_sec):
+        itimes_set, timestamp_present, unix_sec
+      ):
         start_idx = last_idx
         return start_idx, True
       last_idx = line_idx
@@ -1996,18 +2075,18 @@ def find_processing_start_index_streaming(
 def parse_first_timestamp_line_streaming(stats_file: str) -> Any:
   """
   Return first digit-leading stats line identity without ``readlines()``.
-  
+
   Args:
     stats_file (str): String for stats file.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> parse_first_timestamp_line_streaming("x")  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-      update_worker_substage,
+    update_worker_substage,
   )
 
   update_worker_substage("parse:head")
@@ -2032,17 +2111,17 @@ def _collect_tail_timestamp_lines(
 ) -> Any:
   """
   Collect up to ``max_lines`` digit-leading lines from the file tail (newest.
-  
+
     first).
-  
+
   Args:
     stats_file (str): String for stats file.
     max_lines (Any): Max lines passed to this helper.
     tail_read_bytes (int): Integer value for tail read bytes.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _collect_tail_timestamp_lines("x", None, 0)  # doctest: +SKIP
   """
@@ -2056,13 +2135,12 @@ def _collect_tail_timestamp_lines(
   pieces: list[tuple[int, bytes]] = []
   offset = size
   try:
-    with _stats_file_read_lock(stats_file):
-      with open(stats_file, "rb") as fd:
-        while offset > 0:
-          read_size = min(chunk_size, offset)
-          offset -= read_size
-          fd.seek(offset)
-          pieces.append((offset, fd.read(read_size)))
+    with _stats_file_read_lock(stats_file), open(stats_file, "rb") as fd:
+      while offset > 0:
+        read_size = min(chunk_size, offset)
+        offset -= read_size
+        fd.seek(offset)
+        pieces.append((offset, fd.read(read_size)))
   except FileNotFoundError:
     return []
   carry = b""
@@ -2102,22 +2180,22 @@ def tail_window_timestamps_all_present_streaming(
 ) -> Any:
   """
   True when every timestamp in the tail window is already present in DB/cache.
-  
+
   Args:
     stats_file (str): String for stats file.
     itimes_set (Any): Itimes set passed to this helper.
     timestamp_present (Any | None): One of ``Any``, ``None``.
     max_lines (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> tail_window_timestamps_all_present_streaming("x", None, None, None)
   """
   import hpcperfstats.dbload.lib.conf_parser as cfg
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-      update_worker_substage,
+    update_worker_substage,
   )
 
   if max_lines is None:
@@ -2134,7 +2212,8 @@ def tail_window_timestamps_all_present_streaming(
     if unix_sec is None:
       continue
     if not _timestamp_present_for_duplicate(
-        itimes_set, timestamp_present, unix_sec):
+      itimes_set, timestamp_present, unix_sec
+    ):
       return False
   return True
 
@@ -2142,7 +2221,7 @@ def tail_window_timestamps_all_present_streaming(
 class IncrementalStatsParser:
   """
   Stateful parser for chunked/streaming stats-file ingest.
-  
+
   Attributes:
     _line_index: Attribute.
     _proc_by_key: Online peak-merged host_proc rows keyed by ``(jid, host, proc)``.
@@ -2167,21 +2246,21 @@ class IncrementalStatsParser:
   ) -> None:
     """
     Initialize a new instance.
-    
+
     Args:
       start_idx (int): Integer value for start idx.
       exclude_types_list (Any | None): One of ``Any``, ``None``.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> IncrementalStatsParser(0).start_idx
       0
     """
     self.start_idx = int(start_idx)
     self.exclude_types_list = (
-        exclude_types_list if exclude_types_list is not None else exclude_types
+      exclude_types_list if exclude_types_list is not None else exclude_types
     )
     self._line_index = 0
     self.schema = {}
@@ -2273,7 +2352,8 @@ class IncrementalStatsParser:
     Examples:
       >>> p = IncrementalStatsParser(0)
       >>> p._merge_proc_row_online(
-      ...     {"jid": "j", "host": "h", "proc": "p", "vm_peak": 1})
+      ...   {"jid": "j", "host": "h", "proc": "p", "vm_peak": 1}
+      ... )
     """
     key = (row.get("jid"), row.get("host"), row.get("proc"))
     if not _parse_stage_telem_on:
@@ -2416,13 +2496,13 @@ class IncrementalStatsParser:
   def feed_line(self, line: Any) -> None:
     """
     Feed line.
-    
+
     Args:
       line (Any): Line passed to this helper.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> IncrementalStatsParser().feed_line(None)  # doctest: +SKIP
     """
@@ -2444,10 +2524,10 @@ class IncrementalStatsParser:
         # device = full monitor token (name/pid/cmask/mmask); proc = name only.
         proc_name = dev.split("/", 1)[0]
         full_schema_keys = (
-            self.schema.get(typ)
-            or self.schema.get("host_proc")
-            or self.schema.get("proc")
-            or list(HOST_PROC_KEYS)
+          self.schema.get(typ)
+          or self.schema.get("host_proc")
+          or self.schema.get("proc")
+          or list(HOST_PROC_KEYS)
         )
         tier_marker = None
         if vals and vals[0] in _TIER_MARKERS:
@@ -2456,21 +2536,23 @@ class IncrementalStatsParser:
         use_fast = tier_marker == "@fast"
         if use_fast:
           schema_keys = self.schema_fast.get(typ) or _fast_schema_keys(
-              full_schema_keys
+            full_schema_keys
           )
         else:
           # ``@full`` or legacy lines without a tier marker use the full KEYS.
           schema_keys = full_schema_keys
         bare_keys = self._proc_bare_keys_for(
-            typ, list(schema_keys), fast=use_fast,
+          typ,
+          list(schema_keys),
+          fast=use_fast,
         )
         tags2 = self.line_ctx["tags2"]
         row = {
-            "time": tags2["time"],
-            "host": tags2["host"],
-            "jid": tags2["jid"],
-            "proc": proc_name,
-            "device": dev,
+          "time": tags2["time"],
+          "host": tags2["host"],
+          "jid": tags2["jid"],
+          "proc": proc_name,
+          "device": dev,
         }
         for i, bare in enumerate(bare_keys):
           if i >= len(vals):
@@ -2480,10 +2562,10 @@ class IncrementalStatsParser:
           raw = vals[i]
           try:
             row[bare] = int(raw)
-          except (TypeError, ValueError):
+          except TypeError, ValueError:
             try:
               row[bare] = int(float(raw))
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
               row[bare] = None
         self._merge_proc_row_online(row)
         return
@@ -2511,28 +2593,29 @@ class IncrementalStatsParser:
       out_typ = legacy_parsing.legacy_output_type(typ) if use_legacy else typ
       if use_legacy:
         vals_dict = _vals_dict_from_line(
-            typ, self.schema, self.schema[typ], vals, True, dev=dev)
+          typ, self.schema, self.schema[typ], vals, True, dev=dev
+        )
         if vals_dict is None:
           return
         _append_vals_dict_columns(
-            self._stats_cols,
-            time=float(tags["time"]),
-            host=tags["host"],
-            jid=tags["jid"],
-            typ=out_typ,
-            dev=dev,
-            vals_dict=vals_dict,
-        )
-        return
-      _append_compiled_stats_columns(
           self._stats_cols,
           time=float(tags["time"]),
           host=tags["host"],
           jid=tags["jid"],
           typ=out_typ,
           dev=dev,
-          compiled=compiled,
-          vals=vals,
+          vals_dict=vals_dict,
+        )
+        return
+      _append_compiled_stats_columns(
+        self._stats_cols,
+        time=float(tags["time"]),
+        host=tags["host"],
+        jid=tags["jid"],
+        typ=out_typ,
+        dev=dev,
+        compiled=compiled,
+        vals=vals,
       )
 
     elif i >= self.start_idx and s[0].isdigit():
@@ -2552,23 +2635,23 @@ class IncrementalStatsParser:
       self.schema_fast[typ] = _fast_schema_keys(events)
       self.schema_compiled[typ] = _compile_schema_tokens(events)
       self.schema_fast_compiled[typ] = _compile_schema_tokens(
-          self.schema_fast[typ],
+        self.schema_fast[typ],
       )
       self.schema_bare[typ] = _compile_schema_bare_names(events)
       self.schema_fast_bare[typ] = _compile_schema_bare_names(
-          self.schema_fast[typ],
+        self.schema_fast[typ],
       )
 
   def feed_lines(self, lines: Any) -> None:
     """
     Feed lines.
-    
+
     Args:
       lines (Any): Lines passed to this helper.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> IncrementalStatsParser().feed_lines(None)  # doctest: +SKIP
     """
@@ -2579,10 +2662,10 @@ class IncrementalStatsParser:
   def finish(self) -> Any:
     """
     Finish processing and finalize state.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> IncrementalStatsParser().finish()
       ([], [])
@@ -2598,23 +2681,23 @@ def parse_stats_lines(
 ) -> Any:
   """
   Parse stats and proc_stats from lines starting at start_idx.
-  
+
   Legacy archives (CTL/CTR or legacy st_name) use sync_timedb_parsing_legacy.
   eventmaps_by_type is ignored (kept for API compat); detection is automatic.
-  
+
   Args:
     lines (Any): Lines passed to this helper.
     start_idx (Any): Start idx passed to this helper.
     eventmaps_by_type (Any | None): One of ``Any``, ``None``.
     exclude_types_list (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> parse_stats_lines(None, None, None, None)  # doctest: +SKIP
   """
-  del eventmaps_by_type  # noqa: F841 — auto-detect legacy vs canonical
+  del eventmaps_by_type
   parser = IncrementalStatsParser(start_idx, exclude_types_list)
   parser.feed_lines(lines)
   return parser.finish()
@@ -2630,37 +2713,41 @@ def parse_stats_file_streaming(
 ) -> Any:
   """
   Parse a large stats file in bounded batches without ``readlines()``.
-  
+
   Resume offsets must feed the file prefix through the parser so ``!`` schema
   lines register; emission is gated by ``start_idx`` (same as
     ``parse_stats_lines``).
   Do not fast-forward with bare ``fd.readline()`` — that drops schema and
     silently
   discards every hardware stats line (RC-0).
-  
+
   Args:
     stats_file (str): String for stats file.
     start_line_idx (int): Integer value for start line idx.
     parse_start_idx (int): Integer value for parse start idx.
     batch_size (int): Integer value for batch size.
     exclude_types_list (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> parse_stats_file_streaming("x", 0, 0, 0, None)  # doctest: +SKIP
   """
   emission_start = max(int(start_line_idx or 0), int(parse_start_idx or 0))
   parser = IncrementalStatsParser(emission_start, exclude_types_list)
-  from hpcperfstats.dbload.lib.zstd_cli import advise_sequential_read_for_paths
+  from hpcperfstats.dbload.lib.zstd_cli import (
+    advise_sequential_read_for_paths,
+  )
 
   advise_sequential_read_for_paths(stats_file)
   try:
     with open(stats_file, "rb") as fd:
       while True:
         batch = _read_stats_line_batch_decode_after_lock(
-            fd, stats_file, batch_size,
+          fd,
+          stats_file,
+          batch_size,
         )
         if not batch:
           break
@@ -2724,9 +2811,7 @@ def build_stats_dataframes(stats_list: Any, proc_stats_list: Any) -> Any:
   elif isinstance(proc_stats_list, OnlineMergedProcRows):
     with _held_parse_stage("proc_df_s"):
       cols = _proc_rows_to_columns(proc_stats_list)
-      proc_stats_df = (
-          DataFrame(cols, copy=False) if cols else DataFrame()
-      )
+      proc_stats_df = DataFrame(cols, copy=False) if cols else DataFrame()
   else:
     with _held_parse_stage("proc_merge_s"):
       merged = dedupe_proc_stats_peak_merge(proc_stats_list)
@@ -2738,28 +2823,37 @@ def build_stats_dataframes(stats_list: Any, proc_stats_list: Any) -> Any:
 
 
 _EMPTY_DELTA_ARC_COLUMNS = [
-    "time", "host", "jid", "type", "dev", "event", "unit", "value", "delta", "arc"
+  "time",
+  "host",
+  "jid",
+  "type",
+  "dev",
+  "event",
+  "unit",
+  "value",
+  "delta",
+  "arc",
 ]
 
 
 class DeltaCarryState:
   """
   Cross-chunk state for counter deltas and arc rates during incremental ingest.
-  
+
   Attributes:
     arc: Attribute.
     raw: Attribute.
   """
 
-  __slots__ = ("raw", "arc")
+  __slots__ = ("arc", "raw")
 
   def __init__(self) -> None:
     """
     Initialize a new instance.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> DeltaCarryState()  # doctest: +SKIP
     """
@@ -2770,10 +2864,10 @@ class DeltaCarryState:
 def _empty_delta_arc_frame() -> Any:
   """
   Internal helper to handle empty delta arc DataFrame.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _empty_delta_arc_frame()  # doctest: +SKIP
   """
@@ -2783,23 +2877,28 @@ def _empty_delta_arc_frame() -> Any:
 def _stats_df_has_required_delta_cols(stats_df: Any) -> Any:
   """
   Internal helper to handle stats DataFrame has required delta cols.
-  
+
   Args:
     stats_df (Any): Stats df passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _stats_df_has_required_delta_cols(None)  # doctest: +SKIP
   """
   required_cols = {
-      "host", "type", "dev", "event", "unit", "time", "value", "wid", "mult"
+    "host",
+    "type",
+    "dev",
+    "event",
+    "unit",
+    "time",
+    "value",
+    "wid",
+    "mult",
   }
-  return (
-      not stats_df.empty
-      and required_cols.issubset(stats_df.columns)
-  )
+  return not stats_df.empty and required_cols.issubset(stats_df.columns)
 
 
 def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
@@ -2822,12 +2921,13 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
   """
   for col in _COUNTER_GROUP_COLS:
     if col in stats_df.columns and not isinstance(
-        stats_df[col].dtype, pd.CategoricalDtype,
+      stats_df[col].dtype,
+      pd.CategoricalDtype,
     ):
       stats_df[col] = stats_df[col].astype("category")
   code_cols = [
-      stats_df[col].cat.codes.to_numpy(dtype=np.int64, copy=False)
-      for col in _COUNTER_GROUP_COLS
+    stats_df[col].cat.codes.to_numpy(dtype=np.int64, copy=False)
+    for col in _COUNTER_GROUP_COLS
   ]
   sizes = tuple(int(c.max()) + 1 for c in code_cols)
   times = stats_df["time"].to_numpy(dtype=np.float64, copy=False)
@@ -2853,9 +2953,10 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
     if n > 1:
       is_last[:-1] = gid[:-1] != gid[1:]
   else:
-    stats_df = stats_df.sort_values(by=_COUNTER_GROUP_COLS + ["time"])
-    stats_df["delta"] = stats_df.groupby(
-        _COUNTER_GROUP_COLS, observed=True)["value"].diff()
+    stats_df = stats_df.sort_values(by=[*_COUNTER_GROUP_COLS, "time"])
+    stats_df["delta"] = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True)[
+      "value"
+    ].diff()
     is_first = is_last = None
 
   if carry is not None and carry.raw:
@@ -2909,10 +3010,10 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
       raw = carry.raw
       for i in range(len(last)):
         raw[(hosts[i], types[i], devs[i], events[i])] = (
-            float(values[i]),
-            int(wids[i]),
-            float(mults[i]),
-            float(times_last[i]),
+          float(values[i]),
+          int(wids[i]),
+          float(mults[i]),
+          float(times_last[i]),
         )
 
   stats_df.drop(columns=["wid", "mult"], inplace=True)
@@ -2922,13 +3023,13 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
 def _normalize_collapse_dev_column(stats_df: Any) -> Any:
   """
   Fill missing ``dev`` with ``''`` so group keys and UNIQUE semantics match.
-  
+
   Args:
     stats_df (Any): Stats df passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _normalize_collapse_dev_column(None)  # doctest: +SKIP
   """
@@ -2963,9 +3064,9 @@ def _collapse_stats_with_deltas(stats_df: Any) -> Any:
     ccm_power_df = rest_df.iloc[0:0]
     rest_other = rest_df
     if not rest_df.empty:
-      ccm_power_mask = (
-          rest_df["type"].isin(_HOST_CPU_HW_TYPES)
-          & rest_df["event"].isin(_DCGM_CPU_POWER_SOCKET_GAUGE_EVENTS))
+      ccm_power_mask = rest_df["type"].isin(_HOST_CPU_HW_TYPES) & rest_df[
+        "event"
+      ].isin(_DCGM_CPU_POWER_SOCKET_GAUGE_EVENTS)
       ccm_power_df = rest_df[ccm_power_mask]
       rest_other = rest_df[~ccm_power_mask]
   parts = []
@@ -2974,7 +3075,9 @@ def _collapse_stats_with_deltas(stats_df: Any) -> Any:
       # Multi-dev host paths always duplicate gcols (dev dropped); skip
       # identity probe and category-cast before groupby (E8 non-transfer).
       collapsed_rest = _groupby_sum_min_count(
-          rest_other, gcols, assume_duplicates=True,
+        rest_other,
+        gcols,
+        assume_duplicates=True,
       )
       collapsed_rest["dev"] = ""
       parts.append(collapsed_rest)
@@ -2994,9 +3097,7 @@ def _collapse_stats_with_deltas(stats_df: Any) -> Any:
   if not parts:
     return _empty_delta_arc_frame()
   with _held_parse_stage("collapse_concat_s"):
-    collapsed = (
-        concat(parts, ignore_index=True) if len(parts) > 1 else parts[0]
-    )
+    collapsed = concat(parts, ignore_index=True) if len(parts) > 1 else parts[0]
     del parts
     if "dev" not in collapsed.columns:
       collapsed["dev"] = ""
@@ -3008,23 +3109,23 @@ def _collapse_stats_with_deltas(stats_df: Any) -> Any:
       elif str(dev.dtype) != "object":
         collapsed["dev"] = dev.astype(str)
   with _held_parse_stage("collapse_sort_s"):
-    return collapsed.sort_values(by=_ARC_GROUP_COLS + ["time"])
+    return collapsed.sort_values(by=[*_ARC_GROUP_COLS, "time"])
 
 
 def _apply_arc_and_finalize(stats_df: Any, carry: Any | None = None) -> Any:
   """
   Compute arc rates; optional cross-flush ``carry.arc`` continuity.
-  
+
   Carry paths must stay vectorized (groupby head/tail + array extract /
   Index.get_indexer once).
-  
+
   Args:
     stats_df (Any): Stats df passed to this helper.
     carry (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _apply_arc_and_finalize(None, None)  # doctest: +SKIP
   """
@@ -3041,7 +3142,9 @@ def _apply_arc_and_finalize(stats_df: Any, carry: Any | None = None) -> Any:
       positions = stats_df.index.get_indexer(first.index)
       hosts = first["host"].to_numpy()
       types = first["type"].to_numpy()
-      devs = first["dev"].to_numpy() if "dev" in first.columns else [""] * len(first)
+      devs = (
+        first["dev"].to_numpy() if "dev" in first.columns else [""] * len(first)
+      )
       events = first["event"].to_numpy()
       times = first["time"].to_numpy(dtype=np.float64, copy=False)
       deltas = first["delta"].to_numpy(dtype=np.float64, copy=False)
@@ -3049,7 +3152,9 @@ def _apply_arc_and_finalize(stats_df: Any, carry: Any | None = None) -> Any:
         pos = int(positions[i])
         if pos < 0:
           continue
-        prev = carry.arc.get((hosts[i], types[i], str(devs[i] or ""), events[i]))
+        prev = carry.arc.get(
+          (hosts[i], types[i], str(devs[i] or ""), events[i])
+        )
         if prev is None:
           continue
         prev_time = prev["time"] if isinstance(prev, dict) else prev
@@ -3065,12 +3170,14 @@ def _apply_arc_and_finalize(stats_df: Any, carry: Any | None = None) -> Any:
     if not last.empty:
       hosts = last["host"].to_numpy()
       types = last["type"].to_numpy()
-      devs = last["dev"].to_numpy() if "dev" in last.columns else [""] * len(last)
+      devs = (
+        last["dev"].to_numpy() if "dev" in last.columns else [""] * len(last)
+      )
       events = last["event"].to_numpy()
       times = last["time"].to_numpy(dtype=np.float64, copy=False)
       for i in range(len(last)):
-        carry.arc[(hosts[i], types[i], str(devs[i] or ""), events[i])] = (
-            float(times[i])
+        carry.arc[(hosts[i], types[i], str(devs[i] or ""), events[i])] = float(
+          times[i]
         )
 
   return stats_df.dropna(subset=["host", "type", "event", "time", "value"])
@@ -3079,13 +3186,13 @@ def _apply_arc_and_finalize(stats_df: Any, carry: Any | None = None) -> Any:
 def _warn_nonempty_stats_collapsed_to_empty(stats_df: Any) -> None:
   """
   Loud warning when a non-empty stats frame yields zero delta/arc rows.
-  
+
   Args:
     stats_df (Any): Stats df passed to this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _warn_nonempty_stats_collapsed_to_empty(None)  # doctest: +SKIP
   """
@@ -3093,22 +3200,22 @@ def _warn_nonempty_stats_collapsed_to_empty(stats_df: Any) -> None:
     return
   cols = [str(c) for c in list(stats_df.columns)]
   warnings.warn(
-      "non-empty stats frame collapsed to empty delta/arc rows=%d cols=%s"
-      % (int(len(stats_df)), cols),
-      stacklevel=3,
+    "non-empty stats frame collapsed to empty delta/arc rows=%d cols=%s"
+    % (len(stats_df), cols),
+    stacklevel=3,
   )
 
 
 def compute_deltas_and_arc(stats_df: Any) -> Any:
   """
   Compute the deltas and arc.
-  
+
   Args:
     stats_df (Any): Stats df passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> compute_deltas_and_arc(None)  # doctest: +SKIP
   """
@@ -3127,18 +3234,18 @@ def compute_deltas_and_arc(stats_df: Any) -> Any:
 def compute_deltas_and_arc_chunk(stats_df: Any, *, carry: Any) -> Any:
   """
   Compute deltas/arc for one incremental flush; update ``carry`` in place.
-  
+
   Args:
     stats_df (Any): Stats df passed to this helper.
     carry (Any): Carry passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     ValueError: Raised when ``compute_deltas_and_arc_chunk`` hits a
     ``ValueError`` failure path.
-  
+
   Examples:
     >>> compute_deltas_and_arc_chunk(None, None)  # doctest: +SKIP
   """
@@ -3159,15 +3266,15 @@ def compute_deltas_and_arc_chunk(stats_df: Any, *, carry: Any) -> Any:
 def _line_starts_time_sample(line: Any, line_index: Any, start_idx: Any) -> Any:
   """
   Internal helper to handle line starts time sample.
-  
+
   Args:
     line (Any): Line passed to this helper.
     line_index (Any): Line index passed to this helper.
     start_idx (Any): Start idx passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _line_starts_time_sample(None, None, None)  # doctest: +SKIP
   """
@@ -3191,14 +3298,14 @@ def parse_stats_file_streaming_incremental(
 ) -> None:
   """
   Parse a large stats file, flushing complete time samples via ``on_chunk``.
-  
+
   Resume offsets must feed the file prefix through the parser so ``!`` schema
   lines register; emission is gated by ``start_idx`` (same as
     ``parse_stats_lines``).
   Do not fast-forward with bare ``fd.readline()`` — that drops schema and
     silently
   discards every hardware stats line (RC-0).
-  
+
   Args:
     stats_file (str): String for stats file.
     start_line_idx (int): Integer value for start line idx.
@@ -3207,19 +3314,22 @@ def parse_stats_file_streaming_incremental(
     on_chunk (Any): On chunk passed to this helper.
     line_batch_size (int): Integer value for line batch size.
     exclude_types_list (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> parse_stats_file_streaming_incremental(
-    ...     "/missing", flush_rows=1, on_chunk=lambda s, p: None)
+    ...   "/missing", flush_rows=1, on_chunk=lambda s, p: None
+    ... )
   """
   emission_start = max(int(start_line_idx or 0), int(parse_start_idx or 0))
   parser = IncrementalStatsParser(emission_start, exclude_types_list)
   pending_flush = False
   flush_rows = max(1, int(flush_rows))
-  from hpcperfstats.dbload.lib.zstd_cli import advise_sequential_read_for_paths
+  from hpcperfstats.dbload.lib.zstd_cli import (
+    advise_sequential_read_for_paths,
+  )
 
   advise_sequential_read_for_paths(stats_file)
   try:
@@ -3227,25 +3337,27 @@ def parse_stats_file_streaming_incremental(
       while True:
         emit: list[tuple[Any, list]] = []
         batch = _read_stats_line_batch_decode_after_lock(
-            fd, stats_file, line_batch_size,
+          fd,
+          stats_file,
+          line_batch_size,
         )
         if not batch:
           break
         with _held_parse_stage("feed_s"):
           for line in batch:
             if _line_starts_time_sample(
-                line, parser._line_index, parser.start_idx):
-              if pending_flush or parser.stats_len >= flush_rows:
-                if parser.stats_len or parser._proc_by_key:
-                  # take_cols stays inside feed_s (must flush before next
-                  # sample); mid-flush take is attributed to feed_s.
-                  emit.append(
-                      (
-                          parser.take_stats_columns(),
-                          parser.take_proc_stats_columns(),
-                      ),
-                  )
-                pending_flush = False
+              line, parser._line_index, parser.start_idx
+            ) and (pending_flush or parser.stats_len >= flush_rows):
+              if parser.stats_len or parser._proc_by_key:
+                # take_cols stays inside feed_s (must flush before next
+                # sample); mid-flush take is attributed to feed_s.
+                emit.append(
+                  (
+                    parser.take_stats_columns(),
+                    parser.take_proc_stats_columns(),
+                  ),
+                )
+              pending_flush = False
             parser.feed_line(line)
             if parser.stats_len >= flush_rows:
               pending_flush = True

@@ -10,11 +10,11 @@ Attributes:
   TEST_LOGIN_PATH: Hidden Django login URL (not under ``/machine/``).
   TEST_LOGIN_TOKEN_PREFIX: Session ``access_token`` prefix that skips Tapis.
 """
+
 from __future__ import annotations
 
-from typing import Any
-
 import time
+from typing import Any
 
 from django.http import Http404, HttpResponseRedirect
 from django.shortcuts import render
@@ -73,14 +73,16 @@ def test_login_user_payload() -> dict[str, bool | str | None]:
     dict[str, bool | str | None]: ``configured``, ``username``, ``login_url``.
 
   Examples:
-    >>> {"configured": False, "username": None, "login_url": TEST_LOGIN_PATH}["login_url"]
+    >>> {"configured": False, "username": None, "login_url": TEST_LOGIN_PATH}[
+    ...   "login_url"
+    ... ]
     '/test-login/'
   """
   user = TestLoginUser.get_singleton()
   return {
-      "configured": user is not None,
-      "username": user.username if user is not None else None,
-      "login_url": TEST_LOGIN_PATH,
+    "configured": user is not None,
+    "username": user.username if user is not None else None,
+    "login_url": TEST_LOGIN_PATH,
   }
 
 
@@ -97,10 +99,10 @@ def require_separate_test_login() -> None:
   Examples:
     >>> from unittest.mock import patch
     >>> with patch.object(cfg, "get_separate_test_login", return_value=False):
-    ...     try:
-    ...         require_separate_test_login()
-    ...     except Http404:
-    ...         "hidden"
+    ...   try:
+    ...     require_separate_test_login()
+    ...   except Http404:
+    ...     "hidden"
     'hidden'
   """
   if not cfg.get_separate_test_login():
@@ -120,7 +122,7 @@ def mint_test_login_session(request: Any, username: str) -> None:
 
   Examples:
     >>> class _Req:
-    ...     session = {}
+    ...   session = {}
     >>> req = _Req()
     >>> mint_test_login_session(req, "qa")
     >>> req.session["access_token"]
@@ -163,10 +165,10 @@ def test_login_page(request: Any) -> Any:
     >>> req = RequestFactory().get(TEST_LOGIN_PATH)
     >>> req.session = {}
     >>> with patch.object(cfg, "get_separate_test_login", return_value=False):
-    ...     try:
-    ...         test_login_page(req)
-    ...     except Http404:
-    ...         404
+    ...   try:
+    ...     test_login_page(req)
+    ...   except Http404:
+    ...     404
     404
   """
   require_separate_test_login()
@@ -176,16 +178,16 @@ def test_login_page(request: Any) -> Any:
     password = str(request.POST.get("password") or "")
     user = TestLoginUser.get_singleton()
     if (
-        user is not None
-        and username
-        and username == user.username
-        and user.check_password(password)
+      user is not None
+      and username
+      and username == user.username
+      and user.check_password(password)
     ):
       mint_test_login_session(request, user.username)
       return HttpResponseRedirect("/machine/")
     error = INVALID_CREDENTIALS_MESSAGE
   return render(
-      request,
-      "machine/test_login.html",
-      {"error": error},
+    request,
+    "machine/test_login.html",
+    {"error": error},
   )

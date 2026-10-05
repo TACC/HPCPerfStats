@@ -59,27 +59,29 @@ Attributes:
   get_total_ingested_for_tests: Read the ingested counter in unit tests.
   get_total_completed_for_tests: Read the completed counter in unit tests.
 """
+
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import threading
 import time
+from collections.abc import Callable, Iterable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import date, datetime
 from multiprocessing.pool import AsyncResult
-from typing import Any, Callable, Iterable
+from typing import Any
 
-from hpcperfstats.dbload.lib import conf_parser as cfg
-from hpcperfstats.dbload.lib import shutdown_utils as _shutdown_utils
-from hpcperfstats.dbload.lib import sync_timedb_job_discover as jd
-from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
-from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-from hpcperfstats.dbload.lib import sync_timedb_progress_report as progress
-from hpcperfstats.dbload.lib import sync_timedb_worker_memory as worker_memory
-from hpcperfstats.dbload.lib import sync_timedb_mem_telemetry as mem_telem
-from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
-  create_sync_timedb_thread_pool,
+from hpcperfstats.dbload.lib import (
+  conf_parser as cfg,
+  shutdown_utils as _shutdown_utils,
+  sync_timedb_job_discover as jd,
+  sync_timedb_job_reconstruct as jr,
+  sync_timedb_job_store as jq,
+  sync_timedb_mem_telemetry as mem_telem,
+  sync_timedb_progress_report as progress,
+  sync_timedb_worker_memory as worker_memory,
 )
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.process_memory import (
@@ -90,6 +92,9 @@ from hpcperfstats.dbload.lib.process_memory import (
 from hpcperfstats.dbload.lib.process_title import (
   set_daemon_thread_title,
 )
+from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
+  AppendDayClaimLists,
+)
 from hpcperfstats.dbload.lib.sync_timedb_archive_dir_lock import (
   exclusive_archive_dir_flock,
 )
@@ -97,26 +102,26 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   calendar_date_from_daily_tar_path,
   daily_tar_path_for_stats_path,
 )
-from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
-    AppendDayClaimLists,
-)
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-    _rate_limited_day_info_log,
+  _rate_limited_day_info_log,
 )
-from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
-    JanitorDeferTracker,
-)
-from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
   SyncTimedbArchiveMembersStore,
   set_process_archive_members_store,
 )
+from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+  JanitorDeferTracker,
+)
+from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
   ensure_persistence_contract,
 )
 from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
   PopulatePoolController,
   set_populate_pool_controller,
+)
+from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+  create_sync_timedb_thread_pool,
 )
 from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
   iter_find_stats_stdout_chunks,
@@ -139,12 +144,14 @@ _APPEND_DAY_LISTS = AppendDayClaimLists()
 _TOTAL_INGESTED = 0
 _TOTAL_COMPLETED = 0
 _TOTAL_INGESTED_LOCK = threading.Lock()
-_TRANSIENT_DAY_CLOSE_OUTCOMES = frozenset({
+_TRANSIENT_DAY_CLOSE_OUTCOMES = frozenset(
+  {
     "deferred_age",
     "yielded",
     "skipped",
     "incomplete_raw",
-})
+  }
+)
 # Sticky reclaim backoff after cooperative day_close yield (30s→300s).
 _DAY_CLOSE_YIELD_BACKOFF = JanitorDeferTracker()
 _DAY_CLOSE_CLAIM_LOG_STATE: dict[str, dict[str, float]] = {}
@@ -212,7 +219,9 @@ class AtomicPoolRef:
       None
 
     Examples:
-      >>> r = AtomicPoolRef(None); r.set("n"); r.get()
+      >>> r = AtomicPoolRef(None)
+      ... r.set("n")
+      ... r.get()
       'n'
     """
     with self._lock:
@@ -236,7 +245,8 @@ class IngestRecycleGate:
       None
 
     Examples:
-      >>> g = IngestRecycleGate(); g.recycle_requested.is_set()
+      >>> g = IngestRecycleGate()
+      ... g.recycle_requested.is_set()
       False
     """
     self.recycle_requested = threading.Event()
@@ -268,7 +278,7 @@ class SubsystemShutdownBarrier:
     """
     self.draining = threading.Event()
     self.drained: dict[str, threading.Event] = {
-        str(name): threading.Event() for name in names
+      str(name): threading.Event() for name in names
     }
 
   def mark_drained(self, name: str) -> None:
@@ -282,7 +292,8 @@ class SubsystemShutdownBarrier:
       None
 
     Examples:
-      >>> b = SubsystemShutdownBarrier(["x"]); b.mark_drained("x")
+      >>> b = SubsystemShutdownBarrier(["x"])
+      ... b.mark_drained("x")
       >>> b.drained["x"].is_set()
       True
     """
@@ -345,9 +356,8 @@ def fail_closed_on_coordinator_death(
     ... )
   """
   _log(
-      "queue_orchestrator fail-closed coordinator death role=%s"
-      % role,
-      log_fn=log_fn,
+    f"queue_orchestrator fail-closed coordinator death role={role}",
+    log_fn=log_fn,
   )
   request_shutdown()
   (exit_fn or os._exit)(1)
@@ -444,9 +454,8 @@ def install_cooperative_shutdown_handlers(
     except (ValueError, OSError, RuntimeError) as exc:
       installed = False
       _log(
-          "queue_orchestrator signal handler unavailable sig=%s err=%s"
-          % (signum, type(exc).__name__),
-          log_fn=log_fn,
+        f"queue_orchestrator signal handler unavailable sig={signum} err={type(exc).__name__}",
+        log_fn=log_fn,
       )
   return installed
 
@@ -529,11 +538,15 @@ def _status_band_ratios(client: Any) -> dict[str, dict[str, int]]:
     pass
   out["ingest_hot"] = {"inflight": int(hot_i), "queued": int(hot_q)}
   out["ingest_catchup"] = {"inflight": int(catch_i), "queued": int(catch_q)}
-  for kind in (jq.JOB_KIND_APPEND, jq.JOB_KIND_DISCOVER, jq.JOB_KIND_DAY_CLOSE):
+  for kind in (
+    jq.JOB_KIND_APPEND,
+    jq.JOB_KIND_DISCOVER,
+    jq.JOB_KIND_DAY_CLOSE,
+  ):
     entry = census.get(kind) or {}
     out[kind] = {
-        "inflight": int(entry.get("inflight", 0) or 0),
-        "queued": int(entry.get("queued", 0) or 0),
+      "inflight": int(entry.get("inflight", 0) or 0),
+      "queued": int(entry.get("queued", 0) or 0),
     }
   return out
 
@@ -560,54 +573,58 @@ def _emit_progress_report_if_due(
     bool: True when a report was emitted.
 
   Examples:
-    >>> _emit_progress_report_if_due(None, busy_flags={}, busy_lock=threading.Lock())
+    >>> _emit_progress_report_if_due(
+    ...   None, busy_flags={}, busy_lock=threading.Lock()
+    ... )
     False
   """
   state = progress.get_progress_state()
   with busy_lock:
     busy_kinds = [k for k, v in busy_flags.items() if v]
   if _discover_bg_is_busy() and "discover" not in busy_kinds:
-    busy_kinds = list(busy_kinds) + ["discover"]
+    busy_kinds = [*list(busy_kinds), "discover"]
   try:
     census = jq.queue_census(client)
   except Exception:
     census = {}
   band = _status_band_ratios(client)
   depth_now = {
-      kind: int((census.get(kind) or {}).get("queued", 0) or 0)
-      for kind in jq.JOB_KINDS_ALL
+    kind: int((census.get(kind) or {}).get("queued", 0) or 0)
+    for kind in jq.JOB_KINDS_ALL
   }
-  depth_now["ingest_hot"] = int((band.get("ingest_hot") or {}).get("queued", 0) or 0)
+  depth_now["ingest_hot"] = int(
+    (band.get("ingest_hot") or {}).get("queued", 0) or 0
+  )
   depth_now["ingest_catchup"] = int(
-      (band.get("ingest_catchup") or {}).get("queued", 0) or 0,
+    (band.get("ingest_catchup") or {}).get("queued", 0) or 0,
   )
   inflight_map = {
-      kind: int((census.get(kind) or {}).get("inflight", 0) or 0)
-      for kind in jq.JOB_KINDS_ALL
+    kind: int((census.get(kind) or {}).get("inflight", 0) or 0)
+    for kind in jq.JOB_KINDS_ALL
   }
   oldest_day, oldest_age_s = progress.resolve_oldest_queued_day(client)
   if force:
     lines = state.emit_lines(
-        band_ratios=band,
-        busy_kinds=busy_kinds,
-        census_inflight=inflight_map,
-        queue_depth_now=depth_now,
-        oldest_day=oldest_day,
-        oldest_age_s=oldest_age_s,
-    )
-    for line in lines:
-      _log(line, log_fn=log_fn)
-    state.reset_window(queue_depth_start=depth_now)
-    return True
-  return state.maybe_emit_and_reset(
-      interval_s=PROGRESS_REPORT_INTERVAL_S,
       band_ratios=band,
       busy_kinds=busy_kinds,
       census_inflight=inflight_map,
       queue_depth_now=depth_now,
       oldest_day=oldest_day,
       oldest_age_s=oldest_age_s,
-      log_fn=lambda msg, flush=False: _log(msg, log_fn=log_fn),
+    )
+    for line in lines:
+      _log(line, log_fn=log_fn)
+    state.reset_window(queue_depth_start=depth_now)
+    return True
+  return state.maybe_emit_and_reset(
+    interval_s=PROGRESS_REPORT_INTERVAL_S,
+    band_ratios=band,
+    busy_kinds=busy_kinds,
+    census_inflight=inflight_map,
+    queue_depth_now=depth_now,
+    oldest_day=oldest_day,
+    oldest_age_s=oldest_age_s,
+    log_fn=lambda msg, flush=False: _log(msg, log_fn=log_fn),
   )
 
 
@@ -678,16 +695,28 @@ def catchup_dispatch_cap(
 
   Examples:
     >>> catchup_dispatch_cap(
-    ...   hot_queued=4, catchup_queued=10, hot_cap=10, catchup_cap=6, pool=16,
+    ...   hot_queued=4,
+    ...   catchup_queued=10,
+    ...   hot_cap=10,
+    ...   catchup_cap=6,
+    ...   pool=16,
     ... )
     6
     >>> catchup_dispatch_cap(
-    ...   hot_queued=0, catchup_queued=10, hot_cap=10, catchup_cap=6, pool=16,
+    ...   hot_queued=0,
+    ...   catchup_queued=10,
+    ...   hot_cap=10,
+    ...   catchup_cap=6,
+    ...   pool=16,
     ... )
     16
     >>> catchup_dispatch_cap(
-    ...   hot_queued=12, catchup_queued=400, hot_cap=16, catchup_cap=8,
-    ...   pool=24, hot_submitted=0,
+    ...   hot_queued=12,
+    ...   catchup_queued=400,
+    ...   hot_cap=16,
+    ...   catchup_cap=8,
+    ...   pool=24,
+    ...   hot_submitted=0,
     ... )
     24
   """
@@ -719,7 +748,7 @@ def discover_job_identity(
     True
   """
   window = "all" if mtime_days is None else str(int(mtime_days))
-  return "rescan|%s|mtime=%s" % (os.path.normpath(archive_dir), window)
+  return f"rescan|{os.path.normpath(archive_dir)}|mtime={window}"
 
 
 def _discover_mtime_days_from_identity(
@@ -740,11 +769,15 @@ def _discover_mtime_days_from_identity(
 
   Examples:
     >>> _discover_mtime_days_from_identity(
-    ...   discover_job_identity("/a", 1), "/a", None,
+    ...   discover_job_identity("/a", 1),
+    ...   "/a",
+    ...   None,
     ... )
     1
     >>> _discover_mtime_days_from_identity(
-    ...   discover_job_identity("/a", None), "/a", 1,
+    ...   discover_job_identity("/a", None),
+    ...   "/a",
+    ...   1,
     ... ) is None
     True
   """
@@ -752,7 +785,7 @@ def _discover_mtime_days_from_identity(
   marker = "|mtime="
   if not str(identity).startswith(prefix) or marker not in str(identity):
     return fallback
-  path, window = str(identity)[len(prefix):].rsplit(marker, 1)
+  path, window = str(identity)[len(prefix) :].rsplit(marker, 1)
   if os.path.normpath(path) != os.path.normpath(archive_dir):
     return fallback
   if window == "all":
@@ -803,7 +836,8 @@ def _calendar_day_for_ingest_path(
     True
   """
   tar = daily_tar_path_for_stats_path(
-      _path_from_ingest_identity(path) or path, tgz_archive_dir,
+    _path_from_ingest_identity(path) or path,
+    tgz_archive_dir,
   )
   if not tar:
     return None
@@ -842,29 +876,28 @@ def _reband_claimed_ingest_if_needed(
     return False
   band = jr.select_ingest_band(day, today=today_d, hot_days=_hot_days())
   claimed_band = (
-      jq.decode_ingest_band(claim.score) if claim.score is not None else band
+    jq.decode_ingest_band(claim.score) if claim.score is not None else band
   )
   if band == claimed_band:
     return False
   score = jq.encode_ingest_score(
-      band=band,
-      day=day,
-      today=today_d,
-      identity=claim.identity,
+    band=band,
+    day=day,
+    today=today_d,
+    identity=claim.identity,
   )
   penalized = _penalized_ingest_requeue_score(score)
   jq.requeue_job(
-      client,
-      kind=jq.JOB_KIND_INGEST,
-      identity=claim.identity,
-      owner_token=claim.owner_token,
-      score=penalized,
+    client,
+    kind=jq.JOB_KIND_INGEST,
+    identity=claim.identity,
+    owner_token=claim.owner_token,
+    score=penalized,
   )
   _log(
-      "queue_orchestrator ingest fill skip_reband penalty identity=%s"
-      " score=%.0f"
-      % (claim.identity, penalized),
-      log_fn=log_fn,
+    f"queue_orchestrator ingest fill skip_reband penalty identity={claim.identity}"
+    f" score={penalized:.0f}",
+    log_fn=log_fn,
   )
   return True
 
@@ -921,11 +954,15 @@ def _boot_stream_discover(
     >>> class _C:
     ...   def zadd(self, *a, **k):
     ...     return 0
+    ...
     ...   def rpush(self, *a, **k):
     ...     return 0
     >>> isinstance(
     ...   _boot_stream_discover(
-    ...     _C(), "/nope", tgz_archive_dir="/d", log_fn=lambda *a, **k: None,
+    ...     _C(),
+    ...     "/nope",
+    ...     tgz_archive_dir="/d",
+    ...     log_fn=lambda *a, **k: None,
     ...   ),
     ...   jd.StreamingDiscoverStats,
     ... )
@@ -933,38 +970,40 @@ def _boot_stream_discover(
   """
   today = date.today()
   chunks = iter_find_stats_stdout_chunks(
-      archive_dir, mtime_days=mtime_days,
+    archive_dir,
+    mtime_days=mtime_days,
   )
   stats = jd.stream_enqueue_ingest_from_find_stdout_chunks(
-      client,
-      chunks,
-      tgz_archive_dir=tgz_archive_dir,
-      today=today,
-      hot_days=_hot_days(),
-      archive_data_dir=archive_dir,
-      calendar_day_fn=lambda rec: jd.calendar_day_from_find_record(
-          rec, tgz_archive_dir,
-      ),
-      startdate=startdate,
-      enddate=enddate,
-      append_is_complete_fn=jr.discover_append_is_complete,
+    client,
+    chunks,
+    tgz_archive_dir=tgz_archive_dir,
+    today=today,
+    hot_days=_hot_days(),
+    archive_data_dir=archive_dir,
+    calendar_day_fn=lambda rec: jd.calendar_day_from_find_record(
+      rec,
+      tgz_archive_dir,
+    ),
+    startdate=startdate,
+    enddate=enddate,
+    append_is_complete_fn=jr.discover_append_is_complete,
   )
   day_n = _enqueue_day_closes_for_daily_dir(
-      client,
-      tgz_archive_dir=tgz_archive_dir,
+    client,
+    tgz_archive_dir=tgz_archive_dir,
   )
   _log(
-      "queue_orchestrator boot discover seen=%d ingest=%d append=%d "
-      "day_close=%d skipped=%d daily_scan_day_close=%d"
-      % (
-          stats.seen,
-          stats.enqueued_ingest,
-          stats.enqueued_append,
-          stats.enqueued_day_close,
-          stats.skipped_complete,
-          day_n,
-      ),
-      log_fn=log_fn,
+    "queue_orchestrator boot discover seen=%d ingest=%d append=%d "
+    "day_close=%d skipped=%d daily_scan_day_close=%d"
+    % (
+      stats.seen,
+      stats.enqueued_ingest,
+      stats.enqueued_append,
+      stats.enqueued_day_close,
+      stats.skipped_complete,
+      day_n,
+    ),
+    log_fn=log_fn,
   )
   return stats
 
@@ -984,8 +1023,8 @@ def _discover_executor() -> ThreadPoolExecutor:
   with _discover_bg_lock:
     if _discover_bg_executor is None:
       _discover_bg_executor = ThreadPoolExecutor(
-          max_workers=1,
-          thread_name_prefix="discover-bg",
+        max_workers=1,
+        thread_name_prefix="discover-bg",
       )
     return _discover_bg_executor
 
@@ -1021,9 +1060,9 @@ def _run_background_discover(
   """
   try:
     claim = jq.claim_list_job(
-        client,
-        kind=jq.JOB_KIND_DISCOVER,
-        owner_token=jq.make_lease_owner_token(),
+      client,
+      kind=jq.JOB_KIND_DISCOVER,
+      owner_token=jq.make_lease_owner_token(),
     )
   except Exception:
     return
@@ -1031,29 +1070,27 @@ def _run_background_discover(
     return
   try:
     claimed_mtime_days = _discover_mtime_days_from_identity(
-        claim.identity,
-        archive_dir,
-        mtime_days,
+      claim.identity,
+      archive_dir,
+      mtime_days,
     )
     _boot_stream_discover(
-        client,
-        archive_dir,
-        tgz_archive_dir=tgz_archive_dir,
-        log_fn=log_fn,
-        mtime_days=claimed_mtime_days,
-        startdate=startdate,
-        enddate=enddate,
+      client,
+      archive_dir,
+      tgz_archive_dir=tgz_archive_dir,
+      log_fn=log_fn,
+      mtime_days=claimed_mtime_days,
+      startdate=startdate,
+      enddate=enddate,
     )
   finally:
-    try:
+    with contextlib.suppress(Exception):
       jq.ack_job(
-          client,
-          kind=jq.JOB_KIND_DISCOVER,
-          identity=claim.identity,
-          owner_token=claim.owner_token,
+        client,
+        kind=jq.JOB_KIND_DISCOVER,
+        identity=claim.identity,
+        owner_token=claim.owner_token,
       )
-    except Exception:
-      pass
 
 
 def _submit_background_discover(
@@ -1095,18 +1132,18 @@ def _submit_background_discover(
       return
     if _discover_bg_executor is None:
       _discover_bg_executor = ThreadPoolExecutor(
-          max_workers=1,
-          thread_name_prefix="discover-bg",
+        max_workers=1,
+        thread_name_prefix="discover-bg",
       )
     _discover_bg_future = _discover_bg_executor.submit(
-        _run_background_discover,
-        client,
-        archive_dir,
-        tgz_archive_dir=tgz_archive_dir,
-        log_fn=log_fn,
-        mtime_days=mtime_days,
-        startdate=startdate,
-        enddate=enddate,
+      _run_background_discover,
+      client,
+      archive_dir,
+      tgz_archive_dir=tgz_archive_dir,
+      log_fn=log_fn,
+      mtime_days=mtime_days,
+      startdate=startdate,
+      enddate=enddate,
     )
 
 
@@ -1128,15 +1165,11 @@ def _shutdown_background_discover() -> None:
     _discover_bg_future = None
     _discover_bg_executor = None
   if fut is not None:
-    try:
+    with contextlib.suppress(Exception):
       fut.cancel()
-    except Exception:
-      pass
   if executor is not None:
-    try:
+    with contextlib.suppress(Exception):
       executor.shutdown(wait=False, cancel_futures=True)
-    except Exception:
-      pass
 
 
 def _enqueue_day_closes_for_daily_dir(
@@ -1177,9 +1210,9 @@ def _enqueue_day_closes_for_daily_dir(
       continue
     tar_path = os.path.normpath(os.path.join(root, name))
     if jr.enqueue_cheap_day_close_if_needed(
-        client,
-        tar_path,
-        calendar_day=cal,
+      client,
+      tar_path,
+      calendar_day=cal,
     ):
       enqueued += 1
       progress.record(day_token, "incomplete_seen", 1)
@@ -1227,6 +1260,7 @@ def _idle_reconstruct_pass(
     >>> class _C:
     ...   def rpush(self, *a, **k):
     ...     return 1
+    ...
     ...   def lpop(self, *a, **k):
     ...     return None
     >>> _idle_reconstruct_pass(_C(), "/nope", tgz_archive_dir="/d", force=True)
@@ -1235,31 +1269,50 @@ def _idle_reconstruct_pass(
   global _last_idle_reconstruct_mono
   now = time.monotonic()
   if (
-      not force
-      and (now - _last_idle_reconstruct_mono) < _IDLE_RECONSTRUCT_MIN_INTERVAL_S
+    not force
+    and (now - _last_idle_reconstruct_mono) < _IDLE_RECONSTRUCT_MIN_INTERVAL_S
   ):
     return 0
   # H8: do not enqueue/submit discover while discover-bg is already running.
   # H21: still cheap-enqueue age-eligible open tars; do not burn the throttle.
   if not force and _discover_bg_is_busy():
     return _enqueue_day_closes_for_daily_dir(
-        client,
-        tgz_archive_dir=tgz_archive_dir,
+      client,
+      tgz_archive_dir=tgz_archive_dir,
     )
   _last_idle_reconstruct_mono = now
   identity = discover_job_identity(archive_dir, mtime_days)
-  try:
+  with contextlib.suppress(Exception):
     jq.enqueue_list_job(
-        client,
-        kind=jq.JOB_KIND_DISCOVER,
-        identity=identity,
-        dedupe=True,
+      client,
+      kind=jq.JOB_KIND_DISCOVER,
+      identity=identity,
+      dedupe=True,
     )
-  except Exception:
-    pass
   work = 0
   if not force:
     _submit_background_discover(
+      client,
+      archive_dir,
+      tgz_archive_dir=tgz_archive_dir,
+      log_fn=log_fn,
+      mtime_days=mtime_days,
+      startdate=startdate,
+      enddate=enddate,
+    )
+  else:
+    while True:
+      try:
+        claim = jq.claim_list_job(
+          client,
+          kind=jq.JOB_KIND_DISCOVER,
+          owner_token=jq.make_lease_owner_token(),
+        )
+      except Exception:
+        break
+      if claim is None:
+        break
+      stats = _boot_stream_discover(
         client,
         archive_dir,
         tgz_archive_dir=tgz_archive_dir,
@@ -1267,42 +1320,19 @@ def _idle_reconstruct_pass(
         mtime_days=mtime_days,
         startdate=startdate,
         enddate=enddate,
-    )
-  else:
-    while True:
-      try:
-        claim = jq.claim_list_job(
-            client,
-            kind=jq.JOB_KIND_DISCOVER,
-            owner_token=jq.make_lease_owner_token(),
-        )
-      except Exception:
-        break
-      if claim is None:
-        break
-      stats = _boot_stream_discover(
-          client,
-          archive_dir,
-          tgz_archive_dir=tgz_archive_dir,
-          log_fn=log_fn,
-          mtime_days=mtime_days,
-          startdate=startdate,
-          enddate=enddate,
       )
       work += int(stats.enqueued_ingest) + int(stats.enqueued_append)
       work += int(stats.enqueued_day_close)
-      try:
+      with contextlib.suppress(Exception):
         jq.ack_job(
-            client,
-            kind=jq.JOB_KIND_DISCOVER,
-            identity=claim.identity,
-            owner_token=claim.owner_token,
+          client,
+          kind=jq.JOB_KIND_DISCOVER,
+          identity=claim.identity,
+          owner_token=claim.owner_token,
         )
-      except Exception:
-        pass
   work += _enqueue_day_closes_for_daily_dir(
-      client,
-      tgz_archive_dir=tgz_archive_dir,
+    client,
+    tgz_archive_dir=tgz_archive_dir,
   )
   return work
 
@@ -1321,15 +1351,15 @@ def _ingest_worker(path: str) -> Any:
     >>> _ingest_worker("/x")  # doctest: +SKIP
   """
   from hpcperfstats.dbload.sync_timedb import (
-      IngestPerFileTimeoutError,
-      _apply_ingest_session_statement_timeout,
-      _ingest_outcome_meta,
-      _log_ingest_outcome_from_packed_result,
-      _log_ingest_per_file_timeout,
-      _merge_ingest_write_timing_into_meta,
-      _pack_ingest_worker_result,
-      _record_ingest_marks_from_worker_result,
-      add_stats_file_to_db,
+    IngestPerFileTimeoutError,
+    _apply_ingest_session_statement_timeout,
+    _ingest_outcome_meta,
+    _log_ingest_outcome_from_packed_result,
+    _log_ingest_per_file_timeout,
+    _merge_ingest_write_timing_into_meta,
+    _pack_ingest_worker_result,
+    _record_ingest_marks_from_worker_result,
+    add_stats_file_to_db,
   )
 
   _apply_ingest_session_statement_timeout()
@@ -1342,17 +1372,17 @@ def _ingest_worker(path: str) -> Any:
     if isinstance(exc, IngestPerFileTimeoutError):
       _log_ingest_per_file_timeout(exc)
     result = _pack_ingest_worker_result(
-        path,
-        False,
-        False,
-        elapsed,
-        _merge_ingest_write_timing_into_meta(
-            _ingest_outcome_meta(
-                outcome="timeout",
-                fail_reason=stage,
-                archive_skip="timeout",
-            ),
+      path,
+      False,
+      False,
+      elapsed,
+      _merge_ingest_write_timing_into_meta(
+        _ingest_outcome_meta(
+          outcome="timeout",
+          fail_reason=stage,
+          archive_skip="timeout",
         ),
+      ),
     )
   _log_ingest_outcome_from_packed_result(result)
   _record_ingest_marks_from_worker_result(result)
@@ -1439,14 +1469,20 @@ def _handoff_retryable_paths_to_ingest(
     >>> class _C:
     ...   def zscore(self, key, member):
     ...     return None
+    ...
     ...   def zcard(self, key):
     ...     return 0
+    ...
     ...   def zadd(self, key, mapping):
     ...     return 1
+    ...
     ...   def hset(self, *a, **k):
     ...     return 1
     >>> _handoff_retryable_paths_to_ingest(
-    ...   _C(), "/d/2020-01-01.tar", [], tgz_archive_dir="/d",
+    ...   _C(),
+    ...   "/d/2020-01-01.tar",
+    ...   [],
+    ...   tgz_archive_dir="/d",
     ... )
     0
   """
@@ -1464,27 +1500,26 @@ def _handoff_retryable_paths_to_ingest(
     try:
       st_info = os.stat(text)
       plan = jr.classify_closed_raw_path(
-          text,
-          tgz_archive_dir=tgz_archive_dir,
-          size=int(st_info.st_size),
-          mtime_ns=int(getattr(st_info, "st_mtime_ns", 0) or 0),
-          calendar_day=calendar_day,
-          tar_path=tar_path,
-          archive_data_dir=archive_data_dir,
-          ingest_is_complete_fn=ingest_is_complete_fn,
-          append_is_complete_fn=append_is_complete_fn,
+        text,
+        tgz_archive_dir=tgz_archive_dir,
+        size=int(st_info.st_size),
+        mtime_ns=int(getattr(st_info, "st_mtime_ns", 0) or 0),
+        calendar_day=calendar_day,
+        tar_path=tar_path,
+        archive_data_dir=archive_data_dir,
+        ingest_is_complete_fn=ingest_is_complete_fn,
+        append_is_complete_fn=append_is_complete_fn,
       )
       result = jr.enqueue_reconstruct_jobs_for_closed_path(
-          client,
-          plan,
-          today=today_local,
-          hot_days=hot_days,
+        client,
+        plan,
+        today=today_local,
+        hot_days=hot_days,
       )
     except Exception as exc:
       quiet(
-          "queue_orchestrator day_close handoff fail path=%s err=%s"
-          % (text, type(exc).__name__),
-          flush=True,
+        f"queue_orchestrator day_close handoff fail path={text} err={type(exc).__name__}",
+        flush=True,
       )
       continue
     if result.get("ingest") or result.get("append"):
@@ -1495,18 +1530,17 @@ def _handoff_retryable_paths_to_ingest(
     reason_text = str(reason or "")
     if reason_text == "gate_skip":
       from hpcperfstats.dbload.sync_timedb import DEBUG as _ST_DEBUG
+
       if _ST_DEBUG:
         quiet(
-            "DEBUG: queue_orchestrator day_close handoff_to_ingest n=%s tar=%s "
-            "reason=%s"
-            % (enqueued_n, tar_path, reason),
-            flush=True,
+          f"DEBUG: queue_orchestrator day_close handoff_to_ingest n={enqueued_n} tar={tar_path} "
+          f"reason={reason}",
+          flush=True,
         )
     else:
       quiet(
-          "queue_orchestrator day_close handoff_to_ingest n=%s tar=%s reason=%s"
-          % (enqueued_n, tar_path, reason),
-          flush=True,
+        f"queue_orchestrator day_close handoff_to_ingest n={enqueued_n} tar={tar_path} reason={reason}",
+        flush=True,
       )
   return enqueued_n
 
@@ -1545,7 +1579,9 @@ def _day_close_disk_remaining_raw_blocks(coord: Any, tar_path: str) -> bool:
       if callable(get_day):
         state = get_day(tar_path)
         pending_fn = getattr(
-            state, "_manifest_verified_pending_count", None,
+          state,
+          "_manifest_verified_pending_count",
+          None,
         )
         if callable(pending_fn) and int(pending_fn() or 0) > 0:
           return True
@@ -1562,9 +1598,9 @@ def _day_close_disk_remaining_raw_blocks(coord: Any, tar_path: str) -> bool:
 
 
 def _day_close_ingest_jobs_active_for_day(
-    job_store: Any | None,
-    day_token: str,
-    tgz_archive_dir: str,
+  job_store: Any | None,
+  day_token: str,
+  tgz_archive_dir: str,
 ) -> bool:
   """
   Return True when queued or in-flight ingest work belongs to this day.
@@ -1607,9 +1643,9 @@ def _day_close_ingest_jobs_active_for_day(
 
 
 def _day_close_live_ingest_or_populate(
-    job_store: Any | None,
-    tar_path: str,
-    tgz_archive_dir: str,
+  job_store: Any | None,
+  tar_path: str,
+  tgz_archive_dir: str,
 ) -> bool:
   """
   Return True when live ingest/populate currently uses this day's tar.
@@ -1632,8 +1668,8 @@ def _day_close_live_ingest_or_populate(
     False
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      archive_append_inflight_for_day,
-      archive_members_populate_owner_active_for_day,
+    archive_append_inflight_for_day,
+    archive_members_populate_owner_active_for_day,
   )
 
   day = calendar_date_from_daily_tar_path(tar_path)
@@ -1645,14 +1681,16 @@ def _day_close_live_ingest_or_populate(
   if archive_members_populate_owner_active_for_day(day_token):
     return True
   return _day_close_ingest_jobs_active_for_day(
-      job_store, day_token, tgz_archive_dir,
+    job_store,
+    day_token,
+    tgz_archive_dir,
   )
 
 
 def _day_close_append_or_hot_active(
-    job_store: Any | None,
-    tar_path: str,
-    tgz_archive_dir: str,
+  job_store: Any | None,
+  tar_path: str,
+  tgz_archive_dir: str,
 ) -> bool:
   """
   Return True when append LIST or live ingest/populate needs this tar.
@@ -1679,21 +1717,21 @@ def _day_close_append_or_hot_active(
   """
   if job_store is not None:
     try:
-      append_n = int(
-          job_store.queued_count("append") or 0
-      )
+      append_n = int(job_store.queued_count("append") or 0)
     except Exception:
       append_n = 0
     if append_n > 0:
       return True
   return _day_close_live_ingest_or_populate(
-      job_store, tar_path, tgz_archive_dir,
+    job_store,
+    tar_path,
+    tgz_archive_dir,
   )
 
 
 def _day_close_complete_wait_on_ingest_handoff(
-    coord: Any,
-    tar_path: str,
+  coord: Any,
+  tar_path: str,
 ) -> None:
   """
   Handoff closed raw to ingest and kick verify/delete unblock.
@@ -1737,10 +1775,10 @@ def _day_close_complete_wait_on_ingest_handoff(
 
 
 def _day_close_log_claim_if_allowed(
-    day_tok: str,
-    identity: str,
-    *,
-    log_fn: Callable[..., None] | None = None,
+  day_tok: str,
+  identity: str,
+  *,
+  log_fn: Callable[..., None] | None = None,
 ) -> None:
   """
   Rate-limit day_close claim INFO (yield reclaim can otherwise flood).
@@ -1757,22 +1795,21 @@ def _day_close_log_claim_if_allowed(
     >>> _day_close_log_claim_if_allowed("2020-01-01", "/d/2020-01-01.tar")
   """
   _rate_limited_day_info_log(
-      _DAY_CLOSE_CLAIM_LOG_STATE,
-      day_tok or "unknown",
-      "queue_orchestrator day_close claim day=%s identity=%s"
-      % (day_tok, identity),
-      interval_s=DAY_CLOSE_CLAIM_VACATE_LOG_INTERVAL_S,
-      log_fn=log_fn or log_print,
-      skip_unknown_day=False,
+    _DAY_CLOSE_CLAIM_LOG_STATE,
+    day_tok or "unknown",
+    f"queue_orchestrator day_close claim day={day_tok} identity={identity}",
+    interval_s=DAY_CLOSE_CLAIM_VACATE_LOG_INTERVAL_S,
+    log_fn=log_fn or log_print,
+    skip_unknown_day=False,
   )
 
 
 def _day_close_log_vacate_if_allowed(
-    day_tok: str,
-    identity: str,
-    outcome: str,
-    *,
-    log_fn: Callable[..., None] | None = None,
+  day_tok: str,
+  identity: str,
+  outcome: str,
+  *,
+  log_fn: Callable[..., None] | None = None,
 ) -> None:
   """
   Rate-limit day_close vacate INFO for cooperative ``yielded`` outcomes.
@@ -1790,21 +1827,20 @@ def _day_close_log_vacate_if_allowed(
 
   Examples:
     >>> _day_close_log_vacate_if_allowed(
-    ...   "2020-01-01", "/d/2020-01-01.tar", "complete",
+    ...   "2020-01-01",
+    ...   "/d/2020-01-01.tar",
+    ...   "complete",
     ... )
   """
-  line = (
-      "queue_orchestrator day_close vacate day=%s identity=%s outcome=%s"
-      % (day_tok, identity, outcome)
-  )
+  line = f"queue_orchestrator day_close vacate day={day_tok} identity={identity} outcome={outcome}"
   if outcome == "yielded":
     _rate_limited_day_info_log(
-        _DAY_CLOSE_VACATE_LOG_STATE,
-        day_tok or "unknown",
-        line,
-        interval_s=DAY_CLOSE_CLAIM_VACATE_LOG_INTERVAL_S,
-        log_fn=log_fn or log_print,
-        skip_unknown_day=False,
+      _DAY_CLOSE_VACATE_LOG_STATE,
+      day_tok or "unknown",
+      line,
+      interval_s=DAY_CLOSE_CLAIM_VACATE_LOG_INTERVAL_S,
+      log_fn=log_fn or log_print,
+      skip_unknown_day=False,
     )
     return
   _log(line, log_fn=log_fn)
@@ -1845,8 +1881,12 @@ def _run_day_close_job(
     ...   tgz_archive_dir="/tmp",
     ...   log_fn=lambda *a, **k: None,
     ... ) in (
-    ...   "complete", "deferred_age", "incomplete_raw",
-    ...   "skipped", "verify_failed", "yielded",
+    ...   "complete",
+    ...   "deferred_age",
+    ...   "incomplete_raw",
+    ...   "skipped",
+    ...   "verify_failed",
+    ...   "yielded",
     ... )
     True
   """
@@ -1860,18 +1900,18 @@ def _run_day_close_job(
     tar_path = os.path.normpath(text)
   else:
     tar_path = os.path.normpath(
-        os.path.join(tgz_archive_dir, "%s.tar" % day_token)
+      os.path.join(tgz_archive_dir, f"{day_token}.tar")
     )
-  try:
+  with contextlib.suppress(Exception):
     set_daemon_thread_title(
-        "day-close",
-        script_name="sync_timedb.py",
-        role="day-close",
+      "day-close",
+      script_name="sync_timedb.py",
+      role="day-close",
     )
-  except Exception:
-    pass
   if _day_close_live_ingest_or_populate(
-      job_store, tar_path, tgz_archive_dir,
+    job_store,
+    tar_path,
+    tgz_archive_dir,
   ):
     return "yielded"
   try:
@@ -1880,9 +1920,9 @@ def _run_day_close_job(
     return "skipped"
   min_age_h = _day_close_min_age_hours()
   if jr.day_close_is_complete(
-      tar_path,
-      calendar_day=cal,
-      min_age_hours=min_age_h,
+    tar_path,
+    calendar_day=cal,
+    min_age_hours=min_age_h,
   ):
     return "complete"
   if not jr.day_close_min_age_elapsed(cal, min_age_hours=min_age_h):
@@ -1895,50 +1935,50 @@ def _run_day_close_job(
     from django.db import close_old_connections
 
     from hpcperfstats.dbload.lib.conf_parser import (
-        get_archive_keep_uncompressed_tar,
-        get_archive_zstd_level,
-        get_archive_zstd_threads,
-        get_host_name_ext,
-        get_local_timezone,
+      get_archive_keep_uncompressed_tar,
+      get_archive_zstd_level,
+      get_archive_zstd_threads,
+      get_host_name_ext,
+      get_local_timezone,
     )
     from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-        dedupe_tar_keep_largest_file_per_member,
-        reconcile_open_tar_with_sealed_zst,
-        seal_dirty_daily_archives,
+      dedupe_tar_keep_largest_file_per_member,
+      reconcile_open_tar_with_sealed_zst,
+      seal_dirty_daily_archives,
     )
     from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
-        DayCloseYieldError,
+      DayCloseYieldError,
     )
     from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
-        DayRawRemovalCoordinator,
+      DayRawRemovalCoordinator,
     )
     from hpcperfstats.dbload.lib.sync_timedb_ingest_readiness import (
-        stats_file_head_ingested_in_db,
+      stats_file_head_ingested_in_db,
     )
 
     close_old_connections()
     root = str(archive_data_dir or "").strip() or os.path.dirname(
-        os.path.normpath(tgz_archive_dir)
+      os.path.normpath(tgz_archive_dir)
     )
     quiet = log_fn or (lambda *a, **k: None)
     coord = DayRawRemovalCoordinator(
-        archive_data_dir=root,
-        host_name_ext=get_host_name_ext() or "",
-        tgz_archive_dir=tgz_archive_dir,
-        log_fn=quiet,
-        get_quarantine_skip_paths=lambda: set(),
-        ingest_ready_fn=stats_file_head_ingested_in_db,
-        on_handoff_to_ingest=lambda tar_norm, paths, reason: (
-            _handoff_retryable_paths_to_ingest(
-                job_store,
-                tar_norm,
-                paths,
-                tgz_archive_dir=tgz_archive_dir,
-                archive_data_dir=root,
-                reason=reason,
-                log_fn=quiet,
-            )
-        ),
+      archive_data_dir=root,
+      host_name_ext=get_host_name_ext() or "",
+      tgz_archive_dir=tgz_archive_dir,
+      log_fn=quiet,
+      get_quarantine_skip_paths=lambda: set(),
+      ingest_ready_fn=stats_file_head_ingested_in_db,
+      on_handoff_to_ingest=lambda tar_norm, paths, reason: (
+        _handoff_retryable_paths_to_ingest(
+          job_store,
+          tar_norm,
+          paths,
+          tgz_archive_dir=tgz_archive_dir,
+          archive_data_dir=root,
+          reason=reason,
+          log_fn=quiet,
+        )
+      ),
     )
 
     def _stage_enter(name: str) -> None:
@@ -1959,9 +1999,8 @@ def _run_day_close_job(
       nonlocal stage
       stage = name
       _log(
-          "queue_orchestrator day_close stage_enter day=%s stage=%s"
-          % (day_token, name),
-          log_fn=log_fn,
+        f"queue_orchestrator day_close stage_enter day={day_token} stage={name}",
+        log_fn=log_fn,
       )
 
     def _stage_exit(name: str, *, result: str, reason: str = "") -> None:
@@ -1983,15 +2022,14 @@ def _run_day_close_job(
       """
       if reason:
         _log(
-            "queue_orchestrator day_close stage_exit day=%s stage=%s "
-            "result=%s reason=%s" % (day_token, name, result, reason),
-            log_fn=log_fn,
+          f"queue_orchestrator day_close stage_exit day={day_token} stage={name} "
+          f"result={result} reason={reason}",
+          log_fn=log_fn,
         )
       else:
         _log(
-            "queue_orchestrator day_close stage_exit day=%s stage=%s result=%s"
-            % (day_token, name, result),
-            log_fn=log_fn,
+          f"queue_orchestrator day_close stage_exit day={day_token} stage={name} result={result}",
+          log_fn=log_fn,
         )
 
     # H22 soak (04 2026-09-24): emit stage breadcrumb before get_day/manifest
@@ -2025,28 +2063,27 @@ def _run_day_close_job(
       try:
         try:
           pre_seal_ok = coord.run_pre_seal_verify_sync(
-              tar_path,
-              max_classify_batches=1,
+            tar_path,
+            max_classify_batches=1,
           )
         except TypeError:
           pre_seal_ok = coord.run_pre_seal_verify_sync(tar_path)
       except Exception as exc:
         _log(
-            "queue_orchestrator day_close pre_seal_verify fail day=%s err=%s"
-            % (day_token, type(exc).__name__),
-            log_fn=log_fn,
+          f"queue_orchestrator day_close pre_seal_verify fail day={day_token} err={type(exc).__name__}",
+          log_fn=log_fn,
         )
         _stage_exit(
-            "pre_seal_verify",
-            result="fail",
-            reason=type(exc).__name__,
+          "pre_seal_verify",
+          result="fail",
+          reason=type(exc).__name__,
         )
         return "verify_failed"
       if not pre_seal_ok:
         _stage_exit(
-            "pre_seal_verify",
-            result="yielded",
-            reason="classify_batch_resume",
+          "pre_seal_verify",
+          result="yielded",
+          reason="classify_batch_resume",
         )
         return "yielded"
       _stage_exit("pre_seal_verify", result="ok")
@@ -2078,48 +2115,47 @@ def _run_day_close_job(
       nonlocal skip_merge_remaining_raw, remaining_raw_cheap
       phase_fn = getattr(coord, "phase", None)
       phase = (
-          str(phase_fn(tar_path) or "").strip()
-          if callable(phase_fn)
-          else ""
+        str(phase_fn(tar_path) or "").strip() if callable(phase_fn) else ""
       )
       # phase=done + sealed sibling: reclaim open tar; do not forever-yield
       # on append/handoff (04 dual retention).
       if phase == "done" and (
-          os.path.isfile(tar_path + ".zst")
-          or os.path.isfile(tar_path + ".gz")
+        os.path.isfile(tar_path + ".zst") or os.path.isfile(tar_path + ".gz")
       ):
         skip_merge_remaining_raw = True
         _log(
-            "queue_orchestrator day_close wait_on_ingest skip_yield "
-            "day=%s reason=phase_done_sealed" % day_token,
-            log_fn=log_fn,
+          "queue_orchestrator day_close wait_on_ingest skip_yield "
+          f"day={day_token} reason=phase_done_sealed",
+          log_fn=log_fn,
         )
         return None
       handoff_fn = getattr(coord, "should_handoff_to_ingest", None)
       needs_wait = bool(
-          _day_close_disk_remaining_raw_blocks(coord, tar_path)
-          or (callable(handoff_fn) and handoff_fn(tar_path))
+        _day_close_disk_remaining_raw_blocks(coord, tar_path)
+        or (callable(handoff_fn) and handoff_fn(tar_path))
       )
       if not needs_wait:
         return None
       append_or_hot = _day_close_append_or_hot_active(
-          job_store, tar_path, tgz_archive_dir,
+        job_store,
+        tar_path,
+        tgz_archive_dir,
       )
       _day_close_complete_wait_on_ingest_handoff(coord, tar_path)
       if append_or_hot:
         _stage_enter("wait_on_ingest")
         _stage_exit(
-            "wait_on_ingest",
-            result="yielded",
-            reason="wait_on_ingest",
+          "wait_on_ingest",
+          result="yielded",
+          reason="wait_on_ingest",
         )
         return "yielded"
       skip_merge_remaining_raw = True
       remaining_raw_cheap = True
       _log(
-          "queue_orchestrator day_close wait_on_ingest skip_yield "
-          "day=%s reason=append_idle" % day_token,
-          log_fn=log_fn,
+        "queue_orchestrator day_close wait_on_ingest skip_yield "
+        f"day={day_token} reason=append_idle",
+        log_fn=log_fn,
       )
       return None
 
@@ -2172,9 +2208,9 @@ def _run_day_close_job(
 
       if skip_merge_remaining_raw:
         _log(
-            "queue_orchestrator day_close skip_merge day=%s "
-            "reason=append_idle_remaining_raw" % day_token,
-            log_fn=log_fn,
+          f"queue_orchestrator day_close skip_merge day={day_token} "
+          "reason=append_idle_remaining_raw",
+          log_fn=log_fn,
         )
       else:
         _stage_enter("reconcile_merge")
@@ -2182,15 +2218,17 @@ def _run_day_close_job(
           updater = getattr(coord, "update_reconcile_progress", None)
           if callable(updater):
             updater(
-                tar_path,
-                worker_stage="reconcile_merge",
-                members_done=0,
-                members_total=0,
-                last_progress_ts=time.monotonic(),
+              tar_path,
+              worker_stage="reconcile_merge",
+              members_done=0,
+              members_total=0,
+              last_progress_ts=time.monotonic(),
             )
 
           def _on_merge_progress(
-              done: int, total: int, last_mono: float,
+            done: int,
+            total: int,
+            last_mono: float,
           ) -> None:
             """
             Persist reconcile merge counters on the day_raw_removal
@@ -2211,29 +2249,31 @@ def _run_day_close_job(
             """
             if callable(updater):
               updater(
-                  tar_path,
-                  worker_stage="reconcile_merge",
-                  members_done=done,
-                  members_total=total,
-                  last_progress_ts=last_mono,
+                tar_path,
+                worker_stage="reconcile_merge",
+                members_done=done,
+                members_total=total,
+                last_progress_ts=last_mono,
               )
 
           remaining_fn = getattr(
-              coord, "remaining_raw_paths_blocking_tar_drop", None,
+            coord,
+            "remaining_raw_paths_blocking_tar_drop",
+            None,
           )
           remaining_raw_by_gz = (
-              remaining_fn(tar_path) if callable(remaining_fn) else {}
+            remaining_fn(tar_path) if callable(remaining_fn) else {}
           )
           reconcile_open_tar_with_sealed_zst(
-              tar_path,
-              zstd_threads=get_archive_zstd_threads(),
-              compress_level=get_archive_zstd_level(),
-              remaining_raw_by_gz=remaining_raw_by_gz,
-              force_remove_uncompressed_tar=False,
-              log_fn=quiet,
-              tgz_archive_dir=tgz_archive_dir,
-              keep_uncompressed_tar=get_archive_keep_uncompressed_tar(),
-              on_merge_progress=_on_merge_progress,
+            tar_path,
+            zstd_threads=get_archive_zstd_threads(),
+            compress_level=get_archive_zstd_level(),
+            remaining_raw_by_gz=remaining_raw_by_gz,
+            force_remove_uncompressed_tar=False,
+            log_fn=quiet,
+            tgz_archive_dir=tgz_archive_dir,
+            keep_uncompressed_tar=get_archive_keep_uncompressed_tar(),
+            on_merge_progress=_on_merge_progress,
           )
           progress.record(day_token, "reconcile", 1)
           _stage_exit("reconcile_merge", result="ok")
@@ -2243,14 +2283,13 @@ def _run_day_close_job(
           return "yielded"
         except Exception as exc:
           _log(
-              "queue_orchestrator day_close reconcile fail day=%s err=%s"
-              % (day_token, type(exc).__name__),
-              log_fn=log_fn,
+            f"queue_orchestrator day_close reconcile fail day={day_token} err={type(exc).__name__}",
+            log_fn=log_fn,
           )
           _stage_exit(
-              "reconcile_merge",
-              result="fail",
-              reason=type(exc).__name__,
+            "reconcile_merge",
+            result="fail",
+            reason=type(exc).__name__,
           )
 
         early = _run_pre_seal_verify()
@@ -2264,9 +2303,9 @@ def _run_day_close_job(
         _stage_enter("dedupe")
         try:
           dedupe_tar_keep_largest_file_per_member(
-              tar_path,
-              log_fn=quiet,
-              tgz_archive_dir=tgz_archive_dir,
+            tar_path,
+            log_fn=quiet,
+            tgz_archive_dir=tgz_archive_dir,
           )
           progress.record(day_token, "dedupe", 1)
           _stage_exit("dedupe", result="ok")
@@ -2276,9 +2315,8 @@ def _run_day_close_job(
           return "yielded"
         except Exception as exc:
           _log(
-              "queue_orchestrator day_close dedupe fail day=%s err=%s"
-              % (day_token, type(exc).__name__),
-              log_fn=log_fn,
+            f"queue_orchestrator day_close dedupe fail day={day_token} err={type(exc).__name__}",
+            log_fn=log_fn,
           )
           _stage_exit("dedupe", result="fail", reason=type(exc).__name__)
 
@@ -2292,25 +2330,28 @@ def _run_day_close_job(
       remaining_for_seal = {tar_path: ["skip_merge_remaining_raw"]}
     else:
       remaining_fn = getattr(
-          coord, "remaining_raw_paths_blocking_tar_drop", None,
+        coord,
+        "remaining_raw_paths_blocking_tar_drop",
+        None,
       )
       remaining_for_seal = (
-          remaining_fn(tar_path) if callable(remaining_fn) else {}
+        remaining_fn(tar_path) if callable(remaining_fn) else {}
       )
     seal_dirty_daily_archives(
-        tgz_archive_dir,
-        local_tz=get_local_timezone(),
-        zstd_threads=get_archive_zstd_threads(),
-        compress_level=get_archive_zstd_level(),
-        keep_uncompressed_tar=get_archive_keep_uncompressed_tar(),
-        idle_seconds=0,
-        seal_immediately_if_dirty=True,
-        only_daily_tar_paths={tar_path},
-        only_when_no_remaining_raw=True,
-        remaining_raw_by_gz=remaining_for_seal,
-        log_fn=quiet,
+      tgz_archive_dir,
+      local_tz=get_local_timezone(),
+      zstd_threads=get_archive_zstd_threads(),
+      compress_level=get_archive_zstd_level(),
+      keep_uncompressed_tar=get_archive_keep_uncompressed_tar(),
+      idle_seconds=0,
+      seal_immediately_if_dirty=True,
+      only_daily_tar_paths={tar_path},
+      only_when_no_remaining_raw=True,
+      remaining_raw_by_gz=remaining_for_seal,
+      log_fn=quiet,
     )
     _stage_exit("seal", result="ok")
+
     # H19 append_idle already answered remaining; do not re-find at post-seal
     # (01 2026-09-26: hung on has_closed after seal exit, before post_seal).
     # phase_done_sealed sets skip_merge but not remaining_raw_cheap — still find.
@@ -2342,20 +2383,19 @@ def _run_day_close_job(
       try:
         post_seal_ok = bool(coord.run_post_seal_verify_sync(tar_path))
         _stage_exit(
-            "post_seal_verify",
-            result="ok" if post_seal_ok else "fail",
-            **({} if post_seal_ok else {"reason": "verify_false"}),
+          "post_seal_verify",
+          result="ok" if post_seal_ok else "fail",
+          **({} if post_seal_ok else {"reason": "verify_false"}),
         )
       except Exception as exc:
         _log(
-            "queue_orchestrator day_close post_seal_verify fail day=%s err=%s"
-            % (day_token, type(exc).__name__),
-            log_fn=log_fn,
+          f"queue_orchestrator day_close post_seal_verify fail day={day_token} err={type(exc).__name__}",
+          log_fn=log_fn,
         )
         _stage_exit(
-            "post_seal_verify",
-            result="fail",
-            reason=type(exc).__name__,
+          "post_seal_verify",
+          result="fail",
+          reason=type(exc).__name__,
         )
 
     _stage_enter("raw_delete")
@@ -2366,9 +2406,9 @@ def _run_day_close_job(
     _stage_exit("raw_delete", result="ok")
     zst_path = tar_path + ".zst"
     if (
-        not remaining_raw
-        and os.path.isfile(tar_path)
-        and not os.path.isfile(zst_path)
+      not remaining_raw
+      and os.path.isfile(tar_path)
+      and not os.path.isfile(zst_path)
     ):
       _stage_enter("seal")
       # Post-delete: raw cleared; allow reseal without remaining-raw find.
@@ -2376,23 +2416,25 @@ def _run_day_close_job(
         remaining_for_reseal = {}
       else:
         remaining_fn = getattr(
-            coord, "remaining_raw_paths_blocking_tar_drop", None,
+          coord,
+          "remaining_raw_paths_blocking_tar_drop",
+          None,
         )
         remaining_for_reseal = (
-            remaining_fn(tar_path) if callable(remaining_fn) else {}
+          remaining_fn(tar_path) if callable(remaining_fn) else {}
         )
       seal_dirty_daily_archives(
-          tgz_archive_dir,
-          local_tz=get_local_timezone(),
-          zstd_threads=get_archive_zstd_threads(),
-          compress_level=get_archive_zstd_level(),
-          keep_uncompressed_tar=get_archive_keep_uncompressed_tar(),
-          idle_seconds=0,
-          seal_immediately_if_dirty=True,
-          only_daily_tar_paths={tar_path},
-          only_when_no_remaining_raw=True,
-          remaining_raw_by_gz=remaining_for_reseal,
-          log_fn=quiet,
+        tgz_archive_dir,
+        local_tz=get_local_timezone(),
+        zstd_threads=get_archive_zstd_threads(),
+        compress_level=get_archive_zstd_level(),
+        keep_uncompressed_tar=get_archive_keep_uncompressed_tar(),
+        idle_seconds=0,
+        seal_immediately_if_dirty=True,
+        only_daily_tar_paths={tar_path},
+        only_when_no_remaining_raw=True,
+        remaining_raw_by_gz=remaining_for_reseal,
+        log_fn=quiet,
       )
       _stage_exit("seal", result="ok", reason="reseal_after_delete")
       if os.path.isfile(tar_path) or os.path.isfile(zst_path):
@@ -2400,36 +2442,32 @@ def _run_day_close_job(
         try:
           post_seal_ok = bool(coord.run_post_seal_verify_sync(tar_path))
           _stage_exit(
-              "post_seal_verify",
-              result="ok" if post_seal_ok else "fail",
-              **({} if post_seal_ok else {"reason": "verify_false"}),
+            "post_seal_verify",
+            result="ok" if post_seal_ok else "fail",
+            **({} if post_seal_ok else {"reason": "verify_false"}),
           )
         except Exception as exc:
           post_seal_ok = False
           _log(
-              "queue_orchestrator day_close post_seal_verify fail "
-              "day=%s err=%s" % (day_token, type(exc).__name__),
-              log_fn=log_fn,
+            "queue_orchestrator day_close post_seal_verify fail "
+            f"day={day_token} err={type(exc).__name__}",
+            log_fn=log_fn,
           )
           _stage_exit(
-              "post_seal_verify",
-              result="fail",
-              reason=type(exc).__name__,
+            "post_seal_verify",
+            result="fail",
+            reason=type(exc).__name__,
           )
-    if (
-        post_seal_ok
-        and os.path.isfile(zst_path)
-        and os.path.isfile(tar_path)
-    ):
+    if post_seal_ok and os.path.isfile(zst_path) and os.path.isfile(tar_path):
       finish_fn = getattr(coord, "try_finish_tar_drop_if_ready", None)
       _stage_enter("tar_drop")
       try:
         # Known remaining (incl. skip_merge cheap True): skip try_finish find.
         if remaining_raw:
           _stage_exit(
-              "tar_drop",
-              result="skip",
-              reason="remaining_raw",
+            "tar_drop",
+            result="skip",
+            reason="remaining_raw",
           )
         elif callable(finish_fn):
           finish_fn(tar_path)
@@ -2438,16 +2476,16 @@ def _run_day_close_job(
             remaining_raw = False
             progress.record(day_token, "tar_delete", 1)
             _log(
-                "queue_orchestrator day_close tar_drop day=%s" % day_token,
-                log_fn=log_fn,
+              f"queue_orchestrator day_close tar_drop day={day_token}",
+              log_fn=log_fn,
             )
             _stage_exit("tar_drop", result="ok")
           else:
             remaining_raw = _closed_raw_remains()
             _stage_exit(
-                "tar_drop",
-                result="skip",
-                reason="remaining_raw" if remaining_raw else "tar_present",
+              "tar_drop",
+              result="skip",
+              reason="remaining_raw" if remaining_raw else "tar_present",
             )
         else:
           os.remove(tar_path)
@@ -2455,43 +2493,39 @@ def _run_day_close_job(
           remaining_raw = False
           progress.record(day_token, "tar_delete", 1)
           _log(
-              "queue_orchestrator day_close tar_drop day=%s" % day_token,
-              log_fn=log_fn,
+            f"queue_orchestrator day_close tar_drop day={day_token}",
+            log_fn=log_fn,
           )
           _stage_exit("tar_drop", result="ok")
       except OSError as exc:
         _log(
-            "queue_orchestrator day_close tar_drop fail day=%s err=%s"
-            % (day_token, type(exc).__name__),
-            log_fn=log_fn,
+          f"queue_orchestrator day_close tar_drop fail day={day_token} err={type(exc).__name__}",
+          log_fn=log_fn,
         )
         _stage_exit("tar_drop", result="fail", reason=type(exc).__name__)
   except DayCloseYieldError as exc:
     reason = str(getattr(exc, "reason", "") or "yield_requested")
     _log(
-        "queue_orchestrator day_close stage_exit day=%s stage=%s "
-        "result=yielded reason=%s" % (day_token, stage, reason),
-        log_fn=log_fn,
+      f"queue_orchestrator day_close stage_exit day={day_token} stage={stage} "
+      f"result=yielded reason={reason}",
+      log_fn=log_fn,
     )
     return "yielded"
   except Exception as exc:
     _log(
-        "queue_orchestrator day_close error day=%s err=%s"
-        % (day_token, type(exc).__name__),
-        log_fn=log_fn,
+      f"queue_orchestrator day_close error day={day_token} err={type(exc).__name__}",
+      log_fn=log_fn,
     )
     return "skipped"
   finally:
     clear_memo = (
-        getattr(day_state, "_clear_closed_raw_pass_memo", None)
-        if day_state is not None
-        else None
+      getattr(day_state, "_clear_closed_raw_pass_memo", None)
+      if day_state is not None
+      else None
     )
     if callable(clear_memo):
-      try:
+      with contextlib.suppress(Exception):
         clear_memo()
-      except Exception:
-        pass
     try:
       from django.db import close_old_connections as _close
 
@@ -2501,9 +2535,9 @@ def _run_day_close_job(
   if remaining_raw:
     return "incomplete_raw"
   if jr.day_close_is_complete(
-      tar_path,
-      calendar_day=cal,
-      min_age_hours=min_age_h,
+    tar_path,
+    calendar_day=cal,
+    min_age_hours=min_age_h,
   ):
     return "complete"
   if tar_dropped:
@@ -2544,16 +2578,18 @@ def _retry_or_dead_letter(
 
   Examples:
     >>> _retry_or_dead_letter(
-    ...   None, kind="ingest", claim=None, archive_data_dir="/a",
+    ...   None,
+    ...   kind="ingest",
+    ...   claim=None,
+    ...   archive_data_dir="/a",
     ...   reason="x",
     ... )
     'dropped_no_claim'
   """
   if claim is None or client is None:
     _log(
-        "queue_orchestrator retry_or_dead_letter missing claim kind=%s reason=%s"
-        % (kind, reason),
-        log_fn=log_fn,
+      f"queue_orchestrator retry_or_dead_letter missing claim kind={kind} reason={reason}",
+      log_fn=log_fn,
     )
     return "dropped_no_claim"
   identity = claim.identity
@@ -2564,31 +2600,32 @@ def _retry_or_dead_letter(
   if attempt < jq.job_max_attempts():
     progress.record(day_tok, "attempt_bump", 1)
     jq.requeue_job(
-        client,
-        kind=kind,
-        identity=identity,
-        owner_token=claim.owner_token,
-        score=(
-            score if score is not None else getattr(claim, "score", None)
-        ),
+      client,
+      kind=kind,
+      identity=identity,
+      owner_token=claim.owner_token,
+      score=(score if score is not None else getattr(claim, "score", None)),
     )
     return "requeued"
   if archive_data_dir:
     progress.get_progress_state().record_dead_letter(day_tok, kind, 1)
     jq.append_queue_dead_letter(
-        archive_data_dir,
-        kind=kind,
-        identity=identity,
-        attempt=attempt,
-        reason=reason,
+      archive_data_dir,
+      kind=kind,
+      identity=identity,
+      attempt=attempt,
+      reason=reason,
     )
   jq.ack_job(
-      client, kind=kind, identity=identity, owner_token=claim.owner_token,
+    client,
+    kind=kind,
+    identity=identity,
+    owner_token=claim.owner_token,
   )
   _log(
-      "queue_orchestrator dead_letter kind=%s identity=%s attempt=%d reason=%s"
-      % (kind, identity, attempt, reason),
-      log_fn=log_fn,
+    "queue_orchestrator dead_letter kind=%s identity=%s attempt=%d reason=%s"
+    % (kind, identity, attempt, reason),
+    log_fn=log_fn,
   )
   return "dead_letter"
 
@@ -2619,16 +2656,16 @@ def _requeue_claimed_job_without_attempt_bump(
   """
   if claim is None or client is None:
     _log(
-        "queue_orchestrator requeue_without_bump missing claim",
-        log_fn=log_fn,
+      "queue_orchestrator requeue_without_bump missing claim",
+      log_fn=log_fn,
     )
     return "dropped_no_claim"
   jq.requeue_job(
-      client,
-      kind=claim.kind,
-      identity=claim.identity,
-      owner_token=claim.owner_token,
-      score=getattr(claim, "score", None),
+    client,
+    kind=claim.kind,
+    identity=claim.identity,
+    owner_token=claim.owner_token,
+    score=getattr(claim, "score", None),
   )
   return "requeued"
 
@@ -2733,7 +2770,10 @@ def _reconcile_local_ingest_maps_to_store(
 
   Examples:
     >>> _reconcile_local_ingest_maps_to_store(
-    ...   None, ingest_inflight={}, ingest_leases={}, ingest_submitted={},
+    ...   None,
+    ...   ingest_inflight={},
+    ...   ingest_leases={},
+    ...   ingest_submitted={},
     ... )
     0
   """
@@ -2741,7 +2781,7 @@ def _reconcile_local_ingest_maps_to_store(
     return 0
   pruned = 0
   for identity in list(ingest_inflight.keys()) + [
-      i for i in ingest_leases if i not in ingest_inflight
+    i for i in ingest_leases if i not in ingest_inflight
   ]:
     identity = str(identity)
     async_res = ingest_inflight.get(identity)
@@ -2753,7 +2793,9 @@ def _reconcile_local_ingest_maps_to_store(
         pass
     try:
       entry = jq.read_inflight_entry(
-          client, kind=jq.JOB_KIND_INGEST, identity=identity,
+        client,
+        kind=jq.JOB_KIND_INGEST,
+        identity=identity,
       )
     except Exception:
       entry = None
@@ -2775,8 +2817,8 @@ def _reconcile_local_ingest_maps_to_store(
     pruned += 1
   if pruned:
     _log(
-        "queue_orchestrator local_inflight_desync pruned=%d" % pruned,
-        log_fn=log_fn,
+      "queue_orchestrator local_inflight_desync pruned=%d" % pruned,
+      log_fn=log_fn,
     )
   return pruned
 
@@ -2807,7 +2849,11 @@ def _ingest_coordinator_tick_sleep_s(
 
   Examples:
     >>> _ingest_coordinator_tick_sleep_s(
-    ...   zcard=100, poll_s=5.0, fill_submitted=0, local_n=2, pool=24,
+    ...   zcard=100,
+    ...   poll_s=5.0,
+    ...   fill_submitted=0,
+    ...   local_n=2,
+    ...   pool=24,
     ... ) <= 0.005
     True
   """
@@ -2845,7 +2891,10 @@ def _requeue_pool_collateral(
 
   Examples:
     >>> _requeue_pool_collateral(
-    ...   None, inflight={}, claims={}, submitted={},
+    ...   None,
+    ...   inflight={},
+    ...   claims={},
+    ...   submitted={},
     ... )
     0
   """
@@ -2859,18 +2908,17 @@ def _requeue_pool_collateral(
       continue
     try:
       jq.requeue_job(
-          client,
-          kind=jq.JOB_KIND_INGEST,
-          identity=identity,
-          owner_token=claim.owner_token,
-          score=claim.score,
+        client,
+        kind=jq.JOB_KIND_INGEST,
+        identity=identity,
+        owner_token=claim.owner_token,
+        score=claim.score,
       )
       requeued += 1
     except Exception as exc:
       _log(
-          "queue_orchestrator requeue-on-recycle failed identity=%s err=%s"
-          % (identity, type(exc).__name__),
-          log_fn=log_fn,
+        f"queue_orchestrator requeue-on-recycle failed identity={identity} err={type(exc).__name__}",
+        log_fn=log_fn,
       )
   return requeued
 
@@ -2948,33 +2996,31 @@ def _maybe_request_stuck_cohort_recycle(
   if age_s < float(threshold):
     return last_stuck_recycle_mono
   now = time.monotonic()
-  if (
-      last_stuck_recycle_mono > 0.0
-      and (now - last_stuck_recycle_mono) < float(threshold)
+  if last_stuck_recycle_mono > 0.0 and (now - last_stuck_recycle_mono) < float(
+    threshold
   ):
     return last_stuck_recycle_mono
   requeued = _requeue_pool_collateral(
-      client,
-      inflight=inflight,
-      claims=claims,
-      submitted=submitted,
-      inflight_sizes=inflight_sizes,
-      log_fn=log_fn,
+    client,
+    inflight=inflight,
+    claims=claims,
+    submitted=submitted,
+    inflight_sizes=inflight_sizes,
+    log_fn=log_fn,
   )
   recycle_gate.recycle_requested.set()
   _emit_mem_telem_event(
-      "stuck_cohort_recycle",
-      log_fn,
-      submitted=dict(submitted),
-      inflight_sizes=(
-          dict(inflight_sizes) if isinstance(inflight_sizes, dict) else {}
-      ),
+    "stuck_cohort_recycle",
+    log_fn,
+    submitted=dict(submitted),
+    inflight_sizes=(
+      dict(inflight_sizes) if isinstance(inflight_sizes, dict) else {}
+    ),
   )
   _log(
-      "queue_orchestrator stuck_cohort_recycle oldest=%s age_s=%.0f "
-      "threshold_s=%d requeued=%d"
-      % (oldest_id, age_s, threshold, requeued),
-      log_fn=log_fn,
+    "queue_orchestrator stuck_cohort_recycle oldest=%s age_s=%.0f "
+    "threshold_s=%d requeued=%d" % (oldest_id, age_s, threshold, requeued),
+    log_fn=log_fn,
   )
   return now
 
@@ -2996,57 +3042,56 @@ def _recycle_ingest_pool(pool: Any, *, factory: Callable[[], Any]) -> Any:
   """
   try:
     from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
-        terminate_pool_bounded,
+      terminate_pool_bounded,
     )
+
     if pool is not None:
       terminate_pool_bounded(
-          pool,
-          join_timeout_s=5.0,
-          abandon_after_kill=True,
-          context="queue_orchestrator_ingest_recycle",
+        pool,
+        join_timeout_s=5.0,
+        abandon_after_kill=True,
+        context="queue_orchestrator_ingest_recycle",
       )
   except Exception:
     for method in ("terminate", "join"):
       call = getattr(pool, method, None)
       if call is None:
         continue
-      try:
+      with contextlib.suppress(Exception):
         call()
-      except Exception:
-        pass
   return factory()
 
 
 _FILL_BLOCK_KEYS = (
-    "claim_none",
-    "skip_reband",
-    "skip_missing",
-    "skip_lock",
-    "skip_fp",
-    "skip_budget_bytes",
-    "skip_cgroup_headroom",
-    "skip_file_cache_pressure",
-    "band_cap",
-    "submit_err",
+  "claim_none",
+  "skip_reband",
+  "skip_missing",
+  "skip_lock",
+  "skip_fp",
+  "skip_budget_bytes",
+  "skip_cgroup_headroom",
+  "skip_file_cache_pressure",
+  "band_cap",
+  "submit_err",
 )
 
 # Census / status: set when fill skips for raw-byte budget; cleared when a
 # fill tick admits without ``skip_budget_bytes``.
 _INGEST_MEM_BLOCK_STATE: dict[str, Any] = {
-    "blocked": False,
-    "inflight_raw_mib": 0,
-    "budget_mib": 0,
+  "blocked": False,
+  "inflight_raw_mib": 0,
+  "budget_mib": 0,
 }
 
 # Best-effort snapshots for mem telemetry census (updated by ingest fill).
 _MEM_TELEM_RUNTIME: dict[str, Any] = {
-    "inflight_sizes": {},
-    "submitted": {},
-    "append_inflight_n": 0,
-    "day_close_inflight_n": 0,
-    "hot_used": 0,
-    "catch_used": 0,
-    "fill_block": None,
+  "inflight_sizes": {},
+  "submitted": {},
+  "append_inflight_n": 0,
+  "day_close_inflight_n": 0,
+  "hot_used": 0,
+  "catch_used": 0,
+  "fill_block": None,
 }
 
 
@@ -3061,7 +3106,7 @@ def _empty_ingest_fill_stats() -> dict[str, int]:
     >>> _empty_ingest_fill_stats()["claim_none"]
     0
   """
-  return {k: 0 for k in _FILL_BLOCK_KEYS}
+  return dict.fromkeys(_FILL_BLOCK_KEYS, 0)
 
 
 def _note_ingest_mem_block_state(
@@ -3083,17 +3128,19 @@ def _note_ingest_mem_block_state(
 
   Examples:
     >>> _note_ingest_mem_block_state(
-    ...   blocked=False, inflight_sizes={}, budget_bytes=0,
+    ...   blocked=False,
+    ...   inflight_sizes={},
+    ...   budget_bytes=0,
     ... )
   """
   sizes = inflight_sizes if isinstance(inflight_sizes, dict) else {}
   inflight_sum = sum(int(v or 0) for v in sizes.values())
   _INGEST_MEM_BLOCK_STATE["blocked"] = bool(blocked)
   _INGEST_MEM_BLOCK_STATE["inflight_raw_mib"] = int(
-      inflight_sum // (1024 * 1024),
+    inflight_sum // (1024 * 1024),
   )
   _INGEST_MEM_BLOCK_STATE["budget_mib"] = int(
-      max(0, int(budget_bytes or 0)) // (1024 * 1024),
+    max(0, int(budget_bytes or 0)) // (1024 * 1024),
   )
   if isinstance(inflight_sizes, dict):
     _MEM_TELEM_RUNTIME["inflight_sizes"] = dict(inflight_sizes)
@@ -3135,9 +3182,9 @@ def _census_kind_q(census: dict[str, Any], kind: str) -> str:
     '1/2'
   """
   row = census.get(kind) or {}
-  return "%s/%s" % (
-      int(row.get("inflight", 0) or 0),
-      int(row.get("queued", 0) or 0),
+  return "{}/{}".format(
+    int(row.get("inflight", 0) or 0),
+    int(row.get("queued", 0) or 0),
   )
 
 
@@ -3173,23 +3220,23 @@ def _emit_mem_telem_event(event: str, log_fn: Any = None, **extra: Any) -> None:
     total_ingested = _TOTAL_INGESTED
     total_completed = _TOTAL_COMPLETED
   mem_telem.maybe_emit_mem_telemetry(
-      event,
-      log_fn or log_print,
-      inflight_sizes=sizes if isinstance(sizes, dict) else {},
-      submitted=submitted if isinstance(submitted, dict) else {},
-      ingest_mem_blocked=bool(_INGEST_MEM_BLOCK_STATE.get("blocked")),
-      total_ingested=total_ingested,
-      total_completed=total_completed,
-      hot_used=_MEM_TELEM_RUNTIME.get("hot_used"),
-      catch_used=_MEM_TELEM_RUNTIME.get("catch_used"),
-      fill_block=_MEM_TELEM_RUNTIME.get("fill_block"),
-      ingest_q=ingest_q,
-      append_q=append_q,
-      discover_q=discover_q,
-      day_close_q=day_close_q,
-      append_inflight_n=_MEM_TELEM_RUNTIME.get("append_inflight_n"),
-      day_close_inflight_n=_MEM_TELEM_RUNTIME.get("day_close_inflight_n"),
-      **extra,
+    event,
+    log_fn or log_print,
+    inflight_sizes=sizes if isinstance(sizes, dict) else {},
+    submitted=submitted if isinstance(submitted, dict) else {},
+    ingest_mem_blocked=bool(_INGEST_MEM_BLOCK_STATE.get("blocked")),
+    total_ingested=total_ingested,
+    total_completed=total_completed,
+    hot_used=_MEM_TELEM_RUNTIME.get("hot_used"),
+    catch_used=_MEM_TELEM_RUNTIME.get("catch_used"),
+    fill_block=_MEM_TELEM_RUNTIME.get("fill_block"),
+    ingest_q=ingest_q,
+    append_q=append_q,
+    discover_q=discover_q,
+    day_close_q=day_close_q,
+    append_inflight_n=_MEM_TELEM_RUNTIME.get("append_inflight_n"),
+    day_close_inflight_n=_MEM_TELEM_RUNTIME.get("day_close_inflight_n"),
+    **extra,
   )
 
 
@@ -3206,12 +3253,9 @@ def format_ingest_mem_block_census_suffix() -> str:
   """
   if not _INGEST_MEM_BLOCK_STATE.get("blocked"):
     return ""
-  return (
-      " ingest_mem_blocked=yes inflight_raw_mib=%d budget_mib=%d"
-      % (
-          int(_INGEST_MEM_BLOCK_STATE.get("inflight_raw_mib", 0) or 0),
-          int(_INGEST_MEM_BLOCK_STATE.get("budget_mib", 0) or 0),
-      )
+  return " ingest_mem_blocked=yes inflight_raw_mib=%d budget_mib=%d" % (
+    int(_INGEST_MEM_BLOCK_STATE.get("inflight_raw_mib", 0) or 0),
+    int(_INGEST_MEM_BLOCK_STATE.get("budget_mib", 0) or 0),
   )
 
 
@@ -3251,7 +3295,9 @@ def _merge_ingest_fill_stats(
     dict[str, int]: ``base`` after merge.
 
   Examples:
-    >>> _merge_ingest_fill_stats({"claim_none": 1}, {"claim_none": 2})["claim_none"]
+    >>> _merge_ingest_fill_stats({"claim_none": 1}, {"claim_none": 2})[
+    ...   "claim_none"
+    ... ]
     3
   """
   for key, n in extra.items():
@@ -3297,7 +3343,9 @@ def _penalized_ingest_requeue_score(score: float | int | None) -> float:
     float: Score bumped by :data:`LEASE_CONFLICT_SCORE_PENALTY`.
 
   Examples:
-    >>> _penalized_ingest_requeue_score(5.0) == 5.0 + jq.LEASE_CONFLICT_SCORE_PENALTY
+    >>> _penalized_ingest_requeue_score(
+    ...   5.0
+    ... ) == 5.0 + jq.LEASE_CONFLICT_SCORE_PENALTY
     True
   """
   base = float(jq.CATCHUP_SCORE_BASE if score is None else score)
@@ -3306,11 +3354,13 @@ def _penalized_ingest_requeue_score(score: float | int | None) -> float:
 
 # Fill skips that are backpressure waits, not hard failures. Must requeue
 # without bumping attempt / dead-letter (hpcperfstats01 2026-09-29 telem).
-_INGEST_BACKPRESSURE_SKIP_REASONS = frozenset({
+_INGEST_BACKPRESSURE_SKIP_REASONS = frozenset(
+  {
     "skip_budget_bytes",
     "skip_cgroup_headroom",
     "skip_file_cache_pressure",
-})
+  }
+)
 
 
 def _requeue_ingest_fill_skip(
@@ -3343,32 +3393,33 @@ def _requeue_ingest_fill_skip(
     str: ``requeued``, ``dead_letter``, or ``dropped_no_claim``.
 
   Examples:
-    >>> _requeue_ingest_fill_skip(None, claim=None, archive_data_dir="/a",
-    ...   reason="skip_fp")
+    >>> _requeue_ingest_fill_skip(
+    ...   None, claim=None, archive_data_dir="/a", reason="skip_fp"
+    ... )
     'dropped_no_claim'
   """
   if claim is None or client is None:
     return "dropped_no_claim"
   penalized = _penalized_ingest_requeue_score(
-      score if score is not None else getattr(claim, "score", None),
+    score if score is not None else getattr(claim, "score", None),
   )
   if reason in _INGEST_BACKPRESSURE_SKIP_REASONS:
     jq.requeue_job(
-        client,
-        kind=jq.JOB_KIND_INGEST,
-        identity=claim.identity,
-        owner_token=claim.owner_token,
-        score=penalized,
+      client,
+      kind=jq.JOB_KIND_INGEST,
+      identity=claim.identity,
+      owner_token=claim.owner_token,
+      score=penalized,
     )
     return "requeued"
   return _retry_or_dead_letter(
-      client,
-      kind=jq.JOB_KIND_INGEST,
-      claim=claim,
-      archive_data_dir=str(archive_data_dir or ""),
-      reason=reason,
-      log_fn=log_fn,
-      score=penalized,
+    client,
+    kind=jq.JOB_KIND_INGEST,
+    claim=claim,
+    archive_data_dir=str(archive_data_dir or ""),
+    reason=reason,
+    log_fn=log_fn,
+    score=penalized,
   )
 
 
@@ -3391,8 +3442,8 @@ def _ingest_fill_skip_budget_for_queued(zcard: int) -> int:
   if int(zcard or 0) <= 0:
     return INGEST_FILL_SKIP_BUDGET
   return max(
-      INGEST_FILL_SKIP_BUDGET,
-      min(int(zcard) // 50, INGEST_FILL_SKIP_BUDGET_MAX),
+    INGEST_FILL_SKIP_BUDGET,
+    min(int(zcard) // 50, INGEST_FILL_SKIP_BUDGET_MAX),
   )
 
 
@@ -3479,8 +3530,15 @@ def _fill_ingest_band(
 
   Examples:
     >>> _fill_ingest_band(
-    ...   type("C", (), {"evalsha": lambda *a: None, "eval": lambda *a: None,
-    ...                  "script_load": lambda s: "x"})(),
+    ...   type(
+    ...     "C",
+    ...     (),
+    ...     {
+    ...       "evalsha": lambda *a: None,
+    ...       "eval": lambda *a: None,
+    ...       "script_load": lambda s: "x",
+    ...     },
+    ...   )(),
     ...   band="hot",
     ...   cap=0,
     ...   inflight={},
@@ -3492,12 +3550,19 @@ def _fill_ingest_band(
   """
   submitted_n = 0
   skipped = 0
-  budget = int(skip_budget if skip_budget is not None else INGEST_FILL_SKIP_BUDGET)
+  budget = int(
+    skip_budget if skip_budget is not None else INGEST_FILL_SKIP_BUDGET
+  )
   stats = fill_stats if fill_stats is not None else _empty_ingest_fill_stats()
   complete_fn = ingest_is_complete_fn or jr.ingest_is_complete
-  used_map = band_used if band_used is not None else {
-      "hot": 0, "catchup": 0,
-  }
+  used_map = (
+    band_used
+    if band_used is not None
+    else {
+      "hot": 0,
+      "catchup": 0,
+    }
+  )
   if band_used is None:
     hot_n, catch_n = _count_ingest_band_inflight(claims)
     used_map["hot"] = hot_n
@@ -3511,17 +3576,18 @@ def _fill_ingest_band(
         break
     free_total = int(cap) - len(inflight)
     free_band = (
-        int(band_cap) - int(used_map.get(band, 0))
-        if band_cap is not None else free_total
+      int(band_cap) - int(used_map.get(band, 0))
+      if band_cap is not None
+      else free_total
     )
     batch_n = max(1, min(free_total, free_band, max(1, budget - skipped)))
     owner = jq.make_lease_owner_token()
     batch = jq.claim_ingest_jobs(
-        client,
-        band=band,
-        owner_token=owner,
-        max_n=batch_n,
-        probe_depth=probe_depth,
+      client,
+      band=band,
+      owner_token=owner,
+      max_n=batch_n,
+      probe_depth=probe_depth,
     )
     if not batch:
       stats["claim_none"] += 1
@@ -3529,25 +3595,28 @@ def _fill_ingest_band(
     for claim in batch:
       if len(inflight) >= cap:
         jq.requeue_job(
-            client,
-            kind=jq.JOB_KIND_INGEST,
-            identity=claim.identity,
-            owner_token=claim.owner_token,
-            score=claim.score,
+          client,
+          kind=jq.JOB_KIND_INGEST,
+          identity=claim.identity,
+          owner_token=claim.owner_token,
+          score=claim.score,
         )
         continue
       if band_cap is not None and int(used_map.get(band, 0)) >= int(band_cap):
         jq.requeue_job(
-            client,
-            kind=jq.JOB_KIND_INGEST,
-            identity=claim.identity,
-            owner_token=claim.owner_token,
-            score=claim.score,
+          client,
+          kind=jq.JOB_KIND_INGEST,
+          identity=claim.identity,
+          owner_token=claim.owner_token,
+          score=claim.score,
         )
         stats["band_cap"] += 1
         break
       if _reband_claimed_ingest_if_needed(
-          client, claim, tgz_archive_dir, log_fn=log_fn,
+        client,
+        claim,
+        tgz_archive_dir,
+        log_fn=log_fn,
       ):
         skipped += 1
         stats["skip_reband"] += 1
@@ -3557,10 +3626,10 @@ def _fill_ingest_band(
       path = _path_from_ingest_identity(claim.identity)
       if _is_ingest_lock_sidecar_path(path or claim.identity):
         jq.ack_job(
-            client,
-            kind=jq.JOB_KIND_INGEST,
-            identity=claim.identity,
-            owner_token=claim.owner_token,
+          client,
+          kind=jq.JOB_KIND_INGEST,
+          identity=claim.identity,
+          owner_token=claim.owner_token,
         )
         skipped += 1
         stats["skip_lock"] += 1
@@ -3578,25 +3647,25 @@ def _fill_ingest_band(
         if path:
           try:
             complete = bool(
-                complete_fn(path, archive_data_dir=archive_data_dir),
+              complete_fn(path, archive_data_dir=archive_data_dir),
             )
           except Exception:
             complete = False
         if complete:
           jq.ack_job(
-              client,
-              kind=jq.JOB_KIND_INGEST,
-              identity=claim.identity,
-              owner_token=claim.owner_token,
+            client,
+            kind=jq.JOB_KIND_INGEST,
+            identity=claim.identity,
+            owner_token=claim.owner_token,
           )
         else:
           _requeue_ingest_fill_skip(
-              client,
-              claim=claim,
-              archive_data_dir=archive_data_dir,
-              reason="skip_missing",
-              score=claim.score,
-              log_fn=log_fn,
+            client,
+            claim=claim,
+            archive_data_dir=archive_data_dir,
+            reason="skip_missing",
+            score=claim.score,
+            log_fn=log_fn,
           )
         skipped += 1
         stats["skip_missing"] += 1
@@ -3605,26 +3674,26 @@ def _fill_ingest_band(
         continue
       stored_fp = str(getattr(claim, "fingerprint", "") or "")
       if stored_fp and stored_fp != jq.ingest_fingerprint(
-          st_now.st_size, st_now.st_mtime_ns,
+        st_now.st_size,
+        st_now.st_mtime_ns,
       ):
-        try:
+        with contextlib.suppress(OSError):
           jq.write_job_fingerprint(
-              client,
-              kind=jq.JOB_KIND_INGEST,
-              identity=claim.identity,
-              fingerprint=jq.ingest_fingerprint(
-                  st_now.st_size, st_now.st_mtime_ns,
-              ),
-          )
-        except OSError:
-          pass
-        _requeue_ingest_fill_skip(
             client,
-            claim=claim,
-            archive_data_dir=archive_data_dir,
-            reason="skip_fp",
-            score=claim.score,
-            log_fn=log_fn,
+            kind=jq.JOB_KIND_INGEST,
+            identity=claim.identity,
+            fingerprint=jq.ingest_fingerprint(
+              st_now.st_size,
+              st_now.st_mtime_ns,
+            ),
+          )
+        _requeue_ingest_fill_skip(
+          client,
+          claim=claim,
+          archive_data_dir=archive_data_dir,
+          reason="skip_fp",
+          score=claim.score,
+          log_fn=log_fn,
         )
         skipped += 1
         stats["skip_fp"] += 1
@@ -3634,109 +3703,106 @@ def _fill_ingest_band(
       size_bytes = int(st_now.st_size)
       if inflight_sizes is not None:
         budget_bytes = int(
-            worker_memory.compute_ingest_inflight_raw_bytes_budget(),
+          worker_memory.compute_ingest_inflight_raw_bytes_budget(),
         )
         inflight_sum = sum(int(v or 0) for v in inflight_sizes.values())
         if not worker_memory.can_admit_ingest_raw_bytes(
-            inflight_sum, size_bytes, budget_bytes,
+          inflight_sum,
+          size_bytes,
+          budget_bytes,
         ):
           _requeue_ingest_fill_skip(
-              client,
-              claim=claim,
-              archive_data_dir=archive_data_dir,
-              reason="skip_budget_bytes",
-              score=claim.score,
-              log_fn=log_fn,
+            client,
+            claim=claim,
+            archive_data_dir=archive_data_dir,
+            reason="skip_budget_bytes",
+            score=claim.score,
+            log_fn=log_fn,
           )
           skipped += 1
           stats["skip_budget_bytes"] += 1
           _note_ingest_mem_block_state(
-              blocked=True,
-              inflight_sizes=inflight_sizes,
-              budget_bytes=budget_bytes,
+            blocked=True,
+            inflight_sizes=inflight_sizes,
+            budget_bytes=budget_bytes,
           )
           _emit_mem_telem_event(
-              "skip_budget",
-              log_fn,
-              inflight_sizes=inflight_sizes,
-              submitted=submitted,
+            "skip_budget",
+            log_fn,
+            inflight_sizes=inflight_sizes,
+            submitted=submitted,
           )
           if skipped >= budget:
             break
           continue
         headroom_mib = int(cfg.get_sync_cgroup_admit_headroom_mib())
         alone_oversized = (
-            inflight_sum == 0
-            and budget_bytes > 0
-            and size_bytes > budget_bytes
+          inflight_sum == 0 and budget_bytes > 0 and size_bytes > budget_bytes
         )
-        if (
-            not alone_oversized
-            and not cgroup_admit_headroom_ok(headroom_mib)
-        ):
+        if not alone_oversized and not cgroup_admit_headroom_ok(headroom_mib):
           _requeue_ingest_fill_skip(
-              client,
-              claim=claim,
-              archive_data_dir=archive_data_dir,
-              reason="skip_cgroup_headroom",
-              score=claim.score,
-              log_fn=log_fn,
+            client,
+            claim=claim,
+            archive_data_dir=archive_data_dir,
+            reason="skip_cgroup_headroom",
+            score=claim.score,
+            log_fn=log_fn,
           )
           skipped += 1
           stats["skip_cgroup_headroom"] += 1
           _emit_mem_telem_event(
-              "skip_cgroup_headroom",
-              log_fn,
-              inflight_sizes=inflight_sizes,
-              submitted=submitted,
+            "skip_cgroup_headroom",
+            log_fn,
+            inflight_sizes=inflight_sizes,
+            submitted=submitted,
           )
           if skipped >= budget:
             break
           continue
         file_cache_cap_mib = int(effective_cgroup_admit_max_file_cache_mib())
-        if (
-            not alone_oversized
-            and not cgroup_admit_file_cache_ok(file_cache_cap_mib)
+        if not alone_oversized and not cgroup_admit_file_cache_ok(
+          file_cache_cap_mib
         ):
           _requeue_ingest_fill_skip(
-              client,
-              claim=claim,
-              archive_data_dir=archive_data_dir,
-              reason="skip_file_cache_pressure",
-              score=claim.score,
-              log_fn=log_fn,
+            client,
+            claim=claim,
+            archive_data_dir=archive_data_dir,
+            reason="skip_file_cache_pressure",
+            score=claim.score,
+            log_fn=log_fn,
           )
           skipped += 1
           stats["skip_file_cache_pressure"] += 1
           _emit_mem_telem_event(
-              "skip_file_cache_pressure",
-              log_fn,
-              inflight_sizes=inflight_sizes,
-              submitted=submitted,
+            "skip_file_cache_pressure",
+            log_fn,
+            inflight_sizes=inflight_sizes,
+            submitted=submitted,
           )
           if skipped >= budget:
             break
           continue
         if alone_oversized:
           _emit_mem_telem_event(
-              "admit_alone",
-              log_fn,
-              inflight_sizes=inflight_sizes,
-              submitted=submitted,
-              alone_oversized=True,
+            "admit_alone",
+            log_fn,
+            inflight_sizes=inflight_sizes,
+            submitted=submitted,
+            alone_oversized=True,
           )
       try:
         async_res = ingest_pool.apply_async(
-            _ingest_worker, (path,),
+          _ingest_worker,
+          (path,),
         )
       except Exception:
         stats["submit_err"] += 1
         jq.requeue_job(
-            client,
-            kind=jq.JOB_KIND_INGEST,
-            identity=claim.identity,
-            owner_token=claim.owner_token,
-            score=claim.score,
+          client,
+          kind=jq.JOB_KIND_INGEST,
+          identity=claim.identity,
+          owner_token=claim.owner_token,
+          score=claim.score,
         )
         raise
       inflight[claim.identity] = async_res
@@ -3745,22 +3811,25 @@ def _fill_ingest_band(
       if inflight_sizes is not None:
         inflight_sizes[claim.identity] = size_bytes
       note_mem_telem_runtime(
-          submitted=dict(submitted),
-          inflight_sizes=(
-              dict(inflight_sizes) if isinstance(inflight_sizes, dict) else {}
-          ),
+        submitted=dict(submitted),
+        inflight_sizes=(
+          dict(inflight_sizes) if isinstance(inflight_sizes, dict) else {}
+        ),
       )
       used_map[band] = int(used_map.get(band, 0)) + 1
       submitted_n += 1
     if skipped >= budget:
       break
-  if inflight_sizes is not None and int(stats.get("skip_budget_bytes", 0) or 0) == 0:
+  if (
+    inflight_sizes is not None
+    and int(stats.get("skip_budget_bytes", 0) or 0) == 0
+  ):
     _note_ingest_mem_block_state(
-        blocked=False,
-        inflight_sizes=inflight_sizes,
-        budget_bytes=int(
-            worker_memory.compute_ingest_inflight_raw_bytes_budget(),
-        ),
+      blocked=False,
+      inflight_sizes=inflight_sizes,
+      budget_bytes=int(
+        worker_memory.compute_ingest_inflight_raw_bytes_budget(),
+      ),
     )
   return submitted_n
 
@@ -3782,7 +3851,7 @@ def _is_ingest_lock_sidecar_path(path: str) -> bool:
     False
   """
   name = os.path.basename(str(path or ""))
-  return name.endswith(".fnctl.lock") or name.endswith(".lock")
+  return name.endswith((".fnctl.lock", ".lock"))
 
 
 def _is_rich_ingest_timeout_exc(exc: BaseException) -> bool:
@@ -3810,7 +3879,7 @@ def _is_rich_ingest_timeout_exc(exc: BaseException) -> bool:
   try:
     if float(getattr(exc, "elapsed_s", 0.0) or 0.0) > 0.0:
       return True
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     pass
   return False
 
@@ -3840,12 +3909,13 @@ def _log_orchestrator_ingest_timeout(
 
   Examples:
     >>> _log_orchestrator_ingest_timeout(
-    ...   identity="/x", path="/x",
+    ...   identity="/x",
+    ...   path="/x",
     ... )  # doctest: +SKIP
   """
   from hpcperfstats.dbload.sync_timedb import (
-      _unpack_ingest_worker_result,
-      stats_file_size_bytes,
+    _unpack_ingest_worker_result,
+    stats_file_size_bytes,
   )
 
   size_bytes = 0
@@ -3884,19 +3954,19 @@ def _log_orchestrator_ingest_timeout(
     except Exception:
       size_bytes = 0
   parts = [
-      "queue_orchestrator ingest timeout",
-      "identity=%s" % identity,
-      "path=%s" % path_s,
-      "size_bytes=%d" % int(size_bytes),
-      "timeout_s=%.1f" % float(timeout_s),
-      "elapsed_s=%.1f" % float(elapsed_s),
-      "stage=%s" % stage,
+    "queue_orchestrator ingest timeout",
+    f"identity={identity}",
+    f"path={path_s}",
+    "size_bytes=%d" % int(size_bytes),
+    f"timeout_s={float(timeout_s):.1f}",
+    f"elapsed_s={float(elapsed_s):.1f}",
+    f"stage={stage}",
   ]
   if postgres_s is not None:
-    parts.append("postgres_s=%.1f" % float(postgres_s))
+    parts.append(f"postgres_s={float(postgres_s):.1f}")
   if parse_elapsed_s is not None:
-    parts.append("parse_elapsed_s=%.1f" % float(parse_elapsed_s))
-  parts.append("err=%s" % err)
+    parts.append(f"parse_elapsed_s={float(parse_elapsed_s):.1f}")
+  parts.append(f"err={err}")
   _log(" ".join(parts), log_fn=log_fn)
 
 
@@ -3967,7 +4037,8 @@ def _ingest_reaper_skip_identities(
 
   Examples:
     >>> _ingest_reaper_skip_identities(
-    ...   {"/raw/a": _IngestTimeoutSentinel()}, {"/raw/a": object()},
+    ...   {"/raw/a": _IngestTimeoutSentinel()},
+    ...   {"/raw/a": object()},
     ... )
     ()
   """
@@ -4023,7 +4094,9 @@ def _drop_expired_ingest_timeout_sentinels(
 
   Examples:
     >>> _drop_expired_ingest_timeout_sentinels(
-    ...   SyncTimedbJobStore(""), inflight={}, claims={},
+    ...   SyncTimedbJobStore(""),
+    ...   inflight={},
+    ...   claims={},
     ... )
     0
   """
@@ -4080,8 +4153,16 @@ def _drain_ingest_ready(
 
   Examples:
     >>> _drain_ingest_ready(
-    ...   type("C", (), {"eval": lambda *a: 1, "evalsha": lambda *a: 1,
-    ...                  "script_load": lambda s: "x", "rpush": lambda *a: 1})(),
+    ...   type(
+    ...     "C",
+    ...     (),
+    ...     {
+    ...       "eval": lambda *a: 1,
+    ...       "evalsha": lambda *a: 1,
+    ...       "script_load": lambda s: "x",
+    ...       "rpush": lambda *a: 1,
+    ...     },
+    ...   )(),
     ...   inflight={},
     ...   claims={},
     ...   tgz_archive_dir="/d",
@@ -4112,18 +4193,20 @@ def _drain_ingest_ready(
       _release_ingest_inflight_size(inflight_sizes, identity)
       done += 1
       _log_orchestrator_ingest_timeout(
-          identity=identity,
-          path=path or identity,
-          log_fn=log_fn,
-          exc=exc,
+        identity=identity,
+        path=path or identity,
+        log_fn=log_fn,
+        exc=exc,
       )
       day_tok = _day_token_from_date(
-          _calendar_day_for_ingest_path(path or identity, tgz_archive_dir),
+        _calendar_day_for_ingest_path(path or identity, tgz_archive_dir),
       )
       progress.record(day_tok, "ingest", 1)
       progress.record(day_tok, "timeout", 1)
       _requeue_claimed_job_without_attempt_bump(
-          client, claim=claim, log_fn=log_fn,
+        client,
+        claim=claim,
+        log_fn=log_fn,
       )
       continue
     except Exception as exc:
@@ -4134,22 +4217,21 @@ def _drain_ingest_ready(
       _release_ingest_inflight_size(inflight_sizes, identity)
       done += 1
       _log(
-          "queue_orchestrator ingest fail identity=%s err=%s"
-          % (identity, type(exc).__name__),
-          log_fn=log_fn,
+        f"queue_orchestrator ingest fail identity={identity} err={type(exc).__name__}",
+        log_fn=log_fn,
       )
       day_tok = _day_token_from_date(
-          _calendar_day_for_ingest_path(path or identity, tgz_archive_dir),
+        _calendar_day_for_ingest_path(path or identity, tgz_archive_dir),
       )
       progress.record(day_tok, "ingest", 1)
       progress.record(day_tok, "fail", 1)
       _retry_or_dead_letter(
-          client,
-          kind=jq.JOB_KIND_INGEST,
-          claim=claim,
-          archive_data_dir=archive_data_dir,
-          reason=type(exc).__name__,
-          log_fn=log_fn,
+        client,
+        kind=jq.JOB_KIND_INGEST,
+        claim=claim,
+        archive_data_dir=archive_data_dir,
+        reason=type(exc).__name__,
+        log_fn=log_fn,
       )
       continue
     claim = claims.pop(identity, None)
@@ -4170,55 +4252,57 @@ def _drain_ingest_ready(
         outcome = str(meta.get("outcome") or "")
     if not ingest_ok:
       day_tok = _day_token_from_date(
-          _calendar_day_for_ingest_path(path or identity, tgz_archive_dir),
+        _calendar_day_for_ingest_path(path or identity, tgz_archive_dir),
       )
       progress.record(day_tok, "ingest", 1)
       if outcome in ("timeout", "lookup_budget"):
         progress.record(day_tok, "timeout", 1)
         _log_orchestrator_ingest_timeout(
-            identity=identity,
-            path=path or identity,
-            log_fn=log_fn,
-            result=result,
-            outcome=outcome or "timeout",
+          identity=identity,
+          path=path or identity,
+          log_fn=log_fn,
+          result=result,
+          outcome=outcome or "timeout",
         )
         _requeue_claimed_job_without_attempt_bump(
-            client, claim=claim, log_fn=log_fn,
+          client,
+          claim=claim,
+          log_fn=log_fn,
         )
       else:
         progress.record(day_tok, "fail", 1)
         _retry_or_dead_letter(
-            client,
-            kind=jq.JOB_KIND_INGEST,
-            claim=claim,
-            archive_data_dir=archive_data_dir,
-            reason=outcome or "ingest_incomplete",
-            log_fn=log_fn,
-        )
-      continue
-    try:
-      from hpcperfstats.dbload.sync_timedb import (
-          _record_ingest_marks_from_worker_result,
-      )
-      # Worker already logged mark INFO; coordinator persists quietly.
-      _record_ingest_marks_from_worker_result(result, log_fn=None)
-    except Exception as exc:
-      _log(
-          "queue_orchestrator ingest mark fail identity=%s err=%s"
-          % (identity, type(exc).__name__),
-          log_fn=log_fn,
-      )
-      _retry_or_dead_letter(
           client,
           kind=jq.JOB_KIND_INGEST,
           claim=claim,
           archive_data_dir=archive_data_dir,
-          reason="ingest_mark_failed",
+          reason=outcome or "ingest_incomplete",
           log_fn=log_fn,
+        )
+      continue
+    try:
+      from hpcperfstats.dbload.sync_timedb import (
+        _record_ingest_marks_from_worker_result,
+      )
+
+      # Worker already logged mark INFO; coordinator persists quietly.
+      _record_ingest_marks_from_worker_result(result, log_fn=None)
+    except Exception as exc:
+      _log(
+        f"queue_orchestrator ingest mark fail identity={identity} err={type(exc).__name__}",
+        log_fn=log_fn,
+      )
+      _retry_or_dead_letter(
+        client,
+        kind=jq.JOB_KIND_INGEST,
+        claim=claim,
+        archive_data_dir=archive_data_dir,
+        reason="ingest_mark_failed",
+        log_fn=log_fn,
       )
       continue
     day_tok = _day_token_from_date(
-        _calendar_day_for_ingest_path(path or identity, tgz_archive_dir),
+      _calendar_day_for_ingest_path(path or identity, tgz_archive_dir),
     )
     progress.record(day_tok, "ingest", 1)
     if outcome == "db_skip":
@@ -4232,14 +4316,17 @@ def _drain_ingest_ready(
         _TOTAL_INGESTED += 1
     if need_archival and path:
       jq.enqueue_list_job(
-          client, kind=jq.JOB_KIND_APPEND, identity=path, dedupe=True,
+        client,
+        kind=jq.JOB_KIND_APPEND,
+        identity=path,
+        dedupe=True,
       )
     if claim is not None:
       jq.ack_job(
-          client,
-          kind=jq.JOB_KIND_INGEST,
-          identity=identity,
-          owner_token=claim.owner_token,
+        client,
+        kind=jq.JOB_KIND_INGEST,
+        identity=identity,
+        owner_token=claim.owner_token,
       )
   return done
 
@@ -4344,8 +4431,14 @@ def _try_submit_pending_append_days(
 
   Examples:
     >>> _try_submit_pending_append_days(
-    ...   client=None, cap=0, inflight={}, claims={}, archive_pool=None,
-    ...   tgz_archive_dir="/d", batch_size=1, allow_partial=True,
+    ...   client=None,
+    ...   cap=0,
+    ...   inflight={},
+    ...   claims={},
+    ...   archive_pool=None,
+    ...   tgz_archive_dir="/d",
+    ...   batch_size=1,
+    ...   allow_partial=True,
     ... )
     0
   """
@@ -4369,16 +4462,14 @@ def _try_submit_pending_append_days(
       continue
     paths = [job.identity for job in batch_claims]
     try:
-      async_res = archive_pool.apply_async(
-          _append_worker, ((tar_path, paths),)
-      )
+      async_res = archive_pool.apply_async(_append_worker, ((tar_path, paths),))
     except Exception:
       for job in batch_claims:
         jq.requeue_job(
-            client,
-            kind=jq.JOB_KIND_APPEND,
-            identity=job.identity,
-            owner_token=job.owner_token,
+          client,
+          kind=jq.JOB_KIND_APPEND,
+          identity=job.identity,
+          owner_token=job.owner_token,
         )
       raise
     inflight[tar_path] = async_res
@@ -4421,8 +4512,15 @@ def _fill_append_slots(
 
   Examples:
     >>> _fill_append_slots(
-    ...   type("C", (), {"lpop": lambda *a: None, "evalsha": lambda *a: False,
-    ...                  "script_load": lambda s: "x"})(),
+    ...   type(
+    ...     "C",
+    ...     (),
+    ...     {
+    ...       "lpop": lambda *a: None,
+    ...       "evalsha": lambda *a: False,
+    ...       "script_load": lambda s: "x",
+    ...     },
+    ...   )(),
     ...   cap=0,
     ...   inflight={},
     ...   claims={},
@@ -4438,19 +4536,21 @@ def _fill_append_slots(
   if not cgroup_admit_headroom_ok(cfg.get_sync_cgroup_admit_headroom_mib()):
     _emit_mem_telem_event("skip_cgroup_headroom", None)
     return 0
-  if not cgroup_admit_file_cache_ok(effective_cgroup_admit_max_file_cache_mib()):
+  if not cgroup_admit_file_cache_ok(
+    effective_cgroup_admit_max_file_cache_mib()
+  ):
     _emit_mem_telem_event("skip_file_cache_pressure", None)
     return 0
   while len(inflight) < cap:
     submitted += _try_submit_pending_append_days(
-        client=client,
-        cap=cap,
-        inflight=inflight,
-        claims=claims,
-        archive_pool=archive_pool,
-        tgz_archive_dir=tgz_archive_dir,
-        batch_size=batch_size,
-        allow_partial=store_exhausted,
+      client=client,
+      cap=cap,
+      inflight=inflight,
+      claims=claims,
+      archive_pool=archive_pool,
+      tgz_archive_dir=tgz_archive_dir,
+      batch_size=batch_size,
+      allow_partial=store_exhausted,
     )
     if len(inflight) >= cap:
       break
@@ -4459,9 +4559,9 @@ def _fill_append_slots(
     if skipped >= APPEND_FILL_SKIP_BUDGET:
       break
     claim = jq.claim_list_job(
-        client,
-        kind=jq.JOB_KIND_APPEND,
-        owner_token=jq.make_lease_owner_token(),
+      client,
+      kind=jq.JOB_KIND_APPEND,
+      owner_token=jq.make_lease_owner_token(),
     )
     if claim is None:
       store_exhausted = True
@@ -4469,23 +4569,21 @@ def _fill_append_slots(
     path = claim.identity
     if not path or not os.path.isfile(path):
       jq.ack_job(
-          client,
-          kind=jq.JOB_KIND_APPEND,
-          identity=path,
-          owner_token=claim.owner_token,
+        client,
+        kind=jq.JOB_KIND_APPEND,
+        identity=path,
+        owner_token=claim.owner_token,
       )
       skipped += 1
       continue
     this_tar = daily_tar_path_for_stats_path(path, tgz_archive_dir)
-    day_obj = (
-        calendar_date_from_daily_tar_path(this_tar) if this_tar else None
-    )
+    day_obj = calendar_date_from_daily_tar_path(this_tar) if this_tar else None
     if not this_tar or day_obj is None:
       jq.ack_job(
-          client,
-          kind=jq.JOB_KIND_APPEND,
-          identity=path,
-          owner_token=claim.owner_token,
+        client,
+        kind=jq.JOB_KIND_APPEND,
+        identity=path,
+        owner_token=claim.owner_token,
       )
       skipped += 1
       continue
@@ -4518,8 +4616,16 @@ def _drain_append_ready(
 
   Examples:
     >>> _drain_append_ready(
-    ...   type("C", (), {"eval": lambda *a: 1, "evalsha": lambda *a: 1,
-    ...                  "script_load": lambda s: "x", "rpush": lambda *a: 1})(),
+    ...   type(
+    ...     "C",
+    ...     (),
+    ...     {
+    ...       "eval": lambda *a: 1,
+    ...       "evalsha": lambda *a: 1,
+    ...       "script_load": lambda s: "x",
+    ...       "rpush": lambda *a: 1,
+    ...     },
+    ...   )(),
     ...   inflight={},
     ...   claims={},
     ...   tgz_archive_dir="/d",
@@ -4528,9 +4634,9 @@ def _drain_append_ready(
     0
   """
   from hpcperfstats.dbload.sync_timedb import (
-      ArchiveAppendOutcome,
-      _archive_append_outcome_is_gate_skip,
-      _archive_append_outcome_is_soft_requeue,
+    ArchiveAppendOutcome,
+    _archive_append_outcome_is_gate_skip,
+    _archive_append_outcome_is_soft_requeue,
   )
 
   done = 0
@@ -4548,79 +4654,97 @@ def _drain_append_ready(
     except Exception as exc:
       failed = True
       _log(
-          "queue_orchestrator append fail path=%s err=%s detail=%s"
-          % (key, type(exc).__name__, exc),
-          log_fn=log_fn,
+        f"queue_orchestrator append fail path={key} err={type(exc).__name__} detail={exc}",
+        log_fn=log_fn,
       )
       for job in jobs:
         _retry_or_dead_letter(
-            client,
-            kind=jq.JOB_KIND_APPEND,
-            claim=job,
-            archive_data_dir=archive_data_dir,
-            reason=type(exc).__name__,
-            log_fn=log_fn,
+          client,
+          kind=jq.JOB_KIND_APPEND,
+          claim=job,
+          archive_data_dir=archive_data_dir,
+          reason=type(exc).__name__,
+          log_fn=log_fn,
         )
     if failed:
       continue
     if _archive_append_outcome_is_soft_requeue(result):
       _log(
-          "queue_orchestrator append soft_requeue path=%s"
-          % key,
-          log_fn=log_fn,
+        f"queue_orchestrator append soft_requeue path={key}",
+        log_fn=log_fn,
       )
-      day_tok = _day_token_from_date(calendar_date_from_daily_tar_path(
-          key if str(key).endswith(".tar") else daily_tar_path_for_stats_path(
-              key, tgz_archive_dir,
+      day_tok = _day_token_from_date(
+        calendar_date_from_daily_tar_path(
+          key
+          if str(key).endswith(".tar")
+          else daily_tar_path_for_stats_path(
+            key,
+            tgz_archive_dir,
           ),
-      ))
+        )
+      )
       progress.record(day_tok, "soft_requeue", 1)
       progress.record(day_tok, "requeue_noprogress", 1)
       for job in jobs:
         jq.requeue_job(
-            client,
-            kind=jq.JOB_KIND_APPEND,
-            identity=job.identity,
-            owner_token=job.owner_token,
+          client,
+          kind=jq.JOB_KIND_APPEND,
+          identity=job.identity,
+          owner_token=job.owner_token,
         )
       continue
     if isinstance(result, ArchiveAppendOutcome) and not result.ok:
       if not _archive_append_outcome_is_gate_skip(result):
-        day_tok = _day_token_from_date(calendar_date_from_daily_tar_path(
-            key if str(key).endswith(".tar") else daily_tar_path_for_stats_path(
-                key, tgz_archive_dir,
+        day_tok = _day_token_from_date(
+          calendar_date_from_daily_tar_path(
+            key
+            if str(key).endswith(".tar")
+            else daily_tar_path_for_stats_path(
+              key,
+              tgz_archive_dir,
             ),
-        ))
+          )
+        )
         progress.record(day_tok, "append_drop", 1)
         for job in jobs:
           _retry_or_dead_letter(
-              client,
-              kind=jq.JOB_KIND_APPEND,
-              claim=job,
-              archive_data_dir=archive_data_dir,
-              reason="append_failed",
-              log_fn=log_fn,
-          )
-        continue
-    elif result is False:
-      day_tok = _day_token_from_date(calendar_date_from_daily_tar_path(
-          key if str(key).endswith(".tar") else daily_tar_path_for_stats_path(
-              key, tgz_archive_dir,
-          ),
-      ))
-      progress.record(day_tok, "append_drop", 1)
-      for job in jobs:
-        _retry_or_dead_letter(
             client,
             kind=jq.JOB_KIND_APPEND,
             claim=job,
             archive_data_dir=archive_data_dir,
             reason="append_failed",
             log_fn=log_fn,
+          )
+        continue
+    elif result is False:
+      day_tok = _day_token_from_date(
+        calendar_date_from_daily_tar_path(
+          key
+          if str(key).endswith(".tar")
+          else daily_tar_path_for_stats_path(
+            key,
+            tgz_archive_dir,
+          ),
+        )
+      )
+      progress.record(day_tok, "append_drop", 1)
+      for job in jobs:
+        _retry_or_dead_letter(
+          client,
+          kind=jq.JOB_KIND_APPEND,
+          claim=job,
+          archive_data_dir=archive_data_dir,
+          reason="append_failed",
+          log_fn=log_fn,
         )
       continue
-    tar = key if str(key).endswith(".tar") else daily_tar_path_for_stats_path(
-        key, tgz_archive_dir,
+    tar = (
+      key
+      if str(key).endswith(".tar")
+      else daily_tar_path_for_stats_path(
+        key,
+        tgz_archive_dir,
+      )
     )
     day_tok = _day_token_from_date(calendar_date_from_daily_tar_path(tar))
     if _archive_append_outcome_is_gate_skip(result):
@@ -4628,22 +4752,22 @@ def _drain_append_ready(
       progress.record(day_tok, "gate_skip", len(skipped) or 1)
       if skipped and tar:
         _handoff_retryable_paths_to_ingest(
-            client,
-            tar,
-            skipped,
-            tgz_archive_dir=tgz_archive_dir,
-            archive_data_dir=archive_data_dir,
-            reason="gate_skip",
-            log_fn=log_fn,
+          client,
+          tar,
+          skipped,
+          tgz_archive_dir=tgz_archive_dir,
+          archive_data_dir=archive_data_dir,
+          reason="gate_skip",
+          log_fn=log_fn,
         )
     else:
       progress.record(day_tok, "archive", 1)
     for job in jobs:
       jq.ack_job(
-          client,
-          kind=jq.JOB_KIND_APPEND,
-          identity=job.identity,
-          owner_token=job.owner_token,
+        client,
+        kind=jq.JOB_KIND_APPEND,
+        identity=job.identity,
+        owner_token=job.owner_token,
       )
     if tar:
       # Append coordinator must never run remaining-raw / archive find.
@@ -4688,7 +4812,14 @@ def _prioritize_day_close_list_oldest_first(client: Any) -> bool:
 
   Examples:
     >>> _prioritize_day_close_list_oldest_first(
-    ...     type("C", (), {"list_slice": lambda *a: [], "reorder_list": lambda *a: False})()
+    ...   type(
+    ...     "C",
+    ...     (),
+    ...     {
+    ...       "list_slice": lambda *a: [],
+    ...       "reorder_list": lambda *a: False,
+    ...     },
+    ...   )()
     ... )
     False
   """
@@ -4744,8 +4875,14 @@ def _fill_day_close_slots(
 
   Examples:
     >>> from concurrent.futures import ThreadPoolExecutor
-    >>> stub = type("C", (), {"script_load": lambda self, s: "sha",
-    ...                       "evalsha": lambda self, *a: False})()
+    >>> stub = type(
+    ...   "C",
+    ...   (),
+    ...   {
+    ...     "script_load": lambda self, s: "sha",
+    ...     "evalsha": lambda self, *a: False,
+    ...   },
+    ... )()
     >>> with ThreadPoolExecutor(max_workers=1) as ex:
     ...   _fill_day_close_slots(
     ...     stub,
@@ -4757,7 +4894,9 @@ def _fill_day_close_slots(
     ...   )
     (0, 0)
   """
-  tracker = defer_tracker if defer_tracker is not None else _DAY_CLOSE_YIELD_BACKOFF
+  tracker = (
+    defer_tracker if defer_tracker is not None else _DAY_CLOSE_YIELD_BACKOFF
+  )
   _prioritize_day_close_list_oldest_first(client)
   cap = max(1, int(cfg.get_sync_day_close_max_inflight()))
   submitted = 0
@@ -4767,34 +4906,36 @@ def _fill_day_close_slots(
   skip_budget = max(cap * 4, 16)
   while len(inflight) < cap and skip_budget > 0:
     claim = jq.claim_list_job(
-        client,
-        kind=jq.JOB_KIND_DAY_CLOSE,
-        owner_token=jq.make_lease_owner_token(),
+      client,
+      kind=jq.JOB_KIND_DAY_CLOSE,
+      owner_token=jq.make_lease_owner_token(),
     )
     if claim is None:
       break
     if tracker.yield_backoff_active(claim.identity):
       _requeue_claimed_job_without_attempt_bump(
-          client, claim=claim, log_fn=log_fn,
+        client,
+        claim=claim,
+        log_fn=log_fn,
       )
       backoff_skips += 1
       skip_budget -= 1
       continue
     try:
       fut = executor.submit(
-          _run_day_close_job,
-          claim.identity,
-          tgz_archive_dir=tgz_archive_dir,
-          archive_data_dir=archive_data_dir,
-          log_fn=log_fn,
-          job_store=client,
+        _run_day_close_job,
+        claim.identity,
+        tgz_archive_dir=tgz_archive_dir,
+        archive_data_dir=archive_data_dir,
+        log_fn=log_fn,
+        job_store=client,
       )
     except RuntimeError:
       jq.requeue_job(
-          client,
-          kind=jq.JOB_KIND_DAY_CLOSE,
-          identity=claim.identity,
-          owner_token=claim.owner_token,
+        client,
+        kind=jq.JOB_KIND_DAY_CLOSE,
+        identity=claim.identity,
+        owner_token=claim.owner_token,
       )
       break
     inflight[claim.identity] = fut
@@ -4802,7 +4943,9 @@ def _fill_day_close_slots(
     day_tok = progress.day_token_from_day_close_identity(claim.identity)
     progress.record(day_tok, "dc_run", 1)
     _day_close_log_claim_if_allowed(
-        day_tok, claim.identity, log_fn=log_fn,
+      day_tok,
+      claim.identity,
+      log_fn=log_fn,
     )
     submitted += 1
   return submitted, backoff_skips
@@ -4839,15 +4982,24 @@ def _drain_day_close_ready(
 
   Examples:
     >>> _drain_day_close_ready(
-    ...   type("C", (), {"eval": lambda *a: 1, "evalsha": lambda *a: 1,
-    ...                  "script_load": lambda s: "x",
-    ...                  "rpush": lambda *a: 1})(),
+    ...   type(
+    ...     "C",
+    ...     (),
+    ...     {
+    ...       "eval": lambda *a: 1,
+    ...       "evalsha": lambda *a: 1,
+    ...       "script_load": lambda s: "x",
+    ...       "rpush": lambda *a: 1,
+    ...     },
+    ...   )(),
     ...   inflight={},
     ...   leases={},
     ... )
     (0, True)
   """
-  tracker = defer_tracker if defer_tracker is not None else _DAY_CLOSE_YIELD_BACKOFF
+  tracker = (
+    defer_tracker if defer_tracker is not None else _DAY_CLOSE_YIELD_BACKOFF
+  )
   done = 0
   saw_productive = False
   saw_cooperative = False
@@ -4862,31 +5014,33 @@ def _drain_day_close_ready(
     try:
       outcome = str(fut.result())
     except Exception as exc:
-      failure = "%s: %s" % (type(exc).__name__, exc)
+      failure = f"{type(exc).__name__}: {exc}"
       _log(
-          "queue_orchestrator day_close fail id=%s err=%s"
-          % (identity, failure),
-          log_fn=log_fn,
+        f"queue_orchestrator day_close fail id={identity} err={failure}",
+        log_fn=log_fn,
       )
     day_tok = progress.day_token_from_day_close_identity(identity)
     vacate_outcome = failure or outcome
     _day_close_log_vacate_if_allowed(
-        day_tok, identity, vacate_outcome, log_fn=log_fn,
+      day_tok,
+      identity,
+      vacate_outcome,
+      log_fn=log_fn,
     )
     if failure or outcome == "verify_failed":
       saw_productive = True
       progress.record(
-          day_tok,
-          "verify_failed",
-          1,
+        day_tok,
+        "verify_failed",
+        1,
       )
       _retry_or_dead_letter(
-          client,
-          kind=jq.JOB_KIND_DAY_CLOSE,
-          claim=claim,
-          archive_data_dir=archive_data_dir,
-          reason=failure or outcome,
-          log_fn=log_fn,
+        client,
+        kind=jq.JOB_KIND_DAY_CLOSE,
+        claim=claim,
+        archive_data_dir=archive_data_dir,
+        reason=failure or outcome,
+        log_fn=log_fn,
       )
       continue
     if outcome != "complete":
@@ -4898,8 +5052,8 @@ def _drain_day_close_ready(
         saw_cooperative = True
         tracker.record_yield_backoff(identity)
       elif (
-          outcome == "incomplete_raw"
-          or outcome not in _TRANSIENT_DAY_CLOSE_OUTCOMES
+        outcome == "incomplete_raw"
+        or outcome not in _TRANSIENT_DAY_CLOSE_OUTCOMES
       ):
         progress.record(day_tok, "incomplete_raw", 1)
         saw_cooperative = True
@@ -4907,7 +5061,9 @@ def _drain_day_close_ready(
       else:
         saw_cooperative = True
       _requeue_claimed_job_without_attempt_bump(
-          client, claim=claim, log_fn=log_fn,
+        client,
+        claim=claim,
+        log_fn=log_fn,
       )
       continue
     saw_productive = True
@@ -4915,10 +5071,10 @@ def _drain_day_close_ready(
     if claim is not None:
       progress.record(day_tok, "complete", 1)
       jq.ack_job(
-          client,
-          kind=jq.JOB_KIND_DAY_CLOSE,
-          identity=identity,
-          owner_token=claim.owner_token,
+        client,
+        kind=jq.JOB_KIND_DAY_CLOSE,
+        identity=identity,
+        owner_token=claim.owner_token,
       )
   if done == 0:
     cooperative_only = True
@@ -4959,18 +5115,18 @@ def _release_claims_on_shutdown(
       for job in _iter_claim_jobs(claim):
         try:
           if jq.requeue_job(
-              client,
-              kind=kind,
-              identity=job.identity,
-              owner_token=job.owner_token,
-              score=getattr(job, "score", None),
+            client,
+            kind=kind,
+            identity=job.identity,
+            owner_token=job.owner_token,
+            score=getattr(job, "score", None),
           ):
             released += 1
         except Exception as exc:
           _log(
-              "queue_orchestrator shutdown requeue error kind=%s identity=%s "
-              "err=%s" % (kind, job.identity, type(exc).__name__),
-              log_fn=log_fn,
+            f"queue_orchestrator shutdown requeue error kind={kind} identity={job.identity} "
+            f"err={type(exc).__name__}",
+            log_fn=log_fn,
           )
       claims.pop(identity, None)
   return released
@@ -5013,7 +5169,9 @@ def _protect_local_inflight_deadlines(
   for ident in idents:
     try:
       if client.extend_inflight_deadline(
-          kind=kind, identity=ident, extend_s=extend_s,
+        kind=kind,
+        identity=ident,
+        extend_s=extend_s,
       ):
         protected += 1
     except Exception:
@@ -5054,18 +5212,19 @@ def _reap_stale_inflight(
     return 0
   skip = frozenset(str(x) for x in (skip_identities or ()))
   total = 0
-  for kind in (kinds if kinds is not None else jq.JOB_KINDS_ALL):
+  for kind in kinds if kinds is not None else jq.JOB_KINDS_ALL:
     if skip:
       _protect_local_inflight_deadlines(
-          client, kind=str(kind), identities=skip,
+        client,
+        kind=str(kind),
+        identities=skip,
       )
     try:
       recovered = jq.reap_expired_inflight(client, kind=kind)
     except Exception as exc:
       _log(
-          "queue_orchestrator reap error kind=%s err=%s"
-          % (kind, type(exc).__name__),
-          log_fn=log_fn,
+        f"queue_orchestrator reap error kind={kind} err={type(exc).__name__}",
+        log_fn=log_fn,
       )
       continue
     if skip and recovered:
@@ -5073,9 +5232,9 @@ def _reap_stale_inflight(
     if recovered:
       total += len(recovered)
       _log(
-          "queue_orchestrator reaped kind=%s count=%d first=%s"
-          % (kind, len(recovered), recovered[0]),
-          log_fn=log_fn,
+        "queue_orchestrator reaped kind=%s count=%d first=%s"
+        % (kind, len(recovered), recovered[0]),
+        log_fn=log_fn,
       )
   return total
 
@@ -5100,8 +5259,10 @@ def _queues_appear_idle(client: Any) -> bool:
     >>> class _C:
     ...   def zcard(self, k):
     ...     return 0
+    ...
     ...   def llen(self, k):
     ...     return 0
+    ...
     ...   def hlen(self, k):
     ...     return 0
     >>> _queues_appear_idle(_C())
@@ -5152,13 +5313,13 @@ def _ingest_runtime_lease_hygiene(
 
   Examples:
     >>> _ingest_runtime_lease_hygiene(
-    ...     client=None,
-    ...     ingest_inflight={},
-    ...     ingest_leases={},
-    ...     ingest_pool_size=24,
-    ...     zcard=0,
-    ...     last_runtime_steal=0.0,
-    ...     log_fn=None,
+    ...   client=None,
+    ...   ingest_inflight={},
+    ...   ingest_leases={},
+    ...   ingest_pool_size=24,
+    ...   zcard=0,
+    ...   last_runtime_steal=0.0,
+    ...   log_fn=None,
     ... )
     0.0
   """
@@ -5167,9 +5328,7 @@ def _ingest_runtime_lease_hygiene(
   if int(zcard) <= 0:
     return last_runtime_steal
   hlen = (
-      int(store_hlen)
-      if store_hlen is not None
-      else _store_ingest_hlen(client)
+    int(store_hlen) if store_hlen is not None else _store_ingest_hlen(client)
   )
   local_full = len(ingest_inflight) >= int(ingest_pool_size)
   store_underfull = hlen < int(ingest_pool_size)
@@ -5181,37 +5340,34 @@ def _ingest_runtime_lease_hygiene(
   identities = frozenset(ingest_inflight) | frozenset(ingest_leases)
   try:
     reconciled = jq.reconcile_this_owner_orphan_leases(
-        client,
-        local_identities=identities,
-        kind=jq.JOB_KIND_INGEST,
-        owner_token=jq.make_lease_owner_token(),
+      client,
+      local_identities=identities,
+      kind=jq.JOB_KIND_INGEST,
+      owner_token=jq.make_lease_owner_token(),
     )
   except Exception as exc:
     _log(
-        "queue_orchestrator ingest orphan reconcile failed: %s"
-        % type(exc).__name__,
-        log_fn=log_fn,
+      f"queue_orchestrator ingest orphan reconcile failed: {type(exc).__name__}",
+      log_fn=log_fn,
     )
     reconciled = 0
   if reconciled:
     _log(
-        "queue_orchestrator ingest orphan reconcile count=%d"
-        % reconciled,
-        log_fn=log_fn,
+      "queue_orchestrator ingest orphan reconcile count=%d" % reconciled,
+      log_fn=log_fn,
     )
   try:
     stolen = jq.steal_dead_owner_leases(client)
   except Exception as exc:
     _log(
-        "queue_orchestrator ingest runtime steal failed: %s"
-        % type(exc).__name__,
-        log_fn=log_fn,
+      f"queue_orchestrator ingest runtime steal failed: {type(exc).__name__}",
+      log_fn=log_fn,
     )
     stolen = 0
   if stolen:
     _log(
-        "queue_orchestrator ingest runtime steal count=%d" % stolen,
-        log_fn=log_fn,
+      "queue_orchestrator ingest runtime steal count=%d" % stolen,
+      log_fn=log_fn,
     )
   return now_steal
 
@@ -5278,72 +5434,73 @@ def _ingest_coordinator_fill_tick(
     hot_queued, catchup_queued, zcard = jq.ingest_queue_census(client)
   except Exception as exc:
     raise RuntimeError(
-        "queue orchestrator job-store zcount failed: %s" % type(exc).__name__
+      f"queue orchestrator job-store zcount failed: {type(exc).__name__}"
     ) from exc
   probe_depth = jq.ingest_claim_probe_depth(
-      hot_q=hot_queued, pool=ingest_pool_size,
+    hot_q=hot_queued,
+    pool=ingest_pool_size,
   )
   pool = pool_ref.get()
   hot_n, catch_n = _count_ingest_band_inflight(ingest_leases)
   band_used = {"hot": hot_n, "catchup": catch_n}
   fill_kw = {
-      "skip_budget": skip_budget,
-      "probe_depth": probe_depth,
-      "fill_stats": fill_stats,
-      "tgz_archive_dir": tgz_archive_dir,
-      "archive_data_dir": directory,
-      "band_used": band_used,
-      "inflight_sizes": inflight_sizes,
-      "log_fn": log_fn,
+    "skip_budget": skip_budget,
+    "probe_depth": probe_depth,
+    "fill_stats": fill_stats,
+    "tgz_archive_dir": tgz_archive_dir,
+    "archive_data_dir": directory,
+    "band_used": band_used,
+    "inflight_sizes": inflight_sizes,
+    "log_fn": log_fn,
   }
   while len(ingest_inflight) < hot_cap:
     n = _fill_ingest_band(
-        client,
-        band="hot",
-        cap=hot_cap,
-        inflight=ingest_inflight,
-        claims=ingest_leases,
-        submitted=ingest_submitted,
-        ingest_pool=pool,
-        band_cap=hot_cap,
-        **fill_kw,
+      client,
+      band="hot",
+      cap=hot_cap,
+      inflight=ingest_inflight,
+      claims=ingest_leases,
+      submitted=ingest_submitted,
+      ingest_pool=pool,
+      band_cap=hot_cap,
+      **fill_kw,
     )
     did += n
     hot_submitted += n
     if n == 0:
       break
   catchup_limit = catchup_dispatch_cap(
-      hot_queued=hot_queued,
-      catchup_queued=catchup_queued,
-      hot_cap=hot_cap,
-      catchup_cap=catchup_cap,
-      pool=ingest_pool_size,
+    hot_queued=hot_queued,
+    catchup_queued=catchup_queued,
+    hot_cap=hot_cap,
+    catchup_cap=catchup_cap,
+    pool=ingest_pool_size,
   )
   while len(ingest_inflight) < ingest_pool_size:
     n = _fill_ingest_band(
-        client,
-        band="catchup",
-        cap=ingest_pool_size,
-        inflight=ingest_inflight,
-        claims=ingest_leases,
-        submitted=ingest_submitted,
-        ingest_pool=pool_ref.get(),
-        band_cap=catchup_limit,
-        **fill_kw,
+      client,
+      band="catchup",
+      cap=ingest_pool_size,
+      inflight=ingest_inflight,
+      claims=ingest_leases,
+      submitted=ingest_submitted,
+      ingest_pool=pool_ref.get(),
+      band_cap=catchup_limit,
+      **fill_kw,
     )
     did += n
     if n == 0:
       break
   while len(ingest_inflight) < ingest_pool_size:
     n = _fill_ingest_band(
-        client,
-        band="hot",
-        cap=ingest_pool_size,
-        inflight=ingest_inflight,
-        claims=ingest_leases,
-        submitted=ingest_submitted,
-        ingest_pool=pool_ref.get(),
-        **fill_kw,
+      client,
+      band="hot",
+      cap=ingest_pool_size,
+      inflight=ingest_inflight,
+      claims=ingest_leases,
+      submitted=ingest_submitted,
+      ingest_pool=pool_ref.get(),
+      **fill_kw,
     )
     did += n
     hot_submitted += n
@@ -5356,14 +5513,14 @@ def _ingest_coordinator_fill_tick(
       retry_kw["probe_depth"] = retry_probe
       while len(ingest_inflight) < ingest_pool_size:
         n = _fill_ingest_band(
-            client,
-            band="hot",
-            cap=ingest_pool_size,
-            inflight=ingest_inflight,
-            claims=ingest_leases,
-            submitted=ingest_submitted,
-            ingest_pool=pool_ref.get(),
-            **retry_kw,
+          client,
+          band="hot",
+          cap=ingest_pool_size,
+          inflight=ingest_inflight,
+          claims=ingest_leases,
+          submitted=ingest_submitted,
+          ingest_pool=pool_ref.get(),
+          **retry_kw,
         )
         did += n
         hot_submitted += n
@@ -5371,24 +5528,24 @@ def _ingest_coordinator_fill_tick(
           break
     if len(ingest_inflight) < ingest_pool_size and catchup_queued > 0:
       catchup_limit = catchup_dispatch_cap(
-          hot_queued=hot_queued,
-          catchup_queued=catchup_queued,
-          hot_cap=hot_cap,
-          catchup_cap=catchup_cap,
-          pool=ingest_pool_size,
-          hot_submitted=0,
+        hot_queued=hot_queued,
+        catchup_queued=catchup_queued,
+        hot_cap=hot_cap,
+        catchup_cap=catchup_cap,
+        pool=ingest_pool_size,
+        hot_submitted=0,
       )
       while len(ingest_inflight) < ingest_pool_size:
         n = _fill_ingest_band(
-            client,
-            band="catchup",
-            cap=ingest_pool_size,
-            inflight=ingest_inflight,
-            claims=ingest_leases,
-            submitted=ingest_submitted,
-            ingest_pool=pool_ref.get(),
-            band_cap=catchup_limit,
-            **fill_kw,
+          client,
+          band="catchup",
+          cap=ingest_pool_size,
+          inflight=ingest_inflight,
+          claims=ingest_leases,
+          submitted=ingest_submitted,
+          ingest_pool=pool_ref.get(),
+          band_cap=catchup_limit,
+          **fill_kw,
         )
         did += n
         if n == 0:
@@ -5454,9 +5611,9 @@ def _ingest_coordinator_loop(
     True
   """
   set_daemon_thread_title(
-      "ingest-coordinator",
-      script_name="sync_timedb.py",
-      role="ingest-coordinator",
+    "ingest-coordinator",
+    script_name="sync_timedb.py",
+    role="ingest-coordinator",
   )
   role = "ingest-coordinator"
   last_reap = time.monotonic()
@@ -5474,17 +5631,17 @@ def _ingest_coordinator_loop(
       if recycle_gate.recycle_requested.is_set():
         recycle_gate.paused.set()
         while recycle_gate.recycle_requested.is_set() and not (
-            barrier.draining.is_set() or shutdown_requested()
+          barrier.draining.is_set() or shutdown_requested()
         ):
           _drain_ingest_ready(
-              client,
-              inflight=ingest_inflight,
-              claims=ingest_leases,
-              submitted=ingest_submitted,
-              inflight_sizes=inflight_sizes,
-              tgz_archive_dir=tgz_archive_dir,
-              archive_data_dir=directory,
-              log_fn=log_fn,
+            client,
+            inflight=ingest_inflight,
+            claims=ingest_leases,
+            submitted=ingest_submitted,
+            inflight_sizes=inflight_sizes,
+            tgz_archive_dir=tgz_archive_dir,
+            archive_data_dir=directory,
+            log_fn=log_fn,
           )
           time.sleep(min(0.05, max(0.01, poll_s)))
         recycle_gate.paused.clear()
@@ -5498,69 +5655,65 @@ def _ingest_coordinator_loop(
           _hq, _cq, zcard = jq.ingest_queue_census(client)
         except Exception as exc:
           raise RuntimeError(
-              "queue orchestrator job-store zcard failed: %s"
-              % type(exc).__name__
+            f"queue orchestrator job-store zcard failed: {type(exc).__name__}"
           ) from exc
         skip_budget = _ingest_fill_skip_budget_for_queued(zcard)
         store_hlen = _store_ingest_hlen(client)
-        if (
-            zcard > 0
-            and (
-                store_hlen < ingest_pool_size
-                or len(ingest_inflight) > store_hlen
-                or len(ingest_inflight) >= ingest_pool_size
-            )
+        if zcard > 0 and (
+          store_hlen < ingest_pool_size
+          or len(ingest_inflight) > store_hlen
+          or len(ingest_inflight) >= ingest_pool_size
         ):
           _reconcile_local_ingest_maps_to_store(
-              client,
-              ingest_inflight=ingest_inflight,
-              ingest_leases=ingest_leases,
-              ingest_submitted=ingest_submitted,
-              inflight_sizes=inflight_sizes,
-              log_fn=log_fn,
-          )
-        last_runtime_steal = _ingest_runtime_lease_hygiene(
-            client=client,
+            client,
             ingest_inflight=ingest_inflight,
             ingest_leases=ingest_leases,
-            ingest_pool_size=ingest_pool_size,
-            zcard=zcard,
-            last_runtime_steal=last_runtime_steal,
+            ingest_submitted=ingest_submitted,
+            inflight_sizes=inflight_sizes,
             log_fn=log_fn,
-            store_hlen=store_hlen,
+          )
+        last_runtime_steal = _ingest_runtime_lease_hygiene(
+          client=client,
+          ingest_inflight=ingest_inflight,
+          ingest_leases=ingest_leases,
+          ingest_pool_size=ingest_pool_size,
+          zcard=zcard,
+          last_runtime_steal=last_runtime_steal,
+          log_fn=log_fn,
+          store_hlen=store_hlen,
         )
         fill_tick_kw = {
-            "client": client,
-            "pool_ref": pool_ref,
-            "directory": directory,
-            "tgz_archive_dir": tgz_archive_dir,
-            "hot_cap": hot_cap,
-            "catchup_cap": catchup_cap,
-            "ingest_pool_size": ingest_pool_size,
-            "ingest_inflight": ingest_inflight,
-            "ingest_leases": ingest_leases,
-            "ingest_submitted": ingest_submitted,
-            "skip_budget": skip_budget,
-            "fill_stats": fill_stats,
-            "inflight_sizes": inflight_sizes,
-            "log_fn": log_fn,
+          "client": client,
+          "pool_ref": pool_ref,
+          "directory": directory,
+          "tgz_archive_dir": tgz_archive_dir,
+          "hot_cap": hot_cap,
+          "catchup_cap": catchup_cap,
+          "ingest_pool_size": ingest_pool_size,
+          "ingest_inflight": ingest_inflight,
+          "ingest_leases": ingest_leases,
+          "ingest_submitted": ingest_submitted,
+          "skip_budget": skip_budget,
+          "fill_stats": fill_stats,
+          "inflight_sizes": inflight_sizes,
+          "log_fn": log_fn,
         }
         did, hot_queued, zcard, _hot_n = _ingest_coordinator_fill_tick(
-            **fill_tick_kw,
+          **fill_tick_kw,
         )
         fill_submitted += did
         did += _drain_ingest_ready(
-            client,
-            inflight=ingest_inflight,
-            claims=ingest_leases,
-            submitted=ingest_submitted,
-            inflight_sizes=inflight_sizes,
-            tgz_archive_dir=tgz_archive_dir,
-            archive_data_dir=directory,
-            log_fn=log_fn,
+          client,
+          inflight=ingest_inflight,
+          claims=ingest_leases,
+          submitted=ingest_submitted,
+          inflight_sizes=inflight_sizes,
+          tgz_archive_dir=tgz_archive_dir,
+          archive_data_dir=directory,
+          log_fn=log_fn,
         )
         extra, hot_queued, zcard, _hot_n2 = _ingest_coordinator_fill_tick(
-            **fill_tick_kw,
+          **fill_tick_kw,
         )
         did += extra
         fill_submitted += extra
@@ -5568,103 +5721,101 @@ def _ingest_coordinator_loop(
         hot_used, catch_used = _count_ingest_band_inflight(ingest_leases)
         if store_hlen_after >= ingest_pool_size - 1:
           progress.get_progress_state().set_fill_block(None)
-        elif (
-            zcard > 0
-            and len(ingest_inflight) < ingest_pool_size
-        ):
+        elif zcard > 0 and len(ingest_inflight) < ingest_pool_size:
           fill_block = _dominant_ingest_fill_block(fill_stats)
           if fill_block:
             progress.get_progress_state().set_fill_block(fill_block)
           now_bc = time.monotonic()
           local_n = len(ingest_inflight)
           reason_bits = ",".join(
-              "%s=%d" % (k, fill_stats[k])
-              for k in _FILL_BLOCK_KEYS
-              if fill_stats.get(k)
+            "%s=%d" % (k, fill_stats[k])
+            for k in _FILL_BLOCK_KEYS
+            if fill_stats.get(k)
           )
-          census = (
-              " store_hlen=%d local=%d hot_used=%d catch_used=%d"
-              % (store_hlen_after, local_n, hot_used, catch_used)
+          census = " store_hlen=%d local=%d hot_used=%d catch_used=%d" % (
+            store_hlen_after,
+            local_n,
+            hot_used,
+            catch_used,
           )
           if local_n == 0 and (
-              (now_bc - last_fill_empty_log)
-              >= INGEST_FILL_BLOCK_LOG_INTERVAL_S
+            (now_bc - last_fill_empty_log) >= INGEST_FILL_BLOCK_LOG_INTERVAL_S
           ):
             last_fill_empty_log = now_bc
             _log(
-                "queue_orchestrator ingest fill empty deep_queue "
-                "zcard=%d hot_q=%d local_inflight=0 submitted=0"
-                " fill_block=%s stats=%s%s"
-                % (
-                    zcard,
-                    hot_queued,
-                    fill_block or "unknown",
-                    reason_bits or "-",
-                    census,
-                ),
-                log_fn=log_fn,
+              "queue_orchestrator ingest fill empty deep_queue "
+              "zcard=%d hot_q=%d local_inflight=0 submitted=0"
+              " fill_block=%s stats=%s%s"
+              % (
+                zcard,
+                hot_queued,
+                fill_block or "unknown",
+                reason_bits or "-",
+                census,
+              ),
+              log_fn=log_fn,
             )
           elif (
-              (now_bc - last_fill_block_log)
-              >= INGEST_FILL_BLOCK_LOG_INTERVAL_S
-          ):
+            now_bc - last_fill_block_log
+          ) >= INGEST_FILL_BLOCK_LOG_INTERVAL_S:
             last_fill_block_log = now_bc
             _log(
-                "queue_orchestrator ingest fill under-capacity "
-                "zcard=%d hot_q=%d local_inflight=%d pool=%d"
-                " submitted=0 fill_block=%s stats=%s%s"
-                % (
-                    zcard,
-                    hot_queued,
-                    local_n,
-                    ingest_pool_size,
-                    fill_block or "unknown",
-                    reason_bits or "-",
-                    census,
-                ),
-                log_fn=log_fn,
+              "queue_orchestrator ingest fill under-capacity "
+              "zcard=%d hot_q=%d local_inflight=%d pool=%d"
+              " submitted=0 fill_block=%s stats=%s%s"
+              % (
+                zcard,
+                hot_queued,
+                local_n,
+                ingest_pool_size,
+                fill_block or "unknown",
+                reason_bits or "-",
+                census,
+              ),
+              log_fn=log_fn,
             )
       else:
         did += _drain_ingest_ready(
-            client,
-            inflight=ingest_inflight,
-            claims=ingest_leases,
-            submitted=ingest_submitted,
-            inflight_sizes=inflight_sizes,
-            tgz_archive_dir=tgz_archive_dir,
-            archive_data_dir=directory,
-            log_fn=log_fn,
+          client,
+          inflight=ingest_inflight,
+          claims=ingest_leases,
+          submitted=ingest_submitted,
+          inflight_sizes=inflight_sizes,
+          tgz_archive_dir=tgz_archive_dir,
+          archive_data_dir=directory,
+          log_fn=log_fn,
         )
       # Coordinator wall-clock ingest watchdog retired (idle stall + statement
       # timeout own give-up; do not fall back to submit-age abandon).
       if not draining:
         last_stuck_recycle = _maybe_request_stuck_cohort_recycle(
-            recycle_gate=recycle_gate,
-            client=client,
-            inflight=ingest_inflight,
-            claims=ingest_leases,
-            submitted=ingest_submitted,
-            inflight_sizes=inflight_sizes,
-            last_stuck_recycle_mono=last_stuck_recycle,
-            log_fn=log_fn,
+          recycle_gate=recycle_gate,
+          client=client,
+          inflight=ingest_inflight,
+          claims=ingest_leases,
+          submitted=ingest_submitted,
+          inflight_sizes=inflight_sizes,
+          last_stuck_recycle_mono=last_stuck_recycle,
+          log_fn=log_fn,
         )
       now = time.monotonic()
       if now - last_reap >= max(poll_s, 5.0):
         last_reap = now
         _reap_stale_inflight(
-            client,
-            kinds=(jq.JOB_KIND_INGEST,),
-            skip_identities=_ingest_reaper_skip_identities(
-                ingest_inflight, ingest_leases,
-            ),
-            log_fn=log_fn,
+          client,
+          kinds=(jq.JOB_KIND_INGEST,),
+          skip_identities=_ingest_reaper_skip_identities(
+            ingest_inflight,
+            ingest_leases,
+          ),
+          log_fn=log_fn,
         )
         _drop_expired_ingest_timeout_sentinels(
-            client,
-            inflight=ingest_inflight,
-            claims=ingest_leases,
-            submitted=ingest_submitted,
-            inflight_sizes=inflight_sizes,
+          client,
+          inflight=ingest_inflight,
+          claims=ingest_leases,
+          submitted=ingest_submitted,
+          inflight_sizes=inflight_sizes,
         )
       with busy_lock:
         busy_flags["ingest"] = bool(ingest_inflight)
@@ -5682,19 +5833,18 @@ def _ingest_coordinator_loop(
         time.sleep(_ingest_coordinator_idle_sleep_s(zcard=zcard, poll_s=poll_s))
       else:
         time.sleep(
-            _ingest_coordinator_tick_sleep_s(
-                zcard=zcard,
-                poll_s=poll_s,
-                fill_submitted=fill_submitted,
-                local_n=len(ingest_inflight),
-                pool=ingest_pool_size,
-            ),
+          _ingest_coordinator_tick_sleep_s(
+            zcard=zcard,
+            poll_s=poll_s,
+            fill_submitted=fill_submitted,
+            local_n=len(ingest_inflight),
+            pool=ingest_pool_size,
+          ),
         )
   except Exception as exc:
     _log(
-        "queue_orchestrator ingest-coordinator crash err=%s"
-        % type(exc).__name__,
-        log_fn=log_fn,
+      f"queue_orchestrator ingest-coordinator crash err={type(exc).__name__}",
+      log_fn=log_fn,
     )
     raise
   finally:
@@ -5743,9 +5893,9 @@ def _append_coordinator_loop(
     True
   """
   set_daemon_thread_title(
-      "append-coordinator",
-      script_name="sync_timedb.py",
-      role="append-coordinator",
+    "append-coordinator",
+    script_name="sync_timedb.py",
+    role="append-coordinator",
   )
   role = "append-coordinator"
   last_reap = time.monotonic()
@@ -5757,29 +5907,29 @@ def _append_coordinator_loop(
       did = 0
       if not draining:
         did += _fill_append_slots(
-            client,
-            cap=append_cap,
-            inflight=append_inflight,
-            claims=append_leases,
-            archive_pool=archive_pool,
-            tgz_archive_dir=tgz_archive_dir,
-        )
-      did += _drain_append_ready(
           client,
+          cap=append_cap,
           inflight=append_inflight,
           claims=append_leases,
+          archive_pool=archive_pool,
           tgz_archive_dir=tgz_archive_dir,
-          archive_data_dir=directory,
-          log_fn=log_fn,
+        )
+      did += _drain_append_ready(
+        client,
+        inflight=append_inflight,
+        claims=append_leases,
+        tgz_archive_dir=tgz_archive_dir,
+        archive_data_dir=directory,
+        log_fn=log_fn,
       )
       now = time.monotonic()
       if now - last_reap >= max(poll_s, 5.0):
         last_reap = now
         _reap_stale_inflight(
-            client,
-            kinds=(jq.JOB_KIND_APPEND,),
-            skip_identities=tuple(append_inflight) + tuple(append_leases),
-            log_fn=log_fn,
+          client,
+          kinds=(jq.JOB_KIND_APPEND,),
+          skip_identities=tuple(append_inflight) + tuple(append_leases),
+          log_fn=log_fn,
         )
       with busy_lock:
         busy_flags["append"] = bool(append_inflight)
@@ -5836,9 +5986,9 @@ def _day_close_coordinator_loop(
     True
   """
   set_daemon_thread_title(
-      "day-close-coordinator",
-      script_name="sync_timedb.py",
-      role="day-close-coordinator",
+    "day-close-coordinator",
+    script_name="sync_timedb.py",
+    role="day-close-coordinator",
   )
   role = "day-close-coordinator"
   last_reap = time.monotonic()
@@ -5853,23 +6003,23 @@ def _day_close_coordinator_loop(
       backoff_skips = 0
       if not draining:
         submitted, backoff_skips = _fill_day_close_slots(
-            client,
-            executor=day_executor,
-            inflight=day_inflight,
-            leases=day_leases,
-            tgz_archive_dir=tgz_archive_dir,
-            archive_data_dir=directory,
-            log_fn=log_fn,
+          client,
+          executor=day_executor,
+          inflight=day_inflight,
+          leases=day_leases,
+          tgz_archive_dir=tgz_archive_dir,
+          archive_data_dir=directory,
+          log_fn=log_fn,
         )
         did += submitted + backoff_skips
         if backoff_skips and not submitted:
           cooperative_churn = True
       drained, drain_coop = _drain_day_close_ready(
-          client,
-          inflight=day_inflight,
-          leases=day_leases,
-          archive_data_dir=directory,
-          log_fn=log_fn,
+        client,
+        inflight=day_inflight,
+        leases=day_leases,
+        archive_data_dir=directory,
+        log_fn=log_fn,
       )
       did += drained
       if drain_coop and drained:
@@ -5880,10 +6030,10 @@ def _day_close_coordinator_loop(
       if now - last_reap >= max(poll_s, 5.0):
         last_reap = now
         _reap_stale_inflight(
-            client,
-            kinds=(jq.JOB_KIND_DAY_CLOSE,),
-            skip_identities=tuple(day_inflight) + tuple(day_leases),
-            log_fn=log_fn,
+          client,
+          kinds=(jq.JOB_KIND_DAY_CLOSE,),
+          skip_identities=tuple(day_inflight) + tuple(day_leases),
+          log_fn=log_fn,
         )
       with busy_lock:
         busy_flags["day_close"] = bool(day_inflight)
@@ -5893,9 +6043,9 @@ def _day_close_coordinator_loop(
       if draining:
         if day_inflight:
           wait(
-              list(day_inflight.values()),
-              timeout=min(poll_s, 0.5),
-              return_when=FIRST_COMPLETED,
+            list(day_inflight.values()),
+            timeout=min(poll_s, 0.5),
+            return_when=FIRST_COMPLETED,
           )
         else:
           time.sleep(min(0.25, max(0.05, poll_s)))
@@ -5904,9 +6054,9 @@ def _day_close_coordinator_loop(
       else:
         if day_inflight:
           wait(
-              list(day_inflight.values()),
-              timeout=min(poll_s, 0.5),
-              return_when=FIRST_COMPLETED,
+            list(day_inflight.values()),
+            timeout=min(poll_s, 0.5),
+            return_when=FIRST_COMPLETED,
           )
         elif cooperative_churn:
           # Yield/backoff-only churn: sleep poll_s, not ~50ms busy-wait.
@@ -5962,9 +6112,9 @@ def _reconstruct_coordinator_loop(
     True
   """
   set_daemon_thread_title(
-      "reconstruct-coordinator",
-      script_name="sync_timedb.py",
-      role="reconstruct-coordinator",
+    "reconstruct-coordinator",
+    script_name="sync_timedb.py",
+    role="reconstruct-coordinator",
   )
   role = "reconstruct-coordinator"
   last_census = 0.0
@@ -5978,13 +6128,13 @@ def _reconstruct_coordinator_loop(
         barrier.mark_drained(role)
         return
       _idle_reconstruct_pass(
-          client,
-          directory,
-          tgz_archive_dir=tgz_archive_dir,
-          log_fn=log_fn,
-          mtime_days=rescan_mtime_days,
-          startdate=startdate,
-          enddate=enddate,
+        client,
+        directory,
+        tgz_archive_dir=tgz_archive_dir,
+        log_fn=log_fn,
+        mtime_days=rescan_mtime_days,
+        startdate=startdate,
+        enddate=enddate,
       )
       now = time.monotonic()
       if now - last_census >= CENSUS_LOG_INTERVAL_S:
@@ -5996,7 +6146,7 @@ def _reconstruct_coordinator_loop(
         with busy_lock:
           busy_kinds = [k for k, v in busy_flags.items() if v]
         if _discover_bg_is_busy() and "discover" not in busy_kinds:
-          busy_kinds = list(busy_kinds) + ["discover"]
+          busy_kinds = [*list(busy_kinds), "discover"]
         busy_tok = progress.format_busy_token(busy_kinds)
         if census:
           with _TOTAL_INGESTED_LOCK:
@@ -6004,57 +6154,61 @@ def _reconstruct_coordinator_loop(
             total_completed = _TOTAL_COMPLETED
           mem_tok = format_ingest_mem_block_census_suffix()
           _log(
-              "queue_orchestrator census %s total_ingested=%d "
-              "total_completed=%d%s%s"
-              % (
-                  jq.format_queue_census(census),
-                  total_ingested,
-                  total_completed,
-                  (" " + busy_tok) if busy_tok else "",
-                  mem_tok,
-              ),
-              log_fn=log_fn,
+            "queue_orchestrator census %s total_ingested=%d "
+            "total_completed=%d%s%s"
+            % (
+              jq.format_queue_census(census),
+              total_ingested,
+              total_completed,
+              (" " + busy_tok) if busy_tok else "",
+              mem_tok,
+            ),
+            log_fn=log_fn,
           )
           snap = mem_telem.snapshot_pipeline_mem_telemetry(
-              inflight_sizes=_MEM_TELEM_RUNTIME.get("inflight_sizes") or {},
-              submitted=_MEM_TELEM_RUNTIME.get("submitted") or {},
-              ingest_mem_blocked=bool(_INGEST_MEM_BLOCK_STATE.get("blocked")),
-              total_ingested=total_ingested,
-              total_completed=total_completed,
-              hot_used=_MEM_TELEM_RUNTIME.get("hot_used"),
-              catch_used=_MEM_TELEM_RUNTIME.get("catch_used"),
-              fill_block=_MEM_TELEM_RUNTIME.get("fill_block"),
-              ingest_q="%s/%s" % (
-                  int((census.get(jq.JOB_KIND_INGEST) or {}).get("inflight", 0)),
-                  int((census.get(jq.JOB_KIND_INGEST) or {}).get("queued", 0)),
-              ),
-              append_q="%s/%s" % (
-                  int((census.get(jq.JOB_KIND_APPEND) or {}).get("inflight", 0)),
-                  int((census.get(jq.JOB_KIND_APPEND) or {}).get("queued", 0)),
-              ),
-              discover_q="%s/%s" % (
-                  int((census.get(jq.JOB_KIND_DISCOVER) or {}).get("inflight", 0)),
-                  int((census.get(jq.JOB_KIND_DISCOVER) or {}).get("queued", 0)),
-              ),
-              day_close_q="%s/%s" % (
-                  int((census.get(jq.JOB_KIND_DAY_CLOSE) or {}).get("inflight", 0)),
-                  int((census.get(jq.JOB_KIND_DAY_CLOSE) or {}).get("queued", 0)),
-              ),
-              append_inflight_n=_MEM_TELEM_RUNTIME.get("append_inflight_n"),
-              day_close_inflight_n=_MEM_TELEM_RUNTIME.get("day_close_inflight_n"),
+            inflight_sizes=_MEM_TELEM_RUNTIME.get("inflight_sizes") or {},
+            submitted=_MEM_TELEM_RUNTIME.get("submitted") or {},
+            ingest_mem_blocked=bool(_INGEST_MEM_BLOCK_STATE.get("blocked")),
+            total_ingested=total_ingested,
+            total_completed=total_completed,
+            hot_used=_MEM_TELEM_RUNTIME.get("hot_used"),
+            catch_used=_MEM_TELEM_RUNTIME.get("catch_used"),
+            fill_block=_MEM_TELEM_RUNTIME.get("fill_block"),
+            ingest_q="{}/{}".format(
+              int((census.get(jq.JOB_KIND_INGEST) or {}).get("inflight", 0)),
+              int((census.get(jq.JOB_KIND_INGEST) or {}).get("queued", 0)),
+            ),
+            append_q="{}/{}".format(
+              int((census.get(jq.JOB_KIND_APPEND) or {}).get("inflight", 0)),
+              int((census.get(jq.JOB_KIND_APPEND) or {}).get("queued", 0)),
+            ),
+            discover_q="{}/{}".format(
+              int((census.get(jq.JOB_KIND_DISCOVER) or {}).get("inflight", 0)),
+              int((census.get(jq.JOB_KIND_DISCOVER) or {}).get("queued", 0)),
+            ),
+            day_close_q="{}/{}".format(
+              int((census.get(jq.JOB_KIND_DAY_CLOSE) or {}).get("inflight", 0)),
+              int((census.get(jq.JOB_KIND_DAY_CLOSE) or {}).get("queued", 0)),
+            ),
+            append_inflight_n=_MEM_TELEM_RUNTIME.get("append_inflight_n"),
+            day_close_inflight_n=_MEM_TELEM_RUNTIME.get("day_close_inflight_n"),
           )
           for edge in mem_telem.detect_edge_events(snap):
             mem_telem.maybe_emit_mem_telemetry(
-                edge, log_fn or log_print, snap=snap,
+              edge,
+              log_fn or log_print,
+              snap=snap,
             )
           mem_telem.maybe_emit_mem_telemetry(
-              "census", log_fn or log_print, snap=snap,
+            "census",
+            log_fn or log_print,
+            snap=snap,
           )
       _emit_progress_report_if_due(
-          client,
-          busy_flags=busy_flags,
-          busy_lock=busy_lock,
-          log_fn=log_fn,
+        client,
+        busy_flags=busy_flags,
+        busy_lock=busy_lock,
+        log_fn=log_fn,
       )
       with busy_lock:
         busy = any(busy_flags.values())
@@ -6062,19 +6216,22 @@ def _reconstruct_coordinator_loop(
         idle_rounds += 1
         if idle_rounds >= 1:
           recon = _idle_reconstruct_pass(
-              client,
-              directory,
-              tgz_archive_dir=tgz_archive_dir,
-              log_fn=log_fn,
-              force=True,
-              mtime_days=None,
-              startdate=startdate,
-              enddate=enddate,
+            client,
+            directory,
+            tgz_archive_dir=tgz_archive_dir,
+            log_fn=log_fn,
+            force=True,
+            mtime_days=None,
+            startdate=startdate,
+            enddate=enddate,
           )
           with busy_lock:
             busy = any(busy_flags.values())
           if recon == 0 and not busy and _queues_appear_idle(client):
-            _log("queue_orchestrator run_once idle exit", log_fn=log_fn)
+            _log(
+              "queue_orchestrator run_once idle exit",
+              log_fn=log_fn,
+            )
             run_once_exit.set()
             barrier.mark_drained(role)
             return
@@ -6085,13 +6242,14 @@ def _reconstruct_coordinator_loop(
       if now - last_reap >= max(poll_s, 5.0):
         last_reap = now
         _reap_stale_inflight(
-            client,
-            kinds=(jq.JOB_KIND_DISCOVER,),
-            log_fn=log_fn,
+          client,
+          kinds=(jq.JOB_KIND_DISCOVER,),
+          log_fn=log_fn,
         )
       time.sleep(max(0.05, poll_s))
   finally:
     barrier.mark_drained(role)
+
 
 def run_sync_timedb_queue_orchestrator(
   archive_dir: str,
@@ -6153,13 +6311,12 @@ def run_sync_timedb_queue_orchestrator(
       stolen = jq.steal_dead_owner_leases(client)
     except Exception as exc:
       raise RuntimeError(
-          "queue orchestrator steal_dead_owner_leases failed: %s"
-          % type(exc).__name__
+        f"queue orchestrator steal_dead_owner_leases failed: {type(exc).__name__}"
       ) from exc
     if stolen:
       _log(
-          "queue_orchestrator stole dead-owner leases count=%d" % stolen,
-          log_fn=log_fn,
+        "queue_orchestrator stole dead-owner leases count=%d" % stolen,
+        log_fn=log_fn,
       )
     _reap_stale_inflight(client, log_fn=log_fn)
 
@@ -6178,9 +6335,9 @@ def run_sync_timedb_queue_orchestrator(
     day_inflight: dict[str, Future] = {}
     day_leases: dict[str, Any] = {}
     claim_maps = (
-        (jq.JOB_KIND_INGEST, ingest_leases),
-        (jq.JOB_KIND_APPEND, append_leases),
-        (jq.JOB_KIND_DAY_CLOSE, day_leases),
+      (jq.JOB_KIND_INGEST, ingest_leases),
+      (jq.JOB_KIND_APPEND, append_leases),
+      (jq.JOB_KIND_DAY_CLOSE, day_leases),
     )
     last_census_mono = 0.0
     last_reap_mono = time.monotonic()
@@ -6202,9 +6359,9 @@ def run_sync_timedb_queue_orchestrator(
         True
       """
       return create_sync_timedb_thread_pool(
-          max_workers=ingest_pool_size,
-          thread_role="ingest-pool",
-          process_title="sync_timedb.py",
+        max_workers=ingest_pool_size,
+        thread_role="ingest-pool",
+        process_title="sync_timedb.py",
       )
 
     # Start ingest + populate before boot discover so classify never inlines
@@ -6218,33 +6375,31 @@ def run_sync_timedb_queue_orchestrator(
       populate.start(script_name="sync_timedb.py", registry=None)
     except Exception as exc:
       _log(
-          "queue_orchestrator populate-pool start err=%s"
-          % type(exc).__name__,
-          log_fn=log_fn,
+        f"queue_orchestrator populate-pool start err={type(exc).__name__}",
+        log_fn=log_fn,
       )
     # Boot discover off MainThread (same executor as idle reconstruct).
     try:
       for boot_mtime_days in (rescan_mtime_days, None):
         jq.enqueue_list_job(
-            client,
-            kind=jq.JOB_KIND_DISCOVER,
-            identity=discover_job_identity(directory, boot_mtime_days),
-            dedupe=True,
+          client,
+          kind=jq.JOB_KIND_DISCOVER,
+          identity=discover_job_identity(directory, boot_mtime_days),
+          dedupe=True,
         )
     except Exception as exc:
       _log(
-          "queue_orchestrator boot discover enqueue err=%s"
-          % type(exc).__name__,
-          log_fn=log_fn,
+        f"queue_orchestrator boot discover enqueue err={type(exc).__name__}",
+        log_fn=log_fn,
       )
     _submit_background_discover(
-        client,
-        directory,
-        tgz_archive_dir=tgz_archive_dir,
-        log_fn=log_fn,
-        mtime_days=rescan_mtime_days,
-        startdate=startdate,
-        enddate=enddate,
+      client,
+      directory,
+      tgz_archive_dir=tgz_archive_dir,
+      log_fn=log_fn,
+      mtime_days=rescan_mtime_days,
+      startdate=startdate,
+      enddate=enddate,
     )
     # Log only after submit returns — a pre-submit line lied when MainThread
     # deadlocked inside nested ``_discover_bg_lock`` acquire (hpcperfstats03).
@@ -6252,23 +6407,23 @@ def run_sync_timedb_queue_orchestrator(
     pool_ref = AtomicPoolRef(ingest_pool)
     recycle_gate = IngestRecycleGate()
     barrier = SubsystemShutdownBarrier(
-        (
-            "ingest-coordinator",
-            "append-coordinator",
-            "day-close-coordinator",
-            "reconstruct-coordinator",
-        )
+      (
+        "ingest-coordinator",
+        "append-coordinator",
+        "day-close-coordinator",
+        "reconstruct-coordinator",
+      )
     )
     busy_flags: dict[str, bool] = {
-        "ingest": False,
-        "append": False,
-        "day_close": False,
+      "ingest": False,
+      "append": False,
+      "day_close": False,
     }
     busy_lock = threading.Lock()
     run_once_exit = threading.Event()
     day_executor = ThreadPoolExecutor(
-        max_workers=day_close_workers,
-        thread_name_prefix=DAY_CLOSE_THREAD_NAME_PREFIX,
+      max_workers=day_close_workers,
+      thread_name_prefix=DAY_CLOSE_THREAD_NAME_PREFIX,
     )
     threads: list[tuple[str, threading.Thread]] = []
 
@@ -6289,90 +6444,90 @@ def run_sync_timedb_queue_orchestrator(
         True
       """
       thr = threading.Thread(
-          target=target,
-          name=name,
-          kwargs=kwargs,
-          daemon=True,
+        target=target,
+        name=name,
+        kwargs=kwargs,
+        daemon=True,
       )
       threads.append((name, thr))
       thr.start()
 
     _spawn(
-        "ingest-coordinator",
-        _ingest_coordinator_loop,
-        {
-            "client": client,
-            "directory": directory,
-            "tgz_archive_dir": tgz_archive_dir,
-            "pool_ref": pool_ref,
-            "recycle_gate": recycle_gate,
-            "barrier": barrier,
-            "hot_cap": hot_cap,
-            "catchup_cap": catchup_cap,
-            "ingest_pool_size": ingest_pool_size,
-            "poll_s": poll_s,
-            "ingest_inflight": ingest_inflight,
-            "ingest_leases": ingest_leases,
-            "ingest_submitted": ingest_submitted,
-            "inflight_sizes": ingest_inflight_sizes,
-            "busy_flags": busy_flags,
-            "busy_lock": busy_lock,
-            "log_fn": log_fn,
-        },
+      "ingest-coordinator",
+      _ingest_coordinator_loop,
+      {
+        "client": client,
+        "directory": directory,
+        "tgz_archive_dir": tgz_archive_dir,
+        "pool_ref": pool_ref,
+        "recycle_gate": recycle_gate,
+        "barrier": barrier,
+        "hot_cap": hot_cap,
+        "catchup_cap": catchup_cap,
+        "ingest_pool_size": ingest_pool_size,
+        "poll_s": poll_s,
+        "ingest_inflight": ingest_inflight,
+        "ingest_leases": ingest_leases,
+        "ingest_submitted": ingest_submitted,
+        "inflight_sizes": ingest_inflight_sizes,
+        "busy_flags": busy_flags,
+        "busy_lock": busy_lock,
+        "log_fn": log_fn,
+      },
     )
     _spawn(
-        "append-coordinator",
-        _append_coordinator_loop,
-        {
-            "client": client,
-            "directory": directory,
-            "tgz_archive_dir": tgz_archive_dir,
-            "archive_pool": archive_pool,
-            "append_cap": append_cap,
-            "poll_s": poll_s,
-            "barrier": barrier,
-            "append_inflight": append_inflight,
-            "append_leases": append_leases,
-            "busy_flags": busy_flags,
-            "busy_lock": busy_lock,
-            "log_fn": log_fn,
-        },
+      "append-coordinator",
+      _append_coordinator_loop,
+      {
+        "client": client,
+        "directory": directory,
+        "tgz_archive_dir": tgz_archive_dir,
+        "archive_pool": archive_pool,
+        "append_cap": append_cap,
+        "poll_s": poll_s,
+        "barrier": barrier,
+        "append_inflight": append_inflight,
+        "append_leases": append_leases,
+        "busy_flags": busy_flags,
+        "busy_lock": busy_lock,
+        "log_fn": log_fn,
+      },
     )
     _spawn(
-        "day-close-coordinator",
-        _day_close_coordinator_loop,
-        {
-            "client": client,
-            "directory": directory,
-            "tgz_archive_dir": tgz_archive_dir,
-            "day_executor": day_executor,
-            "poll_s": poll_s,
-            "barrier": barrier,
-            "day_inflight": day_inflight,
-            "day_leases": day_leases,
-            "busy_flags": busy_flags,
-            "busy_lock": busy_lock,
-            "log_fn": log_fn,
-        },
+      "day-close-coordinator",
+      _day_close_coordinator_loop,
+      {
+        "client": client,
+        "directory": directory,
+        "tgz_archive_dir": tgz_archive_dir,
+        "day_executor": day_executor,
+        "poll_s": poll_s,
+        "barrier": barrier,
+        "day_inflight": day_inflight,
+        "day_leases": day_leases,
+        "busy_flags": busy_flags,
+        "busy_lock": busy_lock,
+        "log_fn": log_fn,
+      },
     )
     _spawn(
-        "reconstruct-coordinator",
-        _reconstruct_coordinator_loop,
-        {
-            "client": client,
-            "directory": directory,
-            "tgz_archive_dir": tgz_archive_dir,
-            "poll_s": poll_s,
-            "barrier": barrier,
-            "rescan_mtime_days": rescan_mtime_days,
-            "startdate": startdate,
-            "enddate": enddate,
-            "run_once": run_once,
-            "run_once_exit": run_once_exit,
-            "busy_flags": busy_flags,
-            "busy_lock": busy_lock,
-            "log_fn": log_fn,
-        },
+      "reconstruct-coordinator",
+      _reconstruct_coordinator_loop,
+      {
+        "client": client,
+        "directory": directory,
+        "tgz_archive_dir": tgz_archive_dir,
+        "poll_s": poll_s,
+        "barrier": barrier,
+        "rescan_mtime_days": rescan_mtime_days,
+        "startdate": startdate,
+        "enddate": enddate,
+        "run_once": run_once,
+        "run_once_exit": run_once_exit,
+        "busy_flags": busy_flags,
+        "busy_lock": busy_lock,
+        "log_fn": log_fn,
+      },
     )
     try:
       while True:
@@ -6383,28 +6538,27 @@ def run_sync_timedb_queue_orchestrator(
           with busy_lock:
             local_n = sum(1 for v in busy_flags.values() if v)
           _log(
-              "queue_orchestrator shutdown requested; draining inflight=%d"
-              % local_n,
-              log_fn=log_fn,
+            "queue_orchestrator shutdown requested; draining inflight=%d"
+            % local_n,
+            log_fn=log_fn,
           )
-        try:
+        with contextlib.suppress(Exception):
           populate.reap_and_restart()
-        except Exception:
-          pass
         if (
-            recycle_gate.recycle_requested.is_set()
-            and recycle_gate.paused.is_set()
+          recycle_gate.recycle_requested.is_set()
+          and recycle_gate.paused.is_set()
         ):
           old_pool = pool_ref.get()
           new_pool = _recycle_ingest_pool(
-              old_pool, factory=_new_ingest_pool,
+            old_pool,
+            factory=_new_ingest_pool,
           )
           pool_ref.set(new_pool)
           recycle_gate.recycle_requested.clear()
           recycle_gate.paused.clear()
           _log(
-              "queue_orchestrator ingest pool recycled via pause protocol",
-              log_fn=log_fn,
+            "queue_orchestrator ingest pool recycled via pause protocol",
+            log_fn=log_fn,
           )
         for name, thr in threads:
           if thr.is_alive():
@@ -6420,27 +6574,27 @@ def run_sync_timedb_queue_orchestrator(
           if barrier.all_drained():
             _log("queue_orchestrator drained; exiting", log_fn=log_fn)
             _release_claims_on_shutdown(
-                client, claim_maps, log_fn=log_fn,
+              client,
+              claim_maps,
+              log_fn=log_fn,
             )
             break
           if drain_deadline and time.monotonic() >= drain_deadline:
             for fut in list(day_inflight.values()):
-              try:
+              with contextlib.suppress(Exception):
                 fut.cancel()
-              except Exception:
-                pass
-            try:
+            with contextlib.suppress(Exception):
               day_executor.shutdown(wait=False, cancel_futures=True)
-            except Exception:
-              pass
             _log(
-                "queue_orchestrator drain timeout; dirty_tar_recovery "
-                "append_inflight=%d ingest_inflight=%d"
-                % (len(append_inflight), len(ingest_inflight)),
-                log_fn=log_fn,
+              "queue_orchestrator drain timeout; dirty_tar_recovery "
+              "append_inflight=%d ingest_inflight=%d"
+              % (len(append_inflight), len(ingest_inflight)),
+              log_fn=log_fn,
             )
             _release_claims_on_shutdown(
-                client, claim_maps, log_fn=log_fn,
+              client,
+              claim_maps,
+              log_fn=log_fn,
             )
             break
           time.sleep(min(0.25, max(0.05, poll_s)))
@@ -6448,20 +6602,14 @@ def run_sync_timedb_queue_orchestrator(
         time.sleep(max(0.05, poll_s))
     finally:
       _shutdown_background_discover()
-      try:
+      with contextlib.suppress(Exception):
         client.persist(force=True)
-      except Exception:
-        pass
-      try:
+      with contextlib.suppress(Exception):
         populate.stop()
-      except Exception:
-        pass
       set_populate_pool_controller(None)
       set_process_archive_members_store(None)
-      try:
+      with contextlib.suppress(Exception):
         day_executor.shutdown(wait=False, cancel_futures=True)
-      except Exception:
-        pass
       # Closes whichever pool object is current, including one installed by a
       # watchdog recycle (a `with` block would only close the first).
       current_pool = pool_ref.get() if "pool_ref" in locals() else ingest_pool
@@ -6469,7 +6617,5 @@ def run_sync_timedb_queue_orchestrator(
         call = getattr(current_pool, method, None)
         if call is None:
           continue
-        try:
+        with contextlib.suppress(Exception):
           call()
-        except Exception:
-          pass

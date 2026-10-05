@@ -6,21 +6,22 @@ Uses the same archive write path as ``listend.py`` but ``basic_get`` loops until
 the queue is empty, then exits. Intended for tests and one-shot backfills; does
 not take ``listend_lock``.
 """
+
 from __future__ import annotations
 
-from typing import Any
-
+import contextlib
 import sys
+from typing import Any
 
 import pika
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from hpcperfstats.listend import append_monitor_payload_to_archive
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.lib.rmq_quorum_queue import (
-    declare_durable_quorum_queue,
-    listend_amqp_connection_parameters,
+  declare_durable_quorum_queue,
+  listend_amqp_connection_parameters,
 )
+from hpcperfstats.listend import append_monitor_payload_to_archive
 
 
 def drain_queue_to_archive() -> Any:
@@ -42,7 +43,8 @@ def drain_queue_to_archive() -> Any:
   try:
     while True:
       method_frame, _properties, body = channel.basic_get(
-          queue=queue_name, auto_ack=False)
+        queue=queue_name, auto_ack=False
+      )
       if method_frame is None:
         break
       delivery_tag = method_frame.delivery_tag
@@ -51,11 +53,9 @@ def drain_queue_to_archive() -> Any:
         append_monitor_payload_to_archive(message)
         channel.basic_ack(delivery_tag=delivery_tag)
       except Exception as e:
-        log_print("listend_drain: error processing message: %s" % e)
-        try:
+        log_print(f"listend_drain: error processing message: {e}")
+        with contextlib.suppress(Exception):
           channel.basic_nack(delivery_tag=delivery_tag, requeue=True)
-        except Exception:
-          pass
       drained += 1
   finally:
     try:
@@ -70,10 +70,10 @@ def drain_queue_to_archive() -> Any:
 def main() -> None:
   """
   Run this module's command-line entrypoint.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> main()  # doctest: +SKIP
   """

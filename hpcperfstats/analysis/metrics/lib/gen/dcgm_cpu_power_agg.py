@@ -9,6 +9,7 @@ Attributes:
   WATT_UNIQUE_ROUND_DECIMALS (int): Decimal places applied before uniqueness.
   __all__ (tuple): Public exports for ``from … import *``.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -19,16 +20,16 @@ import numpy as np
 WATT_UNIQUE_ROUND_DECIMALS: int = 3
 
 __all__ = (
-    "WATT_UNIQUE_ROUND_DECIMALS",
-    "sum_unique_watt_values_per_host_time",
+  "WATT_UNIQUE_ROUND_DECIMALS",
+  "sum_unique_watt_values_per_host_time",
 )
 
 
 def sum_unique_watt_values_per_host_time(
-    df: Any,
-    *,
-    value_col: str = "sum_val",
-    round_decimals: int = WATT_UNIQUE_ROUND_DECIMALS,
+  df: Any,
+  *,
+  value_col: str = "sum_val",
+  round_decimals: int = WATT_UNIQUE_ROUND_DECIMALS,
 ) -> Any:
   """
   Collapse per-device watt rows to sum of unique rounded paints per host/time.
@@ -50,11 +51,11 @@ def sum_unique_watt_values_per_host_time(
   Examples:
     >>> import pandas as pd
     >>> raw = pd.DataFrame(
-    ...     {
-    ...         "host": ["h1", "h1", "h1"],
-    ...         "time": [1, 1, 1],
-    ...         "sum_val": [45.0, 45.0, 45.0],
-    ...     }
+    ...   {
+    ...     "host": ["h1", "h1", "h1"],
+    ...     "time": [1, 1, 1],
+    ...     "sum_val": [45.0, 45.0, 45.0],
+    ...   }
     ... )
     >>> out = sum_unique_watt_values_per_host_time(raw)
     >>> float(out.iloc[0]["sum_val"])
@@ -66,9 +67,9 @@ def sum_unique_watt_values_per_host_time(
   if df is None or getattr(df, "empty", True):
     return empty
   if (
-      value_col not in df.columns
-      or "host" not in df.columns
-      or "time" not in df.columns
+    value_col not in df.columns
+    or "host" not in df.columns
+    or "time" not in df.columns
   ):
     return empty
 
@@ -101,8 +102,8 @@ def sum_unique_watt_values_per_host_time(
     return float(np.unique(arr).sum())
 
   out = (
-      work.groupby(["host", "time"], as_index=False)["_rounded"]
-      .agg(_unique_sum)
-      .rename(columns={"_rounded": "sum_val"})
+    work.groupby(["host", "time"], as_index=False)["_rounded"]
+    .agg(_unique_sum)
+    .rename(columns={"_rounded": "sum_val"})
   )
   return out[["host", "time", "sum_val"]].reset_index(drop=True)

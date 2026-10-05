@@ -7,9 +7,11 @@ import os
 import tarfile
 from pathlib import Path
 
-from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
-from hpcperfstats.dbload.lib import sync_timedb_archive_members_coord as coord
-from hpcperfstats.dbload.lib import sync_timedb_day_raw_removal as drm
+from hpcperfstats.dbload.lib import (
+  sync_timedb_archive_helpers as helpers,
+  sync_timedb_archive_members_coord as coord,
+  sync_timedb_day_raw_removal as drm,
+)
 
 
 def test_stream_compressed_archive_members_source_has_no_occurrences():
@@ -50,8 +52,12 @@ def test_populate_finish_does_not_triplicate_dict_running_max():
 def test_day_raw_single_memo_form_no_flat_sidecar():
   """Pass memo keeps the map only; flat list is derived without a second store."""
   src_init = inspect.getsource(drm._DayRawRemovalState.__init__)
-  src_paths = inspect.getsource(drm._DayRawRemovalState._closed_raw_paths_on_disk)
-  src_clear = inspect.getsource(drm._DayRawRemovalState._clear_closed_raw_pass_memo)
+  src_paths = inspect.getsource(
+    drm._DayRawRemovalState._closed_raw_paths_on_disk
+  )
+  src_clear = inspect.getsource(
+    drm._DayRawRemovalState._clear_closed_raw_pass_memo
+  )
   assert "_closed_raw_paths_pass_memo" not in src_init
   assert "_closed_raw_paths_pass_memo" not in src_paths
   assert "_closed_raw_paths_pass_memo" not in src_clear
@@ -60,6 +66,6 @@ def test_day_raw_single_memo_form_no_flat_sidecar():
 def test_mutable_invalidate_helper_exists_for_append_merge():
   assert hasattr(helpers, "invalidate_mutable_tar_authority_members")
   sync_src = Path(
-      os.path.join(os.path.dirname(helpers.__file__), "..", "sync_timedb.py"),
+    os.path.join(os.path.dirname(helpers.__file__), "..", "sync_timedb.py"),
   ).read_text()
   assert "invalidate_mutable_tar_authority_members" in sync_src

@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 def _compose_has_named_tmpfs_volume(
-    content: str, name: str, size_opt: str
+  content: str, name: str, size_opt: str
 ) -> bool:
   """Return True when top-level volumes define ``name`` as a sized tmpfs.
 
@@ -27,10 +27,10 @@ def _compose_has_named_tmpfs_volume(
     if line == key:
       block = "\n".join(lines[i : i + 8])
       return (
-          "driver: local" in block
-          and "type: tmpfs" in block
-          and "device: tmpfs" in block
-          and f"o: size={size_opt}" in block
+        "driver: local" in block
+        and "type: tmpfs" in block
+        and "device: tmpfs" in block
+        and f"o: size={size_opt}" in block
       )
   return False
 
@@ -51,19 +51,19 @@ def _compose_has_redis_runtime_named_volume(content: str) -> bool:
   while i < len(lines) and lines[i].startswith("  #"):
     i += 1
   return (
-      i + 1 < len(lines)
-      and lines[i] == "  redis_runtime:"
-      and lines[i + 1] == "    driver: local"
+    i + 1 < len(lines)
+    and lines[i] == "  redis_runtime:"
+    and lines[i + 1] == "    driver: local"
   )
 
 
 def test_compose_has_redis_runtime_named_volume_skips_comments_linearly():
   """Regression: CodeQL py/redos on DOTALL comment-star skip (alerts 26, 27)."""
   assert _compose_has_redis_runtime_named_volume(
-      "volumes:\n  # a\n  # b\n  redis_runtime:\n    driver: local\n"
+    "volumes:\n  # a\n  # b\n  redis_runtime:\n    driver: local\n"
   )
   assert not _compose_has_redis_runtime_named_volume(
-      "volumes:\n  # redis_runtime:\n    driver: local\n"
+    "volumes:\n  # redis_runtime:\n    driver: local\n"
   )
   assert not _compose_has_redis_runtime_named_volume("services:\n  redis:\n")
   src = Path(__file__).read_text()
@@ -94,11 +94,11 @@ def test_docker_compose_host_ports_are_parameterized_with_production_defaults():
   settings = (repo_root / "docker-compose.settings.yaml.example").read_text()
 
   expected_ports = (
-      '"${HPCPERFSTATS_HTTP_PORT:-80}:80"',
-      '"${HPCPERFSTATS_HTTPS_PORT:-443}:443"',
-      '"${HPCPERFSTATS_SYSLOG_PORT:-514}:514/udp"',
-      '"${HPCPERFSTATS_SYSLOG_PORT:-514}:514/tcp"',
-      '"${HPCPERFSTATS_AMQP_PORT:-5672}:5672"',
+    '"${HPCPERFSTATS_HTTP_PORT:-80}:80"',
+    '"${HPCPERFSTATS_HTTPS_PORT:-443}:443"',
+    '"${HPCPERFSTATS_SYSLOG_PORT:-514}:514/udp"',
+    '"${HPCPERFSTATS_SYSLOG_PORT:-514}:514/tcp"',
+    '"${HPCPERFSTATS_AMQP_PORT:-5672}:5672"',
   )
   for port in expected_ports:
     assert port in content
@@ -142,7 +142,15 @@ def test_docker_compose_json_file_logging_rotated():
   assert "driver: json-file" in content
   assert 'max-size: "100m"' in content
   assert 'max-file: "3"' in content
-  for service in ["web", "pipeline", "redis", "proxy", "db", "db_pg18", "rabbitmq"]:
+  for service in [
+    "web",
+    "pipeline",
+    "redis",
+    "proxy",
+    "db",
+    "db_pg18",
+    "rabbitmq",
+  ]:
     assert f"{service}:" in content
   assert content.count("logging: *hpc-logging") == 7
 
@@ -159,30 +167,33 @@ def test_docker_compose_commands_and_healthchecks_use_yaml_list_form():
   assert "hps-redis-entrypoint.sh" in content
   redis_entrypoint = repo_root / "services-conf" / "redis_entrypoint.sh"
   assert redis_entrypoint.is_file(), (
-      "redis_entrypoint.sh must be a file; a directory is a leftover Podman bind"
+    "redis_entrypoint.sh must be a file; a directory is a leftover Podman bind"
   )
   assert "chmod 1777 /run/redis" in redis_entrypoint.read_text()
   assert "command:\n      - redis-server\n" in content
   assert "      - --maxmemory\n      - 16gb\n" in content
   assert "      - --maxmemory-policy\n      - volatile-lru\n" in content
-  assert "      - --io-threads\n      - \"4\"\n" in content
-  assert "      - --io-threads-do-reads\n      - \"yes\"\n" in content
+  assert '      - --io-threads\n      - "4"\n' in content
+  assert '      - --io-threads-do-reads\n      - "yes"\n' in content
   assert "      - --unixsocket\n      - /run/redis/redis.sock\n" in content
-  assert "      - --unixsocketperm\n      - \"777\"\n" in content
-  assert "      - --hash-min-template-entries\n      - \"1\"\n" in content
-  assert "      - --hash-max-template-entries\n      - \"0\"\n" in content
+  assert '      - --unixsocketperm\n      - "777"\n' in content
+  assert '      - --hash-min-template-entries\n      - "1"\n' in content
+  assert '      - --hash-max-template-entries\n      - "0"\n' in content
   assert (
-      "test:\n        - CMD-SHELL\n"
-      "        - redis-cli ping && redis-cli -s /run/redis/redis.sock ping\n"
-  ) in content
-  assert "test:\n        - CMD-SHELL\n        - nc -z 127.0.0.1 80 || exit 1\n" in content
-  assert (
-      "test:\n        - CMD-SHELL\n"
-      "        - rabbitmq-diagnostics -q ping || exit 1\n"
+    "test:\n        - CMD-SHELL\n"
+    "        - redis-cli ping && redis-cli -s /run/redis/redis.sock ping\n"
   ) in content
   assert (
-      "test:\n        - CMD-SHELL\n"
-      "        - pg_isready -U hpcperfstats -d postgres -h 127.0.0.1 -p 5432\n"
+    "test:\n        - CMD-SHELL\n        - nc -z 127.0.0.1 80 || exit 1\n"
+    in content
+  )
+  assert (
+    "test:\n        - CMD-SHELL\n"
+    "        - rabbitmq-diagnostics -q ping || exit 1\n"
+  ) in content
+  assert (
+    "test:\n        - CMD-SHELL\n"
+    "        - pg_isready -U hpcperfstats -d postgres -h 127.0.0.1 -p 5432\n"
   ) in content
   assert "command:\n      - -c\n      - max_connections=500\n" in content
 
@@ -197,11 +208,11 @@ def test_redis_entrypoint_sh_is_tracked_file_not_gitignored():
   path = repo_root / "services-conf" / "redis_entrypoint.sh"
   assert path.is_file(), "must be a file; a directory is a leftover Podman bind"
   ignored = subprocess.run(
-      ["git", "check-ignore", "-v", "services-conf/redis_entrypoint.sh"],
-      cwd=repo_root,
-      check=False,
-      capture_output=True,
-      text=True,
+    ["git", "check-ignore", "-v", "services-conf/redis_entrypoint.sh"],
+    cwd=repo_root,
+    check=False,
+    capture_output=True,
+    text=True,
   )
   detail = (ignored.stdout + ignored.stderr).strip()
   # Tracked files: exit 1 (not ignored). Untracked: ``check-ignore -v`` may
@@ -211,7 +222,10 @@ def test_redis_entrypoint_sh_is_tracked_file_not_gitignored():
     assert "!services-conf/redis_entrypoint.sh" in detail, detail
   else:
     assert ignored.returncode == 1, detail
-  assert "!services-conf/redis_entrypoint.sh" in (repo_root / ".gitignore").read_text()
+  assert (
+    "!services-conf/redis_entrypoint.sh"
+    in (repo_root / ".gitignore").read_text()
+  )
 
 
 def test_docker_compose_redis_maxmemory_policy_is_volatile_lru():
@@ -237,7 +251,11 @@ def test_readme_and_design_doc_redis_policy_is_volatile_lru():
   for text in (readme, design, upgrade):
     assert "hash-min-template-entries" in text
     assert "unix:///run/redis/redis.sock" in text
-    assert "--io-threads 4" in text or "`--io-threads` **4**" in text or "**`--io-threads 4`**" in text
+    assert (
+      "--io-threads 4" in text
+      or "`--io-threads` **4**" in text
+      or "**`--io-threads 4`**" in text
+    )
 
 
 def test_docker_compose_web_and_pipeline_do_not_depend_on_redis():
@@ -259,7 +277,9 @@ def test_docker_compose_web_and_pipeline_do_not_depend_on_redis():
   pipeline = pipeline_m.group(0)
   redis = redis_m.group(0)
   web_deps = re.search(r"(?ms)^    depends_on:\n(.*?)(?=^    [a-z]|\Z)", web)
-  pipe_deps = re.search(r"(?ms)^    depends_on:\n(.*?)(?=^    [a-z]|\Z)", pipeline)
+  pipe_deps = re.search(
+    r"(?ms)^    depends_on:\n(.*?)(?=^    [a-z]|\Z)", pipeline
+  )
   assert web_deps is None, "web must not depends_on redis (podman-compose hang)"
   assert pipe_deps, "pipeline service not found depends_on"
   assert "- web" in pipe_deps.group(0)
@@ -275,12 +295,12 @@ def test_docker_compose_redis_unix_socket_volume_is_shared():
   content = (repo_root / "docker-compose.yaml").read_text()
   example = (repo_root / "docker-compose.settings.yaml.example").read_text()
   overlay = (
-      repo_root / "tests" / "docker-compose.test-overlay.yaml.example"
+    repo_root / "tests" / "docker-compose.test-overlay.yaml.example"
   ).read_text()
   assert "redis_runtime:/run/redis" in content
   assert content.count("redis_runtime:/run/redis") >= 3
   assert _compose_has_redis_runtime_named_volume(content), (
-      "redis_runtime is a named volume in base compose, not a settings bind"
+    "redis_runtime is a named volume in base compose, not a settings bind"
   )
   assert "redis_runtime:" not in example
   assert "redis_runtime:/run/redis" in overlay
@@ -291,31 +311,33 @@ def test_readme_install_is_fresh_only_and_upgrade_doc_holds_existing_stack():
   repo_root = Path(__file__).resolve().parents[2]
   readme = (repo_root / "README.md").read_text()
   upgrade = (repo_root / "docs" / "upgrade.md").read_text()
-  install = readme.split("## Installation", 1)[1].split("## Useful commands", 1)[0]
+  install = readme.split("## Installation", 1)[1].split(
+    "## Useful commands", 1
+  )[0]
   assert "docs/upgrade.md" in readme
   assert "fresh install" in install.lower()
   forbidden_in_install = (
-      "Upgrading the Compose Redis server",
-      "Upgrading from an older ini layout",
-      "Migrating from the old layout",
-      "PostgreSQL 18 migrate",
-      "profile pg18-migrate",
-      "kernel.io_uring_disabled",
-      "./scripts/rebuild_frontend.sh",
-      "./scripts/rebuild_pipeline.sh",
-      "docker compose pull redis",
+    "Upgrading the Compose Redis server",
+    "Upgrading from an older ini layout",
+    "Migrating from the old layout",
+    "PostgreSQL 18 migrate",
+    "profile pg18-migrate",
+    "kernel.io_uring_disabled",
+    "./scripts/rebuild_frontend.sh",
+    "./scripts/rebuild_pipeline.sh",
+    "docker compose pull redis",
   )
   for phrase in forbidden_in_install:
     assert phrase not in install, phrase
   required_in_upgrade = (
-      "docker compose pull redis",
-      "Upgrading from an older ini layout",
-      "docker-compose.app.yaml",
-      "pg18-migrate",
-      "kernel.io_uring_disabled",
-      "./scripts/rebuild_frontend.sh",
-      "./scripts/rebuild_pipeline.sh",
-      "OPERATOR_PG18_MIGRATION.md",
+    "docker compose pull redis",
+    "Upgrading from an older ini layout",
+    "docker-compose.app.yaml",
+    "pg18-migrate",
+    "kernel.io_uring_disabled",
+    "./scripts/rebuild_frontend.sh",
+    "./scripts/rebuild_pipeline.sh",
+    "OPERATOR_PG18_MIGRATION.md",
   )
   for phrase in required_in_upgrade:
     assert phrase in upgrade, phrase
@@ -335,7 +357,9 @@ def test_docker_compose_rabbitmq_sets_erl_flags_allocator_tuning():
   repo_root = Path(__file__).resolve().parents[2]
   compose_path = repo_root / "docker-compose.yaml"
   content = compose_path.read_text()
-  rabbitmq_block = content.split("  rabbitmq:\n", 1)[1].split("\nvolumes:", 1)[0]
+  rabbitmq_block = content.split("  rabbitmq:\n", 1)[1].split("\nvolumes:", 1)[
+    0
+  ]
   expected = "ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512"
 
   assert expected in rabbitmq_block
@@ -355,7 +379,10 @@ def test_docker_compose_rabbitmq_allows_128mib_monitor_messages():
   content = compose_path.read_text()
   conf_path = repo_root / "services-conf" / "rabbitmq_max_message_size.conf"
 
-  assert "rabbitmq_max_message_size.conf:/etc/rabbitmq/conf.d/20-max_message_size.conf" in content
+  assert (
+    "rabbitmq_max_message_size.conf:/etc/rabbitmq/conf.d/20-max_message_size.conf"
+    in content
+  )
   conf_text = conf_path.read_text()
   assert "max_message_size = 134217728" in conf_text
   assert "max_message_size = 67108864" not in conf_text
@@ -369,8 +396,7 @@ def test_docker_compose_rabbitmq_frame_max_conf():
   conf_path = repo_root / "services-conf" / "rabbitmq_frame_max.conf"
 
   assert (
-      "rabbitmq_frame_max.conf:/etc/rabbitmq/conf.d/22-frame_max.conf"
-      in content
+    "rabbitmq_frame_max.conf:/etc/rabbitmq/conf.d/22-frame_max.conf" in content
   )
   conf_text = conf_path.read_text()
   assert "frame_max = 131072" in conf_text
@@ -385,8 +411,8 @@ def test_docker_compose_rabbitmq_defaults_to_quorum_queue_type():
   conf_path = repo_root / "services-conf" / "rabbitmq_default_queue_type.conf"
 
   assert (
-      "rabbitmq_default_queue_type.conf:/etc/rabbitmq/conf.d/25-default_queue_type.conf"
-      in content
+    "rabbitmq_default_queue_type.conf:/etc/rabbitmq/conf.d/25-default_queue_type.conf"
+    in content
   )
   conf_text = conf_path.read_text()
   assert "default_queue_type = quorum" in conf_text
@@ -399,11 +425,12 @@ def test_docker_compose_rabbitmq_vm_memory_cap_is_96gib():
   compose_path = repo_root / "docker-compose.yaml"
   content = compose_path.read_text()
   conf_path = repo_root / "services-conf" / "rabbitmq_vm_memory.conf"
-  rabbitmq_block = content.split("  rabbitmq:\n", 1)[1].split("\nvolumes:", 1)[0]
+  rabbitmq_block = content.split("  rabbitmq:\n", 1)[1].split("\nvolumes:", 1)[
+    0
+  ]
 
   assert (
-      "rabbitmq_vm_memory.conf:/etc/rabbitmq/conf.d/35-vm_memory.conf"
-      in content
+    "rabbitmq_vm_memory.conf:/etc/rabbitmq/conf.d/35-vm_memory.conf" in content
   )
   assert "mem_limit: 96g" in rabbitmq_block
   assert "memswap_limit: 96g" in rabbitmq_block
@@ -415,7 +442,9 @@ def test_docker_compose_rabbitmq_vm_memory_cap_is_96gib():
   design = (repo_root / "docs" / "design-document.md").read_text()
   deploy = (repo_root / "docs" / "DEPLOY_CONCURRENCY_AND_NUMA.md").read_text()
   assert "80GiB" in readme
-  assert "mem_limit: 96g" in readme or "mem_limit` / `memswap_limit` 96g" in readme
+  assert (
+    "mem_limit: 96g" in readme or "mem_limit` / `memswap_limit` 96g" in readme
+  )
   assert "80GiB" in design
   assert "80GiB" in deploy
 
@@ -429,8 +458,8 @@ def test_docker_compose_rabbitmq_logging_warning_not_info():
   conf_text = conf_path.read_text()
 
   assert (
-      "rabbitmq_logging.conf:/etc/rabbitmq/conf.d/30-logging_settings.conf"
-      in content
+    "rabbitmq_logging.conf:/etc/rabbitmq/conf.d/30-logging_settings.conf"
+    in content
   )
   assert "log.console.level = warning" in conf_text
   assert "log.console.level = info" not in conf_text
@@ -444,7 +473,9 @@ def test_docker_compose_rabbitmq_disables_crash_dumps():
   repo_root = Path(__file__).resolve().parents[2]
   compose_path = repo_root / "docker-compose.yaml"
   content = compose_path.read_text()
-  rabbitmq_block = content.split("  rabbitmq:\n", 1)[1].split("\nvolumes:", 1)[0]
+  rabbitmq_block = content.split("  rabbitmq:\n", 1)[1].split("\nvolumes:", 1)[
+    0
+  ]
 
   assert "ERL_CRASH_DUMP_SECONDS=0" in rabbitmq_block
   assert "ulimits:" in rabbitmq_block
@@ -460,7 +491,9 @@ def test_docker_compose_rabbitmq_stop_grace_period_is_10m():
   repo_root = Path(__file__).resolve().parents[2]
   compose_path = repo_root / "docker-compose.yaml"
   content = compose_path.read_text()
-  rabbitmq_block = content.split("  rabbitmq:\n", 1)[1].split("\nvolumes:", 1)[0]
+  rabbitmq_block = content.split("  rabbitmq:\n", 1)[1].split("\nvolumes:", 1)[
+    0
+  ]
 
   assert "stop_grace_period: 10m" in rabbitmq_block
   assert "stop_grace_period: 2m" not in rabbitmq_block
@@ -491,7 +524,9 @@ def test_docker_compose_proxy_runtime_tls_mount_and_entrypoint_materialize():
   compose_path = repo_root / "docker-compose.yaml"
   content = compose_path.read_text()
 
-  assert "./services-conf/nginx.conf:/etc/nginx/http.d/default.conf:ro" in content
+  assert (
+    "./services-conf/nginx.conf:/etc/nginx/http.d/default.conf:ro" in content
+  )
   assert "proxy_ssl_source:/mnt/ssl-source:ro" in content
   assert "ssl_certs:/etc/ssl/hpcperfstats:ro" not in content
   assert "additional_contexts:" not in content
@@ -503,20 +538,48 @@ def test_docker_compose_proxy_runtime_tls_mount_and_entrypoint_materialize():
   assert "services-conf/proxy.Dockerfile" in content
   assert "NGINX_SSL_CERT" not in content
   assert "PROXY_NGINX_TLS" not in content
-  assert "./services-conf/nginx-django-proxy-common.inc:/etc/nginx/nginx-django-proxy-common.inc:ro" in content
-  assert "./services-conf/nginx-compress-proxy.inc:/etc/nginx/nginx-compress-proxy.inc:ro" in content
-  assert "./services-conf/nginx-compress-static.inc:/etc/nginx/nginx-compress-static.inc:ro" in content
-  assert "./services-conf/nginx-edge-security-headers.inc:/etc/nginx/nginx-edge-security-headers.inc:ro" in content
-  assert "./services-conf/nginx-csp-no-active.inc:/etc/nginx/nginx-csp-no-active.inc:ro" in content
-  assert "./services-conf/nginx-csp-django-html.inc:/etc/nginx/nginx-csp-django-html.inc:ro" in content
+  assert (
+    "./services-conf/nginx-django-proxy-common.inc:/etc/nginx/nginx-django-proxy-common.inc:ro"
+    in content
+  )
+  assert (
+    "./services-conf/nginx-compress-proxy.inc:/etc/nginx/nginx-compress-proxy.inc:ro"
+    in content
+  )
+  assert (
+    "./services-conf/nginx-compress-static.inc:/etc/nginx/nginx-compress-static.inc:ro"
+    in content
+  )
+  assert (
+    "./services-conf/nginx-edge-security-headers.inc:/etc/nginx/nginx-edge-security-headers.inc:ro"
+    in content
+  )
+  assert (
+    "./services-conf/nginx-csp-no-active.inc:/etc/nginx/nginx-csp-no-active.inc:ro"
+    in content
+  )
+  assert (
+    "./services-conf/nginx-csp-django-html.inc:/etc/nginx/nginx-csp-django-html.inc:ro"
+    in content
+  )
   assert (repo_root / "services-conf" / "nginx-static-files.conf").exists()
-  assert (repo_root / "services-conf" / "nginx-django-proxy-common.inc").exists()
+  assert (
+    repo_root / "services-conf" / "nginx-django-proxy-common.inc"
+  ).exists()
   assert (repo_root / "services-conf" / "nginx-csp-no-active.inc").exists()
   assert (repo_root / "services-conf" / "nginx-csp-django-html.inc").exists()
-  assert (repo_root / "services-conf" / "parse_hpcperfstats_proxy_hosts.py").exists()
-  assert (repo_root / "services-conf" / "write_nginx_proxy_allowed_hosts_include.py").exists()
-  assert (repo_root / "services-conf" / "write_nginx_resolver_include.py").exists()
-  assert (repo_root / "services-conf" / "resolve_proxy_ssl_certs_dir.py").exists()
+  assert (
+    repo_root / "services-conf" / "parse_hpcperfstats_proxy_hosts.py"
+  ).exists()
+  assert (
+    repo_root / "services-conf" / "write_nginx_proxy_allowed_hosts_include.py"
+  ).exists()
+  assert (
+    repo_root / "services-conf" / "write_nginx_resolver_include.py"
+  ).exists()
+  assert (
+    repo_root / "services-conf" / "resolve_proxy_ssl_certs_dir.py"
+  ).exists()
   assert (repo_root / "services-conf" / "proxy_entrypoint.sh").exists()
   assert (repo_root / "services-conf" / "nginx.conf").exists()
   fixture = repo_root / "tests" / "fixtures" / "proxy-ssl"
@@ -598,9 +661,15 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
 
   # Hybrid compression: pin Facebook zstd + GetPageSpeed (tokers fork) module.
   assert "ARG ZSTD_VERSION=1.5.7" in dockerfile
-  assert "ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3" in dockerfile
+  assert (
+    "ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3"
+    in dockerfile
+  )
   assert "ARG ZSTD_NGINX_MODULE_VERSION=0.2.2" in dockerfile
-  assert "ARG ZSTD_NGINX_MODULE_SHA256=d4db8937f035ebb5e7efca833492611f8f5e4f710dbd3fbdd2f1aa5a85d3fe5e" in dockerfile
+  assert (
+    "ARG ZSTD_NGINX_MODULE_SHA256=d4db8937f035ebb5e7efca833492611f8f5e4f710dbd3fbdd2f1aa5a85d3fe5e"
+    in dockerfile
+  )
   assert "GetPageSpeed/zstd-nginx-module" in dockerfile
   assert 'MOREFLAGS="${OPT_CFLAGS_LIBS}"' in dockerfile
   assert "HAVE_ZLIB=0" in dockerfile
@@ -639,13 +708,18 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   assert "--zlib-compat" in zlib_opt
 
   assert "nginx=${NGINX_EDGE_VERSION}" not in dockerfile
-  assert "nginx-mod-http-brotli" not in dockerfile or "apk info -e nginx-mod-http-brotli" in dockerfile
+  assert (
+    "nginx-mod-http-brotli" not in dockerfile
+    or "apk info -e nginx-mod-http-brotli" in dockerfile
+  )
   assert "NGINX_EDGE_VERSION" not in dockerfile
   assert "ALPINE_EDGE_MAIN" not in dockerfile
   assert "apk add" in dockerfile and "nginx=${" not in dockerfile
   assert 'CMD ["/usr/local/bin/proxy_entrypoint.sh"]' in dockerfile
   assert "ca-certificates" in dockerfile
-  assert "COPY services-conf/nginx-main.conf /etc/nginx/nginx.conf" in dockerfile
+  assert (
+    "COPY services-conf/nginx-main.conf /etc/nginx/nginx.conf" in dockerfile
+  )
   main = (repo_root / "services-conf" / "nginx-main.conf").read_text()
   assert "worker_processes auto;" in main
   assert "worker_cpu_affinity auto;" in main
@@ -656,17 +730,15 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   assert "api;" not in main
   assert "client_body_early_read" not in main
   compose = (repo_root / "docker-compose.yaml").read_text()
-  assert (
-      "./services-conf/nginx-main.conf:/etc/nginx/nginx.conf:ro" in compose
-  )
+  assert "./services-conf/nginx-main.conf:/etc/nginx/nginx.conf:ro" in compose
   for mount_only in (
-      "nginx-edge-security-headers.inc",
-      "nginx-csp-no-active.inc",
-      "nginx-csp-django-html.inc",
-      "nginx-static-files.conf",
-      "nginx-django-proxy-common.inc",
-      "nginx-compress-proxy.inc",
-      "nginx-compress-static.inc",
+    "nginx-edge-security-headers.inc",
+    "nginx-csp-no-active.inc",
+    "nginx-csp-django-html.inc",
+    "nginx-static-files.conf",
+    "nginx-django-proxy-common.inc",
+    "nginx-compress-proxy.inc",
+    "nginx-compress-static.inc",
   ):
     assert f"COPY services-conf/{mount_only}" not in dockerfile
     assert f"./services-conf/{mount_only}:/etc/nginx/{mount_only}:ro" in compose
@@ -677,7 +749,9 @@ def test_proxy_compose_mounts_main_nginx_conf():
   repo_root = Path(__file__).resolve().parents[2]
   compose = (repo_root / "docker-compose.yaml").read_text()
   assert "./services-conf/nginx-main.conf:/etc/nginx/nginx.conf:ro" in compose
-  assert "./services-conf/nginx.conf:/etc/nginx/http.d/default.conf:ro" in compose
+  assert (
+    "./services-conf/nginx.conf:/etc/nginx/http.d/default.conf:ro" in compose
+  )
 
 
 def test_docker_compose_includes_settings_not_app_or_pinning():
@@ -689,10 +763,10 @@ def test_docker_compose_includes_settings_not_app_or_pinning():
   assert not (repo_root / "docker-compose.app.yaml.example").exists()
   assert not (repo_root / "scripts" / "apply_compose_cpu_pinning.py").exists()
   assert not (
-      repo_root / "hpcperfstats" / "dbload" / "lib" / "compose_cpu_layout.py"
+    repo_root / "hpcperfstats" / "dbload" / "lib" / "compose_cpu_layout.py"
   ).exists()
   assert not (
-      repo_root / "hpcperfstats" / "dbload" / "lib" / "numa_topology.py"
+    repo_root / "hpcperfstats" / "dbload" / "lib" / "numa_topology.py"
   ).exists()
 
 
@@ -710,14 +784,14 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
   # redis_runtime is a named Docker volume in base compose — not a setting.
   assert re.search(r"(?m)^volumes:\s*$", settings) is not None
   bind_names = (
-      "hpcperfstatsdata",
-      "staticfiles_data",
-      "media_data",
-      "postgres_data",
-      "postgres_data_pg18",
-      "rabbitmq_messages",
-      "ssh_keys",
-      "proxy_ssl_source",
+    "hpcperfstatsdata",
+    "staticfiles_data",
+    "media_data",
+    "postgres_data",
+    "postgres_data_pg18",
+    "rabbitmq_messages",
+    "ssh_keys",
+    "proxy_ssl_source",
   )
   for name in bind_names:
     assert f"{name}:" in settings
@@ -740,7 +814,7 @@ def test_docker_compose_staticfiles_ram_and_media_ram_tmpfs_not_null_stub():
   base = (repo_root / "docker-compose.yaml").read_text()
   settings = (repo_root / "docker-compose.settings.yaml.example").read_text()
   overlay = (
-      repo_root / "tests" / "docker-compose.test-overlay.yaml.example"
+    repo_root / "tests" / "docker-compose.test-overlay.yaml.example"
   ).read_text()
   assert _compose_has_named_tmpfs_volume(base, "staticfiles_ram", "64m")
   assert _compose_has_named_tmpfs_volume(base, "media_ram", "32m")
@@ -775,7 +849,9 @@ def test_docker_compose_db_pg18_dual_run_beside_hub_pg15():
   pg18_m = re.search(r"(?ms)^  db_pg18:\n(.*?)(?=^  [a-z].*:|\Z)", content)
   assert pg18_m, "db_pg18 service not found"
   pg18 = pg18_m.group(0)
-  assert "services-conf/db.Dockerfile" in pg18 or "dockerfile: db.Dockerfile" in pg18
+  assert (
+    "services-conf/db.Dockerfile" in pg18 or "dockerfile: db.Dockerfile" in pg18
+  )
   assert "image: hpcperfstats-db" in pg18
   assert "pg18-migrate" in pg18
   assert "POSTGRES_DB=hpcperfstats" in pg18
@@ -799,7 +875,9 @@ def test_docker_compose_pipeline_ssh_uses_ssh_keys_volume():
   assert "ssh_keys:/hpcperfstats/.ssh/:ro" in content
   assert "HPCPERFSTATS_PIPELINE_SSH_DIR" not in content
   assert "HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini" in content
-  assert "./hpcperfstats.ini:/home/hpcperfstats/hpcperfstats.ini:ro" not in content
+  assert (
+    "./hpcperfstats.ini:/home/hpcperfstats/hpcperfstats.ini:ro" not in content
+  )
   assert "target: hpcperfstats-full" in content
 
 
@@ -809,42 +887,46 @@ def test_docker_compose_web_build_uses_hpcperfstats_full_target():
   content = (repo_root / "docker-compose.yaml").read_text()
   assert "dockerfile: Dockerfile" in content
   assert "target: hpcperfstats-full" in content
-  assert content.index("target: hpcperfstats-full") < content.index("image: hpcperfstats")
+  assert content.index("target: hpcperfstats-full") < content.index(
+    "image: hpcperfstats"
+  )
 
 
 # Operator-facing bind devices that must stay in docker-compose.settings.yaml.example
 # (see docker-compose-settings-example-sync.mdc).
 _OPERATOR_SETTINGS_SHARED_BIND_DEVICES = (
-    "device: /data/hpcperfstats_data/site_data",
-    "device: /data/hpcperfstats_site/staticfiles",
-    "device: /data/hpcperfstats_site/media",
-    "device: /data/hpcperfstats_db/pg15",
-    "device: /data/hpcperfstats_db/pg18",
-    "device: /data/hpcperfstats_data/rabbitmq",
+  "device: /data/hpcperfstats_data/site_data",
+  "device: /data/hpcperfstats_site/staticfiles",
+  "device: /data/hpcperfstats_site/media",
+  "device: /data/hpcperfstats_db/pg15",
+  "device: /data/hpcperfstats_db/pg18",
+  "device: /data/hpcperfstats_data/rabbitmq",
 )
 
 _OPERATOR_SETTINGS_EXAMPLE_SSH_DEVICE = "device: /keys_directory/.ssh"
 _OPERATOR_SETTINGS_EXAMPLE_SSL_DEVICE = "device: /opt/certs"
 
 _OPERATOR_SETTINGS_VOLUME_NAMES = (
-    "hpcperfstatsdata:",
-    "staticfiles_data:",
-    "media_data:",
-    "postgres_data:",
-    "postgres_data_pg18:",
-    "rabbitmq_messages:",
-    "ssh_keys:",
-    "proxy_ssl_source:",
+  "hpcperfstatsdata:",
+  "staticfiles_data:",
+  "media_data:",
+  "postgres_data:",
+  "postgres_data_pg18:",
+  "rabbitmq_messages:",
+  "ssh_keys:",
+  "proxy_ssl_source:",
 )
 
 
 def test_docker_compose_settings_example_operator_markers():
   repo_root = Path(__file__).resolve().parents[2]
-  example_content = (repo_root / "docker-compose.settings.yaml.example").read_text()
+  example_content = (
+    repo_root / "docker-compose.settings.yaml.example"
+  ).read_text()
   for marker in _OPERATOR_SETTINGS_VOLUME_NAMES:
-    assert marker in example_content, "example missing volume: %s" % marker
+    assert marker in example_content, f"example missing volume: {marker}"
   for marker in _OPERATOR_SETTINGS_SHARED_BIND_DEVICES:
-    assert marker in example_content, "example missing bind device: %s" % marker
+    assert marker in example_content, f"example missing bind device: {marker}"
   assert _OPERATOR_SETTINGS_EXAMPLE_SSH_DEVICE in example_content
   assert _OPERATOR_SETTINGS_EXAMPLE_SSL_DEVICE in example_content
   assert "device: /data/hpcperfstats_db/pg18" in example_content
@@ -866,15 +948,15 @@ def test_docker_compose_settings_example_operator_parity():
   settings_content = settings_path.read_text()
   example_content = example_path.read_text()
   for marker in _OPERATOR_SETTINGS_SHARED_BIND_DEVICES:
-    assert marker in settings_content, "settings yaml missing bind: %s" % marker
-    assert marker in example_content, "example missing bind: %s" % marker
+    assert marker in settings_content, f"settings yaml missing bind: {marker}"
+    assert marker in example_content, f"example missing bind: {marker}"
   for name in _OPERATOR_SETTINGS_VOLUME_NAMES:
     assert name in settings_content
     assert name in example_content
   assert "ssl_certs:" not in settings_content
   assert re.search(
-      r"(?ms)^  ssh_keys:.*?^\s+device:\s+\S+",
-      settings_content,
+    r"(?ms)^  ssh_keys:.*?^\s+device:\s+\S+",
+    settings_content,
   ), "settings must set ssh_keys device"
   assert _OPERATOR_SETTINGS_EXAMPLE_SSH_DEVICE in example_content
 
@@ -888,21 +970,6 @@ def test_docker_compose_test_overlay_clears_host_binds():
   if overlay_path.is_file():
     # Local (gitignored) copy must keep the same bind-clearing contract.
     for name in (
-        "test_hpcperfstatsdata",
-        "test_staticfiles_data",
-        "test_media_data",
-        "test_staticfiles_ram",
-        "test_media_ram",
-        "test_postgres_data",
-        "test_postgres_data_pg18",
-        "test_rabbitmq_messages",
-        "test_ssh_keys",
-        "test_proxy_ssl_source",
-    ):
-      assert name in overlay_path.read_text()
-    assert "redis_runtime:/run/redis" in overlay_path.read_text()
-    assert "test_ssl_certs" not in overlay_path.read_text()
-  for name in (
       "test_hpcperfstatsdata",
       "test_staticfiles_data",
       "test_media_data",
@@ -913,6 +980,21 @@ def test_docker_compose_test_overlay_clears_host_binds():
       "test_rabbitmq_messages",
       "test_ssh_keys",
       "test_proxy_ssl_source",
+    ):
+      assert name in overlay_path.read_text()
+    assert "redis_runtime:/run/redis" in overlay_path.read_text()
+    assert "test_ssl_certs" not in overlay_path.read_text()
+  for name in (
+    "test_hpcperfstatsdata",
+    "test_staticfiles_data",
+    "test_media_data",
+    "test_staticfiles_ram",
+    "test_media_ram",
+    "test_postgres_data",
+    "test_postgres_data_pg18",
+    "test_rabbitmq_messages",
+    "test_ssh_keys",
+    "test_proxy_ssl_source",
   ):
     assert name in overlay
   assert "test_staticfiles_ram:/srv/static:ro" in overlay
@@ -938,16 +1020,16 @@ def test_docker_compose_pipeline_has_no_process_pool_shared_memory_override():
   content = (repo_root / "docker-compose.yaml").read_text()
   # Extract the pipeline service block until the next top-level service key.
   m = re.search(
-      r"(?ms)^  pipeline:\n(.*?)(?=^  [a-z].*:|\Z)",
-      content,
+    r"(?ms)^  pipeline:\n(.*?)(?=^  [a-z].*:|\Z)",
+    content,
   )
   assert m, "pipeline service not found"
   block = m.group(0)
   assert "POSIX SharedMemory for listend live-DB enqueue" not in block
   assert "shm_size:" not in block
   db_m = re.search(
-      r"(?ms)^  db:\n(.*?)(?=^  [a-z].*:|\Z)",
-      content,
+    r"(?ms)^  db:\n(.*?)(?=^  [a-z].*:|\Z)",
+    content,
   )
   assert db_m, "db service not found"
   assert 'shm_size: "16gb"' in db_m.group(0)

@@ -25,15 +25,14 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Iterable, Sequence
 
 import psycopg
-from psycopg import Connection
-from psycopg import errors as pg_errors
+from psycopg import Connection, errors as pg_errors
 
 LOG = logging.getLogger("pg18_host_data_chunk_copy")
 _COUNT_ATTEMPTS = 5
@@ -67,7 +66,13 @@ class ChunkRow:
       str: ``schema.name`` suitable for ``COPY (SELECT * FROM …)``.
 
     Examples:
-      >>> ChunkRow('_timescaledb_internal', '_hyper_1_1_chunk', datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2026, 1, 2, tzinfo=timezone.utc), False).regclass
+      >>> ChunkRow(
+      ...   "_timescaledb_internal",
+      ...   "_hyper_1_1_chunk",
+      ...   datetime(2026, 1, 1, tzinfo=timezone.utc),
+      ...   datetime(2026, 1, 2, tzinfo=timezone.utc),
+      ...   False,
+      ... ).regclass
       '_timescaledb_internal._hyper_1_1_chunk'
     """
     return f"{self.chunk_schema}.{self.chunk_name}"
@@ -103,13 +108,13 @@ def parse_chunk_tsv(lines: Iterable[str]) -> list[ChunkRow]:
       raise ValueError(f"expected 5 TSV fields, got {len(parts)}: {line!r}")
     schema, name, start_s, end_s, compressed_s = parts
     rows.append(
-        ChunkRow(
-            chunk_schema=schema,
-            chunk_name=name,
-            range_start=_parse_pg_timestamptz(start_s),
-            range_end=_parse_pg_timestamptz(end_s),
-            is_compressed=compressed_s.strip().lower() in {"t", "true", "1"},
-        )
+      ChunkRow(
+        chunk_schema=schema,
+        chunk_name=name,
+        range_start=_parse_pg_timestamptz(start_s),
+        range_end=_parse_pg_timestamptz(end_s),
+        is_compressed=compressed_s.strip().lower() in {"t", "true", "1"},
+      )
     )
   return rows
 
@@ -125,11 +130,11 @@ def _parse_pg_timestamptz(value: str) -> datetime:
     datetime: Timezone-aware UTC datetime.
 
   Examples:
-    >>> _parse_pg_timestamptz('2026-07-01 00:00:00+00').year
+    >>> _parse_pg_timestamptz("2026-07-01 00:00:00+00").year
     2026
   """
   text = value.strip().replace(" ", "T")
-  if text.endswith("+00") or text.endswith("-00"):
+  if text.endswith(("+00", "-00")):
     text = text[:-3] + "+00:00"
   if text.endswith("Z"):
     text = text[:-1] + "+00:00"
@@ -138,14 +143,14 @@ def _parse_pg_timestamptz(value: str) -> datetime:
     text = text + "+00:00"
   dt = datetime.fromisoformat(text)
   if dt.tzinfo is None:
-    dt = dt.replace(tzinfo=timezone.utc)
-  return dt.astimezone(timezone.utc)
+    dt = dt.replace(tzinfo=UTC)
+  return dt.astimezone(UTC)
 
 
 def filter_chunks_by_watermark(
-    chunks: Sequence[ChunkRow],
-    *,
-    watermark: datetime,
+  chunks: Sequence[ChunkRow],
+  *,
+  watermark: datetime,
 ) -> list[ChunkRow]:
   """
   Return chunks whose ``range_end`` is strictly before ``watermark``.
@@ -161,7 +166,9 @@ def filter_chunks_by_watermark(
     list[ChunkRow]: Chunks safe for live watermarked copy.
 
   Examples:
-    >>> filter_chunks_by_watermark([], watermark=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    >>> filter_chunks_by_watermark(
+    ...   [], watermark=datetime(2026, 1, 1, tzinfo=timezone.utc)
+    ... )
     []
   """
   return [c for c in chunks if c.range_end < watermark]
@@ -179,13 +186,15 @@ def watermark_from_now(*, days: float, now: datetime | None = None) -> datetime:
     datetime: Aware UTC watermark.
 
   Examples:
-    >>> watermark_from_now(days=3, now=datetime(2026, 9, 4, tzinfo=timezone.utc)).day
+    >>> watermark_from_now(
+    ...   days=3, now=datetime(2026, 9, 4, tzinfo=timezone.utc)
+    ... ).day
     1
   """
-  base = now if now is not None else datetime.now(timezone.utc)
+  base = now if now is not None else datetime.now(UTC)
   if base.tzinfo is None:
-    base = base.replace(tzinfo=timezone.utc)
-  return base.astimezone(timezone.utc) - timedelta(days=days)
+    base = base.replace(tzinfo=UTC)
+  return base.astimezone(UTC) - timedelta(days=days)
 
 
 def build_delete_range_sql(chunk: ChunkRow) -> str:
@@ -199,14 +208,22 @@ def build_delete_range_sql(chunk: ChunkRow) -> str:
     str: ``DELETE FROM host_data WHERE …`` statement.
 
   Examples:
-    >>> 'DELETE FROM host_data' in build_delete_range_sql(ChunkRow('_timescaledb_internal', '_hyper_1_2_chunk', datetime(2026, 8, 10, tzinfo=timezone.utc), datetime(2026, 8, 11, tzinfo=timezone.utc), False))
+    >>> "DELETE FROM host_data" in build_delete_range_sql(
+    ...   ChunkRow(
+    ...     "_timescaledb_internal",
+    ...     "_hyper_1_2_chunk",
+    ...     datetime(2026, 8, 10, tzinfo=timezone.utc),
+    ...     datetime(2026, 8, 11, tzinfo=timezone.utc),
+    ...     False,
+    ...   )
+    ... )
     True
   """
   start = chunk.range_start.isoformat()
   end = chunk.range_end.isoformat()
   return (
-      "DELETE FROM host_data "
-      f"WHERE time >= TIMESTAMPTZ '{start}' AND time < TIMESTAMPTZ '{end}';"
+    "DELETE FROM host_data "
+    f"WHERE time >= TIMESTAMPTZ '{start}' AND time < TIMESTAMPTZ '{end}';"
   )
 
 
@@ -224,7 +241,15 @@ def build_copy_out_sql(chunk: ChunkRow) -> str:
     ValueError: Raised when ``chunk`` names the empty parent ``host_data``.
 
   Examples:
-    >>> build_copy_out_sql(ChunkRow('_timescaledb_internal', '_hyper_1_2_chunk', datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2026, 1, 2, tzinfo=timezone.utc), False))
+    >>> build_copy_out_sql(
+    ...   ChunkRow(
+    ...     "_timescaledb_internal",
+    ...     "_hyper_1_2_chunk",
+    ...     datetime(2026, 1, 1, tzinfo=timezone.utc),
+    ...     datetime(2026, 1, 2, tzinfo=timezone.utc),
+    ...     False,
+    ...   )
+    ... )
     'COPY (SELECT * FROM _timescaledb_internal._hyper_1_2_chunk) TO STDOUT'
   """
   if chunk.chunk_name == "host_data" and chunk.chunk_schema in {"public", ""}:
@@ -254,7 +279,7 @@ def list_source_chunks_sql() -> str:
     str: SQL selecting chunk_schema, chunk_name, range bounds, is_compressed.
 
   Examples:
-    >>> 'hypertable_name' in list_source_chunks_sql()
+    >>> "hypertable_name" in list_source_chunks_sql()
     True
   """
   return """
@@ -266,11 +291,11 @@ ORDER BY range_start;
 
 
 def connect_pg(
-    *,
-    host: str,
-    port: int,
-    user: str,
-    database: str,
+  *,
+  host: str,
+  port: int,
+  user: str,
+  database: str,
 ) -> Connection:
   """
   Open an autocommit psycopg connection (password from ``PGPASSWORD``).
@@ -289,12 +314,12 @@ def connect_pg(
     'connect_pg'
   """
   return psycopg.connect(
-      host=host,
-      port=port,
-      user=user,
-      dbname=database,
-      password=os.environ.get("PGPASSWORD") or "",
-      autocommit=True,
+    host=host,
+    port=port,
+    user=user,
+    dbname=database,
+    password=os.environ.get("PGPASSWORD") or "",
+    autocommit=True,
   )
 
 
@@ -318,19 +343,19 @@ def _as_utc_datetime(value: object) -> datetime:
   if isinstance(value, datetime):
     dt = value
     if dt.tzinfo is None:
-      dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+      dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
   if isinstance(value, str):
     return _parse_pg_timestamptz(value)
   raise TypeError(f"expected datetime or str, got {type(value)!r}")
 
 
 def fetch_source_chunks(
-    *,
-    host: str,
-    port: int,
-    user: str,
-    database: str,
+  *,
+  host: str,
+  port: int,
+  user: str,
+  database: str,
 ) -> list[ChunkRow]:
   """
   Query ``timescaledb_information.chunks`` on the source via psycopg.
@@ -355,13 +380,13 @@ def fetch_source_chunks(
   rows: list[ChunkRow] = []
   for schema, name, start, end, compressed in raw_rows:
     rows.append(
-        ChunkRow(
-            chunk_schema=str(schema),
-            chunk_name=str(name),
-            range_start=_as_utc_datetime(start),
-            range_end=_as_utc_datetime(end),
-            is_compressed=bool(compressed),
-        )
+      ChunkRow(
+        chunk_schema=str(schema),
+        chunk_name=str(name),
+        range_start=_as_utc_datetime(start),
+        range_end=_as_utc_datetime(end),
+        is_compressed=bool(compressed),
+      )
     )
   return rows
 
@@ -405,7 +430,7 @@ def _is_retryable_count_error(exc: BaseException) -> bool:
     bool: True when the error is safe to retry or treat as unsynced.
 
   Examples:
-    >>> _is_retryable_count_error(RuntimeError('x'))
+    >>> _is_retryable_count_error(RuntimeError("x"))
     False
   """
   if isinstance(exc, pg_errors.QueryCanceled):
@@ -416,11 +441,11 @@ def _is_retryable_count_error(exc: BaseException) -> bool:
 
 
 def _count_with_retry(
-    conn: Connection,
-    sql: str,
-    params: Sequence[object] = (),
-    *,
-    label: str,
+  conn: Connection,
+  sql: str,
+  params: Sequence[object] = (),
+  *,
+  label: str,
 ) -> int:
   """
   Run ``count(*)`` with timeout disabled, retries, and ``-1`` on give-up.
@@ -456,20 +481,20 @@ def _count_with_retry(
       if not _is_retryable_count_error(exc):
         raise
       LOG.warning(
-          "%s count attempt %s/%s failed: %s",
-          label,
-          attempt,
-          _COUNT_ATTEMPTS,
-          exc,
+        "%s count attempt %s/%s failed: %s",
+        label,
+        attempt,
+        _COUNT_ATTEMPTS,
+        exc,
       )
       if attempt == _COUNT_ATTEMPTS:
         break
       time.sleep(delay)
       delay = min(delay * 2.0, 4.0)
   LOG.warning(
-      "%s count giving up after retries; treat range as unsynced: %s",
-      label,
-      last,
+    "%s count giving up after retries; treat range as unsynced: %s",
+    label,
+    last,
   )
   return -1
 
@@ -494,9 +519,9 @@ def count_source_chunk_rows(conn: Connection, chunk: ChunkRow) -> int:
     'count_source_chunk_rows'
   """
   return _count_with_retry(
-      conn,
-      f"SELECT count(*) FROM {chunk.regclass}",
-      label=f"source {chunk.regclass}",
+    conn,
+    f"SELECT count(*) FROM {chunk.regclass}",
+    label=f"source {chunk.regclass}",
   )
 
 
@@ -521,23 +546,23 @@ def count_target_range_rows(conn: Connection, chunk: ChunkRow) -> int:
     'count_target_range_rows'
   """
   return _count_with_retry(
-      conn,
-      "SELECT count(*) FROM host_data WHERE time >= %s AND time < %s",
-      (chunk.range_start, chunk.range_end),
-      label=f"target {chunk.regclass}",
+    conn,
+    "SELECT count(*) FROM host_data WHERE time >= %s AND time < %s",
+    (chunk.range_start, chunk.range_end),
+    label=f"target {chunk.regclass}",
   )
 
 
 def copy_one_chunk(
-    chunk: ChunkRow,
-    *,
-    source_host: str,
-    target_host: str,
-    port: int,
-    user: str,
-    database: str,
-    dump_dir: str | None,
-    force: bool = False,
+  chunk: ChunkRow,
+  *,
+  source_host: str,
+  target_host: str,
+  port: int,
+  user: str,
+  database: str,
+  dump_dir: str | None,
+  force: bool = False,
 ) -> str:
   """
   Skip when row counts match, else delete-range + COPY (optional zstd dump).
@@ -573,31 +598,34 @@ def copy_one_chunk(
   out_sql = build_copy_out_sql(chunk)
   in_sql = build_copy_in_sql()
 
-  with connect_pg(
+  with (
+    connect_pg(
       host=source_host, port=port, user=user, database=database
-  ) as src, connect_pg(
+    ) as src,
+    connect_pg(
       host=target_host, port=port, user=user, database=database
-  ) as tgt:
+    ) as tgt,
+  ):
     src_n = count_source_chunk_rows(src, chunk)
     tgt_n = count_target_range_rows(tgt, chunk)
     if not force and chunk_row_counts_match(src_n, tgt_n):
       LOG.info(
-          "skip chunk=%s range=[%s,%s) rows=%s (already synced)",
-          chunk.regclass,
-          chunk.range_start.isoformat(),
-          chunk.range_end.isoformat(),
-          src_n,
+        "skip chunk=%s range=[%s,%s) rows=%s (already synced)",
+        chunk.regclass,
+        chunk.range_start.isoformat(),
+        chunk.range_end.isoformat(),
+        src_n,
       )
       return "skipped"
 
     LOG.info(
-        "copy chunk=%s range=[%s,%s) compressed=%s src_rows=%s tgt_rows=%s",
-        chunk.regclass,
-        chunk.range_start.isoformat(),
-        chunk.range_end.isoformat(),
-        chunk.is_compressed,
-        src_n,
-        tgt_n,
+      "copy chunk=%s range=[%s,%s) compressed=%s src_rows=%s tgt_rows=%s",
+      chunk.regclass,
+      chunk.range_start.isoformat(),
+      chunk.range_end.isoformat(),
+      chunk.is_compressed,
+      src_n,
+      tgt_n,
     )
 
     with tgt.cursor() as tcur:
@@ -610,9 +638,9 @@ def copy_one_chunk(
       with path.open("wb") as out_f, src.cursor() as scur:
         scur.execute("SET statement_timeout = 0")
         zstd = subprocess.Popen(
-            ["zstd", "-T0", "-19"],
-            stdin=subprocess.PIPE,
-            stdout=out_f,
+          ["zstd", "-T0", "-19"],
+          stdin=subprocess.PIPE,
+          stdout=out_f,
         )
         assert zstd.stdin is not None
         with scur.copy(out_sql) as copy_out:
@@ -621,15 +649,13 @@ def copy_one_chunk(
         zstd.stdin.close()
         z_rc = zstd.wait()
         if z_rc != 0:
-          raise RuntimeError(
-              f"dump failed chunk={chunk.regclass} zstd={z_rc}"
-          )
+          raise RuntimeError(f"dump failed chunk={chunk.regclass} zstd={z_rc}")
       with path.open("rb") as in_f, tgt.cursor() as tcur:
         tcur.execute("SET statement_timeout = 0")
         zstd_d = subprocess.Popen(
-            ["zstd", "-dc"],
-            stdin=in_f,
-            stdout=subprocess.PIPE,
+          ["zstd", "-dc"],
+          stdin=in_f,
+          stdout=subprocess.PIPE,
         )
         assert zstd_d.stdout is not None
         with tcur.copy(in_sql) as copy_in:
@@ -641,7 +667,7 @@ def copy_one_chunk(
         d_rc = zstd_d.wait()
         if d_rc != 0:
           raise RuntimeError(
-              f"restore-from-dump failed chunk={chunk.regclass} zstd={d_rc}"
+            f"restore-from-dump failed chunk={chunk.regclass} zstd={d_rc}"
           )
       return "copied"
 
@@ -655,16 +681,16 @@ def copy_one_chunk(
 
 
 def run_chunk_copies(
-    chunks: Sequence[ChunkRow],
-    *,
-    source_host: str,
-    target_host: str,
-    port: int,
-    user: str,
-    database: str,
-    dump_dir: str | None,
-    force: bool,
-    workers: int,
+  chunks: Sequence[ChunkRow],
+  *,
+  source_host: str,
+  target_host: str,
+  port: int,
+  user: str,
+  database: str,
+  dump_dir: str | None,
+  force: bool,
+  workers: int,
 ) -> tuple[int, int]:
   """
   Copy or skip selected chunks with up to ``workers`` concurrent threads.
@@ -692,7 +718,17 @@ def run_chunk_copies(
     ValueError: Raised when a chunk names the parent ``host_data`` relation.
 
   Examples:
-    >>> run_chunk_copies([], source_host='db', target_host='db18', port=5432, user='u', database='d', dump_dir=None, force=False, workers=2)
+    >>> run_chunk_copies(
+    ...   [],
+    ...   source_host="db",
+    ...   target_host="db18",
+    ...   port=5432,
+    ...   user="u",
+    ...   database="d",
+    ...   dump_dir=None,
+    ...   force=False,
+    ...   workers=2,
+    ... )
     (0, 0)
   """
   if workers < 1:
@@ -704,18 +740,18 @@ def run_chunk_copies(
   copied = 0
   with ThreadPoolExecutor(max_workers=workers) as pool:
     futures = [
-        pool.submit(
-            copy_one_chunk,
-            chunk,
-            source_host=source_host,
-            target_host=target_host,
-            port=port,
-            user=user,
-            database=database,
-            dump_dir=dump_dir,
-            force=force,
-        )
-        for chunk in chunks
+      pool.submit(
+        copy_one_chunk,
+        chunk,
+        source_host=source_host,
+        target_host=target_host,
+        port=port,
+        user=user,
+        database=database,
+        dump_dir=dump_dir,
+        force=force,
+      )
+      for chunk in chunks
     ]
     for fut in as_completed(futures):
       outcome = fut.result()
@@ -742,86 +778,90 @@ def main(argv: Sequence[str] | None = None) -> int:
     True
   """
   parser = argparse.ArgumentParser(description=__doc__)
-  parser.add_argument("--source-host", default="db", help="PG15 compose hostname")
-  parser.add_argument("--target-host", default="db18", help="PG18 compose hostname")
+  parser.add_argument(
+    "--source-host", default="db", help="PG15 compose hostname"
+  )
+  parser.add_argument(
+    "--target-host", default="db18", help="PG18 compose hostname"
+  )
   parser.add_argument("--port", type=int, default=5432)
   parser.add_argument("--user", default="hpcperfstats")
   parser.add_argument("--database", default="hpcperfstats")
   parser.add_argument(
-      "--watermark-days",
-      type=float,
-      default=3.0,
-      help="Copy only chunks with range_end < now() - N days (default 3)",
+    "--watermark-days",
+    type=float,
+    default=3.0,
+    help="Copy only chunks with range_end < now() - N days (default 3)",
   )
   parser.add_argument(
-      "--dump-dir",
-      default=None,
-      help="Optional directory for chunk_*.pgcopy.zst audit/resume files",
+    "--dump-dir",
+    default=None,
+    help="Optional directory for chunk_*.pgcopy.zst audit/resume files",
   )
   parser.add_argument(
-      "--list-only",
-      action="store_true",
-      help="Print selected chunks and exit without copying",
+    "--list-only",
+    action="store_true",
+    help="Print selected chunks and exit without copying",
   )
   parser.add_argument(
-      "--force",
-      action="store_true",
-      help="Re-copy even when source/target row counts already match",
+    "--force",
+    action="store_true",
+    help="Re-copy even when source/target row counts already match",
   )
   parser.add_argument(
-      "--workers",
-      type=int,
-      default=2,
-      help="Max concurrent chunk copies (default 2; use 1 for serial)",
+    "--workers",
+    type=int,
+    default=2,
+    help="Max concurrent chunk copies (default 2; use 1 for serial)",
   )
   parser.add_argument("-v", "--verbose", action="store_true")
   args = parser.parse_args(list(argv) if argv is not None else None)
 
   logging.basicConfig(
-      level=logging.DEBUG if args.verbose else logging.INFO,
-      format="%(asctime)s %(levelname)s %(message)s",
+    level=logging.DEBUG if args.verbose else logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
   )
 
   wm = watermark_from_now(days=args.watermark_days)
   chunks = fetch_source_chunks(
-      host=args.source_host,
-      port=args.port,
-      user=args.user,
-      database=args.database,
+    host=args.source_host,
+    port=args.port,
+    user=args.user,
+    database=args.database,
   )
   selected = filter_chunks_by_watermark(chunks, watermark=wm)
   LOG.info(
-      "source_chunks=%s selected=%s watermark=%s workers=%s",
-      len(chunks),
-      len(selected),
-      wm.isoformat(),
-      args.workers,
+    "source_chunks=%s selected=%s watermark=%s workers=%s",
+    len(chunks),
+    len(selected),
+    wm.isoformat(),
+    args.workers,
   )
   for c in selected:
     print(
-        f"{c.regclass}\t{c.range_start.isoformat()}\t{c.range_end.isoformat()}\t"
-        f"compressed={c.is_compressed}"
+      f"{c.regclass}\t{c.range_start.isoformat()}\t{c.range_end.isoformat()}\t"
+      f"compressed={c.is_compressed}"
     )
   if args.list_only:
     return 0
 
   skipped, copied = run_chunk_copies(
-      selected,
-      source_host=args.source_host,
-      target_host=args.target_host,
-      port=args.port,
-      user=args.user,
-      database=args.database,
-      dump_dir=args.dump_dir,
-      force=args.force,
-      workers=args.workers,
+    selected,
+    source_host=args.source_host,
+    target_host=args.target_host,
+    port=args.port,
+    user=args.user,
+    database=args.database,
+    dump_dir=args.dump_dir,
+    force=args.force,
+    workers=args.workers,
   )
   LOG.info(
-      "done skipped=%s copied=%s force=%s workers=%s",
-      skipped,
-      copied,
-      args.force,
-      args.workers,
+    "done skipped=%s copied=%s force=%s workers=%s",
+    skipped,
+    copied,
+    args.force,
+    args.workers,
   )
   return 0
 

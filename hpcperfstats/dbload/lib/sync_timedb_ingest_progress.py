@@ -10,6 +10,7 @@ Attributes:
   _ingest_last_progress_mono: ContextVar last heartbeat monotonic time.
   _ingest_progress_path: ContextVar path label for idle-stall errors.
 """
+
 from __future__ import annotations
 
 import contextvars
@@ -19,15 +20,19 @@ from typing import Any
 import hpcperfstats.dbload.lib.conf_parser as cfg
 
 _ingest_last_progress_mono: contextvars.ContextVar[float | None] = (
-    contextvars.ContextVar("ingest_last_progress_mono", default=None)
+  contextvars.ContextVar("ingest_last_progress_mono", default=None)
 )
-_ingest_idle_stall_s: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+_ingest_idle_stall_s: contextvars.ContextVar[float | None] = (
+  contextvars.ContextVar(
     "ingest_idle_stall_s",
     default=None,
+  )
 )
-_ingest_progress_path: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+_ingest_progress_path: contextvars.ContextVar[str | None] = (
+  contextvars.ContextVar(
     "ingest_progress_path",
     default=None,
+  )
 )
 
 
@@ -95,7 +100,10 @@ def touch_ingest_progress(*, clock: Any = time.monotonic) -> None:
   Examples:
     >>> touch_ingest_progress()  # doctest: +SKIP
   """
-  if _ingest_idle_stall_s.get() is None and _ingest_last_progress_mono.get() is None:
+  if (
+    _ingest_idle_stall_s.get() is None
+    and _ingest_last_progress_mono.get() is None
+  ):
     return
   _ingest_last_progress_mono.set(float(clock()))
 

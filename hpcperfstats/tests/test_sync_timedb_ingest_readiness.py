@@ -1,5 +1,6 @@
 """Tests for sync_timedb DB head+tail readiness gate."""
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 
 import pytest
 
@@ -43,7 +44,7 @@ def test_head_timestamp_cache_reuses_recent_lookup(monkeypatch):
       return _QS()
 
   monkeypatch.setattr(host_data, "objects", _Mgr())
-  ts = datetime.now(timezone.utc)
+  ts = datetime.now(UTC)
   assert readiness.head_timestamp_present_in_db("h1", ts)
   assert readiness.head_timestamp_present_in_db("h1", ts)
   assert calls["n"] == 1
@@ -53,7 +54,7 @@ def test_path_cache_reuses_recent_lookup(monkeypatch, tmp_path):
   arch_suffix = "cluster.readiness.test"
   host_dir = tmp_path / ("n." + arch_suffix)
   host_dir.mkdir()
-  ts = int(datetime(2026, 4, 19, 12, 0, 0, tzinfo=timezone.utc).timestamp())
+  ts = int(datetime(2026, 4, 19, 12, 0, 0, tzinfo=UTC).timestamp())
   seg = host_dir / str(ts)
   seg.write_text("%d job1 cn001\nline\n" % ts)
   calls = {"n": 0}
@@ -75,12 +76,14 @@ def test_stats_file_head_ingested_false_without_db_row(monkeypatch, tmp_path):
   arch_suffix = "cluster.readiness.test"
   host = tmp_path / ("n." + arch_suffix)
   host.mkdir()
-  ts = int(datetime(2026, 4, 20, 12, 0, 0, tzinfo=timezone.utc).timestamp())
+  ts = int(datetime(2026, 4, 20, 12, 0, 0, tzinfo=UTC).timestamp())
   seg = host / str(ts)
   seg.write_text("%d job1 cn001\nline\n" % ts)
 
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
-  monkeypatch.setattr(readiness, "head_timestamp_present_in_db", lambda _h, _t: False)
+  monkeypatch.setattr(
+    readiness, "head_timestamp_present_in_db", lambda _h, _t: False
+  )
   assert readiness.stats_file_head_ingested_in_db(str(seg)) is False
 
 
@@ -88,12 +91,14 @@ def test_stats_file_head_ingested_true_with_db_row(monkeypatch, tmp_path):
   arch_suffix = "cluster.readiness.test"
   host_dir = tmp_path / ("n." + arch_suffix)
   host_dir.mkdir()
-  ts_dt = datetime(2026, 4, 21, 12, 0, 0, tzinfo=timezone.utc)
+  ts_dt = datetime(2026, 4, 21, 12, 0, 0, tzinfo=UTC)
   ts = int(ts_dt.timestamp())
   seg = host_dir / str(ts)
   seg.write_text("%d job1 cn001\nline\n" % ts)
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
-  monkeypatch.setattr(readiness, "head_timestamp_present_in_db", lambda _h, _t: True)
+  monkeypatch.setattr(
+    readiness, "head_timestamp_present_in_db", lambda _h, _t: True
+  )
   assert readiness.stats_file_head_ingested_in_db(str(seg)) is True
 
 
@@ -101,7 +106,9 @@ def test_gate_false_when_head_present_tail_absent(monkeypatch, tmp_path):
   host_dir = tmp_path / "host.cluster"
   host_dir.mkdir()
   base = 1_700_000_000
-  seg = _write_stats_segment(host_dir / "seg", "cn001", base, extra_timestamp_lines=5)
+  seg = _write_stats_segment(
+    host_dir / "seg", "cn001", base, extra_timestamp_lines=5
+  )
   present = {base}
 
   def _present(hostname, timestamp_utc):
@@ -117,7 +124,9 @@ def test_gate_false_when_tail_present_head_absent(monkeypatch, tmp_path):
   host_dir = tmp_path / "host.cluster"
   host_dir.mkdir()
   base = 1_700_000_000
-  seg = _write_stats_segment(host_dir / "seg", "cn001", base, extra_timestamp_lines=5)
+  seg = _write_stats_segment(
+    host_dir / "seg", "cn001", base, extra_timestamp_lines=5
+  )
   present = {base + 5}
 
   def _present(hostname, timestamp_utc):
@@ -129,11 +138,15 @@ def test_gate_false_when_tail_present_head_absent(monkeypatch, tmp_path):
   assert readiness.stats_file_head_ingested_in_db(seg) is False
 
 
-def test_gate_true_when_head_and_tail_present_distinct_seconds(monkeypatch, tmp_path):
+def test_gate_true_when_head_and_tail_present_distinct_seconds(
+  monkeypatch, tmp_path
+):
   host_dir = tmp_path / "host.cluster"
   host_dir.mkdir()
   base = 1_700_000_000
-  seg = _write_stats_segment(host_dir / "seg", "cn001", base, extra_timestamp_lines=5)
+  seg = _write_stats_segment(
+    host_dir / "seg", "cn001", base, extra_timestamp_lines=5
+  )
   present = {base, base + 5}
 
   def _present(hostname, timestamp_utc):
@@ -149,7 +162,9 @@ def test_gate_true_single_line_head_equals_tail(monkeypatch, tmp_path):
   host_dir = tmp_path / "host.cluster"
   host_dir.mkdir()
   base = 1_700_000_000
-  seg = _write_stats_segment(host_dir / "seg", "cn001", base, extra_timestamp_lines=0)
+  seg = _write_stats_segment(
+    host_dir / "seg", "cn001", base, extra_timestamp_lines=0
+  )
   calls = {"n": 0}
 
   def _present(hostname, timestamp_utc):
@@ -167,7 +182,9 @@ def test_tail_identity_uses_streaming_not_full_file_scan(monkeypatch, tmp_path):
   host_dir = tmp_path / "host.cluster"
   host_dir.mkdir()
   base = 1_700_000_000
-  seg = _write_stats_segment(host_dir / "seg", "cn001", base, extra_timestamp_lines=100)
+  seg = _write_stats_segment(
+    host_dir / "seg", "cn001", base, extra_timestamp_lines=100
+  )
   stream_calls = {"n": 0}
   real_stream = parsing.parse_last_timestamp_line_streaming
 
@@ -175,20 +192,26 @@ def test_tail_identity_uses_streaming_not_full_file_scan(monkeypatch, tmp_path):
     stream_calls["n"] += 1
     return real_stream(path, **kwargs)
 
-  monkeypatch.setattr(parsing, "parse_last_timestamp_line_streaming", _counting_stream)
+  monkeypatch.setattr(
+    parsing, "parse_last_timestamp_line_streaming", _counting_stream
+  )
   host, ts = helpers.read_stats_file_tail_identity(seg)
   assert host == "cn001"
   assert int(ts.timestamp()) == base + 100
   assert stream_calls["n"] == 1
-  assert not hasattr(parsing, "collect_stats_file_sampled_timestamp_identities_streaming")
+  assert not hasattr(
+    parsing, "collect_stats_file_sampled_timestamp_identities_streaming"
+  )
 
 
-def test_head_timestamp_present_matches_subsecond_rows_in_same_second(monkeypatch):
+def test_head_timestamp_present_matches_subsecond_rows_in_same_second(
+  monkeypatch,
+):
   """Monitor head lines use fractional seconds; DB rows keep subsecond time."""
   ts_line = 1773864970.470903
   ts_sec = int(ts_line)
-  head_second = datetime.fromtimestamp(ts_sec, tz=timezone.utc)
-  stored_time = datetime.fromtimestamp(ts_line, tz=timezone.utc)
+  head_second = datetime.fromtimestamp(ts_sec, tz=UTC)
+  stored_time = datetime.fromtimestamp(ts_line, tz=UTC)
   seen = {}
 
   class _QS:
@@ -196,7 +219,9 @@ def test_head_timestamp_present_matches_subsecond_rows_in_same_second(monkeypatc
       return bool(seen.get("in_window"))
 
   class _Mgr:
-    def filter(self, *, host, time__gte=None, time__lt=None, time=None, **kwargs):
+    def filter(
+      self, *, host, time__gte=None, time__lt=None, time=None, **kwargs
+    ):
       del host, kwargs
       if time is not None:
         seen["exact"] = time
@@ -206,34 +231,40 @@ def test_head_timestamp_present_matches_subsecond_rows_in_same_second(monkeypatc
       return _QS()
 
   monkeypatch.setattr(host_data, "objects", _Mgr())
-  assert readiness.head_timestamp_present_in_db("c571-001.stampede3.tacc.utexas.edu", head_second)
+  assert readiness.head_timestamp_present_in_db(
+    "c571-001.stampede3.tacc.utexas.edu", head_second
+  )
   assert seen.get("in_window") is True
   assert "exact" not in seen
 
 
 def test_stats_file_head_ingested_fractional_head_line_after_subsecond_ingest(
-    monkeypatch, tmp_path,
+  monkeypatch,
+  tmp_path,
 ):
   arch_suffix = "cluster.readiness.test"
   host_dir = tmp_path / ("n." + arch_suffix)
   host_dir.mkdir()
   ts_line = 1773864970.470903
   seg = host_dir / str(int(ts_line))
-  seg.write_text("%f job1 cn001\nblock dev 1 2 3\n" % ts_line)
+  seg.write_text(f"{ts_line:f} job1 cn001\nblock dev 1 2 3\n")
 
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
-  monkeypatch.setattr(readiness, "head_timestamp_present_in_db", lambda _h, _t: True)
+  monkeypatch.setattr(
+    readiness, "head_timestamp_present_in_db", lambda _h, _t: True
+  )
   assert readiness.stats_file_head_ingested_in_db(str(seg)) is True
 
 
 def test_stats_file_head_ingested_uses_host_from_file_not_path_dirname(
-    monkeypatch, tmp_path,
+  monkeypatch,
+  tmp_path,
 ):
   """Regression: path dirname (FQDN) must not be used for host_data host lookup."""
   fqdn_dir = "c641-072.vista.tacc.utexas.edu"
   host_dir = tmp_path / fqdn_dir
   host_dir.mkdir()
-  ts_dt = datetime(2026, 4, 22, 12, 0, 0, tzinfo=timezone.utc)
+  ts_dt = datetime(2026, 4, 22, 12, 0, 0, tzinfo=UTC)
   ts = int(ts_dt.timestamp())
   seg = host_dir / str(ts)
   short_host = "c641-072"
@@ -255,21 +286,27 @@ def test_filter_paths_head_ingested_partitions(monkeypatch, tmp_path):
   a.write_text("1\n")
   b.write_text("2\n")
   monkeypatch.setattr(
-      readiness,
-      "stats_file_head_ingested_in_db",
-      lambda path, **_: path == str(a),
+    readiness,
+    "stats_file_head_ingested_in_db",
+    lambda path, **_: path == str(a),
   )
-  ready, skipped = readiness.filter_paths_head_ingested([str(a), str(b)], log_fn=None)
+  ready, skipped = readiness.filter_paths_head_ingested(
+    [str(a), str(b)], log_fn=None
+  )
   assert ready == [str(a)]
   assert skipped == [str(b)]
 
 
-def test_filter_paths_head_identity_alone_does_not_batch_head_only(monkeypatch, tmp_path):
+def test_filter_paths_head_identity_alone_does_not_batch_head_only(
+  monkeypatch, tmp_path
+):
   """head_identity_by_path alone must not skip the per-path head+tail probe."""
   host_dir = tmp_path / "host.cluster"
   host_dir.mkdir()
   base = 1_700_000_000
-  seg = _write_stats_segment(host_dir / "seg", "cn001", base, extra_timestamp_lines=3)
+  seg = _write_stats_segment(
+    host_dir / "seg", "cn001", base, extra_timestamp_lines=3
+  )
   present = {base}  # head only
 
   def _present(hostname, timestamp_utc):
@@ -279,9 +316,9 @@ def test_filter_paths_head_identity_alone_does_not_batch_head_only(monkeypatch, 
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(readiness, "head_timestamp_present_in_db", _present)
   ready, skipped = readiness.filter_paths_head_ingested(
-      [seg],
-      log_fn=None,
-      head_identity_by_path={seg: ("cn001", base)},
+    [seg],
+    log_fn=None,
+    head_identity_by_path={seg: ("cn001", base)},
   )
   assert ready == []
   assert skipped == [seg]
@@ -295,17 +332,20 @@ def test_gate_disabled_passes_without_db(monkeypatch, tmp_path):
   assert readiness.stats_file_head_ingested_in_db(str(seg)) is True
 
 
-def test_conf_parser_sync_archive_require_db_ingest_default(temp_ini, monkeypatch):
+def test_conf_parser_sync_archive_require_db_ingest_default(
+  temp_ini, monkeypatch
+):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
+
   importlib.reload(cfg)
   assert cfg.get_sync_archive_require_db_ingest() is True
 
   with open(temp_ini) as fh:
     content = fh.read()
   content = content.replace(
-      "total_cores = 4",
-      "total_cores = 4\nsync_archive_require_db_ingest = no",
+    "total_cores = 4",
+    "total_cores = 4\nsync_archive_require_db_ingest = no",
   )
   with open(temp_ini, "w") as fh:
     fh.write(content)
@@ -316,7 +356,9 @@ def test_conf_parser_sync_archive_require_db_ingest_default(temp_ini, monkeypatc
   assert not hasattr(cfg, "get_sync_archive_db_ingest_gate_sample_stride")
 
 
-def test_stats_file_head_ingested_in_db_closes_connections(monkeypatch, tmp_path):
+def test_stats_file_head_ingested_in_db_closes_connections(
+  monkeypatch, tmp_path
+):
   close_calls = []
 
   class _FakeSyncWorkerDbTask:
@@ -332,7 +374,10 @@ def test_stats_file_head_ingested_in_db_closes_connections(monkeypatch, tmp_path
   seg.write_text("not-a-stats-file\n")
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: False)
   import hpcperfstats.dbload.sync_timedb as sync_timedb
-  monkeypatch.setattr(sync_timedb, "_sync_worker_db_task", lambda: _FakeSyncWorkerDbTask())
+
+  monkeypatch.setattr(
+    sync_timedb, "_sync_worker_db_task", lambda: _FakeSyncWorkerDbTask()
+  )
   assert readiness.stats_file_head_ingested_in_db(str(seg)) is True
   assert close_calls == ["enter", "exit"]
 
@@ -357,15 +402,18 @@ def test_host_sampled_batch_uses_single_range_query(monkeypatch):
 
   monkeypatch.setattr(host_data, "objects", _Mgr())
   seconds = {100, 200, 300}
-  assert host_itimes.host_sampled_timestamp_seconds_all_present("cn001", seconds) is False
+  assert (
+    host_itimes.host_sampled_timestamp_seconds_all_present("cn001", seconds)
+    is False
+  )
   assert query_calls["n"] == 1
 
 
 def test_host_sampled_overflow_falls_back_to_per_second_exists(monkeypatch):
   monkeypatch.setattr(
-      host_itimes,
-      "host_recent_timestamps_cached",
-      lambda *_a, **_k: host_itimes.HOST_ITIMES_SET_OVERFLOW,
+    host_itimes,
+    "host_recent_timestamps_cached",
+    lambda *_a, **_k: host_itimes.HOST_ITIMES_SET_OVERFLOW,
   )
   exists_calls = {"n": 0}
 
@@ -374,21 +422,32 @@ def test_host_sampled_overflow_falls_back_to_per_second_exists(monkeypatch):
     exists_calls["n"] += 1
     return True
 
-  monkeypatch.setattr(host_itimes, "host_timestamp_second_present_in_db", _exists)
-  assert host_itimes.host_sampled_timestamp_seconds_all_present("cn001", {100, 200}) is True
+  monkeypatch.setattr(
+    host_itimes, "host_timestamp_second_present_in_db", _exists
+  )
+  assert (
+    host_itimes.host_sampled_timestamp_seconds_all_present("cn001", {100, 200})
+    is True
+  )
   assert exists_calls["n"] == 2
 
 
-def test_build_head_ingest_ready_set_one_batch_probe_per_host(monkeypatch, tmp_path):
+def test_build_head_ingest_ready_set_one_batch_probe_per_host(
+  monkeypatch, tmp_path
+):
   host_dir = tmp_path / "host.cluster"
   host_dir.mkdir()
   paths = [
-      _write_stats_segment(host_dir / "a", "cn001", 1_700_000_000, extra_timestamp_lines=2),
-      _write_stats_segment(host_dir / "b", "cn001", 1_700_000_010, extra_timestamp_lines=2),
+    _write_stats_segment(
+      host_dir / "a", "cn001", 1_700_000_000, extra_timestamp_lines=2
+    ),
+    _write_stats_segment(
+      host_dir / "b", "cn001", 1_700_000_010, extra_timestamp_lines=2
+    ),
   ]
   gate = {
-      paths[0]: {"cn001": {1_700_000_000, 1_700_000_002}},
-      paths[1]: {"cn001": {1_700_000_010, 1_700_000_012}},
+    paths[0]: {"cn001": {1_700_000_000, 1_700_000_002}},
+    paths[1]: {"cn001": {1_700_000_010, 1_700_000_012}},
   }
   calls = {"n": 0}
 
@@ -398,7 +457,9 @@ def test_build_head_ingest_ready_set_one_batch_probe_per_host(monkeypatch, tmp_p
     return True
 
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
-  monkeypatch.setattr(readiness, "host_timestamp_seconds_all_present", _all_present)
+  monkeypatch.setattr(
+    readiness, "host_timestamp_seconds_all_present", _all_present
+  )
   ready = readiness.build_head_ingest_ready_set(paths, gate, log_fn=None)
   assert paths[0] in ready
   assert paths[1] in ready
@@ -413,7 +474,8 @@ def test_head_tail_identity_as_gate_identities_merges_hosts():
 
 
 def test_zero_host_mark_makes_filter_paths_head_ingested_ready(
-    monkeypatch, tmp_path,
+  monkeypatch,
+  tmp_path,
 ):
   """Successful stats_rows=0 ingest mark must pass archive/delete gate."""
   from hpcperfstats.dbload.lib import sync_timedb_zero_host_ingest_mark as zhm
@@ -427,7 +489,9 @@ def test_zero_host_mark_makes_filter_paths_head_ingested_ready(
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(cfg, "get_archive_dir_path", lambda: str(archive_dir))
   monkeypatch.setattr(
-      readiness, "head_timestamp_present_in_db", lambda _h, _t: False,
+    readiness,
+    "head_timestamp_present_in_db",
+    lambda _h, _t: False,
   )
 
   assert readiness.stats_file_head_ingested_in_db(seg) is False
@@ -435,7 +499,9 @@ def test_zero_host_mark_makes_filter_paths_head_ingested_ready(
   assert ready == []
   assert skipped == [seg]
 
-  assert zhm.record_zero_host_ingest_mark(seg, archive_data_dir=str(archive_dir))
+  assert zhm.record_zero_host_ingest_mark(
+    seg, archive_data_dir=str(archive_dir)
+  )
   readiness.reset_sync_ingest_readiness_caches()
   assert readiness.stats_file_head_ingested_in_db(seg) is True
   ready, skipped = readiness.filter_paths_head_ingested([seg], log_fn=None)
@@ -444,7 +510,8 @@ def test_zero_host_mark_makes_filter_paths_head_ingested_ready(
 
 
 def test_zero_host_mark_widens_batched_build_head_ingest_ready_set(
-    monkeypatch, tmp_path,
+  monkeypatch,
+  tmp_path,
 ):
   from hpcperfstats.dbload.lib import sync_timedb_zero_host_ingest_mark as zhm
 
@@ -457,21 +524,25 @@ def test_zero_host_mark_widens_batched_build_head_ingest_ready_set(
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(cfg, "get_archive_dir_path", lambda: str(archive_dir))
   monkeypatch.setattr(
-      readiness,
-      "host_timestamp_seconds_all_present",
-      lambda _h, _s: False,
+    readiness,
+    "host_timestamp_seconds_all_present",
+    lambda _h, _s: False,
   )
 
   gate = {seg: {"cn001": {1_700_100_100}}}
   ready = readiness.build_head_ingest_ready_set([seg], gate, log_fn=None)
   assert seg not in ready
 
-  assert zhm.record_zero_host_ingest_mark(seg, archive_data_dir=str(archive_dir))
+  assert zhm.record_zero_host_ingest_mark(
+    seg, archive_data_dir=str(archive_dir)
+  )
   ready = readiness.build_head_ingest_ready_set([seg], gate, log_fn=None)
   assert seg in ready
 
 
-def test_without_mark_and_without_host_data_still_skipped(monkeypatch, tmp_path):
+def test_without_mark_and_without_host_data_still_skipped(
+  monkeypatch, tmp_path
+):
   host_dir = tmp_path / "host.cluster"
   host_dir.mkdir()
   archive_dir = tmp_path / "archive"
@@ -481,7 +552,9 @@ def test_without_mark_and_without_host_data_still_skipped(monkeypatch, tmp_path)
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(cfg, "get_archive_dir_path", lambda: str(archive_dir))
   monkeypatch.setattr(
-      readiness, "head_timestamp_present_in_db", lambda _h, _t: False,
+    readiness,
+    "head_timestamp_present_in_db",
+    lambda _h, _t: False,
   )
   assert readiness.stats_file_head_ingested_in_db(seg) is False
 
@@ -498,14 +571,20 @@ def test_live_off_file_complete_ready_without_head_tail(monkeypatch, tmp_path):
   monkeypatch.setattr(cfg, "get_listend_db_ingest_enabled", lambda: False)
   monkeypatch.setattr(cfg, "get_archive_dir_path", lambda: str(archive_dir))
   monkeypatch.setattr(
-      readiness, "_path_head_tail_ready_in_db", lambda _p: (_ for _ in ()).throw(
-          AssertionError("head+tail must not run when file_complete"),
-      ),
+    readiness,
+    "_path_head_tail_ready_in_db",
+    lambda _p: (_ for _ in ()).throw(
+      AssertionError("head+tail must not run when file_complete"),
+    ),
   )
   monkeypatch.setattr(
-      readiness, "_path_ready_via_file_complete_mark", lambda _p: True,
+    readiness,
+    "_path_ready_via_file_complete_mark",
+    lambda _p: True,
   )
   monkeypatch.setattr(
-      readiness, "_path_ready_via_zero_host_mark", lambda _p: False,
+    readiness,
+    "_path_ready_via_zero_host_mark",
+    lambda _p: False,
   )
   assert readiness.stats_file_head_ingested_in_db(seg) is True

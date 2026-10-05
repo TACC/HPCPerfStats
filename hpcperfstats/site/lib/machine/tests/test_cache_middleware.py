@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 from django.middleware.cache import CacheMiddleware
 
 from hpcperfstats.site.lib.machine.cache_middleware import (
-    DynamicTimeoutCacheMiddleware,
-    dynamic_cache_page,
+  DynamicTimeoutCacheMiddleware,
+  dynamic_cache_page,
 )
 
 
@@ -19,7 +19,7 @@ def test_process_response_uses_timeout_resolver():
 
   get_response = MagicMock()
   mw = DynamicTimeoutCacheMiddleware(
-      get_response, page_timeout=1, timeout_resolver=lambda r: 42
+    get_response, page_timeout=1, timeout_resolver=lambda r: 42
   )
   request = MagicMock()
   response = MagicMock()
@@ -37,9 +37,9 @@ def test_process_response_resolver_exception_sets_none_timeout():
     return response
 
   mw = DynamicTimeoutCacheMiddleware(
-      MagicMock(),
-      page_timeout=99,
-      timeout_resolver=lambda r: (_ for _ in ()).throw(RuntimeError("x")),
+    MagicMock(),
+    page_timeout=99,
+    timeout_resolver=lambda r: (_ for _ in ()).throw(RuntimeError("x")),
   )
   with patch.object(CacheMiddleware, "process_response", spy_process):
     mw.process_response(MagicMock(), MagicMock())

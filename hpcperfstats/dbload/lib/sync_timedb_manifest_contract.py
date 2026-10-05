@@ -12,9 +12,10 @@ Attributes:
   RAW_REMOVAL_PHASES: Attribute.
   UNPARSABLE_ENTRY_REQUIRED_KEYS: Attribute.
 """
+
 from __future__ import annotations
 
-from typing import Any, Dict, FrozenSet, Optional, Tuple
+from typing import Any
 
 # Raw-removal coordinators (startup + per-day).
 PHASE_VERIFYING = "verifying"
@@ -22,49 +23,49 @@ PHASE_VERIFICATION_COMPLETE = "verification_complete"
 PHASE_DELETING = "deleting"
 PHASE_DONE = "done"
 
-RAW_REMOVAL_PHASES: FrozenSet[str] = frozenset(
-    {
-        PHASE_VERIFYING,
-        PHASE_VERIFICATION_COMPLETE,
-        PHASE_DELETING,
-        PHASE_DONE,
-    },
+RAW_REMOVAL_PHASES: frozenset[str] = frozenset(
+  {
+    PHASE_VERIFYING,
+    PHASE_VERIFICATION_COMPLETE,
+    PHASE_DELETING,
+    PHASE_DONE,
+  },
 )
 
 # Required top-level keys per persistence kind (after envelope unwrap where applicable).
-MANIFEST_REQUIRED_TOP_LEVEL: Dict[str, Tuple[str, ...]] = {
-    "day_raw_removal": ("phase", "tar_path"),
-    "day_close_manifest": ("entries",),
-    "archive_maint_hints": ("version",),
+MANIFEST_REQUIRED_TOP_LEVEL: dict[str, tuple[str, ...]] = {
+  "day_raw_removal": ("phase", "tar_path"),
+  "day_close_manifest": ("entries",),
+  "archive_maint_hints": ("version",),
 }
 
-UNPARSABLE_ENTRY_REQUIRED_KEYS: Tuple[str, ...] = (
-    "original_path",
-    "quarantined_path",
-    "reason",
+UNPARSABLE_ENTRY_REQUIRED_KEYS: tuple[str, ...] = (
+  "original_path",
+  "quarantined_path",
+  "reason",
 )
 
-CHECKPOINT_ENTRY_REQUIRED_KEYS: Tuple[str, ...] = ("path", "size", "mtime")
+CHECKPOINT_ENTRY_REQUIRED_KEYS: tuple[str, ...] = ("path", "size", "mtime")
 
 # Janitor cold-path day phase ordering (archive_maint_hints.day_phases).
-DAY_PHASE_ORDER: Dict[str, int] = {
-    "sealed": 1,
-    "raw_removed": 2,
-    "tar_dropped": 3,
+DAY_PHASE_ORDER: dict[str, int] = {
+  "sealed": 1,
+  "raw_removed": 2,
+  "tar_dropped": 3,
 }
 
 
-def day_phase_name_from_hints(day_phases: Any, tar_path: str) -> Optional[str]:
+def day_phase_name_from_hints(day_phases: Any, tar_path: str) -> str | None:
   """
   Day phase name from hints.
-  
+
   Args:
     day_phases (Any): Day phases passed to this helper.
     tar_path (str): String for tar path.
-  
+
   Returns:
     Optional[str]: Optional[str] — the result, or None when unavailable.
-  
+
   Examples:
     >>> day_phase_name_from_hints(None, "x")  # doctest: +SKIP
   """
@@ -80,15 +81,15 @@ def day_phase_name_from_hints(day_phases: Any, tar_path: str) -> Optional[str]:
 def day_phase_at_least(day_phases: Any, tar_path: str, target: str) -> bool:
   """
   True when persisted hint phase for ``tar_path`` is >= ``target``.
-  
+
   Args:
     day_phases (Any): Day phases passed to this helper.
     tar_path (str): String for tar path.
     target (str): String for target.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> day_phase_at_least(None, "x", "x")  # doctest: +SKIP
   """
@@ -101,14 +102,14 @@ def day_phase_at_least(day_phases: Any, tar_path: str, target: str) -> bool:
 def manifest_phase_is_valid(kind: str, phase: str) -> bool:
   """
   Return True if the manifest phase is is valid.
-  
+
   Args:
     kind (str): String for kind.
     phase (str): String for phase.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> manifest_phase_is_valid("x", "x")  # doctest: +SKIP
   """
@@ -120,14 +121,14 @@ def manifest_phase_is_valid(kind: str, phase: str) -> bool:
 def validate_manifest_payload(kind: str, payload: Any) -> bool:
   """
   Return True when ``payload`` has required top-level keys for ``kind``.
-  
+
   Args:
     kind (str): String for kind.
     payload (Any): Value to inspect (typically a numeric scalar).
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> validate_manifest_payload("x", None)  # doctest: +SKIP
   """
@@ -139,6 +140,6 @@ def validate_manifest_payload(kind: str, payload: Any) -> bool:
   if not all(key in payload for key in required):
     return False
   phase = payload.get("phase")
-  if phase is not None and not manifest_phase_is_valid(kind, str(phase)):
-    return False
-  return True
+  return not (
+    phase is not None and not manifest_phase_is_valid(kind, str(phase))
+  )

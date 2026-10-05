@@ -1,4 +1,5 @@
 """job_plots serves L1/L2 artifacts only (no jid_table / live host_data)."""
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -31,20 +32,24 @@ def test_job_plots_uses_l2_without_jid_table():
   vis.exists.return_value = True
   cache_set = MagicMock()
 
-  with patch.object(ExpensiveReadThrottle, "allow_request", return_value=True), patch.object(
-      api, "_require_auth", return_value=None
-  ), patch.object(api, "_apply_non_staff_job_visibility", return_value=vis), patch.object(
-      api, "get_site_content_cache_timeout", return_value=3600
-  ), patch.object(api, "cached_orm", side_effect=cached_se), patch.object(
-      api.cache, "get", return_value=None
-  ), patch.object(api.cache, "set", cache_set), patch.object(
+  with (
+    patch.object(ExpensiveReadThrottle, "allow_request", return_value=True),
+    patch.object(api, "_require_auth", return_value=None),
+    patch.object(api, "_apply_non_staff_job_visibility", return_value=vis),
+    patch.object(api, "get_site_content_cache_timeout", return_value=3600),
+    patch.object(api, "cached_orm", side_effect=cached_se),
+    patch.object(api.cache, "get", return_value=None),
+    patch.object(api.cache, "set", cache_set),
+    patch.object(
       api,
       "compute_plot_input_fingerprint",
       return_value="testfp",
-  ), patch.object(
+    ),
+    patch.object(
       api,
       "load_cached_job_plot_entry",
       return_value={"plot_item": plot_item, "unavailable_reason": None},
+    ),
   ):
     response = api.job_plots(request, "j1")
 
@@ -52,7 +57,9 @@ def test_job_plots_uses_l2_without_jid_table():
   assert response.data["plot_item"] == plot_item
   assert response.data["status"] == "ready"
   set_keys = [call.args[0] for call in cache_set.call_args_list]
-  assert any(key.startswith("JOB_PLOTS_DATA:j1:summary_plot:testfp") for key in set_keys)
+  assert any(
+    key.startswith("JOB_PLOTS_DATA:j1:summary_plot:testfp") for key in set_keys
+  )
 
 
 def test_job_plots_l2_null_plot_item_is_terminal_ready():
@@ -74,20 +81,24 @@ def test_job_plots_l2_null_plot_item_is_terminal_ready():
       return job
     return fn()
 
-  with patch.object(ExpensiveReadThrottle, "allow_request", return_value=True), patch.object(
-      api, "_require_auth", return_value=None
-  ), patch.object(api, "_apply_non_staff_job_visibility", return_value=vis), patch.object(
-      api, "get_site_content_cache_timeout", return_value=3600
-  ), patch.object(api, "cached_orm", side_effect=cached_se), patch.object(
-      api.cache, "get", return_value=None
-  ), patch.object(api.cache, "set", MagicMock()), patch.object(
+  with (
+    patch.object(ExpensiveReadThrottle, "allow_request", return_value=True),
+    patch.object(api, "_require_auth", return_value=None),
+    patch.object(api, "_apply_non_staff_job_visibility", return_value=vis),
+    patch.object(api, "get_site_content_cache_timeout", return_value=3600),
+    patch.object(api, "cached_orm", side_effect=cached_se),
+    patch.object(api.cache, "get", return_value=None),
+    patch.object(api.cache, "set", MagicMock()),
+    patch.object(
       api,
       "compute_plot_input_fingerprint",
       return_value="testfp",
-  ), patch.object(
+    ),
+    patch.object(
       api,
       "load_cached_job_plot_entry",
       return_value={"plot_item": None, "unavailable_reason": reason},
+    ),
   ):
     response = api.job_plots(request, "j1")
 
@@ -114,21 +125,26 @@ def test_job_plots_miss_returns_loading_without_live_compute():
       return job
     return fn()
 
-  with patch.object(ExpensiveReadThrottle, "allow_request", return_value=True), patch.object(
-      api, "_require_auth", return_value=None
-  ), patch.object(api, "_apply_non_staff_job_visibility", return_value=vis), patch.object(
-      api, "get_site_content_cache_timeout", return_value=3600
-  ), patch.object(api, "cached_orm", side_effect=cached_se), patch.object(
-      api.cache, "get", return_value=None
-  ), patch.object(api.cache, "set", MagicMock()), patch.object(
+  with (
+    patch.object(ExpensiveReadThrottle, "allow_request", return_value=True),
+    patch.object(api, "_require_auth", return_value=None),
+    patch.object(api, "_apply_non_staff_job_visibility", return_value=vis),
+    patch.object(api, "get_site_content_cache_timeout", return_value=3600),
+    patch.object(api, "cached_orm", side_effect=cached_se),
+    patch.object(api.cache, "get", return_value=None),
+    patch.object(api.cache, "set", MagicMock()),
+    patch.object(
       api,
       "compute_plot_input_fingerprint",
       return_value="testfp",
-  ), patch.object(
+    ),
+    patch.object(
       api,
       "load_cached_job_plot_entry",
       return_value=None,
-  ), patch.object(api, "_get_small_executor") as mock_ex:
+    ),
+    patch.object(api, "_get_small_executor") as mock_ex,
+  ):
     response = api.job_plots(request, "j1")
 
   assert response.status_code == 202
@@ -141,7 +157,9 @@ def test_job_plots_zoom_reads_fingerprinted_data_cache_key():
   from hpcperfstats.site.lib.machine import api
 
   factory = APIRequestFactory()
-  request = factory.get("/api/jobs/j1/plots/", {"plot": "summary_plot", "zoom": "1"})
+  request = factory.get(
+    "/api/jobs/j1/plots/", {"plot": "summary_plot", "zoom": "1"}
+  )
   request.session = {"username": "u1", "is_staff": False}
 
   job = MagicMock()
@@ -159,22 +177,29 @@ def test_job_plots_zoom_reads_fingerprinted_data_cache_key():
     observed_get_keys.append(key)
     return default
 
-  with patch.object(ExpensiveReadThrottle, "allow_request", return_value=True), patch.object(
-      api, "_require_auth", return_value=None
-  ), patch.object(api, "_apply_non_staff_job_visibility", return_value=vis), patch.object(
-      api, "get_site_content_cache_timeout", return_value=3600
-  ), patch.object(api, "cached_orm", side_effect=cached_se), patch.object(
-      api.cache, "get", side_effect=cache_get_side_effect
-  ), patch.object(api.cache, "set", return_value=None), patch.object(
+  with (
+    patch.object(ExpensiveReadThrottle, "allow_request", return_value=True),
+    patch.object(api, "_require_auth", return_value=None),
+    patch.object(api, "_apply_non_staff_job_visibility", return_value=vis),
+    patch.object(api, "get_site_content_cache_timeout", return_value=3600),
+    patch.object(api, "cached_orm", side_effect=cached_se),
+    patch.object(api.cache, "get", side_effect=cache_get_side_effect),
+    patch.object(api.cache, "set", return_value=None),
+    patch.object(
       api,
       "compute_plot_input_fingerprint",
       return_value="newfp",
-  ), patch.object(
+    ),
+    patch.object(
       api,
       "load_cached_job_plot_entry",
       return_value=None,
+    ),
   ):
     response = api.job_plots(request, "j1")
 
   assert response.status_code in (200, 202)
-  assert any(key.startswith("JOB_PLOTS_DATA:j1:summary_plot:newfp") for key in observed_get_keys)
+  assert any(
+    key.startswith("JOB_PLOTS_DATA:j1:summary_plot:newfp")
+    for key in observed_get_keys
+  )

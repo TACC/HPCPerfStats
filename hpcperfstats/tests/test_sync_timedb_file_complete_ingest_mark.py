@@ -64,9 +64,7 @@ def test_record_and_has_roundtrip(tmp_path):
     )
     is True
   )
-  assert fcm.has_file_complete_ingest_mark(
-    seg, archive_data_dir=str(tmp_path)
-  )
+  assert fcm.has_file_complete_ingest_mark(seg, archive_data_dir=str(tmp_path))
   assert any("file_complete_ingest_mark recorded" in line for line in logs)
 
 
@@ -82,9 +80,7 @@ def test_record_missing_path_returns_false(tmp_path):
 
 def test_record_empty_archive_dir_returns_false(tmp_path):
   seg = _seg(tmp_path)
-  assert (
-    fcm.record_file_complete_ingest_mark(seg, archive_data_dir="") is False
-  )
+  assert fcm.record_file_complete_ingest_mark(seg, archive_data_dir="") is False
 
 
 def test_record_stat_race_after_fingerprint_returns_false(
@@ -155,15 +151,11 @@ def test_clear_empty_paths_returns_zero(tmp_path):
     == 0
   )
   assert (
-    fcm.clear_file_complete_ingest_marks(
-      None, archive_data_dir=str(tmp_path)
-    )
+    fcm.clear_file_complete_ingest_marks(None, archive_data_dir=str(tmp_path))
     == 0
   )
   assert (
-    fcm.clear_file_complete_ingest_marks(
-      [""], archive_data_dir=str(tmp_path)
-    )
+    fcm.clear_file_complete_ingest_marks([""], archive_data_dir=str(tmp_path))
     == 0
   )
 
@@ -242,9 +234,7 @@ def test_maybe_record_ingested_records(tmp_path):
     )
     is True
   )
-  assert fcm.has_file_complete_ingest_mark(
-    seg, archive_data_dir=str(tmp_path)
-  )
+  assert fcm.has_file_complete_ingest_mark(seg, archive_data_dir=str(tmp_path))
 
 
 def test_maybe_record_db_skip_full_scan_and_alias(tmp_path):
@@ -324,7 +314,8 @@ def test_has_file_complete_mark_cache_one_json_load(tmp_path, monkeypatch):
   mec.reset_mark_entries_cache_for_tests()
   seg = _seg(tmp_path)
   assert fcm.record_file_complete_ingest_mark(
-      seg, archive_data_dir=str(tmp_path),
+    seg,
+    archive_data_dir=str(tmp_path),
   )
   loads = {"n": 0}
   real = fcm.load_persistence_document
@@ -336,7 +327,8 @@ def test_has_file_complete_mark_cache_one_json_load(tmp_path, monkeypatch):
   monkeypatch.setattr(fcm, "load_persistence_document", _count)
   for _ in range(5):
     assert fcm.has_file_complete_ingest_mark(
-        seg, archive_data_dir=str(tmp_path),
+      seg,
+      archive_data_dir=str(tmp_path),
     )
   assert loads["n"] == 1
 
@@ -347,7 +339,8 @@ def test_record_invalidates_file_complete_mark_cache(tmp_path, monkeypatch):
   mec.reset_mark_entries_cache_for_tests()
   seg = _seg(tmp_path)
   assert fcm.record_file_complete_ingest_mark(
-      seg, archive_data_dir=str(tmp_path),
+    seg,
+    archive_data_dir=str(tmp_path),
   )
   loads = {"n": 0}
   real = fcm.load_persistence_document
@@ -358,13 +351,16 @@ def test_record_invalidates_file_complete_mark_cache(tmp_path, monkeypatch):
 
   monkeypatch.setattr(fcm, "load_persistence_document", _count)
   assert fcm.has_file_complete_ingest_mark(
-      seg, archive_data_dir=str(tmp_path),
+    seg,
+    archive_data_dir=str(tmp_path),
   )
   assert loads["n"] == 1
   assert fcm.record_file_complete_ingest_mark(
-      seg, archive_data_dir=str(tmp_path),
+    seg,
+    archive_data_dir=str(tmp_path),
   )
   assert fcm.has_file_complete_ingest_mark(
-      seg, archive_data_dir=str(tmp_path),
+    seg,
+    archive_data_dir=str(tmp_path),
   )
   assert loads["n"] == 2

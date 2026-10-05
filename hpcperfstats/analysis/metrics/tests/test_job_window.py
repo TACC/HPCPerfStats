@@ -1,15 +1,17 @@
 """Unit tests for shared job window parsing (summary plot)."""
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pandas as pd
 import pytest
+
 from hpcperfstats.analysis.metrics.lib.plot.job_window import (
-    job_window_bounds_local,
-    job_window_label_strings,
-    job_window_timestamps_utc,
+  job_window_bounds_local,
+  job_window_label_strings,
+  job_window_timestamps_utc,
 )
 
 
@@ -20,12 +22,12 @@ class _Jt:
 
 
 @pytest.mark.parametrize(
-    "start,end",
-    [
-        (None, "2020-01-01"),
-        ("2020-01-01", None),
-        ("2020-01-01T12:00:00+00:00", "2020-01-01T12:00:00+00:00"),
-    ],
+  "start,end",
+  [
+    (None, "2020-01-01"),
+    ("2020-01-01", None),
+    ("2020-01-01T12:00:00+00:00", "2020-01-01T12:00:00+00:00"),
+  ],
 )
 def test_job_window_timestamps_utc_invalid_ranges(start, end):
   assert job_window_timestamps_utc(_Jt(start, end)) == (None, None)
@@ -47,10 +49,12 @@ def test_job_window_label_strings():
 
 def test_job_window_bounds_local_converts_timezone():
   jt = _Jt(
-      datetime(2020, 1, 1, 10, 0, tzinfo=timezone.utc),
-      datetime(2020, 1, 1, 11, 0, tzinfo=timezone.utc),
+    datetime(2020, 1, 1, 10, 0, tzinfo=UTC),
+    datetime(2020, 1, 1, 11, 0, tzinfo=UTC),
   )
-  with patch("hpcperfstats.analysis.metrics.lib.plot.job_window.cfg.get_local_timezone") as mock_tz:
+  with patch(
+    "hpcperfstats.analysis.metrics.lib.plot.job_window.cfg.get_local_timezone"
+  ) as mock_tz:
     mock_tz.return_value = "America/Chicago"
     start_local, end_local = job_window_bounds_local(jt)
   assert str(start_local.tz) == "America/Chicago"
@@ -58,7 +62,9 @@ def test_job_window_bounds_local_converts_timezone():
 
 
 def test_hover_tooltip_html_host_time_value_contains_fields():
-  from hpcperfstats.analysis.metrics.lib.plot.hover_html import hover_tooltip_html_host_time_value
+  from hpcperfstats.analysis.metrics.lib.plot.hover_html import (
+    hover_tooltip_html_host_time_value,
+  )
 
   html = hover_tooltip_html_host_time_value("CPU", "cpu")
   assert "@host" in html

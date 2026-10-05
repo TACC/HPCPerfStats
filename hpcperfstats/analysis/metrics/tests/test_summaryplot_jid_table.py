@@ -1,23 +1,26 @@
 """Unit tests for summary plot diagnostics from jid_table aggregates."""
+
 import threading
+from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
-from unittest.mock import MagicMock
 from bokeh.models import CategoricalColorMapper
 from bokeh.models.plots import GridPlot
 from bokeh.palettes import d3
 from bokeh.plotting import figure
 
-from hpcperfstats.dbload.lib.monitor_naming.canonical import INTEL_FP_ARITH_DOUBLE_EVENTS
 from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
-    LLITE_METADATA_IOPS_EVENTS,
+  LLITE_METADATA_IOPS_EVENTS,
 )
 from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
-    SummaryPlot,
-    _cycled_d3_category20_palette,
-    compute_summary_aggregate_prefetch_pool_size,
-    plot_and_reason_summary_from_jid_table,
+  SummaryPlot,
+  _cycled_d3_category20_palette,
+  compute_summary_aggregate_prefetch_pool_size,
+  plot_and_reason_summary_from_jid_table,
+)
+from hpcperfstats.dbload.lib.monitor_naming.canonical import (
+  INTEL_FP_ARITH_DOUBLE_EVENTS,
 )
 
 # Canonical monitor typenames (dual-read: legacy aliases still accepted in mocks).
@@ -25,20 +28,20 @@ _HOST_CPU_TYPES = ("host_cpu", "cpu")
 _HOST_MEM_TYPES = ("host_mem", "mem")
 _IB_FABRIC_TYPES = ("host_ib", "host_ib_ext", "ib_ext")
 _INTEL_CORE_TYPES = (
-    "intel_x86_pmc_gpr8",
-    "intel_8pmc3",
-    "intel_x86_pmc_gpr4",
-    "intel_4pmc3",
-    "cpu_counter_metrics",
-    "host_cpu_hw",
+  "intel_x86_pmc_gpr8",
+  "intel_8pmc3",
+  "intel_x86_pmc_gpr4",
+  "intel_4pmc3",
+  "cpu_counter_metrics",
+  "host_cpu_hw",
 )
 _INTEL_RAPL_TYPES = ("intel_x86_rapl", "intel_rapl")
 _AMD_RAPL_TYPES = ("amd_x86_rapl", "amd64_rapl")
 _PKG_ENERGY_EVENT_NAMES = frozenset(
-    {"pkg_energy", "MSR_PKG_ENERGY_STATUS", "MSR_PKG_ENERGY_STAT"}
+  {"pkg_energy", "MSR_PKG_ENERGY_STATUS", "MSR_PKG_ENERGY_STAT"}
 )
 _DCGM_CPU_POWER_EVENT_NAMES = frozenset(
-    {"dcgm_cpu_power_util_w", "DCGM_CPU_POWER_UTIL_W"}
+  {"dcgm_cpu_power_util_w", "DCGM_CPU_POWER_UTIL_W"}
 )
 
 
@@ -57,10 +60,10 @@ def _is_cpu_type(typ):
 def _cas_events_match(events):
   """True when aggregate events include a dram CAS R+W pair (canonical or legacy)."""
   s = set(events)
-  return (
-      {"dram_cas_reads", "dram_cas_writes"}.issubset(s)
-      or {"CAS_READS", "CAS_WRITES"}.issubset(s)
-  )
+  return {"dram_cas_reads", "dram_cas_writes"}.issubset(s) or {
+    "CAS_READS",
+    "CAS_WRITES",
+  }.issubset(s)
 
 
 def _hbm_cas_events_match(events):
@@ -73,12 +76,16 @@ def test_compute_summary_aggregate_prefetch_pool_size_caps_at_two(monkeypatch):
   import hpcperfstats.analysis.metrics.lib.plot.summaryplot as sp
 
   monkeypatch.setattr(sp.cfg, "get_parallel_db_prefetch_max", lambda: 99)
-  monkeypatch.setattr(sp.cfg, "get_summary_aggregate_prefetch_max_threads", lambda: 2)
+  monkeypatch.setattr(
+    sp.cfg, "get_summary_aggregate_prefetch_max_threads", lambda: 2
+  )
   assert compute_summary_aggregate_prefetch_pool_size(50) == 2
   assert compute_summary_aggregate_prefetch_pool_size(1) == 1
   monkeypatch.setattr(sp.cfg, "get_parallel_db_prefetch_max", lambda: 1)
   assert compute_summary_aggregate_prefetch_pool_size(50) == 1
-  monkeypatch.setattr(sp.cfg, "get_summary_aggregate_prefetch_max_threads", lambda: 1)
+  monkeypatch.setattr(
+    sp.cfg, "get_summary_aggregate_prefetch_max_threads", lambda: 1
+  )
   monkeypatch.setattr(sp.cfg, "get_parallel_db_prefetch_max", lambda: 99)
   assert compute_summary_aggregate_prefetch_pool_size(50) == 1
 
@@ -89,10 +96,12 @@ def test_summary_plot_reports_missing_counter_reason():
   jt.host_list = ["n1.cluster"]
   jt.schema = {"host_cpu": ["user"]}
   jt.get_host_time_df.return_value = pd.DataFrame(
-      [("n1.cluster", t0)],
-      columns=["host", "time"],
+    [("n1.cluster", t0)],
+    columns=["host", "time"],
   )
-  jt.get_aggregate_df.return_value = pd.DataFrame(columns=["host", "time", "sum_val"])
+  jt.get_aggregate_df.return_value = pd.DataFrame(
+    columns=["host", "time", "sum_val"]
+  )
 
   fig, reason = plot_and_reason_summary_from_jid_table(jt)
   assert fig is None
@@ -113,7 +122,7 @@ def test_summaryplot_schema_skips_aggregates_for_absent_types():
       types_seen.append(typ)
     if _is_cpu_type(typ):
       return pd.DataFrame(
-          [("n1.cluster", t0, 0.5)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 0.5)], columns=["host", "time", "sum_val"]
       )
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
@@ -121,7 +130,7 @@ def test_summaryplot_schema_skips_aggregates_for_absent_types():
   jt.host_list = ["n1.cluster"]
   jt.schema = {"host_cpu": ["user", "system", "nice"]}
   jt.get_host_time_df.return_value = pd.DataFrame(
-      [("n1.cluster", t0)], columns=["host", "time"]
+    [("n1.cluster", t0)], columns=["host", "time"]
   )
   jt.get_aggregate_df.side_effect = get_aggregate_df
 
@@ -142,7 +151,7 @@ def test_summaryplot_plot_includes_mbw_from_first_intel_imc_with_data():
     del conv, group_by_dev
     if val_col == "arc" and _is_cpu_type(typ) and "user" in events:
       return pd.DataFrame(
-          [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
       )
     if val_col != "arc":
       return empty
@@ -151,12 +160,13 @@ def test_summaryplot_plot_includes_mbw_from_first_intel_imc_with_data():
     if typ in _INTEL_CORE_TYPES:
       if list(events) == fp64:
         return pd.DataFrame(
-            [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 1.0)],
+          columns=["host", "time", "sum_val"],
         )
       return empty
     if typ in hsw_types and _cas_events_match(events):
       return pd.DataFrame(
-          [("n1.cluster", t0, 8.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 8.0)], columns=["host", "time", "sum_val"]
       )
     return empty
 
@@ -183,7 +193,7 @@ def test_summaryplot_mbw_from_spr_hbm_cas_only():
     del conv, group_by_dev
     if val_col == "arc" and _is_cpu_type(typ) and "user" in events:
       return pd.DataFrame(
-          [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
       )
     if val_col != "arc":
       return empty
@@ -192,12 +202,13 @@ def test_summaryplot_mbw_from_spr_hbm_cas_only():
     if typ in _INTEL_CORE_TYPES:
       if list(events) == fp64:
         return pd.DataFrame(
-            [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 1.0)],
+          columns=["host", "time", "sum_val"],
         )
       return empty
     if typ == spr and _hbm_cas_events_match(events):
       return pd.DataFrame(
-          [("n1.cluster", t0, 7.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 7.0)], columns=["host", "time", "sum_val"]
       )
     return empty
 
@@ -213,7 +224,7 @@ def test_summaryplot_mbw_from_spr_hbm_cas_only():
 def test_summaryplot_mbw_sums_spr_dram_and_hbm_cas():
   """When SPR has both dram and hbm CAS, summary mbw uses the summed series."""
   from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
-      _merge_intel_imc_cas_mbw,
+    _merge_intel_imc_cas_mbw,
   )
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
@@ -227,11 +238,11 @@ def test_summaryplot_mbw_sums_spr_dram_and_hbm_cas():
       return empty
     if _cas_events_match(events):
       return pd.DataFrame(
-          [("n1.cluster", t0, 1.5)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 1.5)], columns=["host", "time", "sum_val"]
       )
     if _hbm_cas_events_match(events):
       return pd.DataFrame(
-          [("n1.cluster", t0, 2.5)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 2.5)], columns=["host", "time", "sum_val"]
       )
     return empty
 
@@ -254,22 +265,45 @@ def test_summaryplot_skips_freq_plot_when_ghz_never_exceeds_500():
     del conv, group_by_dev
     if val_col != "arc":
       return empty
-    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_INTEL_RAPL_TYPES, *_IB_FABRIC_TYPES, "lustre_llite", "llite"):
+    if typ in (
+      "amd64_pmc",
+      "amd64_df",
+      "amd_x86_pmc",
+      "amd_x86_uncore_df",
+      *_INTEL_RAPL_TYPES,
+      *_IB_FABRIC_TYPES,
+      "lustre_llite",
+      "llite",
+    ):
       return empty
     if typ in _INTEL_CORE_TYPES:
       event_list = list(events)
       if event_list == fp64:
-        return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 1.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if event_list == ["MPERF"]:
-        return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 1.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if event_list == ["APERF"]:
         # freq = 2.7 * APERF / MPERF = 486 (never over 500)
-        return pd.DataFrame([("n1.cluster", t0, 180.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 180.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if event_list == ["INST_RETIRED"]:
-        return pd.DataFrame([("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 10.0)],
+          columns=["host", "time", "sum_val"],
+        )
       return empty
     if _is_cpu_type(typ) and "user" in list(events):
-      return pd.DataFrame([("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"])
+      return pd.DataFrame(
+        [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
+      )
     return empty
 
   jt = MagicMock()
@@ -304,46 +338,63 @@ def test_summaryplot_includes_nvidia_gpu_util_and_mem_used_mb_columns():
       ev = list(events)
       if ev == ["gpu_util"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 72.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 72.0)],
+          columns=["host", "time", "sum_val"],
         )
       if ev == ["mem_used_mb"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 4096.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 4096.0)],
+          columns=["host", "time", "sum_val"],
         )
       if ev == ["mem_total_mb"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 16384.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 16384.0)],
+          columns=["host", "time", "sum_val"],
         )
       if ev == ["gpu_count"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 2.0)],
+          columns=["host", "time", "sum_val"],
         )
       return empty
     if val_col == "arc" and _is_cpu_type(typ) and "user" in list(events):
       return pd.DataFrame(
-          [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
       )
     if val_col != "arc":
       return empty
-    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_INTEL_RAPL_TYPES, *_IB_FABRIC_TYPES, "lustre_llite", "llite"):
+    if typ in (
+      "amd64_pmc",
+      "amd64_df",
+      "amd_x86_pmc",
+      "amd_x86_uncore_df",
+      *_INTEL_RAPL_TYPES,
+      *_IB_FABRIC_TYPES,
+      "lustre_llite",
+      "llite",
+    ):
       return empty
     if typ in _INTEL_CORE_TYPES:
       event_list = list(events)
       if event_list == fp64:
         return pd.DataFrame(
-            [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 1.0)],
+          columns=["host", "time", "sum_val"],
         )
       if event_list == ["MPERF"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 1.0)],
+          columns=["host", "time", "sum_val"],
         )
       if event_list == ["APERF"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 180.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 180.0)],
+          columns=["host", "time", "sum_val"],
         )
       if event_list == ["INST_RETIRED"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 10.0)],
+          columns=["host", "time", "sum_val"],
         )
       return empty
     return empty
@@ -397,42 +448,58 @@ def test_summaryplot_nv_gpu_util_falls_back_to_utilization_event():
         return empty
       if ev == ["utilization"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 55.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 55.0)],
+          columns=["host", "time", "sum_val"],
         )
       if ev == ["mem_used_mb"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 4096.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 4096.0)],
+          columns=["host", "time", "sum_val"],
         )
       if ev == ["mem_total_mb"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 16384.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 16384.0)],
+          columns=["host", "time", "sum_val"],
         )
       return empty
     if val_col == "arc" and _is_cpu_type(typ) and "user" in list(events):
       return pd.DataFrame(
-          [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
       )
     if val_col != "arc":
       return empty
-    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_INTEL_RAPL_TYPES, *_IB_FABRIC_TYPES, "lustre_llite", "llite"):
+    if typ in (
+      "amd64_pmc",
+      "amd64_df",
+      "amd_x86_pmc",
+      "amd_x86_uncore_df",
+      *_INTEL_RAPL_TYPES,
+      *_IB_FABRIC_TYPES,
+      "lustre_llite",
+      "llite",
+    ):
       return empty
     if typ in _INTEL_CORE_TYPES:
       event_list = list(events)
       if event_list == fp64:
         return pd.DataFrame(
-            [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 1.0)],
+          columns=["host", "time", "sum_val"],
         )
       if event_list == ["MPERF"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 1.0)],
+          columns=["host", "time", "sum_val"],
         )
       if event_list == ["APERF"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 180.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 180.0)],
+          columns=["host", "time", "sum_val"],
         )
       if event_list == ["INST_RETIRED"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 10.0)],
+          columns=["host", "time", "sum_val"],
         )
       return empty
     return empty
@@ -461,8 +528,8 @@ def test_summaryplot_keeps_nvidia_columns_when_merge_has_nan_gaps():
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   t1 = pd.Timestamp("2024-06-01 12:01:00+00:00")
   base = pd.DataFrame(
-      [("n1.cluster", t0), ("n1.cluster", t1)],
-      columns=["host", "time"],
+    [("n1.cluster", t0), ("n1.cluster", t1)],
+    columns=["host", "time"],
   )
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
@@ -473,32 +540,43 @@ def test_summaryplot_keeps_nvidia_columns_when_merge_has_nan_gaps():
       ev = list(events)
       if ev == ["gpu_util"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 72.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t0, 72.0)],
+          columns=["host", "time", "sum_val"],
         )
       if ev == ["mem_used_mb"]:
         return pd.DataFrame(
-            [("n1.cluster", t1, 8192.0)], columns=["host", "time", "sum_val"]
+          [("n1.cluster", t1, 8192.0)],
+          columns=["host", "time", "sum_val"],
         )
       if ev == ["mem_total_mb"]:
         return pd.DataFrame(
-            [
-                ("n1.cluster", t0, 16384.0),
-                ("n1.cluster", t1, 16384.0),
-            ],
-            columns=["host", "time", "sum_val"],
+          [
+            ("n1.cluster", t0, 16384.0),
+            ("n1.cluster", t1, 16384.0),
+          ],
+          columns=["host", "time", "sum_val"],
         )
       return empty
     if val_col == "arc" and _is_cpu_type(typ) and "user" in list(events):
       return pd.DataFrame(
-          [
-              ("n1.cluster", t0, 0.25),
-              ("n1.cluster", t1, 0.26),
-          ],
-          columns=["host", "time", "sum_val"],
+        [
+          ("n1.cluster", t0, 0.25),
+          ("n1.cluster", t1, 0.26),
+        ],
+        columns=["host", "time", "sum_val"],
       )
     if val_col != "arc":
       return empty
-    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_INTEL_RAPL_TYPES, *_IB_FABRIC_TYPES, "lustre_llite", "llite"):
+    if typ in (
+      "amd64_pmc",
+      "amd64_df",
+      "amd_x86_pmc",
+      "amd_x86_uncore_df",
+      *_INTEL_RAPL_TYPES,
+      *_IB_FABRIC_TYPES,
+      "lustre_llite",
+      "llite",
+    ):
       return empty
     if typ in _INTEL_CORE_TYPES:
       event_list = list(events)
@@ -509,8 +587,8 @@ def test_summaryplot_keeps_nvidia_columns_when_merge_has_nan_gaps():
         return pd.DataFrame(two, columns=["host", "time", "sum_val"])
       if event_list == ["APERF"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 180.0), ("n1.cluster", t1, 181.0)],
-            columns=["host", "time", "sum_val"],
+          [("n1.cluster", t0, 180.0), ("n1.cluster", t1, 181.0)],
+          columns=["host", "time", "sum_val"],
         )
       if event_list == ["INST_RETIRED"]:
         return pd.DataFrame(two, columns=["host", "time", "sum_val"])
@@ -542,8 +620,8 @@ def test_summaryplot_plot_metric_caps_time_tick_count_to_five():
   """Summary plot x-axis should target at most five datetime tick labels."""
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   df = pd.DataFrame(
-      [("n1.cluster", t0, 1.0)],
-      columns=["host", "time", "cpu"],
+    [("n1.cluster", t0, 1.0)],
+    columns=["host", "time", "cpu"],
   )
   jt = MagicMock()
   jt.jid = 123
@@ -596,21 +674,29 @@ def test_summaryplot_plot_metric_palette_matches_factor_count_for_many_hosts():
 
 def test_summaryplot_uses_job_window_for_x_range():
   """Summary plots use cluster-naive job start/end as explicit x-axis bounds."""
-  from hpcperfstats.analysis.metrics.lib.plot.job_window import job_window_bounds_local
+  from hpcperfstats.analysis.metrics.lib.plot.job_window import (
+    job_window_bounds_local,
+  )
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   t1 = pd.Timestamp("2024-06-01 12:01:00+00:00")
   job_start = pd.Timestamp("2024-06-01 11:55:00+00:00")
   job_end = pd.Timestamp("2024-06-01 12:10:00+00:00")
-  base = pd.DataFrame([("n1.cluster", t0), ("n1.cluster", t1)], columns=["host", "time"])
+  base = pd.DataFrame(
+    [("n1.cluster", t0), ("n1.cluster", t1)], columns=["host", "time"]
+  )
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
 
   def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
     del conv, group_by_dev
-    if _is_cpu_type(typ) and val_col == "arc" and list(events) == ["user", "system", "nice"]:
+    if (
+      _is_cpu_type(typ)
+      and val_col == "arc"
+      and list(events) == ["user", "system", "nice"]
+    ):
       return pd.DataFrame(
-          [("n1.cluster", t0, 1.0), ("n1.cluster", t1, 1.2)],
-          columns=["host", "time", "sum_val"],
+        [("n1.cluster", t0, 1.0), ("n1.cluster", t1, 1.2)],
+        columns=["host", "time", "sum_val"],
       )
     return empty
 
@@ -644,7 +730,10 @@ def test_summaryplot_plot_metric_keeps_utc_epoch_for_data_and_x_range():
   """Summary metric plots use cluster-naive wall clock for data and x_range."""
   from bokeh.models import HoverTool, Range1d
   from bokeh.util.serialization import convert_datetime_type
-  from hpcperfstats.analysis.metrics.lib.gen.utils import timestamps_as_cluster_naive
+
+  from hpcperfstats.analysis.metrics.lib.gen.utils import (
+    timestamps_as_cluster_naive,
+  )
 
   t0 = pd.Timestamp("2024-06-01 10:00:00+00:00")
   t1 = pd.Timestamp("2024-06-01 10:05:00+00:00")
@@ -662,33 +751,39 @@ def test_summaryplot_plot_metric_keeps_utc_epoch_for_data_and_x_range():
 
   sp = SummaryPlot(_Jt())
   sp.hc = {"h1": "#111111"}
-  df = pd.DataFrame({
+  df = pd.DataFrame(
+    {
       "time": [t0, t1],
       "host": ["h1", "h1"],
       "cpu": [1.0, 2.0],
-  })
+    }
+  )
 
   plot = sp.plot_metric(df, "cpu", "CPU Usage [#cores]", x_range=x_range)
-  assert convert_datetime_type(plot.x_range.start) == convert_datetime_type(job_start_n)
-  assert convert_datetime_type(plot.x_range.end) == convert_datetime_type(job_end_n)
+  assert convert_datetime_type(plot.x_range.start) == convert_datetime_type(
+    job_start_n
+  )
+  assert convert_datetime_type(plot.x_range.end) == convert_datetime_type(
+    job_end_n
+  )
 
-  scatter = [
-      r
-      for r in plot.renderers
-      if getattr(r, "glyph", None) is not None
-      and getattr(r.glyph, "y", None) == "cpu"
-  ][0]
+  scatter = next(
+    r
+    for r in plot.renderers
+    if getattr(r, "glyph", None) is not None
+    and getattr(r.glyph, "y", None) == "cpu"
+  )
   data_times = scatter.data_source.data["time"]
   assert convert_datetime_type(data_times[0]) == convert_datetime_type(t0_n)
   assert convert_datetime_type(data_times[1]) == convert_datetime_type(t1_n)
 
-  hover = [
-      tool
-      for tool in plot.tools
-      if isinstance(tool, HoverTool)
-      and isinstance(tool.tooltips, str)
-      and "@cpu_plain" in tool.tooltips
-  ][0]
+  hover = next(
+    tool
+    for tool in plot.tools
+    if isinstance(tool, HoverTool)
+    and isinstance(tool.tooltips, str)
+    and "@cpu_plain" in tool.tooltips
+  )
   assert hover.formatters == {}
   assert "@_hover_time" in hover.tooltips
 
@@ -703,23 +798,49 @@ def test_summaryplot_orders_cpu_then_gpu_then_ibbw():
   def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
     del conv, group_by_dev
     ev = list(events)
-    if _is_cpu_type(typ) and val_col == "arc" and ev == ["user", "system", "nice"]:
-      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+    if (
+      _is_cpu_type(typ)
+      and val_col == "arc"
+      and ev == ["user", "system", "nice"]
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+      )
     if typ == "nvidia_gpu" and val_col == "value":
       if ev == ["gpu_util"]:
-        return pd.DataFrame([("n1.cluster", t0, 50.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 50.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if ev == ["mem_used_mb"]:
-        return pd.DataFrame([("n1.cluster", t0, 2048.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 2048.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if ev == ["mem_total_mb"]:
-        return pd.DataFrame([("n1.cluster", t0, 8192.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 8192.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if ev == ["gpu_count"]:
-        return pd.DataFrame([("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 2.0)],
+          columns=["host", "time", "sum_val"],
+        )
       return empty
-    if typ in _IB_FABRIC_TYPES and val_col == "arc" and ev == ["port_rcv_data", "port_xmit_data"]:
-      return pd.DataFrame([("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"])
-    if typ in _INTEL_CORE_TYPES and val_col == "arc":
-      if ev == fp64:
-        return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+    if (
+      typ in _IB_FABRIC_TYPES
+      and val_col == "arc"
+      and ev == ["port_rcv_data", "port_xmit_data"]
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ in _INTEL_CORE_TYPES and val_col == "arc" and ev == fp64:
+      return pd.DataFrame(
+        [("n1.cluster", t0, 1.0)],
+        columns=["host", "time", "sum_val"],
+      )
     return empty
 
   jt = MagicMock()
@@ -752,35 +873,83 @@ def test_summaryplot_orders_buckets_cpu_memory_compute_gpu_subblocks_network():
   def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
     del conv, group_by_dev
     ev = list(events)
-    if _is_cpu_type(typ) and val_col == "arc" and ev == ["user", "system", "nice"]:
-      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
-    if typ in _HOST_MEM_TYPES and val_col == "value" and ev in (["mem_used"], ["MemUsed"]):
-      return pd.DataFrame([("n1.cluster", t0, 1024.0)], columns=["host", "time", "sum_val"])
+    if (
+      _is_cpu_type(typ)
+      and val_col == "arc"
+      and ev == ["user", "system", "nice"]
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+      )
+    if (
+      typ in _HOST_MEM_TYPES
+      and val_col == "value"
+      and ev in (["mem_used"], ["MemUsed"])
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 1024.0)],
+        columns=["host", "time", "sum_val"],
+      )
     if typ == "nvidia_gpu" and val_col == "value":
       if ev == ["gpu_util"]:
-        return pd.DataFrame([("n1.cluster", t0, 50.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 50.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if ev == ["mem_used_mb"]:
-        return pd.DataFrame([("n1.cluster", t0, 2048.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 2048.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if ev == ["mem_total_mb"]:
-        return pd.DataFrame([("n1.cluster", t0, 8192.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 8192.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if ev == ["gpu_count"]:
-        return pd.DataFrame([("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 2.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if ev == ["tensor_imma_active"]:
-        return pd.DataFrame([("n1.cluster", t0, 8.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 8.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if ev == ["tensor_hmma_active"]:
-        return pd.DataFrame([("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 10.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if ev == ["tensor_dfma_active"]:
-        return pd.DataFrame([("n1.cluster", t0, 4.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 4.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if ev == ["tensor_active"]:
-        return pd.DataFrame([("n1.cluster", t0, 12.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 12.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if ev == ["power_usage"]:
-        return pd.DataFrame([("n1.cluster", t0, 180.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 180.0)],
+          columns=["host", "time", "sum_val"],
+        )
       return empty
-    if typ in _IB_FABRIC_TYPES and val_col == "arc" and ev == ["port_rcv_data", "port_xmit_data"]:
-      return pd.DataFrame([("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"])
-    if typ in _INTEL_CORE_TYPES and val_col == "arc":
-      if ev == fp64:
-        return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+    if (
+      typ in _IB_FABRIC_TYPES
+      and val_col == "arc"
+      and ev == ["port_rcv_data", "port_xmit_data"]
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ in _INTEL_CORE_TYPES and val_col == "arc" and ev == fp64:
+      return pd.DataFrame(
+        [("n1.cluster", t0, 1.0)],
+        columns=["host", "time", "sum_val"],
+      )
     return empty
 
   jt = MagicMock()
@@ -801,16 +970,24 @@ def test_summaryplot_orders_buckets_cpu_memory_compute_gpu_subblocks_network():
   assert fig is not None
   assert captured_metrics.index("cpu") < captured_metrics.index("mem")
   assert captured_metrics.index("mem") < captured_metrics.index("flops64b")
-  assert captured_metrics.index("flops64b") < captured_metrics.index("nv_gpu_util")
-  assert captured_metrics.index("nv_gpu_util") < captured_metrics.index("nv_mem_used_mb")
-  assert captured_metrics.index("nv_mem_used_mb") < captured_metrics.index("nv_tensor_imma_active")
-  assert captured_metrics.index("nv_tensor_imma_active") < captured_metrics.index(
-      "nv_tensor_hmma_active"
+  assert captured_metrics.index("flops64b") < captured_metrics.index(
+    "nv_gpu_util"
   )
-  assert captured_metrics.index("nv_tensor_hmma_active") < captured_metrics.index(
-      "nv_tensor_dfma_active"
+  assert captured_metrics.index("nv_gpu_util") < captured_metrics.index(
+    "nv_mem_used_mb"
   )
-  assert captured_metrics.index("nv_tensor_dfma_active") < captured_metrics.index("nv_power_w")
+  assert captured_metrics.index("nv_mem_used_mb") < captured_metrics.index(
+    "nv_tensor_imma_active"
+  )
+  assert captured_metrics.index(
+    "nv_tensor_imma_active"
+  ) < captured_metrics.index("nv_tensor_hmma_active")
+  assert captured_metrics.index(
+    "nv_tensor_hmma_active"
+  ) < captured_metrics.index("nv_tensor_dfma_active")
+  assert captured_metrics.index(
+    "nv_tensor_dfma_active"
+  ) < captured_metrics.index("nv_power_w")
   assert "nv_tensor_active" not in captured_metrics
   assert captured_metrics.index("nv_power_w") < captured_metrics.index("ibbw")
 
@@ -824,17 +1001,35 @@ def test_summaryplot_prefers_tensor_splits_over_lumped_pipe():
   def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
     del conv, group_by_dev
     ev = list(events)
-    if _is_cpu_type(typ) and val_col == "arc" and ev == ["user", "system", "nice"]:
-      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+    if (
+      _is_cpu_type(typ)
+      and val_col == "arc"
+      and ev == ["user", "system", "nice"]
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+      )
     if typ == "nvidia_gpu" and val_col == "value":
       if ev == ["tensor_imma_active"]:
-        return pd.DataFrame([("n1.cluster", t0, 8.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 8.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if ev == ["tensor_hmma_active"]:
-        return pd.DataFrame([("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 10.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if ev == ["tensor_dfma_active"]:
-        return pd.DataFrame([("n1.cluster", t0, 4.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 4.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if ev == ["tensor_active"]:
-        return pd.DataFrame([("n1.cluster", t0, 12.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 12.0)],
+          columns=["host", "time", "sum_val"],
+        )
       return empty
     return empty
 
@@ -869,11 +1064,20 @@ def test_summaryplot_lumped_tensor_fallback_when_splits_absent():
   def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
     del conv, group_by_dev
     ev = list(events)
-    if _is_cpu_type(typ) and val_col == "arc" and ev == ["user", "system", "nice"]:
-      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+    if (
+      _is_cpu_type(typ)
+      and val_col == "arc"
+      and ev == ["user", "system", "nice"]
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+      )
     if typ == "nvidia_gpu" and val_col == "value":
       if ev == ["tensor_active"]:
-        return pd.DataFrame([("n1.cluster", t0, 12.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 12.0)],
+          columns=["host", "time", "sum_val"],
+        )
       return empty
     return empty
 
@@ -910,50 +1114,110 @@ def test_summaryplot_orders_lustre_nfs_before_network():
   def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
     del conv, group_by_dev
     ev = list(events)
-    if _is_cpu_type(typ) and val_col == "arc" and ev == ["user", "system", "nice"]:
-      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
-    if typ in _HOST_MEM_TYPES and val_col == "value" and ev in (["mem_used"], ["MemUsed"]):
-      return pd.DataFrame([("n1.cluster", t0, 1024.0)], columns=["host", "time", "sum_val"])
+    if (
+      _is_cpu_type(typ)
+      and val_col == "arc"
+      and ev == ["user", "system", "nice"]
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+      )
+    if (
+      typ in _HOST_MEM_TYPES
+      and val_col == "value"
+      and ev in (["mem_used"], ["MemUsed"])
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 1024.0)],
+        columns=["host", "time", "sum_val"],
+      )
     if typ == "nvidia_gpu" and val_col == "value":
       if ev == ["gpu_util"]:
-        return pd.DataFrame([("n1.cluster", t0, 50.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 50.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if ev == ["mem_used_mb"]:
-        return pd.DataFrame([("n1.cluster", t0, 2048.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 2048.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if ev == ["mem_total_mb"]:
-        return pd.DataFrame([("n1.cluster", t0, 8192.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 8192.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if ev == ["gpu_count"]:
-        return pd.DataFrame([("n1.cluster", t0, 2.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 2.0)],
+          columns=["host", "time", "sum_val"],
+        )
       return empty
     if typ in ("lustre_llite", "llite") and val_col == "arc":
       if "vfs_read_bytes" in ev or ev == ["read_bytes"]:
-        return pd.DataFrame([("n1.cluster", t0, 1024.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 1024.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if "vfs_write_bytes" in ev or ev == ["write_bytes"]:
-        return pd.DataFrame([("n1.cluster", t0, 2048.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 2048.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if set(llite_meta_events).issubset(set(ev)) or ev == llite_meta_events:
-        return pd.DataFrame([("n1.cluster", t0, 64.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 64.0)],
+          columns=["host", "time", "sum_val"],
+        )
       return empty
     if typ in ("host_nfs", "nfs") and val_col == "arc":
       evset = set(ev)
       if evset.intersection({"normal_read", "direct_read", "server_read"}):
-        return pd.DataFrame([("n1.cluster", t0, 512.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 512.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if evset.intersection({"normal_write", "direct_write", "server_write"}):
-        return pd.DataFrame([("n1.cluster", t0, 256.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 256.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if evset.intersection({"read_ops", "write_ops", "READ_ops", "WRITE_ops"}):
-        return pd.DataFrame([("n1.cluster", t0, 128.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 128.0)],
+          columns=["host", "time", "sum_val"],
+        )
       return empty
     if typ in ("beegfs_client", "beegfs") and val_col == "arc":
       if "vfs_read_bytes" in ev:
-        return pd.DataFrame([("n1.cluster", t0, 400.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 400.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if "vfs_write_bytes" in ev:
-        return pd.DataFrame([("n1.cluster", t0, 300.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 300.0)],
+          columns=["host", "time", "sum_val"],
+        )
       if any(e.endswith("_ops") for e in ev):
-        return pd.DataFrame([("n1.cluster", t0, 80.0)], columns=["host", "time", "sum_val"])
+        return pd.DataFrame(
+          [("n1.cluster", t0, 80.0)],
+          columns=["host", "time", "sum_val"],
+        )
       return empty
-    if typ in _IB_FABRIC_TYPES and val_col == "arc" and ev == ["port_rcv_data", "port_xmit_data"]:
-      return pd.DataFrame([("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"])
-    if typ in _INTEL_CORE_TYPES and val_col == "arc":
-      if ev == fp64:
-        return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+    if (
+      typ in _IB_FABRIC_TYPES
+      and val_col == "arc"
+      and ev == ["port_rcv_data", "port_xmit_data"]
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"]
+      )
+    if typ in _INTEL_CORE_TYPES and val_col == "arc" and ev == fp64:
+      return pd.DataFrame(
+        [("n1.cluster", t0, 1.0)],
+        columns=["host", "time", "sum_val"],
+      )
     return empty
 
   jt = MagicMock()
@@ -974,15 +1238,33 @@ def test_summaryplot_orders_lustre_nfs_before_network():
   assert fig is not None
   assert captured_metrics.index("cpu") < captured_metrics.index("mem")
   assert captured_metrics.index("mem") < captured_metrics.index("nv_gpu_util")
-  assert captured_metrics.index("nv_gpu_util") < captured_metrics.index("nv_mem_used_mb")
-  assert captured_metrics.index("lustre_read_mb_s") < captured_metrics.index("lustre_write_mb_s")
-  assert captured_metrics.index("lustre_write_mb_s") < captured_metrics.index("liops")
-  assert captured_metrics.index("liops") < captured_metrics.index("nfs_read_mb_s")
-  assert captured_metrics.index("nfs_read_mb_s") < captured_metrics.index("nfs_write_mb_s")
-  assert captured_metrics.index("nfs_write_mb_s") < captured_metrics.index("nfs_iops")
-  assert captured_metrics.index("nfs_iops") < captured_metrics.index("beegfs_read_mb_s")
-  assert captured_metrics.index("beegfs_read_mb_s") < captured_metrics.index("beegfs_write_mb_s")
-  assert captured_metrics.index("beegfs_write_mb_s") < captured_metrics.index("beegfs_iops")
+  assert captured_metrics.index("nv_gpu_util") < captured_metrics.index(
+    "nv_mem_used_mb"
+  )
+  assert captured_metrics.index("lustre_read_mb_s") < captured_metrics.index(
+    "lustre_write_mb_s"
+  )
+  assert captured_metrics.index("lustre_write_mb_s") < captured_metrics.index(
+    "liops"
+  )
+  assert captured_metrics.index("liops") < captured_metrics.index(
+    "nfs_read_mb_s"
+  )
+  assert captured_metrics.index("nfs_read_mb_s") < captured_metrics.index(
+    "nfs_write_mb_s"
+  )
+  assert captured_metrics.index("nfs_write_mb_s") < captured_metrics.index(
+    "nfs_iops"
+  )
+  assert captured_metrics.index("nfs_iops") < captured_metrics.index(
+    "beegfs_read_mb_s"
+  )
+  assert captured_metrics.index("beegfs_read_mb_s") < captured_metrics.index(
+    "beegfs_write_mb_s"
+  )
+  assert captured_metrics.index("beegfs_write_mb_s") < captured_metrics.index(
+    "beegfs_iops"
+  )
   assert captured_metrics.index("beegfs_iops") < captured_metrics.index("ibbw")
   idx_ibbw = captured_metrics.index("ibbw")
   for name in ("opa_wait_cong", "opa_ecn"):
@@ -998,8 +1280,13 @@ def test_summaryplot_lustre_and_nfs_read_write_use_per_host_time_series():
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   t1 = pd.Timestamp("2024-06-01 12:01:00+00:00")
   base = pd.DataFrame(
-      [("n1.cluster", t0), ("n2.cluster", t0), ("n1.cluster", t1), ("n2.cluster", t1)],
-      columns=["host", "time"],
+    [
+      ("n1.cluster", t0),
+      ("n2.cluster", t0),
+      ("n1.cluster", t1),
+      ("n2.cluster", t1),
+    ],
+    columns=["host", "time"],
   )
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
@@ -1007,37 +1294,48 @@ def test_summaryplot_lustre_and_nfs_read_write_use_per_host_time_series():
   def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
     del conv, group_by_dev
     ev = list(events)
-    if _is_cpu_type(typ) and val_col == "arc" and ev == ["user", "system", "nice"]:
+    if (
+      _is_cpu_type(typ)
+      and val_col == "arc"
+      and ev == ["user", "system", "nice"]
+    ):
       return pd.DataFrame(
-          [("n1.cluster", t0, 1.0), ("n2.cluster", t0, 1.1), ("n1.cluster", t1, 1.2), ("n2.cluster", t1, 1.3)],
-          columns=["host", "time", "sum_val"],
+        [
+          ("n1.cluster", t0, 1.0),
+          ("n2.cluster", t0, 1.1),
+          ("n1.cluster", t1, 1.2),
+          ("n2.cluster", t1, 1.3),
+        ],
+        columns=["host", "time", "sum_val"],
       )
     if typ in ("lustre_llite", "llite") and val_col == "arc":
       if "vfs_read_bytes" in ev or ev == ["read_bytes"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 10.0), ("n2.cluster", t1, 20.0)],
-            columns=["host", "time", "sum_val"],
+          [("n1.cluster", t0, 10.0), ("n2.cluster", t1, 20.0)],
+          columns=["host", "time", "sum_val"],
         )
       if "vfs_write_bytes" in ev or ev == ["write_bytes"]:
         return pd.DataFrame(
-            [("n1.cluster", t1, 30.0), ("n2.cluster", t0, 40.0)],
-            columns=["host", "time", "sum_val"],
+          [("n1.cluster", t1, 30.0), ("n2.cluster", t0, 40.0)],
+          columns=["host", "time", "sum_val"],
         )
       return empty
     if typ in ("host_nfs", "nfs") and val_col == "arc":
       if ev == ["normal_read", "direct_read", "server_read"]:
         return pd.DataFrame(
-            [("n2.cluster", t0, 5.0), ("n1.cluster", t1, 7.0)],
-            columns=["host", "time", "sum_val"],
+          [("n2.cluster", t0, 5.0), ("n1.cluster", t1, 7.0)],
+          columns=["host", "time", "sum_val"],
         )
       if ev == ["normal_write", "direct_write", "server_write"]:
         return pd.DataFrame(
-            [("n1.cluster", t0, 3.0), ("n2.cluster", t1, 9.0)],
-            columns=["host", "time", "sum_val"],
+          [("n1.cluster", t0, 3.0), ("n2.cluster", t1, 9.0)],
+          columns=["host", "time", "sum_val"],
         )
       return empty
     if typ in _INTEL_CORE_TYPES and val_col == "arc" and ev == fp64:
-      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+      return pd.DataFrame(
+        [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+      )
     return empty
 
   jt = MagicMock()
@@ -1051,10 +1349,10 @@ def test_summaryplot_lustre_and_nfs_read_write_use_per_host_time_series():
   def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
     del label, y_range_end, x_range
     if metric in (
-        "lustre_read_mb_s",
-        "lustre_write_mb_s",
-        "nfs_read_mb_s",
-        "nfs_write_mb_s",
+      "lustre_read_mb_s",
+      "lustre_write_mb_s",
+      "nfs_read_mb_s",
+      "nfs_write_mb_s",
     ):
       captured_series[metric] = df[["host", "time", metric]].copy()
     return figure(width=100, height=60)
@@ -1063,20 +1361,25 @@ def test_summaryplot_lustre_and_nfs_read_write_use_per_host_time_series():
   fig = summary.plot()
   assert fig is not None
   for key in (
-      "lustre_read_mb_s",
-      "lustre_write_mb_s",
-      "nfs_read_mb_s",
-      "nfs_write_mb_s",
+    "lustre_read_mb_s",
+    "lustre_write_mb_s",
+    "nfs_read_mb_s",
+    "nfs_write_mb_s",
   ):
     assert key in captured_series
-    assert set(captured_series[key]["host"].unique()) == {"n1.cluster", "n2.cluster"}
+    assert set(captured_series[key]["host"].unique()) == {
+      "n1.cluster",
+      "n2.cluster",
+    }
     assert captured_series[key]["time"].nunique() == 2
 
 
 def test_summaryplot_liops_and_nfs_iops_are_separate_per_host():
   """Lustre metadata IOPS (liops) and NFS ops (nfs_iops) are not merged."""
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  base = pd.DataFrame([("n1.cluster", t0), ("n2.cluster", t0)], columns=["host", "time"])
+  base = pd.DataFrame(
+    [("n1.cluster", t0), ("n2.cluster", t0)], columns=["host", "time"]
+  )
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
   fp64 = list(INTEL_FP_ARITH_DOUBLE_EVENTS)
   llite_meta = list(LLITE_METADATA_IOPS_EVENTS)
@@ -1084,27 +1387,39 @@ def test_summaryplot_liops_and_nfs_iops_are_separate_per_host():
   def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
     del conv, group_by_dev
     ev = list(events)
-    if _is_cpu_type(typ) and val_col == "arc" and ev == ["user", "system", "nice"]:
-      return pd.DataFrame(
-          [("n1.cluster", t0, 1.0), ("n2.cluster", t0, 1.1)],
-          columns=["host", "time", "sum_val"],
-      )
-    if typ in ("lustre_llite", "llite") and val_col == "arc":
-      if set(llite_meta).issubset(set(ev)) or any(e.startswith("vfs_") and e.endswith("_ops") for e in ev):
-        return pd.DataFrame(
-            [("n1.cluster", t0, 70.0), ("n2.cluster", t0, 40.0)],
-            columns=["host", "time", "sum_val"],
-        )
-      return empty
-    if typ in ("host_nfs", "nfs") and val_col == "arc" and set(ev).intersection(
-        {"read_ops", "write_ops", "READ_ops", "WRITE_ops"}
+    if (
+      _is_cpu_type(typ)
+      and val_col == "arc"
+      and ev == ["user", "system", "nice"]
     ):
       return pd.DataFrame(
-          [("n1.cluster", t0, 30.0), ("n2.cluster", t0, 10.0)],
+        [("n1.cluster", t0, 1.0), ("n2.cluster", t0, 1.1)],
+        columns=["host", "time", "sum_val"],
+      )
+    if typ in ("lustre_llite", "llite") and val_col == "arc":
+      if set(llite_meta).issubset(set(ev)) or any(
+        e.startswith("vfs_") and e.endswith("_ops") for e in ev
+      ):
+        return pd.DataFrame(
+          [("n1.cluster", t0, 70.0), ("n2.cluster", t0, 40.0)],
           columns=["host", "time", "sum_val"],
+        )
+      return empty
+    if (
+      typ in ("host_nfs", "nfs")
+      and val_col == "arc"
+      and set(ev).intersection(
+        {"read_ops", "write_ops", "READ_ops", "WRITE_ops"}
+      )
+    ):
+      return pd.DataFrame(
+        [("n1.cluster", t0, 30.0), ("n2.cluster", t0, 10.0)],
+        columns=["host", "time", "sum_val"],
       )
     if typ in _INTEL_CORE_TYPES and val_col == "arc" and ev == fp64:
-      return pd.DataFrame([("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"])
+      return pd.DataFrame(
+        [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+      )
     return empty
 
   jt = MagicMock()
@@ -1125,8 +1440,12 @@ def test_summaryplot_liops_and_nfs_iops_are_separate_per_host():
   fig = summary.plot()
   assert fig is not None
   assert "liops" in captured and "nfs_iops" in captured
-  liops_by_host = {row["host"]: row["liops"] for _, row in captured["liops"].iterrows()}
-  nfs_by_host = {row["host"]: row["nfs_iops"] for _, row in captured["nfs_iops"].iterrows()}
+  liops_by_host = {
+    row["host"]: row["liops"] for _, row in captured["liops"].iterrows()
+  }
+  nfs_by_host = {
+    row["host"]: row["nfs_iops"] for _, row in captured["nfs_iops"].iterrows()
+  }
   assert liops_by_host["n1.cluster"] == 70.0
   assert liops_by_host["n2.cluster"] == 40.0
   assert nfs_by_host["n1.cluster"] == 30.0
@@ -1143,43 +1462,70 @@ def test_summaryplot_node_power_est_w_intel_plus_gpu():
   def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
     del conv, group_by_dev
     ev = list(events)
-    if typ in _INTEL_RAPL_TYPES and val_col == "arc" and _events_include_pkg_energy(ev):
+    if (
+      typ in _INTEL_RAPL_TYPES
+      and val_col == "arc"
+      and _events_include_pkg_energy(ev)
+    ):
       return pd.DataFrame(
-          [("n1.cluster", t0, 100.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 100.0)], columns=["host", "time", "sum_val"]
       )
     if typ == "nvidia_gpu" and val_col == "value" and ev == ["power_usage"]:
       return pd.DataFrame(
-          [("n1.cluster", t0, 250.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 250.0)], columns=["host", "time", "sum_val"]
       )
-    if typ == "nvidia_gpu" and val_col == "value" and ev == ["module_power_usage"]:
+    if (
+      typ == "nvidia_gpu"
+      and val_col == "value"
+      and ev == ["module_power_usage"]
+    ):
       return empty
-    if typ in ("host_cpu_hw", "cpu_counter_metrics") and val_col == "value" and _events_include_dcgm_cpu_power(ev):
+    if (
+      typ in ("host_cpu_hw", "cpu_counter_metrics")
+      and val_col == "value"
+      and _events_include_dcgm_cpu_power(ev)
+    ):
       return empty
-    if typ in _AMD_RAPL_TYPES and val_col == "arc" and _events_include_pkg_energy(ev):
+    if (
+      typ in _AMD_RAPL_TYPES
+      and val_col == "arc"
+      and _events_include_pkg_energy(ev)
+    ):
       return empty
     if val_col == "arc" and _is_cpu_type(typ) and "user" in ev:
       return pd.DataFrame(
-          [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
       )
     if val_col != "arc":
       return empty
-    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_IB_FABRIC_TYPES, "lustre_llite", "llite"):
+    if typ in (
+      "amd64_pmc",
+      "amd64_df",
+      "amd_x86_pmc",
+      "amd_x86_uncore_df",
+      *_IB_FABRIC_TYPES,
+      "lustre_llite",
+      "llite",
+    ):
       return empty
     if typ in _INTEL_CORE_TYPES and ev == fp64:
       return pd.DataFrame(
-          [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
       )
     if typ in _INTEL_CORE_TYPES and ev in (["MPERF"], ["mperf"]):
       return pd.DataFrame(
-          [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
       )
     if typ in _INTEL_CORE_TYPES and ev in (["APERF"], ["aperf"]):
       return pd.DataFrame(
-          [("n1.cluster", t0, 200.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 200.0)], columns=["host", "time", "sum_val"]
       )
-    if typ in _INTEL_CORE_TYPES and ev in (["INST_RETIRED"], ["instr_retired"]):
+    if typ in _INTEL_CORE_TYPES and ev in (
+      ["INST_RETIRED"],
+      ["instr_retired"],
+    ):
       return pd.DataFrame(
-          [("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"]
       )
     return empty
 
@@ -1215,47 +1561,74 @@ def test_summaryplot_node_power_est_w_prefers_module_branch():
   def get_aggregate_df(typ, val_col, events, conv=1.0, *, group_by_dev=False):
     del conv, group_by_dev
     ev = list(events)
-    if typ in _INTEL_RAPL_TYPES and val_col == "arc" and _events_include_pkg_energy(ev):
+    if (
+      typ in _INTEL_RAPL_TYPES
+      and val_col == "arc"
+      and _events_include_pkg_energy(ev)
+    ):
       return pd.DataFrame(
-          [("n1.cluster", t0, 50.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 50.0)], columns=["host", "time", "sum_val"]
       )
     if typ == "nvidia_gpu" and val_col == "value" and ev == ["power_usage"]:
       return pd.DataFrame(
-          [("n1.cluster", t0, 400.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 400.0)], columns=["host", "time", "sum_val"]
       )
-    if typ == "nvidia_gpu" and val_col == "value" and ev == ["module_power_usage"]:
+    if (
+      typ == "nvidia_gpu"
+      and val_col == "value"
+      and ev == ["module_power_usage"]
+    ):
       return pd.DataFrame(
-          [("n1.cluster", t0, 900.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 900.0)], columns=["host", "time", "sum_val"]
       )
-    if typ in ("host_cpu_hw", "cpu_counter_metrics") and val_col == "value" and _events_include_dcgm_cpu_power(ev):
+    if (
+      typ in ("host_cpu_hw", "cpu_counter_metrics")
+      and val_col == "value"
+      and _events_include_dcgm_cpu_power(ev)
+    ):
       return pd.DataFrame(
-          [("n1.cluster", t0, 120.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 120.0)], columns=["host", "time", "sum_val"]
       )
-    if typ in _AMD_RAPL_TYPES and val_col == "arc" and _events_include_pkg_energy(ev):
+    if (
+      typ in _AMD_RAPL_TYPES
+      and val_col == "arc"
+      and _events_include_pkg_energy(ev)
+    ):
       return empty
     if val_col == "arc" and _is_cpu_type(typ) and "user" in ev:
       return pd.DataFrame(
-          [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
       )
     if val_col != "arc":
       return empty
-    if typ in ("amd64_pmc", "amd64_df", "amd_x86_pmc", "amd_x86_uncore_df", *_IB_FABRIC_TYPES, "lustre_llite", "llite"):
+    if typ in (
+      "amd64_pmc",
+      "amd64_df",
+      "amd_x86_pmc",
+      "amd_x86_uncore_df",
+      *_IB_FABRIC_TYPES,
+      "lustre_llite",
+      "llite",
+    ):
       return empty
     if typ in _INTEL_CORE_TYPES and ev == fp64:
       return pd.DataFrame(
-          [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
       )
     if typ in _INTEL_CORE_TYPES and ev in (["MPERF"], ["mperf"]):
       return pd.DataFrame(
-          [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 1.0)], columns=["host", "time", "sum_val"]
       )
     if typ in _INTEL_CORE_TYPES and ev in (["APERF"], ["aperf"]):
       return pd.DataFrame(
-          [("n1.cluster", t0, 200.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 200.0)], columns=["host", "time", "sum_val"]
       )
-    if typ in _INTEL_CORE_TYPES and ev in (["INST_RETIRED"], ["instr_retired"]):
+    if typ in _INTEL_CORE_TYPES and ev in (
+      ["INST_RETIRED"],
+      ["instr_retired"],
+    ):
       return pd.DataFrame(
-          [("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 10.0)], columns=["host", "time", "sum_val"]
       )
     return empty
 
@@ -1282,8 +1655,8 @@ def test_summaryplot_node_power_est_w_prefers_module_branch():
 def _summary_with_error_hosts(jt, hosts):
   """Build SummaryPlot with host colors so plot_metric can render error panels."""
   from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
-      SummaryPlot,
-      _cycled_d3_category20_palette,
+    SummaryPlot,
+    _cycled_d3_category20_palette,
   )
 
   summary = SummaryPlot(jt)
@@ -1307,7 +1680,7 @@ def _figure_has_help_question_marker(fig):
 
 def test_plot_hardware_error_rate_figures_per_host_when_ib_errors_present():
   from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
-      plot_hardware_error_rate_figures,
+    plot_hardware_error_rate_figures,
   )
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
@@ -1319,11 +1692,11 @@ def test_plot_hardware_error_rate_figures_per_host_when_ib_errors_present():
     del val_col, conv
     if typ in ("host_ib", "ib") and list(events) == ["port_rcv_errors"]:
       return pd.DataFrame(
-          [
-              ("n1.cluster", t0, 2.0),
-              ("n2.cluster", t0, 0.0),
-          ],
-          columns=["host", "time", "sum_val"],
+        [
+          ("n1.cluster", t0, 2.0),
+          ("n2.cluster", t0, 0.0),
+        ],
+        columns=["host", "time", "sum_val"],
       )
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
@@ -1339,7 +1712,7 @@ def test_plot_hardware_error_rate_figures_per_host_when_ib_errors_present():
 
 def test_plot_hardware_error_rate_figures_empty_when_all_zero():
   from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
-      plot_hardware_error_rate_figures,
+    plot_hardware_error_rate_figures,
   )
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
@@ -1351,8 +1724,8 @@ def test_plot_hardware_error_rate_figures_empty_when_all_zero():
     del val_col, conv
     if typ in ("host_ib", "ib") and list(events) == ["port_rcv_errors"]:
       return pd.DataFrame(
-          [("n1.cluster", t0, 0.0)],
-          columns=["host", "time", "sum_val"],
+        [("n1.cluster", t0, 0.0)],
+        columns=["host", "time", "sum_val"],
       )
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
@@ -1363,14 +1736,14 @@ def test_plot_hardware_error_rate_figures_empty_when_all_zero():
 
 def test_plot_hardware_error_rate_figures_empty_when_schema_missing():
   from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
-      plot_hardware_error_rate_figures,
+    plot_hardware_error_rate_figures,
   )
 
   jt = MagicMock()
   jt.host_list = ["n1.cluster"]
   jt.schema = {"host_cpu": ["user"]}
   jt.get_aggregate_df.return_value = pd.DataFrame(
-      columns=["host", "time", "sum_val"]
+    columns=["host", "time", "sum_val"]
   )
   summary = _summary_with_error_hosts(jt, jt.host_list)
   assert plot_hardware_error_rate_figures(summary, None) == []
@@ -1378,15 +1751,15 @@ def test_plot_hardware_error_rate_figures_empty_when_schema_missing():
 
 def test_plot_hardware_error_rate_figures_splits_multiple_counters():
   from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
-      plot_hardware_error_rate_figures,
+    plot_hardware_error_rate_figures,
   )
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   jt = MagicMock()
   jt.host_list = ["n1.cluster"]
   jt.schema = {
-      "host_ib": ["port_rcv_errors", "symbol_error"],
-      "net": ["rx_crc_errors"],
+    "host_ib": ["port_rcv_errors", "symbol_error"],
+    "net": ["rx_crc_errors"],
   }
 
   def _agg(typ, val_col, events, conv=1.0):
@@ -1394,15 +1767,15 @@ def test_plot_hardware_error_rate_figures_splits_multiple_counters():
     ev = list(events)
     if typ in ("host_ib", "ib") and ev == ["port_rcv_errors"]:
       return pd.DataFrame(
-          [("n1.cluster", t0, 1.5)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 1.5)], columns=["host", "time", "sum_val"]
       )
     if typ in ("host_ib", "ib") and ev == ["symbol_error"]:
       return pd.DataFrame(
-          [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 0.25)], columns=["host", "time", "sum_val"]
       )
     if typ == "net" and ev == ["rx_crc_errors"]:
       return pd.DataFrame(
-          [("n1.cluster", t0, 3.0)], columns=["host", "time", "sum_val"]
+        [("n1.cluster", t0, 3.0)], columns=["host", "time", "sum_val"]
       )
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
@@ -1412,9 +1785,9 @@ def test_plot_hardware_error_rate_figures_splits_multiple_counters():
   assert len(figs) == 3
   labels = [f.yaxis.axis_label for f in figs]
   assert labels == [
-      "IB port_rcv_errors [#/s]",
-      "IB symbol_error [#/s]",
-      "Eth rx_crc_errors [#/s]",
+    "IB port_rcv_errors [#/s]",
+    "IB symbol_error [#/s]",
+    "Eth rx_crc_errors [#/s]",
   ]
   for fig in figs:
     assert _figure_has_help_question_marker(fig)
@@ -1422,14 +1795,18 @@ def test_plot_hardware_error_rate_figures_splits_multiple_counters():
 
 def test_summary_allow_partial_null_includes_watts():
   """Sparse Intel RAPL must keep watts like amd_pkg_w (node-power merge)."""
-  from hpcperfstats.analysis.metrics.lib.plot.summaryplot import _SUMMARY_ALLOW_PARTIAL_NULL
+  from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
+    _SUMMARY_ALLOW_PARTIAL_NULL,
+  )
 
   assert "watts" in _SUMMARY_ALLOW_PARTIAL_NULL
   assert "amd_pkg_w" in _SUMMARY_ALLOW_PARTIAL_NULL
 
 
 def test_continuous_polyline_xy_keeps_sample_count():
-  from hpcperfstats.analysis.metrics.lib.plot.summaryplot import _continuous_polyline_xy
+  from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
+    _continuous_polyline_xy,
+  )
 
   times = [1, 2, 3, 4]
   values = [10.0, 20.0, 30.0, 40.0]
@@ -1441,16 +1818,17 @@ def test_continuous_polyline_xy_keeps_sample_count():
 
 def test_clamp_summary_gpu_link_rates_drops_poison():
   import pandas as pd
+
   from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
-      _MAX_SANE_GPU_LINK_GBPS,
-      _clamp_summary_gpu_link_rates,
+    _MAX_SANE_GPU_LINK_GBPS,
+    _clamp_summary_gpu_link_rates,
   )
 
   df = pd.DataFrame(
-      {
-          "host": ["a", "a", "b"],
-          "nv_gpu_link_gbs": [1.0, _MAX_SANE_GPU_LINK_GBPS * 10, 2.0],
-      }
+    {
+      "host": ["a", "a", "b"],
+      "nv_gpu_link_gbs": [1.0, _MAX_SANE_GPU_LINK_GBPS * 10, 2.0],
+    }
   )
   out = _clamp_summary_gpu_link_rates(df)
   assert out["nv_gpu_link_gbs"].iloc[0] == 1.0

@@ -2,17 +2,17 @@
 The database models of hpcperfstats: job_data, metrics_data, host_data,
 proc_data, and RealField. Maps to TimescaleDB/PostgreSQL tables.
 """
+
 from __future__ import annotations
 
+import hashlib
+import hmac
+import secrets
 from typing import Any
 
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.postgres.fields import ArrayField
 from django.contrib.postgres.indexes import GinIndex
-import hashlib
-import hmac
-import secrets
-
 from django.db import models
 from django.db.models import Q
 
@@ -26,13 +26,13 @@ class RealField(models.FloatField):
   def db_type(self, connection: Any) -> Any:
     """
     Return PostgreSQL type name 'real'.
-    
+
     Args:
       connection (Any): Live handle (pool, client, or connection).
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> RealField().db_type(None)  # doctest: +SKIP
     """
@@ -46,6 +46,7 @@ class job_data(models.Model):
   """
   Slurm job accounting record: jid, times, runtime, user, account, queue,.
   """
+
   jid = models.CharField(primary_key=True, max_length=32)
   submit_time = models.DateTimeField()
   start_time = models.DateTimeField()
@@ -77,28 +78,36 @@ class job_data(models.Model):
     """
     Django model metadata for the enclosing model.
     """
-    db_table = 'job_data'
+
+    db_table = "job_data"
     managed = True
     indexes = [
-        models.Index(fields=["username"], name="job_data_username_idx"),
-        models.Index(fields=["account"], name="job_data_account_idx"),
-        models.Index(fields=["queue"], name="job_data_queue_idx"),
-        models.Index(fields=["state"], name="job_data_state_idx"),
-        models.Index(fields=["start_time"], name="job_data_start_time_idx"),
-        models.Index(fields=["end_time", "username"], name="job_data_end_time_username_idx"),
-        models.Index(fields=["queue", "end_time"], name="job_data_queue_end_time_idx"),
-        models.Index(fields=["end_time", "state"], name="job_data_end_time_state_idx"),
-        GinIndex(fields=["host_list"], name="job_data_host_list_gin_idx"),
+      models.Index(fields=["username"], name="job_data_username_idx"),
+      models.Index(fields=["account"], name="job_data_account_idx"),
+      models.Index(fields=["queue"], name="job_data_queue_idx"),
+      models.Index(fields=["state"], name="job_data_state_idx"),
+      models.Index(fields=["start_time"], name="job_data_start_time_idx"),
+      models.Index(
+        fields=["end_time", "username"],
+        name="job_data_end_time_username_idx",
+      ),
+      models.Index(
+        fields=["queue", "end_time"], name="job_data_queue_end_time_idx"
+      ),
+      models.Index(
+        fields=["end_time", "state"], name="job_data_end_time_state_idx"
+      ),
+      GinIndex(fields=["host_list"], name="job_data_host_list_gin_idx"),
     ]
 
   def __str__(self) -> Any:
     """
     Return string representation (jid).
-    
+
     Returns:
       Any: Open return polymorphism from ``__str__``: concrete type depends on
       inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-    
+
     Examples:
       >>> __str__()  # doctest: +SKIP
     """
@@ -107,19 +116,19 @@ class job_data(models.Model):
   def color(self) -> Any:
     """
     Return hex color for state: E1EDFA completed, FFB2B2 failed, silver.
-    
+
       otherwise.
-    
+
     Returns:
       Any: Open return polymorphism from ``color``: concrete type depends on
       inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-    
+
     Examples:
       >>> job_data().color()  # doctest: +SKIP
     """
-    if self.state == 'COMPLETED':
+    if self.state == "COMPLETED":
       ret_val = "E1EDFA"
-    elif self.state == 'FAILED':
+    elif self.state == "FAILED":
       ret_val = "FFB2B2"
     else:
       ret_val = "silver"
@@ -130,13 +139,14 @@ class metrics_data(models.Model):
   """
   Derived metric value per job and (type, metric). Unique on (jid, type,.
   """
+
   jid = models.ForeignKey(
-      job_data,
-      on_delete=models.CASCADE,
-      db_column='jid',
-      related_name='metrics_data_set',
-      blank=True,
-      null=True,
+    job_data,
+    on_delete=models.CASCADE,
+    db_column="jid",
+    related_name="metrics_data_set",
+    blank=True,
+    null=True,
   )
   type = models.CharField(max_length=32, blank=True, null=True)
   metric = models.CharField(max_length=32, blank=True, null=True)
@@ -150,37 +160,47 @@ class metrics_data(models.Model):
     """
     Django model metadata for the enclosing model.
     """
+
     managed = True
-    db_table = 'metrics_data'
-    unique_together = (('jid', 'type', 'metric'),)
+    db_table = "metrics_data"
+    unique_together = (("jid", "type", "metric"),)
     indexes = [
-        models.Index(fields=["metric"], name="metrics_data_metric_idx"),
-        models.Index(fields=["jid", "metric"], name="metrics_data_jid_metric_idx"),
-        models.Index(fields=["metric", "value"], name="metrics_data_metric_value_idx"),
-        models.Index(
-            fields=["jid"],
-            name="metrics_data_stale_jid_idx",
-            condition=Q(value__isnull=True)
-            & (Q(no_data_reason__isnull=True) | Q(no_data_reason="")),
-        ),
+      models.Index(fields=["metric"], name="metrics_data_metric_idx"),
+      models.Index(
+        fields=["jid", "metric"], name="metrics_data_jid_metric_idx"
+      ),
+      models.Index(
+        fields=["metric", "value"], name="metrics_data_metric_value_idx"
+      ),
+      models.Index(
+        fields=["jid"],
+        name="metrics_data_stale_jid_idx",
+        condition=Q(value__isnull=True)
+        & (Q(no_data_reason__isnull=True) | Q(no_data_reason="")),
+      ),
     ]
 
   def __str__(self) -> Any:
     """
     Return string representation jid_type_metric.
-    
+
     Returns:
       Any: Open return polymorphism from ``__str__``: concrete type depends on
       inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-    
+
     Examples:
       >>> __str__()  # doctest: +SKIP
     """
-    return str(self.jid_id or "") + "_" + str(self.type or "") + "_" + str(
-        self.metric or "")
+    return (
+      str(self.jid_id or "")
+      + "_"
+      + str(self.type or "")
+      + "_"
+      + str(self.metric or "")
+    )
 
 
-#Old Table SQL
+# Old Table SQL
 """
     query_create_hostdata_table = CREATE TABLE IF NOT EXISTS host_data (
                                                time  TIMESTAMPTZ NOT NULL,
@@ -240,6 +260,7 @@ class host_data(models.Model):
   uniqueness includes ``dev`` so multi-GPU samples at the same timestamp are
   insertable. Table: host_data.
   """
+
   time = models.DateTimeField(primary_key=True)
   host = models.CharField(max_length=64, blank=True, null=True)
   jid = models.CharField(max_length=32, blank=True, null=True)
@@ -256,26 +277,32 @@ class host_data(models.Model):
     """
     Django model metadata for the enclosing model.
     """
-    db_table = 'host_data'
-    unique_together = (('time', 'host', 'type', 'event', 'dev'),)
+
+    db_table = "host_data"
+    unique_together = (("time", "host", "type", "event", "dev"),)
     indexes = [
-        models.Index(fields=["host", "time"]),
-        models.Index(fields=["jid", "time"]),
-        models.Index(fields=["host", "-time"], name="host_data_host_time_desc_idx"),
-        models.Index(fields=["jid", "-time"], name="host_data_jid_time_desc_idx"),
-        models.Index(fields=["jid", "type", "event", "time"],
-                     name="host_data_jid_type_ev_time_idx"),
+      models.Index(fields=["host", "time"]),
+      models.Index(fields=["jid", "time"]),
+      models.Index(
+        fields=["host", "-time"], name="host_data_host_time_desc_idx"
+      ),
+      models.Index(fields=["jid", "-time"], name="host_data_jid_time_desc_idx"),
+      models.Index(
+        fields=["jid", "type", "event", "time"],
+        name="host_data_jid_type_ev_time_idx",
+      ),
     ]
 
 
 class proc_data(models.Model):
   """
   Per-process host_proc snapshot per (jid, host, proc). Table: proc_data.
-  
+
   ``device`` is the full monitor device token (name/pid/cmask/mmask); ``proc``
   is the first path component (process name). Numeric columns mirror monitor
   ``KEYS`` in ``monitor/src/proc.c``.
   """
+
   jid = models.CharField(max_length=32, blank=True, null=True)
   host = models.CharField(max_length=64, blank=True, null=True)
   proc = models.CharField(max_length=512, blank=True, null=True)
@@ -298,21 +325,22 @@ class proc_data(models.Model):
     """
     Django model metadata for the enclosing model.
     """
+
     managed = True
-    db_table = 'proc_data'
-    unique_together = (('jid', 'host', 'proc'),)
+    db_table = "proc_data"
+    unique_together = (("jid", "host", "proc"),)
     indexes = [
-        models.Index(fields=["jid"]),
+      models.Index(fields=["jid"]),
     ]
 
   def __str__(self) -> Any:
     """
     Return string representation (jid, host, proc).
-    
+
     Returns:
       Any: Open return polymorphism from ``__str__``: concrete type depends on
       inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-    
+
     Examples:
       >>> __str__()  # doctest: +SKIP
     """
@@ -322,16 +350,16 @@ class proc_data(models.Model):
 class job_plot_artifact(models.Model):
   """
   Persisted Bokeh json_item payloads for job-level plots (gzip-compressed JSON).
-  
+
   One row per (job, plot_kind, layout). Invalidated when host_data changes for
     the job.
   """
 
   jid = models.ForeignKey(
-      job_data,
-      on_delete=models.CASCADE,
-      db_column="jid",
-      related_name="plot_artifacts",
+    job_data,
+    on_delete=models.CASCADE,
+    db_column="jid",
+    related_name="plot_artifacts",
   )
   plot_kind = models.CharField(max_length=32)
   layout = models.CharField(max_length=16)
@@ -347,23 +375,24 @@ class job_plot_artifact(models.Model):
     """
     Django model metadata for the enclosing model.
     """
+
     db_table = "job_plot_artifact"
     managed = True
     constraints = [
-        models.UniqueConstraint(
-            fields=["jid", "plot_kind", "layout"],
-            name="job_plot_artifact_jid_kind_layout_uniq",
-        ),
+      models.UniqueConstraint(
+        fields=["jid", "plot_kind", "layout"],
+        name="job_plot_artifact_jid_kind_layout_uniq",
+      ),
     ]
 
   def __str__(self) -> Any:
     """
     Return the informal string representation.
-    
+
     Returns:
       Any: Open return polymorphism from ``__str__``: concrete type depends on
       inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-    
+
     Examples:
       >>> __str__()  # doctest: +SKIP
     """
@@ -376,10 +405,10 @@ class job_detail_artifact(models.Model):
   """
 
   jid = models.ForeignKey(
-      job_data,
-      on_delete=models.CASCADE,
-      db_column="jid",
-      related_name="detail_artifacts",
+    job_data,
+    on_delete=models.CASCADE,
+    db_column="jid",
+    related_name="detail_artifacts",
   )
   artifact_kind = models.CharField(max_length=32)
   artifact_scope = models.CharField(max_length=128, default="")
@@ -395,23 +424,24 @@ class job_detail_artifact(models.Model):
     """
     Django model metadata for the enclosing model.
     """
+
     db_table = "job_detail_artifact"
     managed = True
     constraints = [
-        models.UniqueConstraint(
-            fields=["jid", "artifact_kind", "artifact_scope"],
-            name="job_detail_artifact_jid_kind_scope_uniq",
-        ),
+      models.UniqueConstraint(
+        fields=["jid", "artifact_kind", "artifact_scope"],
+        name="job_detail_artifact_jid_kind_scope_uniq",
+      ),
     ]
 
   def __str__(self) -> Any:
     """
     Return the informal string representation.
-    
+
     Returns:
       Any: Open return polymorphism from ``__str__``: concrete type depends on
       inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-    
+
     Examples:
       >>> __str__()  # doctest: +SKIP
     """
@@ -436,23 +466,24 @@ class public_metrics_artifact(models.Model):
     """
     Django model metadata for the enclosing model.
     """
+
     db_table = "public_metrics_artifact"
     managed = True
     constraints = [
-        models.UniqueConstraint(
-            fields=["scope", "period_key"],
-            name="public_metrics_artifact_scope_period_uniq",
-        ),
+      models.UniqueConstraint(
+        fields=["scope", "period_key"],
+        name="public_metrics_artifact_scope_period_uniq",
+      ),
     ]
 
   def __str__(self) -> Any:
     """
     Return the informal string representation.
-    
+
     Returns:
       Any: Open return polymorphism from ``__str__``: concrete type depends on
       inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-    
+
     Examples:
       >>> __str__()  # doctest: +SKIP
     """
@@ -462,7 +493,7 @@ class public_metrics_artifact(models.Model):
 class ApiKey(models.Model):
   """
   API key for programmatic access, bound to an authenticated username.
-  
+
   Keys are created via an OAuth-protected web page and then used by external
   tools (e.g. hpcperfstats-jobstats, hpcperfstats-sacct-gen) via the
     Authorization: Api-Key header.
@@ -480,20 +511,21 @@ class ApiKey(models.Model):
     """
     Django model metadata for the enclosing model.
     """
+
     db_table = "api_keys"
     managed = True
     indexes = [
-        models.Index(fields=["username"], name="api_keys_username_idx"),
+      models.Index(fields=["username"], name="api_keys_username_idx"),
     ]
 
   def __str__(self) -> Any:
     """
     Return short representation prefix@username.
-    
+
     Returns:
       Any: Open return polymorphism from ``__str__``: concrete type depends on
       inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-    
+
     Examples:
       >>> __str__()  # doctest: +SKIP
     """
@@ -504,13 +536,13 @@ class ApiKey(models.Model):
   def hash_raw_key(raw_key: str) -> str:
     """
     Return stable SHA-256 hash for persisted API key lookup.
-    
+
     Args:
       raw_key (str): String for raw key.
-    
+
     Returns:
       str: str produced by this call.
-    
+
     Examples:
       >>> ApiKey().hash_raw_key("x")  # doctest: +SKIP
     """
@@ -520,10 +552,10 @@ class ApiKey(models.Model):
   def make_raw_key() -> str:
     """
     Generate a new API key value shown once to the user.
-    
+
     Returns:
       str: str produced by this call.
-    
+
     Examples:
       >>> ApiKey().make_raw_key()  # doctest: +SKIP
     """
@@ -533,37 +565,37 @@ class ApiKey(models.Model):
   def create_from_raw_key(cls, username: str, is_staff: bool) -> Any:
     """
     Create a key row from a generated raw key, returning (obj, raw_key).
-    
+
     Args:
       username (str): String for username.
       is_staff (bool): Whether to enable is staff.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> ApiKey().create_from_raw_key("x", True)  # doctest: +SKIP
     """
     raw_key = cls.make_raw_key()
     key_hash = cls.hash_raw_key(raw_key)
     obj = cls.objects.create(
-        key=key_hash,
-        key_prefix=raw_key[:12],
-        username=username,
-        is_staff=is_staff,
+      key=key_hash,
+      key_prefix=raw_key[:12],
+      username=username,
+      is_staff=is_staff,
     )
     return obj, raw_key
 
   def matches_raw_key(self, raw_key: str) -> bool:
     """
     Constant-time comparison helper for explicit validation paths.
-    
+
     Args:
       raw_key (str): String for raw key.
-    
+
     Returns:
       bool: True or False for this check.
-    
+
     Examples:
       >>> ApiKey().matches_raw_key("x")  # doctest: +SKIP
     """
@@ -595,6 +627,7 @@ class TestLoginUser(models.Model):
     """
     Django model metadata for the enclosing model.
     """
+
     db_table = "test_login_user"
 
   def __str__(self) -> str:
@@ -642,10 +675,10 @@ class TestLoginUser(models.Model):
 
   @classmethod
   def replace_singleton(
-      cls,
-      username: str,
-      password: str,
-      created_by: str,
+    cls,
+    username: str,
+    password: str,
+    created_by: str,
   ) -> TestLoginUser:
     """
     Create or replace the singleton username and password hash.
@@ -668,17 +701,19 @@ class TestLoginUser(models.Model):
     obj = cls.get_singleton()
     if obj is None:
       return cls.objects.create(
-          username=username,
-          password_hash=password_hash,
-          created_by=created_by,
+        username=username,
+        password_hash=password_hash,
+        created_by=created_by,
       )
     obj.username = username
     obj.password_hash = password_hash
     obj.created_by = created_by
-    obj.save(update_fields=[
+    obj.save(
+      update_fields=[
         "username",
         "password_hash",
         "created_by",
         "updated_at",
-    ])
+      ]
+    )
     return obj

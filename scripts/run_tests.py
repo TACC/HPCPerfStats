@@ -8,12 +8,12 @@ Django tests need PostgreSQL and HPCPERFSTATS_INI.
 Attributes:
   _root: Attribute.
 """
-from __future__ import annotations
 
-from typing import Any
+from __future__ import annotations
 
 import os
 import sys
+from typing import Any
 
 # Run from directory containing pyproject.toml.
 _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,23 +25,24 @@ if _root not in sys.path:
 def main() -> Any:
   """
   Run pytest, optionally excluding tests marked for Django database access.
-  
+
   Returns:
     Any: Open return polymorphism from ``main``: concrete type depends on
     inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+
   Examples:
     >>> main()  # doctest: +SKIP
   """
   import pytest
+
   args = list(sys.argv[1:])
   if "--no-django" in args:
     args.remove("--no-django")
     host_args = [
-        "--ignore=hpcperfstats/site/lib/machine/tests",
-        "-m",
-        "not django_db",
-        "-q",
+      "--ignore=hpcperfstats/site/lib/machine/tests",
+      "-m",
+      "not django_db",
+      "-q",
     ]
     args = host_args + (args or ["hpcperfstats"])
   else:

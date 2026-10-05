@@ -14,16 +14,19 @@ Attributes:
     SoT).
   RECONSTRUCT_SOURCES: Documented reconstruct sources of truth.
 """
+
 from __future__ import annotations
 
+import contextlib
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any, Callable
+from typing import Any
 
 from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
-    is_internal_archive_stats_path,
+  is_internal_archive_stats_path,
 )
 
 RECONSTRUCT_CHECKPOINT_BASENAME = ".sync_timedb_state.json"
@@ -161,35 +164,37 @@ def ingest_is_complete(
     file_ok = bool(has_file_complete_fn(text))
   else:
     from hpcperfstats.dbload.lib.sync_timedb_file_complete_ingest_mark import (
-        has_file_complete_ingest_mark,
+      has_file_complete_ingest_mark,
     )
+
     file_ok = bool(
-        has_file_complete_ingest_mark(
-            text,
-            archive_data_dir=archive_data_dir,
-        )
+      has_file_complete_ingest_mark(
+        text,
+        archive_data_dir=archive_data_dir,
+      )
     )
 
   if has_zero_host_fn is not None:
     zero_ok = bool(has_zero_host_fn(text))
   else:
     from hpcperfstats.dbload.lib.sync_timedb_zero_host_ingest_mark import (
-        has_zero_host_ingest_mark,
+      has_zero_host_ingest_mark,
     )
+
     zero_ok = bool(
-        has_zero_host_ingest_mark(
-            text,
-            archive_data_dir=archive_data_dir,
-        )
+      has_zero_host_ingest_mark(
+        text,
+        archive_data_dir=archive_data_dir,
+      )
     )
 
   if file_ok or zero_ok:
     return True
 
   live = (
-      bool(listend_enabled)
-      if listend_enabled is not None
-      else _default_listend_enabled()
+    bool(listend_enabled)
+    if listend_enabled is not None
+    else _default_listend_enabled()
   )
   if live:
     return False
@@ -198,8 +203,9 @@ def ingest_is_complete(
     return bool(head_tail_ready_fn(text))
 
   from hpcperfstats.dbload.lib.sync_timedb_ingest_readiness import (
-      stats_file_head_ingested_in_db,
+    stats_file_head_ingested_in_db,
   )
+
   return bool(stats_file_head_ingested_in_db(text))
 
 
@@ -246,8 +252,9 @@ def append_is_complete(
     needs = bool(needs_append_fn(text, archive))
   else:
     from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-        raw_stats_path_needs_tar_append,
+      raw_stats_path_needs_tar_append,
     )
+
     needs = bool(raw_stats_path_needs_tar_append(text, archive))
   return not needs
 
@@ -282,16 +289,16 @@ def discover_raw_needs_tar_append(
     False
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      _daily_archive_members_cache_key,
-      _derive_stats_path_date,
-      _lookup_daily_archive_members_cache,
-      daily_archive_populate_source_exists,
-      daily_compressed_path_for_date,
-      daily_tar_path_from_compressed,
-      get_mutable_tar_authority_member_map,
-      get_tar_member_name,
-      normalize_daily_compressed_path,
-      stats_file_is_active_segment,
+    _daily_archive_members_cache_key,
+    _derive_stats_path_date,
+    _lookup_daily_archive_members_cache,
+    daily_archive_populate_source_exists,
+    daily_compressed_path_for_date,
+    daily_tar_path_from_compressed,
+    get_mutable_tar_authority_member_map,
+    get_tar_member_name,
+    normalize_daily_compressed_path,
+    stats_file_is_active_segment,
   )
 
   text = str(stats_path or "").strip()
@@ -315,9 +322,7 @@ def discover_raw_needs_tar_append(
   tar_path = daily_tar_path_from_compressed(canonical)
   if os.path.isfile(tar_path):
     open_members = get_mutable_tar_authority_member_map(tar_path)
-    if open_members.get(member_name) == expected_size:
-      return False
-    return True
+    return open_members.get(member_name) != expected_size
   if not daily_archive_populate_source_exists(canonical):
     return True
   members = _lookup_daily_archive_members_cache(compressed_path)
@@ -325,9 +330,9 @@ def discover_raw_needs_tar_append(
     return members.get(member_name) != expected_size
   try:
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-        build_archive_members_keys,
-        enqueue_archive_members_populate,
-        member_match_when_warm,
+      build_archive_members_keys,
+      enqueue_archive_members_populate,
+      member_match_when_warm,
     )
   except Exception:
     return True
@@ -336,7 +341,9 @@ def discover_raw_needs_tar_append(
     cache_key = _daily_archive_members_cache_key(canonical)
     keys = build_archive_members_keys(cache_key)
     warm = member_match_when_warm(
-        keys, member_name, expected_size,
+      keys,
+      member_name,
+      expected_size,
     )
     if warm is True:
       return False
@@ -345,10 +352,8 @@ def discover_raw_needs_tar_append(
   except Exception:
     warm = None
   if enqueue_populate_on_cold:
-    try:
+    with contextlib.suppress(Exception):
       enqueue_archive_members_populate(canonical, file_date.isoformat())
-    except Exception:
-      pass
   return True
 
 
@@ -394,9 +399,13 @@ def select_ingest_band(
     ``\"catchup\"``.
 
   Examples:
-    >>> select_ingest_band(date(2026, 8, 20), today=date(2026, 8, 24), hot_days=8)
+    >>> select_ingest_band(
+    ...   date(2026, 8, 20), today=date(2026, 8, 24), hot_days=8
+    ... )
     'hot'
-    >>> select_ingest_band(date(2026, 6, 1), today=date(2026, 8, 24), hot_days=8)
+    >>> select_ingest_band(
+    ...   date(2026, 6, 1), today=date(2026, 8, 24), hot_days=8
+    ... )
     'catchup'
   """
   age = (today - day).days
@@ -510,8 +519,9 @@ def day_close_is_complete(
       filesystem_complete = bool(filesystem_complete_fn(tar_norm))
     else:
       from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-          day_close_filesystem_complete,
+        day_close_filesystem_complete,
       )
+
       filesystem_complete = bool(day_close_filesystem_complete(tar_norm))
   if not bool(filesystem_complete):
     return False
@@ -526,9 +536,9 @@ def day_close_is_complete(
       except ValueError:
         return False
     min_age_elapsed = day_close_min_age_elapsed(
-        day,
-        now=now,
-        min_age_hours=min_age_hours,
+      day,
+      now=now,
+      min_age_hours=min_age_hours,
     )
   return bool(min_age_elapsed)
 
@@ -634,21 +644,21 @@ def classify_closed_raw_path(
     True
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      stats_file_is_active_segment,
+    stats_file_is_active_segment,
   )
 
   norm = os.path.normpath(str(path or ""))
   if is_internal_archive_stats_path(norm) or stats_file_is_active_segment(
-      norm,
+    norm,
   ):
     return ClosedPathReconstructPlan(
-        path=norm,
-        identity=jq.ingest_identity(norm, size, mtime_ns),
-        needs_ingest=False,
-        needs_append=False,
-        calendar_day=calendar_day,
-        tar_path=tar_path,
-        fingerprint=jq.ingest_fingerprint(size, mtime_ns),
+      path=norm,
+      identity=jq.ingest_identity(norm, size, mtime_ns),
+      needs_ingest=False,
+      needs_append=False,
+      calendar_day=calendar_day,
+      tar_path=tar_path,
+      fingerprint=jq.ingest_fingerprint(size, mtime_ns),
     )
   identity = jq.ingest_identity(norm, size, mtime_ns)
   fingerprint = jq.ingest_fingerprint(size, mtime_ns)
@@ -656,25 +666,25 @@ def classify_closed_raw_path(
 
   if ingest_is_complete_fn is not None:
     complete_ingest = bool(
-        ingest_is_complete_fn(
-            path=norm,
-            archive_data_dir=archive_data_dir,
-            listend_enabled=listend_enabled,
-        )
+      ingest_is_complete_fn(
+        path=norm,
+        archive_data_dir=archive_data_dir,
+        listend_enabled=listend_enabled,
+      )
     )
   else:
     complete_ingest = ingest_is_complete(
-        norm,
-        archive_data_dir=archive_data_dir,
-        listend_enabled=listend_enabled,
+      norm,
+      archive_data_dir=archive_data_dir,
+      listend_enabled=listend_enabled,
     )
 
   if append_is_complete_fn is not None:
     complete_append = bool(
-        append_is_complete_fn(
-            path=norm,
-            tgz_archive_dir=archive,
-        )
+      append_is_complete_fn(
+        path=norm,
+        tgz_archive_dir=archive,
+      )
     )
   else:
     complete_append = append_is_complete(norm, archive)
@@ -682,17 +692,17 @@ def classify_closed_raw_path(
   resolved_tar = tar_path
   if resolved_tar is None and calendar_day is not None and archive:
     resolved_tar = os.path.normpath(
-        os.path.join(archive, "%s.tar" % calendar_day.isoformat())
+      os.path.join(archive, f"{calendar_day.isoformat()}.tar")
     )
 
   return ClosedPathReconstructPlan(
-      path=norm,
-      identity=identity,
-      needs_ingest=not complete_ingest,
-      needs_append=not complete_append,
-      calendar_day=calendar_day,
-      tar_path=resolved_tar,
-      fingerprint=fingerprint,
+    path=norm,
+    identity=identity,
+    needs_ingest=not complete_ingest,
+    needs_append=not complete_append,
+    calendar_day=calendar_day,
+    tar_path=resolved_tar,
+    fingerprint=fingerprint,
   )
 
 
@@ -725,14 +735,23 @@ def enqueue_reconstruct_jobs_for_closed_path(
   Examples:
     >>> class _C:
     ...   def __init__(self):
-    ...     self.z = {}; self.l = {}
+    ...     self.z = {}
+    ...     self.l = {}
+    ...
     ...   def zadd(self, key, mapping):
-    ...     self.z.update(mapping); return 1
+    ...     self.z.update(mapping)
+    ...     return 1
+    ...
     ...   def rpush(self, key, *vals):
-    ...     self.l.setdefault(key, []).extend(vals); return len(vals)
+    ...     self.l.setdefault(key, []).extend(vals)
+    ...     return len(vals)
     >>> plan = ClosedPathReconstructPlan(
-    ...   path="/a", identity="/a|1|2", needs_ingest=True, needs_append=False,
-    ...   calendar_day=date(2026, 8, 20), tar_path=None,
+    ...   path="/a",
+    ...   identity="/a|1|2",
+    ...   needs_ingest=True,
+    ...   needs_append=False,
+    ...   calendar_day=date(2026, 8, 20),
+    ...   tar_path=None,
     ... )
     >>> enqueue_reconstruct_jobs_for_closed_path(
     ...   _C(), plan, today=date(2026, 8, 24)
@@ -746,7 +765,9 @@ def enqueue_reconstruct_jobs_for_closed_path(
 
   if plan.needs_ingest:
     if root and jq.identity_in_queue_dead_letter(
-        root, kind=jq.JOB_KIND_INGEST, identity=plan.identity,
+      root,
+      kind=jq.JOB_KIND_INGEST,
+      identity=plan.identity,
     ):
       pass
     elif plan.calendar_day is None:
@@ -756,30 +777,32 @@ def enqueue_reconstruct_jobs_for_closed_path(
       day = plan.calendar_day
       band = select_ingest_band(day, today=today, hot_days=hot_days)
       score = jq.encode_ingest_score(
-          band=band,
-          day=day,
-          today=today,
-          identity=plan.identity,
+        band=band,
+        day=day,
+        today=today,
+        identity=plan.identity,
       )
       jq.zadd_ingest_job(
-          client,
-          identity=plan.identity,
-          score=score,
-          fingerprint=plan.fingerprint or None,
+        client,
+        identity=plan.identity,
+        score=score,
+        fingerprint=plan.fingerprint or None,
       )
       enqueued["ingest"] = True
 
   if plan.needs_append:
     if root and jq.identity_in_queue_dead_letter(
-        root, kind=jq.JOB_KIND_APPEND, identity=plan.path,
+      root,
+      kind=jq.JOB_KIND_APPEND,
+      identity=plan.path,
     ):
       pass
     else:
       jq.enqueue_list_job(
-          client,
-          kind=jq.JOB_KIND_APPEND,
-          identity=plan.path,
-          dedupe=True,
+        client,
+        kind=jq.JOB_KIND_APPEND,
+        identity=plan.path,
+        dedupe=True,
       )
       enqueued["append"] = True
 
@@ -818,8 +841,10 @@ def enqueue_day_close_if_needed(
     >>> class _C:
     ...   def __init__(self):
     ...     self.l = {}
+    ...
     ...   def rpush(self, key, *vals):
-    ...     self.l.setdefault(key, []).extend(vals); return len(vals)
+    ...     self.l.setdefault(key, []).extend(vals)
+    ...     return len(vals)
     >>> enqueue_day_close_if_needed(
     ...   _C(),
     ...   "/d/2026-08-01.tar",
@@ -833,19 +858,19 @@ def enqueue_day_close_if_needed(
   if client is None:
     return False
   if day_close_is_complete(
-      tar_path,
-      calendar_day=calendar_day,
-      filesystem_complete=filesystem_complete,
-      min_age_elapsed=min_age_elapsed,
-      now=now,
-      phase_name=phase_name,
+    tar_path,
+    calendar_day=calendar_day,
+    filesystem_complete=filesystem_complete,
+    min_age_elapsed=min_age_elapsed,
+    now=now,
+    phase_name=phase_name,
   ):
     return False
   jq.enqueue_list_job(
-      client,
-      kind=jq.JOB_KIND_DAY_CLOSE,
-      identity=os.path.normpath(str(tar_path)),
-      dedupe=True,
+    client,
+    kind=jq.JOB_KIND_DAY_CLOSE,
+    identity=os.path.normpath(str(tar_path)),
+    dedupe=True,
   )
   return True
 
@@ -887,12 +912,17 @@ def enqueue_cheap_day_close_if_needed(
     >>> class _C:
     ...   def __init__(self):
     ...     self.n = 0
+    ...
     ...   def rpush(self, key, *vals):
-    ...     self.n += len(vals); return self.n
+    ...     self.n += len(vals)
+    ...     return self.n
+    ...
     ...   def eval(self, *a, **k):
     ...     return 1
+    ...
     ...   def evalsha(self, *a, **k):
     ...     return 1
+    ...
     ...   def script_load(self, s):
     ...     return "x"
     >>> enqueue_cheap_day_close_if_needed(
@@ -914,22 +944,22 @@ def enqueue_cheap_day_close_if_needed(
   elapsed = min_age_elapsed
   if elapsed is None and cal is not None:
     from hpcperfstats.dbload.lib.conf_parser import (
-        get_sync_day_close_min_age_hours,
+      get_sync_day_close_min_age_hours,
     )
 
     elapsed = day_close_min_age_elapsed(
-        cal,
-        now=now,
-        min_age_hours=get_sync_day_close_min_age_hours(),
+      cal,
+      now=now,
+      min_age_hours=get_sync_day_close_min_age_hours(),
     )
   if elapsed is False:
     return False
   return enqueue_day_close_if_needed(
-      client,
-      tar_path,
-      calendar_day=cal,
-      phase_name=phase_name,
-      filesystem_complete=False,
-      min_age_elapsed=elapsed,
-      now=now,
+    client,
+    tar_path,
+    calendar_day=cal,
+    phase_name=phase_name,
+    filesystem_complete=False,
+    min_age_elapsed=elapsed,
+    now=now,
   )

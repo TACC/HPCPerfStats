@@ -5,28 +5,27 @@ from pathlib import Path
 from django.test import Client
 from django.urls import reverse
 
-
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _SERVICES = _REPO_ROOT / "services-conf"
 
 _EDGE_HEADER_MARKERS = (
-    "Strict-Transport-Security",
-    "X-Content-Type-Options",
-    "Referrer-Policy",
-    "Cross-Origin-Opener-Policy",
-    "Permissions-Policy",
-    "X-Frame-Options",
+  "Strict-Transport-Security",
+  "X-Content-Type-Options",
+  "Referrer-Policy",
+  "Cross-Origin-Opener-Policy",
+  "Permissions-Policy",
+  "X-Frame-Options",
 )
 
 _UPSTREAM_HIDE_HEADERS = (
-    "Strict-Transport-Security",
-    "Content-Security-Policy",
-    "Content-Security-Policy-Report-Only",
-    "X-Frame-Options",
-    "X-Content-Type-Options",
-    "Referrer-Policy",
-    "Cross-Origin-Opener-Policy",
-    "Permissions-Policy",
+  "Strict-Transport-Security",
+  "Content-Security-Policy",
+  "Content-Security-Policy-Report-Only",
+  "X-Frame-Options",
+  "X-Content-Type-Options",
+  "Referrer-Policy",
+  "Cross-Origin-Opener-Policy",
+  "Permissions-Policy",
 )
 
 
@@ -36,10 +35,10 @@ def test_nginx_static_and_media_alias_srv_paths():
   assert "alias /srv/static/;" in conf
   assert "alias /srv/media/;" in conf
   urls = (
-      _REPO_ROOT / "hpcperfstats" / "site" / "hpcperfstats_site" / "urls.py"
+    _REPO_ROOT / "hpcperfstats" / "site" / "hpcperfstats_site" / "urls.py"
   ).read_text(encoding="utf-8")
   settings = (
-      _REPO_ROOT / "hpcperfstats" / "site" / "hpcperfstats_site" / "settings.py"
+    _REPO_ROOT / "hpcperfstats" / "site" / "hpcperfstats_site" / "settings.py"
   ).read_text(encoding="utf-8")
   assert "from django.conf.urls.static" not in urls
   assert "static(settings.STATIC_URL" not in urls
@@ -76,16 +75,22 @@ def test_wsgi_robots_txt_is_owned_by_nginx_not_wsgi():
 
 
 def test_nginx_edge_security_headers_inc_covers_transport_and_framing():
-  edge = (_SERVICES / "nginx-edge-security-headers.inc").read_text(encoding="utf-8")
+  edge = (_SERVICES / "nginx-edge-security-headers.inc").read_text(
+    encoding="utf-8"
+  )
   for marker in _EDGE_HEADER_MARKERS:
     assert marker in edge
   assert "max-age=31536000" in edge
   assert "includeSubDomains" in edge
-  hsts_lines = [ln for ln in edge.splitlines() if "Strict-Transport-Security" in ln]
+  hsts_lines = [
+    ln for ln in edge.splitlines() if "Strict-Transport-Security" in ln
+  ]
   assert hsts_lines, "missing Strict-Transport-Security add_header"
   assert "preload" not in hsts_lines[0].lower()
   assert "SAMEORIGIN" in edge
-  assert "frame-ancestors" not in edge  # framing CSP lives in dedicated CSP includes
+  assert (
+    "frame-ancestors" not in edge
+  )  # framing CSP lives in dedicated CSP includes
 
 
 def test_nginx_static_files_conf_robots_txt_is_static_with_edge_headers():
@@ -99,16 +104,16 @@ def test_nginx_static_files_conf_includes_edge_headers_on_every_owned_location()
   """Every nginx-owned location that can emit a body/status must carry edge headers."""
   conf = (_SERVICES / "nginx-static-files.conf").read_text(encoding="utf-8")
   for location in (
-      "location = /favicon.ico",
-      "location /static/",
-      "location /static/frontend/_next/",
-      "location /media/",
-      "location = /machine",
-      "location ^~ /machine/",
-      "location = /pub",
-      "location ^~ /pub/",
-      "location = /robots.txt",
-      "location / {",
+    "location = /favicon.ico",
+    "location /static/",
+    "location /static/frontend/_next/",
+    "location /media/",
+    "location = /machine",
+    "location ^~ /machine/",
+    "location = /pub",
+    "location ^~ /pub/",
+    "location = /robots.txt",
+    "location / {",
   ):
     assert location in conf
   # Edge headers must appear at least once per owned location family (include count).
@@ -136,7 +141,9 @@ def test_nginx_static_files_conf_denies_non_web_static_suffixes():
   assert "return 404" in conf[deny_idx : deny_idx + 400]
   assert "location /static/frontend/_next/" in conf
   assert "location ^~ /static/frontend/_next/" not in conf
-  next_loc = conf.split("location /static/frontend/_next/")[1].split("location ")[0]
+  next_loc = conf.split("location /static/frontend/_next/")[1].split(
+    "location "
+  )[0]
   assert "expires 1y;" in next_loc
   assert "max-age=31536000" in next_loc
   static_loc = conf.split("location /static/")[1].split("location ")[0]
@@ -152,13 +159,13 @@ def test_proxy_entrypoint_writes_csp_only_under_etc_nginx():
   assert 'CSP_OUT_DIR="${HPCPERFSTATS_PROXY_CSP_OUT_DIR:-/etc/nginx}"' in entry
   assert 'CSP_MACHINE="${CSP_OUT_DIR}/nginx-csp-machine.inc"' in entry
   assert "refusing CSP include under public static tree" in entry
-  assert "--out-dir \"${FRONTEND_STATIC_ROOT}\"" not in entry
+  assert '--out-dir "${FRONTEND_STATIC_ROOT}"' not in entry
   regen_idx = entry.index("write_nginx_spa_csp_includes.py")
   validate_idx = entry.index('validate_csp_include "${CSP_PUB}" "pub"')
   nginx_t_idx = entry.index("nginx -t")
   assert regen_idx < validate_idx < nginx_t_idx
   # Bokeh style-src 'unsafe-inline' is allowed; script-src 'unsafe-inline' is not.
-  assert 'script-src[^;]*unsafe-inline' in entry
+  assert "script-src[^;]*unsafe-inline" in entry
   assert 'grep -q "unsafe-inline"' not in entry
   assert "script-src unsafe-inline" in entry
 
@@ -170,27 +177,29 @@ def test_proxy_csp_validate_rejects_only_script_src_unsafe_inline(tmp_path):
   ok = tmp_path / "ok.inc"
   bad = tmp_path / "bad.inc"
   ok.write_text(
-      'add_header Content-Security-Policy "style-src \'self\' \'unsafe-inline\'; '
-      "script-src 'self' 'sha256-abc=';\" always;\n",
-      encoding="utf-8",
+    "add_header Content-Security-Policy \"style-src 'self' 'unsafe-inline'; "
+    "script-src 'self' 'sha256-abc=';\" always;\n",
+    encoding="utf-8",
   )
   bad.write_text(
-      'add_header Content-Security-Policy "script-src \'self\' \'unsafe-inline\';" '
-      "always;\n",
-      encoding="utf-8",
+    "add_header Content-Security-Policy \"script-src 'self' 'unsafe-inline';\" "
+    "always;\n",
+    encoding="utf-8",
   )
   # Same predicate as proxy_entrypoint.sh validate_csp_include.
   ok_proc = subprocess.run(
-      ["grep", "-E", "script-src[^;]*unsafe-inline", str(ok)],
-      check=False,
-      capture_output=True,
+    ["grep", "-E", "script-src[^;]*unsafe-inline", str(ok)],
+    check=False,
+    capture_output=True,
   )
   bad_proc = subprocess.run(
-      ["grep", "-E", "script-src[^;]*unsafe-inline", str(bad)],
-      check=False,
-      capture_output=True,
+    ["grep", "-E", "script-src[^;]*unsafe-inline", str(bad)],
+    check=False,
+    capture_output=True,
   )
-  assert ok_proc.returncode != 0, "style-only unsafe-inline must pass validation"
+  assert ok_proc.returncode != 0, (
+    "style-only unsafe-inline must pass validation"
+  )
   assert bad_proc.returncode == 0, "script-src unsafe-inline must be detected"
 
 
@@ -200,7 +209,9 @@ def test_package_frontend_static_has_no_nginx_config_files():
   if not frontend.is_dir():
     return
   leaked = sorted(frontend.rglob("*.inc"))
-  assert leaked == [], f"nginx config must not live under public static: {leaked}"
+  assert leaked == [], (
+    f"nginx config must not live under public static: {leaked}"
+  )
 
 
 def test_nginx_static_files_conf_returns_favicon_at_edge():
@@ -225,29 +236,31 @@ def test_nginx_static_files_conf_allowlists_django_prefixes_and_default_404():
   assert "try_files $uri $uri/ /pub/index.html =503" in conf
   assert "try_files $uri $uri/ /machine/index.html =503" in conf
   for needle in (
-      "\nlocation = / {\n",
-      "location ^~ /api/",
-      "location = /robots.txt",
-      "location ^~ /csp-report/",
-      "location ^~ /api-key/",
-      "location ^~ /admin_monitor/",
-      "location ^~ /login/",
-      "location ^~ /test-login/",
-      "location = /login_prompt",
-      "location = /logout",
-      "location ^~ /logout/",
-      "location = /machine/logout",
-      "location = /machine/logout/",
-      "location ^~ /oauth_callback/",
-      "location / {",
-      "return 404;",
+    "\nlocation = / {\n",
+    "location ^~ /api/",
+    "location = /robots.txt",
+    "location ^~ /csp-report/",
+    "location ^~ /api-key/",
+    "location ^~ /admin_monitor/",
+    "location ^~ /login/",
+    "location ^~ /test-login/",
+    "location = /login_prompt",
+    "location = /logout",
+    "location ^~ /logout/",
+    "location = /machine/logout",
+    "location = /machine/logout/",
+    "location ^~ /oauth_callback/",
+    "location / {",
+    "return 404;",
   ):
     assert needle in conf
 
 
 def test_nginx_django_proxy_common_hides_upstream_security_headers():
   """Nginx is the public security-header authority; hide duplicate Django headers."""
-  common = (_SERVICES / "nginx-django-proxy-common.inc").read_text(encoding="utf-8")
+  common = (_SERVICES / "nginx-django-proxy-common.inc").read_text(
+    encoding="utf-8"
+  )
   assert "proxy_pass" not in common
   assert "proxy_set_header Host $host;" in common
   assert 'proxy_set_header Accept-Encoding "";' in common
@@ -312,17 +325,17 @@ def test_proxy_dockerfile_wires_ocsp_trust_and_startup_helpers():
   assert "write_nginx_resolver_include.py" in dockerfile
   assert "proxy_entrypoint.sh" in dockerfile
   assert 'CMD ["/usr/local/bin/proxy_entrypoint.sh"]' in dockerfile or (
-      "ENTRYPOINT" in dockerfile and "proxy_entrypoint" in dockerfile
+    "ENTRYPOINT" in dockerfile and "proxy_entrypoint" in dockerfile
   )
   # Shared snippets are compose bind-mounts only — do not also COPY them into the image.
   for mount_only in (
-      "nginx-edge-security-headers.inc",
-      "nginx-csp-no-active.inc",
-      "nginx-csp-django-html.inc",
-      "nginx-static-files.conf",
-      "nginx-django-proxy-common.inc",
-      "nginx-compress-proxy.inc",
-      "nginx-compress-static.inc",
+    "nginx-edge-security-headers.inc",
+    "nginx-csp-no-active.inc",
+    "nginx-csp-django-html.inc",
+    "nginx-static-files.conf",
+    "nginx-django-proxy-common.inc",
+    "nginx-compress-proxy.inc",
+    "nginx-compress-static.inc",
   ):
     assert f"COPY services-conf/{mount_only}" not in dockerfile
 
@@ -336,11 +349,11 @@ def test_proxy_entrypoint_sh_is_tracked_not_gitignored():
   git = shutil.which("git")
   if git is not None and (repo_root / ".git").exists():
     ignored = subprocess.run(
-        [git, "check-ignore", "-v", "services-conf/proxy_entrypoint.sh"],
-        cwd=repo_root,
-        check=False,
-        capture_output=True,
-        text=True,
+      [git, "check-ignore", "-v", "services-conf/proxy_entrypoint.sh"],
+      cwd=repo_root,
+      check=False,
+      capture_output=True,
+      text=True,
     )
     assert ignored.returncode != 0, ignored.stdout + ignored.stderr
   else:
@@ -354,10 +367,18 @@ def test_nginx_hybrid_compression_location_split():
   """Zstd on proxy/SPA; Brotli/Gzip sidecars on /static/; no CORS wildcard."""
   main = (_SERVICES / "nginx-main.conf").read_text(encoding="utf-8")
   vhost = (_SERVICES / "nginx.conf").read_text(encoding="utf-8")
-  static_conf = (_SERVICES / "nginx-static-files.conf").read_text(encoding="utf-8")
-  common = (_SERVICES / "nginx-django-proxy-common.inc").read_text(encoding="utf-8")
-  proxy_inc = (_SERVICES / "nginx-compress-proxy.inc").read_text(encoding="utf-8")
-  static_inc = (_SERVICES / "nginx-compress-static.inc").read_text(encoding="utf-8")
+  static_conf = (_SERVICES / "nginx-static-files.conf").read_text(
+    encoding="utf-8"
+  )
+  common = (_SERVICES / "nginx-django-proxy-common.inc").read_text(
+    encoding="utf-8"
+  )
+  proxy_inc = (_SERVICES / "nginx-compress-proxy.inc").read_text(
+    encoding="utf-8"
+  )
+  static_inc = (_SERVICES / "nginx-compress-static.inc").read_text(
+    encoding="utf-8"
+  )
   assert "gzip off;" in main
   assert "brotli off;" in main
   assert "zstd off;" in main

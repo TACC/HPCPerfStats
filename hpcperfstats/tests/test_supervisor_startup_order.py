@@ -32,9 +32,12 @@ def test_supervisord_hpcperfstats_programs_set_home_and_user_environment():
   hpcperfstats_programs = [
     section
     for section in config.sections()
-    if section.startswith("program:") and config.get(section, "user", fallback="") == "hpcperfstats"
+    if section.startswith("program:")
+    and config.get(section, "user", fallback="") == "hpcperfstats"
   ]
-  assert hpcperfstats_programs, "expected at least one hpcperfstats supervisord program"
+  assert hpcperfstats_programs, (
+    "expected at least one hpcperfstats supervisord program"
+  )
 
   for section in hpcperfstats_programs:
     environment = config.get(section, "environment", fallback="")
@@ -75,7 +78,9 @@ def test_supervisord_rsync_data_program_uses_wrapper():
   assert "rsync_data_wrapper.sh" in command
   assert command.rstrip().endswith("rsync_data_wrapper.sh")
   assert config.get("program:rsync_data", "user") == "hpcperfstats"
-  assert not (_repo_root() / "services-conf" / "supervisord.conf.example").exists()
+  assert not (
+    _repo_root() / "services-conf" / "supervisord.conf.example"
+  ).exists()
 
 
 def test_supervisord_rabbitmq_watcher_program_uses_gil_python3():
@@ -143,16 +148,23 @@ def test_supervisord_has_no_root_programs():
 
 def test_supervisor_startup_keeps_root_prep_without_exec():
   """Root chown/ssh prep remains; supervisord is launched without exec (PID-1 deferred)."""
-  content = (_repo_root() / "services-conf" / "supervisor_startup.sh").read_text()
+  content = (
+    _repo_root() / "services-conf" / "supervisor_startup.sh"
+  ).read_text()
   assert "chown -R hpcperfstats:hpcperfstats /hpcperfstats/*" in content
   assert "cp /hpcperfstats/.ssh/id*" in content
-  assert "/usr/bin/supervisord -c /home/hpcperfstats/services-conf/supervisord.conf" in content
+  assert (
+    "/usr/bin/supervisord -c /home/hpcperfstats/services-conf/supervisord.conf"
+    in content
+  )
   assert "exec /usr/bin/supervisord" not in content
 
 
 def test_supervisor_startup_syslog_lines_are_commented_out():
   """Syslog mkdir + render stay as commented re-enable lines, never executed."""
-  content = (_repo_root() / "services-conf" / "supervisor_startup.sh").read_text()
+  content = (
+    _repo_root() / "services-conf" / "supervisor_startup.sh"
+  ).read_text()
   mkdir_hits = [
     line
     for line in content.splitlines()
@@ -256,7 +268,11 @@ def test_rsync_data_wrapper_errors_when_both_missing(tmp_path: Path):
 def _assert_rsync_script_has_top_guard(path: Path) -> None:
   text = path.read_text()
   # Strip shebang and blank/set lines to find first real actions.
-  lines = [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+  lines = [
+    ln.strip()
+    for ln in text.splitlines()
+    if ln.strip() and not ln.strip().startswith("#")
+  ]
   # After set -x, expect sleep / echo / exit before any rsync.
   assert lines[0] == "set -x"
   assert lines[1] == "sleep 43200"
@@ -267,7 +283,9 @@ def _assert_rsync_script_has_top_guard(path: Path) -> None:
   assert guard_exit < first_rsync, f"{path.name}: exit guard must precede rsync"
   # No sleep after the first rsync line (in-loop sleep removed).
   after_rsync = text[first_rsync:]
-  assert not re.search(r"\nsleep\s+", after_rsync), f"{path.name}: unexpected sleep after rsync"
+  assert not re.search(r"\nsleep\s+", after_rsync), (
+    f"{path.name}: unexpected sleep after rsync"
+  )
 
 
 def test_rsync_data_scripts_have_top_of_script_guard():

@@ -20,17 +20,17 @@ import re
 from pathlib import Path
 
 INLINE_SCRIPT_RE = re.compile(
-    r"<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)</script\b[^>]*>",
-    re.IGNORECASE,
+  r"<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)</script\b[^>]*>",
+  re.IGNORECASE,
 )
 INLINE_STYLE_RE = re.compile(
-    r"<style\b[^>]*>([\s\S]*?)</style\b[^>]*>",
-    re.IGNORECASE,
+  r"<style\b[^>]*>([\s\S]*?)</style\b[^>]*>",
+  re.IGNORECASE,
 )
 STYLE_ATTR_RE = re.compile(r"\sstyle\s*=\s*(['\"])([\s\S]*?)\1", re.IGNORECASE)
 CSP_META_RE = re.compile(
-    r"<meta\s+http-equiv=(['\"])Content-Security-Policy\1[^>]*>\s*",
-    re.IGNORECASE,
+  r"<meta\s+http-equiv=(['\"])Content-Security-Policy\1[^>]*>\s*",
+  re.IGNORECASE,
 )
 
 
@@ -49,9 +49,9 @@ def sha256_csp_hash(content: str) -> str:
     >>> h.startswith("'sha256-") and h.endswith("'")
     True
   """
-  digest = base64.b64encode(hashlib.sha256(content.encode("utf-8")).digest()).decode(
-      "ascii"
-  )
+  digest = base64.b64encode(
+    hashlib.sha256(content.encode("utf-8")).digest()
+  ).decode("ascii")
   return f"'sha256-{digest}'"
 
 
@@ -67,18 +67,24 @@ def extract_inline_csp_hashes_from_html(html: str) -> dict[str, list[str]]:
     ``style_attr_hashes``.
 
   Examples:
-    >>> extract_inline_csp_hashes_from_html("<script>x</script>")["script_hashes"][0].startswith("'sha256-")
+    >>> extract_inline_csp_hashes_from_html("<script>x</script>")[
+    ...   "script_hashes"
+    ... ][0].startswith("'sha256-")
     True
   """
-  script_hashes = {sha256_csp_hash(m.group(1)) for m in INLINE_SCRIPT_RE.finditer(html)}
-  style_hashes = {sha256_csp_hash(m.group(1)) for m in INLINE_STYLE_RE.finditer(html)}
+  script_hashes = {
+    sha256_csp_hash(m.group(1)) for m in INLINE_SCRIPT_RE.finditer(html)
+  }
+  style_hashes = {
+    sha256_csp_hash(m.group(1)) for m in INLINE_STYLE_RE.finditer(html)
+  }
   style_attr_hashes = {
-      sha256_csp_hash(m.group(2)) for m in STYLE_ATTR_RE.finditer(html)
+    sha256_csp_hash(m.group(2)) for m in STYLE_ATTR_RE.finditer(html)
   }
   return {
-      "script_hashes": sorted(script_hashes),
-      "style_hashes": sorted(style_hashes),
-      "style_attr_hashes": sorted(style_attr_hashes),
+    "script_hashes": sorted(script_hashes),
+    "style_hashes": sorted(style_hashes),
+    "style_attr_hashes": sorted(style_attr_hashes),
   }
 
 
@@ -125,19 +131,19 @@ def collect_inline_csp_hashes(root_dir: Path) -> dict[str, list[str]]:
     style_hashes.update(extracted["style_hashes"])
     style_attr_hashes.update(extracted["style_attr_hashes"])
   return {
-      "script_hashes": sorted(script_hashes),
-      "style_hashes": sorted(style_hashes),
-      "style_attr_hashes": sorted(style_attr_hashes),
+    "script_hashes": sorted(script_hashes),
+    "style_hashes": sorted(style_hashes),
+    "style_attr_hashes": sorted(style_attr_hashes),
   }
 
 
 def build_csp_policy(
-    *,
-    script_hashes: list[str] | None = None,
-    style_hashes: list[str] | None = None,
-    style_attr_hashes: list[str] | None = None,
-    allow_unsafe_eval: bool = False,
-    allow_bokeh_style_inline: bool = False,
+  *,
+  script_hashes: list[str] | None = None,
+  style_hashes: list[str] | None = None,
+  style_attr_hashes: list[str] | None = None,
+  allow_unsafe_eval: bool = False,
+  allow_bokeh_style_inline: bool = False,
 ) -> str:
   """
   Build a Content-Security-Policy header/meta value (no nginx wrapper).
@@ -171,30 +177,30 @@ def build_csp_policy(
     if style_attr_hashes:
       styles.extend(["'unsafe-hashes'", *style_attr_hashes])
   return "; ".join(
-      [
-          "default-src 'self'",
-          "base-uri 'self'",
-          "object-src 'none'",
-          "frame-ancestors 'self'",
-          "form-action 'self'",
-          "img-src 'self' data:",
-          "font-src 'self' data:",
-          f"style-src {' '.join(styles)}",
-          f"script-src {' '.join(scripts)}",
-          "connect-src 'self'",
-          "upgrade-insecure-requests",
-          "report-uri /csp-report/",
-      ]
+    [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "object-src 'none'",
+      "frame-ancestors 'self'",
+      "form-action 'self'",
+      "img-src 'self' data:",
+      "font-src 'self' data:",
+      f"style-src {' '.join(styles)}",
+      f"script-src {' '.join(scripts)}",
+      "connect-src 'self'",
+      "upgrade-insecure-requests",
+      "report-uri /csp-report/",
+    ]
   )
 
 
 def build_nginx_csp_include(
-    *,
-    script_hashes: list[str] | None = None,
-    style_hashes: list[str] | None = None,
-    style_attr_hashes: list[str] | None = None,
-    allow_unsafe_eval: bool = False,
-    allow_bokeh_style_inline: bool = False,
+  *,
+  script_hashes: list[str] | None = None,
+  style_hashes: list[str] | None = None,
+  style_attr_hashes: list[str] | None = None,
+  allow_unsafe_eval: bool = False,
+  allow_bokeh_style_inline: bool = False,
 ) -> str:
   """
   Render an nginx ``add_header Content-Security-Policy …`` include body.
@@ -215,11 +221,11 @@ def build_nginx_csp_include(
     True
   """
   policy = build_csp_policy(
-      script_hashes=script_hashes,
-      style_hashes=style_hashes,
-      style_attr_hashes=style_attr_hashes,
-      allow_unsafe_eval=allow_unsafe_eval,
-      allow_bokeh_style_inline=allow_bokeh_style_inline,
+    script_hashes=script_hashes,
+    style_hashes=style_hashes,
+    style_attr_hashes=style_attr_hashes,
+    allow_unsafe_eval=allow_unsafe_eval,
+    allow_bokeh_style_inline=allow_bokeh_style_inline,
   )
   return f'add_header Content-Security-Policy "{policy}" always;\n'
 
@@ -237,7 +243,7 @@ def inject_csp_meta_into_html(html: str, policy: str) -> str:
 
   Examples:
     >>> "Content-Security-Policy" in inject_csp_meta_into_html(
-    ...     "<html><head></head><body></body></html>", "default-src 'self'"
+    ...   "<html><head></head><body></body></html>", "default-src 'self'"
     ... )
     True
   """
@@ -283,16 +289,13 @@ def inject_csp_meta_into_frontend_tree(frontend_root: Path) -> int:
     except ValueError:
       rel = path.name
     allow_eval = (
-        rel == "machine"
-        or rel.startswith("machine/")
-        or rel == "pub"
-        or rel.startswith("pub/")
+      rel == "machine" or rel.startswith(("machine/", "pub/")) or rel == "pub"
     )
     allow_bokeh_style = allow_eval
     policy = build_csp_policy(
-        **hashes,
-        allow_unsafe_eval=allow_eval,
-        allow_bokeh_style_inline=allow_bokeh_style,
+      **hashes,
+      allow_unsafe_eval=allow_eval,
+      allow_bokeh_style_inline=allow_bokeh_style,
     )
     next_html = inject_csp_meta_into_html(without_meta, policy)
     if next_html != raw:
@@ -302,8 +305,8 @@ def inject_csp_meta_into_frontend_tree(frontend_root: Path) -> int:
 
 
 def write_spa_csp_includes(
-    frontend_root: Path,
-    out_dir: Path,
+  frontend_root: Path,
+  out_dir: Path,
 ) -> tuple[Path, Path]:
   """
   Write private machine/pub CSP includes under ``out_dir`` (never under ``/static``).
@@ -335,19 +338,19 @@ def write_spa_csp_includes(
   machine_out = out_dir / "nginx-csp-machine.inc"
   pub_out = out_dir / "nginx-csp-pub.inc"
   machine_out.write_text(
-      build_nginx_csp_include(
-          **machine_hashes,
-          allow_unsafe_eval=True,
-          allow_bokeh_style_inline=True,
-      ),
-      encoding="utf-8",
+    build_nginx_csp_include(
+      **machine_hashes,
+      allow_unsafe_eval=True,
+      allow_bokeh_style_inline=True,
+    ),
+    encoding="utf-8",
   )
   pub_out.write_text(
-      build_nginx_csp_include(
-          **pub_hashes,
-          allow_unsafe_eval=True,
-          allow_bokeh_style_inline=True,
-      ),
-      encoding="utf-8",
+    build_nginx_csp_include(
+      **pub_hashes,
+      allow_unsafe_eval=True,
+      allow_bokeh_style_inline=True,
+    ),
+    encoding="utf-8",
   )
   return machine_out, pub_out

@@ -16,11 +16,11 @@ Attributes:
 
 from __future__ import annotations
 
-from typing import Any
-
+import contextlib
+import ctypes
 import os
 import time
-import ctypes
+from typing import Any
 
 from hpcperfstats.dbload.lib.print_utils import log_print
 
@@ -34,13 +34,15 @@ REAP_RSS = "rss_reap"
 PEAK_CGROUP_PER_RAW_FILE_BYTE = 2.5
 _MIB_BYTES = 1024 * 1024
 
-_FAILED_OUTCOMES = frozenset({
+_FAILED_OUTCOMES = frozenset(
+  {
     "parse_fail",
     "timeout",
     "lookup_budget",
     "quarantine",
     "active_segment",
-})
+  }
+)
 
 _WORKER_TASKS_ON_WORKER = 0
 _LIBC: Any | None = None
@@ -61,7 +63,7 @@ def _libc_handle() -> Any | None:
     return _LIBC
   try:
     _LIBC = ctypes.CDLL("libc.so.6")
-  except (OSError, AttributeError):
+  except OSError, AttributeError:
     return None
   return _LIBC
 
@@ -83,10 +85,10 @@ def reset_libc_handle_for_tests() -> None:
 def reset_worker_tasks_on_worker_for_tests() -> None:
   """
   Reset worker tasks on worker for tests.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> reset_worker_tasks_on_worker_for_tests()  # doctest: +SKIP
   """
@@ -97,10 +99,10 @@ def reset_worker_tasks_on_worker_for_tests() -> None:
 def increment_worker_tasks_on_worker() -> Any:
   """
   Increment worker tasks on worker.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> increment_worker_tasks_on_worker()  # doctest: +SKIP
   """
@@ -112,10 +114,10 @@ def increment_worker_tasks_on_worker() -> Any:
 def get_worker_tasks_on_worker() -> Any:
   """
   Return the worker tasks on worker.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> get_worker_tasks_on_worker()  # doctest: +SKIP
   """
@@ -125,14 +127,14 @@ def get_worker_tasks_on_worker() -> Any:
 def release_spawn_pool_worker_memory() -> None:
   """
   Drop worker-local caches and return heap after any spawn pool task.
-  
+
   Shared by ingest, archive, sealed-archive CLI, populate, metrics, and
   public expansion-factor pools. Ingest telemetry (task counter + RSS meta)
   is applied separately by ``sync_timedb._release_ingest_worker_memory``.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> release_spawn_pool_worker_memory()  # doctest: +SKIP
   """
@@ -141,10 +143,10 @@ def release_spawn_pool_worker_memory() -> None:
   import hpcperfstats.dbload.lib.conf_parser as cfg
   from hpcperfstats.dbload.lib import sync_timedb_host_itimes
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      clear_daily_archive_members_cache,
+    clear_daily_archive_members_cache,
   )
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-      clear_worker_stage,
+    clear_worker_stage,
   )
 
   sync_timedb_host_itimes.reset_host_itimes_caches()
@@ -153,20 +155,18 @@ def release_spawn_pool_worker_memory() -> None:
     gc.collect()
     libc = _libc_handle()
     if libc is not None:
-      try:
+      with contextlib.suppress(AttributeError):
         libc.malloc_trim(0)
-      except AttributeError:
-        pass
   clear_worker_stage()
 
 
 def ingest_pool_width() -> Any:
   """
   Ingest the pool width.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> ingest_pool_width()  # doctest: +SKIP
   """
@@ -180,10 +180,10 @@ def ingest_pool_width() -> Any:
 def compute_rss_recycle_threshold_mib() -> Any:
   """
   Compute the rss recycle threshold mib.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> compute_rss_recycle_threshold_mib()  # doctest: +SKIP
   """
@@ -216,7 +216,7 @@ def compute_ingest_inflight_raw_bytes_budget() -> int:
   if tree_limit_mib <= 0:
     return 0
   return int(
-      (tree_limit_mib * _MIB_BYTES) / float(PEAK_CGROUP_PER_RAW_FILE_BYTE),
+    (tree_limit_mib * _MIB_BYTES) / float(PEAK_CGROUP_PER_RAW_FILE_BYTE),
   )
 
 
@@ -255,18 +255,16 @@ def can_admit_ingest_raw_bytes(
   need = max(0, int(size or 0))
   if cur + need <= budget:
     return True
-  if cur == 0 and need > budget:
-    return True
-  return False
+  return bool(cur == 0 and need > budget)
 
 
 def _worker_rss_mib() -> Any:
   """
   Internal helper to handle worker rss mib.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _worker_rss_mib()  # doctest: +SKIP
   """
@@ -281,19 +279,19 @@ def _worker_rss_mib() -> Any:
 def measure_worker_rss_after_release(stats_file: str) -> Any:
   """
   Measure RSS after release; optional recheck when above threshold.
-  
+
   Args:
     stats_file (str): String for stats file.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> measure_worker_rss_after_release("x")  # doctest: +SKIP
   """
   import hpcperfstats.dbload.lib.conf_parser as cfg
   from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
-      is_giant_ingest_budget,
+    is_giant_ingest_budget,
   )
 
   threshold = compute_rss_recycle_threshold_mib()
@@ -310,13 +308,13 @@ def measure_worker_rss_after_release(stats_file: str) -> Any:
   if threshold > 0 and rss_mib > threshold:
     request_worker_recycle = "yes"
   return {
-      "worker_pid": os.getpid(),
-      "tasks_on_worker": get_worker_tasks_on_worker(),
-      "rss_mib_after_release": rss_mib,
-      "recycle_threshold_mib": threshold,
-      "giant": giant,
-      "rss_recheck_fired": rss_recheck_fired,
-      "request_worker_recycle": request_worker_recycle,
+    "worker_pid": os.getpid(),
+    "tasks_on_worker": get_worker_tasks_on_worker(),
+    "rss_mib_after_release": rss_mib,
+    "recycle_threshold_mib": threshold,
+    "giant": giant,
+    "rss_recheck_fired": rss_recheck_fired,
+    "request_worker_recycle": request_worker_recycle,
   }
 
 
@@ -327,15 +325,15 @@ def resolve_worker_pid_from_meta_or_registry(
 ) -> Any:
   """
   Resolve worker PID from outcome meta or diagnostics registry.
-  
+
   Args:
     meta (Any): Meta passed to this helper.
     registry (Any): Registry passed to this helper.
     path (str): String for path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> resolve_worker_pid_from_meta_or_registry(None, None, "x")
   """
@@ -344,7 +342,7 @@ def resolve_worker_pid_from_meta_or_registry(
     if worker_pid is not None:
       try:
         return int(worker_pid)
-      except (TypeError, ValueError):
+      except TypeError, ValueError:
         pass
   if registry is None or not path:
     return None
@@ -371,13 +369,13 @@ def resolve_worker_pid_from_meta_or_registry(
 def _rss_threshold_and_mib(meta: Any) -> Any:
   """
   Internal helper to handle rss threshold and mib.
-  
+
   Args:
     meta (Any): Meta passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _rss_threshold_and_mib(None)  # doctest: +SKIP
   """
@@ -386,11 +384,11 @@ def _rss_threshold_and_mib(meta: Any) -> Any:
   if isinstance(meta, dict):
     try:
       threshold = float(meta.get("recycle_threshold_mib") or 0.0)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
       threshold = 0.0
     try:
       rss_mib = float(meta.get("rss_mib_after_release") or 0.0)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
       rss_mib = 0.0
   if threshold <= 0:
     threshold = compute_rss_recycle_threshold_mib()
@@ -406,16 +404,16 @@ def classify_supervisor_reap_kind(
 ) -> Any:
   """
   Classify supervisor reap kind.
-  
+
   Args:
     ingest_ok (Any): Ingest ok passed to this helper.
     outcome (Any): Outcome passed to this helper.
     meta (Any): Meta passed to this helper.
     path (str): String for path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> classify_supervisor_reap_kind(None, None, None, "x")  # doctest: +SKIP
   """
@@ -434,22 +432,28 @@ def classify_supervisor_reap_kind(
   threshold, rss_mib = _rss_threshold_and_mib(meta)
   if threshold > 0 and rss_mib > threshold:
     return REAP_RSS
-  if isinstance(meta, dict) and str(meta.get("request_worker_recycle") or "") == "yes":
-    if threshold > 0 and rss_mib > threshold:
-      return REAP_RSS
+  if (
+    (
+      isinstance(meta, dict)
+      and str(meta.get("request_worker_recycle") or "") == "yes"
+    )
+    and threshold > 0
+    and rss_mib > threshold
+  ):
+    return REAP_RSS
   return REAP_KEEP
 
 
 def should_supervisor_retire_worker(reap_kind: Any) -> Any:
   """
   Return True if supervisor retire worker.
-  
+
   Args:
     reap_kind (Any): Reap kind passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> should_supervisor_retire_worker(None)  # doctest: +SKIP
   """
@@ -473,16 +477,16 @@ def should_defer_supervisor_retire(
 ) -> Any:
   """
   Defer cooperative retire during catch-up when the pool is near max inflight.
-  
+
   Args:
     reap_kind (Any): Reap kind passed to this helper.
     accumulator (Any | None): One of ``Any``, ``None``.
     pending_inflight (Any | None): One of ``Any``, ``None``.
     max_inflight (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> should_defer_supervisor_retire(None, None, None, None)  # doctest: +SKIP
   """
@@ -495,7 +499,7 @@ def should_defer_supervisor_retire(
   try:
     inflight = int(pending_inflight or 0)
     cap = int(max_inflight or 0)
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     return False
   if cap <= 0 or inflight < max(1, cap - 1):
     return False
@@ -514,21 +518,21 @@ def should_defer_supervisor_retire(
 def _percentile(values: Any, pct: Any) -> Any:
   """
   Internal helper to handle percentile.
-  
+
   Args:
     values (Any): Values passed to this helper.
     pct (Any): Pct passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _percentile(None, None)  # doctest: +SKIP
   """
   if not values:
     return 0
   ordered = sorted(values)
-  idx = int(round((pct / 100.0) * (len(ordered) - 1)))
+  idx = round((pct / 100.0) * (len(ordered) - 1))
   idx = max(0, min(len(ordered) - 1, idx))
   return ordered[idx]
 
@@ -536,14 +540,14 @@ def _percentile(values: Any, pct: Any) -> Any:
 def _pct(count: int, total: Any) -> Any:
   """
   Internal helper to handle pct.
-  
+
   Args:
     count (int): Integer value for count.
     total (Any): Total passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _pct(0, None)  # doctest: +SKIP
   """
@@ -555,7 +559,7 @@ def _pct(count: int, total: Any) -> Any:
 class WorkerMemoryBatchAccumulator:
   """
   In-memory batch counters; one ``batch_summary`` log line per ingest chunk.
-  
+
   Attributes:
     _chunks_since_flush: Attribute.
     _rss_mib_after: Attribute.
@@ -571,10 +575,10 @@ class WorkerMemoryBatchAccumulator:
   def __init__(self) -> None:
     """
     Initialize a new instance.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> WorkerMemoryBatchAccumulator()  # doctest: +SKIP
     """
@@ -592,10 +596,10 @@ class WorkerMemoryBatchAccumulator:
   def retires_total(self) -> Any:
     """
     Retires total.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> WorkerMemoryBatchAccumulator().retires_total()  # doctest: +SKIP
     """
@@ -604,14 +608,14 @@ class WorkerMemoryBatchAccumulator:
   def record_completion(self, reap_kind: Any, meta: Any | None = None) -> None:
     """
     Record completion.
-    
+
     Args:
       reap_kind (Any): Reap kind passed to this helper.
       meta (Any | None): One of ``Any``, ``None``.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> WorkerMemoryBatchAccumulator().record_completion(None, None)
     """
@@ -625,14 +629,12 @@ class WorkerMemoryBatchAccumulator:
       self.retires_rss_reap += 1
       self.retires_this_window += 1
     if isinstance(meta, dict):
-      try:
+      with contextlib.suppress(TypeError, ValueError):
         self._tasks_on_worker.append(int(meta.get("tasks_on_worker") or 0))
-      except (TypeError, ValueError):
-        pass
-      try:
-        self._rss_mib_after.append(float(meta.get("rss_mib_after_release") or 0.0))
-      except (TypeError, ValueError):
-        pass
+      with contextlib.suppress(TypeError, ValueError):
+        self._rss_mib_after.append(
+          float(meta.get("rss_mib_after_release") or 0.0)
+        )
       if str(meta.get("rss_recheck_fired") or "") == "yes":
         self.rss_recheck_fired += 1
 
@@ -645,24 +647,28 @@ class WorkerMemoryBatchAccumulator:
   ) -> None:
     """
     Maybe flush.
-    
+
     Args:
       chunk_index (Any): Chunk index passed to this helper.
       ingest_pool (Any | None): One of ``Any``, ``None``.
       archive_pool (Any | None): One of ``Any``, ``None``.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> WorkerMemoryBatchAccumulator().maybe_flush(None, None, None)
     """
     import hpcperfstats.dbload.lib.conf_parser as cfg
-    from hpcperfstats.dbload.lib.process_memory import format_tree_rss_breakdown_mb
+    from hpcperfstats.dbload.lib.process_memory import (
+      format_tree_rss_breakdown_mb,
+    )
 
     if not cfg.get_sync_ingest_worker_memory_telemetry():
       return
-    every_n = max(1, int(cfg.get_sync_ingest_worker_memory_telemetry_every_n_chunks()))
+    every_n = max(
+      1, int(cfg.get_sync_ingest_worker_memory_telemetry_every_n_chunks())
+    )
     self._chunks_since_flush += 1
     if self._chunks_since_flush < every_n:
       return
@@ -674,36 +680,36 @@ class WorkerMemoryBatchAccumulator:
     total = self.completions
     retires_total = self.retires_total
     log_print(
-        "INFO: sync_timedb worker_memory: event=batch_summary batch=%d "
-        "completions=%d keep_worker=%d retires_total=%d "
-        "retires_failure_reap=%d retires_rss_reap=%d "
-        "retire_rate_pct=%.1f failure_reap_pct=%.1f rss_reap_pct=%.1f "
-        "tasks_on_worker_min=%d tasks_on_worker_p50=%d "
-        "tasks_on_worker_max=%d rss_mib_after_p50=%.1f rss_mib_after_max=%.1f "
-        "rss_recheck_fired=%d tree_rss_mib=%.1f ingest_pool_rss_mib=%.1f "
-        "threshold_mib=%.1f maxtasksperchild=%d"
-        % (
-            int(chunk_index),
-            total,
-            self.keep_worker,
-            retires_total,
-            self.retires_failure_reap,
-            self.retires_rss_reap,
-            _pct(retires_total, total),
-            _pct(self.retires_failure_reap, total),
-            _pct(self.retires_rss_reap, total),
-            min(self._tasks_on_worker) if self._tasks_on_worker else 0,
-            _percentile(self._tasks_on_worker, 50),
-            max(self._tasks_on_worker) if self._tasks_on_worker else 0,
-            _percentile(self._rss_mib_after, 50),
-            max(self._rss_mib_after) if self._rss_mib_after else 0.0,
-            self.rss_recheck_fired,
-            breakdown.get("tree_total_mb", 0.0),
-            breakdown.get("ingest_pool_mb", 0.0),
-            threshold,
-            cfg.get_sync_ingest_pool_maxtasksperchild(),
-        ),
-        flush=True,
+      "INFO: sync_timedb worker_memory: event=batch_summary batch=%d "
+      "completions=%d keep_worker=%d retires_total=%d "
+      "retires_failure_reap=%d retires_rss_reap=%d "
+      "retire_rate_pct=%.1f failure_reap_pct=%.1f rss_reap_pct=%.1f "
+      "tasks_on_worker_min=%d tasks_on_worker_p50=%d "
+      "tasks_on_worker_max=%d rss_mib_after_p50=%.1f rss_mib_after_max=%.1f "
+      "rss_recheck_fired=%d tree_rss_mib=%.1f ingest_pool_rss_mib=%.1f "
+      "threshold_mib=%.1f maxtasksperchild=%d"
+      % (
+        int(chunk_index),
+        total,
+        self.keep_worker,
+        retires_total,
+        self.retires_failure_reap,
+        self.retires_rss_reap,
+        _pct(retires_total, total),
+        _pct(self.retires_failure_reap, total),
+        _pct(self.retires_rss_reap, total),
+        min(self._tasks_on_worker) if self._tasks_on_worker else 0,
+        _percentile(self._tasks_on_worker, 50),
+        max(self._tasks_on_worker) if self._tasks_on_worker else 0,
+        _percentile(self._rss_mib_after, 50),
+        max(self._rss_mib_after) if self._rss_mib_after else 0.0,
+        self.rss_recheck_fired,
+        breakdown.get("tree_total_mb", 0.0),
+        breakdown.get("ingest_pool_mb", 0.0),
+        threshold,
+        cfg.get_sync_ingest_pool_maxtasksperchild(),
+      ),
+      flush=True,
     )
     self.completions = 0
     self.keep_worker = 0

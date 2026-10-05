@@ -10,22 +10,25 @@ into ``sync_timedb.py`` until the orchestrator cutover slice.
 Attributes:
   StreamingDiscoverStats: Counters returned by stream enqueue.
 """
+
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable, Iterator
-
+import os
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, replace
 from datetime import date, datetime
-import os
+from typing import Any
 
-from hpcperfstats.dbload.lib import conf_parser as cfg
-from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
-from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+from hpcperfstats.dbload.lib import (
+  conf_parser as cfg,
+  sync_timedb_job_reconstruct as jr,
+  sync_timedb_job_store as jq,
+)
 from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
-    FindStatsRecord,
-    is_internal_archive_stats_path,
-    iter_find_printf_records_streaming,
-    _is_lock_name,
+  FindStatsRecord,
+  _is_lock_name,
+  is_internal_archive_stats_path,
+  iter_find_printf_records_streaming,
 )
 
 
@@ -67,7 +70,7 @@ def find_record_mtime_ns(mtime: float) -> int:
     >>> find_record_mtime_ns(1.5)
     1500000000
   """
-  return int(round(float(mtime) * 1_000_000_000))
+  return round(float(mtime) * 1_000_000_000)
 
 
 def calendar_day_from_find_record(
@@ -121,7 +124,9 @@ def filter_find_records_for_date_range(
     FindStatsRecord: Records that pass the date window.
 
   Examples:
-    >>> list(filter_find_records_for_date_range([], startdate=None, enddate=None))
+    >>> list(
+    ...   filter_find_records_for_date_range([], startdate=None, enddate=None)
+    ... )
     []
   """
   start_d = _coerce_filter_date(startdate)
@@ -196,7 +201,7 @@ def _basename_date(path: str) -> date | None:
     return None
   try:
     return datetime.fromtimestamp(epoch).date()
-  except (OSError, OverflowError, ValueError):
+  except OSError, OverflowError, ValueError:
     return None
 
 
@@ -238,9 +243,7 @@ def iter_find_records_from_stdout_chunks(
 
   Examples:
     >>> list(
-    ...   iter_find_records_from_stdout_chunks(
-    ...     [b"/x\\x001.0\\x001\\x002\\x00"]
-    ...   )
+    ...   iter_find_records_from_stdout_chunks([b"/x\\x001.0\\x001\\x002\\x00"])
     ... )[0].path
     '/x'
   """
@@ -292,17 +295,25 @@ def stream_enqueue_ingest_from_find_records(
   Examples:
     >>> class _C:
     ...   def __init__(self):
-    ...     self.z = {}; self.l = {}
+    ...     self.z = {}
+    ...     self.l = {}
+    ...
     ...   def zadd(self, key, mapping):
-    ...     self.z.update(mapping); return 1
+    ...     self.z.update(mapping)
+    ...     return 1
+    ...
     ...   def zscore(self, key, member):
     ...     return self.z.get(member)
+    ...
     ...   def zcard(self, key):
     ...     return len(self.z)
+    ...
     ...   def hset(self, *a, **k):
     ...     return 1
+    ...
     ...   def rpush(self, key, *vals):
-    ...     self.l.setdefault(key, []).extend(vals); return len(vals)
+    ...     self.l.setdefault(key, []).extend(vals)
+    ...     return len(vals)
     >>> stats = stream_enqueue_ingest_from_find_records(
     ...   _C(),
     ...   [FindStatsRecord(path="/a", mtime=1.0, size=10, inode=1)],
@@ -323,12 +334,14 @@ def stream_enqueue_ingest_from_find_records(
   day_close_seen: set[str] = set()
   stopped_at_capacity = False
   day_fn = calendar_day_fn or (
-      lambda rec: calendar_day_from_find_record(rec, tgz_archive_dir)
+    lambda rec: calendar_day_from_find_record(rec, tgz_archive_dir)
   )
   cap = discover_ingest_capacity_limit()
   if startdate is not None or enddate is not None:
     records = filter_find_records_for_date_range(
-        records, startdate=startdate, enddate=enddate,
+      records,
+      startdate=startdate,
+      enddate=enddate,
     )
 
   from hpcperfstats.dbload.lib import sync_timedb_progress_report as progress
@@ -340,7 +353,9 @@ def stream_enqueue_ingest_from_find_records(
       continue
     try:
       has_cap = jq.queue_has_capacity(
-          client, kind=jq.JOB_KIND_INGEST, limit=cap,
+        client,
+        kind=jq.JOB_KIND_INGEST,
+        limit=cap,
       )
     except Exception:
       has_cap = True
@@ -358,29 +373,32 @@ def stream_enqueue_ingest_from_find_records(
         day_tok = None
         progress.record(None, "unresolved_day", 1)
     plan = jr.classify_closed_raw_path(
-        rec.path,
-        tgz_archive_dir=tgz_archive_dir,
-        size=int(rec.size),
-        mtime_ns=find_record_mtime_ns(rec.mtime),
-        calendar_day=cal,
-        archive_data_dir=archive_data_dir,
-        listend_enabled=listend_enabled,
-        ingest_is_complete_fn=ingest_is_complete_fn,
-        append_is_complete_fn=append_is_complete_fn,
+      rec.path,
+      tgz_archive_dir=tgz_archive_dir,
+      size=int(rec.size),
+      mtime_ns=find_record_mtime_ns(rec.mtime),
+      calendar_day=cal,
+      archive_data_dir=archive_data_dir,
+      listend_enabled=listend_enabled,
+      ingest_is_complete_fn=ingest_is_complete_fn,
+      append_is_complete_fn=append_is_complete_fn,
     )
     if not has_cap and (
-        plan.calendar_day is None
-        or jr.select_ingest_band(
-            plan.calendar_day, today=today, hot_days=hot_days,
-        ) != "hot"
+      plan.calendar_day is None
+      or jr.select_ingest_band(
+        plan.calendar_day,
+        today=today,
+        hot_days=hot_days,
+      )
+      != "hot"
     ):
       plan = replace(plan, needs_ingest=False)
     enqueued = jr.enqueue_reconstruct_jobs_for_closed_path(
-        client,
-        plan,
-        today=today,
-        hot_days=hot_days,
-        archive_data_dir=archive_data_dir,
+      client,
+      plan,
+      today=today,
+      hot_days=hot_days,
+      archive_data_dir=archive_data_dir,
     )
     if enqueued.get("ingest"):
       enqueued_ingest += 1
@@ -394,20 +412,20 @@ def stream_enqueue_ingest_from_find_records(
     tar = str(plan.tar_path or "").strip()
     if tar and tar not in day_close_seen:
       if jr.enqueue_cheap_day_close_if_needed(
-          client,
-          tar,
-          calendar_day=plan.calendar_day,
+        client,
+        tar,
+        calendar_day=plan.calendar_day,
       ):
         day_close_seen.add(tar)
         enqueued_day_close += 1
 
   return StreamingDiscoverStats(
-      seen=seen,
-      enqueued_ingest=enqueued_ingest,
-      enqueued_append=enqueued_append,
-      skipped_complete=skipped_complete,
-      enqueued_day_close=enqueued_day_close,
-      stopped_at_capacity=stopped_at_capacity,
+    seen=seen,
+    enqueued_ingest=enqueued_ingest,
+    enqueued_append=enqueued_append,
+    skipped_complete=skipped_complete,
+    enqueued_day_close=enqueued_day_close,
+    stopped_at_capacity=stopped_at_capacity,
   )
 
 
@@ -452,17 +470,25 @@ def stream_enqueue_ingest_from_find_stdout_chunks(
   Examples:
     >>> class _C:
     ...   def __init__(self):
-    ...     self.z = {}; self.l = {}
+    ...     self.z = {}
+    ...     self.l = {}
+    ...
     ...   def zadd(self, key, mapping):
-    ...     self.z.update(mapping); return 1
+    ...     self.z.update(mapping)
+    ...     return 1
+    ...
     ...   def zscore(self, key, member):
     ...     return self.z.get(member)
+    ...
     ...   def zcard(self, key):
     ...     return len(self.z)
+    ...
     ...   def hset(self, *a, **k):
     ...     return 1
+    ...
     ...   def rpush(self, key, *vals):
-    ...     self.l.setdefault(key, []).extend(vals); return len(vals)
+    ...     self.l.setdefault(key, []).extend(vals)
+    ...     return len(vals)
     >>> raw = b"/a\\x001.0\\x0010\\x001\\x00"
     >>> stream_enqueue_ingest_from_find_stdout_chunks(
     ...   _C(),
@@ -476,16 +502,16 @@ def stream_enqueue_ingest_from_find_stdout_chunks(
     1
   """
   return stream_enqueue_ingest_from_find_records(
-      client,
-      iter_find_records_from_stdout_chunks(chunks),
-      tgz_archive_dir=tgz_archive_dir,
-      today=today,
-      hot_days=hot_days,
-      archive_data_dir=archive_data_dir,
-      listend_enabled=listend_enabled,
-      calendar_day_fn=calendar_day_fn,
-      ingest_is_complete_fn=ingest_is_complete_fn,
-      append_is_complete_fn=append_is_complete_fn,
-      startdate=startdate,
-      enddate=enddate,
+    client,
+    iter_find_records_from_stdout_chunks(chunks),
+    tgz_archive_dir=tgz_archive_dir,
+    today=today,
+    hot_days=hot_days,
+    archive_data_dir=archive_data_dir,
+    listend_enabled=listend_enabled,
+    calendar_day_fn=calendar_day_fn,
+    ingest_is_complete_fn=ingest_is_complete_fn,
+    append_is_complete_fn=append_is_complete_fn,
+    startdate=startdate,
+    enddate=enddate,
   )

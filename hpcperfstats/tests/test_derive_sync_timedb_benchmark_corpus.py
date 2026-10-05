@@ -30,22 +30,22 @@ def mod():
 
 def _fixture_text(host: str = "orig.example.com") -> str:
   return (
-      "$hpcperfstats 1.0\n"
-      "$hostname %s\n"
-      "!cpu user sys\n"
-      "1000.0 job1 %s\n"
-      "cpu 0 1 2\n"
-      "1010.5 job1 %s\n"
-      "cpu 0 3 4\n"
-  ) % (host, host, host)
+    "$hpcperfstats 1.0\n"
+    f"$hostname {host}\n"
+    "!cpu user sys\n"
+    f"1000.0 job1 {host}\n"
+    "cpu 0 1 2\n"
+    f"1010.5 job1 {host}\n"
+    "cpu 0 3 4\n"
+  )
 
 
 def test_rewrite_stats_identity_host_and_epochs(mod):
   text = _fixture_text("cn001.example.com")
   out = mod.rewrite_stats_identity(
-      text,
-      new_host="benchhost0001",
-      epoch_offset=100,
+    text,
+    new_host="benchhost0001",
+    epoch_offset=100,
   )
   assert "$hostname benchhost0001" in out
   assert "1100.0 job1 benchhost0001" in out
@@ -70,14 +70,14 @@ def test_derive_corpus_applies_host_suffix(mod, tmp_path):
   source_path = tmp_path / "src"
   source_path.write_text(_fixture_text(), encoding="utf-8")
   manifest = mod.derive_corpus(
-      [source_path],
-      tmp_path / "out",
-      host_suffix=".cluster_name.domain.edu",
-      dry_run=True,
+    [source_path],
+    tmp_path / "out",
+    host_suffix=".cluster_name.domain.edu",
+    dry_run=True,
   )
   assert manifest["host_suffix"] == ".cluster_name.domain.edu"
   assert manifest["entries"][0]["derived_host"].endswith(
-      ".cluster_name.domain.edu",
+    ".cluster_name.domain.edu",
   )
 
 
@@ -101,17 +101,19 @@ def test_derive_corpus_writes_outputs_and_manifest(mod, tmp_path):
   assert entry["source_sha256_before"] == entry["source_sha256_after"]
   assert Path(entry["output_path"]).is_file()
   assert (output_dir / "manifest.json").is_file()
-  manifest_disk = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+  manifest_disk = json.loads(
+    (output_dir / "manifest.json").read_text(encoding="utf-8")
+  )
   assert manifest_disk["entries"][0]["output_sha256"] == entry["output_sha256"]
 
 
 def test_derive_corpus_rejects_host_epoch_collision(mod):
   with pytest.raises(ValueError, match="overlap"):
     mod._assert_no_host_epoch_overlap(
-        [
-            ("benchhost0000", 1.0, 5.0),
-            ("benchhost0000", 4.0, 8.0),
-        ],
+      [
+        ("benchhost0000", 1.0, 5.0),
+        ("benchhost0000", 4.0, 8.0),
+      ],
     )
 
 
@@ -119,13 +121,13 @@ def test_verify_source_unchanged_raises_on_hash_drift(mod, tmp_path):
   source_path = tmp_path / "stats"
   source_path.write_text(_fixture_text(), encoding="utf-8")
   manifest = {
-      "entries": [
-          {
-              "source_path": str(source_path),
-              "source_sha256_before": "deadbeef",
-              "source_sha256_after": "cafebabe",
-          },
-      ],
+    "entries": [
+      {
+        "source_path": str(source_path),
+        "source_sha256_before": "deadbeef",
+        "source_sha256_after": "cafebabe",
+      },
+    ],
   }
   with pytest.raises(ValueError, match="hash drift"):
     mod.verify_source_unchanged(manifest)
@@ -137,13 +139,13 @@ def test_verify_source_unchanged_passes_for_stable_manifest(mod, tmp_path):
   source_path.write_text(_fixture_text(), encoding="utf-8")
   digest = mod._sha256_file(source_path)
   manifest = {
-      "entries": [
-          {
-              "source_path": str(source_path),
-              "source_sha256_before": digest,
-              "source_sha256_after": digest,
-          },
-      ],
+    "entries": [
+      {
+        "source_path": str(source_path),
+        "source_sha256_before": digest,
+        "source_sha256_after": digest,
+      },
+    ],
   }
   mod.verify_source_unchanged(manifest)
 
@@ -154,17 +156,17 @@ def test_manifest_entry_keys(mod, tmp_path):
   manifest = mod.derive_corpus([source_path], tmp_path / "out", dry_run=True)
   entry = manifest["entries"][0]
   expected = {
-      "source_path",
-      "source_sha256_before",
-      "source_sha256_after",
-      "output_path",
-      "output_sha256",
-      "original_host",
-      "derived_host",
-      "epoch_offset",
-      "epoch_min",
-      "epoch_max",
-      "shifted_first_epoch",
+    "source_path",
+    "source_sha256_before",
+    "source_sha256_after",
+    "output_path",
+    "output_sha256",
+    "original_host",
+    "derived_host",
+    "epoch_offset",
+    "epoch_min",
+    "epoch_max",
+    "shifted_first_epoch",
   }
   assert expected.issubset(entry.keys())
 

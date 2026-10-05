@@ -4,10 +4,13 @@ Soft-kill is idle-stall + Postgres statement_timeout. Submit-age abandon must
 not reclaim slots or trigger recycle. Collateral requeue / pool recycle helpers
 remain for other recycle paths.
 """
+
 from __future__ import annotations
 
-from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
-from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+from hpcperfstats.dbload.lib import (
+  sync_timedb_job_store as jq,
+  sync_timedb_queue_orchestrator as qo,
+)
 from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 
 
@@ -38,7 +41,9 @@ def _real_claim(client, identity, *, score=5.0):
   jq.zadd_ingest_job(client, identity=identity, score=score)
   band = jq.decode_ingest_band(score)
   claim = jq.claim_ingest_job(
-      client, band=band, owner_token=jq.make_lease_owner_token(),
+    client,
+    band=band,
+    owner_token=jq.make_lease_owner_token(),
   )
   assert claim is not None and claim.identity == identity
   return claim
@@ -46,11 +51,11 @@ def _real_claim(client, identity, *, score=5.0):
 
 def _claim(identity, *, score=5.0, owner="n:h:b:1"):
   return jq.ClaimedJob(
-      kind=jq.JOB_KIND_INGEST,
-      identity=identity,
-      owner_token=owner,
-      deadline=1.0,
-      score=score,
+    kind=jq.JOB_KIND_INGEST,
+    identity=identity,
+    owner_token=owner,
+    deadline=1.0,
+    score=score,
   )
 
 
@@ -75,12 +80,12 @@ def test_drain_ingest_ready_clears_submitted_timestamps():
   submitted = {identity: 0.0}
 
   done = qo._drain_ingest_ready(
-      client,
-      inflight=inflight,
-      claims=claims,
-      submitted=submitted,
-      tgz_archive_dir="/daily",
-      archive_data_dir="/archive",
+    client,
+    inflight=inflight,
+    claims=claims,
+    submitted=submitted,
+    tgz_archive_dir="/daily",
+    archive_data_dir="/archive",
   )
 
   assert done == 1
@@ -91,7 +96,7 @@ def test_fill_ingest_band_records_submission_time(monkeypatch, tmp_path):
   client = SyncTimedbJobStore("")
   path = tmp_path / "raw"
   path.write_text("x", encoding="utf-8")
-  identity = "%s|1|1" % path
+  identity = f"{path}|1|1"
   jq.zadd_ingest_job(client, identity=identity, score=-1.0)
 
   class _Pool:
@@ -105,13 +110,13 @@ def test_fill_ingest_band_records_submission_time(monkeypatch, tmp_path):
   monkeypatch.setattr(qo, "_path_from_ingest_identity", lambda ident: str(path))
 
   qo._fill_ingest_band(
-      client,
-      band="hot",
-      cap=1,
-      inflight=inflight,
-      claims=claims,
-      submitted=submitted,
-      ingest_pool=_Pool(),
+    client,
+    band="hot",
+    cap=1,
+    inflight=inflight,
+    claims=claims,
+    submitted=submitted,
+    ingest_pool=_Pool(),
   )
 
   assert list(submitted) == list(inflight)
@@ -149,17 +154,19 @@ def test_recycle_requeues_healthy_survivors_without_burning_an_attempt():
   submitted = {survivor: 0.0}
 
   requeued = qo._requeue_pool_collateral(
-      client,
-      inflight=inflight,
-      claims=claims,
-      submitted=submitted,
-      log_fn=lambda *a, **k: None,
+    client,
+    inflight=inflight,
+    claims=claims,
+    submitted=submitted,
+    log_fn=lambda *a, **k: None,
   )
 
   assert requeued == 1
   assert inflight == {} and claims == {} and submitted == {}
   assert client.ingest_score(survivor) == -3.0
-  assert jq.read_job_attempt(client, kind=jq.JOB_KIND_INGEST, identity=survivor) == 0
+  assert (
+    jq.read_job_attempt(client, kind=jq.JOB_KIND_INGEST, identity=survivor) == 0
+  )
 
 
 def test_pool_recycle_tolerates_terminate_failure():

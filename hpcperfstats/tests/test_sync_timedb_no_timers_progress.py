@@ -9,20 +9,22 @@ import subprocess
 import pytest
 
 from hpcperfstats.dbload import sync_timedb as st
-from hpcperfstats.dbload.lib import conf_parser as cfg
-from hpcperfstats.dbload.lib import multiprocessing_pool_health as mph
-from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as ingest_timeout
-from hpcperfstats.dbload.lib import sync_timedb_progress_io as progress_io
+from hpcperfstats.dbload.lib import (
+  conf_parser as cfg,
+  multiprocessing_pool_health as mph,
+  sync_timedb_ingest_timeout as ingest_timeout,
+  sync_timedb_progress_io as progress_io,
+)
 
 
 def test_resolve_timeout_helpers_gone():
   """Wall soft-kill names are not importable."""
   for name in (
-      "resolve_ingest_per_file_timeout_s",
-      "resolve_ingest_per_file_timeout_for_size_bytes",
-      "max_ingest_per_file_timeout_for_paths",
-      "stall_abort_polls_for_paths",
-      "stall_abort_polls_for_sealed_archives",
+    "resolve_ingest_per_file_timeout_s",
+    "resolve_ingest_per_file_timeout_for_size_bytes",
+    "max_ingest_per_file_timeout_for_paths",
+    "stall_abort_polls_for_paths",
+    "stall_abort_polls_for_sealed_archives",
   ):
     assert not hasattr(ingest_timeout, name), name
   assert not hasattr(cfg, "get_sync_ingest_per_file_timeout_s")
@@ -60,12 +62,12 @@ def test_alive_alone_does_not_reset_idle(tmp_path):
   marker.write_bytes(b"")
   with pytest.raises(progress_io.ProgressIdleError):
     progress_io.run_subprocess_with_progress(
-        ["sleep", "30"],
-        progress_path=str(marker),
-        stage="test_alive",
-        metric="bytes",
-        idle_s=0.4,
-        poll_s=0.1,
+      ["sleep", "30"],
+      progress_path=str(marker),
+      stage="test_alive",
+      metric="bytes",
+      idle_s=0.4,
+      poll_s=0.1,
     )
 
 
@@ -75,20 +77,19 @@ def test_byte_progress_resets_idle(tmp_path):
   out.write_bytes(b"")
   script = tmp_path / "grow.py"
   script.write_text(
-      "import time, pathlib\n"
-      "p = pathlib.Path(%r)\n"
-      "for i in range(5):\n"
-      "  p.write_bytes(b'x' * (i + 1))\n"
-      "  time.sleep(0.25)\n"
-      % str(out),
+    "import time, pathlib\n"
+    f"p = pathlib.Path({str(out)!r})\n"
+    "for i in range(5):\n"
+    "  p.write_bytes(b'x' * (i + 1))\n"
+    "  time.sleep(0.25)\n",
   )
   result = progress_io.run_subprocess_with_progress(
-      ["python3", str(script)],
-      progress_path=str(out),
-      stage="test_grow",
-      metric="bytes",
-      idle_s=0.8,
-      poll_s=0.1,
+    ["python3", str(script)],
+    progress_path=str(out),
+    stage="test_grow",
+    metric="bytes",
+    idle_s=0.8,
+    poll_s=0.1,
   )
   assert result.returncode == 0
 
@@ -105,9 +106,9 @@ def test_append_to_tar_idle_kill(monkeypatch, tmp_path):
   """Hung tar append with flat size raises RuntimeError idle stall."""
   tar_path = tmp_path / "day.tar"
   subprocess.run(
-      ["tar", "cf", str(tar_path), "-T", "/dev/null"],
-      check=True,
-      capture_output=True,
+    ["tar", "cf", str(tar_path), "-T", "/dev/null"],
+    check=True,
+    capture_output=True,
   )
   member = tmp_path / "raw"
   member.write_text("payload")
@@ -125,13 +126,13 @@ def test_append_to_tar_idle_kill(monkeypatch, tmp_path):
 def test_progress_sop_log_shape(capsys):
   """SOP log lines must include advancing=true|false and metric=."""
   progress_io.log_progress_sop(
-      stage="tar_append",
-      path="/daily/x.tar",
-      advancing=False,
-      idle_s=12.5,
-      last_progress=1.0,
-      metric="bytes",
-      force=True,
+    stage="tar_append",
+    path="/daily/x.tar",
+    advancing=False,
+    idle_s=12.5,
+    last_progress=1.0,
+    metric="bytes",
+    force=True,
   )
   out = capsys.readouterr().out
   assert "progress stage=tar_append" in out

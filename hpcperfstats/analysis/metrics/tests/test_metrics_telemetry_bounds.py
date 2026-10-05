@@ -8,26 +8,30 @@ import pytest
 from django.utils import timezone
 
 from hpcperfstats.analysis.metrics.lib.metrics import (
-    _in_window_telemetry_bounds_for_job,
-    _persist_metrics_batch,
+  _in_window_telemetry_bounds_for_job,
+  _persist_metrics_batch,
 )
-from hpcperfstats.site.lib.machine.models import host_data, job_data, metrics_data
+from hpcperfstats.site.lib.machine.models import (
+  host_data,
+  job_data,
+  metrics_data,
+)
 
 
 def _compose_network():
   return os.environ.get("HPCPERFSTATS_COMPOSE_NETWORK", "").strip().lower() in (
-      "1",
-      "yes",
-      "true",
+    "1",
+    "yes",
+    "true",
   )
 
 
 pytestmark = pytest.mark.skipif(
-    not _compose_network(),
-    reason=(
-        "Requires Docker Compose network (PostgreSQL at host 'db'). "
-        "Run: tests/run_db_pytest_workflow.sh"
-    ),
+  not _compose_network(),
+  reason=(
+    "Requires Docker Compose network (PostgreSQL at host 'db'). "
+    "Run: tests/run_db_pytest_workflow.sh"
+  ),
 )
 
 
@@ -35,12 +39,12 @@ pytestmark = pytest.mark.skipif(
 def test_job_data_telemetry_fields_nullable_before_metrics():
   now = timezone.now()
   j = job_data.objects.create(
-      jid="telnull1",
-      submit_time=now,
-      start_time=now,
-      end_time=now,
-      username="u1",
-      host_list=["h1.example.org"],
+    jid="telnull1",
+    submit_time=now,
+    start_time=now,
+    end_time=now,
+    username="u1",
+    host_list=["h1.example.org"],
   )
   j.refresh_from_db()
   assert j.telemetry_first_time is None
@@ -53,28 +57,28 @@ def test_in_window_telemetry_bounds_for_job():
   end = timezone.now() - timedelta(hours=1)
   host = "telhost.example.org"
   j = job_data.objects.create(
-      jid="telb1",
-      submit_time=start,
-      start_time=start,
-      end_time=end,
-      username="u1",
-      host_list=[host],
+    jid="telb1",
+    submit_time=start,
+    start_time=start,
+    end_time=end,
+    username="u1",
+    host_list=[host],
   )
   t_first = start + timedelta(minutes=5)
   t_last = end - timedelta(minutes=5)
   host_data.objects.create(
-      time=t_first,
-      host=host,
-      type="host_cpu",
-      event="user",
-      value=1.0,
+    time=t_first,
+    host=host,
+    type="host_cpu",
+    event="user",
+    value=1.0,
   )
   host_data.objects.create(
-      time=t_last,
-      host=host,
-      type="host_cpu",
-      event="idle",
-      value=0.0,
+    time=t_last,
+    host=host,
+    type="host_cpu",
+    event="idle",
+    value=0.0,
   )
   tf, tl = _in_window_telemetry_bounds_for_job(j)
   assert tf == t_first
@@ -89,28 +93,28 @@ def test_in_window_telemetry_bounds_for_lightweight_job_ref():
   host = "telref.example.org"
   jid = "telref1"
   job_data.objects.create(
-      jid=jid,
-      submit_time=start,
-      start_time=start,
-      end_time=end,
-      username="u1",
-      host_list=[host],
+    jid=jid,
+    submit_time=start,
+    start_time=start,
+    end_time=end,
+    username="u1",
+    host_list=[host],
   )
   t_first = start + timedelta(minutes=5)
   t_last = end - timedelta(minutes=5)
   host_data.objects.create(
-      time=t_first,
-      host=host,
-      type="host_cpu",
-      event="user",
-      value=1.0,
+    time=t_first,
+    host=host,
+    type="host_cpu",
+    event="user",
+    value=1.0,
   )
   host_data.objects.create(
-      time=t_last,
-      host=host,
-      type="host_cpu",
-      event="idle",
-      value=0.0,
+    time=t_last,
+    host=host,
+    type="host_cpu",
+    event="idle",
+    value=0.0,
   )
   tf, tl = _in_window_telemetry_bounds_for_job(SimpleNamespace(jid=jid))
   assert tf == t_first
@@ -124,26 +128,28 @@ def test_persist_metrics_batch_writes_telemetry_bounds():
   t_first = start + timedelta(minutes=2)
   t_last = end - timedelta(minutes=2)
   j = job_data.objects.create(
-      jid="telpersist1",
-      submit_time=start,
-      start_time=start,
-      end_time=end,
-      username="u1",
-      host_list=["h1.example.org"],
+    jid="telpersist1",
+    submit_time=start,
+    start_time=start,
+    end_time=end,
+    username="u1",
+    host_list=["h1.example.org"],
   )
-  rows = [{
+  rows = [
+    {
       "jid": j,
       "type": "job",
       "metric": "walltime",
       "units": "s",
       "value": 3600.0,
       "no_data_reason": None,
-  }]
+    }
+  ]
   _persist_metrics_batch(
-      rows,
-      distinct_time_count=10,
-      telemetry_first_time=t_first,
-      telemetry_last_time=t_last,
+    rows,
+    distinct_time_count=10,
+    telemetry_first_time=t_first,
+    telemetry_last_time=t_last,
   )
   j.refresh_from_db()
   assert j.metrics_distinct_time_count == 10

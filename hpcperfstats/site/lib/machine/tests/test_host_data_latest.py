@@ -1,8 +1,9 @@
 """Unit tests for cheap host_data freshness helpers."""
+
 from __future__ import annotations
 
 import contextlib
-from datetime import datetime, timedelta, timezone as dt_timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,9 +21,9 @@ def test_latest_sample_time_by_host_empty():
 def test_latest_sample_time_by_host_postgresql_lateral_limit_1(monkeypatch):
   exec_log = []
   monkeypatch.setattr(
-      host_data_latest.transaction,
-      "atomic",
-      lambda using=None: contextlib.nullcontext(),
+    host_data_latest.transaction,
+    "atomic",
+    lambda using=None: contextlib.nullcontext(),
   )
   monkeypatch.setattr(host_data_latest, "HOST_LAST_TIME_LOOKUP_BATCH", 2)
 
@@ -36,7 +37,7 @@ def test_latest_sample_time_by_host_postgresql_lateral_limit_1(monkeypatch):
     def execute(self, sql, params=None):
       exec_log.append((sql, params))
       if "unnest" in sql.lower() and params and params[0]:
-        ts = datetime(2025, 1, 1, 12, 0, 5, tzinfo=dt_timezone.utc)
+        ts = datetime(2025, 1, 1, 12, 0, 5, tzinfo=UTC)
         self._rows = [(h, ts) for h in params[0]]
       else:
         self._rows = []
@@ -48,7 +49,7 @@ def test_latest_sample_time_by_host_postgresql_lateral_limit_1(monkeypatch):
   fake_conn.vendor = "postgresql"
   fake_conn.alias = "default"
   fake_ops = MagicMock()
-  fake_ops.quote_name = lambda name: '"%s"' % str(name).replace('"', '""')
+  fake_ops.quote_name = lambda name: '"{}"'.format(str(name).replace('"', '""'))
   fake_conn.ops = fake_ops
   fake_conn.cursor = lambda: FakeCursor()
   handler = MagicMock()
@@ -66,8 +67,8 @@ def test_latest_sample_time_by_host_postgresql_lateral_limit_1(monkeypatch):
 @pytest.mark.machine_unit_mock
 def test_newest_host_data_sample_time_uses_order_by_limit(monkeypatch):
   calls = {}
-  expected = datetime(2026, 8, 4, 0, 55, tzinfo=dt_timezone.utc)
-  fixed_now = datetime(2026, 8, 4, 12, 0, tzinfo=dt_timezone.utc)
+  expected = datetime(2026, 8, 4, 0, 55, tzinfo=UTC)
+  fixed_now = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
   monkeypatch.setattr(host_data_latest.timezone, "now", lambda: fixed_now)
 
   class FakeQS:
@@ -95,6 +96,7 @@ def test_newest_host_data_sample_time_uses_order_by_limit(monkeypatch):
   assert calls["order_by"] == ("-time",)
   assert calls["filter"]["time__gt"] == fixed_now - timedelta(hours=3)
 
+
 @pytest.mark.machine_unit_mock
 def test_latest_sample_time_by_host_in_window_uses_short_window(monkeypatch):
   captured = {}
@@ -102,12 +104,12 @@ def test_latest_sample_time_by_host_in_window_uses_short_window(monkeypatch):
   class AnnotateQS:
     def __iter__(self):
       return iter(
-          [
-              {
-                  "host": "n1.example.org",
-                  "last_time": datetime(2026, 8, 4, tzinfo=dt_timezone.utc),
-              }
-          ]
+        [
+          {
+            "host": "n1.example.org",
+            "last_time": datetime(2026, 8, 4, tzinfo=UTC),
+          }
+        ]
       )
 
   class ValuesQS:
@@ -125,15 +127,15 @@ def test_latest_sample_time_by_host_in_window_uses_short_window(monkeypatch):
     return FilterQS()
 
   monkeypatch.setattr(
-      host_data_latest.host_data.objects,
-      "filter",
-      fake_filter,
+    host_data_latest.host_data.objects,
+    "filter",
+    fake_filter,
   )
-  fixed_now = datetime(2026, 8, 4, 12, 0, tzinfo=dt_timezone.utc)
+  fixed_now = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
   monkeypatch.setattr(
-      host_data_latest.timezone,
-      "now",
-      lambda: fixed_now,
+    host_data_latest.timezone,
+    "now",
+    lambda: fixed_now,
   )
 
   out = host_data_latest.latest_sample_time_by_host_in_window()
@@ -147,7 +149,7 @@ def test_latest_sample_time_by_host_in_window_uses_short_window(monkeypatch):
 @pytest.mark.machine_unit_mock
 def test_format_host_data_newest_iso():
   assert host_data_latest.format_host_data_newest_iso(None) is None
-  dt = datetime(2026, 8, 4, 0, 55, tzinfo=dt_timezone.utc)
+  dt = datetime(2026, 8, 4, 0, 55, tzinfo=UTC)
   assert "2026-08-04" in host_data_latest.format_host_data_newest_iso(dt)
 
 
@@ -162,9 +164,9 @@ def test_list_recent_host_fqdns_from_redis_filters_fqdns(monkeypatch):
       yield "other:key"
 
   monkeypatch.setattr(
-      host_data_latest,
-      "_get_redis_py_client",
-      lambda: FakeClient(),
+    host_data_latest,
+    "_get_redis_py_client",
+    lambda: FakeClient(),
   )
   out = host_data_latest.list_recent_host_fqdns_from_redis()
   assert out == ["c101-001.example.com", "c102-002.example.com"]

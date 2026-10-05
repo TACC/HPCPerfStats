@@ -19,8 +19,8 @@ from typing import Any
 
 from hpcperfstats.dbload.lib import process_memory as pm
 from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
-    PEAK_CGROUP_PER_RAW_FILE_BYTE,
-    compute_ingest_inflight_raw_bytes_budget,
+  PEAK_CGROUP_PER_RAW_FILE_BYTE,
+  compute_ingest_inflight_raw_bytes_budget,
 )
 
 _MIB = 1024 * 1024
@@ -63,7 +63,7 @@ def _mib(nbytes: Any) -> int:
   """
   try:
     return int(nbytes or 0) // _MIB
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     return 0
 
 
@@ -104,9 +104,9 @@ def _inflight_rank(
   """
   sizes = inflight_sizes if isinstance(inflight_sizes, dict) else {}
   ranked = sorted(
-      ((str(k), int(v or 0)) for k, v in sizes.items()),
-      key=lambda kv: kv[1],
-      reverse=True,
+    ((str(k), int(v or 0)) for k, v in sizes.items()),
+    key=lambda kv: kv[1],
+    reverse=True,
   )
   top5 = ranked[:5]
   largest = top5[0] if top5 else ("", 0)
@@ -123,15 +123,15 @@ def _inflight_rank(
       oldest_s = age
       oldest_id = ident
   return {
-      "inflight_n": len(sizes),
-      "inflight_raw_mib": _mib(sum(int(v or 0) for v in sizes.values())),
-      "largest_inflight_mib": _mib(largest[1]),
-      "largest_inflight": _basename(largest[0]),
-      "top_inflight": ",".join(
-          "%s:%d" % (_basename(p), _mib(sz)) for p, sz in top5
-      ),
-      "oldest_inflight_s": int(oldest_s),
-      "oldest_inflight": _basename(oldest_id),
+    "inflight_n": len(sizes),
+    "inflight_raw_mib": _mib(sum(int(v or 0) for v in sizes.values())),
+    "largest_inflight_mib": _mib(largest[1]),
+    "largest_inflight": _basename(largest[0]),
+    "top_inflight": ",".join(
+      "%s:%d" % (_basename(p), _mib(sz)) for p, sz in top5
+    ),
+    "oldest_inflight_s": int(oldest_s),
+    "oldest_inflight": _basename(oldest_id),
   }
 
 
@@ -187,31 +187,31 @@ def snapshot_pipeline_mem_telemetry(
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   snap: dict[str, Any] = {
-      "rss_limit_cgroup_pct": int(
-          cfg.get_sync_process_tree_rss_limit_cgroup_pct(),
-      ),
-      "rss_exit_cgroup_pct": int(
-          cfg.get_sync_process_tree_rss_exit_cgroup_pct(),
-      ),
-      "rss_limit_mib": int(pm.effective_process_tree_rss_limit_mib()),
-      "rss_exit_mib": int(pm.effective_process_tree_rss_exit_mib()),
-      "peak_factor": float(PEAK_CGROUP_PER_RAW_FILE_BYTE),
-      "budget_mib": _mib(compute_ingest_inflight_raw_bytes_budget()),
-      "headroom_cfg_mib": int(cfg.get_sync_cgroup_admit_headroom_mib()),
-      "file_cache_cgroup_pct": int(
-          cfg.get_sync_cgroup_admit_max_file_cache_cgroup_pct(),
-      ),
-      "file_cache_cfg_mib": int(pm.effective_cgroup_admit_max_file_cache_mib()),
-      "drop_page_cache": (
-          "yes" if cfg.get_sync_pipeline_drop_page_cache() else "no"
-      ),
-      "ingest_pool": int(cfg.get_sync_ingest_pool_processes()),
-      "listend_pool": int(cfg.get_listend_db_ingest_pool_processes()),
-      "metrics_pool": int(cfg.get_metrics_pool_processes()),
-      "ingest_mem_blocked": "yes" if ingest_mem_blocked else "no",
-      "alone_oversized": "yes" if alone_oversized else "no",
-      "total_ingested": int(total_ingested or 0),
-      "total_completed": int(total_completed or 0),
+    "rss_limit_cgroup_pct": int(
+      cfg.get_sync_process_tree_rss_limit_cgroup_pct(),
+    ),
+    "rss_exit_cgroup_pct": int(
+      cfg.get_sync_process_tree_rss_exit_cgroup_pct(),
+    ),
+    "rss_limit_mib": int(pm.effective_process_tree_rss_limit_mib()),
+    "rss_exit_mib": int(pm.effective_process_tree_rss_exit_mib()),
+    "peak_factor": float(PEAK_CGROUP_PER_RAW_FILE_BYTE),
+    "budget_mib": _mib(compute_ingest_inflight_raw_bytes_budget()),
+    "headroom_cfg_mib": int(cfg.get_sync_cgroup_admit_headroom_mib()),
+    "file_cache_cgroup_pct": int(
+      cfg.get_sync_cgroup_admit_max_file_cache_cgroup_pct(),
+    ),
+    "file_cache_cfg_mib": int(pm.effective_cgroup_admit_max_file_cache_mib()),
+    "drop_page_cache": (
+      "yes" if cfg.get_sync_pipeline_drop_page_cache() else "no"
+    ),
+    "ingest_pool": int(cfg.get_sync_ingest_pool_processes()),
+    "listend_pool": int(cfg.get_listend_db_ingest_pool_processes()),
+    "metrics_pool": int(cfg.get_metrics_pool_processes()),
+    "ingest_mem_blocked": "yes" if ingest_mem_blocked else "no",
+    "alone_oversized": "yes" if alone_oversized else "no",
+    "total_ingested": int(total_ingested or 0),
+    "total_completed": int(total_completed or 0),
   }
   snap.update(_inflight_rank(inflight_sizes, submitted))
 
@@ -226,8 +226,7 @@ def snapshot_pipeline_mem_telemetry(
       left = int(cmax) - int(current or 0)
       snap["headroom_left_mib"] = max(0, left // _MIB)
       snap["headroom_ok"] = (
-          "yes" if pm.cgroup_admit_headroom_ok(snap["headroom_cfg_mib"])
-          else "no"
+        "yes" if pm.cgroup_admit_headroom_ok(snap["headroom_cfg_mib"]) else "no"
       )
     else:
       snap["headroom_ok"] = "n/a"
@@ -237,7 +236,7 @@ def snapshot_pipeline_mem_telemetry(
     snap["file_cache_ok"] = "n/a"
   else:
     snap["file_cache_ok"] = (
-        "yes" if pm.cgroup_admit_file_cache_ok(cap_mib) else "no"
+      "yes" if pm.cgroup_admit_file_cache_ok(cap_mib) else "no"
     )
 
   events = pm.read_cgroup_memory_events()
@@ -253,7 +252,7 @@ def snapshot_pipeline_mem_telemetry(
   if stat:
     for key in pm._MEMORY_STAT_MIB_KEYS:
       if key in stat:
-        snap["%s_mib" % key] = _mib(stat[key])
+        snap[f"{key}_mib"] = _mib(stat[key])
     for key in pm._MEMORY_STAT_COUNT_KEYS:
       if key in stat:
         snap[key] = int(stat[key])
@@ -269,14 +268,15 @@ def snapshot_pipeline_mem_telemetry(
   snap["listend_rss_mib"] = _mib(daemons.get("listend", 0))
   snap["metrics_rss_mib"] = _mib(daemons.get("metrics", 0))
   daemon_sum = (
-      int(daemons.get("sync", 0) or 0)
-      + int(daemons.get("listend", 0) or 0)
-      + int(daemons.get("metrics", 0) or 0)
+    int(daemons.get("sync", 0) or 0)
+    + int(daemons.get("listend", 0) or 0)
+    + int(daemons.get("metrics", 0) or 0)
   )
   snap["daemon_rss_sum_mib"] = _mib(daemon_sum)
   if "cgroup_mib" in snap:
     snap["gap_mib"] = max(
-        0, int(snap["cgroup_mib"]) - int(snap["daemon_rss_sum_mib"]),
+      0,
+      int(snap["cgroup_mib"]) - int(snap["daemon_rss_sum_mib"]),
     )
 
   other = pm.read_other_cgroup_rss()
@@ -305,11 +305,11 @@ def snapshot_pipeline_mem_telemetry(
 
   prev = _PREV
   for key, dkey in (
-      ("cgroup_mib", "d_cgroup_mib"),
-      ("file_mib", "d_file_mib"),
-      ("anon_mib", "d_anon_mib"),
-      ("ev_oom_kill", "d_oom_kill"),
-      ("ev_max", "d_ev_max"),
+    ("cgroup_mib", "d_cgroup_mib"),
+    ("file_mib", "d_file_mib"),
+    ("anon_mib", "d_anon_mib"),
+    ("ev_oom_kill", "d_oom_kill"),
+    ("ev_max", "d_ev_max"),
   ):
     if key in snap:
       snap[dkey] = int(snap[key]) - int(prev.get(key, snap[key]) or 0)
@@ -341,40 +341,90 @@ def format_sync_timedb_mem_telemetry_line(
     True
   """
   data = (
-      snap if isinstance(snap, dict)
-      else snapshot_pipeline_mem_telemetry(**kwargs)
+    snap
+    if isinstance(snap, dict)
+    else snapshot_pipeline_mem_telemetry(**kwargs)
   )
-  parts = ["sync_timedb_mem_telemetry: event=%s" % event]
+  parts = [f"sync_timedb_mem_telemetry: event={event}"]
   order = (
-      "rss_limit_cgroup_pct", "rss_exit_cgroup_pct",
-      "rss_limit_mib", "rss_exit_mib", "peak_factor", "budget_mib",
-      "headroom_cfg_mib", "headroom_left_mib", "headroom_ok",
-      "file_cache_cgroup_pct", "file_cache_cfg_mib", "file_cache_ok",
-      "drop_page_cache", "ingest_pool", "listend_pool", "metrics_pool",
-      "cgroup_mib", "cgroup_peak_mib", "cgroup_max_mib",
-      "ev_low", "ev_high", "ev_max", "ev_oom", "ev_oom_kill",
-      "ev_oom_group_kill",
-      "anon_mib", "file_mib", "file_mapped_mib", "shmem_mib",
-      "active_anon_mib", "inactive_anon_mib", "active_file_mib",
-      "inactive_file_mib",
-      "unevictable_mib", "slab_mib", "pgfault", "pgmajfault",
-      "sync_rss_mib", "sync_sup_mib", "sync_ingest_pool_mib",
-      "sync_archive_pool_mib",
-      "sync_nlwp", "listend_rss_mib", "metrics_rss_mib",
-      "other_rss_mib", "other_top", "daemon_rss_sum_mib", "gap_mib",
-      "inflight_n", "inflight_raw_mib", "ingest_mem_blocked",
-      "largest_inflight_mib", "largest_inflight", "top_inflight",
-      "oldest_inflight_s", "oldest_inflight", "alone_oversized",
-      "total_ingested", "total_completed", "hot_used", "catch_used",
-      "fill_block",
-      "ingest_q", "append_q", "discover_q", "day_close_q",
-      "append_inflight_n", "day_close_inflight_n",
-      "d_cgroup_mib", "d_file_mib", "d_anon_mib", "d_oom_kill", "d_ev_max",
+    "rss_limit_cgroup_pct",
+    "rss_exit_cgroup_pct",
+    "rss_limit_mib",
+    "rss_exit_mib",
+    "peak_factor",
+    "budget_mib",
+    "headroom_cfg_mib",
+    "headroom_left_mib",
+    "headroom_ok",
+    "file_cache_cgroup_pct",
+    "file_cache_cfg_mib",
+    "file_cache_ok",
+    "drop_page_cache",
+    "ingest_pool",
+    "listend_pool",
+    "metrics_pool",
+    "cgroup_mib",
+    "cgroup_peak_mib",
+    "cgroup_max_mib",
+    "ev_low",
+    "ev_high",
+    "ev_max",
+    "ev_oom",
+    "ev_oom_kill",
+    "ev_oom_group_kill",
+    "anon_mib",
+    "file_mib",
+    "file_mapped_mib",
+    "shmem_mib",
+    "active_anon_mib",
+    "inactive_anon_mib",
+    "active_file_mib",
+    "inactive_file_mib",
+    "unevictable_mib",
+    "slab_mib",
+    "pgfault",
+    "pgmajfault",
+    "sync_rss_mib",
+    "sync_sup_mib",
+    "sync_ingest_pool_mib",
+    "sync_archive_pool_mib",
+    "sync_nlwp",
+    "listend_rss_mib",
+    "metrics_rss_mib",
+    "other_rss_mib",
+    "other_top",
+    "daemon_rss_sum_mib",
+    "gap_mib",
+    "inflight_n",
+    "inflight_raw_mib",
+    "ingest_mem_blocked",
+    "largest_inflight_mib",
+    "largest_inflight",
+    "top_inflight",
+    "oldest_inflight_s",
+    "oldest_inflight",
+    "alone_oversized",
+    "total_ingested",
+    "total_completed",
+    "hot_used",
+    "catch_used",
+    "fill_block",
+    "ingest_q",
+    "append_q",
+    "discover_q",
+    "day_close_q",
+    "append_inflight_n",
+    "day_close_inflight_n",
+    "d_cgroup_mib",
+    "d_file_mib",
+    "d_anon_mib",
+    "d_oom_kill",
+    "d_ev_max",
   )
   for key in order:
     if key not in data:
       continue
-    parts.append("%s=%s" % (key, data[key]))
+    parts.append(f"{key}={data[key]}")
   return "INFO: " + " ".join(parts)
 
 
@@ -426,10 +476,7 @@ def detect_edge_events(snap: dict[str, Any]) -> list[str]:
   out: list[str] = []
   oom = snap.get("ev_oom_kill")
   if oom is not None:
-    if (
-        _LAST_EDGE_OOM_KILL is not None
-        and int(oom) > int(_LAST_EDGE_OOM_KILL)
-    ):
+    if _LAST_EDGE_OOM_KILL is not None and int(oom) > int(_LAST_EDGE_OOM_KILL):
       out.append("oom_kill_delta")
     _LAST_EDGE_OOM_KILL = int(oom)
   ev_max = snap.get("ev_max")

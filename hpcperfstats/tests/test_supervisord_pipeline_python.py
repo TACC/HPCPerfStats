@@ -16,9 +16,9 @@ def _supervisord_text() -> str:
 
 def _program_command(text: str, program: str) -> str:
   match = re.search(
-      rf"^\[program:{re.escape(program)}\]\n(?:.*\n)*?^command=(.+)$",
-      text,
-      flags=re.MULTILINE,
+    rf"^\[program:{re.escape(program)}\]\n(?:.*\n)*?^command=(.+)$",
+    text,
+    flags=re.MULTILINE,
   )
   assert match, f"program {program} not found"
   return match.group(1)
@@ -29,9 +29,9 @@ def test_pipeline_programs_use_opt_python314t():
   text = _supervisord_text()
   ft = "/opt/python3.14t/bin/python"
   for program in (
-      "hpcperfstats-rabbitmq-listener",
-      "sync_timedb",
-      "update_metrics",
+    "hpcperfstats-rabbitmq-listener",
+    "sync_timedb",
+    "update_metrics",
   ):
     command = _program_command(text, program)
     assert ft in command, (program, command)
@@ -51,21 +51,21 @@ def test_pipeline_programs_set_ft_malloc_conf_without_clearing_preload():
   """FT daemons may enable jemalloc background_thread; must not unset LD_PRELOAD."""
   text = _supervisord_text()
   for program in (
-      "hpcperfstats-rabbitmq-listener",
-      "sync_timedb",
-      "update_metrics",
+    "hpcperfstats-rabbitmq-listener",
+    "sync_timedb",
+    "update_metrics",
   ):
     match = re.search(
-        rf"^\[program:{re.escape(program)}\]\n(?:.*\n)*?(?=^\[|\Z)",
-        text,
-        flags=re.MULTILINE,
+      rf"^\[program:{re.escape(program)}\]\n(?:.*\n)*?(?=^\[|\Z)",
+      text,
+      flags=re.MULTILINE,
     )
     assert match, program
     block = match.group(0)
     assert "MALLOC_CONF=" in block, program
     assert "background_thread:true" in block, program
     env_lines = [
-        ln for ln in block.splitlines() if ln.startswith("environment=")
+      ln for ln in block.splitlines() if ln.startswith("environment=")
     ]
     assert env_lines, program
     joined_env = "\n".join(env_lines)

@@ -14,6 +14,7 @@ Attributes:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import shutil
 import stat
@@ -85,10 +86,8 @@ def apply_stat_ownership_and_mode(path: Path, st: os.stat_result) -> None:
     >>> apply_stat_ownership_and_mode(p, p.stat())
   """
   os.chmod(path, stat.S_IMODE(st.st_mode))
-  try:
+  with contextlib.suppress(PermissionError):
     os.chown(path, st.st_uid, st.st_gid)
-  except PermissionError:
-    pass
 
 
 def assert_path_under_mount(path: Path, mount_root: Path) -> None:
@@ -121,14 +120,14 @@ def assert_path_under_mount(path: Path, mount_root: Path) -> None:
     resolved_path.relative_to(resolved_mount)
   except ValueError as exc:
     raise ValueError(
-        f"PEM path {resolved_path} is outside ssl source mount {resolved_mount}; "
-        "widen proxy_ssl_source.device to include archive symlinks"
+      f"PEM path {resolved_path} is outside ssl source mount {resolved_mount}; "
+      "widen proxy_ssl_source.device to include archive symlinks"
     ) from exc
 
 
 def resolve_source_certs_dir(
-    ssl_source_mount: Path,
-    ssl_certs_rel: str | None = None,
+  ssl_source_mount: Path,
+  ssl_certs_rel: str | None = None,
 ) -> Path:
   """
   Join the settings mount with an optional relative certificate subpath.
@@ -169,10 +168,10 @@ def resolve_source_certs_dir(
 
 
 def resolve_readable_pem(
-    certs_dir: Path,
-    name: str,
-    *,
-    mount_root: Path | None = None,
+  certs_dir: Path,
+  name: str,
+  *,
+  mount_root: Path | None = None,
 ) -> Path:
   """
   Resolve *name* under *certs_dir* to a readable regular file.
@@ -203,7 +202,7 @@ def resolve_readable_pem(
   except FileNotFoundError as exc:
     if link.is_symlink():
       raise ValueError(
-          f"{name} is a broken symlink: {link} -> {os.readlink(link)}"
+        f"{name} is a broken symlink: {link} -> {os.readlink(link)}"
       ) from exc
     raise ValueError(f"missing {name} under {certs_dir}") from exc
   if mount_root is not None:
@@ -216,9 +215,9 @@ def resolve_readable_pem(
 
 
 def validate_ssl_certs_dir(
-    certs_dir: Path,
-    *,
-    mount_root: Path | None = None,
+  certs_dir: Path,
+  *,
+  mount_root: Path | None = None,
 ) -> Path:
   """
   Require *certs_dir* to be a directory containing readable required PEMs.
@@ -253,18 +252,18 @@ def validate_ssl_certs_dir(
     listing = sorted(resolved.iterdir()) if os.access(resolved, os.R_OK) else []
     names = ", ".join(p.name for p in listing) or "(unreadable or empty)"
     raise ValueError(
-        f"ssl certs source {resolved} PEM check failed: "
-        + "; ".join(errors)
-        + f"; directory entries: {names}"
+      f"ssl certs source {resolved} PEM check failed: "
+      + "; ".join(errors)
+      + f"; directory entries: {names}"
     )
   return resolved
 
 
 def copy_pems_preserving_meta(
-    certs_dir: Path,
-    dest_dir: Path,
-    *,
-    mount_root: Path | None = None,
+  certs_dir: Path,
+  dest_dir: Path,
+  *,
+  mount_root: Path | None = None,
 ) -> Path:
   """
   Copy required PEMs into *dest_dir*, preserving source file and dir metadata.
@@ -308,10 +307,10 @@ def copy_pems_preserving_meta(
 
 
 def materialize_ssl_certs(
-    ssl_source_mount: Path,
-    dest_dir: Path,
-    *,
-    ssl_certs_rel: str | None = None,
+  ssl_source_mount: Path,
+  dest_dir: Path,
+  *,
+  ssl_certs_rel: str | None = None,
 ) -> Path:
   """
   Copy PEMs from the settings mount into the nginx certificate directory.
@@ -339,9 +338,9 @@ def materialize_ssl_certs(
   mount_root = ssl_source_mount.expanduser().resolve()
   source = resolve_source_certs_dir(mount_root, ssl_certs_rel)
   return copy_pems_preserving_meta(
-      source,
-      dest_dir,
-      mount_root=mount_root,
+    source,
+    dest_dir,
+    mount_root=mount_root,
   )
 
 
@@ -367,40 +366,36 @@ def main(argv: list[str] | None = None) -> int:
   """
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument(
-      "--ssl-source-mount",
-      type=Path,
-      default=None,
-      help="read-only TLS source mount (e.g. /mnt/ssl-source)",
+    "--ssl-source-mount",
+    type=Path,
+    default=None,
+    help="read-only TLS source mount (e.g. /mnt/ssl-source)",
   )
   parser.add_argument(
-      "--ssl-certs-rel",
-      default=None,
-      help="optional subpath under the mount (LE live/hostname)",
+    "--ssl-certs-rel",
+    default=None,
+    help="optional subpath under the mount (LE live/hostname)",
   )
   parser.add_argument(
-      "--dest-dir",
-      type=Path,
-      required=True,
-      help="destination directory for materialized PEMs",
+    "--dest-dir",
+    type=Path,
+    required=True,
+    help="destination directory for materialized PEMs",
   )
   parser.add_argument(
-      "--fixture",
-      action="store_true",
-      help="use committed tests/fixtures/proxy-ssl as --ssl-source-mount",
+    "--fixture",
+    action="store_true",
+    help="use committed tests/fixtures/proxy-ssl as --ssl-source-mount",
   )
   args = parser.parse_args(argv)
   if not args.fixture and args.ssl_source_mount is None:
     parser.error("--ssl-source-mount is required unless --fixture is set")
   try:
-    mount = (
-        fixture_ssl_certs_dir()
-        if args.fixture
-        else args.ssl_source_mount
-    )
+    mount = fixture_ssl_certs_dir() if args.fixture else args.ssl_source_mount
     dest = materialize_ssl_certs(
-        mount,
-        args.dest_dir,
-        ssl_certs_rel=args.ssl_certs_rel,
+      mount,
+      args.dest_dir,
+      ssl_certs_rel=args.ssl_certs_rel,
     )
   except ValueError as exc:
     print(f"error: {exc}", file=sys.stderr)

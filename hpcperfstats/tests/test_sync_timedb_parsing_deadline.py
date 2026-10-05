@@ -1,5 +1,7 @@
-from hpcperfstats.dbload.lib.sync_timedb_parsing import find_processing_start_index
 from hpcperfstats.dbload.lib import sync_timedb_archive_members_coord as coord
+from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+  find_processing_start_index,
+)
 
 
 def test_find_processing_start_index_ignores_ingest_wall_deadline():

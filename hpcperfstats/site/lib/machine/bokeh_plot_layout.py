@@ -2,35 +2,34 @@
 Bokeh layout tweaks for zoom / overlay-sized job plots (shared by API and
   artifact persist).
 """
+
 from __future__ import annotations
 
-from typing import Any
-
+import contextlib
 import copy
+from typing import Any
 
 
 def _apply_zoom_layout_to_bokeh_model(root_model: Any) -> None:
   """
   Best-effort layout so zoom plots stretch to overlay width with intrinsic.
-  
+
     height (scroll).
-  
+
   Args:
     root_model (Any): Root model passed to this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _apply_zoom_layout_to_bokeh_model(None)  # doctest: +SKIP
   """
   try:
     candidates = [root_model]
     if hasattr(root_model, "select"):
-      try:
+      with contextlib.suppress(Exception):
         candidates.extend(list(root_model.select({})))
-      except Exception:
-        pass
     for model in candidates:
       if hasattr(model, "sizing_mode"):
         model.sizing_mode = "stretch_width"
@@ -49,13 +48,13 @@ def _apply_zoom_layout_to_bokeh_model(root_model: Any) -> None:
 def _apply_zoom_layout_to_json_item(plot_item: Any) -> Any:
   """
   Return a zoom-sized json_item clone from cached plot data.
-  
+
   Args:
     plot_item (Any): Plot item passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _apply_zoom_layout_to_json_item(None)  # doctest: +SKIP
   """
@@ -67,14 +66,14 @@ def _apply_zoom_layout_to_json_item(plot_item: Any) -> Any:
     return plot_item
 
   layout_model_names = {
-      "Figure",
-      "Plot",
-      "GridPlot",
-      "Row",
-      "Column",
-      "ToolbarBox",
-      "Tabs",
-      "TabPanel",
+    "Figure",
+    "Plot",
+    "GridPlot",
+    "Row",
+    "Column",
+    "ToolbarBox",
+    "Tabs",
+    "TabPanel",
   }
 
   def _apply_attrs(
@@ -84,15 +83,15 @@ def _apply_zoom_layout_to_json_item(plot_item: Any) -> Any:
   ) -> None:
     """
     Internal helper to apply the attrs.
-    
+
     Args:
       attrs (Any): Attrs passed to this helper.
       apply_layout_sizing (bool): Boolean flag for apply layout sizing.
       allow_dimension_reset (bool): Boolean flag for allow dimension reset.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> _apply_attrs(None, True, True)  # doctest: +SKIP
     """
@@ -116,13 +115,13 @@ def _apply_zoom_layout_to_json_item(plot_item: Any) -> Any:
   def _walk(node: Any) -> None:
     """
     Internal helper to handle walk.
-    
+
     Args:
       node (Any): AST or tree node to inspect.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> _walk(None)  # doctest: +SKIP
     """
@@ -132,9 +131,9 @@ def _apply_zoom_layout_to_json_item(plot_item: Any) -> Any:
         model_name = node.get("name")
         is_layout_model = model_name in layout_model_names
         _apply_attrs(
-            attrs,
-            apply_layout_sizing=is_layout_model,
-            allow_dimension_reset=is_layout_model,
+          attrs,
+          apply_layout_sizing=is_layout_model,
+          allow_dimension_reset=is_layout_model,
         )
       for value in node.values():
         _walk(value)

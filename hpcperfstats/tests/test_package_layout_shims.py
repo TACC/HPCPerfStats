@@ -1,4 +1,5 @@
 """Regression: library modules resolve under colocated lib/ trees."""
+
 from __future__ import annotations
 
 import importlib
@@ -16,7 +17,7 @@ def test_dbload_lib_sync_timedb_parsing_importable():
 
 def test_dbload_lib_sync_timedb_append_day_lists_importable():
   mod = importlib.import_module(
-      "hpcperfstats.dbload.lib.sync_timedb_append_day_lists",
+    "hpcperfstats.dbload.lib.sync_timedb_append_day_lists",
   )
   assert hasattr(mod, "AppendDayClaimLists")
 

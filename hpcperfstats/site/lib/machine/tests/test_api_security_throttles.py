@@ -9,17 +9,17 @@ from rest_framework.test import APIRequestFactory
 
 
 @override_settings(
-    CACHES={
-        "default": {
-            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-            "LOCATION": "security-throttle-tests-ingest",
-        }
+  CACHES={
+    "default": {
+      "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+      "LOCATION": "security-throttle-tests-ingest",
+    }
+  },
+  REST_FRAMEWORK={
+    "DEFAULT_THROTTLE_RATES": {
+      "staff_ingest": "1/min",
     },
-    REST_FRAMEWORK={
-        "DEFAULT_THROTTLE_RATES": {
-            "staff_ingest": "1/min",
-        },
-    },
+  },
 )
 @pytest.mark.django_db
 def test_sacct_ingest_throttles_repeated_staff_posts():
@@ -31,14 +31,14 @@ def test_sacct_ingest_throttles_repeated_staff_posts():
   cache.clear()
   factory = APIRequestFactory()
   wsgi1 = factory.post(
-      "/api/sacct/ingest/?date=2024-01-02",
-      data=b"x",
-      content_type="text/plain",
+    "/api/sacct/ingest/?date=2024-01-02",
+    data=b"x",
+    content_type="text/plain",
   )
   wsgi2 = factory.post(
-      "/api/sacct/ingest/?date=2024-01-02",
-      data=b"x",
-      content_type="text/plain",
+    "/api/sacct/ingest/?date=2024-01-02",
+    data=b"x",
+    content_type="text/plain",
   )
   wsgi1.session = {"username": "admin", "is_staff": True}
   wsgi2.session = {"username": "admin", "is_staff": True}
@@ -57,17 +57,17 @@ def test_sacct_ingest_throttles_repeated_staff_posts():
 
 
 @override_settings(
-    CACHES={
-        "default": {
-            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-            "LOCATION": "security-throttle-tests-job-list",
-        }
+  CACHES={
+    "default": {
+      "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+      "LOCATION": "security-throttle-tests-job-list",
+    }
+  },
+  REST_FRAMEWORK={
+    "DEFAULT_THROTTLE_RATES": {
+      "expensive_read": "1/min",
     },
-    REST_FRAMEWORK={
-        "DEFAULT_THROTTLE_RATES": {
-            "expensive_read": "1/min",
-        },
-    },
+  },
 )
 @pytest.mark.django_db(databases=[])
 def test_job_list_throttles_repeated_expensive_reads():
@@ -86,12 +86,18 @@ def test_job_list_throttles_repeated_expensive_reads():
     wsgi.session = {"username": "reader", "is_staff": False}
     return wsgi
 
-  with patch.object(api, "_require_auth", return_value=None), patch.object(
+  with (
+    patch.object(api, "_require_auth", return_value=None),
+    patch.object(
       api,
       "_build_job_list_queryset_from_request",
       return_value=(mock_qs, {}, None, "-end_time"),
-  ), patch.object(
-      api, "build_job_list_qname_and_filter_summary", return_value=(None, []),
+    ),
+    patch.object(
+      api,
+      "build_job_list_qname_and_filter_summary",
+      return_value=(None, []),
+    ),
   ):
     first = api.job_list(_job_list_request())
     second = api.job_list(_job_list_request())

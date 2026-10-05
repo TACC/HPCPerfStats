@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[4]
 METRICS_SOURCE = REPO_ROOT / "hpcperfstats/analysis/metrics/lib/metrics.py"
 SCHEDULER_SOURCE = REPO_ROOT / "hpcperfstats/analysis/metrics/update_metrics.py"
@@ -46,9 +45,9 @@ def test_update_metrics_production_path_has_no_process_pool_contract() -> None:
   assert failures == []
 
   scheduler = sources[SCHEDULER_SOURCE]
-  prewarm_worker = scheduler.split(
-      "def _prewarm_jid_on_metrics_pool", 1
-  )[1].split("class _CompletionReporter", 1)[0]
+  prewarm_worker = scheduler.split("def _prewarm_jid_on_metrics_pool", 1)[
+    1
+  ].split("class _CompletionReporter", 1)[0]
   assert "connections.close_all()" not in prewarm_worker
 
 
@@ -58,9 +57,11 @@ def test_update_metrics_configures_blas_before_numpy_imports() -> None:
   src = SCHEDULER_SOURCE.read_text(encoding="utf-8")
   blas_pos = src.find("configure_blas_thread_env()")
   django_pos = src.find(
-      "from hpcperfstats.dbload.lib.django_bootstrap import ensure_django"
+    "from hpcperfstats.dbload.lib.django_bootstrap import ensure_django"
   )
-  metrics_pos = src.find("from hpcperfstats.analysis.metrics.lib import metrics")
+  metrics_pos = src.find(
+    "from hpcperfstats.analysis.metrics.lib import metrics"
+  )
   assert blas_pos != -1
   assert django_pos != -1
   assert metrics_pos != -1
@@ -75,11 +76,13 @@ def test_removed_process_only_metrics_options_are_absent_from_config() -> None:
     path: path.read_text(encoding="utf-8")
     for path in (CONF_SOURCE, INI_EXAMPLE_SOURCE)
   }
-  for token in ("metrics_pool_maxtasksperchild", "metrics_run_per_job_timeout_s"):
+  for token in (
+    "metrics_pool_maxtasksperchild",
+    "metrics_run_per_job_timeout_s",
+  ):
     failures = [
       str(path.relative_to(REPO_ROOT))
       for path, source in sources.items()
       if token in source
     ]
     assert failures == [], f"{token} remains in {failures}"
-

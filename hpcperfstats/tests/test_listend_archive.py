@@ -11,7 +11,7 @@ def test_append_monitor_payload_to_archive_plain_sample(tmp_path, monkeypatch):
   monkeypatch.setattr(ld.cfg, "get_archive_dir_path", lambda: str(tmp_path))
   host_fqdn = "n001.demo.cluster.local"
   jid = "12345"
-  body = "1700000000.0 %s %s\ncpu 0 1 2 3 4 5 6 7\n" % (jid, host_fqdn)
+  body = f"1700000000.0 {jid} {host_fqdn}\ncpu 0 1 2 3 4 5 6 7\n"
   result = ld.append_monitor_payload_to_archive(body)
   assert result.host == host_fqdn
   assert result.path.endswith("/current")
@@ -29,18 +29,20 @@ def test_append_monitor_payload_to_archive_rejects_empty():
     ld.append_monitor_payload_to_archive("")
 
 
-def test_append_monitor_payload_to_archive_preserves_tier_markers(tmp_path, monkeypatch):
+def test_append_monitor_payload_to_archive_preserves_tier_markers(
+  tmp_path, monkeypatch
+):
   """Sparse @fast/@full rows must pass through unchanged (listend does not parse tiers)."""
   monkeypatch.setattr(ld.cfg, "get_archive_dir_path", lambda: str(tmp_path))
   host_fqdn = "n001.demo.cluster.local"
   jid = "12345"
   body = (
-      "1700000000.0 %s %s\n"
-      "!host_tt a,E b,E,R=S c,E d,E,R=S\n"
-      "host_tt dev0 @fast 100 300\n"
-      "1700000600.0 %s %s\n"
-      "host_tt dev0 @full 200 250 400 450\n"
-  ) % (jid, host_fqdn, jid, host_fqdn)
+    f"1700000000.0 {jid} {host_fqdn}\n"
+    "!host_tt a,E b,E,R=S c,E d,E,R=S\n"
+    "host_tt dev0 @fast 100 300\n"
+    f"1700000600.0 {jid} {host_fqdn}\n"
+    "host_tt dev0 @full 200 250 400 450\n"
+  )
   result = ld.append_monitor_payload_to_archive(body)
   assert result.host == host_fqdn
   current = tmp_path / host_fqdn / "current"
@@ -50,8 +52,8 @@ def test_append_monitor_payload_to_archive_preserves_tier_markers(tmp_path, monk
 def test_append_second_sample_offset_after_first(tmp_path, monkeypatch):
   monkeypatch.setattr(ld.cfg, "get_archive_dir_path", lambda: str(tmp_path))
   host = "n002.demo.cluster.local"
-  first = "1700000000.0 1 %s\ncpu 0\n" % host
-  second = "1700000001.0 1 %s\ncpu 1\n" % host
+  first = f"1700000000.0 1 {host}\ncpu 0\n"
+  second = f"1700000001.0 1 {host}\ncpu 1\n"
   r1 = ld.append_monitor_payload_to_archive(first)
   r2 = ld.append_monitor_payload_to_archive(second)
   assert r1.offset == 0
@@ -66,7 +68,8 @@ def _release_sticky_archive_writer():
 
 
 def test_append_writes_raw_amqp_bytes_without_utf8_roundtrip(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """Archive ``current`` must be the AMQP bytes, not decode/encode."""
   monkeypatch.setattr(ld.cfg, "get_archive_dir_path", lambda: str(tmp_path))
@@ -82,7 +85,8 @@ def test_append_writes_raw_amqp_bytes_without_utf8_roundtrip(
 
 
 def test_n_appends_do_not_unlink_flock_sidecar_each_sample(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """Sticky flock keeps ``current.fnctl.lock`` across samples (Approach B)."""
   monkeypatch.setattr(ld.cfg, "get_archive_dir_path", lambda: str(tmp_path))
@@ -106,7 +110,8 @@ def test_n_appends_do_not_unlink_flock_sidecar_each_sample(
 
 
 def test_current_hardlink_cache_skips_scandir_on_same_inode(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """Cached digit inode must skip host_dir scandir on the next $ check."""
   host_dir = tmp_path / "h.example.edu"
@@ -115,14 +120,22 @@ def test_current_hardlink_cache_skips_scandir_on_same_inode(
   current.write_text("x")
   epoch = host_dir / "1700000000"
   os.link(current, epoch)
-  assert ld._current_is_hardlinked_to_digit_epoch(
-      str(host_dir), str(current),
-  ) is True
+  assert (
+    ld._current_is_hardlinked_to_digit_epoch(
+      str(host_dir),
+      str(current),
+    )
+    is True
+  )
 
   def boom(*_a, **_k):
     raise AssertionError("scandir should be skipped on cache hit")
 
   monkeypatch.setattr(os, "scandir", boom)
-  assert ld._current_is_hardlinked_to_digit_epoch(
-      str(host_dir), str(current),
-  ) is True
+  assert (
+    ld._current_is_hardlinked_to_digit_epoch(
+      str(host_dir),
+      str(current),
+    )
+    is True
+  )

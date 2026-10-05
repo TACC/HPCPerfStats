@@ -14,22 +14,20 @@ from pathlib import Path
 
 from parse_hpcperfstats_proxy_hosts import load_allowed_server_names
 
-GENERATED_HEADER = (
-    "# Generated at proxy image build from [DEFAULT] server= in hpcperfstats.ini.\n"
-)
+GENERATED_HEADER = "# Generated at proxy image build from [DEFAULT] server= in hpcperfstats.ini.\n"
 
 
 def write_allowed_hosts_include(*, ini_path: Path, out_path: Path) -> None:
   """
   Write the allowed hosts include.
-  
+
   Args:
     ini_path (Path): String for ini path.
     out_path (Path): String for out path.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> write_allowed_hosts_include("x", "x")  # doctest: +SKIP
   """
@@ -42,13 +40,13 @@ def write_allowed_hosts_include(*, ini_path: Path, out_path: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
   """
   Run this module's command-line entrypoint.
-  
+
   Args:
     argv (list[str] | None): One of ``list[str]``, ``None``.
-  
+
   Returns:
     int: int produced by this call.
-  
+
   Examples:
     >>> main(None)  # doctest: +SKIP
   """

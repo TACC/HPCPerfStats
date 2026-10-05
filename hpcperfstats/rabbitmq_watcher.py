@@ -16,13 +16,12 @@ Attributes:
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
-
 import base64
 import json
 import os
 import time
 import urllib.request
+from typing import Any, NamedTuple
 
 from hpcperfstats.dbload.lib import conf_parser as cfg
 from hpcperfstats.dbload.lib.print_utils import log_print
@@ -32,7 +31,7 @@ WATCHER_PREFIX = "[rabbitmq-watcher]"
 POLL_INTERVAL_S = 300
 ERROR_FLOOR_GIB = 40
 ERROR_STEP_GIB = 10
-GIB = 1024 ** 3
+GIB = 1024**3
 
 
 class NodeMemorySnapshot(NamedTuple):
@@ -105,17 +104,17 @@ def format_watcher_line(
 
   Examples:
     >>> format_watcher_line(
-    ...     mem_used_bytes=1000,
-    ...     mem_used_gib=0.0,
-    ...     connections=1,
-    ...     threshold_gib=None,
+    ...   mem_used_bytes=1000,
+    ...   mem_used_gib=0.0,
+    ...   connections=1,
+    ...   threshold_gib=None,
     ... ).startswith("[rabbitmq-watcher]")
     True
     >>> "ERROR" in format_watcher_line(
-    ...     mem_used_bytes=50 * (1024 ** 3),
-    ...     mem_used_gib=50.0,
-    ...     connections=None,
-    ...     threshold_gib=50,
+    ...   mem_used_bytes=50 * (1024**3),
+    ...   mem_used_gib=50.0,
+    ...   connections=None,
+    ...   threshold_gib=50,
     ... )
     True
   """
@@ -124,9 +123,9 @@ def format_watcher_line(
   if threshold_gib is not None:
     parts.append("ERROR")
     parts.append("threshold_gib=%d" % int(threshold_gib))
-  parts.append("mem_used_gib=%.2f" % float(mem_used_gib))
+  parts.append(f"mem_used_gib={float(mem_used_gib):.2f}")
   parts.append("mem_used_bytes=%d" % int(mem_used_bytes))
-  parts.append("connections=%s" % conn_s)
+  parts.append(f"connections={conn_s}")
   return " ".join(parts)
 
 
@@ -142,7 +141,7 @@ def _management_base_url() -> str:
     True
   """
   host = cfg.get_rmq_server()
-  default = "http://%s:15672" % host
+  default = f"http://{host}:15672"
   return str(os.environ.get("RABBITMQ_MANAGEMENT_URL", default)).rstrip("/")
 
 
@@ -190,16 +189,14 @@ def _http_get_json(
 
   Examples:
     >>> _http_get_json(  # doctest: +SKIP
-    ...     "http://rabbitmq:15672/api/nodes",
-    ...     user="guest",
-    ...     password="guest",
-    ...     timeout_s=2.0,
+    ...   "http://rabbitmq:15672/api/nodes",
+    ...   user="guest",
+    ...   password="guest",
+    ...   timeout_s=2.0,
     ... )
   """
-  token = base64.b64encode(("%s:%s" % (user, password)).encode()).decode()
-  req = urllib.request.Request(
-      url, headers={"Authorization": "Basic %s" % token}
-  )
+  token = base64.b64encode((f"{user}:{password}").encode()).decode()
+  req = urllib.request.Request(url, headers={"Authorization": f"Basic {token}"})
   with urllib.request.urlopen(req, timeout=timeout_s) as resp:
     return json.loads(resp.read().decode())
 
@@ -232,23 +229,25 @@ def fetch_node_memory_snapshot(
 
   Examples:
     >>> fetch_node_memory_snapshot(  # doctest: +SKIP
-    ...     base_url="http://rabbitmq:15672",
-    ...     user="guest",
-    ...     password="guest",
+    ...   base_url="http://rabbitmq:15672",
+    ...   user="guest",
+    ...   password="guest",
     ... )
   """
   root = str(base_url).rstrip("/")
   nodes = _http_get_json(
-      "%s/api/nodes" % root,
-      user=user,
-      password=password,
-      timeout_s=timeout_s,
+    f"{root}/api/nodes",
+    user=user,
+    password=password,
+    timeout_s=timeout_s,
   )
   if not isinstance(nodes, list) or not nodes:
     raise LookupError("RabbitMQ /api/nodes returned no nodes")
   running = [n for n in nodes if isinstance(n, dict) and n.get("running")]
-  node = running[0] if running else (
-      nodes[0] if isinstance(nodes[0], dict) else None
+  node = (
+    running[0]
+    if running
+    else (nodes[0] if isinstance(nodes[0], dict) else None)
   )
   if not isinstance(node, dict) or node.get("mem_used") is None:
     raise LookupError("RabbitMQ /api/nodes missing mem_used")
@@ -258,10 +257,10 @@ def fetch_node_memory_snapshot(
   connections: int | None = None
   try:
     overview = _http_get_json(
-        "%s/api/overview" % root,
-        user=user,
-        password=password,
-        timeout_s=timeout_s,
+      f"{root}/api/overview",
+      user=user,
+      password=password,
+      timeout_s=timeout_s,
     )
     if isinstance(overview, dict):
       totals = overview.get("object_totals") or {}
@@ -271,9 +270,9 @@ def fetch_node_memory_snapshot(
     connections = None
 
   return NodeMemorySnapshot(
-      mem_used_bytes=mem_used,
-      connections=connections,
-      node_name=node_name,
+    mem_used_bytes=mem_used,
+    connections=connections,
+    node_name=node_name,
   )
 
 
@@ -296,21 +295,21 @@ def poll_once(*, log_fn: Any = log_print) -> None:
   try:
     user, password = _management_auth()
     snap = fetch_node_memory_snapshot(
-        base_url=_management_base_url(),
-        user=user,
-        password=password,
+      base_url=_management_base_url(),
+      user=user,
+      password=password,
     )
   except Exception as exc:
-    log_fn("%s fetch_failed reason=%s" % (WATCHER_PREFIX, exc), flush=True)
+    log_fn(f"{WATCHER_PREFIX} fetch_failed reason={exc}", flush=True)
     return
 
   mem_gib = float(snap.mem_used_bytes) / float(GIB)
   band = error_threshold_band(mem_gib)
   line = format_watcher_line(
-      mem_used_bytes=snap.mem_used_bytes,
-      mem_used_gib=mem_gib,
-      connections=snap.connections,
-      threshold_gib=band,
+    mem_used_bytes=snap.mem_used_bytes,
+    mem_used_gib=mem_gib,
+    connections=snap.connections,
+    threshold_gib=band,
   )
   log_fn(line, flush=True)
 

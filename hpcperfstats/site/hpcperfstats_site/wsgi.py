@@ -5,30 +5,33 @@ DJANGO_SETTINGS_MODULE, and exposes application.
 Attributes:
   application: Attribute.
 """
+
 from __future__ import annotations
 
 import os
 import sys
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../'))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../"))
 sys.path.append(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../'))
+  os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../")
+)
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/")
-os.environ.setdefault("DJANGO_SETTINGS_MODULE",
-                      "hpcperfstats.site.hpcperfstats_site.settings")
+os.environ.setdefault(
+  "DJANGO_SETTINGS_MODULE", "hpcperfstats.site.hpcperfstats_site.settings"
+)
 from django.conf import settings
 
 # Limit BLAS threads per web worker to avoid resource exhaustion.
 # Value comes from Django settings while still allowing env override.
 # Image numpy is MKL-linked; OPENBLAS remains for host/dev OpenBLAS wheels.
 os.environ.setdefault(
-    "OPENBLAS_NUM_THREADS",
-    str(getattr(settings, "OPENBLAS_NUM_THREADS", 4)),
+  "OPENBLAS_NUM_THREADS",
+  str(getattr(settings, "OPENBLAS_NUM_THREADS", 4)),
 )
 os.environ.setdefault(
-    "MKL_NUM_THREADS",
-    str(getattr(settings, "OPENBLAS_NUM_THREADS", 4)),
+  "MKL_NUM_THREADS",
+  str(getattr(settings, "OPENBLAS_NUM_THREADS", 4)),
 )
 
 from django.core.wsgi import get_wsgi_application

@@ -8,26 +8,26 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 
 from hpcperfstats.dbload import sync_timedb as st
-from hpcperfstats.dbload.lib import sync_timedb_append_day_lists as day_lists
 from hpcperfstats.dbload.lib import (
+  sync_timedb_append_day_lists as day_lists,
   sync_timedb_ingest_progress as ingest_progress,
+  sync_timedb_ingest_readiness as readiness,
+  sync_timedb_ingest_sigalrm as ingest_sigalrm,
+  sync_timedb_ingest_timeout as ingest_timeout,
+  sync_timedb_jid_scope as jid_scope,
+  sync_timedb_job_reconstruct as reconstruct,
+  sync_timedb_manifest_contract as manifest,
+  sync_timedb_parsing as parsing,
+  sync_timedb_parsing_legacy as legacy,
+  sync_timedb_persistence as persist,
+  sync_timedb_progress_io as progress_io,
 )
-from hpcperfstats.dbload.lib import sync_timedb_ingest_readiness as readiness
-from hpcperfstats.dbload.lib import sync_timedb_ingest_sigalrm as ingest_sigalrm
-from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as ingest_timeout
-from hpcperfstats.dbload.lib import sync_timedb_jid_scope as jid_scope
-from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as reconstruct
-from hpcperfstats.dbload.lib import sync_timedb_manifest_contract as manifest
-from hpcperfstats.dbload.lib import sync_timedb_parsing as parsing
-from hpcperfstats.dbload.lib import sync_timedb_parsing_legacy as legacy
-from hpcperfstats.dbload.lib import sync_timedb_persistence as persist
-from hpcperfstats.dbload.lib import sync_timedb_progress_io as progress_io
 
 # --- parsing: empty / malformed / numerical bounds ---
 
@@ -46,9 +46,7 @@ def test_digit_line_identity_empty_and_malformed():
 def test_digit_line_unix_second_malformed_and_boundary():
   assert parsing._digit_line_unix_second(None) is None
   assert parsing._digit_line_unix_second("1abc job host") is None
-  assert (
-    parsing._digit_line_unix_second("1709123456.9 job host") == 1709123456
-  )
+  assert parsing._digit_line_unix_second("1709123456.9 job host") == 1709123456
   assert parsing._digit_line_unix_second("0 job host") == 0
   assert parsing._digit_line_unix_second("1e9 job host") == 1_000_000_000
 
@@ -243,10 +241,7 @@ def test_load_stats_file_lines_empty_contents_list():
 def test_normalize_job_host_list_empty_malformed_nested():
   assert jid_scope.normalize_job_host_list(None) == []
   assert (
-    jid_scope.normalize_job_host_list(
-      datetime(2026, 1, 1, tzinfo=timezone.utc)
-    )
-    == []
+    jid_scope.normalize_job_host_list(datetime(2026, 1, 1, tzinfo=UTC)) == []
   )
   assert jid_scope.normalize_job_host_list("") == []
   assert jid_scope.normalize_job_host_list(b"a, b  c") == ["a", "b", "c"]
@@ -296,9 +291,9 @@ def test_padded_job_window_none_start_and_end_before_start():
   with pytest.raises(jid_scope.JobIngestScopeError):
     jid_scope.padded_job_window(None, None)
   start = datetime(2026, 7, 1, 12, 0, 0)
-  end = datetime(2026, 7, 1, 10, 0, 0, tzinfo=timezone.utc)
+  end = datetime(2026, 7, 1, 10, 0, 0, tzinfo=UTC)
   w0, w1 = jid_scope.padded_job_window(start, end)
-  assert w0.tzinfo is timezone.utc
+  assert w0.tzinfo is UTC
   assert (w1 - w0) == timedelta(hours=2)
 
 
@@ -330,9 +325,7 @@ def test_day_phase_at_least_invalid_and_boundary():
   phases = {"/t.tar": "sealed"}
   assert manifest.day_phase_at_least(phases, "/t.tar", "sealed") is True
   assert manifest.day_phase_at_least(phases, "/t.tar", "raw_removed") is False
-  assert (
-    manifest.day_phase_at_least(phases, "/missing.tar", "sealed") is False
-  )
+  assert manifest.day_phase_at_least(phases, "/missing.tar", "sealed") is False
   assert manifest.day_phase_at_least(phases, "/t.tar", "not-a-phase") is False
   phases2 = {"/t.tar": "tar_dropped"}
   assert manifest.day_phase_at_least(phases2, "/t.tar", "sealed") is True
@@ -414,12 +407,9 @@ def test_sealed_member_count_hint_garbage_and_missing(tmp_path):
 def test_estimate_sealed_budget_zero_floor(tmp_path):
   del tmp_path
   assert ingest_timeout.estimate_sealed_archive_ingest_budget_s("/x") == 0.0
+  assert ingest_timeout.max_sealed_archive_ingest_budget_for_paths(None) == 0.0
   assert (
-    ingest_timeout.max_sealed_archive_ingest_budget_for_paths(None) == 0.0
-  )
-  assert (
-    ingest_timeout.max_sealed_archive_ingest_budget_for_paths(["", None])
-    == 0.0
+    ingest_timeout.max_sealed_archive_ingest_budget_for_paths(["", None]) == 0.0
   )
 
 
@@ -432,7 +422,8 @@ def test_is_giant_ingest_budget_current_wall_deleted():
 
 def test_default_giant_supplement_trigger_budget_s():
   assert not hasattr(
-    ingest_timeout, "default_giant_supplement_trigger_budget_s",
+    ingest_timeout,
+    "default_giant_supplement_trigger_budget_s",
   )
 
 
@@ -445,27 +436,17 @@ def test_reconstruct_laws_and_select_ingest_band_boundary():
     reconstruct.checkpoint_sidecar_is_reconstruct_source_of_truth() is False
   )
   today = date(2026, 8, 24)
+  assert reconstruct.select_ingest_band(date(2026, 8, 24), today=today) == "hot"
   assert (
-    reconstruct.select_ingest_band(date(2026, 8, 24), today=today) == "hot"
-  )
-  assert (
-    reconstruct.select_ingest_band(
-      date(2026, 8, 17), today=today, hot_days=8
-    )
+    reconstruct.select_ingest_band(date(2026, 8, 17), today=today, hot_days=8)
     == "hot"
   )
   assert (
-    reconstruct.select_ingest_band(
-      date(2026, 8, 16), today=today, hot_days=8
-    )
+    reconstruct.select_ingest_band(date(2026, 8, 16), today=today, hot_days=8)
     == "catchup"
   )
-  assert (
-    reconstruct.select_ingest_band(date(2026, 8, 25), today=today) == "hot"
-  )
-  assert (
-    reconstruct.select_ingest_band(today, today=today, hot_days=0) == "hot"
-  )
+  assert reconstruct.select_ingest_band(date(2026, 8, 25), today=today) == "hot"
+  assert reconstruct.select_ingest_band(today, today=today, hot_days=0) == "hot"
 
 
 def test_ingest_is_complete_empty_and_live_on_ignores_head_tail():
@@ -722,8 +703,7 @@ def test_stats_file_head_ingested_missing_path_false(monkeypatch, tmp_path):
     lambda: _NullCtx(),
   )
   assert (
-    readiness.stats_file_head_ingested_in_db(str(tmp_path / "gone"))
-    is False
+    readiness.stats_file_head_ingested_in_db(str(tmp_path / "gone")) is False
   )
 
 

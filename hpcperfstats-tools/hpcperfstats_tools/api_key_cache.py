@@ -12,27 +12,26 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
 
 API_KEY_CACHE = Path.home() / ".hpcperfstats-api"
 API_KEY_CACHE_DISPLAY = "~/.hpcperfstats-api"
 
 
-def load_cached_api_key(api_url: str) -> Optional[str]:
+def load_cached_api_key(api_url: str) -> str | None:
   """
   Load API key for api_url from ~/.hpcperfstats-api if present.
-  
+
   Supported formats:
   - Single line file with just the key (applies to all URLs)
   - One mapping per line: '<base_url> <key>'
   Lines starting with '#' are ignored.
-  
+
   Args:
     api_url (str): String for api url.
-  
+
   Returns:
     Optional[str]: Optional[str] — the result, or None when unavailable.
-  
+
   Examples:
     >>> load_cached_api_key("x")  # doctest: +SKIP
   """
@@ -64,14 +63,14 @@ def load_cached_api_key(api_url: str) -> Optional[str]:
 def save_cached_api_key(api_url: str, api_key: str) -> None:
   """
   Persist API key for api_url into ~/.hpcperfstats-api.
-  
+
   Args:
     api_url (str): String for api url.
     api_key (str): String for api key.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> save_cached_api_key("x", "x")  # doctest: +SKIP
   """
@@ -109,16 +108,16 @@ def save_cached_api_key(api_url: str, api_key: str) -> None:
 def api_key_help_url(api_url: str) -> str:
   """
   Best-effort URL of the browsable page where the user can create an API key.
-  
+
   Prefer env override HPCPERF_API_KEY_URL; otherwise strip /api/ and point to
     /api-key/.
-  
+
   Args:
     api_url (str): String for api url.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> api_key_help_url("x")  # doctest: +SKIP
   """

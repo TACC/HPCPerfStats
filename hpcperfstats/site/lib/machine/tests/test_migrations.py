@@ -1,4 +1,5 @@
 """Regression tests for migration SQL/contracts that are easy to break silently."""
+
 import importlib
 
 import pytest
@@ -9,8 +10,12 @@ pytestmark = pytest.mark.machine_unit_mock
 
 
 def test_0002_statsro_create_role_is_duplicate_safe():
-  mod = importlib.import_module("hpcperfstats.site.lib.machine.migrations.0002_add_read_only_user")
-  run_sql_ops = [op for op in mod.Migration.operations if isinstance(op, migrations.RunSQL)]
+  mod = importlib.import_module(
+    "hpcperfstats.site.lib.machine.migrations.0002_add_read_only_user"
+  )
+  run_sql_ops = [
+    op for op in mod.Migration.operations if isinstance(op, migrations.RunSQL)
+  ]
   assert run_sql_ops
   create_role_sql = run_sql_ops[0].sql
   assert "CREATE ROLE statsro LOGIN PASSWORD 'statsro'" in create_role_sql
@@ -18,8 +23,12 @@ def test_0002_statsro_create_role_is_duplicate_safe():
 
 
 def test_0002_statsro_connect_grant_uses_runtime_database_identifier_quoting():
-  mod = importlib.import_module("hpcperfstats.site.lib.machine.migrations.0002_add_read_only_user")
-  run_sql_ops = [op for op in mod.Migration.operations if isinstance(op, migrations.RunSQL)]
+  mod = importlib.import_module(
+    "hpcperfstats.site.lib.machine.migrations.0002_add_read_only_user"
+  )
+  run_sql_ops = [
+    op for op in mod.Migration.operations if isinstance(op, migrations.RunSQL)
+  ]
   assert len(run_sql_ops) >= 2
   connect_sql = run_sql_ops[1].sql
   assert "current_database()" in connect_sql
@@ -28,7 +37,7 @@ def test_0002_statsro_connect_grant_uses_runtime_database_identifier_quoting():
 
 def test_0018_uses_runpython_with_noop_reverse():
   mod = importlib.import_module(
-      "hpcperfstats.site.lib.machine.migrations.0018_statsro_connect_current_database"
+    "hpcperfstats.site.lib.machine.migrations.0018_statsro_connect_current_database"
   )
   assert mod.Migration.dependencies == [("machine", "0017_job_plot_artifact")]
   assert len(mod.Migration.operations) == 1
@@ -39,7 +48,7 @@ def test_0018_uses_runpython_with_noop_reverse():
 
 def test_0012_timescaledb_compression_policy_sql_and_reverse_are_defined():
   mod = importlib.import_module(
-      "hpcperfstats.site.lib.machine.migrations.0012_update_host_data_compression_policy"
+    "hpcperfstats.site.lib.machine.migrations.0012_update_host_data_compression_policy"
   )
   assert len(mod.Migration.operations) == 1
   op = mod.Migration.operations[0]
@@ -51,7 +60,7 @@ def test_0012_timescaledb_compression_policy_sql_and_reverse_are_defined():
 
 def test_0023_host_data_compression_policy_reduced_to_8_days():
   mod = importlib.import_module(
-      "hpcperfstats.site.lib.machine.migrations.0023_reduce_host_data_compression_to_8_days"
+    "hpcperfstats.site.lib.machine.migrations.0023_reduce_host_data_compression_to_8_days"
   )
   assert mod.Migration.dependencies == [("machine", "0022_job_detail_artifact")]
   assert len(mod.Migration.operations) == 1
@@ -64,14 +73,18 @@ def test_0023_host_data_compression_policy_reduced_to_8_days():
 
 def test_0001_timescaledb_sql_uses_idempotent_forms():
   """0001 must CREATE EXTENSION before create_hypertable (PG18 fresh-DB bake failure)."""
-  mod = importlib.import_module("hpcperfstats.site.lib.machine.migrations.0001_initial")
-  run_sql_ops = [op for op in mod.Migration.operations if isinstance(op, migrations.RunSQL)]
+  mod = importlib.import_module(
+    "hpcperfstats.site.lib.machine.migrations.0001_initial"
+  )
+  run_sql_ops = [
+    op for op in mod.Migration.operations if isinstance(op, migrations.RunSQL)
+  ]
   sql_text = "\n".join(op.sql for op in run_sql_ops if isinstance(op.sql, str))
 
   assert "CREATE EXTENSION IF NOT EXISTS timescaledb" in sql_text
-  assert sql_text.index("CREATE EXTENSION IF NOT EXISTS timescaledb") < sql_text.index(
-      "create_hypertable('host_data'"
-  )
+  assert sql_text.index(
+    "CREATE EXTENSION IF NOT EXISTS timescaledb"
+  ) < sql_text.index("create_hypertable('host_data'")
   assert "DROP CONSTRAINT IF EXISTS host_data_pkey" in sql_text
   assert "create_hypertable('host_data'" in sql_text
   assert "if_not_exists => TRUE" in sql_text
@@ -80,9 +93,11 @@ def test_0001_timescaledb_sql_uses_idempotent_forms():
 
 def test_0020_restores_host_data_time_primary_key_contract():
   mod = importlib.import_module(
-      "hpcperfstats.site.lib.machine.migrations.0020_host_data_primary_key_contract"
+    "hpcperfstats.site.lib.machine.migrations.0020_host_data_primary_key_contract"
   )
-  assert mod.Migration.dependencies == [("machine", "0019_job_data_host_data_schema_json")]
+  assert mod.Migration.dependencies == [
+    ("machine", "0019_job_data_host_data_schema_json")
+  ]
   assert len(mod.Migration.operations) == 1
   op = mod.Migration.operations[0]
   assert isinstance(op, migrations.RunSQL)
@@ -92,9 +107,11 @@ def test_0020_restores_host_data_time_primary_key_contract():
 
 def _0030_ops():
   mod = importlib.import_module(
-      "hpcperfstats.site.lib.machine.migrations.0030_host_data_unique_include_dev"
+    "hpcperfstats.site.lib.machine.migrations.0030_host_data_unique_include_dev"
   )
-  assert mod.Migration.dependencies == [("machine", "0029_proc_data_host_proc_fields")]
+  assert mod.Migration.dependencies == [
+    ("machine", "0029_proc_data_host_proc_fields")
+  ]
   assert mod.Migration.atomic is False
   assert len(mod.Migration.operations) == 1
   sep = mod.Migration.operations[0]
@@ -117,9 +134,9 @@ def test_0030_has_no_unbounded_host_data_update():
 def test_0030_removes_compression_policy():
   sep = _0030_ops()
   sql_blobs = [
-      op.sql
-      for op in sep.database_operations
-      if isinstance(op, migrations.RunSQL) and isinstance(op.sql, str)
+    op.sql
+    for op in sep.database_operations
+    if isinstance(op, migrations.RunSQL) and isinstance(op.sql, str)
   ]
   joined = "\n".join(sql_blobs)
   assert "remove_compression_policy('host_data'" in joined
@@ -130,9 +147,9 @@ def test_0030_does_not_add_unique_dev_constraint():
   """Phase 1 must not ADD CONSTRAINT / decompress — that is Phase 2 after decompress."""
   sep = _0030_ops()
   sql_blobs = [
-      op.sql
-      for op in sep.database_operations
-      if isinstance(op, migrations.RunSQL) and isinstance(op.sql, str)
+    op.sql
+    for op in sep.database_operations
+    if isinstance(op, migrations.RunSQL) and isinstance(op.sql, str)
   ]
   joined = "\n".join(sql_blobs).lower()
   assert "add constraint" not in joined
@@ -147,15 +164,19 @@ def test_0030_keeps_state_unique_together():
   assert len(state_ops) == 1
   assert isinstance(state_ops[0], migrations.AlterUniqueTogether)
   assert state_ops[0].name == "host_data"
-  assert state_ops[0].unique_together == {("time", "host", "type", "event", "dev")}
+  assert state_ops[0].unique_together == {
+    ("time", "host", "type", "event", "dev")
+  }
 
 
 def test_0031_is_state_only():
   """Reviewed drift migration must be AlterModelOptions only — no DDL on large tables."""
   mod = importlib.import_module(
-      "hpcperfstats.site.lib.machine.migrations.0031_alter_job_plot_artifact_options_and_more"
+    "hpcperfstats.site.lib.machine.migrations.0031_alter_job_plot_artifact_options_and_more"
   )
-  assert mod.Migration.dependencies == [("machine", "0030_host_data_unique_include_dev")]
+  assert mod.Migration.dependencies == [
+    ("machine", "0030_host_data_unique_include_dev")
+  ]
   ops = mod.Migration.operations
   assert len(ops) == 2
   for op in ops:
@@ -165,22 +186,22 @@ def test_0031_is_state_only():
   for op in ops:
     assert op.options == {"managed": True}
   forbidden = (
-      migrations.RunSQL,
-      migrations.AddConstraint,
-      migrations.AddField,
-      migrations.AlterField,
-      migrations.CreateModel,
-      migrations.DeleteModel,
+    migrations.RunSQL,
+    migrations.AddConstraint,
+    migrations.AddField,
+    migrations.AlterField,
+    migrations.CreateModel,
+    migrations.DeleteModel,
   )
   assert not any(isinstance(op, forbidden) for op in ops)
 
 
 def _0032_sql():
   mod = importlib.import_module(
-      "hpcperfstats.site.lib.machine.migrations.0032_host_data_unique_include_dev_db"
+    "hpcperfstats.site.lib.machine.migrations.0032_host_data_unique_include_dev_db"
   )
   assert mod.Migration.dependencies == [
-      ("machine", "0031_alter_job_plot_artifact_options_and_more")
+    ("machine", "0031_alter_job_plot_artifact_options_and_more")
   ]
   assert mod.Migration.atomic is False
   assert len(mod.Migration.operations) == 1
@@ -245,8 +266,8 @@ def test_no_pending_model_migrations():
 
   loader = MigrationLoader(None, ignore_no_migrations=True)
   changes = MigrationAutodetector(
-      loader.project_state(),
-      ProjectState.from_apps(apps),
+    loader.project_state(),
+    ProjectState.from_apps(apps),
   ).changes(graph=loader.graph)
   assert changes == {}, f"Pending model/migration drift: {sorted(changes)}"
 
@@ -266,33 +287,33 @@ def test_makemigrations_check_command_reports_no_changes(monkeypatch):
   from django.db.migrations.loader import MigrationLoader
 
   monkeypatch.setattr(
-      MigrationLoader,
-      "check_consistent_history",
-      lambda self, connection: None,
+    MigrationLoader,
+    "check_consistent_history",
+    lambda self, connection: None,
   )
 
   out = StringIO()
   try:
     call_command(
-        "makemigrations",
-        "--check",
-        "--dry-run",
-        stdout=out,
-        stderr=out,
+      "makemigrations",
+      "--check",
+      "--dry-run",
+      stdout=out,
+      stderr=out,
     )
   except SystemExit as exc:
     code = exc.code if isinstance(exc.code, int) else 1
     if code != 0:
       raise AssertionError(
-          "makemigrations --check found pending model/migration drift "
-          f"(0031-class Meta / field surprises):\n{out.getvalue()}"
+        "makemigrations --check found pending model/migration drift "
+        f"(0031-class Meta / field surprises):\n{out.getvalue()}"
       ) from exc
   except CommandError as exc:
     raise AssertionError(
-        f"makemigrations --check failed:\n{out.getvalue()}\n{exc}"
+      f"makemigrations --check failed:\n{out.getvalue()}\n{exc}"
     ) from exc
 
   text = out.getvalue()
   assert "Migrations for" not in text, (
-      "makemigrations --check would autogenerate new migration(s):\n" + text
+    "makemigrations --check would autogenerate new migration(s):\n" + text
   )

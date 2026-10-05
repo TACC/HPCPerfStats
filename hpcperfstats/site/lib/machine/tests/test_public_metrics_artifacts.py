@@ -5,39 +5,45 @@ from datetime import datetime, timedelta
 import pytest
 from django.utils import timezone as dj_tz
 
-from hpcperfstats.site.lib.machine.models import job_data, public_metrics_artifact
+from hpcperfstats.site.lib.machine.models import (
+  job_data,
+  public_metrics_artifact,
+)
 from hpcperfstats.site.lib.machine.public_metrics_artifacts import (
-    PUBLIC_EF_MONTH_DAILY,
-    PUBLIC_EF_YEAR_WEEKLY,
-    PAYLOAD_ENCODING_GZIP_JSON,
-    compute_scheduler_expansion_factor_seconds,
-    decompress_public_payload,
-    refresh_public_expansion_factor_artifacts,
-    refresh_public_expansion_factor_artifacts_parallel,
+  PAYLOAD_ENCODING_GZIP_JSON,
+  PUBLIC_EF_MONTH_DAILY,
+  PUBLIC_EF_YEAR_WEEKLY,
+  compute_scheduler_expansion_factor_seconds,
+  decompress_public_payload,
+  refresh_public_expansion_factor_artifacts,
+  refresh_public_expansion_factor_artifacts_parallel,
 )
 
 
 @pytest.mark.django_db
-def test_refresh_public_expansion_factor_artifacts_parallel_inline_pool(monkeypatch):
+def test_refresh_public_expansion_factor_artifacts_parallel_inline_pool(
+  monkeypatch,
+):
   """Parallel path with a pool that runs workers in-process matches sequential stats."""
   submit = datetime(2024, 3, 1, tzinfo=dj_tz.utc)
   start = datetime(2024, 3, 1, 1, 0, 0, tzinfo=dj_tz.utc)
   end = datetime(2024, 3, 15, 2, 0, 0, tzinfo=dj_tz.utc)
   runtime = float((end - start).total_seconds())
   job_data.objects.create(
-      jid="pub_ef_parallel_demo",
-      submit_time=submit,
-      start_time=start,
-      end_time=end,
-      runtime=runtime,
-      ncores=4,
-      username="demo-user",
-      host_list=["n001.cluster.example"],
+    jid="pub_ef_parallel_demo",
+    submit_time=submit,
+    start_time=start,
+    end_time=end,
+    runtime=runtime,
+    ncores=4,
+    username="demo-user",
+    host_list=["n001.cluster.example"],
   )
 
   from hpcperfstats.site.lib.machine.public_metrics_artifacts import (
-      refresh_public_expansion_factor_artifacts_parallel,
+    refresh_public_expansion_factor_artifacts_parallel,
   )
+
   class _InlinePool:
     def imap_unordered(self, fn, tasks, chunksize=1):
       del chunksize
@@ -49,9 +55,13 @@ def test_refresh_public_expansion_factor_artifacts_parallel_inline_pool(monkeypa
 
   parallel = refresh_public_expansion_factor_artifacts_parallel(_InlinePool())
 
-  assert parallel["rebuilt_month_periods"] == sequential["rebuilt_month_periods"]
+  assert (
+    parallel["rebuilt_month_periods"] == sequential["rebuilt_month_periods"]
+  )
   assert parallel["rebuilt_year_periods"] == sequential["rebuilt_year_periods"]
-  assert public_metrics_artifact.objects.filter(scope=PUBLIC_EF_MONTH_DAILY).exists()
+  assert public_metrics_artifact.objects.filter(
+    scope=PUBLIC_EF_MONTH_DAILY
+  ).exists()
 
 
 @pytest.mark.django_db
@@ -61,34 +71,36 @@ def test_invalidate_after_acct_ingest_marks_only_touched_ef_month_rows_stale():
 
   from hpcperfstats.site.lib.machine import cache_utils
   from hpcperfstats.site.lib.machine.public_metrics_artifacts import (
-      assemble_public_monthly_metrics_bundle,
+    assemble_public_monthly_metrics_bundle,
   )
 
   blob = gzip.compress(b"{}")
   for key in ("2024-03", "2024-04"):
     public_metrics_artifact.objects.create(
-        scope=PUBLIC_EF_MONTH_DAILY,
-        period_key=key,
-        payload_compressed=blob,
-        payload_encoding=PAYLOAD_ENCODING_GZIP_JSON,
-        input_fingerprint="testfp",
-        rebuild_required=False,
+      scope=PUBLIC_EF_MONTH_DAILY,
+      period_key=key,
+      payload_compressed=blob,
+      payload_encoding=PAYLOAD_ENCODING_GZIP_JSON,
+      input_fingerprint="testfp",
+      rebuild_required=False,
     )
   submit = datetime(2024, 3, 1, tzinfo=dj_tz.utc)
   start = datetime(2024, 3, 1, 1, 0, 0, tzinfo=dj_tz.utc)
   end = datetime(2024, 3, 15, 2, 0, 0, tzinfo=dj_tz.utc)
   runtime = float((end - start).total_seconds())
   job_data.objects.create(
-      jid="acct_inval_demo",
-      submit_time=submit,
-      start_time=start,
-      end_time=end,
-      runtime=runtime,
-      ncores=4,
-      username="demo-user",
-      host_list=["n001.cluster.example"],
+    jid="acct_inval_demo",
+    submit_time=submit,
+    start_time=start,
+    end_time=end,
+    runtime=runtime,
+    ncores=4,
+    username="demo-user",
+    host_list=["n001.cluster.example"],
   )
-  cache_utils.invalidate_after_job_data_ingest(1, inserted_jids=["acct_inval_demo"])
+  cache_utils.invalidate_after_job_data_ingest(
+    1, inserted_jids=["acct_inval_demo"]
+  )
   march = public_metrics_artifact.objects.get(period_key="2024-03")
   assert march.rebuild_required
   april = public_metrics_artifact.objects.get(period_key="2024-04")
@@ -101,7 +113,8 @@ def test_invalidate_after_acct_ingest_marks_only_touched_ef_month_rows_stale():
 
 @pytest.mark.django_db
 def test_invalidate_public_metrics_survives_statement_timeout_on_one_row(
-    monkeypatch, caplog,
+  monkeypatch,
+  caplog,
 ):
   """Lock/statement timeout on one pk must not abort marking other periods.
 
@@ -117,45 +130,45 @@ def test_invalidate_public_metrics_survives_statement_timeout_on_one_row(
 
   blob = gzip.compress(b"{}")
   march = public_metrics_artifact.objects.create(
-      scope=PUBLIC_EF_MONTH_DAILY,
-      period_key="2024-03",
-      payload_compressed=blob,
-      payload_encoding=PAYLOAD_ENCODING_GZIP_JSON,
-      input_fingerprint="testfp",
-      rebuild_required=False,
+    scope=PUBLIC_EF_MONTH_DAILY,
+    period_key="2024-03",
+    payload_compressed=blob,
+    payload_encoding=PAYLOAD_ENCODING_GZIP_JSON,
+    input_fingerprint="testfp",
+    rebuild_required=False,
   )
   april = public_metrics_artifact.objects.create(
-      scope=PUBLIC_EF_MONTH_DAILY,
-      period_key="2024-04",
-      payload_compressed=blob,
-      payload_encoding=PAYLOAD_ENCODING_GZIP_JSON,
-      input_fingerprint="testfp",
-      rebuild_required=False,
+    scope=PUBLIC_EF_MONTH_DAILY,
+    period_key="2024-04",
+    payload_compressed=blob,
+    payload_encoding=PAYLOAD_ENCODING_GZIP_JSON,
+    input_fingerprint="testfp",
+    rebuild_required=False,
   )
   submit = datetime(2024, 3, 1, tzinfo=dj_tz.utc)
   start = datetime(2024, 3, 1, 1, 0, 0, tzinfo=dj_tz.utc)
   end = datetime(2024, 3, 15, 2, 0, 0, tzinfo=dj_tz.utc)
   job_data.objects.create(
-      jid="acct_inval_timeout",
-      submit_time=submit,
-      start_time=start,
-      end_time=end,
-      runtime=float((end - start).total_seconds()),
-      ncores=4,
-      username="demo-user",
-      host_list=["n001.cluster.example"],
+    jid="acct_inval_timeout",
+    submit_time=submit,
+    start_time=start,
+    end_time=end,
+    runtime=float((end - start).total_seconds()),
+    ncores=4,
+    username="demo-user",
+    host_list=["n001.cluster.example"],
   )
   # Second job in April so both months are targeted.
   end_apr = datetime(2024, 4, 2, 2, 0, 0, tzinfo=dj_tz.utc)
   job_data.objects.create(
-      jid="acct_inval_timeout_apr",
-      submit_time=datetime(2024, 4, 1, tzinfo=dj_tz.utc),
-      start_time=datetime(2024, 4, 1, 1, 0, 0, tzinfo=dj_tz.utc),
-      end_time=end_apr,
-      runtime=3600.0,
-      ncores=4,
-      username="demo-user",
-      host_list=["n001.cluster.example"],
+    jid="acct_inval_timeout_apr",
+    submit_time=datetime(2024, 4, 1, tzinfo=dj_tz.utc),
+    start_time=datetime(2024, 4, 1, 1, 0, 0, tzinfo=dj_tz.utc),
+    end_time=end_apr,
+    runtime=3600.0,
+    ncores=4,
+    username="demo-user",
+    host_list=["n001.cluster.example"],
   )
 
   real_one = pma._update_public_metrics_rebuild_required_one
@@ -165,11 +178,13 @@ def test_invalidate_public_metrics_survives_statement_timeout_on_one_row(
       raise OperationalError("canceling statement due to statement timeout")
     return real_one(pk)
 
-  monkeypatch.setattr(pma, "_update_public_metrics_rebuild_required_one", _flaky)
+  monkeypatch.setattr(
+    pma, "_update_public_metrics_rebuild_required_one", _flaky
+  )
 
   with caplog.at_level(logging.WARNING, logger=pma.logger.name):
     pma.invalidate_public_metrics_artifacts_for_jids(
-        ["acct_inval_timeout", "acct_inval_timeout_apr"],
+      ["acct_inval_timeout", "acct_inval_timeout_apr"],
     )
 
   march.refresh_from_db()
@@ -177,14 +192,16 @@ def test_invalidate_public_metrics_survives_statement_timeout_on_one_row(
   assert not march.rebuild_required
   assert april.rebuild_required
   assert any(
-      "rebuild mark skipped" in r.message and str(march.pk) in r.message
-      for r in caplog.records
+    "rebuild mark skipped" in r.message and str(march.pk) in r.message
+    for r in caplog.records
   )
   assert not any(r.levelno >= logging.ERROR for r in caplog.records)
 
 
 @pytest.mark.machine_unit_mock
-def test_mark_rebuild_by_pks_continues_after_statement_timeout(monkeypatch, caplog):
+def test_mark_rebuild_by_pks_continues_after_statement_timeout(
+  monkeypatch, caplog
+):
   """Host-unit lock of the per-pk timeout skip path (no compose DB required)."""
   import logging
 
@@ -198,13 +215,15 @@ def test_mark_rebuild_by_pks_continues_after_statement_timeout(monkeypatch, capl
     seen.append(int(pk))
     if int(pk) == 25:
       raise OperationalError(
-          "canceling statement due to statement timeout\n"
-          "CONTEXT:  while updating tuple (25,3) in relation "
-          '"public_metrics_artifact"'
+        "canceling statement due to statement timeout\n"
+        "CONTEXT:  while updating tuple (25,3) in relation "
+        '"public_metrics_artifact"'
       )
     return True
 
-  monkeypatch.setattr(pma, "_update_public_metrics_rebuild_required_one", _flaky)
+  monkeypatch.setattr(
+    pma, "_update_public_metrics_rebuild_required_one", _flaky
+  )
   with caplog.at_level(logging.WARNING, logger=pma.logger.name):
     n = pma._mark_public_metrics_rebuild_required_by_pks([25, 26, 27])
   assert seen == [25, 26, 27]
@@ -232,9 +251,11 @@ def test_public_ef_period_worker_dispatches_month_reconcile(monkeypatch):
 
 @pytest.mark.machine_unit_mock
 def test_build_public_expansion_factor_histogram_json_item_shape():
-  from hpcperfstats.site.lib.machine.public_metrics_artifacts import EF_HIST_BIN_EDGES
+  from hpcperfstats.site.lib.machine.public_metrics_artifacts import (
+    EF_HIST_BIN_EDGES,
+  )
   from hpcperfstats.site.lib.machine.public_metrics_bokeh import (
-      build_public_expansion_factor_histogram_json_item,
+    build_public_expansion_factor_histogram_json_item,
   )
 
   edges = list(EF_HIST_BIN_EDGES)
@@ -242,10 +263,10 @@ def test_build_public_expansion_factor_histogram_json_item_shape():
   counts[3] = 2
   counts[-1] = 1
   item = build_public_expansion_factor_histogram_json_item(
-      period_key="2024-03",
-      period_kind="unit subtitle",
-      edges=edges,
-      counts=counts,
+    period_key="2024-03",
+    period_kind="unit subtitle",
+    edges=edges,
+    counts=counts,
   )
   assert item is not None
   assert "doc" in item
@@ -261,22 +282,39 @@ def test_compute_scheduler_expansion_factor_formula_and_guards():
   runtime = 100.0
   ncores = 4
   qw = (start - submit).total_seconds()
-  ef = compute_scheduler_expansion_factor_seconds(submit, start, runtime, ncores)
+  ef = compute_scheduler_expansion_factor_seconds(
+    submit, start, runtime, ncores
+  )
   assert ef == pytest.approx((qw + runtime) / (ncores * runtime))
 
-  assert compute_scheduler_expansion_factor_seconds(submit, start, 0.0, ncores) is None
-  assert compute_scheduler_expansion_factor_seconds(submit, start, runtime, 0) is None
+  assert (
+    compute_scheduler_expansion_factor_seconds(submit, start, 0.0, ncores)
+    is None
+  )
+  assert (
+    compute_scheduler_expansion_factor_seconds(submit, start, runtime, 0)
+    is None
+  )
   bad_submit = start + timedelta(hours=1)
-  assert compute_scheduler_expansion_factor_seconds(bad_submit, start, runtime, ncores) is None
+  assert (
+    compute_scheduler_expansion_factor_seconds(
+      bad_submit, start, runtime, ncores
+    )
+    is None
+  )
 
 
 @pytest.mark.machine_unit_mock
-def test_refresh_public_expansion_factor_artifacts_parallel_marks_no_progress_degraded(monkeypatch):
+def test_refresh_public_expansion_factor_artifacts_parallel_marks_no_progress_degraded(
+  monkeypatch,
+):
   from hpcperfstats.site.lib.machine import public_metrics_artifacts as pma
 
   monkeypatch.setattr(pma, "_month_keys_present", lambda: ["2025-06"])
-  monkeypatch.setattr(pma, "_year_keys_present", lambda: [])
-  monkeypatch.setattr(pma, "_prune_orphan_public_ef_rows", lambda months, years: None)
+  monkeypatch.setattr(pma, "_year_keys_present", list)
+  monkeypatch.setattr(
+    pma, "_prune_orphan_public_ef_rows", lambda months, years: None
+  )
 
   class _NeverProgressIterator:
     def next(self, timeout=None):
@@ -293,10 +331,10 @@ def test_refresh_public_expansion_factor_artifacts_parallel_marks_no_progress_de
   monkeypatch.setattr(pma.time, "monotonic", lambda: next(times))
 
   result = refresh_public_expansion_factor_artifacts_parallel(
-      _Pool(),
-      poll_timeout_s=1.0,
-      no_progress_timeout_s=5.0,
-      progress_callback=progress.append,
+    _Pool(),
+    poll_timeout_s=1.0,
+    no_progress_timeout_s=5.0,
+    progress_callback=progress.append,
   )
 
   assert result["tasks_total"] == 1
@@ -314,14 +352,14 @@ def test_refresh_public_expansion_factor_artifacts_builds_rows():
   end = datetime(2024, 3, 15, 2, 0, 0, tzinfo=dj_tz.utc)
   runtime = float((end - start).total_seconds())
   job_data.objects.create(
-      jid="pub_ef_demo",
-      submit_time=submit,
-      start_time=start,
-      end_time=end,
-      runtime=runtime,
-      ncores=4,
-      username="demo-user",
-      host_list=["n001.cluster.example"],
+    jid="pub_ef_demo",
+    submit_time=submit,
+    start_time=start,
+    end_time=end,
+    runtime=runtime,
+    ncores=4,
+    username="demo-user",
+    host_list=["n001.cluster.example"],
   )
 
   assert public_metrics_artifact.objects.count() == 0
@@ -330,7 +368,7 @@ def test_refresh_public_expansion_factor_artifacts_builds_rows():
   assert stats["rebuilt_year_periods"] >= 1
 
   march = public_metrics_artifact.objects.get(
-      scope=PUBLIC_EF_MONTH_DAILY, period_key="2024-03"
+    scope=PUBLIC_EF_MONTH_DAILY, period_key="2024-03"
   )
   assert march.input_fingerprint
 
@@ -341,7 +379,7 @@ def test_refresh_public_expansion_factor_artifacts_builds_rows():
   assert "root_id" in march_payload["bokeh_histogram_json_item"]
 
   year_row = public_metrics_artifact.objects.get(
-      scope=PUBLIC_EF_YEAR_WEEKLY, period_key="2024"
+    scope=PUBLIC_EF_YEAR_WEEKLY, period_key="2024"
   )
   assert year_row.input_fingerprint
 
@@ -359,27 +397,29 @@ def test_refresh_public_expansion_factor_artifacts_builds_rows():
 
 @pytest.mark.django_db
 def test_invalidate_job_plot_marks_touching_public_artifacts_stale():
-  from hpcperfstats.site.lib.machine.cache_utils import invalidate_job_plot_cache_keys_for_jids
+  from hpcperfstats.site.lib.machine.cache_utils import (
+    invalidate_job_plot_cache_keys_for_jids,
+  )
 
   submit = datetime(2024, 4, 1, tzinfo=dj_tz.utc)
   start = datetime(2024, 4, 5, tzinfo=dj_tz.utc)
   end = datetime(2024, 4, 10, tzinfo=dj_tz.utc)
   runtime = float((end - start).total_seconds())
   job_data.objects.create(
-      jid="pub_ef_inv",
-      submit_time=submit,
-      start_time=start,
-      end_time=end,
-      runtime=runtime,
-      ncores=2,
-      username="demo-user",
-      host_list=["n002.cluster.example"],
+    jid="pub_ef_inv",
+    submit_time=submit,
+    start_time=start,
+    end_time=end,
+    runtime=runtime,
+    ncores=2,
+    username="demo-user",
+    host_list=["n002.cluster.example"],
   )
   refresh_public_expansion_factor_artifacts()
   assert public_metrics_artifact.objects.exists()
 
   invalidate_job_plot_cache_keys_for_jids(["pub_ef_inv"])
   row = public_metrics_artifact.objects.get(
-      scope=PUBLIC_EF_MONTH_DAILY, period_key="2024-04"
+    scope=PUBLIC_EF_MONTH_DAILY, period_key="2024-04"
   )
   assert row.rebuild_required

@@ -52,13 +52,14 @@ Attributes:
   TYPE_LEGACY_TO_CANONICAL: Attribute.
   _REMOVED: Attribute.
 """
+
 from __future__ import annotations
 
 from hpcperfstats.dbload.lib.monitor_naming.load_map import (
-    event_renames,
-    load_monitor_rename_map,
-    type_event_renames,
-    type_renames,
+  event_renames,
+  load_monitor_rename_map,
+  type_event_renames,
+  type_renames,
 )
 
 # Ingest-only typename: dbload used to normalize intel_knl_mc -> intel_knl_mc_dclk.
@@ -67,8 +68,12 @@ MONITOR_LEGACY_KNL_IMC_TYPE = "intel_knl_mc"
 
 TYPE_LEGACY_TO_CANONICAL: dict[str, str] = dict(type_renames())
 # KNL IMC retired from canonical emission; identity mapping for historical host_data.
-TYPE_LEGACY_TO_CANONICAL[INGEST_LEGACY_KNL_IMC_TYPE] = INGEST_LEGACY_KNL_IMC_TYPE
-TYPE_LEGACY_TO_CANONICAL[MONITOR_LEGACY_KNL_IMC_TYPE] = MONITOR_LEGACY_KNL_IMC_TYPE
+TYPE_LEGACY_TO_CANONICAL[INGEST_LEGACY_KNL_IMC_TYPE] = (
+  INGEST_LEGACY_KNL_IMC_TYPE
+)
+TYPE_LEGACY_TO_CANONICAL[MONITOR_LEGACY_KNL_IMC_TYPE] = (
+  MONITOR_LEGACY_KNL_IMC_TYPE
+)
 
 LEGACY_TYPENAMES: frozenset[str] = frozenset(TYPE_LEGACY_TO_CANONICAL.keys())
 
@@ -79,40 +84,40 @@ TYPE_EVENT_LEGACY_TO_CANONICAL: dict[str, dict[str, str]] = type_event_renames()
 
 # Intel IMC types in legacy DB / archives (probe order matches old utils.py).
 LEGACY_INTEL_IMC_STATS_TYPES = (
-    "intel_x86_uncore_imc_snb",
-    "intel_x86_uncore_imc_ivb",
-    "intel_x86_uncore_imc_hsw",
-    "intel_x86_uncore_imc_bdw",
-    "intel_snb_imc",
-    "intel_ivb_imc",
-    "intel_hsw_imc",
-    "intel_bdw_imc",
-    INGEST_LEGACY_KNL_IMC_TYPE,
-    MONITOR_LEGACY_KNL_IMC_TYPE,
-    "intel_skx_imc",
-    "intel_icx_imc",
-    "intel_spr_imc",
+  "intel_x86_uncore_imc_snb",
+  "intel_x86_uncore_imc_ivb",
+  "intel_x86_uncore_imc_hsw",
+  "intel_x86_uncore_imc_bdw",
+  "intel_snb_imc",
+  "intel_ivb_imc",
+  "intel_hsw_imc",
+  "intel_bdw_imc",
+  INGEST_LEGACY_KNL_IMC_TYPE,
+  MONITOR_LEGACY_KNL_IMC_TYPE,
+  "intel_skx_imc",
+  "intel_icx_imc",
+  "intel_spr_imc",
 )
 
 LEGACY_ARM_IMC_STATS_TYPES = ("arm_imc",)
 
 LEGACY_INTEL_CORE_PMC_TYPES_ORDERED = (
-    "intel_8pmc3",
-    "intel_4pmc3",
-    "cpu_counter_metrics",
+  "intel_8pmc3",
+  "intel_4pmc3",
+  "cpu_counter_metrics",
 )
 
 LEGACY_PMC_TYPENAME_PRIORITY = (
-    "amd64_pmc",
-    "intel_8pmc3",
-    "intel_4pmc3",
-    "cpu_counter_metrics",
-    "intel_skx",
-    "intel_knl",
-    "intel_bdw",
-    "intel_hsw",
-    "intel_ivb",
-    "intel_snb",
+  "amd64_pmc",
+  "intel_8pmc3",
+  "intel_4pmc3",
+  "cpu_counter_metrics",
+  "intel_skx",
+  "intel_knl",
+  "intel_bdw",
+  "intel_hsw",
+  "intel_ivb",
+  "intel_snb",
 )
 
 LEGACY_CHA_TYPENAME_PRIORITY = ("intel_skx_cha", "intel_knl_cha")
@@ -166,7 +171,8 @@ _REMOVED = load_monitor_rename_map().get("removed_legacy") or []
 REMOVED_LEGACY_SYMBOLS: frozenset[str] = frozenset(str(x) for x in _REMOVED)
 
 # st_name values that used hex eventmaps + CTL/CTR decode in sync_timedb_parsing_legacy.
-LEGACY_HARDWARE_DECODE_TYPES: frozenset[str] = frozenset({
+LEGACY_HARDWARE_DECODE_TYPES: frozenset[str] = frozenset(
+  {
     "amd64_pmc",
     "amd64_df",
     "intel_8pmc3",
@@ -178,4 +184,5 @@ LEGACY_HARDWARE_DECODE_TYPES: frozenset[str] = frozenset({
     INGEST_LEGACY_KNL_IMC_TYPE,
     MONITOR_LEGACY_KNL_IMC_TYPE,
     "intel_skx_imc",
-})
+  }
+)

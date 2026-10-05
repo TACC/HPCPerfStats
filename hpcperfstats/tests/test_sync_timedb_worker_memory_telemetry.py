@@ -8,9 +8,9 @@ import pytest
 
 from hpcperfstats.dbload.lib import sync_timedb_worker_memory as wm
 from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
-    _dead_worker_exitcode_is_recycle,
-    reset_supervisor_retire_tracking_for_tests,
-    retire_pool_worker_pid,
+  _dead_worker_exitcode_is_recycle,
+  reset_supervisor_retire_tracking_for_tests,
+  retire_pool_worker_pid,
 )
 
 
@@ -23,37 +23,63 @@ def _reset_worker_memory_state():
   reset_supervisor_retire_tracking_for_tests()
 
 
-def test_worker_memory_batch_summary_silent_when_telemetry_off(monkeypatch, capsys):
+def test_worker_memory_batch_summary_silent_when_telemetry_off(
+  monkeypatch, capsys
+):
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
-  monkeypatch.setattr(cfg, "get_sync_ingest_worker_memory_telemetry", lambda: False)
+  monkeypatch.setattr(
+    cfg, "get_sync_ingest_worker_memory_telemetry", lambda: False
+  )
   acc = wm.WorkerMemoryBatchAccumulator()
-  acc.record_completion(wm.REAP_KEEP, {"tasks_on_worker": 3, "rss_mib_after_release": 100.0})
+  acc.record_completion(
+    wm.REAP_KEEP, {"tasks_on_worker": 3, "rss_mib_after_release": 100.0}
+  )
   acc.maybe_flush(0)
   assert capsys.readouterr().out == ""
 
 
-def test_worker_memory_batch_summary_logs_when_telemetry_on(monkeypatch, capsys):
+def test_worker_memory_batch_summary_logs_when_telemetry_on(
+  monkeypatch, capsys
+):
   import hpcperfstats.dbload.lib.conf_parser as cfg
   import hpcperfstats.dbload.lib.process_memory as pm
 
-  monkeypatch.setattr(cfg, "get_sync_ingest_worker_memory_telemetry", lambda: True)
   monkeypatch.setattr(
-      cfg, "get_sync_ingest_worker_memory_telemetry_every_n_chunks", lambda: 1,
+    cfg, "get_sync_ingest_worker_memory_telemetry", lambda: True
+  )
+  monkeypatch.setattr(
+    cfg,
+    "get_sync_ingest_worker_memory_telemetry_every_n_chunks",
+    lambda: 1,
   )
   monkeypatch.setattr(cfg, "get_sync_ingest_pool_maxtasksperchild", lambda: 0)
-  monkeypatch.setattr(pm, "format_tree_rss_breakdown_mb", lambda *_a, **_k: {
+  monkeypatch.setattr(
+    pm,
+    "format_tree_rss_breakdown_mb",
+    lambda *_a, **_k: {
       "tree_total_mb": 1000.0,
       "ingest_pool_mb": 800.0,
-  })
+    },
+  )
   monkeypatch.setattr(wm, "compute_rss_recycle_threshold_mib", lambda: 3437.0)
   acc = wm.WorkerMemoryBatchAccumulator()
-  acc.record_completion(wm.REAP_KEEP, {"tasks_on_worker": 12, "rss_mib_after_release": 200.0})
-  acc.record_completion(wm.REAP_FAILURE, {"tasks_on_worker": 1, "rss_mib_after_release": 500.0})
-  acc.record_completion(wm.REAP_RSS, {"tasks_on_worker": 5, "rss_mib_after_release": 4000.0})
   acc.record_completion(
-      wm.REAP_RSS,
-      {"tasks_on_worker": 2, "rss_mib_after_release": 3000.0, "rss_recheck_fired": "yes"},
+    wm.REAP_KEEP, {"tasks_on_worker": 12, "rss_mib_after_release": 200.0}
+  )
+  acc.record_completion(
+    wm.REAP_FAILURE, {"tasks_on_worker": 1, "rss_mib_after_release": 500.0}
+  )
+  acc.record_completion(
+    wm.REAP_RSS, {"tasks_on_worker": 5, "rss_mib_after_release": 4000.0}
+  )
+  acc.record_completion(
+    wm.REAP_RSS,
+    {
+      "tasks_on_worker": 2,
+      "rss_mib_after_release": 3000.0,
+      "rss_recheck_fired": "yes",
+    },
   )
   acc.maybe_flush(7)
   out = capsys.readouterr().out
@@ -74,9 +100,13 @@ def test_worker_memory_batch_summary_logs_when_telemetry_on(monkeypatch, capsys)
 def test_worker_memory_telemetry_every_n_chunks_throttles(monkeypatch, capsys):
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
-  monkeypatch.setattr(cfg, "get_sync_ingest_worker_memory_telemetry", lambda: True)
   monkeypatch.setattr(
-      cfg, "get_sync_ingest_worker_memory_telemetry_every_n_chunks", lambda: 2,
+    cfg, "get_sync_ingest_worker_memory_telemetry", lambda: True
+  )
+  monkeypatch.setattr(
+    cfg,
+    "get_sync_ingest_worker_memory_telemetry_every_n_chunks",
+    lambda: 2,
   )
   acc = wm.WorkerMemoryBatchAccumulator()
   acc.record_completion(wm.REAP_KEEP, {})
@@ -90,69 +120,105 @@ def test_worker_memory_telemetry_every_n_chunks_throttles(monkeypatch, capsys):
 def test_classify_supervisor_reap_kind_priority(monkeypatch):
   monkeypatch.setattr(wm, "compute_rss_recycle_threshold_mib", lambda: 100.0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_ingest_timeout.is_giant_ingest_budget",
-      lambda p: "giant" in str(p),
+    "hpcperfstats.dbload.lib.sync_timedb_ingest_timeout.is_giant_ingest_budget",
+    lambda p: "giant" in str(p),
   )
-  assert wm.classify_supervisor_reap_kind(
+  assert (
+    wm.classify_supervisor_reap_kind(
       ingest_ok=False,
       outcome="ingested",
       meta={"rss_mib_after_release": 50.0},
       path="/data/giant",
-  ) == wm.REAP_FAILURE
+    )
+    == wm.REAP_FAILURE
+  )
   # Giant path budget alone must not retire (coop giant recycle removed).
-  assert wm.classify_supervisor_reap_kind(
+  assert (
+    wm.classify_supervisor_reap_kind(
       ingest_ok=True,
       outcome="ingested",
-      meta={"rss_mib_after_release": 50.0, "recycle_threshold_mib": 100.0},
+      meta={
+        "rss_mib_after_release": 50.0,
+        "recycle_threshold_mib": 100.0,
+      },
       path="/data/giant",
-  ) == wm.REAP_KEEP
-  assert wm.classify_supervisor_reap_kind(
+    )
+    == wm.REAP_KEEP
+  )
+  assert (
+    wm.classify_supervisor_reap_kind(
       ingest_ok=True,
       outcome="db_skip",
-      meta={"rss_mib_after_release": 200.0, "recycle_threshold_mib": 100.0},
+      meta={
+        "rss_mib_after_release": 200.0,
+        "recycle_threshold_mib": 100.0,
+      },
       path="/data/small",
-  ) == wm.REAP_RSS
-  assert wm.classify_supervisor_reap_kind(
+    )
+    == wm.REAP_RSS
+  )
+  assert (
+    wm.classify_supervisor_reap_kind(
       ingest_ok=True,
       outcome="db_skip",
-      meta={"rss_mib_after_release": 50.0, "recycle_threshold_mib": 100.0},
+      meta={
+        "rss_mib_after_release": 50.0,
+        "recycle_threshold_mib": 100.0,
+      },
       path="/data/small",
-  ) == wm.REAP_KEEP
+    )
+    == wm.REAP_KEEP
+  )
   # RC-J: giant path budget must not force retire on db_skip.
-  assert wm.classify_supervisor_reap_kind(
+  assert (
+    wm.classify_supervisor_reap_kind(
       ingest_ok=True,
       outcome="db_skip",
-      meta={"rss_mib_after_release": 50.0, "recycle_threshold_mib": 100.0},
+      meta={
+        "rss_mib_after_release": 50.0,
+        "recycle_threshold_mib": 100.0,
+      },
       path="/data/giant",
-  ) == wm.REAP_KEEP
+    )
+    == wm.REAP_KEEP
+  )
 
 
 def test_no_giant_reap_on_db_skip(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_ingest_timeout.is_giant_ingest_budget",
-      lambda p: True,
+    "hpcperfstats.dbload.lib.sync_timedb_ingest_timeout.is_giant_ingest_budget",
+    lambda p: True,
   )
-  assert wm.classify_supervisor_reap_kind(
+  assert (
+    wm.classify_supervisor_reap_kind(
       ingest_ok=True,
       outcome="db_skip",
       meta={},
       path="/data/huge.stats",
-  ) == wm.REAP_KEEP
+    )
+    == wm.REAP_KEEP
+  )
   assert wm.should_supervisor_retire_worker(wm.REAP_KEEP) is False
 
 
 def test_giant_path_does_not_retire_without_rss(monkeypatch):
   """Giant ingest budget alone never yields supervisor retire after coop removal."""
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_ingest_timeout.is_giant_ingest_budget",
-      lambda p: True,
+    "hpcperfstats.dbload.lib.sync_timedb_ingest_timeout.is_giant_ingest_budget",
+    lambda p: True,
   )
-  assert wm.classify_supervisor_reap_kind(
+  assert (
+    wm.classify_supervisor_reap_kind(
       ingest_ok=True,
       outcome="ingested",
-      meta={"rss_mib_after_release": 10.0, "recycle_threshold_mib": 100.0},
+      meta={
+        "rss_mib_after_release": 10.0,
+        "recycle_threshold_mib": 100.0,
+      },
       path="/data/huge.stats",
-  ) == wm.REAP_KEEP
+    )
+    == wm.REAP_KEEP
+  )
   assert not hasattr(wm, "REAP_GIANT")
 
 
@@ -174,8 +240,8 @@ def test_supervisor_retire_sigterm_counts_as_healthy_recycle(monkeypatch):
   worker = _Proc()
   pool = SimpleNamespace(_pool=[worker])
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.multiprocessing_pool_health._reap_pool_worker_pids",
-      lambda *_a, **_k: [],
+    "hpcperfstats.dbload.lib.multiprocessing_pool_health._reap_pool_worker_pids",
+    lambda *_a, **_k: [],
   )
   assert retire_pool_worker_pid(pool, 4242, context="test_retire") is True
   assert retired["terminate"] is True
@@ -186,7 +252,9 @@ def test_should_supervisor_retire_respects_maxtasksperchild(monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   monkeypatch.setattr(cfg, "get_sync_ingest_pool_maxtasksperchild", lambda: 1)
-  monkeypatch.setattr(cfg, "get_sync_ingest_recycle_worker_on_failure", lambda: True)
+  monkeypatch.setattr(
+    cfg, "get_sync_ingest_recycle_worker_on_failure", lambda: True
+  )
   assert wm.should_supervisor_retire_worker(wm.REAP_FAILURE) is False
   monkeypatch.setattr(cfg, "get_sync_ingest_pool_maxtasksperchild", lambda: 0)
   assert wm.should_supervisor_retire_worker(wm.REAP_FAILURE) is True
@@ -199,7 +267,9 @@ def test_handle_ingest_worker_memory_after_imap_absent():
   import hpcperfstats.dbload.sync_timedb as st
 
   assert not hasattr(st, "_handle_ingest_worker_memory_after_imap")
-  assert "def _handle_ingest_worker_memory_after_imap" not in inspect.getsource(st)
+  assert "def _handle_ingest_worker_memory_after_imap" not in inspect.getsource(
+    st
+  )
 
 
 def test_should_defer_supervisor_retire_near_max_inflight(monkeypatch):
@@ -208,18 +278,24 @@ def test_should_defer_supervisor_retire_near_max_inflight(monkeypatch):
   monkeypatch.setattr(cfg, "get_sync_ingest_pool_maxtasksperchild", lambda: 0)
   acc = wm.WorkerMemoryBatchAccumulator()
   acc.retires_this_window = 8
-  assert wm.should_defer_supervisor_retire(
+  assert (
+    wm.should_defer_supervisor_retire(
       wm.REAP_RSS,
       accumulator=acc,
       pending_inflight=24,
       max_inflight=24,
-  ) is True
-  assert wm.should_defer_supervisor_retire(
+    )
+    is True
+  )
+  assert (
+    wm.should_defer_supervisor_retire(
       wm.REAP_RSS,
       accumulator=acc,
       pending_inflight=10,
       max_inflight=24,
-  ) is False
+    )
+    is False
+  )
 
 
 def test_defer_retire_uses_live_inflight(monkeypatch):
@@ -232,18 +308,24 @@ def test_defer_retire_uses_live_inflight(monkeypatch):
   # Fake constant near-cap (old bug) would defer; live low inflight must not.
   fake_constant_near_cap = 24
   live_inflight = 3
-  assert wm.should_defer_supervisor_retire(
+  assert (
+    wm.should_defer_supervisor_retire(
       wm.REAP_RSS,
       accumulator=acc,
       pending_inflight=fake_constant_near_cap,
       max_inflight=24,
-  ) is True
-  assert wm.should_defer_supervisor_retire(
+    )
+    is True
+  )
+  assert (
+    wm.should_defer_supervisor_retire(
       wm.REAP_RSS,
       accumulator=acc,
       pending_inflight=live_inflight,
       max_inflight=24,
-  ) is False
+    )
+    is False
+  )
 
 
 def test_cooperative_recycle_after_giant_removed_from_conf_parser():

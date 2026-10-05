@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from hpcperfstats.dbload.lib.python_abi_startup_log import (
-    format_python_abi_startup_line,
-    log_python_abi_startup,
+  format_python_abi_startup_line,
+  log_python_abi_startup,
 )
 
 

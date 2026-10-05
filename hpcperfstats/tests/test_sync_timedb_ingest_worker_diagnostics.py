@@ -1,14 +1,14 @@
 import threading
 
 from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-    apply_ingest_pool_worker_init,
-    clear_worker_stage,
-    count_worker_registry_entries,
-    format_worker_stages_snapshot,
-    record_worker_stage,
-    set_worker_diagnostics_registry,
-    update_worker_substage,
-    worker_registry_key,
+  apply_ingest_pool_worker_init,
+  clear_worker_stage,
+  count_worker_registry_entries,
+  format_worker_stages_snapshot,
+  record_worker_stage,
+  set_worker_diagnostics_registry,
+  update_worker_substage,
+  worker_registry_key,
 )
 
 
@@ -38,21 +38,21 @@ def test_format_worker_stages_snapshot_empty():
 
 def test_format_worker_stages_prefers_ingest_over_populate():
   registry = {
-      "167": {
-          "path": "/data/daily/2026-06-02.tar.zst",
-          "stage": "populate_queue_wait",
-          "t0": 100.0,
-      },
-      "142": {
-          "path": "/data/host.example/1784310055",
-          "stage": "ingest",
-          "substage": "parse",
-          "t0": 100.0,
-      },
+    "167": {
+      "path": "/data/daily/2026-06-02.tar.zst",
+      "stage": "populate_queue_wait",
+      "t0": 100.0,
+    },
+    "142": {
+      "path": "/data/host.example/1784310055",
+      "stage": "ingest",
+      "substage": "parse",
+      "t0": 100.0,
+    },
   }
   snapshot = format_worker_stages_snapshot(
-      registry,
-      prefer_paths=["/data/host.example/1784310055"],
+    registry,
+    prefer_paths=["/data/host.example/1784310055"],
   )
   assert snapshot.index("1784310055") < snapshot.index("populate_queue_wait")
 
@@ -86,7 +86,10 @@ def test_apply_ingest_pool_worker_init_sets_process_registry():
   try:
     from multiprocessing import current_process
 
-    assert getattr(current_process(), "_hpc_worker_diagnostics_registry", None) is registry
+    assert (
+      getattr(current_process(), "_hpc_worker_diagnostics_registry", None)
+      is registry
+    )
     record_worker_stage("/tmp/b", "parse")
     assert count_worker_registry_entries(registry) == 1
   finally:
@@ -101,7 +104,7 @@ def test_record_worker_stage_distinct_keys_per_thread():
   keys = []
 
   def worker(label: str) -> None:
-    record_worker_stage("/tmp/%s" % label, "ingest", substage=label)
+    record_worker_stage(f"/tmp/{label}", "ingest", substage=label)
     keys.append(worker_registry_key())
     barrier.wait(timeout=5)
     barrier.wait(timeout=5)
@@ -123,23 +126,31 @@ def test_record_worker_stage_distinct_keys_per_thread():
 
 def test_registry_key_matches_alive_spawn_pid_prefix():
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-      registry_key_matches_alive_pids,
-      worker_registry_shows_member_match_wait,
+    registry_key_matches_alive_pids,
+    worker_registry_shows_member_match_wait,
   )
 
   assert registry_key_matches_alive_pids("42:99", {"42"}) is True
   registry = {
-      "42:99": {
-          "path": "/tmp/x",
-          "stage": "ingest",
-          "substage": "archive_member_lookup",
-          "lookup_mode": "store_wait",
-          "t0": __import__("time").monotonic(),
-      },
+    "42:99": {
+      "path": "/tmp/x",
+      "stage": "ingest",
+      "substage": "archive_member_lookup",
+      "lookup_mode": "store_wait",
+      "t0": __import__("time").monotonic(),
+    },
   }
-  assert worker_registry_shows_member_match_wait(
-      registry, alive_pids={"42"},
-  ) is True
-  assert worker_registry_shows_member_match_wait(
-      registry, alive_pids={"99"},
-  ) is False
+  assert (
+    worker_registry_shows_member_match_wait(
+      registry,
+      alive_pids={"42"},
+    )
+    is True
+  )
+  assert (
+    worker_registry_shows_member_match_wait(
+      registry,
+      alive_pids={"99"},
+    )
+    is False
+  )

@@ -128,13 +128,13 @@ def redis_url_uses_unix_socket(redis_url: str) -> bool:
 def resolve_redis_host_port(redis_url: str) -> tuple[str, str]:
   """
   Return (host, port) for a Redis URL.
-  
+
   Args:
     redis_url (str): String for redis url.
-  
+
   Returns:
     tuple[str, str]: tuple[str, str] produced by this call.
-  
+
   Examples:
     >>> resolve_redis_host_port("x")  # doctest: +SKIP
   """
@@ -154,7 +154,7 @@ def wait_for_redis_available(
 ) -> None:
   """
   Wait until Redis responds to `PING`.
-  
+
   Args:
     redis_url (str): String for redis url.
     timeout_seconds (int): Integer value for timeout seconds.
@@ -162,14 +162,14 @@ def wait_for_redis_available(
     dns_timeout_seconds (int | None): One of ``int``, ``None``.
     ping_timeout_seconds (float): Floating-point value for ping timeout
     seconds.
-  
+
   Returns:
     None
-  
+
   Raises:
     TimeoutError: Raised when ``wait_for_redis_available`` hits a
     ``TimeoutError`` failure path.
-  
+
   Examples:
     >>> wait_for_redis_available("x", 0, 0, None, 0)  # doctest: +SKIP
   """
@@ -178,9 +178,7 @@ def wait_for_redis_available(
   deadline = time.time() + max(0, timeout_seconds)
   remaining = max(0.0, deadline - time.time())
   dns_budget_seconds = (
-    float(dns_timeout_seconds)
-    if dns_timeout_seconds is not None
-    else remaining
+    float(dns_timeout_seconds) if dns_timeout_seconds is not None else remaining
   )
   dns_budget_seconds = min(dns_budget_seconds, remaining)
 
@@ -211,4 +209,3 @@ def wait_for_redis_available(
   raise TimeoutError(
     f"Timed out waiting for Redis at {redis_url}. Last error: {last_error}"
   )
-

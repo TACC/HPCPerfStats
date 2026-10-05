@@ -131,7 +131,8 @@ hpcperfstats = [
 
 [tool.ruff]
 target-version = "py314"
-line-length = 80  # Google style guide
+line-length = 80  # Google style guide (line length)
+indent-width = 2  # workspace Python indent (2 spaces, not 4)
 extend-exclude = [
   "migrations",
   ".venv",
@@ -166,6 +167,26 @@ fixable = ["ALL"]
 [tool.ruff.lint.isort]
 known-first-party = ["hpcperfstats"]
 combine-as-imports = true
+
+# BLAS/configure_* / Django bootstrap before heavy imports (intentional E402).
+[tool.ruff.lint.per-file-ignores]
+"hpcperfstats/analysis/metrics/update_metrics.py" = ["E402"]
+"hpcperfstats/analysis/metrics/lib/plot/__init__.py" = ["E402"]
+"hpcperfstats/analysis/metrics/lib/plot/devplot.py" = ["E402"]
+"hpcperfstats/analysis/metrics/lib/plot/summaryplot.py" = ["E402"]
+"hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py" = ["E402"]
+"hpcperfstats/analysis/metrics/tests/test_time_imbalance.py" = ["E402"]
+"hpcperfstats/dbload/sync_timedb.py" = ["E402"]
+"hpcperfstats/dbload/sync_timedb_archive.py" = ["E402"]
+"hpcperfstats/dbload/sync_acct.py" = ["E402"]
+"hpcperfstats/dbload/lib/sync_timedb_day_raw_removal.py" = ["E402"]
+"hpcperfstats/dbload/lib/sync_timedb_ingest_timeout.py" = ["E402"]
+"hpcperfstats/dbload/lib/sync_timedb_startup_archive_scan.py" = ["E402"]
+"hpcperfstats/site/hpcperfstats_site/settings.py" = ["E402"]
+"hpcperfstats/site/lib/machine/api.py" = ["E402"]
+"hpcperfstats/site/lib/machine/update_xalt.py" = ["E402"]
+"hpcperfstats/site/lib/machine/tests/test_jid_table.py" = ["E402"]
+"hpcperfstats-tools/hpcperfstats_tools/config.py" = ["E402"]
 
 [tool.ruff.format]
 quote-style = "double"

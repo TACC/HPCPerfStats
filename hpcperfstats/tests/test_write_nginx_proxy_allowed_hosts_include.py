@@ -11,7 +11,9 @@ def _repo_root() -> Path:
 
 def _load_parse():
   path = _repo_root() / "services-conf" / "parse_hpcperfstats_proxy_hosts.py"
-  spec = importlib.util.spec_from_file_location("parse_hpcperfstats_proxy_hosts", path)
+  spec = importlib.util.spec_from_file_location(
+    "parse_hpcperfstats_proxy_hosts", path
+  )
   assert spec and spec.loader
   mod = importlib.util.module_from_spec(spec)
   sys.modules["parse_hpcperfstats_proxy_hosts"] = mod
@@ -21,8 +23,14 @@ def _load_parse():
 
 def _load_write_after_parse():
   _load_parse()
-  path = _repo_root() / "services-conf" / "write_nginx_proxy_allowed_hosts_include.py"
-  spec = importlib.util.spec_from_file_location("write_nginx_proxy_allowed_hosts_include", path)
+  path = (
+    _repo_root()
+    / "services-conf"
+    / "write_nginx_proxy_allowed_hosts_include.py"
+  )
+  spec = importlib.util.spec_from_file_location(
+    "write_nginx_proxy_allowed_hosts_include", path
+  )
   assert spec and spec.loader
   mod = importlib.util.module_from_spec(spec)
   spec.loader.exec_module(mod)
@@ -31,7 +39,9 @@ def _load_write_after_parse():
 
 def test_parse_reads_ini_example():
   mod = _load_parse()
-  names = mod.load_allowed_server_names(_repo_root() / "hpcperfstats.ini.example")
+  names = mod.load_allowed_server_names(
+    _repo_root() / "hpcperfstats.ini.example"
+  )
   assert "servername.domain.edu" in names
   assert "stats.cluster.domain.edu" in names
 
@@ -40,8 +50,8 @@ def test_write_allowed_hosts_include_emits_server_name_line(tmp_path):
   mod_w = _load_write_after_parse()
   ini = tmp_path / "t.ini"
   ini.write_text(
-      "[DEFAULT]\nserver = a.example.com, b.example.org\n",
-      encoding="utf-8",
+    "[DEFAULT]\nserver = a.example.com, b.example.org\n",
+    encoding="utf-8",
   )
   out = tmp_path / "hps-proxy-allowed-hosts.inc"
   mod_w.write_allowed_hosts_include(ini_path=ini, out_path=out)
@@ -50,10 +60,14 @@ def test_write_allowed_hosts_include_emits_server_name_line(tmp_path):
 
 
 def test_committed_nginx_conf_includes_generated_fragment():
-  example = (_repo_root() / "services-conf" / "nginx.conf").read_text(encoding="utf-8")
+  example = (_repo_root() / "services-conf" / "nginx.conf").read_text(
+    encoding="utf-8"
+  )
   assert "include /etc/nginx/hps-proxy-allowed-hosts.inc;" in example
   assert "ssl_certificate " in example
-  assert "ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;" in example
+  assert (
+    "ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;" in example
+  )
   assert "include /etc/nginx/nginx-resolver.inc;" in example
 
 

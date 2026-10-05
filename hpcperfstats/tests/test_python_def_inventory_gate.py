@@ -87,7 +87,9 @@ def test_inventory_lists_nested_and_exclusions(inv, tmp_path: Path):
   )
   tests = tmp_path / "hpcperfstats" / "tests"
   tests.mkdir(parents=True)
-  (tests / "test_foo.py").write_text("def test_x():\n  assert True\n", encoding="utf-8")
+  (tests / "test_foo.py").write_text(
+    "def test_x():\n  assert True\n", encoding="utf-8"
+  )
   mig = tmp_path / "hpcperfstats" / "site" / "migrations"
   mig.mkdir(parents=True)
   (mig / "0001_x.py").write_text("def forwards():\n  pass\n", encoding="utf-8")
@@ -127,7 +129,9 @@ def test_checker_fails_on_missing_args_or_hints(inv, tmp_path: Path):
   assert not rec.excluded
   assert not rec.ok
   assert any("missing_param_annotation" in i for i in rec.issues)
-  assert "missing_docstring" in rec.issues or "missing_args_section" in rec.issues
+  assert (
+    "missing_docstring" in rec.issues or "missing_args_section" in rec.issues
+  )
 
 
 def test_checker_accepts_short_dunder_template(inv, tmp_path: Path):
@@ -257,7 +261,9 @@ def test_checker_rejects_see_callers_doc_phrase(inv, tmp_path: Path):
   assert any(i.startswith("forbidden_doc_phrase:") for i in rec.issues)
 
 
-def test_checker_rejects_name_echo_and_placeholder_examples(inv, tmp_path: Path):
+def test_checker_rejects_name_echo_and_placeholder_examples(
+  inv, tmp_path: Path
+):
   """Name-only summaries and ``name(...)`` Examples placeholders fail."""
   pkg = tmp_path / "hpcperfstats" / "lib"
   pkg.mkdir(parents=True)

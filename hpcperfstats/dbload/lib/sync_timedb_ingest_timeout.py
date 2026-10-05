@@ -34,16 +34,16 @@ _TYPICAL_SEALED_MEMBER_BYTES = 32 * 1024 * 1024
 def is_giant_ingest_budget(path: str, *, trigger_s: Any | None = None) -> Any:
   """
   True when ``path`` resolved ingest budget meets the giant supplement.
-  
+
     threshold.
-  
+
   Args:
     path (str): String for path.
     trigger_s (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> is_giant_ingest_budget("x", None)  # doctest: +SKIP
   """
@@ -54,13 +54,13 @@ def is_giant_ingest_budget(path: str, *, trigger_s: Any | None = None) -> Any:
 def calendar_day_from_sealed_archive_path(sealed_path: str) -> Any:
   """
   Return ``YYYY-MM-DD`` ISO day token from a sealed daily archive path.
-  
+
   Args:
     sealed_path (str): String for sealed path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> calendar_day_from_sealed_archive_path("x")  # doctest: +SKIP
   """
@@ -77,7 +77,7 @@ def calendar_day_from_sealed_archive_path(sealed_path: str) -> Any:
     except ValueError:
       pass
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      parse_archive_date_from_daily_gz_path,
+    parse_archive_date_from_daily_gz_path,
   )
 
   day_date = parse_archive_date_from_daily_gz_path(sealed_path)
@@ -89,21 +89,21 @@ def calendar_day_from_sealed_archive_path(sealed_path: str) -> Any:
 def _store_member_count_for_sealed_day(day_token: Any) -> Any:
   """
   Best-effort store HASH length for a calendar day (0 when unavailable).
-  
+
   Args:
     day_token (Any): Day token passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _store_member_count_for_sealed_day(None)  # doctest: +SKIP
   """
   if not day_token:
     return 0
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      build_archive_members_keys,
-      lookup_full_members,
+    build_archive_members_keys,
+    lookup_full_members,
   )
 
   tgz_archive_dir = cfg.get_daily_archive_dir_path()
@@ -123,12 +123,12 @@ def _store_member_count_for_sealed_day(day_token: Any) -> Any:
     day_date = date_cls.fromisoformat(day_token)
     compressed = daily_compressed_path_for_date(tgz_archive_dir, day_date)
     cache_key = _daily_archive_members_cache_key(
-        normalize_daily_compressed_path(compressed),
+      normalize_daily_compressed_path(compressed),
     )
     keys = build_archive_members_keys(cache_key)
     members = lookup_full_members(keys)
     return 0 if members is None else len(members)
-  except (ValueError, TypeError, OSError):
+  except ValueError, TypeError, OSError:
     return 0
 
 
@@ -139,21 +139,21 @@ def sealed_archive_member_count_hint(
 ) -> Any:
   """
   Estimate member count for sealed-day stall budgeting.
-  
+
   Args:
     sealed_path (str): String for sealed path.
     member_count (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> sealed_archive_member_count_hint("x", None)  # doctest: +SKIP
   """
   if member_count is not None:
     try:
       count = int(member_count)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
       count = 0
     if count > 0:
       return count

@@ -14,14 +14,16 @@ from django.core.wsgi import get_wsgi_application
 
 from hpcperfstats.tests.playwright_axe import assert_no_serious_axe_violations
 from hpcperfstats.tests.public_robots_js_registry import (
-    format_public_robots_txt_body,
-    load_public_robots_allow_prefixes,
+  format_public_robots_txt_body,
+  load_public_robots_allow_prefixes,
 )
 
 try:
   from playwright.sync_api import sync_playwright
 except ModuleNotFoundError:
-  pytest.skip("playwright is required for browser E2E tests", allow_module_level=True)
+  pytest.skip(
+    "playwright is required for browser E2E tests", allow_module_level=True
+  )
 
 
 @contextmanager
@@ -63,19 +65,19 @@ def test_browser_flow_for_web_pages():
       assert machine_response.status == 404
 
       for path in (
-          "/machine/home/",
-          "/machine/jobs/",
-          "/machine/job/123/",
-          "/machine/job/123/cpu/",
-          "/machine/year/2020/",
-          "/machine/date/2024-01-15/",
-          "/machine/host/node1/plot/",
-          "/machine/admin_monitor/",
-          "/machine/job_monitor/",
-          "/machine/test-login/",
-          "/machine/logout/",
-          "/pub/",
-          "/pub/cluster-dashboard",
+        "/machine/home/",
+        "/machine/jobs/",
+        "/machine/job/123/",
+        "/machine/job/123/cpu/",
+        "/machine/year/2020/",
+        "/machine/date/2024-01-15/",
+        "/machine/host/node1/plot/",
+        "/machine/admin_monitor/",
+        "/machine/job_monitor/",
+        "/machine/test-login/",
+        "/machine/logout/",
+        "/pub/",
+        "/pub/cluster-dashboard",
       ):
         response = page.goto(f"{base_url}{path}")
         assert response is not None
@@ -89,13 +91,13 @@ def test_browser_flow_for_web_pages():
       expected = format_public_robots_txt_body(prefixes)
       assert "User-agent: *" in expected
       for prefix in prefixes:
-        assert "Allow: {}".format(prefix) in expected
+        assert f"Allow: {prefix}" in expected
       assert "Disallow: /" in expected
 
       csp_probe = page.context.request.post(
-          f"{base_url}/csp-report/",
-          headers={"Content-Type": "application/csp-report"},
-          data='{"csp-report": {"document-uri": "https://example.test"}}',
+        f"{base_url}/csp-report/",
+        headers={"Content-Type": "application/csp-report"},
+        data='{"csp-report": {"document-uri": "https://example.test"}}',
       )
       assert csp_probe.status == 204
 
@@ -105,9 +107,9 @@ def test_browser_flow_for_web_pages():
       # unsafe-inline) does not block Playwright's axe script injection.
       page.goto("about:blank")
       page.set_content(
-          "<!DOCTYPE html><html lang=\"en\"><head>"
-          "<meta charset=\"utf-8\"/><title>accessibility probe</title></head>"
-          "<body></body></html>",
+        '<!DOCTYPE html><html lang="en"><head>'
+        '<meta charset="utf-8"/><title>accessibility probe</title></head>'
+        "<body></body></html>",
       )
       assert_no_serious_axe_violations(page)
 

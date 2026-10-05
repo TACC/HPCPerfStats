@@ -8,36 +8,36 @@ import weakref
 import pytest
 
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
-    SyncTimedbThreadPool,
+  SyncTimedbThreadPool,
 )
 from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
-    StartupArchiveScanCoordinator,
+  StartupArchiveScanCoordinator,
 )
 
 
 def test_startup_archive_scan_coordinator_construct(tmp_path):
   coord = StartupArchiveScanCoordinator(
-      archive_data_dir=str(tmp_path / "archive"),
-      host_name_ext=".hpc",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      log_fn=lambda *_a, **_k: None,
+    archive_data_dir=str(tmp_path / "archive"),
+    host_name_ext=".hpc",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    log_fn=lambda *_a, **_k: None,
   )
   assert coord.get_snapshot() is None
 
 
 def test_titled_thread_pool_closes_all_thread_local_connections_after_task(
-    monkeypatch,
+  monkeypatch,
 ):
   """Worker finally must call connections.close_all(), not only close_old."""
   calls = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_session_executor.connections.close_all",
-      lambda: calls.append("close_all"),
+    "hpcperfstats.dbload.lib.sync_timedb_session_executor.connections.close_all",
+    lambda: calls.append("close_all"),
   )
   pool = SyncTimedbThreadPool(
-      max_workers=1,
-      thread_role="metrics-pool",
-      process_title="update_metrics.py",
+    max_workers=1,
+    thread_role="metrics-pool",
+    process_title="update_metrics.py",
   )
   try:
     assert pool.apply_async(lambda: 1).get(timeout=5) == 1
@@ -50,9 +50,9 @@ def test_titled_thread_pool_closes_all_thread_local_connections_after_task(
 
 def test_titled_thread_pool_imap_unordered_supports_timeout_and_completion_order():
   pool = SyncTimedbThreadPool(
-      max_workers=2,
-      thread_role="metrics-pool",
-      process_title="update_metrics.py",
+    max_workers=2,
+    thread_role="metrics-pool",
+    process_title="update_metrics.py",
   )
 
   def delayed(item):
@@ -61,9 +61,9 @@ def test_titled_thread_pool_imap_unordered_supports_timeout_and_completion_order
     return value
 
   iterator = pool.imap_unordered(
-      delayed,
-      [(0.05, "slow"), (0.0, "fast")],
-      chunksize=1,
+    delayed,
+    [(0.05, "slow"), (0.0, "fast")],
+    chunksize=1,
   )
   assert iterator.next(timeout=0.5) == "fast"
   assert iterator.next(timeout=0.5) == "slow"
@@ -75,9 +75,9 @@ def test_titled_thread_pool_imap_unordered_supports_timeout_and_completion_order
 
 def test_titled_thread_pool_exposes_bounded_worker_count():
   pool = SyncTimedbThreadPool(
-      max_workers=3,
-      thread_role="metrics-pool",
-      process_title="update_metrics.py",
+    max_workers=3,
+    thread_role="metrics-pool",
+    process_title="update_metrics.py",
   )
   try:
     assert pool._processes == 3
@@ -92,9 +92,9 @@ def test_titled_thread_pool_imap_keeps_only_worker_width_submitted():
   gate = threading.Event()
   produced = []
   pool = SyncTimedbThreadPool(
-      max_workers=2,
-      thread_role="metrics-pool",
-      process_title="update_metrics.py",
+    max_workers=2,
+    thread_role="metrics-pool",
+    process_title="update_metrics.py",
   )
 
   def items():
@@ -122,9 +122,9 @@ def test_titled_thread_pool_imap_close_releases_unsubmitted_inputs():
   """Closing a stalled iterator must release its unsubmitted source."""
   gate = threading.Event()
   pool = SyncTimedbThreadPool(
-      max_workers=1,
-      thread_role="metrics-pool",
-      process_title="update_metrics.py",
+    max_workers=1,
+    thread_role="metrics-pool",
+    process_title="update_metrics.py",
   )
 
   class Payload:
@@ -154,9 +154,9 @@ def test_titled_thread_pool_imap_worker_error_does_not_submit_next_input():
   """A terminal Future error must close the source before refill."""
   produced = []
   pool = SyncTimedbThreadPool(
-      max_workers=1,
-      thread_role="metrics-pool",
-      process_title="update_metrics.py",
+    max_workers=1,
+    thread_role="metrics-pool",
+    process_title="update_metrics.py",
   )
 
   def items():

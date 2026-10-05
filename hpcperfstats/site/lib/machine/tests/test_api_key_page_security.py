@@ -54,7 +54,10 @@ class TestUserApiKeyApiSecurity:
     list_queryset = MagicMock()
     list_queryset.order_by.return_value.first.return_value = active_key
 
-    with patch("hpcperfstats.site.lib.machine.api.ApiKey.objects.filter", return_value=list_queryset):
+    with patch(
+      "hpcperfstats.site.lib.machine.api.ApiKey.objects.filter",
+      return_value=list_queryset,
+    ):
       response = client.get("/api/user-api-key/")
 
     assert response.status_code == 200
@@ -75,9 +78,15 @@ class TestUserApiKeyApiSecurity:
     empty_qs.order_by.return_value.first.return_value = None
     new_obj = SimpleNamespace(key_prefix="deadbeef1234")
 
-    with patch("hpcperfstats.site.lib.machine.api.ApiKey.objects.filter", return_value=empty_qs), patch(
+    with (
+      patch(
+        "hpcperfstats.site.lib.machine.api.ApiKey.objects.filter",
+        return_value=empty_qs,
+      ),
+      patch(
         "hpcperfstats.site.lib.machine.api.ApiKey.create_from_raw_key",
         return_value=(new_obj, "fresh-raw-key-hex"),
+      ),
     ):
       response = client.get("/api/user-api-key/")
 
@@ -98,13 +107,19 @@ class TestUserApiKeyApiSecurity:
     filtered.update.return_value = 1
     rotated = SimpleNamespace(key_prefix="rot456")
 
-    with patch("hpcperfstats.site.lib.machine.api.ApiKey.objects.filter", return_value=filtered), patch(
+    with (
+      patch(
+        "hpcperfstats.site.lib.machine.api.ApiKey.objects.filter",
+        return_value=filtered,
+      ),
+      patch(
         "hpcperfstats.site.lib.machine.api.ApiKey.create_from_raw_key",
         return_value=(rotated, "raw-new-api-key"),
+      ),
     ):
       response = client.post(
-          "/api/user-api-key/rotate/",
-          **_csrf_headers(client),
+        "/api/user-api-key/rotate/",
+        **_csrf_headers(client),
       )
 
     assert response.status_code == 200
@@ -147,9 +162,9 @@ class TestSessionMutatingPostCsrf:
     client = Client()
     self._staff_session(client)
     response = client.post(
-        "/api/cache/invalidate-page/",
-        data='{"page_path": "/machine/jobs/"}',
-        content_type="application/json",
+      "/api/cache/invalidate-page/",
+      data='{"page_path": "/machine/jobs/"}',
+      content_type="application/json",
     )
     assert response.status_code == 403
     assert response.json()["detail"] == "CSRF token missing"
@@ -158,9 +173,9 @@ class TestSessionMutatingPostCsrf:
     client = Client()
     self._staff_session(client)
     response = client.post(
-        "/api/sacct/ingest/?date=2024-01-01",
-        data="jid|user|acct",
-        content_type="text/plain",
+      "/api/sacct/ingest/?date=2024-01-01",
+      data="jid|user|acct",
+      content_type="text/plain",
     )
     assert response.status_code == 403
     assert response.json()["detail"] == "CSRF token missing"
@@ -171,19 +186,20 @@ class TestSessionMutatingPostCsrf:
 
     client = Client()
     key_obj = SimpleNamespace(username="pipeline", is_staff=True)
-    with patch.object(api.ApiKey, "hash_raw_key", return_value="hashed"), patch.object(
-        api.ApiKey.objects, "get", return_value=key_obj
-    ), patch.object(
-        api, "persist_accounting_daily_file", return_value=False
-    ), patch.object(
-        api.job_data.objects, "filter"
-    ) as mock_filter:
-      mock_filter.return_value.values_list.return_value.iterator.return_value = iter([])
+    with (
+      patch.object(api.ApiKey, "hash_raw_key", return_value="hashed"),
+      patch.object(api.ApiKey.objects, "get", return_value=key_obj),
+      patch.object(api, "persist_accounting_daily_file", return_value=False),
+      patch.object(api.job_data.objects, "filter") as mock_filter,
+    ):
+      mock_filter.return_value.values_list.return_value.iterator.return_value = iter(
+        []
+      )
       response = client.post(
-          "/api/sacct/ingest/?date=2024-01-01",
-          data="",
-          content_type="text/plain",
-          HTTP_X_API_KEY="a" * 64,
+        "/api/sacct/ingest/?date=2024-01-01",
+        data="",
+        content_type="text/plain",
+        HTTP_X_API_KEY="a" * 64,
       )
     assert response.status_code == 200
     assert response.json()["inserted"] == 0
@@ -193,14 +209,15 @@ class TestSessionMutatingPostCsrf:
 
     client = Client()
     key_obj = SimpleNamespace(username="reader", is_staff=False)
-    with patch.object(api.ApiKey, "hash_raw_key", return_value="hashed"), patch.object(
-        api.ApiKey.objects, "get", return_value=key_obj
+    with (
+      patch.object(api.ApiKey, "hash_raw_key", return_value="hashed"),
+      patch.object(api.ApiKey.objects, "get", return_value=key_obj),
     ):
       response = client.post(
-          "/api/sacct/ingest/?date=2024-01-01",
-          data="body",
-          content_type="text/plain",
-          HTTP_X_API_KEY="b" * 64,
+        "/api/sacct/ingest/?date=2024-01-01",
+        data="body",
+        content_type="text/plain",
+        HTTP_X_API_KEY="b" * 64,
       )
     assert response.status_code == 403
     assert response.json()["error"] == "Staff access required"

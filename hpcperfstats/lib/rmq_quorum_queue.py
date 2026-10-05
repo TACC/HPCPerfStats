@@ -17,6 +17,7 @@ Attributes:
   AMQP_RECONNECT_BACKOFF_CAP_SECONDS: Max exponential reconnect sleep.
   AMQP_RECONNECT_STABLE_CONSUME_SECONDS: Consume duration before backoff reset.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -52,7 +53,7 @@ def _amqp_reply_code(exc: BaseException) -> int | None:
 
   Examples:
     >>> class _E(Exception):
-    ...     reply_code = 404
+    ...   reply_code = 404
     >>> _amqp_reply_code(_E("x"))
     404
   """
@@ -79,7 +80,7 @@ def is_amqp_not_found_error(exc: BaseException) -> bool:
 
   Examples:
     >>> class _E(Exception):
-    ...     reply_code = 404
+    ...   reply_code = 404
     >>> is_amqp_not_found_error(_E("NOT_FOUND - no queue"))
     True
     >>> is_amqp_not_found_error(OSError("disk full"))
@@ -103,13 +104,15 @@ def is_inequivalent_x_queue_type_error(exc: BaseException) -> bool:
 
   Examples:
     >>> is_inequivalent_x_queue_type_error(
-    ...     Exception(
-    ...         "PRECONDITION_FAILED - inequivalent arg 'x-queue-type' "
-    ...         "received 'quorum' but current is 'classic'"
-    ...     )
+    ...   Exception(
+    ...     "PRECONDITION_FAILED - inequivalent arg 'x-queue-type' "
+    ...     "received 'quorum' but current is 'classic'"
+    ...   )
     ... )
     True
-    >>> is_inequivalent_x_queue_type_error(Exception("inequivalent arg durable"))
+    >>> is_inequivalent_x_queue_type_error(
+    ...   Exception("inequivalent arg durable")
+    ... )
     False
   """
   msg = str(exc).lower()
@@ -137,22 +140,22 @@ def _open_replacement_channel(channel: Any) -> Any:
 
   Examples:
     >>> class _Conn:
-    ...     def channel(self):
-    ...         return "new"
+    ...   def channel(self):
+    ...     return "new"
     >>> class _Ch:
-    ...     connection = _Conn()
+    ...   connection = _Conn()
     >>> _open_replacement_channel(_Ch())
     'new'
   """
   connection = getattr(channel, "connection", None)
   if connection is None:
     raise RuntimeError(
-        "Cannot replace AMQP channel: original channel has no connection"
+      "Cannot replace AMQP channel: original channel has no connection"
     )
   opener = getattr(connection, "channel", None)
   if not callable(opener):
     raise RuntimeError(
-        "Cannot replace AMQP channel: connection has no channel() method"
+      "Cannot replace AMQP channel: connection has no channel() method"
     )
   return opener()
 
@@ -186,9 +189,9 @@ def declare_durable_quorum_queue(channel: Any, queue_name: str) -> Any:
 
   Examples:
     >>> class _Ch:
-    ...     def queue_declare(self, **kwargs):
-    ...         self.last = kwargs
-    ...         return kwargs
+    ...   def queue_declare(self, **kwargs):
+    ...     self.last = kwargs
+    ...     return kwargs
     >>> ch = _Ch()
     >>> out = declare_durable_quorum_queue(ch, "stampede3")
     >>> out is ch
@@ -199,8 +202,8 @@ def declare_durable_quorum_queue(channel: Any, queue_name: str) -> Any:
   try:
     channel.queue_declare(queue=queue_name, durable=True, passive=True)
     log_print(
-        "AMQP attached to existing queue %r (passive declare; "
-        "type unchanged)" % queue_name
+      f"AMQP attached to existing queue {queue_name!r} (passive declare; "
+      "type unchanged)"
     )
     return channel
   except Exception as exc:
@@ -209,32 +212,30 @@ def declare_durable_quorum_queue(channel: Any, queue_name: str) -> Any:
   channel = _open_replacement_channel(channel)
   try:
     channel.queue_declare(
-        queue=queue_name,
-        durable=True,
-        arguments={"x-queue-type": QUORUM_QUEUE_TYPE},
+      queue=queue_name,
+      durable=True,
+      arguments={"x-queue-type": QUORUM_QUEUE_TYPE},
     )
-    log_print("AMQP declared durable quorum queue %r" % queue_name)
+    log_print(f"AMQP declared durable quorum queue {queue_name!r}")
     return channel
   except Exception as exc:
     if not is_inequivalent_x_queue_type_error(exc):
       msg = str(exc).lower()
       code = _amqp_reply_code(exc)
       if (
-          code == 406
-          or "precondition_failed" in msg
-          or "inequivalent arg" in msg
+        code == 406 or "precondition_failed" in msg or "inequivalent arg" in msg
       ):
         raise QuorumQueuePreconditionError(
-            "Queue %r declare failed with inequivalent args (not an "
-            "x-queue-type mismatch). Do not convert to classic from "
-            "listend. Broker error: %s" % (queue_name, exc)
+          f"Queue {queue_name!r} declare failed with inequivalent args (not an "
+          "x-queue-type mismatch). Do not convert to classic from "
+          f"listend. Broker error: {exc}"
         ) from exc
       raise
   channel = _open_replacement_channel(channel)
   channel.queue_declare(queue=queue_name, durable=True, passive=True)
   log_print(
-      "AMQP attached to existing queue %r after quorum declare type "
-      "mismatch (passive; type unchanged)" % queue_name
+    f"AMQP attached to existing queue {queue_name!r} after quorum declare type "
+    "mismatch (passive; type unchanged)"
   )
   return channel
 
@@ -264,10 +265,10 @@ def listend_amqp_connection_parameters(host: str) -> pika.ConnectionParameters:
     131072
   """
   return pika.ConnectionParameters(
-      host,
-      heartbeat=LISTEND_AMQP_HEARTBEAT_SECONDS,
-      blocked_connection_timeout=LISTEND_AMQP_BLOCKED_CONNECTION_TIMEOUT_SECONDS,
-      frame_max=LISTEND_AMQP_FRAME_MAX,
+    host,
+    heartbeat=LISTEND_AMQP_HEARTBEAT_SECONDS,
+    blocked_connection_timeout=LISTEND_AMQP_BLOCKED_CONNECTION_TIMEOUT_SECONDS,
+    frame_max=LISTEND_AMQP_FRAME_MAX,
   )
 
 
@@ -286,10 +287,9 @@ def is_quorum_consume_setup_error(exc: BaseException) -> bool:
 
   Examples:
     >>> is_quorum_consume_setup_error(
-    ...     Exception(
-    ...         "INTERNAL_ERROR - timed out consuming from quorum queue "
-    ...         "'stampede3'"
-    ...     )
+    ...   Exception(
+    ...     "INTERNAL_ERROR - timed out consuming from quorum queue 'stampede3'"
+    ...   )
     ... )
     True
     >>> is_quorum_consume_setup_error(OSError("disk full"))
@@ -335,9 +335,7 @@ def is_amqp_peer_reset_reconnect_error(exc: BaseException) -> bool:
     return True
   if "stream" in msg and "lost" in msg:
     return True
-  if "handshake" in msg and "timeout" in msg:
-    return True
-  return False
+  return bool("handshake" in msg and "timeout" in msg)
 
 
 def should_use_amqp_exponential_reconnect_backoff(exc: BaseException) -> bool:
@@ -354,16 +352,15 @@ def should_use_amqp_exponential_reconnect_backoff(exc: BaseException) -> bool:
 
   Examples:
     >>> should_use_amqp_exponential_reconnect_backoff(
-    ...     ConnectionResetError(104, "Connection reset by peer")
+    ...   ConnectionResetError(104, "Connection reset by peer")
     ... )
     True
     >>> should_use_amqp_exponential_reconnect_backoff(OSError("disk full"))
     False
   """
-  return (
-      is_quorum_consume_setup_error(exc)
-      or is_amqp_peer_reset_reconnect_error(exc)
-  )
+  return is_quorum_consume_setup_error(
+    exc
+  ) or is_amqp_peer_reset_reconnect_error(exc)
 
 
 def next_amqp_reconnect_backoff_seconds(current: int) -> int:

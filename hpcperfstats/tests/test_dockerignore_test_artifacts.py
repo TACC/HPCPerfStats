@@ -52,17 +52,15 @@ def _match_dockerignore(rel_path: str, pattern: str) -> bool:
         return False
       if suffix:
         return (
-            f"/{suffix}/" in f"/{rel}/"
-            or rel.endswith(f"/{suffix}")
-            or rel == suffix
+          f"/{suffix}/" in f"/{rel}/"
+          or rel.endswith(f"/{suffix}")
+          or rel == suffix
         )
       return True
     if dir_pat.startswith("**/"):
       name = dir_pat[3:]
       return (
-          f"/{name}/" in f"/{rel}/"
-          or rel.startswith(f"{name}/")
-          or rel == name
+        f"/{name}/" in f"/{rel}/" or rel.startswith(f"{name}/") or rel == name
       )
     return rel == dir_pat or rel.startswith(f"{dir_pat}/")
 
@@ -102,19 +100,17 @@ def _is_excluded(rel_path: str, patterns: list[str]) -> bool:
 def _is_under_excluded_tree(rel_path: str) -> bool:
   rel = rel_path.replace("\\", "/").lstrip("./")
   prefixes = (
-      "node_modules/",
-      ".venv/",
-      ".pytest_cache/",
-      ".cursor/",
-      "test_runs/",
-      "monitor/",
-      "hpcperfstats-tools/",
+    "node_modules/",
+    ".venv/",
+    ".pytest_cache/",
+    ".cursor/",
+    "test_runs/",
+    "monitor/",
+    "hpcperfstats-tools/",
   )
   if rel.startswith(prefixes):
     return True
-  if rel.startswith("tests/") or "/tests/" in f"/{rel}/":
-    return True
-  return False
+  return bool(rel.startswith("tests/") or "/tests/" in f"/{rel}/")
 
 
 def _looks_like_non_runtime_dev_artifact(rel_path: str) -> bool:
@@ -122,15 +118,15 @@ def _looks_like_non_runtime_dev_artifact(rel_path: str) -> bool:
   if _is_under_excluded_tree(rel):
     return False
   if rel.startswith(
-      (
-          "hpcperfstats/cursor-rules/",
-          "docs/",
-          ".build/",
-          ".github/",
-          "artifacts/",
-          "staticfiles/",
-          "hpcperfstats-tools/",
-      )
+    (
+      "hpcperfstats/cursor-rules/",
+      "docs/",
+      ".build/",
+      ".github/",
+      "artifacts/",
+      "staticfiles/",
+      "hpcperfstats-tools/",
+    )
   ):
     return True
   if rel.endswith(".mdc"):
@@ -139,12 +135,10 @@ def _looks_like_non_runtime_dev_artifact(rel_path: str) -> bool:
     return True
   name = rel.split("/")[-1]
   if name.startswith("docker-compose") and (
-      name.endswith(".yaml") or name.endswith(".yaml.example")
+    name.endswith((".yaml", ".yaml.example"))
   ):
     return True
-  if name == ".DS_Store":
-    return True
-  return False
+  return name == ".DS_Store"
 
 
 def _looks_like_test_artifact(rel_path: str) -> bool:
@@ -173,29 +167,27 @@ def _looks_like_test_artifact(rel_path: str) -> bool:
   if rel.startswith("hpcperfstats/site/frontend/test/"):
     return True
   if name in {
-      "vitest.config.ts",
-      "setupTests.ts",
-      "axe-test-utils.ts",
-      "fix-tests-next.mjs",
-      "playwright_axe.py",
+    "vitest.config.ts",
+    "setupTests.ts",
+    "axe-test-utils.ts",
+    "fix-tests-next.mjs",
+    "playwright_axe.py",
   }:
     return True
-  if rel.startswith("scripts/test_") and rel.endswith(".sh"):
-    return True
-  return False
+  return bool(rel.startswith("scripts/test_") and rel.endswith(".sh"))
 
 
 def test_dockerignore_lists_required_test_patterns():
   content = (_repo_root() / ".dockerignore").read_text()
   required = (
-      "tests/",
-      "**/tests/",
-      "test_runs/",
-      "**/conftest.py",
-      "scripts/test_*.sh",
-      "**/*.test.ts",
-      "**/__tests__/",
-      "hpcperfstats/site/frontend/test/",
+    "tests/",
+    "**/tests/",
+    "test_runs/",
+    "**/conftest.py",
+    "scripts/test_*.sh",
+    "**/*.test.ts",
+    "**/__tests__/",
+    "hpcperfstats/site/frontend/test/",
   )
   for pattern in required:
     assert pattern in content, f"missing .dockerignore pattern: {pattern}"
@@ -204,15 +196,15 @@ def test_dockerignore_lists_required_test_patterns():
 def test_dockerignore_lists_required_dev_patterns():
   content = (_repo_root() / ".dockerignore").read_text()
   required = (
-      "hpcperfstats/cursor-rules/",
-      "**/*.mdc",
-      "docs/",
-      "docker-compose*.yaml",
-      ".build/",
-      ".github/",
-      "artifacts/",
-      "hpcperfstats/site/frontend/README.md",
-      "hpcperfstats-tools/",
+    "hpcperfstats/cursor-rules/",
+    "**/*.mdc",
+    "docs/",
+    "docker-compose*.yaml",
+    ".build/",
+    ".github/",
+    "artifacts/",
+    "hpcperfstats/site/frontend/README.md",
+    "hpcperfstats-tools/",
   )
   for pattern in required:
     assert pattern in content, f"missing .dockerignore pattern: {pattern}"
@@ -225,7 +217,7 @@ def test_pipeline_rebuild_frontend_staging_not_excluded():
   assert "!.build/pipeline-rebuild-frontend/**" in content
   patterns = _dockerignore_patterns(_repo_root())
   assert not _is_excluded(
-      ".build/pipeline-rebuild-frontend/machine/index.html", patterns
+    ".build/pipeline-rebuild-frontend/machine/index.html", patterns
   )
   assert _is_excluded(".build/other-scratch.txt", patterns)
 
@@ -239,9 +231,9 @@ def test_git_directory_not_excluded_from_docker_build_context():
   """SPA bake copies .git into frontend-builder; must not be dockerignored."""
   content = (_repo_root() / ".dockerignore").read_text()
   lines = [
-      line.strip()
-      for line in content.splitlines()
-      if line.strip() and not line.strip().startswith("#")
+    line.strip()
+    for line in content.splitlines()
+    if line.strip() and not line.strip().startswith("#")
   ]
   assert ".git" not in lines
   assert ".git/" not in lines
@@ -252,12 +244,17 @@ def test_git_directory_not_excluded_from_docker_build_context():
 def test_dockerfile_copies_git_for_spa_bake_and_strips_from_runtime():
   dockerfile = (_repo_root() / "Dockerfile").read_text()
   assert "COPY .git /home/hpcperfstats/.git" in dockerfile
-  assert "apk add --no-cache bash git" in dockerfile or "apk add --no-cache git" in dockerfile
+  assert (
+    "apk add --no-cache bash git" in dockerfile
+    or "apk add --no-cache git" in dockerfile
+  )
   assert "rm -rf /home/hpcperfstats/.git" in dockerfile
   # Must resolve SHA in the build RUN (not ENV=unknown before npm).
   assert "git -C /home/hpcperfstats rev-parse HEAD" in dockerfile
   assert "safe.directory" in dockerfile
-  assert "ENV HPCPERFSTATS_GIT_COMMIT=$HPCPERFSTATS_GIT_COMMIT" not in dockerfile
+  assert (
+    "ENV HPCPERFSTATS_GIT_COMMIT=$HPCPERFSTATS_GIT_COMMIT" not in dockerfile
+  )
   # Strip must appear after the full-tree COPY into the Python base stage.
   copy_idx = dockerfile.find("COPY --chown=hpcperfstats:hpcperfstats . .")
   strip_idx = dockerfile.find("rm -rf /home/hpcperfstats/.git")
@@ -279,8 +276,8 @@ def test_all_test_artifacts_excluded_from_docker_build_context():
       missing.append(rel)
 
   assert not missing, (
-      "test artifacts not covered by .dockerignore (first 20):\n"
-      + "\n".join(missing[:20])
+    "test artifacts not covered by .dockerignore (first 20):\n"
+    + "\n".join(missing[:20])
   )
 
 
@@ -299,6 +296,6 @@ def test_all_non_runtime_dev_artifacts_excluded_from_docker_build_context():
       missing.append(rel)
 
   assert not missing, (
-      "non-runtime dev artifacts not covered by .dockerignore (first 20):\n"
-      + "\n".join(missing[:20])
+    "non-runtime dev artifacts not covered by .dockerignore (first 20):\n"
+    + "\n".join(missing[:20])
   )

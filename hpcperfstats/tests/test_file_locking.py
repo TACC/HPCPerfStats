@@ -6,13 +6,13 @@ import time
 import pytest
 
 from hpcperfstats.dbload.lib.file_locking import (
-    cleanup_orphan_fnctl_lock_sidecars,
-    cleanup_orphan_fnctl_lock_sidecars_for_targets,
-    cleanup_stale_fnctl_lock_sidecars,
-    file_read_lock_wait,
-    file_write_lock,
-    _refresh_lock_sidecar_mtime,
-    _try_open_write_lock_fd,
+  _refresh_lock_sidecar_mtime,
+  _try_open_write_lock_fd,
+  cleanup_orphan_fnctl_lock_sidecars,
+  cleanup_orphan_fnctl_lock_sidecars_for_targets,
+  cleanup_stale_fnctl_lock_sidecars,
+  file_read_lock_wait,
+  file_write_lock,
 )
 
 
@@ -72,7 +72,7 @@ def test_file_read_waits_for_writer_and_succeeds(tmp_path):
   start = time.time()
   release.set()
   with file_read_lock_wait(str(target), timeout_seconds=1):
-    with open(target, "r") as fd:
+    with open(target) as fd:
       assert fd.read() == "ok"
   elapsed = time.time() - start
   assert elapsed >= 0
@@ -139,7 +139,9 @@ def test_cleanup_stale_fnctl_lock_sidecars_skips_recent_mtime(tmp_path):
   assert lock_path.exists()
 
 
-def test_cleanup_orphan_fnctl_lock_sidecars_removes_recent_uncontended(tmp_path):
+def test_cleanup_orphan_fnctl_lock_sidecars_removes_recent_uncontended(
+  tmp_path,
+):
   target = tmp_path / "recent.tar"
   target.write_text("x")
   lock_path = tmp_path / "recent.tar.fnctl.lock"
@@ -163,7 +165,9 @@ def test_file_write_lock_clears_recent_orphan_sidecar_before_acquire(tmp_path):
   assert not lock_path.exists()
 
 
-def test_cleanup_orphan_fnctl_lock_sidecars_does_not_remove_active_lock(tmp_path):
+def test_cleanup_orphan_fnctl_lock_sidecars_does_not_remove_active_lock(
+  tmp_path,
+):
   target = tmp_path / "held.tar"
   target.write_text("x")
   lock_path = tmp_path / "held.tar.fnctl.lock"
@@ -184,7 +188,9 @@ def test_cleanup_orphan_fnctl_lock_sidecars_does_not_remove_active_lock(tmp_path
   t.join(timeout=1)
 
 
-def test_cleanup_orphan_fnctl_lock_sidecars_for_targets_removes_uncontended(tmp_path):
+def test_cleanup_orphan_fnctl_lock_sidecars_for_targets_removes_uncontended(
+  tmp_path,
+):
   tar = tmp_path / "2026-06-08.tar"
   zst = tmp_path / "2026-06-08.tar.zst"
   other = tmp_path / "2026-06-09.tar"
@@ -198,7 +204,7 @@ def test_cleanup_orphan_fnctl_lock_sidecars_for_targets_removes_uncontended(tmp_
   zst_lock.write_text("")
   other_lock.write_text("")
   removed = cleanup_orphan_fnctl_lock_sidecars_for_targets(
-      [str(tar), str(zst)],
+    [str(tar), str(zst)],
   )
   assert removed == 2
   assert not tar_lock.exists()
@@ -206,7 +212,9 @@ def test_cleanup_orphan_fnctl_lock_sidecars_for_targets_removes_uncontended(tmp_
   assert other_lock.exists()
 
 
-def test_cleanup_orphan_fnctl_lock_sidecars_for_targets_preserves_held_flock(tmp_path):
+def test_cleanup_orphan_fnctl_lock_sidecars_for_targets_preserves_held_flock(
+  tmp_path,
+):
   target = tmp_path / "held.tar"
   target.write_text("x")
   lock_path = tmp_path / "held.tar.fnctl.lock"
@@ -227,7 +235,9 @@ def test_cleanup_orphan_fnctl_lock_sidecars_for_targets_preserves_held_flock(tmp
   t.join(timeout=1)
 
 
-def test_cleanup_stale_fnctl_lock_sidecars_does_not_remove_active_lock(tmp_path):
+def test_cleanup_stale_fnctl_lock_sidecars_does_not_remove_active_lock(
+  tmp_path,
+):
   target = tmp_path / "held.tar"
   target.write_text("x")
   lock_path = tmp_path / "held.tar.fnctl.lock"
@@ -302,11 +312,13 @@ def test_file_locking_repeated_read_write_cycles(tmp_path):
       with open(target, "w", encoding="utf-8") as fd:
         fd.write("ok")
     with file_read_lock_wait(str(target), timeout_seconds=1):
-      with open(target, "r", encoding="utf-8") as fd:
+      with open(target, encoding="utf-8") as fd:
         assert fd.read() == "ok"
 
 
-def test_file_write_lock_logs_sidecar_cleanup_failures(monkeypatch, tmp_path, capsys):
+def test_file_write_lock_logs_sidecar_cleanup_failures(
+  monkeypatch, tmp_path, capsys
+):
   target = tmp_path / "data.txt"
   target.write_text("ok")
   real_remove = os.remove
@@ -333,7 +345,7 @@ def test_file_write_lock_survives_path_utime_enoent(monkeypatch, tmp_path):
   def _utime(path, times):
     if str(path).endswith(".fnctl.lock"):
       raise FileNotFoundError(
-          errno.ENOENT, "No such file or directory", str(path)
+        errno.ENOENT, "No such file or directory", str(path)
       )
     return real_utime(path, times)
 
@@ -353,8 +365,8 @@ def test_file_write_lock_refreshes_mtime_via_futime(monkeypatch, tmp_path):
     return real_refresh(lock_fd)
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.file_locking._refresh_lock_sidecar_mtime",
-      _spy_refresh,
+    "hpcperfstats.dbload.lib.file_locking._refresh_lock_sidecar_mtime",
+    _spy_refresh,
   )
   with file_write_lock(str(target), timeout_seconds=1):
     pass

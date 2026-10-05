@@ -14,155 +14,165 @@ pytestmark = pytest.mark.django_db(databases=[])
 
 
 def _assert_positive_y_span(plot):
-    yr = plot.y_range
-    start = float(yr.start)
-    end = float(yr.end)
-    assert end > start, f"degenerate y_range: ({start}, {end})"
+  yr = plot.y_range
+  start = float(yr.start)
+  end = float(yr.end)
+  assert end > start, f"degenerate y_range: ({start}, {end})"
 
 
 def test_job_hist_empty_bins_do_not_use_inverted_quads():
-    """Bins with count 0 must not use top < bottom (Bokeh 3.9 blank embed)."""
-    from hpcperfstats.site.lib.machine.views import job_hist
+  """Bins with count 0 must not use top < bottom (Bokeh 3.9 blank embed)."""
+  from hpcperfstats.site.lib.machine.views import job_hist
 
-    df = pd.DataFrame({"runtime": [0.0, 0.0, 0.0, 100.0, 100.0, 100.0]})
-    plot = job_hist(df, "runtime", "hours", width=280, height=200)
-    assert plot is not None
-    assert plot.title.align == "center"
-    tops = plot.renderers[0].data_source.data["top"]
-    assert min(float(x) for x in tops) == 0.0
-    assert max(float(x) for x in tops) >= 1.0
-    assert float(plot.renderers[0].glyph.bottom) == 0.0
+  df = pd.DataFrame({"runtime": [0.0, 0.0, 0.0, 100.0, 100.0, 100.0]})
+  plot = job_hist(df, "runtime", "hours", width=280, height=200)
+  assert plot is not None
+  assert plot.title.align == "center"
+  tops = plot.renderers[0].data_source.data["top"]
+  assert min(float(x) for x in tops) == 0.0
+  assert max(float(x) for x in tops) >= 1.0
+  assert float(plot.renderers[0].glyph.bottom) == 0.0
 
 
 def test_job_hist_y_range_strictly_positive_when_max_bin_count_is_one():
-    """Single finite value → max histogram count 1; y_range must not be (1, 1)."""
-    from hpcperfstats.site.lib.machine.views import job_hist
+  """Single finite value → max histogram count 1; y_range must not be (1, 1)."""
+  from hpcperfstats.site.lib.machine.views import job_hist
 
-    df = pd.DataFrame({"runtime": [42.0]})
-    plot = job_hist(df, "runtime", "hours", width=280, height=200)
-    assert plot is not None
-    _assert_positive_y_span(plot)
+  df = pd.DataFrame({"runtime": [42.0]})
+  plot = job_hist(df, "runtime", "hours", width=280, height=200)
+  assert plot is not None
+  _assert_positive_y_span(plot)
 
 
 def test_job_hist_y_range_strictly_positive_when_max_bin_count_equals_y_floor():
-    """Several values still yielding max count 1 must not produce zero-span range."""
-    from hpcperfstats.site.lib.machine.views import job_hist
+  """Several values still yielding max count 1 must not produce zero-span range."""
+  from hpcperfstats.site.lib.machine.views import job_hist
 
-    # Wide spread so many bins; each value alone in a bin → max(hist) == 1
-    df = pd.DataFrame({"runtime": [1.0, 100.0, 1000.0, 10000.0]})
-    plot = job_hist(df, "runtime", "hours", width=280, height=200)
-    assert plot is not None
-    _assert_positive_y_span(plot)
+  # Wide spread so many bins; each value alone in a bin → max(hist) == 1
+  df = pd.DataFrame({"runtime": [1.0, 100.0, 1000.0, 10000.0]})
+  plot = job_hist(df, "runtime", "hours", width=280, height=200)
+  assert plot is not None
+  _assert_positive_y_span(plot)
 
 
 def test_job_hist_symmetric_x_padding_and_borders():
-    """Job-list thumbs need equal left/right chrome and equal x-range pad."""
-    from hpcperfstats.site.lib.machine.views import job_hist
+  """Job-list thumbs need equal left/right chrome and equal x-range pad."""
+  from hpcperfstats.site.lib.machine.views import job_hist
 
-    df = pd.DataFrame({"runtime": [1.0, 2.0, 3.0, 4.0, 5.0, 10.0]})
-    plot = job_hist(df, "runtime", "hours", width=280, height=200)
-    assert plot is not None
-    assert plot.min_border_left == 40
-    assert plot.min_border_right == 40
-    assert plot.min_border_left == plot.min_border_right
+  df = pd.DataFrame({"runtime": [1.0, 2.0, 3.0, 4.0, 5.0, 10.0]})
+  plot = job_hist(df, "runtime", "hours", width=280, height=200)
+  assert plot is not None
+  assert plot.min_border_left == 40
+  assert plot.min_border_right == 40
+  assert plot.min_border_left == plot.min_border_right
 
-    lefts = [float(x) for x in plot.renderers[0].data_source.data["left"]]
-    rights = [float(x) for x in plot.renderers[0].data_source.data["right"]]
-    first_edge = min(lefts)
-    last_edge = max(rights)
-    x_start = float(plot.x_range.start)
-    x_end = float(plot.x_range.end)
-    left_pad = first_edge - x_start
-    right_pad = x_end - last_edge
-    assert x_end > last_edge
-    assert left_pad > 0
-    assert abs(left_pad - right_pad) < 1e-9
-    span = last_edge - first_edge
-    assert left_pad == pytest.approx(max(span * 0.05, 1e-6), rel=0, abs=1e-12)
+  lefts = [float(x) for x in plot.renderers[0].data_source.data["left"]]
+  rights = [float(x) for x in plot.renderers[0].data_source.data["right"]]
+  first_edge = min(lefts)
+  last_edge = max(rights)
+  x_start = float(plot.x_range.start)
+  x_end = float(plot.x_range.end)
+  left_pad = first_edge - x_start
+  right_pad = x_end - last_edge
+  assert x_end > last_edge
+  assert left_pad > 0
+  assert abs(left_pad - right_pad) < 1e-9
+  span = last_edge - first_edge
+  assert left_pad == pytest.approx(max(span * 0.05, 1e-6), rel=0, abs=1e-12)
 
 
 def test_job_list_queue_bar_chart_y_range_strictly_positive_when_all_tops_zero():
-    """All-zero vbar tops must still get a positive y span (Bokeh 3.9 embed)."""
-    from hpcperfstats.site.lib.machine.api import _job_list_queue_bar_chart
+  """All-zero vbar tops must still get a positive y span (Bokeh 3.9 embed)."""
+  from hpcperfstats.site.lib.machine.api import _job_list_queue_bar_chart
 
-    mock_qs = MagicMock()
-    values_chain = mock_qs.values.return_value
-    annotate_chain = values_chain.annotate.return_value
-    order_chain = annotate_chain.order_by.return_value
-    order_chain.values_list.return_value = [("batch", 0), ("debug", 0)]
+  mock_qs = MagicMock()
+  values_chain = mock_qs.values.return_value
+  annotate_chain = values_chain.annotate.return_value
+  order_chain = annotate_chain.order_by.return_value
+  order_chain.values_list.return_value = [("batch", 0), ("debug", 0)]
 
-    plot = _job_list_queue_bar_chart(mock_qs, width=280, height=200, metric="jobs")
-    assert plot is not None
-    _assert_positive_y_span(plot)
+  plot = _job_list_queue_bar_chart(
+    mock_qs, width=280, height=200, metric="jobs"
+  )
+  assert plot is not None
+  _assert_positive_y_span(plot)
 
 
 def test_job_list_queue_bar_chart_y_range_strictly_positive_when_max_top_one():
-    """Single-job queues (top values 1) must not collapse y_range."""
-    from hpcperfstats.site.lib.machine.api import _job_list_queue_bar_chart
+  """Single-job queues (top values 1) must not collapse y_range."""
+  from hpcperfstats.site.lib.machine.api import _job_list_queue_bar_chart
 
-    mock_qs = MagicMock()
-    values_chain = mock_qs.values.return_value
-    annotate_chain = values_chain.annotate.return_value
-    order_chain = annotate_chain.order_by.return_value
-    order_chain.values_list.return_value = [("q1", 1), ("q2", 1)]
+  mock_qs = MagicMock()
+  values_chain = mock_qs.values.return_value
+  annotate_chain = values_chain.annotate.return_value
+  order_chain = annotate_chain.order_by.return_value
+  order_chain.values_list.return_value = [("q1", 1), ("q2", 1)]
 
-    plot = _job_list_queue_bar_chart(mock_qs, width=280, height=200, metric="jobs")
-    assert plot is not None
-    _assert_positive_y_span(plot)
+  plot = _job_list_queue_bar_chart(
+    mock_qs, width=280, height=200, metric="jobs"
+  )
+  assert plot is not None
+  _assert_positive_y_span(plot)
 
 
 def test_job_list_queue_bar_chart_node_hours_all_zero():
-    from hpcperfstats.site.lib.machine.api import _job_list_queue_bar_chart
+  from hpcperfstats.site.lib.machine.api import _job_list_queue_bar_chart
 
-    mock_qs = MagicMock()
-    values_chain = mock_qs.values.return_value
-    annotate_chain = values_chain.annotate.return_value
-    order_chain = annotate_chain.order_by.return_value
-    order_chain.values_list.return_value = [("q1", 0), ("q2", 0)]
+  mock_qs = MagicMock()
+  values_chain = mock_qs.values.return_value
+  annotate_chain = values_chain.annotate.return_value
+  order_chain = annotate_chain.order_by.return_value
+  order_chain.values_list.return_value = [("q1", 0), ("q2", 0)]
 
-    plot = _job_list_queue_bar_chart(mock_qs, width=280, height=200, metric="node_hours")
-    assert plot is not None
-    _assert_positive_y_span(plot)
+  plot = _job_list_queue_bar_chart(
+    mock_qs, width=280, height=200, metric="node_hours"
+  )
+  assert plot is not None
+  _assert_positive_y_span(plot)
 
 
 def test_job_list_queue_bar_chart_merges_null_and_empty_queue_for_unique_factors():
-    """NULL vs '' are separate SQL groups but both label as '(no queue)'; Bokeh forbids duplicate factors."""
-    from hpcperfstats.site.lib.machine.api import _job_list_queue_bar_chart
+  """NULL vs '' are separate SQL groups but both label as '(no queue)'; Bokeh forbids duplicate factors."""
+  from hpcperfstats.site.lib.machine.api import _job_list_queue_bar_chart
 
-    mock_qs = MagicMock()
-    values_chain = mock_qs.values.return_value
-    annotate_chain = values_chain.annotate.return_value
-    order_chain = annotate_chain.order_by.return_value
-    order_chain.values_list.return_value = [(None, 2), ("", 3), ("normal", 5)]
+  mock_qs = MagicMock()
+  values_chain = mock_qs.values.return_value
+  annotate_chain = values_chain.annotate.return_value
+  order_chain = annotate_chain.order_by.return_value
+  order_chain.values_list.return_value = [(None, 2), ("", 3), ("normal", 5)]
 
-    plot = _job_list_queue_bar_chart(mock_qs, width=280, height=200, metric="jobs")
-    assert plot is not None
-    factors = list(plot.x_range.factors)
-    assert len(factors) == len(set(factors))
-    data = plot.renderers[0].data_source.data
-    by_x = dict(zip(data["x"], data["top"]))
-    assert by_x["(no queue)"] == 5
-    assert by_x["normal"] == 5
+  plot = _job_list_queue_bar_chart(
+    mock_qs, width=280, height=200, metric="jobs"
+  )
+  assert plot is not None
+  factors = list(plot.x_range.factors)
+  assert len(factors) == len(set(factors))
+  data = plot.renderers[0].data_source.data
+  by_x = dict(zip(data["x"], data["top"], strict=False))
+  assert by_x["(no queue)"] == 5
+  assert by_x["normal"] == 5
 
 
 def test_job_list_queue_bar_chart_merges_whitespace_queue_labels_for_node_hours():
-    from hpcperfstats.site.lib.machine.api import _job_list_queue_bar_chart
+  from hpcperfstats.site.lib.machine.api import _job_list_queue_bar_chart
 
-    mock_qs = MagicMock()
-    values_chain = mock_qs.values.return_value
-    annotate_chain = values_chain.annotate.return_value
-    order_chain = annotate_chain.order_by.return_value
-    order_chain.values_list.return_value = [
-        (None, 1.0),
-        ("  ", 2.0),
-        ("batch", 10.0),
-    ]
+  mock_qs = MagicMock()
+  values_chain = mock_qs.values.return_value
+  annotate_chain = values_chain.annotate.return_value
+  order_chain = annotate_chain.order_by.return_value
+  order_chain.values_list.return_value = [
+    (None, 1.0),
+    ("  ", 2.0),
+    ("batch", 10.0),
+  ]
 
-    plot = _job_list_queue_bar_chart(mock_qs, width=280, height=200, metric="node_hours")
-    assert plot is not None
-    factors = list(plot.x_range.factors)
-    assert len(factors) == len(set(factors))
-    data = plot.renderers[0].data_source.data
-    by_x = dict(zip(data["x"], data["top"]))
-    assert by_x["(no queue)"] == 3.0
-    assert by_x["batch"] == 10.0
+  plot = _job_list_queue_bar_chart(
+    mock_qs, width=280, height=200, metric="node_hours"
+  )
+  assert plot is not None
+  factors = list(plot.x_range.factors)
+  assert len(factors) == len(set(factors))
+  data = plot.renderers[0].data_source.data
+  by_x = dict(zip(data["x"], data["top"], strict=False))
+  assert by_x["(no queue)"] == 3.0
+  assert by_x["batch"] == 10.0

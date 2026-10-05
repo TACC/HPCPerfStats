@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import time
 from collections import deque
 from typing import Any
@@ -39,7 +40,7 @@ def resolve_metrics_pool_max_inflight(pool: Any, fallback: int = 1) -> int:
     return max(1, int(fallback))
   try:
     return max(1, int(workers))
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     return max(1, int(fallback))
 
 
@@ -79,13 +80,15 @@ def should_use_metrics_sliding_session(
 
   Examples:
     >>> class _P:
-    ...     def apply_async(self, *a, **k):
-    ...         return None
+    ...   def apply_async(self, *a, **k):
+    ...     return None
     >>> should_use_metrics_sliding_session(
-    ...     supplement_enabled=True, shared_pool=_P())
+    ...   supplement_enabled=True, shared_pool=_P()
+    ... )
     True
     >>> should_use_metrics_sliding_session(
-    ...     supplement_enabled=True, shared_pool=None)
+    ...   supplement_enabled=True, shared_pool=None
+    ... )
     False
   """
   if not supplement_enabled or shared_pool is None:
@@ -120,9 +123,17 @@ def pop_idle_slot_supplements(
     >>> from collections import deque
     >>> from types import SimpleNamespace
     >>> q = deque([SimpleNamespace(jid="s", estimated_sample_count=5)])
-    >>> [r.jid for r in pop_idle_slot_supplements(
-    ...     q, None, max_n=1, soft_max=10, hard_max=80,
-    ...     original_still_inflight=True)]
+    >>> [
+    ...   r.jid
+    ...   for r in pop_idle_slot_supplements(
+    ...     q,
+    ...     None,
+    ...     max_n=1,
+    ...     soft_max=10,
+    ...     hard_max=80,
+    ...     original_still_inflight=True,
+    ...   )
+    ... ]
     ['s']
   """
   if max_n <= 0 or ready_queue is None:
@@ -139,11 +150,11 @@ def pop_idle_slot_supplements(
       >>> _pop()  # doctest: +SKIP
     """
     return pop_supplement_refs_from_ready_queue(
-        ready_queue,
-        max_n=max_n,
-        soft_max=soft_max,
-        hard_max=hard_max,
-        original_batch_still_inflight=original_still_inflight,
+      ready_queue,
+      max_n=max_n,
+      soft_max=soft_max,
+      hard_max=hard_max,
+      original_batch_still_inflight=original_still_inflight,
     )
 
   if ready_queue_lock is None:
@@ -214,10 +225,18 @@ def run_metrics_sliding_session(
 
   Examples:
     >>> run_metrics_sliding_session(  # doctest: +SKIP
-    ...     primary_refs=[], metrics_obj=None, shared_pool=None,
-    ...     unwrap_fn=None, persist_fn=None, prewarm_worker_fn=None,
-    ...     inline_prewarm_fn=None, prewarm_mode="inline",
-    ...     max_inflight=1, poll_timeout_s=0.1, stall_timeout_s=1.0)
+    ...   primary_refs=[],
+    ...   metrics_obj=None,
+    ...   shared_pool=None,
+    ...   unwrap_fn=None,
+    ...   persist_fn=None,
+    ...   prewarm_worker_fn=None,
+    ...   inline_prewarm_fn=None,
+    ...   prewarm_mode="inline",
+    ...   max_inflight=1,
+    ...   poll_timeout_s=0.1,
+    ...   stall_timeout_s=1.0,
+    ... )
   """
   results: list[dict[str, Any]] = []
   if not primary_refs:
@@ -246,7 +265,7 @@ def run_metrics_sliding_session(
       return False
     try:
       return bool(shutdown_requested[0])
-    except (TypeError, IndexError):
+    except TypeError, IndexError:
       return bool(shutdown_requested)
 
   def _emit(phase: str) -> None:
@@ -264,14 +283,12 @@ def run_metrics_sliding_session(
     """
     if not callable(progress_callback):
       return
-    try:
+    with contextlib.suppress(Exception):
       progress_callback(
-          phase=phase,
-          completed=completed_total,
-          total=max(session_total, completed_total),
+        phase=phase,
+        completed=completed_total,
+        total=max(session_total, completed_total),
       )
-    except Exception:
-      pass
 
   def _submit_metrics(ref: Any, *, is_original: bool) -> None:
     """
@@ -288,7 +305,8 @@ def run_metrics_sliding_session(
       >>> _submit_metrics(None, is_original=True)  # doctest: +SKIP
     """
     async_result = shared_pool.apply_async(unwrap_fn, ((metrics_obj, ref),))
-    pending.append({
+    pending.append(
+      {
         "async_result": async_result,
         "ref": ref,
         "phase": "metrics",
@@ -296,7 +314,8 @@ def run_metrics_sliding_session(
         "t0": time.monotonic(),
         "metrics_s": 0.0,
         "base_outcome": None,
-    })
+      }
+    )
 
   def _submit_prewarm(item: dict[str, Any]) -> None:
     """
@@ -321,14 +340,16 @@ def run_metrics_sliding_session(
         except Exception:
           ok = False
       prewarm_s = max(0.0, time.monotonic() - t_pw)
-      results.append({
+      results.append(
+        {
           "ref": ref,
           "ok": bool(item["base_outcome"].get("ok")),
           "prewarm_ok": ok,
           "base_outcome": item["base_outcome"],
           "metrics_s": float(item["metrics_s"]),
           "prewarm_s": prewarm_s,
-      })
+        }
+      )
       return
     async_result = shared_pool.apply_async(prewarm_worker_fn, (ref.jid,))
     item["async_result"] = async_result
@@ -355,13 +376,15 @@ def run_metrics_sliding_session(
     Examples:
       >>> _finalize_failed(None, {}, 0.0)  # doctest: +SKIP
     """
-    results.append({
+    results.append(
+      {
         "ref": ref,
         "ok": False,
         "base_outcome": base,
         "metrics_s": float(metrics_s),
         "prewarm_s": 0.0,
-    })
+      }
+    )
 
   while (primary or pending) and not _shutting_down():
     filled = False
@@ -369,30 +392,30 @@ def run_metrics_sliding_session(
       ref = primary.popleft()
       _submit_metrics(ref, is_original=True)
       filled = True
-      session_total = max(session_total, completed_total + len(pending) + len(primary))
+      session_total = max(
+        session_total, completed_total + len(pending) + len(primary)
+      )
 
     while (
-        supplement_enabled
-        and len(pending) < cap
-        and not primary
-        and original_batch_work_inflight(pending)
+      supplement_enabled
+      and len(pending) < cap
+      and not primary
+      and original_batch_work_inflight(pending)
     ):
       slots = cap - len(pending)
       taken = pop_idle_slot_supplements(
-          ready_queue,
-          ready_queue_lock,
-          max_n=slots,
-          soft_max=soft_max,
-          hard_max=hard_max,
-          original_still_inflight=True,
+        ready_queue,
+        ready_queue_lock,
+        max_n=slots,
+        soft_max=soft_max,
+        hard_max=hard_max,
+        original_still_inflight=True,
       )
       if not taken:
         break
       if callable(on_supplements_taken):
-        try:
+        with contextlib.suppress(Exception):
           on_supplements_taken(len(taken))
-        except Exception:
-          pass
       for ref in taken:
         _submit_metrics(ref, is_original=False)
         filled = True
@@ -424,21 +447,21 @@ def run_metrics_sliding_session(
         for item in list(pending):
           ref = item["ref"]
           base = item.get("base_outcome") or {
+            "jid": ref.jid,
+            "ok": False,
+            "status": "sliding_session_stall",
+            "error_type": "MetricsSlidingStall",
+            "error_message": f"no progress for {stalled_for:.1f}s",
+            "persist_s": 0.0,
+          }
+          if item["phase"] == "metrics":
+            base = {
               "jid": ref.jid,
               "ok": False,
               "status": "sliding_session_stall",
               "error_type": "MetricsSlidingStall",
-              "error_message": "no progress for {:.1f}s".format(stalled_for),
+              "error_message": f"no progress for {stalled_for:.1f}s",
               "persist_s": 0.0,
-          }
-          if item["phase"] == "metrics":
-            base = {
-                "jid": ref.jid,
-                "ok": False,
-                "status": "sliding_session_stall",
-                "error_type": "MetricsSlidingStall",
-                "error_message": "no progress for {:.1f}s".format(stalled_for),
-                "persist_s": 0.0,
             }
           _finalize_failed(ref, base, float(item.get("metrics_s") or 0.0))
           completed_total += 1
@@ -460,12 +483,12 @@ def run_metrics_sliding_session(
         payload = async_result.get(timeout=0)
       except Exception as exc:
         base = {
-            "jid": ref.jid,
-            "ok": False,
-            "status": "sliding_worker_exception",
-            "error_type": type(exc).__name__,
-            "error_message": str(exc),
-            "persist_s": 0.0,
+          "jid": ref.jid,
+          "ok": False,
+          "status": "sliding_worker_exception",
+          "error_type": type(exc).__name__,
+          "error_message": str(exc),
+          "persist_s": 0.0,
         }
         metrics_s = max(0.0, time.monotonic() - float(ready_item["t0"]))
         _finalize_failed(ref, base, metrics_s)
@@ -478,12 +501,12 @@ def run_metrics_sliding_session(
         base_outcome = persist_fn(payload)
       except Exception as exc:
         base_outcome = {
-            "jid": ref.jid,
-            "ok": False,
-            "status": "sliding_persist_exception",
-            "error_type": type(exc).__name__,
-            "error_message": str(exc),
-            "persist_s": 0.0,
+          "jid": ref.jid,
+          "ok": False,
+          "status": "sliding_persist_exception",
+          "error_type": type(exc).__name__,
+          "error_message": str(exc),
+          "persist_s": 0.0,
         }
       last_progress_at = time.monotonic()
       ready_item["base_outcome"] = base_outcome
@@ -511,18 +534,20 @@ def run_metrics_sliding_session(
       prewarm_ok = False
     last_progress_at = time.monotonic()
     prewarm_s = max(
-        0.0,
-        time.monotonic() - float(ready_item.get("t_prewarm0", last_progress_at)),
+      0.0,
+      time.monotonic() - float(ready_item.get("t_prewarm0", last_progress_at)),
     )
     base = ready_item["base_outcome"]
-    results.append({
+    results.append(
+      {
         "ref": ref,
         "ok": bool(base.get("ok")),
         "prewarm_ok": prewarm_ok,
         "base_outcome": base,
         "metrics_s": float(ready_item["metrics_s"]),
         "prewarm_s": prewarm_s,
-    })
+      }
+    )
     completed_total += 1
     _emit("prewarm")
 
@@ -530,19 +555,21 @@ def run_metrics_sliding_session(
   for item in pending:
     ref = item["ref"]
     base = item.get("base_outcome") or {
-        "jid": ref.jid,
-        "ok": False,
-        "status": "sliding_session_interrupted",
-        "error_type": "Shutdown",
-        "error_message": "sliding session interrupted",
-        "persist_s": 0.0,
+      "jid": ref.jid,
+      "ok": False,
+      "status": "sliding_session_interrupted",
+      "error_type": "Shutdown",
+      "error_message": "sliding session interrupted",
+      "persist_s": 0.0,
     }
-    results.append({
+    results.append(
+      {
         "ref": ref,
         "ok": False,
         "base_outcome": base,
         "metrics_s": float(item.get("metrics_s") or 0.0),
         "prewarm_s": 0.0,
-    })
+      }
+    )
 
   return results

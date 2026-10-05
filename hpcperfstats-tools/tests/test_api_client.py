@@ -31,7 +31,9 @@ def test_api_client_get_json_success():
 
 def test_api_client_post_text_blocks_cross_origin_redirect():
   session = Mock()
-  session.post.return_value = _response(status_code=302, location="https://evil.example.net/steal", json_data={})
+  session.post.return_value = _response(
+    status_code=302, location="https://evil.example.net/steal", json_data={}
+  )
   client = ApiClient("https://example.org/api/", api_key="k", session=session)
   result = client.post_text("sacct/ingest/?date=2026-01-01", "payload")
   assert result.ok is False
@@ -41,7 +43,10 @@ def test_api_client_post_text_blocks_cross_origin_redirect():
 
 def test_api_client_post_text_follows_http_to_https_same_host_redirect():
   session = Mock()
-  first = _response(status_code=302, location="https://example.org/api/sacct/ingest/?date=2026-01-01")
+  first = _response(
+    status_code=302,
+    location="https://example.org/api/sacct/ingest/?date=2026-01-01",
+  )
   second = _response(status_code=200, json_data={"inserted": 1})
   session.post.side_effect = [first, second]
   client = ApiClient("http://example.org/api/", api_key="k", session=session)
@@ -53,11 +58,13 @@ def test_api_client_post_text_follows_http_to_https_same_host_redirect():
 
 def test_api_client_post_text_blocks_https_to_http_downgrade_redirect():
   session = Mock()
-  first = _response(status_code=302, location="http://example.org/api/sacct/ingest/?date=2026-01-01")
+  first = _response(
+    status_code=302,
+    location="http://example.org/api/sacct/ingest/?date=2026-01-01",
+  )
   session.post.return_value = first
   client = ApiClient("https://example.org/api/", api_key="k", session=session)
   result = client.post_text("sacct/ingest/?date=2026-01-01", "payload")
   assert result.ok is False
   assert "Cross-origin redirect blocked" in (result.error or "")
   assert session.post.call_count == 1
-

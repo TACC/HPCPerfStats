@@ -5,6 +5,7 @@ Source-contract checks for sync-timedb title-orphan fixes.
 Attributes:
   ROOT: Absolute path to the HPCPerfStats git checkout.
 """
+
 from __future__ import annotations
 
 import ast
@@ -33,13 +34,13 @@ def _populate_entry_ok() -> bool:
   tree = ast.parse(src)
   for node in ast.walk(tree):
     if isinstance(node, ast.FunctionDef) and node.name == (
-        "_populate_pool_worker_entry"
+      "_populate_pool_worker_entry"
     ):
       body = ast.get_source_segment(src, node) or ""
       forbidden = (
-          "apply_ingest_pool_worker_init",
-          "apply_pool_worker_process_title",
-          "setproctitle",
+        "apply_ingest_pool_worker_init",
+        "apply_pool_worker_process_title",
+        "setproctitle",
       )
       return all(token not in body for token in forbidden)
   return False
@@ -58,21 +59,19 @@ def _hygiene_owner_token_ok() -> bool:
     >>> # Regex slice of sync_timedb_queue_orchestrator.py in this checkout
     >>> _hygiene_owner_token_ok()  # doctest: +SKIP
   """
-  path = ROOT / (
-      "hpcperfstats/dbload/lib/sync_timedb_queue_orchestrator.py"
-  )
+  path = ROOT / ("hpcperfstats/dbload/lib/sync_timedb_queue_orchestrator.py")
   src = path.read_text(encoding="utf-8")
   match = re.search(
-      r"def _ingest_runtime_lease_hygiene\([\s\S]*?\n(?=def )",
-      src,
+    r"def _ingest_runtime_lease_hygiene\([\s\S]*?\n(?=def )",
+    src,
   )
   if not match:
     return False
   body = match.group(0)
   return (
-      "reconcile_this_owner_orphan_leases" in body
-      and "owner_token=" in body
-      and "make_lease_owner_token" in body
+    "reconcile_this_owner_orphan_leases" in body
+    and "owner_token=" in body
+    and "make_lease_owner_token" in body
   )
 
 

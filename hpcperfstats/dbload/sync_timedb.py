@@ -72,6 +72,7 @@ Attributes:
   tgz_archive_dir: Attribute.
   thread_count: Attribute.
 """
+
 from __future__ import annotations
 
 import contextvars
@@ -285,7 +286,9 @@ days_to_process = 5
 # Bound processed-file tracking to avoid unbounded set growth in long runs.
 processed_files_max_size = 200000
 SYNC_TIMEDB_CHECKPOINT_BASENAME = ".sync_timedb_state.json"
-SYNC_TIMEDB_CHECKPOINT_FLUSH_EVERY_FILES = cfg.get_sync_checkpoint_flush_batch_size()
+SYNC_TIMEDB_CHECKPOINT_FLUSH_EVERY_FILES = (
+  cfg.get_sync_checkpoint_flush_batch_size()
+)
 
 
 INGEST_PER_FILE_TIMEOUT_LOG_MIN_S = 7200.0
@@ -335,17 +338,17 @@ class IngestPerFileTimeoutError(TimeoutError):
     else:
       try:
         self.size_bytes = int(size_bytes)
-      except (TypeError, ValueError):
+      except TypeError, ValueError:
         self.size_bytes = 0
     rate = (
-        float(self.size_bytes) / float(self.elapsed_s)
-        if float(self.elapsed_s) > 0.0
-        else 0.0
+      float(self.size_bytes) / float(self.elapsed_s)
+      if float(self.elapsed_s) > 0.0
+      else 0.0
     )
     super().__init__(
-        "ingest per-file timeout path=%s size_bytes=%s elapsed_s=%.3f "
-        "bytes_per_s=%.0f stage=%s"
-        % (self.path, self.size_bytes, self.elapsed_s, rate, self.stage)
+      "ingest per-file timeout path=%s size_bytes=%s elapsed_s=%.3f "
+      "bytes_per_s=%.0f stage=%s"
+      % (self.path, self.size_bytes, self.elapsed_s, rate, self.stage)
     )
 
 
@@ -373,9 +376,9 @@ def _log_long_ingest_timeout_budget_if_needed(
     return
   size_bytes = stats_file_size_bytes(stats_file)
   update_worker_substage(
-      "long_timeout_budget",
-      timeout_s="%.1f" % float(timeout_s),
-      size_bytes=str(size_bytes),
+    "long_timeout_budget",
+    timeout_s="%.1f" % float(timeout_s),
+    size_bytes=str(size_bytes),
   )
 
 
@@ -401,8 +404,8 @@ def _raise_if_ingest_per_file_deadline_exceeded(
   """
   del stage
   from hpcperfstats.dbload.lib.sync_timedb_ingest_progress import (
-      raise_if_ingest_idle_stalled,
-      touch_ingest_progress,
+    raise_if_ingest_idle_stalled,
+    touch_ingest_progress,
   )
 
   touch_ingest_progress()
@@ -433,9 +436,9 @@ def _run_ingest_timed(
     >>> _run_ingest_timed("x", None, lambda: 1)  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_ingest_progress import (
-      begin_ingest_progress,
-      end_ingest_progress,
-      touch_ingest_progress,
+    begin_ingest_progress,
+    end_ingest_progress,
+    touch_ingest_progress,
   )
 
   timeout_s = 0.0
@@ -452,26 +455,30 @@ def _run_ingest_timed(
 def _merge_worker_memory_meta(result: Any, mem_meta: Any) -> Any:
   """
   Internal helper to merge the worker memory meta.
-  
+
   Args:
     result (Any): Result passed to this helper.
     mem_meta (Any): Mem meta passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _merge_worker_memory_meta(None, None)  # doctest: +SKIP
   """
   if not mem_meta:
     return result
   stats_file, need_archival, ingest_ok, elapsed_s, meta = (
-      _unpack_ingest_worker_result(result)
+    _unpack_ingest_worker_result(result)
   )
   merged = dict(meta)
   merged.update(mem_meta)
   return _pack_ingest_worker_result(
-      stats_file, need_archival, ingest_ok, elapsed_s, merged,
+    stats_file,
+    need_archival,
+    ingest_ok,
+    elapsed_s,
+    merged,
   )
 
 
@@ -492,43 +499,42 @@ def _log_ingest_per_file_timeout(exc: Any) -> None:
   elapsed_s = float(getattr(exc, "elapsed_s", 0.0) or 0.0)
   rate = (float(size_bytes) / elapsed_s) if elapsed_s > 0.0 else 0.0
   log_print(
-      "ERROR: ingest per-file timeout path=%s size_bytes=%s elapsed=%.1fs "
-      "bytes_per_s=%.0f stage=%s"
-      % (exc.path, size_bytes, elapsed_s, rate, exc.stage),
-      flush=True,
+    "ERROR: ingest per-file timeout path=%s size_bytes=%s elapsed=%.1fs "
+    "bytes_per_s=%.0f stage=%s"
+    % (exc.path, size_bytes, elapsed_s, rate, exc.stage),
+    flush=True,
   )
 
 
 def _log_ingest_archive_lookup_budget_exceeded(exc: Any) -> None:
   """
   Internal helper to log the ingest archive lookup budget exceeded.
-  
+
   Args:
     exc (Any): Exception instance being classified or logged.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _log_ingest_archive_lookup_budget_exceeded(None)  # doctest: +SKIP
   """
   log_print(
-      "ERROR: ingest archive lookup budget exceeded: %s"
-      % exc,
-      flush=True,
+    "ERROR: ingest archive lookup budget exceeded: %s" % exc,
+    flush=True,
   )
 
 
 def _paths_all_db_complete_for_prewarm_skip(paths: Any) -> Any:
   """
   True when every chunk path would db-complete skip (no tar restore/prewarm).
-  
+
   Args:
     paths (Any): Iterable of filesystem paths as strings.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _paths_all_db_complete_for_prewarm_skip(None)  # doctest: +SKIP
   """
@@ -544,7 +550,10 @@ def _paths_all_db_complete_for_prewarm_skip(paths: Any) -> Any:
     timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
     if not head_timestamp_present_in_db(host, timestamp_utc):
       return False
-    if _try_db_complete_head_tail_fast_path(stats_file, host, timestamp_utc) is None:
+    if (
+      _try_db_complete_head_tail_fast_path(stats_file, host, timestamp_utc)
+      is None
+    ):
       return False
   return True
 
@@ -557,20 +566,20 @@ def _signal_ingest_hot_for_populate(
 ) -> None:
   """
   Early hot-path signal before populate fnctl wait (non-blocking).
-  
+
   Args:
     day_token (Any): Day token passed to this helper.
     tar_path (str): String for tar path.
     reason (Any): Reason passed to this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _signal_ingest_hot_for_populate(None, "x", None)  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      set_ingest_tar_hot,
+    set_ingest_tar_hot,
   )
 
   del tar_path  # retained for API compatibility
@@ -585,32 +594,32 @@ def _prewarm_archive_members_for_days(
 ) -> Any:
   """
   Single-flight populate on supervisor before imap when the members store is cold.
-  
+
   Args:
     day_items (Any): Day items passed to this helper.
     gated_tar_restore_day_tokens (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     ArchiveMembersStoreUnavailableError: Raised when
     ``_prewarm_archive_members_for_days`` hits a
     ``ArchiveMembersStoreUnavailableError`` failure path.
-  
+
   Examples:
     >>> _prewarm_archive_members_for_days(None, None)  # doctest: +SKIP
   """
   summary_parts = []
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      _FNCTL_POPULATE_RETRY_DELAYS_S,
-      _daily_archive_members_cache_key,
-      _resolve_sealed_daily_archive_path,
-      daily_archive_populate_source_exists,
+    _FNCTL_POPULATE_RETRY_DELAYS_S,
+    _daily_archive_members_cache_key,
+    _resolve_sealed_daily_archive_path,
+    daily_archive_populate_source_exists,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      ArchiveDayIngestSkipError,
-      request_archive_members_populate_and_wait,
+    ArchiveDayIngestSkipError,
+    request_archive_members_populate_and_wait,
   )
 
   gated_restore = set(gated_tar_restore_day_tokens or ())
@@ -628,26 +637,26 @@ def _prewarm_archive_members_for_days(
     sealed_path = _resolve_sealed_daily_archive_path(canonical)
     tar_path = daily_tar_path_from_compressed(canonical)
     if (
-        day_token in gated_restore
-        and sealed_path is not None
-        and not os.path.isfile(tar_path)
+      day_token in gated_restore
+      and sealed_path is not None
+      and not os.path.isfile(tar_path)
     ):
       if ensure_daily_tar_restored_for_append(
-          tar_path,
-          cfg.get_archive_zstd_threads(),
+        tar_path,
+        cfg.get_archive_zstd_threads(),
       ):
         log_print(
-            "INFO: populate_prewarm restored tar day=%s path=%s"
-            % (day_token, tar_path),
-            flush=True,
+          "INFO: populate_prewarm restored tar day=%s path=%s"
+          % (day_token, tar_path),
+          flush=True,
         )
       else:
         summary_parts.append("%s:restore_failed" % day_token)
         continue
     log_print(
-        "Prewarming archive members store for day=%s sealed=%s"
-        % (day_token, sealed_path or tar_path),
-        flush=True,
+      "Prewarming archive members store for day=%s sealed=%s"
+      % (day_token, sealed_path or tar_path),
+      flush=True,
     )
     _signal_ingest_hot_for_populate(day_token, tar_path, reason="chunk_prewarm")
     prewarm_recovered = False
@@ -657,7 +666,7 @@ def _prewarm_archive_members_for_days(
         time.sleep(delay)
       try:
         members = request_archive_members_populate_and_wait(
-            canonical,
+          canonical,
         )
         source = consume_archive_members_populate_source(canonical)
         # Wait may re-resolve to a post-append identity (T1→T2); do not warm-check
@@ -666,9 +675,10 @@ def _prewarm_archive_members_for_days(
         keys = build_archive_members_keys(cache_key)
         if not members_cache_is_fully_warm(keys):
           from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-              get_archive_day_ingest_skip,
-              lookup_full_members,
+            get_archive_day_ingest_skip,
+            lookup_full_members,
           )
+
           if get_archive_day_ingest_skip(keys) is not None:
             summary_parts.append("%s:day_ingest_skip" % day_token)
             last_transient_exc = None
@@ -677,63 +687,63 @@ def _prewarm_archive_members_for_days(
           if complete and not (members or {}):
             source = source or "empty_archive"
           elif attempt < len(_FNCTL_POPULATE_RETRY_DELAYS_S) and (
-              archive_append_inflight_for_day(day_token) or len(members or {}) > 0
+            archive_append_inflight_for_day(day_token) or len(members or {}) > 0
           ):
             prewarm_recovered = True
             last_transient_exc = ArchiveMembersStoreUnavailableError(
-                "archive members store cold after prewarm for day=%s "
-                "canonical=%s source=%s members_n=%d append_inflight=%s"
-                % (
-                    day_token,
-                    canonical,
-                    source or "none",
-                    len(members or {}),
-                    archive_append_inflight_for_day(day_token),
-                ),
+              "archive members store cold after prewarm for day=%s "
+              "canonical=%s source=%s members_n=%d append_inflight=%s"
+              % (
+                day_token,
+                canonical,
+                source or "none",
+                len(members or {}),
+                archive_append_inflight_for_day(day_token),
+              ),
             )
             if archive_append_inflight_for_day(day_token):
               log_print(
-                  "WARNING: archive_append_inflight during archive members "
-                  "prewarm day=%s attempt=%d/%d: retrying after identity drift"
-                  % (
-                      day_token,
-                      attempt + 1,
-                      len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1,
-                  ),
-                  flush=True,
+                "WARNING: archive_append_inflight during archive members "
+                "prewarm day=%s attempt=%d/%d: retrying after identity drift"
+                % (
+                  day_token,
+                  attempt + 1,
+                  len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1,
+                ),
+                flush=True,
               )
             else:
               log_print(
-                  "WARNING: members returned but store cold during archive "
-                  "members prewarm day=%s attempt=%d/%d members_n=%d "
-                  "source=%s: retrying"
-                  % (
-                      day_token,
-                      attempt + 1,
-                      len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1,
-                      len(members or {}),
-                      source or "none",
-                  ),
-                  flush=True,
+                "WARNING: members returned but store cold during archive "
+                "members prewarm day=%s attempt=%d/%d members_n=%d "
+                "source=%s: retrying"
+                % (
+                  day_token,
+                  attempt + 1,
+                  len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1,
+                  len(members or {}),
+                  source or "none",
+                ),
+                flush=True,
               )
             continue
           else:
             maybe_clear_orphan_incomplete_archive_members(keys)
             raise ArchiveMembersStoreUnavailableError(
-                "archive members store empty after prewarm for day=%s "
-                "canonical=%s source=%s members_n=%d"
-                % (
-                    day_token,
-                    canonical,
-                    source or "none",
-                    len(members or {}),
-                ),
+              "archive members store empty after prewarm for day=%s "
+              "canonical=%s source=%s members_n=%d"
+              % (
+                day_token,
+                canonical,
+                source or "none",
+                len(members or {}),
+              ),
             )
         if not source:
           source = "store_warm"
         if prewarm_recovered:
           summary_parts.append(
-              "%s:populate_recovering:%s" % (day_token, source),
+            "%s:populate_recovering:%s" % (day_token, source),
           )
         else:
           summary_parts.append("%s:%s" % (day_token, source))
@@ -748,15 +758,18 @@ def _prewarm_archive_members_for_days(
         _exit_on_archive_members_store_unavailable(exc)
       except ArchiveMembersStoreUnavailableError as exc:
         maybe_clear_orphan_incomplete_archive_members(keys)
-        if is_transient_fnctl_populate_unavailable(exc) or is_populate_pool_unavailable_error(
-            exc,
+        if is_transient_fnctl_populate_unavailable(
+          exc
+        ) or is_populate_pool_unavailable_error(
+          exc,
         ):
           prewarm_recovered = True
           last_transient_exc = exc
           if is_populate_pool_unavailable_error(exc):
             from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
-                get_populate_pool_controller,
+              get_populate_pool_controller,
             )
+
             controller = get_populate_pool_controller()
             if controller is not None:
               try:
@@ -765,21 +778,21 @@ def _prewarm_archive_members_for_days(
                 pass
           if attempt < len(_FNCTL_POPULATE_RETRY_DELAYS_S):
             label = (
-                "populate-pool unavailable"
-                if is_populate_pool_unavailable_error(exc)
-                else "transient fnctl"
+              "populate-pool unavailable"
+              if is_populate_pool_unavailable_error(exc)
+              else "transient fnctl"
             )
             log_print(
-                "WARNING: %s during archive members prewarm "
-                "day=%s attempt=%d/%d: %s"
-                % (
-                    label,
-                    day_token,
-                    attempt + 1,
-                    len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1,
-                    exc,
-                ),
-                flush=True,
+              "WARNING: %s during archive members prewarm "
+              "day=%s attempt=%d/%d: %s"
+              % (
+                label,
+                day_token,
+                attempt + 1,
+                len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1,
+                exc,
+              ),
+              flush=True,
             )
             continue
         _exit_on_archive_members_store_unavailable(exc)
@@ -792,13 +805,13 @@ def _prewarm_archive_members_for_days(
 def _prewarm_archive_members_for_sealed_chunk(sealed_paths: Any) -> Any:
   """
   Prewarm members store member maps for unique calendar days in a sealed archive chunk.
-  
+
   Args:
     sealed_paths (Any): Iterable of filesystem paths as strings.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _prewarm_archive_members_for_sealed_chunk(None)  # doctest: +SKIP
   """
@@ -811,13 +824,13 @@ def _prewarm_archive_members_for_sealed_chunk_inner(
 ) -> Any:
   """
   Prewarm members store member maps for unique calendar days in a sealed archive chunk.
-  
+
   Args:
     sealed_paths (Any): Iterable of filesystem paths as strings.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _prewarm_archive_members_for_sealed_chunk_inner(None)
   """
@@ -836,16 +849,16 @@ def _prewarm_archive_members_for_sealed_chunk_inner(
     day_items.append((sealed_path, day_token))
   day_tokens = sorted({token for _, token in day_items})
   log_print(
-      "archive chunk prewarm begin sealed_paths=%d days=%s"
-      % (len(day_items), day_tokens),
-      flush=True,
+    "archive chunk prewarm begin sealed_paths=%d days=%s"
+    % (len(day_items), day_tokens),
+    flush=True,
   )
   prewarm_t0 = time.time()
   summary = _prewarm_archive_members_for_days(day_items)
   log_print(
-      "archive chunk prewarm complete elapsed_s=%.3f days=%s"
-      % (time.time() - prewarm_t0, summary),
-      flush=True,
+    "archive chunk prewarm complete elapsed_s=%.3f days=%s"
+    % (time.time() - prewarm_t0, summary),
+    flush=True,
   )
   return summary
 
@@ -853,13 +866,13 @@ def _prewarm_archive_members_for_sealed_chunk_inner(
 def _calendar_day_hint_from_paths(paths: Any) -> Any:
   """
   Best-effort calendar day from first in-flight stats path filename epoch.
-  
+
   Args:
     paths (Any): Iterable of filesystem paths as strings.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _calendar_day_hint_from_paths(None)  # doctest: +SKIP
   """
@@ -870,9 +883,10 @@ def _calendar_day_hint_from_paths(paths: Any) -> Any:
     if base.isdigit():
       try:
         return datetime.fromtimestamp(
-            int(base), tz=timezone.utc,
+          int(base),
+          tz=timezone.utc,
         ).strftime("%Y-%m-%d")
-      except (TypeError, ValueError, OSError, OverflowError):
+      except TypeError, ValueError, OSError, OverflowError:
         pass
   return ""
 
@@ -880,13 +894,13 @@ def _calendar_day_hint_from_paths(paths: Any) -> Any:
 def _calendar_day_hint_from_sealed_paths(sealed_paths: Any) -> Any:
   """
   Best-effort calendar day from sealed daily archive paths.
-  
+
   Args:
     sealed_paths (Any): Iterable of filesystem paths as strings.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _calendar_day_hint_from_sealed_paths(None)  # doctest: +SKIP
   """
@@ -903,21 +917,21 @@ def _distinct_calendar_days_from_sealed_paths(
 ) -> Any:
   """
   Internal helper to handle distinct calendar days from sealed paths.
-  
+
   Args:
     sealed_paths (Any): Iterable of filesystem paths as strings.
     max_days (int): Integer value for max days.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _distinct_calendar_days_from_sealed_paths(None, 0)  # doctest: +SKIP
   """
   return _distinct_calendar_days_from_paths(
-      sealed_paths,
-      max_days=max_days,
-      day_fn=calendar_day_from_sealed_archive_path,
+    sealed_paths,
+    max_days=max_days,
+    day_fn=calendar_day_from_sealed_archive_path,
   )
 
 
@@ -929,16 +943,16 @@ def _distinct_calendar_days_from_paths(
 ) -> Any:
   """
   Internal helper to handle distinct calendar days from paths.
-  
+
   Args:
     paths (Any): Iterable of filesystem paths as strings.
     max_days (int): Integer value for max days.
     day_fn (Any): Optional per-path day extractor. Default uses the
       in-flight path hint.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _distinct_calendar_days_from_paths(None, 0)  # doctest: +SKIP
   """
@@ -959,14 +973,14 @@ def _distinct_calendar_days_from_paths(
 def _in_flight_file_meta_from_paths(paths: Any, max_n: int = 10) -> Any:
   """
   Internal helper to handle in flight file meta from paths.
-  
+
   Args:
     paths (Any): Iterable of filesystem paths as strings.
     max_n (int): Integer value for max n.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _in_flight_file_meta_from_paths(None, 0)  # doctest: +SKIP
   """
@@ -995,7 +1009,7 @@ _last_supervisor_child_reap_mono = 0.0
 class IngestStallDiagnostics:
   """
   Supervisor-thread state included on pool imap stall WARN/ERROR lines.
-  
+
   Attributes:
     chunk_archive_elapsed_s: Attribute.
     chunk_batch_size: Attribute.
@@ -1017,10 +1031,10 @@ class IngestStallDiagnostics:
   def __init__(self) -> None:
     """
     Initialize a new instance.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> IngestStallDiagnostics()  # doctest: +SKIP
     """
@@ -1043,10 +1057,10 @@ class IngestStallDiagnostics:
   def note_imap_completion(self) -> None:
     """
     Note imap completion.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> IngestStallDiagnostics().note_imap_completion()  # doctest: +SKIP
     """
@@ -1055,10 +1069,10 @@ class IngestStallDiagnostics:
   def seconds_since_last_imap_completion(self) -> Any:
     """
     Seconds since last imap completion.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> IngestStallDiagnostics().seconds_since_last_imap_completion()
     """
@@ -1070,10 +1084,10 @@ class IngestStallDiagnostics:
   def format_day_close_pipeline_detail(self) -> Any:
     """
     Format the day close pipeline detail.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> IngestStallDiagnostics().format_day_close_pipeline_detail()
     """
@@ -1090,13 +1104,13 @@ class IngestStallDiagnostics:
       age_s = snap.get("last_progress_age_s")
       age_text = "%.0f" % float(age_s) if age_s is not None else ""
       details.append(
-          "%s:%s:%s:%s"
-          % (
-              os.path.basename(str(tar_path)),
-              snap.get("status") or "",
-              snap.get("last_progress") or "",
-              age_text,
-          )
+        "%s:%s:%s:%s"
+        % (
+          os.path.basename(str(tar_path)),
+          snap.get("status") or "",
+          snap.get("last_progress") or "",
+          age_text,
+        )
       )
     detail = ";".join(details) if details else "-"
     return "%d detail=%s" % (len(active), detail)
@@ -1119,19 +1133,19 @@ def _pool_stall_wall_seconds() -> Any:
 def _dynamic_stall_wall_seconds(stall_diagnostics: Any) -> Any:
   """
   Active imap sub-batch stall wall, or INI ceiling when unset.
-  
+
   Args:
     stall_diagnostics (Any): Stall diagnostics passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _dynamic_stall_wall_seconds(None)  # doctest: +SKIP
   """
   if stall_diagnostics is not None:
     dynamic_wall = float(
-        getattr(stall_diagnostics, "dynamic_stall_wall_s", 0.0) or 0.0,
+      getattr(stall_diagnostics, "dynamic_stall_wall_s", 0.0) or 0.0,
     )
     if dynamic_wall > 0.0:
       return dynamic_wall
@@ -1144,26 +1158,26 @@ def _ingest_stall_defer_long_budget(
 ) -> Any:
   """
   Defer when worker registry budget exceeds batch precompute (safety net).
-  
+
   Args:
     stall_diagnostics (Any): Stall diagnostics passed to this helper.
     consecutive_timeouts (Any): Consecutive timeouts passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _ingest_stall_defer_long_budget(None, None)  # doctest: +SKIP
   """
   if stall_diagnostics is None:
     return False, ""
   effective = _max_effective_ingest_timeout_from_registry(
-      getattr(stall_diagnostics, "worker_registry", None),
+    getattr(stall_diagnostics, "worker_registry", None),
   )
   if effective is None:
     return False, ""
   batch_max_s = float(
-      getattr(stall_diagnostics, "current_imap_batch_max_timeout_s", 0.0) or 0.0,
+    getattr(stall_diagnostics, "current_imap_batch_max_timeout_s", 0.0) or 0.0,
   )
   if batch_max_s <= 0.0 or effective <= batch_max_s:
     return False, ""
@@ -1177,13 +1191,13 @@ def _ingest_stall_defer_long_budget(
 def _sample_looks_like_sealed_archives(sample: Any) -> Any:
   """
   Internal helper to handle sample looks like sealed archives.
-  
+
   Args:
     sample (Any): Sample passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _sample_looks_like_sealed_archives(None)  # doctest: +SKIP
   """
@@ -1206,7 +1220,7 @@ def _ingest_stall_defer_state(
 ) -> Any:
   """
   Internal helper to ingest the stall defer state.
-  
+
   Args:
     day_hint (Any): Day hint passed to this helper.
     progress_state (Any): Progress state passed to this helper.
@@ -1215,17 +1229,17 @@ def _ingest_stall_defer_state(
     pool (Any | None): One of ``Any``, ``None``.
     sample (Any | None): One of ``Any``, ``None``.
     day_hint_from_sample_fn (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _ingest_stall_defer_state(None, None, None, 0, None, None, None)
   """
   registry = (
-      getattr(stall_diagnostics, "worker_registry", None)
-      if stall_diagnostics is not None
-      else None
+    getattr(stall_diagnostics, "worker_registry", None)
+    if stall_diagnostics is not None
+    else None
   )
   active_pool = pool
   if active_pool is None and stall_diagnostics is not None:
@@ -1234,8 +1248,8 @@ def _ingest_stall_defer_state(
   # Check members-store populate / long-budget defer BEFORE idle-ghost: workers
   # blocked in hrtimer_nanosleep during populate wait look idle to ps/wchan.
   defer_on, defer_reason = _ingest_stall_defer_long_budget(
-      stall_diagnostics,
-      consecutive_timeouts,
+    stall_diagnostics,
+    consecutive_timeouts,
   )
   if defer_on:
     return True, defer_reason
@@ -1250,16 +1264,16 @@ def _ingest_stall_defer_state(
     elif sample:
       day_hint_resolved = _calendar_day_hint_from_sealed_paths(sample)
   if day_hint_resolved and archive_members_populate_shows_progress_for_day(
-      day_hint_resolved,
-      tgz_archive_dir,
-      progress_state=progress_state,
+    day_hint_resolved,
+    tgz_archive_dir,
+    progress_state=progress_state,
   ):
     return True, "store_populate_active"
   if (
-      active_pool is not None
-      and sample_list
-      and pool_workers_all_idle(active_pool)
-      and not worker_registry_shows_recent_progress(registry, pool=active_pool)
+    active_pool is not None
+    and sample_list
+    and pool_workers_all_idle(active_pool)
+    and not worker_registry_shows_recent_progress(registry, pool=active_pool)
   ):
     return False, "idle_pool_ghost_inflight"
   if not day_hint_resolved:
@@ -1268,15 +1282,16 @@ def _ingest_stall_defer_state(
     day_date = date_cls.fromisoformat(day_hint_resolved)
     compressed = daily_compressed_path_for_date(tgz_archive_dir, day_date)
     from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-        _daily_archive_members_cache_key,
+      _daily_archive_members_cache_key,
     )
+
     cache_key = _daily_archive_members_cache_key(
-        normalize_daily_compressed_path(compressed),
+      normalize_daily_compressed_path(compressed),
     )
     keys = build_archive_members_keys(cache_key)
     if members_cache_is_fully_warm(keys):
       return False, "store_warm"
-  except (ValueError, TypeError):
+  except ValueError, TypeError:
     pass
   return False, "store_populate_inactive"
 
@@ -1289,28 +1304,29 @@ def _format_store_populate_for_in_flight_days(
 ) -> Any:
   """
   Internal helper to format the store populate for in flight days.
-  
+
   Args:
     paths (Any): Iterable of filesystem paths as strings.
     max_days (int): Integer value for max days.
     days_fn (Any): Optional day-list extractor. Default uses in-flight
       path days.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _format_store_populate_for_in_flight_days(None, 0)  # doctest: +SKIP
   """
   days = (days_fn or _distinct_calendar_days_from_paths)(
-      paths, max_days=max_days,
+    paths,
+    max_days=max_days,
   )
   if not days:
     return ""
   parts = [
-      "%s{%s}"
-      % (day, describe_archive_members_populate_for_day(day, tgz_archive_dir))
-      for day in days
+    "%s{%s}"
+    % (day, describe_archive_members_populate_for_day(day, tgz_archive_dir))
+    for day in days
   ]
   return " store_by_day=" + " ".join(parts)
 
@@ -1321,34 +1337,34 @@ def _format_store_populate_for_sealed_paths(
 ) -> Any:
   """
   Internal helper to format the store populate for sealed paths.
-  
+
   Args:
     sealed_paths (Any): Iterable of filesystem paths as strings.
     max_days (int): Integer value for max days.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _format_store_populate_for_sealed_paths(None, 0)  # doctest: +SKIP
   """
   return _format_store_populate_for_in_flight_days(
-      sealed_paths,
-      max_days=max_days,
-      days_fn=_distinct_calendar_days_from_sealed_paths,
+    sealed_paths,
+    max_days=max_days,
+    days_fn=_distinct_calendar_days_from_sealed_paths,
   )
 
 
 def _max_effective_ingest_timeout_from_registry(registry: Any) -> Any:
   """
   Internal helper to handle max effective ingest timeout from registry.
-  
+
   Args:
     registry (Any): Registry passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _max_effective_ingest_timeout_from_registry(None)  # doctest: +SKIP
   """
@@ -1367,7 +1383,7 @@ def _max_effective_ingest_timeout_from_registry(registry: Any) -> Any:
       continue
     try:
       value = float(raw_timeout)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
       continue
     if best is None or value > best:
       best = value
@@ -1388,7 +1404,7 @@ def _build_ingest_stall_log_suffix(
 ) -> Any:
   """
   Internal helper to build the ingest stall log suffix.
-  
+
   Args:
     sample (Any): Sample passed to this helper.
     day_hint (Any): Day hint passed to this helper.
@@ -1399,20 +1415,20 @@ def _build_ingest_stall_log_suffix(
     poll_timeout_s (Any): Poll timeout s passed to this helper.
     distinct_days_from_sample_fn (Any | None): One of ``Any``, ``None``.
     store_populate_for_sample_fn (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _build_ingest_stall_log_suffix(0)  # doctest: +SKIP
   """
   defer_on, defer_reason = _ingest_stall_defer_state(
-      day_hint,
-      progress_state,
-      stall_diagnostics=stall_diagnostics,
-      consecutive_timeouts=consecutive,
-      pool=getattr(stall_diagnostics, "active_pool", None),
-      sample=sample,
+    day_hint,
+    progress_state,
+    stall_diagnostics=stall_diagnostics,
+    consecutive_timeouts=consecutive,
+    pool=getattr(stall_diagnostics, "active_pool", None),
+    sample=sample,
   )
   max_timeout_s = float(cfg.get_sync_ingest_per_file_timeout_max_s())
   diag = stall_diagnostics or IngestStallDiagnostics()
@@ -1420,15 +1436,15 @@ def _build_ingest_stall_log_suffix(
   if worker_registry is not None:
     prune_stale_worker_stages(worker_registry, max_age_s=900.0)
   worker_stages = format_worker_stages_snapshot(
-      worker_registry,
-      prefer_paths=sample,
+    worker_registry,
+    prefer_paths=sample,
   )
   registry_n = count_worker_registry_entries(worker_registry)
-  effective_timeout_s = _max_effective_ingest_timeout_from_registry(worker_registry)
+  effective_timeout_s = _max_effective_ingest_timeout_from_registry(
+    worker_registry
+  )
   effective_text = (
-      "%.1f" % effective_timeout_s
-      if effective_timeout_s is not None
-      else "-"
+    "%.1f" % effective_timeout_s if effective_timeout_s is not None else "-"
   )
   in_flight_n = len(sample or ())
   since_last = diag.seconds_since_last_imap_completion()
@@ -1437,7 +1453,9 @@ def _build_ingest_stall_log_suffix(
   registry_gap = ""
   if registry_n < in_flight_n:
     registry_gap = " worker_registry_gap=%d" % (in_flight_n - registry_n)
-  batch_max_s = float(getattr(diag, "current_imap_batch_max_timeout_s", 0.0) or 0.0)
+  batch_max_s = float(
+    getattr(diag, "current_imap_batch_max_timeout_s", 0.0) or 0.0
+  )
   dynamic_abort = int(getattr(diag, "dynamic_stall_abort_after_polls", 0) or 0)
   dynamic_wall = float(getattr(diag, "dynamic_stall_wall_s", 0.0) or 0.0)
   if distinct_days_from_sample_fn is None:
@@ -1449,38 +1467,38 @@ def _build_ingest_stall_log_suffix(
   else:
     store_suffix_fn = store_populate_for_sample_fn
   return (
-      " sync_ingest_per_file_timeout_max_s=%s"
-      " batch_max_ingest_timeout_s=%.1f dynamic_stall_abort_after=%d"
-      " dynamic_stall_wall_s=%.0f effective_ingest_timeout_s=%s"
-      " stall_defer=%s defer_reason=%s imap_batch_cap=%d chunk_batch=%d imap_batch=%d"
-      " distinct_in_flight_days=%s in_flight_file_meta=%s"
-      " seconds_since_last_imap_completion=%s ingest_pipeline=%s"
-      " sync_ingest_pool_processes=%s day_close=%s chunk_prewarm=%s"
-      " worker_registry_n=%d in_flight_n=%d worker_stages=%s%s%s"
-      % (
-          max_timeout_s,
-          batch_max_s,
-          dynamic_abort,
-          dynamic_wall,
-          effective_text,
-          "on" if defer_on else "off",
-          defer_reason,
-          int(diag.imap_batch_cap or 0),
-          int(diag.chunk_batch_size or 0),
-          int(diag.current_imap_batch_size or len(sample)),
-          ",".join(distinct_days_fn(sample)) or "-",
-          _in_flight_file_meta_from_paths(sample),
-          since_text,
-          diag.ingest_pipeline or "combined",
-          ingest_pool_n,
-          diag.format_day_close_pipeline_detail(),
-          diag.chunk_prewarm_summary or "-",
-          registry_n,
-          in_flight_n,
-          worker_stages,
-          registry_gap,
-          store_suffix_fn(sample),
-      )
+    " sync_ingest_per_file_timeout_max_s=%s"
+    " batch_max_ingest_timeout_s=%.1f dynamic_stall_abort_after=%d"
+    " dynamic_stall_wall_s=%.0f effective_ingest_timeout_s=%s"
+    " stall_defer=%s defer_reason=%s imap_batch_cap=%d chunk_batch=%d imap_batch=%d"
+    " distinct_in_flight_days=%s in_flight_file_meta=%s"
+    " seconds_since_last_imap_completion=%s ingest_pipeline=%s"
+    " sync_ingest_pool_processes=%s day_close=%s chunk_prewarm=%s"
+    " worker_registry_n=%d in_flight_n=%d worker_stages=%s%s%s"
+    % (
+      max_timeout_s,
+      batch_max_s,
+      dynamic_abort,
+      dynamic_wall,
+      effective_text,
+      "on" if defer_on else "off",
+      defer_reason,
+      int(diag.imap_batch_cap or 0),
+      int(diag.chunk_batch_size or 0),
+      int(diag.current_imap_batch_size or len(sample)),
+      ",".join(distinct_days_fn(sample)) or "-",
+      _in_flight_file_meta_from_paths(sample),
+      since_text,
+      diag.ingest_pipeline or "combined",
+      ingest_pool_n,
+      diag.format_day_close_pipeline_detail(),
+      diag.chunk_prewarm_summary or "-",
+      registry_n,
+      in_flight_n,
+      worker_stages,
+      registry_gap,
+      store_suffix_fn(sample),
+    )
   )
 
 
@@ -1499,7 +1517,7 @@ def _make_ingest_stall_warning_fn(
 ) -> Any:
   """
   Internal helper to make the ingest stall warning function.
-  
+
   Args:
     tracker (Any): Tracker passed to this helper.
     pool (Any): Live handle (pool, client, or connection).
@@ -1511,13 +1529,14 @@ def _make_ingest_stall_warning_fn(
     day_hint_from_sample_fn (Any | None): One of ``Any``, ``None``.
     distinct_days_from_sample_fn (Any | None): One of ``Any``, ``None``.
     store_populate_for_sample_fn (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _make_ingest_stall_warning_fn(0)  # doctest: +SKIP
   """
+
   def on_stall_warning(
     consecutive: Any,
     abort_after: Any,
@@ -1526,16 +1545,16 @@ def _make_ingest_stall_warning_fn(
   ) -> None:
     """
     On stall warning.
-    
+
     Args:
       consecutive (Any): Consecutive passed to this helper.
       abort_after (Any): Abort after passed to this helper.
       poll_timeout_s (Any): Poll timeout s passed to this helper.
       context (Any): Context passed to this helper.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> on_stall_warning(None, None, None, None)  # doctest: +SKIP
     """
@@ -1548,44 +1567,44 @@ def _make_ingest_stall_warning_fn(
     else:
       day_hint = _calendar_day_hint_from_paths(sample)
     extra = _build_ingest_stall_log_suffix(
-        sample=sample,
-        day_hint=day_hint,
-        stall_diagnostics=stall_diagnostics,
-        progress_state=progress_state or {},
-        alive_workers=alive_workers,
-        consecutive=consecutive,
-        poll_timeout_s=poll_timeout_s,
-        distinct_days_from_sample_fn=distinct_days_from_sample_fn,
-        store_populate_for_sample_fn=store_populate_for_sample_fn,
+      sample=sample,
+      day_hint=day_hint,
+      stall_diagnostics=stall_diagnostics,
+      progress_state=progress_state or {},
+      alive_workers=alive_workers,
+      consecutive=consecutive,
+      poll_timeout_s=poll_timeout_s,
+      distinct_days_from_sample_fn=distinct_days_from_sample_fn,
+      store_populate_for_sample_fn=store_populate_for_sample_fn,
     )
     store_hint = ""
     if day_hint and "store_by_day=" not in extra:
       store_hint = " " + describe_archive_members_populate_for_day(
-          day_hint,
-          tgz_archive_dir,
+        day_hint,
+        tgz_archive_dir,
       )
     log_print(
-        "WARN: pool imap stall progress consecutive_timeouts=%d/%d "
-        "poll_timeout_s=%.3f estimated_stall_s=%.1f context=%s chunk=%d "
-        "pending=%d pool_workers_alive=%d/%d in_flight_n=%d "
-        "in_flight_day_hint=%s in_flight_sample=%s%s%s"
-        % (
-            consecutive,
-            abort_after,
-            poll_timeout_s,
-            consecutive * poll_timeout_s,
-            context or "pool",
-            int(chunk_counter),
-            int(pending_count),
-            alive_workers,
-            pool_workers,
-            len(sample),
-            day_hint or "-",
-            sample,
-            store_hint,
-            extra,
-        ),
-        flush=True,
+      "WARN: pool imap stall progress consecutive_timeouts=%d/%d "
+      "poll_timeout_s=%.3f estimated_stall_s=%.1f context=%s chunk=%d "
+      "pending=%d pool_workers_alive=%d/%d in_flight_n=%d "
+      "in_flight_day_hint=%s in_flight_sample=%s%s%s"
+      % (
+        consecutive,
+        abort_after,
+        poll_timeout_s,
+        consecutive * poll_timeout_s,
+        context or "pool",
+        int(chunk_counter),
+        int(pending_count),
+        alive_workers,
+        pool_workers,
+        len(sample),
+        day_hint or "-",
+        sample,
+        store_hint,
+        extra,
+      ),
+      flush=True,
     )
 
   return on_stall_warning
@@ -1598,15 +1617,15 @@ def _should_emit_stall_defer_warn(
 ) -> Any:
   """
   Return True when a pool imap stall defer WARN should be logged.
-  
+
   Args:
     defer_reason (Any): Defer reason passed to this helper.
     defer_log_state (Any): Defer log state passed to this helper.
     interval_s (Any): Interval s passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _should_emit_stall_defer_warn(None, None, None)  # doctest: +SKIP
   """
@@ -1634,17 +1653,17 @@ def _make_ingest_stall_poll_fn(
 ) -> Any:
   """
   Defer pool imap stall abort while members-store populate shows progress.
-  
+
   Args:
     tracker (Any): Tracker passed to this helper.
     progress_state (Any): Progress state passed to this helper.
     stall_diagnostics (Any | None): One of ``Any``, ``None``.
     day_hint_from_sample_fn (Any | None): One of ``Any``, ``None``.
     supervisor_reap_fn (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _make_ingest_stall_poll_fn(None, None, None, None, None)
   """
@@ -1657,15 +1676,15 @@ def _make_ingest_stall_poll_fn(
   ) -> Any:
     """
     On stall poll.
-    
+
     Args:
       consecutive (Any): Consecutive passed to this helper.
       context (Any): Context passed to this helper.
       pool_health_context (Any): Pool health context passed to this helper.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> on_stall_poll(None, None, None)  # doctest: +SKIP
     """
@@ -1686,87 +1705,89 @@ def _make_ingest_stall_poll_fn(
     else:
       day_hint = _calendar_day_hint_from_paths(sample)
     defer_on, defer_reason = _ingest_stall_defer_state(
-        day_hint,
-        progress_state,
-        stall_diagnostics=stall_diagnostics,
-        consecutive_timeouts=consecutive,
-        pool=active_pool,
-        sample=sample,
-        day_hint_from_sample_fn=day_hint_from_sample_fn,
+      day_hint,
+      progress_state,
+      stall_diagnostics=stall_diagnostics,
+      consecutive_timeouts=consecutive,
+      pool=active_pool,
+      sample=sample,
+      day_hint_from_sample_fn=day_hint_from_sample_fn,
     )
     if not defer_on:
       defer_log_state.clear()
       return False
     log_interval_s = float(cfg.get_sync_pool_stall_defer_log_interval_s())
-    if not _should_emit_stall_defer_warn(defer_reason, defer_log_state, log_interval_s):
+    if not _should_emit_stall_defer_warn(
+      defer_reason, defer_log_state, log_interval_s
+    ):
       return True
     poll_s = float(cfg.get_sync_pool_poll_timeout_s())
     estimated_stall_s = consecutive * poll_s
     worker_stages = format_worker_stages_snapshot(
-        getattr(stall_diagnostics, "worker_registry", None)
-        if stall_diagnostics is not None
-        else None,
-        prefer_paths=sample,
+      getattr(stall_diagnostics, "worker_registry", None)
+      if stall_diagnostics is not None
+      else None,
+      prefer_paths=sample,
     )
     if defer_reason == "long_ingest_budget":
       effective = _max_effective_ingest_timeout_from_registry(
-          getattr(stall_diagnostics, "worker_registry", None)
-          if stall_diagnostics is not None
-          else None,
+        getattr(stall_diagnostics, "worker_registry", None)
+        if stall_diagnostics is not None
+        else None,
       )
       batch_max_s = float(
-          getattr(stall_diagnostics, "current_imap_batch_max_timeout_s", 0.0)
-          if stall_diagnostics is not None
-          else 0.0,
+        getattr(stall_diagnostics, "current_imap_batch_max_timeout_s", 0.0)
+        if stall_diagnostics is not None
+        else 0.0,
       )
       log_print(
-          "WARN: pool imap stall deferred: long ingest budget "
-          "effective_ingest_timeout_s=%.1f batch_max_ingest_timeout_s=%.1f "
-          "dynamic_stall_wall_s=%.0f consecutive_timeouts=%d "
-          "estimated_stall_s=%.1f in_flight_n=%d worker_stages=%s"
-          % (
-              effective or 0.0,
-              batch_max_s,
-              _dynamic_stall_wall_seconds(stall_diagnostics),
-              int(consecutive),
-              estimated_stall_s,
-              len(sample),
-              worker_stages,
-          ),
-          flush=True,
+        "WARN: pool imap stall deferred: long ingest budget "
+        "effective_ingest_timeout_s=%.1f batch_max_ingest_timeout_s=%.1f "
+        "dynamic_stall_wall_s=%.0f consecutive_timeouts=%d "
+        "estimated_stall_s=%.1f in_flight_n=%d worker_stages=%s"
+        % (
+          effective or 0.0,
+          batch_max_s,
+          _dynamic_stall_wall_seconds(stall_diagnostics),
+          int(consecutive),
+          estimated_stall_s,
+          len(sample),
+          worker_stages,
+        ),
+        flush=True,
       )
       return True
     if defer_reason == "worker_progress_active":
       log_print(
-          "WARN: pool imap stall deferred: worker progress active "
-          "consecutive_timeouts=%d in_flight_n=%d estimated_stall_s=%.1f "
-          "worker_stages=%s"
-          % (
-              int(consecutive),
-              len(sample),
-              estimated_stall_s,
-              worker_stages,
-          ),
-          flush=True,
-      )
-      return True
-    store_snapshot = describe_archive_members_populate_for_day(
-        day_hint,
-        tgz_archive_dir,
-    )
-    log_print(
-        "WARN: pool imap stall deferred: members-store populate active for day=%s (%s) "
+        "WARN: pool imap stall deferred: worker progress active "
         "consecutive_timeouts=%d in_flight_n=%d estimated_stall_s=%.1f "
         "worker_stages=%s"
         % (
-            day_hint,
-            store_snapshot,
-            int(consecutive),
-            len(sample),
-            consecutive * float(cfg.get_sync_pool_poll_timeout_s()),
-            worker_stages,
+          int(consecutive),
+          len(sample),
+          estimated_stall_s,
+          worker_stages,
         ),
         flush=True,
+      )
+      return True
+    store_snapshot = describe_archive_members_populate_for_day(
+      day_hint,
+      tgz_archive_dir,
+    )
+    log_print(
+      "WARN: pool imap stall deferred: members-store populate active for day=%s (%s) "
+      "consecutive_timeouts=%d in_flight_n=%d estimated_stall_s=%.1f "
+      "worker_stages=%s"
+      % (
+        day_hint,
+        store_snapshot,
+        int(consecutive),
+        len(sample),
+        consecutive * float(cfg.get_sync_pool_poll_timeout_s()),
+        worker_stages,
+      ),
+      flush=True,
     )
     return True
 
@@ -1776,10 +1797,10 @@ def _make_ingest_stall_poll_fn(
 def _clear_ingest_worker_file_caches() -> None:
   """
   Drop per-process host itimes caches after parse segments.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _clear_ingest_worker_file_caches()  # doctest: +SKIP
   """
@@ -1789,10 +1810,10 @@ def _clear_ingest_worker_file_caches() -> None:
 def _clear_ingest_worker_memory_caches() -> None:
   """
   Full per-task cache sweep including daily archive member L1.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _clear_ingest_worker_memory_caches()  # doctest: +SKIP
   """
@@ -1804,8 +1825,8 @@ def _clear_ingest_worker_memory_caches() -> None:
 # ``_release_ingest_worker_memory`` still force-trims every task.
 _HEAP_RELEASE_EVERY_N_CHUNKS = 8
 _heap_release_chunk_n: contextvars.ContextVar[int] = contextvars.ContextVar(
-    "heap_release_chunk_n",
-    default=0,
+  "heap_release_chunk_n",
+  default=0,
 )
 
 
@@ -1858,7 +1879,7 @@ def _release_ingest_worker_memory(stats_file: str = "") -> Any:
     >>> _release_ingest_worker_memory("x")  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
-      release_spawn_pool_worker_memory,
+    release_spawn_pool_worker_memory,
   )
 
   # Reset mid-chunk cadence; end-of-file trim lives in release_spawn.
@@ -1872,7 +1893,7 @@ def _release_ingest_worker_memory(stats_file: str = "") -> Any:
 class SealedArchiveIngestProgress:
   """
   Per-sealed-day file counter for ``sync_timedb_archive`` completion logs.
-  
+
   Attributes:
     completed_files: Attribute.
     total_files: Attribute.
@@ -1882,41 +1903,43 @@ class SealedArchiveIngestProgress:
   completed_files: int = 0
 
 
-_sealed_archive_ingest_progress: contextvars.ContextVar = contextvars.ContextVar(
+_sealed_archive_ingest_progress: contextvars.ContextVar = (
+  contextvars.ContextVar(
     "sealed_archive_ingest_progress",
     default=None,
+  )
 )
 
 
 def set_sealed_archive_ingest_progress(total_files: int) -> None:
   """
   Begin sealed-archive member progress (``sync_timedb_archive`` workers only).
-  
+
   Args:
     total_files (int): Integer value for total files.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> set_sealed_archive_ingest_progress(0)  # doctest: +SKIP
   """
   try:
     total = int(total_files)
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     total = 0
   _sealed_archive_ingest_progress.set(
-      SealedArchiveIngestProgress(total_files=max(0, total)),
+    SealedArchiveIngestProgress(total_files=max(0, total)),
   )
 
 
 def clear_sealed_archive_ingest_progress() -> None:
   """
   Clear sealed archive ingest progress.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> clear_sealed_archive_ingest_progress()  # doctest: +SKIP
   """
@@ -1926,13 +1949,13 @@ def clear_sealed_archive_ingest_progress() -> None:
 def advance_sealed_archive_ingest_progress(count: int = 1) -> None:
   """
   Count sealed-archive members done without ingest (for example oversize skips).
-  
+
   Args:
     count (int): Integer value for count.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> advance_sealed_archive_ingest_progress(0)  # doctest: +SKIP
   """
@@ -1941,7 +1964,7 @@ def advance_sealed_archive_ingest_progress(count: int = 1) -> None:
     return
   try:
     n = int(count)
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     n = 0
   if n > 0:
     progress.completed_files += n
@@ -1950,12 +1973,12 @@ def advance_sealed_archive_ingest_progress(count: int = 1) -> None:
 def _sealed_archive_ingest_remaining_pair() -> Any:
   """
   Return ``(remaining, total)`` after incrementing completed, or ``None``.
-  
+
   Returns:
     Any: Open return polymorphism from
     ``_sealed_archive_ingest_remaining_pair``: concrete type depends on inputs
     and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+
   Examples:
     >>> _sealed_archive_ingest_remaining_pair()  # doctest: +SKIP
   """
@@ -1977,21 +2000,31 @@ _SYNC_TIMEDB_INGEST_INLINE_ENV = "HPCPERFSTATS_SYNC_TIMEDB_INGEST_INLINE"
 def bulk_create_batch_size() -> Any:
   """
   Bulk create batch size.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> bulk_create_batch_size()  # doctest: +SKIP
   """
   return cfg.get_sync_bulk_create_batch_size()
+
+
 _HOST_ITIMES_CACHE = sync_timedb_host_itimes._HOST_ITIMES_CACHE
-_HOST_ITIMES_CACHE_REFRESH_SECONDS = sync_timedb_host_itimes._HOST_ITIMES_CACHE_REFRESH_SECONDS
-_HOST_ITIMES_CACHE_MAX_ENTRIES = sync_timedb_host_itimes._HOST_ITIMES_CACHE_MAX_ENTRIES
+_HOST_ITIMES_CACHE_REFRESH_SECONDS = (
+  sync_timedb_host_itimes._HOST_ITIMES_CACHE_REFRESH_SECONDS
+)
+_HOST_ITIMES_CACHE_MAX_ENTRIES = (
+  sync_timedb_host_itimes._HOST_ITIMES_CACHE_MAX_ENTRIES
+)
 _HOST_ITIMES_SET_OVERFLOW = sync_timedb_host_itimes.HOST_ITIMES_SET_OVERFLOW
 _HOST_SECOND_PRESENT_CACHE = sync_timedb_host_itimes._HOST_SECOND_PRESENT_CACHE
-_HOST_SECOND_PRESENT_CACHE_TTL_S = sync_timedb_host_itimes._HOST_SECOND_PRESENT_CACHE_TTL_S
-_HOST_SECOND_PRESENT_CACHE_MAX_ENTRIES = sync_timedb_host_itimes._HOST_SECOND_PRESENT_CACHE_MAX_ENTRIES
+_HOST_SECOND_PRESENT_CACHE_TTL_S = (
+  sync_timedb_host_itimes._HOST_SECOND_PRESENT_CACHE_TTL_S
+)
+_HOST_SECOND_PRESENT_CACHE_MAX_ENTRIES = (
+  sync_timedb_host_itimes._HOST_SECOND_PRESENT_CACHE_MAX_ENTRIES
+)
 _TREE_RSS_DEFER_SLEEP_SECONDS = 5.0
 
 tgz_archive_dir = cfg.get_daily_archive_dir_path()
@@ -2006,34 +2039,35 @@ def _reap_supervisor_pool_children(
 ) -> None:
   """
   Reap dead pool workers and zombies; restart dead populate-pool workers.
-  
+
   Each step is fault-isolated so a closed/foreign ``Process.is_alive()`` raise
   in pool reap cannot skip zombie ``waitpid`` or the unreaped-zombie WARN.
-  
+
   Args:
     ingest_pool (Any): Ingest pool passed to this helper.
     archive_pool (Any): Archive pool passed to this helper.
     populate_pool_controller (Any): Populate pool controller passed to this
     helper.
     context (str): String for context.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _reap_supervisor_pool_children(None, None, None, "x")  # doctest: +SKIP
   """
+
   def _step(name: Any, fn: Any) -> None:
     """
     Internal helper to handle step.
-    
+
     Args:
       name (Any): Name passed to this helper.
       fn (Any): Callable invoked by this helper.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> _step(None, None)  # doctest: +SKIP
     """
@@ -2041,39 +2075,40 @@ def _reap_supervisor_pool_children(
       fn()
     except Exception as exc:
       log_print(
-          "WARN: supervisor child hygiene step failed step=%s context=%s "
-          "err=%s: %s"
-          % (name, context, type(exc).__name__, exc),
-          flush=True,
+        "WARN: supervisor child hygiene step failed step=%s context=%s "
+        "err=%s: %s" % (name, context, type(exc).__name__, exc),
+        flush=True,
       )
 
   _step(
-      "reap_ingest_pool",
-      lambda: reap_pool_worker_pids(
-          ingest_pool, context="%s_ingest" % context,
-      ),
+    "reap_ingest_pool",
+    lambda: reap_pool_worker_pids(
+      ingest_pool,
+      context="%s_ingest" % context,
+    ),
   )
   _step(
-      "reap_archive_pool",
-      lambda: reap_pool_worker_pids(
-          archive_pool, context="%s_archive" % context,
-      ),
+    "reap_archive_pool",
+    lambda: reap_pool_worker_pids(
+      archive_pool,
+      context="%s_archive" % context,
+    ),
   )
   _step(
-      "reap_zombie_children",
-      lambda: reap_zombie_children_of_self(context=context),
+    "reap_zombie_children",
+    lambda: reap_zombie_children_of_self(context=context),
   )
   if populate_pool_controller is not None:
     try:
       populate_pool_controller.reap_and_restart()
     except Exception as exc:
       log_print(
-          "WARN: populate-pool reap_and_restart failed: %s" % exc,
-          flush=True,
+        "WARN: populate-pool reap_and_restart failed: %s" % exc,
+        flush=True,
       )
   _step(
-      "warn_unreaped_zombies",
-      lambda: warn_unreaped_zombie_children(context=context),
+    "warn_unreaped_zombies",
+    lambda: warn_unreaped_zombie_children(context=context),
   )
 
 
@@ -2086,32 +2121,35 @@ def _maybe_reap_supervisor_pool_children_throttled(
 ) -> Any:
   """
   Run supervisor child hygiene at most once per.
-  
+
     ``_SUPERVISOR_CHILD_REAP_INTERVAL_S``.
-  
+
   Args:
     ingest_pool (Any): Ingest pool passed to this helper.
     archive_pool (Any): Archive pool passed to this helper.
     populate_pool_controller (Any): Populate pool controller passed to this
     helper.
     context (str): String for context.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _maybe_reap_supervisor_pool_children_throttled(None, None, None, "x")
   """
   global _last_supervisor_child_reap_mono
   now_mono = time.monotonic()
-  if now_mono - _last_supervisor_child_reap_mono < _SUPERVISOR_CHILD_REAP_INTERVAL_S:
+  if (
+    now_mono - _last_supervisor_child_reap_mono
+    < _SUPERVISOR_CHILD_REAP_INTERVAL_S
+  ):
     return False
   _last_supervisor_child_reap_mono = now_mono
   _reap_supervisor_pool_children(
-      ingest_pool,
-      archive_pool,
-      populate_pool_controller,
-      context=context,
+    ingest_pool,
+    archive_pool,
+    populate_pool_controller,
+    context=context,
   )
   return True
 
@@ -2119,46 +2157,46 @@ def _maybe_reap_supervisor_pool_children_throttled(
 def _exit_on_archive_members_store_unavailable(exc: Any) -> None:
   """
   Fatal exit when the members-store contract fails during ingest or startup.
-  
+
   Populate-pool-down / refuse-stream is recoverable (enqueue + wait / ensure
   pool) and must not map to immediate ``sys.exit(1)``.
-  
+
   Args:
     exc (Any): Exception instance being classified or logged.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _exit_on_archive_members_store_unavailable(None)  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      is_populate_pool_unavailable_error,
+    is_populate_pool_unavailable_error,
   )
 
   log_print("ERROR: %s" % exc, flush=True)
   if is_populate_pool_unavailable_error(exc):
     log_print(
-        "WARNING: populate-pool unavailable is not an immediate L2 fatal; "
-        "ensure/restart populate-pool and wait within populate_max_seconds "
-        "(ingest/archive must enqueue, never sealed-stream).",
-        flush=True,
+      "WARNING: populate-pool unavailable is not an immediate L2 fatal; "
+      "ensure/restart populate-pool and wait within populate_max_seconds "
+      "(ingest/archive must enqueue, never sealed-stream).",
+      flush=True,
     )
     return
   if isinstance(exc, ArchiveMembersStoreConnectionError):
     log_print(
-        "ERROR: archive members store is not installed.",
-        flush=True,
+      "ERROR: archive members store is not installed.",
+      flush=True,
     )
   elif isinstance(exc, ArchiveMembersPopulateStalledError):
     log_print(
-        "ERROR: archive members populate stalled or timed out.",
-        flush=True,
+      "ERROR: archive members populate stalled or timed out.",
+      flush=True,
     )
   else:
     log_print(
-        "ERROR: archive members populate contract failed.",
-        flush=True,
+      "ERROR: archive members populate contract failed.",
+      flush=True,
     )
   sys.exit(1)
 
@@ -2167,12 +2205,12 @@ def _exit_on_archive_members_store_unavailable(exc: Any) -> None:
 def _sync_worker_db_task() -> Iterator[Any]:
   """
   Refresh DB connections at worker task start and release them at end.
-  
+
   Yields:
     Iterator[Any]: Open return polymorphism from ``_sync_worker_db_task``:
     concrete type depends on inputs and branch (mapping, scalar, handle, or
     ``None``-like empty).
-  
+
   Examples:
     >>> _sync_worker_db_task()  # doctest: +SKIP
   """
@@ -2187,35 +2225,37 @@ def _sync_worker_db_task() -> Iterator[Any]:
 
 
 INGEST_WRITE_PHASE_KEYS: tuple[str, ...] = (
-    "orm_materialize_s",
-    "orm_bulk_prep_s",
-    "db_execute_s",
-    "db_commit_s",
-    "batch_iter_s",
-    "write_setup_s",
+  "orm_materialize_s",
+  "orm_bulk_prep_s",
+  "db_execute_s",
+  "db_commit_s",
+  "batch_iter_s",
+  "write_setup_s",
 )
 # Detail keys nest inside db_execute (COPY path); logged but not residual-summed.
 INGEST_WRITE_DETAIL_KEYS: tuple[str, ...] = (
-    "copy_s",
-    "conflict_insert_s",
+  "copy_s",
+  "conflict_insert_s",
 )
 INGEST_WRITE_LOG_KEYS: tuple[str, ...] = (
-    INGEST_WRITE_PHASE_KEYS + INGEST_WRITE_DETAIL_KEYS
+  INGEST_WRITE_PHASE_KEYS + INGEST_WRITE_DETAIL_KEYS
 )
 
 _ingest_write_telem_on = False
 _ingest_write_campaign: dict[str, float] = {
-    key: 0.0 for key in INGEST_WRITE_LOG_KEYS
+  key: 0.0 for key in INGEST_WRITE_LOG_KEYS
 }
 _ingest_postgres_campaign = 0.0
 _ingest_write_campaign_lock = threading.Lock()
 _ingest_postgres_s: contextvars.ContextVar[float] = contextvars.ContextVar(
-    "ingest_postgres_s",
-    default=0.0,
+  "ingest_postgres_s",
+  default=0.0,
 )
-_ingest_write_phases: contextvars.ContextVar[dict[str, float]] = contextvars.ContextVar(
+_ingest_write_phases: contextvars.ContextVar[dict[str, float]] = (
+  contextvars.ContextVar(
     "ingest_write_phases",
     default={},
+  )
 )
 
 
@@ -2244,6 +2284,7 @@ def _reset_ingest_write_timing(*, enabled: bool | None = None) -> None:
   if enabled is None:
     if not _ingest_write_telem_on:
       from hpcperfstats.dbload.lib import conf_parser as cfg
+
       with _ingest_write_campaign_lock:
         if cfg.ingest_telemetry_enabled_from_env():
           _ingest_write_telem_on = True
@@ -2288,7 +2329,7 @@ def _add_ingest_write_phase(name: str, delta_s: float) -> None:
   _ingest_write_phases.set(acc)
   with _ingest_write_campaign_lock:
     _ingest_write_campaign[name] = (
-        float(_ingest_write_campaign.get(name, 0.0)) + delta
+      float(_ingest_write_campaign.get(name, 0.0)) + delta
     )
 
 
@@ -2330,7 +2371,7 @@ def _snapshot_ingest_write_timing() -> dict[str, float]:
     0.0
   """
   out = {
-      "postgres_s": float(_ingest_postgres_s.get()),
+    "postgres_s": float(_ingest_postgres_s.get()),
   }
   if not _ingest_write_telem_on:
     return out
@@ -2385,15 +2426,17 @@ def _merge_ingest_write_timing_into_meta(meta: Any) -> dict[str, Any]:
     attach_parse_unaccounted(out)
   return out
 
+
 @dataclass(frozen=True)
 class ArchiveTask:
   """
   Hold ArchiveTask state and behavior.
-  
+
   Attributes:
     archive_info: ``archive_info``.
     attempt: ``attempt``.
   """
+
   archive_info: tuple
   attempt: int = 1
 
@@ -2402,7 +2445,7 @@ class ArchiveTask:
 class ArchiveAppendOutcome:
   """
   Archive pool append result plumbed to supervisor finalize.
-  
+
   Attributes:
     ok: Attribute.
     store_merge_ok: Attribute.
@@ -2425,11 +2468,11 @@ class ArchiveAppendOutcome:
   def __bool__(self) -> Any:
     """
     Return the truth value of this object.
-    
+
     Returns:
       Any: Open return polymorphism from ``__bool__``: concrete type depends
       on inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-    
+
     Examples:
       >>> __bool__()  # doctest: +SKIP
     """
@@ -2437,11 +2480,13 @@ class ArchiveAppendOutcome:
 
 
 # Invalidation reasons that must not sync-re-prewarm while a hold blocks waiters.
-DEFER_SYNC_PREWARM_INVALIDATION_REASONS = frozenset({
+DEFER_SYNC_PREWARM_INVALIDATION_REASONS = frozenset(
+  {
     "archive_finalize",
     "tar_restore_pre",
     "tar_restore",
-})
+  }
+)
 
 # Match former dispatch restore-skip backoff constant.
 ARCHIVE_RESTORE_SOFT_REQUEUE_BACKOFF_S = 15.0
@@ -2450,13 +2495,13 @@ ARCHIVE_RESTORE_SOFT_REQUEUE_BACKOFF_S = 15.0
 def _archive_append_outcome_is_soft_requeue(result: Any) -> Any:
   """
   Internal helper to archive the append outcome is soft requeue.
-  
+
   Args:
     result (Any): Result passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _archive_append_outcome_is_soft_requeue(None)  # doctest: +SKIP
   """
@@ -2466,13 +2511,13 @@ def _archive_append_outcome_is_soft_requeue(result: Any) -> Any:
 def _archive_append_outcome_is_gate_skip(result: Any) -> Any:
   """
   Internal helper: append worker returned gate-skipped paths only.
-  
+
   Args:
     result (Any): Result passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _archive_append_outcome_is_gate_skip(None)  # doctest: +SKIP
   """
@@ -2482,13 +2527,13 @@ def _archive_append_outcome_is_gate_skip(result: Any) -> Any:
 def _archive_finalize_skip_invalidate_log_reason(result: Any) -> Any:
   """
   Internal helper to archive the finalize skip invalidate log reason.
-  
+
   Args:
     result (Any): Result passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _archive_finalize_skip_invalidate_log_reason(None)  # doctest: +SKIP
   """
@@ -2505,15 +2550,15 @@ def _handle_pool_worker_exit_fatal(
 ) -> None:
   """
   ``os._exit`` immediately — do not wait on pool terminate or context managers.
-  
+
   Args:
     exc (Any): Exception instance being classified or logged.
     ingest_pool (Any | None): One of ``Any``, ``None``.
     archive_pool (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _handle_pool_worker_exit_fatal(None, None, None)  # doctest: +SKIP
   """
@@ -2524,11 +2569,12 @@ def _handle_pool_worker_exit_fatal(
 class SyncFileState(str, Enum):
   """
   Hold SyncFileState state and behavior.
-  
+
   Subclasses ``str``, extending that type with this class's fields and behavior.
-  
+
   Subclasses ``str``, extending that type with this class's fields and behavior.
   """
+
   DISCOVERED = "discovered"
   PARSED = "parsed"
   WRITTEN = "written"
@@ -2538,23 +2584,23 @@ class SyncFileState(str, Enum):
 
 
 _SYNC_STATE_TRANSITIONS = {
-    SyncFileState.DISCOVERED: {
-        SyncFileState.WRITTEN,
-        SyncFileState.ARCHIVE_QUEUED,
-    },
-    SyncFileState.WRITTEN: {
-        SyncFileState.ARCHIVE_QUEUED,
-        SyncFileState.ARCHIVED,
-    },
-    SyncFileState.ARCHIVE_QUEUED: {
-        SyncFileState.ARCHIVE_FAILED_RETRYABLE,
-        SyncFileState.ARCHIVED,
-    },
-    SyncFileState.ARCHIVE_FAILED_RETRYABLE: {
-        SyncFileState.ARCHIVE_QUEUED,
-        SyncFileState.ARCHIVED,
-    },
-    SyncFileState.ARCHIVED: set(),
+  SyncFileState.DISCOVERED: {
+    SyncFileState.WRITTEN,
+    SyncFileState.ARCHIVE_QUEUED,
+  },
+  SyncFileState.WRITTEN: {
+    SyncFileState.ARCHIVE_QUEUED,
+    SyncFileState.ARCHIVED,
+  },
+  SyncFileState.ARCHIVE_QUEUED: {
+    SyncFileState.ARCHIVE_FAILED_RETRYABLE,
+    SyncFileState.ARCHIVED,
+  },
+  SyncFileState.ARCHIVE_FAILED_RETRYABLE: {
+    SyncFileState.ARCHIVE_QUEUED,
+    SyncFileState.ARCHIVED,
+  },
+  SyncFileState.ARCHIVED: set(),
 }
 
 SYNC_TIMEDB_DEAD_LETTER_BASENAME = ".sync_timedb_dead_letter.json"
@@ -2567,15 +2613,15 @@ def _transition_file_state(
 ) -> Any:
   """
   Best-effort state transition validator for per-file supervisor state.
-  
+
   Args:
     file_states (Any): File states passed to this helper.
     path (str): String for path.
     new_state (Any): New state passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _transition_file_state(None, "x", None)  # doctest: +SKIP
   """
@@ -2586,15 +2632,15 @@ def _transition_file_state(
   # Re-entrant ingest while raw remains on disk or archive dispatch replays:
   # db-complete re-ingest may complete again before append finalizes.
   if new_state == SyncFileState.WRITTEN and current in (
-      SyncFileState.ARCHIVE_QUEUED,
-      SyncFileState.ARCHIVED,
+    SyncFileState.ARCHIVE_QUEUED,
+    SyncFileState.ARCHIVED,
   ):
     file_states[path] = new_state
     return True
   # Archive replay may queue paths already marked ARCHIVED in checkpoint.
   if (
-      current == SyncFileState.ARCHIVED
-      and new_state == SyncFileState.ARCHIVE_QUEUED
+    current == SyncFileState.ARCHIVED
+    and new_state == SyncFileState.ARCHIVE_QUEUED
   ):
     return True
   allowed = _SYNC_STATE_TRANSITIONS.get(current, set())
@@ -2602,9 +2648,9 @@ def _transition_file_state(
     file_states[path] = new_state
     return True
   log_print(
-      "Invalid sync_timedb file state transition path=%s current=%s new=%s"
-      % (path, current, new_state),
-      flush=True,
+    "Invalid sync_timedb file state transition path=%s current=%s new=%s"
+    % (path, current, new_state),
+    flush=True,
   )
   return False
 
@@ -2616,47 +2662,49 @@ def _host_recent_timestamps_cached(
 ) -> Any:
   """
   Internal helper to handle host recent timestamps cached.
-  
+
   Args:
     hostname (Any): Hostname passed to this helper.
     ts_low (Any): Ts low passed to this helper.
     ts_high (Any): Ts high passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _host_recent_timestamps_cached(None, None, None)  # doctest: +SKIP
   """
   return sync_timedb_host_itimes.host_recent_timestamps_cached(
-      hostname, ts_low, ts_high)
+    hostname, ts_low, ts_high
+  )
 
 
 def _host_timestamp_second_present_in_db(host: Any, unix_second: Any) -> Any:
   """
   Internal helper to handle host timestamp second present in db.
-  
+
   Args:
     host (Any): Host passed to this helper.
     unix_second (Any): Unix second passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _host_timestamp_second_present_in_db(None, None)  # doctest: +SKIP
   """
   return sync_timedb_host_itimes.host_timestamp_second_present_in_db(
-      host, unix_second)
+    host, unix_second
+  )
 
 
 def _reset_sync_runtime_caches() -> None:
   """
   Clear per-process ingest caches between sync_timedb sessions.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _reset_sync_runtime_caches()  # doctest: +SKIP
   """
@@ -2667,14 +2715,14 @@ def _reset_sync_runtime_caches() -> None:
 def _should_stream_stats_file(stats_file: str, stats_file_contents: Any) -> Any:
   """
   Internal helper to check whether we should stream stats file.
-  
+
   Args:
     stats_file (str): String for stats file.
     stats_file_contents (Any): Stats file contents passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _should_stream_stats_file("x", None)  # doctest: +SKIP
   """
@@ -2690,21 +2738,23 @@ def _timestamp_second_present_for_duplicate(
 ) -> Any:
   """
   Return whether ``unix_second`` for ``host`` is present in DB (indexed exists.
-  
+
     probe).
-  
+
   Args:
     host (Any): Host passed to this helper.
     unix_second (Any): Unix second passed to this helper.
     timestamp_utc (Any): Timestamp utc passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _timestamp_second_present_for_duplicate(None, None, None)
   """
-  del timestamp_utc  # kept for call-site stability; wide itimes window not needed here
+  del (
+    timestamp_utc
+  )  # kept for call-site stability; wide itimes window not needed here
   return _host_timestamp_second_present_in_db(host, unix_second)
 
 
@@ -2717,18 +2767,18 @@ def _try_db_complete_head_tail_fast_path(
 ) -> Any:
   """
   When head and tail seconds are in DB, skip full duplicate scan (returns.
-  
+
     start_idx=-1).
-  
+
   Args:
     stats_file (str): String for stats file.
     host (Any): Host passed to this helper.
     head_timestamp_utc (Any): Head timestamp utc passed to this helper.
     lines (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _try_db_complete_head_tail_fast_path("x", None, None, None)
   """
@@ -2736,17 +2786,23 @@ def _try_db_complete_head_tail_fast_path(
   # the live queue — never trust this weak probe when live ingest is enabled.
   if cfg.get_listend_db_ingest_enabled():
     return None
-  del head_timestamp_utc  # callers pass head ts for API stability; fast path uses tail only
+  del (
+    head_timestamp_utc
+  )  # callers pass head ts for API stability; fast path uses tail only
   if lines is not None:
     tail_t, _tail_jid, tail_host = parse_last_timestamp_line(lines)
   else:
-    tail_t, _tail_jid, tail_host = parse_last_timestamp_line_streaming(stats_file)
+    tail_t, _tail_jid, tail_host = parse_last_timestamp_line_streaming(
+      stats_file
+    )
   if tail_t is None:
     return None
   tail_host = str(tail_host or host).strip()
   tail_unix = int(float(tail_t))
   tail_ts_utc = datetime.fromtimestamp(tail_unix, tz=timezone.utc)
-  if not _timestamp_second_present_for_duplicate(tail_host, tail_unix, tail_ts_utc):
+  if not _timestamp_second_present_for_duplicate(
+    tail_host, tail_unix, tail_ts_utc
+  ):
     return None
   return -1, True
 
@@ -2761,19 +2817,19 @@ def _try_db_complete_tail_window_fast_path(
 ) -> Any:
   """
   Bounded tail-line probe for large head-present files before full duplicate.
-  
+
     scan.
-  
+
   Args:
     stats_file (str): String for stats file.
     host (Any): Host passed to this helper.
     timestamp_utc (Any): Timestamp utc passed to this helper.
     itimes_set (Any | None): One of ``Any``, ``None``.
     timestamp_present (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _try_db_complete_tail_window_fast_path("x", None, None, None, None)
   """
@@ -2792,42 +2848,42 @@ def _try_db_complete_tail_window_fast_path(
     if itimes_set is _HOST_ITIMES_SET_OVERFLOW:
       itimes_set = None
       probe_count = {"n": 0}
-      max_overflow_probes = cfg.get_sync_host_itimes_cache_max_timestamps_per_entry()
+      max_overflow_probes = (
+        cfg.get_sync_host_itimes_cache_max_timestamps_per_entry()
+      )
 
       def _timestamp_present_with_budget(unix_second: Any) -> Any:
         """
         Internal helper to handle timestamp present with budget.
-        
+
         Args:
           unix_second (Any): Unix second passed to this helper.
-        
+
         Returns:
           Any: Value produced by this call (type depends on inputs).
-        
+
         Raises:
           IngestArchiveLookupBudgetExceededError: Raised when
           ``_timestamp_present_with_budget`` hits a
           ``IngestArchiveLookupBudgetExceededError`` failure path.
-        
+
         Examples:
           >>> _timestamp_present_with_budget(None)  # doctest: +SKIP
         """
         probe_count["n"] += 1
         if probe_count["n"] > max_overflow_probes:
           raise IngestArchiveLookupBudgetExceededError(
-              "itimes overflow DB probe budget exceeded path=%s probes=%d"
-              % (stats_file, probe_count["n"]),
+            "itimes overflow DB probe budget exceeded path=%s probes=%d"
+            % (stats_file, probe_count["n"]),
           )
         update_worker_substage("itimes_overflow_db")
         return _host_timestamp_second_present_in_db(host, unix_second)
 
       timestamp_present = _timestamp_present_with_budget
-  if (
-      tail_window_timestamps_all_present_streaming(
-          stats_file,
-          itimes_set,
-          timestamp_present=timestamp_present,
-      )
+  if tail_window_timestamps_all_present_streaming(
+    stats_file,
+    itimes_set,
+    timestamp_present=timestamp_present,
   ):
     return -1, True
   return None
@@ -2836,27 +2892,31 @@ def _try_db_complete_tail_window_fast_path(
 def _invalidate_jid_caches(stats: Any, proc_stats: Any) -> None:
   """
   Internal helper to handle invalidate job id caches.
-  
+
   Args:
     stats (Any): Stats passed to this helper.
     proc_stats (Any): Proc stats passed to this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _invalidate_jid_caches(None, None)  # doctest: +SKIP
   """
   try:
     from hpcperfstats.site.lib.machine.cache_utils import (
-        invalidate_jid_derived_cache_keys,
-        invalidate_job_plot_cache_keys_for_jids,
+      invalidate_jid_derived_cache_keys,
+      invalidate_job_plot_cache_keys_for_jids,
     )
 
     jids = set()
     if stats is not None and not stats.empty and "jid" in stats.columns:
       jids.update(str(x) for x in stats["jid"].dropna().unique())
-    if proc_stats is not None and not proc_stats.empty and "jid" in proc_stats.columns:
+    if (
+      proc_stats is not None
+      and not proc_stats.empty
+      and "jid" in proc_stats.columns
+    ):
       jids.update(str(x) for x in proc_stats["jid"].dropna().unique())
     if jids:
       invalidate_jid_derived_cache_keys(jids, ingest_fast=True)
@@ -2913,13 +2973,13 @@ def _held_ingest_write_timing() -> Iterator[None]:
 def _reset_ingest_db_connection_after_write_error() -> None:
   """
   Best-effort rollback + close so the next ORM call gets a fresh socket.
-  
+
   Required after interrupted ``bulk_create`` (e.g. SIGALRM) before single-row
   fallback; otherwise psycopg raises ``another command is already in progress``.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _reset_ingest_db_connection_after_write_error()  # doctest: +SKIP
   """
@@ -2936,25 +2996,22 @@ def _reset_ingest_db_connection_after_write_error() -> None:
 def _is_psycopg_connection_desync(exc: Any) -> Any:
   """
   True for wire-protocol errors that warrant connection reset (ingest write.
-  
+
     path).
-  
+
   Args:
     exc (Any): Exception instance being classified or logged.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _is_psycopg_connection_desync(None)  # doctest: +SKIP
   """
   if isinstance(exc, (InterfaceError, OperationalError)):
     return True
   msg = str(exc).lower()
-  return (
-      "already in progress" in msg
-      or "lost synchronization" in msg
-  )
+  return "already in progress" in msg or "lost synchronization" in msg
 
 
 def _apply_ingest_session_statement_timeout() -> None:
@@ -2979,6 +3036,7 @@ def _apply_ingest_session_statement_timeout() -> None:
   ms = max(0, int(max_s * 1000.0))
   try:
     from django.db import connection
+
     with connection.cursor() as cursor:
       cursor.execute("SET statement_timeout = %d" % ms)
   except Exception:
@@ -3034,14 +3092,14 @@ def _write_stats_payload_to_db(
     stats (Any): Stats passed to this helper.
     proc_stats (Any): Proc stats passed to this helper.
     need_archival (bool): Boolean flag for need archival.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     Exception: Raised when ``_write_stats_payload_to_db`` hits a ``Exception``
     failure path.
-  
+
   Examples:
     >>> _write_stats_payload_to_db("x", None, None, True)
   """
@@ -3064,28 +3122,30 @@ def _write_stats_payload_to_db(
             break
           with _held_ingest_write_phase("orm_materialize_s"):
             proc_objs = [
-                proc_data(**_proc_data_row_kwargs(row)) for row in batch
+              proc_data(**_proc_data_row_kwargs(row)) for row in batch
             ]
             proc_objs = _peak_merge_proc_objs_with_existing(proc_objs)
           with _held_ingest_write_phase("db_execute_s"):
-            _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
+            _raise_if_ingest_per_file_deadline_exceeded(
+              stats_file, "db_write_proc"
+            )
             insert_proc_data_batch(proc_objs)
       else:
         batch = list(itertools.islice(proc_it, bulk_create_batch_size()))
         if not batch:
           break
-        proc_objs = [
-            proc_data(**_proc_data_row_kwargs(row)) for row in batch
-        ]
+        proc_objs = [proc_data(**_proc_data_row_kwargs(row)) for row in batch]
         proc_objs = _peak_merge_proc_objs_with_existing(proc_objs)
         with _held_ingest_write_timing():
-          _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
+          _raise_if_ingest_per_file_deadline_exceeded(
+            stats_file, "db_write_proc"
+          )
           insert_proc_data_batch(proc_objs)
   except Exception as e:
     _reraise_if_ingest_control_flow(e)
     if is_database_unavailable_error(e):
       log_and_raise_database_unavailable(
-          e, context="sync_timedb proc_data bulk_create"
+        e, context="sync_timedb proc_data bulk_create"
       )
     if DEBUG:
       log_print("error in proc_data bulk_create: %s\nFile %s" % (e, stats_file))
@@ -3095,9 +3155,9 @@ def _write_stats_payload_to_db(
   try:
     with warnings.catch_warnings():
       warnings.filterwarnings(
-          "ignore",
-          message=".*[Dd]iscarding nonzero nanoseconds.*",
-          category=UserWarning,
+        "ignore",
+        message=".*[Dd]iscarding nonzero nanoseconds.*",
+        category=UserWarning,
       )
       if _ingest_write_telem_on:
         with _held_ingest_write_timing():
@@ -3115,11 +3175,12 @@ def _write_stats_payload_to_db(
               break
             with _held_ingest_write_phase("orm_materialize_s"):
               host_objs = [
-                  host_data_instance_from_stats_row(row) for row in batch
+                host_data_instance_from_stats_row(row) for row in batch
               ]
             with _held_ingest_write_phase("db_execute_s"):
               _raise_if_ingest_per_file_deadline_exceeded(
-                  stats_file, "db_write_host",
+                stats_file,
+                "db_write_host",
               )
               insert_host_data_batch(host_objs)
         else:
@@ -3128,13 +3189,15 @@ def _write_stats_payload_to_db(
             break
           host_objs = [host_data_instance_from_stats_row(row) for row in batch]
           with _held_ingest_write_timing():
-            _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
+            _raise_if_ingest_per_file_deadline_exceeded(
+              stats_file, "db_write_host"
+            )
             insert_host_data_batch(host_objs)
   except Exception as e:
     _reraise_if_ingest_control_flow(e)
     if is_database_unavailable_error(e):
       log_and_raise_database_unavailable(
-          e, context="sync_timedb host_data bulk_create"
+        e, context="sync_timedb host_data bulk_create"
       )
     if DEBUG:
       log_print("error in host_data bulk_create:", str(e))
@@ -3148,39 +3211,39 @@ def _write_stats_payload_to_db(
   if DEBUG:
     log_print("File successfully added to DB")
   return (
-      stats_file,
-      need_archival,
-      _ingest_ok_from_host_write_path(
-          individual_need_archival=individual_need_archival,
-      ),
+    stats_file,
+    need_archival,
+    _ingest_ok_from_host_write_path(
+      individual_need_archival=individual_need_archival,
+    ),
   )
 
 
 _DB_COMPLETE_REASON_TO_SKIP = {
-    "db_complete_head_tail": "head_tail",
-    "db_complete_tail_window": "tail_window",
-    "db_complete_full_scan": "full_scan",
+  "db_complete_head_tail": "head_tail",
+  "db_complete_tail_window": "tail_window",
+  "db_complete_full_scan": "full_scan",
 }
 
 _ARCHIVE_SKIP_FROM_OUTCOME = {
-    "quarantine": "quarantine",
-    "parse_fail": "parse_fail",
-    "active_segment": "active_segment",
-    "lookup_budget": "lookup_budget",
-    "timeout": "timeout",
+  "quarantine": "quarantine",
+  "parse_fail": "parse_fail",
+  "active_segment": "active_segment",
+  "lookup_budget": "lookup_budget",
+  "timeout": "timeout",
 }
 
 
 def _db_skip_token_from_complete_reason(reason: Any) -> Any:
   """
   Internal helper to handle db skip token from complete reason.
-  
+
   Args:
     reason (Any): Reason passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _db_skip_token_from_complete_reason(None)  # doctest: +SKIP
   """
@@ -3192,14 +3255,14 @@ def _db_skip_token_from_complete_reason(reason: Any) -> Any:
 def _ingest_outcome_meta(**kwargs: Any) -> Any:
   """
   Internal helper to ingest the outcome meta.
-  
+
   Args:
     **kwargs (Any): Extra keyword arguments forwarded to the wrapped API; keys
     and value types match that callee's signature.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _ingest_outcome_meta()  # doctest: +SKIP
   """
@@ -3228,6 +3291,7 @@ class IngestFileOutcome:
     timeout_s: Resolved per-file timeout budget (seconds) when known.
     parse_stage: Optional exhaustive parse-stage seconds when telemetry is on.
   """
+
   path: str
   elapsed_s: float
   ingest_ok: bool
@@ -3248,13 +3312,13 @@ class IngestFileOutcome:
 def _archive_skip_token_for_outcome(outcome: Any) -> Any:
   """
   Infer archive log token when meta omitted but archival was skipped.
-  
+
   Args:
     outcome (Any): Outcome passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _archive_skip_token_for_outcome(None)  # doctest: +SKIP
   """
@@ -3265,7 +3329,10 @@ def _archive_skip_token_for_outcome(outcome: Any) -> Any:
   mapped = _ARCHIVE_SKIP_FROM_OUTCOME.get(outcome.outcome)
   if mapped:
     return mapped
-  if outcome.outcome == "parse_fail" and outcome.fail_reason == "invalid_stats_path":
+  if (
+    outcome.outcome == "parse_fail"
+    and outcome.fail_reason == "invalid_stats_path"
+  ):
     return "invalid_stats_path"
   if outcome.ingest_ok and outcome.outcome == "ingested":
     return "db_write_error"
@@ -3275,23 +3342,23 @@ def _archive_skip_token_for_outcome(outcome: Any) -> Any:
 def _need_archival_and_archive_skip_meta(stats_file: str, first_ts: Any) -> Any:
   """
   Tar-append decision for DB-complete ingest; returns meta fragment.
-  
+
   Args:
     stats_file (str): String for stats file.
     first_ts (Any): First ts passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _need_archival_and_archive_skip_meta("x", None)  # doctest: +SKIP
   """
   if not should_archive:
     return False, {"archive_skip": "should_archive_false"}
   need_archival, skip_reason = raw_stats_path_tar_append_decision(
-      stats_file,
-      tgz_archive_dir,
-      first_ts=first_ts,
+    stats_file,
+    tgz_archive_dir,
+    first_ts=first_ts,
   )
   meta = {}
   if not need_archival and skip_reason:
@@ -3308,17 +3375,17 @@ def _pack_ingest_worker_result(
 ) -> Any:
   """
   Internal helper to handle pack ingest worker result.
-  
+
   Args:
     stats_file (str): String for stats file.
     need_archival (Any): Need archival passed to this helper.
     ingest_ok (Any): Ingest ok passed to this helper.
     elapsed_s (Any): Elapsed s passed to this helper.
     outcome_meta (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _pack_ingest_worker_result("x", None, None, None, None)
   """
@@ -3329,13 +3396,13 @@ def _pack_ingest_worker_result(
 def _unpack_ingest_worker_result(result: Any) -> Any:
   """
   Internal helper to handle unpack ingest worker result.
-  
+
   Args:
     result (Any): Result passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _unpack_ingest_worker_result(None)  # doctest: +SKIP
   """
@@ -3344,11 +3411,11 @@ def _unpack_ingest_worker_result(result: Any) -> Any:
   if len(result) >= 5:
     meta = result[4]
     return (
-        result[0],
-        result[1],
-        result[2],
-        float(result[3]),
-        dict(meta) if isinstance(meta, dict) else {},
+      result[0],
+      result[1],
+      result[2],
+      float(result[3]),
+      dict(meta) if isinstance(meta, dict) else {},
     )
   if len(result) >= 4:
     return result[0], result[1], result[2], float(result[3]), {}
@@ -3360,13 +3427,13 @@ def _unpack_ingest_worker_result(result: Any) -> Any:
 def _unpack_parse_payload_result(result: Any) -> Any:
   """
   Internal helper to handle unpack parse payload result.
-  
+
   Args:
     result (Any): Result passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _unpack_parse_payload_result(None)  # doctest: +SKIP
   """
@@ -3375,12 +3442,12 @@ def _unpack_parse_payload_result(result: Any) -> Any:
   if len(result) >= 6:
     meta = result[5]
     return (
-        result[0],
-        result[1],
-        result[2],
-        result[3],
-        float(result[4]),
-        dict(meta) if isinstance(meta, dict) else {},
+      result[0],
+      result[1],
+      result[2],
+      result[3],
+      float(result[4]),
+      dict(meta) if isinstance(meta, dict) else {},
     )
   if len(result) >= 5:
     return result[0], result[1], result[2], result[3], float(result[4]), {}
@@ -3396,17 +3463,17 @@ def _ingest_file_outcome_from_worker(
 ) -> Any:
   """
   Internal helper to ingest the file outcome from worker.
-  
+
   Args:
     stats_file (str): String for stats file.
     need_archival (Any): Need archival passed to this helper.
     ingest_ok (Any): Ingest ok passed to this helper.
     elapsed_s (Any): Elapsed s passed to this helper.
     outcome_meta (Any): Outcome meta passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _ingest_file_outcome_from_worker("x", None, None, None, None)
   """
@@ -3420,28 +3487,26 @@ def _ingest_file_outcome_from_worker(
   db_skip = str(meta.get("db_skip") or "no")
   timeout_s = meta.get("timeout_s")
   stage = {
-      key: float(meta[key])
-      for key in (*PARSE_STAGE_LOG_KEYS, *INGEST_WRITE_LOG_KEYS)
-      if meta.get(key) is not None
+    key: float(meta[key])
+    for key in (*PARSE_STAGE_LOG_KEYS, *INGEST_WRITE_LOG_KEYS)
+    if meta.get(key) is not None
   }
   return IngestFileOutcome(
-      path=str(stats_file or ""),
-      elapsed_s=float(elapsed_s),
-      ingest_ok=bool(ingest_ok),
-      need_archival=bool(need_archival),
-      outcome=outcome,
-      db_skip=db_skip,
-      parse_elapsed_s=meta.get("parse_elapsed_s"),
-      postgres_s=meta.get("postgres_s"),
-      timeout_s=(
-          float(timeout_s) if timeout_s is not None else None
-      ),
-      stats_rows=meta.get("stats_rows"),
-      stats_rows_parsed=meta.get("stats_rows_parsed"),
-      proc_rows=meta.get("proc_rows"),
-      fail_reason=meta.get("fail_reason"),
-      archive_skip=meta.get("archive_skip"),
-      parse_stage=stage or None,
+    path=str(stats_file or ""),
+    elapsed_s=float(elapsed_s),
+    ingest_ok=bool(ingest_ok),
+    need_archival=bool(need_archival),
+    outcome=outcome,
+    db_skip=db_skip,
+    parse_elapsed_s=meta.get("parse_elapsed_s"),
+    postgres_s=meta.get("postgres_s"),
+    timeout_s=(float(timeout_s) if timeout_s is not None else None),
+    stats_rows=meta.get("stats_rows"),
+    stats_rows_parsed=meta.get("stats_rows_parsed"),
+    proc_rows=meta.get("proc_rows"),
+    fail_reason=meta.get("fail_reason"),
+    archive_skip=meta.get("archive_skip"),
+    parse_stage=stage or None,
   )
 
 
@@ -3492,14 +3557,14 @@ def _log_ingest_file_outcome(
   """
   timeout_s = _resolve_outcome_timeout_s(outcome)
   parts = [
-      "ingest file path=%s" % outcome.path,
-      "outcome=%s" % outcome.outcome,
-      "elapsed_s=%.1f" % float(outcome.elapsed_s),
-      "timeout_s=%.1f" % float(timeout_s),
-      "ingest_ok=%s" % ("yes" if outcome.ingest_ok else "no"),
-      "archive=%s" % _archive_skip_token_for_outcome(outcome),
-      "db_skip=%s" % (outcome.db_skip or "no"),
-      "size_bytes=%d" % stats_file_size_bytes(outcome.path),
+    "ingest file path=%s" % outcome.path,
+    "outcome=%s" % outcome.outcome,
+    "elapsed_s=%.1f" % float(outcome.elapsed_s),
+    "timeout_s=%.1f" % float(timeout_s),
+    "ingest_ok=%s" % ("yes" if outcome.ingest_ok else "no"),
+    "archive=%s" % _archive_skip_token_for_outcome(outcome),
+    "db_skip=%s" % (outcome.db_skip or "no"),
+    "size_bytes=%d" % stats_file_size_bytes(outcome.path),
   ]
   if outcome.parse_elapsed_s is not None:
     parts.append("parse_elapsed_s=%.1f" % float(outcome.parse_elapsed_s))
@@ -3553,19 +3618,19 @@ def _log_ingest_outcome_from_packed_result(
     ... )  # doctest: +SKIP
   """
   stats_file, need_archival, ingest_ok, elapsed_s, outcome_meta = (
-      _unpack_ingest_worker_result(result)
+    _unpack_ingest_worker_result(result)
   )
   outcome = _ingest_file_outcome_from_worker(
-      stats_file,
-      need_archival,
-      ingest_ok,
-      elapsed_s,
-      outcome_meta,
+    stats_file,
+    need_archival,
+    ingest_ok,
+    elapsed_s,
+    outcome_meta,
   )
   _log_ingest_file_outcome(
-      outcome,
-      remaining=remaining,
-      supplement=supplement,
+    outcome,
+    remaining=remaining,
+    supplement=supplement,
   )
 
 
@@ -3596,35 +3661,37 @@ def _record_ingest_marks_from_worker_result(
     True
   """
   stats_file, need_archival, ingest_ok, elapsed_s, outcome_meta = (
-      _unpack_ingest_worker_result(result)
+    _unpack_ingest_worker_result(result)
   )
   outcome = _ingest_file_outcome_from_worker(
-      stats_file,
-      need_archival,
-      ingest_ok,
-      elapsed_s,
-      outcome_meta,
+    stats_file,
+    need_archival,
+    ingest_ok,
+    elapsed_s,
+    outcome_meta,
   )
   from hpcperfstats.dbload.lib.sync_timedb_zero_host_ingest_mark import (
-      maybe_record_zero_host_ingest_mark_from_outcome,
+    maybe_record_zero_host_ingest_mark_from_outcome,
   )
+
   maybe_record_zero_host_ingest_mark_from_outcome(
-      stats_file,
-      ingest_ok=outcome.ingest_ok,
-      outcome=outcome.outcome,
-      stats_rows=outcome.stats_rows,
-      stats_rows_parsed=outcome.stats_rows_parsed,
-      log_fn=log_fn,
+    stats_file,
+    ingest_ok=outcome.ingest_ok,
+    outcome=outcome.outcome,
+    stats_rows=outcome.stats_rows,
+    stats_rows_parsed=outcome.stats_rows_parsed,
+    log_fn=log_fn,
   )
   from hpcperfstats.dbload.lib.sync_timedb_file_complete_ingest_mark import (
-      maybe_record_file_complete_ingest_mark_from_outcome,
+    maybe_record_file_complete_ingest_mark_from_outcome,
   )
+
   maybe_record_file_complete_ingest_mark_from_outcome(
-      stats_file,
-      ingest_ok=outcome.ingest_ok,
-      outcome=outcome.outcome,
-      db_skip=outcome.db_skip,
-      log_fn=log_fn,
+    stats_file,
+    ingest_ok=outcome.ingest_ok,
+    outcome=outcome.outcome,
+    db_skip=outcome.db_skip,
+    log_fn=log_fn,
   )
 
 
@@ -3634,14 +3701,14 @@ def _quarantine_failed_ingest_parse(
 ) -> Any:
   """
   Move permanently unparseable closed raw into DLO; return True when handled.
-  
+
   Args:
     stats_file (str): String for stats file.
     error_detail (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _quarantine_failed_ingest_parse("x", None)  # doctest: +SKIP
   """
@@ -3649,10 +3716,10 @@ def _quarantine_failed_ingest_parse(
   if not archive_dir:
     return False
   return quarantine_ingest_failed_raw_path(
-      stats_file,
-      archive_dir,
-      INGEST_PARSE_FAILED_QUARANTINE_REASON,
-      error_detail=error_detail,
+    stats_file,
+    archive_dir,
+    INGEST_PARSE_FAILED_QUARANTINE_REASON,
+    error_detail=error_detail,
   )
 
 
@@ -3663,29 +3730,29 @@ def _parse_failure_after_quarantine(
 ) -> Any:
   """
   Quarantine on permanent parse failure; ingest_ok=True when DLO move succeeds.
-  
+
   Args:
     stats_file (str): String for stats file.
     parse_elapsed (Any): Parse elapsed passed to this helper.
     error_detail (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _parse_failure_after_quarantine("x", None, None)  # doctest: +SKIP
   """
   if _quarantine_failed_ingest_parse(stats_file, error_detail=error_detail):
     meta = _ingest_outcome_meta(
-        outcome="quarantine",
-        fail_reason=error_detail,
-        archive_skip="quarantine",
+      outcome="quarantine",
+      fail_reason=error_detail,
+      archive_skip="quarantine",
     )
     return (stats_file, None, False, True, parse_elapsed, meta)
   meta = _ingest_outcome_meta(
-      outcome="parse_fail",
-      fail_reason=error_detail,
-      archive_skip="parse_fail",
+    outcome="parse_fail",
+    fail_reason=error_detail,
+    archive_skip="parse_fail",
   )
   return (stats_file, None, False, False, parse_elapsed, meta)
 
@@ -3693,28 +3760,28 @@ def _parse_failure_after_quarantine(
 def _reraise_if_ingest_control_flow(exc: Any) -> None:
   """
   Do not swallow timeout / lookup-budget control flow into DLO quarantine.
-  
+
   Bare ``except Exception`` around parse helpers previously converted
   ``IngestPerFileTimeoutError`` into ``outcome=quarantine`` /
   ``reason=ingest_parse_failed``, permanently dead-lettering paths that must
   remain on disk for retry (``ingest_ok=False``, ``outcome=timeout``).
-  
+
   Args:
     exc (Any): Exception instance being classified or logged.
-  
+
   Returns:
     None
-  
+
   Raises:
     exc: Raised when ``_reraise_if_ingest_control_flow`` hits a ``exc``
     failure path.
-  
+
   Examples:
     >>> _reraise_if_ingest_control_flow(None)  # doctest: +SKIP
   """
   if isinstance(
-      exc,
-      (IngestPerFileTimeoutError, IngestArchiveLookupBudgetExceededError),
+    exc,
+    (IngestPerFileTimeoutError, IngestArchiveLookupBudgetExceededError),
   ):
     raise exc
   return
@@ -3728,22 +3795,23 @@ def _parse_stats_file_payload(
 ) -> Any:
   """
   Parse stats file into payload for deferred DB writer stage.
-  
+
   Returns (stats_file, payload, need_archival, ingest_ok, parse_elapsed_s).
-  
+
   Args:
     stats_file (str): String for stats file.
     stats_file_contents (Any | None): One of ``Any``, ``None``.
     use_ingest_timer (bool): Whether to enable use ingest timer.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _parse_stats_file_payload("x", None, True)  # doctest: +SKIP
   """
   impl = lambda: _parse_stats_file_payload_impl(
-      stats_file, stats_file_contents=stats_file_contents,
+    stats_file,
+    stats_file_contents=stats_file_contents,
   )
   if not use_ingest_timer:
     try:
@@ -3751,42 +3819,46 @@ def _parse_stats_file_payload(
     except IngestArchiveLookupBudgetExceededError as exc:
       _log_ingest_archive_lookup_budget_exceeded(exc)
       return (
-          stats_file,
-          None,
-          False,
-          False,
-          0.0,
-          _ingest_outcome_meta(outcome="lookup_budget", archive_skip="lookup_budget"),
-      )
-  try:
-    return _run_ingest_timed(
-        stats_file,
-        "parse",
-        impl,
-    )
-  except IngestPerFileTimeoutError as exc:
-    _log_ingest_per_file_timeout(exc)
-    return (
-        stats_file,
-        None,
-        False,
-        False,
-        exc.elapsed_s,
-        _ingest_outcome_meta(
-            outcome="timeout",
-            fail_reason=exc.stage,
-            archive_skip="timeout",
-        ),
-    )
-  except IngestArchiveLookupBudgetExceededError as exc:
-    _log_ingest_archive_lookup_budget_exceeded(exc)
-    return (
         stats_file,
         None,
         False,
         False,
         0.0,
-        _ingest_outcome_meta(outcome="lookup_budget", archive_skip="lookup_budget"),
+        _ingest_outcome_meta(
+          outcome="lookup_budget", archive_skip="lookup_budget"
+        ),
+      )
+  try:
+    return _run_ingest_timed(
+      stats_file,
+      "parse",
+      impl,
+    )
+  except IngestPerFileTimeoutError as exc:
+    _log_ingest_per_file_timeout(exc)
+    return (
+      stats_file,
+      None,
+      False,
+      False,
+      exc.elapsed_s,
+      _ingest_outcome_meta(
+        outcome="timeout",
+        fail_reason=exc.stage,
+        archive_skip="timeout",
+      ),
+    )
+  except IngestArchiveLookupBudgetExceededError as exc:
+    _log_ingest_archive_lookup_budget_exceeded(exc)
+    return (
+      stats_file,
+      None,
+      False,
+      False,
+      0.0,
+      _ingest_outcome_meta(
+        outcome="lookup_budget", archive_skip="lookup_budget"
+      ),
     )
 
 
@@ -3799,16 +3871,16 @@ def _duplicate_window_start_index(
 ) -> Any:
   """
   Return (start_idx, need_archival) for duplicate detection.
-  
+
   Args:
     stats_file (str): String for stats file.
     host (Any): Host passed to this helper.
     timestamp_utc (Any): Timestamp utc passed to this helper.
     lines (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _duplicate_window_start_index("x", None, None, None)  # doctest: +SKIP
   """
@@ -3820,38 +3892,40 @@ def _duplicate_window_start_index(
     itimes_set = None
     overflow_logged = {"done": False}
     probe_count = {"n": 0}
-    max_overflow_probes = cfg.get_sync_host_itimes_cache_max_timestamps_per_entry()
+    max_overflow_probes = (
+      cfg.get_sync_host_itimes_cache_max_timestamps_per_entry()
+    )
 
     def _timestamp_present_with_budget(unix_second: Any) -> Any:
       """
       Internal helper to handle timestamp present with budget.
-      
+
       Args:
         unix_second (Any): Unix second passed to this helper.
-      
+
       Returns:
         Any: Value produced by this call (type depends on inputs).
-      
+
       Raises:
         IngestArchiveLookupBudgetExceededError: Raised when
         ``_timestamp_present_with_budget`` hits a
         ``IngestArchiveLookupBudgetExceededError`` failure path.
-      
+
       Examples:
         >>> _timestamp_present_with_budget(None)  # doctest: +SKIP
       """
       probe_count["n"] += 1
       if probe_count["n"] == 1 and not overflow_logged["done"]:
         log_print(
-            "WARN: duplicate scan itimes_set overflow path=%s host=%s"
-            % (stats_file, host),
-            flush=True,
+          "WARN: duplicate scan itimes_set overflow path=%s host=%s"
+          % (stats_file, host),
+          flush=True,
         )
         overflow_logged["done"] = True
       if probe_count["n"] > max_overflow_probes:
         raise IngestArchiveLookupBudgetExceededError(
-            "itimes overflow DB probe budget exceeded path=%s probes=%d"
-            % (stats_file, probe_count["n"]),
+          "itimes overflow DB probe budget exceeded path=%s probes=%d"
+          % (stats_file, probe_count["n"]),
         )
       update_worker_substage("itimes_overflow_db")
       return _host_timestamp_second_present_in_db(host, unix_second)
@@ -3859,14 +3933,14 @@ def _duplicate_window_start_index(
     timestamp_present = _timestamp_present_with_budget
   if lines is not None:
     return find_processing_start_index(
-        lines,
-        itimes_set,
-        timestamp_present=timestamp_present,
-    )
-  return find_processing_start_index_streaming(
-      stats_file,
+      lines,
       itimes_set,
       timestamp_present=timestamp_present,
+    )
+  return find_processing_start_index_streaming(
+    stats_file,
+    itimes_set,
+    timestamp_present=timestamp_present,
   )
 
 
@@ -3877,26 +3951,28 @@ def _resolve_streaming_ingest_start(
 ) -> Any:
   """
   Duplicate scan for streaming-eligible segments.
-  
+
   Returns ``(True, early_return)`` when parse can be skipped (including failures
   encoded as a 5-tuple), or ``(False, (start_line_idx, need_archival))`` when
   parsing should proceed.
-  
+
   Args:
     stats_file (str): String for stats file.
     parse_elapsed_fn (Any): Callable invoked by this helper.
     lines (Any | None): In-memory stats lines. When set, first/last
       timestamp helpers use the list instead of streaming the file.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _resolve_streaming_ingest_start("x", None)  # doctest: +SKIP
   """
   with _held_parse_stage("start_s"):
     return _resolve_streaming_ingest_start_impl(
-        stats_file, parse_elapsed_fn, lines=lines,
+      stats_file,
+      parse_elapsed_fn,
+      lines=lines,
     )
 
 
@@ -3926,17 +4002,21 @@ def _resolve_streaming_ingest_start_impl(
     t, _jid, host = parse_first_timestamp_line_streaming(stats_file)
   if t is None:
     return (
-        True,
-        _parse_failure_after_quarantine(
-            stats_file, parse_elapsed_fn(), error_detail="initial_timestamp_not_found",
-        ),
+      True,
+      _parse_failure_after_quarantine(
+        stats_file,
+        parse_elapsed_fn(),
+        error_detail="initial_timestamp_not_found",
+      ),
     )
   if not host:
     return (
-        True,
-        _parse_failure_after_quarantine(
-            stats_file, parse_elapsed_fn(), error_detail="initial_host_not_found",
-        ),
+      True,
+      _parse_failure_after_quarantine(
+        stats_file,
+        parse_elapsed_fn(),
+        error_detail="initial_host_not_found",
+      ),
     )
   host = str(host).strip()
   timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
@@ -3945,40 +4025,45 @@ def _resolve_streaming_ingest_start_impl(
     return False, (0, True)
   db_complete_reason = None
   fast = _try_db_complete_head_tail_fast_path(
-      stats_file, host, timestamp_utc, lines=lines,
+    stats_file,
+    host,
+    timestamp_utc,
+    lines=lines,
   )
   if fast is not None:
     start_idx, need_archival = fast
     db_complete_reason = "db_complete_head_tail"
   else:
     tail_fast = _try_db_complete_tail_window_fast_path(
-        stats_file, host, timestamp_utc,
+      stats_file,
+      host,
+      timestamp_utc,
     )
     if tail_fast is not None:
       start_idx, need_archival = tail_fast
       db_complete_reason = "db_complete_tail_window"
     else:
       start_idx, need_archival = _duplicate_window_start_index(
-          stats_file,
-          host=host,
-          timestamp_utc=timestamp_utc,
-          lines=lines,
+        stats_file,
+        host=host,
+        timestamp_utc=timestamp_utc,
+        lines=lines,
       )
       if start_idx == -1:
         db_complete_reason = "db_complete_full_scan"
   if start_idx == -1:
     need_archival, archive_skip_meta = _need_archival_and_archive_skip_meta(
-        stats_file,
-        t,
+      stats_file,
+      t,
     )
     parse_elapsed = parse_elapsed_fn()
     meta = _ingest_outcome_meta(
-        outcome="db_skip",
-        db_skip=_db_skip_token_from_complete_reason(
-            db_complete_reason or "db_complete_full_scan",
-        ),
-        parse_elapsed_s=parse_elapsed,
-        **archive_skip_meta,
+      outcome="db_skip",
+      db_skip=_db_skip_token_from_complete_reason(
+        db_complete_reason or "db_complete_full_scan",
+      ),
+      parse_elapsed_s=parse_elapsed,
+      **archive_skip_meta,
     )
     return True, (stats_file, None, need_archival, True, parse_elapsed, meta)
   return False, (int(start_idx), need_archival)
@@ -3987,15 +4072,15 @@ def _resolve_streaming_ingest_start_impl(
 def _parse_stats_file_payload_impl_streaming(stats_file: str) -> Any:
   """
   Bounded-memory parse path for segments larger than.
-  
+
     ``sync_ingest_max_file_read_bytes``.
-  
+
   Args:
     stats_file (str): String for stats file.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _parse_stats_file_payload_impl_streaming("x")  # doctest: +SKIP
   """
@@ -4004,10 +4089,10 @@ def _parse_stats_file_payload_impl_streaming(stats_file: str) -> Any:
   def _parse_elapsed() -> Any:
     """
     Internal helper to parse the elapsed.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> _parse_elapsed()  # doctest: +SKIP
     """
@@ -4044,7 +4129,8 @@ def _parse_stats_file_payload_impl_streaming(stats_file: str) -> Any:
           parsed_n += stats_payload_row_count(stats_payload)
           update_worker_substage("parse:dataframes")
         stats_chunk, proc_chunk = build_stats_dataframes(
-            stats_payload, proc_payload,
+          stats_payload,
+          proc_payload,
         )
         if stats_chunk.empty and proc_chunk.empty:
           return
@@ -4058,49 +4144,65 @@ def _parse_stats_file_payload_impl_streaming(stats_file: str) -> Any:
       try:
         update_worker_substage("parse:accumulate")
         parse_stats_file_streaming_incremental(
-            stats_file,
-            start_line_idx=start_line_idx,
-            parse_start_idx=0,
-            flush_rows=bulk_create_batch_size(),
-            on_chunk=_on_parse_chunk,
-            exclude_types_list=exclude_types,
+          stats_file,
+          start_line_idx=start_line_idx,
+          parse_start_idx=0,
+          flush_rows=bulk_create_batch_size(),
+          on_chunk=_on_parse_chunk,
+          exclude_types_list=exclude_types,
         )
       except Exception as e:
         _reraise_if_ingest_control_flow(e)
         return _parse_failure_after_quarantine(
-            stats_file, _parse_elapsed(), error_detail=str(e),
+          stats_file,
+          _parse_elapsed(),
+          error_detail=str(e),
         )
       from pandas import concat as _pd_concat
+
       empty_stats, empty_proc = build_stats_dataframes([], [])
       with _held_parse_stage("concat_s"):
         stats = (
-            _pd_concat(stats_parts, ignore_index=True)
-            if stats_parts else empty_stats
+          _pd_concat(stats_parts, ignore_index=True)
+          if stats_parts
+          else empty_stats
         )
         proc_stats = (
-            _pd_concat(proc_parts, ignore_index=True)
-            if proc_parts else empty_proc
+          _pd_concat(proc_parts, ignore_index=True)
+          if proc_parts
+          else empty_proc
         )
       if stats.empty and proc_stats.empty:
         if DEBUG:
           log_print("Unable to process stats file %s" % stats_file)
         return _parse_failure_after_quarantine(
-            stats_file, _parse_elapsed(), error_detail="empty stats and proc_stats",
+          stats_file,
+          _parse_elapsed(),
+          error_detail="empty stats and proc_stats",
         )
       parse_elapsed = _parse_elapsed()
       meta = _ingest_outcome_meta(
-          outcome="ingested",
-          parse_elapsed_s=parse_elapsed,
-          stats_rows=len(stats),
-          stats_rows_parsed=parsed_n,
-          proc_rows=len(proc_stats),
+        outcome="ingested",
+        parse_elapsed_s=parse_elapsed,
+        stats_rows=len(stats),
+        stats_rows_parsed=parsed_n,
+        proc_rows=len(proc_stats),
       )
       meta = _merge_ingest_write_timing_into_meta(meta)
-      return (stats_file, (stats, proc_stats), need_archival, True, parse_elapsed, meta)
+      return (
+        stats_file,
+        (stats, proc_stats),
+        need_archival,
+        True,
+        parse_elapsed,
+        meta,
+      )
     except FileNotFoundError:
       load_err = "stats_file_disappeared"
       return _parse_failure_after_quarantine(
-          stats_file, _parse_elapsed(), error_detail=load_err,
+        stats_file,
+        _parse_elapsed(),
+        error_detail=load_err,
       )
 
 
@@ -4110,14 +4212,14 @@ def _add_stats_file_to_db_streaming_incremental(
 ) -> Any:
   """
   Parse → DB → parse loop for large segments (combined ingest only).
-  
+
   Args:
     stats_file (str): String for stats file.
     t0 (Any): T0 passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _add_stats_file_to_db_streaming_incremental("x", None)
   """
@@ -4133,10 +4235,10 @@ def _add_stats_file_to_db_streaming_incremental(
   def _parse_elapsed() -> Any:
     """
     Internal helper to parse the elapsed.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> _parse_elapsed()  # doctest: +SKIP
     """
@@ -4145,14 +4247,14 @@ def _add_stats_file_to_db_streaming_incremental(
   def _on_chunk(stats_list: Any, proc_stats_list: Any) -> None:
     """
     Internal helper to handle on chunk.
-    
+
     Args:
       stats_list (Any): Stats list passed to this helper.
       proc_stats_list (Any): Proc stats list passed to this helper.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> _on_chunk(None, None)  # doctest: +SKIP
     """
@@ -4161,7 +4263,9 @@ def _add_stats_file_to_db_streaming_incremental(
     with _held_parse_stage("chunk_setup_s"):
       parsed_stats_n = stats_payload_row_count(stats_list)
       update_worker_substage("parse:dataframes")
-    stats_chunk, proc_chunk = build_stats_dataframes(stats_list, proc_stats_list)
+    stats_chunk, proc_chunk = build_stats_dataframes(
+      stats_list, proc_stats_list
+    )
     del stats_list
     del proc_stats_list
     if stats_chunk.empty and proc_chunk.empty:
@@ -4174,16 +4278,15 @@ def _add_stats_file_to_db_streaming_incremental(
     chunk_proc_rows = len(proc_chunk)
     if parsed_stats_n > 0 and chunk_stats_rows == 0:
       log_print(
-          "WARN: sync_timedb: nonempty stats frame collapsed to empty "
-          "delta/arc path=%s parsed_rows=%d"
-          % (stats_file, parsed_stats_n),
-          flush=True,
+        "WARN: sync_timedb: nonempty stats frame collapsed to empty "
+        "delta/arc path=%s parsed_rows=%d" % (stats_file, parsed_stats_n),
+        flush=True,
       )
     stats_file_local, need_archival, chunk_ok = _write_stats_payload_to_db(
-        stats_file,
-        stats_chunk,
-        proc_chunk,
-        need_archival=need_archival,
+      stats_file,
+      stats_chunk,
+      proc_chunk,
+      need_archival=need_archival,
     )
     del stats_chunk
     del proc_chunk
@@ -4197,9 +4300,13 @@ def _add_stats_file_to_db_streaming_incremental(
       _release_ingest_worker_heap()
 
   _pack_quarantine = lambda failure: (
-      lambda unpacked: _pack_ingest_worker_result(
-          unpacked[0], unpacked[2], unpacked[3], time.time() - t0, unpacked[5],
-      )
+    lambda unpacked: _pack_ingest_worker_result(
+      unpacked[0],
+      unpacked[2],
+      unpacked[3],
+      time.time() - t0,
+      unpacked[5],
+    )
   )(_unpack_parse_payload_result(failure))
 
   with _sync_worker_db_task():
@@ -4207,21 +4314,29 @@ def _add_stats_file_to_db_streaming_incremental(
       done, result = _resolve_streaming_ingest_start(stats_file, _parse_elapsed)
       if done:
         (
-            _stats_file,
-            _payload,
-            need_archival,
-            early_ok,
-            _early_parse_elapsed,
-            outcome_meta,
+          _stats_file,
+          _payload,
+          need_archival,
+          early_ok,
+          _early_parse_elapsed,
+          outcome_meta,
         ) = _unpack_parse_payload_result(result)
         elapsed_total = time.time() - t0
         if not early_ok:
           return _pack_ingest_worker_result(
-              _stats_file, need_archival, False, elapsed_total, outcome_meta,
+            _stats_file,
+            need_archival,
+            False,
+            elapsed_total,
+            outcome_meta,
           )
         if _payload is None:
           return _pack_ingest_worker_result(
-              _stats_file, need_archival, True, elapsed_total, outcome_meta,
+            _stats_file,
+            need_archival,
+            True,
+            elapsed_total,
+            outcome_meta,
           )
       else:
         start_line_idx, need_archival = result
@@ -4230,54 +4345,58 @@ def _add_stats_file_to_db_streaming_incremental(
           # Feed the prefix (parse_start_idx) so schema registers; do not
           # physically skip lines (RC-0).
           parse_stats_file_streaming_incremental(
-              stats_file,
-              start_line_idx=0,
-              parse_start_idx=start_line_idx,
-              flush_rows=flush_rows,
-              on_chunk=_on_chunk,
-              exclude_types_list=exclude_types,
+            stats_file,
+            start_line_idx=0,
+            parse_start_idx=start_line_idx,
+            flush_rows=flush_rows,
+            on_chunk=_on_chunk,
+            exclude_types_list=exclude_types,
           )
         except Exception as e:
           _reraise_if_ingest_control_flow(e)
           return _pack_quarantine(
-              _parse_failure_after_quarantine(
-                  stats_file, _parse_elapsed(), error_detail=str(e),
-              ),
+            _parse_failure_after_quarantine(
+              stats_file,
+              _parse_elapsed(),
+              error_detail=str(e),
+            ),
           )
         if (
-            total_stats_rows_parsed == 0
-            and total_stats_rows == 0
-            and total_proc_rows == 0
+          total_stats_rows_parsed == 0
+          and total_stats_rows == 0
+          and total_proc_rows == 0
         ):
           if DEBUG:
             log_print("Unable to process stats file %s" % stats_file)
           return _pack_quarantine(
-              _parse_failure_after_quarantine(
-                  stats_file,
-                  _parse_elapsed(),
-                  error_detail="empty stats and proc_stats",
-              ),
+            _parse_failure_after_quarantine(
+              stats_file,
+              _parse_elapsed(),
+              error_detail="empty stats and proc_stats",
+            ),
           )
       elapsed = time.time() - t0
       meta = _ingest_outcome_meta(
-          outcome="ingested",
-          parse_elapsed_s=_parse_elapsed(),
-          stats_rows=total_stats_rows,
-          stats_rows_parsed=total_stats_rows_parsed,
-          proc_rows=total_proc_rows,
+        outcome="ingested",
+        parse_elapsed_s=_parse_elapsed(),
+        stats_rows=total_stats_rows,
+        stats_rows_parsed=total_stats_rows_parsed,
+        proc_rows=total_proc_rows,
       )
       return _pack_ingest_worker_result(
-          stats_file,
-          need_archival,
-          ingest_ok,
-          elapsed,
-          _merge_ingest_write_timing_into_meta(meta),
+        stats_file,
+        need_archival,
+        ingest_ok,
+        elapsed,
+        _merge_ingest_write_timing_into_meta(meta),
       )
     except FileNotFoundError:
       return _pack_quarantine(
-          _parse_failure_after_quarantine(
-              stats_file, _parse_elapsed(), error_detail="stats_file_disappeared",
-          ),
+        _parse_failure_after_quarantine(
+          stats_file,
+          _parse_elapsed(),
+          error_detail="stats_file_disappeared",
+        ),
       )
 
 
@@ -4287,14 +4406,14 @@ def _parse_stats_file_payload_impl(
 ) -> Any:
   """
   Implementation for :func:`_parse_stats_file_payload` (parse stage only).
-  
+
   Args:
     stats_file (str): String for stats file.
     stats_file_contents (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _parse_stats_file_payload_impl("x", None)  # doctest: +SKIP
   """
@@ -4304,10 +4423,10 @@ def _parse_stats_file_payload_impl(
   def _parse_elapsed() -> Any:
     """
     Internal helper to parse the elapsed.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> _parse_elapsed()  # doctest: +SKIP
     """
@@ -4316,59 +4435,65 @@ def _parse_stats_file_payload_impl(
   with _sync_worker_db_task():
     try:
       from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
-          is_internal_archive_stats_path,
+        is_internal_archive_stats_path,
       )
 
       if is_internal_archive_stats_path(stats_file):
         return (
-            stats_file,
-            None,
-            False,
-            False,
-            _parse_elapsed(),
-            _ingest_outcome_meta(
-                outcome="skip",
-                fail_reason="internal_archive_sidecar",
-                archive_skip="internal_archive_sidecar",
-            ),
+          stats_file,
+          None,
+          False,
+          False,
+          _parse_elapsed(),
+          _ingest_outcome_meta(
+            outcome="skip",
+            fail_reason="internal_archive_sidecar",
+            archive_skip="internal_archive_sidecar",
+          ),
         )
       hostname, _ = parse_stats_file_path(stats_file)
       if hostname is None:
         return (
-            stats_file,
-            None,
-            False,
-            False,
-            _parse_elapsed(),
-            _ingest_outcome_meta(
-                outcome="parse_fail",
-                fail_reason="invalid_stats_path",
-                archive_skip="invalid_stats_path",
-            ),
+          stats_file,
+          None,
+          False,
+          False,
+          _parse_elapsed(),
+          _ingest_outcome_meta(
+            outcome="parse_fail",
+            fail_reason="invalid_stats_path",
+            archive_skip="invalid_stats_path",
+          ),
         )
       if stats_file_is_active_segment(stats_file):
         if DEBUG:
-          log_print("Skipping active segment (still linked to current): %s" % stats_file)
+          log_print(
+            "Skipping active segment (still linked to current): %s" % stats_file
+          )
         return (
-            stats_file,
-            None,
-            False,
-            False,
-            _parse_elapsed(),
-            _ingest_outcome_meta(
-                outcome="active_segment",
-                archive_skip="active_segment",
-            ),
+          stats_file,
+          None,
+          False,
+          False,
+          _parse_elapsed(),
+          _ingest_outcome_meta(
+            outcome="active_segment",
+            archive_skip="active_segment",
+          ),
         )
       if _should_stream_stats_file(stats_file, stats_file_contents):
         return _parse_stats_file_payload_impl_streaming(stats_file)
       lines, load_err = load_stats_file_lines(stats_file, stats_file_contents)
       if load_err is not None:
         return _parse_failure_after_quarantine(
-            stats_file, _parse_elapsed(), error_detail=load_err,
+          stats_file,
+          _parse_elapsed(),
+          error_detail=load_err,
         )
       done, result = _resolve_streaming_ingest_start(
-          stats_file, _parse_elapsed, lines=lines,
+        stats_file,
+        _parse_elapsed,
+        lines=lines,
       )
       if done:
         return result
@@ -4376,15 +4501,17 @@ def _parse_stats_file_payload_impl(
       try:
         update_worker_substage("parse:accumulate")
         stats_list, proc_stats_list = parse_stats_lines(
-            lines,
-            start_idx,
-            eventmaps_by_type=EVENTMAPS_BY_TYPE,
-            exclude_types_list=exclude_types,
+          lines,
+          start_idx,
+          eventmaps_by_type=EVENTMAPS_BY_TYPE,
+          exclude_types_list=exclude_types,
         )
       except Exception as e:
         _reraise_if_ingest_control_flow(e)
         return _parse_failure_after_quarantine(
-            stats_file, _parse_elapsed(), error_detail=str(e),
+          stats_file,
+          _parse_elapsed(),
+          error_detail=str(e),
         )
       parsed_n = stats_payload_row_count(stats_list)
       update_worker_substage("parse:dataframes")
@@ -4395,19 +4522,28 @@ def _parse_stats_file_payload_impl(
         if DEBUG:
           log_print("Unable to process stats file %s" % stats_file)
         return _parse_failure_after_quarantine(
-            stats_file, _parse_elapsed(), error_detail="empty stats and proc_stats",
+          stats_file,
+          _parse_elapsed(),
+          error_detail="empty stats and proc_stats",
         )
       update_worker_substage("parse:deltas_arc")
       stats = compute_deltas_and_arc(stats)
       parse_elapsed = _parse_elapsed()
       meta = _ingest_outcome_meta(
-          outcome="ingested",
-          parse_elapsed_s=parse_elapsed,
-          stats_rows=len(stats),
-          stats_rows_parsed=parsed_n,
-          proc_rows=len(proc_stats),
+        outcome="ingested",
+        parse_elapsed_s=parse_elapsed,
+        stats_rows=len(stats),
+        stats_rows_parsed=parsed_n,
+        proc_rows=len(proc_stats),
       )
-      return (stats_file, (stats, proc_stats), need_archival, True, parse_elapsed, meta)
+      return (
+        stats_file,
+        (stats, proc_stats),
+        need_archival,
+        True,
+        parse_elapsed,
+        meta,
+      )
     finally:
       if lines is not None:
         del lines
@@ -4420,22 +4556,22 @@ def add_stats_file_to_db(
 ) -> Any:
   """
   Parse a stats file, map hardware counters, compute deltas/arc, and bulk-.
-  
+
     insert.
-  
+
     into host_data and proc_data.
-  
+
   Returns (stats_file, need_archival, ingest_ok, elapsed_s) where elapsed_s is
     wall
   seconds for the attempted ingest path.
-  
+
   Args:
     stats_file (str): String for stats file.
     stats_file_contents (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> add_stats_file_to_db("x", None)  # doctest: +SKIP
   """
@@ -4445,40 +4581,40 @@ def add_stats_file_to_db(
   try:
     try:
       result = _run_ingest_timed(
-          stats_file,
-          "ingest",
-          lambda: _add_stats_file_to_db_impl(
-              stats_file, stats_file_contents=stats_file_contents
-          ),
+        stats_file,
+        "ingest",
+        lambda: _add_stats_file_to_db_impl(
+          stats_file, stats_file_contents=stats_file_contents
+        ),
       )
     except IngestPerFileTimeoutError as exc:
       _log_ingest_per_file_timeout(exc)
       result = _pack_ingest_worker_result(
-          stats_file,
-          False,
-          False,
-          exc.elapsed_s,
-          _merge_ingest_write_timing_into_meta(
-              _ingest_outcome_meta(
-                  outcome="timeout",
-                  fail_reason=exc.stage,
-                  archive_skip="timeout",
-              ),
+        stats_file,
+        False,
+        False,
+        exc.elapsed_s,
+        _merge_ingest_write_timing_into_meta(
+          _ingest_outcome_meta(
+            outcome="timeout",
+            fail_reason=exc.stage,
+            archive_skip="timeout",
           ),
+        ),
       )
     except IngestArchiveLookupBudgetExceededError as exc:
       _log_ingest_archive_lookup_budget_exceeded(exc)
       result = _pack_ingest_worker_result(
-          stats_file,
-          False,
-          False,
-          0.0,
-          _merge_ingest_write_timing_into_meta(
-              _ingest_outcome_meta(
-                  outcome="lookup_budget",
-                  archive_skip="lookup_budget",
-              ),
+        stats_file,
+        False,
+        False,
+        0.0,
+        _merge_ingest_write_timing_into_meta(
+          _ingest_outcome_meta(
+            outcome="lookup_budget",
+            archive_skip="lookup_budget",
           ),
+        ),
       )
   finally:
     if stats_file:
@@ -4500,18 +4636,18 @@ def _add_stats_file_to_db_impl(
 ) -> Any:
   """
   Implementation for :func:`add_stats_file_to_db` (parse + write combined).
-  
+
   Args:
     stats_file (str): String for stats file.
     stats_file_contents (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     Exception: Raised when ``_add_stats_file_to_db_impl`` hits a ``Exception``
     failure path.
-  
+
   Examples:
     >>> _add_stats_file_to_db_impl("x", None)  # doctest: +SKIP
   """
@@ -4523,60 +4659,69 @@ def _add_stats_file_to_db_impl(
   reset_parse_stage_timing()
   if _should_stream_stats_file(stats_file, stats_file_contents):
     return _add_stats_file_to_db_streaming_incremental(
-        stats_file, t0,
+      stats_file,
+      t0,
     )
   with _sync_worker_db_task():
     try:
       parse_result = _parse_stats_file_payload(
-          stats_file,
-          stats_file_contents=stats_file_contents,
-          use_ingest_timer=False,
+        stats_file,
+        stats_file_contents=stats_file_contents,
+        use_ingest_timer=False,
       )
       (
-          stats_file,
-          payload,
-          need_archival,
-          ingest_ok,
-          parse_elapsed,
-          outcome_meta,
+        stats_file,
+        payload,
+        need_archival,
+        ingest_ok,
+        parse_elapsed,
+        outcome_meta,
       ) = _unpack_parse_payload_result(parse_result)
       elapsed_total = time.time() - t0
       if not ingest_ok:
         return _pack_ingest_worker_result(
-            stats_file, need_archival, False, elapsed_total, outcome_meta,
+          stats_file,
+          need_archival,
+          False,
+          elapsed_total,
+          outcome_meta,
         )
       if payload is None:
         return _pack_ingest_worker_result(
-            stats_file, need_archival, True, elapsed_total, outcome_meta,
+          stats_file,
+          need_archival,
+          True,
+          elapsed_total,
+          outcome_meta,
         )
       stats, proc_stats = payload
       stats_rows = len(stats)
       proc_rows = len(proc_stats)
       stats_file, need_archival, ingest_ok = _write_stats_payload_to_db(
-          stats_file, stats, proc_stats, need_archival=need_archival
+        stats_file, stats, proc_stats, need_archival=need_archival
       )
       elapsed_total = time.time() - t0
       meta = dict(outcome_meta)
       meta.update(
-          outcome="ingested",
-          parse_elapsed_s=parse_elapsed,
-          stats_rows=stats_rows,
-          proc_rows=proc_rows,
+        outcome="ingested",
+        parse_elapsed_s=parse_elapsed,
+        stats_rows=stats_rows,
+        proc_rows=proc_rows,
       )
       parsed_n = outcome_meta.get("stats_rows_parsed")
       if parsed_n is not None:
         meta["stats_rows_parsed"] = parsed_n
       return _pack_ingest_worker_result(
-          stats_file,
-          need_archival,
-          ingest_ok,
-          elapsed_total,
-          _merge_ingest_write_timing_into_meta(meta),
+        stats_file,
+        need_archival,
+        ingest_ok,
+        elapsed_total,
+        _merge_ingest_write_timing_into_meta(meta),
       )
     except (OperationalError, DatabaseError) as exc:
       if is_database_unavailable_error(exc):
         log_and_raise_database_unavailable(
-            exc, context="sync_timedb add_stats_file_to_db"
+          exc, context="sync_timedb add_stats_file_to_db"
         )
       raise
     finally:
@@ -4591,13 +4736,13 @@ def _add_stats_file_to_db_impl(
 def _load_sync_checkpoint(state_path: str) -> Any:
   """
   Load checkpoint entries from persistence envelope, returning [] on invalid.
-  
+
   Args:
     state_path (str): String for state path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _load_sync_checkpoint("x")  # doctest: +SKIP
   """
@@ -4616,7 +4761,7 @@ def _load_sync_checkpoint(state_path: str) -> Any:
     try:
       size = int(size)
       mtime = int(mtime)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
       continue
     entries.append({"path": path, "size": size, "mtime": mtime})
   return entries
@@ -4625,42 +4770,42 @@ def _load_sync_checkpoint(state_path: str) -> Any:
 def _save_sync_checkpoint(state_path: str, completed_entries: Any) -> None:
   """
   Atomically save checkpoint entries via persistence API.
-  
+
   Args:
     state_path (str): String for state path.
     completed_entries (Any): Completed entries passed to this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _save_sync_checkpoint("x", None)  # doctest: +SKIP
   """
   save_persistence_document(
-      state_path,
-      "ingest_checkpoint",
-      list(completed_entries),
+    state_path,
+    "ingest_checkpoint",
+    list(completed_entries),
   )
 
 
 def _path_fingerprint(path: str) -> Any:
   """
   Return path fingerprint used for restart-safe processed tracking.
-  
+
   Args:
     path (str): String for path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _path_fingerprint("x")  # doctest: +SKIP
   """
   try:
     return {
-        "path": path,
-        "size": int(os.path.getsize(path)),
-        "mtime": int(os.path.getmtime(path)),
+      "path": path,
+      "size": int(os.path.getsize(path)),
+      "mtime": int(os.path.getmtime(path)),
     }
   except OSError:
     return None
@@ -4677,7 +4822,7 @@ def _add_processed_path(
 ) -> Any:
   """
   Record processed path in memory and checkpoint buffer.
-  
+
   Args:
     path (str): String for path.
     processed_files (Any): Iterable of filesystem paths as strings.
@@ -4685,10 +4830,10 @@ def _add_processed_path(
     checkpoint_entries (Any): Checkpoint entries passed to this helper.
     checkpoint_path (str): String for checkpoint path.
     file_states (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _add_processed_path("x", None, None, None, "x", None)
   """
@@ -4721,7 +4866,7 @@ def _remove_processed_path(
 ) -> Any:
   """
   Undo checkpoint/processed markers so a path re-enters the ingest loop.
-  
+
   Args:
     path (str): String for path.
     processed_files (Any): Iterable of filesystem paths as strings.
@@ -4731,10 +4876,10 @@ def _remove_processed_path(
     file_states (Any | None): One of ``Any``, ``None``.
     host_scan_hints (Any | None): One of ``Any``, ``None``.
     persist (bool): Boolean flag for persist.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _remove_processed_path("x", None, None, None, "x", None, None, True)
   """
@@ -4750,18 +4895,16 @@ def _remove_processed_path(
     kept = deque()
     for entry in snapshot:
       if (
-          entry.get("path") == path
-          and entry.get("size") == fp["size"]
-          and entry.get("mtime") == fp["mtime"]
+        entry.get("path") == path
+        and entry.get("size") == fp["size"]
+        and entry.get("mtime") == fp["mtime"]
       ):
         continue
       kept.append(entry)
     checkpoint_entries.clear()
     checkpoint_entries.extend(kept)
   else:
-    kept = deque(
-        entry for entry in snapshot if entry.get("path") != path
-    )
+    kept = deque(entry for entry in snapshot if entry.get("path") != path)
     checkpoint_entries.clear()
     checkpoint_entries.extend(kept)
   if file_states is not None:
@@ -4807,7 +4950,7 @@ def _proc_field_or_none(row: Any, name: Any) -> Any:
   if type(val).__module__ == "numpy":
     try:
       return int(val)
-    except (TypeError, ValueError, OverflowError):
+    except TypeError, ValueError, OverflowError:
       return None
   return val
 
@@ -4834,7 +4977,7 @@ def _peak_merge_proc_objs_with_existing(proc_objs: list) -> list:
     []
   """
   from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-      peak_merge_proc_objs_with_existing,
+    peak_merge_proc_objs_with_existing,
   )
 
   return peak_merge_proc_objs_with_existing(proc_objs)
@@ -4843,21 +4986,21 @@ def _peak_merge_proc_objs_with_existing(proc_objs: list) -> list:
 def _proc_data_row_kwargs(row: Any) -> Any:
   """
   Build kwargs for proc_data create/update from a parsed DataFrame row.
-  
+
   Args:
     row (Any): Value to inspect (typically a numeric scalar).
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _proc_data_row_kwargs(None)  # doctest: +SKIP
   """
   kwargs = {
-      "jid": row.jid,
-      "host": row.host,
-      "proc": row.proc,
-      "device": _proc_field_or_none(row, "device"),
+    "jid": row.jid,
+    "host": row.host,
+    "proc": row.proc,
+    "device": _proc_field_or_none(row, "device"),
   }
   for key in HOST_PROC_KEYS:
     kwargs[key] = _proc_field_or_none(row, key)
@@ -4867,55 +5010,56 @@ def _proc_data_row_kwargs(row: Any) -> Any:
 def _insert_proc_data_individually(proc_stats_df: Any) -> None:
   """
   Fallback: upsert proc_data rows one by one (update on unique conflict).
-  
+
   Args:
     proc_stats_df (Any): Proc stats df passed to this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _insert_proc_data_individually(None)  # doctest: +SKIP
   """
+
   def _save_proc_row(row: Any) -> None:
     """
     Internal helper to save the proc row.
-    
+
     Args:
       row (Any): Value to inspect (typically a numeric scalar).
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> _save_proc_row(None)  # doctest: +SKIP
     """
     kwargs = _proc_data_row_kwargs(row)
     try:
       prior = proc_data.objects.only(
-          "jid", "host", "proc", *HOST_PROC_PEAK_KEYS
+        "jid", "host", "proc", *HOST_PROC_PEAK_KEYS
       ).get(jid=kwargs["jid"], host=kwargs["host"], proc=kwargs["proc"])
     except proc_data.DoesNotExist:
       prior = None
     if prior is not None:
       peak_holder = types.SimpleNamespace(
-          **{k: kwargs.get(k) for k in HOST_PROC_PEAK_KEYS}
+        **{k: kwargs.get(k) for k in HOST_PROC_PEAK_KEYS}
       )
       apply_proc_peak_attrs_from_earlier(prior, peak_holder)
       for key in HOST_PROC_PEAK_KEYS:
         kwargs[key] = getattr(peak_holder, key)
     defaults = {k: kwargs[k] for k in _PROC_DATA_UPDATE_FIELDS}
     proc_data.objects.update_or_create(
-        jid=kwargs["jid"],
-        host=kwargs["host"],
-        proc=kwargs["proc"],
-        defaults=defaults,
+      jid=kwargs["jid"],
+      host=kwargs["host"],
+      proc=kwargs["proc"],
+      defaults=defaults,
     )
 
   unique_violations = _insert_rows_individually(
-      rows=proc_stats_df.itertuples(index=False),
-      save_row=_save_proc_row,
-      error_prefix="error in single proc_data insert:",
+    rows=proc_stats_df.itertuples(index=False),
+    save_row=_save_proc_row,
+    error_prefix="error in single proc_data insert:",
   )
   if DEBUG:
     log_print("Existing Rows Found in DB: %s" % unique_violations)
@@ -4924,15 +5068,15 @@ def _insert_proc_data_individually(proc_stats_df: Any) -> None:
 def _insert_host_data_individually(stats_df: Any) -> Any:
   """
   Fallback: insert host_data rows one by one, skipping duplicates. Returns.
-  
+
     need_archival.
-  
+
   Args:
     stats_df (Any): Stats df passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _insert_host_data_individually(None)  # doctest: +SKIP
   """
@@ -4940,30 +5084,31 @@ def _insert_host_data_individually(stats_df: Any) -> Any:
   unique_violations = 0
   with warnings.catch_warnings():
     warnings.filterwarnings(
-        "ignore",
-        message=".*[Dd]iscarding nonzero nanoseconds.*",
-        category=UserWarning,
+      "ignore",
+      message=".*[Dd]iscarding nonzero nanoseconds.*",
+      category=UserWarning,
     )
+
     def _save_host_row(row: Any) -> None:
       """
       Internal helper to save the host row.
-      
+
       Args:
         row (Any): Value to inspect (typically a numeric scalar).
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> _save_host_row(None)  # doctest: +SKIP
       """
       host_data_instance_from_stats_row(row).save(force_insert=True)
 
     unique_violations, non_integrity_errors = _insert_rows_individually(
-        rows=stats_df.itertuples(index=False),
-        save_row=_save_host_row,
-        error_prefix="error in single host_data insert:",
-        return_non_integrity_errors=True,
+      rows=stats_df.itertuples(index=False),
+      save_row=_save_host_row,
+      error_prefix="error in single host_data insert:",
+      return_non_integrity_errors=True,
     )
     if non_integrity_errors > 0:
       need_archival = False
@@ -4981,21 +5126,21 @@ def _insert_rows_individually(
 ) -> Any:
   """
   Insert rows one-by-one and count duplicate violations.
-  
+
   On psycopg connection desync (``another command is already in progress``),
   reset once, retry the current row, then abort the loop so remaining rows do
   not spam identical errors on a dead connection.
-  
+
   Args:
     rows (Any): Rows passed to this helper.
     save_row (Any): Save row passed to this helper.
     error_prefix (Any): Error prefix passed to this helper.
     return_non_integrity_errors (bool): Boolean flag for return non integrity
     errors.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _insert_rows_individually(None, None, None, True)  # doctest: +SKIP
   """
@@ -5035,21 +5180,21 @@ def _insert_rows_individually(
 def _decompress_compressed_archive(archive_compressed_path: str) -> Any:
   """
   Decompress ``.tar.zst`` or legacy ``.tar.gz`` to sibling ``.tar``.
-  
+
   Returns True when a verified sibling ``.tar`` exists afterward.
-  
+
   Args:
     archive_compressed_path (str): String for archive compressed path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _decompress_compressed_archive("x")  # doctest: +SKIP
   """
   if not archive_compressed_path or not os.path.isfile(archive_compressed_path):
     zst_path, gz_path = compressed_sibling_paths(
-        daily_tar_path_from_compressed(archive_compressed_path or ""),
+      daily_tar_path_from_compressed(archive_compressed_path or ""),
     )
     if os.path.isfile(zst_path):
       archive_compressed_path = zst_path
@@ -5062,7 +5207,8 @@ def _decompress_compressed_archive(archive_compressed_path: str) -> Any:
   if fmt not in ("zst", "gz"):
     return os.path.isfile(tar_path)
   return ensure_daily_tar_restored_for_append(
-      tar_path, cfg.get_archive_zstd_threads())
+    tar_path, cfg.get_archive_zstd_threads()
+  )
 
 
 def _restore_daily_tar_or_log_failure(
@@ -5072,24 +5218,25 @@ def _restore_daily_tar_or_log_failure(
 ) -> Any:
   """
   Internal helper to handle restore daily tar or log failure.
-  
+
   Args:
     archive_tar_fname (Any): Archive tar fname passed to this helper.
     context (Any): Context passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _restore_daily_tar_or_log_failure(None, None)  # doctest: +SKIP
   """
   if ensure_daily_tar_restored_for_append(
-      archive_tar_fname, cfg.get_archive_zstd_threads()):
+    archive_tar_fname, cfg.get_archive_zstd_threads()
+  ):
     return True
   log_print(
-      "ERROR: could not restore daily tar %s; leaving raw stats files in place: %s"
-      % (context, archive_tar_fname),
-      flush=True,
+    "ERROR: could not restore daily tar %s; leaving raw stats files in place: %s"
+    % (context, archive_tar_fname),
+    flush=True,
   )
   return False
 
@@ -5115,9 +5262,9 @@ def _decompress_sealed_or_log_append_fail(
   if _decompress_compressed_archive(compressed_path):
     return True
   log_print(
-      "ERROR: could not restore daily tar from %s before append; "
-      "leaving raw stats files in place: %s" % (label, compressed_path),
-      flush=True,
+    "ERROR: could not restore daily tar from %s before append; "
+    "leaving raw stats files in place: %s" % (label, compressed_path),
+    flush=True,
   )
   return False
 
@@ -5130,19 +5277,21 @@ def format_tar_append_failure_log(
 ) -> Any:
   """
   Build ERROR line for tar append failure; fold CalledProcessError.stderr.
-  
+
   Args:
     tar_path (str): String for tar path.
     exc (Any): Exception instance being classified or logged.
     retry (bool): Boolean flag for retry.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> format_tar_append_failure_log("x", None, True)  # doctest: +SKIP
   """
-  prefix = "ERROR: retry tar append failed" if retry else "ERROR: tar append failed"
+  prefix = (
+    "ERROR: retry tar append failed" if retry else "ERROR: tar append failed"
+  )
   stderr = getattr(exc, "stderr", None)
   if isinstance(stderr, bytes):
     stderr = stderr.decode("utf-8", errors="replace")
@@ -5154,46 +5303,46 @@ def format_tar_append_failure_log(
     marker = " marker=tar_warning_or_error"
   if stderr_text:
     return (
-        "%s for %s (%s)%s; tar append stderr: %s; leaving raw stats files in place"
-        % (prefix, tar_path, exc, marker, stderr_text)
+      "%s for %s (%s)%s; tar append stderr: %s; leaving raw stats files in place"
+      % (prefix, tar_path, exc, marker, stderr_text)
     )
   return "%s for %s (%s)%s; leaving raw stats files in place" % (
-      prefix,
-      tar_path,
-      exc,
-      marker,
+    prefix,
+    tar_path,
+    exc,
+    marker,
   )
 
 
 def _append_to_tar(tar_path: str, file_paths: Any) -> None:
   """
   Append file_paths to tar at tar_path. Does nothing if file_paths is empty.
-  
+
   Uses GNU/BSD ``tar -r -f`` with ``-C /``, ``--null -T`` and relative member
   paths so argv stays tiny and absolute ``-T`` path warnings are avoided.
   Always passes ``--posix`` (pax) so members larger than 8 GiB - 1 succeed on
   pax-capable archives. Skips paths that disappeared before append (race).
   Batches via ``sync_timedb_tar_append_batch_size`` (default 256).
-  
+
   Args:
     tar_path (str): String for tar path.
     file_paths (Any): Iterable of filesystem paths as strings.
-  
+
   Returns:
     None
-  
+
   Raises:
     RuntimeError: Raised when ``_append_to_tar`` hits a ``RuntimeError``
     failure path (including idle stall with no tar size growth).
     subprocess.CalledProcessError: Raised when ``_append_to_tar`` hits a
     ``subprocess.CalledProcessError`` failure path.
-  
+
   Examples:
     >>> _append_to_tar("x", None)  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_progress_io import (
-      ProgressIdleError,
-      run_subprocess_with_progress,
+    ProgressIdleError,
+    run_subprocess_with_progress,
   )
 
   if not file_paths:
@@ -5217,9 +5366,9 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
         n_missing = len(chunk) - len(present)
         if n_missing:
           log_print(
-              "Archive append: skipped %d missing path(s) in batch %d-%d"
-              % (n_missing, off + 1, off + len(chunk)),
-              flush=True,
+            "Archive append: skipped %d missing path(s) in batch %d-%d"
+            % (n_missing, off + 1, off + len(chunk)),
+            flush=True,
           )
         if not present:
           continue
@@ -5232,38 +5381,38 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
             lf.write(os.fsencode(rel) + b"\0")
         zst_path, gz_path = compressed_sibling_paths(tar_path)
         if not os.path.exists(tar_path) and (
-            os.path.isfile(zst_path) or os.path.isfile(gz_path)
+          os.path.isfile(zst_path) or os.path.isfile(gz_path)
         ):
           raise RuntimeError(
-              "refusing to create daily tar while sealed archive exists "
-              "without restored sibling: %s" % tar_path,
+            "refusing to create daily tar while sealed archive exists "
+            "without restored sibling: %s" % tar_path,
           )
         tar_args = [
-            tar_bin,
-            "-r",
-            "--posix",
-            "-C",
-            "/",
-            "-f",
-            tar_path,
-            "--null",
-            "-T",
-            list_path,
+          tar_bin,
+          "-r",
+          "--posix",
+          "-C",
+          "/",
+          "-f",
+          tar_path,
+          "--null",
+          "-T",
+          list_path,
         ]
         try:
           result = run_subprocess_with_progress(
-              tar_args,
-              progress_path=tar_path,
-              stage="tar_append",
-              metric="bytes",
-              stdout=subprocess.PIPE,
-              stderr=subprocess.PIPE,
-              text=True,
+            tar_args,
+            progress_path=tar_path,
+            stage="tar_append",
+            metric="bytes",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
           )
         except ProgressIdleError as exc:
           raise RuntimeError(
-              "tar append idle stall path=%s idle_s=%s"
-              % (tar_path, getattr(exc, "idle_s", None)),
+            "tar append idle stall path=%s idle_s=%s"
+            % (tar_path, getattr(exc, "idle_s", None)),
           ) from exc
     finally:
       if fd >= 0:
@@ -5283,32 +5432,32 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
       log_print(result.stderr, flush=True)
     if result.returncode != 0:
       raise subprocess.CalledProcessError(
-          result.returncode,
-          result.args,
-          output=result.stdout,
-          stderr=result.stderr,
+        result.returncode,
+        result.args,
+        output=result.stdout,
+        stderr=result.stderr,
       )
     if DEBUG:
       log_print(
-          "Archived batch %d-%d (%d file(s)) -> %s"
-          % (off + 1, off + len(present), len(present), tar_path),
-          flush=True,
+        "Archived batch %d-%d (%d file(s)) -> %s"
+        % (off + 1, off + len(present), len(present), tar_path),
+        flush=True,
       )
 
 
 def archive_stats_files(archive_info: Any) -> Any:
   """
   Append stats files to a daily ``.tar`` (verify, recover, dedupe).
-  
+
   zstd sealing and removal of raw stats run on the day_close queue workers
   (seal → raw removal → tar-drop), not after each append.
-  
+
   Args:
     archive_info (Any): Archive info passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> archive_stats_files(None)  # doctest: +SKIP
   """
@@ -5349,11 +5498,12 @@ def _lookup_existing_members_for_archive_append(
   tar_exists = os.path.exists(archive_tar_fname)
   if tar_exists:
     from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-        get_mutable_tar_authority_member_map,
+      get_mutable_tar_authority_member_map,
     )
+
     return (
-        get_mutable_tar_authority_member_map(archive_tar_fname),
-        "tar_scan",
+      get_mutable_tar_authority_member_map(archive_tar_fname),
+      "tar_scan",
     )
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     _daily_archive_members_cache_key,
@@ -5363,8 +5513,9 @@ def _lookup_existing_members_for_archive_append(
     build_archive_members_keys,
     members_cache_is_fully_warm,
   )
+
   keys = build_archive_members_keys(
-      _daily_archive_members_cache_key(canonical),
+    _daily_archive_members_cache_key(canonical),
   )
   was_warm = members_cache_is_fully_warm(keys)
   with archive_pre_append_member_lookup_context():
@@ -5388,12 +5539,16 @@ def _log_archive_job_begin(archive_tar_fname: Any, members_source: Any) -> int:
     >>> _log_archive_job_begin(None, None)  # doctest: +SKIP
   """
   day_token = calendar_date_from_daily_tar_path(archive_tar_fname) or "?"
-  tar_bytes = os.path.getsize(archive_tar_fname) if os.path.isfile(archive_tar_fname) else 0
+  tar_bytes = (
+    os.path.getsize(archive_tar_fname)
+    if os.path.isfile(archive_tar_fname)
+    else 0
+  )
   if DEBUG:
     log_print(
-        "DEBUG: archive_job_begin day=%s tar_bytes=%s members_source=%s"
-        % (day_token, tar_bytes, members_source),
-        flush=True,
+      "DEBUG: archive_job_begin day=%s tar_bytes=%s members_source=%s"
+      % (day_token, tar_bytes, members_source),
+      flush=True,
     )
   return int(tar_bytes)
 
@@ -5401,13 +5556,13 @@ def _log_archive_job_begin(archive_tar_fname: Any, members_source: Any) -> int:
 def _archive_stats_files_body(archive_info: Any) -> Any:
   """
   Internal helper to archive the stats files body.
-  
+
   Args:
     archive_info (Any): Archive info passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _archive_stats_files_body(None)  # doctest: +SKIP
   """
@@ -5446,21 +5601,18 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
 
   try:
     from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-        read_stats_file_head_identity,
+      read_stats_file_head_identity,
     )
     from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
-        collect_gate_identities_for_paths,
+      collect_gate_identities_for_paths,
     )
 
     mark_ready = []
     need_probe = []
     for path in stats_files:
-      if (
-          not stats_file_is_active_segment(path)
-          and (
-              _path_ready_via_file_complete_mark(path)
-              or _path_ready_via_zero_host_mark(path)
-          )
+      if not stats_file_is_active_segment(path) and (
+        _path_ready_via_file_complete_mark(path)
+        or _path_ready_via_zero_host_mark(path)
       ):
         mark_ready.append(path)
       else:
@@ -5476,18 +5628,18 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         if host is None or timestamp_utc is None:
           continue
         head_identity_by_path[path] = (
-            str(host).strip(),
-            int(timestamp_utc.timestamp()),
+          str(host).strip(),
+          int(timestamp_utc.timestamp()),
         )
       gate_identities_by_path, _gate_stats = collect_gate_identities_for_paths(
-          need_probe,
-          head_identity_by_path,
-          log_fn=log_print,
+        need_probe,
+        head_identity_by_path,
+        log_fn=log_print,
       )
       probed_ready, gate_skipped = filter_paths_head_ingested(
-          need_probe,
-          log_fn=log_print,
-          gate_identities_by_path=gate_identities_by_path,
+        need_probe,
+        log_fn=log_print,
+        gate_identities_by_path=gate_identities_by_path,
       )
       stats_files = mark_ready + list(probed_ready)
     else:
@@ -5495,42 +5647,43 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
     if not stats_files:
       job_outcome = "gate_skip"
       return ArchiveAppendOutcome(
-          ok=False,
-          gate_skipped=True,
-          skipped_paths=tuple(gate_skipped or ()),
-          skip_finalize_invalidate=True,
+        ok=False,
+        gate_skipped=True,
+        skipped_paths=tuple(gate_skipped or ()),
+        skip_finalize_invalidate=True,
       )
     from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-        daily_tar_restore_in_progress_for_day,
-        set_archive_append_inflight,
+      daily_tar_restore_in_progress_for_day,
+      set_archive_append_inflight,
     )
+
     if (
-        day_token
-        and day_token != "?"
-        and daily_tar_restore_in_progress_for_day(day_token)
+      day_token
+      and day_token != "?"
+      and daily_tar_restore_in_progress_for_day(day_token)
     ):
       job_outcome = "soft_skip"
       log_print(
-          "INFO: archive_job soft_skip day=%s reason=daily_tar_restore"
-          % day_token,
-          flush=True,
+        "INFO: archive_job soft_skip day=%s reason=daily_tar_restore"
+        % day_token,
+        flush=True,
       )
       return ArchiveAppendOutcome(
-          ok=False,
-          soft_requeue=True,
-          skip_finalize_invalidate=True,
+        ok=False,
+        soft_requeue=True,
+        skip_finalize_invalidate=True,
       )
     set_archive_append_inflight(day_token, reason="archive_job")
     append_inflight_set = True
     existing_members = {}
     zst_path, gz_path = compressed_sibling_paths(archive_tar_fname)
     sealed_exists = (
-        os.path.isfile(zst_path)
-        or os.path.isfile(gz_path)
-        or (
-            os.path.isfile(archive_fname)
-            and bool(detect_compressed_format(archive_fname))
-        )
+      os.path.isfile(zst_path)
+      or os.path.isfile(gz_path)
+      or (
+        os.path.isfile(archive_fname)
+        and bool(detect_compressed_format(archive_fname))
+      )
     )
 
     # Membership before restore: store/sealed can answer to_add without
@@ -5538,30 +5691,32 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
     store_warm_members = None
     if os.path.exists(archive_tar_fname):
       from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-          _daily_archive_members_cache_key,
-          maybe_invalidate_open_tar_store_divergence_for_append_batch,
+        _daily_archive_members_cache_key,
+        maybe_invalidate_open_tar_store_divergence_for_append_batch,
       )
       from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-          archive_pre_append_member_lookup_context,
-          build_archive_members_keys,
-          members_cache_is_fully_warm,
+        archive_pre_append_member_lookup_context,
+        build_archive_members_keys,
+        members_cache_is_fully_warm,
       )
+
       canonical = normalize_daily_compressed_path(archive_fname)
       keys = build_archive_members_keys(
-          _daily_archive_members_cache_key(canonical),
+        _daily_archive_members_cache_key(canonical),
       )
       if members_cache_is_fully_warm(keys):
         with archive_pre_append_member_lookup_context():
           store_warm_members = get_existing_archive_members_for_daily_archive(
-              canonical,
+            canonical,
           )
     open_tar_tvf_ok = False
     if sealed_exists or os.path.exists(archive_tar_fname):
       try:
         existing_members, members_source = (
-            _lookup_existing_members_for_archive_append(
-                archive_fname, archive_tar_fname,
-            )
+          _lookup_existing_members_for_archive_append(
+            archive_fname,
+            archive_tar_fname,
+          )
         )
       except RuntimeError as exc:
         # A truncated/unreadable mutable .tar makes the GNU tvf authority scan
@@ -5570,44 +5725,44 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         # after recovery and returns False when recovery fails. Raising here
         # would break the archive-pool contract that this body never raises.
         log_print(
-            "WARNING: open tar membership scan failed before append; "
-            "deferring to repair/sealed restore: %s (%s)"
-            % (archive_tar_fname, exc),
-            flush=True,
+          "WARNING: open tar membership scan failed before append; "
+          "deferring to repair/sealed restore: %s (%s)"
+          % (archive_tar_fname, exc),
+          flush=True,
         )
         existing_members = {}
         members_source = "tar_scan"
         _ensure_job_begin_logged(members_source)
       else:
         _ensure_job_begin_logged(members_source)
-        open_tar_tvf_ok = (
-            members_source == "tar_scan"
-            and os.path.exists(archive_tar_fname)
+        open_tar_tvf_ok = members_source == "tar_scan" and os.path.exists(
+          archive_tar_fname
         )
         if store_warm_members is not None:
           maybe_invalidate_open_tar_store_divergence_for_append_batch(
-              archive_fname,
-              stats_files,
-              store_warm_members,
-              existing_members,
+            archive_fname,
+            stats_files,
+            store_warm_members,
+            existing_members,
           )
 
     mapped_n = len(stats_files)
     stats_files_to_tar = filter_files_to_add_to_archive(
-        stats_files, existing_members, debug=DEBUG)
+      stats_files, existing_members, debug=DEBUG
+    )
     to_add_n = len(stats_files_to_tar)
     appended_n = 0
     if not stats_files_to_tar:
       job_outcome = "ok"
       if DEBUG:
         log_print(
-            "DEBUG: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
-            % (day_token, mapped_n, to_add_n, appended_n),
-            flush=True,
+          "DEBUG: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
+          % (day_token, mapped_n, to_add_n, appended_n),
+          flush=True,
         )
       return ArchiveAppendOutcome(
-          skip_finalize_invalidate=True,
-          skipped_paths=skipped_oversized,
+        skip_finalize_invalidate=True,
+        skipped_paths=skipped_oversized,
       )
 
     # Restore / decompress only when append will mutate the daily tar.
@@ -5619,17 +5774,18 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         if not _decompress_sealed_or_log_append_fail(gz_path, "sealed gzip"):
           return False
       elif os.path.isfile(archive_fname) and detect_compressed_format(
-          archive_fname,
+        archive_fname,
       ):
         if not _decompress_sealed_or_log_append_fail(
-            archive_fname, "sealed archive",
+          archive_fname,
+          "sealed archive",
         ):
           return False
     if not os.path.exists(archive_tar_fname) and sealed_exists:
       log_print(
-          "ERROR: sealed archive present but daily tar missing after decompress; "
-          "leaving raw stats files in place: %s" % archive_tar_fname,
-          flush=True,
+        "ERROR: sealed archive present but daily tar missing after decompress; "
+        "leaving raw stats files in place: %s" % archive_tar_fname,
+        flush=True,
       )
       return False
 
@@ -5643,149 +5799,163 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         tar_unreadable = not verify_tar_archive_readable(archive_tar_fname)
       except TimeoutError:
         log_print(
-            "WARNING: fnctl read lock timeout verifying tar before append; "
-            "deferring append for %s"
-            % archive_tar_fname,
-            flush=True,
+          "WARNING: fnctl read lock timeout verifying tar before append; "
+          "deferring append for %s" % archive_tar_fname,
+          flush=True,
         )
         return False
     if tar_unreadable:
       log_print(
-          "Daily tar unreadable before append; attempting in-place repair then "
-          "sealed restore: %s" % archive_tar_fname,
-          flush=True,
+        "Daily tar unreadable before append; attempting in-place repair then "
+        "sealed restore: %s" % archive_tar_fname,
+        flush=True,
       )
       repaired = repair_truncated_daily_tar_in_place(
-          archive_tar_fname,
-          log_fn=log_print,
-          tgz_archive_dir=os.path.dirname(archive_tar_fname),
-          yield_phase="append_tar_repair",
+        archive_tar_fname,
+        log_fn=log_print,
+        tgz_archive_dir=os.path.dirname(archive_tar_fname),
+        yield_phase="append_tar_repair",
       )
       if repaired and verify_tar_archive_readable(archive_tar_fname):
         tar_unreadable = False
       if tar_unreadable and (
-          not replace_corrupt_tar_from_compressed_backup(
-              archive_tar_fname, zst_path, gz_path, cfg.get_archive_zstd_threads(),
-          )
-          or not verify_tar_archive_readable(archive_tar_fname)
+        not replace_corrupt_tar_from_compressed_backup(
+          archive_tar_fname,
+          zst_path,
+          gz_path,
+          cfg.get_archive_zstd_threads(),
+        )
+        or not verify_tar_archive_readable(archive_tar_fname)
       ):
         log_print(
-            "ERROR: could not restore daily tar before append; leaving raw stats "
-            "files in place: %s" % archive_fname,
-            flush=True,
+          "ERROR: could not restore daily tar before append; leaving raw stats "
+          "files in place: %s" % archive_fname,
+          flush=True,
         )
         return False
       if tar_unreadable and os.path.exists(archive_tar_fname):
-        existing_members, members_source = _lookup_existing_members_for_archive_append(
-            archive_fname, archive_tar_fname,
+        existing_members, members_source = (
+          _lookup_existing_members_for_archive_append(
+            archive_fname,
+            archive_tar_fname,
+          )
         )
         _ensure_job_begin_logged(members_source)
         stats_files_to_tar = filter_files_to_add_to_archive(
-            stats_files, existing_members, debug=DEBUG)
+          stats_files, existing_members, debug=DEBUG
+        )
         to_add_n = len(stats_files_to_tar)
         if not stats_files_to_tar:
           job_outcome = "ok"
           if DEBUG:
             log_print(
-                "DEBUG: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
-                % (day_token, mapped_n, to_add_n, appended_n),
-                flush=True,
+              "DEBUG: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
+              % (day_token, mapped_n, to_add_n, appended_n),
+              flush=True,
             )
           return ArchiveAppendOutcome(
-              skip_finalize_invalidate=True,
-              skipped_paths=skipped_oversized,
+            skip_finalize_invalidate=True,
+            skipped_paths=skipped_oversized,
           )
       else:
         existing_members = {}
 
     if stats_files_to_tar:
       if not _restore_daily_tar_or_log_failure(
-          archive_tar_fname, context="before append"):
+        archive_tar_fname, context="before append"
+      ):
         return False
       _ensure_job_begin_logged(members_source)
       before_convert_mtime = (
-          os.path.getmtime(archive_tar_fname)
-          if os.path.isfile(archive_tar_fname)
-          else None
+        os.path.getmtime(archive_tar_fname)
+        if os.path.isfile(archive_tar_fname)
+        else None
       )
       stats_files_to_tar, skipped_list = prepare_paths_for_giant_member_append(
-          archive_tar_fname,
-          stats_files_to_tar,
-          log_fn=log_print,
+        archive_tar_fname,
+        stats_files_to_tar,
+        log_fn=log_print,
       )
       skipped_oversized = tuple(skipped_list)
       to_add_n = len(stats_files_to_tar)
       if (
-          before_convert_mtime is not None
-          and os.path.isfile(archive_tar_fname)
-          and os.path.getmtime(archive_tar_fname) != before_convert_mtime
+        before_convert_mtime is not None
+        and os.path.isfile(archive_tar_fname)
+        and os.path.getmtime(archive_tar_fname) != before_convert_mtime
       ):
         invalidate_after_daily_tar_mutation(
-            archive_fname,
-            reason="pax_convert",
-            log_fn=log_print,
+          archive_fname,
+          reason="pax_convert",
+          log_fn=log_print,
         )
     try:
       _append_to_tar(archive_tar_fname, stats_files_to_tar)
     except (subprocess.CalledProcessError, RuntimeError) as exc:
       log_print(
-          format_tar_append_failure_log(archive_tar_fname, exc, retry=False),
-          flush=True,
+        format_tar_append_failure_log(archive_tar_fname, exc, retry=False),
+        flush=True,
       )
       return False
 
     if stats_files_to_tar:
       if not verify_tar_archive_readable(archive_tar_fname):
         log_print(
-            "Daily tar failed integrity check after append; recovering from "
-            "sealed archive or clearing for rebuild: %s" % archive_tar_fname,
-            flush=True,
+          "Daily tar failed integrity check after append; recovering from "
+          "sealed archive or clearing for rebuild: %s" % archive_tar_fname,
+          flush=True,
         )
         if not replace_corrupt_tar_from_compressed_backup(
-            archive_tar_fname, zst_path, gz_path, cfg.get_archive_zstd_threads(),
+          archive_tar_fname,
+          zst_path,
+          gz_path,
+          cfg.get_archive_zstd_threads(),
         ):
           log_print(
-              "ERROR: could not restore daily tar from %s; leaving raw stats "
-              "files in place" % archive_fname,
-              flush=True,
+            "ERROR: could not restore daily tar from %s; leaving raw stats "
+            "files in place" % archive_fname,
+            flush=True,
           )
           return False
         if os.path.exists(archive_tar_fname):
-          existing_after, members_source = _lookup_existing_members_for_archive_append(
-              archive_fname, archive_tar_fname,
+          existing_after, members_source = (
+            _lookup_existing_members_for_archive_append(
+              archive_fname,
+              archive_tar_fname,
+            )
           )
           _ensure_job_begin_logged(members_source)
         else:
           existing_after = {}
         to_retry = filter_files_to_add_to_archive(
-            stats_files_to_tar, existing_after, debug=DEBUG)
+          stats_files_to_tar, existing_after, debug=DEBUG
+        )
         if to_retry:
           if not _restore_daily_tar_or_log_failure(
-              archive_tar_fname, context="before retry append"):
+            archive_tar_fname, context="before retry append"
+          ):
             return False
           try:
             _append_to_tar(archive_tar_fname, to_retry)
           except (subprocess.CalledProcessError, RuntimeError) as exc:
             log_print(
-                format_tar_append_failure_log(
-                    archive_tar_fname, exc, retry=True),
-                flush=True,
+              format_tar_append_failure_log(archive_tar_fname, exc, retry=True),
+              flush=True,
             )
             return False
           stats_files_to_tar = to_retry
         if not verify_tar_archive_readable(archive_tar_fname):
           log_print(
-              "ERROR: daily tar still unreadable after recovery append; leaving "
-              "raw stats files in place: %s" % archive_tar_fname,
-              flush=True,
+            "ERROR: daily tar still unreadable after recovery append; leaving "
+            "raw stats files in place: %s" % archive_tar_fname,
+            flush=True,
           )
           return False
     if stats_files_to_tar:
       from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-          _daily_archive_members_cache_key,
+        _daily_archive_members_cache_key,
       )
       from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-          merge_appended_members,
+        merge_appended_members,
       )
 
       canonical = normalize_daily_compressed_path(archive_fname)
@@ -5797,15 +5967,15 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       worker_invalidated = False
       try:
         merged = merge_appended_members(
-            cache_key,
-            member_map,
-            saw_duplicates=saw_dupes,
+          cache_key,
+          member_map,
+          saw_duplicates=saw_dupes,
         )
       except Exception as exc:
         log_print(
-            "WARNING: tar_append store merge failed for %s: %s; invalidating"
-            % (canonical, exc),
-            flush=True,
+          "WARNING: tar_append store merge failed for %s: %s; invalidating"
+          % (canonical, exc),
+          flush=True,
         )
       if merged:
         merge_daily_archive_members_l1_cache(canonical, member_map)
@@ -5814,94 +5984,97 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         day_date = calendar_date_from_daily_tar_path(archive_tar_fname)
         if DEBUG:
           log_print(
-              "DEBUG: tar_append store merge day=%s members=%d"
-              % (
-                  day_date.isoformat() if day_date is not None else canonical,
-                  len(member_map),
-              ),
-              flush=True,
+            "DEBUG: tar_append store merge day=%s members=%d"
+            % (
+              day_date.isoformat() if day_date is not None else canonical,
+              len(member_map),
+            ),
+            flush=True,
           )
       else:
         invalidate_after_daily_tar_mutation(
-            archive_fname,
-            reason="tar_append",
-            log_fn=log_print,
+          archive_fname,
+          reason="tar_append",
+          log_fn=log_print,
         )
         worker_invalidated = True
       from hpcperfstats.dbload.lib.sync_timedb_zero_host_ingest_mark import (
-          clear_zero_host_ingest_marks,
+        clear_zero_host_ingest_marks,
       )
+
       clear_zero_host_ingest_marks(stats_files_to_tar, log_fn=log_print)
       job_outcome = "ok"
       if DEBUG:
         log_print(
-            "DEBUG: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
-            % (day_token, mapped_n, to_add_n, appended_n),
-            flush=True,
+          "DEBUG: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
+          % (day_token, mapped_n, to_add_n, appended_n),
+          flush=True,
         )
       return ArchiveAppendOutcome(
-          store_merge_ok=merged,
-          skip_finalize_invalidate=merged or worker_invalidated,
-          skipped_paths=skipped_oversized,
+        store_merge_ok=merged,
+        skip_finalize_invalidate=merged or worker_invalidated,
+        skipped_paths=skipped_oversized,
       )
     job_outcome = "ok"
     if DEBUG:
       log_print(
-          "DEBUG: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
-          % (day_token, mapped_n, to_add_n, appended_n),
-          flush=True,
+        "DEBUG: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
+        % (day_token, mapped_n, to_add_n, appended_n),
+        flush=True,
       )
     return ArchiveAppendOutcome(
-        skip_finalize_invalidate=True,
-        skipped_paths=skipped_oversized,
+      skip_finalize_invalidate=True,
+      skipped_paths=skipped_oversized,
     )
   finally:
     if append_inflight_set:
       from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-          clear_archive_append_inflight,
+        clear_archive_append_inflight,
       )
+
       clear_archive_append_inflight(day_token)
     if job_begin_logged:
       log_print(
-          "INFO: archive_job_done day=%s elapsed_s=%.3f outcome=%s "
-          "tar_bytes=%s members_source=%s mapped=%d to_add=%d appended=%d"
-          % (
-              day_token,
-              time.monotonic() - job_start,
-              job_outcome,
-              tar_bytes,
-              members_source,
-              mapped_n,
-              to_add_n,
-              appended_n,
-          ),
-          flush=True,
+        "INFO: archive_job_done day=%s elapsed_s=%.3f outcome=%s "
+        "tar_bytes=%s members_source=%s mapped=%d to_add=%d appended=%d"
+        % (
+          day_token,
+          time.monotonic() - job_start,
+          job_outcome,
+          tar_bytes,
+          members_source,
+          mapped_n,
+          to_add_n,
+          appended_n,
+        ),
+        flush=True,
       )
 
 
 def database_startup() -> None:
   """
   Print DB version, database size, and optionally chunk compression stats for.
-  
+
     host_data.
-  
+
   Returns:
     None
-  
+
   Raises:
     Exception: Raised when ``database_startup`` hits a ``Exception`` failure
     path.
-  
+
   Examples:
     >>> database_startup()  # doctest: +SKIP
   """
   from django.db import connection
+
   try:
     with connection.cursor() as cur:
       # Single round-trip for version + size
       cur.execute(
-          "SELECT version(), pg_size_pretty(pg_database_size(%s));",
-          [cfg.get_db_name()],
+        "SELECT version(), pg_size_pretty(pg_database_size(%s));",
+        [cfg.get_db_name()],
       )
       row = cur.fetchone()
       if row:
@@ -5911,7 +6084,7 @@ def database_startup() -> None:
       if DEBUG:
         try:
           cur.execute(
-              "SELECT chunk_name,before_compression_total_bytes/(1024*1024*1024),after_compression_total_bytes/(1024*1024*1024) FROM chunk_compression_stats('host_data');"
+            "SELECT chunk_name,before_compression_total_bytes/(1024*1024*1024),after_compression_total_bytes/(1024*1024*1024) FROM chunk_compression_stats('host_data');"
           )
           for x in cur.fetchall():
             try:
@@ -5925,7 +6098,7 @@ def database_startup() -> None:
   except (OperationalError, DatabaseError) as exc:
     if is_database_unavailable_error(exc):
       log_and_raise_database_unavailable(
-          exc, context="sync_timedb database_startup"
+        exc, context="sync_timedb database_startup"
       )
     raise
 
@@ -5933,19 +6106,19 @@ def database_startup() -> None:
 def parse_sync_timedb_argv(argv: Any) -> Any:
   """
   Parse CLI argv into ``(run_once, startdate, enddate)`` (same rules as.
-  
+
     ``sync_timedb``).
-  
+
   Args:
     argv (Any): CLI argument list (``sys.argv``-like).
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     SystemExit: Raised when ``parse_sync_timedb_argv`` hits a ``SystemExit``
     failure path.
-  
+
   Examples:
     >>> parse_sync_timedb_argv(None)  # doctest: +SKIP
   """
@@ -5956,14 +6129,14 @@ def parse_sync_timedb_argv(argv: Any) -> Any:
     argv_for_dates = [argv_for_dates[0]] + argv_for_dates[2:]
 
   if len(argv_for_dates) > 1 and argv_for_dates[1] in (
-      "all",
-      "backlog",
-      "current",
+    "all",
+    "backlog",
+    "current",
   ):
     raise SystemExit(
-        "CLI modes 'all'/'backlog'/'current' are retired; "
-        "run with no date args (hot+catchup bands), a YYYY-MM-DD, "
-        "or a start/end date range"
+      "CLI modes 'all'/'backlog'/'current' are retired; "
+      "run with no date args (hot+catchup bands), a YYYY-MM-DD, "
+      "or a start/end date range"
     )
 
   if len(argv_for_dates) <= 1:
@@ -5971,10 +6144,12 @@ def parse_sync_timedb_argv(argv: Any) -> Any:
 
   now_local = datetime.today()
   default_start = datetime.combine(
-      now_local.date(), datetime.min.time()) - timedelta(days=days_to_process)
+    now_local.date(), datetime.min.time()
+  ) - timedelta(days=days_to_process)
   default_end = now_local
   startdate, enddate = parse_start_end_dates(
-      argv_for_dates, default_start, default_end)
+    argv_for_dates, default_start, default_end
+  )
 
   if len(argv_for_dates) == 2:
     try:
@@ -5991,27 +6166,27 @@ def parse_sync_timedb_argv(argv: Any) -> Any:
 def run_sync_timedb_jid_ingest(jid: Any) -> Any:
   """
   One-shot ingest-only path for ``--jid`` (no archive / day-close / janitor).
-  
+
   Returns process exit code **0** on success (including zero matching files) or
   **1** on missing job / empty hosts / fatal ingest failure.
-  
+
   Args:
     jid (Any): Jid passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> run_sync_timedb_jid_ingest(None)  # doctest: +SKIP
   """
   from collections import deque
 
   from hpcperfstats.dbload.lib.sync_timedb_jid_scope import (
-      JobIngestScopeError,
-      resolve_job_ingest_scope,
+    JobIngestScopeError,
+    resolve_job_ingest_scope,
   )
   from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
-      collect_host_scoped_stats_paths,
+    collect_host_scoped_stats_paths,
   )
 
   global should_archive
@@ -6027,57 +6202,58 @@ def run_sync_timedb_jid_ingest(jid: Any) -> Any:
     host_name_ext = cfg.get_host_name_ext().strip()
     if not host_name_ext:
       log_print(
-          "ERROR: DEFAULT.host_name_ext must be set; sync_timedb --jid uses "
-          "archive subdirectories named with this suffix.",
-          flush=True,
+        "ERROR: DEFAULT.host_name_ext must be set; sync_timedb --jid uses "
+        "archive subdirectories named with this suffix.",
+        flush=True,
       )
       return 1
 
     archive_dir = cfg.get_archive_dir_path()
     if not archive_dir or not os.path.isdir(archive_dir):
       log_print(
-          "sync_timedb --jid: archive_dir missing or not a directory: %s"
-          % archive_dir,
-          flush=True,
+        "sync_timedb --jid: archive_dir missing or not a directory: %s"
+        % archive_dir,
+        flush=True,
       )
       return 1
 
     ensure_persistence_contract(
-        archive_dir, log_fn=log_print, allow_reset=True,
+      archive_dir,
+      log_fn=log_print,
+      allow_reset=True,
     )
     checkpoint_path = os.path.join(archive_dir, SYNC_TIMEDB_CHECKPOINT_BASENAME)
 
     log_print(
-        "sync_timedb --jid: jid=%s hosts=%d window_start=%s window_end=%s"
-        % (
-            scope.jid,
-            len(scope.hosts),
-            scope.window_start.isoformat(),
-            scope.window_end.isoformat(),
-        ),
-        flush=True,
+      "sync_timedb --jid: jid=%s hosts=%d window_start=%s window_end=%s"
+      % (
+        scope.jid,
+        len(scope.hosts),
+        scope.window_start.isoformat(),
+        scope.window_end.isoformat(),
+      ),
+      flush=True,
     )
 
     paths = collect_host_scoped_stats_paths(
-        archive_dir,
-        scope.hosts,
-        scope.window_start,
-        scope.window_end,
-        log_fn=log_print,
+      archive_dir,
+      scope.hosts,
+      scope.window_start,
+      scope.window_end,
+      log_fn=log_print,
     )
     checkpoint_paths = load_checkpoint_path_set(checkpoint_path)
-    pending = [
-        p for p in paths
-        if os.path.normpath(p) not in checkpoint_paths
-    ]
+    pending = [p for p in paths if os.path.normpath(p) not in checkpoint_paths]
     log_print(
-        "sync_timedb --jid: discovered=%d pending_after_checkpoint=%d"
-        % (len(paths), len(pending)),
-        flush=True,
+      "sync_timedb --jid: discovered=%d pending_after_checkpoint=%d"
+      % (len(paths), len(pending)),
+      flush=True,
     )
 
     if not pending:
-      log_print("sync_timedb --jid: nothing to ingest jid=%s" % scope.jid, flush=True)
+      log_print(
+        "sync_timedb --jid: nothing to ingest jid=%s" % scope.jid, flush=True
+      )
       return 0
 
     checkpoint_entries = deque(_load_sync_checkpoint(checkpoint_path))
@@ -6091,47 +6267,47 @@ def run_sync_timedb_jid_ingest(jid: Any) -> Any:
         break
       result = add_stats_file_to_db(path)
       stats_fname, _need_archival, ingest_ok, elapsed_s, outcome_meta = (
-          _unpack_ingest_worker_result(result)
+        _unpack_ingest_worker_result(result)
       )
       _record_ingest_marks_from_worker_result(result)
       remaining = max(0, len(pending) - index - 1)
       log_print(
-          "sync_timedb --jid: ingest path=%s ok=%s elapsed_s=%.3f remaining=%d "
-          "outcome=%s"
-          % (
-              stats_fname,
-              int(bool(ingest_ok)),
-              float(elapsed_s or 0.0),
-              remaining,
-              outcome_meta.get("outcome", ""),
-          ),
-          flush=True,
+        "sync_timedb --jid: ingest path=%s ok=%s elapsed_s=%.3f remaining=%d "
+        "outcome=%s"
+        % (
+          stats_fname,
+          int(bool(ingest_ok)),
+          float(elapsed_s or 0.0),
+          remaining,
+          outcome_meta.get("outcome", ""),
+        ),
+        flush=True,
       )
       if not ingest_ok:
         fail_n += 1
         continue
       ok_n += 1
       _add_processed_path(
-          stats_fname,
-          processed_files,
-          processed_files_order,
-          checkpoint_entries,
-          checkpoint_path,
+        stats_fname,
+        processed_files,
+        processed_files_order,
+        checkpoint_entries,
+        checkpoint_path,
       )
       try:
         _save_sync_checkpoint(checkpoint_path, checkpoint_entries)
       except OSError as exc:
         log_print(
-            "ERROR: sync_timedb --jid checkpoint flush failed path=%s: %s"
-            % (checkpoint_path, exc),
-            flush=True,
+          "ERROR: sync_timedb --jid checkpoint flush failed path=%s: %s"
+          % (checkpoint_path, exc),
+          flush=True,
         )
         return 1
 
     log_print(
-        "sync_timedb --jid: done jid=%s ok=%d fail=%d"
-        % (scope.jid, ok_n, fail_n),
-        flush=True,
+      "sync_timedb --jid: done jid=%s ok=%d fail=%d"
+      % (scope.jid, ok_n, fail_n),
+      flush=True,
     )
     return 1 if fail_n and ok_n == 0 else 0
   finally:
@@ -6152,64 +6328,66 @@ def run_sync_timedb_supervisor_from_parsed(
 ) -> None:
   """
   Run one supervisor session after ``database_startup()`` (CLI or in-process.
-  
+
     tests).
-  
+
   Args:
     run_once (Any): Run once passed to this helper.
     startdate (Any): Time value (``datetime``, ISO string, sentinel, or
     ``None``).
     enddate (Any): Time value (``datetime``, ISO string, sentinel, or
     ``None``).
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> run_sync_timedb_supervisor_from_parsed(None, None, None)
   """
   _reset_sync_runtime_caches()
   if startdate is None and enddate is None:
     log_print(
-        "###Date Range of stats files to ingest: entire archive "
-        "(orchestrator hot+catchup bands)####")
+      "###Date Range of stats files to ingest: entire archive "
+      "(orchestrator hot+catchup bands)####"
+    )
   else:
     log_date_range("stats files to ingest", startdate, enddate)
 
   host_name_ext = cfg.get_host_name_ext().strip()
   if not host_name_ext:
     log_print(
-        "ERROR: DEFAULT.host_name_ext must be set; sync_timedb uses archive "
-        "subdirectories whose names end with this suffix.")
+      "ERROR: DEFAULT.host_name_ext must be set; sync_timedb uses archive "
+      "subdirectories whose names end with this suffix."
+    )
     sys.exit(1)
 
   directory = cfg.get_archive_dir_path()
 
   log_print(
-      "Pipeline absolute pools effective_cores=%d sync_ingest=%d sync_archive=%d "
-      "metrics=%d"
-      % (
-          cfg.get_effective_cores(),
-          cfg.get_sync_ingest_pool_processes(),
-          cfg.get_sync_archive_pool_processes(),
-          cfg.get_metrics_pool_processes(),
-      ),
-      flush=True,
+    "Pipeline absolute pools effective_cores=%d sync_ingest=%d sync_archive=%d "
+    "metrics=%d"
+    % (
+      cfg.get_effective_cores(),
+      cfg.get_sync_ingest_pool_processes(),
+      cfg.get_sync_archive_pool_processes(),
+      cfg.get_metrics_pool_processes(),
+    ),
+    flush=True,
   )
   with create_sync_timedb_thread_pool(
-      max_workers=archive_thread_count,
-      thread_role="archive-pool",
-      process_title=SYNC_TIMEDB_PROCESS_TITLE,
+    max_workers=archive_thread_count,
+    thread_role="archive-pool",
+    process_title=SYNC_TIMEDB_PROCESS_TITLE,
   ) as archive_pool:
     try:
       run_sync_timedb_queue_orchestrator(
-          directory,
-          startdate,
-          enddate,
-          host_name_ext,
-          archive_pool,
-          run_once=run_once,
-          log_fn=log_print,
+        directory,
+        startdate,
+        enddate,
+        host_name_ext,
+        archive_pool,
+        run_once=run_once,
+        log_fn=log_print,
       )
     except MultiprocessingWorkerExitError as exc:
       hard_exit_pool_worker_error(exc)
@@ -6221,14 +6399,14 @@ def run_sync_timedb_supervisor_from_parsed(
 def run_ingest_entire_archive_once_for_tests() -> None:
   """
   In-process equivalent of ``python sync_timedb.py once`` (full archive).
-  
+
   Uses the active Django database (e.g. pytest-django ``test_*``), unlike a
   subprocess which would connect to ``[DEFAULT] dbname`` from ini only. Forces
   single-process ingest so spawn workers do not open the non-test database.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> run_ingest_entire_archive_once_for_tests()  # doctest: +SKIP
   """
@@ -6244,7 +6422,7 @@ def run_ingest_entire_archive_once_for_tests() -> None:
       os.environ[_SYNC_TIMEDB_INGEST_INLINE_ENV] = old_inline
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
   # Use a mutable container so the SIGTERM handler can update state without
   # relying on `nonlocal` (which is only valid for enclosing function scopes).
   sigterm_received = {"value": False}
@@ -6252,18 +6430,18 @@ if __name__ == '__main__':
   def _sigterm_handler(signum: Any, frame: Any) -> None:
     """
     Internal helper to handle sigterm handler.
-    
+
     Args:
       signum (Any): Signum passed to this helper.
       frame (Any): Frame passed to this helper.
-    
+
     Returns:
       None
-    
+
     Raises:
       SystemExit: Raised when ``_sigterm_handler`` hits a ``SystemExit``
       failure path.
-    
+
     Examples:
       >>> _sigterm_handler(None, None)  # doctest: +SKIP
     """
@@ -6275,12 +6453,14 @@ if __name__ == '__main__':
   signal.signal(signal.SIGTERM, _sigterm_handler)
   try:
     set_daemon_process_title(name=SYNC_TIMEDB_PROCESS_TITLE, role="main")
-    from hpcperfstats.dbload.lib.python_abi_startup_log import log_python_abi_startup
+    from hpcperfstats.dbload.lib.python_abi_startup_log import (
+      log_python_abi_startup,
+    )
 
     log_python_abi_startup()
     database_startup()
     from hpcperfstats.dbload.lib.sync_timedb_jid_scope import (
-        parse_sync_timedb_jid_cli_arg,
+      parse_sync_timedb_jid_cli_arg,
     )
 
     jid, jid_err = parse_sync_timedb_jid_cli_arg(sys.argv)
@@ -6297,7 +6477,7 @@ if __name__ == '__main__':
     sys.exit(2)
   except MultiprocessingWorkerExitError as exc:
     from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
-        hard_exit_pool_worker_error,
+      hard_exit_pool_worker_error,
     )
 
     hard_exit_pool_worker_error(exc)

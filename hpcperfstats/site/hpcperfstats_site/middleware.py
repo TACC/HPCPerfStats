@@ -15,17 +15,16 @@ Attributes:
   _BOKEH_RELAXED_CSP_PREFIXES: Path prefixes that keep Bokeh unsafe-eval for HTML responses.
   _REDIRECT_STATUSES: HTTP redirect status codes treated as no-active-content responses.
 """
-from __future__ import annotations
 
-from typing import Any
+from __future__ import annotations
 
 import cProfile
 import io
 import pstats
+from typing import Any
 
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse
-
 
 DEFAULT_PERMISSIONS_POLICY = (
   "accelerometer=(), autoplay=(), bluetooth=(), camera=(), clipboard-read=(), "
@@ -129,9 +128,12 @@ def _response_is_html(response: HttpResponse) -> bool:
 
   Examples:
     >>> class _R:
-    ...     status_code = 200
-    ...     def get(self, key, default=""):
-    ...         return "text/html; charset=utf-8" if key == "Content-Type" else default
+    ...   status_code = 200
+    ...
+    ...   def get(self, key, default=""):
+    ...     return (
+    ...       "text/html; charset=utf-8" if key == "Content-Type" else default
+    ...     )
     >>> _response_is_html(_R())
     True
   """
@@ -159,11 +161,15 @@ def _csp_for_request(request: HttpRequest, response: HttpResponse) -> str:
   Examples:
     >>> from django.http import HttpResponse
     >>> class _Req:
-    ...     path = "/api/jobs/"
-    >>> _csp_for_request(_Req(), HttpResponse(content_type="application/json")) == DEFAULT_CSP_NO_ACTIVE
+    ...   path = "/api/jobs/"
+    >>> _csp_for_request(
+    ...   _Req(), HttpResponse(content_type="application/json")
+    ... ) == DEFAULT_CSP_NO_ACTIVE
     True
   """
-  if response.status_code in _REDIRECT_STATUSES or not _response_is_html(response):
+  if response.status_code in _REDIRECT_STATUSES or not _response_is_html(
+    response
+  ):
     return DEFAULT_CSP_NO_ACTIVE
   path = request.path or ""
   if path.startswith("/login_prompt"):
@@ -178,11 +184,11 @@ def _csp_for_request(request: HttpRequest, response: HttpResponse) -> str:
 class ProfileMiddleware:
   """
   Simple profiling middleware for Django views (Django 3+/6+ style).
-  
+
   Activated only when:
   - settings.DEBUG is True, and
   - the incoming request has a ?prof query parameter.
-  
+
   Attributes:
     get_response: Next middleware/view callable in the Django stack.
   """
@@ -190,15 +196,17 @@ class ProfileMiddleware:
   def __init__(self, get_response: Any) -> None:
     """
     Store the next middleware callable for this profiling wrapper.
-    
+
     Args:
       get_response (Any): Next middleware or view callable.
-    
+
     Returns:
       None
-    
+
     Examples:
-      >>> ProfileMiddleware(lambda request: HttpResponse("ok")).get_response is not None
+      >>> ProfileMiddleware(
+      ...   lambda request: HttpResponse("ok")
+      ... ).get_response is not None
       True
     """
     self.get_response = get_response
@@ -206,16 +214,16 @@ class ProfileMiddleware:
   def _enabled(self, request: HttpRequest) -> bool:
     """
     Return True if profiling is enabled for this request.
-    
+
     Args:
       request (HttpRequest): Incoming request.
-    
+
     Returns:
       bool: True when DEBUG is on and ``prof`` is present in the query string.
-    
+
     Examples:
       >>> class _Req:
-      ...     GET = {"prof": "1"}
+      ...   GET = {"prof": "1"}
       >>> from django.conf import settings as _settings
       >>> bool(_settings.DEBUG) or True  # doctest: +SKIP
       True
@@ -225,18 +233,20 @@ class ProfileMiddleware:
   def __call__(self, request: HttpRequest) -> HttpResponse:
     """
     Optionally profile the downstream view and replace the body with stats text.
-    
+
     Args:
       request (HttpRequest): Incoming request.
-    
+
     Returns:
       HttpResponse: Downstream response, or a plain-text profile dump when enabled.
-    
+
     Raises:
       Exception: Re-raises any exception from the downstream view unchanged.
-    
+
     Examples:
-      >>> ProfileMiddleware(lambda request: HttpResponse("ok"))  # doctest: +SKIP
+      >>> ProfileMiddleware(
+      ...   lambda request: HttpResponse("ok")
+      ... )  # doctest: +SKIP
     """
     if not self._enabled(request):
       return self.get_response(request)
@@ -253,7 +263,7 @@ class ProfileMiddleware:
     sort_key = request.GET.get("sort", "time")
     try:
       count = int(request.GET.get("count", "100"))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
       count = 100
     stats.strip_dirs().sort_stats(sort_key).print_stats(count)
 
@@ -265,11 +275,11 @@ class ProfileMiddleware:
 class DefaultCacheControlMiddleware:
   """
   Apply a consistent default cache policy.
-  
+
   Views may still opt in by explicitly setting Cache-Control. nginx preserves
   application Cache-Control on proxied responses while owning transport security
   headers at the edge.
-  
+
   Attributes:
     get_response: Next middleware/view callable in the Django stack.
   """
@@ -277,15 +287,17 @@ class DefaultCacheControlMiddleware:
   def __init__(self, get_response: Any) -> None:
     """
     Store the next middleware callable for cache-control defaults.
-    
+
     Args:
       get_response (Any): Next middleware or view callable.
-    
+
     Returns:
       None
-    
+
     Examples:
-      >>> DefaultCacheControlMiddleware(lambda request: HttpResponse("ok")).get_response is not None
+      >>> DefaultCacheControlMiddleware(
+      ...   lambda request: HttpResponse("ok")
+      ... ).get_response is not None
       True
     """
     self.get_response = get_response
@@ -293,13 +305,13 @@ class DefaultCacheControlMiddleware:
   def __call__(self, request: HttpRequest) -> HttpResponse:
     """
     Ensure responses without Cache-Control receive a no-store default.
-    
+
     Args:
       request (HttpRequest): Incoming request.
-    
+
     Returns:
       HttpResponse: Downstream response, possibly with Cache-Control added.
-    
+
     Examples:
       >>> mw = DefaultCacheControlMiddleware(lambda request: HttpResponse("ok"))
       >>> "Cache-Control" in mw(HttpRequest())  # doctest: +SKIP
@@ -316,11 +328,11 @@ class DefaultCacheControlMiddleware:
 class DefaultSecurityHeadersMiddleware:
   """
   Apply security headers that Django doesn't emit by default.
-  
+
   nginx is the public enforcement layer for proxied traffic (duplicate upstream
   security headers are hidden). These Django defaults remain defense-in-depth for
   direct Gunicorn access and unit tests.
-  
+
   Attributes:
     get_response: Next middleware/view callable in the Django stack.
   """
@@ -328,15 +340,17 @@ class DefaultSecurityHeadersMiddleware:
   def __init__(self, get_response: Any) -> None:
     """
     Store the next middleware callable for security-header defaults.
-    
+
     Args:
       get_response (Any): Next middleware or view callable.
-    
+
     Returns:
       None
-    
+
     Examples:
-      >>> DefaultSecurityHeadersMiddleware(lambda request: HttpResponse("ok")).get_response is not None
+      >>> DefaultSecurityHeadersMiddleware(
+      ...   lambda request: HttpResponse("ok")
+      ... ).get_response is not None
       True
     """
     self.get_response = get_response
@@ -344,15 +358,17 @@ class DefaultSecurityHeadersMiddleware:
   def __call__(self, request: HttpRequest) -> HttpResponse:
     """
     Attach Permissions-Policy, COOP, and path-aware CSP when not already set.
-    
+
     Args:
       request (HttpRequest): Incoming request.
-    
+
     Returns:
       HttpResponse: Downstream response with security headers applied.
-    
+
     Examples:
-      >>> mw = DefaultSecurityHeadersMiddleware(lambda request: HttpResponse("{}"))
+      >>> mw = DefaultSecurityHeadersMiddleware(
+      ...   lambda request: HttpResponse("{}")
+      ... )
       >>> mw  # doctest: +SKIP
     """
     response = self.get_response(request)

@@ -9,12 +9,12 @@ Uses TypeDetailDataProvider. Layout matches Summary: stretch_width figures in a
 Attributes:
   log: Attribute.
 """
-from __future__ import annotations
 
-from typing import Any
+from __future__ import annotations
 
 import logging
 import time
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -22,32 +22,33 @@ from bokeh.layouts import gridplot
 from bokeh.models import ColumnDataSource, HoverTool, Range1d
 from bokeh.palettes import d3
 from bokeh.plotting import figure
-
 from pandas import to_datetime
 
 from hpcperfstats.analysis.metrics.lib.bokeh_job_embed import figure_embed_kw
 from hpcperfstats.analysis.metrics.lib.gen.utils import (
-    add_hover_plain_columns,
-    clean_dataframe,
-    non_degenerate_y_range_for_series,
-    set_linear_axes_plain_numeric,
-    timestamps_as_cluster_naive,
-    tz_aware_bokeh_tick_formatter,
+  add_hover_plain_columns,
+  clean_dataframe,
+  non_degenerate_y_range_for_series,
+  set_linear_axes_plain_numeric,
+  timestamps_as_cluster_naive,
+  tz_aware_bokeh_tick_formatter,
 )
 from hpcperfstats.analysis.metrics.lib.plot.bokeh_job_detail_help_marker import (
-    add_job_detail_bokeh_help_marker,
+  add_job_detail_bokeh_help_marker,
 )
-from hpcperfstats.analysis.metrics.lib.plot.hover_html import hover_tooltip_html_host_time_value
+from hpcperfstats.analysis.metrics.lib.plot.hover_html import (
+  hover_tooltip_html_host_time_value,
+)
 from hpcperfstats.analysis.metrics.lib.plot.job_detail_bokeh_plot_descriptions import (
-    description_for_job_detail_bokeh_plot,
-    researcher_use_for_job_detail_bokeh_plot,
+  description_for_job_detail_bokeh_plot,
+  researcher_use_for_job_detail_bokeh_plot,
 )
 
 
 class DevPlot:
   """
   Type-detail plot using an ORM data provider (TypeDetailDataProvider).
-  
+
   Attributes:
     data_provider: Attribute.
     host_list: Attribute.
@@ -56,14 +57,14 @@ class DevPlot:
   def __init__(self, data_provider: Any, host_list: Any) -> None:
     """
     Store data provider and host list for plotting.
-    
+
     Args:
       data_provider (Any): Data provider passed to this helper.
       host_list (Any): Host list passed to this helper.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> DevPlot(None, None)  # doctest: +SKIP
     """
@@ -73,15 +74,15 @@ class DevPlot:
   def plot_metric(self, df: Any, event: Any, unit: Any | None = None) -> Any:
     """
     Create one Bokeh figure with continuous lines per host for the given event.
-    
+
     Args:
       df (Any): Df passed to this helper.
       event (Any): Event passed to this helper.
       unit (Any | None): One of ``Any``, ``None``.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Examples:
       >>> DevPlot().plot_metric(None, None, None)  # doctest: +SKIP
     """
@@ -95,15 +96,15 @@ class DevPlot:
     ylabel = event + " (" + (unit or "") + ")"
 
     plot = figure(
-        **figure_embed_kw(
-            150,
-            x_axis_type="datetime",
-            y_range=Range1d(y_range_start, y_range_end),
-            y_axis_label=ylabel,
-            x_axis_label="Time",
-            title="",
-            min_border_left=72,
-        )
+      **figure_embed_kw(
+        150,
+        x_axis_type="datetime",
+        y_range=Range1d(y_range_start, y_range_end),
+        y_axis_label=ylabel,
+        x_axis_label="Time",
+        title="",
+        min_border_left=72,
+      )
     )
     set_linear_axes_plain_numeric(plot)
     plot.xaxis.formatter = tz_aware_bokeh_tick_formatter()
@@ -114,40 +115,41 @@ class DevPlot:
     for h in self.host_list:
       host_df = df[df.host == h].sort_values("time")
       source = ColumnDataSource(
-          add_hover_plain_columns(host_df, [event], time_col="time"),
+        add_hover_plain_columns(host_df, [event], time_col="time"),
       )
       plot.line(
-          x="time",
-          y=event,
-          source=source,
-          line_color=self.hc[h],
-          line_width=1.5,
+        x="time",
+        y=event,
+        source=source,
+        line_color=self.hc[h],
+        line_width=1.5,
       )
       circle = plot.scatter(
-          x="time",
-          y=event,
-          source=source,
-          size=4,
-          marker="circle",
-          color=self.hc[h],
-          alpha=0.9,
+        x="time",
+        y=event,
+        source=source,
+        size=4,
+        marker="circle",
+        color=self.hc[h],
+        alpha=0.9,
       )
       circle_renderers.append(circle)
 
     plot.add_tools(
-        HoverTool(
-            tooltips=hover_tooltip_html_host_time_value(event, event),
-            renderers=circle_renderers,
-        )
+      HoverTool(
+        tooltips=hover_tooltip_html_host_time_value(event, event),
+        renderers=circle_renderers,
+      )
     )
     help_key = "jobDetailPlot_type_detail_rates"
     add_job_detail_bokeh_help_marker(
-        plot,
-        description_for_job_detail_bokeh_plot(help_key) or (
-            f"Time: sample timestamp (UTC). Y ({ylabel}): device-aggregated "
-            f"rate or value for event {event}."
-        ),
-        researcher_use_for_job_detail_bokeh_plot(help_key),
+      plot,
+      description_for_job_detail_bokeh_plot(help_key)
+      or (
+        f"Time: sample timestamp (UTC). Y ({ylabel}): device-aggregated "
+        f"rate or value for event {event}."
+      ),
+      researcher_use_for_job_detail_bokeh_plot(help_key),
     )
     log.debug("time to plot %s: %s", event, time.time() - s)
     return plot
@@ -155,13 +157,13 @@ class DevPlot:
   def plot(self) -> Any:
     """
     Build host_time_df, merge aggregate per event, and return (df, 2-col.
-    
+
       gridplot).
-    
+
     Returns:
       Any: Open return polymorphism from ``plot``: concrete type depends on
       inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-    
+
     Examples:
       >>> DevPlot().plot()  # doctest: +SKIP
     """
@@ -178,9 +180,7 @@ class DevPlot:
 
     metric = "arc"
     if type_list and (
-        "mem" in type_list
-        or "nvidia_gpu" in type_list
-        or "amd_gpu" in type_list
+      "mem" in type_list or "nvidia_gpu" in type_list or "amd_gpu" in type_list
     ):
       metric = "value"
 
@@ -190,9 +190,11 @@ class DevPlot:
       if agg.empty or "sum_val" not in agg.columns:
         df[event] = float("nan")
       else:
-        df = df.merge(agg[["host", "time", "sum_val"]],
-                      on=["host", "time"],
-                      how="left")
+        df = df.merge(
+          agg[["host", "time", "sum_val"]],
+          on=["host", "time"],
+          how="left",
+        )
         df[event] = df["sum_val"]
         df.drop(columns=["sum_val"], inplace=True)
       if event in df.columns and df[event].isnull().values.any():

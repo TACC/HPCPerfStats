@@ -1,4 +1,5 @@
 """Unit tests for sync_acct ingest logic."""
+
 from __future__ import annotations
 
 from datetime import date
@@ -12,26 +13,26 @@ pytestmark = pytest.mark.django_db(databases=[])
 
 
 SACCT_HEADER = (
-    "JobID|User|Account|Start|End|Submit|Partition|Timelimit|JobName|State|"
-    "NNodes|ReqCPUS|NodeList"
+  "JobID|User|Account|Start|End|Submit|Partition|Timelimit|JobName|State|"
+  "NNodes|ReqCPUS|NodeList"
 )
 
 
 def _sacct_row(
-    jid="100",
-    user="alice",
-    queue="batch",
-    start="2024-06-01T10:00:00",
-    end="2024-06-01T11:00:00",
-    submit="2024-06-01T09:00:00",
-    nodes="1",
-    cpus="32",
-    nodelist="node1",
-    timelimit="01:00:00",
+  jid="100",
+  user="alice",
+  queue="batch",
+  start="2024-06-01T10:00:00",
+  end="2024-06-01T11:00:00",
+  submit="2024-06-01T09:00:00",
+  nodes="1",
+  cpus="32",
+  nodelist="node1",
+  timelimit="01:00:00",
 ):
   return (
-      f"{jid}|{user}|acct1|{start}|{end}|{submit}|{queue}|{timelimit}|job1|"
-      f"COMPLETED|{nodes}|{cpus}|{nodelist}"
+    f"{jid}|{user}|acct1|{start}|{end}|{submit}|{queue}|{timelimit}|job1|"
+    f"COMPLETED|{nodes}|{cpus}|{nodelist}"
   )
 
 
@@ -55,9 +56,7 @@ def test_sync_acct_from_content_skips_existing_jids(mock_jd, mock_notify):
   mock_jd.objects.filter.return_value = before_qs
   before_qs.values_list.side_effect = [[], []]
 
-  with patch.object(
-      mock_jd.objects, "bulk_create", return_value=None
-  ) as bulk:
+  with patch.object(mock_jd.objects, "bulk_create", return_value=None) as bulk:
     inserted = sync_acct_from_content(content, jobs_in_db={999, "999"})
 
   assert inserted == 0
@@ -83,9 +82,14 @@ def test_sync_acct_from_content_bulk_insert_success(mock_jd, mock_notify):
 
 
 @patch("hpcperfstats.dbload.sync_acct._notify_job_cache_after_acct_ingest")
-@patch("hpcperfstats.dbload.sync_acct._insert_job_data_individually", return_value=(1, []))
+@patch(
+  "hpcperfstats.dbload.sync_acct._insert_job_data_individually",
+  return_value=(1, []),
+)
 @patch("hpcperfstats.dbload.sync_acct.job_data")
-def test_sync_acct_from_content_bulk_fallback(mock_jd, mock_fallback, mock_notify):
+def test_sync_acct_from_content_bulk_fallback(
+  mock_jd, mock_fallback, mock_notify
+):
   from hpcperfstats.dbload.sync_acct import sync_acct_from_content
 
   content = SACCT_HEADER + "\n" + _sacct_row(jid="502") + "\n"
@@ -102,16 +106,22 @@ def test_sync_acct_from_content_bulk_fallback(mock_jd, mock_fallback, mock_notif
 
 
 @override_settings(DEBUG=True)
-@patch("hpcperfstats.dbload.sync_acct.cfg.get_restricted_queue_keywords", return_value=["secret"])
+@patch(
+  "hpcperfstats.dbload.sync_acct.cfg.get_restricted_queue_keywords",
+  return_value=["secret"],
+)
 @patch("hpcperfstats.dbload.sync_acct._notify_job_cache_after_acct_ingest")
 @patch("hpcperfstats.dbload.sync_acct.job_data")
 def test_sync_acct_filters_restricted_queue(mock_jd, _notify, _keywords):
   from hpcperfstats.dbload.sync_acct import sync_acct_from_content
 
   content = (
-      SACCT_HEADER + "\n"
-      + _sacct_row(jid="601", queue="secret-batch") + "\n"
-      + _sacct_row(jid="602", queue="batch") + "\n"
+    SACCT_HEADER
+    + "\n"
+    + _sacct_row(jid="601", queue="secret-batch")
+    + "\n"
+    + _sacct_row(jid="602", queue="batch")
+    + "\n"
   )
   filter_qs = MagicMock()
   filter_qs.values_list.side_effect = [[], ["602"]]
@@ -126,9 +136,13 @@ def test_sync_acct_filters_restricted_queue(mock_jd, _notify, _keywords):
 
 
 @patch("hpcperfstats.site.lib.machine.cache_utils.warm_job_cache_entries")
-@patch("hpcperfstats.site.lib.machine.cache_utils.invalidate_after_job_data_ingest")
+@patch(
+  "hpcperfstats.site.lib.machine.cache_utils.invalidate_after_job_data_ingest"
+)
 def test_notify_job_cache_after_acct_ingest_warms(mock_inv, mock_warm):
-  from hpcperfstats.dbload.sync_acct import _notify_job_cache_after_acct_ingest
+  from hpcperfstats.dbload.sync_acct import (
+    _notify_job_cache_after_acct_ingest,
+  )
 
   obj = MagicMock(jid="777")
   _notify_job_cache_after_acct_ingest(1, [obj], inserted_jids=["777"])
@@ -138,8 +152,9 @@ def test_notify_job_cache_after_acct_ingest_warms(mock_inv, mock_warm):
 
 @patch("hpcperfstats.dbload.sync_acct.job_data_instance_from_acct_row")
 def test_insert_job_data_individually_skips_integrity_error(mock_from_row):
-  from hpcperfstats.dbload.sync_acct import _insert_job_data_individually
   import pandas as pd
+
+  from hpcperfstats.dbload.sync_acct import _insert_job_data_individually
 
   df = pd.DataFrame([{"jid": "900"}])
   obj = MagicMock()
@@ -153,7 +168,7 @@ def test_insert_job_data_individually_skips_integrity_error(mock_from_row):
 
 
 def _sacct_content(*rows):
-  lines = [SACCT_HEADER] + list(rows)
+  lines = [SACCT_HEADER, *list(rows)]
   return "\n".join(lines) + "\n"
 
 
@@ -173,7 +188,9 @@ def test_persist_accounting_daily_file_creates_file(mock_acct_path, tmp_path):
 
 
 @patch("hpcperfstats.dbload.sync_acct.cfg.get_accounting_path")
-def test_persist_accounting_daily_file_overwrites_when_not_shrinking(mock_acct_path, tmp_path):
+def test_persist_accounting_daily_file_overwrites_when_not_shrinking(
+  mock_acct_path, tmp_path
+):
   from hpcperfstats.dbload.sync_acct import persist_accounting_daily_file
 
   mock_acct_path.return_value = str(tmp_path)
@@ -192,8 +209,8 @@ def test_persist_accounting_daily_file_overwrites_when_not_shrinking(mock_acct_p
 @patch("hpcperfstats.dbload.sync_acct.cfg.get_accounting_path")
 def test_persist_accounting_daily_file_rejects_shrink(mock_acct_path, tmp_path):
   from hpcperfstats.dbload.sync_acct import (
-      AccountingFileShrinkError,
-      persist_accounting_daily_file,
+    AccountingFileShrinkError,
+    persist_accounting_daily_file,
   )
 
   mock_acct_path.return_value = str(tmp_path)
@@ -225,7 +242,9 @@ def test_persist_accounting_daily_file_skips_empty(mock_acct_path, tmp_path):
 
 
 @patch("hpcperfstats.dbload.sync_acct.cfg.get_accounting_path")
-def test_persist_accounting_daily_file_skips_header_only(mock_acct_path, tmp_path):
+def test_persist_accounting_daily_file_skips_header_only(
+  mock_acct_path, tmp_path
+):
   from hpcperfstats.dbload.sync_acct import persist_accounting_daily_file
 
   mock_acct_path.return_value = str(tmp_path)
@@ -239,7 +258,8 @@ def test_persist_accounting_daily_file_skips_header_only(mock_acct_path, tmp_pat
 
 @patch("hpcperfstats.dbload.sync_acct.cfg.get_accounting_path")
 def test_persist_accounting_daily_file_skip_does_not_replace_existing(
-    mock_acct_path, tmp_path,
+  mock_acct_path,
+  tmp_path,
 ):
   from hpcperfstats.dbload.sync_acct import persist_accounting_daily_file
 
@@ -259,9 +279,15 @@ def test_persist_accounting_daily_file_skip_does_not_replace_existing(
 @patch("hpcperfstats.dbload.sync_acct.job_data")
 @patch("hpcperfstats.dbload.sync_acct.cfg.get_accounting_path")
 def test_persisted_file_is_reingestible_by_sync_acct(
-    mock_acct_path, mock_jd, _notify, tmp_path,
+  mock_acct_path,
+  mock_jd,
+  _notify,
+  tmp_path,
 ):
-  from hpcperfstats.dbload.sync_acct import persist_accounting_daily_file, sync_acct
+  from hpcperfstats.dbload.sync_acct import (
+    persist_accounting_daily_file,
+    sync_acct,
+  )
 
   mock_acct_path.return_value = str(tmp_path)
   content = _sacct_content(_sacct_row(jid="1001"))
@@ -280,6 +306,7 @@ def test_persisted_file_is_reingestible_by_sync_acct(
 
 def test_acct_timelimit_to_seconds_day_and_hhmmss():
   import pandas as pd
+
   from hpcperfstats.dbload.sync_acct import _acct_timelimit_to_seconds
 
   out = _acct_timelimit_to_seconds(pd.Series(["01:00:00", "1-02:00:00"]))
@@ -290,32 +317,38 @@ def test_acct_timelimit_to_seconds_sentinels_and_garbage():
   import math
 
   import pandas as pd
+
   from hpcperfstats.dbload.sync_acct import _acct_timelimit_to_seconds
 
   out = _acct_timelimit_to_seconds(
-      pd.Series([
-          "UNLIMITED",
-          "Partition_Limit",
-          "Partition_limit",
-          " INFINITE ",
-          "INVALID",
-          "not-a-duration",
-          "",
-      ]),
+    pd.Series(
+      [
+        "UNLIMITED",
+        "Partition_Limit",
+        "Partition_limit",
+        " INFINITE ",
+        "INVALID",
+        "not-a-duration",
+        "",
+      ]
+    ),
   )
-  assert all(pd.isna(v) or (isinstance(v, float) and math.isnan(v)) for v in out)
+  assert all(
+    pd.isna(v) or (isinstance(v, float) and math.isnan(v)) for v in out
+  )
 
 
 @patch("hpcperfstats.dbload.sync_acct._notify_job_cache_after_acct_ingest")
 @patch("hpcperfstats.dbload.sync_acct.job_data")
 def test_sync_acct_from_content_unlimited_timelimit_does_not_abort_batch(
-    mock_jd, mock_notify,
+  mock_jd,
+  mock_notify,
 ):
   from hpcperfstats.dbload.sync_acct import sync_acct_from_content
 
   content = _sacct_content(
-      _sacct_row(jid="1101", timelimit="UNLIMITED"),
-      _sacct_row(jid="1102", timelimit="01:00:00"),
+    _sacct_row(jid="1101", timelimit="UNLIMITED"),
+    _sacct_row(jid="1102", timelimit="01:00:00"),
   )
   filter_qs = MagicMock()
   filter_qs.values_list.side_effect = [[], ["1101", "1102"]]
@@ -337,9 +370,9 @@ def test_sync_acct_from_content_partition_limit_timelimit(mock_jd, mock_notify):
   from hpcperfstats.dbload.sync_acct import sync_acct_from_content
 
   content = _sacct_content(
-      _sacct_row(jid="1201", timelimit="Partition_Limit"),
-      _sacct_row(jid="1202", timelimit="Partition_limit"),
-      _sacct_row(jid="1203", timelimit="1-02:00:00"),
+    _sacct_row(jid="1201", timelimit="Partition_Limit"),
+    _sacct_row(jid="1202", timelimit="Partition_limit"),
+    _sacct_row(jid="1203", timelimit="1-02:00:00"),
   )
   filter_qs = MagicMock()
   filter_qs.values_list.side_effect = [[], ["1201", "1202", "1203"]]

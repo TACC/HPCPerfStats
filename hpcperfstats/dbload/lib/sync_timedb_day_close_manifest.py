@@ -10,51 +10,58 @@ Attributes:
   _DAY_CLOSE_PIPELINE_PENDING_STATUSES: Attribute.
   _DAY_CLOSE_WORKER_SLOT_STATUSES: Attribute.
 """
+
 from __future__ import annotations
 
+import contextlib
 import copy
 import os
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional, Set
+from collections.abc import Callable
+from typing import Any
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
-    load_persistence_document,
-    save_persistence_document,
+  load_persistence_document,
+  save_persistence_document,
 )
 
 MANIFEST_BASENAME = ".sync_timedb_async_day_close.json"
 MANIFEST_VERSION = 1
 
-_DAY_CLOSE_PIPELINE_PENDING_STATUSES = frozenset({
+_DAY_CLOSE_PIPELINE_PENDING_STATUSES = frozenset(
+  {
     "submitted",
     "queued",
     "sealing",
     "raw_removal",
     "deferred",
-})
+  }
+)
 # Legacy statuses retained for stale-manifest recovery until operator on-disk
 # sample confirms no remaining entries (plan P2 shrink — deferred).
 
-_DAY_CLOSE_WORKER_SLOT_STATUSES = frozenset({
+_DAY_CLOSE_WORKER_SLOT_STATUSES = frozenset(
+  {
     "submitted",
     "queued",
     "sealing",
     "raw_removal",
-})
+  }
+)
 
 
 def _is_day_close_pipeline_pending_entry(entry: Any) -> bool:
   """
   Internal helper to check if day close pipeline pending entry.
-  
+
   Args:
     entry (Any): Entry passed to this helper.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> _is_day_close_pipeline_pending_entry(None)  # doctest: +SKIP
   """
@@ -66,13 +73,13 @@ def _is_day_close_pipeline_pending_entry(entry: Any) -> bool:
 def _is_worker_slot_pending_entry(entry: Any) -> bool:
   """
   Internal helper to check if worker slot pending entry.
-  
+
   Args:
     entry (Any): Entry passed to this helper.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> _is_worker_slot_pending_entry(None)  # doctest: +SKIP
   """
@@ -84,17 +91,17 @@ def _is_worker_slot_pending_entry(entry: Any) -> bool:
 def _is_deferred_waiting_on_ingest_entry(entry: Any) -> bool:
   """
   True for deferred handoff soft-state (waiting / empty / legacy detail).
-  
+
   Empty and ``legacy_raw_delete_pending`` details are treated as waiting so they
   never fake-succeed enqueue (discover cap / immediate blacklist). Clear via
   ``clear_deferred_waiting_on_ingest`` when handoff for that day drains.
-  
+
   Args:
     entry (Any): Entry passed to this helper.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> _is_deferred_waiting_on_ingest_entry(None)  # doctest: +SKIP
   """
@@ -109,47 +116,47 @@ def _is_deferred_waiting_on_ingest_entry(entry: Any) -> bool:
 def manifest_path(archive_data_dir: str) -> str:
   """
   Manifest path.
-  
+
   Args:
     archive_data_dir (str): String for archive data dir.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> manifest_path("x")  # doctest: +SKIP
   """
   return os.path.join(archive_data_dir, MANIFEST_BASENAME)
 
 
-def _new_manifest() -> Dict[str, Any]:
+def _new_manifest() -> dict[str, Any]:
   """
   Internal helper to handle new manifest.
-  
+
   Returns:
     Dict[str, Any]: Dict[str, Any] produced by this call.
-  
+
   Examples:
     >>> _new_manifest()  # doctest: +SKIP
   """
   return {
-      "version": MANIFEST_VERSION,
-      "entries": {},
-      "last_progress": "",
-      "last_progress_at": None,
+    "version": MANIFEST_VERSION,
+    "entries": {},
+    "last_progress": "",
+    "last_progress_at": None,
   }
 
 
-def _load_manifest(path: str) -> Dict[str, Any]:
+def _load_manifest(path: str) -> dict[str, Any]:
   """
   Internal helper to load the manifest.
-  
+
   Args:
     path (str): String for path.
-  
+
   Returns:
     Dict[str, Any]: Dict[str, Any] produced by this call.
-  
+
   Examples:
     >>> _load_manifest("x")  # doctest: +SKIP
   """
@@ -161,17 +168,17 @@ def _load_manifest(path: str) -> Dict[str, Any]:
   return payload
 
 
-def _save_manifest(path: str, payload: Dict[str, Any]) -> None:
+def _save_manifest(path: str, payload: dict[str, Any]) -> None:
   """
   Internal helper to save the manifest.
-  
+
   Args:
     path (str): String for path.
     payload (Dict[str, Any]): Mapping for payload.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _save_manifest("x", {})  # doctest: +SKIP
   """
@@ -181,7 +188,7 @@ def _save_manifest(path: str, payload: Dict[str, Any]) -> None:
 class DayCloseManifestCoordinator:
   """
   Manifest + enqueue shim; ``DAY_CLOSE`` work runs on janitor worker threads.
-  
+
   Attributes:
     _lock: Attribute.
     _manifest: Attribute.
@@ -208,17 +215,17 @@ class DayCloseManifestCoordinator:
     tgz_archive_dir: str,
     local_tz: Any,
     log_fn: Any,
-    get_disqualified_daily_tars: Callable[[], Set[str]],
+    get_disqualified_daily_tars: Callable[[], set[str]],
     day_raw_removal_coordinator: Any | None = None,
-    on_day_phase: Optional[Callable[[str, str], None]] = None,
-    submit_eligible_fn: Optional[Callable[[str], tuple]] = None,
-    enqueue_day_close_fn: Optional[Callable[[str, str], bool]] = None,
-    get_inflight_tar_paths_fn: Optional[Callable[[], Set[str]]] = None,
+    on_day_phase: Callable[[str, str], None] | None = None,
+    submit_eligible_fn: Callable[[str], tuple] | None = None,
+    enqueue_day_close_fn: Callable[[str, str], bool] | None = None,
+    get_inflight_tar_paths_fn: Callable[[], set[str]] | None = None,
     process_title: str = "sync_timedb.py",
   ) -> None:
     """
     Initialize a new instance.
-    
+
     Args:
       archive_data_dir (str): String for archive data dir.
       host_name_ext (str): String for host name ext.
@@ -237,10 +244,10 @@ class DayCloseManifestCoordinator:
       get_inflight_tar_paths_fn (Optional[Callable[[], Set[str]]]): Get
       inflight tar paths fn, or None when absent.
       process_title (str): String for process title.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> __init__(0)  # doctest: +SKIP
     """
@@ -264,10 +271,10 @@ class DayCloseManifestCoordinator:
   def recover_stale_manifest_entries(self) -> None:
     """
     Recover stale manifest entries.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> DayCloseManifestCoordinator().recover_stale_manifest_entries()
     """
@@ -280,24 +287,20 @@ class DayCloseManifestCoordinator:
   ) -> None:
     """
     Internal helper to handle recover stale manifest entries.
-    
+
     Args:
       live_worker_tars (Any | None): One of ``Any``, ``None``.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> DayCloseManifestCoordinator()._recover_stale_manifest_entries(None)
     """
     stale_s = cfg.get_sync_day_close_manifest_stale_seconds()
     if stale_s <= 0:
       return
-    live_workers = {
-        os.path.normpath(t)
-        for t in (live_worker_tars or ())
-        if t
-    }
+    live_workers = {os.path.normpath(t) for t in (live_worker_tars or ()) if t}
     now = time.time()
     recovered: list[str] = []
     worker_slot_recovered: list[str] = []
@@ -313,7 +316,12 @@ class DayCloseManifestCoordinator:
           entry["recovered_at"] = now
           recovered.append(os.path.normpath(tar_norm))
           continue
-        if status not in ("submitted", "sealing", "raw_removal", "queued"):
+        if status not in (
+          "submitted",
+          "sealing",
+          "raw_removal",
+          "queued",
+        ):
           continue
         tar_norm = os.path.normpath(tar_norm)
         # Live day-close workers own the day — do not demote on stale clock.
@@ -345,13 +353,13 @@ class DayCloseManifestCoordinator:
       _save_manifest(self._manifest_path, _manifest_snap)
     for tar_norm in downgraded:
       self.log_fn(
-          "janitor: day_close stale complete downgraded tar=%s" % tar_norm,
-          flush=True,
+        f"janitor: day_close stale complete downgraded tar={tar_norm}",
+        flush=True,
       )
     for tar_norm in recovered:
       self.log_fn(
-          "janitor: day_close stale manifest recovery tar=%s" % tar_norm,
-          flush=True,
+        f"janitor: day_close stale manifest recovery tar={tar_norm}",
+        flush=True,
       )
     # Worker-slot stale rows must re-enter debt as queued (not limbo deferred).
     for tar_norm in worker_slot_recovered:
@@ -359,7 +367,7 @@ class DayCloseManifestCoordinator:
       if self.enqueue_day_close_fn is not None:
         try:
           enqueued = bool(
-              self.enqueue_day_close_fn(tar_norm, "stale_manifest_recovery")
+            self.enqueue_day_close_fn(tar_norm, "stale_manifest_recovery")
           )
         except Exception:
           enqueued = False
@@ -385,16 +393,16 @@ class DayCloseManifestCoordinator:
         _manifest_snap = copy.deepcopy(self._manifest)
       _save_manifest(self._manifest_path, _manifest_snap)
 
-  def entry_progress_snapshot(self, tar_path: str) -> Dict[str, Any]:
+  def entry_progress_snapshot(self, tar_path: str) -> dict[str, Any]:
     """
     Entry progress snapshot.
-    
+
     Args:
       tar_path (str): String for tar path.
-    
+
     Returns:
       Dict[str, Any]: Dict[str, Any] produced by this call.
-    
+
     Examples:
       >>> DayCloseManifestCoordinator().entry_progress_snapshot("x")
     """
@@ -408,73 +416,71 @@ class DayCloseManifestCoordinator:
       if last_at is not None:
         age_s = max(0.0, time.time() - float(last_at))
       return {
-          "status": str(entry.get("status") or ""),
-          "last_progress": str(entry.get("last_progress") or ""),
-          "last_progress_age_s": age_s,
+        "status": str(entry.get("status") or ""),
+        "last_progress": str(entry.get("last_progress") or ""),
+        "last_progress_age_s": age_s,
       }
 
-  def _active_tar_paths_unlocked(self) -> Set[str]:
+  def _active_tar_paths_unlocked(self) -> set[str]:
     """
     Caller must hold ``_lock`` when reading manifest entries.
-    
+
     Returns:
       Set[str]: Set[str] produced by this call.
-    
+
     Examples:
       >>> DayCloseManifestCoordinator()._active_tar_paths_unlocked()
     """
-    active: Set[str] = set()
+    active: set[str] = set()
     if self.get_inflight_tar_paths_fn is not None:
-      try:
+      with contextlib.suppress(Exception):
         active |= set(self.get_inflight_tar_paths_fn() or ())
-      except Exception:
-        pass
     for tar_norm, entry in self._manifest.get("entries", {}).items():
       if _is_day_close_pipeline_pending_entry(entry):
         active.add(os.path.normpath(tar_norm))
     return active
 
-  def _manifest_worker_slot_tar_paths_unlocked(self) -> Set[str]:
+  def _manifest_worker_slot_tar_paths_unlocked(self) -> set[str]:
     """
     Manifest entries occupying a day-close worker slot (excludes deferred.
-    
+
       handoff).
-    
+
     Returns:
       Set[str]: Set[str] produced by this call.
-    
+
     Examples:
       >>> DayCloseManifestCoordinator()._manifest_worker_slot_tar_paths_unlocked()
     """
-    active: Set[str] = set()
+    active: set[str] = set()
     for tar_norm, entry in self._manifest.get("entries", {}).items():
       if _is_worker_slot_pending_entry(entry):
         active.add(os.path.normpath(tar_norm))
     return active
 
-  def _deferred_waiting_on_ingest_tar_paths_unlocked(self) -> Set[str]:
+  def _deferred_waiting_on_ingest_tar_paths_unlocked(self) -> set[str]:
     """
     Internal helper to handle deferred waiting on ingest tar paths unlocked.
-    
+
     Returns:
       Set[str]: Set[str] produced by this call.
-    
+
     Examples:
       >>> _deferred_waiting_on_ingest_tar_paths_unlocked(0)  # doctest: +SKIP
     """
-    waiting: Set[str] = set()
+    waiting: set[str] = set()
     for tar_norm, entry in self._manifest.get("entries", {}).items():
       if _is_deferred_waiting_on_ingest_entry(entry):
         waiting.add(os.path.normpath(tar_norm))
     return waiting
 
-  def active_or_submitted_tar_paths(self) -> Set[str]:
+  def active_or_submitted_tar_paths(self) -> set[str]:
     """
     Pipeline-active tars for stall diagnostics (excludes deferred waiting).
-    
+
     Returns:
       Set[str]: Set[str] produced by this call.
-    
+
     Examples:
       >>> DayCloseManifestCoordinator().active_or_submitted_tar_paths()
     """
@@ -483,26 +489,26 @@ class DayCloseManifestCoordinator:
       active -= self._deferred_waiting_on_ingest_tar_paths_unlocked()
       return active
 
-  def manifest_worker_slot_tar_paths(self) -> Set[str]:
+  def manifest_worker_slot_tar_paths(self) -> set[str]:
     """
     Manifest worker slot tar paths.
-    
+
     Returns:
       Set[str]: Set[str] produced by this call.
-    
+
     Examples:
       >>> DayCloseManifestCoordinator().manifest_worker_slot_tar_paths()
     """
     with self._lock:
       return set(self._manifest_worker_slot_tar_paths_unlocked())
 
-  def deferred_waiting_on_ingest_tar_paths(self) -> Set[str]:
+  def deferred_waiting_on_ingest_tar_paths(self) -> set[str]:
     """
     Deferred waiting on ingest tar paths.
-    
+
     Returns:
       Set[str]: Set[str] produced by this call.
-    
+
     Examples:
       >>> DayCloseManifestCoordinator().deferred_waiting_on_ingest_tar_paths()
     """
@@ -513,23 +519,21 @@ class DayCloseManifestCoordinator:
     self,
     *,
     live_worker_tars: Any | None = None,
-  ) -> Set[str]:
+  ) -> set[str]:
     """
     Discover enqueue cap: live day-close workers + manifest worker slots only.
-    
+
     Args:
       live_worker_tars (Any | None): One of ``Any``, ``None``.
-    
+
     Returns:
       Set[str]: Set[str] produced by this call.
-    
+
     Examples:
       >>> DayCloseManifestCoordinator().active_discover_cap_tar_paths(None)
     """
     live_worker_tars = {
-        os.path.normpath(t)
-        for t in (live_worker_tars or ())
-        if t
+      os.path.normpath(t) for t in (live_worker_tars or ()) if t
     }
     with self._lock:
       active = set(live_worker_tars)
@@ -540,23 +544,21 @@ class DayCloseManifestCoordinator:
     self,
     *,
     live_worker_tars: Any | None = None,
-  ) -> Set[str]:
+  ) -> set[str]:
     """
     Legacy worker occupancy metric (includes debt heap; excludes deferred).
-    
+
     Args:
       live_worker_tars (Any | None): One of ``Any``, ``None``.
-    
+
     Returns:
       Set[str]: Set[str] produced by this call.
-    
+
     Examples:
       >>> DayCloseManifestCoordinator().active_worker_tar_paths(None)
     """
     live_worker_tars = {
-        os.path.normpath(t)
-        for t in (live_worker_tars or ())
-        if t
+      os.path.normpath(t) for t in (live_worker_tars or ()) if t
     }
     with self._lock:
       deferred = self._deferred_waiting_on_ingest_tar_paths_unlocked()
@@ -575,27 +577,27 @@ class DayCloseManifestCoordinator:
   def reconcile_manifest_with_debt_heap(
     self,
     *,
-    debt_tar_paths: Set[str],
-    live_worker_tars: Set[str],
+    debt_tar_paths: set[str],
+    live_worker_tars: set[str],
   ) -> int:
     """
     Re-enqueue manifest worker slots with no heap debt and no live worker.
-    
+
     Args:
       debt_tar_paths (Set[str]): Sequence for debt tar paths.
       live_worker_tars (Set[str]): Sequence for live worker tars.
-    
+
     Returns:
       int: int produced by this call.
-    
+
     Examples:
-      >>> DayCloseManifestCoordinator().reconcile_manifest_with_debt_heap([], [])
+      >>> DayCloseManifestCoordinator().reconcile_manifest_with_debt_heap(
+      ...   [], []
+      ... )
     """
-    debt_tar_paths = {
-        os.path.normpath(t) for t in (debt_tar_paths or ()) if t
-    }
+    debt_tar_paths = {os.path.normpath(t) for t in (debt_tar_paths or ()) if t}
     live_worker_tars = {
-        os.path.normpath(t) for t in (live_worker_tars or ()) if t
+      os.path.normpath(t) for t in (live_worker_tars or ()) if t
     }
     reenqueue: list[str] = []
     with self._lock:
@@ -617,14 +619,14 @@ class DayCloseManifestCoordinator:
       _save_manifest(self._manifest_path, _manifest_snap)
     for tar_norm in reenqueue:
       self.log_fn(
-          "janitor: day_close ghost manifest reconcile tar=%s" % tar_norm,
-          flush=True,
+        f"janitor: day_close ghost manifest reconcile tar={tar_norm}",
+        flush=True,
       )
       enqueued = False
       if self.enqueue_day_close_fn is not None:
         try:
           enqueued = bool(
-              self.enqueue_day_close_fn(tar_norm, "ghost_manifest_reconcile")
+            self.enqueue_day_close_fn(tar_norm, "ghost_manifest_reconcile")
           )
         except Exception:
           enqueued = False
@@ -654,13 +656,13 @@ class DayCloseManifestCoordinator:
   def clear_deferred_waiting_on_ingest(self, tar_path: str) -> bool:
     """
     Drop deferred/waiting_on_ingest so classify can mark ready_for_enqueue.
-    
+
     Args:
       tar_path (str): String for tar path.
-    
+
     Returns:
       bool: True or False for this check.
-    
+
     Examples:
       >>> DayCloseManifestCoordinator().clear_deferred_waiting_on_ingest("x")
     """
@@ -676,8 +678,8 @@ class DayCloseManifestCoordinator:
       _manifest_snap = copy.deepcopy(self._manifest)
     _save_manifest(self._manifest_path, _manifest_snap)
     self.log_fn(
-        "janitor: day_close deferred cleared tar=%s" % tar_norm,
-        flush=True,
+      f"janitor: day_close deferred cleared tar={tar_norm}",
+      flush=True,
     )
     return True
 
@@ -685,31 +687,29 @@ class DayCloseManifestCoordinator:
     self,
     *,
     live_worker_tars: Any | None = None,
-  ) -> Dict[str, int]:
+  ) -> dict[str, int]:
     """
     Counts for janitor discover logging (debt heap vs deferred vs worker slots).
-    
+
     Args:
       live_worker_tars (Any | None): One of ``Any``, ``None``.
-    
+
     Returns:
       Dict[str, int]: Dict[str, int] produced by this call.
-    
+
     Examples:
       >>> DayCloseManifestCoordinator().discover_inflight_breakdown(None)
     """
     live_worker_tars = {
-        os.path.normpath(t)
-        for t in (live_worker_tars or ())
-        if t
+      os.path.normpath(t) for t in (live_worker_tars or ()) if t
     }
     with self._lock:
       deferred = self._deferred_waiting_on_ingest_tar_paths_unlocked()
       manifest_worker = self._manifest_worker_slot_tar_paths_unlocked()
       manifest_pending = sum(
-          1
-          for entry in self._manifest.get("entries", {}).values()
-          if _is_day_close_pipeline_pending_entry(entry)
+        1
+        for entry in self._manifest.get("entries", {}).values()
+        if _is_day_close_pipeline_pending_entry(entry)
       )
       if self.get_inflight_tar_paths_fn is not None:
         try:
@@ -718,29 +718,33 @@ class DayCloseManifestCoordinator:
           debt_heap = set()
       else:
         debt_heap = set()
-    discover_cap = self.active_discover_cap_tar_paths(live_worker_tars=live_worker_tars)
-    worker_occupancy = self.active_worker_tar_paths(live_worker_tars=live_worker_tars)
+    discover_cap = self.active_discover_cap_tar_paths(
+      live_worker_tars=live_worker_tars
+    )
+    worker_occupancy = self.active_worker_tar_paths(
+      live_worker_tars=live_worker_tars
+    )
     return {
-        "active_workers_n": len(live_worker_tars),
-        "deferred_waiting_n": len(deferred),
-        "debt_heap_n": len(debt_heap),
-        "debt_heap_minus_deferred_n": len(debt_heap - deferred),
-        "manifest_pending_n": manifest_pending,
-        "manifest_worker_slot_n": len(manifest_worker),
-        "discover_cap_n": len(discover_cap),
-        "worker_occupancy_n": len(worker_occupancy),
+      "active_workers_n": len(live_worker_tars),
+      "deferred_waiting_n": len(deferred),
+      "debt_heap_n": len(debt_heap),
+      "debt_heap_minus_deferred_n": len(debt_heap - deferred),
+      "manifest_pending_n": manifest_pending,
+      "manifest_worker_slot_n": len(manifest_worker),
+      "discover_cap_n": len(discover_cap),
+      "worker_occupancy_n": len(worker_occupancy),
     }
 
-  def _remaining_raw_for_tar_drop(self, tar_norm: str) -> Dict[str, List[str]]:
+  def _remaining_raw_for_tar_drop(self, tar_norm: str) -> dict[str, list[str]]:
     """
     Internal helper to handle remaining raw for tar drop.
-    
+
     Args:
       tar_norm (str): String for tar norm.
-    
+
     Returns:
       Dict[str, List[str]]: Dict[str, List[str]] produced by this call.
-    
+
     Examples:
       >>> DayCloseManifestCoordinator()._remaining_raw_for_tar_drop("x")
     """
@@ -748,53 +752,55 @@ class DayCloseManifestCoordinator:
     if coord is not None and bool(getattr(coord, "enabled", False)):
       return coord.remaining_raw_paths_blocking_tar_drop(tar_norm)
     from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
-        remaining_raw_by_gz_blocking_tar_drop,
+      remaining_raw_by_gz_blocking_tar_drop,
     )
+
     return remaining_raw_by_gz_blocking_tar_drop(
-        tar_path=tar_norm,
-        archive_data_dir=self.archive_data_dir,
-        host_name_ext=self.host_name_ext,
-        tgz_archive_dir=self.tgz_archive_dir,
-        get_quarantine_skip_paths=lambda: set(),
-        log_fn=None,
+      tar_path=tar_norm,
+      archive_data_dir=self.archive_data_dir,
+      host_name_ext=self.host_name_ext,
+      tgz_archive_dir=self.tgz_archive_dir,
+      get_quarantine_skip_paths=lambda: set(),
+      log_fn=None,
     )
 
   def _day_close_filesystem_complete(self, tar_norm: str) -> bool:
     """
     Internal helper to handle day close filesystem complete.
-    
+
     Args:
       tar_norm (str): String for tar norm.
-    
+
     Returns:
       bool: True or False for this check.
-    
+
     Examples:
       >>> DayCloseManifestCoordinator()._day_close_filesystem_complete("x")
     """
     from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-        day_close_filesystem_complete,
+      day_close_filesystem_complete,
     )
+
     tar_norm = os.path.normpath(tar_norm or "")
     if not tar_norm:
       return False
     remaining = self._remaining_raw_for_tar_drop(tar_norm)
     return day_close_filesystem_complete(
-        tar_norm,
-        remaining_raw_by_gz=remaining,
-        use_blocking_remaining=False,
+      tar_norm,
+      remaining_raw_by_gz=remaining,
+      use_blocking_remaining=False,
     )
 
   def defer_for_ingest_handoff(self, tar_path: str) -> None:
     """
     Defer for ingest handoff.
-    
+
     Args:
       tar_path (str): String for tar path.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> DayCloseManifestCoordinator().defer_for_ingest_handoff("x")
     """
@@ -805,12 +811,14 @@ class DayCloseManifestCoordinator:
       entry = self._manifest.get("entries", {}).get(tar_norm)
       if not isinstance(entry, dict):
         self._manifest.setdefault("entries", {})[tar_norm] = {
-            "tar_path": tar_norm,
-            "status": "deferred",
-            "detail": "waiting_on_ingest",
-            "submitted_at": time.time(),
+          "tar_path": tar_norm,
+          "status": "deferred",
+          "detail": "waiting_on_ingest",
+          "submitted_at": time.time(),
         }
-        self._touch_manifest_locked("deferred_waiting_on_ingest", tar_norm=tar_norm)
+        self._touch_manifest_locked(
+          "deferred_waiting_on_ingest", tar_norm=tar_norm
+        )
         _manifest_snap = copy.deepcopy(self._manifest)
         created = True
       else:
@@ -827,14 +835,14 @@ class DayCloseManifestCoordinator:
   def notify_day_phase(self, tar_path: str, phase: str) -> None:
     """
     Public phase notify (e.g. sealed) for supervisor re-prewarm hooks.
-    
+
     Args:
       tar_path (str): String for tar path.
       phase (str): String for phase.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> DayCloseManifestCoordinator().notify_day_phase("x", "x")
     """
@@ -845,13 +853,13 @@ class DayCloseManifestCoordinator:
   def finalize_complete_if_filesystem(self, tar_path: str) -> bool:
     """
     Finalize complete if filesystem.
-    
+
     Args:
       tar_path (str): String for tar path.
-    
+
     Returns:
       bool: True or False for this check.
-    
+
     Examples:
       >>> DayCloseManifestCoordinator().finalize_complete_if_filesystem("x")
     """
@@ -860,9 +868,9 @@ class DayCloseManifestCoordinator:
       return False
     self._notify_phase(tar_norm, "tar_dropped")
     self._set_entry_status(
-        tar_norm,
-        "complete",
-        completed_at=time.time(),
+      tar_norm,
+      "complete",
+      completed_at=time.time(),
     )
     self._touch_manifest("complete", tar_norm=tar_norm)
     return True
@@ -870,13 +878,13 @@ class DayCloseManifestCoordinator:
   def is_complete(self, tar_path: str) -> bool:
     """
     Return True if complete.
-    
+
     Args:
       tar_path (str): String for tar path.
-    
+
     Returns:
       bool: True or False for this check.
-    
+
     Examples:
       >>> DayCloseManifestCoordinator().is_complete("x")  # doctest: +SKIP
     """
@@ -896,22 +904,22 @@ class DayCloseManifestCoordinator:
   ) -> bool:
     """
     Enqueue janitor ``DAY_CLOSE`` debt for ``tar_path`` (single-flight per tar).
-    
+
     Args:
       tar_path (str): String for tar path.
       reason (str): String for reason.
       disqualified_daily_tars (Any | None): One of ``Any``, ``None``.
-    
+
     Returns:
       bool: True or False for this check.
-    
+
     Examples:
       >>> DayCloseManifestCoordinator().enqueue_day_close("x", "x", None)
     """
     ok, _reason = self.enqueue_day_close_result(
-        tar_path,
-        reason=reason,
-        disqualified_daily_tars=disqualified_daily_tars,
+      tar_path,
+      reason=reason,
+      disqualified_daily_tars=disqualified_daily_tars,
     )
     return ok
 
@@ -924,22 +932,22 @@ class DayCloseManifestCoordinator:
   ) -> tuple[bool, str]:
     """
     Like ``enqueue_day_close`` but returns ``(ok, reject_reason)``.
-    
+
     Args:
       tar_path (str): String for tar path.
       reason (str): String for reason.
       disqualified_daily_tars (Any | None): One of ``Any``, ``None``.
-    
+
     Returns:
       tuple[bool, str]: tuple[bool, str] produced by this call.
-    
+
     Examples:
       >>> DayCloseManifestCoordinator().enqueue_day_close_result("x", "x", None)
     """
     return self._enqueue_day_close_impl(
-        tar_path,
-        reason=reason,
-        disqualified_daily_tars=disqualified_daily_tars,
+      tar_path,
+      reason=reason,
+      disqualified_daily_tars=disqualified_daily_tars,
     )
 
   def _enqueue_day_close_impl(
@@ -951,15 +959,15 @@ class DayCloseManifestCoordinator:
   ) -> tuple[bool, str]:
     """
     Internal helper to handle enqueue day close impl.
-    
+
     Args:
       tar_path (str): String for tar path.
       reason (str): String for reason.
       disqualified_daily_tars (Any | None): One of ``Any``, ``None``.
-    
+
     Returns:
       tuple[bool, str]: tuple[bool, str] produced by this call.
-    
+
     Examples:
       >>> DayCloseManifestCoordinator()._enqueue_day_close_impl("x", "x", None)
     """
@@ -982,19 +990,18 @@ class DayCloseManifestCoordinator:
       if not eligible:
         if skip_reason:
           self.log_fn(
-              "janitor: day_close enqueue skip tar=%s reason=%s"
-              % (tar_norm, skip_reason),
-              flush=True,
+            f"janitor: day_close enqueue skip tar={tar_norm} reason={skip_reason}",
+            flush=True,
           )
         return False, skip_reason or "submit_ineligible"
-    inflight: Set[str] = set()
+    inflight: set[str] = set()
     if self.get_inflight_tar_paths_fn is not None:
       try:
         inflight = set(self.get_inflight_tar_paths_fn() or ())
       except Exception:
         inflight = set()
     promoted = False
-    _manifest_snap: Dict[str, Any] | None = None
+    _manifest_snap: dict[str, Any] | None = None
     with self._lock:
       entry = self._manifest.get("entries", {}).get(tar_norm)
       if _is_day_close_pipeline_pending_entry(entry):
@@ -1002,10 +1009,9 @@ class DayCloseManifestCoordinator:
         # heap; otherwise fall through to debt push + queued. Waiting-on-ingest
         # deferred stays deferred. Other pending statuses are idempotent only
         # when already on the debt heap (ghost queued without debt must re-push).
-        if (
-            str(entry.get("status") or "") == "deferred"
-            and not _is_deferred_waiting_on_ingest_entry(entry)
-        ):
+        if str(
+          entry.get("status") or ""
+        ) == "deferred" and not _is_deferred_waiting_on_ingest_entry(entry):
           if tar_norm in inflight:
             entry["status"] = "queued"
             entry["reason"] = reason or "promoted_from_deferred"
@@ -1027,9 +1033,10 @@ class DayCloseManifestCoordinator:
       assert _manifest_snap is not None
       _save_manifest(self._manifest_path, _manifest_snap)
       self.log_fn(
-          "janitor: day_close enqueue tar=%s reason=%s"
-          % (tar_norm, reason or "promoted_from_deferred"),
-          flush=True,
+        "janitor: day_close enqueue tar={} reason={}".format(
+          tar_norm, reason or "promoted_from_deferred"
+        ),
+        flush=True,
       )
       return True, reason or "promoted_from_deferred"
     enqueued = False
@@ -1042,31 +1049,31 @@ class DayCloseManifestCoordinator:
       return False, "already_on_debt_heap"
     with self._lock:
       self._manifest.setdefault("entries", {})[tar_norm] = {
-          "tar_path": tar_norm,
-          "status": "queued",
-          "reason": reason,
-          "submitted_at": time.time(),
+        "tar_path": tar_norm,
+        "status": "queued",
+        "reason": reason,
+        "submitted_at": time.time(),
       }
       self._touch_manifest_locked("queued", tar_norm=tar_norm)
       _manifest_snap = copy.deepcopy(self._manifest)
     _save_manifest(self._manifest_path, _manifest_snap)
     self.log_fn(
-        "janitor: day_close enqueue tar=%s reason=%s" % (tar_norm, reason),
-        flush=True,
+      f"janitor: day_close enqueue tar={tar_norm} reason={reason}",
+      flush=True,
     )
     return True, reason
 
   def _touch_manifest_locked(self, stage: str, *, tar_norm: str = "") -> None:
     """
     Internal helper to handle touch manifest locked.
-    
+
     Args:
       stage (str): String for stage.
       tar_norm (str): String for tar norm.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> DayCloseManifestCoordinator()._touch_manifest_locked("x", "x")
     """
@@ -1081,14 +1088,14 @@ class DayCloseManifestCoordinator:
   def _touch_manifest(self, stage: str, *, tar_norm: str = "") -> None:
     """
     Internal helper to handle touch manifest.
-    
+
     Args:
       stage (str): String for stage.
       tar_norm (str): String for tar norm.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> DayCloseManifestCoordinator()._touch_manifest("x", "x")
     """
@@ -1100,32 +1107,34 @@ class DayCloseManifestCoordinator:
   def touch_progress(self, stage: str, *, tar_path: str = "") -> None:
     """
     Heartbeat last_progress during long seal/verify/delete (stale recovery).
-    
+
     Args:
       stage (str): String for stage.
       tar_path (str): String for tar path.
-    
+
     Returns:
       None
-    
+
     Examples:
-      >>> DayCloseManifestCoordinator().touch_progress("x", "x")  # doctest: +SKIP
+      >>> DayCloseManifestCoordinator().touch_progress(
+      ...   "x", "x"
+      ... )  # doctest: +SKIP
     """
     self._touch_manifest(stage, tar_norm=os.path.normpath(tar_path or ""))
 
   def _set_entry_status(self, tar_norm: str, status: str, **extra: Any) -> None:
     """
     Internal helper to set the entry status.
-    
+
     Args:
       tar_norm (str): String for tar norm.
       status (str): String for status.
       **extra (Any): Extra keyword arguments (``extra``); keys are ``str`` and
       value types match the wrapped protocol for this helper.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> DayCloseManifestCoordinator()._set_entry_status("x", "x")
     """
@@ -1139,23 +1148,23 @@ class DayCloseManifestCoordinator:
       _manifest_snap = copy.deepcopy(self._manifest)
 
     _save_manifest(self._manifest_path, _manifest_snap)
+
   def _notify_phase(self, tar_norm: str, phase: str) -> None:
     """
     Internal helper to handle notify phase.
-    
+
     Args:
       tar_norm (str): String for tar norm.
       phase (str): String for phase.
-    
+
     Returns:
       None
-    
+
     Examples:
-      >>> DayCloseManifestCoordinator()._notify_phase("x", "x")  # doctest: +SKIP
+      >>> DayCloseManifestCoordinator()._notify_phase(
+      ...   "x", "x"
+      ... )  # doctest: +SKIP
     """
     if self.on_day_phase is not None:
-      try:
+      with contextlib.suppress(Exception):
         self.on_day_phase(tar_norm, phase)
-      except Exception:
-        pass
-

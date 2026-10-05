@@ -1,28 +1,32 @@
 """Drift guard for sync_timedb manifest phase and required-field contracts."""
+
 from __future__ import annotations
 
 from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
-    CHECKPOINT_ENTRY_REQUIRED_KEYS,
-    MANIFEST_REQUIRED_TOP_LEVEL,
-    PHASE_DELETING,
-    PHASE_DONE,
-    PHASE_VERIFICATION_COMPLETE,
-    PHASE_VERIFYING,
-    RAW_REMOVAL_PHASES,
-    UNPARSABLE_ENTRY_REQUIRED_KEYS,
-    manifest_phase_is_valid,
-    validate_manifest_payload,
+  CHECKPOINT_ENTRY_REQUIRED_KEYS,
+  MANIFEST_REQUIRED_TOP_LEVEL,
+  PHASE_DELETING,
+  PHASE_DONE,
+  PHASE_VERIFICATION_COMPLETE,
+  PHASE_VERIFYING,
+  RAW_REMOVAL_PHASES,
+  UNPARSABLE_ENTRY_REQUIRED_KEYS,
+  manifest_phase_is_valid,
+  validate_manifest_payload,
 )
 
 
 def test_raw_removal_phases_stable():
-  assert RAW_REMOVAL_PHASES == frozenset(
+  assert (
+    frozenset(
       {
-          PHASE_VERIFYING,
-          PHASE_VERIFICATION_COMPLETE,
-          PHASE_DELETING,
-          PHASE_DONE,
+        PHASE_VERIFYING,
+        PHASE_VERIFICATION_COMPLETE,
+        PHASE_DELETING,
+        PHASE_DONE,
       },
+    )
+    == RAW_REMOVAL_PHASES
   )
 
 
@@ -33,12 +37,12 @@ def test_manifest_required_fields_registry_covers_coordinators():
 
 def test_validate_manifest_payload_rejects_invalid_phase():
   assert not validate_manifest_payload(
-      "day_raw_removal",
-      {"phase": "not_a_phase"},
+    "day_raw_removal",
+    {"phase": "not_a_phase"},
   )
   assert validate_manifest_payload(
-      "day_raw_removal",
-      {"phase": PHASE_VERIFYING, "tar_path": "/daily/2020-01-01.tar"},
+    "day_raw_removal",
+    {"phase": PHASE_VERIFYING, "tar_path": "/daily/2020-01-01.tar"},
   )
 
 

@@ -9,6 +9,7 @@ def _remove_listen_lock_after_test():
   yield
   try:
     import os
+
     import hpcperfstats.listend as listend
 
     base_dir = os.path.dirname(os.path.realpath(listend.__file__))
@@ -41,7 +42,9 @@ class _FakeChannel:
 def test_on_message_acks_on_success(tmp_path, monkeypatch):
   import hpcperfstats.listend as listend
 
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
   channel = _FakeChannel()
   method_frame = _FakeMethodFrame(delivery_tag=123)
 
@@ -56,12 +59,14 @@ def test_on_message_acks_on_success(tmp_path, monkeypatch):
 def test_on_message_enqueues_recent_host_redis_update(tmp_path, monkeypatch):
   import hpcperfstats.listend as listend
 
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
   captured = []
   monkeypatch.setattr(
-      listend,
-      "_enqueue_recent_host_update",
-      lambda host: captured.append(host),
+    listend,
+    "_enqueue_recent_host_update",
+    lambda host: captured.append(host),
   )
   channel = _FakeChannel()
   method_frame = _FakeMethodFrame(delivery_tag=222)
@@ -74,32 +79,34 @@ def test_on_message_enqueues_recent_host_redis_update(tmp_path, monkeypatch):
 
 
 def test_on_message_dollar_enqueues_monitor_identity_without_build(
-    tmp_path, monkeypatch
+  tmp_path, monkeypatch
 ):
   """``$`` rotation SETs identity even when ``$build`` is absent (old RPM)."""
   import hpcperfstats.listend as listend
 
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
   monkeypatch.setattr(listend.time, "time", lambda: 1710000000.0)
   recent = []
   identities = []
   monkeypatch.setattr(
-      listend,
-      "_enqueue_recent_host_update",
-      lambda host: recent.append(host),
+    listend,
+    "_enqueue_recent_host_update",
+    lambda host: recent.append(host),
   )
   monkeypatch.setattr(
-      listend,
-      "_enqueue_monitor_identity_update",
-      lambda identity: identities.append(identity),
+    listend,
+    "_enqueue_monitor_identity_update",
+    lambda identity: identities.append(identity),
   )
   channel = _FakeChannel()
   body = (
-      b"$\n"
-      b"1 node1.example.com\n"
-      b"$hpcperfstats 3.0\n"
-      b"$uname Linux x86_64\n"
-      b"!host_cpu user,E\n"
+    b"$\n"
+    b"1 node1.example.com\n"
+    b"$hpcperfstats 3.0\n"
+    b"$uname Linux x86_64\n"
+    b"!host_cpu user,E\n"
   )
   listend.on_message(channel, _FakeMethodFrame(delivery_tag=333), None, body)
 
@@ -126,14 +133,14 @@ def test_recent_host_worker_sets_monitor_identity_dict(monkeypatch):
   monkeypatch.setattr(listend, "_get_recent_host_redis_client", lambda: fake)
   # Drain one identity item then stop.
   items = [
-      {
-          "fqdn": "node1.example.com",
-          "package_version": "3.0",
-          "uname": "Linux",
-          "capability_slug": "arch_x86_64",
-          "schema_types": ["host_cpu"],
-          "updated_at": 1710000000,
-      }
+    {
+      "fqdn": "node1.example.com",
+      "package_version": "3.0",
+      "uname": "Linux",
+      "capability_slug": "arch_x86_64",
+      "schema_types": ["host_cpu"],
+      "updated_at": 1710000000,
+    }
   ]
 
   def _get(timeout=1.0):
@@ -149,13 +156,18 @@ def test_recent_host_worker_sets_monitor_identity_dict(monkeypatch):
   assert fake.writes
   assert fake.writes[0][0] == "monitor_identity:node1.example.com"
   assert fake.writes[0][1] == listend.RECENT_HOST_TTL_SECONDS
-  assert b"arch_x86_64" in fake.writes[0][2].encode() or "arch_x86_64" in fake.writes[0][2]
+  assert (
+    b"arch_x86_64" in fake.writes[0][2].encode()
+    or "arch_x86_64" in fake.writes[0][2]
+  )
 
 
 def test_on_message_nacks_and_requeues_on_write_failure(tmp_path, monkeypatch):
   import hpcperfstats.listend as listend
 
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
 
   real_open = builtins.open
 
@@ -176,10 +188,14 @@ def test_on_message_nacks_and_requeues_on_write_failure(tmp_path, monkeypatch):
   assert channel.nacked == [(7, True)]
 
 
-def test_on_message_nacks_and_requeues_on_malformed_message(tmp_path, monkeypatch):
+def test_on_message_nacks_and_requeues_on_malformed_message(
+  tmp_path, monkeypatch
+):
   import hpcperfstats.listend as listend
 
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
   channel = _FakeChannel()
   method_frame = _FakeMethodFrame(delivery_tag=9)
 
@@ -190,11 +206,15 @@ def test_on_message_nacks_and_requeues_on_malformed_message(tmp_path, monkeypatc
   assert channel.nacked == [(9, True)]
 
 
-def test_on_message_acks_monitor_sample_with_leading_newline(tmp_path, monkeypatch):
+def test_on_message_acks_monitor_sample_with_leading_newline(
+  tmp_path, monkeypatch
+):
   """Live AMQP samples start with newline then ``timestamp jobid host``."""
   import hpcperfstats.listend as listend
 
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
   channel = _FakeChannel()
   method_frame = _FakeMethodFrame(delivery_tag=11)
   body = b"\n1710000001.0 job42 c001.example.edu extra\ncpu 1 2 3\n"
@@ -222,16 +242,16 @@ def test_set_recent_host_timestamp_writes_expected_redis_key(monkeypatch):
   listend._set_recent_host_timestamp(fake_redis, "node1.example.com")
 
   assert fake_redis.writes == [
-      (
-          "recent_host:node1.example.com",
-          listend.RECENT_HOST_TTL_SECONDS,
-          "1710000000",
-      )
+    (
+      "recent_host:node1.example.com",
+      listend.RECENT_HOST_TTL_SECONDS,
+      "1710000000",
+    )
   ]
 
 
 def test_on_message_archives_previous_current_on_dollar_switch(
-    tmp_path, monkeypatch
+  tmp_path, monkeypatch
 ):
   import hpcperfstats.listend as listend
 
@@ -242,7 +262,9 @@ def test_on_message_archives_previous_current_on_dollar_switch(
   def _fake_time():
     return round(next(times), 1)
 
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
   monkeypatch.setattr(listend.time, "time", _fake_time)
 
   # Reset globals that could be affected by previous tests.
@@ -282,7 +304,9 @@ def test_on_message_archives_previous_current_on_dollar_switch(
   assert msg2 in epoch_contents
 
 
-def test_on_message_counts_current_unlink_on_dollar_switch(tmp_path, monkeypatch):
+def test_on_message_counts_current_unlink_on_dollar_switch(
+  tmp_path, monkeypatch
+):
   import hpcperfstats.listend as listend
 
   times = itertools.count(1000.1, 0.1)
@@ -290,7 +314,9 @@ def test_on_message_counts_current_unlink_on_dollar_switch(tmp_path, monkeypatch
   def _fake_time():
     return round(next(times), 1)
 
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
   monkeypatch.setattr(listend.time, "time", _fake_time)
 
   with listend._timestamps_lock:
@@ -316,11 +342,15 @@ def test_on_message_counts_current_unlink_on_dollar_switch(tmp_path, monkeypatch
   assert listend._unlink_timestamps[0] > 1000.0
 
 
-def test_on_message_hardlinks_missing_epoch_before_unlink(tmp_path, monkeypatch):
+def test_on_message_hardlinks_missing_epoch_before_unlink(
+  tmp_path, monkeypatch
+):
   """If `current` exists without an older hardlinked epoch file, listend should create one first."""
   import hpcperfstats.listend as listend
 
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
 
   host = "myhost"
   host_dir = tmp_path / host
@@ -330,9 +360,9 @@ def test_on_message_hardlinks_missing_epoch_before_unlink(tmp_path, monkeypatch)
   # but do NOT hardlink it to any epoch-named file yet.
   first_ts_sec = 1773864970
   old_current = (
-      "header-before-first-ts\n"
-      "1773864970.470903 2946877 c571-001.stampede3.tacc.utexas.edu\n"
-      "rest-of-segment\n"
+    "header-before-first-ts\n"
+    "1773864970.470903 2946877 c571-001.stampede3.tacc.utexas.edu\n"
+    "rest-of-segment\n"
   )
   (host_dir / "current").write_text(old_current)
   assert not (host_dir / str(first_ts_sec)).exists()
@@ -374,7 +404,7 @@ def test_on_message_hardlinks_missing_epoch_before_unlink(tmp_path, monkeypatch)
 
 
 def test_on_message_hardlinks_when_first_ts_epoch_is_other_inode(
-    tmp_path, monkeypatch
+  tmp_path, monkeypatch
 ):
   """$ rotate must ack when first_ts name is a closed different inode.
 
@@ -385,7 +415,9 @@ def test_on_message_hardlinks_when_first_ts_epoch_is_other_inode(
 
   import hpcperfstats.listend as listend
 
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
 
   host = "c104-028.horizon.tacc.utexas.edu"
   host_dir = tmp_path / host
@@ -396,13 +428,13 @@ def test_on_message_hardlinks_when_first_ts_epoch_is_other_inode(
   (host_dir / str(first_ts_sec)).write_bytes(closed_bytes)
 
   old_current = (
-      "header-before-first-ts\n"
-      "1786487860.470903 2946877 %s\n"
-      "live-segment-body\n"
-  ) % host
+    "header-before-first-ts\n"
+    f"1786487860.470903 2946877 {host}\n"
+    "live-segment-body\n"
+  )
   (host_dir / "current").write_text(old_current)
   assert not os.path.samefile(
-      host_dir / "current", host_dir / str(first_ts_sec)
+    host_dir / "current", host_dir / str(first_ts_sec)
   )
 
   cutoff_epoch_ts = first_ts_sec + 100
@@ -428,7 +460,7 @@ def test_on_message_hardlinks_when_first_ts_epoch_is_other_inode(
 
   old_current_bytes = old_current.encode()
   digit_epochs = [
-      p for p in host_dir.iterdir() if p.is_file() and p.name.isdigit()
+    p for p in host_dir.iterdir() if p.is_file() and p.name.isdigit()
   ]
   preserved = [p for p in digit_epochs if p.read_bytes() == old_current_bytes]
   assert preserved, "old current bytes must remain under a digit epoch name"
@@ -437,15 +469,13 @@ def test_on_message_hardlinks_when_first_ts_epoch_is_other_inode(
   current_path = host_dir / "current"
   assert current_path.read_bytes() == msg
   current_partners = [
-      p
-      for p in digit_epochs
-      if os.path.samefile(current_path, p)
+    p for p in digit_epochs if os.path.samefile(current_path, p)
   ]
   assert current_partners, "new current must have a digit samefile epoch"
 
 
 def test_on_message_same_second_double_dollar_preserves_closed_epoch(
-    tmp_path, monkeypatch
+  tmp_path, monkeypatch
 ):
   """Two $ rotates in the same unix second must not delete the first inode."""
   import os
@@ -453,7 +483,9 @@ def test_on_message_same_second_double_dollar_preserves_closed_epoch(
   import hpcperfstats.listend as listend
 
   frozen = 1786488768.4
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
   monkeypatch.setattr(listend.time, "time", lambda: frozen)
 
   with listend._timestamps_lock:
@@ -475,11 +507,11 @@ def test_on_message_same_second_double_dollar_preserves_closed_epoch(
   host_dir = tmp_path / host
   current_contents = (host_dir / "current").read_bytes()
   epoch_files = sorted(
-      p for p in host_dir.iterdir() if p.is_file() and p.name.isdigit()
+    p for p in host_dir.iterdir() if p.is_file() and p.name.isdigit()
   )
   assert len(epoch_files) >= 2
   assert all(int(p.name) >= 1_000_000_000 for p in epoch_files), [
-      p.name for p in epoch_files
+    p.name for p in epoch_files
   ]
   first_epoch = host_dir / "1786488768"
   assert first_epoch.is_file()
@@ -490,9 +522,10 @@ def test_on_message_same_second_double_dollar_preserves_closed_epoch(
   assert current_contents == msg2
   assert msg1 in epoch_contents
   assert msg2 in epoch_contents
-  assert os.path.samefile(host_dir / "current", [
-      p for p in epoch_files if p.read_bytes() == msg2
-  ][0])
+  assert os.path.samefile(
+    host_dir / "current",
+    next(p for p in epoch_files if p.read_bytes() == msg2),
+  )
   assert not os.path.samefile(first_epoch, host_dir / "current")
 
 
@@ -502,7 +535,9 @@ def test_dollar_rotate_digit_epoch_from_first_timestamp(tmp_path, monkeypatch):
 
   import hpcperfstats.listend as listend
 
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
   wall_clock = 1900000000
   monkeypatch.setattr(listend.time, "time", lambda: float(wall_clock))
 
@@ -513,17 +548,11 @@ def test_dollar_rotate_digit_epoch_from_first_timestamp(tmp_path, monkeypatch):
 
   host = "c104-028.horizon.tacc.utexas.edu"
   sample_ts = 1786487860
-  msg = (
-      "$\n"
-      "1 %s\n"
-      "!cpu a,E\n"
-      "%s.470903 2946877 %s\n"
-      "cpu 0 1 2\n"
-  ) % (host, sample_ts, host)
+  msg = f"$\n1 {host}\n!cpu a,E\n{sample_ts}.470903 2946877 {host}\ncpu 0 1 2\n"
 
   channel = _FakeChannel()
   listend.on_message(
-      channel, _FakeMethodFrame(delivery_tag=21), None, msg.encode("ascii")
+    channel, _FakeMethodFrame(delivery_tag=21), None, msg.encode("ascii")
   )
 
   assert channel.acked == [21]
@@ -543,7 +572,9 @@ def test_dollar_rotate_digit_epoch_collision_plus_one(tmp_path, monkeypatch):
 
   import hpcperfstats.listend as listend
 
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
   wall_clock = 1900000000
   monkeypatch.setattr(listend.time, "time", lambda: float(wall_clock))
 
@@ -558,17 +589,11 @@ def test_dollar_rotate_digit_epoch_collision_plus_one(tmp_path, monkeypatch):
   host_dir.mkdir()
   (host_dir / str(sample_ts)).write_text("occupied-other-inode\n")
 
-  msg = (
-      "$\n"
-      "1 %s\n"
-      "!cpu a,E\n"
-      "%s.470903 2946877 %s\n"
-      "cpu 0 1 2\n"
-  ) % (host, sample_ts, host)
+  msg = f"$\n1 {host}\n!cpu a,E\n{sample_ts}.470903 2946877 {host}\ncpu 0 1 2\n"
 
   channel = _FakeChannel()
   listend.on_message(
-      channel, _FakeMethodFrame(delivery_tag=22), None, msg.encode("ascii")
+    channel, _FakeMethodFrame(delivery_tag=22), None, msg.encode("ascii")
   )
 
   assert channel.acked == [22]
@@ -590,17 +615,23 @@ def test_get_first_timestamp_seconds_skips_dollar_host_line(tmp_path):
 
   dollar_only = tmp_path / "dollar_only"
   dollar_only.write_text("$\n1 c104-028.horizon.tacc.utexas.edu\n!cpu a,E\n")
-  assert listend._get_first_timestamp_seconds(str(dollar_only), use_lock=False) is None
+  assert (
+    listend._get_first_timestamp_seconds(str(dollar_only), use_lock=False)
+    is None
+  )
 
   mixed = tmp_path / "mixed"
   mixed.write_text(
-      "$\n"
-      "1 c104-028.horizon.tacc.utexas.edu\n"
-      "!cpu a,E\n"
-      "1786487860.470903 2946877 c104-028.horizon.tacc.utexas.edu\n"
-      "cpu 0 1 2\n"
+    "$\n"
+    "1 c104-028.horizon.tacc.utexas.edu\n"
+    "!cpu a,E\n"
+    "1786487860.470903 2946877 c104-028.horizon.tacc.utexas.edu\n"
+    "cpu 0 1 2\n"
   )
-  assert listend._get_first_timestamp_seconds(str(mixed), use_lock=False) == 1786487860
+  assert (
+    listend._get_first_timestamp_seconds(str(mixed), use_lock=False)
+    == 1786487860
+  )
 
 
 class _FakeConn:
@@ -636,23 +667,25 @@ def test_is_amqp_channel_or_connection_dead_detects_channel_closed_message():
   import hpcperfstats.listend as listend
 
   assert listend._is_amqp_channel_or_connection_dead(
-      Exception("Channel is closed."), None
+    Exception("Channel is closed."), None
   )
   assert listend._is_amqp_channel_or_connection_dead(
-      Exception("Connection is closed"), None
+    Exception("Connection is closed"), None
   )
   assert not listend._is_amqp_channel_or_connection_dead(
-      OSError("disk full"), None
+    OSError("disk full"), None
   )
 
 
 def test_on_message_channel_closed_on_ack_requests_reconnect_once(
-    tmp_path, monkeypatch
+  tmp_path, monkeypatch
 ):
   """Dead channel on ack must stop consume and request full reconnect once."""
   import hpcperfstats.listend as listend
 
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
   listend._amqp_reconnect_requested = False
   logs = []
   monkeypatch.setattr(listend, "log_print", lambda msg: logs.append(msg))
@@ -666,7 +699,9 @@ def test_on_message_channel_closed_on_ack_requests_reconnect_once(
   assert channel.connection.close_calls == 1
   assert channel.acked == []
   assert channel.nacked == []
-  reconnect_logs = [m for m in logs if "AMQP reconnect" in m or "Channel is closed" in m]
+  reconnect_logs = [
+    m for m in logs if "AMQP reconnect" in m or "Channel is closed" in m
+  ]
   assert len(reconnect_logs) == 1
   assert "Error processing message; leaving on server" not in "\n".join(logs)
 
@@ -680,12 +715,14 @@ def test_on_message_channel_closed_on_ack_requests_reconnect_once(
 
 
 def test_on_message_write_failure_nacks_without_amqp_reconnect(
-    tmp_path, monkeypatch
+  tmp_path, monkeypatch
 ):
   """Archive I/O failure keeps nack+requeue; must not set reconnect flag."""
   import hpcperfstats.listend as listend
 
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
   listend._amqp_reconnect_requested = False
 
   real_open = builtins.open
@@ -698,10 +735,10 @@ def test_on_message_write_failure_nacks_without_amqp_reconnect(
   monkeypatch.setattr(builtins, "open", _failing_open)
   channel = _FakeChannel()
   channel.stop_consuming = lambda: (_ for _ in ()).throw(
-      AssertionError("stop_consuming must not run on archive IOError")
+    AssertionError("stop_consuming must not run on archive IOError")
   )
   listend.on_message(
-      channel, _FakeMethodFrame(delivery_tag=8), None, b"foo bar myhost baz\n"
+    channel, _FakeMethodFrame(delivery_tag=8), None, b"foo bar myhost baz\n"
   )
   assert listend._amqp_reconnect_requested is False
   assert channel.nacked == [(8, True)]
@@ -718,16 +755,13 @@ def test_db_backpressure_pause_does_not_set_amqp_reconnect(monkeypatch):
     def note_pause_enter(self):
       return None
 
-  monkeypatch.setattr(
-      listend, "_live_db_ingest_pool_active", lambda: _Pool()
-  )
+  monkeypatch.setattr(listend, "_live_db_ingest_pool_active", lambda: _Pool())
   channel = _FakeChannel()
   channel.stop_consuming = lambda: setattr(channel, "stopped", True)
   listend._request_db_backpressure_pause(channel, 1)
   assert listend._db_backpressure_pause is True
   assert listend._amqp_reconnect_requested is False
   listend._db_backpressure_pause = False
-
 
 
 def test_listend_amqp_prefetch_defaults():
@@ -737,8 +771,8 @@ def test_listend_amqp_prefetch_defaults():
   assert cfg.INI_OPTION_DEFAULTS["listend_amqp_prefetch"] == "32"
   assert "listend_archive_worker_threads" not in cfg.INI_OPTION_DEFAULTS
   assert (
-      cfg.get_listend_archive_worker_threads()
-      == 2 * cfg.get_listend_amqp_consumer_count()
+    cfg.get_listend_archive_worker_threads()
+    == 2 * cfg.get_listend_amqp_consumer_count()
   )
 
 
@@ -776,6 +810,7 @@ def test_on_message_does_not_decode_or_str_split_whole_body():
 def test_drop_mode_uses_ini_prefetch_not_only_pause(monkeypatch):
   """Documented contract: drop mode applies get_listend_amqp_prefetch()."""
   import inspect
+
   import hpcperfstats.listend as listend
 
   src = inspect.getsource(listend._amqp_consumer_main)
@@ -791,44 +826,46 @@ def test_format_amqp_consume_error_uses_type_when_str_empty():
 
   assert listend._format_amqp_consume_error(Exception()) == "Exception"
   assert (
-      listend._format_amqp_consume_error(Exception("Channel is closed."))
-      == "Channel is closed."
+    listend._format_amqp_consume_error(Exception("Channel is closed."))
+    == "Channel is closed."
   )
 
 
 def test_is_amqp_dead_detects_add_callback_threadsafe_on_closed_connection():
   """Production: archive-3 add_callback_threadsafe on a closing BlockingConnection."""
-  import hpcperfstats.listend as listend
   from pika.exceptions import ConnectionWrongStateError
 
+  import hpcperfstats.listend as listend
+
   msg = (
-      "BlockingConnection.add_callback_threadsafe() called on closed "
-      "or closing connection."
+    "BlockingConnection.add_callback_threadsafe() called on closed "
+    "or closing connection."
   )
   assert listend._is_amqp_channel_or_connection_dead(Exception(msg))
   assert listend._is_amqp_channel_or_connection_dead(
-      ConnectionWrongStateError(msg)
+    ConnectionWrongStateError(msg)
   )
   assert listend._is_amqp_channel_or_connection_dead(
-      Exception("PRECONDITION_FAILED - unknown delivery tag 2155")
+    Exception("PRECONDITION_FAILED - unknown delivery tag 2155")
   )
 
 
 def test_threadsafe_ack_on_closed_connection_does_not_close_from_worker(
-    monkeypatch,
+  monkeypatch,
 ):
   """Archive threads must not close BlockingConnection (not thread-safe)."""
   import threading
 
-  import hpcperfstats.listend as listend
   from pika.exceptions import ConnectionWrongStateError
+
+  import hpcperfstats.listend as listend
 
   listend._amqp_reconnect_requested = False
   close_calls = []
   monkeypatch.setattr(
-      listend,
-      "_close_amqp_channel_and_connection_gracefully",
-      lambda *a, **k: close_calls.append((a, k)),
+    listend,
+    "_close_amqp_channel_and_connection_gracefully",
+    lambda *a, **k: close_calls.append((a, k)),
   )
   monkeypatch.setattr(listend, "log_print", lambda _m: None)
 
@@ -837,8 +874,8 @@ def test_threadsafe_ack_on_closed_connection_does_not_close_from_worker(
 
     def add_callback_threadsafe(self, _cb):
       raise ConnectionWrongStateError(
-          "BlockingConnection.add_callback_threadsafe() called on closed "
-          "or closing connection."
+        "BlockingConnection.add_callback_threadsafe() called on closed "
+        "or closing connection."
       )
 
   class _Ch:
@@ -914,7 +951,7 @@ def test_threadsafe_ack_skips_stale_delivery_tag_after_reconnect(monkeypatch):
 
 
 def test_request_amqp_reconnect_from_worker_thread_does_not_close(
-    monkeypatch,
+  monkeypatch,
 ):
   """Non-MainThread reconnect request is flag-only; MainThread still closes."""
   import threading
@@ -923,9 +960,9 @@ def test_request_amqp_reconnect_from_worker_thread_does_not_close(
 
   close_calls = []
   monkeypatch.setattr(
-      listend,
-      "_close_amqp_channel_and_connection_gracefully",
-      lambda *a, **k: close_calls.append(True),
+    listend,
+    "_close_amqp_channel_and_connection_gracefully",
+    lambda *a, **k: close_calls.append(True),
   )
   monkeypatch.setattr(listend, "log_print", lambda _m: None)
 
@@ -934,9 +971,9 @@ def test_request_amqp_reconnect_from_worker_thread_does_not_close(
 
   def _worker():
     listend._request_amqp_full_reconnect(
-        channel,
-        "BlockingConnection.add_callback_threadsafe() called on closed "
-        "or closing connection.",
+      channel,
+      "BlockingConnection.add_callback_threadsafe() called on closed "
+      "or closing connection.",
     )
 
   t = threading.Thread(target=_worker, name="listend-archive-3")
@@ -960,9 +997,9 @@ def test_worker_reconnect_schedules_teardown_callback(monkeypatch):
   close_calls = []
   pending = []
   monkeypatch.setattr(
-      listend,
-      "_close_amqp_channel_and_connection_gracefully",
-      lambda *a, **k: close_calls.append(True),
+    listend,
+    "_close_amqp_channel_and_connection_gracefully",
+    lambda *a, **k: close_calls.append(True),
   )
   monkeypatch.setattr(listend, "log_print", lambda _m: None)
 
@@ -997,7 +1034,9 @@ def test_archive_submit_skips_full_decode(tmp_path, monkeypatch):
   """Sync archive-ack path must submit empty message plus archive range."""
   import hpcperfstats.listend as listend
 
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
   submitted = []
 
   def capture_submit(host, message, **kwargs):
@@ -1005,8 +1044,8 @@ def test_archive_submit_skips_full_decode(tmp_path, monkeypatch):
     return True
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
-      capture_submit,
+    "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
+    capture_submit,
   )
   channel = _FakeChannel()
   body = b"1710000001.0 1 myhost x\n"

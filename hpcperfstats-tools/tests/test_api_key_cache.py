@@ -10,19 +10,24 @@ def test_load_cached_api_key_single_line(tmp_path):
   p = tmp_path / "keys"
   p.write_text("secret-key-only\n", encoding="utf-8")
   with patch.object(api_key_cache, "API_KEY_CACHE", p):
-    assert api_key_cache.load_cached_api_key("http://any/api/") == "secret-key-only"
+    assert (
+      api_key_cache.load_cached_api_key("http://any/api/") == "secret-key-only"
+    )
 
 
 def test_load_cached_api_key_url_mapping(tmp_path):
   p = tmp_path / "keys"
   p.write_text(
-      "# comment\n"
-      "http://localhost:8000/api/ key-one\n"
-      "https://other/api/ key-two\n",
-      encoding="utf-8",
+    "# comment\n"
+    "http://localhost:8000/api/ key-one\n"
+    "https://other/api/ key-two\n",
+    encoding="utf-8",
   )
   with patch.object(api_key_cache, "API_KEY_CACHE", p):
-    assert api_key_cache.load_cached_api_key("http://localhost:8000/api/") == "key-one"
+    assert (
+      api_key_cache.load_cached_api_key("http://localhost:8000/api/")
+      == "key-one"
+    )
     assert api_key_cache.load_cached_api_key("https://other/api") == "key-two"
 
 
@@ -43,4 +48,6 @@ def test_api_key_help_url_strips_api_suffix(monkeypatch):
 
 def test_api_key_help_url_env_override(monkeypatch):
   monkeypatch.setenv("HPCPERF_API_KEY_URL", "https://custom/help")
-  assert api_key_cache.api_key_help_url("http://x/api/") == "https://custom/help"
+  assert (
+    api_key_cache.api_key_help_url("http://x/api/") == "https://custom/help"
+  )

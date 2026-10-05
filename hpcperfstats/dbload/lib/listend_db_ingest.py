@@ -23,14 +23,16 @@ Attributes:
   _ARCHIVE_HINT_PEEK_BYTES: Max bytes scanned for archive host/ts/dollar peek.
   _MIN_PLAUSIBLE_UNIX_SECONDS: Lowest unix seconds accepted as a stats timestamp.
 """
+
 from __future__ import annotations
 
+import contextlib
 import os
 import queue
 import threading
 import time
 import zlib
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.print_utils import log_print
@@ -45,13 +47,13 @@ _RESUME_WATERMARK = 0.50
 
 # Shared counter names (in-process ints guarded by ``_ThreadCounter``).
 _COUNTER_NAMES = (
-    "queue_drops",
-    "pause_enters",
-    "schema_miss",
-    "db_ok",
-    "db_err",
-    "conn_recycle",
-    "batch_flush",
+  "queue_drops",
+  "pause_enters",
+  "schema_miss",
+  "db_ok",
+  "db_err",
+  "conn_recycle",
+  "batch_flush",
 )
 
 
@@ -161,7 +163,7 @@ class _FlushWindowStats:
       if elapsed > self._elapsed_max:
         self._elapsed_max = elapsed
 
-  def take(self) -> Tuple[int, float, int, float, float]:
+  def take(self) -> tuple[int, float, int, float, float]:
     """
     Return window count, averages, and maxima, then reset to empty.
 
@@ -195,14 +197,14 @@ class _FlushWindowStats:
 
 
 def _should_flush_pending(
-    *,
-    sample_count: int,
-    pending_rows: int,
-    batch_samples: int,
-    flush_max_rows: int,
-    hold_started_mono: float | None,
-    now_mono: float,
-    flush_hold_s: float,
+  *,
+  sample_count: int,
+  pending_rows: int,
+  batch_samples: int,
+  flush_max_rows: int,
+  hold_started_mono: float | None,
+  now_mono: float,
+  flush_hold_s: float,
 ) -> bool:
   """
   True when a worker should flush pending ORM rows now.
@@ -227,33 +229,33 @@ def _should_flush_pending(
 
   Examples:
     >>> _should_flush_pending(
-    ...     sample_count=1,
-    ...     pending_rows=2000,
-    ...     batch_samples=100,
-    ...     flush_max_rows=2000,
-    ...     hold_started_mono=0.0,
-    ...     now_mono=0.1,
-    ...     flush_hold_s=5.0,
+    ...   sample_count=1,
+    ...   pending_rows=2000,
+    ...   batch_samples=100,
+    ...   flush_max_rows=2000,
+    ...   hold_started_mono=0.0,
+    ...   now_mono=0.1,
+    ...   flush_hold_s=5.0,
     ... )
     True
     >>> _should_flush_pending(
-    ...     sample_count=2,
-    ...     pending_rows=10,
-    ...     batch_samples=100,
-    ...     flush_max_rows=2000,
-    ...     hold_started_mono=100.0,
-    ...     now_mono=105.0,
-    ...     flush_hold_s=5.0,
+    ...   sample_count=2,
+    ...   pending_rows=10,
+    ...   batch_samples=100,
+    ...   flush_max_rows=2000,
+    ...   hold_started_mono=100.0,
+    ...   now_mono=105.0,
+    ...   flush_hold_s=5.0,
     ... )
     True
     >>> _should_flush_pending(
-    ...     sample_count=0,
-    ...     pending_rows=0,
-    ...     batch_samples=100,
-    ...     flush_max_rows=2000,
-    ...     hold_started_mono=None,
-    ...     now_mono=0.0,
-    ...     flush_hold_s=5.0,
+    ...   sample_count=0,
+    ...   pending_rows=0,
+    ...   batch_samples=100,
+    ...   flush_max_rows=2000,
+    ...   hold_started_mono=None,
+    ...   now_mono=0.0,
+    ...   flush_hold_s=5.0,
     ... )
     False
   """
@@ -263,13 +265,11 @@ def _should_flush_pending(
     return True
   if flush_max_rows > 0 and pending_rows >= flush_max_rows:
     return True
-  if (
-      hold_started_mono is not None
-      and flush_hold_s > 0
-      and (now_mono - hold_started_mono) >= flush_hold_s
-  ):
-    return True
-  return False
+  return bool(
+    hold_started_mono is not None
+    and flush_hold_s > 0
+    and now_mono - hold_started_mono >= flush_hold_s
+  )
 
 
 def _listend_flush_error_is_poison(exc: BaseException) -> bool:
@@ -307,7 +307,7 @@ def _is_listend_statement_timeout(exc: BaseException) -> bool:
 
   Examples:
     >>> _is_listend_statement_timeout(
-    ...     Exception("canceling statement due to statement timeout")
+    ...   Exception("canceling statement due to statement timeout")
     ... )
     True
     >>> _is_listend_statement_timeout(Exception("connection reset"))
@@ -364,16 +364,16 @@ def _peak_merge_proc_chunk_with_existing(chunk: list) -> list:
     []
   """
   from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-      peak_merge_proc_objs_with_existing,
+    peak_merge_proc_objs_with_existing,
   )
 
   return peak_merge_proc_objs_with_existing(chunk)
 
 
 def _write_proc_chunk_with_timeout_bisect(
-    chunk: list,
-    *,
-    update_fields: tuple,
+  chunk: list,
+  *,
+  update_fields: tuple,
 ) -> None:
   """
   Peak-merge and ``bulk_create`` one proc chunk; bisect on statement timeout.
@@ -392,7 +392,9 @@ def _write_proc_chunk_with_timeout_bisect(
       bisect recovery.
 
   Examples:
-    >>> _write_proc_chunk_with_timeout_bisect([], update_fields=())  # doctest: +SKIP
+    >>> _write_proc_chunk_with_timeout_bisect(
+    ...   [], update_fields=()
+    ... )  # doctest: +SKIP
   """
   from django.db import close_old_connections, connections
   from django.db.utils import OperationalError
@@ -404,25 +406,23 @@ def _write_proc_chunk_with_timeout_bisect(
   try:
     merged = _peak_merge_proc_chunk_with_existing(chunk)
     proc_data.objects.bulk_create(
-        merged,
-        update_conflicts=True,
-        unique_fields=["jid", "host", "proc"],
-        update_fields=update_fields,
+      merged,
+      update_conflicts=True,
+      unique_fields=["jid", "host", "proc"],
+      update_fields=update_fields,
     )
   except OperationalError as exc:
     if _is_listend_statement_timeout(exc) and len(chunk) > 1:
-      try:
+      with contextlib.suppress(Exception):
         connections.close_all()
-      except Exception:
-        pass
       close_old_connections()
       _apply_listend_db_ingest_statement_timeout()
       mid = len(chunk) // 2
       _write_proc_chunk_with_timeout_bisect(
-          chunk[:mid], update_fields=update_fields
+        chunk[:mid], update_fields=update_fields
       )
       _write_proc_chunk_with_timeout_bisect(
-          chunk[mid:], update_fields=update_fields
+        chunk[mid:], update_fields=update_fields
       )
       return
     raise
@@ -431,36 +431,36 @@ def _write_proc_chunk_with_timeout_bisect(
 def _flush_orm_batch(host_objs: list, proc_objs: list) -> None:
   """
   Write pending ORM instances; clear caller lists on success.
-  
+
   Args:
     host_objs (list): Sequence for host objs.
     proc_objs (list): Sequence for proc objs.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _flush_orm_batch([], [])  # doctest: +SKIP
   """
   from django.db import close_old_connections, connections
   from django.db.utils import OperationalError
 
-  from hpcperfstats.site.lib.machine.models import host_data
   from hpcperfstats.dbload.lib.sync_timedb_parsing import HOST_PROC_KEYS
+  from hpcperfstats.site.lib.machine.models import host_data
 
   # Do not close_old_connections() at every flush start — that fights
   # persistent connections and inflates idle conn_recycle.
   batch_size = cfg.get_sync_bulk_create_batch_size()
-  update_fields = ("device",) + HOST_PROC_KEYS
+  update_fields = ("device", *HOST_PROC_KEYS)
   proc_objs = _dedupe_proc_objs_keep_last(proc_objs)
 
   def _write_once() -> None:
     """
     Internal helper to write the once.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> _write_once()  # doctest: +SKIP
     """
@@ -468,9 +468,7 @@ def _flush_orm_batch(host_objs: list, proc_objs: list) -> None:
       chunk = proc_objs[i : i + batch_size]
       if not chunk:
         continue
-      _write_proc_chunk_with_timeout_bisect(
-          chunk, update_fields=update_fields
-      )
+      _write_proc_chunk_with_timeout_bisect(chunk, update_fields=update_fields)
     for i in range(0, len(host_objs), batch_size):
       chunk = host_objs[i : i + batch_size]
       if not chunk:
@@ -480,10 +478,8 @@ def _flush_orm_batch(host_objs: list, proc_objs: list) -> None:
   try:
     _write_once()
   except OperationalError:
-    try:
+    with contextlib.suppress(Exception):
       connections.close_all()
-    except Exception:
-      pass
     close_old_connections()
     _apply_listend_db_ingest_statement_timeout()
     _write_once()
@@ -513,43 +509,51 @@ def compute_listend_db_queue_budgets(
 
   Examples:
     >>> compute_listend_db_queue_budgets(
-    ...     pool_processes=4, queue_max_gb=1.0,
-    ... )["budget_bytes"] == 1024 ** 3
+    ...   pool_processes=4,
+    ...   queue_max_gb=1.0,
+    ... )["budget_bytes"] == 1024**3
     True
   """
-  n = max(1, int(pool_processes if pool_processes is not None else cfg.get_listend_db_ingest_pool_processes()))
+  n = max(
+    1,
+    int(
+      pool_processes
+      if pool_processes is not None
+      else cfg.get_listend_db_ingest_pool_processes()
+    ),
+  )
   raw_gb = float(
-      queue_max_gb
-      if queue_max_gb is not None
-      else cfg._listend_db_ingest_queue_max_gb_raw()
+    queue_max_gb
+    if queue_max_gb is not None
+    else cfg._listend_db_ingest_queue_max_gb_raw()
   )
   cap_gb = 8.0
   clipped = raw_gb > cap_gb
   max_gb = min(cap_gb, max(0.001, raw_gb))
-  budget_bytes = int(max(0.001, max_gb) * (1024 ** 3))
+  budget_bytes = int(max(0.001, max_gb) * (1024**3))
   per_worker_budget = max(min_payload_bytes, budget_bytes // n)
   floor = max(1, int(min_payload_bytes))
   maxsize = max(1, per_worker_budget // floor)
   return {
-      "pool_processes": n,
-      "budget_bytes": budget_bytes,
-      "per_worker_budget_bytes": per_worker_budget,
-      "queue_maxsize": maxsize,
-      "queue_max_gb_clipped": clipped,
+    "pool_processes": n,
+    "budget_bytes": budget_bytes,
+    "per_worker_budget_bytes": per_worker_budget,
+    "queue_maxsize": maxsize,
+    "queue_max_gb_clipped": clipped,
   }
 
 
 def host_affine_worker_index(host: str, pool_processes: int) -> int:
   """
   Stable hash(host) % N (not salted ``hash()``).
-  
+
   Args:
     host (str): String for host.
     pool_processes (int): Integer value for pool processes.
-  
+
   Returns:
     int: int produced by this call.
-  
+
   Examples:
     >>> host_affine_worker_index("x", 0)  # doctest: +SKIP
   """
@@ -596,16 +600,16 @@ def parse_host_from_monitor_payload(message: str | bytes) -> str:
       i += 1
     if i >= n:
       raise ValueError("Empty message body")
-    is_dollar = raw[i:i + 1] == b"$"
+    is_dollar = raw[i : i + 1] == b"$"
     if is_dollar:
       first_nl = raw.find(b"\n", i)
       if first_nl < 0:
         raise ValueError("Malformed '$' message: missing host line")
       second_nl = raw.find(b"\n", first_nl + 1)
-      prefix = raw[i: second_nl if second_nl >= 0 else n]
+      prefix = raw[i : second_nl if second_nl >= 0 else n]
     else:
       nl = raw.find(b"\n", i)
-      prefix = raw[i: n if nl < 0 else nl]
+      prefix = raw[i : n if nl < 0 else nl]
     text = prefix.decode("utf-8", errors="replace")
   else:
     i = 0
@@ -614,16 +618,16 @@ def parse_host_from_monitor_payload(message: str | bytes) -> str:
       i += 1
     if i >= n:
       raise ValueError("Empty message body")
-    is_dollar = message[i:i + 1] == "$"
+    is_dollar = message[i : i + 1] == "$"
     if is_dollar:
       first_nl = message.find("\n", i)
       if first_nl < 0:
         raise ValueError("Malformed '$' message: missing host line")
       second_nl = message.find("\n", first_nl + 1)
-      text = message[i: second_nl if second_nl >= 0 else n]
+      text = message[i : second_nl if second_nl >= 0 else n]
     else:
       nl = message.find("\n", i)
-      text = message[i: n if nl < 0 else nl]
+      text = message[i : n if nl < 0 else nl]
   if is_dollar:
     lines = text.split("\n", 2)
     if len(lines) < 2:
@@ -662,7 +666,7 @@ def _plausible_unix_seconds_token(token: str) -> int | None:
   """
   try:
     ts = int(float(token))
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     return None
   if ts < _MIN_PLAUSIBLE_UNIX_SECONDS:
     return None
@@ -670,7 +674,7 @@ def _plausible_unix_seconds_token(token: str) -> int | None:
 
 
 def _peek_monitor_dollar_and_unix_second(
-    message: str | bytes,
+  message: str | bytes,
 ) -> tuple[bool, int | None]:
   """
   Peek ``$`` vs digit and a bounded unix-second from the payload prefix.
@@ -686,7 +690,8 @@ def _peek_monitor_dollar_and_unix_second(
 
   Examples:
     >>> _peek_monitor_dollar_and_unix_second(
-    ...     "1710000001.0 1 host.example.edu extra")
+    ...   "1710000001.0 1 host.example.edu extra"
+    ... )
     (False, 1710000001)
     >>> _peek_monitor_dollar_and_unix_second("$\\n1 c001.example.edu\\n")
     (True, None)
@@ -701,7 +706,7 @@ def _peek_monitor_dollar_and_unix_second(
       i += 1
     if i >= n:
       return False, None
-    is_dollar = raw[i:i + 1] == b"$"
+    is_dollar = raw[i : i + 1] == b"$"
     text = raw[i:].decode("utf-8", errors="replace")
   else:
     prefix = message[:_ARCHIVE_HINT_PEEK_BYTES]
@@ -711,7 +716,7 @@ def _peek_monitor_dollar_and_unix_second(
       i += 1
     if i >= n:
       return False, None
-    is_dollar = prefix[i:i + 1] == "$"
+    is_dollar = prefix[i : i + 1] == "$"
     text = prefix[i:]
   lines = text.split("\n", 16)
   if is_dollar:
@@ -731,7 +736,7 @@ def _peek_monitor_dollar_and_unix_second(
 
 
 def parse_monitor_payload_archive_hint(
-    message: str | bytes,
+  message: str | bytes,
 ) -> tuple[str, int | None, bool]:
   """
   Return host, unix second, and ``$`` flag from a bounded payload prefix.
@@ -752,7 +757,8 @@ def parse_monitor_payload_archive_hint(
 
   Examples:
     >>> parse_monitor_payload_archive_hint(
-    ...     "1710000001.0 1 host.example.edu extra")
+    ...   "1710000001.0 1 host.example.edu extra"
+    ... )
     ('host.example.edu', 1710000001, False)
     >>> parse_monitor_payload_archive_hint("$\\n1 c001.example.edu\\n")
     ('c001.example.edu', None, True)
@@ -765,13 +771,13 @@ def parse_monitor_payload_archive_hint(
 def payload_has_schema_bang(message: str) -> bool:
   """
   Payload has schema bang.
-  
+
   Args:
     message (str): String for message.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> payload_has_schema_bang("x")  # doctest: +SKIP
   """
@@ -785,13 +791,13 @@ def payload_has_schema_bang(message: str) -> bool:
 def sample_measurement_types(message: str) -> list[str]:
   """
   Alpha-leading typed measurement names after a digit timestamp header.
-  
+
   Args:
     message (str): String for message.
-  
+
   Returns:
     list[str]: list[str] produced by this call.
-  
+
   Examples:
     >>> sample_measurement_types("x")  # doctest: +SKIP
   """
@@ -812,14 +818,14 @@ def sample_measurement_types(message: str) -> list[str]:
 def schema_covers_measurement_types(schema: dict, types: list[str]) -> bool:
   """
   Schema covers measurement types.
-  
+
   Args:
     schema (dict): Mapping for schema.
     types (list[str]): Sequence for types.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> schema_covers_measurement_types({}, [])  # doctest: +SKIP
   """
@@ -831,16 +837,16 @@ def schema_covers_measurement_types(schema: dict, types: list[str]) -> bool:
   return True
 
 
-def parse_schema_from_bang_lines(message: str) -> Tuple[dict, dict]:
+def parse_schema_from_bang_lines(message: str) -> tuple[dict, dict]:
   """
   Return ``(schema, schema_fast)`` from ``!`` lines (full replace shape).
-  
+
   Args:
     message (str): String for message.
-  
+
   Returns:
     Tuple[dict, dict]: Tuple[dict, dict] produced by this call.
-  
+
   Examples:
     >>> parse_schema_from_bang_lines("x")  # doctest: +SKIP
   """
@@ -863,16 +869,16 @@ def parse_schema_from_bang_lines(message: str) -> Tuple[dict, dict]:
   return schema, schema_fast
 
 
-def seed_schema_from_current_file(host: str) -> Tuple[dict, dict]:
+def seed_schema_from_current_file(host: str) -> tuple[dict, dict]:
   """
   Cold-start: read ``!`` lines from host ``current`` under read lock.
-  
+
   Args:
     host (str): String for host.
-  
+
   Returns:
     Tuple[dict, dict]: Tuple[dict, dict] produced by this call.
-  
+
   Examples:
     >>> seed_schema_from_current_file("x")  # doctest: +SKIP
   """
@@ -885,10 +891,12 @@ def seed_schema_from_current_file(host: str) -> Tuple[dict, dict]:
   if not os.path.isfile(current_path):
     return {}, {}
   try:
-    with file_read_lock_wait(current_path):
-      with open(current_path, "r", encoding="utf-8", errors="replace") as fd:
-        # Schema dumps are near the top; bound the seed read.
-        chunk = fd.read(1024 * 1024)
+    with (
+      file_read_lock_wait(current_path),
+      open(current_path, encoding="utf-8", errors="replace") as fd,
+    ):
+      # Schema dumps are near the top; bound the seed read.
+      chunk = fd.read(1024 * 1024)
   except OSError:
     return {}, {}
   return parse_schema_from_bang_lines(chunk)
@@ -918,15 +926,15 @@ def _payload_byte_size(message: str | bytes) -> int:
 def _inc_counter(counters: dict, name: str, amount: int = 1) -> None:
   """
   Internal helper to handle inc counter.
-  
+
   Args:
     counters (dict): Mapping for counters.
     name (str): String for name.
     amount (int): Integer value for amount.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _inc_counter({}, "x", 0)  # doctest: +SKIP
   """
@@ -940,15 +948,15 @@ def _inc_counter(counters: dict, name: str, amount: int = 1) -> None:
 def _release_listend_db_worker_memory() -> None:
   """
   Drop heap after flush / idle recycle (not every sample).
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _release_listend_db_worker_memory()  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
-      release_spawn_pool_worker_memory,
+    release_spawn_pool_worker_memory,
   )
 
   release_spawn_pool_worker_memory()
@@ -957,10 +965,10 @@ def _release_listend_db_worker_memory() -> None:
 def _conn_max_age_s() -> float:
   """
   Internal helper to handle conn max age s.
-  
+
   Returns:
     float: float produced by this call.
-  
+
   Examples:
     >>> _conn_max_age_s()  # doctest: +SKIP
   """
@@ -1006,7 +1014,7 @@ def _proc_field_or_none(row: Any, key: Any) -> Any:
   if type(val).__module__ == "numpy":
     try:
       return int(val)
-    except (TypeError, ValueError, OverflowError):
+    except TypeError, ValueError, OverflowError:
       return None
   return val
 
@@ -1014,23 +1022,23 @@ def _proc_field_or_none(row: Any, key: Any) -> Any:
 def _proc_data_row_kwargs(row: Any) -> Any:
   """
   Internal helper to handle proc data row kwargs.
-  
+
   Args:
     row (Any): Value to inspect (typically a numeric scalar).
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _proc_data_row_kwargs(None)  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_parsing import HOST_PROC_KEYS
 
   kwargs = {
-      "jid": row.jid,
-      "host": row.host,
-      "proc": row.proc,
-      "device": _proc_field_or_none(row, "device"),
+    "jid": row.jid,
+    "host": row.host,
+    "proc": row.proc,
+    "device": _proc_field_or_none(row, "device"),
   }
   for key in HOST_PROC_KEYS:
     kwargs[key] = _proc_field_or_none(row, key)
@@ -1056,7 +1064,7 @@ def _dedupe_proc_objs_keep_last(proc_objs: list) -> list:
     []
   """
   from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-      apply_proc_peak_attrs_from_earlier,
+    apply_proc_peak_attrs_from_earlier,
   )
 
   if len(proc_objs) <= 1:
@@ -1064,9 +1072,9 @@ def _dedupe_proc_objs_keep_last(proc_objs: list) -> list:
   by_key: dict = {}
   for obj in proc_objs:
     key = (
-        getattr(obj, "jid", None),
-        getattr(obj, "host", None),
-        getattr(obj, "proc", None),
+      getattr(obj, "jid", None),
+      getattr(obj, "host", None),
+      getattr(obj, "proc", None),
     )
     if key in by_key:
       apply_proc_peak_attrs_from_earlier(by_key[key], obj)
@@ -1081,30 +1089,32 @@ def _process_sample_to_orm(
   schema: dict,
   schema_fast: dict,
   carry: Any,
-) -> Tuple[list, list]:
+) -> tuple[list, list]:
   """
   Parse one complete sample → host_data / proc_data instances. Empty on skip.
-  
+
   Args:
     message (str): String for message.
     host (str): String for host.
     schema (dict): Mapping for schema.
     schema_fast (dict): Mapping for schema fast.
     carry (Any): Carry passed to this helper.
-  
+
   Returns:
     Tuple[list, list]: Tuple[list, list] produced by this call.
-  
+
   Examples:
     >>> _process_sample_to_orm("x", "x", {}, {}, None)  # doctest: +SKIP
   """
-  from hpcperfstats.dbload.lib.io_helpers import host_data_instance_from_stats_row
+  from hpcperfstats.dbload.lib.io_helpers import (
+    host_data_instance_from_stats_row,
+  )
   from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-      DeltaCarryState,
-      IncrementalStatsParser,
-      build_stats_dataframes,
-      compute_deltas_and_arc_chunk,
-      stats_payload_row_count,
+    DeltaCarryState,
+    IncrementalStatsParser,
+    build_stats_dataframes,
+    compute_deltas_and_arc_chunk,
+    stats_payload_row_count,
   )
 
   types = sample_measurement_types(message)
@@ -1151,14 +1161,10 @@ def _process_sample_to_orm(
 
         proc_objs.append(proc_data(**_proc_data_row_kwargs(row)))
   finally:
-    try:
+    with contextlib.suppress(Exception):
       del stats_df
-    except Exception:
-      pass
-    try:
+    with contextlib.suppress(Exception):
       del proc_df
-    except Exception:
-      pass
   return host_objs, proc_objs
 
 
@@ -1210,7 +1216,9 @@ def _worker_main(
   del per_worker_budget  # tracked on put; kept for future diagnostics
   # Cap BLAS/OpenMP before any numpy/pandas import (32 threads × default
   # OpenBLAS threads exhausts pthread resources → EAGAIN).
-  from hpcperfstats.dbload.lib.blas_thread_env import configure_blas_thread_env
+  from hpcperfstats.dbload.lib.blas_thread_env import (
+    configure_blas_thread_env,
+  )
 
   configure_blas_thread_env()
 
@@ -1219,9 +1227,9 @@ def _worker_main(
   from hpcperfstats.dbload.lib.sync_timedb_parsing import DeltaCarryState
 
   set_daemon_thread_title(
-      "",
-      script_name="listend.py",
-      role="listend-db-%d" % int(worker_idx),
+    "",
+    script_name="listend.py",
+    role="listend-db-%d" % int(worker_idx),
   )
   ensure_django()
   from django.db import close_old_connections, connections
@@ -1229,9 +1237,9 @@ def _worker_main(
   close_old_connections()
   _apply_listend_db_ingest_statement_timeout()
 
-  schema_by_host: Dict[str, dict] = {}
-  schema_fast_by_host: Dict[str, dict] = {}
-  carry_by_host: Dict[str, DeltaCarryState] = {}
+  schema_by_host: dict[str, dict] = {}
+  schema_fast_by_host: dict[str, dict] = {}
+  carry_by_host: dict[str, DeltaCarryState] = {}
   pending_host: list = []
   pending_proc: list = []
   sample_count = 0
@@ -1242,25 +1250,21 @@ def _worker_main(
   def _recycle_conn(*, reason: str = "idle") -> None:
     """
     Internal helper to handle recycle conn.
-    
+
     Args:
       reason (str): String for reason.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> _recycle_conn("x")  # doctest: +SKIP
     """
     del reason
-    try:
+    with contextlib.suppress(Exception):
       close_old_connections()
-    except Exception:
-      pass
-    try:
+    with contextlib.suppress(Exception):
       connections.close_all()
-    except Exception:
-      pass
     nonlocal conn_opened_at
     conn_opened_at = time.monotonic()
     _apply_listend_db_ingest_statement_timeout()
@@ -1295,9 +1299,9 @@ def _worker_main(
     except Exception as exc:
       _inc_counter(counters, "db_err")
       log_print(
-          "ERROR: listend db ingest flush failed worker=%d: %s"
-          % (worker_idx, exc),
-          flush=True,
+        "ERROR: listend db ingest flush failed worker=%d: %s"
+        % (worker_idx, exc),
+        flush=True,
       )
       if _listend_flush_error_is_poison(exc):
         pending_host = []
@@ -1309,10 +1313,8 @@ def _worker_main(
       return
     elapsed = time.monotonic() - started
     if flush_window is not None:
-      try:
+      with contextlib.suppress(Exception):
         flush_window.record(rows, elapsed)
-      except Exception:
-        pass
     pending_host = []
     pending_proc = []
     sample_count = 0
@@ -1334,33 +1336,33 @@ def _worker_main(
       True
     """
     if _should_flush_pending(
-        sample_count=sample_count,
-        pending_rows=len(pending_host) + len(pending_proc),
-        batch_samples=batch_samples,
-        flush_max_rows=flush_max_rows,
-        hold_started_mono=hold_started_mono,
-        now_mono=time.monotonic(),
-        flush_hold_s=flush_hold_s,
+      sample_count=sample_count,
+      pending_rows=len(pending_host) + len(pending_proc),
+      batch_samples=batch_samples,
+      flush_max_rows=flush_max_rows,
+      hold_started_mono=hold_started_mono,
+      now_mono=time.monotonic(),
+      flush_hold_s=flush_hold_s,
     ):
       _flush(force_memory_release=True)
 
   def _ensure_schema_seed(host: str) -> None:
     """
     Internal helper to ensure the schema seed.
-    
+
     Args:
       host (str): String for host.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> _ensure_schema_seed("x")  # doctest: +SKIP
     """
     if host in seeded_hosts:
       return
     seeded_hosts.add(host)
-    if host in schema_by_host and schema_by_host[host]:
+    if schema_by_host.get(host):
       return
     schema, schema_fast = seed_schema_from_current_file(host)
     if schema:
@@ -1389,9 +1391,9 @@ def _worker_main(
     except Exception as unpack_exc:
       _inc_counter(counters, "db_err")
       log_print(
-          "ERROR: listend db ingest dequeue failed worker=%d: %s"
-          % (worker_idx, unpack_exc),
-          flush=True,
+        "ERROR: listend db ingest dequeue failed worker=%d: %s"
+        % (worker_idx, unpack_exc),
+        flush=True,
       )
       item = None
       continue
@@ -1406,7 +1408,9 @@ def _worker_main(
     try:
       try:
         raw = os.pread(int(fd), int(length), int(offset))
-        from hpcperfstats.dbload.lib.zstd_cli import drop_page_cache_for_fd
+        from hpcperfstats.dbload.lib.zstd_cli import (
+          drop_page_cache_for_fd,
+        )
 
         drop_page_cache_for_fd(fd, offset, len(raw))
         message = raw.decode("utf-8", errors="replace")
@@ -1414,9 +1418,9 @@ def _worker_main(
       except Exception as pread_exc:
         _inc_counter(counters, "db_err")
         log_print(
-            "ERROR: listend db ingest pread failed worker=%d host=%s: %s"
-            % (worker_idx, host, pread_exc),
-            flush=True,
+          "ERROR: listend db ingest pread failed worker=%d host=%s: %s"
+          % (worker_idx, host, pread_exc),
+          flush=True,
         )
         message = None
         continue
@@ -1449,11 +1453,11 @@ def _worker_main(
       schema_fast = schema_fast_by_host.get(host) or {}
       carry = carry_by_host.setdefault(host, DeltaCarryState())
       host_objs, proc_objs = _process_sample_to_orm(
-          message,
-          host=host,
-          schema=schema,
-          schema_fast=schema_fast,
-          carry=carry,
+        message,
+        host=host,
+        schema=schema,
+        schema_fast=schema_fast,
+        carry=carry,
       )
       message = None  # drop payload ref after parse
       if not host_objs and not proc_objs:
@@ -1470,9 +1474,9 @@ def _worker_main(
     except Exception as exc:
       _inc_counter(counters, "db_err")
       log_print(
-          "ERROR: listend db ingest sample failed worker=%d host=%s: %s"
-          % (worker_idx, host, exc),
-          flush=True,
+        "ERROR: listend db ingest sample failed worker=%d host=%s: %s"
+        % (worker_idx, host, exc),
+        flush=True,
       )
       pending_host = []
       pending_proc = []
@@ -1482,21 +1486,15 @@ def _worker_main(
       _release_listend_db_worker_memory()
     finally:
       if fd is not None:
-        try:
+        with contextlib.suppress(Exception):
           os.close(int(fd))
-        except Exception:
-          pass
         fd = None
 
   _flush(force_memory_release=True)
-  try:
+  with contextlib.suppress(Exception):
     close_old_connections()
-  except Exception:
-    pass
-  try:
+  with contextlib.suppress(Exception):
     connections.close_all()
-  except Exception:
-    pass
 
 
 class ListendDbIngestPool:
@@ -1563,13 +1561,13 @@ class ListendDbIngestPool:
       False
     """
     budgets = compute_listend_db_queue_budgets(
-        pool_processes=pool_processes,
-        queue_max_gb=queue_max_gb,
+      pool_processes=pool_processes,
+      queue_max_gb=queue_max_gb,
     )
     self.enabled = (
-        bool(cfg.get_listend_db_ingest_enabled())
-        if enabled is None
-        else bool(enabled)
+      bool(cfg.get_listend_db_ingest_enabled())
+      if enabled is None
+      else bool(enabled)
     )
     self.pool_processes = int(budgets["pool_processes"])
     self.budget_bytes = int(budgets["budget_bytes"])
@@ -1577,28 +1575,28 @@ class ListendDbIngestPool:
     self.queue_maxsize = int(budgets["queue_maxsize"])
     self._queue_max_gb_clipped = bool(budgets.get("queue_max_gb_clipped"))
     self.batch_samples = max(
-        1,
-        int(
-            batch_samples
-            if batch_samples is not None
-            else cfg.get_listend_db_ingest_batch_samples()
-        ),
+      1,
+      int(
+        batch_samples
+        if batch_samples is not None
+        else cfg.get_listend_db_ingest_batch_samples()
+      ),
     )
     self.flush_max_rows = max(
-        0,
-        int(
-            flush_max_rows
-            if flush_max_rows is not None
-            else cfg.get_listend_db_ingest_flush_max_rows()
-        ),
+      0,
+      int(
+        flush_max_rows
+        if flush_max_rows is not None
+        else cfg.get_listend_db_ingest_flush_max_rows()
+      ),
     )
     self.flush_hold_s = max(
-        0.0,
-        float(
-            flush_hold_s
-            if flush_hold_s is not None
-            else cfg.get_listend_db_ingest_flush_hold_s()
-        ),
+      0.0,
+      float(
+        flush_hold_s
+        if flush_hold_s is not None
+        else cfg.get_listend_db_ingest_flush_hold_s()
+      ),
     )
     self._queues: list = []
     self._byte_counts: list = []
@@ -1646,7 +1644,7 @@ class ListendDbIngestPool:
     # django.setup() exactly once on this thread (workers re-call the
     # idempotent helper and return immediately).
     from hpcperfstats.dbload.lib.blas_thread_env import (
-        configure_blas_thread_env,
+      configure_blas_thread_env,
     )
     from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 
@@ -1667,23 +1665,23 @@ class ListendDbIngestPool:
     self._window_baseline = self.snapshot_counters()
     if self._queue_max_gb_clipped:
       log_print(
-          "listend db ingest queue_max_gb clipped to 8.0 GiB "
-          "(INI or constructor above cap)",
-          flush=True,
+        "listend db ingest queue_max_gb clipped to 8.0 GiB "
+        "(INI or constructor above cap)",
+        flush=True,
       )
     log_print(
-        "listend db ingest pool started workers=%d queue_maxsize=%d "
-        "per_worker_budget_bytes=%d batch_samples=%d flush_max_rows=%d "
-        "flush_hold_s=%.3f"
-        % (
-            self.pool_processes,
-            self.queue_maxsize,
-            self.per_worker_budget_bytes,
-            self.batch_samples,
-            self.flush_max_rows,
-            self.flush_hold_s,
-        ),
-        flush=True,
+      "listend db ingest pool started workers=%d queue_maxsize=%d "
+      "per_worker_budget_bytes=%d batch_samples=%d flush_max_rows=%d "
+      "flush_hold_s=%.3f"
+      % (
+        self.pool_processes,
+        self.queue_maxsize,
+        self.per_worker_budget_bytes,
+        self.batch_samples,
+        self.flush_max_rows,
+        self.flush_hold_s,
+      ),
+      flush=True,
     )
 
   def _make_worker_thread(self, worker_idx: int) -> threading.Thread:
@@ -1704,22 +1702,22 @@ class ListendDbIngestPool:
       True
     """
     return threading.Thread(
-        target=_worker_main,
-        args=(
-            worker_idx,
-            self._queues[worker_idx],
-            self._stop,
-            self._byte_counts[worker_idx],
-            self._byte_locks[worker_idx],
-            self._counters,
-            self.batch_samples,
-            self.per_worker_budget_bytes,
-            self.flush_max_rows,
-            self.flush_hold_s,
-            self._flush_window,
-        ),
-        name="listend-db-%d" % worker_idx,
-        daemon=True,
+      target=_worker_main,
+      args=(
+        worker_idx,
+        self._queues[worker_idx],
+        self._stop,
+        self._byte_counts[worker_idx],
+        self._byte_locks[worker_idx],
+        self._counters,
+        self.batch_samples,
+        self.per_worker_budget_bytes,
+        self.flush_max_rows,
+        self.flush_hold_s,
+        self._flush_window,
+      ),
+      name="listend-db-%d" % worker_idx,
+      daemon=True,
     )
 
   def ensure_workers_alive(self) -> int:
@@ -1748,9 +1746,8 @@ class ListendDbIngestPool:
           alive += 1
           continue
         log_print(
-            "ERROR: listend db ingest worker dead; respawning index=%d"
-            % i,
-            flush=True,
+          "ERROR: listend db ingest worker dead; respawning index=%d" % i,
+          flush=True,
         )
         replacement = self._make_worker_thread(i)
         self._workers[i] = replacement
@@ -1762,13 +1759,13 @@ class ListendDbIngestPool:
   def stop(self, *, join_timeout: float = _SHUTDOWN_JOIN_TIMEOUT_S) -> None:
     """
     Stop background work for this object.
-    
+
     Args:
       join_timeout (float): Floating-point value for join timeout.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> ListendDbIngestPool().stop(0)  # doctest: +SKIP
     """
@@ -1777,19 +1774,15 @@ class ListendDbIngestPool:
     if self._stop is not None:
       self._stop.set()
     for q in self._queues:
-      try:
+      with contextlib.suppress(Exception):
         q.put_nowait(None)
-      except Exception:
-        pass
     deadline = time.monotonic() + max(0.1, float(join_timeout))
     for thread in self._workers:
       remaining = deadline - time.monotonic()
       if remaining <= 0:
         break
-      try:
+      with contextlib.suppress(Exception):
         thread.join(timeout=remaining)
-      except Exception:
-        pass
     for q in self._queues:
       while True:
         try:
@@ -1806,33 +1799,31 @@ class ListendDbIngestPool:
   def queued_bytes(self) -> int:
     """
     Return total queued payload bytes across all workers.
-    
+
     Returns:
       int: Sum of per-worker byte counters.
-    
+
     Examples:
       >>> ListendDbIngestPool(enabled=False).queued_bytes()
       0
     """
     total = 0
     for byte_count in self._byte_counts:
-      try:
+      with contextlib.suppress(Exception):
         total += int(byte_count.value)
-      except Exception:
-        pass
     return total
 
   def worker_has_headroom(self, worker_idx: int, size: int) -> bool:
     """
     Return True when worker ``worker_idx`` can accept ``size`` more bytes.
-    
+
     Args:
       worker_idx (int): Host-affine worker index.
       size (int): Payload size in bytes.
-    
+
     Returns:
       bool: True when under that worker's byte budget.
-    
+
     Examples:
       >>> p = ListendDbIngestPool(enabled=False, pool_processes=1)
       >>> p.worker_has_headroom(0, 1)
@@ -1853,14 +1844,14 @@ class ListendDbIngestPool:
   def can_enqueue(self, host: str, message: str) -> bool:
     """
     Return True when the host-affine worker can accept ``message`` now.
-    
+
     Args:
       host (str): Monitor hostname token.
       message (str): Raw monitor payload.
-    
+
     Returns:
       bool: True when enqueue would succeed under the byte budget.
-    
+
     Examples:
       >>> ListendDbIngestPool(enabled=False).can_enqueue("h", "x")
       False
@@ -1876,14 +1867,14 @@ class ListendDbIngestPool:
   def should_pause_consume(self) -> bool:
     """
     Return True when RabbitMQ consume should stop for DB backpressure.
-    
+
     Triggers when aggregate queued bytes reach the high watermark fraction of
     the total budget, or when any worker cannot accept another minimum-floor
     payload (same condition as a would-be queue drop).
-    
+
     Returns:
       bool: True when listend should stop consuming.
-    
+
     Examples:
       >>> ListendDbIngestPool(enabled=False).should_pause_consume()
       False
@@ -1902,13 +1893,13 @@ class ListendDbIngestPool:
   def should_resume_consume(self) -> bool:
     """
     Return True when RabbitMQ consume may restart after a DB pause.
-    
+
     Requires aggregate usage at or below the low watermark and every worker
     having headroom for a minimum-floor payload.
-    
+
     Returns:
       bool: True when listend may resume consuming.
-    
+
     Examples:
       >>> ListendDbIngestPool(enabled=False).should_resume_consume()
       True
@@ -2053,18 +2044,16 @@ class ListendDbIngestPool:
       return False
     finally:
       if fd is not None:
-        try:
+        with contextlib.suppress(Exception):
           os.close(int(fd))
-        except Exception:
-          pass
 
   def snapshot_counters(self) -> dict:
     """
     Snapshot counters.
-    
+
     Returns:
       dict: dict produced by this call.
-    
+
     Examples:
       >>> ListendDbIngestPool().snapshot_counters()  # doctest: +SKIP
     """
@@ -2076,10 +2065,8 @@ class ListendDbIngestPool:
         out[name] = 0
     depth = 0
     for q in self._queues:
-      try:
+      with contextlib.suppress(Exception):
         depth += int(q.qsize())
-      except Exception:
-        pass
     out["db_queue_depth"] = depth
     out["db_queued_bytes"] = self.queued_bytes()
     return out
@@ -2137,72 +2124,66 @@ class ListendDbIngestPool:
     d = self.window_counters_and_reset()
     max_shard_qsize = 0
     for q in self._queues:
-      try:
+      with contextlib.suppress(Exception):
         max_shard_qsize = max(max_shard_qsize, int(q.qsize()))
-      except Exception:
-        pass
     max_shard_bytes = 0
     for byte_count in self._byte_counts:
-      try:
+      with contextlib.suppress(Exception):
         max_shard_bytes = max(max_shard_bytes, int(byte_count.value))
-      except Exception:
-        pass
     flush_rows_avg = 0.0
     flush_rows_max = 0
     flush_elapsed_avg_s = 0.0
     flush_elapsed_max_s = 0.0
-    try:
+    with contextlib.suppress(Exception):
       (
-          _,
-          flush_rows_avg,
-          flush_rows_max,
-          flush_elapsed_avg_s,
-          flush_elapsed_max_s,
+        _,
+        flush_rows_avg,
+        flush_rows_max,
+        flush_elapsed_avg_s,
+        flush_elapsed_max_s,
       ) = self._flush_window.take()
-    except Exception:
-      pass
     return (
-        "db_ingest queue_drops=%d pause_enters=%d pause_s=%d paused=%d "
-        "schema_miss=%d db_ok=%d db_err=%d conn_recycle=%d "
-        "db_queue_depth=%d db_queued_bytes=%d batch_flush=%d "
-        "alive_db_threads=%d max_shard_qsize=%d max_shard_bytes=%d "
-        "flush_rows_avg=%.1f flush_rows_max=%d "
-        "flush_elapsed_avg_s=%.3f flush_elapsed_max_s=%.3f"
-        % (
-            d.get("queue_drops", 0),
-            d.get("pause_enters", 0),
-            d.get("pause_s", 0),
-            d.get("paused", 0),
-            d.get("schema_miss", 0),
-            d.get("db_ok", 0),
-            d.get("db_err", 0),
-            d.get("conn_recycle", 0),
-            d.get("db_queue_depth", 0),
-            d.get("db_queued_bytes", 0),
-            d.get("batch_flush", 0),
-            alive,
-            max_shard_qsize,
-            max_shard_bytes,
-            flush_rows_avg,
-            flush_rows_max,
-            flush_elapsed_avg_s,
-            flush_elapsed_max_s,
-        )
+      "db_ingest queue_drops=%d pause_enters=%d pause_s=%d paused=%d "
+      "schema_miss=%d db_ok=%d db_err=%d conn_recycle=%d "
+      "db_queue_depth=%d db_queued_bytes=%d batch_flush=%d "
+      "alive_db_threads=%d max_shard_qsize=%d max_shard_bytes=%d "
+      "flush_rows_avg=%.1f flush_rows_max=%d "
+      "flush_elapsed_avg_s=%.3f flush_elapsed_max_s=%.3f"
+      % (
+        d.get("queue_drops", 0),
+        d.get("pause_enters", 0),
+        d.get("pause_s", 0),
+        d.get("paused", 0),
+        d.get("schema_miss", 0),
+        d.get("db_ok", 0),
+        d.get("db_err", 0),
+        d.get("conn_recycle", 0),
+        d.get("db_queue_depth", 0),
+        d.get("db_queued_bytes", 0),
+        d.get("batch_flush", 0),
+        alive,
+        max_shard_qsize,
+        max_shard_bytes,
+        flush_rows_avg,
+        flush_rows_max,
+        flush_elapsed_avg_s,
+        flush_elapsed_max_s,
+      )
     )
 
 
 # Process-global pool for listend main (set by start_listend_db_ingest_pool).
-_GLOBAL_POOL: Optional[ListendDbIngestPool] = None
+_GLOBAL_POOL: ListendDbIngestPool | None = None
 
 
-def get_listend_db_ingest_pool() -> Optional[ListendDbIngestPool]:
+def get_listend_db_ingest_pool() -> ListendDbIngestPool | None:
   """
   Return the listend db ingest pool.
-  
+
   Returns:
     Optional[ListendDbIngestPool]: Optional[ListendDbIngestPool] — the result,
     or None when unavailable.
-  
+
   Examples:
     >>> get_listend_db_ingest_pool()  # doctest: +SKIP
   """
@@ -2211,7 +2192,7 @@ def get_listend_db_ingest_pool() -> Optional[ListendDbIngestPool]:
 
 def start_listend_db_ingest_pool(
   **kwargs: Any,
-) -> Optional[ListendDbIngestPool]:
+) -> ListendDbIngestPool | None:
   """
   Construct and start the process-global live DB ingest pool.
 
@@ -2238,8 +2219,8 @@ def start_listend_db_ingest_pool(
     enabled = bool(cfg.get_listend_db_ingest_enabled())
   if not enabled:
     log_print(
-        "listend db ingest disabled; skipping live DB pool",
-        flush=True,
+      "listend db ingest disabled; skipping live DB pool",
+      flush=True,
     )
     return None
   pool = ListendDbIngestPool(**kwargs)
@@ -2252,10 +2233,10 @@ def start_listend_db_ingest_pool(
 def stop_listend_db_ingest_pool() -> None:
   """
   Stop the listend db ingest pool.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> stop_listend_db_ingest_pool()  # doctest: +SKIP
   """
@@ -2266,7 +2247,10 @@ def stop_listend_db_ingest_pool() -> None:
     try:
       pool.stop()
     except Exception as exc:
-      log_print("ERROR: listend db ingest pool stop failed: %s" % exc, flush=True)
+      log_print(
+        f"ERROR: listend db ingest pool stop failed: {exc}",
+        flush=True,
+      )
 
 
 def submit_listend_db_ingest(
@@ -2299,20 +2283,18 @@ def submit_listend_db_ingest(
     return False
   try:
     return bool(
-        pool.submit(
-            host,
-            message,
-            archive_path=archive_path,
-            offset=offset,
-            length=length,
-        )
+      pool.submit(
+        host,
+        message,
+        archive_path=archive_path,
+        offset=offset,
+        length=length,
+      )
     )
   except Exception as exc:
-    try:
+    with contextlib.suppress(Exception):
       log_print(
-          "ERROR: listend db ingest submit failed host=%s: %s" % (host, exc),
-          flush=True,
+        f"ERROR: listend db ingest submit failed host={host}: {exc}",
+        flush=True,
       )
-    except Exception:
-      pass
     return False

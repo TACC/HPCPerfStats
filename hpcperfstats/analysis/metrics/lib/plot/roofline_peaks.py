@@ -30,41 +30,44 @@ Attributes:
   ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS: Attribute.
   _BYTES_TO_GB: Attribute.
 """
+
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from hpcperfstats.dbload.lib.monitor_naming.canonical import HOST_ROOFLINE_PEAK_TYPE
+from hpcperfstats.dbload.lib.monitor_naming.canonical import (
+  HOST_ROOFLINE_PEAK_TYPE,
+)
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
-    amd_df_type_names,
-    amd_pmc_type_names,
-    arm_imc_types_probe_order,
-    canonical_type_name,
-    host_cpu_hw_type_names,
-    host_roofline_peak_type_names,
-    imc_types_probe_order,
+  amd_df_type_names,
+  amd_pmc_type_names,
+  arm_imc_types_probe_order,
+  canonical_type_name,
+  host_cpu_hw_type_names,
+  host_roofline_peak_type_names,
+  imc_types_probe_order,
 )
 
 # (peak_fp64_gflop_s, peak_dram_bw_gb_s) — keyed by canonical IMC st_name.
-ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS: Dict[str, Tuple[float, float]] = {
-    "intel_x86_uncore_imc_snb": (640.0, 85.0),
-    "intel_x86_uncore_imc_ivb": (900.0, 102.0),
-    "intel_x86_uncore_imc_hsw": (1400.0, 110.0),
-    "intel_x86_uncore_imc_bdw": (1800.0, 140.0),
-    "intel_x86_uncore_imc_skx": (6400.0, 460.0),
-    "intel_x86_uncore_imc_icx": (6400.0, 480.0),
-    "intel_x86_uncore_imc_spr": (8400.0, 550.0),
-    "nvidia_grace_cpu_chip": (7100.0, 500.0),
-    "nvidia_grace_cpu_superchip": (14200.0, 1000.0),
-    "amd64_epyc_2s_zen1_naples": (1800.0, 340.0),
-    "amd64_epyc_2s_zen2_rome": (2800.0, 410.0),
-    "amd64_epyc_2s_zen3_milan": (4000.0, 410.0),
-    "amd64_epyc_2s_zen4_genoa": (8000.0, 920.0),
-    "amd64_epyc_2s_zen5_turin": (11000.0, 1080.0),
-    "amd64_epyc_2s_default": (4000.0, 410.0),
+ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS: dict[str, tuple[float, float]] = {
+  "intel_x86_uncore_imc_snb": (640.0, 85.0),
+  "intel_x86_uncore_imc_ivb": (900.0, 102.0),
+  "intel_x86_uncore_imc_hsw": (1400.0, 110.0),
+  "intel_x86_uncore_imc_bdw": (1800.0, 140.0),
+  "intel_x86_uncore_imc_skx": (6400.0, 460.0),
+  "intel_x86_uncore_imc_icx": (6400.0, 480.0),
+  "intel_x86_uncore_imc_spr": (8400.0, 550.0),
+  "nvidia_grace_cpu_chip": (7100.0, 500.0),
+  "nvidia_grace_cpu_superchip": (14200.0, 1000.0),
+  "amd64_epyc_2s_zen1_naples": (1800.0, 340.0),
+  "amd64_epyc_2s_zen2_rome": (2800.0, 410.0),
+  "amd64_epyc_2s_zen3_milan": (4000.0, 410.0),
+  "amd64_epyc_2s_zen4_genoa": (8000.0, 920.0),
+  "amd64_epyc_2s_zen5_turin": (11000.0, 1080.0),
+  "amd64_epyc_2s_default": (4000.0, 410.0),
 }
 
 
@@ -74,19 +77,19 @@ def _max_converted_sum_val(
   conv: float,
   *,
   type_name: str = HOST_ROOFLINE_PEAK_TYPE,
-) -> Optional[float]:
+) -> float | None:
   """
   Internal helper to handle max converted sum val.
-  
+
   Args:
     jt (Any): Jt passed to this helper.
     event (str): String for event.
     conv (float): Floating-point value for conv.
     type_name (str): String for type name.
-  
+
   Returns:
     Optional[float]: Optional[float] — the result, or None when unavailable.
-  
+
   Examples:
     >>> _max_converted_sum_val(None, "x", 0, "x")  # doctest: +SKIP
   """
@@ -98,7 +101,9 @@ def _max_converted_sum_val(
         continue
       if df is None or df.empty or "sum_val" not in df.columns:
         continue
-      values = pd.to_numeric(df["sum_val"], errors="coerce").to_numpy(dtype=float, copy=False)
+      values = pd.to_numeric(df["sum_val"], errors="coerce").to_numpy(
+        dtype=float, copy=False
+      )
       if values.size == 0:
         continue
       finite = values[np.isfinite(values)]
@@ -108,29 +113,29 @@ def _max_converted_sum_val(
   return None
 
 
-_BYTES_TO_GB = 1 / (1024 ** 3)
+_BYTES_TO_GB = 1 / (1024**3)
 
 
-def _cpu_peak_memory_bw_gb_from_host_data(jt: Any) -> Optional[float]:
+def _cpu_peak_memory_bw_gb_from_host_data(jt: Any) -> float | None:
   """
   DDR + HBM peak bytes/s from host_roofline_peak (HBM omitted when absent or.
-  
+
     zero).
-  
+
   Args:
     jt (Any): Jt passed to this helper.
-  
+
   Returns:
     Optional[float]: Optional[float] — the result, or None when unavailable.
-  
+
   Examples:
     >>> _cpu_peak_memory_bw_gb_from_host_data(None)  # doctest: +SKIP
   """
   peak_dram_gb = _max_converted_sum_val(
-      jt, "cpu_peak_dram_bw_bytes_per_s", _BYTES_TO_GB
+    jt, "cpu_peak_dram_bw_bytes_per_s", _BYTES_TO_GB
   )
   peak_hbm_gb = _max_converted_sum_val(
-      jt, "cpu_peak_hbm_bw_bytes_per_s", _BYTES_TO_GB
+    jt, "cpu_peak_hbm_bw_bytes_per_s", _BYTES_TO_GB
   )
   if peak_dram_gb is None and peak_hbm_gb is None:
     return None
@@ -144,17 +149,17 @@ def _cpu_peak_memory_bw_gb_from_host_data(jt: Any) -> Optional[float]:
 
 def _infer_cpu_roofline_peak_from_host_data(
   jt: Any,
-) -> Tuple[Optional[float], Optional[float]]:
+) -> tuple[float | None, float | None]:
   """
   Internal helper to handle infer cpu roofline peak from host data.
-  
+
   Args:
     jt (Any): Jt passed to this helper.
-  
+
   Returns:
     Tuple[Optional[float], Optional[float]]: Tuple[Optional[float],
     Optional[float]] produced by this call.
-  
+
   Examples:
     >>> _infer_cpu_roofline_peak_from_host_data(None)  # doctest: +SKIP
   """
@@ -169,10 +174,10 @@ def _infer_cpu_roofline_peak_from_host_data(
   if peak_flops_gf is None or peak_bw_gb is None:
     return (None, None)
   if not (
-      np.isfinite(peak_flops_gf)
-      and peak_flops_gf > 0
-      and np.isfinite(peak_bw_gb)
-      and peak_bw_gb > 0
+    np.isfinite(peak_flops_gf)
+    and peak_flops_gf > 0
+    and np.isfinite(peak_bw_gb)
+    and peak_bw_gb > 0
   ):
     return (None, None)
   return (peak_flops_gf, peak_bw_gb)
@@ -180,8 +185,8 @@ def _infer_cpu_roofline_peak_from_host_data(
 
 def infer_gpu_roofline_peak_flops_and_bw_gbps(
   jt: Any,
-  bw_axis: Optional[str] = None,
-) -> Tuple[Optional[float], Optional[float]]:
+  bw_axis: str | None = None,
+) -> tuple[float | None, float | None]:
   """
   Infer GPU roofline peak FLOPS and bandwidth (GiB/s) from host_roofline_peak.
 
@@ -209,10 +214,10 @@ def infer_gpu_roofline_peak_flops_and_bw_gbps(
 
   peak_flops_gf = _max_converted_sum_val(jt, "gpu_peak_fp64_flops_per_s", 1e-9)
   mem_bw = _max_converted_sum_val(
-      jt, "gpu_peak_mem_bw_bytes_per_s", 1 / (1024 ** 3)
+    jt, "gpu_peak_mem_bw_bytes_per_s", 1 / (1024**3)
   )
   io_bw = _max_converted_sum_val(
-      jt, "gpu_peak_io_link_bw_bytes_per_s", 1 / (1024 ** 3)
+    jt, "gpu_peak_io_link_bw_bytes_per_s", 1 / (1024**3)
   )
   if bw_axis == "memory_bw":
     peak_bw_gb = mem_bw if mem_bw is not None else io_bw
@@ -221,10 +226,10 @@ def infer_gpu_roofline_peak_flops_and_bw_gbps(
   if peak_flops_gf is None or peak_bw_gb is None:
     return (None, None)
   if not (
-      np.isfinite(peak_flops_gf)
-      and peak_flops_gf > 0
-      and np.isfinite(peak_bw_gb)
-      and peak_bw_gb > 0
+    np.isfinite(peak_flops_gf)
+    and peak_flops_gf > 0
+    and np.isfinite(peak_bw_gb)
+    and peak_bw_gb > 0
   ):
     return (None, None)
   return (peak_flops_gf, peak_bw_gb)
@@ -232,17 +237,17 @@ def infer_gpu_roofline_peak_flops_and_bw_gbps(
 
 def infer_cpu_roofline_peak_flops_and_bw_gbps(
   jt: Any,
-) -> Tuple[Optional[float], Optional[float]]:
+) -> tuple[float | None, float | None]:
   """
   Infer cpu roofline peak flops and bandwidth gbps.
-  
+
   Args:
     jt (Any): Jt passed to this helper.
-  
+
   Returns:
     Tuple[Optional[float], Optional[float]]: Tuple[Optional[float],
     Optional[float]] produced by this call.
-  
+
   Examples:
     >>> infer_cpu_roofline_peak_flops_and_bw_gbps(None)  # doctest: +SKIP
   """
@@ -257,7 +262,9 @@ def infer_cpu_roofline_peak_flops_and_bw_gbps(
 
   for imc_typ in imc_types_probe_order():
     if imc_typ in keys:
-      row = ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS.get(canonical_type_name(imc_typ))
+      row = ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS.get(
+        canonical_type_name(imc_typ)
+      )
       if row is not None:
         return row
 
@@ -275,17 +282,17 @@ def infer_cpu_roofline_peak_flops_and_bw_gbps(
   return (None, None)
 
 
-def lookup_roofline_cpu_peaks(key: str) -> Optional[Tuple[float, float]]:
+def lookup_roofline_cpu_peaks(key: str) -> tuple[float, float] | None:
   """
   Lookup roofline cpu peaks.
-  
+
   Args:
     key (str): String for key.
-  
+
   Returns:
     Optional[Tuple[float, float]]: Optional[Tuple[float, float]] — the result,
     or None when unavailable.
-  
+
   Examples:
     >>> lookup_roofline_cpu_peaks("x")  # doctest: +SKIP
   """

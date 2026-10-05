@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 GENERATED_HEADER = (
-    "# Generated at proxy startup from resolv.conf nameserver entries.\n"
+  "# Generated at proxy startup from resolv.conf nameserver entries.\n"
 )
 
 _NAMESERVER_RE = re.compile(r"^\s*nameserver\s+(\S+)\s*$", re.IGNORECASE)
@@ -56,7 +56,9 @@ def parse_resolv_nameservers(resolv_text: str) -> list[str]:
     list[str]: Deduplicated resolver addresses in file order.
 
   Examples:
-    >>> parse_resolv_nameservers("nameserver 127.0.0.11\\nnameserver 1.1.1.1\\n")
+    >>> parse_resolv_nameservers(
+    ...   "nameserver 127.0.0.11\\nnameserver 1.1.1.1\\n"
+    ... )
     ['127.0.0.11', '1.1.1.1']
   """
   found: list[str] = []
@@ -94,16 +96,16 @@ def render_resolver_include(nameservers: list[str]) -> str:
     raise ValueError("no usable nameserver entries found in resolv.conf")
   joined = " ".join(nameservers)
   return (
-      f"{GENERATED_HEADER}"
-      f"resolver {joined} ipv6=off valid=300s;\n"
-      "resolver_timeout 5s;\n"
+    f"{GENERATED_HEADER}"
+    f"resolver {joined} ipv6=off valid=300s;\n"
+    "resolver_timeout 5s;\n"
   )
 
 
 def write_nginx_resolver_include(
-    *,
-    resolv_path: Path,
-    out_path: Path,
+  *,
+  resolv_path: Path,
+  out_path: Path,
 ) -> list[str]:
   """
   Read resolv.conf and write a validated nginx resolver include file.
@@ -124,15 +126,17 @@ def write_nginx_resolver_include(
     >>> from pathlib import Path
     >>> import tempfile
     >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     resolv = Path(tmp) / "resolv.conf"
-    ...     out = Path(tmp) / "nginx-resolver.inc"
-    ...     _ = resolv.write_text("nameserver 127.0.0.11\\n", encoding="utf-8")
-    ...     write_nginx_resolver_include(resolv_path=resolv, out_path=out)
+    ...   resolv = Path(tmp) / "resolv.conf"
+    ...   out = Path(tmp) / "nginx-resolver.inc"
+    ...   _ = resolv.write_text("nameserver 127.0.0.11\\n", encoding="utf-8")
+    ...   write_nginx_resolver_include(resolv_path=resolv, out_path=out)
     ['127.0.0.11']
   """
   if not resolv_path.is_file():
     raise ValueError(f"resolv.conf not found: {resolv_path}")
-  nameservers = parse_resolv_nameservers(resolv_path.read_text(encoding="utf-8"))
+  nameservers = parse_resolv_nameservers(
+    resolv_path.read_text(encoding="utf-8")
+  )
   body = render_resolver_include(nameservers)
   out_path.parent.mkdir(parents=True, exist_ok=True)
   out_path.write_text(body, encoding="utf-8")
@@ -155,20 +159,22 @@ def main(argv: list[str] | None = None) -> int:
   """
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument(
-      "--resolv",
-      type=Path,
-      default=Path("/etc/resolv.conf"),
-      help="Path to resolv.conf",
+    "--resolv",
+    type=Path,
+    default=Path("/etc/resolv.conf"),
+    help="Path to resolv.conf",
   )
   parser.add_argument(
-      "--out",
-      type=Path,
-      default=Path("/etc/nginx/nginx-resolver.inc"),
-      help="Destination nginx include path",
+    "--out",
+    type=Path,
+    default=Path("/etc/nginx/nginx-resolver.inc"),
+    help="Destination nginx include path",
   )
   args = parser.parse_args(argv)
   try:
-    names = write_nginx_resolver_include(resolv_path=args.resolv, out_path=args.out)
+    names = write_nginx_resolver_include(
+      resolv_path=args.resolv, out_path=args.out
+    )
   except (OSError, ValueError) as exc:
     print(f"error: {exc}", file=sys.stderr)
     return 1

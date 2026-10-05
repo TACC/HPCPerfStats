@@ -1,4 +1,5 @@
 """Tests for hpcperfstats.dbload.lib.zstd_cli (no Django)."""
+
 from __future__ import annotations
 
 import io
@@ -13,19 +14,19 @@ from unittest.mock import patch
 import pytest
 
 from hpcperfstats.dbload.lib.zstd_cli import (
-    decompress_compressed_to_tar,
-    wrap_archive_zstd_cmd,
-    zstd_compress_tar_to_file,
-    zstd_decompress_stdout,
-    zstd_decompress_verbose,
-    drop_page_cache_for_fd,
-    drop_page_cache_for_paths,
-    zstd_drop_page_cache_for_paths,
-    zstd_executable,
-    zstd_gzip_decompress_verbose,
-    zstd_gzip_supported,
-    zstd_test,
-    zstd_thread_cli_args,
+  decompress_compressed_to_tar,
+  drop_page_cache_for_fd,
+  drop_page_cache_for_paths,
+  wrap_archive_zstd_cmd,
+  zstd_compress_tar_to_file,
+  zstd_decompress_stdout,
+  zstd_decompress_verbose,
+  zstd_drop_page_cache_for_paths,
+  zstd_executable,
+  zstd_gzip_decompress_verbose,
+  zstd_gzip_supported,
+  zstd_test,
+  zstd_thread_cli_args,
 )
 
 
@@ -39,18 +40,25 @@ def test_zstd_thread_cli_args_positive():
 
 def test_wrap_archive_zstd_cmd_adds_ionice_and_nice(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._archive_zstd_priority_settings",
-      lambda: (10, 2, 6),
+    "hpcperfstats.dbload.lib.zstd_cli._archive_zstd_priority_settings",
+    lambda: (10, 2, 6),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli.shutil.which",
-      lambda name: "/usr/bin/%s" % name if name in ("ionice", "nice", "zstd") else None,
+    "hpcperfstats.dbload.lib.zstd_cli.shutil.which",
+    lambda name: (
+      f"/usr/bin/{name}" if name in ("ionice", "nice", "zstd") else None
+    ),
   )
   wrapped = wrap_archive_zstd_cmd(["/usr/bin/zstd", "-T0", "-q", "x.zst"])
   assert wrapped[0:8] == [
-      "/usr/bin/ionice", "-c2", "-n6",
-      "/usr/bin/nice", "-n10",
-      "/usr/bin/zstd", "-T0", "-q",
+    "/usr/bin/ionice",
+    "-c2",
+    "-n6",
+    "/usr/bin/nice",
+    "-n10",
+    "/usr/bin/zstd",
+    "-T0",
+    "-q",
   ]
   assert wrapped[8] == "x.zst"
 
@@ -61,15 +69,15 @@ def test_ingest_member_scan_zstd_without_nice(monkeypatch):
   def _fake_popen(cmd, stdout, stderr, apply_priority_wrap=True):
     captured.append((cmd, apply_priority_wrap))
     proc = subprocess.Popen(
-        ["echo"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+      ["echo"],
+      stdout=subprocess.PIPE,
+      stderr=subprocess.DEVNULL,
     )
     return proc
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._popen_zstd",
-      _fake_popen,
+    "hpcperfstats.dbload.lib.zstd_cli._popen_zstd",
+    _fake_popen,
   )
   with zstd_decompress_stdout("/tmp/day.tar.zst", 0, apply_priority_wrap=False):
     pass
@@ -82,14 +90,16 @@ def test_ingest_member_scan_zstd_without_nice(monkeypatch):
 
 def test_wrap_archive_zstd_cmd_skips_when_disabled(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._archive_zstd_priority_settings",
-      lambda: (0, 0, 0),
+    "hpcperfstats.dbload.lib.zstd_cli._archive_zstd_priority_settings",
+    lambda: (0, 0, 0),
   )
   base = ["/usr/bin/zstd", "-d", "x.zst"]
   assert wrap_archive_zstd_cmd(base) == base
 
 
-def test_zstd_compress_tar_to_file_uses_t0_when_thread_count_zero(monkeypatch, tmp_path):
+def test_zstd_compress_tar_to_file_uses_t0_when_thread_count_zero(
+  monkeypatch, tmp_path
+):
   captured = []
 
   def _fake_run(cmd, *args, **kwargs):
@@ -100,7 +110,9 @@ def test_zstd_compress_tar_to_file_uses_t0_when_thread_count_zero(monkeypatch, t
   zst_path = tmp_path / "day.tar.zst"
   tar_path.write_bytes(b"payload")
 
-  with patch("hpcperfstats.dbload.lib.zstd_cli.subprocess.run", side_effect=_fake_run):
+  with patch(
+    "hpcperfstats.dbload.lib.zstd_cli.subprocess.run", side_effect=_fake_run
+  ):
     zstd_compress_tar_to_file(str(tar_path), str(zst_path), 0, 6)
 
   assert "-T0" in captured[0]
@@ -113,14 +125,19 @@ def test_zstd_gzip_decompress_verbose_invokes_zstd_gzip_format(monkeypatch):
     captured.append(cmd)
     return subprocess.CompletedProcess(cmd, 0, stdout="out\n", stderr="err\n")
 
-  with patch("hpcperfstats.dbload.lib.zstd_cli.shutil.which", return_value=None):
-    with patch("hpcperfstats.dbload.lib.zstd_cli.subprocess.run", side_effect=_fake_run):
-      with patch("hpcperfstats.dbload.lib.zstd_cli.log_print"):
-        with patch(
-            "hpcperfstats.dbload.lib.zstd_cli.decompress_compressed_to_tar",
-            return_value=True,
-        ):
-          zstd_gzip_decompress_verbose("/tmp/x.tar.gz", 4)
+  with (
+    patch("hpcperfstats.dbload.lib.zstd_cli.shutil.which", return_value=None),
+    patch(
+      "hpcperfstats.dbload.lib.zstd_cli.subprocess.run",
+      side_effect=_fake_run,
+    ),
+    patch("hpcperfstats.dbload.lib.zstd_cli.log_print"),
+    patch(
+      "hpcperfstats.dbload.lib.zstd_cli.decompress_compressed_to_tar",
+      return_value=True,
+    ),
+  ):
+    zstd_gzip_decompress_verbose("/tmp/x.tar.gz", 4)
 
   assert captured == []
 
@@ -128,13 +145,17 @@ def test_zstd_gzip_decompress_verbose_invokes_zstd_gzip_format(monkeypatch):
 def test_zstd_decompress_verbose_native_decompress_path(monkeypatch):
   captured = []
 
-  def _fake_decomp(compressed_path, tar_path, thread_count, *, remove_compressed=True):
-    captured.append((compressed_path, tar_path, thread_count, remove_compressed))
+  def _fake_decomp(
+    compressed_path, tar_path, thread_count, *, remove_compressed=True
+  ):
+    captured.append(
+      (compressed_path, tar_path, thread_count, remove_compressed)
+    )
     return True
 
   with patch(
-      "hpcperfstats.dbload.lib.zstd_cli.decompress_compressed_to_tar",
-      side_effect=_fake_decomp,
+    "hpcperfstats.dbload.lib.zstd_cli.decompress_compressed_to_tar",
+    side_effect=_fake_decomp,
   ):
     zstd_decompress_verbose("/tmp/small.tar.zst", 2)
 
@@ -152,7 +173,9 @@ def test_zstd_compress_tar_to_file_command_shape(monkeypatch, tmp_path):
   zst_path = tmp_path / "day.tar.zst"
   tar_path.write_bytes(b"payload")
 
-  with patch("hpcperfstats.dbload.lib.zstd_cli.subprocess.run", side_effect=_fake_run):
+  with patch(
+    "hpcperfstats.dbload.lib.zstd_cli.subprocess.run", side_effect=_fake_run
+  ):
     zstd_compress_tar_to_file(str(tar_path), str(zst_path), 2, 6)
 
   assert "-T2" in captured[0]
@@ -167,7 +190,9 @@ def test_zstd_test_command_shape(monkeypatch):
     captured.append(cmd)
     return subprocess.CompletedProcess(cmd, 0)
 
-  with patch("hpcperfstats.dbload.lib.zstd_cli.subprocess.run", side_effect=_fake_run):
+  with patch(
+    "hpcperfstats.dbload.lib.zstd_cli.subprocess.run", side_effect=_fake_run
+  ):
     zstd_test("/tmp/day.tar.zst", 3)
 
   assert "-T3" in captured[0]
@@ -175,7 +200,8 @@ def test_zstd_test_command_shape(monkeypatch):
 
 
 def test_decompress_compressed_to_tar_keeps_compressed_on_verify_failure(
-    monkeypatch, tmp_path,
+  monkeypatch,
+  tmp_path,
 ):
   zst_path = tmp_path / "2024-01-01.tar.zst"
   tar_path = tmp_path / "2024-01-01.tar"
@@ -193,12 +219,12 @@ def test_page_cache_hints_noop_off_linux(monkeypatch, tmp_path):
 
   monkeypatch.setattr(sys, "platform", "darwin")
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._page_cache_hints_enabled",
-      lambda: False,
+    "hpcperfstats.dbload.lib.zstd_cli._page_cache_hints_enabled",
+    lambda: False,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli.os.open",
-      lambda *a, **k: open_calls.append(a) or 1,
+    "hpcperfstats.dbload.lib.zstd_cli.os.open",
+    lambda *a, **k: open_calls.append(a) or 1,
   )
   zstd_drop_page_cache_for_paths(str(path))
   assert open_calls == []
@@ -208,12 +234,12 @@ def test_drop_page_cache_for_fd_invokes_posix_fadvise(monkeypatch):
   advised = []
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._page_cache_hints_enabled",
-      lambda: True,
+    "hpcperfstats.dbload.lib.zstd_cli._page_cache_hints_enabled",
+    lambda: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli.os.posix_fadvise",
-      lambda fd, off, ln, adv: advised.append((fd, off, ln, adv)),
+    "hpcperfstats.dbload.lib.zstd_cli.os.posix_fadvise",
+    lambda fd, off, ln, adv: advised.append((fd, off, ln, adv)),
   )
   drop_page_cache_for_fd(7, 4096, 1024)
   assert advised == [(7, 4096, 1024, os.POSIX_FADV_DONTNEED)]
@@ -224,12 +250,12 @@ def test_drop_page_cache_alias_matches_primary(monkeypatch, tmp_path):
   path.write_bytes(b"x")
   dropped = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._page_cache_hints_enabled",
-      lambda: True,
+    "hpcperfstats.dbload.lib.zstd_cli._page_cache_hints_enabled",
+    lambda: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._advise_drop_cache",
-      lambda p: dropped.append(p),
+    "hpcperfstats.dbload.lib.zstd_cli._advise_drop_cache",
+    lambda p: dropped.append(p),
   )
   drop_page_cache_for_paths(str(path))
   zstd_drop_page_cache_for_paths(str(path))
@@ -243,12 +269,12 @@ def test_page_cache_hints_invoke_fadvise_on_linux(monkeypatch, tmp_path):
 
   monkeypatch.setattr(sys, "platform", "linux")
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._page_cache_hints_enabled",
-      lambda: True,
+    "hpcperfstats.dbload.lib.zstd_cli._page_cache_hints_enabled",
+    lambda: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._advise_drop_cache",
-      lambda p: dropped.append(p),
+    "hpcperfstats.dbload.lib.zstd_cli._advise_drop_cache",
+    lambda p: dropped.append(p),
   )
   zstd_drop_page_cache_for_paths(str(path))
   assert dropped == [str(path)]
@@ -261,12 +287,12 @@ def test_page_cache_hints_disabled_when_ini_off(monkeypatch, tmp_path):
 
   monkeypatch.setattr(sys, "platform", "linux")
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._page_cache_hints_enabled",
-      lambda: False,
+    "hpcperfstats.dbload.lib.zstd_cli._page_cache_hints_enabled",
+    lambda: False,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli.os.open",
-      lambda *a, **k: open_calls.append(a) or 1,
+    "hpcperfstats.dbload.lib.zstd_cli.os.open",
+    lambda *a, **k: open_calls.append(a) or 1,
   )
   zstd_drop_page_cache_for_paths(str(path))
   assert open_calls == []
@@ -280,18 +306,20 @@ def test_zstd_test_applies_page_cache_hints_on_linux(monkeypatch, tmp_path):
   dropped = []
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._advise_sequential_read",
-      lambda p: sequential.append(p),
+    "hpcperfstats.dbload.lib.zstd_cli._advise_sequential_read",
+    lambda p: sequential.append(p),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._advise_drop_cache",
-      lambda p: dropped.append(p),
+    "hpcperfstats.dbload.lib.zstd_cli._advise_drop_cache",
+    lambda p: dropped.append(p),
   )
 
   def _fake_run(cmd, *args, apply_priority_wrap=True, **kwargs):
     return subprocess.CompletedProcess(cmd, 0)
 
-  with patch("hpcperfstats.dbload.lib.zstd_cli.subprocess.run", side_effect=_fake_run):
+  with patch(
+    "hpcperfstats.dbload.lib.zstd_cli.subprocess.run", side_effect=_fake_run
+  ):
     zstd_test(str(zst_path), 1)
 
   assert sequential == [str(zst_path)]
@@ -299,7 +327,8 @@ def test_zstd_test_applies_page_cache_hints_on_linux(monkeypatch, tmp_path):
 
 
 def test_decompress_verifies_tmp_before_replace_no_pipe_preflight(
-    monkeypatch, tmp_path,
+  monkeypatch,
+  tmp_path,
 ):
   zst_path = tmp_path / "2024-01-02.tar.zst"
   tar_path = tmp_path / "2024-01-02.tar"
@@ -308,12 +337,12 @@ def test_decompress_verifies_tmp_before_replace_no_pipe_preflight(
   pipe_calls = []
   verify_calls = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli.zstd_compressed_archive_pipe_readable",
-      lambda *a, **k: pipe_calls.append(a) or True,
+    "hpcperfstats.dbload.lib.zstd_cli.zstd_compressed_archive_pipe_readable",
+    lambda *a, **k: pipe_calls.append(a) or True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._verify_uncompressed_tar_readable",
-      lambda p: verify_calls.append(p) or True,
+    "hpcperfstats.dbload.lib.zstd_cli._verify_uncompressed_tar_readable",
+    lambda p: verify_calls.append(p) or True,
   )
 
   def _fake_decompress(compressed_path, output_path, thread_count):
@@ -321,15 +350,15 @@ def test_decompress_verifies_tmp_before_replace_no_pipe_preflight(
       f.write(b"tar-bytes")
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
-      _fake_decompress,
+    "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
+    _fake_decompress,
   )
 
   assert decompress_compressed_to_tar(
-      str(zst_path),
-      str(tar_path),
-      1,
-      remove_compressed=False,
+    str(zst_path),
+    str(tar_path),
+    1,
+    remove_compressed=False,
   )
   assert pipe_calls == []
   assert len(verify_calls) == 1
@@ -343,8 +372,8 @@ def test_decompress_tmp_verify_failure_skips_replace(monkeypatch, tmp_path):
   zst_path.write_bytes(b"bad")
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._verify_uncompressed_tar_readable",
-      lambda p: False,
+    "hpcperfstats.dbload.lib.zstd_cli._verify_uncompressed_tar_readable",
+    lambda p: False,
   )
 
   def _fake_decompress(compressed_path, output_path, thread_count):
@@ -352,8 +381,8 @@ def test_decompress_tmp_verify_failure_skips_replace(monkeypatch, tmp_path):
       f.write(b"bad-tar")
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
-      _fake_decompress,
+    "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
+    _fake_decompress,
   )
 
   assert not decompress_compressed_to_tar(str(zst_path), str(tar_path), 1)
@@ -380,7 +409,8 @@ def test_decompress_compressed_to_tar_round_trip_removes_zst(tmp_path):
 
 @pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
 def test_decompress_compressed_to_tar_invalidates_members_pre_and_post(
-    monkeypatch, tmp_path,
+  monkeypatch,
+  tmp_path,
 ):
   """Successful sealed→tar restore must invalidate pre- and post-identity caches."""
   tar_path = tmp_path / "2024-01-04.tar"
@@ -398,22 +428,23 @@ def test_decompress_compressed_to_tar_invalidates_members_pre_and_post(
     invalidated.append((path, kw.get("reason")))
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
-      ".invalidate_after_daily_tar_mutation",
-      _capture,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
+    ".invalidate_after_daily_tar_mutation",
+    _capture,
   )
 
   assert decompress_compressed_to_tar(str(zst_path), str(tar_path), 1)
   assert invalidated == [
-      (str(zst_path), "tar_restore_pre"),
-      (str(tar_path), "tar_restore"),
+    (str(zst_path), "tar_restore_pre"),
+    (str(tar_path), "tar_restore"),
   ]
   assert tar_path.is_file()
   assert not zst_path.is_file()
 
 
 def test_decompress_compressed_to_tar_failure_does_not_invalidate(
-    monkeypatch, tmp_path,
+  monkeypatch,
+  tmp_path,
 ):
   """Failed decompress must not touch membership caches."""
   zst_path = tmp_path / "2024-01-05.tar.zst"
@@ -422,9 +453,9 @@ def test_decompress_compressed_to_tar_failure_does_not_invalidate(
   invalidated = []
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
-      ".invalidate_after_daily_tar_mutation",
-      lambda path, **kw: invalidated.append((path, kw.get("reason"))),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
+    ".invalidate_after_daily_tar_mutation",
+    lambda path, **kw: invalidated.append((path, kw.get("reason"))),
   )
 
   assert not decompress_compressed_to_tar(str(zst_path), str(tar_path), 1)
@@ -443,12 +474,14 @@ def test_zstd_decompress_stdout_tolerates_sigpipe_after_reader_closes_pipe():
     def wait(self):
       return -signal.SIGPIPE
 
-  with patch(
+  with (
+    patch(
       "hpcperfstats.dbload.lib.zstd_cli.subprocess.Popen",
       return_value=_FakeProc(),
+    ),
+    zstd_decompress_stdout("/tmp/x.zst", 1) as out,
   ):
-    with zstd_decompress_stdout("/tmp/x.zst", 1) as out:
-      assert out.read(1) == b"a"
+    assert out.read(1) == b"a"
 
 
 @pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
@@ -457,7 +490,9 @@ def test_zstd_gzip_supported_when_zstd_on_path():
 
 
 @pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
-@pytest.mark.skipif(not zstd_gzip_supported(), reason="zstd without gzip support")
+@pytest.mark.skipif(
+  not zstd_gzip_supported(), reason="zstd without gzip support"
+)
 def test_zstd_gzip_decompress_stdout_streams_gzip_payload(tmp_path):
   import gzip
 
@@ -470,29 +505,31 @@ def test_zstd_gzip_decompress_stdout_streams_gzip_payload(tmp_path):
     assert out.read() == b"hello-zstd-gzip-stream"
 
 
-def test_concurrent_decompress_compressed_to_tar_runs_one_zstd(monkeypatch, tmp_path):
+def test_concurrent_decompress_compressed_to_tar_runs_one_zstd(
+  monkeypatch, tmp_path
+):
   import threading
   import time
 
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-      SyncTimedbArchiveMembersStore,
-      set_process_archive_members_store,
+    SyncTimedbArchiveMembersStore,
+    set_process_archive_members_store,
   )
 
   day = "2026-06-02"
-  zst_path = tmp_path / ("%s.tar.zst" % day)
-  tar_path = tmp_path / ("%s.tar" % day)
+  zst_path = tmp_path / (f"{day}.tar.zst")
+  tar_path = tmp_path / (f"{day}.tar")
   zst_path.write_bytes(b"zst")
   store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
   set_process_archive_members_store(store)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._verify_uncompressed_tar_readable",
-      lambda p: True,
+    "hpcperfstats.dbload.lib.zstd_cli._verify_uncompressed_tar_readable",
+    lambda p: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
-      ".invalidate_after_daily_tar_mutation",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
+    ".invalidate_after_daily_tar_mutation",
+    lambda *a, **k: None,
   )
   decompress_calls = []
   hold = threading.Event()
@@ -506,14 +543,17 @@ def test_concurrent_decompress_compressed_to_tar_runs_one_zstd(monkeypatch, tmp_
       f.write(b"tar")
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
-      _slow_decompress,
+    "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
+    _slow_decompress,
   )
   results = [None, None]
 
   def _worker(idx):
     results[idx] = decompress_compressed_to_tar(
-        str(zst_path), str(tar_path), 1, remove_compressed=False,
+      str(zst_path),
+      str(tar_path),
+      1,
+      remove_compressed=False,
     )
 
   try:
@@ -535,24 +575,26 @@ def test_concurrent_decompress_compressed_to_tar_runs_one_zstd(monkeypatch, tmp_
 
 def test_decompress_conflict_does_not_remove_tmp(monkeypatch, tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      try_acquire_daily_tar_restore,
+    try_acquire_daily_tar_restore,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-      SyncTimedbArchiveMembersStore,
-      set_process_archive_members_store,
+    SyncTimedbArchiveMembersStore,
+    set_process_archive_members_store,
   )
 
   day = "2026-06-02"
-  zst_path = tmp_path / ("%s.tar.zst" % day)
-  tar_path = tmp_path / ("%s.tar" % day)
-  tmp_out = tmp_path / ("%s.tar.decomp.tmp" % day)
+  zst_path = tmp_path / (f"{day}.tar.zst")
+  tar_path = tmp_path / (f"{day}.tar")
+  tmp_out = tmp_path / (f"{day}.tar.decomp.tmp")
   zst_path.write_bytes(b"zst")
   tmp_out.write_bytes(b"owner-in-progress")
   store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
   set_process_archive_members_store(store)
   try:
     owner = try_acquire_daily_tar_restore(
-        day, reason="missing_tar", caller="owner",
+      day,
+      reason="missing_tar",
+      caller="owner",
     )
     assert owner
     removes = []
@@ -563,11 +605,11 @@ def test_decompress_conflict_does_not_remove_tmp(monkeypatch, tmp_path):
 
     monkeypatch.setattr("os.remove", _tracking_remove)
     assert not decompress_compressed_to_tar(
-        str(zst_path),
-        str(tar_path),
-        1,
-        remove_compressed=False,
-        wait_for_other_owner=False,
+      str(zst_path),
+      str(tar_path),
+      1,
+      remove_compressed=False,
+      wait_for_other_owner=False,
     )
     assert removes == []
     assert tmp_out.read_bytes() == b"owner-in-progress"
@@ -577,33 +619,35 @@ def test_decompress_conflict_does_not_remove_tmp(monkeypatch, tmp_path):
 
 def test_decompress_no_wait_returns_false_on_conflict(monkeypatch, tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      try_acquire_daily_tar_restore,
+    try_acquire_daily_tar_restore,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-      SyncTimedbArchiveMembersStore,
-      set_process_archive_members_store,
+    SyncTimedbArchiveMembersStore,
+    set_process_archive_members_store,
   )
 
   day = "2026-06-02"
-  zst_path = tmp_path / ("%s.tar.zst" % day)
-  tar_path = tmp_path / ("%s.tar" % day)
+  zst_path = tmp_path / (f"{day}.tar.zst")
+  tar_path = tmp_path / (f"{day}.tar")
   zst_path.write_bytes(b"zst")
   store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
   set_process_archive_members_store(store)
   try:
     assert try_acquire_daily_tar_restore(
-        day, reason="missing_tar", caller="owner",
+      day,
+      reason="missing_tar",
+      caller="owner",
     )
     called = []
     monkeypatch.setattr(
-        "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
-        lambda *a, **k: called.append(1),
+      "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
+      lambda *a, **k: called.append(1),
     )
     assert not decompress_compressed_to_tar(
-        str(zst_path),
-        str(tar_path),
-        1,
-        wait_for_other_owner=False,
+      str(zst_path),
+      str(tar_path),
+      1,
+      wait_for_other_owner=False,
     )
     assert called == []
   finally:
@@ -614,27 +658,27 @@ def test_decompress_uses_file_lock_when_store_unset(monkeypatch, tmp_path):
   import threading
 
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-      set_process_archive_members_store,
+    set_process_archive_members_store,
   )
 
   day = "2026-06-02"
-  zst_path = tmp_path / ("%s.tar.zst" % day)
-  tar_path = tmp_path / ("%s.tar" % day)
+  zst_path = tmp_path / (f"{day}.tar.zst")
+  tar_path = tmp_path / (f"{day}.tar")
   zst_path.write_bytes(b"zst")
   set_process_archive_members_store(None)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._verify_uncompressed_tar_readable",
-      lambda p: True,
+    "hpcperfstats.dbload.lib.zstd_cli._verify_uncompressed_tar_readable",
+    lambda p: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
-      ".invalidate_after_daily_tar_mutation",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
+    ".invalidate_after_daily_tar_mutation",
+    lambda *a, **k: None,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
-      ".notify_daily_tar_restore_cleared",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
+    ".notify_daily_tar_restore_cleared",
+    lambda *a, **k: None,
   )
   calls = []
   hold = threading.Event()
@@ -648,27 +692,30 @@ def test_decompress_uses_file_lock_when_store_unset(monkeypatch, tmp_path):
       f.write(b"tar")
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
-      _slow_decompress,
+    "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
+    _slow_decompress,
   )
   results = []
 
   def _owner():
     results.append(
-        decompress_compressed_to_tar(
-            str(zst_path), str(tar_path), 1, remove_compressed=False,
-        )
+      decompress_compressed_to_tar(
+        str(zst_path),
+        str(tar_path),
+        1,
+        remove_compressed=False,
+      )
     )
 
   t = threading.Thread(target=_owner)
   t.start()
   assert started.wait(timeout=2)
   assert not decompress_compressed_to_tar(
-      str(zst_path),
-      str(tar_path),
-      1,
-      remove_compressed=False,
-      wait_for_other_owner=False,
+    str(zst_path),
+    str(tar_path),
+    1,
+    remove_compressed=False,
+    wait_for_other_owner=False,
   )
   hold.set()
   t.join(timeout=5)
@@ -677,32 +724,33 @@ def test_decompress_uses_file_lock_when_store_unset(monkeypatch, tmp_path):
 
 
 def test_decompress_compressed_to_tar_does_not_skip_empty_dest(
-    monkeypatch, tmp_path,
+  monkeypatch,
+  tmp_path,
 ):
   """Size-0 dest (mkstemp) must run decompress, not short-circuit as present."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-      set_process_archive_members_store,
+    set_process_archive_members_store,
   )
 
   day = "2026-06-03"
-  zst_path = tmp_path / ("%s.tar.zst" % day)
-  tar_path = tmp_path / ("%s.tar" % day)
+  zst_path = tmp_path / (f"{day}.tar.zst")
+  tar_path = tmp_path / (f"{day}.tar")
   zst_path.write_bytes(b"zst")
   tar_path.write_bytes(b"")
   set_process_archive_members_store(None)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._verify_uncompressed_tar_readable",
-      lambda p: True,
+    "hpcperfstats.dbload.lib.zstd_cli._verify_uncompressed_tar_readable",
+    lambda p: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
-      ".invalidate_after_daily_tar_mutation",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
+    ".invalidate_after_daily_tar_mutation",
+    lambda *a, **k: None,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
-      ".notify_daily_tar_restore_cleared",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
+    ".notify_daily_tar_restore_cleared",
+    lambda *a, **k: None,
   )
   called = []
 
@@ -715,11 +763,14 @@ def test_decompress_compressed_to_tar_does_not_skip_empty_dest(
       tf.add(str(member), arcname="m.txt")
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
-      _write_tmp,
+    "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
+    _write_tmp,
   )
   assert decompress_compressed_to_tar(
-      str(zst_path), str(tar_path), 1, remove_compressed=False,
+    str(zst_path),
+    str(tar_path),
+    1,
+    remove_compressed=False,
   )
   assert called
   assert tar_path.stat().st_size > 0
@@ -728,27 +779,29 @@ def test_decompress_compressed_to_tar_does_not_skip_empty_dest(
 def test_decompress_wait_owner_empty_dest_is_not_success(monkeypatch, tmp_path):
   """Waiter must not treat an empty dest left by the owner as restore success."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      try_acquire_daily_tar_restore,
+    try_acquire_daily_tar_restore,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-      SyncTimedbArchiveMembersStore,
-      set_process_archive_members_store,
+    SyncTimedbArchiveMembersStore,
+    set_process_archive_members_store,
   )
 
   day = "2026-06-04"
-  zst_path = tmp_path / ("%s.tar.zst" % day)
-  tar_path = tmp_path / ("%s.tar" % day)
+  zst_path = tmp_path / (f"{day}.tar.zst")
+  tar_path = tmp_path / (f"{day}.tar")
   zst_path.write_bytes(b"zst")
   store = SyncTimedbArchiveMembersStore(str(tmp_path / "archive"))
   set_process_archive_members_store(store)
   try:
     assert try_acquire_daily_tar_restore(
-        day, reason="missing_tar", caller="owner",
+      day,
+      reason="missing_tar",
+      caller="owner",
     )
     called = []
     monkeypatch.setattr(
-        "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
-        lambda *a, **k: called.append(1),
+      "hpcperfstats.dbload.lib.zstd_cli._decompress_to_path",
+      lambda *a, **k: called.append(1),
     )
 
     def _wait(target_path, *, log_fn=None):
@@ -756,16 +809,16 @@ def test_decompress_wait_owner_empty_dest_is_not_success(monkeypatch, tmp_path):
       tar_path.write_bytes(b"")
 
     monkeypatch.setattr(
-        "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord"
-        ".wait_for_daily_tar_restore_before_populate",
-        _wait,
+      "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord"
+      ".wait_for_daily_tar_restore_before_populate",
+      _wait,
     )
     assert not decompress_compressed_to_tar(
-        str(zst_path),
-        str(tar_path),
-        1,
-        wait_for_other_owner=True,
-        remove_compressed=False,
+      str(zst_path),
+      str(tar_path),
+      1,
+      wait_for_other_owner=True,
+      remove_compressed=False,
     )
     assert called == []
   finally:

@@ -12,20 +12,20 @@ Bokeh job-list embed regressions (real BokehJS + Playwright) live in
 """
 
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 import pytest
 from django.core.cache import cache
-from django.test import Client
-from django.test import override_settings
+from django.test import Client, override_settings
 from django.utils import timezone
-from unittest.mock import Mock, patch
 
 from hpcperfstats.site.lib.machine.models import job_data
 from hpcperfstats.site.lib.machine.tests.csrf_test_utils import csrf_headers
 from hpcperfstats.tests.public_robots_js_registry import (
-    format_public_robots_txt_body,
-    load_public_robots_allow_prefixes,
+  format_public_robots_txt_body,
+  load_public_robots_allow_prefixes,
 )
+
 
 @pytest.mark.django_db
 class TestWebPagesEndToEnd:
@@ -39,21 +39,21 @@ class TestWebPagesEndToEnd:
     # Production contract: nginx serves /machine/* SPA shell, not WSGI.
     assert client.get("/machine/").status_code == 404
     for path in (
-        "/machine/home/",
-        "/machine/jobs/",
-        "/machine/job/123/",
-        "/machine/job/123/?tab=roofline",
-        "/machine/job/123/?tab=multiprecisionMix",
-        "/machine/job/123/cpu/",
-        "/machine/year/2020/",
-        "/machine/date/2024-01-15/",
-        "/machine/host/node1/plot/",
-        "/machine/admin_monitor/",
-        "/machine/job_monitor/",
-        "/machine/test-login/",
-        "/machine/logout/",
-        "/pub/",
-        "/pub/cluster-dashboard",
+      "/machine/home/",
+      "/machine/jobs/",
+      "/machine/job/123/",
+      "/machine/job/123/?tab=roofline",
+      "/machine/job/123/?tab=multiprecisionMix",
+      "/machine/job/123/cpu/",
+      "/machine/year/2020/",
+      "/machine/date/2024-01-15/",
+      "/machine/host/node1/plot/",
+      "/machine/admin_monitor/",
+      "/machine/job_monitor/",
+      "/machine/test-login/",
+      "/machine/logout/",
+      "/pub/",
+      "/pub/cluster-dashboard",
     ):
       assert client.get(path).status_code == 404
 
@@ -67,17 +67,17 @@ class TestWebPagesEndToEnd:
     assert "User-agent: *" in expected_body
     assert "Disallow: /" in expected_body
     for prefix in prefixes:
-      assert "Allow: {}".format(prefix) in expected_body
+      assert f"Allow: {prefix}" in expected_body
     built_path = Path(__file__).resolve().parents[5] / (
-        "hpcperfstats/site/hpcperfstats_site/static/frontend/robots.txt"
+      "hpcperfstats/site/hpcperfstats_site/static/frontend/robots.txt"
     )
     if built_path.is_file():
       assert built_path.read_text(encoding="utf-8") == expected_body
 
     csp_response = client.post(
-        "/csp-report/",
-        data='{"csp-report":{"document-uri":"https://example.test"}}',
-        content_type="application/csp-report",
+      "/csp-report/",
+      data='{"csp-report":{"document-uri":"https://example.test"}}',
+      content_type="application/csp-report",
     )
     assert csp_response.status_code == 204
 
@@ -106,9 +106,14 @@ class TestWebPagesEndToEnd:
     rotated_key = Mock()
     rotated_key.key_prefix = "def456"
 
-    with patch("hpcperfstats.site.lib.machine.api.ApiKey.objects.filter") as mock_filter, patch(
+    with (
+      patch(
+        "hpcperfstats.site.lib.machine.api.ApiKey.objects.filter"
+      ) as mock_filter,
+      patch(
         "hpcperfstats.site.lib.machine.api.ApiKey.create_from_raw_key",
         return_value=(rotated_key, "raw-new-api-key"),
+      ),
     ):
       mock_filter.side_effect = [list_queryset, update_queryset]
 
@@ -125,8 +130,8 @@ class TestWebPagesEndToEnd:
       csrf_request = RequestFactory().get("/")
       csrf_request.session = client.session
       rotate_response = client.post(
-          "/api/user-api-key/rotate/",
-          HTTP_X_CSRFTOKEN=get_token(csrf_request),
+        "/api/user-api-key/rotate/",
+        HTTP_X_CSRFTOKEN=get_token(csrf_request),
       )
       assert rotate_response.status_code == 200
       rotate_payload = rotate_response.json()
@@ -158,7 +163,9 @@ class TestWebPagesEndToEnd:
     staff_only_response = client.get("/api/admin_monitor/")
     assert staff_only_response.status_code == 403
 
-  def test_staff_only_endpoints_appear_for_staff_and_disappear_for_non_staff(self):
+  def test_staff_only_endpoints_appear_for_staff_and_disappear_for_non_staff(
+    self,
+  ):
     """Staff-only API routes should allow staff and deny non-staff sessions."""
     client = Client()
 
@@ -170,31 +177,34 @@ class TestWebPagesEndToEnd:
 
     # Keep this test isolated from external DB/Redis dependencies by stubbing
     # expensive data paths. We only validate staff gating behavior here.
-    with override_settings(
+    with (
+      override_settings(
         CACHES={
-            "default": {
-                "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-                "LOCATION": "staff-visibility-e2e",
-            }
+          "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "staff-visibility-e2e",
+          }
         }
-    ), patch(
+      ),
+      patch(
         "hpcperfstats.site.lib.machine.api._get_cache_stats",
         return_value={"ok": True},
+      ),
     ):
       staff_admin = client.get("/api/admin_monitor/?section=cache")
       assert staff_admin.status_code == 200
       staff_ingest = client.post(
-          "/api/sacct/ingest/?date=2026-01-01",
-          data="",
-          content_type="text/plain",
-          **csrf_headers(),
+        "/api/sacct/ingest/?date=2026-01-01",
+        data="",
+        content_type="text/plain",
+        **csrf_headers(),
       )
       assert staff_ingest.status_code == 200
       staff_invalidate = client.post(
-          "/api/cache/invalidate-page/",
-          data={"page_path": "/machine/jobs"},
-          content_type="application/json",
-          **csrf_headers(),
+        "/api/cache/invalidate-page/",
+        data={"page_path": "/machine/jobs"},
+        content_type="application/json",
+        **csrf_headers(),
       )
       assert staff_invalidate.status_code == 200
 
@@ -205,17 +215,17 @@ class TestWebPagesEndToEnd:
       non_staff_admin = client.get("/api/admin_monitor/?section=cache")
       assert non_staff_admin.status_code == 403
       non_staff_ingest = client.post(
-          "/api/sacct/ingest/?date=2026-01-01",
-          data="",
-          content_type="text/plain",
-          **csrf_headers(),
+        "/api/sacct/ingest/?date=2026-01-01",
+        data="",
+        content_type="text/plain",
+        **csrf_headers(),
       )
       assert non_staff_ingest.status_code == 403
       non_staff_invalidate = client.post(
-          "/api/cache/invalidate-page/",
-          data={"page_path": "/machine/jobs"},
-          content_type="application/json",
-          **csrf_headers(),
+        "/api/cache/invalidate-page/",
+        data={"page_path": "/machine/jobs"},
+        content_type="application/json",
+        **csrf_headers(),
       )
       assert non_staff_invalidate.status_code == 403
 
@@ -245,12 +255,13 @@ def test_job_detail_api_includes_staff_metrics_distinct_time_count_for_staff():
   """Staff job detail JSON includes sample-count field (SPA Job Detail page; no DB)."""
   from concurrent.futures import ThreadPoolExecutor
   from contextlib import ExitStack
-  from django.test import RequestFactory
   from unittest.mock import patch
+
+  from django.test import RequestFactory
 
   from hpcperfstats.site.lib.machine import api
   from hpcperfstats.site.lib.machine.tests.test_job_detail_staff_sample_count import (
-      _patch_job_detail_for_staff_count,
+    _patch_job_detail_for_staff_count,
   )
 
   jid = "e2e-staff-metrics-distinct-jid"
@@ -259,12 +270,13 @@ def test_job_detail_api_includes_staff_metrics_distinct_time_count_for_staff():
   request.session = {"username": "e2e-user", "is_staff": True}
 
   ctx = _patch_job_detail_for_staff_count(api, jid, 42_000)
-  with ThreadPoolExecutor(max_workers=4) as executor:
-    with ExitStack() as stack:
-      stack.enter_context(patch.object(api, "_get_small_executor", return_value=executor))
-      for cm in ctx:
-        stack.enter_context(cm)
-      response = api.job_detail(request, jid)
+  with ThreadPoolExecutor(max_workers=4) as executor, ExitStack() as stack:
+    stack.enter_context(
+      patch.object(api, "_get_small_executor", return_value=executor)
+    )
+    for cm in ctx:
+      stack.enter_context(cm)
+    response = api.job_detail(request, jid)
 
   assert response.status_code == 200
   assert response.data["staff_metrics_distinct_time_count"] == 42_000
@@ -276,19 +288,24 @@ def test_job_list_api_exposes_sample_count_only_for_staff():
   client = Client()
   now = timezone.now()
   job = job_data.objects.create(
-      jid="e2e-job-list-sample-count",
-      submit_time=now,
-      start_time=now,
-      end_time=now,
-      runtime=60.0,
-      username="webtest-user",
-      host_list=["n1.example.com"],
-      metrics_distinct_time_count=321,
+    jid="e2e-job-list-sample-count",
+    submit_time=now,
+    start_time=now,
+    end_time=now,
+    runtime=60.0,
+    username="webtest-user",
+    host_list=["n1.example.com"],
+    metrics_distinct_time_count=321,
   )
 
   with patch(
-      "hpcperfstats.site.lib.machine.api._build_job_list_queryset_from_request",
-      return_value=(job_data.objects.filter(pk=job.pk).order_by("pk"), {}, None, "-end_time"),
+    "hpcperfstats.site.lib.machine.api._build_job_list_queryset_from_request",
+    return_value=(
+      job_data.objects.filter(pk=job.pk).order_by("pk"),
+      {},
+      None,
+      "-end_time",
+    ),
   ):
     session = client.session
     session["access_token"] = "token"

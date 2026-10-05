@@ -12,21 +12,23 @@ Attributes:
   FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION: Attribute.
   LogFn: Attribute.
 """
+
 from __future__ import annotations
 
 import os
 import time
-from typing import Any, Callable, Iterable, Optional
+from collections.abc import Callable, Iterable
+from typing import Any, Optional
 
 from hpcperfstats.dbload.lib.file_locking import file_write_lock
 from hpcperfstats.dbload.lib.sync_timedb_mark_entries_cache import (
-    clear_mark_entries_cache,
-    load_cached_mark_entries,
+  clear_mark_entries_cache,
+  load_cached_mark_entries,
 )
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
-    artifact_path,
-    load_persistence_document,
-    save_persistence_document,
+  artifact_path,
+  load_persistence_document,
+  save_persistence_document,
 )
 
 FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION = 1
@@ -36,13 +38,13 @@ LogFn = Optional[Callable[..., Any]]
 def path_fingerprint_key(path: str) -> str | None:
   """
   Return ``path|mtime|size`` fingerprint, or ``None`` if the path is missing.
-  
+
   Args:
     path (str): String for path.
-  
+
   Returns:
     str | None: One of ``str``, ``None`` depending on inputs/branch.
-  
+
   Examples:
     >>> path_fingerprint_key("x")  # doctest: +SKIP
   """
@@ -50,19 +52,23 @@ def path_fingerprint_key(path: str) -> str | None:
     st = os.stat(path)
   except OSError:
     return None
-  return "%s|%d|%d" % (os.path.normpath(path), int(st.st_mtime), int(st.st_size))
+  return "%s|%d|%d" % (
+    os.path.normpath(path),
+    int(st.st_mtime),
+    int(st.st_size),
+  )
 
 
 def file_complete_ingest_mark_path(archive_data_dir: str) -> str:
   """
   File complete ingest mark path.
-  
+
   Args:
     archive_data_dir (str): String for archive data dir.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> file_complete_ingest_mark_path("x")  # doctest: +SKIP
   """
@@ -72,10 +78,10 @@ def file_complete_ingest_mark_path(archive_data_dir: str) -> str:
 def _default_archive_dir() -> str:
   """
   Internal helper to handle default archive dir.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> _default_archive_dir()  # doctest: +SKIP
   """
@@ -98,9 +104,9 @@ def _load_entries_uncached(mark_path: str) -> dict:
     >>> _load_entries_uncached("x")  # doctest: +SKIP
   """
   raw = load_persistence_document(
-      mark_path,
-      "file_complete_ingest_mark",
-      default={"entries": {}},
+    mark_path,
+    "file_complete_ingest_mark",
+    default={"entries": {}},
   )
   if not isinstance(raw, dict):
     return {}
@@ -124,8 +130,8 @@ def _load_entries(mark_path: str) -> dict:
     >>> _load_entries("x")  # doctest: +SKIP
   """
   return load_cached_mark_entries(
-      mark_path,
-      load_uncached=_load_entries_uncached,
+    mark_path,
+    load_uncached=_load_entries_uncached,
   )
 
 
@@ -144,12 +150,12 @@ def _save_entries(mark_path: str, entries: dict) -> None:
     >>> _save_entries("x", {})  # doctest: +SKIP
   """
   save_persistence_document(
-      mark_path,
-      "file_complete_ingest_mark",
-      {
-          "schema_version": FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION,
-          "entries": entries,
-      },
+    mark_path,
+    "file_complete_ingest_mark",
+    {
+      "schema_version": FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION,
+      "entries": entries,
+    },
   )
   clear_mark_entries_cache(mark_path)
 
@@ -161,23 +167,25 @@ def has_file_complete_ingest_mark(
 ) -> bool:
   """
   True when a durable sync_timedb file-complete mark exists for this.
-  
+
     fingerprint.
-  
+
   Args:
     path (str): String for path.
     archive_data_dir (str | None): One of ``str``, ``None``.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> has_file_complete_ingest_mark("x", None)  # doctest: +SKIP
   """
   key = path_fingerprint_key(path)
   if key is None:
     return False
-  archive_dir = archive_data_dir if archive_data_dir is not None else _default_archive_dir()
+  archive_dir = (
+    archive_data_dir if archive_data_dir is not None else _default_archive_dir()
+  )
   if not archive_dir:
     return False
   mark_path = file_complete_ingest_mark_path(archive_dir)
@@ -195,24 +203,26 @@ def record_file_complete_ingest_mark(
 ) -> bool:
   """
   Record a durable mark after sync_timedb completes a path. Return True if.
-  
+
     stored.
-  
+
   Args:
     path (str): String for path.
     archive_data_dir (str | None): One of ``str``, ``None``.
     log_fn (LogFn): Log fn.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> record_file_complete_ingest_mark("x", None, None)  # doctest: +SKIP
   """
   key = path_fingerprint_key(path)
   if key is None:
     return False
-  archive_dir = archive_data_dir if archive_data_dir is not None else _default_archive_dir()
+  archive_dir = (
+    archive_data_dir if archive_data_dir is not None else _default_archive_dir()
+  )
   if not archive_dir:
     return False
   mark_path = file_complete_ingest_mark_path(archive_dir)
@@ -227,16 +237,16 @@ def record_file_complete_ingest_mark(
   with file_write_lock(mark_path):
     entries = _load_entries(mark_path)
     entries[key] = {
-        "path": os.path.normpath(path),
-        "mtime": int(st.st_mtime),
-        "size": int(st.st_size),
-        "marked_at": time.time(),
+      "path": os.path.normpath(path),
+      "mtime": int(st.st_mtime),
+      "size": int(st.st_size),
+      "marked_at": time.time(),
     }
     _save_entries(mark_path, entries)
   if log_fn is not None:
     log_fn(
-        "INFO: file_complete_ingest_mark recorded path=%s" % path,
-        flush=True,
+      f"INFO: file_complete_ingest_mark recorded path={path}",
+      flush=True,
     )
   return True
 
@@ -249,22 +259,24 @@ def clear_file_complete_ingest_marks(
 ) -> int:
   """
   Clear marks for the given paths. Return count removed.
-  
+
   Args:
     paths (Iterable[str]): Paths.
     archive_data_dir (str | None): One of ``str``, ``None``.
     log_fn (LogFn): Log fn.
-  
+
   Returns:
     int: int produced by this call.
-  
+
   Examples:
     >>> clear_file_complete_ingest_marks(None, None, None)  # doctest: +SKIP
   """
   path_set = {os.path.normpath(p) for p in (paths or ()) if p}
   if not path_set:
     return 0
-  archive_dir = archive_data_dir if archive_data_dir is not None else _default_archive_dir()
+  archive_dir = (
+    archive_data_dir if archive_data_dir is not None else _default_archive_dir()
+  )
   if not archive_dir:
     return 0
   mark_path = file_complete_ingest_mark_path(archive_dir)
@@ -290,8 +302,8 @@ def clear_file_complete_ingest_marks(
       _save_entries(mark_path, keep)
   if removed and log_fn is not None:
     log_fn(
-        "INFO: file_complete_ingest_mark cleared n=%d" % removed,
-        flush=True,
+      "INFO: file_complete_ingest_mark cleared n=%d" % removed,
+      flush=True,
     )
   return removed
 
@@ -307,9 +319,9 @@ def maybe_record_file_complete_ingest_mark_from_outcome(
 ) -> bool:
   """
   Record mark when sync_timedb finished the path (ingest or full_scan skip).
-  
+
   Never after live-only head/tail. Live listend must not call this helper.
-  
+
   Args:
     path (str): String for path.
     ingest_ok (bool): Boolean flag for ingest ok.
@@ -317,10 +329,10 @@ def maybe_record_file_complete_ingest_mark_from_outcome(
     db_skip (str | None): One of ``str``, ``None``.
     log_fn (LogFn): Log fn.
     archive_data_dir (str | None): One of ``str``, ``None``.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> maybe_record_file_complete_ingest_mark_from_outcome(0)  # doctest: +SKIP
   """
@@ -329,17 +341,17 @@ def maybe_record_file_complete_ingest_mark_from_outcome(
   outcome_s = str(outcome or "")
   if outcome_s == "ingested":
     return record_file_complete_ingest_mark(
-        path,
-        archive_data_dir=archive_data_dir,
-        log_fn=log_fn,
+      path,
+      archive_data_dir=archive_data_dir,
+      log_fn=log_fn,
     )
   if outcome_s == "db_skip":
     skip = str(db_skip or "")
     # Accept full_scan token only (not head_tail / tail_window).
     if skip in ("full_scan", "db_complete_full_scan"):
       return record_file_complete_ingest_mark(
-          path,
-          archive_data_dir=archive_data_dir,
-          log_fn=log_fn,
+        path,
+        archive_data_dir=archive_data_dir,
+        log_fn=log_fn,
       )
   return False

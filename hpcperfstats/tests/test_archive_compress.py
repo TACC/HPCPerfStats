@@ -1,4 +1,5 @@
 """Unit tests for archive_compress path helpers (no Django)."""
+
 from __future__ import annotations
 
 from datetime import date
@@ -6,41 +7,41 @@ from datetime import date
 import pytest
 
 from hpcperfstats.dbload.lib.archive_compress import (
-    DAILY_ARCHIVE_GZ_SUFFIX,
-    DAILY_ARCHIVE_TAR_SUFFIX,
-    DAILY_ARCHIVE_ZST_SUFFIX,
-    archive_gz_members_contained_in_zst,
-    archive_member_maps_equivalent,
-    compressed_sibling_paths,
-    daily_compressed_path_for_date,
-    daily_tar_path_from_compressed,
-    detect_compressed_format,
-    normalize_daily_compressed_path,
-    sum_member_bytes,
+  DAILY_ARCHIVE_GZ_SUFFIX,
+  DAILY_ARCHIVE_TAR_SUFFIX,
+  DAILY_ARCHIVE_ZST_SUFFIX,
+  archive_gz_members_contained_in_zst,
+  archive_member_maps_equivalent,
+  compressed_sibling_paths,
+  daily_compressed_path_for_date,
+  daily_tar_path_from_compressed,
+  detect_compressed_format,
+  normalize_daily_compressed_path,
+  sum_member_bytes,
 )
 
 
 @pytest.mark.parametrize(
-    ("path", "expected"),
-    [
-        ("/archive/2024-01-02.tar.zst", "zst"),
-        ("/archive/2024-01-02.tar.gz", "gz"),
-        ("/archive/2024-01-02.tar", None),
-        ("/archive/foo.txt", None),
-    ],
+  ("path", "expected"),
+  [
+    ("/archive/2024-01-02.tar.zst", "zst"),
+    ("/archive/2024-01-02.tar.gz", "gz"),
+    ("/archive/2024-01-02.tar", None),
+    ("/archive/foo.txt", None),
+  ],
 )
 def test_detect_compressed_format(path, expected):
   assert detect_compressed_format(path) == expected
 
 
 @pytest.mark.parametrize(
-    ("path", "expected_tar"),
-    [
-        ("/a/2024-01-02.tar.zst", "/a/2024-01-02.tar"),
-        ("/a/2024-01-02.tar.gz", "/a/2024-01-02.tar"),
-        ("/a/2024-01-02.tar", "/a/2024-01-02.tar"),
-        ("/a/other", "/a/other"),
-    ],
+  ("path", "expected_tar"),
+  [
+    ("/a/2024-01-02.tar.zst", "/a/2024-01-02.tar"),
+    ("/a/2024-01-02.tar.gz", "/a/2024-01-02.tar"),
+    ("/a/2024-01-02.tar", "/a/2024-01-02.tar"),
+    ("/a/other", "/a/other"),
+  ],
 )
 def test_daily_tar_path_from_compressed(path, expected_tar):
   assert daily_tar_path_from_compressed(path) == expected_tar
@@ -86,13 +87,13 @@ def test_sum_member_bytes():
 
 
 @pytest.mark.parametrize(
-    ("path", "expected"),
-    [
-        ("/a/2024-01-02.tar.zst", "/a/2024-01-02.tar.zst"),
-        ("/a/2024-01-02.tar.gz", "/a/2024-01-02.tar.zst"),
-        ("/a/2024-01-02.tar", "/a/2024-01-02.tar.zst"),
-        ("/a/other", "/a/other"),
-    ],
+  ("path", "expected"),
+  [
+    ("/a/2024-01-02.tar.zst", "/a/2024-01-02.tar.zst"),
+    ("/a/2024-01-02.tar.gz", "/a/2024-01-02.tar.zst"),
+    ("/a/2024-01-02.tar", "/a/2024-01-02.tar.zst"),
+    ("/a/other", "/a/other"),
+  ],
 )
 def test_normalize_daily_compressed_path(path, expected):
   assert normalize_daily_compressed_path(path) == expected

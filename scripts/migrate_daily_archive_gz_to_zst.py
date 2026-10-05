@@ -15,14 +15,14 @@ before remaining-raw / ORM gates.
 Attributes:
   _ROOT: Attribute.
 """
-from __future__ import annotations
 
-from typing import Any
+from __future__ import annotations
 
 import argparse
 import os
 import sys
 from datetime import datetime
+from typing import Any
 
 # Repo root (directory containing pyproject.toml).
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -33,17 +33,17 @@ if _ROOT not in sys.path:
 def _parse_since(value: Any) -> Any:
   """
   Internal helper to parse the since.
-  
+
   Args:
     value (Any): Value to inspect (typically a numeric scalar).
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     argparse.ArgumentTypeError: Raised when ``_parse_since`` hits a
     ``argparse.ArgumentTypeError`` failure path.
-  
+
   Examples:
     >>> _parse_since(None)  # doctest: +SKIP
   """
@@ -51,98 +51,98 @@ def _parse_since(value: Any) -> Any:
     return datetime.strptime(value, "%Y-%m-%d").date()
   except ValueError as exc:
     raise argparse.ArgumentTypeError(
-        "expected YYYY-MM-DD, got %r" % value,
+      f"expected YYYY-MM-DD, got {value!r}",
     ) from exc
 
 
 def _build_arg_parser() -> Any:
   """
   Internal helper to build the arg parser.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _build_arg_parser()  # doctest: +SKIP
   """
   parser = argparse.ArgumentParser(
-      description=(
-          "Migrate legacy daily .tar.gz archives to .tar.zst in daily_archive_dir."
-      ),
+    description=(
+      "Migrate legacy daily .tar.gz archives to .tar.zst in daily_archive_dir."
+    ),
   )
   parser.add_argument(
-      "--ini",
-      default="",
-      help="Path to hpcperfstats.ini (sets HPCPERFSTATS_INI for this run).",
+    "--ini",
+    default="",
+    help="Path to hpcperfstats.ini (sets HPCPERFSTATS_INI for this run).",
   )
   parser.add_argument(
-      "--daily-archive-dir",
-      default="",
-      help="Override PORTAL daily_archive_dir from ini.",
+    "--daily-archive-dir",
+    default="",
+    help="Override PORTAL daily_archive_dir from ini.",
   )
   parser.add_argument(
-      "--dry-run",
-      action="store_true",
-      help="Log planned actions only; do not modify archives.",
+    "--dry-run",
+    action="store_true",
+    help="Log planned actions only; do not modify archives.",
   )
   parser.add_argument(
-      "--since",
-      type=_parse_since,
-      default=None,
-      metavar="YYYY-MM-DD",
-      help="Only migrate archives on or after this calendar date.",
+    "--since",
+    type=_parse_since,
+    default=None,
+    metavar="YYYY-MM-DD",
+    help="Only migrate archives on or after this calendar date.",
   )
   parser.add_argument(
-      "--limit",
-      type=int,
-      default=None,
-      metavar="N",
-      help="Process at most N legacy .tar.gz files.",
+    "--limit",
+    type=int,
+    default=None,
+    metavar="N",
+    help="Process at most N legacy .tar.gz files.",
   )
   parser.add_argument(
-      "--workers",
-      type=int,
-      default=None,
-      metavar="N",
-      help=(
-          "Parallel migration workers (default: archive_seal_parallel_workers "
-          "or SYNC_ARCHIVE_SEAL_WORKERS)."
-      ),
+    "--workers",
+    type=int,
+    default=None,
+    metavar="N",
+    help=(
+      "Parallel migration workers (default: archive_seal_parallel_workers "
+      "or SYNC_ARCHIVE_SEAL_WORKERS)."
+    ),
   )
   parser.add_argument(
-      "--lock-timeout",
-      type=float,
-      default=0.0,
-      metavar="SECONDS",
-      help=(
-          "Seconds to wait for write locks (0 = skip contended days immediately)."
-      ),
+    "--lock-timeout",
+    type=float,
+    default=0.0,
+    metavar="SECONDS",
+    help=(
+      "Seconds to wait for write locks (0 = skip contended days immediately)."
+    ),
   )
   parser.add_argument(
-      "--force-remove-tar",
-      action="store_true",
-      help=(
-          "Pass force_remove_uncompressed_tar to seal (operator use after raw "
-          "stats are gone; ignores remaining_raw_by_gz gate)."
-      ),
+    "--force-remove-tar",
+    action="store_true",
+    help=(
+      "Pass force_remove_uncompressed_tar to seal (operator use after raw "
+      "stats are gone; ignores remaining_raw_by_gz gate)."
+    ),
   )
   parser.add_argument(
-      "--cleanup-stale-lock-sidecars",
-      action="store_true",
-      help="Remove stale *.fnctl.lock sidecars before and after migration.",
+    "--cleanup-stale-lock-sidecars",
+    action="store_true",
+    help="Remove stale *.fnctl.lock sidecars before and after migration.",
   )
   parser.add_argument(
-      "--verbose",
-      action="store_true",
-      help="Print per-day migration log lines.",
+    "--verbose",
+    action="store_true",
+    help="Print per-day migration log lines.",
   )
   parser.add_argument(
-      "--decompress-tmp-dir",
-      default="/tmp",
-      help=(
-          "Directory for temporary decompressed tar files when migrating gz-only "
-          "days (default: /tmp)."
-      ),
+    "--decompress-tmp-dir",
+    default="/tmp",
+    help=(
+      "Directory for temporary decompressed tar files when migrating gz-only "
+      "days (default: /tmp)."
+    ),
   )
   return parser
 
@@ -150,13 +150,13 @@ def _build_arg_parser() -> Any:
 def main(argv: Any | None = None) -> Any:
   """
   Run this module's command-line entrypoint.
-  
+
   Args:
     argv (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> main(None)  # doctest: +SKIP
   """
@@ -175,14 +175,14 @@ def main(argv: Any | None = None) -> Any:
   cfg_mod._ensure_cfg_loaded()
 
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-      SyncTimedbArchiveMembersStore,
-      set_process_archive_members_store,
+    SyncTimedbArchiveMembersStore,
+    set_process_archive_members_store,
   )
 
   archive_root = cfg_mod.get_archive_dir_path()
   if archive_root:
     set_process_archive_members_store(
-        SyncTimedbArchiveMembersStore(archive_root),
+      SyncTimedbArchiveMembersStore(archive_root),
     )
   try:
     return _run_migrate_after_store(args, cfg_mod, log_print)
@@ -206,24 +206,25 @@ def _run_migrate_after_store(args: Any, cfg_mod: Any, log_print: Any) -> Any:
     >>> callable(_run_migrate_after_store)
     True
   """
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-      MIGRATE_GZ_STATUS_CONVERTED,
-      MIGRATE_GZ_STATUS_DROPPED_ONLY,
-      MIGRATE_GZ_STATUS_FAILED,
-      build_remaining_raw_stats_by_daily_gz,
-      check_archive_migration_prerequisites,
-      migrate_legacy_daily_gz_archives,
+  from hpcperfstats.dbload.lib.file_locking import (
+    cleanup_stale_fnctl_lock_sidecars,
   )
-  from hpcperfstats.dbload.lib.file_locking import cleanup_stale_fnctl_lock_sidecars
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    MIGRATE_GZ_STATUS_CONVERTED,
+    MIGRATE_GZ_STATUS_DROPPED_ONLY,
+    MIGRATE_GZ_STATUS_FAILED,
+    build_remaining_raw_stats_by_daily_gz,
+    check_archive_migration_prerequisites,
+    migrate_legacy_daily_gz_archives,
+  )
 
   daily_archive_dir = (
-      args.daily_archive_dir.strip()
-      or cfg_mod.get_daily_archive_dir_path()
+    args.daily_archive_dir.strip() or cfg_mod.get_daily_archive_dir_path()
   )
   if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
     print(
-        "ERROR: daily archive directory does not exist: %s" % daily_archive_dir,
-        file=sys.stderr,
+      f"ERROR: daily archive directory does not exist: {daily_archive_dir}",
+      file=sys.stderr,
     )
     return 2
 
@@ -232,15 +233,15 @@ def _run_migrate_after_store(args: Any, cfg_mod: Any, log_print: Any) -> Any:
   try:
     check_archive_migration_prerequisites()
   except RuntimeError as exc:
-    print("ERROR: %s" % exc, file=sys.stderr)
+    print(f"ERROR: {exc}", file=sys.stderr)
     return 2
 
   if args.cleanup_stale_lock_sidecars:
     removed = cleanup_stale_fnctl_lock_sidecars(daily_archive_dir)
     if log_fn:
       log_fn(
-          "Removed stale lock sidecars before migrate: %d" % removed,
-          flush=True,
+        "Removed stale lock sidecars before migrate: %d" % removed,
+        flush=True,
       )
 
   remaining_raw_by_gz = None
@@ -248,37 +249,37 @@ def _run_migrate_after_store(args: Any, cfg_mod: Any, log_print: Any) -> Any:
     archive_data_dir = cfg_mod.get_archive_dir_path()
     host_name_ext = cfg_mod.get_host_name_ext()
     remaining_raw_by_gz = build_remaining_raw_stats_by_daily_gz(
-        archive_data_dir,
-        host_name_ext,
-        daily_archive_dir,
+      archive_data_dir,
+      host_name_ext,
+      daily_archive_dir,
     )
 
   try:
     summary = migrate_legacy_daily_gz_archives(
-        daily_archive_dir,
-        remaining_raw_by_gz=remaining_raw_by_gz,
-        force_remove_uncompressed_tar=args.force_remove_tar,
-        decompress_tmp_dir=args.decompress_tmp_dir,
-        log_fn=log_fn,
-        lock_timeout_seconds=args.lock_timeout,
-        dry_run=args.dry_run,
-        since_date=args.since,
-        limit=args.limit,
-        workers=args.workers,
+      daily_archive_dir,
+      remaining_raw_by_gz=remaining_raw_by_gz,
+      force_remove_uncompressed_tar=args.force_remove_tar,
+      decompress_tmp_dir=args.decompress_tmp_dir,
+      log_fn=log_fn,
+      lock_timeout_seconds=args.lock_timeout,
+      dry_run=args.dry_run,
+      since_date=args.since,
+      limit=args.limit,
+      workers=args.workers,
     )
   except RuntimeError as exc:
-    print("ERROR: %s" % exc, file=sys.stderr)
+    print(f"ERROR: {exc}", file=sys.stderr)
     return 2
 
   if args.cleanup_stale_lock_sidecars:
     removed = cleanup_stale_fnctl_lock_sidecars(daily_archive_dir)
     if log_fn:
       log_fn(
-          "Removed stale lock sidecars after migrate: %d" % removed,
-          flush=True,
+        "Removed stale lock sidecars after migrate: %d" % removed,
+        flush=True,
       )
 
-  print("Migration summary for %s:" % daily_archive_dir)
+  print(f"Migration summary for {daily_archive_dir}:")
   for key in sorted(summary.keys()):
     if key == "gz_remaining":
       print("  %s: %d" % (key, summary[key]))

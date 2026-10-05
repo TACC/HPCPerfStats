@@ -10,13 +10,16 @@ Attributes:
   _progress_log_last_mono: Rate-limit map for SOP progress lines.
   _PROGRESS_LOG_MIN_INTERVAL_S: Minimum seconds between SOP lines per key.
 """
+
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import subprocess
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from hpcperfstats.dbload.lib import conf_parser as cfg
 from hpcperfstats.dbload.lib.print_utils import log_print
@@ -93,30 +96,34 @@ def log_progress_sop(
 
   Examples:
     >>> log_progress_sop(
-    ...   stage="tar_append", path="/x", advancing=True, idle_s=0.0,
-    ...   last_progress=1.0, metric="bytes", force=True,
+    ...   stage="tar_append",
+    ...   path="/x",
+    ...   advancing=True,
+    ...   idle_s=0.0,
+    ...   last_progress=1.0,
+    ...   metric="bytes",
+    ...   force=True,
     ... )  # doctest: +SKIP
   """
-  key = "%s:%s" % (stage, path)
+  key = f"{stage}:{path}"
   now = float(clock())
   if not force:
     last = _progress_log_last_mono.get(key)
     if last is not None and (now - last) < _PROGRESS_LOG_MIN_INTERVAL_S:
       return
   _progress_log_last_mono[key] = now
-  last_s = "%.3f" % float(last_progress) if last_progress is not None else "-"
+  last_s = f"{float(last_progress):.3f}" if last_progress is not None else "-"
   log_print(
-      "progress stage=%s path=%s advancing=%s idle_s=%.1f "
-      "last_progress=%s metric=%s"
-      % (
-          stage,
-          path,
-          "true" if advancing else "false",
-          float(idle_s),
-          last_s,
-          metric,
-      ),
-      flush=True,
+    "progress stage={} path={} advancing={} idle_s={:.1f} "
+    "last_progress={} metric={}".format(
+      stage,
+      path,
+      "true" if advancing else "false",
+      float(idle_s),
+      last_s,
+      metric,
+    ),
+    flush=True,
   )
 
 
@@ -138,26 +145,20 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
   pid = int(proc.pid)
   try:
     os.killpg(pid, signal.SIGTERM)
-  except (ProcessLookupError, PermissionError, OSError):
-    try:
+  except ProcessLookupError, PermissionError, OSError:
+    with contextlib.suppress(ProcessLookupError, OSError):
       proc.terminate()
-    except (ProcessLookupError, OSError):
-      pass
   deadline = time.monotonic() + 5.0
   while proc.poll() is None and time.monotonic() < deadline:
     time.sleep(0.05)
   if proc.poll() is None:
     try:
       os.killpg(pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError):
-      try:
+    except ProcessLookupError, PermissionError, OSError:
+      with contextlib.suppress(ProcessLookupError, OSError):
         proc.kill()
-      except (ProcessLookupError, OSError):
-        pass
-  try:
+  with contextlib.suppress(Exception):
     proc.wait(timeout=5.0)
-  except Exception:
-    pass
 
 
 def run_subprocess_with_progress(
@@ -243,31 +244,30 @@ def run_subprocess_with_progress(
         last_progress_mono = now
       idle_elapsed = now - last_progress_mono
       log_progress_sop(
-          stage=stage,
-          path=path_label,
-          advancing=advancing,
-          idle_s=idle_elapsed,
-          last_progress=last_progress_mono,
-          metric=metric,
-          force=False,
-          clock=clock,
+        stage=stage,
+        path=path_label,
+        advancing=advancing,
+        idle_s=idle_elapsed,
+        last_progress=last_progress_mono,
+        metric=metric,
+        force=False,
+        clock=clock,
       )
       if rc is not None:
         stdout, stderr = proc.communicate()
         return subprocess.CompletedProcess(
-            args=list(args),
-            returncode=int(rc),
-            stdout=stdout,
-            stderr=stderr,
+          args=list(args),
+          returncode=int(rc),
+          stdout=stdout,
+          stderr=stderr,
         )
       if idle_s > 0.0 and idle_elapsed >= idle_s:
         _kill_process_group(proc)
         raise ProgressIdleError(
-            "subprocess idle stall stage=%s path=%s idle_s=%.1f"
-            % (stage, path_label, idle_elapsed),
-            stage="idle_stall",
-            idle_s=idle_elapsed,
-            path=path_label,
+          f"subprocess idle stall stage={stage} path={path_label} idle_s={idle_elapsed:.1f}",
+          stage="idle_stall",
+          idle_s=idle_elapsed,
+          path=path_label,
         )
       time.sleep(poll_s)
   except BaseException:

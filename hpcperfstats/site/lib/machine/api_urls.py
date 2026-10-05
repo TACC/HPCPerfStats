@@ -4,38 +4,38 @@ URL routing for machine REST API.
 Attributes:
   urlpatterns: Attribute.
 """
+
 from __future__ import annotations
 
 from django.urls import path
 from drf_spectacular.views import SpectacularAPIView
 
-from . import api
-from . import public_api
+from . import api, public_api
 
 urlpatterns = [
-    path("schema/", SpectacularAPIView.as_view(), name="schema"),
-    path("session/", api.session_info),
-    path("test-login/user/", api.test_login_user),
-    path("user-api-key/", api.user_api_key_status),
-    path("user-api-key/rotate/", api.user_api_key_rotate),
-    path("session/drop-staff/", api.drop_staff_for_session),
-    path("cache/invalidate-page/", api.invalidate_cache_for_page),
-    path("home/", api.home_options),
-    path("jobs/", api.job_list),
-    path("jobs/filter_options/", api.job_list_filter_options_view),
-    path("jobs/histograms/batch/", api.job_list_histograms_batch),
-    path("jobs/histograms/", api.job_list_histograms),
-    path("jobs/<str:pk>/", api.job_detail),
-    path("jobs/<str:pk>/plots/", api.job_plots),
-    path("jobs/<str:jid>/<str:type_name>/", api.type_detail),
-    path("host_plot/", api.host_plot),
-    path("admin_monitor/", api.admin_monitor),
-    path("job_monitor/", api.job_monitor),
-    path("job_monitor/gpu/", api.job_monitor_gpu_for_user),
-    path("sacct/ingest/", api.sacct_ingest),
-    path(
-        "pub/cluster-dashboard/",
-        public_api.PublicClusterDashboardAggregateView.as_view(),
-        name="public_cluster_dashboard",
-    ),
+  path("schema/", SpectacularAPIView.as_view(), name="schema"),
+  path("session/", api.session_info),
+  path("test-login/user/", api.test_login_user),
+  path("user-api-key/", api.user_api_key_status),
+  path("user-api-key/rotate/", api.user_api_key_rotate),
+  path("session/drop-staff/", api.drop_staff_for_session),
+  path("cache/invalidate-page/", api.invalidate_cache_for_page),
+  path("home/", api.home_options),
+  path("jobs/", api.job_list),
+  path("jobs/filter_options/", api.job_list_filter_options_view),
+  path("jobs/histograms/batch/", api.job_list_histograms_batch),
+  path("jobs/histograms/", api.job_list_histograms),
+  path("jobs/<str:pk>/", api.job_detail),
+  path("jobs/<str:pk>/plots/", api.job_plots),
+  path("jobs/<str:jid>/<str:type_name>/", api.type_detail),
+  path("host_plot/", api.host_plot),
+  path("admin_monitor/", api.admin_monitor),
+  path("job_monitor/", api.job_monitor),
+  path("job_monitor/gpu/", api.job_monitor_gpu_for_user),
+  path("sacct/ingest/", api.sacct_ingest),
+  path(
+    "pub/cluster-dashboard/",
+    public_api.PublicClusterDashboardAggregateView.as_view(),
+    name="public_cluster_dashboard",
+  ),
 ]

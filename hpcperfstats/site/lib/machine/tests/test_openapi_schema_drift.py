@@ -1,4 +1,5 @@
 """OpenAPI schema drift guard: committed YAML must match drf-spectacular output."""
+
 from __future__ import annotations
 
 import json
@@ -11,7 +12,7 @@ from drf_spectacular.generators import SchemaGenerator
 pytestmark = pytest.mark.machine_unit_mock
 
 COMMITTED_SCHEMA = (
-    Path(__file__).resolve().parents[3] / "openapi" / "openapi.yaml"
+  Path(__file__).resolve().parents[3] / "openapi" / "openapi.yaml"
 )
 
 
@@ -27,9 +28,9 @@ def _load_committed_schema() -> dict:
 
 def _generate_live_schema() -> dict:
   generator = SchemaGenerator(
-      title="HPCPerfStats API",
-      version="3.0",
-      description="REST API for the HPCPerfStats machine SPA and public dashboards.",
+    title="HPCPerfStats API",
+    version="3.0",
+    description="REST API for the HPCPerfStats machine SPA and public dashboards.",
   )
   return generator.get_schema(request=None, public=True)
 
@@ -38,16 +39,14 @@ def _generate_live_schema() -> dict:
 def test_openapi_schema_matches_committed_file():
   if not COMMITTED_SCHEMA.is_file():
     pytest.fail(
-        "Missing committed OpenAPI at {}. Regenerate with:\n"
-        "  cd hpcperfstats/site && python3 manage.py spectacular "
-        "--file openapi/openapi.yaml --format openapi".format(
-            COMMITTED_SCHEMA,
-        ),
+      f"Missing committed OpenAPI at {COMMITTED_SCHEMA}. Regenerate with:\n"
+      "  cd hpcperfstats/site && python3 manage.py spectacular "
+      "--file openapi/openapi.yaml --format openapi",
     )
   live = _normalize_schema(_generate_live_schema())
   committed = _normalize_schema(_load_committed_schema())
   assert live == committed, (
-      "OpenAPI schema drift. Regenerate:\n"
+    "OpenAPI schema drift. Regenerate:\n"
     "  cd hpcperfstats/site && python3 manage.py spectacular "
     "--file openapi/openapi.yaml --format openapi"
   )

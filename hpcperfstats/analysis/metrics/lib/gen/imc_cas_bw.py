@@ -5,9 +5,10 @@ Same 64 B/CAS conversion is applied by callers before passing frames/scalars
 here. Absent or all-non-finite sides are ignored; when both sides are usable
 they are summed.
 """
+
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -16,13 +17,13 @@ import pandas as pd
 def _scalar_usable(value: Any) -> bool:
   """
   Internal helper to check if the scalar is usable.
-  
+
   Args:
     value (Any): Value to inspect (typically a numeric scalar).
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> _scalar_usable(None)  # doctest: +SKIP
   """
@@ -30,41 +31,43 @@ def _scalar_usable(value: Any) -> bool:
     return False
   try:
     return bool(np.isfinite(float(value)))
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     return False
 
 
-def _frame_usable(df: Optional[pd.DataFrame]) -> bool:
+def _frame_usable(df: pd.DataFrame | None) -> bool:
   """
   Internal helper to check if the DataFrame is usable.
-  
+
   Args:
     df (Optional[pd.DataFrame]): DataFrame to inspect, or None when absent.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> _frame_usable(None)  # doctest: +SKIP
   """
   if df is None or df.empty or "bw_gb" not in df.columns:
     return False
-  vals = pd.to_numeric(df["bw_gb"], errors="coerce").to_numpy(dtype=np.float64, copy=False)
+  vals = pd.to_numeric(df["bw_gb"], errors="coerce").to_numpy(
+    dtype=np.float64, copy=False
+  )
   return bool(np.isfinite(vals).any())
 
 
-def combine_cas_bw_scalars(dram_v: Any, hbm_v: Any) -> Optional[float]:
+def combine_cas_bw_scalars(dram_v: Any, hbm_v: Any) -> float | None:
   """
   Sum usable DDR and HBM scalar BW (GB/s); None if neither side is usable.
-  
+
   Args:
     dram_v (Any): DDR (DRAM) CAS bandwidth value, or something coercible to
     float.
     hbm_v (Any): HBM CAS bandwidth value, or something coercible to float.
-  
+
   Returns:
     Optional[float]: Optional[float] — the result, or None when unavailable.
-  
+
   Examples:
     >>> combine_cas_bw_scalars(None, None)  # doctest: +SKIP
   """
@@ -80,30 +83,34 @@ def combine_cas_bw_scalars(dram_v: Any, hbm_v: Any) -> Optional[float]:
 
 
 def combine_cas_bw_frames(
-  dram_df: Optional[pd.DataFrame],
-  hbm_df: Optional[pd.DataFrame],
-) -> Optional[pd.DataFrame]:
+  dram_df: pd.DataFrame | None,
+  hbm_df: pd.DataFrame | None,
+) -> pd.DataFrame | None:
   """
   Outer-join host/time BW frames and sum; return None if neither side is usable.
-  
+
   Args:
     dram_df (Optional[pd.DataFrame]): DataFrame to inspect, or None when
     absent.
     hbm_df (Optional[pd.DataFrame]): DataFrame to inspect, or None when
     absent.
-  
+
   Returns:
     Optional[pd.DataFrame]: Optional[pd.DataFrame] — the result, or None when
     unavailable.
-  
+
   Examples:
     >>> combine_cas_bw_frames(None, None)  # doctest: +SKIP
   """
   d_ok = _frame_usable(dram_df)
   h_ok = _frame_usable(hbm_df)
   if d_ok and h_ok:
-    left = dram_df[["host", "time", "bw_gb"]].rename(columns={"bw_gb": "bw_dram"})
-    right = hbm_df[["host", "time", "bw_gb"]].rename(columns={"bw_gb": "bw_hbm"})
+    left = dram_df[["host", "time", "bw_gb"]].rename(
+      columns={"bw_gb": "bw_dram"}
+    )
+    right = hbm_df[["host", "time", "bw_gb"]].rename(
+      columns={"bw_gb": "bw_hbm"}
+    )
     merged = left.merge(right, on=["host", "time"], how="outer")
     d = pd.to_numeric(merged["bw_dram"], errors="coerce")
     h = pd.to_numeric(merged["bw_hbm"], errors="coerce")
@@ -120,26 +127,28 @@ def combine_cas_bw_frames(
 
 
 def agg_sum_val_to_bw_frame(
-  agg: Optional[pd.DataFrame],
-) -> Optional[pd.DataFrame]:
+  agg: pd.DataFrame | None,
+) -> pd.DataFrame | None:
   """
   Convert aggregate ``sum_val`` frame to ``bw_gb``; drop when empty or all non-.
-  
+
     finite.
-  
+
   Args:
     agg (Optional[pd.DataFrame]): DataFrame to inspect, or None when absent.
-  
+
   Returns:
     Optional[pd.DataFrame]: Optional[pd.DataFrame] — the result, or None when
     unavailable.
-  
+
   Examples:
     >>> agg_sum_val_to_bw_frame(None)  # doctest: +SKIP
   """
   if agg is None or agg.empty or "sum_val" not in agg.columns:
     return None
-  out = agg.rename(columns={"sum_val": "bw_gb"})[["host", "time", "bw_gb"]].copy()
+  out = agg.rename(columns={"sum_val": "bw_gb"})[
+    ["host", "time", "bw_gb"]
+  ].copy()
   if not _frame_usable(out):
     return None
   return out.reset_index(drop=True)

@@ -23,21 +23,21 @@ Attributes:
   _PATH_READY_CACHE_REFRESH_SECONDS: Attribute.
   sampled_identities_ready_in_db: Attribute.
 """
-from __future__ import annotations
 
-from typing import Any
+from __future__ import annotations
 
 import os
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib import sync_timedb_host_itimes
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-    read_stats_file_head_identity,
-    read_stats_file_tail_identity,
-    stats_file_is_active_segment,
+  read_stats_file_head_identity,
+  read_stats_file_tail_identity,
+  stats_file_is_active_segment,
 )
 
 _HEAD_DB_CACHE = {}
@@ -54,10 +54,10 @@ _GATE_DISABLED_LOGGED = False
 def reset_sync_ingest_readiness_caches() -> None:
   """
   Clear readiness caches between sync_timedb sessions.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> reset_sync_ingest_readiness_caches()  # doctest: +SKIP
   """
@@ -72,13 +72,13 @@ def reset_sync_ingest_readiness_caches() -> None:
 def path_ingest_ready_fingerprint(path: str) -> Any:
   """
   Return ``(path, mtime, size)`` for cache keying, or ``None`` if missing.
-  
+
   Args:
     path (str): String for path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> path_ingest_ready_fingerprint("x")  # doctest: +SKIP
   """
@@ -92,10 +92,10 @@ def path_ingest_ready_fingerprint(path: str) -> Any:
 def _trim_head_db_cache() -> None:
   """
   Internal helper to handle trim head db cache.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _trim_head_db_cache()  # doctest: +SKIP
   """
@@ -103,8 +103,8 @@ def _trim_head_db_cache() -> None:
     if len(_HEAD_DB_CACHE) <= _HEAD_DB_CACHE_MAX_ENTRIES:
       return
     oldest_keys = sorted(
-        _HEAD_DB_CACHE.keys(),
-        key=lambda k: _HEAD_DB_CACHE[k]["checked_at"],
+      _HEAD_DB_CACHE.keys(),
+      key=lambda k: _HEAD_DB_CACHE[k]["checked_at"],
     )[:1000]
     for drop_key in oldest_keys:
       _HEAD_DB_CACHE.pop(drop_key, None)
@@ -113,10 +113,10 @@ def _trim_head_db_cache() -> None:
 def _trim_path_ready_cache() -> None:
   """
   Internal helper to handle trim path ready cache.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _trim_path_ready_cache()  # doctest: +SKIP
   """
@@ -124,8 +124,8 @@ def _trim_path_ready_cache() -> None:
     if len(_PATH_READY_CACHE) <= _PATH_READY_CACHE_MAX_ENTRIES:
       return
     oldest_keys = sorted(
-        _PATH_READY_CACHE.keys(),
-        key=lambda k: _PATH_READY_CACHE[k]["checked_at"],
+      _PATH_READY_CACHE.keys(),
+      key=lambda k: _PATH_READY_CACHE[k]["checked_at"],
     )[:1000]
     for drop_key in oldest_keys:
       _PATH_READY_CACHE.pop(drop_key, None)
@@ -134,18 +134,18 @@ def _trim_path_ready_cache() -> None:
 def head_unix_second_window(timestamp_utc: Any) -> Any:
   """
   Return ``(unix_second, inclusive_start, exclusive_end)`` for a head timestamp.
-  
+
   Args:
     timestamp_utc (Any): Timestamp utc passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> head_unix_second_window(None)  # doctest: +SKIP
   """
   ts_sec = int(timestamp_utc.timestamp())
-  ts_start = datetime.fromtimestamp(ts_sec, tz=timezone.utc)
+  ts_start = datetime.fromtimestamp(ts_sec, tz=UTC)
   ts_end = ts_start + timedelta(seconds=1)
   return ts_sec, ts_start, ts_end
 
@@ -153,14 +153,14 @@ def head_unix_second_window(timestamp_utc: Any) -> Any:
 def head_timestamp_present_in_db(hostname: Any, timestamp_utc: Any) -> Any:
   """
   Return whether ``host_data`` has any row for ``hostname`` in that Unix second.
-  
+
   Args:
     hostname (Any): Hostname passed to this helper.
     timestamp_utc (Any): Timestamp utc passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> head_timestamp_present_in_db(None, None)  # doctest: +SKIP
   """
@@ -171,12 +171,14 @@ def head_timestamp_present_in_db(hostname: Any, timestamp_utc: Any) -> Any:
   now = time.time()
   with _HEAD_DB_CACHE_LOCK:
     cached = _HEAD_DB_CACHE.get(key)
-    if cached and (now - cached["checked_at"] <= _HEAD_DB_CACHE_REFRESH_SECONDS):
+    if cached and (
+      now - cached["checked_at"] <= _HEAD_DB_CACHE_REFRESH_SECONDS
+    ):
       return bool(cached["present"])
   present = host_data.objects.filter(
-      host=hostname,
-      time__gte=ts_start,
-      time__lt=ts_end,
+    host=hostname,
+    time__gte=ts_start,
+    time__lt=ts_end,
   ).exists()
   with _HEAD_DB_CACHE_LOCK:
     _HEAD_DB_CACHE[key] = {"present": bool(present), "checked_at": now}
@@ -190,14 +192,14 @@ def head_tail_identity_as_gate_identities(
 ) -> Any:
   """
   Convert head/tail ``(host, unix_second)`` maps to batched gate identity shape.
-  
+
   Args:
     head_identity_by_path (str): String for head identity by path.
     tail_identity_by_path (str): String for tail identity by path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> head_tail_identity_as_gate_identities("x", "x")  # doctest: +SKIP
   """
@@ -216,34 +218,36 @@ def head_tail_identity_as_gate_identities(
     gate[path] = by_host
   return gate
 
+
 def host_timestamp_seconds_all_present(host: Any, unix_seconds: int) -> Any:
   """
   Return whether every Unix second for ``host`` exists in ``host_data``.
-  
+
   Args:
     host (Any): Host passed to this helper.
     unix_seconds (int): Integer value for unix seconds.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> host_timestamp_seconds_all_present(None, 0)  # doctest: +SKIP
   """
   return sync_timedb_host_itimes.host_sampled_timestamp_seconds_all_present(
-      host, unix_seconds)
+    host, unix_seconds
+  )
 
 
 def gate_identities_ready_in_db(gate_by_host: Any) -> Any:
   """
   Return True when every host's gate seconds pass the batched DB gate.
-  
+
   Args:
     gate_by_host (Any): Gate by host passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> gate_identities_ready_in_db(None)  # doctest: +SKIP
   """
@@ -262,12 +266,12 @@ sampled_identities_ready_in_db = gate_identities_ready_in_db
 def archive_db_head_ingest_gate_enabled() -> Any:
   """
   Whether tar append and raw removal require DB ingest readiness.
-  
+
   Returns:
     Any: Open return polymorphism from
     ``archive_db_head_ingest_gate_enabled``: concrete type depends on inputs
     and branch (mapping, scalar, handle, or ``None``-like empty).
-  
+
   Examples:
     >>> archive_db_head_ingest_gate_enabled()  # doctest: +SKIP
   """
@@ -277,10 +281,10 @@ def archive_db_head_ingest_gate_enabled() -> Any:
 def _archive_gate_skip_label() -> Any:
   """
   Internal helper to archive the gate skip label.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _archive_gate_skip_label()  # doctest: +SKIP
   """
@@ -290,13 +294,13 @@ def _archive_gate_skip_label() -> Any:
 def _log_gate_disabled_once(log_fn: Any) -> None:
   """
   Internal helper to log the gate disabled once.
-  
+
   Args:
     log_fn (Any): Callable invoked by this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _log_gate_disabled_once(None)  # doctest: +SKIP
   """
@@ -305,22 +309,22 @@ def _log_gate_disabled_once(log_fn: Any) -> None:
     return
   _GATE_DISABLED_LOGGED = True
   log_fn(
-      "sync_archive_require_db_ingest is disabled; skipping DB readiness "
-      "checks before archive/delete",
-      flush=True,
+    "sync_archive_require_db_ingest is disabled; skipping DB readiness "
+    "checks before archive/delete",
+    flush=True,
   )
 
 
 def _path_head_tail_ready_in_db(path: str) -> Any:
   """
   Return True when head and tail timestamp seconds are present in ``host_data``.
-  
+
   Args:
     path (str): String for path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _path_head_tail_ready_in_db("x")  # doctest: +SKIP
   """
@@ -332,7 +336,9 @@ def _path_head_tail_ready_in_db(path: str) -> Any:
   tail_host, tail_ts = read_stats_file_tail_identity(path)
   if tail_host is None or tail_ts is None:
     return False
-  if head_host == tail_host and int(head_ts.timestamp()) == int(tail_ts.timestamp()):
+  if head_host == tail_host and int(head_ts.timestamp()) == int(
+    tail_ts.timestamp()
+  ):
     return True
   return head_timestamp_present_in_db(tail_host, tail_ts)
 
@@ -340,18 +346,18 @@ def _path_head_tail_ready_in_db(path: str) -> Any:
 def _path_ready_via_zero_host_mark(path: str) -> Any:
   """
   Internal helper to handle path ready via zero host mark.
-  
+
   Args:
     path (str): String for path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _path_ready_via_zero_host_mark("x")  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_zero_host_ingest_mark import (
-      has_zero_host_ingest_mark,
+    has_zero_host_ingest_mark,
   )
 
   return bool(has_zero_host_ingest_mark(path))
@@ -360,18 +366,18 @@ def _path_ready_via_zero_host_mark(path: str) -> Any:
 def _path_ready_via_file_complete_mark(path: str) -> Any:
   """
   Internal helper to handle path ready via file complete mark.
-  
+
   Args:
     path (str): String for path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _path_ready_via_file_complete_mark("x")  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_file_complete_ingest_mark import (
-      has_file_complete_ingest_mark,
+    has_file_complete_ingest_mark,
   )
 
   return bool(has_file_complete_ingest_mark(path))
@@ -380,10 +386,10 @@ def _path_ready_via_file_complete_mark(path: str) -> Any:
 def _live_db_ingest_enabled() -> Any:
   """
   Internal helper to handle live db ingest enabled.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _live_db_ingest_enabled()  # doctest: +SKIP
   """
@@ -429,16 +435,15 @@ def stats_file_head_ingested_in_db(
     with _PATH_READY_CACHE_LOCK:
       path_cached = _PATH_READY_CACHE.get(fp)
       if path_cached and (
-          now - path_cached["checked_at"] <= _PATH_READY_CACHE_REFRESH_SECONDS
+        now - path_cached["checked_at"] <= _PATH_READY_CACHE_REFRESH_SECONDS
       ):
         return bool(path_cached["ready"])
 
     ready = False
     if not stats_file_is_active_segment(path):
-      ready = (
-          _path_ready_via_file_complete_mark(path)
-          or _path_ready_via_zero_host_mark(path)
-      )
+      ready = _path_ready_via_file_complete_mark(
+        path
+      ) or _path_ready_via_zero_host_mark(path)
       if not ready and not _live_db_ingest_enabled():
         ready = _path_head_tail_ready_in_db(path)
 
@@ -496,8 +501,8 @@ def build_head_ingest_ready_set(
           seconds_by_host.setdefault(host, set()).update(seconds)
 
       host_ok = {
-          host: host_timestamp_seconds_all_present(host, seconds)
-          for host, seconds in seconds_by_host.items()
+        host: host_timestamp_seconds_all_present(host, seconds)
+        for host, seconds in seconds_by_host.items()
       }
 
       for path, sampled in path_samples.items():
@@ -509,10 +514,9 @@ def build_head_ingest_ready_set(
         continue
       if stats_file_is_active_segment(path):
         continue
-      if (
-          _path_ready_via_file_complete_mark(path)
-          or _path_ready_via_zero_host_mark(path)
-      ):
+      if _path_ready_via_file_complete_mark(
+        path
+      ) or _path_ready_via_zero_host_mark(path):
         ready_paths.add(path)
     return ready_paths
 
@@ -527,15 +531,15 @@ def filter_paths_head_ingested(
 ) -> Any:
   """
   Return ``(ready_paths, skipped_paths)`` using batched or per-path gate.
-  
+
   ``head_identity_by_path`` alone is not sufficient (head-only would miss
     tails);
   pass ``gate_identities_by_path`` for the batched path, otherwise each path is
   probed with streaming head+tail reads.
-  
+
   Ready when host_data head+tail passes **or** a durable file-complete /
   zero-host ingest mark is present for the path fingerprint (live on or off).
-  
+
   Args:
     paths (Any): Iterable of filesystem paths as strings.
     log_fn (Any | None): One of ``Any``, ``None``.
@@ -543,10 +547,10 @@ def filter_paths_head_ingested(
     sampled_timestamp_identities_by_path (Any | None): One of ``Any``,
     ``None``.
     head_identity_by_path (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> filter_paths_head_ingested(None, None, None, None, None)
   """
@@ -555,9 +559,9 @@ def filter_paths_head_ingested(
     gate_identities_by_path = sampled_timestamp_identities_by_path
   if gate_identities_by_path is not None:
     ready_set = build_head_ingest_ready_set(
-        paths,
-        gate_identities_by_path,
-        log_fn=log_fn,
+      paths,
+      gate_identities_by_path,
+      log_fn=log_fn,
     )
     ready = [p for p in paths if p in ready_set]
     skipped = [p for p in paths if p not in ready_set]

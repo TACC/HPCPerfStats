@@ -1,4 +1,3 @@
-
 import pytest
 
 from hpcperfstats.dbload.lib import shutdown_utils
@@ -47,7 +46,9 @@ def test_sleep_until_shutdown_invokes_on_tick(monkeypatch):
   shutdown_utils.shutdown_requested[0] = False
 
   shutdown_utils.sleep_until_shutdown(
-      12, interval=5, on_tick=lambda: ticks.append(1),
+    12,
+    interval=5,
+    on_tick=lambda: ticks.append(1),
   )
 
   assert ticks == [1, 1, 1]
@@ -66,6 +67,7 @@ def test_send_sigchld_to_parent_calls_os_kill(monkeypatch):
   shutdown_utils.send_sigchld_to_parent()
 
   import signal
+
   assert calls == [(123, signal.SIGCHLD)]
 
 
@@ -74,9 +76,9 @@ def test_make_sigterm_handler_sets_flag_and_exits():
   handler = shutdown_utils.make_sigterm_handler(flag, exit_code=143)
 
   import signal
+
   with pytest.raises(SystemExit) as excinfo:
     handler(signal.SIGTERM, None)
 
   assert flag[0] is True
   assert excinfo.value.code == 143
-

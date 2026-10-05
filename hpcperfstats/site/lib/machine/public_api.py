@@ -10,25 +10,30 @@ Attributes:
   _INVALID_QUERY_DETAIL: Generic non-reflective 400 detail string.
   _MISSING_PERIOD_DETAIL: Generic non-reflective 404 detail string.
 """
+
 from __future__ import annotations
 
 import re
 from typing import Any
 
-import hpcperfstats.dbload.lib.conf_parser as cfg
+from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework import status
 
-from hpcperfstats.site.lib.machine.openapi_schema import PUBLIC_CLUSTER_DASHBOARD_SCHEMA
+import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.site.lib.machine.openapi_schema import (
+  PUBLIC_CLUSTER_DASHBOARD_SCHEMA,
+)
 from hpcperfstats.site.lib.machine.public_metrics_artifacts import (
-    assemble_public_dashboard_meta_bundle,
-    assemble_public_monthly_metrics_bundle,
-    load_public_expansion_factor_period,
+  assemble_public_dashboard_meta_bundle,
+  assemble_public_monthly_metrics_bundle,
+  load_public_expansion_factor_period,
 )
 from hpcperfstats.site.lib.machine.renderers import SafeJSONRenderer
-from hpcperfstats.site.lib.machine.throttles import PublicClusterDashboardThrottle
+from hpcperfstats.site.lib.machine.throttles import (
+  PublicClusterDashboardThrottle,
+)
 
 _LAZY_SECTION = "expansion_factor"
 _LAZY_GROUPINGS = frozenset({"monthly", "yearly"})
@@ -115,38 +120,44 @@ class PublicClusterDashboardAggregateView(APIView):
     grouping = (request.GET.get("grouping") or "").strip().lower()
     period = (request.GET.get("period") or "").strip()
     section = (request.GET.get("section") or "").strip().lower()
-    full_bundle = str(request.GET.get("full", "")).lower() in ("1", "true", "yes")
+    full_bundle = str(request.GET.get("full", "")).lower() in (
+      "1",
+      "true",
+      "yes",
+    )
 
     lazy_state = _lazy_query_state(section, grouping, period)
     if lazy_state == "invalid":
       return Response(
-          {
-              "error": "invalid_request",
-              "detail": _INVALID_QUERY_DETAIL,
-          },
-          status=status.HTTP_400_BAD_REQUEST,
+        {
+          "error": "invalid_request",
+          "detail": _INVALID_QUERY_DETAIL,
+        },
+        status=status.HTTP_400_BAD_REQUEST,
       )
 
     if lazy_state == "ok":
       block = load_public_expansion_factor_period(grouping, period)
       if block is None:
         return Response(
-            {
-                "error": "period_not_available",
-                "detail": _MISSING_PERIOD_DETAIL,
-            },
-            status=status.HTTP_404_NOT_FOUND,
+          {
+            "error": "period_not_available",
+            "detail": _MISSING_PERIOD_DETAIL,
+          },
+          status=status.HTTP_404_NOT_FOUND,
         )
       payload = {
-          "status": "ready",
-          "section": "expansion_factor",
-          "grouping": grouping,
-          "period_key": period,
-          "block": block,
-          "machine_name": cfg.get_host_name_ext(),
+        "status": "ready",
+        "section": "expansion_factor",
+        "grouping": grouping,
+        "period_key": period,
+        "block": block,
+        "machine_name": cfg.get_host_name_ext(),
       }
       response = Response(payload)
-      response["Cache-Control"] = "public, max-age=120, stale-while-revalidate=300"
+      response["Cache-Control"] = (
+        "public, max-age=120, stale-while-revalidate=300"
+      )
       return response
 
     if full_bundle:
@@ -160,10 +171,10 @@ class PublicClusterDashboardAggregateView(APIView):
     response = Response(payload)
     if isinstance(payload, dict) and payload.get("status") == "ready":
       response["Cache-Control"] = (
-          "public, max-age=120, stale-while-revalidate=300"
+        "public, max-age=120, stale-while-revalidate=300"
       )
     else:
       response["Cache-Control"] = (
-          "private, max-age=0, must-revalidate, no-store"
+        "private, max-age=0, must-revalidate, no-store"
       )
     return response

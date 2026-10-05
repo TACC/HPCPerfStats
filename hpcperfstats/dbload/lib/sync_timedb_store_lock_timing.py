@@ -12,6 +12,7 @@ Attributes:
   _store_lock_totals: Accumulated wait/hold seconds by key.
   _store_lock_totals_lock: Mutex protecting store-lock timing totals.
 """
+
 from __future__ import annotations
 
 import threading
@@ -19,14 +20,14 @@ import time
 from typing import Any
 
 STORE_LOCK_TELEM_KEYS: tuple[str, ...] = (
-    "job_store_wait_s",
-    "job_store_hold_s",
-    "members_store_wait_s",
-    "members_store_hold_s",
+  "job_store_wait_s",
+  "job_store_hold_s",
+  "members_store_wait_s",
+  "members_store_hold_s",
 )
 
 _store_lock_telem_on = False
-_store_lock_totals: dict[str, float] = {key: 0.0 for key in STORE_LOCK_TELEM_KEYS}
+_store_lock_totals: dict[str, float] = dict.fromkeys(STORE_LOCK_TELEM_KEYS, 0.0)
 _store_lock_totals_lock = threading.Lock()
 
 
@@ -66,8 +67,8 @@ def snapshot_store_lock_timing() -> dict[str, float]:
     return {}
   with _store_lock_totals_lock:
     return {
-        key: float(_store_lock_totals.get(key, 0.0))
-        for key in STORE_LOCK_TELEM_KEYS
+      key: float(_store_lock_totals.get(key, 0.0))
+      for key in STORE_LOCK_TELEM_KEYS
     }
 
 
@@ -127,18 +128,16 @@ class TimedRLock:
       'job_store'
     """
     if kind not in ("job_store", "members_store", "members_store_day"):
-      raise ValueError("unsupported store lock kind: %r" % kind)
+      raise ValueError(f"unsupported store lock kind: {kind!r}")
     # Day shards share the members_store telem bucket.
-    self.kind = (
-        "members_store" if kind == "members_store_day" else kind
-    )
+    self.kind = "members_store" if kind == "members_store_day" else kind
     self._lock = threading.RLock()
     self._local = threading.local()
 
   def acquire(
-      self,
-      blocking: bool = True,
-      timeout: float = -1,
+    self,
+    blocking: bool = True,
+    timeout: float = -1,
   ) -> bool:
     """
     Acquire the underlying RLock and optionally record wait time.
@@ -163,8 +162,8 @@ class TimedRLock:
       return False
     if depth == 0 and _store_lock_telem_on:
       _add_store_lock_timing(
-          "%s_wait_s" % self.kind,
-          time.monotonic() - wait_t0,
+        f"{self.kind}_wait_s",
+        time.monotonic() - wait_t0,
       )
       self._local.hold_t0 = time.monotonic()
     self._local.depth = depth + 1
@@ -194,8 +193,8 @@ class TimedRLock:
     if depth == 0 and _store_lock_telem_on:
       hold_t0 = float(getattr(self._local, "hold_t0", time.monotonic()))
       _add_store_lock_timing(
-          "%s_hold_s" % self.kind,
-          time.monotonic() - hold_t0,
+        f"{self.kind}_hold_s",
+        time.monotonic() - hold_t0,
       )
     self._lock.release()
 

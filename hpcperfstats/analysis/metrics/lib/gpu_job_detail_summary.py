@@ -13,9 +13,10 @@ Attributes:
   GPU_TYPE_PRECEDENCE: ``GPU_TYPE_PRECEDENCE``.
   _GPU_UTIL_EVENTS: ``_GPU_UTIL_EVENTS``.
 """
+
 from __future__ import annotations
 
-from typing import Any, List, Optional, Tuple
+from typing import Any
 
 from django.db.models import Avg, Count, Max
 
@@ -31,13 +32,13 @@ _GPU_UTIL_EVENTS = ("gpu_util", "utilization")
 def _blank_excluded_value_q(field: str = "value") -> Any:
   """
   ORM kwargs / Q fragment: exclude DCGM FP64 blank family (covers INT64 blanks).
-  
+
   Args:
     field (str): String for field.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _blank_excluded_value_q("x")  # doctest: +SKIP
   """
@@ -68,7 +69,7 @@ def _collect_gpu_annotate_rows(
   events: Any,
   group_fields: Any,
   annotate_kwargs: Any,
-) -> List[dict]:
+) -> list[dict]:
   """
   Host×time chunked annotate query with statement_timeout split/retry.
 
@@ -84,8 +85,14 @@ def _collect_gpu_annotate_rows(
     List[dict]: Folded annotate rows across chunks.
 
   Examples:
-    >>> _collect_gpu_annotate_rows([], {}, gpu_typ="nvidia_gpu",
-    ...     events=["gpu_util"], group_fields=["host"], annotate_kwargs={})
+    >>> _collect_gpu_annotate_rows(
+    ...   [],
+    ...   {},
+    ...   gpu_typ="nvidia_gpu",
+    ...   events=["gpu_util"],
+    ...   group_fields=["host"],
+    ...   annotate_kwargs={},
+    ... )
     []
   """
   slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
@@ -113,38 +120,38 @@ def _collect_gpu_annotate_rows(
       True
     """
     qs = (
-        host_data.objects.filter(
-            type=gpu_typ,
-            host__in=hosts_list,
-            **_blank_excluded_value_q("value"),
-            **event_filter,
-            **(tf_cur or {}),
-        )
-        .values(*group)
-        .annotate(**annotate_kwargs)
+      host_data.objects.filter(
+        type=gpu_typ,
+        host__in=hosts_list,
+        **_blank_excluded_value_q("value"),
+        **event_filter,
+        **(tf_cur or {}),
+      )
+      .values(*group)
+      .annotate(**annotate_kwargs)
     )
     return list(qs)
 
-  all_rows: List[dict] = []
+  all_rows: list[dict] = []
   for host_chunk, tf in jid_table_mod._iter_host_time_query_chunks(
-      hosts,
-      tkw,
-      batch_size=batch,
-      slice_s=slice_s,
+    hosts,
+    tkw,
+    batch_size=batch,
+    slice_s=slice_s,
   ):
     all_rows.extend(
-        jid_table_mod._run_with_host_time_timeout_retry(
-            host_chunk,
-            tf,
-            run,
-            jid_table_mod._merge_list_results,
-            empty=[],
-        )
+      jid_table_mod._run_with_host_time_timeout_retry(
+        host_chunk,
+        tf,
+        run,
+        jid_table_mod._merge_list_results,
+        empty=[],
+      )
     )
   if not all_rows:
     return []
   if "cnt" in annotate_kwargs and (
-      "vmax" in annotate_kwargs or "vmean" in annotate_kwargs
+    "vmax" in annotate_kwargs or "vmean" in annotate_kwargs
   ):
     return jid_table_mod._fold_count_max_avg_rows(all_rows, group)
   if "mv" in annotate_kwargs:
@@ -154,18 +161,18 @@ def _collect_gpu_annotate_rows(
   return all_rows
 
 
-def gpu_agg_rows_for_job_window(j: Any) -> List[dict]:
+def gpu_agg_rows_for_job_window(j: Any) -> list[dict]:
   """
   Per-(host, dev, event) Count/Max/Avg for GPU util in the job window.
-  
+
   Uses the first vendor in ``GPU_TYPE_PRECEDENCE`` that has util rows.
-  
+
   Args:
     j (Any): Job record (Django ``job_data`` or job-like mapping).
-  
+
   Returns:
     List[dict]: List[dict] produced by this call.
-  
+
   Examples:
     >>> gpu_agg_rows_for_job_window(None)  # doctest: +SKIP
   """
@@ -175,32 +182,32 @@ def gpu_agg_rows_for_job_window(j: Any) -> List[dict]:
   tkw = _job_window_time_filter(j)
   for gpu_typ in GPU_TYPE_PRECEDENCE:
     out = _collect_gpu_annotate_rows(
-        hosts,
-        tkw,
-        gpu_typ=gpu_typ,
-        events=list(_GPU_UTIL_EVENTS),
-        group_fields=["host", "dev", "event"],
-        annotate_kwargs={
-            "cnt": Count("time"),
-            "vmax": Max("value"),
-            "vmean": Avg("value"),
-        },
+      hosts,
+      tkw,
+      gpu_typ=gpu_typ,
+      events=list(_GPU_UTIL_EVENTS),
+      group_fields=["host", "dev", "event"],
+      annotate_kwargs={
+        "cnt": Count("time"),
+        "vmax": Max("value"),
+        "vmean": Avg("value"),
+      },
     )
     if out:
       return out
   return []
 
 
-def gpu_count_total_for_job_window(j: Any) -> Optional[int]:
+def gpu_count_total_for_job_window(j: Any) -> int | None:
   """
   Sum over hosts of max(gpu_count) in window (nvidia → amd → intel).
-  
+
   Args:
     j (Any): Job record (Django ``job_data`` or job-like mapping).
-  
+
   Returns:
     Optional[int]: Optional[int] — the result, or None when unavailable.
-  
+
   Examples:
     >>> gpu_count_total_for_job_window(None)  # doctest: +SKIP
   """
@@ -210,12 +217,12 @@ def gpu_count_total_for_job_window(j: Any) -> Optional[int]:
   tkw = _job_window_time_filter(j)
   for gpu_typ in GPU_TYPE_PRECEDENCE:
     rows = _collect_gpu_annotate_rows(
-        hosts,
-        tkw,
-        gpu_typ=gpu_typ,
-        events="gpu_count",
-        group_fields=["host"],
-        annotate_kwargs={"mv": Max("value")},
+      hosts,
+      tkw,
+      gpu_typ=gpu_typ,
+      events="gpu_count",
+      group_fields=["host"],
+      annotate_kwargs={"mv": Max("value")},
     )
     if not rows:
       continue
@@ -225,27 +232,27 @@ def gpu_count_total_for_job_window(j: Any) -> Optional[int]:
       if v is None or is_dcgm_numeric_blank(v):
         continue
       try:
-        total += int(round(float(v)))
-      except (TypeError, ValueError):
+        total += round(float(v))
+      except TypeError, ValueError:
         continue
     if total > 0:
       return total
   return None
 
 
-def gpu_inventory_for_job_window(j: Any) -> List[dict]:
+def gpu_inventory_for_job_window(j: Any) -> list[dict]:
   """
   Per-(host, dev) util max/mean (+ optional power peak) for Resources inventory.
-  
+
   Uses the first vendor in ``GPU_TYPE_PRECEDENCE`` that has device-level util
     rows.
-  
+
   Args:
     j (Any): Job record (Django ``job_data`` or job-like mapping).
-  
+
   Returns:
     List[dict]: List[dict] produced by this call.
-  
+
   Examples:
     >>> gpu_inventory_for_job_window(None)  # doctest: +SKIP
   """
@@ -255,36 +262,36 @@ def gpu_inventory_for_job_window(j: Any) -> List[dict]:
   tkw = _job_window_time_filter(j)
   for gpu_typ in GPU_TYPE_PRECEDENCE:
     util_rows = _collect_gpu_annotate_rows(
-        hosts,
-        tkw,
-        gpu_typ=gpu_typ,
-        events=list(_GPU_UTIL_EVENTS),
-        group_fields=["host", "dev", "event"],
-        annotate_kwargs={
-            "cnt": Count("time"),
-            "vmax": Max("value"),
-            "vmean": Avg("value"),
-        },
+      hosts,
+      tkw,
+      gpu_typ=gpu_typ,
+      events=list(_GPU_UTIL_EVENTS),
+      group_fields=["host", "dev", "event"],
+      annotate_kwargs={
+        "cnt": Count("time"),
+        "vmax": Max("value"),
+        "vmean": Avg("value"),
+      },
     )
     if not util_rows:
       continue
     power_rows = _collect_gpu_annotate_rows(
-        hosts,
-        tkw,
-        gpu_typ=gpu_typ,
-        events="power_usage",
-        group_fields=["host", "dev"],
-        annotate_kwargs={"pmax": Max("value")},
+      hosts,
+      tkw,
+      gpu_typ=gpu_typ,
+      events="power_usage",
+      group_fields=["host", "dev"],
+      annotate_kwargs={"pmax": Max("value")},
     )
     per_device: dict = {}
     for r in util_rows:
       key = (str(r.get("host") or ""), str(r.get("dev") or ""))
       event = str(r.get("event") or "")
       slot = per_device.setdefault(
-          key, {"host": key[0], "dev": key[1], "type": gpu_typ}
+        key, {"host": key[0], "dev": key[1], "type": gpu_typ}
       )
       if event == "gpu_util" or (
-          event == "utilization" and "util_max" not in slot
+        event == "utilization" and "util_max" not in slot
       ):
         vmax = r.get("vmax")
         vmean = r.get("vmean")
@@ -293,12 +300,12 @@ def gpu_inventory_for_job_window(j: Any) -> List[dict]:
         try:
           slot["util_max"] = float(vmax)
           slot["util_mean"] = (
-              None
-              if vmean is None or is_dcgm_numeric_blank(vmean)
-              else float(vmean)
+            None
+            if vmean is None or is_dcgm_numeric_blank(vmean)
+            else float(vmean)
           )
           slot["sample_count"] = int(r.get("cnt") or 0)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
           continue
     for r in power_rows:
       key = (str(r.get("host") or ""), str(r.get("dev") or ""))
@@ -309,13 +316,9 @@ def gpu_inventory_for_job_window(j: Any) -> List[dict]:
         continue
       try:
         per_device[key]["power_max_w"] = float(pmax)
-      except (TypeError, ValueError):
+      except TypeError, ValueError:
         continue
-    out = [
-        row
-        for row in per_device.values()
-        if "util_max" in row
-    ]
+    out = [row for row in per_device.values() if "util_max" in row]
     out.sort(key=lambda r: (r.get("host") or "", r.get("dev") or ""))
     if out:
       return out
@@ -324,24 +327,24 @@ def gpu_inventory_for_job_window(j: Any) -> List[dict]:
 
 def reduce_gpu_agg_to_util_stats(
   agg: Any,
-) -> Tuple[Optional[int], Optional[float], Optional[float]]:
+) -> tuple[int | None, float | None, float | None]:
   """
   From cached ORM aggregate rows (list of dict) to active/max/mean.
-  
+
   Args:
     agg (Any): Agg passed to this helper.
-  
+
   Returns:
     Tuple[Optional[int], Optional[float], Optional[float]]:
     Tuple[Optional[int], Optional[float], Optional[float]] produced by this
     call.
-  
+
   Examples:
     >>> reduce_gpu_agg_to_util_stats(None)  # doctest: +SKIP
   """
-  gpu_active: Optional[int] = None
-  gpu_max: Optional[float] = None
-  gpu_mean: Optional[float] = None
+  gpu_active: int | None = None
+  gpu_max: float | None = None
+  gpu_mean: float | None = None
 
   if not isinstance(agg, (list, tuple)):
     agg = []
@@ -369,7 +372,7 @@ def reduce_gpu_agg_to_util_stats(
     try:
       vmax_f = float(vmax)
       vmean_f = float(vmean) if vmean is not None else None
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
       continue
     if is_dcgm_numeric_blank(vmax_f):
       continue
@@ -380,7 +383,7 @@ def reduce_gpu_agg_to_util_stats(
   if valid_rows:
     gpu_max = sum(vmax_f for _cnt, vmax_f, _vmean_f in valid_rows)
     mean_values = [
-        vmean_f for _cnt, _vmax_f, vmean_f in valid_rows if vmean_f is not None
+      vmean_f for _cnt, _vmax_f, vmean_f in valid_rows if vmean_f is not None
     ]
     if mean_values:
       gpu_mean = sum(mean_values)
@@ -391,18 +394,23 @@ def reduce_gpu_agg_to_util_stats(
 
 def compute_job_gpu_summary_tuple(
   j: Any,
-) -> Tuple[ Optional[int], Optional[float], Optional[float], Optional[int], ]:
+) -> tuple[
+  int | None,
+  float | None,
+  float | None,
+  int | None,
+]:
   """
   Fresh host_data reads: (gpu_active, gpu_util_max, gpu_util_mean, gpu_count).
-  
+
   Args:
     j (Any): Job record (Django ``job_data`` or job-like mapping).
-  
+
   Returns:
     Tuple[ Optional[int], Optional[float], Optional[float], Optional[int], ]:
     Tuple[ Optional[int], Optional[float], Optional[float], Optional[int], ]
     produced by this call.
-  
+
   Examples:
     >>> compute_job_gpu_summary_tuple(None)  # doctest: +SKIP
   """

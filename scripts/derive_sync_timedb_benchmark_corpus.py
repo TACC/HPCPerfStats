@@ -10,6 +10,7 @@ Attributes:
   MANIFEST_VERSION: Manifest schema version written to ``manifest.json``.
   _EPOCH_LINE_RE: Regex matching digit-leading monitor sample header lines.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -17,12 +18,13 @@ import hashlib
 import json
 import re
 import sys
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 MANIFEST_VERSION = 1
 _EPOCH_LINE_RE = re.compile(
-    r"^(\s*)(\d+(?:\.\d+)?)(\s+)(\S+)(\s+)(\S+)(.*)$",
+  r"^(\s*)(\d+(?:\.\d+)?)(\s+)(\S+)(\s+)(\S+)(.*)$",
 )
 
 
@@ -156,10 +158,10 @@ def _shift_epoch_token(token: str, epoch_offset: int) -> str:
 
 
 def rewrite_stats_identity(
-    text: str,
-    *,
-    new_host: str,
-    epoch_offset: int,
+  text: str,
+  *,
+  new_host: str,
+  epoch_offset: int,
 ) -> str:
   """
   Rewrite hostname and sample epochs without touching schema/metric payloads.
@@ -174,16 +176,16 @@ def rewrite_stats_identity(
 
   Examples:
     >>> rewrite_stats_identity(
-    ...     "$hostname cn001\\n1000.0 j cn001\\n",
-    ...     new_host="benchhost0000",
-    ...     epoch_offset=10,
+    ...   "$hostname cn001\\n1000.0 j cn001\\n",
+    ...   new_host="benchhost0000",
+    ...   epoch_offset=10,
     ... )
     '$hostname benchhost0000\\n1010.0 j benchhost0000\\n'
   """
   out_lines: list[str] = []
   for line in text.splitlines(keepends=True):
     stripped = line.lstrip()
-    if stripped.startswith("$hostname ") or stripped.startswith("$host "):
+    if stripped.startswith(("$hostname ", "$host ")):
       prefix = line[: len(line) - len(stripped)]
       key = stripped.split(None, 1)[0]
       out_lines.append(f"{prefix}{key} {new_host}\n")
@@ -193,8 +195,8 @@ def rewrite_stats_identity(
       shifted = _shift_epoch_token(match.group(2), epoch_offset)
       newline = "\n" if line.endswith("\n") else ""
       rebuilt = (
-          f"{match.group(1)}{shifted}{match.group(3)}{match.group(4)}"
-          f"{match.group(5)}{new_host}{match.group(7)}{newline}"
+        f"{match.group(1)}{shifted}{match.group(3)}{match.group(4)}"
+        f"{match.group(5)}{new_host}{match.group(7)}{newline}"
       )
       out_lines.append(rebuilt)
       continue
@@ -203,7 +205,7 @@ def rewrite_stats_identity(
 
 
 def _assert_no_host_epoch_overlap(
-    ranges: Sequence[tuple[str, float, float]],
+  ranges: Sequence[tuple[str, float, float]],
 ) -> None:
   """
   Reject overlapping epoch ranges registered for the same derived host.
@@ -230,16 +232,15 @@ def _assert_no_host_epoch_overlap(
     for existing_lo, existing_hi in by_host.get(host, []):
       if not (hi < existing_lo or existing_hi < lo):
         raise ValueError(
-            "derived host %r epoch ranges overlap: "
-            "[%s, %s] vs [%s, %s]"
-            % (host, lo, hi, existing_lo, existing_hi),
+          f"derived host {host!r} epoch ranges overlap: "
+          f"[{lo}, {hi}] vs [{existing_lo}, {existing_hi}]",
         )
     by_host.setdefault(host, []).append((lo, hi))
 
 
 def select_smallest_sources(
-    source_paths: Sequence[str | Path],
-    max_files: int | None,
+  source_paths: Sequence[str | Path],
+  max_files: int | None,
 ) -> list[Path]:
   """
   Return ``source_paths`` ordered by size, optionally truncated.
@@ -264,7 +265,7 @@ def select_smallest_sources(
   for path in source_paths:
     candidate = Path(path).resolve()
     if not candidate.is_file():
-      raise ValueError("source path is not a regular file: %s" % candidate)
+      raise ValueError(f"source path is not a regular file: {candidate}")
     resolved.append(candidate)
   ordered = sorted(resolved, key=lambda path: (path.stat().st_size, str(path)))
   if max_files is None or max_files <= 0:
@@ -273,13 +274,13 @@ def select_smallest_sources(
 
 
 def derive_corpus(
-    source_paths: Sequence[str | Path],
-    output_dir: str | Path,
-    *,
-    host_prefix: str = "benchhost",
-    host_suffix: str = "",
-    epoch_base_offset: int = 1_700_000_000,
-    dry_run: bool = False,
+  source_paths: Sequence[str | Path],
+  output_dir: str | Path,
+  *,
+  host_prefix: str = "benchhost",
+  host_suffix: str = "",
+  epoch_base_offset: int = 1_700_000_000,
+  dry_run: bool = False,
 ) -> dict[str, Any]:
   """
   Derive benchmark raw stats copies and return a manifest describing them.
@@ -316,7 +317,7 @@ def derive_corpus(
   normalized_sources = [Path(path).resolve() for path in source_paths]
   for path in normalized_sources:
     if not path.is_file():
-      raise ValueError("source path is not a regular file: %s" % path)
+      raise ValueError(f"source path is not a regular file: {path}")
 
   output_root = Path(output_dir)
   if not dry_run:
@@ -332,14 +333,14 @@ def derive_corpus(
     if span > max_span:
       max_span = span
     prepared.append(
-        {
-            "index": index,
-            "source_path": source_path,
-            "text": text,
-            "original_host": original_host,
-            "epoch_min": epoch_min,
-            "epoch_max": epoch_max,
-        },
+      {
+        "index": index,
+        "source_path": source_path,
+        "text": text,
+        "original_host": original_host,
+        "epoch_min": epoch_min,
+        "epoch_max": epoch_max,
+      },
     )
 
   slot = max(max_span + 1.0, 1.0)
@@ -353,34 +354,36 @@ def derive_corpus(
     source_before = _sha256_file(source_path)
     derived_host = "%s%04d%s" % (host_prefix, index, suffix)
     target_start = epoch_base_offset + index * slot
-    epoch_offset = int(round(target_start - item["epoch_min"]))
+    epoch_offset = round(target_start - item["epoch_min"])
     derived_text = rewrite_stats_identity(
-        item["text"],
-        new_host=derived_host,
-        epoch_offset=epoch_offset,
+      item["text"],
+      new_host=derived_host,
+      epoch_offset=epoch_offset,
     )
     derived_min, derived_max = _epoch_bounds(derived_text)
     host_ranges.append((derived_host, derived_min, derived_max))
     shifted_first_epoch = int(derived_min)
     output_path = output_root / derived_host / str(shifted_first_epoch)
     entry = {
-        "source_path": str(source_path),
-        "source_sha256_before": source_before,
-        "output_path": str(output_path),
-        "original_host": item["original_host"],
-        "derived_host": derived_host,
-        "epoch_offset": epoch_offset,
-        "epoch_min": derived_min,
-        "epoch_max": derived_max,
-        "shifted_first_epoch": shifted_first_epoch,
+      "source_path": str(source_path),
+      "source_sha256_before": source_before,
+      "output_path": str(output_path),
+      "original_host": item["original_host"],
+      "derived_host": derived_host,
+      "epoch_offset": epoch_offset,
+      "epoch_min": derived_min,
+      "epoch_max": derived_max,
+      "shifted_first_epoch": shifted_first_epoch,
     }
     if not dry_run:
       output_path.parent.mkdir(parents=True, exist_ok=True)
-      output_path.write_text(derived_text, encoding="utf-8", errors="surrogateescape")
+      output_path.write_text(
+        derived_text, encoding="utf-8", errors="surrogateescape"
+      )
       entry["output_sha256"] = _sha256_file(output_path)
     else:
       entry["output_sha256"] = _sha256_bytes(
-          derived_text.encode("utf-8", errors="surrogateescape"),
+        derived_text.encode("utf-8", errors="surrogateescape"),
       )
     source_after = _sha256_file(source_path)
     entry["source_sha256_after"] = source_after
@@ -389,19 +392,19 @@ def derive_corpus(
   _assert_no_host_epoch_overlap(host_ranges)
 
   manifest: dict[str, Any] = {
-      "version": MANIFEST_VERSION,
-      "host_prefix": host_prefix,
-      "host_suffix": suffix,
-      "epoch_base_offset": epoch_base_offset,
-      "epoch_slot_seconds": slot,
-      "dry_run": dry_run,
-      "entries": entries,
+    "version": MANIFEST_VERSION,
+    "host_prefix": host_prefix,
+    "host_suffix": suffix,
+    "epoch_base_offset": epoch_base_offset,
+    "epoch_slot_seconds": slot,
+    "dry_run": dry_run,
+    "entries": entries,
   }
   if not dry_run:
     manifest_path = output_root / "manifest.json"
     manifest_path.write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+      json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+      encoding="utf-8",
     )
     manifest["manifest_path"] = str(manifest_path)
   return manifest
@@ -433,10 +436,12 @@ def verify_source_unchanged(manifest: dict[str, Any]) -> None:
     after = entry.get("source_sha256_after")
     source_path = entry.get("source_path")
     if not before or not after:
-      raise ValueError("manifest entry missing source sha256 fields: %r" % entry)
+      raise ValueError(
+        f"manifest entry missing source sha256 fields: {entry!r}"
+      )
     if before != after:
       raise ValueError(
-          "source hash drift recorded in manifest for %r" % source_path,
+        f"source hash drift recorded in manifest for {source_path!r}",
       )
     if source_path:
       path = Path(source_path)
@@ -444,7 +449,7 @@ def verify_source_unchanged(manifest: dict[str, Any]) -> None:
         current = _sha256_file(path)
         if current != before:
           raise ValueError(
-              "source file changed on disk: %r" % source_path,
+            f"source file changed on disk: {source_path!r}",
           )
 
 
@@ -469,7 +474,7 @@ def _collect_source_paths(source_dirs: Iterable[str | Path]) -> list[Path]:
   for root in source_dirs:
     base = Path(root)
     if not base.is_dir():
-      raise ValueError("source directory does not exist: %s" % base)
+      raise ValueError(f"source directory does not exist: {base}")
     for path in sorted(base.rglob("*")):
       if not path.is_file():
         continue
@@ -492,54 +497,54 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     >>> _build_arg_parser().prog  # doctest: +SKIP
   """
   parser = argparse.ArgumentParser(
-      description=(
-          "Derive deterministic sync_timedb benchmark raw stats from exemplars."
-      ),
+    description=(
+      "Derive deterministic sync_timedb benchmark raw stats from exemplars."
+    ),
   )
   parser.add_argument(
-      "--source-dir",
-      action="append",
-      default=[],
-      required=True,
-      help="Directory containing immutable exemplar raw stats (repeatable).",
+    "--source-dir",
+    action="append",
+    default=[],
+    required=True,
+    help="Directory containing immutable exemplar raw stats (repeatable).",
   )
   parser.add_argument(
-      "--output-dir",
-      required=True,
-      help="Directory for derived host/epoch tree and manifest.json.",
+    "--output-dir",
+    required=True,
+    help="Directory for derived host/epoch tree and manifest.json.",
   )
   parser.add_argument(
-      "--host-prefix",
-      default="benchhost",
-      help="Synthetic hostname prefix (default: benchhost).",
+    "--host-prefix",
+    default="benchhost",
+    help="Synthetic hostname prefix (default: benchhost).",
   )
   parser.add_argument(
-      "--host-suffix",
-      default="",
-      help=(
-          "Optional FQDN suffix after the padded index "
-          "(example: .cluster_name.domain.edu)."
-      ),
+    "--host-suffix",
+    default="",
+    help=(
+      "Optional FQDN suffix after the padded index "
+      "(example: .cluster_name.domain.edu)."
+    ),
   )
   parser.add_argument(
-      "--max-files",
-      type=int,
-      default=0,
-      help=(
-          "When >0, derive only the N smallest source files "
-          "(smoke/steady tier selection)."
-      ),
+    "--max-files",
+    type=int,
+    default=0,
+    help=(
+      "When >0, derive only the N smallest source files "
+      "(smoke/steady tier selection)."
+    ),
   )
   parser.add_argument(
-      "--epoch-base-offset",
-      type=int,
-      default=1_700_000_000,
-      help="Base epoch for the first derived file (default: 1700000000).",
+    "--epoch-base-offset",
+    type=int,
+    default=1_700_000_000,
+    help="Base epoch for the first derived file (default: 1700000000).",
   )
   parser.add_argument(
-      "--dry-run",
-      action="store_true",
-      help="Compute manifest only; do not write derived files.",
+    "--dry-run",
+    action="store_true",
+    help="Compute manifest only; do not write derived files.",
   )
   return parser
 
@@ -573,15 +578,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not source_paths:
       raise ValueError("no source files remain after --max-files selection")
     derive_corpus(
-        source_paths,
-        args.output_dir,
-        host_prefix=args.host_prefix,
-        host_suffix=args.host_suffix,
-        epoch_base_offset=args.epoch_base_offset,
-        dry_run=args.dry_run,
+      source_paths,
+      args.output_dir,
+      host_prefix=args.host_prefix,
+      host_suffix=args.host_suffix,
+      epoch_base_offset=args.epoch_base_offset,
+      dry_run=args.dry_run,
     )
   except ValueError as exc:
-    print("error: %s" % exc, file=sys.stderr)
+    print(f"error: {exc}", file=sys.stderr)
     return 1
   return 0
 

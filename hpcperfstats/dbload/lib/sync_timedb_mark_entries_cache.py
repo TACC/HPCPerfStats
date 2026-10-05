@@ -9,11 +9,12 @@ Attributes:
   _ENTRIES_CACHE: mark_path -> (mtime_ns, size, entries dict).
   _ENTRIES_CACHE_LOCK: FT-safe RLock guarding ``_ENTRIES_CACHE``.
 """
+
 from __future__ import annotations
 
 import os
 import threading
-from typing import Callable
+from collections.abc import Callable
 
 # mark_path -> (mtime_ns, size, entries)
 _ENTRIES_CACHE: dict[str, tuple[int, int, dict]] = {}
@@ -75,9 +76,9 @@ def load_cached_mark_entries(
   with _ENTRIES_CACHE_LOCK:
     cached = _ENTRIES_CACHE.get(path)
     if (
-        cached is not None
-        and cached[0] == identity[0]
-        and cached[1] == identity[1]
+      cached is not None
+      and cached[0] == identity[0]
+      and cached[1] == identity[1]
     ):
       return dict(cached[2])
   entries = dict(load_uncached(path) or {})

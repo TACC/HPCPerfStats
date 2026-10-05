@@ -2,7 +2,9 @@
 
 from types import SimpleNamespace
 
-from hpcperfstats.dbload.lib.sync_timedb_populate_pool import PopulatePoolController
+from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
+  PopulatePoolController,
+)
 
 
 class _ReadyResult:
@@ -55,9 +57,9 @@ def test_populate_pool_reap_and_restart_replaces_dead_worker(monkeypatch):
   controller._registry = {}
   controller._results = [_ReadyResult(), _LiveResult()]
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser"
-      ".get_sync_archive_members_populate_pool_processes",
-      lambda: 2,
+    "hpcperfstats.dbload.lib.conf_parser"
+    ".get_sync_archive_members_populate_pool_processes",
+    lambda: 2,
   )
   restarted = controller.reap_and_restart()
   assert restarted == 1
@@ -74,9 +76,9 @@ def test_populate_pool_reap_joins_dead_thread_without_waitpid(monkeypatch):
   controller._registry = {}
   controller._results = [_ReadyResult(), _LiveResult()]
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser"
-      ".get_sync_archive_members_populate_pool_processes",
-      lambda: 2,
+    "hpcperfstats.dbload.lib.conf_parser"
+    ".get_sync_archive_members_populate_pool_processes",
+    lambda: 2,
   )
   controller.reap_and_restart()
   assert pool.submitted

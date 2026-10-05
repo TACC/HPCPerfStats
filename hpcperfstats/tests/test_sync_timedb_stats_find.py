@@ -1,4 +1,5 @@
 """Unit tests for fd -X GNU stat stats discovery."""
+
 from __future__ import annotations
 
 import io
@@ -10,7 +11,7 @@ import pytest
 
 from hpcperfstats.dbload.lib import sync_timedb_stats_find as sf
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-    collect_stats_files_in_range,
+  collect_stats_files_in_range,
 )
 
 _HOST_SUFFIX = "cluster.find.test"
@@ -29,7 +30,9 @@ def _record_key(path: str) -> str:
   return os.path.normpath(os.path.realpath(path))
 
 
-def _assert_fd_x_stat_contract(argv: list[str], *, stat_bin: str, printf_fmt: str) -> None:
+def _assert_fd_x_stat_contract(
+  argv: list[str], *, stat_bin: str, printf_fmt: str
+) -> None:
   assert argv[0]
   assert "--threads" in argv
   assert argv[argv.index("--threads") + 1] == "4"
@@ -61,7 +64,9 @@ def _assert_fd_x_stat_contract(argv: list[str], *, stat_bin: str, printf_fmt: st
 
 def test_find_stats_argv_uses_fd_x_gnu_stat():
   argv = sf.build_find_stats_argv("/archive", find_bin="fd", stat_bin="gstat")
-  _assert_fd_x_stat_contract(argv, stat_bin="gstat", printf_fmt=sf.STAT_PRINTF_FORMAT)
+  _assert_fd_x_stat_contract(
+    argv, stat_bin="gstat", printf_fmt=sf.STAT_PRINTF_FORMAT
+  )
   assert "%Y" in argv[argv.index("-X") + 2]
   assert "--exclude" in argv
   assert argv[argv.index("--exclude") + 1] == "current*"
@@ -73,22 +78,32 @@ def test_find_stats_argv_uses_fd_x_gnu_stat():
 
 def test_find_stats_argv_changed_within_mtime_days():
   argv = sf.build_find_stats_argv(
-      "/archive", mtime_days=1, find_bin="fd", stat_bin="stat",
+    "/archive",
+    mtime_days=1,
+    find_bin="fd",
+    stat_bin="stat",
   )
   assert "--changed-within" in argv
   assert argv[argv.index("--changed-within") + 1] == "1d"
   argv_full = sf.build_find_stats_argv(
-      "/archive", mtime_days=None, find_bin="fd", stat_bin="stat",
+    "/archive",
+    mtime_days=None,
+    find_bin="fd",
+    stat_bin="stat",
   )
   assert "--changed-within" not in argv_full
 
 
 def test_find_current_inode_argv_uses_glob_current():
   argv = sf.build_find_current_inode_argv(
-      "/archive", find_bin="fdfind", stat_bin="stat",
+    "/archive",
+    find_bin="fdfind",
+    stat_bin="stat",
   )
   _assert_fd_x_stat_contract(
-      argv, stat_bin="stat", printf_fmt=sf.STAT_CURRENT_INODE_PRINTF,
+    argv,
+    stat_bin="stat",
+    printf_fmt=sf.STAT_CURRENT_INODE_PRINTF,
   )
   assert "--glob" in argv
   assert "current" in argv
@@ -97,9 +112,13 @@ def test_find_current_inode_argv_uses_glob_current():
 
 def test_find_host_scoped_argv_depth_one():
   argv = sf.build_find_host_scoped_argv(
-      "/archive/h.host", find_bin="fd", stat_bin="gstat",
+    "/archive/h.host",
+    find_bin="fd",
+    stat_bin="gstat",
   )
-  _assert_fd_x_stat_contract(argv, stat_bin="gstat", printf_fmt=sf.STAT_PRINTF_FORMAT)
+  _assert_fd_x_stat_contract(
+    argv, stat_bin="gstat", printf_fmt=sf.STAT_PRINTF_FORMAT
+  )
   assert argv[argv.index("--min-depth") + 1] == "1"
   assert argv[argv.index("--max-depth") + 1] == "1"
   assert os.path.abspath("/archive/h.host") in argv
@@ -107,7 +126,7 @@ def test_find_host_scoped_argv_depth_one():
 
 def test_is_internal_archive_stats_path_dot_prefixed_host_dir():
   assert sf.is_internal_archive_stats_path(
-      "/archive/.sync_timedb_day_raw_removal/2026-08-07.json",
+    "/archive/.sync_timedb_day_raw_removal/2026-08-07.json",
   )
   assert sf.is_internal_archive_stats_path("/archive/.any_sidecar/file")
   host = "/archive/i614-023.vista.tacc.utexas.edu"
@@ -117,36 +136,30 @@ def test_is_internal_archive_stats_path_dot_prefixed_host_dir():
 def test_filter_skips_internal_sidecar_paths():
   host_suffix = ".vista.tacc.utexas.edu"
   internal = sf.FindStatsRecord(
-      path="/archive/.sync_timedb_day_raw_removal/2026-08-07.json",
-      mtime=1700000000.0,
-      size=0,
-      inode=1,
+    path="/archive/.sync_timedb_day_raw_removal/2026-08-07.json",
+    mtime=1700000000.0,
+    size=0,
+    inode=1,
   )
   real = sf.FindStatsRecord(
-      path="/archive/i614.host" + host_suffix + "/1787359835",
-      mtime=1700000000.0,
-      size=10,
-      inode=2,
+    path="/archive/i614.host" + host_suffix + "/1787359835",
+    mtime=1700000000.0,
+    size=10,
+    inode=2,
   )
   out = sf.filter_and_sort_find_records(
-      [internal, real],
-      host_suffix,
-      "backlog",
-      None,
-      {},
+    [internal, real],
+    host_suffix,
+    "backlog",
+    None,
+    {},
   )
   assert [r.path for r in out] == [real.path]
 
 
 def test_parse_find_printf_records_roundtrip():
   path = "/archive/h.host/12345"
-  raw = (
-      path.encode()
-      + b"\0"
-      + b"1700000000.5\0"
-      + b"99\0"
-      + b"4242\0"
-  )
+  raw = path.encode() + b"\0" + b"1700000000.5\0" + b"99\0" + b"4242\0"
   records = sf.parse_find_printf_records(raw)
   assert len(records) == 1
   assert records[0].path == path
@@ -166,17 +179,17 @@ def test_parse_integer_stat_y_mtime():
 def test_filter_skips_inode_matching_current():
   host = "/archive/n." + _HOST_SUFFIX
   active = sf.FindStatsRecord(
-      path=host + "/11111", mtime=1700000000.0, size=10, inode=99
+    path=host + "/11111", mtime=1700000000.0, size=10, inode=99
   )
   closed = sf.FindStatsRecord(
-      path=host + "/22222", mtime=1700000000.0, size=10, inode=100
+    path=host + "/22222", mtime=1700000000.0, size=10, inode=100
   )
   out = sf.filter_and_sort_find_records(
-      [active, closed],
-      _HOST_SUFFIX,
-      "backlog",
-      None,
-      {host: 99},
+    [active, closed],
+    _HOST_SUFFIX,
+    "backlog",
+    None,
+    {host: 99},
   )
   assert [r.path for r in out] == [closed.path]
 
@@ -188,7 +201,9 @@ def test_find_stats_fail_closed_missing_binary():
 
 def test_find_stats_fail_closed_missing_gnu_stat(tmp_path):
   fake = tmp_path / "bsd-stat"
-  fake.write_text("#!/bin/sh\necho 'stat: illegal option -- printf' >&2\nexit 1\n")
+  fake.write_text(
+    "#!/bin/sh\necho 'stat: illegal option -- printf' >&2\nexit 1\n"
+  )
   fake.chmod(0o755)
   with pytest.raises(sf.FindStatsDiscoveryError) as excinfo:
     sf._resolve_stat_bin(str(fake))
@@ -204,14 +219,17 @@ def test_find_stats_fail_closed_missing_walker(tmp_path):
 
 
 def test_streaming_find_does_not_leave_stderr_pipe_undrained(
-    monkeypatch, tmp_path,
+  monkeypatch,
+  tmp_path,
 ):
   """Streaming stdout must not defer reading a child stderr pipe until EOF."""
   popen_kwargs = {}
 
   class _UnreadableStderr:
     def read(self):
-      raise AssertionError("streaming find must not read stderr after stdout EOF")
+      raise AssertionError(
+        "streaming find must not read stderr after stdout EOF"
+      )
 
   class _Proc:
     stdout = io.BytesIO(b"")
@@ -234,14 +252,17 @@ def test_streaming_find_does_not_leave_stderr_pipe_undrained(
 
 
 @pytest.mark.parametrize(
-    ("stderr", "raises"),
-    [
-      (b"stat: /x.fnctl.lock: No such file or directory\n", False),
-      (b"stat: permission denied\n", True),
-    ],
+  ("stderr", "raises"),
+  [
+    (b"stat: /x.fnctl.lock: No such file or directory\n", False),
+    (b"stat: permission denied\n", True),
+  ],
 )
 def test_streaming_find_preserves_exit_one_stderr_classification(
-    monkeypatch, tmp_path, stderr, raises,
+  monkeypatch,
+  tmp_path,
+  stderr,
+  raises,
 ):
   """Non-pipe capture must still distinguish lock races from real failures."""
 
@@ -270,7 +291,8 @@ def test_streaming_find_preserves_exit_one_stderr_classification(
 
 
 def test_streaming_find_close_does_not_deadlock_waiting_on_full_stdout(
-    monkeypatch, tmp_path,
+  monkeypatch,
+  tmp_path,
 ):
   """Early generator close must not wait() while child stdout is still open."""
   import threading
@@ -348,7 +370,7 @@ def test_resolve_find_bin_never_falls_back_to_gfind(monkeypatch):
 
 
 def test_collect_discovery_path_does_not_call_os_stat_for_find_fields(
-    monkeypatch, tmp_path
+  monkeypatch, tmp_path
 ):
   if not _live_discover_ready():
     pytest.skip("fd/fdfind and GNU stat --printf required")
@@ -364,15 +386,15 @@ def test_collect_discovery_path_does_not_call_os_stat_for_find_fields(
 
   def _guard_stat(path, *a, **k):
     path_s = os.fspath(path)
-    if path_s.endswith("22222") or path_s.endswith("current"):
+    if path_s.endswith(("22222", "current")):
       stat_calls.append(path_s)
-      raise AssertionError("discovery must not os.stat find fields: %s" % path_s)
+      raise AssertionError(f"discovery must not os.stat find fields: {path_s}")
     return real_stat(path, *a, **k)
 
   monkeypatch.setattr(os, "stat", _guard_stat)
   monkeypatch.setattr(os, "lstat", _guard_stat)
   result = collect_stats_files_in_range(
-      str(tmp_path), datetime(2020, 6, 1), datetime(2020, 7, 1), _HOST_SUFFIX
+    str(tmp_path), datetime(2020, 6, 1), datetime(2020, 7, 1), _HOST_SUFFIX
   )
   assert any(p.endswith("22222") for p in result)
   assert stat_calls == []
@@ -413,7 +435,9 @@ def test_live_fd_x_stat_output_matches_lstat(tmp_path):
   host_key = os.path.dirname(_record_key(str(current)))
   mapped = None
   for dirname, inode in inode_map.items():
-    if _record_key(dirname) == host_key or os.path.normpath(dirname) == os.path.normpath(str(host)):
+    if _record_key(dirname) == host_key or os.path.normpath(
+      dirname
+    ) == os.path.normpath(str(host)):
       mapped = inode
       break
   assert mapped == int(os.lstat(current).st_ino)

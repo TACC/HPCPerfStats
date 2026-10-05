@@ -14,22 +14,23 @@ Attributes:
   _file_lock_totals: Accumulated SH/EX wait and hold seconds.
   _file_lock_totals_lock: Mutex protecting lock timing totals.
 """
-from __future__ import annotations
 
-from typing import Any, Iterator
+from __future__ import annotations
 
 import errno
 import os
 import threading
 import time
-from contextlib import contextmanager
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from fcntl import LOCK_EX, LOCK_NB, LOCK_SH, LOCK_UN, flock
+from typing import Any
 
 FILE_LOCK_TELEM_KEYS: tuple[str, ...] = (
-    "file_lock_sh_wait_s",
-    "file_lock_sh_hold_s",
-    "file_lock_ex_wait_s",
-    "file_lock_ex_hold_s",
+  "file_lock_sh_wait_s",
+  "file_lock_sh_hold_s",
+  "file_lock_ex_wait_s",
+  "file_lock_ex_hold_s",
 )
 
 LOCK_EXPIRY_SECONDS = 4 * 60 * 60
@@ -38,7 +39,7 @@ POLL_INTERVAL_SECONDS = 0.1
 LOCK_SUFFIX = ".fnctl.lock"
 
 _file_lock_telem_on = False
-_file_lock_totals: dict[str, float] = {key: 0.0 for key in FILE_LOCK_TELEM_KEYS}
+_file_lock_totals: dict[str, float] = dict.fromkeys(FILE_LOCK_TELEM_KEYS, 0.0)
 _file_lock_totals_lock = threading.Lock()
 
 
@@ -78,8 +79,8 @@ def snapshot_file_lock_timing() -> dict[str, float]:
     return {}
   with _file_lock_totals_lock:
     return {
-        key: float(_file_lock_totals.get(key, 0.0))
-        for key in FILE_LOCK_TELEM_KEYS
+      key: float(_file_lock_totals.get(key, 0.0))
+      for key in FILE_LOCK_TELEM_KEYS
     }
 
 
@@ -110,17 +111,17 @@ def _add_file_lock_timing(key: str, delta_s: float) -> None:
 def _lock_path(target_path: str) -> Any:
   """
   Return the sidecar lock path for a target.
-  
+
   This function is intentionally idempotent: callers may (incorrectly) pass
   an already-lock-path, and we must not keep appending lock suffixes
   repeatedly (which can lead to Errno 36: file name too long).
-  
+
   Args:
     target_path (str): String for target path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _lock_path("x")  # doctest: +SKIP
   """
@@ -135,61 +136,60 @@ def _lock_path(target_path: str) -> Any:
 def _print_read_lock_timeout(lock_path: str, timeout_seconds: int) -> None:
   """
   Internal helper to print the read lock timeout.
-  
+
   Args:
     lock_path (str): String for lock path.
     timeout_seconds (int): Integer value for timeout seconds.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _print_read_lock_timeout("x", 0)  # doctest: +SKIP
   """
   print(
-      "ERROR: Timed out waiting %.1fs for read lock: %s"
-      % (timeout_seconds, lock_path)
+    f"ERROR: Timed out waiting {timeout_seconds:.1f}s for read lock: {lock_path}"
   )
 
 
 def _open_lock_file(target_path: str) -> Any:
   """
   Internal helper to open the lock file.
-  
+
   Args:
     target_path (str): String for target path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     FileNotFoundError: Raised when ``_open_lock_file`` hits a
     ``FileNotFoundError`` failure path.
-  
+
   Examples:
     >>> _open_lock_file("x")  # doctest: +SKIP
   """
   lock_path = _lock_path(target_path)
   parent_dir = os.path.dirname(lock_path) or "."
   if not os.path.exists(parent_dir):
-    raise FileNotFoundError("Parent directory does not exist: %s" % parent_dir)
+    raise FileNotFoundError(f"Parent directory does not exist: {parent_dir}")
   return open(lock_path, "a+")
 
 
 def _try_open_write_lock_fd(target_path: str) -> Any:
   """
   Open the sidecar and attempt a non-blocking exclusive flock in one step.
-  
+
   Args:
     target_path (str): String for target path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     Exception: Raised when ``_try_open_write_lock_fd`` hits a ``Exception``
     failure path.
-  
+
   Examples:
     >>> _try_open_write_lock_fd("x")  # doctest: +SKIP
   """
@@ -197,10 +197,8 @@ def _try_open_write_lock_fd(target_path: str) -> Any:
   try:
     flock(lock_fd, LOCK_EX | LOCK_NB)
   except OSError:
-    try:
+    with suppress(OSError):
       lock_fd.close()
-    except OSError:
-      pass
     raise
   return lock_fd
 
@@ -208,13 +206,13 @@ def _try_open_write_lock_fd(target_path: str) -> Any:
 def _refresh_lock_sidecar_mtime(lock_fd: Any) -> None:
   """
   Refresh sidecar mtime on the held fd (safe if path was unlinked).
-  
+
   Args:
     lock_fd (Any): Lock fd passed to this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _refresh_lock_sidecar_mtime(None)  # doctest: +SKIP
   """
@@ -223,10 +221,8 @@ def _refresh_lock_sidecar_mtime(lock_fd: Any) -> None:
     return
   lock_path = lock_fd.name
   if lock_path:
-    try:
+    with suppress(FileNotFoundError):
       os.utime(lock_path, None)
-    except FileNotFoundError:
-      pass
 
 
 def _maybe_reset_stale_lock_file(
@@ -236,23 +232,23 @@ def _maybe_reset_stale_lock_file(
 ) -> Any:
   """
   Remove a lock sidecar when uncontended and optionally older than.
-  
+
     ``expiry_seconds``.
-  
+
   When ``expiry_seconds <= 0``, skip the mtime age gate (post-crash orphan
     cleanup).
   Removal still requires a successful non-blocking exclusive flock probe so
     active
   holders are never cleared.
-  
+
   Args:
     target_path (str): String for target path.
     now (Any): Now passed to this helper.
     expiry_seconds (int): Integer value for expiry seconds.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _maybe_reset_stale_lock_file("x", None, 0)  # doctest: +SKIP
   """
@@ -278,24 +274,22 @@ def _maybe_reset_stale_lock_file(
     return False
   finally:
     if lock_fd is not None:
-      try:
+      with suppress(OSError):
         lock_fd.close()
-      except OSError:
-        pass
 
 
 def _target_path_from_lock_sidecar(lock_path: str) -> Any:
   """
   Map a lock sidecar path back to the locked target (collapse repeated.
-  
+
     suffixes).
-  
+
   Args:
     lock_path (str): String for lock path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _target_path_from_lock_sidecar("x")  # doctest: +SKIP
   """
@@ -313,24 +307,24 @@ def cleanup_stale_fnctl_lock_sidecars(
 ) -> Any:
   """
   Remove stale ``*.fnctl.lock`` sidecars under ``directory`` when safe.
-  
+
   Read paths do not unlink the sidecar file, so empty lock files can linger.
   This walks the tree and, for each ``*.fnctl.lock`` older than
     ``expiry_seconds``,
   reuses the same safety check as :func:`_maybe_reset_stale_lock_file`: attempt
     a
   non-blocking exclusive flock on the sidecar; remove only if uncontended.
-  
+
   Returns the number of sidecar files removed.
-  
+
   Args:
     directory (Any): Directory passed to this helper.
     expiry_seconds (int): Integer value for expiry seconds.
     now (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> cleanup_stale_fnctl_lock_sidecars(None, 0, None)  # doctest: +SKIP
   """
@@ -359,27 +353,27 @@ def cleanup_orphan_fnctl_lock_sidecars(
 ) -> Any:
   """
   Remove uncontended ``*.fnctl.lock`` sidecars regardless of mtime.
-  
+
   Read-lock paths leave sidecars behind; after a crash the sidecar can linger
     with
   a recent mtime while no process holds the flock. Use at startup and on
     manifest
   trees so day-raw-removal deletes do not sit in the 60s write-lock wait loop.
-  
+
   Args:
     directory (Any): Directory passed to this helper.
     now (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> cleanup_orphan_fnctl_lock_sidecars(None, None)  # doctest: +SKIP
   """
   return cleanup_stale_fnctl_lock_sidecars(
-      directory,
-      expiry_seconds=0,
-      now=now,
+    directory,
+    expiry_seconds=0,
+    now=now,
   )
 
 
@@ -390,17 +384,17 @@ def cleanup_orphan_fnctl_lock_sidecars_for_targets(
 ) -> Any:
   """
   Remove uncontended lock sidecars for specific targets (no directory walk).
-  
+
   Used for debt-day-targeted daily ``.tar`` / sealed sibling cleanup on janitor
   ticks. Never unlinks while an exclusive flock probe fails (live SH/EX holder).
-  
+
   Args:
     target_paths (Any): Iterable of filesystem paths as strings.
     now (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> cleanup_orphan_fnctl_lock_sidecars_for_targets(None, None)
   """
@@ -480,7 +474,7 @@ def file_write_lock(
         raise
       if (now - start) >= timeout_seconds:
         raise TimeoutError(
-            "Timed out waiting for write lock: %s" % target_path
+          f"Timed out waiting for write lock: {target_path}"
         ) from exc
       time.sleep(POLL_INTERVAL_SECONDS)
 
@@ -507,22 +501,22 @@ def file_write_lock(
         except OSError:
           # Best-effort cleanup; failure to remove the lock file should not
           # break callers once the advisory lock itself is released.
-          print("WARNING: failed to remove lock sidecar: %s" % lock_path)
+          print(f"WARNING: failed to remove lock sidecar: {lock_path}")
 
 
 @contextmanager
 def try_file_write_lock(target_path: str) -> Iterator[Any]:
   """
   Acquire an exclusive write lock without blocking (timeout 0).
-  
+
   Raises TimeoutError immediately when the lock is contended.
-  
+
   Args:
     target_path (str): String for target path.
-  
+
   Yields:
     Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> try_file_write_lock("x")  # doctest: +SKIP
   """
@@ -538,23 +532,23 @@ def file_read_lock_wait(
 ) -> Iterator[Any]:
   """
   Acquire a shared lock, waiting for active writer lock release.
-  
+
   This acts as "check for lock and wait (up to timeout)" before reads.
-  
+
   Args:
     target_path (str): String for target path.
     timeout_seconds (int): Integer value for timeout seconds.
     expiry_seconds (int): Integer value for expiry seconds.
-  
+
   Yields:
     Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     Exception: Raised when ``file_read_lock_wait`` hits a ``Exception``
     failure path.
     TimeoutError: Raised when ``file_read_lock_wait`` hits a ``TimeoutError``
     failure path.
-  
+
   Examples:
     >>> file_read_lock_wait("x", 0, 0)  # doctest: +SKIP
   """
@@ -571,10 +565,8 @@ def file_read_lock_wait(
       break
     except OSError as exc:
       if lock_fd is not None:
-        try:
+        with suppress(OSError):
           lock_fd.close()
-        except OSError:
-          pass
       lock_fd = None
       if exc.errno not in (errno.EACCES, errno.EAGAIN):
         raise
@@ -582,7 +574,7 @@ def file_read_lock_wait(
         lock_path = _lock_path(target_path)
         _print_read_lock_timeout(lock_path, timeout_seconds)
         raise TimeoutError(
-            "Timed out waiting for read lock: %s" % lock_path
+          f"Timed out waiting for read lock: {lock_path}"
         ) from exc
       time.sleep(POLL_INTERVAL_SECONDS)
 
@@ -597,7 +589,5 @@ def file_read_lock_wait(
     try:
       flock(lock_fd, LOCK_UN)
     finally:
-      try:
+      with suppress(OSError):
         lock_fd.close()
-      except OSError:
-        pass

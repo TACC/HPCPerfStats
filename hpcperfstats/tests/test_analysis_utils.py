@@ -1,26 +1,22 @@
-"""Unit tests for analysis.gen.utils (clean_dataframe, queryset_to_dataframe).
+"""Unit tests for analysis.gen.utils (clean_dataframe, queryset_to_dataframe)."""
 
-"""
 import numpy as np
 import pandas as pd
 
 
-
 def test_clean_dataframe_fillna():
-  """clean_dataframe replaces NaN with empty string.
-
-    """
+  """clean_dataframe replaces NaN with empty string."""
   from hpcperfstats.analysis.metrics.lib.gen.utils import clean_dataframe
+
   df = pd.DataFrame({"a": [1, np.nan, 3]})
   out = clean_dataframe(df)
   assert out["a"].iloc[1] == ""
 
 
 def test_clean_dataframe_inf():
-  """clean_dataframe replaces inf with empty string.
-
-    """
+  """clean_dataframe replaces inf with empty string."""
   from hpcperfstats.analysis.metrics.lib.gen.utils import clean_dataframe
+
   df = pd.DataFrame({"a": [1.0, np.inf, -np.inf]})
   out = clean_dataframe(df)
   assert out["a"].iloc[1] == ""
@@ -28,10 +24,11 @@ def test_clean_dataframe_inf():
 
 
 def test_queryset_to_dataframe_empty():
-  """queryset_to_dataframe returns empty DataFrame for None.
+  """queryset_to_dataframe returns empty DataFrame for None."""
+  from hpcperfstats.analysis.metrics.lib.gen.utils import (
+    queryset_to_dataframe,
+  )
 
-    """
-  from hpcperfstats.analysis.metrics.lib.gen.utils import queryset_to_dataframe
   out = queryset_to_dataframe(None)
   assert isinstance(out, pd.DataFrame)
   assert len(out) == 0
@@ -39,7 +36,9 @@ def test_queryset_to_dataframe_empty():
 
 def test_queryset_to_dataframe_mock_queryset():
   """queryset_to_dataframe converts iterable of dicts (e.g. queryset) to DataFrame."""
-  from hpcperfstats.analysis.metrics.lib.gen.utils import queryset_to_dataframe
+  from hpcperfstats.analysis.metrics.lib.gen.utils import (
+    queryset_to_dataframe,
+  )
 
   class MockQs:
     def __iter__(self):
@@ -54,7 +53,9 @@ def test_queryset_to_dataframe_mock_queryset():
 
 def test_queryset_to_dataframe_empty_values_with_columns_kwarg():
   """Empty values(*columns) still exposes column names for concat/sort."""
-  from hpcperfstats.analysis.metrics.lib.gen.utils import queryset_to_dataframe
+  from hpcperfstats.analysis.metrics.lib.gen.utils import (
+    queryset_to_dataframe,
+  )
 
   class QsEmpty:
     def values(self, *cols):
@@ -67,7 +68,9 @@ def test_queryset_to_dataframe_empty_values_with_columns_kwarg():
 
 def test_queryset_to_dataframe_empty_iter_with_values_select():
   """Empty .values() queryset: use query.values_select for DataFrame columns."""
-  from hpcperfstats.analysis.metrics.lib.gen.utils import queryset_to_dataframe
+  from hpcperfstats.analysis.metrics.lib.gen.utils import (
+    queryset_to_dataframe,
+  )
 
   class QsEmptyValues:
     class _Query:
@@ -87,7 +90,9 @@ def test_tz_aware_bokeh_tick_formatter_returns_datetime_formatter():
   """tz_aware_bokeh_tick_formatter uses built-in DatetimeTickFormatter (no CustomJS)."""
   from bokeh.models import DatetimeTickFormatter
 
-  from hpcperfstats.analysis.metrics.lib.gen.utils import tz_aware_bokeh_tick_formatter
+  from hpcperfstats.analysis.metrics.lib.gen.utils import (
+    tz_aware_bokeh_tick_formatter,
+  )
 
   formatter = tz_aware_bokeh_tick_formatter()
   assert isinstance(formatter, DatetimeTickFormatter)
@@ -119,12 +124,16 @@ def test_format_plain_decimal_avoids_scientific():
 def test_add_hover_plain_columns_adds_formatted_fields():
   import pandas as pd
 
-  from hpcperfstats.analysis.metrics.lib.gen.utils import add_hover_plain_columns
+  from hpcperfstats.analysis.metrics.lib.gen.utils import (
+    add_hover_plain_columns,
+  )
 
-  df = pd.DataFrame({
+  df = pd.DataFrame(
+    {
       "time": [pd.Timestamp("2024-01-01 12:30:00+00:00")],
       "cpu": [1.5],
-  })
+    }
+  )
   out = add_hover_plain_columns(df, ["cpu"])
   assert "_hover_time" in out.columns
   assert "cpu_plain" in out.columns
@@ -144,5 +153,3 @@ def test_plain_linear_tick_formatter_disables_scientific():
   p = figure(width=80, height=60)
   set_linear_axes_plain_numeric(p)
   assert p.yaxis.formatter.use_scientific is False
-
-

@@ -16,8 +16,8 @@ _HELPER_PATH = _REPO_ROOT / "services-conf" / "resolve_proxy_ssl_certs_dir.py"
 
 def _load_helper():
   spec = importlib.util.spec_from_file_location(
-      "resolve_proxy_ssl_certs_dir",
-      _HELPER_PATH,
+    "resolve_proxy_ssl_certs_dir",
+    _HELPER_PATH,
   )
   assert spec is not None and spec.loader is not None
   mod = importlib.util.module_from_spec(spec)
@@ -69,8 +69,12 @@ def test_flat_mount_root_materializes_pems(resolve_mod, tmp_path: Path):
   (mount / "privkey.pem").write_text("KEY", encoding="utf-8")
   dest = tmp_path / "dest"
   resolve_mod.materialize_ssl_certs(mount, dest)
-  assert (dest / "fullchain.pem").is_file() and not (dest / "fullchain.pem").is_symlink()
-  assert (dest / "privkey.pem").is_file() and not (dest / "privkey.pem").is_symlink()
+  assert (dest / "fullchain.pem").is_file() and not (
+    dest / "fullchain.pem"
+  ).is_symlink()
+  assert (dest / "privkey.pem").is_file() and not (
+    dest / "privkey.pem"
+  ).is_symlink()
   assert (dest / "fullchain.pem").read_text(encoding="utf-8") == "CHAIN"
 
 
@@ -88,14 +92,16 @@ def test_letsencrypt_rel_resolves_archive_symlinks(resolve_mod, tmp_path: Path):
   key_src.write_text("KEY", encoding="utf-8")
   os.chmod(full_src, 0o644)
   os.chmod(key_src, 0o600)
-  (live / "fullchain.pem").symlink_to("../../archive/host.example/fullchain1.pem")
+  (live / "fullchain.pem").symlink_to(
+    "../../archive/host.example/fullchain1.pem"
+  )
   (live / "privkey.pem").symlink_to("../../archive/host.example/privkey1.pem")
 
   dest = tmp_path / "dest"
   resolve_mod.materialize_ssl_certs(
-      mount,
-      dest,
-      ssl_certs_rel="live/host.example",
+    mount,
+    dest,
+    ssl_certs_rel="live/host.example",
   )
   fullchain = dest / "fullchain.pem"
   privkey = dest / "privkey.pem"
@@ -120,9 +126,9 @@ def test_symlink_escape_outside_mount_fails_closed(resolve_mod, tmp_path: Path):
 
   with pytest.raises(ValueError, match="outside ssl source mount"):
     resolve_mod.materialize_ssl_certs(
-        mount,
-        tmp_path / "dest",
-        ssl_certs_rel="live/host",
+      mount,
+      tmp_path / "dest",
+      ssl_certs_rel="live/host",
     )
 
 
@@ -159,18 +165,26 @@ def test_copy_pems_preserving_meta(resolve_mod, tmp_path: Path):
 
 def test_main_fixture_materializes(resolve_mod, tmp_path: Path, capsys):
   dest = tmp_path / "out"
-  assert resolve_mod.main(
-      ["--fixture", "--dest-dir", str(dest)]
-  ) == 0
+  assert resolve_mod.main(["--fixture", "--dest-dir", str(dest)]) == 0
   assert (dest / "fullchain.pem").is_file()
   err = capsys.readouterr().err.strip()
   assert err == str(dest.resolve())
 
 
-def test_main_fails_closed_on_missing_mount(resolve_mod, tmp_path: Path, capsys):
+def test_main_fails_closed_on_missing_mount(
+  resolve_mod, tmp_path: Path, capsys
+):
   missing = tmp_path / "missing"
-  assert resolve_mod.main(
-      ["--ssl-source-mount", str(missing), "--dest-dir", str(tmp_path / "out")]
-  ) == 1
+  assert (
+    resolve_mod.main(
+      [
+        "--ssl-source-mount",
+        str(missing),
+        "--dest-dir",
+        str(tmp_path / "out"),
+      ]
+    )
+    == 1
+  )
   err = capsys.readouterr().err
   assert "error:" in err

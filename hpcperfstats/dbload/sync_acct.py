@@ -9,15 +9,16 @@ Attributes:
   _ACCT_TIMELIMIT_SENTINELS: Lowercase Slurm Timelimit tokens stored as NULL.
   local_timezone: Timezone used when localizing sacct Start/End/Submit.
 """
-from __future__ import annotations
 
-from typing import Any
+from __future__ import annotations
 
 import io
 import os
 import sys
 import time
-from datetime import datetime, timedelta, timezone as dt_timezone
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
 from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 
 ensure_django()
@@ -30,27 +31,32 @@ from pandas import read_csv, to_datetime, to_timedelta
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.date_utils import (
-    log_date_range,
-    parse_start_end_dates,
+  log_date_range,
+  parse_start_end_dates,
+)
+from hpcperfstats.dbload.lib.file_locking import (
+  file_read_lock_wait,
+  file_write_lock,
 )
 from hpcperfstats.dbload.lib.io_helpers import job_data_instance_from_acct_row
-from hpcperfstats.dbload.lib.file_locking import file_read_lock_wait, file_write_lock
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 from hpcperfstats.site.lib.machine.models import job_data
 
-local_timezone = dt_timezone.utc
+local_timezone = UTC
 
 # sacct Timelimit specials (SchedMD sacct man + src/sacct/print.c) plus
 # parse_time.c defense tokens. Matched case-insensitively after strip.
-_ACCT_TIMELIMIT_SENTINELS = frozenset({
+_ACCT_TIMELIMIT_SENTINELS = frozenset(
+  {
     "unlimited",
     "partition_limit",
     "infinite",
     "invalid",
     "none",
     "unknown",
-})
+  }
+)
 
 
 def _acct_timelimit_to_seconds(series: Any) -> Any:
@@ -74,9 +80,7 @@ def _acct_timelimit_to_seconds(series: Any) -> Any:
     >>> from hpcperfstats.dbload.sync_acct import _acct_timelimit_to_seconds
     >>> float(_acct_timelimit_to_seconds(pd.Series(["01:00:00"])).iloc[0])
     3600.0
-    >>> pd.isna(
-    ...     _acct_timelimit_to_seconds(pd.Series(["UNLIMITED"])).iloc[0]
-    ... )
+    >>> pd.isna(_acct_timelimit_to_seconds(pd.Series(["UNLIMITED"])).iloc[0])
     True
   """
   text = series.astype("string").str.strip()
@@ -94,25 +98,25 @@ def _notify_job_cache_after_acct_ingest(
 ) -> None:
   """
   Invalidate site/reference caches; optionally warm KEY_JOB after accounting.
-  
+
     ingest.
-  
+
   Args:
     inserted (Any): Inserted passed to this helper.
     job_objs (Any | None): One of ``Any``, ``None``.
     inserted_jids (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _notify_job_cache_after_acct_ingest(None, None, None)  # doctest: +SKIP
   """
   try:
     from hpcperfstats.site.lib.machine.cache_utils import (
-        get_site_content_cache_timeout,
-        invalidate_after_job_data_ingest,
-        warm_job_cache_entries,
+      get_site_content_cache_timeout,
+      invalidate_after_job_data_ingest,
+      warm_job_cache_entries,
     )
 
     invalidate_after_job_data_ingest(inserted, inserted_jids=inserted_jids)
@@ -125,16 +129,28 @@ def _notify_job_cache_after_acct_ingest(
   except Exception:
     pass
 
+
 COLUMNS_TO_READ = [
-    'JobID', 'User', 'Account', 'Start', 'End', 'Submit', 'Partition',
-    'Timelimit', 'JobName', 'State', 'NNodes', 'ReqCPUS', 'NodeList'
+  "JobID",
+  "User",
+  "Account",
+  "Start",
+  "End",
+  "Submit",
+  "Partition",
+  "Timelimit",
+  "JobName",
+  "State",
+  "NNodes",
+  "ReqCPUS",
+  "NodeList",
 ]
 
 
 class AccountingFileShrinkError(Exception):
   """
   Incoming sacct payload has fewer lines than the on-disk daily file.
-  
+
   Attributes:
     existing_lines: Attribute.
     incoming_lines: Attribute.
@@ -149,15 +165,15 @@ class AccountingFileShrinkError(Exception):
   ) -> None:
     """
     Initialize a new instance.
-    
+
     Args:
       path (str): String for path.
       existing_lines (Any): Existing lines passed to this helper.
       incoming_lines (Any): Incoming lines passed to this helper.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> AccountingFileShrinkError("x", None, None)  # doctest: +SKIP
     """
@@ -165,38 +181,37 @@ class AccountingFileShrinkError(Exception):
     self.existing_lines = existing_lines
     self.incoming_lines = incoming_lines
     super().__init__(
-        "Accounting file would shrink: %s (%s -> %s lines)"
-        % (path, existing_lines, incoming_lines)
+      f"Accounting file would shrink: {path} ({existing_lines} -> {incoming_lines} lines)"
     )
 
 
 def accounting_daily_file_path(ingest_date: Any) -> Any:
   """
   Return ``{acct_path}/{YYYY-MM-DD}.txt`` for a calendar ingest date.
-  
+
   Args:
     ingest_date (Any): Ingest date passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> accounting_daily_file_path(None)  # doctest: +SKIP
   """
   date_str = ingest_date.strftime("%Y-%m-%d")
-  return os.path.join(cfg.get_accounting_path(), "%s.txt" % date_str)
+  return os.path.join(cfg.get_accounting_path(), f"{date_str}.txt")
 
 
 def count_accounting_content_lines(content: Any) -> Any:
   """
   Count newline-separated lines in raw sacct text (header + data rows).
-  
+
   Args:
     content (Any): Content passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> count_accounting_content_lines(None)  # doctest: +SKIP
   """
@@ -208,18 +223,18 @@ def count_accounting_content_lines(content: Any) -> Any:
 def _read_accounting_file_line_count(path: str) -> Any:
   """
   Internal helper to read the accounting file line count.
-  
+
   Args:
     path (str): String for path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _read_accounting_file_line_count("x")  # doctest: +SKIP
   """
   with file_read_lock_wait(path):
-    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+    with open(path, encoding="utf-8", errors="replace") as fh:
       return len(fh.read().splitlines())
 
 
@@ -249,7 +264,7 @@ def persist_accounting_daily_file(ingest_date: Any, content: Any) -> bool:
   Examples:
     >>> from datetime import date
     >>> persist_accounting_daily_file(
-    ...     date(2024, 6, 15), "JobID|User\\n1|alice\\n"
+    ...   date(2024, 6, 15), "JobID|User\\n1|alice\\n"
     ... )  # doctest: +SKIP
   """
   if isinstance(content, bytes):
@@ -264,7 +279,7 @@ def persist_accounting_daily_file(ingest_date: Any, content: Any) -> bool:
       raise AccountingFileShrinkError(path, existing_lines, incoming_lines)
   parent = os.path.dirname(path) or "."
   os.makedirs(parent, exist_ok=True)
-  tmp_path = "%s.tmp" % path
+  tmp_path = f"{path}.tmp"
   with file_write_lock(path):
     with open(tmp_path, "w", encoding="utf-8") as fh:
       fh.write(content)
@@ -275,17 +290,17 @@ def persist_accounting_daily_file(ingest_date: Any, content: Any) -> bool:
 def sync_acct_from_content(content: Any, jobs_in_db: Any) -> Any:
   """
   Load accounting data from pipe-delimited string into job_data.
-  
+
   Same logic as sync_acct but accepts raw sacct output (e.g. from API or
   subprocess). Returns the number of new job_data rows inserted.
-  
+
   Args:
     content (Any): Content passed to this helper.
     jobs_in_db (Any): Jobs in db passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> sync_acct_from_content(None, None)  # doctest: +SKIP
   """
@@ -293,46 +308,48 @@ def sync_acct_from_content(content: Any, jobs_in_db: Any) -> Any:
     content = content.decode("utf-8", errors="replace")
   if not content.strip():
     return 0
-  df = read_csv(io.StringIO(content), sep='|', engine='python', on_bad_lines='skip')
+  df = read_csv(
+    io.StringIO(content), sep="|", engine="python", on_bad_lines="skip"
+  )
   return _sync_acct_dataframe(df, jobs_in_db)
 
 
 def sync_acct(acct_file: str, jobs_in_db: Any) -> Any:
   """
   Load accounting CSV from acct_file into job_data, skipping jobs already in.
-  
+
     jobs_in_db and those matching restricted_queue_keywords.
-  
+
   Args:
     acct_file (str): String for acct file.
     jobs_in_db (Any): Jobs in db passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> sync_acct("x", None)  # doctest: +SKIP
   """
   with file_read_lock_wait(acct_file):
-    with open(acct_file, "r", encoding="utf-8", errors="replace") as f:
+    with open(acct_file, encoding="utf-8", errors="replace") as f:
       return sync_acct_from_content(f.read(), jobs_in_db)
 
 
 def _sync_acct_dataframe(df: Any, jobs_in_db: Any) -> Any:
   """
   Apply column filter, renames, filters, and insert into job_data. Returns.
-  
+
     count.
-  
+
     of new entries.
-  
+
   Args:
     df (Any): Df passed to this helper.
     jobs_in_db (Any): Jobs in db passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _sync_acct_dataframe(None, None)  # doctest: +SKIP
   """
@@ -344,21 +361,22 @@ def _sync_acct_dataframe(df: Any, jobs_in_db: Any) -> Any:
     df = df.drop(columns=c)
 
   df = df.rename(
-      columns={
-          'JobID': 'jid',
-          'User': 'username',
-          'Account': 'account',
-          'Start': 'start_time',
-          'End': 'end_time',
-          'Submit': 'submit_time',
-          'Partition': 'queue',
-          'Timelimit': 'timelimit',
-          'JobName': 'jobname',
-          'State': 'state',
-          'NNodes': 'nhosts',
-          'ReqCPUS': 'ncores',
-          'NodeList': 'host_list'
-      })
+    columns={
+      "JobID": "jid",
+      "User": "username",
+      "Account": "account",
+      "Start": "start_time",
+      "End": "end_time",
+      "Submit": "submit_time",
+      "Partition": "queue",
+      "Timelimit": "timelimit",
+      "JobName": "jobname",
+      "State": "state",
+      "NNodes": "nhosts",
+      "ReqCPUS": "ncores",
+      "NodeList": "host_list",
+    }
+  )
 
   df = df[~df["jid"].isin(jobs_in_db)]
   df["jid"] = df["jid"].apply(str)
@@ -375,39 +393,46 @@ def _sync_acct_dataframe(df: Any, jobs_in_db: Any) -> Any:
 
   for i in range(df_len):
     for q in restricted_queue_keywords:
-      if q in df.iloc[i, queue_col_index]:
-        if settings.DEBUG:
-          restricted_job_ids.append(df.iloc[i, job_id_col_index])
-          restricted_df_indices.append(i)
+      if q in df.iloc[i, queue_col_index] and settings.DEBUG:
+        restricted_job_ids.append(df.iloc[i, job_id_col_index])
+        restricted_df_indices.append(i)
 
   if restricted_df_indices:
     # restricted_df_indices are positional; convert to index labels before dropping
     df = df.drop(index=df.index[restricted_df_indices])
 
   if len(restricted_job_ids) > 0:
-    log_print("The following jobs are restricted and will be skipped: " +
-          str(restricted_job_ids))
+    log_print(
+      "The following jobs are restricted and will be skipped: "
+      + str(restricted_job_ids)
+    )
 
   # In case newer slurm gives "None" time for unstarted jobs.  Older slurm prints start_time=end_time=cancelled_time.
-  df['start_time'] = df['start_time'].replace('^None$', pd.NA, regex=True)
-  df['start_time'] = df['start_time'].replace('^Unknown$', pd.NA, regex=True)
-  df['start_time'] = df['start_time'].fillna(df['end_time'])
+  df["start_time"] = df["start_time"].replace("^None$", pd.NA, regex=True)
+  df["start_time"] = df["start_time"].replace("^Unknown$", pd.NA, regex=True)
+  df["start_time"] = df["start_time"].fillna(df["end_time"])
 
   df["start_time"] = to_datetime(df["start_time"]).dt.tz_localize(
-      local_timezone, ambiguous=False, nonexistent="shift_forward")
+    local_timezone, ambiguous=False, nonexistent="shift_forward"
+  )
   df["end_time"] = to_datetime(df["end_time"]).dt.tz_localize(
-      local_timezone, ambiguous=False, nonexistent="shift_forward")
+    local_timezone, ambiguous=False, nonexistent="shift_forward"
+  )
   df["submit_time"] = to_datetime(df["submit_time"]).dt.tz_localize(
-      local_timezone, ambiguous=False, nonexistent="shift_forward")
+    local_timezone, ambiguous=False, nonexistent="shift_forward"
+  )
 
-  df["runtime"] = to_timedelta(df["end_time"] -
-                               df["start_time"]).dt.total_seconds()
+  df["runtime"] = to_timedelta(
+    df["end_time"] - df["start_time"]
+  ).dt.total_seconds()
   df["timelimit"] = _acct_timelimit_to_seconds(df["timelimit"])
 
   df["host_list"] = df["host_list"].apply(hostlist.expand_hostlist)
-  df["node_hrs"] = df["nhosts"] * df["runtime"] / 3600.
+  df["node_hrs"] = df["nhosts"] * df["runtime"] / 3600.0
 
-  objs = [job_data_instance_from_acct_row(row) for row in df.itertuples(index=False)]
+  objs = [
+    job_data_instance_from_acct_row(row) for row in df.itertuples(index=False)
+  ]
 
   if not objs:
     log_print("Total number of new entries: 0")
@@ -417,7 +442,7 @@ def _sync_acct_dataframe(df: Any, jobs_in_db: Any) -> Any:
   # ignore_conflicts (which silently skips duplicates at the DB level).
   jids = [obj.jid for obj in objs]
   jids_before = frozenset(
-      job_data.objects.filter(jid__in=jids).values_list("jid", flat=True),
+    job_data.objects.filter(jid__in=jids).values_list("jid", flat=True),
   )
 
   try:
@@ -425,33 +450,37 @@ def _sync_acct_dataframe(df: Any, jobs_in_db: Any) -> Any:
   except Exception as e:
     log_print("error in bulk_create:", str(e))
     inserted, saved_objs = _insert_job_data_individually(df)
-    log_print("Total number of new entries (fallback single inserts):", inserted)
+    log_print(
+      "Total number of new entries (fallback single inserts):", inserted
+    )
     inserted_jids = [o.jid for o in saved_objs]
     _notify_job_cache_after_acct_ingest(
-        inserted, saved_objs, inserted_jids=inserted_jids)
+      inserted, saved_objs, inserted_jids=inserted_jids
+    )
     return inserted
 
   jids_after = frozenset(
-      job_data.objects.filter(jid__in=jids).values_list("jid", flat=True),
+    job_data.objects.filter(jid__in=jids).values_list("jid", flat=True),
   )
   inserted_jids_list = [j for j in jids_after if j not in jids_before]
   inserted = len(inserted_jids_list)
   log_print("Total number of new entries:", inserted)
   _notify_job_cache_after_acct_ingest(
-      inserted, objs, inserted_jids=inserted_jids_list)
+    inserted, objs, inserted_jids=inserted_jids_list
+  )
   return inserted
 
 
 def _insert_job_data_individually(df: Any) -> Any:
   """
   Fallback: insert job_data rows one by one, skipping duplicates.
-  
+
   Args:
     df (Any): Df passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _insert_job_data_individually(None)  # doctest: +SKIP
   """
@@ -477,7 +506,9 @@ if __name__ == "__main__":
   #################################################################
   default_start = datetime.combine(datetime.today(), datetime.min.time())
   default_end = default_start + timedelta(days=1)
-  startdate, enddate = parse_start_end_dates(sys.argv, default_start, default_end)
+  startdate, enddate = parse_start_end_dates(
+    sys.argv, default_start, default_end
+  )
 
   log_date_range("job files to ingest", startdate, enddate)
   #################################################################
@@ -488,11 +519,11 @@ if __name__ == "__main__":
 
   searchdate = startdate - timedelta(days=2)
   jobs_in_db = set(
-      job_data.objects.filter(end_time__date__gte=searchdate)
-      .values_list("jid", flat=True)
-      .iterator(chunk_size=10000)
+    job_data.objects.filter(end_time__date__gte=searchdate)
+    .values_list("jid", flat=True)
+    .iterator(chunk_size=10000)
   )
-  log_print("Jobs found in DB in this date range: %s" % len(jobs_in_db))
+  log_print(f"Jobs found in DB in this date range: {len(jobs_in_db)}")
 
   while startdate <= enddate and not shutdown_requested[0]:
     for entry in os.scandir(directory):
@@ -509,7 +540,7 @@ if __name__ == "__main__":
         except Exception as e:
           if settings.DEBUG:
             raise e
-          log_print("Unable to load file: %s" % entry.path)
+          log_print(f"Unable to load file: {entry.path}")
     startdate += timedelta(days=1)
   log_print("loading time", time.time() - start)
 
@@ -522,4 +553,4 @@ if __name__ == "__main__":
   connections.close_all()
   # Since this is no longer part of the main workflow we don't need this sleep
   # as it was to wait for the supervisord restart.
-  #sleep_until_shutdown(900)
+  # sleep_until_shutdown(900)

@@ -22,8 +22,8 @@ import ast
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
@@ -44,13 +44,13 @@ SECTION_START_RE = re.compile(
 def _split_prose_and_sections(doc: str) -> tuple[str, str]:
   """
   Split a docstring into leading prose and trailing structured sections.
-  
+
   Args:
     doc (str): String for doc.
-  
+
   Returns:
     tuple[str, str]: tuple[str, str] produced by this call.
-  
+
   Examples:
     >>> _split_prose_and_sections("x")  # doctest: +SKIP
   """
@@ -75,14 +75,14 @@ def _split_prose_and_sections(doc: str) -> tuple[str, str]:
 def _attributes_block(names: Sequence[str], *, existing_sections: str) -> str:
   """
   Build an Attributes section, preferring existing entries when present.
-  
+
   Args:
     names (Sequence[str]): Sequence for names.
     existing_sections (str): String for existing sections.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> _attributes_block([], "x")  # doctest: +SKIP
   """
@@ -117,8 +117,7 @@ def _attributes_block(names: Sequence[str], *, existing_sections: str) -> str:
     # Drop force-docs scaffolding and broken wrapped leftovers.
     if (
       not desc
-      or desc.startswith("Module-level")
-      or desc.startswith("Instance attribute")
+      or desc.startswith(("Module-level", "Instance attribute"))
       or desc == f"``{name}``."
     ):
       desc = f"``{name}``."
@@ -129,14 +128,14 @@ def _attributes_block(names: Sequence[str], *, existing_sections: str) -> str:
 def _prefer_prose(old_prose: str, new_prose: str) -> str:
   """
   Choose the richer leading prose block.
-  
+
   Args:
     old_prose (str): String for old prose.
     new_prose (str): String for new prose.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> _prefer_prose("x", "x")  # doctest: +SKIP
   """
@@ -157,16 +156,16 @@ def _prefer_prose(old_prose: str, new_prose: str) -> str:
 def _format_doc_clean(prose: str, *sections: str, indent: str) -> str:
   """
   Format docstring with clean blank lines.
-  
+
   Args:
     prose (str): String for prose.
     *sections (str): Extra positional values for ``sections``; element types
     match the helper's documented protocol.
     indent (str): String for indent.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> _format_doc_clean("x", "x")  # doctest: +SKIP
   """
@@ -192,15 +191,15 @@ def _replace_docstring_node(
 ) -> str:
   """
   Replace an existing leading docstring under ``node``.
-  
+
   Args:
     source (str): String for source.
     node (ast.AST): Node.
     new_doc_block (str): String for new doc block.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> _replace_docstring_node("x", None, "x")  # doctest: +SKIP
   """
@@ -230,15 +229,15 @@ def _replace_docstring_node(
 def restore_file(path: Path, *, root: Path, old_source: str) -> tuple[str, int]:
   """
   Restore module/class prose for one file.
-  
+
   Args:
     path (Path): String for path.
     root (Path): String for root.
     old_source (str): String for old source.
-  
+
   Returns:
     tuple[str, int]: tuple[str, int] produced by this call.
-  
+
   Examples:
     >>> restore_file("x", "x", "x")  # doctest: +SKIP
   """
@@ -281,7 +280,9 @@ def restore_file(path: Path, *, root: Path, old_source: str) -> tuple[str, int]:
       new_doc = ast.get_docstring(cls) or ""
       new_prose, new_sections = _split_prose_and_sections(new_doc)
       prose = _prefer_prose(old_prose, new_prose)
-      if prose == new_prose.strip("\n") and len(old_prose) < len(new_prose) + 40:
+      if (
+        prose == new_prose.strip("\n") and len(old_prose) < len(new_prose) + 40
+      ):
         continue
       if not old_prose.strip() or len(old_prose) < 40:
         continue
@@ -350,13 +351,13 @@ def restore_file(path: Path, *, root: Path, old_source: str) -> tuple[str, int]:
 def main(argv: Sequence[str] | None = None) -> int:
   """
   CLI entry: restore docstring prose from git HEAD into the working tree.
-  
+
   Args:
     argv (Sequence[str] | None): One of ``Sequence[str]``, ``None``.
-  
+
   Returns:
     int: int produced by this call.
-  
+
   Examples:
     >>> main(None)  # doctest: +SKIP
   """
@@ -411,7 +412,9 @@ def main(argv: Sequence[str] | None = None) -> int:
       print(f"{rel}: restored {n} docstring(s)")
       if args.apply:
         path.write_text(updated, encoding="utf-8")
-  print(f"{'applied' if args.apply else 'would restore'}: {total} docs in {files_touched} files")
+  print(
+    f"{'applied' if args.apply else 'would restore'}: {total} docs in {files_touched} files"
+  )
   return 0
 
 

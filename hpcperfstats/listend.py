@@ -54,10 +54,10 @@ Attributes:
   _archive_inflight: Items popped from archive queues not yet acked.
   _archive_inflight_lock: Guard for ``_archive_inflight``.
 """
+
 from __future__ import annotations
 
-from typing import Any, NamedTuple
-
+import contextlib
 import errno
 import heapq
 import itertools
@@ -70,50 +70,52 @@ import time
 import urllib.request
 from base64 import b64encode
 from collections import deque
-from urllib.parse import quote
-from threading import Event, Lock, Thread, current_thread, local, main_thread
 from fcntl import LOCK_EX, LOCK_NB, LOCK_UN, flock
+from threading import Event, Lock, Thread, current_thread, local, main_thread
+from typing import Any, NamedTuple
+from urllib.parse import quote
 
 import pika
 import redis
 from pika.exceptions import (
-    AMQPChannelError,
-    ChannelWrongStateError,
-    ConnectionWrongStateError,
-    StreamLostError,
+  AMQPChannelError,
+  ChannelWrongStateError,
+  ConnectionWrongStateError,
+  StreamLostError,
 )
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.file_locking import (
-    POLL_INTERVAL_SECONDS,
-    READ_WAIT_TIMEOUT_SECONDS,
-    _lock_path,
-    _maybe_reset_stale_lock_file,
-    _refresh_lock_sidecar_mtime,
-    _try_open_write_lock_fd,
-    file_write_lock,
+  POLL_INTERVAL_SECONDS,
+  READ_WAIT_TIMEOUT_SECONDS,
+  _lock_path,
+  _maybe_reset_stale_lock_file,
+  _refresh_lock_sidecar_mtime,
+  _try_open_write_lock_fd,
+  file_read_lock_wait,
+  file_write_lock,
 )
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.shutdown_utils import send_sigchld_to_parent
 from hpcperfstats.lib.monitor_identity import (
-    parse_monitor_identity_from_dollar_message,
-    set_monitor_identity,
+  parse_monitor_identity_from_dollar_message,
+  set_monitor_identity,
 )
 from hpcperfstats.lib.rmq_quorum_queue import (
-    AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS,
-    AMQP_RECONNECT_STABLE_CONSUME_SECONDS,
-    declare_durable_quorum_queue,
-    is_amqp_peer_reset_reconnect_error,
-    is_quorum_consume_setup_error,
-    listend_amqp_connection_parameters,
-    next_amqp_reconnect_backoff_seconds,
-    should_use_amqp_exponential_reconnect_backoff,
+  AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS,
+  AMQP_RECONNECT_STABLE_CONSUME_SECONDS,
+  declare_durable_quorum_queue,
+  is_amqp_peer_reset_reconnect_error,
+  is_quorum_consume_setup_error,
+  listend_amqp_connection_parameters,
+  next_amqp_reconnect_backoff_seconds,
+  should_use_amqp_exponential_reconnect_backoff,
 )
 
 DEBUG = cfg.get_debug()
 
 MESSAGE_WINDOW_SECONDS = 600  # 10 minutes
-IDLE_CHECK_INTERVAL = 60      # seconds
+IDLE_CHECK_INTERVAL = 60  # seconds
 RECENT_HOST_TTL_SECONDS = 7 * 24 * 60 * 60  # 1 week
 # Monitor schema dumps start with ``$`` then ``1 <fqdn>``; that ``1`` is not
 # a sample unix second. Real host_data timestamps are post-2001.
@@ -285,7 +287,7 @@ def _parse_plausible_unix_seconds(token: str) -> int | None:
   """
   try:
     ts = int(float(token))
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     return None
   if ts < _MIN_PLAUSIBLE_UNIX_SECONDS:
     return None
@@ -304,7 +306,7 @@ def _first_plausible_unix_seconds_from_open_file(fd: Any) -> int | None:
   Examples:
     >>> from io import StringIO
     >>> _first_plausible_unix_seconds_from_open_file(
-    ...     StringIO("$\\n1 host.example\\n1786487860 1 host.example\\n")
+    ...   StringIO("$\\n1 host.example\\n1786487860 1 host.example\\n")
     ... )
     1786487860
   """
@@ -321,8 +323,8 @@ def _first_plausible_unix_seconds_from_open_file(fd: Any) -> int | None:
 
 
 def _get_first_timestamp_seconds(
-    file_path: str,
-    use_lock: bool = True,
+  file_path: str,
+  use_lock: bool = True,
 ) -> int | None:
   """Return first plausible unix timestamp seconds in a stats file.
 
@@ -343,10 +345,9 @@ def _get_first_timestamp_seconds(
   """
   try:
     if use_lock:
-      with file_read_lock_wait(file_path):
-        with open(file_path, "r") as fd:
-          return _first_plausible_unix_seconds_from_open_file(fd)
-    with open(file_path, "r") as fd:
+      with file_read_lock_wait(file_path), open(file_path) as fd:
+        return _first_plausible_unix_seconds_from_open_file(fd)
+    with open(file_path) as fd:
       return _first_plausible_unix_seconds_from_open_file(fd)
   except Exception:
     return None
@@ -374,8 +375,8 @@ def _remember_digit_epoch_link(host_dir: str, epoch_path: str) -> None:
 
 
 def _current_is_hardlinked_to_digit_epoch(
-    host_dir: str,
-    current_path: str,
+  host_dir: str,
+  current_path: str,
 ) -> bool:
   """Return True if ``current_path`` shares an inode with any digit epoch file.
 
@@ -428,10 +429,10 @@ def _current_is_hardlinked_to_digit_epoch(
 
 
 def _link_current_to_unique_digit_epoch(
-    host_dir: str,
-    current_path: str,
-    start_ts: int,
-    step: int,
+  host_dir: str,
+  current_path: str,
+  start_ts: int,
+  step: int,
 ) -> int:
   """Hardlink ``current_path`` to an unused digit epoch name.
 
@@ -478,15 +479,14 @@ def _link_current_to_unique_digit_epoch(
     _remember_digit_epoch_link(host_dir, link_path)
     return ts
   raise RuntimeError(
-      "Unable to find unused digit epoch name in %s (start=%s step=%s)"
-      % (host_dir, start_ts, step)
+    f"Unable to find unused digit epoch name in {host_dir} (start={start_ts} step={step})"
   )
 
 
 def _ensure_current_hardlinked_to_timestamp(
-    host_dir: str,
-    current_path: str,
-    cutoff_epoch_ts: int,
+  host_dir: str,
+  current_path: str,
+  cutoff_epoch_ts: int,
 ) -> None:
   """Hardlink ``current`` to a free digit name at or below first sample ts.
 
@@ -521,16 +521,14 @@ def _ensure_current_hardlinked_to_timestamp(
 
   start_ts = min(int(first_ts_sec), int(cutoff_epoch_ts) - 1)
   if start_ts <= 0:
-    raise RuntimeError("Unable to find unused digit epoch name in %s" % host_dir)
-  _link_current_to_unique_digit_epoch(
-      host_dir, current_path, start_ts, step=-1
-  )
+    raise RuntimeError(f"Unable to find unused digit epoch name in {host_dir}")
+  _link_current_to_unique_digit_epoch(host_dir, current_path, start_ts, step=-1)
 
 
 def _digit_epoch_start_ts_for_new_current(
-    current_path: str,
-    *,
-    fallback_ts: int,
+  current_path: str,
+  *,
+  fallback_ts: int,
 ) -> int:
   """Return digit epoch start for a newly written ``current`` file.
 
@@ -558,12 +556,12 @@ def _digit_epoch_start_ts_for_new_current(
 def _get_recent_host_redis_client() -> Any:
   """
   Get or create the Redis client used for recent-host timestamps.
-  
+
   Returns:
     Any: Open return polymorphism from ``_get_recent_host_redis_client``:
     concrete type depends on inputs and branch (mapping, scalar, handle, or
     ``None``-like empty).
-  
+
   Examples:
     >>> _get_recent_host_redis_client()  # doctest: +SKIP
   """
@@ -572,7 +570,8 @@ def _get_recent_host_redis_client() -> Any:
     return _recent_host_redis_client
   try:
     _recent_host_redis_client = redis.from_url(
-        cfg.get_redis_location(), decode_responses=True)
+      cfg.get_redis_location(), decode_responses=True
+    )
   except Exception:
     _recent_host_redis_client = None
   return _recent_host_redis_client
@@ -581,36 +580,36 @@ def _get_recent_host_redis_client() -> Any:
 def _set_recent_host_timestamp(redis_client: Any, host: Any) -> None:
   """
   Set `recent_host:<fqdn>` to current epoch seconds.
-  
+
   Args:
     redis_client (Any): Redis client passed to this helper.
     host (Any): Host passed to this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _set_recent_host_timestamp(None, None)  # doctest: +SKIP
   """
   if not host or "." not in host:
     return
   redis_client.set(
-      "recent_host:%s" % host,
-      str(int(time.time())),
-      ex=RECENT_HOST_TTL_SECONDS,
+    f"recent_host:{host}",
+    str(int(time.time())),
+    ex=RECENT_HOST_TTL_SECONDS,
   )
 
 
 def _enqueue_recent_host_update(host: Any) -> None:
   """
   Queue a best-effort Redis host timestamp update.
-  
+
   Args:
     host (Any): Host FQDN string (must contain ``.``).
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _enqueue_recent_host_update(None)  # doctest: +SKIP
   """
@@ -620,7 +619,7 @@ def _enqueue_recent_host_update(host: Any) -> None:
     _recent_host_queue.put_nowait(host)
   except queue.Full:
     if DEBUG:
-      log_print("Recent-host Redis queue is full; dropping update for %s" % host)
+      log_print(f"Recent-host Redis queue is full; dropping update for {host}")
 
 
 def _enqueue_monitor_identity_update(identity: Any) -> None:
@@ -651,8 +650,7 @@ def _enqueue_monitor_identity_update(identity: Any) -> None:
   except queue.Full:
     if DEBUG:
       log_print(
-          "Recent-host Redis queue is full; dropping monitor_identity for %s"
-          % fqdn
+        f"Recent-host Redis queue is full; dropping monitor_identity for {fqdn}"
       )
 
 
@@ -666,13 +664,15 @@ def _recent_host_worker() -> None:
 
   Returns:
     None
-  
+
   Examples:
     >>> _recent_host_worker()  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
-  set_daemon_thread_title("", script_name="listend.py", role="recent-host-worker")
+  set_daemon_thread_title(
+    "", script_name="listend.py", role="recent-host-worker"
+  )
   while not _recent_host_worker_stop_event.is_set():
     try:
       item = _recent_host_queue.get(timeout=1.0)
@@ -684,22 +684,17 @@ def _recent_host_worker() -> None:
       if redis_client is not None:
         if isinstance(item, dict):
           set_monitor_identity(
-              redis_client,
-              item,
-              ttl_seconds=RECENT_HOST_TTL_SECONDS,
+            redis_client,
+            item,
+            ttl_seconds=RECENT_HOST_TTL_SECONDS,
           )
         else:
           _set_recent_host_timestamp(redis_client, item)
     except Exception as e:
       if DEBUG:
-        label = (
-            item.get("fqdn")
-            if isinstance(item, dict)
-            else item
-        )
+        label = item.get("fqdn") if isinstance(item, dict) else item
         log_print(
-            "Failed to update recent-host/monitor_identity Redis for %s: %s"
-            % (label, e)
+          f"Failed to update recent-host/monitor_identity Redis for {label}: {e}"
         )
     finally:
       _recent_host_queue.task_done()
@@ -770,19 +765,13 @@ def _release_sticky_archive_writer(*, unlink_sidecar: bool = True) -> None:
   lock_fd = st.get("lock_fd")
   lock_path = st.get("lock_path")
   if data_fd is not None:
-    try:
+    with contextlib.suppress(OSError):
       data_fd.close()
-    except OSError:
-      pass
   if lock_fd is not None:
-    try:
+    with contextlib.suppress(OSError):
       flock(lock_fd, LOCK_UN)
-    except OSError:
-      pass
-    try:
+    with contextlib.suppress(OSError):
       lock_fd.close()
-    except OSError:
-      pass
   if unlink_sidecar and lock_path:
     try:
       os.remove(lock_path)
@@ -793,10 +782,10 @@ def _release_sticky_archive_writer(*, unlink_sidecar: bool = True) -> None:
 
 
 def _sticky_append_sample_bytes(
-    host: str,
-    host_dir: str,
-    current_path: str,
-    payload_bytes: bytes,
+  host: str,
+  host_dir: str,
+  current_path: str,
+  payload_bytes: bytes,
 ) -> int:
   """Append sample bytes on a kept O_APPEND fd under a sticky flock sidecar.
 
@@ -826,9 +815,9 @@ def _sticky_append_sample_bytes(
   """
   st = getattr(_sticky_archive_tls, "state", None)
   need_open = (
-      st is None
-      or st.get("host") != host
-      or st.get("current_path") != current_path
+    st is None
+    or st.get("host") != host
+    or st.get("current_path") != current_path
   )
   if not need_open and st is not None:
     data_fd = st.get("data_fd")
@@ -867,7 +856,7 @@ def _sticky_append_sample_bytes(
             raise
           if (now - start) >= READ_WAIT_TIMEOUT_SECONDS:
             raise TimeoutError(
-                "Timed out waiting for write lock: %s" % current_path
+              f"Timed out waiting for write lock: {current_path}"
             ) from exc
           time.sleep(POLL_INTERVAL_SECONDS)
       flock(lock_fd, LOCK_UN)
@@ -876,20 +865,18 @@ def _sticky_append_sample_bytes(
       except OSError:
         size = 0
       st = {
-          "host": host,
-          "current_path": current_path,
-          "data_fd": data_fd,
-          "lock_fd": lock_fd,
-          "lock_path": _lock_path(current_path),
-          "size": size,
+        "host": host,
+        "current_path": current_path,
+        "data_fd": data_fd,
+        "lock_fd": lock_fd,
+        "lock_path": _lock_path(current_path),
+        "size": size,
       }
       _sticky_archive_tls.state = st
     except Exception:
       if data_fd is not None:
-        try:
+        with contextlib.suppress(OSError):
           data_fd.close()
-        except OSError:
-          pass
       raise
   data_fd = st["data_fd"]
   lock_fd = st["lock_fd"]
@@ -903,7 +890,7 @@ def _sticky_append_sample_bytes(
         raise
       if (time.time() - start) >= READ_WAIT_TIMEOUT_SECONDS:
         raise TimeoutError(
-            "Timed out waiting for write lock: %s" % current_path
+          f"Timed out waiting for write lock: {current_path}"
         ) from exc
       time.sleep(POLL_INTERVAL_SECONDS)
   try:
@@ -917,10 +904,8 @@ def _sticky_append_sample_bytes(
     _release_sticky_archive_writer(unlink_sidecar=False)
     raise
   finally:
-    try:
+    with contextlib.suppress(OSError):
       flock(lock_fd, LOCK_UN)
-    except OSError:
-      pass
 
 
 def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
@@ -949,7 +934,7 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
     True
   """
   from hpcperfstats.dbload.lib.listend_db_ingest import (
-      parse_host_from_monitor_payload,
+    parse_host_from_monitor_payload,
   )
 
   payload_bytes = _coerce_monitor_payload(message)
@@ -979,11 +964,12 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
       if os.path.exists(current_path):
         if not _current_is_hardlinked_to_digit_epoch(host_dir, current_path):
           _ensure_current_hardlinked_to_timestamp(
-              host_dir, current_path, rotate_wall_ts)
-          if not _current_is_hardlinked_to_digit_epoch(
-              host_dir, current_path):
+            host_dir, current_path, rotate_wall_ts
+          )
+          if not _current_is_hardlinked_to_digit_epoch(host_dir, current_path):
             raise RuntimeError(
-                "current is not hardlinked to a digit epoch before unlink")
+              "current is not hardlinked to a digit epoch before unlink"
+            )
 
         os.unlink(current_path)
         unlinked_current = True
@@ -993,15 +979,20 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
       write_offset = 0
       # Name the new segment from first sample ts in the file; +1 on conflict.
       epoch_ts = _digit_epoch_start_ts_for_new_current(
-          current_path, fallback_ts=rotate_wall_ts,
+        current_path,
+        fallback_ts=rotate_wall_ts,
       )
       _link_current_to_unique_digit_epoch(
-          host_dir, current_path, epoch_ts, step=1)
+        host_dir, current_path, epoch_ts, step=1
+      )
       # Epoch name and current share an inode until the next ``$`` rotation.
       # sync_timedb skips epoch files same-inode-as-current to avoid read races.
   else:
     write_offset = _sticky_append_sample_bytes(
-        host, host_dir, current_path, payload_bytes,
+      host,
+      host_dir,
+      current_path,
+      payload_bytes,
     )
   _enqueue_recent_host_update(host)
   # Redis-only identity snapshot on ``$`` rotation (tolerant if ``$build``
@@ -1009,8 +1000,8 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
   if is_dollar:
     try:
       identity = parse_monitor_identity_from_dollar_message(
-          _monitor_payload_as_text(message),
-          updated_at=int(time.time()),
+        _monitor_payload_as_text(message),
+        updated_at=int(time.time()),
       )
     except Exception:
       identity = None
@@ -1031,10 +1022,10 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
       _unlink_timestamps.popleft()
 
   return ArchiveAppendResult(
-      host=host,
-      path=current_path,
-      offset=int(write_offset),
-      length=int(payload_len),
+    host=host,
+    path=current_path,
+    offset=int(write_offset),
+    length=int(payload_len),
   )
 
 
@@ -1058,17 +1049,17 @@ def _get_rmq_queue_depth_for_monitor() -> int | str:
   host = cfg.get_rmq_server()
   queue_name = cfg.get_rmq_queue()
   try:
-    base = os.environ.get(
-        "RABBITMQ_MANAGEMENT_URL", "http://%s:15672" % host)
+    base = os.environ.get("RABBITMQ_MANAGEMENT_URL", f"http://{host}:15672")
     user = os.environ.get("RABBITMQ_MANAGEMENT_USER", "guest")
     password = os.environ.get("RABBITMQ_MANAGEMENT_PASSWORD", "guest")
-    url = "%s/api/queues/%%2F/%s" % (
-        str(base).rstrip("/"),
-        quote(str(queue_name), safe=""),
+    url = "{}/api/queues/%2F/{}".format(
+      str(base).rstrip("/"),
+      quote(str(queue_name), safe=""),
     )
-    token = b64encode(("%s:%s" % (user, password)).encode()).decode()
+    token = b64encode((f"{user}:{password}").encode()).decode()
     req = urllib.request.Request(
-        url, headers={"Authorization": "Basic %s" % token})
+      url, headers={"Authorization": f"Basic {token}"}
+    )
     with urllib.request.urlopen(req, timeout=2) as resp:
       data = json.loads(resp.read().decode())
     ready = data.get("messages_ready")
@@ -1076,19 +1067,18 @@ def _get_rmq_queue_depth_for_monitor() -> int | str:
       return int(ready)
   except Exception as e:
     if DEBUG:
-      log_print("Failed to get queue depth via management API: %s" % e)
+      log_print(f"Failed to get queue depth via management API: {e}")
 
   parameters = listend_amqp_connection_parameters(host)
   connection = None
   try:
     connection = pika.BlockingConnection(parameters)
     channel = connection.channel()
-    q = channel.queue_declare(
-        queue=queue_name, durable=True, passive=True)
+    q = channel.queue_declare(queue=queue_name, durable=True, passive=True)
     return q.method.message_count
   except Exception as e:
     if DEBUG:
-      log_print("Failed to get queue depth in monitor: %s" % e)
+      log_print(f"Failed to get queue depth in monitor: {e}")
     return "n/a"
   finally:
     if connection is not None:
@@ -1100,7 +1090,7 @@ def _get_rmq_queue_depth_for_monitor() -> int | str:
 
 
 def _maybe_reset_amqp_reconnect_backoff_after_stable_consume(
-    session: _AmqpConsumeSession | None = None,
+  session: _AmqpConsumeSession | None = None,
 ) -> None:
   """
   Reset reconnect backoff after a stable consume session (≥30s).
@@ -1121,9 +1111,9 @@ def _maybe_reset_amqp_reconnect_backoff_after_stable_consume(
   """
   global _amqp_reconnect_backoff_seconds
   attach = (
-      session.attach_monotonic
-      if session is not None
-      else _consume_attach_monotonic
+    session.attach_monotonic
+    if session is not None
+    else _consume_attach_monotonic
   )
   if attach is None:
     return
@@ -1148,10 +1138,10 @@ def _apply_amqp_reconnect_backoff() -> int:
 
 
 def _close_amqp_channel_and_connection_gracefully(
-    channel: Any,
-    connection: Any,
-    *,
-    stop_consuming: bool = False,
+  channel: Any,
+  connection: Any,
+  *,
+  stop_consuming: bool = False,
 ) -> None:
   """
   Tear down channel then connection to reduce broker termination timeouts.
@@ -1165,7 +1155,9 @@ def _close_amqp_channel_and_connection_gracefully(
     None
 
   Examples:
-    >>> _close_amqp_channel_and_connection_gracefully(None, None)  # doctest: +SKIP
+    >>> _close_amqp_channel_and_connection_gracefully(
+    ...   None, None
+    ... )  # doctest: +SKIP
   """
   if stop_consuming and channel is not None:
     try:
@@ -1212,10 +1204,8 @@ def _bind_listend_consume(
     >>> _bind_listend_consume(None, "q", had_consumer=False)  # doctest: +SKIP
   """
   if had_consumer:
-    try:
+    with contextlib.suppress(Exception):
       channel.cancel()
-    except Exception:
-      pass
   channel.basic_consume(queue_name, on_message)
 
 
@@ -1244,7 +1234,7 @@ def _format_amqp_consume_error(exc: BaseException) -> str:
     return text
   args = getattr(exc, "args", ())
   if args:
-    return "%s %r" % (type(exc).__name__, args)
+    return f"{type(exc).__name__} {args!r}"
   return type(exc).__name__
 
 
@@ -1264,12 +1254,12 @@ def _log_amqp_outer_loop_error(exc: BaseException) -> str:
     >>> _log_amqp_outer_loop_error(Exception("x"))  # doctest: +SKIP
   """
   if is_quorum_consume_setup_error(exc):
-    log_print("AMQP quorum consume-setup timeout (541): %s" % exc)
+    log_print(f"AMQP quorum consume-setup timeout (541): {exc}")
     return "quorum_consume_setup"
   if is_amqp_peer_reset_reconnect_error(exc):
-    log_print("AMQP peer reset / stream lost / handshake timeout: %s" % exc)
+    log_print(f"AMQP peer reset / stream lost / handshake timeout: {exc}")
     return "peer_reset"
-  log_print("Error establishing RabbitMQ connection: %s" % exc)
+  log_print(f"Error establishing RabbitMQ connection: {exc}")
   return "connection"
 
 
@@ -1284,7 +1274,9 @@ def _live_db_ingest_pool_active() -> Any:
     >>> _live_db_ingest_pool_active()  # doctest: +SKIP
   """
   try:
-    from hpcperfstats.dbload.lib.listend_db_ingest import get_listend_db_ingest_pool
+    from hpcperfstats.dbload.lib.listend_db_ingest import (
+      get_listend_db_ingest_pool,
+    )
 
     pool = get_listend_db_ingest_pool()
   except Exception:
@@ -1315,8 +1307,8 @@ def _listend_db_backpressure_mode_is_pause() -> bool:
 
 
 def _is_amqp_channel_or_connection_dead(
-    exc: BaseException | None = None,
-    channel: Any = None,
+  exc: BaseException | None = None,
+  channel: Any = None,
 ) -> bool:
   """
   Return True when the AMQP channel or connection is unusable.
@@ -1350,8 +1342,7 @@ def _is_amqp_channel_or_connection_dead(
     try:
       conn = getattr(channel, "connection", None)
       if conn is not None and (
-          getattr(conn, "is_closed", False)
-          or getattr(conn, "is_closing", False)
+        getattr(conn, "is_closed", False) or getattr(conn, "is_closing", False)
       ):
         return True
     except Exception:
@@ -1359,22 +1350,22 @@ def _is_amqp_channel_or_connection_dead(
   if exc is None:
     return False
   if isinstance(
-      exc,
-      (
-          ChannelWrongStateError,
-          ConnectionWrongStateError,
-          StreamLostError,
-          AMQPChannelError,
-      ),
+    exc,
+    (
+      ChannelWrongStateError,
+      ConnectionWrongStateError,
+      StreamLostError,
+      AMQPChannelError,
+    ),
   ):
     return True
   msg = str(exc).lower()
   dead_markers = (
-      "channel is closed",
-      "connection is closed",
-      "closed or closing connection",
-      "unknown delivery tag",
-      "precondition_failed",
+    "channel is closed",
+    "connection is closed",
+    "closed or closing connection",
+    "unknown delivery tag",
+    "precondition_failed",
   )
   return any(marker in msg for marker in dead_markers)
 
@@ -1511,7 +1502,7 @@ def _consume_connection_unusable(conn: Any, channel: Any = None) -> bool:
 
 
 def _consume_amqp_for_threadsafe_op(
-    session: _AmqpConsumeSession | None = None,
+  session: _AmqpConsumeSession | None = None,
 ) -> tuple[Any, Any, int] | None:
   """
   Return the current consume connection snapshot, or ``None`` if unusable.
@@ -1541,7 +1532,9 @@ def _consume_amqp_for_threadsafe_op(
       return None
     if session.reconnect_requested or _consume_connection_unusable(conn, ch):
       _request_amqp_full_reconnect(
-          ch, "consume connection unusable before ack/nack", session=session
+        ch,
+        "consume connection unusable before ack/nack",
+        session=session,
       )
       return None
     return conn, ch, gen
@@ -1552,16 +1545,16 @@ def _consume_amqp_for_threadsafe_op(
     return None
   if _amqp_reconnect_requested or _consume_connection_unusable(conn, ch):
     _request_amqp_full_reconnect(
-        ch, "consume connection unusable before ack/nack"
+      ch, "consume connection unusable before ack/nack"
     )
     return None
   return conn, ch, gen
 
 
 def _consume_amqp_callback_stale(
-    conn: Any,
-    generation: int,
-    session: _AmqpConsumeSession | None = None,
+  conn: Any,
+  generation: int,
+  session: _AmqpConsumeSession | None = None,
 ) -> bool:
   """
   Return True when a deferred ack/nack belongs to a prior consume session.
@@ -1581,21 +1574,21 @@ def _consume_amqp_callback_stale(
   """
   if session is not None:
     return (
-        session.generation != generation
-        or session.reconnect_requested
-        or session.connection is not conn
+      session.generation != generation
+      or session.reconnect_requested
+      or session.connection is not conn
     )
   return (
-      _amqp_connection_generation != generation
-      or _amqp_reconnect_requested
-      or _amqp_connection is not conn
+    _amqp_connection_generation != generation
+    or _amqp_reconnect_requested
+    or _amqp_connection is not conn
   )
 
 
 def _request_amqp_full_reconnect(
-    channel: Any,
-    reason: str,
-    session: _AmqpConsumeSession | None = None,
+  channel: Any,
+  reason: str,
+  session: _AmqpConsumeSession | None = None,
 ) -> None:
   """
   Request a consume-connection rebuild; close only on that connection's I/O
@@ -1631,18 +1624,19 @@ def _request_amqp_full_reconnect(
     sess.reconnect_requested = True
     if already:
       return
-    log_print(
-        "AMQP reconnect requested (channel/connection dead): %s" % reason
-    )
+    log_print(f"AMQP reconnect requested (channel/connection dead): {reason}")
     if _is_amqp_io_thread(sess):
       conn = (
-          sess.connection
-          if sess.connection is not None
-          else (getattr(channel, "connection", None) if channel is not None else None)
+        sess.connection
+        if sess.connection is not None
+        else (
+          getattr(channel, "connection", None) if channel is not None else None
+        )
       )
       ch = sess.channel if sess.channel is not None else channel
       _close_amqp_channel_and_connection_gracefully(
-          ch, conn, stop_consuming=True)
+        ch, conn, stop_consuming=True
+      )
       return
     _schedule_amqp_reconnect_teardown_on_io_thread(channel, session=sess)
     return
@@ -1650,20 +1644,19 @@ def _request_amqp_full_reconnect(
   _amqp_reconnect_requested = True
   if already:
     return
-  log_print(
-      "AMQP reconnect requested (channel/connection dead): %s" % reason
-  )
+  log_print(f"AMQP reconnect requested (channel/connection dead): {reason}")
   if _is_amqp_io_thread():
     conn = getattr(channel, "connection", None) if channel is not None else None
     _close_amqp_channel_and_connection_gracefully(
-        channel, conn, stop_consuming=True)
+      channel, conn, stop_consuming=True
+    )
     return
   _schedule_amqp_reconnect_teardown_on_io_thread(channel)
 
 
 def _schedule_amqp_reconnect_teardown_on_io_thread(
-    channel: Any,
-    session: _AmqpConsumeSession | None = None,
+  channel: Any,
+  session: _AmqpConsumeSession | None = None,
 ) -> None:
   """
   Ask the consume I/O thread to stop consuming and close the connection.
@@ -1700,25 +1693,23 @@ def _schedule_amqp_reconnect_teardown_on_io_thread(
         return
       ch = session.channel if session.channel is not None else channel
       conn = (
-          session.connection
-          if session.connection is not None
-          else (getattr(ch, "connection", None) if ch is not None else None)
+        session.connection
+        if session.connection is not None
+        else (getattr(ch, "connection", None) if ch is not None else None)
       )
       _close_amqp_channel_and_connection_gracefully(
-          ch, conn, stop_consuming=True
+        ch, conn, stop_consuming=True
       )
       return
     if not _amqp_reconnect_requested:
       return
     ch = _amqp_channel if _amqp_channel is not None else channel
     conn = (
-        _amqp_connection
-        if _amqp_connection is not None
-        else (getattr(ch, "connection", None) if ch is not None else None)
+      _amqp_connection
+      if _amqp_connection is not None
+      else (getattr(ch, "connection", None) if ch is not None else None)
     )
-    _close_amqp_channel_and_connection_gracefully(
-        ch, conn, stop_consuming=True
-    )
+    _close_amqp_channel_and_connection_gracefully(ch, conn, stop_consuming=True)
 
   conn = None
   if session is not None:
@@ -1758,10 +1749,8 @@ def _request_db_backpressure_pause(channel: Any, delivery_tag: Any) -> None:
   global _db_backpressure_pause
   pool = _live_db_ingest_pool_active()
   if pool is not None and not _db_backpressure_pause:
-    try:
+    with contextlib.suppress(Exception):
       pool.note_pause_enter()
-    except Exception:
-      pass
     # Pause duration is reported on the 10-minute idle-monitor line
     # (pause_s / paused) — no per-flap INFO here.
   _db_backpressure_pause = True
@@ -1770,12 +1759,12 @@ def _request_db_backpressure_pause(channel: Any, delivery_tag: Any) -> None:
       channel.basic_nack(delivery_tag=delivery_tag, requeue=True)
   except Exception as nack_err:
     if DEBUG:
-      log_print("Failed to nack on db backpressure pause: %s" % nack_err)
+      log_print(f"Failed to nack on db backpressure pause: {nack_err}")
   try:
     channel.stop_consuming()
   except Exception as stop_err:
     if DEBUG:
-      log_print("Failed to stop_consuming on db backpressure: %s" % stop_err)
+      log_print(f"Failed to stop_consuming on db backpressure: {stop_err}")
 
 
 def _wait_for_db_backpressure_resume(connection: Any) -> bool:
@@ -1804,17 +1793,15 @@ def _wait_for_db_backpressure_resume(connection: Any) -> bool:
     if pool is None or pool.should_resume_consume():
       _db_backpressure_pause = False
       if pool is not None:
-        try:
+        with contextlib.suppress(Exception):
           pool.note_pause_exit()
-        except Exception:
-          pass
       # Resume is visible via idle-monitor pause_s / paused=0 — no INFO.
       return True
     try:
       connection.process_data_events(time_limit=1)
     except Exception as exc:
       if DEBUG:
-        log_print("process_data_events during db pause wait: %s" % exc)
+        log_print(f"process_data_events during db pause wait: {exc}")
       return False
   return True
 
@@ -1868,10 +1855,8 @@ def archive_queue_depth() -> int:
   """
   total = 0
   for q in _archive_queues:
-    try:
+    with contextlib.suppress(Exception):
       total += int(q.qsize())
-    except Exception:
-      pass
   return total
 
 
@@ -1946,8 +1931,8 @@ def _format_listend_idle_archive_suffix() -> str:
   try:
     if _archive_pool_started:
       parts.append(
-          "archive_q_depth=%d inflight=%d"
-          % (archive_queue_depth(), archive_inflight_count())
+        "archive_q_depth=%d inflight=%d"
+        % (archive_queue_depth(), archive_inflight_count())
       )
   except Exception:
     pass
@@ -1957,8 +1942,8 @@ def _format_listend_idle_archive_suffix() -> str:
       if n_alive <= 0:
         n_alive = max(0, int(_amqp_consumer_count))
       parts.append(
-          "amqp_consumers=%d prefetch=%d"
-          % (n_alive, int(_amqp_applied_prefetch or 0))
+        "amqp_consumers=%d prefetch=%d"
+        % (n_alive, int(_amqp_applied_prefetch or 0))
       )
   except Exception:
     pass
@@ -1968,9 +1953,9 @@ def _format_listend_idle_archive_suffix() -> str:
 
 
 def _threadsafe_basic_ack(
-    delivery_tag: Any,
-    *,
-    session: _AmqpConsumeSession | None = None,
+  delivery_tag: Any,
+  *,
+  session: _AmqpConsumeSession | None = None,
 ) -> None:
   """
   Schedule ``basic_ack`` on the originating consume connection I/O thread.
@@ -2018,7 +2003,7 @@ def _threadsafe_basic_ack(
       if _is_amqp_channel_or_connection_dead(exc, ch):
         _request_amqp_full_reconnect(ch, str(exc), session=session)
       elif DEBUG:
-        log_print("threadsafe basic_ack failed: %s" % exc)
+        log_print(f"threadsafe basic_ack failed: {exc}")
 
   try:
     if hasattr(conn, "add_callback_threadsafe"):
@@ -2029,14 +2014,14 @@ def _threadsafe_basic_ack(
     if _is_amqp_channel_or_connection_dead(exc, ch):
       _request_amqp_full_reconnect(ch, str(exc), session=session)
     elif DEBUG:
-      log_print("add_callback_threadsafe ack failed: %s" % exc)
+      log_print(f"add_callback_threadsafe ack failed: {exc}")
 
 
 def _threadsafe_basic_nack(
-    delivery_tag: Any,
-    *,
-    requeue: bool = True,
-    session: _AmqpConsumeSession | None = None,
+  delivery_tag: Any,
+  *,
+  requeue: bool = True,
+  session: _AmqpConsumeSession | None = None,
 ) -> None:
   """
   Schedule ``basic_nack`` on the originating consume connection I/O thread.
@@ -2083,7 +2068,7 @@ def _threadsafe_basic_nack(
       if _is_amqp_channel_or_connection_dead(exc, ch):
         _request_amqp_full_reconnect(ch, str(exc), session=session)
       elif DEBUG:
-        log_print("threadsafe basic_nack failed: %s" % exc)
+        log_print(f"threadsafe basic_nack failed: {exc}")
 
   try:
     if hasattr(conn, "add_callback_threadsafe"):
@@ -2094,14 +2079,14 @@ def _threadsafe_basic_nack(
     if _is_amqp_channel_or_connection_dead(exc, ch):
       _request_amqp_full_reconnect(ch, str(exc), session=session)
     elif DEBUG:
-      log_print("add_callback_threadsafe nack failed: %s" % exc)
+      log_print(f"add_callback_threadsafe nack failed: {exc}")
 
 
 def _archive_and_submit_then_ack(
-    delivery_tag: Any,
-    message: Any,
-    *,
-    session: _AmqpConsumeSession | None = None,
+  delivery_tag: Any,
+  message: Any,
+  *,
+  session: _AmqpConsumeSession | None = None,
 ) -> None:
   """
   Archive payload, threadsafe ack, then best-effort live-DB submit.
@@ -2129,31 +2114,31 @@ def _archive_and_submit_then_ack(
     _threadsafe_basic_ack(delivery_tag, session=session)
     try:
       from hpcperfstats.dbload.lib.listend_db_ingest import (
-          submit_listend_db_ingest,
+        submit_listend_db_ingest,
       )
 
       submit_listend_db_ingest(
-          result.host,
-          "",
-          archive_path=result.path,
-          offset=result.offset,
-          length=result.length,
+        result.host,
+        "",
+        archive_path=result.path,
+        offset=result.offset,
+        length=result.length,
       )
     except Exception as submit_err:
       if DEBUG:
-        log_print("listend db ingest submit error: %s" % submit_err)
+        log_print(f"listend db ingest submit error: {submit_err}")
   except Exception as e:
     if _is_amqp_channel_or_connection_dead(e, ack_channel):
       _request_amqp_full_reconnect(ack_channel, str(e), session=session)
       return
-    log_print("Error processing message; leaving on server: %s" % e)
+    log_print(f"Error processing message; leaving on server: {e}")
     _threadsafe_basic_nack(delivery_tag, requeue=True, session=session)
 
 
 def _archive_reorder_sort_key(
-    unix_second: int | None,
-    is_dollar: bool,
-    recv_seq: int,
+  unix_second: int | None,
+  is_dollar: bool,
+  recv_seq: int,
 ) -> tuple[int, int, int]:
   """
   Return heap order: unix second, ``$`` before digit, then receive seq.
@@ -2168,7 +2153,8 @@ def _archive_reorder_sort_key(
 
   Examples:
     >>> _archive_reorder_sort_key(1710000001, True, 0) < (
-    ...     _archive_reorder_sort_key(1710000001, False, 1))
+    ...   _archive_reorder_sort_key(1710000001, False, 1)
+    ... )
     True
   """
   return (int(unix_second or 0), 0 if is_dollar else 1, int(recv_seq))
@@ -2197,9 +2183,9 @@ def _archive_worker_main(worker_idx: int, work_queue: queue.Queue) -> None:
   from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
   set_daemon_thread_title(
-      "",
-      script_name="listend.py",
-      role="archive-%d" % int(worker_idx),
+    "",
+    script_name="listend.py",
+    role="archive-%d" % int(worker_idx),
   )
   recv_seq = itertools.count()
   heaps: dict[str, list] = {}
@@ -2220,7 +2206,7 @@ def _archive_worker_main(worker_idx: int, work_queue: queue.Queue) -> None:
     """
     try:
       _archive_and_submit_then_ack(
-          work.delivery_tag, work.message, session=work.session
+        work.delivery_tag, work.message, session=work.session
       )
     finally:
       _archive_inflight_add(-1)
@@ -2248,10 +2234,10 @@ def _archive_worker_main(worker_idx: int, work_queue: queue.Queue) -> None:
     while heap:
       _key, recv_mono, work = heap[0]
       ready = (
-          force
-          or flushed_any
-          or (now - recv_mono) >= _ARCHIVE_REORDER_HOLD_SECONDS
-          or len(heap) >= 2
+        force
+        or flushed_any
+        or (now - recv_mono) >= _ARCHIVE_REORDER_HOLD_SECONDS
+        or len(heap) >= 2
       )
       if not ready:
         break
@@ -2295,35 +2281,31 @@ def _archive_worker_main(worker_idx: int, work_queue: queue.Queue) -> None:
         else:
           delivery_tag, message = item
           work = _ArchiveWorkItem(
-              delivery_tag=delivery_tag,
-              message=message,
-              host="",
-              unix_second=None,
-              is_dollar=False,
-              session=None,
-              recv_monotonic=time.monotonic(),
+            delivery_tag=delivery_tag,
+            message=message,
+            host="",
+            unix_second=None,
+            is_dollar=False,
+            session=None,
+            recv_monotonic=time.monotonic(),
           )
         skip_reorder = (
-            int(_amqp_consumer_count) <= 1 or work.unix_second is None
+          int(_amqp_consumer_count) <= 1 or work.unix_second is None
         )
         if skip_reorder:
           _flush_work(work)
         else:
           host = work.host or ""
           seq = next(recv_seq)
-          key = _archive_reorder_sort_key(
-              work.unix_second, work.is_dollar, seq
-          )
+          key = _archive_reorder_sort_key(work.unix_second, work.is_dollar, seq)
           heapq.heappush(
-              heaps.setdefault(host, []),
-              (key, work.recv_monotonic, work),
+            heaps.setdefault(host, []),
+            (key, work.recv_monotonic, work),
           )
           _drain_host(host, force=False)
       finally:
-        try:
+        with contextlib.suppress(Exception):
           work_queue.task_done()
-        except Exception:
-          pass
   finally:
     _drain_all(force=True)
     _release_sticky_archive_writer(unlink_sidecar=True)
@@ -2348,9 +2330,9 @@ def start_listend_archive_pool(n_threads: int | None = None) -> int:
     if _archive_pool_started:
       return int(_archive_pool_n)
     n = int(
-        n_threads
-        if n_threads is not None
-        else cfg.get_listend_archive_worker_threads()
+      n_threads
+      if n_threads is not None
+      else cfg.get_listend_archive_worker_threads()
     )
     n = max(1, n)
     _archive_pool_stop.clear()
@@ -2359,10 +2341,10 @@ def start_listend_archive_pool(n_threads: int | None = None) -> int:
     for i in range(n):
       q: queue.Queue = queue.Queue()
       t = Thread(
-          target=_archive_worker_main,
-          args=(i, q),
-          name="listend-archive-%d" % i,
-          daemon=True,
+        target=_archive_worker_main,
+        args=(i, q),
+        name="listend-archive-%d" % i,
+        daemon=True,
       )
       _archive_queues.append(q)
       _archive_threads.append(t)
@@ -2370,8 +2352,8 @@ def start_listend_archive_pool(n_threads: int | None = None) -> int:
     _archive_pool_n = n
     _archive_pool_started = True
     log_print(
-        "listend archive pool started threads=%d" % n,
-        flush=True,
+      "listend archive pool started threads=%d" % n,
+      flush=True,
     )
     return n
 
@@ -2395,19 +2377,15 @@ def stop_listend_archive_pool(*, join_timeout: float = 15.0) -> None:
       return
     _archive_pool_stop.set()
     for q in _archive_queues:
-      try:
+      with contextlib.suppress(Exception):
         q.put_nowait(None)
-      except Exception:
-        pass
     deadline = time.monotonic() + max(0.1, float(join_timeout))
     for t in _archive_threads:
       remaining = deadline - time.monotonic()
       if remaining <= 0:
         break
-      try:
+      with contextlib.suppress(Exception):
         t.join(timeout=remaining)
-      except Exception:
-        pass
     _archive_queues.clear()
     _archive_threads.clear()
     _archive_pool_n = 0
@@ -2441,20 +2419,22 @@ def _dispatch_to_archive_pool(
     >>> callable(_dispatch_to_archive_pool)
     True
   """
-  from hpcperfstats.dbload.lib.listend_db_ingest import host_affine_worker_index
+  from hpcperfstats.dbload.lib.listend_db_ingest import (
+    host_affine_worker_index,
+  )
 
   n = max(1, int(_archive_pool_n) if _archive_pool_n else 1)
   idx = host_affine_worker_index(host, n)
   _archive_queues[idx].put(
-      _ArchiveWorkItem(
-          delivery_tag=delivery_tag,
-          message=message,
-          host=host,
-          unix_second=unix_second,
-          is_dollar=bool(is_dollar),
-          session=session,
-          recv_monotonic=time.monotonic(),
-      )
+    _ArchiveWorkItem(
+      delivery_tag=delivery_tag,
+      message=message,
+      host=host,
+      unix_second=unix_second,
+      is_dollar=bool(is_dollar),
+      session=session,
+      recv_monotonic=time.monotonic(),
+    )
   )
 
 
@@ -2494,41 +2474,39 @@ def on_message(
   delivery_tag = getattr(method_frame, "delivery_tag", None)
   try:
     payload = (
-        body if isinstance(body, (bytes, bytearray))
-        else _coerce_monitor_payload(body)
+      body
+      if isinstance(body, (bytes, bytearray))
+      else _coerce_monitor_payload(body)
     )
     pool = _live_db_ingest_pool_active()
     if pool is not None and _listend_db_backpressure_mode_is_pause():
       from hpcperfstats.dbload.lib.listend_db_ingest import (
-          parse_monitor_payload_archive_hint,
+        parse_monitor_payload_archive_hint,
       )
 
       try:
         peek_host, _ts, _dollar = parse_monitor_payload_archive_hint(payload)
       except Exception:
         peek_host = ""
-      if (
-          pool.should_pause_consume()
-          or (peek_host and not pool.can_enqueue(peek_host, payload))
+      if pool.should_pause_consume() or (
+        peek_host and not pool.can_enqueue(peek_host, payload)
       ):
         _request_db_backpressure_pause(channel, delivery_tag)
         return
 
     if _archive_pool_started and _archive_queues:
       from hpcperfstats.dbload.lib.listend_db_ingest import (
-          parse_monitor_payload_archive_hint,
+        parse_monitor_payload_archive_hint,
       )
 
-      host, unix_second, is_dollar = parse_monitor_payload_archive_hint(
-          payload
-      )
+      host, unix_second, is_dollar = parse_monitor_payload_archive_hint(payload)
       _dispatch_to_archive_pool(
-          delivery_tag,
-          payload,
-          host,
-          session=_current_amqp_session(),
-          unix_second=unix_second,
-          is_dollar=is_dollar,
+        delivery_tag,
+        payload,
+        host,
+        session=_current_amqp_session(),
+        unix_second=unix_second,
+        is_dollar=is_dollar,
       )
       return
 
@@ -2536,18 +2514,20 @@ def on_message(
     result = append_monitor_payload_to_archive(payload)
     channel.basic_ack(delivery_tag=delivery_tag)
     try:
-      from hpcperfstats.dbload.lib.listend_db_ingest import submit_listend_db_ingest
+      from hpcperfstats.dbload.lib.listend_db_ingest import (
+        submit_listend_db_ingest,
+      )
 
       submit_listend_db_ingest(
-          result.host,
-          "",
-          archive_path=result.path,
-          offset=result.offset,
-          length=result.length,
+        result.host,
+        "",
+        archive_path=result.path,
+        offset=result.offset,
+        length=result.length,
       )
     except Exception as submit_err:
       if DEBUG:
-        log_print("listend db ingest submit error: %s" % submit_err)
+        log_print(f"listend db ingest submit error: {submit_err}")
   except Exception as e:
     # Critical behavior: do not acknowledge on failure.
     if _is_amqp_channel_or_connection_dead(e, channel):
@@ -2555,13 +2535,13 @@ def on_message(
       _request_amqp_full_reconnect(channel, str(e))
       return
     # Requeue so the message remains on the server for later retry.
-    log_print("Error processing message; leaving on server: %s" % e)
+    log_print(f"Error processing message; leaving on server: {e}")
     try:
       if hasattr(channel, "basic_nack") and delivery_tag is not None:
         channel.basic_nack(delivery_tag=delivery_tag, requeue=True)
     except Exception as nack_err:
       if DEBUG:
-        log_print("Failed to nack message after processing error: %s" % nack_err)
+        log_print(f"Failed to nack message after processing error: {nack_err}")
       if _is_amqp_channel_or_connection_dead(nack_err, channel):
         _request_amqp_full_reconnect(channel, str(nack_err))
     return
@@ -2587,11 +2567,9 @@ def _consume_window_totals(now: float) -> tuple[int, int]:
   """
   cutoff_10 = now - MESSAGE_WINDOW_SECONDS
   with _timestamps_lock:
-    count_last_10 = sum(
-        1 for ts in _message_timestamps if ts >= cutoff_10
-    )
+    count_last_10 = sum(1 for ts in _message_timestamps if ts >= cutoff_10)
     unlink_count_last_10 = sum(
-        1 for ts in _unlink_timestamps if ts >= cutoff_10
+      1 for ts in _unlink_timestamps if ts >= cutoff_10
     )
   return count_last_10, unlink_count_last_10
 
@@ -2611,8 +2589,10 @@ def _emit_idle_monitor_report(now: float) -> None:
     True
   """
   global _last_idle_report_time
-  if (_last_idle_report_time is not None and
-      (now - _last_idle_report_time) < MESSAGE_WINDOW_SECONDS):
+  if (
+    _last_idle_report_time is not None
+    and (now - _last_idle_report_time) < MESSAGE_WINDOW_SECONDS
+  ):
     return
 
   count_last_10, unlink_count_last_10 = _consume_window_totals(now)
@@ -2624,7 +2604,7 @@ def _emit_idle_monitor_report(now: float) -> None:
   db_suffix = ""
   try:
     from hpcperfstats.dbload.lib.listend_db_ingest import (
-        get_listend_db_ingest_pool,
+      get_listend_db_ingest_pool,
     )
 
     pool = get_listend_db_ingest_pool()
@@ -2634,17 +2614,21 @@ def _emit_idle_monitor_report(now: float) -> None:
     pass
 
   archive_suffix = ""
-  try:
+  with contextlib.suppress(Exception):
     archive_suffix = _format_listend_idle_archive_suffix()
-  except Exception:
-    pass
 
   log_print(
-      "Messages consumed in the last 10 minutes: %d; "
-      "messages waiting to be consumed: %s; "
-      "current file unlinks (last 10 minutes): %d%s%s" %
-      (count_last_10, queue_depth, unlink_count_last_10, db_suffix,
-       archive_suffix))
+    "Messages consumed in the last 10 minutes: %d; "
+    "messages waiting to be consumed: %s; "
+    "current file unlinks (last 10 minutes): %d%s%s"
+    % (
+      count_last_10,
+      queue_depth,
+      unlink_count_last_10,
+      db_suffix,
+      archive_suffix,
+    )
+  )
 
   _last_idle_report_time = now
 
@@ -2695,16 +2679,18 @@ def _stop_amqp_consumer_sessions(*, join_timeout: float = 15.0) -> None:
     if conn is None:
       continue
     try:
-      if getattr(conn, "is_closed", False) or getattr(conn, "is_closing", False):
+      if getattr(conn, "is_closed", False) or getattr(
+        conn, "is_closing", False
+      ):
         continue
     except Exception:
       continue
     try:
       if hasattr(conn, "add_callback_threadsafe"):
         conn.add_callback_threadsafe(
-            lambda c=ch, k=conn: _close_amqp_channel_and_connection_gracefully(
-                c, k, stop_consuming=True
-            )
+          lambda c=ch, k=conn: _close_amqp_channel_and_connection_gracefully(
+            c, k, stop_consuming=True
+          )
         )
     except Exception:
       pass
@@ -2713,10 +2699,8 @@ def _stop_amqp_consumer_sessions(*, join_timeout: float = 15.0) -> None:
     remaining = deadline - time.monotonic()
     if remaining <= 0:
       break
-    try:
+    with contextlib.suppress(Exception):
       t.join(timeout=remaining)
-    except Exception:
-      pass
   _amqp_consumer_threads = []
   _amqp_sessions = []
 
@@ -2749,9 +2733,9 @@ def _amqp_consumer_main(session: _AmqpConsumeSession) -> None:
   from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
   set_daemon_thread_title(
-      "",
-      script_name="listend.py",
-      role="amqp-consumer-%d" % int(session.index),
+    "",
+    script_name="listend.py",
+    role="amqp-consumer-%d" % int(session.index),
   )
   session.io_thread_ident = current_thread().ident
   _amqp_tls.session = session
@@ -2774,16 +2758,16 @@ def _amqp_consumer_main(session: _AmqpConsumeSession) -> None:
         set_amqp_connection(connection, channel)
       if session.index == 0:
         log_print(
-            "Messages waiting to be consumed at startup: %s" %
-            _get_rmq_queue_depth_for_monitor())
+          f"Messages waiting to be consumed at startup: {_get_rmq_queue_depth_for_monitor()}"
+        )
       prefetch = _listend_qos_prefetch_count()
       channel.basic_qos(prefetch_count=prefetch)
       _amqp_applied_prefetch = prefetch
       frame_max = _negotiated_amqp_frame_max(connection, parameters)
       log_print(
-          "listend amqp consumer=%d prefetch=%d frame_max=%s queue=%s"
-          % (session.index, prefetch, frame_max, queue_name),
-          flush=True,
+        "listend amqp consumer=%d prefetch=%d frame_max=%s queue=%s"
+        % (session.index, prefetch, frame_max, queue_name),
+        flush=True,
       )
       consume_start_logged = False
       had_consumer = False
@@ -2802,12 +2786,9 @@ def _amqp_consumer_main(session: _AmqpConsumeSession) -> None:
             break
           had_consumer = False
         if not stagger_done and session.index:
-          time.sleep(
-              _AMQP_CONSUME_STAGGER_SECONDS * int(session.index)
-          )
+          time.sleep(_AMQP_CONSUME_STAGGER_SECONDS * int(session.index))
           stagger_done = True
-        _bind_listend_consume(
-            channel, queue_name, had_consumer=had_consumer)
+        _bind_listend_consume(channel, queue_name, had_consumer=had_consumer)
         had_consumer = True
         if not consume_start_logged:
           log_print("Begining Consume from queue: " + queue_name)
@@ -2817,15 +2798,13 @@ def _amqp_consumer_main(session: _AmqpConsumeSession) -> None:
             _consume_attach_monotonic = session.attach_monotonic
         try:
           channel.start_consuming()
-        except (KeyboardInterrupt, SystemExit):
-          try:
+        except KeyboardInterrupt, SystemExit:
+          with contextlib.suppress(Exception):
             channel.stop_consuming()
-          except Exception:
-            pass
           raise
         except StreamLostError as e:
           if DEBUG:
-            log_print("RabbitMQ stream lost while consuming: %s" % e)
+            log_print(f"RabbitMQ stream lost while consuming: {e}")
           _maybe_reset_amqp_reconnect_backoff_after_stable_consume(session)
           reconnect_sleep_s = _apply_amqp_reconnect_backoff()
           break
@@ -2834,31 +2813,26 @@ def _amqp_consumer_main(session: _AmqpConsumeSession) -> None:
           if "NoneType" in msg and "poll" in msg:
             if DEBUG:
               log_print(
-                  "RabbitMQ connection poller torn down during consume: %s"
-                  % e
+                f"RabbitMQ connection poller torn down during consume: {e}"
               )
             _maybe_reset_amqp_reconnect_backoff_after_stable_consume(session)
             reconnect_sleep_s = _apply_amqp_reconnect_backoff()
           else:
             log_print(
-                "Error while consuming from RabbitMQ: %s"
-                % _format_amqp_consume_error(e)
+              f"Error while consuming from RabbitMQ: {_format_amqp_consume_error(e)}"
             )
           break
         except Exception as e:
           if should_use_amqp_exponential_reconnect_backoff(e):
             if is_quorum_consume_setup_error(e):
-              log_print(
-                  "AMQP quorum consume-setup timeout (541): %s" % e)
+              log_print(f"AMQP quorum consume-setup timeout (541): {e}")
             elif is_amqp_peer_reset_reconnect_error(e):
-              log_print(
-                  "AMQP peer reset / stream lost during consume: %s" % e)
+              log_print(f"AMQP peer reset / stream lost during consume: {e}")
             _maybe_reset_amqp_reconnect_backoff_after_stable_consume(session)
             reconnect_sleep_s = _apply_amqp_reconnect_backoff()
           else:
             log_print(
-                "Error while consuming from RabbitMQ: %s"
-                % _format_amqp_consume_error(e)
+              f"Error while consuming from RabbitMQ: {_format_amqp_consume_error(e)}"
             )
           break
         if _db_backpressure_pause:
@@ -2870,15 +2844,16 @@ def _amqp_consumer_main(session: _AmqpConsumeSession) -> None:
         else:
           _maybe_reset_amqp_reconnect_backoff_after_stable_consume(session)
         break
-    except (KeyboardInterrupt, SystemExit):
+    except KeyboardInterrupt, SystemExit:
       log_print("Shutting down listend daemon on user request")
       break
     except Exception as e:
       kind = _log_amqp_outer_loop_error(e)
       _maybe_reset_amqp_reconnect_backoff_after_stable_consume(session)
-      if kind in ("quorum_consume_setup", "peer_reset"):
-        reconnect_sleep_s = _apply_amqp_reconnect_backoff()
-      elif should_use_amqp_exponential_reconnect_backoff(e):
+      if kind in (
+        "quorum_consume_setup",
+        "peer_reset",
+      ) or should_use_amqp_exponential_reconnect_backoff(e):
         reconnect_sleep_s = _apply_amqp_reconnect_backoff()
       else:
         reconnect_sleep_s = AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS
@@ -2899,26 +2874,29 @@ def _amqp_consumer_main(session: _AmqpConsumeSession) -> None:
 def main() -> None:
   """
   Run this module's command-line entrypoint.
-  
+
   Returns:
     None
-  
+
   Raises:
     Exception: Raised when ``main`` hits a ``Exception`` failure path.
-  
+
   Examples:
     >>> main()  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.process_title import set_daemon_process_title
-  from hpcperfstats.dbload.lib.python_abi_startup_log import log_python_abi_startup
+  from hpcperfstats.dbload.lib.python_abi_startup_log import (
+    log_python_abi_startup,
+  )
 
   set_daemon_process_title(name="listend.py", role="main")
   log_python_abi_startup()
   from hpcperfstats.dbload.lib.pg_slot_budget import (
-      log_pg_slot_budget_if_needed,
+    log_pg_slot_budget_if_needed,
   )
+
   log_pg_slot_budget_if_needed(
-      log_fn=lambda message: log_print(message, flush=True)
+    log_fn=lambda message: log_print(message, flush=True)
   )
   global _idle_thread_started
   global _recent_host_worker_thread_started
@@ -2935,18 +2913,18 @@ def main() -> None:
   def _sigterm_handler(signum: Any, frame: Any) -> None:
     """
     Internal helper to handle sigterm handler.
-    
+
     Args:
       signum (Any): Signum passed to this helper.
       frame (Any): Frame passed to this helper.
-    
+
     Returns:
       None
-    
+
     Raises:
       SystemExit: Raised when ``_sigterm_handler`` hits a ``SystemExit``
       failure path.
-    
+
     Examples:
       >>> _sigterm_handler(None, None)  # doctest: +SKIP
     """
@@ -2958,11 +2936,12 @@ def main() -> None:
   signal.signal(signal.SIGTERM, _sigterm_handler)
   try:
     lock_path = os.path.join(
-        os.path.dirname(os.path.realpath(__file__)), "listend_lock")
+      os.path.dirname(os.path.realpath(__file__)), "listend_lock"
+    )
     with open(lock_path, "w") as fd:
       try:
         flock(fd, LOCK_EX | LOCK_NB)
-      except IOError:
+      except OSError:
         log_print("listend is already running")
         sys.exit()
 
@@ -2979,17 +2958,17 @@ def main() -> None:
 
       try:
         from hpcperfstats.dbload.lib.listend_db_ingest import (
-            start_listend_db_ingest_pool,
+          start_listend_db_ingest_pool,
         )
 
         start_listend_db_ingest_pool()
       except Exception as pool_err:
-        log_print("Failed to start listend db ingest pool: %s" % pool_err)
+        log_print(f"Failed to start listend db ingest pool: {pool_err}")
 
       try:
         start_listend_archive_pool()
       except Exception as arch_err:
-        log_print("Failed to start listend archive pool: %s" % arch_err)
+        log_print(f"Failed to start listend archive pool: {arch_err}")
 
       n = max(1, int(cfg.get_listend_amqp_consumer_count()))
       _amqp_consumer_count = n
@@ -3000,10 +2979,10 @@ def main() -> None:
         session = _AmqpConsumeSession(i)
         _amqp_sessions.append(session)
         t = Thread(
-            target=_amqp_consumer_main,
-            args=(session,),
-            name="listend-amqp-%d" % i,
-            daemon=True,
+          target=_amqp_consumer_main,
+          args=(session,),
+          name="listend-amqp-%d" % i,
+          daemon=True,
         )
         _amqp_consumer_threads.append(t)
         t.start()
@@ -3012,21 +2991,19 @@ def main() -> None:
           if sigterm_received["value"]:
             break
           time.sleep(0.5)
-      except (KeyboardInterrupt, SystemExit):
+      except KeyboardInterrupt, SystemExit:
         log_print("Shutting down listend daemon on user request")
   finally:
     _idle_monitor_stop_event.set()
     _recent_host_worker_stop_event.set()
-    try:
+    with contextlib.suppress(Exception):
       _stop_amqp_consumer_sessions()
-    except Exception:
-      pass
-    try:
+    with contextlib.suppress(Exception):
       stop_listend_archive_pool()
-    except Exception:
-      pass
     try:
-      from hpcperfstats.dbload.lib.listend_db_ingest import stop_listend_db_ingest_pool
+      from hpcperfstats.dbload.lib.listend_db_ingest import (
+        stop_listend_db_ingest_pool,
+      )
 
       stop_listend_db_ingest_pool()
     except Exception:

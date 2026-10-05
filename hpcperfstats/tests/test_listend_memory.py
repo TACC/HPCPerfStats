@@ -1,5 +1,3 @@
-
-
 import hpcperfstats.listend as listend
 
 
@@ -16,12 +14,12 @@ def test_message_timestamps_window_bounded(monkeypatch):
   monkeypatch.setattr(listend.time, "time", _fake_time)
 
   channel = type(
-      "Ch",
-      (),
-      {
-          "basic_ack": lambda self, delivery_tag=None: None,
-          "basic_nack": lambda self, delivery_tag=None, requeue=False: None,
-      },
+    "Ch",
+    (),
+    {
+      "basic_ack": lambda self, delivery_tag=None: None,
+      "basic_nack": lambda self, delivery_tag=None, requeue=False: None,
+    },
   )()
 
   # Ensure we start from a clean slate for this test.
@@ -32,11 +30,12 @@ def test_message_timestamps_window_bounded(monkeypatch):
   step = listend.MESSAGE_WINDOW_SECONDS / 10.0
   for i in range(total_messages):
     body = f"foo bar host{i}\n".encode()
-    listend.on_message(channel, type("M", (), {"delivery_tag": i})(), None, body)
+    listend.on_message(
+      channel, type("M", (), {"delivery_tag": i})(), None, body
+    )
     test_message_timestamps_window_bounded.offset += step
 
   # The deque should not hold one entry per message; instead it should be
   # limited to roughly the number of messages occurring within the last
   # MESSAGE_WINDOW_SECONDS.
   assert len(listend._message_timestamps) < total_messages / 2
-

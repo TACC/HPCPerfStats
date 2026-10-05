@@ -12,35 +12,37 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from hpcperfstats.dbload.lib.multiprocessing_pool_health import iter_pool_worker_processes
+from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
+  iter_pool_worker_processes,
+)
 
 
 def read_process_rss_bytes(pid: Any | None = None) -> Any:
   """
   Return resident set size in bytes from Linux ``/proc`` (0 if unknown).
-  
+
   Args:
     pid (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Open return polymorphism from ``read_process_rss_bytes``: concrete
     type depends on inputs and branch (mapping, scalar, handle, or
     ``None``-like empty).
-  
+
   Examples:
     >>> read_process_rss_bytes(None)  # doctest: +SKIP
   """
   proc_pid = "self" if pid is None else int(pid)
-  status_path = "/proc/%s/status" % proc_pid
+  status_path = f"/proc/{proc_pid}/status"
   try:
-    with open(status_path, "r", encoding="utf-8") as fh:
+    with open(status_path, encoding="utf-8") as fh:
       for line in fh:
         if line.startswith("VmRSS:"):
           parts = line.split()
           if len(parts) >= 2:
             return int(parts[1]) * 1024
           break
-  except (OSError, ValueError):
+  except OSError, ValueError:
     return 0
   return 0
 
@@ -48,22 +50,22 @@ def read_process_rss_bytes(pid: Any | None = None) -> Any:
 def _read_cgroup_memory_file(filename: str) -> Any:
   """
   Read a cgroup v2 memory file; return int bytes or None when unavailable.
-  
+
   Args:
     filename (str): String for filename.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _read_cgroup_memory_file("x")  # doctest: +SKIP
   """
   for path in (
-      "/sys/fs/cgroup/%s" % filename,
-      "/sys/fs/cgroup/memory/%s" % filename,
+    f"/sys/fs/cgroup/{filename}",
+    f"/sys/fs/cgroup/memory/{filename}",
   ):
     try:
-      with open(path, "r", encoding="utf-8") as fh:
+      with open(path, encoding="utf-8") as fh:
         raw = fh.read().strip()
     except OSError:
       continue
@@ -79,12 +81,12 @@ def _read_cgroup_memory_file(filename: str) -> Any:
 def read_cgroup_memory_current_bytes() -> Any:
   """
   Return cgroup ``memory.current`` in bytes (0 when unknown).
-  
+
   Returns:
     Any: Open return polymorphism from ``read_cgroup_memory_current_bytes``:
     concrete type depends on inputs and branch (mapping, scalar, handle, or
     ``None``-like empty).
-  
+
   Examples:
     >>> read_cgroup_memory_current_bytes()  # doctest: +SKIP
   """
@@ -95,12 +97,12 @@ def read_cgroup_memory_current_bytes() -> Any:
 def read_cgroup_memory_max_bytes() -> Any:
   """
   Return cgroup ``memory.max`` in bytes (None when unlimited/unknown).
-  
+
   Returns:
     Any: Open return polymorphism from ``read_cgroup_memory_max_bytes``:
     concrete type depends on inputs and branch (mapping, scalar, handle, or
     ``None``-like empty).
-  
+
   Examples:
     >>> read_cgroup_memory_max_bytes()  # doctest: +SKIP
   """
@@ -125,7 +127,7 @@ def effective_process_tree_rss_mib_from_cgroup_pct(pct: Any) -> int:
   """
   try:
     pct_i = int(pct or 0)
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     pct_i = 0
   if pct_i <= 0:
     return 0
@@ -152,7 +154,7 @@ def effective_process_tree_rss_limit_mib() -> int:
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   return effective_process_tree_rss_mib_from_cgroup_pct(
-      cfg.get_sync_process_tree_rss_limit_cgroup_pct(),
+    cfg.get_sync_process_tree_rss_limit_cgroup_pct(),
   )
 
 
@@ -169,7 +171,7 @@ def effective_cgroup_admit_max_file_cache_mib() -> int:
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   return effective_process_tree_rss_mib_from_cgroup_pct(
-      cfg.get_sync_cgroup_admit_max_file_cache_cgroup_pct(),
+    cfg.get_sync_cgroup_admit_max_file_cache_cgroup_pct(),
   )
 
 
@@ -186,28 +188,28 @@ def effective_process_tree_rss_exit_mib() -> int:
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   return effective_process_tree_rss_mib_from_cgroup_pct(
-      cfg.get_sync_process_tree_rss_exit_cgroup_pct(),
+    cfg.get_sync_process_tree_rss_exit_cgroup_pct(),
   )
 
 
 def _read_cgroup_memory_events_raw() -> Any:
   """
   Return raw ``memory.events`` text (empty when unavailable).
-  
+
   Returns:
     Any: Open return polymorphism from ``_read_cgroup_memory_events_raw``:
     concrete type depends on inputs and branch (mapping, scalar, handle, or
     ``None``-like empty).
-  
+
   Examples:
     >>> _read_cgroup_memory_events_raw()  # doctest: +SKIP
   """
   for path in (
-      "/sys/fs/cgroup/memory.events",
-      "/sys/fs/cgroup/memory/memory.events",
+    "/sys/fs/cgroup/memory.events",
+    "/sys/fs/cgroup/memory/memory.events",
   ):
     try:
-      with open(path, "r", encoding="utf-8") as fh:
+      with open(path, encoding="utf-8") as fh:
         return fh.read()
     except OSError:
       continue
@@ -217,12 +219,12 @@ def _read_cgroup_memory_events_raw() -> Any:
 def read_cgroup_memory_events() -> Any:
   """
   Parse cgroup v2 ``memory.events`` counters (empty dict when unavailable).
-  
+
   Returns:
     Any: Open return polymorphism from ``read_cgroup_memory_events``: concrete
     type depends on inputs and branch (mapping, scalar, handle, or
     ``None``-like empty).
-  
+
   Examples:
     >>> read_cgroup_memory_events()  # doctest: +SKIP
   """
@@ -244,13 +246,13 @@ def read_cgroup_memory_events() -> Any:
 def sum_pool_worker_rss_bytes(pool: Any) -> Any:
   """
   Sum ``VmRSS`` for alive workers in a multiprocessing pool.
-  
+
   Args:
     pool (Any): Live handle (pool, client, or connection).
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> sum_pool_worker_rss_bytes(None)  # doctest: +SKIP
   """
@@ -269,14 +271,14 @@ def sum_pool_worker_rss_bytes(pool: Any) -> Any:
 def read_sync_timedb_tree_rss_bytes(ingest_pool: Any, archive_pool: Any) -> Any:
   """
   Supervisor RSS plus ingest/archive pool worker RSS.
-  
+
   Args:
     ingest_pool (Any): Ingest pool passed to this helper.
     archive_pool (Any): Archive pool passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> read_sync_timedb_tree_rss_bytes(None, None)  # doctest: +SKIP
   """
@@ -289,14 +291,14 @@ def read_sync_timedb_tree_rss_bytes(ingest_pool: Any, archive_pool: Any) -> Any:
 def format_tree_rss_breakdown_mb(ingest_pool: Any, archive_pool: Any) -> Any:
   """
   Human-readable per-component RSS breakdown in MiB.
-  
+
   Args:
     ingest_pool (Any): Ingest pool passed to this helper.
     archive_pool (Any): Archive pool passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> format_tree_rss_breakdown_mb(None, None)  # doctest: +SKIP
   """
@@ -304,10 +306,10 @@ def format_tree_rss_breakdown_mb(ingest_pool: Any, archive_pool: Any) -> Any:
   ingest = sum_pool_worker_rss_bytes(ingest_pool)
   archive = sum_pool_worker_rss_bytes(archive_pool)
   return {
-      "supervisor_mb": supervisor / (1024.0 * 1024.0),
-      "ingest_pool_mb": ingest / (1024.0 * 1024.0),
-      "archive_pool_mb": archive / (1024.0 * 1024.0),
-      "tree_total_mb": (supervisor + ingest + archive) / (1024.0 * 1024.0),
+    "supervisor_mb": supervisor / (1024.0 * 1024.0),
+    "ingest_pool_mb": ingest / (1024.0 * 1024.0),
+    "archive_pool_mb": archive / (1024.0 * 1024.0),
+    "tree_total_mb": (supervisor + ingest + archive) / (1024.0 * 1024.0),
   }
 
 
@@ -315,16 +317,16 @@ _MIB = 1024 * 1024
 
 # memory.stat keys emitted by sync_timedb_mem_telemetry (bytes → MiB except faults).
 _MEMORY_STAT_MIB_KEYS = (
-    "anon",
-    "file",
-    "file_mapped",
-    "shmem",
-    "active_anon",
-    "inactive_anon",
-    "active_file",
-    "inactive_file",
-    "unevictable",
-    "slab",
+  "anon",
+  "file",
+  "file_mapped",
+  "shmem",
+  "active_anon",
+  "inactive_anon",
+  "active_file",
+  "inactive_file",
+  "unevictable",
+  "slab",
 )
 _MEMORY_STAT_COUNT_KEYS = ("pgfault", "pgmajfault")
 
@@ -355,11 +357,11 @@ def read_cgroup_memory_stat() -> Any:
     True
   """
   for path in (
-      "/sys/fs/cgroup/memory.stat",
-      "/sys/fs/cgroup/memory/memory.stat",
+    "/sys/fs/cgroup/memory.stat",
+    "/sys/fs/cgroup/memory/memory.stat",
   ):
     try:
-      with open(path, "r", encoding="utf-8") as fh:
+      with open(path, encoding="utf-8") as fh:
         text = fh.read()
     except OSError:
       continue
@@ -444,15 +446,15 @@ def read_process_nlwp(pid: Any | None = None) -> int:
     >>> read_process_nlwp(None)  # doctest: +SKIP
   """
   proc_pid = "self" if pid is None else int(pid)
-  status_path = "/proc/%s/status" % proc_pid
+  status_path = f"/proc/{proc_pid}/status"
   try:
-    with open(status_path, "r", encoding="utf-8") as fh:
+    with open(status_path, encoding="utf-8") as fh:
       for line in fh:
         if line.startswith("Threads:"):
           parts = line.split()
           if len(parts) >= 2:
             return int(parts[1])
-  except (OSError, ValueError):
+  except OSError, ValueError:
     return 0
   return 0
 
@@ -529,11 +531,11 @@ def read_other_cgroup_rss(
   # Prefer cgroup.procs; fall back to all /proc pids.
   proc_list: list[int] = []
   for path in (
-      "/sys/fs/cgroup/cgroup.procs",
-      "/sys/fs/cgroup/memory/cgroup.procs",
+    "/sys/fs/cgroup/cgroup.procs",
+    "/sys/fs/cgroup/memory/cgroup.procs",
   ):
     try:
-      with open(path, "r", encoding="utf-8") as fh:
+      with open(path, encoding="utf-8") as fh:
         for line in fh:
           line = line.strip()
           if line.isdigit():

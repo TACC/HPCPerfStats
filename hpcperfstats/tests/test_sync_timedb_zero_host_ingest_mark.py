@@ -26,8 +26,7 @@ def test_path_fingerprint_key_missing_and_empty(tmp_path):
 def test_has_mark_false_without_file_or_archive(tmp_path):
   seg = _seg(tmp_path)
   assert (
-    zhm.has_zero_host_ingest_mark(seg, archive_data_dir=str(tmp_path))
-    is False
+    zhm.has_zero_host_ingest_mark(seg, archive_data_dir=str(tmp_path)) is False
   )
   assert zhm.has_zero_host_ingest_mark(seg, archive_data_dir="") is False
   assert (
@@ -106,16 +105,13 @@ def test_load_entries_malformed_list_and_non_dict_entries(tmp_path):
 
 def test_clear_empty_inputs_return_zero(tmp_path):
   assert (
-    zhm.clear_zero_host_ingest_marks([], archive_data_dir=str(tmp_path))
-    == 0
+    zhm.clear_zero_host_ingest_marks([], archive_data_dir=str(tmp_path)) == 0
   )
   assert (
-    zhm.clear_zero_host_ingest_marks(None, archive_data_dir=str(tmp_path))
-    == 0
+    zhm.clear_zero_host_ingest_marks(None, archive_data_dir=str(tmp_path)) == 0
   )
   assert (
-    zhm.clear_zero_host_ingest_marks([""], archive_data_dir=str(tmp_path))
-    == 0
+    zhm.clear_zero_host_ingest_marks([""], archive_data_dir=str(tmp_path)) == 0
   )
   assert zhm.clear_zero_host_ingest_marks(["/x"], archive_data_dir="") == 0
   assert (
@@ -246,7 +242,8 @@ def test_has_zero_host_mark_cache_one_json_load(tmp_path, monkeypatch):
   mec.reset_mark_entries_cache_for_tests()
   seg = _seg(tmp_path)
   assert zhm.record_zero_host_ingest_mark(
-      seg, archive_data_dir=str(tmp_path),
+    seg,
+    archive_data_dir=str(tmp_path),
   )
   loads = {"n": 0}
   real = zhm.load_persistence_document
@@ -258,6 +255,7 @@ def test_has_zero_host_mark_cache_one_json_load(tmp_path, monkeypatch):
   monkeypatch.setattr(zhm, "load_persistence_document", _count)
   for _ in range(5):
     assert zhm.has_zero_host_ingest_mark(
-        seg, archive_data_dir=str(tmp_path),
+      seg,
+      archive_data_dir=str(tmp_path),
     )
   assert loads["n"] == 1

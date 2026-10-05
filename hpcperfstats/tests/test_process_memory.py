@@ -16,17 +16,29 @@ class _FakeProc:
 
 
 def test_sum_pool_worker_rss_bytes_skips_dead_workers(monkeypatch):
-  pool = SimpleNamespace(_pool=[
+  pool = SimpleNamespace(
+    _pool=[
       _FakeProc(100, alive=True, rss_kb=2048),
       _FakeProc(101, alive=False, rss_kb=4096),
-  ])
-  monkeypatch.setattr(pm, "read_process_rss_bytes", lambda pid: 2048 * 1024 if pid == 100 else 0)
+    ]
+  )
+  monkeypatch.setattr(
+    pm,
+    "read_process_rss_bytes",
+    lambda pid: 2048 * 1024 if pid == 100 else 0,
+  )
   assert pm.sum_pool_worker_rss_bytes(pool) == 2048 * 1024
 
 
 def test_read_sync_timedb_tree_rss_bytes_sums_components(monkeypatch):
-  monkeypatch.setattr(pm, "read_process_rss_bytes", lambda pid=None: 100 * 1024 * 1024)
-  monkeypatch.setattr(pm, "sum_pool_worker_rss_bytes", lambda pool: 50 * 1024 * 1024 if pool else 0)
+  monkeypatch.setattr(
+    pm, "read_process_rss_bytes", lambda pid=None: 100 * 1024 * 1024
+  )
+  monkeypatch.setattr(
+    pm,
+    "sum_pool_worker_rss_bytes",
+    lambda pool: 50 * 1024 * 1024 if pool else 0,
+  )
   ingest = object()
   archive = object()
   total = pm.read_sync_timedb_tree_rss_bytes(ingest, archive)
@@ -35,32 +47,36 @@ def test_read_sync_timedb_tree_rss_bytes_sums_components(monkeypatch):
 
 def test_read_cgroup_memory_current_bytes_parses_file(monkeypatch):
   monkeypatch.setattr(
-      pm,
-      "_read_cgroup_memory_file",
-      lambda name: 4096 if name == "memory.current" else None,
+    pm,
+    "_read_cgroup_memory_file",
+    lambda name: 4096 if name == "memory.current" else None,
   )
   assert pm.read_cgroup_memory_current_bytes() == 4096
 
 
 def test_read_cgroup_memory_events_from_raw(monkeypatch):
   monkeypatch.setattr(
-      pm,
-      "_read_cgroup_memory_events_raw",
-      lambda: "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n",
+    pm,
+    "_read_cgroup_memory_events_raw",
+    lambda: "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n",
   )
   assert pm.read_cgroup_memory_events() == {
-      "low": 0,
-      "high": 0,
-      "max": 0,
-      "oom": 0,
-      "oom_kill": 0,
-      "oom_group_kill": 0,
+    "low": 0,
+    "high": 0,
+    "max": 0,
+    "oom": 0,
+    "oom_kill": 0,
+    "oom_group_kill": 0,
   }
 
 
 def test_format_tree_rss_breakdown_mb(monkeypatch):
-  monkeypatch.setattr(pm, "read_process_rss_bytes", lambda pid=None: 10 * 1024 * 1024)
-  monkeypatch.setattr(pm, "sum_pool_worker_rss_bytes", lambda pool: 20 * 1024 * 1024)
+  monkeypatch.setattr(
+    pm, "read_process_rss_bytes", lambda pid=None: 10 * 1024 * 1024
+  )
+  monkeypatch.setattr(
+    pm, "sum_pool_worker_rss_bytes", lambda pool: 20 * 1024 * 1024
+  )
   breakdown = pm.format_tree_rss_breakdown_mb(object(), object())
   assert breakdown["supervisor_mb"] == 10.0
   assert breakdown["ingest_pool_mb"] == 20.0
@@ -78,39 +94,39 @@ def test_effective_roof_mib_from_cgroup_pct(monkeypatch):
 
 def test_effective_limit_mib_uses_ini_pct(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_process_tree_rss_limit_cgroup_pct",
-      lambda: 40,
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_process_tree_rss_limit_cgroup_pct",
+    lambda: 40,
   )
   monkeypatch.setattr(
-      pm,
-      "read_cgroup_memory_max_bytes",
-      lambda: 128 * 1024 ** 3,
+    pm,
+    "read_cgroup_memory_max_bytes",
+    lambda: 128 * 1024**3,
   )
   assert pm.effective_process_tree_rss_limit_mib() == 52428
 
 
 def test_effective_file_cache_mib_from_pct(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_cgroup_admit_max_file_cache_cgroup_pct",
-      lambda: 60,
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_cgroup_admit_max_file_cache_cgroup_pct",
+    lambda: 60,
   )
   monkeypatch.setattr(
-      pm,
-      "read_cgroup_memory_max_bytes",
-      lambda: 128 * 1024 ** 3,
+    pm,
+    "read_cgroup_memory_max_bytes",
+    lambda: 128 * 1024**3,
   )
   assert pm.effective_cgroup_admit_max_file_cache_mib() == 78643
 
 
 def test_effective_file_cache_mib_zero_when_pct_off(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_cgroup_admit_max_file_cache_cgroup_pct",
-      lambda: 0,
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_cgroup_admit_max_file_cache_cgroup_pct",
+    lambda: 0,
   )
   monkeypatch.setattr(
-      pm,
-      "read_cgroup_memory_max_bytes",
-      lambda: 128 * 1024 ** 3,
+    pm,
+    "read_cgroup_memory_max_bytes",
+    lambda: 128 * 1024**3,
   )
   assert pm.effective_cgroup_admit_max_file_cache_mib() == 0
 
@@ -119,8 +135,8 @@ def test_read_cgroup_memory_stat_parses(monkeypatch, tmp_path):
   stat = tmp_path / "memory.stat"
   stat.write_text("anon 100\nfile 200\npgfault 3\n", encoding="utf-8")
   monkeypatch.setattr(
-      pm,
-      "read_cgroup_memory_stat",
-      lambda: {"anon": 100, "file": 200, "pgfault": 3},
+    pm,
+    "read_cgroup_memory_stat",
+    lambda: {"anon": 100, "file": 200, "pgfault": 3},
   )
   assert pm.read_cgroup_memory_stat()["file"] == 200

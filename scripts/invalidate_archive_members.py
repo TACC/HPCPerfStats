@@ -21,15 +21,16 @@ Attributes:
   _MIN_PY: Attribute.
   _REPO_ROOT: Attribute.
 """
-from __future__ import annotations
 
-from typing import Any, Iterator
+from __future__ import annotations
 
 import argparse
 import os
 import shutil
 import sys
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 _MIN_PY = (3, 14)
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -38,21 +39,21 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 def _candidate_pythons() -> Iterator[Any]:
   """
   Yield executable paths that may satisfy requires-python >= 3.14.
-  
+
   Yields:
     Iterator[Any]: Open return polymorphism from ``_candidate_pythons``:
     concrete type depends on inputs and branch (mapping, scalar, handle, or
     ``None``-like empty).
-  
+
   Examples:
     >>> _candidate_pythons()  # doctest: +SKIP
   """
   seen = set()
   names = (
-      _REPO_ROOT / ".venv" / "bin" / "python3",
-      _REPO_ROOT.parent / ".venv" / "bin" / "python3",
-      shutil.which("python3.14"),
-      shutil.which("python3.15"),
+    _REPO_ROOT / ".venv" / "bin" / "python3",
+    _REPO_ROOT.parent / ".venv" / "bin" / "python3",
+    shutil.which("python3.14"),
+    shutil.which("python3.15"),
   )
   for raw in names:
     if not raw:
@@ -68,14 +69,14 @@ def _candidate_pythons() -> Iterator[Any]:
 def _ensure_python_version() -> None:
   """
   Re-exec under Python >= 3.14 when the current interpreter is too old.
-  
+
   Returns:
     None
-  
+
   Raises:
     SystemExit: Raised when ``_ensure_python_version`` hits a ``SystemExit``
     failure path.
-  
+
   Examples:
     >>> _ensure_python_version()  # doctest: +SKIP
   """
@@ -86,19 +87,12 @@ def _ensure_python_version() -> None:
     # Avoid infinite re-exec loops.
     if os.path.samefile(candidate, sys.executable):
       continue
-    os.execv(candidate, [candidate, script] + sys.argv[1:])
+    os.execv(candidate, [candidate, script, *sys.argv[1:]])
   sys.stderr.write(
-      "ERROR: scripts/invalidate_archive_members.py requires Python >= %s.%s "
-      "(found %s.%s). Use the project venv or python3.14+, for example:\n"
-      "  %s/../.venv/bin/python3 scripts/invalidate_archive_members.py ...\n"
-      "  python3.14 scripts/invalidate_archive_members.py ...\n"
-      % (
-          _MIN_PY[0],
-          _MIN_PY[1],
-          sys.version_info[0],
-          sys.version_info[1],
-          _REPO_ROOT,
-      ),
+    f"ERROR: scripts/invalidate_archive_members.py requires Python >= {_MIN_PY[0]}.{_MIN_PY[1]} "
+    f"(found {sys.version_info[0]}.{sys.version_info[1]}). Use the project venv or python3.14+, for example:\n"
+    f"  {_REPO_ROOT}/../.venv/bin/python3 scripts/invalidate_archive_members.py ...\n"
+    "  python3.14 scripts/invalidate_archive_members.py ...\n",
   )
   raise SystemExit(2)
 
@@ -112,17 +106,17 @@ if str(_REPO_ROOT) not in sys.path:
 def _resolve_compose_dir(explicit: Any) -> Any:
   """
   Internal helper to resolve the compose dir.
-  
+
   Args:
     explicit (Any): Explicit passed to this helper.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Raises:
     SystemExit: Raised when ``_resolve_compose_dir`` hits a ``SystemExit``
     failure path.
-  
+
   Examples:
     >>> _resolve_compose_dir(None)  # doctest: +SKIP
   """
@@ -130,12 +124,13 @@ def _resolve_compose_dir(explicit: Any) -> Any:
     path = Path(explicit).expanduser().resolve()
   else:
     path = Path.cwd().resolve()
-  if not (path / "docker-compose.yaml").is_file() and not (
-      path / "docker-compose.yml"
-  ).is_file():
+  if (
+    not (path / "docker-compose.yaml").is_file()
+    and not (path / "docker-compose.yml").is_file()
+  ):
     raise SystemExit(
-        "compose dir %s has no docker-compose.yaml; pass --compose-dir "
-        "pointing at the HPCPerfStats checkout" % path,
+      f"compose dir {path} has no docker-compose.yaml; pass --compose-dir "
+      "pointing at the HPCPerfStats checkout",
     )
   return path
 
@@ -143,72 +138,72 @@ def _resolve_compose_dir(explicit: Any) -> Any:
 def _build_parser() -> Any:
   """
   Internal helper to build the parser.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _build_parser()  # doctest: +SKIP
   """
   parser = argparse.ArgumentParser(
-      description=(
-          "Invalidate archive membership sidecars (--all or --day), then "
-          "docker compose restart pipeline (unless --dry-run / --no-restart)."
-      ),
+    description=(
+      "Invalidate archive membership sidecars (--all or --day), then "
+      "docker compose restart pipeline (unless --dry-run / --no-restart)."
+    ),
   )
   scope = parser.add_mutually_exclusive_group(required=True)
   scope.add_argument(
-      "--all",
-      action="store_true",
-      help="Clear all membership day sidecars (requires --yes unless --dry-run)",
+    "--all",
+    action="store_true",
+    help="Clear all membership day sidecars (requires --yes unless --dry-run)",
   )
   scope.add_argument(
-      "--day",
-      action="append",
-      dest="days",
-      metavar="YYYY-MM-DD",
-      help="Clear membership sidecars for one calendar day (repeatable)",
+    "--day",
+    action="append",
+    dest="days",
+    metavar="YYYY-MM-DD",
+    help="Clear membership sidecars for one calendar day (repeatable)",
   )
   parser.add_argument(
-      "--dry-run",
-      action="store_true",
-      help="Scan and report counts without unlinking sidecars or restart",
+    "--dry-run",
+    action="store_true",
+    help="Scan and report counts without unlinking sidecars or restart",
   )
   parser.add_argument(
-      "--yes",
-      action="store_true",
-      help="Confirm destructive --all (required when not --dry-run)",
+    "--yes",
+    action="store_true",
+    help="Confirm destructive --all (required when not --dry-run)",
   )
   parser.add_argument(
-      "--no-restart",
-      action="store_true",
-      help="Skip docker compose restart pipeline after invalidate",
+    "--no-restart",
+    action="store_true",
+    help="Skip docker compose restart pipeline after invalidate",
   )
   parser.add_argument(
-      "--compose-project",
-      default="hpcperfstats",
-      help="Compose project name (default: hpcperfstats)",
+    "--compose-project",
+    default="hpcperfstats",
+    help="Compose project name (default: hpcperfstats)",
   )
   parser.add_argument(
-      "--compose-dir",
-      default=None,
-      help="Directory containing docker-compose.yaml (default: cwd)",
+    "--compose-dir",
+    default=None,
+    help="Directory containing docker-compose.yaml (default: cwd)",
   )
   parser.add_argument(
-      "--compose-file",
-      action="append",
-      dest="compose_files",
-      default=None,
-      metavar="PATH",
-      help="Extra -f compose file (repeatable); relative to --compose-dir",
+    "--compose-file",
+    action="append",
+    dest="compose_files",
+    default=None,
+    metavar="PATH",
+    help="Extra -f compose file (repeatable); relative to --compose-dir",
   )
   parser.add_argument(
-      "--archive-dir",
-      default=None,
-      help=(
-          "Archive data directory that owns .sync_timedb_archive_members; "
-          "defaults to conf_parser.get_archive_dir_path()"
-      ),
+    "--archive-dir",
+    default=None,
+    help=(
+      "Archive data directory that owns .sync_timedb_archive_members; "
+      "defaults to conf_parser.get_archive_dir_path()"
+    ),
   )
   return parser
 
@@ -216,13 +211,13 @@ def _build_parser() -> Any:
 def main(argv: Any | None = None) -> Any:
   """
   Run this module's command-line entrypoint.
-  
+
   Args:
     argv (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> main(None)  # doctest: +SKIP
   """
@@ -234,11 +229,11 @@ def main(argv: Any | None = None) -> Any:
 
   # Import only the lightweight ops module (no print_utils / conf_parser).
   from hpcperfstats.dbload.lib.invalidate_archive_members_ops import (
-      DEFAULT_COMPOSE_PROJECT,
-      compose_argv,
-      format_compose_cmd_for_log,
-      invalidate_archive_members_sidecars,
-      restart_pipeline_compose,
+    DEFAULT_COMPOSE_PROJECT,
+    compose_argv,
+    format_compose_cmd_for_log,
+    invalidate_archive_members_sidecars,
+    restart_pipeline_compose,
   )
 
   compose_dir = _resolve_compose_dir(args.compose_dir)
@@ -252,35 +247,40 @@ def main(argv: Any | None = None) -> Any:
   archive_dir = str(args.archive_dir or "").strip()
   if not archive_dir:
     from hpcperfstats.dbload.lib import conf_parser as cfg
+
     archive_dir = str(cfg.get_archive_dir_path() or "").strip()
   if not archive_dir:
-    print("ERROR: archive_dir is required (--archive-dir or INI)", file=sys.stderr)
+    print(
+      "ERROR: archive_dir is required (--archive-dir or INI)",
+      file=sys.stderr,
+    )
     return 2
 
   try:
     result = invalidate_archive_members_sidecars(
-        archive_dir=archive_dir,
-        day_tokens=day_tokens,
-        dry_run=bool(args.dry_run),
+      archive_dir=archive_dir,
+      day_tokens=day_tokens,
+      dry_run=bool(args.dry_run),
     )
   except ValueError as exc:
-    print("ERROR: %s" % exc, file=sys.stderr)
+    print(f"ERROR: {exc}", file=sys.stderr)
     return 2
-  except Exception as exc:  # noqa: BLE001
-    print("ERROR: sidecar invalidate failed: %s" % exc, file=sys.stderr)
+  except Exception as exc:
+    print(f"ERROR: sidecar invalidate failed: {exc}", file=sys.stderr)
     return 2
 
   scope_label = (
-      "all days" if day_tokens is None else ",".join(result.get("days") or day_tokens)
+    "all days"
+    if day_tokens is None
+    else ",".join(result.get("days") or day_tokens)
   )
   print(
-      "archive_members_invalidate scanned=%s deleted=%s dry_run=%s days=%s"
-      % (
-          result.get("scanned", 0),
-          result.get("deleted", 0),
-          result.get("dry_run", False),
-          scope_label,
-      ),
+    "archive_members_invalidate scanned={} deleted={} dry_run={} days={}".format(
+      result.get("scanned", 0),
+      result.get("deleted", 0),
+      result.get("dry_run", False),
+      scope_label,
+    ),
   )
 
   if args.dry_run or args.no_restart:
@@ -288,25 +288,25 @@ def main(argv: Any | None = None) -> Any:
       print("dry-run: skipped docker compose restart pipeline")
     else:
       print(
-          "no-restart: sidecars cleared; worker L1 may stay warm until "
-          "manual recycle",
+        "no-restart: sidecars cleared; worker L1 may stay warm until "
+        "manual recycle",
       )
     return 0
 
   restart_cmd = compose_argv(project=project, compose_files=compose_files)
   restart_cmd.extend(["restart", "pipeline"])
-  print("restarting pipeline: %s" % format_compose_cmd_for_log(restart_cmd))
+  print(f"restarting pipeline: {format_compose_cmd_for_log(restart_cmd)}")
   try:
     restart_pipeline_compose(
-        compose_dir=str(compose_dir),
-        project=project,
-        compose_files=compose_files,
+      compose_dir=str(compose_dir),
+      project=project,
+      compose_files=compose_files,
     )
-  except Exception as exc:  # noqa: BLE001
+  except Exception as exc:
     print(
-        "ERROR: member sidecars were already cleared, but pipeline "
-        "restart failed: %s" % exc,
-        file=sys.stderr,
+      "ERROR: member sidecars were already cleared, but pipeline "
+      f"restart failed: {exc}",
+      file=sys.stderr,
     )
     return 3
   print("pipeline restart requested ok")

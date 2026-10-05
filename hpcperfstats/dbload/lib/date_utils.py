@@ -1,13 +1,15 @@
 """
 Shared date parsing and range utilities for dbload and CLI scripts.
 """
+
 from __future__ import annotations
 
-from typing import Any, Iterator
-
-from datetime import datetime, timedelta, timezone
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pandas as pd
+
 from hpcperfstats.dbload.lib.print_utils import log_print
 
 
@@ -38,7 +40,7 @@ def to_pydatetime_or_none(ts: Any) -> Any:
   try:
     if pd.isna(ts):
       return None
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     pass
   to_py = getattr(ts, "to_pydatetime", None)
   if callable(to_py):
@@ -46,11 +48,11 @@ def to_pydatetime_or_none(ts: Any) -> Any:
     if dt is None:
       return None
     if getattr(dt, "tzinfo", None) is None:
-      return dt.replace(tzinfo=timezone.utc)
+      return dt.replace(tzinfo=UTC)
     return dt
   if isinstance(ts, datetime):
     return ts
-  return datetime.fromtimestamp(float(ts), tz=timezone.utc)
+  return datetime.fromtimestamp(float(ts), tz=UTC)
 
 
 def parse_start_end_dates(
@@ -61,29 +63,29 @@ def parse_start_end_dates(
 ) -> Any:
   """
   Parse start and end dates from argv[1] and argv[2].
-  
+
   Returns (start_date, end_date). Uses default_start if argv[1] is missing or
   invalid; uses default_end if argv[2] is missing or invalid.
-  
+
   Args:
     argv (Any): CLI argument list (``sys.argv``-like).
     default_start (Any): Default start passed to this helper.
     default_end (Any): Default end passed to this helper.
     date_fmt (str): String for date fmt.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> parse_start_end_dates(None, None, None, "x")  # doctest: +SKIP
   """
   try:
     start = datetime.strptime(argv[1], date_fmt)
-  except (IndexError, ValueError, TypeError):
+  except IndexError, ValueError, TypeError:
     start = default_start
   try:
     end = datetime.strptime(argv[2], date_fmt)
-  except (IndexError, ValueError, TypeError):
+  except IndexError, ValueError, TypeError:
     end = default_end
   return start, end
 
@@ -91,21 +93,21 @@ def parse_start_end_dates(
 def log_date_range(kind: Any, start: Any, end: Any) -> None:
   """
   Print the standard date-range log line. kind e.g. 'stats files to ingest',.
-  
+
     'job files to ingest', 'metrics to update'.
-  
+
   Args:
     kind (Any): Mode or kind token selecting a code path.
     start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
     end (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> log_date_range(None, None, None)  # doctest: +SKIP
   """
-  log_print("###Date Range of {}: {} -> {}####".format(kind, start, end))
+  log_print(f"###Date Range of {kind}: {start} -> {end}####")
 
 
 def daterange(
@@ -115,15 +117,15 @@ def daterange(
 ) -> Iterator[Any]:
   """
   Yield each date from start_date through end_date, one day at a time.
-  
+
   Args:
     start_date (Any): Start date passed to this helper.
     end_date (Any): End date passed to this helper.
     inclusive_end (bool): Boolean flag for inclusive end.
-  
+
   Yields:
     Iterator[Any]: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> daterange(None, None, True)  # doctest: +SKIP
   """

@@ -25,11 +25,21 @@ Attributes:
   SHORT_RUNTIME_NO_METRICS_SECONDS: Attribute.
   TOO_FEW_SAMPLES_SORT_RANKS: Attribute.
 """
+
 from __future__ import annotations
 
 from typing import Any
 
-from django.db.models import Case, Exists, F, IntegerField, OuterRef, Q, Value, When
+from django.db.models import (
+  Case,
+  Exists,
+  F,
+  IntegerField,
+  OuterRef,
+  Q,
+  Value,
+  When,
+)
 
 from hpcperfstats.dbload.lib import conf_parser as cfg
 
@@ -50,13 +60,13 @@ LABEL_NOT_YET_COMPLETED = "Metrics & Plots not yet completed"
 # Canonical performance status labels keyed by sort_rank (header filter + filter_options).
 # Ranks 2–4 share the same UI label; designation values stay distinct for filtering.
 PERFORMANCE_STATUS_BY_SORT_RANK = (
-    (0, LABEL_METRICS_AND_PLOTS_AVAILABLE),
-    (1, LABEL_METRICS_AVAILABLE),
-    (2, LABEL_TOO_FEW_SAMPLES),
-    (3, LABEL_TOO_FEW_SAMPLES),
-    (4, LABEL_TOO_FEW_SAMPLES),
-    (5, LABEL_TOO_SHORT),
-    (6, LABEL_NOT_YET_COMPLETED),
+  (0, LABEL_METRICS_AND_PLOTS_AVAILABLE),
+  (1, LABEL_METRICS_AVAILABLE),
+  (2, LABEL_TOO_FEW_SAMPLES),
+  (3, LABEL_TOO_FEW_SAMPLES),
+  (4, LABEL_TOO_FEW_SAMPLES),
+  (5, LABEL_TOO_SHORT),
+  (6, LABEL_NOT_YET_COMPLETED),
 )
 
 TOO_FEW_SAMPLES_SORT_RANKS = (2, 3, 4)
@@ -160,58 +170,58 @@ def summarize_performance(
     if plots_artifacts_ready:
       label = LABEL_METRICS_AND_PLOTS_AVAILABLE
       return {
-          "label": label,
-          "tone": "success",
-          "aria_label": aria_label_for(label),
-          "sort_rank": 0,
+        "label": label,
+        "tone": "success",
+        "aria_label": aria_label_for(label),
+        "sort_rank": 0,
       }
     label = LABEL_METRICS_AVAILABLE
     return {
-        "label": label,
-        "tone": "info",
-        "aria_label": aria_label_for(label),
-        "sort_rank": 1,
+      "label": label,
+      "tone": "info",
+      "aria_label": aria_label_for(label),
+      "sort_rank": 1,
     }
   if has_metrics_row:
     dtc = distinct_time_count
     if dtc is not None and dtc >= MONITORING_GAPS_MIN_DISTINCT_TIMES:
       label = LABEL_TOO_FEW_SAMPLES
       return {
-          "label": label,
-          "tone": "warning",
-          "aria_label": aria_label_for(label),
-          "sort_rank": 2,
+        "label": label,
+        "tone": "warning",
+        "aria_label": aria_label_for(label),
+        "sort_rank": 2,
       }
     if dtc is not None and 0 < dtc < MONITORING_GAPS_MIN_DISTINCT_TIMES:
       label = LABEL_TOO_FEW_SAMPLES
       return {
-          "label": label,
-          "tone": "warning",
-          "aria_label": aria_label_for(label),
-          "sort_rank": 3,
-      }
-    label = LABEL_TOO_FEW_SAMPLES
-    return {
         "label": label,
         "tone": "warning",
         "aria_label": aria_label_for(label),
-        "sort_rank": 4,
+        "sort_rank": 3,
+      }
+    label = LABEL_TOO_FEW_SAMPLES
+    return {
+      "label": label,
+      "tone": "warning",
+      "aria_label": aria_label_for(label),
+      "sort_rank": 4,
     }
   if runtime is not None and runtime < SHORT_RUNTIME_NO_METRICS_SECONDS:
     label = LABEL_TOO_SHORT
     return {
-        "label": label,
-        "tone": "secondary",
-        "aria_label": aria_label_for(label),
-        "sort_rank": 5,
+      "label": label,
+      "tone": "secondary",
+      "aria_label": aria_label_for(label),
+      "sort_rank": 5,
     }
   # No metrics rows; runtime null, == 600, or > 600 — not yet through update_metrics.
   label = LABEL_NOT_YET_COMPLETED
   return {
-      "label": label,
-      "tone": "secondary",
-      "aria_label": aria_label_for(label),
-      "sort_rank": 6,
+    "label": label,
+    "tone": "secondary",
+    "aria_label": aria_label_for(label),
+    "sort_rank": 6,
   }
 
 
@@ -250,66 +260,73 @@ def annotate_job_list_performance_fields(queryset: Any) -> Any:
   Examples:
     >>> annotate_job_list_performance_fields(None)  # doctest: +SKIP
   """
-  qs = annotate_job_plots_artifacts_ready(queryset, _job_list_host_name_suffix())
+  qs = annotate_job_plots_artifacts_ready(
+    queryset, _job_list_host_name_suffix()
+  )
   md_exists = Exists(metrics_data.objects.filter(jid_id=OuterRef("jid")))
   has_nonnull_metric = Exists(
-      metrics_data.objects.filter(
-          jid_id=OuterRef("jid"),
-          value__isnull=False,
-      )
+    metrics_data.objects.filter(
+      jid_id=OuterRef("jid"),
+      value__isnull=False,
+    )
   )
   qs = qs.annotate(
-      has_metrics_data=md_exists,
-      metrics_value_count=Case(
-          When(has_nonnull_metric, then=Value(1)),
-          default=Value(0),
-          output_field=IntegerField(),
-      ),
+    has_metrics_data=md_exists,
+    metrics_value_count=Case(
+      When(has_nonnull_metric, then=Value(1)),
+      default=Value(0),
+      output_field=IntegerField(),
+    ),
   )
   qs = qs.annotate(
-      performance_sort_rank=Case(
-          When(
-              Q(metrics_value_count__gt=0) & Q(plots_artifacts_ready=True),
-              then=Value(0),
-          ),
-          When(
-              Q(metrics_value_count__gt=0) & Q(plots_artifacts_ready=False),
-              then=Value(1),
-          ),
-          When(
-              Q(has_metrics_data=True)
-              & Q(metrics_distinct_time_count__gte=MONITORING_GAPS_MIN_DISTINCT_TIMES),
-              then=Value(2),
-          ),
-          When(
-              Q(has_metrics_data=True)
-              & Q(metrics_distinct_time_count__gt=0)
-              & Q(metrics_distinct_time_count__lt=MONITORING_GAPS_MIN_DISTINCT_TIMES),
-              then=Value(3),
-          ),
-          When(
-              Q(has_metrics_data=True)
-              & (
-                  Q(metrics_distinct_time_count__isnull=True)
-                  | Q(metrics_distinct_time_count__lte=0)
-              ),
-              then=Value(4),
-          ),
-          When(
-              Q(has_metrics_data=False)
-              & Q(runtime__isnull=False)
-              & Q(runtime__lt=SHORT_RUNTIME_NO_METRICS_SECONDS),
-              then=Value(5),
-          ),
-          default=Value(6),
-          output_field=IntegerField(),
+    performance_sort_rank=Case(
+      When(
+        Q(metrics_value_count__gt=0) & Q(plots_artifacts_ready=True),
+        then=Value(0),
       ),
+      When(
+        Q(metrics_value_count__gt=0) & Q(plots_artifacts_ready=False),
+        then=Value(1),
+      ),
+      When(
+        Q(has_metrics_data=True)
+        & Q(
+          metrics_distinct_time_count__gte=MONITORING_GAPS_MIN_DISTINCT_TIMES
+        ),
+        then=Value(2),
+      ),
+      When(
+        Q(has_metrics_data=True)
+        & Q(metrics_distinct_time_count__gt=0)
+        & Q(metrics_distinct_time_count__lt=MONITORING_GAPS_MIN_DISTINCT_TIMES),
+        then=Value(3),
+      ),
+      When(
+        Q(has_metrics_data=True)
+        & (
+          Q(metrics_distinct_time_count__isnull=True)
+          | Q(metrics_distinct_time_count__lte=0)
+        ),
+        then=Value(4),
+      ),
+      When(
+        Q(has_metrics_data=False)
+        & Q(runtime__isnull=False)
+        & Q(runtime__lt=SHORT_RUNTIME_NO_METRICS_SECONDS),
+        then=Value(5),
+      ),
+      default=Value(6),
+      output_field=IntegerField(),
+    ),
   )
   # Ranks 2–4 share one primary sort bucket (Too few samples to complete).
   return qs.annotate(
-      performance_sort_group=Case(
-          When(performance_sort_rank__in=list(TOO_FEW_SAMPLES_SORT_RANKS), then=Value(2)),
-          default=F("performance_sort_rank"),
-          output_field=IntegerField(),
+    performance_sort_group=Case(
+      When(
+        performance_sort_rank__in=list(TOO_FEW_SAMPLES_SORT_RANKS),
+        then=Value(2),
       ),
+      default=F("performance_sort_rank"),
+      output_field=IntegerField(),
+    ),
   )

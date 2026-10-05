@@ -8,10 +8,10 @@ image GIL ``python3``.
 
 from __future__ import annotations
 
-from typing import Any, Callable
-
 import sys
 import sysconfig
+from collections.abc import Callable
+from typing import Any
 
 from hpcperfstats.dbload.lib.print_utils import log_print
 
@@ -34,7 +34,7 @@ def gil_disabled_config_flag() -> int | None:
     return None
   try:
     return int(value)
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     return None
 
 
@@ -80,8 +80,8 @@ def format_python_abi_startup_line() -> str:
   enabled = gil_enabled_runtime()
   enabled_s = "n/a" if enabled is None else str(enabled).lower()
   return (
-      "python_abi executable={0} Py_GIL_DISABLED={1} "
-      "sys._is_gil_enabled={2}".format(sys.executable, disabled_s, enabled_s)
+    f"python_abi executable={sys.executable} Py_GIL_DISABLED={disabled_s} "
+    f"sys._is_gil_enabled={enabled_s}"
   )
 
 

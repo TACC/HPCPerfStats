@@ -6,12 +6,12 @@ import io
 import sys
 
 from hpcperfstats.dbload.lib.print_utils import (
-    _script_prefix,
-    flush_log_print_queue,
-    ingest_logging,
-    janitorial_logging,
-    log_print,
-    set_log_role,
+  _script_prefix,
+  flush_log_print_queue,
+  ingest_logging,
+  janitorial_logging,
+  log_print,
+  set_log_role,
 )
 
 
@@ -45,6 +45,7 @@ def _capture_log_writes(monkeypatch):
 
 def test_log_print_single_atomic_write(monkeypatch):
   """Podman k8s-file prefixes each write(); multi-write print() mushs lines."""
+
   class DummyMain:
     __file__ = "/tmp/tool.py"
 
@@ -55,8 +56,8 @@ def test_log_print_single_atomic_write(monkeypatch):
 
   _await_log_drain()
   assert writes == ["[tool:main] hello 123\n"], (
-      "log_print must one write() the full line so compose/podman logs "
-      "do not inject a container prefix between prefix and body"
+    "log_print must one write() the full line so compose/podman logs "
+    "do not inject a container prefix between prefix and body"
   )
   assert buf.getvalue() == "[tool:main] hello 123\n"
 
@@ -98,7 +99,7 @@ def test_log_print_adds_janitor_body_prefix_for_main(monkeypatch):
     log_print("day-scoped closed_raw tar=2026-06-05.tar")
   _await_log_drain()
   assert writes == [
-      "[sync_timedb:main] janitor: day-scoped closed_raw tar=2026-06-05.tar\n"
+    "[sync_timedb:main] janitor: day-scoped closed_raw tar=2026-06-05.tar\n"
   ]
   set_log_role(None)
 
@@ -114,7 +115,7 @@ def test_log_print_adds_janitor_body_prefix_for_day_close_role(monkeypatch):
     log_print("seal begin day=2026-06-05")
   _await_log_drain()
   assert writes == [
-      "[sync_timedb:thread:day-close-0] janitor: seal begin day=2026-06-05\n"
+    "[sync_timedb:thread:day-close-0] janitor: seal begin day=2026-06-05\n"
   ]
   set_log_role(None)
 
@@ -130,14 +131,14 @@ def test_log_print_strips_body_janitor_when_role_has_janitor(monkeypatch):
     log_print("janitor: discover_ready_day_close reason=tick")
   _await_log_drain()
   assert writes == [
-      "[sync_timedb:thread:archive-janitor] "
-      "discover_ready_day_close reason=tick\n"
+    "[sync_timedb:thread:archive-janitor] "
+    "discover_ready_day_close reason=tick\n"
   ]
   set_log_role(None)
 
 
 def test_log_print_keeps_single_janitor_when_already_present_for_day_close(
-    monkeypatch,
+  monkeypatch,
 ):
   class DummyMain:
     __file__ = "/path/to/sync_timedb.py"
@@ -149,7 +150,7 @@ def test_log_print_keeps_single_janitor_when_already_present_for_day_close(
     log_print("janitor: day_close defer tar=x")
   _await_log_drain()
   assert writes == [
-      "[sync_timedb:thread:day-close-1] janitor: day_close defer tar=x\n"
+    "[sync_timedb:thread:day-close-1] janitor: day_close defer tar=x\n"
   ]
   set_log_role(None)
 
@@ -165,7 +166,7 @@ def test_log_print_adds_ingest_body_prefix_for_main(monkeypatch):
     log_print("post_finalize_reconcile oldest_tar=x")
   _await_log_drain()
   assert writes == [
-      "[sync_timedb:main] ingest: post_finalize_reconcile oldest_tar=x\n"
+    "[sync_timedb:main] ingest: post_finalize_reconcile oldest_tar=x\n"
   ]
   set_log_role(None)
 
@@ -191,9 +192,8 @@ def test_log_print_janitorial_wins_over_ingest_on_main(monkeypatch):
   monkeypatch.setitem(sys.modules, "__main__", DummyMain)
   set_log_role("main")
   writes, _buf = _capture_log_writes(monkeypatch)
-  with ingest_logging():
-    with janitorial_logging():
-      log_print("day-scoped closed_raw")
+  with ingest_logging(), janitorial_logging():
+    log_print("day-scoped closed_raw")
   _await_log_drain()
   assert writes == ["[sync_timedb:main] janitor: day-scoped closed_raw\n"]
   set_log_role(None)
@@ -210,7 +210,7 @@ def test_log_print_ingest_scope_skips_pool_worker_role(monkeypatch):
     log_print("File successfully added to DB")
   _await_log_drain()
   assert writes == [
-      "[sync_timedb:worker:ingest-pool] File successfully added to DB\n"
+    "[sync_timedb:worker:ingest-pool] File successfully added to DB\n"
   ]
   set_log_role(None)
 
@@ -226,8 +226,8 @@ def test_log_print_oneshot_kwargs(monkeypatch):
   log_print("chunk note", ingest=True)
   _await_log_drain()
   assert writes == [
-      "[sync_timedb:main] janitor: day close note\n",
-      "[sync_timedb:main] ingest: chunk note\n",
+    "[sync_timedb:main] janitor: day close note\n",
+    "[sync_timedb:main] ingest: chunk note\n",
   ]
   set_log_role(None)
 

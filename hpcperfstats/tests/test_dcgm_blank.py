@@ -6,12 +6,12 @@ import numpy as np
 import pytest
 
 from hpcperfstats.lib.dcgm_blank import (
-    DCGM_FP64_BLANK,
-    DCGM_INT64_BLANK,
-    is_dcgm_fp64_blank,
-    is_dcgm_int64_blank,
-    is_dcgm_numeric_blank,
-    nan_out_dcgm_numeric_blanks,
+  DCGM_FP64_BLANK,
+  DCGM_INT64_BLANK,
+  is_dcgm_fp64_blank,
+  is_dcgm_int64_blank,
+  is_dcgm_numeric_blank,
+  nan_out_dcgm_numeric_blanks,
 )
 
 
@@ -46,7 +46,10 @@ def test_four_device_blank_sums_match_production_poison():
 
 
 def test_nan_out_preserves_real_gpu_gauges():
-  arr = np.array([0.0, 42.5, 99.0, 300.0, DCGM_FP64_BLANK, float("nan")], dtype=np.float64)
+  arr = np.array(
+    [0.0, 42.5, 99.0, 300.0, DCGM_FP64_BLANK, float("nan")],
+    dtype=np.float64,
+  )
   out = nan_out_dcgm_numeric_blanks(arr)
   assert out[0] == 0.0
   assert out[1] == 42.5

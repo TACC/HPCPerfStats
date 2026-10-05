@@ -12,30 +12,30 @@ from __future__ import annotations
 import os
 import socket
 import time
-from typing import Mapping, Tuple
+from collections.abc import Mapping
 
 
 def resolve_postgres_wait_target(
   env: Mapping[str, str] | None = None,
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
   """
   Return (host, port) that startup scripts should wait on.
-  
+
   Precedence:
   1. `POSTGRES_HOST` / `POSTGRES_PORT` if set
   2. `DB_HOST` / `DB_PORT` if set
   3. values from `hpcperfstats.ini` via `hpcperfstats.dbload.lib.conf_parser`
-  
+
   Args:
     env (Mapping[str, str] | None): One of ``Mapping[str, str]``, ``None``.
-  
+
   Returns:
     Tuple[str, str]: Tuple[str, str] produced by this call.
-  
+
   Raises:
     ValueError: Raised when ``resolve_postgres_wait_target`` hits a
     ``ValueError`` failure path.
-  
+
   Examples:
     >>> resolve_postgres_wait_target(None)  # doctest: +SKIP
   """
@@ -66,16 +66,16 @@ def resolve_postgres_wait_target(
 def can_resolve_host_port(host: str, port: str) -> bool:
   """
   Return True if `host:port` is resolvable via getaddrinfo.
-  
+
   Note: this does NOT test TCP connectivity; it's only DNS/name resolution.
-  
+
   Args:
     host (str): String for host.
     port (str): String for port.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> can_resolve_host_port("x", "x")  # doctest: +SKIP
   """
@@ -95,20 +95,20 @@ def wait_for_host_port_resolution(
 ) -> None:
   """
   Wait until DNS/name resolution for `host:port` succeeds.
-  
+
   Args:
     host (str): String for host.
     port (str): String for port.
     timeout_seconds (int): Integer value for timeout seconds.
     interval_seconds (float): Floating-point value for interval seconds.
-  
+
   Returns:
     None
-  
+
   Raises:
     TimeoutError: Raised when ``wait_for_host_port_resolution`` hits a
     ``TimeoutError`` failure path.
-  
+
   Examples:
     >>> wait_for_host_port_resolution("x", "x", 0, 0)  # doctest: +SKIP
   """
@@ -119,4 +119,3 @@ def wait_for_host_port_resolution(
     if time.time() >= deadline:
       raise TimeoutError(f"Timed out waiting to resolve {host}:{port}")
     time.sleep(interval_seconds)
-

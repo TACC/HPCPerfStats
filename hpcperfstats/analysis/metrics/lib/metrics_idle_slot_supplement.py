@@ -34,7 +34,7 @@ def estimated_sample_count_for_job(
   """
   try:
     hosts = int(nhosts) if nhosts is not None else 1
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     hosts = 1
   hosts = max(1, hosts)
   if runtime_s is None:
@@ -42,10 +42,10 @@ def estimated_sample_count_for_job(
   else:
     try:
       rt = float(runtime_s)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
       rt = float(unknown_runtime_s)
   rt = max(0.0, rt)
-  minutes = max(1, int(math.ceil(rt / 60.0))) if rt > 0 else 1
+  minutes = max(1, math.ceil(rt / 60.0)) if rt > 0 else 1
   return max(1, hosts * minutes)
 
 
@@ -73,7 +73,7 @@ def resolve_nhosts_for_ref(
   """
   try:
     n = int(nhosts) if nhosts is not None else 0
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     n = 0
   if n > 0:
     return n
@@ -108,12 +108,12 @@ def sample_count_for_ref(
   if existing is not None:
     try:
       return max(1, int(existing))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
       pass
   return estimated_sample_count_for_job(
-      getattr(ref, "nhosts", None),
-      getattr(ref, "runtime_s", None),
-      unknown_runtime_s=unknown_runtime_s,
+    getattr(ref, "nhosts", None),
+    getattr(ref, "runtime_s", None),
+    unknown_runtime_s=unknown_runtime_s,
   )
 
 
@@ -145,20 +145,29 @@ def pop_supplement_refs_from_ready_queue(
   Examples:
     >>> from collections import deque
     >>> from types import SimpleNamespace
-    >>> q = deque([
+    >>> q = deque(
+    ...   [
     ...     SimpleNamespace(jid="big", estimated_sample_count=90000),
     ...     SimpleNamespace(jid="small", estimated_sample_count=10),
-    ... ])
-    >>> [r.jid for r in pop_supplement_refs_from_ready_queue(
-    ...     q, max_n=1, soft_max=10000, hard_max=80000,
-    ...     original_batch_still_inflight=True)]
+    ...   ]
+    ... )
+    >>> [
+    ...   r.jid
+    ...   for r in pop_supplement_refs_from_ready_queue(
+    ...     q,
+    ...     max_n=1,
+    ...     soft_max=10000,
+    ...     hard_max=80000,
+    ...     original_batch_still_inflight=True,
+    ...   )
+    ... ]
     ['small']
   """
   if (
-      not original_batch_still_inflight
-      or max_n <= 0
-      or ready_queue is None
-      or not ready_queue
+    not original_batch_still_inflight
+    or max_n <= 0
+    or ready_queue is None
+    or not ready_queue
   ):
     return []
   soft = max(1, int(soft_max))
@@ -207,9 +216,9 @@ def pop_supplement_refs_from_ready_queue(
   taken, remaining = _select(lambda s: s < soft, items, [])
   if len(taken) < limit:
     taken, remaining = _select(
-        lambda s: soft <= s < hard,
-        remaining,
-        taken,
+      lambda s: soft <= s < hard,
+      remaining,
+      taken,
     )
   for ref in remaining:
     if hasattr(ready_queue, "append"):

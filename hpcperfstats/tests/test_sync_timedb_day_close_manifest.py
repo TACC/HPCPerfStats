@@ -1,4 +1,5 @@
 """Regression tests for DayCloseManifestCoordinator manifest/enqueue shim."""
+
 from __future__ import annotations
 
 import json
@@ -7,7 +8,9 @@ import time
 
 import pytest
 
-from hpcperfstats.dbload.lib import sync_timedb_day_close_manifest as async_dc_mod
+from hpcperfstats.dbload.lib import (
+  sync_timedb_day_close_manifest as async_dc_mod,
+)
 
 
 @pytest.mark.django_db(databases=[])
@@ -18,22 +21,22 @@ def test_submit_day_close_does_not_deadlock_on_manifest_touch(tmp_path):
   archive_dir = str(tmp_path / "archive")
   os.makedirs(archive_dir)
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
-      enqueue_day_close_fn=lambda *_a, **_k: True,
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
+    enqueue_day_close_fn=lambda *_a, **_k: True,
   )
   tar_path = str(tmp_path / "daily" / "2020-01-01.tar")
   os.makedirs(os.path.dirname(tar_path), exist_ok=True)
   with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
     fut = pool.submit(
-        coord.enqueue_day_close,
-        tar_path,
-        reason="test",
-        disqualified_daily_tars=set(),
+      coord.enqueue_day_close,
+      tar_path,
+      reason="test",
+      disqualified_daily_tars=set(),
     )
     assert fut.result(timeout=2.0) is True
 
@@ -53,13 +56,13 @@ def test_submit_day_close_enqueues_via_janitor_fn(tmp_path):
     return True
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=log_fn,
-      get_disqualified_daily_tars=lambda: set(),
-      enqueue_day_close_fn=enqueue_fn,
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=log_fn,
+    get_disqualified_daily_tars=lambda: set(),
+    enqueue_day_close_fn=enqueue_fn,
   )
   tar_path = str(tmp_path / "daily" / "2020-01-01.tar")
   os.makedirs(os.path.dirname(tar_path), exist_ok=True)
@@ -84,14 +87,14 @@ def test_submit_day_close_idempotent_when_queued(tmp_path):
     return True
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
-      get_inflight_tar_paths_fn=lambda: set(debt_heap),
-      enqueue_day_close_fn=enqueue_fn,
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
+    get_inflight_tar_paths_fn=lambda: set(debt_heap),
+    enqueue_day_close_fn=enqueue_fn,
   )
   tar_path = os.path.normpath(str(tmp_path / "daily" / "2020-01-02.tar"))
   os.makedirs(os.path.dirname(tar_path), exist_ok=True)
@@ -108,44 +111,50 @@ def test_submit_day_close_skips_disqualified(tmp_path):
   os.makedirs(os.path.dirname(tar_path), exist_ok=True)
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: {tar_path},
-      enqueue_day_close_fn=lambda *_a, **_k: True,
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: {tar_path},
+    enqueue_day_close_fn=lambda *_a, **_k: True,
   )
   assert coord.enqueue_day_close(tar_path, reason="test") is False
 
 
 @pytest.mark.django_db(databases=[])
-def test_stale_manifest_recovery_downgrades_raw_delete_pending(tmp_path, monkeypatch):
+def test_stale_manifest_recovery_downgrades_raw_delete_pending(
+  tmp_path, monkeypatch
+):
   archive_dir = str(tmp_path / "archive")
   os.makedirs(archive_dir)
   manifest_path = async_dc_mod.manifest_path(archive_dir)
   tar_norm = os.path.normpath("/tmp/daily/2020-04-15.tar")
   payload = {
-      "version": 1,
-      "entries": {
-          tar_norm: {
-              "status": "raw_delete_pending",
-              "last_progress": "raw_delete_pending",
-              "last_progress_at": time.time() - 10_000,
-          },
+    "version": 1,
+    "entries": {
+      tar_norm: {
+        "status": "raw_delete_pending",
+        "last_progress": "raw_delete_pending",
+        "last_progress_at": time.time() - 10_000,
       },
+    },
   }
   with open(manifest_path, "w", encoding="utf-8") as fh:
     json.dump(payload, fh)
 
-  monkeypatch.setattr(async_dc_mod.cfg, "get_sync_day_close_manifest_stale_seconds", lambda: 1.0)
+  monkeypatch.setattr(
+    async_dc_mod.cfg,
+    "get_sync_day_close_manifest_stale_seconds",
+    lambda: 1.0,
+  )
   async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
   )
   entry = async_dc_mod._load_manifest(manifest_path)["entries"][tar_norm]
   assert entry["status"] == "deferred"
@@ -155,12 +164,12 @@ def test_stale_manifest_recovery_downgrades_raw_delete_pending(tmp_path, monkeyp
 @pytest.mark.django_db(databases=[])
 def test_reconcile_supervisor_raw_delete_pending_gone(tmp_path):
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=str(tmp_path / "archive"),
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
+    archive_data_dir=str(tmp_path / "archive"),
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
   )
   assert not hasattr(coord, "reconcile_supervisor_raw_delete_pending")
   assert not hasattr(coord, "tar_paths_raw_delete_pending")
@@ -176,13 +185,13 @@ def test_active_or_submitted_merges_manifest_and_inflight_fn(tmp_path):
   inflight = {tar_b}
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
-      get_inflight_tar_paths_fn=lambda: inflight,
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
+    get_inflight_tar_paths_fn=lambda: inflight,
   )
   coord._set_entry_status(tar_a, "queued")
   assert coord.active_or_submitted_tar_paths() == {tar_a, tar_b}
@@ -197,12 +206,12 @@ def test_finalize_complete_if_filesystem(tmp_path):
   open(zst_path, "wb").close()
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=str(tmp_path / "archive"),
-      host_name_ext="",
-      tgz_archive_dir=str(daily_dir),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
+    archive_data_dir=str(tmp_path / "archive"),
+    host_name_ext="",
+    tgz_archive_dir=str(daily_dir),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
   )
   coord._set_entry_status(tar_path, "raw_removal")
   assert coord.finalize_complete_if_filesystem(tar_path) is True
@@ -218,14 +227,14 @@ def test_submit_day_close_respects_submit_eligible_fn(tmp_path):
   logs: list[str] = []
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda msg, **_kw: logs.append(str(msg)),
-      get_disqualified_daily_tars=lambda: set(),
-      submit_eligible_fn=lambda _t: (False, "not_ready"),
-      enqueue_day_close_fn=lambda *_a, **_k: True,
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda msg, **_kw: logs.append(str(msg)),
+    get_disqualified_daily_tars=lambda: set(),
+    submit_eligible_fn=lambda _t: (False, "not_ready"),
+    enqueue_day_close_fn=lambda *_a, **_k: True,
   )
   assert coord.enqueue_day_close(tar_path, reason="test") is False
   assert any("enqueue skip" in line for line in logs)
@@ -239,13 +248,13 @@ def test_submit_day_close_no_orphan_queued_on_enqueue_failure(tmp_path):
   os.makedirs(os.path.dirname(tar_path), exist_ok=True)
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
-      enqueue_day_close_fn=lambda *_a, **_k: False,
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
+    enqueue_day_close_fn=lambda *_a, **_k: False,
   )
   assert coord.enqueue_day_close(tar_path, reason="test") is False
   with coord._lock:
@@ -264,13 +273,13 @@ def test_unified_inflight_cap_counts_manifest_and_debt(tmp_path):
   inflight = {tar_debt}
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
-      get_inflight_tar_paths_fn=lambda: inflight,
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
+    get_inflight_tar_paths_fn=lambda: inflight,
   )
   coord._set_entry_status(tar_manifest, "queued")
   active = coord.active_or_submitted_tar_paths()
@@ -289,13 +298,13 @@ def test_active_worker_tar_paths_excludes_deferred_waiting_on_ingest(tmp_path):
   os.makedirs(os.path.dirname(tar_deferred), exist_ok=True)
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
-      get_inflight_tar_paths_fn=lambda: {tar_deferred, tar_debt_only},
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
+    get_inflight_tar_paths_fn=lambda: {tar_deferred, tar_debt_only},
   )
   coord._set_entry_status(tar_deferred, "deferred", detail="waiting_on_ingest")
   coord._set_entry_status(tar_worker, "queued")
@@ -326,15 +335,17 @@ def test_discover_cap_excludes_debt_heap_from_inflight(tmp_path):
   os.makedirs(os.path.dirname(tar_debt), exist_ok=True)
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
-      get_inflight_tar_paths_fn=lambda: {tar_debt},
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
+    get_inflight_tar_paths_fn=lambda: {tar_debt},
   )
-  discover_cap = coord.active_discover_cap_tar_paths(live_worker_tars={tar_live})
+  discover_cap = coord.active_discover_cap_tar_paths(
+    live_worker_tars={tar_live}
+  )
   assert tar_live in discover_cap
   assert tar_debt not in discover_cap
 
@@ -352,14 +363,14 @@ def test_enqueue_day_close_requeues_when_manifest_queued_without_debt(tmp_path):
     return True
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
-      get_inflight_tar_paths_fn=lambda: set(),
-      enqueue_day_close_fn=_enqueue_fn,
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
+    get_inflight_tar_paths_fn=lambda: set(),
+    enqueue_day_close_fn=_enqueue_fn,
   )
   coord._set_entry_status(tar_path, "queued")
   assert coord.enqueue_day_close(tar_path, reason="ghost_test")
@@ -379,19 +390,19 @@ def test_reconcile_manifest_ghost_slot_downgrades_or_reenqueues(tmp_path):
     return True
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
-      get_inflight_tar_paths_fn=lambda: set(),
-      enqueue_day_close_fn=_enqueue_fn,
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
+    get_inflight_tar_paths_fn=lambda: set(),
+    enqueue_day_close_fn=_enqueue_fn,
   )
   coord._set_entry_status(tar_path, "queued")
   fixed = coord.reconcile_manifest_with_debt_heap(
-      debt_tar_paths=set(),
-      live_worker_tars=set(),
+    debt_tar_paths=set(),
+    live_worker_tars=set(),
   )
   assert fixed == 1
   assert reenqueued == [(tar_path, "ghost_manifest_reconcile")]
@@ -405,12 +416,12 @@ def test_defer_for_ingest_handoff_creates_entry_when_missing(tmp_path):
   os.makedirs(os.path.dirname(tar_path), exist_ok=True)
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
   )
   coord.defer_for_ingest_handoff(tar_path)
   snap = coord.entry_progress_snapshot(tar_path)
@@ -425,12 +436,12 @@ def test_clear_deferred_waiting_on_ingest_removes_entry(tmp_path):
   os.makedirs(os.path.dirname(tar_path), exist_ok=True)
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
   )
   coord.defer_for_ingest_handoff(tar_path)
   assert coord.clear_deferred_waiting_on_ingest(tar_path) is True
@@ -452,19 +463,19 @@ def test_reconcile_manifest_ghost_sets_queued_after_debt_push(tmp_path):
     return True
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
-      get_inflight_tar_paths_fn=lambda: set(),
-      enqueue_day_close_fn=_enqueue_fn,
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
+    get_inflight_tar_paths_fn=lambda: set(),
+    enqueue_day_close_fn=_enqueue_fn,
   )
   coord._set_entry_status(tar_path, "queued")
   fixed = coord.reconcile_manifest_with_debt_heap(
-      debt_tar_paths=set(),
-      live_worker_tars=set(),
+    debt_tar_paths=set(),
+    live_worker_tars=set(),
   )
   assert fixed == 1
   assert reenqueued == [(tar_path, "ghost_manifest_reconcile")]
@@ -475,7 +486,9 @@ def test_reconcile_manifest_ghost_sets_queued_after_debt_push(tmp_path):
 
 
 @pytest.mark.django_db(databases=[])
-def test_stale_manifest_recovery_reenqueues_and_sets_queued(tmp_path, monkeypatch):
+def test_stale_manifest_recovery_reenqueues_and_sets_queued(
+  tmp_path, monkeypatch
+):
   """Worker-slot stale recovery must restore queued + debt, not limbo deferred."""
   archive_dir = str(tmp_path / "archive")
   os.makedirs(archive_dir)
@@ -483,14 +496,14 @@ def test_stale_manifest_recovery_reenqueues_and_sets_queued(tmp_path, monkeypatc
   tar_norm = os.path.normpath(str(tmp_path / "daily" / "2020-06-07.tar"))
   os.makedirs(os.path.dirname(tar_norm), exist_ok=True)
   payload = {
-      "version": 1,
-      "entries": {
-          tar_norm: {
-              "status": "queued",
-              "last_progress": "queued",
-              "last_progress_at": time.time() - 10_000,
-          },
+    "version": 1,
+    "entries": {
+      tar_norm: {
+        "status": "queued",
+        "last_progress": "queued",
+        "last_progress_at": time.time() - 10_000,
       },
+    },
   }
   with open(manifest_path, "w", encoding="utf-8") as fh:
     json.dump(payload, fh)
@@ -502,17 +515,19 @@ def test_stale_manifest_recovery_reenqueues_and_sets_queued(tmp_path, monkeypatc
     return True
 
   monkeypatch.setattr(
-      async_dc_mod.cfg, "get_sync_day_close_manifest_stale_seconds", lambda: 1.0,
+    async_dc_mod.cfg,
+    "get_sync_day_close_manifest_stale_seconds",
+    lambda: 1.0,
   )
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
-      get_inflight_tar_paths_fn=lambda: set(),
-      enqueue_day_close_fn=_enqueue_fn,
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
+    get_inflight_tar_paths_fn=lambda: set(),
+    enqueue_day_close_fn=_enqueue_fn,
   )
   assert enqueued == [(tar_norm, "stale_manifest_recovery")]
   entry = async_dc_mod._load_manifest(coord._manifest_path)["entries"][tar_norm]
@@ -522,7 +537,8 @@ def test_stale_manifest_recovery_reenqueues_and_sets_queued(tmp_path, monkeypatc
 
 @pytest.mark.django_db(databases=[])
 def test_stale_manifest_recovery_restores_queued_when_already_on_heap(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """Debt push False (already on heap) must still clear limbo deferred."""
   archive_dir = str(tmp_path / "archive")
@@ -531,14 +547,14 @@ def test_stale_manifest_recovery_restores_queued_when_already_on_heap(
   tar_norm = os.path.normpath(str(tmp_path / "daily" / "2020-06-07.tar"))
   os.makedirs(os.path.dirname(tar_norm), exist_ok=True)
   payload = {
-      "version": 1,
-      "entries": {
-          tar_norm: {
-              "status": "queued",
-              "last_progress": "queued",
-              "last_progress_at": time.time() - 10_000,
-          },
+    "version": 1,
+    "entries": {
+      tar_norm: {
+        "status": "queued",
+        "last_progress": "queued",
+        "last_progress_at": time.time() - 10_000,
       },
+    },
   }
   with open(manifest_path, "w", encoding="utf-8") as fh:
     json.dump(payload, fh)
@@ -547,17 +563,19 @@ def test_stale_manifest_recovery_restores_queued_when_already_on_heap(
     return False
 
   monkeypatch.setattr(
-      async_dc_mod.cfg, "get_sync_day_close_manifest_stale_seconds", lambda: 1.0,
+    async_dc_mod.cfg,
+    "get_sync_day_close_manifest_stale_seconds",
+    lambda: 1.0,
   )
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
-      get_inflight_tar_paths_fn=lambda: {tar_norm},
-      enqueue_day_close_fn=_enqueue_fn,
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
+    get_inflight_tar_paths_fn=lambda: {tar_norm},
+    enqueue_day_close_fn=_enqueue_fn,
   )
   entry = async_dc_mod._load_manifest(coord._manifest_path)["entries"][tar_norm]
   assert entry["status"] == "queued"
@@ -578,21 +596,23 @@ def test_enqueue_promotes_non_ingest_deferred_already_on_heap(tmp_path):
     return True
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
-      get_inflight_tar_paths_fn=lambda: {tar_path},
-      enqueue_day_close_fn=_enqueue_fn,
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
+    get_inflight_tar_paths_fn=lambda: {tar_path},
+    enqueue_day_close_fn=_enqueue_fn,
   )
   coord._set_entry_status(
-      tar_path,
-      "deferred",
-      detail="stale_manifest_recovery",
+    tar_path,
+    "deferred",
+    detail="stale_manifest_recovery",
   )
-  ok, reason = coord.enqueue_day_close_result(tar_path, reason="discover_ready_tick")
+  ok, reason = coord.enqueue_day_close_result(
+    tar_path, reason="discover_ready_tick"
+  )
   assert ok is True
   assert reason != "already_inflight"
   snap = coord.entry_progress_snapshot(tar_path)
@@ -610,21 +630,23 @@ def test_enqueue_does_not_promote_waiting_on_ingest_deferred(tmp_path):
   os.makedirs(os.path.dirname(tar_path), exist_ok=True)
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
-      get_inflight_tar_paths_fn=lambda: {tar_path},
-      enqueue_day_close_fn=lambda *_a, **_k: True,
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
+    get_inflight_tar_paths_fn=lambda: {tar_path},
+    enqueue_day_close_fn=lambda *_a, **_k: True,
   )
   coord._set_entry_status(
-      tar_path,
-      "deferred",
-      detail="waiting_on_ingest",
+    tar_path,
+    "deferred",
+    detail="waiting_on_ingest",
   )
-  ok, reason = coord.enqueue_day_close_result(tar_path, reason="discover_ready_tick")
+  ok, reason = coord.enqueue_day_close_result(
+    tar_path, reason="discover_ready_tick"
+  )
   assert ok is False
   assert reason == "deferred_waiting_on_ingest"
   assert coord.entry_progress_snapshot(tar_path).get("status") == "deferred"
@@ -640,13 +662,13 @@ def test_active_or_submitted_excludes_deferred_waiting_on_ingest(tmp_path):
   os.makedirs(os.path.dirname(tar_deferred), exist_ok=True)
 
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
-      get_inflight_tar_paths_fn=lambda: {tar_deferred},
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
+    get_inflight_tar_paths_fn=lambda: {tar_deferred},
   )
   coord._set_entry_status(tar_deferred, "deferred", detail="waiting_on_ingest")
   coord._set_entry_status(tar_queued, "queued")
@@ -663,13 +685,13 @@ def test_touch_progress_updates_last_progress_at(tmp_path):
   tar_path = os.path.normpath(str(tmp_path / "daily" / "2020-06-08.tar"))
   os.makedirs(os.path.dirname(tar_path), exist_ok=True)
   coord = async_dc_mod.DayCloseManifestCoordinator(
-      archive_data_dir=archive_dir,
-      host_name_ext="",
-      tgz_archive_dir=str(tmp_path / "daily"),
-      local_tz=None,
-      log_fn=lambda *_a, **_k: None,
-      get_disqualified_daily_tars=lambda: set(),
-      enqueue_day_close_fn=lambda *_a, **_k: True,
+    archive_data_dir=archive_dir,
+    host_name_ext="",
+    tgz_archive_dir=str(tmp_path / "daily"),
+    local_tz=None,
+    log_fn=lambda *_a, **_k: None,
+    get_disqualified_daily_tars=lambda: set(),
+    enqueue_day_close_fn=lambda *_a, **_k: True,
   )
   coord._set_entry_status(tar_path, "queued", submitted_at=1.0)
   coord.touch_progress("seal", tar_path=tar_path)

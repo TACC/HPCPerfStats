@@ -1,4 +1,5 @@
 """Regression tests for sync_timedb persistence contract API."""
+
 from __future__ import annotations
 
 import json
@@ -9,12 +10,12 @@ import pytest
 
 from hpcperfstats.dbload.lib import sync_timedb_persistence as persist_mod
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
-    PERSISTENCE_ARTIFACT_REGISTRY,
-    SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION,
-    ensure_persistence_contract,
-    load_persistence_document,
-    reset_sync_timedb_persistence,
-    save_persistence_document,
+  PERSISTENCE_ARTIFACT_REGISTRY,
+  SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION,
+  ensure_persistence_contract,
+  load_persistence_document,
+  reset_sync_timedb_persistence,
+  save_persistence_document,
 )
 
 
@@ -23,7 +24,9 @@ def _touch_artifacts(archive_dir: str) -> None:
     path = os.path.join(archive_dir, rel)
     if kind in ("day_raw_removal_dir", "archive_members_store_dir"):
       os.makedirs(path, exist_ok=True)
-      with open(os.path.join(path, "2020-01-01.json"), "w", encoding="utf-8") as handle:
+      with open(
+        os.path.join(path, "2020-01-01.json"), "w", encoding="utf-8"
+      ) as handle:
         handle.write("{}")
     else:
       parent = os.path.dirname(path)
@@ -46,7 +49,9 @@ def test_stale_contract_resets_all_registered_artifacts(tmp_path):
     json.dump({"contract_version": 1, "written_at": 0.0}, handle)
 
   logs: list[str] = []
-  reset_ran = ensure_persistence_contract(archive_dir, log_fn=lambda msg, **_kw: logs.append(str(msg)))
+  reset_ran = ensure_persistence_contract(
+    archive_dir, log_fn=lambda msg, **_kw: logs.append(str(msg))
+  )
   assert reset_ran is True
   for kind, rel in PERSISTENCE_ARTIFACT_REGISTRY.items():
     path = os.path.join(archive_dir, rel)
@@ -64,14 +69,18 @@ def test_stale_contract_resets_all_registered_artifacts(tmp_path):
 def test_matching_contract_preserves_artifacts(tmp_path):
   archive_dir = str(tmp_path / "archive")
   os.makedirs(archive_dir)
-  checkpoint_path = os.path.join(archive_dir, PERSISTENCE_ARTIFACT_REGISTRY["ingest_checkpoint"])
+  checkpoint_path = os.path.join(
+    archive_dir, PERSISTENCE_ARTIFACT_REGISTRY["ingest_checkpoint"]
+  )
   ensure_persistence_contract(archive_dir, log_fn=lambda *_a, **_kw: None)
   save_persistence_document(
-      checkpoint_path,
-      "ingest_checkpoint",
-      [{"path": "/keep", "size": 9, "mtime": 8}],
+    checkpoint_path,
+    "ingest_checkpoint",
+    [{"path": "/keep", "size": 9, "mtime": 8}],
   )
-  loaded = load_persistence_document(checkpoint_path, "ingest_checkpoint", default=[])
+  loaded = load_persistence_document(
+    checkpoint_path, "ingest_checkpoint", default=[]
+  )
   assert loaded == [{"path": "/keep", "size": 9, "mtime": 8}]
 
 
@@ -92,18 +101,18 @@ def test_load_rejects_unsupported_schema_version(tmp_path):
   path = str(tmp_path / "state.json")
   with open(path, "w", encoding="utf-8") as handle:
     json.dump(
-        {
-            "contract_version": SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION,
-            "schema_version": 999,
-            "entries": [{"path": "/x", "size": 1, "mtime": 2}],
-        },
-        handle,
+      {
+        "contract_version": SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION,
+        "schema_version": 999,
+        "entries": [{"path": "/x", "size": 1, "mtime": 2}],
+      },
+      handle,
     )
   logs = []
   loaded = load_persistence_document(
-      path,
-      "ingest_checkpoint",
-      log_fn=lambda msg, **_kw: logs.append(str(msg)),
+    path,
+    "ingest_checkpoint",
+    log_fn=lambda msg, **_kw: logs.append(str(msg)),
   )
   assert loaded == []
   assert any("reject" in line for line in logs)
@@ -139,8 +148,8 @@ def test_persistence_artifact_registry_matches_dbload_sidecars():
   # Every registered file path must appear somewhere in dbload modules.
   for rel in registry_paths:
     assert rel in basenames or rel.rstrip("/") in {
-        b.rstrip("/") for b in basenames
-    }, "registry path missing from dbload sidecar references: %s" % rel
+      b.rstrip("/") for b in basenames
+    }, f"registry path missing from dbload sidecar references: {rel}"
 
 
 @pytest.mark.django_db(databases=[])
@@ -155,21 +164,23 @@ def test_save_json_atomic_concurrent_writers_no_enoent(tmp_path):
     try:
       for iteration in range(40):
         save_persistence_document(
-            path,
-            "archive_maint_hints",
-            {
-                "host_dirs": {},
-                "paths": {},
-                "validated_days": {},
-                "day_phases": {
-                    "/daily/%s-%s.tar" % (worker_id, iteration): "sealed",
-                },
-                "debt_queue": [{
-                    "kind": "DAY_CLOSE",
-                    "tar_path": "/daily/%s-%s.tar" % (worker_id, iteration),
-                }],
+          path,
+          "archive_maint_hints",
+          {
+            "host_dirs": {},
+            "paths": {},
+            "validated_days": {},
+            "day_phases": {
+              f"/daily/{worker_id}-{iteration}.tar": "sealed",
             },
-            compact=True,
+            "debt_queue": [
+              {
+                "kind": "DAY_CLOSE",
+                "tar_path": f"/daily/{worker_id}-{iteration}.tar",
+              }
+            ],
+          },
+          compact=True,
         )
     except BaseException as exc:
       errors.append(exc)
@@ -183,7 +194,9 @@ def test_save_json_atomic_concurrent_writers_no_enoent(tmp_path):
   assert os.path.isfile(path)
   with open(path, encoding="utf-8") as handle:
     payload = json.load(handle)
-  assert payload.get("contract_version") == SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION
+  assert (
+    payload.get("contract_version") == SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION
+  )
   assert "schema_version" in payload
   assert "version" not in payload
   assert load_persistence_document(path, "archive_maint_hints") is not None
@@ -214,14 +227,14 @@ def test_persistence_contract_bump_clears_zero_host_marks(tmp_path):
   contract_path = persist_mod.persistence_contract_path(archive_dir)
   with open(contract_path, "w", encoding="utf-8") as handle:
     json.dump(
-        {
-            "contract_version": SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION - 1,
-            "written_at": 0.0,
-        },
-        handle,
+      {
+        "contract_version": SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION - 1,
+        "written_at": 0.0,
+      },
+      handle,
     )
   reset_ran = ensure_persistence_contract(
-      archive_dir, log_fn=lambda *_a, **_kw: None
+    archive_dir, log_fn=lambda *_a, **_kw: None
   )
   assert reset_ran is True
   assert not os.path.isfile(mark_path)

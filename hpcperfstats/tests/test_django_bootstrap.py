@@ -1,4 +1,5 @@
 """Unit tests for the shared Django bootstrap helper (thread safety)."""
+
 from __future__ import annotations
 
 import threading
@@ -50,12 +51,12 @@ def test_ensure_django_runs_setup_once_under_thread_concurrency(monkeypatch):
     start.wait(5.0)
     try:
       django_bootstrap.ensure_django()
-    except BaseException as exc:  # noqa: BLE001 - recorded for assertion
+    except BaseException as exc:
       errors.append(exc)
 
   threads = [
-      threading.Thread(target=worker, name="bootstrap-%d" % i, daemon=True)
-      for i in range(16)
+    threading.Thread(target=worker, name="bootstrap-%d" % i, daemon=True)
+    for i in range(16)
   ]
   for thread in threads:
     thread.start()

@@ -5,9 +5,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from hpcperfstats.analysis.metrics.lib.live_host_sample_count import (
-    LiveDistinctHostTimeCount,
-    LiveJidScopedDistinctHostTimeCount,
-    live_distinct_host_time_count_expression,
+  LiveDistinctHostTimeCount,
+  LiveJidScopedDistinctHostTimeCount,
+  live_distinct_host_time_count_expression,
 )
 
 
@@ -16,7 +16,7 @@ def _fake_pg_connection():
   conn.vendor = "postgresql"
 
   def quote_name(name):
-    return '"%s"' % str(name).replace('"', '""')
+    return '"{}"'.format(str(name).replace('"', '""'))
 
   conn.ops.quote_name = quote_name
   return conn
@@ -42,7 +42,7 @@ def test_live_jid_scoped_distinct_host_time_count_as_sql_postgresql():
   sql, params = expr.as_sql(MagicMock(), _fake_pg_connection())
   assert params == []
   assert 'h."jid" = "job_data"."jid"' in sql
-  assert 'unnest' not in sql.lower()
+  assert "unnest" not in sql.lower()
 
 
 def test_live_distinct_host_time_count_as_sql_non_postgresql_raises():
@@ -61,15 +61,21 @@ def test_live_distinct_factory_legacy(monkeypatch):
 
 
 def test_live_distinct_factory_default_jid_scoped(monkeypatch):
-  monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
+  monkeypatch.delenv(
+    "HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False
+  )
   expr = live_distinct_host_time_count_expression(".x")
   assert type(expr) is LiveJidScopedDistinctHostTimeCount
 
 
 def test_live_distinct_factory_reloads_env_each_call(monkeypatch):
-  monkeypatch.delenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False)
+  monkeypatch.delenv(
+    "HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False
+  )
   assert type(live_distinct_host_time_count_expression(".x")) is (
-      LiveJidScopedDistinctHostTimeCount)
+    LiveJidScopedDistinctHostTimeCount
+  )
   monkeypatch.setenv("HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", "1")
   assert type(live_distinct_host_time_count_expression(".x")) is (
-      LiveDistinctHostTimeCount)
+    LiveDistinctHostTimeCount
+  )

@@ -5,12 +5,12 @@ lib). Note: Current job_data has no exe, exec_path, cwd, threads or a link to
 Libraries. XALT run data is still queried in views. This script optionally
 iterates by date and logs xalt runs for jobs.
 """
-from __future__ import annotations
 
-from typing import Any
+from __future__ import annotations
 
 import sys
 from datetime import datetime
+from typing import Any
 
 from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 
@@ -29,15 +29,15 @@ def run_update_xalt_for_range(
 ) -> None:
   """
   Iterate job_data by end date and log XALT exec_path lines (for operators).
-  
+
   Args:
     start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
     end (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
     log_fn (Any): Callable invoked by this helper.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> run_update_xalt_for_range(None, None, None)  # doctest: +SKIP
   """
@@ -45,7 +45,8 @@ def run_update_xalt_for_range(
     directory = date.strftime("%Y-%m-%d")
     log_fn(directory)
     jobs_on_date = job_data.objects.filter(end_time__date=date).values_list(
-        "jid", flat=True)
+      "jid", flat=True
+    )
     for jid in jobs_on_date:
       runs = list(run.objects.using("xalt").filter(job_id=jid))
       if not runs:
@@ -53,19 +54,19 @@ def run_update_xalt_for_range(
       for r in runs:
         if "usr" in r.exec_path.split("/"):
           continue
-        log_fn("  jid=%s exec_path=%s" % (jid, r.exec_path))
+        log_fn(f"  jid={jid} exec_path={r.exec_path}")
 
 
 def main(argv: Any | None = None) -> None:
   """
   Run this module's command-line entrypoint.
-  
+
   Args:
     argv (Any | None): One of ``Any``, ``None``.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> main(None)  # doctest: +SKIP
   """

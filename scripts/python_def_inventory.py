@@ -24,9 +24,10 @@ import ast
 import json
 import re
 import sys
+from collections.abc import Iterator, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any
 
 SKIP_DIR_NAMES = frozenset(
   {
@@ -101,7 +102,7 @@ BARE_RAISE_SENTINEL = "Exception"
 class DefRecord:
   """
   One inventoried function or method.
-  
+
   Attributes:
     doc_ok: Attribute.
     excluded: Attribute.
@@ -136,10 +137,10 @@ class DefRecord:
   def ok(self) -> bool:
     """
     Return True when excluded or fully compliant.
-    
+
     Returns:
       bool: True or False for this check.
-    
+
     Examples:
       >>> DefRecord().ok()  # doctest: +SKIP
     """
@@ -151,13 +152,13 @@ class DefRecord:
 def _repo_label(root: Path) -> str:
   """
   Map a scan root to a stable inventory repo label.
-  
+
   Args:
     root (Path): String for root.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> _repo_label("x")  # doctest: +SKIP
   """
@@ -170,13 +171,13 @@ def _repo_label(root: Path) -> str:
 def exclusion_reason_for_path(rel_path: Path) -> str | None:
   """
   Return an exclusion reason for a relative path, if any.
-  
+
   Args:
     rel_path (Path): String for rel path.
-  
+
   Returns:
     str | None: One of ``str``, ``None`` depending on inputs/branch.
-  
+
   Examples:
     >>> exclusion_reason_for_path("x")  # doctest: +SKIP
   """
@@ -196,19 +197,22 @@ def exclusion_reason_for_path(rel_path: Path) -> str | None:
 def iter_python_files(root: Path) -> Iterator[Path]:
   """
   Yield ``*.py`` files under root, skipping cache/vendor dirs.
-  
+
   Args:
     root (Path): String for root.
-  
+
   Yields:
     Iterator[Path]: Iterator[Path] produced by this call.
-  
+
   Examples:
     >>> iter_python_files("x")  # doctest: +SKIP
   """
   root = root.resolve()
   for path in sorted(root.rglob("*.py")):
-    if any(part in SKIP_DIR_NAMES or part.endswith(".egg-info") for part in path.parts):
+    if any(
+      part in SKIP_DIR_NAMES or part.endswith(".egg-info")
+      for part in path.parts
+    ):
       continue
     yield path
 
@@ -216,13 +220,13 @@ def iter_python_files(root: Path) -> Iterator[Path]:
 def _ann_present(node: ast.AST | None) -> bool:
   """
   Return True when an annotation AST node is present.
-  
+
   Args:
     node (ast.AST | None): One of ``ast.AST``, ``None``.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> _ann_present(None)  # doctest: +SKIP
   """
@@ -234,14 +238,14 @@ def documentable_params(
 ) -> list[str]:
   """
   List parameter names that must appear in Args (excludes self/cls).
-  
+
   Args:
     fn (ast.FunctionDef | ast.AsyncFunctionDef): One of ``ast.FunctionDef``,
     ``ast.AsyncFunctionDef``.
-  
+
   Returns:
     list[str]: list[str] produced by this call.
-  
+
   Examples:
     >>> documentable_params(None)  # doctest: +SKIP
   """
@@ -268,14 +272,14 @@ def signature_annotation_issues(
 ) -> list[str]:
   """
   Return issues for missing parameter or return annotations.
-  
+
   Args:
     fn (ast.FunctionDef | ast.AsyncFunctionDef): One of ``ast.FunctionDef``,
     ``ast.AsyncFunctionDef``.
-  
+
   Returns:
     list[str]: list[str] produced by this call.
-  
+
   Examples:
     >>> signature_annotation_issues(None)  # doctest: +SKIP
   """
@@ -304,14 +308,14 @@ def signature_annotation_issues(
 def _section_body(doc: str, header: str) -> str:
   """
   Extract the body text of a Google docstring section.
-  
+
   Args:
     doc (str): String for doc.
     header (str): String for header.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> _section_body("x", "x")  # doctest: +SKIP
   """
@@ -346,14 +350,14 @@ def _section_body(doc: str, header: str) -> str:
 def _is_generator(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
   """
   Return True if the function body yields values.
-  
+
   Args:
     fn (ast.FunctionDef | ast.AsyncFunctionDef): One of ``ast.FunctionDef``,
     ``ast.AsyncFunctionDef``.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> _is_generator(None)  # doctest: +SKIP
   """
@@ -361,24 +365,25 @@ def _is_generator(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
   class _YieldFinder(ast.NodeVisitor):
     """
     Internal helper to handle YieldFinder.
-    
+
     Subclasses ``NodeVisitor``, extending that type with this class's fields and
     behavior.
-    
+
     Subclasses ``NodeVisitor``, extending that type with this class's fields and
     behavior.
-    
+
     Attributes:
       _depth: ``_depth``.
       found: ``found``.
     """
+
     def __init__(self) -> None:
       """
       Initialize a new instance.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> _YieldFinder()  # doctest: +SKIP
       """
@@ -388,13 +393,13 @@ def _is_generator(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
       """
       Visit a ``FunctionDef`` node while walking the AST.
-      
+
       Args:
         node (ast.FunctionDef): Node.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> _YieldFinder().visit_FunctionDef(None)  # doctest: +SKIP
       """
@@ -407,13 +412,13 @@ def _is_generator(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
       """
       Visit a ``AsyncFunctionDef`` node while walking the AST.
-      
+
       Args:
         node (ast.AsyncFunctionDef): Node.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> _YieldFinder().visit_AsyncFunctionDef(None)  # doctest: +SKIP
       """
@@ -425,13 +430,13 @@ def _is_generator(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     def visit_Yield(self, node: ast.Yield) -> None:
       """
       Visit a ``Yield`` node while walking the AST.
-      
+
       Args:
         node (ast.Yield): Node.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> _YieldFinder().visit_Yield(None)  # doctest: +SKIP
       """
@@ -441,13 +446,13 @@ def _is_generator(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     def visit_YieldFrom(self, node: ast.YieldFrom) -> None:
       """
       Visit a ``YieldFrom`` node while walking the AST.
-      
+
       Args:
         node (ast.YieldFrom): Node.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> _YieldFinder().visit_YieldFrom(None)  # doctest: +SKIP
       """
@@ -462,13 +467,13 @@ def _is_generator(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 def _ast_name_of(node: ast.AST | None) -> str | None:
   """
   Return a dotted/simple name for an exception type expression.
-  
+
   Args:
     node (ast.AST | None): One of ``ast.AST``, ``None``.
-  
+
   Returns:
     str | None: One of ``str``, ``None`` depending on inputs/branch.
-  
+
   Examples:
     >>> _ast_name_of(None)  # doctest: +SKIP
   """
@@ -489,17 +494,17 @@ def collect_raised_exception_names(
 ) -> list[str]:
   """
   Collect distinct exception type names raised directly in ``fn``.
-  
+
   Nested function bodies are skipped. Bare ``raise`` (no exc) maps to
   ``Exception`` when no named types are found.
-  
+
   Args:
     fn (ast.FunctionDef | ast.AsyncFunctionDef): One of ``ast.FunctionDef``,
     ``ast.AsyncFunctionDef``.
-  
+
   Returns:
     list[str]: list[str] produced by this call.
-  
+
   Examples:
     >>> collect_raised_exception_names(None)  # doctest: +SKIP
   """
@@ -507,25 +512,26 @@ def collect_raised_exception_names(
   class _RaiseFinder(ast.NodeVisitor):
     """
     Internal helper to handle RaiseFinder.
-    
+
     Subclasses ``NodeVisitor``, extending that type with this class's fields and
     behavior.
-    
+
     Subclasses ``NodeVisitor``, extending that type with this class's fields and
     behavior.
-    
+
     Attributes:
       _depth: ``_depth``.
       bare: ``bare``.
       named: ``named``.
     """
+
     def __init__(self) -> None:
       """
       Initialize a new instance.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> _RaiseFinder()  # doctest: +SKIP
       """
@@ -536,13 +542,13 @@ def collect_raised_exception_names(
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
       """
       Visit a ``FunctionDef`` node while walking the AST.
-      
+
       Args:
         node (ast.FunctionDef): Node.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> _RaiseFinder().visit_FunctionDef(None)  # doctest: +SKIP
       """
@@ -554,13 +560,13 @@ def collect_raised_exception_names(
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
       """
       Visit a ``AsyncFunctionDef`` node while walking the AST.
-      
+
       Args:
         node (ast.AsyncFunctionDef): Node.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> _RaiseFinder().visit_AsyncFunctionDef(None)  # doctest: +SKIP
       """
@@ -572,13 +578,13 @@ def collect_raised_exception_names(
     def visit_Raise(self, node: ast.Raise) -> None:
       """
       Visit a ``Raise`` node while walking the AST.
-      
+
       Args:
         node (ast.Raise): Node.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> _RaiseFinder().visit_Raise(None)  # doctest: +SKIP
       """
@@ -609,13 +615,13 @@ def collect_raised_exception_names(
 def _self_attr_name(target: ast.AST) -> str | None:
   """
   Return ``attr`` when ``target`` is ``self.attr`` / ``cls.attr``.
-  
+
   Args:
     target (ast.AST): Target.
-  
+
   Returns:
     str | None: One of ``str``, ``None`` depending on inputs/branch.
-  
+
   Examples:
     >>> _self_attr_name(None)  # doctest: +SKIP
   """
@@ -628,13 +634,13 @@ def _self_attr_name(target: ast.AST) -> str | None:
 def collect_class_instance_attrs(cls: ast.ClassDef) -> list[str]:
   """
   Harvest instance attributes from ``__init__``/``__new__`` and class fields.
-  
+
   Includes private names (leading ``_``). Class-body ``AnnAssign`` fields
   (dataclass-style) are included.
-  
+
   Returns:
     list[str]: list[str] produced by this call.
-  
+
   Examples:
     >>> collect_class_instance_attrs()  # doctest: +SKIP
   """
@@ -650,23 +656,24 @@ def collect_class_instance_attrs(cls: ast.ClassDef) -> list[str]:
     class _AttrWalk(ast.NodeVisitor):
       """
       Internal helper to handle AttrWalk.
-      
+
       Subclasses ``NodeVisitor``, extending that type with this class's fields
       and behavior.
-      
+
       Subclasses ``NodeVisitor``, extending that type with this class's fields
       and behavior.
       """
+
       def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """
         Visit a ``FunctionDef`` node while walking the AST.
-        
+
         Args:
           node (ast.FunctionDef): Node.
-        
+
         Returns:
           None
-        
+
         Examples:
           >>> _AttrWalk().visit_FunctionDef(None)  # doctest: +SKIP
         """
@@ -676,13 +683,13 @@ def collect_class_instance_attrs(cls: ast.ClassDef) -> list[str]:
       def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         """
         Visit a ``AsyncFunctionDef`` node while walking the AST.
-        
+
         Args:
           node (ast.AsyncFunctionDef): Node.
-        
+
         Returns:
           None
-        
+
         Examples:
           >>> _AttrWalk().visit_AsyncFunctionDef(None)  # doctest: +SKIP
         """
@@ -692,13 +699,13 @@ def collect_class_instance_attrs(cls: ast.ClassDef) -> list[str]:
       def visit_Assign(self, node: ast.Assign) -> None:
         """
         Visit a ``Assign`` node while walking the AST.
-        
+
         Args:
           node (ast.Assign): Node.
-        
+
         Returns:
           None
-        
+
         Examples:
           >>> _AttrWalk().visit_Assign(None)  # doctest: +SKIP
         """
@@ -710,13 +717,13 @@ def collect_class_instance_attrs(cls: ast.ClassDef) -> list[str]:
       def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         """
         Visit a ``AnnAssign`` node while walking the AST.
-        
+
         Args:
           node (ast.AnnAssign): Node.
-        
+
         Returns:
           None
-        
+
         Examples:
           >>> _AttrWalk().visit_AnnAssign(None)  # doctest: +SKIP
         """
@@ -731,15 +738,15 @@ def collect_class_instance_attrs(cls: ast.ClassDef) -> list[str]:
 def collect_module_level_attrs(tree: ast.Module) -> list[str]:
   """
   Harvest module-level assigned names (including private).
-  
+
   Skips ``__dunder__`` module attributes other than keeping ordinary ``_x``.
-  
+
   Args:
     tree (ast.Module): Tree.
-  
+
   Returns:
     list[str]: list[str] produced by this call.
-  
+
   Examples:
     >>> collect_module_level_attrs(None)  # doctest: +SKIP
   """
@@ -812,22 +819,20 @@ def summary_echoes_name(summary: str, name: str) -> bool:
   nlow = name.lower()
   if low == nlow:
     return True
-  if low == f"{nlow} dunder":
-    return True
-  return False
+  return low == f"{nlow} dunder"
 
 
 def summary_is_ai_slop(summary: str, *, kind: str = "function") -> bool:
   """
   Return True when the summary is a known upgrade-helper template.
-  
+
   Args:
     summary (str): String for summary.
     kind (str): String for kind.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> summary_is_ai_slop("x", "x")  # doctest: +SKIP
   """
@@ -836,24 +841,22 @@ def summary_is_ai_slop(summary: str, *, kind: str = "function") -> bool:
     return True
   if AI_SLOP_SUMMARY_RE.match(text):
     return True
-  if kind == "class" and AI_SLOP_CLASS_TYPE_RE.match(text):
-    return True
-  return False
+  return bool(kind == "class" and AI_SLOP_CLASS_TYPE_RE.match(text))
 
 
 def examples_are_placeholder_skip(examples_body: str) -> bool:
   """
   Return True when Examples only has empty ``name(...)`` / ``...`` prompts.
-  
+
   Real usage (concrete args, comments plus a non-ellipsis call, etc.) passes.
   ``# doctest: +SKIP`` is allowed when the ``>>>`` call itself is substantive.
-  
+
   Args:
     examples_body (str): String for examples body.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> examples_are_placeholder_skip("x")  # doctest: +SKIP
   """
@@ -921,7 +924,9 @@ def class_surface_issues(cls: ast.ClassDef) -> list[str]:
     list[str]: Issue codes for the class surface.
 
   Examples:
-    >>> class_surface_issues(__import__("ast").parse("class C:\\n  pass\\n").body[0])
+    >>> class_surface_issues(
+    ...   __import__("ast").parse("class C:\\n  pass\\n").body[0]
+    ... )
     ['missing_class_docstring']
   """
   doc = ast.get_docstring(cls)
@@ -939,21 +944,23 @@ def class_surface_issues(cls: ast.ClassDef) -> list[str]:
       issues.append(f"forbidden_doc_phrase:{phrase}")
   if AI_SLOP_AS_ANN_RE.search(doc):
     issues.append("args_as_ann_slop")
-  issues.extend(attributes_section_issues(doc, collect_class_instance_attrs(cls)))
+  issues.extend(
+    attributes_section_issues(doc, collect_class_instance_attrs(cls))
+  )
   return issues
 
 
 def _is_property(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
   """
   Return True when ``fn`` is decorated with ``@property``.
-  
+
   Args:
     fn (ast.FunctionDef | ast.AsyncFunctionDef): One of ``ast.FunctionDef``,
     ``ast.AsyncFunctionDef``.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> _is_property(None)  # doctest: +SKIP
   """
@@ -1024,13 +1031,13 @@ PLACEHOLDER_EXAMPLE_LINE_RE = re.compile(
 def line_length_for_repo(repo: str) -> int:
   """
   Ruff line-length for a repo label (80 HPCPerfStats, 88 tools).
-  
+
   Args:
     repo (str): String for repo.
-  
+
   Returns:
     int: int produced by this call.
-  
+
   Examples:
     >>> line_length_for_repo("x")  # doctest: +SKIP
   """
@@ -1047,16 +1054,16 @@ def signature_line_length_issues(
 ) -> list[str]:
   """
   Flag ``def`` header physical lines longer than ``line_length``.
-  
+
   Args:
     fn (ast.FunctionDef | ast.AsyncFunctionDef): One of ``ast.FunctionDef``,
     ``ast.AsyncFunctionDef``.
     source_lines (Sequence[str]): Sequence for source lines.
     line_length (int): Integer value for line length.
-  
+
   Returns:
     list[str]: list[str] produced by this call.
-  
+
   Examples:
     >>> signature_line_length_issues(None, [], 0)  # doctest: +SKIP
   """
@@ -1093,8 +1100,8 @@ def docstring_issues(
 
   Examples:
     >>> docstring_issues(
-    ...     __import__("ast").parse("def f():\\n  pass\\n").body[0],
-    ...     trivial_dunder=False,
+    ...   __import__("ast").parse("def f():\\n  pass\\n").body[0],
+    ...   trivial_dunder=False,
     ... )
     ['missing_docstring']
   """
@@ -1151,12 +1158,19 @@ def docstring_issues(
       first = returns_body.strip().splitlines()[0].strip()
       if not first:
         issues.append("empty_returns_section")
-      elif not re.match(
-        r"^(None|`?None`?|[A-Za-z_][\w\.\[\], \|]*|:)",
-        first,
-      ) and ":" not in first and first.lower() != "none":
-        if not re.search(r"\bNone\b", first) and ":" not in first:
-          issues.append("returns_missing_type_or_none")
+      elif (
+        (
+          not re.match(
+            r"^(None|`?None`?|[A-Za-z_][\w\.\[\], \|]*|:)",
+            first,
+          )
+          and ":" not in first
+          and first.lower() != "none"
+        )
+        and not re.search(r"\bNone\b", first)
+        and ":" not in first
+      ):
+        issues.append("returns_missing_type_or_none")
 
   raised = collect_raised_exception_names(fn)
   if raised:
@@ -1183,13 +1197,13 @@ def docstring_issues(
 def _kind_for_stack(stack: list[str]) -> str:
   """
   Classify a def as function, method, or nested from the visit stack.
-  
+
   Args:
     stack (list[str]): Sequence for stack.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> _kind_for_stack([])  # doctest: +SKIP
   """
@@ -1203,7 +1217,7 @@ def _kind_for_stack(stack: list[str]) -> str:
 class _InventoryVisitor(ast.NodeVisitor):
   """
   Collect DefRecord rows for one module.
-  
+
   Attributes:
     excluded: Attribute.
     excluded_reason: Attribute.
@@ -1228,7 +1242,7 @@ class _InventoryVisitor(ast.NodeVisitor):
   ) -> None:
     """
     Initialize visitor state for one file.
-    
+
     Args:
       repo (str): String for repo.
       rel_path (str): String for rel path.
@@ -1236,10 +1250,10 @@ class _InventoryVisitor(ast.NodeVisitor):
       excluded_reason (str): String for excluded reason.
       source_lines (Sequence[str] | None): One of ``Sequence[str]``, ``None``.
       line_length (int): Integer value for line length.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> _InventoryVisitor("x", "x", True, "x", None, 0)  # doctest: +SKIP
     """
@@ -1256,13 +1270,13 @@ class _InventoryVisitor(ast.NodeVisitor):
   def visit_ClassDef(self, node: ast.ClassDef) -> None:
     """
     Record class surface docs, then visit methods.
-    
+
     Args:
       node (ast.ClassDef): Node.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> _InventoryVisitor().visit_ClassDef(None)  # doctest: +SKIP
     """
@@ -1276,13 +1290,13 @@ class _InventoryVisitor(ast.NodeVisitor):
   def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
     """
     Record and recurse into a synchronous function.
-    
+
     Args:
       node (ast.FunctionDef): Node.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> _InventoryVisitor().visit_FunctionDef(None)  # doctest: +SKIP
     """
@@ -1296,13 +1310,13 @@ class _InventoryVisitor(ast.NodeVisitor):
   def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
     """
     Record and recurse into an async function.
-    
+
     Args:
       node (ast.AsyncFunctionDef): Node.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> _InventoryVisitor().visit_AsyncFunctionDef(None)  # doctest: +SKIP
     """
@@ -1316,13 +1330,13 @@ class _InventoryVisitor(ast.NodeVisitor):
   def _record_class(self, node: ast.ClassDef) -> None:
     """
     Append a DefRecord for a class docstring / Attributes surface.
-    
+
     Args:
       node (ast.ClassDef): Node.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> _InventoryVisitor()._record_class(None)  # doctest: +SKIP
     """
@@ -1354,14 +1368,14 @@ class _InventoryVisitor(ast.NodeVisitor):
   def _record(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
     """
     Append a DefRecord for ``node``.
-    
+
     Args:
       node (ast.FunctionDef | ast.AsyncFunctionDef): One of
       ``ast.FunctionDef``, ``ast.AsyncFunctionDef``.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> _InventoryVisitor()._record(None)  # doctest: +SKIP
     """
@@ -1371,10 +1385,7 @@ class _InventoryVisitor(ast.NodeVisitor):
     has_doc = bool(ast.get_docstring(node))
     doc_ok = False
     sig_ok = False
-    if _is_property(node):
-      kind = "property"
-    else:
-      kind = _kind_for_stack(self.stack)
+    kind = "property" if _is_property(node) else _kind_for_stack(self.stack)
     if not self.excluded:
       sig_issues = signature_annotation_issues(node)
       if self.source_lines:
@@ -1412,15 +1423,15 @@ class _InventoryVisitor(ast.NodeVisitor):
 def inventory_file(path: Path, *, root: Path, repo: str) -> list[DefRecord]:
   """
   Inventory all defs in one Python file.
-  
+
   Args:
     path (Path): String for path.
     root (Path): String for root.
     repo (str): String for repo.
-  
+
   Returns:
     list[DefRecord]: list[DefRecord] produced by this call.
-  
+
   Examples:
     >>> inventory_file("x", "x", "x")  # doctest: +SKIP
   """
@@ -1430,7 +1441,7 @@ def inventory_file(path: Path, *, root: Path, repo: str) -> list[DefRecord]:
   try:
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(path))
-  except (OSError, SyntaxError, UnicodeDecodeError):
+  except OSError, SyntaxError, UnicodeDecodeError:
     return [
       DefRecord(
         repo=repo,
@@ -1485,14 +1496,14 @@ def build_inventory(
 ) -> list[DefRecord]:
   """
   Build a full inventory across one or more roots.
-  
+
   Args:
     roots (Sequence[Path]): String for roots.
     path_filter (str | None): One of ``str``, ``None``.
-  
+
   Returns:
     list[DefRecord]: list[DefRecord] produced by this call.
-  
+
   Examples:
     >>> build_inventory("x", None)  # doctest: +SKIP
   """
@@ -1510,13 +1521,13 @@ def build_inventory(
 def inventory_summary(records: Sequence[DefRecord]) -> dict[str, Any]:
   """
   Compute summary counters for an inventory.
-  
+
   Args:
     records (Sequence[DefRecord]): Sequence for records.
-  
+
   Returns:
     dict[str, Any]: dict[str, Any] produced by this call.
-  
+
   Examples:
     >>> inventory_summary([])  # doctest: +SKIP
   """
@@ -1546,22 +1557,24 @@ def records_to_jsonable(
 ) -> dict[str, Any]:
   """
   Serialize inventory records to a JSON-compatible document.
-  
+
   Args:
     records (Sequence[DefRecord]): Sequence for records.
     roots (Sequence[str]): Sequence for roots.
     in_scope_only (bool): Boolean flag for in scope only.
-  
+
   Returns:
     dict[str, Any]: dict[str, Any] produced by this call.
-  
+
   Examples:
     >>> records_to_jsonable([], [], True)  # doctest: +SKIP
   """
   summary = inventory_summary(records)
-  defs = [asdict(r) for r in records if not r.excluded] if in_scope_only else [
-    asdict(r) for r in records
-  ]
+  defs = (
+    [asdict(r) for r in records if not r.excluded]
+    if in_scope_only
+    else [asdict(r) for r in records]
+  )
   doc: dict[str, Any] = {
     "version": 1,
     "roots": list(roots),
@@ -1576,13 +1589,13 @@ def records_to_jsonable(
 def default_roots(workspace_root: Path | None = None) -> list[Path]:
   """
   Resolve default scan roots for this workspace layout.
-  
+
   Args:
     workspace_root (Path | None): One of ``Path``, ``None``.
-  
+
   Returns:
     list[Path]: list[Path] produced by this call.
-  
+
   Examples:
     >>> default_roots(None)  # doctest: +SKIP
   """
@@ -1603,7 +1616,10 @@ def default_roots(workspace_root: Path | None = None) -> list[Path]:
   tools_sibling = workspace_root / "hpcperfstats-tools"
   if tools_in_checkout.is_dir():
     roots.append(tools_in_checkout)
-  elif tools_sibling.is_dir() and tools_sibling.resolve() != tools_in_checkout.resolve():
+  elif (
+    tools_sibling.is_dir()
+    and tools_sibling.resolve() != tools_in_checkout.resolve()
+  ):
     roots.append(tools_sibling)
   return roots
 
@@ -1611,13 +1627,13 @@ def default_roots(workspace_root: Path | None = None) -> list[Path]:
 def failing_records(records: Sequence[DefRecord]) -> list[DefRecord]:
   """
   Filter to in-scope non-compliant records.
-  
+
   Args:
     records (Sequence[DefRecord]): Sequence for records.
-  
+
   Returns:
     list[DefRecord]: list[DefRecord] produced by this call.
-  
+
   Examples:
     >>> failing_records([])  # doctest: +SKIP
   """
@@ -1627,13 +1643,13 @@ def failing_records(records: Sequence[DefRecord]) -> list[DefRecord]:
 def main(argv: Sequence[str] | None = None) -> int:
   """
   CLI entry: write inventory JSON and/or fail on coverage gaps.
-  
+
   Args:
     argv (Sequence[str] | None): One of ``Sequence[str]``, ``None``.
-  
+
   Returns:
     int: int produced by this call.
-  
+
   Examples:
     >>> main(None)  # doctest: +SKIP
   """
@@ -1692,13 +1708,18 @@ def main(argv: Sequence[str] | None = None) -> int:
       roots=[str(r.resolve()) for r in roots],
     )
     args.write.parent.mkdir(parents=True, exist_ok=True)
-    args.write.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    args.write.write_text(
+      json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(f"Wrote {args.write} ({len(records)} defs)", file=sys.stderr)
 
   if args.check:
     failed = failing_records(records)
     if failed:
-      print(f"FAIL: {len(failed)} in-scope def(s) non-compliant", file=sys.stderr)
+      print(
+        f"FAIL: {len(failed)} in-scope def(s) non-compliant",
+        file=sys.stderr,
+      )
       for rec in failed[: args.max_fail_print]:
         print(
           f"  {rec.repo}:{rec.path}:{rec.lineno} {rec.qualname} "

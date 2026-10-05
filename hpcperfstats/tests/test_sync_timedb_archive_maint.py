@@ -1,5 +1,6 @@
 """Tests for archive maintenance snapshot, hints, and parallel head metadata."""
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 
 import pytest
 
@@ -38,8 +39,9 @@ def test_collect_head_metadata_parallel_matches_serial(monkeypatch, tmp_path):
       serial_identity[path] = (host_name, int(ts.timestamp()))
 
   monkeypatch.setattr(cfg, "get_sync_ingest_pool_processes", lambda: 2)
-  parallel_first, parallel_identity, _stats = maint.collect_head_metadata_for_paths(
-      paths, hints_data=None, log_fn=None)
+  parallel_first, parallel_identity, _stats = (
+    maint.collect_head_metadata_for_paths(paths, hints_data=None, log_fn=None)
+  )
 
   assert parallel_first == serial_first
   assert parallel_identity == serial_identity
@@ -52,20 +54,23 @@ def test_maint_hints_skip_reread_when_unchanged(monkeypatch, tmp_path):
   fp = maint._path_fingerprint(path)
   assert fp is not None
   hints = {
-      "version": 1,
-      "host_dirs": {
-          str(host): {"mtime": maint._host_dir_fingerprint(str(host))[0], "file_count": 1},
+    "version": 1,
+    "host_dirs": {
+      str(host): {
+        "mtime": maint._host_dir_fingerprint(str(host))[0],
+        "file_count": 1,
       },
-      "paths": {
-          path: {
-              "mtime": fp[0],
-              "size": fp[1],
-              "first_ts": "1700000400",
-              "host": "cn001",
-              "unix_second": 1700000400,
-          },
+    },
+    "paths": {
+      path: {
+        "mtime": fp[0],
+        "size": fp[1],
+        "first_ts": "1700000400",
+        "host": "cn001",
+        "unix_second": 1700000400,
       },
-      "validated_days": {},
+    },
+    "validated_days": {},
   }
   read_paths = []
   real_read = helpers.read_stats_file_head_identity
@@ -76,7 +81,8 @@ def test_maint_hints_skip_reread_when_unchanged(monkeypatch, tmp_path):
 
   monkeypatch.setattr(helpers, "read_stats_file_head_identity", _track_read)
   first_ts, head_id, stats = maint.collect_head_metadata_for_paths(
-      [path], hints_data=hints, log_fn=None)
+    [path], hints_data=hints, log_fn=None
+  )
   assert first_ts[path] == "1700000400"
   assert head_id[path] == ("cn001", 1700000400)
   assert stats["read"] == 0
@@ -92,11 +98,7 @@ def test_maint_fingerprints_prefer_find_printf_cache(tmp_path):
   path = _write_stats_segment(host, 1700000500)
   sf.clear_fingerprint_caches()
   sf.update_fingerprint_caches_from_records(
-      [
-          sf.FindStatsRecord(
-              path=path, mtime=1700000500.0, size=42, inode=7
-          )
-      ]
+    [sf.FindStatsRecord(path=path, mtime=1700000500.0, size=42, inode=7)]
   )
   assert maint._path_fingerprint(path) == (1700000500, 42)
   assert maint._host_dir_fingerprint(str(host)) == (1700000500, 1)
@@ -104,13 +106,32 @@ def test_maint_fingerprints_prefer_find_printf_cache(tmp_path):
 
 
 def test_save_and_load_archive_maint_hints_roundtrip(tmp_path, monkeypatch):
-  monkeypatch.setattr("hpcperfstats.dbload.lib.sync_timedb_archive_maint.SYNC_ARCHIVE_MAINT_HINTS", True)
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_archive_maint.SYNC_ARCHIVE_MAINT_HINTS",
+    True,
+  )
   archive_dir = str(tmp_path)
   maint.save_archive_maint_hints(
-      archive_dir,
-      host_dirs={"/h/host": {"mtime": 1, "file_count": 2}},
-      paths={"/h/host/1": {"mtime": 2, "size": 3, "first_ts": "9", "host": "h", "unix_second": 9}},
-      validated_days={"/z/day.tar.zst": {"mtime_ns": 1, "size": 2, "ok": True, "member_count": 1, "member_byte_sum": 10}},
+    archive_dir,
+    host_dirs={"/h/host": {"mtime": 1, "file_count": 2}},
+    paths={
+      "/h/host/1": {
+        "mtime": 2,
+        "size": 3,
+        "first_ts": "9",
+        "host": "h",
+        "unix_second": 9,
+      }
+    },
+    validated_days={
+      "/z/day.tar.zst": {
+        "mtime_ns": 1,
+        "size": 2,
+        "ok": True,
+        "member_count": 1,
+        "member_byte_sum": 10,
+      }
+    },
   )
   loaded = maint.load_archive_maint_hints(archive_dir)
   assert loaded["version"] == 2
@@ -118,12 +139,16 @@ def test_save_and_load_archive_maint_hints_roundtrip(tmp_path, monkeypatch):
   assert "/z/day.tar.zst" in loaded["validated_days"]
 
 
-@pytest.mark.skipif(not __import__("shutil").which("zstd"), reason="zstd not on PATH")
+@pytest.mark.skipif(
+  not __import__("shutil").which("zstd"), reason="zstd not on PATH"
+)
 def test_atomic_seal_skips_when_tar_and_zst_equivalent(tmp_path):
   import subprocess
   import tarfile
 
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import atomic_seal_tar_to_zst
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    atomic_seal_tar_to_zst,
+  )
   from hpcperfstats.dbload.lib.zstd_cli import zstd_executable
 
   tar_path = tmp_path / "2021-04-01.tar"
@@ -133,40 +158,40 @@ def test_atomic_seal_skips_when_tar_and_zst_equivalent(tmp_path):
   with tarfile.open(tar_path, "w") as tf:
     tf.add(str(member), arcname="m.txt")
   atomic_seal_tar_to_zst(
-      str(tar_path),
-      str(zst_path),
-      num_threads=1,
-      compress_level=6,
-      keep_uncompressed_tar=True,
-      log_fn=None,
+    str(tar_path),
+    str(zst_path),
+    num_threads=1,
+    compress_level=6,
+    keep_uncompressed_tar=True,
+    log_fn=None,
   )
   first_size = zst_path.stat().st_size
   atomic_seal_tar_to_zst(
-      str(tar_path),
-      str(zst_path),
-      num_threads=1,
-      compress_level=6,
-      keep_uncompressed_tar=True,
-      log_fn=None,
+    str(tar_path),
+    str(zst_path),
+    num_threads=1,
+    compress_level=6,
+    keep_uncompressed_tar=True,
+    log_fn=None,
   )
   assert zst_path.stat().st_size == first_size
   subprocess.run(
-      [zstd_executable(), "-t", "-T1", "-q", str(zst_path)],
-      check=True,
+    [zstd_executable(), "-t", "-T1", "-q", str(zst_path)],
+    check=True,
   )
 
 
 def test_build_head_ingest_ready_set_dedupes_db_lookups(monkeypatch, tmp_path):
   arch_suffix = "cluster.maint.gate"
   host_dir = tmp_path / ("n." + arch_suffix)
-  ts = int(datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc).timestamp())
+  ts = int(datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC).timestamp())
   paths = [
-      _write_stats_segment(host_dir, ts),
-      _write_stats_segment(host_dir, ts + 1),
+    _write_stats_segment(host_dir, ts),
+    _write_stats_segment(host_dir, ts + 1),
   ]
   sampled = {
-      paths[0]: {"cn001": {ts}},
-      paths[1]: {"cn001": {ts}},
+    paths[0]: {"cn001": {ts}},
+    paths[1]: {"cn001": {ts}},
   }
   calls = {"n": 0}
 
@@ -177,7 +202,9 @@ def test_build_head_ingest_ready_set_dedupes_db_lookups(monkeypatch, tmp_path):
 
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(readiness, "_live_db_ingest_enabled", lambda: False)
-  monkeypatch.setattr(readiness, "host_timestamp_seconds_all_present", _all_present)
+  monkeypatch.setattr(
+    readiness, "host_timestamp_seconds_all_present", _all_present
+  )
   ready = readiness.build_head_ingest_ready_set(paths, sampled, log_fn=None)
   assert paths[0] in ready
   assert paths[1] in ready
@@ -185,7 +212,8 @@ def test_build_head_ingest_ready_set_dedupes_db_lookups(monkeypatch, tmp_path):
 
 
 def test_build_archive_maintenance_snapshot_skips_gate_when_build_ready_set_false(
-    monkeypatch, tmp_path,
+  monkeypatch,
+  tmp_path,
 ):
   arch_suffix = "cluster.maint.skip_gate"
   host = tmp_path / ("n." + arch_suffix)
@@ -200,14 +228,19 @@ def test_build_archive_maintenance_snapshot_skips_gate_when_build_ready_set_fals
     gate_calls["n"] += 1
     raise AssertionError("gate collect must not run when build_ready_set=False")
 
-  monkeypatch.setattr("hpcperfstats.dbload.lib.sync_timedb_archive_maint.SYNC_ARCHIVE_MAINT_HINTS", False)
-  monkeypatch.setattr(maint, "collect_gate_identities_for_paths", _forbidden_gate)
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_archive_maint.SYNC_ARCHIVE_MAINT_HINTS",
+    False,
+  )
+  monkeypatch.setattr(
+    maint, "collect_gate_identities_for_paths", _forbidden_gate
+  )
   snap = maint.build_archive_maintenance_snapshot(
-      str(tmp_path),
-      arch_suffix,
-      str(tgz),
-      build_ready_set=False,
-      log_fn=None,
+    str(tmp_path),
+    arch_suffix,
+    str(tgz),
+    build_ready_set=False,
+    log_fn=None,
   )
   assert gate_calls["n"] == 0
   assert snap.gate_identities_by_path == {}
@@ -215,17 +248,18 @@ def test_build_archive_maintenance_snapshot_skips_gate_when_build_ready_set_fals
 
 
 def test_build_archive_maintenance_snapshot_collects_head_tail_gate_identities(
-    monkeypatch, tmp_path,
+  monkeypatch,
+  tmp_path,
 ):
   arch_suffix = "cluster.maint.head_tail"
   host = tmp_path / ("n." + arch_suffix)
   host.mkdir(parents=True, exist_ok=True)
   seg_path = host / "1700000500"
   seg_path.write_text(
-      "1700000500 job1 cn001\n"
-      "1700000501 job2 cn001\n"
-      "1700000502 job3 cn001\n"
-      "payload\n"
+    "1700000500 job1 cn001\n"
+    "1700000501 job2 cn001\n"
+    "1700000502 job3 cn001\n"
+    "payload\n"
   )
   seg = str(seg_path)
   tgz = tmp_path / "daily"
@@ -237,24 +271,32 @@ def test_build_archive_maintenance_snapshot_collects_head_tail_gate_identities(
     gate_calls["n"] += 1
     return real_gate(*args, **kwargs)
 
-  monkeypatch.setattr("hpcperfstats.dbload.lib.sync_timedb_archive_maint.SYNC_ARCHIVE_MAINT_HINTS", False)
-  monkeypatch.setattr(maint, "collect_gate_identities_for_paths", _counting_gate)
   monkeypatch.setattr(
-      readiness,
-      "build_head_ingest_ready_set",
-      lambda closed, _identities, **kw: set(),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_maint.SYNC_ARCHIVE_MAINT_HINTS",
+    False,
+  )
+  monkeypatch.setattr(
+    maint, "collect_gate_identities_for_paths", _counting_gate
+  )
+  monkeypatch.setattr(
+    readiness,
+    "build_head_ingest_ready_set",
+    lambda closed, _identities, **kw: set(),
   )
   snap = maint.build_archive_maintenance_snapshot(
-      str(tmp_path), arch_suffix, str(tgz), log_fn=None)
+    str(tmp_path), arch_suffix, str(tgz), log_fn=None
+  )
   assert gate_calls["n"] == 1
   assert seg in snap.closed_paths
   assert snap.gate_identities_by_path[seg] == {
-      "cn001": {1700000500, 1700000502},
+    "cn001": {1700000500, 1700000502},
   }
   assert not hasattr(maint, "collect_sampled_timestamp_identities_for_paths")
 
 
-def test_build_archive_maintenance_snapshot_once_collects(monkeypatch, tmp_path):
+def test_build_archive_maintenance_snapshot_once_collects(
+  monkeypatch, tmp_path
+):
   arch_suffix = "cluster.maint.snap"
   host = tmp_path / ("n." + arch_suffix)
   seg = _write_stats_segment(host, 1700000500)
@@ -268,20 +310,26 @@ def test_build_archive_maintenance_snapshot_once_collects(monkeypatch, tmp_path)
     return real_collect(*args, **kwargs)
 
   monkeypatch.setattr(maint, "collect_stats_files_in_range", _counting_collect)
-  monkeypatch.setattr("hpcperfstats.dbload.lib.sync_timedb_archive_maint.SYNC_ARCHIVE_MAINT_HINTS", False)
   monkeypatch.setattr(
-      readiness,
-      "build_head_ingest_ready_set",
-      lambda closed, head, **kw: set(),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_maint.SYNC_ARCHIVE_MAINT_HINTS",
+    False,
+  )
+  monkeypatch.setattr(
+    readiness,
+    "build_head_ingest_ready_set",
+    lambda closed, head, **kw: set(),
   )
   snap = maint.build_archive_maintenance_snapshot(
-      str(tmp_path), arch_suffix, str(tgz), log_fn=None)
+    str(tmp_path), arch_suffix, str(tgz), log_fn=None
+  )
   assert collect_calls["n"] == 1
   assert seg in snap.closed_paths
   assert seg in snap.first_timestamp_by_path
 
 
-def test_archive_discovery_worker_count_uses_sync_ingest_pool_processes(monkeypatch):
+def test_archive_discovery_worker_count_uses_sync_ingest_pool_processes(
+  monkeypatch,
+):
   monkeypatch.setattr(cfg, "get_sync_ingest_pool_processes", lambda: 24)
   assert maint._get_archive_discovery_worker_count(100) == 24
   monkeypatch.setattr(cfg, "get_sync_ingest_pool_processes", lambda: 3)
@@ -290,7 +338,7 @@ def test_archive_discovery_worker_count_uses_sync_ingest_pool_processes(monkeypa
 
 def test_gate_tail_metadata_logs_begin_and_progress(monkeypatch):
   paths = ["/fake/path/%d" % i for i in range(5001)]
-  head_identity = {path: ("cn001", 1700000000) for path in paths}
+  head_identity = dict.fromkeys(paths, ("cn001", 1700000000))
   logs = []
 
   def _fake_read(path):
@@ -299,9 +347,9 @@ def test_gate_tail_metadata_logs_begin_and_progress(monkeypatch):
   monkeypatch.setattr(maint, "_read_tail_metadata_one", _fake_read)
   monkeypatch.setattr(cfg, "get_sync_ingest_pool_processes", lambda: 4)
   maint.collect_gate_identities_for_paths(
-      paths,
-      head_identity,
-      log_fn=lambda msg, **kw: logs.append(msg),
+    paths,
+    head_identity,
+    log_fn=lambda msg, **kw: logs.append(msg),
   )
   joined = "\n".join(logs)
   assert "Gate tail metadata: begin" in joined
@@ -319,9 +367,9 @@ def test_head_metadata_logs_begin_and_progress_for_large_read_set(monkeypatch):
   monkeypatch.setattr(maint, "_read_head_metadata_one", _fake_read)
   monkeypatch.setattr(cfg, "get_sync_ingest_pool_processes", lambda: 4)
   maint.collect_head_metadata_for_paths(
-      paths,
-      hints_data=None,
-      log_fn=lambda msg, **kw: logs.append(msg),
+    paths,
+    hints_data=None,
+    log_fn=lambda msg, **kw: logs.append(msg),
   )
   joined = "\n".join(logs)
   assert "Head metadata: begin" in joined

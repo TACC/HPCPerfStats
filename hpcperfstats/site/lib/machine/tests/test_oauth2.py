@@ -4,8 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from django.http import HttpResponseRedirect
-from django.test import RequestFactory
-from django.test import override_settings
+from django.test import RequestFactory, override_settings
 
 pytestmark = pytest.mark.machine_unit_mock
 
@@ -39,18 +38,22 @@ class TestCheckForTokens:
     request.session = {"access_token": "t"}
     assert oauth2.check_for_tokens(request) is True
 
-  @override_settings(SESSION_IDLE_TIMEOUT_SECONDS=1, SESSION_ABSOLUTE_TIMEOUT_SECONDS=3600)
+  @override_settings(
+    SESSION_IDLE_TIMEOUT_SECONDS=1, SESSION_ABSOLUTE_TIMEOUT_SECONDS=3600
+  )
   def test_false_when_idle_timeout_exceeded(self):
     from hpcperfstats.site.lib.machine import oauth2
 
     request = RequestFactory().get("/")
     request.session = {
-        "access_token": "tok",
-        "oauth_login_epoch": 100,
-        "oauth_last_seen_epoch": 100,
-        "oauth_last_validated_epoch": 100,
+      "access_token": "tok",
+      "oauth_login_epoch": 100,
+      "oauth_last_seen_epoch": 100,
+      "oauth_last_validated_epoch": 100,
     }
-    with patch("hpcperfstats.site.lib.machine.oauth2.time.time", return_value=103):
+    with patch(
+      "hpcperfstats.site.lib.machine.oauth2.time.time", return_value=103
+    ):
       assert oauth2.check_for_tokens(request) is False
 
   def test_refreshes_access_token_when_expiring(self):
@@ -58,23 +61,27 @@ class TestCheckForTokens:
 
     request = RequestFactory().get("/")
     request.session = {
-        "access_token": "old",
-        "refresh_token": "r1",
-        "oauth_login_epoch": 100,
-        "oauth_last_seen_epoch": 100,
-        "oauth_last_validated_epoch": 100,
-        "oauth_access_token_expiry_epoch": 110,
+      "access_token": "old",
+      "refresh_token": "r1",
+      "oauth_login_epoch": 100,
+      "oauth_last_seen_epoch": 100,
+      "oauth_last_validated_epoch": 100,
+      "oauth_access_token_expiry_epoch": 110,
     }
     mock_post = MagicMock()
     mock_post.return_value.status_code = 200
     mock_post.return_value.json.return_value = {
-        "result": {
-            "access_token": {"access_token": "new", "expires_in": 3600},
-            "refresh_token": {"refresh_token": "r2"},
-        }
+      "result": {
+        "access_token": {"access_token": "new", "expires_in": 3600},
+        "refresh_token": {"refresh_token": "r2"},
+      }
     }
-    with patch.object(oauth2, "_http_session", MagicMock(post=mock_post)), patch(
-        "hpcperfstats.site.lib.machine.oauth2.time.time", return_value=109
+    with (
+      patch.object(oauth2, "_http_session", MagicMock(post=mock_post)),
+      patch(
+        "hpcperfstats.site.lib.machine.oauth2.time.time",
+        return_value=109,
+      ),
     ):
       assert oauth2.check_for_tokens(request) is True
     assert request.session["access_token"] == "new"
@@ -87,10 +94,14 @@ class TestLoginOauth:
 
     request = RequestFactory().get("/login?next=/jobs")
     request.session = {}
-    with patch.object(oauth2, "reverse", return_value="/oauth_callback/"), patch.object(
-        oauth2.cfg, "get_server_name", return_value="example.com"
-    ), patch.object(
-        oauth2.cfg, "get_oauth_authorize_url", return_value="https://idp/authorize?r=%s&s=%s"
+    with (
+      patch.object(oauth2, "reverse", return_value="/oauth_callback/"),
+      patch.object(oauth2.cfg, "get_server_name", return_value="example.com"),
+      patch.object(
+        oauth2.cfg,
+        "get_oauth_authorize_url",
+        return_value="https://idp/authorize?r=%s&s=%s",
+      ),
     ):
       response = oauth2.login_oauth(request)
     assert isinstance(response, HttpResponseRedirect)
@@ -114,16 +125,16 @@ class TestOauthCallback:
     request = RequestFactory().get("/cb?state=abc&code=ccc")
     request.session = {"auth_state": "abc", "auth_next": "/host/"}
     token_json = {
-        "result": {
-            "access_token": {"access_token": "atok"},
-            "refresh_token": {"refresh_token": "rtok"},
-        }
+      "result": {
+        "access_token": {"access_token": "atok"},
+        "refresh_token": {"refresh_token": "rtok"},
+      }
     }
     user_json = {
-        "result": {
-            "username": "alice",
-            "email": "alice@staff.example.edu",
-        }
+      "result": {
+        "username": "alice",
+        "email": "alice@staff.example.edu",
+      }
     }
     mock_post = MagicMock()
     mock_post.return_value.json.return_value = token_json
@@ -132,12 +143,11 @@ class TestOauthCallback:
     session = MagicMock()
     session.post = mock_post
     session.get = mock_get
-    with patch.object(oauth2, "reverse", return_value="/oauth_callback/"), patch.object(
-        oauth2.cfg, "get_server_name", return_value="example.com"
-    ), patch.object(
-        oauth2, "staff_email_domain", "staff.example.edu"
-    ), patch.object(
-        oauth2, "_http_session", session
+    with (
+      patch.object(oauth2, "reverse", return_value="/oauth_callback/"),
+      patch.object(oauth2.cfg, "get_server_name", return_value="example.com"),
+      patch.object(oauth2, "staff_email_domain", "staff.example.edu"),
+      patch.object(oauth2, "_http_session", session),
     ):
       response = oauth2.oauth_callback(request)
     assert isinstance(response, HttpResponseRedirect)
@@ -152,8 +162,9 @@ class TestLoginPrompt:
 
     request = RequestFactory().get("/login_prompt")
     request.session = {}
-    with patch.object(oauth2, "check_for_tokens", return_value=False), patch.object(
-        oauth2, "reverse", return_value="/login/"
+    with (
+      patch.object(oauth2, "check_for_tokens", return_value=False),
+      patch.object(oauth2, "reverse", return_value="/login/"),
     ):
       response = oauth2.login_prompt(request)
     assert isinstance(response, HttpResponseRedirect)
@@ -181,10 +192,13 @@ def test_logout_skips_revoke_for_test_login_token():
       self["_flushed"] = True
 
   request = RequestFactory().get("/logout/")
-  request.session = _Session({"access_token": "test-login:qa", "username": "qa"})
+  request.session = _Session(
+    {"access_token": "test-login:qa", "username": "qa"}
+  )
   mock_http = MagicMock()
-  with patch.object(oauth2, "_http_session", mock_http), patch.object(
-      oauth2.cfg, "get_separate_test_login", return_value=False
+  with (
+    patch.object(oauth2, "_http_session", mock_http),
+    patch.object(oauth2.cfg, "get_separate_test_login", return_value=False),
   ):
     response = oauth2.logout(request)
   mock_http.post.assert_not_called()
@@ -203,10 +217,13 @@ def test_logout_sends_test_login_user_to_hidden_form_when_enabled():
       self["_flushed"] = True
 
   request = RequestFactory().get("/logout/")
-  request.session = _Session({"access_token": "test-login:qa", "username": "qa"})
+  request.session = _Session(
+    {"access_token": "test-login:qa", "username": "qa"}
+  )
   mock_http = MagicMock()
-  with patch.object(oauth2, "_http_session", mock_http), patch.object(
-      oauth2.cfg, "get_separate_test_login", return_value=True
+  with (
+    patch.object(oauth2, "_http_session", mock_http),
+    patch.object(oauth2.cfg, "get_separate_test_login", return_value=True),
   ):
     response = oauth2.logout(request)
   mock_http.post.assert_not_called()

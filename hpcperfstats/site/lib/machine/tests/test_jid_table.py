@@ -1,7 +1,6 @@
-"""Unit tests for analysis.gen.jid_table (_ensure_tz) and utils.queryset_to_dataframe.
+"""Unit tests for analysis.gen.jid_table (_ensure_tz) and utils.queryset_to_dataframe."""
 
-"""
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pandas as pd
 import pytest
@@ -11,34 +10,37 @@ pytestmark = pytest.mark.django_db(databases=[])
 from contextlib import nullcontext
 from unittest.mock import MagicMock, patch
 
-from django.db import OperationalError
-from django.db import connections
+from django.db import OperationalError, connections
 
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _coerce_jid_table_host_query_batch_size
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _build_acct_host_fqdns
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _listify_acct_hosts
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _coerce_jid_table_schema_dataframe
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _coerce_nonnegative_window_row_count
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _count_host_data_rows_for_window
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _count_host_data_rows_for_window_cached
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _distinct_times_in_window_batched
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _ensure_tz
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _iter_acct_host_batches
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _normalize_host_data_schema_label
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _normalize_host_cell_for_host_data
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _normalize_job_accounting_host_list
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _normalize_window_bound_datetime
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _ntile_bucket_max_timestamps
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import JID_TABLE_HOST_QUERY_BATCH
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _strided_distinct_times_date_bin_postgresql
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _strided_distinct_times_for_large_job
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import _unpack_cached_job_window_row
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import TypeDetailDataProvider
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import gpu_acct_window_for_job_data
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import jid_table
+from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+  JID_TABLE_HOST_QUERY_BATCH,
+  TypeDetailDataProvider,
+  _build_acct_host_fqdns,
+  _coerce_jid_table_host_query_batch_size,
+  _coerce_jid_table_schema_dataframe,
+  _coerce_nonnegative_window_row_count,
+  _count_host_data_rows_for_window,
+  _count_host_data_rows_for_window_cached,
+  _distinct_times_in_window_batched,
+  _ensure_tz,
+  _iter_acct_host_batches,
+  _listify_acct_hosts,
+  _normalize_host_cell_for_host_data,
+  _normalize_host_data_schema_label,
+  _normalize_job_accounting_host_list,
+  _normalize_window_bound_datetime,
+  _ntile_bucket_max_timestamps,
+  _strided_distinct_times_date_bin_postgresql,
+  _strided_distinct_times_for_large_job,
+  _unpack_cached_job_window_row,
+  gpu_acct_window_for_job_data,
+  jid_table,
+)
+from hpcperfstats.analysis.metrics.lib.gen.utils import (
+  iter_queryset_values_dicts,
+  queryset_to_dataframe,
+)
 from hpcperfstats.site.lib.machine.models import job_data
-from hpcperfstats.analysis.metrics.lib.gen.utils import iter_queryset_values_dicts
-from hpcperfstats.analysis.metrics.lib.gen.utils import queryset_to_dataframe
 
 
 def test_queryset_to_dataframe_none():
@@ -50,6 +52,7 @@ def test_queryset_to_dataframe_none():
 
 def test_queryset_to_dataframe_values_list():
   """queryset_to_dataframe converts iterable of tuples to DataFrame."""
+
   class QsValuesList:
     def __init__(self, rows):
       self._rows = rows
@@ -69,6 +72,7 @@ def test_queryset_to_dataframe_values_list():
 
 def test_queryset_to_dataframe_values_dict():
   """queryset_to_dataframe converts iterable of dicts to DataFrame."""
+
   class QsValues:
     def __iter__(self):
       return iter([{"host": "h1", "time": 1}, {"host": "h2", "time": 2}])
@@ -83,6 +87,7 @@ def test_queryset_to_dataframe_values_dict():
 
 def test_queryset_to_dataframe_values_with_columns():
   """queryset_to_dataframe with columns argument uses values(*columns)."""
+
   class QsValuesCols:
     def values(self, *cols):
       return [{"host": "n1", "time": 1}] if cols else []
@@ -104,7 +109,10 @@ def test_normalize_job_accounting_host_list_flattens_nested_sequences():
 
 
 def test_normalize_host_cell_for_host_data_unwraps_list_wrapped_scalar():
-  assert _normalize_host_cell_for_host_data(["host.example.com"]) == "host.example.com"
+  assert (
+    _normalize_host_cell_for_host_data(["host.example.com"])
+    == "host.example.com"
+  )
   assert _normalize_host_cell_for_host_data(None) is None
   assert _normalize_host_cell_for_host_data({"a": 1}) is None
 
@@ -118,16 +126,15 @@ def test_normalize_job_accounting_host_list_rejects_non_sequence():
 
 def test_gpu_acct_window_for_job_data_builds_fqdns():
   """gpu_acct_window_for_job_data mirrors jid_table FQDN rules without full init."""
-  from datetime import timezone as dt_utc
 
   class _Job:
     host_list = ["n1", "n2"]
-    start_time = datetime(2026, 1, 1, 0, 0, 0, tzinfo=dt_utc.utc)
-    end_time = datetime(2026, 1, 2, 0, 0, 0, tzinfo=dt_utc.utc)
+    start_time = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+    end_time = datetime(2026, 1, 2, 0, 0, 0, tzinfo=UTC)
 
   with patch(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_host_name_ext",
-      return_value="cluster.example",
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_host_name_ext",
+    return_value="cluster.example",
   ):
     _st, _et, acct = gpu_acct_window_for_job_data(_Job())
   assert acct == ["n1.cluster.example", "n2.cluster.example"]
@@ -135,16 +142,15 @@ def test_gpu_acct_window_for_job_data_builds_fqdns():
 
 def test_gpu_acct_window_for_job_data_keeps_existing_fqdns():
   """FQDN host_list values must not get a duplicate host suffix appended."""
-  from datetime import timezone as dt_utc
 
   class _Job:
     host_list = ["n1.cluster.example", "n2.cluster.example"]
-    start_time = datetime(2026, 1, 1, 0, 0, 0, tzinfo=dt_utc.utc)
-    end_time = datetime(2026, 1, 2, 0, 0, 0, tzinfo=dt_utc.utc)
+    start_time = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+    end_time = datetime(2026, 1, 2, 0, 0, 0, tzinfo=UTC)
 
   with patch(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_host_name_ext",
-      return_value="cluster.example",
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_host_name_ext",
+    return_value="cluster.example",
   ):
     _st, _et, acct = gpu_acct_window_for_job_data(_Job())
   assert acct == ["n1.cluster.example", "n2.cluster.example"]
@@ -175,10 +181,10 @@ def test_coerce_jid_table_schema_dataframe_unique_on_list_types():
   import pandas as pd
 
   df = pd.DataFrame(
-      {
-          "type": [["nested"], "ok", ["nested"]],
-          "event": ["e1", "e2", "e1"],
-      }
+    {
+      "type": [["nested"], "ok", ["nested"]],
+      "event": ["e1", "e2", "e1"],
+    }
   )
   out = _coerce_jid_table_schema_dataframe(df)
   types = sorted(out["type"].unique().tolist())
@@ -192,12 +198,12 @@ def test_unpack_cached_job_window_row_three_tuple():
   et = datetime(2024, 1, 1, 1, 0, 0)
   assert _unpack_cached_job_window_row((["h1"], st, et)) == (["h1"], st, et)
   j = job_data(
-      jid="z",
-      submit_time=st,
-      start_time=st,
-      end_time=et,
-      username="u",
-      host_list=["n1"],
+    jid="z",
+    submit_time=st,
+    start_time=st,
+    end_time=et,
+    username="u",
+    host_list=["n1"],
   )
   assert _unpack_cached_job_window_row(j) == (None, None, None)
   assert _unpack_cached_job_window_row(None) == (None, None, None)
@@ -223,12 +229,13 @@ def test_coerce_nonnegative_window_row_count_scalar_and_wrapped():
   assert _coerce_nonnegative_window_row_count("net") is None
 
 
-def test_count_host_data_rows_for_window_cached_accepts_list_wrapped_scalar(monkeypatch):
+def test_count_host_data_rows_for_window_cached_accepts_list_wrapped_scalar(
+  monkeypatch,
+):
   """Large-job row-count cache hit must accept JSON-style single-element list values."""
-  from datetime import timezone as dt_utc
 
-  st = datetime(2026, 1, 1, 12, 0, 0, tzinfo=dt_utc.utc)
-  et = datetime(2026, 1, 1, 13, 0, 0, tzinfo=dt_utc.utc)
+  st = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+  et = datetime(2026, 1, 1, 13, 0, 0, tzinfo=UTC)
   calls = {"count": 0}
 
   def _count_stub(*_a, **_k):
@@ -236,40 +243,52 @@ def test_count_host_data_rows_for_window_cached_accepts_list_wrapped_scalar(monk
     raise AssertionError("ORM count must not run when cache parses")
 
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_large_job_window_row_count_cache_ttl",
-      lambda: 60,
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_large_job_window_row_count_cache_ttl",
+    lambda: 60,
   )
-  monkeypatch.setattr("hpcperfstats.analysis.metrics.lib.gen.jid_table.cache.get", lambda _k: [9_000_000])
-  monkeypatch.setattr("hpcperfstats.analysis.metrics.lib.gen.jid_table.cache.set", lambda *a, **k: None)
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table._count_host_data_rows_for_window",
-      _count_stub,
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.cache.get",
+    lambda _k: [9_000_000],
   )
-  n = _count_host_data_rows_for_window_cached("j656931", st, et, ["n1.cluster.example"])
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.cache.set",
+    lambda *a, **k: None,
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table._count_host_data_rows_for_window",
+    _count_stub,
+  )
+  n = _count_host_data_rows_for_window_cached(
+    "j656931", st, et, ["n1.cluster.example"]
+  )
   assert n == 9_000_000
   assert calls["count"] == 0
 
 
-def test_count_host_data_rows_for_window_cached_multi_element_list_recomputes(monkeypatch):
+def test_count_host_data_rows_for_window_cached_multi_element_list_recomputes(
+  monkeypatch,
+):
   """Malformed cache list must fall back to live COUNT and store a plain int."""
-  from datetime import timezone as dt_utc
 
-  st = datetime(2026, 2, 1, 12, 0, 0, tzinfo=dt_utc.utc)
-  et = datetime(2026, 2, 1, 13, 0, 0, tzinfo=dt_utc.utc)
+  st = datetime(2026, 2, 1, 12, 0, 0, tzinfo=UTC)
+  et = datetime(2026, 2, 1, 13, 0, 0, tzinfo=UTC)
   set_calls = []
 
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_large_job_window_row_count_cache_ttl",
-      lambda: 120,
-  )
-  monkeypatch.setattr("hpcperfstats.analysis.metrics.lib.gen.jid_table.cache.get", lambda _k: [1, 2, 3])
-  monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cache.set",
-      lambda key, val, timeout=None: set_calls.append((key, val, timeout)),
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_large_job_window_row_count_cache_ttl",
+    lambda: 120,
   )
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table._count_host_data_rows_for_window",
-      lambda *_a, **_k: 555,
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.cache.get",
+    lambda _k: [1, 2, 3],
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.cache.set",
+    lambda key, val, timeout=None: set_calls.append((key, val, timeout)),
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table._count_host_data_rows_for_window",
+    lambda *_a, **_k: 555,
   )
   n = _count_host_data_rows_for_window_cached("j2", st, et, ["h.x"])
   assert n == 555
@@ -278,46 +297,50 @@ def test_count_host_data_rows_for_window_cached_multi_element_list_recomputes(mo
   assert set_calls[0][2] == 120
 
 
-def test_count_host_data_rows_for_window_cached_handles_invalid_int_parse(monkeypatch):
+def test_count_host_data_rows_for_window_cached_handles_invalid_int_parse(
+  monkeypatch,
+):
   """TTL getter failures fall back to default TTL and still run uncached COUNT (*)."""
-  from datetime import timezone as dt_utc
 
-  st = datetime(2026, 2, 2, 12, 0, 0, tzinfo=dt_utc.utc)
-  et = datetime(2026, 2, 2, 13, 0, 0, tzinfo=dt_utc.utc)
+  st = datetime(2026, 2, 2, 12, 0, 0, tzinfo=UTC)
+  et = datetime(2026, 2, 2, 13, 0, 0, tzinfo=UTC)
 
   def _bad_ttl():
     raise ValueError("invalid literal for int() with base 10: 'net'")
 
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_large_job_window_row_count_cache_ttl",
-      _bad_ttl,
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_large_job_window_row_count_cache_ttl",
+    _bad_ttl,
   )
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table._count_host_data_rows_for_window",
-      lambda *_a, **_k: 917,
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table._count_host_data_rows_for_window",
+    lambda *_a, **_k: 917,
   )
   n = _count_host_data_rows_for_window_cached("j695088", st, et, ["h.x"])
   assert n == 917
 
 
-def test_count_host_data_rows_for_window_cached_handles_non_numeric_count(monkeypatch):
-  from datetime import timezone as dt_utc
+def test_count_host_data_rows_for_window_cached_handles_non_numeric_count(
+  monkeypatch,
+):
 
-  st = datetime(2026, 2, 2, 12, 0, 0, tzinfo=dt_utc.utc)
-  et = datetime(2026, 2, 2, 13, 0, 0, tzinfo=dt_utc.utc)
+  st = datetime(2026, 2, 2, 12, 0, 0, tzinfo=UTC)
+  et = datetime(2026, 2, 2, 13, 0, 0, tzinfo=UTC)
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_large_job_window_row_count_cache_ttl",
-      lambda: 0,
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_large_job_window_row_count_cache_ttl",
+    lambda: 0,
   )
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table._count_host_data_rows_for_window",
-      lambda *_a, **_k: ["net"],
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table._count_host_data_rows_for_window",
+    lambda *_a, **_k: ["net"],
   )
   n = _count_host_data_rows_for_window_cached("j696167_17", st, et, ["h.x"])
   assert n == 0
 
 
-def test_count_host_data_rows_for_window_rejects_non_datetime_bounds(monkeypatch):
+def test_count_host_data_rows_for_window_rejects_non_datetime_bounds(
+  monkeypatch,
+):
   class _FailingObjects:
     def filter(self, **kwargs):
       raise AssertionError("ORM filter should not run for non-datetime bounds")
@@ -325,8 +348,13 @@ def test_count_host_data_rows_for_window_rejects_non_datetime_bounds(monkeypatch
   class _FailingHostData:
     objects = _FailingObjects()
 
-  monkeypatch.setattr("hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data", _FailingHostData())
-  n = _count_host_data_rows_for_window(start=["bad"], end=["bad"], acct_hosts=["h.x"])
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data",
+    _FailingHostData(),
+  )
+  n = _count_host_data_rows_for_window(
+    start=["bad"], end=["bad"], acct_hosts=["h.x"]
+  )
   assert n == 0
 
 
@@ -335,16 +363,21 @@ def test_count_host_data_rows_for_window_rejects_deque_list_bounds(monkeypatch):
 
   class _FailingObjects:
     def filter(self, **kwargs):
-      raise AssertionError("ORM filter should not run for list-like bound wrappers")
+      raise AssertionError(
+        "ORM filter should not run for list-like bound wrappers"
+      )
 
   class _FailingHostData:
     objects = _FailingObjects()
 
-  monkeypatch.setattr("hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data", _FailingHostData())
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data",
+    _FailingHostData(),
+  )
   n = _count_host_data_rows_for_window(
-      start=deque([["bad"]]),
-      end=deque([["bad"]]),
-      acct_hosts=["h.x"],
+    start=deque([["bad"]]),
+    end=deque([["bad"]]),
+    acct_hosts=["h.x"],
   )
   assert n == 0
 
@@ -363,9 +396,8 @@ def test_ensure_tz_none():
 
 def test_ensure_tz_aware_returns_astimezone():
   """_ensure_tz converts timezone-aware datetime to local_timezone."""
-  from datetime import timezone
 
-  utc_aware = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+  utc_aware = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
   result = _ensure_tz(utc_aware)
   assert result is not None
   assert result.tzinfo is not None
@@ -383,17 +415,17 @@ def test_type_detail_provider_aggregate_df_groups_in_pandas():
       return [{col: row[col] for col in cols} for row in self._rows]
 
   provider = TypeDetailDataProvider(
-      jid="j1",
-      type_name="pmc",
-      start_time=None,
-      end_time=None,
-      host_list=["n1"],
+    jid="j1",
+    type_name="pmc",
+    start_time=None,
+    end_time=None,
+    host_list=["n1"],
   )
 
   rows = [
-      {"host": "n1", "time": 1, "arc": 2.0},
-      {"host": "n1", "time": 1, "arc": 3.0},
-      {"host": "n2", "time": 2, "arc": 4.0},
+    {"host": "n1", "time": 1, "arc": 2.0},
+    {"host": "n1", "time": 1, "arc": 3.0},
+    {"host": "n2", "time": 2, "arc": 4.0},
   ]
   provider._qs = lambda **extra: FakeQuerySet(rows)
   out = provider.get_aggregate_df("FLOPS", metric="arc")
@@ -413,14 +445,14 @@ def test_type_detail_provider_invalid_metric_defaults_to_arc():
       return [{col: row[col] for col in cols} for row in self._rows]
 
   provider = TypeDetailDataProvider(
-      jid="j2",
-      type_name="pmc",
-      start_time=None,
-      end_time=None,
-      host_list=["n1"],
+    jid="j2",
+    type_name="pmc",
+    start_time=None,
+    end_time=None,
+    host_list=["n1"],
   )
   provider._qs = lambda **extra: FakeQuerySet(
-      [{"host": "n1", "time": 1, "arc": 7.0, "value": 99.0}]
+    [{"host": "n1", "time": 1, "arc": 7.0, "value": 99.0}]
   )
 
   out = provider.get_aggregate_df("FLOPS", metric="not_a_metric")
@@ -430,13 +462,21 @@ def test_type_detail_provider_invalid_metric_defaults_to_arc():
 def test_is_metrics_compute_control_flow_error_matches_only_timeouts():
   """The fallback guard keys off timeout control flow."""
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      is_metrics_compute_control_flow_error,
+    is_metrics_compute_control_flow_error,
   )
 
-  assert is_metrics_compute_control_flow_error(
-      TimeoutError("statement budget exceeded")) is True
-  assert is_metrics_compute_control_flow_error(
-      OperationalError("canceling statement")) is False
+  assert (
+    is_metrics_compute_control_flow_error(
+      TimeoutError("statement budget exceeded")
+    )
+    is True
+  )
+  assert (
+    is_metrics_compute_control_flow_error(
+      OperationalError("canceling statement")
+    )
+    is False
+  )
 
 
 def test_jid_table_get_aggregate_df_reraises_compute_timeout():
@@ -446,9 +486,9 @@ def test_jid_table_get_aggregate_df_reraises_compute_timeout():
   inst.jid = "jid-agg-timeout"
   inst._large_job_plot_cache_token = "full"
   inst._base_filter = {
-      "host__in": ["n1.example.com"],
-      "time__gte": datetime(2024, 6, 1, tzinfo=timezone.utc),
-      "time__lte": datetime(2024, 6, 2, tzinfo=timezone.utc),
+    "host__in": ["n1.example.com"],
+    "time__gte": datetime(2024, 6, 1, tzinfo=UTC),
+    "time__lte": datetime(2024, 6, 2, tzinfo=UTC),
   }
   calls = []
 
@@ -456,13 +496,17 @@ def test_jid_table_get_aggregate_df_reraises_compute_timeout():
     calls.append(1)
     raise TimeoutError("statement budget exceeded for jid jid-agg-timeout")
 
-  with patch(
+  with (
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.queryset_to_dataframe",
       fake_queryset_to_dataframe,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.cached_orm",
       lambda _key, _timeout, query_fn: query_fn(),
-  ), pytest.raises(TimeoutError):
+    ),
+    pytest.raises(TimeoutError),
+  ):
     jid_table.get_aggregate_df(inst, "host_cpu", "arc", ["user"])
 
   assert calls == [1], "pandas fallback must not run after a timeout"
@@ -475,9 +519,9 @@ def test_jid_table_get_aggregate_df_sql_timeout_splits_not_pandas_fallback():
   inst._large_job_plot_cache_token = "full"
   hosts = [f"n{i}.example.com" for i in range(8)]
   inst._base_filter = {
-      "host__in": hosts,
-      "time__gte": datetime(2024, 6, 1, tzinfo=timezone.utc),
-      "time__lte": datetime(2024, 6, 2, tzinfo=timezone.utc),
+    "host__in": hosts,
+    "time__gte": datetime(2024, 6, 1, tzinfo=UTC),
+    "time__lte": datetime(2024, 6, 2, tzinfo=UTC),
   }
   pandas_calls = []
   retry_calls = []
@@ -495,37 +539,44 @@ def test_jid_table_get_aggregate_df_sql_timeout_splits_not_pandas_fallback():
       right = retry_with_split(hosts_list[mid:], build_qs, **kwargs)
       return pd.concat([left, right], ignore_index=True)
     return pd.DataFrame(
-        {
-            "host": [hosts_list[0]],
-            "time": [datetime(2024, 6, 1, 12, tzinfo=timezone.utc)],
-            "sum_val": [1.0],
-        }
+      {
+        "host": [hosts_list[0]],
+        "time": [datetime(2024, 6, 1, 12, tzinfo=UTC)],
+        "sum_val": [1.0],
+      }
     )
 
-  with patch(
+  with (
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table."
       "_queryset_to_dataframe_with_host_chunk_retry",
       retry_with_split,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table."
       "_fetch_host_data_values_frames",
       fake_pandas,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.cached_orm",
       lambda _key, _timeout, query_fn: query_fn(),
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table."
       "host_data_sum_val_per_sample_queryset",
       lambda qs, _col: qs,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table."
       "host_data_restore_time_column",
       lambda df: df,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data",
-  ) as mock_hd:
+    ) as mock_hd,
+  ):
     mock_hd.objects.filter.return_value.filter.return_value = (
-        mock_hd.objects.filter.return_value
+      mock_hd.objects.filter.return_value
     )
     out = jid_table.get_aggregate_df(inst, "nvidia_gpu", "arc", ["gpu_util"])
 
@@ -541,9 +592,9 @@ def test_jid_table_get_aggregate_df_pandas_fallback_uses_fetch_frames():
   inst.jid = "jid-agg-pandas-fallback"
   inst._large_job_plot_cache_token = "full"
   inst._base_filter = {
-      "host__in": ["n1.example.com", "n2.example.com"],
-      "time__gte": datetime(2024, 6, 1, tzinfo=timezone.utc),
-      "time__lte": datetime(2024, 6, 2, tzinfo=timezone.utc),
+    "host__in": ["n1.example.com", "n2.example.com"],
+    "time__gte": datetime(2024, 6, 1, tzinfo=UTC),
+    "time__lte": datetime(2024, 6, 2, tzinfo=UTC),
   }
   fetch_batches = []
 
@@ -556,45 +607,54 @@ def test_jid_table_get_aggregate_df_pandas_fallback_uses_fetch_frames():
     for h in host_list:
       # Drive build_qs so DCGM/filter wiring still runs (host[, time_filter]).
       try:
-        _ = build_qs([h], {"time__gte": datetime(2024, 6, 1, tzinfo=timezone.utc)})
+        _ = build_qs(
+          [h],
+          {"time__gte": datetime(2024, 6, 1, tzinfo=UTC)},
+        )
       except TypeError:
         _ = build_qs([h])
       rows.append(
-          {
-              "host": h,
-              "time": datetime(2024, 6, 1, 12, tzinfo=timezone.utc),
-              "arc": 2.0,
-          }
+        {
+          "host": h,
+          "time": datetime(2024, 6, 1, 12, tzinfo=UTC),
+          "arc": 2.0,
+        }
       )
     return pd.DataFrame(rows)
 
-  with patch(
+  with (
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table."
       "_queryset_to_dataframe_with_host_chunk_retry",
       fail_sql,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table."
       "_fetch_host_data_values_frames",
       fake_fetch,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.cached_orm",
       lambda _key, _timeout, query_fn: query_fn(),
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table."
       "host_data_sum_val_per_sample_queryset",
       lambda qs, _col: qs,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data",
-  ) as mock_hd:
+    ) as mock_hd,
+  ):
     mock_hd.objects.filter.return_value = mock_hd.objects.filter.return_value
     mock_hd.objects.filter.return_value.filter.return_value = (
-        mock_hd.objects.filter.return_value
+      mock_hd.objects.filter.return_value
     )
     mock_hd.objects.filter.return_value.values.return_value = []
     out = jid_table.get_aggregate_df(inst, "nvidia_gpu", "arc", ["gpu_util"])
 
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      TYPE_DETAIL_HOST_QUERY_BATCH,
+    TYPE_DETAIL_HOST_QUERY_BATCH,
   )
 
   assert fetch_batches == [TYPE_DETAIL_HOST_QUERY_BATCH]
@@ -606,33 +666,40 @@ def test_type_detail_get_aggregate_df_reraises_compute_timeout():
   """TypeDetailDataProvider must not swallow metrics timeout control flow."""
 
   provider = TypeDetailDataProvider(
-      jid="jid-type-detail-timeout",
-      type_name="pmc",
-      start_time=datetime(2024, 6, 1, tzinfo=timezone.utc),
-      end_time=datetime(2024, 6, 2, tzinfo=timezone.utc),
-      host_list=["n1.example.com"],
+    jid="jid-type-detail-timeout",
+    type_name="pmc",
+    start_time=datetime(2024, 6, 1, tzinfo=UTC),
+    end_time=datetime(2024, 6, 2, tzinfo=UTC),
+    host_list=["n1.example.com"],
   )
   fallback_calls = []
 
   def fake_retry(_host_chunk, _build_qs, **_kwargs):
-    raise TimeoutError("statement budget exceeded for jid jid-type-detail-timeout")
+    raise TimeoutError(
+      "statement budget exceeded for jid jid-type-detail-timeout"
+    )
 
   def fake_fallback(*_args, **_kwargs):
     fallback_calls.append(1)
     return pd.DataFrame(columns=["host", "time", "arc"])
 
-  with patch(
+  with (
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table."
       "_queryset_to_dataframe_with_host_chunk_retry",
       fake_retry,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table."
       "_fetch_host_data_values_frames",
       fake_fallback,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.cached_orm",
       lambda _key, _timeout, query_fn: query_fn(),
-  ), pytest.raises(TimeoutError):
+    ),
+    pytest.raises(TimeoutError),
+  ):
     provider.get_aggregate_df("FLOPS", metric="arc")
 
   assert fallback_calls == []
@@ -642,11 +709,14 @@ def test_jid_table_host_data_time_filter_kwargs_full_window():
   """Unsampled jobs use time__gte/time__lte in ORM kwargs."""
   inst = jid_table.__new__(jid_table)
   inst._base_filter = {
-      "time__gte": 1,
-      "time__lte": 2,
-      "host__in": ["a.example.com"],
+    "time__gte": 1,
+    "time__lte": 2,
+    "host__in": ["a.example.com"],
   }
-  assert inst._host_data_time_filter_kwargs() == {"time__gte": 1, "time__lte": 2}
+  assert inst._host_data_time_filter_kwargs() == {
+    "time__gte": 1,
+    "time__lte": 2,
+  }
 
 
 def test_jid_table_host_data_time_filter_kwargs_sampled():
@@ -681,13 +751,13 @@ def test_jid_table_get_llite_delta_by_event_cache_set_failure_still_returns_df()
   inst._large_job_plot_cache_token = "full"
   inst.acct_host_list = ["h1.example.com"]
   inst._base_filter = {
-      "host__in": ["h1.example.com"],
-      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
-      "time__lte": datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+    "host__in": ["h1.example.com"],
+    "time__gte": datetime(2024, 1, 1, tzinfo=UTC),
+    "time__lte": datetime(2024, 1, 1, 1, tzinfo=UTC),
   }
   inst._host_data_time_filter_kwargs = lambda: {
-      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
-      "time__lte": datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+    "time__gte": datetime(2024, 1, 1, tzinfo=UTC),
+    "time__lte": datetime(2024, 1, 1, 1, tzinfo=UTC),
   }
 
   mock_cache = MagicMock()
@@ -696,11 +766,11 @@ def test_jid_table_get_llite_delta_by_event_cache_set_failure_still_returns_df()
 
   with patch.object(cu, "cache", mock_cache):
     with patch(
-        "hpcperfstats.analysis.metrics.lib.gen.jid_table.get_site_content_cache_timeout",
-        return_value=60,
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.get_site_content_cache_timeout",
+      return_value=60,
     ):
       with patch(
-          "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data"
+        "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data"
       ) as hd:
         hd.objects.filter.return_value = FakeQs()
         df = jid_table.get_llite_delta_by_event(inst)
@@ -735,13 +805,13 @@ def test_jid_table_get_beegfs_delta_by_event_cache_set_failure_still_returns_df(
   inst._large_job_plot_cache_token = "full"
   inst.acct_host_list = ["h1.example.com"]
   inst._base_filter = {
-      "host__in": ["h1.example.com"],
-      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
-      "time__lte": datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+    "host__in": ["h1.example.com"],
+    "time__gte": datetime(2024, 1, 1, tzinfo=UTC),
+    "time__lte": datetime(2024, 1, 1, 1, tzinfo=UTC),
   }
   inst._host_data_time_filter_kwargs = lambda: {
-      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
-      "time__lte": datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+    "time__gte": datetime(2024, 1, 1, tzinfo=UTC),
+    "time__lte": datetime(2024, 1, 1, 1, tzinfo=UTC),
   }
 
   mock_cache = MagicMock()
@@ -750,11 +820,11 @@ def test_jid_table_get_beegfs_delta_by_event_cache_set_failure_still_returns_df(
 
   with patch.object(cu, "cache", mock_cache):
     with patch(
-        "hpcperfstats.analysis.metrics.lib.gen.jid_table.get_site_content_cache_timeout",
-        return_value=60,
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.get_site_content_cache_timeout",
+      return_value=60,
     ):
       with patch(
-          "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data"
+        "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data"
       ) as hd:
         hd.objects.filter.return_value = FakeQs()
         df = jid_table.get_beegfs_delta_by_event(inst)
@@ -789,13 +859,13 @@ def test_jid_table_get_nfs_delta_totals_mb_cache_set_failure_still_returns_list(
   inst._large_job_plot_cache_token = "full"
   inst.acct_host_list = ["h1.example.com"]
   inst._base_filter = {
-      "host__in": ["h1.example.com"],
-      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
-      "time__lte": datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+    "host__in": ["h1.example.com"],
+    "time__gte": datetime(2024, 1, 1, tzinfo=UTC),
+    "time__lte": datetime(2024, 1, 1, 1, tzinfo=UTC),
   }
   inst._host_data_time_filter_kwargs = lambda: {
-      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
-      "time__lte": datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+    "time__gte": datetime(2024, 1, 1, tzinfo=UTC),
+    "time__lte": datetime(2024, 1, 1, 1, tzinfo=UTC),
   }
 
   mock_cache = MagicMock()
@@ -804,11 +874,11 @@ def test_jid_table_get_nfs_delta_totals_mb_cache_set_failure_still_returns_list(
 
   with patch.object(cu, "cache", mock_cache):
     with patch(
-        "hpcperfstats.analysis.metrics.lib.gen.jid_table.get_site_content_cache_timeout",
-        return_value=60,
+      "hpcperfstats.analysis.metrics.lib.gen.jid_table.get_site_content_cache_timeout",
+      return_value=60,
     ):
       with patch(
-          "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data"
+        "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data"
       ) as hd:
         hd.objects.filter.return_value = FakeQs()
         out = jid_table.get_nfs_delta_totals_mb(inst)
@@ -829,8 +899,7 @@ def test_iter_queryset_values_dicts_yields_rows():
       return self
 
     def iterator(self, chunk_size=2000):
-      for r in self._rows:
-        yield r
+      yield from self._rows
 
   qs = FakeQs()
   got = list(iter_queryset_values_dicts(qs, "a", "b", chunk_size=1))
@@ -838,100 +907,111 @@ def test_iter_queryset_values_dicts_yields_rows():
 
 
 def test_strided_distinct_times_date_bin_postgresql_skips_distinct_when_sql_nonempty(
-    monkeypatch,
+  monkeypatch,
 ):
   """Grouped-max SQL path must not call the batched DISTINCT time enumerator."""
-  from datetime import timedelta, timezone as dt_utc
+  from datetime import timedelta
 
   monkeypatch.setattr(connections["default"], "vendor", "postgresql")
   distinct_calls = []
 
   def fake_sql(*_a, **_k):
-    st = datetime(2025, 1, 1, 0, 0, tzinfo=dt_utc.utc)
+    st = datetime(2025, 1, 1, 0, 0, tzinfo=UTC)
     return [st, st + timedelta(seconds=30)]
 
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table._strided_distinct_times_date_bin_via_grouped_max_sql",
-      fake_sql,
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table._strided_distinct_times_date_bin_via_grouped_max_sql",
+    fake_sql,
   )
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table._distinct_times_in_window_batched",
-      lambda *a, **k: distinct_calls.append(1),
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table._distinct_times_in_window_batched",
+    lambda *a, **k: distinct_calls.append(1),
   )
-  st = datetime(2025, 1, 1, 0, 0, tzinfo=dt_utc.utc)
+  st = datetime(2025, 1, 1, 0, 0, tzinfo=UTC)
   en = st + timedelta(minutes=5)
-  out = _strided_distinct_times_date_bin_postgresql(st, en, ["n1.example.com"], 64)
+  out = _strided_distinct_times_date_bin_postgresql(
+    st, en, ["n1.example.com"], 64
+  )
   assert out == [st, st + timedelta(seconds=30)]
   assert distinct_calls == []
 
 
 def test_strided_distinct_times_date_bin_postgresql_falls_back_when_sql_empty(
-    monkeypatch,
+  monkeypatch,
 ):
   """When grouped-max SQL returns no rows, fall back to DISTINCT + Python bins."""
-  from datetime import timedelta, timezone as dt_utc
+  from datetime import timedelta
 
   monkeypatch.setattr(connections["default"], "vendor", "postgresql")
   distinct_calls = []
-  st = datetime(2025, 1, 1, 0, 0, tzinfo=dt_utc.utc)
+  st = datetime(2025, 1, 1, 0, 0, tzinfo=UTC)
 
   def fake_distinct(*_a, **_k):
     distinct_calls.append(1)
     return [st + timedelta(seconds=i) for i in range(10)]
 
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table._strided_distinct_times_date_bin_via_grouped_max_sql",
-      lambda *_a, **_k: [],
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table._strided_distinct_times_date_bin_via_grouped_max_sql",
+    lambda *_a, **_k: [],
   )
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table._distinct_times_in_window_batched",
-      fake_distinct,
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table._distinct_times_in_window_batched",
+    fake_distinct,
   )
   en = st + timedelta(seconds=100)
-  out = _strided_distinct_times_date_bin_postgresql(st, en, ["n1.example.com"], 8)
+  out = _strided_distinct_times_date_bin_postgresql(
+    st, en, ["n1.example.com"], 8
+  )
   assert distinct_calls == [1]
   assert out
   assert out[0] >= st
   assert out[-1] <= en
 
 
-def test_strided_distinct_times_for_large_job_falls_back_to_fixed_window_points(monkeypatch):
+def test_strided_distinct_times_for_large_job_falls_back_to_fixed_window_points(
+  monkeypatch,
+):
   """When SQL striding paths fail, return deterministic start/mid/end samples."""
   from datetime import timedelta
+
   from django.utils import timezone as django_tz
 
   start = django_tz.now()
   end = start + timedelta(minutes=30)
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table._strided_distinct_times_postgresql",
-      lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("timeout")),
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table._strided_distinct_times_postgresql",
+    lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("timeout")),
   )
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_large_job_time_sample_sql_mode",
-      lambda: "ntile",
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_large_job_time_sample_sql_mode",
+    lambda: "ntile",
   )
   sampled = _strided_distinct_times_for_large_job(
-      start, end, ["n1.example.com"], 64)
+    start, end, ["n1.example.com"], 64
+  )
   assert sampled[0] == start
   assert sampled[-1] == end
   assert len(sampled) == 3
 
 
-def test_strided_distinct_times_for_large_job_degenerate_window_returns_start(monkeypatch):
+def test_strided_distinct_times_for_large_job_degenerate_window_returns_start(
+  monkeypatch,
+):
   """Fallback sample for zero-width windows is a single timestamp."""
   from django.utils import timezone as django_tz
 
   start = django_tz.now()
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table._strided_distinct_times_postgresql",
-      lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("timeout")),
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table._strided_distinct_times_postgresql",
+    lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("timeout")),
   )
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_large_job_time_sample_sql_mode",
-      lambda: "ntile",
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_large_job_time_sample_sql_mode",
+    lambda: "ntile",
   )
   sampled = _strided_distinct_times_for_large_job(
-      start, start, ["n1.example.com"], 64)
+    start, start, ["n1.example.com"], 64
+  )
   assert sampled == [start]
 
 
@@ -943,12 +1023,18 @@ def test_ntile_bucket_max_timestamps_ten_into_three_buckets():
 
 def test_coerce_jid_table_host_query_batch_size_rejects_non_numeric_strings():
   """Hostnames mistaken for batch sizes must fall back (large-job row count must not raise)."""
-  assert _coerce_jid_table_host_query_batch_size(
-      "c641-092.vista.tacc.utexas.edu") == JID_TABLE_HOST_QUERY_BATCH
-  assert _coerce_jid_table_host_query_batch_size(None) == JID_TABLE_HOST_QUERY_BATCH
+  assert (
+    _coerce_jid_table_host_query_batch_size("c641-092.vista.tacc.utexas.edu")
+    == JID_TABLE_HOST_QUERY_BATCH
+  )
+  assert (
+    _coerce_jid_table_host_query_batch_size(None) == JID_TABLE_HOST_QUERY_BATCH
+  )
   assert _coerce_jid_table_host_query_batch_size(128) == 128
   assert _coerce_jid_table_host_query_batch_size("32") == 32
-  assert _coerce_jid_table_host_query_batch_size(0) == JID_TABLE_HOST_QUERY_BATCH
+  assert (
+    _coerce_jid_table_host_query_batch_size(0) == JID_TABLE_HOST_QUERY_BATCH
+  )
 
 
 def test_listify_acct_hosts_wraps_fqdn_string_without_splitting_chars():
@@ -964,7 +1050,11 @@ def test_listify_acct_hosts_comma_separated_short_names():
 
 def test_listify_acct_hosts_flattens_nested_sequences_and_dedupes():
   nested = [["n1.example"], ("n2.example", ["n3.example", "n1.example"])]
-  assert _listify_acct_hosts(nested) == ["n1.example", "n2.example", "n3.example"]
+  assert _listify_acct_hosts(nested) == [
+    "n1.example",
+    "n2.example",
+    "n3.example",
+  ]
 
 
 def test_iter_acct_host_batches_accepts_single_fqdn_string():
@@ -981,8 +1071,8 @@ def test_normalize_job_accounting_host_list_accepts_plain_string():
 def test_build_acct_host_fqdns_normalizes_suffix_and_avoids_double_append():
   """host_name_ext with leading dot should still generate one correct suffix."""
   with patch(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_host_name_ext",
-      return_value=".cluster.example",
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_host_name_ext",
+    return_value=".cluster.example",
   ):
     out = _build_acct_host_fqdns(["n1", "n2.cluster.example", ""])
   assert out == ["n1.cluster.example", "n2.cluster.example"]
@@ -993,13 +1083,16 @@ def test_iter_acct_host_batches_non_numeric_batch_size_uses_default_chunking():
   n = JID_TABLE_HOST_QUERY_BATCH + 5
   hosts = [f"n{i}.example.com" for i in range(n)]
   chunks = list(
-      _iter_acct_host_batches(hosts, "c641-092.vista.tacc.utexas.edu"))
+    _iter_acct_host_batches(hosts, "c641-092.vista.tacc.utexas.edu")
+  )
   assert len(chunks) == 2
   assert len(chunks[0]) == JID_TABLE_HOST_QUERY_BATCH
   assert len(chunks[1]) == 5
 
 
-def test_count_host_data_rows_for_window_flattens_nested_acct_hosts(monkeypatch):
+def test_count_host_data_rows_for_window_flattens_nested_acct_hosts(
+  monkeypatch,
+):
   captured_host_chunks = []
 
   class _FakeCountQuerySet:
@@ -1014,13 +1107,16 @@ def test_count_host_data_rows_for_window_flattens_nested_acct_hosts(monkeypatch)
   class _FakeHostData:
     objects = _FakeObjects()
 
-  monkeypatch.setattr("hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data", _FakeHostData())
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data",
+    _FakeHostData(),
+  )
   start = datetime(2026, 5, 1, 0, 0, 0)
   end = datetime(2026, 5, 1, 0, 5, 0)
   n = _count_host_data_rows_for_window(
-      start,
-      end,
-      [["n1.example"], ["n2.example", ["n3.example"]]],
+    start,
+    end,
+    [["n1.example"], ["n2.example", ["n3.example"]]],
   )
   assert n == 7
   assert captured_host_chunks == [["n1.example", "n2.example", "n3.example"]]
@@ -1049,13 +1145,16 @@ def test_distinct_times_in_window_batched_uses_host_chunks(monkeypatch):
       return FakeQS(len(kwargs["host__in"]))
 
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table._pg_relax_statement_timeout_for_large_job_time_sql",
-      nullcontext,
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table._pg_relax_statement_timeout_for_large_job_time_sql",
+    nullcontext,
   )
-  monkeypatch.setattr("hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data.objects", FakeManager())
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data.objects",
+    FakeManager(),
+  )
 
   n = JID_TABLE_HOST_QUERY_BATCH + 5
-  hosts = ["h{0}.x".format(i) for i in range(n)]
+  hosts = [f"h{i}.x" for i in range(n)]
   _distinct_times_in_window_batched(1, 2, hosts)
   assert len(chunk_lens) == 2
   assert chunk_lens[0] == JID_TABLE_HOST_QUERY_BATCH
@@ -1077,7 +1176,10 @@ def test_count_host_data_rows_for_window_chunked_single_batch(monkeypatch):
     def filter(self, **kwargs):
       return FakeCountQS(len(kwargs["host__in"]))
 
-  monkeypatch.setattr("hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data.objects", FakeManager())
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data.objects",
+    FakeManager(),
+  )
 
   st = datetime(2026, 5, 1, 0, 0, 0)
   et = datetime(2026, 5, 1, 0, 1, 0)
@@ -1101,7 +1203,10 @@ def test_count_host_data_rows_for_window_chunked_multiple_batches(monkeypatch):
     def filter(self, **kwargs):
       return FakeCountQS(len(kwargs["host__in"]))
 
-  monkeypatch.setattr("hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data.objects", FakeManager())
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data.objects",
+    FakeManager(),
+  )
 
   st = datetime(2026, 5, 1, 0, 0, 0)
   et = datetime(2026, 5, 1, 0, 1, 0)
@@ -1118,7 +1223,7 @@ def test_count_host_data_rows_retries_after_lost_sync(monkeypatch):
       calls["n"] += 1
       if calls["n"] == 1:
         raise OperationalError(
-            'lost synchronization with server: got message type "1", length 942485560'
+          'lost synchronization with server: got message type "1", length 942485560'
         )
       return 7
 
@@ -1126,12 +1231,15 @@ def test_count_host_data_rows_retries_after_lost_sync(monkeypatch):
     def filter(self, **_kwargs):
       return FakeCountQS()
 
-  monkeypatch.setattr("hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data.objects", FakeManager())
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data.objects",
+    FakeManager(),
+  )
   closed = []
 
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.close_old_connections",
-      lambda: closed.append(1),
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.close_old_connections",
+    lambda: closed.append(1),
   )
   st = datetime(2026, 5, 1, 0, 0, 0)
   et = datetime(2026, 5, 1, 0, 1, 0)
@@ -1142,21 +1250,25 @@ def test_count_host_data_rows_retries_after_lost_sync(monkeypatch):
 
 
 def test_is_statement_timeout_error_detects_operational_timeout():
-  from hpcperfstats.analysis.metrics.lib.gen.jid_table import _is_statement_timeout_error
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+    _is_statement_timeout_error,
+  )
 
   assert _is_statement_timeout_error(
-      OperationalError("canceling statement due to statement timeout")
+    OperationalError("canceling statement due to statement timeout")
   )
   assert not _is_statement_timeout_error(OperationalError("connection refused"))
 
 
-def test_queryset_to_dataframe_with_host_chunk_retry_splits_on_timeout(monkeypatch):
+def test_queryset_to_dataframe_with_host_chunk_retry_splits_on_timeout(
+  monkeypatch,
+):
   """On statement timeout, halve host__in and merge sub-chunk results."""
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      _queryset_to_dataframe_with_host_chunk_retry,
+    _queryset_to_dataframe_with_host_chunk_retry,
   )
 
-  hosts = ["h{0}.example.com".format(i) for i in range(8)]
+  hosts = [f"h{i}.example.com" for i in range(8)]
   chunk_sizes = []
 
   def build_qs(chunk):
@@ -1170,12 +1282,12 @@ def test_queryset_to_dataframe_with_host_chunk_retry_splits_on_timeout(monkeypat
     return pd.DataFrame([{"host": "h0.example.com", "sum_val": float(size)}])
 
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.queryset_to_dataframe",
-      fake_q2df,
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.queryset_to_dataframe",
+    fake_q2df,
   )
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.close_old_connections",
-      lambda: None,
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.close_old_connections",
+    lambda: None,
   )
   out = _queryset_to_dataframe_with_host_chunk_retry(hosts, build_qs)
   assert chunk_sizes == [8, 4, 4]
@@ -1201,9 +1313,9 @@ def _host_data_agg_base_qs():
   from hpcperfstats.site.lib.machine.models import host_data
 
   return host_data.objects.filter(
-      host__in=["h1.example.com", "h2.example.com"],
-      type="host_cpu",
-      event__in=["user", "system"],
+    host__in=["h1.example.com", "h2.example.com"],
+    type="host_cpu",
+    event__in=["user", "system"],
   )
 
 
@@ -1213,31 +1325,34 @@ def test_host_data_sum_val_annotation_resolves_float_output_field():
   from django.db.models.functions import Coalesce
 
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      host_data_sum_val_annotation,
+    host_data_sum_val_annotation,
   )
 
   with pytest.raises(Exception):
     Coalesce(Sum("arc"), Value(0)).output_field  # noqa: B018
 
-  assert isinstance(host_data_sum_val_annotation("arc").output_field, FloatField)
+  assert isinstance(
+    host_data_sum_val_annotation("arc").output_field, FloatField
+  )
 
 
 def test_host_data_per_sample_queryset_groups_by_host_and_time():
   """Grouping must survive PostgreSQL's primary-key functional dependency."""
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      HOST_DATA_SUM_VAL_ALIAS,
-      host_data_sum_val_annotation,
-      host_data_sum_val_per_sample_queryset,
+    HOST_DATA_SUM_VAL_ALIAS,
+    host_data_sum_val_annotation,
+    host_data_sum_val_per_sample_queryset,
   )
 
   collapsed = (
-      _host_data_agg_base_qs().values("host", "time")
-      .annotate(**{HOST_DATA_SUM_VAL_ALIAS: host_data_sum_val_annotation("arc")})
-      .order_by("host", "time")
+    _host_data_agg_base_qs()
+    .values("host", "time")
+    .annotate(**{HOST_DATA_SUM_VAL_ALIAS: host_data_sum_val_annotation("arc")})
+    .order_by("host", "time")
   )
   assert len(_compiled_group_by_terms(collapsed)) == 1, (
-      "raw values('host', 'time') no longer collapses; the ExpressionWrapper "
-      "workaround in host_data_sum_val_per_sample_queryset can be simplified"
+    "raw values('host', 'time') no longer collapses; the ExpressionWrapper "
+    "workaround in host_data_sum_val_per_sample_queryset can be simplified"
   )
 
   safe = host_data_sum_val_per_sample_queryset(_host_data_agg_base_qs(), "arc")
@@ -1247,23 +1362,26 @@ def test_host_data_per_sample_queryset_groups_by_host_and_time():
 def test_host_data_per_sample_queryset_sql_shape():
   """Float coalesce by default, optional non-negative FILTER, opt-out NULL sums."""
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      host_data_sum_val_per_sample_queryset,
+    host_data_sum_val_per_sample_queryset,
   )
 
   sql = _compiled_host_data_sql(
-      host_data_sum_val_per_sample_queryset(_host_data_agg_base_qs(), "arc"))
+    host_data_sum_val_per_sample_queryset(_host_data_agg_base_qs(), "arc")
+  )
   assert 'COALESCE(SUM("host_data"."arc")' in sql
   assert "FILTER" not in sql
 
   filtered = _compiled_host_data_sql(
-      host_data_sum_val_per_sample_queryset(
-          _host_data_agg_base_qs(), "arc", nonnegative_only=True)
+    host_data_sum_val_per_sample_queryset(
+      _host_data_agg_base_qs(), "arc", nonnegative_only=True
+    )
   )
   assert 'FILTER (WHERE "host_data"."arc" >= ' in filtered
 
   no_coalesce = _compiled_host_data_sql(
-      host_data_sum_val_per_sample_queryset(
-          _host_data_agg_base_qs(), "value", coalesce_zero=False)
+    host_data_sum_val_per_sample_queryset(
+      _host_data_agg_base_qs(), "value", coalesce_zero=False
+    )
   )
   assert "COALESCE" not in no_coalesce
   assert 'SUM("host_data"."value")' in no_coalesce
@@ -1271,15 +1389,18 @@ def test_host_data_per_sample_queryset_sql_shape():
 
 def test_host_data_restore_time_column_renames_alias():
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      HOST_DATA_SUM_VAL_ALIAS,
-      HOST_DATA_TIME_ALIAS,
-      host_data_restore_time_column,
+    HOST_DATA_SUM_VAL_ALIAS,
+    HOST_DATA_TIME_ALIAS,
+    host_data_restore_time_column,
   )
 
   df = pd.DataFrame(
-      [{"host": "h1", HOST_DATA_TIME_ALIAS: 1, HOST_DATA_SUM_VAL_ALIAS: 2.0}])
+    [{"host": "h1", HOST_DATA_TIME_ALIAS: 1, HOST_DATA_SUM_VAL_ALIAS: 2.0}]
+  )
   assert host_data_restore_time_column(df).columns.tolist() == [
-      "host", "time", HOST_DATA_SUM_VAL_ALIAS
+    "host",
+    "time",
+    HOST_DATA_SUM_VAL_ALIAS,
   ]
   passthrough = pd.DataFrame([{"host": "h1", "time": 1}])
   assert host_data_restore_time_column(passthrough) is passthrough
@@ -1288,14 +1409,14 @@ def test_host_data_restore_time_column_renames_alias():
 
 def test_type_detail_get_aggregate_df_sql_fast_path(monkeypatch):
   """SQL Sum/annotate path returns sum_val without pandas groupby on raw rows."""
-  st = datetime(2024, 6, 1, tzinfo=timezone.utc)
-  et = datetime(2024, 6, 2, tzinfo=timezone.utc)
+  st = datetime(2024, 6, 1, tzinfo=UTC)
+  et = datetime(2024, 6, 2, tzinfo=UTC)
   provider = TypeDetailDataProvider(
-      jid="j-sql",
-      type_name="mdc",
-      start_time=st,
-      end_time=et,
-      host_list=["n1.example.com", "n2.example.com"],
+    jid="j-sql",
+    type_name="mdc",
+    start_time=st,
+    end_time=et,
+    host_list=["n1.example.com", "n2.example.com"],
   )
   filter_calls = []
 
@@ -1310,24 +1431,32 @@ def test_type_detail_get_aggregate_df_sql_fast_path(monkeypatch):
       return self
 
     def __iter__(self):
-      return iter([
+      return iter(
+        [
           {"host": "n1.example.com", "time": 1, "sum_val": 3.0},
           {"host": "n2.example.com", "time": 2, "sum_val": 5.0},
-      ])
+        ]
+      )
 
   class Mgr:
     def filter(self, **kwargs):
       filter_calls.append(kwargs)
       return Qs()
 
-  monkeypatch.setattr("hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data.objects", Mgr())
-  with patch(
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data.objects",
+    Mgr(),
+  )
+  with (
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.cached_orm",
       lambda _k, _ttl, fn: fn(),
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg."
       "get_metrics_plot_aggregate_time_slice_s",
       lambda: 86400 * 7,
+    ),
   ):
     out = provider.get_aggregate_df("ldlm_cancel", metric="arc")
   assert len(filter_calls) == 1
@@ -1338,16 +1467,19 @@ def test_type_detail_get_aggregate_df_sql_fast_path(monkeypatch):
 def test_resolve_plot_aggregate_time_bucket_count_design_capacity_5000():
   """Design 5000×48×60: budget/hosts caps buckets (not full 2048 times)."""
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      _resolve_plot_aggregate_time_bucket_count,
+    _resolve_plot_aggregate_time_bucket_count,
   )
 
-  with patch(
+  with (
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_large_job_time_buckets",
       lambda: 2048,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg."
       "get_plot_aggregate_max_host_time_points",
       lambda: 1_000_000,
+    ),
   ):
     # 5000 hosts → floor(1e6/5000)=200 (14.4M host-sample design capacity).
     assert _resolve_plot_aggregate_time_bucket_count(5000) == 200
@@ -1355,24 +1487,20 @@ def test_resolve_plot_aggregate_time_bucket_count_design_capacity_5000():
 
 def test_iter_aggregate_time_filter_chunks_wall_and_time_in():
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      _iter_aggregate_time_filter_chunks,
+    _iter_aggregate_time_filter_chunks,
   )
 
-  start = datetime(2024, 1, 1, tzinfo=timezone.utc)
-  end = datetime(2024, 1, 1, 3, tzinfo=timezone.utc)
+  start = datetime(2024, 1, 1, tzinfo=UTC)
+  end = datetime(2024, 1, 1, 3, tzinfo=UTC)
   chunks = list(
-      _iter_aggregate_time_filter_chunks(
-          {"time__gte": start, "time__lte": end},
-          3600,
-      )
+    _iter_aggregate_time_filter_chunks(
+      {"time__gte": start, "time__lte": end},
+      3600,
+    )
   )
   assert len(chunks) == 3
-  times = [
-      datetime(2024, 1, 1, i, tzinfo=timezone.utc) for i in range(5)
-  ]
-  tin = list(
-      _iter_aggregate_time_filter_chunks({"time__in": times}, 120)
-  )
+  times = [datetime(2024, 1, 1, i, tzinfo=UTC) for i in range(5)]
+  tin = list(_iter_aggregate_time_filter_chunks({"time__in": times}, 120))
   # slice_s=120 → 2 timestamps per chunk
   assert len(tin) == 3
   assert len(tin[0]["time__in"]) == 2
@@ -1380,7 +1508,7 @@ def test_iter_aggregate_time_filter_chunks_wall_and_time_in():
 
 def test_split_time_filter_for_timeout_bisects_time_in():
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      _split_time_filter_for_timeout,
+    _split_time_filter_for_timeout,
   )
 
   times = list(range(4))
@@ -1392,18 +1520,18 @@ def test_split_time_filter_for_timeout_bisects_time_in():
 
 def test_assemble_sum_val_parts_bounded_single_part_skips_concat():
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      _assemble_sum_val_parts_bounded,
+    _assemble_sum_val_parts_bounded,
   )
 
   df = pd.DataFrame(
-      {
-          "host": ["a", "b"],
-          "time": [
-              datetime(2024, 1, 1, tzinfo=timezone.utc),
-              datetime(2024, 1, 1, tzinfo=timezone.utc),
-          ],
-          "sum_val": [1.0, 2.0],
-      }
+    {
+      "host": ["a", "b"],
+      "time": [
+        datetime(2024, 1, 1, tzinfo=UTC),
+        datetime(2024, 1, 1, tzinfo=UTC),
+      ],
+      "sum_val": [1.0, 2.0],
+    }
   )
   with patch("pandas.concat", side_effect=AssertionError("no concat")):
     out = _assemble_sum_val_parts_bounded([df], 2.0, 100)
@@ -1417,36 +1545,34 @@ def test_apply_large_job_sampling_uses_host_sample_budget(monkeypatch):
   inst = jt_mod.jid_table.__new__(jt_mod.jid_table)
   inst.jid = "jid-design-cap"
   inst.acct_host_list = [f"n{i}" for i in range(5000)]
-  inst.start_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
-  inst.end_time = datetime(2024, 1, 3, tzinfo=timezone.utc)  # 48h
+  inst.start_time = datetime(2024, 1, 1, tzinfo=UTC)
+  inst.end_time = datetime(2024, 1, 3, tzinfo=UTC)  # 48h
   inst._base_filter = {
-      "host__in": inst.acct_host_list,
-      "time__gte": inst.start_time,
-      "time__lte": inst.end_time,
+    "host__in": inst.acct_host_list,
+    "time__gte": inst.start_time,
+    "time__lte": inst.end_time,
   }
   from datetime import timedelta as _td
-  sampled_times = [
-      inst.start_time + _td(minutes=i * 15)
-      for i in range(200)
-  ]
+
+  sampled_times = [inst.start_time + _td(minutes=i * 15) for i in range(200)]
   monkeypatch.setattr(
-      jt_mod.cfg,
-      "get_plot_aggregate_max_host_time_points",
-      lambda: 1_000_000,
+    jt_mod.cfg,
+    "get_plot_aggregate_max_host_time_points",
+    lambda: 1_000_000,
   )
   monkeypatch.setattr(jt_mod.cfg, "get_large_job_time_buckets", lambda: 2048)
   monkeypatch.setattr(
-      jt_mod.cfg, "get_large_job_host_data_row_threshold", lambda: 1_500_000
+    jt_mod.cfg, "get_large_job_host_data_row_threshold", lambda: 1_500_000
   )
   monkeypatch.setattr(
-      jt_mod,
-      "_count_host_data_rows_for_window_cached",
-      lambda *_a, **_k: 1000,
+    jt_mod,
+    "_count_host_data_rows_for_window_cached",
+    lambda *_a, **_k: 1000,
   )
   monkeypatch.setattr(
-      jt_mod,
-      "_strided_distinct_times_for_large_job",
-      lambda *_a, **_k: sampled_times,
+    jt_mod,
+    "_strided_distinct_times_for_large_job",
+    lambda *_a, **_k: sampled_times,
   )
   jt_mod.jid_table._apply_large_job_time_sampling_if_needed(inst)
   assert "time__in" in inst._base_filter
@@ -1456,16 +1582,16 @@ def test_apply_large_job_sampling_uses_host_sample_budget(monkeypatch):
 
 def test_iter_host_time_query_chunks_nests_host_and_time():
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      _iter_host_time_query_chunks,
+    _iter_host_time_query_chunks,
   )
 
-  hosts = ["h{0}.example.com".format(i) for i in range(5)]
+  hosts = [f"h{i}.example.com" for i in range(5)]
   tkw = {
-      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
-      "time__lte": datetime(2024, 1, 1, 2, tzinfo=timezone.utc),
+    "time__gte": datetime(2024, 1, 1, tzinfo=UTC),
+    "time__lte": datetime(2024, 1, 1, 2, tzinfo=UTC),
   }
   pairs = list(
-      _iter_host_time_query_chunks(hosts, tkw, batch_size=2, slice_s=3600)
+    _iter_host_time_query_chunks(hosts, tkw, batch_size=2, slice_s=3600)
   )
   # 2 time hours × ceil(5/2)=3 host batches
   assert len(pairs) == 6
@@ -1475,11 +1601,11 @@ def test_iter_host_time_query_chunks_nests_host_and_time():
 
 def test_run_with_host_time_timeout_retry_splits_hosts(monkeypatch):
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      _merge_list_results,
-      _run_with_host_time_timeout_retry,
+    _merge_list_results,
+    _run_with_host_time_timeout_retry,
   )
 
-  hosts = ["h{0}.example.com".format(i) for i in range(4)]
+  hosts = [f"h{i}.example.com" for i in range(4)]
   seen = []
 
   def run(hosts_list, tf_cur):
@@ -1489,11 +1615,11 @@ def test_run_with_host_time_timeout_retry_splits_hosts(monkeypatch):
     return list(hosts_list)
 
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.close_old_connections",
-      lambda: None,
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.close_old_connections",
+    lambda: None,
   )
   out = _run_with_host_time_timeout_retry(
-      hosts, {"time__gte": 1}, run, _merge_list_results, empty=[]
+    hosts, {"time__gte": 1}, run, _merge_list_results, empty=[]
   )
   assert seen[0] == hosts
   assert sorted(out) == sorted(hosts)
@@ -1501,14 +1627,14 @@ def test_run_with_host_time_timeout_retry_splits_hosts(monkeypatch):
 
 def test_run_with_host_time_timeout_retry_splits_time(monkeypatch):
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      _merge_list_results,
-      _run_with_host_time_timeout_retry,
+    _merge_list_results,
+    _run_with_host_time_timeout_retry,
   )
 
   hosts = ["h0.example.com"]
   tkw = {
-      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
-      "time__lte": datetime(2024, 1, 1, 1, tzinfo=timezone.utc),
+    "time__gte": datetime(2024, 1, 1, tzinfo=UTC),
+    "time__lte": datetime(2024, 1, 1, 1, tzinfo=UTC),
   }
   calls = []
 
@@ -1521,11 +1647,11 @@ def test_run_with_host_time_timeout_retry_splits_time(monkeypatch):
     return [1]
 
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.close_old_connections",
-      lambda: None,
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.close_old_connections",
+    lambda: None,
   )
   out = _run_with_host_time_timeout_retry(
-      hosts, tkw, run, _merge_list_results, empty=[]
+    hosts, tkw, run, _merge_list_results, empty=[]
   )
   assert out == [1, 1]
   assert len(calls) >= 3
@@ -1533,42 +1659,42 @@ def test_run_with_host_time_timeout_retry_splits_time(monkeypatch):
 
 def test_fold_sum_by_key_and_count_max_avg():
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      _fold_count_max_avg_rows,
-      _fold_sum_by_key,
+    _fold_count_max_avg_rows,
+    _fold_sum_by_key,
   )
 
   summed = _fold_sum_by_key(
-      [
-          {"event": "a", "delta_sum": 1},
-          {"event": "a", "delta_sum": 2},
-          {"event": "b", "delta_sum": 4},
-      ],
-      ("event",),
-      "delta_sum",
+    [
+      {"event": "a", "delta_sum": 1},
+      {"event": "a", "delta_sum": 2},
+      {"event": "b", "delta_sum": 4},
+    ],
+    ("event",),
+    "delta_sum",
   )
   by_ev = {r["event"]: r["delta_sum"] for r in summed}
   assert by_ev == {"a": 3.0, "b": 4.0}
 
   folded = _fold_count_max_avg_rows(
-      [
-          {
-              "host": "h",
-              "dev": "0",
-              "event": "gpu_util",
-              "cnt": 2,
-              "vmax": 10.0,
-              "vmean": 4.0,
-          },
-          {
-              "host": "h",
-              "dev": "0",
-              "event": "gpu_util",
-              "cnt": 2,
-              "vmax": 20.0,
-              "vmean": 8.0,
-          },
-      ],
-      ("host", "dev", "event"),
+    [
+      {
+        "host": "h",
+        "dev": "0",
+        "event": "gpu_util",
+        "cnt": 2,
+        "vmax": 10.0,
+        "vmean": 4.0,
+      },
+      {
+        "host": "h",
+        "dev": "0",
+        "event": "gpu_util",
+        "cnt": 2,
+        "vmax": 20.0,
+        "vmean": 8.0,
+      },
+    ],
+    ("host", "dev", "event"),
   )
   assert len(folded) == 1
   assert folded[0]["cnt"] == 4
@@ -1577,19 +1703,21 @@ def test_fold_sum_by_key_and_count_max_avg():
 
 
 def test_full_host_data_rows_batched_uses_metrics_host_batch_and_time_slices(
-    monkeypatch,
+  monkeypatch,
 ):
   """Regression: ~48-host jobs must not issue one full-window values_list."""
   from hpcperfstats.analysis.metrics.lib.gen import jid_table as jt_mod
-  from hpcperfstats.analysis.metrics.lib.metrics import METRICS_HOST_QUERY_BATCH
+  from hpcperfstats.analysis.metrics.lib.metrics import (
+    METRICS_HOST_QUERY_BATCH,
+  )
 
-  hosts = ["h{0}.example.com".format(i) for i in range(20)]
+  hosts = [f"h{i}.example.com" for i in range(20)]
   inst = jt_mod.jid_table.__new__(jt_mod.jid_table)
   inst.acct_host_list = hosts
   inst._base_filter = {
-      "host__in": hosts,
-      "time__gte": datetime(2024, 1, 1, tzinfo=timezone.utc),
-      "time__lte": datetime(2024, 1, 1, 2, tzinfo=timezone.utc),
+    "host__in": hosts,
+    "time__gte": datetime(2024, 1, 1, tzinfo=UTC),
+    "time__lte": datetime(2024, 1, 1, 2, tzinfo=UTC),
   }
   seen_host_lens = []
   seen_tfs = []
@@ -1611,18 +1739,16 @@ def test_full_host_data_rows_batched_uses_metrics_host_batch_and_time_slices(
   def fake_filter(**kwargs):
     host_in = kwargs.get("host__in") or []
     seen_host_lens.append(len(host_in))
-    seen_tfs.append(
-        {k: v for k, v in kwargs.items() if k.startswith("time__")}
-    )
+    seen_tfs.append({k: v for k, v in kwargs.items() if k.startswith("time__")})
     return FakeQs(host_in, kwargs)
 
   monkeypatch.setattr(
-      jt_mod.cfg, "get_metrics_plot_aggregate_time_slice_s", lambda: 3600
+    jt_mod.cfg, "get_metrics_plot_aggregate_time_slice_s", lambda: 3600
   )
   monkeypatch.setattr(jt_mod, "close_old_connections", lambda: None)
   monkeypatch.setattr(jt_mod.host_data.objects, "filter", fake_filter)
   out = inst._full_host_data_rows_batched(
-      ["host", "time", "type", "event", "value", "arc"]
+    ["host", "time", "type", "event", "value", "arc"]
   )
   assert out == []
   assert seen_host_lens
@@ -1634,9 +1760,11 @@ def test_full_host_data_rows_batched_uses_metrics_host_batch_and_time_slices(
 def test_jid_table_host_query_batch_matches_metrics_batch():
   """Drift gate: plot default host batch must stay aligned with metrics law."""
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      JID_TABLE_HOST_QUERY_BATCH,
+    JID_TABLE_HOST_QUERY_BATCH,
   )
-  from hpcperfstats.analysis.metrics.lib.metrics import METRICS_HOST_QUERY_BATCH
+  from hpcperfstats.analysis.metrics.lib.metrics import (
+    METRICS_HOST_QUERY_BATCH,
+  )
 
   assert JID_TABLE_HOST_QUERY_BATCH == 16
   assert JID_TABLE_HOST_QUERY_BATCH == METRICS_HOST_QUERY_BATCH
@@ -1646,56 +1774,56 @@ def test_jid_table_host_query_batch_matches_metrics_batch():
 def test_aggregate_df_host_batch_dense_nfs_read_write_iops():
   """NFS Summary triples (read/write/iops) must start at batch 8, not 64/16."""
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      TYPE_DETAIL_HOST_QUERY_BATCH,
-      _aggregate_df_host_batch,
+    TYPE_DETAIL_HOST_QUERY_BATCH,
+    _aggregate_df_host_batch,
   )
 
   assert (
-      _aggregate_df_host_batch(
-          "host_nfs",
-          ["normal_read", "direct_read", "server_read"],
-          reject_dcgm_blank=False,
-      )
-      == TYPE_DETAIL_HOST_QUERY_BATCH
+    _aggregate_df_host_batch(
+      "host_nfs",
+      ["normal_read", "direct_read", "server_read"],
+      reject_dcgm_blank=False,
+    )
+    == TYPE_DETAIL_HOST_QUERY_BATCH
   )
   assert (
-      _aggregate_df_host_batch(
-          "nfs",
-          ["normal_write", "direct_write", "server_write"],
-          reject_dcgm_blank=False,
-      )
-      == TYPE_DETAIL_HOST_QUERY_BATCH
+    _aggregate_df_host_batch(
+      "nfs",
+      ["normal_write", "direct_write", "server_write"],
+      reject_dcgm_blank=False,
+    )
+    == TYPE_DETAIL_HOST_QUERY_BATCH
   )
   assert (
-      _aggregate_df_host_batch(
-          "nfs",
-          ["READ_ops", "read_ops", "WRITE_ops", "write_ops"],
-          reject_dcgm_blank=False,
-      )
-      == TYPE_DETAIL_HOST_QUERY_BATCH
+    _aggregate_df_host_batch(
+      "nfs",
+      ["READ_ops", "read_ops", "WRITE_ops", "write_ops"],
+      reject_dcgm_blank=False,
+    )
+    == TYPE_DETAIL_HOST_QUERY_BATCH
   )
   assert (
-      _aggregate_df_host_batch(
-          "host_cpu",
-          ["user"],
-          reject_dcgm_blank=False,
-      )
-      == JID_TABLE_HOST_QUERY_BATCH
+    _aggregate_df_host_batch(
+      "host_cpu",
+      ["user"],
+      reject_dcgm_blank=False,
+    )
+    == JID_TABLE_HOST_QUERY_BATCH
   )
   assert (
-      _aggregate_df_host_batch(
-          "nvidia_gpu",
-          ["gpu_util"],
-          reject_dcgm_blank=True,
-      )
-      == TYPE_DETAIL_HOST_QUERY_BATCH
+    _aggregate_df_host_batch(
+      "nvidia_gpu",
+      ["gpu_util"],
+      reject_dcgm_blank=True,
+    )
+    == TYPE_DETAIL_HOST_QUERY_BATCH
   )
 
 
 def test_get_aggregate_df_nfs_first_host_chunk_is_eight(monkeypatch):
   """48-host NFS read SUM must not issue host__in of all 48 on first attempt."""
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      TYPE_DETAIL_HOST_QUERY_BATCH,
+    TYPE_DETAIL_HOST_QUERY_BATCH,
   )
 
   inst = jid_table.__new__(jid_table)
@@ -1703,51 +1831,57 @@ def test_get_aggregate_df_nfs_first_host_chunk_is_eight(monkeypatch):
   inst._large_job_plot_cache_token = "full"
   hosts = [f"c101-{i:03d}.horizon.tacc.utexas.edu" for i in range(1, 49)]
   inst._base_filter = {
-      "host__in": hosts,
-      "time__gte": datetime(2026, 8, 5, 0, 33, 33, tzinfo=timezone.utc),
-      "time__lte": datetime(2026, 8, 5, 1, 33, 33, tzinfo=timezone.utc),
+    "host__in": hosts,
+    "time__gte": datetime(2026, 8, 5, 0, 33, 33, tzinfo=UTC),
+    "time__lte": datetime(2026, 8, 5, 1, 33, 33, tzinfo=UTC),
   }
   # Align with production: one hour window uses one 3600s slice.
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg."
-      "get_metrics_plot_aggregate_time_slice_s",
-      lambda: 3600,
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg."
+    "get_metrics_plot_aggregate_time_slice_s",
+    lambda: 3600,
   )
   first_host_lens = []
 
   def capture_retry(host_chunk, build_qs, **kwargs):
     first_host_lens.append(len([str(h) for h in host_chunk if h]))
     return pd.DataFrame(
-        {
-            "host": [list(host_chunk)[0]],
-            "time": [datetime(2026, 8, 5, 1, tzinfo=timezone.utc)],
-            "sum_val": [1.0],
-        }
+      {
+        "host": [next(iter(host_chunk))],
+        "time": [datetime(2026, 8, 5, 1, tzinfo=UTC)],
+        "sum_val": [1.0],
+      }
     )
 
-  with patch(
+  with (
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table."
       "_queryset_to_dataframe_with_host_chunk_retry",
       capture_retry,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.cached_orm",
       lambda _key, _timeout, query_fn: query_fn(),
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table."
       "host_data_sum_val_per_sample_queryset",
       lambda qs, _col: qs,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table."
       "host_data_restore_time_column",
       lambda df: df,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data",
+    ),
   ):
     out = jid_table.get_aggregate_df(
-        inst,
-        "nfs",
-        "arc",
-        ["normal_read", "direct_read", "server_read"],
+      inst,
+      "nfs",
+      "arc",
+      ["normal_read", "direct_read", "server_read"],
     )
 
   assert first_host_lens, "expected SQL host chunks"
@@ -1758,14 +1892,14 @@ def test_get_aggregate_df_nfs_first_host_chunk_is_eight(monkeypatch):
 
 def test_type_detail_get_host_time_df_uses_time_slices(monkeypatch):
   """TypeDetail host/time distinct must nest wall-clock slices, not full window."""
-  st = datetime(2024, 6, 1, tzinfo=timezone.utc)
-  et = datetime(2024, 6, 1, 2, tzinfo=timezone.utc)
+  st = datetime(2024, 6, 1, tzinfo=UTC)
+  et = datetime(2024, 6, 1, 2, tzinfo=UTC)
   provider = TypeDetailDataProvider(
-      jid="j-ht",
-      type_name="mdc",
-      start_time=st,
-      end_time=et,
-      host_list=["n1.example.com", "n2.example.com"],
+    jid="j-ht",
+    type_name="mdc",
+    start_time=st,
+    end_time=et,
+    host_list=["n1.example.com", "n2.example.com"],
   )
   seen = {"time_chunks": 0}
 
@@ -1774,31 +1908,35 @@ def test_type_detail_get_host_time_df_uses_time_slices(monkeypatch):
     seen["time_chunks"] = len(list(tfc or []))
     seen["batch_size"] = batch_size
     return pd.DataFrame(
-        {
-            "host": ["n1.example.com"],
-            "time": [st],
-        }
+      {
+        "host": ["n1.example.com"],
+        "time": [st],
+      }
     )
 
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg."
-      "get_metrics_plot_aggregate_time_slice_s",
-      lambda: 3600,
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg."
+    "get_metrics_plot_aggregate_time_slice_s",
+    lambda: 3600,
   )
-  with patch(
+  with (
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table."
       "_fetch_host_data_values_frames",
       fake_fetch,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.cached_orm",
       lambda _k, _ttl, fn: fn(),
+    ),
   ):
     out = provider.get_host_time_df()
 
   assert seen["time_chunks"] >= 2
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      TYPE_DETAIL_HOST_QUERY_BATCH,
+    TYPE_DETAIL_HOST_QUERY_BATCH,
   )
+
   assert seen["batch_size"] == TYPE_DETAIL_HOST_QUERY_BATCH
   assert not out.empty
 
@@ -1829,20 +1967,20 @@ def test_host_data_provider_get_aggregate_df_accepts_group_by_dev(monkeypatch):
 
   monkeypatch.setattr(jt_mod, "host_data_sum_val_per_sample_queryset", host_qs)
   monkeypatch.setattr(
-      jt_mod, "host_data_sum_val_per_sample_dev_queryset", dev_qs
+    jt_mod, "host_data_sum_val_per_sample_dev_queryset", dev_qs
   )
   monkeypatch.setattr(
-      jt_mod,
-      "queryset_to_dataframe",
-      lambda qs: empty_dev.copy() if calls["dev"] else empty_host.copy(),
+    jt_mod,
+    "queryset_to_dataframe",
+    lambda qs: empty_dev.copy() if calls["dev"] else empty_host.copy(),
   )
   monkeypatch.setattr(jt_mod, "host_data_restore_time_column", lambda df: df)
   monkeypatch.setattr(
-      jt_mod, "events_probe_names", lambda events, typ=None: list(events)
+    jt_mod, "events_probe_names", lambda events, typ=None: list(events)
   )
   monkeypatch.setattr(jt_mod, "type_probe_names", lambda typ: [typ])
   monkeypatch.setattr(
-      jt_mod, "_incr_summary_aggregate_count_if_active", lambda: None
+    jt_mod, "_incr_summary_aggregate_count_if_active", lambda: None
   )
 
   provider = HostDataProvider.__new__(HostDataProvider)
@@ -1859,8 +1997,7 @@ def test_host_data_provider_get_aggregate_df_accepts_group_by_dev(monkeypatch):
   calls["host"] = 0
   calls["dev"] = 0
   dev_df = provider.get_aggregate_df(
-      "nvidia_gpu", "arc", ["gpu_util"], 1.0, group_by_dev=True
+    "nvidia_gpu", "arc", ["gpu_util"], 1.0, group_by_dev=True
   )
   assert calls["dev"] >= 1
   assert "dev" in list(dev_df.columns)
-

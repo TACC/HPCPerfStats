@@ -15,7 +15,9 @@ def _set_future_result_later(future, value, delay_seconds):
 
 @pytest.mark.django_db(databases=[])
 def test_collect_future_results_with_deadline_returns_partial_results():
-  from hpcperfstats.site.lib.machine.api import _collect_future_results_with_deadline
+  from hpcperfstats.site.lib.machine.api import (
+    _collect_future_results_with_deadline,
+  )
 
   fast_future = Future()
   fast_future.set_result("fast")
@@ -39,7 +41,9 @@ def test_collect_future_results_with_deadline_returns_partial_results():
 
 @pytest.mark.django_db(databases=[])
 def test_collect_future_results_with_deadline_omits_failed_tasks():
-  from hpcperfstats.site.lib.machine.api import _collect_future_results_with_deadline
+  from hpcperfstats.site.lib.machine.api import (
+    _collect_future_results_with_deadline,
+  )
 
   ok_future = Future()
   ok_future.set_result("ok")
@@ -55,4 +59,3 @@ def test_collect_future_results_with_deadline_omits_failed_tasks():
 
   assert results_by_key == {"fsio": "ok"}
   assert remaining_keys == set()
-

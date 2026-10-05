@@ -1,6 +1,8 @@
 """Host unit tests for sync_timedb queue orchestrator cutover (slice 4)."""
+
 from __future__ import annotations
 
+import contextlib
 import inspect
 import os
 import time
@@ -11,9 +13,11 @@ from pathlib import Path
 import pytest
 
 import hpcperfstats.dbload.sync_timedb as st
-from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
-from hpcperfstats.dbload.lib import sync_timedb_progress_report as pr
-from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+from hpcperfstats.dbload.lib import (
+  sync_timedb_job_store as jq,
+  sync_timedb_progress_report as pr,
+  sync_timedb_queue_orchestrator as qo,
+)
 from hpcperfstats.dbload.lib.sync_timedb_archive_dir_lock import (
   exclusive_archive_dir_flock,
   orchestrator_lock_path,
@@ -21,7 +25,9 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_dir_lock import (
 from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 
 
-def test_exclusive_archive_dir_flock_rejects_second_nonblocking_holder(tmp_path):
+def test_exclusive_archive_dir_flock_rejects_second_nonblocking_holder(
+  tmp_path,
+):
   """Second non-blocking flock must fail while the first holder is live."""
   archive = tmp_path / "archive"
   archive.mkdir()
@@ -49,8 +55,8 @@ def test_exclusive_archive_dir_flock_cross_process(tmp_path):
   result = tmp_path / "result.txt"
   with exclusive_archive_dir_flock(str(archive), blocking=True):
     proc = Process(
-        target=_child_try_nonblocking,
-        args=(str(archive), str(result)),
+      target=_child_try_nonblocking,
+      args=(str(archive), str(result)),
     )
     proc.start()
     proc.join(timeout=10)
@@ -72,8 +78,10 @@ def test_supervisor_loop_symbol_removed():
 
 def test_sliding_window_ingest_enqueues_append_while_other_inflight():
   """First completed ingest enqueues append while another ingest stays inflight."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_store as jq,
+    sync_timedb_queue_orchestrator as qo,
+  )
 
   class _Ready:
     def ready(self):
@@ -89,31 +97,31 @@ def test_sliding_window_ingest_enqueues_append_while_other_inflight():
 
   client = SyncTimedbJobStore("")
   inflight = {
-      "/a|1|1": _Ready(),
-      "/b|2|2": _Pending(),
+    "/a|1|1": _Ready(),
+    "/b|2|2": _Pending(),
   }
   claims = {
-      "/a|1|1": jq.ClaimedJob(
-          kind=jq.JOB_KIND_INGEST,
-          identity="/a|1|1",
-          owner_token="n:h:b:1",
-          deadline=1.0,
-          score=5.0,
-      ),
-      "/b|2|2": jq.ClaimedJob(
-          kind=jq.JOB_KIND_INGEST,
-          identity="/b|2|2",
-          owner_token="n:h:b:2",
-          deadline=1.0,
-          score=6.0,
-      ),
+    "/a|1|1": jq.ClaimedJob(
+      kind=jq.JOB_KIND_INGEST,
+      identity="/a|1|1",
+      owner_token="n:h:b:1",
+      deadline=1.0,
+      score=5.0,
+    ),
+    "/b|2|2": jq.ClaimedJob(
+      kind=jq.JOB_KIND_INGEST,
+      identity="/b|2|2",
+      owner_token="n:h:b:2",
+      deadline=1.0,
+      score=6.0,
+    ),
   }
   done = qo._drain_ingest_ready(
-      client,
-      inflight=inflight,
-      claims=claims,
-      tgz_archive_dir="/daily",
-      archive_data_dir="/archive",
+    client,
+    inflight=inflight,
+    claims=claims,
+    tgz_archive_dir="/daily",
+    archive_data_dir="/archive",
   )
   assert done == 1
   assert "/b|2|2" in inflight
@@ -148,20 +156,20 @@ def test_drain_records_ingest_marks_before_ack(monkeypatch):
   client = SyncTimedbJobStore("")
   inflight = {"/a": _Ready()}
   claims = {
-      "/a": jq.ClaimedJob(
-          kind=jq.JOB_KIND_INGEST,
-          identity="/a",
-          owner_token="n:h:b:1",
-          deadline=1.0,
-          score=5.0,
-      ),
+    "/a": jq.ClaimedJob(
+      kind=jq.JOB_KIND_INGEST,
+      identity="/a",
+      owner_token="n:h:b:1",
+      deadline=1.0,
+      score=5.0,
+    ),
   }
   done = qo._drain_ingest_ready(
-      client,
-      inflight=inflight,
-      claims=claims,
-      tgz_archive_dir="/daily",
-      archive_data_dir="/archive",
+    client,
+    inflight=inflight,
+    claims=claims,
+    tgz_archive_dir="/daily",
+    archive_data_dir="/archive",
   )
   assert done == 1
   assert recorded
@@ -191,14 +199,14 @@ def test_handoff_retryable_paths_enqueues_ingest(tmp_path):
   raw = tmp_path / "node.stats"
   raw.write_bytes(b"payload")
   enqueued = qo._handoff_retryable_paths_to_ingest(
-      client,
-      str(tar),
-      [str(raw)],
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      today=date(2026, 8, 24),
-      ingest_is_complete_fn=lambda **k: False,
-      append_is_complete_fn=lambda **k: True,
+    client,
+    str(tar),
+    [str(raw)],
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    today=date(2026, 8, 24),
+    ingest_is_complete_fn=lambda **k: False,
+    append_is_complete_fn=lambda **k: True,
   )
   assert enqueued == 1
   ident = os.path.normpath(str(raw))
@@ -214,13 +222,13 @@ def test_handoff_retryable_paths_skips_when_job_store_missing(tmp_path):
   raw = tmp_path / "node.stats"
   raw.write_bytes(b"payload")
   assert (
-      qo._handoff_retryable_paths_to_ingest(
-          None,
-          str(tar),
-          [str(raw)],
-          tgz_archive_dir=str(daily),
-      )
-      == 0
+    qo._handoff_retryable_paths_to_ingest(
+      None,
+      str(tar),
+      [str(raw)],
+      tgz_archive_dir=str(daily),
+    )
+    == 0
   )
 
 
@@ -235,14 +243,16 @@ def test_parallelism_doc_covers_band_reservation():
 
 def test_day_close_job_tar_drops_when_sealed_and_no_raw(tmp_path, monkeypatch):
   """day_close must seal then tar-drop when zst exists and closed raw is gone."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_queue_orchestrator as qo,
+  )
 
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2020-01-01"
-  tar = daily / ("%s.tar" % day)
-  zst = daily / ("%s.tar.zst" % day)
+  tar = daily / (f"{day}.tar")
+  zst = daily / (f"{day}.tar.zst")
   tar.write_bytes(b"tar")
   zst.write_bytes(b"zst")
 
@@ -250,8 +260,8 @@ def test_day_close_job_tar_drops_when_sealed_and_no_raw(tmp_path, monkeypatch):
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: None,
   )
 
   class _Coord:
@@ -271,30 +281,34 @@ def test_day_close_job_tar_drops_when_sealed_and_no_raw(tmp_path, monkeypatch):
       return False
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda *a, **k: None,
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda *a, **k: None,
   )
   assert outcome == "complete"
   assert not tar.exists()
   assert zst.exists()
 
 
-def test_day_close_skips_tar_drop_when_post_seal_verify_fails(tmp_path, monkeypatch):
+def test_day_close_skips_tar_drop_when_post_seal_verify_fails(
+  tmp_path, monkeypatch
+):
   """post_seal_verify failure must not unlink tar; raw_delete still runs."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_queue_orchestrator as qo,
+  )
 
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2020-01-02"
-  tar = daily / ("%s.tar" % day)
-  zst = daily / ("%s.tar.zst" % day)
+  tar = daily / (f"{day}.tar")
+  zst = daily / (f"{day}.tar.zst")
   tar.write_bytes(b"tar")
   zst.write_bytes(b"zst")
   deleted = []
@@ -303,8 +317,8 @@ def test_day_close_skips_tar_drop_when_post_seal_verify_fails(tmp_path, monkeypa
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: None,
   )
 
   class _Coord:
@@ -325,14 +339,14 @@ def test_day_close_skips_tar_drop_when_post_seal_verify_fails(tmp_path, monkeypa
       return False
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda *a, **k: None,
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda *a, **k: None,
   )
   assert outcome == "incomplete_raw"
   assert tar.exists()
@@ -340,16 +354,20 @@ def test_day_close_skips_tar_drop_when_post_seal_verify_fails(tmp_path, monkeypa
   assert deleted == [str(tar)]
 
 
-def test_day_close_skips_tar_drop_when_post_seal_returns_false(tmp_path, monkeypatch):
+def test_day_close_skips_tar_drop_when_post_seal_returns_false(
+  tmp_path, monkeypatch
+):
   """Soft-fail False from post_seal verify must keep dual copies (contract D)."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_queue_orchestrator as qo,
+  )
 
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2020-01-03"
-  tar = daily / ("%s.tar" % day)
-  zst = daily / ("%s.tar.zst" % day)
+  tar = daily / (f"{day}.tar")
+  zst = daily / (f"{day}.tar.zst")
   tar.write_bytes(b"tar")
   zst.write_bytes(b"zst")
 
@@ -357,8 +375,8 @@ def test_day_close_skips_tar_drop_when_post_seal_returns_false(tmp_path, monkeyp
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: None,
   )
 
   class _Coord:
@@ -381,30 +399,34 @@ def test_day_close_skips_tar_drop_when_post_seal_returns_false(tmp_path, monkeyp
       raise AssertionError("tar_drop must not run when post_seal is False")
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda *a, **k: None,
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda *a, **k: None,
   )
   assert outcome == "incomplete_raw"
   assert tar.exists()
   assert zst.exists()
 
 
-def test_day_close_inventory_shrink_after_delete_and_tar_drop(tmp_path, monkeypatch):
+def test_day_close_inventory_shrink_after_delete_and_tar_drop(
+  tmp_path, monkeypatch
+):
   """Delete on skip_merge claim; tar_drop on a later no-remaining claim."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_queue_orchestrator as qo,
+  )
 
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2020-01-04"
-  tar = daily / ("%s.tar" % day)
-  zst = daily / ("%s.tar.zst" % day)
+  tar = daily / (f"{day}.tar")
+  zst = daily / (f"{day}.tar.zst")
   tar.write_bytes(b"tar")
   zst.write_bytes(b"zst")
   raw = tmp_path / "closed.raw"
@@ -414,8 +436,8 @@ def test_day_close_inventory_shrink_after_delete_and_tar_drop(tmp_path, monkeypa
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: None,
   )
 
   class _Coord:
@@ -443,41 +465,45 @@ def test_day_close_inventory_shrink_after_delete_and_tar_drop(tmp_path, monkeypa
       return not os.path.isfile(tar_path)
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   # Claim 1: H19 append_idle remaining → delete without has_closed re-find.
   outcome1 = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda *a, **k: None,
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda *a, **k: None,
   )
   assert outcome1 == "incomplete_raw"
   assert not raw.exists()
   assert tar.exists()
   # Claim 2: remaining gone → tar_drop.
   outcome2 = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda *a, **k: None,
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda *a, **k: None,
   )
   assert outcome2 == "complete"
   assert not tar.exists()
   assert zst.exists()
 
 
-def test_day_close_reseals_after_raw_delete_when_zst_missing(tmp_path, monkeypatch):
+def test_day_close_reseals_after_raw_delete_when_zst_missing(
+  tmp_path, monkeypatch
+):
   """Reseal+tar_drop on a later claim after skip_merge delete clears raw."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_queue_orchestrator as qo,
+  )
 
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2020-01-05"
-  tar = daily / ("%s.tar" % day)
-  zst = daily / ("%s.tar.zst" % day)
+  tar = daily / (f"{day}.tar")
+  zst = daily / (f"{day}.tar.zst")
   tar.write_bytes(b"tar")
   seal_calls = []
 
@@ -493,8 +519,8 @@ def test_day_close_reseals_after_raw_delete_when_zst_missing(tmp_path, monkeypat
     zst.write_bytes(b"zst")
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      _seal,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    _seal,
   )
 
   class _Coord:
@@ -525,22 +551,22 @@ def test_day_close_reseals_after_raw_delete_when_zst_missing(tmp_path, monkeypat
       return not os.path.isfile(tar_path)
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   outcome1 = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda *a, **k: None,
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda *a, **k: None,
   )
   assert outcome1 == "incomplete_raw"
   assert tar.exists()
   outcome2 = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda *a, **k: None,
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda *a, **k: None,
   )
   assert outcome2 == "complete"
   assert len(seal_calls) >= 2
@@ -550,14 +576,16 @@ def test_day_close_reseals_after_raw_delete_when_zst_missing(tmp_path, monkeypat
 
 def test_day_close_phase_done_dual_reclaims_open_tar(tmp_path, monkeypatch):
   """04 class: phase=done + dual must tar_drop even when append queue is hot."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_queue_orchestrator as qo,
+  )
 
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2020-01-06"
-  tar = daily / ("%s.tar" % day)
-  zst = daily / ("%s.tar.zst" % day)
+  tar = daily / (f"{day}.tar")
+  zst = daily / (f"{day}.tar.zst")
   tar.write_bytes(b"tar")
   zst.write_bytes(b"zst")
 
@@ -569,10 +597,12 @@ def test_day_close_phase_done_dual_reclaims_open_tar(tmp_path, monkeypatch):
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: None,
   )
-  monkeypatch.setattr(qo, "_day_close_live_ingest_or_populate", lambda *a, **k: False)
+  monkeypatch.setattr(
+    qo, "_day_close_live_ingest_or_populate", lambda *a, **k: False
+  )
 
   class _Coord:
     def __init__(self, **_kw):
@@ -602,15 +632,15 @@ def test_day_close_phase_done_dual_reclaims_open_tar(tmp_path, monkeypatch):
       return True
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      job_store=_Store(),
-      log_fn=lambda *a, **k: None,
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    job_store=_Store(),
+    log_fn=lambda *a, **k: None,
   )
   assert outcome == "complete"
   assert not tar.exists()
@@ -619,15 +649,19 @@ def test_day_close_phase_done_dual_reclaims_open_tar(tmp_path, monkeypatch):
 
 def test_day_close_dc01_stage_order(tmp_path, monkeypatch):
   """DC-01 order: pre-seal → reconcile → pre-seal → dedupe → seal → post-seal → delete."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import ReconcileResult
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_queue_orchestrator as qo,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    ReconcileResult,
+  )
 
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2020-01-01"
-  tar = daily / ("%s.tar" % day)
-  zst = daily / ("%s.tar.zst" % day)
+  tar = daily / (f"{day}.tar")
+  zst = daily / (f"{day}.tar.zst")
   tar.write_bytes(b"tar")
   zst.write_bytes(b"zst")
   stages = []
@@ -636,18 +670,23 @@ def test_day_close_dc01_stage_order(tmp_path, monkeypatch):
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: stages.append("seal"),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: stages.append("seal"),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
-      lambda *a, **k: stages.append("dedupe") or True,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
+    lambda *a, **k: stages.append("dedupe") or True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
-      lambda *a, **k: stages.append("reconcile") or ReconcileResult(
-          True, "noop", "already_equivalent",
-      ),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+    lambda *a, **k: (
+      stages.append("reconcile")
+      or ReconcileResult(
+        True,
+        "noop",
+        "already_equivalent",
+      )
+    ),
   )
 
   class _Coord:
@@ -673,24 +712,24 @@ def test_day_close_dc01_stage_order(tmp_path, monkeypatch):
       return {}
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda *a, **k: None,
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda *a, **k: None,
   )
   assert outcome == "complete"
   assert stages == [
-      "pre_seal",
-      "reconcile",
-      "pre_seal",
-      "dedupe",
-      "seal",
-      "post_seal",
-      "delete",
+    "pre_seal",
+    "reconcile",
+    "pre_seal",
+    "dedupe",
+    "seal",
+    "post_seal",
+    "delete",
   ]
 
 
@@ -702,14 +741,16 @@ def test_day_close_reconcile_invoked_before_dedupe():
 
   src = inspect.getsource(qo._run_day_close_job)
   assert src.index("reconcile_open_tar_with_sealed_zst(") < src.index(
-      "dedupe_tar_keep_largest_file_per_member(",
+    "dedupe_tar_keep_largest_file_per_member(",
   )
 
 
 def test_day_close_job_returns_complete_after_tar_drop(tmp_path, monkeypatch):
   """Tar-path identity returns complete after tar-drop with no remaining raw."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_queue_orchestrator as qo,
+  )
 
   daily = tmp_path / "daily"
   daily.mkdir()
@@ -723,8 +764,8 @@ def test_day_close_job_returns_complete_after_tar_drop(tmp_path, monkeypatch):
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: None,
   )
 
   class _Coord:
@@ -744,25 +785,28 @@ def test_day_close_job_returns_complete_after_tar_drop(tmp_path, monkeypatch):
       return False
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   outcome = qo._run_day_close_job(
-      ident,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda *a, **k: None,
+    ident,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda *a, **k: None,
   )
   assert outcome == "complete"
   assert not tar.exists()
 
 
 def test_day_close_job_remaining_raw_returns_incomplete_raw_not_fake_sealed(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """Closed raw on disk must yield before merge/seal (no fake sealed path)."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_queue_orchestrator as qo,
+  )
 
   daily = tmp_path / "daily"
   daily.mkdir()
@@ -775,12 +819,12 @@ def test_day_close_job_remaining_raw_returns_incomplete_raw_not_fake_sealed(
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: seal_calls.append(1),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: seal_calls.append(1),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
-      lambda *a, **k: reconcile_calls.append(1),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+    lambda *a, **k: reconcile_calls.append(1),
   )
 
   class _Coord:
@@ -794,17 +838,17 @@ def test_day_close_job_remaining_raw_returns_incomplete_raw_not_fake_sealed(
       pass
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   logs = []
   store = _enqueue_append_job(str(tmp_path))
   outcome = qo._run_day_close_job(
-      "2020-01-01",
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      job_store=store,
-      log_fn=lambda msg, **k: logs.append(str(msg)),
+    "2020-01-01",
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    job_store=store,
+    log_fn=lambda msg, **k: logs.append(str(msg)),
   )
   assert outcome == "yielded"
   assert not reconcile_calls
@@ -813,10 +857,14 @@ def test_day_close_job_remaining_raw_returns_incomplete_raw_not_fake_sealed(
   assert any("wait_on_ingest" in line for line in logs)
 
 
-def test_enqueue_day_closes_for_daily_dir_calls_reconstruct(tmp_path, monkeypatch):
+def test_enqueue_day_closes_for_daily_dir_calls_reconstruct(
+  tmp_path, monkeypatch
+):
   """Orchestrator must enqueue day_close for incomplete daily tars."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_queue_orchestrator as qo,
+  )
 
   daily = tmp_path / "daily"
   daily.mkdir()
@@ -824,9 +872,9 @@ def test_enqueue_day_closes_for_daily_dir_calls_reconstruct(tmp_path, monkeypatc
   seen = []
 
   monkeypatch.setattr(
-      jr,
-      "enqueue_day_close_if_needed",
-      lambda client, tar, **k: seen.append(tar) or True,
+    jr,
+    "enqueue_day_close_if_needed",
+    lambda client, tar, **k: seen.append(tar) or True,
   )
 
   class _C:
@@ -851,8 +899,10 @@ def test_boot_stream_discover_does_not_call_run_find_stats():
 
 def test_idle_reconstruct_empty_forced_rescan_reports_zero_work(monkeypatch):
   """A control discover claim is not work that should keep run_once alive."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_store as jq,
+    sync_timedb_queue_orchestrator as qo,
+  )
 
   calls = {"boot": 0, "rpush": []}
 
@@ -872,15 +922,15 @@ def test_idle_reconstruct_empty_forced_rescan_reports_zero_work(monkeypatch):
   def _boot(*a, **k):
     calls["boot"] += 1
     return type(
-        "S",
-        (),
-        {
-            "enqueued_ingest": 0,
-            "enqueued_append": 0,
-            "enqueued_day_close": 0,
-            "seen": 0,
-            "skipped_complete": 0,
-        },
+      "S",
+      (),
+      {
+        "enqueued_ingest": 0,
+        "enqueued_append": 0,
+        "enqueued_day_close": 0,
+        "seen": 0,
+        "skipped_complete": 0,
+      },
     )()
 
   def _claim(client, *, kind, owner_token, **kwargs):
@@ -889,32 +939,36 @@ def test_idle_reconstruct_empty_forced_rescan_reports_zero_work(monkeypatch):
     if ident is None:
       return None
     return jq.ClaimedJob(
-        kind=kind,
-        identity=ident,
-        owner_token=owner_token,
-        deadline=1.0,
-        score=None,
+      kind=kind,
+      identity=ident,
+      owner_token=owner_token,
+      deadline=1.0,
+      score=None,
     )
 
   monkeypatch.setattr(qo, "_boot_stream_discover", _boot)
-  monkeypatch.setattr(qo, "_enqueue_day_closes_for_daily_dir", lambda *a, **k: 0)
   monkeypatch.setattr(
-      jq,
-      "enqueue_list_job",
-      lambda client, *, kind, identity, dedupe=False: (
-          client.rpush(kind, identity) or True
-      ),
+    qo, "_enqueue_day_closes_for_daily_dir", lambda *a, **k: 0
+  )
+  monkeypatch.setattr(
+    jq,
+    "enqueue_list_job",
+    lambda client, *, kind, identity, dedupe=False: (
+      client.rpush(kind, identity) or True
+    ),
   )
   monkeypatch.setattr(jq, "claim_list_job", _claim)
   monkeypatch.setattr(
-      jq, "ack_job", lambda *a, **k: True,
+    jq,
+    "ack_job",
+    lambda *a, **k: True,
   )
   n = qo._idle_reconstruct_pass(
-      _C(),
-      "/archive",
-      tgz_archive_dir="/daily",
-      log_fn=lambda *a, **k: None,
-      force=True,
+    _C(),
+    "/archive",
+    tgz_archive_dir="/daily",
+    log_fn=lambda *a, **k: None,
+    force=True,
   )
   assert calls["boot"] == 1
   assert n == 0
@@ -933,8 +987,10 @@ def test_idle_reconstruct_does_not_log_work_total():
 
 def test_idle_reconstruct_off_main_does_not_run_boot_inline(monkeypatch):
   """P1-10: periodic reconstruct must not block MainThread on fd -X stat."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_store as jq,
+    sync_timedb_queue_orchestrator as qo,
+  )
 
   calls = {"boot": 0, "submit": 0}
 
@@ -944,23 +1000,29 @@ def test_idle_reconstruct_off_main_does_not_run_boot_inline(monkeypatch):
       return 1
 
   monkeypatch.setattr(
-      qo, "_boot_stream_discover", lambda *a, **k: calls.__setitem__("boot", 1),
-  )
-  monkeypatch.setattr(qo, "_enqueue_day_closes_for_daily_dir", lambda *a, **k: 0)
-  monkeypatch.setattr(
-      jq, "enqueue_list_job", lambda *a, **k: True,
+    qo,
+    "_boot_stream_discover",
+    lambda *a, **k: calls.__setitem__("boot", 1),
   )
   monkeypatch.setattr(
-      qo,
-      "_submit_background_discover",
-      lambda *a, **k: calls.__setitem__("submit", calls["submit"] + 1),
+    qo, "_enqueue_day_closes_for_daily_dir", lambda *a, **k: 0
+  )
+  monkeypatch.setattr(
+    jq,
+    "enqueue_list_job",
+    lambda *a, **k: True,
+  )
+  monkeypatch.setattr(
+    qo,
+    "_submit_background_discover",
+    lambda *a, **k: calls.__setitem__("submit", calls["submit"] + 1),
   )
   qo._last_idle_reconstruct_mono = 0.0
   n = qo._idle_reconstruct_pass(
-      _C(),
-      "/archive",
-      tgz_archive_dir="/daily",
-      force=False,
+    _C(),
+    "/archive",
+    tgz_archive_dir="/daily",
+    force=False,
   )
   assert calls["boot"] == 0
   assert calls["submit"] == 1
@@ -968,12 +1030,15 @@ def test_idle_reconstruct_off_main_does_not_run_boot_inline(monkeypatch):
 
 
 def test_idle_reconstruct_busy_discover_still_enqueues_day_closes(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """H21: discover-bg busy still cheap-enqueues age-eligible open tars."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_job_store as jq,
+    sync_timedb_queue_orchestrator as qo,
+  )
 
   daily = tmp_path / "daily"
   daily.mkdir()
@@ -983,28 +1048,29 @@ def test_idle_reconstruct_busy_discover_still_enqueues_day_closes(
 
   monkeypatch.setattr(qo, "_discover_bg_is_busy", lambda: True)
   monkeypatch.setattr(
-      qo,
-      "_submit_background_discover",
-      lambda *a, **k: calls.__setitem__("submit", calls["submit"] + 1),
+    qo,
+    "_submit_background_discover",
+    lambda *a, **k: calls.__setitem__("submit", calls["submit"] + 1),
   )
   monkeypatch.setattr(
-      jq,
-      "enqueue_list_job",
-      lambda *a, **k: calls.__setitem__(
-          "discover_enq", calls["discover_enq"] + 1,
-      ),
+    jq,
+    "enqueue_list_job",
+    lambda *a, **k: calls.__setitem__(
+      "discover_enq",
+      calls["discover_enq"] + 1,
+    ),
   )
   monkeypatch.setattr(
-      jr,
-      "enqueue_cheap_day_close_if_needed",
-      lambda client, tar_path, **k: seen.append(tar_path) or True,
+    jr,
+    "enqueue_cheap_day_close_if_needed",
+    lambda client, tar_path, **k: seen.append(tar_path) or True,
   )
   qo._last_idle_reconstruct_mono = 0.0
   n = qo._idle_reconstruct_pass(
-      object(),
-      "/archive",
-      tgz_archive_dir=str(daily),
-      force=False,
+    object(),
+    "/archive",
+    tgz_archive_dir=str(daily),
+    force=False,
   )
   assert n == 1
   assert any(str(p).endswith("2020-01-01.tar") for p in seen)
@@ -1027,16 +1093,16 @@ def test_idle_reconstruct_skips_when_interval_not_elapsed(monkeypatch):
   calls = {"submit": 0}
   monkeypatch.setattr(qo, "_discover_bg_is_busy", lambda: False)
   monkeypatch.setattr(
-      qo,
-      "_submit_background_discover",
-      lambda *a, **k: calls.__setitem__("submit", calls["submit"] + 1),
+    qo,
+    "_submit_background_discover",
+    lambda *a, **k: calls.__setitem__("submit", calls["submit"] + 1),
   )
   qo._last_idle_reconstruct_mono = time.monotonic() - 299.0
   n = qo._idle_reconstruct_pass(
-      object(),
-      "/archive",
-      tgz_archive_dir="/daily",
-      force=False,
+    object(),
+    "/archive",
+    tgz_archive_dir="/daily",
+    force=False,
   )
   assert n == 0
   assert calls["submit"] == 0
@@ -1045,24 +1111,28 @@ def test_idle_reconstruct_skips_when_interval_not_elapsed(monkeypatch):
 def test_idle_reconstruct_submits_after_interval(monkeypatch):
   import time
 
-  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_store as jq,
+    sync_timedb_queue_orchestrator as qo,
+  )
 
   calls = {"submit": 0}
   monkeypatch.setattr(qo, "_discover_bg_is_busy", lambda: False)
-  monkeypatch.setattr(qo, "_enqueue_day_closes_for_daily_dir", lambda *a, **k: 0)
+  monkeypatch.setattr(
+    qo, "_enqueue_day_closes_for_daily_dir", lambda *a, **k: 0
+  )
   monkeypatch.setattr(jq, "enqueue_list_job", lambda *a, **k: True)
   monkeypatch.setattr(
-      qo,
-      "_submit_background_discover",
-      lambda *a, **k: calls.__setitem__("submit", calls["submit"] + 1),
+    qo,
+    "_submit_background_discover",
+    lambda *a, **k: calls.__setitem__("submit", calls["submit"] + 1),
   )
   qo._last_idle_reconstruct_mono = time.monotonic() - 301.0
   n = qo._idle_reconstruct_pass(
-      object(),
-      "/archive",
-      tgz_archive_dir="/daily",
-      force=False,
+    object(),
+    "/archive",
+    tgz_archive_dir="/daily",
+    force=False,
   )
   assert calls["submit"] == 1
   assert n == 0
@@ -1087,7 +1157,7 @@ def test_cli_no_arg_does_not_default_five_day_window():
   assert run_once is True
   assert start is None and end is None
   run_once, start, end = st.parse_sync_timedb_argv(
-      ["sync_timedb.py", "2026-08-01"],
+    ["sync_timedb.py", "2026-08-01"],
   )
   assert run_once is False
   assert start is not None and start.date() == date(2026, 8, 1)
@@ -1104,10 +1174,10 @@ def test_boot_steals_dead_owner_leases():
   claim = jq.claim_ingest_job(client, band="hot", owner_token=owner)
   assert claim is not None
   stolen = jq.steal_dead_owner_leases(
-      client,
-      pid_alive_fn=lambda _pid: False,
-      hostname="host1",
-      boot_id="boot1",
+    client,
+    pid_alive_fn=lambda _pid: False,
+    hostname="host1",
+    boot_id="boot1",
   )
   assert stolen >= 1
   assert client.lease_token("ingest", "/raw/dead") is None
@@ -1137,8 +1207,8 @@ def test_orchestrator_boot_prioritizes_incremental_then_queues_full_scan():
   """Boot must expose current files before retaining whole-archive catch-up."""
   src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
   boot = src.split("# Boot discover off MainThread", 1)[1].split(
-      "pool_ref =",
-      1,
+    "pool_ref =",
+    1,
   )[0]
   assert "for boot_mtime_days in (rescan_mtime_days, None):" in boot
   assert "discover_job_identity(directory, boot_mtime_days)" in boot
@@ -1151,35 +1221,35 @@ def test_background_discover_uses_claimed_scan_window(monkeypatch):
   full_identity = qo.discover_job_identity("/archive", None)
   incremental_identity = qo.discover_job_identity("/archive", 1)
   jq.enqueue_list_job(
-      client,
-      kind=jq.JOB_KIND_DISCOVER,
-      identity=full_identity,
+    client,
+    kind=jq.JOB_KIND_DISCOVER,
+    identity=full_identity,
   )
   jq.enqueue_list_job(
-      client,
-      kind=jq.JOB_KIND_DISCOVER,
-      identity=incremental_identity,
+    client,
+    kind=jq.JOB_KIND_DISCOVER,
+    identity=incremental_identity,
   )
   seen_windows = []
   monkeypatch.setattr(
-      qo,
-      "_boot_stream_discover",
-      lambda *a, **kw: seen_windows.append(kw["mtime_days"]),
+    qo,
+    "_boot_stream_discover",
+    lambda *a, **kw: seen_windows.append(kw["mtime_days"]),
   )
 
   qo._run_background_discover(
-      client,
-      "/archive",
-      tgz_archive_dir="/daily",
-      log_fn=None,
-      mtime_days=1,
-      startdate=None,
-      enddate=None,
+    client,
+    "/archive",
+    tgz_archive_dir="/daily",
+    log_fn=None,
+    mtime_days=1,
+    startdate=None,
+    enddate=None,
   )
 
   assert seen_windows == [None]
   assert client.list_slice(jq.JOB_KIND_DISCOVER, 0, -1) == [
-      incremental_identity,
+    incremental_identity,
   ]
 
 
@@ -1193,13 +1263,13 @@ def test_submit_background_discover_does_not_deadlock_on_lock():
 
   def _run() -> None:
     qo._submit_background_discover(
-        client,
-        "/tmp/archive-does-not-need-to-exist",
-        tgz_archive_dir="/tmp/daily",
-        log_fn=None,
-        mtime_days=None,
-        startdate=None,
-        enddate=None,
+      client,
+      "/tmp/archive-does-not-need-to-exist",
+      tgz_archive_dir="/tmp/daily",
+      log_fn=None,
+      mtime_days=None,
+      startdate=None,
+      enddate=None,
     )
     done["ok"] = True
 
@@ -1216,11 +1286,11 @@ def test_fill_append_slots_missing_paths_ack_and_bounded(monkeypatch, tmp_path):
   """Missing append identities ACK-drop with skip budget (not unbounded requeue)."""
   client = SyncTimedbJobStore("")
   claim = jq.ClaimedJob(
-      kind=jq.JOB_KIND_APPEND,
-      identity="/no/such/raw/file",
-      owner_token="n:h:b:1",
-      deadline=1060.0,
-      score=0.0,
+    kind=jq.JOB_KIND_APPEND,
+    identity="/no/such/raw/file",
+    owner_token="n:h:b:1",
+    deadline=1060.0,
+    score=0.0,
   )
   calls = {"claim": 0, "ack": 0, "requeue": 0}
 
@@ -1247,12 +1317,12 @@ def test_fill_append_slots_missing_paths_ack_and_bounded(monkeypatch, tmp_path):
       raise AssertionError("must not submit missing path")
 
   qo._fill_append_slots(
-      client,
-      cap=8,
-      inflight={},
-      claims={},
-      archive_pool=_Pool(),
-      tgz_archive_dir=str(tmp_path),
+    client,
+    cap=8,
+    inflight={},
+    claims={},
+    archive_pool=_Pool(),
+    tgz_archive_dir=str(tmp_path),
   )
   assert calls["claim"] <= qo.APPEND_FILL_SKIP_BUDGET
   assert calls["ack"] >= 1
@@ -1266,12 +1336,15 @@ def test_boot_stream_discover_uses_discover_append_complete():
 
 
 def test_discover_raw_needs_tar_append_cold_never_calls_populate_wait(
-  tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """Cold members store: discover probe enqueues append without populate_and_wait."""
-  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as ah
-  from hpcperfstats.dbload.lib import sync_timedb_archive_members_coord as amr
-  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_archive_helpers as ah,
+    sync_timedb_archive_members_coord as amr,
+    sync_timedb_job_reconstruct as jr,
+  )
 
   daily = tmp_path / "daily"
   daily.mkdir()
@@ -1285,32 +1358,41 @@ def test_discover_raw_needs_tar_append_cold_never_calls_populate_wait(
 
   monkeypatch.setattr(ah, "stats_file_is_active_segment", lambda _p: False)
   monkeypatch.setattr(
-      ah, "_derive_stats_path_date",
-      lambda _p, _ts=None: date(2026, 6, 3),
+    ah,
+    "_derive_stats_path_date",
+    lambda _p, _ts=None: date(2026, 6, 3),
   )
-  monkeypatch.setattr(ah, "daily_archive_populate_source_exists", lambda _c: True)
-  monkeypatch.setattr(ah, "_lookup_daily_archive_members_cache", lambda _c: None)
   monkeypatch.setattr(
-      amr, "build_archive_members_keys",
-      lambda key: type("K", (), {"hash_key": "h", "complete_key": "c"})(),
+    ah, "daily_archive_populate_source_exists", lambda _c: True
+  )
+  monkeypatch.setattr(
+    ah, "_lookup_daily_archive_members_cache", lambda _c: None
+  )
+  monkeypatch.setattr(
+    amr,
+    "build_archive_members_keys",
+    lambda key: type("K", (), {"hash_key": "h", "complete_key": "c"})(),
   )
   monkeypatch.setattr(amr, "member_match_when_warm", lambda *a, **k: None)
   monkeypatch.setattr(
-      amr,
-      "request_archive_members_populate_and_wait",
-      lambda *a, **k: calls.__setitem__("wait", calls["wait"] + 1),
+    amr,
+    "request_archive_members_populate_and_wait",
+    lambda *a, **k: calls.__setitem__("wait", calls["wait"] + 1),
   )
   monkeypatch.setattr(
-      amr,
-      "enqueue_archive_members_populate",
-      lambda *a, **k: calls.__setitem__("enqueue", calls["enqueue"] + 1) or True,
+    amr,
+    "enqueue_archive_members_populate",
+    lambda *a, **k: calls.__setitem__("enqueue", calls["enqueue"] + 1) or True,
   )
 
   needs = jr.discover_raw_needs_tar_append(str(raw), str(daily))
   assert needs is True
   assert calls["wait"] == 0
   assert calls["enqueue"] == 1
-  assert jr.discover_append_is_complete(path=str(raw), tgz_archive_dir=str(daily)) is False
+  assert (
+    jr.discover_append_is_complete(path=str(raw), tgz_archive_dir=str(daily))
+    is False
+  )
 
 
 def test_populate_pool_started_in_orchestrator():
@@ -1322,35 +1404,57 @@ def test_populate_pool_started_in_orchestrator():
 
 def test_reserved_band_slots_under_mixed_inflight():
   """B2: catchup cannot steal hot's reserved slots while hot work is queued."""
-  assert qo.catchup_dispatch_cap(
-      hot_queued=12, catchup_queued=400, hot_cap=10, catchup_cap=6, pool=16,
-  ) == 6
-  assert qo.catchup_dispatch_cap(
-      hot_queued=0, catchup_queued=400, hot_cap=10, catchup_cap=6, pool=16,
-  ) == 16
+  assert (
+    qo.catchup_dispatch_cap(
+      hot_queued=12,
+      catchup_queued=400,
+      hot_cap=10,
+      catchup_cap=6,
+      pool=16,
+    )
+    == 6
+  )
+  assert (
+    qo.catchup_dispatch_cap(
+      hot_queued=0,
+      catchup_queued=400,
+      hot_cap=10,
+      catchup_cap=6,
+      pool=16,
+    )
+    == 16
+  )
 
 
 def test_catchup_dispatch_cap_expands_when_hot_submitted_zero():
   """RC1: unused pool slots go to catchup when hot is queued but unsubmittable."""
-  assert qo.catchup_dispatch_cap(
+  assert (
+    qo.catchup_dispatch_cap(
       hot_queued=531,
       catchup_queued=2010,
       hot_cap=16,
       catchup_cap=8,
       pool=24,
       hot_submitted=0,
-  ) == 24
-  assert qo.catchup_dispatch_cap(
+    )
+    == 24
+  )
+  assert (
+    qo.catchup_dispatch_cap(
       hot_queued=531,
       catchup_queued=2010,
       hot_cap=16,
       catchup_cap=8,
       pool=24,
       hot_submitted=3,
-  ) == 8
+    )
+    == 8
+  )
 
 
-def test_rc7_unused_slot_catchup_when_hot_submitted_nonzero(monkeypatch, tmp_path):
+def test_rc7_unused_slot_catchup_when_hot_submitted_nonzero(
+  monkeypatch, tmp_path
+):
   """RC7: after one hot submit, unused slots still expand catchup (and elevated hot)."""
   pool = 3
   hot_cap = 2
@@ -1371,36 +1475,42 @@ def test_rc7_unused_slot_catchup_when_hot_submitted_nonzero(monkeypatch, tmp_pat
       return 250
 
   def _fake_fill(
-      client,
-      *,
-      band,
-      cap,
-      inflight,
-      claims,
-      submitted,
-      ingest_pool,
-      band_cap=None,
-      **kw,
+    client,
+    *,
+    band,
+    cap,
+    inflight,
+    claims,
+    submitted,
+    ingest_pool,
+    band_cap=None,
+    **kw,
   ):
     del client, claims, submitted, ingest_pool, cap
-    fill_log.append({
+    fill_log.append(
+      {
         "band": band,
         "band_cap": band_cap,
         "probe_depth": kw.get("probe_depth"),
         "inflight_before": len(inflight),
-    })
+      }
+    )
     # Reserved hot: one successful submit then stop.
     if (
-        band == "hot"
-        and band_cap == hot_cap
-        and not any(k.startswith("hot-res-") for k in inflight)
+      band == "hot"
+      and band_cap == hot_cap
+      and not any(k.startswith("hot-res-") for k in inflight)
     ):
       inflight["hot-res-0"] = object()
       return 1
     # Reserved catchup + spillover: claim nothing (hot still queued).
     if band == "catchup" and band_cap == catchup_cap:
       return 0
-    if band == "hot" and band_cap is None and int(kw.get("probe_depth") or 0) < 32:
+    if (
+      band == "hot"
+      and band_cap is None
+      and int(kw.get("probe_depth") or 0) < 32
+    ):
       return 0
     # Elevated hot retry: still nothing claimable.
     if band == "hot" and int(kw.get("probe_depth") or 0) >= 32:
@@ -1415,27 +1525,28 @@ def test_rc7_unused_slot_catchup_when_hot_submitted_nonzero(monkeypatch, tmp_pat
 
   monkeypatch.setattr(qo, "_fill_ingest_band", _fake_fill)
   did, hot_q, zcard, hot_n = qo._ingest_coordinator_fill_tick(
-      client=_Client(),
-      pool_ref=qo.AtomicPoolRef(object()),
-      directory=str(tmp_path),
-      tgz_archive_dir=str(tmp_path),
-      hot_cap=hot_cap,
-      catchup_cap=catchup_cap,
-      ingest_pool_size=pool,
-      ingest_inflight=inflight,
-      ingest_leases={},
-      ingest_submitted={},
-      skip_budget=8,
-      fill_stats=qo._empty_ingest_fill_stats(),
+    client=_Client(),
+    pool_ref=qo.AtomicPoolRef(object()),
+    directory=str(tmp_path),
+    tgz_archive_dir=str(tmp_path),
+    hot_cap=hot_cap,
+    catchup_cap=catchup_cap,
+    ingest_pool_size=pool,
+    ingest_inflight=inflight,
+    ingest_leases={},
+    ingest_submitted={},
+    skip_budget=8,
+    fill_stats=qo._empty_ingest_fill_stats(),
   )
   assert hot_n >= 1
   assert did >= 2
   assert "catch-expand-0" in inflight
   assert any(
-      c["band"] == "catchup" and c["band_cap"] == pool for c in fill_log
+    c["band"] == "catchup" and c["band_cap"] == pool for c in fill_log
   ), fill_log
   assert any(
-      c["band"] == "hot" and int(c.get("probe_depth") or 0) >= 32 for c in fill_log
+    c["band"] == "hot" and int(c.get("probe_depth") or 0) >= 32
+    for c in fill_log
   ), fill_log
   assert hot_q == 50
   assert zcard == 250
@@ -1449,26 +1560,31 @@ def test_reband_at_claim_moves_stale_hot_to_catchup(monkeypatch):
   jq.reset_job_queue_script_cache_for_tests()
   identity = "/raw/old"
   score = jq.encode_ingest_score(
-      band="hot",
-      day=date(2026, 8, 24),
-      today=date(2026, 8, 24),
-      identity=identity,
+    band="hot",
+    day=date(2026, 8, 24),
+    today=date(2026, 8, 24),
+    identity=identity,
   )
   jq.zadd_ingest_job(client, identity=identity, score=score)
   monkeypatch.setattr(qo, "_hot_days", lambda: 8)
   monkeypatch.setattr(
-      qo, "_calendar_day_for_ingest_path",
-      lambda path, tgz: date(2026, 6, 1),
+    qo,
+    "_calendar_day_for_ingest_path",
+    lambda path, tgz: date(2026, 6, 1),
   )
   claim = jq.claim_ingest_job(
-      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    client,
+    band="hot",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
   assert claim is not None
   did = qo._reband_claimed_ingest_if_needed(
-      client,
-      claim,
-      tgz_archive_dir="/daily",
-      today=date(2026, 8, 24),
+    client,
+    claim,
+    tgz_archive_dir="/daily",
+    today=date(2026, 8, 24),
   )
   assert did is True
   restored = client.ingest_score(identity)
@@ -1483,25 +1599,33 @@ def test_poison_routes_to_dead_letter(tmp_path, monkeypatch):
   jq.reset_job_queue_script_cache_for_tests()
   jq.zadd_ingest_job(client, identity="/raw/a", score=1)
   claim = jq.claim_ingest_job(
-      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    client,
+    band="hot",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
   first = qo._retry_or_dead_letter(
-      client,
-      kind="ingest",
-      claim=claim,
-      archive_data_dir=str(tmp_path),
-      reason="boom",
+    client,
+    kind="ingest",
+    claim=claim,
+    archive_data_dir=str(tmp_path),
+    reason="boom",
   )
   assert first == "requeued"
   claim2 = jq.claim_ingest_job(
-      client, band="hot", owner_token="n:h:b:2", ttl_s=60, now_s=1000.0,
+    client,
+    band="hot",
+    owner_token="n:h:b:2",
+    ttl_s=60,
+    now_s=1000.0,
   )
   second = qo._retry_or_dead_letter(
-      client,
-      kind="ingest",
-      claim=claim2,
-      archive_data_dir=str(tmp_path),
-      reason="boom",
+    client,
+    kind="ingest",
+    claim=claim2,
+    archive_data_dir=str(tmp_path),
+    reason="boom",
   )
   assert second == "dead_letter"
   assert client.queued_count("ingest") == 0
@@ -1536,7 +1660,7 @@ def test_dead_pool_worker_frees_slot_and_requeues():
   assert not hasattr(qo, "_ingest_watchdog_budget_s")
   assert not hasattr(qo, "_abandon_timed_out_ingest")
   assert "_abandon_timed_out_ingest" not in inspect.getsource(
-      qo._ingest_coordinator_loop,
+    qo._ingest_coordinator_loop,
   )
 
 
@@ -1544,8 +1668,9 @@ def test_ingest_deadline_requeues():
   """T3 retired: abandon helper must not remain as a retry/dead-letter shim."""
   assert not hasattr(qo, "_abandon_timed_out_ingest")
   assert "_abandon_timed_out_ingest" not in inspect.getsource(
-      qo._ingest_coordinator_loop,
+    qo._ingest_coordinator_loop,
   )
+
 
 def test_day_close_failure_requeues(tmp_path, monkeypatch):
   """S3: deferred_age requeues without burning a retry attempt."""
@@ -1554,7 +1679,11 @@ def test_day_close_failure_requeues(tmp_path, monkeypatch):
   jq.reset_job_queue_script_cache_for_tests()
   jq.enqueue_list_job(client, kind="day_close", identity="2026-08-01")
   claim = jq.claim_list_job(
-      client, kind="day_close", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    client,
+    kind="day_close",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
 
   class _Done:
@@ -1565,16 +1694,21 @@ def test_day_close_failure_requeues(tmp_path, monkeypatch):
       return "deferred_age"
 
   n, _coop = qo._drain_day_close_ready(
-      client,
-      inflight={"2026-08-01": _Done()},
-      leases={"2026-08-01": claim},
-      archive_data_dir=str(tmp_path),
+    client,
+    inflight={"2026-08-01": _Done()},
+    leases={"2026-08-01": claim},
+    archive_data_dir=str(tmp_path),
   )
   assert n == 1
   assert client.queued_count("day_close") == 1
-  assert jq.read_job_attempt(
-      client, kind="day_close", identity="2026-08-01",
-  ) == 0
+  assert (
+    jq.read_job_attempt(
+      client,
+      kind="day_close",
+      identity="2026-08-01",
+    )
+    == 0
+  )
 
 
 def test_day_close_verify_failed_bumps_attempt(tmp_path, monkeypatch):
@@ -1584,7 +1718,11 @@ def test_day_close_verify_failed_bumps_attempt(tmp_path, monkeypatch):
   jq.reset_job_queue_script_cache_for_tests()
   jq.enqueue_list_job(client, kind="day_close", identity="2026-08-02")
   claim = jq.claim_list_job(
-      client, kind="day_close", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    client,
+    kind="day_close",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
 
   class _Done:
@@ -1595,15 +1733,20 @@ def test_day_close_verify_failed_bumps_attempt(tmp_path, monkeypatch):
       return "verify_failed"
 
   n, _coop = qo._drain_day_close_ready(
-      client,
-      inflight={"2026-08-02": _Done()},
-      leases={"2026-08-02": claim},
-      archive_data_dir=str(tmp_path),
+    client,
+    inflight={"2026-08-02": _Done()},
+    leases={"2026-08-02": claim},
+    archive_data_dir=str(tmp_path),
   )
   assert n == 1
-  assert jq.read_job_attempt(
-      client, kind="day_close", identity="2026-08-02",
-  ) == 1
+  assert (
+    jq.read_job_attempt(
+      client,
+      kind="day_close",
+      identity="2026-08-02",
+    )
+    == 1
+  )
 
 
 def test_day_close_path_identity_records_complete_on_calendar_day(tmp_path):
@@ -1614,7 +1757,11 @@ def test_day_close_path_identity_records_complete_on_calendar_day(tmp_path):
   ident = "/d/2026-06-07.tar"
   jq.enqueue_list_job(client, kind="day_close", identity=ident)
   claim = jq.claim_list_job(
-      client, kind="day_close", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    client,
+    kind="day_close",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
 
   class _Done:
@@ -1625,10 +1772,10 @@ def test_day_close_path_identity_records_complete_on_calendar_day(tmp_path):
       return "complete"
 
   n, _coop = qo._drain_day_close_ready(
-      client,
-      inflight={ident: _Done()},
-      leases={ident: claim},
-      archive_data_dir=str(tmp_path),
+    client,
+    inflight={ident: _Done()},
+    leases={ident: claim},
+    archive_data_dir=str(tmp_path),
   )
   assert n == 1
   assert client.queued_count("day_close") == 0
@@ -1648,7 +1795,11 @@ def test_day_close_incomplete_raw_requeues_without_ack(tmp_path):
   ident = "/d/2026-06-07.tar"
   jq.enqueue_list_job(client, kind="day_close", identity=ident)
   claim = jq.claim_list_job(
-      client, kind="day_close", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    client,
+    kind="day_close",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
 
   class _Done:
@@ -1659,16 +1810,21 @@ def test_day_close_incomplete_raw_requeues_without_ack(tmp_path):
       return "incomplete_raw"
 
   n, _coop = qo._drain_day_close_ready(
-      client,
-      inflight={ident: _Done()},
-      leases={ident: claim},
-      archive_data_dir=str(tmp_path),
+    client,
+    inflight={ident: _Done()},
+    leases={ident: claim},
+    archive_data_dir=str(tmp_path),
   )
   assert n == 1
   assert client.queued_count("day_close") == 1
-  assert jq.read_job_attempt(
-      client, kind="day_close", identity=ident,
-  ) == 0
+  assert (
+    jq.read_job_attempt(
+      client,
+      kind="day_close",
+      identity=ident,
+    )
+    == 0
+  )
   days = pr.get_progress_state().snapshot_days()
   assert days["2026-06-07"].counters["incomplete_raw"] == 1
   assert days["2026-06-07"].counters["sealed"] == 0
@@ -1683,7 +1839,11 @@ def test_day_close_fake_sealed_requeues_without_ack(tmp_path):
   ident = "/d/2026-07-15.tar"
   jq.enqueue_list_job(client, kind="day_close", identity=ident)
   claim = jq.claim_list_job(
-      client, kind="day_close", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    client,
+    kind="day_close",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
 
   class _Done:
@@ -1694,16 +1854,21 @@ def test_day_close_fake_sealed_requeues_without_ack(tmp_path):
       return "sealed"
 
   n, _coop = qo._drain_day_close_ready(
-      client,
-      inflight={ident: _Done()},
-      leases={ident: claim},
-      archive_data_dir=str(tmp_path),
+    client,
+    inflight={ident: _Done()},
+    leases={ident: claim},
+    archive_data_dir=str(tmp_path),
   )
   assert n == 1
   assert client.queued_count("day_close") == 1
-  assert jq.read_job_attempt(
-      client, kind="day_close", identity=ident,
-  ) == 0
+  assert (
+    jq.read_job_attempt(
+      client,
+      kind="day_close",
+      identity=ident,
+    )
+    == 0
+  )
   days = pr.get_progress_state().snapshot_days()
   assert days["2026-07-15"].counters["complete"] == 0
   assert days["2026-07-15"].counters["sealed"] == 0
@@ -1711,7 +1876,8 @@ def test_day_close_fake_sealed_requeues_without_ack(tmp_path):
 
 
 def test_fill_day_close_records_dc_run_for_tar_path_identity(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """Fill records dc_run= on the calendar day before the worker finishes."""
   from concurrent.futures import ThreadPoolExecutor
@@ -1728,13 +1894,13 @@ def test_fill_day_close_records_dc_run_for_tar_path_identity(
   leases = {}
   with ThreadPoolExecutor(max_workers=1) as ex:
     n, _skips = qo._fill_day_close_slots(
-        client,
-        executor=ex,
-        inflight=inflight,
-        leases=leases,
-        tgz_archive_dir=str(tmp_path),
-        archive_data_dir=str(tmp_path),
-        log_fn=lambda *a, **k: None,
+      client,
+      executor=ex,
+      inflight=inflight,
+      leases=leases,
+      tgz_archive_dir=str(tmp_path),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
     )
   assert n == 1
   days = pr.get_progress_state().snapshot_days()
@@ -1771,20 +1937,24 @@ def test_verify_failure_blocks_seal_and_delete(tmp_path, monkeypatch):
       return False
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   monkeypatch.setattr(
-      qo.jr, "day_close_is_complete", lambda *a, **k: False,
+    qo.jr,
+    "day_close_is_complete",
+    lambda *a, **k: False,
   )
   monkeypatch.setattr(
-      qo.jr, "day_close_min_age_elapsed", lambda *a, **k: True,
+    qo.jr,
+    "day_close_min_age_elapsed",
+    lambda *a, **k: True,
   )
   outcome = qo._run_day_close_job(
-      "2026-01-01",
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda *a, **k: None,
+    "2026-01-01",
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda *a, **k: None,
   )
   assert outcome == "verify_failed"
 
@@ -1800,18 +1970,20 @@ def test_day_close_claim_vacate_and_stage_enter_logged(tmp_path, monkeypatch):
   """Fill/drain and job body emit claim/vacate/stage_enter breadcrumbs."""
   from concurrent.futures import Future
 
-  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
-  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_job_store as jq,
+  )
   from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
-      DayCloseYieldError,
+    DayCloseYieldError,
   )
 
   logs = []
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2020-01-01"
-  tar = daily / ("%s.tar" % day)
-  zst = daily / ("%s.tar.zst" % day)
+  tar = daily / (f"{day}.tar")
+  zst = daily / (f"{day}.tar.zst")
   tar.write_bytes(b"tar")
   zst.write_bytes(b"zst")
 
@@ -1819,18 +1991,18 @@ def test_day_close_claim_vacate_and_stage_enter_logged(tmp_path, monkeypatch):
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: None,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
-      lambda *a, **k: True,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
+    lambda *a, **k: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
-      lambda *a, **k: (_ for _ in ()).throw(
-          DayCloseYieldError(str(tar), phase="tar_merge", reason="stall_confirmed"),
-      ),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+    lambda *a, **k: (_ for _ in ()).throw(
+      DayCloseYieldError(str(tar), phase="tar_merge", reason="stall_confirmed"),
+    ),
   )
 
   class _Coord:
@@ -1859,14 +2031,14 @@ def test_day_close_claim_vacate_and_stage_enter_logged(tmp_path, monkeypatch):
       return False
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda msg, **k: logs.append(str(msg)),
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda msg, **k: logs.append(str(msg)),
   )
   assert outcome == "yielded"
   joined = "\n".join(logs)
@@ -1876,20 +2048,20 @@ def test_day_close_claim_vacate_and_stage_enter_logged(tmp_path, monkeypatch):
 
   client = SyncTimedbJobStore("")
   claim = jq.ClaimedJob(
-      kind=jq.JOB_KIND_DAY_CLOSE,
-      identity=str(tar),
-      owner_token="owner-test",
-      deadline=time.time() + 3600,
-      score=None,
+    kind=jq.JOB_KIND_DAY_CLOSE,
+    identity=str(tar),
+    owner_token="owner-test",
+    deadline=time.time() + 3600,
+    score=None,
   )
   fut = Future()
   fut.set_result("yielded")
   qo._drain_day_close_ready(
-      client,
-      inflight={str(tar): fut},
-      leases={str(tar): claim},
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda msg, **k: logs.append(str(msg)),
+    client,
+    inflight={str(tar): fut},
+    leases={str(tar): claim},
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda msg, **k: logs.append(str(msg)),
   )
   assert any("day_close vacate" in line for line in logs)
   # Drain records yield backoff; clear so the fill assertion below can submit.
@@ -1904,20 +2076,20 @@ def test_day_close_claim_vacate_and_stage_enter_logged(tmp_path, monkeypatch):
       return f
 
   monkeypatch.setattr(
-      jq,
-      "claim_list_job",
-      lambda *a, **k: claim,
+    jq,
+    "claim_list_job",
+    lambda *a, **k: claim,
   )
   monkeypatch.setattr(qo.cfg, "get_sync_day_close_max_inflight", lambda: 1)
   fill_logs = []
   submitted, _skips = qo._fill_day_close_slots(
-      client,
-      executor=_Ex(),
-      inflight={},
-      leases={},
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda msg, **k: fill_logs.append(str(msg)),
+    client,
+    executor=_Ex(),
+    inflight={},
+    leases={},
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda msg, **k: fill_logs.append(str(msg)),
   )
   assert submitted == 1
   assert any("day_close claim" in line for line in fill_logs)
@@ -1926,13 +2098,15 @@ def test_day_close_claim_vacate_and_stage_enter_logged(tmp_path, monkeypatch):
 def test_day_close_wait_on_ingest_yield(tmp_path, monkeypatch):
   """Only-waiting-on-ingest must handoff and return yielded (release slot)."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import ReconcileResult
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    ReconcileResult,
+  )
 
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2020-01-01"
-  tar = daily / ("%s.tar" % day)
-  zst = daily / ("%s.tar.zst" % day)
+  tar = daily / (f"{day}.tar")
+  zst = daily / (f"{day}.tar.zst")
   tar.write_bytes(b"tar")
   zst.write_bytes(b"zst")
   handoffs = []
@@ -1943,18 +2117,23 @@ def test_day_close_wait_on_ingest_yield(tmp_path, monkeypatch):
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: None,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
-      lambda *a, **k: reconcile_calls.append(1) or ReconcileResult(
-          True, "noop", "already_equivalent",
-      ),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+    lambda *a, **k: (
+      reconcile_calls.append(1)
+      or ReconcileResult(
+        True,
+        "noop",
+        "already_equivalent",
+      )
+    ),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
-      lambda *a, **k: True,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
+    lambda *a, **k: True,
   )
 
   class _Coord:
@@ -1977,16 +2156,16 @@ def test_day_close_wait_on_ingest_yield(tmp_path, monkeypatch):
       pass
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   store = _enqueue_append_job(str(tmp_path))
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      job_store=store,
-      log_fn=lambda msg, **k: logs.append(str(msg)),
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    job_store=store,
+    log_fn=lambda msg, **k: logs.append(str(msg)),
   )
   assert outcome == "yielded"
   assert handoffs and handoffs[0][1] == "day_close_wait_on_ingest"
@@ -1997,13 +2176,15 @@ def test_day_close_wait_on_ingest_yield(tmp_path, monkeypatch):
 
 def test_day_close_remaining_raw_map_skips_merge(tmp_path, monkeypatch):
   """Non-empty remaining_raw map must yield before reconcile_merge (H17)."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_queue_orchestrator as qo,
+  )
 
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2020-01-01"
-  tar = daily / ("%s.tar" % day)
+  tar = daily / (f"{day}.tar")
   tar.write_bytes(b"tar")
   reconcile_calls = []
 
@@ -2011,8 +2192,8 @@ def test_day_close_remaining_raw_map_skips_merge(tmp_path, monkeypatch):
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
-      lambda *a, **k: reconcile_calls.append(1),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+    lambda *a, **k: reconcile_calls.append(1),
   )
 
   class _Coord:
@@ -2029,32 +2210,36 @@ def test_day_close_remaining_raw_map_skips_merge(tmp_path, monkeypatch):
       pass
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   logs = []
   store = _enqueue_append_job(str(tmp_path))
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      job_store=store,
-      log_fn=lambda msg, **k: logs.append(str(msg)),
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    job_store=store,
+    log_fn=lambda msg, **k: logs.append(str(msg)),
   )
   assert outcome == "yielded"
   assert not reconcile_calls
   assert any("wait_on_ingest" in line for line in logs)
 
 
-def test_day_close_closed_raw_handoff_false_yields_before_merge(tmp_path, monkeypatch):
+def test_day_close_closed_raw_handoff_false_yields_before_merge(
+  tmp_path, monkeypatch
+):
   """H17b: has_closed_raw true but should_handoff false still skips merge."""
-  from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_reconstruct as jr,
+    sync_timedb_queue_orchestrator as qo,
+  )
 
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2020-01-01"
-  tar = daily / ("%s.tar" % day)
+  tar = daily / (f"{day}.tar")
   tar.write_bytes(b"tar")
   reconcile_calls = []
   seal_calls = []
@@ -2065,12 +2250,12 @@ def test_day_close_closed_raw_handoff_false_yields_before_merge(tmp_path, monkey
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
-      lambda *a, **k: reconcile_calls.append(1),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+    lambda *a, **k: reconcile_calls.append(1),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: seal_calls.append(1),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: seal_calls.append(1),
   )
 
   class _Coord:
@@ -2095,16 +2280,16 @@ def test_day_close_closed_raw_handoff_false_yields_before_merge(tmp_path, monkey
       return "verify"
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   store = _enqueue_append_job(str(tmp_path))
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      job_store=store,
-      log_fn=lambda *a, **k: None,
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    job_store=store,
+    log_fn=lambda *a, **k: None,
   )
   assert outcome == "yielded"
   assert not reconcile_calls
@@ -2117,25 +2302,28 @@ def _enqueue_append_job(archive_dir: str, identity: str = "/raw/closed.stats"):
   """Put one append LIST job in an in-process store (H17 hot-append)."""
   store = SyncTimedbJobStore(archive_dir)
   jq.enqueue_list_job(
-      store,
-      kind=jq.JOB_KIND_APPEND,
-      identity=identity,
-      dedupe=True,
+    store,
+    kind=jq.JOB_KIND_APPEND,
+    identity=identity,
+    dedupe=True,
   )
   return store
 
 
 def test_day_close_idle_append_verifying_does_not_forever_yield(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """H19: idle append + verifying/has_closed must kick verify, not only yield."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import ReconcileResult
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    ReconcileResult,
+  )
 
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2020-01-01"
-  tar = daily / ("%s.tar" % day)
+  tar = daily / (f"{day}.tar")
   tar.write_bytes(b"tar")
   reconcile_calls = []
   seal_calls = []
@@ -2146,18 +2334,23 @@ def test_day_close_idle_append_verifying_does_not_forever_yield(
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
-      lambda *a, **k: reconcile_calls.append(1) or ReconcileResult(
-          True, "noop", "already_equivalent",
-      ),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+    lambda *a, **k: (
+      reconcile_calls.append(1)
+      or ReconcileResult(
+        True,
+        "noop",
+        "already_equivalent",
+      )
+    ),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: seal_calls.append(1),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: seal_calls.append(1),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
-      lambda *a, **k: True,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
+    lambda *a, **k: True,
   )
 
   class _Coord:
@@ -2194,17 +2387,17 @@ def test_day_close_idle_append_verifying_does_not_forever_yield(
       return {}
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   store = SyncTimedbJobStore(str(tmp_path))
   logs = []
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      job_store=store,
-      log_fn=lambda msg, **k: logs.append(str(msg)),
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    job_store=store,
+    log_fn=lambda msg, **k: logs.append(str(msg)),
   )
   assert outcome != "yielded"
   assert outcome == "incomplete_raw"
@@ -2216,7 +2409,8 @@ def test_day_close_idle_append_verifying_does_not_forever_yield(
 
 
 def test_day_close_skip_merge_seal_skips_remaining_raw_find(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """H19 skip_merge then seal must not call remaining_raw_paths_blocking_tar_drop.
 
@@ -2228,8 +2422,8 @@ def test_day_close_skip_merge_seal_skips_remaining_raw_find(
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2026-07-28"
-  tar = daily / ("%s.tar" % day)
-  zst = daily / ("%s.tar.zst" % day)
+  tar = daily / (f"{day}.tar")
+  zst = daily / (f"{day}.tar.zst")
   tar.write_bytes(b"tar")
   zst.write_bytes(b"zst")
   seal_kw = []
@@ -2239,12 +2433,12 @@ def test_day_close_skip_merge_seal_skips_remaining_raw_find(
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: seal_kw.append(dict(k)),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: seal_kw.append(dict(k)),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
-      lambda *a, **k: True,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
+    lambda *a, **k: True,
   )
 
   class _Coord:
@@ -2286,15 +2480,15 @@ def test_day_close_skip_merge_seal_skips_remaining_raw_find(
         os.remove(tar_path)
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      job_store=SyncTimedbJobStore(str(tmp_path)),
-      log_fn=lambda msg, **k: logs.append(str(msg)),
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    job_store=SyncTimedbJobStore(str(tmp_path)),
+    log_fn=lambda msg, **k: logs.append(str(msg)),
   )
   joined = "\n".join(logs)
   assert "skip_merge" in joined and "append_idle_remaining_raw" in joined
@@ -2307,7 +2501,8 @@ def test_day_close_skip_merge_seal_skips_remaining_raw_find(
 
 
 def test_day_close_skip_merge_post_seal_skips_has_closed_raw_find(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """H19 skip_merge then post-seal must not call has_closed_raw_on_disk.
 
@@ -2319,8 +2514,8 @@ def test_day_close_skip_merge_post_seal_skips_has_closed_raw_find(
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2026-07-29"
-  tar = daily / ("%s.tar" % day)
-  zst = daily / ("%s.tar.zst" % day)
+  tar = daily / (f"{day}.tar")
+  zst = daily / (f"{day}.tar.zst")
   tar.write_bytes(b"tar")
   zst.write_bytes(b"zst")
   logs = []
@@ -2330,12 +2525,12 @@ def test_day_close_skip_merge_post_seal_skips_has_closed_raw_find(
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: None,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
-      lambda *a, **k: True,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
+    lambda *a, **k: True,
   )
 
   class _Coord:
@@ -2377,15 +2572,15 @@ def test_day_close_skip_merge_post_seal_skips_has_closed_raw_find(
       raise AssertionError("try_finish remaining find after skip_merge")
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      job_store=SyncTimedbJobStore(str(tmp_path)),
-      log_fn=lambda msg, **k: logs.append(str(msg)),
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    job_store=SyncTimedbJobStore(str(tmp_path)),
+    log_fn=lambda msg, **k: logs.append(str(msg)),
   )
   joined = "\n".join(logs)
   assert "skip_merge" in joined and "append_idle_remaining_raw" in joined
@@ -2393,22 +2588,24 @@ def test_day_close_skip_merge_post_seal_skips_has_closed_raw_find(
   assert any("stage_enter" in ln and "post_seal_verify" in ln for ln in logs)
   assert any("stage_exit" in ln and "raw_delete" in ln for ln in logs)
   assert any(
-      "stage_exit" in ln and "tar_drop" in ln and "remaining_raw" in ln
-      for ln in logs
+    "stage_exit" in ln and "tar_drop" in ln and "remaining_raw" in ln
+    for ln in logs
   )
   assert deletes
   assert outcome == "incomplete_raw"
   assert os.path.isfile(tar)
 
 
-def test_day_close_append_active_still_yields_before_merge(tmp_path, monkeypatch):
+def test_day_close_append_active_still_yields_before_merge(
+  tmp_path, monkeypatch
+):
   """H17/H19: append LIST non-empty + has_closed still yields before merge."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
 
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2020-01-01"
-  tar = daily / ("%s.tar" % day)
+  tar = daily / (f"{day}.tar")
   tar.write_bytes(b"tar")
   reconcile_calls = []
   kicks = []
@@ -2417,8 +2614,8 @@ def test_day_close_append_active_still_yields_before_merge(tmp_path, monkeypatch
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
-      lambda *a, **k: reconcile_calls.append(1),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+    lambda *a, **k: reconcile_calls.append(1),
   )
 
   class _Coord:
@@ -2442,16 +2639,16 @@ def test_day_close_append_active_still_yields_before_merge(tmp_path, monkeypatch
       return {}
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   store = _enqueue_append_job(str(tmp_path))
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      job_store=store,
-      log_fn=lambda *a, **k: None,
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    job_store=store,
+    log_fn=lambda *a, **k: None,
   )
   assert outcome == "yielded"
   assert not reconcile_calls
@@ -2461,8 +2658,8 @@ def test_day_close_append_active_still_yields_before_merge(tmp_path, monkeypatch
 def _install_members_store(tmp_path):
   """Install a process members store so ingest_tar_hot is visible."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-      SyncTimedbArchiveMembersStore,
-      set_process_archive_members_store,
+    SyncTimedbArchiveMembersStore,
+    set_process_archive_members_store,
   )
 
   store = SyncTimedbArchiveMembersStore(str(tmp_path / "members_store"))
@@ -2511,22 +2708,25 @@ def _day_close_has_closed_coord(kicks, deletes=None):
 
 
 def test_day_close_stale_ingest_tar_hot_does_not_forever_yield(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """H20a: leftover ingest_tar_hot + idle append must skip_yield, not yield."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import ReconcileResult
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    ReconcileResult,
+  )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      set_ingest_tar_hot,
+    set_ingest_tar_hot,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-      set_process_archive_members_store,
+    set_process_archive_members_store,
   )
 
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2020-01-01"
-  tar = daily / ("%s.tar" % day)
+  tar = daily / (f"{day}.tar")
   tar.write_bytes(b"tar")
   reconcile_calls = []
   kicks = []
@@ -2539,32 +2739,37 @@ def test_day_close_stale_ingest_tar_hot_does_not_forever_yield(
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
-      lambda *a, **k: reconcile_calls.append(1) or ReconcileResult(
-          True, "noop", "already_equivalent",
-      ),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+    lambda *a, **k: (
+      reconcile_calls.append(1)
+      or ReconcileResult(
+        True,
+        "noop",
+        "already_equivalent",
+      )
+    ),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: None,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
-      lambda *a, **k: True,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
+    lambda *a, **k: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _day_close_has_closed_coord(kicks, deletes),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _day_close_has_closed_coord(kicks, deletes),
   )
   try:
     store = SyncTimedbJobStore(str(tmp_path))
     logs = []
     outcome = qo._run_day_close_job(
-        day,
-        tgz_archive_dir=str(daily),
-        archive_data_dir=str(tmp_path),
-        job_store=store,
-        log_fn=lambda msg, **k: logs.append(str(msg)),
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      job_store=store,
+      log_fn=lambda msg, **k: logs.append(str(msg)),
     )
     assert outcome != "yielded"
     assert outcome == "incomplete_raw"
@@ -2578,22 +2783,25 @@ def test_day_close_stale_ingest_tar_hot_does_not_forever_yield(
 
 
 def test_day_close_kick_set_ingest_tar_hot_does_not_forever_yield(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """H20a: ingest_tar_hot set by wait_on_ingest kick must not flip to yield."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import ReconcileResult
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    ReconcileResult,
+  )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      set_ingest_tar_hot,
+    set_ingest_tar_hot,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-      set_process_archive_members_store,
+    set_process_archive_members_store,
   )
 
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2020-01-01"
-  tar = daily / ("%s.tar" % day)
+  tar = daily / (f"{day}.tar")
   tar.write_bytes(b"tar")
   reconcile_calls = []
   kicks = []
@@ -2609,32 +2817,37 @@ def test_day_close_kick_set_ingest_tar_hot_does_not_forever_yield(
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
-      lambda *a, **k: reconcile_calls.append(1) or ReconcileResult(
-          True, "noop", "already_equivalent",
-      ),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+    lambda *a, **k: (
+      reconcile_calls.append(1)
+      or ReconcileResult(
+        True,
+        "noop",
+        "already_equivalent",
+      )
+    ),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: None,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
-      lambda *a, **k: True,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
+    lambda *a, **k: True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _KickSetsHot,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _KickSetsHot,
   )
   try:
     store = SyncTimedbJobStore(str(tmp_path))
     logs = []
     outcome = qo._run_day_close_job(
-        day,
-        tgz_archive_dir=str(daily),
-        archive_data_dir=str(tmp_path),
-        job_store=store,
-        log_fn=lambda msg, **k: logs.append(str(msg)),
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      job_store=store,
+      log_fn=lambda msg, **k: logs.append(str(msg)),
     )
     assert outcome != "yielded"
     assert outcome == "incomplete_raw"
@@ -2649,13 +2862,13 @@ def test_day_close_live_ingest_or_populate_still_yields(tmp_path, monkeypatch):
   """H20a: live populate owner still yields before merge (H17)."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-      set_process_archive_members_store,
+    set_process_archive_members_store,
   )
 
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2020-01-01"
-  tar = daily / ("%s.tar" % day)
+  tar = daily / (f"{day}.tar")
   tar.write_bytes(b"tar")
   reconcile_calls = []
   kicks = []
@@ -2666,21 +2879,21 @@ def test_day_close_live_ingest_or_populate_still_yields(tmp_path, monkeypatch):
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
-      lambda *a, **k: reconcile_calls.append(1),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+    lambda *a, **k: reconcile_calls.append(1),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _day_close_has_closed_coord(kicks),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _day_close_has_closed_coord(kicks),
   )
   try:
     store = SyncTimedbJobStore(str(tmp_path))
     outcome = qo._run_day_close_job(
-        day,
-        tgz_archive_dir=str(daily),
-        archive_data_dir=str(tmp_path),
-        job_store=store,
-        log_fn=lambda *a, **k: None,
+      day,
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      job_store=store,
+      log_fn=lambda *a, **k: None,
     )
     assert outcome == "yielded"
     assert not reconcile_calls
@@ -2696,7 +2909,7 @@ def test_day_close_live_ingest_queue_still_yields(tmp_path, monkeypatch):
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2020-01-01"
-  tar = daily / ("%s.tar" % day)
+  tar = daily / (f"{day}.tar")
   tar.write_bytes(b"tar")
   reconcile_calls = []
   kicks = []
@@ -2709,26 +2922,26 @@ def test_day_close_live_ingest_queue_still_yields(tmp_path, monkeypatch):
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
-      lambda *a, **k: reconcile_calls.append(1),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+    lambda *a, **k: reconcile_calls.append(1),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _day_close_has_closed_coord(kicks),
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _day_close_has_closed_coord(kicks),
   )
   monkeypatch.setattr(
-      qo,
-      "_calendar_day_for_ingest_path",
-      lambda _path, _daily: date(2020, 1, 1),
+    qo,
+    "_calendar_day_for_ingest_path",
+    lambda _path, _daily: date(2020, 1, 1),
   )
   store = SyncTimedbJobStore(str(tmp_path))
   jq.zadd_ingest_job(store, identity=str(raw), score=1.0)
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      job_store=store,
-      log_fn=lambda *a, **k: None,
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    job_store=store,
+    log_fn=lambda *a, **k: None,
   )
   assert outcome == "yielded"
   assert not reconcile_calls
@@ -2789,10 +3002,13 @@ def test_day_close_disk_remaining_raw_blocks_uses_cheap_phase_not_has_closed():
     def should_handoff_to_ingest(self, _tar_path):
       raise AssertionError("handoff remaining-raw")
 
-  assert qo._day_close_disk_remaining_raw_blocks(
+  assert (
+    qo._day_close_disk_remaining_raw_blocks(
       _HangCoord(),
       "/d/2026-07-28.tar",
-  ) is True
+    )
+    is True
+  )
 
 
 def test_day_close_disk_remaining_raw_blocks_without_phase_uses_has_closed():
@@ -2805,10 +3021,13 @@ def test_day_close_disk_remaining_raw_blocks_without_phase_uses_has_closed():
     def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
       raise AssertionError("remaining-raw find should not run after has_closed")
 
-  assert qo._day_close_disk_remaining_raw_blocks(
+  assert (
+    qo._day_close_disk_remaining_raw_blocks(
       _NoPhase(),
       "/d/2026-07-28.tar",
-  ) is True
+    )
+    is True
+  )
 
 
 def test_day_close_disk_remaining_raw_blocks_phase_done_skips_has_closed():
@@ -2824,10 +3043,13 @@ def test_day_close_disk_remaining_raw_blocks_phase_done_skips_has_closed():
     def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
       raise AssertionError("remaining-raw find")
 
-  assert qo._day_close_disk_remaining_raw_blocks(
+  assert (
+    qo._day_close_disk_remaining_raw_blocks(
       _Done(),
       "/d/2026-07-28.tar",
-  ) is False
+    )
+    is False
+  )
 
 
 def test_day_close_disk_remaining_raw_blocks_verification_complete_empty_does_not_block():
@@ -2843,10 +3065,13 @@ def test_day_close_disk_remaining_raw_blocks_verification_complete_empty_does_no
     def remaining_raw_paths_blocking_tar_drop(self, _tar_path):
       raise AssertionError("remaining-raw find")
 
-  assert qo._day_close_disk_remaining_raw_blocks(
+  assert (
+    qo._day_close_disk_remaining_raw_blocks(
       _VcEmpty(),
       "/d/2022-11-05.tar",
-  ) is False
+    )
+    is False
+  )
 
 
 def test_day_close_disk_remaining_raw_blocks_verification_complete_pending_blocks():
@@ -2866,24 +3091,30 @@ def test_day_close_disk_remaining_raw_blocks_verification_complete_pending_block
     def has_closed_raw_on_disk(self, _tar_path):
       raise AssertionError("remaining-raw find")
 
-  assert qo._day_close_disk_remaining_raw_blocks(
+  assert (
+    qo._day_close_disk_remaining_raw_blocks(
       _VcPending(),
       "/d/2026-08-03.tar",
-  ) is True
+    )
+    is True
+  )
 
 
 def test_day_close_verification_complete_empty_still_reconciles(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """H20d: leftover-style phase() must not skip reconcile when remaining is 0."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import ReconcileResult
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    ReconcileResult,
+  )
 
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2022-11-05"
-  tar = daily / ("%s.tar" % day)
-  zst = daily / ("%s.tar.zst" % day)
+  tar = daily / (f"{day}.tar")
+  zst = daily / (f"{day}.tar.zst")
   tar.write_bytes(b"tar")
   zst.write_bytes(b"zst")
   stages = []
@@ -2892,18 +3123,23 @@ def test_day_close_verification_complete_empty_still_reconciles(
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: stages.append("seal"),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: stages.append("seal"),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
-      lambda *a, **k: stages.append("dedupe") or True,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.dedupe_tar_keep_largest_file_per_member",
+    lambda *a, **k: stages.append("dedupe") or True,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
-      lambda *a, **k: stages.append("reconcile") or ReconcileResult(
-          True, "noop", "already_equivalent",
-      ),
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+    lambda *a, **k: (
+      stages.append("reconcile")
+      or ReconcileResult(
+        True,
+        "noop",
+        "already_equivalent",
+      )
+    ),
   )
 
   class _Coord:
@@ -2937,15 +3173,15 @@ def test_day_close_verification_complete_empty_still_reconciles(
       return 0
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      job_store=SyncTimedbJobStore(str(tmp_path)),
-      log_fn=lambda *a, **k: None,
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    job_store=SyncTimedbJobStore(str(tmp_path)),
+    log_fn=lambda *a, **k: None,
   )
   assert outcome == "complete"
   assert "reconcile" in stages
@@ -2953,7 +3189,8 @@ def test_day_close_verification_complete_empty_still_reconciles(
 
 
 def test_day_close_open_tar_verifying_does_not_call_has_closed(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """Job-entry leftover verifying must stage_enter without has_closed find."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
@@ -2961,7 +3198,7 @@ def test_day_close_open_tar_verifying_does_not_call_has_closed(
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2026-07-28"
-  tar = daily / ("%s.tar" % day)
+  tar = daily / (f"{day}.tar")
   tar.write_bytes(b"tar")
   logs = []
   kicks = []
@@ -2970,8 +3207,8 @@ def test_day_close_open_tar_verifying_does_not_call_has_closed(
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: None,
   )
 
   class _Coord:
@@ -3012,17 +3249,19 @@ def test_day_close_open_tar_verifying_does_not_call_has_closed(
       return 0
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      job_store=SyncTimedbJobStore(str(tmp_path)),
-      log_fn=lambda msg, **k: logs.append(str(msg)),
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    job_store=SyncTimedbJobStore(str(tmp_path)),
+    log_fn=lambda msg, **k: logs.append(str(msg)),
   )
-  assert any("stage_enter" in line and "disk_remaining_raw" in line for line in logs)
+  assert any(
+    "stage_enter" in line and "disk_remaining_raw" in line for line in logs
+  )
   assert kicks
   assert outcome != "yielded"
 
@@ -3057,11 +3296,12 @@ def test_run_once_exits_with_future_dated_file_present():
   """B4: a poppable future-dated member must not wedge run_once idle detection."""
   lo, hi = jq.ingest_score_range("hot")
   from datetime import date
+
   score = jq.encode_ingest_score(
-      band="hot",
-      day=date(2026, 8, 30),
-      today=date(2026, 8, 24),
-      identity="/raw/future",
+    band="hot",
+    day=date(2026, 8, 30),
+    today=date(2026, 8, 24),
+    identity="/raw/future",
   )
   assert lo <= score <= hi
 
@@ -3078,11 +3318,11 @@ def test_missing_path_requeues_ingest_not_ack(monkeypatch, tmp_path):
   client = SyncTimedbJobStore("")
   identity = "/no/such/raw/file"
   claim = jq.ClaimedJob(
-      kind=jq.JOB_KIND_INGEST,
-      identity=identity,
-      owner_token="n:h:b:1",
-      deadline=1060.0,
-      score=5.0,
+    kind=jq.JOB_KIND_INGEST,
+    identity=identity,
+    owner_token="n:h:b:1",
+    deadline=1060.0,
+    score=5.0,
   )
   calls = {"n": 0}
 
@@ -3119,16 +3359,16 @@ def test_missing_path_requeues_ingest_not_ack(monkeypatch, tmp_path):
       raise AssertionError("must not submit missing path")
 
   qo._fill_ingest_band(
-      client,
-      band="hot",
-      cap=1,
-      inflight={},
-      claims={},
-      submitted={},
-      ingest_pool=_Pool(),
-      band_cap=1,
-      tgz_archive_dir=str(tmp_path),
-      ingest_is_complete_fn=lambda *_a, **_k: False,
+    client,
+    band="hot",
+    cap=1,
+    inflight={},
+    claims={},
+    submitted={},
+    ingest_pool=_Pool(),
+    band_cap=1,
+    tgz_archive_dir=str(tmp_path),
+    ingest_is_complete_fn=lambda *_a, **_k: False,
   )
   assert requeued
   assert not acked
@@ -3139,11 +3379,11 @@ def test_missing_path_acks_when_ingest_complete(monkeypatch, tmp_path):
   client = SyncTimedbJobStore("")
   identity = "/gone/but/complete"
   claim = jq.ClaimedJob(
-      kind=jq.JOB_KIND_INGEST,
-      identity=identity,
-      owner_token="n:h:b:1",
-      deadline=1060.0,
-      score=5.0,
+    kind=jq.JOB_KIND_INGEST,
+    identity=identity,
+    owner_token="n:h:b:1",
+    deadline=1060.0,
+    score=5.0,
   )
   calls = {"n": 0}
 
@@ -3158,10 +3398,14 @@ def test_missing_path_acks_when_ingest_complete(monkeypatch, tmp_path):
   requeued = []
   acked = []
   monkeypatch.setattr(
-      jq, "requeue_job", lambda *a, **k: requeued.append(k.get("identity")),
+    jq,
+    "requeue_job",
+    lambda *a, **k: requeued.append(k.get("identity")),
   )
   monkeypatch.setattr(
-      jq, "ack_job", lambda *a, **k: acked.append(k.get("identity")) or True,
+    jq,
+    "ack_job",
+    lambda *a, **k: acked.append(k.get("identity")) or True,
   )
   monkeypatch.setattr(jq, "claim_ingest_job", _claim)
   monkeypatch.setattr(jq, "claim_ingest_jobs", _claim_jobs)
@@ -3172,16 +3416,16 @@ def test_missing_path_acks_when_ingest_complete(monkeypatch, tmp_path):
       raise AssertionError("must not submit missing path")
 
   qo._fill_ingest_band(
-      client,
-      band="hot",
-      cap=1,
-      inflight={},
-      claims={},
-      submitted={},
-      ingest_pool=_Pool(),
-      band_cap=1,
-      tgz_archive_dir=str(tmp_path),
-      ingest_is_complete_fn=lambda *_a, **_k: True,
+    client,
+    band="hot",
+    cap=1,
+    inflight={},
+    claims={},
+    submitted={},
+    ingest_pool=_Pool(),
+    band_cap=1,
+    tgz_archive_dir=str(tmp_path),
+    ingest_is_complete_fn=lambda *_a, **_k: True,
   )
   assert acked == [identity]
   assert not requeued
@@ -3194,11 +3438,11 @@ def test_fill_ingest_ack_drops_fnctl_lock_sidecar(monkeypatch, tmp_path):
   lock_path.write_bytes(b"x")
   identity = str(lock_path)
   claim = jq.ClaimedJob(
-      kind=jq.JOB_KIND_INGEST,
-      identity=identity,
-      owner_token="n:h:b:1",
-      deadline=1060.0,
-      score=5.0,
+    kind=jq.JOB_KIND_INGEST,
+    identity=identity,
+    owner_token="n:h:b:1",
+    deadline=1060.0,
+    score=5.0,
   )
   calls = {"n": 0}
 
@@ -3212,14 +3456,18 @@ def test_fill_ingest_ack_drops_fnctl_lock_sidecar(monkeypatch, tmp_path):
 
   acked = []
   monkeypatch.setattr(
-      jq, "ack_job", lambda *a, **k: acked.append(k.get("identity")) or True,
+    jq,
+    "ack_job",
+    lambda *a, **k: acked.append(k.get("identity")) or True,
   )
   monkeypatch.setattr(jq, "claim_ingest_job", _claim)
   monkeypatch.setattr(jq, "claim_ingest_jobs", _claim_jobs)
   monkeypatch.setattr(
-      jq, "requeue_job", lambda *a, **k: (_ for _ in ()).throw(
-          AssertionError("must not requeue lock sidecar"),
-      ),
+    jq,
+    "requeue_job",
+    lambda *a, **k: (_ for _ in ()).throw(
+      AssertionError("must not requeue lock sidecar"),
+    ),
   )
 
   class _Pool:
@@ -3227,15 +3475,15 @@ def test_fill_ingest_ack_drops_fnctl_lock_sidecar(monkeypatch, tmp_path):
       raise AssertionError("must not submit lock sidecar")
 
   n = qo._fill_ingest_band(
-      SyncTimedbJobStore(""),
-      band="hot",
-      cap=1,
-      inflight={},
-      claims={},
-      submitted={},
-      ingest_pool=_Pool(),
-      band_cap=1,
-      tgz_archive_dir=str(tmp_path),
+    SyncTimedbJobStore(""),
+    band="hot",
+    cap=1,
+    inflight={},
+    claims={},
+    submitted={},
+    ingest_pool=_Pool(),
+    band_cap=1,
+    tgz_archive_dir=str(tmp_path),
   )
   assert n == 0
   assert acked == [identity]
@@ -3245,11 +3493,11 @@ def test_fill_ingest_skip_budget_breaks(monkeypatch, tmp_path):
   """P0-3: missing-path skips must not busy-spin the MainThread tick."""
   client = SyncTimedbJobStore("")
   claim = jq.ClaimedJob(
-      kind=jq.JOB_KIND_INGEST,
-      identity="/no/such/raw/file",
-      owner_token="n:h:b:1",
-      deadline=1060.0,
-      score=5.0,
+    kind=jq.JOB_KIND_INGEST,
+    identity="/no/such/raw/file",
+    owner_token="n:h:b:1",
+    deadline=1060.0,
+    score=5.0,
   )
   calls = {"n": 0}
 
@@ -3276,15 +3524,15 @@ def test_fill_ingest_skip_budget_breaks(monkeypatch, tmp_path):
       raise AssertionError("must not submit missing path")
 
   qo._fill_ingest_band(
-      client,
-      band="hot",
-      cap=8,
-      inflight={},
-      claims={},
-      submitted={},
-      ingest_pool=_Pool(),
-      tgz_archive_dir=str(tmp_path),
-      ingest_is_complete_fn=lambda *_a, **_k: False,
+    client,
+    band="hot",
+    cap=8,
+    inflight={},
+    claims={},
+    submitted={},
+    ingest_pool=_Pool(),
+    tgz_archive_dir=str(tmp_path),
+    ingest_is_complete_fn=lambda *_a, **_k: False,
   )
   assert calls["n"] <= qo.INGEST_FILL_SKIP_BUDGET
 
@@ -3309,9 +3557,16 @@ def test_request_shutdown_sets_list_flag():
 
 def test_retry_or_dead_letter_claim_none_not_silent_requeued():
   """F15: missing claim must not report success as requeued."""
-  assert qo._retry_or_dead_letter(
-      None, kind="ingest", claim=None, archive_data_dir="/a", reason="x",
-  ) == "dropped_no_claim"
+  assert (
+    qo._retry_or_dead_letter(
+      None,
+      kind="ingest",
+      claim=None,
+      archive_data_dir="/a",
+      reason="x",
+    )
+    == "dropped_no_claim"
+  )
 
 
 def test_drain_timeout_terminates_before_requeue():
@@ -3323,12 +3578,13 @@ def test_drain_timeout_terminates_before_requeue():
   arm_start = src.rfind("if drain_deadline", 0, timeout_idx)
   finally_idx = src.find("\n    finally:", timeout_idx)
   window = src[
-      arm_start if arm_start != -1 else max(0, timeout_idx - 400)
-      : finally_idx if finally_idx != -1 else timeout_idx + 800
+    arm_start if arm_start != -1 else max(0, timeout_idx - 400) : finally_idx
+    if finally_idx != -1
+    else timeout_idx + 800
   ]
   assert "day_executor.shutdown(wait=False" in window
   assert window.find("day_executor.shutdown") < window.find(
-      "_release_claims_on_shutdown",
+    "_release_claims_on_shutdown",
   )
 
 
@@ -3340,7 +3596,11 @@ def test_ingest_timeout_requeues_without_attempt_bump(tmp_path, monkeypatch):
   identity = "/raw/timeout"
   jq.zadd_ingest_job(client, identity=identity, score=1.0)
   claim = jq.claim_ingest_job(
-      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    client,
+    band="hot",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
 
   class _Ready:
@@ -3352,11 +3612,11 @@ def test_ingest_timeout_requeues_without_attempt_bump(tmp_path, monkeypatch):
       return (identity, False, False, 1.0, {"outcome": "timeout"})
 
   n = qo._drain_ingest_ready(
-      client,
-      inflight={identity: _Ready()},
-      claims={identity: claim},
-      tgz_archive_dir="/daily",
-      archive_data_dir=str(tmp_path),
+    client,
+    inflight={identity: _Ready()},
+    claims={identity: claim},
+    tgz_archive_dir="/daily",
+    archive_data_dir=str(tmp_path),
   )
   assert n == 1
   assert jq.read_job_attempt(client, kind="ingest", identity=identity) == 0
@@ -3385,7 +3645,10 @@ def test_ingest_fill_skip_budget_scales_with_zcard():
   """B2: deep queue escalates skip budget with a hard cap."""
   assert qo._ingest_fill_skip_budget_for_queued(0) == qo.INGEST_FILL_SKIP_BUDGET
   assert qo._ingest_fill_skip_budget_for_queued(500) == 10
-  assert qo._ingest_fill_skip_budget_for_queued(5000) == qo.INGEST_FILL_SKIP_BUDGET_MAX
+  assert (
+    qo._ingest_fill_skip_budget_for_queued(5000)
+    == qo.INGEST_FILL_SKIP_BUDGET_MAX
+  )
 
 
 def test_ingest_claim_probe_depth_elevates_when_hot_deep():
@@ -3410,11 +3673,11 @@ def test_skip_missing_penalty_requeues_with_score_bump(monkeypatch, tmp_path):
   client = SyncTimedbJobStore("")
   identity = "/no/such/raw/file"
   claim = jq.ClaimedJob(
-      kind=jq.JOB_KIND_INGEST,
-      identity=identity,
-      owner_token="n:h:b:1",
-      deadline=1060.0,
-      score=5.0,
+    kind=jq.JOB_KIND_INGEST,
+    identity=identity,
+    owner_token="n:h:b:1",
+    deadline=1060.0,
+    score=5.0,
   )
   requeue_kw: list[dict] = []
   calls = {"n": 0}
@@ -3425,8 +3688,9 @@ def test_skip_missing_penalty_requeues_with_score_bump(monkeypatch, tmp_path):
 
   monkeypatch.setattr(jq, "claim_ingest_jobs", _claim_jobs)
   monkeypatch.setattr(
-      jq, "requeue_job",
-      lambda *a, **k: requeue_kw.append(dict(k)) or True,
+    jq,
+    "requeue_job",
+    lambda *a, **k: requeue_kw.append(dict(k)) or True,
   )
   monkeypatch.setattr(jq, "bump_job_attempt", lambda *a, **k: 1)
   monkeypatch.setattr(jq, "ack_job", lambda *a, **k: True)
@@ -3436,23 +3700,25 @@ def test_skip_missing_penalty_requeues_with_score_bump(monkeypatch, tmp_path):
       raise AssertionError("must not submit missing path")
 
   qo._fill_ingest_band(
-      client,
-      band="hot",
-      cap=1,
-      inflight={},
-      claims={},
-      submitted={},
-      ingest_pool=_Pool(),
-      band_cap=1,
-      tgz_archive_dir=str(tmp_path),
-      archive_data_dir=str(tmp_path),
-      ingest_is_complete_fn=lambda *_a, **_k: False,
+    client,
+    band="hot",
+    cap=1,
+    inflight={},
+    claims={},
+    submitted={},
+    ingest_pool=_Pool(),
+    band_cap=1,
+    tgz_archive_dir=str(tmp_path),
+    archive_data_dir=str(tmp_path),
+    ingest_is_complete_fn=lambda *_a, **_k: False,
   )
   assert len(requeue_kw) == 1
   assert requeue_kw[0]["score"] == qo._penalized_ingest_requeue_score(5.0)
 
 
-def test_skip_fp_penalty_lets_claimable_job_behind_submit(monkeypatch, tmp_path):
+def test_skip_fp_penalty_lets_claimable_job_behind_submit(
+  monkeypatch, tmp_path
+):
   """RC9: stale fingerprint at head must not block submit of job behind it."""
   good_path = tmp_path / "host" / "good"
   good_path.parent.mkdir(parents=True)
@@ -3462,20 +3728,20 @@ def test_skip_fp_penalty_lets_claimable_job_behind_submit(monkeypatch, tmp_path)
   good_st = os.stat(good_path)
   good_fp = jq.ingest_fingerprint(good_st.st_size, good_st.st_mtime_ns)
   bad_claim = jq.ClaimedJob(
-      kind=jq.JOB_KIND_INGEST,
-      identity=str(bad_path),
-      owner_token="n:h:b:1",
-      deadline=1060.0,
-      score=5.0,
-      fingerprint="stale-fingerprint",
+    kind=jq.JOB_KIND_INGEST,
+    identity=str(bad_path),
+    owner_token="n:h:b:1",
+    deadline=1060.0,
+    score=5.0,
+    fingerprint="stale-fingerprint",
   )
   good_claim = jq.ClaimedJob(
-      kind=jq.JOB_KIND_INGEST,
-      identity=str(good_path),
-      owner_token="n:h:b:2",
-      deadline=1060.0,
-      score=6.0,
-      fingerprint=good_fp,
+    kind=jq.JOB_KIND_INGEST,
+    identity=str(good_path),
+    owner_token="n:h:b:2",
+    deadline=1060.0,
+    score=6.0,
+    fingerprint=good_fp,
   )
   requeue_kw: list[dict] = []
   submitted: list[str] = []
@@ -3489,8 +3755,9 @@ def test_skip_fp_penalty_lets_claimable_job_behind_submit(monkeypatch, tmp_path)
 
   monkeypatch.setattr(jq, "claim_ingest_jobs", _claim_jobs)
   monkeypatch.setattr(
-      jq, "requeue_job",
-      lambda *a, **k: requeue_kw.append(dict(k)) or True,
+    jq,
+    "requeue_job",
+    lambda *a, **k: requeue_kw.append(dict(k)) or True,
   )
   monkeypatch.setattr(jq, "bump_job_attempt", lambda *a, **k: 1)
   monkeypatch.setattr(jq, "write_job_fingerprint", lambda *a, **k: True)
@@ -3502,16 +3769,16 @@ def test_skip_fp_penalty_lets_claimable_job_behind_submit(monkeypatch, tmp_path)
       return type("_R", (), {"ready": lambda self: False})()
 
   n = qo._fill_ingest_band(
-      SyncTimedbJobStore(""),
-      band="hot",
-      cap=2,
-      inflight={},
-      claims={},
-      submitted={},
-      ingest_pool=_Pool(),
-      band_cap=2,
-      tgz_archive_dir=str(tmp_path),
-      archive_data_dir=str(tmp_path),
+    SyncTimedbJobStore(""),
+    band="hot",
+    cap=2,
+    inflight={},
+    claims={},
+    submitted={},
+    ingest_pool=_Pool(),
+    band_cap=2,
+    tgz_archive_dir=str(tmp_path),
+    archive_data_dir=str(tmp_path),
   )
   assert n == 1
   assert submitted == [str(good_path)]
@@ -3545,11 +3812,11 @@ def test_ingest_coordinator_uses_runtime_steal_on_fill_empty():
   assert "zcard" in hy
   fill_src = inspect.getsource(qo._ingest_coordinator_loop)
   first_fill = fill_src.find(
-      "did, hot_queued, zcard, _hot_n = _ingest_coordinator_fill_tick",
+    "did, hot_queued, zcard, _hot_n = _ingest_coordinator_fill_tick",
   )
   drain_at = fill_src.find("did += _drain_ingest_ready")
   second_fill = fill_src.find(
-      "extra, hot_queued, zcard, _hot_n2 = _ingest_coordinator_fill_tick",
+    "extra, hot_queued, zcard, _hot_n2 = _ingest_coordinator_fill_tick",
   )
   assert 0 < first_fill < drain_at < second_fill
   assert "fill under-capacity" in fill_src
@@ -3561,9 +3828,12 @@ def test_ingest_coordinator_loop_uses_zcard_for_idle_sleep():
   """B1: idle sleep branch must consult ZSET depth."""
   src = inspect.getsource(qo._ingest_coordinator_loop)
   assert "_ingest_coordinator_idle_sleep_s" in src
-  assert "time.sleep(max(0.05, poll_s))" not in src.split(
+  assert (
+    "time.sleep(max(0.05, poll_s))"
+    not in src.split(
       "elif did == 0 and not ingest_inflight:",
-  )[1].split("else:")[0]
+    )[1].split("else:")[0]
+  )
 
 
 def test_renew_helper_not_called_from_loop():
@@ -3615,8 +3885,8 @@ def test_sync_timedb_modules_have_no_bare_print():
       func = node.func
       if isinstance(func, ast.Name) and func.id == "print":
         offenders.append("%s:%d" % (path.name, node.lineno))
-  assert not offenders, "bare print() in sync_timedb modules: %s" % (
-      ", ".join(offenders),
+  assert not offenders, "bare print() in sync_timedb modules: {}".format(
+    ", ".join(offenders),
   )
 
 
@@ -3644,11 +3914,11 @@ def test_drain_append_no_find_uses_cheap_day_close(monkeypatch):
   client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   n = qo._drain_append_ready(
-      client,
-      inflight={"/d/2026-07-17.tar": _Ready()},
-      claims={"/d/2026-07-17.tar": _Claim()},
-      tgz_archive_dir="/d",
-      archive_data_dir="/a",
+    client,
+    inflight={"/d/2026-07-17.tar": _Ready()},
+    claims={"/d/2026-07-17.tar": _Claim()},
+    tgz_archive_dir="/d",
+    archive_data_dir="/a",
   )
   assert n == 1
   assert calls == [("/d/2026-07-17.tar", {})]
@@ -3674,15 +3944,17 @@ def test_drain_append_gate_skip_handoffs_before_ack(monkeypatch):
   monkeypatch.setattr(qo, "_handoff_retryable_paths_to_ingest", _handoff)
   monkeypatch.setattr(qo.jq, "ack_job", _ack)
   monkeypatch.setattr(
-      qo.jr, "enqueue_cheap_day_close_if_needed", lambda *a, **k: True,
+    qo.jr,
+    "enqueue_cheap_day_close_if_needed",
+    lambda *a, **k: True,
   )
 
   skipped = ("/raw/a",)
   outcome = ArchiveAppendOutcome(
-      ok=False,
-      gate_skipped=True,
-      skipped_paths=skipped,
-      skip_finalize_invalidate=True,
+    ok=False,
+    gate_skipped=True,
+    skipped_paths=skipped,
+    skip_finalize_invalidate=True,
   )
 
   class _Ready:
@@ -3699,11 +3971,11 @@ def test_drain_append_gate_skip_handoffs_before_ack(monkeypatch):
   client = SyncTimedbJobStore("")
   jq.reset_job_queue_script_cache_for_tests()
   n = qo._drain_append_ready(
-      client,
-      inflight={"/d/2026-07-17.tar": _Ready()},
-      claims={"/d/2026-07-17.tar": _Claim()},
-      tgz_archive_dir="/d",
-      archive_data_dir="/a",
+    client,
+    inflight={"/d/2026-07-17.tar": _Ready()},
+    claims={"/d/2026-07-17.tar": _Claim()},
+    tgz_archive_dir="/d",
+    archive_data_dir="/a",
   )
   assert n == 1
   assert handoffs == [("/d/2026-07-17.tar", skipped, "gate_skip")]
@@ -3727,9 +3999,9 @@ def test_drain_append_soft_requeue_requeues_without_ack(monkeypatch):
   monkeypatch.setattr(qo.jq, "ack_job", _ack)
 
   outcome = ArchiveAppendOutcome(
-      ok=False,
-      soft_requeue=True,
-      skip_finalize_invalidate=True,
+    ok=False,
+    soft_requeue=True,
+    skip_finalize_invalidate=True,
   )
 
   class _Ready:
@@ -3745,18 +4017,20 @@ def test_drain_append_soft_requeue_requeues_without_ack(monkeypatch):
 
   client = SyncTimedbJobStore("")
   n = qo._drain_append_ready(
-      client,
-      inflight={"/d/2026-07-17.tar": _Ready()},
-      claims={"/d/2026-07-17.tar": _Claim()},
-      tgz_archive_dir="/d",
-      archive_data_dir="/a",
+    client,
+    inflight={"/d/2026-07-17.tar": _Ready()},
+    claims={"/d/2026-07-17.tar": _Claim()},
+    tgz_archive_dir="/d",
+    archive_data_dir="/a",
   )
   assert n == 1
   assert requeues == ["/raw/a"]
   assert acks == []
 
 
-def test_drain_append_failure_log_includes_exception_detail(monkeypatch, tmp_path):
+def test_drain_append_failure_log_includes_exception_detail(
+  monkeypatch, tmp_path
+):
   """Append worker failures retain the actionable missing-path detail."""
   logs: list[str] = []
 
@@ -3772,20 +4046,22 @@ def test_drain_append_failure_log_includes_exception_detail(monkeypatch, tmp_pat
     owner_token = "tok"
 
   monkeypatch.setattr(
-      qo, "_retry_or_dead_letter", lambda *a, **k: "dead_letter",
+    qo,
+    "_retry_or_dead_letter",
+    lambda *a, **k: "dead_letter",
   )
   qo._drain_append_ready(
-      SyncTimedbJobStore(""),
-      inflight={"/d/2026-07-17.tar": _Ready()},
-      claims={"/d/2026-07-17.tar": _Claim()},
-      tgz_archive_dir="/d",
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda message, **_kwargs: logs.append(message),
+    SyncTimedbJobStore(""),
+    inflight={"/d/2026-07-17.tar": _Ready()},
+    claims={"/d/2026-07-17.tar": _Claim()},
+    tgz_archive_dir="/d",
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda message, **_kwargs: logs.append(message),
   )
 
   assert any(
-      "err=FileNotFoundError" in line and "/missing/archive-input" in line
-      for line in logs
+    "err=FileNotFoundError" in line and "/missing/archive-input" in line
+    for line in logs
   )
 
 
@@ -3799,10 +4075,10 @@ def test_reconstruct_coordinator_reaps_discover_kind():
 def test_coordinator_roles_no_double_thread_prefix():
   """set_daemon_thread_title already prefixes thread: — role= must not repeat."""
   for fn_name in (
-      "_ingest_coordinator_loop",
-      "_append_coordinator_loop",
-      "_day_close_coordinator_loop",
-      "_reconstruct_coordinator_loop",
+    "_ingest_coordinator_loop",
+    "_append_coordinator_loop",
+    "_day_close_coordinator_loop",
+    "_reconstruct_coordinator_loop",
   ):
     src = inspect.getsource(getattr(qo, fn_name))
     assert 'role="thread:' not in src, fn_name
@@ -3829,9 +4105,14 @@ def test_cheap_day_close_helper_rejects_blocking_filesystem_complete():
 
   jrmod.enqueue_day_close_if_needed = _wrapped  # type: ignore[assignment]
   try:
-    assert jr.enqueue_cheap_day_close_if_needed(
-        object(), "/d/2026-08-01.tar", calendar_day=date(2026, 8, 1),
-    ) is True
+    assert (
+      jr.enqueue_cheap_day_close_if_needed(
+        object(),
+        "/d/2026-08-01.tar",
+        calendar_day=date(2026, 8, 1),
+      )
+      is True
+    )
   finally:
     jrmod.enqueue_day_close_if_needed = orig  # type: ignore[assignment]
   assert seen and seen[0].get("filesystem_complete") is False
@@ -3862,19 +4143,34 @@ def test_cheap_day_close_age_skips_today_and_yesterday(monkeypatch):
   jq.reset_job_queue_script_cache_for_tests()
   now = datetime(2026, 8, 27, 12, 0, 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_day_close_min_age_hours",
-      lambda: 32.0,
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_day_close_min_age_hours",
+    lambda: 32.0,
   )
-  assert jr.enqueue_cheap_day_close_if_needed(
-      client, "/d/2026-08-27.tar", now=now,
-  ) is False
-  assert jr.enqueue_cheap_day_close_if_needed(
-      client, "/d/2026-08-26.tar", now=now,
-  ) is False
+  assert (
+    jr.enqueue_cheap_day_close_if_needed(
+      client,
+      "/d/2026-08-27.tar",
+      now=now,
+    )
+    is False
+  )
+  assert (
+    jr.enqueue_cheap_day_close_if_needed(
+      client,
+      "/d/2026-08-26.tar",
+      now=now,
+    )
+    is False
+  )
   assert int(client.queued_count("day_close") or 0) == 0
-  assert jr.enqueue_cheap_day_close_if_needed(
-      client, "/d/2026-08-01.tar", now=now,
-  ) is True
+  assert (
+    jr.enqueue_cheap_day_close_if_needed(
+      client,
+      "/d/2026-08-01.tar",
+      now=now,
+    )
+    is True
+  )
   assert int(client.queued_count("day_close") or 0) == 1
 
 
@@ -3905,9 +4201,9 @@ def test_fail_closed_coordinator_death_no_empty_map_restart(monkeypatch):
   qo.reset_shutdown_for_tests()
   try:
     qo.fail_closed_on_coordinator_death(
-        role="ingest-coordinator",
-        log_fn=lambda *a, **k: None,
-        exit_fn=exits.append,
+      role="ingest-coordinator",
+      log_fn=lambda *a, **k: None,
+      exit_fn=exits.append,
     )
   finally:
     qo.reset_shutdown_for_tests()
@@ -3938,10 +4234,10 @@ def test_kind_scoped_reaper_skips_local_inflight(monkeypatch):
   monkeypatch.setattr(qo, "_protect_local_inflight_deadlines", _fake_protect)
   monkeypatch.setattr(jq, "reap_expired_inflight", _fake_reap)
   n = qo._reap_stale_inflight(
-      client,
-      kinds=(jq.JOB_KIND_INGEST,),
-      skip_identities=("local-a",),
-      log_fn=lambda *a, **k: None,
+    client,
+    kinds=(jq.JOB_KIND_INGEST,),
+    skip_identities=("local-a",),
+    log_fn=lambda *a, **k: None,
   )
   assert "local-a" in protected
   assert calls == [jq.JOB_KIND_INGEST]
@@ -3955,12 +4251,12 @@ def test_mainthread_forbid_fill_drain():
   """MainThread maintenance must not call fill/drain helpers directly."""
   src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
   for banned in (
-      "_fill_ingest_band(",
-      "_fill_append_slots(",
-      "_fill_day_close_slots(",
-      "_drain_append_ready(",
-      "_drain_ingest_ready(",
-      "_idle_reconstruct_pass(",
+    "_fill_ingest_band(",
+    "_fill_append_slots(",
+    "_fill_day_close_slots(",
+    "_drain_append_ready(",
+    "_drain_ingest_ready(",
+    "_idle_reconstruct_pass(",
   ):
     assert banned not in src, banned
   assert "populate.reap_and_restart" in src
@@ -3968,9 +4264,9 @@ def test_mainthread_forbid_fill_drain():
   assert "_append_coordinator_loop" in src
 
 
-
 def test_drain_bare_TimeoutError_leaves_inflight_no_soft_requeue(
-  tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """Bare TimeoutError on get must not soft-requeue or clear local inflight."""
   monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
@@ -3979,7 +4275,11 @@ def test_drain_bare_TimeoutError_leaves_inflight_no_soft_requeue(
   identity = "/raw/timeout_escape"
   jq.zadd_ingest_job(client, identity=identity, score=1.0)
   claim = jq.claim_ingest_job(
-      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    client,
+    band="hot",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
   logs = []
 
@@ -3996,13 +4296,13 @@ def test_drain_bare_TimeoutError_leaves_inflight_no_soft_requeue(
   claims = {identity: claim}
   submitted = {identity: 1.0}
   n = qo._drain_ingest_ready(
-      client,
-      inflight=inflight,
-      claims=claims,
-      submitted=submitted,
-      tgz_archive_dir="/daily",
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda *a, **k: logs.append(" ".join(str(x) for x in a)),
+    client,
+    inflight=inflight,
+    claims=claims,
+    submitted=submitted,
+    tgz_archive_dir="/daily",
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda *a, **k: logs.append(" ".join(str(x) for x in a)),
   )
   assert n == 0
   assert identity in inflight
@@ -4016,7 +4316,9 @@ def test_drain_bare_TimeoutError_leaves_inflight_no_soft_requeue(
   assert qo._is_ingest_timeout_sentinel(inflight[identity])
 
 
-def test_drain_timeout_sentinel_is_not_deadline_protected(tmp_path, monkeypatch):
+def test_drain_timeout_sentinel_is_not_deadline_protected(
+  tmp_path, monkeypatch
+):
   """H7 sentinels stay in inflight but are excluded from deadline protect."""
   monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
   client = SyncTimedbJobStore("")
@@ -4024,17 +4326,21 @@ def test_drain_timeout_sentinel_is_not_deadline_protected(tmp_path, monkeypatch)
   identity = "/raw/timeout_sentinel"
   jq.zadd_ingest_job(client, identity=identity, score=1.0)
   claim = jq.claim_ingest_job(
-      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    client,
+    band="hot",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
   inflight = {identity: qo._IngestTimeoutSentinel()}
   protected = qo._protect_local_inflight_deadlines(
-      client,
-      kind="ingest",
-      identities=[
-          ident
-          for ident, res in inflight.items()
-          if not qo._is_ingest_timeout_sentinel(res)
-      ],
+    client,
+    kind="ingest",
+    identities=[
+      ident
+      for ident, res in inflight.items()
+      if not qo._is_ingest_timeout_sentinel(res)
+    ],
   )
   assert protected == 0
   assert identity in inflight
@@ -4059,25 +4365,33 @@ def test_reaper_after_ttl_reclaims_sentinel(tmp_path, monkeypatch):
   identity = "/raw/sentinel_ttl"
   jq.zadd_ingest_job(client, identity=identity, score=1.0)
   claim = jq.claim_ingest_job(
-      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    client,
+    band="hot",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
   assert claim is not None
   client._inflight[jq.JOB_KIND_INGEST][identity] = (
-      1.0, claim.owner_token, 1.0,
+    1.0,
+    claim.owner_token,
+    1.0,
   )
   inflight = {identity: qo._IngestTimeoutSentinel()}
   leases = {identity: claim}
   skip = qo._ingest_reaper_skip_identities(inflight, leases)
   recovered = qo._reap_stale_inflight(
-      client,
-      kinds=(jq.JOB_KIND_INGEST,),
-      skip_identities=skip,
-      log_fn=lambda *a, **k: None,
+    client,
+    kinds=(jq.JOB_KIND_INGEST,),
+    skip_identities=skip,
+    log_fn=lambda *a, **k: None,
   )
   assert recovered >= 1
   assert client.ingest_score(identity) is not None
   dropped = qo._drop_expired_ingest_timeout_sentinels(
-      client, inflight=inflight, claims=leases,
+    client,
+    inflight=inflight,
+    claims=leases,
   )
   assert dropped == 1
   assert identity not in inflight
@@ -4094,7 +4408,9 @@ def test_orchestrator_shutdown_force_persists():
   assert persist_at > finally_at
 
 
-def test_drain_rich_TimeoutError_soft_requeues_without_fail(tmp_path, monkeypatch):
+def test_drain_rich_TimeoutError_soft_requeues_without_fail(
+  tmp_path, monkeypatch
+):
   """Rich IngestPerFileTimeoutError escape still soft-requeues (Wave 1)."""
   monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
   client = SyncTimedbJobStore("")
@@ -4102,7 +4418,11 @@ def test_drain_rich_TimeoutError_soft_requeues_without_fail(tmp_path, monkeypatc
   identity = "/raw/timeout_rich"
   jq.zadd_ingest_job(client, identity=identity, score=1.0)
   claim = jq.claim_ingest_job(
-      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    client,
+    band="hot",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
   logs = []
 
@@ -4122,12 +4442,12 @@ def test_drain_rich_TimeoutError_soft_requeues_without_fail(tmp_path, monkeypatc
       raise _RichTimeout()
 
   n = qo._drain_ingest_ready(
-      client,
-      inflight={identity: _Ready()},
-      claims={identity: claim},
-      tgz_archive_dir="/daily",
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda *a, **k: logs.append(" ".join(str(x) for x in a)),
+    client,
+    inflight={identity: _Ready()},
+    claims={identity: claim},
+    tgz_archive_dir="/daily",
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda *a, **k: logs.append(" ".join(str(x) for x in a)),
   )
   assert n == 1
   assert jq.read_job_attempt(client, kind="ingest", identity=identity) == 0
@@ -4147,7 +4467,11 @@ def test_drain_packed_timeout_rich_log(tmp_path, monkeypatch):
   identity = "/raw/packed_timeout"
   jq.zadd_ingest_job(client, identity=identity, score=1.0)
   claim = jq.claim_ingest_job(
-      client, band="hot", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    client,
+    band="hot",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
   logs = []
 
@@ -4158,26 +4482,26 @@ def test_drain_packed_timeout_rich_log(tmp_path, monkeypatch):
     def get(self, timeout=0):
       del timeout
       return (
-          identity,
-          False,
-          False,
-          12.5,
-          {
-              "outcome": "timeout",
-              "fail_reason": "write",
-              "timeout_s": 8000.2,
-              "postgres_s": 4.0,
-              "parse_elapsed_s": 1.5,
-          },
+        identity,
+        False,
+        False,
+        12.5,
+        {
+          "outcome": "timeout",
+          "fail_reason": "write",
+          "timeout_s": 8000.2,
+          "postgres_s": 4.0,
+          "parse_elapsed_s": 1.5,
+        },
       )
 
   n = qo._drain_ingest_ready(
-      client,
-      inflight={identity: _Ready()},
-      claims={identity: claim},
-      tgz_archive_dir="/daily",
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda *a, **k: logs.append(" ".join(str(x) for x in a)),
+    client,
+    inflight={identity: _Ready()},
+    claims={identity: claim},
+    tgz_archive_dir="/daily",
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda *a, **k: logs.append(" ".join(str(x) for x in a)),
   )
   assert n == 1
   assert jq.read_job_attempt(client, kind="ingest", identity=identity) == 0
@@ -4194,7 +4518,7 @@ def test_ingest_worker_logs_outcome_before_marks():
   src = inspect.getsource(qo._ingest_worker)
   assert "_log_ingest_outcome_from_packed_result" in src
   assert src.index("_log_ingest_outcome_from_packed_result") < src.index(
-      "_record_ingest_marks_from_worker_result",
+    "_record_ingest_marks_from_worker_result",
   )
   assert "_log_ingest_worker_result" not in src
 
@@ -4220,20 +4544,20 @@ def test_drain_ingest_marks_quiet_log_fn_none(monkeypatch, tmp_path):
   client = SyncTimedbJobStore("")
   inflight = {"/a": _Ready()}
   claims = {
-      "/a": jq.ClaimedJob(
-          kind=jq.JOB_KIND_INGEST,
-          identity="/a",
-          owner_token="n:h:b:1",
-          deadline=1.0,
-          score=5.0,
-      ),
+    "/a": jq.ClaimedJob(
+      kind=jq.JOB_KIND_INGEST,
+      identity="/a",
+      owner_token="n:h:b:1",
+      deadline=1.0,
+      score=5.0,
+    ),
   }
   done = qo._drain_ingest_ready(
-      client,
-      inflight=inflight,
-      claims=claims,
-      tgz_archive_dir="/daily",
-      archive_data_dir=str(tmp_path),
+    client,
+    inflight=inflight,
+    claims=claims,
+    tgz_archive_dir="/daily",
+    archive_data_dir=str(tmp_path),
   )
   assert done == 1
   assert recorded
@@ -4246,11 +4570,15 @@ def test_drain_ingest_increments_total_ingested(monkeypatch, tmp_path):
   """ingested bumps both counters; db_skip only completed; fail neither."""
   qo.reset_total_ingested_for_tests()
   monkeypatch.setattr(
-      st, "_record_ingest_marks_from_worker_result", lambda *a, **k: None,
+    st,
+    "_record_ingest_marks_from_worker_result",
+    lambda *a, **k: None,
   )
   monkeypatch.setattr(jq, "ack_job", lambda *a, **k: True)
   monkeypatch.setattr(
-      qo, "_retry_or_dead_letter", lambda *a, **k: "requeued",
+    qo,
+    "_retry_or_dead_letter",
+    lambda *a, **k: "requeued",
   )
 
   class _Ready:
@@ -4263,44 +4591,50 @@ def test_drain_ingest_increments_total_ingested(monkeypatch, tmp_path):
 
     def get(self, timeout=0):
       del timeout
-      return ("/a", True, self._ingest_ok, 0.1, {"outcome": self._outcome})
+      return (
+        "/a",
+        True,
+        self._ingest_ok,
+        0.1,
+        {"outcome": self._outcome},
+      )
 
   def _claim(identity: str) -> jq.ClaimedJob:
     return jq.ClaimedJob(
-        kind=jq.JOB_KIND_INGEST,
-        identity=identity,
-        owner_token="n:h:b:1",
-        deadline=1.0,
-        score=5.0,
+      kind=jq.JOB_KIND_INGEST,
+      identity=identity,
+      owner_token="n:h:b:1",
+      deadline=1.0,
+      score=5.0,
     )
 
   client = SyncTimedbJobStore("")
   done = qo._drain_ingest_ready(
-      client,
-      inflight={"/ingested": _Ready("ingested")},
-      claims={"/ingested": _claim("/ingested")},
-      tgz_archive_dir="/daily",
-      archive_data_dir=str(tmp_path),
+    client,
+    inflight={"/ingested": _Ready("ingested")},
+    claims={"/ingested": _claim("/ingested")},
+    tgz_archive_dir="/daily",
+    archive_data_dir=str(tmp_path),
   )
   assert done == 1
   assert qo.get_total_ingested_for_tests() == 1
   assert qo.get_total_completed_for_tests() == 1
   done_skip = qo._drain_ingest_ready(
-      client,
-      inflight={"/skip": _Ready("db_skip")},
-      claims={"/skip": _claim("/skip")},
-      tgz_archive_dir="/daily",
-      archive_data_dir=str(tmp_path),
+    client,
+    inflight={"/skip": _Ready("db_skip")},
+    claims={"/skip": _claim("/skip")},
+    tgz_archive_dir="/daily",
+    archive_data_dir=str(tmp_path),
   )
   assert done_skip == 1
   assert qo.get_total_ingested_for_tests() == 1
   assert qo.get_total_completed_for_tests() == 2
   done_fail = qo._drain_ingest_ready(
-      client,
-      inflight={"/fail": _Ready("parse_fail", ingest_ok=False)},
-      claims={"/fail": _claim("/fail")},
-      tgz_archive_dir="/daily",
-      archive_data_dir=str(tmp_path),
+    client,
+    inflight={"/fail": _Ready("parse_fail", ingest_ok=False)},
+    claims={"/fail": _claim("/fail")},
+    tgz_archive_dir="/daily",
+    archive_data_dir=str(tmp_path),
   )
   assert done_fail == 1
   assert qo.get_total_ingested_for_tests() == 1
@@ -4314,18 +4648,15 @@ def test_census_log_always_includes_total_ingested():
   assert "total_completed=%d" in src
   qo.reset_total_ingested_for_tests()
   census = {
-      "ingest": {"queued": 0, "inflight": 0},
-      "append": {"queued": 0, "inflight": 0},
-      "discover": {"queued": 0, "inflight": 0},
-      "day_close": {"queued": 0, "inflight": 0},
+    "ingest": {"queued": 0, "inflight": 0},
+    "append": {"queued": 0, "inflight": 0},
+    "discover": {"queued": 0, "inflight": 0},
+    "day_close": {"queued": 0, "inflight": 0},
   }
-  line = (
-      "queue_orchestrator census %s total_ingested=%d total_completed=%d"
-      % (
-          jq.format_queue_census(census),
-          qo.get_total_ingested_for_tests(),
-          qo.get_total_completed_for_tests(),
-      )
+  line = "queue_orchestrator census %s total_ingested=%d total_completed=%d" % (
+    jq.format_queue_census(census),
+    qo.get_total_ingested_for_tests(),
+    qo.get_total_completed_for_tests(),
   )
   assert "total_ingested=0" in line
   assert "total_completed=0" in line
@@ -4335,9 +4666,9 @@ def test_census_log_always_includes_total_ingested():
 def test_regression_battery_script_nounset_empty_extra():
   """No-arg battery must not expand empty PYTEST_EXTRA under bash set -u."""
   script = (
-      Path(__file__).resolve().parents[2]
-      / "tests"
-      / "run_sync_timedb_regression_battery.sh"
+    Path(__file__).resolve().parents[2]
+    / "tests"
+    / "run_sync_timedb_regression_battery.sh"
   )
   src = script.read_text(encoding="utf-8")
   assert script.is_file()
@@ -4346,6 +4677,7 @@ def test_regression_battery_script_nounset_empty_extra():
 
 def test_rc8_reconcile_prunes_local_when_store_hlen_low():
   """RC8: phantom local maps prune when the job store has no inflight/lease."""
+
   class _Client:
     def hget(self, key, field):
       del key, field
@@ -4361,16 +4693,16 @@ def test_rc8_reconcile_prunes_local_when_store_hlen_low():
 
   inflight = {"/phantom": _NotReady()}
   leases = {
-      "/phantom": type("C", (), {"score": 1.0})(),
+    "/phantom": type("C", (), {"score": 1.0})(),
   }
   submitted = {"/phantom": 1.0}
   band_used = {"hot": 1, "catchup": 0}
   pruned = qo._reconcile_local_ingest_maps_to_store(
-      _Client(),
-      ingest_inflight=inflight,
-      ingest_leases=leases,
-      ingest_submitted=submitted,
-      band_used=band_used,
+    _Client(),
+    ingest_inflight=inflight,
+    ingest_leases=leases,
+    ingest_submitted=submitted,
+    band_used=band_used,
   )
   assert pruned == 1
   assert inflight == {}
@@ -4395,24 +4727,29 @@ def test_rc8_hygiene_runs_when_local_full_store_underfull(monkeypatch):
 
   monkeypatch.setattr(jq, "steal_dead_owner_leases", fake_steal)
   monkeypatch.setattr(
-      jq, "reconcile_this_owner_orphan_leases", fake_reconcile,
+    jq,
+    "reconcile_this_owner_orphan_leases",
+    fake_reconcile,
   )
   monkeypatch.setattr(
-      jq, "make_lease_owner_token", lambda: "n:h:b:test-owner",
+    jq,
+    "make_lease_owner_token",
+    lambda: "n:h:b:test-owner",
   )
+
   class _Ready:
     pass
 
   inflight = {("/x%d" % i): _Ready() for i in range(24)}
   now = qo._ingest_runtime_lease_hygiene(
-      client=object(),
-      ingest_inflight=inflight,
-      ingest_leases={},
-      ingest_pool_size=24,
-      zcard=100,
-      last_runtime_steal=0.0,
-      log_fn=None,
-      store_hlen=5,
+    client=object(),
+    ingest_inflight=inflight,
+    ingest_leases={},
+    ingest_pool_size=24,
+    zcard=100,
+    last_runtime_steal=0.0,
+    log_fn=None,
+    store_hlen=5,
   )
   assert now > 0
   assert calls["steal"] == 1
@@ -4439,11 +4776,19 @@ def test_rc8_band_cap_uses_counters_not_full_scan():
 def test_rc8e_no_50ms_sleep_on_zero_submit_deep_zset():
   """RC8e: 0-submit deep ZSET under pool sleeps <<50ms."""
   s = qo._ingest_coordinator_tick_sleep_s(
-      zcard=100, poll_s=5.0, fill_submitted=0, local_n=2, pool=24,
+    zcard=100,
+    poll_s=5.0,
+    fill_submitted=0,
+    local_n=2,
+    pool=24,
   )
   assert s <= 0.005
   s2 = qo._ingest_coordinator_tick_sleep_s(
-      zcard=100, poll_s=5.0, fill_submitted=3, local_n=5, pool=24,
+    zcard=100,
+    poll_s=5.0,
+    fill_submitted=3,
+    local_n=5,
+    pool=24,
   )
   assert s2 == 0.05
 
@@ -4457,7 +4802,9 @@ def test_rc8e_census_wired_in_fill_tick():
   assert "_reconcile_local_ingest_maps_to_store" in loop
 
 
-def test_day_close_fill_prefers_oldest_frozen_age_eligible(tmp_path, monkeypatch):
+def test_day_close_fill_prefers_oldest_frozen_age_eligible(
+  tmp_path, monkeypatch
+):
   """H18: day_close fill claims oldest calendar day before newer LIST heads."""
   from concurrent.futures import ThreadPoolExecutor
 
@@ -4484,24 +4831,26 @@ def test_day_close_fill_prefers_oldest_frozen_age_eligible(tmp_path, monkeypatch
   leases = {}
   with ThreadPoolExecutor(max_workers=1) as ex:
     n, _skips = qo._fill_day_close_slots(
-        client,
-        executor=ex,
-        inflight=inflight,
-        leases=leases,
-        tgz_archive_dir=str(tmp_path),
-        archive_data_dir=str(tmp_path),
-        log_fn=lambda *a, **k: None,
+      client,
+      executor=ex,
+      inflight=inflight,
+      leases=leases,
+      tgz_archive_dir=str(tmp_path),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
     )
   assert n == 1
   assert claimed == [older]
   assert older in inflight
 
 
-def test_day_close_yield_backoff_skips_reclaim_without_claim_log(tmp_path, monkeypatch):
+def test_day_close_yield_backoff_skips_reclaim_without_claim_log(
+  tmp_path, monkeypatch
+):
   """After yield, fill silently requeues while sticky backoff is active."""
   from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
   from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
-      JanitorDeferTracker,
+    JanitorDeferTracker,
   )
 
   qo._DAY_CLOSE_CLAIM_LOG_STATE.clear()
@@ -4521,14 +4870,14 @@ def test_day_close_yield_backoff_skips_reclaim_without_claim_log(tmp_path, monke
   logs = []
   monkeypatch.setattr(qo.cfg, "get_sync_day_close_max_inflight", lambda: 1)
   submitted, skips = qo._fill_day_close_slots(
-      client,
-      executor=_Ex(),
-      inflight={},
-      leases={},
-      tgz_archive_dir=str(tmp_path),
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda msg, **k: logs.append(str(msg)),
-      defer_tracker=tracker,
+    client,
+    executor=_Ex(),
+    inflight={},
+    leases={},
+    tgz_archive_dir=str(tmp_path),
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda msg, **k: logs.append(str(msg)),
+    defer_tracker=tracker,
   )
   assert submitted == 0
   assert skips >= 1
@@ -4542,7 +4891,7 @@ def test_day_close_yield_backoff_clears_on_complete(tmp_path):
 
   from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
   from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
-      JanitorDeferTracker,
+    JanitorDeferTracker,
   )
 
   tracker = JanitorDeferTracker()
@@ -4551,19 +4900,23 @@ def test_day_close_yield_backoff_clears_on_complete(tmp_path):
   ident = "2020-01-02"
   jq.enqueue_list_job(client, kind="day_close", identity=ident)
   claim = jq.claim_list_job(
-      client, kind="day_close", owner_token="n:h:b:1", ttl_s=60, now_s=1000.0,
+    client,
+    kind="day_close",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
   )
   tracker.record_yield_backoff(ident)
   assert tracker.yield_backoff_active(ident)
   fut = Future()
   fut.set_result("complete")
   n, coop = qo._drain_day_close_ready(
-      client,
-      inflight={ident: fut},
-      leases={ident: claim},
-      archive_data_dir=str(tmp_path),
-      log_fn=lambda *a, **k: None,
-      defer_tracker=tracker,
+    client,
+    inflight={ident: fut},
+    leases={ident: claim},
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda *a, **k: None,
+    defer_tracker=tracker,
   )
   assert n == 1
   assert coop is False
@@ -4577,6 +4930,7 @@ def test_day_close_coordinator_sleeps_poll_on_yield_only_churn(monkeypatch):
 
   class _Barrier:
     draining = type("E", (), {"is_set": staticmethod(lambda: False)})()
+
     def mark_drained(self, role):
       del role
 
@@ -4598,22 +4952,20 @@ def test_day_close_coordinator_sleeps_poll_on_yield_only_churn(monkeypatch):
   monkeypatch.setattr(qo, "set_daemon_thread_title", lambda *a, **k: None)
   monkeypatch.setattr(qo, "_reap_stale_inflight", lambda *a, **k: 0)
 
-  try:
+  with contextlib.suppress(StopIteration):
     qo._day_close_coordinator_loop(
-        client=object(),
-        directory="/a",
-        tgz_archive_dir="/d",
-        day_executor=object(),
-        poll_s=5.0,
-        barrier=_Barrier(),
-        day_inflight={},
-        day_leases={},
-        busy_flags={},
-        busy_lock=__import__("threading").Lock(),
-        log_fn=None,
+      client=object(),
+      directory="/a",
+      tgz_archive_dir="/d",
+      day_executor=object(),
+      poll_s=5.0,
+      barrier=_Barrier(),
+      day_inflight={},
+      day_leases={},
+      busy_flags={},
+      busy_lock=__import__("threading").Lock(),
+      log_fn=None,
     )
-  except StopIteration:
-    pass
   assert sleeps, "expected cooperative poll sleep"
   assert sleeps[0] >= 5.0
 
@@ -4661,8 +5013,8 @@ def test_day_close_cheap_phase_verifying_skips_remaining_raw_kick():
       return "verify"
 
   qo._day_close_complete_wait_on_ingest_handoff(
-      _Coord(),
-      "/d/2026-07-28.tar",
+    _Coord(),
+    "/d/2026-07-28.tar",
   )
   assert kicks == []
   assert unblocks == [("/d/2026-07-28.tar", "day_close_wait_on_ingest")]
@@ -4696,8 +5048,8 @@ def test_day_close_vc_pending_skips_remaining_raw_kick():
       return "verify"
 
   qo._day_close_complete_wait_on_ingest_handoff(
-      _Coord(),
-      "/d/2026-08-03.tar",
+    _Coord(),
+    "/d/2026-08-03.tar",
   )
   assert kicks == []
   assert unblocks == [("/d/2026-08-03.tar", "day_close_wait_on_ingest")]
@@ -4726,8 +5078,8 @@ def test_day_close_cheap_phase_verifying_skips_complete_handoff():
       return "verify"
 
   qo._day_close_complete_wait_on_ingest_handoff(
-      _Coord(),
-      "/d/2026-07-28.tar",
+    _Coord(),
+    "/d/2026-07-28.tar",
   )
   assert handoffs == []
   assert kicks == []
@@ -4764,8 +5116,8 @@ def test_day_close_vc_pending_skips_complete_handoff_remaining_raw():
       return "verify"
 
   qo._day_close_complete_wait_on_ingest_handoff(
-      _Coord(),
-      "/d/2026-08-03.tar",
+    _Coord(),
+    "/d/2026-08-03.tar",
   )
   assert handoffs == []
   assert kicks == []
@@ -4773,7 +5125,8 @@ def test_day_close_vc_pending_skips_complete_handoff_remaining_raw():
 
 
 def test_day_close_leftover_verifying_skips_remaining_raw_kick(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """H23: leftover verifying must not remaining-raw kick after stage_enter."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
@@ -4781,7 +5134,7 @@ def test_day_close_leftover_verifying_skips_remaining_raw_kick(
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2026-07-28"
-  tar = daily / ("%s.tar" % day)
+  tar = daily / (f"{day}.tar")
   tar.write_bytes(b"tar")
   logs = []
   unblocks = []
@@ -4790,8 +5143,8 @@ def test_day_close_leftover_verifying_skips_remaining_raw_kick(
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: None,
   )
 
   class _Coord:
@@ -4830,25 +5183,26 @@ def test_day_close_leftover_verifying_skips_remaining_raw_kick(
       return 0
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      job_store=SyncTimedbJobStore(str(tmp_path)),
-      log_fn=lambda msg, **k: logs.append(str(msg)),
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    job_store=SyncTimedbJobStore(str(tmp_path)),
+    log_fn=lambda msg, **k: logs.append(str(msg)),
   )
   assert any(
-      "stage_enter" in line and "disk_remaining_raw" in line for line in logs
+    "stage_enter" in line and "disk_remaining_raw" in line for line in logs
   )
   assert unblocks
   assert outcome != "yielded"
 
 
 def test_day_close_leftover_vc_pending_skips_complete_handoff(
-    tmp_path, monkeypatch,
+  tmp_path,
+  monkeypatch,
 ):
   """H24: leftover vc+pending must not complete_handoff after stage_enter."""
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
@@ -4856,7 +5210,7 @@ def test_day_close_leftover_vc_pending_skips_complete_handoff(
   daily = tmp_path / "daily"
   daily.mkdir()
   day = "2026-08-03"
-  tar = daily / ("%s.tar" % day)
+  tar = daily / (f"{day}.tar")
   tar.write_bytes(b"tar")
   logs = []
   unblocks = []
@@ -4865,8 +5219,8 @@ def test_day_close_leftover_vc_pending_skips_complete_handoff(
   monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
-      lambda *a, **k: None,
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: None,
   )
 
   class _State:
@@ -4912,18 +5266,18 @@ def test_day_close_leftover_vc_pending_skips_complete_handoff(
       return 0
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
-      _Coord,
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
   )
   outcome = qo._run_day_close_job(
-      day,
-      tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
-      job_store=SyncTimedbJobStore(str(tmp_path)),
-      log_fn=lambda msg, **k: logs.append(str(msg)),
+    day,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    job_store=SyncTimedbJobStore(str(tmp_path)),
+    log_fn=lambda msg, **k: logs.append(str(msg)),
   )
   assert any(
-      "stage_enter" in line and "disk_remaining_raw" in line for line in logs
+    "stage_enter" in line and "disk_remaining_raw" in line for line in logs
   )
   assert unblocks
   assert outcome != "yielded"
@@ -4945,14 +5299,14 @@ def test_day_close_append_or_hot_active_true_when_append_queued(tmp_path):
 
 
 def test_day_close_append_or_hot_active_false_when_stale_ingest_tar_hot(
-    tmp_path,
+  tmp_path,
 ):
   """H20a idle predicate: leftover ingest_tar_hot is not live hot."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-      set_ingest_tar_hot,
+    set_ingest_tar_hot,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-      set_process_archive_members_store,
+    set_process_archive_members_store,
   )
 
   daily = tmp_path / "daily"
@@ -4963,9 +5317,14 @@ def test_day_close_append_or_hot_active_false_when_stale_ingest_tar_hot(
   set_ingest_tar_hot("2020-01-01", reason="populate")
   try:
     store = SyncTimedbJobStore(str(tmp_path))
-    assert qo._day_close_append_or_hot_active(
-        store, str(tar), str(daily),
-    ) is False
+    assert (
+      qo._day_close_append_or_hot_active(
+        store,
+        str(tar),
+        str(daily),
+      )
+      is False
+    )
   finally:
     set_process_archive_members_store(None)
 
@@ -4976,7 +5335,7 @@ def test_day_close_claim_vacate_yield_log_rate_limited(tmp_path):
 
   from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
   from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
-      JanitorDeferTracker,
+    JanitorDeferTracker,
   )
 
   qo._DAY_CLOSE_VACATE_LOG_STATE.clear()
@@ -4989,21 +5348,21 @@ def test_day_close_claim_vacate_yield_log_rate_limited(tmp_path):
   for i in range(5):
     jq.enqueue_list_job(client, kind="day_close", identity=ident)
     claim = jq.claim_list_job(
-        client,
-        kind="day_close",
-        owner_token="n:h:b:%d" % i,
-        ttl_s=60,
-        now_s=1000.0 + i,
+      client,
+      kind="day_close",
+      owner_token="n:h:b:%d" % i,
+      ttl_s=60,
+      now_s=1000.0 + i,
     )
     fut = Future()
     fut.set_result("yielded")
     qo._drain_day_close_ready(
-        client,
-        inflight={ident: fut},
-        leases={ident: claim},
-        archive_data_dir=str(tmp_path),
-        log_fn=lambda msg, **k: logs.append(str(msg)),
-        defer_tracker=tracker,
+      client,
+      inflight={ident: fut},
+      leases={ident: claim},
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda msg, **k: logs.append(str(msg)),
+      defer_tracker=tracker,
     )
   vacate_lines = [ln for ln in logs if "day_close vacate" in ln]
   assert len(vacate_lines) == 1
@@ -5016,7 +5375,7 @@ def test_ingest_pool_size_follows_ini_not_effective_cores():
   """Fill cap is INI sync_ingest_pool_processes only (no nproc / effective_cores clamp)."""
   src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
   idx = src.index("ingest_pool_size =")
-  window = src[idx:idx + 280]
+  window = src[idx : idx + 280]
   assert "get_sync_ingest_pool_processes()" in window
   assert "get_effective_cores()" not in window
   assert "min(" not in window

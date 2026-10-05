@@ -1,4 +1,5 @@
 """Regression tests for listend quorum declare / consume-setup helpers."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -13,9 +14,9 @@ def test_declare_existing_queue_uses_passive_without_x_queue_type():
   out = declare_durable_quorum_queue(channel, "stampede3")
   assert out is channel
   channel.queue_declare.assert_called_once_with(
-      queue="stampede3",
-      durable=True,
-      passive=True,
+    queue="stampede3",
+    durable=True,
+    passive=True,
   )
   kwargs = channel.queue_declare.call_args.kwargs
   assert "arguments" not in kwargs or kwargs.get("arguments") in (None, {})
@@ -25,8 +26,8 @@ def test_is_quorum_consume_setup_error_detects_541_text():
   from hpcperfstats.lib.rmq_quorum_queue import is_quorum_consume_setup_error
 
   exc = Exception(
-      "(541, \"INTERNAL_ERROR - timed out consuming from quorum queue "
-      "'stampede3' in vhost '/': {'%2F_stampede3', 'rabbit@rabbitmq-prod'}\")"
+    '(541, "INTERNAL_ERROR - timed out consuming from quorum queue '
+    "'stampede3' in vhost '/': {'%2F_stampede3', 'rabbit@rabbitmq-prod'}\")"
   )
   assert is_quorum_consume_setup_error(exc) is True
   assert is_quorum_consume_setup_error(OSError("disk full")) is False
@@ -43,7 +44,7 @@ def test_is_quorum_consume_setup_error_detects_reply_code():
 
 def test_next_amqp_reconnect_backoff_seconds_grows_and_caps():
   from hpcperfstats.lib.rmq_quorum_queue import (
-      next_amqp_reconnect_backoff_seconds,
+    next_amqp_reconnect_backoff_seconds,
   )
 
   assert next_amqp_reconnect_backoff_seconds(5) == 10
@@ -54,8 +55,8 @@ def test_next_amqp_reconnect_backoff_seconds_grows_and_caps():
 
 def test_listend_amqp_connection_parameters_sets_heartbeat():
   from hpcperfstats.lib.rmq_quorum_queue import (
-      LISTEND_AMQP_HEARTBEAT_SECONDS,
-      listend_amqp_connection_parameters,
+    LISTEND_AMQP_HEARTBEAT_SECONDS,
+    listend_amqp_connection_parameters,
   )
 
   p = listend_amqp_connection_parameters("rabbitmq")
@@ -64,12 +65,13 @@ def test_listend_amqp_connection_parameters_sets_heartbeat():
 
 
 def test_listend_amqp_connection_parameters_sets_frame_max():
-  from hpcperfstats.lib.rmq_quorum_queue import (
-      LISTEND_AMQP_FRAME_MAX,
-      LISTEND_AMQP_HEARTBEAT_SECONDS,
-      listend_amqp_connection_parameters,
-  )
   import pika
+
+  from hpcperfstats.lib.rmq_quorum_queue import (
+    LISTEND_AMQP_FRAME_MAX,
+    LISTEND_AMQP_HEARTBEAT_SECONDS,
+    listend_amqp_connection_parameters,
+  )
 
   p = listend_amqp_connection_parameters("rabbitmq")
   assert p.frame_max == LISTEND_AMQP_FRAME_MAX
@@ -101,8 +103,8 @@ def test_classify_amqp_outer_error_logs_consume_setup_for_541(monkeypatch):
   logs = []
   monkeypatch.setattr(listend, "log_print", lambda m: logs.append(m))
   exc = Exception(
-      "(541, \"INTERNAL_ERROR - timed out consuming from quorum queue "
-      "'stampede3'\")"
+    '(541, "INTERNAL_ERROR - timed out consuming from quorum queue '
+    "'stampede3'\")"
   )
   kind = listend._log_amqp_outer_loop_error(exc)
   assert kind == "quorum_consume_setup"
@@ -113,7 +115,9 @@ def test_classify_amqp_outer_error_logs_consume_setup_for_541(monkeypatch):
 def test_is_quorum_consume_setup_error_detects_bare_541_internal_error():
   from hpcperfstats.lib.rmq_quorum_queue import is_quorum_consume_setup_error
 
-  assert is_quorum_consume_setup_error(Exception("(541, 'INTERNAL_ERROR')")) is True
+  assert (
+    is_quorum_consume_setup_error(Exception("(541, 'INTERNAL_ERROR')")) is True
+  )
 
   class _TupleExc(Exception):
     def __init__(self) -> None:
@@ -123,25 +127,36 @@ def test_is_quorum_consume_setup_error_detects_bare_541_internal_error():
 
 
 def test_is_amqp_peer_reset_reconnect_error_detects_connection_reset():
-  from hpcperfstats.lib.rmq_quorum_queue import is_amqp_peer_reset_reconnect_error
+  from hpcperfstats.lib.rmq_quorum_queue import (
+    is_amqp_peer_reset_reconnect_error,
+  )
 
-  assert is_amqp_peer_reset_reconnect_error(
+  assert (
+    is_amqp_peer_reset_reconnect_error(
       ConnectionResetError(104, "Connection reset by peer")
-  ) is True
-  assert is_amqp_peer_reset_reconnect_error(
+    )
+    is True
+  )
+  assert (
+    is_amqp_peer_reset_reconnect_error(
       Exception("Timeout during AMQP handshake")
-  ) is True
+    )
+    is True
+  )
   assert is_amqp_peer_reset_reconnect_error(OSError("disk full")) is False
 
 
 def test_should_use_amqp_exponential_reconnect_backoff_peer_reset():
   from hpcperfstats.lib.rmq_quorum_queue import (
-      should_use_amqp_exponential_reconnect_backoff,
+    should_use_amqp_exponential_reconnect_backoff,
   )
 
-  assert should_use_amqp_exponential_reconnect_backoff(
+  assert (
+    should_use_amqp_exponential_reconnect_backoff(
       ConnectionResetError(104, "reset")
-  ) is True
+    )
+    is True
+  )
 
 
 def test_apply_amqp_reconnect_backoff_grows(monkeypatch):
@@ -169,7 +184,9 @@ def test_maybe_reset_backoff_after_stable_consume(monkeypatch):
   assert listend._amqp_reconnect_backoff_seconds == 40
 
 
-def test_request_amqp_full_reconnect_closes_channel_then_connection(monkeypatch):
+def test_request_amqp_full_reconnect_closes_channel_then_connection(
+  monkeypatch,
+):
   import hpcperfstats.listend as listend
 
   calls = []
@@ -178,7 +195,7 @@ def test_request_amqp_full_reconnect_closes_channel_then_connection(monkeypatch)
     calls.append(("close", stop_consuming, channel, connection))
 
   monkeypatch.setattr(
-      listend, "_close_amqp_channel_and_connection_gracefully", _fake_close
+    listend, "_close_amqp_channel_and_connection_gracefully", _fake_close
   )
   monkeypatch.setattr(listend, "log_print", lambda _m: None)
 
@@ -196,7 +213,7 @@ def test_classify_amqp_outer_error_logs_peer_reset(monkeypatch):
   logs = []
   monkeypatch.setattr(listend, "log_print", lambda m: logs.append(m))
   kind = listend._log_amqp_outer_loop_error(
-      ConnectionResetError(104, "Connection reset by peer")
+    ConnectionResetError(104, "Connection reset by peer")
   )
   assert kind == "peer_reset"
   assert any("peer reset" in m.lower() for m in logs)
@@ -208,7 +225,7 @@ def test_classify_amqp_outer_error_logs_handshake_as_peer_reset(monkeypatch):
   logs = []
   monkeypatch.setattr(listend, "log_print", lambda m: logs.append(m))
   kind = listend._log_amqp_outer_loop_error(
-      Exception("Timeout during AMQP handshake")
+    Exception("Timeout during AMQP handshake")
   )
   assert kind == "peer_reset"
   assert any("peer reset" in m.lower() for m in logs)
@@ -219,9 +236,7 @@ def test_classify_amqp_outer_error_logs_establishing_for_tcp(monkeypatch):
 
   logs = []
   monkeypatch.setattr(listend, "log_print", lambda m: logs.append(m))
-  kind = listend._log_amqp_outer_loop_error(
-      Exception("Connection refused")
-  )
+  kind = listend._log_amqp_outer_loop_error(Exception("Connection refused"))
   assert kind == "connection"
   assert any("Error establishing RabbitMQ connection" in m for m in logs)
 
@@ -239,7 +254,7 @@ def test_declare_missing_queue_creates_durable_quorum_on_replacement_channel():
   def _passive_missing(**kwargs):
     if kwargs.get("passive"):
       raise _NotFound(
-          "(404, \"NOT_FOUND - no queue 'stampede3' in vhost '/'\")"
+        "(404, \"NOT_FOUND - no queue 'stampede3' in vhost '/'\")"
       )
     return MagicMock()
 
@@ -250,9 +265,9 @@ def test_declare_missing_queue_creates_durable_quorum_on_replacement_channel():
   out = declare_durable_quorum_queue(original, "stampede3")
   assert out is created
   created.queue_declare.assert_called_once_with(
-      queue="stampede3",
-      durable=True,
-      arguments={"x-queue-type": "quorum"},
+    queue="stampede3",
+    durable=True,
+    arguments={"x-queue-type": "quorum"},
   )
 
 
@@ -281,9 +296,9 @@ def test_declare_create_path_x_queue_type_mismatch_passive_attaches():
   def _quorum_mismatch(**kwargs):
     if kwargs.get("arguments", {}).get("x-queue-type") == "quorum":
       raise _TypeMismatch(
-          "(406, \"PRECONDITION_FAILED - inequivalent arg 'x-queue-type' "
-          "for queue 'stampede3' in vhost '/': received 'quorum' but "
-          "current is 'classic'\")"
+        "(406, \"PRECONDITION_FAILED - inequivalent arg 'x-queue-type' "
+        "for queue 'stampede3' in vhost '/': received 'quorum' but "
+        "current is 'classic'\")"
       )
     return MagicMock()
 
@@ -293,16 +308,16 @@ def test_declare_create_path_x_queue_type_mismatch_passive_attaches():
   out = declare_durable_quorum_queue(original, "stampede3")
   assert out is attached
   attached.queue_declare.assert_called_with(
-      queue="stampede3",
-      durable=True,
-      passive=True,
+    queue="stampede3",
+    durable=True,
+    passive=True,
   )
 
 
 def test_declare_unrelated_precondition_still_fails_closed():
   from hpcperfstats.lib.rmq_quorum_queue import (
-      QuorumQueuePreconditionError,
-      declare_durable_quorum_queue,
+    QuorumQueuePreconditionError,
+    declare_durable_quorum_queue,
   )
 
   class _NotFound(Exception):
@@ -319,15 +334,16 @@ def test_declare_unrelated_precondition_still_fails_closed():
   original.connection = connection
   original.queue_declare.side_effect = _NotFound("NOT_FOUND")
   create_ch.queue_declare.side_effect = _DurableMismatch(
-      "(406, \"PRECONDITION_FAILED - inequivalent arg 'durable' "
-      "for queue 'stampede3'\")"
+    "(406, \"PRECONDITION_FAILED - inequivalent arg 'durable' "
+    "for queue 'stampede3'\")"
   )
 
   with pytest.raises(QuorumQueuePreconditionError) as ei:
     declare_durable_quorum_queue(original, "stampede3")
-  assert "inequivalent arg" in str(ei.value).lower() or "durable" in str(
-      ei.value
-  ).lower()
+  assert (
+    "inequivalent arg" in str(ei.value).lower()
+    or "durable" in str(ei.value).lower()
+  )
 
 
 def test_drain_declares_quorum_queue(monkeypatch):
@@ -340,27 +356,27 @@ def test_drain_declares_quorum_queue(monkeypatch):
   channel.basic_get.return_value = (None, None, None)
 
   with (
-      patch(
-          "hpcperfstats.listend_drain.pika.BlockingConnection",
-          return_value=connection,
-      ),
-      patch(
-          "hpcperfstats.listend_drain.cfg.get_rmq_queue",
-          return_value="test-q",
-      ),
-      patch(
-          "hpcperfstats.listend_drain.cfg.get_rmq_server",
-          return_value="localhost",
-      ),
-      patch(
-          "hpcperfstats.listend_drain.append_monitor_payload_to_archive",
-      ),
+    patch(
+      "hpcperfstats.listend_drain.pika.BlockingConnection",
+      return_value=connection,
+    ),
+    patch(
+      "hpcperfstats.listend_drain.cfg.get_rmq_queue",
+      return_value="test-q",
+    ),
+    patch(
+      "hpcperfstats.listend_drain.cfg.get_rmq_server",
+      return_value="localhost",
+    ),
+    patch(
+      "hpcperfstats.listend_drain.append_monitor_payload_to_archive",
+    ),
   ):
     from hpcperfstats.listend_drain import drain_queue_to_archive
 
     assert drain_queue_to_archive() == 0
   channel.queue_declare.assert_called_with(
-      queue="test-q",
-      durable=True,
-      passive=True,
+    queue="test-q",
+    durable=True,
+    passive=True,
   )

@@ -25,13 +25,16 @@ Attributes:
   PersistenceContractMismatchError: Raised when allow_reset=False and
     on-disk contract_version disagrees.
 """
+
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
 import time
-from typing import Any, Callable, Dict, Optional, Tuple
+from collections.abc import Callable
+from typing import Any, Optional
 
 from hpcperfstats.dbload.lib.print_utils import ingest_logging
 
@@ -42,24 +45,24 @@ SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION = 9
 PERSISTENCE_CONTRACT_BASENAME = ".sync_timedb_persistence.json"
 
 # Orphan sidecars removed from registry at v6; still deleted on contract reset.
-LEGACY_ORPHAN_ARTIFACT_PATHS: Tuple[str, ...] = (
-    ".sync_timedb_startup_tar_seal.json",
-    ".sync_timedb_startup_raw_removal.json",
+LEGACY_ORPHAN_ARTIFACT_PATHS: tuple[str, ...] = (
+  ".sync_timedb_startup_tar_seal.json",
+  ".sync_timedb_startup_raw_removal.json",
 )
 
 # Canonical artifact registry (kind -> relative path under archive_data_dir).
-PERSISTENCE_ARTIFACT_REGISTRY: Dict[str, str] = {
-    "ingest_checkpoint": ".sync_timedb_state.json",
-    "archive_dead_letter": ".sync_timedb_dead_letter.json",
-    "queue_dead_letter": ".sync_timedb_queue_dead_letter.json",
-    "archive_maint_hints": ".sync_archive_maint_hints.json",
-    "day_close_manifest": ".sync_timedb_async_day_close.json",
-    "day_raw_removal_dir": ".sync_timedb_day_raw_removal",
-    "unparsable_raw": ".sync_timedb_unparsable_raw.json",
-    "zero_host_ingest_mark": ".sync_timedb_zero_host_ingest_mark.json",
-    "file_complete_ingest_mark": ".sync_timedb_file_complete_ingest_mark.json",
-    "job_store_snapshot": ".sync_timedb_job_store.json",
-    "archive_members_store_dir": ".sync_timedb_archive_members",
+PERSISTENCE_ARTIFACT_REGISTRY: dict[str, str] = {
+  "ingest_checkpoint": ".sync_timedb_state.json",
+  "archive_dead_letter": ".sync_timedb_dead_letter.json",
+  "queue_dead_letter": ".sync_timedb_queue_dead_letter.json",
+  "archive_maint_hints": ".sync_archive_maint_hints.json",
+  "day_close_manifest": ".sync_timedb_async_day_close.json",
+  "day_raw_removal_dir": ".sync_timedb_day_raw_removal",
+  "unparsable_raw": ".sync_timedb_unparsable_raw.json",
+  "zero_host_ingest_mark": ".sync_timedb_zero_host_ingest_mark.json",
+  "file_complete_ingest_mark": ".sync_timedb_file_complete_ingest_mark.json",
+  "job_store_snapshot": ".sync_timedb_job_store.json",
+  "archive_members_store_dir": ".sync_timedb_archive_members",
 }
 
 INGEST_CHECKPOINT_SCHEMA_VERSION = 1
@@ -74,68 +77,76 @@ JOB_STORE_SNAPSHOT_SCHEMA_VERSION = 1
 
 LogFn = Optional[Callable[..., Any]]
 
-_KIND_SCHEMA_VERSION: Dict[str, int] = {
-    "ingest_checkpoint": INGEST_CHECKPOINT_SCHEMA_VERSION,
-    "archive_dead_letter": DEAD_LETTER_SCHEMA_VERSION,
-    "queue_dead_letter": QUEUE_DEAD_LETTER_SCHEMA_VERSION,
-    "unparsable_raw": UNPARSABLE_RAW_SCHEMA_VERSION,
-    "archive_maint_hints": MAINT_HINTS_SCHEMA_VERSION,
-    "day_close_manifest": MANIFEST_SCHEMA_VERSION,
-    "day_raw_removal": MANIFEST_SCHEMA_VERSION,
-    "zero_host_ingest_mark": ZERO_HOST_INGEST_MARK_SCHEMA_VERSION,
-    "file_complete_ingest_mark": FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION,
-    "job_store_snapshot": JOB_STORE_SNAPSHOT_SCHEMA_VERSION,
+_KIND_SCHEMA_VERSION: dict[str, int] = {
+  "ingest_checkpoint": INGEST_CHECKPOINT_SCHEMA_VERSION,
+  "archive_dead_letter": DEAD_LETTER_SCHEMA_VERSION,
+  "queue_dead_letter": QUEUE_DEAD_LETTER_SCHEMA_VERSION,
+  "unparsable_raw": UNPARSABLE_RAW_SCHEMA_VERSION,
+  "archive_maint_hints": MAINT_HINTS_SCHEMA_VERSION,
+  "day_close_manifest": MANIFEST_SCHEMA_VERSION,
+  "day_raw_removal": MANIFEST_SCHEMA_VERSION,
+  "zero_host_ingest_mark": ZERO_HOST_INGEST_MARK_SCHEMA_VERSION,
+  "file_complete_ingest_mark": FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION,
+  "job_store_snapshot": JOB_STORE_SNAPSHOT_SCHEMA_VERSION,
 }
-_LIST_ENTRY_KINDS = frozenset({
+_LIST_ENTRY_KINDS = frozenset(
+  {
     "ingest_checkpoint",
     "archive_dead_letter",
     "queue_dead_letter",
     "unparsable_raw",
-})
-_MANIFEST_KINDS = frozenset({
+  }
+)
+_MANIFEST_KINDS = frozenset(
+  {
     "day_close_manifest",
     "day_raw_removal",
-})
-_DICT_ENTRIES_KINDS = frozenset({
+  }
+)
+_DICT_ENTRIES_KINDS = frozenset(
+  {
     "zero_host_ingest_mark",
     "file_complete_ingest_mark",
-})
-_DICT_PASSTHROUGH_KINDS = frozenset({
+  }
+)
+_DICT_PASSTHROUGH_KINDS = frozenset(
+  {
     "archive_maint_hints",
     "day_close_manifest",
     "day_raw_removal",
     "zero_host_ingest_mark",
     "file_complete_ingest_mark",
-})
-_KIND_LOAD_DEFAULT_FACTORY: Dict[str, Callable[[], Any]] = {
-    "ingest_checkpoint": list,
-    "archive_dead_letter": list,
-    "queue_dead_letter": list,
-    "unparsable_raw": list,
-    "archive_maint_hints": lambda: None,
-    "day_close_manifest": lambda: None,
-    "day_raw_removal": lambda: None,
-    "zero_host_ingest_mark": lambda: {"entries": {}},
-    "file_complete_ingest_mark": lambda: {"entries": {}},
-    "job_store_snapshot": lambda: {
-        "ingest": {},
-        "lists": {},
-        "pending": {},
-        "payloads": {},
-    },
+  }
+)
+_KIND_LOAD_DEFAULT_FACTORY: dict[str, Callable[[], Any]] = {
+  "ingest_checkpoint": list,
+  "archive_dead_letter": list,
+  "queue_dead_letter": list,
+  "unparsable_raw": list,
+  "archive_maint_hints": lambda: None,
+  "day_close_manifest": lambda: None,
+  "day_raw_removal": lambda: None,
+  "zero_host_ingest_mark": lambda: {"entries": {}},
+  "file_complete_ingest_mark": lambda: {"entries": {}},
+  "job_store_snapshot": lambda: {
+    "ingest": {},
+    "lists": {},
+    "pending": {},
+    "payloads": {},
+  },
 }
 
 
 def persistence_contract_path(archive_data_dir: str) -> str:
   """
   Persistence contract path.
-  
+
   Args:
     archive_data_dir (str): String for archive data dir.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> persistence_contract_path("x")  # doctest: +SKIP
   """
@@ -145,43 +156,43 @@ def persistence_contract_path(archive_data_dir: str) -> str:
 def artifact_path(archive_data_dir: str, kind: str) -> str:
   """
   Artifact path.
-  
+
   Args:
     archive_data_dir (str): String for archive data dir.
     kind (str): String for kind.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Raises:
     KeyError: Raised when ``artifact_path`` hits a ``KeyError`` failure path.
-  
+
   Examples:
     >>> artifact_path("x", "x")  # doctest: +SKIP
   """
   rel = PERSISTENCE_ARTIFACT_REGISTRY.get(kind)
   if rel is None:
-    raise KeyError("unknown persistence artifact kind: %s" % kind)
+    raise KeyError(f"unknown persistence artifact kind: {kind}")
   return os.path.join(archive_data_dir, rel)
 
 
 def _read_json_file(path: str) -> Any:
   """
   Internal helper to read the json file.
-  
+
   Args:
     path (str): String for path.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _read_json_file("x")  # doctest: +SKIP
   """
   try:
-    with open(path, "r", encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
       return json.load(handle)
-  except (OSError, ValueError, TypeError, json.JSONDecodeError):
+  except OSError, ValueError, TypeError, json.JSONDecodeError:
     return None
 
 
@@ -193,28 +204,28 @@ def _save_json_atomic(
 ) -> None:
   """
   Internal helper to save the json atomic.
-  
+
   Args:
     path (str): String for path.
     payload (Any): Value to inspect (typically a numeric scalar).
     compact (bool): Boolean flag for compact.
-  
+
   Returns:
     None
-  
+
   Raises:
     Exception: Raised when ``_save_json_atomic`` hits a ``Exception`` failure
     path.
-  
+
   Examples:
     >>> _save_json_atomic("x", None, True)  # doctest: +SKIP
   """
   parent = os.path.dirname(str(path)) or "."
   os.makedirs(parent, exist_ok=True)
   fd, tmp_path = tempfile.mkstemp(
-      prefix=".atomic.",
-      suffix=os.path.basename(path),
-      dir=parent,
+    prefix=".atomic.",
+    suffix=os.path.basename(path),
+    dir=parent,
   )
   try:
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -224,24 +235,22 @@ def _save_json_atomic(
         json.dump(payload, handle)
     os.replace(tmp_path, path)
   except Exception:
-    try:
+    with contextlib.suppress(OSError):
       os.unlink(tmp_path)
-    except OSError:
-      pass
     raise
 
 
 def _unlink_path(path: str, log_fn: LogFn) -> None:
   """
   Internal helper to handle unlink path.
-  
+
   Args:
     path (str): String for path.
     log_fn (LogFn): Log fn.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _unlink_path("x", None)  # doctest: +SKIP
   """
@@ -251,23 +260,22 @@ def _unlink_path(path: str, log_fn: LogFn) -> None:
   except OSError as exc:
     if log_fn:
       log_fn(
-          "persistence reset could not unlink %s: %s"
-          % (path, exc),
-          flush=True,
+        f"persistence reset could not unlink {path}: {exc}",
+        flush=True,
       )
 
 
 def _unlink_tree(path: str, log_fn: LogFn) -> None:
   """
   Internal helper to handle unlink tree.
-  
+
   Args:
     path (str): String for path.
     log_fn (LogFn): Log fn.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> _unlink_tree("x", None)  # doctest: +SKIP
   """
@@ -283,17 +291,16 @@ def _unlink_tree(path: str, log_fn: LogFn) -> None:
       except OSError as exc:
         if log_fn:
           log_fn(
-              "persistence reset could not rmdir %s: %s"
-              % (os.path.join(root, name), exc),
-              flush=True,
+            f"persistence reset could not rmdir {os.path.join(root, name)}: {exc}",
+            flush=True,
           )
   try:
     os.rmdir(path)
   except OSError as exc:
     if log_fn:
       log_fn(
-          "persistence reset could not rmdir %s: %s" % (path, exc),
-          flush=True,
+        f"persistence reset could not rmdir {path}: {exc}",
+        flush=True,
       )
 
 
@@ -304,14 +311,14 @@ def reset_sync_timedb_persistence(
 ) -> None:
   """
   Delete all registered sidecar artifacts (best-effort).
-  
+
   Args:
     archive_data_dir (str): String for archive data dir.
     log_fn (LogFn): Log fn.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> reset_sync_timedb_persistence("x", None)  # doctest: +SKIP
   """
@@ -328,16 +335,16 @@ def reset_sync_timedb_persistence(
   _unlink_path(persistence_contract_path(archive_data_dir), log_fn)
 
 
-def _read_contract_version(archive_data_dir: str) -> Optional[int]:
+def _read_contract_version(archive_data_dir: str) -> int | None:
   """
   Internal helper to read the contract version.
-  
+
   Args:
     archive_data_dir (str): String for archive data dir.
-  
+
   Returns:
     Optional[int]: Optional[int] — the result, or None when unavailable.
-  
+
   Examples:
     >>> _read_contract_version("x")  # doctest: +SKIP
   """
@@ -347,7 +354,7 @@ def _read_contract_version(archive_data_dir: str) -> Optional[int]:
   version = raw.get("contract_version")
   try:
     return int(version)
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     return None
 
 
@@ -412,11 +419,15 @@ def ensure_persistence_contract(
       ``allow_reset`` is False.
 
   Examples:
-    >>> ensure_persistence_contract("/tmp/archive", allow_reset=False)  # doctest: +SKIP
+    >>> ensure_persistence_contract(
+    ...   "/tmp/archive", allow_reset=False
+    ... )  # doctest: +SKIP
   """
   with ingest_logging():
     return _ensure_persistence_contract_inner(
-        archive_data_dir, log_fn=log_fn, allow_reset=allow_reset,
+      archive_data_dir,
+      log_fn=log_fn,
+      allow_reset=allow_reset,
     )
 
 
@@ -444,7 +455,9 @@ def _ensure_persistence_contract_inner(
       ``allow_reset`` is False.
 
   Examples:
-    >>> _ensure_persistence_contract_inner("/tmp/a", allow_reset=False)  # doctest: +SKIP
+    >>> _ensure_persistence_contract_inner(
+    ...   "/tmp/a", allow_reset=False
+    ... )  # doctest: +SKIP
   """
   if not archive_data_dir:
     return False
@@ -454,55 +467,55 @@ def _ensure_persistence_contract_inner(
   if on_disk == current:
     if log_fn:
       log_fn(
-          "persistence contract v%d active" % current,
-          flush=True,
+        "persistence contract v%d active" % current,
+        flush=True,
       )
     return False
   if not allow_reset:
     if on_disk is None:
       payload = {
-          "contract_version": current,
-          "written_at": time.time(),
+        "contract_version": current,
+        "written_at": time.time(),
       }
       _save_json_atomic(persistence_contract_path(archive_data_dir), payload)
       if log_fn:
         log_fn(
-            "persistence contract v%d active" % current,
-            flush=True,
+          "persistence contract v%d active" % current,
+          flush=True,
         )
       return False
     detail = "persistence contract mismatch old=%s new=%d (reset refused)" % (
-        on_disk,
-        current,
+      on_disk,
+      current,
     )
     if log_fn:
       log_fn(detail, flush=True)
     raise PersistenceContractMismatchError(detail)
   reset_sync_timedb_persistence(archive_data_dir, log_fn=log_fn)
   payload = {
-      "contract_version": current,
-      "written_at": time.time(),
+    "contract_version": current,
+    "written_at": time.time(),
   }
   _save_json_atomic(persistence_contract_path(archive_data_dir), payload)
   if log_fn:
     log_fn(
-        "persistence reset old=%s new=%d"
-        % (on_disk if on_disk is not None else "missing", current),
-        flush=True,
+      "persistence reset old=%s new=%d"
+      % (on_disk if on_disk is not None else "missing", current),
+      flush=True,
     )
   return True
 
 
-def _expected_schema_version(kind: str) -> Optional[int]:
+def _expected_schema_version(kind: str) -> int | None:
   """
   Internal helper to handle expected schema version.
-  
+
   Args:
     kind (str): String for kind.
-  
+
   Returns:
     Optional[int]: Optional[int] — the result, or None when unavailable.
-  
+
   Examples:
     >>> _expected_schema_version("ingest_checkpoint")
     1
@@ -552,7 +565,7 @@ def _persistence_schema_version_ok(
     return True
   try:
     schema_i = int(schema)
-  except (TypeError, ValueError):
+  except TypeError, ValueError:
     return False
   accepted = {expected}
   if allowed:
@@ -562,15 +575,13 @@ def _persistence_schema_version_ok(
   if log_fn:
     if kind == "archive_maint_hints":
       log_fn(
-          "reject archive_maint_hints schema_version=%s expected=%s"
-          % (schema, expected),
-          flush=True,
+        f"reject archive_maint_hints schema_version={schema} expected={expected}",
+        flush=True,
       )
     else:
       log_fn(
-          "reject %s schema_version=%s expected=%s"
-          % (kind, schema, expected),
-          flush=True,
+        f"reject {kind} schema_version={schema} expected={expected}",
+        flush=True,
       )
   return False
 
@@ -578,15 +589,15 @@ def _persistence_schema_version_ok(
 def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
   """
   Return False when envelope schema/version/shape is unsupported.
-  
+
   Args:
     raw (Any): Raw passed to this helper.
     kind (str): String for kind.
     log_fn (LogFn): Log fn.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> _validate_envelope(None, kind="ingest_checkpoint")
     False
@@ -600,7 +611,10 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
     if not isinstance(raw, dict):
       return False
     if not _persistence_schema_version_ok(
-        raw, kind=kind, expected=expected, log_fn=log_fn,
+      raw,
+      kind=kind,
+      expected=expected,
+      log_fn=log_fn,
     ):
       return False
     return isinstance(raw.get("entries"), list)
@@ -610,32 +624,33 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
     # Legacy on-disk hints used ``version`` 1 before the persistence
     # envelope standardized on ``schema_version`` == expected (2).
     return _persistence_schema_version_ok(
-        raw,
-        kind=kind,
-        expected=expected,
-        log_fn=log_fn,
-        allowed=frozenset({1}),
-        version_key_fallback=True,
+      raw,
+      kind=kind,
+      expected=expected,
+      log_fn=log_fn,
+      allowed=frozenset({1}),
+      version_key_fallback=True,
     )
   if kind in _MANIFEST_KINDS:
     if not isinstance(raw, dict):
       return False
     if not _persistence_schema_version_ok(
-        raw,
-        kind=kind,
-        expected=expected,
-        log_fn=log_fn,
-        version_key_fallback=True,
+      raw,
+      kind=kind,
+      expected=expected,
+      log_fn=log_fn,
+      version_key_fallback=True,
     ):
       return False
     from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
-        validate_manifest_payload,
+      validate_manifest_payload,
     )
+
     if not validate_manifest_payload(kind, raw):
       if log_fn:
         log_fn(
-            "reject %s manifest missing required fields" % kind,
-            flush=True,
+          f"reject {kind} manifest missing required fields",
+          flush=True,
         )
       return False
     return True
@@ -643,7 +658,10 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
     if not isinstance(raw, dict):
       return False
     if not _persistence_schema_version_ok(
-        raw, kind=kind, expected=expected, log_fn=log_fn,
+      raw,
+      kind=kind,
+      expected=expected,
+      log_fn=log_fn,
     ):
       return False
     entries = raw.get("entries")
@@ -652,7 +670,10 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
     if not isinstance(raw, dict):
       return False
     if not _persistence_schema_version_ok(
-        raw, kind=kind, expected=expected, log_fn=log_fn,
+      raw,
+      kind=kind,
+      expected=expected,
+      log_fn=log_fn,
     ):
       return False
     ingest = raw.get("ingest")
@@ -663,14 +684,14 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
 def _unwrap_envelope(raw: Any, *, kind: str) -> Any:
   """
   Internal helper to handle unwrap envelope.
-  
+
   Args:
     raw (Any): Raw passed to this helper.
     kind (str): String for kind.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> _unwrap_envelope(["a"], kind="ingest_checkpoint")
     ['a']
@@ -686,10 +707,10 @@ def _unwrap_envelope(raw: Any, *, kind: str) -> Any:
   if kind == "job_store_snapshot":
     if isinstance(raw, dict):
       return {
-          "ingest": raw.get("ingest") or {},
-          "lists": raw.get("lists") or {},
-          "pending": raw.get("pending") or {},
-          "payloads": raw.get("payloads") or {},
+        "ingest": raw.get("ingest") or {},
+        "lists": raw.get("lists") or {},
+        "pending": raw.get("pending") or {},
+        "payloads": raw.get("payloads") or {},
       }
     return None
   return raw
@@ -704,16 +725,16 @@ def load_persistence_document(
 ) -> Any:
   """
   Load a registered artifact after ``ensure_persistence_contract``.
-  
+
   Args:
     path (str): String for path.
     kind (str): String for kind.
     default (Any): Default passed to this helper.
     log_fn (LogFn): Log fn.
-  
+
   Returns:
     Any: Value produced by this call (type depends on inputs).
-  
+
   Examples:
     >>> load_persistence_document("x", "x", None, None)  # doctest: +SKIP
   """
@@ -740,16 +761,16 @@ def save_persistence_document(
 ) -> None:
   """
   Persist a registered artifact with contract/schema envelope where needed.
-  
+
   Args:
     path (str): String for path.
     kind (str): String for kind.
     payload (Any): Value to inspect (typically a numeric scalar).
     compact (bool): Boolean flag for compact.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> save_persistence_document("x", "x", None, True)  # doctest: +SKIP
   """
@@ -757,9 +778,9 @@ def save_persistence_document(
   schema_version = _KIND_SCHEMA_VERSION.get(kind)
   if kind in _LIST_ENTRY_KINDS:
     envelope = {
-        "contract_version": contract_version,
-        "schema_version": schema_version,
-        "entries": list(payload or []),
+      "contract_version": contract_version,
+      "schema_version": schema_version,
+      "entries": list(payload or []),
     }
     _save_json_atomic(path, envelope, compact=compact)
     return
@@ -794,12 +815,12 @@ def save_persistence_document(
     if not isinstance(payload, dict):
       payload = {}
     envelope = {
-        "contract_version": contract_version,
-        "schema_version": JOB_STORE_SNAPSHOT_SCHEMA_VERSION,
-        "ingest": dict(payload.get("ingest") or {}),
-        "lists": dict(payload.get("lists") or {}),
-        "pending": dict(payload.get("pending") or {}),
-        "payloads": dict(payload.get("payloads") or {}),
+      "contract_version": contract_version,
+      "schema_version": JOB_STORE_SNAPSHOT_SCHEMA_VERSION,
+      "ingest": dict(payload.get("ingest") or {}),
+      "lists": dict(payload.get("lists") or {}),
+      "pending": dict(payload.get("pending") or {}),
+      "payloads": dict(payload.get("payloads") or {}),
     }
     _save_json_atomic(path, envelope, compact=compact)
     return

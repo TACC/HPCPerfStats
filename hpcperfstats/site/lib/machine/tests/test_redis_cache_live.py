@@ -1,4 +1,6 @@
 """Live Redis cache integration tests (Docker compose). Skipped unless HPCPERFSTATS_PYTEST_LIVE_REDIS=1."""
+
+import contextlib
 import os
 import uuid
 from unittest.mock import patch
@@ -11,24 +13,28 @@ from hpcperfstats.site.lib.machine import api as api_module
 
 from .csrf_test_utils import csrf_headers
 
-_COMPOSE = os.environ.get("HPCPERFSTATS_COMPOSE_NETWORK", "").strip().lower() in (
-    "1",
-    "yes",
-    "true",
+_COMPOSE = os.environ.get(
+  "HPCPERFSTATS_COMPOSE_NETWORK", ""
+).strip().lower() in (
+  "1",
+  "yes",
+  "true",
 )
-_LIVE = os.environ.get("HPCPERFSTATS_PYTEST_LIVE_REDIS", "").strip().lower() in (
-    "1",
-    "yes",
-    "true",
+_LIVE = os.environ.get(
+  "HPCPERFSTATS_PYTEST_LIVE_REDIS", ""
+).strip().lower() in (
+  "1",
+  "yes",
+  "true",
 )
 
 pytestmark = pytest.mark.skipif(
-    not (_COMPOSE and _LIVE),
-    reason=(
-        "Requires Docker Compose network and live Redis cache "
-        "(HPCPERFSTATS_COMPOSE_NETWORK=1 and HPCPERFSTATS_PYTEST_LIVE_REDIS=1). "
-        "Run: tests/run_redis_cache_pytest_workflow.sh"
-    ),
+  not (_COMPOSE and _LIVE),
+  reason=(
+    "Requires Docker Compose network and live Redis cache "
+    "(HPCPERFSTATS_COMPOSE_NETWORK=1 and HPCPERFSTATS_PYTEST_LIVE_REDIS=1). "
+    "Run: tests/run_redis_cache_pytest_workflow.sh"
+  ),
 )
 
 
@@ -83,29 +89,27 @@ def test_get_redis_cache_client_supports_scan():
 def test_invalidate_cache_for_page_deletes_matching_key():
   token = uuid.uuid4().hex
   path = "/machine/jobs"
-  raw_key = f"pytest_live:{token}:custom:{path}:cache_marker".encode("utf-8")
+  raw_key = f"pytest_live:{token}:custom:{path}:cache_marker".encode()
   client = api_module._get_redis_cache_client()
   assert client is not None
   client.set(raw_key, b"1")
   try:
     factory = RequestFactory()
     request = factory.post(
-        "/api/cache/invalidate-page/",
-        {"page_path": path},
-        content_type="application/json",
-        **csrf_headers(),
+      "/api/cache/invalidate-page/",
+      {"page_path": path},
+      content_type="application/json",
+      **csrf_headers(),
     )
     request.session = {
-        "access_token": "t",
-        "username": "live-redis-test",
-        "is_staff": True,
+      "access_token": "t",
+      "username": "live-redis-test",
+      "is_staff": True,
     }
     with patch.object(api_module, "_require_auth", return_value=None):
       response = api_module.invalidate_cache_for_page(request)
     assert response.status_code == 200
     assert client.get(raw_key) is None
   finally:
-    try:
+    with contextlib.suppress(Exception):
       client.delete(raw_key)
-    except Exception:
-      pass

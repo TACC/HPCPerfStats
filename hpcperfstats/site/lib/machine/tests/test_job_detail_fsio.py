@@ -1,7 +1,8 @@
 """Tests for job_detail file-system section (llite vs NFS fallback)."""
+
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -18,7 +19,7 @@ def _patch_job_detail_fsio_context(api_module, jid, mock_j, fsio_payload):
   job_mock = MagicMock()
   job_mock.jid = jid
   job_mock.username = "u1"
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
   job_mock.start_time = t0
   job_mock.end_time = t0
   job_mock.metrics_data_set.all.return_value = []
@@ -38,39 +39,43 @@ def _patch_job_detail_fsio_context(api_module, jid, mock_j, fsio_payload):
   vis = MagicMock()
   vis.exists.return_value = True
   return (
-      patch.object(api_module, "_require_auth", return_value=None),
-      patch.object(
-          api_module, "_apply_non_staff_job_visibility", return_value=vis
-      ),
-      patch.object(api_module, "get_site_content_cache_timeout", return_value=3600),
-      patch.object(api_module, "build_job_metrics_display_list", return_value=[]),
-      patch.object(api_module.cfg, "get_xalt_user", return_value=""),
-      patch.object(api_module.cfg, "get_host_name_ext", return_value="example.com"),
-      patch.object(api_module, "cached_orm", side_effect=cached_se),
-      patch.object(
-          api_module,
-          "load_job_detail_artifact",
-          return_value={
-              "host_list": mock_j.acct_host_list,
-              "schema": {},
-              "fsio": fsio_payload,
-              "gpu_active": None,
-              "gpu_utilization_max": None,
-              "gpu_utilization_mean": None,
-              "gpu_count": None,
-          },
-      ),
-      patch.object(
-          api_module,
-          "_job_for_detail_list_serializer",
-          return_value=job_mock,
-      ),
-      patch.object(
-          api_module,
-          "JobListSerializer",
-          return_value=MagicMock(data={"jid": jid, "username": "u1"}),
-      ),
-      patch.object(api_module, "local_timezone", timezone.utc),
+    patch.object(api_module, "_require_auth", return_value=None),
+    patch.object(
+      api_module, "_apply_non_staff_job_visibility", return_value=vis
+    ),
+    patch.object(
+      api_module, "get_site_content_cache_timeout", return_value=3600
+    ),
+    patch.object(api_module, "build_job_metrics_display_list", return_value=[]),
+    patch.object(api_module.cfg, "get_xalt_user", return_value=""),
+    patch.object(
+      api_module.cfg, "get_host_name_ext", return_value="example.com"
+    ),
+    patch.object(api_module, "cached_orm", side_effect=cached_se),
+    patch.object(
+      api_module,
+      "load_job_detail_artifact",
+      return_value={
+        "host_list": mock_j.acct_host_list,
+        "schema": {},
+        "fsio": fsio_payload,
+        "gpu_active": None,
+        "gpu_utilization_max": None,
+        "gpu_utilization_mean": None,
+        "gpu_count": None,
+      },
+    ),
+    patch.object(
+      api_module,
+      "_job_for_detail_list_serializer",
+      return_value=job_mock,
+    ),
+    patch.object(
+      api_module,
+      "JobListSerializer",
+      return_value=MagicMock(data={"jid": jid, "username": "u1"}),
+    ),
+    patch.object(api_module, "local_timezone", UTC),
   )
 
 
@@ -88,18 +93,19 @@ def test_job_detail_fsio_uses_nfs_when_no_llite():
   mock_j.schema = {}
   mock_j.get_llite_delta_by_event.return_value = MagicMock(empty=True)
   mock_j.get_nfs_delta_totals_mb.return_value = [12.5, 3.25]
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
   mock_j.start_time = t0
   mock_j.end_time = t0
 
   ctx = _patch_job_detail_fsio_context(api, jid, mock_j, {"nfs": [12.5, 3.25]})
 
-  with ThreadPoolExecutor(max_workers=4) as executor:
-    with ExitStack() as stack:
-      stack.enter_context(patch.object(api, "_get_small_executor", return_value=executor))
-      for cm in ctx:
-        stack.enter_context(cm)
-      response = api.job_detail(request, jid)
+  with ThreadPoolExecutor(max_workers=4) as executor, ExitStack() as stack:
+    stack.enter_context(
+      patch.object(api, "_get_small_executor", return_value=executor)
+    )
+    for cm in ctx:
+      stack.enter_context(cm)
+    response = api.job_detail(request, jid)
 
   assert response.status_code == 200
   assert response.data["fsio"] == {"nfs": [12.5, 3.25]}
@@ -119,24 +125,25 @@ def test_job_detail_fsio_prefers_llite_over_nfs():
   mock_j.acct_host_list = ["n1.example.com"]
   mock_j.schema = {}
   llite_df = pd.DataFrame(
-      [
-          {"event": "read_bytes", "delta_sum": 1048576.0},
-          {"event": "write_bytes", "delta_sum": 2097152.0},
-      ]
+    [
+      {"event": "read_bytes", "delta_sum": 1048576.0},
+      {"event": "write_bytes", "delta_sum": 2097152.0},
+    ]
   )
   mock_j.get_llite_delta_by_event.return_value = llite_df
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
   mock_j.start_time = t0
   mock_j.end_time = t0
 
   ctx = _patch_job_detail_fsio_context(api, jid, mock_j, {"llite": [1.0, 2.0]})
 
-  with ThreadPoolExecutor(max_workers=4) as executor:
-    with ExitStack() as stack:
-      stack.enter_context(patch.object(api, "_get_small_executor", return_value=executor))
-      for cm in ctx:
-        stack.enter_context(cm)
-      response = api.job_detail(request, jid)
+  with ThreadPoolExecutor(max_workers=4) as executor, ExitStack() as stack:
+    stack.enter_context(
+      patch.object(api, "_get_small_executor", return_value=executor)
+    )
+    for cm in ctx:
+      stack.enter_context(cm)
+    response = api.job_detail(request, jid)
 
   assert response.status_code == 200
   assert response.data["fsio"]["llite"][0] == 1.0
@@ -161,12 +168,12 @@ def test_job_detail_fsio_from_metrics_skips_host_queries():
   job_mock = MagicMock()
   job_mock.jid = jid
   job_mock.username = "u1"
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
   job_mock.start_time = t0
   job_mock.end_time = t0
   job_mock.metrics_data_set.all.return_value = [
-      _R("detail_fsio_llite_read_mb", 9.0),
-      _R("detail_fsio_llite_write_mb", 1.0),
+    _R("detail_fsio_llite_read_mb", 9.0),
+    _R("detail_fsio_llite_write_mb", 1.0),
   ]
   job_mock.host_data_schema_json = None
 
@@ -190,45 +197,46 @@ def test_job_detail_fsio_from_metrics_skips_host_queries():
   vis = MagicMock()
   vis.exists.return_value = True
   ctx = (
-      patch.object(api, "_require_auth", return_value=None),
-      patch.object(api, "_apply_non_staff_job_visibility", return_value=vis),
-      patch.object(api, "get_site_content_cache_timeout", return_value=3600),
-      patch.object(api, "build_job_metrics_display_list", return_value=[]),
-      patch.object(api.cfg, "get_xalt_user", return_value=""),
-      patch.object(api.cfg, "get_host_name_ext", return_value="example.com"),
-      patch.object(api, "cached_orm", side_effect=cached_se),
-      patch.object(
-          api,
-          "load_job_detail_artifact",
-          return_value={
-              "host_list": mock_j.acct_host_list,
-              "schema": {},
-              "fsio": {"llite": [9.0, 1.0]},
-              "gpu_active": None,
-              "gpu_utilization_max": None,
-              "gpu_utilization_mean": None,
-              "gpu_count": None,
-          },
-      ),
-      patch.object(
-          api,
-          "_job_for_detail_list_serializer",
-          return_value=job_mock,
-      ),
-      patch.object(
-          api,
-          "JobListSerializer",
-          return_value=MagicMock(data={"jid": jid, "username": "u1"}),
-      ),
-      patch.object(api, "local_timezone", timezone.utc),
+    patch.object(api, "_require_auth", return_value=None),
+    patch.object(api, "_apply_non_staff_job_visibility", return_value=vis),
+    patch.object(api, "get_site_content_cache_timeout", return_value=3600),
+    patch.object(api, "build_job_metrics_display_list", return_value=[]),
+    patch.object(api.cfg, "get_xalt_user", return_value=""),
+    patch.object(api.cfg, "get_host_name_ext", return_value="example.com"),
+    patch.object(api, "cached_orm", side_effect=cached_se),
+    patch.object(
+      api,
+      "load_job_detail_artifact",
+      return_value={
+        "host_list": mock_j.acct_host_list,
+        "schema": {},
+        "fsio": {"llite": [9.0, 1.0]},
+        "gpu_active": None,
+        "gpu_utilization_max": None,
+        "gpu_utilization_mean": None,
+        "gpu_count": None,
+      },
+    ),
+    patch.object(
+      api,
+      "_job_for_detail_list_serializer",
+      return_value=job_mock,
+    ),
+    patch.object(
+      api,
+      "JobListSerializer",
+      return_value=MagicMock(data={"jid": jid, "username": "u1"}),
+    ),
+    patch.object(api, "local_timezone", UTC),
   )
 
-  with ThreadPoolExecutor(max_workers=4) as executor:
-    with ExitStack() as stack:
-      stack.enter_context(patch.object(api, "_get_small_executor", return_value=executor))
-      for cm in ctx:
-        stack.enter_context(cm)
-      response = api.job_detail(request, jid)
+  with ThreadPoolExecutor(max_workers=4) as executor, ExitStack() as stack:
+    stack.enter_context(
+      patch.object(api, "_get_small_executor", return_value=executor)
+    )
+    for cm in ctx:
+      stack.enter_context(cm)
+    response = api.job_detail(request, jid)
 
   assert response.status_code == 200
   assert response.data["fsio"] == {"llite": [9.0, 1.0]}
@@ -247,7 +255,7 @@ def test_job_detail_schema_prefers_host_data_schema_json():
   job_mock = MagicMock()
   job_mock.jid = jid
   job_mock.username = "u1"
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
   job_mock.start_time = t0
   job_mock.end_time = t0
   job_mock.metrics_data_set.all.return_value = []
@@ -273,45 +281,46 @@ def test_job_detail_schema_prefers_host_data_schema_json():
   vis = MagicMock()
   vis.exists.return_value = True
   ctx = (
-      patch.object(api, "_require_auth", return_value=None),
-      patch.object(api, "_apply_non_staff_job_visibility", return_value=vis),
-      patch.object(api, "get_site_content_cache_timeout", return_value=3600),
-      patch.object(api, "build_job_metrics_display_list", return_value=[]),
-      patch.object(api.cfg, "get_xalt_user", return_value=""),
-      patch.object(api.cfg, "get_host_name_ext", return_value="example.com"),
-      patch.object(api, "cached_orm", side_effect=cached_se),
-      patch.object(
-          api,
-          "load_job_detail_artifact",
-          return_value={
-              "host_list": mock_j.acct_host_list,
-              "schema": {"cpu": ["user", "system"]},
-              "fsio": {},
-              "gpu_active": None,
-              "gpu_utilization_max": None,
-              "gpu_utilization_mean": None,
-              "gpu_count": None,
-          },
-      ),
-      patch.object(
-          api,
-          "_job_for_detail_list_serializer",
-          return_value=job_mock,
-      ),
-      patch.object(
-          api,
-          "JobListSerializer",
-          return_value=MagicMock(data={"jid": jid, "username": "u1"}),
-      ),
-      patch.object(api, "local_timezone", timezone.utc),
+    patch.object(api, "_require_auth", return_value=None),
+    patch.object(api, "_apply_non_staff_job_visibility", return_value=vis),
+    patch.object(api, "get_site_content_cache_timeout", return_value=3600),
+    patch.object(api, "build_job_metrics_display_list", return_value=[]),
+    patch.object(api.cfg, "get_xalt_user", return_value=""),
+    patch.object(api.cfg, "get_host_name_ext", return_value="example.com"),
+    patch.object(api, "cached_orm", side_effect=cached_se),
+    patch.object(
+      api,
+      "load_job_detail_artifact",
+      return_value={
+        "host_list": mock_j.acct_host_list,
+        "schema": {"cpu": ["user", "system"]},
+        "fsio": {},
+        "gpu_active": None,
+        "gpu_utilization_max": None,
+        "gpu_utilization_mean": None,
+        "gpu_count": None,
+      },
+    ),
+    patch.object(
+      api,
+      "_job_for_detail_list_serializer",
+      return_value=job_mock,
+    ),
+    patch.object(
+      api,
+      "JobListSerializer",
+      return_value=MagicMock(data={"jid": jid, "username": "u1"}),
+    ),
+    patch.object(api, "local_timezone", UTC),
   )
 
-  with ThreadPoolExecutor(max_workers=4) as executor:
-    with ExitStack() as stack:
-      stack.enter_context(patch.object(api, "_get_small_executor", return_value=executor))
-      for cm in ctx:
-        stack.enter_context(cm)
-      response = api.job_detail(request, jid)
+  with ThreadPoolExecutor(max_workers=4) as executor, ExitStack() as stack:
+    stack.enter_context(
+      patch.object(api, "_get_small_executor", return_value=executor)
+    )
+    for cm in ctx:
+      stack.enter_context(cm)
+    response = api.job_detail(request, jid)
 
   assert response.status_code == 200
   assert response.data["schema"] == {"cpu": ["user", "system"]}
@@ -331,21 +340,22 @@ def test_job_detail_with_empty_host_list_does_not_error():
   mock_j.schema = {}
   mock_j.get_llite_delta_by_event.return_value = MagicMock(empty=True)
   mock_j.get_nfs_delta_totals_mb.return_value = None
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
   mock_j.start_time = t0
   mock_j.end_time = t0
 
   ctx = _patch_job_detail_fsio_context(api, jid, mock_j, {})
 
-  with ThreadPoolExecutor(max_workers=4) as executor:
-    with ExitStack() as stack:
-      stack.enter_context(patch.object(api, "_get_small_executor", return_value=executor))
-      for cm in ctx:
-        stack.enter_context(cm)
-      response = api.job_detail(request, jid)
+  with ThreadPoolExecutor(max_workers=4) as executor, ExitStack() as stack:
+    stack.enter_context(
+      patch.object(api, "_get_small_executor", return_value=executor)
+    )
+    for cm in ctx:
+      stack.enter_context(cm)
+    response = api.job_detail(request, jid)
 
   assert response.status_code == 200
   assert response.data["host_list"] == []
   assert response.data["client_url"].startswith(
-      "https://scribe.tacc.utexas.edu/en-US/app/search/search?q=search%20"
+    "https://scribe.tacc.utexas.edu/en-US/app/search/search?q=search%20"
   )

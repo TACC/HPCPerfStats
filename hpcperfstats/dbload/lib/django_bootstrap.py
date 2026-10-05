@@ -18,6 +18,7 @@ Attributes:
   _SETUP_COMPLETE: True once ``django.setup()`` returned successfully.
   _SETUP_OWNER_IDENT: Thread ident currently inside ``django.setup()``.
 """
+
 from __future__ import annotations
 
 import os
@@ -56,7 +57,7 @@ def ensure_django() -> None:
   with _SETUP_LOCK:
     if _SETUP_COMPLETE:
       return
-    if _SETUP_OWNER_IDENT == threading.get_ident():
+    if threading.get_ident() == _SETUP_OWNER_IDENT:
       return
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", DJANGO_SETTINGS_MODULE)
     import django

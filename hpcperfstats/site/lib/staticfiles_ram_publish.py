@@ -27,14 +27,14 @@ from collections.abc import Sequence
 from pathlib import Path
 
 REQUIRED_STATIC_RELPATHS: tuple[str, ...] = (
-    "frontend/machine/index.html",
-    "frontend/pub/index.html",
+  "frontend/machine/index.html",
+  "frontend/pub/index.html",
 )
 DEFAULT_STATIC_RAM_ROOT = "/home/hpcperfstats/staticfiles-ram"
 DEFAULT_MEDIA_RAM_ROOT = "/home/hpcperfstats/media-ram"
 DEFAULT_STATIC_ROOT = "/home/hpcperfstats/staticfiles"
 DEFAULT_MEDIA_ROOT = (
-    "/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media"
+  "/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media"
 )
 _STAGING_PREFIX = ".publish-"
 _BACKUP_PREFIX = ".bak-"
@@ -54,9 +54,9 @@ def _fail(message: str) -> None:
 
   Examples:
     >>> try:
-    ...     _fail("dest is not writable")
+    ...   _fail("dest is not writable")
     ... except SystemExit as exc:
-    ...     exc.code
+    ...   exc.code
     1
   """
   print(message, file=sys.stderr)
@@ -76,9 +76,9 @@ def _file_sha256(path: Path) -> str:
     >>> import tempfile
     >>> from pathlib import Path
     >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     p = Path(tmp) / "a.bin"
-    ...     p.write_bytes(b"abc")
-    ...     _file_sha256(p) == hashlib.sha256(b"abc").hexdigest()
+    ...   p = Path(tmp) / "a.bin"
+    ...   p.write_bytes(b"abc")
+    ...   _file_sha256(p) == hashlib.sha256(b"abc").hexdigest()
     True
   """
   digest = hashlib.sha256()
@@ -89,8 +89,8 @@ def _file_sha256(path: Path) -> str:
 
 
 def _ignore_staging_names(
-    directory: str,
-    names: list[str],
+  directory: str,
+  names: list[str],
 ) -> list[str]:
   """Return names under ``directory`` that copytree must skip.
 
@@ -107,9 +107,7 @@ def _ignore_staging_names(
   """
   del directory
   return [
-      name
-      for name in names
-      if name.startswith(_STAGING_PREFIX) or name.startswith(_BACKUP_PREFIX)
+    name for name in names if name.startswith((_STAGING_PREFIX, _BACKUP_PREFIX))
   ]
 
 
@@ -128,13 +126,13 @@ def _is_reserved_dest_name(name: str) -> bool:
     >>> _is_reserved_dest_name("frontend")
     False
   """
-  return name.startswith(_STAGING_PREFIX) or name.startswith(_BACKUP_PREFIX)
+  return name.startswith((_STAGING_PREFIX, _BACKUP_PREFIX))
 
 
 def _assert_src_ready(
-    src: Path,
-    dest: Path,
-    required_relpaths: Sequence[str],
+  src: Path,
+  dest: Path,
+  required_relpaths: Sequence[str],
 ) -> None:
   """Fail closed when src/dest are unusable or required files are missing.
 
@@ -155,24 +153,18 @@ def _assert_src_ready(
     >>> from pathlib import Path
     >>> import tempfile
     >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     root = Path(tmp)
-    ...     src = root / "src"
-    ...     src.mkdir()
-    ...     _assert_src_ready(src, root / "dest", ())
+    ...   root = Path(tmp)
+    ...   src = root / "src"
+    ...   src.mkdir()
+    ...   _assert_src_ready(src, root / "dest", ())
   """
   if src.resolve() == dest.resolve():
     _fail(f"ram dest must not equal src: {src}")
   if not src.is_dir():
     _fail(f"publish src is not a directory: {src}")
-  missing = [
-      rel
-      for rel in required_relpaths
-      if not (src / rel).is_file()
-  ]
+  missing = [rel for rel in required_relpaths if not (src / rel).is_file()]
   if missing:
-    _fail(
-        "publish src missing required file(s): " + ", ".join(missing)
-    )
+    _fail("publish src missing required file(s): " + ", ".join(missing))
 
 
 def _restore_backup(dest: Path, backup: Path) -> None:
@@ -189,13 +181,13 @@ def _restore_backup(dest: Path, backup: Path) -> None:
     >>> from pathlib import Path
     >>> import tempfile
     >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     dest = Path(tmp) / "dest"
-    ...     backup = Path(tmp) / "bak"
-    ...     dest.mkdir()
-    ...     backup.mkdir()
-    ...     (backup / "keep.txt").write_text("ok", encoding="utf-8")
-    ...     _restore_backup(dest, backup)
-    ...     (dest / "keep.txt").read_text(encoding="utf-8")
+    ...   dest = Path(tmp) / "dest"
+    ...   backup = Path(tmp) / "bak"
+    ...   dest.mkdir()
+    ...   backup.mkdir()
+    ...   (backup / "keep.txt").write_text("ok", encoding="utf-8")
+    ...   _restore_backup(dest, backup)
+    ...   (dest / "keep.txt").read_text(encoding="utf-8")
     'ok'
   """
   if not backup.is_dir():
@@ -214,9 +206,9 @@ def _restore_backup(dest: Path, backup: Path) -> None:
 
 
 def _replace_dest_children(
-    dest: Path,
-    staging: Path,
-    backup: Path,
+  dest: Path,
+  staging: Path,
+  backup: Path,
 ) -> None:
   """Move dest children aside, then promote staging children into dest.
 
@@ -235,21 +227,21 @@ def _replace_dest_children(
     >>> from pathlib import Path
     >>> import tempfile
     >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     dest = Path(tmp) / "dest"
-    ...     staging = Path(tmp) / "stage"
-    ...     backup = Path(tmp) / "bak"
-    ...     dest.mkdir()
-    ...     staging.mkdir()
-    ...     backup.mkdir()
-    ...     (dest / "old.txt").write_text("old", encoding="utf-8")
-    ...     (staging / "new.txt").write_text("new", encoding="utf-8")
-    ...     _replace_dest_children(dest, staging, backup)
-    ...     (dest / "new.txt").read_text(encoding="utf-8")
+    ...   dest = Path(tmp) / "dest"
+    ...   staging = Path(tmp) / "stage"
+    ...   backup = Path(tmp) / "bak"
+    ...   dest.mkdir()
+    ...   staging.mkdir()
+    ...   backup.mkdir()
+    ...   (dest / "old.txt").write_text("old", encoding="utf-8")
+    ...   (staging / "new.txt").write_text("new", encoding="utf-8")
+    ...   _replace_dest_children(dest, staging, backup)
+    ...   (dest / "new.txt").read_text(encoding="utf-8")
     'new'
   """
   backup.mkdir(parents=True, exist_ok=True)
   for child in list(dest.iterdir()):
-    if child == staging or child == backup:
+    if child in (staging, backup):
       continue
     if _is_reserved_dest_name(child.name):
       continue
@@ -259,9 +251,9 @@ def _replace_dest_children(
 
 
 def _verify_required_match(
-    src: Path,
-    dest: Path,
-    required_relpaths: Sequence[str],
+  src: Path,
+  dest: Path,
+  required_relpaths: Sequence[str],
 ) -> None:
   """Fail closed when dest lacks required files or sha256 diverges.
 
@@ -281,11 +273,11 @@ def _verify_required_match(
     >>> from pathlib import Path
     >>> import tempfile
     >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     src = Path(tmp) / "src"
-    ...     dest = Path(tmp) / "dest"
-    ...     src.mkdir()
-    ...     dest.mkdir()
-    ...     _verify_required_match(src, dest, ())
+    ...   src = Path(tmp) / "src"
+    ...   dest = Path(tmp) / "dest"
+    ...   src.mkdir()
+    ...   dest.mkdir()
+    ...   _verify_required_match(src, dest, ())
   """
   for rel in required_relpaths:
     src_file = src / rel
@@ -297,10 +289,10 @@ def _verify_required_match(
 
 
 def publish_tree_to_ram(
-    src: Path,
-    dest: Path,
-    *,
-    required_relpaths: Sequence[str] = (),
+  src: Path,
+  dest: Path,
+  *,
+  required_relpaths: Sequence[str] = (),
 ) -> None:
   """Copy ``src`` onto ``dest`` via same-filesystem staging rename.
 
@@ -326,12 +318,12 @@ def publish_tree_to_ram(
     >>> from pathlib import Path
     >>> import tempfile
     >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     src = Path(tmp) / "src"
-    ...     dest = Path(tmp) / "dest"
-    ...     src.mkdir()
-    ...     (src / "hello.txt").write_text("hi", encoding="utf-8")
-    ...     publish_tree_to_ram(src, dest)
-    ...     (dest / "hello.txt").read_text(encoding="utf-8")
+    ...   src = Path(tmp) / "src"
+    ...   dest = Path(tmp) / "dest"
+    ...   src.mkdir()
+    ...   (src / "hello.txt").write_text("hi", encoding="utf-8")
+    ...   publish_tree_to_ram(src, dest)
+    ...   (dest / "hello.txt").read_text(encoding="utf-8")
     'hi'
   """
   src = Path(src)
@@ -349,9 +341,9 @@ def publish_tree_to_ram(
     shutil.rmtree(backup)
   try:
     shutil.copytree(
-        src,
-        staging,
-        ignore=_ignore_staging_names,
+      src,
+      staging,
+      ignore=_ignore_staging_names,
     )
     _replace_dest_children(dest, staging, backup)
     _verify_required_match(src, dest, required_relpaths)
@@ -373,7 +365,7 @@ def publish_tree_to_ram(
 
 
 def _paths_for_kind(
-    kind: str,
+  kind: str,
 ) -> tuple[Path, Path, tuple[str, ...]]:
   """Return src, dest, and required relpaths for ``kind``.
 
@@ -402,14 +394,12 @@ def _paths_for_kind(
   if kind == "static":
     src = Path(os.environ.get("STATIC_ROOT") or DEFAULT_STATIC_ROOT)
     dest = Path(
-        os.environ.get("STATICFILES_RAM_ROOT") or DEFAULT_STATIC_RAM_ROOT
+      os.environ.get("STATICFILES_RAM_ROOT") or DEFAULT_STATIC_RAM_ROOT
     )
     return src, dest, REQUIRED_STATIC_RELPATHS
   if kind == "media":
     src = Path(os.environ.get("MEDIA_ROOT") or DEFAULT_MEDIA_ROOT)
-    dest = Path(
-        os.environ.get("MEDIAFILES_RAM_ROOT") or DEFAULT_MEDIA_RAM_ROOT
-    )
+    dest = Path(os.environ.get("MEDIAFILES_RAM_ROOT") or DEFAULT_MEDIA_RAM_ROOT)
     return src, dest, ()
   _fail(f"unknown publish kind: {kind}")
   raise SystemExit(1)
@@ -433,23 +423,24 @@ def main(argv: list[str] | None = None) -> int:
     >>> from pathlib import Path
     >>> import tempfile
     >>> with tempfile.TemporaryDirectory() as tmp:
-    ...     src = Path(tmp) / "media"
-    ...     dest = Path(tmp) / "media-ram"
-    ...     src.mkdir()
-    ...     import os
-    ...     os.environ["MEDIA_ROOT"] = str(src)
-    ...     os.environ["MEDIAFILES_RAM_ROOT"] = str(dest)
-    ...     main(["--kind", "media"])
+    ...   src = Path(tmp) / "media"
+    ...   dest = Path(tmp) / "media-ram"
+    ...   src.mkdir()
+    ...   import os
+    ...
+    ...   os.environ["MEDIA_ROOT"] = str(src)
+    ...   os.environ["MEDIAFILES_RAM_ROOT"] = str(dest)
+    ...   main(["--kind", "media"])
     0
   """
   parser = argparse.ArgumentParser(
-      description="Publish STATIC_ROOT or MEDIA_ROOT onto a ram dest.",
+    description="Publish STATIC_ROOT or MEDIA_ROOT onto a ram dest.",
   )
   parser.add_argument(
-      "--kind",
-      choices=("static", "media"),
-      required=True,
-      help="static requires SPA shells; media may be empty.",
+    "--kind",
+    choices=("static", "media"),
+    required=True,
+    help="static requires SPA shells; media may be empty.",
   )
   args = parser.parse_args(sys.argv[1:] if argv is None else argv)
   src, dest, required = _paths_for_kind(args.kind)

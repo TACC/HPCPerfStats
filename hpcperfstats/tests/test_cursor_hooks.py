@@ -1,4 +1,5 @@
 """Unit tests for Cursor hook helpers (cursor-hooks/hpc_hook_lib.py)."""
+
 from __future__ import annotations
 
 import json
@@ -14,32 +15,30 @@ sys.path.insert(0, str(HOOKS_DIR))
 
 import hpc_hook_lib as lib  # noqa: E402
 from hook_task_router import (  # noqa: E402
-    MONITOR_ROUTER_ENTRIES,
-    ROUTER_ENTRIES,
-    detect_rules_profile,
-    profile_rules_dir_label,
-    triggered_rules_for_paths,
+  MONITOR_ROUTER_ENTRIES,
+  ROUTER_ENTRIES,
+  detect_rules_profile,
+  profile_rules_dir_label,
+  triggered_rules_for_paths,
 )
 
 RULE_PATH = (
-    "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
-    "sync-timedb-archive-janitor-contract.mdc"
+  "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+  "sync-timedb-archive-janitor-contract.mdc"
 )
 MONITOR_RULE_PATH = (
-    "/repo/HPCPerfStats/monitor/cursor-rules/monitor-c-conventions.mdc"
+  "/repo/HPCPerfStats/monitor/cursor-rules/monitor-c-conventions.mdc"
 )
-MONITOR_PLAN_TEMPLATE = (
-    "/repo/HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md"
-)
+MONITOR_PLAN_TEMPLATE = "/repo/HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md"
 MONITOR_GLOBAL_TESTING_PATH = (
-    "/repo/HPCPerfStats/monitor/cursor-rules/global-testing-discipline.mdc"
+  "/repo/HPCPerfStats/monitor/cursor-rules/global-testing-discipline.mdc"
 )
 MONITOR_CURSOR_SYNC_PATH = (
-    "/repo/HPCPerfStats/monitor/cursor-rules/monitor-cursor-rules-sync.mdc"
+  "/repo/HPCPerfStats/monitor/cursor-rules/monitor-cursor-rules-sync.mdc"
 )
 HOOK_LIB_PATH = "/repo/HPCPerfStats/cursor-hooks/hpc_hook_lib.py"
 TESTING_RULE_PATH = (
-    "/repo/HPCPerfStats/hpcperfstats/cursor-rules/testing-best-practices.mdc"
+  "/repo/HPCPerfStats/hpcperfstats/cursor-rules/testing-best-practices.mdc"
 )
 
 
@@ -57,34 +56,38 @@ def test_agent_rule_dispatch_requires_mdc_or_na():
   assert lib.AGENT_RULE_DISPATCH_DETAIL_LABEL in missing
 
   with_mdc = (
-      "## Agent rule dispatch\n\n"
-      "Read: plan-completion-gate.mdc, every-error-regression-test.mdc\n"
+    "## Agent rule dispatch\n\n"
+    "Read: plan-completion-gate.mdc, every-error-regression-test.mdc\n"
   )
-  assert lib.AGENT_RULE_DISPATCH_LABEL not in lib.missing_close_gate_sections(with_mdc)
+  assert lib.AGENT_RULE_DISPATCH_LABEL not in lib.missing_close_gate_sections(
+    with_mdc
+  )
 
   with_na = "## Agent rule dispatch\n\nN/A — answer-only turn, no file edits.\n"
-  assert lib.AGENT_RULE_DISPATCH_LABEL not in lib.missing_close_gate_sections(with_na)
+  assert lib.AGENT_RULE_DISPATCH_LABEL not in lib.missing_close_gate_sections(
+    with_na
+  )
 
 
 def test_extract_read_rule_basenames_from_transcript():
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "Read",
-                      "input": {"path": RULE_PATH},
-                  },
-                  {
-                      "type": "tool_use",
-                      "name": "Read",
-                      "input": {"path": "/repo/hpcperfstats/dbload/sync_timedb.py"},
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {"path": RULE_PATH},
           },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {"path": "/repo/hpcperfstats/dbload/sync_timedb.py"},
+          },
+        ],
       },
+    },
   ]
   read_names = lib.extract_read_rule_basenames(rows)
   assert "sync-timedb-archive-janitor-contract.mdc" in read_names
@@ -94,34 +97,36 @@ def test_extract_read_rule_basenames_from_transcript():
 def test_is_cursor_rule_read_path_accepts_workspace_symlink():
   # Canonical authoritative path counts.
   assert lib.is_cursor_rule_read_path(
-      "/repo/HPCPerfStats/hpcperfstats/cursor-rules/plan-creation-contract.mdc"
+    "/repo/HPCPerfStats/hpcperfstats/cursor-rules/plan-creation-contract.mdc"
   )
   # Monitor rule path counts.
   assert lib.is_cursor_rule_read_path(MONITOR_RULE_PATH)
   # Workspace `.cursor/rules/` symlink path must also count (regression:
   # reads opened via the symlink previously did not satisfy the plan gate).
   assert lib.is_cursor_rule_read_path(
-      "/ws/.cursor/rules/plan-creation-contract.mdc"
+    "/ws/.cursor/rules/plan-creation-contract.mdc"
   )
   # Non-rule reads are still excluded.
-  assert not lib.is_cursor_rule_read_path("/repo/hpcperfstats/dbload/sync_timedb.py")
+  assert not lib.is_cursor_rule_read_path(
+    "/repo/hpcperfstats/dbload/sync_timedb.py"
+  )
   assert not lib.is_cursor_rule_read_path("/ws/.cursor/rules/README.md")
 
 
 def test_extract_read_rule_basenames_accepts_workspace_symlink_path():
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "Read",
-                      "input": {"path": "/ws/.cursor/rules/plan-live-disk-sync.mdc"},
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {"path": "/ws/.cursor/rules/plan-live-disk-sync.mdc"},
           },
+        ],
       },
+    },
   ]
   read_names = lib.extract_read_rule_basenames(rows)
   assert "plan-live-disk-sync.mdc" in read_names
@@ -130,19 +135,19 @@ def test_extract_read_rule_basenames_accepts_workspace_symlink_path():
 def test_plan_authoring_precreate_read_issues_clears_with_symlink_reads():
   base = "/ws/.cursor/rules/"
   content = [
-      {
-          "type": "tool_use",
-          "name": "Read",
-          "input": {"path": f"{base}{name}"},
-      }
-      for name in lib.PLAN_AUTHORING_REQUIRED_MDC
+    {
+      "type": "tool_use",
+      "name": "Read",
+      "input": {"path": f"{base}{name}"},
+    }
+    for name in lib.PLAN_AUTHORING_REQUIRED_MDC
   ]
   content.append(
-      {
-          "type": "tool_use",
-          "name": "Read",
-          "input": {"path": "/ws/.cursor/rules/../docs/plans/PLAN_TEMPLATE.md"},
-      },
+    {
+      "type": "tool_use",
+      "name": "Read",
+      "input": {"path": "/ws/.cursor/rules/../docs/plans/PLAN_TEMPLATE.md"},
+    },
   )
   rows = [{"role": "assistant", "message": {"content": content}}]
   assert lib.plan_authoring_precreate_read_issues(rows) == []
@@ -151,19 +156,19 @@ def test_plan_authoring_precreate_read_issues_clears_with_symlink_reads():
 def test_plan_authoring_precreate_read_issues_accepts_readfile_tool_name():
   base = "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
   content = [
-      {
-          "type": "tool_use",
-          "name": "ReadFile",
-          "input": {"path": f"{base}{name}"},
-      }
-      for name in lib.PLAN_AUTHORING_REQUIRED_MDC
+    {
+      "type": "tool_use",
+      "name": "ReadFile",
+      "input": {"path": f"{base}{name}"},
+    }
+    for name in lib.PLAN_AUTHORING_REQUIRED_MDC
   ]
   content.append(
-      {
-          "type": "tool_use",
-          "name": "ReadFile",
-          "input": {"path": "/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md"},
-      },
+    {
+      "type": "tool_use",
+      "name": "ReadFile",
+      "input": {"path": "/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md"},
+    },
   )
   rows = [{"role": "assistant", "message": {"content": content}}]
   assert lib.plan_authoring_precreate_read_issues(rows) == []
@@ -171,22 +176,21 @@ def test_plan_authoring_precreate_read_issues_accepts_readfile_tool_name():
 
 def test_domain_rule_read_issues_flags_missing_read():
   assistant_text = (
-      "## Agent rule dispatch\n\n"
-      "Read: sync-timedb-archive-janitor-contract.mdc\n"
+    "## Agent rule dispatch\n\nRead: sync-timedb-archive-janitor-contract.mdc\n"
   )
   rows_without_read = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "Write",
-                      "input": {"path": "a.py"},
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {"path": "a.py"},
           },
+        ],
       },
+    },
   ]
   required = lib.domain_rules_required(assistant_text, ["a.py"])
   unread = lib.domain_rule_read_issues(required, rows_without_read)
@@ -195,178 +199,182 @@ def test_domain_rule_read_issues_flags_missing_read():
 
 def test_domain_rule_read_issues_flags_read_after_first_edit():
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "Write",
-                      "input": {"path": HOOK_LIB_PATH},
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {"path": HOOK_LIB_PATH},
           },
+        ],
       },
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "Read",
-                      "input": {"path": TESTING_RULE_PATH},
-                  },
-              ],
+    },
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {"path": TESTING_RULE_PATH},
           },
+        ],
       },
+    },
   ]
   issues = lib.domain_rule_read_issues(["testing-best-practices.mdc"], rows)
-  assert issues == ["Rule read after first edit/plan: testing-best-practices.mdc"]
+  assert issues == [
+    "Rule read after first edit/plan: testing-best-practices.mdc"
+  ]
 
 
 def test_triggered_rule_dispatch_rejects_na_when_edits_trigger_rules():
   assistant_text = "## Agent rule dispatch\n\nN/A — hooks only.\n"
   issues = lib.triggered_rule_dispatch_issues(
-      assistant_text,
-      [HOOK_LIB_PATH],
+    assistant_text,
+    [HOOK_LIB_PATH],
   )
-  assert issues == ["Agent rule dispatch (N/A invalid — edits triggered domain rules)"]
+  assert issues == [
+    "Agent rule dispatch (N/A invalid — edits triggered domain rules)"
+  ]
 
 
 def test_triggered_rule_dispatch_requires_listed_rules():
-  assistant_text = (
-      "## Agent rule dispatch\n\n"
-      "Read: plan-completion-gate.mdc\n"
-  )
+  assistant_text = "## Agent rule dispatch\n\nRead: plan-completion-gate.mdc\n"
   issues = lib.triggered_rule_dispatch_issues(
-      assistant_text,
-      [HOOK_LIB_PATH],
+    assistant_text,
+    [HOOK_LIB_PATH],
   )
   assert "Rule not dispatched: testing-best-practices.mdc" in issues
 
 
 def test_edge_cases_issues_requires_three_items():
-  text = (
-      "## Post-implementation review\n\n"
-      "### Edge cases\n\n"
-      "- one\n"
-      "- two\n"
-  )
+  text = "## Post-implementation review\n\n### Edge cases\n\n- one\n- two\n"
   assert lib.edge_cases_issues(text) == [
-      "### Edge cases (≥3 numbered/bulleted items required)",
+    "### Edge cases (≥3 numbered/bulleted items required)",
   ]
 
 
 def test_sync_timedb_regression_battery_issues_requires_citation():
   assistant_text = (
-      "## Agent rule dispatch\n\nsync-timedb-change-regression-gate.mdc\n"
-      "## Final code review (senior engineer pass)\n\nok\n"
-      "## Post-implementation review\n\n"
-      "### Why it works\n\nok\n"
-      "### Edge cases\n\n- a\n- b\n- c\n"
-      "### Convention check\n\nok\n"
+    "## Agent rule dispatch\n\nsync-timedb-change-regression-gate.mdc\n"
+    "## Final code review (senior engineer pass)\n\nok\n"
+    "## Post-implementation review\n\n"
+    "### Why it works\n\nok\n"
+    "### Edge cases\n\n- a\n- b\n- c\n"
+    "### Convention check\n\nok\n"
   )
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "Write",
-                      "input": {
-                          "path": "HPCPerfStats/hpcperfstats/dbload/sync_timedb.py",
-                      },
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "path": "HPCPerfStats/hpcperfstats/dbload/sync_timedb.py",
+            },
           },
+        ],
       },
+    },
   ]
   issues = lib.sync_timedb_regression_battery_issues(
-      assistant_text,
-      rows,
-      ["hpcperfstats/dbload/sync_timedb.py"],
+    assistant_text,
+    rows,
+    ["hpcperfstats/dbload/sync_timedb.py"],
   )
   assert issues
   cited = assistant_text + "\nrun_sync_timedb_regression_battery"
   assert not lib.sync_timedb_regression_battery_issues(
-      cited,
-      rows,
-      ["hpcperfstats/dbload/sync_timedb.py"],
+    cited,
+    rows,
+    ["hpcperfstats/dbload/sync_timedb.py"],
   )
 
 
 def test_sync_timedb_plan_todo_issues_requires_battery_and_verify():
   plan = (
-      "---\nname: sync stall\n"
-      "todos:\n"
-      "  - id: regression-battery-script\n"
-      "    status: pending\n"
-      "  - id: operator-stall-verify-doc\n"
-      "    status: pending\n"
-      "---\n\n"
-      "## Problem and facts\n\nsync_timedb stall\n"
+    "---\nname: sync stall\n"
+    "todos:\n"
+    "  - id: regression-battery-script\n"
+    "    status: pending\n"
+    "  - id: operator-stall-verify-doc\n"
+    "    status: pending\n"
+    "---\n\n"
+    "## Problem and facts\n\nsync_timedb stall\n"
   )
   assert lib.sync_timedb_plan_todo_issues(plan) == []
   missing = lib.sync_timedb_plan_todo_issues(
-      "## Problem and facts\n\nsync_timedb day_close stall\n",
+    "## Problem and facts\n\nsync_timedb day_close stall\n",
   )
-  assert any("regression-battery" in issue or "run-full-battery" in issue for issue in missing)
+  assert any(
+    "regression-battery" in issue or "run-full-battery" in issue
+    for issue in missing
+  )
   assert any("operator-stall-verify" in issue for issue in missing)
 
 
 def test_close_gate_issues_passes_when_rules_read_before_edit():
   assistant_text = (
-      "## Agent rule dispatch\n\n"
-      "Read: testing-best-practices.mdc, global-testing-discipline.mdc, "
-      "monitor-cursor-rules-sync.mdc\n"
-      "## Final code review (senior engineer pass)\n\nok\n"
-      "## Post-implementation review\n\n"
-      "### Why it works\n\nok\n"
-      "### Edge cases\n\n- a\n- b\n- c\n"
-      "### Convention check\n\nok\n"
+    "## Agent rule dispatch\n\n"
+    "Read: testing-best-practices.mdc, global-testing-discipline.mdc, "
+    "monitor-cursor-rules-sync.mdc\n"
+    "## Final code review (senior engineer pass)\n\nok\n"
+    "## Post-implementation review\n\n"
+    "### Why it works\n\nok\n"
+    "### Edge cases\n\n- a\n- b\n- c\n"
+    "### Convention check\n\nok\n"
   )
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "Read",
-                      "input": {"path": TESTING_RULE_PATH},
-                  },
-                  {
-                      "type": "tool_use",
-                      "name": "Read",
-                      "input": {"path": MONITOR_GLOBAL_TESTING_PATH},
-                  },
-                  {
-                      "type": "tool_use",
-                      "name": "Read",
-                      "input": {"path": MONITOR_CURSOR_SYNC_PATH},
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {"path": TESTING_RULE_PATH},
           },
-      },
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "Write",
-                      "input": {"path": HOOK_LIB_PATH},
-                  },
-              ],
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {"path": MONITOR_GLOBAL_TESTING_PATH},
           },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {"path": MONITOR_CURSOR_SYNC_PATH},
+          },
+        ],
       },
+    },
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {"path": HOOK_LIB_PATH},
+          },
+        ],
+      },
+    },
   ]
-  assert lib.close_gate_issues(assistant_text=assistant_text, transcript_rows=rows) == []
+  assert (
+    lib.close_gate_issues(assistant_text=assistant_text, transcript_rows=rows)
+    == []
+  )
 
 
 def test_hook_task_router_rules_exist_and_are_documented():
-  core_text = (RULES_DIR / "agent-discipline-core.mdc").read_text(encoding="utf-8")
+  core_text = (RULES_DIR / "agent-discipline-core.mdc").read_text(
+    encoding="utf-8"
+  )
   for entry in ROUTER_ENTRIES:
     for rule in entry["rules"]:
       assert (RULES_DIR / rule).is_file(), rule
@@ -380,12 +388,12 @@ def test_triggered_rules_product_python_dispatches_surgical_bug_fix():
   assert "grok-surgical-bug-fix-mandate.mdc" in py_rules
   assert "refactor-dedup-priorities.mdc" in py_rules
   nested_rules = triggered_rules_for_paths(
-      ["hpcperfstats/dbload/lib/listend_db_ingest.py"],
+    ["hpcperfstats/dbload/lib/listend_db_ingest.py"],
   )
   assert "grok-surgical-bug-fix-mandate.mdc" in nested_rules
   assert "refactor-dedup-priorities.mdc" in nested_rules
   fe_rules = triggered_rules_for_paths(
-      ["hpcperfstats/site/frontend/src/views/JobDetail.tsx"],
+    ["hpcperfstats/site/frontend/src/views/JobDetail.tsx"],
   )
   assert "grok-surgical-bug-fix-mandate.mdc" in fe_rules
   assert "refactor-dedup-priorities.mdc" in fe_rules
@@ -403,7 +411,7 @@ def test_triggered_rules_for_dockerignore_path():
 
 def test_triggered_rules_staticfiles_ram_publish_dispatches_nginx_static():
   rules = triggered_rules_for_paths(
-      ["hpcperfstats/site/lib/staticfiles_ram_publish.py"],
+    ["hpcperfstats/site/lib/staticfiles_ram_publish.py"],
   )
   assert "nginx-static-url-prefix.mdc" in rules
   assert "frontend-static-prod-serve-only.mdc" in rules
@@ -411,14 +419,14 @@ def test_triggered_rules_staticfiles_ram_publish_dispatches_nginx_static():
 
 def test_triggered_rules_sync_timedb_lib_helper_path():
   rules = triggered_rules_for_paths(
-      ["hpcperfstats/dbload/lib/sync_timedb_day_close_manifest.py"],
+    ["hpcperfstats/dbload/lib/sync_timedb_day_close_manifest.py"],
   )
   assert "sync-timedb-archive-janitor-contract.mdc" in rules
 
 
 def test_triggered_rules_archive_members_store_test_dispatches_anti_log_spam():
   rules = triggered_rules_for_paths(
-      ["hpcperfstats/tests/test_sync_timedb_archive_members_store.py"],
+    ["hpcperfstats/tests/test_sync_timedb_archive_members_store.py"],
   )
   assert "sync-timedb-anti-log-spam.mdc" in rules
   assert "sync-timedb-ingest-pool-io-coordination.mdc" in rules
@@ -426,7 +434,7 @@ def test_triggered_rules_archive_members_store_test_dispatches_anti_log_spam():
 
 def test_triggered_rules_stale_dbload_helper_path_not_matched():
   rules = triggered_rules_for_paths(
-      ["hpcperfstats/dbload/sync_timedb_day_close_manifest.py"],
+    ["hpcperfstats/dbload/sync_timedb_day_close_manifest.py"],
   )
   assert "sync-timedb-archive-janitor-contract.mdc" not in rules
 
@@ -440,7 +448,7 @@ def test_resolve_cursor_rule_path_finds_checkout_rules():
 
 def test_readme_install_not_triggered_for_hooks_readme():
   rules = triggered_rules_for_paths(
-      ["/repo/HPCPerfStats/cursor-hooks/README.md"],
+    ["/repo/HPCPerfStats/cursor-hooks/README.md"],
   )
   assert "readme-installation-sync.mdc" not in rules
 
@@ -460,7 +468,7 @@ def test_readme_install_triggered_for_upgrade_doc():
 
 def test_rule_file_needs_router_entry_for_new_mdc():
   ok, name = lib.rule_file_needs_router_entry(
-      "/repo/hpcperfstats/cursor-rules/sync-timedb-foo-contract.mdc",
+    "/repo/hpcperfstats/cursor-rules/sync-timedb-foo-contract.mdc",
   )
   assert ok is True
   assert name == "sync-timedb-foo-contract.mdc"
@@ -468,7 +476,7 @@ def test_rule_file_needs_router_entry_for_new_mdc():
 
 def test_rule_file_skips_core_and_router():
   ok, _ = lib.rule_file_needs_router_entry(
-      "/repo/hpcperfstats/cursor-rules/agent-discipline-core.mdc",
+    "/repo/hpcperfstats/cursor-rules/agent-discipline-core.mdc",
   )
   assert ok is False
 
@@ -486,11 +494,13 @@ def test_rule_dual_registration_issues_flags_orphan_rule(tmp_path):
   orphan_dir.mkdir()
   orphan = orphan_dir / "orphan-test-rule-contract.mdc"
   orphan.write_text(
-      "---\ndescription: hook dual-registration test fixture\n---\n# Orphan\n",
-      encoding="utf-8",
+    "---\ndescription: hook dual-registration test fixture\n---\n# Orphan\n",
+    encoding="utf-8",
   )
   issues = lib.rule_dual_registration_issues([str(orphan)])
-  assert any("agent-discipline-core.mdc task router" in issue for issue in issues)
+  assert any(
+    "agent-discipline-core.mdc task router" in issue for issue in issues
+  )
   assert any("hook_task_router.py" in issue for issue in issues)
 
 
@@ -507,41 +517,41 @@ def test_rule_dual_registration_issues_skips_non_rule_paths():
 
 def _minimal_plan_markdown() -> str:
   return (
-      "## Plan disk file\n\n"
-      "Live path: .cursor/plans/test.plan.md\n"
-      "## Operator discovery\n\n**Status:** `not needed`\n"
-      "## Problem and facts\n\nfacts\n"
-      "## Approach\n\nsteps\n"
-      "## Testing\n\ntests\n"
-      "## Implementation\n\nfiles\n"
-      "## Cursor rules / docs sync\n\nno rule change\n"
-      "## Final code review (mandatory before implementation close)\n\nreview\n"
-      "## Post-implementation review (required before close)\n\nreview\n"
-      "---\n"
-      "todos:\n"
-      "  - id: git-hooks-pre-close\n"
-      "    content: run commit and push hooks\n"
-      "    status: pending\n"
-      "  - id: post-implementation-review\n"
-      "    content: review\n"
-      "    status: pending\n"
+    "## Plan disk file\n\n"
+    "Live path: .cursor/plans/test.plan.md\n"
+    "## Operator discovery\n\n**Status:** `not needed`\n"
+    "## Problem and facts\n\nfacts\n"
+    "## Approach\n\nsteps\n"
+    "## Testing\n\ntests\n"
+    "## Implementation\n\nfiles\n"
+    "## Cursor rules / docs sync\n\nno rule change\n"
+    "## Final code review (mandatory before implementation close)\n\nreview\n"
+    "## Post-implementation review (required before close)\n\nreview\n"
+    "---\n"
+    "todos:\n"
+    "  - id: git-hooks-pre-close\n"
+    "    content: run commit and push hooks\n"
+    "    status: pending\n"
+    "  - id: post-implementation-review\n"
+    "    content: review\n"
+    "    status: pending\n"
   )
 
 
 def test_turn_had_create_plan_detects_create_plan_tool():
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "CreatePlan",
-                      "input": {"plan": _minimal_plan_markdown()},
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "CreatePlan",
+            "input": {"plan": _minimal_plan_markdown()},
           },
+        ],
       },
+    },
   ]
   assert lib.turn_had_create_plan(lib.last_turn_rows(rows)) is True
   assert lib.turn_had_closeable_work(lib.last_turn_rows(rows)) is True
@@ -564,23 +574,23 @@ def test_plan_template_includes_root_cause_surgical_fix_block():
   """PLAN_TEMPLATE.md keeps RCA in facts and target/fix subsections in Approach."""
   repo_root = Path(__file__).resolve().parents[2]
   templates = (
-      repo_root / "docs" / "plans" / "PLAN_TEMPLATE.md",
-      repo_root / "monitor" / "docs" / "plans" / "PLAN_TEMPLATE.md",
+    repo_root / "docs" / "plans" / "PLAN_TEMPLATE.md",
+    repo_root / "monitor" / "docs" / "plans" / "PLAN_TEMPLATE.md",
   )
   required = (
-      "### Root Cause Analysis",
-      "### Target File & Line Numbers",
-      "### Minimally Invasive Fix",
-      "### Fix compression sequence",
-      "### Compression metric block",
-      "1 sentence explaining exactly why the bug is happening",
-      "[Path/to/file.py] around lines [X to Y]",
-      "Show the exact 1-5 lines of code you will change, add, or delete",
-      "Expansion Fix (mental draft)",
-      "Redundant Blocks Slated for Deletion",
-      "Target Modern Syntax/Refactoring Mechanism",
-      "Projected Net Line Impact",
-      "Zero-expansion",
+    "### Root Cause Analysis",
+    "### Target File & Line Numbers",
+    "### Minimally Invasive Fix",
+    "### Fix compression sequence",
+    "### Compression metric block",
+    "1 sentence explaining exactly why the bug is happening",
+    "[Path/to/file.py] around lines [X to Y]",
+    "Show the exact 1-5 lines of code you will change, add, or delete",
+    "Expansion Fix (mental draft)",
+    "Redundant Blocks Slated for Deletion",
+    "Target Modern Syntax/Refactoring Mechanism",
+    "Projected Net Line Impact",
+    "Zero-expansion",
   )
   for template in templates:
     text = template.read_text(encoding="utf-8")
@@ -604,21 +614,21 @@ def test_plan_template_includes_root_cause_surgical_fix_block():
 
 def test_triggered_rules_monitor_src_dispatches_surgical_bug_fix():
   src_rules = triggered_rules_for_paths(
-      ["HPCPerfStats/monitor/src/stats_buffer_rmq.c"],
+    ["HPCPerfStats/monitor/src/stats_buffer_rmq.c"],
   )
   assert "grok-surgical-bug-fix-mandate.mdc" in src_rules
   assert "refactor-dedup-priorities.mdc" in src_rules
   test_rules = triggered_rules_for_paths(
-      ["HPCPerfStats/monitor/tests/test_ib_sysfs_parsing.c"],
+    ["HPCPerfStats/monitor/tests/test_ib_sysfs_parsing.c"],
   )
   assert "grok-surgical-bug-fix-mandate.mdc" in test_rules
   assert "refactor-dedup-priorities.mdc" in test_rules
 
   body = _minimal_plan_markdown().replace(
-      "  - id: git-hooks-pre-close\n"
-      "    content: run commit and push hooks\n"
-      "    status: pending\n",
-      "",
+    "  - id: git-hooks-pre-close\n"
+    "    content: run commit and push hooks\n"
+    "    status: pending\n",
+    "",
   )
   issues = lib.plan_content_issues(body)
   assert any("git-hooks-pre-close todo" in item for item in issues)
@@ -626,23 +636,25 @@ def test_triggered_rules_monitor_src_dispatches_surgical_bug_fix():
 
 def test_is_live_plan_disk_path():
   assert lib.is_live_plan_disk_path("/ws/.cursor/plans/foo.plan.md")
-  assert not lib.is_live_plan_disk_path("HPCPerfStats/docs/plans/PLAN_TEMPLATE.md")
+  assert not lib.is_live_plan_disk_path(
+    "HPCPerfStats/docs/plans/PLAN_TEMPLATE.md"
+  )
 
 
 def test_plan_disk_sync_issues_requires_disk_write_with_create_plan():
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "CreatePlan",
-                      "input": {"plan": "plan body"},
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "CreatePlan",
+            "input": {"plan": "plan body"},
           },
+        ],
       },
+    },
   ]
   issues = lib.plan_disk_sync_issues(rows)
   assert any("Plan not written to disk" in item for item in issues)
@@ -650,110 +662,112 @@ def test_plan_disk_sync_issues_requires_disk_write_with_create_plan():
 
 def test_plan_disk_sync_issues_passes_when_disk_write_present():
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "CreatePlan",
-                      "input": {"plan": "plan body"},
-                  },
-                  {
-                      "type": "tool_use",
-                      "name": "Write",
-                      "input": {
-                          "path": ".cursor/plans/foo.plan.md",
-                          "contents": _minimal_plan_markdown(),
-                      },
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "CreatePlan",
+            "input": {"plan": "plan body"},
           },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "path": ".cursor/plans/foo.plan.md",
+              "contents": _minimal_plan_markdown(),
+            },
+          },
+        ],
       },
+    },
   ]
   assert lib.plan_disk_sync_issues(rows) == []
 
 
 def test_suggested_live_plan_disk_path_from_name_field():
   path = lib.suggested_live_plan_disk_path(
-      {"name": "startup stall follow-up"},
+    {"name": "startup stall follow-up"},
   )
   assert path == ".cursor/plans/startup-stall-follow-up.plan.md"
 
 
 def test_check_close_gate_blocks_create_plan_without_disk_even_without_plan_ready(
-    tmp_path,
+  tmp_path,
 ):
   transcript = tmp_path / "plan-silent.jsonl"
   transcript.write_text(
-      json.dumps(
-          {
-              "role": "user",
-              "message": {"content": [{"type": "text", "text": "create a plan"}]},
-          },
-      )
-      + "\n"
-      + json.dumps(
-          {
-              "role": "assistant",
-              "message": {
-                  "content": [
-                      {
-                          "type": "tool_use",
-                          "name": "CreatePlan",
-                          "input": {
-                              "name": "startup-stall-followup",
-                              "plan": "## Approach\n\nonly",
-                          },
-                      },
-                      {
-                          "type": "text",
-                          "text": "See the plan in the UI.",
-                      },
-                  ],
+    json.dumps(
+      {
+        "role": "user",
+        "message": {"content": [{"type": "text", "text": "create a plan"}]},
+      },
+    )
+    + "\n"
+    + json.dumps(
+      {
+        "role": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use",
+              "name": "CreatePlan",
+              "input": {
+                "name": "startup-stall-followup",
+                "plan": "## Approach\n\nonly",
               },
-          },
-      )
-      + "\n",
-      encoding="utf-8",
+            },
+            {
+              "type": "text",
+              "text": "See the plan in the UI.",
+            },
+          ],
+        },
+      },
+    )
+    + "\n",
+    encoding="utf-8",
   )
   payload = {
-      "status": "completed",
-      "loop_count": 0,
-      "transcript_path": str(transcript),
+    "status": "completed",
+    "loop_count": 0,
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-close-gate.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
   assert "followup_message" in data
   assert "Plan disk sync incomplete" in data["followup_message"]
-  assert ".cursor/plans/startup-stall-followup.plan.md" in data["followup_message"]
+  assert (
+    ".cursor/plans/startup-stall-followup.plan.md" in data["followup_message"]
+  )
 
 
 def test_check_create_plan_disk_sync_injects_same_turn_write(tmp_path):
   payload = {
-      "tool_name": "CreatePlan",
-      "tool_input": {
-          "name": "foo-bar",
-          "plan": "---\nname: foo-bar\n---\n\n## Approach\n",
-      },
-      "transcript_path": str(tmp_path / "empty.jsonl"),
+    "tool_name": "CreatePlan",
+    "tool_input": {
+      "name": "foo-bar",
+      "plan": "---\nname: foo-bar\n---\n\n## Approach\n",
+    },
+    "transcript_path": str(tmp_path / "empty.jsonl"),
   }
   (tmp_path / "empty.jsonl").write_text("", encoding="utf-8")
   script = HOOKS_DIR / "check-create-plan-disk-sync.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
@@ -764,7 +778,7 @@ def test_check_create_plan_disk_sync_injects_same_turn_write(tmp_path):
 
 def test_paths_from_plan_markdown_extracts_backtick_paths():
   text = (
-      "Touch [`hpcperfstats/dbload/lib/sync_timedb_day_close_manifest.py`](path)"
+    "Touch [`hpcperfstats/dbload/lib/sync_timedb_day_close_manifest.py`](path)"
   )
   paths = lib.paths_from_plan_markdown(text)
   assert "hpcperfstats/dbload/lib/sync_timedb_day_close_manifest.py" in paths
@@ -772,67 +786,69 @@ def test_paths_from_plan_markdown_extracts_backtick_paths():
 
 def test_plan_template_read_issues_requires_read_before_create_plan():
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "CreatePlan",
-                      "input": {"plan": _minimal_plan_markdown()},
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "CreatePlan",
+            "input": {"plan": _minimal_plan_markdown()},
           },
+        ],
       },
+    },
   ]
   assert lib.plan_template_read_issues(rows) == [
-      "PLAN_TEMPLATE.md not read via Read tool",
+    "PLAN_TEMPLATE.md not read via Read tool",
   ]
 
 
 def test_looks_like_plan_close_when_dispatch_present():
   assert lib.looks_like_plan_close(
-      "## Agent rule dispatch\n\nRead: plan-creation-contract.mdc\n",
-      had_plan=True,
+    "## Agent rule dispatch\n\nRead: plan-creation-contract.mdc\n",
+    had_plan=True,
   )
 
 
 def test_close_gate_issues_flags_plan_content_and_reads():
   plan_md = _minimal_plan_markdown()
   assistant_text = (
-      "## Agent rule dispatch\n\n"
-      "Read: plan-creation-contract.mdc\n"
-      "## Final code review (senior engineer pass)\n\nok\n"
-      "## Post-implementation review\n\n"
-      "### Why it works\n\nok\n"
-      "### Edge cases\n\n- a\n- b\n- c\n"
-      "### Convention check\n\nok\n"
-      "\n\nPlan is ready for your review."
+    "## Agent rule dispatch\n\n"
+    "Read: plan-creation-contract.mdc\n"
+    "## Final code review (senior engineer pass)\n\nok\n"
+    "## Post-implementation review\n\n"
+    "### Why it works\n\nok\n"
+    "### Edge cases\n\n- a\n- b\n- c\n"
+    "### Convention check\n\nok\n"
+    "\n\nPlan is ready for your review."
   )
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "CreatePlan",
-                      "input": {"plan": plan_md},
-                  },
-                  {
-                      "type": "tool_use",
-                      "name": "Write",
-                      "input": {
-                          "path": ".cursor/plans/test.plan.md",
-                          "contents": plan_md,
-                      },
-                  },
-                  {"type": "text", "text": assistant_text},
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "CreatePlan",
+            "input": {"plan": plan_md},
           },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "path": ".cursor/plans/test.plan.md",
+              "contents": plan_md,
+            },
+          },
+          {"type": "text", "text": assistant_text},
+        ],
       },
+    },
   ]
-  issues = lib.close_gate_issues(assistant_text=assistant_text, transcript_rows=rows)
+  issues = lib.close_gate_issues(
+    assistant_text=assistant_text, transcript_rows=rows
+  )
   assert "PLAN_TEMPLATE.md not read via Read tool" in issues
   assert "Rule not read: plan-creation-contract.mdc" in issues
   assert "Rule not read: plan-live-disk-sync.mdc" in issues
@@ -846,30 +862,30 @@ def test_plan_authority_content_issues_validates_disk_not_create_plan(tmp_path):
   plan_path.write_text("## Approach\n\nonly approach\n", encoding="utf-8")
   complete_create_plan = _minimal_plan_markdown()
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "CreatePlan",
-                      "input": {"plan": complete_create_plan},
-                  },
-                  {
-                      "type": "tool_use",
-                      "name": "Write",
-                      "input": {
-                          "path": str(plan_path),
-                          "contents": "## Approach\n\nonly approach\n",
-                      },
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "CreatePlan",
+            "input": {"plan": complete_create_plan},
           },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "path": str(plan_path),
+              "contents": "## Approach\n\nonly approach\n",
+            },
+          },
+        ],
       },
+    },
   ]
   issues = lib.plan_authority_content_issues(
-      rows,
-      workspace_roots=[str(workspace)],
+    rows,
+    workspace_roots=[str(workspace)],
   )
   assert any("Plan disk file" in item for item in issues)
   assert any("Operator discovery" in item for item in issues)
@@ -879,26 +895,26 @@ def test_plan_authority_content_issues_validates_disk_not_create_plan(tmp_path):
 def test_plan_authority_content_issues_passes_complete_disk_write():
   plan_md = _minimal_plan_markdown()
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "CreatePlan",
-                      "input": {"plan": "## Approach\n\nstub"},
-                  },
-                  {
-                      "type": "tool_use",
-                      "name": "Write",
-                      "input": {
-                          "path": ".cursor/plans/test.plan.md",
-                          "contents": plan_md,
-                      },
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "CreatePlan",
+            "input": {"plan": "## Approach\n\nstub"},
           },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "path": ".cursor/plans/test.plan.md",
+              "contents": plan_md,
+            },
+          },
+        ],
       },
+    },
   ]
   assert lib.plan_authority_content_issues(rows) == []
 
@@ -910,52 +926,52 @@ def test_extract_plan_authority_markdown_prefers_filesystem(tmp_path):
   on_disk = "## Plan disk file\n\nfrom filesystem\n"
   plan_path.write_text(on_disk, encoding="utf-8")
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "Write",
-                      "input": {
-                          "path": str(plan_path),
-                          "contents": "## Approach\n\ntranscript only\n",
-                      },
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "path": str(plan_path),
+              "contents": "## Approach\n\ntranscript only\n",
+            },
           },
+        ],
       },
+    },
   ]
   assert "from filesystem" in lib.extract_plan_authority_markdown(
-      rows,
-      workspace_roots=[str(workspace)],
+    rows,
+    workspace_roots=[str(workspace)],
   )
 
 
 def _operator_in_progress_plan_markdown() -> str:
   return _minimal_plan_markdown().replace(
-      "## Operator discovery\n\n**Status:** `not needed`\n",
-      (
-          "## Operator discovery\n\n"
-          "**Status:** `in progress`\n\n"
-          "### Completed findings\n\n"
-          "| # | Service | Asked for | Found | Date |\n"
-          "|---|---------|-----------|-------|------|\n\n"
-          "### Pending commands\n\n"
-          "#### pipeline — paste manifest snapshot\n\n"
-          "```bash\n"
-          "docker compose exec pipeline su hpcperfstats -c 'python3 -c \""
-          "from hpcperfstats.dbload.lib import conf_parser as cfg; "
-          "print(cfg.get_archive_dir_path())\"'\n"
-          "```\n"
-      ),
+    "## Operator discovery\n\n**Status:** `not needed`\n",
+    (
+      "## Operator discovery\n\n"
+      "**Status:** `in progress`\n\n"
+      "### Completed findings\n\n"
+      "| # | Service | Asked for | Found | Date |\n"
+      "|---|---------|-----------|-------|------|\n\n"
+      "### Pending commands\n\n"
+      "#### pipeline — paste manifest snapshot\n\n"
+      "```bash\n"
+      "docker compose exec pipeline su hpcperfstats -c 'python3 -c \""
+      "from hpcperfstats.dbload.lib import conf_parser as cfg; "
+      "print(cfg.get_archive_dir_path())\"'\n"
+      "```\n"
+    ),
   )
 
 
 def test_operator_discovery_issues_requires_pending_shape_when_in_progress():
   bad = _minimal_plan_markdown().replace(
-      "## Operator discovery\n\n**Status:** `not needed`\n",
-      "## Operator discovery\n\n**Status:** `in progress`\n",
+    "## Operator discovery\n\n**Status:** `not needed`\n",
+    "## Operator discovery\n\n**Status:** `in progress`\n",
   )
   issues = lib.operator_discovery_issues(bad)
   assert any("Pending commands" in item for item in issues)
@@ -963,48 +979,50 @@ def test_operator_discovery_issues_requires_pending_shape_when_in_progress():
 
 
 def test_operator_discovery_issues_accepts_valid_pending_commands():
-  assert lib.operator_discovery_issues(_operator_in_progress_plan_markdown()) == []
+  assert (
+    lib.operator_discovery_issues(_operator_in_progress_plan_markdown()) == []
+  )
 
 
 def test_operator_discovery_accepts_compose_flags_before_subcommand():
   plan = _minimal_plan_markdown().replace(
-      "## Operator discovery\n\n**Status:** `not needed`\n",
-      (
-          "## Operator discovery\n\n"
-          "**Status:** `in progress`\n\n"
-          "### Completed findings\n\n"
-          "| # | Service | Asked for | Found | Date |\n"
-          "|---|---------|-----------|-------|------|\n\n"
-          "### Pending commands\n\n"
-          "#### pipeline — filtered recover logs\n\n"
-          "```bash\n"
-          "docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | "
-          "grep -E 'pool_recover' | tail -40\n"
-          "```\n"
-      ),
+    "## Operator discovery\n\n**Status:** `not needed`\n",
+    (
+      "## Operator discovery\n\n"
+      "**Status:** `in progress`\n\n"
+      "### Completed findings\n\n"
+      "| # | Service | Asked for | Found | Date |\n"
+      "|---|---------|-----------|-------|------|\n\n"
+      "### Pending commands\n\n"
+      "#### pipeline — filtered recover logs\n\n"
+      "```bash\n"
+      "docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | "
+      "grep -E 'pool_recover' | tail -40\n"
+      "```\n"
+    ),
   )
   assert lib.operator_discovery_issues(plan) == []
 
 
 def test_operator_discovery_rejects_multi_pipeline_blocks():
   plan = _minimal_plan_markdown().replace(
-      "## Operator discovery\n\n**Status:** `not needed`\n",
-      (
-          "## Operator discovery\n\n"
-          "**Status:** `in progress`\n\n"
-          "### Completed findings\n\n"
-          "| # | Service | Asked for | Found | Date |\n"
-          "|---|---------|-----------|-------|------|\n\n"
-          "### Pending commands\n\n"
-          "#### pipeline — knobs\n\n"
-          "```bash\n"
-          "docker compose exec pipeline su hpcperfstats -c 'echo knobs'\n"
-          "```\n\n"
-          "#### pipeline — logs\n\n"
-          "```bash\n"
-          "docker compose logs pipeline 2>&1 | grep -E 'stall' | tail -20\n"
-          "```\n"
-      ),
+    "## Operator discovery\n\n**Status:** `not needed`\n",
+    (
+      "## Operator discovery\n\n"
+      "**Status:** `in progress`\n\n"
+      "### Completed findings\n\n"
+      "| # | Service | Asked for | Found | Date |\n"
+      "|---|---------|-----------|-------|------|\n\n"
+      "### Pending commands\n\n"
+      "#### pipeline — knobs\n\n"
+      "```bash\n"
+      "docker compose exec pipeline su hpcperfstats -c 'echo knobs'\n"
+      "```\n\n"
+      "#### pipeline — logs\n\n"
+      "```bash\n"
+      "docker compose logs pipeline 2>&1 | grep -E 'stall' | tail -20\n"
+      "```\n"
+    ),
   )
   issues = lib.operator_discovery_issues(plan)
   assert any("appears 2 times" in item for item in issues)
@@ -1012,20 +1030,20 @@ def test_operator_discovery_rejects_multi_pipeline_blocks():
 
 def test_operator_discovery_rejects_host_cd_before_compose():
   plan = _minimal_plan_markdown().replace(
-      "## Operator discovery\n\n**Status:** `not needed`\n",
-      (
-          "## Operator discovery\n\n"
-          "**Status:** `in progress`\n\n"
-          "### Completed findings\n\n"
-          "| # | Service | Asked for | Found | Date |\n"
-          "|---|---------|-----------|-------|------|\n\n"
-          "### Pending commands\n\n"
-          "#### pipeline — bad host cd\n\n"
-          "```bash\n"
-          "cd HPCPerfStats\n"
-          "docker compose logs pipeline 2>&1 | grep -E 'stall' | tail -20\n"
-          "```\n"
-      ),
+    "## Operator discovery\n\n**Status:** `not needed`\n",
+    (
+      "## Operator discovery\n\n"
+      "**Status:** `in progress`\n\n"
+      "### Completed findings\n\n"
+      "| # | Service | Asked for | Found | Date |\n"
+      "|---|---------|-----------|-------|------|\n\n"
+      "### Pending commands\n\n"
+      "#### pipeline — bad host cd\n\n"
+      "```bash\n"
+      "cd HPCPerfStats\n"
+      "docker compose logs pipeline 2>&1 | grep -E 'stall' | tail -20\n"
+      "```\n"
+    ),
   )
   issues = lib.operator_discovery_issues(plan)
   assert any("host cd" in item for item in issues)
@@ -1033,19 +1051,19 @@ def test_operator_discovery_rejects_host_cd_before_compose():
 
 def test_operator_discovery_rejects_tail_before_grep_on_logs():
   plan = _minimal_plan_markdown().replace(
-      "## Operator discovery\n\n**Status:** `not needed`\n",
-      (
-          "## Operator discovery\n\n"
-          "**Status:** `in progress`\n\n"
-          "### Completed findings\n\n"
-          "| # | Service | Asked for | Found | Date |\n"
-          "|---|---------|-----------|-------|------|\n\n"
-          "### Pending commands\n\n"
-          "#### pipeline — bad --tail\n\n"
-          "```bash\n"
-          "docker compose logs pipeline --tail=500 2>&1 | grep -E 'stall'\n"
-          "```\n"
-      ),
+    "## Operator discovery\n\n**Status:** `not needed`\n",
+    (
+      "## Operator discovery\n\n"
+      "**Status:** `in progress`\n\n"
+      "### Completed findings\n\n"
+      "| # | Service | Asked for | Found | Date |\n"
+      "|---|---------|-----------|-------|------|\n\n"
+      "### Pending commands\n\n"
+      "#### pipeline — bad --tail\n\n"
+      "```bash\n"
+      "docker compose logs pipeline --tail=500 2>&1 | grep -E 'stall'\n"
+      "```\n"
+    ),
   )
   issues = lib.operator_discovery_issues(plan)
   assert any("--tail/--since" in item for item in issues)
@@ -1053,19 +1071,19 @@ def test_operator_discovery_rejects_tail_before_grep_on_logs():
 
 def test_operator_discovery_rejects_unfiltered_compose_logs():
   plan = _minimal_plan_markdown().replace(
-      "## Operator discovery\n\n**Status:** `not needed`\n",
-      (
-          "## Operator discovery\n\n"
-          "**Status:** `in progress`\n\n"
-          "### Completed findings\n\n"
-          "| # | Service | Asked for | Found | Date |\n"
-          "|---|---------|-----------|-------|------|\n\n"
-          "### Pending commands\n\n"
-          "#### pipeline — firehose\n\n"
-          "```bash\n"
-          "docker compose logs pipeline\n"
-          "```\n"
-      ),
+    "## Operator discovery\n\n**Status:** `not needed`\n",
+    (
+      "## Operator discovery\n\n"
+      "**Status:** `in progress`\n\n"
+      "### Completed findings\n\n"
+      "| # | Service | Asked for | Found | Date |\n"
+      "|---|---------|-----------|-------|------|\n\n"
+      "### Pending commands\n\n"
+      "#### pipeline — firehose\n\n"
+      "```bash\n"
+      "docker compose logs pipeline\n"
+      "```\n"
+    ),
   )
   issues = lib.operator_discovery_issues(plan)
   assert any("unfiltered firehose" in item for item in issues)
@@ -1073,21 +1091,21 @@ def test_operator_discovery_rejects_unfiltered_compose_logs():
 
 def test_operator_discovery_rejects_heredoc_python_through_exec():
   plan = _minimal_plan_markdown().replace(
-      "## Operator discovery\n\n**Status:** `not needed`\n",
-      (
-          "## Operator discovery\n\n"
-          "**Status:** `in progress`\n\n"
-          "### Completed findings\n\n"
-          "| # | Service | Asked for | Found | Date |\n"
-          "|---|---------|-----------|-------|------|\n\n"
-          "### Pending commands\n\n"
-          "#### pipeline — heredoc anti-pattern\n\n"
-          "```bash\n"
-          "docker compose exec pipeline su hpcperfstats -c 'python3 - <<EOF\n"
-          "print(1)\n"
-          "EOF'\n"
-          "```\n"
-      ),
+    "## Operator discovery\n\n**Status:** `not needed`\n",
+    (
+      "## Operator discovery\n\n"
+      "**Status:** `in progress`\n\n"
+      "### Completed findings\n\n"
+      "| # | Service | Asked for | Found | Date |\n"
+      "|---|---------|-----------|-------|------|\n\n"
+      "### Pending commands\n\n"
+      "#### pipeline — heredoc anti-pattern\n\n"
+      "```bash\n"
+      "docker compose exec pipeline su hpcperfstats -c 'python3 - <<EOF\n"
+      "print(1)\n"
+      "EOF'\n"
+      "```\n"
+    ),
   )
   issues = lib.operator_discovery_issues(plan)
   assert any("heredoc" in item for item in issues)
@@ -1095,20 +1113,20 @@ def test_operator_discovery_rejects_heredoc_python_through_exec():
 
 def test_operator_discovery_rejects_hardcoded_hpcperfstats_without_conf_parser():
   plan = _minimal_plan_markdown().replace(
-      "## Operator discovery\n\n**Status:** `not needed`\n",
-      (
-          "## Operator discovery\n\n"
-          "**Status:** `in progress`\n\n"
-          "### Completed findings\n\n"
-          "| # | Service | Asked for | Found | Date |\n"
-          "|---|---------|-----------|-------|------|\n\n"
-          "### Pending commands\n\n"
-          "#### pipeline — hardcoded archive path\n\n"
-          "```bash\n"
-          "docker compose exec pipeline su hpcperfstats -c "
-          "'ls /hpcperfstats/archive/i615-104/1780790218'\n"
-          "```\n"
-      ),
+    "## Operator discovery\n\n**Status:** `not needed`\n",
+    (
+      "## Operator discovery\n\n"
+      "**Status:** `in progress`\n\n"
+      "### Completed findings\n\n"
+      "| # | Service | Asked for | Found | Date |\n"
+      "|---|---------|-----------|-------|------|\n\n"
+      "### Pending commands\n\n"
+      "#### pipeline — hardcoded archive path\n\n"
+      "```bash\n"
+      "docker compose exec pipeline su hpcperfstats -c "
+      "'ls /hpcperfstats/archive/i615-104/1780790218'\n"
+      "```\n"
+    ),
   )
   issues = lib.operator_discovery_issues(plan)
   assert any("hardcode" in item for item in issues)
@@ -1116,22 +1134,22 @@ def test_operator_discovery_rejects_hardcoded_hpcperfstats_without_conf_parser()
 
 def test_operator_discovery_rejects_raw_configparser_archive_dir():
   plan = _minimal_plan_markdown().replace(
-      "## Operator discovery\n\n**Status:** `not needed`\n",
-      (
-          "## Operator discovery\n\n"
-          "**Status:** `in progress`\n\n"
-          "### Completed findings\n\n"
-          "| # | Service | Asked for | Found | Date |\n"
-          "|---|---------|-----------|-------|------|\n\n"
-          "### Pending commands\n\n"
-          "#### pipeline — raw ConfigParser\n\n"
-          "```bash\n"
-          "docker compose exec pipeline su hpcperfstats -c 'python3 -c \""
-          "from configparser import ConfigParser; c=ConfigParser(); "
-          "c.read('/home/hpcperfstats/hpcperfstats.ini'); "
-          "print(c['PIPELINE'].get('archive_dir'))\"'\n"
-          "```\n"
-      ),
+    "## Operator discovery\n\n**Status:** `not needed`\n",
+    (
+      "## Operator discovery\n\n"
+      "**Status:** `in progress`\n\n"
+      "### Completed findings\n\n"
+      "| # | Service | Asked for | Found | Date |\n"
+      "|---|---------|-----------|-------|------|\n\n"
+      "### Pending commands\n\n"
+      "#### pipeline — raw ConfigParser\n\n"
+      "```bash\n"
+      "docker compose exec pipeline su hpcperfstats -c 'python3 -c \""
+      "from configparser import ConfigParser; c=ConfigParser(); "
+      "c.read('/home/hpcperfstats/hpcperfstats.ini'); "
+      "print(c['PIPELINE'].get('archive_dir'))\"'\n"
+      "```\n"
+    ),
   )
   issues = lib.operator_discovery_issues(plan)
   assert any("conf_parser" in item for item in issues)
@@ -1139,31 +1157,31 @@ def test_operator_discovery_rejects_raw_configparser_archive_dir():
 
 def test_operator_discovery_accepts_conf_parser_archive_dir():
   plan = _minimal_plan_markdown().replace(
-      "## Operator discovery\n\n**Status:** `not needed`\n",
-      (
-          "## Operator discovery\n\n"
-          "**Status:** `in progress`\n\n"
-          "### Completed findings\n\n"
-          "| # | Service | Asked for | Found | Date |\n"
-          "|---|---------|-----------|-------|------|\n\n"
-          "### Pending commands\n\n"
-          "#### pipeline — conf_parser archive\n\n"
-          "```bash\n"
-          "docker compose exec pipeline su hpcperfstats -c 'python3 -c \""
-          "from hpcperfstats.dbload.lib import conf_parser as cfg; "
-          "import os; "
-          "p=os.path.join(cfg.get_archive_dir_path(), 'host', '1'); "
-          "print(p)\"'\n"
-          "```\n"
-      ),
+    "## Operator discovery\n\n**Status:** `not needed`\n",
+    (
+      "## Operator discovery\n\n"
+      "**Status:** `in progress`\n\n"
+      "### Completed findings\n\n"
+      "| # | Service | Asked for | Found | Date |\n"
+      "|---|---------|-----------|-------|------|\n\n"
+      "### Pending commands\n\n"
+      "#### pipeline — conf_parser archive\n\n"
+      "```bash\n"
+      "docker compose exec pipeline su hpcperfstats -c 'python3 -c \""
+      "from hpcperfstats.dbload.lib import conf_parser as cfg; "
+      "import os; "
+      "p=os.path.join(cfg.get_archive_dir_path(), 'host', '1'); "
+      "print(p)\"'\n"
+      "```\n"
+    ),
   )
   assert lib.operator_discovery_issues(plan) == []
 
 
 def test_reconstruct_live_plan_markdown_from_write():
   md = lib.reconstruct_live_plan_markdown_from_tool_input(
-      "Write",
-      {"contents": "# plan\n"},
+    "Write",
+    {"contents": "# plan\n"},
   )
   assert md == "# plan\n"
 
@@ -1172,8 +1190,8 @@ def test_reconstruct_live_plan_markdown_from_str_replace(tmp_path):
   path = tmp_path / "x.plan.md"
   path.write_text("hello OLD world\n", encoding="utf-8")
   md = lib.reconstruct_live_plan_markdown_from_tool_input(
-      "StrReplace",
-      {"path": str(path), "old_string": "OLD", "new_string": "NEW"},
+    "StrReplace",
+    {"path": str(path), "old_string": "OLD", "new_string": "NEW"},
   )
   assert md == "hello NEW world\n"
 
@@ -1183,32 +1201,32 @@ def test_check_live_plan_operator_discovery_denies_hardcoded_path(tmp_path):
   plans.mkdir(parents=True)
   plan_path = plans / "bad.plan.md"
   bad = _minimal_plan_markdown().replace(
-      "## Operator discovery\n\n**Status:** `not needed`\n",
-      (
-          "## Operator discovery\n\n"
-          "**Status:** `in progress`\n\n"
-          "### Completed findings\n\n"
-          "| # | Service | Asked for | Found | Date |\n"
-          "|---|---------|-----------|-------|------|\n\n"
-          "### Pending commands\n\n"
-          "#### pipeline — hardcoded\n\n"
-          "```bash\n"
-          "docker compose exec pipeline su hpcperfstats -c "
-          "'ls /hpcperfstats/archive'\n"
-          "```\n"
-      ),
+    "## Operator discovery\n\n**Status:** `not needed`\n",
+    (
+      "## Operator discovery\n\n"
+      "**Status:** `in progress`\n\n"
+      "### Completed findings\n\n"
+      "| # | Service | Asked for | Found | Date |\n"
+      "|---|---------|-----------|-------|------|\n\n"
+      "### Pending commands\n\n"
+      "#### pipeline — hardcoded\n\n"
+      "```bash\n"
+      "docker compose exec pipeline su hpcperfstats -c "
+      "'ls /hpcperfstats/archive'\n"
+      "```\n"
+    ),
   )
   payload = {
-      "tool_name": "Write",
-      "tool_input": {"path": str(plan_path), "contents": bad},
+    "tool_name": "Write",
+    "tool_input": {"path": str(plan_path), "contents": bad},
   }
   script = HOOKS_DIR / "check-live-plan-operator-discovery.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
@@ -1221,107 +1239,109 @@ def test_check_live_plan_operator_discovery_allows_valid_pending(tmp_path):
   plans.mkdir(parents=True)
   plan_path = plans / "ok.plan.md"
   compose_path = (
-      "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
-      "compose-operator-terminal-commands.mdc"
+    "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+    "compose-operator-terminal-commands.mdc"
   )
   lessons_path = (
-      "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
-      "operator-command-lessons-learned.mdc"
+    "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+    "operator-command-lessons-learned.mdc"
   )
   transcript = tmp_path / "op-allow.jsonl"
   transcript.write_text(
-      json.dumps(
-          {
-              "role": "user",
-              "message": {"content": [{"type": "text", "text": "plan"}]},
-          },
-      )
-      + "\n"
-      + json.dumps(
-          {
-              "role": "assistant",
-              "message": {
-                  "content": [
-                      {
-                          "type": "tool_use",
-                          "name": "Read",
-                          "input": {"path": compose_path},
-                      },
-                      {
-                          "type": "tool_use",
-                          "name": "Read",
-                          "input": {"path": lessons_path},
-                      },
-                  ],
-              },
-          },
-      )
-      + "\n",
-      encoding="utf-8",
+    json.dumps(
+      {
+        "role": "user",
+        "message": {"content": [{"type": "text", "text": "plan"}]},
+      },
+    )
+    + "\n"
+    + json.dumps(
+      {
+        "role": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use",
+              "name": "Read",
+              "input": {"path": compose_path},
+            },
+            {
+              "type": "tool_use",
+              "name": "Read",
+              "input": {"path": lessons_path},
+            },
+          ],
+        },
+      },
+    )
+    + "\n",
+    encoding="utf-8",
   )
   payload = {
-      "tool_name": "Write",
-      "tool_input": {
-          "path": str(plan_path),
-          "contents": _operator_in_progress_plan_markdown(),
-      },
-      "transcript_path": str(transcript),
+    "tool_name": "Write",
+    "tool_input": {
+      "path": str(plan_path),
+      "contents": _operator_in_progress_plan_markdown(),
+    },
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-live-plan-operator-discovery.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
   assert data.get("permission") == "allow"
 
 
-
 def test_operator_discovery_issues_flags_compose_blocks_outside_section():
   plan = _minimal_plan_markdown() + (
-      "\n## Approach\n\n"
-      "```bash\n"
-      "docker compose exec pipeline bash -lc 'echo hi'\n"
-      "```\n"
+    "\n## Approach\n\n"
+    "```bash\n"
+    "docker compose exec pipeline bash -lc 'echo hi'\n"
+    "```\n"
   )
   issues = lib.operator_discovery_issues(plan)
-  assert any("Operator discovery" in item or "Operator commands" in item for item in issues)
+  assert any(
+    "Operator discovery" in item or "Operator commands" in item
+    for item in issues
+  )
 
 
 def test_turn_create_plan_pending_disk_write():
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "CreatePlan",
-                      "input": {"plan": "x"},
-                  },
-                  {
-                      "type": "tool_use",
-                      "name": "Shell",
-                      "input": {"command": "echo hi"},
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "CreatePlan",
+            "input": {"plan": "x"},
           },
+          {
+            "type": "tool_use",
+            "name": "Shell",
+            "input": {"command": "echo hi"},
+          },
+        ],
       },
+    },
   ]
   assert lib.turn_create_plan_pending_disk_write(rows) is True
   rows[0]["message"]["content"].append(
-      {
-          "type": "tool_use",
-          "name": "Write",
-          "input": {
-              "path": ".cursor/plans/foo.plan.md",
-              "contents": _minimal_plan_markdown(),
-          },
+    {
+      "type": "tool_use",
+      "name": "Write",
+      "input": {
+        "path": ".cursor/plans/foo.plan.md",
+        "contents": _minimal_plan_markdown(),
       },
+    },
   )
   assert lib.turn_create_plan_pending_disk_write(rows) is False
 
@@ -1329,44 +1349,44 @@ def test_turn_create_plan_pending_disk_write():
 def test_turn_create_plan_pending_false_when_disk_before_createplan():
   """Disk-first: Write before CreatePlan clears pending."""
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "Write",
-                      "input": {
-                          "path": ".cursor/plans/foo.plan.md",
-                          "contents": _minimal_plan_markdown(),
-                      },
-                  },
-                  {
-                      "type": "tool_use",
-                      "name": "CreatePlan",
-                      "input": {"plan": "x", "name": "foo"},
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "path": ".cursor/plans/foo.plan.md",
+              "contents": _minimal_plan_markdown(),
+            },
           },
+          {
+            "type": "tool_use",
+            "name": "CreatePlan",
+            "input": {"plan": "x", "name": "foo"},
+          },
+        ],
       },
+    },
   ]
   assert lib.turn_create_plan_pending_disk_write(rows) is False
 
 
 def test_plan_authoring_precreate_read_issues_requires_reads():
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "CreatePlan",
-                      "input": {"plan": "x"},
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "CreatePlan",
+            "input": {"plan": "x"},
           },
+        ],
       },
+    },
   ]
   issues = lib.plan_authoring_precreate_read_issues(rows)
   assert any("compose-operator-terminal-commands" in item for item in issues)
@@ -1376,35 +1396,35 @@ def test_plan_authoring_precreate_read_issues_requires_reads():
 def test_check_pre_create_plan_reads_denies_without_reads(tmp_path):
   transcript = tmp_path / "pre-create.jsonl"
   transcript.write_text(
-      json.dumps(
-          {
-              "role": "assistant",
-              "message": {
-                  "content": [
-                      {
-                          "type": "tool_use",
-                          "name": "Read",
-                          "input": {"path": "unrelated.txt"},
-                      },
-                  ],
-              },
-          },
-      )
-      + "\n",
-      encoding="utf-8",
+    json.dumps(
+      {
+        "role": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use",
+              "name": "Read",
+              "input": {"path": "unrelated.txt"},
+            },
+          ],
+        },
+      },
+    )
+    + "\n",
+    encoding="utf-8",
   )
   payload = {
-      "tool_name": "CreatePlan",
-      "tool_input": {"name": "foo"},
-      "transcript_path": str(transcript),
+    "tool_name": "CreatePlan",
+    "tool_input": {"name": "foo"},
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-pre-create-plan-reads.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
@@ -1412,43 +1432,45 @@ def test_check_pre_create_plan_reads_denies_without_reads(tmp_path):
   assert "compose-operator-terminal-commands" in data.get("agent_message", "")
 
 
-def test_check_pre_create_plan_reads_allows_live_plan_write_after_readfile_reads(tmp_path):
+def test_check_pre_create_plan_reads_allows_live_plan_write_after_readfile_reads(
+  tmp_path,
+):
   base = "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
   content = [
-      {
-          "type": "tool_use",
-          "name": "ReadFile",
-          "input": {"path": f"{base}{name}"},
-      }
-      for name in lib.PLAN_AUTHORING_REQUIRED_MDC
+    {
+      "type": "tool_use",
+      "name": "ReadFile",
+      "input": {"path": f"{base}{name}"},
+    }
+    for name in lib.PLAN_AUTHORING_REQUIRED_MDC
   ]
   content.append(
-      {
-          "type": "tool_use",
-          "name": "ReadFile",
-          "input": {"path": "/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md"},
-      },
+    {
+      "type": "tool_use",
+      "name": "ReadFile",
+      "input": {"path": "/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md"},
+    },
   )
   transcript = tmp_path / "pre-create-readfile.jsonl"
   transcript.write_text(
-      json.dumps({"role": "assistant", "message": {"content": content}}) + "\n",
-      encoding="utf-8",
+    json.dumps({"role": "assistant", "message": {"content": content}}) + "\n",
+    encoding="utf-8",
   )
   payload = {
-      "tool_name": "Write",
-      "tool_input": {
-          "path": ".cursor/plans/foo.plan.md",
-          "contents": _minimal_plan_markdown(),
-      },
-      "transcript_path": str(transcript),
+    "tool_name": "Write",
+    "tool_input": {
+      "path": ".cursor/plans/foo.plan.md",
+      "contents": _minimal_plan_markdown(),
+    },
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-pre-create-plan-reads.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
@@ -1463,8 +1485,8 @@ def _one_user_row_transcript(tmp_path, name="lag.jsonl"):
   """
   transcript = tmp_path / name
   transcript.write_text(
-      json.dumps({"role": "user", "message": {"content": "do the thing"}}) + "\n",
-      encoding="utf-8",
+    json.dumps({"role": "user", "message": {"content": "do the thing"}}) + "\n",
+    encoding="utf-8",
   )
   return transcript
 
@@ -1472,9 +1494,11 @@ def _one_user_row_transcript(tmp_path, name="lag.jsonl"):
 def test_record_rule_read_to_ledger_writes_current_turn_entry(tmp_path):
   transcript = _one_user_row_transcript(tmp_path)
   wrote = lib.record_rule_read_to_ledger(
-      str(transcript),
-      "Read",
-      {"path": "/repo/HPCPerfStats/hpcperfstats/cursor-rules/plan-creation-contract.mdc"},
+    str(transcript),
+    "Read",
+    {
+      "path": "/repo/HPCPerfStats/hpcperfstats/cursor-rules/plan-creation-contract.mdc"
+    },
   )
   assert wrote is True
   full_rows = lib.parse_transcript_lines(str(transcript))
@@ -1485,9 +1509,9 @@ def test_record_rule_read_to_ledger_writes_current_turn_entry(tmp_path):
 def test_record_rule_read_to_ledger_ignores_unrelated_paths(tmp_path):
   transcript = _one_user_row_transcript(tmp_path)
   wrote = lib.record_rule_read_to_ledger(
-      str(transcript),
-      "Read",
-      {"path": "/repo/HPCPerfStats/hpcperfstats/dbload/sync_timedb.py"},
+    str(transcript),
+    "Read",
+    {"path": "/repo/HPCPerfStats/hpcperfstats/dbload/sync_timedb.py"},
   )
   assert wrote is False
   ledger = lib.rule_read_ledger_path(str(transcript))
@@ -1496,13 +1520,18 @@ def test_record_rule_read_to_ledger_ignores_unrelated_paths(tmp_path):
 
 def test_record_rule_read_to_ledger_accepts_readfile_and_template(tmp_path):
   transcript = _one_user_row_transcript(tmp_path)
-  assert lib.record_rule_read_to_ledger(
+  assert (
+    lib.record_rule_read_to_ledger(
       str(transcript),
       "ReadFile",
       {"path": "/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md"},
-  ) is True
+    )
+    is True
+  )
   full_rows = lib.parse_transcript_lines(str(transcript))
-  assert lib.ledger_has_template_read_this_turn(str(transcript), full_rows) is True
+  assert (
+    lib.ledger_has_template_read_this_turn(str(transcript), full_rows) is True
+  )
 
 
 def test_ledger_reads_scoped_to_current_turn(tmp_path):
@@ -1510,28 +1539,30 @@ def test_ledger_reads_scoped_to_current_turn(tmp_path):
   ledger = lib.rule_read_ledger_path(str(transcript))
   # A stale entry from a prior turn (different user-row count) must not count.
   ledger.write_text(
-      json.dumps(
-          {
-              "basename": "plan-live-disk-sync.mdc",
-              "template": False,
-              "partial": False,
-              "user_rows": 99,
-          },
-      )
-      + "\n",
-      encoding="utf-8",
+    json.dumps(
+      {
+        "basename": "plan-live-disk-sync.mdc",
+        "template": False,
+        "partial": False,
+        "user_rows": 99,
+      },
+    )
+    + "\n",
+    encoding="utf-8",
   )
   full_rows = lib.parse_transcript_lines(str(transcript))
-  assert lib.ledger_read_basenames_this_turn(str(transcript), full_rows) == set()
+  assert (
+    lib.ledger_read_basenames_this_turn(str(transcript), full_rows) == set()
+  )
 
 
 def test_plan_authoring_precreate_read_issues_satisfied_by_ledger_only():
   rows = [{"role": "user", "message": {"content": "go"}}]
-  extra = {name for name in lib.PLAN_AUTHORING_REQUIRED_MDC}
+  extra = set(lib.PLAN_AUTHORING_REQUIRED_MDC)
   issues = lib.plan_authoring_precreate_read_issues(
-      rows,
-      extra_read_basenames=extra,
-      extra_has_template=True,
+    rows,
+    extra_read_basenames=extra,
+    extra_has_template=True,
   )
   assert issues == []
 
@@ -1539,9 +1570,9 @@ def test_plan_authoring_precreate_read_issues_satisfied_by_ledger_only():
 def test_full_file_rule_read_issues_satisfied_by_ledger_extra():
   rows = [{"role": "user", "message": {"content": "go"}}]
   issues = lib.full_file_rule_read_issues(
-      rows,
-      lib.OPERATOR_FULL_READ_REQUIRED_MDC,
-      extra_full_file_basenames=set(lib.OPERATOR_FULL_READ_REQUIRED_MDC),
+    rows,
+    lib.OPERATOR_FULL_READ_REQUIRED_MDC,
+    extra_full_file_basenames=set(lib.OPERATOR_FULL_READ_REQUIRED_MDC),
   )
   assert issues == []
 
@@ -1549,29 +1580,32 @@ def test_full_file_rule_read_issues_satisfied_by_ledger_extra():
 def test_record_rule_reads_hook_allows_and_records(tmp_path):
   transcript = _one_user_row_transcript(tmp_path, "recorder.jsonl")
   payload = {
-      "tool_name": "Read",
-      "tool_input": {
-          "path": "/repo/HPCPerfStats/hpcperfstats/cursor-rules/plan-live-disk-sync.mdc",
-      },
-      "transcript_path": str(transcript),
+    "tool_name": "Read",
+    "tool_input": {
+      "path": "/repo/HPCPerfStats/hpcperfstats/cursor-rules/plan-live-disk-sync.mdc",
+    },
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "record-rule-reads.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   assert json.loads(proc.stdout.strip()).get("permission") == "allow"
   full_rows = lib.parse_transcript_lines(str(transcript))
   assert "plan-live-disk-sync.mdc" in lib.ledger_read_basenames_this_turn(
-      str(transcript), full_rows,
+    str(transcript),
+    full_rows,
   )
 
 
-def test_check_pre_create_plan_reads_allows_plan_write_when_reads_only_in_ledger(tmp_path):
+def test_check_pre_create_plan_reads_allows_plan_write_when_reads_only_in_ledger(
+  tmp_path,
+):
   # Reproduces the transcript-lag deadlock: the current turn's Reads are not in
   # the transcript yet, but the recorder hook persisted them to the ledger.
   transcript = _one_user_row_transcript(tmp_path, "ledger-gate.jsonl")
@@ -1581,80 +1615,82 @@ def test_check_pre_create_plan_reads_allows_plan_write_when_reads_only_in_ledger
   read_paths.append("/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md")
   for path in read_paths:
     proc = subprocess.run(
-        [sys.executable, str(recorder)],
-        input=json.dumps(
-            {
-                "tool_name": "Read",
-                "tool_input": {"path": path},
-                "transcript_path": str(transcript),
-            },
-        ),
-        capture_output=True,
-        text=True,
-        check=False,
+      [sys.executable, str(recorder)],
+      input=json.dumps(
+        {
+          "tool_name": "Read",
+          "tool_input": {"path": path},
+          "transcript_path": str(transcript),
+        },
+      ),
+      capture_output=True,
+      text=True,
+      check=False,
     )
     assert proc.returncode == 0
 
   payload = {
-      "tool_name": "Write",
-      "tool_input": {
-          "path": ".cursor/plans/foo.plan.md",
-          "contents": _minimal_plan_markdown(),
-      },
-      "transcript_path": str(transcript),
+    "tool_name": "Write",
+    "tool_input": {
+      "path": ".cursor/plans/foo.plan.md",
+      "contents": _minimal_plan_markdown(),
+    },
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-pre-create-plan-reads.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   assert json.loads(proc.stdout.strip()).get("permission") == "allow"
 
 
-def test_check_pre_create_plan_reads_still_denies_when_ledger_missing_rule(tmp_path):
+def test_check_pre_create_plan_reads_still_denies_when_ledger_missing_rule(
+  tmp_path,
+):
   transcript = _one_user_row_transcript(tmp_path, "ledger-partial.jsonl")
   base = "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
   recorder = HOOKS_DIR / "record-rule-reads.py"
   # Record all required rules EXCEPT deploy-ini-with-code-no-phase-zero.mdc.
   read_paths = [
-      f"{base}{name}"
-      for name in lib.PLAN_AUTHORING_REQUIRED_MDC
-      if name != "deploy-ini-with-code-no-phase-zero.mdc"
+    f"{base}{name}"
+    for name in lib.PLAN_AUTHORING_REQUIRED_MDC
+    if name != "deploy-ini-with-code-no-phase-zero.mdc"
   ]
   read_paths.append("/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md")
   for path in read_paths:
     subprocess.run(
-        [sys.executable, str(recorder)],
-        input=json.dumps(
-            {
-                "tool_name": "Read",
-                "tool_input": {"path": path},
-                "transcript_path": str(transcript),
-            },
-        ),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-  payload = {
-      "tool_name": "Write",
-      "tool_input": {
-          "path": ".cursor/plans/foo.plan.md",
-          "contents": _minimal_plan_markdown(),
-      },
-      "transcript_path": str(transcript),
-  }
-  script = HOOKS_DIR / "check-pre-create-plan-reads.py"
-  proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
+      [sys.executable, str(recorder)],
+      input=json.dumps(
+        {
+          "tool_name": "Read",
+          "tool_input": {"path": path},
+          "transcript_path": str(transcript),
+        },
+      ),
       capture_output=True,
       text=True,
       check=False,
+    )
+  payload = {
+    "tool_name": "Write",
+    "tool_input": {
+      "path": ".cursor/plans/foo.plan.md",
+      "contents": _minimal_plan_markdown(),
+    },
+    "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "check-pre-create-plan-reads.py"
+  proc = subprocess.run(
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
@@ -1672,9 +1708,9 @@ def test_record_turn_activity_parallel_reads_keep_all_entries(tmp_path):
 
   def _record(name: str) -> bool:
     return lib.record_turn_activity(
-        str(transcript),
-        "Read",
-        {"path": f"{base}{name}"},
+      str(transcript),
+      "Read",
+      {"path": f"{base}{name}"},
     )
 
   with concurrent.futures.ThreadPoolExecutor(max_workers=len(names)) as pool:
@@ -1685,21 +1721,30 @@ def test_record_turn_activity_parallel_reads_keep_all_entries(tmp_path):
   assert got == {n.lower() for n in names}
 
 
-def test_ledger_create_plan_and_write_clear_pending_without_transcript(tmp_path):
+def test_ledger_create_plan_and_write_clear_pending_without_transcript(
+  tmp_path,
+):
   transcript = _one_user_row_transcript(tmp_path, "pending-clear.jsonl")
   assert lib.record_turn_activity(
-      str(transcript), "CreatePlan", {"name": "race-fix"},
+    str(transcript),
+    "CreatePlan",
+    {"name": "race-fix"},
   )
   assert lib.record_turn_activity(
-      str(transcript),
-      "Write",
-      {"path": ".cursor/plans/race-fix.plan.md", "contents": "x"},
+    str(transcript),
+    "Write",
+    {"path": ".cursor/plans/race-fix.plan.md", "contents": "x"},
   )
   full_rows = lib.parse_transcript_lines(str(transcript))
   turn_rows = lib.last_turn_rows(full_rows)
-  assert lib.turn_create_plan_pending_disk_write(
-      turn_rows, transcript_path=str(transcript), full_rows=full_rows,
-  ) is False
+  assert (
+    lib.turn_create_plan_pending_disk_write(
+      turn_rows,
+      transcript_path=str(transcript),
+      full_rows=full_rows,
+    )
+    is False
+  )
 
 
 def test_stale_on_disk_plan_file_does_not_clear_pending(tmp_path):
@@ -1708,13 +1753,20 @@ def test_stale_on_disk_plan_file_does_not_clear_pending(tmp_path):
   leftover = tmp_path / "leftover.plan.md"
   leftover.write_text("stale", encoding="utf-8")
   assert lib.record_turn_activity(
-      str(transcript), "CreatePlan", {"name": "stale-case"},
+    str(transcript),
+    "CreatePlan",
+    {"name": "stale-case"},
   )
   full_rows = lib.parse_transcript_lines(str(transcript))
   turn_rows = lib.last_turn_rows(full_rows)
-  assert lib.turn_create_plan_pending_disk_write(
-      turn_rows, transcript_path=str(transcript), full_rows=full_rows,
-  ) is True
+  assert (
+    lib.turn_create_plan_pending_disk_write(
+      turn_rows,
+      transcript_path=str(transcript),
+      full_rows=full_rows,
+    )
+    is True
+  )
   assert leftover.is_file()
 
 
@@ -1722,58 +1774,62 @@ def test_check_block_until_plan_disk_allows_when_write_only_in_ledger(tmp_path):
   transcript = _one_user_row_transcript(tmp_path, "block-ledger-write.jsonl")
   recorder = HOOKS_DIR / "record-rule-reads.py"
   for tool_name, tool_input in (
-      ("CreatePlan", {"name": "ledger-write"}),
-      (
-          "Write",
-          {
-              "path": ".cursor/plans/ledger-write.plan.md",
-              "contents": _minimal_plan_markdown(),
-          },
-      ),
+    ("CreatePlan", {"name": "ledger-write"}),
+    (
+      "Write",
+      {
+        "path": ".cursor/plans/ledger-write.plan.md",
+        "contents": _minimal_plan_markdown(),
+      },
+    ),
   ):
     proc = subprocess.run(
-        [sys.executable, str(recorder)],
-        input=json.dumps(
-            {
-                "tool_name": tool_name,
-                "tool_input": tool_input,
-                "transcript_path": str(transcript),
-            },
-        ),
-        capture_output=True,
-        text=True,
-        check=False,
+      [sys.executable, str(recorder)],
+      input=json.dumps(
+        {
+          "tool_name": tool_name,
+          "tool_input": tool_input,
+          "transcript_path": str(transcript),
+        },
+      ),
+      capture_output=True,
+      text=True,
+      check=False,
     )
     assert proc.returncode == 0
 
   payload = {
-      "tool_name": "Shell",
-      "tool_input": {"command": "echo ok"},
-      "transcript_path": str(transcript),
+    "tool_name": "Shell",
+    "tool_input": {"command": "echo ok"},
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-block-until-plan-disk.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   assert json.loads(proc.stdout.strip()).get("permission") == "allow"
 
 
 def test_close_gate_still_flags_create_plan_without_write_in_ledger_or_transcript(
-    tmp_path,
+  tmp_path,
 ):
   transcript = _one_user_row_transcript(tmp_path, "close-true-pos.jsonl")
   assert lib.record_turn_activity(
-      str(transcript), "CreatePlan", {"name": "true-pos"},
+    str(transcript),
+    "CreatePlan",
+    {"name": "true-pos"},
   )
   full_rows = lib.parse_transcript_lines(str(transcript))
   turn_rows = lib.last_turn_rows(full_rows)
   issues = lib.plan_disk_sync_issues(
-      turn_rows, str(transcript), full_rows,
+    turn_rows,
+    str(transcript),
+    full_rows,
   )
   assert issues
   assert any("Plan not written to disk" in item for item in issues)
@@ -1786,87 +1842,90 @@ def test_check_close_gate_accepts_reads_only_in_ledger(tmp_path):
   recorder = HOOKS_DIR / "record-rule-reads.py"
   for name in lib.PLAN_AUTHORING_REQUIRED_MDC:
     subprocess.run(
-        [sys.executable, str(recorder)],
-        input=json.dumps(
-            {
-                "tool_name": "Read",
-                "tool_input": {"path": f"{base}{name}"},
-                "transcript_path": str(transcript),
-            },
-        ),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-  subprocess.run(
       [sys.executable, str(recorder)],
       input=json.dumps(
-          {
-              "tool_name": "Read",
-              "tool_input": {
-                  "path": "/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md",
-              },
-              "transcript_path": str(transcript),
-          },
+        {
+          "tool_name": "Read",
+          "tool_input": {"path": f"{base}{name}"},
+          "transcript_path": str(transcript),
+        },
       ),
       capture_output=True,
       text=True,
       check=False,
-  )
-  assert lib.record_turn_activity(
-      str(transcript), "CreatePlan", {"name": "close-ledger"},
-  )
-  assert lib.record_turn_activity(
-      str(transcript),
-      "Write",
+    )
+  subprocess.run(
+    [sys.executable, str(recorder)],
+    input=json.dumps(
       {
-          "path": ".cursor/plans/close-ledger.plan.md",
-          "contents": _minimal_plan_markdown(),
+        "tool_name": "Read",
+        "tool_input": {
+          "path": "/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md",
+        },
+        "transcript_path": str(transcript),
       },
+    ),
+    capture_output=True,
+    text=True,
+    check=False,
+  )
+  assert lib.record_turn_activity(
+    str(transcript),
+    "CreatePlan",
+    {"name": "close-ledger"},
+  )
+  assert lib.record_turn_activity(
+    str(transcript),
+    "Write",
+    {
+      "path": ".cursor/plans/close-ledger.plan.md",
+      "contents": _minimal_plan_markdown(),
+    },
   )
   # Put a real disk file where resolve can find it for content checks.
   workspace_plans = tmp_path / ".cursor" / "plans"
   workspace_plans.mkdir(parents=True)
   (workspace_plans / "close-ledger.plan.md").write_text(
-      _minimal_plan_markdown(), encoding="utf-8",
+    _minimal_plan_markdown(),
+    encoding="utf-8",
   )
 
   close_text = (
-      "## Agent rule dispatch\n\n"
-      + ", ".join(lib.PLAN_AUTHORING_REQUIRED_MDC)
-      + "\n\n"
-      "## Final code review (senior engineer pass)\n\nok\n\n"
-      "## Post-implementation review\n\n"
-      "### Why it works\n\nworks\n\n"
-      "### Edge cases\n\n"
-      "- one\n- two\n- three\n\n"
-      "### Convention check\nok\n"
+    "## Agent rule dispatch\n\n"
+    + ", ".join(lib.PLAN_AUTHORING_REQUIRED_MDC)
+    + "\n\n"
+    "## Final code review (senior engineer pass)\n\nok\n\n"
+    "## Post-implementation review\n\n"
+    "### Why it works\n\nworks\n\n"
+    "### Edge cases\n\n"
+    "- one\n- two\n- three\n\n"
+    "### Convention check\nok\n"
   )
   # Append assistant close text + no tool parts (lag simulation).
   with transcript.open("a", encoding="utf-8") as fh:
     fh.write(
-        json.dumps(
-            {
-                "role": "assistant",
-                "message": {"content": [{"type": "text", "text": close_text}]},
-            },
-        )
-        + "\n",
+      json.dumps(
+        {
+          "role": "assistant",
+          "message": {"content": [{"type": "text", "text": close_text}]},
+        },
+      )
+      + "\n",
     )
 
   payload = {
-      "status": "completed",
-      "loop_count": 0,
-      "transcript_path": str(transcript),
-      "workspace_roots": [str(tmp_path)],
+    "status": "completed",
+    "loop_count": 0,
+    "transcript_path": str(transcript),
+    "workspace_roots": [str(tmp_path)],
   }
   script = HOOKS_DIR / "check-close-gate.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip() or "{}")
@@ -1878,35 +1937,35 @@ def test_check_close_gate_accepts_reads_only_in_ledger(tmp_path):
 def test_check_block_until_plan_disk_denies_shell_after_create_plan(tmp_path):
   transcript = tmp_path / "block-disk.jsonl"
   transcript.write_text(
-      json.dumps(
-          {
-              "role": "assistant",
-              "message": {
-                  "content": [
-                      {
-                          "type": "tool_use",
-                          "name": "CreatePlan",
-                          "input": {"name": "foo-bar", "plan": "x"},
-                      },
-                  ],
-              },
-          },
-      )
-      + "\n",
-      encoding="utf-8",
+    json.dumps(
+      {
+        "role": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use",
+              "name": "CreatePlan",
+              "input": {"name": "foo-bar", "plan": "x"},
+            },
+          ],
+        },
+      },
+    )
+    + "\n",
+    encoding="utf-8",
   )
   payload = {
-      "tool_name": "Shell",
-      "tool_input": {"command": "echo hi"},
-      "transcript_path": str(transcript),
+    "tool_name": "Shell",
+    "tool_input": {"command": "echo hi"},
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-block-until-plan-disk.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
@@ -1914,79 +1973,83 @@ def test_check_block_until_plan_disk_denies_shell_after_create_plan(tmp_path):
   assert ".cursor/plans/foo-bar.plan.md" in data.get("agent_message", "")
 
 
-def test_check_block_until_plan_disk_allows_plan_write_after_create_plan(tmp_path):
+def test_check_block_until_plan_disk_allows_plan_write_after_create_plan(
+  tmp_path,
+):
   transcript = tmp_path / "allow-disk.jsonl"
   transcript.write_text(
-      json.dumps(
-          {
-              "role": "assistant",
-              "message": {
-                  "content": [
-                      {
-                          "type": "tool_use",
-                          "name": "CreatePlan",
-                          "input": {"name": "foo-bar", "plan": "x"},
-                      },
-                  ],
-              },
-          },
-      )
-      + "\n",
-      encoding="utf-8",
+    json.dumps(
+      {
+        "role": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use",
+              "name": "CreatePlan",
+              "input": {"name": "foo-bar", "plan": "x"},
+            },
+          ],
+        },
+      },
+    )
+    + "\n",
+    encoding="utf-8",
   )
   payload = {
-      "tool_name": "Write",
-      "tool_input": {
-          "path": ".cursor/plans/foo-bar.plan.md",
-          "contents": _minimal_plan_markdown(),
-      },
-      "transcript_path": str(transcript),
+    "tool_name": "Write",
+    "tool_input": {
+      "path": ".cursor/plans/foo-bar.plan.md",
+      "contents": _minimal_plan_markdown(),
+    },
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-block-until-plan-disk.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
   assert data.get("permission") == "allow"
 
 
-def test_check_block_until_plan_disk_allows_readfile_after_create_plan(tmp_path):
+def test_check_block_until_plan_disk_allows_readfile_after_create_plan(
+  tmp_path,
+):
   transcript = tmp_path / "allow-readfile.jsonl"
   transcript.write_text(
-      json.dumps(
-          {
-              "role": "assistant",
-              "message": {
-                  "content": [
-                      {
-                          "type": "tool_use",
-                          "name": "CreatePlan",
-                          "input": {"name": "foo-bar", "plan": "x"},
-                      },
-                  ],
-              },
-          },
-      )
-      + "\n",
-      encoding="utf-8",
+    json.dumps(
+      {
+        "role": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use",
+              "name": "CreatePlan",
+              "input": {"name": "foo-bar", "plan": "x"},
+            },
+          ],
+        },
+      },
+    )
+    + "\n",
+    encoding="utf-8",
   )
   payload = {
-      "tool_name": "ReadFile",
-      "tool_input": {"path": "/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md"},
-      "transcript_path": str(transcript),
+    "tool_name": "ReadFile",
+    "tool_input": {"path": "/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md"},
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-block-until-plan-disk.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
@@ -1996,46 +2059,46 @@ def test_check_block_until_plan_disk_allows_readfile_after_create_plan(tmp_path)
 def test_check_close_gate_emits_followup_for_create_plan(tmp_path):
   transcript = tmp_path / "plan.jsonl"
   transcript.write_text(
-      json.dumps(
-          {
-              "role": "user",
-              "message": {"content": [{"type": "text", "text": "create a plan"}]},
-          },
-      )
-      + "\n"
-      + json.dumps(
-          {
-              "role": "assistant",
-              "message": {
-                  "content": [
-                      {
-                          "type": "tool_use",
-                          "name": "CreatePlan",
-                          "input": {"plan": "## Approach\n\nonly"},
-                      },
-                      {
-                          "type": "text",
-                          "text": "Plan is ready for your review.",
-                      },
-                  ],
-              },
-          },
-      )
-      + "\n",
-      encoding="utf-8",
+    json.dumps(
+      {
+        "role": "user",
+        "message": {"content": [{"type": "text", "text": "create a plan"}]},
+      },
+    )
+    + "\n"
+    + json.dumps(
+      {
+        "role": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use",
+              "name": "CreatePlan",
+              "input": {"plan": "## Approach\n\nonly"},
+            },
+            {
+              "type": "text",
+              "text": "Plan is ready for your review.",
+            },
+          ],
+        },
+      },
+    )
+    + "\n",
+    encoding="utf-8",
   )
   payload = {
-      "status": "completed",
-      "loop_count": 0,
-      "transcript_path": str(transcript),
+    "status": "completed",
+    "loop_count": 0,
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-close-gate.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
@@ -2047,45 +2110,45 @@ def test_check_close_gate_emits_followup_for_create_plan(tmp_path):
 def test_check_edit_triggered_rules_create_plan_requires_reads(tmp_path):
   transcript = tmp_path / "plan.jsonl"
   transcript.write_text(
-      json.dumps(
-          {
-              "role": "assistant",
-              "message": {
-                  "content": [
-                      {
-                          "type": "tool_use",
-                          "name": "CreatePlan",
-                          "input": {
-                              "plan": (
-                                  "## Implementation\n\n"
-                                  "`hpcperfstats/dbload/lib/sync_timedb_day_close_manifest.py`\n"
-                              ),
-                          },
-                      },
-                  ],
+    json.dumps(
+      {
+        "role": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use",
+              "name": "CreatePlan",
+              "input": {
+                "plan": (
+                  "## Implementation\n\n"
+                  "`hpcperfstats/dbload/lib/sync_timedb_day_close_manifest.py`\n"
+                ),
               },
-          },
-      )
-      + "\n",
-      encoding="utf-8",
+            },
+          ],
+        },
+      },
+    )
+    + "\n",
+    encoding="utf-8",
   )
   payload = {
-      "tool_name": "CreatePlan",
-      "tool_input": {
-          "plan": (
-              "## Implementation\n\n"
-              "`hpcperfstats/dbload/lib/sync_timedb_day_close_manifest.py`\n"
-          ),
-      },
-      "transcript_path": str(transcript),
+    "tool_name": "CreatePlan",
+    "tool_input": {
+      "plan": (
+        "## Implementation\n\n"
+        "`hpcperfstats/dbload/lib/sync_timedb_day_close_manifest.py`\n"
+      ),
+    },
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-edit-triggered-rules.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
@@ -2099,15 +2162,22 @@ def test_check_edit_triggered_rules_create_plan_requires_reads(tmp_path):
 
 def test_turn_had_edits_detects_write_tool():
   rows = [
-      {"role": "user", "message": {"content": [{"type": "text", "text": "fix it"}]}},
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {"type": "tool_use", "name": "StrReplace", "input": {"path": "a.py"}},
-              ],
+    {
+      "role": "user",
+      "message": {"content": [{"type": "text", "text": "fix it"}]},
+    },
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "StrReplace",
+            "input": {"path": "a.py"},
           },
+        ],
       },
+    },
   ]
   assert lib.turn_had_edits(lib.last_turn_rows(rows)) is True
 
@@ -2115,42 +2185,46 @@ def test_turn_had_edits_detects_write_tool():
 def test_check_close_gate_emits_followup_for_missing_headings(tmp_path):
   transcript = tmp_path / "t.jsonl"
   transcript.write_text(
-      json.dumps(
-          {
-              "role": "user",
-              "message": {"content": [{"type": "text", "text": "implement fix"}]},
-          },
-      )
-      + "\n"
-      + json.dumps(
-          {
-              "role": "assistant",
-              "message": {
-                  "content": [
-                      {"type": "tool_use", "name": "Write", "input": {"path": "a.py"}},
-                      {
-                          "type": "text",
-                          "text": "Fix is done and tests passed.",
-                      },
-                  ],
-              },
-          },
-      )
-      + "\n",
-      encoding="utf-8",
+    json.dumps(
+      {
+        "role": "user",
+        "message": {"content": [{"type": "text", "text": "implement fix"}]},
+      },
+    )
+    + "\n"
+    + json.dumps(
+      {
+        "role": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use",
+              "name": "Write",
+              "input": {"path": "a.py"},
+            },
+            {
+              "type": "text",
+              "text": "Fix is done and tests passed.",
+            },
+          ],
+        },
+      },
+    )
+    + "\n",
+    encoding="utf-8",
   )
   payload = {
-      "status": "completed",
-      "loop_count": 0,
-      "transcript_path": str(transcript),
+    "status": "completed",
+    "loop_count": 0,
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-close-gate.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
@@ -2161,89 +2235,90 @@ def test_check_close_gate_emits_followup_for_missing_headings(tmp_path):
 def test_check_close_gate_emits_followup_for_read_after_edit(tmp_path):
   transcript = tmp_path / "t.jsonl"
   close_text = (
-      "## Agent rule dispatch\n\n"
-      "Read: testing-best-practices.mdc\n\n"
-      "## Final code review (senior engineer pass)\n\nok\n"
-      "## Post-implementation review\n\n"
-      "### Why it works\n\nok\n"
-      "### Edge cases\n\n1. a\n2. b\n3. c\n"
-      "### Convention check\n\nok\n"
-      "\n\nImplementation is done and tests passed."
+    "## Agent rule dispatch\n\n"
+    "Read: testing-best-practices.mdc\n\n"
+    "## Final code review (senior engineer pass)\n\nok\n"
+    "## Post-implementation review\n\n"
+    "### Why it works\n\nok\n"
+    "### Edge cases\n\n1. a\n2. b\n3. c\n"
+    "### Convention check\n\nok\n"
+    "\n\nImplementation is done and tests passed."
   )
   transcript.write_text(
-      json.dumps(
-          {
-              "role": "user",
-              "message": {"content": [{"type": "text", "text": "implement fix"}]},
-          },
-      )
-      + "\n"
-      + json.dumps(
-          {
-              "role": "assistant",
-              "message": {
-                  "content": [
-                      {
-                          "type": "tool_use",
-                          "name": "Write",
-                          "input": {"path": HOOK_LIB_PATH},
-                      },
-                  ],
-              },
-          },
-      )
-      + "\n"
-      + json.dumps(
-          {
-              "role": "assistant",
-              "message": {
-                  "content": [
-                      {
-                          "type": "tool_use",
-                          "name": "Read",
-                          "input": {"path": TESTING_RULE_PATH},
-                      },
-                      {"type": "text", "text": close_text},
-                  ],
-              },
-          },
-      )
-      + "\n",
-      encoding="utf-8",
+    json.dumps(
+      {
+        "role": "user",
+        "message": {"content": [{"type": "text", "text": "implement fix"}]},
+      },
+    )
+    + "\n"
+    + json.dumps(
+      {
+        "role": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use",
+              "name": "Write",
+              "input": {"path": HOOK_LIB_PATH},
+            },
+          ],
+        },
+      },
+    )
+    + "\n"
+    + json.dumps(
+      {
+        "role": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use",
+              "name": "Read",
+              "input": {"path": TESTING_RULE_PATH},
+            },
+            {"type": "text", "text": close_text},
+          ],
+        },
+      },
+    )
+    + "\n",
+    encoding="utf-8",
   )
   payload = {
-      "status": "completed",
-      "loop_count": 0,
-      "transcript_path": str(transcript),
+    "status": "completed",
+    "loop_count": 0,
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-close-gate.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
   assert "followup_message" in data
-  assert "Rule read after first edit/plan: testing-best-practices.mdc" in data[
-      "followup_message"
-  ]
+  assert (
+    "Rule read after first edit/plan: testing-best-practices.mdc"
+    in data["followup_message"]
+  )
 
 
 def test_domain_rule_read_issues_skips_deleted_rule():
   issues = lib.domain_rule_read_issues(
-      ["sync-timedb-startup-tar-seal-contract.mdc"],
-      [],
+    ["sync-timedb-startup-tar-seal-contract.mdc"],
+    [],
   )
   assert issues == []
 
 
 def test_rule_dual_registration_skips_deleted_rule():
   deleted_path = (
-      "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
-      "sync-timedb-startup-tar-seal-contract.mdc"
+    "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+    "sync-timedb-startup-tar-seal-contract.mdc"
   )
   issues = lib.rule_dual_registration_issues([deleted_path])
   assert issues == []
@@ -2257,7 +2332,7 @@ def test_triggered_rules_for_monitor_src_path():
 
 def test_triggered_rules_for_monitor_cursor_rules_path():
   rules = triggered_rules_for_paths(
-      ["HPCPerfStats/monitor/cursor-rules/plan-completion-gate.mdc"],
+    ["HPCPerfStats/monitor/cursor-rules/plan-completion-gate.mdc"],
   )
   assert "agent-discipline-core.mdc" in rules
   assert "implementation-review-workflow.mdc" in rules
@@ -2272,9 +2347,12 @@ def test_resolve_cursor_rule_path_finds_monitor_rules():
 
 def test_is_plan_template_read_path_accepts_monitor_template():
   assert lib.is_plan_template_read_path(MONITOR_PLAN_TEMPLATE) is True
-  assert lib.is_plan_template_read_path(
+  assert (
+    lib.is_plan_template_read_path(
       "HPCPerfStats/docs/plans/PLAN_TEMPLATE.md",
-  ) is True
+    )
+    is True
+  )
 
 
 def test_detect_rules_profile_monitor_symlink(tmp_path):
@@ -2282,10 +2360,14 @@ def test_detect_rules_profile_monitor_symlink(tmp_path):
   cursor_dir.mkdir()
   monitor_rules = tmp_path / "HPCPerfStats" / "monitor" / "cursor-rules"
   monitor_rules.mkdir(parents=True)
-  (monitor_rules / "agent-discipline-core.mdc").write_text("---\n---\n", encoding="utf-8")
+  (monitor_rules / "agent-discipline-core.mdc").write_text(
+    "---\n---\n", encoding="utf-8"
+  )
   (cursor_dir / "rules").symlink_to(monitor_rules)
   assert detect_rules_profile([str(tmp_path)]) == "monitor"
-  assert profile_rules_dir_label("monitor") == "HPCPerfStats/monitor/cursor-rules"
+  assert (
+    profile_rules_dir_label("monitor") == "HPCPerfStats/monitor/cursor-rules"
+  )
 
 
 def test_detect_rules_profile_hpcperfstats_symlink(tmp_path):
@@ -2293,7 +2375,9 @@ def test_detect_rules_profile_hpcperfstats_symlink(tmp_path):
   cursor_dir.mkdir()
   hps_rules = tmp_path / "HPCPerfStats" / "hpcperfstats" / "cursor-rules"
   hps_rules.mkdir(parents=True)
-  (hps_rules / "agent-discipline-core.mdc").write_text("---\n---\n", encoding="utf-8")
+  (hps_rules / "agent-discipline-core.mdc").write_text(
+    "---\n---\n", encoding="utf-8"
+  )
   (cursor_dir / "rules").symlink_to(hps_rules)
   assert detect_rules_profile([str(tmp_path)]) == "hpcperfstats"
 
@@ -2306,12 +2390,14 @@ def test_workspace_hooks_json_must_be_real_file_not_symlink():
   if not hooks_json.exists():
     pytest.skip("workspace .cursor/hooks.json not present on this checkout")
   assert not hooks_json.is_symlink(), (
-      f"{hooks_json} must be a real file copy of HPCPerfStats/cursor-hooks/hooks.json "
-      "(Cursor refuses a symlinked project hooks.json)"
+    f"{hooks_json} must be a real file copy of HPCPerfStats/cursor-hooks/hooks.json "
+    "(Cursor refuses a symlinked project hooks.json)"
   )
   auth = workspace_root / "HPCPerfStats" / "cursor-hooks" / "hooks.json"
   assert auth.is_file()
-  assert hooks_json.read_text(encoding="utf-8") == auth.read_text(encoding="utf-8")
+  assert hooks_json.read_text(encoding="utf-8") == auth.read_text(
+    encoding="utf-8"
+  )
 
 
 def test_hooks_json_commands_use_workspace_venv_python():
@@ -2322,7 +2408,7 @@ def test_hooks_json_commands_use_workspace_venv_python():
     for entry in entries:
       cmd = entry.get("command") or ""
       assert cmd.startswith(".venv/bin/python3 "), (
-          f"{event} hook must invoke workspace venv (got: {cmd!r})"
+        f"{event} hook must invoke workspace venv (got: {cmd!r})"
       )
 
 
@@ -2333,18 +2419,18 @@ def test_plan_pre_hook_imports_under_system_python3():
     pytest.skip("no /usr/bin/python3")
   script = HOOKS_DIR / "check-pre-create-plan-reads.py"
   proc = subprocess.run(
-      [str(system_py), str(script)],
-      input=json.dumps(
-          {
-              "tool_name": "CreatePlan",
-              "tool_input": {"name": "smoke"},
-              "transcript_path": "/tmp/hpc-hook-smoke-transcript.jsonl",
-              "workspace_roots": [str(Path(__file__).resolve().parents[3])],
-          },
-      ),
-      capture_output=True,
-      text=True,
-      check=False,
+    [str(system_py), str(script)],
+    input=json.dumps(
+      {
+        "tool_name": "CreatePlan",
+        "tool_input": {"name": "smoke"},
+        "transcript_path": "/tmp/hpc-hook-smoke-transcript.jsonl",
+        "workspace_roots": [str(Path(__file__).resolve().parents[3])],
+      },
+    ),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   assert "typing_extensions" not in (proc.stderr or "")
@@ -2352,146 +2438,159 @@ def test_plan_pre_hook_imports_under_system_python3():
 
 
 def test_monitor_router_entries_reference_existing_files():
-  monitor_rules_dir = Path(__file__).resolve().parents[2] / "monitor" / "cursor-rules"
+  monitor_rules_dir = (
+    Path(__file__).resolve().parents[2] / "monitor" / "cursor-rules"
+  )
   for entry in MONITOR_ROUTER_ENTRIES:
     for rule in entry["rules"]:
       if rule == "out-of-monitor-hpcperfstats-rules.mdc":
         continue
       path = monitor_rules_dir / rule
-      assert path.is_file(), f"missing monitor rule file: {rule} (entry {entry['id']})"
+      assert path.is_file(), (
+        f"missing monitor rule file: {rule} (entry {entry['id']})"
+      )
 
 
 def _plan_authoring_read_parts() -> list[dict]:
   base = "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
   parts = [
-      {
-          "type": "tool_use",
-          "name": "Read",
-          "input": {"path": f"{base}{name}"},
-      }
-      for name in lib.PLAN_AUTHORING_REQUIRED_MDC
+    {
+      "type": "tool_use",
+      "name": "Read",
+      "input": {"path": f"{base}{name}"},
+    }
+    for name in lib.PLAN_AUTHORING_REQUIRED_MDC
   ]
   parts.append(
-      {
-          "type": "tool_use",
-          "name": "Read",
-          "input": {"path": "/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md"},
-      },
+    {
+      "type": "tool_use",
+      "name": "Read",
+      "input": {"path": "/repo/HPCPerfStats/docs/plans/PLAN_TEMPLATE.md"},
+    },
   )
   return parts
 
 
 def test_full_file_rule_read_issues_rejects_partial_limit():
   compose = (
-      "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
-      "compose-operator-terminal-commands.mdc"
+    "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+    "compose-operator-terminal-commands.mdc"
   )
   lessons = (
-      "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
-      "operator-command-lessons-learned.mdc"
+    "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+    "operator-command-lessons-learned.mdc"
   )
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "Read",
-                      "input": {"path": compose, "limit": 5},
-                  },
-                  {
-                      "type": "tool_use",
-                      "name": "Read",
-                      "input": {"path": lessons},
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {"path": compose, "limit": 5},
           },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": {"path": lessons},
+          },
+        ],
       },
+    },
   ]
   issues = lib.full_file_rule_read_issues(rows)
-  assert any("Partial Read" in item and "compose-operator" in item for item in issues)
+  assert any(
+    "Partial Read" in item and "compose-operator" in item for item in issues
+  )
   assert not any("operator-command-lessons" in item for item in issues)
 
 
 def test_full_file_rule_read_issues_accepts_readfile_tool_name():
   base = "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
   rows = [
-      {
-          "role": "assistant",
-          "message": {
-              "content": [
-                  {
-                      "type": "tool_use",
-                      "name": "ReadFile",
-                      "input": {
-                          "path": f"{base}compose-operator-terminal-commands.mdc",
-                      },
-                  },
-                  {
-                      "type": "tool_use",
-                      "name": "ReadFile",
-                      "input": {
-                          "path": f"{base}operator-command-lessons-learned.mdc",
-                      },
-                  },
-              ],
+    {
+      "role": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "ReadFile",
+            "input": {
+              "path": f"{base}compose-operator-terminal-commands.mdc",
+            },
           },
+          {
+            "type": "tool_use",
+            "name": "ReadFile",
+            "input": {
+              "path": f"{base}operator-command-lessons-learned.mdc",
+            },
+          },
+        ],
       },
+    },
   ]
   assert lib.full_file_rule_read_issues(rows) == []
 
 
 def test_operator_discovery_needs_full_rule_reads():
-  assert lib.operator_discovery_needs_full_rule_reads(_minimal_plan_markdown()) is False
   assert (
-      lib.operator_discovery_needs_full_rule_reads(_operator_in_progress_plan_markdown())
-      is True
+    lib.operator_discovery_needs_full_rule_reads(_minimal_plan_markdown())
+    is False
+  )
+  assert (
+    lib.operator_discovery_needs_full_rule_reads(
+      _operator_in_progress_plan_markdown()
+    )
+    is True
   )
 
 
-def test_check_pre_create_plan_reads_denies_live_plan_write_without_reads(tmp_path):
+def test_check_pre_create_plan_reads_denies_live_plan_write_without_reads(
+  tmp_path,
+):
   transcript = tmp_path / "no-reads.jsonl"
   transcript.write_text(
-      json.dumps(
-          {
-              "role": "user",
-              "message": {"content": [{"type": "text", "text": "update plan"}]},
-          },
-      )
-      + "\n"
-      + json.dumps(
-          {
-              "role": "assistant",
-              "message": {
-                  "content": [
-                      {
-                          "type": "tool_use",
-                          "name": "Read",
-                          "input": {"path": "unrelated.txt"},
-                      },
-                  ],
-              },
-          },
-      )
-      + "\n",
-      encoding="utf-8",
+    json.dumps(
+      {
+        "role": "user",
+        "message": {"content": [{"type": "text", "text": "update plan"}]},
+      },
+    )
+    + "\n"
+    + json.dumps(
+      {
+        "role": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use",
+              "name": "Read",
+              "input": {"path": "unrelated.txt"},
+            },
+          ],
+        },
+      },
+    )
+    + "\n",
+    encoding="utf-8",
   )
   payload = {
-      "tool_name": "Write",
-      "tool_input": {
-          "path": str(tmp_path / ".cursor" / "plans" / "x.plan.md"),
-          "contents": _minimal_plan_markdown(),
-      },
-      "transcript_path": str(transcript),
+    "tool_name": "Write",
+    "tool_input": {
+      "path": str(tmp_path / ".cursor" / "plans" / "x.plan.md"),
+      "contents": _minimal_plan_markdown(),
+    },
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-pre-create-plan-reads.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
@@ -2499,162 +2598,170 @@ def test_check_pre_create_plan_reads_denies_live_plan_write_without_reads(tmp_pa
   assert ".cursor/plans" in data.get("agent_message", "")
 
 
-def test_check_pre_create_plan_reads_allows_live_plan_write_after_reads(tmp_path):
+def test_check_pre_create_plan_reads_allows_live_plan_write_after_reads(
+  tmp_path,
+):
   transcript = tmp_path / "with-reads.jsonl"
   transcript.write_text(
-      json.dumps(
-          {
-              "role": "user",
-              "message": {"content": [{"type": "text", "text": "update plan"}]},
-          },
-      )
-      + "\n"
-      + json.dumps(
-          {
-              "role": "assistant",
-              "message": {"content": _plan_authoring_read_parts()},
-          },
-      )
-      + "\n",
-      encoding="utf-8",
+    json.dumps(
+      {
+        "role": "user",
+        "message": {"content": [{"type": "text", "text": "update plan"}]},
+      },
+    )
+    + "\n"
+    + json.dumps(
+      {
+        "role": "assistant",
+        "message": {"content": _plan_authoring_read_parts()},
+      },
+    )
+    + "\n",
+    encoding="utf-8",
   )
   payload = {
-      "tool_name": "Write",
-      "tool_input": {
-          "path": str(tmp_path / ".cursor" / "plans" / "x.plan.md"),
-          "contents": _minimal_plan_markdown(),
-      },
-      "transcript_path": str(transcript),
+    "tool_name": "Write",
+    "tool_input": {
+      "path": str(tmp_path / ".cursor" / "plans" / "x.plan.md"),
+      "contents": _minimal_plan_markdown(),
+    },
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-pre-create-plan-reads.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
   assert data.get("permission") == "allow"
 
 
-def test_check_live_plan_operator_discovery_denies_partial_operator_read(tmp_path):
+def test_check_live_plan_operator_discovery_denies_partial_operator_read(
+  tmp_path,
+):
   plans = tmp_path / ".cursor" / "plans"
   plans.mkdir(parents=True)
   plan_path = plans / "partial.plan.md"
   compose = (
-      "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
-      "compose-operator-terminal-commands.mdc"
+    "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+    "compose-operator-terminal-commands.mdc"
   )
   lessons = (
-      "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
-      "operator-command-lessons-learned.mdc"
+    "/repo/HPCPerfStats/hpcperfstats/cursor-rules/"
+    "operator-command-lessons-learned.mdc"
   )
   transcript = tmp_path / "partial.jsonl"
   transcript.write_text(
-      json.dumps(
-          {
-              "role": "user",
-              "message": {"content": [{"type": "text", "text": "plan"}]},
-          },
-      )
-      + "\n"
-      + json.dumps(
-          {
-              "role": "assistant",
-              "message": {
-                  "content": [
-                      {
-                          "type": "tool_use",
-                          "name": "Read",
-                          "input": {"path": compose, "limit": 8},
-                      },
-                      {
-                          "type": "tool_use",
-                          "name": "Read",
-                          "input": {"path": lessons},
-                      },
-                  ],
-              },
-          },
-      )
-      + "\n",
-      encoding="utf-8",
+    json.dumps(
+      {
+        "role": "user",
+        "message": {"content": [{"type": "text", "text": "plan"}]},
+      },
+    )
+    + "\n"
+    + json.dumps(
+      {
+        "role": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use",
+              "name": "Read",
+              "input": {"path": compose, "limit": 8},
+            },
+            {
+              "type": "tool_use",
+              "name": "Read",
+              "input": {"path": lessons},
+            },
+          ],
+        },
+      },
+    )
+    + "\n",
+    encoding="utf-8",
   )
   payload = {
-      "tool_name": "Write",
-      "tool_input": {
-          "path": str(plan_path),
-          "contents": _operator_in_progress_plan_markdown(),
-      },
-      "transcript_path": str(transcript),
+    "tool_name": "Write",
+    "tool_input": {
+      "path": str(plan_path),
+      "contents": _operator_in_progress_plan_markdown(),
+    },
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-live-plan-operator-discovery.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
   assert data.get("permission") == "deny"
-  assert "Partial Read" in data.get("user_message", "") or "partial" in data.get(
+  assert (
+    "Partial Read" in data.get("user_message", "")
+    or "partial"
+    in data.get(
       "user_message",
       "",
-  ).lower()
+    ).lower()
+  )
 
 
 def test_check_close_gate_plan_disk_edit_without_phrasing(tmp_path):
   """Plan StrReplace alone (no CreatePlan, no completion words) still requires close."""
   transcript = tmp_path / "plan-edit.jsonl"
   transcript.write_text(
-      json.dumps(
-          {
-              "role": "user",
-              "message": {"content": [{"type": "text", "text": "tweak plan"}]},
-          },
-      )
-      + "\n"
-      + json.dumps(
-          {
-              "role": "assistant",
-              "message": {
-                  "content": [
-                      {
-                          "type": "tool_use",
-                          "name": "StrReplace",
-                          "input": {
-                              "path": ".cursor/plans/foo.plan.md",
-                              "old_string": "a",
-                              "new_string": "b",
-                          },
-                      },
-                      {
-                          "type": "text",
-                          "text": "Updated the plan slightly.",
-                      },
-                  ],
+    json.dumps(
+      {
+        "role": "user",
+        "message": {"content": [{"type": "text", "text": "tweak plan"}]},
+      },
+    )
+    + "\n"
+    + json.dumps(
+      {
+        "role": "assistant",
+        "message": {
+          "content": [
+            {
+              "type": "tool_use",
+              "name": "StrReplace",
+              "input": {
+                "path": ".cursor/plans/foo.plan.md",
+                "old_string": "a",
+                "new_string": "b",
               },
-          },
-      )
-      + "\n",
-      encoding="utf-8",
+            },
+            {
+              "type": "text",
+              "text": "Updated the plan slightly.",
+            },
+          ],
+        },
+      },
+    )
+    + "\n",
+    encoding="utf-8",
   )
   payload = {
-      "status": "completed",
-      "loop_count": 0,
-      "transcript_path": str(transcript),
+    "status": "completed",
+    "loop_count": 0,
+    "transcript_path": str(transcript),
   }
   script = HOOKS_DIR / "check-close-gate.py"
   proc = subprocess.run(
-      [sys.executable, str(script)],
-      input=json.dumps(payload),
-      capture_output=True,
-      text=True,
-      check=False,
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
   )
   assert proc.returncode == 0
   data = json.loads(proc.stdout.strip())
@@ -2665,48 +2772,50 @@ def test_check_close_gate_plan_disk_edit_without_phrasing(tmp_path):
 def test_domain_rule_read_issues_last_turn_ignores_prior_turn_edit():
   """Prior-turn edit must not cause read-after-edit when this turn Reads then edits."""
   prior = {
-      "role": "assistant",
-      "message": {
-          "content": [
-              {
-                  "type": "tool_use",
-                  "name": "Write",
-                  "input": {
-                      "path": ".cursor/plans/old.plan.md",
-                      "contents": "x",
-                  },
-              },
-          ],
-      },
+    "role": "assistant",
+    "message": {
+      "content": [
+        {
+          "type": "tool_use",
+          "name": "Write",
+          "input": {
+            "path": ".cursor/plans/old.plan.md",
+            "contents": "x",
+          },
+        },
+      ],
+    },
   }
   user = {
-      "role": "user",
-      "message": {"content": [{"type": "text", "text": "next"}]},
+    "role": "user",
+    "message": {"content": [{"type": "text", "text": "next"}]},
   }
   current = {
-      "role": "assistant",
-      "message": {
-          "content": [
-              {
-                  "type": "tool_use",
-                  "name": "Read",
-                  "input": {"path": TESTING_RULE_PATH},
-              },
-              {
-                  "type": "tool_use",
-                  "name": "Write",
-                  "input": {
-                      "path": "hpcperfstats/tests/test_cursor_hooks.py",
-                      "contents": "pass\n",
-                  },
-              },
-          ],
-      },
+    "role": "assistant",
+    "message": {
+      "content": [
+        {
+          "type": "tool_use",
+          "name": "Read",
+          "input": {"path": TESTING_RULE_PATH},
+        },
+        {
+          "type": "tool_use",
+          "name": "Write",
+          "input": {
+            "path": "hpcperfstats/tests/test_cursor_hooks.py",
+            "contents": "pass\n",
+          },
+        },
+      ],
+    },
   }
   full = [prior, user, current]
   turn = lib.last_turn_rows(full)
   issues = lib.domain_rule_read_issues(["testing-best-practices.mdc"], turn)
   assert issues == []
   # Full transcript still sees prior edit before this turn's Read.
-  full_issues = lib.domain_rule_read_issues(["testing-best-practices.mdc"], full)
+  full_issues = lib.domain_rule_read_issues(
+    ["testing-best-practices.mdc"], full
+  )
   assert any("read after first edit" in item for item in full_issues)

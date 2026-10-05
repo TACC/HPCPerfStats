@@ -52,21 +52,22 @@ Attributes:
   PMC_TYPENAME_PRIORITY: Attribute.
   _PMC_FREQ_BY_TYPENAME: Attribute.
 """
+
 from __future__ import annotations
 
 # Intel IMC types exposing dram_cas_* (and on SPR also hbm_cas_*) for measured BW.
 INTEL_IMC_STATS_TYPES = (
-    "intel_x86_uncore_imc_skx",
-    "intel_x86_uncore_imc_icx",
-    "intel_x86_uncore_imc_spr",
+  "intel_x86_uncore_imc_skx",
+  "intel_x86_uncore_imc_icx",
+  "intel_x86_uncore_imc_spr",
 )
 
 ARM_IMC_STATS_TYPES = ("arm_aarch64_imc",)
 
 INTEL_CORE_PMC_TYPES_ORDERED = (
-    "intel_x86_pmc_gpr8",
-    "intel_x86_pmc_gpr4",
-    "host_cpu_hw",
+  "intel_x86_pmc_gpr8",
+  "intel_x86_pmc_gpr4",
+  "host_cpu_hw",
 )
 
 AMD_PMC_TYPE = "amd_x86_pmc"
@@ -74,10 +75,10 @@ AMD_PMC_TYPE = "amd_x86_pmc"
 AMD_DF_TYPE = "amd_x86_uncore_df"
 # Live LIKWID family DF collectors (rome → turin).
 AMD_DF_STATS_TYPES = (
-    "amd_x86_uncore_df_rome",
-    "amd_x86_uncore_df_milan",
-    "amd_x86_uncore_df_genoa",
-    "amd_x86_uncore_df_turin",
+  "amd_x86_uncore_df_rome",
+  "amd_x86_uncore_df_milan",
+  "amd_x86_uncore_df_genoa",
+  "amd_x86_uncore_df_turin",
 )
 INTEL_RAPL_STATS_TYPES = ("intel_x86_rapl",)
 AMD_RAPL_STATS_TYPES = ("amd_x86_rapl",)
@@ -86,38 +87,40 @@ HOST_CPU_HW_TYPE = "host_cpu_hw"
 HOST_ROOFLINE_PEAK_TYPE = "host_roofline_peak"
 
 PMC_TYPENAME_PRIORITY = (
-    AMD_PMC_TYPE,
-    "intel_x86_pmc_gpr8",
-    "intel_x86_pmc_gpr4",
-    HOST_CPU_HW_TYPE,
-    "intel_x86_uncore_imc_skx",
-    "intel_x86_uncore_imc_bdw",
-    "intel_x86_uncore_imc_hsw",
-    "intel_x86_uncore_imc_ivb",
-    "intel_x86_uncore_imc_snb",
+  AMD_PMC_TYPE,
+  "intel_x86_pmc_gpr8",
+  "intel_x86_pmc_gpr4",
+  HOST_CPU_HW_TYPE,
+  "intel_x86_uncore_imc_skx",
+  "intel_x86_uncore_imc_bdw",
+  "intel_x86_uncore_imc_hsw",
+  "intel_x86_uncore_imc_ivb",
+  "intel_x86_uncore_imc_snb",
 )
 
 CHA_TYPENAME_PRIORITY = ("intel_x86_uncore_cha_skx",)
 
 # FP_ARITH events (unchanged monitor mnemonics).
 INTEL_FP_ARITH_DOUBLE_EVENTS = (
-    "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE",
-    "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE",
-    "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE",
-    "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE",
+  "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE",
+  "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE",
+  "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE",
+  "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE",
 )
 INTEL_FP_ARITH_SINGLE_EVENTS = (
-    "FP_ARITH_INST_RETIRED_SCALAR_SINGLE",
-    "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE",
-    "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE",
-    "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE",
+  "FP_ARITH_INST_RETIRED_SCALAR_SINGLE",
+  "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE",
+  "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE",
+  "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE",
 )
-INTEL_FP_ARITH_ALL_EVENTS = INTEL_FP_ARITH_DOUBLE_EVENTS + INTEL_FP_ARITH_SINGLE_EVENTS
+INTEL_FP_ARITH_ALL_EVENTS = (
+  INTEL_FP_ARITH_DOUBLE_EVENTS + INTEL_FP_ARITH_SINGLE_EVENTS
+)
 
 INTEL_LEGACY_SSE_FLOP_EVENTS = (
-    ("SSE_DOUBLE_SCALAR", 1),
-    ("SSE_DOUBLE_PACKED", 2),
-    ("SIMD_DOUBLE_256", 4),
+  ("SSE_DOUBLE_SCALAR", 1),
+  ("SSE_DOUBLE_PACKED", 2),
+  ("SIMD_DOUBLE_256", 4),
 )
 
 # Canonical event names
@@ -160,36 +163,36 @@ LUSTRE_LLITE_TYPE = "lustre_llite"
 
 # Nominal GHz for APERF/MPERF ratio in avg_freq when typename matches.
 _PMC_FREQ_BY_TYPENAME = {
-    "intel_snb": 2.7,
-    "intel_ivb": 2.8,
-    "intel_hsw": 2.3,
-    "intel_bdw": 2.6,
-    "intel_skx": 2.1,
-    "intel_x86_pmc_gpr8": 2.7,
-    "intel_x86_pmc_gpr4": 2.7,
-    AMD_PMC_TYPE: 2.7,
-    HOST_CPU_HW_TYPE: 2.7,
-    # Legacy keys still probed via resolve dual-read in utils._pick_pmc_typename
-    "intel_8pmc3": 2.7,
-    "intel_4pmc3": 2.7,
-    "amd64_pmc": 2.7,
-    "cpu_counter_metrics": 2.7,
+  "intel_snb": 2.7,
+  "intel_ivb": 2.8,
+  "intel_hsw": 2.3,
+  "intel_bdw": 2.6,
+  "intel_skx": 2.1,
+  "intel_x86_pmc_gpr8": 2.7,
+  "intel_x86_pmc_gpr4": 2.7,
+  AMD_PMC_TYPE: 2.7,
+  HOST_CPU_HW_TYPE: 2.7,
+  # Legacy keys still probed via resolve dual-read in utils._pick_pmc_typename
+  "intel_8pmc3": 2.7,
+  "intel_4pmc3": 2.7,
+  "amd64_pmc": 2.7,
+  "cpu_counter_metrics": 2.7,
 }
 
 
 def pmc_freq_for_typename(typename: str | None) -> float:
-    """
-    Pmc freq for typename.
-    
-    Args:
-      typename (str | None): One of ``str``, ``None``.
-    
-    Returns:
-      float: float produced by this call.
-    
-    Examples:
-      >>> pmc_freq_for_typename(None)  # doctest: +SKIP
-    """
-    if not typename:
-        return 2.7
-    return _PMC_FREQ_BY_TYPENAME.get(typename, 2.7)
+  """
+  Pmc freq for typename.
+
+  Args:
+    typename (str | None): One of ``str``, ``None``.
+
+  Returns:
+    float: float produced by this call.
+
+  Examples:
+    >>> pmc_freq_for_typename(None)  # doctest: +SKIP
+  """
+  if not typename:
+    return 2.7
+  return _PMC_FREQ_BY_TYPENAME.get(typename, 2.7)

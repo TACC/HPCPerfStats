@@ -31,9 +31,11 @@ def test_run_update_xalt_for_range_skips_exec_path_with_usr_segment():
   jd_mock = MagicMock()
   jd_mock.objects.filter.return_value = jd_tail
 
-  with patch.object(update_xalt, "daterange", fake_daterange), patch.object(
-      update_xalt, "job_data", jd_mock
-  ), patch.object(update_xalt, "run", run_mock):
+  with (
+    patch.object(update_xalt, "daterange", fake_daterange),
+    patch.object(update_xalt, "job_data", jd_mock),
+    patch.object(update_xalt, "run", run_mock),
+  ):
     update_xalt.run_update_xalt_for_range(day, day, log_fn=lines.append)
 
   assert "2024-01-01" in lines

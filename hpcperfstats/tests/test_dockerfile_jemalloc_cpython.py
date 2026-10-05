@@ -12,9 +12,9 @@ def _repo_root() -> Path:
 
 def _stage_body(dockerfile: str, stage_name: str) -> str:
   match = re.search(
-      rf"^FROM .* AS {re.escape(stage_name)}\s*\n(.*?)(?=^FROM |\Z)",
-      dockerfile,
-      flags=re.MULTILINE | re.DOTALL,
+    rf"^FROM .* AS {re.escape(stage_name)}\s*\n(.*?)(?=^FROM |\Z)",
+    dockerfile,
+    flags=re.MULTILINE | re.DOTALL,
   )
   assert match, f"{stage_name} stage not found in Dockerfile"
   return match.group(1)
@@ -24,14 +24,14 @@ def test_dockerfile_uses_debian_trixie_builder_and_slim_runtime():
   dockerfile = (_repo_root() / "Dockerfile").read_text()
   assert "FROM python:3.14.7-trixie" not in dockerfile
   assert re.search(
-      r"^FROM debian:trixie AS python-build\s*$",
-      dockerfile,
-      flags=re.MULTILINE,
+    r"^FROM debian:trixie AS python-build\s*$",
+    dockerfile,
+    flags=re.MULTILINE,
   )
   assert re.search(
-      r"^FROM debian:trixie-slim AS hpcperfstats-base\s*$",
-      dockerfile,
-      flags=re.MULTILINE,
+    r"^FROM debian:trixie-slim AS hpcperfstats-base\s*$",
+    dockerfile,
+    flags=re.MULTILINE,
   )
   assert "python-freethreaded" not in dockerfile
 
@@ -40,21 +40,34 @@ def test_compiled_library_pins_are_latest_known():
   """Lock Dockerfile compile-from-source pins (bump when intentionally upgrading)."""
   build = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
   assert "jemalloc-5.4.0.tar.bz2" in build
-  assert "200776fac271093e7c2f21edd6d62657ecd2be578d9328633f2a86bfa6ef4f1d" in build
+  assert (
+    "200776fac271093e7c2f21edd6d62657ecd2be578d9328633f2a86bfa6ef4f1d" in build
+  )
   assert "mpdecimal-4.0.1.tar.gz" in build
-  assert "96d33abb4bb0070c7be0fed4246cd38416188325f820468214471938545b1ac8" in build
+  assert (
+    "96d33abb4bb0070c7be0fed4246cd38416188325f820468214471938545b1ac8" in build
+  )
   assert "libffi-3.8.0.tar.gz" in build
-  assert "7da3e2d9a171eb0a038f592ecad3ff2bb2550f3496d87b3b29ad0cf4430c0db4" in build
+  assert (
+    "7da3e2d9a171eb0a038f592ecad3ff2bb2550f3496d87b3b29ad0cf4430c0db4" in build
+  )
   assert "zlib-ng/archive/refs/tags/2.3.3.tar.gz" in build
-  assert "f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1" in build
+  assert (
+    "f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1" in build
+  )
   assert "zstd-1.5.7.tar.gz" in build
-  assert "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3" in build
+  assert (
+    "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3" in build
+  )
   assert "PYTHON_VERSION=3.14.8" in build
   _py314_8_sha = (
-      "a65b20a728f169f4e66ae143f40b1bd3d33c38d770251663f627c9767b79b210"
+    "a65b20a728f169f4e66ae143f40b1bd3d33c38d770251663f627c9767b79b210"
   )
   assert build.count(_py314_8_sha) == 2  # GIL + free-threaded source tarballs
-  assert "62859805f6fdf25e2bcbf3fa3217801e1996887ca33e6a2af80674bdfa2dbe07" not in build
+  assert (
+    "62859805f6fdf25e2bcbf3fa3217801e1996887ca33e6a2af80674bdfa2dbe07"
+    not in build
+  )
   # Stale pins must not linger.
   assert "jemalloc-5.3.1.tar.bz2" not in build
   assert "jemalloc-5.3.0.tar.bz2" not in build
@@ -82,14 +95,14 @@ def test_zlib_ng_compat_opt_direct_link_no_explicit_apt_zlib():
   assert "name '_decimal*.so'" in build
   assert "name '_ctypes*.so'" in build
   assert not re.search(
-      r"ldd /opt/python3\.14(?:t)?/bin/python3\.14t? \| grep '/opt/zlib-ng",
-      build,
+    r"ldd /opt/python3\.14(?:t)?/bin/python3\.14t? \| grep '/opt/zlib-ng",
+    build,
   )
   # Do not explicitly apt-install stock zlib (transitive Depends OK).
   assert "zlib1g-dev" not in build
   assert not re.search(
-      r"apt-get install[^\n]*\bzlib1g\b",
-      base,
+    r"apt-get install[^\n]*\bzlib1g\b",
+    base,
   )
   assert "COPY --from=python-build /opt/zlib-ng" in base
   assert "/opt/zlib-ng/lib" in base
@@ -119,10 +132,12 @@ def test_zstd_opt_direct_link_replaces_system_cli_enables_cpython_zstd():
   assert "ln -sfn /opt/zstd/bin/$b" in base
   # zstd CLI gzip support must link zlib-ng (not stock apt zlib).
   assert re.search(
-      r"PKG_CONFIG_PATH=.*?/opt/zlib-ng/lib/pkgconfig",
-      build,
+    r"PKG_CONFIG_PATH=.*?/opt/zlib-ng/lib/pkgconfig",
+    build,
   )
-  zstd_run = build[build.index("zstd-1.5.7.tar.gz") : build.index("mpdecimal-4.0.1")]
+  zstd_run = build[
+    build.index("zstd-1.5.7.tar.gz") : build.index("mpdecimal-4.0.1")
+  ]
   assert "-I/opt/zlib-ng/include" in zstd_run
   assert "-L/opt/zlib-ng/lib" in zstd_run
   assert "-Wl,-rpath,/opt/zlib-ng/lib" in zstd_run
@@ -145,14 +160,16 @@ def test_gil_and_ft_assign_zstd_so_before_test_n():
   """
   build = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
   gil = build[
-      build.index("--prefix=/opt/python3.14") : build.index("--prefix=/opt/python3.14t")
+    build.index("--prefix=/opt/python3.14") : build.index(
+      "--prefix=/opt/python3.14t"
+    )
   ]
   ft = build[build.index("--prefix=/opt/python3.14t") :]
   gil_assign = (
-      "zstd_so=\"$(find /opt/python3.14 -name '_zstd*.so' -type f | head -1)\""
+    "zstd_so=\"$(find /opt/python3.14 -name '_zstd*.so' -type f | head -1)\""
   )
   ft_assign = (
-      "zstd_so=\"$(find /opt/python3.14t -name '_zstd*.so' -type f | head -1)\""
+    "zstd_so=\"$(find /opt/python3.14t -name '_zstd*.so' -type f | head -1)\""
   )
   assert gil_assign in gil
   assert ft_assign in ft
@@ -170,12 +187,14 @@ def test_jemalloc_configure_flags_and_no_initial_exec_tls():
   assert "--with-lg-page=" in build
   # Flag must not appear on jemalloc ./configure argv (comments alone are fine).
   configure_lines = [
-      ln for ln in build.splitlines() if "./configure" in ln or "--prefix=/opt/jemalloc" in ln
+    ln
+    for ln in build.splitlines()
+    if "./configure" in ln or "--prefix=/opt/jemalloc" in ln
   ]
   assert configure_lines
   assert all("--disable-initial-exec-tls" not in ln for ln in configure_lines)
   assert "--disable-initial-exec-tls" not in "\n".join(
-      ln for ln in build.splitlines() if not ln.lstrip().startswith("#")
+    ln for ln in build.splitlines() if not ln.lstrip().startswith("#")
   )
   assert "-march=native" in build
   assert "-flto" in build
@@ -211,7 +230,9 @@ def test_cpython_gil_without_mimalloc_ft_keeps_mimalloc_both_force_jemalloc():
   assert "-ljemalloc" in build
   # --without-mimalloc only on GIL configure (not on --disable-gil block).
   gil_cfg = build[
-      build.index("--prefix=/opt/python3.14") : build.index("--prefix=/opt/python3.14t")
+    build.index("--prefix=/opt/python3.14") : build.index(
+      "--prefix=/opt/python3.14t"
+    )
   ]
   ft_cfg = build[build.index("--prefix=/opt/python3.14t") :]
   assert "--without-mimalloc" in gil_cfg
@@ -221,9 +242,11 @@ def test_cpython_gil_without_mimalloc_ft_keeps_mimalloc_both_force_jemalloc():
 
 
 def test_runtime_jemalloc_both_ways_preload_and_ld_so_preload():
-  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base")
+  base = _stage_body(
+    (_repo_root() / "Dockerfile").read_text(), "hpcperfstats-base"
+  )
   assert "ENV LD_PRELOAD=/opt/jemalloc/lib/libjemalloc.so.2" in base or (
-      "LD_PRELOAD=/opt/jemalloc/lib/libjemalloc.so.2" in base
+    "LD_PRELOAD=/opt/jemalloc/lib/libjemalloc.so.2" in base
   )
   assert "/etc/ld.so.preload" in base
   assert "MALLOC_CONF=background_thread:false" in base
@@ -238,13 +261,13 @@ def test_runtime_jemalloc_both_ways_preload_and_ld_so_preload():
   # because podman wraps RUN in sh -c "…" (Unterminated quoted string).
   assert "/usr/local/lib/${so##*/}" in base
   symlink_run = next(
-      body
-      for body in re.findall(
-          r"^RUN /bin/bash -o pipefail -c '((?:\\'|[^'])*)'",
-          base,
-          flags=re.MULTILINE | re.DOTALL,
-      )
-      if "/etc/ld.so.preload" in body and "grep -F 1.5.7" in body
+    body
+    for body in re.findall(
+      r"^RUN /bin/bash -o pipefail -c '((?:\\'|[^'])*)'",
+      base,
+      flags=re.MULTILINE | re.DOTALL,
+    )
+    if "/etc/ld.so.preload" in body and "grep -F 1.5.7" in body
   )
   assert '"' not in symlink_run
   assert "grep -F 1.5.7" in symlink_run
@@ -257,9 +280,13 @@ def test_hpcperfstats_base_apt_includes_curl_for_supervisor_startup():
   """pipeline supervisor_startup.sh curls web:8000; slim must ship curl."""
   dockerfile = (_repo_root() / "Dockerfile").read_text()
   base = _stage_body(dockerfile, "hpcperfstats-base")
-  apt_install = base[base.index("apt-get install") : base.index("apt-get clean")]
+  apt_install = base[
+    base.index("apt-get install") : base.index("apt-get clean")
+  ]
   assert re.search(r"\bcurl\b", apt_install), apt_install
-  startup = (_repo_root() / "services-conf" / "supervisor_startup.sh").read_text()
+  startup = (
+    _repo_root() / "services-conf" / "supervisor_startup.sh"
+  ).read_text()
   assert 'curl -s -o /dev/null -w "%{http_code}"' in startup
 
 
@@ -267,7 +294,9 @@ def test_hpcperfstats_base_apt_includes_fd_find():
   """pipeline discover walks with fdfind; slim must ship fd-find."""
   dockerfile = (_repo_root() / "Dockerfile").read_text()
   base = _stage_body(dockerfile, "hpcperfstats-base")
-  apt_install = base[base.index("apt-get install") : base.index("apt-get clean")]
+  apt_install = base[
+    base.index("apt-get install") : base.index("apt-get clean")
+  ]
   assert re.search(r"\bfd-find\b", apt_install), apt_install
 
 
@@ -275,19 +304,19 @@ def test_dockerfile_avoids_nested_quotes_inside_command_substitution():
   """Podman/buildah: RUN is sh -c \"…\"; $(… \" …) and bare \" break quoting."""
   text = (_repo_root() / "Dockerfile").read_text()
   assert '$(basename "' not in text
-  assert "$(basename \"" not in text
+  assert '$(basename "' not in text
   assert "${so##*/}" in text
   assert "${_mkl_vers[0]##*/}" in text
   # Base ldconfig/symlink RUN (single-quoted -c) must contain no double quotes.
   base = _stage_body(text, "hpcperfstats-base")
   symlink_run = next(
-      body
-      for body in re.findall(
-          r"^RUN /bin/bash -o pipefail -c '((?:\\'|[^'])*)'",
-          base,
-          flags=re.MULTILINE | re.DOTALL,
-      )
-      if "/etc/ld.so.preload" in body and "zstd --version" in body
+    body
+    for body in re.findall(
+      r"^RUN /bin/bash -o pipefail -c '((?:\\'|[^'])*)'",
+      base,
+      flags=re.MULTILINE | re.DOTALL,
+    )
+    if "/etc/ld.so.preload" in body and "zstd --version" in body
   )
   assert '"' not in symlink_run
 
@@ -298,9 +327,9 @@ def test_hpcperfstats_base_copies_only_opt_prefixes_not_compile_trees():
   build = _stage_body(dockerfile, "python-build")
   base = _stage_body(dockerfile, "hpcperfstats-base")
   copies = [
-      ln.strip()
-      for ln in base.splitlines()
-      if ln.strip().startswith("COPY --from=python-build")
+    ln.strip()
+    for ln in base.splitlines()
+    if ln.strip().startswith("COPY --from=python-build")
   ]
   assert copies
   for ln in copies:

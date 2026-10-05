@@ -1,35 +1,42 @@
 """Tests for persisted job plot artifacts (gzip json_item + fingerprint)."""
 
-import pytest
 from datetime import timedelta
+
+import pytest
 from django.utils import timezone
 
-from hpcperfstats.site.lib.machine.cache_utils import invalidate_job_plot_cache_keys_for_jids
-from hpcperfstats.site.lib.machine.job_plot_artifacts import (
-    JOB_PLOT_KINDS,
-    JOB_PLOT_LAYOUT_ZOOM_V3,
-    PAYLOAD_ENCODING_GZIP_JSON,
-    compute_plot_input_fingerprint,
-    decompress_plot_item_dict,
-    get_live_distinct_time_count_for_jid,
-    json_item_to_compressed_payload,
-    load_cached_job_plot_entry,
-    upsert_job_plot_artifact_batch,
-    upsert_job_plot_artifact,
-    persist_job_plot_artifacts_for_jid,
+from hpcperfstats.site.lib.machine.cache_utils import (
+  invalidate_job_plot_cache_keys_for_jids,
 )
 from hpcperfstats.site.lib.machine.job_detail_artifacts import (
-    ARTIFACT_KIND_JOB_DETAIL,
-    upsert_job_detail_artifact,
+  ARTIFACT_KIND_JOB_DETAIL,
+  upsert_job_detail_artifact,
 )
-from hpcperfstats.site.lib.machine.models import job_data, job_detail_artifact, job_plot_artifact
+from hpcperfstats.site.lib.machine.job_plot_artifacts import (
+  JOB_PLOT_KINDS,
+  JOB_PLOT_LAYOUT_ZOOM_V3,
+  PAYLOAD_ENCODING_GZIP_JSON,
+  compute_plot_input_fingerprint,
+  decompress_plot_item_dict,
+  get_live_distinct_time_count_for_jid,
+  json_item_to_compressed_payload,
+  load_cached_job_plot_entry,
+  persist_job_plot_artifacts_for_jid,
+  upsert_job_plot_artifact,
+  upsert_job_plot_artifact_batch,
+)
+from hpcperfstats.site.lib.machine.models import (
+  job_data,
+  job_detail_artifact,
+  job_plot_artifact,
+)
 
 
 @pytest.mark.django_db
 def test_json_item_to_compressed_payload_roundtrip():
   big = {
-      "roots": list(range(500)),
-      "nested": {"x": [[1.5] * 200] * 50},
+    "roots": list(range(500)),
+    "nested": {"x": [[1.5] * 200] * 50},
   }
   raw, compressed, enc = json_item_to_compressed_payload(big)
   assert enc == PAYLOAD_ENCODING_GZIP_JSON
@@ -47,13 +54,13 @@ def test_decompress_plot_item_dict_rejects_unknown_encoding():
 def test_fingerprint_stable_for_same_job_fields():
   now = timezone.now()
   j = job_data.objects.create(
-      jid="fpjob1",
-      submit_time=now,
-      start_time=now,
-      end_time=now,
-      username="u1",
-      host_list=["n1", "n2"],
-      metrics_distinct_time_count=42,
+    jid="fpjob1",
+    submit_time=now,
+    start_time=now,
+    end_time=now,
+    username="u1",
+    host_list=["n1", "n2"],
+    metrics_distinct_time_count=42,
   )
   fp1 = compute_plot_input_fingerprint(j, 99)
   fp2 = compute_plot_input_fingerprint(j, 99)
@@ -71,15 +78,15 @@ def test_fingerprint_changes_when_telemetry_first_time_moves():
   start = timezone.now() - timedelta(hours=2)
   end = timezone.now()
   j = job_data.objects.create(
-      jid="fptel1",
-      submit_time=start,
-      start_time=start,
-      end_time=end,
-      username="u1",
-      host_list=["n1"],
-      metrics_distinct_time_count=5,
-      telemetry_first_time=start + timedelta(minutes=5),
-      telemetry_last_time=end - timedelta(minutes=5),
+    jid="fptel1",
+    submit_time=start,
+    start_time=start,
+    end_time=end,
+    username="u1",
+    host_list=["n1"],
+    metrics_distinct_time_count=5,
+    telemetry_first_time=start + timedelta(minutes=5),
+    telemetry_last_time=end - timedelta(minutes=5),
   )
   fp1 = compute_plot_input_fingerprint(j, 5)
   j.telemetry_first_time = start + timedelta(minutes=1)
@@ -99,18 +106,18 @@ def test_app_plot_artifact_schema_version_bumped_for_telemetry_bounds():
 def test_load_cached_job_plot_entry_miss_and_hit():
   now = timezone.now()
   j = job_data.objects.create(
-      jid="pcache1",
-      submit_time=now,
-      start_time=now,
-      end_time=now,
-      username="u1",
-      host_list=["n1"],
-      metrics_distinct_time_count=1,
+    jid="pcache1",
+    submit_time=now,
+    start_time=now,
+    end_time=now,
+    username="u1",
+    host_list=["n1"],
+    metrics_distinct_time_count=1,
   )
   live = get_live_distinct_time_count_for_jid("pcache1")
   fp = compute_plot_input_fingerprint(j, live)
   assert (
-      load_cached_job_plot_entry("pcache1", "summary_plot", "normal", fp) is None
+    load_cached_job_plot_entry("pcache1", "summary_plot", "normal", fp) is None
   )
   item = {"doc": {"roots": []}, "root_ids": []}
   upsert_job_plot_artifact("pcache1", "summary_plot", "normal", fp, item)
@@ -124,23 +131,21 @@ def test_load_cached_job_plot_entry_miss_and_hit():
 def test_load_cached_job_plot_entry_stale_fingerprint():
   now = timezone.now()
   j = job_data.objects.create(
-      jid="stale1",
-      submit_time=now,
-      start_time=now,
-      end_time=now,
-      username="u1",
-      host_list=["n1"],
-      metrics_distinct_time_count=1,
+    jid="stale1",
+    submit_time=now,
+    start_time=now,
+    end_time=now,
+    username="u1",
+    host_list=["n1"],
+    metrics_distinct_time_count=1,
   )
   fp_old = compute_plot_input_fingerprint(j, 1)
-  upsert_job_plot_artifact(
-      "stale1", "roofline", "normal", fp_old, {"a": 1}
-  )
+  upsert_job_plot_artifact("stale1", "roofline", "normal", fp_old, {"a": 1})
   j.host_list = ["n1", "n2"]
   j.save(update_fields=["host_list"])
   fp_new = compute_plot_input_fingerprint(j, 999)
   assert (
-      load_cached_job_plot_entry("stale1", "roofline", "normal", fp_new) is None
+    load_cached_job_plot_entry("stale1", "roofline", "normal", fp_new) is None
   )
 
 
@@ -148,17 +153,19 @@ def test_load_cached_job_plot_entry_stale_fingerprint():
 def test_invalidate_job_plot_cache_keys_for_jids_deletes_rows():
   now = timezone.now()
   j = job_data.objects.create(
-      jid="inv1",
-      submit_time=now,
-      start_time=now,
-      end_time=now,
-      username="u1",
-      host_list=["n1"],
-      metrics_distinct_time_count=0,
+    jid="inv1",
+    submit_time=now,
+    start_time=now,
+    end_time=now,
+    username="u1",
+    host_list=["n1"],
+    metrics_distinct_time_count=0,
   )
   fp = compute_plot_input_fingerprint(j, 0)
   upsert_job_plot_artifact("inv1", "roofline", "normal", fp, {"x": 1})
-  upsert_job_detail_artifact("inv1", ARTIFACT_KIND_JOB_DETAIL, "", "fp", {"x": 1})
+  upsert_job_detail_artifact(
+    "inv1", ARTIFACT_KIND_JOB_DETAIL, "", "fp", {"x": 1}
+  )
   assert job_plot_artifact.objects.filter(jid_id="inv1").count() == 1
   assert job_detail_artifact.objects.filter(jid_id="inv1").count() == 1
   invalidate_job_plot_cache_keys_for_jids(["inv1"])
@@ -170,60 +177,67 @@ def test_invalidate_job_plot_cache_keys_for_jids_deletes_rows():
 def test_load_cached_job_plot_entry_zoom_uses_normal_layout_fallback():
   now = timezone.now()
   j = job_data.objects.create(
-      jid="zoomfb1",
-      submit_time=now,
-      start_time=now,
-      end_time=now,
-      username="u1",
-      host_list=["n1"],
-      metrics_distinct_time_count=1,
+    jid="zoomfb1",
+    submit_time=now,
+    start_time=now,
+    end_time=now,
+    username="u1",
+    host_list=["n1"],
+    metrics_distinct_time_count=1,
   )
   fp = compute_plot_input_fingerprint(j, 1)
   normal_item = {
-      "doc": {
-          "roots": [
-              {
-                  "type": "object",
-                  "name": "Figure",
-                  "id": "fig-1",
-                  "attributes": {"width": 300, "height": 120},
-              }
-          ]
-      }
+    "doc": {
+      "roots": [
+        {
+          "type": "object",
+          "name": "Figure",
+          "id": "fig-1",
+          "attributes": {"width": 300, "height": 120},
+        }
+      ]
+    }
   }
   upsert_job_plot_artifact("zoomfb1", "summary_plot", "normal", fp, normal_item)
 
   entry = load_cached_job_plot_entry(
-      "zoomfb1",
-      "summary_plot",
-      JOB_PLOT_LAYOUT_ZOOM_V3,
-      fp,
+    "zoomfb1",
+    "summary_plot",
+    JOB_PLOT_LAYOUT_ZOOM_V3,
+    fp,
   )
   assert entry is not None
   assert entry["unavailable_reason"] is None
-  assert entry["plot_item"]["doc"]["roots"][0]["attributes"]["sizing_mode"] == "stretch_width"
+  assert (
+    entry["plot_item"]["doc"]["roots"][0]["attributes"]["sizing_mode"]
+    == "stretch_width"
+  )
 
 
 @pytest.mark.django_db
 def test_load_cached_job_plot_entry_returns_none_on_corrupt_payload():
   now = timezone.now()
   j = job_data.objects.create(
-      jid="corrupt1",
-      submit_time=now,
-      start_time=now,
-      end_time=now,
-      username="u1",
-      host_list=["n1"],
-      metrics_distinct_time_count=1,
+    jid="corrupt1",
+    submit_time=now,
+    start_time=now,
+    end_time=now,
+    username="u1",
+    host_list=["n1"],
+    metrics_distinct_time_count=1,
   )
   fp = compute_plot_input_fingerprint(j, 1)
   upsert_job_plot_artifact("corrupt1", "roofline", "normal", fp, {"ok": True})
 
-  row = job_plot_artifact.objects.get(jid_id="corrupt1", plot_kind="roofline", layout="normal")
+  row = job_plot_artifact.objects.get(
+    jid_id="corrupt1", plot_kind="roofline", layout="normal"
+  )
   row.payload_compressed = b"definitely-not-gzip"
   row.save(update_fields=["payload_compressed"])
 
-  assert load_cached_job_plot_entry("corrupt1", "roofline", "normal", fp) is None
+  assert (
+    load_cached_job_plot_entry("corrupt1", "roofline", "normal", fp) is None
+  )
 
 
 @pytest.mark.django_db
@@ -232,26 +246,33 @@ def test_upsert_job_plot_artifact_batch_updates_existing_row():
 
   now = timezone.now()
   j = job_data.objects.create(
-      jid="batch1",
-      submit_time=now,
-      start_time=now,
-      end_time=now,
-      username="u1",
-      host_list=["n1"],
-      metrics_distinct_time_count=1,
+    jid="batch1",
+    submit_time=now,
+    start_time=now,
+    end_time=now,
+    username="u1",
+    host_list=["n1"],
+    metrics_distinct_time_count=1,
   )
   fp = compute_plot_input_fingerprint(j, 1)
-  upsert_job_plot_artifact_batch([
+  upsert_job_plot_artifact_batch(
+    [
       ("batch1", "summary_plot", "normal", fp, {"v": 1}),
       ("batch1", "roofline", "normal", fp, {"r": 1}),
-  ])
+    ]
+  )
   assert job_plot_artifact.objects.filter(jid_id="batch1").count() == 2
-  upsert_job_plot_artifact_batch([
+  upsert_job_plot_artifact_batch(
+    [
       ("batch1", "summary_plot", "normal", fp, {"v": 2}),
-  ])
+    ]
+  )
   row = job_plot_artifact.objects.get(
-      jid_id="batch1", plot_kind="summary_plot", layout="normal")
-  out = decompress_plot_item_dict(bytes(row.payload_compressed), row.payload_encoding)
+    jid_id="batch1", plot_kind="summary_plot", layout="normal"
+  )
+  out = decompress_plot_item_dict(
+    bytes(row.payload_compressed), row.payload_encoding
+  )
   assert out == {"plot_item": {"v": 2}, "unavailable_reason": None}
   assert row.artifact_schema == plot_cfg.APP_PLOT_ARTIFACT_SCHEMA_VERSION
 
@@ -262,18 +283,18 @@ def test_upsert_job_plot_artifact_persists_artifact_schema():
 
   now = timezone.now()
   j = job_data.objects.create(
-      jid="schema1",
-      submit_time=now,
-      start_time=now,
-      end_time=now,
-      username="u1",
-      host_list=["n1"],
-      metrics_distinct_time_count=1,
+    jid="schema1",
+    submit_time=now,
+    start_time=now,
+    end_time=now,
+    username="u1",
+    host_list=["n1"],
+    metrics_distinct_time_count=1,
   )
   fp = compute_plot_input_fingerprint(j, 1)
   upsert_job_plot_artifact("schema1", "summary_plot", "normal", fp, {"x": 1})
   row = job_plot_artifact.objects.get(
-      jid_id="schema1", plot_kind="summary_plot", layout="normal"
+    jid_id="schema1", plot_kind="summary_plot", layout="normal"
   )
   assert row.artifact_schema == plot_cfg.APP_PLOT_ARTIFACT_SCHEMA_VERSION
 
@@ -284,40 +305,42 @@ def test_upsert_job_detail_artifact_persists_artifact_schema():
 
   now = timezone.now()
   job_data.objects.create(
-      jid="dschema1",
-      submit_time=now,
-      start_time=now,
-      end_time=now,
-      username="u1",
-      host_list=["n1"],
-      metrics_distinct_time_count=1,
+    jid="dschema1",
+    submit_time=now,
+    start_time=now,
+    end_time=now,
+    username="u1",
+    host_list=["n1"],
+    metrics_distinct_time_count=1,
   )
   upsert_job_detail_artifact(
-      "dschema1",
-      ARTIFACT_KIND_JOB_DETAIL,
-      "",
-      "fp-detail-1",
-      {"ok": True},
+    "dschema1",
+    ARTIFACT_KIND_JOB_DETAIL,
+    "",
+    "fp-detail-1",
+    {"ok": True},
   )
   row = job_detail_artifact.objects.get(
-      jid_id="dschema1",
-      artifact_kind=ARTIFACT_KIND_JOB_DETAIL,
-      artifact_scope="",
+    jid_id="dschema1",
+    artifact_kind=ARTIFACT_KIND_JOB_DETAIL,
+    artifact_scope="",
   )
   assert row.artifact_schema == detail_cfg.APP_DETAIL_ARTIFACT_SCHEMA_VERSION
 
 
 @pytest.mark.django_db
-def test_persist_job_plot_artifacts_persists_fresh_unavailable_rows(monkeypatch):
+def test_persist_job_plot_artifacts_persists_fresh_unavailable_rows(
+  monkeypatch,
+):
   now = timezone.now()
   job = job_data.objects.create(
-      jid="plotunavail1",
-      submit_time=now,
-      start_time=now,
-      end_time=now,
-      username="u1",
-      host_list=["n1"],
-      metrics_distinct_time_count=1,
+    jid="plotunavail1",
+    submit_time=now,
+    start_time=now,
+    end_time=now,
+    username="u1",
+    host_list=["n1"],
+    metrics_distinct_time_count=1,
   )
 
   class _FakeJt:
@@ -326,25 +349,31 @@ def test_persist_job_plot_artifacts_persists_fresh_unavailable_rows(monkeypatch)
 
     def get_host_time_df(self):
       import pandas as pd
+
       return pd.DataFrame({"host": ["n1"], "time": [now]})
 
     def get_aggregate_df(
-        self, _typ, _metric_column, _events, _conv, *, group_by_dev=False
+      self, _typ, _metric_column, _events, _conv, *, group_by_dev=False
     ):
       import pandas as pd
+
       return pd.DataFrame({"host": ["n1"], "time": [now], "sum_val": [0.0]})
 
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.job_plot_artifacts.get_live_distinct_time_count_for_jid",
-      lambda jid: 1,
+    "hpcperfstats.site.lib.machine.job_plot_artifacts.get_live_distinct_time_count_for_jid",
+    lambda jid: 1,
   )
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.job_plot_artifacts.jid_table.jid_table",
-      lambda jid: _FakeJt(),
+    "hpcperfstats.site.lib.machine.job_plot_artifacts.jid_table.jid_table",
+    lambda jid: _FakeJt(),
   )
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.job_plot_artifacts.compute_plot_item_for_kind",
-      lambda _jt, _kind, _zoom_mode: (None, "No plot data for this job.", None),
+    "hpcperfstats.site.lib.machine.job_plot_artifacts.compute_plot_item_for_kind",
+    lambda _jt, _kind, _zoom_mode: (
+      None,
+      "No plot data for this job.",
+      None,
+    ),
   )
 
   persist_job_plot_artifacts_for_jid(job.jid)
@@ -354,20 +383,24 @@ def test_persist_job_plot_artifacts_persists_fresh_unavailable_rows(monkeypatch)
   assert entry is not None
   assert entry["plot_item"] is None
   assert entry["unavailable_reason"] == "No plot data for this job."
-  assert job_plot_artifact.objects.filter(jid_id=job.jid).count() == len(JOB_PLOT_KINDS)
+  assert job_plot_artifact.objects.filter(jid_id=job.jid).count() == len(
+    JOB_PLOT_KINDS
+  )
 
 
 @pytest.mark.django_db
-def test_persist_job_plot_artifacts_marks_plot_exceptions_unavailable(monkeypatch):
+def test_persist_job_plot_artifacts_marks_plot_exceptions_unavailable(
+  monkeypatch,
+):
   now = timezone.now()
   job = job_data.objects.create(
-      jid="ploterror1",
-      submit_time=now,
-      start_time=now,
-      end_time=now,
-      username="u1",
-      host_list=["n1"],
-      metrics_distinct_time_count=1,
+    jid="ploterror1",
+    submit_time=now,
+    start_time=now,
+    end_time=now,
+    username="u1",
+    host_list=["n1"],
+    metrics_distinct_time_count=1,
   )
 
   class _FakeJt:
@@ -376,29 +409,31 @@ def test_persist_job_plot_artifacts_marks_plot_exceptions_unavailable(monkeypatc
 
     def get_host_time_df(self):
       import pandas as pd
+
       return pd.DataFrame({"host": ["n1"], "time": [now]})
 
     def get_aggregate_df(
-        self, _typ, _metric_column, _events, _conv, *, group_by_dev=False
+      self, _typ, _metric_column, _events, _conv, *, group_by_dev=False
     ):
       import pandas as pd
+
       return pd.DataFrame({"host": ["n1"], "time": [now], "sum_val": [0.0]})
 
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.job_plot_artifacts.get_live_distinct_time_count_for_jid",
-      lambda jid: 1,
+    "hpcperfstats.site.lib.machine.job_plot_artifacts.get_live_distinct_time_count_for_jid",
+    lambda jid: 1,
   )
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.job_plot_artifacts.jid_table.jid_table",
-      lambda jid: _FakeJt(),
+    "hpcperfstats.site.lib.machine.job_plot_artifacts.jid_table.jid_table",
+    lambda jid: _FakeJt(),
   )
 
   def _raise_plot_error(_jt, _kind, _zoom_mode):
     raise RuntimeError("boom")
 
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.job_plot_artifacts.compute_plot_item_for_kind",
-      _raise_plot_error,
+    "hpcperfstats.site.lib.machine.job_plot_artifacts.compute_plot_item_for_kind",
+    _raise_plot_error,
   )
 
   persist_job_plot_artifacts_for_jid(job.jid)
@@ -407,21 +442,26 @@ def test_persist_job_plot_artifacts_marks_plot_exceptions_unavailable(monkeypatc
   entry = load_cached_job_plot_entry(job.jid, "summary_plot", "normal", fp)
   assert entry is not None
   assert entry["plot_item"] is None
-  assert entry["unavailable_reason"] == "Plot generation failed during artifact prewarm."
+  assert (
+    entry["unavailable_reason"]
+    == "Plot generation failed during artifact prewarm."
+  )
 
 
 @pytest.mark.django_db
-def test_persist_job_plot_artifacts_skips_interpreter_shutdown_poison(monkeypatch):
+def test_persist_job_plot_artifacts_skips_interpreter_shutdown_poison(
+  monkeypatch,
+):
   """Do not upsert L2 rows whose reason is ThreadPool/interpreter-shutdown poison."""
   now = timezone.now()
   job = job_data.objects.create(
-      jid="plotpoison1",
-      submit_time=now,
-      start_time=now,
-      end_time=now,
-      username="u1",
-      host_list=["n1"],
-      metrics_distinct_time_count=1,
+    jid="plotpoison1",
+    submit_time=now,
+    start_time=now,
+    end_time=now,
+    username="u1",
+    host_list=["n1"],
+    metrics_distinct_time_count=1,
   )
 
   class _FakeJt:
@@ -430,25 +470,27 @@ def test_persist_job_plot_artifacts_skips_interpreter_shutdown_poison(monkeypatc
 
     def get_host_time_df(self):
       import pandas as pd
+
       return pd.DataFrame({"host": ["n1"], "time": [now]})
 
     def get_aggregate_df(
-        self, _typ, _metric_column, _events, _conv, *, group_by_dev=False
+      self, _typ, _metric_column, _events, _conv, *, group_by_dev=False
     ):
       import pandas as pd
+
       return pd.DataFrame({"host": ["n1"], "time": [now], "sum_val": [0.0]})
 
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.job_plot_artifacts.jid_table.jid_table",
-      lambda jid: _FakeJt(),
+    "hpcperfstats.site.lib.machine.job_plot_artifacts.jid_table.jid_table",
+    lambda jid: _FakeJt(),
   )
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.job_plot_artifacts.compute_plot_item_for_kind",
-      lambda _jt, _kind, _zoom_mode: (
-          None,
-          "cannot schedule new futures after interpreter shutdown",
-          None,
-      ),
+    "hpcperfstats.site.lib.machine.job_plot_artifacts.compute_plot_item_for_kind",
+    lambda _jt, _kind, _zoom_mode: (
+      None,
+      "cannot schedule new futures after interpreter shutdown",
+      None,
+    ),
   )
 
   persist_job_plot_artifacts_for_jid(job.jid)
@@ -460,13 +502,13 @@ def test_persist_job_plot_artifacts_skips_interpreter_shutdown_poison(monkeypatc
 def test_persist_job_plot_artifacts_reuses_context_rows_map(monkeypatch):
   now = timezone.now()
   job_data.objects.create(
-      jid="ctxrows1",
-      submit_time=now,
-      start_time=now,
-      end_time=now,
-      username="u1",
-      host_list=["n1"],
-      metrics_distinct_time_count=1,
+    jid="ctxrows1",
+    submit_time=now,
+    start_time=now,
+    end_time=now,
+    username="u1",
+    host_list=["n1"],
+    metrics_distinct_time_count=1,
   )
   calls = {"rows": 0}
   shared = {"_telemetry": {}}
@@ -477,33 +519,35 @@ def test_persist_job_plot_artifacts_reuses_context_rows_map(monkeypatch):
 
     def get_host_time_df(self):
       import pandas as pd
+
       return pd.DataFrame({"host": ["n1"], "time": [now]})
 
     def get_aggregate_df(
-        self, _typ, _metric_column, _events, _conv, *, group_by_dev=False
+      self, _typ, _metric_column, _events, _conv, *, group_by_dev=False
     ):
       import pandas as pd
+
       return pd.DataFrame({"host": ["n1"], "time": [now], "sum_val": [1.0]})
 
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.job_plot_artifacts.get_live_distinct_time_count_for_jid",
-      lambda jid: 1,
+    "hpcperfstats.site.lib.machine.job_plot_artifacts.get_live_distinct_time_count_for_jid",
+    lambda jid: 1,
   )
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.job_plot_artifacts.jid_table.jid_table",
-      lambda jid: _FakeJt(),
+    "hpcperfstats.site.lib.machine.job_plot_artifacts.jid_table.jid_table",
+    lambda jid: _FakeJt(),
   )
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.job_plot_artifacts._load_rows_map",
-      lambda jid, layouts: calls.__setitem__("rows", calls["rows"] + 1) or {},
+    "hpcperfstats.site.lib.machine.job_plot_artifacts._load_rows_map",
+    lambda jid, layouts: calls.__setitem__("rows", calls["rows"] + 1) or {},
   )
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.job_plot_artifacts.compute_plot_item_for_kind",
-      lambda j, kind, zoom_mode: ({"k": kind, "z": zoom_mode}, None, None),
+    "hpcperfstats.site.lib.machine.job_plot_artifacts.compute_plot_item_for_kind",
+    lambda j, kind, zoom_mode: ({"k": kind, "z": zoom_mode}, None, None),
   )
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.job_plot_artifacts.upsert_job_plot_artifact_batch",
-      lambda rows: None,
+    "hpcperfstats.site.lib.machine.job_plot_artifacts.upsert_job_plot_artifact_batch",
+    lambda rows: None,
   )
 
   persist_job_plot_artifacts_for_jid("ctxrows1", context=shared)
@@ -515,8 +559,9 @@ def test_persist_job_plot_artifacts_reuses_context_rows_map(monkeypatch):
 
 @pytest.mark.django_db
 def test_jt_memo_proxy_telemetry_counts_hits():
-  from hpcperfstats.site.lib.machine.job_plot_artifacts import _JtMemoProxy
   import pandas as pd
+
+  from hpcperfstats.site.lib.machine.job_plot_artifacts import _JtMemoProxy
 
   class _FakeJt:
     def __init__(self):
@@ -528,10 +573,12 @@ def test_jt_memo_proxy_telemetry_counts_hits():
       return pd.DataFrame({"host": ["n1"], "time": [timezone.now()]})
 
     def get_aggregate_df(
-        self, _typ, _metric_column, _events, _conv, *, group_by_dev=False
+      self, _typ, _metric_column, _events, _conv, *, group_by_dev=False
     ):
       self.agg_calls += 1
-      return pd.DataFrame({"host": ["n1"], "time": [timezone.now()], "sum_val": [1.0]})
+      return pd.DataFrame(
+        {"host": ["n1"], "time": [timezone.now()], "sum_val": [1.0]}
+      )
 
   telemetry = {}
   proxy = _JtMemoProxy(_FakeJt(), telemetry=telemetry)
@@ -549,32 +596,35 @@ def test_jt_memo_proxy_telemetry_counts_hits():
 @pytest.mark.machine_unit_mock
 def test_jt_memo_proxy_forwards_group_by_dev():
   """Proxy must accept group_by_dev and forward it to inner jid_table."""
-  from hpcperfstats.site.lib.machine.job_plot_artifacts import _JtMemoProxy
   import pandas as pd
+
+  from hpcperfstats.site.lib.machine.job_plot_artifacts import _JtMemoProxy
 
   class _FakeJt:
     def __init__(self):
       self.calls = []
 
     def get_aggregate_df(
-        self, typ, metric_column, events, conv, *, group_by_dev=False
+      self, typ, metric_column, events, conv, *, group_by_dev=False
     ):
       self.calls.append(
-          {
-              "typ": typ,
-              "metric_column": metric_column,
-              "events": events,
-              "conv": conv,
-              "group_by_dev": group_by_dev,
-          }
+        {
+          "typ": typ,
+          "metric_column": metric_column,
+          "events": events,
+          "conv": conv,
+          "group_by_dev": group_by_dev,
+        }
       )
       return pd.DataFrame(
-          {"host": ["n1"], "time": [timezone.now()], "sum_val": [1.0]}
+        {"host": ["n1"], "time": [timezone.now()], "sum_val": [1.0]}
       )
 
   inner = _FakeJt()
   proxy = _JtMemoProxy(inner)
-  proxy.get_aggregate_df("nvidia_gpu", "arc", ["gpu_util"], 1.0, group_by_dev=True)
+  proxy.get_aggregate_df(
+    "nvidia_gpu", "arc", ["gpu_util"], 1.0, group_by_dev=True
+  )
   assert len(inner.calls) == 1
   assert inner.calls[0]["group_by_dev"] is True
   assert inner.calls[0]["typ"] == "nvidia_gpu"
@@ -583,29 +633,30 @@ def test_jt_memo_proxy_forwards_group_by_dev():
 @pytest.mark.machine_unit_mock
 def test_jt_memo_proxy_cache_key_includes_group_by_dev():
   """Host-sum and per-dev requests must not share a memo entry."""
-  from hpcperfstats.site.lib.machine.job_plot_artifacts import _JtMemoProxy
   import pandas as pd
+
+  from hpcperfstats.site.lib.machine.job_plot_artifacts import _JtMemoProxy
 
   class _FakeJt:
     def __init__(self):
       self.calls = []
 
     def get_aggregate_df(
-        self, typ, metric_column, events, conv, *, group_by_dev=False
+      self, typ, metric_column, events, conv, *, group_by_dev=False
     ):
       del typ, metric_column, events, conv
       self.calls.append(bool(group_by_dev))
       if group_by_dev:
         return pd.DataFrame(
-            {
-                "host": ["n1"],
-                "time": [timezone.now()],
-                "dev": ["0"],
-                "sum_val": [2.0],
-            }
+          {
+            "host": ["n1"],
+            "time": [timezone.now()],
+            "dev": ["0"],
+            "sum_val": [2.0],
+          }
         )
       return pd.DataFrame(
-          {"host": ["n1"], "time": [timezone.now()], "sum_val": [1.0]}
+        {"host": ["n1"], "time": [timezone.now()], "sum_val": [1.0]}
       )
 
   inner = _FakeJt()
@@ -622,22 +673,23 @@ def test_jt_memo_proxy_cache_key_includes_group_by_dev():
 @pytest.mark.machine_unit_mock
 def test_persist_job_plot_artifacts_skips_jid_table_when_warm(monkeypatch):
   """Warm L2 for all kinds must not construct jid_table / prefetch."""
-  from hpcperfstats.site.lib.machine import job_plot_artifacts as jpa
   from types import SimpleNamespace
+
+  from hpcperfstats.site.lib.machine import job_plot_artifacts as jpa
 
   layouts = (jpa.JOB_PLOT_LAYOUT_NORMAL,)
   fp = "fp-warm"
   existing = {
-      (kind, jpa.JOB_PLOT_LAYOUT_NORMAL): SimpleNamespace(
-          input_fingerprint=fp,
-          payload_compressed=b"gz",
-      )
-      for kind in jpa.JOB_PLOT_KINDS
+    (kind, jpa.JOB_PLOT_LAYOUT_NORMAL): SimpleNamespace(
+      input_fingerprint=fp,
+      payload_compressed=b"gz",
+    )
+    for kind in jpa.JOB_PLOT_KINDS
   }
   shared = {
-      "job": SimpleNamespace(jid="warmskip1"),
-      "plot_fingerprint": fp,
-      "existing_plot_rows": existing,
+    "job": SimpleNamespace(jid="warmskip1"),
+    "plot_fingerprint": fp,
+    "existing_plot_rows": existing,
   }
   calls = {"jt": 0}
 
@@ -646,5 +698,7 @@ def test_persist_job_plot_artifacts_skips_jid_table_when_warm(monkeypatch):
     raise AssertionError("jid_table must not be constructed when warm")
 
   monkeypatch.setattr(jpa.jid_table, "jid_table", boom)
-  jpa.persist_job_plot_artifacts_for_jid("warmskip1", layouts=layouts, context=shared)
+  jpa.persist_job_plot_artifacts_for_jid(
+    "warmskip1", layouts=layouts, context=shared
+  )
   assert calls["jt"] == 0

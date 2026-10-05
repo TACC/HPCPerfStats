@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from django.db.utils import OperationalError
@@ -20,20 +20,18 @@ def _reset_caches():
 
 def test_sampled_empty_seconds_returns_false():
   assert (
-    host_itimes.host_sampled_timestamp_seconds_all_present("h", set())
-    is False
+    host_itimes.host_sampled_timestamp_seconds_all_present("h", set()) is False
   )
   assert (
     host_itimes.host_sampled_timestamp_seconds_all_present("h", []) is False
   )
   assert (
-    host_itimes.host_sampled_timestamp_seconds_all_present("h", None)
-    is False
+    host_itimes.host_sampled_timestamp_seconds_all_present("h", None) is False
   )
 
 
 def test_iter_host_itimes_chunk_bounds_single_and_multi_day():
-  ts0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+  ts0 = datetime(2026, 1, 1, tzinfo=UTC)
   ts1 = ts0 + timedelta(hours=12)
   chunks = list(host_itimes._iter_host_itimes_chunk_bounds(ts0, ts1))
   assert chunks == [(ts0, ts1)]
@@ -49,7 +47,7 @@ def test_iter_host_itimes_chunk_bounds_single_and_multi_day():
 
 def test_collect_skips_none_and_naive_overflow(monkeypatch):
   naive = datetime(2026, 1, 1, 0, 0, 1)
-  aware = datetime(2026, 1, 1, 0, 0, 2, tzinfo=timezone.utc)
+  aware = datetime(2026, 1, 1, 0, 0, 2, tzinfo=UTC)
 
   class _QS:
     def iterator(self):
@@ -74,12 +72,12 @@ def test_collect_skips_none_and_naive_overflow(monkeypatch):
   itimes = set()
   overflow = host_itimes._collect_distinct_unix_seconds(
     "h",
-    datetime(2026, 1, 1, tzinfo=timezone.utc),
-    datetime(2026, 1, 2, tzinfo=timezone.utc),
+    datetime(2026, 1, 1, tzinfo=UTC),
+    datetime(2026, 1, 2, tzinfo=UTC),
     itimes,
   )
   assert overflow is host_itimes.HOST_ITIMES_SET_OVERFLOW
-  assert int(naive.replace(tzinfo=timezone.utc).timestamp()) in itimes
+  assert int(naive.replace(tzinfo=UTC).timestamp()) in itimes
 
 
 def test_cached_reuses_and_trims(monkeypatch):
@@ -87,7 +85,7 @@ def test_cached_reuses_and_trims(monkeypatch):
 
   class _QS:
     def iterator(self):
-      return iter([datetime(2026, 1, 1, tzinfo=timezone.utc)])
+      return iter([datetime(2026, 1, 1, tzinfo=UTC)])
 
     def distinct(self):
       return self
@@ -106,8 +104,8 @@ def test_cached_reuses_and_trims(monkeypatch):
     "get_sync_host_itimes_cache_max_timestamps_per_entry",
     lambda: 100,
   )
-  ts_low = datetime(2026, 1, 1, tzinfo=timezone.utc)
-  ts_high = datetime(2026, 1, 1, 1, tzinfo=timezone.utc)
+  ts_low = datetime(2026, 1, 1, tzinfo=UTC)
+  ts_high = datetime(2026, 1, 1, 1, tzinfo=UTC)
   a = host_itimes.host_recent_timestamps_cached("h1", ts_low, ts_high)
   b = host_itimes.host_recent_timestamps_cached("h1", ts_low, ts_high)
   assert a == b
@@ -117,9 +115,7 @@ def test_cached_reuses_and_trims(monkeypatch):
 def test_bounded_query_failure_returns_overflow(monkeypatch):
   class _QS:
     def iterator(self):
-      raise OperationalError(
-        "canceling statement due to statement timeout"
-      )
+      raise OperationalError("canceling statement due to statement timeout")
 
     def distinct(self):
       return self
@@ -137,8 +133,8 @@ def test_bounded_query_failure_returns_overflow(monkeypatch):
     "is_query_bounded_failure_error",
     lambda _exc: True,
   )
-  ts_low = datetime(2026, 1, 1, tzinfo=timezone.utc)
-  ts_high = datetime(2026, 1, 1, 1, tzinfo=timezone.utc)
+  ts_low = datetime(2026, 1, 1, tzinfo=UTC)
+  ts_high = datetime(2026, 1, 1, 1, tzinfo=UTC)
   out = host_itimes.host_recent_timestamps_cached("h1", ts_low, ts_high)
   assert out is host_itimes.HOST_ITIMES_SET_OVERFLOW
   # second call logs once
@@ -185,8 +181,7 @@ def test_sampled_missing_second_false(monkeypatch):
     is False
   )
   assert (
-    host_itimes.host_sampled_timestamp_seconds_all_present("h1", {100})
-    is True
+    host_itimes.host_sampled_timestamp_seconds_all_present("h1", {100}) is True
   )
 
 
@@ -197,6 +192,5 @@ def test_zero_unix_second_set_is_valid_boundary(monkeypatch):
     lambda *_a, **_k: {0},
   )
   assert (
-    host_itimes.host_sampled_timestamp_seconds_all_present("h1", {0})
-    is True
+    host_itimes.host_sampled_timestamp_seconds_all_present("h1", {0}) is True
   )

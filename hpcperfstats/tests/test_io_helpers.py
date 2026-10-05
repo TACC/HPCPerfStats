@@ -1,31 +1,32 @@
 """Tests for dbload ORM row builders."""
+
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import UTC
 from types import SimpleNamespace
 
 import pandas as pd
 
 from hpcperfstats.dbload.lib.io_helpers import (
-    host_data_instance_from_stats_row,
-    job_data_instance_from_acct_row,
+  host_data_instance_from_stats_row,
+  job_data_instance_from_acct_row,
 )
 
 
 def test_host_data_instance_from_stats_row_maps_fields():
   ts = pd.Timestamp("2020-06-01 12:00:00")
   row = SimpleNamespace(
-      time=ts,
-      host="n.example.com",
-      type="cpu",
-      event="cycles",
-      unit="count",
-      value=1.5,
-      delta=0.25,
-      arc=100.0,
+    time=ts,
+    host="n.example.com",
+    type="cpu",
+    event="cycles",
+    unit="count",
+    value=1.5,
+    delta=0.25,
+    arc=100.0,
   )
   h = host_data_instance_from_stats_row(row)
-  assert h.time == ts.to_pydatetime(warn=False).replace(tzinfo=timezone.utc)
+  assert h.time == ts.to_pydatetime(warn=False).replace(tzinfo=UTC)
   assert h.host == "n.example.com"
   assert h.type == "cpu"
   assert h.dev == ""
@@ -42,36 +43,36 @@ def test_host_data_instance_from_stats_row_nanosecond_timestamp_no_warning():
 
   ts = pd.Timestamp("2020-06-01 12:00:00.123456789")
   row = SimpleNamespace(
-      time=ts,
-      host="n.example.com",
-      type="cpu",
-      event="cycles",
-      unit="count",
-      value=1.0,
-      delta=None,
-      arc=None,
+    time=ts,
+    host="n.example.com",
+    type="cpu",
+    event="cycles",
+    unit="count",
+    value=1.0,
+    delta=None,
+    arc=None,
   )
   with warnings.catch_warnings(record=True) as caught:
     warnings.simplefilter("always")
     h = host_data_instance_from_stats_row(row)
-  assert not any(
-      "nanoseconds" in str(w.message).lower() for w in caught
-  ), [str(w.message) for w in caught]
-  assert h.time == ts.to_pydatetime(warn=False).replace(tzinfo=timezone.utc)
+  assert not any("nanoseconds" in str(w.message).lower() for w in caught), [
+    str(w.message) for w in caught
+  ]
+  assert h.time == ts.to_pydatetime(warn=False).replace(tzinfo=UTC)
 
 
 def test_host_data_instance_from_stats_row_persists_dev():
   ts = pd.Timestamp("2020-06-01 12:00:00")
   row = SimpleNamespace(
-      time=ts,
-      host="n.example.com",
-      type="nvidia_gpu",
-      dev="0",
-      event="gpu_util",
-      unit="%",
-      value=40.0,
-      delta=1.0,
-      arc=None,
+    time=ts,
+    host="n.example.com",
+    type="nvidia_gpu",
+    dev="0",
+    event="gpu_util",
+    unit="%",
+    value=40.0,
+    delta=1.0,
+    arc=None,
   )
   h = host_data_instance_from_stats_row(row)
   assert h.dev == "0"
@@ -79,21 +80,21 @@ def test_host_data_instance_from_stats_row_persists_dev():
 
 def test_job_data_instance_from_acct_row_maps_fields():
   row = SimpleNamespace(
-      jid="42",
-      username="alice",
-      account=pd.NA,
-      start_time=pd.Timestamp("2020-01-01 10:00:00"),
-      end_time=pd.Timestamp("2020-01-01 11:00:00"),
-      submit_time=pd.Timestamp("2020-01-01 09:00:00"),
-      queue="batch",
-      timelimit=3600.0,
-      jobname="j1",
-      state="COMPLETED",
-      nhosts=2,
-      ncores=64,
-      host_list=["a", "b"],
-      runtime=3600.0,
-      node_hrs=2.0,
+    jid="42",
+    username="alice",
+    account=pd.NA,
+    start_time=pd.Timestamp("2020-01-01 10:00:00"),
+    end_time=pd.Timestamp("2020-01-01 11:00:00"),
+    submit_time=pd.Timestamp("2020-01-01 09:00:00"),
+    queue="batch",
+    timelimit=3600.0,
+    jobname="j1",
+    state="COMPLETED",
+    nhosts=2,
+    ncores=64,
+    host_list=["a", "b"],
+    runtime=3600.0,
+    node_hrs=2.0,
   )
   j = job_data_instance_from_acct_row(row)
   assert j.jid == "42"
@@ -107,21 +108,21 @@ def test_job_data_instance_from_acct_row_maps_fields():
 
 def test_job_data_instance_from_acct_row_nullable_fields():
   row = SimpleNamespace(
-      jid="99",
-      username="bob",
-      account=pd.NA,
-      start_time=pd.NaT,
-      end_time=pd.Timestamp("2020-01-01 11:00:00"),
-      submit_time=pd.NA,
-      queue=pd.NA,
-      timelimit=pd.NA,
-      jobname=pd.NA,
-      state=pd.NA,
-      nhosts=pd.NA,
-      ncores=pd.NA,
-      host_list=[],
-      runtime=pd.NA,
-      node_hrs=pd.NA,
+    jid="99",
+    username="bob",
+    account=pd.NA,
+    start_time=pd.NaT,
+    end_time=pd.Timestamp("2020-01-01 11:00:00"),
+    submit_time=pd.NA,
+    queue=pd.NA,
+    timelimit=pd.NA,
+    jobname=pd.NA,
+    state=pd.NA,
+    nhosts=pd.NA,
+    ncores=pd.NA,
+    host_list=[],
+    runtime=pd.NA,
+    node_hrs=pd.NA,
   )
   j = job_data_instance_from_acct_row(row)
   assert j.jid == "99"
@@ -134,15 +135,15 @@ def test_job_data_instance_from_acct_row_nullable_fields():
 def test_host_data_instance_from_stats_row_jid_dash_becomes_none():
   ts = pd.Timestamp("2020-06-01 12:00:00")
   row = SimpleNamespace(
-      time=ts,
-      host="n.example.com",
-      jid="-",
-      type="cpu",
-      event="cycles",
-      unit="count",
-      value=None,
-      delta=None,
-      arc=None,
+    time=ts,
+    host="n.example.com",
+    jid="-",
+    type="cpu",
+    event="cycles",
+    unit="count",
+    value=None,
+    delta=None,
+    arc=None,
   )
   h = host_data_instance_from_stats_row(row)
   assert h.jid is None

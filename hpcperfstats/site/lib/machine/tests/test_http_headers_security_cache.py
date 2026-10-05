@@ -1,6 +1,5 @@
-from django.test import Client
-
 import pytest
+from django.test import Client
 
 from hpcperfstats.site.hpcperfstats_site.middleware import (
   DEFAULT_COOP,
@@ -10,7 +9,6 @@ from hpcperfstats.site.hpcperfstats_site.middleware import (
   DEFAULT_CSP_STRICT,
   DEFAULT_PERMISSIONS_POLICY,
 )
-
 
 pytestmark = pytest.mark.django_db(databases=[])
 
@@ -37,7 +35,9 @@ def test_security_headers_are_not_overwritten_if_already_set_by_view():
   assert response["Permissions-Policy"] == DEFAULT_PERMISSIONS_POLICY
   assert response["Cross-Origin-Opener-Policy"] == DEFAULT_COOP
   assert response["Content-Security-Policy"] == DEFAULT_CSP_NO_ACTIVE
-  assert response["Content-Security-Policy-Report-Only"] == DEFAULT_CSP_REPORT_ONLY
+  assert (
+    response["Content-Security-Policy-Report-Only"] == DEFAULT_CSP_REPORT_ONLY
+  )
   assert "unsafe-inline" not in response["Content-Security-Policy"]
   assert "unsafe-eval" not in DEFAULT_CSP_REPORT_ONLY
 

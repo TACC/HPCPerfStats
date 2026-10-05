@@ -1,4 +1,5 @@
 """Host tests for competing AMQP consumers, per-consumer prefetch, and reorder."""
+
 from __future__ import annotations
 
 import threading
@@ -42,7 +43,9 @@ class _FakeConnection:
 def archive_pool_env(tmp_path, monkeypatch):
   import hpcperfstats.listend as listend
 
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
   listend.stop_listend_archive_pool()
   listend._amqp_consumer_count = 1
   listend._amqp_applied_prefetch = 0
@@ -60,19 +63,15 @@ def archive_pool_env(tmp_path, monkeypatch):
 def test_amqp_prefetch_is_per_consumer_not_split(monkeypatch):
   import hpcperfstats.listend as listend
 
-  monkeypatch.setattr(
-      listend.cfg, "get_listend_amqp_prefetch", lambda: 32
-  )
+  monkeypatch.setattr(listend.cfg, "get_listend_amqp_prefetch", lambda: 32)
   monkeypatch.setattr(listend, "_live_db_ingest_pool_active", lambda: None)
   listend._amqp_consumer_count = 16
   assert listend._listend_qos_prefetch_count() == 32
   listend._amqp_consumer_count = 1
   assert listend._listend_qos_prefetch_count() == 32
+  monkeypatch.setattr(listend, "_live_db_ingest_pool_active", lambda: object())
   monkeypatch.setattr(
-      listend, "_live_db_ingest_pool_active", lambda: object()
-  )
-  monkeypatch.setattr(
-      listend, "_listend_db_backpressure_mode_is_pause", lambda: True
+    listend, "_listend_db_backpressure_mode_is_pause", lambda: True
   )
   assert listend._listend_qos_prefetch_count() == 1
   listend._amqp_consumer_count = 1
@@ -86,13 +85,18 @@ def test_n1_skips_reorder(archive_pool_env, monkeypatch):
   def tracking_append(message):
     order.append(message.split()[0])
     return listend.ArchiveAppendResult(
-        host="samehost.example.com", path="/tmp/x", offset=0, length=1,
+      host="samehost.example.com",
+      path="/tmp/x",
+      offset=0,
+      length=1,
     )
 
-  monkeypatch.setattr(listend, "append_monitor_payload_to_archive", tracking_append)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
-      lambda *a, **k: True,
+    listend, "append_monitor_payload_to_archive", tracking_append
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
+    lambda *a, **k: True,
   )
   later = b"1710000121.0 1 samehost.example.com y\n"
   earlier = b"1710000001.0 1 samehost.example.com x\n"
@@ -103,11 +107,14 @@ def test_n1_skips_reorder(archive_pool_env, monkeypatch):
     time.sleep(0.01)
   assert channel.acked == [1, 2]
   assert order == [b"1710000121.0", b"1710000001.0"] or order == [
-      "1710000121.0", "1710000001.0",
+    "1710000121.0",
+    "1710000001.0",
   ]
 
 
-def test_same_host_later_timestamp_waits_for_earlier(archive_pool_env, monkeypatch):
+def test_same_host_later_timestamp_waits_for_earlier(
+  archive_pool_env, monkeypatch
+):
   listend, channel, _conn, _tmp = archive_pool_env
   order = []
   listend._amqp_consumer_count = 8
@@ -118,13 +125,18 @@ def test_same_host_later_timestamp_waits_for_earlier(archive_pool_env, monkeypat
       tok = tok.decode("utf-8")
     order.append(tok)
     return listend.ArchiveAppendResult(
-        host="samehost.example.com", path="/tmp/x", offset=0, length=1,
+      host="samehost.example.com",
+      path="/tmp/x",
+      offset=0,
+      length=1,
     )
 
-  monkeypatch.setattr(listend, "append_monitor_payload_to_archive", tracking_append)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
-      lambda *a, **k: True,
+    listend, "append_monitor_payload_to_archive", tracking_append
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
+    lambda *a, **k: True,
   )
   later = b"1710000121.0 1 samehost.example.com y\n"
   earlier = b"1710000001.0 1 samehost.example.com x\n"
@@ -149,13 +161,18 @@ def test_dollar_rotates_before_digit_same_second(archive_pool_env, monkeypatch):
       text = str(message)
     order.append("$" if text.lstrip().startswith("$") else "digit")
     return listend.ArchiveAppendResult(
-        host="c001.example.edu", path="/tmp/x", offset=0, length=1,
+      host="c001.example.edu",
+      path="/tmp/x",
+      offset=0,
+      length=1,
     )
 
-  monkeypatch.setattr(listend, "append_monitor_payload_to_archive", tracking_append)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
-      lambda *a, **k: True,
+    listend, "append_monitor_payload_to_archive", tracking_append
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
+    lambda *a, **k: True,
   )
   digit = b"1710000001.0 1 c001.example.edu extra\n"
   dollar = b"$\n1 c001.example.edu\n1710000001.0 1 c001.example.edu extra\n"
@@ -171,8 +188,8 @@ def test_ack_uses_originating_connection(archive_pool_env, monkeypatch):
   listend, _global_ch, _global_conn, _tmp = archive_pool_env
   listend._amqp_consumer_count = 8
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
-      lambda *a, **k: True,
+    "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
+    lambda *a, **k: True,
   )
 
   ch0, conn0 = _FakeChannel(), _FakeConnection()
@@ -184,12 +201,20 @@ def test_ack_uses_originating_connection(archive_pool_env, monkeypatch):
   body0 = b"1710000001.0 1 host-a.example.com x\n"
   body1 = b"1710000001.0 1 host-b.example.com x\n"
   listend._dispatch_to_archive_pool(
-      10, body0, "host-a.example.com",
-      session=s0, unix_second=1710000001, is_dollar=False,
+    10,
+    body0,
+    "host-a.example.com",
+    session=s0,
+    unix_second=1710000001,
+    is_dollar=False,
   )
   listend._dispatch_to_archive_pool(
-      11, body1, "host-b.example.com",
-      session=s1, unix_second=1710000001, is_dollar=False,
+    11,
+    body1,
+    "host-b.example.com",
+    session=s1,
+    unix_second=1710000001,
+    is_dollar=False,
   )
   deadline = time.time() + 5.0
   while time.time() < deadline and not (ch0.acked and ch1.acked):
@@ -220,17 +245,17 @@ def test_idle_monitor_archive_suffix_includes_amqp_consumers(monkeypatch):
 
 def test_parse_monitor_payload_archive_hint_dollar_and_digit():
   from hpcperfstats.dbload.lib.listend_db_ingest import (
-      parse_monitor_payload_archive_hint,
+    parse_monitor_payload_archive_hint,
   )
 
   host, ts, is_dollar = parse_monitor_payload_archive_hint(
-      "1710000001.0 1 host.example.edu extra\n"
+    "1710000001.0 1 host.example.edu extra\n"
   )
   assert host == "host.example.edu"
   assert ts == 1710000001
   assert is_dollar is False
   host, ts, is_dollar = parse_monitor_payload_archive_hint(
-      "$\n1 c001.example.edu\n1710000001.0 1 c001.example.edu extra\n"
+    "$\n1 c001.example.edu\n1710000001.0 1 c001.example.edu extra\n"
   )
   assert host == "c001.example.edu"
   assert ts == 1710000001

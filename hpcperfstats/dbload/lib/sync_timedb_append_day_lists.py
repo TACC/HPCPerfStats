@@ -3,11 +3,12 @@
 Attributes:
   AppendDayClaimLists: Process-local day → deque helper (coordinator only).
 """
+
 from __future__ import annotations
 
+import threading
 from collections import deque
 from typing import Any
-import threading
 
 
 class AppendDayClaimLists:

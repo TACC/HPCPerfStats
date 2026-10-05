@@ -115,11 +115,11 @@ def test_imap_unordered_watch_pool_aborts_when_worker_dies():
 
   threading.Thread(target=kill_after_delay, daemon=True).start()
   iterator = mph.imap_unordered_watch_pool(
-      pool,
-      lambda x: x,
-      [1],
-      poll_timeout_s=0.05,
-      context="test_imap",
+    pool,
+    lambda x: x,
+    [1],
+    poll_timeout_s=0.05,
+    context="test_imap",
   )
   with pytest.raises(mph.MultiprocessingWorkerExitError):
     next(iterator)
@@ -143,10 +143,10 @@ def test_async_result_get_watch_pool_aborts_when_worker_dies():
   threading.Thread(target=kill_after_delay, daemon=True).start()
   with pytest.raises(mph.MultiprocessingWorkerExitError):
     mph.async_result_get_watch_pool(
-        _BlockingAsyncResult(),
-        pool,
-        poll_timeout_s=0.05,
-        context="test_async",
+      _BlockingAsyncResult(),
+      pool,
+      poll_timeout_s=0.05,
+      context="test_async",
     )
 
 
@@ -159,10 +159,10 @@ def test_async_result_get_watch_pool_returns_when_ready():
       return [True, False]
 
   assert mph.async_result_get_watch_pool(
-      _ReadyAsyncResult(),
-      pool,
-      poll_timeout_s=0.05,
-      context="test_ready",
+    _ReadyAsyncResult(),
+    pool,
+    poll_timeout_s=0.05,
+    context="test_ready",
   ) == [True, False]
 
 
@@ -186,15 +186,15 @@ def test_async_result_get_watch_pool_invokes_stall_poll_before_ready():
     calls.append((consecutive_timeouts, context, health_ctx))
 
   assert mph.async_result_get_watch_pool(
-      _TimeoutThenReadyAsyncResult(),
-      pool,
-      poll_timeout_s=0.05,
-      context="archive_finalize",
-      on_stall_poll=_on_stall_poll,
-      pool_health_context={"archive_pool": pool},
+    _TimeoutThenReadyAsyncResult(),
+    pool,
+    poll_timeout_s=0.05,
+    context="archive_finalize",
+    on_stall_poll=_on_stall_poll,
+    pool_health_context={"archive_pool": pool},
   ) == [True]
   assert calls == [
-      (0, "archive_finalize", {"archive_pool": pool}),
+    (0, "archive_finalize", {"archive_pool": pool}),
   ]
 
 
@@ -214,7 +214,9 @@ class _CloseablePool:
 
 def test_close_pool_bounded_terminates_when_worker_dead():
   pool = _CloseablePool([_DeadWorker()])
-  assert mph.close_pool_bounded(pool, timeout_s=0.1, force_terminate=False) is True
+  assert (
+    mph.close_pool_bounded(pool, timeout_s=0.1, force_terminate=False) is True
+  )
   assert pool.terminated is True
 
 
@@ -222,12 +224,12 @@ def test_imap_unordered_watch_pool_aborts_on_stuck_worker_stall(monkeypatch):
   del monkeypatch
   pool = _BlockingPool()
   iterator = mph.imap_unordered_watch_pool(
-      pool,
-      lambda x: x,
-      [1],
-      poll_timeout_s=0.01,
-      stall_abort_after_timeouts=2,
-      context="test_stall",
+    pool,
+    lambda x: x,
+    [1],
+    poll_timeout_s=0.01,
+    stall_abort_after_timeouts=2,
+    context="test_stall",
   )
   with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
     next(iterator)
@@ -236,15 +238,17 @@ def test_imap_unordered_watch_pool_aborts_on_stuck_worker_stall(monkeypatch):
 
 def test_imap_stall_logs_before_raise(monkeypatch):
   logs = []
-  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, **kwargs: logs.append(str(msg))
+  )
   pool = _BlockingPool()
   iterator = mph.imap_unordered_watch_pool(
-      pool,
-      lambda x: x,
-      [1],
-      poll_timeout_s=0.01,
-      stall_abort_after_timeouts=2,
-      context="test_stall_log",
+    pool,
+    lambda x: x,
+    [1],
+    poll_timeout_s=0.01,
+    stall_abort_after_timeouts=2,
+    context="test_stall_log",
   )
   with pytest.raises(mph.MultiprocessingPoolStallError):
     next(iterator)
@@ -258,18 +262,18 @@ def test_imap_stall_warning_callback(monkeypatch):
 
   def on_stall_warning(consecutive, abort_after, poll_timeout_s, context):
     warnings.append(
-        (consecutive, abort_after, poll_timeout_s, context),
+      (consecutive, abort_after, poll_timeout_s, context),
     )
 
   pool = _BlockingPool()
   iterator = mph.imap_unordered_watch_pool(
-      pool,
-      lambda x: x,
-      [1],
-      poll_timeout_s=0.01,
-      stall_abort_after_timeouts=4,
-      context="test_warn",
-      on_stall_warning=on_stall_warning,
+    pool,
+    lambda x: x,
+    [1],
+    poll_timeout_s=0.01,
+    stall_abort_after_timeouts=4,
+    context="test_warn",
+    on_stall_warning=on_stall_warning,
   )
   with pytest.raises(mph.MultiprocessingPoolStallError):
     next(iterator)
@@ -287,13 +291,13 @@ def test_imap_unordered_watch_pool_honors_stall_abort_override(monkeypatch):
 
   pool = _BlockingPool()
   iterator = mph.imap_unordered_watch_pool(
-      pool,
-      lambda x: x,
-      [1],
-      poll_timeout_s=0.01,
-      stall_abort_after_timeouts=2,
-      context="test_override",
-      on_stall_warning=on_stall_warning,
+    pool,
+    lambda x: x,
+    [1],
+    poll_timeout_s=0.01,
+    stall_abort_after_timeouts=2,
+    context="test_override",
+    on_stall_warning=on_stall_warning,
   )
   with pytest.raises(mph.MultiprocessingPoolStallError):
     next(iterator)
@@ -302,7 +306,9 @@ def test_imap_unordered_watch_pool_honors_stall_abort_override(monkeypatch):
 
 def test_imap_stall_fatal_summary_appended_to_error(monkeypatch):
   logs = []
-  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, **kwargs: logs.append(str(msg))
+  )
 
   def on_stall_fatal_summary(consecutive, abort_after, poll_timeout_s, context):
     del consecutive, abort_after, poll_timeout_s, context
@@ -310,17 +316,19 @@ def test_imap_stall_fatal_summary_appended_to_error(monkeypatch):
 
   pool = _BlockingPool()
   iterator = mph.imap_unordered_watch_pool(
-      pool,
-      lambda x: x,
-      [1],
-      poll_timeout_s=0.01,
-      stall_abort_after_timeouts=2,
-      context="test_fatal_summary",
-      on_stall_fatal_summary=on_stall_fatal_summary,
+    pool,
+    lambda x: x,
+    [1],
+    poll_timeout_s=0.01,
+    stall_abort_after_timeouts=2,
+    context="test_fatal_summary",
+    on_stall_fatal_summary=on_stall_fatal_summary,
   )
   with pytest.raises(mph.MultiprocessingPoolStallError):
     next(iterator)
-  error_lines = [line for line in logs if "ERROR:" in line and "Pool imap stalled" in line]
+  error_lines = [
+    line for line in logs if "ERROR:" in line and "Pool imap stalled" in line
+  ]
   assert error_lines
   assert "diagnostics_summary=worker_stages=-" in error_lines[-1]
 
@@ -354,12 +362,12 @@ def test_imap_stall_counter_resets_during_store_populate_progress(monkeypatch):
   del monkeypatch
   pool = _DeferStallPool(release_after=5)
   iterator = mph.imap_unordered_watch_pool(
-      pool,
-      lambda x: x,
-      [42],
-      poll_timeout_s=0.01,
-      stall_abort_after_timeouts=2,
-      on_stall_poll=lambda *_a, **_k: True,
+    pool,
+    lambda x: x,
+    [42],
+    poll_timeout_s=0.01,
+    stall_abort_after_timeouts=2,
+    on_stall_poll=lambda *_a, **_k: True,
   )
   assert next(iterator) == 42
 
@@ -374,8 +382,8 @@ def test_close_pool_bounded_closes_alive_workers():
 def test_terminate_pool_bounded_logs_context(monkeypatch):
   logs = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.multiprocessing_pool_health.log_print",
-      lambda msg, flush=False: logs.append(msg),
+    "hpcperfstats.dbload.lib.multiprocessing_pool_health.log_print",
+    lambda msg, flush=False: logs.append(msg),
   )
 
   class _TermPool:
@@ -386,7 +394,9 @@ def test_terminate_pool_bounded_logs_context(monkeypatch):
         worker.join()
 
   mph.terminate_pool_bounded(_TermPool(), context="ingest_pool")
-  assert any("Pool workers terminated" in line and "ingest_pool" in line for line in logs)
+  assert any(
+    "Pool workers terminated" in line and "ingest_pool" in line for line in logs
+  )
 
 
 class _StubbornWorker:
@@ -403,16 +413,16 @@ def test_terminate_pool_bounded_sigkill_after_timeout(monkeypatch):
   logs = []
   killed = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.multiprocessing_pool_health.log_print",
-      lambda msg, flush=False: logs.append(msg),
+    "hpcperfstats.dbload.lib.multiprocessing_pool_health.log_print",
+    lambda msg, flush=False: logs.append(msg),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.multiprocessing_pool_health.os.kill",
-      lambda pid, sig: killed.append((pid, sig)),
+    "hpcperfstats.dbload.lib.multiprocessing_pool_health.os.kill",
+    lambda pid, sig: killed.append((pid, sig)),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.multiprocessing_pool_health.os.waitpid",
-      lambda pid, flags: (pid, 0),
+    "hpcperfstats.dbload.lib.multiprocessing_pool_health.os.waitpid",
+    lambda pid, flags: (pid, 0),
   )
 
   class _StubbornPool:
@@ -421,8 +431,12 @@ def test_terminate_pool_bounded_sigkill_after_timeout(monkeypatch):
     def terminate(self):
       pass
 
-  mph.terminate_pool_bounded(_StubbornPool(), timeout_s=0.01, context="ingest_pool")
-  assert any("Pool terminate SIGKILL" in line and "5555" in line for line in logs)
+  mph.terminate_pool_bounded(
+    _StubbornPool(), timeout_s=0.01, context="ingest_pool"
+  )
+  assert any(
+    "Pool terminate SIGKILL" in line and "5555" in line for line in logs
+  )
   assert (5555, mph.signal.SIGKILL) in killed
 
 
@@ -430,18 +444,18 @@ def test_hard_exit_pool_worker_error_uses_os_exit(monkeypatch):
   exit_codes = []
   logs = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.multiprocessing_pool_health.log_print",
-      lambda msg, flush=False: logs.append(msg),
+    "hpcperfstats.dbload.lib.multiprocessing_pool_health.log_print",
+    lambda msg, flush=False: logs.append(msg),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.multiprocessing_pool_health.os._exit",
-      lambda code: exit_codes.append(code),
+    "hpcperfstats.dbload.lib.multiprocessing_pool_health.os._exit",
+    lambda code: exit_codes.append(code),
   )
   exc = mph.MultiprocessingPoolStallError(
-      "pool imap stalled",
-      dead_pids=(),
-      context="sync_timedb ingest pool",
-      exit_code=124,
+    "pool imap stalled",
+    dead_pids=(),
+    context="sync_timedb ingest pool",
+    exit_code=124,
   )
   mph.hard_exit_pool_worker_error(exc)
   assert exit_codes == [124]
@@ -453,19 +467,19 @@ def test_hard_exit_ghost_preserves_taskqueue_dead_likely_cause(monkeypatch):
   exit_codes = []
   logs = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.multiprocessing_pool_health.log_print",
-      lambda msg, flush=False: logs.append(msg),
+    "hpcperfstats.dbload.lib.multiprocessing_pool_health.log_print",
+    lambda msg, flush=False: logs.append(msg),
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.multiprocessing_pool_health.os._exit",
-      lambda code: exit_codes.append(code),
+    "hpcperfstats.dbload.lib.multiprocessing_pool_health.os._exit",
+    lambda code: exit_codes.append(code),
   )
   exc = mph.MultiprocessingPoolStallError(
-      "pool imap idle workers with pending async",
-      dead_pids=[],
-      context="idle_pool_ghost_inflight",
-      exit_code=124,
-      likely_cause="idle_pool_taskqueue_dead",
+    "pool imap idle workers with pending async",
+    dead_pids=[],
+    context="idle_pool_ghost_inflight",
+    exit_code=124,
+    likely_cause="idle_pool_taskqueue_dead",
   )
   mph.hard_exit_pool_worker_error(exc)
   assert exit_codes == [124]
@@ -474,37 +488,41 @@ def test_hard_exit_ghost_preserves_taskqueue_dead_likely_cause(monkeypatch):
   assert "likely_cause=unknown" not in joined
 
 
-def test_handle_pool_worker_exit_fatal_hard_exits_without_terminate(monkeypatch):
+def test_handle_pool_worker_exit_fatal_hard_exits_without_terminate(
+  monkeypatch,
+):
   import hpcperfstats.dbload.sync_timedb as st
 
   exit_codes = []
   terminate_calls = []
 
   monkeypatch.setattr(
-      st,
-      "terminate_pool_bounded",
-      lambda *_a, **_k: terminate_calls.append(True) or False,
+    st,
+    "terminate_pool_bounded",
+    lambda *_a, **_k: terminate_calls.append(True) or False,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.multiprocessing_pool_health.log_print",
-      lambda msg, flush=False: None,
+    "hpcperfstats.dbload.lib.multiprocessing_pool_health.log_print",
+    lambda msg, flush=False: None,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.multiprocessing_pool_health.os._exit",
-      lambda code: exit_codes.append(code),
+    "hpcperfstats.dbload.lib.multiprocessing_pool_health.os._exit",
+    lambda code: exit_codes.append(code),
   )
   exc = mph.MultiprocessingPoolStallError(
-      "pool imap stalled",
-      dead_pids=(),
-      context="sync_timedb ingest pool",
-      exit_code=124,
+    "pool imap stalled",
+    dead_pids=(),
+    context="sync_timedb ingest pool",
+    exit_code=124,
   )
   st._handle_pool_worker_exit_fatal(exc, ingest_pool=object())
   assert exit_codes == [124]
   assert terminate_calls == []
 
 
-def test_handle_pool_worker_exit_fatal_hard_exits_when_terminate_would_block(monkeypatch):
+def test_handle_pool_worker_exit_fatal_hard_exits_when_terminate_would_block(
+  monkeypatch,
+):
   """Regression: production limbo when terminate ran before os._exit(124)."""
   import hpcperfstats.dbload.sync_timedb as st
 
@@ -518,14 +536,14 @@ def test_handle_pool_worker_exit_fatal_hard_exits_when_terminate_would_block(mon
 
   monkeypatch.setattr(st, "terminate_pool_bounded", blocking_terminate)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.multiprocessing_pool_health.os._exit",
-      lambda code: exit_codes.append(code),
+    "hpcperfstats.dbload.lib.multiprocessing_pool_health.os._exit",
+    lambda code: exit_codes.append(code),
   )
   exc = mph.MultiprocessingPoolStallError(
-      "pool imap stalled",
-      dead_pids=(),
-      context="sync_timedb ingest pool",
-      exit_code=124,
+    "pool imap stalled",
+    dead_pids=(),
+    context="sync_timedb ingest pool",
+    exit_code=124,
   )
   st._handle_pool_worker_exit_fatal(exc, ingest_pool=object())
   assert exit_codes == [124]
@@ -534,7 +552,9 @@ def test_handle_pool_worker_exit_fatal_hard_exits_when_terminate_would_block(mon
 
 def test_abort_recycle_grace_tolerates_many_checks(monkeypatch):
   monkeypatch.setattr(
-      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+    mph,
+    "get_sync_pool_worker_recycle_grace_seconds",
+    lambda: 60.0,
   )
   pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
   for _ in range(20):
@@ -551,59 +571,79 @@ def _recycle_test_pool(*, dead_count=1, alive_count=20, pool_pad=0):
 def test_abort_recycle_20_of_21_alive_no_fatal(monkeypatch):
   """July-08 display signature: 20 alive, 1 dead recycle, 21 materialized."""
   monkeypatch.setattr(
-      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+    mph,
+    "get_sync_pool_worker_recycle_grace_seconds",
+    lambda: 60.0,
   )
   logs = []
-  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, **kwargs: logs.append(str(msg))
+  )
   pool = _recycle_test_pool(dead_count=1, alive_count=20)
   ctx = {"expected_pool_workers": 24}
   mph.abort_if_pool_workers_dead(
-      pool,
-      context="sync_timedb ingest chunk",
-      pool_health_context=ctx,
+    pool,
+    context="sync_timedb ingest chunk",
+    pool_health_context=ctx,
   )
-  assert not any("ERROR: pool worker death diagnostics" in line for line in logs)
+  assert not any(
+    "ERROR: pool worker death diagnostics" in line for line in logs
+  )
   assert any("pool worker recycle in progress" in line for line in logs)
 
 
 def test_abort_recycle_24_cap_20_alive_one_dead_no_fatal(monkeypatch):
   """Reproduces July-08 fatal: process_cap 24, 20 alive, 1 dead, pool below cap."""
   monkeypatch.setattr(
-      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+    mph,
+    "get_sync_pool_worker_recycle_grace_seconds",
+    lambda: 60.0,
   )
   logs = []
-  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, **kwargs: logs.append(str(msg))
+  )
   pool = _recycle_test_pool(dead_count=1, alive_count=20)
   ctx = {"expected_pool_workers": 24}
   mph.abort_if_pool_workers_dead(
-      pool,
-      context="sync_timedb ingest chunk",
-      pool_health_context=ctx,
+    pool,
+    context="sync_timedb ingest chunk",
+    pool_health_context=ctx,
   )
-  assert not any("ERROR: pool worker death diagnostics" in line for line in logs)
+  assert not any(
+    "ERROR: pool worker death diagnostics" in line for line in logs
+  )
 
 
 def test_abort_recycle_22_pool_19_alive_three_dead_no_fatal(monkeypatch):
   """July-08 tolerated poll: 19 alive, 3 dead recycle, 22 materialized."""
   monkeypatch.setattr(
-      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+    mph,
+    "get_sync_pool_worker_recycle_grace_seconds",
+    lambda: 60.0,
   )
   logs = []
-  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, **kwargs: logs.append(str(msg))
+  )
   pool = _recycle_test_pool(dead_count=3, alive_count=19)
   ctx = {"expected_pool_workers": 24}
   mph.abort_if_pool_workers_dead(
-      pool,
-      context="sync_timedb ingest chunk",
-      pool_health_context=ctx,
+    pool,
+    context="sync_timedb ingest chunk",
+    pool_health_context=ctx,
   )
-  assert not any("ERROR: pool worker death diagnostics" in line for line in logs)
+  assert not any(
+    "ERROR: pool worker death diagnostics" in line for line in logs
+  )
 
 
 def test_abort_recycle_spawn_gap_raw_pool_len_no_fatal(monkeypatch):
   """Raw _pool longer than materialized workers during replacement spawn."""
   monkeypatch.setattr(
-      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+    mph,
+    "get_sync_pool_worker_recycle_grace_seconds",
+    lambda: 60.0,
   )
   pool = _recycle_test_pool(dead_count=1, alive_count=20, pool_pad=1)
   mph.abort_if_pool_workers_dead(pool, context="spawn_gap")
@@ -612,26 +652,40 @@ def test_abort_recycle_spawn_gap_raw_pool_len_no_fatal(monkeypatch):
 def test_abort_recycle_consecutive_different_pids_no_fatal(monkeypatch):
   """Reproduces hpcperfstats03: grace 1/2, 2/2, then third PID must not fatal."""
   monkeypatch.setattr(
-      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+    mph,
+    "get_sync_pool_worker_recycle_grace_seconds",
+    lambda: 60.0,
   )
   logs = []
-  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, **kwargs: logs.append(str(msg))
+  )
 
   def pool_with_one_dead(dead_pid, alive_count=15):
     workers = [_RecycledWorker(pid=dead_pid)]
     workers.extend(_AliveWorker(pid=6000 + i) for i in range(alive_count))
     return SimpleNamespace(_pool=workers)
 
-  mph.abort_if_pool_workers_dead(pool_with_one_dead(1173), context="sync_timedb ingest chunk")
-  mph.abort_if_pool_workers_dead(pool_with_one_dead(1500), context="sync_timedb ingest chunk")
-  mph.abort_if_pool_workers_dead(pool_with_one_dead(1765), context="sync_timedb ingest chunk")
-  assert not any("ERROR: pool worker death diagnostics" in line for line in logs)
+  mph.abort_if_pool_workers_dead(
+    pool_with_one_dead(1173), context="sync_timedb ingest chunk"
+  )
+  mph.abort_if_pool_workers_dead(
+    pool_with_one_dead(1500), context="sync_timedb ingest chunk"
+  )
+  mph.abort_if_pool_workers_dead(
+    pool_with_one_dead(1765), context="sync_timedb ingest chunk"
+  )
+  assert not any(
+    "ERROR: pool worker death diagnostics" in line for line in logs
+  )
   assert any("dead_pid=1765" in line for line in logs)
 
 
 def test_abort_recycle_many_rapid_checks_no_fatal(monkeypatch):
   monkeypatch.setattr(
-      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+    mph,
+    "get_sync_pool_worker_recycle_grace_seconds",
+    lambda: 60.0,
   )
   pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
   for _ in range(25):
@@ -640,7 +694,9 @@ def test_abort_recycle_many_rapid_checks_no_fatal(monkeypatch):
 
 def test_abort_recycle_stuck_replacements_fatal(monkeypatch):
   monkeypatch.setattr(
-      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+    mph,
+    "get_sync_pool_worker_recycle_grace_seconds",
+    lambda: 60.0,
   )
   dead_workers = [_RecycledWorker(pid=100 + i) for i in range(4)]
   pool = SimpleNamespace(_pool=dead_workers)
@@ -658,25 +714,33 @@ def test_abort_recycle_slow_spawn_warn_not_fatal(monkeypatch):
 
   monkeypatch.setattr(mph.time, "monotonic", fake_monotonic)
   monkeypatch.setattr(
-      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 10.0,
+    mph,
+    "get_sync_pool_worker_recycle_grace_seconds",
+    lambda: 10.0,
   )
   logs = []
-  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, **kwargs: logs.append(str(msg))
+  )
   pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
   mph.abort_if_pool_workers_dead(pool, context="slow")
   mono[0] += 15.0
   mph.abort_if_pool_workers_dead(pool, context="slow")
   assert any("WARN: pool worker recycle slow" in line for line in logs)
-  assert not any("ERROR: pool worker death diagnostics" in line for line in logs)
+  assert not any(
+    "ERROR: pool worker death diagnostics" in line for line in logs
+  )
 
 
 def test_abort_recycle_exitcode_none_grace(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
-      lambda: 1,
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+    lambda: 1,
   )
   monkeypatch.setattr(
-      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+    mph,
+    "get_sync_pool_worker_recycle_grace_seconds",
+    lambda: 60.0,
   )
   pool = SimpleNamespace(_pool=[_RecycledWorkerNoneExit(), _AliveWorker()])
   mph.abort_if_pool_workers_dead(pool, context="none_exit")
@@ -685,7 +749,9 @@ def test_abort_recycle_exitcode_none_grace(monkeypatch):
 
 def test_abort_recycle_grace_reaps_dead_worker_pids(monkeypatch):
   monkeypatch.setattr(
-      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+    mph,
+    "get_sync_pool_worker_recycle_grace_seconds",
+    lambda: 60.0,
   )
   waitpids = []
 
@@ -703,7 +769,9 @@ def test_abort_recycle_grace_reaps_dead_worker_pids(monkeypatch):
 
 def test_abort_recycle_grace_reaps_zombie_children(monkeypatch):
   monkeypatch.setattr(
-      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+    mph,
+    "get_sync_pool_worker_recycle_grace_seconds",
+    lambda: 60.0,
   )
   zombie_calls = []
   warn_calls = []
@@ -726,18 +794,29 @@ def test_abort_recycle_grace_reaps_zombie_children(monkeypatch):
 def test_warn_unreaped_zombie_children_logs_when_zombies_remain(monkeypatch):
   logs = []
   mph.reset_zombie_reap_observability_for_tests()
-  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
-  monkeypatch.setattr(mph, "_iter_zombie_child_pids", lambda: iter([111, 222, 333]))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, **kwargs: logs.append(str(msg))
+  )
+  monkeypatch.setattr(
+    mph, "_iter_zombie_child_pids", lambda: iter([111, 222, 333])
+  )
   mph.warn_unreaped_zombie_children(context="unit_warn")
-  assert any("WARN: unreaped zombie children context=unit_warn count=3" in line for line in logs)
+  assert any(
+    "WARN: unreaped zombie children context=unit_warn count=3" in line
+    for line in logs
+  )
   assert any("max_age_s=" in line for line in logs)
   assert any("sample_age_s=" in line for line in logs)
 
 
-def test_warn_unreaped_zombie_children_escalates_to_error_past_threshold(monkeypatch):
+def test_warn_unreaped_zombie_children_escalates_to_error_past_threshold(
+  monkeypatch,
+):
   logs = []
   mph.reset_zombie_reap_observability_for_tests()
-  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, **kwargs: logs.append(str(msg))
+  )
   monkeypatch.setattr(mph, "_iter_zombie_child_pids", lambda: iter([555]))
   mono = {"t": 1000.0}
   monkeypatch.setattr(mph.time, "monotonic", lambda: mono["t"])
@@ -747,16 +826,18 @@ def test_warn_unreaped_zombie_children_escalates_to_error_past_threshold(monkeyp
   mono["t"] = 1061.0
   mph.warn_unreaped_zombie_children(context="age_error")
   assert any(
-      line.startswith("ERROR: unreaped zombie children context=age_error")
-      and "max_age_s=61.0" in line
-      for line in logs
+    line.startswith("ERROR: unreaped zombie children context=age_error")
+    and "max_age_s=61.0" in line
+    for line in logs
   )
 
 
 def test_reap_pool_worker_pids_survives_is_alive_value_error(monkeypatch):
   """Closed Process.is_alive() must not abort pool reap (RC-1)."""
   logs = []
-  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, **kwargs: logs.append(str(msg))
+  )
 
   class _ClosedWorker:
     pid = 7777
@@ -806,7 +887,9 @@ def test_reap_pool_worker_pids_survives_is_alive_assertion_error(monkeypatch):
 def test_waitpid_oserror_logs_errno_once_per_pid(monkeypatch):
   logs = []
   mph.reset_zombie_reap_observability_for_tests()
-  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, **kwargs: logs.append(str(msg))
+  )
 
   def _waitpid(pid, flags):
     del flags
@@ -818,8 +901,7 @@ def test_waitpid_oserror_logs_errno_once_per_pid(monkeypatch):
   assert mph._waitpid_pid_nonblocking(424242, timeout_s=0) is False
   assert mph._waitpid_pid_nonblocking(424242, timeout_s=0) is False
   matches = [
-      line for line in logs
-      if "WARN: waitpid failed pid=424242 errno=10" in line
+    line for line in logs if "WARN: waitpid failed pid=424242 errno=10" in line
   ]
   assert len(matches) == 1
 
@@ -827,7 +909,9 @@ def test_waitpid_oserror_logs_errno_once_per_pid(monkeypatch):
 def test_async_result_get_watch_pool_logs_stall_poll_failure(monkeypatch):
   logs = []
   mph.reset_zombie_reap_observability_for_tests()
-  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, **kwargs: logs.append(str(msg))
+  )
   pool = SimpleNamespace(_pool=[_AliveWorker()])
 
   class _TimeoutThenReadyAsyncResult:
@@ -845,41 +929,42 @@ def test_async_result_get_watch_pool_logs_stall_poll_failure(monkeypatch):
     raise RuntimeError("stall poll boom")
 
   assert mph.async_result_get_watch_pool(
-      _TimeoutThenReadyAsyncResult(),
-      pool,
-      poll_timeout_s=0.05,
-      context="archive_finalize",
-      on_stall_poll=_boom,
+    _TimeoutThenReadyAsyncResult(),
+    pool,
+    poll_timeout_s=0.05,
+    context="archive_finalize",
+    on_stall_poll=_boom,
   ) == [True]
   assert any(
-      "WARN: on_stall_poll failed context=archive_finalize err=RuntimeError"
-      in line
-      for line in logs
+    "WARN: on_stall_poll failed context=archive_finalize err=RuntimeError"
+    in line
+    for line in logs
   )
 
 
 def test_imap_unordered_watch_pool_logs_stall_poll_failure(monkeypatch):
   logs = []
   mph.reset_zombie_reap_observability_for_tests()
-  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, **kwargs: logs.append(str(msg))
+  )
   pool = _DeferStallPool(release_after=2)
 
   def _boom(*_a, **_k):
     raise RuntimeError("imap stall boom")
 
   iterator = mph.imap_unordered_watch_pool(
-      pool,
-      lambda x: x,
-      [7],
-      poll_timeout_s=0.01,
-      stall_abort_after_timeouts=50,
-      on_stall_poll=_boom,
+    pool,
+    lambda x: x,
+    [7],
+    poll_timeout_s=0.01,
+    stall_abort_after_timeouts=50,
+    on_stall_poll=_boom,
   )
   assert next(iterator) == 7
   assert any(
-      "WARN: on_stall_poll failed context=" in line
-      and "err=RuntimeError" in line
-      for line in logs
+    "WARN: on_stall_poll failed context=" in line and "err=RuntimeError" in line
+    for line in logs
   )
 
 
@@ -892,12 +977,14 @@ def test_read_proc_stat_fields_survives_non_ascii_comm(monkeypatch, tmp_path):
   good_pid.mkdir(parents=True)
   # Craft a stat line with non-ascii bytes in comm; bytes reader must survive.
   (bad_pid / "stat").write_bytes(
-      b"90001 (bad\xffcomm) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+    b"90001 (bad\xffcomm) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
   )
   self_pid = os.getpid()
   (good_pid / "stat").write_bytes(
-      ("90002 (zombie) Z %d 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
-       % self_pid).encode("ascii")
+    (
+      "90002 (zombie) Z %d 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+      % self_pid
+    ).encode("ascii")
   )
 
   real_listdir = mph.os.listdir
@@ -923,14 +1010,17 @@ def test_read_proc_stat_fields_survives_non_ascii_comm(monkeypatch, tmp_path):
   assert list(mph._iter_zombie_child_pids()) == [90002]
 
 
-def test_iter_zombie_child_pids_skips_unreadable_and_continues(monkeypatch, tmp_path):
+def test_iter_zombie_child_pids_skips_unreadable_and_continues(
+  monkeypatch, tmp_path
+):
   proc_root = tmp_path / "proc"
   zombie = proc_root / "91001"
   zombie.mkdir(parents=True)
   self_pid = os.getpid()
   (zombie / "stat").write_bytes(
-      ("91001 (z) Z %d 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
-       % self_pid).encode("ascii")
+    (
+      "91001 (z) Z %d 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n" % self_pid
+    ).encode("ascii")
   )
   real_open = open
 
@@ -954,7 +1044,9 @@ def test_iter_zombie_child_pids_skips_unreadable_and_continues(monkeypatch, tmp_
 
 def test_reap_pool_worker_pids_logs_reaped(monkeypatch):
   logs = []
-  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, **kwargs: logs.append(str(msg))
+  )
   waitpids = []
 
   def _waitpid(pid, flags):
@@ -971,37 +1063,43 @@ def test_reap_pool_worker_pids_logs_reaped(monkeypatch):
 def test_create_sync_timedb_spawn_pool_requires_pool_kind():
   with pytest.raises(ValueError, match="pool_kind_log_label"):
     mph.create_sync_timedb_spawn_pool(
-        processes=1,
-        initializer=lambda: None,
-        initargs=(),
-        pool_kind_log_label="",
+      processes=1,
+      initializer=lambda: None,
+      initargs=(),
+      pool_kind_log_label="",
     )
 
 
 def test_abort_archive_recycle_healthy_when_ingest_maxtasks_zero(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
-      lambda: 0,
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+    lambda: 0,
   )
   monkeypatch.setattr(
-      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+    mph,
+    "get_sync_pool_worker_recycle_grace_seconds",
+    lambda: 60.0,
   )
   ingest_pool = SimpleNamespace(_pool=[_AliveWorker()])
   archive_pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
   mph.abort_if_pool_workers_dead(
-      archive_pool,
-      context="archive_recycle",
-      pool_health_context={
-          "ingest_pool": ingest_pool,
-          "archive_pool": archive_pool,
-      },
+    archive_pool,
+    context="archive_recycle",
+    pool_health_context={
+      "ingest_pool": ingest_pool,
+      "archive_pool": archive_pool,
+    },
   )
 
 
 def test_reap_zombie_children_of_self_waitpids_state_z(monkeypatch):
   logs = []
-  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
-  monkeypatch.setattr(mph, "_iter_zombie_child_pids", lambda: iter([99901, 99902]))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, **kwargs: logs.append(str(msg))
+  )
+  monkeypatch.setattr(
+    mph, "_iter_zombie_child_pids", lambda: iter([99901, 99902])
+  )
   waitpids = []
 
   def _waitpid(pid, flags):
@@ -1017,37 +1115,49 @@ def test_reap_zombie_children_of_self_waitpids_state_z(monkeypatch):
 
 def test_abort_recycle_grace_logs_info_not_error(monkeypatch):
   monkeypatch.setattr(
-      mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0,
+    mph,
+    "get_sync_pool_worker_recycle_grace_seconds",
+    lambda: 60.0,
   )
   logs = []
-  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, **kwargs: logs.append(str(msg))
+  )
   pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
   mph._reset_recycle_tracking(pool)
   mph.abort_if_pool_workers_dead(pool, context="recycle_log")
   assert any("INFO: pool worker recycle in progress" in line for line in logs)
   assert any("grace_deadline_s=" in line for line in logs)
-  assert not any("ERROR: pool worker death diagnostics" in line for line in logs)
+  assert not any(
+    "ERROR: pool worker death diagnostics" in line for line in logs
+  )
 
 
 def test_abort_sigkill_logs_diagnostics_with_non_cgroup_hint(monkeypatch):
   logs = []
-  monkeypatch.setattr(mph, "log_print", lambda msg, **kwargs: logs.append(str(msg)))
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_events",
-      lambda: {"oom_kill": 0},
+    mph, "log_print", lambda msg, **kwargs: logs.append(str(msg))
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_current_bytes",
-      lambda: 33205403648,
+    "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_events",
+    lambda: {"oom_kill": 0},
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_max_bytes",
-      lambda: 137438953472,
+    "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_current_bytes",
+    lambda: 33205403648,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.process_memory.format_tree_rss_breakdown_mb",
-      lambda *a, **k: {"tree_total_mb": 31.0, "supervisor_mb": 1.0,
-                       "ingest_pool_mb": 20.0, "archive_pool_mb": 5.0},
+    "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_max_bytes",
+    lambda: 137438953472,
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.process_memory.format_tree_rss_breakdown_mb",
+    lambda *a, **k: {
+      "tree_total_mb": 31.0,
+      "supervisor_mb": 1.0,
+      "ingest_pool_mb": 20.0,
+      "archive_pool_mb": 5.0,
+    },
   )
   pool = SimpleNamespace(_pool=[_DeadWorker()])
   with pytest.raises(mph.MultiprocessingWorkerExitError) as excinfo:
@@ -1059,21 +1169,25 @@ def test_abort_sigkill_logs_diagnostics_with_non_cgroup_hint(monkeypatch):
 
 def test_abort_sigkill_with_cgroup_oom_reports_sigkill(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_events",
-      lambda: {"oom_kill": 3},
+    "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_events",
+    lambda: {"oom_kill": 3},
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_current_bytes",
-      lambda: 100,
+    "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_current_bytes",
+    lambda: 100,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_max_bytes",
-      lambda: 1000,
+    "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_max_bytes",
+    lambda: 1000,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.process_memory.format_tree_rss_breakdown_mb",
-      lambda *a, **k: {"tree_total_mb": 1.0, "supervisor_mb": 1.0,
-                       "ingest_pool_mb": 0.0, "archive_pool_mb": 0.0},
+    "hpcperfstats.dbload.lib.process_memory.format_tree_rss_breakdown_mb",
+    lambda *a, **k: {
+      "tree_total_mb": 1.0,
+      "supervisor_mb": 1.0,
+      "ingest_pool_mb": 0.0,
+      "archive_pool_mb": 0.0,
+    },
   )
   pool = SimpleNamespace(_pool=[_DeadWorker()])
   with pytest.raises(mph.MultiprocessingWorkerExitError) as excinfo:
@@ -1083,26 +1197,30 @@ def test_abort_sigkill_with_cgroup_oom_reports_sigkill(monkeypatch):
 
 def test_describe_dead_pool_workers_includes_in_flight_sample(monkeypatch):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_events",
-      lambda: {"oom_kill": 0},
+    "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_events",
+    lambda: {"oom_kill": 0},
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_current_bytes",
-      lambda: 0,
+    "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_current_bytes",
+    lambda: 0,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_max_bytes",
-      lambda: None,
+    "hpcperfstats.dbload.lib.process_memory.read_cgroup_memory_max_bytes",
+    lambda: None,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.process_memory.format_tree_rss_breakdown_mb",
-      lambda *a, **k: {"tree_total_mb": 0.0, "supervisor_mb": 0.0,
-                       "ingest_pool_mb": 0.0, "archive_pool_mb": 0.0},
+    "hpcperfstats.dbload.lib.process_memory.format_tree_rss_breakdown_mb",
+    lambda *a, **k: {
+      "tree_total_mb": 0.0,
+      "supervisor_mb": 0.0,
+      "ingest_pool_mb": 0.0,
+      "archive_pool_mb": 0.0,
+    },
   )
   pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
   diag = mph.describe_dead_pool_workers(
-      pool,
-      pool_health_context={"in_flight_sample": ["/pending/a"]},
+    pool,
+    pool_health_context={"in_flight_sample": ["/pending/a"]},
   )
   assert diag["in_flight_sample"] == ["/pending/a"]
   assert diag["likely_cause"] == "recycle"
@@ -1150,23 +1268,23 @@ def test_imap_sliding_window_watch_pool_refills_before_prior_batch_drains():
 
   pool = _ManualPool()
   paths = [
-      "slow0",
-      "fast1",
-      "fast2",
-      "fast3",
-      "slow4",
-      "fast5",
-      "fast6",
-      "fast7",
+    "slow0",
+    "fast1",
+    "fast2",
+    "fast3",
+    "slow4",
+    "fast5",
+    "fast6",
+    "fast7",
   ]
   gen = mph.imap_sliding_window_watch_pool(
-      pool,
-      lambda path: path,
-      paths,
-      max_inflight=4,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 10000,
-      context="test_sliding_refill",
+    pool,
+    lambda path: path,
+    paths,
+    max_inflight=4,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 10000,
+    context="test_sliding_refill",
   )
   results = []
   errors = []
@@ -1185,7 +1303,7 @@ def test_imap_sliding_window_watch_pool_refills_before_prior_batch_drains():
     time.sleep(0.005)
   assert pool.submit_count == 4
   fast_first_batch = [
-      ar for ar, path in pool.inflight.items() if path.startswith("fast")
+    ar for ar, path in pool.inflight.items() if path.startswith("fast")
   ]
   assert len(fast_first_batch) == 3
   for ar in fast_first_batch:
@@ -1209,12 +1327,12 @@ def test_imap_sliding_window_watch_pool_peak_concurrency():
   pool = _ManualPool()
   paths = [f"path{i}" for i in range(20)]
   gen = mph.imap_sliding_window_watch_pool(
-      pool,
-      lambda path: path,
-      paths,
-      max_inflight=4,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 10000,
+    pool,
+    lambda path: path,
+    paths,
+    max_inflight=4,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 10000,
   )
   results = []
   import threading
@@ -1228,7 +1346,9 @@ def test_imap_sliding_window_watch_pool_peak_concurrency():
   time.sleep(0.02)
   assert pool.peak == 4
   deadline = time.monotonic() + 2.0
-  while (pool.inflight or len(results) < len(paths)) and time.monotonic() < deadline:
+  while (
+    pool.inflight or len(results) < len(paths)
+  ) and time.monotonic() < deadline:
     for ar in list(pool.inflight):
       ar.finish()
     time.sleep(0.005)
@@ -1249,12 +1369,12 @@ def test_imap_sliding_window_recomputes_stall_abort_for_in_flight(monkeypatch):
   pool = _ManualPool()
   paths = ["large0", "small1", "small2", "small3"]
   gen = mph.imap_sliding_window_watch_pool(
-      pool,
-      lambda path: path,
-      paths,
-      max_inflight=2,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=_polls_fn,
+    pool,
+    lambda path: path,
+    paths,
+    max_inflight=2,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=_polls_fn,
   )
   import threading
 
@@ -1280,13 +1400,13 @@ def test_sliding_window_supplements_sub_1g_when_giants_in_flight():
     return [f"tail{i}" for i in range(slots_needed)]
 
   gen = mph.imap_sliding_window_watch_pool(
-      pool,
-      lambda path: path,
-      chunk_paths,
-      max_inflight=4,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 10000,
-      supplement_paths_fn=_supplement,
+    pool,
+    lambda path: path,
+    chunk_paths,
+    max_inflight=4,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 10000,
+    supplement_paths_fn=_supplement,
   )
   import threading
 
@@ -1297,7 +1417,7 @@ def test_sliding_window_supplements_sub_1g_when_giants_in_flight():
     time.sleep(0.005)
   assert pool.submit_count == 4
   assert supplement_calls
-  dispatched = {path for path in pool.inflight.values()}
+  dispatched = set(pool.inflight.values())
   assert "tail0" in dispatched
   assert "tail1" in dispatched
   for ar in list(pool.inflight):
@@ -1318,13 +1438,13 @@ def test_supplement_fills_idle_slot_while_chunk_path_remains_in_flight():
     return ["tail0"]
 
   gen = mph.imap_sliding_window_watch_pool(
-      pool,
-      lambda path: path,
-      paths,
-      max_inflight=2,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 10000,
-      supplement_paths_fn=_supplement,
+    pool,
+    lambda path: path,
+    paths,
+    max_inflight=2,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 10000,
+    supplement_paths_fn=_supplement,
   )
   import threading
 
@@ -1345,7 +1465,7 @@ def test_supplement_fills_idle_slot_while_chunk_path_remains_in_flight():
       ar.finish()
     time.sleep(0.01)
   thread.join(timeout=2.0)
-  assert sorted(results) == sorted(paths + ["tail0"])
+  assert sorted(results) == sorted([*paths, "tail0"])
 
 
 def test_supplement_duplicate_only_does_not_busy_spin():
@@ -1361,13 +1481,13 @@ def test_supplement_duplicate_only_does_not_busy_spin():
     return list(in_flight)[:1] or ["chunk0"]
 
   gen = mph.imap_sliding_window_watch_pool(
-      pool,
-      lambda path: path,
-      paths,
-      max_inflight=2,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 10000,
-      supplement_paths_fn=_supplement,
+    pool,
+    lambda path: path,
+    paths,
+    max_inflight=2,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 10000,
+    supplement_paths_fn=_supplement,
   )
   import threading
 
@@ -1399,17 +1519,17 @@ def test_supplement_requires_giant_in_flight():
     return ["tail0"]
 
   gen = mph.imap_sliding_window_watch_pool(
-      pool,
-      lambda path: path,
-      chunk_paths,
-      max_inflight=4,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 10000,
-      supplement_paths_fn=lambda slots, in_flight: (
-          _supplement(slots, in_flight)
-          if any(path.startswith("giant") for path in in_flight)
-          else []
-      ),
+    pool,
+    lambda path: path,
+    chunk_paths,
+    max_inflight=4,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 10000,
+    supplement_paths_fn=lambda slots, in_flight: (
+      _supplement(slots, in_flight)
+      if any(path.startswith("giant") for path in in_flight)
+      else []
+    ),
   )
   import threading
 
@@ -1432,12 +1552,12 @@ def test_imap_sliding_window_waits_for_slow_in_flight():
   finished = {"done": False}
 
   gen = mph.imap_sliding_window_watch_pool(
-      pool,
-      lambda path: path,
-      paths,
-      max_inflight=2,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 100000,
+    pool,
+    lambda path: path,
+    paths,
+    max_inflight=2,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 100000,
   )
 
   def consumer():
@@ -1455,12 +1575,6 @@ def test_imap_sliding_window_waits_for_slow_in_flight():
   assert finished["done"] is True
 
 
-
-
-
-
-
-
 def test_pool_workers_all_idle_false_when_wchan_unavailable(monkeypatch):
   pool = SimpleNamespace(_pool=[_AliveWorker()])
   monkeypatch.setattr(mph, "read_process_wchan", lambda _pid: None)
@@ -1469,7 +1583,9 @@ def test_pool_workers_all_idle_false_when_wchan_unavailable(monkeypatch):
 
 def test_pool_workers_all_idle_true_for_futex_wchan(monkeypatch):
   pool = SimpleNamespace(_pool=[_AliveWorker()])
-  monkeypatch.setattr(mph, "read_process_wchan", lambda _pid: "futex_wait_queue")
+  monkeypatch.setattr(
+    mph, "read_process_wchan", lambda _pid: "futex_wait_queue"
+  )
   assert mph.pool_workers_all_idle(pool) is True
 
 
@@ -1489,7 +1605,9 @@ def test_imap_sliding_window_idle_pool_ghost_fatal(monkeypatch):
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 3)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
   monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 0)
-  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  monkeypatch.setattr(
+    mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1
+  )
   pool = _ManualPool()
   paths = ["ghost_path"]
   ghost_fatal = {"called": False, "paths": None}
@@ -1499,13 +1617,13 @@ def test_imap_sliding_window_idle_pool_ghost_fatal(monkeypatch):
     ghost_fatal["paths"] = list(pending_paths)
 
   gen = mph.imap_sliding_window_watch_pool(
-      pool,
-      lambda path: path,
-      paths,
-      max_inflight=1,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 100000,
-      on_idle_pool_ghost_fatal=on_fatal,
+    pool,
+    lambda path: path,
+    paths,
+    max_inflight=1,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 100000,
+    on_idle_pool_ghost_fatal=on_fatal,
   )
   with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
     list(gen)
@@ -1548,9 +1666,9 @@ def test_reconcile_idle_pending_async_collects_orphan():
   pool = _ManualPool()
   pending = {_OrphanAsyncResult(pool, lambda p: p, "p1"): "p1"}
   collected, redispatched = mph.reconcile_idle_pending_async(
-      pool,
-      pending,
-      lambda path: path,
+    pool,
+    pending,
+    lambda path: path,
   )
   assert redispatched == 0
   assert collected == [("p1", "p1")]
@@ -1564,10 +1682,10 @@ def test_reconcile_idle_pending_async_redispatches_stale():
   redispatch_paths = []
 
   collected, redispatched = mph.reconcile_idle_pending_async(
-      pool,
-      pending,
-      lambda path: path,
-      on_redispatch=lambda path: redispatch_paths.append(path),
+    pool,
+    pending,
+    lambda path: path,
+    on_redispatch=lambda path: redispatch_paths.append(path),
   )
   assert collected == []
   assert redispatched == 1
@@ -1582,10 +1700,10 @@ def test_reconcile_idle_pending_async_skip_without_redispatch():
   stale = _ManualAsyncResult(pool, lambda p: p, "skip_path")
   pending = {stale: "skip_path"}
   collected, redispatched = mph.reconcile_idle_pending_async(
-      pool,
-      pending,
-      lambda path: path,
-      resolve_skip_result=lambda path: (path, False, True, 0.0),
+    pool,
+    pending,
+    lambda path: path,
+    resolve_skip_result=lambda path: (path, False, True, 0.0),
   )
   assert redispatched == 0
   assert collected == [("skip_path", ("skip_path", False, True, 0.0))]
@@ -1597,7 +1715,9 @@ def test_imap_sliding_window_orphan_collect_avoids_ghost_fatal(monkeypatch):
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 3)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
   monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
-  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 100)
+  monkeypatch.setattr(
+    mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 100
+  )
   pool = _ManualPool()
 
   class _OrphanPool(_ManualPool):
@@ -1606,12 +1726,12 @@ def test_imap_sliding_window_orphan_collect_avoids_ghost_fatal(monkeypatch):
 
   pool = _OrphanPool()
   gen = mph.imap_sliding_window_watch_pool(
-      pool,
-      lambda path: path,
-      ["orphan_path"],
-      max_inflight=1,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 100000,
+    pool,
+    lambda path: path,
+    ["orphan_path"],
+    max_inflight=1,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 100000,
   )
   results = list(gen)
   assert results == ["orphan_path"]
@@ -1621,7 +1741,9 @@ def test_imap_sliding_window_reconcile_redispatch_within_budget(monkeypatch):
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
   monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
-  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  monkeypatch.setattr(
+    mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1
+  )
   pool = _ManualPool()
   redispatch_count = {"n": 0}
 
@@ -1630,13 +1752,13 @@ def test_imap_sliding_window_reconcile_redispatch_within_budget(monkeypatch):
     redispatch_count["n"] += 1
 
   gen = mph.imap_sliding_window_watch_pool(
-      pool,
-      lambda path: path,
-      ["stale_path"],
-      max_inflight=1,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 100000,
-      on_reconcile_redispatch=on_redispatch,
+    pool,
+    lambda path: path,
+    ["stale_path"],
+    max_inflight=1,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 100000,
+    on_reconcile_redispatch=on_redispatch,
   )
 
   import threading
@@ -1658,15 +1780,17 @@ def test_imap_sliding_window_ghost_fatal_after_reconcile_exhausted(monkeypatch):
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 3)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
   monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 1)
-  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  monkeypatch.setattr(
+    mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1
+  )
   pool = _ManualPool()
   gen = mph.imap_sliding_window_watch_pool(
-      pool,
-      lambda path: path,
-      ["ghost_path"],
-      max_inflight=1,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 100000,
+    pool,
+    lambda path: path,
+    ["ghost_path"],
+    max_inflight=1,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 100000,
   )
   with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
     list(gen)
@@ -1692,24 +1816,24 @@ def test_sliding_window_suppresses_duplicate_normpath_dispatch(capsys):
 
   pool = _AutoFinishPool()
   paths = [
-      "/archive/c637-051/1780788583",
-      "/archive/c637-051/1780788583",
-      "/archive/c637-062/1780788583",
+    "/archive/c637-051/1780788583",
+    "/archive/c637-051/1780788583",
+    "/archive/c637-062/1780788583",
   ]
   gen = mph.imap_sliding_window_watch_pool(
-      pool,
-      lambda path: path,
-      paths,
-      max_inflight=3,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 100000,
-      context="test_duplicate_dispatch",
+    pool,
+    lambda path: path,
+    paths,
+    max_inflight=3,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 100000,
+    context="test_duplicate_dispatch",
   )
   results = list(gen)
   assert pool.submit_count == 2
   assert sorted(results) == [
-      "/archive/c637-051/1780788583",
-      "/archive/c637-062/1780788583",
+    "/archive/c637-051/1780788583",
+    "/archive/c637-062/1780788583",
   ]
   out = capsys.readouterr().out
   assert "duplicate dispatch suppressed" in out
@@ -1719,15 +1843,15 @@ def test_sliding_window_suppresses_duplicate_normpath_dispatch(capsys):
 
 def test_ingest_path_dispatch_label_host_basename():
   assert (
-      mph.ingest_path_dispatch_label("/archive/c637-051/1780788583")
-      == "c637-051/1780788583"
+    mph.ingest_path_dispatch_label("/archive/c637-051/1780788583")
+    == "c637-051/1780788583"
   )
   assert mph.ingest_path_dispatch_label("dup_path") == "dup_path"
 
 
 def test_pool_recover_dedupes_duplicate_pending_paths():
   pending = ["/archive/a/1781085150"] * 8 + ["/archive/a/1781081790"]
-  unique, duplicate_n, sample = mph.dedupe_ingest_paths_preserve_order(pending)
+  unique, duplicate_n, _sample = mph.dedupe_ingest_paths_preserve_order(pending)
   assert duplicate_n == 7
   assert len(unique) == 2
   assert unique[0].endswith("1781085150")
@@ -1739,7 +1863,9 @@ def test_reconcile_full_redispatch_then_recovery_callback(monkeypatch):
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
   monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
-  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  monkeypatch.setattr(
+    mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1
+  )
   stuck_pool = _ManualPool()
   recover_calls = {"n": 0}
 
@@ -1754,13 +1880,13 @@ def test_reconcile_full_redispatch_then_recovery_callback(monkeypatch):
     return {"pool": new_pool, "collected": []}
 
   gen = mph.imap_sliding_window_watch_pool(
-      stuck_pool,
-      lambda path: path,
-      ["stuck_path"],
-      max_inflight=1,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 100000,
-      on_idle_pool_stuck_after_redispatch=on_recover,
+    stuck_pool,
+    lambda path: path,
+    ["stuck_path"],
+    max_inflight=1,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 100000,
+    on_idle_pool_stuck_after_redispatch=on_recover,
   )
   results = list(gen)
   assert results == ["stuck_path"]
@@ -1771,7 +1897,9 @@ def test_idle_pool_ghost_fatal_sets_taskqueue_dead_cause(monkeypatch):
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 3)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
   monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 1)
-  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  monkeypatch.setattr(
+    mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1
+  )
   pool = _ManualPool()
 
   def on_recover_fail(pool, pending_paths, pending_async, fn):
@@ -1779,13 +1907,13 @@ def test_idle_pool_ghost_fatal_sets_taskqueue_dead_cause(monkeypatch):
     return {"pool": None, "collected": []}
 
   gen = mph.imap_sliding_window_watch_pool(
-      pool,
-      lambda path: path,
-      ["ghost_path"],
-      max_inflight=1,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 100000,
-      on_idle_pool_stuck_after_redispatch=on_recover_fail,
+    pool,
+    lambda path: path,
+    ["ghost_path"],
+    max_inflight=1,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 100000,
+    on_idle_pool_stuck_after_redispatch=on_recover_fail,
   )
   with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
     list(gen)
@@ -1795,7 +1923,9 @@ def test_idle_pool_ghost_fatal_sets_taskqueue_dead_cause(monkeypatch):
 
 
 def test_abort_if_pool_workers_dead_recycle_invokes_idle_reconcile(monkeypatch):
-  monkeypatch.setattr(mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0)
+  monkeypatch.setattr(
+    mph, "get_sync_pool_worker_recycle_grace_seconds", lambda: 60.0
+  )
   reconcile_calls = {"n": 0}
 
   def reconcile_fn():
@@ -1803,43 +1933,49 @@ def test_abort_if_pool_workers_dead_recycle_invokes_idle_reconcile(monkeypatch):
 
   pool = SimpleNamespace(_pool=[_RecycledWorker(), _AliveWorker()])
   ctx = {"idle_reconcile_fn": reconcile_fn}
-  mph.abort_if_pool_workers_dead(pool, context="recycle_reconcile_test", pool_health_context=ctx)
+  mph.abort_if_pool_workers_dead(
+    pool, context="recycle_reconcile_test", pool_health_context=ctx
+  )
   assert reconcile_calls["n"] == 1
-  mph.abort_if_pool_workers_dead(pool, context="recycle_reconcile_test", pool_health_context=ctx)
+  mph.abort_if_pool_workers_dead(
+    pool, context="recycle_reconcile_test", pool_health_context=ctx
+  )
   assert reconcile_calls["n"] == 2
   mph.abort_if_pool_workers_dead(
-      pool,
-      context="recycle_reconcile_test",
-      pool_health_context=ctx,
+    pool,
+    context="recycle_reconcile_test",
+    pool_health_context=ctx,
   )
   assert reconcile_calls["n"] == 3
 
 
-def test_terminate_pool_bounded_kill_workers_first_before_terminate(monkeypatch):
+def test_terminate_pool_bounded_kill_workers_first_before_terminate(
+  monkeypatch,
+):
   """Non-abandon path still calls stdlib terminate after aggressive kill."""
   logs = []
   aggressive_calls = []
   terminate_calls = []
 
   monkeypatch.setattr(
-      mph,
-      "log_print",
-      lambda msg, flush=False: logs.append(msg),
+    mph,
+    "log_print",
+    lambda msg, flush=False: logs.append(msg),
   )
   monkeypatch.setattr(
-      mph,
-      "_aggressive_terminate_pool_workers",
-      lambda pool, **kwargs: aggressive_calls.append(pool),
+    mph,
+    "_aggressive_terminate_pool_workers",
+    lambda pool, **kwargs: aggressive_calls.append(pool),
   )
   monkeypatch.setattr(
-      mph,
-      "_wait_pool_processes_bounded",
-      lambda pool, timeout_s: (True, []),
+    mph,
+    "_wait_pool_processes_bounded",
+    lambda pool, timeout_s: (True, []),
   )
   monkeypatch.setattr(
-      mph,
-      "_reap_pool_worker_pids",
-      lambda pool, **kwargs: [],
+    mph,
+    "_reap_pool_worker_pids",
+    lambda pool, **kwargs: [],
   )
 
   class _TermPool:
@@ -1849,10 +1985,10 @@ def test_terminate_pool_bounded_kill_workers_first_before_terminate(monkeypatch)
       terminate_calls.append(True)
 
   mph.terminate_pool_bounded(
-      _TermPool(),
-      context="idle_pool_recover",
-      kill_workers_first=True,
-      abandon_after_kill=False,
+    _TermPool(),
+    context="idle_pool_recover",
+    kill_workers_first=True,
+    abandon_after_kill=False,
   )
   assert aggressive_calls
   assert terminate_calls
@@ -1864,19 +2000,19 @@ def test_terminate_pool_bounded_non_abandon_reaps_zombie_children(monkeypatch):
   zombie_reap_calls = []
   monkeypatch.setattr(mph, "log_print", lambda msg, flush=False: None)
   monkeypatch.setattr(
-      mph,
-      "_wait_pool_processes_bounded",
-      lambda pool, timeout_s: (True, []),
+    mph,
+    "_wait_pool_processes_bounded",
+    lambda pool, timeout_s: (True, []),
   )
   monkeypatch.setattr(
-      mph,
-      "_reap_pool_worker_pids",
-      lambda pool, **kwargs: [],
+    mph,
+    "_reap_pool_worker_pids",
+    lambda pool, **kwargs: [],
   )
   monkeypatch.setattr(
-      mph,
-      "reap_zombie_children_of_self",
-      lambda **kwargs: zombie_reap_calls.append(dict(kwargs)),
+    mph,
+    "reap_zombie_children_of_self",
+    lambda **kwargs: zombie_reap_calls.append(dict(kwargs)),
   )
 
   class _TermPool:
@@ -1886,29 +2022,29 @@ def test_terminate_pool_bounded_non_abandon_reaps_zombie_children(monkeypatch):
       return None
 
   ok = mph.terminate_pool_bounded(
-      _TermPool(),
-      timeout_s=0.1,
-      context="pool",
-      abandon_after_kill=False,
+    _TermPool(),
+    timeout_s=0.1,
+    context="pool",
+    abandon_after_kill=False,
   )
   assert ok is True
   assert zombie_reap_calls == [{"context": "pool"}]
 
 
 def test_terminate_pool_bounded_non_abandon_zombie_reap_failure_isolated(
-    monkeypatch,
+  monkeypatch,
 ):
   """RC-JT: zombie reap raise must not escape terminate_pool_bounded."""
   monkeypatch.setattr(mph, "log_print", lambda msg, flush=False: None)
   monkeypatch.setattr(
-      mph,
-      "_wait_pool_processes_bounded",
-      lambda pool, timeout_s: (True, []),
+    mph,
+    "_wait_pool_processes_bounded",
+    lambda pool, timeout_s: (True, []),
   )
   monkeypatch.setattr(
-      mph,
-      "_reap_pool_worker_pids",
-      lambda pool, **kwargs: [],
+    mph,
+    "_reap_pool_worker_pids",
+    lambda pool, **kwargs: [],
   )
 
   def _boom(**kwargs):
@@ -1924,10 +2060,10 @@ def test_terminate_pool_bounded_non_abandon_zombie_reap_failure_isolated(
       return None
 
   ok = mph.terminate_pool_bounded(
-      _TermPool(),
-      timeout_s=0.1,
-      context="pool",
-      abandon_after_kill=False,
+    _TermPool(),
+    timeout_s=0.1,
+    context="pool",
+    abandon_after_kill=False,
   )
   assert ok is True
 
@@ -1952,18 +2088,18 @@ def test_close_pool_bounded_join_timeout_reaches_zombie_reap(monkeypatch):
       return None
 
   monkeypatch.setattr(
-      mph,
-      "_wait_pool_processes_bounded",
-      lambda pool, timeout_s: (False, [7777]),
+    mph,
+    "_wait_pool_processes_bounded",
+    lambda pool, timeout_s: (False, [7777]),
   )
 
   def _fake_terminate(pool, timeout_s=30.0, **kwargs):
     terminate_calls.append(
-        {
-            "timeout_s": timeout_s,
-            "abandon_after_kill": kwargs.get("abandon_after_kill", False),
-            "context": kwargs.get("context", ""),
-        }
+      {
+        "timeout_s": timeout_s,
+        "abandon_after_kill": kwargs.get("abandon_after_kill", False),
+        "context": kwargs.get("context", ""),
+      }
     )
     return True
 
@@ -1982,19 +2118,19 @@ def test_terminate_pool_bounded_abandon_skips_blocking_terminate(monkeypatch):
   terminate_calls = []
 
   monkeypatch.setattr(
-      mph,
-      "log_print",
-      lambda msg, flush=False: logs.append(msg),
+    mph,
+    "log_print",
+    lambda msg, flush=False: logs.append(msg),
   )
   monkeypatch.setattr(
-      mph,
-      "_aggressive_terminate_pool_workers",
-      lambda pool, **kwargs: aggressive_kwargs.append(dict(kwargs)),
+    mph,
+    "_aggressive_terminate_pool_workers",
+    lambda pool, **kwargs: aggressive_kwargs.append(dict(kwargs)),
   )
   monkeypatch.setattr(
-      mph,
-      "reap_zombie_children_of_self",
-      lambda **kwargs: None,
+    mph,
+    "reap_zombie_children_of_self",
+    lambda **kwargs: None,
   )
   monkeypatch.setattr(mph, "_iter_zombie_child_pids", lambda: iter([]))
   monkeypatch.setattr(mph, "warn_unreaped_zombie_children", lambda **k: None)
@@ -2009,10 +2145,10 @@ def test_terminate_pool_bounded_abandon_skips_blocking_terminate(monkeypatch):
 
   started = time.monotonic()
   ok = mph.terminate_pool_bounded(
-      _HangTerminatePool(),
-      context="idle_pool_recover",
-      kill_workers_first=True,
-      abandon_after_kill=True,
+    _HangTerminatePool(),
+    context="idle_pool_recover",
+    kill_workers_first=True,
+    abandon_after_kill=True,
   )
   elapsed = time.monotonic() - started
   assert ok is True
@@ -2026,6 +2162,7 @@ def test_terminate_pool_bounded_abandon_skips_blocking_terminate(monkeypatch):
 def test_recover_wall_raises_stall_not_soft_hang(monkeypatch):
   """Recover wall deleted: hung recover no longer raises exit-124 wall error."""
   import inspect
+
   src = inspect.getsource(mph)
   assert "idle pool recover exceeded wall_s" not in src
   assert "recover_thread.join()" in src
@@ -2037,7 +2174,9 @@ def test_recover_does_not_clear_pending_before_new_pool_ready(monkeypatch):
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
   monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
-  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  monkeypatch.setattr(
+    mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1
+  )
   stuck_pool = _ManualPool()
   seen = {}
 
@@ -2047,21 +2186,21 @@ def test_recover_does_not_clear_pending_before_new_pool_ready(monkeypatch):
     seen["paths"] = list(pending_async.values())
     # Simulate probe/respawn failure without clearing pending.
     raise mph.MultiprocessingPoolStallError(
-        "replacement ingest pool dispatch_probe failed",
-        dead_pids=[],
-        context="idle_pool_recover",
-        exit_code=124,
-        likely_cause=mph._IDLE_POOL_TASKQUEUE_DEAD_CAUSE,
+      "replacement ingest pool dispatch_probe failed",
+      dead_pids=[],
+      context="idle_pool_recover",
+      exit_code=124,
+      likely_cause=mph._IDLE_POOL_TASKQUEUE_DEAD_CAUSE,
     )
 
   gen = mph.imap_sliding_window_watch_pool(
-      stuck_pool,
-      lambda path: path,
-      ["stuck_path"],
-      max_inflight=1,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 100000,
-      on_idle_pool_stuck_after_redispatch=on_recover_fail_after_inspect,
+    stuck_pool,
+    lambda path: path,
+    ["stuck_path"],
+    max_inflight=1,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 100000,
+    on_idle_pool_stuck_after_redispatch=on_recover_fail_after_inspect,
   )
   with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
     list(gen)
@@ -2070,38 +2209,40 @@ def test_recover_does_not_clear_pending_before_new_pool_ready(monkeypatch):
   assert excinfo.value.likely_cause == mph._IDLE_POOL_TASKQUEUE_DEAD_CAUSE
 
 
-def test_maintain_ingest_pool_refuses_swap_while_replacement_lagging(monkeypatch):
+def test_maintain_ingest_pool_refuses_swap_while_replacement_lagging(
+  monkeypatch,
+):
   """RC-M: gap>0 must not proactive-swap."""
   mph.reset_post_retire_maintain_coalesce_for_tests()
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
-      lambda: 0,
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+    lambda: 0,
   )
   monkeypatch.setattr(mph, "reap_pool_worker_pids", lambda *a, **k: [])
   monkeypatch.setattr(mph, "reap_zombie_children_of_self", lambda **k: None)
   monkeypatch.setattr(mph, "_iter_dead_pool_worker_processes", lambda pool: [])
   monkeypatch.setattr(
-      mph,
-      "_pool_recycle_gate_metrics",
-      lambda *a, **k: {
-          "alive": 23,
-          "expected_total": 24,
-          "materialized": 23,
-          "gap": 1,
-          "dead_n": 0,
-      },
+    mph,
+    "_pool_recycle_gate_metrics",
+    lambda *a, **k: {
+      "alive": 23,
+      "expected_total": 24,
+      "materialized": 23,
+      "gap": 1,
+      "dead_n": 0,
+    },
   )
   probe_calls = []
   monkeypatch.setattr(
-      mph,
-      "probe_ingest_pool_dispatch",
-      lambda *a, **k: probe_calls.append(True) or False,
+    mph,
+    "probe_ingest_pool_dispatch",
+    lambda *a, **k: probe_calls.append(True) or False,
   )
   recreate_calls = []
   pool = SimpleNamespace(_pool=[_AliveWorker()])
   out = mph.maintain_ingest_pool_after_supervisor_retire(
-      pool,
-      recreate_pool_fn=lambda: recreate_calls.append(True) or object(),
+    pool,
+    recreate_pool_fn=lambda: recreate_calls.append(True) or object(),
   )
   assert out is pool
   assert probe_calls == []
@@ -2112,22 +2253,22 @@ def test_maintain_ingest_pool_proactive_swap_abandons_old_pool(monkeypatch):
   """RC-N: proactive swap must abandon+kill old pool before recreate."""
   mph.reset_post_retire_maintain_coalesce_for_tests()
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
-      lambda: 0,
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+    lambda: 0,
   )
   monkeypatch.setattr(mph, "reap_pool_worker_pids", lambda *a, **k: [])
   monkeypatch.setattr(mph, "reap_zombie_children_of_self", lambda **k: None)
   monkeypatch.setattr(mph, "_iter_dead_pool_worker_processes", lambda pool: [])
   monkeypatch.setattr(
-      mph,
-      "_pool_recycle_gate_metrics",
-      lambda *a, **k: {
-          "alive": 24,
-          "expected_total": 24,
-          "materialized": 24,
-          "gap": 0,
-          "dead_n": 0,
-      },
+    mph,
+    "_pool_recycle_gate_metrics",
+    lambda *a, **k: {
+      "alive": 24,
+      "expected_total": 24,
+      "materialized": 24,
+      "gap": 0,
+      "dead_n": 0,
+    },
   )
   monkeypatch.setattr(mph, "probe_ingest_pool_dispatch", lambda *a, **k: False)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
@@ -2139,15 +2280,15 @@ def test_maintain_ingest_pool_proactive_swap_abandons_old_pool(monkeypatch):
 
   monkeypatch.setattr(mph, "terminate_pool_bounded", fake_terminate)
   monkeypatch.setattr(
-      mph,
-      "reclaim_excess_ingest_pool_children",
-      lambda *a, **k: [],
+    mph,
+    "reclaim_excess_ingest_pool_children",
+    lambda *a, **k: [],
   )
   new_pool = object()
   old_pool = SimpleNamespace(_pool=[_AliveWorker()])
   out = mph.maintain_ingest_pool_after_supervisor_retire(
-      old_pool,
-      recreate_pool_fn=lambda: new_pool,
+    old_pool,
+    recreate_pool_fn=lambda: new_pool,
   )
   assert out is new_pool
   assert terminate_calls
@@ -2161,19 +2302,19 @@ def test_terminate_pool_bounded_abandon_kills_ppid_census_orphans(monkeypatch):
   logs = []
   census_calls = []
   monkeypatch.setattr(
-      mph,
-      "log_print",
-      lambda msg, flush=False: logs.append(msg),
+    mph,
+    "log_print",
+    lambda msg, flush=False: logs.append(msg),
   )
   monkeypatch.setattr(
-      mph,
-      "_aggressive_terminate_pool_workers",
-      lambda pool, **kwargs: None,
+    mph,
+    "_aggressive_terminate_pool_workers",
+    lambda pool, **kwargs: None,
   )
   monkeypatch.setattr(
-      mph,
-      "reap_zombie_children_of_self",
-      lambda **kwargs: None,
+    mph,
+    "reap_zombie_children_of_self",
+    lambda **kwargs: None,
   )
   monkeypatch.setattr(mph, "_iter_zombie_child_pids", lambda: iter([]))
   monkeypatch.setattr(mph, "warn_unreaped_zombie_children", lambda **k: None)
@@ -2189,10 +2330,10 @@ def test_terminate_pool_bounded_abandon_kills_ppid_census_orphans(monkeypatch):
     _pool = [_AliveWorker(pid=100)]
 
   ok = mph.terminate_pool_bounded(
-      _Pool(),
-      context="proactive_swap",
-      kill_workers_first=True,
-      abandon_after_kill=True,
+    _Pool(),
+    context="proactive_swap",
+    kill_workers_first=True,
+    abandon_after_kill=True,
   )
   assert ok is True
   assert census_calls
@@ -2225,8 +2366,8 @@ def test_kill_pool_children_by_ppid_census_matches_pool_kind_mark(monkeypatch):
   monkeypatch.setattr(mph, "log_print", lambda *a, **k: None)
 
   out = mph.kill_pool_children_by_ppid_census(
-      cmdline_mark="[worker:metrics-pool]",
-      context="metrics_pool",
+    cmdline_mark="[worker:metrics-pool]",
+    context="metrics_pool",
   )
   assert out == [501, 502]
   assert killed == [501, 502]
@@ -2237,7 +2378,9 @@ def test_kill_pool_children_by_ppid_census_matches_pool_kind_mark(monkeypatch):
   assert "[worker:ingest-pool]" in listed
 
 
-def test_terminate_pool_bounded_abandon_reaps_and_skips_stdlib_terminate(monkeypatch):
+def test_terminate_pool_bounded_abandon_reaps_and_skips_stdlib_terminate(
+  monkeypatch,
+):
   """Abandon path SIGKILLs, censuses, reaps, and never calls pool.terminate()."""
   terminate_calls = []
   reap_calls = []
@@ -2252,35 +2395,35 @@ def test_terminate_pool_bounded_abandon_reaps_and_skips_stdlib_terminate(monkeyp
       raise AssertionError("stdlib terminate must not run on abandon")
 
   monkeypatch.setattr(
-      mph,
-      "_aggressive_terminate_pool_workers",
-      lambda pool, **kwargs: aggressive.append(dict(kwargs)),
+    mph,
+    "_aggressive_terminate_pool_workers",
+    lambda pool, **kwargs: aggressive.append(dict(kwargs)),
   )
   monkeypatch.setattr(
-      mph,
-      "kill_pool_children_by_ppid_census",
-      lambda **kwargs: census_calls.append(dict(kwargs)) or [42],
+    mph,
+    "kill_pool_children_by_ppid_census",
+    lambda **kwargs: census_calls.append(dict(kwargs)) or [42],
   )
   monkeypatch.setattr(
-      mph,
-      "reap_zombie_children_of_self",
-      lambda **kwargs: reap_calls.append(dict(kwargs)),
+    mph,
+    "reap_zombie_children_of_self",
+    lambda **kwargs: reap_calls.append(dict(kwargs)),
   )
   monkeypatch.setattr(mph, "_iter_zombie_child_pids", lambda: iter([]))
   monkeypatch.setattr(mph, "warn_unreaped_zombie_children", lambda **k: None)
   monkeypatch.setattr(
-      mph,
-      "_reap_pool_worker_pids",
-      lambda pool, **kwargs: [],
+    mph,
+    "_reap_pool_worker_pids",
+    lambda pool, **kwargs: [],
   )
   monkeypatch.setattr(mph, "log_print", lambda *a, **k: None)
 
   ok = mph.terminate_pool_bounded(
-      _HangPool(),
-      context="metrics_pool",
-      kill_workers_first=True,
-      abandon_after_kill=True,
-      pool_worker_cmdline_mark="[worker:metrics-pool]",
+    _HangPool(),
+    context="metrics_pool",
+    kill_workers_first=True,
+    abandon_after_kill=True,
+    pool_worker_cmdline_mark="[worker:metrics-pool]",
   )
   assert ok is True
   assert terminate_calls == []
@@ -2320,18 +2463,18 @@ def test_terminate_pool_bounded_abandon_stops_handler_before_kill(monkeypatch):
   def _aggressive(active, **kwargs):
     del kwargs
     order.append(
-        (
-            "sigkill",
-            getattr(active._worker_handler, "_state", None),
-            getattr(active, "_state", None),
-        )
+      (
+        "sigkill",
+        getattr(active._worker_handler, "_state", None),
+        getattr(active, "_state", None),
+      )
     )
 
   monkeypatch.setattr(mph, "_aggressive_terminate_pool_workers", _aggressive)
   monkeypatch.setattr(
-      mph,
-      "kill_pool_children_by_ppid_census",
-      lambda **kwargs: order.append("census") or [],
+    mph,
+    "kill_pool_children_by_ppid_census",
+    lambda **kwargs: order.append("census") or [],
   )
   monkeypatch.setattr(mph, "reap_zombie_children_of_self", lambda **kwargs: [])
   monkeypatch.setattr(mph, "_iter_zombie_child_pids", lambda: iter([]))
@@ -2340,12 +2483,12 @@ def test_terminate_pool_bounded_abandon_stops_handler_before_kill(monkeypatch):
   monkeypatch.setattr(mph, "log_print", lambda *a, **k: None)
 
   ok = mph.terminate_pool_bounded(
-      pool,
-      timeout_s=2.0,
-      context="metrics_pool",
-      kill_workers_first=True,
-      abandon_after_kill=True,
-      pool_worker_cmdline_mark="[worker:metrics-pool]",
+    pool,
+    timeout_s=2.0,
+    context="metrics_pool",
+    kill_workers_first=True,
+    abandon_after_kill=True,
+    pool_worker_cmdline_mark="[worker:metrics-pool]",
   )
   assert ok is True
   assert cancel_calls == [True]
@@ -2373,30 +2516,30 @@ def test_terminate_pool_bounded_abandon_retries_reap_until_clear(monkeypatch):
     return iter([])
 
   monkeypatch.setattr(
-      mph,
-      "_aggressive_terminate_pool_workers",
-      lambda pool, **kwargs: None,
+    mph,
+    "_aggressive_terminate_pool_workers",
+    lambda pool, **kwargs: None,
   )
   monkeypatch.setattr(
-      mph,
-      "kill_pool_children_by_ppid_census",
-      lambda **kwargs: [],
+    mph,
+    "kill_pool_children_by_ppid_census",
+    lambda **kwargs: [],
   )
   monkeypatch.setattr(
-      mph,
-      "_reap_pool_worker_pids",
-      lambda pool, **kwargs: join_calls.append(dict(kwargs)) or [9001],
+    mph,
+    "_reap_pool_worker_pids",
+    lambda pool, **kwargs: join_calls.append(dict(kwargs)) or [9001],
   )
   monkeypatch.setattr(
-      mph,
-      "reap_zombie_children_of_self",
-      lambda **kwargs: reap_calls.append(dict(kwargs)) or [],
+    mph,
+    "reap_zombie_children_of_self",
+    lambda **kwargs: reap_calls.append(dict(kwargs)) or [],
   )
   monkeypatch.setattr(mph, "_iter_zombie_child_pids", _iter_zombies)
   monkeypatch.setattr(
-      mph,
-      "warn_unreaped_zombie_children",
-      lambda **kwargs: warn_calls.append(dict(kwargs)),
+    mph,
+    "warn_unreaped_zombie_children",
+    lambda **kwargs: warn_calls.append(dict(kwargs)),
   )
   monkeypatch.setattr(mph, "log_print", lambda *a, **k: None)
   monkeypatch.setattr(mph.time, "sleep", lambda _s: None)
@@ -2408,12 +2551,12 @@ def test_terminate_pool_bounded_abandon_retries_reap_until_clear(monkeypatch):
       raise AssertionError("stdlib terminate must not run")
 
   ok = mph.terminate_pool_bounded(
-      _Pool(),
-      timeout_s=2.0,
-      context="abandon_pool",
-      kill_workers_first=True,
-      abandon_after_kill=True,
-      pool_worker_cmdline_mark="[worker:metrics-pool]",
+    _Pool(),
+    timeout_s=2.0,
+    context="abandon_pool",
+    kill_workers_first=True,
+    abandon_after_kill=True,
+    pool_worker_cmdline_mark="[worker:metrics-pool]",
   )
   assert ok is True
   assert join_calls, "abandon must call _reap_pool_worker_pids (Process.join)"
@@ -2457,12 +2600,12 @@ def test_terminate_pool_bounded_abandon_no_repopulate_after_kill(monkeypatch):
   monkeypatch.setattr(mph, "log_print", lambda *a, **k: None)
 
   mph.terminate_pool_bounded(
-      pool,
-      timeout_s=2.0,
-      context="metrics_pool",
-      kill_workers_first=True,
-      abandon_after_kill=True,
-      pool_worker_cmdline_mark="[worker:metrics-pool]",
+    pool,
+    timeout_s=2.0,
+    context="metrics_pool",
+    kill_workers_first=True,
+    abandon_after_kill=True,
+    pool_worker_cmdline_mark="[worker:metrics-pool]",
   )
   assert pool._worker_handler._state == TERMINATE
   assert pool.repopulate_attempts == 0
@@ -2471,58 +2614,61 @@ def test_terminate_pool_bounded_abandon_no_repopulate_after_kill(monkeypatch):
 
 def test_metrics_recycle_not_misread_as_attrition(monkeypatch):
   """Metrics health context drives recycle classification, not ingest getter."""
+
   class _Proc:
     exitcode = None
     pid = 99
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
-      lambda: 0,
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+    lambda: 0,
   )
   # Without metrics context, ingest getter=0 → not recycle.
   assert mph._dead_worker_exitcode_is_recycle(_Proc(), pool=None) is False
   # With metrics maxtasksperchild in context → recycle.
   assert (
-      mph._dead_worker_exitcode_is_recycle(
-          _Proc(),
-          pool=None,
-          pool_health_context={"maxtasksperchild": 16},
-      )
-      is True
+    mph._dead_worker_exitcode_is_recycle(
+      _Proc(),
+      pool=None,
+      pool_health_context={"maxtasksperchild": 16},
+    )
+    is True
   )
   # Explicit 0 in context must not fall through to ingest getter.
   assert (
-      mph._dead_worker_exitcode_is_recycle(
-          _Proc(),
-          pool=None,
-          pool_health_context={"maxtasksperchild": 0},
-      )
-      is False
+    mph._dead_worker_exitcode_is_recycle(
+      _Proc(),
+      pool=None,
+      pool_health_context={"maxtasksperchild": 0},
+    )
+    is False
   )
 
 
-def test_reclaim_excess_ingest_pool_children_kills_orphans_keeps_pool(monkeypatch):
+def test_reclaim_excess_ingest_pool_children_kills_orphans_keeps_pool(
+  monkeypatch,
+):
   """When child_ingest > configured, cull orphans not in pool._pool."""
   killed = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_processes",
-      lambda: 2,
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_processes",
+    lambda: 2,
   )
   monkeypatch.setattr(
-      mph,
-      "list_ingest_pool_child_pids_of_self",
-      lambda: [10, 11, 20, 21],
+    mph,
+    "list_ingest_pool_child_pids_of_self",
+    lambda: [10, 11, 20, 21],
   )
   monkeypatch.setattr(
-      mph,
-      "_sigkill_pool_worker_pids",
-      lambda pids, **kwargs: killed.extend(list(pids)),
+    mph,
+    "_sigkill_pool_worker_pids",
+    lambda pids, **kwargs: killed.extend(list(pids)),
   )
   monkeypatch.setattr(mph, "log_print", lambda *a, **k: None)
   pool = SimpleNamespace(_pool=[_AliveWorker(pid=10), _AliveWorker(pid=11)])
   culled = mph.reclaim_excess_ingest_pool_children(
-      pool,
-      context="post_retire_maintenance",
+    pool,
+    context="post_retire_maintenance",
   )
   assert sorted(culled) == [20, 21]
   assert sorted(killed) == [20, 21]
@@ -2532,22 +2678,22 @@ def test_maintain_ingest_pool_reclaims_when_alive_over_cap(monkeypatch):
   """Entry reclaim runs even when probe succeeds (no swap path)."""
   mph.reset_post_retire_maintain_coalesce_for_tests()
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
-      lambda: 0,
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+    lambda: 0,
   )
   monkeypatch.setattr(mph, "reap_pool_worker_pids", lambda *a, **k: [])
   monkeypatch.setattr(mph, "reap_zombie_children_of_self", lambda **k: None)
   monkeypatch.setattr(mph, "_iter_dead_pool_worker_processes", lambda pool: [])
   monkeypatch.setattr(
-      mph,
-      "_pool_recycle_gate_metrics",
-      lambda *a, **k: {
-          "alive": 24,
-          "expected_total": 24,
-          "materialized": 24,
-          "gap": 0,
-          "dead_n": 0,
-      },
+    mph,
+    "_pool_recycle_gate_metrics",
+    lambda *a, **k: {
+      "alive": 24,
+      "expected_total": 24,
+      "materialized": 24,
+      "gap": 0,
+      "dead_n": 0,
+    },
   )
   # Idle so probe still runs (busy path skips probe by design).
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
@@ -2591,9 +2737,9 @@ def test_probe_ingest_pool_dispatch_logs_timeout_error_typename(monkeypatch):
   """Empty str(TimeoutError) must still log TimeoutError in err=."""
   logs = []
   monkeypatch.setattr(
-      mph,
-      "log_print",
-      lambda msg, flush=False: logs.append(msg),
+    mph,
+    "log_print",
+    lambda msg, flush=False: logs.append(msg),
   )
 
   class _TimeoutAsync:
@@ -2606,24 +2752,27 @@ def test_probe_ingest_pool_dispatch_logs_timeout_error_typename(monkeypatch):
       del fn, args
       return _TimeoutAsync()
 
-  assert mph.probe_ingest_pool_dispatch(_TimeoutPool(), context="post_retire") is False
+  assert (
+    mph.probe_ingest_pool_dispatch(_TimeoutPool(), context="post_retire")
+    is False
+  )
   assert any(
-      "dispatch_probe failed" in line and "TimeoutError" in line for line in logs
+    "dispatch_probe failed" in line and "TimeoutError" in line for line in logs
   )
 
 
 def test_maintain_ingest_pool_after_supervisor_retire_noop_when_maxtasks_positive(
-    monkeypatch,
+  monkeypatch,
 ):
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
-      lambda: 1,
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+    lambda: 1,
   )
   probe_calls = []
   monkeypatch.setattr(
-      mph,
-      "probe_ingest_pool_dispatch",
-      lambda *a, **k: probe_calls.append(True) or True,
+    mph,
+    "probe_ingest_pool_dispatch",
+    lambda *a, **k: probe_calls.append(True) or True,
   )
   pool = object()
   assert mph.maintain_ingest_pool_after_supervisor_retire(pool) is pool
@@ -2635,37 +2784,41 @@ def test_maintain_skips_probe_when_workers_busy(monkeypatch):
   mph.reset_post_retire_maintain_coalesce_for_tests()
   logs = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
-      lambda: 0,
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+    lambda: 0,
   )
   monkeypatch.setattr(mph, "reap_pool_worker_pids", lambda *a, **k: [])
   monkeypatch.setattr(mph, "reap_zombie_children_of_self", lambda **k: None)
   monkeypatch.setattr(mph, "_iter_dead_pool_worker_processes", lambda pool: [])
   monkeypatch.setattr(
-      mph,
-      "_pool_recycle_gate_metrics",
-      lambda *a, **k: {
-          "alive": 32,
-          "expected_total": 32,
-          "materialized": 32,
-          "gap": 0,
-          "dead_n": 0,
-      },
+    mph,
+    "_pool_recycle_gate_metrics",
+    lambda *a, **k: {
+      "alive": 32,
+      "expected_total": 32,
+      "materialized": 32,
+      "gap": 0,
+      "dead_n": 0,
+    },
   )
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: False)
-  monkeypatch.setattr(mph, "reclaim_excess_ingest_pool_children", lambda *a, **k: [])
-  monkeypatch.setattr(mph, "log_print", lambda msg, flush=False: logs.append(msg))
+  monkeypatch.setattr(
+    mph, "reclaim_excess_ingest_pool_children", lambda *a, **k: []
+  )
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, flush=False: logs.append(msg)
+  )
   probe_calls = []
   monkeypatch.setattr(
-      mph,
-      "probe_ingest_pool_dispatch",
-      lambda *a, **k: probe_calls.append(True) or False,
+    mph,
+    "probe_ingest_pool_dispatch",
+    lambda *a, **k: probe_calls.append(True) or False,
   )
   recreate_calls = []
   pool = SimpleNamespace(_pool=[_AliveWorker(pid=i) for i in range(32)])
   out = mph.maintain_ingest_pool_after_supervisor_retire(
-      pool,
-      recreate_pool_fn=lambda: recreate_calls.append(True) or object(),
+    pool,
+    recreate_pool_fn=lambda: recreate_calls.append(True) or object(),
   )
   assert out is pool
   assert probe_calls == []
@@ -2677,31 +2830,31 @@ def test_reclaim_never_kills_registered_pool_workers(monkeypatch):
   """Census over-cap must cull orphans only — never truncate registered keep."""
   killed = []
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_processes",
-      lambda: 2,
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_processes",
+    lambda: 2,
   )
   # Three registered keep PIDs (> expected=2) plus one orphan.
   monkeypatch.setattr(
-      mph,
-      "list_ingest_pool_child_pids_of_self",
-      lambda: [10, 11, 12, 99],
+    mph,
+    "list_ingest_pool_child_pids_of_self",
+    lambda: [10, 11, 12, 99],
   )
   monkeypatch.setattr(
-      mph,
-      "_sigkill_pool_worker_pids",
-      lambda pids, **kwargs: killed.extend(list(pids)),
+    mph,
+    "_sigkill_pool_worker_pids",
+    lambda pids, **kwargs: killed.extend(list(pids)),
   )
   monkeypatch.setattr(mph, "log_print", lambda *a, **k: None)
   pool = SimpleNamespace(
-      _pool=[
-          _AliveWorker(pid=10),
-          _AliveWorker(pid=11),
-          _AliveWorker(pid=12),
-      ],
+    _pool=[
+      _AliveWorker(pid=10),
+      _AliveWorker(pid=11),
+      _AliveWorker(pid=12),
+    ],
   )
   culled = mph.reclaim_excess_ingest_pool_children(
-      pool,
-      context="post_retire_maintenance",
+    pool,
+    context="post_retire_maintenance",
   )
   assert culled == [99]
   assert killed == [99]
@@ -2711,38 +2864,40 @@ def test_post_retire_maintain_coalesced_under_load(monkeypatch):
   """Second maintain within coalesce window while busy skips reclaim+probe."""
   mph.reset_post_retire_maintain_coalesce_for_tests()
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
-      lambda: 0,
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
+    lambda: 0,
   )
   monkeypatch.setattr(mph, "reap_pool_worker_pids", lambda *a, **k: [])
   monkeypatch.setattr(mph, "reap_zombie_children_of_self", lambda **k: None)
   monkeypatch.setattr(mph, "_iter_dead_pool_worker_processes", lambda pool: [])
   monkeypatch.setattr(
-      mph,
-      "_pool_recycle_gate_metrics",
-      lambda *a, **k: {
-          "alive": 32,
-          "expected_total": 32,
-          "materialized": 32,
-          "gap": 0,
-          "dead_n": 0,
-      },
+    mph,
+    "_pool_recycle_gate_metrics",
+    lambda *a, **k: {
+      "alive": 32,
+      "expected_total": 32,
+      "materialized": 32,
+      "gap": 0,
+      "dead_n": 0,
+    },
   )
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: False)
   reclaim_calls = []
   monkeypatch.setattr(
-      mph,
-      "reclaim_excess_ingest_pool_children",
-      lambda *a, **k: reclaim_calls.append(True) or [],
+    mph,
+    "reclaim_excess_ingest_pool_children",
+    lambda *a, **k: reclaim_calls.append(True) or [],
   )
   probe_calls = []
   monkeypatch.setattr(
-      mph,
-      "probe_ingest_pool_dispatch",
-      lambda *a, **k: probe_calls.append(True) or True,
+    mph,
+    "probe_ingest_pool_dispatch",
+    lambda *a, **k: probe_calls.append(True) or True,
   )
   logs = []
-  monkeypatch.setattr(mph, "log_print", lambda msg, flush=False: logs.append(msg))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, flush=False: logs.append(msg)
+  )
   pool = SimpleNamespace(_pool=[_AliveWorker()])
   assert mph.maintain_ingest_pool_after_supervisor_retire(pool) is pool
   assert len(reclaim_calls) == 1
@@ -2753,11 +2908,15 @@ def test_post_retire_maintain_coalesced_under_load(monkeypatch):
   assert any("coalesced" in line and "workers_busy" in line for line in logs)
 
 
-def test_full_redispatch_thrash_triggers_immediate_recover_same_round(monkeypatch):
+def test_full_redispatch_thrash_triggers_immediate_recover_same_round(
+  monkeypatch,
+):
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
   monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
-  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  monkeypatch.setattr(
+    mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1
+  )
   stuck_pool = _ManualPool()
   recover_calls = {"n": 0}
 
@@ -2771,13 +2930,13 @@ def test_full_redispatch_thrash_triggers_immediate_recover_same_round(monkeypatc
     return {"pool": new_pool, "collected": []}
 
   gen = mph.imap_sliding_window_watch_pool(
-      stuck_pool,
-      lambda path: path,
-      ["stuck_path"],
-      max_inflight=1,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 100000,
-      on_idle_pool_stuck_after_redispatch=on_recover,
+    stuck_pool,
+    lambda path: path,
+    ["stuck_path"],
+    max_inflight=1,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 100000,
+    on_idle_pool_stuck_after_redispatch=on_recover,
   )
   results = list(gen)
   assert results == ["stuck_path"]
@@ -2789,11 +2948,15 @@ def test_post_recover_thrash_allows_second_recover(monkeypatch):
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
   monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
-  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  monkeypatch.setattr(
+    mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1
+  )
   stuck_pool = _ManualPool()
   recover_calls = {"n": 0}
   logs = []
-  monkeypatch.setattr(mph, "log_print", lambda msg, flush=False: logs.append(msg))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, flush=False: logs.append(msg)
+  )
 
   def on_recover(pool, pending_paths, pending_async, fn):
     recover_calls["n"] += 1
@@ -2807,13 +2970,13 @@ def test_post_recover_thrash_allows_second_recover(monkeypatch):
     return {"pool": new_pool, "collected": []}
 
   gen = mph.imap_sliding_window_watch_pool(
-      stuck_pool,
-      lambda path: path,
-      ["stuck_path"],
-      max_inflight=1,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 100000,
-      on_idle_pool_stuck_after_redispatch=on_recover,
+    stuck_pool,
+    lambda path: path,
+    ["stuck_path"],
+    max_inflight=1,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 100000,
+    on_idle_pool_stuck_after_redispatch=on_recover,
   )
   results = list(gen)
   assert results == ["stuck_path"]
@@ -2828,11 +2991,15 @@ def test_pool_recover_cap_fatals_taskqueue_dead(monkeypatch):
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
   monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
-  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  monkeypatch.setattr(
+    mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1
+  )
   stuck_pool = _ManualPool()
   recover_calls = {"n": 0}
   logs = []
-  monkeypatch.setattr(mph, "log_print", lambda msg, flush=False: logs.append(msg))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, flush=False: logs.append(msg)
+  )
 
   def on_recover(pool, pending_paths, pending_async, fn):
     recover_calls["n"] += 1
@@ -2844,14 +3011,14 @@ def test_pool_recover_cap_fatals_taskqueue_dead(monkeypatch):
     return {"pool": new_pool, "collected": []}
 
   gen = mph.imap_sliding_window_watch_pool(
-      stuck_pool,
-      lambda path: path,
-      ["stuck_path"],
-      max_inflight=1,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 100000,
-      on_idle_pool_stuck_after_redispatch=on_recover,
-      soft_fail_unhealed_paths_fn=lambda paths: [],
+    stuck_pool,
+    lambda path: path,
+    ["stuck_path"],
+    max_inflight=1,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 100000,
+    on_idle_pool_stuck_after_redispatch=on_recover,
+    soft_fail_unhealed_paths_fn=lambda paths: [],
   )
   with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
     list(gen)
@@ -2861,19 +3028,25 @@ def test_pool_recover_cap_fatals_taskqueue_dead(monkeypatch):
   assert any("pool_recover cap exceeded" in line for line in logs)
 
 
-def test_unhealed_recover_same_skip_no_quarantines_path_not_exit_124(monkeypatch):
+def test_unhealed_recover_same_skip_no_quarantines_path_not_exit_124(
+  monkeypatch,
+):
   """Identical pending after N probe-ok recovers → path soft-fail, not exit 124."""
   monkeypatch.setattr(mph, "IDLE_POOL_RECOVER_MAX", 3)
   monkeypatch.setattr(mph, "IDLE_POOL_UNHEALED_RECOVER_MAX", 3)
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
   monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
-  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  monkeypatch.setattr(
+    mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1
+  )
   stuck_pool = _ManualPool()
   recover_calls = {"n": 0}
   soft_fail_calls = {"n": 0, "paths": None}
   logs = []
-  monkeypatch.setattr(mph, "log_print", lambda msg, flush=False: logs.append(msg))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, flush=False: logs.append(msg)
+  )
 
   def on_recover(pool, pending_paths, pending_async, fn):
     recover_calls["n"] += 1
@@ -2888,23 +3061,32 @@ def test_unhealed_recover_same_skip_no_quarantines_path_not_exit_124(monkeypatch
     soft_fail_calls["n"] += 1
     soft_fail_calls["paths"] = list(paths)
     return [
-        (path, (path, False, False, 0.0, {
+      (
+        path,
+        (
+          path,
+          False,
+          False,
+          0.0,
+          {
             "outcome": "soft_fail",
             "fail_reason": "idle_pool_unhealed_after_recover",
             "reconcile_skip": "yes",
-        }))
-        for path in paths
+          },
+        ),
+      )
+      for path in paths
     ]
 
   gen = mph.imap_sliding_window_watch_pool(
-      stuck_pool,
-      lambda path: path,
-      ["/host/a/stuck_path"],
-      max_inflight=1,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 100000,
-      on_idle_pool_stuck_after_redispatch=on_recover,
-      soft_fail_unhealed_paths_fn=soft_fail,
+    stuck_pool,
+    lambda path: path,
+    ["/host/a/stuck_path"],
+    max_inflight=1,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 100000,
+    on_idle_pool_stuck_after_redispatch=on_recover,
+    soft_fail_unhealed_paths_fn=soft_fail,
   )
   results = list(gen)
   assert soft_fail_calls["n"] == 1
@@ -2923,11 +3105,15 @@ def test_healed_recover_different_pending_still_allows_cap(monkeypatch):
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
   monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
-  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  monkeypatch.setattr(
+    mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1
+  )
   stuck_pool = _ManualPool()
   recover_calls = {"n": 0}
   logs = []
-  monkeypatch.setattr(mph, "log_print", lambda msg, flush=False: logs.append(msg))
+  monkeypatch.setattr(
+    mph, "log_print", lambda msg, flush=False: logs.append(msg)
+  )
 
   def on_recover(pool, pending_paths, pending_async, fn):
     recover_calls["n"] += 1
@@ -2941,14 +3127,14 @@ def test_healed_recover_different_pending_still_allows_cap(monkeypatch):
     return {"pool": new_pool, "collected": []}
 
   gen = mph.imap_sliding_window_watch_pool(
-      stuck_pool,
-      lambda path: path,
-      ["stuck_path_0"],
-      max_inflight=1,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 100000,
-      on_idle_pool_stuck_after_redispatch=on_recover,
-      soft_fail_unhealed_paths_fn=lambda paths: [],
+    stuck_pool,
+    lambda path: path,
+    ["stuck_path_0"],
+    max_inflight=1,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 100000,
+    on_idle_pool_stuck_after_redispatch=on_recover,
+    soft_fail_unhealed_paths_fn=lambda paths: [],
   )
   with pytest.raises(mph.MultiprocessingPoolStallError) as excinfo:
     list(gen)
@@ -2963,7 +3149,9 @@ def test_idle_pool_recover_skipped_when_skip_fn_returns_reason(monkeypatch):
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
   monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
-  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  monkeypatch.setattr(
+    mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1
+  )
   recover_calls = {"n": 0}
   logs = []
 
@@ -2973,7 +3161,9 @@ def test_idle_pool_recover_skipped_when_skip_fn_returns_reason(monkeypatch):
     time.sleep(30)
 
   monkeypatch.setattr(
-      mph, "log_print", lambda msg, flush=False: logs.append(msg),
+    mph,
+    "log_print",
+    lambda msg, flush=False: logs.append(msg),
   )
 
   class _FinishablePool(_ManualPool):
@@ -2993,14 +3183,14 @@ def test_idle_pool_recover_skipped_when_skip_fn_returns_reason(monkeypatch):
     return "populate_wait day=2026-06-07 reason=populate_wait"
 
   gen = mph.imap_sliding_window_watch_pool(
-      stuck_pool,
-      lambda path: path,
-      ["stuck_path"],
-      max_inflight=1,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 100000,
-      on_idle_pool_stuck_after_redispatch=on_recover,
-      skip_idle_pool_recover_fn=skip_fn,
+    stuck_pool,
+    lambda path: path,
+    ["stuck_path"],
+    max_inflight=1,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 100000,
+    on_idle_pool_stuck_after_redispatch=on_recover,
+    skip_idle_pool_recover_fn=skip_fn,
   )
   results = list(gen)
   assert results == ["stuck_path"]
@@ -3008,12 +3198,16 @@ def test_idle_pool_recover_skipped_when_skip_fn_returns_reason(monkeypatch):
   assert any("pool_recover skipped" in line for line in logs)
 
 
-def test_idle_redispatch_skipped_when_skip_fn_returns_populate_wait(monkeypatch):
+def test_idle_redispatch_skipped_when_skip_fn_returns_populate_wait(
+  monkeypatch,
+):
   """populate_wait skip must disable idle redispatch (not only pool_recover)."""
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
   monkeypatch.setattr(mph, "pool_workers_all_idle", lambda _p: True)
   monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_max_rounds", lambda: 3)
-  monkeypatch.setattr(mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1)
+  monkeypatch.setattr(
+    mph, "get_sync_pool_idle_reconcile_polls_per_round", lambda: 1
+  )
   recover_calls = {"n": 0}
   redispatch_calls = {"n": 0}
   logs = []
@@ -3023,7 +3217,9 @@ def test_idle_redispatch_skipped_when_skip_fn_returns_populate_wait(monkeypatch)
     del pool, pending_paths, pending_async, fn
 
   monkeypatch.setattr(
-      mph, "log_print", lambda msg, flush=False: logs.append(msg),
+    mph,
+    "log_print",
+    lambda msg, flush=False: logs.append(msg),
   )
 
   class _FinishablePool(_ManualPool):
@@ -3048,15 +3244,15 @@ def test_idle_redispatch_skipped_when_skip_fn_returns_populate_wait(monkeypatch)
     del path
 
   gen = mph.imap_sliding_window_watch_pool(
-      stuck_pool,
-      lambda path: path,
-      ["stuck_path"],
-      max_inflight=1,
-      poll_timeout_s=0.01,
-      stall_abort_polls_fn=lambda in_flight: 100000,
-      on_idle_pool_stuck_after_redispatch=on_recover,
-      on_reconcile_redispatch=on_redispatch,
-      skip_idle_pool_recover_fn=skip_fn,
+    stuck_pool,
+    lambda path: path,
+    ["stuck_path"],
+    max_inflight=1,
+    poll_timeout_s=0.01,
+    stall_abort_polls_fn=lambda in_flight: 100000,
+    on_idle_pool_stuck_after_redispatch=on_recover,
+    on_reconcile_redispatch=on_redispatch,
+    skip_idle_pool_recover_fn=skip_fn,
   )
   results = list(gen)
   assert results == ["stuck_path"]
@@ -3064,4 +3260,3 @@ def test_idle_redispatch_skipped_when_skip_fn_returns_populate_wait(monkeypatch)
   assert redispatch_calls["n"] == 0
   assert not any("redispatch round=" in line for line in logs)
   assert any("redispatch skipped" in line for line in logs)
-

@@ -114,9 +114,9 @@ client = ApiClient("https://stats.cluster.edu/api/", api_key="YOUR_KEY")
 home = client.get_json("home/")
 
 df = get_job_full_dataframe(
-    jid="12345",
-    api_url="https://stats.cluster.edu/api/",
-    api_key="YOUR_KEY",
+  jid="12345",
+  api_url="https://stats.cluster.edu/api/",
+  api_key="YOUR_KEY",
 )
 print(df.head())
 ```

@@ -9,11 +9,12 @@ Attributes:
   suspend_ingest_sigalrm_for_populate_wait: Alias of
     ``suspend_ingest_sigalrm_for_non_work_wait``.
 """
+
 from __future__ import annotations
 
-from typing import Any, Iterator
-
+from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Any
 
 
 @contextmanager
@@ -32,7 +33,7 @@ def suspend_ingest_sigalrm_for_non_work_wait() -> Iterator[Any]:
     ...   pass  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.sync_timedb_ingest_progress import (
-      touch_ingest_progress,
+    touch_ingest_progress,
   )
 
   try:
@@ -42,7 +43,7 @@ def suspend_ingest_sigalrm_for_non_work_wait() -> Iterator[Any]:
 
 
 suspend_ingest_sigalrm_for_populate_wait = (
-    suspend_ingest_sigalrm_for_non_work_wait
+  suspend_ingest_sigalrm_for_non_work_wait
 )
 
 

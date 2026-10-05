@@ -24,4 +24,3 @@ def test_summaryplot_raises_when_no_metric_data():
     sp.plot()
 
   assert MSG_NO_METRIC_DATA in str(excinfo.value)
-

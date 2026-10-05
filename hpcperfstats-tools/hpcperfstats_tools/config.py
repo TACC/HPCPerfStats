@@ -25,18 +25,17 @@ Example INI file:
 import configparser
 import os
 from pathlib import Path
-from typing import Optional
 
 _cfg = configparser.ConfigParser()
 
 
-def _load_config() -> Optional[Path]:
+def _load_config() -> Path | None:
   """
   Load configuration from HPCPERFSTATS_TOOLS_INI if set.
-  
+
   Returns:
     Optional[Path]: Optional[Path] — the result, or None when unavailable.
-  
+
   Examples:
     >>> _load_config()  # doctest: +SKIP
   """
@@ -57,20 +56,20 @@ _CONFIG_PATH = _load_config()
 
 
 def get_api_base_url(
-  default: Optional[str] = "http://localhost:8000/api/",
-) -> Optional[str]:
+  default: str | None = "http://localhost:8000/api/",
+) -> str | None:
   """
   Return the base URL for the HPCPerfStats REST API.
-  
+
   Loaded only from the tools INI file ([API] base_url). Config file path must
   be set via HPCPERFSTATS_TOOLS_INI. Falls back to default if not set.
-  
+
   Args:
     default (Optional[str]): Default, or None when absent.
-  
+
   Returns:
     Optional[str]: Optional[str] — the result, or None when unavailable.
-  
+
   Examples:
     >>> get_api_base_url(None)  # doctest: +SKIP
   """
@@ -80,4 +79,3 @@ def get_api_base_url(
       return value
 
   return default
-

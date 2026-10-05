@@ -9,7 +9,7 @@ def _sha256_hex(raw_value: str) -> str:
 def test_migration_hashes_apikeys_without_updating_pk_fields():
   # Import via importlib because the module filename starts with digits.
   migration = importlib.import_module(
-      "hpcperfstats.site.lib.machine.migrations.0016_apikey_hash_storage"
+    "hpcperfstats.site.lib.machine.migrations.0016_apikey_hash_storage"
   )
 
   class _FakeApiKeyRow:
@@ -63,4 +63,3 @@ def test_migration_hashes_apikeys_without_updating_pk_fields():
   assert fake2.save_called is False
   assert fake2.key_prefix == "already-set"
   assert fake2.key == raw2
-

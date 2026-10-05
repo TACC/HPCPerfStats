@@ -15,8 +15,8 @@ import ast
 import re
 import sys
 import textwrap
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
@@ -30,8 +30,8 @@ from python_def_inventory import (  # noqa: E402
   collect_module_level_attrs,
   collect_raised_exception_names,
   default_roots,
-  documentable_params,
   docstring_issues,
+  documentable_params,
   exclusion_reason_for_path,
   module_surface_issues,
   signature_annotation_issues,
@@ -41,14 +41,14 @@ from python_def_inventory import (  # noqa: E402
 def _expr_source(source: str, node: ast.AST | None) -> str | None:
   """
   Return the source slice for an AST expression, if available.
-  
+
   Args:
     source (str): String for source.
     node (ast.AST | None): One of ``ast.AST``, ``None``.
-  
+
   Returns:
     str | None: One of ``str``, ``None`` depending on inputs/branch.
-  
+
   Examples:
     >>> _expr_source("x", None)  # doctest: +SKIP
   """
@@ -71,13 +71,13 @@ def _expr_source(source: str, node: ast.AST | None) -> str | None:
 def infer_type_from_default(default: ast.AST | None) -> str | None:
   """
   Infer a type annotation string from a default value AST.
-  
+
   Args:
     default (ast.AST | None): One of ``ast.AST``, ``None``.
-  
+
   Returns:
     str | None: One of ``str``, ``None`` depending on inputs/branch.
-  
+
   Examples:
     >>> infer_type_from_default(None)  # doctest: +SKIP
   """
@@ -111,13 +111,13 @@ def infer_type_from_default(default: ast.AST | None) -> str | None:
 def infer_type_from_name(name: str) -> str:
   """
   Heuristic type for an unannotated parameter name.
-  
+
   Args:
     name (str): String for name.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> infer_type_from_name("x")  # doctest: +SKIP
   """
@@ -127,7 +127,9 @@ def infer_type_from_name(name: str) -> str:
     ("_path", "_file", "_dir", "_dirname")
   ):
     return "str"
-  if lower.startswith(("is_", "has_", "use_", "enable_", "disable_", "skip_", "force_")):
+  if lower.startswith(
+    ("is_", "has_", "use_", "enable_", "disable_", "skip_", "force_")
+  ):
     return "bool"
   if lower.endswith(("_flag", "_enabled", "_disabled")):
     return "bool"
@@ -146,9 +148,19 @@ def infer_type_from_name(name: str) -> str:
     "index",
     "lineno",
     "chunk_size",
-  ) or lower.endswith(("_count", "_size", "_limit", "_timeout", "_seconds", "_ms")):
+  ) or lower.endswith(
+    ("_count", "_size", "_limit", "_timeout", "_seconds", "_ms")
+  ):
     return "int"
-  if lower in ("cfg", "config", "kwargs", "options", "params", "payload", "data"):
+  if lower in (
+    "cfg",
+    "config",
+    "kwargs",
+    "options",
+    "params",
+    "payload",
+    "data",
+  ):
     return "Any"
   if name.startswith("*"):
     return "Any"
@@ -158,14 +170,14 @@ def infer_type_from_name(name: str) -> str:
 def infer_return_type(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
   """
   Infer a return annotation for a function body.
-  
+
   Args:
     fn (ast.FunctionDef | ast.AsyncFunctionDef): One of ``ast.FunctionDef``,
     ``ast.AsyncFunctionDef``.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> infer_return_type(None)  # doctest: +SKIP
   """
@@ -173,25 +185,26 @@ def infer_return_type(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
   class _BodyProbe(ast.NodeVisitor):
     """
     Internal helper to handle BodyProbe.
-    
+
     Subclasses ``NodeVisitor``, extending that type with this class's fields and
     behavior.
-    
+
     Subclasses ``NodeVisitor``, extending that type with this class's fields and
     behavior.
-    
+
     Attributes:
       _depth: ``_depth``.
       returns_value: ``returns_value``.
       yields: ``yields``.
     """
+
     def __init__(self) -> None:
       """
       Initialize a new instance.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> _BodyProbe()  # doctest: +SKIP
       """
@@ -202,13 +215,13 @@ def infer_return_type(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
       """
       Visit a ``FunctionDef`` node while walking the AST.
-      
+
       Args:
         node (ast.FunctionDef): Node.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> _BodyProbe().visit_FunctionDef(None)  # doctest: +SKIP
       """
@@ -220,13 +233,13 @@ def infer_return_type(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
       """
       Visit a ``AsyncFunctionDef`` node while walking the AST.
-      
+
       Args:
         node (ast.AsyncFunctionDef): Node.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> _BodyProbe().visit_AsyncFunctionDef(None)  # doctest: +SKIP
       """
@@ -238,13 +251,13 @@ def infer_return_type(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     def visit_Yield(self, node: ast.Yield) -> None:
       """
       Visit a ``Yield`` node while walking the AST.
-      
+
       Args:
         node (ast.Yield): Node.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> _BodyProbe().visit_Yield(None)  # doctest: +SKIP
       """
@@ -254,13 +267,13 @@ def infer_return_type(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     def visit_YieldFrom(self, node: ast.YieldFrom) -> None:
       """
       Visit a ``YieldFrom`` node while walking the AST.
-      
+
       Args:
         node (ast.YieldFrom): Node.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> _BodyProbe().visit_YieldFrom(None)  # doctest: +SKIP
       """
@@ -270,13 +283,13 @@ def infer_return_type(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     def visit_Return(self, node: ast.Return) -> None:
       """
       Visit a ``Return`` node while walking the AST.
-      
+
       Args:
         node (ast.Return): Node.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> _BodyProbe().visit_Return(None)  # doctest: +SKIP
       """
@@ -302,15 +315,15 @@ def _param_defaults(
 ) -> dict[str, ast.AST | None]:
   """
   Map parameter names to default AST nodes.
-  
+
   Args:
     fn (ast.FunctionDef | ast.AsyncFunctionDef): One of ``ast.FunctionDef``,
     ``ast.AsyncFunctionDef``.
-  
+
   Returns:
     dict[str, ast.AST | None]: dict[str, ast.AST | None] produced by this
     call.
-  
+
   Examples:
     >>> _param_defaults(None)  # doctest: +SKIP
   """
@@ -321,7 +334,7 @@ def _param_defaults(
   pad = len(positional) - len(defaults)
   for i, arg in enumerate(positional):
     result[arg.arg] = None if i < pad else defaults[i - pad]
-  for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+  for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=False):
     result[arg.arg] = default
   if args.vararg is not None:
     result[f"*{args.vararg.arg}"] = None
@@ -336,15 +349,15 @@ def _param_annotations(
 ) -> dict[str, str]:
   """
   Resolve annotation text for every documentable parameter.
-  
+
   Args:
     fn (ast.FunctionDef | ast.AsyncFunctionDef): One of ``ast.FunctionDef``,
     ``ast.AsyncFunctionDef``.
     source (str): String for source.
-  
+
   Returns:
     dict[str, str]: dict[str, str] produced by this call.
-  
+
   Examples:
     >>> _param_annotations(None, "x")  # doctest: +SKIP
   """
@@ -379,16 +392,17 @@ def _param_annotations(
     out[key] = (existing or infer_type_from_name(key)).strip()
   return out
 
+
 def _split_union_types(ann: str) -> list[str]:
   """
   Split a top-level union annotation on ``|`` (ignores ``|`` inside ``[]``).
-  
+
   Args:
     ann (str): String for ann.
-  
+
   Returns:
     list[str]: list[str] produced by this call.
-  
+
   Examples:
     >>> _split_union_types("x")  # doctest: +SKIP
   """
@@ -416,14 +430,14 @@ def _split_union_types(ann: str) -> list[str]:
 def _describe_union(ann: str, *, kind: str) -> str | None:
   """
   Describe a union/optional annotation as explicit polymorphic variants.
-  
+
   Args:
     ann (str): String for ann.
     kind (str): String for kind.
-  
+
   Returns:
     str | None: One of ``str``, ``None`` depending on inputs/branch.
-  
+
   Examples:
     >>> _describe_union("x", "x")  # doctest: +SKIP
   """
@@ -475,15 +489,37 @@ def _describe_any_param(bare: str) -> str:
     return "Time value (``datetime``, ISO string, sentinel, or ``None``)."
   if lower in ("lock", "redis_lock", "mutex"):
     return "Lock object used to serialize access."
-  if lower in ("tasks", "task", "task_args", "tasks_locked", "chunk", "chunks"):
+  if lower in (
+    "tasks",
+    "task",
+    "task_args",
+    "tasks_locked",
+    "chunk",
+    "chunks",
+  ):
     return "Task payload for a worker (tuple/list per this helper's protocol)."
   if lower in ("j", "job") or lower.endswith("_job"):
     return "Job record (Django ``job_data`` or job-like mapping)."
-  if lower in ("callback", "cb", "handler", "fn", "func", "predicate", "worker") or (
-    lower.endswith(("_fn", "_cb", "_handler"))
-  ):
+  if lower in (
+    "callback",
+    "cb",
+    "handler",
+    "fn",
+    "func",
+    "predicate",
+    "worker",
+  ) or (lower.endswith(("_fn", "_cb", "_handler"))):
     return "Callable invoked by this helper."
-  if lower in ("data", "payload", "body", "row", "record", "obj", "value", "item"):
+  if lower in (
+    "data",
+    "payload",
+    "body",
+    "row",
+    "record",
+    "obj",
+    "value",
+    "item",
+  ):
     return "Value to inspect (typically a numeric scalar)."
   if lower.startswith("dram"):
     return "DDR (DRAM) CAS bandwidth value, or something coercible to float."
@@ -500,7 +536,9 @@ def _describe_any_param(bare: str) -> str:
   if lower.startswith(("is_", "has_", "use_", "enable_", "skip_", "force_")):
     return "Flag controlling this behavior (usually a ``bool``)."
   words = bare.replace("_", " ")
-  return f"{words[0].upper() + words[1:] if words else bare} passed to this helper."
+  return (
+    f"{words[0].upper() + words[1:] if words else bare} passed to this helper."
+  )
 
 
 def _describe_param(name: str, ann: str) -> str:
@@ -549,7 +587,7 @@ def _describe_param(name: str, ann: str) -> str:
     )
   if ann == "Any" or ann.startswith("Any"):
     return _describe_any_param(bare)
-  if "[Any]" in ann or ann.startswith("list[Any]") or ann.startswith("dict[Any"):
+  if "[Any]" in ann or ann.startswith(("list[Any]", "dict[Any")):
     return f"Container of mixed values (``{ann}``)."
   return _describe_typed_param(bare, ann)
 
@@ -592,13 +630,19 @@ def _describe_typed_param(bare: str, ann: str) -> str:
   if flat in ("float",) or flat.startswith("float"):
     return f"Floating-point value for {words}."
   if flat in ("str",) or flat.startswith("str|") or "Path" in ann:
-    return f"Path or string for {words}." if optional else f"String for {words}."
-  if flat.startswith(("list", "List", "tuple", "Tuple", "Sequence", "set", "Set")):
+    return (
+      f"Path or string for {words}." if optional else f"String for {words}."
+    )
+  if flat.startswith(
+    ("list", "List", "tuple", "Tuple", "Sequence", "set", "Set")
+  ):
     return f"Sequence for {words}."
   if flat.startswith(("dict", "Dict", "Mapping")):
     return f"Mapping for {words}."
   if optional:
-    return f"{words[0].upper() + words[1:] if words else bare}, or None when absent."
+    return (
+      f"{words[0].upper() + words[1:] if words else bare}, or None when absent."
+    )
   return f"{words[0].upper() + words[1:] if words else bare}."
 
 
@@ -692,10 +736,7 @@ def _wrap_doc_content_lines(
     if stripped.startswith(">>>"):
       out.append(line)
       continue
-    if re.match(r"^([-*]|\d+\.)\s+", stripped):
-      cont = hang + "  "
-    else:
-      cont = hang
+    cont = hang + "  " if re.match(r"^([-*]|\d+\.)\s+", stripped) else hang
     wrapped = textwrap.wrap(
       stripped,
       width=max(20, width - lead),
@@ -905,7 +946,9 @@ def _default_behavior_summary(name: str, *, trivial: bool) -> str:
       core = f"check whether {rest} is present"
     else:
       core = f"check whether we {parts[0]} {rest}"
-    result = f"Internal helper to {core}" if private else f"Return True if {rest}"
+    result = (
+      f"Internal helper to {core}" if private else f"Return True if {rest}"
+    )
   elif parts[-1] in ("usable", "valid", "ready", "present", "empty", "ok"):
     subject = _friendly_words(parts[:-1]) or "value"
     core = f"check if the {subject} is {parts[-1]}"
@@ -921,10 +964,7 @@ def _default_behavior_summary(name: str, *, trivial: bool) -> str:
     verb = _VERB_LEADERS[parts[0]]
     obj = _friendly_words(parts[1:])
     if obj:
-      if verb == "return":
-        phrase = f"return the {obj}"
-      else:
-        phrase = f"{verb} the {obj}"
+      phrase = f"return the {obj}" if verb == "return" else f"{verb} the {obj}"
     else:
       phrase = verb
     if private:
@@ -942,18 +982,19 @@ def _default_behavior_summary(name: str, *, trivial: bool) -> str:
     return short_methods.get(name, f"{result} for this object")
   return result
 
+
 def _summary_from_existing(doc: str | None, name: str, trivial: bool) -> str:
   """
   Choose a one-line summary from an existing docstring or a default.
-  
+
   Args:
     doc (str | None): One of ``str``, ``None``.
     name (str): String for name.
     trivial (bool): Boolean flag for trivial.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> _summary_from_existing(None, "x", True)  # doctest: +SKIP
   """
@@ -1004,13 +1045,17 @@ def _example_literal_for_ann(ann: str, bare: str) -> str:
   low = bare.lower()
   if flat.startswith("Optional[") or flat.endswith("|None"):
     return "None"
-  if "bool" in flat.lower() or low.startswith(("is_", "has_", "use_", "enable_")):
+  if "bool" in flat.lower() or low.startswith(
+    ("is_", "has_", "use_", "enable_")
+  ):
     return "True"
   if flat in ("int", "float") or flat.startswith("int") or "int|" in flat:
     return "0"
   if flat in ("str",) or flat.startswith("str") or "Path" in flat:
     return '"x"'
-  if flat.startswith(("list", "List", "tuple", "Tuple", "Sequence", "set", "Set")):
+  if flat.startswith(
+    ("list", "List", "tuple", "Tuple", "Sequence", "set", "Set")
+  ):
     return "[]"
   if flat.startswith(("dict", "Dict", "Mapping")):
     return "{}"
@@ -1037,8 +1082,10 @@ def _build_example_call(
 
   Examples:
     >>> _build_example_call(
-    ...     __import__("ast").parse("def f(x: int) -> int:\\n  return x\\n").body[0],
-    ...     source="def f(x: int) -> int:\\n  return x\\n",
+    ...   __import__("ast")
+    ...   .parse("def f(x: int) -> int:\\n  return x\\n")
+    ...   .body[0],
+    ...   source="def f(x: int) -> int:\\n  return x\\n",
     ... )
     '>>> f(0)  # doctest: +SKIP'
   """
@@ -1051,7 +1098,9 @@ def _build_example_call(
       continue
     if name.startswith("*"):
       continue
-    args.append(_example_literal_for_ann(anns.get(name, "Any"), name.lstrip("*")))
+    args.append(
+      _example_literal_for_ann(anns.get(name, "Any"), name.lstrip("*"))
+    )
   joined = ", ".join(args)
   if class_name and fn.name == "__init__":
     call = f"{class_name}({joined})"
@@ -1087,8 +1136,10 @@ def build_docstring_lines(
 
   Examples:
     >>> build_docstring_lines(
-    ...     __import__("ast").parse("def f(x: int) -> int:\\n  return x\\n").body[0],
-    ...     source="def f(x: int) -> int:\\n  return x\\n",
+    ...   __import__("ast")
+    ...   .parse("def f(x: int) -> int:\\n  return x\\n")
+    ...   .body[0],
+    ...   source="def f(x: int) -> int:\\n  return x\\n",
     ... )[0]
     'F.'
   """
@@ -1176,8 +1227,7 @@ def build_docstring_lines(
   lines.append("")
   lines.append("Examples:")
   lines.append(
-    "  "
-    + _build_example_call(fn, source=source, class_name=class_name)
+    "  " + _build_example_call(fn, source=source, class_name=class_name)
   )
   return lines
 
@@ -1189,16 +1239,16 @@ def build_module_docstring_lines(
 ) -> list[str]:
   """
   Build a module-level Google docstring with Attributes when needed.
-  
+
   Preserves multi-paragraph prose from an existing module docstring.
-  
+
   Args:
     tree (ast.Module): Tree.
     module_name (str): String for module name.
-  
+
   Returns:
     list[str]: list[str] produced by this call.
-  
+
   Examples:
     >>> build_module_docstring_lines(None, "x")  # doctest: +SKIP
   """
@@ -1241,7 +1291,9 @@ def _base_name(node: ast.expr) -> str:
     str: Simple or attribute name, else empty.
 
   Examples:
-    >>> _base_name(__import__("ast").parse("class C(Base):\\n  pass\\n").body[0].bases[0])
+    >>> _base_name(
+    ...   __import__("ast").parse("class C(Base):\\n  pass\\n").body[0].bases[0]
+    ... )
     'Base'
   """
   if isinstance(node, ast.Name):
@@ -1261,7 +1313,9 @@ def _class_help_text(cls: ast.ClassDef) -> str | None:
     str | None: Help text when present.
 
   Examples:
-    >>> _class_help_text(__import__("ast").parse("class C:\\n  pass\\n").body[0])
+    >>> _class_help_text(
+    ...   __import__("ast").parse("class C:\\n  pass\\n").body[0]
+    ... )
   """
   for stmt in cls.body:
     if isinstance(stmt, ast.Assign):
@@ -1287,15 +1341,14 @@ def build_class_docstring_lines(cls: ast.ClassDef) -> list[str]:
 
   Examples:
     >>> build_class_docstring_lines(
-    ...     __import__("ast").parse("class Box:\\n  pass\\n").body[0]
+    ...   __import__("ast").parse("class Box:\\n  pass\\n").body[0]
     ... )[0]
     'Hold Box state and behavior.'
   """
   existing = ast.get_docstring(cls)
   help_text = _class_help_text(cls)
   if help_text and (
-    not existing
-    or summary_echoes_name_safe(existing, cls.name)
+    not existing or summary_echoes_name_safe(existing, cls.name)
   ):
     summary = help_text.rstrip(".")
   else:
@@ -1378,15 +1431,15 @@ def format_docstring_block(
 ) -> str:
   """
   Format docstring content as an indented triple-quoted block.
-  
+
   Args:
     content_lines (list[str]): Sequence for content lines.
     indent (str): String for indent.
     line_length (int): Integer value for line length.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> format_docstring_block([], "x", 0)  # doctest: +SKIP
   """
@@ -1403,15 +1456,15 @@ def format_docstring_block(
 def _format_param(name: str, ann: str | None, default_src: str | None) -> str:
   """
   Format one parameter for a reconstructed signature.
-  
+
   Args:
     name (str): String for name.
     ann (str | None): One of ``str``, ``None``.
     default_src (str | None): One of ``str``, ``None``.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> _format_param("x", None, None)  # doctest: +SKIP
   """
@@ -1430,16 +1483,16 @@ def _collect_signature_parts(
 ) -> list[str]:
   """
   Collect comma-separated signature parameter fragments.
-  
+
   Args:
     fn (ast.FunctionDef | ast.AsyncFunctionDef): One of ``ast.FunctionDef``,
     ``ast.AsyncFunctionDef``.
     param_anns (dict[str, str]): Mapping for param anns.
     source (str): String for source.
-  
+
   Returns:
     list[str]: list[str] produced by this call.
-  
+
   Examples:
     >>> _collect_signature_parts(None, {}, "x")  # doctest: +SKIP
   """
@@ -1453,13 +1506,13 @@ def _collect_signature_parts(
   def default_for_index(i: int) -> str | None:
     """
     Default for index.
-    
+
     Args:
       i (int): Integer value for i.
-    
+
     Returns:
       str | None: One of ``str``, ``None`` depending on inputs/branch.
-    
+
     Examples:
       >>> default_for_index(0)  # doctest: +SKIP
     """
@@ -1490,17 +1543,21 @@ def _collect_signature_parts(
 
   if args.vararg is not None:
     key = f"*{args.vararg.arg}"
-    parts.append(_format_param(f"*{args.vararg.arg}", param_anns.get(key), None))
+    parts.append(
+      _format_param(f"*{args.vararg.arg}", param_anns.get(key), None)
+    )
   elif args.kwonlyargs:
     parts.append("*")
 
-  for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+  for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=False):
     dsrc = _expr_source(source, default) if default is not None else None
     parts.append(_format_param(arg.arg, param_anns.get(arg.arg), dsrc))
 
   if args.kwarg is not None:
     key = f"**{args.kwarg.arg}"
-    parts.append(_format_param(f"**{args.kwarg.arg}", param_anns.get(key), None))
+    parts.append(
+      _format_param(f"**{args.kwarg.arg}", param_anns.get(key), None)
+    )
   return parts
 
 
@@ -1512,15 +1569,15 @@ def _emit_signature_param_lines(
 ) -> list[str]:
   """
   Emit one signature parameter, wrapping long annotations if needed.
-  
+
   Args:
     part (str): String for part.
     cont (str): String for cont.
     line_length (int): Integer value for line length.
-  
+
   Returns:
     list[str]: list[str] produced by this call.
-  
+
   Examples:
     >>> _emit_signature_param_lines("x", "x", 0)  # doctest: +SKIP
   """
@@ -1575,7 +1632,7 @@ def _signature_block(
 ) -> str:
   """
   Build a ``def``/``async def`` header, wrapping past ``line_length``.
-  
+
   Args:
     fn (ast.FunctionDef | ast.AsyncFunctionDef): One of ``ast.FunctionDef``,
     ``ast.AsyncFunctionDef``.
@@ -1584,10 +1641,10 @@ def _signature_block(
     source (str): String for source.
     base_indent (str): String for base indent.
     line_length (int): Integer value for line length.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> _signature_block(None, {}, "x", "x", "x", 0)  # doctest: +SKIP
   """
@@ -1631,13 +1688,13 @@ def _signature_block(
 def _ensure_future_annotations(source: str) -> str:
   """
   Insert ``from __future__ import annotations`` when missing.
-  
+
   Args:
     source (str): String for source.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> _ensure_future_annotations("x")  # doctest: +SKIP
   """
@@ -1670,14 +1727,14 @@ def _ensure_future_annotations(source: str) -> str:
 def _ensure_typing_imports(source: str, needed: set[str]) -> str:
   """
   Ensure ``typing`` names used in annotations are imported.
-  
+
   Args:
     source (str): String for source.
     needed (set[str]): Sequence for needed.
-  
+
   Returns:
     str: str produced by this call.
-  
+
   Examples:
     >>> _ensure_typing_imports("x", [])  # doctest: +SKIP
   """
@@ -1713,16 +1770,16 @@ def _replace_leading_docstring(
 ) -> str | None:
   """
   Replace or insert a docstring immediately under ``node``.
-  
+
   Args:
     source (str): String for source.
     node (ast.AST): Node.
     new_doc_block (str): String for new doc block.
     base_indent (str): String for base indent.
-  
+
   Returns:
     str | None: One of ``str``, ``None`` depending on inputs/branch.
-  
+
   Examples:
     >>> _replace_leading_docstring("x", None, "x", "x")  # doctest: +SKIP
   """
@@ -1756,7 +1813,7 @@ def _replace_leading_docstring(
     if new_lines and not new_lines[-1].endswith("\n"):
       new_lines[-1] += "\n"
     if insert_at < len(lines) and lines[insert_at].strip():
-      new_lines = new_lines + ["\n"]
+      new_lines = [*new_lines, "\n"]
     lines[insert_at:insert_at] = new_lines
     return "".join(lines)
 
@@ -1786,19 +1843,19 @@ def upgrade_source(
 ) -> tuple[str, int]:
   """
   Upgrade all in-scope functions, classes, and the module docstring.
-  
+
   Applies edits from the bottom of the file upward so line numbers remain
   valid for earlier functions.
-  
+
   Args:
     source (str): String for source.
     rel_path (str): String for rel path.
     force_docs (bool): Whether to enable force docs.
     line_length (int): Integer value for line length.
-  
+
   Returns:
     tuple[str, int]: tuple[str, int] produced by this call.
-  
+
   Examples:
     >>> upgrade_source("x", "x", True, 0)  # doctest: +SKIP
   """
@@ -1816,23 +1873,24 @@ def upgrade_source(
   class Collector(ast.NodeVisitor):
     """
     Hold Collector state and behavior.
-    
+
     Subclasses ``NodeVisitor``, extending that type with this class's fields and
     behavior.
-    
+
     Subclasses ``NodeVisitor``, extending that type with this class's fields and
     behavior.
     """
+
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
       """
       Visit a ``FunctionDef`` node while walking the AST.
-      
+
       Args:
         node (ast.FunctionDef): Node.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> Collector().visit_FunctionDef(None)  # doctest: +SKIP
       """
@@ -1842,13 +1900,13 @@ def upgrade_source(
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
       """
       Visit a ``AsyncFunctionDef`` node while walking the AST.
-      
+
       Args:
         node (ast.AsyncFunctionDef): Node.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> Collector().visit_AsyncFunctionDef(None)  # doctest: +SKIP
       """
@@ -1863,10 +1921,10 @@ def upgrade_source(
   class ClassMap(ast.NodeVisitor):
     """
     Walk classes to record enclosing context for methods.
-    
+
     Subclasses ``NodeVisitor``, extending that type with this class's fields and
     behavior.
-    
+
     Attributes:
       _stack: ``_stack``.
     """
@@ -1874,10 +1932,10 @@ def upgrade_source(
     def __init__(self) -> None:
       """
       Initialize a new instance.
-      
+
       Returns:
         None
-      
+
       Examples:
         >>> ClassMap()  # doctest: +SKIP
       """
@@ -1910,7 +1968,7 @@ def upgrade_source(
 
       Examples:
         >>> ClassMap().visit_FunctionDef(
-        ...     __import__("ast").parse("def f():\\n  pass\\n").body[0]
+        ...   __import__("ast").parse("def f():\\n  pass\\n").body[0]
         ... )
       """
       if self._stack:
@@ -1928,7 +1986,7 @@ def upgrade_source(
 
       Examples:
         >>> ClassMap().visit_AsyncFunctionDef(
-        ...     __import__("ast").parse("async def f():\\n  pass\\n").body[0]
+        ...   __import__("ast").parse("async def f():\\n  pass\\n").body[0]
         ... )
       """
       if self._stack:
@@ -1952,7 +2010,8 @@ def upgrade_source(
     base_indent = re.match(r"^[ \t]*", lines[fn.lineno - 1]).group(0)
     sig_line_end = first_body.lineno - 1  # exclusive index into lines
     needs_sig_wrap = any(
-      len(lines[i]) > line_length for i in range(fn.lineno - 1, max(fn.lineno, sig_line_end))
+      len(lines[i]) > line_length
+      for i in range(fn.lineno - 1, max(fn.lineno, sig_line_end))
     )
     existing_doc = ast.get_docstring(fn) or ""
     stale_poly_docs = any(
@@ -2122,17 +2181,17 @@ def upgrade_path(
 ) -> int:
   """
   Upgrade one file on disk.
-  
+
   Args:
     path (Path): String for path.
     root (Path): String for root.
     apply (bool): Boolean flag for apply.
     force_docs (bool): Whether to enable force docs.
     line_length (int): Integer value for line length.
-  
+
   Returns:
     int: int produced by this call.
-  
+
   Examples:
     >>> upgrade_path("x", "x", True, True, 0)  # doctest: +SKIP
   """
@@ -2154,13 +2213,13 @@ def upgrade_path(
 def main(argv: Sequence[str] | None = None) -> int:
   """
   CLI entry for docstring/annotation upgrades.
-  
+
   Args:
     argv (Sequence[str] | None): One of ``Sequence[str]``, ``None``.
-  
+
   Returns:
     int: int produced by this call.
-  
+
   Examples:
     >>> main(None)  # doctest: +SKIP
   """

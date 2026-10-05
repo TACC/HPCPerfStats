@@ -9,17 +9,18 @@ Attributes:
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from hpcperfstats.dbload.lib.conf_parser import (
-    get_api_small_executor_max_workers,
-    get_gunicorn_workers,
-    get_listend_db_ingest_pool_processes,
-    get_metrics_pool_processes,
-    get_parallel_db_prefetch_max,
-    get_sync_archive_pool_processes,
-    get_sync_day_close_max_inflight,
-    get_sync_ingest_pool_processes,
+  get_api_small_executor_max_workers,
+  get_gunicorn_workers,
+  get_listend_db_ingest_pool_processes,
+  get_metrics_pool_processes,
+  get_parallel_db_prefetch_max,
+  get_sync_archive_pool_processes,
+  get_sync_day_close_max_inflight,
+  get_sync_ingest_pool_processes,
 )
 
 COMPOSE_PG_MAX_CONNECTIONS = 500
@@ -46,9 +47,9 @@ def estimate_django_pg_slot_peak() -> dict[str, Any]:
   """
   gunicorn = max(1, int(get_gunicorn_workers()))
   executor = max(
-      1,
-      int(get_api_small_executor_max_workers()),
-      int(get_parallel_db_prefetch_max()),
+    1,
+    int(get_api_small_executor_max_workers()),
+    int(get_parallel_db_prefetch_max()),
   )
   listend = max(0, int(get_listend_db_ingest_pool_processes()))
   metrics_pool = max(1, int(get_metrics_pool_processes()))
@@ -57,31 +58,25 @@ def estimate_django_pg_slot_peak() -> dict[str, Any]:
   archive = max(0, int(get_sync_archive_pool_processes()))
   web = gunicorn * executor
   peak = (
-      web
-      + listend
-      + metrics_pool
-      + ingest
-      + day_close
-      + archive
-      + RESERVE_SLOTS
+    web + listend + metrics_pool + ingest + day_close + archive + RESERVE_SLOTS
   )
   warn_threshold = int(COMPOSE_PG_MAX_CONNECTIONS * WARN_FRACTION)
   return {
-      "peak": peak,
-      "max_connections": COMPOSE_PG_MAX_CONNECTIONS,
-      "warn_threshold": warn_threshold,
-      "should_warn": peak >= warn_threshold,
-      "components": {
-          "gunicorn_workers": gunicorn,
-          "executor": executor,
-          "web": web,
-          "listend": listend,
-          "metrics_pool": metrics_pool,
-          "ingest": ingest,
-          "day_close": day_close,
-          "archive": archive,
-          "reserve": RESERVE_SLOTS,
-      },
+    "peak": peak,
+    "max_connections": COMPOSE_PG_MAX_CONNECTIONS,
+    "warn_threshold": warn_threshold,
+    "should_warn": peak >= warn_threshold,
+    "components": {
+      "gunicorn_workers": gunicorn,
+      "executor": executor,
+      "web": web,
+      "listend": listend,
+      "metrics_pool": metrics_pool,
+      "ingest": ingest,
+      "day_close": day_close,
+      "archive": archive,
+      "reserve": RESERVE_SLOTS,
+    },
   }
 
 
@@ -110,23 +105,22 @@ def log_pg_slot_budget_if_needed(
   try:
     estimate = estimate_django_pg_slot_peak()
   except Exception as exc:
-    emit("WARN: pg slot budget estimate failed: %s" % exc)
+    emit(f"WARN: pg slot budget estimate failed: {exc}")
     return {
-        "peak": 0,
-        "max_connections": COMPOSE_PG_MAX_CONNECTIONS,
-        "warn_threshold": int(COMPOSE_PG_MAX_CONNECTIONS * WARN_FRACTION),
-        "should_warn": False,
-        "components": {},
+      "peak": 0,
+      "max_connections": COMPOSE_PG_MAX_CONNECTIONS,
+      "warn_threshold": int(COMPOSE_PG_MAX_CONNECTIONS * WARN_FRACTION),
+      "should_warn": False,
+      "components": {},
     }
   if estimate["should_warn"]:
     emit(
-        "WARN: estimated Django PG slot peak %s >= 80%% of max_connections=%s "
-        "(warn_threshold=%s components=%s); do not raise the GUC — close leaks"
-        % (
-            estimate["peak"],
-            estimate["max_connections"],
-            estimate["warn_threshold"],
-            estimate["components"],
-        )
+      "WARN: estimated Django PG slot peak {} >= 80% of max_connections={} "
+      "(warn_threshold={} components={}); do not raise the GUC — close leaks".format(
+        estimate["peak"],
+        estimate["max_connections"],
+        estimate["warn_threshold"],
+        estimate["components"],
+      )
     )
   return estimate

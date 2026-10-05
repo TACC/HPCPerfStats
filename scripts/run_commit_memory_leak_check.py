@@ -24,6 +24,7 @@ Attributes:
   _PROCESS_MEMORY_POOL: Fake pool used by the process_memory workload.
   _REPO_ROOT: Git checkout root (directory with ``pyproject.toml``).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -33,10 +34,11 @@ import sys
 import tempfile
 import time
 from collections import deque
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable, Sequence
+from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -48,9 +50,9 @@ EXIT_OK = 0
 EXIT_FAIL = 1
 EXIT_MISCONFIG = 2
 INSTALL_HINT = (
-    'memray is required for the commit memory-leak check. '
-    'Install with: pip install -e ".[dev]" '
-    "(from the HPCPerfStats checkout, using the workspace .venv)."
+  "memray is required for the commit memory-leak check. "
+  'Install with: pip install -e ".[dev]" '
+  "(from the HPCPerfStats checkout, using the workspace .venv)."
 )
 
 
@@ -73,21 +75,21 @@ class WorkloadThresholds:
 # ceilings stay well above clean allocate/free noise and below intentional
 # multi-iteration retention of tens of KB per step.
 WORKLOAD_THRESHOLDS: dict[str, WorkloadThresholds] = {
-    "control_allocate_free": WorkloadThresholds(
-        max_growth_bytes=256_000,
-        max_peak_bytes=2_000_000,
-        max_leaked_bytes=256_000,
-    ),
-    "listend_timestamp_window": WorkloadThresholds(
-        max_growth_bytes=512_000,
-        max_peak_bytes=4_000_000,
-        max_leaked_bytes=512_000,
-    ),
-    "process_memory_fakes": WorkloadThresholds(
-        max_growth_bytes=512_000,
-        max_peak_bytes=4_000_000,
-        max_leaked_bytes=512_000,
-    ),
+  "control_allocate_free": WorkloadThresholds(
+    max_growth_bytes=256_000,
+    max_peak_bytes=2_000_000,
+    max_leaked_bytes=256_000,
+  ),
+  "listend_timestamp_window": WorkloadThresholds(
+    max_growth_bytes=512_000,
+    max_peak_bytes=4_000_000,
+    max_leaked_bytes=512_000,
+  ),
+  "process_memory_fakes": WorkloadThresholds(
+    max_growth_bytes=512_000,
+    max_peak_bytes=4_000_000,
+    max_leaked_bytes=512_000,
+  ),
 }
 
 
@@ -218,10 +220,12 @@ def evaluate_heap_growth(
     growth is ``late_mean - early_mean``.
 
   Examples:
-    >>> evaluate_heap_growth([0, 0, 0, 0, 0, 10, 10, 10, 10, 10, 20, 20, 20, 20, 20])
+    >>> evaluate_heap_growth(
+    ...   [0, 0, 0, 0, 0, 10, 10, 10, 10, 10, 20, 20, 20, 20, 20]
+    ... )
     (10.0, 20.0, 10.0)
   """
-  post = list(heap_samples[max(0, warmup):])
+  post = list(heap_samples[max(0, warmup) :])
   if not post:
     return 0.0, 0.0, 0.0
   early = post[:early_count]
@@ -287,10 +291,10 @@ def prepare_curated_workloads() -> None:
 
   pm.read_process_rss_bytes = _fake_rss  # type: ignore[assignment]
   _PROCESS_MEMORY_POOL = SimpleNamespace(
-      _pool=[
-          _FakeProc(100, alive=True, rss_kb=2048),
-          _FakeProc(101, alive=False, rss_kb=4096),
-      ],
+    _pool=[
+      _FakeProc(100, alive=True, rss_kb=2048),
+      _FakeProc(101, alive=False, rss_kb=4096),
+    ],
   )
 
 
@@ -408,9 +412,9 @@ def _workload_map() -> dict[str, Callable[[int], None]]:
     True
   """
   return {
-      "control_allocate_free": workload_control_allocate_free,
-      "listend_timestamp_window": workload_listend_timestamp_window,
-      "process_memory_fakes": workload_process_memory_fakes,
+    "control_allocate_free": workload_control_allocate_free,
+    "listend_timestamp_window": workload_listend_timestamp_window,
+    "process_memory_fakes": workload_process_memory_fakes,
   }
 
 
@@ -461,9 +465,9 @@ def run_workload_under_memray(
 
   Examples:
     >>> run_workload_under_memray(  # doctest: +SKIP
-    ...     "control_allocate_free",
-    ...     workload_control_allocate_free,
-    ...     WORKLOAD_THRESHOLDS["control_allocate_free"],
+    ...   "control_allocate_free",
+    ...   workload_control_allocate_free,
+    ...   WORKLOAD_THRESHOLDS["control_allocate_free"],
     ... )
   """
   Tracker, FileReader = _import_memray()
@@ -484,7 +488,7 @@ def run_workload_under_memray(
     with FileReader(str(path)) as reader:
       peak = int(reader.metadata.peak_memory)
       leaked = int(
-          sum(rec.size for rec in reader.get_leaked_allocation_records()),
+        sum(rec.size for rec in reader.get_leaked_allocation_records()),
       )
       heaps = [float(snap.heap) for snap in reader.get_memory_snapshots()]
   finally:
@@ -495,13 +499,11 @@ def run_workload_under_memray(
   if len(heaps) < warmup + GROWTH_EARLY_COUNT + GROWTH_LATE_COUNT:
     heaps = [0.0] * warmup + [float(peak)] * (iterations - warmup)
 
-  early_mean, late_mean, growth = evaluate_heap_growth(
-      heaps, warmup=warmup
-  )
+  early_mean, late_mean, growth = evaluate_heap_growth(heaps, warmup=warmup)
   reasons: list[str] = []
   if growth > float(thresholds.max_growth_bytes):
     reasons.append(
-        f"growth {growth:.0f}B > {thresholds.max_growth_bytes}B",
+      f"growth {growth:.0f}B > {thresholds.max_growth_bytes}B",
     )
   if peak > thresholds.max_peak_bytes:
     reasons.append(f"peak {peak}B > {thresholds.max_peak_bytes}B")
@@ -509,23 +511,26 @@ def run_workload_under_memray(
     reasons.append(f"leaked {leaked}B > {thresholds.max_leaked_bytes}B")
   passed = not reasons
   detail = (
-      f"{name}: ok peak={peak} leaked={leaked} "
-      f"early={early_mean:.0f} late={late_mean:.0f} growth={growth:.0f}"
-      if passed
-      else f"{name}: FAIL " + "; ".join(reasons)
+    f"{name}: ok peak={peak} leaked={leaked} "
+    f"early={early_mean:.0f} late={late_mean:.0f} growth={growth:.0f}"
+    if passed
+    else f"{name}: FAIL " + "; ".join(reasons)
   )
   if verbose:
     print(detail, file=sys.stderr)
-    print(f"  heap_samples={len(heaps)} peak={peak} leaked={leaked}", file=sys.stderr)
+    print(
+      f"  heap_samples={len(heaps)} peak={peak} leaked={leaked}",
+      file=sys.stderr,
+    )
   return WorkloadOutcome(
-      name=name,
-      peak_bytes=peak,
-      leaked_bytes=leaked,
-      early_mean_heap=early_mean,
-      late_mean_heap=late_mean,
-      growth_bytes=growth,
-      passed=passed,
-      detail=detail,
+    name=name,
+    peak_bytes=peak,
+    leaked_bytes=leaked,
+    early_mean_heap=early_mean,
+    late_mean_heap=late_mean,
+    growth_bytes=growth,
+    passed=passed,
+    detail=detail,
   )
 
 
@@ -564,14 +569,14 @@ def run_all_workloads(
   try:
     for name in sorted(wl.keys()):
       outcomes.append(
-          run_workload_under_memray(
-              name,
-              wl[name],
-              th[name],
-              iterations=iterations,
-              warmup=warmup,
-              verbose=verbose,
-          ),
+        run_workload_under_memray(
+          name,
+          wl[name],
+          th[name],
+          iterations=iterations,
+          warmup=warmup,
+          verbose=verbose,
+        ),
       )
   finally:
     restore_curated_workloads()
@@ -593,36 +598,41 @@ def main(argv: Sequence[str] | None = None) -> int:
     >>> main([])  # doctest: +SKIP
   """
   parser = argparse.ArgumentParser(
-      description="Commit-hook memray memory-leak smoke (curated workloads).",
+    description="Commit-hook memray memory-leak smoke (curated workloads).",
   )
   parser.add_argument(
-      "--iterations",
-      type=int,
-      default=DEFAULT_ITERATIONS,
-      help=f"Iterations per workload (default {DEFAULT_ITERATIONS}).",
+    "--iterations",
+    type=int,
+    default=DEFAULT_ITERATIONS,
+    help=f"Iterations per workload (default {DEFAULT_ITERATIONS}).",
   )
   parser.add_argument(
-      "--warmup",
-      type=int,
-      default=DEFAULT_WARMUP,
-      help=f"Warm-up iterations to discard (default {DEFAULT_WARMUP}).",
+    "--warmup",
+    type=int,
+    default=DEFAULT_WARMUP,
+    help=f"Warm-up iterations to discard (default {DEFAULT_WARMUP}).",
   )
   parser.add_argument(
-      "--verbose",
-      action="store_true",
-      help="Print per-workload measurements to stderr.",
+    "--verbose",
+    action="store_true",
+    help="Print per-workload measurements to stderr.",
   )
   args = parser.parse_args(list(argv) if argv is not None else None)
-  verbose = bool(args.verbose) or os.environ.get(
-      "HPCPERFSTATS_MEMORY_LEAK_CHECK_LOG", "",
-  ) == "1"
+  verbose = (
+    bool(args.verbose)
+    or os.environ.get(
+      "HPCPERFSTATS_MEMORY_LEAK_CHECK_LOG",
+      "",
+    )
+    == "1"
+  )
 
   venv_python = _REPO_ROOT.parent / ".venv" / "bin" / "python3"
   if not venv_python.is_file():
     print(
-        "error: workspace venv missing at "
-        f"{venv_python} — create it before running this check",
-        file=sys.stderr,
+      "error: workspace venv missing at "
+      f"{venv_python} — create it before running this check",
+      file=sys.stderr,
     )
     return EXIT_MISCONFIG
 
@@ -634,9 +644,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
   try:
     outcomes = run_all_workloads(
-        iterations=args.iterations,
-        warmup=args.warmup,
-        verbose=verbose,
+      iterations=args.iterations,
+      warmup=args.warmup,
+      verbose=verbose,
     )
   except ImportError:
     print(f"error: {INSTALL_HINT}", file=sys.stderr)
@@ -651,8 +661,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(outcome.detail, file=stream)
   if failed:
     print(
-        f"error: {len(failed)} workload(s) exceeded memray growth ceilings",
-        file=sys.stderr,
+      f"error: {len(failed)} workload(s) exceeded memray growth ceilings",
+      file=sys.stderr,
     )
     return EXIT_FAIL
   return EXIT_OK

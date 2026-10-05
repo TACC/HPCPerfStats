@@ -7,38 +7,44 @@ from pathlib import Path
 
 import pytest
 
+from hpcperfstats.analysis.metrics.lib.plot.roofline_peaks import (
+  ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS,
+)
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
-    AMD_DF_STATS_TYPES,
-    AMD_DF_TYPE,
-    AMD_PMC_TYPE,
-    AMD_RAPL_STATS_TYPES,
-    ARM_IMC_STATS_TYPES,
-    INTEL_CORE_PMC_TYPES_ORDERED,
-    INTEL_IMC_STATS_TYPES,
-    INTEL_RAPL_STATS_TYPES,
+  AMD_DF_STATS_TYPES,
+  AMD_DF_TYPE,
+  AMD_PMC_TYPE,
+  AMD_RAPL_STATS_TYPES,
+  ARM_IMC_STATS_TYPES,
+  INTEL_CORE_PMC_TYPES_ORDERED,
+  INTEL_IMC_STATS_TYPES,
+  INTEL_RAPL_STATS_TYPES,
 )
 from hpcperfstats.dbload.lib.monitor_naming.legacy import (
-    INGEST_LEGACY_KNL_IMC_TYPE,
-    LEGACY_INTEL_IMC_STATS_TYPES,
-    MONITOR_LEGACY_KNL_IMC_TYPE,
+  INGEST_LEGACY_KNL_IMC_TYPE,
+  LEGACY_INTEL_IMC_STATS_TYPES,
+  MONITOR_LEGACY_KNL_IMC_TYPE,
 )
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
-    amd_df_types_probe_order,
-    imc_types_probe_order,
-    rapl_types_probe_order,
+  amd_df_types_probe_order,
+  imc_types_probe_order,
+  rapl_types_probe_order,
 )
-from hpcperfstats.analysis.metrics.lib.plot.roofline_peaks import ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS
 
-_RETIRED_KNL_CANONICAL_TYPES = frozenset({
+_RETIRED_KNL_CANONICAL_TYPES = frozenset(
+  {
     "intel_x86_pmc_knl",
     "intel_x86_uncore_mc_knl",
     "intel_x86_uncore_edc_knl",
     "intel_x86_uncore_cha_knl",
-})
-_HISTORICAL_INTEL_CORE_PMC_TYPES = frozenset({
+  }
+)
+_HISTORICAL_INTEL_CORE_PMC_TYPES = frozenset(
+  {
     "intel_x86_pmc_gpr8",
     "intel_x86_pmc_gpr4",
-})
+  }
+)
 
 _ST_NAME_RE = re.compile(r'\.st_name\s*=\s*"([^"]+)"')
 _ST_NAME_DEFINE_RE = re.compile(r'#define\s+\w+_ST_NAME\s+"([^"]+)"')
@@ -62,18 +68,18 @@ def _monitor_st_names_from_sources() -> set[str]:
 def test_intel_imc_stats_types_have_roofline_peak_rows():
   for typename in INTEL_IMC_STATS_TYPES:
     assert typename in ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS, (
-        f"Add ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS row for {typename!r}."
+      f"Add ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS row for {typename!r}."
     )
 
 
 def test_monitor_st_names_cover_intel_core_pmc_types_ordered():
   monitor = _monitor_st_names_from_sources()
   live_types = (
-      set(INTEL_CORE_PMC_TYPES_ORDERED) - _HISTORICAL_INTEL_CORE_PMC_TYPES
+    set(INTEL_CORE_PMC_TYPES_ORDERED) - _HISTORICAL_INTEL_CORE_PMC_TYPES
   )
   for typename in live_types:
     assert typename in monitor, (
-        f"Live {typename!r} in INTEL_CORE_PMC_TYPES_ORDERED must match monitor .st_name."
+      f"Live {typename!r} in INTEL_CORE_PMC_TYPES_ORDERED must match monitor .st_name."
     )
 
 
@@ -81,7 +87,7 @@ def test_monitor_st_names_cover_arm_imc_stats_types():
   monitor = _monitor_st_names_from_sources()
   for typename in ARM_IMC_STATS_TYPES:
     assert typename in monitor, (
-        f"{typename!r} in ARM_IMC_STATS_TYPES must match monitor .st_name."
+      f"{typename!r} in ARM_IMC_STATS_TYPES must match monitor .st_name."
     )
 
 
@@ -89,7 +95,7 @@ def test_monitor_st_names_cover_intel_imc_stats_types():
   monitor = _monitor_st_names_from_sources()
   for typename in INTEL_IMC_STATS_TYPES:
     assert typename in monitor, (
-        f"{typename!r} in INTEL_IMC_STATS_TYPES must match monitor .st_name."
+      f"{typename!r} in INTEL_IMC_STATS_TYPES must match monitor .st_name."
     )
 
 
@@ -108,7 +114,7 @@ def test_monitor_st_names_cover_amd_df_family_types():
   monitor = _monitor_st_names_from_sources()
   for typename in AMD_DF_STATS_TYPES:
     assert typename in monitor, (
-        f"{typename!r} in AMD_DF_STATS_TYPES must match monitor .st_name."
+      f"{typename!r} in AMD_DF_STATS_TYPES must match monitor .st_name."
     )
   assert AMD_DF_TYPE not in monitor
   assert AMD_PMC_TYPE not in monitor
@@ -120,7 +126,7 @@ def test_monitor_st_names_cover_rapl_types():
   monitor = _monitor_st_names_from_sources()
   for typename in INTEL_RAPL_STATS_TYPES + AMD_RAPL_STATS_TYPES:
     assert typename in monitor, (
-        f"{typename!r} RAPL type must match monitor .st_name."
+      f"{typename!r} RAPL type must match monitor .st_name."
     )
     assert typename in rapl_types_probe_order()
 

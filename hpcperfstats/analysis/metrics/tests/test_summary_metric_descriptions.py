@@ -1,9 +1,10 @@
 """Tests for summary subplot metric documentation strings."""
+
 from hpcperfstats.analysis.metrics.lib.plot.summary_metric_descriptions import (
-    SUMMARY_METRIC_DESCRIPTIONS,
-    SUMMARY_METRIC_RESEARCHER_USE,
-    description_for_summary_metric,
-    researcher_use_for_summary_metric,
+  SUMMARY_METRIC_DESCRIPTIONS,
+  SUMMARY_METRIC_RESEARCHER_USE,
+  description_for_summary_metric,
+  researcher_use_for_summary_metric,
 )
 
 
@@ -26,7 +27,9 @@ def test_researcher_use_for_summary_metric_cpu():
 
 
 def test_researcher_use_for_summary_metric_unknown_is_none():
-  assert researcher_use_for_summary_metric("totally_unknown_summary_xyz") is None
+  assert (
+    researcher_use_for_summary_metric("totally_unknown_summary_xyz") is None
+  )
 
 
 def test_description_for_summary_metric_hardware_error_rates():

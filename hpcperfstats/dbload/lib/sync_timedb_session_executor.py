@@ -14,15 +14,17 @@ Attributes:
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from queue import Empty, Queue
-from typing import Any, Callable, Iterable, Iterator, Optional, Tuple, TypeVar
+from typing import Any, TypeVar
 
 from django.db import close_old_connections, connections
 
 from hpcperfstats.dbload.lib.process_title import (
-    current_libpq_application_name,
-    set_daemon_thread_title,
+  current_libpq_application_name,
+  set_daemon_thread_title,
 )
 
 T = TypeVar("T")
@@ -44,10 +46,8 @@ def close_thread_local_django_connections() -> None:
     >>> close_thread_local_django_connections()  # doctest: +SKIP
   """
   close_old_connections()
-  try:
+  with contextlib.suppress(Exception):
     connections.close_all()
-  except Exception:
-    pass
 
 
 def apply_libpq_application_name() -> None:
@@ -213,9 +213,9 @@ class ThreadPoolUnorderedIterator:
       >>> executor.shutdown()
     """
     while (
-        not self._closed
-        and not self._exhausted
-        and self._inflight < self._max_inflight
+      not self._closed
+      and not self._exhausted
+      and self._inflight < self._max_inflight
     ):
       try:
         item = next(self._items)
@@ -226,7 +226,7 @@ class ThreadPoolUnorderedIterator:
       self._inflight += 1
       future.add_done_callback(self._completed.put)
 
-  def __iter__(self) -> "ThreadPoolUnorderedIterator":
+  def __iter__(self) -> ThreadPoolUnorderedIterator:
     """
     Return this completion iterator.
 
@@ -366,8 +366,8 @@ class SyncTimedbThreadPool:
     self._processes = max(1, int(max_workers))
     self._shutdown = False
     self._executor = ThreadPoolExecutor(
-        max_workers=self._processes,
-        thread_name_prefix=self.thread_role,
+      max_workers=self._processes,
+      thread_name_prefix=self.thread_role,
     )
 
   @property
@@ -412,7 +412,8 @@ class SyncTimedbThreadPool:
       >>> pool = SyncTimedbThreadPool(max_workers=1, thread_role="ingest-pool")
       >>> pool.apply_async(lambda: 1).get()
       1
-      >>> pool.terminate(); pool.join()
+      >>> pool.terminate()
+      ... pool.join()
     """
     del callback, error_callback
     kwargs = dict(kwds or {})
@@ -429,14 +430,14 @@ class SyncTimedbThreadPool:
         True
       """
       from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-          reset_worker_pool_kind,
-          set_worker_pool_kind,
+        reset_worker_pool_kind,
+        set_worker_pool_kind,
       )
 
       set_daemon_thread_title(
-          "",
-          script_name=self.process_title,
-          role=self.thread_role,
+        "",
+        script_name=self.process_title,
+        role=self.thread_role,
       )
       pool_token = set_worker_pool_kind(self.thread_role)
       apply_libpq_application_name()
@@ -475,7 +476,8 @@ class SyncTimedbThreadPool:
       >>> pool = SyncTimedbThreadPool(max_workers=1, thread_role="x")
       >>> list(pool.imap_unordered(lambda x: x + 1, [1], chunksize=1))
       [2]
-      >>> pool.close(); pool.join()
+      >>> pool.close()
+      ... pool.join()
     """
     if int(chunksize) < 1:
       raise ValueError("chunksize must be >= 1")
@@ -495,14 +497,14 @@ class SyncTimedbThreadPool:
         True
       """
       from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
-          reset_worker_pool_kind,
-          set_worker_pool_kind,
+        reset_worker_pool_kind,
+        set_worker_pool_kind,
       )
 
       set_daemon_thread_title(
-          "",
-          script_name=self.process_title,
-          role=self.thread_role,
+        "",
+        script_name=self.process_title,
+        role=self.thread_role,
       )
       pool_token = set_worker_pool_kind(self.thread_role)
       apply_libpq_application_name()
@@ -554,11 +556,12 @@ class SyncTimedbThreadPool:
 
     Examples:
       >>> pool = SyncTimedbThreadPool(max_workers=1, thread_role="ingest-pool")
-      >>> pool.terminate(); pool.join()
+      >>> pool.terminate()
+      ... pool.join()
     """
     self._executor.shutdown(wait=True)
 
-  def __enter__(self) -> "SyncTimedbThreadPool":
+  def __enter__(self) -> SyncTimedbThreadPool:
     """
     Return this pool for a with-statement.
 
@@ -616,25 +619,27 @@ def create_sync_timedb_thread_pool(
 
   Examples:
     >>> pool = create_sync_timedb_thread_pool(
-    ...   max_workers=1, thread_role="ingest-pool",
+    ...   max_workers=1,
+    ...   thread_role="ingest-pool",
     ... )
     >>> pool.apply_async(lambda: 3).get()
     3
-    >>> pool.terminate(); pool.join()
+    >>> pool.terminate()
+    ... pool.join()
   """
   return SyncTimedbThreadPool(
-      max_workers=max_workers,
-      thread_role=thread_role,
-      process_title=process_title,
-      initializer=initializer,
-      initargs=initargs,
+    max_workers=max_workers,
+    thread_role=thread_role,
+    process_title=process_title,
+    initializer=initializer,
+    initargs=initargs,
   )
 
 
 class SessionSingleFlightExecutor:
   """
   Eager max_workers=1 ThreadPoolExecutor for supervisor background roles.
-  
+
   Attributes:
     _executor: Attribute.
     enabled: Attribute.
@@ -653,16 +658,16 @@ class SessionSingleFlightExecutor:
   ) -> None:
     """
     Initialize a new instance.
-    
+
     Args:
       thread_name_prefix (str): String for thread name prefix.
       process_title (str): String for process title.
       thread_role (str): String for thread role.
       enabled (bool): Boolean flag for enabled.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> SessionSingleFlightExecutor("x", "x", "x", True)  # doctest: +SKIP
     """
@@ -670,21 +675,21 @@ class SessionSingleFlightExecutor:
     self.process_title = process_title
     self.thread_role = thread_role
     self.enabled = bool(enabled)
-    self._executor: Optional[ThreadPoolExecutor] = None
+    self._executor: ThreadPoolExecutor | None = None
     if self.enabled:
       self._executor = ThreadPoolExecutor(
-          max_workers=1,
-          thread_name_prefix=self.thread_name_prefix,
+        max_workers=1,
+        thread_name_prefix=self.thread_name_prefix,
       )
 
   @property
   def is_active(self) -> bool:
     """
     Return True if active.
-    
+
     Returns:
       bool: True or False for this check.
-    
+
     Examples:
       >>> SessionSingleFlightExecutor().is_active()  # doctest: +SKIP
     """
@@ -693,44 +698,44 @@ class SessionSingleFlightExecutor:
   def submit(self, fn: Callable[..., R], *args: Any, **kwargs: Any) -> Any:
     """
     Submit work to this executor.
-    
+
     Args:
       fn (Callable[..., R]): Fn.
       *args (Any): Extra positional arguments; unused unless the callee
       documents a specific leftover protocol.
       **kwargs (Any): Extra keyword arguments forwarded to the wrapped API;
       keys and value types match that callee's signature.
-    
+
     Returns:
       Any: Value produced by this call (type depends on inputs).
-    
+
     Raises:
       RuntimeError: Raised when ``submit`` hits a ``RuntimeError`` failure
       path.
-    
+
     Examples:
       >>> SessionSingleFlightExecutor().submit(None)  # doctest: +SKIP
     """
     if self._executor is None:
       raise RuntimeError(
-          "SessionSingleFlightExecutor is disabled or not initialized "
-          "(thread_name_prefix=%s)" % self.thread_name_prefix,
+        "SessionSingleFlightExecutor is disabled or not initialized "
+        f"(thread_name_prefix={self.thread_name_prefix})",
       )
 
     def _run() -> R:
       """
       Internal helper to run.
-      
+
       Returns:
         R: R produced by this call.
-      
+
       Examples:
         >>> SessionSingleFlightExecutor()._run()  # doctest: +SKIP
       """
       set_daemon_thread_title(
-          "",
-          script_name=self.process_title,
-          role=self.thread_role,
+        "",
+        script_name=self.process_title,
+        role=self.thread_role,
       )
       apply_libpq_application_name()
       close_old_connections()
@@ -744,13 +749,13 @@ class SessionSingleFlightExecutor:
   def shutdown(self, wait: bool = True) -> None:
     """
     Shut down this object and release resources.
-    
+
     Args:
       wait (bool): Boolean flag for wait.
-    
+
     Returns:
       None
-    
+
     Examples:
       >>> SessionSingleFlightExecutor().shutdown(True)  # doctest: +SKIP
     """
@@ -759,32 +764,32 @@ class SessionSingleFlightExecutor:
     self._executor.shutdown(wait=wait)
 
 
-def iter_bounded_thread_pool(
+def iter_bounded_thread_pool[T, R](
   items: Iterable[T],
   worker_fn: Callable[[T], R],
   *,
   max_workers: int,
-  thread_role: Optional[str] = None,
+  thread_role: str | None = None,
   process_title: str = "sync_timedb.py",
-) -> Iterator[Tuple[T, Optional[R], Optional[BaseException]]]:
+) -> Iterator[tuple[T, R | None, BaseException | None]]:
   """
   Run ``worker_fn(item)`` with bounded parallelism.
-  
+
   Yields ``(item, result, error)`` per completed task. ``error`` is set when the
   worker raised; ``result`` is set on success.
-  
+
   Args:
     items (Iterable[T]): Items.
     worker_fn (Callable[[T], R]): Worker fn.
     max_workers (int): Integer value for max workers.
     thread_role (Optional[str]): Thread role, or None when absent.
     process_title (str): String for process title.
-  
+
   Yields:
     Iterator[Tuple[T, Optional[R], Optional[BaseException]]]:
     Iterator[Tuple[T, Optional[R], Optional[BaseException]]] produced by this
     call.
-  
+
   Examples:
     >>> iter_bounded_thread_pool(None, None, 0, None, "x")  # doctest: +SKIP
   """
@@ -796,9 +801,9 @@ def iter_bounded_thread_pool(
     for item in item_list:
       if thread_role:
         set_daemon_thread_title(
-            "",
-            script_name=process_title,
-            role=thread_role,
+          "",
+          script_name=process_title,
+          role=thread_role,
         )
       try:
         yield item, worker_fn(item), None
@@ -809,28 +814,26 @@ def iter_bounded_thread_pool(
   def _task(item: T) -> R:
     """
     Internal helper to handle task.
-    
+
     Args:
       item (T): Item.
-    
+
     Returns:
       R: R produced by this call.
-    
+
     Examples:
       >>> _task(None)  # doctest: +SKIP
     """
     if thread_role:
       set_daemon_thread_title(
-          "",
-          script_name=process_title,
-          role=thread_role,
+        "",
+        script_name=process_title,
+        role=thread_role,
       )
     return worker_fn(item)
 
   with ThreadPoolExecutor(max_workers=workers) as executor:
-    future_to_item = {
-        executor.submit(_task, item): item for item in item_list
-    }
+    future_to_item = {executor.submit(_task, item): item for item in item_list}
     for future in as_completed(future_to_item):
       item = future_to_item[future]
       try:
@@ -839,37 +842,37 @@ def iter_bounded_thread_pool(
         yield item, None, exc
 
 
-def run_bounded_thread_pool(
+def run_bounded_thread_pool[T, R](
   items: Iterable[T],
   worker_fn: Callable[[T], R],
   *,
   max_workers: int,
-  thread_role: Optional[str] = None,
+  thread_role: str | None = None,
   process_title: str = "sync_timedb.py",
-) -> list[Tuple[T, Optional[R], Optional[BaseException]]]:
+) -> list[tuple[T, R | None, BaseException | None]]:
   """
   Collect ``iter_bounded_thread_pool`` results in completion order.
-  
+
   Args:
     items (Iterable[T]): Items.
     worker_fn (Callable[[T], R]): Worker fn.
     max_workers (int): Integer value for max workers.
     thread_role (Optional[str]): Thread role, or None when absent.
     process_title (str): String for process title.
-  
+
   Returns:
     list[Tuple[T, Optional[R], Optional[BaseException]]]: list[Tuple[T,
     Optional[R], Optional[BaseException]]] produced by this call.
-  
+
   Examples:
     >>> run_bounded_thread_pool(None, None, 0, None, "x")  # doctest: +SKIP
   """
   return list(
-      iter_bounded_thread_pool(
-          items,
-          worker_fn,
-          max_workers=max_workers,
-          thread_role=thread_role,
-          process_title=process_title,
-      ),
+    iter_bounded_thread_pool(
+      items,
+      worker_fn,
+      max_workers=max_workers,
+      thread_role=thread_role,
+      process_title=process_title,
+    ),
   )

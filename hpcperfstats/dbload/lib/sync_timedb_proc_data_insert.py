@@ -11,21 +11,24 @@ Attributes:
   PROC_DATA_UPDATE_FIELDS (tuple[str, ...]): ON CONFLICT DO UPDATE columns.
   _STAGE_DDL (str): TEMP staging table DDL (ON COMMIT DROP).
 """
+
 from __future__ import annotations
 
 import os
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from hpcperfstats.dbload.lib.sync_timedb_parsing import HOST_PROC_KEYS
 
 PROC_DATA_COPY_COLUMNS: tuple[str, ...] = (
-    "jid",
-    "host",
-    "proc",
-    "device",
-) + HOST_PROC_KEYS
+  "jid",
+  "host",
+  "proc",
+  "device",
+  *HOST_PROC_KEYS,
+)
 
-PROC_DATA_UPDATE_FIELDS: tuple[str, ...] = ("device",) + HOST_PROC_KEYS
+PROC_DATA_UPDATE_FIELDS: tuple[str, ...] = ("device", *HOST_PROC_KEYS)
 
 _STAGE_DDL = """
 CREATE TEMP TABLE proc_data_ingest_stage (
@@ -63,12 +66,11 @@ def _stage_upsert_sql() -> str:
   """
   cols = ", ".join(PROC_DATA_COPY_COLUMNS)
   set_clause = ", ".join(
-      "%s = EXCLUDED.%s" % (field, field) for field in PROC_DATA_UPDATE_FIELDS
+    f"{field} = EXCLUDED.{field}" for field in PROC_DATA_UPDATE_FIELDS
   )
   return (
-      "INSERT INTO proc_data (%s) SELECT %s FROM proc_data_ingest_stage "
-      "ON CONFLICT (jid, host, proc) DO UPDATE SET %s"
-      % (cols, cols, set_clause)
+    f"INSERT INTO proc_data ({cols}) SELECT {cols} FROM proc_data_ingest_stage "
+    f"ON CONFLICT (jid, host, proc) DO UPDATE SET {set_clause}"
   )
 
 
@@ -86,7 +88,9 @@ def proc_insert_arm() -> str:
   raw = os.environ.get("HPCPERFSTATS_PROC_INSERT_ARM", "").strip().lower()
   if raw in ("baseline", "candidate"):
     return raw
-  copy_flag = os.environ.get("HPCPERFSTATS_SYNC_PROC_DATA_COPY", "").strip().lower()
+  copy_flag = (
+    os.environ.get("HPCPERFSTATS_SYNC_PROC_DATA_COPY", "").strip().lower()
+  )
   if copy_flag in ("0", "false", "no", "baseline"):
     return "baseline"
   return "candidate"
@@ -136,10 +140,10 @@ def _sql_literal(value: Any) -> str:
     return str(int(value))
   text = str(value)
   return (
-      text.replace("\\", "\\\\")
-      .replace("\t", "\\t")
-      .replace("\n", "\\n")
-      .replace("\r", "\\r")
+    text.replace("\\", "\\\\")
+    .replace("\t", "\\t")
+    .replace("\n", "\\n")
+    .replace("\r", "\\r")
   )
 
 
@@ -189,22 +193,20 @@ def bulk_insert_proc_data_update_conflicts(objs: Sequence[Any]) -> None:
 
   payload = proc_data_objs_to_copy_bytes(objs)
   col_list = ", ".join(PROC_DATA_COPY_COLUMNS)
-  copy_sql = "COPY proc_data_ingest_stage (%s) FROM STDIN" % col_list
+  copy_sql = f"COPY proc_data_ingest_stage ({col_list}) FROM STDIN"
   from hpcperfstats.dbload import sync_timedb as st
 
   telem = bool(getattr(st, "_ingest_write_telem_on", False))
   copy_cm = st._held_ingest_write_phase("copy_s") if telem else nullcontext()
   conflict_cm = (
-      st._held_ingest_write_phase("conflict_insert_s") if telem else nullcontext()
+    st._held_ingest_write_phase("conflict_insert_s") if telem else nullcontext()
   )
-  with transaction.atomic():
-    with connection.cursor() as cursor:
-      cursor.execute(_STAGE_DDL)
-      with copy_cm:
-        with cursor.copy(copy_sql) as copy:
-          copy.write(payload)
-      with conflict_cm:
-        cursor.execute(_stage_upsert_sql())
+  with transaction.atomic(), connection.cursor() as cursor:
+    cursor.execute(_STAGE_DDL)
+    with copy_cm, cursor.copy(copy_sql) as copy:
+      copy.write(payload)
+    with conflict_cm:
+      cursor.execute(_stage_upsert_sql())
 
 
 def bulk_create_proc_data_update_conflicts(objs: Sequence[Any]) -> None:
@@ -222,13 +224,15 @@ def bulk_create_proc_data_update_conflicts(objs: Sequence[Any]) -> None:
   """
   if not objs:
     return
-  from hpcperfstats.site.lib.machine.models import proc_data as proc_data_model
+  from hpcperfstats.site.lib.machine.models import (
+    proc_data as proc_data_model,
+  )
 
   proc_data_model.objects.bulk_create(
-      list(objs),
-      update_conflicts=True,
-      unique_fields=["jid", "host", "proc"],
-      update_fields=list(PROC_DATA_UPDATE_FIELDS),
+    list(objs),
+    update_conflicts=True,
+    unique_fields=["jid", "host", "proc"],
+    update_fields=list(PROC_DATA_UPDATE_FIELDS),
   )
 
 

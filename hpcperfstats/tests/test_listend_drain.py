@@ -1,8 +1,8 @@
 """Unit tests for listend_drain queue drain loop."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
-
 
 
 def _make_get_sequence(*frames_and_bodies):
@@ -21,7 +21,9 @@ def _make_get_sequence(*frames_and_bodies):
 @patch("hpcperfstats.listend_drain.append_monitor_payload_to_archive")
 @patch("hpcperfstats.listend_drain.pika.BlockingConnection")
 @patch("hpcperfstats.listend_drain.cfg.get_rmq_queue", return_value="test-q")
-@patch("hpcperfstats.listend_drain.cfg.get_rmq_server", return_value="localhost")
+@patch(
+  "hpcperfstats.listend_drain.cfg.get_rmq_server", return_value="localhost"
+)
 def test_drain_queue_empty(_srv, _q, mock_conn_cls, mock_append):
   channel = MagicMock()
   channel.basic_get.return_value = (None, None, None)
@@ -40,13 +42,15 @@ def test_drain_queue_empty(_srv, _q, mock_conn_cls, mock_append):
 @patch("hpcperfstats.listend_drain.append_monitor_payload_to_archive")
 @patch("hpcperfstats.listend_drain.pika.BlockingConnection")
 @patch("hpcperfstats.listend_drain.cfg.get_rmq_queue", return_value="test-q")
-@patch("hpcperfstats.listend_drain.cfg.get_rmq_server", return_value="localhost")
+@patch(
+  "hpcperfstats.listend_drain.cfg.get_rmq_server", return_value="localhost"
+)
 def test_drain_queue_processes_and_acks(_srv, _q, mock_conn_cls, mock_append):
   channel = MagicMock()
   channel.basic_get.side_effect = _make_get_sequence(
-      (1, b"payload1"),
-      (2, b"payload2"),
-      (None, None),
+    (1, b"payload1"),
+    (2, b"payload2"),
+    (None, None),
   )
   connection = MagicMock()
   connection.is_closed = False
@@ -63,13 +67,17 @@ def test_drain_queue_processes_and_acks(_srv, _q, mock_conn_cls, mock_append):
 @patch("hpcperfstats.listend_drain.append_monitor_payload_to_archive")
 @patch("hpcperfstats.listend_drain.pika.BlockingConnection")
 @patch("hpcperfstats.listend_drain.cfg.get_rmq_queue", return_value="test-q")
-@patch("hpcperfstats.listend_drain.cfg.get_rmq_server", return_value="localhost")
-def test_drain_queue_nacks_on_processing_error(_srv, _q, mock_conn_cls, mock_append):
+@patch(
+  "hpcperfstats.listend_drain.cfg.get_rmq_server", return_value="localhost"
+)
+def test_drain_queue_nacks_on_processing_error(
+  _srv, _q, mock_conn_cls, mock_append
+):
   mock_append.side_effect = RuntimeError("bad payload")
   channel = MagicMock()
   channel.basic_get.side_effect = _make_get_sequence(
-      (1, b"bad"),
-      (None, None),
+    (1, b"bad"),
+    (None, None),
   )
   connection = MagicMock()
   connection.is_closed = False

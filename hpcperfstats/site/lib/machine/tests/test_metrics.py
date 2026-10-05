@@ -1,41 +1,41 @@
-"""Unit tests for analysis.metrics.metrics (_Schema, _EventIndex, _Host, avg_freq).
+"""Unit tests for analysis.metrics.metrics (_Schema, _EventIndex, _Host, avg_freq)."""
 
-"""
 import warnings
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 from pandas import Timestamp
 
-from unittest.mock import MagicMock, patch
-
 from hpcperfstats.analysis.metrics.lib.gen import jid_table
-from hpcperfstats.analysis.metrics.lib.job_metric_display_labels import JOB_METRIC_SHORT_LABELS
+from hpcperfstats.analysis.metrics.lib.job_metric_display_labels import (
+  JOB_METRIC_SHORT_LABELS,
+)
 from hpcperfstats.analysis.metrics.lib.metrics import (
-    METRIC_NOT_COMPUTED_YET,
-    METRICS_HOST_QUERY_BATCH,
-    Metrics,
-    _EventIndex,
-    _Host,
-    _Schema,
-    _host_data_metric_rows_batched,
-    _host_data_row_cache_key,
-    _jid_table_host_data_time_kwargs,
-    _metric_type_events_feasible,
-    avg_ethbw,
-    avg_freq,
-    avg_gpuutil,
-    avg_packetsize,
-    build_job_metrics_display_list,
-    expected_job_metric_row_count,
-    job_metrics_catalog_entries,
-    max_fabricbw,
-    max_gpu_clock_event_reasons,
-    max_gpu_link_gbps,
-    max_gpu_power,
-    max_mds,
-    max_packetrate,
-    mem_hwm,
+  METRIC_NOT_COMPUTED_YET,
+  METRICS_HOST_QUERY_BATCH,
+  Metrics,
+  _EventIndex,
+  _Host,
+  _host_data_metric_rows_batched,
+  _host_data_row_cache_key,
+  _jid_table_host_data_time_kwargs,
+  _metric_type_events_feasible,
+  _Schema,
+  avg_ethbw,
+  avg_freq,
+  avg_gpuutil,
+  avg_packetsize,
+  build_job_metrics_display_list,
+  expected_job_metric_row_count,
+  job_metrics_catalog_entries,
+  max_fabricbw,
+  max_gpu_clock_event_reasons,
+  max_gpu_link_gbps,
+  max_gpu_power,
+  max_mds,
+  max_packetrate,
+  mem_hwm,
 )
 
 
@@ -86,6 +86,7 @@ def test_host_starts_with_empty_stats():
 
 def test_avg_freq_returns_none_when_no_pmc():
   """avg_freq.compute_metric returns (None, typename, units) when get_type('pmc') has no schema."""
+
   class MockU:
     def get_type(self, typename):
       return None, {}
@@ -239,8 +240,6 @@ def test_job_arc_avg_flops_uses_amd_when_present():
   assert typename in ("amd_x86_pmc", "amd64_pmc")
 
 
-
-
 def test_job_arc_avg_flops_legacy_sse_when_fp_arith_missing():
   """avg_flops sums weighted SSE/AVX double proxies when FP_ARITH bundle has no data."""
 
@@ -267,15 +266,13 @@ def test_job_arc_avg_flops_legacy_sse_when_fp_arith_missing():
   assert typename in ("intel_x86_pmc_gpr8", "intel_8pmc3")
 
 
-
-
 @pytest.mark.machine_unit_mock
 def test_job_arc_avg_mbw_uses_intel_imc_when_amd_df_empty():
   """avg_mbw tries AMD DF then Intel IMC dram CAS read/write events."""
 
   cas_pairs = (
-      ["dram_cas_reads", "dram_cas_writes"],
-      ["CAS_READS", "CAS_WRITES"],
+    ["dram_cas_reads", "dram_cas_writes"],
+    ["CAS_READS", "CAS_WRITES"],
   )
 
   def fake_job_arc(self, jt, **kw):
@@ -339,7 +336,7 @@ def test_job_arc_avg_mbw_spr_sums_dram_and_hbm_cas():
 @pytest.mark.machine_unit_mock
 def test_dram_bw_weighted_events_include_hbm_when_present():
   from hpcperfstats.analysis.metrics.lib.metrics import (
-      _dram_bw_weighted_events_for_imbalance,
+    _dram_bw_weighted_events_for_imbalance,
   )
 
   class _Schema(list):
@@ -353,17 +350,17 @@ def test_dram_bw_weighted_events_include_hbm_when_present():
       return None, {}
 
   with patch(
-      "hpcperfstats.analysis.metrics.lib.metrics.resolve_get_type",
-      return_value=(
-          _Schema(
-              [
-                  "hbm_cas_reads",
-                  "hbm_cas_writes",
-              ]
-          ),
-          {"h1": object()},
-          "intel_x86_uncore_imc_spr",
+    "hpcperfstats.analysis.metrics.lib.metrics.resolve_get_type",
+    return_value=(
+      _Schema(
+        [
+          "hbm_cas_reads",
+          "hbm_cas_writes",
+        ]
       ),
+      {"h1": object()},
+      "intel_x86_uncore_imc_spr",
+    ),
   ):
     typ, weighted = _dram_bw_weighted_events_for_imbalance(MockU())
   assert typ == "intel_x86_uncore_imc_spr"
@@ -391,10 +388,10 @@ def test_job_arc_avg_flops_host_cpu_hw():
     if kw.get("typename") in ("amd64_pmc", "amd_x86_pmc"):
       return None
     if kw.get("typename") in (
-        "intel_x86_pmc_gpr8",
-        "intel_8pmc3",
-        "intel_x86_pmc_gpr4",
-        "intel_4pmc3",
+      "intel_x86_pmc_gpr8",
+      "intel_8pmc3",
+      "intel_x86_pmc_gpr4",
+      "intel_4pmc3",
     ):
       return None
     if kw.get("typename") in ("host_cpu_hw", "cpu_counter_metrics"):
@@ -415,9 +412,12 @@ def test_job_arc_avg_flops_arm_counter_fallback():
 
   def fake_job_arc(self, jt, **kw):
     ev = list(kw.get("events") or [])
-    if kw.get("typename") in ("host_cpu_hw", "cpu_counter_metrics") and ev in (
-        ["arm_est_flops"],
-        ["ARM_EST_FLOPS"],
+    if kw.get("typename") in (
+      "host_cpu_hw",
+      "cpu_counter_metrics",
+    ) and ev in (
+      ["arm_est_flops"],
+      ["ARM_EST_FLOPS"],
     ):
       return 4.25
     return None
@@ -446,14 +446,14 @@ def test_job_arc_avg_flops_precision_grace_scalar_fallback():
   with patch.object(Metrics, "job_arc", fake_job_arc):
     m = Metrics()
     v64, t64 = m._job_arc_avg_flops_precision(
-        object(),
-        list(m.simple_metrics_list["avg_flops64b"]["events"]),
-        grace_scalar_events=("fp_arith_inst_retired_scalar_double",),
+      object(),
+      list(m.simple_metrics_list["avg_flops64b"]["events"]),
+      grace_scalar_events=("fp_arith_inst_retired_scalar_double",),
     )
     v32, t32 = m._job_arc_avg_flops_precision(
-        object(),
-        list(m.simple_metrics_list["avg_flops32b"]["events"]),
-        grace_scalar_events=("fp_arith_inst_retired_scalar_single",),
+      object(),
+      list(m.simple_metrics_list["avg_flops32b"]["events"]),
+      grace_scalar_events=("fp_arith_inst_retired_scalar_single",),
     )
   assert abs(v64 - 2.5) < 1e-9
   assert abs(v32 - 7.5) < 1e-9
@@ -468,10 +468,13 @@ def test_job_arc_avg_flops_precision_prefers_intel_over_grace():
   def fake_job_arc(self, jt, **kw):
     typ = kw.get("typename")
     ev = list(kw.get("events") or [])
-    if typ in ("intel_x86_pmc_gpr8", "intel_8pmc3") and "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE" in ev:
+    if (
+      typ in ("intel_x86_pmc_gpr8", "intel_8pmc3")
+      and "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE" in ev
+    ):
       return 9.0
     if typ in ("host_cpu_hw", "cpu_counter_metrics") and ev == [
-        "fp_arith_inst_retired_scalar_double"
+      "fp_arith_inst_retired_scalar_double"
     ]:
       return 1.0
     return None
@@ -479,9 +482,9 @@ def test_job_arc_avg_flops_precision_prefers_intel_over_grace():
   with patch.object(Metrics, "job_arc", fake_job_arc):
     m = Metrics()
     value, typename = m._job_arc_avg_flops_precision(
-        object(),
-        list(m.simple_metrics_list["avg_flops64b"]["events"]),
-        grace_scalar_events=("fp_arith_inst_retired_scalar_double",),
+      object(),
+      list(m.simple_metrics_list["avg_flops64b"]["events"]),
+      grace_scalar_events=("fp_arith_inst_retired_scalar_double",),
     )
   assert abs(value - 9.0) < 1e-9
   assert typename in ("intel_x86_pmc_gpr8", "intel_8pmc3")
@@ -499,26 +502,34 @@ def test_job_metrics_catalog_includes_avg_arm_int_ops():
 @pytest.mark.machine_unit_mock
 def test_job_arc_avg_mbw_arm_counter_fallback():
   """avg_mbw falls back to host_cpu_hw arm_dram_bw_bytes when IMC rows are absent."""
-  from hpcperfstats.dbload.lib.monitor_naming.resolve import arm_dram_bw_event_names
+  from hpcperfstats.dbload.lib.monitor_naming.resolve import (
+    arm_dram_bw_event_names,
+  )
 
   dram_events = list(arm_dram_bw_event_names())
 
   def fake_job_arc(self, jt, **kw):
     ev = list(kw.get("events") or [])
-    if kw.get("typename") in ("host_cpu_hw", "cpu_counter_metrics") and ev == dram_events:
+    if (
+      kw.get("typename") in ("host_cpu_hw", "cpu_counter_metrics")
+      and ev == dram_events
+    ):
       return 6.5
     return None
 
-  with patch.object(Metrics, "job_arc", fake_job_arc):
-    with patch(
-        "hpcperfstats.analysis.metrics.lib.metrics.imc_types_probe_order",
-        return_value=(),
-    ), patch(
-        "hpcperfstats.analysis.metrics.lib.metrics.arm_imc_types_probe_order",
-        return_value=(),
-    ):
-      m = Metrics()
-      value, typename = m._job_arc_avg_mbw(object())
+  with (
+    patch.object(Metrics, "job_arc", fake_job_arc),
+    patch(
+      "hpcperfstats.analysis.metrics.lib.metrics.imc_types_probe_order",
+      return_value=(),
+    ),
+    patch(
+      "hpcperfstats.analysis.metrics.lib.metrics.arm_imc_types_probe_order",
+      return_value=(),
+    ),
+  ):
+    m = Metrics()
+    value, typename = m._job_arc_avg_mbw(object())
   assert abs(value - 6.5) < 1e-9
   assert typename in ("host_cpu_hw", "cpu_counter_metrics")
 
@@ -639,8 +650,8 @@ def test_max_mds_uses_nfs_ops_when_llite_missing():
   """max_mds falls back to nfs READ_ops/WRITE_ops when llite telemetry is missing."""
   schema_nfs = _Schema(["READ_ops", "WRITE_ops"])
   stats = np.array(
-      [[0.0, 0.0], [100.0, 20.0], [220.0, 40.0]],
-      dtype=np.float64,
+    [[0.0, 0.0], [100.0, 20.0], [220.0, 40.0]],
+    dtype=np.float64,
   )
 
   class MockU:
@@ -664,13 +675,13 @@ def test_max_mds_uses_nfs_ops_when_llite_missing():
 def _legacy_llite_metadata_event_names():
   """Proc opcode names corresponding to LLITE_METADATA_IOPS_EVENTS (pre-vfs_* archives)."""
   from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
-      LLITE_METADATA_IOPS_EVENTS,
+    LLITE_METADATA_IOPS_EVENTS,
   )
 
   out = []
   for name in LLITE_METADATA_IOPS_EVENTS:
     assert name.startswith("vfs_") and name.endswith("_ops")
-    out.append(name[len("vfs_"): -len("_ops")])
+    out.append(name[len("vfs_") : -len("_ops")])
   return out
 
 
@@ -678,7 +689,7 @@ def _legacy_llite_metadata_event_names():
 def test_max_mds_uses_legacy_llite_opcode_schema():
   """Old-archive getattr/open KEYS still resolve via type-scoped dual-read."""
   from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
-      LLITE_METADATA_IOPS_EVENTS,
+    LLITE_METADATA_IOPS_EVENTS,
   )
 
   legacy = _legacy_llite_metadata_event_names()
@@ -714,7 +725,7 @@ def test_max_mds_uses_legacy_llite_opcode_schema():
 def test_max_mds_uses_canonical_vfs_ops_schema():
   """New-emit vfs_*_ops KEYS resolve without legacy aliases."""
   from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
-      LLITE_METADATA_IOPS_EVENTS,
+    LLITE_METADATA_IOPS_EVENTS,
   )
 
   events = list(LLITE_METADATA_IOPS_EVENTS)
@@ -747,7 +758,9 @@ def test_max_mds_uses_canonical_vfs_ops_schema():
 def test_avg_packetsize_falls_back_to_ethernet_packets():
   """avg_packetsize uses net bytes/packets when IB and OPA are absent."""
   schema = _Schema(["tx_packets", "rx_packets", "tx_bytes", "rx_bytes"])
-  stats = np.array([[0.0, 0.0, 0.0, 0.0], [100.0, 100.0, 1000.0, 1000.0]], dtype=np.float64)
+  stats = np.array(
+    [[0.0, 0.0, 0.0, 0.0], [100.0, 100.0, 1000.0, 1000.0]], dtype=np.float64
+  )
 
   class MockU:
     def get_type(self, typename):
@@ -768,7 +781,9 @@ def test_avg_packetsize_falls_back_to_ethernet_packets():
 def test_max_fabricbw_falls_back_to_ethernet():
   """max_fabricbw uses net tx/rx byte rate when IB and OPA are absent."""
   schema = _Schema(["tx_bytes", "rx_bytes"])
-  stats = np.array([[0.0, 0.0], [100.0, 50.0], [300.0, 150.0]], dtype=np.float64)
+  stats = np.array(
+    [[0.0, 0.0], [100.0, 50.0], [300.0, 150.0]], dtype=np.float64
+  )
 
   class MockU:
     t = np.array([0.0, 10.0, 20.0], dtype=np.float64)
@@ -794,7 +809,7 @@ def test_max_fabricbw_rejects_packet_rate_scale_as_mb_s():
   schema = _Schema(["port_xmit_data", "port_rcv_data"])
   # ~5e10 counter units over 10s without MiB conversion would look like ~5e9 "MB/s".
   stats = np.array(
-      [[0.0, 0.0], [2.5e10, 2.5e10], [5.0e10, 5.0e10]], dtype=np.float64
+    [[0.0, 0.0], [2.5e10, 2.5e10], [5.0e10, 5.0e10]], dtype=np.float64
   )
 
   class MockU:
@@ -819,6 +834,7 @@ def test_max_fabricbw_rejects_packet_rate_scale_as_mb_s():
 def test_avg_cpuusage_sums_per_host_means():
   """avg_cpuusage persists sum of per-host busy-core means (not mean-of-hosts)."""
   import pandas as pd
+
   from hpcperfstats.analysis.metrics.lib.metrics import Metrics
 
   m = Metrics()
@@ -833,30 +849,34 @@ def test_avg_cpuusage_sums_per_host_means():
 
   class FakeJt:
     _base_filter = {
-        "host__in": ["a", "b"],
-        "time__gte": t0,
-        "time__lte": t2,
+      "host__in": ["a", "b"],
+      "time__gte": t0,
+      "time__lte": t2,
     }
 
   def fake_rows(*_a, **_k):
     return rows
 
-  with patch(
+  with (
+    patch(
       "hpcperfstats.analysis.metrics.lib.metrics._host_data_metric_rows_batched",
       fake_rows,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
       lambda typ: (typ,),
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.metrics._jid_table_host_data_time_kwargs",
       lambda _base: {"time__gte": t0, "time__lte": t2},
+    ),
   ):
     value = m.job_arc(
-        FakeJt(),
-        typename="host_cpu",
-        events=["user", "system", "nice"],
-        conv=1.0,
-        host_aggregate="sum",
+      FakeJt(),
+      typename="host_cpu",
+      events=["user", "system", "nice"],
+      conv=1.0,
+      host_aggregate="sum",
     )
   assert value == pytest.approx(4.0)
 
@@ -869,6 +889,7 @@ def test_job_arc_means_samples_within_bucket_not_sum():
   (e.g. JID 858104-class ~10k cores vs ncores=40).
   """
   import pandas as pd
+
   from hpcperfstats.analysis.metrics.lib.metrics import Metrics
 
   m = Metrics()
@@ -879,33 +900,35 @@ def test_job_arc_means_samples_within_bucket_not_sum():
   t1 = pd.Timestamp("2024-01-01 00:05:00")
   t2 = pd.Timestamp("2024-01-01 00:05:10")
   t3 = pd.Timestamp("2024-01-01 00:05:20")
-  rows = [
-      {"host": "a", "time": t, "arc": 2.0} for t in (t0, t1, t2, t3)
-  ]
+  rows = [{"host": "a", "time": t, "arc": 2.0} for t in (t0, t1, t2, t3)]
 
   class FakeJt:
     _base_filter = {
-        "host__in": ["a"],
-        "time__gte": t0,
-        "time__lte": t3,
+      "host__in": ["a"],
+      "time__gte": t0,
+      "time__lte": t3,
     }
 
-  with patch(
+  with (
+    patch(
       "hpcperfstats.analysis.metrics.lib.metrics._host_data_metric_rows_batched",
       lambda *_a, **_k: rows,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
       lambda typ: (typ,),
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.metrics._jid_table_host_data_time_kwargs",
       lambda _base: {"time__gte": t0, "time__lte": t3},
+    ),
   ):
     value = m.job_arc(
-        FakeJt(),
-        typename="host_cpu",
-        events=["user"],
-        conv=1.0,
-        host_aggregate="sum",
+      FakeJt(),
+      typename="host_cpu",
+      events=["user"],
+      conv=1.0,
+      host_aggregate="sum",
     )
   assert value == pytest.approx(2.0)
 
@@ -914,39 +937,44 @@ def test_job_arc_means_samples_within_bucket_not_sum():
 def test_job_arc_keeps_single_bucket_per_host():
   """Single remaining 5m bucket must not be dropped (short-job defensive)."""
   import pandas as pd
+
   from hpcperfstats.analysis.metrics.lib.metrics import Metrics
 
   m = Metrics()
   t0 = pd.Timestamp("2024-01-01 00:00:00")
   t1 = pd.Timestamp("2024-01-01 00:01:00")
   rows = [
-      {"host": "a", "time": t0, "arc": 5.0},
-      {"host": "a", "time": t1, "arc": 5.0},
+    {"host": "a", "time": t0, "arc": 5.0},
+    {"host": "a", "time": t1, "arc": 5.0},
   ]
 
   class FakeJt:
     _base_filter = {
-        "host__in": ["a"],
-        "time__gte": t0,
-        "time__lte": t1,
+      "host__in": ["a"],
+      "time__gte": t0,
+      "time__lte": t1,
     }
 
-  with patch(
+  with (
+    patch(
       "hpcperfstats.analysis.metrics.lib.metrics._host_data_metric_rows_batched",
       lambda *_a, **_k: rows,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
       lambda typ: (typ,),
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.metrics._jid_table_host_data_time_kwargs",
       lambda _base: {"time__gte": t0, "time__lte": t1},
+    ),
   ):
     value = m.job_arc(
-        FakeJt(),
-        typename="host_cpu",
-        events=["user"],
-        conv=1.0,
-        host_aggregate="mean",
+      FakeJt(),
+      typename="host_cpu",
+      events=["user"],
+      conv=1.0,
+      host_aggregate="mean",
     )
   assert value == pytest.approx(5.0)
 
@@ -955,6 +983,7 @@ def test_job_arc_keeps_single_bucket_per_host():
 def test_avg_cpuusage_scales_to_allocated_ncores():
   """Node-wide /proc util scaled by ncores/nhosts (not raw host-wide busy cores)."""
   import pandas as pd
+
   from hpcperfstats.analysis.metrics.lib.metrics import Metrics
 
   m = Metrics()
@@ -972,9 +1001,9 @@ def test_avg_cpuusage_scales_to_allocated_ncores():
 
   class FakeJt:
     _base_filter = {
-        "host__in": ["a", "b"],
-        "time__gte": t0,
-        "time__lte": t2,
+      "host__in": ["a", "b"],
+      "time__gte": t0,
+      "time__lte": t2,
     }
 
   class FakeJob:
@@ -987,15 +1016,19 @@ def test_avg_cpuusage_scales_to_allocated_ncores():
       return list(rows_idle)
     return list(rows_busy)
 
-  with patch(
+  with (
+    patch(
       "hpcperfstats.analysis.metrics.lib.metrics._host_data_metric_rows_batched",
       fake_rows,
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
       lambda typ: (typ,),
-  ), patch(
+    ),
+    patch(
       "hpcperfstats.analysis.metrics.lib.metrics._jid_table_host_data_time_kwargs",
       lambda _base: {"time__gte": t0, "time__lte": t2},
+    ),
   ):
     value = m._job_avg_cpuusage_allocated(FakeJt(), FakeJob())
   assert value == pytest.approx(1.0)
@@ -1026,7 +1059,9 @@ def test_gpu_activity_zero_mean_gate_accepts_zero():
 @pytest.mark.machine_unit_mock
 def test_build_job_metrics_display_list_hides_duplicate_avg_gpuutil():
   """When avg_gpuutil equals detail_gpu_util_mean, hide the duplicate row."""
-  from hpcperfstats.analysis.metrics.lib.metrics import build_job_metrics_display_list
+  from hpcperfstats.analysis.metrics.lib.metrics import (
+    build_job_metrics_display_list,
+  )
 
   class Row:
     def __init__(self, metric, value, type_="gpu", units="%"):
@@ -1039,24 +1074,29 @@ def test_build_job_metrics_display_list_hides_duplicate_avg_gpuutil():
   class Job:
     def __init__(self):
       self.metrics_data_set = type(
-          "S",
-          (),
-          {
-              "all": lambda self: [
-                  Row("detail_gpu_util_mean", 2552.0),
-                  Row("avg_gpuutil", 2552.0),
-                  Row("avg_cpuusage", 10.0, type_="host_cpu", units="#cores"),
-              ]
-          },
+        "S",
+        (),
+        {
+          "all": lambda self: [
+            Row("detail_gpu_util_mean", 2552.0),
+            Row("avg_gpuutil", 2552.0),
+            Row(
+              "avg_cpuusage",
+              10.0,
+              type_="host_cpu",
+              units="#cores",
+            ),
+          ]
+        },
       )()
 
   with patch(
-      "hpcperfstats.analysis.metrics.lib.metrics.job_metrics_catalog_entries",
-      return_value=[
-          {"metric": "detail_gpu_util_mean", "type": "gpu", "units": "%"},
-          {"metric": "avg_gpuutil", "type": "gpu", "units": "%"},
-          {"metric": "avg_cpuusage", "type": "host_cpu", "units": "#cores"},
-      ],
+    "hpcperfstats.analysis.metrics.lib.metrics.job_metrics_catalog_entries",
+    return_value=[
+      {"metric": "detail_gpu_util_mean", "type": "gpu", "units": "%"},
+      {"metric": "avg_gpuutil", "type": "gpu", "units": "%"},
+      {"metric": "avg_cpuusage", "type": "host_cpu", "units": "#cores"},
+    ],
   ):
     out = build_job_metrics_display_list(Job())
   metrics = [r["metric"] for r in out]
@@ -1069,18 +1109,19 @@ def test_build_job_metrics_display_list_hides_duplicate_avg_gpuutil():
 def test_job_cpu_gpu_watt_hours_integrates_and_gates():
   """Watt-hours requires CPU fragments (GPU optional); integrates W×s/3600 per host."""
   import pandas as pd
+
   from hpcperfstats.analysis.metrics.lib.gen import node_power_est as npe
 
   t0 = pd.Timestamp("2024-01-01 00:00:00")
   t1 = pd.Timestamp("2024-01-01 00:01:00")
   df = pd.DataFrame(
-      {
-          "host": ["h1", "h1"],
-          "time": [t0, t1],
-          "node_power_est_w": [100.0, 100.0],
-          "dcg_cpu_power_w": [40.0, 40.0],
-          "nv_power_w": [60.0, 60.0],
-      }
+    {
+      "host": ["h1", "h1"],
+      "time": [t0, t1],
+      "node_power_est_w": [100.0, 100.0],
+      "dcg_cpu_power_w": [40.0, 40.0],
+      "nv_power_w": [60.0, 60.0],
+    }
   )
 
   class FakeJt:
@@ -1092,11 +1133,17 @@ def test_job_cpu_gpu_watt_hours_integrates_and_gates():
   assert wh == pytest.approx(6000.0 / 3600.0)
 
   df_cpu_only = df.drop(columns=["nv_power_w"])
-  with patch.object(npe, "build_node_power_est_dataframe", return_value=df_cpu_only):
-    assert npe.job_cpu_gpu_watt_hours(FakeJt()) == pytest.approx(6000.0 / 3600.0)
+  with patch.object(
+    npe, "build_node_power_est_dataframe", return_value=df_cpu_only
+  ):
+    assert npe.job_cpu_gpu_watt_hours(FakeJt()) == pytest.approx(
+      6000.0 / 3600.0
+    )
 
   df_no_cpu = df.drop(columns=["dcg_cpu_power_w"])
-  with patch.object(npe, "build_node_power_est_dataframe", return_value=df_no_cpu):
+  with patch.object(
+    npe, "build_node_power_est_dataframe", return_value=df_no_cpu
+  ):
     assert npe.job_cpu_gpu_watt_hours(FakeJt()) is None
 
 
@@ -1108,7 +1155,11 @@ def test_max_packetrate_falls_back_to_ethernet():
 
   class MockU:
     t = np.array([0.0, 10.0, 20.0], dtype=np.float64)
-    job = type("J", (), {"cluster_mean_by_type": {}, "cluster_mean_arc_by_type": {}})()
+    job = type(
+      "J",
+      (),
+      {"cluster_mean_by_type": {}, "cluster_mean_arc_by_type": {}},
+    )()
 
     def get_type(self, typename):
       if typename in ("host_ib", "opa"):
@@ -1132,7 +1183,11 @@ def test_max_packetrate_rejects_uint64_wrap_poison():
 
   class MockU:
     t = np.array([0.0, 1.0], dtype=np.float64)
-    job = type("J", (), {"cluster_mean_by_type": {}, "cluster_mean_arc_by_type": {}})()
+    job = type(
+      "J",
+      (),
+      {"cluster_mean_by_type": {}, "cluster_mean_arc_by_type": {}},
+    )()
 
     def get_type(self, typename):
       if typename == "host_ib":
@@ -1153,7 +1208,11 @@ def test_max_gpu_link_gbps_rejects_uint64_wrap_poison():
 
   class MockU:
     t = np.array([0.0, 1.0], dtype=np.float64)
-    job = type("J", (), {"cluster_mean_by_type": {}, "cluster_mean_arc_by_type": {}})()
+    job = type(
+      "J",
+      (),
+      {"cluster_mean_by_type": {}, "cluster_mean_arc_by_type": {}},
+    )()
 
     def get_type(self, typename):
       if typename == "nvidia_gpu":
@@ -1177,12 +1236,12 @@ def test_max_gpu_link_gbps_prefers_sane_arc_over_poison_value_diff():
   class MockU:
     t = np.array([0.0, 1.0], dtype=np.float64)
     job = type(
-        "J",
-        (),
-        {
-            "cluster_mean_by_type": {},
-            "cluster_mean_arc_by_type": {"nvidia_gpu": arc_cm},
-        },
+      "J",
+      (),
+      {
+        "cluster_mean_by_type": {},
+        "cluster_mean_arc_by_type": {"nvidia_gpu": arc_cm},
+      },
     )()
 
     def get_type(self, typename):
@@ -1231,7 +1290,7 @@ def test_avg_gpuutil_nvidia_takes_precedence_over_amd():
       return None, {}
 
   u = MockU()
-  value, typename, units = avg_gpuutil().compute_metric(u)
+  value, typename, _units = avg_gpuutil().compute_metric(u)
   assert typename == "nvidia_gpu"
   assert value == pytest.approx(20.0)
 
@@ -1266,7 +1325,7 @@ def test_avg_gpuutil_nvidia_legacy_utilization_only():
       return None, {}
 
   u = MockU()
-  value, typename, units = avg_gpuutil().compute_metric(u)
+  value, typename, _units = avg_gpuutil().compute_metric(u)
   assert typename == "nvidia_gpu"
   assert value == pytest.approx(30.0)
 
@@ -1319,7 +1378,7 @@ def test_max_gpu_power_all_nan_returns_none():
         return schema, {"h1": stats}
       return None, {}
 
-  value, typename, units = max_gpu_power().compute_metric(MockU())
+  value, _typename, units = max_gpu_power().compute_metric(MockU())
   assert value is None
   assert units == "W"
 
@@ -1336,7 +1395,7 @@ def test_max_gpu_power_skips_nan_hosts_uses_finite_max():
         return schema, {"nan_host": nan_stats, "good_host": good_stats}
       return None, {}
 
-  value, typename, units = max_gpu_power().compute_metric(MockU())
+  value, typename, _units = max_gpu_power().compute_metric(MockU())
   assert value == pytest.approx(250.0)
   assert typename == "nvidia_gpu"
 
@@ -1348,7 +1407,7 @@ def test_max_gpu_power_rejects_dcgm_fp64_blank():
 
   schema = _Schema(["power_usage"])
   blank_stats = np.array(
-      [[DCGM_FP64_BLANK], [DCGM_FP64_BLANK], [300.0]], dtype=np.float64
+    [[DCGM_FP64_BLANK], [DCGM_FP64_BLANK], [300.0]], dtype=np.float64
   )
 
   class MockU:
@@ -1357,7 +1416,7 @@ def test_max_gpu_power_rejects_dcgm_fp64_blank():
         return schema, {"h1": blank_stats}
       return None, {}
 
-  value, typename, units = max_gpu_power().compute_metric(MockU())
+  value, typename, _units = max_gpu_power().compute_metric(MockU())
   assert value == pytest.approx(300.0)
   assert typename == "nvidia_gpu"
 
@@ -1367,7 +1426,9 @@ def test_max_gpu_power_all_blank_returns_none():
   from hpcperfstats.lib.dcgm_blank import DCGM_FP64_BLANK
 
   schema = _Schema(["power_usage"])
-  blank_stats = np.array([[DCGM_FP64_BLANK], [4 * DCGM_FP64_BLANK]], dtype=np.float64)
+  blank_stats = np.array(
+    [[DCGM_FP64_BLANK], [4 * DCGM_FP64_BLANK]], dtype=np.float64
+  )
 
   class MockU:
     def get_type(self, typename):
@@ -1386,7 +1447,7 @@ def test_avg_gpuutil_rejects_dcgm_int64_blank():
 
   schema = _Schema(["gpu_util"])
   stats = np.array(
-      [[0.0], [float(DCGM_INT64_BLANK)], [40.0], [60.0]], dtype=np.float64
+    [[0.0], [float(DCGM_INT64_BLANK)], [40.0], [60.0]], dtype=np.float64
   )
 
   class MockU:
@@ -1443,7 +1504,7 @@ def test_mem_hwm_mixed_nan_uses_finite_peak():
   schema = _Schema(["MemUsed", "Slab", "FilePages"])
   nan_stats = np.array([[np.nan, np.nan, np.nan]], dtype=np.float64)
   # Monitor host_mem values are KB; 1 GiB == 1024**2 KB (Summary scale).
-  one_gib_kb = float(1024 ** 2)
+  one_gib_kb = float(1024**2)
   good_stats = np.array([[one_gib_kb, 0.0, 0.0]], dtype=np.float64)
 
   class MockU:
@@ -1614,7 +1675,9 @@ def test_build_job_metrics_display_list_puts_not_computed_yet_last():
   job.metrics_data_set.all.return_value = [row]
   out = build_job_metrics_display_list(job)
   flags = [item["no_data_reason"] == METRIC_NOT_COMPUTED_YET for item in out]
-  first_pending = next((i for i, pending in enumerate(flags) if pending), len(out))
+  first_pending = next(
+    (i for i, pending in enumerate(flags) if pending), len(out)
+  )
   assert first_pending == 1
   assert not any(flags[:first_pending])
   assert all(flags[first_pending:])
@@ -1645,7 +1708,7 @@ def test_build_job_metrics_display_list_keeps_empty_reason_ahead_of_not_computed
 def test_build_job_metrics_display_list_tiers_valued_error_then_not_computed():
   """Valued metrics, then Insufficient/error reasons, then Metric not computed."""
   from hpcperfstats.analysis.metrics.lib.metrics import (
-      INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
+    INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
   )
 
   entries = job_metrics_catalog_entries()
@@ -1677,13 +1740,13 @@ def test_metrics_run_uses_supplied_pool(monkeypatch):
   """Metrics.run should use caller-supplied pool and not manage lifecycle."""
   m = Metrics()
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.metrics._persist_metrics_batch",
-      lambda rows, distinct_n, **kwargs: None,
+    "hpcperfstats.analysis.metrics.lib.metrics._persist_metrics_batch",
+    lambda rows, distinct_n, **kwargs: None,
   )
   monkeypatch.setattr(
-      m,
-      "_worker_thread_count",
-      lambda: 4,
+    m,
+    "_worker_thread_count",
+    lambda: 4,
   )
 
   class FakePool:
@@ -1695,7 +1758,14 @@ def test_metrics_run_uses_supplied_pool(monkeypatch):
     def imap_unordered(self, fn, args_iter, chunksize=1):
       self.chunksize = chunksize
       _ = list(args_iter)
-      return iter([{"rows": [{"jid": MagicMock(jid=1)}], "distinct_time_count": 1}])
+      return iter(
+        [
+          {
+            "rows": [{"jid": MagicMock(jid=1)}],
+            "distinct_time_count": 1,
+          }
+        ]
+      )
 
     def close(self):
       self.closed = True
@@ -1713,15 +1783,19 @@ def test_metrics_run_uses_supplied_pool(monkeypatch):
 def test_jid_table_host_data_time_kwargs_full_and_sampled():
   assert _jid_table_host_data_time_kwargs({}) is None
   assert _jid_table_host_data_time_kwargs({"host__in": []}) is None
-  assert _jid_table_host_data_time_kwargs({
+  assert _jid_table_host_data_time_kwargs(
+    {
       "time__in": [1, 2],
       "host__in": ["x"],
-  }) == {"time__in": [1, 2]}
-  assert _jid_table_host_data_time_kwargs({
+    }
+  ) == {"time__in": [1, 2]}
+  assert _jid_table_host_data_time_kwargs(
+    {
       "time__gte": 1,
       "time__lte": 2,
       "host__in": ["x"],
-  }) == {"time__gte": 1, "time__lte": 2}
+    }
+  ) == {"time__gte": 1, "time__lte": 2}
 
 
 class _FakeHostDataQs:
@@ -1755,18 +1829,18 @@ class _FakeHostDataManager:
   def filter(self, **kwargs):
     self.filter_calls.append(kwargs)
     return _FakeHostDataQs(
-        list(kwargs.get("host__in") or []),
-        self._rows,
-        self._on_materialize,
+      list(kwargs.get("host__in") or []),
+      self._rows,
+      self._on_materialize,
     )
 
 
 def _agg_row(host, time, value):
   """One row as returned by the per-(host, time) SQL sum queryset."""
   return {
-      "host": host,
-      jid_table.HOST_DATA_TIME_ALIAS: time,
-      jid_table.HOST_DATA_SUM_VAL_ALIAS: value,
+    "host": host,
+    jid_table.HOST_DATA_TIME_ALIAS: time,
+    jid_table.HOST_DATA_SUM_VAL_ALIAS: value,
   }
 
 
@@ -1779,10 +1853,10 @@ def test_job_arc_uses_time__in_when_jid_table_large_job_sampled():
 
   t1 = django_tz.now()
   jt = SimpleNamespace(
-      _base_filter={
-          "time__in": [t1],
-          "host__in": ["n.example.com"],
-      }
+    _base_filter={
+      "time__in": [t1],
+      "host__in": ["n.example.com"],
+    }
   )
   m = Metrics()
   mgr = _FakeHostDataManager()
@@ -1799,15 +1873,17 @@ def test_host_data_metric_rows_batched_splits_host__in():
   """Large host lists query host_data in METRICS_HOST_QUERY_BATCH chunks."""
 
   n = METRICS_HOST_QUERY_BATCH + 2
-  hosts = ["h{0}.x".format(i) for i in range(n)]
+  hosts = [f"h{i}.x" for i in range(n)]
   chunk_sizes = []
   mgr = _FakeHostDataManager(
-      on_materialize=lambda chunk: chunk_sizes.append(len(chunk)))
+    on_materialize=lambda chunk: chunk_sizes.append(len(chunk))
+  )
 
   tkw = {"time__gte": 1, "time__lte": 2}
   with patch("hpcperfstats.site.lib.machine.models.host_data.objects", mgr):
     rows = _host_data_metric_rows_batched(
-        tkw, hosts, "net", ["rx_bytes"], "arc")
+      tkw, hosts, "net", ["rx_bytes"], "arc"
+    )
   assert rows == []
   assert chunk_sizes == [METRICS_HOST_QUERY_BATCH, 2]
 
@@ -1817,17 +1893,19 @@ def test_host_data_metric_rows_batched_rows_cache_reuses_fetch():
   """Same (tkw, typename, events, column) in one compute_metrics pass hits cache."""
   chunk_passes = []
   mgr = _FakeHostDataManager(
-      rows=[{"host": "h1", "time": 1, "arc": 2.0}],
-      on_materialize=lambda _chunk: chunk_passes.append(1),
+    rows=[{"host": "h1", "time": 1, "arc": 2.0}],
+    on_materialize=lambda _chunk: chunk_passes.append(1),
   )
 
   tkw = {"time__gte": 1, "time__lte": 2}
   cache = {}
   with patch("hpcperfstats.site.lib.machine.models.host_data.objects", mgr):
     r1 = _host_data_metric_rows_batched(
-        tkw, ["h1"], "net", ["rx_bytes"], "arc", rows_cache=cache)
+      tkw, ["h1"], "net", ["rx_bytes"], "arc", rows_cache=cache
+    )
     r2 = _host_data_metric_rows_batched(
-        tkw, ["h1"], "net", ["rx_bytes"], "arc", rows_cache=cache)
+      tkw, ["h1"], "net", ["rx_bytes"], "arc", rows_cache=cache
+    )
   assert r1 == r2
   assert len(chunk_passes) == 1
 
@@ -1839,7 +1917,8 @@ def test_host_data_metric_rows_batched_normalizes_sql_sum_rows():
   tkw = {"time__gte": 1, "time__lte": 2}
   with patch("hpcperfstats.site.lib.machine.models.host_data.objects", mgr):
     rows = _host_data_metric_rows_batched(
-        tkw, ["h1"], "net", ["rx_bytes"], "arc", sum_per_sample=True)
+      tkw, ["h1"], "net", ["rx_bytes"], "arc", sum_per_sample=True
+    )
   assert rows == [{"host": "h1", "time": 1, "arc": 7.0}]
 
 
@@ -1849,9 +1928,16 @@ def test_host_data_row_cache_key_separates_aggregate_variants():
   tkw = {"time__gte": 1, "time__lte": 2}
   raw = _host_data_row_cache_key(tkw, "net", ["rx_bytes"], "arc")
   summed = _host_data_row_cache_key(
-      tkw, "net", ["rx_bytes"], "arc", sum_per_sample=True)
+    tkw, "net", ["rx_bytes"], "arc", sum_per_sample=True
+  )
   nonneg = _host_data_row_cache_key(
-      tkw, "net", ["rx_bytes"], "arc", sum_per_sample=True, nonnegative_only=True)
+    tkw,
+    "net",
+    ["rx_bytes"],
+    "arc",
+    sum_per_sample=True,
+    nonnegative_only=True,
+  )
   assert len({raw, summed, nonneg}) == 3
 
 
@@ -1864,11 +1950,11 @@ def test_job_arc_requests_sql_sum_and_nonnegative_filter(monkeypatch):
 
   t0 = django_tz.now()
   jt = SimpleNamespace(
-      _base_filter={
-          "time__gte": t0,
-          "time__lte": t0,
-          "host__in": ["h1.x"],
-      }
+    _base_filter={
+      "time__gte": t0,
+      "time__lte": t0,
+      "host__in": ["h1.x"],
+    }
   )
   seen = {}
 
@@ -1878,19 +1964,19 @@ def test_job_arc_requests_sql_sum_and_nonnegative_filter(monkeypatch):
     return []
 
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.metrics._host_data_metric_rows_batched",
-      fake_rows,
+    "hpcperfstats.analysis.metrics.lib.metrics._host_data_metric_rows_batched",
+    fake_rows,
   )
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
-      lambda typename: (typename,),
+    "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
+    lambda typename: (typename,),
   )
   Metrics().job_arc(
-      jt,
-      typename="net",
-      events=["rx_bytes"],
-      conv=1.0,
-      nonnegative_rate=True,
+    jt,
+    typename="net",
+    events=["rx_bytes"],
+    conv=1.0,
+    nonnegative_rate=True,
   )
   assert seen == {"sum_per_sample": True, "nonnegative_only": True}
 
@@ -1902,22 +1988,26 @@ def test_job_arc_issues_multiple_queries_when_many_hosts(monkeypatch):
   from django.utils import timezone as django_tz
 
   n = METRICS_HOST_QUERY_BATCH + 1
-  hosts = ["h{0}.x".format(i) for i in range(n)]
+  hosts = [f"h{i}.x" for i in range(n)]
   t0 = django_tz.now()
   jt = SimpleNamespace(
-      _base_filter={
-          "time__gte": t0,
-          "time__lte": t0,
-          "host__in": hosts,
-      }
+    _base_filter={
+      "time__gte": t0,
+      "time__lte": t0,
+      "host__in": hosts,
+    }
   )
   calls = []
-  mgr = _FakeHostDataManager(on_materialize=lambda chunk: calls.append(len(chunk)))
+  mgr = _FakeHostDataManager(
+    on_materialize=lambda chunk: calls.append(len(chunk))
+  )
 
-  monkeypatch.setattr("hpcperfstats.site.lib.machine.models.host_data.objects", mgr)
   monkeypatch.setattr(
-      "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
-      lambda typename: (typename,),
+    "hpcperfstats.site.lib.machine.models.host_data.objects", mgr
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
+    lambda typename: (typename,),
   )
   m = Metrics()
   m.job_arc(jt, typename="net", events=["rx_bytes"], conv=1.0)
@@ -1928,12 +2018,16 @@ def test_job_arc_issues_multiple_queries_when_many_hosts(monkeypatch):
 
 def test_metric_type_events_feasible_skips_impossible_types():
   assert _metric_type_events_feasible({}, "amd64_pmc", ["FLOPS"]) is True
-  assert _metric_type_events_feasible(
+  assert (
+    _metric_type_events_feasible(
       {"cpu": ["user", "system"]}, "amd64_pmc", ["FLOPS"]
-  ) is False
-  assert _metric_type_events_feasible(
-      {"cpu": ["user", "system"]}, "cpu", ["user"]
-  ) is True
+    )
+    is False
+  )
+  assert (
+    _metric_type_events_feasible({"cpu": ["user", "system"]}, "cpu", ["user"])
+    is True
+  )
 
 
 @pytest.mark.django_db(databases=[])
@@ -1945,21 +2039,27 @@ def test_job_arc_skips_orm_when_schema_rules_out_type(monkeypatch):
 
   t0 = django_tz.now()
   jt = SimpleNamespace(
-      schema={"cpu": ["user", "system", "idle"]},
-      _base_filter={
-          "time__gte": t0,
-          "time__lte": t0,
-          "host__in": ["h1.x"],
-      },
+    schema={"cpu": ["user", "system", "idle"]},
+    _base_filter={
+      "time__gte": t0,
+      "time__lte": t0,
+      "host__in": ["h1.x"],
+    },
   )
   filter_calls = []
 
   class Mgr:
     def filter(self, **kwargs):
       filter_calls.append(kwargs)
-      raise AssertionError("job_arc must not query host_data for impossible types")
+      raise AssertionError(
+        "job_arc must not query host_data for impossible types"
+      )
 
-  monkeypatch.setattr("hpcperfstats.site.lib.machine.models.host_data.objects", Mgr())
+  monkeypatch.setattr(
+    "hpcperfstats.site.lib.machine.models.host_data.objects", Mgr()
+  )
   m = Metrics()
-  assert m.job_arc(jt, typename="amd64_pmc", events=["FLOPS"], conv=1e-9) is None
+  assert (
+    m.job_arc(jt, typename="amd64_pmc", events=["FLOPS"], conv=1e-9) is None
+  )
   assert filter_calls == []

@@ -10,7 +10,9 @@ from pathlib import Path
 
 def test_xalt_models_schema_mapping_contract():
   """`site/xalt/models.py` should match upstream XALT MySQL schema."""
-  models_path = Path(__file__).resolve().parents[1] / "site" / "xalt" / "models.py"
+  models_path = (
+    Path(__file__).resolve().parents[1] / "site" / "xalt" / "models.py"
+  )
   content = models_path.read_text(encoding="utf-8")
 
   # Table names + managed=False (read-only / existing DB).
@@ -31,8 +33,7 @@ def test_xalt_models_schema_mapping_contract():
   assert 'db_table = "join_run_object"' in content
   assert "date = models.DateField()" in content
   assert "timestamp = models.DateTimeField(null=True)" in content
-  assert 'module_name = models.CharField(max_length=64, null=True)' in content
+  assert "module_name = models.CharField(max_length=64, null=True)" in content
 
   # Ensure we removed fields that don't exist in upstream schema.
   assert "exit_code" not in content
-

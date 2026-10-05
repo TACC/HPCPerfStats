@@ -33,11 +33,11 @@ def test_mem_hwm_snake_case_host_mem_kb_to_gib():
   schema = metrics._Schema(["mem_used", "slab", "file_pages"])
   # Peak used−slab−file_pages = 2_097_152 KB → 2.0 GiB
   stats = np.array(
-      [
-          [3_000_000.0, 500_000.0, 402_848.0],
-          [3_500_000.0, 500_000.0, 902_848.0],
-      ],
-      dtype=np.float64,
+    [
+      [3_000_000.0, 500_000.0, 402_848.0],
+      [3_500_000.0, 500_000.0, 902_848.0],
+    ],
+    dtype=np.float64,
   )
   u = _StubUtils({"host_mem": (schema, {"n1": stats})})
   value, typename, units = metrics.mem_hwm().compute_metric(u)
@@ -66,19 +66,25 @@ def test_avg_ethbw_no_keyerror_when_net_partial():
 def test_avg_packetsize_falls_through_partial_ib_ext():
   ib_partial = metrics._Schema(["port_xmit_pkts"])
   net_schema = metrics._Schema(
-      ["tx_packets", "rx_packets", "tx_bytes", "rx_bytes"])
+    ["tx_packets", "rx_packets", "tx_bytes", "rx_bytes"]
+  )
   stats_ib = np.zeros((4, 1), dtype=np.float64)
-  stats_net = np.array([
+  stats_net = np.array(
+    [
       [1.0, 1.0, 100.0, 200.0],
       [2.0, 2.0, 220.0, 440.0],
       [3.0, 3.0, 340.0, 680.0],
       [8.0, 8.0, 880.0, 1760.0],
-  ], dtype=np.float64)
-  u = _StubUtils({
+    ],
+    dtype=np.float64,
+  )
+  u = _StubUtils(
+    {
       "ib_ext": (ib_partial, {"n1": stats_ib}),
       "opa": (None, {}),
       "net": (net_schema, {"n1": stats_net}),
-  })
+    }
+  )
   value, typename, units = metrics.avg_packetsize().compute_metric(u)
   assert typename == "net" and units == "MB"
   assert isinstance(value, float) and value > 0
@@ -92,4 +98,5 @@ def test_hashable_metric_events_signature_nested_lists():
 
 def test_flatten_event_names_nested_once():
   assert metrics._flatten_event_names_for_host_data_query(
-      [["rd_sectors", "wr_sectors"], "irq"]) == ["rd_sectors", "wr_sectors", "irq"]
+    [["rd_sectors", "wr_sectors"], "irq"]
+  ) == ["rd_sectors", "wr_sectors", "irq"]

@@ -6,12 +6,15 @@ Attributes:
   ORCH: Path to ``sync_timedb_queue_orchestrator.py``.
   ROOT: Git checkout root containing ``scripts/``.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-ORCH = ROOT / "hpcperfstats" / "dbload" / "lib" / "sync_timedb_queue_orchestrator.py"
+ORCH = (
+  ROOT / "hpcperfstats" / "dbload" / "lib" / "sync_timedb_queue_orchestrator.py"
+)
 
 FORBIDDEN = ("pop_ingest_job_ranged", "pop_list_job")
 
@@ -30,7 +33,7 @@ def main() -> int:
   src = ORCH.read_text(encoding="utf-8")
   found = [name for name in FORBIDDEN if name in src]
   if found:
-    print("silent drop APIs still referenced: %s" % ", ".join(found))
+    print("silent drop APIs still referenced: {}".format(", ".join(found)))
     return 1
   print("NO_SILENT_DROP_OK")
   return 0

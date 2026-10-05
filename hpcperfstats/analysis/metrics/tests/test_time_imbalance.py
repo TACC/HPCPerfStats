@@ -12,8 +12,8 @@ from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 
 ensure_django()
 
-from hpcperfstats.analysis.metrics.lib.gen.utils import utils as job_utils
 from hpcperfstats.analysis.metrics.lib import metrics
+from hpcperfstats.analysis.metrics.lib.gen.utils import utils as job_utils
 
 try:
   from numpy import trapezoid as _trapz
@@ -133,4 +133,6 @@ def test_time_imbalance_large_nt_completes_under_budget():
   assert units == "%"
   assert value is not None
   assert np.isfinite(value)
-  assert elapsed < 2.0, f"time_imbalance took {elapsed:.3f}s (expected O(n) < 2s)"
+  assert elapsed < 2.0, (
+    f"time_imbalance took {elapsed:.3f}s (expected O(n) < 2s)"
+  )

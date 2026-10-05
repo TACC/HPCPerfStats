@@ -32,7 +32,9 @@ def test_spa_shell_fingerprint_hashes_machine_index(tmp_path: Path):
   assert spa_shell_fingerprint(tmp_path / "missing") == ""
 
 
-def test_ensure_spa_shells_heals_vite_volume(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+def test_ensure_spa_shells_heals_vite_volume(
+  tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
   package = tmp_path / "pkg" / "frontend"
   _write(package / "machine" / "index.html", "machine-pkg")
   _write(package / "pub" / "index.html", "pub-pkg")
@@ -49,8 +51,12 @@ def test_ensure_spa_shells_heals_vite_volume(tmp_path: Path, capsys: pytest.Capt
     package_frontend=package,
   )
 
-  assert (volume / "machine" / "index.html").read_text(encoding="utf-8") == "machine-pkg"
-  assert (volume / "pub" / "index.html").read_text(encoding="utf-8") == "pub-pkg"
+  assert (volume / "machine" / "index.html").read_text(
+    encoding="utf-8"
+  ) == "machine-pkg"
+  assert (volume / "pub" / "index.html").read_text(
+    encoding="utf-8"
+  ) == "pub-pkg"
   assert not (volume / ".vite").exists()
   assert not (volume / "index.html").is_file()
   out = capsys.readouterr().out
@@ -105,7 +111,9 @@ def test_ensure_spa_shells_noop_when_fingerprints_match(
     package_frontend=package,
   )
 
-  assert (volume / "machine" / "index.html").read_text(encoding="utf-8") == "same-shell"
+  assert (volume / "machine" / "index.html").read_text(
+    encoding="utf-8"
+  ) == "same-shell"
   assert (volume / "_next" / "old.js").is_file()
   assert not (volume / "_next" / "new.js").is_file()
   out = capsys.readouterr().out
@@ -134,8 +142,12 @@ def test_ensure_spa_shells_replaces_on_fingerprint_drift(
     package_frontend=package,
   )
 
-  assert (volume / "machine" / "index.html").read_text(encoding="utf-8") == "pkg-machine-new"
-  assert (volume / "pub" / "index.html").read_text(encoding="utf-8") == "pkg-pub"
+  assert (volume / "machine" / "index.html").read_text(
+    encoding="utf-8"
+  ) == "pkg-machine-new"
+  assert (volume / "pub" / "index.html").read_text(
+    encoding="utf-8"
+  ) == "pkg-pub"
   assert (volume / "_next" / "chunk.js").is_file()
   assert not (volume / "_next" / "stale.js").is_file()
   out = capsys.readouterr().out
@@ -157,7 +169,9 @@ def test_package_has_required_shells_and_resolve(tmp_path: Path):
   assert resolved == frontend
 
 
-def test_purge_nginx_config_from_public_frontend_keeps_br_gz_sidecars(tmp_path: Path):
+def test_purge_nginx_config_from_public_frontend_keeps_br_gz_sidecars(
+  tmp_path: Path,
+):
   """Brotli/Gzip sidecars must remain on the public frontend tree after heal purge."""
   frontend = tmp_path / "frontend"
   chunk = frontend / "_next" / "static" / "chunks" / "app.js"
@@ -167,7 +181,7 @@ def test_purge_nginx_config_from_public_frontend_keeps_br_gz_sidecars(tmp_path: 
   _write(frontend / "nginx-csp-machine.inc", "leak\n")
   removed = purge_nginx_config_from_public_frontend(frontend)
   assert "nginx-csp-machine.inc" in removed
-  assert not any(rel.endswith(".br") or rel.endswith(".gz") for rel in removed)
+  assert not any(rel.endswith((".br", ".gz")) for rel in removed)
   assert chunk.is_file()
   assert Path(str(chunk) + ".br").is_file()
   assert Path(str(chunk) + ".gz").is_file()
@@ -176,7 +190,10 @@ def test_purge_nginx_config_from_public_frontend_keeps_br_gz_sidecars(tmp_path: 
 def test_purge_nginx_config_from_public_frontend_removes_inc(tmp_path: Path):
   frontend = tmp_path / "frontend"
   _write(frontend / "machine" / "index.html", "ok")
-  _write(frontend / "nginx-csp-machine.inc", "add_header Content-Security-Policy \"x\";\n")
+  _write(
+    frontend / "nginx-csp-machine.inc",
+    'add_header Content-Security-Policy "x";\n',
+  )
   _write(frontend / "notes.md", "# no")
   removed = purge_nginx_config_from_public_frontend(frontend)
   assert "nginx-csp-machine.inc" in removed
@@ -197,6 +214,8 @@ def test_ensure_spa_shells_purges_leaked_nginx_inc(
   _write(volume / "pub" / "index.html", "same")
   _write(volume / "nginx-csp-pub.inc", "leak")
 
-  ensure_spa_shells_in_static_root(static_root=static_root, package_frontend=package)
+  ensure_spa_shells_in_static_root(
+    static_root=static_root, package_frontend=package
+  )
   assert not (volume / "nginx-csp-pub.inc").exists()
   assert "Purged non-web leftovers" in capsys.readouterr().out

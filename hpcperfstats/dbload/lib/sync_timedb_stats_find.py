@@ -18,20 +18,25 @@ Attributes:
   _host_fp_cache: Attribute.
   _path_fp_cache: Attribute.
 """
+
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
+from typing import (
+  Any,
+)
 
-from hpcperfstats.dbload.lib.file_locking import LOCK_SUFFIX
 import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib.file_locking import LOCK_SUFFIX
 
 # GNU stat --printf argv: interpret \0 as NUL (do not embed real NULs —
 # Python subprocess rejects embedded null bytes in argv on some platforms).
@@ -41,27 +46,28 @@ FD_THREADS = 4
 FD_BATCH_SIZE = 1000
 
 _FNCTL_LOCK_ENOENT_RE = re.compile(
-    r"No such file or directory.*\.fnctl\.lock|"
-    r"\.fnctl\.lock.*No such file or directory",
-    re.I,
+  r"No such file or directory.*\.fnctl\.lock|"
+  r"\.fnctl\.lock.*No such file or directory",
+  re.I,
 )
 
 # Last successful find scan → fingerprint caches for maint hints (C9).
-_path_fp_cache: Dict[str, Tuple[int, int]] = {}
-_host_fp_cache: Dict[str, Tuple[int, int]] = {}
+_path_fp_cache: dict[str, tuple[int, int]] = {}
+_host_fp_cache: dict[str, tuple[int, int]] = {}
 
 
 @dataclass(frozen=True)
 class FindStatsRecord:
   """
   Hold FindStatsRecord state and behavior.
-  
+
   Attributes:
     inode: ``inode``.
     mtime: ``mtime``.
     path: ``path``.
     size: ``size``.
   """
+
   path: str
   mtime: float
   size: int
@@ -77,10 +83,10 @@ class FindStatsDiscoveryError(RuntimeError):
 def clear_fingerprint_caches() -> None:
   """
   Clear fingerprint caches.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> clear_fingerprint_caches()  # doctest: +SKIP
   """
@@ -88,34 +94,34 @@ def clear_fingerprint_caches() -> None:
   _host_fp_cache.clear()
 
 
-def lookup_path_fingerprint(path: str) -> Optional[Tuple[int, int]]:
+def lookup_path_fingerprint(path: str) -> tuple[int, int] | None:
   """
   Lookup path fingerprint.
-  
+
   Args:
     path (str): String for path.
-  
+
   Returns:
     Optional[Tuple[int, int]]: Optional[Tuple[int, int]] — the result, or None
     when unavailable.
-  
+
   Examples:
     >>> lookup_path_fingerprint("x")  # doctest: +SKIP
   """
   return _path_fp_cache.get(os.path.normpath(path))
 
 
-def lookup_host_dir_fingerprint(host_dir: str) -> Optional[Tuple[int, int]]:
+def lookup_host_dir_fingerprint(host_dir: str) -> tuple[int, int] | None:
   """
   Lookup host dir fingerprint.
-  
+
   Args:
     host_dir (str): String for host dir.
-  
+
   Returns:
     Optional[Tuple[int, int]]: Optional[Tuple[int, int]] — the result, or None
     when unavailable.
-  
+
   Examples:
     >>> lookup_host_dir_fingerprint("x")  # doctest: +SKIP
   """
@@ -127,19 +133,19 @@ def update_fingerprint_caches_from_records(
 ) -> None:
   """
   Refresh path/host fingerprint caches from fd -X GNU stat records.
-  
+
   Args:
     records (Sequence[FindStatsRecord]): records as
     ``Sequence[FindStatsRecord]``.
-  
+
   Returns:
     None
-  
+
   Examples:
     >>> update_fingerprint_caches_from_records([])  # doctest: +SKIP
   """
   _path_fp_cache.clear()
-  host_agg: Dict[str, List[FindStatsRecord]] = {}
+  host_agg: dict[str, list[FindStatsRecord]] = {}
   for rec in records:
     norm = os.path.normpath(rec.path)
     _path_fp_cache[norm] = (int(rec.mtime), int(rec.size))
@@ -166,7 +172,9 @@ def host_dir_is_internal_for_stats_discovery(host_dir: str) -> bool:
     bool: True when ``host_dir`` basename starts with ``.``.
 
   Examples:
-    >>> host_dir_is_internal_for_stats_discovery("/a/.sync_timedb_day_raw_removal")
+    >>> host_dir_is_internal_for_stats_discovery(
+    ...   "/a/.sync_timedb_day_raw_removal"
+    ... )
     True
     >>> host_dir_is_internal_for_stats_discovery("/a/.hidden_sidecar")
     True
@@ -214,9 +222,9 @@ def _fd_x_stat_argv(
   printf_format: str,
   pattern: str = ".",
   glob: bool = False,
-  exclude: Optional[str] = None,
-  mtime_days: Optional[int] = None,
-) -> List[str]:
+  exclude: str | None = None,
+  mtime_days: int | None = None,
+) -> list[str]:
   """
   Build one ``fd``/``fdfind -X`` GNU stat argv (no shell, no xargs).
 
@@ -247,17 +255,17 @@ def _fd_x_stat_argv(
     'fd'
   """
   argv = [
-      find_bin,
-      "--threads",
-      str(int(FD_THREADS)),
-      "--no-ignore",
-      "--absolute-path",
-      "--max-depth",
-      str(int(max_depth)),
-      "--min-depth",
-      str(int(min_depth)),
-      "--type",
-      "f",
+    find_bin,
+    "--threads",
+    str(int(FD_THREADS)),
+    "--no-ignore",
+    "--absolute-path",
+    "--max-depth",
+    str(int(max_depth)),
+    "--min-depth",
+    str(int(min_depth)),
+    "--type",
+    "f",
   ]
   if glob:
     argv.append("--glob")
@@ -266,15 +274,15 @@ def _fd_x_stat_argv(
   if mtime_days is not None and int(mtime_days) > 0:
     argv.extend(["--changed-within", "%dd" % int(mtime_days)])
   argv.extend(
-      [
-          "--batch-size",
-          str(int(FD_BATCH_SIZE)),
-          pattern,
-          os.path.abspath(search_path),
-          "-X",
-          stat_bin,
-          "--printf=" + printf_format,
-      ]
+    [
+      "--batch-size",
+      str(int(FD_BATCH_SIZE)),
+      pattern,
+      os.path.abspath(search_path),
+      "-X",
+      stat_bin,
+      "--printf=" + printf_format,
+    ]
   )
   return argv
 
@@ -282,10 +290,10 @@ def _fd_x_stat_argv(
 def build_find_stats_argv(
   archive_dir: str,
   *,
-  mtime_days: Optional[int] = None,
+  mtime_days: int | None = None,
   find_bin: str = "fd",
   stat_bin: str = "stat",
-) -> List[str]:
+) -> list[str]:
   """
   Build fd ``-X`` GNU stat argv for archive stats discovery (depth 2).
 
@@ -303,14 +311,14 @@ def build_find_stats_argv(
     True
   """
   return _fd_x_stat_argv(
-      find_bin=find_bin,
-      stat_bin=stat_bin,
-      search_path=archive_dir,
-      min_depth=2,
-      max_depth=2,
-      printf_format=STAT_PRINTF_FORMAT,
-      exclude="current*",
-      mtime_days=mtime_days,
+    find_bin=find_bin,
+    stat_bin=stat_bin,
+    search_path=archive_dir,
+    min_depth=2,
+    max_depth=2,
+    printf_format=STAT_PRINTF_FORMAT,
+    exclude="current*",
+    mtime_days=mtime_days,
   )
 
 
@@ -319,7 +327,7 @@ def build_find_current_inode_argv(
   *,
   find_bin: str = "fd",
   stat_bin: str = "stat",
-) -> List[str]:
+) -> list[str]:
   """
   Find host ``current`` files and emit ``path`` + inode via GNU stat.
 
@@ -336,14 +344,14 @@ def build_find_current_inode_argv(
     True
   """
   return _fd_x_stat_argv(
-      find_bin=find_bin,
-      stat_bin=stat_bin,
-      search_path=archive_dir,
-      min_depth=2,
-      max_depth=2,
-      printf_format=STAT_CURRENT_INODE_PRINTF,
-      pattern="current",
-      glob=True,
+    find_bin=find_bin,
+    stat_bin=stat_bin,
+    search_path=archive_dir,
+    min_depth=2,
+    max_depth=2,
+    printf_format=STAT_CURRENT_INODE_PRINTF,
+    pattern="current",
+    glob=True,
   )
 
 
@@ -352,7 +360,7 @@ def build_find_host_scoped_argv(
   *,
   find_bin: str = "fd",
   stat_bin: str = "stat",
-) -> List[str]:
+) -> list[str]:
   """
   Build fd ``-X`` GNU stat argv for one host directory (depth 1).
 
@@ -369,16 +377,16 @@ def build_find_host_scoped_argv(
     'fd'
   """
   return _fd_x_stat_argv(
-      find_bin=find_bin,
-      stat_bin=stat_bin,
-      search_path=host_dir,
-      min_depth=1,
-      max_depth=1,
-      printf_format=STAT_PRINTF_FORMAT,
+    find_bin=find_bin,
+    stat_bin=stat_bin,
+    search_path=host_dir,
+    min_depth=1,
+    max_depth=1,
+    printf_format=STAT_PRINTF_FORMAT,
   )
 
 
-def parse_find_printf_records(data: bytes) -> List[FindStatsRecord]:
+def parse_find_printf_records(data: bytes) -> list[FindStatsRecord]:
   """
   Parse NUL records produced by GNU ``stat --printf`` with
   ``STAT_PRINTF_FORMAT``.
@@ -424,14 +432,17 @@ def iter_find_printf_records_streaming(
   Examples:
     >>> recs = list(
     ...   iter_find_printf_records_streaming(
-    ...     [b"/a\\x001.0\\x001\\x002\\x00", b"/b\\x002.0\\x003\\x004\\x00"]
+    ...     [
+    ...       b"/a\\x001.0\\x001\\x002\\x00",
+    ...       b"/b\\x002.0\\x003\\x004\\x00",
+    ...     ]
     ...   )
     ... )
     >>> [r.path for r in recs]
     ['/a', '/b']
   """
   buf = b""
-  fields: List[bytes] = []
+  fields: list[bytes] = []
   index = 0
   for chunk in chunks:
     if chunk:
@@ -453,34 +464,32 @@ def iter_find_printf_records_streaming(
         inode = int(inode_b)
       except (ValueError, TypeError, UnicodeDecodeError) as exc:
         raise FindStatsDiscoveryError(
-            "invalid fd -X stat record at index %d: %s" % (index, exc)
+          "invalid fd -X stat record at index %d: %s" % (index, exc)
         ) from exc
       index += 1
-      yield FindStatsRecord(
-          path=path, mtime=mtime, size=size, inode=inode
-      )
+      yield FindStatsRecord(path=path, mtime=mtime, size=size, inode=inode)
   if fields or buf:
     raise FindStatsDiscoveryError(
-        "fd -X stat record stream length is not a multiple of 4 fields "
-        "(got %d leftover tokens, %d leftover bytes)"
-        % (len(fields) + (1 if buf else 0), len(buf))
+      "fd -X stat record stream length is not a multiple of 4 fields "
+      "(got %d leftover tokens, %d leftover bytes)"
+      % (len(fields) + (1 if buf else 0), len(buf))
     )
 
 
-def parse_current_inode_records(data: bytes) -> Dict[str, int]:
+def parse_current_inode_records(data: bytes) -> dict[str, int]:
   """
   Map host_dir → inode for ``current`` files (pathinode).
-  
+
   Args:
     data (bytes): Data.
-  
+
   Returns:
     Dict[str, int]: Dict[str, int] produced by this call.
-  
+
   Raises:
     FindStatsDiscoveryError: Raised when ``parse_current_inode_records`` hits
     a ``FindStatsDiscoveryError`` failure path.
-  
+
   Examples:
     >>> parse_current_inode_records(None)  # doctest: +SKIP
   """
@@ -491,9 +500,9 @@ def parse_current_inode_records(data: bytes) -> Dict[str, int]:
     parts.pop()
   if len(parts) % 2 != 0:
     raise FindStatsDiscoveryError(
-        "fd -X stat current inode stream length is not a multiple of 2 fields"
+      "fd -X stat current inode stream length is not a multiple of 2 fields"
     )
-  out: Dict[str, int] = {}
+  out: dict[str, int] = {}
   for i in range(0, len(parts), 2):
     path = os.fsdecode(parts[i])
     inode = int(parts[i + 1])
@@ -504,13 +513,13 @@ def parse_current_inode_records(data: bytes) -> Dict[str, int]:
 def _stderr_is_only_fnctl_races(stderr: str) -> bool:
   """
   Internal helper to handle stderr is only fnctl races.
-  
+
   Args:
     stderr (str): String for stderr.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> _stderr_is_only_fnctl_races("x")  # doctest: +SKIP
   """
@@ -519,7 +528,7 @@ def _stderr_is_only_fnctl_races(stderr: str) -> bool:
     return True
   for line in lines:
     if "fnctl.lock" in line and (
-        "No such file or directory" in line or "cannot" in line.lower()
+      "No such file or directory" in line or "cannot" in line.lower()
     ):
       continue
     if _FNCTL_LOCK_ENOENT_RE.search(line):
@@ -547,12 +556,12 @@ def _resolve_named_binary(candidate: str, *, kind: str) -> str:
   """
   if os.path.isabs(candidate) or os.sep in candidate:
     if not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
-      raise FindStatsDiscoveryError("%s binary not found: %s" % (kind, candidate))
+      raise FindStatsDiscoveryError(f"{kind} binary not found: {candidate}")
     return candidate
   resolved = shutil.which(candidate)
   if not resolved:
     raise FindStatsDiscoveryError(
-        "%s binary not found on PATH: %s" % (kind, candidate)
+      f"{kind} binary not found on PATH: {candidate}"
     )
   return resolved
 
@@ -573,18 +582,17 @@ def _gnu_stat_supports_printf(stat_bin: str) -> bool:
   """
   try:
     proc = subprocess.run(
-        [stat_bin, "--printf=%n", stat_bin],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-        timeout=5,
+      [stat_bin, "--printf=%n", stat_bin],
+      capture_output=True,
+      check=False,
+      timeout=5,
     )
-  except (OSError, subprocess.TimeoutExpired):
+  except OSError, subprocess.TimeoutExpired:
     return False
   return proc.returncode == 0 and bool(proc.stdout)
 
 
-def _resolve_find_bin(find_bin: Optional[str] = None) -> str:
+def _resolve_find_bin(find_bin: str | None = None) -> str:
   """
   Resolve the archive walker (``fdfind`` then Homebrew ``fd``). Never GNU find.
 
@@ -614,12 +622,12 @@ def _resolve_find_bin(find_bin: Optional[str] = None) -> str:
     if resolved:
       return resolved
   raise FindStatsDiscoveryError(
-      "fd/fdfind not found on PATH (install fd-find in the image or fd on "
-      "the host; required for stats discovery)"
+    "fd/fdfind not found on PATH (install fd-find in the image or fd on "
+    "the host; required for stats discovery)"
   )
 
 
-def _resolve_stat_bin(stat_bin: Optional[str] = None) -> str:
+def _resolve_stat_bin(stat_bin: str | None = None) -> str:
   """
   Resolve GNU ``stat`` (prefer Homebrew ``gstat``, then ``stat``).
 
@@ -635,10 +643,7 @@ def _resolve_stat_bin(stat_bin: Optional[str] = None) -> str:
   Examples:
     >>> _resolve_stat_bin(None)  # doctest: +SKIP
   """
-  if stat_bin:
-    candidates = [stat_bin]
-  else:
-    candidates = ["gstat", "stat"]
+  candidates = [stat_bin] if stat_bin else ["gstat", "stat"]
   last_error = "GNU stat --printf not found"
   for name in candidates:
     try:
@@ -649,8 +654,7 @@ def _resolve_stat_bin(stat_bin: Optional[str] = None) -> str:
     if _gnu_stat_supports_printf(resolved):
       return resolved
     last_error = (
-        "GNU stat --printf is required for stats discovery (rejected %s)"
-        % resolved
+      f"GNU stat --printf is required for stats discovery (rejected {resolved})"
     )
   raise FindStatsDiscoveryError(last_error)
 
@@ -662,53 +666,52 @@ def _run_find_capture(
 ) -> bytes:
   """
   Internal helper to run the find capture.
-  
+
   Args:
     argv (Sequence[str]): Sequence for argv.
     allow_fnctl_race_exit (bool): Boolean flag for allow fnctl race exit.
-  
+
   Returns:
     bytes: bytes produced by this call.
-  
+
   Raises:
     FindStatsDiscoveryError: Raised when ``_run_find_capture`` hits a
     ``FindStatsDiscoveryError`` failure path.
-  
+
   Examples:
     >>> _run_find_capture([], True)  # doctest: +SKIP
   """
   try:
     proc = subprocess.run(
-        list(argv),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
+      list(argv),
+      capture_output=True,
+      check=False,
     )
   except FileNotFoundError as exc:
     raise FindStatsDiscoveryError(
-        "fd/fdfind or GNU stat not found (required for stats discovery)"
+      "fd/fdfind or GNU stat not found (required for stats discovery)"
     ) from exc
   stderr_text = (proc.stderr or b"").decode("utf-8", errors="replace")
   if proc.returncode == 0:
     return proc.stdout or b""
   if (
-      allow_fnctl_race_exit
-      and proc.returncode == 1
-      and _stderr_is_only_fnctl_races(stderr_text)
+    allow_fnctl_race_exit
+    and proc.returncode == 1
+    and _stderr_is_only_fnctl_races(stderr_text)
   ):
     return proc.stdout or b""
   raise FindStatsDiscoveryError(
-      "fd/fdfind -X stat failed exit=%d: %s"
-      % (proc.returncode, stderr_text.strip() or "(no stderr)")
+    "fd/fdfind -X stat failed exit=%d: %s"
+    % (proc.returncode, stderr_text.strip() or "(no stderr)")
   )
 
 
 def iter_find_stats_stdout_chunks(
   archive_dir: str,
   *,
-  mtime_days: Optional[int] = None,
-  find_bin: Optional[str] = None,
-  stat_bin: Optional[str] = None,
+  mtime_days: int | None = None,
+  find_bin: str | None = None,
+  stat_bin: str | None = None,
   chunk_size: int = 65536,
 ) -> Iterator[bytes]:
   """
@@ -743,23 +746,23 @@ def iter_find_stats_stdout_chunks(
   bin_path = _resolve_find_bin(find_bin)
   stat_path = _resolve_stat_bin(stat_bin)
   argv = build_find_stats_argv(
-      archive_dir,
-      mtime_days=mtime_days,
-      find_bin=bin_path,
-      stat_bin=stat_path,
+    archive_dir,
+    mtime_days=mtime_days,
+    find_bin=bin_path,
+    stat_bin=stat_path,
   )
   read_n = max(1, int(chunk_size))
   stderr_file = tempfile.TemporaryFile()
   try:
     proc = subprocess.Popen(
-        list(argv),
-        stdout=subprocess.PIPE,
-        stderr=stderr_file,
+      list(argv),
+      stdout=subprocess.PIPE,
+      stderr=stderr_file,
     )
   except FileNotFoundError as exc:
     stderr_file.close()
     raise FindStatsDiscoveryError(
-        "fd/fdfind or GNU stat not found (required for stats discovery)"
+      "fd/fdfind or GNU stat not found (required for stats discovery)"
     ) from exc
   assert proc.stdout is not None
   last_progress = time.monotonic()
@@ -776,16 +779,18 @@ def iter_find_stats_stdout_chunks(
       now = time.monotonic()
       # Unit progress = bytes streamed from walker stdout.
       last_progress = now
-      from hpcperfstats.dbload.lib.sync_timedb_progress_io import log_progress_sop
+      from hpcperfstats.dbload.lib.sync_timedb_progress_io import (
+        log_progress_sop,
+      )
 
       log_progress_sop(
-          stage="find_stats",
-          path=str(archive_dir),
-          advancing=True,
-          idle_s=0.0,
-          last_progress=last_progress,
-          metric="bytes",
-          force=False,
+        stage="find_stats",
+        path=str(archive_dir),
+        advancing=True,
+        idle_s=0.0,
+        last_progress=last_progress,
+        metric="bytes",
+        force=False,
       )
       yield chunk
       if idle_s > 0.0 and (now - last_progress) >= idle_s:
@@ -797,15 +802,11 @@ def iter_find_stats_stdout_chunks(
       # stdout PIPE; wait() then deadlocks. Close+kill only when we did not
       # reach EOF so a normal walk still returns its real exit status.
       if not finished_stdout:
-        try:
+        with contextlib.suppress(Exception):
           proc.stdout.close()
-        except Exception:
-          pass
         if proc.poll() is None:
-          try:
+          with contextlib.suppress(Exception):
             proc.kill()
-          except Exception:
-            pass
       rc = proc.wait()
       stderr_file.seek(0)
       stderr_b = stderr_file.read()
@@ -817,19 +818,19 @@ def iter_find_stats_stdout_chunks(
   if rc == 1 and _stderr_is_only_fnctl_races(stderr_text):
     return
   raise FindStatsDiscoveryError(
-      "fd/fdfind -X stat failed exit=%d: %s"
-      % (rc, stderr_text.strip() or "(no stderr)")
+    "fd/fdfind -X stat failed exit=%d: %s"
+    % (rc, stderr_text.strip() or "(no stderr)")
   )
 
 
 def run_find_stats(
   archive_dir: str,
   *,
-  mtime_days: Optional[int] = None,
-  find_bin: Optional[str] = None,
-  stat_bin: Optional[str] = None,
-  log_fn: Optional[Callable[..., None]] = None,
-) -> List[FindStatsRecord]:
+  mtime_days: int | None = None,
+  find_bin: str | None = None,
+  stat_bin: str | None = None,
+  log_fn: Callable[..., None] | None = None,
+) -> list[FindStatsRecord]:
   """
   Run fd ``-X`` GNU stat and return parsed stats records (fail-closed).
 
@@ -855,23 +856,23 @@ def run_find_stats(
   bin_path = _resolve_find_bin(find_bin)
   stat_path = _resolve_stat_bin(stat_bin)
   argv = build_find_stats_argv(
-      archive_dir,
-      mtime_days=mtime_days,
-      find_bin=bin_path,
-      stat_bin=stat_path,
+    archive_dir,
+    mtime_days=mtime_days,
+    find_bin=bin_path,
+    stat_bin=stat_path,
   )
   raw = _run_find_capture(argv)
   records = parse_find_printf_records(raw)
   update_fingerprint_caches_from_records(records)
   if log_fn is not None:
     log_fn(
-        "find_stats paths=%d elapsed_s=%.3f mtime_days=%s"
-        % (
-            len(records),
-            time.monotonic() - t0,
-            "None" if mtime_days is None else str(int(mtime_days)),
-        ),
-        flush=True,
+      "find_stats paths=%d elapsed_s=%.3f mtime_days=%s"
+      % (
+        len(records),
+        time.monotonic() - t0,
+        "None" if mtime_days is None else str(int(mtime_days)),
+      ),
+      flush=True,
     )
   return records
 
@@ -879,9 +880,9 @@ def run_find_stats(
 def load_current_inode_map(
   archive_dir: str,
   *,
-  find_bin: Optional[str] = None,
-  stat_bin: Optional[str] = None,
-) -> Dict[str, int]:
+  find_bin: str | None = None,
+  stat_bin: str | None = None,
+) -> dict[str, int]:
   """
   Return host_dir → inode for each host ``current`` file via fd ``-X`` stat.
 
@@ -901,7 +902,9 @@ def load_current_inode_map(
   bin_path = _resolve_find_bin(find_bin)
   stat_path = _resolve_stat_bin(stat_bin)
   argv = build_find_current_inode_argv(
-      archive_dir, find_bin=bin_path, stat_bin=stat_path,
+    archive_dir,
+    find_bin=bin_path,
+    stat_bin=stat_path,
   )
   raw = _run_find_capture(argv, allow_fnctl_race_exit=True)
   return parse_current_inode_records(raw)
@@ -910,17 +913,17 @@ def load_current_inode_map(
 def _is_lock_name(name: str) -> bool:
   """
   Internal helper to check if lock name.
-  
+
   Args:
     name (str): String for name.
-  
+
   Returns:
     bool: True or False for this check.
-  
+
   Examples:
     >>> _is_lock_name("x")  # doctest: +SKIP
   """
-  return name.endswith(LOCK_SUFFIX) or name.endswith(".lock")
+  return name.endswith((LOCK_SUFFIX, ".lock"))
 
 
 def filter_and_sort_find_records(
@@ -928,13 +931,13 @@ def filter_and_sort_find_records(
   host_name_ext: str,
   startdate: Any,
   enddate: Any,
-  current_inodes: Optional[Dict[str, int]] = None,
+  current_inodes: dict[str, int] | None = None,
   *,
   newest_first: bool = False,
-) -> List[FindStatsRecord]:
+) -> list[FindStatsRecord]:
   """
   Filter find records by host suffix / locks / active inode / date; sort.
-  
+
   Args:
     records (Iterable[FindStatsRecord]): Records.
     host_name_ext (str): String for host name ext.
@@ -945,10 +948,10 @@ def filter_and_sort_find_records(
     current_inodes (Optional[Dict[str, int]]): Current inodes, or None when
     absent.
     newest_first (bool): Boolean flag for newest first.
-  
+
   Returns:
     List[FindStatsRecord]: List[FindStatsRecord] produced by this call.
-  
+
   Examples:
     >>> filter_and_sort_find_records(None, "x", None, None, None, True)
   """
@@ -956,7 +959,7 @@ def filter_and_sort_find_records(
   if not suffix:
     return []
   current_inodes = current_inodes or {}
-  selected: List[Tuple[FindStatsRecord, Optional[int]]] = []
+  selected: list[tuple[FindStatsRecord, int | None]] = []
   for rec in records:
     path = rec.path
     name = os.path.basename(path)
@@ -966,7 +969,7 @@ def filter_and_sort_find_records(
       continue
     if not host_base.endswith(suffix):
       continue
-    if name.startswith(".") or name.startswith("current"):
+    if name.startswith((".", "current")):
       continue
     if _is_lock_name(name):
       continue
@@ -975,12 +978,12 @@ def filter_and_sort_find_records(
 
     fdate_mtime = datetime.fromtimestamp(int(rec.mtime))
     fdate_name = None
-    sort_epoch: Optional[int] = None
+    sort_epoch: int | None = None
     try:
       fname_epoch = int(name)
       fdate_name = datetime.fromtimestamp(fname_epoch)
       sort_epoch = fname_epoch
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
       sort_epoch = int(rec.mtime)
 
     if startdate in ("all", "backlog", "current"):
@@ -990,14 +993,14 @@ def filter_and_sort_find_records(
     def _in_range(ts: Any) -> Any:
       """
       Internal helper to handle in range.
-      
+
       Args:
         ts (Any): Time value (``datetime``, ISO string, sentinel, or
         ``None``).
-      
+
       Returns:
         Any: Value produced by this call (type depends on inputs).
-      
+
       Examples:
         >>> _in_range(None)  # doctest: +SKIP
       """
@@ -1021,14 +1024,14 @@ def discover_stats_records(
   enddate: Any,
   host_name_ext: str,
   *,
-  mtime_days: Optional[int] = None,
+  mtime_days: int | None = None,
   newest_first: bool = False,
-  find_bin: Optional[str] = None,
-  log_fn: Optional[Callable[..., None]] = None,
-) -> List[FindStatsRecord]:
+  find_bin: str | None = None,
+  log_fn: Callable[..., None] | None = None,
+) -> list[FindStatsRecord]:
   """
   Full discovery pipeline: find → current inode map → filter/sort.
-  
+
   Args:
     archive_dir (str): String for archive dir.
     startdate (Any): Time value (``datetime``, ISO string, sentinel, or
@@ -1040,27 +1043,27 @@ def discover_stats_records(
     newest_first (bool): Boolean flag for newest first.
     find_bin (Optional[str]): Find bin, or None when absent.
     log_fn (Optional[Callable[..., None]]): Log fn, or None when absent.
-  
+
   Returns:
     List[FindStatsRecord]: List[FindStatsRecord] produced by this call.
-  
+
   Examples:
     >>> discover_stats_records("x", None, None, "x", None, True, None, None)
   """
   records = run_find_stats(
-      archive_dir,
-      mtime_days=mtime_days,
-      find_bin=find_bin,
-      log_fn=log_fn,
+    archive_dir,
+    mtime_days=mtime_days,
+    find_bin=find_bin,
+    log_fn=log_fn,
   )
   current_inodes = load_current_inode_map(archive_dir, find_bin=find_bin)
   return filter_and_sort_find_records(
-      records,
-      host_name_ext,
-      startdate,
-      enddate,
-      current_inodes,
-      newest_first=newest_first,
+    records,
+    host_name_ext,
+    startdate,
+    enddate,
+    current_inodes,
+    newest_first=newest_first,
   )
 
 
@@ -1069,29 +1072,29 @@ JID_NEIGHBOR_FILES = 1
 
 
 def expand_sorted_records_with_window_neighbors(
-  sorted_items: Sequence[Tuple[FindStatsRecord, int]],
+  sorted_items: Sequence[tuple[FindStatsRecord, int]],
   window_start: datetime,
   window_end: datetime,
   *,
   neighbor_files: int = JID_NEIGHBOR_FILES,
-) -> List[FindStatsRecord]:
+) -> list[FindStatsRecord]:
   """
   Keep in-window records plus ±N neighbors from an epoch-sorted host list.
-  
+
   ``sorted_items`` must already be sorted ascending by epoch. When the core
   (in-window) set is empty, take the last file before ``window_start`` and the
   first file after ``window_end`` (when present).
-  
+
   Args:
     sorted_items (Sequence[Tuple[FindStatsRecord, int]]): Sequence for sorted
     items.
     window_start (datetime): Window start.
     window_end (datetime): Window end.
     neighbor_files (int): Integer value for neighbor files.
-  
+
   Returns:
     List[FindStatsRecord]: List[FindStatsRecord] produced by this call.
-  
+
   Examples:
     >>> expand_sorted_records_with_window_neighbors([], None, None, 0)
   """
@@ -1101,13 +1104,12 @@ def expand_sorted_records_with_window_neighbors(
   try:
     start_ts = float(window_start.timestamp())
     end_ts = float(window_end.timestamp())
-  except (AttributeError, OSError, OverflowError, TypeError, ValueError):
+  except AttributeError, OSError, OverflowError, TypeError, ValueError:
     return []
 
   epochs = [int(ep) for _, ep in sorted_items]
   core_idxs = [
-      i for i, ep in enumerate(epochs)
-      if start_ts <= float(ep) <= end_ts
+    i for i, ep in enumerate(epochs) if start_ts <= float(ep) <= end_ts
   ]
   take: set[int] = set()
   if core_idxs:
@@ -1120,8 +1122,8 @@ def expand_sorted_records_with_window_neighbors(
       if hi + k < len(sorted_items):
         take.add(hi + k)
   else:
-    last_before: Optional[int] = None
-    first_after: Optional[int] = None
+    last_before: int | None = None
+    first_after: int | None = None
     for i, ep in enumerate(epochs):
       if float(ep) < start_ts:
         last_before = i
@@ -1141,18 +1143,18 @@ def filter_host_scoped_window_records(
   host_fqdns: Sequence[str],
   window_start: datetime,
   window_end: datetime,
-  current_inodes: Optional[Dict[str, int]] = None,
+  current_inodes: dict[str, int] | None = None,
   *,
   neighbor_files: int = JID_NEIGHBOR_FILES,
-) -> List[FindStatsRecord]:
+) -> list[FindStatsRecord]:
   """
   Filter records to allowed hosts; keep padded window plus ±N neighbors.
-  
+
   Skips locks, ``current*``, dotfiles, and live ``current`` inodes (same as
   continuous sync). Epoch basename is preferred; mtime is the fallback clock.
   Neighbor expansion runs **independently per host** on that host's
   epoch-sorted eligible list.
-  
+
   Args:
     records (Iterable[FindStatsRecord]): Records.
     host_fqdns (Sequence[str]): Sequence for host fqdns.
@@ -1161,22 +1163,18 @@ def filter_host_scoped_window_records(
     current_inodes (Optional[Dict[str, int]]): Current inodes, or None when
     absent.
     neighbor_files (int): Integer value for neighbor files.
-  
+
   Returns:
     List[FindStatsRecord]: List[FindStatsRecord] produced by this call.
-  
+
   Examples:
     >>> filter_host_scoped_window_records(None, [], None, None, None, 0)
   """
-  allow = {
-      str(h).strip()
-      for h in (host_fqdns or ())
-      if str(h or "").strip()
-  }
+  allow = {str(h).strip() for h in (host_fqdns or ()) if str(h or "").strip()}
   if not allow:
     return []
   current_inodes = current_inodes or {}
-  by_host: Dict[str, List[Tuple[FindStatsRecord, int]]] = {}
+  by_host: dict[str, list[tuple[FindStatsRecord, int]]] = {}
   for rec in records:
     path = rec.path
     name = os.path.basename(path)
@@ -1186,7 +1184,7 @@ def filter_host_scoped_window_records(
       continue
     if host_base not in allow:
       continue
-    if name.startswith(".") or name.startswith("current"):
+    if name.startswith((".", "current")):
       continue
     if _is_lock_name(name):
       continue
@@ -1195,24 +1193,24 @@ def filter_host_scoped_window_records(
 
     try:
       sort_epoch = int(name)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
       sort_epoch = int(rec.mtime)
     by_host.setdefault(host_base, []).append((rec, sort_epoch))
 
-  selected: List[Tuple[FindStatsRecord, int]] = []
+  selected: list[tuple[FindStatsRecord, int]] = []
   for host_base in by_host:
     items = by_host[host_base]
     items.sort(key=lambda item: item[1])
     for rec in expand_sorted_records_with_window_neighbors(
-        items,
-        window_start,
-        window_end,
-        neighbor_files=neighbor_files,
+      items,
+      window_start,
+      window_end,
+      neighbor_files=neighbor_files,
     ):
       name = os.path.basename(rec.path)
       try:
         ep = int(name)
-      except (TypeError, ValueError):
+      except TypeError, ValueError:
         ep = int(rec.mtime)
       selected.append((rec, ep))
 
@@ -1226,15 +1224,15 @@ def discover_host_scoped_stats_records(
   window_start: datetime,
   window_end: datetime,
   *,
-  find_bin: Optional[str] = None,
-  log_fn: Optional[Callable[..., None]] = None,
-) -> List[FindStatsRecord]:
+  find_bin: str | None = None,
+  log_fn: Callable[..., None] | None = None,
+) -> list[FindStatsRecord]:
   """
   Discover stats under named host dirs only (no full-archive walk).
 
   Runs fd ``-X`` GNU stat per existing ``{archive_dir}/{fqdn}`` directory.
   Missing host dirs are skipped. Does not walk unrelated hosts.
-  
+
   Args:
     archive_dir (str): String for archive dir.
     host_fqdns (Sequence[str]): Sequence for host fqdns.
@@ -1242,55 +1240,53 @@ def discover_host_scoped_stats_records(
     window_end (datetime): Window end.
     find_bin (Optional[str]): Find bin, or None when absent.
     log_fn (Optional[Callable[..., None]]): Log fn, or None when absent.
-  
+
   Returns:
     List[FindStatsRecord]: List[FindStatsRecord] produced by this call.
-  
+
   Examples:
     >>> discover_host_scoped_stats_records("x", [], None, None, None, None)
   """
   if not archive_dir or not os.path.isdir(archive_dir):
     return []
-  hosts = [
-      str(h).strip()
-      for h in (host_fqdns or ())
-      if str(h or "").strip()
-  ]
+  hosts = [str(h).strip() for h in (host_fqdns or ()) if str(h or "").strip()]
   if not hosts:
     return []
   bin_path = _resolve_find_bin(find_bin)
   stat_path = _resolve_stat_bin(None)
-  records: List[FindStatsRecord] = []
+  records: list[FindStatsRecord] = []
   for host in hosts:
     host_dir = os.path.join(archive_dir, host)
     if not os.path.isdir(host_dir):
       if log_fn is not None:
         log_fn(
-            "jid discover: skip missing host_dir=%s" % host_dir,
-            flush=True,
+          f"jid discover: skip missing host_dir={host_dir}",
+          flush=True,
         )
       continue
     argv = build_find_host_scoped_argv(
-        host_dir, find_bin=bin_path, stat_bin=stat_path,
+      host_dir,
+      find_bin=bin_path,
+      stat_bin=stat_path,
     )
     t0 = time.monotonic()
     raw = _run_find_capture(argv, allow_fnctl_race_exit=True)
     host_recs = parse_find_printf_records(raw)
     if log_fn is not None:
       log_fn(
-          "jid discover: host=%s find_records=%d elapsed_s=%.3f"
-          % (host, len(host_recs), time.monotonic() - t0),
-          flush=True,
+        "jid discover: host=%s find_records=%d elapsed_s=%.3f"
+        % (host, len(host_recs), time.monotonic() - t0),
+        flush=True,
       )
     records.extend(host_recs)
 
   current_inodes = load_current_inode_map(archive_dir, find_bin=bin_path)
   filtered = filter_host_scoped_window_records(
-      records,
-      hosts,
-      window_start,
-      window_end,
-      current_inodes,
+    records,
+    hosts,
+    window_start,
+    window_end,
+    current_inodes,
   )
   update_fingerprint_caches_from_records(filtered)
   return filtered
@@ -1302,12 +1298,12 @@ def collect_host_scoped_stats_paths(
   window_start: datetime,
   window_end: datetime,
   *,
-  find_bin: Optional[str] = None,
-  log_fn: Optional[Callable[..., None]] = None,
-) -> List[str]:
+  find_bin: str | None = None,
+  log_fn: Callable[..., None] | None = None,
+) -> list[str]:
   """
   Return host-scoped stats paths in padded window plus ±1 file neighbors.
-  
+
   Args:
     archive_dir (str): String for archive dir.
     host_fqdns (Sequence[str]): Sequence for host fqdns.
@@ -1315,21 +1311,21 @@ def collect_host_scoped_stats_paths(
     window_end (datetime): Window end.
     find_bin (Optional[str]): Find bin, or None when absent.
     log_fn (Optional[Callable[..., None]]): Log fn, or None when absent.
-  
+
   Returns:
     List[str]: List[str] produced by this call.
-  
+
   Examples:
     >>> collect_host_scoped_stats_paths("x", [], None, None, None, None)
   """
   return [
-      rec.path
-      for rec in discover_host_scoped_stats_records(
-          archive_dir,
-          host_fqdns,
-          window_start,
-          window_end,
-          find_bin=find_bin,
-          log_fn=log_fn,
-      )
+    rec.path
+    for rec in discover_host_scoped_stats_records(
+      archive_dir,
+      host_fqdns,
+      window_start,
+      window_end,
+      find_bin=find_bin,
+      log_fn=log_fn,
+    )
   ]

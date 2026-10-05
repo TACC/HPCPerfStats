@@ -1,4 +1,5 @@
 """Tests for host-affine listend archive thread pool dispatch and FIFO."""
+
 from __future__ import annotations
 
 import threading
@@ -38,7 +39,9 @@ class _FakeConnection:
 def archive_pool_env(tmp_path, monkeypatch):
   import hpcperfstats.listend as listend
 
-  monkeypatch.setattr(listend.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  monkeypatch.setattr(
+    listend.cfg, "get_archive_dir_path", lambda: str(tmp_path)
+  )
   listend.stop_listend_archive_pool()
   channel = _FakeChannel()
   conn = _FakeConnection()
@@ -50,7 +53,9 @@ def archive_pool_env(tmp_path, monkeypatch):
 
 
 def test_host_affine_archive_index_stable():
-  from hpcperfstats.dbload.lib.listend_db_ingest import host_affine_worker_index
+  from hpcperfstats.dbload.lib.listend_db_ingest import (
+    host_affine_worker_index,
+  )
 
   a = host_affine_worker_index("c001.example.edu", 8)
   b = host_affine_worker_index("c001.example.edu", 8)
@@ -59,7 +64,7 @@ def test_host_affine_archive_index_stable():
 
 
 def test_same_host_fifo_on_archive_worker(archive_pool_env, monkeypatch):
-  listend, channel, tmp_path = archive_pool_env
+  listend, channel, _tmp_path = archive_pool_env
   order = []
   order_lock = threading.Lock()
   real_append = listend.append_monitor_payload_to_archive
@@ -82,8 +87,8 @@ def test_same_host_fifo_on_archive_worker(archive_pool_env, monkeypatch):
 
   monkeypatch.setattr(listend, "append_monitor_payload_to_archive", slow_append)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
-      lambda *a, **k: True,
+    "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
+    lambda *a, **k: True,
   )
 
   body1 = b"1710000001.0 1 samehost.example.com x\n"
@@ -95,7 +100,9 @@ def test_same_host_fifo_on_archive_worker(archive_pool_env, monkeypatch):
   while time.time() < deadline and len(channel.acked) < 2:
     time.sleep(0.01)
   assert channel.acked == [1, 2]
-  starts = [t for t in order if t[0] == "start" and t[1] == "samehost.example.com"]
+  starts = [
+    t for t in order if t[0] == "start" and t[1] == "samehost.example.com"
+  ]
   assert [s[2] for s in starts] == ["1710000001.0", "1710000002.0"]
 
 
@@ -108,19 +115,25 @@ def test_different_hosts_can_archive_in_parallel(archive_pool_env, monkeypatch):
     barrier.wait()
     return real_append(message)
 
-  monkeypatch.setattr(listend, "append_monitor_payload_to_archive", barrier_append)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
-      lambda *a, **k: True,
+    listend, "append_monitor_payload_to_archive", barrier_append
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
+    lambda *a, **k: True,
   )
 
   listend.on_message(
-      channel, _FakeMethodFrame(10), None,
-      b"1710000001.0 1 host-a.example.com x\n",
+    channel,
+    _FakeMethodFrame(10),
+    None,
+    b"1710000001.0 1 host-a.example.com x\n",
   )
   listend.on_message(
-      channel, _FakeMethodFrame(11), None,
-      b"1710000001.0 1 host-b.example.com x\n",
+    channel,
+    _FakeMethodFrame(11),
+    None,
+    b"1710000001.0 1 host-b.example.com x\n",
   )
 
   deadline = time.time() + 5.0
@@ -136,17 +149,24 @@ def test_ack_only_after_archive_success(archive_pool_env, monkeypatch):
   def tracking_append(message):
     archived.append(message)
     return listend.ArchiveAppendResult(
-        host="h", path="/tmp/x", offset=0, length=1,
+      host="h",
+      path="/tmp/x",
+      offset=0,
+      length=1,
     )
 
-  monkeypatch.setattr(listend, "append_monitor_payload_to_archive", tracking_append)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
-      lambda *a, **k: True,
+    listend, "append_monitor_payload_to_archive", tracking_append
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
+    lambda *a, **k: True,
   )
   listend.on_message(
-      channel, _FakeMethodFrame(99), None,
-      b"1710000001.0 1 myhost.example.com x\n",
+    channel,
+    _FakeMethodFrame(99),
+    None,
+    b"1710000001.0 1 myhost.example.com x\n",
   )
   deadline = time.time() + 5.0
   while time.time() < deadline and not channel.acked:
@@ -164,8 +184,10 @@ def test_archive_io_error_nacks(archive_pool_env, monkeypatch):
 
   monkeypatch.setattr(listend, "append_monitor_payload_to_archive", boom)
   listend.on_message(
-      channel, _FakeMethodFrame(7), None,
-      b"1710000001.0 1 myhost.example.com x\n",
+    channel,
+    _FakeMethodFrame(7),
+    None,
+    b"1710000001.0 1 myhost.example.com x\n",
   )
   deadline = time.time() + 5.0
   while time.time() < deadline and not channel.nacked:
@@ -184,12 +206,14 @@ def test_drop_mode_submit_not_on_consume_thread(archive_pool_env, monkeypatch):
     return True
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
-      capture_submit,
+    "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
+    capture_submit,
   )
   listend.on_message(
-      channel, _FakeMethodFrame(5), None,
-      b"1710000001.0 1 myhost.example.com x\n",
+    channel,
+    _FakeMethodFrame(5),
+    None,
+    b"1710000001.0 1 myhost.example.com x\n",
   )
   deadline = time.time() + 5.0
   while time.time() < deadline and not channel.acked:
@@ -207,7 +231,10 @@ def test_ack_scheduled_before_db_submit(archive_pool_env, monkeypatch):
   def tracking_append(message):
     order.append("archive")
     return listend.ArchiveAppendResult(
-        host="h", path="/tmp/x", offset=0, length=1,
+      host="h",
+      path="/tmp/x",
+      offset=0,
+      length=1,
     )
 
   real_ack = listend._threadsafe_basic_ack
@@ -220,15 +247,19 @@ def test_ack_scheduled_before_db_submit(archive_pool_env, monkeypatch):
     order.append("submit")
     return True
 
-  monkeypatch.setattr(listend, "append_monitor_payload_to_archive", tracking_append)
+  monkeypatch.setattr(
+    listend, "append_monitor_payload_to_archive", tracking_append
+  )
   monkeypatch.setattr(listend, "_threadsafe_basic_ack", tracking_ack)
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
-      tracking_submit,
+    "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
+    tracking_submit,
   )
   listend.on_message(
-      channel, _FakeMethodFrame(42), None,
-      b"1710000001.0 1 myhost.example.com x\n",
+    channel,
+    _FakeMethodFrame(42),
+    None,
+    b"1710000001.0 1 myhost.example.com x\n",
   )
   deadline = time.time() + 5.0
   while time.time() < deadline and "submit" not in order:
@@ -266,8 +297,8 @@ def test_archive_thread_title_role(monkeypatch):
     return "ok"
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.process_title.set_daemon_thread_title",
-      capture_title,
+    "hpcperfstats.dbload.lib.process_title.set_daemon_thread_title",
+    capture_title,
   )
   listend.stop_listend_archive_pool()
   listend.start_listend_archive_pool(n_threads=2)
@@ -289,8 +320,8 @@ def test_archive_submit_skips_full_decode(archive_pool_env, monkeypatch):
     return True
 
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
-      capture_submit,
+    "hpcperfstats.dbload.lib.listend_db_ingest.submit_listend_db_ingest",
+    capture_submit,
   )
   body = b"1710000001.0 1 myhost.example.com x\n"
   listend.on_message(channel, _FakeMethodFrame(11), None, body)
@@ -303,7 +334,7 @@ def test_archive_submit_skips_full_decode(archive_pool_env, monkeypatch):
   assert host == "myhost.example.com"
   assert message == ""
   assert str(kwargs.get("archive_path", "")).endswith(
-      "/myhost.example.com/current"
+    "/myhost.example.com/current"
   )
   assert kwargs.get("offset") == 0
   assert kwargs.get("length") == len(body)

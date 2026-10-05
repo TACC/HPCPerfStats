@@ -25,31 +25,31 @@ from pathlib import Path
 from types import ModuleType
 
 SIDECAR_COMPRESS_EXTENSIONS: frozenset[str] = frozenset(
-    {".js", ".mjs", ".css", ".svg", ".json", ".txt", ".xml"}
+  {".js", ".mjs", ".css", ".svg", ".json", ".txt", ".xml"}
 )
 SIDECAR_SKIP_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".br",
-        ".gz",
-        ".zst",
-        ".woff",
-        ".woff2",
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".webp",
-        ".avif",
-        ".gif",
-        ".wasm",
-        ".map",
-    }
+  {
+    ".br",
+    ".gz",
+    ".zst",
+    ".woff",
+    ".woff2",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".avif",
+    ".gif",
+    ".wasm",
+    ".map",
+  }
 )
 SIDECAR_MIN_BYTES = 256
 _SPA_HTML_PREFIXES: tuple[str, ...] = (
-    "frontend/machine/",
-    "frontend/pub/",
-    "machine/",
-    "pub/",
+  "frontend/machine/",
+  "frontend/pub/",
+  "machine/",
+  "pub/",
 )
 _DEFAULT_STATIC_ROOT = "/home/hpcperfstats/staticfiles"
 
@@ -73,14 +73,14 @@ def _load_brotli() -> ModuleType:
     import brotli
   except ImportError as exc:
     raise RuntimeError(
-        "Python brotli package is required to write static sidecars"
+      "Python brotli package is required to write static sidecars"
     ) from exc
   return brotli
 
 
 def should_write_static_sidecars(
-    rel_posix: str,
-    size_bytes: int,
+  rel_posix: str,
+  size_bytes: int,
 ) -> bool:
   """
   Return whether ``rel_posix`` under STATIC_ROOT should get sidecars.
@@ -103,7 +103,7 @@ def should_write_static_sidecars(
     return False
   normalized = rel_posix.replace("\\", "/")
   if normalized.endswith(".html") and any(
-      normalized.startswith(prefix) for prefix in _SPA_HTML_PREFIXES
+    normalized.startswith(prefix) for prefix in _SPA_HTML_PREFIXES
   ):
     return False
   ext = Path(normalized).suffix.lower()
@@ -134,8 +134,8 @@ def _sidecars_are_fresh(source: Path) -> bool:
     return False
   src_mtime = source.stat().st_mtime
   return (
-      br_path.stat().st_mtime >= src_mtime
-      and gz_path.stat().st_mtime >= src_mtime
+    br_path.stat().st_mtime >= src_mtime
+    and gz_path.stat().st_mtime >= src_mtime
   )
 
 
@@ -188,9 +188,7 @@ def compress_static_sidecars(root_dir: str | Path) -> tuple[int, int]:
         skipped += 1
         continue
       raw = entry.read_bytes()
-      Path(f"{entry}.br").write_bytes(
-          brotli_mod.compress(raw, quality=11)
-      )
+      Path(f"{entry}.br").write_bytes(brotli_mod.compress(raw, quality=11))
       Path(f"{entry}.gz").write_bytes(gzip.compress(raw, compresslevel=9))
       written += 1
   return (written, skipped)
@@ -220,10 +218,7 @@ def main(argv: list[str] | None = None) -> int:
   else:
     root = os.environ.get("STATIC_ROOT") or _DEFAULT_STATIC_ROOT
   written, skipped = compress_static_sidecars(root)
-  print(
-      f"STATIC_ROOT sidecars written={written} skipped={skipped} "
-      f"root={root}"
-  )
+  print(f"STATIC_ROOT sidecars written={written} skipped={skipped} root={root}")
   return 0
 
 

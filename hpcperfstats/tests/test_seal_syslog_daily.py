@@ -4,24 +4,24 @@ import importlib
 import tarfile
 from datetime import date
 
+
 def _write_ini(path, data_dir):
   path.write_text(
-      "[DEFAULT]\ndebug = no\nsecret_key = x\nhost_name_ext = local\n"
-      "restricted_queue_keywords =\nmachine = test\nserver = test\n"
-      "data_dir = %s\nstaff_email_domain = local\ntimezone = UTC\n"
-      "total_cores = 4\n"
-      "engine_name = django.db.backends.postgresql\n"
-      "dbname = test\nusername = u\npassword = p\nport = 5432\n"
-      "host = localhost\n"
-      "[PIPELINE]\narchive_dir = /tmp\nacct_path = /tmp\n"
-      "daily_archive_dir = /tmp\n"
-      "[RMQ]\nrmq_server = localhost\nrmq_queue = test\n"
-      "[XALT]\nxalt_engine = django.db.backends.sqlite3\nxalt_name = xalt\n"
-      "xalt_user = u\nxalt_password = p\nxalt_host = localhost\n"
-      "[OAUTH2]\nclient_id = id\nclient_key = key\n"
-      "authorize_url = http://localhost\noauth_base_url = http://localhost\n"
-      % data_dir,
-      encoding="utf-8",
+    "[DEFAULT]\ndebug = no\nsecret_key = x\nhost_name_ext = local\n"
+    "restricted_queue_keywords =\nmachine = test\nserver = test\n"
+    f"data_dir = {data_dir}\nstaff_email_domain = local\ntimezone = UTC\n"
+    "total_cores = 4\n"
+    "engine_name = django.db.backends.postgresql\n"
+    "dbname = test\nusername = u\npassword = p\nport = 5432\n"
+    "host = localhost\n"
+    "[PIPELINE]\narchive_dir = /tmp\nacct_path = /tmp\n"
+    "daily_archive_dir = /tmp\n"
+    "[RMQ]\nrmq_server = localhost\nrmq_queue = test\n"
+    "[XALT]\nxalt_engine = django.db.backends.sqlite3\nxalt_name = xalt\n"
+    "xalt_user = u\nxalt_password = p\nxalt_host = localhost\n"
+    "[OAUTH2]\nclient_id = id\nclient_key = key\n"
+    "authorize_url = http://localhost\noauth_base_url = http://localhost\n",
+    encoding="utf-8",
   )
 
 
@@ -40,6 +40,7 @@ def test_seal_day_writes_tar_and_removes_sources(tmp_path, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", str(tmp_path / "t.ini"))
   import hpcperfstats.dbload.lib.conf_parser as cfg
   import hpcperfstats.seal_syslog_daily as seal
+
   importlib.reload(cfg)
   importlib.reload(seal)
 
@@ -55,7 +56,9 @@ def test_seal_day_writes_tar_and_removes_sources(tmp_path, monkeypatch):
   assert (cur / "n3.20240103.log").exists()
 
 
-def test_seal_day_removes_leftovers_when_valid_tar_exists(tmp_path, monkeypatch):
+def test_seal_day_removes_leftovers_when_valid_tar_exists(
+  tmp_path, monkeypatch
+):
   root = tmp_path / "data"
   root.mkdir()
   _write_ini(tmp_path / "t.ini", str(root))
@@ -71,6 +74,7 @@ def test_seal_day_removes_leftovers_when_valid_tar_exists(tmp_path, monkeypatch)
   monkeypatch.setenv("HPCPERFSTATS_INI", str(tmp_path / "t.ini"))
   import hpcperfstats.dbload.lib.conf_parser as cfg
   import hpcperfstats.seal_syslog_daily as seal
+
   importlib.reload(cfg)
   importlib.reload(seal)
 

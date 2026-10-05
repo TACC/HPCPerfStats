@@ -1,4 +1,5 @@
 """job_plots artifact-only loading/ready contracts (no live host_data compute)."""
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -12,12 +13,12 @@ pytestmark = pytest.mark.django_db(databases=[])
 def _patch_plot_fingerprint_dependencies(monkeypatch):
   """Avoid DB access for fingerprint/L2 probes in databases=[] tests."""
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.api.compute_plot_input_fingerprint",
-      lambda _job, *_a, **_k: "testfp",
+    "hpcperfstats.site.lib.machine.api.compute_plot_input_fingerprint",
+    lambda _job, *_a, **_k: "testfp",
   )
   monkeypatch.setattr(
-      "hpcperfstats.site.lib.machine.api.load_cached_job_plot_entry",
-      lambda *_a, **_k: None,
+    "hpcperfstats.site.lib.machine.api.load_cached_job_plot_entry",
+    lambda *_a, **_k: None,
   )
 
 
@@ -26,8 +27,8 @@ def _patch_allow_job_visibility():
   m = MagicMock()
   m.exists.return_value = True
   return patch(
-      "hpcperfstats.site.lib.machine.api._apply_non_staff_job_visibility",
-      return_value=m,
+    "hpcperfstats.site.lib.machine.api._apply_non_staff_job_visibility",
+    return_value=m,
   )
 
 
@@ -40,13 +41,16 @@ def test_job_plots_returns_loading_when_artifacts_missing():
 
   fake_job = SimpleNamespace(jid=2945017)
 
-  with _patch_allow_job_visibility(), patch(
-      "hpcperfstats.site.lib.machine.api._require_auth", return_value=None
-  ), patch(
-      "hpcperfstats.site.lib.machine.api.cached_orm", return_value=fake_job
-  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache, patch(
-      "hpcperfstats.site.lib.machine.api._get_small_executor"
-  ) as mock_exec:
+  with (
+    _patch_allow_job_visibility(),
+    patch("hpcperfstats.site.lib.machine.api._require_auth", return_value=None),
+    patch(
+      "hpcperfstats.site.lib.machine.api.cached_orm",
+      return_value=fake_job,
+    ),
+    patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache,
+    patch("hpcperfstats.site.lib.machine.api._get_small_executor") as mock_exec,
+  ):
     mock_cache.get.return_value = None
     response = api.job_plots(request, 2945017)
 
@@ -68,18 +72,31 @@ def test_job_plots_returns_full_payload_from_l1_cache():
 
   def _cache_get(cache_key, default=None):
     if "summary_plot" in str(cache_key):
-      return {"plot_item": {"kind": "summary"}, "unavailable_reason": None}
+      return {
+        "plot_item": {"kind": "summary"},
+        "unavailable_reason": None,
+      }
     if "gpu_roofline" in str(cache_key):
-      return {"plot_item": {"kind": "gpu_roofline"}, "unavailable_reason": None}
+      return {
+        "plot_item": {"kind": "gpu_roofline"},
+        "unavailable_reason": None,
+      }
     if "roofline" in str(cache_key):
-      return {"plot_item": {"kind": "roofline"}, "unavailable_reason": None}
+      return {
+        "plot_item": {"kind": "roofline"},
+        "unavailable_reason": None,
+      }
     return default
 
-  with _patch_allow_job_visibility(), patch(
-      "hpcperfstats.site.lib.machine.api._require_auth", return_value=None
-  ), patch(
-      "hpcperfstats.site.lib.machine.api.cached_orm", return_value=fake_job
-  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache:
+  with (
+    _patch_allow_job_visibility(),
+    patch("hpcperfstats.site.lib.machine.api._require_auth", return_value=None),
+    patch(
+      "hpcperfstats.site.lib.machine.api.cached_orm",
+      return_value=fake_job,
+    ),
+    patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache,
+  ):
     mock_cache.get.side_effect = _cache_get
     response = api.job_plots(request, 2945017)
 
@@ -102,14 +119,18 @@ def test_job_plots_supports_per_plot_ready_from_l1():
 
   fake_job = SimpleNamespace(jid=2945017)
 
-  with _patch_allow_job_visibility(), patch(
-      "hpcperfstats.site.lib.machine.api._require_auth", return_value=None
-  ), patch(
-      "hpcperfstats.site.lib.machine.api.cached_orm", return_value=fake_job
-  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache:
+  with (
+    _patch_allow_job_visibility(),
+    patch("hpcperfstats.site.lib.machine.api._require_auth", return_value=None),
+    patch(
+      "hpcperfstats.site.lib.machine.api.cached_orm",
+      return_value=fake_job,
+    ),
+    patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache,
+  ):
     mock_cache.get.return_value = {
-        "plot_item": {"kind": "summary"},
-        "unavailable_reason": None,
+      "plot_item": {"kind": "summary"},
+      "unavailable_reason": None,
     }
     response = api.job_plots(request, 2945017)
 
@@ -134,18 +155,28 @@ def test_job_plots_null_l1_entry_is_terminal_ready():
   def _cache_get(cache_key, default=None):
     key = str(cache_key)
     if "summary_plot" in key:
-      return {"plot_item": {"kind": "summary"}, "unavailable_reason": None}
+      return {
+        "plot_item": {"kind": "summary"},
+        "unavailable_reason": None,
+      }
     if "gpu_roofline" in key:
-      return {"plot_item": {"kind": "gpu_roofline"}, "unavailable_reason": None}
+      return {
+        "plot_item": {"kind": "gpu_roofline"},
+        "unavailable_reason": None,
+      }
     if "roofline" in key:
       return {"plot_item": None, "unavailable_reason": reason}
     return default
 
-  with _patch_allow_job_visibility(), patch(
-      "hpcperfstats.site.lib.machine.api._require_auth", return_value=None
-  ), patch(
-      "hpcperfstats.site.lib.machine.api.cached_orm", return_value=fake_job
-  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache:
+  with (
+    _patch_allow_job_visibility(),
+    patch("hpcperfstats.site.lib.machine.api._require_auth", return_value=None),
+    patch(
+      "hpcperfstats.site.lib.machine.api.cached_orm",
+      return_value=fake_job,
+    ),
+    patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache,
+  ):
     mock_cache.get.side_effect = _cache_get
     response = api.job_plots(request, 2945017)
 
@@ -166,14 +197,19 @@ def test_job_plots_progressive_returns_200_partial_when_artifacts_missing():
 
   vis_qs = MagicMock()
   vis_qs.exists.return_value = True
-  with patch("hpcperfstats.site.lib.machine.api._require_auth", return_value=None), patch(
-      "hpcperfstats.site.lib.machine.api.cached_orm", return_value=fake_job
-  ), patch(
+  with (
+    patch("hpcperfstats.site.lib.machine.api._require_auth", return_value=None),
+    patch(
+      "hpcperfstats.site.lib.machine.api.cached_orm",
+      return_value=fake_job,
+    ),
+    patch(
       "hpcperfstats.site.lib.machine.api._apply_non_staff_job_visibility",
       return_value=vis_qs,
-  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache, patch(
-      "hpcperfstats.site.lib.machine.api._get_small_executor"
-  ) as mock_exec:
+    ),
+    patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache,
+    patch("hpcperfstats.site.lib.machine.api._get_small_executor") as mock_exec,
+  ):
     mock_cache.get.return_value = None
     response = api.job_plots(request, 2945017)
 
@@ -182,9 +218,9 @@ def test_job_plots_progressive_returns_200_partial_when_artifacts_missing():
   assert payload["status"] == "partial"
   assert payload["progressive"] is True
   assert set(payload["loading_plots"]) == {
-      "summary_plot",
-      "roofline",
-      "gpu_roofline",
+    "summary_plot",
+    "roofline",
+    "gpu_roofline",
   }
   assert "mplot_item" not in payload
   mock_exec.assert_not_called()
@@ -202,17 +238,26 @@ def test_job_plots_progressive_partial_includes_completed_plot_fields():
 
   def _cache_get(cache_key, default=None):
     if "summary_plot" in str(cache_key):
-      return {"plot_item": {"kind": "summary"}, "unavailable_reason": None}
+      return {
+        "plot_item": {"kind": "summary"},
+        "unavailable_reason": None,
+      }
     return default
 
   vis_qs = MagicMock()
   vis_qs.exists.return_value = True
-  with patch("hpcperfstats.site.lib.machine.api._require_auth", return_value=None), patch(
-      "hpcperfstats.site.lib.machine.api.cached_orm", return_value=fake_job
-  ), patch(
+  with (
+    patch("hpcperfstats.site.lib.machine.api._require_auth", return_value=None),
+    patch(
+      "hpcperfstats.site.lib.machine.api.cached_orm",
+      return_value=fake_job,
+    ),
+    patch(
       "hpcperfstats.site.lib.machine.api._apply_non_staff_job_visibility",
       return_value=vis_qs,
-  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache:
+    ),
+    patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache,
+  ):
     mock_cache.get.side_effect = _cache_get
     response = api.job_plots(request, 2945017)
 
@@ -242,12 +287,18 @@ def test_job_plots_progressive_final_payload_includes_ready_metadata():
 
   vis_qs = MagicMock()
   vis_qs.exists.return_value = True
-  with patch("hpcperfstats.site.lib.machine.api._require_auth", return_value=None), patch(
-      "hpcperfstats.site.lib.machine.api.cached_orm", return_value=fake_job
-  ), patch(
+  with (
+    patch("hpcperfstats.site.lib.machine.api._require_auth", return_value=None),
+    patch(
+      "hpcperfstats.site.lib.machine.api.cached_orm",
+      return_value=fake_job,
+    ),
+    patch(
       "hpcperfstats.site.lib.machine.api._apply_non_staff_job_visibility",
       return_value=vis_qs,
-  ), patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache:
+    ),
+    patch("hpcperfstats.site.lib.machine.api.cache") as mock_cache,
+  ):
     mock_cache.get.side_effect = _cache_get
     response = api.job_plots(request, 2945017)
 
@@ -260,28 +311,30 @@ def test_job_plots_progressive_final_payload_includes_ready_metadata():
 
 def test_apply_zoom_layout_to_json_item_keeps_glyph_dimensions():
   """Zoom JSON transform should not clobber glyph width/height value specs."""
-  from hpcperfstats.site.lib.machine.api import _apply_zoom_layout_to_json_item
+  from hpcperfstats.site.lib.machine.api import (
+    _apply_zoom_layout_to_json_item,
+  )
 
   item = {
-      "doc": {
-          "roots": [
-              {
-                  "type": "object",
-                  "name": "Figure",
-                  "id": "fig-1",
-                  "attributes": {"width": 400, "height": 200},
-              },
-              {
-                  "type": "object",
-                  "name": "Rect",
-                  "id": "glyph-1",
-                  "attributes": {
-                      "width": {"type": "value", "value": 1},
-                      "height": {"type": "value", "value": 1},
-                  },
-              },
-          ]
-      }
+    "doc": {
+      "roots": [
+        {
+          "type": "object",
+          "name": "Figure",
+          "id": "fig-1",
+          "attributes": {"width": 400, "height": 200},
+        },
+        {
+          "type": "object",
+          "name": "Rect",
+          "id": "glyph-1",
+          "attributes": {
+            "width": {"type": "value", "value": 1},
+            "height": {"type": "value", "value": 1},
+          },
+        },
+      ]
+    }
   }
 
   out = _apply_zoom_layout_to_json_item(item)
@@ -300,19 +353,21 @@ def test_apply_zoom_layout_to_json_item_keeps_glyph_dimensions():
 
 def test_apply_zoom_layout_to_json_item_does_not_mutate_document_config():
   """Zoom JSON transform must not inject unsupported attrs into DocumentConfig."""
-  from hpcperfstats.site.lib.machine.api import _apply_zoom_layout_to_json_item
+  from hpcperfstats.site.lib.machine.api import (
+    _apply_zoom_layout_to_json_item,
+  )
 
   item = {
-      "doc": {
-          "roots": [
-              {
-                  "type": "object",
-                  "name": "DocumentConfig",
-                  "id": "cfg-1",
-                  "attributes": {"notifications": {"type": "value", "value": []}},
-              }
-          ]
-      }
+    "doc": {
+      "roots": [
+        {
+          "type": "object",
+          "name": "DocumentConfig",
+          "id": "cfg-1",
+          "attributes": {"notifications": {"type": "value", "value": []}},
+        }
+      ]
+    }
   }
 
   out = _apply_zoom_layout_to_json_item(item)
