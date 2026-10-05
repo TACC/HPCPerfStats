@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable, Iterable
-from typing import Any, Optional
+from typing import Any
 
 from hpcperfstats.dbload.lib.file_locking import file_write_lock
 from hpcperfstats.dbload.lib.sync_timedb_mark_entries_cache import (
@@ -32,7 +32,7 @@ from hpcperfstats.dbload.lib.sync_timedb_persistence import (
 )
 
 FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION = 1
-LogFn = Optional[Callable[..., Any]]
+LogFn = Callable[..., Any] | None
 
 
 def path_fingerprint_key(path: str) -> str | None:

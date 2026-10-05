@@ -170,37 +170,101 @@ combine-as-imports = true
 
 # BLAS/configure_* / Django bootstrap before heavy imports (intentional E402).
 [tool.ruff.lint.per-file-ignores]
-"hpcperfstats/analysis/metrics/update_metrics.py" = ["E402"]
+"hpcperfstats/analysis/metrics/update_metrics.py" = [
+  "E402",
+  "B023",
+  "SIM117",
+  "SIM102",
+  "B904",
+]
 "hpcperfstats/analysis/metrics/lib/plot/__init__.py" = ["E402"]
-"hpcperfstats/analysis/metrics/lib/plot/devplot.py" = ["E402"]
-"hpcperfstats/analysis/metrics/lib/plot/summaryplot.py" = ["E402"]
+"hpcperfstats/analysis/metrics/lib/plot/devplot.py" = ["E402", "B007"]
+"hpcperfstats/analysis/metrics/lib/plot/summaryplot.py" = ["E402", "B007"]
 "hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py" = ["E402"]
 "hpcperfstats/analysis/metrics/tests/test_time_imbalance.py" = ["E402"]
 # sync_timedb*: skip SIM/E731 refactors that introduce nested defs (python_def_inventory gate).
-"hpcperfstats/dbload/sync_timedb.py" = ["E402", "E731", "SIM102", "SIM108", "SIM117"]
+"hpcperfstats/dbload/lib/sync_timedb_archive_helpers.py" = [
+  "E731",
+  "SIM102",
+  "SIM108",
+  "SIM117",
+  "B023",
+  "B904",
+  "RUF002",
+  "RUF003",
+  "SIM115",
+  "SIM105",
+]
+"hpcperfstats/dbload/sync_timedb.py" = [
+  "E402",
+  "E731",
+  "SIM102",
+  "SIM108",
+  "SIM117",
+  "B023",
+  "B904",
+  "SIM115",
+  "B039",
+]
 "hpcperfstats/dbload/sync_timedb_archive.py" = ["E402"]
-"hpcperfstats/dbload/lib/sync_timedb_archive_helpers.py" = ["E731", "SIM102", "SIM108", "SIM117"]
-"hpcperfstats/dbload/sync_acct.py" = ["E402"]
-"hpcperfstats/dbload/lib/sync_timedb_day_raw_removal.py" = ["E402"]
+"hpcperfstats/dbload/lib/sync_timedb_parsing.py" = ["B023", "SIM115", "B039", "E741"]
+"hpcperfstats/dbload/lib/sync_timedb_queue_orchestrator.py" = [
+  "B023",
+  "SIM117",
+  "SIM102",
+  "B904",
+]
+"hpcperfstats/dbload/lib/sync_timedb_archive_members_coord.py" = ["B023", "SIM117"]
+"hpcperfstats/dbload/lib/sync_timedb_day_raw_removal.py" = ["E402", "SIM117", "B904", "SIM102"]
 "hpcperfstats/dbload/lib/sync_timedb_ingest_timeout.py" = ["E402"]
 "hpcperfstats/dbload/lib/sync_timedb_startup_archive_scan.py" = ["E402"]
+"hpcperfstats/dbload/sync_acct.py" = ["E402", "SIM117"]
+"hpcperfstats/dbload/lib/multiprocessing_pool_health.py" = ["B904", "SIM102"]
+"hpcperfstats/dbload/lib/file_locking.py" = ["SIM115"]
+"hpcperfstats/dbload/lib/listend_db_ingest.py" = ["RUF003"]
+"hpcperfstats/dbload/lib/print_utils.py" = ["SIM102"]
+"hpcperfstats/dbload/lib/monitor_naming/load_map.py" = ["PGH003"]
+"hpcperfstats/dbload/lib/conf_parser.py" = ["SIM117"]
+"hpcperfstats/dbload/lib/sync_timedb_archive_maint.py" = ["SIM102"]
+"hpcperfstats/dbload/lib/sync_timedb_job_discover.py" = ["SIM102"]
+"hpcperfstats/dbload/lib/sync_timedb_stats_find.py" = ["SIM115"]
+"hpcperfstats/listend.py" = ["SIM117", "SIM115"]
+"hpcperfstats/analysis/metrics/lib/metrics.py" = ["B904"]
+"hpcperfstats/analysis/metrics/lib/gen/jid_table.py" = ["B023"]
+"hpcperfstats/site/lib/machine/api.py" = ["E402", "SIM117", "B904", "SIM105", "PGH003", "E741"]
+"hpcperfstats/site/lib/machine/job_plot_artifacts.py" = ["SIM105"]
+"hpcperfstats/site/lib/machine/oauth2.py" = ["SIM102"]
+"hpcperfstats/site/lib/machine/throttles.py" = ["B904"]
+"hpcperfstats-tools/hpcperfstats_tools/api_key_cache.py" = ["SIM105"]
+"scripts/python_def_inventory.py" = ["E741", "B023", "SIM102"]
+"scripts/pg18_host_data_chunk_copy.py" = ["SIM117"]
 "hpcperfstats/site/hpcperfstats_site/settings.py" = ["E402"]
-"hpcperfstats/site/lib/machine/api.py" = ["E402"]
 "hpcperfstats/site/lib/machine/update_xalt.py" = ["E402"]
 "hpcperfstats/site/lib/machine/tests/test_jid_table.py" = ["E402"]
 "hpcperfstats-tools/hpcperfstats_tools/config.py" = ["E402"]
 "cursor-hooks/**" = ["E402"]
 "hpcperfstats/analysis/metrics/lib/gen/utils.py" = ["E402"]
 "hpcperfstats/tests/test_cursor_hooks.py" = ["E402"]
-"scripts/python_def_docstring_upgrade.py" = ["E402"]
+"scripts/python_def_docstring_upgrade.py" = ["E402", "SIM102"]
 "scripts/restore_docstring_prose_from_git.py" = ["E402"]
 # Django Meta / DRF ``fields`` / ``indexes`` lists are class-scoped config, not instances.
 "hpcperfstats/site/lib/machine/models.py" = ["RUF012"]
 "hpcperfstats/site/lib/machine/serializers.py" = ["RUF012"]
 "hpcperfstats/site/lib/machine/public_api.py" = ["RUF012"]
 "hpcperfstats/site/hpcperfstats_site/staticfiles_config.py" = ["RUF012"]
-# Test doubles: mutable class attrs on stub job-table types.
-"**/tests/**" = ["RUF012"]
+# Test doubles: mutable class attrs; pragmatic lint debt on large archive/metrics tests.
+"**/tests/**" = [
+  "RUF012",
+  "SIM115",
+  "E741",
+  "RUF043",
+  "UP045",
+  "B023",
+  "SIM117",
+  "SIM102",
+  "B904",
+  "RUF003",
+]
 
 [tool.ruff.format]
 quote-style = "double"

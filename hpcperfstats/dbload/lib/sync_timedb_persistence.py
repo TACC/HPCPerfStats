@@ -34,7 +34,7 @@ import os
 import tempfile
 import time
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any
 
 from hpcperfstats.dbload.lib.print_utils import ingest_logging
 
@@ -75,7 +75,7 @@ ZERO_HOST_INGEST_MARK_SCHEMA_VERSION = 1
 FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION = 1
 JOB_STORE_SNAPSHOT_SCHEMA_VERSION = 1
 
-LogFn = Optional[Callable[..., Any]]
+LogFn = Callable[..., Any] | None
 
 _KIND_SCHEMA_VERSION: dict[str, int] = {
   "ingest_checkpoint": INGEST_CHECKPOINT_SCHEMA_VERSION,

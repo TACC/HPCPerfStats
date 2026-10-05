@@ -217,9 +217,7 @@ def _is_non_http_management_command() -> Any:
     if arg0 in {"-", "", "-c"}:
       return True
     # ``python <<EOF`` / piped script: argv is only the interpreter path, not ``run_tests.py``.
-    if _argv0_is_python_interpreter(arg0) and not sys.stdin.isatty():
-      return True
-    return False
+    return bool(_argv0_is_python_interpreter(arg0) and not sys.stdin.isatty())
   if len(argv) < 2:
     return False
   # ``python /path/python - <<'PY'`` (two-arg form): argv is ``[..., '-']``.

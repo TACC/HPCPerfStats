@@ -1497,10 +1497,7 @@ def _collapse_nvidia_gpu_vectorized(nv_df: Any, gcols: Any) -> Any:
 
   if not parts:
     return _empty_delta_arc_frame()
-  if len(parts) == 1:
-    out = parts[0]
-  else:
-    out = concat(parts, ignore_index=True)
+  out = parts[0] if len(parts) == 1 else concat(parts, ignore_index=True)
   for col in gcols:
     if col == "time" or col not in out.columns:
       continue

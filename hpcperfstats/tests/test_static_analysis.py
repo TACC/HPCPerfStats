@@ -36,6 +36,16 @@ def _run(
 @pytest.mark.skipif(
   not _RUFF.is_file(), reason="ruff not installed in workspace venv"
 )
+def test_ruff_lint_and_format_clean():
+  lint = _run([str(_RUFF), "check", *_RUFF_FORMAT_PATHS])
+  assert lint.returncode == 0, lint.stdout + lint.stderr
+  fmt = _run([str(_RUFF), "format", "--check", *_RUFF_FORMAT_PATHS])
+  assert fmt.returncode == 0, fmt.stdout + fmt.stderr
+
+
+@pytest.mark.skipif(
+  not _RUFF.is_file(), reason="ruff not installed in workspace venv"
+)
 def test_ruff_unused_imports_and_variables_clean():
   proc = _run(
     [
@@ -80,6 +90,13 @@ def test_pre_commit_config_includes_ruff_format_hook():
   text = (_REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
   assert "id: ruff-format" in text
   assert "ruff format" in text
+
+
+def test_pre_commit_config_uses_full_ruff_check_not_f401_only():
+  text = (_REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+  assert "id: ruff-check" in text
+  assert "--select=F401" not in text
+  assert "id: ruff-unused" not in text
 
 
 @pytest.mark.skipif(

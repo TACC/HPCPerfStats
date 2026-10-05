@@ -10,6 +10,7 @@ Attributes:
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -98,11 +99,9 @@ def save_cached_api_key(api_url: str, api_key: str) -> None:
       continue
     new_lines.append(line)
   new_lines.append(f"{base} {api_key}")
-  try:
-    API_KEY_CACHE.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-  except OSError:
+  with contextlib.suppress(OSError):
     # Failing to cache should not break the CLI.
-    pass
+    API_KEY_CACHE.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 
 def api_key_help_url(api_url: str) -> str:

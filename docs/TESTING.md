@@ -67,10 +67,10 @@ Optional bulk upgrade helper (review the diff; must not emit call-site / ellipsi
 ```bash
 ../.venv/bin/python3 scripts/python_def_docstring_upgrade.py --path-filter hpcperfstats/dbload --apply
 
-# Rewrap / fill full surface to Ruff line-length (80 HPCPerfStats / 88 tools)
+# Rewrap / fill full surface to Ruff line-length (80 — main repo and hpcperfstats-tools)
 ../.venv/bin/python3 scripts/python_def_docstring_upgrade.py --force-docs --line-length 80 --apply
 ../.venv/bin/python3 scripts/python_def_docstring_upgrade.py --root hpcperfstats-tools \
-  --force-docs --line-length 88 --apply
+  --force-docs --line-length 80 --apply
 ```
 
 ### Operator deploy scripts (not test workflows)
@@ -923,7 +923,7 @@ pip install -e ".[dev]"
 ./scripts/install-git-hooks.sh
 ```
 
-**Pre-commit** (staged files): **`ruff format`** on staged Python under `hpcperfstats/`, `cursor-hooks/`, `scripts/`, `services-conf/`, and `hpcperfstats-tools/`; Ruff **`F401`/`F841`/`F811`** on those trees (full pyproject lint is enforced incrementally — see `pyproject.toml`); ESLint on staged `hpcperfstats/site/frontend` TypeScript; python def inventory `--check`; **memray** curated memory-leak smoke (`python-memory-leak-check`) on staged `hpcperfstats/` / `scripts/` Python.
+**Pre-commit** (staged files): **`ruff check --fix`** and **`ruff format`** on staged Python under `hpcperfstats/`, `cursor-hooks/`, `scripts/`, `services-conf/`, and `hpcperfstats-tools/` (policy from `pyproject.toml`: isort **`I`**, whitespace **`W291`/`W292`/`W293`**, plus **`E`/`F`/`B`/`UP`/`SIM`/`RUF`/`C4`/`PIE`/`PGH`**; **`E501`** ignored — use the formatter); ESLint on staged `hpcperfstats/site/frontend` TypeScript; python def inventory `--check`; **memray** curated memory-leak smoke (`python-memory-leak-check`) on staged `hpcperfstats/` / `scripts/` Python.
 
 **Pre-push:** frontend `npm run typecheck` and `npm run lint:dead` (knip); `vulture hpcperfstats scripts/vulture_whitelist.py --min-confidence 80`.
 
@@ -939,11 +939,13 @@ Does not require creating a commit or pushing — only running the hook suites a
 Manual equivalents:
 
 ```bash
-# Python formatting (2-space indent per pyproject.toml)
+# Python lint + format (2-space indent, line-length 80 — main repo + hpcperfstats-tools)
+../.venv/bin/ruff check hpcperfstats cursor-hooks scripts services-conf hpcperfstats-tools
+../.venv/bin/ruff check hpcperfstats cursor-hooks scripts services-conf hpcperfstats-tools --fix
 ../.venv/bin/ruff format hpcperfstats cursor-hooks scripts services-conf hpcperfstats-tools
 ../.venv/bin/ruff format --check hpcperfstats cursor-hooks scripts services-conf hpcperfstats-tools
 
-# Python unused imports/variables
+# Narrow unused-import check (subset of F rules; full tree uses pyproject select above)
 ../.venv/bin/ruff check hpcperfstats cursor-hooks scripts services-conf hpcperfstats-tools --select F401,F841,F811
 
 # Python dead symbols (high confidence)

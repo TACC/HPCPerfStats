@@ -61,9 +61,10 @@ import tempfile
 import threading
 import time
 from collections import OrderedDict, defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time as dt_time, timedelta
-from typing import Any, Iterator
+from typing import Any
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.archive_compress import (
@@ -203,9 +204,7 @@ def daily_tar_path_in_maintenance_scope(
   if only_set and normalized not in only_set:
     return False
   skip_set = _normalize_daily_tar_path_set(skip_daily_tar_paths)
-  if skip_set and normalized in skip_set:
-    return False
-  return True
+  return not (skip_set and normalized in skip_set)
 
 
 def daily_tar_paths_for_archive_job_tasks(deferred_paths: Any) -> Any:
@@ -683,10 +682,8 @@ def prepare_paths_for_giant_member_append(
     return list(stats_files or ()), []
   max_size = 0
   for path in oversized:
-    try:
+    with contextlib.suppress(OSError):
       max_size = max(max_size, int(os.path.getsize(path)))
-    except OSError:
-      pass
   label = (
     classify_daily_tar_file_label(tar_path)
     if os.path.isfile(tar_path)
@@ -2462,9 +2459,7 @@ def _closed_raw_eligible_for_quarantine(path_norm: Any) -> Any:
   base = os.path.basename(path_norm)
   if base.startswith("current"):
     return False
-  if stats_file_is_active_segment(path_norm):
-    return False
-  return True
+  return not stats_file_is_active_segment(path_norm)
 
 
 def _quarantine_one_closed_raw_path(
@@ -2542,10 +2537,8 @@ def _quarantine_one_closed_raw_path(
         _save_unparsable_raw_manifest_atomic(manifest_path, manifest_entries)
       except OSError as exc:
         manifest_entries.pop()
-        try:
+        with contextlib.suppress(OSError):
           shutil.move(dest_path, path_norm)
-        except OSError:
-          pass
         if log_fn:
           log_fn(
             f"Unparsable raw quarantine manifest save failed path={path_norm}: {exc}",
@@ -3111,9 +3104,7 @@ def day_close_filesystem_complete(
       tar_norm,
       tgz_archive_dir=archive_dir,
     )
-  if remaining_raw_by_gz_has_paths_on_disk(remaining, zst_path):
-    return False
-  return True
+  return not remaining_raw_by_gz_has_paths_on_disk(remaining, zst_path)
 
 
 def daily_tar_needs_day_close_work(
@@ -3159,9 +3150,7 @@ def daily_tar_needs_day_close_work(
   )
 
   blocking = remaining_raw_blocking_day_incomplete(tar_norm)
-  if remaining_raw_by_gz_has_paths_on_disk(blocking, zst_path):
-    return True
-  return False
+  return bool(remaining_raw_by_gz_has_paths_on_disk(blocking, zst_path))
 
 
 def count_unprocessed_paths_on_disk(
@@ -4044,7 +4033,7 @@ def _is_lock_file_name(name: Any) -> Any:
   # We intentionally skip generic *.lock too, because different lock
   # implementations may exist on the filesystem (and we don't want them
   # mistaken for stats data files during archive discovery).
-  return name.endswith(LOCK_SUFFIX) or name.endswith(".lock")
+  return name.endswith((LOCK_SUFFIX, ".lock"))
 
 
 def _remove_read_lock_sidecar(target_path: str) -> None:
@@ -4060,10 +4049,8 @@ def _remove_read_lock_sidecar(target_path: str) -> None:
   Examples:
     >>> _remove_read_lock_sidecar("x")  # doctest: +SKIP
   """
-  try:
+  with contextlib.suppress(OSError):
     os.remove(f"{target_path}{LOCK_SUFFIX}")
-  except OSError:
-    pass
 
 
 def read_stats_file_head_identity(
@@ -4093,7 +4080,7 @@ def read_stats_file_head_identity(
     parse_first_ts_fn = parse_first_timestamp_line
   try:
     with file_read_lock_wait(stats_fname):
-      with open(stats_fname, "r") as f:
+      with open(stats_fname) as f:
         head = []
         for line in f:
           head.append(line)
@@ -4309,8 +4296,7 @@ def _iter_tar_members(tf: Any) -> Iterator[Any]:
     iterator = iter(tf)
   except TypeError:
     iterator = tf.getmembers()
-  for member in iterator:
-    yield member
+  yield from iterator
 
 
 def verify_tar_archive_readable(
@@ -4707,10 +4693,8 @@ def notify_daily_tar_restore_cleared(day_token: Any) -> None:
   try:
     hook(day_token)
   except TypeError:
-    try:
+    with contextlib.suppress(Exception):
       hook()
-    except Exception:
-      pass
   except Exception:
     pass
 
@@ -4740,10 +4724,8 @@ def _notify_archive_members_invalidation(
   try:
     hook(canonical, day_token, reason)
   except TypeError:
-    try:
+    with contextlib.suppress(Exception):
       hook(canonical, day_token)
-    except Exception:
-      pass
   except Exception:
     pass
 
@@ -5306,9 +5288,7 @@ def _decompress_should_unlink_compressed(tar_path: str) -> Any:
   if not tar_path:
     return True
   zst_path, gz_path = compressed_sibling_paths(tar_path)
-  if os.path.isfile(zst_path) or os.path.isfile(gz_path):
-    return False
-  return True
+  return not (os.path.isfile(zst_path) or os.path.isfile(gz_path))
 
 
 def _populate_should_use_tar_scan(
@@ -6193,9 +6173,7 @@ def ensure_daily_tar_restored_for_append(
         flush=True,
       )
       return True
-  if os.path.isfile(zst_path) or os.path.isfile(gz_path):
-    return False
-  return True
+  return not (os.path.isfile(zst_path) or os.path.isfile(gz_path))
 
 
 def replace_corrupt_tar_from_compressed_backup(
@@ -6258,9 +6236,7 @@ def replace_corrupt_tar_from_compressed_backup(
           os.remove(rebuild)
       except OSError:
         pass
-      if os.path.isfile(zst_path) or os.path.isfile(gz_path):
-        return False
-      return True
+      return not (os.path.isfile(zst_path) or os.path.isfile(gz_path))
     with file_write_lock(tar_path):
       if not os.path.isfile(rebuild):
         return False
@@ -6430,10 +6406,8 @@ def _run_gnu_tf_member_names(archive_path: str) -> tuple[list[str], int, str]:
       )
     except (FileNotFoundError, OSError) as exc:
       p_decomp.kill()
-      try:
+      with contextlib.suppress(OSError, subprocess.SubprocessError):
         p_decomp.wait(timeout=30)
-      except OSError, subprocess.SubprocessError:
-        pass
       return [], 1, str(exc)
     if p_decomp.stdout is not None:
       p_decomp.stdout.close()
@@ -6443,10 +6417,8 @@ def _run_gnu_tf_member_names(archive_path: str) -> tuple[list[str], int, str]:
       _decomp_stdout, decomp_stderr = p_decomp.communicate(timeout=30)
     except OSError, subprocess.SubprocessError:
       p_decomp.kill()
-      try:
+      with contextlib.suppress(OSError, subprocess.SubprocessError):
         p_decomp.wait(timeout=30)
-      except OSError, subprocess.SubprocessError:
-        pass
     rc = 0 if (p_tar.returncode == 0 and p_decomp.returncode == 0) else 1
     stderr = (tar_stderr or "") + (decomp_stderr or "")
     lines = (tar_stdout or "").splitlines()
@@ -6493,7 +6465,7 @@ def _parse_tar_tvf_size_and_name(line: str) -> tuple[str, int] | None:
     return None
   if text[:1] not in ("-", "d", "l", "h"):
     return None
-  if text.startswith("d") or text.startswith("l"):
+  if text.startswith(("d", "l")):
     return None
   parts = text.split()
   if len(parts) < 6:
@@ -7615,9 +7587,7 @@ def remove_verified_archived_raw_files(
   validation_started = time.time()
   success_count = 0
   failed_count = 0
-  stats_paths_by_gz = {
-    gz_path: stats_paths for gz_path, stats_paths in validation_targets
-  }
+  stats_paths_by_gz = dict(validation_targets)
 
   for gz_path, ok, members in _iter_archive_validation_results_stream(
     [gz_path for gz_path, _stats_paths in validation_targets],
@@ -8209,10 +8179,8 @@ def _dir_tree_file_byte_sum(root_dir: str) -> tuple[int, int]:
   for dirpath, _dirs, filenames in os.walk(root_dir):
     for filename in filenames:
       count += 1
-      try:
+      with contextlib.suppress(OSError):
         total += int(os.path.getsize(os.path.join(dirpath, filename)))
-      except OSError:
-        pass
   return count, total
 
 
@@ -8522,10 +8490,8 @@ def _repair_truncated_daily_tar_via_extract_recreate(
       log_fn(f"WARNING: repair_fail tar={tar_path} exc={exc}", flush=True)
     return False
   finally:
-    try:
+    with contextlib.suppress(OSError):
       shutil.rmtree(work_root, ignore_errors=True)
-    except OSError:
-      pass
 
 
 def repair_truncated_daily_tar_in_place(
@@ -8593,10 +8559,8 @@ def repair_truncated_daily_tar_in_place(
             yield_phase=yield_phase,
           )
           if not verify_tar_archive_readable(tmp_path):
-            try:
+            with contextlib.suppress(OSError):
               os.remove(tmp_path)
-            except OSError:
-              pass
             ok = False
           else:
             os.replace(tmp_path, tar_path)
@@ -8754,15 +8718,11 @@ def _gnu_tar_extract_named_member(
       return False
     finally:
       if decomp.stdout is not None:
-        try:
+        with contextlib.suppress(OSError):
           decomp.stdout.close()
-        except OSError:
-          pass
       if decomp.poll() is None:
-        try:
+        with contextlib.suppress(OSError):
           decomp.kill()
-        except OSError:
-          pass
       decomp.wait()
     return int(getattr(result, "returncode", 1) or 0) == 0
 
@@ -8904,27 +8864,21 @@ def _copy_union_member_into_tar(
     except OSError:
       size_ok = False
     if not size_ok:
-      try:
+      with contextlib.suppress(OSError):
         os.remove(extracted)
-      except OSError:
-        pass
       continue
     member_rel = os.path.relpath(extracted, extract_dir)
     if member_rel.startswith(".."):
-      try:
+      with contextlib.suppress(OSError):
         os.remove(extracted)
-      except OSError:
-        pass
       continue
     appended = _gnu_tar_append_extracted_member(
       dest_tar_path,
       extract_dir,
       member_rel,
     )
-    try:
+    with contextlib.suppress(OSError):
       os.remove(extracted)
-    except OSError:
-      pass
     if appended:
       return True
   return False
@@ -9096,10 +9050,8 @@ def rebuild_daily_tar_member_union_in_place(
     pass
   last_yield_poll = float(clock())
   if callable(on_merge_progress):
-    try:
+    with contextlib.suppress(Exception):
       on_merge_progress(members_done, members_total, last_progress_mono)
-    except Exception:
-      pass
   parent = os.path.dirname(tar_path) or "."
   extract_dir = tempfile.mkdtemp(prefix="hps_union_extract_", dir=parent)
 
@@ -9180,23 +9132,19 @@ def rebuild_daily_tar_member_union_in_place(
         zst_path=zst_path,
         extract_dir=extract_dir,
       ):
-        try:
+        with contextlib.suppress(OSError):
           os.remove(tmp_path)
-        except OSError:
-          pass
         return False
       members_done += 1
       last_progress_mono = float(clock())
       warn_emitted = False
       if callable(on_merge_progress):
-        try:
+        with contextlib.suppress(Exception):
           on_merge_progress(
             members_done,
             members_total,
             last_progress_mono,
           )
-        except Exception:
-          pass
       _emit_reconcile_stage_progress(
         day_token,
         members_done=members_done,
@@ -9208,10 +9156,8 @@ def rebuild_daily_tar_member_union_in_place(
         force=False,
       )
     if not verify_tar_archive_readable(tmp_path):
-      try:
+      with contextlib.suppress(OSError):
         os.remove(tmp_path)
-      except OSError:
-        pass
       return False
     with file_write_lock(tar_path):
       requested, reason = day_close_yield_requested(
@@ -9512,10 +9458,8 @@ def dedupe_tar_keep_largest_file_per_member(
         yield_phase=yield_phase,
       )
       if not verify_tar_archive_readable(tmp_path):
-        try:
+        with contextlib.suppress(OSError):
           os.remove(tmp_path)
-        except OSError:
-          pass
         return False
       os.replace(tmp_path, tar_path)
     invalidate_after_daily_tar_mutation(
@@ -9583,7 +9527,7 @@ def dedupe_sealed_daily_archive(
   if sealed_path is None or not os.path.isfile(sealed_path):
     return False
   tar_path = daily_tar_path_from_compressed(sealed_path)
-  zst_path, gz_path = compressed_sibling_paths(tar_path)
+  zst_path, _gz_path = compressed_sibling_paths(tar_path)
   if os.path.isfile(tar_path):
     if not tar_has_duplicate_file_members(tar_path):
       return True
@@ -9616,6 +9560,10 @@ def dedupe_sealed_daily_archive(
       return False
   if keep_uncompressed_tar is None:
     keep_uncompressed_tar = cfg.get_archive_keep_uncompressed_tar()
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+    DayCloseYieldError,
+  )
+
   try:
     atomic_seal_tar_to_zst(
       tar_path,
@@ -9915,10 +9863,8 @@ def iter_sealed_daily_archive_member_paths(
                 break
               out.write(chunk)
         finally:
-          try:
+          with contextlib.suppress(Exception):
             fobj.close()
-          except Exception:
-            pass
         yield member_info.name, dest
 
 
@@ -10311,7 +10257,7 @@ def _is_migration_scratch_name(name: Any) -> Any:
   Examples:
     >>> _is_migration_scratch_name(None)  # doctest: +SKIP
   """
-  return name.endswith(".tmp") or name.endswith(".decomp.tmp")
+  return name.endswith((".tmp", ".decomp.tmp"))
 
 
 def iter_daily_gz_paths(daily_archive_dir: str) -> Iterator[Any]:
@@ -10871,14 +10817,14 @@ def seal_dirty_daily_archives(
   if not candidates:
     return
 
-  seal_kwargs = dict(
-    zstd_threads=zstd_threads,
-    compress_level=compress_level,
-    keep_uncompressed_tar=keep_uncompressed_tar,
-    log_fn=log_fn,
-    remaining_raw_by_gz=remaining_raw_by_gz,
-    force_remove_uncompressed_tar=force_remove_uncompressed_tar,
-  )
+  seal_kwargs = {
+    "zstd_threads": zstd_threads,
+    "compress_level": compress_level,
+    "keep_uncompressed_tar": keep_uncompressed_tar,
+    "log_fn": log_fn,
+    "remaining_raw_by_gz": remaining_raw_by_gz,
+    "force_remove_uncompressed_tar": force_remove_uncompressed_tar,
+  }
   workers = _get_archive_seal_worker_count(len(candidates))
   if workers <= 1 or len(candidates) <= 1:
     for tar_path, zst_path, gz_path in candidates:
@@ -11078,10 +11024,8 @@ def _migrate_one_daily_legacy_gz_locked(
       )
       os.close(fd)
       remove_temp_tar_after = True
-      try:
+      with contextlib.suppress(OSError):
         os.unlink(temp_tar_path)
-      except OSError:
-        pass
     if not decompress_compressed_to_tar(
       gz_path,
       temp_tar_path,
@@ -11297,17 +11241,17 @@ def migrate_legacy_daily_gz_archives(
     summary["gz_remaining"] = 0
     return summary
 
-  migrate_kwargs = dict(
-    zstd_threads=zstd_threads,
-    compress_level=compress_level,
-    keep_uncompressed_tar=keep_uncompressed_tar,
-    remaining_raw_by_gz=remaining_raw_by_gz,
-    force_remove_uncompressed_tar=force_remove_uncompressed_tar,
-    decompress_tmp_dir=decompress_tmp_dir,
-    log_fn=log_fn,
-    lock_timeout_seconds=lock_timeout_seconds,
-    dry_run=dry_run,
-  )
+  migrate_kwargs = {
+    "zstd_threads": zstd_threads,
+    "compress_level": compress_level,
+    "keep_uncompressed_tar": keep_uncompressed_tar,
+    "remaining_raw_by_gz": remaining_raw_by_gz,
+    "force_remove_uncompressed_tar": force_remove_uncompressed_tar,
+    "decompress_tmp_dir": decompress_tmp_dir,
+    "log_fn": log_fn,
+    "lock_timeout_seconds": lock_timeout_seconds,
+    "dry_run": dry_run,
+  }
 
   worker_count = workers
   if worker_count is None:
@@ -11329,7 +11273,7 @@ def migrate_legacy_daily_gz_archives(
       if status in summary:
         summary[status] = summary.get(status, 0) + 1
   else:
-    for gz_path, result, err in iter_bounded_thread_pool(
+    for _gz_path, result, err in iter_bounded_thread_pool(
       gz_paths,
       _run_one,
       max_workers=worker_count,

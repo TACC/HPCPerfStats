@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable, Iterable
-from typing import Any, Optional
+from typing import Any
 
 from hpcperfstats.dbload.lib.file_locking import file_write_lock
 from hpcperfstats.dbload.lib.sync_timedb_file_complete_ingest_mark import (
@@ -37,7 +37,7 @@ from hpcperfstats.dbload.lib.sync_timedb_persistence import (
 )
 
 ZERO_HOST_INGEST_MARK_SCHEMA_VERSION = 1
-LogFn = Optional[Callable[..., Any]]
+LogFn = Callable[..., Any] | None
 
 
 def zero_host_ingest_mark_path(archive_data_dir: str) -> str:

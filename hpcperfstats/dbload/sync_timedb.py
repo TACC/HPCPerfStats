@@ -80,8 +80,9 @@ import gc
 import itertools
 import os
 import threading
-from contextlib import contextmanager
-from typing import Any, Iterator
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
+from typing import Any
 
 from hpcperfstats.dbload.lib.blas_thread_env import configure_blas_thread_env
 
@@ -98,7 +99,7 @@ import warnings
 from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, date as date_cls, datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 
 from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 from hpcperfstats.dbload.lib.process_title import (
@@ -652,7 +653,7 @@ def _prewarm_archive_members_for_days(
     _signal_ingest_hot_for_populate(day_token, tar_path, reason="chunk_prewarm")
     prewarm_recovered = False
     last_transient_exc = None
-    for attempt, delay in enumerate((0.0,) + _FNCTL_POPULATE_RETRY_DELAYS_S):
+    for attempt, delay in enumerate((0.0, *_FNCTL_POPULATE_RETRY_DELAYS_S)):
       if delay:
         time.sleep(delay)
       try:
@@ -733,10 +734,8 @@ def _prewarm_archive_members_for_days(
 
             controller = get_populate_pool_controller()
             if controller is not None:
-              try:
+              with suppress(Exception):
                 controller.reap_and_restart()
-              except Exception:
-                pass
           if attempt < len(_FNCTL_POPULATE_RETRY_DELAYS_S):
             label = (
               "populate-pool unavailable"
@@ -951,7 +950,7 @@ def _in_flight_file_meta_from_paths(paths: Any, max_n: int = 10) -> Any:
 # Soft TTL: force refresh when incomplete fingerprint is absent/zero.
 PENDING_RECONCILE_UNPROCESSED_TTL_S = 120.0
 # Hard ceiling: valid incomplete fingerprint may reuse past soft TTL (caps often
-# take 200–400s; soft-only expiry caused perpetual full rebuilds).
+# take 200-400s; soft-only expiry caused perpetual full rebuilds).
 PENDING_RECONCILE_UNPROCESSED_HARD_CEILING_S = 900.0
 _SUPERVISOR_CHILD_REAP_INTERVAL_S = 60.0
 _last_supervisor_child_reap_mono = 0.0
@@ -1148,7 +1147,7 @@ def _sample_looks_like_sealed_archives(sample: Any) -> Any:
   """
   for path in sample or ():
     base = os.path.basename(str(path))
-    if base.endswith(".tar.zst") or base.endswith(".tar.gz"):
+    if base.endswith((".tar.zst", ".tar.gz")):
       return True
   return False
 
@@ -1582,10 +1581,8 @@ def _make_ingest_stall_poll_fn(
     """
     del context
     if supervisor_reap_fn is not None:
-      try:
+      with suppress(Exception):
         supervisor_reap_fn()
-      except Exception:
-        pass
     sample = []
     if tracker is not None:
       sample = tracker.sample_in_flight()
@@ -1698,7 +1695,7 @@ def _release_ingest_worker_heap(*, force: bool = False) -> None:
 
   Mid-chunk calls throttle ``gc.collect`` / ``malloc_trim`` to every
   ``_HEAP_RELEASE_EVERY_N_CHUNKS`` invocations (soak: ``heap_release_s``
-  ~155–220 s/file). Pass ``force=True`` for end-of-file paths.
+  ~155-220 s/file). Pass ``force=True`` for end-of-file paths.
 
   Args:
     force (bool): When True, always collect+trim.
@@ -1721,10 +1718,8 @@ def _release_ingest_worker_heap(*, force: bool = False) -> None:
   gc.collect()
   libc = _libc_handle()
   if libc is not None:
-    try:
+    with suppress(AttributeError):
       libc.malloc_trim(0)
-    except AttributeError:
-      pass
 
 
 def _release_ingest_worker_memory(stats_file: str = "") -> Any:
@@ -2079,10 +2074,8 @@ def _sync_worker_db_task() -> Iterator[Any]:
   try:
     yield
   finally:
-    try:
+    with suppress(Exception):
       connections.close_all()
-    except Exception:
-      pass
 
 
 INGEST_WRITE_PHASE_KEYS: tuple[str, ...] = (
@@ -2103,9 +2096,9 @@ INGEST_WRITE_LOG_KEYS: tuple[str, ...] = (
 )
 
 _ingest_write_telem_on = False
-_ingest_write_campaign: dict[str, float] = {
-  key: 0.0 for key in INGEST_WRITE_LOG_KEYS
-}
+_ingest_write_campaign: dict[str, float] = dict.fromkeys(
+  INGEST_WRITE_LOG_KEYS, 0.0
+)
 _ingest_postgres_campaign = 0.0
 _ingest_write_campaign_lock = threading.Lock()
 _ingest_postgres_s: contextvars.ContextVar[float] = contextvars.ContextVar(
@@ -2162,7 +2155,7 @@ def _reset_ingest_write_timing(*, enabled: bool | None = None) -> None:
       for key in INGEST_WRITE_LOG_KEYS:
         _ingest_write_campaign[key] = 0.0
   _ingest_postgres_s.set(0.0)
-  _ingest_write_phases.set({key: 0.0 for key in INGEST_WRITE_LOG_KEYS})
+  _ingest_write_phases.set(dict.fromkeys(INGEST_WRITE_LOG_KEYS, 0.0))
 
 
 def _add_ingest_write_phase(name: str, delta_s: float) -> None:
@@ -2427,7 +2420,7 @@ def _handle_pool_worker_exit_fatal(
   hard_exit_pool_worker_error(exc)
 
 
-class SyncFileState(str, Enum):
+class SyncFileState(StrEnum):
   """
   Hold SyncFileState state and behavior.
 
@@ -2586,9 +2579,7 @@ def _should_stream_stats_file(stats_file: str, stats_file_contents: Any) -> Any:
   Examples:
     >>> _should_stream_stats_file("x", None)  # doctest: +SKIP
   """
-  if stats_file_contents is not None:
-    return False
-  return True
+  return stats_file_contents is None
 
 
 def _timestamp_second_present_for_duplicate(
@@ -2842,14 +2833,10 @@ def _reset_ingest_db_connection_after_write_error() -> None:
   Examples:
     >>> _reset_ingest_db_connection_after_write_error()  # doctest: +SKIP
   """
-  try:
+  with suppress(Exception):
     connections[DEFAULT_DB_ALIAS].rollback()
-  except Exception:
-    pass
-  try:
+  with suppress(Exception):
     close_old_connections()
-  except Exception:
-    pass
 
 
 def _is_psycopg_connection_desync(exc: Any) -> Any:
@@ -4138,7 +4125,7 @@ def _add_stats_file_to_db_streaming_incremental(
         f"WARN: sync_timedb: nonempty stats frame collapsed to empty delta/arc path={stats_file} parsed_rows={parsed_stats_n}",
         flush=True,
       )
-    stats_file_local, need_archival, chunk_ok = _write_stats_payload_to_db(
+    _stats_file_local, need_archival, chunk_ok = _write_stats_payload_to_db(
       stats_file,
       stats_chunk,
       proc_chunk,
@@ -4741,10 +4728,8 @@ def _remove_processed_path(
   """
   path = str(path)
   processed_files.discard(path)
-  try:
+  with suppress(ValueError):
     processed_files_order.remove(path)
-  except ValueError:
-    pass
   fp = _path_fingerprint(path)
   snapshot = checkpoint_entries_snapshot(checkpoint_entries)
   if fp is not None:
@@ -4796,7 +4781,7 @@ def _proc_field_or_none(row: Any, name: Any) -> Any:
     return None
   try:
     # pandas may emit float('nan') for missing numeric cells.
-    if val != val:  # noqa: PLR0124 — NaN check without importing math/pandas
+    if val != val:
       return None
   except Exception:
     pass
@@ -4811,7 +4796,7 @@ def _proc_field_or_none(row: Any, name: Any) -> Any:
   return val
 
 
-_PROC_DATA_UPDATE_FIELDS = ("device",) + HOST_PROC_KEYS
+_PROC_DATA_UPDATE_FIELDS = ("device", *HOST_PROC_KEYS)
 
 
 def _peak_merge_proc_objs_with_existing(proc_objs: list) -> list:
@@ -5261,14 +5246,10 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
           ) from exc
     finally:
       if fd >= 0:
-        try:
+        with suppress(OSError):
           os.close(fd)
-        except OSError:
-          pass
-      try:
+      with suppress(OSError):
         os.remove(list_path)
-      except OSError:
-        pass
     if result is None:
       continue
     if result.stdout:
@@ -5908,10 +5889,8 @@ def database_startup() -> None:
             "SELECT chunk_name,before_compression_total_bytes/(1024*1024*1024),after_compression_total_bytes/(1024*1024*1024) FROM chunk_compression_stats('host_data');"
           )
           for x in cur.fetchall():
-            try:
-              log_print("{0} Size: {1:8.1f} {2:8.1f}".format(*x))
-            except Exception:
-              pass
+            with suppress(Exception):
+              log_print("{} Size: {:8.1f} {:8.1f}".format(*x))
         except Exception:
           pass
       else:
@@ -5947,7 +5926,7 @@ def parse_sync_timedb_argv(argv: Any) -> Any:
   run_once = False
   if len(argv_for_dates) > 1 and argv_for_dates[1] == "once":
     run_once = True
-    argv_for_dates = [argv_for_dates[0]] + argv_for_dates[2:]
+    argv_for_dates = [argv_for_dates[0], *argv_for_dates[2:]]
 
   if len(argv_for_dates) > 1 and argv_for_dates[1] in (
     "all",
@@ -6286,8 +6265,6 @@ if __name__ == "__main__":
         connections.close_all()
       except Exception:
         pass
-      try:
+      with suppress(Exception):
         send_sigchld_to_parent()
-      except Exception:
-        pass
     signal.signal(signal.SIGTERM, previous_sigterm_handler)
