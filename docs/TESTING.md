@@ -923,7 +923,7 @@ pip install -e ".[dev]"
 ./scripts/install-git-hooks.sh
 ```
 
-**Pre-commit** (staged files): Ruff `F401`/`F841`/`F811` on `hpcperfstats/`, `cursor-hooks/`, `scripts/`; ESLint on staged `hpcperfstats/site/frontend` TypeScript; python def inventory `--check`; **memray** curated memory-leak smoke (`python-memory-leak-check`) on staged `hpcperfstats/` / `scripts/` Python.
+**Pre-commit** (staged files): **`ruff format`** on staged Python under `hpcperfstats/`, `cursor-hooks/`, `scripts/`, `services-conf/`, and `hpcperfstats-tools/`; Ruff **`F401`/`F841`/`F811`** on those trees (full pyproject lint is enforced incrementally — see `pyproject.toml`); ESLint on staged `hpcperfstats/site/frontend` TypeScript; python def inventory `--check`; **memray** curated memory-leak smoke (`python-memory-leak-check`) on staged `hpcperfstats/` / `scripts/` Python.
 
 **Pre-push:** frontend `npm run typecheck` and `npm run lint:dead` (knip); `vulture hpcperfstats scripts/vulture_whitelist.py --min-confidence 80`.
 
@@ -939,9 +939,12 @@ Does not require creating a commit or pushing — only running the hook suites a
 Manual equivalents:
 
 ```bash
+# Python formatting (2-space indent per pyproject.toml)
+../.venv/bin/ruff format hpcperfstats cursor-hooks scripts services-conf hpcperfstats-tools
+../.venv/bin/ruff format --check hpcperfstats cursor-hooks scripts services-conf hpcperfstats-tools
+
 # Python unused imports/variables
-../.venv/bin/ruff check hpcperfstats cursor-hooks scripts --select F401,F841,F811
-../.venv/bin/ruff check hpcperfstats-tools --select F401,F841,F811
+../.venv/bin/ruff check hpcperfstats cursor-hooks scripts services-conf hpcperfstats-tools --select F401,F841,F811
 
 # Python dead symbols (high confidence)
 ../.venv/bin/vulture hpcperfstats scripts/vulture_whitelist.py --min-confidence 80

@@ -664,9 +664,10 @@ def first_edit_event_index(rows: list[dict]) -> int | None:
 def first_closeable_event_index(rows: list[dict]) -> int | None:
   first: int | None = None
   for event_idx, part in iter_tool_parts(rows):
-    if is_edit_tool_part(part) or is_create_plan_tool_part(part):
-      if first is None or event_idx < first:
-        first = event_idx
+    if (is_edit_tool_part(part) or is_create_plan_tool_part(part)) and (
+      first is None or event_idx < first
+    ):
+      first = event_idx
   return first
 
 

@@ -14,11 +14,21 @@ repos:
 
   - repo: local
     hooks:
+      - id: ruff-format
+        name: ruff format (staged Python)
+        entry: bash -c '../.venv/bin/ruff format "$@"' --
+        language: system
+        files: ^(hpcperfstats/|cursor-hooks/|scripts/|services-conf/|hpcperfstats-tools/).*\.py$
+        exclude: (^|/)migrations/
+        pass_filenames: true
+
+  - repo: local
+    hooks:
       - id: ruff-unused
         name: ruff (Python unused imports/vars)
-        entry: bash -c '../.venv/bin/ruff check --select=F401,F841,F811 hpcperfstats cursor-hooks scripts'
+        entry: bash -c '../.venv/bin/ruff check --select=F401,F841,F811 hpcperfstats cursor-hooks scripts services-conf hpcperfstats-tools'
         language: system
-        files: ^(hpcperfstats/|cursor-hooks/|scripts/).*\.py$
+        files: ^(hpcperfstats/|cursor-hooks/|scripts/|services-conf/|hpcperfstats-tools/).*\.py$
         pass_filenames: false
 
   - repo: local

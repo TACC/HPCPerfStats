@@ -176,8 +176,10 @@ combine-as-imports = true
 "hpcperfstats/analysis/metrics/lib/plot/summaryplot.py" = ["E402"]
 "hpcperfstats/analysis/metrics/tests/test_per_interval_rate.py" = ["E402"]
 "hpcperfstats/analysis/metrics/tests/test_time_imbalance.py" = ["E402"]
-"hpcperfstats/dbload/sync_timedb.py" = ["E402"]
+# sync_timedb*: skip SIM/E731 refactors that introduce nested defs (python_def_inventory gate).
+"hpcperfstats/dbload/sync_timedb.py" = ["E402", "E731", "SIM102", "SIM108", "SIM117"]
 "hpcperfstats/dbload/sync_timedb_archive.py" = ["E402"]
+"hpcperfstats/dbload/lib/sync_timedb_archive_helpers.py" = ["E731", "SIM102", "SIM108", "SIM117"]
 "hpcperfstats/dbload/sync_acct.py" = ["E402"]
 "hpcperfstats/dbload/lib/sync_timedb_day_raw_removal.py" = ["E402"]
 "hpcperfstats/dbload/lib/sync_timedb_ingest_timeout.py" = ["E402"]
