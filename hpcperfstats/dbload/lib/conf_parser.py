@@ -303,7 +303,7 @@ INI_OPTION_DEFAULTS = {
     'sync_ingest_worker_memory_telemetry': 'no',
     'sync_ingest_worker_memory_telemetry_every_n_chunks': '1',
     'sync_timedb_mem_telemetry': 'no',
-    'sync_cgroup_admit_headroom_mib': '16384',
+    'sync_cgroup_admit_headroom_mib': '4096',
     'sync_cgroup_admit_max_file_cache_cgroup_pct': '60',
     'sync_ingest_stuck_inflight_recycle_s': '3600',
     'sync_ingest_telemetry': 'no',
@@ -3667,7 +3667,7 @@ def get_sync_cgroup_admit_headroom_mib() -> Any:
   """
   Require this many MiB free under ``memory.max`` before multi-file admit / append.
 
-  Default ``16384``. ``0`` disables the cgroup-headroom gate (fail open).
+  Default ``4096``. ``0`` disables the cgroup-headroom gate (fail open).
 
   Returns:
     Any: Non-negative integer MiB.

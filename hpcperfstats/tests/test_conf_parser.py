@@ -57,7 +57,7 @@ def test_absolute_concurrency_defaults(temp_ini, monkeypatch):
   assert cfg.get_sync_process_tree_rss_limit_cgroup_pct() == 40
   assert cfg.get_sync_process_tree_rss_exit_cgroup_pct() == 0
   assert cfg.get_sync_timedb_mem_telemetry() is False
-  assert cfg.get_sync_cgroup_admit_headroom_mib() == 16384
+  assert cfg.get_sync_cgroup_admit_headroom_mib() == 4096
   assert cfg.get_sync_cgroup_admit_max_file_cache_cgroup_pct() == 60
   assert cfg.get_sync_ingest_stuck_inflight_recycle_s() == 3600
   for dead in (

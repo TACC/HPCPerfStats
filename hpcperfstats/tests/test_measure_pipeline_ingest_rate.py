@@ -518,6 +518,42 @@ def test_overnight_pack_prefers_dense_8mib_when_64mib_empty(mod):
     assert outcomes["tier_8mib_64mib_count"] == "12"
 
 
+def test_dense_tier_below_min_samples_warns_not_decision_grade(mod, capsys):
+    """Tail admit-starvation (n<12 dense) must label decision_next_dense not decision-grade."""
+    mib = 1024 * 1024
+    lines = [
+        _ts(0)
+        + "Messages consumed in the last 10 minutes: 100; messages waiting "
+        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+        _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+    ]
+    for i in range(3):
+        lines.append(
+            _ts(10 + i * 5)
+            + (
+                "ingest file path=/arch/dense/%d outcome=ingested elapsed_s=100.0 "
+                "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
+                "postgres_s=5.0 feed_s=80.0 collapse_gpu_s=70.0 "
+                "parse_unaccounted_s=2.0"
+                % (i, 16 * mib)
+            ),
+        )
+    lines.append(
+        _ts(40)
+        + "Messages consumed in the last 10 minutes: 100; messages waiting "
+        "to be consumed: 0; current file unlinks (last 10 minutes): 60",
+    )
+    lines.append(
+        _ts(40) + "Pending stats file list truncated pending=900 max=2000",
+    )
+    outcomes = mod.analyze_lines(lines)
+    assert outcomes["tier_8mib_64mib_count"] == "3"
+    assert outcomes["decision_next_dense"] == "parse_hold_feed_s"
+    err = capsys.readouterr().err
+    assert "tier_8mib_64mib_count=3 below min 12" in err
+    assert "not decision-grade" in err
+
+
 def test_overnight_pack_prefers_dense_when_64mib_sparse(mod):
     """Four 64mib files must not beat twelve dense 8–64 MiB samples."""
     mib = 1024 * 1024

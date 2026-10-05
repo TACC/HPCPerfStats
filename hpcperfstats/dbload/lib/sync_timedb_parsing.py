@@ -1389,7 +1389,7 @@ def _collapse_nvidia_gpu_vectorized(nv_df: Any, gcols: Any) -> Any:
   max_df = nv_df.loc[event_class == _NVIDIA_EVENT_CLASS_MAX]
   if not max_df.empty:
     parts.append(
-        max_df.groupby(gcols, observed=True).agg(
+        max_df.groupby(gcols, observed=True, sort=False).agg(
             value=("value", "max"),
             delta=("delta", "mean"),
             **_optional_jid_first_agg(max_df),
@@ -1399,7 +1399,7 @@ def _collapse_nvidia_gpu_vectorized(nv_df: Any, gcols: Any) -> Any:
   mean_df = nv_df.loc[event_class == _NVIDIA_EVENT_CLASS_MEAN]
   if not mean_df.empty:
     parts.append(
-        mean_df.groupby(gcols, observed=True).agg(
+        mean_df.groupby(gcols, observed=True, sort=False).agg(
             value=("value", "mean"),
             delta=("delta", "mean"),
             **_optional_jid_first_agg(mean_df),
@@ -1408,7 +1408,7 @@ def _collapse_nvidia_gpu_vectorized(nv_df: Any, gcols: Any) -> Any:
 
   or_df = nv_df.loc[event_class == _NVIDIA_EVENT_CLASS_OR]
   if not or_df.empty:
-    or_collapsed = or_df.groupby(gcols, observed=True).agg(
+    or_collapsed = or_df.groupby(gcols, observed=True, sort=False).agg(
         value=("value", _nvidia_bitwise_or_values),
         delta=("delta", "sum"),
         _delta_n=("delta", "count"),

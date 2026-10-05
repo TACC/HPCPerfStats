@@ -1496,6 +1496,13 @@ def build_outcomes(
         )
     else:
         decision_next_dense = "insufficient_dense_tier_samples"
+    if 0 < dense_n < _MID_TIER_MIN_SAMPLES:
+        print(
+            "WARN: tier_8mib_64mib_count=%d below min %d; "
+            "decision_next_dense=%s not decision-grade"
+            % (dense_n, _MID_TIER_MIN_SAMPLES, decision_next_dense),
+            file=sys.stderr,
+        )
     if telem_incomplete:
         print(
             "WARN: mid-tier telem incomplete "
