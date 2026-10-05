@@ -127,6 +127,18 @@ if ! grep -q 'apply_pipeline_memory_high' "${PIPELINE_SCRIPT}"; then
   echo "rebuild_pipeline.sh must call apply_pipeline_memory_high" >&2
   exit 1
 fi
+if ! grep -q 'CgroupPath' "${MEMORY_LIB}"; then
+  echo "compose_pipeline_memory_high.sh must set memory.high via podman CgroupPath on host" >&2
+  exit 1
+fi
+if ! grep -q '/sys/fs/cgroup' "${MEMORY_LIB}"; then
+  echo "compose_pipeline_memory_high.sh must write under host /sys/fs/cgroup" >&2
+  exit 1
+fi
+if grep -qE 'exec -u 0.*> /sys/fs/cgroup/memory\.high' "${MEMORY_LIB}"; then
+  echo "compose_pipeline_memory_high.sh must not write memory.high only inside container (ro cgroup)" >&2
+  exit 1
+fi
 apply_line="$(awk '/^main\(\)/ {m=1} m && /apply_pipeline_memory_high/ {print NR; exit}' "${PIPELINE_SCRIPT}")"
 start_line="$(awk '/^main\(\)/ {m=1} m && /start_web_proxy_pipeline/ {print NR; exit}' "${PIPELINE_SCRIPT}")"
 if [[ -z "${apply_line}" || -z "${start_line}" || "${apply_line}" -le "${start_line}" ]]; then

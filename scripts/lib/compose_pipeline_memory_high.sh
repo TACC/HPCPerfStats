@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Pipeline cgroup v2 memory.high = 2/3 of live memory.max (integer bytes).
+# Writes from the host via podman CgroupPath (in-container /sys/fs/cgroup is often ro).
 # Requires PODMAN, HPCPERFSTATS_COMPOSE_PROJECT (from podman_runtime.sh).
 
 if [[ -z "${BASH_VERSION:-}" ]]; then
@@ -16,26 +17,42 @@ compute_pipeline_memory_high_bytes() {
   echo $((max_bytes * 2 / 3))
 }
 
+pipeline_cgroup_dir_on_host() {
+  local name rel base
+  name="$(pipeline_container_name)"
+  rel="$("${PODMAN[@]}" inspect --format '{{.CgroupPath}}' "${name}" 2>/dev/null)"
+  if [[ -z "${rel}" ]]; then
+    echo "compose_pipeline_memory_high: no CgroupPath for ${name}" >&2
+    return 1
+  fi
+  if [[ "${rel}" != /* ]]; then
+    rel="/${rel}"
+  fi
+  base="/sys/fs/cgroup${rel}"
+  if [[ ! -r "${base}/memory.max" ]]; then
+    echo "compose_pipeline_memory_high: host cgroup not found at ${base}" >&2
+    return 1
+  fi
+  echo "${base}"
+}
+
 _read_pipeline_cgroup_file() {
   local file_name="$1"
-  local name
+  local dir name
+  if dir="$(pipeline_cgroup_dir_on_host 2>/dev/null)"; then
+    cat "${dir}/${file_name}" 2>/dev/null | tr -d '[:space:]'
+    return 0
+  fi
   name="$(pipeline_container_name)"
   "${PODMAN[@]}" exec -u 0 "${name}" cat "/sys/fs/cgroup/${file_name}" 2>/dev/null \
     | tr -d '[:space:]'
 }
 
-read_pipeline_memory_max_bytes() {
-  local raw
-  raw="$(_read_pipeline_cgroup_file memory.max)"
-  if [[ -z "${raw}" || "${raw}" == "max" ]]; then
-    echo "compose_pipeline_memory_high: memory.max is unlimited or unreadable (${raw:-empty})" >&2
-    return 1
-  fi
-  if [[ ! "${raw}" =~ ^[0-9]+$ ]]; then
-    echo "compose_pipeline_memory_high: unexpected memory.max value: ${raw}" >&2
-    return 1
-  fi
-  echo "${raw}"
+_write_pipeline_memory_high_bytes() {
+  local high_bytes="$1"
+  local dir
+  dir="$(pipeline_cgroup_dir_on_host)" || return 1
+  echo "${high_bytes}" >"${dir}/memory.high"
 }
 
 _format_bytes_mib() {
@@ -60,22 +77,23 @@ wait_for_pipeline_container_running() {
 
 apply_pipeline_memory_high() {
   if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
-    echo "[dry-run] would set pipeline cgroup memory.high to 2/3 of memory.max"
+    echo "[dry-run] would set pipeline cgroup memory.high to 2/3 of memory.max (host cgroup via CgroupPath)"
     return 0
   fi
 
   wait_for_pipeline_container_running || return 1
 
-  local max_bytes high_bytes name read_back max_mib high_mib
+  local max_bytes high_bytes name read_back max_mib high_mib cgroup_dir
   max_bytes="$(read_pipeline_memory_max_bytes)" || return 1
   high_bytes="$(compute_pipeline_memory_high_bytes "${max_bytes}")"
   name="$(pipeline_container_name)"
+  cgroup_dir="$(pipeline_cgroup_dir_on_host)" || return 1
   max_mib="$(_format_bytes_mib "${max_bytes}")"
   high_mib="$(_format_bytes_mib "${high_bytes}")"
 
-  echo "Setting ${name} memory.high=${high_bytes} (${high_mib} MiB) from memory.max=${max_bytes} (${max_mib} MiB) ..."
-  if ! "${PODMAN[@]}" exec -u 0 "${name}" sh -c "echo '${high_bytes}' > /sys/fs/cgroup/memory.high"; then
-    echo "compose_pipeline_memory_high: failed to write memory.high" >&2
+  echo "Setting ${name} memory.high=${high_bytes} (${high_mib} MiB) from memory.max=${max_bytes} (${max_mib} MiB) at ${cgroup_dir} ..."
+  if ! _write_pipeline_memory_high_bytes "${high_bytes}"; then
+    echo "compose_pipeline_memory_high: failed to write memory.high on host" >&2
     return 1
   fi
 
