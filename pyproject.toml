@@ -148,14 +148,24 @@ extend-exclude = [
 select = [
   "E",  # pycodestyle errors
   "F",  # pyflakes
-  "I",  # import sorting
+  "I",  # isort (replaces pre-commit isort hook)
+  "W",  # pycodestyle warnings (W291/W292/W293: trailing ws, EOF newline)
   "B",  # flake8-bugbear
-  "W",  # pycodestyle warnings
+  "UP",  # pyupgrade
+  "SIM",  # flake8-simplify
+  "RUF",  # Ruff-specific
+  "C4",  # flake8-comprehensions
+  "PIE",  # flake8-pie
+  "PGH",  # pygrep-hooks
 ]
 ignore = [
-  # Add specific rule codes here if Ruff is too strict somewhere.
+  "E501",  # line length; ruff format wraps (Google 80 col)
 ]
 fixable = ["ALL"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["hpcperfstats"]
+combine-as-imports = true
 
 [tool.ruff.format]
 quote-style = "double"

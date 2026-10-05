@@ -7,7 +7,7 @@ name = "hpcperfstats-tools"
 version = "0.2.0"
 description = "Command-line tools for querying an HPCPerfStats deployment"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 license = { file = "LICENSE" }
 authors = [
   { name = "Texas Advanced Computing Center", email = "sharrell@tacc.utexas.edu" },
@@ -38,9 +38,38 @@ hpcperfstats-sacct-gen = "hpcperfstats_tools.sacct_gen:main"
 packages = ["hpcperfstats_tools"]
 
 [tool.ruff]
-target-version = "py310"
-line-length = 88
+target-version = "py314"
+line-length = 80  # align with main HPCPerfStats package (Google style)
+extend-exclude = [
+  ".venv",
+  "build",
+  "dist",
+]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "W"]
+select = [
+  "E",
+  "F",
+  "I",
+  "W",
+  "B",
+  "UP",
+  "SIM",
+  "RUF",
+  "C4",
+  "PIE",
+  "PGH",
+]
+ignore = ["E501"]
+fixable = ["ALL"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["hpcperfstats_tools"]
+combine-as-imports = true
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+docstring-code-format = true
 
