@@ -26,6 +26,7 @@ If the failure reveals a **recurring** gap (not a one-off typo), also add a one-
 ## What counts as “failed”
 
 - Non-zero exit, `command not found`, wrong container user (`su hpcperfstats` vs root).
+- **`docker compose exec pipeline su hpcperfstats -c 'python3 …'`** as **root** on hpcperfstats01 → **`su: Authentication failure`** (2026-10-05); use **`docker compose exec -u hpcperfstats pipeline python3 -c "…"`** (no nested `su`).
 - Path does not exist — especially when the command hardcoded `/hpcperfstats/...` instead of INI-resolved paths.
 - Leading `cd HPCPerfStats` (or any host `cd`) before `docker compose` in operator paste blocks — forbidden per **Mandatory format** in `compose-operator-terminal-commands.mdc`; state cwd in prose only.
 - `docker compose ps pipeline` / `ps -q pipeline` on podman-compose — unrecognized positional (hpcperfstats02 2026-09-24); use `podman inspect hpcperfstats_pipeline_1` (see **Podman-compose sites** `ps` / `ps -q` rows in `compose-operator-terminal-commands.mdc`).

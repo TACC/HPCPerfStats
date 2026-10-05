@@ -95,6 +95,8 @@ Remove **`sync_cgroup_admit_max_file_cache_mib`** from baked site INI; it is **n
 
 Effective MiB = ``process_memory.effective_cgroup_admit_max_file_cache_mib()`` (same formula as roof pct). Telem prints **`file_cache_cgroup_pct=`** plus effective **`file_cache_cfg_mib=`**. Tune **`file_cache_cgroup_pct`** only on file-cache-heavy hosts (not a separate MiB INI).
 
+**192g pipeline cgroup (`mem_limit` 192G):** at default **60%**, effective file-cache admit cap **≈117965 MiB** — parallel ingest at full pool width can still pin **`skip_cgroup_headroom`** when page cache exceeds that tripwire. Primary relief is **`sync_pipeline_drop_page_cache=yes`** (Linux **`posix_fadvise`** on ingest/archive paths; legacy **`archive_zstd_drop_page_cache`** when the new key is omitted) plus P0 restart after deploy — **not** lowering **`sync_ingest_pool_processes`**. See **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** § pipeline memory.
+
 ---
 
 ## Cluster syslog volume layout

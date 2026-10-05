@@ -47,7 +47,7 @@ def _page_cache_hints_enabled() -> bool:
     return False
   from hpcperfstats.dbload.lib import conf_parser as cfg_mod
 
-  return cfg_mod.get_archive_zstd_drop_page_cache()
+  return cfg_mod.get_sync_pipeline_drop_page_cache()
 
 
 def _advise_path(path: str, advice: int) -> None:
@@ -114,19 +114,18 @@ def _advise_drop_cache(path: str) -> None:
   _advise_path(path, os.POSIX_FADV_DONTNEED)
 
 
-def zstd_drop_page_cache_for_paths(*paths: str) -> None:
+def drop_page_cache_for_paths(*paths: str) -> None:
   """
-  Drop Linux page cache for archive paths after one-shot zstd I/O.
+  Drop Linux page cache for file paths after one-shot or streaming I/O.
   
   Args:
-    *paths (str): Variadic positional values for ``paths``; element types
-    match the helper's documented protocol.
+    *paths (str): Filesystem paths to advise ``POSIX_FADV_DONTNEED``.
   
   Returns:
     None
   
   Examples:
-    >>> zstd_drop_page_cache_for_paths()  # doctest: +SKIP
+    >>> drop_page_cache_for_paths()  # doctest: +SKIP
   """
   if not _page_cache_hints_enabled():
     return
@@ -136,6 +135,69 @@ def zstd_drop_page_cache_for_paths(*paths: str) -> None:
       continue
     seen.add(path)
     _advise_drop_cache(path)
+
+
+def advise_sequential_read_for_paths(*paths: str) -> None:
+  """
+  Hint sequential read access before large file scans.
+  
+  Args:
+    *paths (str): Filesystem paths to advise ``POSIX_FADV_SEQUENTIAL``.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> advise_sequential_read_for_paths()  # doctest: +SKIP
+  """
+  if not _page_cache_hints_enabled():
+    return
+  seen: set[str] = set()
+  for path in paths:
+    if not path or path in seen:
+      continue
+    seen.add(path)
+    _advise_sequential_read(path)
+
+
+def drop_page_cache_for_fd(fd: Any, offset: int, length: int) -> None:
+  """
+  Drop page cache for a byte range on an open file descriptor.
+  
+  Args:
+    fd (Any): Open file object or integer fileno.
+    offset (int): Start offset for ``posix_fadvise``.
+    length (int): Length in bytes (0 no-op).
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> drop_page_cache_for_fd(0, 0, 0)  # doctest: +SKIP
+  """
+  if not _page_cache_hints_enabled() or length <= 0:
+    return
+  try:
+    fileno = int(fd) if isinstance(fd, int) else int(fd.fileno())
+    os.posix_fadvise(fileno, int(offset), int(length), os.POSIX_FADV_DONTNEED)
+  except (OSError, AttributeError, TypeError, ValueError):
+    pass
+
+
+def zstd_drop_page_cache_for_paths(*paths: str) -> None:
+  """
+  Deprecated alias for :func:`drop_page_cache_for_paths`.
+  
+  Args:
+    *paths (str): Passed through to ``drop_page_cache_for_paths``.
+  
+  Returns:
+    None
+  
+  Examples:
+    >>> zstd_drop_page_cache_for_paths()  # doctest: +SKIP
+  """
+  drop_page_cache_for_paths(*paths)
 
 
 def zstd_executable() -> str:
@@ -582,7 +644,7 @@ def _decompress_to_path(
         stderr=result.stderr,
     )
   # Drop compressed pages only; keep output_path warm for verify / replace.
-  zstd_drop_page_cache_for_paths(compressed_path)
+  drop_page_cache_for_paths(compressed_path)
 
 
 def _tar_dest_is_nonempty(tar_path: str) -> bool:
@@ -776,7 +838,7 @@ def decompress_compressed_to_tar(
       except OSError:
         pass
       return False
-    zstd_drop_page_cache_for_paths(compressed_path, tar_path)
+    drop_page_cache_for_paths(compressed_path, tar_path)
     remove_ok = True
     if remove_compressed:
       try:
@@ -1378,4 +1440,4 @@ def zstd_compress_tar_to_file(
           result.args,
           stderr=result.stderr,
       )
-  zstd_drop_page_cache_for_paths(tar_path, zst_path)
+  drop_page_cache_for_paths(tar_path, zst_path)

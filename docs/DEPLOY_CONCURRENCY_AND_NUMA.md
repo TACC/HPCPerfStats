@@ -32,11 +32,11 @@ Daily monitor archives are sealed inside the **`pipeline`** container. **`web`**
 | **`archive_zstd_nice`** | **`10`** | CPU deprioritization for archive (niced) zstd children (`0` disables) |
 | **`archive_zstd_ionice_class`** / **`archive_zstd_ionice_level`** | **`2`** / **`6`** | Best-effort I/O class; higher level yields disk to Postgres |
 | **`archive_zstd_level`** | **`7`** | Compression level; benchmark before raising above **9** |
-| **`archive_zstd_drop_page_cache`** | **`yes`** | Linux-only **`posix_fadvise`** hints around archive zstd reads/writes to drop hot pages after one-shot seal/decompress/integrity paths; set **`no`** to disable |
+| **`sync_pipeline_drop_page_cache`** | **`yes`** | Linux-only **`posix_fadvise`** on pipeline file I/O (ingest streaming, archive zstd, tar paths); legacy **`archive_zstd_drop_page_cache`** when this key is omitted |
 
 **Tuning:** If seals are too slow, raise **`sync_day_close_max_inflight`** (parallel day-close workers, default **8**). If web/API or Postgres latency spikes during seal/zstd, raise **`archive_zstd_nice`** or **`archive_zstd_ionice_level`**. Override env **`SYNC_ARCHIVE_SEAL_WORKERS`** mirrors validation fanout.
 
-**Page cache:** Large daily archives fill the Linux page cache during zstd I/O. With **`archive_zstd_drop_page_cache=yes`** (default), **`zstd_cli.py`** issues **`POSIX_FADV_SEQUENTIAL`** before reads and **`POSIX_FADV_DONTNEED`** after successful one-shot access. This is a hint only (not **`O_DIRECT`**); macOS dev hosts no-op. Decompress restore materializes to a temp ``.tar``, verifies with **`tar tf`** on that tmp, then replaces the canonical sibling (one zst pass; no pipe preflight on the restore path).
+**Page cache:** Large daily archives and parallel ingest raw reads fill the Linux page cache. With **`sync_pipeline_drop_page_cache=yes`** (default), **`zstd_cli.py`** issues **`POSIX_FADV_SEQUENTIAL`** before large scans and **`POSIX_FADV_DONTNEED`** after one-shot paths and streaming read batches (not a substitute for lowering ingest pool width). Hint only (not **`O_DIRECT`**); macOS dev hosts no-op. **192g pipeline cgroup:** at **60%** file-cache admit, effective cap ≈ **117965 MiB** — tune via **`sync_cgroup_admit_max_file_cache_cgroup_pct`** only as an admit tripwire; primary relief is fadvise + P0 restart, not pool cuts.
 
 ## Day close (queue orchestrator)
 

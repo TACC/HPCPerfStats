@@ -271,6 +271,26 @@ def test_get_archive_zstd_drop_page_cache_opt_out(temp_ini, monkeypatch):
   assert cfg.get_archive_zstd_drop_page_cache() is False
 
 
+def test_get_sync_pipeline_drop_page_cache_new_key_wins(temp_ini, monkeypatch):
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+  importlib.reload(cfg)
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+      "daily_archive_dir = /tmp",
+      "daily_archive_dir = /tmp\n"
+      "archive_zstd_drop_page_cache = yes\n"
+      "sync_pipeline_drop_page_cache = no",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_sync_pipeline_drop_page_cache() is False
+  assert cfg.get_archive_zstd_drop_page_cache() is False
+
+
 def test_get_archive_zstd_threads_default_and_override(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib

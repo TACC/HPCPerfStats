@@ -62,6 +62,7 @@ When adding a new tunable whose example value is the registry default, add it **
 
 - `sync_*`, `metrics_*`, `ingest_*` → **`[PIPELINE]`**
 - `archive_*` → **`[PIPELINE]`**
+- **`sync_pipeline_drop_page_cache`** → **`[PIPELINE]`** (default **`yes`**; legacy **`archive_zstd_drop_page_cache`** read when the new key is omitted)
 - `gunicorn_*`, `summary_aggregate_*`, `parallel_db_*`, `api_small_*`, `db_conn_*`, `db_statement_*`, `db_idle_*`, `cors_*` → **`[PORTAL]`**
 - `xalt_*` → **`[XALT]`**; `rmq_*` → **`[RMQ]`**
 

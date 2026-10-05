@@ -203,7 +203,7 @@ def snapshot_pipeline_mem_telemetry(
       ),
       "file_cache_cfg_mib": int(pm.effective_cgroup_admit_max_file_cache_mib()),
       "drop_page_cache": (
-          "yes" if cfg.get_archive_zstd_drop_page_cache() else "no"
+          "yes" if cfg.get_sync_pipeline_drop_page_cache() else "no"
       ),
       "ingest_pool": int(cfg.get_sync_ingest_pool_processes()),
       "listend_pool": int(cfg.get_listend_db_ingest_pool_processes()),

@@ -1406,6 +1406,9 @@ def _worker_main(
     try:
       try:
         raw = os.pread(int(fd), int(length), int(offset))
+        from hpcperfstats.dbload.lib.zstd_cli import drop_page_cache_for_fd
+
+        drop_page_cache_for_fd(fd, offset, len(raw))
         message = raw.decode("utf-8", errors="replace")
         raw = None
       except Exception as pread_exc:

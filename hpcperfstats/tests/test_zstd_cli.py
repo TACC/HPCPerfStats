@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import os
 import shutil
 import signal
 import subprocess
@@ -17,6 +18,8 @@ from hpcperfstats.dbload.lib.zstd_cli import (
     zstd_compress_tar_to_file,
     zstd_decompress_stdout,
     zstd_decompress_verbose,
+    drop_page_cache_for_fd,
+    drop_page_cache_for_paths,
     zstd_drop_page_cache_for_paths,
     zstd_executable,
     zstd_gzip_decompress_verbose,
@@ -199,6 +202,38 @@ def test_page_cache_hints_noop_off_linux(monkeypatch, tmp_path):
   )
   zstd_drop_page_cache_for_paths(str(path))
   assert open_calls == []
+
+
+def test_drop_page_cache_for_fd_invokes_posix_fadvise(monkeypatch):
+  advised = []
+
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.zstd_cli._page_cache_hints_enabled",
+      lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.zstd_cli.os.posix_fadvise",
+      lambda fd, off, ln, adv: advised.append((fd, off, ln, adv)),
+  )
+  drop_page_cache_for_fd(7, 4096, 1024)
+  assert advised == [(7, 4096, 1024, os.POSIX_FADV_DONTNEED)]
+
+
+def test_drop_page_cache_alias_matches_primary(monkeypatch, tmp_path):
+  path = tmp_path / "stats.raw"
+  path.write_bytes(b"x")
+  dropped = []
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.zstd_cli._page_cache_hints_enabled",
+      lambda: True,
+  )
+  monkeypatch.setattr(
+      "hpcperfstats.dbload.lib.zstd_cli._advise_drop_cache",
+      lambda p: dropped.append(p),
+  )
+  drop_page_cache_for_paths(str(path))
+  zstd_drop_page_cache_for_paths(str(path))
+  assert dropped == [str(path), str(path)]
 
 
 def test_page_cache_hints_invoke_fadvise_on_linux(monkeypatch, tmp_path):

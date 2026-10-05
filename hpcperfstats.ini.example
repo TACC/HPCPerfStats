@@ -442,9 +442,11 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # zstd compression level 1-19 for .tar.zst (default 7; benchmark before raising above 9).
 # archive_zstd_level = 7
 
-# Linux-only: posix_fadvise SEQUENTIAL/DONTNEED around archive zstd subprocess I/O to
-# encourage early page-cache eviction after one-shot seal/decompress/integrity reads.
+# Linux-only: posix_fadvise SEQUENTIAL/DONTNEED on pipeline file I/O (ingest, archive, zstd).
 # Default yes when omitted; set no only for A/B tuning or debugging.
+# sync_pipeline_drop_page_cache = yes
+
+# Legacy name for sync_pipeline_drop_page_cache (used when the new key is omitted).
 # archive_zstd_drop_page_cache = yes
 
 # Optional idle dwell before janitor tick budget bonus (default 300).

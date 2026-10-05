@@ -1013,6 +1013,13 @@ def _read_stats_line_batch_decode_after_lock(
         if not raw:
           break
         raw_batch.append(raw)
+      if raw_batch:
+        from hpcperfstats.dbload.lib.zstd_cli import drop_page_cache_for_fd
+
+        chunk_bytes = sum(len(raw) for raw in raw_batch)
+        if chunk_bytes > 0:
+          end_pos = fd.tell()
+          drop_page_cache_for_fd(fd, end_pos - chunk_bytes, chunk_bytes)
   with _held_parse_stage("decode_s"):
     return [_decode_stats_readline(raw) for raw in raw_batch]
 
@@ -2646,6 +2653,9 @@ def parse_stats_file_streaming(
   """
   emission_start = max(int(start_line_idx or 0), int(parse_start_idx or 0))
   parser = IncrementalStatsParser(emission_start, exclude_types_list)
+  from hpcperfstats.dbload.lib.zstd_cli import advise_sequential_read_for_paths
+
+  advise_sequential_read_for_paths(stats_file)
   try:
     with open(stats_file, "rb") as fd:
       while True:
@@ -3209,7 +3219,9 @@ def parse_stats_file_streaming_incremental(
   parser = IncrementalStatsParser(emission_start, exclude_types_list)
   pending_flush = False
   flush_rows = max(1, int(flush_rows))
+  from hpcperfstats.dbload.lib.zstd_cli import advise_sequential_read_for_paths
 
+  advise_sequential_read_for_paths(stats_file)
   try:
     with open(stats_file, "rb") as fd:
       while True:

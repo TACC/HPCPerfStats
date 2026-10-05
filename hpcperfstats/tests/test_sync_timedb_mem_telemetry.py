@@ -69,7 +69,7 @@ def test_format_includes_contract_tokens(monkeypatch):
       lambda: 16384,
   )
   monkeypatch.setattr(
-      "hpcperfstats.dbload.lib.conf_parser.get_archive_zstd_drop_page_cache",
+      "hpcperfstats.dbload.lib.conf_parser.get_sync_pipeline_drop_page_cache",
       lambda: True,
   )
   monkeypatch.setattr(

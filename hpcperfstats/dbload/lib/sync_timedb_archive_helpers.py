@@ -88,7 +88,7 @@ from hpcperfstats.dbload.lib.zstd_cli import (
     decompress_compressed_to_tar,
     zstd_compressed_archive_pipe_readable,
     zstd_decompress_stdout,
-    zstd_drop_page_cache_for_paths,
+    drop_page_cache_for_paths,
     zstd_gzip_decompress_stdout,
     zstd_gzip_supported,
     zstd_compress_tar_to_file,
@@ -9359,7 +9359,7 @@ def reconcile_open_tar_with_sealed_zst(
     if force_remove_uncompressed_tar and zst_exists and zst_readable:
       try:
         zstd_test(zst_path, zstd_threads)
-        zstd_drop_page_cache_for_paths(tar_path)
+        drop_page_cache_for_paths(tar_path)
         with file_write_lock(tar_path):
           os.remove(tar_path)
         invalidate_after_daily_tar_mutation(
@@ -10653,7 +10653,7 @@ def atomic_seal_tar_to_zst(
       )
   else:
     try:
-      zstd_drop_page_cache_for_paths(tar_path)
+      drop_page_cache_for_paths(tar_path)
       with file_write_lock(tar_path):
         os.remove(tar_path)
       if log_fn:
