@@ -178,6 +178,8 @@ RUN set -eux; \
   cd /usr/src/nginx; \
   export ZSTD_INC=/opt/zstd/include; \
   export ZSTD_LIB=/opt/zstd/lib; \
+  # libzstd.a is linked by zstd-nginx-module (ngx_zstd_try_static), not --with-ld-opt:
+  # nginx auto/cc/conf probes ld-opt with an empty main(); -l:libzstd.a + -flto fails on GCC 16.
   ./configure \
     --prefix=/opt/nginx \
     --sbin-path=/usr/sbin/nginx \
@@ -203,7 +205,7 @@ RUN set -eux; \
     --with-openssl=../openssl-${OPENSSL_VERSION} \
     --with-zlib=../zlib-ng \
     --with-cc-opt="${OPT_CFLAGS_LIBS} -I/opt/zstd/include" \
-    --with-ld-opt="-flto -L/opt/jemalloc/lib -L/opt/brotli/lib -L/opt/zstd/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -ljemalloc -lbrotlienc -lbrotlidec -lbrotlicommon -l:libzstd.a" \
+    --with-ld-opt="-flto -L/opt/jemalloc/lib -L/opt/brotli/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -ljemalloc -lbrotlienc -lbrotlidec -lbrotlicommon" \
     --with-openssl-opt="no-nextprotoneg no-weak-ssl-ciphers no-ssl3 no-shared enable-ec_nistp_64_gcc_128 ${OPT_CFLAGS_LIBS}" \
     --with-zlib-opt="--zlib-compat"; \
   make -j"$(nproc)"; \

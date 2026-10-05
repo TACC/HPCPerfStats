@@ -696,8 +696,6 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   assert "HAVE_LZ4=0" in dockerfile
   assert "libzstd.a" in dockerfile
   assert "-I/opt/zstd/include" in dockerfile
-  assert "-L/opt/zstd/lib" in dockerfile
-  assert "-l:libzstd.a" in dockerfile
   assert "ZSTD_INC=/opt/zstd/include" in dockerfile
   assert "ZSTD_LIB=/opt/zstd/lib" in dockerfile
   assert "grep -Fi zstd" in dockerfile
@@ -720,6 +718,10 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   assert 'MOREFLAGS="${OPT_CFLAGS_LIBS}"' in zstd_moreflags
   cc_opt = _first_line_containing("--with-cc-opt=")
   assert "${OPT_CFLAGS_LIBS}" in cc_opt
+  ld_opt = _first_line_containing("--with-ld-opt=")
+  assert "libzstd" not in ld_opt, (
+    "libzstd must fold via zstd-nginx-module static path, not --with-ld-opt (nginx configure probe)"
+  )
   openssl_opt = _first_line_containing("--with-openssl-opt=")
   assert "${OPT_CFLAGS_LIBS}" in openssl_opt
   assert "enable-ec_nistp_64_gcc_128" in openssl_opt
