@@ -28,6 +28,16 @@ def test_db_dockerfile_pins_alpine_3_24_not_latest_or_trixie() -> None:
   text = _dockerfile()
   assert "ARG ALPINE_VERSION=3.24.2" in text
   assert "FROM alpine:${ALPINE_VERSION}" in text
+  first_from = text.index("FROM ")
+  alpine_arg = text.index("ARG ALPINE_VERSION=3.24.2")
+  assert alpine_arg < first_from, (
+    "ALPINE_VERSION must be declared before first FROM"
+  )
+
+
+def test_db_dockerfile_apk_includes_bzip2_for_source_tarballs() -> None:
+  text = _dockerfile()
+  assert "bzip2" in text.split("apk add", 1)[1].split("RUN gcc", 1)[0]
   assert "alpine:latest" not in text
   assert "alpine:edge" not in text
   assert "debian:trixie" not in text

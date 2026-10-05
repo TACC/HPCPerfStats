@@ -31,6 +31,7 @@ def test_python_build_uses_gcc_16_from_testing_pin() -> None:
     in build
   )
   assert "build-essential" not in build
+  assert "bzip2" in build
   assert "CC=gcc-16" in build or "ENV CC=gcc-16" in build
 
 

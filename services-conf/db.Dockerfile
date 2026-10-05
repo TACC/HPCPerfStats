@@ -4,11 +4,11 @@
 # Do not use a floating Alpine tag. Do not copy docker-library --disable-rpath.
 
 # syntax=docker/dockerfile:1
+ARG ALPINE_VERSION=3.24.2
 ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2
 ARG GCC_MIN_VERSION=16.2
 FROM ${GCC_TOOLCHAIN_IMAGE} AS gcc-toolchain
 
-ARG ALPINE_VERSION=3.24.2
 FROM alpine:${ALPINE_VERSION} AS db-build
 
 ARG GCC_MIN_VERSION=16.2
@@ -28,6 +28,7 @@ RUN set -eux; \
   apk add --no-cache \
     bash \
     bison \
+    bzip2 \
     build-base \
     cmake \
     coreutils \

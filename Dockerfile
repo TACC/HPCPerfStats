@@ -82,7 +82,7 @@ RUN /bin/bash -o pipefail -c '\
   apt-get install -y --no-install-recommends \
     gcc-16 g++-16 cpp-16 libgcc-16-dev libstdc++-16-dev gfortran-16 \
     make libc6-dev ninja-build cmake pkg-config \
-    curl ca-certificates autoconf \
+    curl ca-certificates autoconf bzip2 \
     libssl-dev libncursesw5-dev libsqlite3-dev \
     libreadline-dev libbz2-dev liblzma-dev tk-dev uuid-dev \
     libgdbm-dev libnss3-dev libexpat1-dev \

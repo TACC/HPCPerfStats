@@ -5,11 +5,11 @@
 # via resolve_proxy_ssl_certs_dir.py in proxy_entrypoint.sh (not baked at build).
 # Do not apk-install nginx / nginx-mod-http-brotli.
 
+ARG ALPINE_VERSION=3.24.2
 ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2
 ARG GCC_MIN_VERSION=16.2
 FROM ${GCC_TOOLCHAIN_IMAGE} AS gcc-toolchain
 
-ARG ALPINE_VERSION=3.24.2
 FROM alpine:${ALPINE_VERSION} AS proxy-build
 
 ARG GCC_MIN_VERSION=16.2
@@ -40,6 +40,7 @@ ENV OPT_CFLAGS_LIBS="-O3 -march=native -mtune=native -flto -g0"
 
 RUN apk add --no-cache \
     build-base \
+    bzip2 \
     cmake \
     curl \
     linux-headers \

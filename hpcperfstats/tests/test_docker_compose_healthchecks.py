@@ -627,6 +627,11 @@ def test_docker_compose_proxy_runtime_tls_mount_and_entrypoint_materialize():
 def test_proxy_dockerfile_uses_shared_musl_gcc_toolchain() -> None:
   repo_root = Path(__file__).resolve().parents[2]
   dockerfile = (repo_root / "services-conf" / "proxy.Dockerfile").read_text()
+  first_from = dockerfile.index("FROM ")
+  alpine_arg = dockerfile.index("ARG ALPINE_VERSION=3.24.2")
+  assert alpine_arg < first_from, (
+    "ALPINE_VERSION must be declared before first FROM"
+  )
   assert "ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2" in dockerfile
   assert "FROM ${GCC_TOOLCHAIN_IMAGE} AS gcc-toolchain" in dockerfile
   assert "COPY --from=gcc-toolchain /opt/gcc-16 /opt/gcc-16" in dockerfile
@@ -644,6 +649,9 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   assert "ARG NGINX_SHA256=" in dockerfile
   assert "ARG JEMALLOC_VERSION=5.4.0" in dockerfile
   assert "ARG JEMALLOC_SHA256=" in dockerfile
+  assert (
+    "bzip2" in dockerfile.split("apk add", 1)[1].split("# --- jemalloc", 1)[0]
+  )
   assert "ARG ZLIB_NG_VERSION=2.3.3" in dockerfile
   assert "ARG ZLIB_NG_SHA256=" in dockerfile
   assert "ARG OPENSSL_VERSION=3.5.9" in dockerfile
