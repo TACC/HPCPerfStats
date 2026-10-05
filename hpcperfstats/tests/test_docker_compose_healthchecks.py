@@ -630,7 +630,10 @@ def test_proxy_dockerfile_uses_shared_musl_gcc_toolchain() -> None:
   assert "ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2" in dockerfile
   assert "FROM ${GCC_TOOLCHAIN_IMAGE} AS gcc-toolchain" in dockerfile
   assert "COPY --from=gcc-toolchain /opt/gcc-16 /opt/gcc-16" in dockerfile
-  assert "assert_gcc_min_version.sh" in dockerfile
+  assert (
+    "COPY --from=gcc-toolchain /usr/local/bin/assert_gcc_min_version.sh"
+    in dockerfile
+  )
 
 
 def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():

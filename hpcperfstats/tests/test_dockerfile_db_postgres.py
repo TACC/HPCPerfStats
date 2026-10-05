@@ -19,7 +19,9 @@ def test_db_dockerfile_uses_shared_musl_gcc_toolchain() -> None:
   assert "ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2" in text
   assert "FROM ${GCC_TOOLCHAIN_IMAGE} AS gcc-toolchain" in text
   assert "COPY --from=gcc-toolchain /opt/gcc-16 /opt/gcc-16" in text
-  assert "assert_gcc_min_version.sh" in text
+  assert (
+    "COPY --from=gcc-toolchain /usr/local/bin/assert_gcc_min_version.sh" in text
+  )
 
 
 def test_db_dockerfile_pins_alpine_3_24_not_latest_or_trixie() -> None:

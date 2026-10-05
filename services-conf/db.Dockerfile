@@ -13,7 +13,7 @@ FROM alpine:${ALPINE_VERSION} AS db-build
 
 ARG GCC_MIN_VERSION=16.2
 COPY --from=gcc-toolchain /opt/gcc-16 /opt/gcc-16
-COPY assert_gcc_min_version.sh /usr/local/bin/assert_gcc_min_version.sh
+COPY --from=gcc-toolchain /usr/local/bin/assert_gcc_min_version.sh /usr/local/bin/assert_gcc_min_version.sh
 ENV PATH="/opt/gcc-16/bin:${PATH}" CC=gcc CXX=g++
 RUN chmod +x /usr/local/bin/assert_gcc_min_version.sh \
   && GCC_MIN_VERSION="${GCC_MIN_VERSION}" assert_gcc_min_version.sh

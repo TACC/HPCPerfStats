@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -54,7 +55,22 @@ def test_rebuild_full_site_builds_musl_gcc_with_services_conf_context() -> None:
     'podman build -f "${GCC_ALPINE_DOCKERFILE}" -t "${GCC_MUSL_IMAGE}" services-conf'
     in text
   )
-  assert "services-conf/assert_gcc_min_version.sh" in text
+
+
+def test_assert_gcc_min_version_script_is_tracked_not_gitignored() -> None:
+  rel = "services-conf/assert_gcc_min_version.sh"
+  check = subprocess.run(
+    ["git", "check-ignore", "-q", rel],
+    cwd=_repo_root(),
+    capture_output=True,
+    text=True,
+    check=False,
+  )
+  assert check.returncode == 1, (
+    f"{rel} is gitignored; add !{rel} under .gitignore"
+  )
+  ignore = (_repo_root() / ".gitignore").read_text()
+  assert "!services-conf/assert_gcc_min_version.sh" in ignore
 
 
 def test_assert_gcc_min_version_script_uses_dumpfullversion() -> None:
