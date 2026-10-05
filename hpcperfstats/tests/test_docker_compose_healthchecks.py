@@ -710,6 +710,7 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
 
   env_cflags = _first_line_containing("ENV OPT_CFLAGS_LIBS=")
   assert "-mtune=native" in env_cflags
+  assert "ENV NGINX_OPT_CFLAGS=" in dockerfile
   jemalloc_cflags = _first_line_containing('CFLAGS="${OPT_CFLAGS_LIBS}"')
   assert 'CFLAGS="${OPT_CFLAGS_LIBS}"' in jemalloc_cflags
   brotli_cflags = _first_line_containing('CMAKE_C_FLAGS="${OPT_CFLAGS_LIBS}"')
@@ -717,11 +718,14 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   zstd_moreflags = _first_line_containing('MOREFLAGS="${OPT_CFLAGS_LIBS}"')
   assert 'MOREFLAGS="${OPT_CFLAGS_LIBS}"' in zstd_moreflags
   cc_opt = _first_line_containing("--with-cc-opt=")
-  assert "${OPT_CFLAGS_LIBS}" in cc_opt
+  assert "NGINX_OPT_CFLAGS" in cc_opt
+  assert "-flto" not in cc_opt
   ld_opt = _first_line_containing("--with-ld-opt=")
   assert "libzstd" not in ld_opt, (
     "libzstd must fold via zstd-nginx-module static path, not --with-ld-opt (nginx configure probe)"
   )
+  assert "-flto" not in ld_opt
+  assert "-Wl,--no-as-needed" not in ld_opt
   openssl_opt = _first_line_containing("--with-openssl-opt=")
   assert "${OPT_CFLAGS_LIBS}" in openssl_opt
   assert "enable-ec_nistp_64_gcc_128" in openssl_opt
