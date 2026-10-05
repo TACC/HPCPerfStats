@@ -178,7 +178,8 @@ def test_build_payload_core_zero_actionable_ib_informational():
   assert "all_zero_other_event" in kinds
   assert "signature_absent" not in kinds
   md = payload["monitor_handoff_markdown"]
-  assert "n001.example.com" in md
+  sampled_fqdn = payload["hosts_sampled_fqdns"][0]
+  assert md.find(sampled_fqdn) >= 0
   assert "slug pending" in md.lower() or "slug pending RPM" in md
   assert (
     "host_ib" not in md.split("## Actionable findings")[1].split("## Out")[0]

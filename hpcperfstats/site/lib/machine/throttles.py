@@ -4,10 +4,10 @@ DRF throttles for authenticated and expensive machine API routes.
 
 from __future__ import annotations
 
-import hashlib
 from typing import Any
 
 from django.core.exceptions import ImproperlyConfigured
+from django.utils.crypto import salted_hmac
 from rest_framework.settings import api_settings
 from rest_framework.throttling import ScopedRateThrottle, SimpleRateThrottle
 
@@ -54,12 +54,16 @@ def _request_api_key_fingerprint(request: Any) -> Any:
   if auth:
     parts = auth.strip().split(None, 1)
     if len(parts) == 2 and parts[0].lower() == "api-key":
-      return hashlib.sha256(parts[1].strip().encode("utf-8")).hexdigest()
+      return salted_hmac(
+        "hps_api_key_throttle", parts[1].strip(), algorithm="sha256"
+      ).hexdigest()
   header_key = request.META.get("HTTP_X_API_KEY") or request.headers.get(
     "X-API-Key"
   )
   if header_key:
-    return hashlib.sha256(header_key.strip().encode("utf-8")).hexdigest()
+    return salted_hmac(
+      "hps_api_key_throttle", header_key.strip(), algorithm="sha256"
+    ).hexdigest()
   return ""
 
 

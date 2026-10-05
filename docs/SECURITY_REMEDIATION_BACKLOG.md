@@ -39,6 +39,7 @@ Prioritized follow-ups from [SECURITY_AUDIT.md](SECURITY_AUDIT.md). Update this 
 | Frontend stack posture (2026-06 / doc 2026-07-31) | Mid-2026 migration to Next static export + TypeScript + OpenAPI/Orval/Zod documented as positive controls in SECURITY_AUDIT (attack-surface and contract validation), not only as DX. |
 | Burp 2026-08-05 edge hardening | nginx-canonical HSTS/framing/COOP/Permissions-Policy/Referrer-Policy; OCSP stapling (`ssl_trusted_certificate` + runtime resolver); hash-based SPA CSP without `unsafe-inline` (machine/pub retain Bokeh `unsafe-eval`); public dashboard query allowlist + non-reflective errors; SECURITY_AUDIT disposition table. |
 | Dependabot #117 dompurify (2026-10-05) | `overrides.dompurify@^3.4.16` (lock **3.4.16**); `next@^16.3.6` (lock **16.3.8**); `test_dompurify_override_meets_dependabot_117_floor`; GitHub alert closes on default-branch rescan. |
+| CodeQL #29–#41 (2026-10-05) | Staff API opaque errors (RabbitMQ admin stats, `sacct_ingest`); OAuth path redirect guard; jobstats CLI auth help; `salted_hmac` API-key throttle fingerprint; test Redis key equality. Log: [`test_runs/code_scanning_sweep_2026-10-05.md`](../test_runs/code_scanning_sweep_2026-10-05.md). |
 | CodeQL #28 secure_path TOCTOU (2026-10-05) | `ensure_private_dir` fd + `fchmod`; extended `monitor/tests/test_secure_path.c`; alert closes on CodeQL rescan after merge. |
 
 ## History

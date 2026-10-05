@@ -185,8 +185,8 @@ def oauth_callback(request: Any) -> Any:
       user_data["result"]["email"].split("@")[-1] == staff_email_domain
     )
     next_url = request.session.pop("auth_next", None)
-    redirect_to = next_url if _safe_redirect_path(next_url) else "/"
-    return HttpResponseRedirect(redirect_to)
+    safe_next = _safe_redirect_path(next_url)
+    return HttpResponseRedirect(safe_next if safe_next is not None else "/")
 
 
 def _is_synthetic_access_token(access_token: Any) -> bool:
@@ -270,8 +270,8 @@ def login_prompt(request: Any) -> Any:
   """
   next_url = request.GET.get("next", "")
   if check_for_tokens(request):
-    redirect_to = next_url if _safe_redirect_path(next_url) else "/"
-    return HttpResponseRedirect(redirect_to)
+    safe_next = _safe_redirect_path(next_url)
+    return HttpResponseRedirect(safe_next if safe_next is not None else "/")
   login_url = reverse("login") + (
     "?next=" + quote(next_url) if next_url else ""
   )

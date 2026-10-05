@@ -162,14 +162,12 @@ def _get_json(
   if result.status_code == 404:
     return None, result.status_code
   if result.status_code in (401, 403):
-    help_url = api_key_help_url(base_url)
     print(
       f"Authentication with the HPCPerfStats API failed ({result.status_code})."
     )
     print(
-      "Obtain an API key from:\n"
-      f"  {help_url}\n"
-      "Then run this command again with --api-key.\n"
+      "Obtain an API key from the Machine API keys page on your HPCPerfStats site, "
+      "then run this command again with --api-key.\n"
       f"The key will be cached in {API_KEY_CACHE_DISPLAY}."
     )
     return None, result.status_code

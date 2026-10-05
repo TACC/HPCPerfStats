@@ -1125,6 +1125,8 @@ class TestRabbitmqStatsErrorBranches:
       stats = api._get_rabbitmq_stats()
     assert "error" in stats
     assert "management" in stats["error"].lower()
+    assert "refused" not in stats["error"]
+    assert "see server logs" in stats["error"].lower()
 
   def test_requests_import_failure_sets_error(self):
     from hpcperfstats.site.lib.machine import api
@@ -1332,6 +1334,8 @@ class TestSacctIngestErrorBranches:
       response = api.sacct_ingest(request)
     assert response.status_code == 500
     assert response.data["error"] == "Ingest failed"
+    assert response.data["detail"] == "See server logs for details."
+    assert "ingest failed" not in str(response.data)
 
   def test_persist_failure_returns_500(self):
     from hpcperfstats.site.lib.machine import api
@@ -1356,4 +1360,6 @@ class TestSacctIngestErrorBranches:
       response = api.sacct_ingest(request)
     assert response.status_code == 500
     assert response.data["error"] == "Failed to write accounting file"
+    assert response.data["detail"] == "See server logs for details."
+    assert "permission denied" not in str(response.data)
     mock_sync.assert_not_called()

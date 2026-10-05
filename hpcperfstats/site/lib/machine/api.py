@@ -66,6 +66,26 @@ import hpcperfstats.dbload.lib.conf_parser as cfg
 logger = logging.getLogger(__name__)
 
 
+def _staff_api_opaque_error(context: str, exc: BaseException) -> str:
+  """
+  Log an exception server-side and return a stable staff API error string.
+
+  Args:
+    context (str): Short operator-facing label for the failure (no secrets).
+    exc (BaseException): Caught exception; logged with stack trace, not returned.
+
+  Returns:
+    str: ``{context}; see server logs for details.``
+
+  Examples:
+    >>> _staff_api_opaque_error(
+    ...   "RabbitMQ stats", RuntimeError("x")
+    ... )  # doctest: +SKIP
+  """
+  logger.warning("%s: %s", context, exc, exc_info=True)
+  return f"{context}; see server logs for details."
+
+
 class _JSONResponse(Response):
   """
   Response subclass with a json() helper for unit tests.
@@ -1727,7 +1747,9 @@ def _get_rabbitmq_stats() -> Any:
   try:
     resp = requests.get(queue_url, auth=auth, timeout=5)
   except Exception as e:
-    stats["error"] = f"Failed to connect to RabbitMQ management API: {e}"
+    stats["error"] = _staff_api_opaque_error(
+      "Failed to connect to RabbitMQ management API", e
+    )
   else:
     if resp.status_code != 200:
       stats["error"] = (
@@ -1737,8 +1759,8 @@ def _get_rabbitmq_stats() -> Any:
       try:
         data = resp.json()
       except Exception as e:
-        stats["error"] = (
-          f"Failed to decode RabbitMQ management API response: {e}"
+        stats["error"] = _staff_api_opaque_error(
+          "Failed to decode RabbitMQ management API response", e
         )
         data = {}
 
@@ -4961,13 +4983,7 @@ def sacct_ingest(request: Any) -> Any:
       status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
     )
 
-  try:
-    body = request.body.decode("utf-8", errors="replace")
-  except Exception as e:
-    return Response(
-      {"error": "Invalid request body", "detail": str(e)},
-      status=status.HTTP_400_BAD_REQUEST,
-    )
+  body = request.body.decode("utf-8", errors="replace")
 
   date_str = (request.GET.get("date") or "").strip()
   if not date_str:
@@ -4995,11 +5011,15 @@ def sacct_ingest(request: Any) -> Any:
       },
       status=status.HTTP_409_CONFLICT,
     )
-  except Exception as e:
+  except Exception:
     if settings.DEBUG:
       raise
+    logger.exception("sacct_ingest: failed to write accounting file")
     return Response(
-      {"error": "Failed to write accounting file", "detail": str(e)},
+      {
+        "error": "Failed to write accounting file",
+        "detail": "See server logs for details.",
+      },
       status=status.HTTP_500_INTERNAL_SERVER_ERROR,
     )
 
@@ -5017,11 +5037,15 @@ def sacct_ingest(request: Any) -> Any:
 
   try:
     inserted = sync_acct_from_content(body, jobs_in_db)
-  except Exception as e:
+  except Exception:
     if settings.DEBUG:
       raise
+    logger.exception("sacct_ingest: sync_acct_from_content failed")
     return Response(
-      {"error": "Ingest failed", "detail": str(e)},
+      {
+        "error": "Ingest failed",
+        "detail": "See server logs for details.",
+      },
       status=status.HTTP_500_INTERNAL_SERVER_ERROR,
     )
 

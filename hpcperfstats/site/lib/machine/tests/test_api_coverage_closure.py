@@ -1060,9 +1060,9 @@ class TestRemainingHelperLinesClosure:
 
       def get(self, key):
         key_s = key.decode("utf-8") if isinstance(key, bytes) else str(key)
-        if "badhost" in key_s:
+        if key_s == "recent_host:badhost":
           raise RuntimeError("get fail")
-        if "n3.example.com" in key_s:
+        if key_s == "recent_host:n3.example.com":
           return str(ts).encode("utf-8")
         return None
 
@@ -1168,11 +1168,11 @@ class TestRemainingHelperLinesClosure:
 
       def get(self, key):
         key_s = key.decode("utf-8") if isinstance(key, bytes) else str(key)
-        if "n4.example.com" in key_s:
+        if key_s == "recent_host:n4.example.com":
           raise RuntimeError("get fail")
-        if "n5.example.com" in key_s:
+        if key_s == "recent_host:n5.example.com":
           return None
-        if "n6.example.com" in key_s:
+        if key_s == "recent_host:n6.example.com":
           return "not-a-ts"
         return str(ts)
 
