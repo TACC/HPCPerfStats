@@ -76,7 +76,7 @@ class PopulatePoolController:
   Long-lived populate workers submitted on SyncTimedbThreadPool.
 
   Each worker dequeues in-process populate jobs. The titled pool is the
-  only worker set — there is no leftover raw-thread dual path.
+  only worker set - there is no leftover raw-thread dual path.
 
   Attributes:
     _pool: Titled SyncTimedbThreadPool that runs populate workers.
@@ -152,7 +152,7 @@ class PopulatePoolController:
         )
       )
     log_print(
-      "populate-pool started workers=%d" % len(self._results),
+      f"populate-pool started workers={len(self._results)}",
       flush=True,
     )
 
@@ -213,7 +213,7 @@ class PopulatePoolController:
       )
       restarted += 1
       log_print(
-        "WARN: populate-pool worker restarted index=%d" % restarted,
+        f"WARN: populate-pool worker restarted index={restarted}",
         flush=True,
       )
     self._results = kept
@@ -269,9 +269,7 @@ def _populate_pool_worker_entry(
       complete_populate_queue_job(job)
     except Exception as exc:
       log_print(
-        "ERROR: populate-pool scan failed canonical={} day={}: {}".format(
-          canonical, day_token or "?", exc
-        ),
+        f"ERROR: populate-pool scan failed canonical={canonical} day={day_token or '?'}: {exc}",
         flush=True,
       )
       requeue_populate_queue_job(job)

@@ -1,9 +1,9 @@
 """
-Streaming discover → ingest ZADD helpers for the greenfield orchestrator.
+Streaming discover -> ingest ZADD helpers for the greenfield orchestrator.
 
 Library-only (slice 3): consume fd ``-X`` GNU stat NUL records (or any
 :class:`FindStatsRecord` iterator) and enqueue ingest/append jobs as each
-path arrives — without waiting for the scan iterator to exhaust. Skips
+path arrives - without waiting for the scan iterator to exhaust. Skips
 identities whose reconstruct complete predicates are already true. Not wired
 into ``sync_timedb.py`` until the orchestrator cutover slice.
 
@@ -82,7 +82,7 @@ def calendar_day_from_find_record(
 
   Accepts an ISO ``YYYY-MM-DD`` prefix or a listend digit-epoch basename.
   Returns ``None`` rather than substituting today or ``rec.mtime`` when the
-  name cannot be parsed — banding without a real day would mis-schedule
+  name cannot be parsed - banding without a real day would mis-schedule
   catchup work. ``tgz_archive_dir`` is kept for caller compatibility.
 
   Args:

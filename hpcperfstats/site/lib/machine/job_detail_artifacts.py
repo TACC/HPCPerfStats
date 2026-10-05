@@ -303,7 +303,7 @@ def load_job_detail_artifact(
     input_fingerprint (str): String for input fingerprint.
 
   Returns:
-    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] — the result, or None
+    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] - the result, or None
     when unavailable.
 
   Examples:
@@ -428,7 +428,7 @@ def _gpu_detail_from_metric_values(
     metric_values (Dict[str, Optional[float]]): Mapping for metric values.
 
   Returns:
-    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] — the result, or None
+    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] - the result, or None
     when unavailable.
 
   Examples:
@@ -806,7 +806,7 @@ def _fsio_from_metric_values(
       beegfs_peak_iops,
     ]
   if not out:
-    # Catalog rows present but all null — allow host_data fallback.
+    # Catalog rows present but all null - allow host_data fallback.
     return {}, False
   return out, True
 

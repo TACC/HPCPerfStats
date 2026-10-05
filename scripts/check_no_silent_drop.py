@@ -33,7 +33,7 @@ def main() -> int:
   src = ORCH.read_text(encoding="utf-8")
   found = [name for name in FORBIDDEN if name in src]
   if found:
-    print("silent drop APIs still referenced: {}".format(", ".join(found)))
+    print(f"silent drop APIs still referenced: {', '.join(found)}")
     return 1
   print("NO_SILENT_DROP_OK")
   return 0

@@ -260,7 +260,7 @@ SUMMARY_METRIC_RESEARCHER_USE: dict[str, str] = {
     "an estimate."
   ),
   "nv_gpu_link_gbs": (
-    "Host–device transfer and link saturation versus GPU compute; pairs with the "
+    "Host-device transfer and link saturation versus GPU compute; pairs with the "
     "GPU roofline when present."
   ),
   "lustre_read_mb_s": (

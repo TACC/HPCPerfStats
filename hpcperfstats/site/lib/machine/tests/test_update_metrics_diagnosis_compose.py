@@ -44,7 +44,7 @@ def _default_db_connect_kwargs():
 
 @pytest.mark.django_db(transaction=True)
 def test_update_metrics_diagnosis_compose_records_phases(monkeypatch, tmp_path):
-  """Small (100–300) and large (300–5000) in-window host_data rows; capture phase totals."""
+  """Small (100-300) and large (300-5000) in-window host_data rows; capture phase totals."""
   if not _compose_network():
     pytest.skip(
       "Requires Docker Compose network (PostgreSQL at host 'db'). "

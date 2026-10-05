@@ -54,7 +54,7 @@ def test_schema_events_and_desc():
 
 
 def test_schema_accepts_non_string_events():
-  """_Schema normalises non‑string event labels (e.g. pandas.Timestamp) to str."""
+  """_Schema normalises non-string event labels (e.g. pandas.Timestamp) to str."""
   ts1 = Timestamp("2020-01-01T00:00:00Z")
   ts2 = Timestamp("2020-01-01T01:00:00Z")
   events = [ts1, ts2]
@@ -696,7 +696,7 @@ def test_max_mds_uses_legacy_llite_opcode_schema():
   assert len(legacy) == len(LLITE_METADATA_IOPS_EVENTS)
   n = len(legacy)
   schema = _Schema(legacy)
-  # Cumulative: interval1 sum Δ=140 → 14 iops; interval2 sum Δ=160 → 16 iops.
+  # Cumulative: interval1 sum Δ=140 -> 14 iops; interval2 sum Δ=160 -> 16 iops.
   row0 = np.zeros(n, dtype=np.float64)
   row1 = row0.copy()
   row1[0] = 100.0
@@ -824,7 +824,7 @@ def test_max_fabricbw_rejects_packet_rate_scale_as_mb_s():
   value, typename, units = max_fabricbw().compute_metric(MockU())
   assert units == "MB/s"
   assert typename == "host_ib"
-  # With MiB conversion: (5e10)/10 / (1024**2) ≈ 4768 MB/s — finite and << 5e9.
+  # With MiB conversion: (5e10)/10 / (1024**2) ≈ 4768 MB/s - finite and << 5e9.
   assert value is not None
   assert value < 1e6
   assert value == pytest.approx(5.0e10 / 10.0 / (1024 * 1024))
@@ -842,7 +842,7 @@ def test_avg_cpuusage_sums_per_host_means():
   t1 = pd.Timestamp("2024-01-01 00:05:00")
   t2 = pd.Timestamp("2024-01-01 00:10:00")
   rows = []
-  # Host a: buckets mean 1.0; host b: buckets mean 3.0 → sum 4.0 (mean would be 2.0).
+  # Host a: buckets mean 1.0; host b: buckets mean 3.0 -> sum 4.0 (mean would be 2.0).
   for host, arc in (("a", 1.0), ("b", 3.0)):
     for t in (t0, t1, t2):
       rows.append({"host": host, "time": t, "arc": arc})
@@ -895,7 +895,7 @@ def test_job_arc_means_samples_within_bucket_not_sum():
   m = Metrics()
   # Three timestamps inside the same 5m bucket after the first-bucket drop.
   # First bucket (t0) is dropped; remaining bucket has three samples of arc=2.0
-  # → mean 2.0, not sum 6.0.
+  # -> mean 2.0, not sum 6.0.
   t0 = pd.Timestamp("2024-01-01 00:00:00")
   t1 = pd.Timestamp("2024-01-01 00:05:00")
   t2 = pd.Timestamp("2024-01-01 00:05:10")
@@ -991,7 +991,7 @@ def test_avg_cpuusage_scales_to_allocated_ncores():
   t1 = pd.Timestamp("2024-01-01 00:05:00")
   t2 = pd.Timestamp("2024-01-01 00:10:00")
   # After first-bucket drop, remaining buckets: util = busy/(busy+idle) = 100/200 = 0.5
-  # cores_per_host = 2/2 = 1 → per-host mean 0.5; sum hosts = 1.0
+  # cores_per_host = 2/2 = 1 -> per-host mean 0.5; sum hosts = 1.0
   rows_busy = []
   rows_idle = []
   for host in ("a", "b"):
@@ -1042,7 +1042,7 @@ def test_gpu_activity_zero_mean_gate_accepts_zero():
   import hpcperfstats.analysis.metrics.lib.metrics as metrics_mod
 
   text = Path(metrics_mod.__file__).read_text()
-  start = text.index('elif metric_name in (\n            "avg_tensor_active"')
+  start = text.index('elif metric_name in (\n          "avg_tensor_active"')
   end = text.index('elif metric_name == "avg_fabric_mb_per_avg_tensor"', start)
   snippet = text[start:end]
   assert "if v is not None and float(v) > 0:" not in snippet
@@ -1107,7 +1107,7 @@ def test_build_job_metrics_display_list_hides_duplicate_avg_gpuutil():
 
 @pytest.mark.machine_unit_mock
 def test_job_cpu_gpu_watt_hours_integrates_and_gates():
-  """Watt-hours requires CPU fragments (GPU optional); integrates W×s/3600 per host."""
+  """Watt-hours requires CPU fragments (GPU optional); integrates Wxs/3600 per host."""
   import pandas as pd
 
   from hpcperfstats.analysis.metrics.lib.gen import node_power_est as npe
@@ -1129,7 +1129,7 @@ def test_job_cpu_gpu_watt_hours_integrates_and_gates():
 
   with patch.object(npe, "build_node_power_est_dataframe", return_value=df):
     wh = npe.job_cpu_gpu_watt_hours(FakeJt())
-  # 100 W × 60 s = 6000 J = 6000/3600 Wh
+  # 100 W x 60 s = 6000 J = 6000/3600 Wh
   assert wh == pytest.approx(6000.0 / 3600.0)
 
   df_cpu_only = df.drop(columns=["nv_power_w"])
@@ -1178,7 +1178,7 @@ def test_max_packetrate_falls_back_to_ethernet():
 def test_max_packetrate_rejects_uint64_wrap_poison():
   """Counter wrap (~2^63 packets / dt) must not become a huge peak rate."""
   schema = _Schema(["port_xmit_pkts", "port_rcv_pkts"])
-  # Jump of 2**63 packets in 1s → ~9e18 #/s without sanity clamp.
+  # Jump of 2**63 packets in 1s -> ~9e18 #/s without sanity clamp.
   stats = np.array([[0.0, 0.0], [float(2**63), 0.0]], dtype=np.float64)
 
   class MockU:
@@ -1229,7 +1229,7 @@ def test_max_gpu_link_gbps_rejects_uint64_wrap_poison():
 def test_max_gpu_link_gbps_prefers_sane_arc_over_poison_value_diff():
   """When ingest arc is present and sane, prefer it over wrap poisoned value dy/dt."""
   schema = _Schema(["gpu_io_link_total_bytes"])
-  # Poisoned counters, but cluster arc says 12e9 bytes/s → 12 GB/s.
+  # Poisoned counters, but cluster arc says 12e9 bytes/s -> 12 GB/s.
   stats = np.array([[0.0], [float(2**63)]], dtype=np.float64)
   arc_cm = np.array([[12e9], [12e9]], dtype=np.float64)
 
@@ -1402,7 +1402,7 @@ def test_max_gpu_power_skips_nan_hosts_uses_finite_max():
 
 @pytest.mark.machine_unit_mock
 def test_max_gpu_power_rejects_dcgm_fp64_blank():
-  """4× DCGM_FP64_BLANK poison must not become max_gpu_power."""
+  """4x DCGM_FP64_BLANK poison must not become max_gpu_power."""
   from hpcperfstats.lib.dcgm_blank import DCGM_FP64_BLANK
 
   schema = _Schema(["power_usage"])
@@ -1459,7 +1459,7 @@ def test_avg_gpuutil_rejects_dcgm_int64_blank():
   value, typename, units = avg_gpuutil().compute_metric(MockU())
   assert typename == "nvidia_gpu"
   assert units == "%"
-  # window is stats[1:-1] → blank + 40; blank dropped → mean 40
+  # window is stats[1:-1] -> blank + 40; blank dropped -> mean 40
   assert value == pytest.approx(40.0)
 
 

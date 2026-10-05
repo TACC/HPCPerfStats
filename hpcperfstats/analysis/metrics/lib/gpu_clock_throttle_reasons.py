@@ -5,7 +5,7 @@ Mirrors ``dcgm_fields.h`` ``DCGM_CLOCKS_THROTTLE_REASON_*`` and the SPA helper
 ``gpuClockThrottleReasons.ts``. Display-only; persisted metrics stay numeric.
 
 Blank-family and no-known-bit garbage masks return ``""`` (never ``unknown
-(0x…)``).
+(0x...)``).
 
 Attributes:
   DCGM_CLOCK_THROTTLE_REASON_FLAGS: ``DCGM_CLOCK_THROTTLE_REASON_FLAGS``.
@@ -38,7 +38,7 @@ def format_gpu_clock_throttle_reasons(mask: float | int | None) -> str:
   Format a DCGM clock-throttle bitmask as comma-separated flag names.
 
   Returns ``""`` for missing / non-finite / zero / blank / no-known-bit masks.
-  Known bits only — residual garbage hex is never shown.
+  Known bits only - residual garbage hex is never shown.
 
   Args:
     mask (float | int | None): One of ``float``, ``int``, ``None``.

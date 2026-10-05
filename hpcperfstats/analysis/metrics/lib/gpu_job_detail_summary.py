@@ -2,10 +2,10 @@
 ORM GPU aggregates for job-detail and metrics_data (shared with API).
 
 Uses the same reduction rules as historical ``api._compute_job_gpu_stats``:
-host×time chunked ``host__in``, util aggregates by vendor precedence, then
+hostxtime chunked ``host__in``, util aggregates by vendor precedence, then
 ``gpu_count``.
 
-Vendor precedence for summary fields: ``nvidia_gpu`` → ``amd_gpu`` →
+Vendor precedence for summary fields: ``nvidia_gpu`` -> ``amd_gpu`` ->
 ``intel_gpu`` (no mixed-vendor merge for a single field). DCGM blank-family
 samples are rejected.
 
@@ -71,7 +71,7 @@ def _collect_gpu_annotate_rows(
   annotate_kwargs: Any,
 ) -> list[dict]:
   """
-  Host×time chunked annotate query with statement_timeout split/retry.
+  Hostxtime chunked annotate query with statement_timeout split/retry.
 
   Args:
     hosts (Any): Accounting hosts.
@@ -200,13 +200,13 @@ def gpu_agg_rows_for_job_window(j: Any) -> list[dict]:
 
 def gpu_count_total_for_job_window(j: Any) -> int | None:
   """
-  Sum over hosts of max(gpu_count) in window (nvidia → amd → intel).
+  Sum over hosts of max(gpu_count) in window (nvidia -> amd -> intel).
 
   Args:
     j (Any): Job record (Django ``job_data`` or job-like mapping).
 
   Returns:
-    Optional[int]: Optional[int] — the result, or None when unavailable.
+    Optional[int]: Optional[int] - the result, or None when unavailable.
 
   Examples:
     >>> gpu_count_total_for_job_window(None)  # doctest: +SKIP

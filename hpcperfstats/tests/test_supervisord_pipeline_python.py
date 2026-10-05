@@ -90,7 +90,7 @@ def test_supervisord_has_no_syslog_programs():
 
 
 def test_supervisord_has_no_pipeline_interpreter_resolver():
-  """No INI/env ABI switch — image bake only."""
+  """No INI/env ABI switch - image bake only."""
   text = _supervisord_text()
   assert "pipeline_interpreter" not in text
   assert "listend_interpreter" not in text

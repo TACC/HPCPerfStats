@@ -185,13 +185,13 @@ JOB_LIST_SCHEMA = extend_schema(
       name="state",
       type=str,
       location=OpenApiParameter.QUERY,
-      description="Comma-separated major terminal status group keys (OR) — completed, failed, canceled, preempted, timeout.",
+      description="Comma-separated major terminal status group keys (OR) - completed, failed, canceled, preempted, timeout.",
     ),
     OpenApiParameter(
       name="performance_sort_rank",
       type=str,
       location=OpenApiParameter.QUERY,
-      description="Comma-separated performance status ranks 0–5 (OR).",
+      description="Comma-separated performance status ranks 0-5 (OR).",
     ),
     OpenApiParameter(name="host", type=str, location=OpenApiParameter.QUERY),
     OpenApiParameter(
@@ -246,7 +246,7 @@ JOB_LIST_FILTER_OPTIONS_SCHEMA = extend_schema(
       name="performance_sort_rank",
       type=str,
       location=OpenApiParameter.QUERY,
-      description="Comma-separated performance status ranks 0–5 (OR).",
+      description="Comma-separated performance status ranks 0-5 (OR).",
     ),
     OpenApiParameter(name="host", type=str, location=OpenApiParameter.QUERY),
     OpenApiParameter(
@@ -287,7 +287,7 @@ JOB_LIST_HISTOGRAMS_BATCH_SCHEMA = extend_schema(
       location=OpenApiParameter.QUERY,
       description="Comma-separated metric names (default: runtime,nhosts,queue_wait)",
     ),
-    # Same browse/filter query keys as job_list — SPA spreads listApiParams into the batch URL.
+    # Same browse/filter query keys as job_list - SPA spreads listApiParams into the batch URL.
     OpenApiParameter(
       name="end_time__date", type=str, location=OpenApiParameter.QUERY
     ),

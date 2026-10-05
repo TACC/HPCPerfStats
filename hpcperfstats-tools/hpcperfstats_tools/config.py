@@ -34,7 +34,7 @@ def _load_config() -> Path | None:
   Load configuration from HPCPERFSTATS_TOOLS_INI if set.
 
   Returns:
-    Optional[Path]: Optional[Path] — the result, or None when unavailable.
+    Optional[Path]: Optional[Path] - the result, or None when unavailable.
 
   Examples:
     >>> _load_config()  # doctest: +SKIP
@@ -68,7 +68,7 @@ def get_api_base_url(
     default (Optional[str]): Default, or None when absent.
 
   Returns:
-    Optional[str]: Optional[str] — the result, or None when unavailable.
+    Optional[str]: Optional[str] - the result, or None when unavailable.
 
   Examples:
     >>> get_api_base_url(None)  # doctest: +SKIP

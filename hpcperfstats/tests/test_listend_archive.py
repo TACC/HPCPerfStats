@@ -102,7 +102,7 @@ def test_n_appends_do_not_unlink_flock_sidecar_each_sample(
   monkeypatch.setattr(os, "remove", spy_remove)
   try:
     for i in range(20):
-      body = "17000000%02d.0 1 %s\ncpu %d\n" % (i, host, i)
+      body = f"17000000{i:02}.0 1 {host}\ncpu {i}\n"
       ld.append_monitor_payload_to_archive(body)
     assert len(removed_locks) <= 1
   finally:

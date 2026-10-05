@@ -541,7 +541,7 @@ def test_list_claim_conflict_puts_member_back_on_queue():
 def test_queue_capacity_limit_blocks_unbounded_growth():
   store = _store()
   for index in range(3):
-    _seed_ingest(store, "p|%d|1" % index, index)
+    _seed_ingest(store, f"p|{index}|1", index)
   assert jq.queue_has_capacity(store, kind="ingest", limit=4)
   assert not jq.queue_has_capacity(store, kind="ingest", limit=3)
 
@@ -639,11 +639,11 @@ def test_reap_recovers_list_kind_without_score():
 def test_reap_respects_limit():
   store = _store()
   for index in range(5):
-    _seed_ingest(store, "p|%d|1" % index, index)
+    _seed_ingest(store, f"p|{index}|1", index)
     jq.claim_ingest_job(
       store,
       band="hot",
-      owner_token="n:h:b:%d" % index,
+      owner_token=f"n:h:b:{index}",
       ttl_s=60,
       now_s=1000.0,
     )

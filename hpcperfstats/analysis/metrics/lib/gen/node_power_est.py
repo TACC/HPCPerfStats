@@ -166,7 +166,7 @@ def job_cpu_gpu_watt_hours(jt: Any) -> Any:
     fails.
 
   Requires finite CPU power fragments in the estimate dataframe (GPU optional;
-  not module-only without a CPU side). Integrates watts × seconds / 3600.
+  not module-only without a CPU side). Integrates watts x seconds / 3600.
 
   Args:
     jt (Any): Jt passed to this helper.

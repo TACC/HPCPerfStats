@@ -68,6 +68,7 @@ from __future__ import annotations
 # Django settings for hpcperfstats_site project. Database, auth, templates, static, and app config from conf_parser and env.
 #
 import os
+import re
 import sys
 import warnings
 from datetime import UTC
@@ -180,6 +181,23 @@ def _validate_cors_allowed_origins(origins: Any) -> None:
     )
 
 
+def _argv0_is_python_interpreter(argv0: str) -> bool:
+  """
+  Return True when argv[0] is a Python executable basename (stdin script).
+
+  Args:
+    argv0 (str): First process argument.
+
+  Returns:
+    bool: Whether ``argv0`` names a Python interpreter.
+
+  Examples:
+    >>> _argv0_is_python_interpreter("/usr/bin/python3.14")  # doctest: +SKIP
+  """
+  base = os.path.basename(argv0.rstrip(os.sep))
+  return bool(re.fullmatch(r"python(\d+(?:\.\d+)*)?", base))
+
+
 def _is_non_http_management_command() -> Any:
   """
   Return True when Django loads for CLI helpers that never serve browsers.
@@ -198,8 +216,10 @@ def _is_non_http_management_command() -> Any:
     arg0 = str(argv[0] or "")
     if arg0 in {"-", "", "-c"}:
       return True
-    # ``python <<EOF`` or ``cat script.py | python``: interpreter path only, script on stdin.
-    return bool(not sys.stdin.isatty())
+    # ``python <<EOF`` / piped script: argv is only the interpreter path, not ``run_tests.py``.
+    if _argv0_is_python_interpreter(arg0) and not sys.stdin.isatty():
+      return True
+    return False
   if len(argv) < 2:
     return False
   # ``python /path/python - <<'PY'`` (two-arg form): argv is ``[..., '-']``.
@@ -219,7 +239,7 @@ def _is_non_http_management_command() -> Any:
     "test",
     "check",
   }
-  # Typical: ``python path/to/manage.py <subcommand>`` — subcommand is argv[2], not argv[1].
+  # Typical: ``python path/to/manage.py <subcommand>`` - subcommand is argv[2], not argv[1].
   for i, arg in enumerate(argv):
     arg_str = str(arg or "")
     if arg_str.endswith("manage.py"):

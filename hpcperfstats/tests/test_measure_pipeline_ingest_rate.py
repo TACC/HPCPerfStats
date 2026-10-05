@@ -32,10 +32,8 @@ def mod():
 def _ts(minutes_from_start: int, second: int = 0) -> str:
   hour = 10 + minutes_from_start // 60
   minute = minutes_from_start % 60
-  return "2026-07-08T%02d:%02d:%02dZ hpcperfstats_pipeline_1 | " % (
-    hour,
-    minute,
-    second,
+  return (
+    f"2026-07-08T{hour:02}:{minute:02}:{second:02}Z hpcperfstats_pipeline_1 | "
   )
 
 
@@ -46,11 +44,7 @@ FIXTURE_WINNING = [
 ]
 FIXTURE_WINNING += [
   _ts(10 + i)
-  + (
-    "ingest file path=/arch/host/%d outcome=ingested elapsed_s=1.0 "
-    "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10"
-  )
-  % (100 + i)
+  + f"ingest file path=/arch/host/{100 + i} outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10"
   for i in range(12)
 ]
 FIXTURE_WINNING += [
@@ -169,21 +163,16 @@ def test_overlapping_listend_windows_not_double_counted(mod):
   for i in range(60):
     lines.append(
       _ts(1 + i)
-      + (
-        "ingest file path=/arch/host/%d outcome=ingested elapsed_s=1.0 "
-        "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 "
-        "stats_rows=10"
-      )
-      % (1000 + i)
+      + f"ingest file path=/arch/host/{1000 + i} outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10"
     )
   outcomes = mod.analyze_lines(lines, since_minutes=None, exclude_startup=False)
-  # Non-overlapping keep: t=0,10,20,30,40,50,60 → 7 * 10 = 70 over ~60 min.
+  # Non-overlapping keep: t=0,10,20,30,40,50,60 -> 7 * 10 = 70 over ~60 min.
   assert float(outcomes["window_minutes"]) == pytest.approx(60.0, abs=0.1)
   assert float(outcomes["listend_closed_per_min"]) == pytest.approx(
     70.0 / 60.0,
     rel=1e-3,
   )
-  # Naive sum of every overlapping report would be 61*10=610 → ~10.17/min.
+  # Naive sum of every overlapping report would be 61*10=610 -> ~10.17/min.
   assert float(outcomes["listend_closed_per_min"]) < 2.0
 
 
@@ -313,7 +302,7 @@ def test_measurement_window_starts_at_ingest_gate_not_startup(mod):
     "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
   ]
   outcomes = mod.analyze_lines(lines)
-  # 60 min of startup must not inflate the window: gate@60 → last@120 = 60 min.
+  # 60 min of startup must not inflate the window: gate@60 -> last@120 = 60 min.
   assert float(outcomes["window_minutes"]) == pytest.approx(60.0, abs=0.1)
   assert outcomes["backlog_at_start"] == "4000"
   assert float(outcomes["elapsed_hours"]) == pytest.approx(1.0, abs=0.01)
@@ -353,11 +342,7 @@ def test_since_minutes_window(mod):
   ]
   lines += [
     _ts(130 + i)
-    + (
-      "ingest file path=/arch/host/%d outcome=ingested elapsed_s=1.0 "
-      "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10"
-    )
-    % (300 + i)
+    + f"ingest file path=/arch/host/{300 + i} outcome=ingested elapsed_s=1.0 ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10"
     for i in range(12)
   ]
   lines.append(
@@ -415,40 +400,30 @@ def test_full_ingest_mib_per_min_and_size_tiers(mod):
     _ts(0) + "Messages consumed in the last 10 minutes: 1; messages waiting to "
     "be consumed: 0; current file unlinks (last 10 minutes): 1",
     _ts(0) + "sync_timedb: pending rescan done pending=10 elapsed_s=1.0",
-    # lt_8mib — unordered tokens (postgres before size before elapsed)
+    # lt_8mib - unordered tokens (postgres before size before elapsed)
     _ts(10)
     + (
-      "ingest file path=/arch/a outcome=ingested postgres_s=10.0 "
-      "ingest_ok=yes db_skip=no size_bytes=%d elapsed_s=40.0 archive=yes"
-      % (4 * mib)
+      f"ingest file path=/arch/a outcome=ingested postgres_s=10.0 ingest_ok=yes db_skip=no size_bytes={4 * mib} elapsed_s=40.0 archive=yes"
     ),
     # 8mib_64mib (Horizon dense mid-tier)
     _ts(15)
     + (
-      "ingest file path=/arch/a2 outcome=ingested postgres_s=12.0 "
-      "ingest_ok=yes db_skip=no size_bytes=%d elapsed_s=45.0 archive=yes"
-      % (16 * mib)
+      f"ingest file path=/arch/a2 outcome=ingested postgres_s=12.0 ingest_ok=yes db_skip=no size_bytes={16 * mib} elapsed_s=45.0 archive=yes"
     ),
     # 64mib_1gib
     _ts(20)
     + (
-      "ingest file path=/arch/b outcome=ingested elapsed_s=100.0 "
-      "ingest_ok=yes archive=yes db_skip=no size_bytes=%d postgres_s=50.0"
-      % (128 * mib)
+      f"ingest file path=/arch/b outcome=ingested elapsed_s=100.0 ingest_ok=yes archive=yes db_skip=no size_bytes={128 * mib} postgres_s=50.0"
     ),
     # 1_4gib
     _ts(30)
     + (
-      "ingest file path=/arch/c outcome=ingested size_bytes=%d "
-      "ingest_ok=yes db_skip=no elapsed_s=200.0 postgres_s=80.0 archive=yes"
-      % (2 * gib)
+      f"ingest file path=/arch/c outcome=ingested size_bytes={2 * gib} ingest_ok=yes db_skip=no elapsed_s=200.0 postgres_s=80.0 archive=yes"
     ),
     # ge_4gib
     _ts(40)
     + (
-      "ingest file path=/arch/d outcome=ingested elapsed_s=300.0 "
-      "postgres_s=120.0 size_bytes=%d ingest_ok=yes archive=yes db_skip=no"
-      % (5 * gib)
+      f"ingest file path=/arch/d outcome=ingested elapsed_s=300.0 postgres_s=120.0 size_bytes={5 * gib} ingest_ok=yes archive=yes db_skip=no"
     ),
     _ts(60)
     + "Messages consumed in the last 10 minutes: 1; messages waiting to "
@@ -501,26 +476,18 @@ def test_overnight_pack_prefers_dense_8mib_when_64mib_empty(mod):
     _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
   ]
   for i in range(6):
-    # Tiny files — must not drive mid_tier when dense samples exist.
+    # Tiny files - must not drive mid_tier when dense samples exist.
     lines.append(
       _ts(5 + i)
       + (
-        "ingest file path=/arch/tiny/%d outcome=ingested elapsed_s=20.0 "
-        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-        "postgres_s=1.0 db_execute_s=0.5 copy_s=0.2 "
-        "orm_materialize_s=0.2 feed_s=15.0 collapse_gpu_s=1.0 "
-        "parse_unaccounted_s=1.0" % (i, 2 * mib)
+        f"ingest file path=/arch/tiny/{i} outcome=ingested elapsed_s=20.0 ingest_ok=yes archive=yes db_skip=no size_bytes={2 * mib} postgres_s=1.0 db_execute_s=0.5 copy_s=0.2 orm_materialize_s=0.2 feed_s=15.0 collapse_gpu_s=1.0 parse_unaccounted_s=1.0"
       ),
     )
   for i in range(12):
     lines.append(
       _ts(20 + i * 5)
       + (
-        "ingest file path=/arch/dense/%d outcome=ingested elapsed_s=100.0 "
-        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-        "postgres_s=5.0 db_execute_s=2.0 copy_s=1.0 "
-        "orm_materialize_s=1.0 feed_s=10.0 collapse_gpu_s=70.0 "
-        "parse_unaccounted_s=5.0" % (i, 16 * mib)
+        f"ingest file path=/arch/dense/{i} outcome=ingested elapsed_s=100.0 ingest_ok=yes archive=yes db_skip=no size_bytes={16 * mib} postgres_s=5.0 db_execute_s=2.0 copy_s=1.0 orm_materialize_s=1.0 feed_s=10.0 collapse_gpu_s=70.0 parse_unaccounted_s=5.0"
       ),
     )
   lines.append(
@@ -550,10 +517,7 @@ def test_dense_tier_below_min_samples_warns_not_decision_grade(mod, capsys):
     lines.append(
       _ts(10 + i * 5)
       + (
-        "ingest file path=/arch/dense/%d outcome=ingested elapsed_s=100.0 "
-        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-        "postgres_s=5.0 feed_s=80.0 collapse_gpu_s=70.0 "
-        "parse_unaccounted_s=2.0" % (i, 16 * mib)
+        f"ingest file path=/arch/dense/{i} outcome=ingested elapsed_s=100.0 ingest_ok=yes archive=yes db_skip=no size_bytes={16 * mib} postgres_s=5.0 feed_s=80.0 collapse_gpu_s=70.0 parse_unaccounted_s=2.0"
       ),
     )
   lines.append(
@@ -572,7 +536,7 @@ def test_dense_tier_below_min_samples_warns_not_decision_grade(mod, capsys):
 
 
 def test_overnight_pack_prefers_dense_when_64mib_sparse(mod):
-  """Four 64mib files must not beat twelve dense 8–64 MiB samples."""
+  """Four 64mib files must not beat twelve dense 8-64 MiB samples."""
   mib = 1024 * 1024
   lines = [
     _ts(0) + "Messages consumed in the last 10 minutes: 100; messages waiting "
@@ -583,22 +547,14 @@ def test_overnight_pack_prefers_dense_when_64mib_sparse(mod):
     lines.append(
       _ts(5 + i)
       + (
-        "ingest file path=/arch/big/%d outcome=ingested elapsed_s=2000.0 "
-        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-        "postgres_s=1000.0 db_execute_s=100.0 copy_s=10.0 "
-        "orm_materialize_s=900.0 feed_s=50.0" % (i, 128 * mib)
+        f"ingest file path=/arch/big/{i} outcome=ingested elapsed_s=2000.0 ingest_ok=yes archive=yes db_skip=no size_bytes={128 * mib} postgres_s=1000.0 db_execute_s=100.0 copy_s=10.0 orm_materialize_s=900.0 feed_s=50.0"
       ),
     )
   for i in range(12):
     lines.append(
       _ts(30 + i * 5)
       + (
-        "ingest file path=/arch/dense/%d outcome=ingested elapsed_s=800.0 "
-        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-        "postgres_s=200.0 db_execute_s=50.0 copy_s=5.0 "
-        "orm_materialize_s=30.0 feed_s=40.0 delta_s=120.0 "
-        "jid_invalidate_s=130.0 collapse_gpu_s=90.0 "
-        "parse_unaccounted_s=2.0" % (i, 16 * mib)
+        f"ingest file path=/arch/dense/{i} outcome=ingested elapsed_s=800.0 ingest_ok=yes archive=yes db_skip=no size_bytes={16 * mib} postgres_s=200.0 db_execute_s=50.0 copy_s=5.0 orm_materialize_s=30.0 feed_s=40.0 delta_s=120.0 jid_invalidate_s=130.0 collapse_gpu_s=90.0 parse_unaccounted_s=2.0"
       ),
     )
   lines.append(
@@ -627,11 +583,7 @@ def test_overnight_pack_decision_next_write_path(mod):
     lines.append(
       _ts(10 + i * 5)
       + (
-        "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
-        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-        "postgres_s=50.0 db_execute_s=40.0 copy_s=25.0 "
-        "conflict_insert_s=15.0 orm_materialize_s=5.0 feed_s=10.0"
-        % (i, 128 * mib)
+        f"ingest file path=/arch/h/{i} outcome=ingested elapsed_s=100.0 ingest_ok=yes archive=yes db_skip=no size_bytes={128 * mib} postgres_s=50.0 db_execute_s=40.0 copy_s=25.0 conflict_insert_s=15.0 orm_materialize_s=5.0 feed_s=10.0"
       ),
     )
   lines.append(
@@ -662,11 +614,7 @@ def test_overnight_pack_decision_next_parse_hold(mod):
     lines.append(
       _ts(10 + i * 5)
       + (
-        "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
-        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-        "postgres_s=5.0 db_execute_s=2.0 copy_s=1.0 "
-        "orm_materialize_s=1.0 feed_s=70.0 collapse_s=10.0 "
-        "parse_unaccounted_s=5.0" % (i, 128 * mib)
+        f"ingest file path=/arch/h/{i} outcome=ingested elapsed_s=100.0 ingest_ok=yes archive=yes db_skip=no size_bytes={128 * mib} postgres_s=5.0 db_execute_s=2.0 copy_s=1.0 orm_materialize_s=1.0 feed_s=70.0 collapse_s=10.0 parse_unaccounted_s=5.0"
       ),
     )
   lines.append(
@@ -683,7 +631,7 @@ def test_overnight_pack_decision_next_parse_hold(mod):
 
 
 def test_overnight_pack_decision_next_parse_unaccounted(mod):
-  """Unaccounted median ≥ top named hold → parse_unaccounted_investigate."""
+  """Unaccounted median >= top named hold -> parse_unaccounted_investigate."""
   mib = 1024 * 1024
   lines = [
     _ts(0) + "Messages consumed in the last 10 minutes: 100; messages waiting "
@@ -694,11 +642,7 @@ def test_overnight_pack_decision_next_parse_unaccounted(mod):
     lines.append(
       _ts(10 + i * 5)
       + (
-        "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
-        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-        "postgres_s=5.0 db_execute_s=2.0 copy_s=1.0 "
-        "orm_materialize_s=1.0 feed_s=20.0 collapse_s=10.0 "
-        "parse_unaccounted_s=80.0" % (i, 128 * mib)
+        f"ingest file path=/arch/h/{i} outcome=ingested elapsed_s=100.0 ingest_ok=yes archive=yes db_skip=no size_bytes={128 * mib} postgres_s=5.0 db_execute_s=2.0 copy_s=1.0 orm_materialize_s=1.0 feed_s=20.0 collapse_s=10.0 parse_unaccounted_s=80.0"
       ),
     )
   lines.append(
@@ -715,7 +659,7 @@ def test_overnight_pack_decision_next_parse_unaccounted(mod):
 
 
 def test_overnight_pack_decision_next_telem_incomplete(mod, capsys):
-  """Parse holds without write-phase tokens → telem_incomplete_re_soak."""
+  """Parse holds without write-phase tokens -> telem_incomplete_re_soak."""
   mib = 1024 * 1024
   lines = [
     _ts(0) + "Messages consumed in the last 10 minutes: 100; messages waiting "
@@ -726,10 +670,7 @@ def test_overnight_pack_decision_next_telem_incomplete(mod, capsys):
     lines.append(
       _ts(10 + i * 5)
       + (
-        "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
-        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-        "postgres_s=5.0 feed_s=70.0 collapse_s=10.0 "
-        "parse_unaccounted_s=5.0" % (i, 128 * mib)
+        f"ingest file path=/arch/h/{i} outcome=ingested elapsed_s=100.0 ingest_ok=yes archive=yes db_skip=no size_bytes={128 * mib} postgres_s=5.0 feed_s=70.0 collapse_s=10.0 parse_unaccounted_s=5.0"
       ),
     )
   lines.append(
@@ -751,7 +692,7 @@ def test_overnight_pack_decision_next_telem_incomplete(mod, capsys):
 
 
 def test_overnight_pack_decision_next_telem_all_phases_absent(mod, capsys):
-  """Mid-tier files with no parse and no write phase tokens → incomplete."""
+  """Mid-tier files with no parse and no write phase tokens -> incomplete."""
   mib = 1024 * 1024
   lines = [
     _ts(0) + "Messages consumed in the last 10 minutes: 100; messages waiting "
@@ -762,9 +703,7 @@ def test_overnight_pack_decision_next_telem_all_phases_absent(mod, capsys):
     lines.append(
       _ts(10 + i * 5)
       + (
-        "ingest file path=/arch/h/%d outcome=ingested elapsed_s=100.0 "
-        "ingest_ok=yes archive=yes db_skip=no size_bytes=%d "
-        "postgres_s=5.0" % (i, 128 * mib)
+        f"ingest file path=/arch/h/{i} outcome=ingested elapsed_s=100.0 ingest_ok=yes archive=yes db_skip=no size_bytes={128 * mib} postgres_s=5.0"
       ),
     )
   lines.append(

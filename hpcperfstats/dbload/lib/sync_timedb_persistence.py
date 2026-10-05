@@ -343,7 +343,7 @@ def _read_contract_version(archive_data_dir: str) -> int | None:
     archive_data_dir (str): String for archive data dir.
 
   Returns:
-    Optional[int]: Optional[int] — the result, or None when unavailable.
+    Optional[int]: Optional[int] - the result, or None when unavailable.
 
   Examples:
     >>> _read_contract_version("x")  # doctest: +SKIP
@@ -467,7 +467,7 @@ def _ensure_persistence_contract_inner(
   if on_disk == current:
     if log_fn:
       log_fn(
-        "persistence contract v%d active" % current,
+        f"persistence contract v{current} active",
         flush=True,
       )
     return False
@@ -480,14 +480,11 @@ def _ensure_persistence_contract_inner(
       _save_json_atomic(persistence_contract_path(archive_data_dir), payload)
       if log_fn:
         log_fn(
-          "persistence contract v%d active" % current,
+          f"persistence contract v{current} active",
           flush=True,
         )
       return False
-    detail = "persistence contract mismatch old=%s new=%d (reset refused)" % (
-      on_disk,
-      current,
-    )
+    detail = f"persistence contract mismatch old={on_disk} new={current} (reset refused)"
     if log_fn:
       log_fn(detail, flush=True)
     raise PersistenceContractMismatchError(detail)
@@ -499,8 +496,7 @@ def _ensure_persistence_contract_inner(
   _save_json_atomic(persistence_contract_path(archive_data_dir), payload)
   if log_fn:
     log_fn(
-      "persistence reset old=%s new=%d"
-      % (on_disk if on_disk is not None else "missing", current),
+      f"persistence reset old={on_disk if on_disk is not None else 'missing'} new={current}",
       flush=True,
     )
   return True
@@ -514,7 +510,7 @@ def _expected_schema_version(kind: str) -> int | None:
     kind (str): String for kind.
 
   Returns:
-    Optional[int]: Optional[int] — the result, or None when unavailable.
+    Optional[int]: Optional[int] - the result, or None when unavailable.
 
   Examples:
     >>> _expected_schema_version("ingest_checkpoint")

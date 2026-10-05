@@ -631,7 +631,7 @@ def main(argv: Sequence[str] | None = None) -> int:
   if not venv_python.is_file():
     print(
       "error: workspace venv missing at "
-      f"{venv_python} — create it before running this check",
+      f"{venv_python} - create it before running this check",
       file=sys.stderr,
     )
     return EXIT_MISCONFIG

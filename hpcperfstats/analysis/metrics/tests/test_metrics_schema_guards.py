@@ -31,7 +31,7 @@ def test_mem_hwm_no_keyerror_when_mem_events_incomplete():
 def test_mem_hwm_snake_case_host_mem_kb_to_gib():
   """Canonical host_mem events (KB) dual-read to finite GiB (Summary scale)."""
   schema = metrics._Schema(["mem_used", "slab", "file_pages"])
-  # Peak used−slab−file_pages = 2_097_152 KB → 2.0 GiB
+  # Peak used-slab-file_pages = 2_097_152 KB -> 2.0 GiB
   stats = np.array(
     [
       [3_000_000.0, 500_000.0, 402_848.0],
@@ -46,7 +46,7 @@ def test_mem_hwm_snake_case_host_mem_kb_to_gib():
 
 
 def test_mem_hwm_legacy_pascal_case_mem_type_kb_to_gib():
-  """Legacy mem + PascalCase events still dual-read; same KB→GiB scale."""
+  """Legacy mem + PascalCase events still dual-read; same KB->GiB scale."""
   schema = metrics._Schema(["MemUsed", "Slab", "FilePages"])
   stats = np.array([[2_097_152.0, 0.0, 0.0]], dtype=np.float64)
   u = _StubUtils({"mem": (schema, {"n1": stats})})

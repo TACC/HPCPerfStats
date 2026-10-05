@@ -1,6 +1,6 @@
 """Regression: test-only paths must stay out of the Docker build context.
 
-See dockerignore-test-artifacts-sync.mdc — update this module when adding new
+See dockerignore-test-artifacts-sync.mdc - update this module when adding new
 test-only path conventions or .dockerignore baseline patterns.
 """
 
@@ -28,7 +28,7 @@ def _normalize_dockerignore_rel(rel_path: str) -> str:
   """Normalize a context-relative path for dockerignore matching.
 
   Only strips repeated ``./`` prefixes (and a single leading ``/``). Do **not**
-  use ``str.lstrip('./')`` — that also strips the leading dot from ``.build/``.
+  use ``str.lstrip('./')`` - that also strips the leading dot from ``.build/``.
   """
   rel = rel_path.replace("\\", "/")
   while rel.startswith("./"):

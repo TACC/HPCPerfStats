@@ -196,7 +196,7 @@ def test_mkl_source_stack_run_order_and_flags():
     numexpr_install_end = compile_body.index("ne.use_vml", numexpr_install_idx)
     numexpr_region = compile_body[numexpr_install_idx:numexpr_install_end]
     assert "--no-deps" in numexpr_region
-    # MKL assert after numexpr (before pandas) — prod log: numexpr replaced MKL numpy.
+    # MKL assert after numexpr (before pandas) - prod log: numexpr replaced MKL numpy.
     after_numexpr = compile_body[
       numexpr_install_end : compile_body.index(pandas_marker)
     ]

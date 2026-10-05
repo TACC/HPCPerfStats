@@ -76,7 +76,7 @@ def assert_no_serious_axe_violations(
       elif t is not None:
         targets.append(str(t))
     tail = "; ".join(targets) if targets else "(no targets)"
-    lines.append(f"  [{impact}] {rule} — {help_txt}")
+    lines.append(f"  [{impact}] {rule} - {help_txt}")
     lines.append(f"    {tail}")
   msg = "axe found {} serious/critical violation(s):\n{}".format(
     len(bad),

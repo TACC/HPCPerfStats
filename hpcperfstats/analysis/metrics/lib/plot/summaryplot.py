@@ -110,7 +110,7 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
 # Absolute INI [PORTAL] summary_aggregate_prefetch_max_threads (default 2).
 
 # When True (plot/detail prewarm threads), fetch aggregates serially so peak RSS
-# stays ~one host×time grid (design capacity 5000×48×60).
+# stays ~one hostxtime grid (design capacity 5000x48x60).
 _SERIAL_SUMMARY_AGGREGATE_PREFETCH = contextvars.ContextVar(
   "hps_serial_summary_aggregate_prefetch",
   default=False,
@@ -182,7 +182,7 @@ def _cycled_d3_category20_palette(n: Any) -> Any:
 _CAS_BW_CONV = 64 / (1024 * 1024 * 1024)
 _BYTES_TO_MB = 1 / (1024 * 1024)
 _BYTES_TO_GBPS = (
-  1e-9  # decimal GB/s — match metrics avg_gpu_* / link conversions
+  1e-9  # decimal GB/s - match metrics avg_gpu_* / link conversions
 )
 _BYTES_TO_GB = (
   _BYTES_TO_GBPS  # GPU rate plots; prefer _BYTES_TO_GBPS for new call sites
@@ -297,7 +297,7 @@ def _get_dcgm_cpu_power_util_agg(jt: Any, conv: Any = 1.0) -> Any:
   Aggregate Grace ``dcgm_cpu_power_util_w`` as sum of unique socket paints.
 
   Fetches per-``dev`` rows then collapses identical per-CPU replicas via
-  ``sum_unique_watt_values_per_host_time`` so Ncores×socket_watts does not
+  ``sum_unique_watt_values_per_host_time`` so Ncoresxsocket_watts does not
   overcount.
 
   Args:
@@ -1543,7 +1543,7 @@ def _iter_hardware_error_event_specs() -> Iterator[tuple[str, str, str]]:
 
 def _one_error_host_series(jt: Any, typ: Any, event: Any) -> Any:
   """
-  Return host×time rates for one error counter, or None when unusable.
+  Return hostxtime rates for one error counter, or None when unusable.
 
   Uses arc rates from ``_get_agg_if_feasible``. Returns None when the aggregate
   is empty, all-NaN, or all zeros after fillna (no subplot for that counter).
@@ -1656,7 +1656,7 @@ class SummaryPlot:
 
     Uses one multi_line glyph plus one scatter (HoverTool on data) and a
       separate
-    HoverTool on a small “?” marker for metric documentation.
+    HoverTool on a small "?" marker for metric documentation.
 
     Args:
       df (Any): Df passed to this helper.

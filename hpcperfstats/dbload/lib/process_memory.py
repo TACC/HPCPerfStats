@@ -111,7 +111,7 @@ def read_cgroup_memory_max_bytes() -> Any:
 
 def effective_process_tree_rss_mib_from_cgroup_pct(pct: Any) -> int:
   """
-  Return process-tree roof/exit MiB from ``memory.max`` × ``pct`` (0–100).
+  Return process-tree roof/exit MiB from ``memory.max`` x ``pct`` (0-100).
 
   When ``pct <= 0`` or ``memory.max`` is unknown, return ``0`` (fail open).
 
@@ -146,7 +146,7 @@ def effective_process_tree_rss_limit_mib() -> int:
   Effective defer roof MiB from INI ``sync_process_tree_rss_limit_cgroup_pct``.
 
   Returns:
-    int: MiB from runtime cgroup max × pct, or ``0`` when disabled.
+    int: MiB from runtime cgroup max x pct, or ``0`` when disabled.
 
   Examples:
     >>> effective_process_tree_rss_limit_mib()  # doctest: +SKIP
@@ -160,10 +160,10 @@ def effective_process_tree_rss_limit_mib() -> int:
 
 def effective_cgroup_admit_max_file_cache_mib() -> int:
   """
-  Effective file-cache admit cap MiB from INI cgroup pct × ``memory.max``.
+  Effective file-cache admit cap MiB from INI cgroup pct x ``memory.max``.
 
   Returns:
-    int: MiB from runtime cgroup max × pct, or ``0`` when disabled.
+    int: MiB from runtime cgroup max x pct, or ``0`` when disabled.
 
   Examples:
     >>> effective_cgroup_admit_max_file_cache_mib()  # doctest: +SKIP
@@ -180,7 +180,7 @@ def effective_process_tree_rss_exit_mib() -> int:
   Effective hard-exit MiB from INI ``sync_process_tree_rss_exit_cgroup_pct``.
 
   Returns:
-    int: MiB from runtime cgroup max × pct, or ``0`` when disabled.
+    int: MiB from runtime cgroup max x pct, or ``0`` when disabled.
 
   Examples:
     >>> effective_process_tree_rss_exit_mib()  # doctest: +SKIP
@@ -315,7 +315,7 @@ def format_tree_rss_breakdown_mb(ingest_pool: Any, archive_pool: Any) -> Any:
 
 _MIB = 1024 * 1024
 
-# memory.stat keys emitted by sync_timedb_mem_telemetry (bytes → MiB except faults).
+# memory.stat keys emitted by sync_timedb_mem_telemetry (bytes -> MiB except faults).
 _MEMORY_STAT_MIB_KEYS = (
   "anon",
   "file",
@@ -350,7 +350,7 @@ def read_cgroup_memory_stat() -> Any:
   Parse cgroup ``memory.stat`` into a dict of int counters (empty if unavailable).
 
   Returns:
-    Any: Mapping of key → int.
+    Any: Mapping of key -> int.
 
   Examples:
     >>> isinstance(read_cgroup_memory_stat(), dict)
@@ -474,7 +474,7 @@ def _cmdline_of(pid: int) -> str:
     True
   """
   try:
-    with open("/proc/%d/cmdline" % pid, "rb") as fh:
+    with open(f"/proc/{pid}/cmdline", "rb") as fh:
       raw = fh.read().replace(b"\x00", b" ").decode("utf-8", "replace")
     return raw.strip()
   except OSError:
@@ -486,7 +486,7 @@ def read_daemon_rss_by_cmdline() -> dict[str, int]:
   Sum VmRSS bytes for listend / update_metrics / sync_timedb by cmdline match.
 
   Returns:
-    dict[str, int]: Keys ``sync``, ``listend``, ``metrics`` → RSS bytes.
+    dict[str, int]: Keys ``sync``, ``listend``, ``metrics`` -> RSS bytes.
 
   Examples:
     >>> sorted(read_daemon_rss_by_cmdline().keys())
@@ -515,7 +515,7 @@ def read_other_cgroup_rss(
   exclude_pids: set[int] | None = None,
 ) -> dict[str, Any]:
   """
-  Sum RSS of PIDs under this cgroup excluding known daemons; note top ≥1 GiB.
+  Sum RSS of PIDs under this cgroup excluding known daemons; note top >=1 GiB.
 
   Args:
     exclude_pids (set[int] | None): PIDs to skip (daemon mains).

@@ -30,7 +30,7 @@ WARN_FRACTION = 0.80
 
 def estimate_django_pg_slot_peak() -> dict[str, Any]:
   """
-  Sum gunicorn×executor + listend + metrics + ingest + day_close + reserve.
+  Sum gunicornxexecutor + listend + metrics + ingest + day_close + reserve.
 
   This is a **peak occupancy estimate**, not a live ``pg_stat_activity``
   census. A leak (detached metrics threads that skip ``connections.close_all``)
@@ -115,12 +115,6 @@ def log_pg_slot_budget_if_needed(
     }
   if estimate["should_warn"]:
     emit(
-      "WARN: estimated Django PG slot peak {} >= 80% of max_connections={} "
-      "(warn_threshold={} components={}); do not raise the GUC — close leaks".format(
-        estimate["peak"],
-        estimate["max_connections"],
-        estimate["warn_threshold"],
-        estimate["components"],
-      )
+      f"WARN: estimated Django PG slot peak {estimate['peak']} >= 80% of max_connections={estimate['max_connections']} (warn_threshold={estimate['warn_threshold']} components={estimate['components']}); do not raise the GUC - close leaks"
     )
   return estimate

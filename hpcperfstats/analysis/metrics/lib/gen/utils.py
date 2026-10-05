@@ -39,10 +39,10 @@ jid_table = None
 local_timezone = cfg.get_timezone()
 
 # Canonical monitor typenames (see hpcperfstats.dbload.lib.monitor_naming); dual-read via resolve.
-from hpcperfstats.dbload.lib.monitor_naming.canonical import (  # noqa: E402
+from hpcperfstats.dbload.lib.monitor_naming.canonical import (
   pmc_freq_for_typename,
 )
-from hpcperfstats.dbload.lib.monitor_naming.resolve import (  # noqa: E402
+from hpcperfstats.dbload.lib.monitor_naming.resolve import (
   cha_typename_priority,
   imc_types_probe_order,
   pmc_typename_priority,
@@ -453,11 +453,7 @@ def format_cluster_hover_datetime(value: Any) -> Any:
     local = ts.tz_convert(ZoneInfo(local_timezone))
   else:
     ts = pd.Timestamp(value)
-    if ts.tzinfo is None:
-      # Cluster-naive plot series: already wall clock in ``local_timezone``.
-      local = ts
-    else:
-      local = ts.tz_convert(ZoneInfo(local_timezone))
+    local = ts if ts.tzinfo is None else ts.tz_convert(ZoneInfo(local_timezone))
   formatted = local.strftime("%I:%M %p")
   if formatted.startswith("0"):
     formatted = formatted[1:]
@@ -466,7 +462,7 @@ def format_cluster_hover_datetime(value: Any) -> Any:
 
 def timestamps_as_cluster_naive(series: Any) -> Any:
   """
-  UTC (or naive-as-UTC) timestamps → naive cluster wall clock for Bokeh axes.
+  UTC (or naive-as-UTC) timestamps -> naive cluster wall clock for Bokeh axes.
 
   Bokeh 3.9 ``DatetimeTickFormatter`` has no timezone property and formats in
   UTC. Shifting to naive cluster local makes axis ticks match

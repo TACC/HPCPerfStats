@@ -731,7 +731,7 @@ def canonical_type_name(typ: str) -> str:
 
 def _type_scoped_event_map(typ: str | None) -> dict[str, str]:
   """
-  Legacy→canonical event map for ``typ``, or empty when type has no.
+  Legacy->canonical event map for ``typ``, or empty when type has no.
 
     type_events.
 
@@ -932,8 +932,8 @@ def type_probe_names(typ: str) -> tuple[str, ...]:
   Examples:
     >>> type_probe_names("x")  # doctest: +SKIP
   """
-  # Bare / legacy AMD DF → full family probe order (live family types first).
-  # Family types stay exact — do not alias rome/milan/… onto historical bare rows.
+  # Bare / legacy AMD DF -> full family probe order (live family types first).
+  # Family types stay exact - do not alias rome/milan/... onto historical bare rows.
   if typ in (canon.AMD_DF_TYPE, leg.LEGACY_AMD_DF_TYPE):
     return amd_df_types_probe_order()
   if typ in canon.AMD_DF_STATS_TYPES:

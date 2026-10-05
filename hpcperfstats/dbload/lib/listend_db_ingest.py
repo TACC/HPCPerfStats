@@ -341,7 +341,7 @@ def _apply_listend_db_ingest_statement_timeout() -> None:
     from django.db import connection
 
     with connection.cursor() as cursor:
-      cursor.execute("SET statement_timeout = %d" % ms)
+      cursor.execute(f"SET statement_timeout = {ms}")
   except Exception:
     return
 
@@ -1229,7 +1229,7 @@ def _worker_main(
   set_daemon_thread_title(
     "",
     script_name="listend.py",
-    role="listend-db-%d" % int(worker_idx),
+    role=f"listend-db-{int(worker_idx)}",
   )
   ensure_django()
   from django.db import close_old_connections, connections
@@ -1299,8 +1299,7 @@ def _worker_main(
     except Exception as exc:
       _inc_counter(counters, "db_err")
       log_print(
-        "ERROR: listend db ingest flush failed worker=%d: %s"
-        % (worker_idx, exc),
+        f"ERROR: listend db ingest flush failed worker={worker_idx}: {exc}",
         flush=True,
       )
       if _listend_flush_error_is_poison(exc):
@@ -1391,8 +1390,7 @@ def _worker_main(
     except Exception as unpack_exc:
       _inc_counter(counters, "db_err")
       log_print(
-        "ERROR: listend db ingest dequeue failed worker=%d: %s"
-        % (worker_idx, unpack_exc),
+        f"ERROR: listend db ingest dequeue failed worker={worker_idx}: {unpack_exc}",
         flush=True,
       )
       item = None
@@ -1418,8 +1416,7 @@ def _worker_main(
       except Exception as pread_exc:
         _inc_counter(counters, "db_err")
         log_print(
-          "ERROR: listend db ingest pread failed worker=%d host=%s: %s"
-          % (worker_idx, host, pread_exc),
+          f"ERROR: listend db ingest pread failed worker={worker_idx} host={host}: {pread_exc}",
           flush=True,
         )
         message = None
@@ -1474,8 +1471,7 @@ def _worker_main(
     except Exception as exc:
       _inc_counter(counters, "db_err")
       log_print(
-        "ERROR: listend db ingest sample failed worker=%d host=%s: %s"
-        % (worker_idx, host, exc),
+        f"ERROR: listend db ingest sample failed worker={worker_idx} host={host}: {exc}",
         flush=True,
       )
       pending_host = []
@@ -1670,17 +1666,7 @@ class ListendDbIngestPool:
         flush=True,
       )
     log_print(
-      "listend db ingest pool started workers=%d queue_maxsize=%d "
-      "per_worker_budget_bytes=%d batch_samples=%d flush_max_rows=%d "
-      "flush_hold_s=%.3f"
-      % (
-        self.pool_processes,
-        self.queue_maxsize,
-        self.per_worker_budget_bytes,
-        self.batch_samples,
-        self.flush_max_rows,
-        self.flush_hold_s,
-      ),
+      f"listend db ingest pool started workers={self.pool_processes} queue_maxsize={self.queue_maxsize} per_worker_budget_bytes={self.per_worker_budget_bytes} batch_samples={self.batch_samples} flush_max_rows={self.flush_max_rows} flush_hold_s={self.flush_hold_s:.3f}",
       flush=True,
     )
 
@@ -1716,7 +1702,7 @@ class ListendDbIngestPool:
         self.flush_hold_s,
         self._flush_window,
       ),
-      name="listend-db-%d" % worker_idx,
+      name=f"listend-db-{worker_idx}",
       daemon=True,
     )
 
@@ -1746,7 +1732,7 @@ class ListendDbIngestPool:
           alive += 1
           continue
         log_print(
-          "ERROR: listend db ingest worker dead; respawning index=%d" % i,
+          f"ERROR: listend db ingest worker dead; respawning index={i}",
           flush=True,
         )
         replacement = self._make_worker_thread(i)
@@ -2142,34 +2128,7 @@ class ListendDbIngestPool:
         flush_elapsed_avg_s,
         flush_elapsed_max_s,
       ) = self._flush_window.take()
-    return (
-      "db_ingest queue_drops=%d pause_enters=%d pause_s=%d paused=%d "
-      "schema_miss=%d db_ok=%d db_err=%d conn_recycle=%d "
-      "db_queue_depth=%d db_queued_bytes=%d batch_flush=%d "
-      "alive_db_threads=%d max_shard_qsize=%d max_shard_bytes=%d "
-      "flush_rows_avg=%.1f flush_rows_max=%d "
-      "flush_elapsed_avg_s=%.3f flush_elapsed_max_s=%.3f"
-      % (
-        d.get("queue_drops", 0),
-        d.get("pause_enters", 0),
-        d.get("pause_s", 0),
-        d.get("paused", 0),
-        d.get("schema_miss", 0),
-        d.get("db_ok", 0),
-        d.get("db_err", 0),
-        d.get("conn_recycle", 0),
-        d.get("db_queue_depth", 0),
-        d.get("db_queued_bytes", 0),
-        d.get("batch_flush", 0),
-        alive,
-        max_shard_qsize,
-        max_shard_bytes,
-        flush_rows_avg,
-        flush_rows_max,
-        flush_elapsed_avg_s,
-        flush_elapsed_max_s,
-      )
-    )
+    return f"db_ingest queue_drops={d.get('queue_drops', 0)} pause_enters={d.get('pause_enters', 0)} pause_s={d.get('pause_s', 0)} paused={d.get('paused', 0)} schema_miss={d.get('schema_miss', 0)} db_ok={d.get('db_ok', 0)} db_err={d.get('db_err', 0)} conn_recycle={d.get('conn_recycle', 0)} db_queue_depth={d.get('db_queue_depth', 0)} db_queued_bytes={d.get('db_queued_bytes', 0)} batch_flush={d.get('batch_flush', 0)} alive_db_threads={alive} max_shard_qsize={max_shard_qsize} max_shard_bytes={max_shard_bytes} flush_rows_avg={flush_rows_avg:.1f} flush_rows_max={flush_rows_max} flush_elapsed_avg_s={flush_elapsed_avg_s:.3f} flush_elapsed_max_s={flush_elapsed_max_s:.3f}"
 
 
 # Process-global pool for listend main (set by start_listend_db_ingest_pool).

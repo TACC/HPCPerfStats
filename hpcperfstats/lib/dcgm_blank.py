@@ -1,7 +1,7 @@
 """
 NVIDIA DCGM blank-family sentinels (mirror ``dcgm_structs.h``).
 
-Telemetry that equals or exceeds these bases is missing/unsupported/not-found —
+Telemetry that equals or exceeds these bases is missing/unsupported/not-found -
 not a real watt, percent, or bitmask. Analysis and ingest must reject them
 before sum/mean/max/OR so blank GPUs cannot poison job aggregates.
 

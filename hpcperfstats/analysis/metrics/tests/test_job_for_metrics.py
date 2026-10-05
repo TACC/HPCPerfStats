@@ -784,7 +784,7 @@ def test_pg_session_statement_timeout_for_metrics_worker_restore_swallows_db_err
 def test_host_data_metric_rows_with_host_chunk_retry_splits_on_timeout(
   monkeypatch,
 ):
-  """48-host / single-batch style: timeout on full chunk → halve and succeed."""
+  """48-host / single-batch style: timeout on full chunk -> halve and succeed."""
   hosts = [f"h{i}.example.com" for i in range(8)]
   seen = []
 

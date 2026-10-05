@@ -149,7 +149,7 @@ def resolve_package_frontend_dir(
   settings_dir: str | Path | None = None,
 ) -> Path:
   """
-  Locate package ``…/static/frontend`` from Django settings paths.
+  Locate package ``.../static/frontend`` from Django settings paths.
 
   Args:
     staticfiles_dirs (Sequence[str | Path] | None): One of ``Sequence[str |

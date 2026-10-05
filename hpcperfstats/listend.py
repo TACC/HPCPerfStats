@@ -40,7 +40,7 @@ Attributes:
   _DIGIT_EPOCH_NAME_MAX_ATTEMPTS: Max digit names to probe when finding a
     free epoch filename during ``$`` rotate.
   _sticky_archive_tls: Per-archive-thread kept ``current`` fd and flock sidecar.
-  _digit_epoch_link_cache: host_dir → (digit epoch path, inode) for ``$`` rotate.
+  _digit_epoch_link_cache: host_dir -> (digit epoch path, inode) for ``$`` rotate.
   _digit_epoch_link_cache_lock: Guard for the digit-link cache.
   _ARCHIVE_REORDER_HOLD_SECONDS: Per-host reorder hold when N>1 consumers.
   _AMQP_CONSUME_STAGGER_SECONDS: Delay before first consume per consumer index.
@@ -1052,10 +1052,7 @@ def _get_rmq_queue_depth_for_monitor() -> int | str:
     base = os.environ.get("RABBITMQ_MANAGEMENT_URL", f"http://{host}:15672")
     user = os.environ.get("RABBITMQ_MANAGEMENT_USER", "guest")
     password = os.environ.get("RABBITMQ_MANAGEMENT_PASSWORD", "guest")
-    url = "{}/api/queues/%2F/{}".format(
-      str(base).rstrip("/"),
-      quote(str(queue_name), safe=""),
-    )
+    url = f"{str(base).rstrip('/')}/api/queues/%2F/{quote(str(queue_name), safe='')}"
     token = b64encode((f"{user}:{password}").encode()).decode()
     req = urllib.request.Request(
       url, headers={"Authorization": f"Basic {token}"}
@@ -1093,7 +1090,7 @@ def _maybe_reset_amqp_reconnect_backoff_after_stable_consume(
   session: _AmqpConsumeSession | None = None,
 ) -> None:
   """
-  Reset reconnect backoff after a stable consume session (≥30s).
+  Reset reconnect backoff after a stable consume session (>=30s).
 
   Backoff must not reset on ``Begining Consume`` alone; only after the
   consumer has been attached long enough to indicate broker health.
@@ -1752,7 +1749,7 @@ def _request_db_backpressure_pause(channel: Any, delivery_tag: Any) -> None:
     with contextlib.suppress(Exception):
       pool.note_pause_enter()
     # Pause duration is reported on the 10-minute idle-monitor line
-    # (pause_s / paused) — no per-flap INFO here.
+    # (pause_s / paused) - no per-flap INFO here.
   _db_backpressure_pause = True
   try:
     if hasattr(channel, "basic_nack") and delivery_tag is not None:
@@ -1795,7 +1792,7 @@ def _wait_for_db_backpressure_resume(connection: Any) -> bool:
       if pool is not None:
         with contextlib.suppress(Exception):
           pool.note_pause_exit()
-      # Resume is visible via idle-monitor pause_s / paused=0 — no INFO.
+      # Resume is visible via idle-monitor pause_s / paused=0 - no INFO.
       return True
     try:
       connection.process_data_events(time_limit=1)
@@ -1931,8 +1928,7 @@ def _format_listend_idle_archive_suffix() -> str:
   try:
     if _archive_pool_started:
       parts.append(
-        "archive_q_depth=%d inflight=%d"
-        % (archive_queue_depth(), archive_inflight_count())
+        f"archive_q_depth={archive_queue_depth()} inflight={archive_inflight_count()}"
       )
   except Exception:
     pass
@@ -1942,8 +1938,7 @@ def _format_listend_idle_archive_suffix() -> str:
       if n_alive <= 0:
         n_alive = max(0, int(_amqp_consumer_count))
       parts.append(
-        "amqp_consumers=%d prefetch=%d"
-        % (n_alive, int(_amqp_applied_prefetch or 0))
+        f"amqp_consumers={n_alive} prefetch={int(_amqp_applied_prefetch or 0)}"
       )
   except Exception:
     pass
@@ -2091,7 +2086,7 @@ def _archive_and_submit_then_ack(
   """
   Archive payload, threadsafe ack, then best-effort live-DB submit.
 
-  Hard order: durable filesystem archive → ACK → submit. Never ACK without
+  Hard order: durable filesystem archive -> ACK -> submit. Never ACK without
   a successful archive append. Live-DB enqueue after ack holds an archive
   fd plus byte range; this path must not decode the full sample.
 
@@ -2185,7 +2180,7 @@ def _archive_worker_main(worker_idx: int, work_queue: queue.Queue) -> None:
   set_daemon_thread_title(
     "",
     script_name="listend.py",
-    role="archive-%d" % int(worker_idx),
+    role=f"archive-{int(worker_idx)}",
   )
   recv_seq = itertools.count()
   heaps: dict[str, list] = {}
@@ -2317,7 +2312,7 @@ def start_listend_archive_pool(n_threads: int | None = None) -> int:
 
   Args:
     n_threads (int | None): Worker count; default from
-      ``get_listend_archive_worker_threads`` (2× AMQP consumer count).
+      ``get_listend_archive_worker_threads`` (2x AMQP consumer count).
 
   Returns:
     int: Number of archive worker threads started (or already running).
@@ -2343,7 +2338,7 @@ def start_listend_archive_pool(n_threads: int | None = None) -> int:
       t = Thread(
         target=_archive_worker_main,
         args=(i, q),
-        name="listend-archive-%d" % i,
+        name=f"listend-archive-{i}",
         daemon=True,
       )
       _archive_queues.append(q)
@@ -2352,7 +2347,7 @@ def start_listend_archive_pool(n_threads: int | None = None) -> int:
     _archive_pool_n = n
     _archive_pool_started = True
     log_print(
-      "listend archive pool started threads=%d" % n,
+      f"listend archive pool started threads={n}",
       flush=True,
     )
     return n
@@ -2449,7 +2444,7 @@ def on_message(
 
   When the archive pool is running, peek host from the AMQP bytes, enqueue
   ``(delivery_tag, payload_bytes)``, and return without archive/ack on this
-  thread. Archive workers perform durable append → threadsafe ack →
+  thread. Archive workers perform durable append -> threadsafe ack ->
   best-effort DB submit. Without a started pool (unit tests), process
   synchronously on this thread.
 
@@ -2510,7 +2505,7 @@ def on_message(
       )
       return
 
-    # Sync path (tests / pool not started): archive → ack → submit.
+    # Sync path (tests / pool not started): archive -> ack -> submit.
     result = append_monitor_payload_to_archive(payload)
     channel.basic_ack(delivery_tag=delivery_tag)
     try:
@@ -2618,16 +2613,7 @@ def _emit_idle_monitor_report(now: float) -> None:
     archive_suffix = _format_listend_idle_archive_suffix()
 
   log_print(
-    "Messages consumed in the last 10 minutes: %d; "
-    "messages waiting to be consumed: %s; "
-    "current file unlinks (last 10 minutes): %d%s%s"
-    % (
-      count_last_10,
-      queue_depth,
-      unlink_count_last_10,
-      db_suffix,
-      archive_suffix,
-    )
+    f"Messages consumed in the last 10 minutes: {count_last_10}; messages waiting to be consumed: {queue_depth}; current file unlinks (last 10 minutes): {unlink_count_last_10}{db_suffix}{archive_suffix}"
   )
 
   _last_idle_report_time = now
@@ -2735,7 +2721,7 @@ def _amqp_consumer_main(session: _AmqpConsumeSession) -> None:
   set_daemon_thread_title(
     "",
     script_name="listend.py",
-    role="amqp-consumer-%d" % int(session.index),
+    role=f"amqp-consumer-{int(session.index)}",
   )
   session.io_thread_ident = current_thread().ident
   _amqp_tls.session = session
@@ -2765,8 +2751,7 @@ def _amqp_consumer_main(session: _AmqpConsumeSession) -> None:
       _amqp_applied_prefetch = prefetch
       frame_max = _negotiated_amqp_frame_max(connection, parameters)
       log_print(
-        "listend amqp consumer=%d prefetch=%d frame_max=%s queue=%s"
-        % (session.index, prefetch, frame_max, queue_name),
+        f"listend amqp consumer={session.index} prefetch={prefetch} frame_max={frame_max} queue={queue_name}",
         flush=True,
       )
       consume_start_logged = False
@@ -2974,14 +2959,14 @@ def main() -> None:
       _amqp_consumer_count = n
       _amqp_consumer_threads = []
       _amqp_sessions = []
-      log_print("listend amqp consumers=%d" % n, flush=True)
+      log_print(f"listend amqp consumers={n}", flush=True)
       for i in range(n):
         session = _AmqpConsumeSession(i)
         _amqp_sessions.append(session)
         t = Thread(
           target=_amqp_consumer_main,
           args=(session,),
-          name="listend-amqp-%d" % i,
+          name=f"listend-amqp-{i}",
           daemon=True,
         )
         _amqp_consumer_threads.append(t)

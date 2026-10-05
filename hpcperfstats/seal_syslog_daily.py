@@ -74,7 +74,7 @@ def _yyyymmdd(d: date) -> str:
   Examples:
     >>> _yyyymmdd(None)  # doctest: +SKIP
   """
-  return "%04d%02d%02d" % (d.year, d.month, d.day)
+  return f"{d.year:04}{d.month:02}{d.day:02}"
 
 
 def _paths_for_day(current_dir: str, day: date) -> Any:
@@ -153,7 +153,7 @@ def seal_day(day: date, *, log_fn: Any = print) -> bool:
       os.unlink(p)
     except OSError as exc:
       log_fn(f"seal_syslog_daily: warning removing {p} ({exc})")
-  log_fn("seal_syslog_daily: wrote %s (%d members)" % (tar_path, len(paths)))
+  log_fn(f"seal_syslog_daily: wrote {tar_path} ({len(paths)} members)")
   return True
 
 

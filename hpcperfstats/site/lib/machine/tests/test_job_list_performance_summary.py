@@ -226,7 +226,7 @@ class TestAnnotateJobListPerformanceFields:
     )
 
   def test_annotation_matches_classifier_for_each_rank(self):
-    # Non-PG: plots_artifacts_ready=False → value jobs are rank 1.
+    # Non-PG: plots_artifacts_ready=False -> value jobs are rank 1.
     j0 = self._create_job("perf0", dtc=10)
     metrics_data.objects.create(
       jid=j0, type="t", metric="m", units="u", value=1.0
@@ -373,7 +373,7 @@ def test_job_list_serializer_exposes_metrics_available_without_artifacts():
   ).first()
   data = JobListSerializer(j).data
   assert "has_metrics" not in data
-  # Non-PG annotate fail-closes artifacts → Metrics available (rank 1).
+  # Non-PG annotate fail-closes artifacts -> Metrics available (rank 1).
   assert data["performance"]["sort_rank"] == 1
   assert data["performance"]["label"] == LABEL_METRICS_AVAILABLE
   assert data["performance"]["tone"] == "info"

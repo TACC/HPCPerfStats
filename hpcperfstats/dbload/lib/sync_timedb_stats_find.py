@@ -38,7 +38,7 @@ from typing import (
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.file_locking import LOCK_SUFFIX
 
-# GNU stat --printf argv: interpret \0 as NUL (do not embed real NULs —
+# GNU stat --printf argv: interpret \0 as NUL (do not embed real NULs -
 # Python subprocess rejects embedded null bytes in argv on some platforms).
 STAT_PRINTF_FORMAT = "%n\\0%Y\\0%s\\0%i\\0"
 STAT_CURRENT_INODE_PRINTF = "%n\\0%i\\0"
@@ -51,7 +51,7 @@ _FNCTL_LOCK_ENOENT_RE = re.compile(
   re.I,
 )
 
-# Last successful find scan → fingerprint caches for maint hints (C9).
+# Last successful find scan -> fingerprint caches for maint hints (C9).
 _path_fp_cache: dict[str, tuple[int, int]] = {}
 _host_fp_cache: dict[str, tuple[int, int]] = {}
 
@@ -102,7 +102,7 @@ def lookup_path_fingerprint(path: str) -> tuple[int, int] | None:
     path (str): String for path.
 
   Returns:
-    Optional[Tuple[int, int]]: Optional[Tuple[int, int]] — the result, or None
+    Optional[Tuple[int, int]]: Optional[Tuple[int, int]] - the result, or None
     when unavailable.
 
   Examples:
@@ -119,7 +119,7 @@ def lookup_host_dir_fingerprint(host_dir: str) -> tuple[int, int] | None:
     host_dir (str): String for host dir.
 
   Returns:
-    Optional[Tuple[int, int]]: Optional[Tuple[int, int]] — the result, or None
+    Optional[Tuple[int, int]]: Optional[Tuple[int, int]] - the result, or None
     when unavailable.
 
   Examples:
@@ -272,7 +272,7 @@ def _fd_x_stat_argv(
   if exclude:
     argv.extend(["--exclude", str(exclude)])
   if mtime_days is not None and int(mtime_days) > 0:
-    argv.extend(["--changed-within", "%dd" % int(mtime_days)])
+    argv.extend(["--changed-within", f"{int(mtime_days)}d"])
   argv.extend(
     [
       "--batch-size",
@@ -464,21 +464,19 @@ def iter_find_printf_records_streaming(
         inode = int(inode_b)
       except (ValueError, TypeError, UnicodeDecodeError) as exc:
         raise FindStatsDiscoveryError(
-          "invalid fd -X stat record at index %d: %s" % (index, exc)
+          f"invalid fd -X stat record at index {index}: {exc}"
         ) from exc
       index += 1
       yield FindStatsRecord(path=path, mtime=mtime, size=size, inode=inode)
   if fields or buf:
     raise FindStatsDiscoveryError(
-      "fd -X stat record stream length is not a multiple of 4 fields "
-      "(got %d leftover tokens, %d leftover bytes)"
-      % (len(fields) + (1 if buf else 0), len(buf))
+      f"fd -X stat record stream length is not a multiple of 4 fields (got {len(fields) + (1 if buf else 0)} leftover tokens, {len(buf)} leftover bytes)"
     )
 
 
 def parse_current_inode_records(data: bytes) -> dict[str, int]:
   """
-  Map host_dir → inode for ``current`` files (pathinode).
+  Map host_dir -> inode for ``current`` files (pathinode).
 
   Args:
     data (bytes): Data.
@@ -701,8 +699,7 @@ def _run_find_capture(
   ):
     return proc.stdout or b""
   raise FindStatsDiscoveryError(
-    "fd/fdfind -X stat failed exit=%d: %s"
-    % (proc.returncode, stderr_text.strip() or "(no stderr)")
+    f"fd/fdfind -X stat failed exit={proc.returncode}: {stderr_text.strip() or '(no stderr)'}"
   )
 
 
@@ -818,8 +815,7 @@ def iter_find_stats_stdout_chunks(
   if rc == 1 and _stderr_is_only_fnctl_races(stderr_text):
     return
   raise FindStatsDiscoveryError(
-    "fd/fdfind -X stat failed exit=%d: %s"
-    % (rc, stderr_text.strip() or "(no stderr)")
+    f"fd/fdfind -X stat failed exit={rc}: {stderr_text.strip() or '(no stderr)'}"
   )
 
 
@@ -866,12 +862,7 @@ def run_find_stats(
   update_fingerprint_caches_from_records(records)
   if log_fn is not None:
     log_fn(
-      "find_stats paths=%d elapsed_s=%.3f mtime_days=%s"
-      % (
-        len(records),
-        time.monotonic() - t0,
-        "None" if mtime_days is None else str(int(mtime_days)),
-      ),
+      f"find_stats paths={len(records)} elapsed_s={time.monotonic() - t0:.3f} mtime_days={'None' if mtime_days is None else str(int(mtime_days))}",
       flush=True,
     )
   return records
@@ -884,7 +875,7 @@ def load_current_inode_map(
   stat_bin: str | None = None,
 ) -> dict[str, int]:
   """
-  Return host_dir → inode for each host ``current`` file via fd ``-X`` stat.
+  Return host_dir -> inode for each host ``current`` file via fd ``-X`` stat.
 
   Args:
     archive_dir (str): String for archive dir.
@@ -1030,7 +1021,7 @@ def discover_stats_records(
   log_fn: Callable[..., None] | None = None,
 ) -> list[FindStatsRecord]:
   """
-  Full discovery pipeline: find → current inode map → filter/sort.
+  Full discovery pipeline: find -> current inode map -> filter/sort.
 
   Args:
     archive_dir (str): String for archive dir.
@@ -1274,8 +1265,7 @@ def discover_host_scoped_stats_records(
     host_recs = parse_find_printf_records(raw)
     if log_fn is not None:
       log_fn(
-        "jid discover: host=%s find_records=%d elapsed_s=%.3f"
-        % (host, len(host_recs), time.monotonic() - t0),
+        f"jid discover: host={host} find_records={len(host_recs)} elapsed_s={time.monotonic() - t0:.3f}",
         flush=True,
       )
     records.extend(host_recs)

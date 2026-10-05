@@ -16,7 +16,7 @@ from typing import Any
 
 _PR_SET_PDEATHSIG = 1
 
-# ``python3 -m hpcperfstats.<module>`` — basename for top when argv[0] is the interpreter.
+# ``python3 -m hpcperfstats.<module>`` - basename for top when argv[0] is the interpreter.
 _MODULE_PROCESS_TITLES: dict[str, str] = {
   "hpcperfstats.seal_syslog_daily": "seal_syslog_daily.py",
   "hpcperfstats.render_syslog_ng_generated": "render_syslog_ng_generated.py",

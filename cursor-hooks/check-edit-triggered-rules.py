@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cursor postToolUse hook — warn when an edit or CreatePlan triggers unread rules."""
+"""Cursor postToolUse hook - warn when an edit or CreatePlan triggers unread rules."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ HOOK_DIR = Path(__file__).resolve().parent
 if str(HOOK_DIR) not in sys.path:
   sys.path.insert(0, str(HOOK_DIR))
 
-from hook_task_router import triggered_rules_for_paths  # noqa: E402
-from hpc_hook_lib import (  # noqa: E402
+from hook_task_router import triggered_rules_for_paths
+from hpc_hook_lib import (
   PLAN_AUTHORING_REQUIRED_MDC,
   READ_VERIFY_EXEMPT_MDC,
   domain_rule_read_issues,
@@ -106,7 +106,7 @@ def main() -> int:
     return 0
 
   workspace_roots = payload.get("workspace_roots") or []
-  # Turn-scoped only — prior-turn edits must not poison read-before-edit checks.
+  # Turn-scoped only - prior-turn edits must not poison read-before-edit checks.
   full_rows = parse_transcript_lines(transcript_path)
   rows = last_turn_rows(full_rows)
   extra_reads = ledger_read_basenames_this_turn(transcript_path, full_rows)

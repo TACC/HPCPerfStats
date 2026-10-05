@@ -113,8 +113,8 @@ def archive_member_maps_union(
   When sizes tie, prefer the tar side (AR-06 open-tar authority).
 
   Args:
-    tar_members (dict[str, int]): Open tar basename → byte size.
-    zst_members (dict[str, int]): Sealed archive basename → byte size.
+    tar_members (dict[str, int]): Open tar basename -> byte size.
+    zst_members (dict[str, int]): Sealed archive basename -> byte size.
 
   Returns:
     dict[str, int]: Canonical union map.

@@ -6125,7 +6125,7 @@ def test_compute_watchdog_downshifts_on_batch_wall_not_metrics_only(
   )
   cap_lines = [line for line in logs if "next_batch_cap=" in line]
   assert cap_lines
-  # Starting cap with 24 workers ×2 = 48; half → 24 (floor MIN_CAP=16).
+  # Starting cap with 24 workers x2 = 48; half -> 24 (floor MIN_CAP=16).
   assert any("next_batch_cap=24" in line for line in cap_lines)
 
 
@@ -6152,7 +6152,7 @@ def test_candidate_ref_attaches_estimated_sample_count(monkeypatch):
 
 @pytest.mark.machine_unit_mock
 def test_ready_queue_cap_uses_ini_target_not_chunks_product(monkeypatch):
-  """prefetch_ready_cap equals ready_queue_target; ignores chunks×CHUNK_SIZE."""
+  """prefetch_ready_cap equals ready_queue_target; ignores chunksxCHUNK_SIZE."""
   monkeypatch.setattr(
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
   )
@@ -6230,7 +6230,7 @@ def test_ready_queue_cap_uses_ini_target_not_chunks_product(monkeypatch):
   )
   update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
   assert captured.get("prefetch_ready_cap") == 100
-  # chunks×CHUNK_SIZE would be 4000; must not be used as the cap.
+  # chunksxCHUNK_SIZE would be 4000; must not be used as the cap.
   assert captured.get("prefetch_ready_cap") != 8 * update_metrics.CHUNK_SIZE
 
 

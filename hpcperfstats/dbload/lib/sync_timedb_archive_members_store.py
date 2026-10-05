@@ -302,7 +302,7 @@ class SyncTimedbArchiveMembersStore:
     """
     Drop abandoned sibling identities after the live identity completes.
 
-    Identity drift (T1→T2) otherwise leaves Events and incomplete maps
+    Identity drift (T1->T2) otherwise leaves Events and incomplete maps
     for the rest of the supervisor life. Caller sets popped Events after
     releasing the day-shard RLock.
 

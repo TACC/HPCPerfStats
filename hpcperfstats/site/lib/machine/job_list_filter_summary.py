@@ -36,10 +36,10 @@ def _metric_lines_from_fields(fields: Any) -> Any:
       continue
     if key.endswith("__gte"):
       metric = key[len("metrics_") : -len("__gte")]
-      lines.append(f"{metric} ≥ {value}")
+      lines.append(f"{metric} >= {value}")
     elif key.endswith("__lte"):
       metric = key[len("metrics_") : -len("__lte")]
-      lines.append(f"{metric} ≤ {value}")
+      lines.append(f"{metric} <= {value}")
   return lines
 
 
@@ -130,12 +130,12 @@ def build_job_list_qname_and_filter_summary(fields: Any) -> Any:
       lines.append(f"Job end date: {date_param}")
 
   for key, op_sym in (
-    ("runtime__gte", "Runtime ≥"),
-    ("runtime__lte", "Runtime ≤"),
-    ("nhosts__gte", "Nodes ≥"),
-    ("nhosts__lte", "Nodes ≤"),
-    ("node_hrs__gte", "Node-hours ≥"),
-    ("node_hrs__lte", "Node-hours ≤"),
+    ("runtime__gte", "Runtime >="),
+    ("runtime__lte", "Runtime <="),
+    ("nhosts__gte", "Nodes >="),
+    ("nhosts__lte", "Nodes <="),
+    ("node_hrs__gte", "Node-hours >="),
+    ("node_hrs__lte", "Node-hours <="),
   ):
     val = fields.get(key)
     if val not in (None, ""):

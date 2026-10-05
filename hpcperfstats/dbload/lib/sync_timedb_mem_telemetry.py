@@ -92,8 +92,8 @@ def _inflight_rank(
   Rank in-flight ingest identities by size and age for telemetry tokens.
 
   Args:
-    inflight_sizes (dict[str, int] | None): Identity → ``st_size``.
-    submitted (dict[str, float] | None): Identity → submit monotonic time.
+    inflight_sizes (dict[str, int] | None): Identity -> ``st_size``.
+    submitted (dict[str, float] | None): Identity -> submit monotonic time.
 
   Returns:
     dict[str, Any]: Inflight summary tokens.
@@ -127,9 +127,7 @@ def _inflight_rank(
     "inflight_raw_mib": _mib(sum(int(v or 0) for v in sizes.values())),
     "largest_inflight_mib": _mib(largest[1]),
     "largest_inflight": _basename(largest[0]),
-    "top_inflight": ",".join(
-      "%s:%d" % (_basename(p), _mib(sz)) for p, sz in top5
-    ),
+    "top_inflight": ",".join(f"{_basename(p)}:{_mib(sz)}" for p, sz in top5),
     "oldest_inflight_s": int(oldest_s),
     "oldest_inflight": _basename(oldest_id),
   }
@@ -161,8 +159,8 @@ def snapshot_pipeline_mem_telemetry(
   Args:
     ingest_pool (Any | None): Optional ingest pool for tree RSS.
     archive_pool (Any | None): Optional archive pool for tree RSS.
-    inflight_sizes (dict[str, int] | None): Identity → ``st_size``.
-    submitted (dict[str, float] | None): Identity → submit monotonic.
+    inflight_sizes (dict[str, int] | None): Identity -> ``st_size``.
+    submitted (dict[str, float] | None): Identity -> submit monotonic.
     ingest_mem_blocked (bool): Raw-budget blocked flag.
     alone_oversized (bool): Alone-oversized admit flag.
     total_ingested (int): Lifetime ingested ACK count.
@@ -327,7 +325,7 @@ def format_sync_timedb_mem_telemetry_line(
   Format one greppable ``sync_timedb_mem_telemetry:`` line.
 
   Args:
-    event (str): Event name (census, admit_alone, skip_budget, …).
+    event (str): Event name (census, admit_alone, skip_budget, ...).
     snap (dict | None): Prebuilt snapshot; else build via kwargs.
     **kwargs: Forwarded to :func:`snapshot_pipeline_mem_telemetry`.
 

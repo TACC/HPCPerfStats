@@ -48,14 +48,14 @@ def test_fill_skips_when_inflight_raw_budget_tight(monkeypatch, tmp_path):
   """Multiple large files cannot all sit in flight over the byte budget."""
   paths = []
   for i in range(3):
-    p = tmp_path / ("big%d" % i)
+    p = tmp_path / (f"big{i}")
     p.write_bytes(b"x" * 40)
     paths.append(str(p))
   claims = [
     jq.ClaimedJob(
       kind=jq.JOB_KIND_INGEST,
       identity=p,
-      owner_token="n:h:b:%d" % i,
+      owner_token=f"n:h:b:{i}",
       deadline=1e9,
       score=1.0,
       fingerprint=jq.ingest_fingerprint(

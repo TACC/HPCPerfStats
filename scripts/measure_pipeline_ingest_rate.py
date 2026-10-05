@@ -11,8 +11,8 @@ Backlog fields (backlog_at_start / backlog_latest / drained / empirical ETA) use
   historical ``sync_timedb:`` / ``ingest:`` body prefixes)
 - ``Pending stats file list truncated pending=N max=M`` (uncapped N at truncate)
 
-Do **not** mix those with ``Throughput telemetry … backlog=N``, which is capped
-in-memory ``len(pending_stats_files)`` (≤ sync_ingest_queue_max_size, often
+Do **not** mix those with ``Throughput telemetry ... backlog=N``, which is capped
+in-memory ``len(pending_stats_files)`` (<= sync_ingest_queue_max_size, often
 2000). Queue occupancy is reported separately as ingest_queue_depth_*.
 
 The measurement window starts at **ingest start** by default (last ``startup
@@ -85,19 +85,19 @@ from typing import Any
 _RFC3339_TS = (
   r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
 )
-# docker compose logs --timestamps: 2026-…T…Z container | message
+# docker compose logs --timestamps: 2026-...T...Z container | message
 _LOG_TS_PIPE_RE = re.compile(
   rf"^(?P<ts>{_RFC3339_TS})\s+\S+\s+\|\s+(?P<body>.*)$"
 )
-# docker compose logs --timestamps: container | 2026-…T… message
+# docker compose logs --timestamps: container | 2026-...T... message
 _LOG_TS_CONTAINER_PIPE_RE = re.compile(
   rf"^\S+\s+\|\s+(?P<ts>{_RFC3339_TS})\s+(?P<body>.*)$"
 )
-# docker compose logs --timestamps --names: container 2026-…T… message
+# docker compose logs --timestamps --names: container 2026-...T... message
 _LOG_TS_CONTAINER_FIRST_RE = re.compile(
   rf"^\S+\s+(?P<ts>{_RFC3339_TS})\s+(?P<body>.*)$"
 )
-# Bare RFC3339 prefix (supervisord / some compose drivers): 2026-…T… message
+# Bare RFC3339 prefix (supervisord / some compose drivers): 2026-...T... message
 _LOG_TS_LEADING_RE = re.compile(rf"^(?P<ts>{_RFC3339_TS})\s+(?P<body>.*)$")
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 _LISTEND_UNLINKS_RE = re.compile(
@@ -166,7 +166,7 @@ _TIER_STDOUT_EXTRA_PARSE_TOKENS = (
 )
 _MIB_BYTES = 1024 * 1024
 _GIB_BYTES = 1024 * _MIB_BYTES
-# Horizon dense mid-files are ~13–17 MiB; split former lt_64mib so decision
+# Horizon dense mid-files are ~13-17 MiB; split former lt_64mib so decision
 # pack is not diluted by tiny files when 64mib_1gib is empty.
 _SIZE_TIER_BOUNDS = (
   ("lt_8mib", 0, 8 * _MIB_BYTES),
@@ -200,7 +200,7 @@ _THROUGHPUT_BACKLOG_RE = re.compile(
 _BOOT_MARKERS = ("startup ingest gate cleared; ingest may begin",)
 # Used only when no ingest-gate line is present in the log dump.
 _INGEST_START_FALLBACK_MARKERS = ("chunk imap start",)
-# Disk pending ≫ queue depth by at least this factor → saturation WARN.
+# Disk pending ≫ queue depth by at least this factor -> saturation WARN.
 _QUEUE_SATURATION_DISK_FACTOR = 2
 
 EVEN_RATIO_TOLERANCE = 0.02
@@ -416,7 +416,7 @@ def _decision_next(
     mid_write_dominates (bool): True when execute/copy dominate write phases.
     ge_1gib_wall_share (Optional[float]): Share of elapsed samples in large tiers.
     telem_incomplete (bool): Parse holds present but no write-phase tokens.
-    parse_unaccounted_dominates (bool): Mid ``parse_unaccounted_s`` ≥ top named hold.
+    parse_unaccounted_dominates (bool): Mid ``parse_unaccounted_s`` >= top named hold.
 
   Returns:
     str: Decision token for operators (never empty).
@@ -679,7 +679,7 @@ def _parse_log_timestamp(raw: str) -> datetime | None:
     raw (str): String for raw.
 
   Returns:
-    Optional[datetime]: Optional[datetime] — the result, or None when
+    Optional[datetime]: Optional[datetime] - the result, or None when
     unavailable.
 
   Examples:
@@ -786,7 +786,7 @@ def _find_ingest_start_cutoff(lines: Iterable[str]) -> int | None:
     lines (Iterable[str]): Lines.
 
   Returns:
-    Optional[int]: Optional[int] — the result, or None when unavailable.
+    Optional[int]: Optional[int] - the result, or None when unavailable.
 
   Examples:
     >>> _find_ingest_start_cutoff(None)  # doctest: +SKIP
@@ -812,7 +812,7 @@ def _find_boot_cutoff(lines: Iterable[str]) -> int | None:
     lines (Iterable[str]): Lines.
 
   Returns:
-    Optional[int]: Optional[int] — the result, or None when unavailable.
+    Optional[int]: Optional[int] - the result, or None when unavailable.
 
   Examples:
     >>> _find_boot_cutoff(None)  # doctest: +SKIP
@@ -1026,7 +1026,7 @@ def _backlog_at_start(metrics: LogMetrics) -> int | None:
     metrics (LogMetrics): Metrics.
 
   Returns:
-    Optional[int]: Optional[int] — the result, or None when unavailable.
+    Optional[int]: Optional[int] - the result, or None when unavailable.
 
   Examples:
     >>> _backlog_at_start(None)  # doctest: +SKIP
@@ -1044,7 +1044,7 @@ def _backlog_latest(metrics: LogMetrics) -> int | None:
     metrics (LogMetrics): Metrics.
 
   Returns:
-    Optional[int]: Optional[int] — the result, or None when unavailable.
+    Optional[int]: Optional[int] - the result, or None when unavailable.
 
   Examples:
     >>> _backlog_latest(None)  # doctest: +SKIP
@@ -1078,7 +1078,7 @@ def _queue_depth_at_start(metrics: LogMetrics) -> int | None:
     metrics (LogMetrics): Metrics.
 
   Returns:
-    Optional[int]: Optional[int] — the result, or None when unavailable.
+    Optional[int]: Optional[int] - the result, or None when unavailable.
 
   Examples:
     >>> _queue_depth_at_start(None)  # doctest: +SKIP
@@ -1096,7 +1096,7 @@ def _queue_depth_latest(metrics: LogMetrics) -> int | None:
     metrics (LogMetrics): Metrics.
 
   Returns:
-    Optional[int]: Optional[int] — the result, or None when unavailable.
+    Optional[int]: Optional[int] - the result, or None when unavailable.
 
   Examples:
     >>> _queue_depth_latest(None)  # doctest: +SKIP
@@ -1292,7 +1292,7 @@ def _parse_eta_hours(text: str) -> float | None:
     text (str): String for text.
 
   Returns:
-    Optional[float]: Optional[float] — the result, or None when unavailable.
+    Optional[float]: Optional[float] - the result, or None when unavailable.
 
   Examples:
     >>> _parse_eta_hours("x")  # doctest: +SKIP
@@ -1401,7 +1401,7 @@ def build_outcomes(
   empirical_drain = 0.0
   drained = None
   pct_complete = "N/A"
-  # Require ≥2 disk samples so drain is not invented from a single census point.
+  # Require >=2 disk samples so drain is not invented from a single census point.
   if disk_n >= 2 and backlog_start is not None and backlog_latest is not None:
     drained = backlog_start - backlog_latest
     if backlog_start > 0:
@@ -1510,18 +1510,12 @@ def build_outcomes(
     decision_next_dense = "insufficient_dense_tier_samples"
   if 0 < dense_n < _MID_TIER_MIN_SAMPLES:
     print(
-      "WARN: tier_8mib_64mib_count=%d below min %d; "
-      "decision_next_dense=%s not decision-grade"
-      % (dense_n, _MID_TIER_MIN_SAMPLES, decision_next_dense),
+      f"WARN: tier_8mib_64mib_count={dense_n} below min {_MID_TIER_MIN_SAMPLES}; decision_next_dense={decision_next_dense} not decision-grade",
       file=sys.stderr,
     )
   if telem_incomplete:
     print(
-      "WARN: mid-tier telem incomplete "
-      "(parse_samples=%d write_samples=%d mid_n=%d); "
-      "decision_next=telem_incomplete_re_soak — enable "
-      "sync_ingest_telemetry=yes on redeploy"
-      % (named_parse_sample_n, write_sample_n, mid_n),
+      f"WARN: mid-tier telem incomplete (parse_samples={named_parse_sample_n} write_samples={write_sample_n} mid_n={mid_n}); decision_next=telem_incomplete_re_soak - enable sync_ingest_telemetry=yes on redeploy",
       file=sys.stderr,
     )
   total_elapsed_samples = sum(
@@ -1618,8 +1612,7 @@ def emit_warnings(metrics: LogMetrics, window_minutes: float) -> None:
       watermark = metrics.truncate_max_samples[-1]
     if queue_latest >= watermark:
       print(
-        "WARN: ingest queue depth saturated at %d while disk_pending=%d "
-        "(queue depth is not disk backlog)" % (queue_latest, backlog_latest),
+        f"WARN: ingest queue depth saturated at {queue_latest} while disk_pending={backlog_latest} (queue depth is not disk backlog)",
         file=sys.stderr,
       )
   if window_minutes < 60:
@@ -1782,8 +1775,7 @@ def _fetch_compose_logs(compose_argv: list[str]) -> list[str]:
   )
   if proc.returncode != 0:
     raise RuntimeError(
-      "compose logs failed (exit %d): %s"
-      % (proc.returncode, (proc.stderr or proc.stdout or "").strip())
+      f"compose logs failed (exit {proc.returncode}): {(proc.stderr or proc.stdout or '').strip()}"
     )
   return proc.stdout.splitlines()
 

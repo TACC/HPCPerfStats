@@ -20,7 +20,7 @@ def _clear_readiness_caches():
 def _write_stats_segment(host_dir, epoch, host_token="cn001"):
   host_dir.mkdir(parents=True, exist_ok=True)
   seg = host_dir / str(epoch)
-  seg.write_text("%d job1 %s\npayload\n" % (epoch, host_token))
+  seg.write_text(f"{epoch} job1 {host_token}\npayload\n")
   return str(seg)
 
 
@@ -337,7 +337,7 @@ def test_archive_discovery_worker_count_uses_sync_ingest_pool_processes(
 
 
 def test_gate_tail_metadata_logs_begin_and_progress(monkeypatch):
-  paths = ["/fake/path/%d" % i for i in range(5001)]
+  paths = [f"/fake/path/{i}" for i in range(5001)]
   head_identity = dict.fromkeys(paths, ("cn001", 1700000000))
   logs = []
 
@@ -358,7 +358,7 @@ def test_gate_tail_metadata_logs_begin_and_progress(monkeypatch):
 
 
 def test_head_metadata_logs_begin_and_progress_for_large_read_set(monkeypatch):
-  paths = ["/fake/path/%d" % i for i in range(5001)]
+  paths = [f"/fake/path/{i}" for i in range(5001)]
   logs = []
 
   def _fake_read(path):

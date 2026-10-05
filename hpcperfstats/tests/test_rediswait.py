@@ -233,7 +233,7 @@ def test_django_startup_publishes_ram_after_compress():
 
 @pytest.mark.machine_unit_mock
 def test_django_startup_does_not_run_makemigrations():
-  """Production startup must apply reviewed migrations only — never autogenerate."""
+  """Production startup must apply reviewed migrations only - never autogenerate."""
   repo_root = Path(__file__).resolve().parents[2]
   script_path = repo_root / "services-conf" / "django_startup.sh"
   content = script_path.read_text()

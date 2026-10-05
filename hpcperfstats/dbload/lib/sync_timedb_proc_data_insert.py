@@ -1,5 +1,5 @@
 """
-Set-based ``proc_data`` upsert (COPY → staging → ON CONFLICT DO UPDATE).
+Set-based ``proc_data`` upsert (COPY -> staging -> ON CONFLICT DO UPDATE).
 
 Preserves Django ``bulk_create(..., update_conflicts=True)`` semantics after
 client-side peak-merge. A/B arm ``HPCPERFSTATS_PROC_INSERT_ARM``; default
@@ -55,7 +55,7 @@ CREATE TEMP TABLE proc_data_ingest_stage (
 
 def _stage_upsert_sql() -> str:
   """
-  Build INSERT…SELECT…ON CONFLICT DO UPDATE for ``proc_data``.
+  Build INSERT...SELECT...ON CONFLICT DO UPDATE for ``proc_data``.
 
   Returns:
     str: Upsert SQL string.

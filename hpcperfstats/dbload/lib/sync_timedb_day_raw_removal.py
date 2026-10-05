@@ -144,7 +144,7 @@ def _log_day_raw_verify_complete(
   if label:
     prefix = f"Day raw removal {label} verify complete"
   log_fn(
-    "%s day=%s verified=%d skipped=%d" % (prefix, day_iso, verified, skipped),
+    f"{prefix} day={day_iso} verified={verified} skipped={skipped}",
     flush=True,
   )
 
@@ -193,7 +193,7 @@ def _path_fingerprint(path: str) -> dict[str, int] | None:
     path (str): String for path.
 
   Returns:
-    Optional[Dict[str, int]]: Optional[Dict[str, int]] — the result, or None
+    Optional[Dict[str, int]]: Optional[Dict[str, int]] - the result, or None
     when unavailable.
 
   Examples:
@@ -286,7 +286,7 @@ def _entry_fingerprint(entry: dict[str, Any]) -> dict[str, int] | None:
     entry (Dict[str, Any]): Mapping for entry.
 
   Returns:
-    Optional[Dict[str, int]]: Optional[Dict[str, int]] — the result, or None
+    Optional[Dict[str, int]]: Optional[Dict[str, int]] - the result, or None
     when unavailable.
 
   Examples:
@@ -561,7 +561,7 @@ class _DayRawRemovalState:
 
     PRE_SEAL cousin: sealed day stuck ``phase=verifying`` +
       ``pre_seal_complete``
-    with only ingest-waiting retryables — promote so handoff/delete eligibility
+    with only ingest-waiting retryables - promote so handoff/delete eligibility
     matches the POST_SEAL trap fix (do not silent-reenqueue forever).
 
     Returns:
@@ -900,15 +900,7 @@ class _DayRawRemovalState:
     sealed = "ok" if sealed_ok else "missing"
     with janitorial_logging():
       self.log_fn(
-        "tar_drop_skip day=%s reason=%s remaining_n=%d "
-        "quarantine_n=%d sealed=%s validation=ok"
-        % (
-          self.day_date.isoformat(),
-          reason,
-          remaining_n,
-          quarantine_n,
-          sealed,
-        ),
+        f"tar_drop_skip day={self.day_date.isoformat()} reason={reason} remaining_n={remaining_n} quarantine_n={quarantine_n} sealed={sealed} validation=ok",
         flush=True,
       )
 
@@ -1301,11 +1293,7 @@ class _DayRawRemovalState:
     _save_manifest(self._manifest_path, _manifest_snap)
     if self.log_fn:
       self.log_fn(
-        "Day raw removal quarantine-terminal done day=%s on_disk=%d"
-        % (
-          self.day_date.isoformat(),
-          len(self._manifest_entries_on_disk()),
-        ),
+        f"Day raw removal quarantine-terminal done day={self.day_date.isoformat()} on_disk={len(self._manifest_entries_on_disk())}",
         flush=True,
       )
 
@@ -1334,8 +1322,7 @@ class _DayRawRemovalState:
     _save_manifest(self._manifest_path, _manifest_snap)
     if self.log_fn:
       self.log_fn(
-        "Day raw removal ghost delete retry day=%s paths=%d"
-        % (self.day_date.isoformat(), len(ghosts)),
+        f"Day raw removal ghost delete retry day={self.day_date.isoformat()} paths={len(ghosts)}",
         flush=True,
       )
     return True
@@ -1430,16 +1417,14 @@ class _DayRawRemovalState:
       _save_manifest(self._manifest_path, _manifest_snap)
       if self.log_fn:
         self.log_fn(
-          "Day raw removal reclassify retryable skips day=%s "
-          "upgraded=%d still_skipped=%d"
-          % (self.day_date.isoformat(), upgraded, still_skipped),
+          f"Day raw removal reclassify retryable skips day={self.day_date.isoformat()} upgraded={upgraded} still_skipped={still_skipped}",
           flush=True,
         )
     return upgraded
 
   def _manifest_only_waiting_on_ingest(self) -> bool:
     """
-    True when every on-disk entry is retryable or quarantine, with ≥1 retryable.
+    True when every on-disk entry is retryable or quarantine, with >=1 retryable.
 
     Quarantine is transparent: mixed ``skipped_not_in_archive`` +
     ``skipped_quarantine`` (06-07) must hand off like retryable-only, not stay
@@ -1565,7 +1550,7 @@ class _DayRawRemovalState:
     """
     if self.delete_phase_done():
       return self._manifest_retryable_paths_on_disk()
-    # Pre-ingest: no day-scoped census — known manifest retryables only.
+    # Pre-ingest: no day-scoped census - known manifest retryables only.
     if not self.get_allow_day_scoped_closed_raw():
       return self._manifest_retryable_paths_on_disk()
     if self.verification_complete():
@@ -1640,13 +1625,7 @@ class _DayRawRemovalState:
     if retryable_count > 0:
       if self.log_fn:
         self.log_fn(
-          "Day raw removal waiting_on_ingest (raw remains) day=%s "
-          "retryable=%d phase=%s"
-          % (
-            self.day_date.isoformat(),
-            retryable_count,
-            self.phase(),
-          ),
+          f"Day raw removal waiting_on_ingest (raw remains) day={self.day_date.isoformat()} retryable={retryable_count} phase={self.phase()}",
           flush=True,
         )
       return
@@ -1657,8 +1636,7 @@ class _DayRawRemovalState:
     _save_manifest(self._manifest_path, _manifest_snap)
     if self.log_fn:
       self.log_fn(
-        "Day raw removal deferring to done (waiting_on_ingest) day=%s retryable=%d"
-        % (self.day_date.isoformat(), retryable_count),
+        f"Day raw removal deferring to done (waiting_on_ingest) day={self.day_date.isoformat()} retryable={retryable_count}",
         flush=True,
       )
 
@@ -1759,13 +1737,7 @@ class _DayRawRemovalState:
     _save_manifest(self._manifest_path, _manifest_snap)
     if self.log_fn:
       self.log_fn(
-        "Day raw removal pending delete reopen day=%s "
-        "manifest_pending=%d on_disk=%d"
-        % (
-          self.day_date.isoformat(),
-          pending_manifest_n,
-          len(pending_on_disk),
-        ),
+        f"Day raw removal pending delete reopen day={self.day_date.isoformat()} manifest_pending={pending_manifest_n} on_disk={len(pending_on_disk)}",
         flush=True,
       )
     return True
@@ -2140,8 +2112,7 @@ class _DayRawRemovalState:
       return False
     if self.log_fn:
       self.log_fn(
-        "janitor: day_close pre_seal_verify open_tar_members n=%d day=%s"
-        % (len(members), self.day_date.isoformat()),
+        f"janitor: day_close pre_seal_verify open_tar_members n={len(members)} day={self.day_date.isoformat()}",
         flush=True,
       )
     zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
@@ -2272,14 +2243,7 @@ class _DayRawRemovalState:
       _save_manifest(self._manifest_path, _manifest_snap)
       if self.log_fn:
         self.log_fn(
-          "janitor: day_close pre_seal_verify classify progress "
-          "verified_n=%d/%d elapsed_s=%.1f day=%s"
-          % (
-            cursor,
-            len(filtered),
-            time.time() - verify_started,
-            self.day_date.isoformat(),
-          ),
+          f"janitor: day_close pre_seal_verify classify progress verified_n={cursor}/{len(filtered)} elapsed_s={time.time() - verify_started:.1f} day={self.day_date.isoformat()}",
           flush=True,
         )
     if shutdown_requested[0] or cursor < len(filtered):
@@ -2530,11 +2494,7 @@ class _DayRawRemovalState:
       _save_manifest(self._manifest_path, _manifest_snap)
       if self.log_fn:
         self.log_fn(
-          "Day raw removal delete complete day=%s deleted=%d"
-          % (
-            self.day_date.isoformat(),
-            int(self._manifest.get("deleted_count", 0)),
-          ),
+          f"Day raw removal delete complete day={self.day_date.isoformat()} deleted={int(self._manifest.get('deleted_count', 0))}",
           flush=True,
         )
     else:
@@ -2699,8 +2659,7 @@ def _run_supervisor_day_raw_removal_delete_pass_inner(
     still_present = [t for t in tar_drop_targets if os.path.isfile(t)]
     if still_present:
       day_raw_removal.log_fn(
-        "tar_drop_deferred oldest=%s count=%d"
-        % (still_present[0], len(still_present)),
+        f"tar_drop_deferred oldest={still_present[0]} count={len(still_present)}",
         flush=True,
       )
   if needs_delete:
@@ -2800,7 +2759,7 @@ def blocking_closed_raw_remains_for_day(
   Census builders (``build_remaining_raw_*``) remain inventory-only.
 
   Distinct from checkpoint ``checkpoint_incomplete`` (ingest DB), which means
-  unprocessed ingest paths — not closed raw on disk.
+  unprocessed ingest paths - not closed raw on disk.
 
   Args:
     tar_path (str): String for tar path.
@@ -3389,12 +3348,7 @@ class DayRawRemovalCoordinator:
         continue
       in_flight = state._async_verify_in_flight()
       pending_n = state._manifest_verified_pending_count()
-      token = "%s phase=%s pending_verified=%d in_flight=%s" % (
-        os.path.basename(state.tar_path),
-        state.phase(),
-        pending_n,
-        in_flight,
-      )
+      token = f"{os.path.basename(state.tar_path)} phase={state.phase()} pending_verified={pending_n} in_flight={in_flight}"
       blockers.append((state.day_date, token))
     if not blockers:
       return 0, ""
@@ -3516,7 +3470,7 @@ class DayRawRemovalCoordinator:
     Oldest day needing delete.
 
     Returns:
-      Optional[str]: Optional[str] — the result, or None when unavailable.
+      Optional[str]: Optional[str] - the result, or None when unavailable.
 
     Examples:
       >>> DayRawRemovalCoordinator().oldest_day_needing_delete()  # doctest: +SKIP
@@ -3648,8 +3602,8 @@ class DayRawRemovalCoordinator:
     ``handoff_paths_for_ingest()`` as a boolean probe (that builds remaining-
       raw).
 
-    Verifying×exclude×handoff deadlock: while ``phase=verifying`` and not yet
-    ``verification_complete``, retryables stay **eligible for pending** —
+    Verifyingxexcludexhandoff deadlock: while ``phase=verifying`` and not yet
+    ``verification_complete``, retryables stay **eligible for pending** -
     ``should_handoff_day_close_to_ingest`` requires verification_complete, so
     excluding them starves both pending and handoff.
 
@@ -3678,7 +3632,7 @@ class DayRawRemovalCoordinator:
 
   def paths_for_closed_raw_handoff_requeue(self, tar_path: str) -> list[str]:
     """
-    Retryable/unmanifested closed raw only — not manifest-blocking verify paths.
+    Retryable/unmanifested closed raw only - not manifest-blocking verify paths.
 
     Args:
       tar_path (str): String for tar path.
@@ -3751,7 +3705,7 @@ class DayRawRemovalCoordinator:
       reason (str): String for reason.
 
     Returns:
-      str: Kick outcome (``handoff``, ``delete_reopen``, ``noop``, …).
+      str: Kick outcome (``handoff``, ``delete_reopen``, ``noop``, ...).
 
     Examples:
       >>> DayRawRemovalCoordinator().kick_closed_raw_unblock("x", "x")
@@ -3764,9 +3718,7 @@ class DayRawRemovalCoordinator:
       state._finalize_quarantine_terminal_done()
       if self.log_fn:
         self.log_fn(
-          "Day raw removal closed-raw quarantine terminal tar={} reason={}".format(
-            tar_norm, reason or ""
-          ),
+          f"Day raw removal closed-raw quarantine terminal tar={tar_norm} reason={reason or ''}",
           flush=True,
         )
       return "quarantine_terminal"
@@ -3774,9 +3726,7 @@ class DayRawRemovalCoordinator:
       if state._prepare_ghost_delete_retry():
         if self.log_fn:
           self.log_fn(
-            "Day raw removal closed-raw ghost delete kick tar={} reason={}".format(
-              tar_norm, reason or ""
-            ),
+            f"Day raw removal closed-raw ghost delete kick tar={tar_norm} reason={reason or ''}",
             flush=True,
           )
         return "ghost_delete"
@@ -3795,12 +3745,11 @@ class DayRawRemovalCoordinator:
             if state.phase() == PHASE_DELETING:
               if self.log_fn:
                 self.log_fn(
-                  "Day raw removal closed-raw delete kick tar={} reason={} "
-                  "detail=reclassify_upgraded".format(tar_norm, reason or ""),
+                  f"Day raw removal closed-raw delete kick tar={tar_norm} reason={reason or ''} detail=reclassify_upgraded",
                   flush=True,
                 )
               return "delete_reopen"
-          # H18: retryable-only remaining raw must drive ingest handoff —
+          # H18: retryable-only remaining raw must drive ingest handoff -
           # never pure noop, and never begin_deleting (lock re-entry hang).
           paths = self.paths_for_closed_raw_handoff_requeue(tar_path) or list(
             blocking
@@ -3814,8 +3763,7 @@ class DayRawRemovalCoordinator:
             )
             if self.log_fn:
               self.log_fn(
-                "Day raw removal closed-raw handoff kick tar={} reason={} "
-                "detail=retryable_only".format(tar_norm, reason or ""),
+                f"Day raw removal closed-raw handoff kick tar={tar_norm} reason={reason or ''} detail=retryable_only",
                 flush=True,
               )
             return "handoff"
@@ -3824,20 +3772,17 @@ class DayRawRemovalCoordinator:
           if state.phase() == PHASE_DELETING:
             if self.log_fn:
               self.log_fn(
-                "Day raw removal closed-raw delete kick tar={} reason={} "
-                "detail=blocking_manifest".format(tar_norm, reason or ""),
+                f"Day raw removal closed-raw delete kick tar={tar_norm} reason={reason or ''} detail=blocking_manifest",
                 flush=True,
               )
             return "delete_reopen"
-      # Fall through when phase=done with no blocking / no handoff paths —
+      # Fall through when phase=done with no blocking / no handoff paths -
       # has_closed may still need verify/delete reopen (H18).
     if not state.verification_complete():
       self.start_async_verify(tar_path)
       if self.log_fn:
         self.log_fn(
-          "Day raw removal closed-raw verify kick tar={} reason={}".format(
-            tar_norm, reason or ""
-          ),
+          f"Day raw removal closed-raw verify kick tar={tar_norm} reason={reason or ''}",
           flush=True,
         )
       return "verify"
@@ -3855,10 +3800,7 @@ class DayRawRemovalCoordinator:
         if state.phase() == PHASE_DELETING:
           if self.log_fn:
             self.log_fn(
-              "Day raw removal closed-raw delete kick tar={} reason={} "
-              "detail=verification_complete_pending".format(
-                tar_norm, reason or ""
-              ),
+              f"Day raw removal closed-raw delete kick tar={tar_norm} reason={reason or ''} detail=verification_complete_pending",
               flush=True,
             )
           return "delete_reopen"
@@ -3869,10 +3811,7 @@ class DayRawRemovalCoordinator:
         self.apply_batch_delete(tar_path)
         if self.log_fn:
           self.log_fn(
-            "Day raw removal closed-raw delete kick tar={} reason={} "
-            "detail=reclassify_upgraded_deleting".format(
-              tar_norm, reason or ""
-            ),
+            f"Day raw removal closed-raw delete kick tar={tar_norm} reason={reason or ''} detail=reclassify_upgraded_deleting",
             flush=True,
           )
         return "delete_reopen"
@@ -3883,9 +3822,7 @@ class DayRawRemovalCoordinator:
         )
         if self.log_fn:
           self.log_fn(
-            "Day raw removal closed-raw handoff kick tar={} reason={}".format(
-              tar_norm, reason or ""
-            ),
+            f"Day raw removal closed-raw handoff kick tar={tar_norm} reason={reason or ''}",
             flush=True,
           )
         return "handoff"
@@ -3904,8 +3841,7 @@ class DayRawRemovalCoordinator:
         )
         if self.log_fn:
           self.log_fn(
-            "Day raw removal closed-raw handoff kick tar={} reason={} "
-            "detail=has_closed_fallback".format(tar_norm, reason or ""),
+            f"Day raw removal closed-raw handoff kick tar={tar_norm} reason={reason or ''} detail=has_closed_fallback",
             flush=True,
           )
         return "handoff"
@@ -3913,16 +3849,14 @@ class DayRawRemovalCoordinator:
       if state.phase() == PHASE_DELETING:
         if self.log_fn:
           self.log_fn(
-            "Day raw removal closed-raw delete kick tar={} reason={} "
-            "detail=has_closed_fallback".format(tar_norm, reason or ""),
+            f"Day raw removal closed-raw delete kick tar={tar_norm} reason={reason or ''} detail=has_closed_fallback",
             flush=True,
           )
         return "delete_reopen"
       self.start_async_verify(tar_path)
       if self.log_fn:
         self.log_fn(
-          "Day raw removal closed-raw verify kick tar={} reason={} "
-          "detail=has_closed_fallback".format(tar_norm, reason or ""),
+          f"Day raw removal closed-raw verify kick tar={tar_norm} reason={reason or ''} detail=has_closed_fallback",
           flush=True,
         )
       return "verify"
@@ -4391,8 +4325,7 @@ class DayRawRemovalCoordinator:
       upgraded = state._reclassify_retryable_skips_on_disk()
       if upgraded and self.log_fn:
         self.log_fn(
-          "Day raw removal reclassify before batch_delete tar=%s upgraded=%d"
-          % (tar_path, upgraded),
+          f"Day raw removal reclassify before batch_delete tar={tar_path} upgraded={upgraded}",
           flush=True,
         )
       deleted = state.apply_batch_delete()

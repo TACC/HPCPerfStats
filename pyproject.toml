@@ -189,6 +189,18 @@ combine-as-imports = true
 "hpcperfstats/site/lib/machine/update_xalt.py" = ["E402"]
 "hpcperfstats/site/lib/machine/tests/test_jid_table.py" = ["E402"]
 "hpcperfstats-tools/hpcperfstats_tools/config.py" = ["E402"]
+"cursor-hooks/**" = ["E402"]
+"hpcperfstats/analysis/metrics/lib/gen/utils.py" = ["E402"]
+"hpcperfstats/tests/test_cursor_hooks.py" = ["E402"]
+"scripts/python_def_docstring_upgrade.py" = ["E402"]
+"scripts/restore_docstring_prose_from_git.py" = ["E402"]
+# Django Meta / DRF ``fields`` / ``indexes`` lists are class-scoped config, not instances.
+"hpcperfstats/site/lib/machine/models.py" = ["RUF012"]
+"hpcperfstats/site/lib/machine/serializers.py" = ["RUF012"]
+"hpcperfstats/site/lib/machine/public_api.py" = ["RUF012"]
+"hpcperfstats/site/hpcperfstats_site/staticfiles_config.py" = ["RUF012"]
+# Test doubles: mutable class attrs on stub job-table types.
+"**/tests/**" = ["RUF012"]
 
 [tool.ruff.format]
 quote-style = "double"

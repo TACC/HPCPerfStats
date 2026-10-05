@@ -12,9 +12,9 @@ janitor]. When the role is unset, format_log_prefix defaults to ``main`` so
 lines are always [script_name:main] (never a bare [script_name] at runtime).
 
 Body facets (outside brackets):
-- janitorial_logging() / janitorial=True → add or strip leading ``janitor:``
+- janitorial_logging() / janitorial=True -> add or strip leading ``janitor:``
   (strip when role already contains ``janitor``).
-- ingest_logging() / ingest=True → add leading ``ingest:`` on MainThread only
+- ingest_logging() / ingest=True -> add leading ``ingest:`` on MainThread only
   (role ``main`` or unset). Janitorial scope wins over ingest when both active.
 
 Canonical implementation; hpcperfstats-tools may keep a copy for standalone use.
@@ -406,8 +406,8 @@ def log_print(*args: Any, **kwargs: Any) -> None:
   This helper joins once and writes the complete record (including ``end``).
 
   Optional oneshot kwargs (not forwarded to the stream):
-  - ``janitorial=True`` — apply janitorial body rules for this call
-  - ``ingest=True`` — apply MainThread ingest body rules for this call
+  - ``janitorial=True`` - apply janitorial body rules for this call
+  - ``ingest=True`` - apply MainThread ingest body rules for this call
 
   Args:
     *args (Any): Message fragments joined with ``sep`` after the script

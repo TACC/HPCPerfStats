@@ -8,7 +8,7 @@ best-effort while writers stay on PG15; freeze + recount is required before
 cutover (see ``docs/OPERATOR_PG18_MIGRATION.md``).
 
 Uses **psycopg** (already in the ``web`` image) for catalog queries and COPY
-streaming — no PostgreSQL client binary is required on PATH. Chunks whose
+streaming - no PostgreSQL client binary is required on PATH. Chunks whose
 source and target row counts already match are skipped unless ``--force``.
 Up to ``--workers`` chunks copy concurrently (default 2).
 
@@ -63,7 +63,7 @@ class ChunkRow:
     Return the qualified chunk relation name for COPY.
 
     Returns:
-      str: ``schema.name`` suitable for ``COPY (SELECT * FROM …)``.
+      str: ``schema.name`` suitable for ``COPY (SELECT * FROM ...)``.
 
     Examples:
       >>> ChunkRow(
@@ -138,7 +138,7 @@ def _parse_pg_timestamptz(value: str) -> datetime:
     text = text[:-3] + "+00:00"
   if text.endswith("Z"):
     text = text[:-1] + "+00:00"
-  # Handle "+00:00" already; also bare timestamps → assume UTC.
+  # Handle "+00:00" already; also bare timestamps -> assume UTC.
   if "+" not in text[10:] and "-" not in text[10:]:
     text = text + "+00:00"
   dt = datetime.fromisoformat(text)
@@ -205,7 +205,7 @@ def build_delete_range_sql(chunk: ChunkRow) -> str:
     chunk (ChunkRow): Source chunk whose time bounds define the delete window.
 
   Returns:
-    str: ``DELETE FROM host_data WHERE …`` statement.
+    str: ``DELETE FROM host_data WHERE ...`` statement.
 
   Examples:
     >>> "DELETE FROM host_data" in build_delete_range_sql(
@@ -229,13 +229,13 @@ def build_delete_range_sql(chunk: ChunkRow) -> str:
 
 def build_copy_out_sql(chunk: ChunkRow) -> str:
   """
-  Build ``COPY (SELECT * FROM <chunk>) TO STDOUT`` — never the parent hypertable.
+  Build ``COPY (SELECT * FROM <chunk>) TO STDOUT`` - never the parent hypertable.
 
   Args:
     chunk (ChunkRow): Source chunk to stream.
 
   Returns:
-    str: ``COPY … TO STDOUT`` statement.
+    str: ``COPY ... TO STDOUT`` statement.
 
   Raises:
     ValueError: Raised when ``chunk`` names the empty parent ``host_data``.
@@ -259,7 +259,7 @@ def build_copy_out_sql(chunk: ChunkRow) -> str:
 
 def build_copy_in_sql() -> str:
   """
-  Build ``COPY host_data FROM STDIN`` — Timescale routes into new chunks.
+  Build ``COPY host_data FROM STDIN`` - Timescale routes into new chunks.
 
   Returns:
     str: ``COPY host_data FROM STDIN`` statement.
@@ -452,7 +452,7 @@ def _count_with_retry(
 
   Args:
     conn (Connection): Open Postgres connection.
-    sql (str): Count SQL (``SELECT count(*) …``).
+    sql (str): Count SQL (``SELECT count(*) ...``).
     params (Sequence[object]): Bind parameters for ``sql``.
     label (str): Log label for retries (source/target).
 

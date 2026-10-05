@@ -120,9 +120,7 @@ def signal_day_close_yield(
     ev.set()
   if log_fn:
     log_fn(
-      "janitor: day_close yield signal tar={} reason={}".format(
-        tar_norm, reason or "yield_requested"
-      ),
+      f"janitor: day_close yield signal tar={tar_norm} reason={reason or 'yield_requested'}",
       flush=True,
     )
 
@@ -402,12 +400,7 @@ def log_janitor_day_close_defer(
   """
   if log_fn:
     log_fn(
-      "janitor: day_close {} tar={} phase={} reason={}".format(
-        action or "defer",
-        _tar_norm(tar_path),
-        phase or "",
-        reason or "",
-      ),
+      f"janitor: day_close {action or 'defer'} tar={_tar_norm(tar_path)} phase={phase or ''} reason={reason or ''}",
       flush=True,
     )
 
@@ -506,7 +499,7 @@ class JanitorDeferTracker:
     """
     Record a cooperative day_close yield for sticky reclaim backoff.
 
-    Same 30s→300s schedule as write_lock contention. Fill skips reclaim
+    Same 30s->300s schedule as write_lock contention. Fill skips reclaim
     while active so claim/vacate cannot busy-wait for minutes.
 
     Args:

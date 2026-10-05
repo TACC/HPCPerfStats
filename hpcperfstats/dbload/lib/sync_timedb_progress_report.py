@@ -135,7 +135,7 @@ class WindowHealthCounters:
   Attributes:
     undated: Counters for events without a resolvable calendar day.
     dead_letter_by_kind: Undated dead-letter counts keyed by job kind.
-    queue_depth_start: Queued depths snapped at window open (kind → depth).
+    queue_depth_start: Queued depths snapped at window open (kind -> depth).
   """
 
   __slots__ = ("dead_letter_by_kind", "queue_depth_start", "undated")
@@ -200,7 +200,7 @@ def format_busy_token(busy_kinds: Iterable[str]) -> str:
       ordered.append(k)
   if not ordered:
     return ""
-  return "busy={}".format(",".join(ordered))
+  return f"busy={','.join(ordered)}"
 
 
 def day_token_from_day_close_identity(identity: str) -> str | None:
@@ -328,7 +328,7 @@ def format_day_progress_line(day: str, ledger: DayActivityLedger) -> str:
   for key in _DAY_COUNTER_KEYS:
     val = int(ledger.counters.get(key, 0) or 0)
     if val:
-      parts.append("%s=%d" % (key, val))
+      parts.append(f"{key}={val}")
   return " ".join(parts)
 
 
@@ -340,7 +340,7 @@ def format_orphan_inflight(
   Render store inflight kinds that are not locally busy.
 
   Args:
-    census_inflight (Mapping[str, int]): Kind → inflight count.
+    census_inflight (Mapping[str, int]): Kind -> inflight count.
     busy_kinds (Iterable[str]): Local busy kinds.
 
   Returns:
@@ -358,10 +358,10 @@ def format_orphan_inflight(
       continue
     if kind in busy:
       continue
-    parts.append("%s:%d" % (kind, count))
+    parts.append(f"{kind}:{count}")
   if not parts:
     return ""
-  return "orphan_inflight={}".format(",".join(parts))
+  return f"orphan_inflight={','.join(parts)}"
 
 
 def format_queue_ratio_token(name: str, inflight: int, queued: int) -> str:
@@ -386,7 +386,7 @@ def format_queue_ratio_token(name: str, inflight: int, queued: int) -> str:
   q = int(queued or 0)
   if i == 0 and q == 0:
     return ""
-  return "%s=%d/%d" % (name, i, q)
+  return f"{name}={i}/{q}"
 
 
 def format_status_line(
@@ -405,11 +405,11 @@ def format_status_line(
   Format omit-zeros ``queue_orchestrator status`` footer (always one line).
 
   Args:
-    band_ratios (Mapping[str, Mapping[str, int]]): Name →
+    band_ratios (Mapping[str, Mapping[str, int]]): Name ->
       ``{"inflight": n, "queued": n}``.
     queue_deltas (Mapping[str, int]): Queued-depth delta vs window start.
     busy_kinds (Iterable[str]): Local busy kinds.
-    orphan_inflight (Mapping[str, int]): Kind → store inflight.
+    orphan_inflight (Mapping[str, int]): Kind -> store inflight.
     oldest_day (Optional[str]): Oldest queued day token.
     oldest_age_s (Optional[int]): Age of oldest head in seconds.
     undated (Optional[Mapping[str, int]]): Undated fallback counters.
@@ -441,16 +441,16 @@ def format_status_line(
     i = int(entry.get("inflight", 0) or 0)
     q = int(entry.get("queued", 0) or 0)
     if name in ("ingest_hot", "ingest_catchup") or i or q:
-      parts.append("%s=%d/%d" % (name, i, q))
+      parts.append(f"{name}={i}/{q}")
   for name, delta in sorted(queue_deltas.items()):
     d = int(delta or 0)
     if d == 0:
       continue
-    parts.append("%s_q_delta=%d" % (name, d))
+    parts.append(f"{name}_q_delta={d}")
   if oldest_day:
     parts.append(f"oldest_day={oldest_day}")
   if oldest_age_s is not None and int(oldest_age_s) > 0:
-    parts.append("oldest_age_s=%d" % int(oldest_age_s))
+    parts.append(f"oldest_age_s={int(oldest_age_s)}")
   orphan = format_orphan_inflight(orphan_inflight, busy_kinds)
   if orphan:
     parts.append(orphan)
@@ -461,10 +461,10 @@ def format_status_line(
     parts.append(f"fill_block={fill_block!s}")
   for kind, n in sorted((dead_letter_by_kind or {}).items()):
     if int(n or 0):
-      parts.append("dead_letter_%s=%d" % (kind, int(n)))
+      parts.append(f"dead_letter_{kind}={int(n)}")
   for key, n in sorted((undated or {}).items()):
     if int(n or 0):
-      parts.append("%s=%d" % (key, int(n)))
+      parts.append(f"{key}={int(n)}")
   if len(parts) == 1:
     parts.append("idle")
   return " ".join(parts)
@@ -476,7 +476,7 @@ class ProgressReportState:
 
   Attributes:
     _lock: Guards mutation and emit.
-    _days: Calendar day → :class:`DayActivityLedger`.
+    _days: Calendar day -> :class:`DayActivityLedger`.
     window: :class:`WindowHealthCounters` for the open window.
     _window_started_mono: Monotonic time when the current window opened.
     _fill_block: Latest ingest fill-block reason for status footers.
@@ -610,7 +610,7 @@ class ProgressReportState:
     Return a shallow copy of day ledgers under the lock.
 
     Returns:
-      Dict[str, DayActivityLedger]: Day → ledger.
+      Dict[str, DayActivityLedger]: Day -> ledger.
 
     Examples:
       >>> ProgressReportState().snapshot_days()
@@ -635,8 +635,8 @@ class ProgressReportState:
     Args:
       band_ratios (Mapping[str, Mapping[str, int]]): Status band ratios.
       busy_kinds (Iterable[str]): Local busy kinds.
-      census_inflight (Mapping[str, int]): Kind → store inflight.
-      queue_depth_now (Mapping[str, int]): Kind → queued depth now.
+      census_inflight (Mapping[str, int]): Kind -> store inflight.
+      queue_depth_now (Mapping[str, int]): Kind -> queued depth now.
       oldest_day (Optional[str]): Oldest queued day.
       oldest_age_s (Optional[int]): Oldest head age seconds.
 
@@ -710,8 +710,8 @@ class ProgressReportState:
       interval_s (float): Emit interval.
       band_ratios (Mapping[str, Mapping[str, int]]): Status band ratios.
       busy_kinds (Iterable[str]): Local busy kinds.
-      census_inflight (Mapping[str, int]): Kind → store inflight.
-      queue_depth_now (Mapping[str, int]): Kind → queued depth now.
+      census_inflight (Mapping[str, int]): Kind -> store inflight.
+      queue_depth_now (Mapping[str, int]): Kind -> queued depth now.
       oldest_day (Optional[str]): Oldest queued day.
       oldest_age_s (Optional[int]): Oldest head age seconds.
       log_fn (Optional[Callable[..., None]]): Logger (``log_print``-compatible).

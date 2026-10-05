@@ -345,7 +345,7 @@ def test_invalidate_jid_derived_cache_keys_deletes_jid_table_window():
 
 
 def test_job_instance_cache_key_distinct_from_jid_table_window_key():
-  """``jid_table`` caches a values_list tuple; API caches ``job_data`` — keys must not collide."""
+  """``jid_table`` caches a values_list tuple; API caches ``job_data`` - keys must not collide."""
   from hpcperfstats.site.lib.machine.cache_utils import (
     KEY_JOB,
     KEY_JOB_JID_TABLE_WINDOW,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cursor preToolUse hook — after CreatePlan, block tools until live plan disk write."""
+"""Cursor preToolUse hook - after CreatePlan, block tools until live plan disk write."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ HOOK_DIR = Path(__file__).resolve().parent
 if str(HOOK_DIR) not in sys.path:
   sys.path.insert(0, str(HOOK_DIR))
 
-from hpc_hook_lib import (  # noqa: E402
+from hpc_hook_lib import (
   create_plan_payload_from_tool_part,
   emit_allow,
   emit_deny,

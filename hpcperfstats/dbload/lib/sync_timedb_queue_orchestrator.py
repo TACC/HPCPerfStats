@@ -27,7 +27,7 @@ Attributes:
     bumping attempt (``skip_budget_bytes``, ``skip_cgroup_headroom``,
     ``skip_file_cache_pressure``).
   _INGEST_MEM_BLOCK_STATE: Process-local census fields when fill waits on
-    the in-flight raw-byte budget (``ingest_mem_blocked=…``).
+    the in-flight raw-byte budget (``ingest_mem_blocked=...``).
   _MEM_TELEM_RUNTIME: Best-effort inflight/submitted/queue snapshots for
     gated ``sync_timedb_mem_telemetry`` census lines.
   APPEND_FILL_SKIP_BUDGET: Max impossible append claims (missing path /
@@ -152,7 +152,7 @@ _TRANSIENT_DAY_CLOSE_OUTCOMES = frozenset(
     "incomplete_raw",
   }
 )
-# Sticky reclaim backoff after cooperative day_close yield (30s→300s).
+# Sticky reclaim backoff after cooperative day_close yield (30s->300s).
 _DAY_CLOSE_YIELD_BACKOFF = JanitorDeferTracker()
 _DAY_CLOSE_CLAIM_LOG_STATE: dict[str, dict[str, float]] = {}
 _DAY_CLOSE_VACATE_LOG_STATE: dict[str, dict[str, float]] = {}
@@ -259,7 +259,7 @@ class SubsystemShutdownBarrier:
 
   Attributes:
     draining: Set when cooperative shutdown begins.
-    drained: Map of coordinator role → Event set when that role finished.
+    drained: Map of coordinator role -> Event set when that role finished.
   """
 
   def __init__(self, names: Iterable[str]) -> None:
@@ -465,7 +465,7 @@ def _log(msg: str, *, log_fn: Callable[..., None] | None = None) -> None:
   Emit an orchestrator log line via ``log_fn`` or ``log_print``.
 
   Falls back to ``log_print`` (role-prefixed atomic write) when ``log_fn`` is
-  None — never bare ``print``.
+  None - never bare ``print``.
 
   Args:
     msg (str): Message body.
@@ -513,7 +513,7 @@ def _status_band_ratios(client: Any) -> dict[str, dict[str, int]]:
     client (Any): job store.
 
   Returns:
-    dict[str, dict[str, int]]: Name → ``inflight`` / ``queued``.
+    dict[str, dict[str, int]]: Name -> ``inflight`` / ``queued``.
 
   Examples:
     >>> _status_band_ratios(type("C", (), {})())  # doctest: +SKIP
@@ -993,16 +993,7 @@ def _boot_stream_discover(
     tgz_archive_dir=tgz_archive_dir,
   )
   _log(
-    "queue_orchestrator boot discover seen=%d ingest=%d append=%d "
-    "day_close=%d skipped=%d daily_scan_day_close=%d"
-    % (
-      stats.seen,
-      stats.enqueued_ingest,
-      stats.enqueued_append,
-      stats.enqueued_day_close,
-      stats.skipped_complete,
-      day_n,
-    ),
+    f"queue_orchestrator boot discover seen={stats.seen} ingest={stats.enqueued_ingest} append={stats.enqueued_append} day_close={stats.enqueued_day_close} skipped={stats.skipped_complete} daily_scan_day_close={day_n}",
     log_fn=log_fn,
   )
   return stats
@@ -1124,7 +1115,7 @@ def _submit_background_discover(
   """
   global _discover_bg_future, _discover_bg_executor
   # Create executor + submit under one Lock hold. Do NOT call the locked
-  # discover-executor helper from here — that helper also takes
+  # discover-executor helper from here - that helper also takes
   # ``_discover_bg_lock`` (non-reentrant), which deadlocks MainThread forever
   # (hpcperfstats03 2026-08-26: py-spy idle under submit on nested Lock).
   with _discover_bg_lock:
@@ -1234,7 +1225,7 @@ def _idle_reconstruct_pass(
   """
   Interval reconstruct: rediscover via ``JOB_KIND_DISCOVER`` + day_close scan.
 
-  Empty job store does **not** mean caught up — this pass re-classifies from disk.
+  Empty job store does **not** mean caught up - this pass re-classifies from disk.
   Throttled to at most once per ``_IDLE_RECONSTRUCT_MIN_INTERVAL_S`` unless
   ``force`` (``run_once`` exit path). ``force=True`` claims discover on this
   thread so tests and run_once can observe a complete pass; ``force=False``
@@ -1394,7 +1385,7 @@ def _append_worker(archive_info: Any) -> Any:
   Spawn-pool append entry: append closed raw paths to a daily ``.tar``.
 
   Args:
-    archive_info (Any): ``(tar_path, [stats_paths…])`` tuple for
+    archive_info (Any): ``(tar_path, [stats_paths...])`` tuple for
       ``archive_stats_files``.
 
   Returns:
@@ -1553,7 +1544,7 @@ def _day_close_disk_remaining_raw_blocks(coord: Any, tar_path: str) -> bool:
   days do not call ``has_closed_raw_on_disk`` or remaining-raw find (those
   walks hung day_close inflight before the first ``stage_enter``).
   ``verification_complete`` blocks only when cheap manifest verified-pending
-  is non-zero — remaining=0 days must still merge (H20d). Test doubles
+  is non-zero - remaining=0 days must still merge (H20d). Test doubles
   without ``phase`` still use ``has_closed_raw_on_disk``.
 
   Args:
@@ -1652,7 +1643,7 @@ def _day_close_live_ingest_or_populate(
 
   H20a: leftover ``ingest_tar_hot`` and a complete members map are not
   live holders. Global append LIST depth is also not a per-day live
-  signal — callers that need that use ``_day_close_append_or_hot_active``.
+  signal - callers that need that use ``_day_close_append_or_hot_active``.
 
   Args:
     job_store (Any | None): In-process job store, or None when unset.
@@ -1697,7 +1688,7 @@ def _day_close_append_or_hot_active(
 
   H19: ``wait_on_ingest`` must yield only while append or the hot path is
   actually working this day. Empty append plus no ingest/populate hot is
-  idle — day_close should kick verify/delete instead of forever-yielding.
+  idle - day_close should kick verify/delete instead of forever-yielding.
 
   H20a: leftover ``ingest_tar_hot`` and a complete members map are not
   live holders. Yield only for append LIST depth, append inflight, a
@@ -2098,8 +2089,8 @@ def _run_day_close_job(
       """
       Yield when append/hot needs the tar; otherwise kick and skip merge.
 
-      H17: remaining raw or verify-handoff plus append/hot → ``yielded``.
-      H19: same remaining-raw signal with idle append and no hot → kick
+      H17: remaining raw or verify-handoff plus append/hot -> ``yielded``.
+      H19: same remaining-raw signal with idle append and no hot -> kick
       verify/delete and continue without merge.
       H20a: measure live append/ingest/populate *before* kick so leftover
       or kick-set ``ingest_tar_hot`` cannot forever-yield.
@@ -2190,8 +2181,8 @@ def _run_day_close_job(
       """
       return _wait_on_ingest_or_advance()
 
-    # H17 DC-01: disk remaining-raw / verify-handoff before merge → merge →
-    # verify → dedupe → seal → post-seal → delete → tar-drop.
+    # H17 DC-01: disk remaining-raw / verify-handoff before merge -> merge ->
+    # verify -> dedupe -> seal -> post-seal -> delete -> tar-drop.
     # stage_enter disk_remaining_raw already emitted before get_day above.
     if os.path.isfile(tar_path):
       early = _maybe_yield_disk_remaining_raw()
@@ -2354,14 +2345,14 @@ def _run_day_close_job(
 
     # H19 append_idle already answered remaining; do not re-find at post-seal
     # (01 2026-09-26: hung on has_closed after seal exit, before post_seal).
-    # phase_done_sealed sets skip_merge but not remaining_raw_cheap — still find.
+    # phase_done_sealed sets skip_merge but not remaining_raw_cheap - still find.
     def _closed_raw_remains() -> bool:
       """
       Return True when closed raw still blocks tar_drop this claim.
 
       H19 append_idle sets ``remaining_raw_cheap`` so giant days do not
       re-call ``has_closed_raw_on_disk`` after seal / delete. ``phase_done``
-      skip_merge does not set cheap — still probes the coord.
+      skip_merge does not set cheap - still probes the coord.
 
       Returns:
         bool: True when remaining closed raw is known or on disk.
@@ -2623,8 +2614,7 @@ def _retry_or_dead_letter(
     owner_token=claim.owner_token,
   )
   _log(
-    "queue_orchestrator dead_letter kind=%s identity=%s attempt=%d reason=%s"
-    % (kind, identity, attempt, reason),
+    f"queue_orchestrator dead_letter kind={kind} identity={identity} attempt={attempt} reason={reason}",
     log_fn=log_fn,
   )
   return "dead_letter"
@@ -2678,7 +2668,7 @@ def _count_ingest_band_inflight(claims: dict[str, Any]) -> tuple[int, int]:
   this full walk is for bootstrap / tests only.
 
   Args:
-    claims (dict[str, Any]): Identity → claim map.
+    claims (dict[str, Any]): Identity -> claim map.
 
   Returns:
     tuple[int, int]: ``(hot, catchup)`` counts.
@@ -2762,7 +2752,7 @@ def _reconcile_local_ingest_maps_to_store(
     ingest_leases (dict[str, Any]): Local claim map (mutated).
     ingest_submitted (dict[str, float]): Submit-time map (mutated).
     band_used (dict[str, int] | None): Optional hot/catchup counters.
-    inflight_sizes (dict[str, int] | None): Identity → ``st_size`` map.
+    inflight_sizes (dict[str, int] | None): Identity -> ``st_size`` map.
     log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
@@ -2817,7 +2807,7 @@ def _reconcile_local_ingest_maps_to_store(
     pruned += 1
   if pruned:
     _log(
-      "queue_orchestrator local_inflight_desync pruned=%d" % pruned,
+      f"queue_orchestrator local_inflight_desync pruned={pruned}",
       log_fn=log_fn,
     )
   return pruned
@@ -2875,7 +2865,7 @@ def _requeue_pool_collateral(
   Requeue still-running ingest claims that a pool recycle is about to kill.
 
   Terminating the pool kills every worker, not just the hung one, so the
-  survivors are put back at their original score without burning an attempt —
+  survivors are put back at their original score without burning an attempt -
   they did not fail, the coordinator preempted them.
 
   Args:
@@ -2883,7 +2873,7 @@ def _requeue_pool_collateral(
     inflight (dict[str, AsyncResult]): In-flight ingest map (cleared).
     claims (dict[str, Any]): Claim map (cleared).
     submitted (dict[str, float]): Submit-time map (cleared).
-    inflight_sizes (dict[str, int] | None): Identity → ``st_size`` map.
+    inflight_sizes (dict[str, int] | None): Identity -> ``st_size`` map.
     log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
@@ -2932,7 +2922,7 @@ def _oldest_ingest_inflight_age_s(
   Return age in seconds of the oldest submit timestamp in ``submitted``.
 
   Args:
-    submitted (dict[str, float] | None): Identity → monotonic submit time.
+    submitted (dict[str, float] | None): Identity -> monotonic submit time.
     now (float | None): Optional monotonic clock; defaults to ``time.monotonic``.
 
   Returns:
@@ -2974,7 +2964,7 @@ def _maybe_request_stuck_cohort_recycle(
     inflight (dict[str, AsyncResult]): Local ingest AsyncResult map.
     claims (dict[str, Any]): Local ingest claim map.
     submitted (dict[str, float]): Submit monotonic times.
-    inflight_sizes (dict[str, int] | None): Identity → ``st_size`` map.
+    inflight_sizes (dict[str, int] | None): Identity -> ``st_size`` map.
     last_stuck_recycle_mono (float): Prior recycle request monotonic time.
     log_fn (Callable[..., None] | None): Optional logger.
 
@@ -3018,8 +3008,7 @@ def _maybe_request_stuck_cohort_recycle(
     ),
   )
   _log(
-    "queue_orchestrator stuck_cohort_recycle oldest=%s age_s=%.0f "
-    "threshold_s=%d requeued=%d" % (oldest_id, age_s, threshold, requeued),
+    f"queue_orchestrator stuck_cohort_recycle oldest={oldest_id} age_s={age_s:.0f} threshold_s={threshold} requeued={requeued}",
     log_fn=log_fn,
   )
   return now
@@ -3120,7 +3109,7 @@ def _note_ingest_mem_block_state(
 
   Args:
     blocked (bool): True when fill skipped for ``skip_budget_bytes``.
-    inflight_sizes (dict[str, int] | None): Identity → ``st_size`` map.
+    inflight_sizes (dict[str, int] | None): Identity -> ``st_size`` map.
     budget_bytes (int): Current admit budget in bytes (``0`` = gate off).
 
   Returns:
@@ -3182,10 +3171,7 @@ def _census_kind_q(census: dict[str, Any], kind: str) -> str:
     '1/2'
   """
   row = census.get(kind) or {}
-  return "{}/{}".format(
-    int(row.get("inflight", 0) or 0),
-    int(row.get("queued", 0) or 0),
-  )
+  return f"{int(row.get('inflight', 0) or 0)}/{int(row.get('queued', 0) or 0)}"
 
 
 def _emit_mem_telem_event(event: str, log_fn: Any = None, **extra: Any) -> None:
@@ -3245,7 +3231,7 @@ def format_ingest_mem_block_census_suffix() -> str:
   Return census token when ingest fill is waiting on raw-byte budget.
 
   Returns:
-    str: Empty when not blocked; otherwise ``ingest_mem_blocked=yes …``.
+    str: Empty when not blocked; otherwise ``ingest_mem_blocked=yes ...``.
 
   Examples:
     >>> isinstance(format_ingest_mem_block_census_suffix(), str)
@@ -3253,10 +3239,7 @@ def format_ingest_mem_block_census_suffix() -> str:
   """
   if not _INGEST_MEM_BLOCK_STATE.get("blocked"):
     return ""
-  return " ingest_mem_blocked=yes inflight_raw_mib=%d budget_mib=%d" % (
-    int(_INGEST_MEM_BLOCK_STATE.get("inflight_raw_mib", 0) or 0),
-    int(_INGEST_MEM_BLOCK_STATE.get("budget_mib", 0) or 0),
-  )
+  return f" ingest_mem_blocked=yes inflight_raw_mib={int(_INGEST_MEM_BLOCK_STATE.get('inflight_raw_mib', 0) or 0)} budget_mib={int(_INGEST_MEM_BLOCK_STATE.get('budget_mib', 0) or 0)}"
 
 
 def _release_ingest_inflight_size(
@@ -3267,7 +3250,7 @@ def _release_ingest_inflight_size(
   Drop ``identity`` from the in-flight raw-size map when present.
 
   Args:
-    inflight_sizes (dict[str, int] | None): Identity → size map (mutated).
+    inflight_sizes (dict[str, int] | None): Identity -> size map (mutated).
     identity (str): Ingest job identity.
 
   Returns:
@@ -3378,7 +3361,7 @@ def _requeue_ingest_fill_skip(
   Backpressure reasons (``skip_budget_bytes``, ``skip_cgroup_headroom``,
   ``skip_file_cache_pressure``)
   requeue without ``bump_job_attempt`` so sustained cgroup pressure cannot
-  dead-letter good work. Hard skips (``skip_missing``, ``skip_fp``, …) still
+  dead-letter good work. Hard skips (``skip_missing``, ``skip_fp``, ...) still
   use :func:`_retry_or_dead_letter`.
 
   Args:
@@ -3495,16 +3478,16 @@ def _fill_ingest_band(
   Claim ranged ingest jobs and submit until ``cap`` in-flight for ``band``.
 
   Uses multi-claim (RC8c) and claim-returned fingerprints (RC8b). Band
-  capacity uses maintained ``band_used`` counters (RC8 #9) — not a per-claim
+  capacity uses maintained ``band_used`` counters (RC8 #9) - not a per-claim
   full-map walk.
 
   Args:
     client (Any): job store.
     band (str): ``hot`` or ``catchup``.
     cap (int): Max total concurrent ingest jobs.
-    inflight (dict[str, AsyncResult]): Identity → async result map.
-    claims (dict[str, Any]): Identity → claim map.
-    submitted (dict[str, float]): Identity → submit monotonic time (mutated).
+    inflight (dict[str, AsyncResult]): Identity -> async result map.
+    claims (dict[str, Any]): Identity -> claim map.
+    submitted (dict[str, float]): Identity -> submit monotonic time (mutated).
     ingest_pool (Any): Spawn ``multiprocessing.Pool``.
     band_cap (int | None): Optional reserved cap for this band alone.
     band_used (dict[str, int] | None): Hot/catchup used counters (mutated).
@@ -3516,7 +3499,7 @@ def _fill_ingest_band(
     skip_budget (int | None): Max skip/requeue iterations this tick.
     probe_depth (int | None): Lua claim probe depth override.
     fill_stats (dict[str, int] | None): Optional per-tick failure counters.
-    inflight_sizes (dict[str, int] | None): Identity → on-disk ``st_size``
+    inflight_sizes (dict[str, int] | None): Identity -> on-disk ``st_size``
       for in-flight admits (mutated). When ``None``, byte-budget gate is
       skipped (unit tests).
     log_fn (Callable[..., None] | None): Optional logger.
@@ -3858,7 +3841,7 @@ def _is_rich_ingest_timeout_exc(exc: BaseException) -> bool:
   """
   Return True when a drain ``TimeoutError`` carries real per-file timeout meta.
 
-  Bare ``TimeoutError`` (no stage / elapsed) must not soft-requeue — that is the
+  Bare ``TimeoutError`` (no stage / elapsed) must not soft-requeue - that is the
   H7 thrash path that clears local inflight while the ZSET stays deep.
 
   Args:
@@ -3957,7 +3940,7 @@ def _log_orchestrator_ingest_timeout(
     "queue_orchestrator ingest timeout",
     f"identity={identity}",
     f"path={path_s}",
-    "size_bytes=%d" % int(size_bytes),
+    f"size_bytes={int(size_bytes)}",
     f"timeout_s={float(timeout_s):.1f}",
     f"elapsed_s={float(elapsed_s):.1f}",
     f"stage={stage}",
@@ -4087,7 +4070,7 @@ def _drop_expired_ingest_timeout_sentinels(
     inflight (dict[str, Any]): Local ingest inflight map.
     claims (dict[str, Any]): Local claim map.
     submitted (dict[str, float] | None): Submit-time map.
-    inflight_sizes (dict[str, int] | None): Identity → ``st_size`` map.
+    inflight_sizes (dict[str, int] | None): Identity -> ``st_size`` map.
 
   Returns:
     int: Number of sentinels dropped.
@@ -4145,7 +4128,7 @@ def _drain_ingest_ready(
     tgz_archive_dir (str): Daily archive dir (unused; append uses path).
     archive_data_dir (str): Archive data root for the dead-letter sidecar.
     submitted (dict[str, float] | None): Submit-time map to clear (mutated).
-    inflight_sizes (dict[str, int] | None): Identity → ``st_size`` map.
+    inflight_sizes (dict[str, int] | None): Identity -> ``st_size`` map.
     log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
@@ -4415,8 +4398,8 @@ def _try_submit_pending_append_days(
   Args:
     client (Any): Job store used to requeue popped claims on submit fail.
     cap (int): Max concurrent append jobs.
-    inflight (dict[str, AsyncResult]): Daily tar → async result.
-    claims (dict[str, Any]): Daily tar → claim list for drain ACK.
+    inflight (dict[str, AsyncResult]): Daily tar -> async result.
+    claims (dict[str, Any]): Daily tar -> claim list for drain ACK.
     archive_pool (Any): Archive thread pool.
     tgz_archive_dir (str): Daily archive directory.
     batch_size (int): Max paths per ``tar -T`` job.
@@ -4498,8 +4481,8 @@ def _fill_append_slots(
   Args:
     client (Any): job store.
     cap (int): Max concurrent append jobs.
-    inflight (dict[str, AsyncResult]): Path → async result.
-    claims (dict[str, Any]): Path → claim map.
+    inflight (dict[str, AsyncResult]): Path -> async result.
+    claims (dict[str, Any]): Path -> claim map.
     archive_pool (Any): Archive thread pool.
     tgz_archive_dir (str): Daily archive directory.
 
@@ -4863,8 +4846,8 @@ def _fill_day_close_slots(
   Args:
     client (Any): job store.
     executor (ThreadPoolExecutor): Day-close thread pool (max inflight 4).
-    inflight (dict[str, Future]): Identity → future.
-    leases (dict[str, Any]): Identity → claim map (mutated).
+    inflight (dict[str, Future]): Identity -> future.
+    leases (dict[str, Any]): Identity -> claim map (mutated).
     tgz_archive_dir (str): Daily archive directory.
     archive_data_dir (str): Archive data root for day_raw_removal.
     log_fn (Callable[..., None] | None): Optional logger.
@@ -4976,7 +4959,7 @@ def _drain_day_close_ready(
     defer_tracker (JanitorDeferTracker | None): Yield backoff tracker.
 
   Returns:
-    tuple[int, bool]: ``(drained, cooperative_churn_only)`` — the bool is
+    tuple[int, bool]: ``(drained, cooperative_churn_only)`` - the bool is
     True when every drained outcome was a transient cooperative yield
     (or incomplete_raw / deferred_age) with no ``complete``.
 
@@ -5232,8 +5215,7 @@ def _reap_stale_inflight(
     if recovered:
       total += len(recovered)
       _log(
-        "queue_orchestrator reaped kind=%s count=%d first=%s"
-        % (kind, len(recovered), recovered[0]),
+        f"queue_orchestrator reaped kind={kind} count={len(recovered)} first={recovered[0]}",
         log_fn=log_fn,
       )
   return total
@@ -5353,7 +5335,7 @@ def _ingest_runtime_lease_hygiene(
     reconciled = 0
   if reconciled:
     _log(
-      "queue_orchestrator ingest orphan reconcile count=%d" % reconciled,
+      f"queue_orchestrator ingest orphan reconcile count={reconciled}",
       log_fn=log_fn,
     )
   try:
@@ -5366,7 +5348,7 @@ def _ingest_runtime_lease_hygiene(
     stolen = 0
   if stolen:
     _log(
-      "queue_orchestrator ingest runtime steal count=%d" % stolen,
+      f"queue_orchestrator ingest runtime steal count={stolen}",
       log_fn=log_fn,
     )
   return now_steal
@@ -5395,7 +5377,7 @@ def _ingest_coordinator_fill_tick(
   Order: fill hot to ``hot_cap``; catchup under reserved
   ``catchup_dispatch_cap`` (``hot_submitted`` omitted); hot spillover to
   pool; when free slots remain, elevated-probe hot retry (if hot queued)
-  then catchup with ``hot_submitted=0`` expand (if catchup queued) —
+  then catchup with ``hot_submitted=0`` expand (if catchup queued) -
   even when this tick already submitted hot (RC7).
 
   Args:
@@ -5411,7 +5393,7 @@ def _ingest_coordinator_fill_tick(
     ingest_submitted (dict[str, float]): Submit monotonic times.
     skip_budget (int): Max skip iterations per band fill.
     fill_stats (dict[str, int]): Per-tick failure counters (mutated).
-    inflight_sizes (dict[str, int] | None): Identity → ``st_size`` map.
+    inflight_sizes (dict[str, int] | None): Identity -> ``st_size`` map.
     log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
@@ -5596,7 +5578,7 @@ def _ingest_coordinator_loop(
     ingest_submitted (dict[str, float]): Submit monotonic times.
     busy_flags (dict[str, bool]): Shared busy flags (mutated under lock).
     busy_lock (threading.Lock): Guards ``busy_flags``.
-    inflight_sizes (dict[str, int] | None): Identity → ``st_size`` map.
+    inflight_sizes (dict[str, int] | None): Identity -> ``st_size`` map.
     log_fn (Callable[..., None] | None): Optional logger.
 
   Returns:
@@ -5728,31 +5710,17 @@ def _ingest_coordinator_loop(
           now_bc = time.monotonic()
           local_n = len(ingest_inflight)
           reason_bits = ",".join(
-            "%s=%d" % (k, fill_stats[k])
+            f"{k}={fill_stats[k]}"
             for k in _FILL_BLOCK_KEYS
             if fill_stats.get(k)
           )
-          census = " store_hlen=%d local=%d hot_used=%d catch_used=%d" % (
-            store_hlen_after,
-            local_n,
-            hot_used,
-            catch_used,
-          )
+          census = f" store_hlen={store_hlen_after} local={local_n} hot_used={hot_used} catch_used={catch_used}"
           if local_n == 0 and (
             (now_bc - last_fill_empty_log) >= INGEST_FILL_BLOCK_LOG_INTERVAL_S
           ):
             last_fill_empty_log = now_bc
             _log(
-              "queue_orchestrator ingest fill empty deep_queue "
-              "zcard=%d hot_q=%d local_inflight=0 submitted=0"
-              " fill_block=%s stats=%s%s"
-              % (
-                zcard,
-                hot_queued,
-                fill_block or "unknown",
-                reason_bits or "-",
-                census,
-              ),
+              f"queue_orchestrator ingest fill empty deep_queue zcard={zcard} hot_q={hot_queued} local_inflight=0 submitted=0 fill_block={fill_block or 'unknown'} stats={reason_bits or '-'}{census}",
               log_fn=log_fn,
             )
           elif (
@@ -5760,18 +5728,7 @@ def _ingest_coordinator_loop(
           ) >= INGEST_FILL_BLOCK_LOG_INTERVAL_S:
             last_fill_block_log = now_bc
             _log(
-              "queue_orchestrator ingest fill under-capacity "
-              "zcard=%d hot_q=%d local_inflight=%d pool=%d"
-              " submitted=0 fill_block=%s stats=%s%s"
-              % (
-                zcard,
-                hot_queued,
-                local_n,
-                ingest_pool_size,
-                fill_block or "unknown",
-                reason_bits or "-",
-                census,
-              ),
+              f"queue_orchestrator ingest fill under-capacity zcard={zcard} hot_q={hot_queued} local_inflight={local_n} pool={ingest_pool_size} submitted=0 fill_block={fill_block or 'unknown'} stats={reason_bits or '-'}{census}",
               log_fn=log_fn,
             )
       else:
@@ -6154,15 +6111,7 @@ def _reconstruct_coordinator_loop(
             total_completed = _TOTAL_COMPLETED
           mem_tok = format_ingest_mem_block_census_suffix()
           _log(
-            "queue_orchestrator census %s total_ingested=%d "
-            "total_completed=%d%s%s"
-            % (
-              jq.format_queue_census(census),
-              total_ingested,
-              total_completed,
-              (" " + busy_tok) if busy_tok else "",
-              mem_tok,
-            ),
+            f"queue_orchestrator census {jq.format_queue_census(census)} total_ingested={total_ingested} total_completed={total_completed}{' ' + busy_tok if busy_tok else ''}{mem_tok}",
             log_fn=log_fn,
           )
           snap = mem_telem.snapshot_pipeline_mem_telemetry(
@@ -6174,22 +6123,10 @@ def _reconstruct_coordinator_loop(
             hot_used=_MEM_TELEM_RUNTIME.get("hot_used"),
             catch_used=_MEM_TELEM_RUNTIME.get("catch_used"),
             fill_block=_MEM_TELEM_RUNTIME.get("fill_block"),
-            ingest_q="{}/{}".format(
-              int((census.get(jq.JOB_KIND_INGEST) or {}).get("inflight", 0)),
-              int((census.get(jq.JOB_KIND_INGEST) or {}).get("queued", 0)),
-            ),
-            append_q="{}/{}".format(
-              int((census.get(jq.JOB_KIND_APPEND) or {}).get("inflight", 0)),
-              int((census.get(jq.JOB_KIND_APPEND) or {}).get("queued", 0)),
-            ),
-            discover_q="{}/{}".format(
-              int((census.get(jq.JOB_KIND_DISCOVER) or {}).get("inflight", 0)),
-              int((census.get(jq.JOB_KIND_DISCOVER) or {}).get("queued", 0)),
-            ),
-            day_close_q="{}/{}".format(
-              int((census.get(jq.JOB_KIND_DAY_CLOSE) or {}).get("inflight", 0)),
-              int((census.get(jq.JOB_KIND_DAY_CLOSE) or {}).get("queued", 0)),
-            ),
+            ingest_q=f"{int((census.get(jq.JOB_KIND_INGEST) or {}).get('inflight', 0))}/{int((census.get(jq.JOB_KIND_INGEST) or {}).get('queued', 0))}",
+            append_q=f"{int((census.get(jq.JOB_KIND_APPEND) or {}).get('inflight', 0))}/{int((census.get(jq.JOB_KIND_APPEND) or {}).get('queued', 0))}",
+            discover_q=f"{int((census.get(jq.JOB_KIND_DISCOVER) or {}).get('inflight', 0))}/{int((census.get(jq.JOB_KIND_DISCOVER) or {}).get('queued', 0))}",
+            day_close_q=f"{int((census.get(jq.JOB_KIND_DAY_CLOSE) or {}).get('inflight', 0))}/{int((census.get(jq.JOB_KIND_DAY_CLOSE) or {}).get('queued', 0))}",
             append_inflight_n=_MEM_TELEM_RUNTIME.get("append_inflight_n"),
             day_close_inflight_n=_MEM_TELEM_RUNTIME.get("day_close_inflight_n"),
           )
@@ -6315,7 +6252,7 @@ def run_sync_timedb_queue_orchestrator(
       ) from exc
     if stolen:
       _log(
-        "queue_orchestrator stole dead-owner leases count=%d" % stolen,
+        f"queue_orchestrator stole dead-owner leases count={stolen}",
         log_fn=log_fn,
       )
     _reap_stale_inflight(client, log_fn=log_fn)
@@ -6365,7 +6302,7 @@ def run_sync_timedb_queue_orchestrator(
       )
 
     # Start ingest + populate before boot discover so classify never inlines
-    # sealed populate on MainThread (populate controller None → execute_…).
+    # sealed populate on MainThread (populate controller None -> execute_...).
     # Not a `with` block: a watchdog abandonment recycles the pool, and the
     # `with` statement would only ever close the pool it first entered.
     ingest_pool = _new_ingest_pool()
@@ -6401,7 +6338,7 @@ def run_sync_timedb_queue_orchestrator(
       startdate=startdate,
       enddate=enddate,
     )
-    # Log only after submit returns — a pre-submit line lied when MainThread
+    # Log only after submit returns - a pre-submit line lied when MainThread
     # deadlocked inside nested ``_discover_bg_lock`` acquire (hpcperfstats03).
     _log("queue_orchestrator boot discover submitted", log_fn=log_fn)
     pool_ref = AtomicPoolRef(ingest_pool)
@@ -6538,8 +6475,7 @@ def run_sync_timedb_queue_orchestrator(
           with busy_lock:
             local_n = sum(1 for v in busy_flags.values() if v)
           _log(
-            "queue_orchestrator shutdown requested; draining inflight=%d"
-            % local_n,
+            f"queue_orchestrator shutdown requested; draining inflight={local_n}",
             log_fn=log_fn,
           )
         with contextlib.suppress(Exception):
@@ -6586,9 +6522,7 @@ def run_sync_timedb_queue_orchestrator(
             with contextlib.suppress(Exception):
               day_executor.shutdown(wait=False, cancel_futures=True)
             _log(
-              "queue_orchestrator drain timeout; dirty_tar_recovery "
-              "append_inflight=%d ingest_inflight=%d"
-              % (len(append_inflight), len(ingest_inflight)),
+              f"queue_orchestrator drain timeout; dirty_tar_recovery append_inflight={len(append_inflight)} ingest_inflight={len(ingest_inflight)}",
               log_fn=log_fn,
             )
             _release_claims_on_shutdown(

@@ -1321,6 +1321,7 @@ def _host_data_agg_base_qs():
 
 def test_host_data_sum_val_annotation_resolves_float_output_field():
   """``Coalesce(Sum(RealField), Value(0))`` raised FieldError when compiled."""
+  from django.core.exceptions import FieldError
   from django.db.models import FloatField, Sum, Value
   from django.db.models.functions import Coalesce
 
@@ -1328,8 +1329,8 @@ def test_host_data_sum_val_annotation_resolves_float_output_field():
     host_data_sum_val_annotation,
   )
 
-  with pytest.raises(Exception):
-    Coalesce(Sum("arc"), Value(0)).output_field  # noqa: B018
+  with pytest.raises((FieldError, AttributeError)):
+    _ = Coalesce(Sum("arc"), Value(0)).output_field
 
   assert isinstance(
     host_data_sum_val_annotation("arc").output_field, FloatField
@@ -1465,7 +1466,7 @@ def test_type_detail_get_aggregate_df_sql_fast_path(monkeypatch):
 
 
 def test_resolve_plot_aggregate_time_bucket_count_design_capacity_5000():
-  """Design 5000×48×60: budget/hosts caps buckets (not full 2048 times)."""
+  """Design 5000x48x60: budget/hosts caps buckets (not full 2048 times)."""
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
     _resolve_plot_aggregate_time_bucket_count,
   )
@@ -1481,7 +1482,7 @@ def test_resolve_plot_aggregate_time_bucket_count_design_capacity_5000():
       lambda: 1_000_000,
     ),
   ):
-    # 5000 hosts → floor(1e6/5000)=200 (14.4M host-sample design capacity).
+    # 5000 hosts -> floor(1e6/5000)=200 (14.4M host-sample design capacity).
     assert _resolve_plot_aggregate_time_bucket_count(5000) == 200
 
 
@@ -1501,7 +1502,7 @@ def test_iter_aggregate_time_filter_chunks_wall_and_time_in():
   assert len(chunks) == 3
   times = [datetime(2024, 1, 1, i, tzinfo=UTC) for i in range(5)]
   tin = list(_iter_aggregate_time_filter_chunks({"time__in": times}, 120))
-  # slice_s=120 → 2 timestamps per chunk
+  # slice_s=120 -> 2 timestamps per chunk
   assert len(tin) == 3
   assert len(tin[0]["time__in"]) == 2
 
@@ -1539,7 +1540,7 @@ def test_assemble_sum_val_parts_bounded_single_part_skips_concat():
 
 
 def test_apply_large_job_sampling_uses_host_sample_budget(monkeypatch):
-  """5000×48×60 estimate must sample even when COUNT(*) is below 1.5M threshold."""
+  """5000x48x60 estimate must sample even when COUNT(*) is below 1.5M threshold."""
   from hpcperfstats.analysis.metrics.lib.gen import jid_table as jt_mod
 
   inst = jt_mod.jid_table.__new__(jt_mod.jid_table)
@@ -1593,7 +1594,7 @@ def test_iter_host_time_query_chunks_nests_host_and_time():
   pairs = list(
     _iter_host_time_query_chunks(hosts, tkw, batch_size=2, slice_s=3600)
   )
-  # 2 time hours × ceil(5/2)=3 host batches
+  # 2 time hours x ceil(5/2)=3 host batches
   assert len(pairs) == 6
   assert pairs[0][0] == ["h0.example.com", "h1.example.com"]
   assert "time__gte" in pairs[0][1]
@@ -1753,7 +1754,7 @@ def test_full_host_data_rows_batched_uses_metrics_host_batch_and_time_slices(
   assert out == []
   assert seen_host_lens
   assert max(seen_host_lens) <= METRICS_HOST_QUERY_BATCH
-  # 2 hour window / 3600s → ≥2 time slices × ceil(20/16)=2 host batches
+  # 2 hour window / 3600s -> >=2 time slices x ceil(20/16)=2 host batches
   assert len(seen_host_lens) >= 4
 
 

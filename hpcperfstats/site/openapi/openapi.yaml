@@ -280,7 +280,7 @@ paths:
         - username
         - total_jobs: number of jobs run
         - failed_jobs: number of jobs with state OUT_OF_MEMORY or FAILED
-        - failed_rate: percentage of failed jobs (0–100), sorted descending.
+        - failed_rate: percentage of failed jobs (0-100), sorted descending.
         GPU fields are intentionally omitted from this initial endpoint so the page
         can render quickly; per-user GPU stats are fetched asynchronously from
         job_monitor_gpu_for_user.
@@ -424,7 +424,7 @@ paths:
         name: performance_sort_rank
         schema:
           type: string
-        description: Comma-separated performance status ranks 0–5 (OR).
+        description: Comma-separated performance status ranks 0-5 (OR).
       - in: query
         name: queue
         schema:
@@ -434,7 +434,7 @@ paths:
         name: state
         schema:
           type: string
-        description: Comma-separated major terminal status group keys (OR) — completed,
+        description: Comma-separated major terminal status group keys (OR) - completed,
           failed, canceled, preempted, timeout.
       - in: query
         name: username
@@ -806,7 +806,7 @@ paths:
         name: performance_sort_rank
         schema:
           type: string
-        description: Comma-separated performance status ranks 0–5 (OR).
+        description: Comma-separated performance status ranks 0-5 (OR).
       - in: query
         name: queue
         schema:
@@ -1328,13 +1328,13 @@ paths:
           >>> from django.test import RequestFactory
           >>> req = RequestFactory().get("/api/test-login/user/")
           >>> with patch(
-          ...     "hpcperfstats.site.lib.machine.test_login.cfg.get_separate_test_login",
-          ...     return_value=False,
+          ...   "hpcperfstats.site.lib.machine.test_login.cfg.get_separate_test_login",
+          ...   return_value=False,
           ... ):
-          ...     try:
-          ...         test_login_user(req)
-          ...     except Http404:
-          ...         404
+          ...   try:
+          ...     test_login_user(req)
+          ...   except Http404:
+          ...     404
           404
       tags:
       - session
@@ -1386,13 +1386,13 @@ paths:
           >>> from django.test import RequestFactory
           >>> req = RequestFactory().get("/api/test-login/user/")
           >>> with patch(
-          ...     "hpcperfstats.site.lib.machine.test_login.cfg.get_separate_test_login",
-          ...     return_value=False,
+          ...   "hpcperfstats.site.lib.machine.test_login.cfg.get_separate_test_login",
+          ...   return_value=False,
           ... ):
-          ...     try:
-          ...         test_login_user(req)
-          ...     except Http404:
-          ...         404
+          ...   try:
+          ...     test_login_user(req)
+          ...   except Http404:
+          ...     404
           404
       tags:
       - session

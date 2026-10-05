@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cursor stop hook — require close-gate headings after code or plan authoring turns."""
+"""Cursor stop hook - require close-gate headings after code or plan authoring turns."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ HOOK_DIR = Path(__file__).resolve().parent
 if str(HOOK_DIR) not in sys.path:
   sys.path.insert(0, str(HOOK_DIR))
 
-from hpc_hook_lib import (  # noqa: E402
+from hpc_hook_lib import (
   close_gate_issues,
   create_plan_payload_from_tool_part,
   emit_json,
@@ -63,7 +63,7 @@ def main() -> int:
     transcript_path,
     full_rows,
   )
-  # Plan turns always require close headings — no looks_like_task_close escape.
+  # Plan turns always require close headings - no looks_like_task_close escape.
   plan_turn = had_plan or had_live_plan_disk
 
   # Hard gate: CreatePlan without a same-turn .cursor/plans/*.plan.md write always
@@ -126,7 +126,7 @@ def main() -> int:
     plan_extra = (
       "\nPlan turns also require PLAN_TEMPLATE sections in the **live disk file** "
       f"({rules_dir}/../docs/plans/PLAN_TEMPLATE.md or "
-      "HPCPerfStats/docs/plans/PLAN_TEMPLATE.md — Plan disk file, Operator discovery, "
+      "HPCPerfStats/docs/plans/PLAN_TEMPLATE.md - Plan disk file, Operator discovery, "
       "Problem and facts, Approach, Testing, Implementation, Cursor rules, "
       "Final code review, Post-implementation review, git-hooks-pre-close todo, "
       "post-implementation-review todo), "
@@ -145,19 +145,19 @@ def main() -> int:
     "final assistant message is missing required sections or listed rules were "
     "not Read via the Read tool.%s\n\n"
     "Add in order:\n"
-    "1. ## Agent rule dispatch — list every triggered "
+    "1. ## Agent rule dispatch - list every triggered "
     f"{rules_dir}/*.mdc you Read (or N/A only when work did not "
     "trigger domain rules). Each listed domain rule needs a Read tool call on "
     "that .mdc path BEFORE the first Write/StrReplace/CreatePlan in this turn. "
     "Auto-triggered rules from edited or plan-referenced paths must appear in "
     "dispatch (always-on rules exempt).\n"
-    "2. ## Final code review (senior engineer pass) — full diff/plan + workflows; "
+    "2. ## Final code review (senior engineer pass) - full diff/plan + workflows; "
     "when cursor-rules/*.mdc changed, confirm dual registration in "
     "agent-discipline-core.mdc and hook_task_router.py, then "
     "`cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json`; "
     "fix gaps before close\n"
     "3. ## Post-implementation review with ### Why it works, ### Edge cases "
-    "(≥3), ### Convention check\n\n"
+    "(>=3), ### Convention check\n\n"
     f"Missing now: {', '.join(issues)}\n\n"
     "Per plan-completion-gate.mdc and agent-discipline-core.mdc. Do not claim "
     "the task or plan is done until all sections are present and listed rules "

@@ -62,7 +62,7 @@ def build_public_expansion_factor_histogram_json_item(
     counts (Sequence[int]): Sequence for counts.
 
   Returns:
-    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] — the result, or None
+    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] - the result, or None
     when unavailable.
 
   Examples:
@@ -98,7 +98,7 @@ def build_public_expansion_factor_histogram_json_item(
     lefts.append(last_edge)
     rights.append(last_edge + span)
     tops.append(overflow)
-    labels.append(f"≥ {_format_edge_plain(last_edge)}")
+    labels.append(f">= {_format_edge_plain(last_edge)}")
 
   if not lefts:
     return None
@@ -106,7 +106,7 @@ def build_public_expansion_factor_histogram_json_item(
   y_max = max(tops) if tops else 0
   y_end = max(1, math.ceil(y_max * 1.08) if y_max else 1)
 
-  title = f"Expansion factor — {period_key}"
+  title = f"Expansion factor - {period_key}"
   subtitle = period_kind
 
   plot = figure(

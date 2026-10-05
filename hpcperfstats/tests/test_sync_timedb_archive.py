@@ -254,10 +254,10 @@ def test_tar_members_recoverable_prefers_gnu_listing_before_tarfile(
 
   tar_path = tmp_path / "eof.tar"
   for idx in range(3):
-    member = tmp_path / ("m%d.txt" % idx)
-    member.write_text("payload-%d" % idx)
+    member = tmp_path / (f"m{idx}.txt")
+    member.write_text(f"payload-{idx}")
     with tarfile.open(tar_path, "a" if idx else "w") as tf:
-      tf.add(str(member), arcname="host/m%d.txt" % idx)
+      tf.add(str(member), arcname=f"host/m{idx}.txt")
   real_verify = helpers.verify_tar_archive_readable
 
   def _verify_unreadable(_path: str, **kwargs: object) -> bool:
@@ -279,10 +279,10 @@ def test_repair_truncated_tar_eof_via_gnu_extract_recreate(
 
   tar_path = tmp_path / "eof.tar"
   for idx in range(3):
-    member = tmp_path / ("f%d.txt" % idx)
-    member.write_text("payload-%d-%s" % (idx, "x" * 40))
+    member = tmp_path / (f"f{idx}.txt")
+    member.write_text(f"payload-{idx}-{'x' * 40}")
     with tarfile.open(tar_path, "a" if idx else "w") as tf:
-      tf.add(str(member), arcname="host/f%d.txt" % idx)
+      tf.add(str(member), arcname=f"host/f{idx}.txt")
   real_verify = helpers.verify_tar_archive_readable
   calls = {"n": 0}
 
@@ -313,12 +313,12 @@ def test_reconcile_repairs_eof_truncated_tar_and_seals(tmp_path, monkeypatch):
 
   tar_path = tmp_path / "2026-08-21.tar"
   for idx in range(2):
-    member = tmp_path / ("d%d.txt" % idx)
-    member.write_text("day-%d" % idx)
+    member = tmp_path / (f"d{idx}.txt")
+    member.write_text(f"day-{idx}")
     with tarfile.open(tar_path, "a" if idx else "w") as tf:
       tf.add(
         str(member),
-        arcname="hpcperfstats/archive/host/%d" % idx,
+        arcname=f"hpcperfstats/archive/host/{idx}",
       )
   real_verify = helpers.verify_tar_archive_readable
   calls = {"n": 0}
@@ -559,7 +559,7 @@ def test_rebuild_union_does_not_call_tarfile_getmember(tmp_path, monkeypatch):
   names = []
   with tarfile.open(tar_path, "w") as tf:
     for i in range(8):
-      p = tmp_path / ("m%d.txt" % i)
+      p = tmp_path / (f"m{i}.txt")
       p.write_text("x" * (i + 1))
       tf.add(str(p), arcname=p.name)
       names.append(p.name)
@@ -848,6 +848,10 @@ def test_append_repairs_truncated_tar_before_restore_from_zst(
   monkeypatch.setattr(
     "hpcperfstats.dbload.sync_timedb.filter_paths_head_ingested",
     lambda paths, log_fn=None, **_kwargs: (paths, []),
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.sync_timedb.repair_truncated_daily_tar_in_place",
+    lambda *a, **k: True,
   )
   monkeypatch.setattr(
     "hpcperfstats.dbload.sync_timedb._append_to_tar",
@@ -2385,7 +2389,7 @@ def test_build_remaining_raw_stats_by_daily_gz_groups_closed_segments(tmp_path):
   host.mkdir()
   ts = int(datetime(2026, 4, 20, 10, 0, 0).timestamp())
   seg = host / str(ts)
-  seg.write_text("%d job1 cn001\nline\n" % ts)
+  seg.write_text(f"{ts} job1 cn001\nline\n")
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
   zst_key = str(tgz_dir / "2026-04-20.tar.zst")
@@ -2431,7 +2435,7 @@ def test_atomic_seal_tar_to_zst_passes_thread_count_to_compress_and_test(
       f.write(b"fake-zst-bytes")
 
   def _fake_test(path, threads, **kwargs):
-    calls.append([zstd_executable(), "-t", "-T%d" % threads, "-q", path])
+    calls.append([zstd_executable(), "-t", f"-T{threads}", "-q", path])
 
   monkeypatch.setattr(helpers, "zstd_compress_tar_to_file", _fake_compress)
   monkeypatch.setattr(helpers, "zstd_test", _fake_test)
@@ -2508,7 +2512,7 @@ def test_seal_dirty_daily_archives_seals_multiple_days_in_parallel(
   monkeypatch.setattr(helpers, "should_seal_daily_tar", lambda *a, **k: True)
 
   for day in (1, 2, 3, 4):
-    (archive_dir / ("2024-01-%02d.tar" % day)).write_bytes(b"tar")
+    (archive_dir / (f"2024-01-{day:02}.tar")).write_bytes(b"tar")
 
   seal_dirty_daily_archives(
     str(archive_dir),
@@ -2949,7 +2953,7 @@ def test_remove_verified_archived_raw_files_removes_when_verified(tmp_path):
   host.mkdir()
   ts = int(datetime(2022, 5, 3, 15, 30, 0).timestamp())
   seg = host / str(ts)
-  seg.write_text("%d job1 cn001\nline\n" % ts)
+  seg.write_text(f"{ts} job1 cn001\nline\n")
   os.utime(seg, (ts, ts))
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
@@ -2979,7 +2983,7 @@ def test_remove_verified_archived_raw_files_bootstraps_missing_daily_archive(
   host.mkdir()
   ts = int(datetime(2026, 4, 15, 12, 0, 0).timestamp())
   seg = host / str(ts)
-  seg.write_text("%d job1 cn001\nline\n" % ts)
+  seg.write_text(f"{ts} job1 cn001\nline\n")
   os.utime(seg, (ts, ts))
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
@@ -3033,7 +3037,7 @@ def test_remove_verified_archived_raw_files_skips_bootstrap_until_ingest_ready(
   host.mkdir()
   ts = int(datetime(2026, 4, 16, 12, 0, 0).timestamp())
   seg = host / str(ts)
-  seg.write_text("%d job1 cn001\nline\n" % ts)
+  seg.write_text(f"{ts} job1 cn001\nline\n")
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
   archive_calls = []
@@ -3069,7 +3073,7 @@ def test_remove_verified_archived_raw_files_skips_removal_until_ingest_ready(
   host.mkdir()
   ts = int(datetime(2022, 5, 4, 15, 30, 0).timestamp())
   seg = host / str(ts)
-  seg.write_text("%d job1 cn001\nline\n" % ts)
+  seg.write_text(f"{ts} job1 cn001\nline\n")
   os.utime(seg, (ts, ts))
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
@@ -3179,7 +3183,7 @@ def test_archive_stats_files_skips_gate_tail_collect_when_marks_ready(
     lambda *_a, **_k: True,
   )
 
-  # Missing sealed sibling → new-tar path; mark-ready still skips collect.
+  # Missing sealed sibling -> new-tar path; mark-ready still skips collect.
   result = st.archive_stats_files((archive_key, [str(raw_file)]))
   assert collect_calls["n"] == 0
   assert result is not False
@@ -3561,7 +3565,7 @@ def test_not_ingested_raw_still_blocks_tar_removal_after_seal(
   host.mkdir()
   ts = int(datetime(2026, 4, 24, 12, 0, 0).timestamp())
   seg = host / str(ts)
-  seg.write_text("%d job1 cn001\nline\n" % ts)
+  seg.write_text(f"{ts} job1 cn001\nline\n")
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
   gz_key = str(tgz_dir / "2026-04-24.tar.gz")
@@ -3939,7 +3943,7 @@ def test_remove_verified_archived_raw_files_logs_cache_summary(tmp_path):
   host.mkdir()
   ts = int(datetime(2022, 5, 4, 15, 30, 0).timestamp())
   seg = host / str(ts)
-  seg.write_text("%d job1 cn001\nline\n" % ts)
+  seg.write_text(f"{ts} job1 cn001\nline\n")
   os.utime(seg, (ts, ts))
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
@@ -4303,7 +4307,7 @@ def test_append_to_tar_respects_ini_batch_size(monkeypatch, tmp_path):
 
   paths = []
   for i in range(5):
-    p = tmp_path / ("seg%d" % i)
+    p = tmp_path / (f"seg{i}")
     p.write_bytes(b"x")
     paths.append(str(p))
   tar_path = tmp_path / "2024-06-01.tar"
@@ -4903,7 +4907,7 @@ def test_collect_stats_files_in_range_parallel_multi_host(
     for offset in [2, 0, 1]
   ]
   for host_idx in range(3):
-    cn = tmp_path / ("cn%03d." % host_idx + _ARCH_HOST_SUFFIX)
+    cn = tmp_path / (f"cn{host_idx:03}." + _ARCH_HOST_SUFFIX)
     cn.mkdir()
     ts = epochs[host_idx]
     p = cn / str(ts)
@@ -5222,7 +5226,7 @@ def test_build_archive_mapping_summarizes_missing_timestamp_logs(
   tgz_dir.mkdir()
   paths = []
   for i in range(8):
-    f = tmp_path / ("bad_%d" % i)
+    f = tmp_path / (f"bad_{i}")
     f.write_text("no digit line\n")
     paths.append(str(f))
   logs = []
@@ -5264,7 +5268,7 @@ def test_build_archive_mapping_includes_today(tmp_path):
   tgz_dir.mkdir()
   f1 = tmp_path / "f1"
   today_ts = datetime.today().replace(hour=12, minute=0, second=0).timestamp()
-  f1.write_text("%d job1 cn001\n" % today_ts)
+  f1.write_text(f"{today_ts} job1 cn001\n")
   mapping = build_archive_mapping([str(f1)], str(tgz_dir))
   assert len(mapping) == 1
   key = next(iter(mapping.keys()))
@@ -6553,7 +6557,7 @@ def test_daily_tar_paths_for_stats_paths_uses_first_ts_then_filename_epoch():
   archive_dir = "/arch"
   epoch_day = datetime(2024, 4, 5, 1, 0, 0)
   other_day = datetime(2024, 4, 6, 1, 0, 0)
-  epoch_path = "/raw/host/%d" % int(epoch_day.timestamp())
+  epoch_path = f"/raw/host/{int(epoch_day.timestamp())}"
   named_path = "/raw/host/not-an-epoch"
   first_ts = {named_path: int(other_day.timestamp())}
   result = daily_tar_paths_for_stats_paths(
@@ -6566,7 +6570,7 @@ def test_daily_tar_paths_for_stats_paths_uses_first_ts_then_filename_epoch():
 def test_merge_maintenance_skip_daily_tar_paths_unions_unmapped_days():
   archive_dir = "/arch"
   unmapped_day = datetime(2024, 5, 2, 2, 0, 0)
-  unmapped_path = "/raw/host/%d" % int(unmapped_day.timestamp())
+  unmapped_path = f"/raw/host/{int(unmapped_day.timestamp())}"
   mapping = {"/arch/2024-05-01.tar.zst": ["/raw/host/1"]}
   merged = merge_maintenance_skip_daily_tar_paths(
     ["/arch/2024-05-09.tar"],
@@ -6643,7 +6647,7 @@ def test_quarantine_ingest_failed_raw_path_valid_head_corrupt_body(tmp_path):
   day_epoch = 1704067200
   raw_path = host_dir / str(day_epoch)
   raw_path.write_text(
-    "%d job1 cn001\nbad line with only two tokens\n" % day_epoch,
+    f"{day_epoch} job1 cn001\nbad line with only two tokens\n",
     encoding="utf-8",
   )
 
@@ -7214,7 +7218,7 @@ def test_sealed_archive_member_has_exact_size_early_exit(
   with tarfile.open(day_gz, "w:gz") as tf:
     tf.add(str(inner_target), arcname="host/target")
     for i in range(50):
-      tf.add(str(inner_noise), arcname="noise/%d" % i)
+      tf.add(str(inner_noise), arcname=f"noise/{i}")
 
   iter_count = {"n": 0}
   real_iter = helpers._iter_tar_members
@@ -8842,7 +8846,7 @@ def test_unmapped_disqualify_uses_coordinator_after_accrual_trim(monkeypatch):
 
   archive_dir = "/arch"
   unmapped_day = datetime(2024, 5, 2, 2, 0, 0)
-  unmapped_path = "/raw/host/%d" % int(unmapped_day.timestamp())
+  unmapped_path = f"/raw/host/{int(unmapped_day.timestamp())}"
   coord_snap = ArchiveMaintenanceSnapshot(
     closed_paths=[unmapped_path],
     mapping={},
@@ -8877,8 +8881,8 @@ def test_collect_days_with_unmapped_closed_raw_buckets_unmapped_only():
   archive_dir = "/arch"
   mapped_day = datetime(2024, 5, 1, 2, 0, 0)
   unmapped_day = datetime(2024, 5, 2, 2, 0, 0)
-  mapped_path = "/raw/host/%d" % int(mapped_day.timestamp())
-  unmapped_path = "/raw/host/%d" % int(unmapped_day.timestamp())
+  mapped_path = f"/raw/host/{int(mapped_day.timestamp())}"
+  unmapped_path = f"/raw/host/{int(unmapped_day.timestamp())}"
   closed_paths = [mapped_path, unmapped_path]
   mapping = {"/arch/2024-05-01.tar.zst": [mapped_path]}
   result = collect_days_with_unmapped_closed_raw(
@@ -8892,10 +8896,10 @@ def test_build_day_close_disqualified_daily_tars_ignores_pending_ingest():
   archive_dir = "/arch"
 
   def d(day):
-    return os.path.normpath("/arch/2024-06-%02d.tar" % day)
+    return os.path.normpath(f"/arch/2024-06-{day:02}.tar")
 
   pending_day = datetime(2024, 6, 1, 3, 0, 0)
-  pending_path = "/raw/host/%d" % int(pending_day.timestamp())
+  pending_path = f"/raw/host/{int(pending_day.timestamp())}"
   disqualified = build_day_close_disqualified_daily_tars(
     tgz_archive_dir=archive_dir,
     pending_stats_paths=[pending_path],
@@ -8908,12 +8912,12 @@ def test_build_day_close_disqualified_daily_tars_unions_all_sources():
   archive_dir = "/arch"
 
   def d(day):
-    return os.path.normpath("/arch/2024-06-%02d.tar" % day)
+    return os.path.normpath(f"/arch/2024-06-{day:02}.tar")
 
   pending_day = datetime(2024, 6, 1, 3, 0, 0)
   inflight_day = datetime(2024, 6, 2, 3, 0, 0)
-  pending_path = "/raw/host/%d" % int(pending_day.timestamp())
-  inflight_path = "/raw/host/%d" % int(inflight_day.timestamp())
+  pending_path = f"/raw/host/{int(pending_day.timestamp())}"
+  inflight_path = f"/raw/host/{int(inflight_day.timestamp())}"
   disqualified = build_day_close_disqualified_daily_tars(
     tgz_archive_dir=archive_dir,
     remaining_raw_by_gz={"/arch/2024-06-03.tar.zst": ["/raw/x"]},
@@ -8961,7 +8965,7 @@ def test_ingest_stream_past_calendar_day_empty_pending():
 def test_ingest_stream_past_calendar_day_blocks_same_day_pending():
   day = date(2020, 1, 1)
   epoch = int(datetime(2020, 1, 1, 12, tzinfo=UTC).timestamp())
-  pending = ["/raw/host.hpc/%d" % epoch]
+  pending = [f"/raw/host.hpc/{epoch}"]
   assert not ingest_stream_past_calendar_day(
     day,
     pending_stats_paths=pending,
@@ -8973,7 +8977,7 @@ def test_ingest_stream_past_calendar_day_true_when_min_pending_after_day():
   day = date(2020, 1, 1)
   day1_epoch = int(datetime(2020, 1, 1, 12, tzinfo=UTC).timestamp())
   day2_epoch = int(datetime(2020, 1, 2, 12, tzinfo=UTC).timestamp())
-  pending = ["/raw/host.hpc/%d" % day2_epoch]
+  pending = [f"/raw/host.hpc/{day2_epoch}"]
   assert ingest_stream_past_calendar_day(
     day,
     pending_stats_paths=pending,
@@ -8984,7 +8988,7 @@ def test_ingest_stream_past_calendar_day_true_when_min_pending_after_day():
 def test_ingest_stream_past_calendar_day_restart_without_epoch_history():
   day = date(2020, 1, 1)
   day2_epoch = int(datetime(2020, 1, 2, 12, tzinfo=UTC).timestamp())
-  pending = ["/raw/host.hpc/%d" % day2_epoch]
+  pending = [f"/raw/host.hpc/{day2_epoch}"]
   assert ingest_stream_past_calendar_day(
     day,
     pending_stats_paths=pending,
@@ -9081,7 +9085,7 @@ def test_augment_unprocessed_by_tar_with_pending_paths(tmp_path):
   tar_path = os.path.normpath(str(daily_dir / "2020-01-01.tar"))
   open(tar_path, "wb").close()
   day_epoch = int(datetime(2020, 1, 1, 12, tzinfo=UTC).timestamp())
-  pending_path = "/raw/host.hpc/%d" % day_epoch
+  pending_path = f"/raw/host.hpc/{day_epoch}"
   augmented = augment_unprocessed_by_tar_with_pending_paths(
     {},
     pending_stats_paths=[pending_path],
@@ -9175,7 +9179,7 @@ def test_build_unprocessed_raw_by_daily_tar_subtracts_checkpoint(tmp_path):
   day = date(2021, 3, 15)
   ts = int(datetime(day.year, day.month, day.day, 10, tzinfo=UTC).timestamp())
   seg = host / str(ts)
-  seg.write_text("%d job1 cn001\nline\n" % ts)
+  seg.write_text(f"{ts} job1 cn001\nline\n")
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()
   tar_path = str(daily_dir / "2021-03-15.tar")
@@ -10277,7 +10281,7 @@ def test_archive_stats_files_body_soft_skips_when_daily_tar_restore(
   monkeypatch,
   tmp_path,
 ):
-  """Restore in progress → soft_requeue before append_inflight (no slot park)."""
+  """Restore in progress -> soft_requeue before append_inflight (no slot park)."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_members_coord as coord_mod
   import hpcperfstats.dbload.sync_timedb as st
 
@@ -10328,7 +10332,7 @@ def test_archive_stats_files_body_gate_skip_returns_handoff_outcome(
   monkeypatch,
   tmp_path,
 ):
-  """All gate-skipped paths must not return silent ok — carry skipped_paths."""
+  """All gate-skipped paths must not return silent ok - carry skipped_paths."""
   import hpcperfstats.dbload.sync_timedb as st
 
   raw = tmp_path / "1709123456"
@@ -10353,7 +10357,7 @@ def test_archive_stats_files_restores_when_to_add_positive_sealed(
   monkeypatch,
   tmp_path,
 ):
-  """Missing .tar + sealed + path not in members → decompress then append."""
+  """Missing .tar + sealed + path not in members -> decompress then append."""
   import tarfile
 
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
@@ -10702,7 +10706,7 @@ def test_try_reuse_pending_reconcile_unprocessed_cache_skip_vs_rescan():
   assert reused[2] == 72
   assert reused[3] == "unchanged_incomplete"
 
-  # Past soft TTL (120s) but under hard ceiling — still reuse (reconcile-tax fix).
+  # Past soft TTL (120s) but under hard ceiling - still reuse (reconcile-tax fix).
   past_soft = try_reuse_pending_reconcile_unprocessed_cache(
     cached=cached,
     last_mono=100.0,
@@ -10778,7 +10782,7 @@ def test_reconcile_orphan_inflight_for_oldest_tar_reclaims_without_archive_job(
   open(tar_a, "wb").close()
   blocked = []
   for i in range(3):
-    path = tmp_path / ("b%d" % i)
+    path = tmp_path / (f"b{i}")
     path.write_text("1000 job cn001\n")
     os.utime(path, (d1.timestamp(), d1.timestamp()))
     blocked.append(str(path))
@@ -10934,12 +10938,8 @@ def test_cap_pending_sort_retains_global_oldest_head():
     sort_pending_stats_paths_oldest_first,
   )
 
-  may_paths = [
-    "/archive/host/%d" % (1_000_000 + index) for index in range(1000)
-  ]
-  handoff_paths = [
-    "/archive/host/%d" % (2_000_000 + index) for index in range(1500)
-  ]
+  may_paths = [f"/archive/host/{1000000 + index}" for index in range(1000)]
+  handoff_paths = [f"/archive/host/{2000000 + index}" for index in range(1500)]
   merged = handoff_paths + may_paths
   capped = cap_pending_stats_file_list(
     sort_pending_stats_paths_oldest_first(merged),
@@ -10988,7 +10988,7 @@ def test_rescan_force_snapshot_merges_incremental_find_for_post_snapshot_closes(
   tmp_path,
   monkeypatch,
 ):
-  """Idle-refill stall: processed snap paths + new find close → pending=[new].
+  """Idle-refill stall: processed snap paths + new find close -> pending=[new].
 
   Production signature (hpcperfstats04): force_snapshot_paths=True freezes on a
   stale coordinator closed_paths list already in processed_files while newly
@@ -11050,7 +11050,7 @@ def test_rescan_force_full_snapshot_without_force_flag_stays_snapshot_only(
     return [str(walk_path)]
 
   monkeypatch.setattr(helpers, "collect_stats_files_in_range", _fake_collect)
-  # __rescan_count__ % full_every == 0 → should_force_full True without idle force.
+  # __rescan_count__ % full_every == 0 -> should_force_full True without idle force.
   result = helpers.rescan_pending_stats_files(
     str(tmp_path),
     "all",
@@ -11077,7 +11077,7 @@ def test_supplement_pending_paths_from_closed_paths_refills_toward_max(
   host_dir.mkdir(parents=True)
   closed = []
   for index in range(10):
-    path = host_dir / ("seg_%d.stats" % index)
+    path = host_dir / (f"seg_{index}.stats")
     path.write_text("1\n", encoding="utf-8")
     closed.append(str(path))
   capped = supplement_pending_paths_from_closed_paths(
@@ -11302,7 +11302,7 @@ def test_blocking_tar_drop_excludes_cross_day_filename(tmp_path, monkeypatch):
 
 
 def test_supplement_at_max_replaces_with_older_closed_paths(tmp_path):
-  """Full queue of June paths + older closed_paths → head is older."""
+  """Full queue of June paths + older closed_paths -> head is older."""
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     supplement_pending_paths_from_closed_paths,
   )
@@ -11314,8 +11314,8 @@ def test_supplement_at_max_replaces_with_older_closed_paths(tmp_path):
   may_paths = []
   june_paths = []
   for index in range(5):
-    may_path = host_dir / ("may_%d" % index)
-    june_path = host_dir / ("june_%d" % index)
+    may_path = host_dir / (f"may_{index}")
+    june_path = host_dir / (f"june_{index}")
     may_path.write_text("1\n", encoding="utf-8")
     june_path.write_text("1\n", encoding="utf-8")
     os.utime(may_path, (d_may.timestamp() + index, d_may.timestamp() + index))
@@ -11351,7 +11351,7 @@ def test_supplement_at_max_replaces_with_older_closed_paths(tmp_path):
 
 
 def test_supplement_stats_only_retainable_candidates(tmp_path, monkeypatch):
-  """Full queue + exclusively newer closed candidates → zero isfile calls."""
+  """Full queue + exclusively newer closed candidates -> zero isfile calls."""
   import os as os_mod
 
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (

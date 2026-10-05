@@ -108,7 +108,7 @@ def test_compute_job_gpu_summary_tuple_swallows_errors(monkeypatch):
 
 
 def test_gpu_agg_rows_uses_type_detail_batch_and_time_chunks(monkeypatch):
-  """GPU util aggregates must use batch=8 and host×time helpers."""
+  """GPU util aggregates must use batch=8 and hostxtime helpers."""
   from datetime import datetime
 
   from hpcperfstats.analysis.metrics.lib import gpu_job_detail_summary as g

@@ -12,7 +12,7 @@ from hpcperfstats.dbload.lib import sync_timedb_day_close_cooperation as coop
 
 @pytest.fixture(autouse=True)
 def _clear_yield_state():
-  # Current behavior: empty string normalizes to "." — clear both.
+  # Current behavior: empty string normalizes to "." - clear both.
   coop.clear_day_close_yield("")
   coop.clear_day_close_yield(".")
   coop.clear_day_close_yield("/daily/2020-01-01.tar")

@@ -395,7 +395,7 @@ def test_on_message_hardlinks_missing_epoch_before_unlink(
   # After unlink+rotate, `current` must contain only the new segment.
   assert (host_dir / "current").read_bytes() == msg
 
-  # Schema-only `$` has no sample ts → fallback digit name is wall-clock cutoff.
+  # Schema-only `$` has no sample ts -> fallback digit name is wall-clock cutoff.
   assert (host_dir / str(cutoff_epoch_ts)).read_bytes() == msg
 
   # Confirm listend counted exactly one unlink during rotation.

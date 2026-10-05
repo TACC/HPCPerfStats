@@ -5,7 +5,7 @@ import importlib
 import pytest
 from django.db import migrations
 
-# Importlib / source-contract checks — no live PostgreSQL required on the host.
+# Importlib / source-contract checks - no live PostgreSQL required on the host.
 pytestmark = pytest.mark.machine_unit_mock
 
 
@@ -144,7 +144,7 @@ def test_0030_removes_compression_policy():
 
 
 def test_0030_does_not_add_unique_dev_constraint():
-  """Phase 1 must not ADD CONSTRAINT / decompress — that is Phase 2 after decompress."""
+  """Phase 1 must not ADD CONSTRAINT / decompress - that is Phase 2 after decompress."""
   sep = _0030_ops()
   sql_blobs = [
     op.sql
@@ -170,7 +170,7 @@ def test_0030_keeps_state_unique_together():
 
 
 def test_0031_is_state_only():
-  """Reviewed drift migration must be AlterModelOptions only — no DDL on large tables."""
+  """Reviewed drift migration must be AlterModelOptions only - no DDL on large tables."""
   mod = importlib.import_module(
     "hpcperfstats.site.lib.machine.migrations.0031_alter_job_plot_artifact_options_and_more"
   )

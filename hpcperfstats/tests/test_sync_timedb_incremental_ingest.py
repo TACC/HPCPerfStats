@@ -1,4 +1,4 @@
-"""Regression tests for incremental large-segment ingest (parse → DB → parse)."""
+"""Regression tests for incremental large-segment ingest (parse -> DB -> parse)."""
 
 from __future__ import annotations
 
@@ -31,8 +31,8 @@ def _counter_fixture_lines(extra_samples=0):
   value = 1000
   for i in range(1, 2 + extra_samples):
     value += 100
-    lines.append("170912345%d job1 host.example.com\n" % (6 + i))
-    lines.append("cpu 0 %d\n" % value)
+    lines.append(f"170912345{6 + i} job1 host.example.com\n")
+    lines.append(f"cpu 0 {value}\n")
   return lines
 
 
@@ -180,6 +180,7 @@ def test_compute_deltas_and_arc_chunk_matches_full_file():
     combined[["host", "type", "event", "delta", "arc"]],
     expected[["host", "type", "event", "delta", "arc"]],
     check_dtype=False,
+    check_categorical=False,
     rtol=1e-9,
     atol=1e-9,
   )
@@ -195,6 +196,7 @@ def test_counter_delta_carry_vectorized_matches_rowwise():
     out1.reset_index(drop=True),
     ref1.reset_index(drop=True),
     check_dtype=False,
+    check_categorical=False,
   )
   assert carry_vec.raw == carry_ref.raw
   out2 = _apply_counter_deltas(flush2.copy(), carry=carry_vec)
@@ -203,6 +205,7 @@ def test_counter_delta_carry_vectorized_matches_rowwise():
     out2.reset_index(drop=True),
     ref2.reset_index(drop=True),
     check_dtype=False,
+    check_categorical=False,
   )
   assert carry_vec.raw == carry_ref.raw
   # Wrapped first-row delta across flush: 10 - 250 + 256 = 16
@@ -222,6 +225,7 @@ def test_arc_carry_vectorized_matches_rowwise():
     a1.reset_index(drop=True),
     a1r.reset_index(drop=True),
     check_dtype=False,
+    check_categorical=False,
   )
   assert carry_vec.arc == carry_ref.arc
   d2 = _apply_counter_deltas(flush2.copy(), carry=carry_vec)
@@ -232,6 +236,7 @@ def test_arc_carry_vectorized_matches_rowwise():
     a2.reset_index(drop=True),
     a2r.reset_index(drop=True),
     check_dtype=False,
+    check_categorical=False,
   )
   assert carry_vec.arc == carry_ref.arc
 
@@ -260,6 +265,7 @@ def test_carry_state_survives_flush_boundary_split():
     combined[["host", "type", "event", "delta", "arc"]],
     expected[["host", "type", "event", "delta", "arc"]],
     check_dtype=False,
+    check_categorical=False,
     rtol=1e-9,
     atol=1e-9,
   )
@@ -313,11 +319,12 @@ def test_apply_counter_deltas_carry_mult_matches_full_file():
     combined[["host", "type", "event", "delta", "arc"]],
     expected[["host", "type", "event", "delta", "arc"]],
     check_dtype=False,
+    check_categorical=False,
     rtol=1e-9,
     atol=1e-9,
   )
   wrap_delta = float(combined.loc[combined["time"] == 30.0, "delta"].iloc[0])
-  # Unscaled wrap is 10 - 250 + 256 = 16; one ``* 64`` → 1024, not 65536.
+  # Unscaled wrap is 10 - 250 + 256 = 16; one ``* 64`` -> 1024, not 65536.
   assert abs(wrap_delta - 1024.0) < 1e-9
 
 

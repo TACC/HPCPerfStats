@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cursor postToolUse hook — new cursor-rules must appear in agent-discipline-core router."""
+"""Cursor postToolUse hook - new cursor-rules must appear in agent-discipline-core router."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ HOOK_DIR = Path(__file__).resolve().parent
 if str(HOOK_DIR) not in sys.path:
   sys.path.insert(0, str(HOOK_DIR))
 
-from hpc_hook_lib import (  # noqa: E402
+from hpc_hook_lib import (
   emit_json,
   find_hook_task_router_file,
   find_router_file,
@@ -80,12 +80,12 @@ def main() -> int:
         f"MANDATORY (agent-discipline-core.mdc): new/updated rule `{basename}` "
         f"is not fully dual-registered. Missing: {', '.join(missing)}. "
         "In the same task, add a row to `agent-discipline-core.mdc` "
-        "(trigger paths → Read this rule), a matching row in "
+        "(trigger paths -> Read this rule), a matching row in "
         "`cursor-hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES` or "
         "`HPCPERFSTATS_ROUTER_ENTRIES`), and a one-line note in "
         "`RULES_README.md` if policy changes. When dual registration is "
         "done, `cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json` "
-        "(real file — Cursor refuses a symlinked project hooks.json). "
+        "(real file - Cursor refuses a symlinked project hooks.json). "
         "Verify both routers + the copy in Final code review before close."
       ),
     },

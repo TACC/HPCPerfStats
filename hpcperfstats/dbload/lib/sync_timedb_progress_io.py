@@ -114,15 +114,7 @@ def log_progress_sop(
   _progress_log_last_mono[key] = now
   last_s = f"{float(last_progress):.3f}" if last_progress is not None else "-"
   log_print(
-    "progress stage={} path={} advancing={} idle_s={:.1f} "
-    "last_progress={} metric={}".format(
-      stage,
-      path,
-      "true" if advancing else "false",
-      float(idle_s),
-      last_s,
-      metric,
-    ),
+    f"progress stage={stage} path={path} advancing={'true' if advancing else 'false'} idle_s={float(idle_s):.1f} last_progress={last_s} metric={metric}",
     flush=True,
   )
 

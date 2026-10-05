@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 # Former B giant-supplement thresholds (INI keys retired). Used only to label
-# oversized paths for worker-memory telemetry — not a coordinator supplement path.
+# oversized paths for worker-memory telemetry - not a coordinator supplement path.
 GIANT_SUPPLEMENT_TRIGGER_BUDGET_S = 6600.0
 GIANT_SUPPLEMENT_MAX_BYTES = 1024 * 1024 * 1024
 GIANT_SUPPLEMENT_LARGE_MAX_BYTES = 8 * 1024 * 1024 * 1024
@@ -176,7 +176,7 @@ def estimate_sealed_archive_ingest_budget_s(
   member_count: Any | None = None,
 ) -> Any:
   """
-  Sealed-day wall-clock budget — always ``0`` (internal walls deleted).
+  Sealed-day wall-clock budget - always ``0`` (internal walls deleted).
 
   Args:
     sealed_path (str): Daily sealed archive path (ignored; always 0.0).
@@ -199,7 +199,7 @@ def max_sealed_archive_ingest_budget_for_paths(
   member_counts: Any | None = None,
 ) -> Any:
   """
-  Largest sealed-day ingest budget — always ``0`` (internal walls deleted).
+  Largest sealed-day ingest budget - always ``0`` (internal walls deleted).
 
   Args:
     sealed_paths (Any): Sealed archive paths (ignored; always 0.0).

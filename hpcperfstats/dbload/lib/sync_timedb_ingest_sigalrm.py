@@ -3,7 +3,7 @@ Idle-clock suspend helpers for ingest workers on non-work waits.
 
 Populate members-store wait and Manager write-lock *acquire* suspend the idle
 stall clock (touch progress on exit). Internal wall SIGALRM soft-kill is
-deleted — these helpers no longer arm setitimer for wall budgets.
+deleted - these helpers no longer arm setitimer for wall budgets.
 
 Attributes:
   suspend_ingest_sigalrm_for_populate_wait: Alias of
@@ -22,7 +22,7 @@ def suspend_ingest_sigalrm_for_non_work_wait() -> Iterator[Any]:
   """
   Suspend idle-stall clock during a non-work wait; touch progress on exit.
 
-  Use for members-store populate wait and Manager write-lock *acquire* only — not
+  Use for members-store populate wait and Manager write-lock *acquire* only - not
   while holding the lock during ``bulk_create``.
 
   Yields:

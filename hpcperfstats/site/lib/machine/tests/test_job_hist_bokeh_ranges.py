@@ -35,7 +35,7 @@ def test_job_hist_empty_bins_do_not_use_inverted_quads():
 
 
 def test_job_hist_y_range_strictly_positive_when_max_bin_count_is_one():
-  """Single finite value → max histogram count 1; y_range must not be (1, 1)."""
+  """Single finite value -> max histogram count 1; y_range must not be (1, 1)."""
   from hpcperfstats.site.lib.machine.views import job_hist
 
   df = pd.DataFrame({"runtime": [42.0]})
@@ -48,7 +48,7 @@ def test_job_hist_y_range_strictly_positive_when_max_bin_count_equals_y_floor():
   """Several values still yielding max count 1 must not produce zero-span range."""
   from hpcperfstats.site.lib.machine.views import job_hist
 
-  # Wide spread so many bins; each value alone in a bin → max(hist) == 1
+  # Wide spread so many bins; each value alone in a bin -> max(hist) == 1
   df = pd.DataFrame({"runtime": [1.0, 100.0, 1000.0, 10000.0]})
   plot = job_hist(df, "runtime", "hours", width=280, height=200)
   assert plot is not None

@@ -66,7 +66,7 @@ def combine_cas_bw_scalars(dram_v: Any, hbm_v: Any) -> float | None:
     hbm_v (Any): HBM CAS bandwidth value, or something coercible to float.
 
   Returns:
-    Optional[float]: Optional[float] — the result, or None when unavailable.
+    Optional[float]: Optional[float] - the result, or None when unavailable.
 
   Examples:
     >>> combine_cas_bw_scalars(None, None)  # doctest: +SKIP
@@ -96,7 +96,7 @@ def combine_cas_bw_frames(
     absent.
 
   Returns:
-    Optional[pd.DataFrame]: Optional[pd.DataFrame] — the result, or None when
+    Optional[pd.DataFrame]: Optional[pd.DataFrame] - the result, or None when
     unavailable.
 
   Examples:
@@ -138,7 +138,7 @@ def agg_sum_val_to_bw_frame(
     agg (Optional[pd.DataFrame]): DataFrame to inspect, or None when absent.
 
   Returns:
-    Optional[pd.DataFrame]: Optional[pd.DataFrame] — the result, or None when
+    Optional[pd.DataFrame]: Optional[pd.DataFrame] - the result, or None when
     unavailable.
 
   Examples:

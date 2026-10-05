@@ -240,10 +240,10 @@ def test_checker_rejects_see_callers_doc_phrase(inv, tmp_path: Path):
         """Polymorphic helper.
 
         Args:
-          x (Any): Value of ``x`` (polymorphic — see callers).
+          x (Any): Value of ``x`` (polymorphic - see callers).
 
         Returns:
-          Any: Result of ``f`` (polymorphic when ``Any`` — see return sites).
+          Any: Result of ``f`` (polymorphic when ``Any`` - see return sites).
 
         Examples:
           >>> f(1)

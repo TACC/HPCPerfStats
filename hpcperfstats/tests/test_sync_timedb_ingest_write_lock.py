@@ -46,9 +46,7 @@ def _patch_write_path_no_db(monkeypatch, *, bulk_create):
   )
   monkeypatch.setattr(st, "bulk_create_batch_size", lambda: 100)
   monkeypatch.setattr(st.proc_data.objects, "bulk_create", bulk_create)
-  monkeypatch.setattr(
-    st.host_data.objects, "bulk_create", lambda *_a, **_k: None
-  )
+  monkeypatch.setattr(st, "insert_host_data_batch", lambda *_a, **_k: None)
 
 
 def test_in_process_db_writer_lock_api_absent():

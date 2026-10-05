@@ -88,7 +88,7 @@ def test_insert_host_data_batch_routes_candidate_to_copy(monkeypatch):
 def test_bulk_insert_host_data_ignore_conflicts_uses_stage_and_conflict(
   monkeypatch,
 ):
-  """COPY path must stage then INSERT … ON CONFLICT DO NOTHING."""
+  """COPY path must stage then INSERT ... ON CONFLICT DO NOTHING."""
   executes: list[str] = []
   copy_writes: list[bytes] = []
 

@@ -2,7 +2,7 @@
 Prewarmed gzip-compressed public dashboard payloads (expansion-factor
 aggregates).
 
-Computed only from ``update_metrics`` scheduler passes — HTTP handlers must not
+Computed only from ``update_metrics`` scheduler passes - HTTP handlers must not
 reaggregate heavy ranges here.
 
 Rows are **not** deleted when inputs change: invalidation sets
@@ -112,7 +112,7 @@ def compute_scheduler_expansion_factor_seconds(
     ncores (Optional[int]): Ncores, or None when absent.
 
   Returns:
-    Optional[float]: Optional[float] — the result, or None when unavailable.
+    Optional[float]: Optional[float] - the result, or None when unavailable.
 
   Examples:
     >>> compute_scheduler_expansion_factor_seconds(None, None, None, None)
@@ -916,7 +916,7 @@ def load_public_expansion_factor_period(
     period_key (str): String for period key.
 
   Returns:
-    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] — the result, or None
+    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] - the result, or None
     when unavailable.
 
   Examples:

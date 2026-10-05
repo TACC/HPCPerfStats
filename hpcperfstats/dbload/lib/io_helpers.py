@@ -14,7 +14,7 @@ from hpcperfstats.site.lib.machine.models import host_data, job_data
 
 def _dev_str_from_stats_row(row: Any) -> str:
   """
-  Monitor device id for ``host_data.dev``; missing/NaN → ``''`` (not NULL).
+  Monitor device id for ``host_data.dev``; missing/NaN -> ``''`` (not NULL).
 
   Args:
     row (Any): Value to inspect (typically a numeric scalar).

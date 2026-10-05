@@ -73,7 +73,7 @@ INTEL_CORE_PMC_TYPES_ORDERED = (
 AMD_PMC_TYPE = "amd_x86_pmc"
 # Historical bare typename (removed from live monitor emit; dual-read only).
 AMD_DF_TYPE = "amd_x86_uncore_df"
-# Live LIKWID family DF collectors (rome → turin).
+# Live LIKWID family DF collectors (rome -> turin).
 AMD_DF_STATS_TYPES = (
   "amd_x86_uncore_df_rome",
   "amd_x86_uncore_df_milan",

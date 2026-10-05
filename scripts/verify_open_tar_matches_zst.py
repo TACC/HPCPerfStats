@@ -75,8 +75,8 @@ def _member_map_diff(
   Summarize differences between two daily archive member maps.
 
   Args:
-    tar_members (dict[str, int]): Open tar basename → byte size.
-    zst_members (dict[str, int]): Sealed zstd basename → byte size.
+    tar_members (dict[str, int]): Open tar basename -> byte size.
+    zst_members (dict[str, int]): Sealed zstd basename -> byte size.
 
   Returns:
     dict[str, Any]: Keys ``tar_only``, ``zst_only``, ``size_mismatch``.
@@ -141,7 +141,7 @@ def _format_diff_detail(
     - min(20, len(diff["size_mismatch"]))
   )
   if extra > 0:
-    lines.append("  ... (%d more diff entries)" % extra)
+    lines.append(f"  ... ({extra} more diff entries)")
   return "\n".join(lines)
 
 
@@ -465,13 +465,7 @@ def main(argv: list[str] | None = None) -> int:
     results.append(result)
     if args.verbose and not args.json:
       print(
-        "{day} status={status} tar_members={tar_member_count} "
-        "zst_members={zst_member_count}".format(
-          day=result.get("day", "?"),
-          status=result.get("status", "?"),
-          tar_member_count=result.get("tar_member_count", "-"),
-          zst_member_count=result.get("zst_member_count", "-"),
-        )
+        f"{result.get('day', '?')} status={result.get('status', '?')} tar_members={result.get('tar_member_count', '-')} zst_members={result.get('zst_member_count', '-')}"
       )
       diff_detail = result.get("diff_detail")
       if diff_detail:
@@ -516,8 +510,7 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps(summary, indent=2, sort_keys=True))
   else:
     print(
-      "daily_archive_dir=%s checked=%d counts=%s"
-      % (daily_archive_dir, len(results), counts)
+      f"daily_archive_dir={daily_archive_dir} checked={len(results)} counts={counts}"
     )
     for item in failures:
       print(

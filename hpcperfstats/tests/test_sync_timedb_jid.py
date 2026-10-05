@@ -19,7 +19,7 @@ from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
 
 def _rec(host_dir: str, epoch: int, inode: int = 1) -> FindStatsRecord:
   return FindStatsRecord(
-    path="%s/%d" % (host_dir, epoch),
+    path=f"{host_dir}/{epoch}",
     mtime=float(epoch),
     size=10,
     inode=inode,
@@ -183,7 +183,7 @@ def test_expand_neighbors_edges_sole_file_and_no_before_after():
     start,
     end,
   )
-  assert [r.path for r in sole] == ["%s/%d" % (host_dir, e_only)]
+  assert [r.path for r in sole] == [f"{host_dir}/{e_only}"]
 
   e_core = int(start.timestamp()) + 60
   no_before = expand_sorted_records_with_window_neighbors(
@@ -212,7 +212,7 @@ def test_filter_host_scoped_window_records_skips_and_adds_neighbors():
     _rec(host_dir, e_after, 2),
     _rec(host_dir, e_far, 6),
     FindStatsRecord(
-      path="%s/%d.fnctl.lock" % (host_dir, in_epoch),
+      path=f"{host_dir}/{in_epoch}.fnctl.lock",
       mtime=float(in_epoch),
       size=1,
       inode=3,

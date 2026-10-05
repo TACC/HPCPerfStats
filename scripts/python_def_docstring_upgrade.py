@@ -22,7 +22,7 @@ _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
   sys.path.insert(0, str(_SCRIPTS))
 
-from python_def_inventory import (  # noqa: E402
+from python_def_inventory import (
   TRIVIAL_DUNDERS,
   _is_generator,
   class_surface_issues,
@@ -672,7 +672,7 @@ def _describe_return(fn_name: str, ret: str) -> str:
     return "Value produced by this call (type depends on inputs)."
   flat = re.sub(r"\s+", "", ret)
   if flat.startswith("Optional[") or flat.endswith("|None"):
-    return f"{ret} — the result, or None when unavailable."
+    return f"{ret} - the result, or None when unavailable."
   if "DataFrame" in ret:
     return "Result DataFrame, or None when nothing usable remains."
   return f"{ret} produced by this call."

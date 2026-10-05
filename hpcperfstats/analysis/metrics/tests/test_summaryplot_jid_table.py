@@ -864,7 +864,7 @@ def test_summaryplot_orders_cpu_then_gpu_then_ibbw():
 
 
 def test_summaryplot_orders_buckets_cpu_memory_compute_gpu_subblocks_network():
-  """Enforce bucket order: CPU usage → CPU memory → CPU compute → GPU usage → GPU memory → GPU tensor → GPU other → ibbw."""
+  """Enforce bucket order: CPU usage -> CPU memory -> CPU compute -> GPU usage -> GPU memory -> GPU tensor -> GPU other -> ibbw."""
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   base = pd.DataFrame([("n1.cluster", t0)], columns=["host", "time"])
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])

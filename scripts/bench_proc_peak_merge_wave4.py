@@ -2,7 +2,7 @@
 """Wave 4 microbenchmark: online ownership merge vs append+copy dedupe.
 
 Compares the merge strategy only (same row construction cost), not ASCII
-feed_line parsing — that cost is identical before/after Wave 4.
+feed_line parsing - that cost is identical before/after Wave 4.
 """
 
 from __future__ import annotations
@@ -142,16 +142,7 @@ def main() -> None:
   assert len(out) == n_procs
   speedup = legacy_s / online_s if online_s > 0 else float("inf")
   print(
-    "legacy_copy_s=%.4f online_own_s=%.4f helper_own_s=%.4f "
-    "speedup=%.2fx rows=%d unique=%d"
-    % (
-      legacy_s,
-      online_s,
-      helper_s,
-      speedup,
-      n_samples * n_procs,
-      n_procs,
-    ),
+    f"legacy_copy_s={legacy_s:.4f} online_own_s={online_s:.4f} helper_own_s={helper_s:.4f} speedup={speedup:.2f}x rows={n_samples * n_procs} unique={n_procs}",
   )
   if online_s < legacy_s:
     print("SPEEDUP_OK")

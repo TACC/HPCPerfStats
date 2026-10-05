@@ -239,7 +239,7 @@ def registry_key_os_pid(key: Any) -> str:
   Return the OS PID prefix from a worker registry key.
 
   Args:
-    key (Any): Registry map key (``pid``, ``pid:tid``, or ``dispatch:…``).
+    key (Any): Registry map key (``pid``, ``pid:tid``, or ``dispatch:...``).
 
   Returns:
     str: Decimal PID string, or ``\"\"`` for dispatch placeholders.
@@ -628,7 +628,7 @@ def idle_pool_recover_skip_reason_for_registry_wait(
   """
   Non-empty reason when pending paths show live store_wait in the registry.
 
-  Ghost ``dispatch:`` placeholders are ignored — only real worker PID entries
+  Ghost ``dispatch:`` placeholders are ignored - only real worker PID entries
   whose ``path`` matches a pending normpath count. Skips idle recover/redispatch
   even when ``ingest_tar_hot`` has already cleared.
 

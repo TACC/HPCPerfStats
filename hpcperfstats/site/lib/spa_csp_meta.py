@@ -8,7 +8,7 @@ Used by proxy startup (private ``/etc/nginx`` includes) and by Django SPA heal
 Attributes:
   INLINE_SCRIPT_RE: Regex matching inline ``<script>`` bodies (no ``src``).
   INLINE_STYLE_RE: Regex matching ``<style>`` bodies.
-  STYLE_ATTR_RE: Regex matching HTML ``style="…"`` attribute values.
+  STYLE_ATTR_RE: Regex matching HTML ``style="..."`` attribute values.
   CSP_META_RE: Regex matching an existing CSP ``<meta http-equiv>`` tag.
 """
 
@@ -36,13 +36,13 @@ CSP_META_RE = re.compile(
 
 def sha256_csp_hash(content: str) -> str:
   """
-  Return a CSP ``'sha256-…'`` token for UTF-8 script/style body bytes.
+  Return a CSP ``'sha256-...'`` token for UTF-8 script/style body bytes.
 
   Args:
     content (str): Exact inline script or style text as served in HTML.
 
   Returns:
-    str: Quoted CSP hash source (for example ``'sha256-…='``).
+    str: Quoted CSP hash source (for example ``'sha256-...='``).
 
   Examples:
     >>> h = sha256_csp_hash("void 0")
@@ -112,7 +112,7 @@ def collect_inline_csp_hashes(root_dir: Path) -> dict[str, list[str]]:
   Union inline CSP hashes from every HTML file under ``root_dir``.
 
   Args:
-    root_dir (Path): SPA segment directory (for example ``…/frontend/machine``).
+    root_dir (Path): SPA segment directory (for example ``.../frontend/machine``).
 
   Returns:
     dict[str, list[str]]: Merged sorted hash lists.
@@ -149,9 +149,9 @@ def build_csp_policy(
   Build a Content-Security-Policy header/meta value (no nginx wrapper).
 
   Args:
-    script_hashes (list[str] | None): Quoted ``'sha256-…'`` tokens for scripts.
+    script_hashes (list[str] | None): Quoted ``'sha256-...'`` tokens for scripts.
     style_hashes (list[str] | None): Quoted hashes for ``<style>`` bodies.
-    style_attr_hashes (list[str] | None): Quoted hashes for ``style="…"`` attrs.
+    style_attr_hashes (list[str] | None): Quoted hashes for ``style="..."`` attrs.
     allow_unsafe_eval (bool): When True, append ``'unsafe-eval'`` (machine/pub Bokeh).
     allow_bokeh_style_inline (bool): When True, use ``style-src 'self'
       'unsafe-inline'`` and omit style hashes (CSP3 ignores ``unsafe-inline``
@@ -203,12 +203,12 @@ def build_nginx_csp_include(
   allow_bokeh_style_inline: bool = False,
 ) -> str:
   """
-  Render an nginx ``add_header Content-Security-Policy …`` include body.
+  Render an nginx ``add_header Content-Security-Policy ...`` include body.
 
   Args:
-    script_hashes (list[str] | None): Quoted ``'sha256-…'`` tokens for scripts.
+    script_hashes (list[str] | None): Quoted ``'sha256-...'`` tokens for scripts.
     style_hashes (list[str] | None): Quoted hashes for ``<style>`` bodies.
-    style_attr_hashes (list[str] | None): Quoted hashes for ``style="…"`` attrs.
+    style_attr_hashes (list[str] | None): Quoted hashes for ``style="..."`` attrs.
     allow_unsafe_eval (bool): When True, append ``'unsafe-eval'`` (machine/pub Bokeh).
     allow_bokeh_style_inline (bool): When True, Bokeh-safe ``style-src`` without
       style hashes (see ``build_csp_policy``).

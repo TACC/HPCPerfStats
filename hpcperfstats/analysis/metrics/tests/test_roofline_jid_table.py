@@ -443,7 +443,7 @@ def test_gpu_roofline_two_devices_yield_two_scatter_points():
   assert bw_axis == GPU_ROOFLINE_BW_AXIS_MEMORY
   job_source = fig.renderers[1].data_source.data
   assert sorted(job_source["dev"]) == ["0", "1"]
-  # Per-device rates: AI = flops_gf / bw_gb → 10/2=5 and 30/4=7.5 (not host sum 40/6).
+  # Per-device rates: AI = flops_gf / bw_gb -> 10/2=5 and 30/4=7.5 (not host sum 40/6).
   ai_vals = sorted(float(x) for x in job_source["ai"])
   assert ai_vals == pytest.approx([5.0, 7.5])
   perf_vals = sorted(float(x) for x in job_source["perf"])
@@ -452,7 +452,7 @@ def test_gpu_roofline_two_devices_yield_two_scatter_points():
 
 
 def test_gpu_roofline_blank_dev_still_one_point_per_host_time():
-  """Legacy empty ``dev`` remains a single bucket per host×time."""
+  """Legacy empty ``dev`` remains a single bucket per hostxtime."""
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   jt = _make_jt([("n1.cluster", t0)], {})
 
@@ -481,11 +481,11 @@ def test_gpu_roofline_blank_dev_still_one_point_per_host_time():
   job_source = fig.renderers[1].data_source.data
   assert len(job_source["dev"]) == 1
   assert job_source["dev"][0] == ""
-  assert job_source["dev_display"][0] == "—"
+  assert job_source["dev_display"][0] == "-"
 
 
 def test_assemble_sum_val_parts_keeps_dev_group_cols():
-  """Per-device assemble must not re-collapse devices into host×time."""
+  """Per-device assemble must not re-collapse devices into hostxtime."""
   from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
     _assemble_sum_val_parts_bounded,
   )

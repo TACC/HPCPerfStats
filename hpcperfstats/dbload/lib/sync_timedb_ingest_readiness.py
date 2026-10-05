@@ -8,7 +8,7 @@ ingest mark (successful ``stats_rows=0`` / proc-only ingest; ``proc_data`` has
 no time column so it cannot mirror head/tail probes).
 
 Host probes use streaming head and EOF-backward tail reads (no full-file load).
-The monitor emits fractional seconds; ingest stores subsecond ``time`` values —
+The monitor emits fractional seconds; ingest stores subsecond ``time`` values -
 probes use Unix-second windows, not exact ``time=`` equality.
 
 Attributes:

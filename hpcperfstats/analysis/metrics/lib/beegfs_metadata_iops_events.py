@@ -3,7 +3,7 @@ BeeGFS client metadata events summed for IOPS (summary + job-detail FSIO peaks).
 
 Canonical ``vfs_*_ops`` names from monitor ``beegfs_client.h`` KEYS. Kept in one
 module so summary plots, tests, and FSIO peak logic stay aligned. Do not reuse
-``LLITE_METADATA_IOPS_EVENTS`` — BeeGFS does not emit several Lustre-only ops
+``LLITE_METADATA_IOPS_EVENTS`` - BeeGFS does not emit several Lustre-only ops
 (for example ``vfs_mmap_ops``, ``vfs_fsync_ops``, xattr ops).
 
 Attributes:

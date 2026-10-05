@@ -1,4 +1,4 @@
-"""Unit tests for STATIC_ROOT SPA shell auto-heal (Vite volume → Next package)."""
+"""Unit tests for STATIC_ROOT SPA shell auto-heal (Vite volume -> Next package)."""
 
 from __future__ import annotations
 
@@ -94,7 +94,7 @@ def test_ensure_spa_shells_fails_when_package_missing(
 def test_ensure_spa_shells_noop_when_fingerprints_match(
   tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
-  """Shells present with identical machine/index.html content → noop."""
+  """Shells present with identical machine/index.html content -> noop."""
   package = tmp_path / "pkg" / "frontend"
   _write(package / "machine" / "index.html", "same-shell")
   _write(package / "pub" / "index.html", "pkg-pub")
@@ -125,7 +125,7 @@ def test_ensure_spa_shells_noop_when_fingerprints_match(
 def test_ensure_spa_shells_replaces_on_fingerprint_drift(
   tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
-  """Shells present but machine/index.html content differs → replace volume."""
+  """Shells present but machine/index.html content differs -> replace volume."""
   package = tmp_path / "pkg" / "frontend"
   _write(package / "machine" / "index.html", "pkg-machine-new")
   _write(package / "pub" / "index.html", "pkg-pub")

@@ -156,7 +156,7 @@ class ApiClient:
     True if we may re-POST to target after a redirect from source.
 
     Allows strict same-origin (normalized host and port) and a single hop
-    http://host → https://host when both use default ports, so sites that
+    http://host -> https://host when both use default ports, so sites that
     redirect HTTP to HTTPS do not trip the cross-origin guard.
 
     Args:

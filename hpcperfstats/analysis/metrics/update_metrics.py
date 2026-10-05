@@ -1161,9 +1161,7 @@ def _handle_strict_readiness_db_error(
         mono_now + STRICT_CHECK_COOLDOWN_SECONDS
       )
   log_print(
-    "strict readiness batch timed out size={}; new_strict_batch_size={}: {}".format(
-      int(batch_size_seen), strict_check_state["batch_size"], exc
-    ),
+    f"strict readiness batch timed out size={int(batch_size_seen)}; new_strict_batch_size={strict_check_state['batch_size']}: {exc}",
     flush=True,
   )
 
@@ -1575,7 +1573,7 @@ class _PrewarmPipeline:
 
   def has_pending(self) -> Any:
     """
-    Always False — sync prewarm has no async backlog.
+    Always False - sync prewarm has no async backlog.
 
     Returns:
       Any: False.
@@ -1607,7 +1605,7 @@ class _PrewarmPipeline:
 
   def finish(self) -> None:
     """
-    No-op — sync prewarm completes inside submit / run_for_jid / pool map.
+    No-op - sync prewarm completes inside submit / run_for_jid / pool map.
 
     Returns:
       None
@@ -2029,7 +2027,7 @@ def _pg_session_statement_timeout_for_metrics_batch() -> Iterator[Any]:
   ``_jobs_queryset`` annotated scans (cheap metrics subqueries) and Phase A2
   page live-distinct / Phase B fingerprint probes can exceed the default
   session ``statement_timeout`` (often 2 minutes). Keyset pagination must not
-  fall back to offset slicing on timeout — that repeats the same expensive SQL.
+  fall back to offset slicing on timeout - that repeats the same expensive SQL.
   Restore the configured timeout when the block exits.
 
   Yields:
@@ -2277,11 +2275,7 @@ def _refresh_default_metrics_dates_list(
   start, end = _default_metrics_date_range()
   dates[:] = _newest_first_metrics_dates(start, end)
   log_print(
-    "metrics scheduler: window_rollover today={} old_end={} new_end={}".format(
-      _today_datetime().strftime("%Y-%m-%d"),
-      old_end.strftime("%Y-%m-%d") if old_end is not None else "none",
-      end.strftime("%Y-%m-%d"),
-    ),
+    f"metrics scheduler: window_rollover today={_today_datetime().strftime('%Y-%m-%d')} old_end={old_end.strftime('%Y-%m-%d') if old_end is not None else 'none'} new_end={end.strftime('%Y-%m-%d')}",
     flush=True,
   )
   return True
@@ -2296,7 +2290,7 @@ def _cheap_metrics_day_job_qs(sched_date: Any, min_time: Any) -> dict[str, Any]:
     min_time (Any): Runtime threshold in seconds (same as listing).
 
   Returns:
-    dict[str, Any]: Keys ``all``, ``rt_null``, ``rt_ge_min_time`` → querysets.
+    dict[str, Any]: Keys ``all``, ``rt_null``, ``rt_ge_min_time`` -> querysets.
 
   Examples:
     >>> census_keys = ("all", "rt_null", "rt_ge_min_time")
@@ -2340,8 +2334,8 @@ def _metrics_day_listed_count(
   """
   Count jobs the cheap Phase A listing predicate would return for one day.
 
-  Uses ``_jobs_queryset`` only (md/stale/gate-failure gates) — never
-  live_distinct annotate, Phase A2 catch-up, or fingerprint annotate — so
+  Uses ``_jobs_queryset`` only (md/stale/gate-failure gates) - never
+  live_distinct annotate, Phase A2 catch-up, or fingerprint annotate - so
   empty-pass census cannot re-trigger hot-day ``host_data`` / sha256
   statement timeouts. ``listed=`` is metrics-incomplete + gate-failure
   candidates, not live-refresh or artifact-only backlog.
@@ -2409,23 +2403,10 @@ def _log_metrics_window_census(
       )
       continue
     parts.append(
-      "{}:all={}/rt_ge_{}={}/rt_null={}/listed={}".format(
-        day_label,
-        cheap["all"],
-        int(min_time),
-        cheap["rt_ge_min_time"],
-        cheap["rt_null"],
-        listed,
-      )
+      f"{day_label}:all={cheap['all']}/rt_ge_{int(min_time)}={cheap['rt_ge_min_time']}/rt_null={cheap['rt_null']}/listed={listed}"
     )
   log_print(
-    "metrics scheduler: {} today={} window_start={} window_end={} {}".format(
-      reason,
-      today.strftime("%Y-%m-%d %H:%M:%S"),
-      window_start.strftime("%Y-%m-%d") if window_start is not None else "none",
-      window_end.strftime("%Y-%m-%d") if window_end is not None else "none",
-      " ".join(parts) if parts else "days=none",
-    ),
+    f"metrics scheduler: {reason} today={today.strftime('%Y-%m-%d %H:%M:%S')} window_start={window_start.strftime('%Y-%m-%d') if window_start is not None else 'none'} window_end={window_end.strftime('%Y-%m-%d') if window_end is not None else 'none'} {' '.join(parts) if parts else 'days=none'}",
     flush=True,
   )
 
@@ -2639,7 +2620,7 @@ def _jobs_queryset(date: Any, min_time: Any, rerun: Any) -> Any:
   Newest first (``-end_time``, ``-jid``). Keyset SQL uses **cheap** metrics
   gates only (``md_count`` / ``stale_null`` / gate-failure ``Exists``). Does
   **not** embed correlated ``live_distinct`` ``host_data`` aggregates or
-  plot/detail sha256 fingerprints — those are Phase A2 and Phase B.
+  plot/detail sha256 fingerprints - those are Phase A2 and Phase B.
 
   Args:
     date (Any): Calendar day (or datetime) for ``end_time`` half-open bounds.
@@ -2785,7 +2766,7 @@ def _jobs_queryset_artifact_catchup(date: Any, min_time: Any) -> Any:
   """
   Phase B keyset: metrics-complete jobs that are not in Phase A.
 
-  SQL stays free of plot/detail ``encode(sha256…)`` and live_distinct
+  SQL stays free of plot/detail ``encode(sha256...)`` and live_distinct
   ``host_data`` aggregates. Per-page Python / bounded FP annotate decides
   ``artifact_only`` (``_page_rows_needing_artifact_refresh``).
 
@@ -2809,7 +2790,7 @@ def _page_rows_needing_live_distinct_refresh(rows: Any) -> list[Any]:
   Keep Phase A2 page rows whose live distinct exceeds persisted count.
 
   Uses ``get_live_distinct_time_count_for_jid`` per jid on the page
-  (``≤ CHUNK_SIZE``) — never embeds correlated live distinct in day keyset SQL.
+  (``<= CHUNK_SIZE``) - never embeds correlated live distinct in day keyset SQL.
 
   Args:
     rows (Any): ``values_list`` tuples
@@ -2852,7 +2833,7 @@ def _page_rows_needing_artifact_refresh(rows: Any) -> list[Any]:
   Keep Phase B page rows that still need plot/detail artifact work.
 
   Uses cheap row-existence checks first, then bounded fingerprint compare
-  for the page (``≤ CHUNK_SIZE``) — never embeds sha256 in the day keyset.
+  for the page (``<= CHUNK_SIZE``) - never embeds sha256 in the day keyset.
 
   Args:
     rows (Any): ``values_list`` tuples
@@ -3542,16 +3523,7 @@ def _log_metrics_deferred_coverage_once(jid: Any, reason: Any) -> None:
     return
   _COVERAGE_DEFER_LOGGED.add(jid)
   log_print(
-    "metrics_deferred_coverage jid={} start_ok={} end_ok={} "
-    "start_lag_s={} end_lag_s={} start_margin_s={} end_margin_s={}".format(
-      jid,
-      reason.get("start_ok"),
-      reason.get("end_ok"),
-      reason.get("start_lag_s"),
-      reason.get("end_lag_s"),
-      reason.get("start_margin_s"),
-      reason.get("end_margin_s"),
-    ),
+    f"metrics_deferred_coverage jid={jid} start_ok={reason.get('start_ok')} end_ok={reason.get('end_ok')} start_lag_s={reason.get('start_lag_s')} end_lag_s={reason.get('end_lag_s')} start_margin_s={reason.get('start_margin_s')} end_margin_s={reason.get('end_margin_s')}",
     flush=True,
   )
 
@@ -3682,7 +3654,7 @@ def _in_window_per_host_bounds(
   """
   Return ``(host_min_map, host_max_map)`` for ``hosts`` in ``[start, end]``.
 
-  Uses host×time chunking with timeout split/retry so a multi-day window of
+  Uses hostxtime chunking with timeout split/retry so a multi-day window of
   ~48 hosts cannot burn a single statement_timeout.
 
   Args:
@@ -3711,7 +3683,7 @@ def _in_window_per_host_bounds(
 
   def run(hosts_list: Any, tf_cur: Any) -> Any:
     """
-    Per-host Min/Max time for one host×time chunk.
+    Per-host Min/Max time for one hostxtime chunk.
 
     Args:
       hosts_list (Any): Hostnames for this attempt.
@@ -5061,13 +5033,7 @@ def _run_public_ef_artifacts_parallel_phase(
       return
     last_progress_log["at"] = now
     log_print(
-      "metrics scheduler: waiting on /pub/ EF artifacts completed={}/{} pending={} "
-      "no_progress_s={:.1f}".format(
-        int(snapshot.get("tasks_completed", 0)),
-        int(snapshot.get("tasks_total", 0)),
-        int(snapshot.get("pending_tasks", 0)),
-        float(snapshot.get("stalled_for_s", 0.0)),
-      ),
+      f"metrics scheduler: waiting on /pub/ EF artifacts completed={int(snapshot.get('tasks_completed', 0))}/{int(snapshot.get('tasks_total', 0))} pending={int(snapshot.get('pending_tasks', 0))} no_progress_s={float(snapshot.get('stalled_for_s', 0.0)):.1f}",
       flush=True,
     )
 
@@ -5537,14 +5503,7 @@ def _start_readiness_producer(
             stats["stall_exit_triggered"] = 1
             stats["stall_reason"] = "no_ready_candidates"
           log_print(
-            "metrics scheduler: no progress for {:.1f}s; exiting producer "
-            "(attempted_total={} candidate_jids={} deferred_not_ready={} rescan_backlog={}).".format(
-              stalled_for_s,
-              int(stats.get("processed", 0)) + int(stats.get("failed", 0)),
-              stats.get("candidate_jids", 0),
-              len(deferred_not_ready),
-              int(has_rescan_backlog),
-            ),
+            f"metrics scheduler: no progress for {stalled_for_s:.1f}s; exiting producer (attempted_total={int(stats.get('processed', 0)) + int(stats.get('failed', 0))} candidate_jids={stats.get('candidate_jids', 0)} deferred_not_ready={len(deferred_not_ready)} rescan_backlog={int(has_rescan_backlog)}).",
             flush=True,
           )
           break
@@ -5696,12 +5655,7 @@ def _compute_and_prewarm_jid(
     )
   if not run_outcome.get("ok"):
     log_print(
-      "metrics scheduler: failed jid={}; status={}; skipping prewarm error_type={} error={!r}".format(
-        context.jid,
-        run_outcome.get("status"),
-        run_outcome.get("error_type"),
-        run_outcome.get("error_message"),
-      ),
+      f"metrics scheduler: failed jid={context.jid}; status={run_outcome.get('status')}; skipping prewarm error_type={run_outcome.get('error_type')} error={run_outcome.get('error_message')!r}",
       flush=True,
     )
     return {
@@ -5734,25 +5688,12 @@ def _compute_and_prewarm_jid(
     total_s = metrics_elapsed + float(prewarm_timing["prewarm_total_s"])
     if prewarm_timing.get("undivided"):
       log_print(
-        "jid={} compute complete total={:.1f}s metrics={:.1f}s "
-        "prewarm_job_detail+plots={:.1f}s".format(
-          context.jid,
-          total_s,
-          metrics_elapsed,
-          float(prewarm_timing["prewarm_total_s"]),
-        ),
+        f"jid={context.jid} compute complete total={total_s:.1f}s metrics={metrics_elapsed:.1f}s prewarm_job_detail+plots={float(prewarm_timing['prewarm_total_s']):.1f}s",
         flush=True,
       )
     else:
       log_print(
-        "jid={} compute complete total={:.1f}s metrics={:.1f}s "
-        "job_detail={:.1f}s job_plots={:.1f}s".format(
-          context.jid,
-          total_s,
-          metrics_elapsed,
-          float(prewarm_timing["detail_s"]),
-          float(prewarm_timing["plots_s"]),
-        ),
+        f"jid={context.jid} compute complete total={total_s:.1f}s metrics={metrics_elapsed:.1f}s job_detail={float(prewarm_timing['detail_s']):.1f}s job_plots={float(prewarm_timing['plots_s']):.1f}s",
         flush=True,
       )
   return {
@@ -5888,8 +5829,8 @@ def _prewarm_successful_refs_on_metrics_pool(
   Run detail+plot prewarm for metrics-successful jids on pool B (wait fully).
 
   Fail-closed: only ``successful_refs`` are prewarmed. Mode gate uses
-  ``metrics_plot_prewarm_mode`` (``inline`` → parent ``run_for_jid``;
-  ``pipeline_required`` → metrics thread pool completion drain). On prewarm stall,
+  ``metrics_plot_prewarm_mode`` (``inline`` -> parent ``run_for_jid``;
+  ``pipeline_required`` -> metrics thread pool completion drain). On prewarm stall,
   keep partial successes, soft-fail unfinished jids, and recycle the pool.
   Before pool imap, rebind via ``ensure_pool`` so detached executors after
   ``reset_pool_hard`` never receive another submission.
@@ -6208,7 +6149,7 @@ def _compute_jid_outcomes_batch(
   ``apply_async``, uses a pool-sized sliding session: per-jid metrics
   persist then prewarm, filling idle slots from ``ready_queue`` under
   sample-count soft/hard caps (RC-E). Otherwise a single
-  ``Metrics.run(job_refs, …)`` saturates the thread pool and prewarm
+  ``Metrics.run(job_refs, ...)`` saturates the thread pool and prewarm
   runs afterward on successful jids.
 
   Stall/watchdog timing treats metrics+prewarm as one job/batch wall-time
@@ -6284,7 +6225,7 @@ def _compute_jid_outcomes_batch(
       "1" if bool(getattr(r, "artifact_only", False)) else "0"
       for r in job_refs[:head]
     )
-    suffix = "" if n <= head else f" …(+{n - head} more)"
+    suffix = "" if n <= head else f" ...(+{n - head} more)"
     log_print(
       f"metrics scheduler: phase=batch_compute size={n} jids[{head}]={jids_head}{suffix} "
       f"artifact_only[{head}]={ao_head}",
@@ -6813,11 +6754,7 @@ def update_metrics_for_dates(
       _reset_metrics_pool_after_public_phase(metrics_manager)
       shared_pool = metrics_manager.ensure_pool(pool_kind="metrics-pool")
       log_print(
-        "Metrics thread pool recycled after /pub phase. "
-        "configured={} pool_threads={}".format(
-          cfg.get_metrics_pool_processes(),
-          getattr(shared_pool, "_processes", None),
-        ),
+        f"Metrics thread pool recycled after /pub phase. configured={cfg.get_metrics_pool_processes()} pool_threads={getattr(shared_pool, '_processes', None)}",
         flush=True,
       )
       ready_queue_lock = threading.Lock()
@@ -7290,78 +7227,54 @@ def update_metrics_for_dates(
           "strict_check_avg_latency_ms": stats["strict_check_avg_latency_ms"],
         }
       log_print(
-        "Finished metrics scheduler mode={}: processed={} failed={} "
-        "candidate_jids={} skipped_not_ready={} readiness_error_chunks={} "
-        "proxy_checked_chunks={} proxy_rejected_jids={} proxy_not_ready_jids={} "
-        "strict_not_ready_jids={} strict_ready_jids={} strict_cooldown_skips={} "
-        "deferred_not_ready_queue_size={} deferred_not_ready_due_now={} "
-        "deferred_quarantined_jids={} stall_exit_triggered={} stall_reason={} "
-        "ready_enqueued_total={} ready_dequeued_total={} inflight_jids={} "
-        "compute_batches_total={} batch_compute_exceptions_total={} "
-        "per_jid_fallback_failures_total={} worker_failed_outcomes_total={} "
-        "parent_persist_failures_total={} attempted_total={} "
-        "public_ef_degraded={} public_ef_worker_exceptions_total={} "
-        "public_ef_watchdog_timeouts_total={} public_ef_pending_tasks={} "
-        "readiness_probe_target={} strict_batch_size_current={} strict_check_calls={} "
-        "strict_check_timeouts={} strict_check_avg_latency_ms={:.2f} "
-        "completed_last_hour={} elapsed_s={:.2f} jobs_per_min={:.2f} "
-        "worker_busy_ratio={:.3f} phase_candidate_s={:.2f} "
-        "phase_readiness_s={:.2f} phase_pub_ef_s={:.2f} phase_compute_s={:.2f} phase_prewarm_s={:.2f} "
-        "prewarm_backlog_jobs={} prewarm_oldest_pending_age_s={:.3f} "
-        "prewarm_lag_seconds_p95={:.3f} prewarm_success_ratio={:.3f} "
-        "prewarm_backpressure_events={} prewarm_inline_fallback_jobs={}{50}".format(
-          scheduler_mode,
-          snap["processed"],
-          snap["failed"],
-          snap["candidate_jids"],
-          snap["skipped_not_ready"],
-          snap["readiness_error_chunks"],
-          snap["proxy_checked_chunks"],
-          snap["proxy_rejected_jids"],
-          snap["proxy_not_ready_jids"],
-          snap["strict_not_ready_jids"],
-          snap["strict_ready_jids"],
-          snap["strict_cooldown_skips"],
-          snap["deferred_not_ready_queue_size"],
-          snap["deferred_not_ready_due_now"],
-          snap["deferred_quarantined_jids"],
-          snap["stall_exit_triggered"],
-          snap["stall_reason"] or "n/a",
-          snap["ready_enqueued_total"],
-          snap["ready_dequeued_total"],
-          snap["inflight_jids"],
-          snap["compute_batches_total"],
-          snap["batch_compute_exceptions_total"],
-          snap["per_jid_fallback_failures_total"],
-          snap["worker_failed_outcomes_total"],
-          snap["parent_persist_failures_total"],
-          snap["attempted_total"],
-          snap["public_ef_degraded"],
-          snap["public_ef_worker_exceptions_total"],
-          snap["public_ef_watchdog_timeouts_total"],
-          snap["public_ef_pending_tasks"],
-          snap["readiness_probe_value"],
-          snap["strict_batch_size_current"],
-          snap["strict_check_calls"],
-          snap["strict_check_timeouts"],
-          snap["strict_check_avg_latency_ms"],
-          completion_reporter.completed_in_window(),
-          elapsed,
-          (snap["processed"] * 60.0) / elapsed,
-          worker_busy_ratio,
-          totals["candidate_sql_s"],
-          totals["readiness_s"],
-          totals.get("public_ef_artifacts_s", 0.0),
-          totals["metrics_compute_s"],
-          totals["prewarm_s"],
-          prewarm_stats["prewarm_backlog_jobs"],
-          prewarm_stats["prewarm_oldest_pending_age_s"],
-          prewarm_stats["prewarm_lag_seconds_p95"],
-          prewarm_stats["prewarm_success_ratio"],
-          prewarm_stats["prewarm_backpressure_events"],
-          prewarm_stats["prewarm_inline_fallback_jobs"],
-          telemetry_suffix,
-        ),
+        f"Finished metrics scheduler mode={scheduler_mode}: processed={snap['processed']} "
+        f"failed={snap['failed']} "
+        f"candidate_jids={snap['candidate_jids']} skipped_not_ready={snap['skipped_not_ready']} "
+        f"readiness_error_chunks={snap['readiness_error_chunks']} "
+        f"proxy_checked_chunks={snap['proxy_checked_chunks']} "
+        f"proxy_rejected_jids={snap['proxy_rejected_jids']} "
+        f"proxy_not_ready_jids={snap['proxy_not_ready_jids']} "
+        f"strict_not_ready_jids={snap['strict_not_ready_jids']} "
+        f"strict_ready_jids={snap['strict_ready_jids']} "
+        f"strict_cooldown_skips={snap['strict_cooldown_skips']} "
+        f"deferred_not_ready_queue_size={snap['deferred_not_ready_queue_size']} "
+        f"deferred_not_ready_due_now={snap['deferred_not_ready_due_now']} "
+        f"deferred_quarantined_jids={snap['deferred_quarantined_jids']} "
+        f"stall_exit_triggered={snap['stall_exit_triggered']} "
+        f"stall_reason={snap['stall_reason'] or 'n/a'} "
+        f"ready_enqueued_total={snap['ready_enqueued_total']} "
+        f"ready_dequeued_total={snap['ready_dequeued_total']} "
+        f"inflight_jids={snap['inflight_jids']} "
+        f"compute_batches_total={snap['compute_batches_total']} "
+        f"batch_compute_exceptions_total={snap['batch_compute_exceptions_total']} "
+        f"per_jid_fallback_failures_total={snap['per_jid_fallback_failures_total']} "
+        f"worker_failed_outcomes_total={snap['worker_failed_outcomes_total']} "
+        f"parent_persist_failures_total={snap['parent_persist_failures_total']} "
+        f"attempted_total={snap['attempted_total']} "
+        f"public_ef_degraded={snap['public_ef_degraded']} "
+        f"public_ef_worker_exceptions_total={snap['public_ef_worker_exceptions_total']} "
+        f"public_ef_watchdog_timeouts_total={snap['public_ef_watchdog_timeouts_total']} "
+        f"public_ef_pending_tasks={snap['public_ef_pending_tasks']} "
+        f"readiness_probe_target={snap['readiness_probe_value']} "
+        f"strict_batch_size_current={snap['strict_batch_size_current']} "
+        f"strict_check_calls={snap['strict_check_calls']} "
+        f"strict_check_timeouts={snap['strict_check_timeouts']} "
+        f"strict_check_avg_latency_ms={snap['strict_check_avg_latency_ms']:.2f} "
+        f"completed_last_hour={completion_reporter.completed_in_window()} "
+        f"elapsed_s={elapsed:.2f} jobs_per_min={(snap['processed'] * 60.0) / elapsed:.2f} "
+        f"worker_busy_ratio={worker_busy_ratio:.3f} "
+        f"phase_candidate_s={totals['candidate_sql_s']:.2f} "
+        f"phase_readiness_s={totals['readiness_s']:.2f} "
+        f"phase_pub_ef_s={totals.get('public_ef_artifacts_s', 0.0):.2f} "
+        f"phase_compute_s={totals['metrics_compute_s']:.2f} "
+        f"phase_prewarm_s={totals['prewarm_s']:.2f} "
+        f"prewarm_backlog_jobs={prewarm_stats['prewarm_backlog_jobs']} "
+        f"prewarm_oldest_pending_age_s={prewarm_stats['prewarm_oldest_pending_age_s']:.3f} "
+        f"prewarm_lag_seconds_p95={prewarm_stats['prewarm_lag_seconds_p95']:.3f} "
+        f"prewarm_success_ratio={prewarm_stats['prewarm_success_ratio']:.3f} "
+        f"prewarm_backpressure_events={prewarm_stats['prewarm_backpressure_events']} "
+        f"prewarm_inline_fallback_jobs={prewarm_stats['prewarm_inline_fallback_jobs']}"
+        f"{telemetry_suffix[:50]}",
         flush=True,
       )
 
@@ -7380,10 +7293,7 @@ def update_metrics_for_dates(
 
       if snap.get("stall_exit_triggered"):
         log_print(
-          "metrics scheduler: stall exit triggered (stall_reason={}); "
-          "exiting for supervisor restart.".format(
-            snap.get("stall_reason") or "unknown"
-          ),
+          f"metrics scheduler: stall exit triggered (stall_reason={snap.get('stall_reason') or 'unknown'}); exiting for supervisor restart.",
           flush=True,
         )
         scheduled_stall_exit = MetricsSchedulerStallExit(
@@ -7396,10 +7306,7 @@ def update_metrics_for_dates(
     _run,
     attempts=2,
     on_retry=lambda exc, _attempt: log_print(
-      "Database error while updating metrics for dates {}, retrying once: {}".format(
-        ",".join(d.strftime("%Y-%m-%d") for d in dates),
-        exc,
-      )
+      f"Database error while updating metrics for dates {','.join(d.strftime('%Y-%m-%d') for d in dates)}, retrying once: {exc}"
     ),
   )
 
@@ -7409,9 +7316,9 @@ def _parse_jid_cli_arg(argv: Any) -> Any:
   Parse ``--jid`` / ``--jid=`` from argv.
 
   Returns ``(jid, error)``:
-  - ``(None, None)`` — not a ``--jid`` invocation (use date-range path).
-  - ``(jid, None)`` — one-shot recalculate for ``jid``.
-  - ``(None, message)`` — usage / mutual-exclusion error (caller exits 1).
+  - ``(None, None)`` - not a ``--jid`` invocation (use date-range path).
+  - ``(jid, None)`` - one-shot recalculate for ``jid``.
+  - ``(None, message)`` - usage / mutual-exclusion error (caller exits 1).
 
   Args:
     argv (Any): CLI argument list (``sys.argv``-like).
@@ -7446,9 +7353,7 @@ def _parse_jid_cli_arg(argv: Any) -> Any:
     return None, "usage: update_metrics.py --jid <JID> (empty jid)"
   if rest:
     return None, (
-      "update_metrics.py --jid cannot be combined with date arguments: {}".format(
-        " ".join(rest)
-      )
+      f"update_metrics.py --jid cannot be combined with date arguments: {' '.join(rest)}"
     )
   return jid, None
 
@@ -7459,7 +7364,7 @@ def _invalidate_caches_before_one_jid_recalc(jid: Any) -> None:
 
   Deletes job-plot Redis keys, ``job_plot_artifact`` / ``job_detail_artifact``
   rows, public-metrics artifacts for the jid, per-jid derived Redis keys
-  (GPU agg, jid_table window, …), and the versioned job-detail ``KEY_JOB``
+  (GPU agg, jid_table window, ...), and the versioned job-detail ``KEY_JOB``
   entry. Runs before ``_compute_and_prewarm_jid`` so fingerprint-matched
   artifact skips cannot keep stale payloads after a formula/code change.
 
@@ -7543,12 +7448,7 @@ def _main_one_jid(jid: Any) -> Any:
     return 1
   ok = bool(outcome.get("ok"))
   log_print(
-    "update_metrics --jid: jid={} ok={} metrics_s={:.1f} prewarm_s={:.1f}".format(
-      jid,
-      int(ok),
-      float(outcome.get("metrics_s", 0.0) or 0.0),
-      float(outcome.get("prewarm_s", 0.0) or 0.0),
-    ),
+    f"update_metrics --jid: jid={jid} ok={int(ok)} metrics_s={float(outcome.get('metrics_s', 0.0) or 0.0):.1f} prewarm_s={float(outcome.get('prewarm_s', 0.0) or 0.0):.1f}",
     flush=True,
   )
   return 0 if ok else 1
@@ -7622,8 +7522,7 @@ def main(argv: Any | None = None, sleep_after: Any | None = None) -> Any:
   startdate, enddate = parse_start_end_dates(argv, default_start, default_end)
 
   log_print(
-    "Metrics absolute pool effective_cores=%d metrics_pool_processes=%d"
-    % (cfg.get_effective_cores(), cfg.get_metrics_pool_processes())
+    f"Metrics absolute pool effective_cores={cfg.get_effective_cores()} metrics_pool_processes={cfg.get_metrics_pool_processes()}"
   )
   from hpcperfstats.dbload.lib.pg_slot_budget import (
     log_pg_slot_budget_if_needed,
@@ -7640,9 +7539,7 @@ def main(argv: Any | None = None, sleep_after: Any | None = None) -> Any:
   all_dates = _newest_first_metrics_dates(startdate, enddate)
   allow_rollover = not _argv_has_explicit_metrics_dates(argv)
   log_print(
-    "Date order (newest first): {}".format(
-      ", ".join(d.strftime("%Y-%m-%d") for d in all_dates)
-    ),
+    f"Date order (newest first): {', '.join(d.strftime('%Y-%m-%d') for d in all_dates)}",
     flush=True,
   )
   scheduler_mode = cfg.get_metrics_scheduler_mode()

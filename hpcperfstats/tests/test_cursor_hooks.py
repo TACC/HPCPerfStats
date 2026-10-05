@@ -13,8 +13,8 @@ HOOKS_DIR = Path(__file__).resolve().parents[2] / "cursor-hooks"
 RULES_DIR = Path(__file__).resolve().parents[1] / "cursor-rules"
 sys.path.insert(0, str(HOOKS_DIR))
 
-import hpc_hook_lib as lib  # noqa: E402
-from hook_task_router import (  # noqa: E402
+import hpc_hook_lib as lib
+from hook_task_router import (
   MONITOR_ROUTER_ENTRIES,
   ROUTER_ENTRIES,
   detect_rules_profile,
@@ -63,7 +63,7 @@ def test_agent_rule_dispatch_requires_mdc_or_na():
     with_mdc
   )
 
-  with_na = "## Agent rule dispatch\n\nN/A — answer-only turn, no file edits.\n"
+  with_na = "## Agent rule dispatch\n\nN/A - answer-only turn, no file edits.\n"
   assert lib.AGENT_RULE_DISPATCH_LABEL not in lib.missing_close_gate_sections(
     with_na
   )
@@ -231,13 +231,13 @@ def test_domain_rule_read_issues_flags_read_after_first_edit():
 
 
 def test_triggered_rule_dispatch_rejects_na_when_edits_trigger_rules():
-  assistant_text = "## Agent rule dispatch\n\nN/A — hooks only.\n"
+  assistant_text = "## Agent rule dispatch\n\nN/A - hooks only.\n"
   issues = lib.triggered_rule_dispatch_issues(
     assistant_text,
     [HOOK_LIB_PATH],
   )
   assert issues == [
-    "Agent rule dispatch (N/A invalid — edits triggered domain rules)"
+    "Agent rule dispatch (N/A invalid - edits triggered domain rules)"
   ]
 
 
@@ -253,7 +253,7 @@ def test_triggered_rule_dispatch_requires_listed_rules():
 def test_edge_cases_issues_requires_three_items():
   text = "## Post-implementation review\n\n### Edge cases\n\n- one\n- two\n"
   assert lib.edge_cases_issues(text) == [
-    "### Edge cases (≥3 numbered/bulleted items required)",
+    "### Edge cases (>=3 numbered/bulleted items required)",
   ]
 
 
@@ -958,7 +958,7 @@ def _operator_in_progress_plan_markdown() -> str:
       "| # | Service | Asked for | Found | Date |\n"
       "|---|---------|-----------|-------|------|\n\n"
       "### Pending commands\n\n"
-      "#### pipeline — paste manifest snapshot\n\n"
+      "#### pipeline - paste manifest snapshot\n\n"
       "```bash\n"
       "docker compose exec pipeline su hpcperfstats -c 'python3 -c \""
       "from hpcperfstats.dbload.lib import conf_parser as cfg; "
@@ -994,7 +994,7 @@ def test_operator_discovery_accepts_compose_flags_before_subcommand():
       "| # | Service | Asked for | Found | Date |\n"
       "|---|---------|-----------|-------|------|\n\n"
       "### Pending commands\n\n"
-      "#### pipeline — filtered recover logs\n\n"
+      "#### pipeline - filtered recover logs\n\n"
       "```bash\n"
       "docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | "
       "grep -E 'pool_recover' | tail -40\n"
@@ -1014,11 +1014,11 @@ def test_operator_discovery_rejects_multi_pipeline_blocks():
       "| # | Service | Asked for | Found | Date |\n"
       "|---|---------|-----------|-------|------|\n\n"
       "### Pending commands\n\n"
-      "#### pipeline — knobs\n\n"
+      "#### pipeline - knobs\n\n"
       "```bash\n"
       "docker compose exec pipeline su hpcperfstats -c 'echo knobs'\n"
       "```\n\n"
-      "#### pipeline — logs\n\n"
+      "#### pipeline - logs\n\n"
       "```bash\n"
       "docker compose logs pipeline 2>&1 | grep -E 'stall' | tail -20\n"
       "```\n"
@@ -1038,7 +1038,7 @@ def test_operator_discovery_rejects_host_cd_before_compose():
       "| # | Service | Asked for | Found | Date |\n"
       "|---|---------|-----------|-------|------|\n\n"
       "### Pending commands\n\n"
-      "#### pipeline — bad host cd\n\n"
+      "#### pipeline - bad host cd\n\n"
       "```bash\n"
       "cd HPCPerfStats\n"
       "docker compose logs pipeline 2>&1 | grep -E 'stall' | tail -20\n"
@@ -1059,7 +1059,7 @@ def test_operator_discovery_rejects_tail_before_grep_on_logs():
       "| # | Service | Asked for | Found | Date |\n"
       "|---|---------|-----------|-------|------|\n\n"
       "### Pending commands\n\n"
-      "#### pipeline — bad --tail\n\n"
+      "#### pipeline - bad --tail\n\n"
       "```bash\n"
       "docker compose logs pipeline --tail=500 2>&1 | grep -E 'stall'\n"
       "```\n"
@@ -1079,7 +1079,7 @@ def test_operator_discovery_rejects_unfiltered_compose_logs():
       "| # | Service | Asked for | Found | Date |\n"
       "|---|---------|-----------|-------|------|\n\n"
       "### Pending commands\n\n"
-      "#### pipeline — firehose\n\n"
+      "#### pipeline - firehose\n\n"
       "```bash\n"
       "docker compose logs pipeline\n"
       "```\n"
@@ -1099,7 +1099,7 @@ def test_operator_discovery_rejects_heredoc_python_through_exec():
       "| # | Service | Asked for | Found | Date |\n"
       "|---|---------|-----------|-------|------|\n\n"
       "### Pending commands\n\n"
-      "#### pipeline — heredoc anti-pattern\n\n"
+      "#### pipeline - heredoc anti-pattern\n\n"
       "```bash\n"
       "docker compose exec pipeline su hpcperfstats -c 'python3 - <<EOF\n"
       "print(1)\n"
@@ -1121,7 +1121,7 @@ def test_operator_discovery_rejects_hardcoded_hpcperfstats_without_conf_parser()
       "| # | Service | Asked for | Found | Date |\n"
       "|---|---------|-----------|-------|------|\n\n"
       "### Pending commands\n\n"
-      "#### pipeline — hardcoded archive path\n\n"
+      "#### pipeline - hardcoded archive path\n\n"
       "```bash\n"
       "docker compose exec pipeline su hpcperfstats -c "
       "'ls /hpcperfstats/archive/i615-104/1780790218'\n"
@@ -1142,7 +1142,7 @@ def test_operator_discovery_rejects_raw_configparser_archive_dir():
       "| # | Service | Asked for | Found | Date |\n"
       "|---|---------|-----------|-------|------|\n\n"
       "### Pending commands\n\n"
-      "#### pipeline — raw ConfigParser\n\n"
+      "#### pipeline - raw ConfigParser\n\n"
       "```bash\n"
       "docker compose exec pipeline su hpcperfstats -c 'python3 -c \""
       "from configparser import ConfigParser; c=ConfigParser(); "
@@ -1165,7 +1165,7 @@ def test_operator_discovery_accepts_conf_parser_archive_dir():
       "| # | Service | Asked for | Found | Date |\n"
       "|---|---------|-----------|-------|------|\n\n"
       "### Pending commands\n\n"
-      "#### pipeline — conf_parser archive\n\n"
+      "#### pipeline - conf_parser archive\n\n"
       "```bash\n"
       "docker compose exec pipeline su hpcperfstats -c 'python3 -c \""
       "from hpcperfstats.dbload.lib import conf_parser as cfg; "
@@ -1209,7 +1209,7 @@ def test_check_live_plan_operator_discovery_denies_hardcoded_path(tmp_path):
       "| # | Service | Asked for | Found | Date |\n"
       "|---|---------|-----------|-------|------|\n\n"
       "### Pending commands\n\n"
-      "#### pipeline — hardcoded\n\n"
+      "#### pipeline - hardcoded\n\n"
       "```bash\n"
       "docker compose exec pipeline su hpcperfstats -c "
       "'ls /hpcperfstats/archive'\n"

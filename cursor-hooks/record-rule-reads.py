@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Cursor preToolUse — record turn activity (Reads / CreatePlan / live-plan Write).
+"""Cursor preToolUse - record turn activity (Reads / CreatePlan / live-plan Write).
 
 Cursor persists a turn's tool calls to ``transcript_path`` only after the turn
 ends, so mid-turn preToolUse gates cannot see this turn's tool parts and would
 deny plan Write / mis-fire block-until / close-gate. This recorder fires first
 on ``Read``/``ReadFile``/``CreatePlan``/``Write``/``StrReplace`` and appends to a
 flock-protected sidecar so gates can union it with the lagging transcript. It
-never blocks — always ``allow``.
+never blocks - always ``allow``.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ HOOK_DIR = Path(__file__).resolve().parent
 if str(HOOK_DIR) not in sys.path:
   sys.path.insert(0, str(HOOK_DIR))
 
-from hpc_hook_lib import (  # noqa: E402
+from hpc_hook_lib import (
   emit_allow,
   load_json_stdin,
   record_turn_activity,

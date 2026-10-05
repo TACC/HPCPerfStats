@@ -64,7 +64,7 @@ def day_phase_name_from_hints(day_phases: Any, tar_path: str) -> str | None:
     tar_path (str): String for tar path.
 
   Returns:
-    Optional[str]: Optional[str] — the result, or None when unavailable.
+    Optional[str]: Optional[str] - the result, or None when unavailable.
 
   Examples:
     >>> day_phase_name_from_hints(None, "x")  # doctest: +SKIP

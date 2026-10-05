@@ -34,7 +34,7 @@ def _make_closed_segment(tmp_path, arch_suffix, day):
   host.mkdir(parents=True, exist_ok=True)
   ts = int(datetime(day.year, day.month, day.day, 12, 0, 0).timestamp())
   seg = host / str(ts)
-  seg.write_text("%d job1 cn001\nline\n" % ts)
+  seg.write_text(f"{ts} job1 cn001\nline\n")
   os.utime(seg, (ts, ts))
   return seg
 
@@ -43,7 +43,7 @@ def _seal_day(tmp_path, seg, day):
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir(exist_ok=True)
   zst_key = str(
-    tgz_dir / ("%04d-%02d-%02d.tar.zst" % (day.year, day.month, day.day))
+    tgz_dir / (f"{day.year:04}-{day.month:02}-{day.day:02}.tar.zst")
   )
   tar_path = daily_tar_path_from_compressed(zst_key)
   arcname = get_tar_member_name(str(seg))
@@ -164,7 +164,7 @@ def test_apply_batch_delete_skips_path_in_quarantine_skip_paths(
     state._manifest["phase"] = PHASE_DELETING
     state._manifest["verified_count"] = 1
     _save_manifest(state._manifest_path, state._manifest)
-  # Live ingest overlap (handoff) — not paths_pending_delete self-block.
+  # Live ingest overlap (handoff) - not paths_pending_delete self-block.
   state.get_ingest_active_skip_paths = lambda: {skip_path}
   deleted = state.apply_batch_delete()
   assert deleted == 0
@@ -339,7 +339,7 @@ def test_any_active_raw_removal_work_false_when_only_retryable_skips_remain(
   assert state.waiting_on_ingest_at_startup()
   assert coord.count_days_waiting_on_ingest() == 1
   state._mark_done_waiting_on_ingest()
-  # F15: retryable closed raw still on disk → leave phase; do not mark PHASE_DONE.
+  # F15: retryable closed raw still on disk -> leave phase; do not mark PHASE_DONE.
   assert coord.phase(tar_path) != PHASE_DONE
   assert coord.any_needs_delete_phase()
   assert not coord.any_active_raw_removal_work()
@@ -358,7 +358,7 @@ def test_verification_complete_all_verified_deleted_retryable_skips_handoff(
   retry_host.mkdir(parents=True, exist_ok=True)
   ts = int(datetime(day.year, day.month, day.day, 14, 0, 0).timestamp())
   retry_seg = retry_host / str(ts)
-  retry_seg.write_text("%d job2 cn002\nline\n" % ts)
+  retry_seg.write_text(f"{ts} job2 cn002\nline\n")
   os.utime(retry_seg, (ts, ts))
   tar_path, zst = _seal_day(tmp_path, verified_seg, day)
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
@@ -386,7 +386,7 @@ def test_verification_complete_all_verified_deleted_retryable_skips_handoff(
   coord.begin_deleting(tar_path)
   deleted = coord.apply_batch_delete(tar_path)
   assert deleted == 0
-  # F15: retryable raw remains → stay verification_complete/deleting, not PHASE_DONE.
+  # F15: retryable raw remains -> stay verification_complete/deleting, not PHASE_DONE.
   assert coord.phase(tar_path) != PHASE_DONE
   assert retry_seg.is_file()
   assert coord.should_handoff_to_ingest(tar_path)
@@ -406,13 +406,13 @@ def test_mixed_not_in_archive_and_quarantine_marks_done_waiting_on_ingest(
   retry_host.mkdir(parents=True, exist_ok=True)
   ts_retry = int(datetime(day.year, day.month, day.day, 14, 0, 0).timestamp())
   retry_seg = retry_host / str(ts_retry)
-  retry_seg.write_text("%d job2 cn002\nline\n" % ts_retry)
+  retry_seg.write_text(f"{ts_retry} job2 cn002\nline\n")
   os.utime(retry_seg, (ts_retry, ts_retry))
   quar_host = tmp_path / "n3.cluster.integration.test"
   quar_host.mkdir(parents=True, exist_ok=True)
   ts_quar = int(datetime(day.year, day.month, day.day, 15, 0, 0).timestamp())
   quar_seg = quar_host / str(ts_quar)
-  quar_seg.write_text("%d job3 cn003\nline\n" % ts_quar)
+  quar_seg.write_text(f"{ts_quar} job3 cn003\nline\n")
   os.utime(quar_seg, (ts_quar, ts_quar))
   tar_path, zst = _seal_day(tmp_path, verified_seg, day)
   coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: False)
@@ -442,7 +442,7 @@ def test_mixed_not_in_archive_and_quarantine_marks_done_waiting_on_ingest(
   coord.begin_deleting(tar_path)
   deleted = coord.apply_batch_delete(tar_path)
   assert deleted == 0
-  # F15: retryable raw remains → do not mark PHASE_DONE.
+  # F15: retryable raw remains -> do not mark PHASE_DONE.
   assert coord.phase(tar_path) != PHASE_DONE
   assert retry_seg.is_file()
   assert quar_seg.is_file()
@@ -493,7 +493,7 @@ def test_promote_phase_when_verifying_but_post_seal_complete(tmp_path):
 
 
 def test_promote_phase_when_verifying_but_pre_seal_complete_sealed(tmp_path):
-  """PRE_SEAL cousin: verifying + pre_seal + sealed + retryables → promote."""
+  """PRE_SEAL cousin: verifying + pre_seal + sealed + retryables -> promote."""
   day = datetime(2026, 6, 5)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, zst = _seal_day(tmp_path, seg, day)
@@ -559,7 +559,7 @@ def test_apply_batch_delete_marks_done_when_only_retryable_skips_remain(
   coord.begin_deleting(tar_path)
   deleted = coord.apply_batch_delete(tar_path)
   assert deleted == 0
-  # F15: retryable closed raw remains → refuse PHASE_DONE.
+  # F15: retryable closed raw remains -> refuse PHASE_DONE.
   assert coord.phase(tar_path) != PHASE_DONE
   assert coord.phase(tar_path) == PHASE_DELETING
   assert state._needs_retry_after_ingest() or coord.should_handoff_to_ingest(
@@ -793,7 +793,7 @@ def test_handoff_paths_manifest_fast_many_entries(tmp_path, monkeypatch):
   for hour in range(10):
     ts = int(datetime(day.year, day.month, day.day, hour, 0, 0).timestamp())
     seg = host / str(ts)
-    seg.write_text("%d job1 cn001\nline\n" % ts)
+    seg.write_text(f"{ts} job1 cn001\nline\n")
     os.utime(seg, (ts, ts))
     segs.append(seg)
   tar_path, zst = _seal_day(tmp_path, segs[0], day)
@@ -959,7 +959,7 @@ def test_run_supervisor_delete_pass_tar_drop_before_chunk_wait():
 
 
 def test_discover_closed_raw_handoffs_phase_done_verified(tmp_path):
-  """phase=done + verified on disk → narrow discover (no handoff paths)."""
+  """phase=done + verified on disk -> narrow discover (no handoff paths)."""
   day = datetime(2026, 5, 22)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, zst = _seal_day(tmp_path, seg, day)
@@ -1065,7 +1065,7 @@ def test_closed_raw_handoff_manifest_fast_phase_done_many_retryable_skip(
   for hour in range(10):
     ts = int(datetime(day.year, day.month, day.day, hour, 0, 0).timestamp())
     seg = host / str(ts)
-    seg.write_text("%d job1 cn001\nline\n" % ts)
+    seg.write_text(f"{ts} job1 cn001\nline\n")
     os.utime(seg, (ts, ts))
     segs.append(seg)
   tar_path, zst = _seal_day(tmp_path, segs[0], day)
@@ -1116,7 +1116,7 @@ def test_branch_c_reclassify_under_deleting_upgrades_before_handoff(
   for hour in (10, 11):
     ts = int(datetime(day.year, day.month, day.day, hour, 0, 0).timestamp())
     seg = host / str(ts)
-    seg.write_text("%d job1 cn001\nline\n" % ts)
+    seg.write_text(f"{ts} job1 cn001\nline\n")
     os.utime(seg, (ts, ts))
     segs.append(seg)
   tar_path, zst = _seal_day(tmp_path, segs[0], day)
@@ -1175,8 +1175,8 @@ def test_skip_only_deleting_not_in_tar_handoffs_not_freeze(tmp_path):
   ts1 = int(datetime(day.year, day.month, day.day, 11, 0, 0).timestamp())
   seg0 = host / str(ts0)
   seg1 = host / str(ts1)
-  seg0.write_text("%d job1 cn001\nline\n" % ts0)
-  seg1.write_text("%d job1 cn001\nline\n" % ts1)
+  seg0.write_text(f"{ts0} job1 cn001\nline\n")
+  seg1.write_text(f"{ts1} job1 cn001\nline\n")
   os.utime(seg0, (ts0, ts0))
   os.utime(seg1, (ts1, ts1))
   tar_path, zst = _seal_day(tmp_path, seg0, day)
@@ -1238,7 +1238,7 @@ def test_reclassify_retryable_skip_upgrades_to_verified_when_tar_member(
   for hour in (10, 11):
     ts = int(datetime(day.year, day.month, day.day, hour, 0, 0).timestamp())
     seg = host / str(ts)
-    seg.write_text("%d job1 cn001\nline\n" % ts)
+    seg.write_text(f"{ts} job1 cn001\nline\n")
     os.utime(seg, (ts, ts))
     segs.append(seg)
   tar_path, zst = _seal_day(tmp_path, segs[0], day)
@@ -1564,7 +1564,7 @@ def test_kick_closed_raw_unblock_empty_handoff_advances_when_has_closed(
   )
   state = coord._get_or_create_day(tar_path)
   # Verified-but-not-deleted: handoff_paths empty (not retryable skip),
-  # has_closed True — kick must reopen delete.
+  # has_closed True - kick must reopen delete.
   state._record_entry(str(seg), zst, "verified", "verified")
   with state._lock:
     state._manifest["phase"] = PHASE_DONE
@@ -1686,7 +1686,7 @@ def test_discover_closed_raw_no_full_tree_scan(tmp_path):
 
 
 def test_requeue_handoff_before_kick(tmp_path):
-  """Handoff paths present → kick must not run before handoff callback."""
+  """Handoff paths present -> kick must not run before handoff callback."""
   retry_day = datetime(2026, 5, 23)
   retry_seg = _make_closed_segment(
     tmp_path, "cluster.integration.test", retry_day
@@ -1731,7 +1731,7 @@ def test_requeue_handoff_before_kick(tmp_path):
 
 
 def test_kick_delete_reopen_at_verification_complete(tmp_path):
-  """VERIFICATION_COMPLETE with verified pending delete → begin_deleting kick."""
+  """VERIFICATION_COMPLETE with verified pending delete -> begin_deleting kick."""
   day = datetime(2026, 5, 22)
   seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
   tar_path, zst = _seal_day(tmp_path, seg, day)
@@ -2118,7 +2118,7 @@ def test_pre_seal_verify_slices_by_paths_per_tick(tmp_path, monkeypatch):
   for hour in range(5):
     ts = int(datetime(day.year, day.month, day.day, hour, 0, 0).timestamp())
     seg = host / str(ts)
-    seg.write_text("%d job1 cn001\nline\n" % ts)
+    seg.write_text(f"{ts} job1 cn001\nline\n")
     os.utime(seg, (ts, ts))
     segs.append(seg)
   tgz_dir = tmp_path / "daily"
@@ -2178,7 +2178,7 @@ def test_pre_seal_verify_completes_large_day_without_budget_log(
   seg_paths = []
   for i in range(n_paths):
     seg = host / str(ts + i)
-    seg.write_text("%d job1 cn001\nline\n" % (ts + i))
+    seg.write_text(f"{ts + i} job1 cn001\nline\n")
     seg_paths.append(str(seg))
   tgz_dir = tmp_path / "daily"
   tgz_dir.mkdir()
@@ -2278,8 +2278,8 @@ def test_skip_only_apply_batch_delete_memos_day_scoped_closed_raw(
   ts1 = int(datetime(day.year, day.month, day.day, 11, 0, 0).timestamp())
   seg0 = host / str(ts0)
   seg1 = host / str(ts1)
-  seg0.write_text("%d job1 cn001\nline\n" % ts0)
-  seg1.write_text("%d job1 cn001\nline\n" % ts1)
+  seg0.write_text(f"{ts0} job1 cn001\nline\n")
+  seg1.write_text(f"{ts1} job1 cn001\nline\n")
   os.utime(seg0, (ts0, ts0))
   os.utime(seg1, (ts1, ts1))
   tar_path, zst = _seal_day(tmp_path, seg0, day)
@@ -2327,8 +2327,7 @@ def test_skip_only_apply_batch_delete_memos_day_scoped_closed_raw(
   deleted = coord.apply_batch_delete(tar_path)
   assert deleted == 0
   assert len(census_calls) <= 1, (
-    "skip-only delete/handoff must memoize day-scoped closed_raw "
-    "(got %d censuses)" % len(census_calls)
+    f"skip-only delete/handoff must memoize day-scoped closed_raw (got {len(census_calls)} censuses)"
   )
 
 
@@ -2339,7 +2338,7 @@ def test_day_close_job_scoped_closed_raw_pass_memo(tmp_path, monkeypatch):
   host.mkdir(parents=True, exist_ok=True)
   ts0 = int(datetime(day.year, day.month, day.day, 10, 0, 0).timestamp())
   seg0 = host / str(ts0)
-  seg0.write_text("%d job1 cn001\nline\n" % ts0)
+  seg0.write_text(f"{ts0} job1 cn001\nline\n")
   os.utime(seg0, (ts0, ts0))
   tar_path, zst = _seal_day(tmp_path, seg0, day)
   del zst
@@ -2372,8 +2371,7 @@ def test_day_close_job_scoped_closed_raw_pass_memo(tmp_path, monkeypatch):
   finally:
     state._clear_closed_raw_pass_memo()
   assert len(census_calls) == 1, (
-    "job-scoped memo must census once across pre_seal/seal probes "
-    "(got %d)" % len(census_calls)
+    f"job-scoped memo must census once across pre_seal/seal probes (got {len(census_calls)})"
   )
 
 
@@ -2477,7 +2475,7 @@ def test_pre_seal_many_tar_members_no_day_scoped_collect(tmp_path, monkeypatch):
   for hour in range(8):
     ts = int(datetime(day.year, day.month, day.day, hour, 0, 0).timestamp())
     seg = host / str(ts)
-    seg.write_text("%d job1 cn001\nline\n" % ts)
+    seg.write_text(f"{ts} job1 cn001\nline\n")
     os.utime(seg, (ts, ts))
     seg_paths.append(str(seg))
   tgz_dir = tmp_path / "daily"
@@ -2553,8 +2551,8 @@ def test_pre_seal_classify_paths_cache_skips_second_find(tmp_path, monkeypatch):
   ts1 = int(datetime(day.year, day.month, day.day, 11, 0, 0).timestamp())
   seg0 = host / str(ts0)
   seg1 = host / str(ts1)
-  seg0.write_text("%d job1 cn001\nline\n" % ts0)
-  seg1.write_text("%d job1 cn001\nline\n" % ts1)
+  seg0.write_text(f"{ts0} job1 cn001\nline\n")
+  seg1.write_text(f"{ts1} job1 cn001\nline\n")
   os.utime(seg0, (ts0, ts0))
   os.utime(seg1, (ts1, ts1))
   tar_path, _zst = _seal_day(tmp_path, seg0, day)

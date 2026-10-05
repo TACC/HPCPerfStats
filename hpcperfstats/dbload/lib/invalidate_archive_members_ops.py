@@ -36,7 +36,7 @@ def compose_argv(
   compose_files: Any | None = None,
 ) -> list[str]:
   """
-  Build ``docker compose -p <project> [-f …]`` argv prefix.
+  Build ``docker compose -p <project> [-f ...]`` argv prefix.
 
   Args:
     project (Any): Compose project name.
@@ -111,9 +111,7 @@ def restart_pipeline_compose(
       or ""
     ).strip()
     raise RuntimeError(
-      "docker compose restart pipeline failed (exit {}): {}".format(
-        getattr(completed, "returncode", "?"), err or "(no output)"
-      ),
+      f"docker compose restart pipeline failed (exit {getattr(completed, 'returncode', '?')}): {err or '(no output)'}",
     )
 
 

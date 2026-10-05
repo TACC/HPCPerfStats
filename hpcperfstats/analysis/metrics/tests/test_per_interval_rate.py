@@ -97,7 +97,7 @@ def test_time_imbalance_duplicate_tail_timestamps_no_runtime_warning():
 
 
 def test_schema_iteration_yields_event_names_not_indices():
-  """``for name in schema`` must yield event strings (Python 3 otherwise uses __getitem__(0), …)."""
+  """``for name in schema`` must yield event strings (Python 3 otherwise uses __getitem__(0), ...)."""
   schema = metrics._Schema(["SSE_D_ALL", "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE"])
   assert list(schema) == ["SSE_D_ALL", "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE"]
   assert schema["SSE_D_ALL"].index == 0

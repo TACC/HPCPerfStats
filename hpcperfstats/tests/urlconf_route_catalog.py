@@ -92,7 +92,7 @@ def build_pipeline_http_endpoint_specs(
 ) -> list[PipelineHttpEndpointSpec]:
   """Concrete URLs for every entry in ``EXPECTED_ROUTE_TEMPLATES``.
 
-  Raises ``ValueError`` if a template is not mapped — forces matrix updates
+  Raises ``ValueError`` if a template is not mapped - forces matrix updates
   when the URLconf gains patterns.
   """
   host_q = urlencode(
@@ -254,7 +254,7 @@ def build_pipeline_http_endpoint_specs(
     PipelineHttpEndpointSpec(
       "api/jobs/<str:jid>/<str:type_name>/",
       "GET",
-      "/api/jobs/{}/{}/".format(jid, "cpu"),
+      f"/api/jobs/{jid}/cpu/",
       200,
       499,
       "application/json",

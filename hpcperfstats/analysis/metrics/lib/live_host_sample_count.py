@@ -4,7 +4,7 @@ PostgreSQL correlated subquery: live per-host distinct sample times (host_data).
 Used when deciding whether to re-run metrics after new samples arrive. The outer
 row is the accounting ``job_data`` row; correlation uses quoted table/column
 names in SQL. Only the site FQDN suffix is a bound parameter for the legacy
-``host_list`` path (never ``OuterRef`` in params — drivers cannot adapt those).
+``host_list`` path (never ``OuterRef`` in params - drivers cannot adapt those).
 """
 
 from __future__ import annotations

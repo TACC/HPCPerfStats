@@ -4,21 +4,21 @@ and sort order.
 
 sort_rank semantics (designation identity for filters / API
 ``performance.sort_rank``):
-0 — Metrics & Plots available (non-null metrics values and fresh plot/detail
-artifacts). 1 — Metrics available (non-null values; artifacts not ready).
-2–4 — Too few samples to complete (metrics rows exist, all values null; ranks
-differ by ``metrics_distinct_time_count``). 5 — Too short to complete (no
-metrics rows; runtime < SHORT threshold). 6 — Metrics & Plots not yet completed
+0 - Metrics & Plots available (non-null metrics values and fresh plot/detail
+artifacts). 1 - Metrics available (non-null values; artifacts not ready).
+2-4 - Too few samples to complete (metrics rows exist, all values null; ranks
+differ by ``metrics_distinct_time_count``). 5 - Too short to complete (no
+metrics rows; runtime < SHORT threshold). 6 - Metrics & Plots not yet completed
 (no metrics rows; runtime null, == SHORT, or > SHORT).
 
-``performance_sort_group`` collapses ranks 2–4 into one primary sort bucket
+``performance_sort_group`` collapses ranks 2-4 into one primary sort bucket
 (group 2). Public ``order_by=performance_sort_rank`` orders by that group.
 
 Attributes:
   LABEL_METRICS_AND_PLOTS_AVAILABLE: Display label for sort_rank 0.
   LABEL_METRICS_AVAILABLE: Display label for sort_rank 1.
   LABEL_NOT_YET_COMPLETED: Display label for sort_rank 6.
-  LABEL_TOO_FEW_SAMPLES: Display label for sort_ranks 2–4.
+  LABEL_TOO_FEW_SAMPLES: Display label for sort_ranks 2-4.
   LABEL_TOO_SHORT: Display label for sort_rank 5.
   MONITORING_GAPS_MIN_DISTINCT_TIMES: Attribute.
   PERFORMANCE_STATUS_BY_SORT_RANK: Attribute.
@@ -48,7 +48,7 @@ from .models import metrics_data
 
 # Threshold for rank 2 vs 3 when metrics rows exist but all values are null.
 MONITORING_GAPS_MIN_DISTINCT_TIMES = 5
-# Jobs shorter than this (seconds) with no metrics rows → Too short to complete.
+# Jobs shorter than this (seconds) with no metrics rows -> Too short to complete.
 SHORT_RUNTIME_NO_METRICS_SECONDS = 600.0
 
 LABEL_METRICS_AND_PLOTS_AVAILABLE = "Metrics & Plots available"
@@ -58,7 +58,7 @@ LABEL_TOO_SHORT = "Too short to complete"
 LABEL_NOT_YET_COMPLETED = "Metrics & Plots not yet completed"
 
 # Canonical performance status labels keyed by sort_rank (header filter + filter_options).
-# Ranks 2–4 share the same UI label; designation values stay distinct for filtering.
+# Ranks 2-4 share the same UI label; designation values stay distinct for filtering.
 PERFORMANCE_STATUS_BY_SORT_RANK = (
   (0, LABEL_METRICS_AND_PLOTS_AVAILABLE),
   (1, LABEL_METRICS_AVAILABLE),
@@ -93,7 +93,7 @@ def performance_status_label(sort_rank: Any) -> Any:
 
 def expand_performance_sort_ranks_for_filter(ranks: Any) -> Any:
   """
-  Expand shared-label ranks so filtering one Too-few rank covers 2–4.
+  Expand shared-label ranks so filtering one Too-few rank covers 2-4.
 
   Args:
     ranks (Any): Iterable of int ranks from the query string.
@@ -215,7 +215,7 @@ def summarize_performance(
       "aria_label": aria_label_for(label),
       "sort_rank": 5,
     }
-  # No metrics rows; runtime null, == 600, or > 600 — not yet through update_metrics.
+  # No metrics rows; runtime null, == 600, or > 600 - not yet through update_metrics.
   label = LABEL_NOT_YET_COMPLETED
   return {
     "label": label,
@@ -319,7 +319,7 @@ def annotate_job_list_performance_fields(queryset: Any) -> Any:
       output_field=IntegerField(),
     ),
   )
-  # Ranks 2–4 share one primary sort bucket (Too few samples to complete).
+  # Ranks 2-4 share one primary sort bucket (Too few samples to complete).
   return qs.annotate(
     performance_sort_group=Case(
       When(

@@ -38,7 +38,7 @@ def test_mark_entries_cache_concurrent_get_set_clear(tmp_path: Path) -> None:
       errors.append(exc)
 
   threads = [
-    threading.Thread(target=_worker, args=(i,), name="mark-cache-%d" % i)
+    threading.Thread(target=_worker, args=(i,), name=f"mark-cache-{i}")
     for i in range(8)
   ]
   for thread in threads:
@@ -67,7 +67,7 @@ def test_ingest_readiness_caches_expose_ft_safe_locks() -> None:
     try:
       barrier.wait(timeout=5)
       for n in range(50):
-        key = ("host%d" % (idx % 3), n % 10)
+        key = (f"host{idx % 3}", n % 10)
         now = time.time()
         with ready._HEAD_DB_CACHE_LOCK:
           ready._HEAD_DB_CACHE[key] = {
@@ -75,7 +75,7 @@ def test_ingest_readiness_caches_expose_ft_safe_locks() -> None:
             "checked_at": now,
           }
           ready._trim_head_db_cache()
-        fp = ("/tmp/p%d" % (idx % 4), n, n)
+        fp = (f"/tmp/p{idx % 4}", n, n)
         with ready._PATH_READY_CACHE_LOCK:
           ready._PATH_READY_CACHE[fp] = {
             "ready": True,
@@ -88,7 +88,7 @@ def test_ingest_readiness_caches_expose_ft_safe_locks() -> None:
       errors.append(exc)
 
   threads = [
-    threading.Thread(target=_worker, args=(i,), name="ready-cache-%d" % i)
+    threading.Thread(target=_worker, args=(i,), name=f"ready-cache-{i}")
     for i in range(8)
   ]
   for thread in threads:
@@ -120,7 +120,7 @@ def test_host_itimes_caches_expose_ft_safe_locks() -> None:
     try:
       barrier.wait(timeout=5)
       for n in range(50):
-        key = ("h%d" % (idx % 3), n, n + 1)
+        key = (f"h{idx % 3}", n, n + 1)
         now = time.time()
         with itimes._HOST_ITIMES_CACHE_LOCK:
           itimes._HOST_ITIMES_CACHE[key] = {
@@ -138,7 +138,7 @@ def test_host_itimes_caches_expose_ft_safe_locks() -> None:
       errors.append(exc)
 
   threads = [
-    threading.Thread(target=_worker, args=(i,), name="itimes-cache-%d" % i)
+    threading.Thread(target=_worker, args=(i,), name=f"itimes-cache-{i}")
     for i in range(8)
   ]
   for thread in threads:
@@ -185,12 +185,12 @@ def test_daily_archive_members_l1_cache_concurrent(
       for n in range(40):
         helpers._store_daily_archive_members_cache(
           path,
-          {"m%d" % n: n + idx},
+          {f"m{n}": n + idx},
         )
         helpers._lookup_daily_archive_members_cache(path)
         helpers.merge_daily_archive_members_l1_cache(
           path,
-          {"m%d" % n: n + 1},
+          {f"m{n}": n + 1},
         )
         if n % 5 == 0:
           helpers.invalidate_daily_archive_members_cache(path, reason="test")
@@ -200,7 +200,7 @@ def test_daily_archive_members_l1_cache_concurrent(
       errors.append(exc)
 
   threads = [
-    threading.Thread(target=_worker, args=(i,), name="l1-cache-%d" % i)
+    threading.Thread(target=_worker, args=(i,), name=f"l1-cache-{i}")
     for i in range(8)
   ]
   for thread in threads:

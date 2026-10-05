@@ -37,7 +37,7 @@ def test_int64_blank_base_and_family():
 
 
 def test_four_device_blank_sums_match_production_poison():
-  """JID 3351747-class: 4 × FP64 blank power; 4 × INT64 blank util."""
+  """JID 3351747-class: 4 x FP64 blank power; 4 x INT64 blank util."""
   power_sum = 4 * DCGM_FP64_BLANK
   util_sum = 4 * float(DCGM_INT64_BLANK)
   assert is_dcgm_numeric_blank(power_sum)

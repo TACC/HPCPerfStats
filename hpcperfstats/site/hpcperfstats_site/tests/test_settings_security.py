@@ -21,6 +21,21 @@ def test_validate_cors_allowed_origins_rejects_empty_in_production(monkeypatch):
     settings._validate_cors_allowed_origins([])
 
 
+def test_validate_cors_allowed_origins_not_skipped_for_run_tests_argv(
+  monkeypatch,
+):
+  """``run_tests.py`` with piped stdin must not bypass production CORS checks."""
+  monkeypatch.setattr(settings, "DEBUG", False)
+  monkeypatch.setattr(
+    settings.sys,
+    "argv",
+    ["/data/HPCPerfStats/HPCPerfStats/scripts/run_tests.py"],
+  )
+  monkeypatch.setattr(settings.sys.stdin, "isatty", lambda: False)
+  with pytest.raises(ValueError):
+    settings._validate_cors_allowed_origins([])
+
+
 def test_validate_cors_allowed_origins_rejects_dev_hosts_in_production(
   monkeypatch,
 ):

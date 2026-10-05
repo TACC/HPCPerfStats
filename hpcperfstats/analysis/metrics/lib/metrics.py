@@ -316,7 +316,7 @@ def _hashable_metric_events_signature(events: Any) -> Any:
     keys.
 
   ``tuple(events)`` is unsafe when ingest/catalog corruption nests lists inside
-  ``events`` — the tuple can contain a raw ``list``, which is unhashable and
+  ``events`` - the tuple can contain a raw ``list``, which is unhashable and
   crashes ``cache_key in cache`` during ``job_arc`` / ``job_value_mean``.
 
   Args:
@@ -808,7 +808,7 @@ class _Schema:
       >>> _Schema(None)  # doctest: +SKIP
     """
     # Normalise event names to strings so that schema construction is robust
-    # when upstream code passes non‑string labels (e.g. pandas.Timestamp).
+    # when upstream code passes non-string labels (e.g. pandas.Timestamp).
     self.events = [str(e) for e in events]
     self._index = {name: idx for idx, name in enumerate(self.events)}
     self.desc = " ".join(self.events) + "\n"
@@ -1061,7 +1061,7 @@ def _in_window_telemetry_bounds_for_job(job: Any) -> Any:
 
   def run(hosts_list: Any, tf_cur: Any) -> Any:
     """
-    Min/Max telemetry time for one host×time chunk.
+    Min/Max telemetry time for one hostxtime chunk.
 
     Args:
       hosts_list (Any): Hostnames for this attempt.
@@ -1374,9 +1374,7 @@ def _unwrap(args: Any) -> Any:
     raise
   except (OperationalError, DatabaseError) as exc:
     log_print(
-      "Skipping metrics for jid {} after DB error in worker: {}".format(
-        getattr(job, "jid", "?"), exc
-      )
+      f"Skipping metrics for jid {getattr(job, 'jid', '?')} after DB error in worker: {exc}"
     )
     return {
       "jid": _metrics_jid_value(job),
@@ -1388,9 +1386,7 @@ def _unwrap(args: Any) -> Any:
     }
   except Exception as exc:
     _log_exception_details(
-      "Skipping metrics for jid {} after compute error".format(
-        getattr(job, "jid", "?")
-      ),
+      f"Skipping metrics for jid {getattr(job, 'jid', '?')} after compute error",
       exc,
     )
     return {
@@ -1543,12 +1539,7 @@ def _persist_metrics_payload(payload: Any) -> Any:
   status = str(payload.get("status") or "ok")
   if status != "ok":
     log_print(
-      "Metrics.run worker outcome failed jid={} status={} error_type={} error={!r}".format(
-        jid,
-        status,
-        payload.get("error_type"),
-        payload.get("error_message"),
-      ),
+      f"Metrics.run worker outcome failed jid={jid} status={status} error_type={payload.get('error_type')} error={payload.get('error_message')!r}",
       flush=True,
     )
     return _metrics_run_outcome(
@@ -1869,7 +1860,7 @@ def _host_data_metric_rows_queryset(
   ``sum_per_sample`` moves the per-sample total across events and devices into
   PostgreSQL, so a job with many events/devices transfers one row per sample
     time
-  instead of ``events × devices`` rows. The aggregate queryset labels its
+  instead of ``events x devices`` rows. The aggregate queryset labels its
     columns
   with the ``jid_table`` aliases; ``_normalize_host_data_metric_rows`` maps them
   back so both paths yield ``{host, time, <metric_column>}`` rows.
@@ -2031,7 +2022,7 @@ def _host_data_metric_rows_with_host_chunk_retry(
   return []
 
 
-# Prefer host×time chunks sized like jid_table's default (16) so ~48-host jobs
+# Prefer hostxtime chunks sized like jid_table's default (16) so ~48-host jobs
 # issue several bounded queries; pairs with metrics_worker_statement_timeout_ms
 # so chunk-on-timeout split can fire before the batch stall budget. Equal to
 # ``jid_table.JID_TABLE_HOST_QUERY_BATCH`` (drift-tested).
@@ -2050,11 +2041,11 @@ def _host_data_metric_rows_batched(
   nonnegative_only: bool = False,
 ) -> Any:
   """
-  Fetch host_data rows for metrics bucketing via host×time chunks.
+  Fetch host_data rows for metrics bucketing via hostxtime chunks.
 
   Rows are always ``{host, time, <metric_column>}``. With ``sum_per_sample`` the
   value is the per-sample total across events and devices, summed by PostgreSQL;
-  host×time chunks are disjoint and each chunk groups per (host, time), so rows
+  hostxtime chunks are disjoint and each chunk groups per (host, time), so rows
   stay unique per (host, time) and callers can skip a pandas groupby.
 
   Args:
@@ -2099,7 +2090,7 @@ def _host_data_metric_rows_batched(
 
   def run(hosts_list: Any, tf_cur: Any) -> Any:
     """
-    Materialize metric rows for one host×time chunk.
+    Materialize metric rows for one hostxtime chunk.
 
     Args:
       hosts_list (Any): Hostnames for this attempt.
@@ -2536,12 +2527,7 @@ class Metrics:
         )
       if outcomes:
         log_print(
-          "Metrics.run: recovered after worker stall completed={} "
-          "failed={} pool_reset_confirmed={}".format(
-            sum(1 for o in outcomes if o.get("ok")),
-            sum(1 for o in outcomes if not o.get("ok")),
-            1 if reset_confirmed else 0,
-          ),
+          f"Metrics.run: recovered after worker stall completed={sum(1 for o in outcomes if o.get('ok'))} failed={sum(1 for o in outcomes if not o.get('ok'))} pool_reset_confirmed={1 if reset_confirmed else 0}",
           flush=True,
         )
         return outcomes
@@ -2579,7 +2565,7 @@ class Metrics:
 
     For each sample time: sum ``arc`` across events and devices (instantaneous
     total). Within each 5m bucket: **mean** of those per-time totals (not a sum
-    of all rows — summing samples inflated rates by sample count). For each
+    of all rows - summing samples inflated rates by sample count). For each
     host: mean of per-bucket values (after dropping the first bucket). By
     default returns the **arithmetic mean of those per-host values** across
     hosts (most ``avg_*`` simple metrics). When ``host_aggregate="sum"``
@@ -2641,7 +2627,7 @@ class Metrics:
     for typ in type_probe_names(typename):
       if not _metric_type_events_feasible(schema, typ, events):
         continue
-      # Instantaneous total at each sample time (events × devices) is summed in
+      # Instantaneous total at each sample time (events x devices) is summed in
       # SQL; pulling every device row into pandas exhausted the statement
       # budget on multi-node PMC jobs.
       rows = _host_data_metric_rows_batched(
@@ -4693,7 +4679,7 @@ class max_packetrate:
 # may miss high water marks in between.
 class mem_hwm:
   """
-  Memory high-water mark (GiB) from host_mem/mem used − slab − file pages.
+  Memory high-water mark (GiB) from host_mem/mem used - slab - file pages.
 
   Monitor emits KB (``mem_used`` / ``slab`` / ``file_pages``); dual-read also
   accepts legacy PascalCase event names. Peak KB is scaled by ``1024**2``
@@ -4702,7 +4688,7 @@ class mem_hwm:
 
   def compute_metric(self, u: Any) -> Any:
     """
-    Peak (MemUsed − Slab − FilePages) over hosts, in GiB.
+    Peak (MemUsed - Slab - FilePages) over hosts, in GiB.
 
     Args:
       u (Any): Job utils view with ``get_type`` for ``host_mem`` / ``mem``.

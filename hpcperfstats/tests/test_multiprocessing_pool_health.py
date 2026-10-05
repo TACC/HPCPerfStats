@@ -982,8 +982,7 @@ def test_read_proc_stat_fields_survives_non_ascii_comm(monkeypatch, tmp_path):
   self_pid = os.getpid()
   (good_pid / "stat").write_bytes(
     (
-      "90002 (zombie) Z %d 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
-      % self_pid
+      f"90002 (zombie) Z {self_pid} 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
     ).encode("ascii")
   )
 
@@ -1019,7 +1018,7 @@ def test_iter_zombie_child_pids_skips_unreadable_and_continues(
   self_pid = os.getpid()
   (zombie / "stat").write_bytes(
     (
-      "91001 (z) Z %d 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n" % self_pid
+      f"91001 (z) Z {self_pid} 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
     ).encode("ascii")
   )
   real_open = open
@@ -1477,7 +1476,7 @@ def test_supplement_duplicate_only_does_not_busy_spin():
   def _supplement(slots_needed, in_flight):
     del slots_needed
     calls["n"] += 1
-    # Always offer a path already in flight → dispatch suppressed.
+    # Always offer a path already in flight -> dispatch suppressed.
     return list(in_flight)[:1] or ["chunk0"]
 
   gen = mph.imap_sliding_window_watch_pool(
@@ -2509,7 +2508,7 @@ def test_terminate_pool_bounded_abandon_retries_reap_until_clear(monkeypatch):
   iter_calls = {"n": 0}
 
   def _iter_zombies():
-    # Each abandon loop calls reap (1×) then remaining check (1×).
+    # Each abandon loop calls reap (1x) then remaining check (1x).
     iter_calls["n"] += 1
     if iter_calls["n"] <= 3:
       return iter([830, 831])
@@ -2623,9 +2622,9 @@ def test_metrics_recycle_not_misread_as_attrition(monkeypatch):
     "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_maxtasksperchild",
     lambda: 0,
   )
-  # Without metrics context, ingest getter=0 → not recycle.
+  # Without metrics context, ingest getter=0 -> not recycle.
   assert mph._dead_worker_exitcode_is_recycle(_Proc(), pool=None) is False
-  # With metrics maxtasksperchild in context → recycle.
+  # With metrics maxtasksperchild in context -> recycle.
   assert (
     mph._dead_worker_exitcode_is_recycle(
       _Proc(),
@@ -2827,7 +2826,7 @@ def test_maintain_skips_probe_when_workers_busy(monkeypatch):
 
 
 def test_reclaim_never_kills_registered_pool_workers(monkeypatch):
-  """Census over-cap must cull orphans only — never truncate registered keep."""
+  """Census over-cap must cull orphans only - never truncate registered keep."""
   killed = []
   monkeypatch.setattr(
     "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_pool_processes",
@@ -3031,7 +3030,7 @@ def test_pool_recover_cap_fatals_taskqueue_dead(monkeypatch):
 def test_unhealed_recover_same_skip_no_quarantines_path_not_exit_124(
   monkeypatch,
 ):
-  """Identical pending after N probe-ok recovers → path soft-fail, not exit 124."""
+  """Identical pending after N probe-ok recovers -> path soft-fail, not exit 124."""
   monkeypatch.setattr(mph, "IDLE_POOL_RECOVER_MAX", 3)
   monkeypatch.setattr(mph, "IDLE_POOL_UNHEALED_RECOVER_MAX", 3)
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
@@ -3099,7 +3098,7 @@ def test_unhealed_recover_same_skip_no_quarantines_path_not_exit_124(
 
 
 def test_healed_recover_different_pending_still_allows_cap(monkeypatch):
-  """Changing pending between recovers resets unhealed streak; empty soft-fail → 124."""
+  """Changing pending between recovers resets unhealed streak; empty soft-fail -> 124."""
   monkeypatch.setattr(mph, "IDLE_POOL_RECOVER_MAX", 2)
   monkeypatch.setattr(mph, "IDLE_POOL_UNHEALED_RECOVER_MAX", 2)
   monkeypatch.setattr(mph, "idle_pool_ghost_abort_polls", lambda _n: 1000)
@@ -3121,7 +3120,7 @@ def test_healed_recover_different_pending_still_allows_cap(monkeypatch):
     pending_async.clear()
     new_pool = _ManualPool()
     # Distinct pending each recover so unhealed streak never reaches max.
-    path = "stuck_path_%d" % recover_calls["n"]
+    path = f"stuck_path_{recover_calls['n']}"
     ar = new_pool.apply_async(fn, (path,))
     pending_async[ar] = path
     return {"pool": new_pool, "collected": []}

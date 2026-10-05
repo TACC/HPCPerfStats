@@ -1,5 +1,5 @@
 """
-Queue wait (start_time − submit_time) contract for job list SQL aggregates and
+Queue wait (start_time - submit_time) contract for job list SQL aggregates and
   histograms.
 """
 

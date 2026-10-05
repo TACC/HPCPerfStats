@@ -3,7 +3,7 @@
 Load stats from sealed daily archives (``.tar.zst`` / legacy ``.tar.gz``) into
 the database.
 
-Operator backfill tool: reads **only** sealed archives via in-memory zstd→tar
+Operator backfill tool: reads **only** sealed archives via in-memory zstd->tar
 streaming. Uncompressed ``YYYY-MM-DD.tar`` is never opened; unsealed days are
 skipped.
 
@@ -133,19 +133,7 @@ def _log_archive_ingest_startup(
     >>> _log_archive_ingest_startup(None, None)  # doctest: +SKIP
   """
   log_print(
-    "sync_timedb_archive: pool_processes=%d zstd_threads=%s "
-    "ionice=c%s-n%s nice=%s sealed_days=%d skipped_tar_only=%d "
-    "max_concurrent_sealed=%d"
-    % (
-      _archive_worker_process_count(),
-      cfg.get_archive_zstd_threads(),
-      cfg.get_archive_zstd_ionice_class(),
-      cfg.get_archive_zstd_ionice_level(),
-      cfg.get_archive_zstd_nice(),
-      sealed_days,
-      skipped_tar_only,
-      cfg.get_sync_timedb_archive_max_concurrent_sealed_days(),
-    ),
+    f"sync_timedb_archive: pool_processes={_archive_worker_process_count()} zstd_threads={cfg.get_archive_zstd_threads()} ionice=c{cfg.get_archive_zstd_ionice_class()}-n{cfg.get_archive_zstd_ionice_level()} nice={cfg.get_archive_zstd_nice()} sealed_days={sealed_days} skipped_tar_only={skipped_tar_only} max_concurrent_sealed={cfg.get_sync_timedb_archive_max_concurrent_sealed_days()}",
     flush=True,
   )
 
@@ -412,15 +400,7 @@ def _update_archive_sliding_window_stall_diagnostics(
     stall_diagnostics.ingest_pipeline = "sealed_archive_backfill"
   if log_budget and sealed_paths:
     log_print(
-      "sync_timedb_archive: in_flight sealed_days=%d "
-      "sealed_archive_stall_budget_s=%.1f "
-      "dynamic_stall_abort_after=%d dynamic_stall_wall_s=%.0f"
-      % (
-        len(sealed_paths),
-        batch_max_s,
-        batch_abort,
-        batch_abort * poll_s,
-      ),
+      f"sync_timedb_archive: in_flight sealed_days={len(sealed_paths)} sealed_archive_stall_budget_s={batch_max_s:.1f} dynamic_stall_abort_after={batch_abort} dynamic_stall_wall_s={batch_abort * poll_s:.0f}",
       flush=True,
     )
   return batch_abort, batch_max_s
@@ -483,8 +463,7 @@ def _process_sealed_tasks_sliding_window(
   stall_diagnostics.active_pool = pool
   stall_diagnostics.current_imap_batch_size = len(all_sealed_paths)
   log_print(
-    "sync_timedb_archive: sealed_days_total=%d max_inflight=%d"
-    % (len(all_sealed_paths), max_inflight),
+    f"sync_timedb_archive: sealed_days_total={len(all_sealed_paths)} max_inflight={max_inflight}",
     flush=True,
   )
   prewarm_summary = _prewarm_archive_members_for_sealed_chunk(all_sealed_paths)

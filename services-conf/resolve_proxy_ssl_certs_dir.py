@@ -134,7 +134,7 @@ def resolve_source_certs_dir(
 
   Args:
     ssl_source_mount (Path): Read-only mount root (for example ``/mnt/ssl-source``).
-    ssl_certs_rel (str | None): Optional subpath under the mount for LE ``live/…``.
+    ssl_certs_rel (str | None): Optional subpath under the mount for LE ``live/...``.
 
   Returns:
     Path: Absolute resolved source directory containing PEMs.

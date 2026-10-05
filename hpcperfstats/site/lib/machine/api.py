@@ -207,7 +207,7 @@ from .views import (
 
 # Shared thread pools (capped total threads per process).
 _small_executor = (
-  None  # dashboard, queue histograms, job_detail, job_plots (≤8 tasks)
+  None  # dashboard, queue histograms, job_detail, job_plots (<=8 tasks)
 )
 _job_plots_lock = threading.Lock()
 
@@ -281,7 +281,7 @@ def _get_admin_host_stats_statement_timeout_ms() -> Any:
   Statement timeout for Admin Monitor 3h GROUP BY fallback only.
 
   Primary path uses Redis inventory + LATERAL LIMIT 1 (no long timeout).
-  Never floor at 600s — that matched the old 8-day GroupAggregate hang.
+  Never floor at 600s - that matched the old 8-day GroupAggregate hang.
 
   Returns:
     Any: Open return polymorphism from
@@ -1016,7 +1016,7 @@ def _apply_job_list_performance_sort_rank_filter(
   """
   Filter annotated queryset by comma-separated performance_sort_rank values.
 
-  Shared-label ranks 2–4 (Too few samples to complete) expand so selecting
+  Shared-label ranks 2-4 (Too few samples to complete) expand so selecting
   any one matches all three designations.
 
   Args:
@@ -1233,7 +1233,7 @@ def _delete_django_cache_page_entries_for_request(
 
   Drops the ``cache_header`` registry entry, then either the ``get_cache_key``
     page
-  key or—when the registry is missing—the empty-``Vary`` page key Django would
+  key or-when the registry is missing-the empty-``Vary`` page key Django would
     use.
 
   Args:
@@ -1413,11 +1413,9 @@ def _get_cache_stats() -> Any:
         total_sampled_bytes = 0
         # Limit to a reasonable number of sampled keys to keep this light.
         max_sample = 500
-        scanned = 0
-        for key in client.scan_iter(count=max_sample):
+        for scanned, key in enumerate(client.scan_iter(count=max_sample)):
           if scanned >= max_sample:
             break
-          scanned += 1
           try:
             size = client.memory_usage(key) or 0
           except Exception:
@@ -2302,7 +2300,7 @@ def invalidate_cache_for_page(request: Any) -> Any:
     path_variants.add(f"{normalized_path}/")
 
   # Machine SPA browse pages load calendar/year options from GET /api/home/, which
-  # uses its own @dynamic_cache_page entry plus cached_orm keys (dates, queues, …).
+  # uses its own @dynamic_cache_page entry plus cached_orm keys (dates, queues, ...).
   # Invalidate those whenever any /machine path is purged so staff "invalidate this
   # page" refreshes the calendar data contract for the whole SPA shell.
   if normalized_path == "/machine" or normalized_path.startswith("/machine/"):
@@ -2541,7 +2539,7 @@ def _queue_histogram_display_label(raw_queue: Any) -> Any:
 
 def _merge_queue_bar_rows(rows: Any, *, metric: Any) -> Any:
   """
-  Merge ORM rows that map to the same display label (e.g. NULL vs '' → '(no.
+  Merge ORM rows that map to the same display label (e.g. NULL vs '' -> '(no.
 
     queue)').
 
@@ -3637,7 +3635,7 @@ def job_detail(request: Any, pk: Any) -> Any:
   if err is not None:
     return err
 
-  # Artifact / job_data only — do not construct jid_table (host_data) here.
+  # Artifact / job_data only - do not construct jid_table (host_data) here.
   host_list = list(job.host_list or [])
   defer_set = _parse_job_detail_defer_set(request)
 
@@ -3983,11 +3981,7 @@ def job_plots(request: Any, pk: Any) -> Any:
   zoom_mode = str(request.GET.get("zoom", "")).lower() in ("1", "true", "yes")
   if plot_kind and plot_kind not in JOB_PLOT_KINDS:
     return Response(
-      {
-        "error": (
-          "Invalid plot parameter. Use {}.".format(", ".join(JOB_PLOT_KINDS))
-        )
-      },
+      {"error": (f"Invalid plot parameter. Use {', '.join(JOB_PLOT_KINDS)}.")},
       status=status.HTTP_400_BAD_REQUEST,
     )
   if not plot_kind:
@@ -4696,7 +4690,7 @@ def job_monitor(request: Any) -> Any:
   - username
   - total_jobs: number of jobs run
   - failed_jobs: number of jobs with state OUT_OF_MEMORY or FAILED
-  - failed_rate: percentage of failed jobs (0–100), sorted descending.
+  - failed_rate: percentage of failed jobs (0-100), sorted descending.
   GPU fields are intentionally omitted from this initial endpoint so the page
   can render quickly; per-user GPU stats are fetched asynchronously from
   job_monitor_gpu_for_user.

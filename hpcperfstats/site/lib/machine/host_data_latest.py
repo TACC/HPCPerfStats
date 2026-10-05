@@ -1,7 +1,7 @@
 """
 Cheap host_data freshness helpers (LATERAL per-host max, site-wide LIMIT 1).
 
-Avoid multi-day ``GROUP BY host, max(time)`` over the hypertable — that path
+Avoid multi-day ``GROUP BY host, max(time)`` over the hypertable - that path
 scans hundreds of millions of rows on large sites (Admin Monitor hang).
 
 Attributes:
@@ -192,7 +192,7 @@ def newest_host_data_sample_time(window: Any | None = None) -> Any:
   """
   Return the newest ``host_data.time`` in ``window``, or ``None``.
 
-  Uses ``ORDER BY time DESC LIMIT 1`` (chunk-friendly) — not ``max(time)``
+  Uses ``ORDER BY time DESC LIMIT 1`` (chunk-friendly) - not ``max(time)``
   over an unbounded table.
 
   Args:

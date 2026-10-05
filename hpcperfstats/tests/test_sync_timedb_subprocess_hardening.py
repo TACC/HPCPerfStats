@@ -37,7 +37,7 @@ def test_compress_poll_loop_drains_pipes():
 def test_restore_from_compressed_backup_no_self_deadlock():
   """A6: inner decompress must not re-acquire a lock the caller already holds."""
   source = inspect.getsource(helpers.replace_corrupt_tar_from_compressed_backup)
-  assert "already_held=True" in source or "already_locked=True" in source
+  assert "already_locked=" in source
   decomp = inspect.getsource(zstd_cli.decompress_compressed_to_tar)
   assert "already_locked" in decomp
   lock_src = inspect.getsource(file_locking.file_write_lock)

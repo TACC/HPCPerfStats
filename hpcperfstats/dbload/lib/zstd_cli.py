@@ -255,7 +255,7 @@ def _thread_args(thread_count: int) -> list[str]:
   """
   if int(thread_count) == 0:
     return ["-T0"]
-  return ["-T%d" % max(1, int(thread_count))]
+  return [f"-T{max(1, int(thread_count))}"]
 
 
 def _archive_zstd_priority_settings() -> Any:
@@ -315,8 +315,8 @@ def _wrap_zstd_cmd(cmd: list[str]) -> list[str]:
       prefix.extend(
         [
           ionice_bin,
-          "-c%d" % int(ionice_class),
-          "-n%d" % max(0, min(7, int(ionice_level))),
+          f"-c{int(ionice_class)}",
+          f"-n{max(0, min(7, int(ionice_level)))}",
         ]
       )
     elif not _PRIORITY_TOOLS_WARNED:
@@ -328,7 +328,7 @@ def _wrap_zstd_cmd(cmd: list[str]) -> list[str]:
   if nice_inc > 0:
     nice_bin = shutil.which("nice")
     if nice_bin:
-      prefix.extend([nice_bin, "-n%d" % int(nice_inc)])
+      prefix.extend([nice_bin, f"-n{int(nice_inc)}"])
     elif not _PRIORITY_TOOLS_WARNED:
       log_print(
         "archive zstd: nice not on PATH; skipping CPU priority wrapper",
@@ -659,7 +659,6 @@ def _decompress_to_path(
       output=None,
       stderr=result.stderr,
     )
-  # Drop compressed pages only; keep output_path warm for verify / replace.
   drop_page_cache_for_paths(compressed_path)
 
 
@@ -1359,11 +1358,11 @@ def zstd_compress_tar_to_file(
   cmd = [
     zstd_executable(),
     *_thread_args(thread_count),
-    "-%d" % int(compress_level),
+    f"-{int(compress_level)}",
     "-q",
     "-o",
     zst_path,
-    "--size-hint=%d" % int(tar_bytes),
+    f"--size-hint={int(tar_bytes)}",
     tar_path,
   ]
   if tgz_archive_dir:

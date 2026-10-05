@@ -238,7 +238,7 @@ def get_site_newest_job_end_time() -> Any:
   Return max(job_data.end_time) with a short-lived cache; None if no jobs.
 
   Values are normalized to timezone-aware datetimes. Cache entries may be legacy
-  ints (Unix epoch) or ISO strings depending on serializer — those are accepted.
+  ints (Unix epoch) or ISO strings depending on serializer - those are accepted.
 
   Returns:
     Any: Open return polymorphism from ``get_site_newest_job_end_time``:
@@ -355,7 +355,7 @@ def invalidate_after_job_data_ingest(
     for
   those jobs' calendar periods are marked for rebuild (see
   :func:`invalidate_public_metrics_artifacts_for_jids`). Otherwise falls back
-  to marking every prewarmed /pub row stale — avoid that in hot paths where
+  to marking every prewarmed /pub row stale - avoid that in hot paths where
   *inserted_jids* is knowable (e.g. accounting ingest).
 
   Args:
@@ -659,7 +659,7 @@ KEY_JOB = "job"
 KEY_JOB_CACHE_VERSION = "v2"
 KEY_NONSTAFF_ACCOUNTS = "nonstaff_accounts_v1"
 # Pickle-safe (host_list, start_time, end_time) row for :class:`jid_table` only;
-# do not reuse ``KEY_JOB`` for this — that key holds full ``job_data`` instances
+# do not reuse ``KEY_JOB`` for this - that key holds full ``job_data`` instances
 # for the job detail API and ingest warmers.
 KEY_JOB_JID_TABLE_WINDOW = "job_jid_table_win"
 KEY_JOB_HOST_LIST = "job_host_list"

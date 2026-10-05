@@ -240,7 +240,7 @@ def _run_migrate_after_store(args: Any, cfg_mod: Any, log_print: Any) -> Any:
     removed = cleanup_stale_fnctl_lock_sidecars(daily_archive_dir)
     if log_fn:
       log_fn(
-        "Removed stale lock sidecars before migrate: %d" % removed,
+        f"Removed stale lock sidecars before migrate: {removed}",
         flush=True,
       )
 
@@ -275,16 +275,16 @@ def _run_migrate_after_store(args: Any, cfg_mod: Any, log_print: Any) -> Any:
     removed = cleanup_stale_fnctl_lock_sidecars(daily_archive_dir)
     if log_fn:
       log_fn(
-        "Removed stale lock sidecars after migrate: %d" % removed,
+        f"Removed stale lock sidecars after migrate: {removed}",
         flush=True,
       )
 
   print(f"Migration summary for {daily_archive_dir}:")
   for key in sorted(summary.keys()):
     if key == "gz_remaining":
-      print("  %s: %d" % (key, summary[key]))
+      print(f"  {key}: {summary[key]}")
     else:
-      print("  %s: %d" % (key, summary.get(key, 0)))
+      print(f"  {key}: {summary.get(key, 0)}")
 
   if args.dry_run:
     return 0

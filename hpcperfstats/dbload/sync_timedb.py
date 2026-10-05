@@ -97,8 +97,7 @@ import types
 import warnings
 from collections import deque
 from dataclasses import dataclass
-from datetime import date as date_cls
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, date as date_cls, datetime, timedelta
 from enum import Enum
 
 from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
@@ -120,6 +119,7 @@ from django.db import (
 from django.db.utils import DatabaseError, OperationalError
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.dbload.lib import sync_timedb_host_itimes
 from hpcperfstats.dbload.lib.archive_compress import (
   compressed_sibling_paths,
   daily_compressed_path_for_date,
@@ -137,14 +137,6 @@ from hpcperfstats.dbload.lib.db_unavailable import (
 )
 from hpcperfstats.dbload.lib.file_locking import file_write_lock
 from hpcperfstats.dbload.lib.io_helpers import host_data_instance_from_stats_row
-from hpcperfstats.dbload.lib.sync_timedb_host_data_insert import (
-  host_insert_arm,
-  insert_host_data_batch,
-)
-from hpcperfstats.dbload.lib.sync_timedb_proc_data_insert import (
-  insert_proc_data_batch,
-  proc_insert_arm,
-)
 from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
   MultiprocessingWorkerExitError,
   alive_pool_worker_count,
@@ -200,6 +192,17 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
   maybe_clear_orphan_incomplete_archive_members,
   members_cache_is_fully_warm,
 )
+from hpcperfstats.dbload.lib.sync_timedb_host_data_insert import (
+  host_insert_arm,
+  insert_host_data_batch,
+)
+from hpcperfstats.dbload.lib.sync_timedb_ingest_readiness import (
+  _path_ready_via_file_complete_mark,
+  _path_ready_via_zero_host_mark,
+  filter_paths_head_ingested,
+  head_timestamp_present_in_db,
+  reset_sync_ingest_readiness_caches,
+)
 from hpcperfstats.dbload.lib.sync_timedb_ingest_timeout import (
   calendar_day_from_sealed_archive_path,
 )
@@ -212,32 +215,15 @@ from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
   worker_registry_shows_member_match_wait,
   worker_registry_shows_recent_progress,
 )
-from hpcperfstats.dbload.lib.sync_timedb_queue_orchestrator import (
-  run_sync_timedb_queue_orchestrator,
-)
-from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
-  create_sync_timedb_thread_pool,
-)
-from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
-  increment_worker_tasks_on_worker,
-  measure_worker_rss_after_release,
-)
-
-
-from hpcperfstats.dbload.lib import sync_timedb_host_itimes
-from hpcperfstats.dbload.lib.sync_timedb_ingest_readiness import (
-  _path_ready_via_file_complete_mark,
-  _path_ready_via_zero_host_mark,
-  filter_paths_head_ingested,
-  head_timestamp_present_in_db,
-  reset_sync_ingest_readiness_caches,
-)
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
   EVENTMAPS_BY_TYPE,
   HOST_PROC_KEYS,
   HOST_PROC_PEAK_KEYS,
+  PARSE_STAGE_LOG_KEYS,
   DeltaCarryState,
+  _held_parse_stage,
   apply_proc_peak_attrs_from_earlier,
+  attach_parse_unaccounted,
   build_stats_dataframes,
   compute_deltas_and_arc,
   compute_deltas_and_arc_chunk,
@@ -254,9 +240,6 @@ from hpcperfstats.dbload.lib.sync_timedb_parsing import (
   parse_stats_lines,
   reset_parse_stage_timing,
   snapshot_parse_stage_timing,
-  attach_parse_unaccounted,
-  PARSE_STAGE_LOG_KEYS,
-  _held_parse_stage,
   stats_file_size_bytes,
   stats_payload_row_count,
   tail_window_timestamps_all_present_streaming,
@@ -265,6 +248,20 @@ from hpcperfstats.dbload.lib.sync_timedb_persistence import (
   ensure_persistence_contract,
   load_persistence_document,
   save_persistence_document,
+)
+from hpcperfstats.dbload.lib.sync_timedb_proc_data_insert import (
+  insert_proc_data_batch,
+  proc_insert_arm,
+)
+from hpcperfstats.dbload.lib.sync_timedb_queue_orchestrator import (
+  run_sync_timedb_queue_orchestrator,
+)
+from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+  create_sync_timedb_thread_pool,
+)
+from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
+  increment_worker_tasks_on_worker,
+  measure_worker_rss_after_release,
 )
 from hpcperfstats.site.lib.machine.models import proc_data
 
@@ -346,9 +343,7 @@ class IngestPerFileTimeoutError(TimeoutError):
       else 0.0
     )
     super().__init__(
-      "ingest per-file timeout path=%s size_bytes=%s elapsed_s=%.3f "
-      "bytes_per_s=%.0f stage=%s"
-      % (self.path, self.size_bytes, self.elapsed_s, rate, self.stage)
+      f"ingest per-file timeout path={self.path} size_bytes={self.size_bytes} elapsed_s={self.elapsed_s:.3f} bytes_per_s={rate:.0f} stage={self.stage}"
     )
 
 
@@ -377,7 +372,7 @@ def _log_long_ingest_timeout_budget_if_needed(
   size_bytes = stats_file_size_bytes(stats_file)
   update_worker_substage(
     "long_timeout_budget",
-    timeout_s="%.1f" % float(timeout_s),
+    timeout_s=f"{float(timeout_s):.1f}",
     size_bytes=str(size_bytes),
   )
 
@@ -499,9 +494,7 @@ def _log_ingest_per_file_timeout(exc: Any) -> None:
   elapsed_s = float(getattr(exc, "elapsed_s", 0.0) or 0.0)
   rate = (float(size_bytes) / elapsed_s) if elapsed_s > 0.0 else 0.0
   log_print(
-    "ERROR: ingest per-file timeout path=%s size_bytes=%s elapsed=%.1fs "
-    "bytes_per_s=%.0f stage=%s"
-    % (exc.path, size_bytes, elapsed_s, rate, exc.stage),
+    f"ERROR: ingest per-file timeout path={exc.path} size_bytes={size_bytes} elapsed={elapsed_s:.1f}s bytes_per_s={rate:.0f} stage={exc.stage}",
     flush=True,
   )
 
@@ -520,7 +513,7 @@ def _log_ingest_archive_lookup_budget_exceeded(exc: Any) -> None:
     >>> _log_ingest_archive_lookup_budget_exceeded(None)  # doctest: +SKIP
   """
   log_print(
-    "ERROR: ingest archive lookup budget exceeded: %s" % exc,
+    f"ERROR: ingest archive lookup budget exceeded: {exc}",
     flush=True,
   )
 
@@ -547,7 +540,7 @@ def _paths_all_db_complete_for_prewarm_skip(paths: Any) -> Any:
     if t is None or not host:
       return False
     host = str(host).strip()
-    timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
+    timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=UTC)
     if not head_timestamp_present_in_db(host, timestamp_utc):
       return False
     if (
@@ -629,10 +622,10 @@ def _prewarm_archive_members_for_days(
     keys = build_archive_members_keys(cache_key)
     maybe_clear_orphan_incomplete_archive_members(keys)
     if members_cache_is_fully_warm(keys):
-      summary_parts.append("%s:store_warm" % day_token)
+      summary_parts.append(f"{day_token}:store_warm")
       continue
     if not daily_archive_populate_source_exists(canonical):
-      summary_parts.append("%s:no_daily_archive" % day_token)
+      summary_parts.append(f"{day_token}:no_daily_archive")
       continue
     sealed_path = _resolve_sealed_daily_archive_path(canonical)
     tar_path = daily_tar_path_from_compressed(canonical)
@@ -646,16 +639,14 @@ def _prewarm_archive_members_for_days(
         cfg.get_archive_zstd_threads(),
       ):
         log_print(
-          "INFO: populate_prewarm restored tar day=%s path=%s"
-          % (day_token, tar_path),
+          f"INFO: populate_prewarm restored tar day={day_token} path={tar_path}",
           flush=True,
         )
       else:
-        summary_parts.append("%s:restore_failed" % day_token)
+        summary_parts.append(f"{day_token}:restore_failed")
         continue
     log_print(
-      "Prewarming archive members store for day=%s sealed=%s"
-      % (day_token, sealed_path or tar_path),
+      f"Prewarming archive members store for day={day_token} sealed={sealed_path or tar_path}",
       flush=True,
     )
     _signal_ingest_hot_for_populate(day_token, tar_path, reason="chunk_prewarm")
@@ -680,7 +671,7 @@ def _prewarm_archive_members_for_days(
           )
 
           if get_archive_day_ingest_skip(keys) is not None:
-            summary_parts.append("%s:day_ingest_skip" % day_token)
+            summary_parts.append(f"{day_token}:day_ingest_skip")
             last_transient_exc = None
             break
           complete = lookup_full_members(keys) is not None
@@ -691,66 +682,36 @@ def _prewarm_archive_members_for_days(
           ):
             prewarm_recovered = True
             last_transient_exc = ArchiveMembersStoreUnavailableError(
-              "archive members store cold after prewarm for day=%s "
-              "canonical=%s source=%s members_n=%d append_inflight=%s"
-              % (
-                day_token,
-                canonical,
-                source or "none",
-                len(members or {}),
-                archive_append_inflight_for_day(day_token),
-              ),
+              f"archive members store cold after prewarm for day={day_token} canonical={canonical} source={source or 'none'} members_n={len(members or {})} append_inflight={archive_append_inflight_for_day(day_token)}",
             )
             if archive_append_inflight_for_day(day_token):
               log_print(
-                "WARNING: archive_append_inflight during archive members "
-                "prewarm day=%s attempt=%d/%d: retrying after identity drift"
-                % (
-                  day_token,
-                  attempt + 1,
-                  len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1,
-                ),
+                f"WARNING: archive_append_inflight during archive members prewarm day={day_token} attempt={attempt + 1}/{len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1}: retrying after identity drift",
                 flush=True,
               )
             else:
               log_print(
-                "WARNING: members returned but store cold during archive "
-                "members prewarm day=%s attempt=%d/%d members_n=%d "
-                "source=%s: retrying"
-                % (
-                  day_token,
-                  attempt + 1,
-                  len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1,
-                  len(members or {}),
-                  source or "none",
-                ),
+                f"WARNING: members returned but store cold during archive members prewarm day={day_token} attempt={attempt + 1}/{len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1} members_n={len(members or {})} source={source or 'none'}: retrying",
                 flush=True,
               )
             continue
           else:
             maybe_clear_orphan_incomplete_archive_members(keys)
             raise ArchiveMembersStoreUnavailableError(
-              "archive members store empty after prewarm for day=%s "
-              "canonical=%s source=%s members_n=%d"
-              % (
-                day_token,
-                canonical,
-                source or "none",
-                len(members or {}),
-              ),
+              f"archive members store empty after prewarm for day={day_token} canonical={canonical} source={source or 'none'} members_n={len(members or {})}",
             )
         if not source:
           source = "store_warm"
         if prewarm_recovered:
           summary_parts.append(
-            "%s:populate_recovering:%s" % (day_token, source),
+            f"{day_token}:populate_recovering:{source}",
           )
         else:
-          summary_parts.append("%s:%s" % (day_token, source))
+          summary_parts.append(f"{day_token}:{source}")
         last_transient_exc = None
         break
       except ArchiveDayIngestSkipError:
-        summary_parts.append("%s:day_ingest_skip" % day_token)
+        summary_parts.append(f"{day_token}:day_ingest_skip")
         last_transient_exc = None
         break
       except ArchiveMembersPopulateStalledError as exc:
@@ -783,15 +744,7 @@ def _prewarm_archive_members_for_days(
               else "transient fnctl"
             )
             log_print(
-              "WARNING: %s during archive members prewarm "
-              "day=%s attempt=%d/%d: %s"
-              % (
-                label,
-                day_token,
-                attempt + 1,
-                len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1,
-                exc,
-              ),
+              f"WARNING: {label} during archive members prewarm day={day_token} attempt={attempt + 1}/{len(_FNCTL_POPULATE_RETRY_DELAYS_S) + 1}: {exc}",
               flush=True,
             )
             continue
@@ -849,15 +802,13 @@ def _prewarm_archive_members_for_sealed_chunk_inner(
     day_items.append((sealed_path, day_token))
   day_tokens = sorted({token for _, token in day_items})
   log_print(
-    "archive chunk prewarm begin sealed_paths=%d days=%s"
-    % (len(day_items), day_tokens),
+    f"archive chunk prewarm begin sealed_paths={len(day_items)} days={day_tokens}",
     flush=True,
   )
   prewarm_t0 = time.time()
   summary = _prewarm_archive_members_for_days(day_items)
   log_print(
-    "archive chunk prewarm complete elapsed_s=%.3f days=%s"
-    % (time.time() - prewarm_t0, summary),
+    f"archive chunk prewarm complete elapsed_s={time.time() - prewarm_t0:.3f} days={summary}",
     flush=True,
   )
   return summary
@@ -884,7 +835,7 @@ def _calendar_day_hint_from_paths(paths: Any) -> Any:
       try:
         return datetime.fromtimestamp(
           int(base),
-          tz=timezone.utc,
+          tz=UTC,
         ).strftime("%Y-%m-%d")
       except TypeError, ValueError, OSError, OverflowError:
         pass
@@ -993,7 +944,7 @@ def _in_flight_file_meta_from_paths(paths: Any, max_n: int = 10) -> Any:
       size_bytes = os.path.getsize(path)
     except OSError:
       size_bytes = -1
-    parts.append("%s:%d" % (base, int(size_bytes)))
+    parts.append(f"{base}:{int(size_bytes)}")
   return ",".join(parts) if parts else "-"
 
 
@@ -1102,18 +1053,12 @@ class IngestStallDiagnostics:
     for tar_path in sorted(active)[:8]:
       snap = coord.entry_progress_snapshot(tar_path) or {}
       age_s = snap.get("last_progress_age_s")
-      age_text = "%.0f" % float(age_s) if age_s is not None else ""
+      age_text = f"{float(age_s):.0f}" if age_s is not None else ""
       details.append(
-        "%s:%s:%s:%s"
-        % (
-          os.path.basename(str(tar_path)),
-          snap.get("status") or "",
-          snap.get("last_progress") or "",
-          age_text,
-        )
+        f"{os.path.basename(str(tar_path))}:{snap.get('status') or ''}:{snap.get('last_progress') or ''}:{age_text}"
       )
     detail = ";".join(details) if details else "-"
-    return "%d detail=%s" % (len(active), detail)
+    return f"{len(active)} detail={detail}"
 
 
 def _pool_stall_wall_seconds() -> Any:
@@ -1324,8 +1269,7 @@ def _format_store_populate_for_in_flight_days(
   if not days:
     return ""
   parts = [
-    "%s{%s}"
-    % (day, describe_archive_members_populate_for_day(day, tgz_archive_dir))
+    f"{day}{{{describe_archive_members_populate_for_day(day, tgz_archive_dir)}}}"
     for day in days
   ]
   return " store_by_day=" + " ".join(parts)
@@ -1444,15 +1388,15 @@ def _build_ingest_stall_log_suffix(
     worker_registry
   )
   effective_text = (
-    "%.1f" % effective_timeout_s if effective_timeout_s is not None else "-"
+    f"{effective_timeout_s:.1f}" if effective_timeout_s is not None else "-"
   )
   in_flight_n = len(sample or ())
   since_last = diag.seconds_since_last_imap_completion()
-  since_text = "%.1f" % since_last if since_last >= 0.0 else "-"
+  since_text = f"{since_last:.1f}" if since_last >= 0.0 else "-"
   ingest_pool_n = int(cfg.get_sync_ingest_pool_processes())
   registry_gap = ""
   if registry_n < in_flight_n:
-    registry_gap = " worker_registry_gap=%d" % (in_flight_n - registry_n)
+    registry_gap = f" worker_registry_gap={in_flight_n - registry_n}"
   batch_max_s = float(
     getattr(diag, "current_imap_batch_max_timeout_s", 0.0) or 0.0
   )
@@ -1466,40 +1410,7 @@ def _build_ingest_stall_log_suffix(
     store_suffix_fn = _format_store_populate_for_in_flight_days
   else:
     store_suffix_fn = store_populate_for_sample_fn
-  return (
-    " sync_ingest_per_file_timeout_max_s=%s"
-    " batch_max_ingest_timeout_s=%.1f dynamic_stall_abort_after=%d"
-    " dynamic_stall_wall_s=%.0f effective_ingest_timeout_s=%s"
-    " stall_defer=%s defer_reason=%s imap_batch_cap=%d chunk_batch=%d imap_batch=%d"
-    " distinct_in_flight_days=%s in_flight_file_meta=%s"
-    " seconds_since_last_imap_completion=%s ingest_pipeline=%s"
-    " sync_ingest_pool_processes=%s day_close=%s chunk_prewarm=%s"
-    " worker_registry_n=%d in_flight_n=%d worker_stages=%s%s%s"
-    % (
-      max_timeout_s,
-      batch_max_s,
-      dynamic_abort,
-      dynamic_wall,
-      effective_text,
-      "on" if defer_on else "off",
-      defer_reason,
-      int(diag.imap_batch_cap or 0),
-      int(diag.chunk_batch_size or 0),
-      int(diag.current_imap_batch_size or len(sample)),
-      ",".join(distinct_days_fn(sample)) or "-",
-      _in_flight_file_meta_from_paths(sample),
-      since_text,
-      diag.ingest_pipeline or "combined",
-      ingest_pool_n,
-      diag.format_day_close_pipeline_detail(),
-      diag.chunk_prewarm_summary or "-",
-      registry_n,
-      in_flight_n,
-      worker_stages,
-      registry_gap,
-      store_suffix_fn(sample),
-    )
-  )
+  return f" sync_ingest_per_file_timeout_max_s={max_timeout_s} batch_max_ingest_timeout_s={batch_max_s:.1f} dynamic_stall_abort_after={dynamic_abort} dynamic_stall_wall_s={dynamic_wall:.0f} effective_ingest_timeout_s={effective_text} stall_defer={'on' if defer_on else 'off'} defer_reason={defer_reason} imap_batch_cap={int(diag.imap_batch_cap or 0)} chunk_batch={int(diag.chunk_batch_size or 0)} imap_batch={int(diag.current_imap_batch_size or len(sample))} distinct_in_flight_days={','.join(distinct_days_fn(sample)) or '-'} in_flight_file_meta={_in_flight_file_meta_from_paths(sample)} seconds_since_last_imap_completion={since_text} ingest_pipeline={diag.ingest_pipeline or 'combined'} sync_ingest_pool_processes={ingest_pool_n} day_close={diag.format_day_close_pipeline_detail()} chunk_prewarm={diag.chunk_prewarm_summary or '-'} worker_registry_n={registry_n} in_flight_n={in_flight_n} worker_stages={worker_stages}{registry_gap}{store_suffix_fn(sample)}"
 
 
 def _make_ingest_stall_warning_fn(
@@ -1584,26 +1495,7 @@ def _make_ingest_stall_warning_fn(
         tgz_archive_dir,
       )
     log_print(
-      "WARN: pool imap stall progress consecutive_timeouts=%d/%d "
-      "poll_timeout_s=%.3f estimated_stall_s=%.1f context=%s chunk=%d "
-      "pending=%d pool_workers_alive=%d/%d in_flight_n=%d "
-      "in_flight_day_hint=%s in_flight_sample=%s%s%s"
-      % (
-        consecutive,
-        abort_after,
-        poll_timeout_s,
-        consecutive * poll_timeout_s,
-        context or "pool",
-        int(chunk_counter),
-        int(pending_count),
-        alive_workers,
-        pool_workers,
-        len(sample),
-        day_hint or "-",
-        sample,
-        store_hint,
-        extra,
-      ),
+      f"WARN: pool imap stall progress consecutive_timeouts={consecutive}/{abort_after} poll_timeout_s={poll_timeout_s:.3f} estimated_stall_s={consecutive * poll_timeout_s:.1f} context={context or 'pool'} chunk={int(chunk_counter)} pending={int(pending_count)} pool_workers_alive={alive_workers}/{pool_workers} in_flight_n={len(sample)} in_flight_day_hint={day_hint or '-'} in_flight_sample={sample}{store_hint}{extra}",
       flush=True,
     )
 
@@ -1741,33 +1633,13 @@ def _make_ingest_stall_poll_fn(
         else 0.0,
       )
       log_print(
-        "WARN: pool imap stall deferred: long ingest budget "
-        "effective_ingest_timeout_s=%.1f batch_max_ingest_timeout_s=%.1f "
-        "dynamic_stall_wall_s=%.0f consecutive_timeouts=%d "
-        "estimated_stall_s=%.1f in_flight_n=%d worker_stages=%s"
-        % (
-          effective or 0.0,
-          batch_max_s,
-          _dynamic_stall_wall_seconds(stall_diagnostics),
-          int(consecutive),
-          estimated_stall_s,
-          len(sample),
-          worker_stages,
-        ),
+        f"WARN: pool imap stall deferred: long ingest budget effective_ingest_timeout_s={effective or 0.0:.1f} batch_max_ingest_timeout_s={batch_max_s:.1f} dynamic_stall_wall_s={_dynamic_stall_wall_seconds(stall_diagnostics):.0f} consecutive_timeouts={int(consecutive)} estimated_stall_s={estimated_stall_s:.1f} in_flight_n={len(sample)} worker_stages={worker_stages}",
         flush=True,
       )
       return True
     if defer_reason == "worker_progress_active":
       log_print(
-        "WARN: pool imap stall deferred: worker progress active "
-        "consecutive_timeouts=%d in_flight_n=%d estimated_stall_s=%.1f "
-        "worker_stages=%s"
-        % (
-          int(consecutive),
-          len(sample),
-          estimated_stall_s,
-          worker_stages,
-        ),
+        f"WARN: pool imap stall deferred: worker progress active consecutive_timeouts={int(consecutive)} in_flight_n={len(sample)} estimated_stall_s={estimated_stall_s:.1f} worker_stages={worker_stages}",
         flush=True,
       )
       return True
@@ -1776,17 +1648,7 @@ def _make_ingest_stall_poll_fn(
       tgz_archive_dir,
     )
     log_print(
-      "WARN: pool imap stall deferred: members-store populate active for day=%s (%s) "
-      "consecutive_timeouts=%d in_flight_n=%d estimated_stall_s=%.1f "
-      "worker_stages=%s"
-      % (
-        day_hint,
-        store_snapshot,
-        int(consecutive),
-        len(sample),
-        consecutive * float(cfg.get_sync_pool_poll_timeout_s()),
-        worker_stages,
-      ),
+      f"WARN: pool imap stall deferred: members-store populate active for day={day_hint} ({store_snapshot}) consecutive_timeouts={int(consecutive)} in_flight_n={len(sample)} estimated_stall_s={consecutive * float(cfg.get_sync_pool_poll_timeout_s()):.1f} worker_stages={worker_stages}",
       flush=True,
     )
     return True
@@ -2075,8 +1937,7 @@ def _reap_supervisor_pool_children(
       fn()
     except Exception as exc:
       log_print(
-        "WARN: supervisor child hygiene step failed step=%s context=%s "
-        "err=%s: %s" % (name, context, type(exc).__name__, exc),
+        f"WARN: supervisor child hygiene step failed step={name} context={context} err={type(exc).__name__}: {exc}",
         flush=True,
       )
 
@@ -2084,14 +1945,14 @@ def _reap_supervisor_pool_children(
     "reap_ingest_pool",
     lambda: reap_pool_worker_pids(
       ingest_pool,
-      context="%s_ingest" % context,
+      context=f"{context}_ingest",
     ),
   )
   _step(
     "reap_archive_pool",
     lambda: reap_pool_worker_pids(
       archive_pool,
-      context="%s_archive" % context,
+      context=f"{context}_archive",
     ),
   )
   _step(
@@ -2103,7 +1964,7 @@ def _reap_supervisor_pool_children(
       populate_pool_controller.reap_and_restart()
     except Exception as exc:
       log_print(
-        "WARN: populate-pool reap_and_restart failed: %s" % exc,
+        f"WARN: populate-pool reap_and_restart failed: {exc}",
         flush=True,
       )
   _step(
@@ -2174,7 +2035,7 @@ def _exit_on_archive_members_store_unavailable(exc: Any) -> None:
     is_populate_pool_unavailable_error,
   )
 
-  log_print("ERROR: %s" % exc, flush=True)
+  log_print(f"ERROR: {exc}", flush=True)
   if is_populate_pool_unavailable_error(exc):
     log_print(
       "WARNING: populate-pool unavailable is not an immediate L2 fatal; "
@@ -2648,8 +2509,7 @@ def _transition_file_state(
     file_states[path] = new_state
     return True
   log_print(
-    "Invalid sync_timedb file state transition path=%s current=%s new=%s"
-    % (path, current, new_state),
+    f"Invalid sync_timedb file state transition path={path} current={current} new={new_state}",
     flush=True,
   )
   return False
@@ -2799,7 +2659,7 @@ def _try_db_complete_head_tail_fast_path(
     return None
   tail_host = str(tail_host or host).strip()
   tail_unix = int(float(tail_t))
-  tail_ts_utc = datetime.fromtimestamp(tail_unix, tz=timezone.utc)
+  tail_ts_utc = datetime.fromtimestamp(tail_unix, tz=UTC)
   if not _timestamp_second_present_for_duplicate(
     tail_host, tail_unix, tail_ts_utc
   ):
@@ -2873,8 +2733,7 @@ def _try_db_complete_tail_window_fast_path(
         probe_count["n"] += 1
         if probe_count["n"] > max_overflow_probes:
           raise IngestArchiveLookupBudgetExceededError(
-            "itimes overflow DB probe budget exceeded path=%s probes=%d"
-            % (stats_file, probe_count["n"]),
+            f"itimes overflow DB probe budget exceeded path={stats_file} probes={probe_count['n']}",
           )
         update_worker_substage("itimes_overflow_db")
         return _host_timestamp_second_present_in_db(host, unix_second)
@@ -3038,7 +2897,7 @@ def _apply_ingest_session_statement_timeout() -> None:
     from django.db import connection
 
     with connection.cursor() as cursor:
-      cursor.execute("SET statement_timeout = %d" % ms)
+      cursor.execute(f"SET statement_timeout = {ms}")
   except Exception:
     return
 
@@ -3148,7 +3007,7 @@ def _write_stats_payload_to_db(
         e, context="sync_timedb proc_data bulk_create"
       )
     if DEBUG:
-      log_print("error in proc_data bulk_create: %s\nFile %s" % (e, stats_file))
+      log_print(f"error in proc_data bulk_create: {e}\nFile {stats_file}")
     _reset_ingest_db_connection_after_write_error()
     with _held_ingest_write_timing():
       _insert_proc_data_individually(proc_stats)
@@ -3557,41 +3416,41 @@ def _log_ingest_file_outcome(
   """
   timeout_s = _resolve_outcome_timeout_s(outcome)
   parts = [
-    "ingest file path=%s" % outcome.path,
-    "outcome=%s" % outcome.outcome,
-    "elapsed_s=%.1f" % float(outcome.elapsed_s),
-    "timeout_s=%.1f" % float(timeout_s),
-    "ingest_ok=%s" % ("yes" if outcome.ingest_ok else "no"),
-    "archive=%s" % _archive_skip_token_for_outcome(outcome),
+    f"ingest file path={outcome.path}",
+    f"outcome={outcome.outcome}",
+    f"elapsed_s={float(outcome.elapsed_s):.1f}",
+    f"timeout_s={float(timeout_s):.1f}",
+    f"ingest_ok={'yes' if outcome.ingest_ok else 'no'}",
+    f"archive={_archive_skip_token_for_outcome(outcome)}",
     "db_skip=%s" % (outcome.db_skip or "no"),
-    "size_bytes=%d" % stats_file_size_bytes(outcome.path),
+    f"size_bytes={stats_file_size_bytes(outcome.path)}",
   ]
   if outcome.parse_elapsed_s is not None:
-    parts.append("parse_elapsed_s=%.1f" % float(outcome.parse_elapsed_s))
+    parts.append(f"parse_elapsed_s={float(outcome.parse_elapsed_s):.1f}")
   if outcome.postgres_s is not None:
-    parts.append("postgres_s=%.1f" % float(outcome.postgres_s))
+    parts.append(f"postgres_s={float(outcome.postgres_s):.1f}")
   if outcome.parse_stage:
     for key in (*PARSE_STAGE_LOG_KEYS, *INGEST_WRITE_LOG_KEYS):
       if key in outcome.parse_stage:
-        parts.append("%s=%.1f" % (key, float(outcome.parse_stage[key])))
+        parts.append(f"{key}={float(outcome.parse_stage[key]):.1f}")
   if outcome.stats_rows is not None:
-    parts.append("stats_rows=%d" % int(outcome.stats_rows))
+    parts.append(f"stats_rows={int(outcome.stats_rows)}")
   if outcome.stats_rows_parsed is not None:
-    parts.append("stats_rows_parsed=%d" % int(outcome.stats_rows_parsed))
+    parts.append(f"stats_rows_parsed={int(outcome.stats_rows_parsed)}")
   if outcome.proc_rows is not None:
-    parts.append("proc_rows=%d" % int(outcome.proc_rows))
-  parts.append("host_insert_arm=%s" % host_insert_arm())
-  parts.append("proc_insert_arm=%s" % proc_insert_arm())
+    parts.append(f"proc_rows={int(outcome.proc_rows)}")
+  parts.append(f"host_insert_arm={host_insert_arm()}")
+  parts.append(f"proc_insert_arm={proc_insert_arm()}")
   if outcome.fail_reason:
-    parts.append("fail_reason=%s" % outcome.fail_reason)
+    parts.append(f"fail_reason={outcome.fail_reason}")
   if remaining is not None:
-    parts.append("remaining=%d" % max(0, int(remaining)))
+    parts.append(f"remaining={max(0, int(remaining))}")
   if supplement:
     parts.append("supplement=yes")
   remaining_pair = _sealed_archive_ingest_remaining_pair()
   if remaining_pair is not None:
     sealed_remaining, sealed_total = remaining_pair
-    parts.append("sealed_remaining=%d/%d" % (sealed_remaining, sealed_total))
+    parts.append(f"sealed_remaining={sealed_remaining}/{sealed_total}")
   log_print(" ".join(parts), flush=True)
 
 
@@ -3917,15 +3776,13 @@ def _duplicate_window_start_index(
       probe_count["n"] += 1
       if probe_count["n"] == 1 and not overflow_logged["done"]:
         log_print(
-          "WARN: duplicate scan itimes_set overflow path=%s host=%s"
-          % (stats_file, host),
+          f"WARN: duplicate scan itimes_set overflow path={stats_file} host={host}",
           flush=True,
         )
         overflow_logged["done"] = True
       if probe_count["n"] > max_overflow_probes:
         raise IngestArchiveLookupBudgetExceededError(
-          "itimes overflow DB probe budget exceeded path=%s probes=%d"
-          % (stats_file, probe_count["n"]),
+          f"itimes overflow DB probe budget exceeded path={stats_file} probes={probe_count['n']}",
         )
       update_worker_substage("itimes_overflow_db")
       return _host_timestamp_second_present_in_db(host, unix_second)
@@ -4019,7 +3876,7 @@ def _resolve_streaming_ingest_start_impl(
       ),
     )
   host = str(host).strip()
-  timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
+  timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=UTC)
   head_present = head_timestamp_present_in_db(host, timestamp_utc)
   if not head_present:
     return False, (0, True)
@@ -4174,7 +4031,7 @@ def _parse_stats_file_payload_impl_streaming(stats_file: str) -> Any:
         )
       if stats.empty and proc_stats.empty:
         if DEBUG:
-          log_print("Unable to process stats file %s" % stats_file)
+          log_print(f"Unable to process stats file {stats_file}")
         return _parse_failure_after_quarantine(
           stats_file,
           _parse_elapsed(),
@@ -4278,8 +4135,7 @@ def _add_stats_file_to_db_streaming_incremental(
     chunk_proc_rows = len(proc_chunk)
     if parsed_stats_n > 0 and chunk_stats_rows == 0:
       log_print(
-        "WARN: sync_timedb: nonempty stats frame collapsed to empty "
-        "delta/arc path=%s parsed_rows=%d" % (stats_file, parsed_stats_n),
+        f"WARN: sync_timedb: nonempty stats frame collapsed to empty delta/arc path={stats_file} parsed_rows={parsed_stats_n}",
         flush=True,
       )
     stats_file_local, need_archival, chunk_ok = _write_stats_payload_to_db(
@@ -4367,7 +4223,7 @@ def _add_stats_file_to_db_streaming_incremental(
           and total_proc_rows == 0
         ):
           if DEBUG:
-            log_print("Unable to process stats file %s" % stats_file)
+            log_print(f"Unable to process stats file {stats_file}")
           return _pack_quarantine(
             _parse_failure_after_quarantine(
               stats_file,
@@ -4468,7 +4324,7 @@ def _parse_stats_file_payload_impl(
       if stats_file_is_active_segment(stats_file):
         if DEBUG:
           log_print(
-            "Skipping active segment (still linked to current): %s" % stats_file
+            f"Skipping active segment (still linked to current): {stats_file}"
           )
         return (
           stats_file,
@@ -4520,7 +4376,7 @@ def _parse_stats_file_payload_impl(
       del proc_stats_list
       if stats.empty and proc_stats.empty:
         if DEBUG:
-          log_print("Unable to process stats file %s" % stats_file)
+          log_print(f"Unable to process stats file {stats_file}")
         return _parse_failure_after_quarantine(
           stats_file,
           _parse_elapsed(),
@@ -5062,7 +4918,7 @@ def _insert_proc_data_individually(proc_stats_df: Any) -> None:
     error_prefix="error in single proc_data insert:",
   )
   if DEBUG:
-    log_print("Existing Rows Found in DB: %s" % unique_violations)
+    log_print(f"Existing Rows Found in DB: {unique_violations}")
 
 
 def _insert_host_data_individually(stats_df: Any) -> Any:
@@ -5113,7 +4969,7 @@ def _insert_host_data_individually(stats_df: Any) -> Any:
     if non_integrity_errors > 0:
       need_archival = False
   if DEBUG:
-    log_print("Existing Rows Found in DB: %s" % unique_violations)
+    log_print(f"Existing Rows Found in DB: {unique_violations}")
   return need_archival
 
 
@@ -5234,8 +5090,7 @@ def _restore_daily_tar_or_log_failure(
   ):
     return True
   log_print(
-    "ERROR: could not restore daily tar %s; leaving raw stats files in place: %s"
-    % (context, archive_tar_fname),
+    f"ERROR: could not restore daily tar {context}; leaving raw stats files in place: {archive_tar_fname}",
     flush=True,
   )
   return False
@@ -5262,8 +5117,7 @@ def _decompress_sealed_or_log_append_fail(
   if _decompress_compressed_archive(compressed_path):
     return True
   log_print(
-    "ERROR: could not restore daily tar from %s before append; "
-    "leaving raw stats files in place: %s" % (label, compressed_path),
+    f"ERROR: could not restore daily tar from {label} before append; leaving raw stats files in place: {compressed_path}",
     flush=True,
   )
   return False
@@ -5302,15 +5156,9 @@ def format_tar_append_failure_log(
   elif stderr_text and "tar:" in stderr_text.lower():
     marker = " marker=tar_warning_or_error"
   if stderr_text:
-    return (
-      "%s for %s (%s)%s; tar append stderr: %s; leaving raw stats files in place"
-      % (prefix, tar_path, exc, marker, stderr_text)
-    )
-  return "%s for %s (%s)%s; leaving raw stats files in place" % (
-    prefix,
-    tar_path,
-    exc,
-    marker,
+    return f"{prefix} for {tar_path} ({exc}){marker}; tar append stderr: {stderr_text}; leaving raw stats files in place"
+  return (
+    f"{prefix} for {tar_path} ({exc}){marker}; leaving raw stats files in place"
   )
 
 
@@ -5366,8 +5214,7 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
         n_missing = len(chunk) - len(present)
         if n_missing:
           log_print(
-            "Archive append: skipped %d missing path(s) in batch %d-%d"
-            % (n_missing, off + 1, off + len(chunk)),
+            f"Archive append: skipped {n_missing} missing path(s) in batch {off + 1}-{off + len(chunk)}",
             flush=True,
           )
         if not present:
@@ -5384,8 +5231,7 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
           os.path.isfile(zst_path) or os.path.isfile(gz_path)
         ):
           raise RuntimeError(
-            "refusing to create daily tar while sealed archive exists "
-            "without restored sibling: %s" % tar_path,
+            f"refusing to create daily tar while sealed archive exists without restored sibling: {tar_path}",
           )
         tar_args = [
           tar_bin,
@@ -5411,8 +5257,7 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
           )
         except ProgressIdleError as exc:
           raise RuntimeError(
-            "tar append idle stall path=%s idle_s=%s"
-            % (tar_path, getattr(exc, "idle_s", None)),
+            f"tar append idle stall path={tar_path} idle_s={getattr(exc, 'idle_s', None)}",
           ) from exc
     finally:
       if fd >= 0:
@@ -5439,8 +5284,7 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
       )
     if DEBUG:
       log_print(
-        "Archived batch %d-%d (%d file(s)) -> %s"
-        % (off + 1, off + len(present), len(present), tar_path),
+        f"Archived batch {off + 1}-{off + len(present)} ({len(present)} file(s)) -> {tar_path}",
         flush=True,
       )
 
@@ -5546,8 +5390,7 @@ def _log_archive_job_begin(archive_tar_fname: Any, members_source: Any) -> int:
   )
   if DEBUG:
     log_print(
-      "DEBUG: archive_job_begin day=%s tar_bytes=%s members_source=%s"
-      % (day_token, tar_bytes, members_source),
+      f"DEBUG: archive_job_begin day={day_token} tar_bytes={tar_bytes} members_source={members_source}",
       flush=True,
     )
   return int(tar_bytes)
@@ -5664,8 +5507,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
     ):
       job_outcome = "soft_skip"
       log_print(
-        "INFO: archive_job soft_skip day=%s reason=daily_tar_restore"
-        % day_token,
+        f"INFO: archive_job soft_skip day={day_token} reason=daily_tar_restore",
         flush=True,
       )
       return ArchiveAppendOutcome(
@@ -5725,9 +5567,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         # after recovery and returns False when recovery fails. Raising here
         # would break the archive-pool contract that this body never raises.
         log_print(
-          "WARNING: open tar membership scan failed before append; "
-          "deferring to repair/sealed restore: %s (%s)"
-          % (archive_tar_fname, exc),
+          f"WARNING: open tar membership scan failed before append; deferring to repair/sealed restore: {archive_tar_fname} ({exc})",
           flush=True,
         )
         existing_members = {}
@@ -5756,8 +5596,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       job_outcome = "ok"
       if DEBUG:
         log_print(
-          "DEBUG: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
-          % (day_token, mapped_n, to_add_n, appended_n),
+          f"DEBUG: archive_job_duty day={day_token} mapped={mapped_n} to_add={to_add_n} appended={appended_n}",
           flush=True,
         )
       return ArchiveAppendOutcome(
@@ -5783,8 +5622,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
           return False
     if not os.path.exists(archive_tar_fname) and sealed_exists:
       log_print(
-        "ERROR: sealed archive present but daily tar missing after decompress; "
-        "leaving raw stats files in place: %s" % archive_tar_fname,
+        f"ERROR: sealed archive present but daily tar missing after decompress; leaving raw stats files in place: {archive_tar_fname}",
         flush=True,
       )
       return False
@@ -5799,15 +5637,13 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         tar_unreadable = not verify_tar_archive_readable(archive_tar_fname)
       except TimeoutError:
         log_print(
-          "WARNING: fnctl read lock timeout verifying tar before append; "
-          "deferring append for %s" % archive_tar_fname,
+          f"WARNING: fnctl read lock timeout verifying tar before append; deferring append for {archive_tar_fname}",
           flush=True,
         )
         return False
     if tar_unreadable:
       log_print(
-        "Daily tar unreadable before append; attempting in-place repair then "
-        "sealed restore: %s" % archive_tar_fname,
+        f"Daily tar unreadable before append; attempting in-place repair then sealed restore: {archive_tar_fname}",
         flush=True,
       )
       repaired = repair_truncated_daily_tar_in_place(
@@ -5828,8 +5664,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         or not verify_tar_archive_readable(archive_tar_fname)
       ):
         log_print(
-          "ERROR: could not restore daily tar before append; leaving raw stats "
-          "files in place: %s" % archive_fname,
+          f"ERROR: could not restore daily tar before append; leaving raw stats files in place: {archive_fname}",
           flush=True,
         )
         return False
@@ -5849,8 +5684,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
           job_outcome = "ok"
           if DEBUG:
             log_print(
-              "DEBUG: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
-              % (day_token, mapped_n, to_add_n, appended_n),
+              f"DEBUG: archive_job_duty day={day_token} mapped={mapped_n} to_add={to_add_n} appended={appended_n}",
               flush=True,
             )
           return ArchiveAppendOutcome(
@@ -5900,19 +5734,25 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
     if stats_files_to_tar:
       if not verify_tar_archive_readable(archive_tar_fname):
         log_print(
-          "Daily tar failed integrity check after append; recovering from "
-          "sealed archive or clearing for rebuild: %s" % archive_tar_fname,
+          f"Daily tar failed integrity check after append; recovering from sealed archive or clearing for rebuild: {archive_tar_fname}",
           flush=True,
         )
-        if not replace_corrupt_tar_from_compressed_backup(
+        repaired = repair_truncated_daily_tar_in_place(
+          archive_tar_fname,
+          log_fn=log_print,
+          tgz_archive_dir=os.path.dirname(archive_tar_fname),
+          yield_phase="append_tar_repair",
+        )
+        if not (
+          repaired and verify_tar_archive_readable(archive_tar_fname)
+        ) and not replace_corrupt_tar_from_compressed_backup(
           archive_tar_fname,
           zst_path,
           gz_path,
           cfg.get_archive_zstd_threads(),
         ):
           log_print(
-            "ERROR: could not restore daily tar from %s; leaving raw stats "
-            "files in place" % archive_fname,
+            f"ERROR: could not restore daily tar from {archive_fname}; leaving raw stats files in place",
             flush=True,
           )
           return False
@@ -5945,8 +5785,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
           stats_files_to_tar = to_retry
         if not verify_tar_archive_readable(archive_tar_fname):
           log_print(
-            "ERROR: daily tar still unreadable after recovery append; leaving "
-            "raw stats files in place: %s" % archive_tar_fname,
+            f"ERROR: daily tar still unreadable after recovery append; leaving raw stats files in place: {archive_tar_fname}",
             flush=True,
           )
           return False
@@ -5973,8 +5812,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         )
       except Exception as exc:
         log_print(
-          "WARNING: tar_append store merge failed for %s: %s; invalidating"
-          % (canonical, exc),
+          f"WARNING: tar_append store merge failed for {canonical}: {exc}; invalidating",
           flush=True,
         )
       if merged:
@@ -5984,11 +5822,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         day_date = calendar_date_from_daily_tar_path(archive_tar_fname)
         if DEBUG:
           log_print(
-            "DEBUG: tar_append store merge day=%s members=%d"
-            % (
-              day_date.isoformat() if day_date is not None else canonical,
-              len(member_map),
-            ),
+            f"DEBUG: tar_append store merge day={day_date.isoformat() if day_date is not None else canonical} members={len(member_map)}",
             flush=True,
           )
       else:
@@ -6006,8 +5840,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       job_outcome = "ok"
       if DEBUG:
         log_print(
-          "DEBUG: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
-          % (day_token, mapped_n, to_add_n, appended_n),
+          f"DEBUG: archive_job_duty day={day_token} mapped={mapped_n} to_add={to_add_n} appended={appended_n}",
           flush=True,
         )
       return ArchiveAppendOutcome(
@@ -6018,8 +5851,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
     job_outcome = "ok"
     if DEBUG:
       log_print(
-        "DEBUG: archive_job_duty day=%s mapped=%d to_add=%d appended=%d"
-        % (day_token, mapped_n, to_add_n, appended_n),
+        f"DEBUG: archive_job_duty day={day_token} mapped={mapped_n} to_add={to_add_n} appended={appended_n}",
         flush=True,
       )
     return ArchiveAppendOutcome(
@@ -6035,18 +5867,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       clear_archive_append_inflight(day_token)
     if job_begin_logged:
       log_print(
-        "INFO: archive_job_done day=%s elapsed_s=%.3f outcome=%s "
-        "tar_bytes=%s members_source=%s mapped=%d to_add=%d appended=%d"
-        % (
-          day_token,
-          time.monotonic() - job_start,
-          job_outcome,
-          tar_bytes,
-          members_source,
-          mapped_n,
-          to_add_n,
-          appended_n,
-        ),
+        f"INFO: archive_job_done day={day_token} elapsed_s={time.monotonic() - job_start:.3f} outcome={job_outcome} tar_bytes={tar_bytes} members_source={members_source} mapped={mapped_n} to_add={to_add_n} appended={appended_n}",
         flush=True,
       )
 
@@ -6196,7 +6017,7 @@ def run_sync_timedb_jid_ingest(jid: Any) -> Any:
     try:
       scope = resolve_job_ingest_scope(jid)
     except JobIngestScopeError as exc:
-      log_print("sync_timedb --jid: %s" % exc, flush=True)
+      log_print(f"sync_timedb --jid: {exc}", flush=True)
       return 1
 
     host_name_ext = cfg.get_host_name_ext().strip()
@@ -6211,8 +6032,7 @@ def run_sync_timedb_jid_ingest(jid: Any) -> Any:
     archive_dir = cfg.get_archive_dir_path()
     if not archive_dir or not os.path.isdir(archive_dir):
       log_print(
-        "sync_timedb --jid: archive_dir missing or not a directory: %s"
-        % archive_dir,
+        f"sync_timedb --jid: archive_dir missing or not a directory: {archive_dir}",
         flush=True,
       )
       return 1
@@ -6225,13 +6045,7 @@ def run_sync_timedb_jid_ingest(jid: Any) -> Any:
     checkpoint_path = os.path.join(archive_dir, SYNC_TIMEDB_CHECKPOINT_BASENAME)
 
     log_print(
-      "sync_timedb --jid: jid=%s hosts=%d window_start=%s window_end=%s"
-      % (
-        scope.jid,
-        len(scope.hosts),
-        scope.window_start.isoformat(),
-        scope.window_end.isoformat(),
-      ),
+      f"sync_timedb --jid: jid={scope.jid} hosts={len(scope.hosts)} window_start={scope.window_start.isoformat()} window_end={scope.window_end.isoformat()}",
       flush=True,
     )
 
@@ -6245,14 +6059,13 @@ def run_sync_timedb_jid_ingest(jid: Any) -> Any:
     checkpoint_paths = load_checkpoint_path_set(checkpoint_path)
     pending = [p for p in paths if os.path.normpath(p) not in checkpoint_paths]
     log_print(
-      "sync_timedb --jid: discovered=%d pending_after_checkpoint=%d"
-      % (len(paths), len(pending)),
+      f"sync_timedb --jid: discovered={len(paths)} pending_after_checkpoint={len(pending)}",
       flush=True,
     )
 
     if not pending:
       log_print(
-        "sync_timedb --jid: nothing to ingest jid=%s" % scope.jid, flush=True
+        f"sync_timedb --jid: nothing to ingest jid={scope.jid}", flush=True
       )
       return 0
 
@@ -6272,15 +6085,7 @@ def run_sync_timedb_jid_ingest(jid: Any) -> Any:
       _record_ingest_marks_from_worker_result(result)
       remaining = max(0, len(pending) - index - 1)
       log_print(
-        "sync_timedb --jid: ingest path=%s ok=%s elapsed_s=%.3f remaining=%d "
-        "outcome=%s"
-        % (
-          stats_fname,
-          int(bool(ingest_ok)),
-          float(elapsed_s or 0.0),
-          remaining,
-          outcome_meta.get("outcome", ""),
-        ),
+        f"sync_timedb --jid: ingest path={stats_fname} ok={int(bool(ingest_ok))} elapsed_s={float(elapsed_s or 0.0):.3f} remaining={remaining} outcome={outcome_meta.get('outcome', '')}",
         flush=True,
       )
       if not ingest_ok:
@@ -6298,15 +6103,13 @@ def run_sync_timedb_jid_ingest(jid: Any) -> Any:
         _save_sync_checkpoint(checkpoint_path, checkpoint_entries)
       except OSError as exc:
         log_print(
-          "ERROR: sync_timedb --jid checkpoint flush failed path=%s: %s"
-          % (checkpoint_path, exc),
+          f"ERROR: sync_timedb --jid checkpoint flush failed path={checkpoint_path}: {exc}",
           flush=True,
         )
         return 1
 
     log_print(
-      "sync_timedb --jid: done jid=%s ok=%d fail=%d"
-      % (scope.jid, ok_n, fail_n),
+      f"sync_timedb --jid: done jid={scope.jid} ok={ok_n} fail={fail_n}",
       flush=True,
     )
     return 1 if fail_n and ok_n == 0 else 0
@@ -6364,14 +6167,7 @@ def run_sync_timedb_supervisor_from_parsed(
   directory = cfg.get_archive_dir_path()
 
   log_print(
-    "Pipeline absolute pools effective_cores=%d sync_ingest=%d sync_archive=%d "
-    "metrics=%d"
-    % (
-      cfg.get_effective_cores(),
-      cfg.get_sync_ingest_pool_processes(),
-      cfg.get_sync_archive_pool_processes(),
-      cfg.get_metrics_pool_processes(),
-    ),
+    f"Pipeline absolute pools effective_cores={cfg.get_effective_cores()} sync_ingest={cfg.get_sync_ingest_pool_processes()} sync_archive={cfg.get_sync_archive_pool_processes()} metrics={cfg.get_metrics_pool_processes()}",
     flush=True,
   )
   with create_sync_timedb_thread_pool(

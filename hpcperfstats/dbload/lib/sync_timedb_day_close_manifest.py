@@ -40,7 +40,7 @@ _DAY_CLOSE_PIPELINE_PENDING_STATUSES = frozenset(
   }
 )
 # Legacy statuses retained for stale-manifest recovery until operator on-disk
-# sample confirms no remaining entries (plan P2 shrink — deferred).
+# sample confirms no remaining entries (plan P2 shrink - deferred).
 
 _DAY_CLOSE_WORKER_SLOT_STATUSES = frozenset(
   {
@@ -324,7 +324,7 @@ class DayCloseManifestCoordinator:
         ):
           continue
         tar_norm = os.path.normpath(tar_norm)
-        # Live day-close workers own the day — do not demote on stale clock.
+        # Live day-close workers own the day - do not demote on stale clock.
         if tar_norm in live_workers:
           continue
         last_at = entry.get("last_progress_at") or entry.get("submitted_at")
@@ -631,7 +631,7 @@ class DayCloseManifestCoordinator:
         except Exception:
           enqueued = False
       if not enqueued:
-        # F17: do not leave sticky ghost limbo — drop so classify can retry.
+        # F17: do not leave sticky ghost limbo - drop so classify can retry.
         with self._lock:
           entries = self._manifest.setdefault("entries", {})
           entries.pop(tar_norm, None)
@@ -1020,22 +1020,20 @@ class DayCloseManifestCoordinator:
             self._touch_manifest_locked("queued", tar_norm=tar_norm)
             _manifest_snap = copy.deepcopy(self._manifest)
             promoted = True
-          # else: Not on heap yet — fall through to enqueue_day_close_fn.
+          # else: Not on heap yet - fall through to enqueue_day_close_fn.
         elif _is_deferred_waiting_on_ingest_entry(entry):
           # Soft-state only: not queued work. Discover must not treat as success.
           return False, "deferred_waiting_on_ingest"
         elif tar_norm in inflight:
           return True, "already_inflight"
-        # Pending worker-slot without heap debt — fall through to re-push.
+        # Pending worker-slot without heap debt - fall through to re-push.
       elif tar_norm in inflight:
         return True, "already_inflight"
     if promoted:
       assert _manifest_snap is not None
       _save_manifest(self._manifest_path, _manifest_snap)
       self.log_fn(
-        "janitor: day_close enqueue tar={} reason={}".format(
-          tar_norm, reason or "promoted_from_deferred"
-        ),
+        f"janitor: day_close enqueue tar={tar_norm} reason={reason or 'promoted_from_deferred'}",
         flush=True,
       )
       return True, reason or "promoted_from_deferred"

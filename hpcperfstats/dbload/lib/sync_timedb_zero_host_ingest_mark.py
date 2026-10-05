@@ -270,7 +270,7 @@ def clear_zero_host_ingest_marks(
       _save_entries(mark_path, keep)
   if removed and log_fn is not None:
     log_fn(
-      "INFO: zero_host_ingest_mark cleared n=%d" % removed,
+      f"INFO: zero_host_ingest_mark cleared n={removed}",
       flush=True,
     )
   return removed

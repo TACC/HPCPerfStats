@@ -85,7 +85,7 @@ from hpcperfstats.site.lib.machine.models import host_data, job_data
 # Prior value 64 let ~48-host NFS Summary SUM(arc) fit in one first attempt
 # and burn the full 120s statement_timeout before any bisect (hs04).
 JID_TABLE_HOST_QUERY_BATCH = 16
-# Smaller batches for GPU / multi-event NFS·llite / type-detail density.
+# Smaller batches for GPU / multi-event NFS.llite / type-detail density.
 TYPE_DETAIL_HOST_QUERY_BATCH = 8
 
 # Types whose plot aggregates are multi-event dense (Summary NFS read/write/iops).
@@ -128,7 +128,7 @@ def host_data_sum_val_annotation(
   an integer ``Value(0)`` makes Django refuse to resolve the expression type
   (``FieldError: Expression contains mixed types: RealField, IntegerField``)
     when
-  the query is compiled — the annotation must carry an explicit float
+  the query is compiled - the annotation must carry an explicit float
   ``output_field``.
 
   ``coalesce_zero`` keeps parity with pandas ``groupby().sum()``, which returns
@@ -171,7 +171,7 @@ def host_data_sum_val_per_sample_queryset(
   unique on (time, host, type, event, dev). PostgreSQL advertises
   ``allows_group_by_selected_pks``, so Django treats every other column as
   functionally dependent on ``time`` and silently drops ``host`` from
-  ``.values("host", "time").annotate(...)`` — the aggregate then sums across all
+  ``.values("host", "time").annotate(...)`` - the aggregate then sums across all
   hosts at each timestamp. Grouping on an ``ExpressionWrapper`` keeps the
   timestamp out of that optimization, so GROUP BY stays (host, time).
 
@@ -348,8 +348,8 @@ def _aggregate_df_host_batch(
   """
   Choose starting ``host__in`` batch for ``get_aggregate_df`` plot SUMs.
 
-  GPU and multi-event / NFS·llite aggregates use ``TYPE_DETAIL_HOST_QUERY_BATCH``
-  (8) so a ~48-host job never issues one 48×1h SUM as the first attempt.
+  GPU and multi-event / NFS.llite aggregates use ``TYPE_DETAIL_HOST_QUERY_BATCH``
+  (8) so a ~48-host job never issues one 48x1h SUM as the first attempt.
   Single-event non-GPU uses ``JID_TABLE_HOST_QUERY_BATCH`` (16).
 
   Args:
@@ -576,9 +576,9 @@ def _estimate_one_min_samples_for_window(start_time: Any, end_time: Any) -> int:
 
 def _resolve_plot_aggregate_time_bucket_count(n_hosts: int) -> int:
   """
-  Choose large-job time bucket count so hosts×times stays under the row budget.
+  Choose large-job time bucket count so hostsxtimes stays under the row budget.
 
-  Design capacity ``5000×48×60`` uses ``floor(budget / n_hosts)`` (e.g. 200 at
+  Design capacity ``5000x48x60`` uses ``floor(budget / n_hosts)`` (e.g. 200 at
   5000 hosts with a 1M-row budget), never more than configured buckets.
 
   Args:
@@ -697,7 +697,7 @@ def _iter_host_time_query_chunks(
   slice_s: Any | None = None,
 ) -> Iterator[Any]:
   """
-  Yield ``(host_chunk, time_kw)`` over host batches × wall-clock time slices.
+  Yield ``(host_chunk, time_kw)`` over host batches x wall-clock time slices.
 
   Args:
     hosts (Any): Accounting host FQDNs for ``host__in``.
@@ -913,7 +913,7 @@ def _fold_count_max_avg_rows(
   avg_field: str = "vmean",
 ) -> Any:
   """
-  Fold Count/Max/Avg annotate rows across host×time chunks.
+  Fold Count/Max/Avg annotate rows across hostxtime chunks.
 
   ``cnt`` sums; ``max_field`` takes max; ``avg_field`` is count-weighted.
 
@@ -1020,7 +1020,7 @@ def _assemble_sum_val_parts_bounded(
   """
   Build one sum_val DataFrame from chunk parts without a mega-concat.
 
-  Parts must already be capped so total rows ≤ ``max_rows``. A single part is
+  Parts must already be capped so total rows <= ``max_rows``. A single part is
   returned without ``pd.concat``; multiple parts are concatenated once.
 
   Args:
@@ -2501,11 +2501,11 @@ class jid_table:
 
   def _apply_large_job_time_sampling_if_needed(self) -> None:
     """
-    Thin time axis when raw rows or hosts×samples exceed the plot memory budget.
+    Thin time axis when raw rows or hostsxsamples exceed the plot memory budget.
 
     Activates when ``COUNT(*)`` exceeds the large-job threshold **or** when
-    ``n_hosts × estimated_1min_samples`` exceeds
-    ``get_plot_aggregate_max_host_time_points()`` (design ``5000×48×60``).
+    ``n_hosts x estimated_1min_samples`` exceeds
+    ``get_plot_aggregate_max_host_time_points()`` (design ``5000x48x60``).
     Bucket count is ``min(configured, floor(budget / n_hosts))``.
 
     Returns:
@@ -2575,8 +2575,8 @@ class jid_table:
     """
     Base host_data queryset for this job (time range + hosts).
 
-    Filter builder only — do **not** materialize multi-host ``Sum`` /
-    ``annotate`` / ``list()`` from this alone; use host×time chunk helpers
+    Filter builder only - do **not** materialize multi-host ``Sum`` /
+    ``annotate`` / ``list()`` from this alone; use hostxtime chunk helpers
     (see ``get_llite_delta_by_event`` / ``get_nfs_delta_totals_mb``).
 
     Args:
@@ -2602,7 +2602,7 @@ class jid_table:
 
   def _full_host_data_rows_batched(self, cols: Any) -> Any:
     """
-    values_list rows for the job window, chunking host×time with timeout split.
+    values_list rows for the job window, chunking hostxtime with timeout split.
 
     Args:
       cols (Any): Cols passed to this helper.
@@ -2626,7 +2626,7 @@ class jid_table:
 
     def run(hosts_list: Any, tf_cur: Any) -> Any:
       """
-      Materialize one host×time values_list chunk.
+      Materialize one hostxtime values_list chunk.
 
       Args:
         hosts_list (Any): Hostnames for this attempt.
@@ -2677,7 +2677,7 @@ class jid_table:
     """
     DataFrame of (host, time) distinct, ordered by host, time (cached).
 
-    Multi-host reads use host×time chunks with timeout split/retry so a full
+    Multi-host reads use hostxtime chunks with timeout split/retry so a full
     accounting window cannot burn a single statement_timeout.
 
     Returns:
@@ -2691,7 +2691,7 @@ class jid_table:
 
     def _fn() -> Any:
       """
-      Materialize distinct (host, time) under host×time chunking.
+      Materialize distinct (host, time) under hostxtime chunking.
 
       Returns:
         Any: DataFrame with host, time columns (possibly empty).
@@ -2711,7 +2711,7 @@ class jid_table:
 
       def build_qs(host_chunk: Any, tf: Any) -> Any:
         """
-        Distinct host/time values for one host×time sub-chunk.
+        Distinct host/time values for one hostxtime sub-chunk.
 
         Args:
           host_chunk (Any): Hostnames for this ``host__in`` slice.
@@ -2798,7 +2798,7 @@ class jid_table:
       """
       Aggregate via raw host_data rows when SQL SUM is unavailable.
 
-      Uses host×time chunking with timeout split/retry and a row budget.
+      Uses hostxtime chunking with timeout split/retry and a row budget.
 
       Returns:
         Any: DataFrame with host, time[,dev], sum_val columns (possibly empty).
@@ -2835,7 +2835,7 @@ class jid_table:
           ct: Any = candidate_typ,
         ) -> Any:
           """
-          Build raw-row values queryset for one host×time sub-chunk.
+          Build raw-row values queryset for one hostxtime sub-chunk.
 
           Args:
             host_chunk (Any): Hostnames for this ``host__in`` slice.
@@ -2902,7 +2902,7 @@ class jid_table:
       """
       Prefer SQL SUM per sample; fall back to raw-row groupby on failure.
 
-      Host×time chunks use portal statement_timeout with split/retry; GPU and
+      Hostxtime chunks use portal statement_timeout with split/retry; GPU and
       multi-event NFS/llite types use a smaller host batch. Materialised rows
       stay under the plot budget. Pandas fallback uses the **same** host batch
       (never a larger 64-host scan).
@@ -2955,7 +2955,7 @@ class jid_table:
                 ct: Any = candidate_typ,
               ) -> Any:
                 """
-                Build SQL SUM-per-sample queryset for one host×time sub-chunk.
+                Build SQL SUM-per-sample queryset for one hostxtime sub-chunk.
 
                 Args:
                   host_subchunk (Any): Hostnames for this ``host__in`` slice.
@@ -3156,7 +3156,7 @@ class jid_table:
           _probed: Any = probed,
         ) -> Any:
           """
-          SUM(delta) by event for one host×time chunk.
+          SUM(delta) by event for one hostxtime chunk.
 
           Args:
             hosts_list (Any): Hostnames for this attempt.
@@ -3271,7 +3271,7 @@ class jid_table:
 
         def run(hosts_list: Any, tf_cur: Any, _typ: Any = typ) -> Any:
           """
-          SUM(delta) by NFS event for one host×time chunk.
+          SUM(delta) by NFS event for one hostxtime chunk.
 
           Args:
             hosts_list (Any): Hostnames for this attempt.
@@ -3346,7 +3346,7 @@ class jid_table:
     """
     BeeGFS ``vfs_read_bytes``/``vfs_write_bytes`` sum(delta) by event for this job.
 
-    Uses host×time chunking (same contract as ``get_llite_delta_by_event``).
+    Uses hostxtime chunking (same contract as ``get_llite_delta_by_event``).
     Returned ``event`` values are canonicalized via
     ``canonical_event_name_for_type``.
 
@@ -3390,7 +3390,7 @@ class jid_table:
           _probed: Any = probed,
         ) -> Any:
           """
-          SUM(delta) by event for one host×time chunk.
+          SUM(delta) by event for one hostxtime chunk.
 
           Args:
             hosts_list (Any): Hostnames for this attempt.
@@ -3599,7 +3599,7 @@ class TypeDetailDataProvider:
     """
     DataFrame of (host, time) distinct, ordered by host, time (cached).
 
-    Multi-host reads use host×time chunks with timeout split/retry.
+    Multi-host reads use hostxtime chunks with timeout split/retry.
 
     Returns:
       Any: Open return polymorphism from ``get_host_time_df``: concrete type
@@ -3617,7 +3617,7 @@ class TypeDetailDataProvider:
 
     def _fn() -> Any:
       """
-      Materialize distinct (host, time) under host×time chunking.
+      Materialize distinct (host, time) under hostxtime chunking.
 
       Returns:
         Any: DataFrame with host, time columns (possibly empty).
@@ -3644,7 +3644,7 @@ class TypeDetailDataProvider:
 
       def build_qs(host_chunk: Any, tf: Any) -> Any:
         """
-        Distinct host/time values for one host×time sub-chunk.
+        Distinct host/time values for one hostxtime sub-chunk.
 
         Args:
           host_chunk (Any): Hostnames for this ``host__in`` slice.
@@ -3796,7 +3796,7 @@ class TypeDetailDataProvider:
               met: Any = metric,
             ) -> Any:
               """
-              Build SQL SUM-per-sample queryset for one host×time sub-chunk.
+              Build SQL SUM-per-sample queryset for one hostxtime sub-chunk.
 
               Args:
                 host_subchunk (Any): Hostnames for this ``host__in`` slice.
@@ -3857,7 +3857,7 @@ class TypeDetailDataProvider:
         met: Any = metric,
       ) -> Any:
         """
-        Build raw-row values queryset for one host×time sub-chunk.
+        Build raw-row values queryset for one hostxtime sub-chunk.
 
         Args:
           host_chunk (Any): Hostnames for this ``host__in`` slice.
@@ -4027,7 +4027,7 @@ class HostDataProvider:
     group_by_dev: bool = False,
   ) -> Any:
     """
-    Aggregate ``val_col`` for type and events into host×time rows.
+    Aggregate ``val_col`` for type and events into hostxtime rows.
 
     Returns a DataFrame with ``host``, ``time``, and ``sum_val``
     (sum * ``conv``). When ``group_by_dev`` is True, keep ``dev`` and

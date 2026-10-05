@@ -50,7 +50,7 @@ class PlotArtifactInputFingerprintHex(Expression):
   ``encode(sha256(convert_to(canonical_json, 'UTF8'))), 'hex')`` for plot.
 
   ``live_distinct`` in the canonical JSON is ``COALESCE(metrics_distinct_time_count, 0)``
-  (persisted only — no request-time ``host_data`` COUNT).
+  (persisted only - no request-time ``host_data`` COUNT).
 
   Attributes:
     host_suffix: Attribute.

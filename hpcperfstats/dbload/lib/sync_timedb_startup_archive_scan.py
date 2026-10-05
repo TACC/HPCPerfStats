@@ -191,7 +191,7 @@ class StartupArchiveScanCoordinator:
 
     Returns:
       Optional[ArchiveMaintenanceSnapshot]:
-      Optional[ArchiveMaintenanceSnapshot] — the result, or None when
+      Optional[ArchiveMaintenanceSnapshot] - the result, or None when
       unavailable.
 
     Examples:
@@ -336,8 +336,7 @@ class StartupArchiveScanCoordinator:
       closed_n = sum(len(v) for v in snapshot.mapping.values())
     builders = 1 if self._published_by_janitor else max(1, self._builder_count)
     self.log_fn(
-      "startup archive scan ready paths=%d wait_s=%.3f "
-      "builders=%d" % (closed_n, wait_s, builders),
+      f"startup archive scan ready paths={closed_n} wait_s={wait_s:.3f} builders={builders}",
       flush=True,
     )
 

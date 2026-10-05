@@ -4,7 +4,7 @@ Loads committed fixtures from ``site/frontend/test/fixtures/`` (generated from
 Django ``json_item`` after range fixes). Uses the public Bokeh 3.10.0 CDN so
 Chromium has a real canvas (jsdom/Vitest cannot run ``embed_item``).
 
-A second test serves the **Next static export** (``npm run build`` →
+A second test serves the **Next static export** (``npm run build`` ->
 ``hpcperfstats_site/static/frontend/``) via ``python3 -m http.server`` and embeds
 the same fixtures through ``/static/frontend/bokeh-playwright-smoke/`` (vendored
 UMD ``bokeh.min.js`` + ``patch-resize-observer-for-bokeh``), matching production
@@ -80,7 +80,7 @@ def _wait_http_ok(url: str, *, timeout_s: float = 45.0) -> None:
 
 
 def _html_page_for_item(payload_json: str) -> str:
-  # application/json script body must not contain "</script>" — Bokeh ids only use p+digits.
+  # application/json script body must not contain "</script>" - Bokeh ids only use p+digits.
   return f"""<!DOCTYPE html>
 <html lang="en">
 <head>

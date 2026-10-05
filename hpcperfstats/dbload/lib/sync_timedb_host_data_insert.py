@@ -1,5 +1,5 @@
 """
-Set-based ``host_data`` insert (COPY → staging → ON CONFLICT DO NOTHING).
+Set-based ``host_data`` insert (COPY -> staging -> ON CONFLICT DO NOTHING).
 
 A/B arm ``HPCPERFSTATS_HOST_INSERT_ARM=baseline|candidate`` selects Django
 ``bulk_create(ignore_conflicts=True)`` vs this path. Default is ``candidate``
@@ -9,7 +9,7 @@ A/B arm ``HPCPERFSTATS_HOST_INSERT_ARM=baseline|candidate`` selects Django
 Attributes:
   HOST_DATA_COPY_COLUMNS (tuple[str, ...]): Column order for COPY / INSERT.
   _STAGE_DDL (str): TEMP staging table DDL (ON COMMIT DROP).
-  _STAGE_INSERT (str): INSERT…SELECT…ON CONFLICT DO NOTHING SQL.
+  _STAGE_INSERT (str): INSERT...SELECT...ON CONFLICT DO NOTHING SQL.
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ def host_insert_arm() -> str:
   )
   if copy_flag in ("0", "false", "no", "baseline"):
     return "baseline"
-  # Default ON after Podman A/B retain (host_data_insert_ab_fde1031c…).
+  # Default ON after Podman A/B retain (host_data_insert_ab_fde1031c...).
   # Opt-out via HPCPERFSTATS_SYNC_HOST_DATA_COPY=0 or ARM=baseline.
   return "candidate"
 
@@ -118,7 +118,7 @@ def _sql_literal(value: Any) -> str:
     return "\\N"
   if isinstance(value, bool):
     return "t" if value else "f"
-  # datetime / date → ISO for timestamptz COPY
+  # datetime / date -> ISO for timestamptz COPY
   iso = getattr(value, "isoformat", None)
   text = iso() if callable(iso) else str(value)
   return (

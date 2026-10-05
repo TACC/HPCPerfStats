@@ -6,6 +6,7 @@ import sys
 import pytest
 
 from hpcperfstats.dbload.lib.print_utils import (
+  flush_log_print_queue,
   format_log_prefix,
   get_log_role,
   ingest_logging,
@@ -60,6 +61,7 @@ def test_log_print_includes_role_prefix(monkeypatch):
   monkeypatch.setattr(sys, "stdout", buf)
   set_log_role("worker:archive-pool")
   log_print("seal done", flush=True)
+  flush_log_print_queue()
   assert writes == ["[sync_timedb:worker:archive-pool] seal done\n"]
 
 
@@ -133,12 +135,14 @@ def test_janitor_body_prefix_respects_role(monkeypatch):
   monkeypatch.setattr(sys, "stdout", buf)
   set_log_role("main")
   with janitorial_logging():
-    log_print("day-scoped closed_raw")
+    log_print("day-scoped closed_raw", flush=True)
+  flush_log_print_queue()
   assert writes[-1] == "[sync_timedb:main] janitor: day-scoped closed_raw\n"
   writes.clear()
   set_log_role("thread:archive-janitor")
   with janitorial_logging():
-    log_print("janitor: discover_ready_day_close")
+    log_print("janitor: discover_ready_day_close", flush=True)
+  flush_log_print_queue()
   assert writes[-1] == (
     "[sync_timedb:thread:archive-janitor] discover_ready_day_close\n"
   )
@@ -158,12 +162,14 @@ def test_ingest_body_prefix_main_only(monkeypatch):
   monkeypatch.setattr(sys, "stdout", buf)
   set_log_role("main")
   with ingest_logging():
-    log_print("post_finalize_reconcile")
+    log_print("post_finalize_reconcile", flush=True)
+  flush_log_print_queue()
   assert writes[-1] == ("[sync_timedb:main] ingest: post_finalize_reconcile\n")
   writes.clear()
   set_log_role("worker:ingest-pool")
   with ingest_logging():
-    log_print("File successfully added to DB")
+    log_print("File successfully added to DB", flush=True)
+  flush_log_print_queue()
   assert writes[-1] == (
     "[sync_timedb:worker:ingest-pool] File successfully added to DB\n"
   )

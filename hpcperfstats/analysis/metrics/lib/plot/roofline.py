@@ -621,7 +621,7 @@ def _build_roofline_figure(
     dev_vals = df["dev"].fillna("").astype(str).tolist()
   else:
     dev_vals = [""] * len(host)
-  dev_display = [d if d else "—" for d in dev_vals]
+  dev_display = [d if d else "-" for d in dev_vals]
 
   # Clamp AI for plot range (avoid log(0))
   ai_min, ai_max = max(1e-3, float(ai.min())), max(1e-2, float(ai.max()))

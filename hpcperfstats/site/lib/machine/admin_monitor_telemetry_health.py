@@ -211,7 +211,7 @@ def _format_monitor_handoff_markdown(
       ver = ident.get("package_version") or "unknown"
       slug = ident.get("capability_slug")
       slug_txt = slug if slug else "slug pending RPM"
-      uname = ident.get("uname") or "—"
+      uname = ident.get("uname") or "-"
       schema = ident.get("schema_types") or []
       schema_note = (
         f"{len(schema)} type(s) in last `!` schema"
@@ -219,13 +219,13 @@ def _format_monitor_handoff_markdown(
         else "no `!` schema types stored"
       )
       lines.append(
-        f"- `{fqdn}` — version `{ver}`, build `{slug_txt}`, "
+        f"- `{fqdn}` - version `{ver}`, build `{slug_txt}`, "
         f"uname `{uname}`, {schema_note}"
       )
   lines.extend(["", "## Interpretation", ""])
   if timed_out:
     lines.append(
-      "**Incomplete scan — do not conclude healthy or broken.** "
+      "**Incomplete scan - do not conclude healthy or broken.** "
       + (error or "Results are incomplete.")
     )
   else:
@@ -237,8 +237,8 @@ def _format_monitor_handoff_markdown(
     lines.append("")
     lines.append(
       "When a host identity has `schema_types`: type not in last `!` "
-      "schema → not expected from this binary; type in schema but "
-      "missing from `host_data` → emit/ingest gap."
+      "schema -> not expected from this binary; type in schema but "
+      "missing from `host_data` -> emit/ingest gap."
     )
   lines.append("")
   lines.append(
@@ -257,7 +257,7 @@ def _format_monitor_handoff_markdown(
   lines.extend(["", "## Actionable findings", ""])
   if timed_out:
     lines.append(
-      "Scan incomplete — no actionable anomaly tables (do not invent "
+      "Scan incomplete - no actionable anomaly tables (do not invent "
       "missing-core from a failed query)."
     )
   elif not primary:
@@ -270,12 +270,12 @@ def _format_monitor_handoff_markdown(
       type_name = f.get("type")
       event_name = f.get("event")
       if type_name and event_name:
-        detail = f"`{type_name}` / `{event_name}` — {detail}"
+        detail = f"`{type_name}` / `{event_name}` - {detail}"
       elif type_name:
-        detail = f"`{type_name}` — {detail}"
+        detail = f"`{type_name}` - {detail}"
       fqdn = f.get("fqdn")
       if fqdn:
-        detail = f"`{fqdn}` — {detail}"
+        detail = f"`{fqdn}` - {detail}"
       lines.append(f"| {f.get('severity')} | `{f.get('kind')}` | {detail} |")
 
   if truncated:
@@ -875,7 +875,7 @@ def compute_telemetry_health(*, force_refresh: bool = False) -> dict[str, Any]:
   computed_at = dj_timezone.now()
   try:
     if connection.vendor != "postgresql":
-      # Unit tests / SQLite: empty scan → missing cores, not healthy.
+      # Unit tests / SQLite: empty scan -> missing cores, not healthy.
       payload = build_telemetry_health_payload(
         [],
         computed_at=computed_at,

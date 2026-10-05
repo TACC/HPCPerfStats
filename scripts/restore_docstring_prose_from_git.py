@@ -29,7 +29,7 @@ _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
   sys.path.insert(0, str(_SCRIPTS))
 
-from python_def_inventory import (  # noqa: E402
+from python_def_inventory import (
   collect_class_instance_attrs,
   collect_module_level_attrs,
   exclusion_reason_for_path,

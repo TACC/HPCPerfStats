@@ -13,7 +13,7 @@ def estimated_sample_count_for_job(
   unknown_runtime_s: float = 172800.0,
 ) -> int:
   """
-  Estimate host×minute sample count for idle-slot size filtering.
+  Estimate hostxminute sample count for idle-slot size filtering.
 
   Aligns with ``_estimate_one_min_samples_for_window`` cadence:
   ``max(1, nhosts) * max(1, ceil(runtime_s / 60))``.

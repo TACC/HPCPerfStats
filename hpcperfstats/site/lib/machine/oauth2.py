@@ -57,7 +57,7 @@ def _get_redirect_uri() -> Any:
   Examples:
     >>> _get_redirect_uri()  # doctest: +SKIP
   """
-  uri = "https://{}{}".format(server_name, reverse("oauth_callback"))
+  uri = f"https://{server_name}{reverse('oauth_callback')}"
   return uri[:-1] if uri.endswith("/") else uri
 
 

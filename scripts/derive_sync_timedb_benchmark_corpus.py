@@ -352,7 +352,7 @@ def derive_corpus(
     index = item["index"]
     source_path = item["source_path"]
     source_before = _sha256_file(source_path)
-    derived_host = "%s%04d%s" % (host_prefix, index, suffix)
+    derived_host = f"{host_prefix}{index:04}{suffix}"
     target_start = epoch_base_offset + index * slot
     epoch_offset = round(target_start - item["epoch_min"])
     derived_text = rewrite_stats_identity(

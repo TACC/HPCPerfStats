@@ -133,7 +133,7 @@ def parse_job_list_multi_value_field(raw: Any) -> Any:
 
 def parse_job_list_performance_sort_ranks(raw: Any) -> Any:
   """
-  Parse comma-separated performance_sort_rank tokens (0–6); drop invalid.
+  Parse comma-separated performance_sort_rank tokens (0-6); drop invalid.
 
   Args:
     raw (Any): Raw passed to this helper.
@@ -414,7 +414,7 @@ def _calendar_day_from_bound_value(value: Any) -> Any:
   m = _NAIVE_MIDNIGHT_ISO.match(text)
   if m:
     return date_cls(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-  # Aware / offset ISO (…Z or ±HH:MM) — leave for Django.
+  # Aware / offset ISO (...Z or ±HH:MM) - leave for Django.
   if "T" in text.upper() and (
     text.endswith("Z")
     or "+" in text[10:]
@@ -475,7 +475,7 @@ def coerce_job_list_datetime_bounds(acct_kwargs: Any) -> Any:
   strings through ``filter(**kwargs)`` makes Django emit RuntimeWarning under
   ``USE_TZ`` and treats ``__lte`` as midnight (excluding the end calendar
     day).
-  Date-only ``__gte`` → start of local day; date-only ``__lte`` → end of local
+  Date-only ``__gte`` -> start of local day; date-only ``__lte`` -> end of local
     day.
   Full offset ISO timestamps are left unchanged.
 

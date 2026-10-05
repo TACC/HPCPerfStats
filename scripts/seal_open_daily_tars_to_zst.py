@@ -97,7 +97,7 @@ def classify_tar_for_operator_seal(
   Decide whether an open tar should be sealed, dropped, or skipped.
 
   Args:
-    tar_members (dict[str, int]): Open tar basename → byte size.
+    tar_members (dict[str, int]): Open tar basename -> byte size.
     zst_exists (bool): Whether sibling ``.tar.zst`` is present.
     zst_readable (bool): Whether sealed scan / ``zstd -t`` succeeded.
     zst_members (dict[str, int]): Sealed member map (empty when absent).
@@ -411,15 +411,7 @@ def _process_one_tar(
   if dry_run:
     if log_fn:
       log_fn(
-        "Dry-run %s %s: %s -> %s (tar_members=%d zst_members=%d)"
-        % (
-          action,
-          day_token,
-          tar_path,
-          zst_path,
-          len(tar_members),
-          len(zst_members),
-        ),
+        f"Dry-run {action} {day_token}: {tar_path} -> {zst_path} (tar_members={len(tar_members)} zst_members={len(zst_members)})",
         flush=True,
       )
     if action == ACTION_DROP_TAR_ONLY:
@@ -570,7 +562,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
   """
-  Run parallel tar→zst sealing and return a process exit code.
+  Run parallel tar->zst sealing and return a process exit code.
 
   Args:
     argv (list[str] | None): Optional argv override for tests.
@@ -646,7 +638,7 @@ def main(argv: list[str] | None = None) -> int:
     removed = cleanup_orphan_fnctl_lock_sidecars_for_targets(lock_targets)
     if removed and log_fn:
       log_fn(
-        "Removed %d uncontended .fnctl.lock sidecar(s)" % removed,
+        f"Removed {removed} uncontended .fnctl.lock sidecar(s)",
         flush=True,
       )
 
@@ -702,14 +694,7 @@ def main(argv: list[str] | None = None) -> int:
       )
 
   print(
-    "daily_archive_dir=%s candidates=%d workers=%d counts=%s dry_run=%s"
-    % (
-      daily_archive_dir,
-      len(tar_paths),
-      workers,
-      counts,
-      args.dry_run,
-    )
+    f"daily_archive_dir={daily_archive_dir} candidates={len(tar_paths)} workers={workers} counts={counts} dry_run={args.dry_run}"
   )
   for tar_path, status, detail in failures:
     print(f"FAIL {tar_path} {status}: {detail}", file=sys.stderr)

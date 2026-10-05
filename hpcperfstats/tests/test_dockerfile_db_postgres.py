@@ -203,12 +203,12 @@ def test_db_dockerfile_timescale_229_no_external_lz4_zstd_ldd_gate() -> None:
   Second bake: timescaledb.so still DT_NEEDED libjemalloc because cmake uses
   `pg_config --ldflags` (-ljemalloc from postgres bake). unset LDFLAGS alone
   is insufficient; wrap pg_config. Also `! grep` under set -e does not fail
-  the layer when the forbidden pattern matches (bash quirk) — use if/exit 1.
+  the layer when the forbidden pattern matches (bash quirk) - use if/exit 1.
 
   Third bake (podman): shell heredoc (`cat <<EOF`) inside RUN is parsed as a
-  bogus CHMOD instruction — use printf to write the wrap script inline.
+  bogus CHMOD instruction - use printf to write the wrap script inline.
 
-  Fourth bake (Alpine BusyBox sed): `s|(^|…)|…|` is invalid — `|` used as both
+  Fourth bake (Alpine BusyBox sed): `s|(^|...)|...|` is invalid - `|` used as both
   delimiter and regex OR. Use `#` delimiters / plain `s/-ljemalloc//g`.
   """
   text = _dockerfile()

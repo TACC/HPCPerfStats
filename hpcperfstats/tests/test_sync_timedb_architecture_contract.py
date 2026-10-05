@@ -1,6 +1,6 @@
 """Predicate architecture contracts for the sync_timedb queue orchestrator.
 
-B-09 (slice 4): lock rediscovered → ingest job; remaining-raw → ingest/append
+B-09 (slice 4): lock rediscovered -> ingest job; remaining-raw -> ingest/append
 job; day_close = filesystem complete + 32h min-age. Do not freeze two-queue
 threads as sacred law.
 """

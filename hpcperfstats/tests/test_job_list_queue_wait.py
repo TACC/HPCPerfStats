@@ -1,4 +1,4 @@
-"""Queue wait contract (pandas) for job list / histogram alignment — runs without Compose DB."""
+"""Queue wait contract (pandas) for job list / histogram alignment - runs without Compose DB."""
 
 import pandas as pd
 import pytest

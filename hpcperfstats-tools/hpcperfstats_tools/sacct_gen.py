@@ -167,13 +167,13 @@ def send_to_api(base_url: Any, api_key: Any, date_str: Any, body: Any) -> Any:
   """
   POST sacct output to the ingest endpoint. Return (success, message).
 
-  Some deployments may issue an HTTP redirect (for example, HTTP→HTTPS or
+  Some deployments may issue an HTTP redirect (for example, HTTP->HTTPS or
   path normalization). The Python requests library may convert a POST into a
   GET when following a 301/302 redirect, which would cause Django to return
   "405 Method Not Allowed" on the ingest view (which only allows POST).
 
   To avoid this, we first send the request with redirects disabled and, if
-  we receive a redirect status with a Location header, we re‑POST once to
+  we receive a redirect status with a Location header, we re-POST once to
   the redirected URL while preserving the HTTP method and body.
 
   Args:
@@ -220,7 +220,7 @@ def _parse_date_range(args: Any) -> Any:
     start_date = datetime.now()
 
   try:
-    # Inclusive CLI range: omit end_date → same calendar day as start.
+    # Inclusive CLI range: omit end_date -> same calendar day as start.
     end_date = parse(args.end_date) if args.end_date else start_date
   except Exception:
     end_date = start_date

@@ -30,7 +30,7 @@ def load_cached_api_key(api_url: str) -> str | None:
     api_url (str): String for api url.
 
   Returns:
-    Optional[str]: Optional[str] — the result, or None when unavailable.
+    Optional[str]: Optional[str] - the result, or None when unavailable.
 
   Examples:
     >>> load_cached_api_key("x")  # doctest: +SKIP

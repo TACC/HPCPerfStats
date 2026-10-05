@@ -468,7 +468,7 @@ def test_day_close_inventory_shrink_after_delete_and_tar_drop(
     "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
     _Coord,
   )
-  # Claim 1: H19 append_idle remaining → delete without has_closed re-find.
+  # Claim 1: H19 append_idle remaining -> delete without has_closed re-find.
   outcome1 = qo._run_day_close_job(
     day,
     tgz_archive_dir=str(daily),
@@ -478,7 +478,7 @@ def test_day_close_inventory_shrink_after_delete_and_tar_drop(
   assert outcome1 == "incomplete_raw"
   assert not raw.exists()
   assert tar.exists()
-  # Claim 2: remaining gone → tar_drop.
+  # Claim 2: remaining gone -> tar_drop.
   outcome2 = qo._run_day_close_job(
     day,
     tgz_archive_dir=str(daily),
@@ -648,7 +648,7 @@ def test_day_close_phase_done_dual_reclaims_open_tar(tmp_path, monkeypatch):
 
 
 def test_day_close_dc01_stage_order(tmp_path, monkeypatch):
-  """DC-01 order: pre-seal → reconcile → pre-seal → dedupe → seal → post-seal → delete."""
+  """DC-01 order: pre-seal -> reconcile -> pre-seal -> dedupe -> seal -> post-seal -> delete."""
   from hpcperfstats.dbload.lib import (
     sync_timedb_job_reconstruct as jr,
     sync_timedb_queue_orchestrator as qo,
@@ -2493,7 +2493,7 @@ def test_day_close_skip_merge_seal_skips_remaining_raw_find(
   joined = "\n".join(logs)
   assert "skip_merge" in joined and "append_idle_remaining_raw" in joined
   assert any("stage_enter" in ln and "seal" in ln for ln in logs)
-  # Cheap blocking sentinel — not remaining_fn — so only_when_no_remaining_raw
+  # Cheap blocking sentinel - not remaining_fn - so only_when_no_remaining_raw
   # still no-ops seal while remaining raw exists.
   rem = seal_kw[0].get("remaining_raw_by_gz") if seal_kw else None
   assert rem and list(rem.values()) == [["skip_merge_remaining_raw"]]
@@ -2973,7 +2973,7 @@ def test_day_close_job_entry_stage_enter_before_get_day_manifest_load():
   """H22 soak: stage_enter before get_day/begin_memo so hang leaves a breadcrumb.
 
   hpcperfstats04 2026-09-24: H24 deployed, claim|stage count=0 with day_close at
-  cap — hang/manifest work before first stage_enter occupied all inflight slots.
+  cap - hang/manifest work before first stage_enter occupied all inflight slots.
   """
   src = inspect.getsource(qo._run_day_close_job)
   enter_idx = src.index('_stage_enter("disk_remaining_raw")')
@@ -3375,7 +3375,7 @@ def test_missing_path_requeues_ingest_not_ack(monkeypatch, tmp_path):
 
 
 def test_missing_path_acks_when_ingest_complete(monkeypatch, tmp_path):
-  """P0-3: gone + complete predicates → terminal ack, not infinite requeue."""
+  """P0-3: gone + complete predicates -> terminal ack, not infinite requeue."""
   client = SyncTimedbJobStore("")
   identity = "/gone/but/complete"
   claim = jq.ClaimedJob(
@@ -3884,9 +3884,9 @@ def test_sync_timedb_modules_have_no_bare_print():
         continue
       func = node.func
       if isinstance(func, ast.Name) and func.id == "print":
-        offenders.append("%s:%d" % (path.name, node.lineno))
-  assert not offenders, "bare print() in sync_timedb modules: {}".format(
-    ", ".join(offenders),
+        offenders.append(f"{path.name}:{node.lineno}")
+  assert not offenders, (
+    f"bare print() in sync_timedb modules: {', '.join(offenders)}"
   )
 
 
@@ -4073,7 +4073,7 @@ def test_reconstruct_coordinator_reaps_discover_kind():
 
 
 def test_coordinator_roles_no_double_thread_prefix():
-  """set_daemon_thread_title already prefixes thread: — role= must not repeat."""
+  """set_daemon_thread_title already prefixes thread: - role= must not repeat."""
   for fn_name in (
     "_ingest_coordinator_loop",
     "_append_coordinator_loop",
@@ -4644,8 +4644,8 @@ def test_drain_ingest_increments_total_ingested(monkeypatch, tmp_path):
 def test_census_log_always_includes_total_ingested():
   """60s census format always includes total_ingested= and total_completed=."""
   src = inspect.getsource(qo._reconstruct_coordinator_loop)
-  assert "total_ingested=%d" in src
-  assert "total_completed=%d" in src
+  assert "total_ingested=" in src
+  assert "total_completed=" in src
   qo.reset_total_ingested_for_tests()
   census = {
     "ingest": {"queued": 0, "inflight": 0},
@@ -4653,11 +4653,7 @@ def test_census_log_always_includes_total_ingested():
     "discover": {"queued": 0, "inflight": 0},
     "day_close": {"queued": 0, "inflight": 0},
   }
-  line = "queue_orchestrator census %s total_ingested=%d total_completed=%d" % (
-    jq.format_queue_census(census),
-    qo.get_total_ingested_for_tests(),
-    qo.get_total_completed_for_tests(),
-  )
+  line = f"queue_orchestrator census {jq.format_queue_census(census)} total_ingested={qo.get_total_ingested_for_tests()} total_completed={qo.get_total_completed_for_tests()}"
   assert "total_ingested=0" in line
   assert "total_completed=0" in line
   assert "ingest=0/0" in line
@@ -4740,7 +4736,7 @@ def test_rc8_hygiene_runs_when_local_full_store_underfull(monkeypatch):
   class _Ready:
     pass
 
-  inflight = {("/x%d" % i): _Ready() for i in range(24)}
+  inflight = {(f"/x{i}"): _Ready() for i in range(24)}
   now = qo._ingest_runtime_lease_hygiene(
     client=object(),
     ingest_inflight=inflight,
@@ -5350,7 +5346,7 @@ def test_day_close_claim_vacate_yield_log_rate_limited(tmp_path):
     claim = jq.claim_list_job(
       client,
       kind="day_close",
-      owner_token="n:h:b:%d" % i,
+      owner_token=f"n:h:b:{i}",
       ttl_s=60,
       now_s=1000.0 + i,
     )

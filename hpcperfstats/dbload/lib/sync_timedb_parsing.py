@@ -31,7 +31,7 @@ Attributes:
   _NVIDIA_GPU_MEAN_EVENTS: Attribute.
   _NVIDIA_GPU_OR_EVENTS: Attribute.
   _NVIDIA_GPU_SUM_EVENTS: Attribute.
-  _NVIDIA_EVENT_TO_CLASS: Event name → collapse class code for single-pass partition.
+  _NVIDIA_EVENT_TO_CLASS: Event name -> collapse class code for single-pass partition.
   _NVIDIA_EVENT_CLASS_SUM: Attribute.
   _NVIDIA_EVENT_CLASS_MAX: Attribute.
   _NVIDIA_EVENT_CLASS_MEAN: Attribute.
@@ -370,7 +370,7 @@ HOST_PROC_PEAK_KEYS = frozenset(
 
 def schema_key_basename(token: str) -> str:
   """
-  Strip monitor schema option suffixes (``,U=kB``, ``,E``, …).
+  Strip monitor schema option suffixes (``,U=kB``, ``,E``, ...).
 
   Args:
     token (str): Full schema entry from a ``!host_proc`` line (or bare key).
@@ -513,7 +513,7 @@ def dedupe_proc_stats_peak_merge(
     if key in by_key:
       by_key[key] = merge_proc_row_dicts(by_key[key], row)
     else:
-      # Take ownership — callers must not mutate ``row`` after pass-in.
+      # Take ownership - callers must not mutate ``row`` after pass-in.
       by_key[key] = row
   return list(by_key.values())
 
@@ -690,7 +690,7 @@ _NVIDIA_GPU_MAX_EVENTS = frozenset(
   {
     "module_power_usage",
     "sysio_power_usage",
-    # Node GPU count is emitted on every device row; MAX avoids N×N when
+    # Node GPU count is emitted on every device row; MAX avoids NxN when
     # identity collapses without a distinct ``dev`` (legacy / empty-dev path).
     "gpu_count",
   }
@@ -996,8 +996,7 @@ def _append_compiled_stats_columns(
   n = len(events)
   if len(vals) != n:
     warnings.warn(
-      "stats line value count %d != schema key count %d for type=%s dev=%s"
-      % (len(vals), n, typ, dev),
+      f"stats line value count {len(vals)} != schema key count {n} for type={typ} dev={dev}",
       stacklevel=3,
     )
     return
@@ -1098,8 +1097,7 @@ def _zip_schema_vals(
   """
   if len(vals) != len(schema_keys):
     warnings.warn(
-      "stats line value count %d != schema key count %d for type=%s dev=%s"
-      % (len(vals), len(schema_keys), typ, dev),
+      f"stats line value count {len(vals)} != schema key count {len(schema_keys)} for type={typ} dev={dev}",
       stacklevel=3,
     )
     return None
@@ -1284,7 +1282,7 @@ _NVIDIA_GPU_KNOWN_EVENTS = frozenset().union(
   _NVIDIA_GPU_MEAN_EVENTS,
   _NVIDIA_GPU_OR_EVENTS,
 )
-# Single-pass event→class map for NVIDIA collapse (0=sum/default, 1=max,
+# Single-pass event->class map for NVIDIA collapse (0=sum/default, 1=max,
 # 2=mean, 3=OR). Unknown events stay sum/default (legacy behavior).
 _NVIDIA_EVENT_CLASS_SUM = 0
 _NVIDIA_EVENT_CLASS_MAX = 1
@@ -1355,7 +1353,7 @@ def _groupby_sum_min_count(
   Sum value/delta across devs with pandas ``sum(min_count=1)`` NaN semantics.
 
   When every ``gcols`` key is unique (common for GPU-with-dev and many
-  host metrics), skip ``groupby`` factorize — return the projection.
+  host metrics), skip ``groupby`` factorize - return the projection.
   Host multi-dev collapse drops ``dev`` from ``gcols``, so callers that
   already know rows duplicate should pass ``assume_duplicates=True`` to
   skip the wasted uniqueness scan and cast keys to ``category`` before
@@ -1444,7 +1442,7 @@ def _collapse_nvidia_gpu_vectorized(nv_df: Any, gcols: Any) -> Any:
       continue
     if not isinstance(nv_df[col].dtype, pd.CategoricalDtype):
       nv_df[col] = nv_df[col].astype("category")
-  # One map pass: unknown events → sum/default (class 0).
+  # One map pass: unknown events -> sum/default (class 0).
   event_class = (
     nv_df["event"]
     .map(_NVIDIA_EVENT_TO_CLASS)
@@ -1500,8 +1498,15 @@ def _collapse_nvidia_gpu_vectorized(nv_df: Any, gcols: Any) -> Any:
   if not parts:
     return _empty_delta_arc_frame()
   if len(parts) == 1:
-    return parts[0]
-  return concat(parts, ignore_index=True)
+    out = parts[0]
+  else:
+    out = concat(parts, ignore_index=True)
+  for col in gcols:
+    if col == "time" or col not in out.columns:
+      continue
+    if not isinstance(out[col].dtype, pd.CategoricalDtype):
+      out[col] = out[col].astype("category")
+  return out
 
 
 def _vals_dict_from_line(
@@ -2717,7 +2722,7 @@ def parse_stats_file_streaming(
   Resume offsets must feed the file prefix through the parser so ``!`` schema
   lines register; emission is gated by ``start_idx`` (same as
     ``parse_stats_lines``).
-  Do not fast-forward with bare ``fd.readline()`` — that drops schema and
+  Do not fast-forward with bare ``fd.readline()`` - that drops schema and
     silently
   discards every hardware stats line (RC-0).
 
@@ -3200,8 +3205,7 @@ def _warn_nonempty_stats_collapsed_to_empty(stats_df: Any) -> None:
     return
   cols = [str(c) for c in list(stats_df.columns)]
   warnings.warn(
-    "non-empty stats frame collapsed to empty delta/arc rows=%d cols=%s"
-    % (len(stats_df), cols),
+    f"non-empty stats frame collapsed to empty delta/arc rows={len(stats_df)} cols={cols}",
     stacklevel=3,
   )
 
@@ -3302,7 +3306,7 @@ def parse_stats_file_streaming_incremental(
   Resume offsets must feed the file prefix through the parser so ``!`` schema
   lines register; emission is gated by ``start_idx`` (same as
     ``parse_stats_lines``).
-  Do not fast-forward with bare ``fd.readline()`` — that drops schema and
+  Do not fast-forward with bare ``fd.readline()`` - that drops schema and
     silently
   discards every hardware stats line (RC-0).
 

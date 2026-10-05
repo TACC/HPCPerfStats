@@ -1,7 +1,7 @@
 """Thread-safe calendar-day lists of claimed tar-append identities.
 
 Attributes:
-  AppendDayClaimLists: Process-local day → deque helper (coordinator only).
+  AppendDayClaimLists: Process-local day -> deque helper (coordinator only).
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import Any
 
 class AppendDayClaimLists:
   """
-  Process-local day → deque of append claims.
+  Process-local day -> deque of append claims.
 
   The job-store append LIST remains durable SoT. This structure only
   groups claims already taken by the append-coordinator. Empty day keys
@@ -24,7 +24,7 @@ class AppendDayClaimLists:
 
   Attributes:
     _lock: Mutex covering the day map.
-    _days: Calendar day ``YYYY-MM-DD`` → claim deque.
+    _days: Calendar day ``YYYY-MM-DD`` -> claim deque.
   """
 
   def __init__(self, lock: threading.Lock | None = None) -> None:

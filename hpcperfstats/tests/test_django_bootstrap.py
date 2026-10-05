@@ -55,7 +55,7 @@ def test_ensure_django_runs_setup_once_under_thread_concurrency(monkeypatch):
       errors.append(exc)
 
   threads = [
-    threading.Thread(target=worker, name="bootstrap-%d" % i, daemon=True)
+    threading.Thread(target=worker, name=f"bootstrap-{i}", daemon=True)
     for i in range(16)
   ]
   for thread in threads:

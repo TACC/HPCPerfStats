@@ -37,7 +37,7 @@ def test_decompress_to_path_does_not_dontneed_output_before_verify(
   monkeypatch.setattr(z, "_run_zstd", _fake_run)
   monkeypatch.setattr(
     z,
-    "zstd_drop_page_cache_for_paths",
+    "drop_page_cache_for_paths",
     lambda *paths: dropped.extend(str(p) for p in paths),
   )
 

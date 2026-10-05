@@ -49,6 +49,38 @@ def test_frontend_builder_does_not_copy_entire_repo():
   assert frontend_copy_pos < build_pos
 
 
+_FRONTEND_DEV_ONLY_PACKAGES = frozenset(
+  {
+    "@bokeh/bokehjs",
+    "@tailwindcss/postcss",
+    "autoprefixer",
+    "shadcn",
+    "tailwindcss",
+    "tailwindcss-animate",
+    "tw-animate-css",
+  }
+)
+
+
+def test_frontend_build_tooling_lives_in_dev_dependencies():
+  """CLI, PostCSS/Tailwind, and Bokeh vendor copy are build-time — not runtime deps."""
+  import json
+
+  package_json = json.loads(
+    (_repo_root() / "hpcperfstats/site/frontend/package.json").read_text(
+      encoding="utf-8"
+    ),
+  )
+  deps = set((package_json.get("dependencies") or {}).keys())
+  dev_deps = set((package_json.get("devDependencies") or {}).keys())
+  assert not _FRONTEND_DEV_ONLY_PACKAGES & deps, (
+    f"build-only packages must not be in dependencies: "
+    f"{sorted(_FRONTEND_DEV_ONLY_PACKAGES & deps)}"
+  )
+  missing = _FRONTEND_DEV_ONLY_PACKAGES - dev_deps
+  assert not missing, f"expected devDependencies to include {sorted(missing)}"
+
+
 def test_frontend_package_json_allowscripts_covers_esbuild():
   """npm 12 blocks dependency install scripts unless allowScripts opts in."""
   import json
@@ -141,20 +173,20 @@ def test_nanoid_override_meets_dependabot_109_floor():
 
 
 def test_fast_uri_override_meets_dependabot_113_116_floor():
-  """Dependabot #113–#116 / GHSA-*-fast-uri: fast-uri < 4.1.3 is vulnerable."""
+  """Dependabot #113-#116 / GHSA-*-fast-uri: fast-uri < 4.1.3 is vulnerable."""
   _assert_npm_override_floor(
     "fast-uri",
     (4, 1, 3),
-    reason="GHSA-5jgf-p345-68v8 / Dependabot #113–#116",
+    reason="GHSA-5jgf-p345-68v8 / Dependabot #113-#116",
   )
 
 
 def test_qs_override_meets_dependabot_111_112_floor():
-  """Dependabot #111–#112 / GHSA-*-qs: qs <= 6.15.3 is vulnerable."""
+  """Dependabot #111-#112 / GHSA-*-qs: qs <= 6.15.3 is vulnerable."""
   _assert_npm_override_floor(
     "qs",
     (6, 16, 0),
-    reason="GHSA-x5fp-wj9c-mxmx / Dependabot #111–#112",
+    reason="GHSA-x5fp-wj9c-mxmx / Dependabot #111-#112",
   )
 
 

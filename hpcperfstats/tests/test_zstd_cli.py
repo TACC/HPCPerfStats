@@ -412,7 +412,7 @@ def test_decompress_compressed_to_tar_invalidates_members_pre_and_post(
   monkeypatch,
   tmp_path,
 ):
-  """Successful sealed→tar restore must invalidate pre- and post-identity caches."""
+  """Successful sealed->tar restore must invalidate pre- and post-identity caches."""
   tar_path = tmp_path / "2024-01-04.tar"
   zst_path = tmp_path / "2024-01-04.tar.zst"
   member = tmp_path / "m.txt"

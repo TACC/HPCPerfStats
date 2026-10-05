@@ -327,7 +327,7 @@ def test_proxy_dockerfile_wires_ocsp_trust_and_startup_helpers():
   assert 'CMD ["/usr/local/bin/proxy_entrypoint.sh"]' in dockerfile or (
     "ENTRYPOINT" in dockerfile and "proxy_entrypoint" in dockerfile
   )
-  # Shared snippets are compose bind-mounts only — do not also COPY them into the image.
+  # Shared snippets are compose bind-mounts only - do not also COPY them into the image.
   for mount_only in (
     "nginx-edge-security-headers.inc",
     "nginx-csp-no-active.inc",

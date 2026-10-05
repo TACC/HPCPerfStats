@@ -63,7 +63,7 @@ def drain_queue_to_archive() -> Any:
         connection.close()
     except Exception:
       pass
-  log_print("listend_drain: drained %d message(s)" % drained)
+  log_print(f"listend_drain: drained {drained} message(s)")
   return drained
 
 

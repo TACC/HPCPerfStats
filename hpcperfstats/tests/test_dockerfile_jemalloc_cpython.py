@@ -88,7 +88,7 @@ def test_zlib_ng_compat_opt_direct_link_no_explicit_apt_zlib():
   assert "-Wl,-rpath,/opt/zlib-ng/lib" in build
   assert "-I/opt/zlib-ng/include" in build
   assert "ldd" in build and "/opt/zlib-ng" in build
-  # CPython does not DT_NEEDED libz on bin/python* — only on zlib*.so (and
+  # CPython does not DT_NEEDED libz on bin/python* - only on zlib*.so (and
   # similarly libmpdec/_decimal, libffi/_ctypes). Grepping the interpreter
   # binary for zlib-ng fails the GIL/FT bake after make install.
   assert "name 'zlib*.so'" in build
@@ -106,7 +106,7 @@ def test_zlib_ng_compat_opt_direct_link_no_explicit_apt_zlib():
   )
   assert "COPY --from=python-build /opt/zlib-ng" in base
   assert "/opt/zlib-ng/lib" in base
-  # libz is link/rpath only — jemalloc keeps LD_PRELOAD; do not preload libz.
+  # libz is link/rpath only - jemalloc keeps LD_PRELOAD; do not preload libz.
   for ln in base.splitlines():
     if "LD_PRELOAD" in ln:
       assert "zlib-ng" not in ln
@@ -258,7 +258,7 @@ def test_runtime_jemalloc_both_ways_preload_and_ld_so_preload():
   assert "COPY --from=python-build /opt/python3.14 " in base
   assert "COPY --from=python-build /opt/python3.14t" in base
   # Prefer ${var##*/} over $(basename "$var"); this RUN must also avoid any "
-  # because podman wraps RUN in sh -c "…" (Unterminated quoted string).
+  # because podman wraps RUN in sh -c "..." (Unterminated quoted string).
   assert "/usr/local/lib/${so##*/}" in base
   symlink_run = next(
     body
@@ -301,7 +301,7 @@ def test_hpcperfstats_base_apt_includes_fd_find():
 
 
 def test_dockerfile_avoids_nested_quotes_inside_command_substitution():
-  """Podman/buildah: RUN is sh -c \"…\"; $(… \" …) and bare \" break quoting."""
+  """Podman/buildah: RUN is sh -c \"...\"; $(... \" ...) and bare \" break quoting."""
   text = (_repo_root() / "Dockerfile").read_text()
   assert '$(basename "' not in text
   assert '$(basename "' not in text

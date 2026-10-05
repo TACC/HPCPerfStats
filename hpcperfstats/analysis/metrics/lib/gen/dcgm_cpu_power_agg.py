@@ -7,7 +7,7 @@ rounding (float-stable uniqueness).
 
 Attributes:
   WATT_UNIQUE_ROUND_DECIMALS (int): Decimal places applied before uniqueness.
-  __all__ (tuple): Public exports for ``from … import *``.
+  __all__ (tuple): Public exports for ``from ... import *``.
 """
 
 from __future__ import annotations

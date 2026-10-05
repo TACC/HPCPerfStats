@@ -951,7 +951,7 @@ def test_large_job_numeric_env_invalid_falls_back_to_defaults(
 
 
 def test_plot_aggregate_chunk_budget_defaults_and_env(temp_ini, monkeypatch):
-  """Plot aggregate time-slice and host×time budget (design 5000×48×60)."""
+  """Plot aggregate time-slice and hostxtime budget (design 5000x48x60)."""
   monkeypatch.delenv(
     "HPCPERFSTATS_METRICS_PLOT_AGGREGATE_TIME_SLICE_S", raising=False
   )

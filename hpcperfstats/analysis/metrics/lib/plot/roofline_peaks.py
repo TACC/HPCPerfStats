@@ -10,10 +10,10 @@ socket count, or turbo state.
 
 - **Intel:** Rows follow canonical IMC typenames in host_data. Numbers target
   **typical dual-socket** scalable for ``intel_x86_uncore_imc_skx`` / ``icx`` /
-  ``spr``; retired SNB→BDW canonical names remain for historical ``host_data``
+  ``spr``; retired SNB->BDW canonical names remain for historical ``host_data``
   via legacy probe order.
 - **AMD:** Monitor does not encode Zen generation in ``host_data.type``; see
-  ``amd64_epyc_2s_default`` and named Zen1–Zen5 rows for
+  ``amd64_epyc_2s_default`` and named Zen1-Zen5 rows for
   documentation/overrides.
 - **NVIDIA Grace:** Single-die vs Grace Superchip (two CPU dies) per NVIDIA
   public summaries.
@@ -51,7 +51,7 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
   imc_types_probe_order,
 )
 
-# (peak_fp64_gflop_s, peak_dram_bw_gb_s) — keyed by canonical IMC st_name.
+# (peak_fp64_gflop_s, peak_dram_bw_gb_s) - keyed by canonical IMC st_name.
 ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS: dict[str, tuple[float, float]] = {
   "intel_x86_uncore_imc_snb": (640.0, 85.0),
   "intel_x86_uncore_imc_ivb": (900.0, 102.0),
@@ -88,7 +88,7 @@ def _max_converted_sum_val(
     type_name (str): String for type name.
 
   Returns:
-    Optional[float]: Optional[float] — the result, or None when unavailable.
+    Optional[float]: Optional[float] - the result, or None when unavailable.
 
   Examples:
     >>> _max_converted_sum_val(None, "x", 0, "x")  # doctest: +SKIP
@@ -126,7 +126,7 @@ def _cpu_peak_memory_bw_gb_from_host_data(jt: Any) -> float | None:
     jt (Any): Jt passed to this helper.
 
   Returns:
-    Optional[float]: Optional[float] — the result, or None when unavailable.
+    Optional[float]: Optional[float] - the result, or None when unavailable.
 
   Examples:
     >>> _cpu_peak_memory_bw_gb_from_host_data(None)  # doctest: +SKIP
@@ -290,7 +290,7 @@ def lookup_roofline_cpu_peaks(key: str) -> tuple[float, float] | None:
     key (str): String for key.
 
   Returns:
-    Optional[Tuple[float, float]]: Optional[Tuple[float, float]] — the result,
+    Optional[Tuple[float, float]]: Optional[Tuple[float, float]] - the result,
     or None when unavailable.
 
   Examples:

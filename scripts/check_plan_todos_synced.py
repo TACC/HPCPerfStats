@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     if line.strip() == "status: pending"
   ]
   if pending:
-    print("pending todos remain: %d" % len(pending))
+    print(f"pending todos remain: {len(pending)}")
     return 1
   print("PLAN_TODOS_SYNCED_OK")
   return 0

@@ -23,9 +23,9 @@ def _clear_readiness_caches():
 
 def _write_stats_segment(path, host, base_ts, extra_timestamp_lines=0):
   path.parent.mkdir(parents=True, exist_ok=True)
-  lines = ["%d job0 %s\n" % (base_ts, host)]
+  lines = [f"{base_ts} job0 {host}\n"]
   for i in range(1, extra_timestamp_lines + 1):
-    lines.append("%d job%d %s\n" % (base_ts + i, i, host))
+    lines.append(f"{base_ts + i} job{i} {host}\n")
   lines.append("block dev 1 2 3\n")
   path.write_text("".join(lines))
   return str(path)
@@ -56,7 +56,7 @@ def test_path_cache_reuses_recent_lookup(monkeypatch, tmp_path):
   host_dir.mkdir()
   ts = int(datetime(2026, 4, 19, 12, 0, 0, tzinfo=UTC).timestamp())
   seg = host_dir / str(ts)
-  seg.write_text("%d job1 cn001\nline\n" % ts)
+  seg.write_text(f"{ts} job1 cn001\nline\n")
   calls = {"n": 0}
 
   def _head_present(hostname, timestamp_utc):
@@ -78,7 +78,7 @@ def test_stats_file_head_ingested_false_without_db_row(monkeypatch, tmp_path):
   host.mkdir()
   ts = int(datetime(2026, 4, 20, 12, 0, 0, tzinfo=UTC).timestamp())
   seg = host / str(ts)
-  seg.write_text("%d job1 cn001\nline\n" % ts)
+  seg.write_text(f"{ts} job1 cn001\nline\n")
 
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(
@@ -94,7 +94,7 @@ def test_stats_file_head_ingested_true_with_db_row(monkeypatch, tmp_path):
   ts_dt = datetime(2026, 4, 21, 12, 0, 0, tzinfo=UTC)
   ts = int(ts_dt.timestamp())
   seg = host_dir / str(ts)
-  seg.write_text("%d job1 cn001\nline\n" % ts)
+  seg.write_text(f"{ts} job1 cn001\nline\n")
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
   monkeypatch.setattr(
     readiness, "head_timestamp_present_in_db", lambda _h, _t: True
@@ -268,7 +268,7 @@ def test_stats_file_head_ingested_uses_host_from_file_not_path_dirname(
   ts = int(ts_dt.timestamp())
   seg = host_dir / str(ts)
   short_host = "c641-072"
-  seg.write_text("%d job1 %s\nline\n" % (ts, short_host))
+  seg.write_text(f"{ts} job1 {short_host}\nline\n")
 
   monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
 

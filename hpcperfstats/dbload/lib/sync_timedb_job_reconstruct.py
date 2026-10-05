@@ -474,7 +474,7 @@ def day_close_is_complete(
   True when day_close complete predicates hold (filesystem + 32h min-age).
 
   Manifest / removal ``phase_name`` (including ghost ``phase=done``) is
-  **ignored** — it is not reconstruct source of truth.
+  **ignored** - it is not reconstruct source of truth.
 
   Args:
     tar_path (str): Daily ``YYYY-MM-DD.tar`` path (may be absent on disk).

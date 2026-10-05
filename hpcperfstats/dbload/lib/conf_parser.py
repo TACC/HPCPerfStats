@@ -49,7 +49,7 @@ _ACTIVE_CONFIG_PATH = None
 # *default* is a str code fallback, or None when the key is required / has no
 # code default. Used by drift guards; keep in sync when adding getters.
 _INI_OPTION_REGISTRY_KEYS = (
-  # [DEFAULT] — install, site-wide, PostgreSQL connection, cpuset pinning (last in example)
+  # [DEFAULT] - install, site-wide, PostgreSQL connection, cpuset pinning (last in example)
   ("DEFAULT", "machine"),
   ("DEFAULT", "host_name_ext"),
   ("DEFAULT", "data_dir"),
@@ -66,7 +66,7 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("DEFAULT", "password"),
   ("DEFAULT", "host"),
   ("DEFAULT", "port"),
-  # [PORTAL] — Gunicorn / Django web stack tuning
+  # [PORTAL] - Gunicorn / Django web stack tuning
   ("PORTAL", "cors_origin_scheme"),
   ("PORTAL", "gunicorn_workers"),
   ("PORTAL", "summary_aggregate_prefetch_max_threads"),
@@ -76,7 +76,7 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PORTAL", "db_statement_timeout_ms"),
   ("PORTAL", "db_idle_in_transaction_session_timeout_ms"),
   ("PORTAL", "separate_test_login"),
-  # [PIPELINE] — sync_timedb, update_metrics, sync_acct, archive paths/tuning
+  # [PIPELINE] - sync_timedb, update_metrics, sync_acct, archive paths/tuning
   ("PIPELINE", "metrics_pool_processes"),
   ("PIPELINE", "metrics_scheduler_mode"),
   ("PIPELINE", "metrics_scheduler_prefetch_chunks"),
@@ -195,11 +195,11 @@ _INI_OPTION_REGISTRY_KEYS = (
   # [RMQ]
   ("RMQ", "rmq_server"),
   ("RMQ", "rmq_queue"),
-  # [SYSLOG] — section optional; keys documented when section is used
+  # [SYSLOG] - section optional; keys documented when section is used
   ("SYSLOG", "allow_from"),
   ("SYSLOG", "listen_tcp"),
   ("SYSLOG", "listen_udp"),
-  # [CACHE] — section optional
+  # [CACHE] - section optional
   ("CACHE", "redis_location"),
   # [XALT]
   ("XALT", "xalt_engine"),
@@ -242,9 +242,9 @@ INI_OPTION_DEFAULTS = {
   "metrics_supplement_sample_soft_max": "10000",
   "metrics_supplement_sample_hard_max": "80000",
   "metrics_plot_prewarm_mode": "pipeline_required",
-  # Host×time SQL chunk wall seconds (1h @ 1-min sample); design 5000×48×60.
+  # Hostxtime SQL chunk wall seconds (1h @ 1-min sample); design 5000x48x60.
   "metrics_plot_aggregate_time_slice_s": "3600",
-  # Max host×time rows materialised per plot aggregate DF (not 14.4M).
+  # Max hostxtime rows materialised per plot aggregate DF (not 14.4M).
   "metrics_plot_aggregate_max_host_time_points": "1000000",
   "metrics_run_poll_timeout_s": "5",
   "metrics_run_stall_timeout_s": "900",
@@ -542,9 +542,7 @@ def _load_cfg() -> None:
       _ACTIVE_CONFIG_PATH = path
       return
   raise FileNotFoundError(
-    "Unable to locate HPCPerfStats config file. Set HPCPERFSTATS_INI or place "
-    "hpcperfstats.ini at /home/hpcperfstats/hpcperfstats.ini. Attempted paths: "
-    "{}".format(", ".join(attempted_paths))
+    f"Unable to locate HPCPerfStats config file. Set HPCPERFSTATS_INI or place hpcperfstats.ini at /home/hpcperfstats/hpcperfstats.ini. Attempted paths: {', '.join(attempted_paths)}"
   )
 
 
@@ -2171,10 +2169,10 @@ def build_postgres_connection_options() -> Any:
   parts = []
   st = get_db_statement_timeout_ms()
   if st > 0:
-    parts.append("-c statement_timeout=%d" % st)
+    parts.append(f"-c statement_timeout={st}")
   it = get_db_idle_in_transaction_session_timeout_ms()
   if it > 0:
-    parts.append("-c idle_in_transaction_session_timeout=%d" % it)
+    parts.append(f"-c idle_in_transaction_session_timeout={it}")
   if parts:
     result["options"] = " ".join(parts)
   return result
@@ -2220,7 +2218,7 @@ def get_sync_archive_pool_processes() -> Any:
   """
   Archive pool size / concurrent daily-tar append slots (INI default 4).
 
-  Sole source of archive append concurrency — not derived from cpuset budget.
+  Sole source of archive append concurrency - not derived from cpuset budget.
 
   Returns:
     Any: Open return polymorphism from ``get_sync_archive_pool_processes``:
@@ -3017,7 +3015,7 @@ def get_sync_archive_members_populate_max_seconds() -> Any:
 
 def get_sync_daily_tar_restore_lease_seconds() -> Any:
   """
-  Exclusive sealed→tar restore lease TTL (renewed while decompressing).
+  Exclusive sealed->tar restore lease TTL (renewed while decompressing).
 
   Returns:
     Any: Open return polymorphism from
@@ -3143,8 +3141,8 @@ def get_sync_ingest_stall_idle_s() -> Any:
     return 1800.0
 
 
-# 30 GiB × per_mib + historical floor-900 slope reaches max at default slope.
-# Floor default (0 = wall B off); keep per_mib anchored to (86400−900)/30720.
+# 30 GiB x per_mib + historical floor-900 slope reaches max at default slope.
+# Floor default (0 = wall B off); keep per_mib anchored to (86400-900)/30720.
 _SYNC_INGEST_PER_FILE_TIMEOUT_REFERENCE_MIB = 30720  # 30 GiB
 _SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT = 86400.0  # 24h at reference size
 _SYNC_INGEST_PER_FILE_TIMEOUT_SLOPE_FLOOR_S = 900.0  # historical slope anchor
@@ -3318,8 +3316,8 @@ def get_metrics_plot_aggregate_time_slice_s() -> Any:
   """
   Wall-clock seconds per plot-aggregate SQL time chunk (default 3600).
 
-  Design capacity ``5000×48×60`` host-samples uses one-hour slices at 1-min
-  cadence so each statement_timeout covers a bounded host×time chunk.
+  Design capacity ``5000x48x60`` host-samples uses one-hour slices at 1-min
+  cadence so each statement_timeout covers a bounded hostxtime chunk.
   Env ``HPCPERFSTATS_METRICS_PLOT_AGGREGATE_TIME_SLICE_S`` overrides INI.
 
   Returns:
@@ -3345,9 +3343,9 @@ def get_metrics_plot_aggregate_time_slice_s() -> Any:
 
 def get_plot_aggregate_max_host_time_points() -> Any:
   """
-  Max host×time rows one plot aggregate DataFrame may materialise.
+  Max hostxtime rows one plot aggregate DataFrame may materialise.
 
-  Caps memory for design capacity ``5000×48×60`` (14.4M samples): adaptive
+  Caps memory for design capacity ``5000x48x60`` (14.4M samples): adaptive
   large-job time buckets use ``floor(budget / n_hosts)``. Default 1_000_000.
   Env ``HPCPERFSTATS_PLOT_AGGREGATE_MAX_HOST_TIME_POINTS`` overrides INI.
 
@@ -3601,12 +3599,12 @@ def get_sync_supervisor_rss_limit_mb() -> Any:
 
 def get_sync_process_tree_rss_limit_cgroup_pct() -> Any:
   """
-  Process-tree defer roof as percent of cgroup ``memory.max`` (0–100).
+  Process-tree defer roof as percent of cgroup ``memory.max`` (0-100).
 
   ``0`` disables backpressure and the raw-byte ingest budget gate (default 40).
 
   Returns:
-    Any: Integer percentage clamped to 0–100.
+    Any: Integer percentage clamped to 0-100.
 
   Examples:
     >>> get_sync_process_tree_rss_limit_cgroup_pct()  # doctest: +SKIP
@@ -3624,7 +3622,7 @@ def get_sync_process_tree_rss_exit_cgroup_pct() -> Any:
   ``0`` disables (default 0).
 
   Returns:
-    Any: Integer percentage clamped to 0–100.
+    Any: Integer percentage clamped to 0-100.
 
   Examples:
     >>> get_sync_process_tree_rss_exit_cgroup_pct()  # doctest: +SKIP
@@ -3792,7 +3790,7 @@ def get_sync_cgroup_admit_max_file_cache_cgroup_pct() -> Any:
   ``process_memory.effective_cgroup_admit_max_file_cache_mib()``.
 
   Returns:
-    Any: Integer 0–100.
+    Any: Integer 0-100.
 
   Examples:
     >>> get_sync_cgroup_admit_max_file_cache_cgroup_pct() >= 0
@@ -3863,7 +3861,7 @@ def ingest_telemetry_enabled_from_env() -> bool:
   """
   Return whether ingest outcome-line telemetry is forced on via test env.
 
-  Production enable path is INI ``sync_ingest_telemetry`` — not env
+  Production enable path is INI ``sync_ingest_telemetry`` - not env
   (``no-production-env-for-ini-config.mdc``). Env is test/CI override only.
 
   Returns:

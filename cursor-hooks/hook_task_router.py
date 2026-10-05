@@ -1,4 +1,4 @@
-"""Path → domain-rule mapping for Cursor hooks (keep in sync with agent-discipline-core.mdc)."""
+"""Path -> domain-rule mapping for Cursor hooks (keep in sync with agent-discipline-core.mdc)."""
 
 from __future__ import annotations
 
@@ -1141,7 +1141,7 @@ def normalize_repo_path(path: str) -> str:
 
 
 def is_workspace_root_readme(normalized_path: str) -> bool:
-  """Workspace/git-root operator README only — not hooks, cursor-rules, or package READMEs."""
+  """Workspace/git-root operator README only - not hooks, cursor-rules, or package READMEs."""
   if normalized_path == "README.md":
     return True
   if not normalized_path.endswith("/README.md"):

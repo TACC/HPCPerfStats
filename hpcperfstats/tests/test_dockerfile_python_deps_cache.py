@@ -81,7 +81,7 @@ def test_python_build_prunes_full_image_build_toolchain_keeps_cython():
 
   Covers the full image-build ``Successfully installed`` set (not only
   meson/ninja): drop devel/backends; keep cython and MKL/OpenMP/TBB runtime.
-  Rest project.dependencies (Django/Bokeh/…) do not need the pruned names.
+  Rest project.dependencies (Django/Bokeh/...) do not need the pruned names.
   """
   build = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
   uninstall_bodies = [

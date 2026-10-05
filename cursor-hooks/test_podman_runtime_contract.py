@@ -10,8 +10,8 @@ REPO_ROOT = HOOKS_DIR.parent
 RULES_DIR = REPO_ROOT / "hpcperfstats" / "cursor-rules"
 sys.path.insert(0, str(HOOKS_DIR))
 
-import hook_task_router  # noqa: E402
-import hpc_hook_lib  # noqa: E402
+import hook_task_router
+import hpc_hook_lib
 
 
 def test_compose_workflow_dispatches_podman_runtime() -> None:

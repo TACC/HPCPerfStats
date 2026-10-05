@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cursor preToolUse — deny CreatePlan / live-plan Write until plan-authoring rules are Read."""
+"""Cursor preToolUse - deny CreatePlan / live-plan Write until plan-authoring rules are Read."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ HOOK_DIR = Path(__file__).resolve().parent
 if str(HOOK_DIR) not in sys.path:
   sys.path.insert(0, str(HOOK_DIR))
 
-from hpc_hook_lib import (  # noqa: E402
+from hpc_hook_lib import (
   PLAN_AUTHORING_REQUIRED_MDC,
   emit_allow,
   emit_deny,

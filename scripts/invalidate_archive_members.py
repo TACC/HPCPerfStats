@@ -275,12 +275,7 @@ def main(argv: Any | None = None) -> Any:
     else ",".join(result.get("days") or day_tokens)
   )
   print(
-    "archive_members_invalidate scanned={} deleted={} dry_run={} days={}".format(
-      result.get("scanned", 0),
-      result.get("deleted", 0),
-      result.get("dry_run", False),
-      scope_label,
-    ),
+    f"archive_members_invalidate scanned={result.get('scanned', 0)} deleted={result.get('deleted', 0)} dry_run={result.get('dry_run', False)} days={scope_label}",
   )
 
   if args.dry_run or args.no_restart:

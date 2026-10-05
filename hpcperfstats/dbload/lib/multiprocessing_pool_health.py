@@ -226,7 +226,7 @@ def dedupe_ingest_paths_preserve_order(paths: Any) -> Any:
   for norm in order:
     count = norm_counts[norm]
     if count > 1:
-      duplicate_sample.append("%s:%d" % (os.path.basename(norm), count))
+      duplicate_sample.append(f"{os.path.basename(norm)}:{count}")
   return unique, duplicate_n, duplicate_sample
 
 
@@ -570,7 +570,7 @@ def read_process_wchan(pid: int) -> Any:
     >>> read_process_wchan(0)  # doctest: +SKIP
   """
   try:
-    with open("/proc/%d/wchan" % int(pid), encoding="ascii") as proc_wchan:
+    with open(f"/proc/{int(pid)}/wchan", encoding="ascii") as proc_wchan:
       return proc_wchan.read().strip()
   except OSError:
     return None
@@ -653,7 +653,7 @@ def format_pool_worker_wchan_sample(pool: Any, *, limit: int = 5) -> Any:
     if pid is None:
       continue
     wchan = read_process_wchan(pid)
-    entries.append("{}:{}".format(pid, wchan if wchan is not None else "?"))
+    entries.append(f"{pid}:{wchan if wchan is not None else '?'}")
   return entries
 
 
@@ -694,8 +694,8 @@ def _process_exitcode_signal_name(exitcode: Any) -> Any:
     try:
       return signal.Signals(-exitcode).name
     except ValueError, AttributeError:
-      return "SIG%d" % (-exitcode)
-  return "exit_%d" % exitcode
+      return f"SIG{-exitcode}"
+  return f"exit_{exitcode}"
 
 
 def _infer_likely_cause(dead_workers: Any, cgroup_events: Any) -> Any:
@@ -968,18 +968,7 @@ def _format_recycle_gate_reject_reason(
     dead_procs,
     pool_health_context=pool_health_context,
   )
-  return (
-    "alive={} len_workers={} expected_total={} materialized={} dead_n={} "
-    "gap={} dead_exitcodes={}".format(
-      metrics["alive"],
-      metrics["len_workers"],
-      metrics["expected_total"],
-      metrics["materialized"],
-      metrics["dead_n"],
-      metrics["gap"],
-      metrics["dead_exitcodes"],
-    )
-  )
+  return f"alive={metrics['alive']} len_workers={metrics['len_workers']} expected_total={metrics['expected_total']} materialized={metrics['materialized']} dead_n={metrics['dead_n']} gap={metrics['gap']} dead_exitcodes={metrics['dead_exitcodes']}"
 
 
 def _is_recycle_stuck_replacements_lagging(
@@ -1108,24 +1097,7 @@ def _format_pool_worker_death_diagnostics(
   """
   dead_workers = diagnostics.get("dead_workers") or []
   dead_pids = [w.get("pid") for w in dead_workers if w.get("pid") is not None]
-  return (
-    "context={} likely_cause={} dead_pids={} dead_workers={} "
-    "alive_workers={}/{} cgroup_oom_kill={} "
-    "cgroup_memory_current_mb={:.1f} cgroup_memory_max_mb={} "
-    "tree_total_mb={:.1f} in_flight_sample={}".format(
-      context or "unknown",
-      diagnostics.get("likely_cause") or "unknown",
-      dead_pids,
-      dead_workers,
-      diagnostics.get("alive_workers"),
-      diagnostics.get("total_workers"),
-      diagnostics.get("cgroup_oom_kill"),
-      float(diagnostics.get("cgroup_memory_current_mb") or 0.0),
-      diagnostics.get("cgroup_memory_max_mb"),
-      float(diagnostics.get("tree_total_mb") or 0.0),
-      diagnostics.get("in_flight_sample") or [],
-    )
-  )
+  return f"context={context or 'unknown'} likely_cause={diagnostics.get('likely_cause') or 'unknown'} dead_pids={dead_pids} dead_workers={dead_workers} alive_workers={diagnostics.get('alive_workers')}/{diagnostics.get('total_workers')} cgroup_oom_kill={diagnostics.get('cgroup_oom_kill')} cgroup_memory_current_mb={float(diagnostics.get('cgroup_memory_current_mb') or 0.0):.1f} cgroup_memory_max_mb={diagnostics.get('cgroup_memory_max_mb')} tree_total_mb={float(diagnostics.get('tree_total_mb') or 0.0):.1f} in_flight_sample={diagnostics.get('in_flight_sample') or []}"
 
 
 def _reset_recycle_tracking(pool: Any) -> None:
@@ -1313,21 +1285,12 @@ def abort_if_pool_workers_dead(
     diagnostics["likely_cause"] = likely_cause
 
   log_print(
-    "ERROR: pool worker recycle gate rejected: {}".format(
-      _format_recycle_gate_reject_reason(
-        pool,
-        dead_procs,
-        pool_health_context=pool_health_context,
-      )
-    ),
+    f"ERROR: pool worker recycle gate rejected: {_format_recycle_gate_reject_reason(pool, dead_procs, pool_health_context=pool_health_context)}",
     flush=True,
   )
 
   _reset_recycle_tracking(pool)
-  message = (
-    "Multiprocessing pool worker no longer alive; "
-    "dead_pids={} context={}".format(dead, context or "unknown")
-  )
+  message = f"Multiprocessing pool worker no longer alive; dead_pids={dead} context={context or 'unknown'}"
   log_print(
     f"ERROR: pool worker death diagnostics: {_format_pool_worker_death_diagnostics(context, diagnostics)}",
     flush=True,
@@ -1423,9 +1386,7 @@ def _log_waitpid_oserror(pid: int, exc: Any) -> None:
     _WAITPID_OSERROR_LOGGED_PIDS.clear()
   _WAITPID_OSERROR_LOGGED_PIDS.add(pid_int)
   log_print(
-    "WARN: waitpid failed pid={} errno={} err={}".format(
-      pid_int, getattr(exc, "errno", None), type(exc).__name__
-    ),
+    f"WARN: waitpid failed pid={pid_int} errno={getattr(exc, 'errno', None)} err={type(exc).__name__}",
     flush=True,
   )
 
@@ -1452,9 +1413,7 @@ def _log_on_stall_poll_failure(exc: Any, *, context: str = "") -> None:
     return
   _last_stall_poll_fail_log_mono = now_mono
   log_print(
-    "WARN: on_stall_poll failed context={} err={}: {}".format(
-      context or "unknown", type(exc).__name__, exc
-    ),
+    f"WARN: on_stall_poll failed context={context or 'unknown'} err={type(exc).__name__}: {exc}",
     flush=True,
   )
 
@@ -1569,7 +1528,7 @@ def _reap_pool_worker_pids(
       reaped.append(int(pid))
   if reaped:
     log_print(
-      "Pool worker reap context={} pids={}".format(context or "pool", reaped),
+      f"Pool worker reap context={context or 'pool'} pids={reaped}",
       flush=True,
     )
   return reaped
@@ -1691,7 +1650,7 @@ def _read_proc_stat_fields(pid: int) -> Any:
     >>> _read_proc_stat_fields(0)  # doctest: +SKIP
   """
   try:
-    with open("/proc/%d/stat" % int(pid), "rb") as proc_stat:
+    with open(f"/proc/{int(pid)}/stat", "rb") as proc_stat:
       raw = proc_stat.read()
   except OSError:
     return None
@@ -1786,9 +1745,7 @@ def reap_zombie_children_of_self(*, context: str = "") -> Any:
       _ZOMBIE_FIRST_SEEN_MONO.pop(int(pid), None)
   if reaped:
     log_print(
-      "Zombie child reap context={} pids={}".format(
-        context or "supervisor", reaped
-      ),
+      f"Zombie child reap context={context or 'supervisor'} pids={reaped}",
       flush=True,
     )
   return reaped
@@ -1815,12 +1772,12 @@ def pool_worker_cmdline_mark_for_kind(pool_kind: str) -> str:
     >>> pool_worker_cmdline_mark_for_kind("metrics-pool")
     '[worker:metrics-pool]'
   """
-  return "[worker:{}]".format(str(pool_kind or "").strip())
+  return f"[worker:{str(pool_kind or '').strip()}]"
 
 
 def _read_proc_cmdline(pid: int) -> Any:
   """
-  Return decoded ``/proc/<pid>/cmdline`` (nulls → spaces) or ``""``.
+  Return decoded ``/proc/<pid>/cmdline`` (nulls -> spaces) or ``""``.
 
   Args:
     pid (int): Integer value for pid.
@@ -1832,7 +1789,7 @@ def _read_proc_cmdline(pid: int) -> Any:
     >>> _read_proc_cmdline(0)  # doctest: +SKIP
   """
   try:
-    with open("/proc/%d/cmdline" % int(pid), "rb") as handle:
+    with open(f"/proc/{int(pid)}/cmdline", "rb") as handle:
       raw = handle.read()
   except OSError:
     return ""
@@ -1942,7 +1899,7 @@ def kill_pool_children_by_ppid_census(
 
   Used on abandon/recreate so orphans left out of ``pool._pool`` cannot
   survive a proactive swap. Pool-kind agnostic; ingest and metrics pass
-  their respective ``[worker:…]`` marks.
+  their respective ``[worker:...]`` marks.
 
   Args:
     cmdline_mark (str): Cmdline substring for the pool kind.
@@ -1967,8 +1924,7 @@ def kill_pool_children_by_ppid_census(
   if not targets:
     return []
   log_print(
-    "INFO: pool_recover ppid_census kill context=%s n=%d pids=%s"
-    % (context or "ppid_census", len(targets), targets[:24]),
+    f"INFO: pool_recover ppid_census kill context={context or 'ppid_census'} n={len(targets)} pids={targets[:24]}",
     flush=True,
   )
   _sigkill_pool_worker_pids(
@@ -2044,19 +2000,12 @@ def reclaim_excess_ingest_pool_children(
     return []
   keep = set(_alive_pool_worker_pids(pool)) if pool is not None else set()
   keep = {pid for pid in keep if pid in children}
-  # Never truncate keep — registered workers stay alive; only orphans cull.
+  # Never truncate keep - registered workers stay alive; only orphans cull.
   extras = [pid for pid in children if pid not in keep]
   if not extras:
     return []
   log_print(
-    "ERROR: ingest pool child_ingest over cap alive=%d expected=%d "
-    "culling_n=%d context=%s"
-    % (
-      len(children),
-      expected,
-      len(extras),
-      context or "reclaim",
-    ),
+    f"ERROR: ingest pool child_ingest over cap alive={len(children)} expected={expected} culling_n={len(extras)} context={context or 'reclaim'}",
     flush=True,
   )
   _sigkill_pool_worker_pids(
@@ -2099,20 +2048,11 @@ def warn_unreaped_zombie_children(*, context: str = "") -> None:
   max_age = max(ages) if ages else 0.0
   sample = zombies[:8]
   sample_ages = [
-    "%.1f" % (now_mono - _ZOMBIE_FIRST_SEEN_MONO[int(pid)]) for pid in sample
+    f"{now_mono - _ZOMBIE_FIRST_SEEN_MONO[int(pid)]:.1f}" for pid in sample
   ]
   level = "ERROR" if max_age >= _ZOMBIE_AGE_ERROR_THRESHOLD_S else "WARN"
   log_print(
-    "%s: unreaped zombie children context=%s count=%d "
-    "max_age_s=%.1f sample_pids=%s sample_age_s=%s"
-    % (
-      level,
-      context or "supervisor",
-      len(zombies),
-      max_age,
-      sample,
-      sample_ages,
-    ),
+    f"{level}: unreaped zombie children context={context or 'supervisor'} count={len(zombies)} max_age_s={max_age:.1f} sample_pids={sample} sample_age_s={sample_ages}",
     flush=True,
   )
 
@@ -2239,15 +2179,13 @@ def _sigkill_pool_worker_pids(
       continue
   if killed:
     log_print(
-      "Pool terminate SIGKILL context={} pids={}".format(
-        context or "pool", killed
-      ),
+      f"Pool terminate SIGKILL context={context or 'pool'} pids={killed}",
       flush=True,
     )
   for pid in killed:
     with contextlib.suppress(ChildProcessError, OSError):
       os.waitpid(int(pid), os.WNOHANG)
-  # Bounded non-blocking reap; never O(workers × 2s).
+  # Bounded non-blocking reap; never O(workers x 2s).
   reap_budget = max(0.0, float(blocking_reap_s))
   if reap_budget <= 0.0 or not killed:
     return
@@ -2318,7 +2256,7 @@ def _abandon_pool_reap_until_clear(
 
   Args:
     pool (Any): Abandoned pool whose ``_pool`` workers may still need join.
-    timeout_s (float): Caller join/abandon budget; clamped to ~2–10s wall.
+    timeout_s (float): Caller join/abandon budget; clamped to ~2-10s wall.
     context (str): Operator-facing reap/warn context string.
 
   Returns:
@@ -2368,19 +2306,19 @@ def terminate_pool_bounded(
   When ``abandon_after_kill=True`` (idle-pool recover / proactive swap /
   metrics teardown), **stop ``_worker_handler`` and cancel Finalize first**,
   then SIGKILL known worker PIDs and **do not** call stdlib
-  ``Pool.terminate()`` / join — that path can hang forever in
+  ``Pool.terminate()`` / join - that path can hang forever in
   ``_help_stuff_finish`` or at ``p.join()`` when workers swallow SIGTERM
   (RC-C; hs04 2026-08-13). Also SIGKILL every direct child whose cmdline
   matches ``pool_worker_cmdline_mark`` (default ``[worker:ingest-pool]``)
   so orphans left out of ``pool._pool`` cannot double the live cohort on
   recreate. After kill, Process.join + retry ``/proc`` reap until empty
-  (or a bounded wall) and warn unreaped zombies — a single-pass reap left
+  (or a bounded wall) and warn unreaped zombies - a single-pass reap left
   the ``/pub`` recycle 24Z cohort under metrics ``[main]``.
 
   Args:
     active_pool (Any): Live ``multiprocessing.Pool``.
     timeout_s (float): Join budget for the non-abandon path; abandon reap
-      wall clamps to about 2–10s from this value.
+      wall clamps to about 2-10s from this value.
     context (str): Operator-facing context string.
     kill_workers_first (bool): SIGTERM/SIGKILL workers before terminate.
     abandon_after_kill (bool): Skip stdlib ``Pool.terminate()`` after kill.
@@ -2404,13 +2342,12 @@ def terminate_pool_bounded(
     return True
   alive_before = alive_pool_worker_count(active_pool)
   if abandon_after_kill:
-    # Primary: stop repopulator before SIGKILL (hs04 PID gap 830–853).
+    # Primary: stop repopulator before SIGKILL (hs04 PID gap 830-853).
     _stop_abandoned_pool_repopulate(active_pool)
   if kill_workers_first or abandon_after_kill:
     wchan_sample = format_pool_worker_wchan_sample(active_pool)
     log_print(
-      "INFO: pool_recover terminate workers_before=%d wchan_sample=%s "
-      "context=%s" % (alive_before, wchan_sample, context or "pool"),
+      f"INFO: pool_recover terminate workers_before={alive_before} wchan_sample={wchan_sample} context={context or 'pool'}",
       flush=True,
     )
     _aggressive_terminate_pool_workers(
@@ -2433,8 +2370,7 @@ def terminate_pool_bounded(
         keep_pids=(),
       )
     log_print(
-      "INFO: pool_recover terminate outcome=abandoned context=%s "
-      "workers_before=%d" % (context or "pool", alive_before),
+      f"INFO: pool_recover terminate outcome=abandoned context={context or 'pool'} workers_before={alive_before}",
       flush=True,
     )
     _abandon_pool_reap_until_clear(
@@ -2449,8 +2385,7 @@ def terminate_pool_bounded(
   with contextlib.suppress(Exception):
     active_pool.terminate()
   log_print(
-    "Pool workers terminated context=%s workers_before=%d"
-    % (context or "pool", alive_before),
+    f"Pool workers terminated context={context or 'pool'} workers_before={alive_before}",
     flush=True,
   )
   all_done, alive = _wait_pool_processes_bounded(active_pool, timeout_s)
@@ -2465,17 +2400,13 @@ def terminate_pool_bounded(
     all_done, alive = _wait_pool_processes_bounded(active_pool, timeout_s)
     if not all_done and alive:
       log_print(
-        "Pool terminate still lingering after SIGKILL context={} workers={}".format(
-          context or "pool", alive
-        ),
+        f"Pool terminate still lingering after SIGKILL context={context or 'pool'} workers={alive}",
         flush=True,
       )
       outcome = "timeout"
   if kill_workers_first or "recover" in str(context or ""):
     log_print(
-      "INFO: pool_recover terminate outcome={} context={}".format(
-        outcome, context or "pool"
-      ),
+      f"INFO: pool_recover terminate outcome={outcome} context={context or 'pool'}",
       flush=True,
     )
   _reap_pool_worker_pids(
@@ -2483,7 +2414,7 @@ def terminate_pool_bounded(
   )
   # RC-JT: orphans outside pool._pool (recycle races, census kills, abandoned
   # cohorts) stay STAT=Z under [main] if we only waitpid tracked workers.
-  # Mirror the abandon branch — PID-specific /proc reap, never waitpid(-1).
+  # Mirror the abandon branch - PID-specific /proc reap, never waitpid(-1).
   with contextlib.suppress(Exception):
     reap_zombie_children_of_self(context=context or "pool")
   return all_done
@@ -2553,9 +2484,7 @@ def probe_ingest_pool_dispatch(
   except Exception as exc:
     err_s = str(exc).strip() or type(exc).__name__
     log_print(
-      "ERROR: pool_recover respawn dispatch_probe failed context={} err={}".format(
-        context or "pool", err_s
-      ),
+      f"ERROR: pool_recover respawn dispatch_probe failed context={context or 'pool'} err={err_s}",
       flush=True,
     )
     return False
@@ -2623,20 +2552,12 @@ def maintain_ingest_pool_after_supervisor_retire(
     or metrics["alive"] < metrics["expected_total"] - metrics["dead_n"]
   ):
     log_print(
-      "WARN: ingest pool replacement lagging alive=%d expected_total=%d "
-      "materialized=%d gap=%d dead_n=%d context=post_retire_maintenance"
-      % (
-        metrics["alive"],
-        metrics["expected_total"],
-        metrics["materialized"],
-        metrics["gap"],
-        metrics["dead_n"],
-      ),
+      f"WARN: ingest pool replacement lagging alive={metrics['alive']} expected_total={metrics['expected_total']} materialized={metrics['materialized']} gap={metrics['gap']} dead_n={metrics['dead_n']} context=post_retire_maintenance",
       flush=True,
     )
     # RC-M: refuse further retire/swap while replacement is still lagging.
     return pool
-  # Busy pool: skip dispatch_probe — a 10s apply_async behind long in-flight
+  # Busy pool: skip dispatch_probe - a 10s apply_async behind long in-flight
   # tasks raises TimeoutError and was mis-read as a dead taskqueue, driving
   # reclaim/SIGKILL thrash toward exit 124.
   if not pool_workers_all_idle(pool):
@@ -2884,16 +2805,7 @@ def imap_unordered_watch_pool(
           )
       if stall_abort_after > 0 and consecutive_timeouts >= stall_abort_after:
         estimated_stall_s = consecutive_timeouts * poll_timeout_s
-        message = (
-          "Pool imap stalled after %d consecutive poll timeouts "
-          "(context=%s poll_timeout_s=%.3f estimated_stall_s=%.1f)"
-          % (
-            consecutive_timeouts,
-            context or "pool",
-            poll_timeout_s,
-            estimated_stall_s,
-          )
-        )
+        message = f"Pool imap stalled after {consecutive_timeouts} consecutive poll timeouts (context={context or 'pool'} poll_timeout_s={poll_timeout_s:.3f} estimated_stall_s={estimated_stall_s:.1f})"
         fatal_extra = ""
         if on_stall_fatal_summary is not None:
           try:
@@ -2932,7 +2844,7 @@ _IDLE_POOL_TASKQUEUE_DEAD_CAUSE = "idle_pool_taskqueue_dead"
 IDLE_POOL_RECOVER_WALL_S = 30.0
 # Max successful idle-pool recovers per sliding-window imap session.
 IDLE_POOL_RECOVER_MAX = 3
-# Identical skip_no pending after this many probe-ok recovers → path soft-fail
+# Identical skip_no pending after this many probe-ok recovers -> path soft-fail
 # (not process exit 124). Aligns with recover cap by default.
 IDLE_POOL_UNHEALED_RECOVER_MAX = 3
 
@@ -2992,7 +2904,7 @@ def imap_sliding_window_watch_pool(
     are
   soft-failed via ``soft_fail_unhealed_paths_fn`` (or a path-as-item default)
     and the
-  imap session continues — exit **124** is reserved for recover wall / probe
+  imap session continues - exit **124** is reserved for recover wall / probe
     fail /
   empty soft-fail at cap (true taskqueue death).
 
@@ -3126,19 +3038,7 @@ def imap_sliding_window_watch_pool(
         pending_async.pop(async_result, None)
     sample = [os.path.basename(str(path)) for path, _item in packed[:5] if path]
     log_print(
-      "ERROR: pool imap idle reconcile path soft-fail "
-      "reason=idle_pool_unhealed_after_recover escalate=%s "
-      "path_n=%d recover_count=%d/%d unhealed_streak=%d "
-      "pending_sample=%s context=%s"
-      % (
-        escalate_reason,
-        len(packed),
-        int(pool_recover_count),
-        int(IDLE_POOL_RECOVER_MAX),
-        int(unhealed_recover_streak),
-        sample,
-        context or "pool",
-      ),
+      f"ERROR: pool imap idle reconcile path soft-fail reason=idle_pool_unhealed_after_recover escalate={escalate_reason} path_n={len(packed)} recover_count={int(pool_recover_count)}/{int(IDLE_POOL_RECOVER_MAX)} unhealed_streak={int(unhealed_recover_streak)} pending_sample={sample} context={context or 'pool'}",
       flush=True,
     )
     unhealed_recover_streak = 0
@@ -3178,9 +3078,7 @@ def imap_sliding_window_watch_pool(
     if not idle_recover_skip_logged:
       idle_recover_skip_logged = True
       log_print(
-        "INFO: pool imap idle reconcile pool_recover skipped reason=%s "
-        "pending_async_n=%d context=%s"
-        % (reason, len(pending_paths or ()), context or "pool"),
+        f"INFO: pool imap idle reconcile pool_recover skipped reason={reason} pending_async_n={len(pending_paths or ())} context={context or 'pool'}",
         flush=True,
       )
     return reason
@@ -3295,13 +3193,7 @@ def imap_sliding_window_watch_pool(
       if norm not in duplicate_dispatch_warned:
         duplicate_dispatch_warned.add(norm)
         log_print(
-          "WARN: pool imap duplicate dispatch suppressed path=%s "
-          "suppressed_n=%d context=%s"
-          % (
-            ingest_path_dispatch_label(norm),
-            suppressed_n,
-            context or "pool",
-          ),
+          f"WARN: pool imap duplicate dispatch suppressed path={ingest_path_dispatch_label(norm)} suppressed_n={suppressed_n} context={context or 'pool'}",
           flush=True,
         )
       return False
@@ -3358,7 +3250,7 @@ def imap_sliding_window_watch_pool(
       else:
         if _dispatch_path(path):
           continue
-        # Primary path suppressed as duplicate — advance to next path.
+        # Primary path suppressed as duplicate - advance to next path.
         continue
 
   def _handle_stall_poll() -> None:
@@ -3407,16 +3299,7 @@ def imap_sliding_window_watch_pool(
         )
     if stall_abort_after > 0 and consecutive_timeouts >= stall_abort_after:
       estimated_stall_s = consecutive_timeouts * poll_timeout_s
-      message = (
-        "Pool imap stalled after %d consecutive poll timeouts "
-        "(context=%s poll_timeout_s=%.3f estimated_stall_s=%.1f)"
-        % (
-          consecutive_timeouts,
-          context or "pool",
-          poll_timeout_s,
-          estimated_stall_s,
-        )
-      )
+      message = f"Pool imap stalled after {consecutive_timeouts} consecutive poll timeouts (context={context or 'pool'} poll_timeout_s={poll_timeout_s:.3f} estimated_stall_s={estimated_stall_s:.1f})"
       fatal_extra = ""
       if on_stall_fatal_summary is not None:
         try:
@@ -3488,32 +3371,16 @@ def imap_sliding_window_watch_pool(
       )
       if soft_failed:
         log_print(
-          "ERROR: pool imap idle reconcile pool_recover cap exceeded "
-          "recover_count=%d max=%d pending_async_n=%d "
-          "action=path_soft_fail context=%s"
-          % (
-            cap_count,
-            int(IDLE_POOL_RECOVER_MAX),
-            len(pending_async),
-            context or "pool",
-          ),
+          f"ERROR: pool imap idle reconcile pool_recover cap exceeded recover_count={cap_count} max={int(IDLE_POOL_RECOVER_MAX)} pending_async_n={len(pending_async)} action=path_soft_fail context={context or 'pool'}",
           flush=True,
         )
         return soft_failed
       log_print(
-        "ERROR: pool imap idle reconcile pool_recover cap exceeded "
-        "recover_count=%d max=%d pending_async_n=%d context=%s"
-        % (
-          cap_count,
-          int(IDLE_POOL_RECOVER_MAX),
-          len(pending_async),
-          context or "pool",
-        ),
+        f"ERROR: pool imap idle reconcile pool_recover cap exceeded recover_count={cap_count} max={int(IDLE_POOL_RECOVER_MAX)} pending_async_n={len(pending_async)} context={context or 'pool'}",
         flush=True,
       )
       raise MultiprocessingPoolStallError(
-        "idle pool recover cap exceeded recover_count=%d max=%d"
-        % (cap_count, int(IDLE_POOL_RECOVER_MAX)),
+        f"idle pool recover cap exceeded recover_count={cap_count} max={int(IDLE_POOL_RECOVER_MAX)}",
         dead_pids=[],
         context=context,
         exit_code=124,
@@ -3531,18 +3398,10 @@ def imap_sliding_window_watch_pool(
       os.path.basename(str(path)) for path in pending_paths[:5] if path
     ]
     log_print(
-      "INFO: pool imap idle reconcile pool_recover pending_async_n=%d "
-      "recover_count=%d/%d pending_sample=%s context=%s"
-      % (
-        pending_before,
-        int(pool_recover_count) + 1,
-        int(IDLE_POOL_RECOVER_MAX),
-        pending_sample,
-        context or "pool",
-      ),
+      f"INFO: pool imap idle reconcile pool_recover pending_async_n={pending_before} recover_count={int(pool_recover_count) + 1}/{int(IDLE_POOL_RECOVER_MAX)} pending_sample={pending_sample} context={context or 'pool'}",
       flush=True,
     )
-    # RC-F/G/H: wall-clock abort — never soft-hang MainThread on recover.
+    # RC-F/G/H: wall-clock abort - never soft-hang MainThread on recover.
     recover_box = {}
     recover_error = {}
 
@@ -3579,9 +3438,7 @@ def imap_sliding_window_watch_pool(
       if isinstance(exc, MultiprocessingPoolStallError):
         raise exc
       log_print(
-        "ERROR: pool imap idle reconcile pool_recover failed: {} context={}".format(
-          exc, context or "pool"
-        ),
+        f"ERROR: pool imap idle reconcile pool_recover failed: {exc} context={context or 'pool'}",
         flush=True,
       )
       raise MultiprocessingPoolStallError(
@@ -3633,18 +3490,7 @@ def imap_sliding_window_watch_pool(
     else:
       unhealed_recover_streak = 0
     log_print(
-      "INFO: pool imap idle reconcile pool_recover done "
-      "collected_n=%d pending_async_n=%d recover_count=%d/%d "
-      "unhealed_streak=%d/%d context=%s"
-      % (
-        len(collected),
-        len(pending_async),
-        int(pool_recover_count),
-        int(IDLE_POOL_RECOVER_MAX),
-        int(unhealed_recover_streak),
-        int(IDLE_POOL_UNHEALED_RECOVER_MAX),
-        context or "pool",
-      ),
+      f"INFO: pool imap idle reconcile pool_recover done collected_n={len(collected)} pending_async_n={len(pending_async)} recover_count={int(pool_recover_count)}/{int(IDLE_POOL_RECOVER_MAX)} unhealed_streak={int(unhealed_recover_streak)}/{int(IDLE_POOL_UNHEALED_RECOVER_MAX)} context={context or 'pool'}",
       flush=True,
     )
     if (
@@ -3658,10 +3504,9 @@ def imap_sliding_window_watch_pool(
       if soft_failed:
         collected.extend(soft_failed)
       elif not soft_failed and pending_async:
-        # Caller refused soft-fail while pending remains — treat as taskqueue death.
+        # Caller refused soft-fail while pending remains - treat as taskqueue death.
         raise MultiprocessingPoolStallError(
-          "idle pool unhealed recover soft-fail empty recover_count=%d"
-          % int(pool_recover_count),
+          f"idle pool unhealed recover soft-fail empty recover_count={int(pool_recover_count)}",
           dead_pids=[],
           context=context,
           exit_code=124,
@@ -3708,7 +3553,7 @@ def imap_sliding_window_watch_pool(
         if recovered and queue_yields:
           reconcile_pending_yields.extend(recovered)
         return recovered
-      # Recover failed — still allow one more redispatch cycle below.
+      # Recover failed - still allow one more redispatch cycle below.
     allow_redispatch = idle_reconcile_rounds < max_reconcile_rounds
     if full_redispatch_thrash_seen and pool_recover_attempted:
       allow_redispatch = False
@@ -3716,9 +3561,7 @@ def imap_sliding_window_watch_pool(
       if not idle_redispatch_skip_logged:
         idle_redispatch_skip_logged = True
         log_print(
-          "INFO: pool imap idle reconcile redispatch skipped reason=%s "
-          "pending_async_n=%d context=%s"
-          % (skip_reason, len(pending_async), context or "pool"),
+          f"INFO: pool imap idle reconcile redispatch skipped reason={skip_reason} pending_async_n={len(pending_async)} context={context or 'pool'}",
           flush=True,
         )
       allow_redispatch = False
@@ -3748,16 +3591,7 @@ def imap_sliding_window_watch_pool(
         os.path.basename(str(path)) for path in _in_flight_paths()[:5] if path
       ]
       log_print(
-        "INFO: pool imap idle reconcile redispatch round=%d/%d "
-        "redispatched_n=%d pending_async_n=%d pending_sample=%s context=%s"
-        % (
-          int(idle_reconcile_rounds),
-          int(max_reconcile_rounds),
-          int(redispatched),
-          len(pending_async),
-          pending_sample,
-          context or "pool",
-        ),
+        f"INFO: pool imap idle reconcile redispatch round={int(idle_reconcile_rounds)}/{int(max_reconcile_rounds)} redispatched_n={int(redispatched)} pending_async_n={len(pending_async)} pending_sample={pending_sample} context={context or 'pool'}",
         flush=True,
       )
       if (
@@ -3826,22 +3660,13 @@ def imap_sliding_window_watch_pool(
     if polls_since_last_yield >= warn_after and not idle_pool_warned:
       idle_pool_warned = True
       log_print(
-        "WARN: pool imap waiting pending_async_n=%d workers_idle=yes "
-        "polls_since_yield=%d pending_sample=%s worker_wchan_sample=%s "
-        "context=%s"
-        % (
-          len(pending_async),
-          int(polls_since_last_yield),
-          pending_sample,
-          wchan_sample,
-          context or "pool",
-        ),
+        f"WARN: pool imap waiting pending_async_n={len(pending_async)} workers_idle=yes polls_since_yield={int(polls_since_last_yield)} pending_sample={pending_sample} worker_wchan_sample={wchan_sample} context={context or 'pool'}",
         flush=True,
       )
     if polls_since_last_yield < ghost_abort_polls:
       return
     # Do not fatal on thrash+stale-attempted after a successful recover reset
-    # rounds to 0/1 — wait for more rounds or recover-cap exhaustion.
+    # rounds to 0/1 - wait for more rounds or recover-cap exhaustion.
     recover_cap_exceeded = pool_recover_count >= int(IDLE_POOL_RECOVER_MAX)
     if recover_cap_exceeded and pending_async:
       soft_failed = _soft_fail_unhealed_paths(
@@ -3862,19 +3687,7 @@ def imap_sliding_window_watch_pool(
       and full_redispatch_thrash_seen
     )
     likely_cause = _IDLE_POOL_TASKQUEUE_DEAD_CAUSE if taskqueue_dead else ""
-    message = (
-      "pool imap idle workers with pending async "
-      "(context=%s pending_async_n=%d polls_since_yield=%d "
-      "pending_sample=%s worker_wchan_sample=%s likely_cause=%s)"
-      % (
-        _IDLE_POOL_GHOST_CONTEXT,
-        len(pending_async),
-        int(polls_since_last_yield),
-        pending_sample,
-        wchan_sample,
-        likely_cause or "unknown",
-      )
-    )
+    message = f"pool imap idle workers with pending async (context={_IDLE_POOL_GHOST_CONTEXT} pending_async_n={len(pending_async)} polls_since_yield={int(polls_since_last_yield)} pending_sample={pending_sample} worker_wchan_sample={wchan_sample} likely_cause={likely_cause or 'unknown'})"
     log_print(f"ERROR: {message}", flush=True)
     if callable(on_idle_pool_ghost_fatal):
       with contextlib.suppress(Exception):
@@ -4059,13 +3872,7 @@ def hard_exit_pool_worker_error(exc: MultiprocessingWorkerExitError) -> None:
       diagnostics,
     )
   log_print(
-    "Pool worker exit: hard exit code=%d context=%s likely_cause=%s%s"
-    % (
-      exc.exit_code,
-      exc.context or "unknown",
-      likely_cause or "unknown",
-      extra,
-    ),
+    f"Pool worker exit: hard exit code={exc.exit_code} context={exc.context or 'unknown'} likely_cause={likely_cause or 'unknown'}{extra}",
     flush=True,
   )
   os._exit(int(exc.exit_code))

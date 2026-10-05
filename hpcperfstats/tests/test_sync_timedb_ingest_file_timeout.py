@@ -29,7 +29,7 @@ def _patch_stats_file_size_bytes(monkeypatch, fn):
   )
 
 
-# Slope keeps historical (86400−900)/30720 anchor; floor default is independent (3600).
+# Slope keeps historical (86400-900)/30720 anchor; floor default is independent (3600).
 _PER_MIB_DEFAULT = (86400.0 - 900.0) / 30720.0
 _FLOOR_DEFAULT = 3600.0
 _MAX_TIMEOUT_DEFAULT = 86400.0
@@ -470,7 +470,7 @@ def test_timeout_s_on_outcome_from_meta():
 
 
 def test_idle_stall_raises_after_no_progress(monkeypatch):
-  """No heartbeat for idle window → stage=idle_stall TimeoutError."""
+  """No heartbeat for idle window -> stage=idle_stall TimeoutError."""
   from hpcperfstats.dbload.lib import sync_timedb_ingest_progress as prog
 
   clock = {"t": 100.0}

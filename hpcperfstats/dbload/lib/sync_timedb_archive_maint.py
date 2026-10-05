@@ -155,8 +155,7 @@ def _maybe_log_parallel_task_progress(
     or (now - last_progress_mono) >= _ARCHIVE_METADATA_PROGRESS_INTERVAL_S
   ):
     log_fn(
-      "%s: progress done=%d/%d errors=%d elapsed_s=%d"
-      % (prefix, done, total, errors, int(now - started_mono)),
+      f"{prefix}: progress done={done}/{total} errors={errors} elapsed_s={int(now - started_mono)}",
       flush=True,
     )
     return now
@@ -171,7 +170,7 @@ def _path_fingerprint(path: str) -> tuple[int, int] | None:
     path (str): String for path.
 
   Returns:
-    Optional[Tuple[int, int]]: Optional[Tuple[int, int]] — the result, or None
+    Optional[Tuple[int, int]]: Optional[Tuple[int, int]] - the result, or None
     when unavailable.
 
   Examples:
@@ -199,7 +198,7 @@ def _host_dir_fingerprint(host_dir: str) -> tuple[int, int] | None:
     host_dir (str): String for host dir.
 
   Returns:
-    Optional[Tuple[int, int]]: Optional[Tuple[int, int]] — the result, or None
+    Optional[Tuple[int, int]]: Optional[Tuple[int, int]] - the result, or None
     when unavailable.
 
   Examples:
@@ -231,7 +230,7 @@ def load_archive_maint_hints(archive_data_dir: str) -> dict[str, Any] | None:
     archive_data_dir (str): String for archive data dir.
 
   Returns:
-    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] — the result, or None
+    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] - the result, or None
     when unavailable.
 
   Examples:
@@ -614,7 +613,7 @@ def collect_gate_identities_for_paths(
   log_fn: Any = log_print,
 ) -> tuple[dict[str, dict[str, set[int]]], dict[str, int]]:
   """
-  Build per-path head+tail host→seconds maps; parallel EOF-backward tail reads.
+  Build per-path head+tail host->seconds maps; parallel EOF-backward tail reads.
 
   Args:
     paths (Any): Iterable of filesystem paths as strings.
@@ -646,7 +645,7 @@ def collect_gate_identities_for_paths(
   total_tasks = len(path_list)
   if log_fn and total_tasks >= _ARCHIVE_METADATA_PROGRESS_MIN_PATHS:
     log_fn(
-      "Gate tail metadata: begin paths=%d workers=%d" % (total_tasks, workers),
+      f"Gate tail metadata: begin paths={total_tasks} workers={workers}",
       flush=True,
     )
   last_progress_mono = started_mono
@@ -706,14 +705,7 @@ def collect_gate_identities_for_paths(
   }
   if log_fn and path_list:
     log_fn(
-      "Gate tail metadata: paths=%d read=%d workers=%d errors=%d elapsed_s=%d"
-      % (
-        stats["paths"],
-        stats["read"],
-        stats["workers"],
-        stats["errors"],
-        stats["elapsed_s"],
-      ),
+      f"Gate tail metadata: paths={stats['paths']} read={stats['read']} workers={stats['workers']} errors={stats['errors']} elapsed_s={stats['elapsed_s']}",
       flush=True,
     )
   return gate_by_path, stats
@@ -758,8 +750,7 @@ def collect_head_metadata_for_paths(
     workers = _get_archive_discovery_worker_count(read_total)
     if log_fn and read_total >= _ARCHIVE_METADATA_PROGRESS_MIN_PATHS:
       log_fn(
-        "Head metadata: begin paths=%d read=%d workers=%d"
-        % (len(paths), read_total, workers),
+        f"Head metadata: begin paths={len(paths)} read={read_total} workers={workers}",
         flush=True,
       )
     last_progress_mono = started_mono
@@ -819,15 +810,7 @@ def collect_head_metadata_for_paths(
   }
   if log_fn:
     log_fn(
-      "Head metadata: paths=%d hinted=%d read=%d workers=%d errors=%d elapsed_s=%d"
-      % (
-        stats["paths"],
-        stats["hinted"],
-        stats["read"],
-        stats["workers"],
-        stats["errors"],
-        stats["elapsed_s"],
-      ),
+      f"Head metadata: paths={stats['paths']} hinted={stats['hinted']} read={stats['read']} workers={stats['workers']} errors={stats['errors']} elapsed_s={stats['elapsed_s']}",
       flush=True,
     )
   return first_timestamp_by_path, head_identity_by_path, stats
@@ -901,8 +884,7 @@ def build_archive_maintenance_snapshot(
   )
   if log_fn:
     log_fn(
-      "Archive maintenance snapshot: head metadata complete paths=%d "
-      "elapsed_s=%.3f" % (len(closed_paths), time.time() - snap_t0),
+      f"Archive maintenance snapshot: head metadata complete paths={len(closed_paths)} elapsed_s={time.time() - snap_t0:.3f}",
       flush=True,
     )
   gate_identities_by_path: dict[str, dict[str, set[int]]] = {}
@@ -928,17 +910,14 @@ def build_archive_maintenance_snapshot(
   remaining_raw_by_gz = remaining_raw_by_gz_from_mapping(mapping)
   if log_fn:
     log_fn(
-      "Archive maintenance snapshot: mapping built days=%d closed_paths=%d "
-      "elapsed_s=%.3f"
-      % (len(mapping), len(closed_paths), time.time() - snap_t0),
+      f"Archive maintenance snapshot: mapping built days={len(mapping)} closed_paths={len(closed_paths)} elapsed_s={time.time() - snap_t0:.3f}",
       flush=True,
     )
   ready_paths: set[str] = set()
   if build_ready_set:
     if log_fn:
       log_fn(
-        "Archive maintenance snapshot: building head-ingest ready set "
-        "paths=%d" % len(closed_paths),
+        f"Archive maintenance snapshot: building head-ingest ready set paths={len(closed_paths)}",
         flush=True,
       )
     ready_paths = build_head_ingest_ready_set(
@@ -953,8 +932,7 @@ def build_archive_maintenance_snapshot(
     )
   if log_fn:
     log_fn(
-      "Archive maintenance snapshot: complete ready_paths=%d elapsed_s=%.3f"
-      % (len(ready_paths), time.time() - snap_t0),
+      f"Archive maintenance snapshot: complete ready_paths={len(ready_paths)} elapsed_s={time.time() - snap_t0:.3f}",
       flush=True,
     )
   return ArchiveMaintenanceSnapshot(
@@ -1070,16 +1048,6 @@ def log_archive_maintenance_snapshot_summary(
   )
   hrs = snapshot.head_read_stats or {}
   log_fn(
-    "Archive maintenance snapshot: closed_paths=%d days=%d seal_candidates=%d "
-    "head_read_tasks=%d head_read_workers=%d hinted=%d ready_paths=%d"
-    % (
-      len(snapshot.closed_paths),
-      days,
-      seal_candidates,
-      hrs.get("read", 0),
-      hrs.get("workers", 0),
-      hrs.get("hinted", 0),
-      len(snapshot.ready_paths),
-    ),
+    f"Archive maintenance snapshot: closed_paths={len(snapshot.closed_paths)} days={days} seal_candidates={seal_candidates} head_read_tasks={hrs.get('read', 0)} head_read_workers={hrs.get('workers', 0)} hinted={hrs.get('hinted', 0)} ready_paths={len(snapshot.ready_paths)}",
     flush=True,
   )

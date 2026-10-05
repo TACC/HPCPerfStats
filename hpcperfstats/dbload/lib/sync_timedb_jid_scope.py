@@ -1,7 +1,7 @@
 """
 Resolve ``job_data`` scope for ``sync_timedb.py --jid`` ingest-only runs.
 
-Does not import the analysis metrics ``jid_table`` stack — FQDN suffix rules
+Does not import the analysis metrics ``jid_table`` stack - FQDN suffix rules
 mirror ``jid_table._as_host_data_fqdn`` using ``conf_parser.get_host_name_ext``.
 
 Attributes:
@@ -274,9 +274,9 @@ def parse_sync_timedb_jid_cli_arg(
   Parse ``--jid`` / ``--jid=`` from argv.
 
     Returns ``(jid, error)``:
-    - ``(None, None)`` — not a ``--jid`` invocation
-    - ``(jid, None)`` — one-shot jid ingest
-    - ``(None, message)`` — usage / mutual-exclusion error
+    - ``(None, None)`` - not a ``--jid`` invocation
+    - ``(jid, None)`` - one-shot jid ingest
+    - ``(None, message)`` - usage / mutual-exclusion error
 
   Args:
     argv (Optional[Sequence[str]]): Argv, or None when absent.
@@ -312,8 +312,6 @@ def parse_sync_timedb_jid_cli_arg(
     return None, "usage: sync_timedb.py --jid <JID> (empty jid)"
   if rest:
     return None, (
-      "sync_timedb.py --jid cannot be combined with other arguments: {}".format(
-        " ".join(rest)
-      )
+      f"sync_timedb.py --jid cannot be combined with other arguments: {' '.join(rest)}"
     )
   return jid, None

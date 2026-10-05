@@ -152,7 +152,7 @@ def job_hist(
   plot.quad(top=hist, bottom=0, left=edges[:-1], right=edges[1:])
 
   # Equal outer chrome (y-axis labels vs last x tick) and equal data-range pad so
-  # job-list distribution thumbs are not clipped on the right (280×200 embeds).
+  # job-list distribution thumbs are not clipped on the right (280x200 embeds).
   plot.min_border_left = 40
   plot.min_border_right = 40
   xmin = float(edges[0])

@@ -50,7 +50,7 @@ def parse_monitor_identity_from_dollar_message(
 
   Expects the listend ``$`` shape: first line starts with ``$``, second line
   is ``1 <fqdn>``, then property lines (``$hpcperfstats``, ``$uname``,
-  optional ``$build``) and ``!type …`` schema lines. Old RPMs without
+  optional ``$build``) and ``!type ...`` schema lines. Old RPMs without
   ``$build`` still yield version / uname / schema_types.
 
   Args:
@@ -157,7 +157,7 @@ def set_monitor_identity(
   Best-effort SET of ``monitor_identity:{fqdn}`` JSON with a TTL.
 
   Args:
-    redis_client (Any): redis-py client with ``set(name, value, ex=…)``.
+    redis_client (Any): redis-py client with ``set(name, value, ex=...)``.
     identity (Mapping[str, Any]): Document from
       ``parse_monitor_identity_from_dollar_message`` (must include ``fqdn``).
     ttl_seconds (int): Redis key TTL in seconds (aligned with

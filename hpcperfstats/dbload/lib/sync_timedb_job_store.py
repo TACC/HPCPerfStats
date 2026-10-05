@@ -1280,12 +1280,7 @@ def make_lease_owner_token(
   else:
     host = hostname
   boot = current_boot_id() if boot_id is None else boot_id
-  return "{}:{}:{}:{}".format(
-    secrets.token_hex(16),
-    str(host or "unknown").replace(":", "_").replace("|", "_"),
-    str(boot or "unknown").replace(":", "_").replace("|", "_"),
-    owner_pid,
-  )
+  return f"{secrets.token_hex(16)}:{str(host or 'unknown').replace(':', '_').replace('|', '_')}:{str(boot or 'unknown').replace(':', '_').replace('|', '_')}:{owner_pid}"
 
 
 def zadd_ingest_job(
@@ -1881,7 +1876,7 @@ def format_queue_census(census: dict[str, dict[str, int]]) -> str:
     if not entry:
       continue
     parts.append(
-      "%s=%d/%d" % (kind, entry.get("inflight", 0), entry.get("queued", 0)),
+      f"{kind}={entry.get('inflight', 0)}/{entry.get('queued', 0)}",
     )
   return " ".join(parts)
 

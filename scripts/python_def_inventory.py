@@ -44,7 +44,7 @@ SKIP_DIR_NAMES = frozenset(
   }
 )
 
-# Path segment / name rules → excluded_reason (first match wins).
+# Path segment / name rules -> excluded_reason (first match wins).
 EXCLUSION_RULES: tuple[tuple[str, str], ...] = (
   ("monitor", "monitor_read_only"),
   ("migrations", "django_migrations"),
@@ -1143,7 +1143,7 @@ def docstring_issues(
         ):
           issues.append(f"missing_args_entry:{name}")
   elif trivial_dunder:
-    # No documentable params — Args section optional.
+    # No documentable params - Args section optional.
     pass
 
   returns_body = _section_body(doc, "Returns")
@@ -1600,7 +1600,7 @@ def default_roots(workspace_root: Path | None = None) -> list[Path]:
     >>> default_roots(None)  # doctest: +SKIP
   """
   if workspace_root is None:
-    # scripts/ → HPCPerfStats git checkout → workspace root
+    # scripts/ -> HPCPerfStats git checkout -> workspace root
     checkout = Path(__file__).resolve().parent.parent
     workspace_root = checkout.parent
   else:
@@ -1728,7 +1728,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
       if len(failed) > args.max_fail_print:
         print(
-          f"  … {len(failed) - args.max_fail_print} more",
+          f"  ... {len(failed) - args.max_fail_print} more",
           file=sys.stderr,
         )
       return 1

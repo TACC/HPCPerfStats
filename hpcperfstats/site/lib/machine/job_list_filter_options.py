@@ -138,7 +138,7 @@ def build_job_list_filter_options(
     .order_by("performance_sort_rank")
   )
   ranks_present = {rank for rank in rank_rows if rank is not None}
-  # One facet per UI label; shared Too-few ranks (2–4) collapse to the lowest
+  # One facet per UI label; shared Too-few ranks (2-4) collapse to the lowest
   # present designation (filter expands via expand_performance_sort_ranks_for_filter).
   seen_labels = set()
   statuses = []

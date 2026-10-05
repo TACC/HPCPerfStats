@@ -52,11 +52,7 @@ def path_fingerprint_key(path: str) -> str | None:
     st = os.stat(path)
   except OSError:
     return None
-  return "%s|%d|%d" % (
-    os.path.normpath(path),
-    int(st.st_mtime),
-    int(st.st_size),
-  )
+  return f"{os.path.normpath(path)}|{int(st.st_mtime)}|{int(st.st_size)}"
 
 
 def file_complete_ingest_mark_path(archive_data_dir: str) -> str:
@@ -302,7 +298,7 @@ def clear_file_complete_ingest_marks(
       _save_entries(mark_path, keep)
   if removed and log_fn is not None:
     log_fn(
-      "INFO: file_complete_ingest_mark cleared n=%d" % removed,
+      f"INFO: file_complete_ingest_mark cleared n={removed}",
       flush=True,
     )
   return removed

@@ -1163,18 +1163,11 @@ def try_acquire_daily_tar_restore(
   store = get_process_archive_members_store()
   if store is None:
     return ""
-  token = "{}:{}:{}:{}".format(
-    reason or "missing_tar",
-    caller or "",
-    os.getpid(),
-    secrets.token_hex(16),
-  )
+  token = f"{reason or 'missing_tar'}:{caller or ''}:{os.getpid()}:{secrets.token_hex(16)}"
   if not store.try_acquire_restore(day_token, token):
     return ""
   log_print(
-    "archive: daily_tar_restore begin day={} reason={} caller={}".format(
-      day_token, reason or "missing_tar", caller or ""
-    ),
+    f"archive: daily_tar_restore begin day={day_token} reason={reason or 'missing_tar'} caller={caller or ''}",
     flush=True,
   )
   return token
@@ -1234,9 +1227,7 @@ def clear_daily_tar_restore_in_progress(
     return
   store.clear_restore(day_token, token)
   log_print(
-    "archive: daily_tar_restore end day={} ok={} reason={}".format(
-      day_token, "yes" if ok else "no", reason or "missing_tar"
-    ),
+    f"archive: daily_tar_restore end day={day_token} ok={'yes' if ok else 'no'} reason={reason or 'missing_tar'}",
     flush=True,
   )
   try:
@@ -1414,7 +1405,7 @@ def _rate_limited_day_info_log(
   suppressed_n = int(state.get("suppressed") or 0)
   state["last_log_mono"] = now_mono
   state["suppressed"] = 0.0
-  suffix = (" suppressed_n=%d" % suppressed_n) if suppressed_n else ""
+  suffix = f" suppressed_n={suppressed_n}" if suppressed_n else ""
   log_fn(f"{message}{suffix}", flush=True)
 
 
@@ -1700,11 +1691,7 @@ def describe_archive_members_populate_for_day(
   store = get_process_archive_members_store()
   if store is None:
     return "store=unset"
-  return "complete_identities=%d degraded=%s skip=%s" % (
-    store.complete_identity_count(day_token),
-    "yes" if store.is_degraded(day_token) else "no",
-    "yes" if store.get_day_skip(day_token) else "no",
-  )
+  return f"complete_identities={store.complete_identity_count(day_token)} degraded={'yes' if store.is_degraded(day_token) else 'no'} skip={'yes' if store.get_day_skip(day_token) else 'no'}"
 
 
 def archive_members_populate_owner_active_for_day(day_token: str) -> bool:

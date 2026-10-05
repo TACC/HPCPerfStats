@@ -51,13 +51,7 @@ Attributes:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Iterator
-
 import contextlib
-from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
-  iter_bounded_thread_pool,
-)
 import os
 import re
 import shutil
@@ -67,7 +61,9 @@ import tempfile
 import threading
 import time
 from collections import OrderedDict, defaultdict
-from datetime import date, datetime, time as dt_time, timedelta
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, time as dt_time, timedelta
+from typing import Any, Iterator
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.archive_compress import (
@@ -84,20 +80,6 @@ from hpcperfstats.dbload.lib.archive_compress import (
   normalize_daily_compressed_path,
   sum_member_bytes,
 )
-from hpcperfstats.dbload.lib.zstd_cli import (
-  _tar_dest_is_nonempty,
-  decompress_compressed_to_tar,
-  zstd_compressed_archive_pipe_readable,
-  zstd_decompress_stdout,
-  drop_page_cache_for_paths,
-  zstd_gzip_decompress_stdout,
-  zstd_gzip_supported,
-  zstd_compress_tar_to_file,
-  zstd_test,
-)
-from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-  parse_first_timestamp_line,
-)
 from hpcperfstats.dbload.lib.file_locking import (
   LOCK_EXPIRY_SECONDS,
   LOCK_SUFFIX,
@@ -105,6 +87,23 @@ from hpcperfstats.dbload.lib.file_locking import (
   file_write_lock,
 )
 from hpcperfstats.dbload.lib.print_utils import janitorial_logging, log_print
+from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+  parse_first_timestamp_line,
+)
+from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+  iter_bounded_thread_pool,
+)
+from hpcperfstats.dbload.lib.zstd_cli import (
+  _tar_dest_is_nonempty,
+  decompress_compressed_to_tar,
+  drop_page_cache_for_paths,
+  zstd_compress_tar_to_file,
+  zstd_compressed_archive_pipe_readable,
+  zstd_decompress_stdout,
+  zstd_gzip_decompress_stdout,
+  zstd_gzip_supported,
+  zstd_test,
+)
 
 _DAY_SCOPED_CLOSED_RAW_COLLECT_LOCK = threading.Lock()
 
@@ -547,8 +546,7 @@ def convert_daily_tar_to_pax_via_extract_recreate(
   if free < tar_size:
     if log_fn:
       log_fn(
-        "WARNING: convert_fail reason=insufficient_free_space tar=%s "
-        "size=%d free=%d" % (tar_path, tar_size, free),
+        f"WARNING: convert_fail reason=insufficient_free_space tar={tar_path} size={tar_size} free={free}",
         flush=True,
       )
     return False
@@ -562,7 +560,7 @@ def convert_daily_tar_to_pax_via_extract_recreate(
     with file_write_lock(tar_path):
       if log_fn:
         log_fn(
-          "INFO: convert_start phase=extract tar=%s" % tar_path,
+          f"INFO: convert_start phase=extract tar={tar_path}",
           flush=True,
         )
       extract = subprocess.run(
@@ -574,18 +572,13 @@ def convert_daily_tar_to_pax_via_extract_recreate(
       if extract.returncode != 0:
         if log_fn:
           log_fn(
-            "WARNING: convert_fail phase=extract tar=%s rc=%s stderr=%s"
-            % (
-              tar_path,
-              extract.returncode,
-              (extract.stderr or "").strip(),
-            ),
+            f"WARNING: convert_fail phase=extract tar={tar_path} rc={extract.returncode} stderr={(extract.stderr or '').strip()}",
             flush=True,
           )
         return False
       if log_fn:
         log_fn(
-          "INFO: convert_start phase=recreate tar=%s" % tar_path,
+          f"INFO: convert_start phase=recreate tar={tar_path}",
           flush=True,
         )
       from hpcperfstats.dbload.lib.sync_timedb_progress_io import (
@@ -606,20 +599,14 @@ def convert_daily_tar_to_pax_via_extract_recreate(
       except ProgressIdleError as exc:
         if log_fn:
           log_fn(
-            "WARNING: convert_fail phase=recreate idle_stall tar=%s exc=%s"
-            % (tar_path, exc),
+            f"WARNING: convert_fail phase=recreate idle_stall tar={tar_path} exc={exc}",
             flush=True,
           )
         return False
       if recreate.returncode != 0 or not os.path.isfile(new_tar):
         if log_fn:
           log_fn(
-            "WARNING: convert_fail phase=recreate tar=%s rc=%s stderr=%s"
-            % (
-              tar_path,
-              recreate.returncode,
-              (recreate.stderr or "").strip(),
-            ),
+            f"WARNING: convert_fail phase=recreate tar={tar_path} rc={recreate.returncode} stderr={(recreate.stderr or '').strip()}",
             flush=True,
           )
         return False
@@ -641,31 +628,25 @@ def convert_daily_tar_to_pax_via_extract_recreate(
       except ProgressIdleError as exc:
         if log_fn:
           log_fn(
-            "WARNING: convert_fail phase=tf idle_stall tar=%s exc=%s"
-            % (tar_path, exc),
+            f"WARNING: convert_fail phase=tf idle_stall tar={tar_path} exc={exc}",
             flush=True,
           )
         return False
       if listed.returncode != 0:
         if log_fn:
           log_fn(
-            "WARNING: convert_fail phase=tf tar=%s rc=%s stderr=%s"
-            % (
-              tar_path,
-              listed.returncode,
-              (listed.stderr or "").strip(),
-            ),
+            f"WARNING: convert_fail phase=tf tar={tar_path} rc={listed.returncode} stderr={(listed.stderr or '').strip()}",
             flush=True,
           )
         return False
       os.replace(new_tar, tar_path)
     if log_fn:
-      log_fn("INFO: convert_done tar=%s" % tar_path, flush=True)
+      log_fn(f"INFO: convert_done tar={tar_path}", flush=True)
     return True
   except (OSError, subprocess.SubprocessError, TimeoutError) as exc:
     if log_fn:
       log_fn(
-        "WARNING: convert_fail tar=%s exc=%s" % (tar_path, exc),
+        f"WARNING: convert_fail tar={tar_path} exc={exc}",
         flush=True,
       )
     return False
@@ -713,15 +694,7 @@ def prepare_paths_for_giant_member_append(
   )
   if log_fn:
     log_fn(
-      "INFO: must_convert tar=%s reason=size_gt_ustar_not_pax_capable "
-      "file_label=%r oversized_n=%d max_member_bytes=%d ustar_limit=%d"
-      % (
-        tar_path,
-        label,
-        len(oversized),
-        max_size,
-        USTAR_MAX_MEMBER_BYTES,
-      ),
+      f"INFO: must_convert tar={tar_path} reason=size_gt_ustar_not_pax_capable file_label={label!r} oversized_n={len(oversized)} max_member_bytes={max_size} ustar_limit={USTAR_MAX_MEMBER_BYTES}",
       flush=True,
     )
   if not os.path.isfile(tar_path):
@@ -731,12 +704,7 @@ def prepare_paths_for_giant_member_append(
     return list(stats_files or ()), []
   if log_fn:
     log_fn(
-      "WARNING: convert_fail_skip tar=%s skipped_n=%d sample_paths=%s"
-      % (
-        tar_path,
-        len(oversized),
-        [os.path.basename(p) for p in oversized[:5]],
-      ),
+      f"WARNING: convert_fail_skip tar={tar_path} skipped_n={len(oversized)} sample_paths={[os.path.basename(p) for p in oversized[:5]]}",
       flush=True,
     )
   return within, list(oversized)
@@ -1103,20 +1071,17 @@ def supplement_pending_paths_from_closed_paths(
       replaced = sum(1 for path in capped if path not in before_set)
       if replaced:
         log_fn(
-          "pending cap supplement replace n=%d pending=%d"
-          % (replaced, len(capped)),
+          f"pending cap supplement replace n={replaced} pending={len(capped)}",
           flush=True,
         )
       elif supplemented:
         log_fn(
-          "pending cap supplement from snapshot n=%d pending=%d"
-          % (supplemented, len(capped)),
+          f"pending cap supplement from snapshot n={supplemented} pending={len(capped)}",
           flush=True,
         )
     else:
       log_fn(
-        "pending cap supplement from snapshot n=%d pending=%d"
-        % (supplemented, len(capped)),
+        f"pending cap supplement from snapshot n={supplemented} pending={len(capped)}",
         flush=True,
       )
   return capped
@@ -1173,8 +1138,7 @@ def cap_pending_stats_with_blocked_retention(
     capped = capped[:max_size]
   if len(merged) > len(capped) and log_fn is not None:
     log_fn(
-      "Pending stats file list truncated pending=%d max=%d"
-      % (len(merged), max_size),
+      f"Pending stats file list truncated pending={len(merged)} max={max_size}",
       flush=True,
     )
   return capped
@@ -1932,7 +1896,7 @@ def _day_ingest_skip_archive_token(kind: Any) -> Any:
   Examples:
     >>> _day_ingest_skip_archive_token(None)  # doctest: +SKIP
   """
-  return "%s%s" % (ARCHIVE_SKIP_DAY_INGEST_SKIP_PREFIX, kind)
+  return f"{ARCHIVE_SKIP_DAY_INGEST_SKIP_PREFIX}{kind}"
 
 
 def raw_stats_path_tar_append_decision(
@@ -2552,7 +2516,7 @@ def _quarantine_one_closed_raw_path(
       if os.path.exists(dest_path):
         if log_fn:
           log_fn(
-            "Unparsable raw quarantine skipped existing dest: %s" % dest_path,
+            f"Unparsable raw quarantine skipped existing dest: {dest_path}",
             flush=True,
           )
         return False
@@ -2561,7 +2525,7 @@ def _quarantine_one_closed_raw_path(
       except OSError as exc:
         if log_fn:
           log_fn(
-            "Unparsable raw quarantine failed path=%s: %s" % (path_norm, exc),
+            f"Unparsable raw quarantine failed path={path_norm}: {exc}",
             flush=True,
           )
         return False
@@ -2584,22 +2548,21 @@ def _quarantine_one_closed_raw_path(
           pass
         if log_fn:
           log_fn(
-            "Unparsable raw quarantine manifest save failed path=%s: %s"
-            % (path_norm, exc),
+            f"Unparsable raw quarantine manifest save failed path={path_norm}: {exc}",
             flush=True,
           )
         return False
       already_quarantined.add(path_norm)
       if log_fn:
         log_fn(
-          "Quarantined unparsable raw stats %s -> %s" % (path_norm, dest_path),
+          f"Quarantined unparsable raw stats {path_norm} -> {dest_path}",
           flush=True,
         )
       return True
   except OSError as exc:
     if log_fn:
       log_fn(
-        "Unparsable raw quarantine failed path=%s: %s" % (path_norm, exc),
+        f"Unparsable raw quarantine failed path={path_norm}: {exc}",
         flush=True,
       )
     return False
@@ -2770,7 +2733,7 @@ def delete_raw_stats_path_if_fingerprint_unchanged(
   if expected_fp is not None and current_fp != expected_fp:
     if log_fn:
       log_fn(
-        "Skipping raw delete fingerprint changed path=%s" % path,
+        f"Skipping raw delete fingerprint changed path={path}",
         flush=True,
       )
     return False
@@ -2782,7 +2745,7 @@ def delete_raw_stats_path_if_fingerprint_unchanged(
     return True
   except OSError as exc:
     if log_fn:
-      log_fn("Could not remove %s: %s" % (path, exc), flush=True)
+      log_fn(f"Could not remove {path}: {exc}", flush=True)
     return False
 
 
@@ -3493,12 +3456,9 @@ def reconcile_orphan_inflight_for_oldest_tar(
     if not aligned_with_oldest:
       cross_day_reclaimed += 1
   if reclaimed and log_fn is not None:
-    msg = "orphan inflight reclaim oldest_tar=%s reclaimed_n=%d" % (
-      oldest_tar_norm,
-      len(reclaimed),
-    )
+    msg = f"orphan inflight reclaim oldest_tar={oldest_tar_norm} reclaimed_n={len(reclaimed)}"
     if cross_day_reclaimed:
-      msg += " cross_day_n=%d detail=cross_day_bucket" % cross_day_reclaimed
+      msg += f" cross_day_n={cross_day_reclaimed} detail=cross_day_bucket"
     log_fn(msg, flush=True)
   return reclaimed
 
@@ -4018,8 +3978,7 @@ def _iter_archive_validation_results_stream(
     if err is not None:
       if log_fn:
         log_fn(
-          "Skipping removal: validation worker error for %s (%s)"
-          % (gz_path, err),
+          f"Skipping removal: validation worker error for {gz_path} ({err})",
           flush=True,
         )
       ok, members = False, None
@@ -4060,19 +4019,11 @@ def _log_archive_validation_summary(
   if not log_fn:
     return
   log_fn(
-    "Archive validation parallel summary archives=%d workers=%d success=%d failed=%d elapsed_s=%.3f"
-    % (
-      validation_targets_count,
-      workers,
-      success_count,
-      failed_count,
-      max(0.0, time.time() - validation_started),
-    ),
+    f"Archive validation parallel summary archives={validation_targets_count} workers={workers} success={success_count} failed={failed_count} elapsed_s={max(0.0, time.time() - validation_started):.3f}",
     flush=True,
   )
   log_fn(
-    "Archive validation cache summary hits=%d misses=%d"
-    % (int(validation_cache["hits"]), int(validation_cache["misses"])),
+    f"Archive validation cache summary hits={int(validation_cache['hits'])} misses={int(validation_cache['misses'])}",
     flush=True,
   )
 
@@ -4110,7 +4061,7 @@ def _remove_read_lock_sidecar(target_path: str) -> None:
     >>> _remove_read_lock_sidecar("x")  # doctest: +SKIP
   """
   try:
-    os.remove("%s%s" % (target_path, LOCK_SUFFIX))
+    os.remove(f"{target_path}{LOCK_SUFFIX}")
   except OSError:
     pass
 
@@ -4156,10 +4107,10 @@ def read_stats_file_head_identity(
   t, _jid, host = parse_first_ts_fn(head)
   if t is None or not host:
     return None, None
-  from datetime import datetime, timezone
+  from datetime import datetime
 
   # Gate and duplicate detection bucket by Unix second; ingest may store subseconds.
-  timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
+  timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=UTC)
   return str(host).strip(), timestamp_utc
 
 
@@ -4181,7 +4132,7 @@ def read_stats_file_tail_identity(stats_fname: Any) -> Any:
   Examples:
     >>> read_stats_file_tail_identity(None)  # doctest: +SKIP
   """
-  from datetime import datetime, timezone
+  from datetime import datetime
 
   from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     parse_last_timestamp_line_streaming,
@@ -4190,7 +4141,7 @@ def read_stats_file_tail_identity(stats_fname: Any) -> Any:
   t, _jid, host = parse_last_timestamp_line_streaming(stats_fname)
   if t is None or not host:
     return None, None
-  timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=timezone.utc)
+  timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=UTC)
   return str(host).strip(), timestamp_utc
 
 
@@ -4644,8 +4595,7 @@ def maybe_invalidate_open_tar_store_divergence_for_append_batch(
   day_token = day_date.isoformat() if day_date is not None else "?"
   if log_fn:
     log_fn(
-      "INFO: archive_append open_tar_store_divergence day=%s "
-      "store_only_n=%d open_only_n=%d" % (day_token, store_only_n, open_only_n),
+      f"INFO: archive_append open_tar_store_divergence day={day_token} store_only_n={store_only_n} open_only_n={open_only_n}",
       flush=True,
     )
   invalidate_after_daily_tar_mutation(
@@ -4833,8 +4783,7 @@ def invalidate_after_daily_tar_mutation(
   invalidate_daily_archive_members_cache(canonical, reason=reason)
   if log_fn and reason:
     log_fn(
-      "Archive members cache invalidated path=%s reason=%s"
-      % (canonical, reason),
+      f"Archive members cache invalidated path={canonical} reason={reason}",
       flush=True,
     )
 
@@ -5427,17 +5376,7 @@ def _log_populate_source_decision(
   )
   sealed_exists = bool(sealed_path and os.path.isfile(sealed_path))
   log_print(
-    "INFO: populate_source_decision day=%s dirty=%s sealed_exists=%s "
-    "use_tar=%s reason=%s tar=%s sealed=%s"
-    % (
-      day_token,
-      dirty,
-      sealed_exists,
-      use_tar,
-      reason or ("sealed_only" if not use_tar else "tar_exists"),
-      tar_path,
-      sealed_path or "",
-    ),
+    f"INFO: populate_source_decision day={day_token} dirty={dirty} sealed_exists={sealed_exists} use_tar={use_tar} reason={reason or ('sealed_only' if not use_tar else 'tar_exists')} tar={tar_path} sealed={sealed_path or ''}",
     flush=True,
   )
 
@@ -5460,7 +5399,7 @@ def _resolve_sealed_path_for_day_token(day_token: Any) -> Any:
   daily_dir = cfg.get_daily_archive_dir_path()
   if not daily_dir:
     return ""
-  tar_path = os.path.join(daily_dir, "%s.tar" % day_token)
+  tar_path = os.path.join(daily_dir, f"{day_token}.tar")
   zst_path, gz_path = compressed_sibling_paths(tar_path)
   if os.path.isfile(zst_path):
     return zst_path
@@ -5651,9 +5590,9 @@ def mark_archive_day_ingest_skip_and_raise(
     >>> mark_archive_day_ingest_skip_and_raise("x", None, None, None)
   """
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+    _SELF_INGEST_TAR_HOT_REASONS,
     ArchiveDayIngestSkipError,
     ArchiveMembersStoreUnavailableError,
-    _SELF_INGEST_TAR_HOT_REASONS,
     archive_append_inflight_for_day,
     ingest_tar_hot_for_day,
     ingest_tar_hot_reason_for_day,
@@ -5668,8 +5607,7 @@ def mark_archive_day_ingest_skip_and_raise(
     or _is_fnctl_read_lock_timeout_detail(detail)
   ):
     raise ArchiveMembersStoreUnavailableError(
-      "transient fnctl read lock timeout during sealed populate day=%s path=%s"
-      % (keys.day_token, sealed_path or ""),
+      f"transient fnctl read lock timeout during sealed populate day={keys.day_token} path={sealed_path or ''}",
     )
   if kind == SKIP_KIND_TAR_TRUNCATED and not (
     sealed_path and os.path.isfile(sealed_path)
@@ -5679,38 +5617,34 @@ def mark_archive_day_ingest_skip_and_raise(
     if day_token and day_token != "unknown":
       daily_dir = cfg.get_daily_archive_dir_path()
       if daily_dir:
-        tar_path = os.path.join(daily_dir, "%s.tar" % day_token)
+        tar_path = os.path.join(daily_dir, f"{day_token}.tar")
     sealed_sibling = _resolve_sealed_path_for_day_token(day_token)
     # True append (or non-self hot) → transient Unavailable; preserve no day-skip.
     if day_token and archive_append_inflight_for_day(day_token):
       raise ArchiveMembersStoreUnavailableError(
-        "transient tar populate EOF during hot/append activity day=%s"
-        % day_token,
+        f"transient tar populate EOF during hot/append activity day={day_token}",
       )
     # Self-hot alone + sealed sibling → prefer sealed populate (not forever-transient).
     if day_token and sealed_sibling and os.path.isfile(sealed_sibling):
       raise ArchiveMembersStoreUnavailableError(
-        "tar populate EOF prefer sealed fallback day=%s" % day_token,
+        f"tar populate EOF prefer sealed fallback day={day_token}",
       )
     if day_token and ingest_tar_hot_for_day(day_token):
       hot_reason = ingest_tar_hot_reason_for_day(day_token)
       if hot_reason and hot_reason not in _SELF_INGEST_TAR_HOT_REASONS:
         raise ArchiveMembersStoreUnavailableError(
-          "transient tar populate EOF during hot/append activity day=%s"
-          % day_token,
+          f"transient tar populate EOF during hot/append activity day={day_token}",
         )
       # Self-hot only without sealed: fall through to readable / sticky skip.
     if tar_path and os.path.isfile(tar_path):
       try:
         if verify_tar_archive_readable(tar_path):
           raise ArchiveMembersStoreUnavailableError(
-            "transient tar populate EOF while mutable tar readable day=%s"
-            % day_token,
+            f"transient tar populate EOF while mutable tar readable day={day_token}",
           )
       except TimeoutError:
         raise ArchiveMembersStoreUnavailableError(
-          "transient tar populate EOF during fnctl contention day=%s"
-          % day_token,
+          f"transient tar populate EOF during fnctl contention day={day_token}",
         ) from None
   resolved_sealed = sealed_path or _resolve_sealed_path_for_day_token(
     keys.day_token
@@ -5752,18 +5686,14 @@ def _log_archive_day_ingest_skip_once(exc: Any) -> None:
   _LOGGED_ARCHIVE_DAY_INGEST_SKIP.add(exc.day_token)
   if exc.kind == SKIP_KIND_TAR_TRUNCATED:
     reason_phrase = (
-      "tar_truncated_or_unreadable (zstd -t passed; tar stream: %s)"
-      % exc.detail
+      f"tar_truncated_or_unreadable (zstd -t passed; tar stream: {exc.detail})"
     )
   elif exc.kind == SKIP_KIND_ZST_FRAME_INVALID:
-    reason_phrase = "zst_frame_invalid (zstd -t failed: %s)" % exc.detail
+    reason_phrase = f"zst_frame_invalid (zstd -t failed: {exc.detail})"
   else:
-    reason_phrase = "%s (%s)" % (exc.kind, exc.detail)
+    reason_phrase = f"{exc.kind} ({exc.detail})"
   log_print(
-    "ERROR: daily sealed archive unusable for ingest lookup: sealed_path=%s day=%s "
-    "reason=%s; skipping tar-append duplicate-check for all raw stats files on this "
-    "day until the archive is repaired"
-    % (exc.sealed_path, exc.day_token, reason_phrase),
+    f"ERROR: daily sealed archive unusable for ingest lookup: sealed_path={exc.sealed_path} day={exc.day_token} reason={reason_phrase}; skipping tar-append duplicate-check for all raw stats files on this day until the archive is repaired",
     flush=True,
   )
 
@@ -5809,8 +5739,8 @@ def _member_match_via_store_or_sealed_point(
     ArchiveDayIngestSkipError,
     ArchiveMembersStoreUnavailableError,
     archive_members_populate_shows_progress_for_day,
-    populate_degraded_is_set,
     member_match_when_warm,
+    populate_degraded_is_set,
     request_archive_members_populate_and_wait,
     wait_for_member_match,
   )
@@ -5964,8 +5894,7 @@ def _stream_compressed_archive_members(
     if isinstance(exc, ArchiveMembersStoreUnavailableError):
       raise
     log_print(
-      "WARNING: sealed archive member stream failed for %s: %s"
-      % (compressed_path, exc),
+      f"WARNING: sealed archive member stream failed for {compressed_path}: {exc}",
       flush=True,
     )
     return False, {}, False, exc
@@ -6101,8 +6030,7 @@ def validate_sealed_daily_archive_for_raw_removal(
   fmt = detect_compressed_format(archive_compressed_path)
   if fmt not in ("zst", "gz"):
     _log_skip(
-      "Skipping removal validation: not a daily compressed archive: %s"
-      % archive_compressed_path,
+      f"Skipping removal validation: not a daily compressed archive: {archive_compressed_path}",
     )
     return False, None
   sealed_path = archive_compressed_path
@@ -6125,31 +6053,27 @@ def validate_sealed_daily_archive_for_raw_removal(
       get_archive_zstd_thread_count(),
       log_fn=log_fn,
     ):
-      _log_skip(
-        "Skipping removal: uncompressed tar failed check: %s" % tar_path
-      )
+      _log_skip(f"Skipping removal: uncompressed tar failed check: {tar_path}")
       return False, None
     members_tar = get_existing_archive_members(tar_path)
     if not members_tar:
       _log_skip(
-        "Skipping removal: uncompressed tar has no file members: %s" % tar_path,
+        f"Skipping removal: uncompressed tar has no file members: {tar_path}",
       )
       return False, None
 
   zst_path, _gz_path = compressed_sibling_paths(tar_path)
   if not os.path.isfile(sealed_path):
     if members_tar is None:
-      _log_skip("Skipping removal: sealed archive missing: %s" % sealed_path)
+      _log_skip(f"Skipping removal: sealed archive missing: {sealed_path}")
       return False, None
     if not allow_auto_seal:
       _log_skip(
-        "Skipping removal: sealed archive missing and auto-seal disabled "
-        "(janitor seal already ran this pass): %s" % tar_path,
+        f"Skipping removal: sealed archive missing and auto-seal disabled (janitor seal already ran this pass): {tar_path}",
       )
       return False, None
     _log_skip(
-      "Sealed archive missing; creating from valid uncompressed tar: %s"
-      % tar_path,
+      f"Sealed archive missing; creating from valid uncompressed tar: {tar_path}",
     )
     try:
       atomic_seal_tar_to_zst(
@@ -6168,15 +6092,12 @@ def validate_sealed_daily_archive_for_raw_removal(
       )
       if not sealed_readable or members_sealed != members_tar:
         _log_skip(
-          "Skipping removal: auto-seal member mismatch for %s "
-          "(tar count=%s sealed count=%s)"
-          % (sealed_path, len(members_tar), len(members_sealed)),
+          f"Skipping removal: auto-seal member mismatch for {sealed_path} (tar count={len(members_tar)} sealed count={len(members_sealed)})",
         )
         return False, None
     except (OSError, subprocess.CalledProcessError) as exc:
       _log_skip(
-        "Skipping removal: failed to seal tar into zstd for %s (%s)"
-        % (tar_path, exc),
+        f"Skipping removal: failed to seal tar into zstd for {tar_path} ({exc})",
       )
       return False, None
 
@@ -6185,8 +6106,7 @@ def validate_sealed_daily_archive_for_raw_removal(
   )
   if not sealed_readable:
     _log_skip(
-      "Skipping removal: sealed archive failed integrity check: %s"
-      % sealed_path,
+      f"Skipping removal: sealed archive failed integrity check: {sealed_path}",
     )
     result = (False, None)
     if validation_cache is not None:
@@ -6196,9 +6116,7 @@ def validate_sealed_daily_archive_for_raw_removal(
   if members_tar is not None:
     if members_tar != members_sealed:
       _log_skip(
-        "Skipping removal: tar vs sealed member mismatch for %s "
-        "(uncompressed count=%s sealed count=%s)"
-        % (sealed_path, len(members_tar), len(members_sealed)),
+        f"Skipping removal: tar vs sealed member mismatch for {sealed_path} (uncompressed count={len(members_tar)} sealed count={len(members_sealed)})",
       )
       result = (False, None)
       if validation_cache is not None:
@@ -6257,8 +6175,7 @@ def ensure_daily_tar_restored_for_append(
   )
   if sealed:
     log_print(
-      "INFO: archive decompress restore begin tar=%s from=%s "
-      "remove_compressed=%s" % (tar_path, sealed, remove_compressed),
+      f"INFO: archive decompress restore begin tar={tar_path} from={sealed} remove_compressed={remove_compressed}",
       flush=True,
     )
   for sealed_src in (zst_path, gz_path):
@@ -6272,8 +6189,7 @@ def ensure_daily_tar_restored_for_append(
       wait_for_other_owner=wait_for_other_owner,
     ):
       log_print(
-        "INFO: archive decompress restore tar=%s from=%s remove_compressed=%s"
-        % (tar_path, sealed_src, remove_compressed),
+        f"INFO: archive decompress restore tar={tar_path} from={sealed_src} remove_compressed={remove_compressed}",
         flush=True,
       )
       return True
@@ -6392,13 +6308,13 @@ def restore_tar_from_sealed_if_unreadable(
   ) and verify_tar_archive_readable(tar_path):
     if log_fn:
       log_fn(
-        "Restored unreadable tar from sealed backup: %s" % tar_path,
+        f"Restored unreadable tar from sealed backup: {tar_path}",
         flush=True,
       )
     return True
   if log_fn:
     log_fn(
-      "Tar unreadable and sealed restore failed: %s" % tar_path,
+      f"Tar unreadable and sealed restore failed: {tar_path}",
       flush=True,
     )
   return False
@@ -6641,8 +6557,7 @@ def _read_tar_file_member_sizes_unlocked(tar_path: str) -> Any:
   occurrences, rc, stderr = _run_gnu_tvf_file_members(tar_path)
   if rc != 0:
     raise RuntimeError(
-      "gnu tar tvf failed path=%s rc=%s stderr=%s"
-      % (tar_path, rc, stderr[:200])
+      f"gnu tar tvf failed path={tar_path} rc={rc} stderr={stderr[:200]}"
     )
   by_name: dict[str, list[int]] = defaultdict(list)
   for name, size in occurrences:
@@ -6774,18 +6689,17 @@ def _ensure_populate_scan_allowed() -> None:
   Examples:
     >>> _ensure_populate_scan_allowed()  # doctest: +SKIP
   """
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+    ArchiveMembersStoreUnavailableError,
+  )
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
     get_worker_pool_kind,
     may_run_archive_members_populate_scan,
   )
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
-    ArchiveMembersStoreUnavailableError,
-  )
 
   if not may_run_archive_members_populate_scan():
     raise ArchiveMembersStoreUnavailableError(
-      "archive members populate scan forbidden for pool_kind=%s"
-      % get_worker_pool_kind(),
+      f"archive members populate scan forbidden for pool_kind={get_worker_pool_kind()}",
     )
 
 
@@ -6850,8 +6764,7 @@ def _clear_stale_day_ingest_skip_if_tar_repaired(
     if store is not None:
       store.clear_degraded(keys.day_token)
   log_print(
-    "INFO: cleared stale archive_day_ingest_skip day=%s tar=%s "
-    "(sealed missing/dirty; tar readable)" % (keys.day_token, tar_path),
+    f"INFO: cleared stale archive_day_ingest_skip day={keys.day_token} tar={tar_path} (sealed missing/dirty; tar readable)",
     flush=True,
   )
 
@@ -6963,14 +6876,7 @@ def _populate_members_from_sealed_scan(
         raise
       if tar_ok:
         log_print(
-          "INFO: populate tar fallback after sealed failure day=%s "
-          "sealed=%s tar=%s reason=%s"
-          % (
-            keys.day_token,
-            sealed_path,
-            tar_path,
-            exc.detail,
-          ),
+          f"INFO: populate tar fallback after sealed failure day={keys.day_token} sealed={sealed_path} tar={tar_path} reason={exc.detail}",
           flush=True,
         )
         clear_archive_day_ingest_skip(keys)
@@ -6990,8 +6896,7 @@ def _populate_members_from_sealed_scan(
     day_token = keys.day_token if keys.day_token != "unknown" else ""
     if day_token:
       log_print(
-        "INFO: populate_source=sealed day=%s path=%s"
-        % (day_token, sealed_path),
+        f"INFO: populate_source=sealed day={day_token} path={sealed_path}",
         flush=True,
       )
   return members
@@ -7055,8 +6960,7 @@ def _populate_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
           False,
           False,
           RuntimeError(
-            "gnu tar tvf failed path=%s rc=%s stderr=%s"
-            % (tar_path, rc, stderr[:200])
+            f"gnu tar tvf failed path={tar_path} rc={rc} stderr={stderr[:200]}"
           ),
         )
       for name, size in occurrences:
@@ -7071,8 +6975,7 @@ def _populate_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
 
       if _is_fnctl_read_lock_timeout_error(exc):
         raise ArchiveMembersStoreUnavailableError(
-          "transient fnctl read lock timeout during tar populate path=%s"
-          % tar_path,
+          f"transient fnctl read lock timeout during tar populate path={tar_path}",
         ) from exc
       return False, False, exc
     finally:
@@ -7105,8 +7008,7 @@ def _populate_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
     if not (sealed_path and os.path.isfile(sealed_path)):
       raise
     log_print(
-      "INFO: populate sealed fallback after dirty-tar EOF day=%s "
-      "tar=%s sealed=%s" % (keys.day_token, tar_path, sealed_path),
+      f"INFO: populate sealed fallback after dirty-tar EOF day={keys.day_token} tar={tar_path} sealed={sealed_path}",
       flush=True,
     )
     return _populate_members_from_sealed_scan(
@@ -7119,7 +7021,7 @@ def _populate_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
     day_token = keys.day_token if keys.day_token != "unknown" else ""
     if day_token:
       log_print(
-        "INFO: populate_source=tar day=%s path=%s" % (day_token, tar_path),
+        f"INFO: populate_source=tar day={day_token} path={tar_path}",
         flush=True,
       )
   return members
@@ -7147,8 +7049,8 @@ def execute_archive_members_populate_for_canonical(canonical: Any) -> Any:
     ArchiveMembersStoreUnavailableError,
     build_archive_members_keys,
     get_archive_day_ingest_skip,
-    populate_degraded_is_set,
     lookup_full_members,
+    populate_degraded_is_set,
   )
   from hpcperfstats.dbload.lib.sync_timedb_ingest_worker_diagnostics import (
     get_worker_pool_kind,
@@ -7160,8 +7062,7 @@ def execute_archive_members_populate_for_canonical(canonical: Any) -> Any:
   kind = get_worker_pool_kind()
   if kind in ("ingest-pool", "archive-pool"):
     raise ArchiveMembersStoreUnavailableError(
-      "execute_archive_members_populate_for_canonical forbidden on %s "
-      "(use request_archive_members_populate_and_wait)" % kind,
+      f"execute_archive_members_populate_for_canonical forbidden on {kind} (use request_archive_members_populate_and_wait)",
     )
   token = None
   if kind != "populate-pool":
@@ -7205,7 +7106,7 @@ def execute_archive_members_populate_for_canonical(canonical: Any) -> Any:
     else:
       if sealed_path is None:
         raise ArchiveMembersStoreUnavailableError(
-          "no sealed archive for populate canonical=%s" % canonical,
+          f"no sealed archive for populate canonical={canonical}",
         )
       members = _populate_members_from_sealed_scan(
         sealed_path,
@@ -7463,8 +7364,7 @@ def validate_open_tar_for_raw_removal(
     ):
       if log_fn:
         log_fn(
-          "Skipping open-tar verify: cannot restore tar from sealed: %s"
-          % tar_path,
+          f"Skipping open-tar verify: cannot restore tar from sealed: {tar_path}",
           flush=True,
         )
       return False, None
@@ -7475,8 +7375,7 @@ def validate_open_tar_for_raw_removal(
   ):
     if log_fn:
       log_fn(
-        "Skipping open-tar verify: uncompressed tar failed check: %s"
-        % tar_path,
+        f"Skipping open-tar verify: uncompressed tar failed check: {tar_path}",
         flush=True,
       )
     return False, None
@@ -7484,8 +7383,7 @@ def validate_open_tar_for_raw_removal(
   if not members:
     if log_fn:
       log_fn(
-        "Skipping open-tar verify: uncompressed tar has no file members: %s"
-        % tar_path,
+        f"Skipping open-tar verify: uncompressed tar has no file members: {tar_path}",
         flush=True,
       )
     return False, None
@@ -7559,8 +7457,7 @@ def validate_post_seal_tar_zst_parity(
   if not os.path.isfile(zst_path):
     if log_fn:
       log_fn(
-        "janitor: day_close post_seal_verify failed sealed missing: %s"
-        % zst_path,
+        f"janitor: day_close post_seal_verify failed sealed missing: {zst_path}",
         flush=True,
       )
     return False
@@ -7572,7 +7469,7 @@ def validate_post_seal_tar_zst_parity(
   )
   if not ok and log_fn:
     log_fn(
-      "janitor: day_close post_seal_verify mismatch tar=%s" % tar_path,
+      f"janitor: day_close post_seal_verify mismatch tar={tar_path}",
       flush=True,
     )
   return ok
@@ -7692,13 +7589,11 @@ def remove_verified_archived_raw_files(
         and bootstrap_ready
       ):
         _log(
-          "Bootstrapping missing daily archive from %d raw stats file(s): %s"
-          % (len(bootstrap_ready), archive_path),
+          f"Bootstrapping missing daily archive from {len(bootstrap_ready)} raw stats file(s): {archive_path}",
         )
         if not archive_stats_files_fn((archive_path, list(bootstrap_ready))):
           _log(
-            "Skipping removal: could not bootstrap daily archive: %s"
-            % archive_path,
+            f"Skipping removal: could not bootstrap daily archive: {archive_path}",
           )
           continue
       elif (
@@ -7708,8 +7603,7 @@ def remove_verified_archived_raw_files(
         and not bootstrap_ready
       ):
         _log(
-          "Skipping bootstrap for %s: %d path(s) without sampled timestamps in DB"
-          % (archive_path, len(stats_paths)),
+          f"Skipping bootstrap for {archive_path}: {len(stats_paths)} path(s) without sampled timestamps in DB",
         )
     validation_targets.append((archive_path, list(stats_paths)))
 
@@ -7770,7 +7664,7 @@ def remove_verified_archived_raw_files(
             os.remove(path)
           deletes_this_pass += 1
         except OSError as exc:
-          _log("Could not remove %s: %s" % (path, exc))
+          _log(f"Could not remove {path}: {exc}")
   _log_archive_validation_summary(
     log_fn=log_fn,
     validation_targets_count=len(validation_targets),
@@ -7931,9 +7825,7 @@ def build_day_scoped_closed_raw_by_gz(
   if log_fn:
     with janitorial_logging():
       log_fn(
-        "day-scoped closed_raw tar=%s paths=%d "
-        "(no full maintenance snapshot)"
-        % (os.path.basename(tar_norm), len(aligned)),
+        f"day-scoped closed_raw tar={os.path.basename(tar_norm)} paths={len(aligned)} (no full maintenance snapshot)",
         flush=True,
       )
   return {zst_path: aligned}
@@ -8157,17 +8049,16 @@ def remove_verified_uncompressed_daily_tars(
       and remaining_raw_by_gz_has_paths_on_disk(remaining_raw_by_gz, gz_path)
     ):
       _log(
-        "Skipping removal of verified uncompressed tar (raw stats still "
-        "present for day): %s" % tar_path,
+        f"Skipping removal of verified uncompressed tar (raw stats still present for day): {tar_path}",
       )
       continue
     try:
       with file_write_lock(tar_path):
         if os.path.isfile(tar_path):
           os.remove(tar_path)
-      _log("Maintenance removed verified uncompressed tar: %s" % tar_path)
+      _log(f"Maintenance removed verified uncompressed tar: {tar_path}")
     except OSError as exc:
-      _log("Could not remove verified tar %s: %s" % (tar_path, exc))
+      _log(f"Could not remove verified tar {tar_path}: {exc}")
   _log_archive_validation_summary(
     log_fn=log_fn,
     validation_targets_count=len(validation_targets),
@@ -8450,15 +8341,7 @@ def _log_truncated_tar_recoverability(
   except OSError:
     tar_size = -1
   log_fn(
-    "WARNING: tar_unrecoverable tar=%s size=%d gnu_members=%d tf_members=%d "
-    "tarfile_ok=%s"
-    % (
-      tar_path,
-      tar_size,
-      len(gnu_map),
-      len(tf_map),
-      tarfile_ok,
-    ),
+    f"WARNING: tar_unrecoverable tar={tar_path} size={tar_size} gnu_members={len(gnu_map)} tf_members={len(tf_map)} tarfile_ok={tarfile_ok}",
     flush=True,
   )
 
@@ -8579,9 +8462,7 @@ def _repair_truncated_daily_tar_via_extract_recreate(
   if free < required_free:
     if log_fn:
       log_fn(
-        "WARNING: repair_fail reason=insufficient_free_space tar=%s "
-        "size=%d required=%d free=%d"
-        % (tar_path, tar_size, required_free, free),
+        f"WARNING: repair_fail reason=insufficient_free_space tar={tar_path} size={tar_size} required={required_free} free={free}",
         flush=True,
       )
     return False
@@ -8610,17 +8491,7 @@ def _repair_truncated_daily_tar_via_extract_recreate(
     if not extract_ok:
       if log_fn:
         log_fn(
-          "WARNING: repair_fail phase=extract tar=%s rc=%s extracted=%d "
-          "bytes=%d expected_count=%d expected_bytes=%d stderr=%s"
-          % (
-            tar_path,
-            extract.returncode,
-            extracted_count,
-            extracted_bytes,
-            expected_count,
-            expected_bytes,
-            stderr_text[:200],
-          ),
+          f"WARNING: repair_fail phase=extract tar={tar_path} rc={extract.returncode} extracted={extracted_count} bytes={extracted_bytes} expected_count={expected_count} expected_bytes={expected_bytes} stderr={stderr_text[:200]}",
           flush=True,
         )
       return False
@@ -8633,12 +8504,7 @@ def _repair_truncated_daily_tar_via_extract_recreate(
     if recreate.returncode != 0 or not os.path.isfile(new_tar):
       if log_fn:
         log_fn(
-          "WARNING: repair_fail phase=recreate tar=%s rc=%s stderr=%s"
-          % (
-            tar_path,
-            recreate.returncode,
-            (recreate.stderr or "").strip()[:200],
-          ),
+          f"WARNING: repair_fail phase=recreate tar={tar_path} rc={recreate.returncode} stderr={(recreate.stderr or '').strip()[:200]}",
           flush=True,
         )
       return False
@@ -8647,13 +8513,13 @@ def _repair_truncated_daily_tar_via_extract_recreate(
     os.replace(new_tar, tar_path)
     if log_fn:
       log_fn(
-        "Repaired truncated daily tar via extract+recreate: %s" % tar_path,
+        f"Repaired truncated daily tar via extract+recreate: {tar_path}",
         flush=True,
       )
     return True
   except (OSError, subprocess.SubprocessError, TimeoutError) as exc:
     if log_fn:
-      log_fn("WARNING: repair_fail tar=%s exc=%s" % (tar_path, exc), flush=True)
+      log_fn(f"WARNING: repair_fail tar={tar_path} exc={exc}", flush=True)
     return False
   finally:
     try:
@@ -8699,7 +8565,7 @@ def repair_truncated_daily_tar_in_place(
   if not tar_members_recoverable_despite_gnu_tf_fail(tar_path):
     return False
   partial_gnu = tar_members_recoverable_via_partial_gnu_listing(tar_path)
-  tmp_path = "%s.repair.tmp" % tar_path
+  tmp_path = f"{tar_path}.repair.tmp"
   try:
     if os.path.exists(tmp_path):
       os.remove(tmp_path)
@@ -8738,8 +8604,7 @@ def repair_truncated_daily_tar_in_place(
         except Exception as exc:
           if log_fn:
             log_fn(
-              "WARNING: repair_fail tarfile_rewrite tar=%s exc=%s"
-              % (tar_path, exc),
+              f"WARNING: repair_fail tarfile_rewrite tar={tar_path} exc={exc}",
               flush=True,
             )
           ok = False
@@ -8761,7 +8626,7 @@ def repair_truncated_daily_tar_in_place(
     )
     if log_fn and not partial_gnu:
       log_fn(
-        "Repaired truncated daily tar in place: %s" % tar_path,
+        f"Repaired truncated daily tar in place: {tar_path}",
         flush=True,
       )
     return True
@@ -9131,19 +8996,9 @@ def _emit_reconcile_stage_progress(
   """
   if log_fn is None:
     return
-  msg = (
-    "queue_orchestrator day_close stage_progress day=%s stage=reconcile_merge "
-    "members_done=%d members_total=%d elapsed_s=%.1f advancing=%s"
-    % (
-      day_token,
-      int(members_done),
-      int(members_total),
-      float(elapsed_s),
-      "true" if advancing else "false",
-    )
-  )
+  msg = f"queue_orchestrator day_close stage_progress day={day_token} stage=reconcile_merge members_done={int(members_done)} members_total={int(members_total)} elapsed_s={float(elapsed_s):.1f} advancing={'true' if advancing else 'false'}"
   if not advancing:
-    msg = "%s stuck_s=%.1f" % (msg, float(stuck_s))
+    msg = f"{msg} stuck_s={float(stuck_s):.1f}"
   if force:
     log_fn(msg, flush=True)
     return
@@ -9233,7 +9088,7 @@ def rebuild_daily_tar_member_union_in_place(
   merge_started = float(clock())
   last_progress_mono = merge_started
   warn_emitted = False
-  tmp_path = "%s.merge.tmp" % tar_path
+  tmp_path = f"{tar_path}.merge.tmp"
   try:
     if os.path.exists(tmp_path):
       os.remove(tmp_path)
@@ -9374,8 +9229,7 @@ def rebuild_daily_tar_member_union_in_place(
     )
     if log_fn:
       log_fn(
-        "Rebuilt daily tar union (%d members): %s"
-        % (len(union_members), tar_path),
+        f"Rebuilt daily tar union ({len(union_members)} members): {tar_path}",
         flush=True,
       )
     return True
@@ -9504,7 +9358,7 @@ def reconcile_open_tar_with_sealed_zst(
     if not tar_gnu_readable:
       if log_fn:
         log_fn(
-          "WARNING: tar still unreadable after repair tar=%s" % tar_path,
+          f"WARNING: tar still unreadable after repair tar={tar_path}",
           flush=True,
         )
       return ReconcileResult(False, "skip", "tar_unrecoverable")
@@ -9643,7 +9497,7 @@ def dedupe_tar_keep_largest_file_per_member(
 
   if not os.path.isfile(tar_path):
     return True
-  tmp_path = "%s.dedupe.tmp" % tar_path
+  tmp_path = f"{tar_path}.dedupe.tmp"
   try:
     if os.path.exists(tmp_path):
       os.remove(tmp_path)
@@ -9671,7 +9525,7 @@ def dedupe_tar_keep_largest_file_per_member(
     )
     if log_fn:
       log_fn(
-        "Deduplicated archive (largest wins per path): %s" % tar_path,
+        f"Deduplicated archive (largest wins per path): {tar_path}",
         flush=True,
       )
     return True
@@ -9749,7 +9603,7 @@ def dedupe_sealed_daily_archive(
     ):
       if log_fn:
         log_fn(
-          "dedupe_sealed_daily_archive: decompress failed for %s" % sealed_path,
+          f"dedupe_sealed_daily_archive: decompress failed for {sealed_path}",
           flush=True,
         )
       return False
@@ -9765,7 +9619,7 @@ def dedupe_sealed_daily_archive(
   try:
     atomic_seal_tar_to_zst(
       tar_path,
-      zst_path if sealed_path.endswith(DAILY_ARCHIVE_ZST_SUFFIX) else zst_path,
+      zst_path,
       num_threads=get_archive_zstd_thread_count(),
       compress_level=cfg.get_archive_zstd_level(),
       keep_uncompressed_tar=keep_uncompressed_tar,
@@ -9777,8 +9631,7 @@ def dedupe_sealed_daily_archive(
   except (OSError, subprocess.CalledProcessError) as exc:
     if log_fn:
       log_fn(
-        "dedupe_sealed_daily_archive: re-seal failed for %s (%s)"
-        % (tar_path, exc),
+        f"dedupe_sealed_daily_archive: re-seal failed for {tar_path} ({exc})",
         flush=True,
       )
     return False
@@ -9800,7 +9653,7 @@ def dedupe_sealed_daily_archive(
     pass
   if log_fn:
     log_fn(
-      "dedupe_sealed_daily_archive: re-sealed after dedupe %s" % sealed_path,
+      f"dedupe_sealed_daily_archive: re-sealed after dedupe {sealed_path}",
       flush=True,
     )
   return True
@@ -9893,8 +9746,7 @@ def iter_sealed_daily_archive_member_lines(sealed_path: str) -> Iterator[Any]:
   fmt = detect_compressed_format(sealed_path)
   if fmt not in ("zst", "gz"):
     raise ValueError(
-      "sync_timedb_archive requires sealed archive (.tar.zst or .tar.gz): %s"
-      % sealed_path,
+      f"sync_timedb_archive requires sealed archive (.tar.zst or .tar.gz): {sealed_path}",
     )
   if not os.path.isfile(sealed_path):
     raise FileNotFoundError(sealed_path)
@@ -9910,8 +9762,7 @@ def iter_sealed_daily_archive_member_lines(sealed_path: str) -> Iterator[Any]:
           continue
         if max_bytes > 0 and member_info.size > max_bytes:
           log_print(
-            "sync_timedb_archive: skip oversize member %s (%d bytes > %d)"
-            % (member_info.name, member_info.size, max_bytes),
+            f"sync_timedb_archive: skip oversize member {member_info.name} ({member_info.size} bytes > {max_bytes})",
             flush=True,
           )
           continue
@@ -10025,8 +9876,7 @@ def iter_sealed_daily_archive_member_paths(
   fmt = detect_compressed_format(sealed_path)
   if fmt not in ("zst", "gz"):
     raise ValueError(
-      "sync_timedb_archive requires sealed archive (.tar.zst or .tar.gz): %s"
-      % sealed_path,
+      f"sync_timedb_archive requires sealed archive (.tar.zst or .tar.gz): {sealed_path}",
     )
   if not os.path.isfile(sealed_path):
     raise FileNotFoundError(sealed_path)
@@ -10043,8 +9893,7 @@ def iter_sealed_daily_archive_member_paths(
           continue
         if max_bytes > 0 and member_info.size > max_bytes:
           log_print(
-            "sync_timedb_archive: skip oversize member %s (%d bytes > %d)"
-            % (member_info.name, member_info.size, max_bytes),
+            f"sync_timedb_archive: skip oversize member {member_info.name} ({member_info.size} bytes > {max_bytes})",
             flush=True,
           )
           if on_member_skipped is not None:
@@ -10095,7 +9944,7 @@ def iter_archive_ingest_tasks(
     sealed = resolve_sealed_archive_path_for_ingest(path, daily_archive_dir)
     if not sealed:
       log_print(
-        "sync_timedb_archive: skipped_tar_only (no sealed archive): %s" % path,
+        f"sync_timedb_archive: skipped_tar_only (no sealed archive): {path}",
         flush=True,
       )
       continue
@@ -10195,7 +10044,7 @@ def collect_sealed_daily_archive_paths_in_range(
     elif os.path.isfile(ref_tar):
       skipped_tar_only += 1
       log_print(
-        "sync_timedb_archive: skipped_tar_only (unsealed day): %s" % ref_tar,
+        f"sync_timedb_archive: skipped_tar_only (unsealed day): {ref_tar}",
         flush=True,
       )
   return paths, skipped_tar_only
@@ -10262,7 +10111,7 @@ def iter_tar_file_tasks(tar_path: str) -> Iterator[Any]:
       names, rc, _stderr = _run_gnu_tf_member_names(open_path)
     if rc != 0:
       raise OSError(
-        "gnu tar tf failed path=%s rc=%s" % (open_path, rc),
+        f"gnu tar tf failed path={open_path} rc={rc}",
       )
     for name in names:
       yield (open_path, name)
@@ -10283,16 +10132,14 @@ def iter_tar_file_tasks(tar_path: str) -> Iterator[Any]:
     return
   except OSError:
     log_print(
-      "Unable to read archive %s (possible corruption); attempting restore "
-      "from compressed backup" % open_path
+      f"Unable to read archive {open_path} (possible corruption); attempting restore from compressed backup"
     )
     if not _restore_from_compressed():
       log_print(
-        "Archive recovery failed for %s; no usable compressed backup"
-        % open_path
+        f"Archive recovery failed for {open_path}; no usable compressed backup"
       )
       raise
-    log_print("Archive recovery succeeded for %s; retrying read" % open_path)
+    log_print(f"Archive recovery succeeded for {open_path}; retrying read")
     open_path = resolve_preferred_archive_path_for_read(tar_path)
   yield from _iter_members()
 
@@ -10628,27 +10475,16 @@ def drop_legacy_gz_if_equivalent_to_zst(
         os.remove(gz_path)
       if log_fn:
         log_fn(
-          "Removed legacy gzip archive after zst equivalence: %s" % gz_path,
+          f"Removed legacy gzip archive after zst equivalence: {gz_path}",
           flush=True,
         )
     except OSError as exc:
       if log_fn:
-        log_fn(
-          "Could not remove legacy gzip %s: %s" % (gz_path, exc), flush=True
-        )
+        log_fn(f"Could not remove legacy gzip {gz_path}: {exc}", flush=True)
     return
   if log_fn:
     log_fn(
-      "Keeping legacy gzip %s: member mismatch with %s "
-      "(gzip_bytes=%s zst_bytes=%s gzip_members=%s zst_members=%s)"
-      % (
-        gz_path,
-        zst_path,
-        sum_member_bytes(gz_members),
-        sum_member_bytes(zst_members),
-        len(gz_members),
-        len(zst_members),
-      ),
+      f"Keeping legacy gzip {gz_path}: member mismatch with {zst_path} (gzip_bytes={sum_member_bytes(gz_members)} zst_bytes={sum_member_bytes(zst_members)} gzip_members={len(gz_members)} zst_members={len(zst_members)})",
       flush=True,
     )
 
@@ -10688,8 +10524,7 @@ def _seal_skip_existing_zst_equivalent(
   if not os.path.isfile(tar_path):
     if log_fn:
       log_fn(
-        "Seal skipped: sealed archive valid and uncompressed tar absent: %s"
-        % zst_path,
+        f"Seal skipped: sealed archive valid and uncompressed tar absent: {zst_path}",
         flush=True,
       )
     return True, None
@@ -10703,8 +10538,7 @@ def _seal_skip_existing_zst_equivalent(
   if archive_member_maps_equivalent(zst_members, tar_members):
     if log_fn:
       log_fn(
-        "Seal skipped: tar and zst already equivalent (members=%d): %s"
-        % (len(tar_members), zst_path),
+        f"Seal skipped: tar and zst already equivalent (members={len(tar_members)}): {zst_path}",
         flush=True,
       )
     return True, zst_members
@@ -10774,7 +10608,7 @@ def atomic_seal_tar_to_zst(
   skipped, zst_members = skip_result
   if skipped:
     return zst_members
-  tmp_zst = "%s.tmp" % zst_path
+  tmp_zst = f"{zst_path}.tmp"
   try:
     if os.path.exists(tmp_zst):
       os.remove(tmp_zst)
@@ -10796,29 +10630,21 @@ def atomic_seal_tar_to_zst(
           if len(existing_members) > len(tar_members):
             if log_fn:
               log_fn(
-                "Seal refused: existing zst has more members than tar "
-                "(zst=%s tar=%s): %s"
-                % (len(existing_members), len(tar_members), zst_path),
+                f"Seal refused: existing zst has more members than tar (zst={len(existing_members)} tar={len(tar_members)}): {zst_path}",
                 flush=True,
               )
             return None
           if sum_member_bytes(existing_members) > sum_member_bytes(tar_members):
             if log_fn:
               log_fn(
-                "Seal refused: existing zst byte sum exceeds tar "
-                "(zst=%s tar=%s): %s"
-                % (
-                  sum_member_bytes(existing_members),
-                  sum_member_bytes(tar_members),
-                  zst_path,
-                ),
+                f"Seal refused: existing zst byte sum exceeds tar (zst={sum_member_bytes(existing_members)} tar={sum_member_bytes(tar_members)}): {zst_path}",
                 flush=True,
               )
             return None
       if not verify_tar_archive_readable(tar_path, assume_write_lock_held=True):
         if log_fn:
           log_fn(
-            "Seal refused: tar unreadable before compress: %s" % tar_path,
+            f"Seal refused: tar unreadable before compress: {tar_path}",
             flush=True,
           )
         return None
@@ -10842,13 +10668,13 @@ def atomic_seal_tar_to_zst(
       pass
     raise
   if log_fn:
-    log_fn("Sealed archive %s -> %s" % (tar_path, zst_path), flush=True)
+    log_fn(f"Sealed archive {tar_path} -> {zst_path}", flush=True)
   invalidate_daily_archive_members_cache(zst_path)
   zst_key = normalize_daily_compressed_path(zst_path)
   if keep_uncompressed_tar:
     if log_fn:
       log_fn(
-        "Sealed archive retaining uncompressed tar: %s" % tar_path, flush=True
+        f"Sealed archive retaining uncompressed tar: {tar_path}", flush=True
       )
   elif (
     not force_remove_uncompressed_tar
@@ -10856,8 +10682,7 @@ def atomic_seal_tar_to_zst(
   ):
     if log_fn:
       log_fn(
-        "Sealed archive retaining uncompressed tar (raw stats still present "
-        "for day): %s" % tar_path,
+        f"Sealed archive retaining uncompressed tar (raw stats still present for day): {tar_path}",
         flush=True,
       )
   else:
@@ -10867,7 +10692,7 @@ def atomic_seal_tar_to_zst(
         os.remove(tar_path)
       if log_fn:
         log_fn(
-          "Sealed archive removed uncompressed tar: %s" % tar_path, flush=True
+          f"Sealed archive removed uncompressed tar: {tar_path}", flush=True
         )
     except OSError:
       pass
@@ -10949,7 +10774,7 @@ def _seal_one_daily_tar(
     )
   except (subprocess.CalledProcessError, RuntimeError, TimeoutError) as exc:
     if log_fn:
-      log_fn("Seal failed for %s: %s" % (tar_path, exc), flush=True)
+      log_fn(f"Seal failed for {tar_path}: {exc}", flush=True)
 
 
 def seal_dirty_daily_archives(
@@ -11038,8 +10863,7 @@ def seal_dirty_daily_archives(
       if remaining_raw_by_gz_has_paths_on_disk(blocking, zst_path):
         if log_fn:
           log_fn(
-            "Post-chunk seal deferred (raw stats still present for day): %s"
-            % tar_path,
+            f"Post-chunk seal deferred (raw stats still present for day): {tar_path}",
             flush=True,
           )
         continue
@@ -11183,7 +11007,7 @@ def _migrate_one_daily_legacy_gz_locked(
     except (subprocess.CalledProcessError, RuntimeError) as exc:
       if log_fn:
         log_fn(
-          "Migration seal failed for %s: %s" % (seal_tar_path, exc),
+          f"Migration seal failed for {seal_tar_path}: {exc}",
           flush=True,
         )
       return MIGRATE_GZ_STATUS_FAILED
@@ -11223,8 +11047,7 @@ def _migrate_one_daily_legacy_gz_locked(
       return _seal_and_drop()
     if log_fn:
       log_fn(
-        "Keeping legacy gzip (zst member mismatch or no re-sealable tar): %s"
-        % gz_path,
+        f"Keeping legacy gzip (zst member mismatch or no re-sealable tar): {gz_path}",
         flush=True,
       )
     return MIGRATE_GZ_STATUS_KEPT_MISMATCH
@@ -11244,13 +11067,12 @@ def _migrate_one_daily_legacy_gz_locked(
       except OSError as exc:
         if log_fn:
           log_fn(
-            "Migration temp directory unavailable %s: %s"
-            % (decompress_tmp_dir, exc),
+            f"Migration temp directory unavailable {decompress_tmp_dir}: {exc}",
             flush=True,
           )
         return MIGRATE_GZ_STATUS_FAILED
       fd, temp_tar_path = tempfile.mkstemp(
-        prefix="%s.migrate." % os.path.basename(tar_path),
+        prefix=f"{os.path.basename(tar_path)}.migrate.",
         suffix=".tar",
         dir=decompress_tmp_dir,
       )
@@ -11268,7 +11090,7 @@ def _migrate_one_daily_legacy_gz_locked(
     ):
       if log_fn:
         log_fn(
-          "Migration decompress failed for legacy gzip: %s" % gz_path,
+          f"Migration decompress failed for legacy gzip: {gz_path}",
           flush=True,
         )
       if remove_temp_tar_after:
@@ -11339,7 +11161,7 @@ def migrate_one_daily_legacy_gz(
     action = _planned_migrate_action_for_legacy_gz(gz_path, tar_path, zst_path)
     if log_fn and action != MIGRATE_GZ_STATUS_SKIPPED_NO_GZ:
       log_fn(
-        "Dry-run %s: %s -> %s" % (action, gz_path, zst_path),
+        f"Dry-run {action}: {gz_path} -> {zst_path}",
         flush=True,
       )
     return action
@@ -11388,7 +11210,7 @@ def migrate_one_daily_legacy_gz(
   except TimeoutError:
     if log_fn:
       log_fn(
-        "Skipping migration (lock contended): %s" % primary_path,
+        f"Skipping migration (lock contended): {primary_path}",
         flush=True,
       )
     return MIGRATE_GZ_STATUS_SKIPPED_LOCKED
@@ -11557,7 +11379,7 @@ def filter_files_to_add_to_archive(
     if file_size != existing_members[member_name]:
       to_add.append(path)
     elif debug:
-      log_print("file %s found in archive, skipping" % path)
+      log_print(f"file {path} found in archive, skipping")
   return to_add
 
 
@@ -11713,12 +11535,7 @@ def collect_stats_files_in_range(
   paths = [rec.path for rec in records]
   if log_fn is not None:
     log_fn(
-      "collect_stats_files_in_range: find paths=%d elapsed_s=%.3f mtime_days=%s"
-      % (
-        len(paths),
-        time.monotonic() - collect_t0,
-        "None" if effective_mtime is None else str(int(effective_mtime)),
-      ),
+      f"collect_stats_files_in_range: find paths={len(paths)} elapsed_s={time.monotonic() - collect_t0:.3f} mtime_days={'None' if effective_mtime is None else str(int(effective_mtime))}",
       flush=True,
     )
   return paths
@@ -11831,15 +11648,7 @@ def rescan_pending_stats_files(
         find_only_n += 1
       if log_fn is not None and find_only_n:
         log_fn(
-          "idle_rescan_merge snapshot_n=%d find_n=%d find_only_n=%d "
-          "merged_n=%d force_full=%s"
-          % (
-            len(startup_closed_paths),
-            len(find_files),
-            find_only_n,
-            len(discovered_files),
-            "yes" if should_force_full else "no",
-          ),
+          f"idle_rescan_merge snapshot_n={len(startup_closed_paths)} find_n={len(find_files)} find_only_n={find_only_n} merged_n={len(discovered_files)} force_full={'yes' if should_force_full else 'no'}",
           flush=True,
         )
     if newest_first:
@@ -11878,12 +11687,7 @@ def rescan_pending_stats_files(
       and (index + 1) % progress_interval == 0
     ):
       log_fn(
-        "pending rescan progress filtered_n=%d/%d elapsed_s=%.1f"
-        % (
-          index + 1,
-          total,
-          time.monotonic() - filter_t0,
-        ),
+        f"pending rescan progress filtered_n={index + 1}/{total} elapsed_s={time.monotonic() - filter_t0:.1f}",
         flush=True,
       )
   return result
@@ -11920,8 +11724,7 @@ def cap_pending_stats_file_list(
     return list(paths)
   if log_fn is not None:
     log_fn(
-      "Pending stats file list truncated pending=%d max=%d"
-      % (len(paths), max_size),
+      f"Pending stats file list truncated pending={len(paths)} max={max_size}",
       flush=True,
     )
   if not newest_first:
@@ -11981,14 +11784,12 @@ def build_archive_mapping(
     ar_file_mapping[archive_fname].append(stats_fname)
   if skipped_no_ts:
     log_print(
-      "Unable to find first timestamp in %d path(s), skipping archiving "
-      "sample=%s" % (skipped_no_ts, ",".join(skipped_samples) or "-"),
+      f"Unable to find first timestamp in {skipped_no_ts} path(s), skipping archiving sample={','.join(skipped_samples) or '-'}",
       flush=True,
     )
   if skipped_no_ts and not ar_file_mapping:
     log_print(
-      "No files added to archive mapping (%d skipped: no timestamp)"
-      % skipped_no_ts
+      f"No files added to archive mapping ({skipped_no_ts} skipped: no timestamp)"
     )
   return ar_file_mapping
 

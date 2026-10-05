@@ -201,7 +201,7 @@ def test_docker_compose_commands_and_healthchecks_use_yaml_list_form():
 def test_redis_entrypoint_sh_is_tracked_file_not_gitignored():
   """Root *.sh must not hide the Redis bind-mount entrypoint.
 
-  Signature (hpcperfstats04): missing file → Podman creates
+  Signature (hpcperfstats04): missing file -> Podman creates
   services-conf/redis_entrypoint.sh as a directory; Redis exits 0 in <1ms.
   """
   repo_root = Path(__file__).resolve().parents[2]
@@ -781,7 +781,7 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
   settings = (repo_root / "docker-compose.settings.yaml.example").read_text()
   # Site bind volumes live only in settings (include). Bare `name:` under
   # volumes parses as null and breaks podman-compose rec_merge_one.
-  # redis_runtime is a named Docker volume in base compose — not a setting.
+  # redis_runtime is a named Docker volume in base compose - not a setting.
   assert re.search(r"(?m)^volumes:\s*$", settings) is not None
   bind_names = (
     "hpcperfstatsdata",

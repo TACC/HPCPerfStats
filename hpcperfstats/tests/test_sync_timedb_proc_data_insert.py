@@ -77,7 +77,7 @@ def test_proc_copy_bytes_coerces_float_bigint_fields():
     ]
   ).decode("utf-8")
   fields = payload.strip().split("\t")
-  # PROC_DATA_COPY_COLUMNS: jid host proc device uid … vm_size … vm_swap threads
+  # PROC_DATA_COPY_COLUMNS: jid host proc device uid ... vm_size ... vm_swap threads
   assert "0.0" not in fields
   assert "236948.0" not in fields
   assert fields[4] == "0"  # uid

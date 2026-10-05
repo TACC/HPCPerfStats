@@ -645,7 +645,7 @@ def test_compute_deltas_and_arc_rollover():
 
 
 def test_compute_deltas_and_arc_zero_deltat_yields_nan_arc():
-  """Same (host,type,event) time twice (different unit rows): Δt=0 → arc undefined."""
+  """Same (host,type,event) time twice (different unit rows): Δt=0 -> arc undefined."""
   stats_df = pd.DataFrame(
     [
       {
@@ -890,7 +890,7 @@ def test_compute_deltas_and_arc_nvidia_clocks_event_reasons_keeps_dev():
 
 
 def test_compute_deltas_and_arc_nvidia_gpu_count_max_not_nxn():
-  """Monitor emits node gpu_count=N on every device; keep-dev + MAX → N not N²."""
+  """Monitor emits node gpu_count=N on every device; keep-dev + MAX -> N not N²."""
   rows = []
   for d in ("0", "1", "2", "3"):
     rows.append(
@@ -947,7 +947,7 @@ def _assert_collapse_frames_equal(actual, expected):
   actual_sorted = actual[cols].sort_values(by=cols).reset_index(drop=True)
   expected_sorted = expected[cols].sort_values(by=cols).reset_index(drop=True)
   pd.testing.assert_frame_equal(
-    actual_sorted, expected_sorted, check_dtype=False
+    actual_sorted, expected_sorted, check_dtype=False, check_categorical=False
   )
 
 
@@ -1339,7 +1339,7 @@ def test_collapse_nvidia_gpu_or_skips_dcgm_int64_blank():
   collapsed = _collapse_nvidia_gpu_vectorized(stats_df, gcols)
   assert len(collapsed) == 2
   by_dev = {str(r["dev"]): float(r["value"]) for _, r in collapsed.iterrows()}
-  # Blank device OR of empty set → 0; real device keeps mask.
+  # Blank device OR of empty set -> 0; real device keeps mask.
   assert by_dev["0"] == 0.0
   assert by_dev["1"] == 7.0
 
@@ -1529,7 +1529,7 @@ def test_streaming_resume_registers_schema_from_skipped_header(tmp_path):
   stats_file = tmp_path / "host.example.com" / "1709123456"
   stats_file.parent.mkdir(parents=True)
   stats_file.write_text("".join(lines), encoding="utf-8")
-  # Offset 3 is the second timestamp line — past the !cpu schema.
+  # Offset 3 is the second timestamp line - past the !cpu schema.
   start_idx = 3
   expected_stats, expected_proc = parse_stats_lines(lines, start_idx)
   assert len(expected_stats) > 0
@@ -1554,17 +1554,20 @@ def test_streaming_resume_matches_nonstreaming_parse(tmp_path):
       str(stats_file),
       start_line_idx=start_idx,
     )
-    assert stream_stats == expected_stats, "streaming start_idx=%d" % start_idx
-    assert stream_proc == expected_proc, (
-      "streaming proc start_idx=%d" % start_idx
-    )
+    assert stream_stats == expected_stats, f"streaming start_idx={start_idx}"
+    assert stream_proc == expected_proc, f"streaming proc start_idx={start_idx}"
     chunks = []
 
     def on_chunk(stats_list, proc_list):
+      proc_rows = (
+        stats_payload_to_records(proc_list)
+        if isinstance(proc_list, dict)
+        else list(proc_list)
+      )
       chunks.append(
         (
           stats_payload_to_records(stats_list),
-          list(proc_list),
+          proc_rows,
         )
       )
 
@@ -1576,10 +1579,8 @@ def test_streaming_resume_matches_nonstreaming_parse(tmp_path):
     )
     inc_stats = [row for stats, _proc in chunks for row in stats]
     inc_proc = [row for _stats, proc in chunks for row in proc]
-    assert inc_stats == expected_stats, "incremental start_idx=%d" % start_idx
-    assert inc_proc == expected_proc, (
-      "incremental proc start_idx=%d" % start_idx
-    )
+    assert inc_stats == expected_stats, f"incremental start_idx={start_idx}"
+    assert inc_proc == expected_proc, f"incremental proc start_idx={start_idx}"
 
 
 def test_streaming_resume_emits_nothing_before_start_idx(tmp_path):

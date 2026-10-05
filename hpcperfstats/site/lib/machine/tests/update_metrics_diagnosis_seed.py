@@ -125,7 +125,7 @@ FROM generate_series(1, %s) AS h(n)
 
 
 def seed_update_metrics_diagnosis_jobs():
-  """Create two jobs: small cohort (100–300 in-window rows) and large (300–5000).
+  """Create two jobs: small cohort (100-300 in-window rows) and large (300-5000).
 
   Returns dict with jids, row counts, and local end date for ``update_metrics_for_dates``.
   """

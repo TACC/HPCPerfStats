@@ -57,7 +57,7 @@ def _format_timedelta(seconds: float | None) -> str:
 
 def _bar(percentage: float | None) -> str:
   """
-  Return an ASCII bar for a 0–100 percentage.
+  Return an ASCII bar for a 0-100 percentage.
 
   Args:
     percentage (Optional[float]): Percentage, or None when absent.

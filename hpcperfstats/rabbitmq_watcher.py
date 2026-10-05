@@ -2,8 +2,8 @@
 Pipeline RabbitMQ memory scream: poll management API every 5 minutes.
 
 Always emits a ``[rabbitmq-watcher]`` line so operators can correlate RSS
-climbs in compose logs. When ``mem_used`` is at or above 40 GiB, the line
-includes literal ``ERROR`` and a band floor (40, 50, 60, … every 10 GiB).
+climbs in compose logs. When ``mem_used`` is at or above 40 GiB, the line
+includes literal ``ERROR`` and a band floor (40, 50, 60, ... every 10 GiB).
 
 Attributes:
   WATCHER_PREFIX: Log line token for grep/pager correlation.
@@ -51,9 +51,9 @@ class NodeMemorySnapshot(NamedTuple):
 
 def error_threshold_band(mem_gib: float) -> int | None:
   """
-  Return the ERROR band floor for ``mem_gib``, or ``None`` below 40 GiB.
+  Return the ERROR band floor for ``mem_gib``, or ``None`` below 40 GiB.
 
-  Bands are 40, 50, 60, … using floor arithmetic on the integer GiB value:
+  Bands are 40, 50, 60, ... using floor arithmetic on the integer GiB value:
   ``40 + 10 * ((int(mem_gib) - 40) // 10)``.
 
   Args:
@@ -122,9 +122,9 @@ def format_watcher_line(
   parts = [WATCHER_PREFIX]
   if threshold_gib is not None:
     parts.append("ERROR")
-    parts.append("threshold_gib=%d" % int(threshold_gib))
+    parts.append(f"threshold_gib={int(threshold_gib)}")
   parts.append(f"mem_used_gib={float(mem_used_gib):.2f}")
-  parts.append("mem_used_bytes=%d" % int(mem_used_bytes))
+  parts.append(f"mem_used_bytes={int(mem_used_bytes)}")
   parts.append(f"connections={conn_s}")
   return " ".join(parts)
 

@@ -106,7 +106,7 @@ def researcher_use_for_job_detail_bokeh_plot(plot_key: str) -> str | None:
     plot_key (str): String for plot key.
 
   Returns:
-    Optional[str]: Optional[str] — the result, or None when unavailable.
+    Optional[str]: Optional[str] - the result, or None when unavailable.
 
   Examples:
     >>> researcher_use_for_job_detail_bokeh_plot("x")  # doctest: +SKIP

@@ -511,7 +511,7 @@ def _load_row(
     layout (str): String for layout.
 
   Returns:
-    Optional[job_plot_artifact]: Optional[job_plot_artifact] — the result, or
+    Optional[job_plot_artifact]: Optional[job_plot_artifact] - the result, or
     None when unavailable.
 
   Examples:
@@ -690,7 +690,7 @@ class _JtMemoProxy:
       events (Any): Event name or sequence of event names.
       conv (Any): Multiplier applied to summed values.
       group_by_dev (bool): When True, one row per (host, time, dev);
-      when False, sum devices at host×time grain.
+      when False, sum devices at hostxtime grain.
 
     Returns:
       Any: Copy of the cached aggregate DataFrame from the inner table.
@@ -762,7 +762,7 @@ def load_cached_job_plot_entry(
     fingerprint (str): String for fingerprint.
 
   Returns:
-    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] — the result, or None
+    Optional[Dict[str, Any]]: Optional[Dict[str, Any]] - the result, or None
     when unavailable.
 
   Examples:

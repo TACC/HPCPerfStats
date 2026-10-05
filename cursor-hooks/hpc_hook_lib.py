@@ -68,7 +68,7 @@ LIVE_PLAN_DISK_SUFFIX = ".cursor/plans/"
 PLAN_CONTENT_SECTIONS = (
   (
     re.compile(r"##\s*Plan disk file", re.I),
-    "## Plan disk file (authority — chat does not count)",
+    "## Plan disk file (authority - chat does not count)",
   ),
   (
     re.compile(r"##\s*Operator discovery", re.I),
@@ -543,7 +543,7 @@ def extract_plan_authority_markdown(
   transcript_path: str | None = None,
   full_rows: list[dict] | None = None,
 ) -> str:
-  """Authoritative plan body for hook validation — disk file, not CreatePlan tool."""
+  """Authoritative plan body for hook validation - disk file, not CreatePlan tool."""
   paths = list(live_plan_disk_paths_from_rows(rows))
   if transcript_path is not None and full_rows is not None:
     for path in live_plan_disk_paths_from_ledger(transcript_path, full_rows):
@@ -621,7 +621,7 @@ def plan_disk_sync_followup_message(
     "1. Read plan-creation-contract.mdc, plan-live-disk-sync.mdc, and "
     "docs/plans/PLAN_TEMPLATE.md (Read tool).\n"
     "2. Write the full plan (frontmatter todos + PLAN_TEMPLATE sections) to "
-    f"`{path_hint}` — CreatePlan and chat do not count (plan-live-disk-sync.mdc).\n"
+    f"`{path_hint}` - CreatePlan and chat do not count (plan-live-disk-sync.mdc).\n"
     "3. Include ## Plan disk file with live path and last-updated date.\n\n"
     f"Missing now: {issue_text}\n"
     f"loop_count={loop_count}. Per plan-live-disk-sync.mdc and plan-creation-contract.mdc."
@@ -636,7 +636,7 @@ def create_plan_disk_sync_post_tool_context(suggested_path: str) -> str:
     "Write or StrReplace the full plan to "
     f"<workspace_root>/{suggested_path} "
     "(frontmatter todos + PLAN_TEMPLATE sections including ## Plan disk file; "
-    "operator commands only under ## Operator discovery → ### Pending commands). "
+    "operator commands only under ## Operator discovery -> ### Pending commands). "
     "Read plan-creation-contract.mdc, plan-live-disk-sync.mdc, "
     "compose-operator-terminal-commands.mdc, deploy-ini-with-code-no-phase-zero.mdc, "
     "plan-template-enforcement.mdc, and PLAN_TEMPLATE.md first if not already Read. "
@@ -788,7 +788,7 @@ def _validate_pending_commands_subsection(pending: str) -> list[str]:
   if not service_sections:
     return [
       "Operator discovery: ### Pending commands needs service-labeled "
-      "#### <service> — <what to paste> headers "
+      "#### <service> - <what to paste> headers "
       "(compose-operator-terminal-commands.mdc)",
     ]
   issues: list[str] = []
@@ -797,9 +797,11 @@ def _validate_pending_commands_subsection(pending: str) -> list[str]:
     label_match = re.match(r"####\s*(\S+)", section)
     if not label_match:
       continue
-    service = label_match.group(1).rstrip("—-").strip()
-    # Normalize "pipeline — paste …" → service token before em-dash/space.
-    service = re.split(r"[\s—-]", service, maxsplit=1)[0]
+    service = label_match.group(1).strip()
+    while service.endswith("-"):
+      service = service[:-1]
+    # Normalize "pipeline - paste ..." -> service token before em-dash/space.
+    service = re.split(r"(?:\s+|--)", service, maxsplit=1)[0]
     seen_services[service] = seen_services.get(service, 0) + 1
     if not re.search(r"```bash\b", section, re.I):
       issues.append(
@@ -851,7 +853,7 @@ def _validate_pending_commands_subsection(pending: str) -> list[str]:
             "(compose-operator-terminal-commands.mdc)",
           )
           break
-        # Flag appears before grep on the same line → still reject.
+        # Flag appears before grep on the same line -> still reject.
         flag_pos = re.search(r"--tail(=|\s)|--since(=|\s)", line, re.I)
         grep_pos = re.search(r"\|\s*grep\b", line, re.I)
         if flag_pos and grep_pos and flag_pos.start() < grep_pos.start():
@@ -927,7 +929,7 @@ def _validate_pending_commands_subsection(pending: str) -> list[str]:
     if count > 1:
       issues.append(
         f"Operator discovery: #### {service} appears {count} times under "
-        "Pending commands — combine into one block per service "
+        "Pending commands - combine into one block per service "
         "(compose-operator-terminal-commands.mdc)",
       )
   return issues
@@ -973,7 +975,7 @@ def reconstruct_live_plan_markdown_from_tool_input(
 
 
 def operator_commands_outside_discovery_issues(plan_markdown: str) -> list[str]:
-  """Compose bash blocks must live under Operator discovery → Pending commands."""
+  """Compose bash blocks must live under Operator discovery -> Pending commands."""
   od_match = re.search(r"##\s*Operator discovery\b", plan_markdown or "", re.I)
   if not od_match:
     return []
@@ -991,7 +993,7 @@ def operator_commands_outside_discovery_issues(plan_markdown: str) -> list[str]:
     ):
       return [
         "Operator commands: podman-compose blocks must live under "
-        "## Operator discovery → ### Pending commands only "
+        "## Operator discovery -> ### Pending commands only "
         "(compose-operator-terminal-commands.mdc)",
       ]
   return []
@@ -1240,7 +1242,7 @@ def full_file_rule_read_issues(
       continue
     if read_event_indices_for_rule(rows, name):
       issues.append(
-        f"Partial Read of {name} does not count — Read the full file "
+        f"Partial Read of {name} does not count - Read the full file "
         "(no limit/offset) when Operator discovery needs commands",
       )
     else:
@@ -1329,7 +1331,7 @@ def _with_ledger_lock(ledger: Path):
       finally:
         fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
   except OSError:
-    # Fail open for lock acquisition — still attempt the body unlocked so a
+    # Fail open for lock acquisition - still attempt the body unlocked so a
     # single-writer path keeps working; parallel races may remain if lock fails.
     yield
 
@@ -1656,7 +1658,7 @@ def triggered_rule_dispatch_issues(
   if body is None:
     return []
   if dispatch_is_na(body):
-    return ["Agent rule dispatch (N/A invalid — edits triggered domain rules)"]
+    return ["Agent rule dispatch (N/A invalid - edits triggered domain rules)"]
   listed_lower = {name.lower() for name in extract_dispatch_listed_mdc(body)}
   issues: list[str] = []
   for rule in sorted(domain_triggered, key=str.lower):
@@ -1753,7 +1755,7 @@ def edge_cases_issues(assistant_text: str) -> list[str]:
     body = body[: next_heading.start()]
   items = re.findall(r"^\s*(?:[-*]|\d+[\.)])\s+\S", body, re.M)
   if len(items) < 3:
-    return ["### Edge cases (≥3 numbered/bulleted items required)"]
+    return ["### Edge cases (>=3 numbered/bulleted items required)"]
   return []
 
 
@@ -1877,7 +1879,7 @@ def rule_dual_registration_issues(work_paths: list[str]) -> list[str]:
     router = find_router_file([], rule_path=path)
     if router is None:
       issues.append(
-        f"Rule dual registration: `{basename}` — agent-discipline-core.mdc not found",
+        f"Rule dual registration: `{basename}` - agent-discipline-core.mdc not found",
       )
       continue
     router_text = router.read_text(encoding="utf-8", errors="replace")
@@ -1889,7 +1891,7 @@ def rule_dual_registration_issues(work_paths: list[str]) -> list[str]:
     hook_router = find_hook_task_router_file()
     if hook_router is None:
       issues.append(
-        f"Rule dual registration: `{basename}` — hook_task_router.py not found",
+        f"Rule dual registration: `{basename}` - hook_task_router.py not found",
       )
       continue
     hook_text = hook_router.read_text(encoding="utf-8", errors="replace")

@@ -28,8 +28,8 @@ REAP_KEEP = "keep"
 REAP_FAILURE = "failure_reap"
 REAP_RSS = "rss_reap"
 
-# Design peak cgroup bytes per in-flight raw ``st_size`` byte (page cache ≈1×
-# + parse/DF/jemalloc ≈1–1.5×). Ingest admit budget = tree RSS roof / this.
+# Design peak cgroup bytes per in-flight raw ``st_size`` byte (page cache ≈1x
+# + parse/DF/jemalloc ≈1-1.5x). Ingest admit budget = tree RSS roof / this.
 # See plan sync-timedb-oom-sep24 + docs/DEPLOY_CONCURRENCY_AND_NUMA.md § OOM.
 PEAK_CGROUP_PER_RAW_FILE_BYTE = 2.5
 _MIB_BYTES = 1024 * 1024
@@ -680,34 +680,15 @@ class WorkerMemoryBatchAccumulator:
     total = self.completions
     retires_total = self.retires_total
     log_print(
-      "INFO: sync_timedb worker_memory: event=batch_summary batch=%d "
-      "completions=%d keep_worker=%d retires_total=%d "
-      "retires_failure_reap=%d retires_rss_reap=%d "
-      "retire_rate_pct=%.1f failure_reap_pct=%.1f rss_reap_pct=%.1f "
-      "tasks_on_worker_min=%d tasks_on_worker_p50=%d "
-      "tasks_on_worker_max=%d rss_mib_after_p50=%.1f rss_mib_after_max=%.1f "
-      "rss_recheck_fired=%d tree_rss_mib=%.1f ingest_pool_rss_mib=%.1f "
-      "threshold_mib=%.1f maxtasksperchild=%d"
-      % (
-        int(chunk_index),
-        total,
-        self.keep_worker,
-        retires_total,
-        self.retires_failure_reap,
-        self.retires_rss_reap,
-        _pct(retires_total, total),
-        _pct(self.retires_failure_reap, total),
-        _pct(self.retires_rss_reap, total),
-        min(self._tasks_on_worker) if self._tasks_on_worker else 0,
-        _percentile(self._tasks_on_worker, 50),
-        max(self._tasks_on_worker) if self._tasks_on_worker else 0,
-        _percentile(self._rss_mib_after, 50),
-        max(self._rss_mib_after) if self._rss_mib_after else 0.0,
-        self.rss_recheck_fired,
-        breakdown.get("tree_total_mb", 0.0),
-        breakdown.get("ingest_pool_mb", 0.0),
-        threshold,
-        cfg.get_sync_ingest_pool_maxtasksperchild(),
+      (
+        f"INFO: sync_timedb worker_memory: event=batch_summary batch={int(chunk_index)} "
+        f"completions={total} keep_worker={self.keep_worker} retires_total={retires_total} "
+        f"retires_failure_reap={self.retires_failure_reap} retires_rss_reap={self.retires_rss_reap} "
+        f"retire_rate_pct={_pct(retires_total, total):.1f} failure_reap_pct={_pct(self.retires_failure_reap, total):.1f} rss_reap_pct={_pct(self.retires_rss_reap, total):.1f} "
+        f"tasks_on_worker_min={min(self._tasks_on_worker) if self._tasks_on_worker else 0} tasks_on_worker_p50={_percentile(self._tasks_on_worker, 50)} "
+        f"tasks_on_worker_max={max(self._tasks_on_worker) if self._tasks_on_worker else 0} rss_mib_after_p50={_percentile(self._rss_mib_after, 50):.1f} rss_mib_after_max={max(self._rss_mib_after) if self._rss_mib_after else 0.0:.1f} "
+        f"rss_recheck_fired={self.rss_recheck_fired} tree_rss_mib={breakdown.get('tree_total_mb', 0.0):.1f} ingest_pool_rss_mib={breakdown.get('ingest_pool_mb', 0.0):.1f} "
+        f"threshold_mib={threshold:.1f} maxtasksperchild={cfg.get_sync_ingest_pool_maxtasksperchild()}"
       ),
       flush=True,
     )

@@ -136,7 +136,7 @@ def test_submit_drops_when_byte_budget_exceeded(tmp_path):
 
   pool = ldi.ListendDbIngestPool(
     pool_processes=1,
-    queue_max_gb=0.000001,  # tiny → tiny per-worker budget
+    queue_max_gb=0.000001,  # tiny -> tiny per-worker budget
     batch_samples=10,
     enabled=True,
   )
@@ -192,17 +192,17 @@ def test_should_pause_and_resume_hysteresis():
     enabled=True,
   )
   budget = 1000
-  # Above pause watermark (0.95) → pause.
+  # Above pause watermark (0.95) -> pause.
   _wire_fake_pool_bytes(pool, queued=950, budget=budget, per_worker=budget)
   assert pool.should_pause_consume() is True
   assert pool.should_resume_consume() is False
 
-  # Mid band: still above resume (0.50) → stay paused for resume check.
+  # Mid band: still above resume (0.50) -> stay paused for resume check.
   pool._byte_counts[0].value = 700
   assert pool.should_pause_consume() is False
   assert pool.should_resume_consume() is False
 
-  # At/below resume watermark → resume.
+  # At/below resume watermark -> resume.
   pool._byte_counts[0].value = 500
   assert pool.should_pause_consume() is False
   assert pool.should_resume_consume() is True
@@ -405,7 +405,7 @@ def test_find_processing_start_index_extra_tokens_and_malformed():
     "1710000003.0 only_two\n",
     "1710000004.0 1 host.example.edu\n",
   ]
-  # 1 and 2 present, 4 missing → resume from last present (line index of 2).
+  # 1 and 2 present, 4 missing -> resume from last present (line index of 2).
   itimes = {1710000001, 1710000002}
   start_idx, need = find_processing_start_index(lines, itimes)
   assert need is True
@@ -507,7 +507,7 @@ def test_archive_gate_live_on_requires_file_complete_mark(
     "get_archive_dir_path",
     lambda: str(tmp_path),
   )
-  # has_file_complete uses archive_data_dir from cfg default — patch helper.
+  # has_file_complete uses archive_data_dir from cfg default - patch helper.
   monkeypatch.setattr(
     ready,
     "_path_ready_via_file_complete_mark",
@@ -782,7 +782,7 @@ def test_peak_merge_uses_jid_host_in_fast_path(monkeypatch):
     SimpleNamespace(
       jid="3450351",
       host="c515-013.stampede3.tacc.utexas.edu",
-      proc="exec%d" % i,
+      proc=f"exec{i}",
       vm_peak=i,
       vm_hwm=None,
       vm_stk=None,
@@ -797,7 +797,7 @@ def test_peak_merge_uses_jid_host_in_fast_path(monkeypatch):
   call = filter_calls[0]
   assert call["jid"] == "3450351"
   assert call["host"] == "c515-013.stampede3.tacc.utexas.edu"
-  assert set(call["proc__in"]) == {"exec%d" % i for i in range(5)}
+  assert set(call["proc__in"]) == {f"exec{i}" for i in range(5)}
   assert len(call) == 3
 
 
@@ -833,7 +833,7 @@ def test_peak_merge_subchunks_large_mixed_batch(monkeypatch):
     SimpleNamespace(
       jid="j1",
       host="h1",
-      proc="p%d" % i,
+      proc=f"p{i}",
       vm_peak=1,
       vm_hwm=1,
       vm_stk=1,
@@ -890,7 +890,7 @@ def test_flush_bisects_proc_chunk_on_statement_timeout(monkeypatch):
     SimpleNamespace(
       jid="1",
       host="h",
-      proc="p%d" % i,
+      proc=f"p{i}",
       device="d",
       **dict.fromkeys(
         (
@@ -970,7 +970,7 @@ def test_sync_timedb_peak_merge_delegates_to_shared_helper():
 def test_worker_main_configures_blas_before_numpy(monkeypatch):
   """Regression: listend DB workers must cap OpenBLAS before parsing imports numpy.
 
-  Without this, ~30 workers × default OpenBLAS threads hit pthread_create EAGAIN.
+  Without this, ~30 workers x default OpenBLAS threads hit pthread_create EAGAIN.
   """
   import os
 
@@ -1105,7 +1105,7 @@ def test_pause_resume_wait_emits_no_transition_info(monkeypatch):
   connection = type("Conn", (), {"is_closed": False})()
   connection.process_data_events = lambda *a, **k: None
 
-  # Flap: pause → drain → resume → pause again (preserve counters across flaps).
+  # Flap: pause -> drain -> resume -> pause again (preserve counters across flaps).
   for _ in range(3):
     pool._byte_counts[0].value = 999
     listend._request_db_backpressure_pause(channel, 1)
@@ -1178,7 +1178,7 @@ def test_idle_monitor_pause_s_open_interval_and_window_reset(monkeypatch):
   assert "pause_s=45" in suffix
   assert "paused=1" in suffix
 
-  # Still paused after reset — next window should not include prior 45s.
+  # Still paused after reset - next window should not include prior 45s.
   mono["t"] = 5050.0
   pause_s2, paused2 = pool.pause_seconds_snapshot()
   assert paused2 == 1
@@ -1473,7 +1473,7 @@ def test_worker_uses_thread_title_not_process_pool_title():
 
   src = inspect.getsource(ldi._worker_main)
   assert "set_daemon_thread_title" in src
-  assert "listend-db-%d" in src
+  assert "listend-db-" in src and "worker_idx" in src
   assert "listend-db-pool" not in src
   assert "set_daemon_process_title" not in src
 
