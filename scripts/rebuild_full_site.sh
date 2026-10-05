@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Full-stack image rebuild: build all default services + db_pg18, then recreate
-# without --build on up. Sets pipeline cgroup memory.high after pipeline is up.
+# Full-stack image rebuild: build musl GCC toolchain image, then compose-build all
+# default services + db_pg18, then recreate without --build on up. Sets pipeline
+# cgroup memory.high after pipeline is up. Never use podman-compose up --build here.
 #
 # Not for SPA-only releases — use rebuild_frontend.sh / rebuild_pipeline.sh when
 # you need live frontend preservation (see rebuild_pipeline.sh).
@@ -23,6 +24,9 @@ DRY_RUN=0
 BUILD_ONLY=0
 NO_START=0
 
+GCC_MUSL_IMAGE=hpcperfstats-gcc-musl:16.2
+GCC_ALPINE_DOCKERFILE=services-conf/gcc-alpine.Dockerfile
+
 DEFAULT_BUILD_SERVICES=(web pipeline redis proxy db rabbitmq)
 PG18_PROFILE=pg18-migrate
 PG18_SERVICE=db_pg18
@@ -31,13 +35,14 @@ usage() {
   cat <<'EOF'
 Usage: scripts/rebuild_full_site.sh [options]
 
-Build all default-stack images and hpcperfstats-db (db_pg18 profile), then
-recreate the stack with:
+Build musl GCC (podman build), then default-stack images and hpcperfstats-db
+(db_pg18 profile), then recreate the stack with:
 
   podman-compose up -d --force-recreate
   podman-compose --profile pg18-migrate up -d --force-recreate db_pg18
 
-No --build on the up steps. Applies pipeline memory.high after pipeline starts.
+All image builds happen before any up step (no --build on up). Applies pipeline
+memory.high after pipeline starts.
 
 Full-stack downtime including db, redis, and rabbitmq. PG18 dual-run host
 prereqs: docs/OPERATOR_PG18_MIGRATION.md.
@@ -95,6 +100,11 @@ preflight() {
   cd "${REPO_ROOT}"
 }
 
+build_musl_gcc_toolchain_image() {
+  echo "Building musl GCC toolchain image ${GCC_MUSL_IMAGE} ..."
+  run_cmd podman build -f "${GCC_ALPINE_DOCKERFILE}" -t "${GCC_MUSL_IMAGE}" .
+}
+
 build_default_stack_images() {
   echo "Building default stack images: ${DEFAULT_BUILD_SERVICES[*]} ..."
   run_cmd "${PODMAN_COMPOSE[@]}" build "${DEFAULT_BUILD_SERVICES[@]}"
@@ -117,6 +127,7 @@ up_db_pg18() {
 
 main() {
   preflight
+  build_musl_gcc_toolchain_image
   build_default_stack_images
   build_db_pg18_image
 

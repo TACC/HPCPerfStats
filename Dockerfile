@@ -64,20 +64,35 @@ ENV PYTHON_VERSION=3.14.8 \
     PIP_ROOT_USER_ACTION=ignore \
     PKG_CONFIG_PATH=/opt/zstd/lib/pkgconfig:/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig
 
-# Builder apt toolchain (compilers stay in python-build only).
+# Builder apt toolchain (compilers stay in python-build only). GCC >= 16.2 via testing pin.
+COPY services-conf/assert_gcc_min_version.sh /usr/local/bin/assert_gcc_min_version.sh
+RUN chmod +x /usr/local/bin/assert_gcc_min_version.sh
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   test "$(uname -m)" = "x86_64"; \
+  printf "%s\n" "deb http://deb.debian.org/debian testing main" \
+    > /etc/apt/sources.list.d/debian-testing.list; \
+  printf "%s\n" \
+    "Package: gcc-16 g++-16 cpp-16 libgcc-16-dev libstdc++-16-dev gfortran-16" \
+    "Pin: version 16.2.0-3" \
+    "Pin-Priority: 1001" \
+    > /etc/apt/preferences.d/gcc-16; \
   apt-get update -y; \
   apt-get install -y --no-install-recommends \
-    build-essential gfortran ninja-build cmake pkg-config \
+    gcc-16 g++-16 cpp-16 libgcc-16-dev libstdc++-16-dev gfortran-16 \
+    make libc6-dev ninja-build cmake pkg-config \
     curl ca-certificates autoconf \
     libssl-dev libncursesw5-dev libsqlite3-dev \
     libreadline-dev libbz2-dev liblzma-dev tk-dev uuid-dev \
     libgdbm-dev libnss3-dev libexpat1-dev \
     default-libmysqlclient-dev file binutils; \
+  update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-16 100; \
+  update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-16 100; \
+  GCC_MIN_VERSION=16.2 assert_gcc_min_version.sh; \
   apt-get clean; \
   rm -rf /var/lib/apt/lists/*'
+
+ENV CC=gcc-16 CXX=g++-16
 
 # Print out compiler platform detection
 

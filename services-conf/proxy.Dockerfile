@@ -5,9 +5,19 @@
 # via resolve_proxy_ssl_certs_dir.py in proxy_entrypoint.sh (not baked at build).
 # Do not apk-install nginx / nginx-mod-http-brotli.
 
-ARG ALPINE_VERSION=3.24.2
+ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2
+ARG GCC_MIN_VERSION=16.2
+FROM ${GCC_TOOLCHAIN_IMAGE} AS gcc-toolchain
 
+ARG ALPINE_VERSION=3.24.2
 FROM alpine:${ALPINE_VERSION} AS proxy-build
+
+ARG GCC_MIN_VERSION=16.2
+COPY --from=gcc-toolchain /opt/gcc-16 /opt/gcc-16
+COPY services-conf/assert_gcc_min_version.sh /usr/local/bin/assert_gcc_min_version.sh
+ENV PATH="/opt/gcc-16/bin:${PATH}" CC=gcc CXX=g++
+RUN chmod +x /usr/local/bin/assert_gcc_min_version.sh \
+  && GCC_MIN_VERSION="${GCC_MIN_VERSION}" assert_gcc_min_version.sh
 
 ARG NGINX_VERSION=1.31.6
 ARG NGINX_SHA256=974ed5298a5e398e008704ed5db284e655fc270c596493dbccada452448fc9f1

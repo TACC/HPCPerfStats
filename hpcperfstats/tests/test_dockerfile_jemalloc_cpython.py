@@ -20,6 +20,16 @@ def _stage_body(dockerfile: str, stage_name: str) -> str:
   return match.group(1)
 
 
+def test_python_build_uses_gcc_16_from_testing_pin() -> None:
+  dockerfile = (_repo_root() / "Dockerfile").read_text()
+  build = _stage_body(dockerfile, "python-build")
+  assert "gcc-16" in build
+  assert "16.2.0-3" in build
+  assert "assert_gcc_min_version.sh" in build
+  assert "build-essential" not in build
+  assert "CC=gcc-16" in build or "ENV CC=gcc-16" in build
+
+
 def test_dockerfile_uses_debian_trixie_builder_and_slim_runtime():
   dockerfile = (_repo_root() / "Dockerfile").read_text()
   assert "FROM python:3.14.7-trixie" not in dockerfile

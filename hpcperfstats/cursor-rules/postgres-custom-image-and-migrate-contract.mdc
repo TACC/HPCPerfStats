@@ -18,6 +18,7 @@ globs: services-conf/db.Dockerfile,docker-compose.yaml,scripts/pg18_host_data_ch
 | CFLAGS | Postgres + Timescale: `-O3 -march=native -mprefer-vector-width=512 -mtune=native -flto=auto -g0` (512-bit prefer **only** on PG + Timescale unless later asked). Supporting `/opt` libs (`OPT_CFLAGS_LIBS`): `-O3 -march=native -mtune=native -flto=auto -g0`. LZ4 bake also passes **`-DLZ4_HEAPMODE=0`** |
 | Runtime | `LD_PRELOAD` jemalloc on musl; fail-closed `ldd` shows `/opt/...` for jemalloc/**zlib-ng**/icu/uring/lz4/zstd on **`postgres`** and zlib-ng+lz4 on **`zstd` CLI**; do not apk-add `zlib` ourselves (transitive apk zlib OK). Entrypoints **`services-conf/db-docker-entrypoint.sh`** + **`db-docker-ensure-initdb.sh`** must be **git-tracked** (`!services-conf/db-docker-*.sh` under root `*.sh` ignore) — bake `COPY` fails on prod if they are ignored. Host bind for `postgres_data_pg18` must be **`chown -R 70:70`** (Alpine postgres) before first start — bind replaces image `1777`; empty `root:root` / NFS `root_squash` → `mkdir …/18/` Permission denied |
 | Build host | Bake on the **prod CPU** (`native`). Cross-arch (e.g. aarch64) images are not the ship target for x86_64 production |
+| Musl GCC | **`db-build`** / **`proxy-build`** use **`hpcperfstats-gcc-musl:16.2`** at **`/opt/gcc-16`** (`COPY --from=gcc-toolchain`). Build once via **`services-conf/gcc-alpine.Dockerfile`**; **`scripts/rebuild_full_site.sh`** runs **`podman build`** before compose **`build`**. Fail-closed **`assert_gcc_min_version.sh`** |
 
 ## Compose dual-run
 

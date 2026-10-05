@@ -409,6 +409,8 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    **`nginx-csp-no-active.inc`**, **`nginx-csp-django-html.inc`**) as the **only**
    runtime source for those snippets (they are **not** baked into **`proxy.Dockerfile`**).
 
+   Full-stack image rebuilds (including **proxy** and homemade **db_pg18**) use **`./scripts/rebuild_full_site.sh`**, which builds musl GCC **`hpcperfstats-gcc-musl:16.2`** once, then compose-builds images, then recreates containers without **`up --build`**. Alpine compile images (**proxy**, **db_pg18**) require that toolchain tag on the build host.
+
    The **`proxy`** image is **source-built** from **`services-conf/proxy.Dockerfile`**:
    pinned **nginx 1.31.6**, **jemalloc**, **zlib-ng (ZLIB_COMPAT)**, **OpenSSL 3.5.x**,
    **ngx_brotli**, and **zstd 1.5.7** (static **`libzstd.a`** + GetPageSpeed

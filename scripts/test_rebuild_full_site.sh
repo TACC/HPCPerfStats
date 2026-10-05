@@ -47,6 +47,14 @@ if ! grep -q 'apply_pipeline_memory_high' "${FULL_SITE_SCRIPT}"; then
   exit 1
 fi
 
+if ! grep -q 'GCC_MUSL_IMAGE=hpcperfstats-gcc-musl:16.2' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must define GCC_MUSL_IMAGE" >&2
+  exit 1
+fi
+if ! grep -q 'build_musl_gcc_toolchain_image' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must define build_musl_gcc_toolchain_image" >&2
+  exit 1
+fi
 if ! grep -q 'DEFAULT_BUILD_SERVICES=(web pipeline redis proxy db rabbitmq)' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must list default stack build services" >&2
   exit 1
@@ -82,10 +90,26 @@ if [[ -z "${build_line}" || -z "${up_line}" ]]; then
   echo "rebuild_full_site.sh must define build and up helpers" >&2
   exit 1
 fi
+main_musl="$(awk '/^main\(\)/ {m=1} m && /build_musl_gcc_toolchain_image/ {print NR; exit}' "${FULL_SITE_SCRIPT}")"
 main_build="$(awk '/^main\(\)/ {m=1} m && /build_default_stack_images/ {print NR; exit}' "${FULL_SITE_SCRIPT}")"
 main_up="$(awk '/^main\(\)/ {m=1} m && /up_default_stack/ {print NR; exit}' "${FULL_SITE_SCRIPT}")"
-if [[ -z "${main_build}" || -z "${main_up}" || "${main_build}" -ge "${main_up}" ]]; then
-  echo "rebuild_full_site.sh main must build before up" >&2
+if [[ -z "${main_musl}" || -z "${main_build}" || -z "${main_up}" ]]; then
+  echo "rebuild_full_site.sh main must call musl, default stack build, and up helpers" >&2
+  exit 1
+fi
+if [[ "${main_musl}" -ge "${main_build}" || "${main_build}" -ge "${main_up}" ]]; then
+  echo "rebuild_full_site.sh main must build musl then compose images before up" >&2
+  exit 1
+fi
+
+up_default_body="$(awk '/^up_default_stack\(\)/ {u=1; next} u && /^}/ {exit} u' "${FULL_SITE_SCRIPT}")"
+up_db_body="$(awk '/^up_db_pg18\(\)/ {u=1; next} u && /^}/ {exit} u' "${FULL_SITE_SCRIPT}")"
+if grep -q 'podman build' <<<"${up_default_body}${up_db_body}"; then
+  echo "rebuild_full_site.sh must not podman build inside up_* helpers" >&2
+  exit 1
+fi
+if grep -qE 'compose build|PODMAN_COMPOSE.* build' <<<"${up_default_body}${up_db_body}"; then
+  echo "rebuild_full_site.sh must not compose build inside up_* helpers" >&2
   exit 1
 fi
 

@@ -624,6 +624,15 @@ def test_docker_compose_proxy_runtime_tls_mount_and_entrypoint_materialize():
   assert not (repo_root / "services-conf" / "proxy-ssl.fixture").exists()
 
 
+def test_proxy_dockerfile_uses_shared_musl_gcc_toolchain() -> None:
+  repo_root = Path(__file__).resolve().parents[2]
+  dockerfile = (repo_root / "services-conf" / "proxy.Dockerfile").read_text()
+  assert "ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2" in dockerfile
+  assert "FROM ${GCC_TOOLCHAIN_IMAGE} AS gcc-toolchain" in dockerfile
+  assert "COPY --from=gcc-toolchain /opt/gcc-16 /opt/gcc-16" in dockerfile
+  assert "assert_gcc_min_version.sh" in dockerfile
+
+
 def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   """Regression: proxy must SHA-pin source nginx/jemalloc/zlib-ng/OpenSSL/brotli; no apk edge nginx."""
   repo_root = Path(__file__).resolve().parents[2]

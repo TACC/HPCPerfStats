@@ -228,6 +228,13 @@ def test_hpcperfstats_child_stages_do_not_reinstall_python_deps():
     )
 
 
+def test_python_build_pins_gcc_16_toolchain() -> None:
+  build = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
+  assert "gcc-16" in build
+  assert "16.2.0-3" in build
+  assert "assert_gcc_min_version.sh" in build
+
+
 def test_hpcperfstats_full_is_last_dockerfile_stage():
   """Default build target must run frontend-builder (podman-compose ignores build.target)."""
   dockerfile = (_repo_root() / "Dockerfile").read_text()
