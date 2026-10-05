@@ -39,7 +39,8 @@ runtime-compatibility endpoint. OCI filenames (`Dockerfile`, `.dockerignore`,
    | Task | Command |
    |------|---------|
    | Rebuild SPA in running stack (optional hot path; no pipeline restart) | `./scripts/rebuild_frontend.sh` |
-   | Rebuild shared hpcperfstats image; down proxy; ``up -d web proxy pipeline`` (db/redis/rabbitmq stay up; proxy image not rebuilt) | `./scripts/rebuild_pipeline.sh` |
+   | Rebuild shared hpcperfstats image; down proxy; ``up -d web proxy pipeline`` (db/redis/rabbitmq stay up; proxy image not rebuilt); sets pipeline ``memory.high`` to ⅔ of ``memory.max`` | `./scripts/rebuild_pipeline.sh` |
+   | Full stack + ``db_pg18``: ``compose build`` then ``up -d --force-recreate`` (no ``--build`` on up); same ``memory.high`` on pipeline | `./scripts/rebuild_full_site.sh` |
    | Detached recreate of web+pipeline only (no image build) | `./scripts/recreate_web_pipeline.sh` |
    | Rebuild just the app and keep persistent services running | `docker compose stop -t 30 web pipeline proxy && docker compose up --build -d web pipeline && docker compose start proxy` |
 
@@ -49,7 +50,13 @@ runtime-compatibility endpoint. OCI filenames (`Dockerfile`, `.dockerignore`,
 
 4. After `collectstatic --noinput --clear`, startup verifies SPA shells under **`STATIC_ROOT/frontend/{machine,pub}/index.html`** and compares a **sha256 fingerprint** of package vs volume `machine/index.html`. `--clear` drops unused hashed files (and stale sidecars) from the persistent **`staticfiles_data`** staging volume before the new tree is copied. If shells are missing (for example a Vite-era volume after upgrading to the Next export), or fingerprints **differ** after a from-scratch image rebuild while **`staticfiles_data`** still holds an older Next tree, startup **auto-heals** by replacing `STATIC_ROOT/frontend` from package static. After heal and sidecar compress, startup **publishes** disk `STATIC_ROOT` and `MEDIA_ROOT` onto tmpfs **`staticfiles_ram`** / **`media_ram`** (nginx `/srv/static` and `/srv/media`). Empty media is a successful publish; tmpfs is empty after host reboot until web finishes that step. Image build `collectstatic` alone cannot update the named volume (it masks the image layer). If the package image itself lacks the shells, web fail-closes — rebuild target **`hpcperfstats-full`** (primary) or run **`./scripts/rebuild_frontend.sh`** (SPA-only hot path; that script re-publishes **static** ram so proxy sees the new frontend without a web restart).
 
-5. After changing pipeline **`mem_limit`** / **`memswap_limit`** or **`HPCPERFSTATS_PIPELINE_STOP_GRACE`**, recreate the container (`docker compose up -d --force-recreate pipeline`) and verify **`memory.max`** inside the cgroup is numeric (not `max`).
+5. After changing pipeline **`mem_limit`** / **`memswap_limit`** or **`HPCPERFSTATS_PIPELINE_STOP_GRACE`**, recreate the container (`docker compose up -d --force-recreate pipeline`) and verify **`memory.max`** inside the cgroup is numeric (not `max`). **`rebuild_pipeline.sh`** and **`rebuild_full_site.sh`** set **`memory.high`** to two-thirds of runtime **`memory.max`** after pipeline start. Verify inside the pipeline container (unescaped loop — do not escape `$f` through podman-compose):
+
+   ```bash
+   podman-compose -p hpcperfstats exec pipeline bash -lc 'for f in memory.max memory.high memory.current; do echo $f; cat /sys/fs/cgroup/$f; done'
+   ```
+
+   Expect **`memory.high`** ≈ **`memory.max * 2 / 3`** (integer bytes). Full-site rebuild also recreates **`db_pg18`** under profile **`pg18-migrate`**; host PG18 prereqs remain in **`docs/OPERATOR_PG18_MIGRATION.md`**.
 
 ---
 

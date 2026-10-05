@@ -12,6 +12,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIPELINE_SCRIPT="${SCRIPT_DIR}/rebuild_pipeline.sh"
 HELPERS="${SCRIPT_DIR}/lib/compose_frontend_helpers.sh"
+MEMORY_LIB="${SCRIPT_DIR}/lib/compose_pipeline_memory_high.sh"
 FRONTEND_SCRIPT="${SCRIPT_DIR}/rebuild_frontend.sh"
 RECREATE_SCRIPT="${SCRIPT_DIR}/recreate_web_pipeline.sh"
 RUNTIME_ADAPTER="${SCRIPT_DIR}/lib/podman_runtime.sh"
@@ -33,6 +34,15 @@ fi
 
 if ! bash -n "${HELPERS}"; then
   echo "bash -n failed for compose_frontend_helpers.sh" >&2
+  exit 1
+fi
+
+if [[ ! -f "${MEMORY_LIB}" ]]; then
+  echo "missing ${MEMORY_LIB}" >&2
+  exit 1
+fi
+if ! bash -n "${MEMORY_LIB}"; then
+  echo "bash -n failed for compose_pipeline_memory_high.sh" >&2
   exit 1
 fi
 
@@ -106,6 +116,21 @@ fi
 
 if ! grep -q 'compose_frontend_helpers.sh' "${PIPELINE_SCRIPT}"; then
   echo "rebuild_pipeline.sh must source compose_frontend_helpers.sh" >&2
+  exit 1
+fi
+
+if ! grep -q 'compose_pipeline_memory_high.sh' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must source compose_pipeline_memory_high.sh" >&2
+  exit 1
+fi
+if ! grep -q 'apply_pipeline_memory_high' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must call apply_pipeline_memory_high" >&2
+  exit 1
+fi
+apply_line="$(awk '/^main\(\)/ {m=1} m && /apply_pipeline_memory_high/ {print NR; exit}' "${PIPELINE_SCRIPT}")"
+start_line="$(awk '/^main\(\)/ {m=1} m && /start_web_proxy_pipeline/ {print NR; exit}' "${PIPELINE_SCRIPT}")"
+if [[ -z "${apply_line}" || -z "${start_line}" || "${apply_line}" -le "${start_line}" ]]; then
+  echo "rebuild_pipeline.sh must call apply_pipeline_memory_high after start_web_proxy_pipeline" >&2
   exit 1
 fi
 

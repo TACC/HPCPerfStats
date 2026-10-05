@@ -21,6 +21,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=lib/compose_frontend_helpers.sh
 source "${SCRIPT_DIR}/lib/compose_frontend_helpers.sh"
+# shellcheck source=lib/compose_pipeline_memory_high.sh
+source "${SCRIPT_DIR}/lib/compose_pipeline_memory_high.sh"
 
 PIPELINE_BUILD_TARGET="hpcperfstats-pipeline-refresh"
 PRESERVE_FRONTEND_DIR="${REPO_ROOT}/.build/pipeline-rebuild-frontend"
@@ -47,6 +49,7 @@ stays up, then cut over: down proxy / web / pipeline and
   docker compose up -d web proxy pipeline
 
 Leaves db / db_pg18 / redis / rabbitmq running. Does not rebuild the proxy image.
+After start, sets pipeline cgroup memory.high to two-thirds of memory.max.
 
 IMPORTANT: This does NOT ship SPA/OpenAPI/Orval fixes. After frontend changes run:
   ./scripts/rebuild_frontend.sh
@@ -308,6 +311,7 @@ main() {
         "${CONTAINER_STATIC_ROOT_FRONTEND}" \
         "STATIC_ROOT/frontend (post-rebuild)" || true
     fi
+    apply_pipeline_memory_high || exit 1
   fi
 
   echo "Rebuild complete (built while up → cut over to new image). Status:"
