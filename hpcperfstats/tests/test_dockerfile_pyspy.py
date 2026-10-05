@@ -62,6 +62,8 @@ def test_python_build_pyspy_pins_pr_860_sha_and_temporary_comment():
   assert f"honglei/py-spy/archive/{_PYSPY_PIN_SHA}.tar.gz" in build
   assert "sha256sum -c" in build
   assert "cargo build --release --locked" in build
+  assert "update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-16" in build
+  assert 'export CC="${CC:-gcc-16}"' in build
   assert "install -m 0755" in build and "/opt/python3.14/bin/py-spy" in build
   assert "libpython3.14t" in build
   assert "1.88.0" in build

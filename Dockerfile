@@ -89,6 +89,8 @@ RUN /bin/bash -o pipefail -c '\
     default-libmysqlclient-dev file binutils; \
   update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-16 100; \
   update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-16 100; \
+  update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-16 100; \
+  update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-16 100; \
   GCC_MIN_VERSION=16.2 assert_gcc_min_version.sh; \
   apt-get clean; \
   rm -rf /var/lib/apt/lists/*'
@@ -584,6 +586,8 @@ RUN /bin/bash -o pipefail -c '\
   tar -xzf /tmp/py-spy.tar.gz -C /usr/src/py-spy --strip-components=1; \
   rm -f /tmp/py-spy.tar.gz; \
   cd /usr/src/py-spy; \
+  export CC="${CC:-gcc-16}" CXX="${CXX:-g++-16}"; \
+  command -v "${CC}"; \
   cargo build --release --locked; \
   install -m 0755 target/release/py-spy /opt/python3.14/bin/py-spy; \
   test -x /opt/python3.14/bin/py-spy; \
