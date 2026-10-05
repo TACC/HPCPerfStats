@@ -1,6 +1,6 @@
 # Security audit memo (HPCPerfStats)
 
-Internal reference for security posture review. **Last reviewed:** 2026-09-17 (dependency pin refresh: OpenSSL 3.5.8, Timescale 2.30.1, redis 8.10.1, rabbitmq 4.3.5, jemalloc 5.4.0, zlib-ng 2.3.3, Orval 8.33.0, next 16.3.5; prior 2026-09-03 frontend npm pin refresh + Dependabot #110–#116 / Bokeh 3.10 lockstep).
+Internal reference for security posture review. **Last reviewed:** 2026-10-05 (Dependabot #117 `dompurify@^3.4.16` lock **3.4.16**; `next@^16.3.6` lock **16.3.8**; CodeQL #28 `ensure_private_dir` fd + `fchmod`; prior 2026-09-17 dependency pin refresh).
 
 ## Executive summary
 
@@ -36,6 +36,8 @@ HPCPerfStats combines a Django + DRF backend, a **Next.js static-export React SP
 
 ### npm audit (frontend)
 
+**2026-10-05:** Dependabot [#117](https://github.com/TACC/HPCPerfStats/security/dependabot/117) (`dompurify` / GHSA-p98j-92pf-mc4p): `overrides.dompurify@^3.4.16` (lock **3.4.16**); `next@^16.3.6` (lock **16.3.8**, GHSA-vcvr-r3jv-pc5j). `shadcn@^4.21.2`. Regression `test_dompurify_override_meets_dependabot_117_floor`. **7 high** remain in `npm audit` from dev-only `shadcn` → `braces` chain (GHSA-vfj7-8cjw-p6xm); production SPA static export does not ship the CLI tree — see [`test_runs/gh_security_alerts_sweep_2026-10-05.md`](../test_runs/gh_security_alerts_sweep_2026-10-05.md). CodeQL [#28](https://github.com/TACC/HPCPerfStats/security/code-scanning/28): `monitor/src/secure_path.c` uses `open(O_DIRECTORY|O_NOFOLLOW)` + `fchmod` on directory fd (TOCTOU). Same day: dev/direct pin refresh — Orval exact **`8.40.0`**, `vitest@^5.0.3`, `vite@^8.3.2`, `eslint@^10.12.0`, TanStack Query / lucide / knip / jsdom floors raised; held **`typescript@^6.0.3`** and **`@bokeh/bokehjs@3.10.0`**. Verified `npm install`, `generate:api`, `typecheck:all`, Vitest **728**.
+
 **2026-09-03 (frontend pin refresh):** 0 vulnerabilities (739 packages). Raised direct floors (`next@^16.3.4`, `vitest@^5.0.0`, Orval exact **`8.27.0`** — npm `latest` **8.28.0** is incomplete/`@orval/angular` missing, `zod@^4.5.4`, etc.) and override floors (`dompurify@^3.4.14`, `esbuild@^0.28.2`, `js-yaml@4.3.2`, `hono`/`sharp`/`postcss`/`undici`/`ip-address`). Held **`typescript@^6.0.3`** (`typescript-eslint` peer `<6.1.0`); held **`@bokeh/bokehjs@3.10.0`** lockstep; held **`nanoid@^3.3.18`** (Next 3.x line). Verified: `npm install`, `typecheck:all`, Vitest **712**, `npm run build`, override-floor pytest. Logs: [`test_runs/frontend_pin_refresh_2026-09-03_*.log`](../test_runs/).
 
 **2026-09-03:** 0 vulnerabilities after Bokeh lockstep bump to **`@bokeh/bokehjs@3.10.0`** / **`bokeh==3.10.0`**. Lockfile swaps deprecated `@bokeh/slickgrid` for transitive **`slickgrid@5.20.0`**; kept **`overrides.dompurify`**. SPA loads via **`src/bokehjs-bundle.ts`** (Turbopack cannot resolve 3.10 package-`main` bare imports). Log: [`test_runs/bokeh_3_10_npm_audit.log`](../test_runs/bokeh_3_10_npm_audit.log) + embed suite under `test_runs/bokeh_3_10_*`.
@@ -56,7 +58,7 @@ HPCPerfStats combines a Django + DRF backend, a **Next.js static-export React SP
 
 | Override | Reason |
 |----------|--------|
-| `dompurify@^3.4.13` | GHSA-c2j3-45gr-mqc4 custom-element sanitize bypass; prior XSS / IN_PLACE advisories (`@bokeh/bokehjs`) |
+| `dompurify@^3.4.16` | GHSA-p98j-92pf-mc4p / Dependabot #117 IN_PLACE detached subtree XSS; prior GHSA-c2j3-45gr-mqc4 (`@bokeh/bokehjs`) |
 | `js-yaml@4.3.1` | GHSA-h67p-54hq-rp68 merge-key DoS (`orval` codegen). **Stay on 4.x** — Orval uses `import … from "js-yaml"`; js-yaml 5 has no default export and breaks `npm run generate:api` / Docker `build:prod`. |
 | `esbuild@^0.28.1` | GHSA-gv7w-rqvm-qjhr, GHSA-g7r4-m6w7-qqqr (Orval + Vitest/Vite tree) |
 | `postcss@^8.5.25` | GHSA-r28c-9q8g-f849 source map path traversal (Next nested postcss) |

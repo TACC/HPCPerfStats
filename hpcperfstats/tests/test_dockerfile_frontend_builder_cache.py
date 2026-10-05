@@ -116,6 +116,15 @@ def _assert_npm_override_floor(
   )
 
 
+def test_dompurify_override_meets_dependabot_117_floor():
+  """Dependabot #117 / GHSA-p98j-92pf-mc4p: dompurify <= 3.4.15 is vulnerable."""
+  _assert_npm_override_floor(
+      "dompurify",
+      (3, 4, 16),
+      reason="GHSA-p98j-92pf-mc4p / Dependabot #117",
+  )
+
+
 def test_nanoid_override_meets_dependabot_109_floor():
   """Dependabot #109 / GHSA-2v37-7h3g-55p8: nanoid < 3.3.18 is vulnerable (DoS on size 0)."""
   _assert_npm_override_floor(

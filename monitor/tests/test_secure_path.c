@@ -20,6 +20,12 @@ int main(void)
   assert(S_ISDIR(st.st_mode));
   assert((st.st_mode & 022) == 0);
 
+  if (chmod(dir, 0777) == 0) {
+    assert(ensure_private_dir(dir, 0700) == 0);
+    assert(lstat(dir, &st) == 0);
+    assert((st.st_mode & 022) == 0);
+  }
+
   snprintf(hijack, sizeof(hijack), "%s/link", dir);
   if (symlink("/tmp", hijack) == 0)
     assert(ensure_private_dir(hijack, 0700) < 0);

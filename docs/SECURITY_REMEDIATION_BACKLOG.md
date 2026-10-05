@@ -12,6 +12,7 @@ Prioritized follow-ups from [SECURITY_AUDIT.md](SECURITY_AUDIT.md). Update this 
 
 ## P2 — Hardening and hygiene
 
+- **shadcn CLI transitive `braces` (npm audit):** 7 high in dev-only `shadcn` / `@shadcn/registry` tree (GHSA-vfj7-8cjw-p6xm); not shipped in production static export. Track upstream or safe `overrides` — do not `npm audit fix --force` (downgrades `shadcn` to 1.0.0). Log: [`test_runs/gh_security_alerts_sweep_2026-10-05.md`](../test_runs/gh_security_alerts_sweep_2026-10-05.md).
 - **Audit workflow compose overlay (F9):** mitigated — workflows use **`docker-compose.settings.yaml`** (from example) plus **`tests/docker-compose.test-overlay.yaml`** so local machines do not need production `/data` binds. Optional: still run `pip-audit` via `docker run --rm` on the built image.
 
 ## Done
@@ -37,11 +38,14 @@ Prioritized follow-ups from [SECURITY_AUDIT.md](SECURITY_AUDIT.md). Update this 
 | Dependabot #110–#116 npm (2026-09-02) | `overrides` floors `fast-uri@^4.1.3` (lock **4.1.4**), `qs@^6.16.0`, `@xmldom/xmldom@^0.9.12`; override-floor tests in `test_dockerfile_frontend_builder_cache.py`; `npm audit` 0. |
 | Frontend stack posture (2026-06 / doc 2026-07-31) | Mid-2026 migration to Next static export + TypeScript + OpenAPI/Orval/Zod documented as positive controls in SECURITY_AUDIT (attack-surface and contract validation), not only as DX. |
 | Burp 2026-08-05 edge hardening | nginx-canonical HSTS/framing/COOP/Permissions-Policy/Referrer-Policy; OCSP stapling (`ssl_trusted_certificate` + runtime resolver); hash-based SPA CSP without `unsafe-inline` (machine/pub retain Bokeh `unsafe-eval`); public dashboard query allowlist + non-reflective errors; SECURITY_AUDIT disposition table. |
+| Dependabot #117 dompurify (2026-10-05) | `overrides.dompurify@^3.4.16` (lock **3.4.16**); `next@^16.3.6` (lock **16.3.8**); `test_dompurify_override_meets_dependabot_117_floor`; GitHub alert closes on default-branch rescan. |
+| CodeQL #28 secure_path TOCTOU (2026-10-05) | `ensure_private_dir` fd + `fchmod`; extended `monitor/tests/test_secure_path.c`; alert closes on CodeQL rescan after merge. |
 
 ## History
 
 | Date       | Change |
 |------------|--------|
+| 2026-10-05 | Dependabot #117 + Next 16.3.8 + CodeQL #28 monitor TOCTOU; P2 note for shadcn/braces dev-tree audit residual. |
 | 2026-09-02 | Dependabot #110–#116: `fast-uri` / `qs` / `@xmldom/xmldom` override floors; SECURITY_AUDIT npm snapshot updated; local `npm audit` clean (GitHub alert dismiss awaits push/rescan). |
 | 2026-08-13 | Dependabot #109: `nanoid@^3.3.18` override; SECURITY_AUDIT npm snapshot updated; local `npm audit` clean (GitHub alert dismiss awaits push/rescan). |
 | 2026-08-05 | Burp report dispositions + nginx HSTS/OCSP/CSP hardening marked Done; Django runtime cap `<6.1` until DRF supports 6.1 `cc_delim_re` removal. |
