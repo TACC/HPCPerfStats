@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Musl GCC 16.2 toolchain exported at /opt/gcc-16 for db/proxy build stages.
 # Build on the production CPU (-march=native consumers). Tag: hpcperfstats-gcc-musl:16.2
-# Context: repository root (HPCPerfStats/), e.g. podman build -f services-conf/gcc-alpine.Dockerfile .
+# Context: ./services-conf (same as db.Dockerfile), e.g. podman build -f gcc-alpine.Dockerfile .
 
 ARG ALPINE_VERSION=3.24.2
 ARG GCC_VERSION=16.2.0
@@ -31,6 +31,9 @@ RUN set -eux; \
     texinfo \
     zlib-dev
 
+COPY assert_gcc_min_version.sh /usr/local/bin/assert_gcc_min_version.sh
+RUN chmod +x /usr/local/bin/assert_gcc_min_version.sh
+
 WORKDIR /usr/src
 
 RUN set -eux; \
@@ -52,9 +55,7 @@ RUN set -eux; \
   make install-strip; \
   rm -rf /usr/src/gcc-${GCC_VERSION} /usr/src/gcc-build /usr/src/gcc-${GCC_VERSION}.tar.xz
 
-COPY services-conf/assert_gcc_min_version.sh /usr/local/bin/assert_gcc_min_version.sh
-RUN chmod +x /usr/local/bin/assert_gcc_min_version.sh \
-  && PATH="/opt/gcc-16/bin:${PATH}" GCC_MIN_VERSION="${GCC_MIN_VERSION}" assert_gcc_min_version.sh
+RUN PATH="/opt/gcc-16/bin:${PATH}" GCC_MIN_VERSION="${GCC_MIN_VERSION}" assert_gcc_min_version.sh
 
 FROM alpine:${ALPINE_VERSION} AS gcc-export
 

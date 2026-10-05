@@ -20,7 +20,20 @@ def test_gcc_alpine_dockerfile_pins_version_and_prefix() -> None:
   assert "ARG GCC_MIN_VERSION=16.2" in text
   assert "--prefix=/opt/gcc-16" in text
   assert "COPY --from=gcc-builder /opt/gcc-16 /opt/gcc-16" in text
-  assert "assert_gcc_min_version.sh" in text
+  assert (
+    "COPY assert_gcc_min_version.sh /usr/local/bin/assert_gcc_min_version.sh"
+    in text
+  )
+  assert "COPY services-conf/assert_gcc_min_version.sh" not in text
+  assert "Context: ./services-conf" in text
+
+
+def test_rebuild_full_site_builds_musl_gcc_with_services_conf_context() -> None:
+  text = (_repo_root() / "scripts" / "rebuild_full_site.sh").read_text()
+  assert (
+    'podman build -f "${GCC_ALPINE_DOCKERFILE}" -t "${GCC_MUSL_IMAGE}" services-conf'
+    in text
+  )
 
 
 def test_assert_gcc_min_version_script_uses_dumpfullversion() -> None:

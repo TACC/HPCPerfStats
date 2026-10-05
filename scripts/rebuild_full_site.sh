@@ -102,7 +102,7 @@ preflight() {
 
 build_musl_gcc_toolchain_image() {
   echo "Building musl GCC toolchain image ${GCC_MUSL_IMAGE} ..."
-  run_cmd podman build -f "${GCC_ALPINE_DOCKERFILE}" -t "${GCC_MUSL_IMAGE}" .
+  run_cmd podman build -f "${GCC_ALPINE_DOCKERFILE}" -t "${GCC_MUSL_IMAGE}" services-conf
 }
 
 build_default_stack_images() {
