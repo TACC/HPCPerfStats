@@ -77,6 +77,7 @@ def test_assert_gcc_min_version_script_uses_dumpfullversion() -> None:
   text = (
     _repo_root() / "services-conf" / "assert_gcc_min_version.sh"
   ).read_text()
+  assert text.startswith("#!/bin/sh\n")
   assert "gcc -dumpfullversion" in text
   assert "sort -V" in text
   assert "sort -C -V" not in text
