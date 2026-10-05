@@ -27,7 +27,10 @@ NO_START=0
 GCC_MUSL_IMAGE=hpcperfstats-gcc-musl:16.2
 GCC_ALPINE_DOCKERFILE=services-conf/gcc-alpine.Dockerfile
 
-DEFAULT_BUILD_SERVICES=(web pipeline redis proxy db rabbitmq)
+# Only services with compose `build:` (web → hpcperfstats; proxy → hpcperfstats-proxy).
+# Build one service per `podman-compose build` — parallel multi-service build can fail
+# after hpcperfstats tags while proxy still compiles (podman-compose runs builds concurrently).
+COMPOSE_IMAGE_BUILD_SERVICES=(web proxy)
 PG18_PROFILE=pg18-migrate
 PG18_SERVICE=db_pg18
 
@@ -104,16 +107,23 @@ preflight() {
 }
 
 build_musl_gcc_toolchain_image() {
+  LAST_STEP="podman build ${GCC_MUSL_IMAGE}"
   echo "Building musl GCC toolchain image ${GCC_MUSL_IMAGE} ..."
   run_cmd podman build -f "${GCC_ALPINE_DOCKERFILE}" -t "${GCC_MUSL_IMAGE}" services-conf
 }
 
 build_default_stack_images() {
-  echo "Building default stack images: ${DEFAULT_BUILD_SERVICES[*]} ..."
-  run_cmd "${PODMAN_COMPOSE[@]}" build "${DEFAULT_BUILD_SERVICES[@]}"
+  local svc
+  echo "Building compose images (serial): ${COMPOSE_IMAGE_BUILD_SERVICES[*]} ..."
+  for svc in "${COMPOSE_IMAGE_BUILD_SERVICES[@]}"; do
+    LAST_STEP="podman-compose build ${svc}"
+    echo "rebuild_full_site.sh: ${LAST_STEP} ..."
+    run_cmd "${PODMAN_COMPOSE[@]}" build "${svc}"
+  done
 }
 
 build_db_pg18_image() {
+  LAST_STEP="podman-compose --profile ${PG18_PROFILE} build ${PG18_SERVICE}"
   echo "Building ${PG18_SERVICE} (profile ${PG18_PROFILE}) ..."
   run_cmd "${PODMAN_COMPOSE[@]}" --profile "${PG18_PROFILE}" build "${PG18_SERVICE}"
 }
@@ -141,12 +151,17 @@ verify_default_stack_running() {
 
 PHASE=preflight
 UP_COMPLETED=0
+LAST_STEP=
 
 on_exit() {
   local ec=$?
   if [[ "${UP_COMPLETED}" -eq 0 && "${BUILD_ONLY}" -eq 0 && "${NO_START}" -eq 0 && "${DRY_RUN}" -eq 0 ]]; then
-    echo "rebuild_full_site.sh: exited (code ${ec}) before podman-compose up finished (phase=${PHASE})." >&2
-    echo "rebuild_full_site.sh: image-only output (e.g. collectstatic in Dockerfile) is NOT a full rebuild — run ./scripts/rebuild_full_site.sh with no flags, or look above for FINISHED BUILD ONLY / errors." >&2
+    echo "rebuild_full_site.sh: exited (code ${ec}) before podman-compose up finished (phase=${PHASE} last_step=${LAST_STEP:-unknown})." >&2
+    if [[ "${PHASE}" == build ]]; then
+      echo "rebuild_full_site.sh: scroll above for the failing build step (often proxy or db_pg18 after hpcperfstats:latest tags)." >&2
+      echo "rebuild_full_site.sh: retry in isolation: podman-compose -p ${HPCPERFSTATS_COMPOSE_PROJECT} build proxy" >&2
+    fi
+    echo "rebuild_full_site.sh: collectstatic in Dockerfile output alone is NOT a successful full rebuild." >&2
   fi
 }
 

@@ -55,12 +55,20 @@ if ! grep -q 'build_musl_gcc_toolchain_image' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must define build_musl_gcc_toolchain_image" >&2
   exit 1
 fi
-if ! grep -q 'DEFAULT_BUILD_SERVICES=(web pipeline redis proxy db rabbitmq)' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must list default stack build services" >&2
+if ! grep -q 'COMPOSE_IMAGE_BUILD_SERVICES=(web proxy)' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must list compose build services (web proxy only)" >&2
   exit 1
 fi
-if ! grep -q 'build "${DEFAULT_BUILD_SERVICES' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must compose build default stack services" >&2
+if grep -q 'build "${DEFAULT_BUILD_SERVICES' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must not batch all stack services in one compose build" >&2
+  exit 1
+fi
+if ! grep -q 'for svc in "${COMPOSE_IMAGE_BUILD_SERVICES' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must compose build web and proxy serially" >&2
+  exit 1
+fi
+if ! grep -q 'LAST_STEP=' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must track LAST_STEP for build failures" >&2
   exit 1
 fi
 if grep -qE '"\$\{PODMAN_COMPOSE\[@\]\}" up -d --build|"$\{PODMAN_COMPOSE\[@\]\}" up --build' "${FULL_SITE_SCRIPT}"; then
