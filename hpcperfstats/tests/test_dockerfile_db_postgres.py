@@ -136,6 +136,7 @@ def test_db_dockerfile_links_opt_icu_liburing_lz4_zstd_into_postgres() -> None:
   assert "-Wl,-rpath,/opt/lz4/lib" in text
   assert "-Wl,-rpath,/opt/zstd/lib" in text
   assert "-Wl,-rpath,/opt/zlib-ng/lib" in text
+  assert "-ljemalloc -lstdc++" in text
   # Must not pass docker-library's --disable-rpath to postgres ./configure.
   # Slice stops before the fail-closed config.status grep (which names the flag).
   pg_run = text[

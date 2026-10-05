@@ -172,7 +172,7 @@ RUN set -eux; \
 
 ENV PKG_CONFIG_PATH="/opt/zlib-ng/lib/pkgconfig:/opt/icu/lib/pkgconfig:/opt/liburing/lib/pkgconfig:/opt/lz4/lib/pkgconfig:/opt/zstd/lib/pkgconfig" \
   PATH="/opt/jemalloc/bin:/opt/zstd/bin:/usr/local/bin:${PATH}" \
-  LDFLAGS="-L/opt/jemalloc/lib -L/opt/zlib-ng/lib -L/opt/icu/lib -L/opt/liburing/lib -L/opt/lz4/lib -L/opt/zstd/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/icu/lib -Wl,-rpath,/opt/liburing/lib -Wl,-rpath,/opt/lz4/lib -Wl,-rpath,/opt/zstd/lib -Wl,--no-as-needed -ljemalloc" \
+  LDFLAGS="-L/opt/jemalloc/lib -L/opt/zlib-ng/lib -L/opt/icu/lib -L/opt/liburing/lib -L/opt/lz4/lib -L/opt/zstd/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/icu/lib -Wl,-rpath,/opt/liburing/lib -Wl,-rpath,/opt/lz4/lib -Wl,-rpath,/opt/zstd/lib -Wl,--no-as-needed -ljemalloc -lstdc++" \
   CPPFLAGS="-I/opt/jemalloc/include -I/opt/zlib-ng/include -I/opt/icu/include -I/opt/liburing/include -I/opt/lz4/include -I/opt/zstd/include" \
   CFLAGS="${OPT_CFLAGS_PG}" \
   CXXFLAGS="${OPT_CFLAGS_PG}"
