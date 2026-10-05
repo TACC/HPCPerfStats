@@ -19,9 +19,8 @@ ENV PATH="/opt/gcc-16/bin:${PATH}" CC=gcc CXX=g++
 RUN chmod +x /usr/local/bin/assert_gcc_min_version.sh \
   && GCC_MIN_VERSION="${GCC_MIN_VERSION}" assert_gcc_min_version.sh
 
-# Bump NGINX_VERSION: retry restoring nginx --with-cc-opt from OPT_CFLAGS_LIBS (-flto) and
-# linker-only --with-ld-opt (see NGINX_OPT_CFLAGS below); drop NGINX_OPT_CFLAGS if GCC 16
-# configure probe + post-build greps pass. Check objs/autoconf.err when ld-opt fails.
+# Bump NGINX_VERSION: retry full OPT_CFLAGS_LIBS on --with-cc-opt if configure probe passes; keep
+# linker-only --with-ld-opt. Until then: NGINX_OPT_CFLAGS at configure + make CFLAGS="${OPT_CFLAGS_LIBS} …".
 ARG NGINX_VERSION=1.31.6
 ARG NGINX_SHA256=974ed5298a5e398e008704ed5db284e655fc270c596493dbccada452448fc9f1
 ARG OPENSSL_VERSION=3.5.9
@@ -40,10 +39,8 @@ ARG ZSTD_NGINX_MODULE_VERSION=0.2.2
 ARG ZSTD_NGINX_MODULE_SHA256=d4db8937f035ebb5e7efca833492611f8f5e4f710dbd3fbdd2f1aa5a85d3fe5e
 
 ENV OPT_CFLAGS_LIBS="-O3 -march=native -mtune=native -flto -g0"
-# nginx auto/cc/conf link-probes --with-ld-opt with an empty main(); -flto + static
-# jemalloc/brotli fails on GCC 16. Keep LTO on deps/openssl; nginx link uses NGINX_OPT_CFLAGS.
+# nginx configure: probe-safe cc/ld (no -flto on ld-opt). make: CFLAGS="${OPT_CFLAGS_LIBS} …" restores LTO.
 ENV NGINX_OPT_CFLAGS="-O3 -march=native -mtune=native -g0"
-# ^ workaround until a higher NGINX_VERSION pin allows full OPT_CFLAGS_LIBS on --with-cc-opt (see pin comment above).
 
 RUN apk add --no-cache \
     build-base \
@@ -185,8 +182,8 @@ RUN set -eux; \
   cd /usr/src/nginx; \
   export ZSTD_INC=/opt/zstd/include; \
   export ZSTD_LIB=/opt/zstd/lib; \
-  # libzstd.a is linked by zstd-nginx-module (ngx_zstd_try_static), not --with-ld-opt.
-  # Do not put -flto on --with-ld-opt (nginx configure probe; see NGINX_OPT_CFLAGS above).
+  nginx_bake_cflags="${OPT_CFLAGS_LIBS} -I/opt/zstd/include"; \
+  # libzstd.a via zstd-nginx-module. Configure: NGINX_OPT_CFLAGS + linker-only ld-opt (GCC 16 probe).
   ./configure \
     --prefix=/opt/nginx \
     --sbin-path=/usr/sbin/nginx \
@@ -215,8 +212,8 @@ RUN set -eux; \
     --with-ld-opt="-L/opt/jemalloc/lib -L/opt/brotli/lib -Wl,-rpath,/opt/jemalloc/lib -ljemalloc -lbrotlienc -lbrotlidec -lbrotlicommon -lstdc++" \
     --with-openssl-opt="no-nextprotoneg no-weak-ssl-ciphers no-ssl3 no-shared enable-ec_nistp_64_gcc_128 ${OPT_CFLAGS_LIBS}" \
     --with-zlib-opt="--zlib-compat"; \
-  make -j"$(nproc)"; \
-  make install; \
+  make -j"$(nproc)" CFLAGS="${nginx_bake_cflags}"; \
+  make install CFLAGS="${nginx_bake_cflags}"; \
   strip --strip-unneeded /usr/sbin/nginx; \
   # --conf-path=/etc/nginx/nginx.conf installs mime.types under /etc/nginx/, not
   # prefix/conf/. Normalize into /opt/nginx/conf for the runtime COPY.
