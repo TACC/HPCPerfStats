@@ -150,6 +150,13 @@ def test_db_dockerfile_links_opt_icu_liburing_lz4_zstd_into_postgres() -> None:
   # PG18 removed --enable-thread-safety (always on); --enable-option-checking=fatal
   # rejects unrecognized options (bake failure on prod: 2026-09-04).
   assert "--enable-thread-safety" not in configure_block
+  assert 'gnuArch="$(gcc -dumpmachine)"' in pg_run
+  assert 'pg_bake_ldflags="$LDFLAGS"' in pg_run
+  assert (
+    'export CFLAGS="-O3 -march=native -mprefer-vector-width=512 -mtune=native -g0"'
+    in pg_run
+  )
+  assert 'export LDFLAGS="$pg_bake_ldflags"' in pg_run
 
 
 def test_db_dockerfile_postgres_and_timescale_prefer_512_vector_width() -> None:

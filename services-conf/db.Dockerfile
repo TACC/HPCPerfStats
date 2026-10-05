@@ -194,7 +194,14 @@ RUN set -eux; \
   mv src/include/pg_config_manual.h.new src/include/pg_config_manual.h; \
   export LLVM_CONFIG="/usr/lib/llvm21/bin/llvm-config"; \
   export CLANG=clang-21; \
-  gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"; \
+  gnuArch="$(gcc -dumpmachine)"; \
+  pg_bake_ldflags="$LDFLAGS"; \
+  pg_bake_cflags="$CFLAGS"; \
+  pg_bake_cxxflags="$CXXFLAGS"; \
+  # GCC 16: full LDFLAGS (-ljemalloc, --no-as-needed) + -flto=auto fail configure's link probe.
+  export LDFLAGS="-L/opt/jemalloc/lib -L/opt/zlib-ng/lib -L/opt/icu/lib -L/opt/liburing/lib -L/opt/lz4/lib -L/opt/zstd/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/icu/lib -Wl,-rpath,/opt/liburing/lib -Wl,-rpath,/opt/lz4/lib -Wl,-rpath,/opt/zstd/lib"; \
+  export CFLAGS="-O3 -march=native -mprefer-vector-width=512 -mtune=native -g0"; \
+  export CXXFLAGS="$CFLAGS"; \
   # Intentionally omit docker-library --disable-rpath so /opt rpaths stick.
   ./configure \
     --enable-option-checking=fatal \
@@ -215,6 +222,9 @@ RUN set -eux; \
     --with-openssl \
     --with-zstd \
   ; \
+  export LDFLAGS="$pg_bake_ldflags"; \
+  export CFLAGS="$pg_bake_cflags"; \
+  export CXXFLAGS="$pg_bake_cxxflags"; \
   if grep -q -- '--disable-rpath' config.status; then \
     echo "postgres configure must not use --disable-rpath" >&2; exit 1; \
   fi; \
