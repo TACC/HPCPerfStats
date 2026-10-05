@@ -55,10 +55,8 @@ RUN /bin/bash -o pipefail -c "\
 # GIL: --without-mimalloc so jemalloc owns process + object-arena malloc.
 # FT: keep mimalloc for objects; still force-link jemalloc for side allocation.
 # Jemalloc both ways: DT_NEEDED here + runtime LD_PRELOAD + /etc/ld.so.preload for wheels.
-ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2
-FROM ${GCC_TOOLCHAIN_IMAGE} AS gcc-toolchain
-
 FROM debian:trixie AS python-build
+ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2
 ENV PYTHON_VERSION=3.14.8 \
     MAKEFLAGS=-j40 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -68,7 +66,7 @@ ENV PYTHON_VERSION=3.14.8 \
     PKG_CONFIG_PATH=/opt/zstd/lib/pkgconfig:/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig
 
 # Builder apt toolchain (compilers stay in python-build only). GCC >= 16.2 via testing pin.
-COPY --from=gcc-toolchain /usr/local/bin/assert_gcc_min_version.sh /usr/local/bin/assert_gcc_min_version.sh
+COPY --from=${GCC_TOOLCHAIN_IMAGE} /usr/local/bin/assert_gcc_min_version.sh /usr/local/bin/assert_gcc_min_version.sh
 RUN chmod +x /usr/local/bin/assert_gcc_min_version.sh
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \

@@ -49,6 +49,18 @@ def test_gcc_alpine_embedded_assert_matches_canonical_script() -> None:
   assert embedded == canonical
 
 
+def test_root_dockerfile_copies_assert_from_musl_image_not_extra_from_stage() -> (
+  None
+):
+  text = (_repo_root() / "Dockerfile").read_text()
+  assert "FROM ${GCC_TOOLCHAIN_IMAGE} AS gcc-toolchain" not in text
+  assert "ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2" in text
+  assert (
+    "COPY --from=${GCC_TOOLCHAIN_IMAGE} /usr/local/bin/assert_gcc_min_version.sh"
+    in text
+  )
+
+
 def test_rebuild_full_site_builds_musl_gcc_with_services_conf_context() -> None:
   text = (_repo_root() / "scripts" / "rebuild_full_site.sh").read_text()
   assert (

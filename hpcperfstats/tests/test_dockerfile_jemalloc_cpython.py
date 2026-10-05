@@ -25,8 +25,9 @@ def test_python_build_uses_gcc_16_from_testing_pin() -> None:
   build = _stage_body(dockerfile, "python-build")
   assert "gcc-16" in build
   assert "16.2.0-3" in build
+  assert "ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2" in build
   assert (
-    "COPY --from=gcc-toolchain /usr/local/bin/assert_gcc_min_version.sh"
+    "COPY --from=${GCC_TOOLCHAIN_IMAGE} /usr/local/bin/assert_gcc_min_version.sh"
     in build
   )
   assert "build-essential" not in build
