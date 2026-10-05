@@ -12,6 +12,7 @@ From **workspace root** (contains `.venv/` and `HPCPerfStats/`):
             or → symlink → HPCPerfStats/monitor/cursor-rules       (monitor-focused)
   hooks/       → symlink → HPCPerfStats/cursor-hooks
   hooks.json   → real file copy of HPCPerfStats/cursor-hooks/hooks.json
+                 (commands use `.venv/bin/python3 .cursor/hooks/…`)
   plans/       → real directory; live *.plan.md (outside git)
 ```
 
@@ -71,12 +72,13 @@ Plan template paths accepted for Read verification:
 
 ```bash
 echo '{"status":"completed","loop_count":0,"transcript_path":"/path/to/transcript.jsonl","workspace_roots":["/path/to/workspace"]}' | \
-  python3 HPCPerfStats/cursor-hooks/check-close-gate.py
+  .venv/bin/python3 HPCPerfStats/cursor-hooks/check-close-gate.py
 ```
 
 ## Requirements
 
-- `python3` on `PATH`
+- **`<workspace_root>/.venv/bin/python3`** — `hooks.json` invokes hooks through the workspace venv (not shebang `python3` on `PATH`, which is often system 3.9 on Linux and previously caused plan gates to fail-open on `typing_extensions` import errors).
+- Hook modules stay **stdlib-only** (no third-party imports) so direct `python3 cursor-hooks/*.py` smoke tests still work on 3.9+.
 - Trusted workspace (project hooks do not run in untrusted workspaces)
 
 ## Dual registration

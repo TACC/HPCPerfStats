@@ -2314,6 +2314,43 @@ def test_workspace_hooks_json_must_be_real_file_not_symlink():
   assert hooks_json.read_text(encoding="utf-8") == auth.read_text(encoding="utf-8")
 
 
+def test_hooks_json_commands_use_workspace_venv_python():
+  """Project hooks must not rely on shebang ``python3`` (often system 3.9 on Linux)."""
+  hooks_path = HOOKS_DIR / "hooks.json"
+  data = json.loads(hooks_path.read_text(encoding="utf-8"))
+  for event, entries in (data.get("hooks") or {}).items():
+    for entry in entries:
+      cmd = entry.get("command") or ""
+      assert cmd.startswith(".venv/bin/python3 "), (
+          f"{event} hook must invoke workspace venv (got: {cmd!r})"
+      )
+
+
+def test_plan_pre_hook_imports_under_system_python3():
+  """Regression: hook_task_router must not require typing_extensions on PATH python3."""
+  system_py = Path("/usr/bin/python3")
+  if not system_py.is_file():
+    pytest.skip("no /usr/bin/python3")
+  script = HOOKS_DIR / "check-pre-create-plan-reads.py"
+  proc = subprocess.run(
+      [str(system_py), str(script)],
+      input=json.dumps(
+          {
+              "tool_name": "CreatePlan",
+              "tool_input": {"name": "smoke"},
+              "transcript_path": "/tmp/hpc-hook-smoke-transcript.jsonl",
+              "workspace_roots": [str(Path(__file__).resolve().parents[3])],
+          },
+      ),
+      capture_output=True,
+      text=True,
+      check=False,
+  )
+  assert proc.returncode == 0
+  assert "typing_extensions" not in (proc.stderr or "")
+  assert '"permission": "deny"' in proc.stdout
+
+
 def test_monitor_router_entries_reference_existing_files():
   monitor_rules_dir = Path(__file__).resolve().parents[2] / "monitor" / "cursor-rules"
   for entry in MONITOR_ROUTER_ENTRIES:

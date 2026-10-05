@@ -5,17 +5,17 @@ import fnmatch
 from pathlib import Path
 from typing import Iterable, TypedDict
 
-try:
-    from typing import NotRequired
-except ImportError:
-    from typing_extensions import NotRequired
 
-
-class RouterEntry(TypedDict):
+class _RouterEntryRequired(TypedDict):
     id: str
     patterns: list[str]
     rules: list[str]
-    exact_paths: NotRequired[list[str]]
+
+
+class RouterEntry(_RouterEntryRequired, total=False):
+    """Optional ``exact_paths`` without ``NotRequired`` (stdlib hooks use system Python 3.9)."""
+
+    exact_paths: list[str]
 
 
 # Mirror agent-discipline-core.mdc task router. Update both in the same task when triggers change.

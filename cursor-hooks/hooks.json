@@ -3,46 +3,46 @@
   "hooks": {
     "preToolUse": [
       {
-        "command": ".cursor/hooks/record-rule-reads.py",
+        "command": ".venv/bin/python3 .cursor/hooks/record-rule-reads.py",
         "matcher": "Read|ReadFile|CreatePlan|Write|StrReplace",
         "timeout": 10
       },
       {
-        "command": ".cursor/hooks/check-pre-create-plan-reads.py",
+        "command": ".venv/bin/python3 .cursor/hooks/check-pre-create-plan-reads.py",
         "matcher": "CreatePlan|Write|StrReplace",
         "timeout": 10
       },
       {
-        "command": ".cursor/hooks/check-block-until-plan-disk.py",
+        "command": ".venv/bin/python3 .cursor/hooks/check-block-until-plan-disk.py",
         "matcher": "Write|StrReplace|Shell|Grep|Task|Delete|ApplyPatch|EditNotebook",
         "timeout": 10
       },
       {
-        "command": ".cursor/hooks/check-live-plan-operator-discovery.py",
+        "command": ".venv/bin/python3 .cursor/hooks/check-live-plan-operator-discovery.py",
         "matcher": "Write|StrReplace",
         "timeout": 10
       }
     ],
     "stop": [
       {
-        "command": ".cursor/hooks/check-close-gate.py",
+        "command": ".venv/bin/python3 .cursor/hooks/check-close-gate.py",
         "loop_limit": 3,
         "timeout": 15
       }
     ],
     "postToolUse": [
       {
-        "command": ".cursor/hooks/check-create-plan-disk-sync.py",
+        "command": ".venv/bin/python3 .cursor/hooks/check-create-plan-disk-sync.py",
         "matcher": "CreatePlan",
         "timeout": 10
       },
       {
-        "command": ".cursor/hooks/check-edit-triggered-rules.py",
+        "command": ".venv/bin/python3 .cursor/hooks/check-edit-triggered-rules.py",
         "matcher": "Write|StrReplace|EditNotebook|CreatePlan",
         "timeout": 10
       },
       {
-        "command": ".cursor/hooks/check-new-rule-router.py",
+        "command": ".venv/bin/python3 .cursor/hooks/check-new-rule-router.py",
         "matcher": "Write|StrReplace",
         "timeout": 10
       }
