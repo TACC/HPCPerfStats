@@ -230,6 +230,16 @@ def test_jemalloc_configure_flags_and_no_initial_exec_tls():
   assert "-march=native" in build
   assert "-flto" in build
   assert "-g0" in build
+  assert "_cf_cfg=" in build
+  assert "_cf_bake=" in build
+  jem = build[
+    build.index("jemalloc-5.4.0.tar.bz2") : build.index("zlib-ng/archive")
+  ]
+  assert "_ld=" in jem and "LDFLAGS=" in jem
+  assert "-fuse-ld=lld" in jem
+  assert "flto=thin" in jem
+  assert jem.index("_cf_cfg") < jem.index("./configure")
+  assert 'make -j40 CC="${CC}" CFLAGS="${_cf_bake}"' in jem
   assert "strip --strip-unneeded" in build
   assert "--with-pydebug" not in build
   assert "-ggdb" not in build

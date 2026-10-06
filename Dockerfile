@@ -115,10 +115,14 @@ RUN /bin/bash -o pipefail -c '\
   tar -xjf /tmp/jemalloc.tar.bz2 -C /usr/src/jemalloc --strip-components=1; \
   rm -f /tmp/jemalloc.tar.bz2; \
   cd /usr/src/jemalloc; \
-  export CFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0" CXXFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"; \
-  ./configure --prefix=/opt/jemalloc --enable-shared --disable-static \
+  _cf_cfg="-O2 -march=native -mtune=native -g0"; \
+  _cf_bake="-O2 -march=native -mtune=native -flto=thin -g0"; \
+  _ld="-fuse-ld=lld"; \
+  CC="${CC}" CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" LDFLAGS="${_ld}" \
+    ./configure --prefix=/opt/jemalloc --enable-shared --disable-static \
     --disable-stats --disable-fill --disable-debug --with-lg-page="${LG_PAGE}"; \
-  make -j40; make install; \
+  make -j40 CC="${CC}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
+  make install CC="${CC}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
   find /opt/jemalloc -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
   echo "/opt/jemalloc/lib" > /etc/ld.so.conf.d/jemalloc.conf; \
   ldconfig; \
@@ -208,9 +212,13 @@ RUN /bin/bash -o pipefail -c '\
   tar -xzf /tmp/libffi.tar.gz -C /usr/src/libffi --strip-components=1; \
   rm -f /tmp/libffi.tar.gz; \
   cd /usr/src/libffi; \
-  export CFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0" CXXFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"; \
-  ./configure --prefix=/opt/libffi --with-gcc-arch=native --disable-static --enable-shared; \
-  make -j40; make install; \
+  _cf_cfg="-O2 -march=native -mtune=native -g0"; \
+  _cf_bake="-O2 -march=native -mtune=native -flto=thin -g0"; \
+  _ld="-fuse-ld=lld"; \
+  CC="${CC}" CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" LDFLAGS="${_ld}" \
+    ./configure --prefix=/opt/libffi --with-gcc-arch=native --disable-static --enable-shared; \
+  make -j40 CC="${CC}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
+  make install CC="${CC}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
   find /opt/libffi -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
   if [ -d /opt/libffi/lib/x86_64-linux-gnu ]; then \
     echo "/opt/libffi/lib/x86_64-linux-gnu" > /etc/ld.so.conf.d/libffi.conf; \
