@@ -51,8 +51,11 @@ RUN set -eux; \
     $DOCKER_PG_LLVM_DEPS
 # libz ABI is /opt/zlib-ng (ZLIB_COMPAT); do not apk-install stock zlib packages.
 
+# pgo_clang_flags.sh is bash; default /bin/sh (ash) cannot parse its function defs.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 # Print out compiler platform detection (clang_march_native_probe.sh).
-RUN /bin/bash /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
+RUN /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 
 # /opt source pins: slowest-changing independent layers first (Docker cache).
 # zstd links /opt/lz4 + /opt/zlib-ng, so it stays after both even though zstd

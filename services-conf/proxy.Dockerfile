@@ -50,8 +50,11 @@ RUN apk add --no-cache \
     pcre2-dev \
     perl
 
+# pgo_clang_flags.sh is bash; default /bin/sh (ash) cannot parse its function defs.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 # Print out compiler platform detection (clang_march_native_probe.sh).
-RUN /bin/bash /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
+RUN /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 
 # --- jemalloc ---
 ARG PGO_NAMESPACE=proxy/jemalloc

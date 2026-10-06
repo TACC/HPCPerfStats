@@ -348,6 +348,15 @@ def test_pgo_ensure_web_shared_link_dirs_creates_raw_on_generate() -> None:
       assert (Path(tmp) / ns / "raw").is_dir()
 
 
+def test_alpine_pgo_dockerfiles_use_bash_shell_for_pgo_clang_flags() -> None:
+  """Regression: ash sourcing pgo_clang_flags.sh fails on bash array syntax."""
+  for name in ("proxy.Dockerfile", "db.Dockerfile"):
+    text = (_repo_root() / "services-conf" / name).read_text()
+    assert "apk add" in text and "bash" in text, name
+    assert 'SHELL ["/bin/bash"' in text, name
+    assert "pgo_clang_flags.sh" in text, name
+
+
 def test_rebuild_full_site_pgo_fail_loud_helpers() -> None:
   script = (_repo_root() / "scripts" / "rebuild_full_site.sh").read_text()
   pgo_lib = (_repo_root() / "scripts" / "pgo_lib.sh").read_text()
