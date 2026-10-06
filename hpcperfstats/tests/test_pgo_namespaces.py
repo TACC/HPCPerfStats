@@ -183,7 +183,7 @@ def test_pgo_alpine_thinlto_ldflags_for_jemalloc_link() -> None:
   ).strip()
   assert "-flto=thin" in out
   assert "-fuse-ld=lld" in out
-  assert "--ld-path=/usr/lib/llvm22/bin/ld.lld" in out
+  assert "--ld-path=/usr/bin/ld.lld" in out
 
 
 def test_cpython_generate_makefile_relax_matches_tabbed_makefile() -> None:

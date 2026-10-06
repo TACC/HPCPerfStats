@@ -15,16 +15,18 @@ ENV CC=clang CXX=clang++ LD=ld.lld
 
 COPY pgo_clang_flags.sh /usr/local/lib/hpcperfstats/pgo_clang_flags.sh
 COPY clang_march_native_probe.sh /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
-RUN chmod +x /usr/local/lib/hpcperfstats/pgo_clang_flags.sh /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
+COPY alpine_pgo_profile_runtime_link.sh /usr/local/lib/hpcperfstats/alpine_pgo_profile_runtime_link.sh
+RUN chmod +x /usr/local/lib/hpcperfstats/pgo_clang_flags.sh /usr/local/lib/hpcperfstats/clang_march_native_probe.sh /usr/local/lib/hpcperfstats/alpine_pgo_profile_runtime_link.sh
 
 # LLVM major matches docker-library postgres 18/alpine3.24.
 ENV DOCKER_PG_LLVM_DEPS="llvm22-dev clang22"
-ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin --ld-path=/usr/lib/llvm22/bin/ld.lld -g0"
-ENV OPT_CFLAGS_PG="-O2 -march=native -mprefer-vector-width=512 -mtune=native -flto=thin --ld-path=/usr/lib/llvm22/bin/ld.lld -g0"
+ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin --ld-path=/usr/bin/ld.lld -g0"
+ENV OPT_CFLAGS_PG="-O2 -march=native -mprefer-vector-width=512 -mtune=native -flto=thin --ld-path=/usr/bin/ld.lld -g0"
 
 RUN set -eux; \
   apk add --no-cache \
     clang22 \
+    compiler-rt \
     lld22 \
     bash \
     bison \
@@ -49,9 +51,8 @@ RUN set -eux; \
     python3 \
     util-linux-dev \
     $DOCKER_PG_LLVM_DEPS; \
-  ln -sf /usr/lib/llvm22/bin/ld.lld /usr/local/bin/ld.lld; \
-  ln -sf /usr/lib/llvm22/bin/ld.lld /usr/local/bin/lld; \
-  test -x /usr/local/bin/ld.lld
+  test -x /usr/bin/ld.lld; \
+  /bin/bash /usr/local/lib/hpcperfstats/alpine_pgo_profile_runtime_link.sh
 # libz ABI is /opt/zlib-ng (ZLIB_COMPAT); do not apk-install stock zlib packages.
 
 # Podman OCI ignores Dockerfile SHELL; PGO RUN steps invoke /bin/bash explicitly (BASH_ENV sources pgo_clang_flags.sh).

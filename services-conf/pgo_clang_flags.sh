@@ -106,7 +106,7 @@ hpcperfstats_native_base_cflags() {
   local variant="${1:-libs}"
   case "${variant}" in
     pg)
-      printf '%s' "-O2 -march=native -mprefer-vector-width=512 -mtune=native -flto=thin --ld-path=/usr/lib/llvm22/bin/ld.lld -g0"
+      printf '%s' "-O2 -march=native -mprefer-vector-width=512 -mtune=native -flto=thin --ld-path=$(hpcperfstats_alpine_ld_lld_path) -g0"
       ;;
     debian-lib)
       printf '%s' "-O2 -march=native -mtune=native -flto=thin -g0"
@@ -117,10 +117,17 @@ hpcperfstats_native_base_cflags() {
   esac
 }
 
+# Alpine lld22 installs ld.lld under /usr/bin (llvm-ar stays under /usr/lib/llvm22/bin).
+hpcperfstats_alpine_ld_lld_path() {
+  printf '%s' '/usr/bin/ld.lld'
+}
+
 # Autotools (jemalloc shared): compile uses bake CFLAGS (-flto=thin); link must repeat LTO.
 hpcperfstats_alpine_thinlto_ldflags() {
+  local lld
+  lld="$(hpcperfstats_alpine_ld_lld_path)"
   # -fuse-ld=lld: clang++ must not fall back to musl gcc ld (TPOFF32 / ThinLTO .so link).
-  printf '%s' "-flto=thin -fuse-ld=lld --ld-path=/usr/lib/llvm22/bin/ld.lld"
+  printf '%s' "-flto=thin -fuse-ld=lld --ld-path=${lld}"
 }
 
 hpcperfstats_configure_cflags() {

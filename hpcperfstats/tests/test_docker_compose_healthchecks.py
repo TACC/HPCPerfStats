@@ -647,9 +647,13 @@ def test_proxy_dockerfile_uses_clang22_apk_toolchain() -> None:
   assert "bash" in _apk_before_probe, (
     "Alpine proxy-build needs bash before clang_march_native_probe RUN"
   )
-  assert "/usr/local/bin/ld.lld" in dockerfile, (
-    "ENV LD=ld.lld requires ld.lld on PATH for ThinLTO shared jemalloc link"
+  assert "test -x /usr/bin/ld.lld" in dockerfile, (
+    "Alpine lld22 ships ld.lld in /usr/bin; fail closed if apk layout regresses"
   )
+  assert "compiler-rt" in _apk_before_probe, (
+    "PGO_PHASE=generate needs compiler-rt for -fprofile-instr-generate links"
+  )
+  assert "alpine_pgo_profile_runtime_link.sh" in dockerfile
   assert "-Q --help=target" not in dockerfile
   assert "NGINX_OPT_CFLAGS" not in dockerfile
   assert "-flto=thin" in dockerfile
@@ -738,7 +742,7 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   assert "libzstd" not in ld_opt, (
     "libzstd must fold via zstd-nginx-module static path, not --with-ld-opt (nginx configure probe)"
   )
-  assert "--ld-path=/usr/lib/llvm22/bin/ld.lld" in ld_opt
+  assert "--ld-path=/usr/bin/ld.lld" in ld_opt
   nginx_run = dockerfile[
     dockerfile.index("# --- nginx ---") : dockerfile.index(
       "# ---------------------------------------------------------------------------"

@@ -17,6 +17,8 @@ def _dockerfile() -> str:
 def test_db_dockerfile_uses_clang22_apk_toolchain() -> None:
   text = _dockerfile()
   assert "clang22" in text
+  assert "compiler-rt" in text
+  assert "alpine_pgo_profile_runtime_link.sh" in text
   assert "lld22" in text
   assert "ENV CC=clang CXX=clang++" in text
   assert "gcc-toolchain" not in text
@@ -185,7 +187,7 @@ def test_db_dockerfile_libs_mtune_and_lz4_heapmode() -> None:
   """OPT_CFLAGS_LIBS include -mtune=native; lz4 bake sets -DLZ4_HEAPMODE=0."""
   text = _dockerfile()
   assert (
-    'ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin --ld-path=/usr/lib/llvm22/bin/ld.lld -g0"'
+    'ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin --ld-path=/usr/bin/ld.lld -g0"'
     in text
   )
   assert "-mtune=native" in text
