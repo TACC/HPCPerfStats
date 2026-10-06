@@ -488,8 +488,19 @@ RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
     ln -s "${_mkl_vers[0]##*/}" "${MKLROOT}/lib/libmkl_rt.so"; \
   fi; \
   test -e "${MKLROOT}/lib/libmkl_rt.so"; \
+  _PY_LIB="/opt/python3.14/lib"; \
+  echo "${MKLROOT}/lib" > /etc/ld.so.conf.d/mkl-gil.conf; \
+  echo "${_PY_LIB}" >> /etc/ld.so.conf.d/mkl-gil.conf; \
+  shopt -s nullglob; \
+  for _lib in "${MKLROOT}"/lib/libmkl*.so* "${MKLROOT}"/lib/libiomp5.so* "${MKLROOT}"/lib/libtbb*.so*; do \
+    _b="$(basename "${_lib}")"; \
+    [ -e "${_PY_LIB}/${_b}" ] || ln -sf "${_lib}" "${_PY_LIB}/${_b}"; \
+  done; \
+  shopt -u nullglob; \
+  ldconfig; \
+  export LD_LIBRARY_PATH="${MKLROOT}/lib:${_PY_LIB}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"; \
   export LIBRARY_PATH="${MKLROOT}/lib${LIBRARY_PATH:+:${LIBRARY_PATH}}"; \
-  export LDFLAGS="${LDFLAGS:+${LDFLAGS} }-L${MKLROOT}/lib -Wl,-rpath,${MKLROOT}/lib -L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib -L/opt/jemalloc/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed ${HPC_CLANG_LD_PATH}"; \
+  export LDFLAGS="${LDFLAGS:+${LDFLAGS} }-L${MKLROOT}/lib -Wl,-rpath,${MKLROOT}/lib -L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib -L/opt/jemalloc/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -lmkl_rt -ljemalloc -Wl,--as-needed ${HPC_CLANG_LD_PATH}"; \
   export CFLAGS="${CFLAGS:+${CFLAGS} }${_opt_stack_cf} -I/opt/zlib-ng/include" \
     CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }${_opt_stack_cf} -I/opt/zlib-ng/include" \
     FFLAGS="${FFLAGS:+${FFLAGS} }${_opt_stack_cf}"; \
@@ -525,8 +536,7 @@ RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   python3 -m pip install --no-cache-dir --no-build-isolation --force-reinstall --no-deps \
     --no-binary brotli \
     -r /tmp/requirements-mkl-brotli.txt; \
-  python3 -c "import brotli; p=brotli.compress(b\"hps\", quality=11); assert brotli.decompress(p)==b\"hps\""; \
-  echo "${MKLROOT}/lib" > /etc/ld.so.conf.d/mkl-gil.conf'
+  python3 -c "import brotli; p=brotli.compress(b\"hps\", quality=11); assert brotli.decompress(p)==b\"hps\""'
 
 # 4) GIL rest wheels (Bokeh/contourpy see MKL numpy; constraint blocks wheel upgrades).
 # python-dateutil is here; import pandas only after rest (needs dateutil).
@@ -572,8 +582,19 @@ RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
     ln -s "${_mkl_vers[0]##*/}" "${MKLROOT_T}/lib/libmkl_rt.so"; \
   fi; \
   test -e "${MKLROOT_T}/lib/libmkl_rt.so"; \
+  _PY_LIB="/opt/python3.14t/lib"; \
+  echo "${MKLROOT_T}/lib" > /etc/ld.so.conf.d/mkl-ft.conf; \
+  echo "${_PY_LIB}" >> /etc/ld.so.conf.d/mkl-ft.conf; \
+  shopt -s nullglob; \
+  for _lib in "${MKLROOT_T}"/lib/libmkl*.so* "${MKLROOT_T}"/lib/libiomp5.so* "${MKLROOT_T}"/lib/libtbb*.so*; do \
+    _b="$(basename "${_lib}")"; \
+    [ -e "${_PY_LIB}/${_b}" ] || ln -sf "${_lib}" "${_PY_LIB}/${_b}"; \
+  done; \
+  shopt -u nullglob; \
+  ldconfig; \
+  export LD_LIBRARY_PATH="${MKLROOT_T}/lib:${_PY_LIB}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"; \
   export LIBRARY_PATH="${MKLROOT_T}/lib${LIBRARY_PATH:+:${LIBRARY_PATH}}"; \
-  export LDFLAGS="${LDFLAGS:+${LDFLAGS} }-L${MKLROOT_T}/lib -Wl,-rpath,${MKLROOT_T}/lib -L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib -L/opt/jemalloc/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed ${HPC_CLANG_LD_PATH}"; \
+  export LDFLAGS="${LDFLAGS:+${LDFLAGS} }-L${MKLROOT_T}/lib -Wl,-rpath,${MKLROOT_T}/lib -L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib -L/opt/jemalloc/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -lmkl_rt -ljemalloc -Wl,--as-needed ${HPC_CLANG_LD_PATH}"; \
   export CFLAGS="${CFLAGS:+${CFLAGS} }${_opt_stack_cf} -I/opt/zlib-ng/include" \
     CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }${_opt_stack_cf} -I/opt/zlib-ng/include" \
     FFLAGS="${FFLAGS:+${FFLAGS} }${_opt_stack_cf}"; \
@@ -609,9 +630,7 @@ RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --no-build-isolation --force-reinstall --no-deps \
     --no-binary brotli \
     -r /tmp/requirements-mkl-brotli.txt; \
-  /opt/python3.14t/bin/python3.14t -c "import brotli; p=brotli.compress(b\"hps\", quality=11); assert brotli.decompress(p)==b\"hps\""; \
-  echo "${MKLROOT_T}/lib" > /etc/ld.so.conf.d/mkl-ft.conf; \
-  ldconfig'
+  /opt/python3.14t/bin/python3.14t -c "import brotli; p=brotli.compress(b\"hps\", quality=11); assert brotli.decompress(p)==b\"hps\""'
 
 # 7) Free-threaded rest wheels (dateutil then import pandas, same as GIL).
 RUN /bin/bash -o pipefail -c '\

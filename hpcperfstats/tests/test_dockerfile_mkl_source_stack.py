@@ -234,6 +234,24 @@ def test_numexpr_link_creates_unversioned_mkl_rt_so():
   assert "ln -s" in base
 
 
+def test_mkl_companion_libs_symlinked_into_python_prefix_before_numpy():
+  """Regression: libmkl_intel_lp64 in prefix lib without libmkl_core → import fail."""
+  base = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
+  runs = _run_instructions(base)
+  gil_compile = next(
+    b for b in runs if "--no-binary numpy" in b and "python3.14t" not in b
+  )
+  ft_compile = next(
+    b for b in runs if "--no-binary numpy" in b and "python3.14t" in b
+  )
+  for compile_body in (gil_compile, ft_compile):
+    assert "libmkl*.so*" in compile_body
+    assert "-lmkl_rt" in compile_body
+    assert "ldconfig" in compile_body
+  assert "mkl-gil.conf" in gil_compile
+  assert "mkl-ft.conf" in ft_compile
+
+
 def test_show_config_assert_uses_dicts_mode_not_none_return():
   """Regression: str(np.show_config()) is 'None' even when MKL linked (numpy 2.5)."""
   base = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
