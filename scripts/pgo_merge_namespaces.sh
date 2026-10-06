@@ -19,12 +19,10 @@ while IFS= read -r ns; do
   raw_dir="${root}/${ns}/raw"
   out="${root}/${ns}/default.profdata"
   shopt -s nullglob
-  raw=( "${raw_dir}"/*.profraw )
-  case "${ns}" in
-    web/gil/cpython | web/ft/cpython)
-      raw+=( "${raw_dir}"/*.profclangr )
-      ;;
-  esac
+  raw=()
+  for f in "${raw_dir}"/*.profraw "${raw_dir}"/*.profclangr; do
+    [[ -s "${f}" ]] && raw+=( "${f}" )
+  done
   if [[ ${#raw[@]} -eq 0 ]]; then
     if [[ -s "${out}" ]]; then
       echo "PGO merge: ${ns} skip (existing default.profdata)" >&2

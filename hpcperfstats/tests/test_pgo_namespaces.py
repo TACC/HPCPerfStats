@@ -120,7 +120,7 @@ def test_pgo_lib_bootstraps_pg_root_before_layout() -> None:
   pgo_lib = (_repo_root() / "scripts" / "pgo_lib.sh").read_text()
   ensure = (_repo_root() / "scripts" / "pgo_ensure_layout.sh").read_text()
   assert "pgo_ensure_pg_root" in pgo_lib
-  assert "pgo_ensure_pg_root" in ensure
+  assert "pgo_reset_sketch_tree" in ensure
   assert "pgo_chmod_shared_tree" in pgo_lib
   assert "pgo_chmod_shared_tree" in ensure
 
@@ -192,6 +192,12 @@ def test_cpython_make_install_uses_upstream_profile_targets() -> None:
   assert "profile-opt" in script
   assert "hpcperfstats_cpython_stage_profiles_for_profile_opt" in script
   assert "hpcperfstats_cpython_run_makefile_prof_merger" in script
+  assert (
+    "hpcperfstats_cpython_makefile_block_profile_opt_without_profclangd"
+    in script
+  )
+  assert "hpcperfstats-profile-opt-guard" in script
+  assert "hpcperfstats-block-profile-run-stamp" in script
   assert "LLVM_PROF_MERGER" in script
   assert "llvm-profdata merge" not in script
   assert "code-*.profclangr" in script
@@ -353,14 +359,283 @@ def test_alpine_pgo_dockerfiles_use_bash_shell_for_pgo_clang_flags() -> None:
   for name in ("proxy.Dockerfile", "db.Dockerfile"):
     text = (_repo_root() / "services-conf" / name).read_text()
     assert "apk add" in text and "bash" in text, name
-    assert 'SHELL ["/bin/bash"' in text, name
-    assert "pgo_clang_flags.sh" in text, name
+    assert "BASH_ENV=/usr/local/lib/hpcperfstats/pgo_clang_flags.sh" in text, (
+      name
+    )
+    assert "/bin/bash -o pipefail" in text, name
+    assert ". /usr/local/lib/hpcperfstats/pgo_clang_flags.sh" not in text, name
+
+
+def _source_pgo_lib_profiles_ready(
+  tmp: Path,
+) -> subprocess.CompletedProcess[str]:
+  pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
+  repo = _repo_root()
+  return subprocess.run(
+    [
+      "bash",
+      "-c",
+      (
+        f'source "{pgo_lib}"; '
+        f'profiles_ready "{repo}"; '
+        "echo profiles_ready_exit=$?"
+      ),
+    ],
+    env={**os.environ, "PGOROOT": str(tmp)},
+    capture_output=True,
+    text=True,
+    check=False,
+  )
+
+
+def test_profiles_ready_false_when_only_generate_instr_raw(
+  tmp_path: Path,
+) -> None:
+  """Generate-time profraw must not trigger PGO use (CPython still needs soak)."""
+  ns = "web/gil/cpython"
+  raw = tmp_path / ns / "raw"
+  raw.mkdir(parents=True)
+  (tmp_path / "web/shared/jemalloc/raw").mkdir(parents=True)
+  (tmp_path / "web/shared/jemalloc/raw/jemalloc.profraw").write_bytes(b"x")
+  proc = _source_pgo_lib_profiles_ready(tmp_path)
+  assert proc.returncode != 0
+
+
+def test_partial_profile_collection_dies_before_compile(tmp_path: Path) -> None:
+  pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
+  repo = _repo_root()
+  (tmp_path / "web/shared/jemalloc/raw").mkdir(parents=True)
+  (tmp_path / "web/shared/jemalloc/raw/jemalloc.profraw").write_bytes(b"x")
+  (tmp_path / "web/gil/cpython/raw").mkdir(parents=True)
+  proc = subprocess.run(
+    [
+      "bash",
+      "-c",
+      (
+        f'source "{pgo_lib}"; set +e; '
+        f'pgo_die_if_partial_profile_collection "{repo}" 0; '
+        "echo exit=$?"
+      ),
+    ],
+    env={**os.environ, "PGOROOT": str(tmp_path)},
+    capture_output=True,
+    text=True,
+    check=False,
+  )
+  assert proc.returncode != 0
+  assert "PGO profile collection incomplete" in proc.stderr
+  assert "web/gil/cpython" in proc.stderr
+  assert "web/ft/cpython" in proc.stderr
+
+
+def test_pgo_wipe_pgroot_for_profile_phase_removes_all_contents(
+  tmp_path: Path,
+) -> None:
+  pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
+  prof = tmp_path / "web/gil/cpython/default.profdata"
+  prof.parent.mkdir(parents=True)
+  prof.write_bytes(b"merged")
+  (tmp_path / "breadcrumbs").mkdir(parents=True, exist_ok=True)
+  (tmp_path / "breadcrumbs/pgo_use_full_rebuild.done").write_text("x")
+  (tmp_path / "manifest.yaml").write_text("old", encoding="utf-8")
+  subprocess.run(
+    [
+      "bash",
+      "-c",
+      f'source "{pgo_lib}"; pgo_wipe_pgroot_for_profile_phase',
+    ],
+    env={**os.environ, "PGOROOT": str(tmp_path)},
+    check=True,
+    capture_output=True,
+    text=True,
+  )
+  assert not any(tmp_path.iterdir())
+
+
+def test_rebuild_full_site_wipes_pgroot_on_profile_phase() -> None:
+  script = (_repo_root() / "scripts" / "rebuild_full_site.sh").read_text()
+  pgo_lib = (_repo_root() / "scripts" / "pgo_lib.sh").read_text()
+  assert "pgo_confirm_wipe_pgroot_for_profile_phase" in script
+  assert "pgo_confirm_wipe_pgroot_for_profile_phase" in pgo_lib
+  assert "HPC_PGO_PROFILE_PHASE_FORCE_WIPE" in pgo_lib
+  assert 'if [[ "${PROFILE_PHASE}" -eq 1 ]]; then' in script
+
+
+def test_profile_phase_force_wipe_with_complete_profiles(
+  tmp_path: Path,
+) -> None:
+  pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
+  repo = _repo_root()
+  for ns in _registry_namespaces():
+    (tmp_path / ns / "raw").mkdir(parents=True, exist_ok=True)
+    if ns in ("web/gil/cpython", "web/ft/cpython"):
+      (tmp_path / ns / "raw/python-1.profraw").write_bytes(b"soak")
+    else:
+      (tmp_path / ns / "raw/mod.profraw").write_bytes(b"gen")
+  (tmp_path / "manifest.yaml").write_text("keep", encoding="utf-8")
+  subprocess.run(
+    [
+      "bash",
+      "-c",
+      (
+        f'source "{pgo_lib}"; '
+        f'pgo_confirm_wipe_pgroot_for_profile_phase "{repo}"'
+      ),
+    ],
+    env={
+      **os.environ,
+      "PGOROOT": str(tmp_path),
+      "HPC_PGO_PROFILE_PHASE_FORCE_WIPE": "1",
+    },
+    check=True,
+    capture_output=True,
+    text=True,
+  )
+  assert not any(tmp_path.iterdir())
+
+
+def test_partial_profile_collection_allowed_during_profile_phase_flag(
+  tmp_path: Path,
+) -> None:
+  pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
+  repo = _repo_root()
+  (tmp_path / "web/shared/jemalloc/raw").mkdir(parents=True)
+  (tmp_path / "web/shared/jemalloc/raw/jemalloc.profraw").write_bytes(b"x")
+  proc = subprocess.run(
+    [
+      "bash",
+      "-c",
+      (
+        f'source "{pgo_lib}"; '
+        f'pgo_die_if_partial_profile_collection "{repo}" 1; '
+        "echo ok"
+      ),
+    ],
+    env={**os.environ, "PGOROOT": str(tmp_path)},
+    capture_output=True,
+    text=True,
+    check=False,
+  )
+  assert proc.returncode == 0 and "ok" in proc.stdout
+
+
+def test_profiles_ready_true_when_cpython_soak_raw_present(
+  tmp_path: Path,
+) -> None:
+  for ns in _registry_namespaces():
+    (tmp_path / ns / "raw").mkdir(parents=True, exist_ok=True)
+    if ns in ("web/gil/cpython", "web/ft/cpython"):
+      (tmp_path / ns / "raw/python-12345.profraw").write_bytes(b"soak")
+    else:
+      (tmp_path / ns / "raw/module.profraw").write_bytes(b"gen")
+  proc = _source_pgo_lib_profiles_ready(tmp_path)
+  assert proc.returncode == 0 and "profiles_ready_exit=0" in proc.stdout
+
+
+def test_pgo_reset_sketch_tree_clears_layout_only_pgroot(
+  tmp_path: Path,
+) -> None:
+  pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
+  repo = _repo_root()
+  (tmp_path / "breadcrumbs").mkdir(parents=True)
+  (tmp_path / "manifest.yaml").write_text("old", encoding="utf-8")
+  (tmp_path / "web/shared/jemalloc/raw").mkdir(parents=True)
+  env = {**os.environ, "PGOROOT": str(tmp_path)}
+  proc = subprocess.run(
+    [
+      "bash",
+      "-c",
+      (
+        f'source "{pgo_lib}"; set +e; '
+        f'pgo_reset_sketch_tree "{repo}"; r=$?; set -e; echo exit=$r'
+      ),
+    ],
+    env=env,
+    capture_output=True,
+    text=True,
+    check=False,
+  )
+  assert proc.returncode == 0 and "exit=0" in proc.stdout
+  assert not (tmp_path / "manifest.yaml").exists()
+  assert not (tmp_path / "breadcrumbs").exists()
+
+
+def test_pgo_reset_sketch_tree_keeps_tree_when_profile_data_present(
+  tmp_path: Path,
+) -> None:
+  pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
+  repo = _repo_root()
+  raw = tmp_path / "web/shared/jemalloc/raw"
+  raw.mkdir(parents=True)
+  (raw / "jemalloc.profraw").write_bytes(b"x")
+  (tmp_path / "manifest.yaml").write_text("keep", encoding="utf-8")
+  env = {**os.environ, "PGOROOT": str(tmp_path)}
+  proc = subprocess.run(
+    [
+      "bash",
+      "-c",
+      (
+        f'source "{pgo_lib}"; set +e; '
+        f'pgo_reset_sketch_tree "{repo}"; r=$?; set -e; echo exit=$r'
+      ),
+    ],
+    env=env,
+    capture_output=True,
+    text=True,
+    check=False,
+  )
+  assert proc.returncode == 0 and "exit=1" in proc.stdout
+  assert (tmp_path / "manifest.yaml").read_text(encoding="utf-8") == "keep"
+
+
+def test_pgo_ensure_layout_refreshes_manifest_after_sketch_clear(
+  tmp_path: Path,
+) -> None:
+  env = os.environ.copy()
+  env["PGOROOT"] = str(tmp_path)
+  (tmp_path / "manifest.yaml").write_text("stale", encoding="utf-8")
+  (tmp_path / "web/shared/zstd/raw").mkdir(parents=True)
+  subprocess.run(
+    [_repo_root() / "scripts" / "pgo_ensure_layout.sh"],
+    check=True,
+    env=env,
+    cwd=_repo_root(),
+    capture_output=True,
+    text=True,
+  )
+  manifest = (tmp_path / "manifest.yaml").read_text(encoding="utf-8")
+  assert "stale" not in manifest
+  assert "namespaces_source:" in manifest
+  assert (tmp_path / "web/shared/zstd/raw").is_dir()
+
+
+def test_profiles_ready_true_when_all_namespaces_have_profdata(
+  tmp_path: Path,
+) -> None:
+  for ns in _registry_namespaces():
+    out = tmp_path / ns / "default.profdata"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(b"merged")
+  proc = _source_pgo_lib_profiles_ready(tmp_path)
+  assert proc.returncode == 0 and "profiles_ready_exit=0" in proc.stdout
+
+
+def test_alpine_dockerfiles_invoke_bash_for_pgo_not_shell() -> None:
+  """Regression: Podman OCI ignores Dockerfile SHELL; ash cannot source pgo_clang_flags.sh."""
+  root = _repo_root()
+  for name in ("services-conf/proxy.Dockerfile", "services-conf/db.Dockerfile"):
+    text = (root / name).read_text()
+    assert "BASH_ENV=/usr/local/lib/hpcperfstats/pgo_clang_flags.sh" in text
+    assert "/bin/bash -o pipefail" in text
+    assert ". /usr/local/lib/hpcperfstats/pgo_clang_flags.sh" not in text
 
 
 def test_rebuild_full_site_pgo_fail_loud_helpers() -> None:
   script = (_repo_root() / "scripts" / "rebuild_full_site.sh").read_text()
   pgo_lib = (_repo_root() / "scripts" / "pgo_lib.sh").read_text()
   assert "PGO FAILED" in pgo_lib
+  assert "pgo_die_if_partial_profile_collection" in script
+  assert "pgo_die_if_partial_profile_collection" in pgo_lib
   assert "pgo_die" in script
   assert "--profile-phase" in script
   assert (

@@ -61,40 +61,209 @@ pgo_list_namespaces() {
   grep -E '^[[:space:]]+- namespace:' "${yaml_path}" | sed -E 's/^[[:space:]]+- namespace:[[:space:]]*//'
 }
 
-pgo_namespace_has_mergeable_raw() {
-  local root ns
-  root="$(pgo_root_dir)"
-  ns="$1"
-  shopt -s nullglob
-  local files=("${root}/${ns}/raw/"*.profraw)
-  case "${ns}" in
-    web/gil/cpython | web/ft/cpython)
-      files+=( "${root}/${ns}/raw/"*.profclangr )
-      ;;
-  esac
-  [[ ${#files[@]} -gt 0 ]]
-}
-
-pgo_namespace_has_profdata() {
+pgo_namespace_has_nonempty_profdata() {
   local root ns
   root="$(pgo_root_dir)"
   ns="$1"
   [[ -s "${root}/${ns}/default.profdata" ]]
 }
 
+# Instrumentation profraw from PGO generate image builds (ignore zero-byte placeholders).
+pgo_namespace_has_nonempty_instr_raw() {
+  local root ns f
+  root="$(pgo_root_dir)"
+  ns="$1"
+  shopt -s nullglob
+  for f in "${root}/${ns}/raw/"*.profraw; do
+    [[ -s "${f}" ]] && return 0
+  done
+  shopt -u nullglob
+  return 1
+}
+
+# CPython use-phase needs live-soak profiles (not Makefile unittest output).
+pgo_cpython_namespace_has_soak_raw() {
+  local root ns f
+  root="$(pgo_root_dir)"
+  ns="$1"
+  case "${ns}" in
+    web/gil/cpython | web/ft/cpython) ;;
+    *) return 1 ;;
+  esac
+  shopt -s nullglob
+  for f in "${root}/${ns}/raw/"python-*.profraw "${root}/${ns}/raw/"code-*.profclangr; do
+    [[ -s "${f}" ]] && return 0
+  done
+  for f in "${root}/${ns}/raw/"*.profclangr; do
+    [[ -s "${f}" ]] && return 0
+  done
+  shopt -u nullglob
+  return 1
+}
+
+pgo_namespace_profile_input_ready() {
+  local ns="${1:?namespace}"
+  if pgo_namespace_has_nonempty_profdata "${ns}"; then
+    return 0
+  fi
+  case "${ns}" in
+    web/gil/cpython | web/ft/cpython)
+      pgo_cpython_namespace_has_soak_raw "${ns}"
+      ;;
+    *)
+      pgo_namespace_has_nonempty_instr_raw "${ns}"
+      ;;
+  esac
+}
+
+# True when every namespace can enter merge/use (merged profdata or soak-backed raw inputs).
 profiles_ready() {
   local repo_root="${1:?repo_root}"
   local ns
   while IFS= read -r ns; do
     [[ -n "${ns}" ]] || continue
-    if pgo_namespace_has_profdata "${ns}"; then
-      continue
-    fi
-    if pgo_namespace_has_mergeable_raw "${ns}"; then
+    if pgo_namespace_profile_input_ready "${ns}"; then
       continue
     fi
     return 1
   done < <(pgo_list_namespaces "${repo_root}")
+  return 0
+}
+
+pgo_namespace_use_gap_reason() {
+  local ns="${1:?namespace}"
+  if pgo_namespace_profile_input_ready "${ns}"; then
+    return 1
+  fi
+  case "${ns}" in
+    web/gil/cpython | web/ft/cpython)
+      printf '%s' \
+        "${ns}: missing live soak (nonempty raw/python-*.profraw); check web/pipeline up, PGOROOT bind, LLVM_PROFILE_FILE"
+      ;;
+    *)
+      printf '%s' \
+        "${ns}: missing profiles (nonempty raw/*.profraw after --profile-phase generate, or default.profdata)"
+      ;;
+  esac
+  return 0
+}
+
+# Stage-3-only PGOROOT (some raw/profdata, not all namespaces soak-ready): fail closed before compile.
+pgo_die_if_partial_profile_collection() {
+  local repo_root="${1:?repo_root}"
+  local allow_profile_generate="${2:-0}"
+  local ns
+  local -a gaps=()
+
+  if [[ "${allow_profile_generate}" -eq 1 ]]; then
+    return 0
+  fi
+  if [[ -f "$(pgo_use_breadcrumb_path)" ]]; then
+    return 0
+  fi
+  if pgo_tree_sketch_only "${repo_root}" || profiles_ready "${repo_root}"; then
+    return 0
+  fi
+  if ! pgo_tree_has_any_profile_data "${repo_root}"; then
+    return 0
+  fi
+
+  while IFS= read -r ns; do
+    [[ -n "${ns}" ]] || continue
+    if pgo_namespace_profile_input_ready "${ns}"; then
+      continue
+    fi
+    gaps+=( "$(pgo_namespace_use_gap_reason "${ns}")" )
+  done < <(pgo_list_namespaces "${repo_root}")
+
+  pgo_die \
+    "PGO profile collection incomplete (soak or generate wiring not connected for every namespace); refusing compile. $(IFS='; '; echo "${gaps[*]}")"
+}
+
+pgo_tree_has_any_profile_data() {
+  local repo_root="${1:?repo_root}" ns
+  while IFS= read -r ns; do
+    [[ -n "${ns}" ]] || continue
+    if pgo_namespace_profile_input_ready "${ns}"; then
+      return 0
+    fi
+  done < <(pgo_list_namespaces "${repo_root}")
+  return 1
+}
+
+# Stage 1 (missing PGOROOT) and stage 2 (layout sketch only): no profile inputs in any namespace.
+pgo_tree_sketch_only() {
+  local repo_root="${1:?repo_root}"
+  if pgo_tree_has_any_profile_data "${repo_root}"; then
+    return 1
+  fi
+  return 0
+}
+
+# --profile-phase: remove all prior PGO artifacts (raw, profdata, breadcrumbs) and start clean.
+pgo_wipe_pgroot_for_profile_phase() {
+  local root
+  root="$(pgo_root_dir)"
+  pgo_ensure_pg_root
+  shopt -s nullglob
+  local entries=("${root}"/*)
+  shopt -u nullglob
+  if [[ ${#entries[@]} -eq 0 ]]; then
+    echo "pgo_wipe_pgroot_for_profile_phase: PGOROOT already empty under ${root}" >&2
+    return 0
+  fi
+  rm -rf "${root:?}"/*
+  echo "pgo_wipe_pgroot_for_profile_phase: removed all contents under ${root}" >&2
+}
+
+# Wipe for --profile-phase; prompt when every namespace already has profile inputs (profiles_ready).
+pgo_confirm_wipe_pgroot_for_profile_phase() {
+  local repo_root="${1:?repo_root}"
+  if ! profiles_ready "${repo_root}"; then
+    pgo_wipe_pgroot_for_profile_phase
+    return 0
+  fi
+  if [[ "${HPC_PGO_PROFILE_PHASE_FORCE_WIPE:-0}" == 1 ]]; then
+    echo "pgo: HPC_PGO_PROFILE_PHASE_FORCE_WIPE=1; wiping complete profile set under $(pgo_root_dir)" >&2
+    pgo_wipe_pgroot_for_profile_phase
+    return 0
+  fi
+  if [[ ! -t 0 ]] || [[ ! -t 1 ]]; then
+    pgo_die \
+      "PGOROOT has a complete profile set (all namespaces profiles_ready); refusing --profile-phase wipe without a TTY. Re-run interactively and confirm, or set HPC_PGO_PROFILE_PHASE_FORCE_WIPE=1."
+  fi
+  echo "rebuild_full_site.sh: PGOROOT=$(pgo_root_dir) has profiles for all PGO namespaces (ready for merge/use)." >&2
+  printf 'Delete ALL profile data under PGOROOT and restart PGO from scratch? [y/N] ' >&2
+  local ans
+  read -r ans
+  case "${ans}" in
+    y | Y | yes | YES)
+      pgo_wipe_pgroot_for_profile_phase
+      ;;
+    *)
+      pgo_die "profile-phase aborted: PGOROOT unchanged"
+      ;;
+  esac
+}
+
+# Drop breadcrumbs, manifest, and namespace trees when PGOROOT has no profile data yet.
+# Returns 0 if contents were removed; 1 if PGOROOT was left unchanged.
+pgo_reset_sketch_tree() {
+  local root repo_root
+  repo_root="${1:?repo_root}"
+  root="$(pgo_root_dir)"
+  pgo_ensure_pg_root
+  if pgo_tree_has_any_profile_data "${repo_root}"; then
+    return 1
+  fi
+  shopt -s nullglob
+  local entries=("${root}"/*)
+  shopt -u nullglob
+  if [[ ${#entries[@]} -eq 0 ]]; then
+    return 1
+  fi
+  rm -rf "${root:?}"/*
+  echo "pgo_reset_sketch_tree: cleared layout-only PGOROOT under ${root}" >&2
   return 0
 }
 

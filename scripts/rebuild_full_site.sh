@@ -43,12 +43,14 @@ the stack with:
   podman-compose --profile pg18-migrate up -d --force-recreate db_pg18
 
 PGO (optional): PGOROOT defaults to /root/.hpcperfstats_pgo. --profile-phase
-builds with PGO_PHASE=generate for soak; after profiles exist, the first default
-run performs one merge + PGO_PHASE=use rebuild (db_pg18, proxy, web), then skip
-until the next --profile-phase.
+wipes PGOROOT and builds with PGO_PHASE=generate for soak; if a complete profile
+set already exists (all namespaces ready), you must confirm interactively or set
+HPC_PGO_PROFILE_PHASE_FORCE_WIPE=1. After soak, the first default run performs
+one merge + PGO_PHASE=use rebuild (db_pg18, proxy, web), then skip until the next
+--profile-phase.
 
 Options:
-  --profile-phase  PGO generate build + up for live soak (clears use breadcrumb)
+  --profile-phase  PGO generate build + up for live soak (fresh PGOROOT wipe)
   --dry-run        Print planned steps only
   --build-only     Build images only; do not up -d or set memory.high
   --no-start       Build images, skip up -d and memory.high
@@ -134,27 +136,22 @@ resolve_pgo_phase() {
   fi
   if profiles_ready "${REPO_ROOT}"; then
     PGO_PHASE=use
-    echo "PGO: profiles ready → one-time PGO_PHASE=use rebuild" >&2
+    echo "PGO: profiles ready (soak/generate satisfied for all namespaces) → one-time PGO_PHASE=use rebuild" >&2
     return 0
   fi
   PGO_PHASE=skip
-  echo "PGO: skip — profiles not ready; run --profile-phase" >&2
+  echo "PGO: skip — profiles not ready; run --profile-phase for generate, then soak stack until every namespace has profiles" >&2
 }
 
 prepare_profile_phase() {
-  rm -f "$(pgo_use_breadcrumb_path)"
-  rm -f "$(pgo_use_failed_path)"
+  mkdir -p "$(pgo_root_dir)/breadcrumbs"
   date -u +"%Y-%m-%dT%H:%M:%SZ" >"${PGOROOT}/breadcrumbs/profile_phase_started"
-  local ns root
-  root="$(pgo_root_dir)"
-  while IFS= read -r ns; do
-    [[ -n "${ns}" ]] || continue
-    rm -rf "${root}/${ns}/raw/"*
-  done < <(pgo_list_namespaces "${REPO_ROOT}")
 }
 
 run_pgo_use_path() {
   echo "=== PGO one-time use rebuild (merge → build db_pg18/proxy/web → up) ===" >&2
+  profiles_ready "${REPO_ROOT}" \
+    || pgo_die "PGO use rebuild refused: profiles_ready false (soak not confirmed for every namespace)"
   local failed=0
   if ! run_cmd "${SCRIPT_DIR}/pgo_merge_namespaces.sh"; then
     failed=1
@@ -338,8 +335,20 @@ main() {
   preflight
   # Always create PGOROOT on the host (even --dry-run). Compose pgo_profiles binds and
   # Dockerfile RUN --mount=bind require the path before build/up — not gated on run_cmd.
+  if [[ "${PROFILE_PHASE}" -eq 1 ]]; then
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+      if profiles_ready "${REPO_ROOT}"; then
+        echo "[dry-run] --profile-phase would prompt before wiping complete PGOROOT at $(pgo_root_dir)" >&2
+      else
+        echo "[dry-run] --profile-phase would wipe PGOROOT at $(pgo_root_dir) (incomplete or empty profile set)" >&2
+      fi
+    else
+      pgo_confirm_wipe_pgroot_for_profile_phase "${REPO_ROOT}"
+    fi
+  fi
   "${SCRIPT_DIR}/pgo_ensure_layout.sh"
   resolve_pgo_phase
+  pgo_die_if_partial_profile_collection "${REPO_ROOT}" "${PROFILE_PHASE}"
 
   if [[ "${PGO_PHASE}" == use && "${PROFILE_PHASE}" -eq 0 ]]; then
     run_pgo_use_path

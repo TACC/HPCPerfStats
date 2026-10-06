@@ -177,16 +177,19 @@ hpcperfstats_cpython_stage_profiles_for_profile_opt() {
 
   shopt -s nullglob
   for f in "${raw_dir}"/python-*.profraw; do
+    [[ -s "${f}" ]] || continue
     dest="./code-$(basename "${f}" .profraw).profclangr"
     cp "${f}" "${dest}"
     staged+=( "${dest}" )
   done
   for f in "${raw_dir}"/code-*.profclangr; do
+    [[ -s "${f}" ]] || continue
     dest="./$(basename "${f}")"
     cp "${f}" "${dest}"
     staged+=( "${dest}" )
   done
   for f in "${raw_dir}"/*.profclangr; do
+    [[ -s "${f}" ]] || continue
     case "$(basename "${f}")" in
       code-*.profclangr) continue ;;
     esac
@@ -218,6 +221,26 @@ hpcperfstats_cpython_relax_install_deps_for_instrumented() {
     Makefile
 }
 
+# PGO generate must not run upstream profile-run-stamp (unittest) or profile-opt without soak data.
+hpcperfstats_cpython_makefile_block_profile_opt_without_profclangd() {
+  [[ -f Makefile ]] || hpcperfstats_pgo_die "CPython Makefile missing (run ./configure first)"
+  cat >>Makefile <<'EOF'
+
+.PHONY: hpcperfstats-block-profile-run-stamp hpcperfstats-profile-opt-guard
+hpcperfstats-block-profile-run-stamp:
+	@echo "pgo_clang_flags: profile-run-stamp blocked in PGO generate (use live soak, not unittest)" >&2
+	@exit 1
+hpcperfstats-profile-opt-guard:
+	@test -s "$(CURDIR)/code.profclangd" || { echo "pgo_clang_flags: profile-opt requires non-empty code.profclangd (soak + merge/stage first)" >&2; exit 1; }
+EOF
+  if grep -q '^profile-run-stamp:' Makefile; then
+    sed -i 's/^profile-run-stamp:/profile-run-stamp: hpcperfstats-block-profile-run-stamp/' Makefile
+  fi
+  if grep -q '^profile-opt:' Makefile; then
+    sed -i 's/^profile-opt:/profile-opt: hpcperfstats-profile-opt-guard/' Makefile
+  fi
+}
+
 # skip → make install; generate → profile-gen-stamp + altinstall; use → profile-run-stamp + profile-opt + altinstall.
 hpcperfstats_cpython_make_install() {
   local namespace="${1:?namespace required}"
@@ -237,11 +260,14 @@ hpcperfstats_cpython_make_install() {
       ;;
     generate)
       hpcperfstats_cpython_relax_install_deps_for_instrumented
+      hpcperfstats_cpython_makefile_block_profile_opt_without_profclangd
       make -j"${jobs}" profile-gen-stamp
       make altinstall
       ;;
     use)
       hpcperfstats_cpython_stage_profiles_for_profile_opt "${namespace}"
+      [[ -s ./code.profclangd ]] \
+        || hpcperfstats_pgo_die "PGO use: refuse profile-opt without code.profclangd"
       touch profile-run-stamp
       make -j"${jobs}" profile-opt
       make altinstall

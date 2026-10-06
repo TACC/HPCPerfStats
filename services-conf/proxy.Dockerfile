@@ -50,33 +50,34 @@ RUN apk add --no-cache \
     pcre2-dev \
     perl
 
-# pgo_clang_flags.sh is bash; default /bin/sh (ash) cannot parse its function defs.
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# Podman OCI ignores Dockerfile SHELL; PGO RUN steps invoke /bin/bash explicitly (BASH_ENV sources pgo_clang_flags.sh).
+ENV BASH_ENV=/usr/local/lib/hpcperfstats/pgo_clang_flags.sh
 
 # Print out compiler platform detection (clang_march_native_probe.sh).
-RUN /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
+RUN /bin/bash -o pipefail /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 
 # --- jemalloc ---
 ARG PGO_NAMESPACE=proxy/jemalloc
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
-  set -eux; \
-  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
-  curl -fsSL "https://github.com/jemalloc/jemalloc/releases/download/${JEMALLOC_VERSION}/jemalloc-${JEMALLOC_VERSION}.tar.bz2" \
-    -o /tmp/jemalloc.tar.bz2; \
-  echo "${JEMALLOC_SHA256}  /tmp/jemalloc.tar.bz2" | sha256sum -c -; \
-  mkdir -p /usr/src/jemalloc; \
-  tar -xjf /tmp/jemalloc.tar.bz2 -C /usr/src/jemalloc --strip-components=1; \
-  cd /usr/src/jemalloc; \
-  _cf_cfg="$(hpcperfstats_configure_cflags proxy/jemalloc)"; \
-  _cf_bake="$(hpcperfstats_bake_cflags proxy/jemalloc)"; \
-  _lto_ld="$(hpcperfstats_alpine_thinlto_ldflags)"; \
-  CPPFLAGS="-D_GNU_SOURCE" CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" \
-    ./configure --prefix=/opt/jemalloc; \
-  make -j"$(nproc)" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_lto_ld}" \
-    AR=/usr/lib/llvm22/bin/llvm-ar RANLIB=/usr/lib/llvm22/bin/llvm-ranlib; \
-  make install CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_lto_ld}" \
-    AR=/usr/lib/llvm22/bin/llvm-ar RANLIB=/usr/lib/llvm22/bin/llvm-ranlib; \
-  rm -rf /usr/src/jemalloc /tmp/jemalloc.tar.bz2
+  /bin/bash -o pipefail -s <<BASH
+set -eux
+curl -fsSL "https://github.com/jemalloc/jemalloc/releases/download/${JEMALLOC_VERSION}/jemalloc-${JEMALLOC_VERSION}.tar.bz2" \
+  -o /tmp/jemalloc.tar.bz2
+echo "${JEMALLOC_SHA256}  /tmp/jemalloc.tar.bz2" | sha256sum -c -
+mkdir -p /usr/src/jemalloc
+tar -xjf /tmp/jemalloc.tar.bz2 -C /usr/src/jemalloc --strip-components=1
+cd /usr/src/jemalloc
+_cf_cfg="$(hpcperfstats_configure_cflags proxy/jemalloc)"
+_cf_bake="$(hpcperfstats_bake_cflags proxy/jemalloc)"
+_lto_ld="$(hpcperfstats_alpine_thinlto_ldflags)"
+CPPFLAGS="-D_GNU_SOURCE" CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" \
+  ./configure --prefix=/opt/jemalloc
+make -j"$(nproc)" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_lto_ld}" \
+  AR=/usr/lib/llvm22/bin/llvm-ar RANLIB=/usr/lib/llvm22/bin/llvm-ranlib
+make install CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_lto_ld}" \
+  AR=/usr/lib/llvm22/bin/llvm-ar RANLIB=/usr/lib/llvm22/bin/llvm-ranlib
+rm -rf /usr/src/jemalloc /tmp/jemalloc.tar.bz2
+BASH
 
 WORKDIR /usr/src
 
@@ -86,37 +87,38 @@ WORKDIR /usr/src
 # it via CFLAGS aborts with "Compiler error reporting is too harsh".
 ARG PGO_NAMESPACE=proxy/zlib-ng
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
-  set -eux; \
-  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
-  _cf_cfg="$(hpcperfstats_configure_cflags proxy/zlib-ng)"; \
-  _cf_bake="$(hpcperfstats_bake_cflags proxy/zlib-ng)"; \
-  curl -fsSL "https://github.com/zlib-ng/zlib-ng/archive/refs/tags/${ZLIB_NG_VERSION}.tar.gz" \
-    -o /tmp/zlib-ng.tar.gz; \
-  echo "${ZLIB_NG_SHA256}  /tmp/zlib-ng.tar.gz" | sha256sum -c -; \
-  mkdir -p /usr/src/zlib-ng; \
-  tar -xzf /tmp/zlib-ng.tar.gz -C /usr/src/zlib-ng --strip-components=1; \
-  cd /usr/src/zlib-ng; \
-  mv configure configure.zlib-ng; \
-  printf '%s\n' \
-    '#!/bin/sh' \
-    'set -eu' \
-    'extra=""' \
-    'new_cflags=""' \
-    'for arg in ${CFLAGS:-}; do' \
-    '  case "$arg" in' \
-    '    --zlib-compat) extra="$extra --zlib-compat" ;;' \
-    '    *) new_cflags="${new_cflags:+$new_cflags }$arg" ;;' \
-    '  esac' \
-    'done' \
-    'export CFLAGS="$new_cflags"' \
-    'exec ./configure.zlib-ng --zlib-compat "$@" $extra' \
-    > configure; \
-  chmod +x configure; \
-  CFLAGS="${_cf_cfg}" CC=clang ./configure --zlib-compat; \
-  test -f Makefile; \
-  make -j"$(nproc)" libz.a CC=clang CFLAGS="${_cf_bake}"; \
-  test -f libz.a; \
-  rm -f /tmp/zlib-ng.tar.gz
+  /bin/bash -o pipefail -s <<BASH
+set -eux
+_cf_cfg="$(hpcperfstats_configure_cflags proxy/zlib-ng)"
+_cf_bake="$(hpcperfstats_bake_cflags proxy/zlib-ng)"
+curl -fsSL "https://github.com/zlib-ng/zlib-ng/archive/refs/tags/${ZLIB_NG_VERSION}.tar.gz" \
+  -o /tmp/zlib-ng.tar.gz
+echo "${ZLIB_NG_SHA256}  /tmp/zlib-ng.tar.gz" | sha256sum -c -
+mkdir -p /usr/src/zlib-ng
+tar -xzf /tmp/zlib-ng.tar.gz -C /usr/src/zlib-ng --strip-components=1
+cd /usr/src/zlib-ng
+mv configure configure.zlib-ng
+printf '%s\n' \
+  '#!/bin/sh' \
+  'set -eu' \
+  'extra=""' \
+  'new_cflags=""' \
+  'for arg in ${CFLAGS:-}; do' \
+  '  case "$arg" in' \
+  '    --zlib-compat) extra="$extra --zlib-compat" ;;' \
+  '    *) new_cflags="${new_cflags:+$new_cflags }$arg" ;;' \
+  '  esac' \
+  'done' \
+  'export CFLAGS="$new_cflags"' \
+  'exec ./configure.zlib-ng --zlib-compat "$@" $extra' \
+  > configure
+chmod +x configure
+CFLAGS="${_cf_cfg}" CC=clang ./configure --zlib-compat
+test -f Makefile
+make -j"$(nproc)" libz.a CC=clang CFLAGS="${_cf_bake}"
+test -f libz.a
+rm -f /tmp/zlib-ng.tar.gz
+BASH
 
 # --- OpenSSL (nginx --with-openssl builds it; no-shared folds into nginx) ---
 RUN set -eux; \
@@ -133,35 +135,36 @@ RUN set -eux; \
 # /opt/brotli so the nginx link line can resolve them (folded into the binary).
 ARG PGO_NAMESPACE=proxy/brotli
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
-  set -eux; \
-  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
-  _cflags="$(hpcperfstats_bake_cflags proxy/brotli)"; \
-  curl -fsSL "https://github.com/google/ngx_brotli/archive/refs/tags/v${NGX_BROTLI_VERSION}.tar.gz" \
-    -o /tmp/ngx_brotli.tar.gz; \
-  echo "${NGX_BROTLI_SHA256}  /tmp/ngx_brotli.tar.gz" | sha256sum -c -; \
-  mkdir -p /usr/src/ngx_brotli; \
-  tar -xzf /tmp/ngx_brotli.tar.gz -C /usr/src/ngx_brotli --strip-components=1; \
-  curl -fsSL "https://github.com/google/brotli/archive/refs/tags/v${BROTLI_VERSION}.tar.gz" \
-    -o /tmp/brotli.tar.gz; \
-  echo "${BROTLI_SHA256}  /tmp/brotli.tar.gz" | sha256sum -c -; \
-  rm -rf /usr/src/ngx_brotli/deps/brotli; \
-  mkdir -p /usr/src/ngx_brotli/deps; \
-  tar -xzf /tmp/brotli.tar.gz -C /usr/src/ngx_brotli/deps; \
-  mv "/usr/src/ngx_brotli/deps/brotli-${BROTLI_VERSION}" /usr/src/ngx_brotli/deps/brotli; \
-  test -f /usr/src/ngx_brotli/deps/brotli/c/include/brotli/decode.h; \
-  cmake -S /usr/src/ngx_brotli/deps/brotli -B /usr/src/ngx_brotli/deps/brotli/out \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_SHARED_LIBS=OFF \
-    -DCMAKE_INSTALL_PREFIX=/opt/brotli \
-    -DCMAKE_INSTALL_LIBDIR=lib \
-    -DCMAKE_C_FLAGS="${_cflags}" \
-    -DCMAKE_CXX_FLAGS="${_cflags}"; \
-  cmake --build /usr/src/ngx_brotli/deps/brotli/out -j"$(nproc)"; \
-  cmake --install /usr/src/ngx_brotli/deps/brotli/out; \
-  test -f /opt/brotli/lib/libbrotlienc.a; \
-  test -f /opt/brotli/lib/libbrotlidec.a; \
-  test -f /opt/brotli/lib/libbrotlicommon.a; \
-  rm -f /tmp/ngx_brotli.tar.gz /tmp/brotli.tar.gz
+  /bin/bash -o pipefail -s <<BASH
+set -eux
+_cflags="$(hpcperfstats_bake_cflags proxy/brotli)"
+curl -fsSL "https://github.com/google/ngx_brotli/archive/refs/tags/v${NGX_BROTLI_VERSION}.tar.gz" \
+  -o /tmp/ngx_brotli.tar.gz
+echo "${NGX_BROTLI_SHA256}  /tmp/ngx_brotli.tar.gz" | sha256sum -c -
+mkdir -p /usr/src/ngx_brotli
+tar -xzf /tmp/ngx_brotli.tar.gz -C /usr/src/ngx_brotli --strip-components=1
+curl -fsSL "https://github.com/google/brotli/archive/refs/tags/v${BROTLI_VERSION}.tar.gz" \
+  -o /tmp/brotli.tar.gz
+echo "${BROTLI_SHA256}  /tmp/brotli.tar.gz" | sha256sum -c -
+rm -rf /usr/src/ngx_brotli/deps/brotli
+mkdir -p /usr/src/ngx_brotli/deps
+tar -xzf /tmp/brotli.tar.gz -C /usr/src/ngx_brotli/deps
+mv "/usr/src/ngx_brotli/deps/brotli-${BROTLI_VERSION}" /usr/src/ngx_brotli/deps/brotli
+test -f /usr/src/ngx_brotli/deps/brotli/c/include/brotli/decode.h
+cmake -S /usr/src/ngx_brotli/deps/brotli -B /usr/src/ngx_brotli/deps/brotli/out \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_SHARED_LIBS=OFF \
+  -DCMAKE_INSTALL_PREFIX=/opt/brotli \
+  -DCMAKE_INSTALL_LIBDIR=lib \
+  -DCMAKE_C_FLAGS="${_cflags}" \
+  -DCMAKE_CXX_FLAGS="${_cflags}"
+cmake --build /usr/src/ngx_brotli/deps/brotli/out -j"$(nproc)"
+cmake --install /usr/src/ngx_brotli/deps/brotli/out
+test -f /opt/brotli/lib/libbrotlienc.a
+test -f /opt/brotli/lib/libbrotlidec.a
+test -f /opt/brotli/lib/libbrotlicommon.a
+rm -f /tmp/ngx_brotli.tar.gz /tmp/brotli.tar.gz
+BASH
 
 # --- zstd (static libzstd.a) + GetPageSpeed zstd-nginx-module (tokers fork) ---
 # Proxy has no /opt/zlib-ng or /opt/lz4; do not enable HAVE_ZLIB/HAVE_LZ4 (those
@@ -169,113 +172,115 @@ RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
 # per CPU. Fold libzstd.a into nginx; do not COPY /opt/zstd into the runtime.
 ARG PGO_NAMESPACE=proxy/zstd
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
-  set -eux; \
-  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
-  _cflags="$(hpcperfstats_bake_cflags proxy/zstd)"; \
-  curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" \
-    -o /tmp/zstd.tar.gz; \
-  echo "${ZSTD_SHA256}  /tmp/zstd.tar.gz" | sha256sum -c -; \
-  mkdir -p /usr/src/zstd; \
-  tar -xzf /tmp/zstd.tar.gz -C /usr/src/zstd --strip-components=1; \
-  make -j"$(nproc)" -C /usr/src/zstd/lib libzstd.a \
-    PREFIX=/opt/zstd \
-    MOREFLAGS="${_cflags}" \
-    ZSTD_LEGACY_SUPPORT=0 \
-    HAVE_ZLIB=0 \
-    HAVE_LZ4=0; \
-  make -C /usr/src/zstd/lib install-static PREFIX=/opt/zstd; \
-  make -C /usr/src/zstd/lib install-includes PREFIX=/opt/zstd; \
-  test -f /opt/zstd/lib/libzstd.a; \
-  test -f /opt/zstd/include/zstd.h; \
-  curl -fsSL "https://github.com/GetPageSpeed/zstd-nginx-module/archive/refs/tags/${ZSTD_NGINX_MODULE_VERSION}.tar.gz" \
-    -o /tmp/zstd-nginx-module.tar.gz; \
-  echo "${ZSTD_NGINX_MODULE_SHA256}  /tmp/zstd-nginx-module.tar.gz" | sha256sum -c -; \
-  mkdir -p /usr/src/zstd-nginx-module; \
-  tar -xzf /tmp/zstd-nginx-module.tar.gz -C /usr/src/zstd-nginx-module --strip-components=1; \
-  test -f /usr/src/zstd-nginx-module/config; \
-  rm -rf /usr/src/zstd /tmp/zstd.tar.gz /tmp/zstd-nginx-module.tar.gz
+  /bin/bash -o pipefail -s <<BASH
+set -eux
+_cflags="$(hpcperfstats_bake_cflags proxy/zstd)"
+curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" \
+  -o /tmp/zstd.tar.gz
+echo "${ZSTD_SHA256}  /tmp/zstd.tar.gz" | sha256sum -c -
+mkdir -p /usr/src/zstd
+tar -xzf /tmp/zstd.tar.gz -C /usr/src/zstd --strip-components=1
+make -j"$(nproc)" -C /usr/src/zstd/lib libzstd.a \
+  PREFIX=/opt/zstd \
+  MOREFLAGS="${_cflags}" \
+  ZSTD_LEGACY_SUPPORT=0 \
+  HAVE_ZLIB=0 \
+  HAVE_LZ4=0
+make -C /usr/src/zstd/lib install-static PREFIX=/opt/zstd
+make -C /usr/src/zstd/lib install-includes PREFIX=/opt/zstd
+test -f /opt/zstd/lib/libzstd.a
+test -f /opt/zstd/include/zstd.h
+curl -fsSL "https://github.com/GetPageSpeed/zstd-nginx-module/archive/refs/tags/${ZSTD_NGINX_MODULE_VERSION}.tar.gz" \
+  -o /tmp/zstd-nginx-module.tar.gz
+echo "${ZSTD_NGINX_MODULE_SHA256}  /tmp/zstd-nginx-module.tar.gz" | sha256sum -c -
+mkdir -p /usr/src/zstd-nginx-module
+tar -xzf /tmp/zstd-nginx-module.tar.gz -C /usr/src/zstd-nginx-module --strip-components=1
+test -f /usr/src/zstd-nginx-module/config
+rm -rf /usr/src/zstd /tmp/zstd.tar.gz /tmp/zstd-nginx-module.tar.gz
+BASH
 
 # --- nginx ---
 ARG PGO_NAMESPACE=proxy/nginx
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
-  set -eux; \
-  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
-  hpcperfstats_pgo_ensure_proxy_nginx_link_dirs; \
-  _cflags="$(hpcperfstats_bake_cflags proxy/nginx)"; \
-  _openssl_cflags="$(hpcperfstats_bake_cflags proxy/openssl)"; \
-  test -f /usr/src/zlib-ng/libz.a; \
-  curl -fsSL "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
-    -o /tmp/nginx.tar.gz; \
-  echo "${NGINX_SHA256}  /tmp/nginx.tar.gz" | sha256sum -c -; \
-  mkdir -p /usr/src/nginx; \
-  tar -xzf /tmp/nginx.tar.gz -C /usr/src/nginx --strip-components=1; \
-  cd /usr/src/nginx; \
-  export ZSTD_INC=/opt/zstd/include; \
-  export ZSTD_LIB=/opt/zstd/lib; \
-  nginx_bake_cflags="${_cflags} -I/opt/zstd/include"; \
-  # libzstd.a via zstd-nginx-module. Same ThinLTO flags at configure and make.
-  ./configure \
-    --prefix=/opt/nginx \
-    --sbin-path=/usr/sbin/nginx \
-    --conf-path=/etc/nginx/nginx.conf \
-    --pid-path=/run/nginx/nginx.pid \
-    --lock-path=/run/nginx/nginx.lock \
-    --error-log-path=/var/log/nginx/error.log \
-    --http-log-path=/var/log/nginx/access.log \
-    --http-client-body-temp-path=/var/lib/nginx/tmp/client_body \
-    --http-proxy-temp-path=/var/lib/nginx/tmp/proxy \
-    --http-fastcgi-temp-path=/var/lib/nginx/tmp/fastcgi \
-    --http-uwsgi-temp-path=/var/lib/nginx/tmp/uwsgi \
-    --http-scgi-temp-path=/var/lib/nginx/tmp/scgi \
-    --user=nginx \
-    --group=nginx \
-    --with-http_ssl_module \
-    --with-http_v2_module \
-    --with-http_gzip_static_module \
-    --with-http_stub_status_module \
-    --with-pcre \
-    --add-module=../ngx_brotli \
-    --add-module=../zstd-nginx-module \
-    --with-openssl=../openssl-${OPENSSL_VERSION} \
-    --with-zlib=../zlib-ng \
-    --with-cc-opt="${_cflags} -I/opt/zstd/include" \
-    --with-ld-opt="-L/opt/jemalloc/lib -L/opt/brotli/lib -Wl,-rpath,/opt/jemalloc/lib -ljemalloc -lbrotlienc -lbrotlidec -lbrotlicommon -lstdc++ --ld-path=/usr/lib/llvm22/bin/ld.lld" \
-    --with-openssl-opt="no-nextprotoneg no-weak-ssl-ciphers no-ssl3 no-shared enable-ec_nistp_64_gcc_128 ${_openssl_cflags}" \
-    --with-zlib-opt="--zlib-compat"; \
-  make -j"$(nproc)" CFLAGS="${nginx_bake_cflags}"; \
-  make install CFLAGS="${nginx_bake_cflags}"; \
-  strip --strip-unneeded /usr/sbin/nginx; \
-  # --conf-path=/etc/nginx/nginx.conf installs mime.types under /etc/nginx/, not
-  # prefix/conf/. Normalize into /opt/nginx/conf for the runtime COPY.
-  mkdir -p /opt/nginx/conf; \
-  if [ -f /etc/nginx/mime.types ]; then \
-    cp /etc/nginx/mime.types /opt/nginx/conf/mime.types; \
-  elif [ -f /opt/nginx/conf/mime.types ]; then \
-    :; \
-  else \
-    echo "mime.types missing after make install"; ls -la /etc/nginx /opt/nginx/conf || true; exit 1; \
-  fi; \
-  test -f /opt/nginx/conf/mime.types; \
-  nginx -V 2>&1 | tee /tmp/nginx-V.txt; \
-  grep -F "nginx/${NGINX_VERSION}" /tmp/nginx-V.txt; \
-  grep -F -- "-mtune=native" /tmp/nginx-V.txt; \
-  grep -F -- "-ljemalloc" /tmp/nginx-V.txt; \
-  grep -F -- "--with-zlib-opt=--zlib-compat" /tmp/nginx-V.txt || \
-    grep -F -- '--with-zlib-opt="--zlib-compat"' /tmp/nginx-V.txt; \
-  grep -Fi openssl /tmp/nginx-V.txt; \
-  grep -Fi brotli /tmp/nginx-V.txt; \
-  grep -Fi zstd /tmp/nginx-V.txt; \
-  ldd /usr/sbin/nginx | tee /tmp/nginx-ldd.txt; \
-  grep -F /opt/jemalloc /tmp/nginx-ldd.txt; \
-  if grep -E '/usr/lib/libzstd|/lib/libzstd' /tmp/nginx-ldd.txt; then \
-    echo "apk libzstd leaked into nginx"; exit 1; \
-  fi; \
-  if apk info -e zstd >/dev/null 2>&1; then echo "apk zstd present"; exit 1; fi; \
-  if apk info -e libzstd >/dev/null 2>&1; then echo "apk libzstd present"; exit 1; fi; \
-  if apk info -e zstd-dev >/dev/null 2>&1; then echo "apk zstd-dev present"; exit 1; fi; \
-  grep -F /opt/jemalloc /tmp/nginx-ldd.txt; \
-  rm -rf /usr/src /tmp/nginx.tar.gz /tmp/nginx-V.txt /tmp/nginx-ldd.txt; \
-  if [ -e /usr/src ]; then echo "leftover /usr/src"; exit 1; fi
+  /bin/bash -o pipefail -s <<BASH
+set -eux
+hpcperfstats_pgo_ensure_proxy_nginx_link_dirs
+_cflags="$(hpcperfstats_bake_cflags proxy/nginx)"
+_openssl_cflags="$(hpcperfstats_bake_cflags proxy/openssl)"
+test -f /usr/src/zlib-ng/libz.a
+curl -fsSL "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
+  -o /tmp/nginx.tar.gz
+echo "${NGINX_SHA256}  /tmp/nginx.tar.gz" | sha256sum -c -
+mkdir -p /usr/src/nginx
+tar -xzf /tmp/nginx.tar.gz -C /usr/src/nginx --strip-components=1
+cd /usr/src/nginx
+export ZSTD_INC=/opt/zstd/include
+export ZSTD_LIB=/opt/zstd/lib
+nginx_bake_cflags="${_cflags} -I/opt/zstd/include"
+# libzstd.a via zstd-nginx-module. Same ThinLTO flags at configure and make.
+./configure \
+  --prefix=/opt/nginx \
+  --sbin-path=/usr/sbin/nginx \
+  --conf-path=/etc/nginx/nginx.conf \
+  --pid-path=/run/nginx/nginx.pid \
+  --lock-path=/run/nginx/nginx.lock \
+  --error-log-path=/var/log/nginx/error.log \
+  --http-log-path=/var/log/nginx/access.log \
+  --http-client-body-temp-path=/var/lib/nginx/tmp/client_body \
+  --http-proxy-temp-path=/var/lib/nginx/tmp/proxy \
+  --http-fastcgi-temp-path=/var/lib/nginx/tmp/fastcgi \
+  --http-uwsgi-temp-path=/var/lib/nginx/tmp/uwsgi \
+  --http-scgi-temp-path=/var/lib/nginx/tmp/scgi \
+  --user=nginx \
+  --group=nginx \
+  --with-http_ssl_module \
+  --with-http_v2_module \
+  --with-http_gzip_static_module \
+  --with-http_stub_status_module \
+  --with-pcre \
+  --add-module=../ngx_brotli \
+  --add-module=../zstd-nginx-module \
+  --with-openssl=../openssl-${OPENSSL_VERSION} \
+  --with-zlib=../zlib-ng \
+  --with-cc-opt="${_cflags} -I/opt/zstd/include" \
+  --with-ld-opt="-L/opt/jemalloc/lib -L/opt/brotli/lib -Wl,-rpath,/opt/jemalloc/lib -ljemalloc -lbrotlienc -lbrotlidec -lbrotlicommon -lstdc++ --ld-path=/usr/lib/llvm22/bin/ld.lld" \
+  --with-openssl-opt="no-nextprotoneg no-weak-ssl-ciphers no-ssl3 no-shared enable-ec_nistp_64_gcc_128 ${_openssl_cflags}" \
+  --with-zlib-opt="--zlib-compat"
+make -j"$(nproc)" CFLAGS="${nginx_bake_cflags}"
+make install CFLAGS="${nginx_bake_cflags}"
+strip --strip-unneeded /usr/sbin/nginx
+# --conf-path=/etc/nginx/nginx.conf installs mime.types under /etc/nginx/, not
+# prefix/conf/. Normalize into /opt/nginx/conf for the runtime COPY.
+mkdir -p /opt/nginx/conf
+if [ -f /etc/nginx/mime.types ]; then
+  cp /etc/nginx/mime.types /opt/nginx/conf/mime.types
+elif [ -f /opt/nginx/conf/mime.types ]; then
+  :
+else
+  echo "mime.types missing after make install"; ls -la /etc/nginx /opt/nginx/conf || true; exit 1
+fi
+test -f /opt/nginx/conf/mime.types
+nginx -V 2>&1 | tee /tmp/nginx-V.txt
+grep -F "nginx/${NGINX_VERSION}" /tmp/nginx-V.txt
+grep -F -- "-mtune=native" /tmp/nginx-V.txt
+grep -F -- "-ljemalloc" /tmp/nginx-V.txt
+grep -F -- "--with-zlib-opt=--zlib-compat" /tmp/nginx-V.txt || \
+  grep -F -- '--with-zlib-opt="--zlib-compat"' /tmp/nginx-V.txt
+grep -Fi openssl /tmp/nginx-V.txt
+grep -Fi brotli /tmp/nginx-V.txt
+grep -Fi zstd /tmp/nginx-V.txt
+ldd /usr/sbin/nginx | tee /tmp/nginx-ldd.txt
+grep -F /opt/jemalloc /tmp/nginx-ldd.txt
+if grep -E '/usr/lib/libzstd|/lib/libzstd' /tmp/nginx-ldd.txt; then
+  echo "apk libzstd leaked into nginx"; exit 1
+fi
+if apk info -e zstd >/dev/null 2>&1; then echo "apk zstd present"; exit 1; fi
+if apk info -e libzstd >/dev/null 2>&1; then echo "apk libzstd present"; exit 1; fi
+if apk info -e zstd-dev >/dev/null 2>&1; then echo "apk zstd-dev present"; exit 1; fi
+grep -F /opt/jemalloc /tmp/nginx-ldd.txt
+rm -rf /usr/src /tmp/nginx.tar.gz /tmp/nginx-V.txt /tmp/nginx-ldd.txt
+if [ -e /usr/src ]; then echo "leftover /usr/src"; exit 1; fi
+BASH
 
 # ---------------------------------------------------------------------------
 FROM alpine:${ALPINE_VERSION}

@@ -6,15 +6,17 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=pgo_lib.sh
 source "${SCRIPT_DIR}/pgo_lib.sh"
 
-pgo_ensure_pg_root
-root="$(pgo_root_dir)"
-mkdir -p "${root}/breadcrumbs"
-if [[ ! -f "${root}/manifest.yaml" ]]; then
+if pgo_reset_sketch_tree "${REPO_ROOT}" || [[ ! -f "$(pgo_root_dir)/manifest.yaml" ]]; then
+  root="$(pgo_root_dir)"
+  mkdir -p "${root}/breadcrumbs"
   cat >"${root}/manifest.yaml" <<EOF
 # HPCPerfStats PGO manifest (operator-local; not committed).
 created: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 namespaces_source: ${PGO_NAMESPACES_YAML}
 EOF
+else
+  root="$(pgo_root_dir)"
+  mkdir -p "${root}/breadcrumbs"
 fi
 
 while IFS= read -r ns; do

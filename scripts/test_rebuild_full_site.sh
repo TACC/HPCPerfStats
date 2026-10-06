@@ -10,6 +10,7 @@ set -euo pipefail
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 FULL_SITE_SCRIPT="${SCRIPT_DIR}/rebuild_full_site.sh"
 MEMORY_LIB="${SCRIPT_DIR}/lib/compose_pipeline_memory_high.sh"
 RUNTIME_ADAPTER="${SCRIPT_DIR}/lib/podman_runtime.sh"
@@ -86,6 +87,24 @@ if ! grep -q 'pgo_podman_build_context_args' "${PGO_LIB}"; then
 fi
 if ! grep -q 'compose_build_proxy_image' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must podman build proxy with --build-context=pgo=PGOROOT" >&2
+  exit 1
+fi
+PROXY_DF="${REPO_ROOT}/services-conf/proxy.Dockerfile"
+DB_DF="${REPO_ROOT}/services-conf/db.Dockerfile"
+if ! grep -q 'BASH_ENV=/usr/local/lib/hpcperfstats/pgo_clang_flags.sh' "${PROXY_DF}"; then
+  echo "proxy.Dockerfile must set BASH_ENV for pgo_clang_flags.sh under OCI (SHELL ignored)" >&2
+  exit 1
+fi
+if ! grep -q '/bin/bash -o pipefail' "${PROXY_DF}"; then
+  echo "proxy.Dockerfile must invoke /bin/bash for PGO build steps" >&2
+  exit 1
+fi
+if ! grep -q 'BASH_ENV=/usr/local/lib/hpcperfstats/pgo_clang_flags.sh' "${DB_DF}"; then
+  echo "db.Dockerfile must set BASH_ENV for pgo_clang_flags.sh under OCI (SHELL ignored)" >&2
+  exit 1
+fi
+if ! grep -q '/bin/bash -o pipefail' "${DB_DF}"; then
+  echo "db.Dockerfile must invoke /bin/bash for PGO build steps" >&2
   exit 1
 fi
 if ! grep -q 'compose_build_web_image' "${FULL_SITE_SCRIPT}"; then
