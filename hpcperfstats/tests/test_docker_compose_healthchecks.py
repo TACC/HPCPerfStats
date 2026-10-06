@@ -4,6 +4,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import yaml
+
 
 def _compose_has_named_tmpfs_volume(
   content: str, name: str, size_opt: str
@@ -965,6 +967,16 @@ def test_docker_compose_settings_example_operator_markers():
   assert "5432:5432" in example_content
   assert "device: /root/.hpcperfstats_pgo" in example_content
   assert "pgo_profiles:/root/.hpcperfstats_pgo" in example_content
+  assert "Do not uncomment individual lines" in example_content
+
+
+def test_docker_compose_settings_example_is_valid_yaml():
+  repo_root = Path(__file__).resolve().parents[2]
+  example_path = repo_root / "docker-compose.settings.yaml.example"
+  parsed = yaml.safe_load(example_path.read_text())
+  assert isinstance(parsed, dict)
+  assert "volumes" in parsed
+  assert "pgo_profiles" in parsed["volumes"]
 
 
 def test_docker_compose_settings_example_operator_parity():

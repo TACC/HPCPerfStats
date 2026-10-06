@@ -80,48 +80,15 @@ volumes:
       device: /root/.hpcperfstats_pgo
       o: bind
 
-# Optional knobs — copy a block under `services:` in your local
-# docker-compose.settings.yaml and uncomment as needed for this site.
+# Optional service overrides — paste ONE whole block below (including `services:`).
+# Do not uncomment individual lines inside a block; partial edits break YAML parsing.
 #
 # Production defaults remain 80/443/514/5672. For an unprivileged development run,
 # set HPCPERFSTATS_HTTP_PORT=8080, HPCPERFSTATS_HTTPS_PORT=8443, and
 # HPCPERFSTATS_SYSLOG_PORT=1514, HPCPERFSTATS_AMQP_PORT=5673 for that command.
-# Production needs no environment file: site paths stay here and application
-# configuration stays in hpcperfstats.ini.
 #
+# --- PGO live soak (rebuild_full_site.sh --profile-phase) ---
 # services:
-#   web:
-#     # Publish Django/gunicorn directly on the host (normally only via proxy 80/443).
-#     ports:
-#       - "${HPCPERFSTATS_WEB_PORT:-8000}:8000"
-#   db:
-#     # Allow the database to be open to the world.
-#     ports:
-#       - "5432:5432"
-#   rabbitmq:
-#     # Allow the rabbitmq management interface to be open to the world.
-#     ports:
-#       - "15672:15672"
-#   proxy:
-#     # Let's Encrypt only — PEMs under live/hostname with archive symlinks.
-#     # Set proxy_ssl_source.device to /etc/letsencrypt (parent tree), then uncomment:
-#     environment:
-#       - HPCPERFSTATS_SSL_CERTS_REL=live/hpcperfstats02.example.com
-#   pipeline:
-#     # Debugging only — normal usage should never need this.
-#     cap_add:
-#       - SYS_PTRACE
-#     # Per-site cgroup overrides (defaults are 128g in docker-compose.yaml):
-#     # mem_limit: 128g
-#     # memswap_limit: 128g
-#     # stop_grace_period: ${HPCPERFSTATS_PIPELINE_STOP_GRACE:-30s}
-#
-# Live-soak PGO (--profile-phase): bind host PGOROOT into app/db/proxy containers so
-# .profraw lands on the host for pgo_merge_namespaces.sh. Mount path must stay
-# /root/.hpcperfstats_pgo (matches pgo_clang_flags.sh + Dockerfile RUN bind targets).
-# Uncomment all four blocks together during profile collection; safe to leave mounted
-# during normal rebuilds (skip/use phases). Override host path via pgo_profiles.device above.
-#
 #   web:
 #     volumes:
 #       - pgo_profiles:/root/.hpcperfstats_pgo
@@ -134,3 +101,29 @@ volumes:
 #   db_pg18:
 #     volumes:
 #       - pgo_profiles:/root/.hpcperfstats_pgo
+#
+# --- Host port publishing (dev/debug) ---
+# services:
+#   web:
+#     ports:
+#       - "${HPCPERFSTATS_WEB_PORT:-8000}:8000"
+#   db:
+#     ports:
+#       - "5432:5432"
+#   rabbitmq:
+#     ports:
+#       - "15672:15672"
+#
+# --- Let's Encrypt REL (set proxy_ssl_source.device to /etc/letsencrypt first) ---
+# services:
+#   proxy:
+#     environment:
+#       - HPCPERFSTATS_SSL_CERTS_REL=live/hpcperfstats02.example.com
+#
+# --- Pipeline debug ---
+# services:
+#   pipeline:
+#     cap_add:
+#       - SYS_PTRACE
+#     mem_limit: 128g
+#     memswap_limit: 128g

@@ -103,7 +103,20 @@ preflight() {
     echo "rebuild_full_site.sh: docker-compose.yaml not found under ${REPO_ROOT}" >&2
     exit 1
   fi
+  if [[ ! -f "${REPO_ROOT}/docker-compose.settings.yaml" ]]; then
+    echo "rebuild_full_site.sh: missing docker-compose.settings.yaml (cp docker-compose.settings.yaml.example)" >&2
+    exit 1
+  fi
   cd "${REPO_ROOT}"
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    return 0
+  fi
+  if ! "${PODMAN_COMPOSE[@]}" config >/dev/null 2>&1; then
+    echo "rebuild_full_site.sh: compose parse failed (often invalid docker-compose.settings.yaml)." >&2
+    echo "rebuild_full_site.sh: paste whole optional blocks from docker-compose.settings.yaml.example — do not uncomment lines inside a block partially." >&2
+    "${PODMAN_COMPOSE[@]}" config 2>&1 | tail -25 >&2 || true
+    exit 1
+  fi
 }
 
 resolve_pgo_phase() {
