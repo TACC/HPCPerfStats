@@ -38,6 +38,17 @@ def test_python_build_uses_clang_native_probe_not_gcc_help() -> None:
   dockerfile = (_repo_root() / "Dockerfile").read_text()
   assert "-Q --help=target" not in dockerfile
   assert "clang_march_native_probe.sh" in dockerfile
+  probe = (
+    _repo_root() / "services-conf" / "clang_march_native_probe.sh"
+  ).read_text()
+  assert "| head -30" not in probe
+  assert "mktemp" in probe
+  assert "-fsyntax-only" in probe
+  assert "-c -o /dev/null" not in probe
+  assert (
+    "/bin/bash /usr/local/lib/hpcperfstats/clang_march_native_probe.sh"
+    in dockerfile
+  )
 
 
 def test_dockerfile_uses_debian_trixie_builder_and_slim_runtime():

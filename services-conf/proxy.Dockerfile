@@ -50,7 +50,7 @@ RUN apk add --no-cache \
     perl
 
 # Print out compiler platform detection (clang_march_native_probe.sh).
-RUN /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
+RUN /bin/bash /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 
 # --- jemalloc ---
 ARG PGO_NAMESPACE=proxy/jemalloc

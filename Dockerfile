@@ -94,7 +94,7 @@ RUN /bin/bash -o pipefail -c '\
 ENV CC=clang-22 CXX=clang++-22
 
 # Print out compiler platform detection (services-conf/clang_march_native_probe.sh).
-RUN CC=clang-22 /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
+RUN CC=clang-22 /bin/bash /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 
 # jemalloc 5.4.0 (shared; keep default initial-exec TLS — do not disable it).
 RUN /bin/bash -o pipefail -c '\
