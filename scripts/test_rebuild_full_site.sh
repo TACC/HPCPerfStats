@@ -80,6 +80,22 @@ if ! grep -q 'pgo_chmod_shared_tree' "${SCRIPT_DIR}/pgo_ensure_layout.sh"; then
   echo "pgo_ensure_layout.sh must call pgo_chmod_shared_tree" >&2
   exit 1
 fi
+if ! grep -q 'pgo_podman_build_context_args' "${PGO_LIB}"; then
+  echo "pgo_lib.sh must define pgo_podman_build_context_args for Podman PGO mounts" >&2
+  exit 1
+fi
+if ! grep -q 'compose_build_proxy_image' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must podman build proxy with --build-context=pgo=PGOROOT" >&2
+  exit 1
+fi
+if ! grep -q 'compose_build_web_image' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must podman build web with --build-context=pgo=PGOROOT" >&2
+  exit 1
+fi
+if ! grep -q 'pgo_podman_build_context_args' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must call pgo_podman_build_context_args for proxy/db podman build" >&2
+  exit 1
+fi
 if ! grep -q '\-\-profile-phase' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must support --profile-phase" >&2
   exit 1
@@ -120,8 +136,9 @@ if ! grep -q 'compose_build_db_pg18' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must build db_pg18 via compose_build_db_pg18" >&2
   exit 1
 fi
-if ! grep -qF -- '--profile "${PG18_PROFILE}" build' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must build db_pg18 with pg18-migrate profile" >&2
+if ! grep -q 'compose_build_db_pg18' "${FULL_SITE_SCRIPT}" \
+  || ! grep -q 'hpcperfstats-db' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must build db_pg18 image (hpcperfstats-db)" >&2
   exit 1
 fi
 if ! grep -qF -- '--profile "${PG18_PROFILE}" up -d --force-recreate "${PG18_SERVICE}"' "${FULL_SITE_SCRIPT}"; then

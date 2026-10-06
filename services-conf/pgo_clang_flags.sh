@@ -29,23 +29,24 @@ hpcperfstats_strip_lto_and_pgo() {
   local s="${1}"
   printf '%s' "${s}" | sed -E \
     's/-flto=thin//g; s/-fuse-ld=lld//g; s/-fuse-ld=[^[:space:]]+//g; \
+     s/--ld-path=[^[:space:]]+//g; \
      s/-fprofile-instr-generate=[^[:space:]]+//g; s/-fprofile-instr-use=[^[:space:]]+//g; \
      s/[[:space:]]+/ /g; s/^ //; s/ $//'
 }
 
 # variant: libs (Alpine default), pg (PostgreSQL vector width), debian-lib (Debian web
-# native deps: ThinLTO in bake CFLAGS; fuse-ld only via LDFLAGS / HPC_FUSE_LD_LLD).
+# native deps: ThinLTO in bake CFLAGS; --ld-path only via LDFLAGS / HPC_CLANG_LD_PATH).
 hpcperfstats_native_base_cflags() {
   local variant="${1:-libs}"
   case "${variant}" in
     pg)
-      printf '%s' "-O2 -march=native -mprefer-vector-width=512 -mtune=native -flto=thin -fuse-ld=lld -g0"
+      printf '%s' "-O2 -march=native -mprefer-vector-width=512 -mtune=native -flto=thin --ld-path=/usr/lib/llvm22/bin/ld.lld -g0"
       ;;
     debian-lib)
       printf '%s' "-O2 -march=native -mtune=native -flto=thin -g0"
       ;;
     libs | *)
-      printf '%s' "-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"
+      printf '%s' "-O2 -march=native -mtune=native -flto=thin --ld-path=/usr/lib/llvm22/bin/ld.lld -g0"
       ;;
   esac
 }

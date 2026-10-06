@@ -36,7 +36,7 @@ ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
 ARG ZSTD_NGINX_MODULE_VERSION=0.2.2
 ARG ZSTD_NGINX_MODULE_SHA256=d4db8937f035ebb5e7efca833492611f8f5e4f710dbd3fbdd2f1aa5a85d3fe5e
 
-ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"
+ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin --ld-path=/usr/lib/llvm22/bin/ld.lld -g0"
 
 RUN apk add --no-cache \
     bash \
@@ -55,7 +55,7 @@ RUN /bin/bash /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 
 # --- jemalloc ---
 ARG PGO_NAMESPACE=proxy/jemalloc
-RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   curl -fsSL "https://github.com/jemalloc/jemalloc/releases/download/${JEMALLOC_VERSION}/jemalloc-${JEMALLOC_VERSION}.tar.bz2" \
@@ -79,7 +79,7 @@ WORKDIR /usr/src
 # ./configure. zlib-ng requires --zlib-compat as a configure argv flag; passing
 # it via CFLAGS aborts with "Compiler error reporting is too harsh".
 ARG PGO_NAMESPACE=proxy/zlib-ng
-RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   _cflags="$(hpcperfstats_bake_cflags proxy/zlib-ng)"; \
@@ -124,7 +124,7 @@ RUN set -eux; \
 # -lbrotlienc instead of compiling deps sources. Pre-build static libs to
 # /opt/brotli so the nginx link line can resolve them (folded into the binary).
 ARG PGO_NAMESPACE=proxy/brotli
-RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   _cflags="$(hpcperfstats_bake_cflags proxy/brotli)"; \
@@ -160,7 +160,7 @@ RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
 # are for the db/Python zstd CLI). Do not lib-mt: nginx already has one worker
 # per CPU. Fold libzstd.a into nginx; do not COPY /opt/zstd into the runtime.
 ARG PGO_NAMESPACE=proxy/zstd
-RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   _cflags="$(hpcperfstats_bake_cflags proxy/zstd)"; \
@@ -189,7 +189,7 @@ RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
 
 # --- nginx ---
 ARG PGO_NAMESPACE=proxy/nginx
-RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   _cflags="$(hpcperfstats_bake_cflags proxy/nginx)"; \
@@ -229,7 +229,7 @@ RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
     --with-openssl=../openssl-${OPENSSL_VERSION} \
     --with-zlib=../zlib-ng \
     --with-cc-opt="${_cflags} -I/opt/zstd/include" \
-    --with-ld-opt="-L/opt/jemalloc/lib -L/opt/brotli/lib -Wl,-rpath,/opt/jemalloc/lib -ljemalloc -lbrotlienc -lbrotlidec -lbrotlicommon -lstdc++ -fuse-ld=lld" \
+    --with-ld-opt="-L/opt/jemalloc/lib -L/opt/brotli/lib -Wl,-rpath,/opt/jemalloc/lib -ljemalloc -lbrotlienc -lbrotlidec -lbrotlicommon -lstdc++ --ld-path=/usr/lib/llvm22/bin/ld.lld" \
     --with-openssl-opt="no-nextprotoneg no-weak-ssl-ciphers no-ssl3 no-shared enable-ec_nistp_64_gcc_128 ${_openssl_cflags}" \
     --with-zlib-opt="--zlib-compat"; \
   make -j"$(nproc)" CFLAGS="${nginx_bake_cflags}"; \

@@ -184,23 +184,73 @@ run_pgo_use_path() {
 
 compose_build_service() {
   local svc="$1"
+  case "${svc}" in
+    web)
+      compose_build_web_image
+      return $?
+      ;;
+    proxy)
+      compose_build_proxy_image
+      return $?
+      ;;
+  esac
   LAST_STEP="podman-compose build ${svc} (PGO_PHASE=${PGO_PHASE})"
   echo "rebuild_full_site.sh: ${LAST_STEP} ..."
   run_cmd env PGO_PHASE="${PGO_PHASE}" PGO_ROOT="${PGOROOT}" PGOROOT="${PGOROOT}" \
     "${PODMAN_COMPOSE[@]}" build \
     --build-arg "PGO_PHASE=${PGO_PHASE}" \
-    --build-arg "PGO_ROOT=${PGOROOT}" \
+    --build-arg "PGO_ROOT=/root/.hpcperfstats_pgo" \
     "${svc}"
 }
 
-compose_build_db_pg18() {
-  LAST_STEP="podman-compose --profile ${PG18_PROFILE} build ${PG18_SERVICE} (PGO_PHASE=${PGO_PHASE})"
+compose_build_web_image() {
+  local pgo_ctx git_commit
+  LAST_STEP="podman build web (PGO_PHASE=${PGO_PHASE} PGOROOT=${PGOROOT})"
   echo "rebuild_full_site.sh: ${LAST_STEP} ..."
-  run_cmd env PGO_PHASE="${PGO_PHASE}" PGO_ROOT="${PGOROOT}" PGOROOT="${PGOROOT}" \
-    "${PODMAN_COMPOSE[@]}" --profile "${PG18_PROFILE}" build \
+  git_commit="${HPCPERFSTATS_GIT_COMMIT:-unknown}"
+  if [[ "${git_commit}" == "unknown" ]] \
+    && command -v git >/dev/null 2>&1 \
+    && git -C "${REPO_ROOT}" rev-parse HEAD >/dev/null 2>&1; then
+    git_commit="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+  fi
+  mapfile -t pgo_ctx < <(pgo_podman_build_context_args)
+  run_cmd "${PODMAN[@]}" build \
+    -f "${REPO_ROOT}/Dockerfile" \
+    -t hpcperfstats \
+    --target hpcperfstats-full \
+    --build-arg "HPCPERFSTATS_GIT_COMMIT=${git_commit}" \
     --build-arg "PGO_PHASE=${PGO_PHASE}" \
-    --build-arg "PGO_ROOT=${PGOROOT}" \
-    "${PG18_SERVICE}"
+    --build-arg "PGO_ROOT=/root/.hpcperfstats_pgo" \
+    "${pgo_ctx[@]}" \
+    "${REPO_ROOT}"
+}
+
+compose_build_proxy_image() {
+  local pgo_ctx
+  LAST_STEP="podman build proxy (PGO_PHASE=${PGO_PHASE} PGOROOT=${PGOROOT})"
+  echo "rebuild_full_site.sh: ${LAST_STEP} ..."
+  mapfile -t pgo_ctx < <(pgo_podman_build_context_args)
+  run_cmd "${PODMAN[@]}" build \
+    -f "${REPO_ROOT}/services-conf/proxy.Dockerfile" \
+    -t hpcperfstats-proxy \
+    --build-arg "PGO_PHASE=${PGO_PHASE}" \
+    --build-arg "PGO_ROOT=/root/.hpcperfstats_pgo" \
+    "${pgo_ctx[@]}" \
+    "${REPO_ROOT}"
+}
+
+compose_build_db_pg18() {
+  local pgo_ctx
+  LAST_STEP="podman build ${PG18_SERVICE} (PGO_PHASE=${PGO_PHASE} PGOROOT=${PGOROOT})"
+  echo "rebuild_full_site.sh: ${LAST_STEP} ..."
+  mapfile -t pgo_ctx < <(pgo_podman_build_context_args)
+  run_cmd "${PODMAN[@]}" build \
+    -f "${REPO_ROOT}/services-conf/db.Dockerfile" \
+    -t hpcperfstats-db \
+    --build-arg "PGO_PHASE=${PGO_PHASE}" \
+    --build-arg "PGO_ROOT=/root/.hpcperfstats_pgo" \
+    "${pgo_ctx[@]}" \
+    "${REPO_ROOT}/services-conf"
 }
 
 compose_build_all_with_pgo() {

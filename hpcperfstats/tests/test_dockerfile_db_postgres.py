@@ -22,7 +22,7 @@ def test_db_dockerfile_uses_clang22_apk_toolchain() -> None:
   assert "gcc-toolchain" not in text
   assert "assert_gcc_min_version" not in text
   assert "pgo_clang_flags.sh" in text
-  assert "source=${PGO_ROOT},target=/root/.hpcperfstats_pgo" in text
+  assert "from=pgo,source=.,target=/root/.hpcperfstats_pgo" in text
   assert "clang_march_native_probe.sh" in text
   assert "-Q --help=target" not in text
   assert "-flto=thin" in text
@@ -180,7 +180,7 @@ def test_db_dockerfile_libs_mtune_and_lz4_heapmode() -> None:
   """OPT_CFLAGS_LIBS include -mtune=native; lz4 bake sets -DLZ4_HEAPMODE=0."""
   text = _dockerfile()
   assert (
-    'ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"'
+    'ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin --ld-path=/usr/lib/llvm22/bin/ld.lld -g0"'
     in text
   )
   assert "-mtune=native" in text

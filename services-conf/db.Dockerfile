@@ -19,8 +19,8 @@ RUN chmod +x /usr/local/lib/hpcperfstats/pgo_clang_flags.sh /usr/local/lib/hpcpe
 
 # LLVM major matches docker-library postgres 18/alpine3.24.
 ENV DOCKER_PG_LLVM_DEPS="llvm22-dev clang22"
-ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"
-ENV OPT_CFLAGS_PG="-O2 -march=native -mprefer-vector-width=512 -mtune=native -flto=thin -fuse-ld=lld -g0"
+ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin --ld-path=/usr/lib/llvm22/bin/ld.lld -g0"
+ENV OPT_CFLAGS_PG="-O2 -march=native -mprefer-vector-width=512 -mtune=native -flto=thin --ld-path=/usr/lib/llvm22/bin/ld.lld -g0"
 
 RUN set -eux; \
   apk add --no-cache \
@@ -62,7 +62,7 @@ ARG JEMALLOC_VERSION=5.4.0
 ARG JEMALLOC_SHA256=200776fac271093e7c2f21edd6d62657ecd2be578d9328633f2a86bfa6ef4f1d
 # --- jemalloc ---
 ARG PGO_NAMESPACE=db/jemalloc
-RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   curl -fsSL "https://github.com/jemalloc/jemalloc/releases/download/${JEMALLOC_VERSION}/jemalloc-${JEMALLOC_VERSION}.tar.bz2" \
@@ -83,7 +83,7 @@ ARG LZ4_VERSION=1.10.0
 ARG LZ4_SHA256=537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b
 # --- lz4 ---
 ARG PGO_NAMESPACE=db/lz4
-RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   _cflags="$(hpcperfstats_bake_cflags db/lz4) -DLZ4_HEAPMODE=0"; \
@@ -101,7 +101,7 @@ ARG ICU_VERSION=78.3
 ARG ICU_SHA256=3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0
 # --- ICU (source under /opt/icu; not apk icu-dev as linked ABI) ---
 ARG PGO_NAMESPACE=db/icu
-RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   _cflags="$(hpcperfstats_bake_cflags db/icu)"; \
@@ -121,7 +121,7 @@ ARG LIBURING_VERSION=2.15
 ARG LIBURING_SHA256=8d052f2622dcb3678cbaee5ff582a87572672a6c0a56533cdda5b65cb636120a
 # --- liburing ---
 ARG PGO_NAMESPACE=db/liburing
-RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   _cflags="$(hpcperfstats_bake_cflags db/liburing)"; \
@@ -140,7 +140,7 @@ ARG ZLIB_NG_VERSION=2.3.3
 ARG ZLIB_NG_SHA256=f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1
 # --- zlib-ng (ZLIB_COMPAT → libz.so; match Python image /opt/zlib-ng pin) ---
 ARG PGO_NAMESPACE=db/zlib-ng
-RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   _cflags="$(hpcperfstats_bake_cflags db/zlib-ng)"; \
@@ -171,7 +171,7 @@ ARG ZSTD_VERSION=1.5.7
 ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
 # --- zstd (match Python image /opt/zstd 1.5.7 pin; gzip→zlib-ng, .lz4→/opt/lz4) ---
 ARG PGO_NAMESPACE=db/zstd
-RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   _cflags="$(hpcperfstats_bake_cflags db/zstd)"; \
@@ -205,7 +205,7 @@ ARG PG_VERSION=18.6
 ARG PG_SHA256=555610c24d53e4316da5b7d3fc25c279d96856d5e0e23ee308c328c5fa881d9f
 # --- PostgreSQL 18 ---
 ARG PGO_NAMESPACE=db/postgresql
-RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   _pg_cflags="$(hpcperfstats_bake_cflags db/postgresql pg)"; \
@@ -279,7 +279,7 @@ ARG TIMESCALEDB_SHA256=a7003a70836477dc8d575d95a4c515d8a22ed219d0cb03b3640bb813f
 # Timescale 2.29+ also does not DT_NEEDED external liblz4/libzstd. musl `ldd`
 # on a PG extension always reports unresolved backend symbols — use scanelf.
 ARG PGO_NAMESPACE=db/timescaledb
-RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   _ts_cflags="$(hpcperfstats_bake_cflags db/timescaledb pg)"; \

@@ -26,7 +26,7 @@ def test_python_build_uses_clang_22_from_trixie() -> None:
   assert "clang-22" in build
   assert "llvm-22" in build
   assert "lld-22" in build
-  assert "HPC_FUSE_LD_LLD=-fuse-ld=/usr/lib/llvm-22/bin/ld.lld" in build
+  assert "HPC_CLANG_LD_PATH=--ld-path=/usr/lib/llvm-22/bin/ld.lld" in build
   assert "AR=llvm-ar-22" in build
   assert "RANLIB=llvm-ranlib-22" in build
   assert "update-alternatives --install /usr/bin/llvm-ar llvm-ar" in build
@@ -44,8 +44,25 @@ def test_python_build_uses_clang_22_from_trixie() -> None:
   assert "assert_gcc_min_version" not in build
   assert "build-essential" not in build
   assert "bzip2" in build
+  assert "libgdbm-compat-dev" in build
   assert "ENV CC=clang-22 CXX=clang++-22" in build
   assert "-flto=thin" in build
+
+
+def test_python_build_mounts_pgoroot_for_pgo_namespaces() -> None:
+  """Build-time PGO profraw must reach host PGOROOT (from=pgo + rebuild --build-context)."""
+  build = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
+  mount = "from=pgo,source=.,target=/root/.hpcperfstats_pgo"
+  assert mount in build
+  for needle in (
+    "web/shared/jemalloc",
+    "web/shared/zlib-ng",
+    "web/shared/zstd",
+    "web/shared/mpdecimal",
+    "web/shared/libffi",
+  ):
+    assert needle in build
+  assert build.count(mount) >= 5
 
 
 def test_python_build_uses_clang_native_probe_not_gcc_help() -> None:
@@ -250,7 +267,7 @@ def test_jemalloc_configure_flags_and_no_initial_exec_tls():
     build.index("jemalloc-5.4.0.tar.bz2") : build.index("zlib-ng/archive")
   ]
   assert "_ld=" in jem and "LDFLAGS=" in jem
-  assert "HPC_FUSE_LD_LLD" in jem
+  assert "HPC_CLANG_LD_PATH" in jem
   assert "/usr/lib/llvm-22/bin/ld.lld" in build
   assert 'CPPFLAGS="-D_GNU_SOURCE"' in jem
   configure_block = jem[jem.index("./configure") : jem.index("make -j40")]

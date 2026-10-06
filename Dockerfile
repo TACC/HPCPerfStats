@@ -81,7 +81,7 @@ RUN /bin/bash -o pipefail -c '\
     curl ca-certificates autoconf bzip2 \
     libssl-dev libncursesw5-dev libsqlite3-dev \
     libreadline-dev libbz2-dev liblzma-dev tk-dev uuid-dev \
-    libgdbm-dev libnss3-dev libexpat1-dev \
+    libgdbm-dev libgdbm-compat-dev libnss3-dev libexpat1-dev \
     default-libmysqlclient-dev file binutils; \
   update-alternatives --install /usr/bin/clang clang /usr/bin/clang-22 100; \
   update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-22 100; \
@@ -112,13 +112,14 @@ RUN /bin/bash -o pipefail -c '\
 
 ENV CC=clang-22 CXX=clang++-22 \
     AR=llvm-ar-22 RANLIB=llvm-ranlib-22 NM=llvm-nm-22 \
-    HPC_FUSE_LD_LLD=-fuse-ld=/usr/lib/llvm-22/bin/ld.lld
+    HPC_CLANG_LD_PATH=--ld-path=/usr/lib/llvm-22/bin/ld.lld
 
 # Print out compiler platform detection (services-conf/clang_march_native_probe.sh).
 RUN CC=clang-22 /bin/bash /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 
 # jemalloc 5.4.0 (shared; keep default initial-exec TLS — do not disable it).
-RUN /bin/bash -o pipefail -c '\
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
+  /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   PAGE_SIZE="$(getconf PAGE_SIZE)"; \
   case "${PAGE_SIZE}" in \
@@ -139,7 +140,7 @@ RUN /bin/bash -o pipefail -c '\
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   _cf_cfg="$(hpcperfstats_configure_cflags web/shared/jemalloc debian-lib)"; \
   _cf_bake="$(hpcperfstats_bake_cflags web/shared/jemalloc debian-lib)"; \
-  _ld="${HPC_FUSE_LD_LLD}"; \
+  _ld="${HPC_CLANG_LD_PATH}"; \
   CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" \
     CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" CPPFLAGS="-D_GNU_SOURCE" \
     ./configure --prefix=/opt/jemalloc --enable-shared --disable-static \
@@ -154,7 +155,8 @@ RUN /bin/bash -o pipefail -c '\
   rm -rf /usr/src/jemalloc'
 
 # zlib-ng 2.3.3 (ZLIB_COMPAT → libz.so.1). CPython and source builds link this; no apt zlib*.
-RUN /bin/bash -o pipefail -c '\
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
+  /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   curl -fsSL "https://github.com/zlib-ng/zlib-ng/archive/refs/tags/2.3.3.tar.gz" \
     -o /tmp/zlib-ng.tar.gz; \
@@ -163,6 +165,8 @@ RUN /bin/bash -o pipefail -c '\
   tar -xzf /tmp/zlib-ng.tar.gz -C /usr/src/zlib-ng --strip-components=1; \
   rm -f /tmp/zlib-ng.tar.gz; \
   cd /usr/src/zlib-ng; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  _cf_bake="$(hpcperfstats_bake_cflags web/shared/zlib-ng debian-lib)"; \
   cmake -S . -B build \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/opt/zlib-ng \
@@ -174,7 +178,7 @@ RUN /bin/bash -o pipefail -c '\
     -DWITH_OPTIM=ON \
     -DWITH_NEW_STRATEGIES=ON \
     -DWITH_NATIVE_INSTRUCTIONS=ON \
-    -DCMAKE_C_FLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_FUSE_LD_LLD} -g0"; \
+    -DCMAKE_C_FLAGS="${_cf_bake} ${HPC_CLANG_LD_PATH}"; \
   cmake --build build -j40; \
   cmake --install build; \
   find /opt/zlib-ng -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
@@ -184,7 +188,8 @@ RUN /bin/bash -o pipefail -c '\
   rm -rf /usr/src/zlib-ng'
 
 # zstd 1.5.7 (lib + CLI). Link gzip/zlib support to /opt/zlib-ng; no apt zstd.
-RUN /bin/bash -o pipefail -c '\
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
+  /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   curl -fsSL "https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz" \
     -o /tmp/zstd.tar.gz; \
@@ -196,7 +201,8 @@ RUN /bin/bash -o pipefail -c '\
   export PKG_CONFIG_PATH="/opt/zlib-ng/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
   export CPPFLAGS="-I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
   export LDFLAGS="-L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib${LDFLAGS:+ $LDFLAGS}"; \
-  export MOREFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_FUSE_LD_LLD} -g0"; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  export MOREFLAGS="$(hpcperfstats_bake_cflags web/shared/zstd debian-lib) ${HPC_CLANG_LD_PATH}"; \
   make -j40 PREFIX=/opt/zstd HAVE_ZLIB=1; \
   make install PREFIX=/opt/zstd; \
   find /opt/zstd -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
@@ -209,7 +215,8 @@ RUN /bin/bash -o pipefail -c '\
   rm -rf /usr/src/zstd'
 
 # mpdecimal 4.0.1 (x86_64 MACHINE=x64 → CONFIG_64 + ASM).
-RUN /bin/bash -o pipefail -c '\
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
+  /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   curl -fsSL "https://www.bytereef.org/software/mpdecimal/releases/mpdecimal-4.0.1.tar.gz" \
     -o /tmp/mpdecimal.tar.gz; \
@@ -218,9 +225,10 @@ RUN /bin/bash -o pipefail -c '\
   tar -xzf /tmp/mpdecimal.tar.gz -C /usr/src/mpdecimal --strip-components=1; \
   rm -f /tmp/mpdecimal.tar.gz; \
   cd /usr/src/mpdecimal; \
-  _cf_cfg="-O3 -march=native -DCONFIG_64 -DASM -g0"; \
-  _cf_bake="-O3 -march=native -DCONFIG_64 -DASM -flto=thin -fPIC -g0"; \
-  _ld="${HPC_FUSE_LD_LLD} -flto=thin"; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  _cf_cfg="$(hpcperfstats_configure_cflags web/shared/mpdecimal debian-lib) -DCONFIG_64 -DASM"; \
+  _cf_bake="$(hpcperfstats_bake_cflags web/shared/mpdecimal debian-lib) -DCONFIG_64 -DASM"; \
+  _ld="${HPC_CLANG_LD_PATH} -flto=thin"; \
   CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" \
     CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" \
     ./configure --prefix=/opt/mpdecimal MACHINE=x64 --disable-cxx; \
@@ -234,7 +242,8 @@ RUN /bin/bash -o pipefail -c '\
   rm -rf /usr/src/mpdecimal'
 
 # libffi 3.8.0 (--with-gcc-arch=native).
-RUN /bin/bash -o pipefail -c '\
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
+  /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   curl -fsSL "https://github.com/libffi/libffi/releases/download/v3.8.0/libffi-3.8.0.tar.gz" \
     -o /tmp/libffi.tar.gz; \
@@ -246,7 +255,7 @@ RUN /bin/bash -o pipefail -c '\
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   _cf_cfg="$(hpcperfstats_configure_cflags web/shared/libffi debian-lib)"; \
   _cf_bake="$(hpcperfstats_bake_cflags web/shared/libffi debian-lib)"; \
-  _ld="${HPC_FUSE_LD_LLD}"; \
+  _ld="${HPC_CLANG_LD_PATH}"; \
   CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" \
     CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" \
     ./configure --prefix=/opt/libffi --with-gcc-arch=native --disable-static --enable-shared; \
@@ -509,8 +518,8 @@ RUN /bin/bash -o pipefail -c '\
 # 4b) GIL native brotli (replace rest-layer wheel; host .venv keeps the wheel).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
-  export CFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_FUSE_LD_LLD} -g0" \
-    CXXFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_FUSE_LD_LLD} -g0"; \
+  export CFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_CLANG_LD_PATH} -g0" \
+    CXXFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_CLANG_LD_PATH} -g0"; \
   python3 -m pip install --no-cache-dir --force-reinstall --no-binary brotli \
     --constraint /tmp/requirements.txt brotli; \
   python3 -c "import brotli; p=brotli.compress(b\"hps\", quality=11); assert brotli.decompress(p)==b\"hps\""'
@@ -595,8 +604,8 @@ RUN /bin/bash -o pipefail -c '\
 # 7b) Free-threaded native brotli (same CFLAGS as GIL; rest layer stays wheels).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
-  export CFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_FUSE_LD_LLD} -g0" \
-    CXXFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_FUSE_LD_LLD} -g0"; \
+  export CFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_CLANG_LD_PATH} -g0" \
+    CXXFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_CLANG_LD_PATH} -g0"; \
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir \
     --force-reinstall --no-binary brotli \
     --constraint /tmp/requirements.txt brotli; \
@@ -719,8 +728,8 @@ RUN /bin/bash -o pipefail -c "apt-get update -y \
        vim nano lsof openssh-client fd-find\
        curl ca-certificates libreadline8t64 \
        libssl3t64 libsqlite3-0 libbz2-1.0 liblzma5 \
-       libncursesw6 libuuid1 libgdbm6t64 libexpat1 \
-       libpq5 libmariadb3 libunwind8\
+       libncursesw6 libuuid1 libgdbm6t64 libgdbm-compat4t64 \
+       libexpat1 libpq5 libmariadb3 libunwind8 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*"
 

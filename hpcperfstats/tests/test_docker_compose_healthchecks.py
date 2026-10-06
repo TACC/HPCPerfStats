@@ -727,7 +727,7 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   assert "libzstd" not in ld_opt, (
     "libzstd must fold via zstd-nginx-module static path, not --with-ld-opt (nginx configure probe)"
   )
-  assert "-fuse-ld=lld" in ld_opt
+  assert "--ld-path=/usr/lib/llvm22/bin/ld.lld" in ld_opt
   nginx_run = dockerfile[
     dockerfile.index("# --- nginx ---") : dockerfile.index(
       "# ---------------------------------------------------------------------------"

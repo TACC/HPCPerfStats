@@ -292,6 +292,7 @@ def test_dockerfile_pins_dual_cpython_prefixes_from_python_build():
   assert "/opt/hpcperfstats-ft" not in dockerfile
 
   base = _stage_body(dockerfile, "hpcperfstats-base")
+  assert "libgdbm-compat4t64" in base
   assert "COPY --from=python-build /opt/python3.14t /opt/python3.14t" in base
   assert "COPY --from=python-build /opt/python3.14 /opt/python3.14" in base
   assert "/opt/python3.14t/bin/python3.14t -m pip" in base

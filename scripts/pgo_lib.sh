@@ -40,6 +40,13 @@ pgo_chmod_shared_tree() {
   find "${root}" -type f -exec chmod a+rw {} +
 }
 
+# Host PGOROOT for podman build --build-context=pgo=… (proxy/db PGO profraw mounts).
+pgo_podman_build_context_args() {
+  local root
+  root="$(cd "$(pgo_root_dir)" && pwd)"
+  printf '%s\n' "--build-context=pgo=${root}"
+}
+
 pgo_use_breadcrumb_path() {
   printf '%s/breadcrumbs/pgo_use_full_rebuild.done' "$(pgo_root_dir)"
 }
