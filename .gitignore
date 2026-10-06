@@ -42,6 +42,7 @@ tacc_stats.egg-info/
 # Clang PGO bake flags (db/proxy COPY; Dockerfile COPY from services-conf/).
 !services-conf/pgo_clang_flags.sh
 !services-conf/clang_march_native_probe.sh
+!services-conf/alpine_pgo_profile_runtime_link.sh
 *.so
 *.d
 .project
