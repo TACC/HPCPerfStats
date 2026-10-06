@@ -212,13 +212,19 @@ hpcperfstats_cpython_stage_profiles_for_profile_opt() {
   fi
 }
 
-# generate: install instrumented tree without running profile-opt (libinstall: all → build_all).
+# generate: install instrumented tree without running profile-opt (Makefile uses tabs after ':').
 hpcperfstats_cpython_relax_install_deps_for_instrumented() {
+  [[ -f Makefile ]] || hpcperfstats_pgo_die "CPython Makefile missing (run ./configure first)"
   sed -i \
-    -e 's/^libinstall: all/libinstall: build_all/' \
-    -e 's/^sharedinstall: all/sharedinstall: build_all/' \
-    -e 's/^libainstall: all scripts/libainstall: build_all scripts/' \
+    -e 's/^all:[[:space:]]*profile-opt/all: build_all/' \
+    -e 's/^libinstall:[[:space:]]*all/libinstall: build_all/' \
+    -e 's/^sharedinstall:[[:space:]]*all/sharedinstall: build_all/' \
+    -e 's/^libainstall:[[:space:]]*all/libainstall: build_all/' \
     Makefile
+  grep -q '^all:[[:space:]]*build_all' Makefile \
+    || hpcperfstats_pgo_die "PGO generate: failed to repoint all: away from profile-opt"
+  grep -q '^libinstall:[[:space:]]*build_all' Makefile \
+    || hpcperfstats_pgo_die "PGO generate: failed to repoint libinstall: away from all"
 }
 
 # PGO generate must not run upstream profile-run-stamp (unittest) or profile-opt without soak data.
@@ -234,10 +240,10 @@ hpcperfstats-profile-opt-guard:
 	@test -s "$(CURDIR)/code.profclangd" || { echo "pgo_clang_flags: profile-opt requires non-empty code.profclangd (soak + merge/stage first)" >&2; exit 1; }
 EOF
   if grep -q '^profile-run-stamp:' Makefile; then
-    sed -i 's/^profile-run-stamp:/profile-run-stamp: hpcperfstats-block-profile-run-stamp/' Makefile
+    sed -i 's/^profile-run-stamp:[[:space:]]*/profile-run-stamp: hpcperfstats-block-profile-run-stamp /' Makefile
   fi
   if grep -q '^profile-opt:' Makefile; then
-    sed -i 's/^profile-opt:/profile-opt: hpcperfstats-profile-opt-guard/' Makefile
+    sed -i 's/^profile-opt:[[:space:]]*/profile-opt: hpcperfstats-profile-opt-guard /' Makefile
   fi
 }
 

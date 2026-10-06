@@ -185,8 +185,41 @@ def test_pgo_alpine_thinlto_ldflags_for_jemalloc_link() -> None:
   assert "--ld-path=/usr/lib/llvm22/bin/ld.lld" in out
 
 
+def test_cpython_generate_makefile_relax_matches_tabbed_makefile() -> None:
+  """Regression: CPython Makefile uses tabs after ':'; space-only sed never rewired install."""
+  import tempfile
+
+  script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
+  sample = (
+    "all:\t\tprofile-opt\n"
+    "profile-opt: profile-run-stamp\n"
+    "sharedinstall: all\n"
+    "libinstall:\tall $(srcdir)/Modules/xxmodule.c\n"
+    "libainstall: all scripts\n"
+  )
+  with tempfile.TemporaryDirectory() as tmp:
+    mk = Path(tmp) / "Makefile"
+    mk.write_text(sample, encoding="utf-8")
+    subprocess.run(
+      [
+        "bash",
+        "-c",
+        f'source "{script}"; hpcperfstats_cpython_relax_install_deps_for_instrumented',
+      ],
+      cwd=tmp,
+      check=True,
+    )
+    out = mk.read_text(encoding="utf-8")
+  assert "all: build_all" in out.replace("\t", " ")
+  assert "libinstall: build_all" in out.replace("\t", " ")
+  assert "sharedinstall: build_all" in out.replace("\t", " ")
+  assert "libainstall: build_all" in out.replace("\t", " ")
+  assert "profile-opt" in out
+
+
 def test_cpython_make_install_uses_upstream_profile_targets() -> None:
   script = (_repo_root() / "services-conf" / "pgo_clang_flags.sh").read_text()
+  assert "all:[[:space:]]*profile-opt" in script
   assert "profile-gen-stamp" in script
   assert "touch profile-run-stamp" in script
   assert "profile-opt" in script
