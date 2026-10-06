@@ -48,7 +48,10 @@ RUN set -eux; \
     pkgconf \
     python3 \
     util-linux-dev \
-    $DOCKER_PG_LLVM_DEPS
+    $DOCKER_PG_LLVM_DEPS; \
+  ln -sf /usr/lib/llvm22/bin/ld.lld /usr/local/bin/ld.lld; \
+  ln -sf /usr/lib/llvm22/bin/ld.lld /usr/local/bin/lld; \
+  test -x /usr/local/bin/ld.lld
 # libz ABI is /opt/zlib-ng (ZLIB_COMPAT); do not apk-install stock zlib packages.
 
 # Podman OCI ignores Dockerfile SHELL; PGO RUN steps invoke /bin/bash explicitly (BASH_ENV sources pgo_clang_flags.sh).

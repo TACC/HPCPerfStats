@@ -182,6 +182,7 @@ def test_pgo_alpine_thinlto_ldflags_for_jemalloc_link() -> None:
     text=True,
   ).strip()
   assert "-flto=thin" in out
+  assert "-fuse-ld=lld" in out
   assert "--ld-path=/usr/lib/llvm22/bin/ld.lld" in out
 
 

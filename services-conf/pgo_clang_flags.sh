@@ -119,7 +119,8 @@ hpcperfstats_native_base_cflags() {
 
 # Autotools (jemalloc shared): compile uses bake CFLAGS (-flto=thin); link must repeat LTO.
 hpcperfstats_alpine_thinlto_ldflags() {
-  printf '%s' "-flto=thin --ld-path=/usr/lib/llvm22/bin/ld.lld"
+  # -fuse-ld=lld: clang++ must not fall back to musl gcc ld (TPOFF32 / ThinLTO .so link).
+  printf '%s' "-flto=thin -fuse-ld=lld --ld-path=/usr/lib/llvm22/bin/ld.lld"
 }
 
 hpcperfstats_configure_cflags() {

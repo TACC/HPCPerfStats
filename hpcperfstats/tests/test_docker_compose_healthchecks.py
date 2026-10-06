@@ -647,6 +647,9 @@ def test_proxy_dockerfile_uses_clang22_apk_toolchain() -> None:
   assert "bash" in _apk_before_probe, (
     "Alpine proxy-build needs bash before clang_march_native_probe RUN"
   )
+  assert "/usr/local/bin/ld.lld" in dockerfile, (
+    "ENV LD=ld.lld requires ld.lld on PATH for ThinLTO shared jemalloc link"
+  )
   assert "-Q --help=target" not in dockerfile
   assert "NGINX_OPT_CFLAGS" not in dockerfile
   assert "-flto=thin" in dockerfile

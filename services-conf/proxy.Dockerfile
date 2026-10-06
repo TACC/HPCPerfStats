@@ -51,6 +51,10 @@ RUN apk add --no-cache \
     pcre2-dev \
     perl
 
+RUN ln -sf /usr/lib/llvm22/bin/ld.lld /usr/local/bin/ld.lld && \
+    ln -sf /usr/lib/llvm22/bin/ld.lld /usr/local/bin/lld && \
+    test -x /usr/local/bin/ld.lld
+
 # Podman OCI ignores Dockerfile SHELL; PGO RUN steps invoke /bin/bash explicitly (BASH_ENV sources pgo_clang_flags.sh).
 ENV BASH_ENV=/usr/local/lib/hpcperfstats/pgo_clang_flags.sh
 
