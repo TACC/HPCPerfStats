@@ -73,10 +73,13 @@ RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   cd /usr/src/jemalloc; \
   _cf_cfg="$(hpcperfstats_configure_cflags db/jemalloc)"; \
   _cf_bake="$(hpcperfstats_bake_cflags db/jemalloc)"; \
+  _lto_ld="$(hpcperfstats_alpine_thinlto_ldflags)"; \
   CPPFLAGS="-D_GNU_SOURCE" CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" \
     ./configure --prefix=/opt/jemalloc; \
-  make -j"$(nproc)" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}"; \
-  make install CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}"; \
+  make -j"$(nproc)" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_lto_ld}" \
+    AR=/usr/lib/llvm22/bin/llvm-ar RANLIB=/usr/lib/llvm22/bin/llvm-ranlib; \
+  make install CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_lto_ld}" \
+    AR=/usr/lib/llvm22/bin/llvm-ar RANLIB=/usr/lib/llvm22/bin/llvm-ranlib; \
   rm -rf /usr/src/jemalloc /tmp/jemalloc.tar.bz2
 
 ARG LZ4_VERSION=1.10.0
@@ -174,6 +177,7 @@ ARG PGO_NAMESPACE=db/zstd
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  hpcperfstats_pgo_ensure_db_zstd_upstream; \
   _cflags="$(hpcperfstats_bake_cflags db/zstd)"; \
   curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" \
     -o /tmp/zstd.tar.gz; \
@@ -208,6 +212,7 @@ ARG PGO_NAMESPACE=db/postgresql
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  hpcperfstats_pgo_ensure_db_postgresql_link_dirs; \
   _pg_cflags="$(hpcperfstats_bake_cflags db/postgresql pg)"; \
   curl -fsSL "https://ftp.postgresql.org/pub/source/v${PG_VERSION}/postgresql-${PG_VERSION}.tar.bz2" \
     -o /tmp/postgresql.tar.bz2; \
@@ -282,6 +287,7 @@ ARG PGO_NAMESPACE=db/timescaledb
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  hpcperfstats_pgo_ensure_db_timescaledb_link_dirs; \
   _ts_cflags="$(hpcperfstats_bake_cflags db/timescaledb pg)"; \
   curl -fsSL "https://github.com/timescale/timescaledb/archive/refs/tags/${TIMESCALEDB_VERSION}.tar.gz" \
     -o /tmp/timescaledb.tar.gz; \

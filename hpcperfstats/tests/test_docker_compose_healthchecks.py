@@ -721,6 +721,11 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   assert "-flto=thin" in env_cflags
   assert "hpcperfstats_configure_cflags proxy/jemalloc" in dockerfile
   assert "hpcperfstats_bake_cflags proxy/jemalloc" in dockerfile
+  jem_run = dockerfile[
+    dockerfile.index("# --- jemalloc") : dockerfile.index("# --- zlib-ng")
+  ]
+  assert "hpcperfstats_alpine_thinlto_ldflags" in jem_run
+  assert "LDFLAGS=" in jem_run and "llvm-ar" in jem_run
   cc_opt = _first_line_containing("--with-cc-opt=")
   assert "${_cflags}" in cc_opt
   ld_opt = _first_line_containing("--with-ld-opt=")
@@ -734,6 +739,13 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
     )
   ]
   assert 'nginx_bake_cflags="${_cflags} -I/opt/zstd/include"' in nginx_run
+  assert "hpcperfstats_pgo_ensure_proxy_nginx_link_dirs" in nginx_run
+  zlib_run = dockerfile[
+    dockerfile.index("# --- zlib-ng") : dockerfile.index("# --- OpenSSL")
+  ]
+  assert "hpcperfstats_bake_cflags proxy/zlib-ng" in zlib_run
+  assert "make -j" in zlib_run and "libz.a" in zlib_run
+  assert "hpcperfstats_configure_cflags proxy/zlib-ng" in zlib_run
   assert "hpcperfstats_bake_cflags proxy/nginx" in nginx_run
   assert 'make -j"$(nproc)" CFLAGS="${nginx_bake_cflags}"' in nginx_run
   assert 'make install CFLAGS="${nginx_bake_cflags}"' in nginx_run

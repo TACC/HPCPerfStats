@@ -62,7 +62,14 @@ def test_python_build_mounts_pgoroot_for_pgo_namespaces() -> None:
     "web/shared/libffi",
   ):
     assert needle in build
-  assert build.count(mount) >= 5
+  assert build.count(mount) >= 9
+  assert "hpcperfstats_pgo_ensure_web_gil_cpython_link_dirs" in build
+  assert "hpcperfstats_pgo_ensure_web_ft_cpython_link_dirs" in build
+  assert "hpcperfstats_bake_cflags web/gil/cpython" in build
+  assert "hpcperfstats_bake_cflags web/gil/optimization-stack" in build
+  assert "requirements-mkl-brotli.txt" in build
+  assert "ensure_web_gil_brotli_link_dirs" not in build
+  assert "hpcperfstats_pgo_ensure_raw_dir web/shared/zlib-ng" in build
 
 
 def test_python_build_uses_clang_native_probe_not_gcc_help() -> None:
@@ -288,12 +295,12 @@ def test_libmpdec_and_libffi_native_flags():
   assert "/opt/mpdecimal" in build
   assert "-DCONFIG_64" in build
   assert "-DASM" in build
+  assert "hpcperfstats_configure_cflags web/shared/mpdecimal" in build
   mpd = build[
     build.index("mpdecimal-4.0.1.tar.gz") : build.index("libffi-3.8.0.tar.gz")
   ]
-  assert (
-    "flto=thin" in mpd and "-fPIC" in mpd
-  )  # web-only libmpdec; not in db/proxy
+  assert "hpcperfstats_bake_cflags web/shared/mpdecimal" in mpd
+  assert "_cf_bake=" in mpd
   assert 'AR="${AR}"' in mpd and 'LDFLAGS="${_ld}"' in mpd
   assert "--disable-cxx" in mpd
   assert "make install CC=" in mpd

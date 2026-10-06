@@ -16,6 +16,72 @@ hpcperfstats_pgo_root() {
   printf '%s' "${HPC_PGO_ROOT:-${PGO_ROOT:-/root/.hpcperfstats_pgo}}"
 }
 
+hpcperfstats_pgo_ensure_raw_dir() {
+  local namespace="${1:?namespace required}"
+  local phase root
+  phase="$(hpcperfstats_pgo_phase)"
+  [[ "${phase}" == generate ]] || return 0
+  root="$(hpcperfstats_pgo_root)"
+  mkdir -p "${root}/${namespace}/raw"
+}
+
+# Linking /opt/* built with PGO generate pulls instrumented deps (e.g. zstd→libz).
+hpcperfstats_pgo_ensure_web_shared_link_dirs() {
+  local ns
+  for ns in web/shared/jemalloc web/shared/zlib-ng web/shared/zstd \
+    web/shared/mpdecimal web/shared/libffi; do
+    hpcperfstats_pgo_ensure_raw_dir "${ns}"
+  done
+}
+
+hpcperfstats_pgo_ensure_web_gil_cpython_link_dirs() {
+  hpcperfstats_pgo_ensure_web_shared_link_dirs
+  hpcperfstats_pgo_ensure_raw_dir web/gil/cpython
+}
+
+hpcperfstats_pgo_ensure_web_ft_cpython_link_dirs() {
+  hpcperfstats_pgo_ensure_web_shared_link_dirs
+  hpcperfstats_pgo_ensure_raw_dir web/ft/cpython
+}
+
+hpcperfstats_pgo_ensure_web_gil_optimization_stack_link_dirs() {
+  hpcperfstats_pgo_ensure_web_shared_link_dirs
+  hpcperfstats_pgo_ensure_raw_dir web/gil/cpython
+  hpcperfstats_pgo_ensure_raw_dir web/gil/optimization-stack
+}
+
+hpcperfstats_pgo_ensure_web_ft_optimization_stack_link_dirs() {
+  hpcperfstats_pgo_ensure_web_shared_link_dirs
+  hpcperfstats_pgo_ensure_raw_dir web/ft/cpython
+  hpcperfstats_pgo_ensure_raw_dir web/ft/optimization-stack
+}
+
+hpcperfstats_pgo_ensure_db_zstd_upstream() {
+  hpcperfstats_pgo_ensure_raw_dir db/lz4
+  hpcperfstats_pgo_ensure_raw_dir db/zlib-ng
+}
+
+hpcperfstats_pgo_ensure_db_postgresql_link_dirs() {
+  local ns
+  for ns in db/jemalloc db/lz4 db/zlib-ng db/zstd db/icu db/liburing \
+    db/postgresql; do
+    hpcperfstats_pgo_ensure_raw_dir "${ns}"
+  done
+}
+
+hpcperfstats_pgo_ensure_db_timescaledb_link_dirs() {
+  hpcperfstats_pgo_ensure_db_postgresql_link_dirs
+  hpcperfstats_pgo_ensure_raw_dir db/timescaledb
+}
+
+hpcperfstats_pgo_ensure_proxy_nginx_link_dirs() {
+  local ns
+  for ns in proxy/jemalloc proxy/zlib-ng proxy/brotli proxy/zstd \
+    proxy/openssl proxy/nginx; do
+    hpcperfstats_pgo_ensure_raw_dir "${ns}"
+  done
+}
+
 # Shared libmpdec/jemalloc/libffi: ThinLTO link of a .so needs PIC on LTO objects.
 hpcperfstats_shared_lib_namespace() {
   case "${1}" in
@@ -46,9 +112,14 @@ hpcperfstats_native_base_cflags() {
       printf '%s' "-O2 -march=native -mtune=native -flto=thin -g0"
       ;;
     libs | *)
-      printf '%s' "-O2 -march=native -mtune=native -flto=thin --ld-path=/usr/lib/llvm22/bin/ld.lld -g0"
+      printf '%s' "-O2 -march=native -mtune=native -flto=thin -g0"
       ;;
   esac
+}
+
+# Autotools (jemalloc shared): compile uses bake CFLAGS (-flto=thin); link must repeat LTO.
+hpcperfstats_alpine_thinlto_ldflags() {
+  printf '%s' "-flto=thin --ld-path=/usr/lib/llvm22/bin/ld.lld"
 }
 
 hpcperfstats_configure_cflags() {
@@ -76,7 +147,7 @@ hpcperfstats_bake_cflags() {
       out="${base}"
       ;;
     generate)
-      mkdir -p "${root}/${namespace}/raw"
+      hpcperfstats_pgo_ensure_raw_dir "${namespace}"
       out="${base} -fprofile-instr-generate=${root}/${namespace}/raw"
       ;;
     use)

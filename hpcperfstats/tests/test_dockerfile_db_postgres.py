@@ -92,6 +92,9 @@ def test_db_dockerfile_pins_jemalloc_icu_liburing_lz4_zlib_ng_zstd() -> None:
   assert "jemalloc-${JEMALLOC_VERSION}.tar.bz2" in text
   assert "hpcperfstats_configure_cflags db/jemalloc" in text
   assert "hpcperfstats_bake_cflags db/jemalloc" in text
+  assert "hpcperfstats_alpine_thinlto_ldflags" in text
+  jem_run = text[text.index("# --- jemalloc") : text.index("# --- lz4")]
+  assert "LDFLAGS=" in jem_run and "llvm-ar" in jem_run
   assert "zstd-${ZSTD_VERSION}.tar.gz" in text
   assert "zlib-ng/archive/refs/tags/${ZLIB_NG_VERSION}.tar.gz" in text
 
@@ -110,6 +113,7 @@ def test_db_dockerfile_uses_zlib_ng_not_apk_zlib() -> None:
   assert "-L/opt/lz4/lib" in text
   # zstd bake must rpath both codecs (zlib-ng + lz4), not only the global PG LDFLAGS.
   zstd_run = text[text.index("# --- zstd") : text.index("ENV PKG_CONFIG_PATH=")]
+  assert "hpcperfstats_pgo_ensure_db_zstd_upstream" in zstd_run
   assert "HAVE_LZ4=1" in zstd_run
   assert "/opt/lz4" in zstd_run
   assert "/opt/lz4/.+liblz4" in zstd_run
@@ -162,6 +166,7 @@ def test_db_dockerfile_links_opt_icu_liburing_lz4_zstd_into_postgres() -> None:
   # rejects unrecognized options (bake failure on prod: 2026-09-04).
   assert "--enable-thread-safety" not in configure_block
   assert 'gnuArch="$(clang -dumpmachine)"' in pg_run
+  assert "hpcperfstats_pgo_ensure_db_postgresql_link_dirs" in pg_run
   assert "hpcperfstats_bake_cflags db/postgresql pg" in pg_run
   assert 'export LLVM_CONFIG="/usr/lib/llvm22/bin/llvm-config"' in pg_run
   assert "pg_bake_ldflags" not in pg_run
@@ -250,6 +255,7 @@ def test_db_dockerfile_timescale_229_no_external_lz4_zstd_ldd_gate() -> None:
   ts_run = text[
     text.index("# --- TimescaleDB") : text.index("# Prune docs/man")
   ]
+  assert "hpcperfstats_pgo_ensure_db_timescaledb_link_dirs" in ts_run
   assert "unset LDFLAGS" in ts_run
   assert "pg-config-wrap" in ts_run
   assert "printf '%s\\n'" in ts_run

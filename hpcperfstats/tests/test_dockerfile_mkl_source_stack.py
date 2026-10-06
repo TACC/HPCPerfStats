@@ -23,7 +23,7 @@ def _stage_body(dockerfile: str, stage_name: str) -> str:
 def _run_instructions(stage: str) -> list[str]:
   """Return each RUN instruction body from a Dockerfile stage."""
   return re.findall(
-    r"^RUN /bin/bash -o pipefail -c '((?:\\'|[^'])*)'",
+    r"^RUN (?:--mount[^\n]*\n\s*)?/bin/bash -o pipefail -c '((?:\\'|[^'])*)'",
     stage,
     flags=re.MULTILINE | re.DOTALL,
   )
@@ -74,6 +74,7 @@ def test_mkl_source_stack_run_order_and_flags():
       "--no-binary numpy" in b
       and "ne.use_vml" in b
       and "--no-binary pandas" in b
+      and "--no-binary brotli" in b
       and "python3.14t" not in b
     )
   )
@@ -97,6 +98,7 @@ def test_mkl_source_stack_run_order_and_flags():
       and "--no-binary numpy" in b
       and "ne.use_vml" in b
       and "--no-binary pandas" in b
+      and "--no-binary brotli" in b
     )
   )
   ft_rest_i, ft_rest = _find(
@@ -107,23 +109,9 @@ def test_mkl_source_stack_run_order_and_flags():
     )
   )
 
-  gil_brotli_i, gil_brotli = _find(
-    lambda b: (
-      "--no-binary brotli" in b
-      and "import brotli" in b
-      and "python3.14t" not in b
-    )
-  )
-  ft_brotli_i, ft_brotli = _find(
-    lambda b: (
-      "--no-binary brotli" in b and "import brotli" in b and "python3.14t" in b
-    )
-  )
-
   assert gil_build_i < gil_compile_i < gil_rest_i
   assert ft_build_i < ft_compile_i < ft_rest_i
-  assert gil_rest_i < gil_brotli_i < ft_build_i
-  assert ft_rest_i < ft_brotli_i
+  assert gil_compile_i < ft_build_i
 
   for build in (gil_build, ft_build):
     assert "-r /tmp/requirements-rest.txt" not in build
@@ -136,8 +124,15 @@ def test_mkl_source_stack_run_order_and_flags():
     assert "-Dlapack=mkl" in compile_body
     assert "-Dcpu-baseline=native" in compile_body
     assert "-Dcpu-dispatch=max" in compile_body
-    assert "-march=native" in compile_body
+    assert (
+      "hpcperfstats_bake_cflags web/gil/optimization-stack" in compile_body
+      or ("hpcperfstats_bake_cflags web/ft/optimization-stack" in compile_body)
+    )
+    assert "_opt_stack_cf=" in compile_body
     assert "-r /tmp/requirements-mkl-numpy.txt" in compile_body
+    assert "-r /tmp/requirements-mkl-brotli.txt" in compile_body
+    assert "brotli.compress" in compile_body
+    assert "brotli.decompress" in compile_body
     assert "-r /tmp/requirements-mkl-numexpr.txt" in compile_body
     assert "-r /tmp/requirements-mkl-pandas.txt" in compile_body
     # Combined three-way --no-binary must not return (numexpr needs installed numpy).
@@ -221,15 +216,6 @@ def test_mkl_source_stack_run_order_and_flags():
     # pandas import needs dateutil from rest; smoke after rest install.
     assert "import pandas" in rest
     assert "pd.__version__" in rest
-
-  for native in (gil_brotli, ft_brotli):
-    assert "--force-reinstall" in native
-    assert "-march=native" in native
-    assert "-mtune=native" in native
-    assert "-flto" in native
-    assert "-r /tmp/requirements-rest.txt" not in native
-    assert "brotli.compress" in native
-    assert "brotli.decompress" in native
 
   assert "ldconfig" in ft_compile
   assert "mkl-gil.conf" in gil_compile
@@ -386,14 +372,22 @@ def test_writer_run_payload_executes_against_real_pyproject(
   rest = (out / "requirements-rest.txt").read_text().splitlines()
   all_deps = (out / "requirements.txt").read_text().splitlines()
 
-  assert {_pep508_name(d) for d in src} == {"numpy", "numexpr", "pandas"}
+  brotli_only = (out / "requirements-mkl-brotli.txt").read_text().splitlines()
+  assert {_pep508_name(d) for d in src} == {
+    "numpy",
+    "numexpr",
+    "pandas",
+    "brotli",
+  }
   assert {_pep508_name(d) for d in numpy_only} == {"numpy"}
   assert {_pep508_name(d) for d in numexpr_only} == {"numexpr"}
   assert {_pep508_name(d) for d in pandas_only} == {"pandas"}
+  assert {_pep508_name(d) for d in brotli_only} == {"brotli"}
   assert {_pep508_name(d) for d in after_numpy} == {"numexpr", "pandas"}
-  assert set(numpy_only) | set(after_numpy) == set(src)
+  assert set(numpy_only) | set(after_numpy) | set(brotli_only) == set(src)
   assert set(numexpr_only) | set(pandas_only) == set(after_numpy)
   assert "numpy" not in {_pep508_name(d) for d in rest}
+  assert "brotli" not in {_pep508_name(d) for d in rest}
   assert any(_pep508_name(d) == "python-dateutil" for d in rest)
   assert "bokeh==3.10.0" in rest
   assert any(_pep508_name(d) == "mkl" for d in build)

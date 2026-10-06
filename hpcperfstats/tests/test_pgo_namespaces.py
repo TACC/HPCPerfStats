@@ -40,6 +40,74 @@ def test_proxy_dockerfile_declares_pgo_namespace_for_each_proxy_row() -> None:
     assert f"hpcperfstats_bake_cflags {ns}" in proxy_text, ns
 
 
+def _pgo_ensure_raw_namespaces_from_shell() -> set[str]:
+  script = (_repo_root() / "services-conf" / "pgo_clang_flags.sh").read_text()
+  ensured = set(
+    re.findall(
+      r"hpcperfstats_pgo_ensure_raw_dir\s+([a-z0-9./_-]+)",
+      script,
+    )
+  )
+  for loop in re.finditer(
+    r"for ns in\s+([^;]+);\s*do\s+hpcperfstats_pgo_ensure_raw_dir",
+    script,
+    flags=re.DOTALL,
+  ):
+    for token in re.findall(r"[a-z0-9]+/[a-z0-9./_-]+", loop.group(1)):
+      ensured.add(token.strip())
+  return ensured
+
+
+def test_pgo_ensure_helpers_list_every_db_and_proxy_registry_namespace() -> (
+  None
+):
+  """Link-time raw dirs: no registry row may rely on ad hoc mkdir later."""
+  ensured = _pgo_ensure_raw_namespaces_from_shell()
+  reg = set(_registry_namespaces())
+  for ns in sorted(n for n in reg if n.startswith(("db/", "proxy/"))):
+    assert ns in ensured, (
+      f"missing ensure_raw_dir for {ns} in pgo_clang_flags.sh"
+    )
+
+
+def test_pgo_ensure_helpers_list_every_web_registry_namespace() -> None:
+  ensured = _pgo_ensure_raw_namespaces_from_shell()
+  reg = set(_registry_namespaces())
+  for ns in sorted(n for n in reg if n.startswith("web/")):
+    assert ns in ensured, (
+      f"missing ensure_raw_dir for {ns} in pgo_clang_flags.sh"
+    )
+
+
+def test_pgo_registry_rows_use_pg_mount_with_bake_cflags() -> None:
+  """Every bake_cflags call in image Dockerfiles must sit in a from=pgo RUN."""
+  mount = "from=pgo,source=.,target=/root/.hpcperfstats_pgo"
+  for path in (
+    _repo_root() / "Dockerfile",
+    _repo_root() / "services-conf" / "db.Dockerfile",
+    _repo_root() / "services-conf" / "proxy.Dockerfile",
+  ):
+    text = path.read_text()
+    for match in re.finditer(r"hpcperfstats_bake_cflags[^\n\\]+", text):
+      start = text.rfind("RUN", 0, match.start())
+      end = text.find("\n\n", match.start())
+      if end == -1:
+        end = len(text)
+      run_block = text[start:end]
+      assert mount in run_block, (
+        f"{path.name}: bake without PGOROOT mount near {match.group(0)!r}"
+      )
+
+
+def test_web_dockerfile_declares_pgo_namespace_for_each_web_row() -> None:
+  web_text = (_repo_root() / "Dockerfile").read_text()
+  build = web_text[web_text.index("FROM debian:trixie AS python-build") :]
+  for ns in _registry_namespaces():
+    if not ns.startswith("web/"):
+      continue
+    assert f"hpcperfstats_bake_cflags {ns}" in build, ns
+
+
 def test_pgo_lib_bootstraps_pg_root_before_layout() -> None:
   pgo_lib = (_repo_root() / "scripts" / "pgo_lib.sh").read_text()
   ensure = (_repo_root() / "scripts" / "pgo_ensure_layout.sh").read_text()
@@ -79,6 +147,36 @@ def test_pgo_ensure_layout_applies_shared_directory_mode(
   assert manifest.stat().st_mode & 0o666 == 0o666
 
 
+def test_pgo_alpine_libs_bake_omits_ld_path_from_cflags() -> None:
+  script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
+  env = {**os.environ, "HPC_PGO_PHASE": "skip"}
+  out = subprocess.check_output(
+    [
+      "bash",
+      "-c",
+      f'source "{script}"; hpcperfstats_bake_cflags proxy/jemalloc',
+    ],
+    env=env,
+    text=True,
+  ).strip()
+  assert "-flto=thin" in out
+  assert "--ld-path=" not in out
+
+
+def test_pgo_alpine_thinlto_ldflags_for_jemalloc_link() -> None:
+  script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
+  out = subprocess.check_output(
+    [
+      "bash",
+      "-c",
+      f'source "{script}"; hpcperfstats_alpine_thinlto_ldflags',
+    ],
+    text=True,
+  ).strip()
+  assert "-flto=thin" in out
+  assert "--ld-path=/usr/lib/llvm22/bin/ld.lld" in out
+
+
 def test_pgo_clang_flags_shared_lib_configure_vs_bake() -> None:
   script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
   cmd = (
@@ -93,6 +191,77 @@ def test_pgo_clang_flags_shared_lib_configure_vs_bake() -> None:
   assert "-flto=thin" in bake
   assert "-flto=thin" not in cfg
   assert "-fPIC" not in cfg
+
+
+def test_pgo_ensure_db_and_proxy_link_dirs_on_generate() -> None:
+  import tempfile
+
+  script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
+  with tempfile.TemporaryDirectory() as tmp:
+    env = {**os.environ, "HPC_PGO_PHASE": "generate", "HPC_PGO_ROOT": tmp}
+    subprocess.check_call(
+      [
+        "bash",
+        "-c",
+        (
+          f'source "{script}"; '
+          "hpcperfstats_pgo_ensure_db_zstd_upstream; "
+          "hpcperfstats_pgo_ensure_db_postgresql_link_dirs; "
+          "hpcperfstats_pgo_ensure_proxy_nginx_link_dirs"
+        ),
+      ],
+      env=env,
+    )
+    for ns in ("db/lz4", "db/postgresql", "proxy/openssl"):
+      assert (Path(tmp) / ns / "raw").is_dir()
+
+
+def test_pgo_ensure_web_abi_link_dirs_creates_raw_on_generate() -> None:
+  import tempfile
+
+  script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
+  with tempfile.TemporaryDirectory() as tmp:
+    env = {**os.environ, "HPC_PGO_PHASE": "generate", "HPC_PGO_ROOT": tmp}
+    subprocess.check_call(
+      [
+        "bash",
+        "-c",
+        (
+          f'source "{script}"; '
+          "hpcperfstats_pgo_ensure_web_gil_optimization_stack_link_dirs"
+        ),
+      ],
+      env=env,
+    )
+    for ns in ("web/gil/cpython", "web/gil/optimization-stack"):
+      assert (Path(tmp) / ns / "raw").is_dir()
+
+
+def test_pgo_ensure_web_shared_link_dirs_creates_raw_on_generate() -> None:
+  """Regression: CPython links PGO-instrumented /opt/zlib-ng and /opt/zstd."""
+  import tempfile
+
+  script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
+  with tempfile.TemporaryDirectory() as tmp:
+    env = {
+      **os.environ,
+      "HPC_PGO_PHASE": "generate",
+      "HPC_PGO_ROOT": tmp,
+    }
+    subprocess.check_call(
+      [
+        "bash",
+        "-c",
+        f'source "{script}"; hpcperfstats_pgo_ensure_web_shared_link_dirs',
+      ],
+      env=env,
+    )
+    for ns in (
+      "web/shared/zlib-ng",
+      "web/shared/zstd",
+      "web/shared/jemalloc",
+    ):
+      assert (Path(tmp) / ns / "raw").is_dir()
 
 
 def test_rebuild_full_site_pgo_fail_loud_helpers() -> None:

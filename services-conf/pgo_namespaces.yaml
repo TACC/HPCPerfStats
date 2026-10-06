@@ -84,19 +84,11 @@ namespaces:
     build_service: web
     soak_services: [pipeline]
     abi: ft
-  - namespace: web/gil/mkl-stack
+  - namespace: web/gil/optimization-stack
     build_service: web
     soak_services: [web]
     abi: gil
-  - namespace: web/ft/mkl-stack
-    build_service: web
-    soak_services: [pipeline]
-    abi: ft
-  - namespace: web/gil/brotli
-    build_service: web
-    soak_services: [web]
-    abi: gil
-  - namespace: web/ft/brotli
+  - namespace: web/ft/optimization-stack
     build_service: web
     soak_services: [pipeline]
     abi: ft

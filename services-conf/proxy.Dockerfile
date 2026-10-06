@@ -66,10 +66,13 @@ RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   cd /usr/src/jemalloc; \
   _cf_cfg="$(hpcperfstats_configure_cflags proxy/jemalloc)"; \
   _cf_bake="$(hpcperfstats_bake_cflags proxy/jemalloc)"; \
+  _lto_ld="$(hpcperfstats_alpine_thinlto_ldflags)"; \
   CPPFLAGS="-D_GNU_SOURCE" CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" \
     ./configure --prefix=/opt/jemalloc; \
-  make -j"$(nproc)" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}"; \
-  make install CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}"; \
+  make -j"$(nproc)" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_lto_ld}" \
+    AR=/usr/lib/llvm22/bin/llvm-ar RANLIB=/usr/lib/llvm22/bin/llvm-ranlib; \
+  make install CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_lto_ld}" \
+    AR=/usr/lib/llvm22/bin/llvm-ar RANLIB=/usr/lib/llvm22/bin/llvm-ranlib; \
   rm -rf /usr/src/jemalloc /tmp/jemalloc.tar.bz2
 
 WORKDIR /usr/src
@@ -82,7 +85,8 @@ ARG PGO_NAMESPACE=proxy/zlib-ng
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
-  _cflags="$(hpcperfstats_bake_cflags proxy/zlib-ng)"; \
+  _cf_cfg="$(hpcperfstats_configure_cflags proxy/zlib-ng)"; \
+  _cf_bake="$(hpcperfstats_bake_cflags proxy/zlib-ng)"; \
   curl -fsSL "https://github.com/zlib-ng/zlib-ng/archive/refs/tags/${ZLIB_NG_VERSION}.tar.gz" \
     -o /tmp/zlib-ng.tar.gz; \
   echo "${ZLIB_NG_SHA256}  /tmp/zlib-ng.tar.gz" | sha256sum -c -; \
@@ -105,9 +109,10 @@ RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
     'exec ./configure.zlib-ng --zlib-compat "$@" $extra' \
     > configure; \
   chmod +x configure; \
-  CFLAGS="--zlib-compat -pipe" CC=cc ./configure; \
+  CFLAGS="${_cf_cfg}" CC=clang ./configure --zlib-compat; \
   test -f Makefile; \
-  make distclean; \
+  make -j"$(nproc)" libz.a CC=clang CFLAGS="${_cf_bake}"; \
+  test -f libz.a; \
   rm -f /tmp/zlib-ng.tar.gz
 
 # --- OpenSSL (nginx --with-openssl builds it; no-shared folds into nginx) ---
@@ -192,8 +197,10 @@ ARG PGO_NAMESPACE=proxy/nginx
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  hpcperfstats_pgo_ensure_proxy_nginx_link_dirs; \
   _cflags="$(hpcperfstats_bake_cflags proxy/nginx)"; \
   _openssl_cflags="$(hpcperfstats_bake_cflags proxy/openssl)"; \
+  test -f /usr/src/zlib-ng/libz.a; \
   curl -fsSL "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
     -o /tmp/nginx.tar.gz; \
   echo "${NGINX_SHA256}  /tmp/nginx.tar.gz" | sha256sum -c -; \

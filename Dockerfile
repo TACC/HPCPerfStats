@@ -202,6 +202,7 @@ RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   export CPPFLAGS="-I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
   export LDFLAGS="-L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib${LDFLAGS:+ $LDFLAGS}"; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  hpcperfstats_pgo_ensure_raw_dir web/shared/zlib-ng; \
   export MOREFLAGS="$(hpcperfstats_bake_cflags web/shared/zstd debian-lib) ${HPC_CLANG_LD_PATH}"; \
   make -j40 PREFIX=/opt/zstd HAVE_ZLIB=1; \
   make install PREFIX=/opt/zstd; \
@@ -273,7 +274,8 @@ RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   rm -rf /usr/src/libffi'
 
 # GIL CPython 3.14.8 (--without-mimalloc; force-link jemalloc).
-RUN /bin/bash -o pipefail -c '\
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
+  /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   curl -fsSL "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \
     -o /tmp/Python.tgz; \
@@ -282,13 +284,17 @@ RUN /bin/bash -o pipefail -c '\
   tar -xzf /tmp/Python.tgz -C /usr/src/python --strip-components=1; \
   rm -f /tmp/Python.tgz; \
   cd /usr/src/python; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  hpcperfstats_pgo_ensure_web_gil_cpython_link_dirs; \
+  _py_cfg="$(hpcperfstats_configure_cflags web/gil/cpython debian-lib)"; \
+  _py_bake="$(hpcperfstats_bake_cflags web/gil/cpython debian-lib)"; \
   export PKG_CONFIG_PATH="/opt/zstd/lib/pkgconfig:/opt/zlib-ng/lib/pkgconfig:/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
   export CPPFLAGS="-I/opt/zstd/include -I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
-  export CFLAGS="-O2 -march=native -mtune=native -g0" CXXFLAGS="-O2 -march=native -mtune=native -g0" OPT="-O2 -g0"; \
+  export CFLAGS="${_py_cfg}" CXXFLAGS="${_py_cfg}" OPT="-O2 -g0"; \
   LIBFFI_LIBDIR="/opt/libffi/lib"; \
   if [ -d /opt/libffi/lib/x86_64-linux-gnu ]; then LIBFFI_LIBDIR="/opt/libffi/lib/x86_64-linux-gnu"; fi; \
   export LIBFFI_CFLAGS="-I/opt/libffi/include" LIBFFI_LIBS="-L${LIBFFI_LIBDIR} -lffi"; \
-  export LDFLAGS="-L/opt/zstd/lib -L/opt/zlib-ng/lib -L/opt/jemalloc/lib -L/opt/mpdecimal/lib -L${LIBFFI_LIBDIR} -Wl,-rpath,/opt/zstd/lib -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/mpdecimal/lib -Wl,-rpath,${LIBFFI_LIBDIR} -Wl,-rpath,/opt/python3.14/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
+  export LDFLAGS="-L/opt/zstd/lib -L/opt/zlib-ng/lib -L/opt/jemalloc/lib -L/opt/mpdecimal/lib -L${LIBFFI_LIBDIR} -Wl,-rpath,/opt/zstd/lib -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/mpdecimal/lib -Wl,-rpath,${LIBFFI_LIBDIR} -Wl,-rpath,/opt/python3.14/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed ${HPC_CLANG_LD_PATH}"; \
   ./configure \
     --prefix=/opt/python3.14 \
     --enable-shared \
@@ -299,8 +305,8 @@ RUN /bin/bash -o pipefail -c '\
     --without-static-libpython \
     --disable-test-modules \
     --without-mimalloc; \
-  make -j40; \
-  make install; \
+  make -j40 CFLAGS="${_py_bake}" CXXFLAGS="${_py_bake}"; \
+  make install CFLAGS="${_py_bake}" CXXFLAGS="${_py_bake}"; \
   /opt/python3.14/bin/python3.14 -c "import sysconfig; assert int(sysconfig.get_config_var(\"Py_GIL_DISABLED\") or 0) == 0"; \
   ldd /opt/python3.14/bin/python3.14 | grep libjemalloc; \
   ldd /opt/python3.14/lib/libpython3.14.so | grep libjemalloc; \
@@ -334,7 +340,8 @@ RUN /bin/bash -o pipefail -c '\
   rm -rf /usr/src/python'
 
 # Free-threaded CPython 3.14.8 (mimalloc required; still force-link jemalloc).
-RUN /bin/bash -o pipefail -c '\
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
+  /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   curl -fsSL "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz" \
     -o /tmp/Python.tgz; \
@@ -343,13 +350,17 @@ RUN /bin/bash -o pipefail -c '\
   tar -xzf /tmp/Python.tgz -C /usr/src/python --strip-components=1; \
   rm -f /tmp/Python.tgz; \
   cd /usr/src/python; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  hpcperfstats_pgo_ensure_web_ft_cpython_link_dirs; \
+  _py_cfg="$(hpcperfstats_configure_cflags web/ft/cpython debian-lib)"; \
+  _py_bake="$(hpcperfstats_bake_cflags web/ft/cpython debian-lib)"; \
   export PKG_CONFIG_PATH="/opt/zstd/lib/pkgconfig:/opt/zlib-ng/lib/pkgconfig:/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
   export CPPFLAGS="-I/opt/zstd/include -I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
-  export CFLAGS="-O2 -march=native -mtune=native -g0" CXXFLAGS="-O2 -march=native -mtune=native -g0" OPT="-O2 -g0"; \
+  export CFLAGS="${_py_cfg}" CXXFLAGS="${_py_cfg}" OPT="-O2 -g0"; \
   LIBFFI_LIBDIR="/opt/libffi/lib"; \
   if [ -d /opt/libffi/lib/x86_64-linux-gnu ]; then LIBFFI_LIBDIR="/opt/libffi/lib/x86_64-linux-gnu"; fi; \
   export LIBFFI_CFLAGS="-I/opt/libffi/include" LIBFFI_LIBS="-L${LIBFFI_LIBDIR} -lffi"; \
-  export LDFLAGS="-L/opt/zstd/lib -L/opt/zlib-ng/lib -L/opt/jemalloc/lib -L/opt/mpdecimal/lib -L${LIBFFI_LIBDIR} -Wl,-rpath,/opt/zstd/lib -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/mpdecimal/lib -Wl,-rpath,${LIBFFI_LIBDIR} -Wl,-rpath,/opt/python3.14t/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
+  export LDFLAGS="-L/opt/zstd/lib -L/opt/zlib-ng/lib -L/opt/jemalloc/lib -L/opt/mpdecimal/lib -L${LIBFFI_LIBDIR} -Wl,-rpath,/opt/zstd/lib -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/mpdecimal/lib -Wl,-rpath,${LIBFFI_LIBDIR} -Wl,-rpath,/opt/python3.14t/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed ${HPC_CLANG_LD_PATH}"; \
   ./configure \
     --prefix=/opt/python3.14t \
     --enable-shared \
@@ -360,8 +371,8 @@ RUN /bin/bash -o pipefail -c '\
     --without-static-libpython \
     --disable-test-modules \
     --disable-gil; \
-  make -j40; \
-  make install; \
+  make -j40 CFLAGS="${_py_bake}" CXXFLAGS="${_py_bake}"; \
+  make install CFLAGS="${_py_bake}" CXXFLAGS="${_py_bake}"; \
   ln -sf python3.14t /opt/python3.14t/bin/python; \
   ln -sf python3.14t /opt/python3.14t/bin/python3; \
   /opt/python3.14t/bin/python3.14t -c "import sysconfig; assert int(sysconfig.get_config_var(\"Py_GIL_DISABLED\") or 0) == 1"; \
@@ -415,13 +426,15 @@ RUN /bin/bash -o pipefail -c '\
     build = proj[\"optional-dependencies\"][\"image-build\"]; \
     build_names = {n(d) for d in build}; \
     assert {\"mkl\", \"mkl-devel\", \"meson-python\", \"meson\", \"ninja\", \"cython\", \"setuptools\", \"versioneer\"} <= build_names, build_names; \
-    src_names = {\"numpy\", \"numexpr\", \"pandas\"}; \
+    src_names = {\"numpy\", \"numexpr\", \"pandas\", \"brotli\"}; \
     src = [d for d in deps if n(d) in src_names]; \
     assert src_names <= {n(d) for d in src}, src_names - {n(d) for d in src}; \
     rest = [d for d in deps if n(d) not in src_names]; \
     numpy_reqs = [d for d in src if n(d) == \"numpy\"]; \
     numexpr_reqs = [d for d in src if n(d) == \"numexpr\"]; \
     pandas_reqs = [d for d in src if n(d) == \"pandas\"]; \
+    brotli_reqs = [d for d in src if n(d) == \"brotli\"]; \
+    assert brotli_reqs, \"brotli missing from project.dependencies\"; \
     after_numpy = numexpr_reqs + pandas_reqs; \
     assert numpy_reqs and numexpr_reqs and pandas_reqs, (numpy_reqs, numexpr_reqs, pandas_reqs); \
     Path(\"/tmp/requirements.txt\").write_text(\"\\n\".join(deps) + \"\\n\"); \
@@ -430,6 +443,7 @@ RUN /bin/bash -o pipefail -c '\
     Path(\"/tmp/requirements-mkl-numpy.txt\").write_text(\"\\n\".join(numpy_reqs) + \"\\n\"); \
     Path(\"/tmp/requirements-mkl-numexpr.txt\").write_text(\"\\n\".join(numexpr_reqs) + \"\\n\"); \
     Path(\"/tmp/requirements-mkl-pandas.txt\").write_text(\"\\n\".join(pandas_reqs) + \"\\n\"); \
+    Path(\"/tmp/requirements-mkl-brotli.txt\").write_text(\"\\n\".join(brotli_reqs) + \"\\n\"); \
     Path(\"/tmp/requirements-mkl-after-numpy.txt\").write_text(\"\\n\".join(after_numpy) + \"\\n\"); \
     Path(\"/tmp/requirements-build.txt\").write_text(\"\\n\".join(build) + \"\\n\")"'
 
@@ -445,7 +459,7 @@ RUN /bin/bash -o pipefail -c '\
   fi; \
   cython -V'
 
-# 3) GIL source-build against MKL (before rest): numpy, numexpr+VML, pandas.
+# 3) GIL source-build against MKL (before rest): numpy, numexpr+VML, pandas, brotli.
 # mkl 2026+ wheels install shared libs under sysconfig data/lib (no Python package).
 # np.show_config() prints and returns None by default — use mode=dicts for assert.
 # numexpr VML requires site.cfg in the sdist tree (setup.py sets USE_VML).
@@ -455,8 +469,12 @@ RUN /bin/bash -o pipefail -c '\
 # numexpr and pandas --no-deps: without it, pip resolves numpy>=… and replaces
 # the MKL source build with a manylinux OpenBLAS wheel (same version string).
 # python-dateutil (+ six) come from project.dependencies via the rest RUN.
-RUN /bin/bash -o pipefail -c '\
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
+  /bin/bash -o pipefail -c '\
   set -euo pipefail; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  hpcperfstats_pgo_ensure_web_gil_optimization_stack_link_dirs; \
+  _opt_stack_cf="$(hpcperfstats_bake_cflags web/gil/optimization-stack debian-lib)"; \
   export PATH="/opt/python3.14/bin:/usr/local/bin:/opt/zstd/bin:${PATH}"; \
   test "$(command -v cython)" = "/opt/python3.14/bin/cython"; \
   if command -v cython3 >/dev/null 2>&1; then \
@@ -472,10 +490,10 @@ RUN /bin/bash -o pipefail -c '\
   fi; \
   test -e "${MKLROOT}/lib/libmkl_rt.so"; \
   export LIBRARY_PATH="${MKLROOT}/lib${LIBRARY_PATH:+:${LIBRARY_PATH}}"; \
-  export LDFLAGS="${LDFLAGS:+${LDFLAGS} }-L${MKLROOT}/lib -Wl,-rpath,${MKLROOT}/lib -L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib -L/opt/jemalloc/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
-  export CFLAGS="${CFLAGS:+${CFLAGS} }-O2 -march=native -mtune=native -g0 -I/opt/zlib-ng/include" \
-    CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }-O2 -march=native -mtune=native -g0 -I/opt/zlib-ng/include" \
-    FFLAGS="${FFLAGS:+${FFLAGS} }-O2 -march=native -mtune=native -g0"; \
+  export LDFLAGS="${LDFLAGS:+${LDFLAGS} }-L${MKLROOT}/lib -Wl,-rpath,${MKLROOT}/lib -L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib -L/opt/jemalloc/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed ${HPC_CLANG_LD_PATH}"; \
+  export CFLAGS="${CFLAGS:+${CFLAGS} }${_opt_stack_cf} -I/opt/zlib-ng/include" \
+    CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }${_opt_stack_cf} -I/opt/zlib-ng/include" \
+    FFLAGS="${FFLAGS:+${FFLAGS} }${_opt_stack_cf}"; \
   python3 -m pip install --no-cache-dir --no-build-isolation --force-reinstall \
     --no-binary numpy \
     --config-settings=setup-args=-Dblas=mkl \
@@ -505,6 +523,10 @@ RUN /bin/bash -o pipefail -c '\
     --no-binary pandas \
     -r /tmp/requirements-mkl-pandas.txt; \
   python3 -c "import numpy as np; c=np.show_config(mode=\"dicts\"); assert \"mkl\" in str(c).lower(), c"; \
+  python3 -m pip install --no-cache-dir --no-build-isolation --force-reinstall --no-deps \
+    --no-binary brotli \
+    -r /tmp/requirements-mkl-brotli.txt; \
+  python3 -c "import brotli; p=brotli.compress(b\"hps\", quality=11); assert brotli.decompress(p)==b\"hps\""; \
   echo "${MKLROOT}/lib" > /etc/ld.so.conf.d/mkl-gil.conf'
 
 # 4) GIL rest wheels (Bokeh/contourpy see MKL numpy; constraint blocks wheel upgrades).
@@ -514,15 +536,6 @@ RUN /bin/bash -o pipefail -c '\
   python3 -m pip install --no-cache-dir --constraint /tmp/requirements-mkl-src.txt \
     -r /tmp/requirements-rest.txt; \
   python3 -c "import pandas as pd; assert pd.__version__"'
-
-# 4b) GIL native brotli (replace rest-layer wheel; host .venv keeps the wheel).
-RUN /bin/bash -o pipefail -c '\
-  set -euo pipefail; \
-  export CFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_CLANG_LD_PATH} -g0" \
-    CXXFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_CLANG_LD_PATH} -g0"; \
-  python3 -m pip install --no-cache-dir --force-reinstall --no-binary brotli \
-    --constraint /tmp/requirements.txt brotli; \
-  python3 -c "import brotli; p=brotli.compress(b\"hps\", quality=11); assert brotli.decompress(p)==b\"hps\""'
 
 # 5) Free-threaded image-build wheels only (pip already from --with-ensurepip=install).
 RUN /bin/bash -o pipefail -c '\
@@ -536,12 +549,16 @@ RUN /bin/bash -o pipefail -c '\
   fi; \
   cython -V'
 
-# 6) Free-threaded source-build + ldconfig (numpy, numexpr+VML, pandas).
+# 6) Free-threaded source-build + ldconfig (numpy, numexpr+VML, pandas, brotli).
 # Same as GIL: MKLROOT is sysconfig data prefix; numexpr VML via injected site.cfg.
 # -march=native: prod-host builds only (same as GIL compile RUN).
 # numexpr/pandas --no-deps: same MKL-numpy preservation as GIL (dateutil via rest).
-RUN /bin/bash -o pipefail -c '\
+RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
+  /bin/bash -o pipefail -c '\
   set -euo pipefail; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  hpcperfstats_pgo_ensure_web_ft_optimization_stack_link_dirs; \
+  _opt_stack_cf="$(hpcperfstats_bake_cflags web/ft/optimization-stack debian-lib)"; \
   export PATH="/opt/python3.14t/bin:/usr/local/bin:/opt/zstd/bin:${PATH}"; \
   test "$(command -v cython)" = "/opt/python3.14t/bin/cython"; \
   if command -v cython3 >/dev/null 2>&1; then \
@@ -557,10 +574,10 @@ RUN /bin/bash -o pipefail -c '\
   fi; \
   test -e "${MKLROOT_T}/lib/libmkl_rt.so"; \
   export LIBRARY_PATH="${MKLROOT_T}/lib${LIBRARY_PATH:+:${LIBRARY_PATH}}"; \
-  export LDFLAGS="${LDFLAGS:+${LDFLAGS} }-L${MKLROOT_T}/lib -Wl,-rpath,${MKLROOT_T}/lib -L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib -L/opt/jemalloc/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
-  export CFLAGS="${CFLAGS:+${CFLAGS} }-O2 -march=native -mtune=native -g0 -I/opt/zlib-ng/include" \
-    CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }-O2 -march=native -mtune=native -g0 -I/opt/zlib-ng/include" \
-    FFLAGS="${FFLAGS:+${FFLAGS} }-O2 -march=native -mtune=native -g0"; \
+  export LDFLAGS="${LDFLAGS:+${LDFLAGS} }-L${MKLROOT_T}/lib -Wl,-rpath,${MKLROOT_T}/lib -L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib -L/opt/jemalloc/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed ${HPC_CLANG_LD_PATH}"; \
+  export CFLAGS="${CFLAGS:+${CFLAGS} }${_opt_stack_cf} -I/opt/zlib-ng/include" \
+    CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }${_opt_stack_cf} -I/opt/zlib-ng/include" \
+    FFLAGS="${FFLAGS:+${FFLAGS} }${_opt_stack_cf}"; \
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --no-build-isolation --force-reinstall \
     --no-binary numpy \
     --config-settings=setup-args=-Dblas=mkl \
@@ -590,6 +607,10 @@ RUN /bin/bash -o pipefail -c '\
     --no-binary pandas \
     -r /tmp/requirements-mkl-pandas.txt; \
   /opt/python3.14t/bin/python3.14t -c "import numpy as np; c=np.show_config(mode=\"dicts\"); assert \"mkl\" in str(c).lower(), c"; \
+  /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --no-build-isolation --force-reinstall --no-deps \
+    --no-binary brotli \
+    -r /tmp/requirements-mkl-brotli.txt; \
+  /opt/python3.14t/bin/python3.14t -c "import brotli; p=brotli.compress(b\"hps\", quality=11); assert brotli.decompress(p)==b\"hps\""; \
   echo "${MKLROOT_T}/lib" > /etc/ld.so.conf.d/mkl-ft.conf; \
   ldconfig'
 
@@ -600,16 +621,6 @@ RUN /bin/bash -o pipefail -c '\
     --constraint /tmp/requirements-mkl-src.txt \
     -r /tmp/requirements-rest.txt; \
   /opt/python3.14t/bin/python3.14t -c "import pandas as pd; assert pd.__version__"'
-
-# 7b) Free-threaded native brotli (same CFLAGS as GIL; rest layer stays wheels).
-RUN /bin/bash -o pipefail -c '\
-  set -euo pipefail; \
-  export CFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_CLANG_LD_PATH} -g0" \
-    CXXFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_CLANG_LD_PATH} -g0"; \
-  /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir \
-    --force-reinstall --no-binary brotli \
-    --constraint /tmp/requirements.txt brotli; \
-  /opt/python3.14t/bin/python3.14t -c "import brotli; p=brotli.compress(b\"hps\", quality=11); assert brotli.decompress(p)==b\"hps\""'
 
 # Install pyinstrument into the GIL prefix (operator CPU profiler).
 RUN /bin/bash -o pipefail -c 'python3 -m pip install --no-cache-dir pyinstrument'
@@ -644,7 +655,7 @@ RUN /bin/bash -o pipefail -c '\
   rm -rf /var/lib/apt/lists/*'
 
 # Uninstall image-build-only toolchain/devel from both ABIs after all pip layers
-# (image-build + MKL source numpy/numexpr/pandas + rest wheels + native brotli +
+# (image-build + MKL source numpy/numexpr/pandas/brotli + rest wheels +
 # pyinstrument).
 # Keep: cython (operator); mkl + OpenMP/TBB/UR runtime; setuptools/wheel/packaging
 # (packaging is a runtime dep of bokeh; setuptools/wheel stay for pip tooling).
