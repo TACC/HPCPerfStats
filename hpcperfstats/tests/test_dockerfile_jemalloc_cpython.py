@@ -27,6 +27,8 @@ def test_python_build_uses_clang_22_from_trixie() -> None:
   assert "llvm-22" in build
   assert "lld-22" in build
   assert "HPC_FUSE_LD_LLD=-fuse-ld=/usr/lib/llvm-22/bin/ld.lld" in build
+  assert "AR=llvm-ar-22" in build
+  assert "RANLIB=llvm-ranlib-22" in build
   assert "/usr/lib/llvm-22/bin/ld.lld --version" in build
   assert "pgo_clang_flags.sh" in build
   assert "gcc-toolchain" not in build
@@ -241,9 +243,13 @@ def test_jemalloc_configure_flags_and_no_initial_exec_tls():
   assert "_ld=" in jem and "LDFLAGS=" in jem
   assert "HPC_FUSE_LD_LLD" in jem
   assert "/usr/lib/llvm-22/bin/ld.lld" in build
+  assert 'CPPFLAGS="-D_GNU_SOURCE"' in jem
+  configure_block = jem[jem.index("./configure") : jem.index("make -j40")]
+  assert "LDFLAGS=" not in configure_block
   assert "flto=thin" in jem
   assert jem.index("_cf_cfg") < jem.index("./configure")
-  assert 'make -j40 CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_bake}"' in jem
+  assert "make -j40 CC=" in jem and 'CFLAGS="${_cf_bake}"' in jem
+  assert 'AR="${AR}"' in jem and 'LDFLAGS="${_ld}"' in jem
   assert "strip --strip-unneeded" in build
   assert "--with-pydebug" not in build
   assert "-ggdb" not in build

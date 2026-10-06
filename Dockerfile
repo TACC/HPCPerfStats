@@ -92,10 +92,14 @@ RUN /bin/bash -o pipefail -c '\
   update-alternatives --install /usr/bin/lld lld /usr/lib/llvm-22/bin/ld.lld 100; \
   clang-22 --version | grep -q "clang version 22"; \
   /usr/lib/llvm-22/bin/ld.lld --version | grep -q "LLD 22"; \
+  command -v llvm-ar-22 >/dev/null; \
+  command -v llvm-ranlib-22 >/dev/null; \
+  command -v llvm-nm-22 >/dev/null; \
   apt-get clean; \
   rm -rf /var/lib/apt/lists/*'
 
 ENV CC=clang-22 CXX=clang++-22 \
+    AR=llvm-ar-22 RANLIB=llvm-ranlib-22 NM=llvm-nm-22 \
     HPC_FUSE_LD_LLD=-fuse-ld=/usr/lib/llvm-22/bin/ld.lld
 
 # Print out compiler platform detection (services-conf/clang_march_native_probe.sh).
@@ -123,11 +127,14 @@ RUN /bin/bash -o pipefail -c '\
   _cf_cfg="-O2 -march=native -mtune=native -g0"; \
   _cf_bake="-O2 -march=native -mtune=native -flto=thin -g0"; \
   _ld="${HPC_FUSE_LD_LLD}"; \
-  CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" LDFLAGS="${_ld}" \
+  CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" \
+    CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" CPPFLAGS="-D_GNU_SOURCE" \
     ./configure --prefix=/opt/jemalloc --enable-shared --disable-static \
     --disable-stats --disable-fill --disable-debug --with-lg-page="${LG_PAGE}"; \
-  make -j40 CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
-  make install CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
+  make -j40 CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" \
+    CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
+  make install CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" \
+    CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
   find /opt/jemalloc -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
   echo "/opt/jemalloc/lib" > /etc/ld.so.conf.d/jemalloc.conf; \
   ldconfig; \
@@ -220,10 +227,13 @@ RUN /bin/bash -o pipefail -c '\
   _cf_cfg="-O2 -march=native -mtune=native -g0"; \
   _cf_bake="-O2 -march=native -mtune=native -flto=thin -g0"; \
   _ld="${HPC_FUSE_LD_LLD}"; \
-  CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" LDFLAGS="${_ld}" \
+  CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" \
+    CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" \
     ./configure --prefix=/opt/libffi --with-gcc-arch=native --disable-static --enable-shared; \
-  make -j40 CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
-  make install CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
+  make -j40 CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" \
+    CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
+  make install CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" \
+    CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
   find /opt/libffi -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
   if [ -d /opt/libffi/lib/x86_64-linux-gnu ]; then \
     echo "/opt/libffi/lib/x86_64-linux-gnu" > /etc/ld.so.conf.d/libffi.conf; \
