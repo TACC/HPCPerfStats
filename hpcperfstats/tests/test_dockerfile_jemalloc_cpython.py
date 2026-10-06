@@ -66,6 +66,8 @@ def test_python_build_mounts_pgoroot_for_pgo_namespaces() -> None:
   assert "hpcperfstats_pgo_ensure_web_gil_cpython_link_dirs" in build
   assert "hpcperfstats_pgo_ensure_web_ft_cpython_link_dirs" in build
   assert "hpcperfstats_cpython_make_install web/gil/cpython" in build
+  assert "ln -sf python3.14 /opt/python3.14/bin/python3" in build
+  assert "ln -sf pip3.14t /opt/python3.14t/bin/pip3" in build
   assert "hpcperfstats_configure_cflags web/gil/cpython" in build
   assert "hpcperfstats_bake_cflags web/gil/optimization-stack" in build
   assert "requirements-mkl-brotli.txt" in build

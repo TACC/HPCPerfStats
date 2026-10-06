@@ -305,6 +305,8 @@ RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
     --disable-test-modules \
     --without-mimalloc; \
   hpcperfstats_cpython_make_install web/gil/cpython 40; \
+  ln -sf python3.14 /opt/python3.14/bin/python3; \
+  ln -sf pip3.14 /opt/python3.14/bin/pip3; \
   /opt/python3.14/bin/python3.14 -c "import sysconfig; assert int(sysconfig.get_config_var(\"Py_GIL_DISABLED\") or 0) == 0"; \
   ldd /opt/python3.14/bin/python3.14 | grep libjemalloc; \
   ldd /opt/python3.14/lib/libpython3.14.so | grep libjemalloc; \
@@ -371,6 +373,7 @@ RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   hpcperfstats_cpython_make_install web/ft/cpython 40; \
   ln -sf python3.14t /opt/python3.14t/bin/python; \
   ln -sf python3.14t /opt/python3.14t/bin/python3; \
+  ln -sf pip3.14t /opt/python3.14t/bin/pip3; \
   /opt/python3.14t/bin/python3.14t -c "import sysconfig; assert int(sysconfig.get_config_var(\"Py_GIL_DISABLED\") or 0) == 1"; \
   ldd /opt/python3.14t/bin/python3.14t | grep libjemalloc; \
   (ldd /opt/python3.14t/lib/libpython3.14t.so 2>/dev/null || ldd /opt/python3.14t/lib/libpython3.14.so) | grep libjemalloc; \
