@@ -54,20 +54,21 @@ RUN /bin/bash /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 
 # --- jemalloc ---
 ARG PGO_NAMESPACE=proxy/jemalloc
-RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
-  _cflags="$(hpcperfstats_bake_cflags proxy/jemalloc)"; \
   curl -fsSL "https://github.com/jemalloc/jemalloc/releases/download/${JEMALLOC_VERSION}/jemalloc-${JEMALLOC_VERSION}.tar.bz2" \
     -o /tmp/jemalloc.tar.bz2; \
   echo "${JEMALLOC_SHA256}  /tmp/jemalloc.tar.bz2" | sha256sum -c -; \
   mkdir -p /usr/src/jemalloc; \
   tar -xjf /tmp/jemalloc.tar.bz2 -C /usr/src/jemalloc --strip-components=1; \
   cd /usr/src/jemalloc; \
-  CFLAGS="${_cflags}" CXXFLAGS="${_cflags}" \
+  _cf_cfg="$(hpcperfstats_configure_cflags proxy/jemalloc)"; \
+  _cf_bake="$(hpcperfstats_bake_cflags proxy/jemalloc)"; \
+  CPPFLAGS="-D_GNU_SOURCE" CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" \
     ./configure --prefix=/opt/jemalloc; \
-  make -j"$(nproc)"; \
-  make install; \
+  make -j"$(nproc)" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}"; \
+  make install CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}"; \
   rm -rf /usr/src/jemalloc /tmp/jemalloc.tar.bz2
 
 WORKDIR /usr/src
@@ -77,7 +78,7 @@ WORKDIR /usr/src
 # ./configure. zlib-ng requires --zlib-compat as a configure argv flag; passing
 # it via CFLAGS aborts with "Compiler error reporting is too harsh".
 ARG PGO_NAMESPACE=proxy/zlib-ng
-RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   _cflags="$(hpcperfstats_bake_cflags proxy/zlib-ng)"; \
@@ -122,7 +123,7 @@ RUN set -eux; \
 # -lbrotlienc instead of compiling deps sources. Pre-build static libs to
 # /opt/brotli so the nginx link line can resolve them (folded into the binary).
 ARG PGO_NAMESPACE=proxy/brotli
-RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   _cflags="$(hpcperfstats_bake_cflags proxy/brotli)"; \
@@ -158,7 +159,7 @@ RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_
 # are for the db/Python zstd CLI). Do not lib-mt: nginx already has one worker
 # per CPU. Fold libzstd.a into nginx; do not COPY /opt/zstd into the runtime.
 ARG PGO_NAMESPACE=proxy/zstd
-RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   _cflags="$(hpcperfstats_bake_cflags proxy/zstd)"; \
@@ -187,7 +188,7 @@ RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_
 
 # --- nginx ---
 ARG PGO_NAMESPACE=proxy/nginx
-RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+RUN --mount=type=bind,source=${PGO_ROOT},target=/root/.hpcperfstats_pgo,rw \
   set -eux; \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   _cflags="$(hpcperfstats_bake_cflags proxy/nginx)"; \

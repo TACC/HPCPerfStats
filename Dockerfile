@@ -76,7 +76,7 @@ RUN /bin/bash -o pipefail -c '\
   test "$(uname -m)" = "x86_64"; \
   apt-get update -y; \
   apt-get install -y --no-install-recommends \
-    clang-22 llvm-22 lld-22 gfortran \
+    clang-22 llvm-22 lld-22 libclang-rt-22-dev gfortran \
     make libc6-dev ninja-build cmake pkg-config \
     curl ca-certificates autoconf bzip2 \
     libssl-dev libncursesw5-dev libsqlite3-dev \
@@ -95,6 +95,18 @@ RUN /bin/bash -o pipefail -c '\
   command -v llvm-ar-22 >/dev/null; \
   command -v llvm-ranlib-22 >/dev/null; \
   command -v llvm-nm-22 >/dev/null; \
+  update-alternatives --install /usr/bin/llvm-ar llvm-ar /usr/bin/llvm-ar-22 100; \
+  update-alternatives --install /usr/bin/llvm-ranlib llvm-ranlib /usr/bin/llvm-ranlib-22 100; \
+  update-alternatives --install /usr/bin/llvm-nm llvm-nm /usr/bin/llvm-nm-22 100; \
+  command -v llvm-profdata-22 >/dev/null; \
+  update-alternatives --install /usr/bin/llvm-profdata llvm-profdata /usr/bin/llvm-profdata-22 100; \
+  command -v llvm-ar >/dev/null; \
+  command -v llvm-profdata >/dev/null; \
+  _rt=/usr/lib/llvm-22/lib/clang/22/lib; \
+  _triple=x86_64-pc-linux-gnu; \
+  mkdir -p "${_rt}/${_triple}"; \
+  ln -sf ../linux/libclang_rt.profile-x86_64.a "${_rt}/${_triple}/libclang_rt.profile.a"; \
+  test -f "${_rt}/${_triple}/libclang_rt.profile.a"; \
   apt-get clean; \
   rm -rf /var/lib/apt/lists/*'
 
@@ -124,8 +136,9 @@ RUN /bin/bash -o pipefail -c '\
   tar -xjf /tmp/jemalloc.tar.bz2 -C /usr/src/jemalloc --strip-components=1; \
   rm -f /tmp/jemalloc.tar.bz2; \
   cd /usr/src/jemalloc; \
-  _cf_cfg="-O2 -march=native -mtune=native -g0"; \
-  _cf_bake="-O2 -march=native -mtune=native -flto=thin -g0"; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  _cf_cfg="$(hpcperfstats_configure_cflags web/shared/jemalloc debian-lib)"; \
+  _cf_bake="$(hpcperfstats_bake_cflags web/shared/jemalloc debian-lib)"; \
   _ld="${HPC_FUSE_LD_LLD}"; \
   CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" \
     CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" CPPFLAGS="-D_GNU_SOURCE" \
@@ -205,10 +218,16 @@ RUN /bin/bash -o pipefail -c '\
   tar -xzf /tmp/mpdecimal.tar.gz -C /usr/src/mpdecimal --strip-components=1; \
   rm -f /tmp/mpdecimal.tar.gz; \
   cd /usr/src/mpdecimal; \
-  export CFLAGS="-O3 -march=native -DCONFIG_64 -DASM -flto -g0" \
-    CXXFLAGS="-O3 -march=native -DCONFIG_64 -DASM -flto -g0"; \
-  ./configure --prefix=/opt/mpdecimal MACHINE=x64; \
-  make -j40; make install; \
+  _cf_cfg="-O3 -march=native -DCONFIG_64 -DASM -g0"; \
+  _cf_bake="-O3 -march=native -DCONFIG_64 -DASM -flto=thin -fPIC -g0"; \
+  _ld="${HPC_FUSE_LD_LLD} -flto=thin"; \
+  CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" \
+    CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" \
+    ./configure --prefix=/opt/mpdecimal MACHINE=x64 --disable-cxx; \
+  make -j40 CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" \
+    CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
+  make install CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" \
+    CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
   find /opt/mpdecimal -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
   echo "/opt/mpdecimal/lib" > /etc/ld.so.conf.d/mpdecimal.conf; \
   ldconfig; \
@@ -224,8 +243,9 @@ RUN /bin/bash -o pipefail -c '\
   tar -xzf /tmp/libffi.tar.gz -C /usr/src/libffi --strip-components=1; \
   rm -f /tmp/libffi.tar.gz; \
   cd /usr/src/libffi; \
-  _cf_cfg="-O2 -march=native -mtune=native -g0"; \
-  _cf_bake="-O2 -march=native -mtune=native -flto=thin -g0"; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  _cf_cfg="$(hpcperfstats_configure_cflags web/shared/libffi debian-lib)"; \
+  _cf_bake="$(hpcperfstats_bake_cflags web/shared/libffi debian-lib)"; \
   _ld="${HPC_FUSE_LD_LLD}"; \
   CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" \
     CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" \

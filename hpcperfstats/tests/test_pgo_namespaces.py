@@ -79,6 +79,22 @@ def test_pgo_ensure_layout_applies_shared_directory_mode(
   assert manifest.stat().st_mode & 0o666 == 0o666
 
 
+def test_pgo_clang_flags_shared_lib_configure_vs_bake() -> None:
+  script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
+  cmd = (
+    f'source "{script}"; '
+    "b=$(hpcperfstats_bake_cflags db/jemalloc); "
+    "c=$(hpcperfstats_configure_cflags db/jemalloc); "
+    'printf "%s|%s" "$c" "$b"'
+  )
+  out = subprocess.check_output(["bash", "-c", cmd], text=True).strip()
+  cfg, bake = out.split("|", 1)
+  assert "-fPIC" in bake
+  assert "-flto=thin" in bake
+  assert "-flto=thin" not in cfg
+  assert "-fPIC" not in cfg
+
+
 def test_rebuild_full_site_pgo_fail_loud_helpers() -> None:
   script = (_repo_root() / "scripts" / "rebuild_full_site.sh").read_text()
   pgo_lib = (_repo_root() / "scripts" / "pgo_lib.sh").read_text()

@@ -29,6 +29,15 @@ def test_python_build_uses_clang_22_from_trixie() -> None:
   assert "HPC_FUSE_LD_LLD=-fuse-ld=/usr/lib/llvm-22/bin/ld.lld" in build
   assert "AR=llvm-ar-22" in build
   assert "RANLIB=llvm-ranlib-22" in build
+  assert "update-alternatives --install /usr/bin/llvm-ar llvm-ar" in build
+  assert "command -v llvm-ar" in build
+  assert (
+    "update-alternatives --install /usr/bin/llvm-profdata llvm-profdata"
+    in build
+  )
+  assert "libclang-rt-22-dev" in build
+  assert "libclang_rt.profile-x86_64.a" in build
+  assert "libclang_rt.profile.a" in build
   assert "/usr/lib/llvm-22/bin/ld.lld --version" in build
   assert "pgo_clang_flags.sh" in build
   assert "gcc-toolchain" not in build
@@ -246,7 +255,8 @@ def test_jemalloc_configure_flags_and_no_initial_exec_tls():
   assert 'CPPFLAGS="-D_GNU_SOURCE"' in jem
   configure_block = jem[jem.index("./configure") : jem.index("make -j40")]
   assert "LDFLAGS=" not in configure_block
-  assert "flto=thin" in jem
+  assert "hpcperfstats_configure_cflags web/shared/jemalloc" in jem
+  assert "hpcperfstats_bake_cflags web/shared/jemalloc" in jem
   assert jem.index("_cf_cfg") < jem.index("./configure")
   assert "make -j40 CC=" in jem and 'CFLAGS="${_cf_bake}"' in jem
   assert 'AR="${AR}"' in jem and 'LDFLAGS="${_ld}"' in jem
@@ -261,6 +271,16 @@ def test_libmpdec_and_libffi_native_flags():
   assert "/opt/mpdecimal" in build
   assert "-DCONFIG_64" in build
   assert "-DASM" in build
+  mpd = build[
+    build.index("mpdecimal-4.0.1.tar.gz") : build.index("libffi-3.8.0.tar.gz")
+  ]
+  assert (
+    "flto=thin" in mpd and "-fPIC" in mpd
+  )  # web-only libmpdec; not in db/proxy
+  assert 'AR="${AR}"' in mpd and 'LDFLAGS="${_ld}"' in mpd
+  assert "--disable-cxx" in mpd
+  assert "make install CC=" in mpd
+  assert "libmpdec++" not in mpd
   assert "--with-system-libmpdec" in build
   assert "/opt/libffi" in build
   assert "--with-gcc-arch=native" in build

@@ -713,6 +713,7 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   env_cflags = _first_line_containing("ENV OPT_CFLAGS_LIBS=")
   assert "-mtune=native" in env_cflags
   assert "-flto=thin" in env_cflags
+  assert "hpcperfstats_configure_cflags proxy/jemalloc" in dockerfile
   assert "hpcperfstats_bake_cflags proxy/jemalloc" in dockerfile
   cc_opt = _first_line_containing("--with-cc-opt=")
   assert "${_cflags}" in cc_opt

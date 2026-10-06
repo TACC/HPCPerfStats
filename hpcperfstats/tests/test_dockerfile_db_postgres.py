@@ -22,6 +22,7 @@ def test_db_dockerfile_uses_clang22_apk_toolchain() -> None:
   assert "gcc-toolchain" not in text
   assert "assert_gcc_min_version" not in text
   assert "pgo_clang_flags.sh" in text
+  assert "source=${PGO_ROOT},target=/root/.hpcperfstats_pgo" in text
   assert "clang_march_native_probe.sh" in text
   assert "-Q --help=target" not in text
   assert "-flto=thin" in text
@@ -89,6 +90,8 @@ def test_db_dockerfile_pins_jemalloc_icu_liburing_lz4_zlib_ng_zstd() -> None:
     "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3" in text
   )
   assert "jemalloc-${JEMALLOC_VERSION}.tar.bz2" in text
+  assert "hpcperfstats_configure_cflags db/jemalloc" in text
+  assert "hpcperfstats_bake_cflags db/jemalloc" in text
   assert "zstd-${ZSTD_VERSION}.tar.gz" in text
   assert "zlib-ng/archive/refs/tags/${ZLIB_NG_VERSION}.tar.gz" in text
 
