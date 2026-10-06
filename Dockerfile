@@ -76,7 +76,7 @@ RUN /bin/bash -o pipefail -c '\
   test "$(uname -m)" = "x86_64"; \
   apt-get update -y; \
   apt-get install -y --no-install-recommends \
-    clang-22 llvm-22 lld gfortran \
+    clang-22 llvm-22 lld-22 gfortran \
     make libc6-dev ninja-build cmake pkg-config \
     curl ca-certificates autoconf bzip2 \
     libssl-dev libncursesw5-dev libsqlite3-dev \
@@ -87,11 +87,16 @@ RUN /bin/bash -o pipefail -c '\
   update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-22 100; \
   update-alternatives --install /usr/bin/cc cc /usr/bin/clang-22 100; \
   update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-22 100; \
+  test -x /usr/lib/llvm-22/bin/ld.lld; \
+  update-alternatives --install /usr/bin/ld.lld ld.lld /usr/lib/llvm-22/bin/ld.lld 100; \
+  update-alternatives --install /usr/bin/lld lld /usr/lib/llvm-22/bin/ld.lld 100; \
   clang-22 --version | grep -q "clang version 22"; \
+  /usr/lib/llvm-22/bin/ld.lld --version | grep -q "LLD 22"; \
   apt-get clean; \
   rm -rf /var/lib/apt/lists/*'
 
-ENV CC=clang-22 CXX=clang++-22
+ENV CC=clang-22 CXX=clang++-22 \
+    HPC_FUSE_LD_LLD=-fuse-ld=/usr/lib/llvm-22/bin/ld.lld
 
 # Print out compiler platform detection (services-conf/clang_march_native_probe.sh).
 RUN CC=clang-22 /bin/bash /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
@@ -117,12 +122,12 @@ RUN /bin/bash -o pipefail -c '\
   cd /usr/src/jemalloc; \
   _cf_cfg="-O2 -march=native -mtune=native -g0"; \
   _cf_bake="-O2 -march=native -mtune=native -flto=thin -g0"; \
-  _ld="-fuse-ld=lld"; \
-  CC="${CC}" CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" LDFLAGS="${_ld}" \
+  _ld="${HPC_FUSE_LD_LLD}"; \
+  CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" LDFLAGS="${_ld}" \
     ./configure --prefix=/opt/jemalloc --enable-shared --disable-static \
     --disable-stats --disable-fill --disable-debug --with-lg-page="${LG_PAGE}"; \
-  make -j40 CC="${CC}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
-  make install CC="${CC}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
+  make -j40 CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
+  make install CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
   find /opt/jemalloc -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
   echo "/opt/jemalloc/lib" > /etc/ld.so.conf.d/jemalloc.conf; \
   ldconfig; \
@@ -149,7 +154,7 @@ RUN /bin/bash -o pipefail -c '\
     -DWITH_OPTIM=ON \
     -DWITH_NEW_STRATEGIES=ON \
     -DWITH_NATIVE_INSTRUCTIONS=ON \
-    -DCMAKE_C_FLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"; \
+    -DCMAKE_C_FLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_FUSE_LD_LLD} -g0"; \
   cmake --build build -j40; \
   cmake --install build; \
   find /opt/zlib-ng -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
@@ -171,7 +176,7 @@ RUN /bin/bash -o pipefail -c '\
   export PKG_CONFIG_PATH="/opt/zlib-ng/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
   export CPPFLAGS="-I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
   export LDFLAGS="-L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib${LDFLAGS:+ $LDFLAGS}"; \
-  export MOREFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"; \
+  export MOREFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_FUSE_LD_LLD} -g0"; \
   make -j40 PREFIX=/opt/zstd HAVE_ZLIB=1; \
   make install PREFIX=/opt/zstd; \
   find /opt/zstd -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
@@ -214,11 +219,11 @@ RUN /bin/bash -o pipefail -c '\
   cd /usr/src/libffi; \
   _cf_cfg="-O2 -march=native -mtune=native -g0"; \
   _cf_bake="-O2 -march=native -mtune=native -flto=thin -g0"; \
-  _ld="-fuse-ld=lld"; \
-  CC="${CC}" CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" LDFLAGS="${_ld}" \
+  _ld="${HPC_FUSE_LD_LLD}"; \
+  CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" LDFLAGS="${_ld}" \
     ./configure --prefix=/opt/libffi --with-gcc-arch=native --disable-static --enable-shared; \
-  make -j40 CC="${CC}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
-  make install CC="${CC}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
+  make -j40 CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
+  make install CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_ld}"; \
   find /opt/libffi -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
   if [ -d /opt/libffi/lib/x86_64-linux-gnu ]; then \
     echo "/opt/libffi/lib/x86_64-linux-gnu" > /etc/ld.so.conf.d/libffi.conf; \
@@ -474,8 +479,8 @@ RUN /bin/bash -o pipefail -c '\
 # 4b) GIL native brotli (replace rest-layer wheel; host .venv keeps the wheel).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
-  export CFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0" \
-    CXXFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"; \
+  export CFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_FUSE_LD_LLD} -g0" \
+    CXXFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_FUSE_LD_LLD} -g0"; \
   python3 -m pip install --no-cache-dir --force-reinstall --no-binary brotli \
     --constraint /tmp/requirements.txt brotli; \
   python3 -c "import brotli; p=brotli.compress(b\"hps\", quality=11); assert brotli.decompress(p)==b\"hps\""'
@@ -560,8 +565,8 @@ RUN /bin/bash -o pipefail -c '\
 # 7b) Free-threaded native brotli (same CFLAGS as GIL; rest layer stays wheels).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
-  export CFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0" \
-    CXXFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"; \
+  export CFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_FUSE_LD_LLD} -g0" \
+    CXXFLAGS="-O2 -march=native -mtune=native -flto=thin ${HPC_FUSE_LD_LLD} -g0"; \
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir \
     --force-reinstall --no-binary brotli \
     --constraint /tmp/requirements.txt brotli; \

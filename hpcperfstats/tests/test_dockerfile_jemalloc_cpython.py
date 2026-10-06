@@ -25,6 +25,9 @@ def test_python_build_uses_clang_22_from_trixie() -> None:
   build = _stage_body(dockerfile, "python-build")
   assert "clang-22" in build
   assert "llvm-22" in build
+  assert "lld-22" in build
+  assert "HPC_FUSE_LD_LLD=-fuse-ld=/usr/lib/llvm-22/bin/ld.lld" in build
+  assert "/usr/lib/llvm-22/bin/ld.lld --version" in build
   assert "pgo_clang_flags.sh" in build
   assert "gcc-toolchain" not in build
   assert "assert_gcc_min_version" not in build
@@ -236,10 +239,11 @@ def test_jemalloc_configure_flags_and_no_initial_exec_tls():
     build.index("jemalloc-5.4.0.tar.bz2") : build.index("zlib-ng/archive")
   ]
   assert "_ld=" in jem and "LDFLAGS=" in jem
-  assert "-fuse-ld=lld" in jem
+  assert "HPC_FUSE_LD_LLD" in jem
+  assert "/usr/lib/llvm-22/bin/ld.lld" in build
   assert "flto=thin" in jem
   assert jem.index("_cf_cfg") < jem.index("./configure")
-  assert 'make -j40 CC="${CC}" CFLAGS="${_cf_bake}"' in jem
+  assert 'make -j40 CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_bake}"' in jem
   assert "strip --strip-unneeded" in build
   assert "--with-pydebug" not in build
   assert "-ggdb" not in build
