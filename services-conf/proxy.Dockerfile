@@ -42,6 +42,7 @@ RUN apk add --no-cache \
     bash \
     clang22 \
     lld22 \
+    llvm22-dev \
     build-base \
     bzip2 \
     cmake \

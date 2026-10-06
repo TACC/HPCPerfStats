@@ -641,6 +641,9 @@ def test_proxy_dockerfile_uses_clang22_apk_toolchain() -> None:
   _apk_before_probe = dockerfile.split("apk add", 1)[1].split(
     "clang_march_native_probe", 1
   )[0]
+  assert "llvm22-dev" in _apk_before_probe, (
+    "proxy ThinLTO jemalloc make needs /usr/lib/llvm22/bin/llvm-ar from llvm22-dev"
+  )
   assert "bash" in _apk_before_probe, (
     "Alpine proxy-build needs bash before clang_march_native_probe RUN"
   )
