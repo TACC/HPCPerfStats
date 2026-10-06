@@ -131,6 +131,127 @@ hpcperfstats_configure_cflags() {
   printf '%s' "${stripped}"
 }
 
+# CPython 3.14: --enable-optimizations + profile-gen-stamp / profile-run-stamp / profile-opt.
+hpcperfstats_cpython_pgo_namespace() {
+  case "${1}" in
+    web/gil/cpython | web/ft/cpython) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Pass to ./configure when PGO_PHASE is generate or use (skip omits --enable-optimizations).
+hpcperfstats_cpython_enable_optimizations_for_configure() {
+  case "$(hpcperfstats_pgo_phase)" in
+    generate | use) printf '%s' '--enable-optimizations' ;;
+  esac
+}
+
+# Live soak (Clang): LLVM_PROFILE_FILE → PGOROOT/.../raw/python-%p.profraw
+# %p = PID so listend, sync_timedb, update_metrics, gunicorn workers each get a unique file;
+# Upstream Makefile LLVM_PROF_MERGER merges $(pwd)/*.profclangr → code.profclangd before profile-opt.
+hpcperfstats_cpython_llvm_profile_file() {
+  local namespace="${1:?namespace required}"
+  hpcperfstats_cpython_pgo_namespace "${namespace}" \
+    || hpcperfstats_pgo_die "not a CPython PGO namespace: ${namespace}"
+  printf '%s' "$(hpcperfstats_pgo_root)/${namespace}/raw/python-%p.profraw"
+}
+
+# Run $(LLVM_PROF_MERGER) from the configured CPython Makefile (same as profile-run-stamp tail).
+hpcperfstats_cpython_run_makefile_prof_merger() {
+  [[ -f Makefile ]] || hpcperfstats_pgo_die "CPython Makefile missing (run ./configure first)"
+  make -s --eval '.PHONY: hpcperfstats-prof-merge' \
+    --eval 'hpcperfstats-prof-merge: ; $(LLVM_PROF_MERGER)' \
+    hpcperfstats-prof-merge
+}
+
+# Use-phase: copy soak profiles into $(pwd) as code-*.profclangr for upstream LLVM_PROF_MERGER.
+hpcperfstats_cpython_stage_profiles_for_profile_opt() {
+  local namespace="${1:?namespace required}"
+  local root raw_dir prof staged=() f dest
+
+  root="$(hpcperfstats_pgo_root)"
+  raw_dir="${root}/${namespace}/raw"
+  prof="${root}/${namespace}/default.profdata"
+
+  rm -f ./code-*.profclangr ./code.profclangd
+
+  shopt -s nullglob
+  for f in "${raw_dir}"/python-*.profraw; do
+    dest="./code-$(basename "${f}" .profraw).profclangr"
+    cp "${f}" "${dest}"
+    staged+=( "${dest}" )
+  done
+  for f in "${raw_dir}"/code-*.profclangr; do
+    dest="./$(basename "${f}")"
+    cp "${f}" "${dest}"
+    staged+=( "${dest}" )
+  done
+  for f in "${raw_dir}"/*.profclangr; do
+    case "$(basename "${f}")" in
+      code-*.profclangr) continue ;;
+    esac
+    dest="./code-$(basename "${f}")"
+    cp "${f}" "${dest}"
+    staged+=( "${dest}" )
+  done
+  shopt -u nullglob
+
+  if [[ ${#staged[@]} -gt 0 ]]; then
+    hpcperfstats_cpython_run_makefile_prof_merger
+  elif [[ -s "${prof}" ]]; then
+    cp "${prof}" ./code.profclangd
+  else
+    hpcperfstats_pgo_die "PGO use requires raw profiles under ${raw_dir} or ${prof}"
+  fi
+
+  if [[ ! -s ./code.profclangd ]]; then
+    hpcperfstats_pgo_die "PGO use: empty code.profclangd after merge"
+  fi
+}
+
+# generate: install instrumented tree without running profile-opt (libinstall: all → build_all).
+hpcperfstats_cpython_relax_install_deps_for_instrumented() {
+  sed -i \
+    -e 's/^libinstall: all/libinstall: build_all/' \
+    -e 's/^sharedinstall: all/sharedinstall: build_all/' \
+    -e 's/^libainstall: all scripts/libainstall: build_all scripts/' \
+    Makefile
+}
+
+# skip → make install; generate → profile-gen-stamp + altinstall; use → profile-run-stamp + profile-opt + altinstall.
+hpcperfstats_cpython_make_install() {
+  local namespace="${1:?namespace required}"
+  local jobs="${2:-40}"
+  local phase root prof
+
+  hpcperfstats_cpython_pgo_namespace "${namespace}" \
+    || hpcperfstats_pgo_die "hpcperfstats_cpython_make_install: ${namespace}"
+
+  phase="$(hpcperfstats_pgo_phase)"
+  root="$(hpcperfstats_pgo_root)"
+
+  case "${phase}" in
+    skip | "")
+      make -j"${jobs}"
+      make install
+      ;;
+    generate)
+      hpcperfstats_cpython_relax_install_deps_for_instrumented
+      make -j"${jobs}" profile-gen-stamp
+      make altinstall
+      ;;
+    use)
+      hpcperfstats_cpython_stage_profiles_for_profile_opt "${namespace}"
+      touch profile-run-stamp
+      make -j"${jobs}" profile-opt
+      make altinstall
+      ;;
+    *)
+      hpcperfstats_pgo_die "unknown PGO_PHASE=${phase}"
+      ;;
+  esac
+}
+
 # variant: libs (default) or pg (PostgreSQL / Timescale extra vector width)
 hpcperfstats_bake_cflags() {
   local namespace="${1:?namespace required}"
@@ -138,6 +259,11 @@ hpcperfstats_bake_cflags() {
   local base phase root prof out
 
   base="$(hpcperfstats_native_base_cflags "${variant}")"
+
+  if hpcperfstats_cpython_pgo_namespace "${namespace}"; then
+    printf '%s' "${base}"
+    return 0
+  fi
 
   phase="$(hpcperfstats_pgo_phase)"
   root="$(hpcperfstats_pgo_root)"

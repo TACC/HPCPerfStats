@@ -67,6 +67,11 @@ pgo_namespace_has_mergeable_raw() {
   ns="$1"
   shopt -s nullglob
   local files=("${root}/${ns}/raw/"*.profraw)
+  case "${ns}" in
+    web/gil/cpython | web/ft/cpython)
+      files+=( "${root}/${ns}/raw/"*.profclangr )
+      ;;
+  esac
   [[ ${#files[@]} -gt 0 ]]
 }
 

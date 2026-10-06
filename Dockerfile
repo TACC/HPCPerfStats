@@ -287,7 +287,6 @@ RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   hpcperfstats_pgo_ensure_web_gil_cpython_link_dirs; \
   _py_cfg="$(hpcperfstats_configure_cflags web/gil/cpython debian-lib)"; \
-  _py_bake="$(hpcperfstats_bake_cflags web/gil/cpython debian-lib)"; \
   export PKG_CONFIG_PATH="/opt/zstd/lib/pkgconfig:/opt/zlib-ng/lib/pkgconfig:/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
   export CPPFLAGS="-I/opt/zstd/include -I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
   export CFLAGS="${_py_cfg}" CXXFLAGS="${_py_cfg}" OPT="-O2 -g0"; \
@@ -298,15 +297,14 @@ RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   ./configure \
     --prefix=/opt/python3.14 \
     --enable-shared \
-    --enable-optimizations \
+    $(hpcperfstats_cpython_enable_optimizations_for_configure) \
     --with-lto \
     --with-ensurepip=install \
     --with-system-libmpdec \
     --without-static-libpython \
     --disable-test-modules \
     --without-mimalloc; \
-  make -j40 CFLAGS="${_py_bake}" CXXFLAGS="${_py_bake}"; \
-  make install CFLAGS="${_py_bake}" CXXFLAGS="${_py_bake}"; \
+  hpcperfstats_cpython_make_install web/gil/cpython 40; \
   /opt/python3.14/bin/python3.14 -c "import sysconfig; assert int(sysconfig.get_config_var(\"Py_GIL_DISABLED\") or 0) == 0"; \
   ldd /opt/python3.14/bin/python3.14 | grep libjemalloc; \
   ldd /opt/python3.14/lib/libpython3.14.so | grep libjemalloc; \
@@ -353,7 +351,6 @@ RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
   hpcperfstats_pgo_ensure_web_ft_cpython_link_dirs; \
   _py_cfg="$(hpcperfstats_configure_cflags web/ft/cpython debian-lib)"; \
-  _py_bake="$(hpcperfstats_bake_cflags web/ft/cpython debian-lib)"; \
   export PKG_CONFIG_PATH="/opt/zstd/lib/pkgconfig:/opt/zlib-ng/lib/pkgconfig:/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
   export CPPFLAGS="-I/opt/zstd/include -I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
   export CFLAGS="${_py_cfg}" CXXFLAGS="${_py_cfg}" OPT="-O2 -g0"; \
@@ -364,15 +361,14 @@ RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   ./configure \
     --prefix=/opt/python3.14t \
     --enable-shared \
-    --enable-optimizations \
+    $(hpcperfstats_cpython_enable_optimizations_for_configure) \
     --with-lto \
     --with-ensurepip=install \
     --with-system-libmpdec \
     --without-static-libpython \
     --disable-test-modules \
     --disable-gil; \
-  make -j40 CFLAGS="${_py_bake}" CXXFLAGS="${_py_bake}"; \
-  make install CFLAGS="${_py_bake}" CXXFLAGS="${_py_bake}"; \
+  hpcperfstats_cpython_make_install web/ft/cpython 40; \
   ln -sf python3.14t /opt/python3.14t/bin/python; \
   ln -sf python3.14t /opt/python3.14t/bin/python3; \
   /opt/python3.14t/bin/python3.14t -c "import sysconfig; assert int(sysconfig.get_config_var(\"Py_GIL_DISABLED\") or 0) == 1"; \

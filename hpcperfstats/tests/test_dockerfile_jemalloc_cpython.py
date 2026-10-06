@@ -65,7 +65,8 @@ def test_python_build_mounts_pgoroot_for_pgo_namespaces() -> None:
   assert build.count(mount) >= 9
   assert "hpcperfstats_pgo_ensure_web_gil_cpython_link_dirs" in build
   assert "hpcperfstats_pgo_ensure_web_ft_cpython_link_dirs" in build
-  assert "hpcperfstats_bake_cflags web/gil/cpython" in build
+  assert "hpcperfstats_cpython_make_install web/gil/cpython" in build
+  assert "hpcperfstats_configure_cflags web/gil/cpython" in build
   assert "hpcperfstats_bake_cflags web/gil/optimization-stack" in build
   assert "requirements-mkl-brotli.txt" in build
   assert "ensure_web_gil_brotli_link_dirs" not in build
@@ -320,7 +321,11 @@ def test_libmpdec_and_libffi_native_flags():
 def test_cpython_gil_without_mimalloc_ft_keeps_mimalloc_both_force_jemalloc():
   build = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
   assert "--with-lto" in build
-  assert "--enable-optimizations" in build
+  assert "hpcperfstats_cpython_enable_optimizations_for_configure" in build
+  pgo_sh = (_repo_root() / "services-conf" / "pgo_clang_flags.sh").read_text()
+  assert "profile-gen-stamp" in pgo_sh
+  assert "profile-opt" in pgo_sh
+  assert "make altinstall" in pgo_sh
   assert "-Wl,--no-as-needed" in build
   assert "-ljemalloc" in build
   # --without-mimalloc only on GIL configure (not on --disable-gil block).

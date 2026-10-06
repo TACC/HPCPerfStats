@@ -80,7 +80,7 @@ def test_pgo_ensure_helpers_list_every_web_registry_namespace() -> None:
 
 
 def test_pgo_registry_rows_use_pg_mount_with_bake_cflags() -> None:
-  """Every bake_cflags call in image Dockerfiles must sit in a from=pgo RUN."""
+  """Every PGO bake/cpython make call in image Dockerfiles must sit in a from=pgo RUN."""
   mount = "from=pgo,source=.,target=/root/.hpcperfstats_pgo"
   for path in (
     _repo_root() / "Dockerfile",
@@ -88,15 +88,19 @@ def test_pgo_registry_rows_use_pg_mount_with_bake_cflags() -> None:
     _repo_root() / "services-conf" / "proxy.Dockerfile",
   ):
     text = path.read_text()
-    for match in re.finditer(r"hpcperfstats_bake_cflags[^\n\\]+", text):
-      start = text.rfind("RUN", 0, match.start())
-      end = text.find("\n\n", match.start())
-      if end == -1:
-        end = len(text)
-      run_block = text[start:end]
-      assert mount in run_block, (
-        f"{path.name}: bake without PGOROOT mount near {match.group(0)!r}"
-      )
+    for pattern in (
+      r"hpcperfstats_bake_cflags[^\n\\]+",
+      r"hpcperfstats_cpython_make_install[^\n\\]+",
+    ):
+      for match in re.finditer(pattern, text):
+        start = text.rfind("RUN", 0, match.start())
+        end = text.find("\n\n", match.start())
+        if end == -1:
+          end = len(text)
+        run_block = text[start:end]
+        assert mount in run_block, (
+          f"{path.name}: PGO without PGOROOT mount near {match.group(0)!r}"
+        )
 
 
 def test_web_dockerfile_declares_pgo_namespace_for_each_web_row() -> None:
@@ -105,7 +109,11 @@ def test_web_dockerfile_declares_pgo_namespace_for_each_web_row() -> None:
   for ns in _registry_namespaces():
     if not ns.startswith("web/"):
       continue
-    assert f"hpcperfstats_bake_cflags {ns}" in build, ns
+    if ns in ("web/gil/cpython", "web/ft/cpython"):
+      assert f"hpcperfstats_cpython_make_install {ns}" in build, ns
+      assert f"hpcperfstats_configure_cflags {ns}" in build, ns
+    else:
+      assert f"hpcperfstats_bake_cflags {ns}" in build, ns
 
 
 def test_pgo_lib_bootstraps_pg_root_before_layout() -> None:
@@ -175,6 +183,59 @@ def test_pgo_alpine_thinlto_ldflags_for_jemalloc_link() -> None:
   ).strip()
   assert "-flto=thin" in out
   assert "--ld-path=/usr/lib/llvm22/bin/ld.lld" in out
+
+
+def test_cpython_make_install_uses_upstream_profile_targets() -> None:
+  script = (_repo_root() / "services-conf" / "pgo_clang_flags.sh").read_text()
+  assert "profile-gen-stamp" in script
+  assert "touch profile-run-stamp" in script
+  assert "profile-opt" in script
+  assert "hpcperfstats_cpython_stage_profiles_for_profile_opt" in script
+  assert "hpcperfstats_cpython_run_makefile_prof_merger" in script
+  assert "LLVM_PROF_MERGER" in script
+  assert "llvm-profdata merge" not in script
+  assert "code-*.profclangr" in script
+  assert "python-%p.profraw" in script
+  assert "build_all_generate_profile" not in script
+  assert "hpcperfstats_cpython_enable_optimizations_for_configure" in script
+
+
+def test_cpython_bake_omits_namespace_pgo_instr_flags() -> None:
+  """CPython PGO uses --enable-optimizations + split make targets, not bake instr flags."""
+  script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
+  import tempfile
+
+  with tempfile.TemporaryDirectory() as tmp:
+    for phase in ("skip", "generate", "use"):
+      out = subprocess.check_output(
+        [
+          "bash",
+          "-c",
+          f'source "{script}"; hpcperfstats_bake_cflags web/gil/cpython debian-lib',
+        ],
+        env={
+          **os.environ,
+          "HPC_PGO_PHASE": phase,
+          "HPC_PGO_ROOT": tmp,
+        },
+        text=True,
+      ).strip()
+      assert "-fprofile-instr-generate" not in out, phase
+      assert "-fprofile-instr-use" not in out, phase
+
+
+def test_cpython_llvm_profile_file_matches_upstream_profraw_pattern() -> None:
+  script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
+  out = subprocess.check_output(
+    [
+      "bash",
+      "-c",
+      f'source "{script}"; hpcperfstats_cpython_llvm_profile_file web/gil/cpython',
+    ],
+    env={**os.environ, "HPC_PGO_ROOT": "/tmp/pgo"},
+    text=True,
+  ).strip()
+  assert out.endswith("/web/gil/cpython/raw/python-%p.profraw")
 
 
 def test_pgo_generate_bake_uses_profraw_filename_template() -> None:
