@@ -177,6 +177,29 @@ def test_pgo_alpine_thinlto_ldflags_for_jemalloc_link() -> None:
   assert "--ld-path=/usr/lib/llvm22/bin/ld.lld" in out
 
 
+def test_pgo_generate_bake_uses_profraw_filename_template() -> None:
+  """Regression: -fprofile-instr-generate must not point at raw/ alone (EISDIR at runtime)."""
+  script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
+  import tempfile
+
+  with tempfile.TemporaryDirectory() as tmp:
+    env = {**os.environ, "HPC_PGO_PHASE": "generate", "HPC_PGO_ROOT": tmp}
+    out = subprocess.check_output(
+      [
+        "bash",
+        "-c",
+        f'source "{script}"; hpcperfstats_bake_cflags web/shared/zstd debian-lib',
+      ],
+      env=env,
+      text=True,
+    ).strip()
+  assert "/raw/%m.profraw" in out
+  assert out.endswith(".profraw") or "/raw/%m.profraw" in out
+  assert "-fprofile-instr-generate=" in out
+  bad = out.split("-fprofile-instr-generate=", 1)[1].split()[0]
+  assert not bad.endswith("/raw"), f"EISDIR path: {bad!r}"
+
+
 def test_pgo_clang_flags_shared_lib_configure_vs_bake() -> None:
   script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
   cmd = (

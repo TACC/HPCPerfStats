@@ -148,7 +148,7 @@ hpcperfstats_bake_cflags() {
       ;;
     generate)
       hpcperfstats_pgo_ensure_raw_dir "${namespace}"
-      out="${base} -fprofile-instr-generate=${root}/${namespace}/raw"
+      out="${base} -fprofile-instr-generate=${root}/${namespace}/raw/%m.profraw"
       ;;
     use)
       prof="${root}/${namespace}/default.profdata"
