@@ -638,6 +638,12 @@ def test_proxy_dockerfile_uses_clang22_apk_toolchain() -> None:
   assert "ENV CC=clang CXX=clang++" in dockerfile
   assert "gcc-toolchain" not in dockerfile
   assert "clang_march_native_probe.sh" in dockerfile
+  _apk_before_probe = dockerfile.split("apk add", 1)[1].split(
+    "clang_march_native_probe", 1
+  )[0]
+  assert "bash" in _apk_before_probe, (
+    "Alpine proxy-build needs bash before clang_march_native_probe RUN"
+  )
   assert "-Q --help=target" not in dockerfile
   assert "NGINX_OPT_CFLAGS" not in dockerfile
   assert "-flto=thin" in dockerfile

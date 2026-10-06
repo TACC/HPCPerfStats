@@ -39,6 +39,7 @@ ARG ZSTD_NGINX_MODULE_SHA256=d4db8937f035ebb5e7efca833492611f8f5e4f710dbd3fbdd2f
 ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"
 
 RUN apk add --no-cache \
+    bash \
     clang22 \
     lld22 \
     build-base \
