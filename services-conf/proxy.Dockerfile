@@ -19,8 +19,7 @@ ENV PATH="/opt/gcc-16/bin:${PATH}" CC=gcc CXX=g++
 RUN chmod +x /usr/local/bin/assert_gcc_min_version.sh \
   && GCC_MIN_VERSION="${GCC_MIN_VERSION}" assert_gcc_min_version.sh
 
-# Bump NGINX_VERSION: retry full OPT_CFLAGS_LIBS on --with-cc-opt if configure probe passes; keep
-# linker-only --with-ld-opt. Until then: NGINX_OPT_CFLAGS at configure + make CFLAGS="${OPT_CFLAGS_LIBS} …".
+# nginx configure/compile: NGINX_OPT_CFLAGS (no -flto; GCC 16 probe-safe). Other /opt deps keep OPT_CFLAGS_LIBS LTO.
 ARG NGINX_VERSION=1.31.6
 ARG NGINX_SHA256=974ed5298a5e398e008704ed5db284e655fc270c596493dbccada452448fc9f1
 ARG OPENSSL_VERSION=3.5.9
@@ -182,8 +181,8 @@ RUN set -eux; \
   cd /usr/src/nginx; \
   export ZSTD_INC=/opt/zstd/include; \
   export ZSTD_LIB=/opt/zstd/lib; \
-  nginx_bake_cflags="${OPT_CFLAGS_LIBS} -I/opt/zstd/include"; \
-  # libzstd.a via zstd-nginx-module. Configure: NGINX_OPT_CFLAGS + linker-only ld-opt (GCC 16 probe).
+  nginx_bake_cflags="${NGINX_OPT_CFLAGS} -I/opt/zstd/include"; \
+  # libzstd.a via zstd-nginx-module. Same flags at configure and make (no -flto on nginx link).
   ./configure \
     --prefix=/opt/nginx \
     --sbin-path=/usr/sbin/nginx \

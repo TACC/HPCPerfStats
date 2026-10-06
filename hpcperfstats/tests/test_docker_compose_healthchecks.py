@@ -732,8 +732,10 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
     )
   ]
   assert (
-    'nginx_bake_cflags="${OPT_CFLAGS_LIBS} -I/opt/zstd/include"' in nginx_run
+    'nginx_bake_cflags="${NGINX_OPT_CFLAGS} -I/opt/zstd/include"' in nginx_run
   )
+  bake_line = _first_line_containing('nginx_bake_cflags="${NGINX_OPT_CFLAGS}')
+  assert "-flto" not in bake_line
   assert 'make -j"$(nproc)" CFLAGS="${nginx_bake_cflags}"' in nginx_run
   assert 'make install CFLAGS="${nginx_bake_cflags}"' in nginx_run
   openssl_opt = _first_line_containing("--with-openssl-opt=")
