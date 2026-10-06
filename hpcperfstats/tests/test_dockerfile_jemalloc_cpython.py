@@ -34,6 +34,12 @@ def test_python_build_uses_clang_22_from_trixie() -> None:
   assert "-flto=thin" in build
 
 
+def test_python_build_uses_clang_native_probe_not_gcc_help() -> None:
+  dockerfile = (_repo_root() / "Dockerfile").read_text()
+  assert "-Q --help=target" not in dockerfile
+  assert "clang_march_native_probe.sh" in dockerfile
+
+
 def test_dockerfile_uses_debian_trixie_builder_and_slim_runtime():
   dockerfile = (_repo_root() / "Dockerfile").read_text()
   assert "FROM python:3.14.7-trixie" not in dockerfile

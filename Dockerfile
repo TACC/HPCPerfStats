@@ -69,7 +69,8 @@ ENV PYTHON_VERSION=3.14.8 \
 
 # Builder apt toolchain (compilers stay in python-build only). Clang 22 from trixie.
 COPY services-conf/pgo_clang_flags.sh /usr/local/lib/hpcperfstats/pgo_clang_flags.sh
-RUN chmod +x /usr/local/lib/hpcperfstats/pgo_clang_flags.sh
+COPY services-conf/clang_march_native_probe.sh /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
+RUN chmod +x /usr/local/lib/hpcperfstats/pgo_clang_flags.sh /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   test "$(uname -m)" = "x86_64"; \
@@ -92,9 +93,8 @@ RUN /bin/bash -o pipefail -c '\
 
 ENV CC=clang-22 CXX=clang++-22
 
-# Print out compiler platform detection
-
-RUN clang-22 -march=native -mtune=native -Q --help=target
+# Print out compiler platform detection (services-conf/clang_march_native_probe.sh).
+RUN CC=clang-22 /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 
 # jemalloc 5.4.0 (shared; keep default initial-exec TLS — do not disable it).
 RUN /bin/bash -o pipefail -c '\

@@ -41,6 +41,7 @@ tacc_stats.egg-info/
 !services-conf/redis_entrypoint.sh
 # Clang PGO bake flags (db/proxy COPY; Dockerfile COPY from services-conf/).
 !services-conf/pgo_clang_flags.sh
+!services-conf/clang_march_native_probe.sh
 *.so
 *.d
 .project

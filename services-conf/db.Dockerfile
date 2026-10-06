@@ -14,7 +14,8 @@ ENV HPC_PGO_PHASE=${PGO_PHASE} HPC_PGO_ROOT=${PGO_ROOT}
 ENV CC=clang CXX=clang++ LD=ld.lld
 
 COPY pgo_clang_flags.sh /usr/local/lib/hpcperfstats/pgo_clang_flags.sh
-RUN chmod +x /usr/local/lib/hpcperfstats/pgo_clang_flags.sh
+COPY clang_march_native_probe.sh /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
+RUN chmod +x /usr/local/lib/hpcperfstats/pgo_clang_flags.sh /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 
 # LLVM major matches docker-library postgres 18/alpine3.24.
 ENV DOCKER_PG_LLVM_DEPS="llvm22-dev clang22"
@@ -50,9 +51,8 @@ RUN set -eux; \
     $DOCKER_PG_LLVM_DEPS
 # libz ABI is /opt/zlib-ng (ZLIB_COMPAT); do not apk-install stock zlib packages.
 
- # Print out compiler platform detection
-
-RUN clang --version && clang -march=native -mtune=native -Q --help=target
+# Print out compiler platform detection (clang_march_native_probe.sh).
+RUN /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 
 # /opt source pins: slowest-changing independent layers first (Docker cache).
 # zstd links /opt/lz4 + /opt/zlib-ng, so it stays after both even though zstd

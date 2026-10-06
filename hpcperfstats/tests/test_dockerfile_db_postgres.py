@@ -22,6 +22,8 @@ def test_db_dockerfile_uses_clang22_apk_toolchain() -> None:
   assert "gcc-toolchain" not in text
   assert "assert_gcc_min_version" not in text
   assert "pgo_clang_flags.sh" in text
+  assert "clang_march_native_probe.sh" in text
+  assert "-Q --help=target" not in text
   assert "-flto=thin" in text
   assert 'ENV OPT_CFLAGS_LIBS="-O2' in text
 
@@ -39,7 +41,10 @@ def test_db_dockerfile_pins_alpine_3_24_not_latest_or_trixie() -> None:
 
 def test_db_dockerfile_apk_includes_bzip2_for_source_tarballs() -> None:
   text = _dockerfile()
-  assert "bzip2" in text.split("apk add", 1)[1].split("RUN clang", 1)[0]
+  assert (
+    "bzip2"
+    in text.split("apk add", 1)[1].split("clang_march_native_probe", 1)[0]
+  )
   assert "alpine:latest" not in text
   assert "alpine:edge" not in text
   assert "debian:trixie" not in text

@@ -15,7 +15,8 @@ ENV HPC_PGO_PHASE=${PGO_PHASE} HPC_PGO_ROOT=${PGO_ROOT}
 ENV CC=clang CXX=clang++ LD=ld.lld
 
 COPY services-conf/pgo_clang_flags.sh /usr/local/lib/hpcperfstats/pgo_clang_flags.sh
-RUN chmod +x /usr/local/lib/hpcperfstats/pgo_clang_flags.sh
+COPY services-conf/clang_march_native_probe.sh /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
+RUN chmod +x /usr/local/lib/hpcperfstats/pgo_clang_flags.sh /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 
 # nginx and /opt deps: unified -O2 ThinLTO bake (+ optional PGO via pgo_clang_flags.sh).
 ARG NGINX_VERSION=1.31.6
@@ -48,9 +49,8 @@ RUN apk add --no-cache \
     pcre2-dev \
     perl
 
-# Print out compiler platform detection
-
-RUN clang --version && clang -march=native -mtune=native -Q --help=target
+# Print out compiler platform detection (clang_march_native_probe.sh).
+RUN /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 
 # --- jemalloc ---
 ARG PGO_NAMESPACE=proxy/jemalloc

@@ -637,6 +637,8 @@ def test_proxy_dockerfile_uses_clang22_apk_toolchain() -> None:
   assert "clang22" in dockerfile
   assert "ENV CC=clang CXX=clang++" in dockerfile
   assert "gcc-toolchain" not in dockerfile
+  assert "clang_march_native_probe.sh" in dockerfile
+  assert "-Q --help=target" not in dockerfile
   assert "NGINX_OPT_CFLAGS" not in dockerfile
   assert "-flto=thin" in dockerfile
 
