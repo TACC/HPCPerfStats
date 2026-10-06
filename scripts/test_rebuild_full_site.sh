@@ -72,6 +72,14 @@ if ! grep -q 'pgo_ensure_pg_root' "${PGO_LIB}"; then
   echo "pgo_lib.sh must define pgo_ensure_pg_root for host PGOROOT bootstrap" >&2
   exit 1
 fi
+if ! grep -q 'pgo_chmod_shared_tree' "${PGO_LIB}"; then
+  echo "pgo_lib.sh must define pgo_chmod_shared_tree for shared PGOROOT permissions" >&2
+  exit 1
+fi
+if ! grep -q 'pgo_chmod_shared_tree' "${SCRIPT_DIR}/pgo_ensure_layout.sh"; then
+  echo "pgo_ensure_layout.sh must call pgo_chmod_shared_tree" >&2
+  exit 1
+fi
 if ! grep -q '\-\-profile-phase' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must support --profile-phase" >&2
   exit 1

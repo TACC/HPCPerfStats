@@ -29,6 +29,17 @@ pgo_ensure_pg_root() {
   fi
 }
 
+# World-writable dirs (sticky) + world-readable/writable files so rootless builders,
+# container UIDs, and merge/rebuild on different host users share one PGOROOT bind.
+pgo_chmod_shared_tree() {
+  local root
+  root="$(pgo_root_dir)"
+  [[ -d "${root}" ]] || return 0
+  chmod 1777 "${root}" || pgo_die "chmod 1777 failed: ${root}"
+  find "${root}" -type d -exec chmod 1777 {} +
+  find "${root}" -type f -exec chmod a+rw {} +
+}
+
 pgo_use_breadcrumb_path() {
   printf '%s/breadcrumbs/pgo_use_full_rebuild.done' "$(pgo_root_dir)"
 }

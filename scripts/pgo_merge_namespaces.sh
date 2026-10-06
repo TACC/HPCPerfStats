@@ -11,6 +11,7 @@ if ! command -v llvm-profdata >/dev/null 2>&1; then
 fi
 
 root="$(pgo_root_dir)"
+pgo_chmod_shared_tree
 failed=()
 
 while IFS= read -r ns; do
@@ -36,6 +37,8 @@ while IFS= read -r ns; do
     failed+=( "${ns}: empty default.profdata after merge" )
   fi
 done < <(pgo_list_namespaces "${REPO_ROOT}")
+
+pgo_chmod_shared_tree
 
 if [[ ${#failed[@]} -gt 0 ]]; then
   pgo_die "$(printf '%s; ' "${failed[@]}")"

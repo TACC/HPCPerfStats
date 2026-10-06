@@ -22,4 +22,6 @@ while IFS= read -r ns; do
   mkdir -p "${root}/${ns}/raw"
 done < <(pgo_list_namespaces "${REPO_ROOT}")
 
+pgo_chmod_shared_tree
+
 echo "pgo_ensure_layout: ready under ${root}" >&2

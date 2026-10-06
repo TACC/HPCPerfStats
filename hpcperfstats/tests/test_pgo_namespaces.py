@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -43,6 +45,38 @@ def test_pgo_lib_bootstraps_pg_root_before_layout() -> None:
   ensure = (_repo_root() / "scripts" / "pgo_ensure_layout.sh").read_text()
   assert "pgo_ensure_pg_root" in pgo_lib
   assert "pgo_ensure_pg_root" in ensure
+  assert "pgo_chmod_shared_tree" in pgo_lib
+  assert "pgo_chmod_shared_tree" in ensure
+
+
+def _dir_world_rwx(mode: int) -> bool:
+  perms = mode & 0o777
+  return perms in (0o777, 0o1777)
+
+
+def test_pgo_ensure_layout_applies_shared_directory_mode(
+  tmp_path: Path,
+) -> None:
+  pgoroot = tmp_path / "pgo-shared-perms"
+  env = os.environ.copy()
+  env["PGOROOT"] = str(pgoroot)
+  subprocess.run(
+    [_repo_root() / "scripts" / "pgo_ensure_layout.sh"],
+    check=True,
+    env=env,
+    cwd=_repo_root(),
+    capture_output=True,
+    text=True,
+  )
+  assert pgoroot.is_dir()
+  assert _dir_world_rwx(pgoroot.stat().st_mode)
+  raw_dirs = list(pgoroot.glob("**/raw"))
+  assert raw_dirs, "expected namespace raw/ dirs from pgo_namespaces.yaml"
+  for raw in raw_dirs:
+    assert _dir_world_rwx(raw.stat().st_mode)
+  manifest = pgoroot / "manifest.yaml"
+  assert manifest.is_file()
+  assert manifest.stat().st_mode & 0o666 == 0o666
 
 
 def test_rebuild_full_site_pgo_fail_loud_helpers() -> None:

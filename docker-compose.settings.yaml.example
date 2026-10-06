@@ -68,7 +68,10 @@ volumes:
       o: bind
   # Live-soak Clang PGO profiles (not committed). device: must match PGOROOT used by
   # rebuild_full_site.sh (default /root/.hpcperfstats_pgo). That script (and
-  # scripts/pgo_ensure_layout.sh) creates this host directory before compose build/up.
+  # scripts/pgo_ensure_layout.sh) creates this host tree before compose build/up and
+  # chmods dirs 1777 / files a+rw so any host user or container UID can write profraw.
+  # Host path under /root is still only reachable as root on the host; prefer
+  # PGOROOT=/data/user/$USER/hpcperfstats-pgo for rootless multi-user sites.
   # If you override PGOROOT, change device: here to the same path before enabling binds.
   pgo_profiles:
     driver: local
