@@ -39,8 +39,8 @@ tacc_stats.egg-info/
 # Redis bind-mount entrypoint (compose unix socket prep). Missing file → Podman
 # creates a directory at this path and Redis exits 0 immediately.
 !services-conf/redis_entrypoint.sh
-# GCC >= gate for image builds (db/proxy/web; canonical copy for gcc-alpine heredoc drift test).
-!services-conf/assert_gcc_min_version.sh
+# Clang PGO bake flags (db/proxy COPY; Dockerfile COPY from services-conf/).
+!services-conf/pgo_clang_flags.sh
 *.so
 *.d
 .project

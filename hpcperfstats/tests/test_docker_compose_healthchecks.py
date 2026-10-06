@@ -624,7 +624,7 @@ def test_docker_compose_proxy_runtime_tls_mount_and_entrypoint_materialize():
   assert not (repo_root / "services-conf" / "proxy-ssl.fixture").exists()
 
 
-def test_proxy_dockerfile_uses_shared_musl_gcc_toolchain() -> None:
+def test_proxy_dockerfile_uses_clang22_apk_toolchain() -> None:
   repo_root = Path(__file__).resolve().parents[2]
   dockerfile = (repo_root / "services-conf" / "proxy.Dockerfile").read_text()
   first_from = dockerfile.index("FROM ")
@@ -632,13 +632,11 @@ def test_proxy_dockerfile_uses_shared_musl_gcc_toolchain() -> None:
   assert alpine_arg < first_from, (
     "ALPINE_VERSION must be declared before first FROM"
   )
-  assert "ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2" in dockerfile
-  assert "FROM ${GCC_TOOLCHAIN_IMAGE} AS gcc-toolchain" in dockerfile
-  assert "COPY --from=gcc-toolchain /opt/gcc-16 /opt/gcc-16" in dockerfile
-  assert (
-    "COPY --from=gcc-toolchain /usr/local/bin/assert_gcc_min_version.sh"
-    in dockerfile
-  )
+  assert "clang22" in dockerfile
+  assert "ENV CC=clang CXX=clang++" in dockerfile
+  assert "gcc-toolchain" not in dockerfile
+  assert "NGINX_OPT_CFLAGS" not in dockerfile
+  assert "-flto=thin" in dockerfile
 
 
 def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
@@ -691,7 +689,7 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
     in dockerfile
   )
   assert "GetPageSpeed/zstd-nginx-module" in dockerfile
-  assert 'MOREFLAGS="${OPT_CFLAGS_LIBS}"' in dockerfile
+  assert "hpcperfstats_bake_cflags proxy/zstd" in dockerfile
   assert "HAVE_ZLIB=0" in dockerfile
   assert "HAVE_LZ4=0" in dockerfile
   assert "libzstd.a" in dockerfile
@@ -710,36 +708,26 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
 
   env_cflags = _first_line_containing("ENV OPT_CFLAGS_LIBS=")
   assert "-mtune=native" in env_cflags
-  assert "ENV NGINX_OPT_CFLAGS=" in dockerfile
-  jemalloc_cflags = _first_line_containing('CFLAGS="${OPT_CFLAGS_LIBS}"')
-  assert 'CFLAGS="${OPT_CFLAGS_LIBS}"' in jemalloc_cflags
-  brotli_cflags = _first_line_containing('CMAKE_C_FLAGS="${OPT_CFLAGS_LIBS}"')
-  assert 'CMAKE_C_FLAGS="${OPT_CFLAGS_LIBS}"' in brotli_cflags
-  zstd_moreflags = _first_line_containing('MOREFLAGS="${OPT_CFLAGS_LIBS}"')
-  assert 'MOREFLAGS="${OPT_CFLAGS_LIBS}"' in zstd_moreflags
+  assert "-flto=thin" in env_cflags
+  assert "hpcperfstats_bake_cflags proxy/jemalloc" in dockerfile
   cc_opt = _first_line_containing("--with-cc-opt=")
-  assert "NGINX_OPT_CFLAGS" in cc_opt
-  assert "-flto" not in cc_opt
+  assert "${_cflags}" in cc_opt
   ld_opt = _first_line_containing("--with-ld-opt=")
   assert "libzstd" not in ld_opt, (
     "libzstd must fold via zstd-nginx-module static path, not --with-ld-opt (nginx configure probe)"
   )
-  assert "-flto" not in ld_opt
-  assert "-Wl,--no-as-needed" not in ld_opt
+  assert "-fuse-ld=lld" in ld_opt
   nginx_run = dockerfile[
     dockerfile.index("# --- nginx ---") : dockerfile.index(
       "# ---------------------------------------------------------------------------"
     )
   ]
-  assert (
-    'nginx_bake_cflags="${NGINX_OPT_CFLAGS} -I/opt/zstd/include"' in nginx_run
-  )
-  bake_line = _first_line_containing('nginx_bake_cflags="${NGINX_OPT_CFLAGS}')
-  assert "-flto" not in bake_line
+  assert 'nginx_bake_cflags="${_cflags} -I/opt/zstd/include"' in nginx_run
+  assert "hpcperfstats_bake_cflags proxy/nginx" in nginx_run
   assert 'make -j"$(nproc)" CFLAGS="${nginx_bake_cflags}"' in nginx_run
   assert 'make install CFLAGS="${nginx_bake_cflags}"' in nginx_run
   openssl_opt = _first_line_containing("--with-openssl-opt=")
-  assert "${OPT_CFLAGS_LIBS}" in openssl_opt
+  assert "${_openssl_cflags}" in openssl_opt
   assert "enable-ec_nistp_64_gcc_128" in openssl_opt
   zlib_opt = _first_line_containing("--with-zlib-opt=")
   assert "-mtune=native" not in zlib_opt
@@ -953,6 +941,7 @@ _OPERATOR_SETTINGS_VOLUME_NAMES = (
   "rabbitmq_messages:",
   "ssh_keys:",
   "proxy_ssl_source:",
+  "pgo_profiles:",
 )
 
 
@@ -974,6 +963,8 @@ def test_docker_compose_settings_example_operator_markers():
   assert "SYS_PTRACE" in example_content
   assert "15672:15672" in example_content
   assert "5432:5432" in example_content
+  assert "device: /root/.hpcperfstats_pgo" in example_content
+  assert "pgo_profiles:/root/.hpcperfstats_pgo" in example_content
 
 
 def test_docker_compose_settings_example_operator_parity():

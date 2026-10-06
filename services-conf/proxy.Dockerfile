@@ -6,20 +6,18 @@
 # Do not apk-install nginx / nginx-mod-http-brotli.
 
 ARG ALPINE_VERSION=3.24.2
-ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2
-ARG GCC_MIN_VERSION=16.2
-FROM ${GCC_TOOLCHAIN_IMAGE} AS gcc-toolchain
 
 FROM alpine:${ALPINE_VERSION} AS proxy-build
 
-ARG GCC_MIN_VERSION=16.2
-COPY --from=gcc-toolchain /opt/gcc-16 /opt/gcc-16
-COPY --from=gcc-toolchain /usr/local/bin/assert_gcc_min_version.sh /usr/local/bin/assert_gcc_min_version.sh
-ENV PATH="/opt/gcc-16/bin:${PATH}" CC=gcc CXX=g++
-RUN chmod +x /usr/local/bin/assert_gcc_min_version.sh \
-  && GCC_MIN_VERSION="${GCC_MIN_VERSION}" assert_gcc_min_version.sh
+ARG PGO_PHASE=skip
+ARG PGO_ROOT=/root/.hpcperfstats_pgo
+ENV HPC_PGO_PHASE=${PGO_PHASE} HPC_PGO_ROOT=${PGO_ROOT}
+ENV CC=clang CXX=clang++ LD=ld.lld
 
-# nginx configure/compile: NGINX_OPT_CFLAGS (no -flto; GCC 16 probe-safe). Other /opt deps keep OPT_CFLAGS_LIBS LTO.
+COPY services-conf/pgo_clang_flags.sh /usr/local/lib/hpcperfstats/pgo_clang_flags.sh
+RUN chmod +x /usr/local/lib/hpcperfstats/pgo_clang_flags.sh
+
+# nginx and /opt deps: unified -O2 ThinLTO bake (+ optional PGO via pgo_clang_flags.sh).
 ARG NGINX_VERSION=1.31.6
 ARG NGINX_SHA256=974ed5298a5e398e008704ed5db284e655fc270c596493dbccada452448fc9f1
 ARG OPENSSL_VERSION=3.5.9
@@ -37,11 +35,11 @@ ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
 ARG ZSTD_NGINX_MODULE_VERSION=0.2.2
 ARG ZSTD_NGINX_MODULE_SHA256=d4db8937f035ebb5e7efca833492611f8f5e4f710dbd3fbdd2f1aa5a85d3fe5e
 
-ENV OPT_CFLAGS_LIBS="-O3 -march=native -mtune=native -flto -g0"
-# nginx configure: probe-safe cc/ld (no -flto on ld-opt). make: CFLAGS="${OPT_CFLAGS_LIBS} …" restores LTO.
-ENV NGINX_OPT_CFLAGS="-O3 -march=native -mtune=native -g0"
+ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"
 
 RUN apk add --no-cache \
+    clang22 \
+    lld22 \
     build-base \
     bzip2 \
     cmake \
@@ -52,17 +50,21 @@ RUN apk add --no-cache \
 
 # Print out compiler platform detection
 
-RUN gcc -march=native -mtune=native -Q --help=target
+RUN clang --version && clang -march=native -mtune=native -Q --help=target
 
 # --- jemalloc ---
-RUN set -eux; \
+ARG PGO_NAMESPACE=proxy/jemalloc
+RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+  set -eux; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  _cflags="$(hpcperfstats_bake_cflags proxy/jemalloc)"; \
   curl -fsSL "https://github.com/jemalloc/jemalloc/releases/download/${JEMALLOC_VERSION}/jemalloc-${JEMALLOC_VERSION}.tar.bz2" \
     -o /tmp/jemalloc.tar.bz2; \
   echo "${JEMALLOC_SHA256}  /tmp/jemalloc.tar.bz2" | sha256sum -c -; \
   mkdir -p /usr/src/jemalloc; \
   tar -xjf /tmp/jemalloc.tar.bz2 -C /usr/src/jemalloc --strip-components=1; \
   cd /usr/src/jemalloc; \
-  CFLAGS="${OPT_CFLAGS_LIBS}" CXXFLAGS="${OPT_CFLAGS_LIBS}" \
+  CFLAGS="${_cflags}" CXXFLAGS="${_cflags}" \
     ./configure --prefix=/opt/jemalloc; \
   make -j"$(nproc)"; \
   make install; \
@@ -74,7 +76,11 @@ WORKDIR /usr/src
 # nginx auto/lib/zlib injects --with-zlib-opt into CFLAGS when it re-runs
 # ./configure. zlib-ng requires --zlib-compat as a configure argv flag; passing
 # it via CFLAGS aborts with "Compiler error reporting is too harsh".
-RUN set -eux; \
+ARG PGO_NAMESPACE=proxy/zlib-ng
+RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+  set -eux; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  _cflags="$(hpcperfstats_bake_cflags proxy/zlib-ng)"; \
   curl -fsSL "https://github.com/zlib-ng/zlib-ng/archive/refs/tags/${ZLIB_NG_VERSION}.tar.gz" \
     -o /tmp/zlib-ng.tar.gz; \
   echo "${ZLIB_NG_SHA256}  /tmp/zlib-ng.tar.gz" | sha256sum -c -; \
@@ -115,7 +121,11 @@ RUN set -eux; \
 # brotli >=1.1 dropped scripts/sources.lst; ngx_brotli v1.0.0rc then links
 # -lbrotlienc instead of compiling deps sources. Pre-build static libs to
 # /opt/brotli so the nginx link line can resolve them (folded into the binary).
-RUN set -eux; \
+ARG PGO_NAMESPACE=proxy/brotli
+RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+  set -eux; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  _cflags="$(hpcperfstats_bake_cflags proxy/brotli)"; \
   curl -fsSL "https://github.com/google/ngx_brotli/archive/refs/tags/v${NGX_BROTLI_VERSION}.tar.gz" \
     -o /tmp/ngx_brotli.tar.gz; \
   echo "${NGX_BROTLI_SHA256}  /tmp/ngx_brotli.tar.gz" | sha256sum -c -; \
@@ -134,8 +144,8 @@ RUN set -eux; \
     -DBUILD_SHARED_LIBS=OFF \
     -DCMAKE_INSTALL_PREFIX=/opt/brotli \
     -DCMAKE_INSTALL_LIBDIR=lib \
-    -DCMAKE_C_FLAGS="${OPT_CFLAGS_LIBS}" \
-    -DCMAKE_CXX_FLAGS="${OPT_CFLAGS_LIBS}"; \
+    -DCMAKE_C_FLAGS="${_cflags}" \
+    -DCMAKE_CXX_FLAGS="${_cflags}"; \
   cmake --build /usr/src/ngx_brotli/deps/brotli/out -j"$(nproc)"; \
   cmake --install /usr/src/ngx_brotli/deps/brotli/out; \
   test -f /opt/brotli/lib/libbrotlienc.a; \
@@ -147,7 +157,11 @@ RUN set -eux; \
 # Proxy has no /opt/zlib-ng or /opt/lz4; do not enable HAVE_ZLIB/HAVE_LZ4 (those
 # are for the db/Python zstd CLI). Do not lib-mt: nginx already has one worker
 # per CPU. Fold libzstd.a into nginx; do not COPY /opt/zstd into the runtime.
-RUN set -eux; \
+ARG PGO_NAMESPACE=proxy/zstd
+RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+  set -eux; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  _cflags="$(hpcperfstats_bake_cflags proxy/zstd)"; \
   curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" \
     -o /tmp/zstd.tar.gz; \
   echo "${ZSTD_SHA256}  /tmp/zstd.tar.gz" | sha256sum -c -; \
@@ -155,7 +169,7 @@ RUN set -eux; \
   tar -xzf /tmp/zstd.tar.gz -C /usr/src/zstd --strip-components=1; \
   make -j"$(nproc)" -C /usr/src/zstd/lib libzstd.a \
     PREFIX=/opt/zstd \
-    MOREFLAGS="${OPT_CFLAGS_LIBS}" \
+    MOREFLAGS="${_cflags}" \
     ZSTD_LEGACY_SUPPORT=0 \
     HAVE_ZLIB=0 \
     HAVE_LZ4=0; \
@@ -172,7 +186,12 @@ RUN set -eux; \
   rm -rf /usr/src/zstd /tmp/zstd.tar.gz /tmp/zstd-nginx-module.tar.gz
 
 # --- nginx ---
-RUN set -eux; \
+ARG PGO_NAMESPACE=proxy/nginx
+RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+  set -eux; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  _cflags="$(hpcperfstats_bake_cflags proxy/nginx)"; \
+  _openssl_cflags="$(hpcperfstats_bake_cflags proxy/openssl)"; \
   curl -fsSL "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
     -o /tmp/nginx.tar.gz; \
   echo "${NGINX_SHA256}  /tmp/nginx.tar.gz" | sha256sum -c -; \
@@ -181,8 +200,8 @@ RUN set -eux; \
   cd /usr/src/nginx; \
   export ZSTD_INC=/opt/zstd/include; \
   export ZSTD_LIB=/opt/zstd/lib; \
-  nginx_bake_cflags="${NGINX_OPT_CFLAGS} -I/opt/zstd/include"; \
-  # libzstd.a via zstd-nginx-module. Same flags at configure and make (no -flto on nginx link).
+  nginx_bake_cflags="${_cflags} -I/opt/zstd/include"; \
+  # libzstd.a via zstd-nginx-module. Same ThinLTO flags at configure and make.
   ./configure \
     --prefix=/opt/nginx \
     --sbin-path=/usr/sbin/nginx \
@@ -207,9 +226,9 @@ RUN set -eux; \
     --add-module=../zstd-nginx-module \
     --with-openssl=../openssl-${OPENSSL_VERSION} \
     --with-zlib=../zlib-ng \
-    --with-cc-opt="${NGINX_OPT_CFLAGS} -I/opt/zstd/include" \
-    --with-ld-opt="-L/opt/jemalloc/lib -L/opt/brotli/lib -Wl,-rpath,/opt/jemalloc/lib -ljemalloc -lbrotlienc -lbrotlidec -lbrotlicommon -lstdc++" \
-    --with-openssl-opt="no-nextprotoneg no-weak-ssl-ciphers no-ssl3 no-shared enable-ec_nistp_64_gcc_128 ${OPT_CFLAGS_LIBS}" \
+    --with-cc-opt="${_cflags} -I/opt/zstd/include" \
+    --with-ld-opt="-L/opt/jemalloc/lib -L/opt/brotli/lib -Wl,-rpath,/opt/jemalloc/lib -ljemalloc -lbrotlienc -lbrotlidec -lbrotlicommon -lstdc++ -fuse-ld=lld" \
+    --with-openssl-opt="no-nextprotoneg no-weak-ssl-ciphers no-ssl3 no-shared enable-ec_nistp_64_gcc_128 ${_openssl_cflags}" \
     --with-zlib-opt="--zlib-compat"; \
   make -j"$(nproc)" CFLAGS="${nginx_bake_cflags}"; \
   make install CFLAGS="${nginx_bake_cflags}"; \

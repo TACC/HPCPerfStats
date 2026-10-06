@@ -14,14 +14,16 @@ def _dockerfile() -> str:
   return (_repo_root() / "services-conf" / "db.Dockerfile").read_text()
 
 
-def test_db_dockerfile_uses_shared_musl_gcc_toolchain() -> None:
+def test_db_dockerfile_uses_clang22_apk_toolchain() -> None:
   text = _dockerfile()
-  assert "ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2" in text
-  assert "FROM ${GCC_TOOLCHAIN_IMAGE} AS gcc-toolchain" in text
-  assert "COPY --from=gcc-toolchain /opt/gcc-16 /opt/gcc-16" in text
-  assert (
-    "COPY --from=gcc-toolchain /usr/local/bin/assert_gcc_min_version.sh" in text
-  )
+  assert "clang22" in text
+  assert "lld22" in text
+  assert "ENV CC=clang CXX=clang++" in text
+  assert "gcc-toolchain" not in text
+  assert "assert_gcc_min_version" not in text
+  assert "pgo_clang_flags.sh" in text
+  assert "-flto=thin" in text
+  assert 'ENV OPT_CFLAGS_LIBS="-O2' in text
 
 
 def test_db_dockerfile_pins_alpine_3_24_not_latest_or_trixie() -> None:
@@ -37,7 +39,7 @@ def test_db_dockerfile_pins_alpine_3_24_not_latest_or_trixie() -> None:
 
 def test_db_dockerfile_apk_includes_bzip2_for_source_tarballs() -> None:
   text = _dockerfile()
-  assert "bzip2" in text.split("apk add", 1)[1].split("RUN gcc", 1)[0]
+  assert "bzip2" in text.split("apk add", 1)[1].split("RUN clang", 1)[0]
   assert "alpine:latest" not in text
   assert "alpine:edge" not in text
   assert "debian:trixie" not in text
@@ -151,13 +153,10 @@ def test_db_dockerfile_links_opt_icu_liburing_lz4_zstd_into_postgres() -> None:
   # PG18 removed --enable-thread-safety (always on); --enable-option-checking=fatal
   # rejects unrecognized options (bake failure on prod: 2026-09-04).
   assert "--enable-thread-safety" not in configure_block
-  assert 'gnuArch="$(gcc -dumpmachine)"' in pg_run
-  assert 'pg_bake_ldflags="$LDFLAGS"' in pg_run
-  assert (
-    'export CFLAGS="-O3 -march=native -mprefer-vector-width=512 -mtune=native -g0"'
-    in pg_run
-  )
-  assert 'export LDFLAGS="$pg_bake_ldflags"' in pg_run
+  assert 'gnuArch="$(clang -dumpmachine)"' in pg_run
+  assert "hpcperfstats_bake_cflags db/postgresql pg" in pg_run
+  assert 'export LLVM_CONFIG="/usr/lib/llvm22/bin/llvm-config"' in pg_run
+  assert "pg_bake_ldflags" not in pg_run
 
 
 def test_db_dockerfile_postgres_and_timescale_prefer_512_vector_width() -> None:
@@ -173,13 +172,13 @@ def test_db_dockerfile_libs_mtune_and_lz4_heapmode() -> None:
   """OPT_CFLAGS_LIBS include -mtune=native; lz4 bake sets -DLZ4_HEAPMODE=0."""
   text = _dockerfile()
   assert (
-    'ENV OPT_CFLAGS_LIBS="-O3 -march=native -mtune=native -flto=auto -g0"'
+    'ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"'
     in text
   )
   assert "-mtune=native" in text
   lz4_run = text[text.index("# --- lz4 ---") : text.index("# --- ICU")]
   assert "-DLZ4_HEAPMODE=0" in lz4_run
-  assert "OPT_CFLAGS_LIBS" in lz4_run
+  assert "hpcperfstats_bake_cflags db/lz4" in lz4_run
 
 
 def test_db_dockerfile_opt_lib_bake_order_cache_and_deps() -> None:

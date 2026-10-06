@@ -20,19 +20,18 @@ def _stage_body(dockerfile: str, stage_name: str) -> str:
   return match.group(1)
 
 
-def test_python_build_uses_gcc_16_from_testing_pin() -> None:
+def test_python_build_uses_clang_22_from_trixie() -> None:
   dockerfile = (_repo_root() / "Dockerfile").read_text()
   build = _stage_body(dockerfile, "python-build")
-  assert "gcc-16" in build
-  assert "16.2.0-3" in build
-  assert "ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2" in build
-  assert (
-    "COPY --from=${GCC_TOOLCHAIN_IMAGE} /usr/local/bin/assert_gcc_min_version.sh"
-    in build
-  )
+  assert "clang-22" in build
+  assert "llvm-22" in build
+  assert "pgo_clang_flags.sh" in build
+  assert "gcc-toolchain" not in build
+  assert "assert_gcc_min_version" not in build
   assert "build-essential" not in build
   assert "bzip2" in build
-  assert "CC=gcc-16" in build or "ENV CC=gcc-16" in build
+  assert "ENV CC=clang-22 CXX=clang++-22" in build
+  assert "-flto=thin" in build
 
 
 def test_dockerfile_uses_debian_trixie_builder_and_slim_runtime():

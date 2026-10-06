@@ -1,0 +1,102 @@
+# Canonical PGO namespaces for Clang live-soak profiling (committed registry).
+namespaces:
+  - namespace: db/jemalloc
+    build_service: db_pg18
+    soak_services: [db_pg18]
+    abi: "-"
+  - namespace: db/lz4
+    build_service: db_pg18
+    soak_services: [db_pg18]
+    abi: "-"
+  - namespace: db/zlib-ng
+    build_service: db_pg18
+    soak_services: [db_pg18]
+    abi: "-"
+  - namespace: db/zstd
+    build_service: db_pg18
+    soak_services: [db_pg18]
+    abi: "-"
+  - namespace: db/icu
+    build_service: db_pg18
+    soak_services: [db_pg18]
+    abi: "-"
+  - namespace: db/liburing
+    build_service: db_pg18
+    soak_services: [db_pg18]
+    abi: "-"
+  - namespace: db/postgresql
+    build_service: db_pg18
+    soak_services: [db_pg18]
+    abi: "-"
+  - namespace: db/timescaledb
+    build_service: db_pg18
+    soak_services: [db_pg18]
+    abi: "-"
+  - namespace: proxy/jemalloc
+    build_service: proxy
+    soak_services: [proxy]
+    abi: "-"
+  - namespace: proxy/nginx
+    build_service: proxy
+    soak_services: [proxy]
+    abi: "-"
+  - namespace: proxy/openssl
+    build_service: proxy
+    soak_services: [proxy]
+    abi: "-"
+  - namespace: proxy/brotli
+    build_service: proxy
+    soak_services: [proxy]
+    abi: "-"
+  - namespace: proxy/zstd
+    build_service: proxy
+    soak_services: [proxy]
+    abi: "-"
+  - namespace: proxy/zlib-ng
+    build_service: proxy
+    soak_services: [proxy]
+    abi: "-"
+  - namespace: web/shared/jemalloc
+    build_service: web
+    soak_services: [web, pipeline]
+    abi: shared
+  - namespace: web/shared/zlib-ng
+    build_service: web
+    soak_services: [web, pipeline]
+    abi: shared
+  - namespace: web/shared/zstd
+    build_service: web
+    soak_services: [web, pipeline]
+    abi: shared
+  - namespace: web/shared/libffi
+    build_service: web
+    soak_services: [web, pipeline]
+    abi: shared
+  - namespace: web/shared/mpdecimal
+    build_service: web
+    soak_services: [web, pipeline]
+    abi: shared
+  - namespace: web/gil/cpython
+    build_service: web
+    soak_services: [web]
+    abi: gil
+  - namespace: web/ft/cpython
+    build_service: web
+    soak_services: [pipeline]
+    abi: ft
+  - namespace: web/gil/mkl-stack
+    build_service: web
+    soak_services: [web]
+    abi: gil
+  - namespace: web/ft/mkl-stack
+    build_service: web
+    soak_services: [pipeline]
+    abi: ft
+  - namespace: web/gil/brotli
+    build_service: web
+    soak_services: [web]
+    abi: gil
+  - namespace: web/ft/brotli
+    build_service: web
+    soak_services: [pipeline]
+    abi: ft

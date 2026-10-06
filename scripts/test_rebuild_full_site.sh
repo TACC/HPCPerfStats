@@ -13,8 +13,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FULL_SITE_SCRIPT="${SCRIPT_DIR}/rebuild_full_site.sh"
 MEMORY_LIB="${SCRIPT_DIR}/lib/compose_pipeline_memory_high.sh"
 RUNTIME_ADAPTER="${SCRIPT_DIR}/lib/podman_runtime.sh"
+PGO_LIB="${SCRIPT_DIR}/pgo_lib.sh"
 
-for path in "${FULL_SITE_SCRIPT}" "${MEMORY_LIB}" "${RUNTIME_ADAPTER}"; do
+for path in "${FULL_SITE_SCRIPT}" "${MEMORY_LIB}" "${RUNTIME_ADAPTER}" "${PGO_LIB}"; do
   if [[ ! -f "${path}" ]]; then
     echo "missing ${path}" >&2
     exit 1
@@ -29,6 +30,10 @@ if ! bash -n "${MEMORY_LIB}"; then
   echo "bash -n failed for compose_pipeline_memory_high.sh" >&2
   exit 1
 fi
+if ! bash -n "${PGO_LIB}"; then
+  echo "bash -n failed for pgo_lib.sh" >&2
+  exit 1
+fi
 
 if ! grep -q 'podman_runtime.sh' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must source podman_runtime.sh" >&2
@@ -36,6 +41,10 @@ if ! grep -q 'podman_runtime.sh' "${FULL_SITE_SCRIPT}"; then
 fi
 if ! grep -q 'compose_pipeline_memory_high.sh' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must source compose_pipeline_memory_high.sh" >&2
+  exit 1
+fi
+if ! grep -q 'pgo_lib.sh' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must source pgo_lib.sh" >&2
   exit 1
 fi
 if ! grep -q 'podman_runtime_require' "${FULL_SITE_SCRIPT}"; then
@@ -47,12 +56,28 @@ if ! grep -q 'apply_pipeline_memory_high' "${FULL_SITE_SCRIPT}"; then
   exit 1
 fi
 
-if ! grep -q 'GCC_MUSL_IMAGE=hpcperfstats-gcc-musl:16.2' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must define GCC_MUSL_IMAGE" >&2
+if grep -q 'build_musl_gcc_toolchain_image' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must not build musl GCC toolchain image" >&2
   exit 1
 fi
-if ! grep -q 'build_musl_gcc_toolchain_image' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must define build_musl_gcc_toolchain_image" >&2
+if ! grep -q 'pgo_ensure_layout.sh' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must run pgo_ensure_layout.sh" >&2
+  exit 1
+fi
+if grep -q 'run_cmd "${SCRIPT_DIR}/pgo_ensure_layout.sh"' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must run pgo_ensure_layout.sh outside run_cmd (dry-run must still mkdir PGOROOT)" >&2
+  exit 1
+fi
+if ! grep -q 'pgo_ensure_pg_root' "${PGO_LIB}"; then
+  echo "pgo_lib.sh must define pgo_ensure_pg_root for host PGOROOT bootstrap" >&2
+  exit 1
+fi
+if ! grep -q '\-\-profile-phase' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must support --profile-phase" >&2
+  exit 1
+fi
+if ! grep -q 'pgo_die' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must fail loud on PGO errors (pgo_die)" >&2
   exit 1
 fi
 if ! grep -q 'COMPOSE_IMAGE_BUILD_SERVICES=(web proxy)' "${FULL_SITE_SCRIPT}"; then
@@ -83,8 +108,12 @@ if ! grep -q 'PG18_PROFILE=pg18-migrate' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must set pg18-migrate profile" >&2
   exit 1
 fi
-if ! grep -qF -- '--profile "${PG18_PROFILE}" build "${PG18_SERVICE}"' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must build db_pg18 with profile" >&2
+if ! grep -q 'compose_build_db_pg18' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must build db_pg18 via compose_build_db_pg18" >&2
+  exit 1
+fi
+if ! grep -qF -- '--profile "${PG18_PROFILE}" build' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must build db_pg18 with pg18-migrate profile" >&2
   exit 1
 fi
 if ! grep -qF -- '--profile "${PG18_PROFILE}" up -d --force-recreate "${PG18_SERVICE}"' "${FULL_SITE_SCRIPT}"; then
@@ -98,15 +127,10 @@ if [[ -z "${build_line}" || -z "${up_line}" ]]; then
   echo "rebuild_full_site.sh must define build and up helpers" >&2
   exit 1
 fi
-main_musl="$(awk '/^main\(\)/ {m=1} m && /build_musl_gcc_toolchain_image/ {print NR; exit}' "${FULL_SITE_SCRIPT}")"
 main_build="$(awk '/^main\(\)/ {m=1} m && /build_default_stack_images/ {print NR; exit}' "${FULL_SITE_SCRIPT}")"
 main_up="$(awk '/^main\(\)/ {m=1} m && /up_default_stack/ {print NR; exit}' "${FULL_SITE_SCRIPT}")"
-if [[ -z "${main_musl}" || -z "${main_build}" || -z "${main_up}" ]]; then
-  echo "rebuild_full_site.sh main must call musl, default stack build, and up helpers" >&2
-  exit 1
-fi
-if [[ "${main_musl}" -ge "${main_build}" || "${main_build}" -ge "${main_up}" ]]; then
-  echo "rebuild_full_site.sh main must build musl then compose images before up" >&2
+if [[ -z "${main_build}" || -z "${main_up}" ]]; then
+  echo "rebuild_full_site.sh main must call default stack build and up helpers" >&2
   exit 1
 fi
 

@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# Full-stack image rebuild: build musl GCC toolchain image, then compose-build all
-# default services + db_pg18, then recreate without --build on up. Sets pipeline
+# Full-stack image rebuild: compose-build default services + db_pg18, then recreate
+# without --build on up. Optional live-soak PGO via --profile-phase. Sets pipeline
 # cgroup memory.high after pipeline is up. Never use podman-compose up --build here.
-#
-# Not for SPA-only releases — use rebuild_frontend.sh / rebuild_pipeline.sh when
-# you need live frontend preservation (see rebuild_pipeline.sh).
 #
 # Usage (from the git checkout that contains docker-compose.yaml):
 #   ./scripts/rebuild_full_site.sh
+#   ./scripts/rebuild_full_site.sh --profile-phase
 #   ./scripts/rebuild_full_site.sh --dry-run
 #   ./scripts/rebuild_full_site.sh --build-only
 #   ./scripts/rebuild_full_site.sh --no-start
@@ -19,49 +17,51 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/lib/podman_runtime.sh"
 # shellcheck source=lib/compose_pipeline_memory_high.sh
 source "${SCRIPT_DIR}/lib/compose_pipeline_memory_high.sh"
+# shellcheck source=pgo_lib.sh
+source "${SCRIPT_DIR}/pgo_lib.sh"
 
 DRY_RUN=0
 BUILD_ONLY=0
 NO_START=0
+PROFILE_PHASE=0
 
-GCC_MUSL_IMAGE=hpcperfstats-gcc-musl:16.2
-GCC_ALPINE_DOCKERFILE=services-conf/gcc-alpine.Dockerfile
+export PGOROOT="${PGOROOT:-${HPCPERFSTATS_PGO_ROOT:-/root/.hpcperfstats_pgo}}"
 
-# Only services with compose `build:` (web → hpcperfstats; proxy → hpcperfstats-proxy).
-# Build one service per `podman-compose build` — parallel multi-service build can fail
-# after hpcperfstats tags while proxy still compiles (podman-compose runs builds concurrently).
 COMPOSE_IMAGE_BUILD_SERVICES=(web proxy)
 PG18_PROFILE=pg18-migrate
 PG18_SERVICE=db_pg18
+PGO_PHASE=skip
 
 usage() {
   cat <<'EOF'
 Usage: scripts/rebuild_full_site.sh [options]
 
-Build musl GCC (podman build), then default-stack images and hpcperfstats-db
-(db_pg18 profile), then recreate the stack with:
+Build default-stack images and hpcperfstats-db (db_pg18 profile), then recreate
+the stack with:
 
   podman-compose up -d --force-recreate
   podman-compose --profile pg18-migrate up -d --force-recreate db_pg18
 
-All image builds happen before any up step (no --build on up). Applies pipeline
-memory.high after pipeline starts.
-
-Full-stack downtime including db, redis, and rabbitmq. PG18 dual-run host
-prereqs: docs/OPERATOR_PG18_MIGRATION.md.
-
-For SPA or pipeline-only cutover use rebuild_frontend.sh / rebuild_pipeline.sh.
+PGO (optional): PGOROOT defaults to /root/.hpcperfstats_pgo. --profile-phase
+builds with PGO_PHASE=generate for soak; after profiles exist, the first default
+run performs one merge + PGO_PHASE=use rebuild (db_pg18, proxy, web), then skip
+until the next --profile-phase.
 
 Options:
-  --dry-run       Print planned steps only
-  --build-only    Build images only; do not up -d or set memory.high
-  --no-start      Build images, skip up -d and memory.high
-  -h, --help      Show this help
+  --profile-phase  PGO generate build + up for live soak (clears use breadcrumb)
+  --dry-run        Print planned steps only
+  --build-only     Build images only; do not up -d or set memory.high
+  --no-start       Build images, skip up -d and memory.high
+  -h, --help       Show this help
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --profile-phase)
+      PROFILE_PHASE=1
+      shift
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -106,26 +106,100 @@ preflight() {
   cd "${REPO_ROOT}"
 }
 
-build_musl_gcc_toolchain_image() {
-  LAST_STEP="podman build ${GCC_MUSL_IMAGE}"
-  echo "Building musl GCC toolchain image ${GCC_MUSL_IMAGE} ..."
-  run_cmd podman build -f "${GCC_ALPINE_DOCKERFILE}" -t "${GCC_MUSL_IMAGE}" services-conf
+resolve_pgo_phase() {
+  if [[ "${PROFILE_PHASE}" -eq 1 ]]; then
+    PGO_PHASE=generate
+    echo "PGO: profile-phase → PGO_PHASE=generate" >&2
+    return 0
+  fi
+  local crumb
+  crumb="$(pgo_use_breadcrumb_path)"
+  if [[ -f "${crumb}" ]]; then
+    PGO_PHASE=skip
+    echo "PGO: skip — use breadcrumb present (${crumb})" >&2
+    return 0
+  fi
+  if profiles_ready "${REPO_ROOT}"; then
+    PGO_PHASE=use
+    echo "PGO: profiles ready → one-time PGO_PHASE=use rebuild" >&2
+    return 0
+  fi
+  PGO_PHASE=skip
+  echo "PGO: skip — profiles not ready; run --profile-phase" >&2
+}
+
+prepare_profile_phase() {
+  rm -f "$(pgo_use_breadcrumb_path)"
+  rm -f "$(pgo_use_failed_path)"
+  date -u +"%Y-%m-%dT%H:%M:%SZ" >"${PGOROOT}/breadcrumbs/profile_phase_started"
+  local ns root
+  root="$(pgo_root_dir)"
+  while IFS= read -r ns; do
+    [[ -n "${ns}" ]] || continue
+    rm -rf "${root}/${ns}/raw/"*
+  done < <(pgo_list_namespaces "${REPO_ROOT}")
+}
+
+run_pgo_use_path() {
+  echo "=== PGO one-time use rebuild (merge → build db_pg18/proxy/web → up) ===" >&2
+  local failed=0
+  if ! run_cmd "${SCRIPT_DIR}/pgo_merge_namespaces.sh"; then
+    failed=1
+  fi
+  if [[ "${failed}" -eq 0 ]]; then
+    if ! compose_build_all_with_pgo; then
+      failed=1
+    fi
+  fi
+  if [[ "${failed}" -ne 0 ]]; then
+    date -u +"%Y-%m-%dT%H:%M:%SZ" >"$(pgo_use_failed_path)"
+    echo "PGO: use rebuild FAILED — breadcrumb NOT written" >&2
+    pgo_die "use path failed (see above)"
+  fi
+  if [[ "${BUILD_ONLY}" -eq 1 || "${NO_START}" -eq 1 || "${DRY_RUN}" -eq 1 ]]; then
+    echo "PGO: use build finished; skipping up due to flags" >&2
+  else
+    PHASE=up
+    up_default_stack
+    up_db_pg18
+    verify_default_stack_running || pgo_die "stack verify failed after PGO use up"
+    UP_COMPLETED=1
+  fi
+  date -u +"%Y-%m-%dT%H:%M:%SZ" >"$(pgo_use_breadcrumb_path)"
+  echo "PGO: use rebuild complete; wrote pgo_use_full_rebuild.done" >&2
+}
+
+compose_build_service() {
+  local svc="$1"
+  LAST_STEP="podman-compose build ${svc} (PGO_PHASE=${PGO_PHASE})"
+  echo "rebuild_full_site.sh: ${LAST_STEP} ..."
+  run_cmd env PGO_PHASE="${PGO_PHASE}" PGO_ROOT="${PGOROOT}" PGOROOT="${PGOROOT}" \
+    "${PODMAN_COMPOSE[@]}" build \
+    --build-arg "PGO_PHASE=${PGO_PHASE}" \
+    --build-arg "PGO_ROOT=${PGOROOT}" \
+    "${svc}"
+}
+
+compose_build_db_pg18() {
+  LAST_STEP="podman-compose --profile ${PG18_PROFILE} build ${PG18_SERVICE} (PGO_PHASE=${PGO_PHASE})"
+  echo "rebuild_full_site.sh: ${LAST_STEP} ..."
+  run_cmd env PGO_PHASE="${PGO_PHASE}" PGO_ROOT="${PGOROOT}" PGOROOT="${PGOROOT}" \
+    "${PODMAN_COMPOSE[@]}" --profile "${PG18_PROFILE}" build \
+    --build-arg "PGO_PHASE=${PGO_PHASE}" \
+    --build-arg "PGO_ROOT=${PGOROOT}" \
+    "${PG18_SERVICE}"
+}
+
+compose_build_all_with_pgo() {
+  local svc
+  for svc in "${COMPOSE_IMAGE_BUILD_SERVICES[@]}"; do
+    compose_build_service "${svc}" || return 1
+  done
+  compose_build_db_pg18 || return 1
 }
 
 build_default_stack_images() {
-  local svc
-  echo "Building compose images (serial): ${COMPOSE_IMAGE_BUILD_SERVICES[*]} ..."
-  for svc in "${COMPOSE_IMAGE_BUILD_SERVICES[@]}"; do
-    LAST_STEP="podman-compose build ${svc}"
-    echo "rebuild_full_site.sh: ${LAST_STEP} ..."
-    run_cmd "${PODMAN_COMPOSE[@]}" build "${svc}"
-  done
-}
-
-build_db_pg18_image() {
-  LAST_STEP="podman-compose --profile ${PG18_PROFILE} build ${PG18_SERVICE}"
-  echo "Building ${PG18_SERVICE} (profile ${PG18_PROFILE}) ..."
-  run_cmd "${PODMAN_COMPOSE[@]}" --profile "${PG18_PROFILE}" build "${PG18_SERVICE}"
+  compose_build_all_with_pgo
 }
 
 up_default_stack() {
@@ -155,6 +229,7 @@ LAST_STEP=
 
 on_exit() {
   local ec=$?
+  pgo_print_summary "${PGO_PHASE}"
   if [[ "${UP_COMPLETED}" -eq 0 && "${BUILD_ONLY}" -eq 0 && "${NO_START}" -eq 0 && "${DRY_RUN}" -eq 0 ]]; then
     echo "rebuild_full_site.sh: exited (code ${ec}) before podman-compose up finished (phase=${PHASE} last_step=${LAST_STEP:-unknown})." >&2
     if [[ "${PHASE}" == build ]]; then
@@ -198,14 +273,33 @@ print_stack_summary() {
 main() {
   trap on_exit EXIT
   preflight
+  # Always create PGOROOT on the host (even --dry-run). Compose pgo_profiles binds and
+  # Dockerfile RUN --mount=bind require the path before build/up — not gated on run_cmd.
+  "${SCRIPT_DIR}/pgo_ensure_layout.sh"
+  resolve_pgo_phase
+
+  if [[ "${PGO_PHASE}" == use && "${PROFILE_PHASE}" -eq 0 ]]; then
+    run_pgo_use_path
+    PHASE=memory_high
+    if [[ "${DRY_RUN}" -eq 0 && "${BUILD_ONLY}" -eq 0 && "${NO_START}" -eq 0 ]]; then
+      apply_pipeline_memory_high || exit 1
+    fi
+    PHASE=summary
+    echo "Full-site PGO use rebuild complete."
+    print_stack_summary
+    return 0
+  fi
+
+  if [[ "${PROFILE_PHASE}" -eq 1 ]]; then
+    prepare_profile_phase
+  fi
+
   PHASE=build
-  echo "rebuild_full_site.sh: project=${HPCPERFSTATS_COMPOSE_PROJECT} DRY_RUN=${DRY_RUN} BUILD_ONLY=${BUILD_ONLY} NO_START=${NO_START}"
+  echo "rebuild_full_site.sh: project=${HPCPERFSTATS_COMPOSE_PROJECT} DRY_RUN=${DRY_RUN} BUILD_ONLY=${BUILD_ONLY} NO_START=${NO_START} PGO_PHASE=${PGO_PHASE}"
   if [[ "${BUILD_ONLY}" -eq 1 || "${NO_START}" -eq 1 || "${DRY_RUN}" -eq 1 ]]; then
     echo "NOTE: up -d --force-recreate runs only when all three flags above are 0." >&2
   fi
-  build_musl_gcc_toolchain_image
   build_default_stack_images
-  build_db_pg18_image
 
   if [[ "${BUILD_ONLY}" -eq 1 ]]; then
     echo "rebuild_full_site.sh: FINISHED BUILD ONLY — did not run podman-compose up (use without --build-only to recreate containers)." >&2
@@ -223,7 +317,9 @@ main() {
   echo "=== rebuild_full_site.sh: starting podman-compose up (force-recreate, no --build) ==="
   up_default_stack
   up_db_pg18
-  verify_default_stack_running || exit 1
+  if [[ "${DRY_RUN}" -eq 0 ]]; then
+    verify_default_stack_running || exit 1
+  fi
   UP_COMPLETED=1
 
   PHASE=memory_high

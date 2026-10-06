@@ -56,7 +56,9 @@ RUN /bin/bash -o pipefail -c "\
 # FT: keep mimalloc for objects; still force-link jemalloc for side allocation.
 # Jemalloc both ways: DT_NEEDED here + runtime LD_PRELOAD + /etc/ld.so.preload for wheels.
 FROM debian:trixie AS python-build
-ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2
+ARG PGO_PHASE=skip
+ARG PGO_ROOT=/root/.hpcperfstats_pgo
+ENV HPC_PGO_PHASE=${PGO_PHASE} HPC_PGO_ROOT=${PGO_ROOT}
 ENV PYTHON_VERSION=3.14.8 \
     MAKEFLAGS=-j40 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -65,41 +67,34 @@ ENV PYTHON_VERSION=3.14.8 \
     PIP_ROOT_USER_ACTION=ignore \
     PKG_CONFIG_PATH=/opt/zstd/lib/pkgconfig:/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig
 
-# Builder apt toolchain (compilers stay in python-build only). GCC >= 16.2 via testing pin.
-COPY --from=${GCC_TOOLCHAIN_IMAGE} /usr/local/bin/assert_gcc_min_version.sh /usr/local/bin/assert_gcc_min_version.sh
-RUN chmod +x /usr/local/bin/assert_gcc_min_version.sh
+# Builder apt toolchain (compilers stay in python-build only). Clang 22 from trixie.
+COPY services-conf/pgo_clang_flags.sh /usr/local/lib/hpcperfstats/pgo_clang_flags.sh
+RUN chmod +x /usr/local/lib/hpcperfstats/pgo_clang_flags.sh
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   test "$(uname -m)" = "x86_64"; \
-  printf "%s\n" "deb http://deb.debian.org/debian testing main" \
-    > /etc/apt/sources.list.d/debian-testing.list; \
-  printf "%s\n" \
-    "Package: gcc-16 g++-16 cpp-16 libgcc-16-dev libstdc++-16-dev gfortran-16" \
-    "Pin: version 16.2.0-3" \
-    "Pin-Priority: 1001" \
-    > /etc/apt/preferences.d/gcc-16; \
   apt-get update -y; \
   apt-get install -y --no-install-recommends \
-    gcc-16 g++-16 cpp-16 libgcc-16-dev libstdc++-16-dev gfortran-16 \
+    clang-22 llvm-22 lld gfortran \
     make libc6-dev ninja-build cmake pkg-config \
     curl ca-certificates autoconf bzip2 \
     libssl-dev libncursesw5-dev libsqlite3-dev \
     libreadline-dev libbz2-dev liblzma-dev tk-dev uuid-dev \
     libgdbm-dev libnss3-dev libexpat1-dev \
     default-libmysqlclient-dev file binutils; \
-  update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-16 100; \
-  update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-16 100; \
-  update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-16 100; \
-  update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-16 100; \
-  GCC_MIN_VERSION=16.2 assert_gcc_min_version.sh; \
+  update-alternatives --install /usr/bin/clang clang /usr/bin/clang-22 100; \
+  update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-22 100; \
+  update-alternatives --install /usr/bin/cc cc /usr/bin/clang-22 100; \
+  update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-22 100; \
+  clang-22 --version | grep -q "clang version 22"; \
   apt-get clean; \
   rm -rf /var/lib/apt/lists/*'
 
-ENV CC=gcc-16 CXX=g++-16
+ENV CC=clang-22 CXX=clang++-22
 
 # Print out compiler platform detection
 
-RUN gcc -march=native -mtune=native -Q --help=target
+RUN clang-22 -march=native -mtune=native -Q --help=target
 
 # jemalloc 5.4.0 (shared; keep default initial-exec TLS — do not disable it).
 RUN /bin/bash -o pipefail -c '\
@@ -120,7 +115,7 @@ RUN /bin/bash -o pipefail -c '\
   tar -xjf /tmp/jemalloc.tar.bz2 -C /usr/src/jemalloc --strip-components=1; \
   rm -f /tmp/jemalloc.tar.bz2; \
   cd /usr/src/jemalloc; \
-  export CFLAGS="-O3 -march=native -flto -g0" CXXFLAGS="-O3 -march=native -flto -g0"; \
+  export CFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0" CXXFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"; \
   ./configure --prefix=/opt/jemalloc --enable-shared --disable-static \
     --disable-stats --disable-fill --disable-debug --with-lg-page="${LG_PAGE}"; \
   make -j40; make install; \
@@ -150,7 +145,7 @@ RUN /bin/bash -o pipefail -c '\
     -DWITH_OPTIM=ON \
     -DWITH_NEW_STRATEGIES=ON \
     -DWITH_NATIVE_INSTRUCTIONS=ON \
-    -DCMAKE_C_FLAGS="-O3 -march=native -flto -g0"; \
+    -DCMAKE_C_FLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"; \
   cmake --build build -j40; \
   cmake --install build; \
   find /opt/zlib-ng -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
@@ -172,7 +167,7 @@ RUN /bin/bash -o pipefail -c '\
   export PKG_CONFIG_PATH="/opt/zlib-ng/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
   export CPPFLAGS="-I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
   export LDFLAGS="-L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib${LDFLAGS:+ $LDFLAGS}"; \
-  export MOREFLAGS="-O3 -march=native -flto -g0"; \
+  export MOREFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"; \
   make -j40 PREFIX=/opt/zstd HAVE_ZLIB=1; \
   make install PREFIX=/opt/zstd; \
   find /opt/zstd -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
@@ -213,7 +208,7 @@ RUN /bin/bash -o pipefail -c '\
   tar -xzf /tmp/libffi.tar.gz -C /usr/src/libffi --strip-components=1; \
   rm -f /tmp/libffi.tar.gz; \
   cd /usr/src/libffi; \
-  export CFLAGS="-O3 -march=native -flto -g0" CXXFLAGS="-O3 -march=native -flto -g0"; \
+  export CFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0" CXXFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"; \
   ./configure --prefix=/opt/libffi --with-gcc-arch=native --disable-static --enable-shared; \
   make -j40; make install; \
   find /opt/libffi -type f | while read -r f; do file -b "$f" | grep -q ELF && strip --strip-unneeded "$f" || true; done; \
@@ -237,7 +232,7 @@ RUN /bin/bash -o pipefail -c '\
   cd /usr/src/python; \
   export PKG_CONFIG_PATH="/opt/zstd/lib/pkgconfig:/opt/zlib-ng/lib/pkgconfig:/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
   export CPPFLAGS="-I/opt/zstd/include -I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
-  export CFLAGS="-O3 -march=native -g0" CXXFLAGS="-O3 -march=native -g0" OPT="-O3 -g0"; \
+  export CFLAGS="-O2 -march=native -mtune=native -g0" CXXFLAGS="-O2 -march=native -mtune=native -g0" OPT="-O2 -g0"; \
   LIBFFI_LIBDIR="/opt/libffi/lib"; \
   if [ -d /opt/libffi/lib/x86_64-linux-gnu ]; then LIBFFI_LIBDIR="/opt/libffi/lib/x86_64-linux-gnu"; fi; \
   export LIBFFI_CFLAGS="-I/opt/libffi/include" LIBFFI_LIBS="-L${LIBFFI_LIBDIR} -lffi"; \
@@ -298,7 +293,7 @@ RUN /bin/bash -o pipefail -c '\
   cd /usr/src/python; \
   export PKG_CONFIG_PATH="/opt/zstd/lib/pkgconfig:/opt/zlib-ng/lib/pkgconfig:/opt/mpdecimal/lib/pkgconfig:/opt/libffi/lib/pkgconfig:/opt/libffi/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
   export CPPFLAGS="-I/opt/zstd/include -I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
-  export CFLAGS="-O3 -march=native -g0" CXXFLAGS="-O3 -march=native -g0" OPT="-O3 -g0"; \
+  export CFLAGS="-O2 -march=native -mtune=native -g0" CXXFLAGS="-O2 -march=native -mtune=native -g0" OPT="-O2 -g0"; \
   LIBFFI_LIBDIR="/opt/libffi/lib"; \
   if [ -d /opt/libffi/lib/x86_64-linux-gnu ]; then LIBFFI_LIBDIR="/opt/libffi/lib/x86_64-linux-gnu"; fi; \
   export LIBFFI_CFLAGS="-I/opt/libffi/include" LIBFFI_LIBS="-L${LIBFFI_LIBDIR} -lffi"; \
@@ -426,9 +421,9 @@ RUN /bin/bash -o pipefail -c '\
   test -e "${MKLROOT}/lib/libmkl_rt.so"; \
   export LIBRARY_PATH="${MKLROOT}/lib${LIBRARY_PATH:+:${LIBRARY_PATH}}"; \
   export LDFLAGS="${LDFLAGS:+${LDFLAGS} }-L${MKLROOT}/lib -Wl,-rpath,${MKLROOT}/lib -L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib -L/opt/jemalloc/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
-  export CFLAGS="${CFLAGS:+${CFLAGS} }-O3 -march=native -g0 -I/opt/zlib-ng/include" \
-    CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }-O3 -march=native -g0 -I/opt/zlib-ng/include" \
-    FFLAGS="${FFLAGS:+${FFLAGS} }-O3 -march=native -g0"; \
+  export CFLAGS="${CFLAGS:+${CFLAGS} }-O2 -march=native -mtune=native -g0 -I/opt/zlib-ng/include" \
+    CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }-O2 -march=native -mtune=native -g0 -I/opt/zlib-ng/include" \
+    FFLAGS="${FFLAGS:+${FFLAGS} }-O2 -march=native -mtune=native -g0"; \
   python3 -m pip install --no-cache-dir --no-build-isolation --force-reinstall \
     --no-binary numpy \
     --config-settings=setup-args=-Dblas=mkl \
@@ -471,8 +466,8 @@ RUN /bin/bash -o pipefail -c '\
 # 4b) GIL native brotli (replace rest-layer wheel; host .venv keeps the wheel).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
-  export CFLAGS="-O3 -march=native -mtune=native -flto -g0" \
-    CXXFLAGS="-O3 -march=native -mtune=native -flto -g0"; \
+  export CFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0" \
+    CXXFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"; \
   python3 -m pip install --no-cache-dir --force-reinstall --no-binary brotli \
     --constraint /tmp/requirements.txt brotli; \
   python3 -c "import brotli; p=brotli.compress(b\"hps\", quality=11); assert brotli.decompress(p)==b\"hps\""'
@@ -511,9 +506,9 @@ RUN /bin/bash -o pipefail -c '\
   test -e "${MKLROOT_T}/lib/libmkl_rt.so"; \
   export LIBRARY_PATH="${MKLROOT_T}/lib${LIBRARY_PATH:+:${LIBRARY_PATH}}"; \
   export LDFLAGS="${LDFLAGS:+${LDFLAGS} }-L${MKLROOT_T}/lib -Wl,-rpath,${MKLROOT_T}/lib -L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib -L/opt/jemalloc/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,--no-as-needed -ljemalloc -Wl,--as-needed"; \
-  export CFLAGS="${CFLAGS:+${CFLAGS} }-O3 -march=native -g0 -I/opt/zlib-ng/include" \
-    CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }-O3 -march=native -g0 -I/opt/zlib-ng/include" \
-    FFLAGS="${FFLAGS:+${FFLAGS} }-O3 -march=native -g0"; \
+  export CFLAGS="${CFLAGS:+${CFLAGS} }-O2 -march=native -mtune=native -g0 -I/opt/zlib-ng/include" \
+    CXXFLAGS="${CXXFLAGS:+${CXXFLAGS} }-O2 -march=native -mtune=native -g0 -I/opt/zlib-ng/include" \
+    FFLAGS="${FFLAGS:+${FFLAGS} }-O2 -march=native -mtune=native -g0"; \
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --no-build-isolation --force-reinstall \
     --no-binary numpy \
     --config-settings=setup-args=-Dblas=mkl \
@@ -557,8 +552,8 @@ RUN /bin/bash -o pipefail -c '\
 # 7b) Free-threaded native brotli (same CFLAGS as GIL; rest layer stays wheels).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
-  export CFLAGS="-O3 -march=native -mtune=native -flto -g0" \
-    CXXFLAGS="-O3 -march=native -mtune=native -flto -g0"; \
+  export CFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0" \
+    CXXFLAGS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"; \
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir \
     --force-reinstall --no-binary brotli \
     --constraint /tmp/requirements.txt brotli; \
@@ -586,7 +581,7 @@ RUN /bin/bash -o pipefail -c '\
   tar -xzf /tmp/py-spy.tar.gz -C /usr/src/py-spy --strip-components=1; \
   rm -f /tmp/py-spy.tar.gz; \
   cd /usr/src/py-spy; \
-  export CC="${CC:-gcc-16}" CXX="${CXX:-g++-16}"; \
+  export CC="${CC:-clang-22}" CXX="${CXX:-clang++-22}"; \
   command -v "${CC}"; \
   cargo build --release --locked; \
   install -m 0755 target/release/py-spy /opt/python3.14/bin/py-spy; \

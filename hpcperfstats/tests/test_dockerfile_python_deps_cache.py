@@ -228,15 +228,12 @@ def test_hpcperfstats_child_stages_do_not_reinstall_python_deps():
     )
 
 
-def test_python_build_pins_gcc_16_toolchain() -> None:
+def test_python_build_uses_clang_22_toolchain() -> None:
   build = _stage_body((_repo_root() / "Dockerfile").read_text(), "python-build")
-  assert "gcc-16" in build
-  assert "16.2.0-3" in build
-  assert "ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2" in build
-  assert (
-    "COPY --from=${GCC_TOOLCHAIN_IMAGE} /usr/local/bin/assert_gcc_min_version.sh"
-    in build
-  )
+  assert "clang-22" in build
+  assert "PGO_PHASE=skip" in build or "ARG PGO_PHASE=skip" in build
+  assert "pgo_clang_flags.sh" in build
+  assert "gcc-toolchain" not in build
 
 
 def test_hpcperfstats_full_is_last_dockerfile_stage():

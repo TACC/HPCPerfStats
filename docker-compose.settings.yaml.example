@@ -66,6 +66,16 @@ volumes:
       # See below for extra configuration for symlinks outside of this directory (Lets Encrypt)
       device: /opt/certs
       o: bind
+  # Live-soak Clang PGO profiles (not committed). device: must match PGOROOT used by
+  # rebuild_full_site.sh (default /root/.hpcperfstats_pgo). That script (and
+  # scripts/pgo_ensure_layout.sh) creates this host directory before compose build/up.
+  # If you override PGOROOT, change device: here to the same path before enabling binds.
+  pgo_profiles:
+    driver: local
+    driver_opts:
+      type: none
+      device: /root/.hpcperfstats_pgo
+      o: bind
 
 # Optional knobs — copy a block under `services:` in your local
 # docker-compose.settings.yaml and uncomment as needed for this site.
@@ -102,3 +112,22 @@ volumes:
 #     # mem_limit: 128g
 #     # memswap_limit: 128g
 #     # stop_grace_period: ${HPCPERFSTATS_PIPELINE_STOP_GRACE:-30s}
+#
+# Live-soak PGO (--profile-phase): bind host PGOROOT into app/db/proxy containers so
+# .profraw lands on the host for pgo_merge_namespaces.sh. Mount path must stay
+# /root/.hpcperfstats_pgo (matches pgo_clang_flags.sh + Dockerfile RUN bind targets).
+# Uncomment all four blocks together during profile collection; safe to leave mounted
+# during normal rebuilds (skip/use phases). Override host path via pgo_profiles.device above.
+#
+#   web:
+#     volumes:
+#       - pgo_profiles:/root/.hpcperfstats_pgo
+#   pipeline:
+#     volumes:
+#       - pgo_profiles:/root/.hpcperfstats_pgo
+#   proxy:
+#     volumes:
+#       - pgo_profiles:/root/.hpcperfstats_pgo
+#   db_pg18:
+#     volumes:
+#       - pgo_profiles:/root/.hpcperfstats_pgo

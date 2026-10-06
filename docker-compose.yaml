@@ -27,6 +27,8 @@ services:
       # (frontend-builder COPY + git rev-parse). Default unknown falls back to .git.
       args:
         HPCPERFSTATS_GIT_COMMIT: ${HPCPERFSTATS_GIT_COMMIT:-unknown}
+        PGO_PHASE: ${PGO_PHASE:-skip}
+        PGO_ROOT: ${PGO_ROOT:-/root/.hpcperfstats_pgo}
     image: hpcperfstats
     restart: always
     logging: *hpc-logging
@@ -120,6 +122,9 @@ services:
     build:
       context: ./
       dockerfile: services-conf/proxy.Dockerfile
+      args:
+        PGO_PHASE: ${PGO_PHASE:-skip}
+        PGO_ROOT: ${PGO_ROOT:-/root/.hpcperfstats_pgo}
       # TLS PEMs materialized at container start from proxy_ssl_source settings volume.
       # No additional_contexts / no .env for TLS paths.
     image: hpcperfstats-proxy
@@ -258,6 +263,9 @@ services:
     build:
       context: ./services-conf
       dockerfile: db.Dockerfile
+      args:
+        PGO_PHASE: ${PGO_PHASE:-skip}
+        PGO_ROOT: ${PGO_ROOT:-/root/.hpcperfstats_pgo}
     image: hpcperfstats-db
     logging: *hpc-logging
     shm_size: "16gb"

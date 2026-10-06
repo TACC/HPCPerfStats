@@ -5,27 +5,26 @@
 
 # syntax=docker/dockerfile:1
 ARG ALPINE_VERSION=3.24.2
-ARG GCC_TOOLCHAIN_IMAGE=hpcperfstats-gcc-musl:16.2
-ARG GCC_MIN_VERSION=16.2
-FROM ${GCC_TOOLCHAIN_IMAGE} AS gcc-toolchain
 
 FROM alpine:${ALPINE_VERSION} AS db-build
 
-ARG GCC_MIN_VERSION=16.2
-COPY --from=gcc-toolchain /opt/gcc-16 /opt/gcc-16
-COPY --from=gcc-toolchain /usr/local/bin/assert_gcc_min_version.sh /usr/local/bin/assert_gcc_min_version.sh
-ENV PATH="/opt/gcc-16/bin:${PATH}" CC=gcc CXX=g++
-RUN chmod +x /usr/local/bin/assert_gcc_min_version.sh \
-  && GCC_MIN_VERSION="${GCC_MIN_VERSION}" assert_gcc_min_version.sh
+ARG PGO_PHASE=skip
+ARG PGO_ROOT=/root/.hpcperfstats_pgo
+ENV HPC_PGO_PHASE=${PGO_PHASE} HPC_PGO_ROOT=${PGO_ROOT}
+ENV CC=clang CXX=clang++ LD=ld.lld
 
+COPY pgo_clang_flags.sh /usr/local/lib/hpcperfstats/pgo_clang_flags.sh
+RUN chmod +x /usr/local/lib/hpcperfstats/pgo_clang_flags.sh
 
 # LLVM major matches docker-library postgres 18/alpine3.24.
-ENV DOCKER_PG_LLVM_DEPS="llvm21-dev clang21"
-ENV OPT_CFLAGS_LIBS="-O3 -march=native -mtune=native -flto=auto -g0"
-ENV OPT_CFLAGS_PG="-O3 -march=native -mprefer-vector-width=512 -mtune=native -flto=auto -g0"
+ENV DOCKER_PG_LLVM_DEPS="llvm22-dev clang22"
+ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin -fuse-ld=lld -g0"
+ENV OPT_CFLAGS_PG="-O2 -march=native -mprefer-vector-width=512 -mtune=native -flto=thin -fuse-ld=lld -g0"
 
 RUN set -eux; \
   apk add --no-cache \
+    clang22 \
+    lld22 \
     bash \
     bison \
     bzip2 \
@@ -53,7 +52,7 @@ RUN set -eux; \
 
  # Print out compiler platform detection
 
-RUN gcc -march=native -mtune=native -Q --help=target
+RUN clang --version && clang -march=native -mtune=native -Q --help=target
 
 # /opt source pins: slowest-changing independent layers first (Docker cache).
 # zstd links /opt/lz4 + /opt/zlib-ng, so it stays after both even though zstd
@@ -62,14 +61,18 @@ RUN gcc -march=native -mtune=native -Q --help=target
 ARG JEMALLOC_VERSION=5.4.0
 ARG JEMALLOC_SHA256=200776fac271093e7c2f21edd6d62657ecd2be578d9328633f2a86bfa6ef4f1d
 # --- jemalloc ---
-RUN set -eux; \
+ARG PGO_NAMESPACE=db/jemalloc
+RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+  set -eux; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  _cflags="$(hpcperfstats_bake_cflags db/jemalloc)"; \
   curl -fsSL "https://github.com/jemalloc/jemalloc/releases/download/${JEMALLOC_VERSION}/jemalloc-${JEMALLOC_VERSION}.tar.bz2" \
     -o /tmp/jemalloc.tar.bz2; \
   echo "${JEMALLOC_SHA256}  /tmp/jemalloc.tar.bz2" | sha256sum -c -; \
   mkdir -p /usr/src/jemalloc; \
   tar -xjf /tmp/jemalloc.tar.bz2 -C /usr/src/jemalloc --strip-components=1; \
   cd /usr/src/jemalloc; \
-  CFLAGS="${OPT_CFLAGS_LIBS}" CXXFLAGS="${OPT_CFLAGS_LIBS}" \
+  CFLAGS="${_cflags}" CXXFLAGS="${_cflags}" \
     ./configure --prefix=/opt/jemalloc; \
   make -j"$(nproc)"; \
   make install; \
@@ -78,28 +81,36 @@ RUN set -eux; \
 ARG LZ4_VERSION=1.10.0
 ARG LZ4_SHA256=537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b
 # --- lz4 ---
-RUN set -eux; \
+ARG PGO_NAMESPACE=db/lz4
+RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+  set -eux; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  _cflags="$(hpcperfstats_bake_cflags db/lz4) -DLZ4_HEAPMODE=0"; \
   curl -fsSL "https://github.com/lz4/lz4/archive/refs/tags/v${LZ4_VERSION}.tar.gz" \
     -o /tmp/lz4.tar.gz; \
   echo "${LZ4_SHA256}  /tmp/lz4.tar.gz" | sha256sum -c -; \
   mkdir -p /usr/src/lz4; \
   tar -xzf /tmp/lz4.tar.gz -C /usr/src/lz4 --strip-components=1; \
   cd /usr/src/lz4; \
-  make -j"$(nproc)" CFLAGS="${OPT_CFLAGS_LIBS} -DLZ4_HEAPMODE=0" PREFIX=/opt/lz4; \
+  make -j"$(nproc)" CFLAGS="${_cflags}" PREFIX=/opt/lz4; \
   make install PREFIX=/opt/lz4; \
   rm -rf /usr/src/lz4 /tmp/lz4.tar.gz
 
 ARG ICU_VERSION=78.3
 ARG ICU_SHA256=3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0
 # --- ICU (source under /opt/icu; not apk icu-dev as linked ABI) ---
-RUN set -eux; \
+ARG PGO_NAMESPACE=db/icu
+RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+  set -eux; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  _cflags="$(hpcperfstats_bake_cflags db/icu)"; \
   curl -fsSL "https://github.com/unicode-org/icu/releases/download/release-${ICU_VERSION}/icu4c-${ICU_VERSION}-sources.tgz" \
     -o /tmp/icu.tgz; \
   echo "${ICU_SHA256}  /tmp/icu.tgz" | sha256sum -c -; \
   mkdir -p /usr/src/icu; \
   tar -xzf /tmp/icu.tgz -C /usr/src/icu; \
   cd /usr/src/icu/icu/source; \
-  CFLAGS="${OPT_CFLAGS_LIBS}" CXXFLAGS="${OPT_CFLAGS_LIBS}" \
+  CFLAGS="${_cflags}" CXXFLAGS="${_cflags}" \
     ./configure --prefix=/opt/icu --enable-static --disable-samples --disable-tests; \
   make -j"$(nproc)"; \
   make install; \
@@ -108,7 +119,11 @@ RUN set -eux; \
 ARG LIBURING_VERSION=2.15
 ARG LIBURING_SHA256=8d052f2622dcb3678cbaee5ff582a87572672a6c0a56533cdda5b65cb636120a
 # --- liburing ---
-RUN set -eux; \
+ARG PGO_NAMESPACE=db/liburing
+RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+  set -eux; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  _cflags="$(hpcperfstats_bake_cflags db/liburing)"; \
   curl -fsSL "https://github.com/axboe/liburing/archive/refs/tags/liburing-${LIBURING_VERSION}.tar.gz" \
     -o /tmp/liburing.tar.gz; \
   echo "${LIBURING_SHA256}  /tmp/liburing.tar.gz" | sha256sum -c -; \
@@ -116,14 +131,18 @@ RUN set -eux; \
   tar -xzf /tmp/liburing.tar.gz -C /usr/src/liburing --strip-components=1; \
   cd /usr/src/liburing; \
   ./configure --prefix=/opt/liburing; \
-  make -j"$(nproc)" CFLAGS="${OPT_CFLAGS_LIBS}"; \
+  make -j"$(nproc)" CFLAGS="${_cflags}"; \
   make install; \
   rm -rf /usr/src/liburing /tmp/liburing.tar.gz
 
 ARG ZLIB_NG_VERSION=2.3.3
 ARG ZLIB_NG_SHA256=f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1
 # --- zlib-ng (ZLIB_COMPAT → libz.so; match Python image /opt/zlib-ng pin) ---
-RUN set -eux; \
+ARG PGO_NAMESPACE=db/zlib-ng
+RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+  set -eux; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  _cflags="$(hpcperfstats_bake_cflags db/zlib-ng)"; \
   curl -fsSL "https://github.com/zlib-ng/zlib-ng/archive/refs/tags/${ZLIB_NG_VERSION}.tar.gz" \
     -o /tmp/zlib-ng.tar.gz; \
   echo "${ZLIB_NG_SHA256}  /tmp/zlib-ng.tar.gz" | sha256sum -c -; \
@@ -141,7 +160,7 @@ RUN set -eux; \
     -DWITH_OPTIM=ON \
     -DWITH_NEW_STRATEGIES=ON \
     -DWITH_NATIVE_INSTRUCTIONS=ON \
-    -DCMAKE_C_FLAGS="${OPT_CFLAGS_LIBS}"; \
+    -DCMAKE_C_FLAGS="${_cflags}"; \
   cmake --build build -j"$(nproc)"; \
   cmake --install build; \
   test -f /opt/zlib-ng/lib/libz.so || test -f /opt/zlib-ng/lib/libz.so.1; \
@@ -150,7 +169,11 @@ RUN set -eux; \
 ARG ZSTD_VERSION=1.5.7
 ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
 # --- zstd (match Python image /opt/zstd 1.5.7 pin; gzip→zlib-ng, .lz4→/opt/lz4) ---
-RUN set -eux; \
+ARG PGO_NAMESPACE=db/zstd
+RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+  set -eux; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  _cflags="$(hpcperfstats_bake_cflags db/zstd)"; \
   curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" \
     -o /tmp/zstd.tar.gz; \
   echo "${ZSTD_SHA256}  /tmp/zstd.tar.gz" | sha256sum -c -; \
@@ -160,7 +183,7 @@ RUN set -eux; \
   export PKG_CONFIG_PATH="/opt/lz4/lib/pkgconfig:/opt/zlib-ng/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
   export CPPFLAGS="-I/opt/lz4/include -I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; \
   export LDFLAGS="-L/opt/lz4/lib -Wl,-rpath,/opt/lz4/lib -L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib${LDFLAGS:+ $LDFLAGS}"; \
-  make -j"$(nproc)" PREFIX=/opt/zstd HAVE_ZLIB=1 HAVE_LZ4=1 MOREFLAGS="${OPT_CFLAGS_LIBS}"; \
+  make -j"$(nproc)" PREFIX=/opt/zstd HAVE_ZLIB=1 HAVE_LZ4=1 MOREFLAGS="${_cflags}"; \
   make install PREFIX=/opt/zstd; \
   ldd /opt/zstd/bin/zstd | tee /tmp/zstd.ldd; \
   grep -E '/opt/zlib-ng/.+libz' /tmp/zstd.ldd; \
@@ -180,7 +203,11 @@ ENV PKG_CONFIG_PATH="/opt/zlib-ng/lib/pkgconfig:/opt/icu/lib/pkgconfig:/opt/libu
 ARG PG_VERSION=18.6
 ARG PG_SHA256=555610c24d53e4316da5b7d3fc25c279d96856d5e0e23ee308c328c5fa881d9f
 # --- PostgreSQL 18 ---
-RUN set -eux; \
+ARG PGO_NAMESPACE=db/postgresql
+RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+  set -eux; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  _pg_cflags="$(hpcperfstats_bake_cflags db/postgresql pg)"; \
   curl -fsSL "https://ftp.postgresql.org/pub/source/v${PG_VERSION}/postgresql-${PG_VERSION}.tar.bz2" \
     -o /tmp/postgresql.tar.bz2; \
   echo "${PG_SHA256}  /tmp/postgresql.tar.bz2" | sha256sum -c -; \
@@ -192,16 +219,12 @@ RUN set -eux; \
     src/include/pg_config_manual.h > src/include/pg_config_manual.h.new; \
   grep '/var/run/postgresql' src/include/pg_config_manual.h.new; \
   mv src/include/pg_config_manual.h.new src/include/pg_config_manual.h; \
-  export LLVM_CONFIG="/usr/lib/llvm21/bin/llvm-config"; \
-  export CLANG=clang-21; \
-  gnuArch="$(gcc -dumpmachine)"; \
-  pg_bake_ldflags="$LDFLAGS"; \
-  pg_bake_cflags="$CFLAGS"; \
-  pg_bake_cxxflags="$CXXFLAGS"; \
-  # GCC 16: full LDFLAGS (-ljemalloc, --no-as-needed) + -flto=auto fail configure's link probe.
-  export LDFLAGS="-L/opt/jemalloc/lib -L/opt/zlib-ng/lib -L/opt/icu/lib -L/opt/liburing/lib -L/opt/lz4/lib -L/opt/zstd/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/icu/lib -Wl,-rpath,/opt/liburing/lib -Wl,-rpath,/opt/lz4/lib -Wl,-rpath,/opt/zstd/lib"; \
-  export CFLAGS="-O3 -march=native -mprefer-vector-width=512 -mtune=native -g0"; \
-  export CXXFLAGS="$CFLAGS"; \
+  export LLVM_CONFIG="/usr/lib/llvm22/bin/llvm-config"; \
+  export CLANG=clang-22; \
+  gnuArch="$(clang -dumpmachine)"; \
+  export LDFLAGS="${LDFLAGS}"; \
+  export CFLAGS="${_pg_cflags}"; \
+  export CXXFLAGS="${_pg_cflags}"; \
   # Intentionally omit docker-library --disable-rpath so /opt rpaths stick.
   ./configure \
     --enable-option-checking=fatal \
@@ -222,9 +245,6 @@ RUN set -eux; \
     --with-openssl \
     --with-zstd \
   ; \
-  export LDFLAGS="$pg_bake_ldflags"; \
-  export CFLAGS="$pg_bake_cflags"; \
-  export CXXFLAGS="$pg_bake_cxxflags"; \
   if grep -q -- '--disable-rpath' config.status; then \
     echo "postgres configure must not use --disable-rpath" >&2; exit 1; \
   fi; \
@@ -257,7 +277,11 @@ ARG TIMESCALEDB_SHA256=a7003a70836477dc8d575d95a4c515d8a22ed219d0cb03b3640bb813f
 # heredoc — podman/buildah misparses <<EOF inside RUN as a CHMOD instruction).
 # Timescale 2.29+ also does not DT_NEEDED external liblz4/libzstd. musl `ldd`
 # on a PG extension always reports unresolved backend symbols — use scanelf.
-RUN set -eux; \
+ARG PGO_NAMESPACE=db/timescaledb
+RUN --mount=type=bind,source=/root/.hpcperfstats_pgo,target=/root/.hpcperfstats_pgo,rw \
+  set -eux; \
+  . /usr/local/lib/hpcperfstats/pgo_clang_flags.sh; \
+  _ts_cflags="$(hpcperfstats_bake_cflags db/timescaledb pg)"; \
   curl -fsSL "https://github.com/timescale/timescaledb/archive/refs/tags/${TIMESCALEDB_VERSION}.tar.gz" \
     -o /tmp/timescaledb.tar.gz; \
   echo "${TIMESCALEDB_SHA256}  /tmp/timescaledb.tar.gz" | sha256sum -c -; \
@@ -286,7 +310,7 @@ RUN set -eux; \
     -DCMAKE_BUILD_TYPE=Release \
     -DREGRESS_CHECKS=OFF \
     -DTAP_CHECKS=OFF \
-    -DCMAKE_C_FLAGS="${OPT_CFLAGS_PG}" \
+    -DCMAKE_C_FLAGS="${_ts_cflags}" \
   ; \
   cmake -L build | tee /tmp/ts.cmake; \
   if grep -qi 'APACHE_ONLY:BOOL=ON' /tmp/ts.cmake; then \
