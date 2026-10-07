@@ -152,7 +152,39 @@ ARG PGO_NAMESPACE=db/postgresql
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   /bin/bash -o pipefail -s <<'BASH'
 set -eux
-hpcperfstats_pgo_ensure_db_postgresql_link_dirs; _pg_cflags="$(hpcperfstats_bake_cflags db/postgresql pg)"; curl -fsSL "https://ftp.postgresql.org/pub/source/v${PG_VERSION}/postgresql-${PG_VERSION}.tar.bz2" -o /tmp/postgresql.tar.bz2; echo "${PG_SHA256}  /tmp/postgresql.tar.bz2" | sha256sum -c -; mkdir -p /usr/src/postgresql; tar -xjf /tmp/postgresql.tar.bz2 -C /usr/src/postgresql --strip-components=1; rm -f /tmp/postgresql.tar.bz2; cd /usr/src/postgresql; awk '$1 == "#define" && $2 == "DEFAULT_PGSOCKET_DIR" && $3 == "\"/tmp\"" { $3 = "\"/var/run/postgresql\""; print; next } { print }' src/include/pg_config_manual.h > src/include/pg_config_manual.h.new; grep '/var/run/postgresql' src/include/pg_config_manual.h.new; mv src/include/pg_config_manual.h.new src/include/pg_config_manual.h; export LLVM_CONFIG="${LLVM_CONFIG}"; export CLANG=clang-22; gnuArch="$(clang -dumpmachine)"; export LDFLAGS="${LDFLAGS} ${HPC_THINLTO_LDFLAGS}"; export CFLAGS="${_pg_cflags}"; export CXXFLAGS="${_pg_cflags}"; # Intentionally omit docker-library --disable-rpath so /opt rpaths stick. CC="${CC}" CXX="${CXX}" ./configure --enable-option-checking=fatal --build="$gnuArch" --enable-integer-datetimes --with-uuid=e2fs --with-pgport=5432 --with-system-tzdata=/usr/share/zoneinfo --prefix=/usr/local --with-includes=/usr/local/include --with-libraries=/usr/local/lib --with-icu --with-liburing --with-libxml --with-libxslt --with-llvm --with-lz4 --with-openssl --with-zstd ; if grep -q -- '--disable-rpath' config.status; then echo "postgres configure must not use --disable-rpath" >&2; exit 1; fi; make -j"$(nproc)" CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" world-bin; make install-world-bin CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}"; make -C contrib install CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}"; # Fail-closed: postgres DT_NEEDED must resolve /opt libs (not apk under /usr/lib). # NOTE: under set -e, "! grep PATTERN" does NOT fail the layer when PATTERN # matches (bash ignores negated status); use if/exit 1. ldd /usr/local/bin/postgres | tee /tmp/postgres.ldd; grep -E '/opt/jemalloc/.+libjemalloc' /tmp/postgres.ldd; grep -E '/opt/zlib-ng/.+libz' /tmp/postgres.ldd; grep -E '/opt/icu/.+libicu' /tmp/postgres.ldd; grep -E '/opt/liburing/.+liburing' /tmp/postgres.ldd; grep -E '/opt/lz4/.+liblz4' /tmp/postgres.ldd; grep -E '/opt/zstd/.+libzstd' /tmp/postgres.ldd; if grep -E '[[:space:]](/lib/libz\.|/usr/lib/libz\.|/usr/lib/liblz4|/usr/lib/libzstd|/usr/lib/libicu|/usr/lib/liburing)' /tmp/postgres.ldd; then echo "postgres linked apk libs instead of /opt" >&2; exit 1; fi; strip --strip-unneeded /usr/local/bin/postgres /usr/local/bin/psql || true; postgres --version
+hpcperfstats_pgo_ensure_db_postgresql_link_dirs
+_pg_cflags="$(hpcperfstats_bake_cflags db/postgresql pg)"
+curl -fsSL "https://ftp.postgresql.org/pub/source/v${PG_VERSION}/postgresql-${PG_VERSION}.tar.bz2" -o /tmp/postgresql.tar.bz2
+echo "${PG_SHA256}  /tmp/postgresql.tar.bz2" | sha256sum -c -
+mkdir -p /usr/src/postgresql
+tar -xjf /tmp/postgresql.tar.bz2 -C /usr/src/postgresql --strip-components=1
+rm -f /tmp/postgresql.tar.bz2
+cd /usr/src/postgresql
+awk '$1 == "#define" && $2 == "DEFAULT_PGSOCKET_DIR" && $3 == "\"/tmp\"" { $3 = "\"/var/run/postgresql\""; print; next } { print }' src/include/pg_config_manual.h > src/include/pg_config_manual.h.new
+grep '/var/run/postgresql' src/include/pg_config_manual.h.new
+mv src/include/pg_config_manual.h.new src/include/pg_config_manual.h
+export LLVM_CONFIG="${LLVM_CONFIG}"
+export CLANG=clang-22
+gnuArch="$(clang -dumpmachine)"
+export LDFLAGS="${LDFLAGS} ${HPC_THINLTO_LDFLAGS}"
+export CFLAGS="${_pg_cflags}"
+export CXXFLAGS="${_pg_cflags}"
+# Intentionally omit docker-library --disable-rpath so /opt rpaths stick.
+CC="${CC}" CXX="${CXX}" ./configure --enable-option-checking=fatal --build="$gnuArch" --enable-integer-datetimes --with-uuid=e2fs --with-pgport=5432 --with-system-tzdata=/usr/share/zoneinfo --prefix=/usr/local --with-includes=/usr/local/include --with-libraries=/usr/local/lib --with-icu --with-liburing --with-libxml --with-libxslt --with-llvm --with-lz4 --with-openssl --with-zstd
+if grep -q -- '--disable-rpath' config.status; then echo "postgres configure must not use --disable-rpath" >&2; exit 1; fi
+make -j"$(nproc)" CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" world-bin
+make install-world-bin CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}"
+make -C contrib install CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}"
+ldd /usr/local/bin/postgres | tee /tmp/postgres.ldd
+grep -E '/opt/jemalloc/.+libjemalloc' /tmp/postgres.ldd
+grep -E '/opt/zlib-ng/.+libz' /tmp/postgres.ldd
+grep -E '/opt/icu/.+libicu' /tmp/postgres.ldd
+grep -E '/opt/liburing/.+liburing' /tmp/postgres.ldd
+grep -E '/opt/lz4/.+liblz4' /tmp/postgres.ldd
+grep -E '/opt/zstd/.+libzstd' /tmp/postgres.ldd
+if grep -E '[[:space:]](/lib/libz\.|/usr/lib/libz\.|/usr/lib/liblz4|/usr/lib/libzstd|/usr/lib/libicu|/usr/lib/liburing)' /tmp/postgres.ldd; then echo "postgres linked apk libs instead of /opt" >&2; exit 1; fi
+strip --strip-unneeded /usr/local/bin/postgres /usr/local/bin/psql || true
+postgres --version
 BASH
 
 ARG TIMESCALEDB_VERSION=2.30.2
@@ -170,7 +202,35 @@ ARG PGO_NAMESPACE=db/timescaledb
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   /bin/bash -o pipefail -s <<'BASH'
 set -eux
-hpcperfstats_pgo_ensure_db_timescaledb_link_dirs; _ts_cflags="$(hpcperfstats_bake_cflags db/timescaledb pg)"; curl -fsSL "https://github.com/timescale/timescaledb/archive/refs/tags/${TIMESCALEDB_VERSION}.tar.gz" -o /tmp/timescaledb.tar.gz; echo "${TIMESCALEDB_SHA256}  /tmp/timescaledb.tar.gz" | sha256sum -c -; mkdir -p /usr/src/timescaledb; tar -xzf /tmp/timescaledb.tar.gz -C /usr/src/timescaledb --strip-components=1; rm -f /tmp/timescaledb.tar.gz; cd /usr/src/timescaledb; unset LDFLAGS CPPFLAGS CFLAGS CXXFLAGS PKG_CONFIG_PATH || true; mkdir -p /tmp/pg-config-wrap; # BusyBox sed: never use '|' as s||| delimiter when the pattern also has '|'. printf '%s\n' '#!/bin/sh' 'real=/usr/local/bin/pg_config' 'case "$1" in' '  --ldflags|--libs)' '    "$real" "$@" | sed -e "s/-ljemalloc//g" -e "s#-L/opt/jemalloc[^[:space:]]*##g" -e "s#-Wl,-rpath,/opt/jemalloc[^[:space:]]*##g"' '    ;;' '  *)' '    exec "$real" "$@"' '    ;;' 'esac' > /tmp/pg-config-wrap/pg_config; chmod +x /tmp/pg-config-wrap/pg_config; export PATH="/tmp/pg-config-wrap:/usr/local/bin:${PATH}"; ./bootstrap -DCMAKE_BUILD_TYPE=Release -DREGRESS_CHECKS=OFF -DTAP_CHECKS=OFF -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_AR="${AR}" -DCMAKE_RANLIB="${RANLIB}" -DCMAKE_NM="${NM}" -DCMAKE_EXE_LINKER_FLAGS="${HPC_THINLTO_LDFLAGS}" -DCMAKE_SHARED_LINKER_FLAGS="${HPC_THINLTO_LDFLAGS}" -DCMAKE_C_FLAGS="${_ts_cflags}" ; cmake -L build | tee /tmp/ts.cmake; if grep -qi 'APACHE_ONLY:BOOL=ON' /tmp/ts.cmake; then echo "Timescale must not be APACHE_ONLY" >&2; exit 1; fi; # Belt-and-suspenders: drop any -ljemalloc cmake already expanded into link lines. find build -type f \( -name 'link.txt' -o -name 'flags.make' -o -name 'build.make' \) -exec sed -i -e 's/-ljemalloc//g' -e 's#-L/opt/jemalloc[^[:space:]]*##g' -e 's#-Wl,-rpath,/opt/jemalloc[^[:space:]]*##g' {} +; cd build; make -j"$(nproc)" CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}"; make install CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}"; TS_SO="$(find /usr/local/lib/postgresql -name 'timescaledb.so' | head -1)"; test -n "$TS_SO"; test -f "$TS_SO"; scanelf -n "$TS_SO" | tee /tmp/timescaledb.needed; if grep -E 'liblz4|libzstd|libjemalloc' /tmp/timescaledb.needed; then echo "timescaledb.so must not DT_NEEDED jemalloc/lz4/zstd" >&2; exit 1; fi; sed -ri "s/#?(shared_preload_libraries)\s*=.*/\1 = 'timescaledb'/" /usr/local/share/postgresql/postgresql.conf.sample; grep -F "shared_preload_libraries = 'timescaledb'" /usr/local/share/postgresql/postgresql.conf.sample; rm -rf /usr/src/timescaledb /usr/src/postgresql /tmp/pg-config-wrap
+hpcperfstats_pgo_ensure_db_timescaledb_link_dirs
+_ts_cflags="$(hpcperfstats_bake_cflags db/timescaledb pg)"
+curl -fsSL "https://github.com/timescale/timescaledb/archive/refs/tags/${TIMESCALEDB_VERSION}.tar.gz" -o /tmp/timescaledb.tar.gz
+echo "${TIMESCALEDB_SHA256}  /tmp/timescaledb.tar.gz" | sha256sum -c -
+mkdir -p /usr/src/timescaledb
+tar -xzf /tmp/timescaledb.tar.gz -C /usr/src/timescaledb --strip-components=1
+rm -f /tmp/timescaledb.tar.gz
+cd /usr/src/timescaledb
+unset LDFLAGS CPPFLAGS CFLAGS CXXFLAGS PKG_CONFIG_PATH || true
+mkdir -p /tmp/pg-config-wrap
+# BusyBox sed: never use '|' as s||| delimiter when the pattern also has '|'.
+printf '%s\n' '#!/bin/sh' 'real=/usr/local/bin/pg_config' 'case "$1" in' '  --ldflags|--libs)' '    "$real" "$@" | sed -e "s/-ljemalloc//g" -e "s#-L/opt/jemalloc[^[:space:]]*##g" -e "s#-Wl,-rpath,/opt/jemalloc[^[:space:]]*##g"' '    ;;' '  *)' '    exec "$real" "$@"' '    ;;' 'esac' > /tmp/pg-config-wrap/pg_config
+chmod +x /tmp/pg-config-wrap/pg_config
+export PATH="/tmp/pg-config-wrap:/usr/local/bin:${PATH}"
+./bootstrap -DCMAKE_BUILD_TYPE=Release -DREGRESS_CHECKS=OFF -DTAP_CHECKS=OFF -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_AR="${AR}" -DCMAKE_RANLIB="${RANLIB}" -DCMAKE_NM="${NM}" -DCMAKE_EXE_LINKER_FLAGS="${HPC_THINLTO_LDFLAGS}" -DCMAKE_SHARED_LINKER_FLAGS="${HPC_THINLTO_LDFLAGS}" -DCMAKE_C_FLAGS="${_ts_cflags}"
+cmake -L build | tee /tmp/ts.cmake
+if grep -qi 'APACHE_ONLY:BOOL=ON' /tmp/ts.cmake; then echo "Timescale must not be APACHE_ONLY" >&2; exit 1; fi
+find build -type f \( -name 'link.txt' -o -name 'flags.make' -o -name 'build.make' \) -exec sed -i -e 's/-ljemalloc//g' -e 's#-L/opt/jemalloc[^[:space:]]*##g' -e 's#-Wl,-rpath,/opt/jemalloc[^[:space:]]*##g' {} +
+cd build
+make -j"$(nproc)" CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}"
+make install CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}"
+TS_SO="$(find /usr/local/lib/postgresql -name 'timescaledb.so' | head -1)"
+test -n "$TS_SO"
+test -f "$TS_SO"
+scanelf -n "$TS_SO" | tee /tmp/timescaledb.needed
+if grep -E 'liblz4|libzstd|libjemalloc' /tmp/timescaledb.needed; then echo "timescaledb.so must not DT_NEEDED jemalloc/lz4/zstd" >&2; exit 1; fi
+sed -ri "s/#?(shared_preload_libraries)\s*=.*/\1 = 'timescaledb'/" /usr/local/share/postgresql/postgresql.conf.sample
+grep -F "shared_preload_libraries = 'timescaledb'" /usr/local/share/postgresql/postgresql.conf.sample
+rm -rf /usr/src/timescaledb /usr/src/postgresql /tmp/pg-config-wrap
 BASH
 
 # Prune docs/man from the install tree copied to runtime.

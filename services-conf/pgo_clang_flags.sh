@@ -124,10 +124,15 @@ hpcperfstats_alpine_ld_lld_path() {
 
 # Autotools (jemalloc shared): compile uses bake CFLAGS (-flto=thin); link must repeat LTO.
 hpcperfstats_alpine_thinlto_ldflags() {
-  local lld
+  local lld flags
   lld="$(hpcperfstats_alpine_ld_lld_path)"
   # -fuse-ld=lld: clang++ must not fall back to musl gcc ld (TPOFF32 / ThinLTO .so link).
-  printf '%s' "-flto=thin -fuse-ld=lld --ld-path=${lld}"
+  flags="-flto=thin -fuse-ld=lld --ld-path=${lld}"
+  # PGO generate: libclang_rt.profile.a needs libc when lld links .so (e.g. db/liburing).
+  case "$(hpcperfstats_pgo_phase)" in
+    generate) flags="${flags} -lc" ;;
+  esac
+  printf '%s' "${flags}"
 }
 
 # llvm-ar/ranlib/nm only (safe under BASH_ENV: do not rewrite CC — probe uses "${CC}" as argv0).

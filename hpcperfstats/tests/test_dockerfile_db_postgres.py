@@ -150,6 +150,26 @@ def test_db_dockerfile_uses_zlib_ng_not_apk_zlib() -> None:
   assert "/lib/libz\\.|/usr/lib/libz\\." in text or "/lib/libz\\." in text
 
 
+def test_db_dockerfile_postgres_and_timescale_heredocs_avoid_inline_hash_comments() -> (
+  None
+):
+  """Regression: '; # comment' on one line comments out ./configure and bootstrap (bake no-op)."""
+  text = _dockerfile()
+  pg_run = text[
+    text.index("# --- PostgreSQL") : text.index("# --- TimescaleDB")
+  ]
+  ts_run = text[
+    text.index("# --- TimescaleDB") : text.index("# Prune docs/man")
+  ]
+  assert "; # Intentionally omit docker-library" not in pg_run
+  assert "./configure --enable-option-checking=fatal" in pg_run
+  assert "make -j" in pg_run and "world-bin" in pg_run
+  assert "postgres --version" in pg_run
+  assert "; # BusyBox sed" not in ts_run
+  assert "pg-config-wrap/pg_config" in ts_run
+  assert "./bootstrap -DCMAKE_BUILD_TYPE=Release" in ts_run
+
+
 def test_db_dockerfile_links_opt_icu_liburing_lz4_zstd_into_postgres() -> None:
   text = _dockerfile()
   assert "--with-icu" in text

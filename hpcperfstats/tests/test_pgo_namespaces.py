@@ -186,6 +186,31 @@ def test_pgo_alpine_thinlto_ldflags_for_jemalloc_link() -> None:
   assert "--ld-path=/usr/bin/ld.lld" in out
 
 
+def test_pgo_alpine_thinlto_ldflags_adds_libc_on_generate() -> None:
+  """Regression: PGO generate .so links need -lc for libclang_rt.profile.a on musl+lld."""
+  script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
+  skip = subprocess.check_output(
+    [
+      "bash",
+      "-c",
+      f'source "{script}"; hpcperfstats_alpine_thinlto_ldflags',
+    ],
+    env={**os.environ, "PGO_PHASE": "skip"},
+    text=True,
+  ).strip()
+  assert " -lc" not in skip and not skip.endswith("-lc")
+  gen = subprocess.check_output(
+    [
+      "bash",
+      "-c",
+      f'source "{script}"; hpcperfstats_alpine_thinlto_ldflags',
+    ],
+    env={**os.environ, "PGO_PHASE": "generate"},
+    text=True,
+  ).strip()
+  assert gen.endswith("-lc")
+
+
 def test_pgo_alpine_jemalloc_export_uses_llvm_binutils() -> None:
   """ThinLTO .sym.o objects need llvm-nm/llvm-ar, not GNU nm from build-base."""
   script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
