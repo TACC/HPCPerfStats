@@ -412,6 +412,10 @@ volumes:
   # Not a host bind — Docker/Podman named volume only.
   redis_runtime:
     driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=4m
   # Finished STATIC_ROOT / MEDIA_ROOT copies nginx serves. Disk binds stay
   # collectstatic / MEDIA_ROOT staging. Not settings binds (same class as
   # redis_runtime). Podman tmpfs reject → same-redeploy /dev/shm bind.
