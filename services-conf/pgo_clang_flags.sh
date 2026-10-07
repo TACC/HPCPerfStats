@@ -188,10 +188,52 @@ hpcperfstats_cpython_pgo_namespace() {
   esac
 }
 
-# Pass to ./configure for Clang soak PGO only (generate/use). stdlib/skip: no --enable-optimizations.
+# stdlib/generate/use (+ skip when merged profdata exists): --enable-optimizations.
+hpcperfstats_namespace_default_profdata() {
+  printf '%s' "$(hpcperfstats_pgo_root)/${1}/default.profdata"
+}
+
+hpcperfstats_pgroot_has_any_profile_artifact() {
+  local root="${1:-$(hpcperfstats_pgo_root)}"
+  [[ -d "${root}" ]] || return 1
+  if find "${root}" \
+    \( -name default.profdata -o -name '*.profraw' -o -name '*.profclangr' \) \
+    -type f -size +0c -print -quit 2>/dev/null | grep -q .; then
+    return 0
+  fi
+  return 1
+}
+
+hpcperfstats_pgo_die_if_skip_use_missing_profdata() {
+  local namespace="${1:?namespace required}"
+  local phase prof
+  phase="$(hpcperfstats_pgo_phase)"
+  prof="$(hpcperfstats_namespace_default_profdata "${namespace}")"
+  case "${phase}" in
+    use)
+      [[ -s "${prof}" ]] \
+        || hpcperfstats_pgo_die "PGO_PHASE=use requires non-empty ${prof}"
+      ;;
+    skip | "")
+      if [[ -s "${prof}" ]]; then
+        return 0
+      fi
+      if hpcperfstats_pgroot_has_any_profile_artifact; then
+        hpcperfstats_pgo_die \
+          "PGO_PHASE=${phase}: partial PGOROOT (missing ${prof}); refusing mixed compile"
+      fi
+      ;;
+  esac
+}
+
 hpcperfstats_cpython_enable_optimizations_for_configure() {
   case "$(hpcperfstats_pgo_phase)" in
-    generate | use) printf '%s' '--enable-optimizations' ;;
+    stdlib | generate | use) printf '%s' '--enable-optimizations' ;;
+    skip | "")
+      if hpcperfstats_pgroot_has_any_profile_artifact; then
+        printf '%s' '--enable-optimizations'
+      fi
+      ;;
   esac
 }
 
@@ -253,7 +295,7 @@ hpcperfstats_cpython_stage_profiles_for_profile_opt() {
   elif [[ -s "${prof}" ]]; then
     cp "${prof}" ./code.profclangd
   else
-    hpcperfstats_pgo_die "PGO use requires raw profiles under ${raw_dir} or ${prof}"
+    hpcperfstats_pgo_die "PGO profile-opt requires raw profiles under ${raw_dir} or ${prof}"
   fi
 
   if [[ ! -s ./code.profclangd ]]; then
@@ -296,22 +338,44 @@ EOF
   fi
 }
 
-# skip → make install; generate → profile-gen-stamp + altinstall; use → profile-run-stamp + profile-opt + altinstall.
+hpcperfstats_cpython_make_install_profile_opt() {
+  local namespace="${1:?namespace required}"
+  local jobs="${2:-40}"
+
+  hpcperfstats_cpython_stage_profiles_for_profile_opt "${namespace}"
+  [[ -s ./code.profclangd ]] \
+    || hpcperfstats_pgo_die "PGO profile-opt: refuse without code.profclangd"
+  touch profile-run-stamp
+  make -j"${jobs}" profile-opt
+  make altinstall
+}
+
+# stdlib → plain make install. skip/use + merged profdata → profile-opt + altinstall.
+# generate → profile-gen-stamp + altinstall.
 hpcperfstats_cpython_make_install() {
   local namespace="${1:?namespace required}"
   local jobs="${2:-40}"
-  local phase root prof
+  local phase prof
 
   hpcperfstats_cpython_pgo_namespace "${namespace}" \
     || hpcperfstats_pgo_die "hpcperfstats_cpython_make_install: ${namespace}"
 
   phase="$(hpcperfstats_pgo_phase)"
-  root="$(hpcperfstats_pgo_root)"
+  prof="$(hpcperfstats_namespace_default_profdata "${namespace}")"
 
   case "${phase}" in
-    skip | "" | stdlib)
+    stdlib)
       make -j"${jobs}"
       make install
+      ;;
+    skip | "")
+      hpcperfstats_pgo_die_if_skip_use_missing_profdata "${namespace}"
+      if [[ -s "${prof}" ]]; then
+        hpcperfstats_cpython_make_install_profile_opt "${namespace}" "${jobs}"
+      else
+        make -j"${jobs}"
+        make install
+      fi
       ;;
     generate)
       hpcperfstats_cpython_relax_install_deps_for_instrumented
@@ -320,12 +384,7 @@ hpcperfstats_cpython_make_install() {
       make altinstall
       ;;
     use)
-      hpcperfstats_cpython_stage_profiles_for_profile_opt "${namespace}"
-      [[ -s ./code.profclangd ]] \
-        || hpcperfstats_pgo_die "PGO use: refuse profile-opt without code.profclangd"
-      touch profile-run-stamp
-      make -j"${jobs}" profile-opt
-      make altinstall
+      hpcperfstats_cpython_make_install_profile_opt "${namespace}" "${jobs}"
       ;;
     *)
       hpcperfstats_pgo_die "unknown PGO_PHASE=${phase}"
@@ -349,19 +408,26 @@ hpcperfstats_bake_cflags() {
   phase="$(hpcperfstats_pgo_phase)"
   root="$(hpcperfstats_pgo_root)"
 
+  prof="$(hpcperfstats_namespace_default_profdata "${namespace}")"
+
   case "${phase}" in
-    skip | "" | stdlib)
+    stdlib)
       out="${base}"
+      ;;
+    skip | "")
+      hpcperfstats_pgo_die_if_skip_use_missing_profdata "${namespace}"
+      if [[ -s "${prof}" ]]; then
+        out="${base} -fprofile-instr-use=${prof}"
+      else
+        out="${base}"
+      fi
       ;;
     generate)
       hpcperfstats_pgo_ensure_raw_dir "${namespace}"
       out="${base} -fprofile-instr-generate=${root}/${namespace}/raw/%m.profraw"
       ;;
     use)
-      prof="${root}/${namespace}/default.profdata"
-      if [[ ! -s "${prof}" ]]; then
-        hpcperfstats_pgo_die "PGO_PHASE=use requires non-empty ${prof}"
-      fi
+      hpcperfstats_pgo_die_if_skip_use_missing_profdata "${namespace}"
       out="${base} -fprofile-instr-use=${prof}"
       ;;
     *)

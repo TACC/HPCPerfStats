@@ -123,6 +123,19 @@ if ! grep -q 'pgo_podman_build_context_args' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must call pgo_podman_build_context_args for proxy/db podman build" >&2
   exit 1
 fi
+if ! grep -q 'pgo_image_build_cache_args' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must call pgo_image_build_cache_args for PGO image builds" >&2
+  exit 1
+fi
+if ! grep -q 'mapfile -t cache_args.*pgo_image_build_cache_args' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must wire pgo_image_build_cache_args into podman/compose build" >&2
+  exit 1
+fi
+PGO_LIB="${REPO_ROOT}/scripts/pgo_lib.sh"
+if ! grep -q 'PGO_PHASE=use' "${PGO_LIB}" || ! grep -q '\-\-no-cache' "${PGO_LIB}"; then
+  echo "pgo_lib.sh must emit --no-cache only for PGO_PHASE=use" >&2
+  exit 1
+fi
 if ! grep -q '\-\-profile-phase' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must support --profile-phase" >&2
   exit 1

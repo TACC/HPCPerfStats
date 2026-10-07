@@ -329,8 +329,8 @@ def test_cpython_bake_omits_namespace_pgo_instr_flags() -> None:
       assert "-fprofile-instr-use" not in out, phase
 
 
-def test_cpython_stdlib_no_instrumentation_flags() -> None:
-  """Default rebuild (PGO_PHASE=stdlib): no Clang instr and no CPython profile-gen path."""
+def test_cpython_stdlib_upstream_mini_pgo_no_clang_instr_on_libs() -> None:
+  """Default rebuild (PGO_PHASE=stdlib): CPython mini PGO; no Clang -fprofile-instr-* on libs."""
   script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
   import tempfile
 
@@ -363,14 +363,135 @@ def test_cpython_stdlib_no_instrumentation_flags() -> None:
       env={**os.environ, "HPC_PGO_PHASE": "skip", "HPC_PGO_ROOT": tmp},
       text=True,
     ).strip()
-  assert opt == ""
+  assert opt == "--enable-optimizations"
   assert "-fprofile-instr-generate" not in zstd
   assert "-fprofile-instr-use" not in zstd
   assert zstd == skip_zstd
   body = script.read_text()
-  assert "stdlib)" in body
-  assert "profile-gen-stamp" in body
-  assert 'skip | "" | stdlib)' in body.replace("\t", " ")
+  normalized = body.replace("\t", " ")
+  assert "stdlib | generate | use)" in normalized
+  assert "stdlib)" in normalized
+  assert "make -j" in body and "profile-gen-stamp" in body
+  make_install_body = body.split("hpcperfstats_cpython_make_install", 1)[1]
+  stdlib_branch = make_install_body.split("stdlib)", 1)[1].split(";;", 1)[0]
+  assert "profile-gen-stamp" not in stdlib_branch
+  assert "profile-opt" not in stdlib_branch
+
+
+def test_pgo_skip_applies_merged_profiles_when_profdata_present() -> None:
+  """Post-use rebuilds (PGO_PHASE=skip) still consume default.profdata when present."""
+  script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
+  pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
+  import tempfile
+  from pathlib import Path
+
+  with (
+    tempfile.TemporaryDirectory() as tmp_empty,
+    tempfile.TemporaryDirectory() as tmp,
+  ):
+    opt_empty = subprocess.check_output(
+      [
+        "bash",
+        "-c",
+        f'source "{script}"; hpcperfstats_cpython_enable_optimizations_for_configure',
+      ],
+      env={**os.environ, "HPC_PGO_PHASE": "skip", "HPC_PGO_ROOT": tmp_empty},
+      text=True,
+    ).strip()
+    assert opt_empty == ""
+
+    ns = Path(tmp) / "web" / "shared" / "zstd"
+    ns.mkdir(parents=True)
+    prof = ns / "default.profdata"
+    prof.write_bytes(b"profdata-placeholder")
+
+    env = {**os.environ, "HPC_PGO_PHASE": "skip", "HPC_PGO_ROOT": tmp}
+    zstd = subprocess.check_output(
+      [
+        "bash",
+        "-c",
+        f'source "{script}"; hpcperfstats_bake_cflags web/shared/zstd debian-lib',
+      ],
+      env=env,
+      text=True,
+    ).strip()
+    assert "-fprofile-instr-use=" in zstd
+    assert str(prof) in zstd
+
+    opt = subprocess.check_output(
+      [
+        "bash",
+        "-c",
+        f'source "{script}"; hpcperfstats_cpython_enable_optimizations_for_configure',
+      ],
+      env=env,
+      text=True,
+    ).strip()
+    assert opt == "--enable-optimizations"
+
+  use_nc = subprocess.check_output(
+    [
+      "bash",
+      "-c",
+      f'source "{pgo_lib}"; PGO_PHASE=use; pgo_image_build_cache_args',
+    ],
+    text=True,
+  ).strip()
+  assert use_nc == "--no-cache"
+
+  skip_nc = subprocess.check_output(
+    [
+      "bash",
+      "-c",
+      f'source "{pgo_lib}"; PGO_PHASE=skip; pgo_image_build_cache_args',
+    ],
+    text=True,
+  ).strip()
+  assert skip_nc == ""
+
+
+def test_pgo_skip_partial_pgroot_refuses_mixed_bake(tmp_path: Path) -> None:
+  """PGO_PHASE=skip with some profdata but a missing namespace must die, not plain-compile."""
+  script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
+  zstd_dir = tmp_path / "web" / "shared" / "zstd"
+  zstd_dir.mkdir(parents=True)
+  (zstd_dir / "default.profdata").write_bytes(b"merged")
+  proc = subprocess.run(
+    [
+      "bash",
+      "-c",
+      f'source "{script}"; hpcperfstats_bake_cflags web/shared/jemalloc debian-lib',
+    ],
+    env={
+      **os.environ,
+      "HPC_PGO_PHASE": "skip",
+      "HPC_PGO_ROOT": str(tmp_path),
+    },
+    capture_output=True,
+    text=True,
+    check=False,
+  )
+  assert proc.returncode != 0
+  assert "partial PGOROOT" in proc.stderr
+  assert "web/shared/jemalloc" in proc.stderr
+
+
+def test_pgo_skip_empty_pgroot_omits_instr_use(tmp_path: Path) -> None:
+  script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
+  out = subprocess.check_output(
+    [
+      "bash",
+      "-c",
+      f'source "{script}"; hpcperfstats_bake_cflags web/shared/zstd debian-lib',
+    ],
+    env={
+      **os.environ,
+      "HPC_PGO_PHASE": "skip",
+      "HPC_PGO_ROOT": str(tmp_path),
+    },
+    text=True,
+  ).strip()
+  assert "-fprofile-instr-use" not in out
 
 
 def test_cpython_llvm_profile_file_matches_upstream_profraw_pattern() -> None:
@@ -552,6 +673,35 @@ def test_partial_cpython_generate_profraw_only_dies_not_stdlib(
   repo = _repo_root()
   (tmp_path / "web/gil/cpython/raw").mkdir(parents=True)
   (tmp_path / "web/gil/cpython/raw/module.profraw").write_bytes(b"gen")
+  proc = subprocess.run(
+    [
+      "bash",
+      "-c",
+      (
+        f'source "{pgo_lib}"; set +e; '
+        f'pgo_die_if_partial_profile_collection "{repo}" 0; '
+        "echo exit=$?"
+      ),
+    ],
+    env={**os.environ, "PGOROOT": str(tmp_path)},
+    capture_output=True,
+    text=True,
+    check=False,
+  )
+  assert proc.returncode != 0
+  assert "PGO profile collection incomplete" in proc.stderr
+
+
+def test_partial_profile_collection_dies_with_use_breadcrumb(
+  tmp_path: Path,
+) -> None:
+  """Use breadcrumb must not bypass partial PGOROOT fail-closed."""
+  pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
+  repo = _repo_root()
+  (tmp_path / "breadcrumbs").mkdir(parents=True, exist_ok=True)
+  (tmp_path / "breadcrumbs/pgo_use_full_rebuild.done").write_text("done")
+  (tmp_path / "web/shared/jemalloc/raw").mkdir(parents=True)
+  (tmp_path / "web/shared/jemalloc/raw/jemalloc.profraw").write_bytes(b"x")
   proc = subprocess.run(
     [
       "bash",

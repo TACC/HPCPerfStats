@@ -47,6 +47,13 @@ pgo_podman_build_context_args() {
   printf '%s\n' "--build-context=pgo=${root}"
 }
 
+# PGO_PHASE=use must ignore stale layer cache (profile-opt flags); skip keeps cache.
+pgo_image_build_cache_args() {
+  if [[ "${PGO_PHASE:-}" == use ]]; then
+    printf '%s\n' --no-cache
+  fi
+}
+
 pgo_use_breadcrumb_path() {
   printf '%s/breadcrumbs/pgo_use_full_rebuild.done' "$(pgo_root_dir)"
 }
@@ -173,9 +180,6 @@ pgo_die_if_partial_profile_collection() {
   local -a gaps=()
 
   if [[ "${allow_profile_generate}" -eq 1 ]]; then
-    return 0
-  fi
-  if [[ -f "$(pgo_use_breadcrumb_path)" ]]; then
     return 0
   fi
   if pgo_tree_sketch_only "${repo_root}" || profiles_ready "${repo_root}"; then

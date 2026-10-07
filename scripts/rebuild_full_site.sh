@@ -48,13 +48,13 @@ the stack with:
   podman-compose --profile pg18-migrate up -d --force-recreate db_pg18
 
 PGO (optional): PGOROOT defaults to /root/.hpcperfstats_pgo. Default no-arg rebuild
-uses PGO_PHASE=stdlib (no Clang or CPython profile instrumentation; native ThinLTO bake only)
+uses PGO_PHASE=stdlib (no Clang PGOROOT PGO; CPython --enable-optimizations + plain make install)
 when PGOROOT has no profile artifacts (partial collection exits before compile). --profile-phase wipes PGOROOT and builds with
 PGO_PHASE=generate for soak; if a complete profile
 set already exists (all namespaces ready), you must confirm interactively or set
 HPC_PGO_PROFILE_PHASE_FORCE_WIPE=1. After soak, the first default run performs
-one merge + PGO_PHASE=use rebuild (db_pg18, proxy, web), then skip until the next
---profile-phase.
+one merge + PGO_PHASE=use rebuild (db_pg18, proxy, web; podman build --no-cache),
+then skip (same merged profiles, cache allowed) until the next --profile-phase.
 
 Options:
   --profile-phase  PGO generate build + up for live soak (fresh PGOROOT wipe)
@@ -147,7 +147,7 @@ resolve_pgo_phase() {
     return 0
   fi
   PGO_PHASE=stdlib
-  echo "PGO: stdlib — empty PGOROOT profile inputs; no Clang/CPython profile instrumentation (ThinLTO native bake only)" >&2
+  echo "PGO: stdlib — empty PGOROOT; no Clang PGO on libs; CPython --enable-optimizations + make install" >&2
   echo "PGO: for live-soak Clang PGO run --profile-phase, soak, then rebuild when profiles_ready" >&2
 }
 
@@ -189,6 +189,7 @@ run_pgo_use_path() {
 
 compose_build_service() {
   local svc="$1"
+  local -a cache_args=()
   case "${svc}" in
     web)
       compose_build_web_image
@@ -199,10 +200,12 @@ compose_build_service() {
       return $?
       ;;
   esac
+  mapfile -t cache_args < <(pgo_image_build_cache_args)
   LAST_STEP="podman-compose build ${svc} (PGO_PHASE=${PGO_PHASE})"
   echo "rebuild_full_site.sh: ${LAST_STEP} ..."
   run_cmd env PGO_PHASE="${PGO_PHASE}" PGO_ROOT="${PGOROOT}" PGOROOT="${PGOROOT}" \
     "${PODMAN_COMPOSE[@]}" build \
+    "${cache_args[@]}" \
     --build-arg "PGO_PHASE=${PGO_PHASE}" \
     --build-arg "PGO_ROOT=/root/.hpcperfstats_pgo" \
     "${svc}"
@@ -210,6 +213,7 @@ compose_build_service() {
 
 compose_build_web_image() {
   local pgo_ctx git_commit
+  local -a cache_args=()
   LAST_STEP="podman build web (PGO_PHASE=${PGO_PHASE} PGOROOT=${PGOROOT})"
   echo "rebuild_full_site.sh: ${LAST_STEP} ..."
   git_commit="${HPCPERFSTATS_GIT_COMMIT:-unknown}"
@@ -219,7 +223,9 @@ compose_build_web_image() {
     git_commit="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
   fi
   mapfile -t pgo_ctx < <(pgo_podman_build_context_args)
+  mapfile -t cache_args < <(pgo_image_build_cache_args)
   run_cmd "${PODMAN[@]}" build \
+    "${cache_args[@]}" \
     -f "${REPO_ROOT}/Dockerfile" \
     -t hpcperfstats \
     --target hpcperfstats-full \
@@ -232,10 +238,13 @@ compose_build_web_image() {
 
 compose_build_proxy_image() {
   local pgo_ctx
+  local -a cache_args=()
   LAST_STEP="podman build proxy (PGO_PHASE=${PGO_PHASE} PGOROOT=${PGOROOT})"
   echo "rebuild_full_site.sh: ${LAST_STEP} ..."
   mapfile -t pgo_ctx < <(pgo_podman_build_context_args)
+  mapfile -t cache_args < <(pgo_image_build_cache_args)
   run_cmd "${PODMAN[@]}" build \
+    "${cache_args[@]}" \
     -f "${REPO_ROOT}/services-conf/proxy.Dockerfile" \
     -t hpcperfstats-proxy \
     --build-arg "PGO_PHASE=${PGO_PHASE}" \
@@ -246,10 +255,13 @@ compose_build_proxy_image() {
 
 compose_build_db_pg18() {
   local pgo_ctx
+  local -a cache_args=()
   LAST_STEP="podman build ${PG18_SERVICE} (PGO_PHASE=${PGO_PHASE} PGOROOT=${PGOROOT})"
   echo "rebuild_full_site.sh: ${LAST_STEP} ..."
   mapfile -t pgo_ctx < <(pgo_podman_build_context_args)
+  mapfile -t cache_args < <(pgo_image_build_cache_args)
   run_cmd "${PODMAN[@]}" build \
+    "${cache_args[@]}" \
     -f "${REPO_ROOT}/services-conf/db.Dockerfile" \
     -t hpcperfstats-db \
     --build-arg "PGO_PHASE=${PGO_PHASE}" \
