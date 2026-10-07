@@ -316,9 +316,7 @@ grep -F /opt/jemalloc /tmp/nginx-ldd.txt
 if grep -E '/usr/lib/libzstd|/lib/libzstd' /tmp/nginx-ldd.txt; then
   echo "apk libzstd leaked into nginx"; exit 1
 fi
-if apk info -e zstd >/dev/null 2>&1; then echo "apk zstd present"; exit 1; fi
-if apk info -e libzstd >/dev/null 2>&1; then echo "apk libzstd present"; exit 1; fi
-if apk info -e zstd-dev >/dev/null 2>&1; then echo "apk zstd-dev present"; exit 1; fi
+# llvm22-dev pulls zstd apk in proxy-build; runtime stage enforces no apk zstd.
 grep -F /opt/jemalloc /tmp/nginx-ldd.txt
 rm -rf /usr/src /tmp/nginx.tar.gz /tmp/nginx-V.txt /tmp/nginx-ldd.txt
 if [ -e /usr/src ]; then echo "leftover /usr/src"; exit 1; fi
@@ -374,9 +372,6 @@ RUN set -eux; \
   # Fail closed: never ship apk nginx packages.
   if apk info -e nginx >/dev/null 2>&1; then echo "apk nginx present"; exit 1; fi; \
   if apk info -e nginx-mod-http-brotli >/dev/null 2>&1; then echo "apk brotli mod present"; exit 1; fi; \
-  if apk info -e zstd >/dev/null 2>&1; then echo "apk zstd present"; exit 1; fi; \
-  if apk info -e libzstd >/dev/null 2>&1; then echo "apk libzstd present"; exit 1; fi; \
-  if apk info -e zstd-dev >/dev/null 2>&1; then echo "apk zstd-dev present"; exit 1; fi; \
   rm -f /tmp/nginx-V-runtime.txt /tmp/nginx-ldd-runtime.txt
 
 ENV LD_PRELOAD=/opt/jemalloc/lib/libjemalloc.so.2
@@ -435,7 +430,10 @@ RUN set -eu; \
       'resolver 127.0.0.11 ipv6=off valid=300s;' \
       'resolver_timeout 5s;' \
       > /etc/nginx/nginx-resolver.inc; \
-    rm -rf /build
+    rm -rf /build; \
+    if apk info -e zstd >/dev/null 2>&1; then echo "apk zstd present"; exit 1; fi; \
+    if apk info -e libzstd >/dev/null 2>&1; then echo "apk libzstd present"; exit 1; fi; \
+    if apk info -e zstd-dev >/dev/null 2>&1; then echo "apk zstd-dev present"; exit 1; fi
 
 STOPSIGNAL SIGTERM
 

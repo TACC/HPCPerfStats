@@ -780,6 +780,14 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   assert "hpcperfstats_bake_cflags proxy/nginx" in nginx_run
   assert 'make -j"$(nproc)" CFLAGS="${nginx_bake_cflags}"' in nginx_run
   assert 'make install CFLAGS="${nginx_bake_cflags}"' in nginx_run
+  assert "if apk info -e zstd" not in nginx_run, (
+    "proxy-build llvm22-dev installs zstd apk; nginx leak guard is ldd-only"
+  )
+  zstd_apk_guard = dockerfile.index("if apk info -e zstd")
+  prod_build_end = dockerfile.index("rm -rf /build")
+  assert zstd_apk_guard > prod_build_end, (
+    "apk zstd guards belong at end of prod image build, not proxy-build"
+  )
   openssl_opt = _first_line_containing("--with-openssl-opt=")
   assert "${_openssl_cflags}" in openssl_opt
   assert "enable-ec_nistp_64_gcc_128" in openssl_opt
