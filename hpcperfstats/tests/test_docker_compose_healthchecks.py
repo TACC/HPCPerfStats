@@ -763,7 +763,10 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
       "# ---------------------------------------------------------------------------"
     )
   ]
-  assert 'nginx_bake_cflags="${_cflags} -I/opt/zstd/include"' in nginx_run
+  assert (
+    'nginx_bake_cflags="${_cflags} -I/opt/zstd/include -DZLIB_COMPAT"'
+    in nginx_run
+  )
   assert "hpcperfstats_pgo_ensure_proxy_nginx_link_dirs" in nginx_run
   zlib_run = dockerfile[
     dockerfile.index("# --- zlib-ng") : dockerfile.index("# --- OpenSSL")

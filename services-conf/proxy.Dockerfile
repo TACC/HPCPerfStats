@@ -249,7 +249,7 @@ tar -xzf /tmp/nginx.tar.gz -C /usr/src/nginx --strip-components=1
 cd /usr/src/nginx
 export ZSTD_INC=/opt/zstd/include
 export ZSTD_LIB=/opt/zstd/lib
-nginx_bake_cflags="${_cflags} -I/opt/zstd/include"
+nginx_bake_cflags="${_cflags} -I/opt/zstd/include -DZLIB_COMPAT"
 # libzstd.a via zstd-nginx-module. Same ThinLTO flags at configure and make.
 ./configure \
   --prefix=/opt/nginx \
