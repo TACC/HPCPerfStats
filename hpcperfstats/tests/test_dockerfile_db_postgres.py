@@ -206,6 +206,8 @@ def test_db_dockerfile_links_opt_icu_liburing_lz4_zstd_into_postgres() -> None:
   assert 'gnuArch="$(clang -dumpmachine)"' in pg_run
   assert "hpcperfstats_pgo_ensure_db_postgresql_link_dirs" in pg_run
   assert "hpcperfstats_bake_cflags db/postgresql pg" in pg_run
+  assert "src/interfaces/libpq/Makefile" in pg_run
+  assert "__tsan_func_exit -e atexit" in pg_run
   assert 'export LLVM_CONFIG="${LLVM_CONFIG}"' in pg_run
   assert "LLVM_CONFIG=/usr/lib/llvm22/bin/llvm-config" in text
   assert "pg_bake_ldflags" not in pg_run

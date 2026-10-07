@@ -163,6 +163,9 @@ cd /usr/src/postgresql
 awk '$1 == "#define" && $2 == "DEFAULT_PGSOCKET_DIR" && $3 == "\"/tmp\"" { $3 = "\"/var/run/postgresql\""; print; next } { print }' src/include/pg_config_manual.h > src/include/pg_config_manual.h.new
 grep '/var/run/postgresql' src/include/pg_config_manual.h.new
 mv src/include/pg_config_manual.h.new src/include/pg_config_manual.h
+if [[ "$(hpcperfstats_pgo_phase)" == generate ]]; then
+  sed -i 's/grep -v -e __cxa_atexit -e __tsan_func_exit/grep -v -e __cxa_atexit -e __tsan_func_exit -e atexit/' src/interfaces/libpq/Makefile
+fi
 export LLVM_CONFIG="${LLVM_CONFIG}"
 export CLANG=clang-22
 gnuArch="$(clang -dumpmachine)"
