@@ -84,6 +84,10 @@ ENV HPC_ALPINE_LLVM_TOOLCHAIN=1 \
 # Print out compiler platform detection (clang_march_native_probe.sh).
 RUN /bin/bash -o pipefail /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 
+ARG PGO_PHASE
+ARG PGO_ROOT
+ENV HPC_PGO_PHASE=${PGO_PHASE} HPC_PGO_ROOT=${PGO_ROOT}
+
 # --- jemalloc ---
 ARG PGO_NAMESPACE=proxy/jemalloc
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \

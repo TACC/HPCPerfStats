@@ -48,7 +48,7 @@ the stack with:
   podman-compose --profile pg18-migrate up -d --force-recreate db_pg18
 
 PGO (optional): PGOROOT defaults to /root/.hpcperfstats_pgo. Default no-arg rebuild
-uses PGO_PHASE=stdlib (no Clang PGO; CPython --enable-optimizations in image build)
+uses PGO_PHASE=stdlib (no Clang or CPython profile instrumentation; native ThinLTO bake only)
 when PGOROOT has no profile artifacts (partial collection exits before compile). --profile-phase wipes PGOROOT and builds with
 PGO_PHASE=generate for soak; if a complete profile
 set already exists (all namespaces ready), you must confirm interactively or set
@@ -147,7 +147,7 @@ resolve_pgo_phase() {
     return 0
   fi
   PGO_PHASE=stdlib
-  echo "PGO: stdlib — empty PGOROOT profile inputs; db/proxy/native without Clang PGO; CPython --enable-optimizations in image build" >&2
+  echo "PGO: stdlib — empty PGOROOT profile inputs; no Clang/CPython profile instrumentation (ThinLTO native bake only)" >&2
   echo "PGO: for live-soak Clang PGO run --profile-phase, soak, then rebuild when profiles_ready" >&2
 }
 

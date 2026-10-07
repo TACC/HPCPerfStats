@@ -329,10 +329,8 @@ def test_cpython_bake_omits_namespace_pgo_instr_flags() -> None:
       assert "-fprofile-instr-use" not in out, phase
 
 
-def test_cpython_stdlib_enable_optimizations_and_no_clang_instr_on_zstd() -> (
-  None
-):
-  """Default rebuild (PGO_PHASE=stdlib): upstream CPython PGO only, no Clang instr on libs."""
+def test_cpython_stdlib_no_instrumentation_flags() -> None:
+  """Default rebuild (PGO_PHASE=stdlib): no Clang instr and no CPython profile-gen path."""
   script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
   import tempfile
 
@@ -356,8 +354,23 @@ def test_cpython_stdlib_enable_optimizations_and_no_clang_instr_on_zstd() -> (
       env=env,
       text=True,
     ).strip()
-  assert opt == "--enable-optimizations"
+    skip_zstd = subprocess.check_output(
+      [
+        "bash",
+        "-c",
+        f'source "{script}"; hpcperfstats_bake_cflags web/shared/zstd debian-lib',
+      ],
+      env={**os.environ, "HPC_PGO_PHASE": "skip", "HPC_PGO_ROOT": tmp},
+      text=True,
+    ).strip()
+  assert opt == ""
   assert "-fprofile-instr-generate" not in zstd
+  assert "-fprofile-instr-use" not in zstd
+  assert zstd == skip_zstd
+  body = script.read_text()
+  assert "stdlib)" in body
+  assert "profile-gen-stamp" in body
+  assert 'skip | "" | stdlib)' in body.replace("\t", " ")
 
 
 def test_cpython_llvm_profile_file_matches_upstream_profraw_pattern() -> None:

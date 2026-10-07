@@ -67,6 +67,10 @@ ENV HPC_ALPINE_LLVM_TOOLCHAIN=1 \
 # Print out compiler platform detection (clang_march_native_probe.sh).
 RUN /bin/bash -o pipefail /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 
+ARG PGO_PHASE
+ARG PGO_ROOT
+ENV HPC_PGO_PHASE=${PGO_PHASE} HPC_PGO_ROOT=${PGO_ROOT}
+
 # /opt source pins: slowest-changing independent layers first (Docker cache).
 # zstd links /opt/lz4 + /opt/zlib-ng, so it stays after both even though zstd
 # itself ships ~yearly. Postgres + Timescale consume every /opt lib.

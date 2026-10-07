@@ -117,6 +117,11 @@ ENV CC=clang-22 CXX=clang++-22 \
 # Print out compiler platform detection (services-conf/clang_march_native_probe.sh).
 RUN CC=clang-22 /bin/bash /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
 
+# Re-bind build-arg → ENV so PGO_PHASE=stdlib|generate|use is not stuck on an early cached ENV layer.
+ARG PGO_PHASE
+ARG PGO_ROOT
+ENV HPC_PGO_PHASE=${PGO_PHASE} HPC_PGO_ROOT=${PGO_ROOT}
+
 # jemalloc 5.4.0 (shared; keep default initial-exec TLS — do not disable it).
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
   /bin/bash -o pipefail -c '\
