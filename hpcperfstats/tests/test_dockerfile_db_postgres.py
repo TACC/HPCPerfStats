@@ -96,6 +96,8 @@ def test_db_dockerfile_pins_jemalloc_icu_liburing_lz4_zlib_ng_zstd() -> None:
   assert "hpcperfstats_bake_cflags db/jemalloc" in text
   assert "hpcperfstats_alpine_thinlto_ldflags" in text
   jem_run = text[text.index("# --- jemalloc") : text.index("# --- lz4")]
+  assert "hpcperfstats_alpine_jemalloc_export_link_toolchain" in jem_run
+  assert "EXTRA_LDFLAGS=" in jem_run
   assert "LDFLAGS=" in jem_run and "llvm-ar" in jem_run
   assert "zstd-${ZSTD_VERSION}.tar.gz" in text
   assert "zlib-ng/archive/refs/tags/${ZLIB_NG_VERSION}.tar.gz" in text

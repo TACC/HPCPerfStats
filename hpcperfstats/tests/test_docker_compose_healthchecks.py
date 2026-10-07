@@ -686,6 +686,14 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   assert "Compiler error reporting is too harsh" in dockerfile
   # Regression: brotli 1.1 dropped sources.lst; must cmake-install static libs for -lbrotlienc.
   assert "CMAKE_INSTALL_PREFIX=/opt/brotli" in dockerfile
+  assert "BROTLI_BUILD_TOOLS=OFF" not in dockerfile
+  brotli_run = dockerfile[
+    dockerfile.index("# --- ngx_brotli") : dockerfile.index("# --- zstd")
+  ]
+  assert "CMAKE_AR=/usr/lib/llvm22/bin/llvm-ar" in brotli_run
+  assert "CMAKE_EXE_LINKER_FLAGS=" in brotli_run
+  assert "hpcperfstats_alpine_thinlto_ldflags" in brotli_run
+  assert "test -x /opt/brotli/bin/brotli" in brotli_run
   assert "-L/opt/brotli/lib" in dockerfile
   assert "libbrotlienc.a" in dockerfile
   assert "/opt/nginx/conf/mime.types" in dockerfile
@@ -735,6 +743,13 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
     dockerfile.index("# --- jemalloc") : dockerfile.index("# --- zlib-ng")
   ]
   assert "hpcperfstats_alpine_thinlto_ldflags" in jem_run
+  assert "hpcperfstats_alpine_jemalloc_export_link_toolchain" in jem_run
+  assert "<<'BASH'" in jem_run, (
+    "Quoted heredoc disables BuildKit host $(…) expansion for PGO shell helpers"
+  )
+  assert "$(hpcperfstats_configure_cflags proxy/jemalloc)" in jem_run
+  assert "$$(hpcperfstats_configure_cflags proxy/jemalloc)" not in jem_run
+  assert "EXTRA_LDFLAGS=" in jem_run
   assert "LDFLAGS=" in jem_run and "llvm-ar" in jem_run
   cc_opt = _first_line_containing("--with-cc-opt=")
   assert "${_cflags}" in cc_opt
@@ -756,12 +771,19 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   assert "hpcperfstats_bake_cflags proxy/zlib-ng" in zlib_run
   assert "make -j" in zlib_run and "libz.a" in zlib_run
   assert "hpcperfstats_configure_cflags proxy/zlib-ng" in zlib_run
+  assert "-DZLIB_COMPAT" in zlib_run, (
+    "proxy zlib-ng make must not drop configure --zlib-compat (CFLAGS= override)"
+  )
   assert "hpcperfstats_bake_cflags proxy/nginx" in nginx_run
   assert 'make -j"$(nproc)" CFLAGS="${nginx_bake_cflags}"' in nginx_run
   assert 'make install CFLAGS="${nginx_bake_cflags}"' in nginx_run
   openssl_opt = _first_line_containing("--with-openssl-opt=")
   assert "${_openssl_cflags}" in openssl_opt
   assert "enable-ec_nistp_64_gcc_128" in openssl_opt
+  assert "no-tests" in openssl_opt, (
+    "OpenSSL test programs must stay disabled (ThinLTO link storm via nginx make)"
+  )
+  assert "no-apps" in openssl_opt
   zlib_opt = _first_line_containing("--with-zlib-opt=")
   assert "-mtune=native" not in zlib_opt
   assert "--zlib-compat" in zlib_opt

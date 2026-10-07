@@ -37,6 +37,24 @@ ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
 ARG ZSTD_NGINX_MODULE_VERSION=0.2.2
 ARG ZSTD_NGINX_MODULE_SHA256=d4db8937f035ebb5e7efca833492611f8f5e4f710dbd3fbdd2f1aa5a85d3fe5e
 
+# Quoted heredoc (<<'BASH') disables BuildKit host $(…) expansion; pins resolve from ENV at RUN time.
+ENV NGINX_VERSION=${NGINX_VERSION} \
+    NGINX_SHA256=${NGINX_SHA256} \
+    OPENSSL_VERSION=${OPENSSL_VERSION} \
+    OPENSSL_SHA256=${OPENSSL_SHA256} \
+    JEMALLOC_VERSION=${JEMALLOC_VERSION} \
+    JEMALLOC_SHA256=${JEMALLOC_SHA256} \
+    ZLIB_NG_VERSION=${ZLIB_NG_VERSION} \
+    ZLIB_NG_SHA256=${ZLIB_NG_SHA256} \
+    NGX_BROTLI_VERSION=${NGX_BROTLI_VERSION} \
+    NGX_BROTLI_SHA256=${NGX_BROTLI_SHA256} \
+    BROTLI_VERSION=${BROTLI_VERSION} \
+    BROTLI_SHA256=${BROTLI_SHA256} \
+    ZSTD_VERSION=${ZSTD_VERSION} \
+    ZSTD_SHA256=${ZSTD_SHA256} \
+    ZSTD_NGINX_MODULE_VERSION=${ZSTD_NGINX_MODULE_VERSION} \
+    ZSTD_NGINX_MODULE_SHA256=${ZSTD_NGINX_MODULE_SHA256}
+
 ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin --ld-path=/usr/bin/ld.lld -g0"
 
 RUN apk add --no-cache \
@@ -64,7 +82,7 @@ RUN /bin/bash -o pipefail /usr/local/lib/hpcperfstats/clang_march_native_probe.s
 # --- jemalloc ---
 ARG PGO_NAMESPACE=proxy/jemalloc
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
-  /bin/bash -o pipefail -s <<BASH
+  /bin/bash -o pipefail -s <<'BASH'
 set -eux
 curl -fsSL "https://github.com/jemalloc/jemalloc/releases/download/${JEMALLOC_VERSION}/jemalloc-${JEMALLOC_VERSION}.tar.bz2" \
   -o /tmp/jemalloc.tar.bz2
@@ -77,9 +95,10 @@ _cf_bake="$(hpcperfstats_bake_cflags proxy/jemalloc)"
 _lto_ld="$(hpcperfstats_alpine_thinlto_ldflags)"
 CPPFLAGS="-D_GNU_SOURCE" CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" \
   ./configure --prefix=/opt/jemalloc
-make -j"$(nproc)" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_lto_ld}" \
+hpcperfstats_alpine_jemalloc_export_link_toolchain
+make -j"$(nproc)" CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_lto_ld}" EXTRA_LDFLAGS="${_lto_ld}" \
   AR=/usr/lib/llvm22/bin/llvm-ar RANLIB=/usr/lib/llvm22/bin/llvm-ranlib
-make install CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_lto_ld}" \
+make install CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_lto_ld}" EXTRA_LDFLAGS="${_lto_ld}" \
   AR=/usr/lib/llvm22/bin/llvm-ar RANLIB=/usr/lib/llvm22/bin/llvm-ranlib
 rm -rf /usr/src/jemalloc /tmp/jemalloc.tar.bz2
 BASH
@@ -92,7 +111,7 @@ WORKDIR /usr/src
 # it via CFLAGS aborts with "Compiler error reporting is too harsh".
 ARG PGO_NAMESPACE=proxy/zlib-ng
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
-  /bin/bash -o pipefail -s <<BASH
+  /bin/bash -o pipefail -s <<'BASH'
 set -eux
 _cf_cfg="$(hpcperfstats_configure_cflags proxy/zlib-ng)"
 _cf_bake="$(hpcperfstats_bake_cflags proxy/zlib-ng)"
@@ -120,7 +139,8 @@ printf '%s\n' \
 chmod +x configure
 CFLAGS="${_cf_cfg}" CC=clang ./configure --zlib-compat
 test -f Makefile
-make -j"$(nproc)" libz.a CC=clang CFLAGS="${_cf_bake}"
+# make … CFLAGS= overrides Makefile flags; keep -DZLIB_COMPAT from ./configure --zlib-compat.
+make -j"$(nproc)" libz.a CC=clang CFLAGS="${_cf_bake} -DZLIB_COMPAT"
 test -f libz.a
 rm -f /tmp/zlib-ng.tar.gz
 BASH
@@ -135,14 +155,16 @@ RUN set -eux; \
   rm -f /tmp/openssl.tar.gz
 
 # --- ngx_brotli (+ brotli sources into empty submodule dir) ---
+# brotli cmake: clang + llvm-ar/ranlib + lld (ThinLTO); build CLI (default tools ON).
 # brotli >=1.1 dropped scripts/sources.lst; ngx_brotli v1.0.0rc then links
 # -lbrotlienc instead of compiling deps sources. Pre-build static libs to
 # /opt/brotli so the nginx link line can resolve them (folded into the binary).
 ARG PGO_NAMESPACE=proxy/brotli
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
-  /bin/bash -o pipefail -s <<BASH
+  /bin/bash -o pipefail -s <<'BASH'
 set -eux
 _cflags="$(hpcperfstats_bake_cflags proxy/brotli)"
+_lto_ld="$(hpcperfstats_alpine_thinlto_ldflags)"
 curl -fsSL "https://github.com/google/ngx_brotli/archive/refs/tags/v${NGX_BROTLI_VERSION}.tar.gz" \
   -o /tmp/ngx_brotli.tar.gz
 echo "${NGX_BROTLI_SHA256}  /tmp/ngx_brotli.tar.gz" | sha256sum -c -
@@ -159,6 +181,11 @@ test -f /usr/src/ngx_brotli/deps/brotli/c/include/brotli/decode.h
 cmake -S /usr/src/ngx_brotli/deps/brotli -B /usr/src/ngx_brotli/deps/brotli/out \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_SHARED_LIBS=OFF \
+  -DCMAKE_C_COMPILER=clang \
+  -DCMAKE_CXX_COMPILER=clang++ \
+  -DCMAKE_AR=/usr/lib/llvm22/bin/llvm-ar \
+  -DCMAKE_RANLIB=/usr/lib/llvm22/bin/llvm-ranlib \
+  -DCMAKE_EXE_LINKER_FLAGS="${_lto_ld}" \
   -DCMAKE_INSTALL_PREFIX=/opt/brotli \
   -DCMAKE_INSTALL_LIBDIR=lib \
   -DCMAKE_C_FLAGS="${_cflags}" \
@@ -168,6 +195,7 @@ cmake --install /usr/src/ngx_brotli/deps/brotli/out
 test -f /opt/brotli/lib/libbrotlienc.a
 test -f /opt/brotli/lib/libbrotlidec.a
 test -f /opt/brotli/lib/libbrotlicommon.a
+test -x /opt/brotli/bin/brotli
 rm -f /tmp/ngx_brotli.tar.gz /tmp/brotli.tar.gz
 BASH
 
@@ -177,7 +205,7 @@ BASH
 # per CPU. Fold libzstd.a into nginx; do not COPY /opt/zstd into the runtime.
 ARG PGO_NAMESPACE=proxy/zstd
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
-  /bin/bash -o pipefail -s <<BASH
+  /bin/bash -o pipefail -s <<'BASH'
 set -eux
 _cflags="$(hpcperfstats_bake_cflags proxy/zstd)"
 curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" \
@@ -207,7 +235,7 @@ BASH
 # --- nginx ---
 ARG PGO_NAMESPACE=proxy/nginx
 RUN --mount=type=bind,from=pgo,source=.,target=/root/.hpcperfstats_pgo,rw \
-  /bin/bash -o pipefail -s <<BASH
+  /bin/bash -o pipefail -s <<'BASH'
 set -eux
 hpcperfstats_pgo_ensure_proxy_nginx_link_dirs
 _cflags="$(hpcperfstats_bake_cflags proxy/nginx)"
@@ -249,8 +277,17 @@ nginx_bake_cflags="${_cflags} -I/opt/zstd/include"
   --with-zlib=../zlib-ng \
   --with-cc-opt="${_cflags} -I/opt/zstd/include" \
   --with-ld-opt="-L/opt/jemalloc/lib -L/opt/brotli/lib -Wl,-rpath,/opt/jemalloc/lib -ljemalloc -lbrotlienc -lbrotlidec -lbrotlicommon -lstdc++ --ld-path=/usr/bin/ld.lld" \
-  --with-openssl-opt="no-nextprotoneg no-weak-ssl-ciphers no-ssl3 no-shared enable-ec_nistp_64_gcc_128 ${_openssl_cflags}" \
+  --with-openssl-opt="no-nextprotoneg no-weak-ssl-ciphers no-ssl3 no-shared no-fuzz-afl no-fuzz-libfuzzer no-tests no-apps enable-ec_nistp_64_gcc_128 ${_openssl_cflags}" \
   --with-zlib-opt="--zlib-compat"
+# objs/Makefile builds ../openssl-* and ../zlib-ng in parallel; zlib-ng distclean races
+# zlib-ng.h generation. OpenSSL tests/apps/fuzz add hundreds of ThinLTO links.
+_lto_ld="$(hpcperfstats_alpine_thinlto_ldflags)"
+export AR=/usr/lib/llvm22/bin/llvm-ar RANLIB=/usr/lib/llvm22/bin/llvm-ranlib
+hpcperfstats_alpine_jemalloc_export_link_toolchain
+make -f objs/Makefile -j1 \
+  "../openssl-${OPENSSL_VERSION}/.openssl/include/openssl/ssl.h" \
+  ../zlib-ng/libz.a \
+  CFLAGS="${nginx_bake_cflags}" LDFLAGS="${_lto_ld}" EXTRA_LDFLAGS="${_lto_ld}"
 make -j"$(nproc)" CFLAGS="${nginx_bake_cflags}"
 make install CFLAGS="${nginx_bake_cflags}"
 strip --strip-unneeded /usr/sbin/nginx

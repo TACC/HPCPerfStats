@@ -130,6 +130,17 @@ hpcperfstats_alpine_thinlto_ldflags() {
   printf '%s' "-flto=thin -fuse-ld=lld --ld-path=${lld}"
 }
 
+# jemalloc DSO link must use lld (musl gcc ld rejects ThinLTO .pic.o); export before make.
+hpcperfstats_alpine_jemalloc_export_link_toolchain() {
+  local lld ldflags
+  lld="$(hpcperfstats_alpine_ld_lld_path)"
+  ldflags="$(hpcperfstats_alpine_thinlto_ldflags)"
+  export LDFLAGS="${ldflags}"
+  export EXTRA_LDFLAGS="${ldflags}"
+  export CC="clang -fuse-ld=lld --ld-path=${lld}"
+  export CXX="clang++ -fuse-ld=lld --ld-path=${lld}"
+}
+
 hpcperfstats_configure_cflags() {
   local namespace="${1:?namespace required}"
   local variant="${2:-libs}"
