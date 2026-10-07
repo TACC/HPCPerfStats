@@ -286,6 +286,7 @@ def test_cpython_make_install_uses_upstream_profile_targets() -> None:
   script = (_repo_root() / "services-conf" / "pgo_clang_flags.sh").read_text()
   assert "all:[[:space:]]*profile-opt" in script
   assert "profile-gen-stamp" in script
+  assert "profile-run-stamp" in script
   assert "touch profile-run-stamp" in script
   assert "profile-opt" in script
   assert "hpcperfstats_cpython_stage_profiles_for_profile_opt" in script
@@ -310,7 +311,7 @@ def test_cpython_bake_omits_namespace_pgo_instr_flags() -> None:
   import tempfile
 
   with tempfile.TemporaryDirectory() as tmp:
-    for phase in ("skip", "generate", "use"):
+    for phase in ("skip", "stdlib", "generate", "use"):
       out = subprocess.check_output(
         [
           "bash",
@@ -326,6 +327,37 @@ def test_cpython_bake_omits_namespace_pgo_instr_flags() -> None:
       ).strip()
       assert "-fprofile-instr-generate" not in out, phase
       assert "-fprofile-instr-use" not in out, phase
+
+
+def test_cpython_stdlib_enable_optimizations_and_no_clang_instr_on_zstd() -> (
+  None
+):
+  """Default rebuild (PGO_PHASE=stdlib): upstream CPython PGO only, no Clang instr on libs."""
+  script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
+  import tempfile
+
+  with tempfile.TemporaryDirectory() as tmp:
+    env = {**os.environ, "HPC_PGO_PHASE": "stdlib", "HPC_PGO_ROOT": tmp}
+    opt = subprocess.check_output(
+      [
+        "bash",
+        "-c",
+        f'source "{script}"; hpcperfstats_cpython_enable_optimizations_for_configure',
+      ],
+      env=env,
+      text=True,
+    ).strip()
+    zstd = subprocess.check_output(
+      [
+        "bash",
+        "-c",
+        f'source "{script}"; hpcperfstats_bake_cflags web/shared/zstd debian-lib',
+      ],
+      env=env,
+      text=True,
+    ).strip()
+  assert opt == "--enable-optimizations"
+  assert "-fprofile-instr-generate" not in zstd
 
 
 def test_cpython_llvm_profile_file_matches_upstream_profraw_pattern() -> None:
@@ -497,6 +529,33 @@ def test_profiles_ready_false_when_only_generate_instr_raw(
   (tmp_path / "web/shared/jemalloc/raw/jemalloc.profraw").write_bytes(b"x")
   proc = _source_pgo_lib_profiles_ready(tmp_path)
   assert proc.returncode != 0
+
+
+def test_partial_cpython_generate_profraw_only_dies_not_stdlib(
+  tmp_path: Path,
+) -> None:
+  """Incomplete CPython generate profraw (no soak) must fail closed, not stdlib."""
+  pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
+  repo = _repo_root()
+  (tmp_path / "web/gil/cpython/raw").mkdir(parents=True)
+  (tmp_path / "web/gil/cpython/raw/module.profraw").write_bytes(b"gen")
+  proc = subprocess.run(
+    [
+      "bash",
+      "-c",
+      (
+        f'source "{pgo_lib}"; set +e; '
+        f'pgo_die_if_partial_profile_collection "{repo}" 0; '
+        "echo exit=$?"
+      ),
+    ],
+    env={**os.environ, "PGOROOT": str(tmp_path)},
+    capture_output=True,
+    text=True,
+    check=False,
+  )
+  assert proc.returncode != 0
+  assert "PGO profile collection incomplete" in proc.stderr
 
 
 def test_partial_profile_collection_dies_before_compile(tmp_path: Path) -> None:

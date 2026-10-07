@@ -116,6 +116,23 @@ pgo_namespace_profile_input_ready() {
   esac
 }
 
+# Any nonempty profile artifact under a namespace (ready or incomplete — blocks stdlib fallback).
+pgo_namespace_has_any_profile_artifact() {
+  local ns="${1:?namespace}"
+  local root="${2:-$(pgo_root_dir)}"
+  local f
+
+  if [[ -s "${root}/${ns}/default.profdata" ]]; then
+    return 0
+  fi
+  shopt -s nullglob
+  for f in "${root}/${ns}/raw/"*.profraw "${root}/${ns}/raw/"*.profclangr; do
+    [[ -s "${f}" ]] && return 0
+  done
+  shopt -u nullglob
+  return 1
+}
+
 # True when every namespace can enter merge/use (merged profdata or soak-backed raw inputs).
 profiles_ready() {
   local repo_root="${1:?repo_root}"
@@ -181,10 +198,11 @@ pgo_die_if_partial_profile_collection() {
 }
 
 pgo_tree_has_any_profile_data() {
-  local repo_root="${1:?repo_root}" ns
+  local repo_root="${1:?repo_root}" ns root
+  root="$(pgo_root_dir)"
   while IFS= read -r ns; do
     [[ -n "${ns}" ]] || continue
-    if pgo_namespace_profile_input_ready "${ns}"; then
+    if pgo_namespace_has_any_profile_artifact "${ns}" "${root}"; then
       return 0
     fi
   done < <(pgo_list_namespaces "${repo_root}")

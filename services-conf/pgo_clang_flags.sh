@@ -188,10 +188,10 @@ hpcperfstats_cpython_pgo_namespace() {
   esac
 }
 
-# Pass to ./configure when PGO_PHASE is generate or use (skip omits --enable-optimizations).
+# Pass to ./configure when PGO_PHASE is generate, use, or stdlib (skip omits --enable-optimizations).
 hpcperfstats_cpython_enable_optimizations_for_configure() {
   case "$(hpcperfstats_pgo_phase)" in
-    generate | use) printf '%s' '--enable-optimizations' ;;
+    generate | use | stdlib) printf '%s' '--enable-optimizations' ;;
   esac
 }
 
@@ -313,6 +313,12 @@ hpcperfstats_cpython_make_install() {
       make -j"${jobs}"
       make install
       ;;
+    stdlib)
+      make -j"${jobs}" profile-gen-stamp
+      make -j"${jobs}" profile-run-stamp
+      make -j"${jobs}" profile-opt
+      make install
+      ;;
     generate)
       hpcperfstats_cpython_relax_install_deps_for_instrumented
       hpcperfstats_cpython_makefile_block_profile_opt_without_profclangd
@@ -350,7 +356,7 @@ hpcperfstats_bake_cflags() {
   root="$(hpcperfstats_pgo_root)"
 
   case "${phase}" in
-    skip | "")
+    skip | "" | stdlib)
       out="${base}"
       ;;
     generate)

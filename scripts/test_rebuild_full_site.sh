@@ -127,6 +127,16 @@ if ! grep -q '\-\-profile-phase' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must support --profile-phase" >&2
   exit 1
 fi
+if ! grep -q 'PGO_PHASE=stdlib' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must use PGO_PHASE=stdlib when PGOROOT profiles are not ready" >&2
+  exit 1
+fi
+partial_line="$(grep -n 'pgo_die_if_partial_profile_collection' "${FULL_SITE_SCRIPT}" | head -n 1 | cut -d: -f1)"
+resolve_line="$(grep -n '^  resolve_pgo_phase' "${FULL_SITE_SCRIPT}" | head -n 1 | cut -d: -f1)"
+if [[ -z "${partial_line}" || -z "${resolve_line}" || "${partial_line}" -ge "${resolve_line}" ]]; then
+  echo "rebuild_full_site.sh must run pgo_die_if_partial_profile_collection before resolve_pgo_phase" >&2
+  exit 1
+fi
 if ! grep -q 'pgo_die' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must fail loud on PGO errors (pgo_die)" >&2
   exit 1

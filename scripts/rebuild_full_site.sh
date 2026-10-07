@@ -47,8 +47,10 @@ the stack with:
   podman-compose up -d --force-recreate
   podman-compose --profile pg18-migrate up -d --force-recreate db_pg18
 
-PGO (optional): PGOROOT defaults to /root/.hpcperfstats_pgo. --profile-phase
-wipes PGOROOT and builds with PGO_PHASE=generate for soak; if a complete profile
+PGO (optional): PGOROOT defaults to /root/.hpcperfstats_pgo. Default no-arg rebuild
+uses PGO_PHASE=stdlib (no Clang PGO; CPython --enable-optimizations in image build)
+when PGOROOT has no profile artifacts (partial collection exits before compile). --profile-phase wipes PGOROOT and builds with
+PGO_PHASE=generate for soak; if a complete profile
 set already exists (all namespaces ready), you must confirm interactively or set
 HPC_PGO_PROFILE_PHASE_FORCE_WIPE=1. After soak, the first default run performs
 one merge + PGO_PHASE=use rebuild (db_pg18, proxy, web), then skip until the next
@@ -144,8 +146,9 @@ resolve_pgo_phase() {
     echo "PGO: profiles ready (soak/generate satisfied for all namespaces) → one-time PGO_PHASE=use rebuild" >&2
     return 0
   fi
-  PGO_PHASE=skip
-  echo "PGO: skip — profiles not ready; run --profile-phase for generate, then soak stack until every namespace has profiles" >&2
+  PGO_PHASE=stdlib
+  echo "PGO: stdlib — empty PGOROOT profile inputs; db/proxy/native without Clang PGO; CPython --enable-optimizations in image build" >&2
+  echo "PGO: for live-soak Clang PGO run --profile-phase, soak, then rebuild when profiles_ready" >&2
 }
 
 prepare_profile_phase() {
@@ -352,8 +355,8 @@ main() {
     fi
   fi
   "${SCRIPT_DIR}/pgo_ensure_layout.sh"
-  resolve_pgo_phase
   pgo_die_if_partial_profile_collection "${REPO_ROOT}" "${PROFILE_PHASE}"
+  resolve_pgo_phase
 
   if [[ "${PGO_PHASE}" == use && "${PROFILE_PHASE}" -eq 0 ]]; then
     run_pgo_use_path
