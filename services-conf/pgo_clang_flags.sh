@@ -130,16 +130,41 @@ hpcperfstats_alpine_thinlto_ldflags() {
   printf '%s' "-flto=thin -fuse-ld=lld --ld-path=${lld}"
 }
 
-# jemalloc DSO link must use lld (musl gcc ld rejects ThinLTO .pic.o); export before make.
-hpcperfstats_alpine_jemalloc_export_link_toolchain() {
-  local lld ldflags
+# llvm-ar/ranlib/nm only (safe under BASH_ENV: do not rewrite CC — probe uses "${CC}" as argv0).
+hpcperfstats_alpine_export_llvm_binutils() {
+  local llvm_bin lto_ld
+  llvm_bin="/usr/lib/llvm22/bin"
+  lto_ld="$(hpcperfstats_alpine_thinlto_ldflags)"
+  export AR="${llvm_bin}/llvm-ar"
+  export RANLIB="${llvm_bin}/llvm-ranlib"
+  export NM="${llvm_bin}/llvm-nm"
+  export LLVM_CONFIG="${llvm_bin}/llvm-config"
+  export HPC_THINLTO_LDFLAGS="${lto_ld}"
+  export PATH="${llvm_bin}:${PATH}"
+}
+
+# Full autotools/cmake link: clang driver + lld (call from PGO RUN before make, not global bootstrap).
+hpcperfstats_alpine_export_clang_link_toolchain() {
+  local lld
+  hpcperfstats_alpine_export_llvm_binutils
   lld="$(hpcperfstats_alpine_ld_lld_path)"
-  ldflags="$(hpcperfstats_alpine_thinlto_ldflags)"
-  export LDFLAGS="${ldflags}"
-  export EXTRA_LDFLAGS="${ldflags}"
   export CC="clang -fuse-ld=lld --ld-path=${lld}"
   export CXX="clang++ -fuse-ld=lld --ld-path=${lld}"
 }
+
+# jemalloc DSO link must use lld (musl gcc ld rejects ThinLTO .pic.o); export before make.
+hpcperfstats_alpine_jemalloc_export_link_toolchain() {
+  hpcperfstats_alpine_export_clang_link_toolchain
+  export LDFLAGS="${HPC_THINLTO_LDFLAGS}"
+  export EXTRA_LDFLAGS="${HPC_THINLTO_LDFLAGS}"
+}
+
+hpcperfstats_alpine_maybe_bootstrap_llvm_toolchain() {
+  [[ "${HPC_ALPINE_LLVM_TOOLCHAIN:-}" == 1 ]] || return 0
+  hpcperfstats_alpine_export_llvm_binutils
+}
+
+hpcperfstats_alpine_maybe_bootstrap_llvm_toolchain
 
 hpcperfstats_configure_cflags() {
   local namespace="${1:?namespace required}"

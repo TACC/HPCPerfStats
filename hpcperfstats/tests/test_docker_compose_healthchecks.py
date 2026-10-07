@@ -750,7 +750,11 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   assert "$(hpcperfstats_configure_cflags proxy/jemalloc)" in jem_run
   assert "$$(hpcperfstats_configure_cflags proxy/jemalloc)" not in jem_run
   assert "EXTRA_LDFLAGS=" in jem_run
-  assert "LDFLAGS=" in jem_run and "llvm-ar" in jem_run
+  assert "LDFLAGS=" in jem_run and 'AR="${AR}"' in jem_run
+  assert 'NM="${NM}"' in jem_run
+  assert jem_run.index(
+    "hpcperfstats_alpine_jemalloc_export_link_toolchain"
+  ) < jem_run.index("./configure")
   cc_opt = _first_line_containing("--with-cc-opt=")
   assert "${_cflags}" in cc_opt
   ld_opt = _first_line_containing("--with-ld-opt=")

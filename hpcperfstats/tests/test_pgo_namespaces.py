@@ -186,6 +186,45 @@ def test_pgo_alpine_thinlto_ldflags_for_jemalloc_link() -> None:
   assert "--ld-path=/usr/bin/ld.lld" in out
 
 
+def test_pgo_alpine_jemalloc_export_uses_llvm_binutils() -> None:
+  """ThinLTO .sym.o objects need llvm-nm/llvm-ar, not GNU nm from build-base."""
+  script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
+  out = subprocess.check_output(
+    [
+      "bash",
+      "-c",
+      f'source "{script}"; hpcperfstats_alpine_jemalloc_export_link_toolchain; printf "AR=%s RANLIB=%s NM=%s\\n" "$AR" "$RANLIB" "$NM"',
+    ],
+    text=True,
+  ).strip()
+  assert "AR=/usr/lib/llvm22/bin/llvm-ar" in out
+  assert "RANLIB=/usr/lib/llvm22/bin/llvm-ranlib" in out
+  assert "NM=/usr/lib/llvm22/bin/llvm-nm" in out
+
+
+def test_pgo_alpine_bootstrap_llvm_toolchain_when_env_flag() -> None:
+  script = _repo_root() / "services-conf" / "pgo_clang_flags.sh"
+  out = subprocess.check_output(
+    [
+      "bash",
+      "-c",
+      f'source "{script}"; printf "CC=%s NM=%s LTO=%s\\n" "$CC" "$NM" "$HPC_THINLTO_LDFLAGS"',
+    ],
+    env={
+      **os.environ,
+      "HPC_ALPINE_LLVM_TOOLCHAIN": "1",
+      "CC": "clang",
+      "CXX": "clang++",
+    },
+    text=True,
+  ).strip()
+  assert "CC=clang" in out, (
+    "bootstrap must not rewrite CC (clang_march_native_probe uses ${CC} as argv0)"
+  )
+  assert "NM=/usr/lib/llvm22/bin/llvm-nm" in out
+  assert "-fuse-ld=lld" in out
+
+
 def test_cpython_generate_makefile_relax_matches_tabbed_makefile() -> None:
   """Regression: CPython Makefile uses tabs after ':'; space-only sed never rewired install."""
   import tempfile

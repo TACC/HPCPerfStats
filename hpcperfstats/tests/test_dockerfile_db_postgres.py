@@ -21,6 +21,8 @@ def test_db_dockerfile_uses_clang22_apk_toolchain() -> None:
   assert "alpine_pgo_profile_runtime_link.sh" in text
   assert "lld22" in text
   assert "ENV CC=clang CXX=clang++" in text
+  assert "HPC_ALPINE_LLVM_TOOLCHAIN=1" in text
+  assert "NM=/usr/lib/llvm22/bin/llvm-nm" in text
   assert "gcc-toolchain" not in text
   assert "assert_gcc_min_version" not in text
   assert "pgo_clang_flags.sh" in text
@@ -98,7 +100,19 @@ def test_db_dockerfile_pins_jemalloc_icu_liburing_lz4_zlib_ng_zstd() -> None:
   jem_run = text[text.index("# --- jemalloc") : text.index("# --- lz4")]
   assert "hpcperfstats_alpine_jemalloc_export_link_toolchain" in jem_run
   assert "EXTRA_LDFLAGS=" in jem_run
-  assert "LDFLAGS=" in jem_run and "llvm-ar" in jem_run
+  assert "LDFLAGS=" in jem_run and 'AR="${AR}"' in jem_run
+  assert 'NM="${NM}"' in jem_run, (
+    "jemalloc ThinLTO .sym.o needs llvm-nm, not GNU nm"
+  )
+  assert jem_run.index(
+    "hpcperfstats_alpine_jemalloc_export_link_toolchain"
+  ) < jem_run.index("./configure"), (
+    "export llvm nm/ar before jemalloc configure"
+  )
+  pre_cfg = jem_run[: jem_run.index("./configure")]
+  assert 'NM="${NM}"' in pre_cfg and 'AR="${AR}"' in pre_cfg, (
+    "jemalloc ./configure must receive llvm nm/ar (Makefile bakes NM=)"
+  )
   assert "zstd-${ZSTD_VERSION}.tar.gz" in text
   assert "zlib-ng/archive/refs/tags/${ZLIB_NG_VERSION}.tar.gz" in text
 
@@ -172,7 +186,8 @@ def test_db_dockerfile_links_opt_icu_liburing_lz4_zstd_into_postgres() -> None:
   assert 'gnuArch="$(clang -dumpmachine)"' in pg_run
   assert "hpcperfstats_pgo_ensure_db_postgresql_link_dirs" in pg_run
   assert "hpcperfstats_bake_cflags db/postgresql pg" in pg_run
-  assert 'export LLVM_CONFIG="/usr/lib/llvm22/bin/llvm-config"' in pg_run
+  assert 'export LLVM_CONFIG="${LLVM_CONFIG}"' in pg_run
+  assert "LLVM_CONFIG=/usr/lib/llvm22/bin/llvm-config" in text
   assert "pg_bake_ldflags" not in pg_run
 
 
@@ -196,6 +211,30 @@ def test_db_dockerfile_libs_mtune_and_lz4_heapmode() -> None:
   lz4_run = text[text.index("# --- lz4 ---") : text.index("# --- ICU")]
   assert "-DLZ4_HEAPMODE=0" in lz4_run
   assert "hpcperfstats_bake_cflags db/lz4" in lz4_run
+  assert 'AR="${AR}"' in lz4_run and 'NM="${NM}"' in lz4_run
+  assert "HPC_THINLTO_LDFLAGS" in lz4_run
+
+
+def test_db_dockerfile_opt_libs_use_llvm_binutils_not_gnu() -> None:
+  """Regression: GNU nm on ThinLTO .sym.o → file format not recognized (jemalloc)."""
+  text = _dockerfile()
+  zlib_run = text[text.index("# --- zlib-ng") : text.index("# --- zstd")]
+  assert "CMAKE_AR=" in zlib_run and "CMAKE_NM=" in zlib_run
+  assert "CMAKE_EXE_LINKER_FLAGS=" in zlib_run
+  icu_run = text[text.index("# --- ICU") : text.index("# --- liburing")]
+  assert 'NM="${NM}"' in icu_run
+  zstd_run = text[text.index("# --- zstd") : text.index("ENV PKG_CONFIG_PATH=")]
+  assert "HPC_THINLTO_LDFLAGS" in zstd_run
+  assert 'AR="${AR}"' in zstd_run
+  pg_run = text[
+    text.index("# --- PostgreSQL") : text.index("# --- TimescaleDB")
+  ]
+  assert "HPC_THINLTO_LDFLAGS" in pg_run
+  assert 'AR="${AR}"' in pg_run and 'NM="${NM}"' in pg_run
+  ts_run = text[
+    text.index("# --- TimescaleDB") : text.index("# Prune docs/man")
+  ]
+  assert "CMAKE_AR=" in ts_run and "CMAKE_NM=" in ts_run
 
 
 def test_db_dockerfile_opt_lib_bake_order_cache_and_deps() -> None:

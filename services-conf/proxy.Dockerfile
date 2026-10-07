@@ -75,6 +75,11 @@ RUN test -x /usr/bin/ld.lld && /bin/bash /usr/local/lib/hpcperfstats/alpine_pgo_
 
 # Podman OCI ignores Dockerfile SHELL; PGO RUN steps invoke /bin/bash explicitly (BASH_ENV sources pgo_clang_flags.sh).
 ENV BASH_ENV=/usr/local/lib/hpcperfstats/pgo_clang_flags.sh
+ENV HPC_ALPINE_LLVM_TOOLCHAIN=1 \
+  AR=/usr/lib/llvm22/bin/llvm-ar \
+  RANLIB=/usr/lib/llvm22/bin/llvm-ranlib \
+  NM=/usr/lib/llvm22/bin/llvm-nm \
+  LLVM_CONFIG=/usr/lib/llvm22/bin/llvm-config
 
 # Print out compiler platform detection (clang_march_native_probe.sh).
 RUN /bin/bash -o pipefail /usr/local/lib/hpcperfstats/clang_march_native_probe.sh
@@ -93,13 +98,14 @@ cd /usr/src/jemalloc
 _cf_cfg="$(hpcperfstats_configure_cflags proxy/jemalloc)"
 _cf_bake="$(hpcperfstats_bake_cflags proxy/jemalloc)"
 _lto_ld="$(hpcperfstats_alpine_thinlto_ldflags)"
-CPPFLAGS="-D_GNU_SOURCE" CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" \
-  ./configure --prefix=/opt/jemalloc
 hpcperfstats_alpine_jemalloc_export_link_toolchain
+AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" CC="${CC}" CXX="${CXX}" \
+  CPPFLAGS="-D_GNU_SOURCE" CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" \
+  ./configure --prefix=/opt/jemalloc
 make -j"$(nproc)" CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_lto_ld}" EXTRA_LDFLAGS="${_lto_ld}" \
-  AR=/usr/lib/llvm22/bin/llvm-ar RANLIB=/usr/lib/llvm22/bin/llvm-ranlib
+  AR="${AR}" RANLIB="${RANLIB}" NM="${NM}"
 make install CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_lto_ld}" EXTRA_LDFLAGS="${_lto_ld}" \
-  AR=/usr/lib/llvm22/bin/llvm-ar RANLIB=/usr/lib/llvm22/bin/llvm-ranlib
+  AR="${AR}" RANLIB="${RANLIB}" NM="${NM}"
 rm -rf /usr/src/jemalloc /tmp/jemalloc.tar.bz2
 BASH
 
