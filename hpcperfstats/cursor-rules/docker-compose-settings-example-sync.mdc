@@ -1,26 +1,26 @@
 ---
-description: Keep docker-compose.settings.yaml.example aligned when settings or bind volumes change
-globs: docker-compose.settings.yaml,docker-compose.settings.yaml.example,.gitignore
+description: Keep docker-compose.yaml.example aligned when settings or bind volumes change
+globs: docker-compose.yaml,docker-compose.yaml.example,.gitignore
 alwaysApply: false
 ---
 
-# docker-compose.settings.yaml Example Sync
+# docker-compose.yaml Example Sync
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 Operators bootstrap site bind volumes from a copy/edit flow documented in **`HPCPerfStats/README.md`**:
 
 ```bash
-cp docker-compose.settings.yaml.example docker-compose.settings.yaml
+cp docker-compose.yaml.example docker-compose.yaml
 ```
 
-**`docker-compose.settings.yaml` is gitignored**. The **committed** operator template is **`docker-compose.settings.yaml.example`**. Base **`docker-compose.yaml`** `include`s the settings file automatically — do **not** pass a separate `-f` for settings, and do **not** use obsolete **`docker-compose.app.yaml`**.
+**`docker-compose.yaml` is gitignored**. The **committed** operator template is **`docker-compose.yaml.example`**. That file **`include:`** **`docker-compose.defaults.yaml`** (canonical stack wiring) and merges site binds plus optional service overrides on top — **`podman-compose`** / **`docker compose`** discover **`docker-compose.yaml`** by default (no extra **`-f`**). Do **not** use obsolete **`docker-compose.app.yaml`**.
 
-Local settings hold site-specific bind **`device:`** paths (`hpcperfstatsdata`, `staticfiles_data`, `media_data`, `postgres_data`, `rabbitmq_messages`, `ssh_keys`, **`proxy_ssl_source`**) and optional commented knobs (host ports, **`HPCPERFSTATS_SSL_CERTS_REL`** for LE, `SYS_PTRACE`, mem/grace overrides). **Every operator-facing change** made in the local file **must** be mirrored into **`.example` in the same task** or the next `cp` will drop it for other operators and fresh clones.
+Local compose holds site-specific bind **`device:`** paths (`hpcperfstatsdata`, `staticfiles_data`, `media_data`, `postgres_data`, `rabbitmq_messages`, `ssh_keys`, **`proxy_ssl_source`**) and optional commented knobs (host ports, **`HPCPERFSTATS_SSL_CERTS_REL`** for LE, `SYS_PTRACE`, mem/grace overrides). **Every operator-facing change** made in the local file **must** be mirrored into **`.example` in the same task** or the next `cp` will drop it for other operators and fresh clones.
 
 ## Law (non-dev → example)
 
-When you change **`docker-compose.settings.yaml`** in a way operators need after `cp …example …settings.yaml`, you **must** apply the **same change** to **`docker-compose.settings.yaml.example` in the same task**. Do not treat the gitignored file as the only source of truth for bind devices or optional knobs.
+When you change **`docker-compose.yaml`** in a way operators need after `cp …example …yaml`, you **must** apply the **same change** to **`docker-compose.yaml.example` in the same task**. Do not treat the gitignored file as the only source of truth for bind devices or optional knobs.
 
 ## Must mirror (operator / deploy contract)
 
@@ -29,13 +29,13 @@ When you change **`docker-compose.settings.yaml`** in a way operators need after
 | Top-level **`volumes:`** bind **`device:`** paths | All seven named volumes (including **`proxy_ssl_source`**); keep comments for SSH keys and LE override |
 
 | Commented optional **`services:`** knobs | `web`/`db`/`rabbitmq` host ports, pipeline `cap_add`, mem/grace overrides |
-| Volume **names** used by base compose | Service mounts in **`docker-compose.yaml`** must match volume keys in settings for **site binds**; **do not** put empty/null volume stubs in base (podman-compose cannot merge `None` with settings dicts). **`redis_runtime`** is a named Docker volume in **base** compose (Unix socket dir) — **not** a settings bind and must **not** appear in `.example` |
+| Volume **names** used by defaults compose | Service mounts in **`docker-compose.defaults.yaml`** must match volume keys in the example for **site binds**; **do not** put empty/null volume stubs in defaults (podman-compose cannot merge `None` with operator dicts). **`redis_runtime`** is a named Docker volume in **defaults** (Unix socket dir) — **not** an operator bind and must **not** appear in `.example` |
 
-Service bodies for **`web`** / **`pipeline`** / infra live in **`docker-compose.yaml`** — do not reintroduce an app overlay.
+Service bodies for **`web`** / **`pipeline`** / infra live in **`docker-compose.defaults.yaml`** — do not reintroduce an app overlay.
 
 ## Required behavior
 
-1. Edit **`.example` first** when the change is meant for all operators; then copy or align local **`docker-compose.settings.yaml`**.
+1. Edit **`.example` first** when the change is meant for all operators; then copy or align local **`docker-compose.yaml`**.
 2. If you edited local settings first, **backport** operator-facing deltas to **`.example` before closing the task**.
 3. Keep the example **copy-pasteable**: no secrets; use documented placeholders and comments.
 4. Extend **`hpcperfstats/tests/test_docker_compose_healthchecks.py`** settings markers when adding new operator-facing binds or knobs.

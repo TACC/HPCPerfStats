@@ -76,7 +76,7 @@ def _parse_documented_ini_options(path):
 
 
 def test_ssl_certs_dir_removed_from_registry_and_example():
-  """TLS authority moved to docker-compose.settings.yaml proxy_ssl_source volume."""
+  """TLS authority moved to docker-compose.yaml proxy_ssl_source volume."""
   registry_options = {
     option for _section, option, _default in cfg.INI_OPTION_REGISTRY
   }

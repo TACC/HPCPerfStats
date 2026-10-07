@@ -1,11 +1,8 @@
-# Base stack: infra + web/pipeline definitions.
-# Site bind volumes and optional knobs: docker-compose.settings.yaml
-# (cp docker-compose.settings.yaml.example docker-compose.settings.yaml).
+# Canonical stack wiring (services, healthchecks, volume names). Do not edit on
+# site deploys — copy docker-compose.yaml.example to docker-compose.yaml (gitignored)
+# and set bind device: paths there; that file include:s this defaults file.
 
 name: hpcperfstats
-
-include:
-  - docker-compose.settings.yaml
 
 # Container stdout/stderr for `docker compose logs` (not host syslog/journald).
 # Use json-file (not Docker-only ``local``) so Podman accept the driver too.
@@ -150,7 +147,7 @@ services:
       - "${HPCPERFSTATS_HTTP_PORT:-80}:80"
       - "${HPCPERFSTATS_HTTPS_PORT:-443}:443"
     volumes:
-      # TLS source mount (device: in docker-compose.settings.yaml → proxy_ssl_source).
+      # TLS source mount (device: in docker-compose.yaml → proxy_ssl_source).
       # Entrypoint materializes PEMs into /etc/ssl/hpcperfstats before nginx -t.
       - proxy_ssl_source:/mnt/ssl-source:ro
       # Main process/http defaults + vhost. Shared routing/security snippets:
@@ -396,7 +393,7 @@ services:
       - "${HPCPERFSTATS_AMQP_PORT:-5672}:5672"
       # Management HTTP API / UI — keep compose-internal only (Django uses
       # http://rabbitmq:15672). Do not publish 15672 on the host by default;
-      # uncomment in docker-compose.settings.yaml if needed.
+      # uncomment in docker-compose.yaml if needed.
     volumes:
       - rabbitmq_messages:/var/lib/rabbitmq/
       - ./services-conf/rabbitmq_logging.conf:/etc/rabbitmq/conf.d/30-logging_settings.conf:ro

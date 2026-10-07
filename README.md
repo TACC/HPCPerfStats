@@ -276,12 +276,12 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 4. **Compose settings (site bind volumes):**
 
    ```bash
-   cp docker-compose.settings.yaml.example docker-compose.settings.yaml
+   cp docker-compose.yaml.example docker-compose.yaml
    ```
 
-   **`docker-compose.settings.yaml` is gitignored** — treat **`docker-compose.settings.yaml.example`** as the committed operator template. Base **`docker-compose.yaml`** `include`s the settings file automatically; you do **not** pass a second `-f` for settings. Named volume definitions (bind `device:` paths) live **only** in settings — base compose mounts them by name and must not declare empty volume stubs (podman-compose cannot merge null stubs with settings dicts). After `cp`, edit site-specific **`device:`** paths below; any new bind volumes or optional knobs must be added to **`.example`** in the repo (see **`hpcperfstats/cursor-rules/docker-compose-settings-example-sync.mdc`**) so the next clone gets them.
+   **`docker-compose.yaml` is gitignored** — treat **`docker-compose.yaml.example`** as the committed operator template. It **`include:`** **`docker-compose.defaults.yaml`** (tracked stack wiring) and merges site binds on top (PGO, host ports, mem limits, etc.). **`podman-compose -p hpcperfstats`** and **`docker compose`** discover **`docker-compose.yaml`** automatically — no extra **`-f`**. Named volume **`device:`** paths live in your local **`docker-compose.yaml`** only; **`docker-compose.defaults.yaml`** mounts them by name and must not declare empty volume stubs (podman-compose cannot merge null stubs with operator dicts). After `cp`, edit site-specific **`device:`** paths; any new bind volumes or optional knobs must be added to **`.example`** in the repo (see **`hpcperfstats/cursor-rules/docker-compose-settings-example-sync.mdc`**) so the next clone gets them.
 
-   Edit `docker-compose.settings.yaml` and set at least:
+   Edit `docker-compose.yaml` and set at least:
 
    - **`volumes → ssh_keys → device`:** host directory with pipeline SSH keys (permissions suitable for mount as `/hpcperfstats/.ssh/`)
    - **`volumes → proxy_ssl_source → device`:** host directory containing **`fullchain.pem`** and **`privkey.pem`** (flat PEM dir; default example uses **`/opt/certs`**). For Let's Encrypt, set **`device: /etc/letsencrypt`** and uncomment the optional **`services.proxy.environment`** block in the settings example with **`HPCPERFSTATS_SSL_CERTS_REL=live/your.hostname`** — do **not** bind only the **`live/hostname`** leaf (archive symlinks break).
@@ -370,7 +370,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    For memory-constrained deployments, start with the conservative baseline values documented in `hpcperfstats.ini.example`, then scale up gradually after observing stable DB checkpoints and container RSS headroom.
 
-   **`pipeline` memory cap (`docker-compose.yaml`):** on hosts with **~192 GiB RAM and no swap**, set **`mem_limit: 128g`** and **`memswap_limit: 128g`** on the **`pipeline`** service (defaults in base compose; override in **`docker-compose.settings.yaml`** if needed) so ingest spikes cgroup-OOM inside the container before starving **`db`**/**`web`**. **`stop_grace_period`** defaults to **30s** for **`web`** and **`pipeline`** (`HPCPERFSTATS_WEB_STOP_GRACE` / **`HPCPERFSTATS_PIPELINE_STOP_GRACE`**); short cutovers may SIGKILL before full `sync_timedb` drain. Pair with **`[PIPELINE]`** RSS knobs documented in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** § OOM. Recreating after limit changes: **[docs/upgrade.md](docs/upgrade.md)**.
+   **`pipeline` memory cap (`docker-compose.yaml`):** on hosts with **~192 GiB RAM and no swap**, set **`mem_limit: 128g`** and **`memswap_limit: 128g`** on the **`pipeline`** service (defaults in base compose; override in **`docker-compose.yaml`** if needed) so ingest spikes cgroup-OOM inside the container before starving **`db`**/**`web`**. **`stop_grace_period`** defaults to **30s** for **`web`** and **`pipeline`** (`HPCPERFSTATS_WEB_STOP_GRACE` / **`HPCPERFSTATS_PIPELINE_STOP_GRACE`**); short cutovers may SIGKILL before full `sync_timedb` drain. Pair with **`[PIPELINE]`** RSS knobs documented in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** § OOM. Recreating after limit changes: **[docs/upgrade.md](docs/upgrade.md)**.
 
    **Python interpreters (image):** web/gunicorn and helpers use GIL **`/opt/python3.14`** via **`/usr/local/bin/python3`** / **`gunicorn`** (built on **`debian:trixie`**, not Hub `python:*`). Pipeline daemons **`listend`**, **`sync_timedb`**, and **`update_metrics`** are baked onto free-threaded **`/opt/python3.14t/bin/python`** (no INI toggle). Image jemalloc is force-linked and preloaded (`LD_PRELOAD` + `/etc/ld.so.preload`) so CPython and manylinux wheels share it; gunicorn keeps `MALLOC_CONF=background_thread:false`. Stdlib **`zlib`** and other image-built natives link **zlib-ng** under **`/opt/zlib-ng`** (ZLIB_COMPAT; direct rpath link, not apt `zlib1g`). Image **`zstd`** CLI and CPython **`_zstd`** / **`compression.zstd`** use **zstd 1.5.7** under **`/opt/zstd`** (CLI gzip/zlib support linked to **zlib-ng**; symlinked into `/usr/local/bin` and `/usr/bin`; not apt `zstd`). `docker compose exec pipeline python3` stays GIL for operator one-liners; greppable startup lines `python_abi executable=… Py_GIL_DISABLED=…` prove the live daemon ABI. `sync_timedb` ingest/append/populate run as in-process threads; durable queues are the job-store sidecar. Production images install Intel MKL from PyPI and **source-compile** numpy/numexpr/pandas against it for both ABIs (not a host `pip` step); full image rebuilds take longer than wheel-only installs.
 
@@ -392,7 +392,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    **no** Compose **`ssl_certs`** volume, **no** build-time host **`/`** bind,
    **no** ``additional_contexts`` / manual resolve step, and **no** production
    **`.env`**. **Do not** edit TLS paths in nginx — set
-   **`proxy_ssl_source.device`** in **`docker-compose.settings.yaml`** (and for
+   **`proxy_ssl_source.device`** in **`docker-compose.yaml`** (and for
    Let's Encrypt, optional **`HPCPERFSTATS_SSL_CERTS_REL`** in settings).
 
    After Let's Encrypt renew (or changing the TLS source path): restart
@@ -498,7 +498,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    These variables are a development launch override only. Production site
    configuration remains in `hpcperfstats.ini` and
-   `docker-compose.settings.yaml`, never a required `.env`.
+   `docker-compose.yaml`, never a required `.env`.
 
    On first startup, the `web` container runs Django migrations
    (`manage.py migrate` only — schema changes ship as reviewed, committed

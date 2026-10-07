@@ -13,7 +13,7 @@ Prioritized follow-ups from [SECURITY_AUDIT.md](SECURITY_AUDIT.md). Update this 
 ## P2 — Hardening and hygiene
 
 - **shadcn CLI transitive `braces` (npm audit):** 7 high in dev-only `shadcn` / `@shadcn/registry` tree (GHSA-vfj7-8cjw-p6xm); not shipped in production static export. Track upstream or safe `overrides` — do not `npm audit fix --force` (downgrades `shadcn` to 1.0.0). Log: [`test_runs/gh_security_alerts_sweep_2026-10-05.md`](../test_runs/gh_security_alerts_sweep_2026-10-05.md).
-- **Audit workflow compose overlay (F9):** mitigated — workflows use **`docker-compose.settings.yaml`** (from example) plus **`tests/docker-compose.test-overlay.yaml`** so local machines do not need production `/data` binds. Optional: still run `pip-audit` via `docker run --rm` on the built image.
+- **Audit workflow compose overlay (F9):** mitigated — workflows use **`docker-compose.yaml`** (from example) plus **`tests/docker-compose.test-overlay.yaml`** so local machines do not need production `/data` binds. Optional: still run `pip-audit` via `docker run --rm` on the built image.
 
 ## Done
 

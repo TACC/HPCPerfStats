@@ -17,7 +17,6 @@ export HPCPERFSTATS_COMPOSE_PROJECT
 
 COMPOSE_TEST=(
   "${PODMAN_COMPOSE[@]}"
-  -f docker-compose.yaml
   -f tests/docker-compose.test-overlay.yaml
 )
 COMPOSE_BIND_MOUNT_DIR=""
@@ -27,19 +26,24 @@ compose_repo_root() {
   cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
 }
 
-compose_ensure_settings_yaml() {
+compose_ensure_compose_yaml() {
   local repo_root
   repo_root="$(compose_repo_root)"
-  local settings="${repo_root}/docker-compose.settings.yaml"
-  local example="${repo_root}/docker-compose.settings.yaml.example"
-  if [[ ! -f "$settings" ]]; then
+  local compose_file="${repo_root}/docker-compose.yaml"
+  local example="${repo_root}/docker-compose.yaml.example"
+  if [[ ! -f "$compose_file" ]]; then
     if [[ ! -f "$example" ]]; then
-      echo "compose_ensure_settings_yaml: missing ${example}" >&2
+      echo "compose_ensure_compose_yaml: missing ${example}" >&2
       return 1
     fi
-    cp "$example" "$settings"
-    echo "compose_ensure_settings_yaml: created ${settings} from example" >&2
+    cp "$example" "$compose_file"
+    echo "compose_ensure_compose_yaml: created ${compose_file} from example" >&2
   fi
+}
+
+# Backward-compatible alias for workflow scripts.
+compose_ensure_settings_yaml() {
+  compose_ensure_compose_yaml "$@"
 }
 
 compose_ensure_test_overlay_yaml() {
@@ -97,8 +101,8 @@ compose_rsync_repo_to_work_copy() {
     rsync -a --timeout=120 "${excludes[@]}" \
       "${repo_root}/pyproject.toml" \
       "${repo_root}/conftest.py" \
-      "${repo_root}/docker-compose.yaml" \
-      "${repo_root}/docker-compose.settings.yaml.example" \
+      "${repo_root}/docker-compose.defaults.yaml" \
+      "${repo_root}/docker-compose.yaml.example" \
       "${repo_root}/Dockerfile" \
       "${dest}/"
     rsync -a --timeout=120 "${excludes[@]}" \
@@ -167,13 +171,13 @@ compose_prepare_bind_mount() {
       fi
       if [[ -f "${_COMPOSE_BIND_MOUNT_WORK_COPY}/pyproject.toml" ]]; then
         compose_ensure_work_copy_ini "$repo_root" "${_COMPOSE_BIND_MOUNT_WORK_COPY}"
-        if [[ ! -f "${_COMPOSE_BIND_MOUNT_WORK_COPY}/docker-compose.settings.yaml" ]]; then
-          if [[ -f "${_COMPOSE_BIND_MOUNT_WORK_COPY}/docker-compose.settings.yaml.example" ]]; then
-            cp "${_COMPOSE_BIND_MOUNT_WORK_COPY}/docker-compose.settings.yaml.example" \
-              "${_COMPOSE_BIND_MOUNT_WORK_COPY}/docker-compose.settings.yaml"
-          elif [[ -f "${repo_root}/docker-compose.settings.yaml" ]]; then
-            cp -f "${repo_root}/docker-compose.settings.yaml" \
-              "${_COMPOSE_BIND_MOUNT_WORK_COPY}/docker-compose.settings.yaml"
+        if [[ ! -f "${_COMPOSE_BIND_MOUNT_WORK_COPY}/docker-compose.yaml" ]]; then
+          if [[ -f "${_COMPOSE_BIND_MOUNT_WORK_COPY}/docker-compose.yaml.example" ]]; then
+            cp "${_COMPOSE_BIND_MOUNT_WORK_COPY}/docker-compose.yaml.example" \
+              "${_COMPOSE_BIND_MOUNT_WORK_COPY}/docker-compose.yaml"
+          elif [[ -f "${repo_root}/docker-compose.yaml" ]]; then
+            cp -f "${repo_root}/docker-compose.yaml" \
+              "${_COMPOSE_BIND_MOUNT_WORK_COPY}/docker-compose.yaml"
           fi
         fi
         if [[ ! -f "${_COMPOSE_BIND_MOUNT_WORK_COPY}/tests/docker-compose.test-overlay.yaml" ]]; then

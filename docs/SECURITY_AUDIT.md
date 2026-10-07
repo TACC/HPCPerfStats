@@ -32,7 +32,7 @@ HPCPerfStats combines a Django + DRF backend, a **Next.js static-export React SP
 
 **Host dev venv** (not shipped): `idna` 3.13 (CVE-2026-45409 → 3.15+), `pip` 26.1.1 (PYSEC-2026-196 → 26.1.2+). Treat as developer-workstation hygiene only.
 
-**Workflow note:** `tests/run_security_audit_workflow.sh` uses the rootless Podman test project and overlay. On machines missing **`docker-compose.settings.yaml`**, `compose_test_cmd.sh` copies it from **`.example`**. Direct `podman run --rm hpcperfstats pip-audit` remains a valid local fallback when the `/data` runtime contract is active.
+**Workflow note:** `tests/run_security_audit_workflow.sh` uses the rootless Podman test project and overlay. On machines missing **`docker-compose.yaml`**, `compose_test_cmd.sh` copies it from **`.example`**. Direct `podman run --rm hpcperfstats pip-audit` remains a valid local fallback when the `/data` runtime contract is active.
 
 ### npm audit (frontend)
 

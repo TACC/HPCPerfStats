@@ -11,6 +11,11 @@
 #   ./scripts/rebuild_full_site.sh --no-start
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+  echo "rebuild_full_site.sh: run ./scripts/rebuild_full_site.sh — do not source (.) this file; exit would close your shell" >&2
+  return 2 2>/dev/null || exit 2
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=lib/podman_runtime.sh
@@ -101,12 +106,12 @@ run_cmd() {
 
 preflight() {
   podman_runtime_require
-  if [[ ! -f "${REPO_ROOT}/docker-compose.yaml" ]]; then
-    echo "rebuild_full_site.sh: docker-compose.yaml not found under ${REPO_ROOT}" >&2
+  if [[ ! -f "${REPO_ROOT}/docker-compose.defaults.yaml" ]]; then
+    echo "rebuild_full_site.sh: docker-compose.defaults.yaml not found under ${REPO_ROOT}" >&2
     exit 1
   fi
-  if [[ ! -f "${REPO_ROOT}/docker-compose.settings.yaml" ]]; then
-    echo "rebuild_full_site.sh: missing docker-compose.settings.yaml (cp docker-compose.settings.yaml.example)" >&2
+  if [[ ! -f "${REPO_ROOT}/docker-compose.yaml" ]]; then
+    echo "rebuild_full_site.sh: missing docker-compose.yaml (cp docker-compose.yaml.example docker-compose.yaml)" >&2
     exit 1
   fi
   cd "${REPO_ROOT}"
@@ -114,8 +119,8 @@ preflight() {
     return 0
   fi
   if ! "${PODMAN_COMPOSE[@]}" config >/dev/null 2>&1; then
-    echo "rebuild_full_site.sh: compose parse failed (often invalid docker-compose.settings.yaml)." >&2
-    echo "rebuild_full_site.sh: paste whole optional blocks from docker-compose.settings.yaml.example — do not uncomment lines inside a block partially." >&2
+    echo "rebuild_full_site.sh: compose parse failed (often invalid docker-compose.yaml)." >&2
+    echo "rebuild_full_site.sh: paste whole optional blocks from docker-compose.yaml.example — do not uncomment lines inside a block partially." >&2
     "${PODMAN_COMPOSE[@]}" config 2>&1 | tail -25 >&2 || true
     exit 1
   fi

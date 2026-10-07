@@ -416,8 +416,9 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
   {
     "id": "docker_compose_settings_example",
     "patterns": [
-      "docker-compose.settings.yaml",
-      "docker-compose.settings.yaml.example",
+      "docker-compose.yaml",
+      "docker-compose.yaml.example",
+      "docker-compose.defaults.yaml",
     ],
     "rules": [
       "docker-compose-settings-example-sync.mdc",

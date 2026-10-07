@@ -75,7 +75,7 @@ def test_compose_has_redis_runtime_named_volume_skips_comments_linearly():
 
 def test_docker_compose_has_healthchecks_for_core_services():
   repo_root = Path(__file__).resolve().parents[2]
-  compose_path = repo_root / "docker-compose.yaml"
+  compose_path = repo_root / "docker-compose.defaults.yaml"
   content = compose_path.read_text()
 
   # Core infrastructure services defined in docker-compose.yaml
@@ -92,8 +92,8 @@ def test_docker_compose_has_healthchecks_for_core_services():
 def test_docker_compose_host_ports_are_parameterized_with_production_defaults():
   """Rootless development can override ports without changing production defaults."""
   repo_root = Path(__file__).resolve().parents[2]
-  content = (repo_root / "docker-compose.yaml").read_text()
-  settings = (repo_root / "docker-compose.settings.yaml.example").read_text()
+  content = (repo_root / "docker-compose.defaults.yaml").read_text()
+  settings = (repo_root / "docker-compose.yaml.example").read_text()
 
   expected_ports = (
     '"${HPCPERFSTATS_HTTP_PORT:-80}:80"',
@@ -116,7 +116,7 @@ def test_docker_compose_host_ports_are_parameterized_with_production_defaults():
 def test_docker_compose_registry_images_are_fully_qualified_for_podman():
   """Noninteractive rootless Podman must never prompt for a short-name registry."""
   repo_root = Path(__file__).resolve().parents[2]
-  content = (repo_root / "docker-compose.yaml").read_text()
+  content = (repo_root / "docker-compose.defaults.yaml").read_text()
 
   assert "image: docker.io/library/redis:8.10.2-alpine3.23" in content
   assert "image: docker.io/timescale/timescaledb:2.28.3-pg15" in content
@@ -126,7 +126,7 @@ def test_docker_compose_registry_images_are_fully_qualified_for_podman():
 def test_docker_compose_network_name_is_parameterized_with_production_default():
   """Test and development projects can isolate their shared Compose network."""
   repo_root = Path(__file__).resolve().parents[2]
-  content = (repo_root / "docker-compose.yaml").read_text()
+  content = (repo_root / "docker-compose.defaults.yaml").read_text()
   runtime = (repo_root / "scripts" / "lib" / "podman_runtime.sh").read_text()
 
   assert "name: ${HPCPERFSTATS_NETWORK_NAME:-hpcperfstats_net}" in content
@@ -135,12 +135,14 @@ def test_docker_compose_network_name_is_parameterized_with_production_default():
   assert "HPCPERFSTATS_NETWORK_NAME=hpcperfstats-dev_net" in runtime
   assert "HPCPERFSTATS_LOCAL_DATA_CONTRACT=0" in runtime
   assert "HPCPERFSTATS_LOCAL_DATA_CONTRACT=1" in runtime
+  assert "-f docker-compose.yaml" not in runtime
+  assert "-f docker-compose.defaults.yaml" not in runtime
 
 
 def test_docker_compose_json_file_logging_rotated():
   """Stdout logging is file-backed for compose logs (Podman-safe, not journald)."""
   repo_root = Path(__file__).resolve().parents[2]
-  content = (repo_root / "docker-compose.yaml").read_text()
+  content = (repo_root / "docker-compose.defaults.yaml").read_text()
   assert "driver: json-file" in content
   assert 'max-size: "100m"' in content
   assert 'max-file: "3"' in content
@@ -160,7 +162,7 @@ def test_docker_compose_json_file_logging_rotated():
 def test_docker_compose_commands_and_healthchecks_use_yaml_list_form():
   """Regression: keep argv/healthcheck tests as YAML block lists, not flow [...]."""
   repo_root = Path(__file__).resolve().parents[2]
-  compose_path = repo_root / "docker-compose.yaml"
+  compose_path = repo_root / "docker-compose.defaults.yaml"
   content = compose_path.read_text()
 
   assert "command: [" not in content
@@ -233,7 +235,7 @@ def test_redis_entrypoint_sh_is_tracked_file_not_gitignored():
 def test_docker_compose_redis_maxmemory_policy_is_volatile_lru():
   """job:v1 keys are TTL-free; allkeys-* would evict them (Q9)."""
   repo_root = Path(__file__).resolve().parents[2]
-  content = (repo_root / "docker-compose.yaml").read_text()
+  content = (repo_root / "docker-compose.defaults.yaml").read_text()
   assert "      - --maxmemory-policy\n      - volatile-lru\n" in content
   assert "allkeys-lru" not in content
   assert "allkeys-lfu" not in content
@@ -268,7 +270,7 @@ def test_docker_compose_web_and_pipeline_do_not_depend_on_redis():
   Startup wait uses the Unix socket in rediswait.py instead.
   """
   repo_root = Path(__file__).resolve().parents[2]
-  content = (repo_root / "docker-compose.yaml").read_text()
+  content = (repo_root / "docker-compose.defaults.yaml").read_text()
   web_m = re.search(r"(?ms)^  web:\n(.*?)(?=^  [a-z].*:|\Z)", content)
   pipeline_m = re.search(r"(?ms)^  pipeline:\n(.*?)(?=^  [a-z].*:|\Z)", content)
   redis_m = re.search(r"(?ms)^  redis:\n(.*?)(?=^  [a-z].*:|\Z)", content)
@@ -294,8 +296,8 @@ def test_docker_compose_web_and_pipeline_do_not_depend_on_redis():
 def test_docker_compose_redis_unix_socket_volume_is_shared():
   """Unix socket is applicable only when redis/web/pipeline share the runtime dir."""
   repo_root = Path(__file__).resolve().parents[2]
-  content = (repo_root / "docker-compose.yaml").read_text()
-  example = (repo_root / "docker-compose.settings.yaml.example").read_text()
+  content = (repo_root / "docker-compose.defaults.yaml").read_text()
+  example = (repo_root / "docker-compose.yaml.example").read_text()
   overlay = (
     repo_root / "tests" / "docker-compose.test-overlay.yaml.example"
   ).read_text()
@@ -347,7 +349,7 @@ def test_readme_install_is_fresh_only_and_upgrade_doc_holds_existing_stack():
 
 def test_docker_compose_rabbitmq_defaults_to_guest_credentials():
   repo_root = Path(__file__).resolve().parents[2]
-  compose_path = repo_root / "docker-compose.yaml"
+  compose_path = repo_root / "docker-compose.defaults.yaml"
   content = compose_path.read_text()
 
   assert "RABBITMQ_DEFAULT_USER=guest" in content
@@ -357,7 +359,7 @@ def test_docker_compose_rabbitmq_defaults_to_guest_credentials():
 def test_docker_compose_rabbitmq_sets_erl_flags_allocator_tuning():
   """Keep Erlang carrier sizes + aobf strategy on the rabbitmq service env."""
   repo_root = Path(__file__).resolve().parents[2]
-  compose_path = repo_root / "docker-compose.yaml"
+  compose_path = repo_root / "docker-compose.defaults.yaml"
   content = compose_path.read_text()
   rabbitmq_block = content.split("  rabbitmq:\n", 1)[1].split("\nvolumes:", 1)[
     0
@@ -377,7 +379,7 @@ def test_docker_compose_rabbitmq_sets_erl_flags_allocator_tuning():
 def test_docker_compose_rabbitmq_allows_128mib_monitor_messages():
   """Keep the intentional 128 MiB broker maximum for large monitor payloads."""
   repo_root = Path(__file__).resolve().parents[2]
-  compose_path = repo_root / "docker-compose.yaml"
+  compose_path = repo_root / "docker-compose.defaults.yaml"
   content = compose_path.read_text()
   conf_path = repo_root / "services-conf" / "rabbitmq_max_message_size.conf"
 
@@ -393,7 +395,7 @@ def test_docker_compose_rabbitmq_allows_128mib_monitor_messages():
 def test_docker_compose_rabbitmq_frame_max_conf():
   """Listend AMQP frame_max 131072 must ship on broker and compose conf.d."""
   repo_root = Path(__file__).resolve().parents[2]
-  compose_path = repo_root / "docker-compose.yaml"
+  compose_path = repo_root / "docker-compose.defaults.yaml"
   content = compose_path.read_text()
   conf_path = repo_root / "services-conf" / "rabbitmq_frame_max.conf"
 
@@ -408,7 +410,7 @@ def test_docker_compose_rabbitmq_frame_max_conf():
 def test_docker_compose_rabbitmq_defaults_to_quorum_queue_type():
   """Classic queues OOM under many monitor connections; keep quorum default."""
   repo_root = Path(__file__).resolve().parents[2]
-  compose_path = repo_root / "docker-compose.yaml"
+  compose_path = repo_root / "docker-compose.defaults.yaml"
   content = compose_path.read_text()
   conf_path = repo_root / "services-conf" / "rabbitmq_default_queue_type.conf"
 
@@ -424,7 +426,7 @@ def test_docker_compose_rabbitmq_defaults_to_quorum_queue_type():
 def test_docker_compose_rabbitmq_vm_memory_cap_is_96gib():
   """Unbounded RMQ RSS OOM'd the host; 96g cgroup + 80GiB watermark headroom."""
   repo_root = Path(__file__).resolve().parents[2]
-  compose_path = repo_root / "docker-compose.yaml"
+  compose_path = repo_root / "docker-compose.defaults.yaml"
   content = compose_path.read_text()
   conf_path = repo_root / "services-conf" / "rabbitmq_vm_memory.conf"
   rabbitmq_block = content.split("  rabbitmq:\n", 1)[1].split("\nvolumes:", 1)[
@@ -454,7 +456,7 @@ def test_docker_compose_rabbitmq_vm_memory_cap_is_96gib():
 def test_docker_compose_rabbitmq_logging_warning_not_info():
   """Memory alarms at warning; forbid info flood under publisher fleets."""
   repo_root = Path(__file__).resolve().parents[2]
-  compose_path = repo_root / "docker-compose.yaml"
+  compose_path = repo_root / "docker-compose.defaults.yaml"
   content = compose_path.read_text()
   conf_path = repo_root / "services-conf" / "rabbitmq_logging.conf"
   conf_text = conf_path.read_text()
@@ -473,7 +475,7 @@ def test_docker_compose_rabbitmq_logging_warning_not_info():
 def test_docker_compose_rabbitmq_disables_crash_dumps():
   """Production OOMs must not write erl_crash.dump / OS cores by default."""
   repo_root = Path(__file__).resolve().parents[2]
-  compose_path = repo_root / "docker-compose.yaml"
+  compose_path = repo_root / "docker-compose.defaults.yaml"
   content = compose_path.read_text()
   rabbitmq_block = content.split("  rabbitmq:\n", 1)[1].split("\nvolumes:", 1)[
     0
@@ -491,7 +493,7 @@ def test_docker_compose_rabbitmq_disables_crash_dumps():
 def test_docker_compose_rabbitmq_stop_grace_period_is_10m():
   """RabbitMQ stop_grace_period must stay 10m for orderly broker shutdown."""
   repo_root = Path(__file__).resolve().parents[2]
-  compose_path = repo_root / "docker-compose.yaml"
+  compose_path = repo_root / "docker-compose.defaults.yaml"
   content = compose_path.read_text()
   rabbitmq_block = content.split("  rabbitmq:\n", 1)[1].split("\nvolumes:", 1)[
     0
@@ -523,7 +525,7 @@ def test_operator_rabbitmq_recovery_runbook_exists():
 
 def test_docker_compose_proxy_runtime_tls_mount_and_entrypoint_materialize():
   repo_root = Path(__file__).resolve().parents[2]
-  compose_path = repo_root / "docker-compose.yaml"
+  compose_path = repo_root / "docker-compose.defaults.yaml"
   content = compose_path.read_text()
 
   assert (
@@ -825,7 +827,7 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   assert "worker_processes 20" not in main
   assert "api;" not in main
   assert "client_body_early_read" not in main
-  compose = (repo_root / "docker-compose.yaml").read_text()
+  compose = (repo_root / "docker-compose.defaults.yaml").read_text()
   assert "./services-conf/nginx-main.conf:/etc/nginx/nginx.conf:ro" in compose
   for mount_only in (
     "nginx-edge-security-headers.inc",
@@ -843,7 +845,7 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
 def test_proxy_compose_mounts_main_nginx_conf():
   """Compose must bind-mount nginx-main.conf as the process config source of truth."""
   repo_root = Path(__file__).resolve().parents[2]
-  compose = (repo_root / "docker-compose.yaml").read_text()
+  compose = (repo_root / "docker-compose.defaults.yaml").read_text()
   assert "./services-conf/nginx-main.conf:/etc/nginx/nginx.conf:ro" in compose
   assert (
     "./services-conf/nginx.conf:/etc/nginx/http.d/default.conf:ro" in compose
@@ -852,10 +854,18 @@ def test_proxy_compose_mounts_main_nginx_conf():
 
 def test_docker_compose_includes_settings_not_app_or_pinning():
   repo_root = Path(__file__).resolve().parents[2]
-  content = (repo_root / "docker-compose.yaml").read_text()
-  assert "docker-compose.settings.yaml" in content
-  assert "docker-compose.app.yaml" not in content
-  assert "cpu-pinning" not in content
+  base = (repo_root / "docker-compose.defaults.yaml").read_text()
+  settings_example = (repo_root / "docker-compose.yaml.example").read_text()
+  assert re.search(r"(?m)^include:", base) is None
+  assert (
+    re.search(
+      r"(?m)^include:\s*\n\s+- docker-compose\.defaults\.yaml",
+      settings_example,
+    )
+    is not None
+  )
+  assert "docker-compose.app.yaml" not in base
+  assert "cpu-pinning" not in base
   assert not (repo_root / "docker-compose.app.yaml.example").exists()
   assert not (repo_root / "scripts" / "apply_compose_cpu_pinning.py").exists()
   assert not (
@@ -873,8 +883,8 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
   of type <class 'NoneType'> and <class 'dict'> during include merge / down.
   """
   repo_root = Path(__file__).resolve().parents[2]
-  base = (repo_root / "docker-compose.yaml").read_text()
-  settings = (repo_root / "docker-compose.settings.yaml.example").read_text()
+  base = (repo_root / "docker-compose.defaults.yaml").read_text()
+  settings = (repo_root / "docker-compose.yaml.example").read_text()
   # Site bind volumes live only in settings (include). Bare `name:` under
   # volumes parses as null and breaks podman-compose rec_merge_one.
   # redis_runtime is a named Docker volume in base compose - not a setting.
@@ -907,8 +917,8 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
 def test_docker_compose_staticfiles_ram_and_media_ram_tmpfs_not_null_stub():
   """Named tmpfs volumes live in base compose; the test overlay remaps them."""
   repo_root = Path(__file__).resolve().parents[2]
-  base = (repo_root / "docker-compose.yaml").read_text()
-  settings = (repo_root / "docker-compose.settings.yaml.example").read_text()
+  base = (repo_root / "docker-compose.defaults.yaml").read_text()
+  settings = (repo_root / "docker-compose.yaml.example").read_text()
   overlay = (
     repo_root / "tests" / "docker-compose.test-overlay.yaml.example"
   ).read_text()
@@ -934,7 +944,7 @@ def test_docker_compose_staticfiles_ram_and_media_ram_tmpfs_not_null_stub():
 def test_docker_compose_db_pg18_dual_run_beside_hub_pg15():
   """Hub PG15 keeps alias db; homemade PG18 is profile-gated with db18 + io_uring."""
   repo_root = Path(__file__).resolve().parents[2]
-  content = (repo_root / "docker-compose.yaml").read_text()
+  content = (repo_root / "docker-compose.defaults.yaml").read_text()
   db_m = re.search(r"(?ms)^  db:\n(.*?)(?=^  [a-z].*:|\Z)", content)
   assert db_m, "db service not found"
   db_block = db_m.group(0)
@@ -967,7 +977,7 @@ def test_docker_compose_db_pg18_dual_run_beside_hub_pg15():
 
 def test_docker_compose_pipeline_ssh_uses_ssh_keys_volume():
   repo_root = Path(__file__).resolve().parents[2]
-  content = (repo_root / "docker-compose.yaml").read_text()
+  content = (repo_root / "docker-compose.defaults.yaml").read_text()
   assert "ssh_keys:/hpcperfstats/.ssh/:ro" in content
   assert "HPCPERFSTATS_PIPELINE_SSH_DIR" not in content
   assert "HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini" in content
@@ -980,7 +990,7 @@ def test_docker_compose_pipeline_ssh_uses_ssh_keys_volume():
 def test_docker_compose_web_build_uses_hpcperfstats_full_target():
   """Compose must request full image; rebuild_pipeline.sh uses pipeline-refresh explicitly."""
   repo_root = Path(__file__).resolve().parents[2]
-  content = (repo_root / "docker-compose.yaml").read_text()
+  content = (repo_root / "docker-compose.defaults.yaml").read_text()
   assert "dockerfile: Dockerfile" in content
   assert "target: hpcperfstats-full" in content
   assert content.index("target: hpcperfstats-full") < content.index(
@@ -988,7 +998,7 @@ def test_docker_compose_web_build_uses_hpcperfstats_full_target():
   )
 
 
-# Operator-facing bind devices that must stay in docker-compose.settings.yaml.example
+# Operator-facing bind devices that must stay in docker-compose.yaml.example
 # (see docker-compose-settings-example-sync.mdc).
 _OPERATOR_SETTINGS_SHARED_BIND_DEVICES = (
   "device: /data/hpcperfstats_data/site_data",
@@ -1017,9 +1027,7 @@ _OPERATOR_SETTINGS_VOLUME_NAMES = (
 
 def test_docker_compose_settings_example_operator_markers():
   repo_root = Path(__file__).resolve().parents[2]
-  example_content = (
-    repo_root / "docker-compose.settings.yaml.example"
-  ).read_text()
+  example_content = (repo_root / "docker-compose.yaml.example").read_text()
   for marker in _OPERATOR_SETTINGS_VOLUME_NAMES:
     assert marker in example_content, f"example missing volume: {marker}"
   for marker in _OPERATOR_SETTINGS_SHARED_BIND_DEVICES:
@@ -1038,9 +1046,24 @@ def test_docker_compose_settings_example_operator_markers():
   assert "Do not uncomment individual lines" in example_content
 
 
+def test_docker_compose_pgo_profiles_service_mounts_in_settings_example():
+  """Settings include base and merge service volumes; PGOROOT bind is not in base."""
+  repo_root = Path(__file__).resolve().parents[2]
+  base = (repo_root / "docker-compose.defaults.yaml").read_text()
+  example = (repo_root / "docker-compose.yaml.example").read_text()
+  mount = "pgo_profiles:/root/.hpcperfstats_pgo"
+  assert mount not in base
+  assert example.count(mount) >= 4
+  for svc in ("web:", "pipeline:", "proxy:", "db_pg18:"):
+    assert re.search(
+      rf"(?ms)^  {re.escape(svc)}\n.*?{re.escape(mount)}",
+      example,
+    ), f"{svc} missing {mount} in settings example"
+
+
 def test_docker_compose_settings_example_is_valid_yaml():
   repo_root = Path(__file__).resolve().parents[2]
-  example_path = repo_root / "docker-compose.settings.yaml.example"
+  example_path = repo_root / "docker-compose.yaml.example"
   parsed = yaml.safe_load(example_path.read_text())
   assert isinstance(parsed, dict)
   assert "volumes" in parsed
@@ -1050,8 +1073,8 @@ def test_docker_compose_settings_example_is_valid_yaml():
 def test_docker_compose_settings_example_operator_parity():
   """Shared /data binds must match .example; ssh device may differ per site."""
   repo_root = Path(__file__).resolve().parents[2]
-  settings_path = repo_root / "docker-compose.settings.yaml"
-  example_path = repo_root / "docker-compose.settings.yaml.example"
+  settings_path = repo_root / "docker-compose.yaml"
+  example_path = repo_root / "docker-compose.yaml.example"
   if not settings_path.is_file():
     return
   settings_content = settings_path.read_text()
@@ -1126,7 +1149,7 @@ def test_docker_compose_pipeline_has_no_process_pool_shared_memory_override():
   import re
 
   repo_root = Path(__file__).resolve().parents[2]
-  content = (repo_root / "docker-compose.yaml").read_text()
+  content = (repo_root / "docker-compose.defaults.yaml").read_text()
   # Extract the pipeline service block until the next top-level service key.
   m = re.search(
     r"(?ms)^  pipeline:\n(.*?)(?=^  [a-z].*:|\Z)",

@@ -10,7 +10,7 @@ globs: docker-compose*.yaml,hpcperfstats.ini.example,services-conf/resolve_proxy
 
 ## Law (non-negotiable)
 
-**Production deploys must not require operators to create a Compose `.env` file, export shell environment variables, or add pipeline `environment:` entries for site/pipeline configuration that belongs in `hpcperfstats.ini` or `docker-compose.settings.yaml`.**
+**Production deploys must not require operators to create a Compose `.env` file, export shell environment variables, or add pipeline `environment:` entries for site/pipeline configuration that belongs in `hpcperfstats.ini` or `docker-compose.yaml`.**
 
 If a knob belongs in INI or settings — for example **`server=`**, paths, pool sizes, **ingest telemetry**, or TLS **`proxy_ssl_source.device`** — Compose / install / soak docs must consume it from those files. Do **not** make **`export FOO=…`**, **`.env`**, **`${FOO:?…}`**, or **“set `HPCPERFSTATS_*=1` on the pipeline container”** the production contract for that knob.
 
@@ -31,7 +31,7 @@ Ship INI keys + `conf_parser` getters + commented `# key = no` in **`hpcperfstat
 
 | Allowed | Forbidden in production docs / base compose |
 |---------|-----------------------------------------------|
-| Set **`proxy_ssl_source.device`** in **`docker-compose.settings.yaml`** | Requiring **`HPCPERFSTATS_SSL_CERTS_DIR`** for `up` / `down` / `build` |
+| Set **`proxy_ssl_source.device`** in **`docker-compose.yaml`** | Requiring **`HPCPERFSTATS_SSL_CERTS_DIR`** for `up` / `down` / `build` |
 | Optional **`HPCPERFSTATS_SSL_CERTS_REL`** in settings for LE **`live/hostname`** only | Teaching operators to maintain a project **`.env`** or mandatory pre-start resolve for TLS |
 | **`docker compose up --build`** (entrypoint materializes PEMs at start) | Defaulting production settings to the CI self-signed fixture |
 | Test/CI: **`test_proxy_ssl_source`** overlay bind to **`tests/fixtures/proxy-ssl`** | Build-time host **`/`** bind or **`additional_contexts`** for TLS |
@@ -41,7 +41,7 @@ Ship INI keys + `conf_parser` getters + commented `# key = no` in **`hpcperfstat
 ## Allowed env uses (narrow)
 
 - **Process titles / container runtime** already set in compose (`HPCPERFSTATS_INI=…` inside the image path).
-- **Optional LE subpath** via **`HPCPERFSTATS_SSL_CERTS_REL`** in **`docker-compose.settings.yaml`** (commented in `.example`); unset for flat PEM dirs.
+- **Optional LE subpath** via **`HPCPERFSTATS_SSL_CERTS_REL`** in **`docker-compose.yaml`** (commented in `.example`); unset for flat PEM dirs.
 - **Test/CI-only** exports inside **`tests/compose_test_cmd.sh`** / workflow scripts / Podman A/B arms (never the production install or overnight soak path). Env may **override** an INI telem default inside unit tests; it must **not** be the documented production enable path.
 - **One-shot diagnostics** where the operator pastes a command that substitutes a resolved path — prefer the resolve helper over a standing env var.
 

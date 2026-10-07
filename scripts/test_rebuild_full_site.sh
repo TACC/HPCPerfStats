@@ -56,6 +56,14 @@ if ! grep -q 'apply_pipeline_memory_high' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must call apply_pipeline_memory_high" >&2
   exit 1
 fi
+if ! grep -q 'do not source' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must refuse being sourced (exit kills login shell)" >&2
+  exit 1
+fi
+if ! grep -q '^read_pipeline_memory_max_bytes()' "${MEMORY_LIB}"; then
+  echo "compose_pipeline_memory_high.sh must define read_pipeline_memory_max_bytes" >&2
+  exit 1
+fi
 
 if grep -q 'build_musl_gcc_toolchain_image' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must not build musl GCC toolchain image" >&2

@@ -1,12 +1,17 @@
-# Site-local Compose settings (bind volumes + optional knobs).
+# Site-local Compose file (bind volumes + optional knobs).
 #
-# Operators: cp this file to docker-compose.settings.yaml (gitignored).
+# Operators: cp this file to docker-compose.yaml (gitignored).
 # Any operator-facing change must update this .example in the same task —
 # see hpcperfstats/cursor-rules/docker-compose-settings-example-sync.mdc.
 #
-# Base stack: docker-compose.yaml (includes this file).
+# Entry point: include docker-compose.defaults.yaml, then merge site binds and
+# service overrides here (this file wins over defaults for overlapping keys).
+# podman-compose / docker compose discover docker-compose.yaml by default.
 # TLS PEMs: proxy_ssl_source volume (flat PEM dir default); entrypoint copies
 # real files into /etc/ssl/hpcperfstats before nginx starts.
+
+include:
+  - docker-compose.defaults.yaml
 
 volumes:
   hpcperfstatsdata:
@@ -80,27 +85,28 @@ volumes:
       device: /root/.hpcperfstats_pgo
       o: bind
 
+# Live PGO soak mounts (rebuild_full_site.sh --profile-phase). Merged after base
+# service volumes so PGOROOT is bind-mounted without editing docker-compose.defaults.yaml.
+services:
+  web:
+    volumes:
+      - pgo_profiles:/root/.hpcperfstats_pgo
+  pipeline:
+    volumes:
+      - pgo_profiles:/root/.hpcperfstats_pgo
+  proxy:
+    volumes:
+      - pgo_profiles:/root/.hpcperfstats_pgo
+  db_pg18:
+    volumes:
+      - pgo_profiles:/root/.hpcperfstats_pgo
+
 # Optional service overrides — paste ONE whole block below (including `services:`).
 # Do not uncomment individual lines inside a block; partial edits break YAML parsing.
 #
 # Production defaults remain 80/443/514/5672. For an unprivileged development run,
 # set HPCPERFSTATS_HTTP_PORT=8080, HPCPERFSTATS_HTTPS_PORT=8443, and
 # HPCPERFSTATS_SYSLOG_PORT=1514, HPCPERFSTATS_AMQP_PORT=5673 for that command.
-#
-# --- PGO live soak (rebuild_full_site.sh --profile-phase) ---
-# services:
-#   web:
-#     volumes:
-#       - pgo_profiles:/root/.hpcperfstats_pgo
-#   pipeline:
-#     volumes:
-#       - pgo_profiles:/root/.hpcperfstats_pgo
-#   proxy:
-#     volumes:
-#       - pgo_profiles:/root/.hpcperfstats_pgo
-#   db_pg18:
-#     volumes:
-#       - pgo_profiles:/root/.hpcperfstats_pgo
 #
 # --- Host port publishing (dev/debug) ---
 # services:

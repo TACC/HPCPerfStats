@@ -3,8 +3,8 @@
 # Operators / agents: cp this file to tests/docker-compose.test-overlay.yaml
 # (gitignored). compose_test_cmd.sh copies automatically when missing.
 #
-# Production bind devices live in docker-compose.settings.yaml (from
-# docker-compose.settings.yaml.example; included by docker-compose.yaml).
+# Production bind devices live in docker-compose.yaml (from
+# docker-compose.yaml.example; settings include docker-compose.yaml).
 # This overlay remaps every bind-backed named volume to a Compose-managed named
 # volume so rootless Podman tests and CI do not need production bind paths.
 # Production deploys use base compose only (settings included; no app overlay).

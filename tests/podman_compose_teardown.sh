@@ -37,6 +37,5 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   fi
   podman_compose_teardown \
     "${PODMAN_COMPOSE[@]}" \
-    -f docker-compose.yaml \
     -f "$overlay"
 fi

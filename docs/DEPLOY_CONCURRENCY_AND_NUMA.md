@@ -66,7 +66,7 @@ Kernel OOM may kill an ingest pool worker (`[worker:ingest-pool]`) with a **tran
 | Mitigation | Role |
 |------------|------|
 | **`PR_SET_PDEATHSIG` (SIGKILL)** on pool workers | Workers exit when the supervisor dies so **supervisord** can restart a clean tree |
-| **`pipeline` `mem_limit` / `memswap_limit`** (Compose) | Cgroup cap before host global OOM on swapless hosts; **128 GiB** is a reasonable default on **192 GiB** RAM (see `docker-compose.yaml`; optional overrides in `docker-compose.settings.yaml`) |
+| **`pipeline` `mem_limit` / `memswap_limit`** (Compose) | Cgroup cap before host global OOM on swapless hosts; **128 GiB** is a reasonable default on **192 GiB** RAM (see `docker-compose.yaml`; optional overrides in `docker-compose.yaml`) |
 | **`rabbitmq` `mem_limit` / `memswap_limit` 96g** plus **`vm_memory_high_watermark.absolute = 80GiB`** | Cgroup hard wall at 96 GiB; publishers block at 80 GiB headroom (`services-conf/rabbitmq_vm_memory.conf`) before Erlang `binary_alloc`. **`ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512`** reduces allocator fragmentation. Console **`warning`** (not **`info`**); **`ERL_CRASH_DUMP_SECONDS=0`**. Recreate `rabbitmq` after changing limits, watermark, logging, crash-dump knobs, or **`ERL_FLAGS`**. Lower both mem limits and watermark together on hosts with less than 96 GiB RAM. Recovery: **`docs/OPERATOR_RABBITMQ_RECOVERY.md`**. |
 | **`sync_ingest_max_file_read_bytes`** (default **512 MiB**) | Stream-parse larger segments instead of **`readlines()`** |
 | **`sync_bulk_create_batch_size`** (default **10000**) | Combined ingest: flush parse → delta/arc → DB write every N stats rows (complete time sample first); same knob sizes `host_data`/`proc_data` write batches. Default write path is COPY→staging→`ON CONFLICT` (see `sync_timedb_host_data_insert` / `sync_timedb_proc_data_insert`); opt out with `HPCPERFSTATS_SYNC_HOST_DATA_COPY=0` / `HPCPERFSTATS_SYNC_PROC_DATA_COPY=0` |
@@ -304,4 +304,4 @@ For large DB sites with slow duplicate-detection or bulk writes, use **idle stal
 - [`services-conf/django_startup.sh`](../services-conf/django_startup.sh) — Gunicorn worker count
 - [`hpcperfstats/site/hpcperfstats_site/settings.py`](../hpcperfstats/site/hpcperfstats_site/settings.py) — `CONN_MAX_AGE`, PostgreSQL `OPTIONS`
 - [`docker-compose.yaml`](../docker-compose.yaml) — Postgres `max_connections`, `statement_timeout`, `idle_in_transaction_session_timeout`; pipeline `mem_limit`
-- [`docker-compose.settings.yaml.example`](../docker-compose.settings.yaml.example) — site bind volumes and optional knobs
+- [`docker-compose.yaml.example`](../docker-compose.yaml.example) — site bind volumes and optional knobs

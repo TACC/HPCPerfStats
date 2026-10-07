@@ -14,7 +14,7 @@ pgo_root_dir() {
 }
 
 # Host PGOROOT must exist before compose bind mounts or Dockerfile RUN --mount=bind
-# (device path in docker-compose.settings.yaml). Idempotent; safe every rebuild.
+# (device path in docker-compose.yaml). Idempotent; safe every rebuild.
 pgo_ensure_pg_root() {
   local root
   root="$(pgo_root_dir)"
@@ -22,7 +22,7 @@ pgo_ensure_pg_root() {
     pgo_die "PGOROOT exists but is not a directory: ${root}"
   fi
   if ! mkdir -p "${root}"; then
-    pgo_die "cannot mkdir PGOROOT=${root} (permission denied?). Set PGOROOT to a writable path, e.g. /data/user/\$USER/hpcperfstats-pgo, and match pgo_profiles.device in docker-compose.settings.yaml"
+    pgo_die "cannot mkdir PGOROOT=${root} (permission denied?). Set PGOROOT to a writable path, e.g. /data/user/\$USER/hpcperfstats-pgo, and match pgo_profiles.device in docker-compose.yaml"
   fi
   if [[ ! -w "${root}" ]]; then
     pgo_die "PGOROOT not writable: ${root}"

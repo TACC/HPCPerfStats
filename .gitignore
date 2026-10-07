@@ -13,7 +13,7 @@ htmlcov/
 .tools/
 node_modules/
 hpcperfstats.ini
-docker-compose.settings.yaml
+docker-compose.yaml
 tests/docker-compose.test-overlay.yaml
 dist/
 hpcperfstats/site/hpcperfstats_site/edge_nginx/

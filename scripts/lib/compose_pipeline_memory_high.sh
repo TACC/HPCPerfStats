@@ -55,6 +55,20 @@ _write_pipeline_memory_high_bytes() {
   echo "${high_bytes}" >"${dir}/memory.high"
 }
 
+read_pipeline_memory_max_bytes() {
+  local raw
+  raw="$(_read_pipeline_cgroup_file memory.max)" || true
+  if [[ -z "${raw}" || "${raw}" == max ]]; then
+    echo "compose_pipeline_memory_high: pipeline memory.max missing or unlimited" >&2
+    return 1
+  fi
+  if [[ ! "${raw}" =~ ^[0-9]+$ ]]; then
+    echo "compose_pipeline_memory_high: invalid memory.max: ${raw}" >&2
+    return 1
+  fi
+  echo "${raw}"
+}
+
 _format_bytes_mib() {
   local bytes="$1"
   echo $((bytes / 1048576))
