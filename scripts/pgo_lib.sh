@@ -35,15 +35,30 @@ pgo_chmod_shared_tree() {
   local root
   root="$(pgo_root_dir)"
   [[ -d "${root}" ]] || return 0
-  chmod 1777 "${root}" || pgo_die "chmod 1777 failed: ${root}"
-  find "${root}" -type d -exec chmod 1777 {} +
-  find "${root}" -type f -exec chmod a+rw {} +
+  # Only fix modes that are wrong — avoid rewriting the whole tree (Podman pgo context digest).
+  if [[ "$(stat -c '%a' "${root}" 2>/dev/null || echo "")" != "1777" ]]; then
+    chmod 1777 "${root}" || pgo_die "chmod 1777 failed: ${root}"
+  fi
+  find "${root}" -type d ! -perm 1777 -exec chmod 1777 {} +
+  find "${root}" -type f ! -perm -666 -exec chmod a+rw {} +
 }
 
 # Host PGOROOT for podman build --build-context=pgo=… (proxy/db PGO profraw mounts).
+# stdlib + layout-only PGOROOT: use a tiny fixed stub so ensure_layout/manifest churn
+# on the live tree does not bust Podman cache on every from=pgo RUN.
 pgo_podman_build_context_args() {
-  local root
+  local repo_root="${1:?repo_root}"
+  local root stub
   root="$(cd "$(pgo_root_dir)" && pwd)"
+  if [[ "${PGO_PHASE:-}" == stdlib ]] && pgo_tree_sketch_only "${repo_root}"; then
+    stub="${root}/.podman-sketch-context"
+    mkdir -p "${stub}"
+    if [[ ! -f "${stub}/.stable" ]]; then
+      printf '1\n' >"${stub}/.stable"
+    fi
+    printf '%s\n' "--build-context=pgo=${stub}"
+    return 0
+  fi
   printf '%s\n' "--build-context=pgo=${root}"
 }
 

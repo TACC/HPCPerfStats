@@ -85,6 +85,22 @@ if ! grep -q 'pgo_chmod_shared_tree' "${PGO_LIB}"; then
   echo "pgo_lib.sh must define pgo_chmod_shared_tree for shared PGOROOT permissions" >&2
   exit 1
 fi
+if ! grep -q '! -perm 1777' "${PGO_LIB}"; then
+  echo "pgo_chmod_shared_tree must only chmod directories that are not already 1777" >&2
+  exit 1
+fi
+if ! grep -q 'pgo_podman_build_context_args "${REPO_ROOT}"' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must pass REPO_ROOT to pgo_podman_build_context_args" >&2
+  exit 1
+fi
+if ! grep -q '.podman-sketch-context' "${PGO_LIB}"; then
+  echo "pgo_lib.sh must use stable .podman-sketch-context for stdlib sketch builds" >&2
+  exit 1
+fi
+if ! grep -q 'run_compose_up_memory_high_and_summary' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must centralize compose up + memory.high" >&2
+  exit 1
+fi
 if ! grep -q 'pgo_chmod_shared_tree' "${SCRIPT_DIR}/pgo_ensure_layout.sh"; then
   echo "pgo_ensure_layout.sh must call pgo_chmod_shared_tree" >&2
   exit 1
@@ -219,9 +235,9 @@ if [[ -z "${build_line}" || -z "${up_line}" ]]; then
   exit 1
 fi
 main_build="$(awk '/^main\(\)/ {m=1} m && /build_default_stack_images/ {print NR; exit}' "${FULL_SITE_SCRIPT}")"
-main_up="$(awk '/^main\(\)/ {m=1} m && /up_default_stack/ {print NR; exit}' "${FULL_SITE_SCRIPT}")"
+main_up="$(awk '/^main\(\)/ {m=1} m && /run_compose_up_memory_high_and_summary/ {print NR; exit}' "${FULL_SITE_SCRIPT}")"
 if [[ -z "${main_build}" || -z "${main_up}" ]]; then
-  echo "rebuild_full_site.sh main must call default stack build and up helpers" >&2
+  echo "rebuild_full_site.sh main must call build and run_compose_up_memory_high_and_summary" >&2
   exit 1
 fi
 

@@ -225,7 +225,7 @@ compose_build_web_image() {
     && git -C "${REPO_ROOT}" rev-parse HEAD >/dev/null 2>&1; then
     git_commit="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
   fi
-  mapfile -t pgo_ctx < <(pgo_podman_build_context_args)
+  mapfile -t pgo_ctx < <(pgo_podman_build_context_args "${REPO_ROOT}")
   mapfile -t cache_args < <(pgo_image_build_cache_args)
   run_cmd "${PODMAN[@]}" build \
     "${cache_args[@]}" \
@@ -244,7 +244,7 @@ compose_build_proxy_image() {
   local -a cache_args=()
   LAST_STEP="podman build proxy (PGO_PHASE=${PGO_PHASE} PGOROOT=${PGOROOT})"
   echo "rebuild_full_site.sh: ${LAST_STEP} ..."
-  mapfile -t pgo_ctx < <(pgo_podman_build_context_args)
+  mapfile -t pgo_ctx < <(pgo_podman_build_context_args "${REPO_ROOT}")
   mapfile -t cache_args < <(pgo_image_build_cache_args)
   run_cmd "${PODMAN[@]}" build \
     "${cache_args[@]}" \
@@ -261,7 +261,7 @@ compose_build_db_pg18() {
   local -a cache_args=()
   LAST_STEP="podman build ${PG18_SERVICE} (PGO_PHASE=${PGO_PHASE} PGOROOT=${PGOROOT})"
   echo "rebuild_full_site.sh: ${LAST_STEP} ..."
-  mapfile -t pgo_ctx < <(pgo_podman_build_context_args)
+  mapfile -t pgo_ctx < <(pgo_podman_build_context_args "${REPO_ROOT}")
   mapfile -t cache_args < <(pgo_image_build_cache_args)
   run_cmd "${PODMAN[@]}" build \
     "${cache_args[@]}" \
@@ -363,6 +363,25 @@ print_stack_summary() {
   done
 }
 
+run_compose_up_memory_high_and_summary() {
+  PHASE=up
+  echo "=== rebuild_full_site.sh: starting podman-compose down + up (no --build) ==="
+  up_default_stack
+  up_db_pg18
+  if [[ "${DRY_RUN}" -eq 0 ]]; then
+    verify_default_stack_running || exit 1
+  fi
+  UP_COMPLETED=1
+
+  PHASE=memory_high
+  if [[ "${DRY_RUN}" -eq 0 ]]; then
+    apply_pipeline_memory_high || exit 1
+  fi
+
+  PHASE=summary
+  print_stack_summary
+}
+
 main() {
   trap on_exit EXIT
   preflight
@@ -381,6 +400,7 @@ main() {
   fi
   "${SCRIPT_DIR}/pgo_ensure_layout.sh"
   pgo_die_if_partial_profile_collection "${REPO_ROOT}" "${PROFILE_PHASE}"
+
   resolve_pgo_phase
 
   if [[ "${PGO_PHASE}" == use && "${PROFILE_PHASE}" -eq 0 ]]; then
@@ -418,23 +438,8 @@ main() {
     return 0
   fi
 
-  PHASE=up
-  echo "=== rebuild_full_site.sh: starting podman-compose down + up (no --build) ==="
-  up_default_stack
-  up_db_pg18
-  if [[ "${DRY_RUN}" -eq 0 ]]; then
-    verify_default_stack_running || exit 1
-  fi
-  UP_COMPLETED=1
-
-  PHASE=memory_high
-  if [[ "${DRY_RUN}" -eq 0 ]]; then
-    apply_pipeline_memory_high || exit 1
-  fi
-
-  PHASE=summary
+  run_compose_up_memory_high_and_summary
   echo "Full-site rebuild complete (build + up + memory.high)."
-  print_stack_summary
 }
 
 main "$@"

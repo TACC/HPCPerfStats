@@ -116,11 +116,67 @@ def test_web_dockerfile_declares_pgo_namespace_for_each_web_row() -> None:
       assert f"hpcperfstats_bake_cflags {ns}" in build, ns
 
 
+def test_pgo_chmod_shared_tree_skips_entries_already_shared(
+  tmp_path: Path,
+) -> None:
+  pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
+  env = {**os.environ, "PGOROOT": str(tmp_path)}
+  tmp_path.chmod(0o1777)
+  (tmp_path / "manifest.yaml").write_text("x", encoding="utf-8")
+  (tmp_path / "manifest.yaml").chmod(0o666)
+  before = (tmp_path / "manifest.yaml").stat().st_mtime_ns
+  subprocess.run(
+    [
+      "bash",
+      "-c",
+      f'source "{pgo_lib}"; pgo_chmod_shared_tree',
+    ],
+    check=True,
+    env=env,
+    capture_output=True,
+    text=True,
+  )
+  after = (tmp_path / "manifest.yaml").stat().st_mtime_ns
+  assert before == after
+
+
+def test_pgo_podman_build_context_uses_stable_stub_for_stdlib_sketch(
+  tmp_path: Path,
+) -> None:
+  pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
+  repo = _repo_root()
+  env = {**os.environ, "PGOROOT": str(tmp_path), "PGO_PHASE": "stdlib"}
+  (tmp_path / "manifest.yaml").write_text("layout\n", encoding="utf-8")
+  (tmp_path / "web/shared/jemalloc/raw").mkdir(parents=True)
+  out1 = subprocess.check_output(
+    [
+      "bash",
+      "-c",
+      f'source "{pgo_lib}"; pgo_podman_build_context_args "{repo}"',
+    ],
+    env=env,
+    text=True,
+  ).strip()
+  assert ".podman-sketch-context" in out1
+  (tmp_path / "manifest.yaml").write_text("layout-churn\n", encoding="utf-8")
+  out2 = subprocess.check_output(
+    [
+      "bash",
+      "-c",
+      f'source "{pgo_lib}"; pgo_podman_build_context_args "{repo}"',
+    ],
+    env=env,
+    text=True,
+  ).strip()
+  assert out1 == out2
+
+
 def test_pgo_lib_bootstraps_pg_root_before_layout() -> None:
   pgo_lib = (_repo_root() / "scripts" / "pgo_lib.sh").read_text()
   ensure = (_repo_root() / "scripts" / "pgo_ensure_layout.sh").read_text()
   assert "pgo_ensure_pg_root" in pgo_lib
-  assert "pgo_reset_sketch_tree" in ensure
+  assert "pgo_reset_sketch_tree" in pgo_lib
+  assert "pgo_reset_sketch_tree" not in ensure
   assert "pgo_chmod_shared_tree" in pgo_lib
   assert "pgo_chmod_shared_tree" in ensure
 
@@ -908,12 +964,12 @@ def test_pgo_reset_sketch_tree_keeps_tree_when_profile_data_present(
   assert (tmp_path / "manifest.yaml").read_text(encoding="utf-8") == "keep"
 
 
-def test_pgo_ensure_layout_refreshes_manifest_after_sketch_clear(
+def test_pgo_ensure_layout_preserves_manifest_on_repeat_layout_only(
   tmp_path: Path,
 ) -> None:
   env = os.environ.copy()
   env["PGOROOT"] = str(tmp_path)
-  (tmp_path / "manifest.yaml").write_text("stale", encoding="utf-8")
+  (tmp_path / "manifest.yaml").write_text("stale-marker\n", encoding="utf-8")
   (tmp_path / "web/shared/zstd/raw").mkdir(parents=True)
   subprocess.run(
     [_repo_root() / "scripts" / "pgo_ensure_layout.sh"],
@@ -924,9 +980,35 @@ def test_pgo_ensure_layout_refreshes_manifest_after_sketch_clear(
     text=True,
   )
   manifest = (tmp_path / "manifest.yaml").read_text(encoding="utf-8")
-  assert "stale" not in manifest
-  assert "namespaces_source:" in manifest
+  assert manifest == "stale-marker\n"
   assert (tmp_path / "web/shared/zstd/raw").is_dir()
+  subprocess.run(
+    [_repo_root() / "scripts" / "pgo_ensure_layout.sh"],
+    check=True,
+    env=env,
+    cwd=_repo_root(),
+    capture_output=True,
+    text=True,
+  )
+  assert (tmp_path / "manifest.yaml").read_text(
+    encoding="utf-8"
+  ) == "stale-marker\n"
+
+
+def test_pgo_ensure_layout_writes_manifest_when_missing(tmp_path: Path) -> None:
+  env = os.environ.copy()
+  env["PGOROOT"] = str(tmp_path)
+  subprocess.run(
+    [_repo_root() / "scripts" / "pgo_ensure_layout.sh"],
+    check=True,
+    env=env,
+    cwd=_repo_root(),
+    capture_output=True,
+    text=True,
+  )
+  manifest = (tmp_path / "manifest.yaml").read_text(encoding="utf-8")
+  assert "namespaces_source:" in manifest
+  assert "created:" in manifest
 
 
 def test_profiles_ready_true_when_all_namespaces_have_profdata(
