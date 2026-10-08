@@ -174,8 +174,20 @@ if grep -qE '"\$\{PODMAN_COMPOSE\[@\]\}" up -d --build|"$\{PODMAN_COMPOSE\[@\]\}
   echo "rebuild_full_site.sh must not pass --build to compose up" >&2
   exit 1
 fi
-if ! grep -qE '"\$\{PODMAN_COMPOSE\[@\]\}" up -d --force-recreate' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must use up -d --force-recreate for default stack" >&2
+if grep -qE '"\$\{PODMAN_COMPOSE\[@\]\}" up -d --force-recreate' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must not use up -d --force-recreate (use down then up -d)" >&2
+  exit 1
+fi
+if ! grep -q 'compose_down_project' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must define compose_down_project before up" >&2
+  exit 1
+fi
+if ! grep -qF 'down -t "${timeout}" --remove-orphans' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must run podman-compose down with grace timeout before up" >&2
+  exit 1
+fi
+if ! grep -qE '"\$\{PODMAN_COMPOSE\[@\]\}" up -d' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must use up -d for default stack after down" >&2
   exit 1
 fi
 if ! grep -q 'PG18_PROFILE=pg18-migrate' "${FULL_SITE_SCRIPT}"; then
@@ -191,8 +203,12 @@ if ! grep -q 'compose_build_db_pg18' "${FULL_SITE_SCRIPT}" \
   echo "rebuild_full_site.sh must build db_pg18 image (hpcperfstats-db)" >&2
   exit 1
 fi
-if ! grep -qF -- '--profile "${PG18_PROFILE}" up -d --force-recreate "${PG18_SERVICE}"' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must up db_pg18 with profile and --force-recreate" >&2
+if ! grep -qF -- '--profile "${PG18_PROFILE}" up -d "${PG18_SERVICE}"' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must up db_pg18 with profile (no --force-recreate)" >&2
+  exit 1
+fi
+if grep -qE '"\$\{PODMAN_COMPOSE\[@\]\}".*--force-recreate|run_cmd.*--force-recreate' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must not pass --force-recreate to podman-compose" >&2
   exit 1
 fi
 
@@ -219,8 +235,8 @@ if ! grep -q 'verify_default_stack_running' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must verify stack running after up" >&2
   exit 1
 fi
-if ! grep -qF 'starting podman-compose up' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must log before compose up" >&2
+if ! grep -qF 'starting podman-compose down + up' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must log before compose down + up" >&2
   exit 1
 fi
 if ! grep -q 'print_stack_summary' "${FULL_SITE_SCRIPT}"; then

@@ -950,6 +950,25 @@ def test_alpine_dockerfiles_invoke_bash_for_pgo_not_shell() -> None:
     assert ". /usr/local/lib/hpcperfstats/pgo_clang_flags.sh" not in text
 
 
+def test_compose_pipeline_memory_high_uses_state_cgroup_path() -> None:
+  lib = (
+    _repo_root() / "scripts" / "lib" / "compose_pipeline_memory_high.sh"
+  ).read_text()
+  assert "{{.State.CgroupPath}}" in lib
+  assert "pipeline_cgroup_dir_on_host" in lib
+
+
+def test_rebuild_full_site_compose_down_before_up() -> None:
+  script = (_repo_root() / "scripts" / "rebuild_full_site.sh").read_text()
+  assert "compose_down_project" in script
+  assert 'down -t "${timeout}" --remove-orphans' in script
+  assert "up -d --force-recreate" not in script
+  assert '"${PODMAN_COMPOSE[@]}" up -d' in script
+  down_pos = script.index("compose_down_project")
+  up_pos = script.index("up_default_stack()")
+  assert down_pos < up_pos
+
+
 def test_rebuild_full_site_pgo_fail_loud_helpers() -> None:
   script = (_repo_root() / "scripts" / "rebuild_full_site.sh").read_text()
   pgo_lib = (_repo_root() / "scripts" / "pgo_lib.sh").read_text()

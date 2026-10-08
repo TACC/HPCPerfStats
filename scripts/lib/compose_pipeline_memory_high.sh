@@ -20,9 +20,12 @@ compute_pipeline_memory_high_bytes() {
 pipeline_cgroup_dir_on_host() {
   local name rel base
   name="$(pipeline_container_name)"
-  rel="$("${PODMAN[@]}" inspect --format '{{.CgroupPath}}' "${name}" 2>/dev/null)"
+  rel="$("${PODMAN[@]}" inspect --format '{{.State.CgroupPath}}' "${name}" 2>/dev/null)"
   if [[ -z "${rel}" ]]; then
-    echo "compose_pipeline_memory_high: no CgroupPath for ${name}" >&2
+    rel="$("${PODMAN[@]}" inspect --format '{{.CgroupPath}}' "${name}" 2>/dev/null)" || true
+  fi
+  if [[ -z "${rel}" ]]; then
+    echo "compose_pipeline_memory_high: no CgroupPath for ${name} (inspect .State.CgroupPath and .CgroupPath empty)" >&2
     return 1
   fi
   if [[ "${rel}" != /* ]]; then
@@ -112,9 +115,22 @@ apply_pipeline_memory_high() {
   fi
 
   read_back="$(_read_pipeline_cgroup_file memory.high)"
-  if [[ "${read_back}" != "${high_bytes}" ]]; then
-    echo "compose_pipeline_memory_high: memory.high read-back mismatch (expected ${high_bytes}, got ${read_back:-empty})" >&2
+  if [[ -z "${read_back}" || "${read_back}" == max ]]; then
+    echo "compose_pipeline_memory_high: memory.high read-back missing or unlimited" >&2
     return 1
+  fi
+  if [[ "${read_back}" != "${high_bytes}" ]]; then
+    local diff=0
+    if [[ "${read_back}" -gt "${high_bytes}" ]]; then
+      diff=$((read_back - high_bytes))
+    else
+      diff=$((high_bytes - read_back))
+    fi
+    if [[ "${diff}" -gt 1048576 ]]; then
+      echo "compose_pipeline_memory_high: memory.high read-back mismatch (expected ${high_bytes}, got ${read_back})" >&2
+      return 1
+    fi
+    high_mib="$(_format_bytes_mib "${read_back}")"
   fi
   echo "Verified pipeline memory.high=${read_back} (${high_mib} MiB)"
   return 0

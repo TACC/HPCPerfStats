@@ -41,11 +41,14 @@ usage() {
   cat <<'EOF'
 Usage: scripts/rebuild_full_site.sh [options]
 
-Build default-stack images and hpcperfstats-db (db_pg18 profile), then recreate
-the stack with:
+Build default-stack images and hpcperfstats-db (db_pg18 profile), then tear down
+the compose project (graceful stop, preserve volumes) and start:
 
-  podman-compose up -d --force-recreate
-  podman-compose --profile pg18-migrate up -d --force-recreate db_pg18
+  podman-compose down -t <timeout> --remove-orphans
+  podman-compose up -d
+  podman-compose --profile pg18-migrate up -d db_pg18
+
+Default down stop timeout: HPCPERFSTATS_COMPOSE_DOWN_TIMEOUT=30 (seconds).
 
 PGO (optional): PGOROOT defaults to /root/.hpcperfstats_pgo. Default no-arg rebuild
 uses PGO_PHASE=stdlib (no Clang PGOROOT PGO; CPython --enable-optimizations + plain make install)
@@ -282,14 +285,24 @@ build_default_stack_images() {
   compose_build_all_with_pgo
 }
 
+compose_down_project() {
+  local timeout="${HPCPERFSTATS_COMPOSE_DOWN_TIMEOUT:-30}"
+  LAST_STEP="podman-compose down -t ${timeout} --remove-orphans"
+  echo "rebuild_full_site.sh: ${LAST_STEP} (volumes preserved; no -v) ..."
+  run_cmd "${PODMAN_COMPOSE[@]}" down -t "${timeout}" --remove-orphans
+}
+
 up_default_stack() {
-  echo "Recreating default stack: up -d --force-recreate (no --build) ..."
-  run_cmd "${PODMAN_COMPOSE[@]}" up -d --force-recreate
+  compose_down_project
+  LAST_STEP="podman-compose up -d (default stack)"
+  echo "rebuild_full_site.sh: ${LAST_STEP} (no --build) ..."
+  run_cmd "${PODMAN_COMPOSE[@]}" up -d
 }
 
 up_db_pg18() {
-  echo "Recreating ${PG18_SERVICE}: --profile ${PG18_PROFILE} up -d --force-recreate (no --build) ..."
-  run_cmd "${PODMAN_COMPOSE[@]}" --profile "${PG18_PROFILE}" up -d --force-recreate "${PG18_SERVICE}"
+  LAST_STEP="podman-compose --profile ${PG18_PROFILE} up -d ${PG18_SERVICE}"
+  echo "rebuild_full_site.sh: ${LAST_STEP} (no --build) ..."
+  run_cmd "${PODMAN_COMPOSE[@]}" --profile "${PG18_PROFILE}" up -d "${PG18_SERVICE}"
 }
 
 verify_default_stack_running() {
@@ -389,7 +402,7 @@ main() {
   PHASE=build
   echo "rebuild_full_site.sh: project=${HPCPERFSTATS_COMPOSE_PROJECT} DRY_RUN=${DRY_RUN} BUILD_ONLY=${BUILD_ONLY} NO_START=${NO_START} PGO_PHASE=${PGO_PHASE}"
   if [[ "${BUILD_ONLY}" -eq 1 || "${NO_START}" -eq 1 || "${DRY_RUN}" -eq 1 ]]; then
-    echo "NOTE: up -d --force-recreate runs only when all three flags above are 0." >&2
+    echo "NOTE: compose down + up runs only when all three flags above are 0." >&2
   fi
   build_default_stack_images
 
@@ -406,7 +419,7 @@ main() {
   fi
 
   PHASE=up
-  echo "=== rebuild_full_site.sh: starting podman-compose up (force-recreate, no --build) ==="
+  echo "=== rebuild_full_site.sh: starting podman-compose down + up (no --build) ==="
   up_default_stack
   up_db_pg18
   if [[ "${DRY_RUN}" -eq 0 ]]; then

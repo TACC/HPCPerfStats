@@ -127,6 +127,10 @@ if ! grep -q 'apply_pipeline_memory_high' "${PIPELINE_SCRIPT}"; then
   echo "rebuild_pipeline.sh must call apply_pipeline_memory_high" >&2
   exit 1
 fi
+if ! grep -q 'State.CgroupPath' "${MEMORY_LIB}"; then
+  echo "compose_pipeline_memory_high.sh must read podman inspect .State.CgroupPath on host" >&2
+  exit 1
+fi
 if ! grep -q 'CgroupPath' "${MEMORY_LIB}"; then
   echo "compose_pipeline_memory_high.sh must set memory.high via podman CgroupPath on host" >&2
   exit 1
