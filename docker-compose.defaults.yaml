@@ -58,7 +58,7 @@ services:
     logging: *hpc-logging
     # cgroup memory.max for sync_timedb / supervisord (Podman/Docker --memory).
     # Tune from host MemTotal minus db, web, redis; 128g fits ~192 GiB hosts with no swap.
-    stop_grace_period: ${HPCPERFSTATS_PIPELINE_STOP_GRACE:-30s}
+    stop_grace_period: ${HPCPERFSTATS_PIPELINE_STOP_GRACE:-480s}
     depends_on:
       - web
     command: /home/hpcperfstats/services-conf/supervisor_startup.sh

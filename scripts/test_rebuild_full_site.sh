@@ -240,6 +240,33 @@ if ! grep -q 'compose_down_project' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must define compose_down_project before up" >&2
   exit 1
 fi
+if ! grep -q 'pipeline_supervisor_shutdown.sh' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must source pipeline_supervisor_shutdown.sh" >&2
+  exit 1
+fi
+HELPER="${SCRIPT_DIR}/lib/pipeline_supervisor_shutdown.sh"
+if ! grep -q 'supervisorctl -c /home/hpcperfstats/services-conf/supervisord.conf shutdown' "${HELPER}"; then
+  echo "pipeline_supervisor_shutdown.sh must run supervisorctl shutdown" >&2
+  exit 1
+fi
+if grep -q 'supervisorctl .*>/dev/null || true' "${HELPER}" || grep -q 'shutdown || true' "${HELPER}"; then
+  echo "pipeline_supervisor_shutdown.sh must not ignore supervisorctl failure" >&2
+  exit 1
+fi
+if ! grep -q 'Shut down' "${HELPER}"; then
+  echo "pipeline_supervisor_shutdown.sh must accept supervisorctl 'Shut down' when the socket closes" >&2
+  exit 1
+fi
+shutdown_before_down="$(awk '
+  /^compose_down_project\(\)/ { in_fn = 1 }
+  in_fn && /pipeline_supervisor_shutdown$/ { call = NR }
+  in_fn && /down --remove-orphans/ { down = NR; exit }
+  END { if (call && down && call < down) print "yes" }
+' "${FULL_SITE_SCRIPT}")"
+if [[ "${shutdown_before_down}" != "yes" ]]; then
+  echo "compose_down_project must call pipeline_supervisor_shutdown before down" >&2
+  exit 1
+fi
 if grep -qE 'down -t "\$\{HPCPERFSTATS_COMPOSE_DOWN_TIMEOUT|down -t "\$\{timeout\}|down -t 30' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must not pass down -t (overrides compose stop_grace_period)" >&2
   exit 1

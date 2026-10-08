@@ -90,7 +90,16 @@ chmod -R 0600  /home/hpcperfstats/.ssh/*
 #mkdir -p /var/lib/hpcperfstats-syslog
 #/usr/local/bin/python3 -m hpcperfstats.render_syslog_ng_generated || exit 1
 
-/usr/bin/supervisord -c /home/hpcperfstats/services-conf/supervisord.conf
+supervisord_pid=
+trap 'kill -TERM "${supervisord_pid}" 2>/dev/null || true' TERM INT
+/usr/bin/supervisord -c /home/hpcperfstats/services-conf/supervisord.conf &
+supervisord_pid=$!
+status=0
+while kill -0 "${supervisord_pid}" 2>/dev/null; do
+  wait "${supervisord_pid}"
+  status=$?
+done
+exit "${status}"
 
 
 

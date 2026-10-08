@@ -23,13 +23,15 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/lib/compose_frontend_helpers.sh"
 # shellcheck source=lib/compose_pipeline_memory_high.sh
 source "${SCRIPT_DIR}/lib/compose_pipeline_memory_high.sh"
+# shellcheck source=lib/pipeline_supervisor_shutdown.sh
+source "${SCRIPT_DIR}/lib/pipeline_supervisor_shutdown.sh"
 
 PIPELINE_BUILD_TARGET="hpcperfstats-pipeline-refresh"
 PRESERVE_FRONTEND_DIR="${REPO_ROOT}/.build/pipeline-rebuild-frontend"
 FRONTEND_BACKUP_TAR=""
 FRONTEND_RESTORE_DIR=""
 _PIPELINE_REBUILD_CLEANUP_DONE=0
-PIPELINE_STOP_TIMEOUT="${HPCPERFSTATS_PIPELINE_STOP_TIMEOUT:-30}"
+PIPELINE_STOP_TIMEOUT="${HPCPERFSTATS_PIPELINE_STOP_TIMEOUT:-480}"
 WEB_STOP_TIMEOUT="${HPCPERFSTATS_WEB_STOP_TIMEOUT:-30}"
 PROXY_STOP_TIMEOUT="${HPCPERFSTATS_PROXY_STOP_TIMEOUT:-30}"
 WEB_WAIT_TIMEOUT="${HPCPERFSTATS_WEB_WAIT_TIMEOUT:-600}"
@@ -237,6 +239,8 @@ build_pipeline_image() {
 # Never touch db / redis / rabbitmq.
 stop_and_remove_web_pipeline() {
   echo "Leaving db / redis / rabbitmq running. Not rebuilding proxy image."
+  echo "Shutting down pipeline supervisord ..."
+  pipeline_supervisor_shutdown
   echo "Stopping pipeline (grace ${PIPELINE_STOP_TIMEOUT}s) ..."
   run_cmd "${PODMAN_COMPOSE[@]}" stop -t "${PIPELINE_STOP_TIMEOUT}" pipeline || true
   echo "Stopping web (grace ${WEB_STOP_TIMEOUT}s) ..."

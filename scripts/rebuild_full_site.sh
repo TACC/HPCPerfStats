@@ -26,6 +26,8 @@ source "${SCRIPT_DIR}/lib/compose_pipeline_memory_high.sh"
 source "${SCRIPT_DIR}/lib/compose_frontend_helpers.sh"
 # shellcheck source=pgo_lib.sh
 source "${SCRIPT_DIR}/pgo_lib.sh"
+# shellcheck source=lib/pipeline_supervisor_shutdown.sh
+source "${SCRIPT_DIR}/lib/pipeline_supervisor_shutdown.sh"
 
 DRY_RUN=0
 BUILD_ONLY=0
@@ -279,6 +281,9 @@ compose_build_all_with_pgo() {
 }
 
 compose_down_project() {
+  LAST_STEP="pipeline supervisor shutdown"
+  echo "rebuild_full_site.sh: ${LAST_STEP} ..."
+  pipeline_supervisor_shutdown
   LAST_STEP="podman-compose down --remove-orphans"
   echo "rebuild_full_site.sh: ${LAST_STEP} (volumes preserved; no -v; stop_grace_period from compose) ..."
   run_cmd "${PODMAN_COMPOSE[@]}" down --remove-orphans

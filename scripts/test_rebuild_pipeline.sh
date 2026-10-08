@@ -216,8 +216,22 @@ if ! grep -q 'wait_for_web_http "http://web:8000/"' "${PIPELINE_SCRIPT}"; then
 fi
 
 # Default stop grace for pipeline/web is 30s (matches compose stop_grace_period).
-if ! grep -q 'PIPELINE_STOP_TIMEOUT="${HPCPERFSTATS_PIPELINE_STOP_TIMEOUT:-30}"' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh default PIPELINE_STOP_TIMEOUT must be 30" >&2
+if ! grep -q 'PIPELINE_STOP_TIMEOUT="${HPCPERFSTATS_PIPELINE_STOP_TIMEOUT:-480}"' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh default PIPELINE_STOP_TIMEOUT must be 480" >&2
+  exit 1
+fi
+if ! grep -q 'pipeline_supervisor_shutdown.sh' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must source pipeline_supervisor_shutdown.sh" >&2
+  exit 1
+fi
+shutdown_before_stop="$(awk '
+  /^stop_and_remove_web_pipeline\(\)/ { in_fn = 1 }
+  in_fn && /pipeline_supervisor_shutdown$/ { call = NR }
+  in_fn && /stop -t/ && /pipeline/ { stop = NR; exit }
+  END { if (call && stop && call < stop) print "yes" }
+' "${PIPELINE_SCRIPT}")"
+if [[ "${shutdown_before_stop}" != "yes" ]]; then
+  echo "stop_and_remove_web_pipeline must call pipeline_supervisor_shutdown before stop -t pipeline" >&2
   exit 1
 fi
 if ! grep -q 'WEB_STOP_TIMEOUT="${HPCPERFSTATS_WEB_STOP_TIMEOUT:-30}"' "${PIPELINE_SCRIPT}"; then
@@ -225,13 +239,13 @@ if ! grep -q 'WEB_STOP_TIMEOUT="${HPCPERFSTATS_WEB_STOP_TIMEOUT:-30}"' "${PIPELI
   exit 1
 fi
 
-COMPOSE_YAML="${SCRIPT_DIR}/../docker-compose.yaml"
-if ! grep -q 'HPCPERFSTATS_PIPELINE_STOP_GRACE:-30s' "${COMPOSE_YAML}"; then
-  echo "docker-compose.yaml pipeline stop_grace_period default must be 30s" >&2
+COMPOSE_YAML="${SCRIPT_DIR}/../docker-compose.defaults.yaml"
+if ! grep -q 'HPCPERFSTATS_PIPELINE_STOP_GRACE:-480s' "${COMPOSE_YAML}"; then
+  echo "docker-compose.defaults.yaml pipeline stop_grace_period default must be 480s" >&2
   exit 1
 fi
 if ! grep -q 'HPCPERFSTATS_WEB_STOP_GRACE:-30s' "${COMPOSE_YAML}"; then
-  echo "docker-compose.yaml web stop_grace_period default must be 30s" >&2
+  echo "docker-compose.defaults.yaml web stop_grace_period default must be 30s" >&2
   exit 1
 fi
 

@@ -120,7 +120,7 @@ def test_supervisor_startup_wait_order_is_db_then_redis_then_web():
 
 
 def test_supervisord_runs_as_hpcperfstats_user():
-  """[supervisord] drops to hpcperfstats with user-writable pidfile; no supervisorctl RPC."""
+  """[supervisord] drops to hpcperfstats; control socket is unix /tmp mode 0700."""
   config = configparser.ConfigParser()
   config.read(_supervisord_conf_path())
 
@@ -129,9 +129,38 @@ def test_supervisord_runs_as_hpcperfstats_user():
   assert pidfile.startswith("/tmp/"), pidfile
   assert "/var/run" not in pidfile
 
-  assert not config.has_section("unix_http_server")
-  assert not config.has_section("supervisorctl")
-  assert not any(s.startswith("rpcinterface:") for s in config.sections())
+  assert config.has_section("unix_http_server")
+  assert config.get("unix_http_server", "file") == "/tmp/supervisor.sock"
+  assert config.get("unix_http_server", "chmod") == "0700"
+  assert config.has_section("supervisorctl")
+  assert (
+    config.get("supervisorctl", "serverurl") == "unix:///tmp/supervisor.sock"
+  )
+  assert config.has_section("rpcinterface:supervisor")
+  assert not config.has_section("inet_http_server")
+
+
+def test_supervisord_stop_signals_drain_term_and_kill_watcher_rsync():
+  """Drain programs get SIGTERM and 130s; watcher and rsync are SIGKILL immediately."""
+  config = configparser.ConfigParser()
+  config.read(_supervisord_conf_path())
+
+  drain = (
+    "program:hpcperfstats-rabbitmq-listener",
+    "program:sync_timedb",
+    "program:update_metrics",
+  )
+  for section in drain:
+    assert config.get(section, "stopsignal") == "TERM", section
+    assert config.get(section, "stopasgroup") == "true", section
+    assert config.get(section, "killasgroup") == "true", section
+    assert int(config.get(section, "stopwaitsecs")) >= 120, section
+
+  for section in ("program:rabbitmq-watcher", "program:rsync_data"):
+    assert config.get(section, "stopsignal") == "KILL", section
+    assert config.get(section, "stopasgroup") == "true", section
+    assert config.get(section, "killasgroup") == "true", section
+    assert int(config.get(section, "stopwaitsecs")) <= 1, section
 
 
 def test_supervisord_has_no_root_programs():
@@ -158,6 +187,9 @@ def test_supervisor_startup_keeps_root_prep_without_exec():
     in content
   )
   assert "exec /usr/bin/supervisord" not in content
+  assert "supervisord_pid" in content
+  assert 'kill -TERM "${supervisord_pid}"' in content
+  assert "trap " in content
 
 
 def test_supervisor_startup_syslog_lines_are_commented_out():
