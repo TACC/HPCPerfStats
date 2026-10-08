@@ -409,7 +409,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    **`nginx-csp-no-active.inc`**, **`nginx-csp-django-html.inc`**) as the **only**
    runtime source for those snippets (they are **not** baked into **`proxy.Dockerfile`**).
 
-   Full-stack image rebuilds (including **proxy** and homemade **db_pg18**) use **`./scripts/rebuild_full_site.sh`**, which compose-builds **web**, **proxy**, and **`db_pg18`** (Clang **22** in-image on Alpine **db/proxy** and Debian **`python-build`**), then recreates containers without **`up --build`**. Optional live-soak PGO: **`./scripts/rebuild_full_site.sh --profile-phase`**, then soak, then a default rebuild for the one-time profile-guided use pass (see **`docs/upgrade.md`**).
+   Full-stack image rebuilds (including **proxy** and homemade **db_pg18**) use **`./scripts/rebuild_full_site.sh`**, which compose-builds **web**, **proxy**, and **`db_pg18`** (Clang **22** in-image on Alpine **db/proxy** and Debian **`python-build`**), then recreates containers without **`up --build`**. Default rebuild is **stdlib** (no PGOROOT PGO). Optional Clang PGO: **`--profile-phase`** (generate + soak), then **`--pgo-use`**, later **`--pgo-skip`** (see **`docs/upgrade.md`**).
 
    The **`proxy`** image is **source-built** from **`services-conf/proxy.Dockerfile`**:
    pinned **nginx 1.31.6**, **jemalloc**, **zlib-ng (ZLIB_COMPAT)**, **OpenSSL 3.5.x**,

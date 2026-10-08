@@ -40,7 +40,7 @@ runtime-compatibility endpoint. OCI filenames (`Dockerfile`, `.dockerignore`,
    |------|---------|
    | Rebuild SPA in running stack (optional hot path; no pipeline restart) | `./scripts/rebuild_frontend.sh` |
    | Rebuild shared hpcperfstats image; down proxy; ``up -d web proxy pipeline`` (db/redis/rabbitmq stay up; proxy image not rebuilt); sets pipeline ``memory.high`` to ⅔ of ``memory.max`` | `./scripts/rebuild_pipeline.sh` |
-   | Full stack + ``db_pg18``: ``compose build`` (web, proxy, db_pg18), then ``up -d --force-recreate`` (no ``--build`` on up); optional PGO via ``--profile-phase`` + ``PGOROOT`` (default ``/root/.hpcperfstats_pgo``); for live soak, bind ``pgo_profiles`` on web/pipeline/proxy/db_pg18 per ``docker-compose.yaml.example``; same ``memory.high`` on pipeline | `./scripts/rebuild_full_site.sh` |
+   | Full stack + ``db_pg18``: default **stdlib** rebuild (no PGOROOT); optional PGO: ``--profile-phase`` (generate + soak), ``--pgo-use`` (merge + one-time use), ``--pgo-skip`` (rebuild with merged profdata); ``PGOROOT`` default ``/root/.hpcperfstats_pgo`` when PGO flags used; bind ``pgo_profiles`` for soak per ``docker-compose.yaml.example``; compose down + ``up -d`` (no ``--build`` on up); ``memory.high`` on pipeline | `./scripts/rebuild_full_site.sh` |
    | Detached recreate of web+pipeline only (no image build) | `./scripts/recreate_web_pipeline.sh` |
    | Rebuild just the app and keep persistent services running | `docker compose stop -t 30 web pipeline proxy && docker compose up --build -d web pipeline && docker compose start proxy` |
 

@@ -59,27 +59,29 @@ pgo_ensure_sketch_podman_context_dir() {
   fi
 }
 
-pgo_stdlib_sketch_only_phase() {
-  local repo_root="${1:?repo_root}"
-  [[ "${PGO_PHASE:-}" == stdlib ]] && pgo_tree_sketch_only "${repo_root}"
+# FHS empty dir (stable Podman --build-context=pgo digest); never written by rebuild.
+pgo_stdlib_empty_build_context_dir() {
+  local d="${HPCPERFSTATS_PGO_EMPTY_BUILD_CONTEXT:-/usr/share/empty}"
+  if [[ ! -d "${d}" ]]; then
+    pgo_die \
+      "stdlib podman build requires an existing empty directory for --build-context=pgo (set HPCPERFSTATS_PGO_EMPTY_BUILD_CONTEXT): ${d}"
+  fi
+  printf '%s' "${d}"
 }
 
 pgo_use_sketch_podman_build_context() {
   local repo_root="${1:?repo_root}"
   pgo_tree_sketch_only "${repo_root}" \
     || return 1
-  case "${PGO_PHASE:-}" in
-    stdlib | skip) return 0 ;;
-    *) return 1 ;;
-  esac
+  [[ "${PGO_PHASE:-}" == skip ]]
 }
 
-# Host PGOROOT tree for compose bind / generate / skip+profdata — not for stdlib sketch builds.
+# Host PGOROOT tree for compose bind / generate / skip+profdata — not for stdlib builds.
 pgo_prepare_host_pgroot_for_rebuild() {
   local repo_root="${1:?repo_root}"
   local ensure_layout="${2:?ensure_layout script path}"
-  if pgo_stdlib_sketch_only_phase "${repo_root}"; then
-    echo "PGO: stdlib sketch — no host PGOROOT layout (build uses services-conf/pgo_sketch_podman_context)" >&2
+  if [[ "${PGO_PHASE:-}" == stdlib ]]; then
+    echo "PGO: stdlib — no host PGOROOT layout" >&2
     return 0
   fi
   "${ensure_layout}"
@@ -108,7 +110,13 @@ pgo_stderr_why_full_pgroot_context() {
 # Host PGOROOT for podman build --build-context=pgo=… (proxy/db PGO profraw mounts).
 pgo_podman_build_context_args() {
   local repo_root="${1:?repo_root}"
-  local root stub
+  local root stub empty
+  if [[ "${PGO_PHASE:-}" == stdlib ]]; then
+    empty="$(pgo_stdlib_empty_build_context_dir)"
+    echo "pgo podman build-context: stdlib empty ${empty} (no PGOROOT)" >&2
+    printf '%s\n' "--build-context=pgo=${empty}"
+    return 0
+  fi
   root="$(cd "$(pgo_root_dir)" && pwd)"
   if pgo_use_sketch_podman_build_context "${repo_root}"; then
     pgo_ensure_sketch_podman_context_dir "${repo_root}"
@@ -127,6 +135,27 @@ pgo_image_build_cache_args() {
   if [[ "${PGO_PHASE:-}" == use ]]; then
     printf '%s\n' --no-cache
   fi
+}
+
+# After explicit podman build, compose up must not build/pull from a registry.
+# Tag podman-compose fallback names ({project}_{service}) when include-merge drops image:.
+compose_ensure_local_stack_image_tags() {
+  local project canonical alias
+  project="${HPCPERFSTATS_COMPOSE_PROJECT:-hpcperfstats}"
+  while IFS= read -r canonical alias; do
+    [[ -n "${canonical}" ]] || continue
+    if ! podman image exists "${canonical}"; then
+      pgo_die "stack image missing before compose up: ${canonical} (build images first)"
+    fi
+    if [[ "${canonical}" != "${alias}" ]] && ! podman image exists "${alias}"; then
+      podman tag "${canonical}" "${alias}"
+    fi
+  done <<EOF
+hpcperfstats:latest ${project}_web:latest
+hpcperfstats:latest ${project}_pipeline:latest
+hpcperfstats-proxy:latest ${project}_proxy:latest
+hpcperfstats-db:latest ${project}_db_pg18:latest
+EOF
 }
 
 pgo_use_breadcrumb_path() {

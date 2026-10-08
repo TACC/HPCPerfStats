@@ -29,13 +29,15 @@ DRY_RUN=0
 BUILD_ONLY=0
 NO_START=0
 PROFILE_PHASE=0
+PGO_USE=0
+PGO_SKIP=0
 
 export PGOROOT="${PGOROOT:-${HPCPERFSTATS_PGO_ROOT:-/root/.hpcperfstats_pgo}}"
 
 COMPOSE_IMAGE_BUILD_SERVICES=(web proxy)
 PG18_PROFILE=pg18-migrate
 PG18_SERVICE=db_pg18
-PGO_PHASE=skip
+PGO_PHASE=stdlib
 
 usage() {
   cat <<'EOF'
@@ -50,17 +52,17 @@ the compose project (graceful stop, preserve volumes) and start:
 
 Default down stop timeout: HPCPERFSTATS_COMPOSE_DOWN_TIMEOUT=30 (seconds).
 
-PGO (optional): PGOROOT defaults to /root/.hpcperfstats_pgo. Default no-arg rebuild
-uses PGO_PHASE=stdlib (no Clang PGOROOT PGO; CPython --enable-optimizations + plain make install)
-when PGOROOT has no profile artifacts (partial collection exits before compile). --profile-phase wipes PGOROOT and builds with
-PGO_PHASE=generate for soak; if a complete profile
-set already exists (all namespaces ready), you must confirm interactively or set
-HPC_PGO_PROFILE_PHASE_FORCE_WIPE=1. After soak, the first default run performs
-one merge + PGO_PHASE=use rebuild (db_pg18, proxy, web; podman build --no-cache),
-then skip (same merged profiles, cache allowed) until the next --profile-phase.
+PGO (optional): default rebuild is always PGO_PHASE=stdlib — no PGOROOT access, no Clang
+PGOROOT PGO (CPython --enable-optimizations + plain make install). PGOROOT defaults to
+/root/.hpcperfstats_pgo only when a PGO flag is used.
+
+  --profile-phase  Wipe PGOROOT (confirm if complete set) and build PGO_PHASE=generate for live soak
+  --pgo-use        After soak: merge profiles + one-time PGO_PHASE=use rebuild (--no-cache on images)
+  --pgo-skip       Rebuild with PGO_PHASE=skip (merged profdata under PGOROOT; podman cache allowed)
+
+Only one of --profile-phase, --pgo-use, --pgo-skip may be passed.
 
 Options:
-  --profile-phase  PGO generate build + up for live soak (fresh PGOROOT wipe)
   --dry-run        Print planned steps only
   --build-only     Build images only; do not up -d or set memory.high
   --no-start       Build images, skip up -d and memory.high
@@ -72,6 +74,14 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --profile-phase)
       PROFILE_PHASE=1
+      shift
+      ;;
+    --pgo-use)
+      PGO_USE=1
+      shift
+      ;;
+    --pgo-skip)
+      PGO_SKIP=1
       shift
       ;;
     --dry-run)
@@ -97,6 +107,20 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+pgo_validate_exclusive_cli_flags() {
+  local n=0
+  [[ "${PROFILE_PHASE}" -eq 1 ]] && n=$((n + 1))
+  [[ "${PGO_USE}" -eq 1 ]] && n=$((n + 1))
+  [[ "${PGO_SKIP}" -eq 1 ]] && n=$((n + 1))
+  if [[ "${n}" -gt 1 ]]; then
+    echo "rebuild_full_site.sh: only one of --profile-phase, --pgo-use, --pgo-skip allowed" >&2
+    usage >&2
+    exit 2
+  fi
+}
+
+pgo_validate_exclusive_cli_flags
 
 run_cmd() {
   printf '+'
@@ -134,24 +158,21 @@ preflight() {
 resolve_pgo_phase() {
   if [[ "${PROFILE_PHASE}" -eq 1 ]]; then
     PGO_PHASE=generate
-    echo "PGO: profile-phase → PGO_PHASE=generate" >&2
+    echo "PGO: --profile-phase → PGO_PHASE=generate" >&2
     return 0
   fi
-  local crumb
-  crumb="$(pgo_use_breadcrumb_path)"
-  if [[ -f "${crumb}" ]]; then
-    PGO_PHASE=skip
-    echo "PGO: skip — use breadcrumb present (${crumb})" >&2
-    return 0
-  fi
-  if profiles_ready "${REPO_ROOT}"; then
+  if [[ "${PGO_USE}" -eq 1 ]]; then
     PGO_PHASE=use
-    echo "PGO: profiles ready (soak/generate satisfied for all namespaces) → one-time PGO_PHASE=use rebuild" >&2
+    echo "PGO: --pgo-use → PGO_PHASE=use (merge + profile-guided rebuild)" >&2
+    return 0
+  fi
+  if [[ "${PGO_SKIP}" -eq 1 ]]; then
+    PGO_PHASE=skip
+    echo "PGO: --pgo-skip → PGO_PHASE=skip (merged profdata; build cache allowed)" >&2
     return 0
   fi
   PGO_PHASE=stdlib
-  echo "PGO: stdlib — empty PGOROOT; no Clang PGO on libs; CPython --enable-optimizations + make install" >&2
-  echo "PGO: for live-soak Clang PGO run --profile-phase, soak, then rebuild when profiles_ready" >&2
+  echo "PGO: default stdlib — no PGOROOT; no Clang PGO (optional: --profile-phase, --pgo-use, --pgo-skip)" >&2
 }
 
 prepare_profile_phase() {
@@ -279,6 +300,7 @@ compose_build_all_with_pgo() {
     compose_build_service "${svc}" || return 1
   done
   compose_build_db_pg18 || return 1
+  compose_ensure_local_stack_image_tags
 }
 
 build_default_stack_images() {
@@ -294,15 +316,15 @@ compose_down_project() {
 
 up_default_stack() {
   compose_down_project
-  LAST_STEP="podman-compose up -d (default stack)"
-  echo "rebuild_full_site.sh: ${LAST_STEP} (no --build) ..."
-  run_cmd "${PODMAN_COMPOSE[@]}" up -d
+  LAST_STEP="podman-compose up -d --no-build (default stack)"
+  echo "rebuild_full_site.sh: ${LAST_STEP} ..."
+  run_cmd "${PODMAN_COMPOSE[@]}" up -d --no-build
 }
 
 up_db_pg18() {
-  LAST_STEP="podman-compose --profile ${PG18_PROFILE} up -d ${PG18_SERVICE}"
-  echo "rebuild_full_site.sh: ${LAST_STEP} (no --build) ..."
-  run_cmd "${PODMAN_COMPOSE[@]}" --profile "${PG18_PROFILE}" up -d "${PG18_SERVICE}"
+  LAST_STEP="podman-compose --profile ${PG18_PROFILE} up -d --no-build ${PG18_SERVICE}"
+  echo "rebuild_full_site.sh: ${LAST_STEP} ..."
+  run_cmd "${PODMAN_COMPOSE[@]}" --profile "${PG18_PROFILE}" up -d --no-build "${PG18_SERVICE}"
 }
 
 verify_default_stack_running() {
@@ -365,7 +387,9 @@ print_stack_summary() {
 
 run_compose_up_memory_high_and_summary() {
   # Compose pgo_profiles bind needs the host path to exist (empty dir is enough).
-  pgo_ensure_pg_root
+  if [[ "${PGO_PHASE}" != stdlib ]]; then
+    pgo_ensure_pg_root
+  fi
   PHASE=up
   echo "=== rebuild_full_site.sh: starting podman-compose down + up (no --build) ==="
   up_default_stack
@@ -398,11 +422,13 @@ main() {
       pgo_confirm_wipe_pgroot_for_profile_phase "${REPO_ROOT}"
     fi
   fi
-  pgo_die_if_partial_profile_collection "${REPO_ROOT}" "${PROFILE_PHASE}"
   resolve_pgo_phase
-  pgo_prepare_host_pgroot_for_rebuild "${REPO_ROOT}" "${SCRIPT_DIR}/pgo_ensure_layout.sh"
+  if [[ "${PGO_PHASE}" != stdlib ]]; then
+    pgo_die_if_partial_profile_collection "${REPO_ROOT}" "${PROFILE_PHASE}"
+    pgo_prepare_host_pgroot_for_rebuild "${REPO_ROOT}" "${SCRIPT_DIR}/pgo_ensure_layout.sh"
+  fi
 
-  if [[ "${PGO_PHASE}" == use && "${PROFILE_PHASE}" -eq 0 ]]; then
+  if [[ "${PGO_USE}" -eq 1 ]]; then
     run_pgo_use_path
     PHASE=memory_high
     if [[ "${DRY_RUN}" -eq 0 && "${BUILD_ONLY}" -eq 0 && "${NO_START}" -eq 0 ]]; then

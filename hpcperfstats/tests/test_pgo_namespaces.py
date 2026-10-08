@@ -140,17 +140,19 @@ def test_pgo_chmod_shared_tree_skips_entries_already_shared(
   assert before == after
 
 
-def test_pgo_podman_build_context_uses_stable_stub_for_stdlib_sketch(
+def test_pgo_podman_build_context_stdlib_uses_empty_dir_not_pgoroot(
   tmp_path: Path,
 ) -> None:
   pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
   repo = _repo_root()
-  pgoroot = tmp_path / "pgoroot"
-  pgoroot.mkdir()
-  env = {**os.environ, "PGOROOT": str(pgoroot), "PGO_PHASE": "stdlib"}
-  (pgoroot / "manifest.yaml").write_text("layout\n", encoding="utf-8")
-  (pgoroot / "web/shared/jemalloc/raw").mkdir(parents=True)
-  out1 = subprocess.check_output(
+  empty = tmp_path / "empty_ctx"
+  empty.mkdir()
+  env = {
+    **os.environ,
+    "PGO_PHASE": "stdlib",
+    "HPCPERFSTATS_PGO_EMPTY_BUILD_CONTEXT": str(empty),
+  }
+  out = subprocess.check_output(
     [
       "bash",
       "-c",
@@ -159,21 +161,8 @@ def test_pgo_podman_build_context_uses_stable_stub_for_stdlib_sketch(
     env=env,
     text=True,
   ).strip()
-  assert "pgo_sketch_podman_context" in out1
-  (pgoroot / "manifest.yaml").write_text("layout-churn\n", encoding="utf-8")
-  out2 = subprocess.check_output(
-    [
-      "bash",
-      "-c",
-      f'source "{pgo_lib}"; pgo_podman_build_context_args "{repo}"',
-    ],
-    env=env,
-    text=True,
-  ).strip()
-  assert out1 == out2
-  assert (
-    repo / "services-conf" / "pgo_sketch_podman_context" / ".stable"
-  ).is_file()
+  assert f"--build-context=pgo={empty}" in out
+  assert "pgo_sketch_podman_context" not in out
 
 
 def test_pgo_podman_build_context_uses_stub_for_skip_sketch_only(
@@ -198,7 +187,7 @@ def test_pgo_podman_build_context_uses_stub_for_skip_sketch_only(
   assert "pgo_sketch_podman_context" in out
 
 
-def test_pgo_prepare_host_pgroot_skips_layout_on_stdlib_sketch(
+def test_pgo_prepare_host_pgroot_skips_layout_on_stdlib(
   tmp_path: Path,
 ) -> None:
   pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
@@ -1092,6 +1081,27 @@ def test_compose_pipeline_memory_high_uses_state_cgroup_path() -> None:
   ).read_text()
   assert "{{.State.CgroupPath}}" in lib
   assert "pipeline_cgroup_dir_on_host" in lib
+
+
+def test_docker_compose_example_pgo_overrides_keep_image_names() -> None:
+  example = (_repo_root() / "docker-compose.yaml.example").read_text()
+  block_start = example.index("services:\n  web:")
+  block = example[block_start : block_start + 600]
+  assert "image: hpcperfstats" in block
+  assert "image: hpcperfstats-proxy" in block
+  assert "image: hpcperfstats-db" in block
+
+
+def test_rebuild_full_site_default_stdlib_pgo_only_via_flags() -> None:
+  script = (_repo_root() / "scripts" / "rebuild_full_site.sh").read_text()
+  assert "PGO_PHASE=stdlib" in script
+  assert "--pgo-use" in script
+  assert "--pgo-skip" in script
+  resolve_start = script.index("resolve_pgo_phase()")
+  resolve_end = script.index("\nprepare_profile_phase()", resolve_start)
+  resolve_body = script[resolve_start:resolve_end]
+  assert "profiles_ready" not in resolve_body
+  assert "pgo_use_breadcrumb" not in resolve_body
 
 
 def test_rebuild_full_site_compose_down_before_up() -> None:

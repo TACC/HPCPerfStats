@@ -24,9 +24,10 @@ services:
       # (frontend-builder COPY + git rev-parse). Default unknown falls back to .git.
       args:
         HPCPERFSTATS_GIT_COMMIT: ${HPCPERFSTATS_GIT_COMMIT:-unknown}
-        PGO_PHASE: ${PGO_PHASE:-skip}
+        PGO_PHASE: ${PGO_PHASE:-stdlib}
         PGO_ROOT: ${PGO_ROOT:-/root/.hpcperfstats_pgo}
     image: hpcperfstats
+    pull_policy: never
     restart: always
     logging: *hpc-logging
     command: /home/hpcperfstats/services-conf/django_startup.sh
@@ -52,6 +53,7 @@ services:
 
   pipeline:
     image: hpcperfstats
+    pull_policy: never
     restart: always
     logging: *hpc-logging
     # cgroup memory.max for sync_timedb / supervisord (Podman/Docker --memory).
@@ -121,12 +123,12 @@ services:
       context: ./
       dockerfile: services-conf/proxy.Dockerfile
       args:
-        PGO_PHASE: ${PGO_PHASE:-skip}
+        PGO_PHASE: ${PGO_PHASE:-stdlib}
         PGO_ROOT: ${PGO_ROOT:-/root/.hpcperfstats_pgo}
       # TLS PEMs materialized at container start from proxy_ssl_source settings volume.
       # No additional_contexts / no .env for TLS paths.
     image: hpcperfstats-proxy
-
+    pull_policy: never
     restart: always
     logging: *hpc-logging
     depends_on:
@@ -262,9 +264,10 @@ services:
       context: ./services-conf
       dockerfile: db.Dockerfile
       args:
-        PGO_PHASE: ${PGO_PHASE:-skip}
+        PGO_PHASE: ${PGO_PHASE:-stdlib}
         PGO_ROOT: ${PGO_ROOT:-/root/.hpcperfstats_pgo}
     image: hpcperfstats-db
+    pull_policy: never
     logging: *hpc-logging
     shm_size: "16gb"
     # io_uring (PG18 -c io_method=io_uring):

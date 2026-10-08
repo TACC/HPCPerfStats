@@ -73,8 +73,12 @@ if ! grep -q 'pgo_prepare_host_pgroot_for_rebuild' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must prepare host PGOROOT via pgo_prepare_host_pgroot_for_rebuild" >&2
   exit 1
 fi
-if ! grep -q 'pgo_stdlib_sketch_only_phase' "${PGO_LIB}"; then
-  echo "pgo_lib.sh must skip host PGOROOT layout on stdlib sketch" >&2
+if ! grep -q 'PGO: stdlib — no host PGOROOT layout' "${PGO_LIB}"; then
+  echo "pgo_lib.sh must skip host PGOROOT layout on stdlib" >&2
+  exit 1
+fi
+if ! grep -q 'pgo_stdlib_empty_build_context_dir' "${PGO_LIB}"; then
+  echo "pgo_lib.sh must use fixed empty dir for stdlib podman pgo context" >&2
   exit 1
 fi
 if grep -q 'run_cmd "${SCRIPT_DIR}/pgo_ensure_layout.sh"' "${FULL_SITE_SCRIPT}"; then
@@ -98,15 +102,19 @@ if ! grep -q 'pgo_podman_build_context_args "${REPO_ROOT}"' "${FULL_SITE_SCRIPT}
   exit 1
 fi
 if ! grep -q 'pgo_ensure_sketch_podman_context_dir' "${PGO_LIB}"; then
-  echo "pgo_lib.sh must ensure gitignored sketch podman context dir" >&2
+  echo "pgo_lib.sh must ensure gitignored sketch podman context dir for skip sketch-only" >&2
   exit 1
 fi
 if ! grep -q 'pgo_sketch_podman_context' "${PGO_LIB}"; then
-  echo "pgo_lib.sh must use local services-conf/pgo_sketch_podman_context for sketch builds" >&2
+  echo "pgo_lib.sh must use local services-conf/pgo_sketch_podman_context for skip sketch builds" >&2
   exit 1
 fi
 if ! grep -q 'pgo_use_sketch_podman_build_context' "${PGO_LIB}"; then
-  echo "pgo_lib.sh must gate sketch podman context on stdlib|skip + sketch-only PGOROOT" >&2
+  echo "pgo_lib.sh must gate sketch podman context on skip + sketch-only PGOROOT" >&2
+  exit 1
+fi
+if grep -A5 'pgo_use_sketch_podman_build_context()' "${PGO_LIB}" | grep -q stdlib; then
+  echo "pgo_use_sketch_podman_build_context must not reference stdlib" >&2
   exit 1
 fi
 if ! grep -q 'run_compose_up_memory_high_and_summary' "${FULL_SITE_SCRIPT}"; then
@@ -168,14 +176,34 @@ if ! grep -q '\-\-profile-phase' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must support --profile-phase" >&2
   exit 1
 fi
-if ! grep -q 'PGO_PHASE=stdlib' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must use PGO_PHASE=stdlib when PGOROOT profiles are not ready" >&2
+if ! grep -q '^PGO_PHASE=stdlib' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must default PGO_PHASE=stdlib (no-arg rebuild)" >&2
+  exit 1
+fi
+if ! grep -q '\-\-pgo-use' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must support --pgo-use" >&2
+  exit 1
+fi
+if ! grep -q '\-\-pgo-skip' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must support --pgo-skip" >&2
+  exit 1
+fi
+if grep -A25 'resolve_pgo_phase()' "${FULL_SITE_SCRIPT}" | grep -q 'profiles_ready'; then
+  echo "resolve_pgo_phase must not auto-select use from profiles_ready" >&2
+  exit 1
+fi
+if grep -A25 'resolve_pgo_phase()' "${FULL_SITE_SCRIPT}" | grep -q 'pgo_use_breadcrumb'; then
+  echo "resolve_pgo_phase must not auto-select skip from use breadcrumb" >&2
   exit 1
 fi
 partial_line="$(grep -n 'pgo_die_if_partial_profile_collection' "${FULL_SITE_SCRIPT}" | head -n 1 | cut -d: -f1)"
 resolve_line="$(grep -n '^  resolve_pgo_phase' "${FULL_SITE_SCRIPT}" | head -n 1 | cut -d: -f1)"
-if [[ -z "${partial_line}" || -z "${resolve_line}" || "${partial_line}" -ge "${resolve_line}" ]]; then
-  echo "rebuild_full_site.sh must run pgo_die_if_partial_profile_collection before resolve_pgo_phase" >&2
+if [[ -z "${partial_line}" || -z "${resolve_line}" || "${partial_line}" -le "${resolve_line}" ]]; then
+  echo "rebuild_full_site.sh must run pgo_die_if_partial_profile_collection after resolve_pgo_phase" >&2
+  exit 1
+fi
+if ! grep -q 'PGO_PHASE}" != stdlib' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must skip PGOROOT helpers when PGO_PHASE=stdlib" >&2
   exit 1
 fi
 if ! grep -q 'pgo_die' "${FULL_SITE_SCRIPT}"; then
@@ -214,8 +242,16 @@ if ! grep -qF 'down -t "${timeout}" --remove-orphans' "${FULL_SITE_SCRIPT}"; the
   echo "rebuild_full_site.sh must run podman-compose down with grace timeout before up" >&2
   exit 1
 fi
-if ! grep -qE '"\$\{PODMAN_COMPOSE\[@\]\}" up -d' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must use up -d for default stack after down" >&2
+if ! grep -qE '"\$\{PODMAN_COMPOSE\[@\]\}" up -d --no-build' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must use up -d --no-build after explicit podman build" >&2
+  exit 1
+fi
+if ! grep -q 'compose_ensure_local_stack_image_tags' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must tag local stack images before compose up" >&2
+  exit 1
+fi
+if ! grep -q 'compose_ensure_local_stack_image_tags' "${PGO_LIB}"; then
+  echo "pgo_lib.sh must define compose_ensure_local_stack_image_tags" >&2
   exit 1
 fi
 if ! grep -q 'PG18_PROFILE=pg18-migrate' "${FULL_SITE_SCRIPT}"; then
@@ -231,8 +267,8 @@ if ! grep -q 'compose_build_db_pg18' "${FULL_SITE_SCRIPT}" \
   echo "rebuild_full_site.sh must build db_pg18 image (hpcperfstats-db)" >&2
   exit 1
 fi
-if ! grep -qF -- '--profile "${PG18_PROFILE}" up -d "${PG18_SERVICE}"' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must up db_pg18 with profile (no --force-recreate)" >&2
+if ! grep -qF -- '--profile "${PG18_PROFILE}" up -d --no-build "${PG18_SERVICE}"' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must up db_pg18 with profile and --no-build" >&2
   exit 1
 fi
 if grep -qE '"\$\{PODMAN_COMPOSE\[@\]\}".*--force-recreate|run_cmd.*--force-recreate' "${FULL_SITE_SCRIPT}"; then

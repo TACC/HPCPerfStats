@@ -89,15 +89,19 @@ volumes:
 # service volumes so PGOROOT is bind-mounted without editing docker-compose.defaults.yaml.
 services:
   web:
+    image: hpcperfstats
     volumes:
       - pgo_profiles:/root/.hpcperfstats_pgo
   pipeline:
+    image: hpcperfstats
     volumes:
       - pgo_profiles:/root/.hpcperfstats_pgo
   proxy:
+    image: hpcperfstats-proxy
     volumes:
       - pgo_profiles:/root/.hpcperfstats_pgo
   db_pg18:
+    image: hpcperfstats-db
     volumes:
       - pgo_profiles:/root/.hpcperfstats_pgo
 
