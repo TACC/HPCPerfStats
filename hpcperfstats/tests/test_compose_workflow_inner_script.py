@@ -401,6 +401,10 @@ def test_compose_helpers_preserve_oci_filenames_and_explicit_argv():
   compose = _read("tests/compose_test_cmd.sh")
   assert "docker-compose.yaml" in compose
   assert "docker-compose.test-overlay.yaml" in compose
+  assert (
+    "-f docker-compose.defaults.yaml\n"
+    "  -f tests/docker-compose.test-overlay.yaml"
+  ) in compose
   assert '"${PODMAN_COMPOSE[@]}"' in compose
   assert '"${PODMAN[@]}" inspect' in compose
 

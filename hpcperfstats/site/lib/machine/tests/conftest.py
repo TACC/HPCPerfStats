@@ -94,3 +94,31 @@ def _unit_test_database_guards(request, monkeypatch):
 
   monkeypatch.setattr(shutdown_utils, "shutdown_requested", [False])
   monkeypatch.setattr(update_metrics_module, "shutdown_requested", [False])
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config, items):
+  """Dropped default-database marks on tests already skipped off the compose network.
+
+  Root conftest adds ``django_db`` and then ``skip``. pytest-django still
+  creates that database for every collected item, so a host run that also
+  collects the skipped test fails before the unit tests start.
+  """
+  if os.environ.get("HPCPERFSTATS_COMPOSE_NETWORK", "").strip().lower() in (
+    "1",
+    "yes",
+    "true",
+  ):
+    return
+  for item in items:
+    skipped_off_compose = any(
+      mark.name == "skip"
+      and "Compose network" in str(mark.kwargs.get("reason", ""))
+      for mark in item.iter_markers("skip")
+    )
+    if not skipped_off_compose:
+      continue
+    item.own_markers[:] = [
+      mark for mark in item.own_markers if mark.name != "django_db"
+    ]
+    item.add_marker(pytest.mark.django_db(databases=[]))

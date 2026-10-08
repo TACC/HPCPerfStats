@@ -252,6 +252,44 @@ def test_0032_restores_compression_policy_8d():
   assert "compress_after => INTERVAL '8d'" in sql
 
 
+def test_0035_widens_job_data_jid_without_using_cast():
+  """State AlterField plus typmod SQL. USING would rewrite the FK tables."""
+  mod = importlib.import_module(
+    "hpcperfstats.site.lib.machine.migrations.0035_job_data_jid_max_length"
+  )
+  assert mod.Migration.dependencies == [
+    ("machine", "0034_metrics_host_data_sql_functions"),
+  ]
+  assert len(mod.Migration.operations) == 1
+  op = mod.Migration.operations[0]
+  assert isinstance(op, migrations.SeparateDatabaseAndState)
+  state = op.state_operations
+  assert len(state) == 1
+  assert isinstance(state[0], migrations.AlterField)
+  assert state[0].model_name == "job_data"
+  assert state[0].name == "jid"
+  assert state[0].field.max_length == 512
+  assert state[0].field.primary_key is True
+  assert len(op.database_operations) == 1
+  db = op.database_operations[0]
+  assert isinstance(db, migrations.RunSQL)
+  sql = "\n".join(db.sql)
+  reverse = "\n".join(db.reverse_sql)
+  for text in (sql, reverse):
+    assert "USING" not in text
+    assert "host_data" not in text
+    assert "proc_data" not in text
+  assert "varchar(512)" in sql
+  assert "varchar(32)" in reverse
+  for name in (
+    "metrics_data_jid_d251aeb6_fk_job_data_jid",
+    "job_plot_artifact_jid_2614497c_fk_job_data_jid",
+    "job_detail_artifact_jid_072a4361_fk_job_data_jid",
+  ):
+    assert name in sql
+    assert name in reverse
+
+
 def test_0032_coalesces_null_dev():
   sql = _0032_sql().lower()
   assert "update host_data set dev = '' where dev is null" in sql

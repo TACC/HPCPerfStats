@@ -17,6 +17,7 @@ export HPCPERFSTATS_COMPOSE_PROJECT
 
 COMPOSE_TEST=(
   "${PODMAN_COMPOSE[@]}"
+  -f docker-compose.defaults.yaml
   -f tests/docker-compose.test-overlay.yaml
 )
 COMPOSE_BIND_MOUNT_DIR=""
