@@ -8,6 +8,61 @@ Contract rule: `hpcperfstats/cursor-rules/postgres-custom-image-and-migrate-cont
 
 Run compose from the checkout that contains `docker-compose.yaml` (typically `HPCPerfStats/`). Do not prefix paste blocks with host `cd`.
 
+**Single-host PG18-primary cutover** (retire Hub PG15, PG18 already holds production `host_data`): merge **`docs/snippets/docker-compose-pg18-primary-site.yaml.example`** into site `docker-compose.yaml` — do **not** change tracked `docker-compose.defaults.yaml` for one site while others dual-run.
+
+---
+
+## PG18 data safety — what mutates the PG18 volume
+
+Use this before re-running migrate steps when **`db_pg18` already contains terabytes of `host_data`** (PG15 truncated or lagging). **`pg18` bind data survives container recreate**; these steps do **not** wipe the host directory by themselves:
+
+| Step / command | Touches PG18? | Deletes or overwrites PG18 data? |
+|----------------|---------------|----------------------------------|
+| Prerequisites `mkdir` / `chown` on **`pg18`** | Host dir only | **No** (idempotent on existing tree) |
+| `build` / `up -d` / `up -d --force-recreate db_pg18` | Container only | **No** — same bind mount keeps files |
+| Phase A `CREATE DATABASE` (if missing) | Catalog only | **No** — skips when DB exists |
+| Phase A health / `pg_isready` / `SHOW io_method` | Read-only | **No** |
+| Phase B Django **`migrate`** on **`db18`** | DDL / migrations | **Risk** if re-applied on a populated DB — **skip** when `django_migrations` and hypertable already match production |
+| Phase B block expecting **`host_data_n = 0`** | Read | **N/A** — **do not use as gate** when PG18 already has rows |
+| Phase B **`remove_compression_policy`** | Policy only | **No row delete** (safe; stops background compression jobs) |
+| Phase C / D5 **`pg18_host_data_chunk_copy.py`** (no `--list-only`) | **`host_data` ranges** | **Yes** — on count mismatch or **`--force`**, **deletes target time range on PG18 then COPY from PG15**. **Forbidden** when PG18 is authoritative and PG15 is stale/smaller |
+| Phase C / D5 **`--list-only`** | Read PG15 (+ logs) | **No** |
+| Phase D8 **`TRUNCATE … CASCADE`** on PG18 | Relational tables | **Yes** — **wipes listed public tables on PG18** (not `host_data`) |
+| Phase D9 **`pg_dump` from PG15 → psql PG18** | Relational **`INSERT`** | **Overwrites / duplicates** unless tables empty or you handle conflicts — **does not** include `host_data` |
+| Phase D10 **`add_compression_policy`** | Policy only | **No row delete** |
+| Phase E cutover (alias **`db`**, stop PG15) | Network / which container runs | **No** — PG15 volume untouched if service stopped |
+| Deleting **`/data/.../pg18`** on the host | Everything | **Yes** — **forbidden** without snapshot |
+
+**Additive path when PG18 already holds more `host_data` than PG15:** verify PG18 → optional relational sync (**D9 without D8** if PG18 relational tables are empty or you accept merge work) → **Phase E** only. **Skip** Phase B (empty-schema migrate), Phase C, D5, and D8. **Never** run chunk copy **`--force`** toward PG18 while PG15 is the smaller source.
+
+---
+
+## Path — PG18 authoritative (early cutover)
+
+For sites where **`pg_database_size` on `db_pg18` ≫ PG15** and chunk/time bounds on PG18 cover production history (PG15 may only retain a recent window):
+
+1. **Verify PG18** (read-only; raise `statement_timeout`):
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec db_pg18 \
+  psql -h localhost -U hpcperfstats -d hpcperfstats -X -v ON_ERROR_STOP=1 -c "
+SET statement_timeout = 0;
+SELECT pg_size_pretty(pg_database_size(current_database())) AS db_size;
+SELECT count(*) AS chunks, min(range_start) AS min_start, max(range_end) AS max_end
+FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data';
+SELECT (SELECT time FROM host_data ORDER BY time ASC LIMIT 1) AS oldest;
+SELECT (SELECT time FROM host_data ORDER BY time DESC LIMIT 1) AS newest;
+"
+```
+
+2. **Optional — relational data from PG15 without truncating PG18:** only if PG18 **`job_data` / `metrics_data` / …** are empty or you have a merge plan. **Do not run Phase D8.** Pipe **D9** as written (data-only, excludes `host_data` and `django_migrations`). If **`psql` fails on duplicate keys**, stop — do not TRUNCATE PG18 to “fix” without a backup.
+
+3. **Optional — compression policy on PG18** after verification: Phase **D10** only (`ANALYZE` + `add_compression_policy`).
+
+4. **Cutover:** Phase **E** (compose + stop PG15 + start stack on alias **`db`**). Site-local compose merge: **`docs/snippets/docker-compose-pg18-primary-site.yaml.example`**.
+
+5. **Rollback window:** keep **`postgres_data` / `pg15`** bind and **`db`** service under profile **`pg15-retired`** (snippet) — do not delete **`pg15`** until soak completes.
+
 ---
 
 ## Prerequisites
@@ -46,6 +101,8 @@ Then start (or recreate) `db_pg18`:
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate up -d --force-recreate db_pg18
 ```
+
+**Existing `pg18` data:** `--force-recreate` replaces the **container**, not the bind-mounted cluster under **`postgres_data_pg18`**. Do **not** re-run Phase B empty-schema migrate or chunk copy from PG15 when PG18 already holds production `host_data` (see **PG18 data safety** above).
 
 5. Build on the **production CPU** (`-march=native`). Do not ship an aarch64 / non-prod-CPU bake to x86_64 production.
 
@@ -252,8 +309,12 @@ Leave the Hub PG15 **volume intact** for the rollback window. Do not delete `/da
 
 ### E1 — edit `docker-compose.yaml` on the host (not a compose command)
 
-1. Service **`db`** (Hub PG15): change network alias `db` → `db15` (so the name `db` is free).
-2. Service **`db_pg18`**: set aliases to include **`db`** (keep `db18` if you want); **remove** `profiles: [pg18-migrate]` so PG18 starts with the normal stack.
+**Recommended (one site, others still dual-run):** merge **`docs/snippets/docker-compose-pg18-primary-site.yaml.example`** into site `docker-compose.yaml` (keeps tracked **`docker-compose.defaults.yaml`** unchanged).
+
+**Manual equivalent:**
+
+1. Service **`db`** (Hub PG15): add profile **`pg15-retired`** (or alias `db` → `db15`) so the name **`db`** is free on the network.
+2. Service **`db_pg18`**: set aliases to include **`db`** (keep `db18` if you want); **remove** `profiles: [pg18-migrate]` so PG18 starts with the normal stack (`profiles: !reset []` where Compose supports it).
 3. Save the file.
 
 ### E2 — stop Hub PG15 (volume stays; paste status)
@@ -328,6 +389,7 @@ After a successful soak, operators may archive/delete `/data/hpcperfstats_db/pg1
 
 ## Related docs
 
+- `docs/snippets/docker-compose-pg18-primary-site.yaml.example` (single-host PG18-primary merge; does not replace `docker-compose.defaults.yaml`)
 - `docs/upgrade.md` (PG18 bind mkdir, io_uring sysctl, dual-run note); fresh PG15 bind mkdir stays in `README.md` Installation
 - `docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md` (stay on 2.28.x while on PG15)
 - `docs/TESTING.md` (test overlay still uses Hub `db` until cutover)
