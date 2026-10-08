@@ -124,7 +124,7 @@ def test_fill_ingest_band_records_submission_time(monkeypatch, tmp_path):
 
 
 def test_pool_recycle_replaces_pool_after_abandonment():
-  """Recycling must terminate the old pool and hand back a fresh one."""
+  """Recycling terminates the old pool without join and hands back a fresh one."""
   events = []
 
   class _Pool:
@@ -141,11 +141,11 @@ def test_pool_recycle_replaces_pool_after_abandonment():
   new_pool = _Pool("new")
   result = qo._recycle_ingest_pool(old, factory=lambda: new_pool)
   assert result is new_pool
-  assert events == [("terminate", "old"), ("join", "old")]
+  assert events == [("terminate", "old")]
 
 
 def test_recycle_requeues_healthy_survivors_without_burning_an_attempt():
-  """Terminating the pool kills every worker, not just the hung one."""
+  """Recycle requeues in-flight claims without burning an attempt."""
   client = SyncTimedbJobStore("")
   survivor = "/raw/live|1|1"
   claim = _real_claim(client, survivor, score=-3.0)

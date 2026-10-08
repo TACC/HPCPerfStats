@@ -1329,6 +1329,91 @@ def test_fill_append_slots_missing_paths_ack_and_bounded(monkeypatch, tmp_path):
   assert calls["requeue"] == 0
 
 
+def test_fill_append_slots_stops_when_busy_tar_batch_is_full(
+  monkeypatch,
+  tmp_path,
+):
+  """A tar already in flight parks one batch, then leaves the LIST queued."""
+  tar = str(tmp_path / "2026-06-03.tar")
+  day = date(2026, 6, 3)
+  identities = [str(tmp_path / f"raw-{i}") for i in range(5)]
+  pending = [
+    jq.ClaimedJob(
+      kind=jq.JOB_KIND_APPEND,
+      identity=ident,
+      owner_token=f"n:h:b:{i}",
+      deadline=1.0e9,
+      score=0.0,
+    )
+    for i, ident in enumerate(identities)
+  ]
+  requeued: list[str] = []
+
+  def _claim(*_a, **_k):
+    return pending.pop(0) if pending else None
+
+  def _requeue(*_a, **k):
+    requeued.append(str(k["identity"]))
+    return True
+
+  monkeypatch.setattr(jq, "claim_list_job", _claim)
+  monkeypatch.setattr(jq, "requeue_job", _requeue)
+  monkeypatch.setattr(qo, "cgroup_admit_headroom_ok", lambda *_a, **_k: True)
+  monkeypatch.setattr(qo, "cgroup_admit_file_cache_ok", lambda *_a, **_k: True)
+  monkeypatch.setattr(
+    qo.cfg, "get_sync_timedb_tar_append_batch_size", lambda: 2
+  )
+  monkeypatch.setattr(qo, "daily_tar_path_for_stats_path", lambda _p, _d: tar)
+  monkeypatch.setattr(qo, "calendar_date_from_daily_tar_path", lambda _p: day)
+  monkeypatch.setattr(os.path, "isfile", lambda _p: True)
+  qo.reset_append_day_lists_for_tests()
+  try:
+    qo._fill_append_slots(
+      SyncTimedbJobStore(""),
+      cap=4,
+      inflight={tar: object()},
+      claims={},
+      archive_pool=object(),
+      tgz_archive_dir=str(tmp_path),
+    )
+    assert qo._APPEND_DAY_LISTS.peek_len(day.isoformat()) == 2
+    assert requeued == [identities[2]]
+    assert len(pending) == 2
+  finally:
+    qo.reset_append_day_lists_for_tests()
+
+
+def test_census_includes_fill_block_when_set():
+  """60s census suffix carries fill_block only while the sticky token is set."""
+  state = qo.progress.get_progress_state()
+  state.set_fill_block(None)
+  blocked = qo._INGEST_MEM_BLOCK_STATE.get("blocked")
+  qo._INGEST_MEM_BLOCK_STATE["blocked"] = False
+  try:
+    assert "fill_block=" not in qo.format_ingest_mem_block_census_suffix()
+    state.set_fill_block("claim_none")
+    assert "fill_block=claim_none" in qo.format_ingest_mem_block_census_suffix()
+  finally:
+    state.set_fill_block(None)
+    qo._INGEST_MEM_BLOCK_STATE["blocked"] = blocked
+
+
+def test_recycle_ingest_pool_does_not_join():
+  """Thread-pool recycle calls terminate() and returns the factory pool."""
+  joined = {"n": 0}
+
+  class _Pool:
+    def terminate(self):
+      return None
+
+    def join(self):
+      joined["n"] += 1
+
+  fresh = object()
+  assert qo._recycle_ingest_pool(_Pool(), factory=lambda: fresh) is fresh
+  assert joined["n"] == 0
+
+
 def test_boot_stream_discover_uses_discover_append_complete():
   """Discover skip-complete must use discover_append_is_complete (no sealed wait)."""
   src = inspect.getsource(qo._boot_stream_discover)

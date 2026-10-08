@@ -515,6 +515,22 @@ class ProgressReportState:
     with self._lock:
       self._fill_block = str(block).strip() if block else None
 
+  def fill_block(self) -> str | None:
+    """
+    Return the sticky ingest fill-block token, if one is set.
+
+    Returns:
+      str | None: Reason token, or ``None`` when clear.
+
+    Examples:
+      >>> state = ProgressReportState()
+      >>> state.set_fill_block("claim_none")
+      >>> state.fill_block()
+      'claim_none'
+    """
+    with self._lock:
+      return self._fill_block
+
   def reset_window(
     self,
     *,

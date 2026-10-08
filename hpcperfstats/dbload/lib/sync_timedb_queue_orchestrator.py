@@ -2862,11 +2862,10 @@ def _requeue_pool_collateral(
   log_fn: Callable[..., None] | None = None,
 ) -> int:
   """
-  Requeue still-running ingest claims that a pool recycle is about to kill.
+  Requeue still-running ingest claims before a pool recycle.
 
-  Terminating the pool kills every worker, not just the hung one, so the
-  survivors are put back at their original score without burning an attempt -
-  they did not fail, the coordinator preempted them.
+  Thread-pool terminate() does not wait for a worker already inside a file.
+  Those claims go back at their original score without burning an attempt.
 
   Args:
     client (Any): job store.
@@ -3029,25 +3028,11 @@ def _recycle_ingest_pool(pool: Any, *, factory: Callable[[], Any]) -> Any:
     >>> _recycle_ingest_pool(None, factory=lambda: "fresh")
     'fresh'
   """
-  try:
-    from hpcperfstats.dbload.lib.multiprocessing_pool_health import (
-      terminate_pool_bounded,
-    )
-
-    if pool is not None:
-      terminate_pool_bounded(
-        pool,
-        join_timeout_s=5.0,
-        abandon_after_kill=True,
-        context="queue_orchestrator_ingest_recycle",
-      )
-  except Exception:
-    for method in ("terminate", "join"):
-      call = getattr(pool, method, None)
-      if call is None:
-        continue
+  if pool is not None:
+    term = getattr(pool, "terminate", None)
+    if term is not None:
       with contextlib.suppress(Exception):
-        call()
+        term()
   return factory()
 
 
@@ -3228,18 +3213,29 @@ def _emit_mem_telem_event(event: str, log_fn: Any = None, **extra: Any) -> None:
 
 def format_ingest_mem_block_census_suffix() -> str:
   """
-  Return census token when ingest fill is waiting on raw-byte budget.
+  Return census tokens for the raw-byte budget and the sticky fill block.
 
   Returns:
-    str: Empty when not blocked; otherwise ``ingest_mem_blocked=yes ...``.
+    str: Empty when neither is set; otherwise a leading-space token string
+    that may include ``ingest_mem_blocked=yes`` and ``fill_block=``.
 
   Examples:
     >>> isinstance(format_ingest_mem_block_census_suffix(), str)
     True
   """
-  if not _INGEST_MEM_BLOCK_STATE.get("blocked"):
+  parts: list[str] = []
+  if _INGEST_MEM_BLOCK_STATE.get("blocked"):
+    parts.append(
+      "ingest_mem_blocked=yes inflight_raw_mib="
+      f"{int(_INGEST_MEM_BLOCK_STATE.get('inflight_raw_mib', 0) or 0)} "
+      f"budget_mib={int(_INGEST_MEM_BLOCK_STATE.get('budget_mib', 0) or 0)}"
+    )
+  block = progress.get_progress_state().fill_block()
+  if block:
+    parts.append(f"fill_block={block}")
+  if not parts:
     return ""
-  return f" ingest_mem_blocked=yes inflight_raw_mib={int(_INGEST_MEM_BLOCK_STATE.get('inflight_raw_mib', 0) or 0)} budget_mib={int(_INGEST_MEM_BLOCK_STATE.get('budget_mib', 0) or 0)}"
+  return " " + " ".join(parts)
 
 
 def _release_ingest_inflight_size(
@@ -4475,8 +4471,9 @@ def _fill_append_slots(
 
   Missing paths and unresolved daily-tar identities are ``ack_job``-dropped
   (impossible work), bounded by ``APPEND_FILL_SKIP_BUDGET`` per tick. Other-tar
-  FIFO items go onto their calendar-day list (no ``requeue`` + ``break``).
+  FIFO items go onto their calendar-day list.
   Same-tar inflight holds claims in the day list until the writer slot frees.
+  Claiming stops once that parked batch is full.
 
   Args:
     client (Any): job store.
@@ -4570,7 +4567,18 @@ def _fill_append_slots(
       )
       skipped += 1
       continue
-    _APPEND_DAY_LISTS.add(day_obj.isoformat(), claim)
+    day_key = day_obj.isoformat()
+    if (
+      this_tar in inflight and _APPEND_DAY_LISTS.peek_len(day_key) >= batch_size
+    ):
+      jq.requeue_job(
+        client,
+        kind=jq.JOB_KIND_APPEND,
+        identity=claim.identity,
+        owner_token=claim.owner_token,
+      )
+      break
+    _APPEND_DAY_LISTS.add(day_key, claim)
   return submitted
 
 
