@@ -364,6 +364,8 @@ print_stack_summary() {
 }
 
 run_compose_up_memory_high_and_summary() {
+  # Compose pgo_profiles bind needs the host path to exist (empty dir is enough).
+  pgo_ensure_pg_root
   PHASE=up
   echo "=== rebuild_full_site.sh: starting podman-compose down + up (no --build) ==="
   up_default_stack
@@ -385,8 +387,6 @@ run_compose_up_memory_high_and_summary() {
 main() {
   trap on_exit EXIT
   preflight
-  # Always create PGOROOT on the host (even --dry-run). Compose pgo_profiles binds and
-  # Dockerfile RUN --mount=bind require the path before build/up — not gated on run_cmd.
   if [[ "${PROFILE_PHASE}" -eq 1 ]]; then
     if [[ "${DRY_RUN}" -eq 1 ]]; then
       if profiles_ready "${REPO_ROOT}"; then
@@ -398,10 +398,9 @@ main() {
       pgo_confirm_wipe_pgroot_for_profile_phase "${REPO_ROOT}"
     fi
   fi
-  "${SCRIPT_DIR}/pgo_ensure_layout.sh"
   pgo_die_if_partial_profile_collection "${REPO_ROOT}" "${PROFILE_PHASE}"
-
   resolve_pgo_phase
+  pgo_prepare_host_pgroot_for_rebuild "${REPO_ROOT}" "${SCRIPT_DIR}/pgo_ensure_layout.sh"
 
   if [[ "${PGO_PHASE}" == use && "${PROFILE_PHASE}" -eq 0 ]]; then
     run_pgo_use_path

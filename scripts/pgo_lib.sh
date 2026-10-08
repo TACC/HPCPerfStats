@@ -43,22 +43,73 @@ pgo_chmod_shared_tree() {
   find "${root}" -type f ! -perm -666 -exec chmod a+rw {} +
 }
 
+pgo_committed_sketch_podman_context_dir() {
+  local repo_root="${1:?repo_root}"
+  printf '%s' "${repo_root}/services-conf/pgo_sketch_podman_context"
+}
+
+pgo_stdlib_sketch_only_phase() {
+  local repo_root="${1:?repo_root}"
+  [[ "${PGO_PHASE:-}" == stdlib ]] && pgo_tree_sketch_only "${repo_root}"
+}
+
+pgo_use_sketch_podman_build_context() {
+  local repo_root="${1:?repo_root}"
+  pgo_tree_sketch_only "${repo_root}" \
+    || return 1
+  case "${PGO_PHASE:-}" in
+    stdlib | skip) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Host PGOROOT tree for compose bind / generate / skip+profdata — not for stdlib sketch builds.
+pgo_prepare_host_pgroot_for_rebuild() {
+  local repo_root="${1:?repo_root}"
+  local ensure_layout="${2:?ensure_layout script path}"
+  if pgo_stdlib_sketch_only_phase "${repo_root}"; then
+    echo "PGO: stdlib sketch — no host PGOROOT layout (build uses services-conf/pgo_sketch_podman_context)" >&2
+    return 0
+  fi
+  "${ensure_layout}"
+}
+
+pgo_stderr_why_full_pgroot_context() {
+  local repo_root="${1:?repo_root}"
+  local ns root
+  root="$(pgo_root_dir)"
+  case "${PGO_PHASE:-}" in
+    stdlib | skip) ;;
+    *) return 0 ;;
+  esac
+  if pgo_tree_sketch_only "${repo_root}"; then
+    return 0
+  fi
+  echo "pgo podman build-context: sketch unavailable — profile artifacts under ${root}:" >&2
+  while IFS= read -r ns; do
+    [[ -n "${ns}" ]] || continue
+    if pgo_namespace_has_any_profile_artifact "${ns}" "${root}"; then
+      echo "  - ${ns}" >&2
+    fi
+  done < <(pgo_list_namespaces "${repo_root}")
+}
+
 # Host PGOROOT for podman build --build-context=pgo=… (proxy/db PGO profraw mounts).
-# stdlib + layout-only PGOROOT: use a tiny fixed stub so ensure_layout/manifest churn
-# on the live tree does not bust Podman cache on every from=pgo RUN.
 pgo_podman_build_context_args() {
   local repo_root="${1:?repo_root}"
   local root stub
   root="$(cd "$(pgo_root_dir)" && pwd)"
-  if [[ "${PGO_PHASE:-}" == stdlib ]] && pgo_tree_sketch_only "${repo_root}"; then
-    stub="${root}/.podman-sketch-context"
-    mkdir -p "${stub}"
+  if pgo_use_sketch_podman_build_context "${repo_root}"; then
+    stub="$(pgo_committed_sketch_podman_context_dir "${repo_root}")"
     if [[ ! -f "${stub}/.stable" ]]; then
-      printf '1\n' >"${stub}/.stable"
+      pgo_die "missing ${stub}/.stable (committed sketch podman context)"
     fi
+    echo "pgo podman build-context: committed sketch ${stub} (PGO_PHASE=${PGO_PHASE})" >&2
     printf '%s\n' "--build-context=pgo=${stub}"
     return 0
   fi
+  pgo_stderr_why_full_pgroot_context "${repo_root}"
+  echo "pgo podman build-context: full PGOROOT ${root} (PGO_PHASE=${PGO_PHASE})" >&2
   printf '%s\n' "--build-context=pgo=${root}"
 }
 

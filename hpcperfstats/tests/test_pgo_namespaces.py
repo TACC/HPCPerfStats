@@ -145,9 +145,11 @@ def test_pgo_podman_build_context_uses_stable_stub_for_stdlib_sketch(
 ) -> None:
   pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
   repo = _repo_root()
-  env = {**os.environ, "PGOROOT": str(tmp_path), "PGO_PHASE": "stdlib"}
-  (tmp_path / "manifest.yaml").write_text("layout\n", encoding="utf-8")
-  (tmp_path / "web/shared/jemalloc/raw").mkdir(parents=True)
+  pgoroot = tmp_path / "pgoroot"
+  pgoroot.mkdir()
+  env = {**os.environ, "PGOROOT": str(pgoroot), "PGO_PHASE": "stdlib"}
+  (pgoroot / "manifest.yaml").write_text("layout\n", encoding="utf-8")
+  (pgoroot / "web/shared/jemalloc/raw").mkdir(parents=True)
   out1 = subprocess.check_output(
     [
       "bash",
@@ -157,8 +159,8 @@ def test_pgo_podman_build_context_uses_stable_stub_for_stdlib_sketch(
     env=env,
     text=True,
   ).strip()
-  assert ".podman-sketch-context" in out1
-  (tmp_path / "manifest.yaml").write_text("layout-churn\n", encoding="utf-8")
+  assert "pgo_sketch_podman_context" in out1
+  (pgoroot / "manifest.yaml").write_text("layout-churn\n", encoding="utf-8")
   out2 = subprocess.check_output(
     [
       "bash",
@@ -169,6 +171,58 @@ def test_pgo_podman_build_context_uses_stable_stub_for_stdlib_sketch(
     text=True,
   ).strip()
   assert out1 == out2
+  assert (
+    repo / "services-conf" / "pgo_sketch_podman_context" / ".stable"
+  ).is_file()
+
+
+def test_pgo_podman_build_context_uses_stub_for_skip_sketch_only(
+  tmp_path: Path,
+) -> None:
+  pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
+  repo = _repo_root()
+  pgoroot = tmp_path / "pgoroot"
+  pgoroot.mkdir()
+  (pgoroot / "breadcrumbs").mkdir()
+  (pgoroot / "breadcrumbs/pgo_use_full_rebuild.done").write_text("done\n")
+  env = {**os.environ, "PGOROOT": str(pgoroot), "PGO_PHASE": "skip"}
+  out = subprocess.check_output(
+    [
+      "bash",
+      "-c",
+      f'source "{pgo_lib}"; pgo_podman_build_context_args "{repo}"',
+    ],
+    env=env,
+    text=True,
+  ).strip()
+  assert "pgo_sketch_podman_context" in out
+
+
+def test_pgo_prepare_host_pgroot_skips_layout_on_stdlib_sketch(
+  tmp_path: Path,
+) -> None:
+  pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
+  repo = _repo_root()
+  ensure = _repo_root() / "scripts" / "pgo_ensure_layout.sh"
+  env = {**os.environ, "PGOROOT": str(tmp_path), "PGO_PHASE": "stdlib"}
+  proc = subprocess.run(
+    [
+      "bash",
+      "-c",
+      (
+        f'source "{pgo_lib}"; '
+        f'pgo_prepare_host_pgroot_for_rebuild "{repo}" "{ensure}"'
+      ),
+    ],
+    env=env,
+    capture_output=True,
+    text=True,
+    check=False,
+  )
+  assert proc.returncode == 0
+  assert "no host PGOROOT layout" in proc.stderr
+  assert not (tmp_path / "manifest.yaml").exists()
+  assert not list(tmp_path.glob("**/raw"))
 
 
 def test_pgo_lib_bootstraps_pg_root_before_layout() -> None:

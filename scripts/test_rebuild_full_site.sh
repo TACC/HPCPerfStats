@@ -69,8 +69,12 @@ if grep -q 'build_musl_gcc_toolchain_image' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must not build musl GCC toolchain image" >&2
   exit 1
 fi
-if ! grep -q 'pgo_ensure_layout.sh' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must run pgo_ensure_layout.sh" >&2
+if ! grep -q 'pgo_prepare_host_pgroot_for_rebuild' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must prepare host PGOROOT via pgo_prepare_host_pgroot_for_rebuild" >&2
+  exit 1
+fi
+if ! grep -q 'pgo_stdlib_sketch_only_phase' "${PGO_LIB}"; then
+  echo "pgo_lib.sh must skip host PGOROOT layout on stdlib sketch" >&2
   exit 1
 fi
 if grep -q 'run_cmd "${SCRIPT_DIR}/pgo_ensure_layout.sh"' "${FULL_SITE_SCRIPT}"; then
@@ -93,8 +97,12 @@ if ! grep -q 'pgo_podman_build_context_args "${REPO_ROOT}"' "${FULL_SITE_SCRIPT}
   echo "rebuild_full_site.sh must pass REPO_ROOT to pgo_podman_build_context_args" >&2
   exit 1
 fi
-if ! grep -q '.podman-sketch-context' "${PGO_LIB}"; then
-  echo "pgo_lib.sh must use stable .podman-sketch-context for stdlib sketch builds" >&2
+if ! grep -q 'pgo_sketch_podman_context' "${PGO_LIB}"; then
+  echo "pgo_lib.sh must use committed services-conf/pgo_sketch_podman_context for sketch builds" >&2
+  exit 1
+fi
+if ! grep -q 'pgo_use_sketch_podman_build_context' "${PGO_LIB}"; then
+  echo "pgo_lib.sh must gate sketch podman context on stdlib|skip + sketch-only PGOROOT" >&2
   exit 1
 fi
 if ! grep -q 'run_compose_up_memory_high_and_summary' "${FULL_SITE_SCRIPT}"; then
