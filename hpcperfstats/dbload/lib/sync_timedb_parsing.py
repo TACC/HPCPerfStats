@@ -1440,7 +1440,9 @@ def _collapse_nvidia_gpu_vectorized(nv_df: Any, gcols: Any) -> Any:
   groupby.apply).
 
   Partitions event classes with one ``map`` pass (not four ``isin`` scans)
-  and casts non-time group keys to ``category`` before groupby.
+  and casts non-time group keys to ``category`` before groupby. Unique
+  group keys return the projected rows and mask OR values in one array
+  pass; duplicate keys keep the per-class aggregations.
 
   Args:
     nv_df (Any): Nv df passed to this helper.
@@ -1467,6 +1469,19 @@ def _collapse_nvidia_gpu_vectorized(nv_df: Any, gcols: Any) -> Any:
     .fillna(_NVIDIA_EVENT_CLASS_SUM)
     .to_numpy(dtype=np.int8, copy=False)
   )
+  if not nv_df.duplicated(gcols).any():
+    keep = [c for c in (*gcols, "value", "delta", "jid") if c in nv_df.columns]
+    out = nv_df.loc[:, keep].reset_index(drop=True)
+    or_rows = event_class == _NVIDIA_EVENT_CLASS_OR
+    if or_rows.any():
+      raw = out["value"].to_numpy(dtype=np.float64, copy=False)
+      vals = raw.copy()
+      finite = or_rows & np.isfinite(raw) & (raw < DCGM_FP64_BLANK)
+      vals[or_rows] = 0.0
+      if finite.any():
+        vals[finite] = raw[finite].astype(np.uint64).astype(np.float64)
+      out["value"] = vals
+    return out
   parts = []
   sum_df = nv_df.loc[event_class == _NVIDIA_EVENT_CLASS_SUM]
   if not sum_df.empty:

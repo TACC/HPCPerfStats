@@ -484,6 +484,70 @@ def test_collapse_gpu_single_pass_local_retain():
     print("collapse_gpu_no_cut_no_retain")
 
 
+def test_collapse_nvidia_gpu_unique_keys_skip_per_group_or(monkeypatch):
+  """Unique device keys must mask OR rows without a per-group Python reducer."""
+  from hpcperfstats.dbload.lib import sync_timedb_parsing as parsing
+
+  def _boom(_series):
+    raise AssertionError("per-group OR")
+
+  monkeypatch.setattr(parsing, "_nvidia_bitwise_or_values", _boom)
+  gcols = list(parsing._COLLAPSE_GROUP_COLS_WITH_DEV)
+  or_event = sorted(parsing._NVIDIA_GPU_OR_EVENTS)[0]
+  max_event = sorted(parsing._NVIDIA_GPU_MAX_EVENTS)[0]
+  frame = pd.DataFrame(
+    [
+      ("h", "nvidia_gpu", "0", or_event, "none", 1.0, np.nan, np.nan, "j1"),
+      ("h", "nvidia_gpu", "0", max_event, "none", 1.0, 9.0, 1.5, "j1"),
+      ("h", "nvidia_gpu", "1", or_event, "none", 1.0, 5.0, 0.0, "j1"),
+    ],
+    columns=[
+      "host",
+      "type",
+      "dev",
+      "event",
+      "unit",
+      "time",
+      "value",
+      "delta",
+      "jid",
+    ],
+  )
+  out = parsing._collapse_nvidia_gpu_vectorized(frame, gcols)
+  or_nan = out[(out["dev"] == "0") & (out["event"] == or_event)].iloc[0]
+  or_bit = out[(out["dev"] == "1") & (out["event"] == or_event)].iloc[0]
+  max_row = out[out["event"] == max_event].iloc[0]
+  assert or_nan["value"] == 0.0
+  assert pd.isna(or_nan["delta"])
+  assert or_bit["value"] == 5.0
+  assert or_bit["jid"] == "j1"
+  assert max_row["value"] == 9.0
+  assert max_row["delta"] == 1.5
+
+
+def test_collapse_nvidia_gpu_duplicate_or_still_combines_bits():
+  """Repeated keys still bitwise-OR clocks_event_reasons across the rows."""
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import (
+    _COLLAPSE_GROUP_COLS_WITH_DEV,
+    _NVIDIA_GPU_OR_EVENTS,
+    _collapse_nvidia_gpu_vectorized,
+  )
+
+  or_event = sorted(_NVIDIA_GPU_OR_EVENTS)[0]
+  frame = pd.DataFrame(
+    [
+      ("h", "nvidia_gpu", "0", or_event, "none", 1.0, 1.0, 0.0),
+      ("h", "nvidia_gpu", "0", or_event, "none", 1.0, 2.0, 0.0),
+    ],
+    columns=["host", "type", "dev", "event", "unit", "time", "value", "delta"],
+  )
+  out = _collapse_nvidia_gpu_vectorized(
+    frame, list(_COLLAPSE_GROUP_COLS_WITH_DEV)
+  )
+  assert len(out) == 1
+  assert out.iloc[0]["value"] == 3.0
+
+
 def _apply_counter_deltas_legacy_sort_groupby(
   stats_df: pd.DataFrame,
 ) -> pd.DataFrame:

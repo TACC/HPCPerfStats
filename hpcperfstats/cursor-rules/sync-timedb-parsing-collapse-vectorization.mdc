@@ -38,7 +38,7 @@ Multi-`dev` metric collapse in ingest parse (`_collapse_stats_with_deltas` and h
 | Sum across devs (`min_count=1`) | `_groupby_sum_min_count` |
 | **GPU types** (`nvidia_gpu` / `amd_gpu` / `intel_gpu`) | Collapse group cols **include `dev`** (`_COLLAPSE_GROUP_COLS_WITH_DEV`) — keep per-device rows; sum/mean/max/OR only within a device. Non-GPU types keep `_COLLAPSE_GROUP_COLS` (no `dev`) and set `dev=''` on output. |
 | Event-dispatched standard reducers (sum/max/mean) | Partition by event class → `groupby.agg` with native reducers |
-| Bitwise OR (`clocks_event_reasons`) | `_nvidia_bitwise_or_values` (`numpy.bitwise_or.reduce`) on OR slice only |
+| Bitwise OR (`clocks_event_reasons`) | Duplicate keys: `_nvidia_bitwise_or_values` (`numpy.bitwise_or.reduce`) on the OR slice only. Unique keys: one column mask (NaN or DCGM blank → 0.0; finite → uint64 bit pattern) with no per-group call |
 | Custom reducer (DCGM cluster-mean, dynamic gap) | `_collapse_dcg_cpu_power_vectorized` — explicit `for key, group in grouped` + NumPy `_cluster_mean_sum_sorted` (`reduceat`), **not** `apply` |
 | New metric type / event class | Extend typed router in `_collapse_stats_with_deltas`; add equivalence test vs apply reference |
 | Last-row-per-group **carry** (`carry.raw` / `carry.arc`) | `groupby(...).tail(1)` + array extract into packed tuples (`(value, wid, mult, time)` / arc unix seconds) — **never** `group.iloc[-1]` per group or per-row inner dicts |
