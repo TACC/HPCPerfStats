@@ -73,8 +73,8 @@ if ! grep -q 'pgo_prepare_host_pgroot_for_rebuild' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must prepare host PGOROOT via pgo_prepare_host_pgroot_for_rebuild" >&2
   exit 1
 fi
-if ! grep -q 'PGO: stdlib — no host PGOROOT layout' "${PGO_LIB}"; then
-  echo "pgo_lib.sh must skip host PGOROOT layout on stdlib" >&2
+if ! grep -q 'PGO_PHASE:-}" == stdlib' "${PGO_LIB}"; then
+  echo "pgo_lib.sh must no-op pgo_prepare_host_pgroot_for_rebuild on stdlib" >&2
   exit 1
 fi
 if ! grep -q 'pgo_stdlib_empty_build_context_dir' "${PGO_LIB}"; then
@@ -101,20 +101,16 @@ if ! grep -q 'pgo_podman_build_context_args "${REPO_ROOT}"' "${FULL_SITE_SCRIPT}
   echo "rebuild_full_site.sh must pass REPO_ROOT to pgo_podman_build_context_args" >&2
   exit 1
 fi
-if ! grep -q 'pgo_ensure_sketch_podman_context_dir' "${PGO_LIB}"; then
-  echo "pgo_lib.sh must ensure gitignored sketch podman context dir for skip sketch-only" >&2
+if grep -q 'pgo_sketch_podman_context' "${PGO_LIB}"; then
+  echo "pgo_lib.sh must not use retired sketch podman context paths" >&2
   exit 1
 fi
-if ! grep -q 'pgo_sketch_podman_context' "${PGO_LIB}"; then
-  echo "pgo_lib.sh must use local services-conf/pgo_sketch_podman_context for skip sketch builds" >&2
+if grep -q 'pgo_reset_sketch_tree' "${PGO_LIB}"; then
+  echo "pgo_lib.sh must not define retired pgo_reset_sketch_tree" >&2
   exit 1
 fi
-if ! grep -q 'pgo_use_sketch_podman_build_context' "${PGO_LIB}"; then
-  echo "pgo_lib.sh must gate sketch podman context on skip + sketch-only PGOROOT" >&2
-  exit 1
-fi
-if grep -A5 'pgo_use_sketch_podman_build_context()' "${PGO_LIB}" | grep -q stdlib; then
-  echo "pgo_use_sketch_podman_build_context must not reference stdlib" >&2
+if grep -q 'pgo_use_breadcrumb_path' "${PGO_LIB}"; then
+  echo "pgo_lib.sh must not reference retired pgo_use_full_rebuild.done breadcrumb" >&2
   exit 1
 fi
 if ! grep -q 'run_compose_up_memory_high_and_summary' "${FULL_SITE_SCRIPT}"; then
@@ -188,11 +184,12 @@ if ! grep -q '\-\-pgo-skip' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must support --pgo-skip" >&2
   exit 1
 fi
-if grep -A25 'resolve_pgo_phase()' "${FULL_SITE_SCRIPT}" | grep -q 'profiles_ready'; then
+resolve_pgo_phase_body="$(awk '/^resolve_pgo_phase\(\) \{/,/^\}$/' "${FULL_SITE_SCRIPT}")"
+if echo "${resolve_pgo_phase_body}" | grep -q 'profiles_ready'; then
   echo "resolve_pgo_phase must not auto-select use from profiles_ready" >&2
   exit 1
 fi
-if grep -A25 'resolve_pgo_phase()' "${FULL_SITE_SCRIPT}" | grep -q 'pgo_use_breadcrumb'; then
+if echo "${resolve_pgo_phase_body}" | grep -q 'pgo_use_breadcrumb'; then
   echo "resolve_pgo_phase must not auto-select skip from use breadcrumb" >&2
   exit 1
 fi
@@ -210,16 +207,21 @@ if ! grep -q 'pgo_die' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must fail loud on PGO errors (pgo_die)" >&2
   exit 1
 fi
-if ! grep -q 'COMPOSE_IMAGE_BUILD_SERVICES=(web proxy)' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must list compose build services (web proxy only)" >&2
+if ! grep -q 'PODMAN_BUILD_STACK_IMAGES=(web proxy)' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must list podman build stack images (web proxy only)" >&2
   exit 1
 fi
 if grep -q 'build "${DEFAULT_BUILD_SERVICES' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must not batch all stack services in one compose build" >&2
   exit 1
 fi
-if ! grep -q 'for svc in "${COMPOSE_IMAGE_BUILD_SERVICES' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must compose build web and proxy serially" >&2
+if ! grep -q 'compose_build_web_image' "${FULL_SITE_SCRIPT}" \
+  || ! grep -q 'compose_build_proxy_image' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must podman build web and proxy explicitly" >&2
+  exit 1
+fi
+if grep -q 'podman-compose build' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must not use podman-compose build (use podman build)" >&2
   exit 1
 fi
 if ! grep -q 'LAST_STEP=' "${FULL_SITE_SCRIPT}"; then
@@ -254,6 +256,10 @@ if ! grep -q 'compose_ensure_local_stack_image_tags' "${PGO_LIB}"; then
   echo "pgo_lib.sh must define compose_ensure_local_stack_image_tags" >&2
   exit 1
 fi
+if grep -A8 'compose_ensure_local_stack_image_tags()' "${PGO_LIB}" | grep -q 'IFS= read -r canonical alias'; then
+  echo "compose_ensure_local_stack_image_tags: IFS= read with two vars merges canonical+alias (use read -r canonical alias)" >&2
+  exit 1
+fi
 if ! grep -q 'PG18_PROFILE=pg18-migrate' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must set pg18-migrate profile" >&2
   exit 1
@@ -276,16 +282,20 @@ if grep -qE '"\$\{PODMAN_COMPOSE\[@\]\}".*--force-recreate|run_cmd.*--force-recr
   exit 1
 fi
 
-build_line="$(grep -n 'build_default_stack_images' "${FULL_SITE_SCRIPT}" | head -n 1 | cut -d: -f1)"
-up_line="$(grep -n 'up_default_stack' "${FULL_SITE_SCRIPT}" | head -n 1 | cut -d: -f1)"
+build_line="$(grep -n 'compose_build_all_with_pgo' "${FULL_SITE_SCRIPT}" | head -n 1 | cut -d: -f1)"
+up_line="$(grep -n 'run_stack_up_and_verify' "${FULL_SITE_SCRIPT}" | head -n 1 | cut -d: -f1)"
 if [[ -z "${build_line}" || -z "${up_line}" ]]; then
-  echo "rebuild_full_site.sh must define build and up helpers" >&2
+  echo "rebuild_full_site.sh must define compose_build_all_with_pgo and run_stack_up_and_verify" >&2
   exit 1
 fi
-main_build="$(awk '/^main\(\)/ {m=1} m && /build_default_stack_images/ {print NR; exit}' "${FULL_SITE_SCRIPT}")"
+main_build="$(awk '/^main\(\)/ {m=1} m && /compose_build_all_with_pgo/ {print NR; exit}' "${FULL_SITE_SCRIPT}")"
 main_up="$(awk '/^main\(\)/ {m=1} m && /run_compose_up_memory_high_and_summary/ {print NR; exit}' "${FULL_SITE_SCRIPT}")"
 if [[ -z "${main_build}" || -z "${main_up}" ]]; then
-  echo "rebuild_full_site.sh main must call build and run_compose_up_memory_high_and_summary" >&2
+  echo "rebuild_full_site.sh main must call compose_build_all_with_pgo and run_compose_up_memory_high_and_summary" >&2
+  exit 1
+fi
+if grep -q 'prepare_profile_phase' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must not write unread profile_phase_started breadcrumb" >&2
   exit 1
 fi
 

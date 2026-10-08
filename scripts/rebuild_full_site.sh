@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Full-stack image rebuild: compose-build default services + db_pg18, then recreate
-# without --build on up. Optional live-soak PGO via --profile-phase. Sets pipeline
-# cgroup memory.high after pipeline is up. Never use podman-compose up --build here.
+# Full-stack image rebuild: podman build web, proxy, db_pg18; compose down + up -d
+# --no-build. Optional live-soak PGO via --profile-phase. Sets pipeline cgroup
+# memory.high after pipeline is up. Never use podman-compose up --build here.
 #
 # Usage (from the git checkout that contains docker-compose.yaml):
 #   ./scripts/rebuild_full_site.sh
@@ -34,7 +34,7 @@ PGO_SKIP=0
 
 export PGOROOT="${PGOROOT:-${HPCPERFSTATS_PGO_ROOT:-/root/.hpcperfstats_pgo}}"
 
-COMPOSE_IMAGE_BUILD_SERVICES=(web proxy)
+PODMAN_BUILD_STACK_IMAGES=(web proxy)
 PG18_PROFILE=pg18-migrate
 PG18_SERVICE=db_pg18
 PGO_PHASE=stdlib
@@ -47,8 +47,8 @@ Build default-stack images and hpcperfstats-db (db_pg18 profile), then tear down
 the compose project (graceful stop, preserve volumes) and start:
 
   podman-compose down -t <timeout> --remove-orphans
-  podman-compose up -d
-  podman-compose --profile pg18-migrate up -d db_pg18
+  podman-compose up -d --no-build
+  podman-compose --profile pg18-migrate up -d --no-build db_pg18
 
 Default down stop timeout: HPCPERFSTATS_COMPOSE_DOWN_TIMEOUT=30 (seconds).
 
@@ -175,11 +175,6 @@ resolve_pgo_phase() {
   echo "PGO: default stdlib — no PGOROOT; no Clang PGO (optional: --profile-phase, --pgo-use, --pgo-skip)" >&2
 }
 
-prepare_profile_phase() {
-  mkdir -p "$(pgo_root_dir)/breadcrumbs"
-  date -u +"%Y-%m-%dT%H:%M:%SZ" >"${PGOROOT}/breadcrumbs/profile_phase_started"
-}
-
 run_pgo_use_path() {
   echo "=== PGO one-time use rebuild (merge → build db_pg18/proxy/web → up) ===" >&2
   profiles_ready "${REPO_ROOT}" \
@@ -201,38 +196,19 @@ run_pgo_use_path() {
   if [[ "${BUILD_ONLY}" -eq 1 || "${NO_START}" -eq 1 || "${DRY_RUN}" -eq 1 ]]; then
     echo "PGO: use build finished; skipping up due to flags" >&2
   else
-    PHASE=up
-    up_default_stack
-    up_db_pg18
-    verify_default_stack_running || pgo_die "stack verify failed after PGO use up"
-    UP_COMPLETED=1
+    run_stack_up_and_verify || pgo_die "stack verify failed after PGO use up"
   fi
-  date -u +"%Y-%m-%dT%H:%M:%SZ" >"$(pgo_use_breadcrumb_path)"
-  echo "PGO: use rebuild complete; wrote pgo_use_full_rebuild.done" >&2
+  echo "PGO: use rebuild complete" >&2
 }
 
-compose_build_service() {
-  local svc="$1"
-  local -a cache_args=()
-  case "${svc}" in
-    web)
-      compose_build_web_image
-      return $?
-      ;;
-    proxy)
-      compose_build_proxy_image
-      return $?
-      ;;
-  esac
-  mapfile -t cache_args < <(pgo_image_build_cache_args)
-  LAST_STEP="podman-compose build ${svc} (PGO_PHASE=${PGO_PHASE})"
-  echo "rebuild_full_site.sh: ${LAST_STEP} ..."
-  run_cmd env PGO_PHASE="${PGO_PHASE}" PGO_ROOT="${PGOROOT}" PGOROOT="${PGOROOT}" \
-    "${PODMAN_COMPOSE[@]}" build \
-    "${cache_args[@]}" \
-    --build-arg "PGO_PHASE=${PGO_PHASE}" \
-    --build-arg "PGO_ROOT=/root/.hpcperfstats_pgo" \
-    "${svc}"
+run_stack_up_and_verify() {
+  PHASE=up
+  up_default_stack
+  up_db_pg18
+  if [[ "${DRY_RUN}" -eq 0 ]]; then
+    verify_default_stack_running || return 1
+  fi
+  UP_COMPLETED=1
 }
 
 compose_build_web_image() {
@@ -295,16 +271,10 @@ compose_build_db_pg18() {
 }
 
 compose_build_all_with_pgo() {
-  local svc
-  for svc in "${COMPOSE_IMAGE_BUILD_SERVICES[@]}"; do
-    compose_build_service "${svc}" || return 1
-  done
+  compose_build_web_image || return 1
+  compose_build_proxy_image || return 1
   compose_build_db_pg18 || return 1
   compose_ensure_local_stack_image_tags
-}
-
-build_default_stack_images() {
-  compose_build_all_with_pgo
 }
 
 compose_down_project() {
@@ -349,7 +319,7 @@ on_exit() {
     echo "rebuild_full_site.sh: exited (code ${ec}) before podman-compose up finished (phase=${PHASE} last_step=${LAST_STEP:-unknown})." >&2
     if [[ "${PHASE}" == build ]]; then
       echo "rebuild_full_site.sh: scroll above for the failing build step (often proxy or db_pg18 after hpcperfstats:latest tags)." >&2
-      echo "rebuild_full_site.sh: retry in isolation: podman-compose -p ${HPCPERFSTATS_COMPOSE_PROJECT} build proxy" >&2
+      echo "rebuild_full_site.sh: retry in isolation: podman build -f ${REPO_ROOT}/services-conf/proxy.Dockerfile -t hpcperfstats-proxy ${REPO_ROOT}" >&2
     fi
     echo "rebuild_full_site.sh: collectstatic in Dockerfile output alone is NOT a successful full rebuild." >&2
   fi
@@ -390,14 +360,8 @@ run_compose_up_memory_high_and_summary() {
   if [[ "${PGO_PHASE}" != stdlib ]]; then
     pgo_ensure_pg_root
   fi
-  PHASE=up
   echo "=== rebuild_full_site.sh: starting podman-compose down + up (no --build) ==="
-  up_default_stack
-  up_db_pg18
-  if [[ "${DRY_RUN}" -eq 0 ]]; then
-    verify_default_stack_running || exit 1
-  fi
-  UP_COMPLETED=1
+  run_stack_up_and_verify || exit 1
 
   PHASE=memory_high
   if [[ "${DRY_RUN}" -eq 0 ]]; then
@@ -440,16 +404,12 @@ main() {
     return 0
   fi
 
-  if [[ "${PROFILE_PHASE}" -eq 1 ]]; then
-    prepare_profile_phase
-  fi
-
   PHASE=build
   echo "rebuild_full_site.sh: project=${HPCPERFSTATS_COMPOSE_PROJECT} DRY_RUN=${DRY_RUN} BUILD_ONLY=${BUILD_ONLY} NO_START=${NO_START} PGO_PHASE=${PGO_PHASE}"
   if [[ "${BUILD_ONLY}" -eq 1 || "${NO_START}" -eq 1 || "${DRY_RUN}" -eq 1 ]]; then
     echo "NOTE: compose down + up runs only when all three flags above are 0." >&2
   fi
-  build_default_stack_images
+  compose_build_all_with_pgo
 
   if [[ "${BUILD_ONLY}" -eq 1 ]]; then
     echo "rebuild_full_site.sh: FINISHED BUILD ONLY — did not run podman-compose up (use without --build-only to recreate containers)." >&2

@@ -43,22 +43,6 @@ pgo_chmod_shared_tree() {
   find "${root}" -type f ! -perm -666 -exec chmod a+rw {} +
 }
 
-pgo_sketch_podman_context_dir() {
-  local repo_root="${1:?repo_root}"
-  printf '%s' "${repo_root}/services-conf/pgo_sketch_podman_context"
-}
-
-# Local-only Podman pgo context (gitignored). Created once; never rewritten on rebuild.
-pgo_ensure_sketch_podman_context_dir() {
-  local repo_root="${1:?repo_root}"
-  local stub
-  stub="$(pgo_sketch_podman_context_dir "${repo_root}")"
-  mkdir -p "${stub}"
-  if [[ ! -f "${stub}/.stable" ]]; then
-    printf '%s\n' 'sketch-only podman --build-context=pgo' >"${stub}/.stable"
-  fi
-}
-
 # FHS empty dir (stable Podman --build-context=pgo digest); never written by rebuild.
 pgo_stdlib_empty_build_context_dir() {
   local d="${HPCPERFSTATS_PGO_EMPTY_BUILD_CONTEXT:-/usr/share/empty}"
@@ -69,21 +53,11 @@ pgo_stdlib_empty_build_context_dir() {
   printf '%s' "${d}"
 }
 
-pgo_use_sketch_podman_build_context() {
-  local repo_root="${1:?repo_root}"
-  pgo_tree_sketch_only "${repo_root}" \
-    || return 1
-  [[ "${PGO_PHASE:-}" == skip ]]
-}
-
-# Host PGOROOT tree for compose bind / generate / skip+profdata — not for stdlib builds.
+# Host PGOROOT tree for compose bind / generate / use / skip — not for stdlib builds.
 pgo_prepare_host_pgroot_for_rebuild() {
-  local repo_root="${1:?repo_root}"
+  local _repo_root="${1:?repo_root}"
   local ensure_layout="${2:?ensure_layout script path}"
-  if [[ "${PGO_PHASE:-}" == stdlib ]]; then
-    echo "PGO: stdlib — no host PGOROOT layout" >&2
-    return 0
-  fi
+  [[ "${PGO_PHASE:-}" == stdlib ]] && return 0
   "${ensure_layout}"
 }
 
@@ -92,13 +66,13 @@ pgo_stderr_why_full_pgroot_context() {
   local ns root
   root="$(pgo_root_dir)"
   case "${PGO_PHASE:-}" in
-    stdlib | skip) ;;
+    skip) ;;
     *) return 0 ;;
   esac
-  if pgo_tree_sketch_only "${repo_root}"; then
+  if ! pgo_tree_has_any_profile_data "${repo_root}"; then
     return 0
   fi
-  echo "pgo podman build-context: sketch unavailable — profile artifacts under ${root}:" >&2
+  echo "pgo podman build-context: using full PGOROOT — profile artifacts under ${root}:" >&2
   while IFS= read -r ns; do
     [[ -n "${ns}" ]] || continue
     if pgo_namespace_has_any_profile_artifact "${ns}" "${root}"; then
@@ -118,13 +92,6 @@ pgo_podman_build_context_args() {
     return 0
   fi
   root="$(cd "$(pgo_root_dir)" && pwd)"
-  if pgo_use_sketch_podman_build_context "${repo_root}"; then
-    pgo_ensure_sketch_podman_context_dir "${repo_root}"
-    stub="$(pgo_sketch_podman_context_dir "${repo_root}")"
-    echo "pgo podman build-context: local sketch ${stub} (PGO_PHASE=${PGO_PHASE})" >&2
-    printf '%s\n' "--build-context=pgo=${stub}"
-    return 0
-  fi
   pgo_stderr_why_full_pgroot_context "${repo_root}"
   echo "pgo podman build-context: full PGOROOT ${root} (PGO_PHASE=${PGO_PHASE})" >&2
   printf '%s\n' "--build-context=pgo=${root}"
@@ -142,7 +109,7 @@ pgo_image_build_cache_args() {
 compose_ensure_local_stack_image_tags() {
   local project canonical alias
   project="${HPCPERFSTATS_COMPOSE_PROJECT:-hpcperfstats}"
-  while IFS= read -r canonical alias; do
+  while read -r canonical alias; do
     [[ -n "${canonical}" ]] || continue
     if ! podman image exists "${canonical}"; then
       pgo_die "stack image missing before compose up: ${canonical} (build images first)"
@@ -156,10 +123,6 @@ hpcperfstats:latest ${project}_pipeline:latest
 hpcperfstats-proxy:latest ${project}_proxy:latest
 hpcperfstats-db:latest ${project}_db_pg18:latest
 EOF
-}
-
-pgo_use_breadcrumb_path() {
-  printf '%s/breadcrumbs/pgo_use_full_rebuild.done' "$(pgo_root_dir)"
 }
 
 pgo_use_failed_path() {
@@ -227,7 +190,7 @@ pgo_namespace_profile_input_ready() {
   esac
 }
 
-# Any nonempty profile artifact under a namespace (ready or incomplete — blocks stdlib fallback).
+# Any nonempty profile artifact under a namespace (ready or incomplete partial-PGOROOT detection).
 pgo_namespace_has_any_profile_artifact() {
   local ns="${1:?namespace}"
   local root="${2:-$(pgo_root_dir)}"
@@ -317,7 +280,7 @@ pgo_tree_has_any_profile_data() {
   return 1
 }
 
-# Stage 1 (missing PGOROOT) and stage 2 (layout sketch only): no profile inputs in any namespace.
+# True when PGOROOT has no profile inputs in any namespace (layout-only / empty tree).
 pgo_tree_sketch_only() {
   local repo_root="${1:?repo_root}"
   if pgo_tree_has_any_profile_data "${repo_root}"; then
@@ -372,34 +335,11 @@ pgo_confirm_wipe_pgroot_for_profile_phase() {
   esac
 }
 
-# Drop breadcrumbs, manifest, and namespace trees when PGOROOT has no profile data yet.
-# Returns 0 if contents were removed; 1 if PGOROOT was left unchanged.
-pgo_reset_sketch_tree() {
-  local root repo_root
-  repo_root="${1:?repo_root}"
-  root="$(pgo_root_dir)"
-  pgo_ensure_pg_root
-  if pgo_tree_has_any_profile_data "${repo_root}"; then
-    return 1
-  fi
-  shopt -s nullglob
-  local entries=("${root}"/*)
-  shopt -u nullglob
-  if [[ ${#entries[@]} -eq 0 ]]; then
-    return 1
-  fi
-  rm -rf "${root:?}"/*
-  echo "pgo_reset_sketch_tree: cleared layout-only PGOROOT under ${root}" >&2
-  return 0
-}
-
 pgo_print_summary() {
   local phase="$1"
   local crumb="absent"
-  if [[ -f "$(pgo_use_breadcrumb_path)" ]]; then
-    crumb="present"
-  elif [[ -f "$(pgo_use_failed_path)" ]]; then
+  if [[ -f "$(pgo_use_failed_path)" ]]; then
     crumb="failed"
   fi
-  echo "PGO phase=${phase} breadcrumb=${crumb} PGOROOT=$(pgo_root_dir)" >&2
+  echo "PGO phase=${phase} use_failed_marker=${crumb} PGOROOT=$(pgo_root_dir)" >&2
 }

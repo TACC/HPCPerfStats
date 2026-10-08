@@ -165,16 +165,15 @@ def test_pgo_podman_build_context_stdlib_uses_empty_dir_not_pgoroot(
   assert "pgo_sketch_podman_context" not in out
 
 
-def test_pgo_podman_build_context_uses_stub_for_skip_sketch_only(
+def test_pgo_podman_build_context_skip_uses_full_pgoroot(
   tmp_path: Path,
 ) -> None:
+  """Post-use skip always mounts full PGOROOT for podman build (no sketch context)."""
   pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
   repo = _repo_root()
   pgoroot = tmp_path / "pgoroot"
   pgoroot.mkdir()
-  (pgoroot / "breadcrumbs").mkdir()
-  (pgoroot / "breadcrumbs/pgo_use_full_rebuild.done").write_text("done\n")
-  env = {**os.environ, "PGOROOT": str(pgoroot), "PGO_PHASE": "skip"}
+  env = {**os.environ, "PGOROOT": str(pgoroot.resolve()), "PGO_PHASE": "skip"}
   out = subprocess.check_output(
     [
       "bash",
@@ -184,7 +183,8 @@ def test_pgo_podman_build_context_uses_stub_for_skip_sketch_only(
     env=env,
     text=True,
   ).strip()
-  assert "pgo_sketch_podman_context" in out
+  assert "pgo_sketch_podman_context" not in out
+  assert f"--build-context=pgo={pgoroot.resolve()}" in out
 
 
 def test_pgo_prepare_host_pgroot_skips_layout_on_stdlib(
@@ -209,7 +209,6 @@ def test_pgo_prepare_host_pgroot_skips_layout_on_stdlib(
     check=False,
   )
   assert proc.returncode == 0
-  assert "no host PGOROOT layout" in proc.stderr
   assert not (tmp_path / "manifest.yaml").exists()
   assert not list(tmp_path.glob("**/raw"))
 
@@ -218,7 +217,7 @@ def test_pgo_lib_bootstraps_pg_root_before_layout() -> None:
   pgo_lib = (_repo_root() / "scripts" / "pgo_lib.sh").read_text()
   ensure = (_repo_root() / "scripts" / "pgo_ensure_layout.sh").read_text()
   assert "pgo_ensure_pg_root" in pgo_lib
-  assert "pgo_reset_sketch_tree" in pgo_lib
+  assert "pgo_reset_sketch_tree" not in pgo_lib
   assert "pgo_reset_sketch_tree" not in ensure
   assert "pgo_chmod_shared_tree" in pgo_lib
   assert "pgo_chmod_shared_tree" in ensure
@@ -791,10 +790,10 @@ def test_partial_cpython_generate_profraw_only_dies_not_stdlib(
   assert "PGO profile collection incomplete" in proc.stderr
 
 
-def test_partial_profile_collection_dies_with_use_breadcrumb(
+def test_partial_profile_collection_dies_with_stale_done_file_in_pgroot(
   tmp_path: Path,
 ) -> None:
-  """Use breadcrumb must not bypass partial PGOROOT fail-closed."""
+  """Stale done file under PGOROOT must not bypass partial profile fail-closed."""
   pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
   repo = _repo_root()
   (tmp_path / "breadcrumbs").mkdir(parents=True, exist_ok=True)
@@ -951,62 +950,6 @@ def test_profiles_ready_true_when_cpython_soak_raw_present(
   assert proc.returncode == 0 and "profiles_ready_exit=0" in proc.stdout
 
 
-def test_pgo_reset_sketch_tree_clears_layout_only_pgroot(
-  tmp_path: Path,
-) -> None:
-  pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
-  repo = _repo_root()
-  (tmp_path / "breadcrumbs").mkdir(parents=True)
-  (tmp_path / "manifest.yaml").write_text("old", encoding="utf-8")
-  (tmp_path / "web/shared/jemalloc/raw").mkdir(parents=True)
-  env = {**os.environ, "PGOROOT": str(tmp_path)}
-  proc = subprocess.run(
-    [
-      "bash",
-      "-c",
-      (
-        f'source "{pgo_lib}"; set +e; '
-        f'pgo_reset_sketch_tree "{repo}"; r=$?; set -e; echo exit=$r'
-      ),
-    ],
-    env=env,
-    capture_output=True,
-    text=True,
-    check=False,
-  )
-  assert proc.returncode == 0 and "exit=0" in proc.stdout
-  assert not (tmp_path / "manifest.yaml").exists()
-  assert not (tmp_path / "breadcrumbs").exists()
-
-
-def test_pgo_reset_sketch_tree_keeps_tree_when_profile_data_present(
-  tmp_path: Path,
-) -> None:
-  pgo_lib = _repo_root() / "scripts" / "pgo_lib.sh"
-  repo = _repo_root()
-  raw = tmp_path / "web/shared/jemalloc/raw"
-  raw.mkdir(parents=True)
-  (raw / "jemalloc.profraw").write_bytes(b"x")
-  (tmp_path / "manifest.yaml").write_text("keep", encoding="utf-8")
-  env = {**os.environ, "PGOROOT": str(tmp_path)}
-  proc = subprocess.run(
-    [
-      "bash",
-      "-c",
-      (
-        f'source "{pgo_lib}"; set +e; '
-        f'pgo_reset_sketch_tree "{repo}"; r=$?; set -e; echo exit=$r'
-      ),
-    ],
-    env=env,
-    capture_output=True,
-    text=True,
-    check=False,
-  )
-  assert proc.returncode == 0 and "exit=1" in proc.stdout
-  assert (tmp_path / "manifest.yaml").read_text(encoding="utf-8") == "keep"
-
-
 def test_pgo_ensure_layout_preserves_manifest_on_repeat_layout_only(
   tmp_path: Path,
 ) -> None:
@@ -1084,12 +1027,16 @@ def test_compose_pipeline_memory_high_uses_state_cgroup_path() -> None:
 
 
 def test_docker_compose_example_pgo_overrides_keep_image_names() -> None:
+  """PGO volume overrides must not replace stack image: tags (single services: stanza)."""
   example = (_repo_root() / "docker-compose.yaml.example").read_text()
-  block_start = example.index("services:\n  web:")
-  block = example[block_start : block_start + 600]
-  assert "image: hpcperfstats" in block
-  assert "image: hpcperfstats-proxy" in block
-  assert "image: hpcperfstats-db" in block
+  assert (
+    sum(1 for line in example.splitlines() if line.strip() == "services:") == 1
+  )
+  assert (
+    "image: hpcperfstats\n" in example or "    image: hpcperfstats\n" in example
+  )
+  assert "image: hpcperfstats-proxy" in example
+  assert "image: hpcperfstats-db" in example
 
 
 def test_rebuild_full_site_default_stdlib_pgo_only_via_flags() -> None:
@@ -1097,11 +1044,19 @@ def test_rebuild_full_site_default_stdlib_pgo_only_via_flags() -> None:
   assert "PGO_PHASE=stdlib" in script
   assert "--pgo-use" in script
   assert "--pgo-skip" in script
-  resolve_start = script.index("resolve_pgo_phase()")
-  resolve_end = script.index("\nprepare_profile_phase()", resolve_start)
-  resolve_body = script[resolve_start:resolve_end]
+  resolve_lines: list[str] = []
+  in_resolve = False
+  for line in script.splitlines():
+    if line == "resolve_pgo_phase() {":
+      in_resolve = True
+    if in_resolve:
+      resolve_lines.append(line)
+      if line == "}" and len(resolve_lines) > 1:
+        break
+  resolve_body = "\n".join(resolve_lines)
   assert "profiles_ready" not in resolve_body
   assert "pgo_use_breadcrumb" not in resolve_body
+  assert "prepare_profile_phase" not in script
 
 
 def test_rebuild_full_site_compose_down_before_up() -> None:
@@ -1115,6 +1070,17 @@ def test_rebuild_full_site_compose_down_before_up() -> None:
   assert down_pos < up_pos
 
 
+def test_compose_ensure_local_stack_image_tags_splits_canonical_and_alias() -> (
+  None
+):
+  """Regression: IFS= read with two vars assigns the whole line to canonical only."""
+  pgo_lib = (_repo_root() / "scripts" / "pgo_lib.sh").read_text()
+  start = pgo_lib.index("compose_ensure_local_stack_image_tags()")
+  block = pgo_lib[start : start + 500]
+  assert "while read -r canonical alias" in block
+  assert "IFS= read -r canonical alias" not in block
+
+
 def test_rebuild_full_site_pgo_fail_loud_helpers() -> None:
   script = (_repo_root() / "scripts" / "rebuild_full_site.sh").read_text()
   pgo_lib = (_repo_root() / "scripts" / "pgo_lib.sh").read_text()
@@ -1123,9 +1089,8 @@ def test_rebuild_full_site_pgo_fail_loud_helpers() -> None:
   assert "pgo_die_if_partial_profile_collection" in pgo_lib
   assert "pgo_die" in script
   assert "--profile-phase" in script
-  assert (
-    "pgo_use_full_rebuild.done" in script or "pgo_use_breadcrumb_path" in script
-  )
+  assert "pgo_use_full_rebuild.done" not in script
+  assert "pgo_use_breadcrumb_path" not in pgo_lib
   assert (
     "pgo_use_failed_path" in script or "pgo_use_full_rebuild.failed" in script
   )

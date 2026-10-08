@@ -58,7 +58,7 @@ runtime-compatibility endpoint. OCI filenames (`Dockerfile`, `.dockerignore`,
 
    Expect **`memory.high`** ≈ **`memory.max * 2 / 3`** (integer bytes). Full-site rebuild also recreates **`db_pg18`** under profile **`pg18-migrate`**; host PG18 prereqs remain in **`docs/OPERATOR_PG18_MIGRATION.md`**.
 
-   A successful **`./scripts/rebuild_full_site.sh`** (no flags) ends with **`Stack summary`**: compose network id, **`podman-compose ps -a`**, and per-service container/image ids. If the log stops at **`Successfully tagged localhost/hpcperfstats:latest`** right after Dockerfile **`collectstatic`**, with no **`=== starting podman-compose up`** banner, the script **failed during the build phase** (commonly **`proxy`** or **`db_pg18`** while **`web`** already tagged) — scroll above the trap line for **`Error`** / **`BUILD FAILED`**, or run **`podman-compose -p hpcperfstats build proxy`** and paste the failure. Wrong command, **`--build-only`**, or an outdated script on the host are other causes.
+   A successful **`./scripts/rebuild_full_site.sh`** (no flags) ends with **`Stack summary`**: compose network id, **`podman-compose ps -a`**, and per-service container/image ids. If the log stops at **`Successfully tagged localhost/hpcperfstats:latest`** right after Dockerfile **`collectstatic`**, with no **`=== starting podman-compose up`** banner, the script **failed during the build phase** (commonly **`proxy`** or **`db_pg18`** while **`web`** already tagged) — scroll above the trap line for **`Error`** / **`BUILD FAILED`**, or retry **`podman build -f services-conf/proxy.Dockerfile -t hpcperfstats-proxy .`** from the git checkout and paste the failure. Wrong command, **`--build-only`**, or an outdated script on the host are other causes.
 
 ---
 
