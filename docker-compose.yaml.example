@@ -9,6 +9,13 @@
 # podman-compose / docker compose discover docker-compose.yaml by default.
 # TLS PEMs: proxy_ssl_source volume (flat PEM dir default); entrypoint copies
 # real files into /etc/ssl/hpcperfstats before nginx starts.
+#
+# Project name must live on this file (first compose file podman-compose loads).
+# If omitted, podman-compose uses the checkout directory basename for container
+# names ({dir}_proxy_1), not name: in docker-compose.defaults.yaml — logs/exec
+# then miss hpcperfstats_* containers when the cwd is not literally hpcperfstats.
+
+name: hpcperfstats
 
 include:
   - docker-compose.defaults.yaml
@@ -85,55 +92,52 @@ volumes:
       device: /root/.hpcperfstats_pgo
       o: bind
 
-# Live PGO soak mounts (rebuild_full_site.sh --profile-phase). Merged after base
-# service volumes so PGOROOT is bind-mounted without editing docker-compose.defaults.yaml.
+# Site service overrides (single `services:` map — YAML must not repeat `services:` at
+# top level; a second key replaces the first). Stack bodies live in
+# docker-compose.defaults.yaml; uncomment optional keys below as needed.
+#
+# Dev/unprivileged ports: also set HPCPERFSTATS_HTTP_PORT=8080, HPCPERFSTATS_HTTPS_PORT=8443,
+# HPCPERFSTATS_SYSLOG_PORT=1514, HPCPERFSTATS_AMQP_PORT=5673 on the compose command env.
 services:
   web:
     image: hpcperfstats
     volumes:
       - pgo_profiles:/root/.hpcperfstats_pgo
+    # Dev/debug — publish gunicorn on the host:
+    # ports:
+    #   - "${HPCPERFSTATS_WEB_PORT:-8000}:8000"
+
   pipeline:
     image: hpcperfstats
     volumes:
       - pgo_profiles:/root/.hpcperfstats_pgo
+    # Pipeline debug (optional):
+    # cap_add:
+    #   - SYS_PTRACE
+    # mem_limit: 128g
+    # memswap_limit: 128g
+
   proxy:
     image: hpcperfstats-proxy
     volumes:
       - pgo_profiles:/root/.hpcperfstats_pgo
+    # Let's Encrypt: set proxy_ssl_source.device to /etc/letsencrypt, then uncomment:
+    # environment:
+    #   - HPCPERFSTATS_SSL_CERTS_REL=live/your.hostname.example
+
   db_pg18:
     image: hpcperfstats-db
     volumes:
       - pgo_profiles:/root/.hpcperfstats_pgo
 
-# Optional service overrides — paste ONE whole block below (including `services:`).
-# Do not uncomment individual lines inside a block; partial edits break YAML parsing.
-#
-# Production defaults remain 80/443/514/5672. For an unprivileged development run,
-# set HPCPERFSTATS_HTTP_PORT=8080, HPCPERFSTATS_HTTPS_PORT=8443, and
-# HPCPERFSTATS_SYSLOG_PORT=1514, HPCPERFSTATS_AMQP_PORT=5673 for that command.
-#
-# --- Host port publishing (dev/debug) ---
-# services:
-#   web:
-#     ports:
-#       - "${HPCPERFSTATS_WEB_PORT:-8000}:8000"
-#   db:
-#     ports:
-#       - "5432:5432"
-#   rabbitmq:
-#     ports:
-#       - "15672:15672"
-#
-# --- Let's Encrypt REL (set proxy_ssl_source.device to /etc/letsencrypt first) ---
-# services:
-#   proxy:
-#     environment:
-#       - HPCPERFSTATS_SSL_CERTS_REL=live/hpcperfstats02.example.com
-#
-# --- Pipeline debug ---
-# services:
-#   pipeline:
-#     cap_add:
-#       - SYS_PTRACE
-#     mem_limit: 128g
-#     memswap_limit: 128g
+  # db (defaults): dev/debug host port — add under db: (keep or drop `{}`):
+  # db:
+  #   ports:
+  #     - "5432:5432"
+  db: {}
+
+  # rabbitmq (defaults): dev/debug management UI:
+  # rabbitmq:
+  #   ports:
+  #     - "15672:15672"
+  rabbitmq: {}

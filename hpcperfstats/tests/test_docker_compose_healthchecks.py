@@ -852,6 +852,23 @@ def test_proxy_compose_mounts_main_nginx_conf():
   )
 
 
+def test_docker_compose_settings_example_declares_project_name_before_include():
+  """Regression: podman-compose locks project from the first file only.
+
+  Signature (hpcperfstats01 2026-10-07): ``docker compose logs`` looked for
+  ``source_pipeline_1`` when the checkout directory basename was ``source``,
+  because ``name: hpcperfstats`` lived only in the included defaults file.
+  """
+  repo_root = Path(__file__).resolve().parents[2]
+  settings_example = (repo_root / "docker-compose.yaml.example").read_text()
+  assert (
+    re.search(r"(?m)^name:\s*hpcperfstats\s*$", settings_example) is not None
+  )
+  name_pos = settings_example.index("name: hpcperfstats")
+  include_pos = settings_example.index("include:")
+  assert name_pos < include_pos
+
+
 def test_docker_compose_includes_settings_not_app_or_pinning():
   repo_root = Path(__file__).resolve().parents[2]
   base = (repo_root / "docker-compose.defaults.yaml").read_text()
@@ -1043,7 +1060,8 @@ def test_docker_compose_settings_example_operator_markers():
   assert "5432:5432" in example_content
   assert "device: /root/.hpcperfstats_pgo" in example_content
   assert "pgo_profiles:/root/.hpcperfstats_pgo" in example_content
-  assert "Do not uncomment individual lines" in example_content
+  assert "single `services:` map" in example_content
+  assert example_content.count("\nservices:\n") == 1
 
 
 def test_docker_compose_pgo_profiles_service_mounts_in_settings_example():

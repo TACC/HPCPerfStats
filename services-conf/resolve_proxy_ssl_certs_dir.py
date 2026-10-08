@@ -251,10 +251,20 @@ def validate_ssl_certs_dir(
   if errors:
     listing = sorted(resolved.iterdir()) if os.access(resolved, os.R_OK) else []
     names = ", ".join(p.name for p in listing) or "(unreadable or empty)"
+    hint = ""
+    if mount_root is not None and resolved == mount_root.resolve():
+      top = {p.name for p in listing}
+      if "live" in top and "archive" in top:
+        hint = (
+          "; hint: mount looks like Let's Encrypt — set "
+          "HPCPERFSTATS_SSL_CERTS_REL=live/<hostname> on the proxy service "
+          "in docker-compose.yaml and recreate the proxy container"
+        )
     raise ValueError(
       f"ssl certs source {resolved} PEM check failed: "
       + "; ".join(errors)
       + f"; directory entries: {names}"
+      + hint
     )
   return resolved
 
