@@ -43,6 +43,8 @@ tacc_stats.egg-info/
 !services-conf/pgo_clang_flags.sh
 !services-conf/clang_march_native_probe.sh
 !services-conf/alpine_pgo_profile_runtime_link.sh
+# Podman --build-context=pgo stub for stdlib/skip (created by pgo_ensure_sketch_podman_context_dir).
+services-conf/pgo_sketch_podman_context/
 *.so
 *.d
 .project

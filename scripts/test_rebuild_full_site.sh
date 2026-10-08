@@ -97,8 +97,12 @@ if ! grep -q 'pgo_podman_build_context_args "${REPO_ROOT}"' "${FULL_SITE_SCRIPT}
   echo "rebuild_full_site.sh must pass REPO_ROOT to pgo_podman_build_context_args" >&2
   exit 1
 fi
+if ! grep -q 'pgo_ensure_sketch_podman_context_dir' "${PGO_LIB}"; then
+  echo "pgo_lib.sh must ensure gitignored sketch podman context dir" >&2
+  exit 1
+fi
 if ! grep -q 'pgo_sketch_podman_context' "${PGO_LIB}"; then
-  echo "pgo_lib.sh must use committed services-conf/pgo_sketch_podman_context for sketch builds" >&2
+  echo "pgo_lib.sh must use local services-conf/pgo_sketch_podman_context for sketch builds" >&2
   exit 1
 fi
 if ! grep -q 'pgo_use_sketch_podman_build_context' "${PGO_LIB}"; then

@@ -43,9 +43,20 @@ pgo_chmod_shared_tree() {
   find "${root}" -type f ! -perm -666 -exec chmod a+rw {} +
 }
 
-pgo_committed_sketch_podman_context_dir() {
+pgo_sketch_podman_context_dir() {
   local repo_root="${1:?repo_root}"
   printf '%s' "${repo_root}/services-conf/pgo_sketch_podman_context"
+}
+
+# Local-only Podman pgo context (gitignored). Created once; never rewritten on rebuild.
+pgo_ensure_sketch_podman_context_dir() {
+  local repo_root="${1:?repo_root}"
+  local stub
+  stub="$(pgo_sketch_podman_context_dir "${repo_root}")"
+  mkdir -p "${stub}"
+  if [[ ! -f "${stub}/.stable" ]]; then
+    printf '%s\n' 'sketch-only podman --build-context=pgo' >"${stub}/.stable"
+  fi
 }
 
 pgo_stdlib_sketch_only_phase() {
@@ -100,11 +111,9 @@ pgo_podman_build_context_args() {
   local root stub
   root="$(cd "$(pgo_root_dir)" && pwd)"
   if pgo_use_sketch_podman_build_context "${repo_root}"; then
-    stub="$(pgo_committed_sketch_podman_context_dir "${repo_root}")"
-    if [[ ! -f "${stub}/.stable" ]]; then
-      pgo_die "missing ${stub}/.stable (committed sketch podman context)"
-    fi
-    echo "pgo podman build-context: committed sketch ${stub} (PGO_PHASE=${PGO_PHASE})" >&2
+    pgo_ensure_sketch_podman_context_dir "${repo_root}"
+    stub="$(pgo_sketch_podman_context_dir "${repo_root}")"
+    echo "pgo podman build-context: local sketch ${stub} (PGO_PHASE=${PGO_PHASE})" >&2
     printf '%s\n' "--build-context=pgo=${stub}"
     return 0
   fi
