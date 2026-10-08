@@ -1062,12 +1062,19 @@ def test_rebuild_full_site_default_stdlib_pgo_only_via_flags() -> None:
 def test_rebuild_full_site_compose_down_before_up() -> None:
   script = (_repo_root() / "scripts" / "rebuild_full_site.sh").read_text()
   assert "compose_down_project" in script
-  assert 'down -t "${timeout}" --remove-orphans' in script
+  assert "down --remove-orphans" in script
+  assert 'down -t "${timeout}"' not in script
+  assert "HPCPERFSTATS_COMPOSE_DOWN_TIMEOUT:-30" not in script
   assert "up -d --force-recreate" not in script
-  assert '"${PODMAN_COMPOSE[@]}" up -d' in script
+  assert "up -d --no-build" in script
+  assert '--profile "${PG18_PROFILE}"' in script
   down_pos = script.index("compose_down_project")
-  up_pos = script.index("up_default_stack()")
+  up_pos = script.index("compose_up_project_stack()")
   assert down_pos < up_pos
+  assert "wait_for_compose_service_running" in script
+  run_stack = script[script.index("run_stack_up_and_verify()") :]
+  run_stack_end = run_stack.index("\n\n", run_stack.index("UP_COMPLETED=1"))
+  assert "up_db_pg18" not in run_stack[:run_stack_end]
 
 
 def test_compose_ensure_local_stack_image_tags_splits_canonical_and_alias() -> (

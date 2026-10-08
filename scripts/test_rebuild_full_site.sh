@@ -240,11 +240,15 @@ if ! grep -q 'compose_down_project' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must define compose_down_project before up" >&2
   exit 1
 fi
-if ! grep -qF 'down -t "${timeout}" --remove-orphans' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must run podman-compose down with grace timeout before up" >&2
+if grep -qE 'down -t "\$\{HPCPERFSTATS_COMPOSE_DOWN_TIMEOUT|down -t "\$\{timeout\}|down -t 30' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must not pass down -t (overrides compose stop_grace_period)" >&2
   exit 1
 fi
-if ! grep -qE '"\$\{PODMAN_COMPOSE\[@\]\}" up -d --no-build' "${FULL_SITE_SCRIPT}"; then
+if ! grep -qF 'down --remove-orphans' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must run podman-compose down --remove-orphans before up" >&2
+  exit 1
+fi
+if ! grep -q 'up -d --no-build' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must use up -d --no-build after explicit podman build" >&2
   exit 1
 fi
@@ -273,8 +277,24 @@ if ! grep -q 'compose_build_db_pg18' "${FULL_SITE_SCRIPT}" \
   echo "rebuild_full_site.sh must build db_pg18 image (hpcperfstats-db)" >&2
   exit 1
 fi
-if ! grep -qF -- '--profile "${PG18_PROFILE}" up -d --no-build "${PG18_SERVICE}"' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must up db_pg18 with profile and --no-build" >&2
+if ! grep -qF -- '--profile "${PG18_PROFILE}" up -d --no-build' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must up stack with pg18-migrate profile (db_pg18 + default services)" >&2
+  exit 1
+fi
+if grep -A10 'run_stack_up_and_verify()' "${FULL_SITE_SCRIPT}" | grep -q 'up_db_pg18'; then
+  echo "run_stack_up_and_verify must not call up_db_pg18 twice (single profile up)" >&2
+  exit 1
+fi
+if ! grep -q 'wait_for_compose_service_running' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must wait for services after up (web startup race)" >&2
+  exit 1
+fi
+if ! grep -A6 'verify_default_stack_running()' "${FULL_SITE_SCRIPT}" | grep -q 'db rabbitmq'; then
+  echo "verify_default_stack_running must require Hub db during PG18 dual-run migrate" >&2
+  exit 1
+fi
+if ! grep -A8 'verify_default_stack_running()' "${FULL_SITE_SCRIPT}" | grep -q '"${PG18_SERVICE}"'; then
+  echo "verify_default_stack_running must require db_pg18 during PG18 dual-run migrate" >&2
   exit 1
 fi
 if grep -qE '"\$\{PODMAN_COMPOSE\[@\]\}".*--force-recreate|run_cmd.*--force-recreate' "${FULL_SITE_SCRIPT}"; then

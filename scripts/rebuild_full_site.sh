@@ -22,6 +22,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/lib/podman_runtime.sh"
 # shellcheck source=lib/compose_pipeline_memory_high.sh
 source "${SCRIPT_DIR}/lib/compose_pipeline_memory_high.sh"
+# shellcheck source=lib/compose_frontend_helpers.sh
+source "${SCRIPT_DIR}/lib/compose_frontend_helpers.sh"
 # shellcheck source=pgo_lib.sh
 source "${SCRIPT_DIR}/pgo_lib.sh"
 
@@ -46,11 +48,11 @@ Usage: scripts/rebuild_full_site.sh [options]
 Build default-stack images and hpcperfstats-db (db_pg18 profile), then tear down
 the compose project (graceful stop, preserve volumes) and start:
 
-  podman-compose down -t <timeout> --remove-orphans
-  podman-compose up -d --no-build
-  podman-compose --profile pg18-migrate up -d --no-build db_pg18
+  podman-compose down --remove-orphans
+  podman-compose --profile pg18-migrate up -d --no-build
 
-Default down stop timeout: HPCPERFSTATS_COMPOSE_DOWN_TIMEOUT=30 (seconds).
+Down uses each service stop_grace_period from compose (do not pass down -t; a global
+timeout overrides longer db/rabbitmq/pg18 grace and risks SIGKILL mid-shutdown).
 
 PGO (optional): default rebuild is always PGO_PHASE=stdlib — no PGOROOT access, no Clang
 PGOROOT PGO (CPython --enable-optimizations + plain make install). PGOROOT defaults to
@@ -203,8 +205,7 @@ run_pgo_use_path() {
 
 run_stack_up_and_verify() {
   PHASE=up
-  up_default_stack
-  up_db_pg18
+  compose_up_project_stack
   if [[ "${DRY_RUN}" -eq 0 ]]; then
     verify_default_stack_running || return 1
   fi
@@ -278,33 +279,58 @@ compose_build_all_with_pgo() {
 }
 
 compose_down_project() {
-  local timeout="${HPCPERFSTATS_COMPOSE_DOWN_TIMEOUT:-30}"
-  LAST_STEP="podman-compose down -t ${timeout} --remove-orphans"
-  echo "rebuild_full_site.sh: ${LAST_STEP} (volumes preserved; no -v) ..."
-  run_cmd "${PODMAN_COMPOSE[@]}" down -t "${timeout}" --remove-orphans
+  LAST_STEP="podman-compose down --remove-orphans"
+  echo "rebuild_full_site.sh: ${LAST_STEP} (volumes preserved; no -v; stop_grace_period from compose) ..."
+  run_cmd "${PODMAN_COMPOSE[@]}" down --remove-orphans
 }
 
-up_default_stack() {
+compose_up_project_stack() {
   compose_down_project
-  LAST_STEP="podman-compose up -d --no-build (default stack)"
+  LAST_STEP="podman-compose --profile ${PG18_PROFILE} up -d --no-build (full stack incl. ${PG18_SERVICE})"
   echo "rebuild_full_site.sh: ${LAST_STEP} ..."
-  run_cmd "${PODMAN_COMPOSE[@]}" up -d --no-build
+  run_cmd "${PODMAN_COMPOSE[@]}" --profile "${PG18_PROFILE}" up -d --no-build
+}
+
+# Legacy names kept for callers/tests; single profile up includes db_pg18 (no second up).
+up_default_stack() {
+  compose_up_project_stack
 }
 
 up_db_pg18() {
-  LAST_STEP="podman-compose --profile ${PG18_PROFILE} up -d --no-build ${PG18_SERVICE}"
-  echo "rebuild_full_site.sh: ${LAST_STEP} ..."
-  run_cmd "${PODMAN_COMPOSE[@]}" --profile "${PG18_PROFILE}" up -d --no-build "${PG18_SERVICE}"
+  :
+}
+
+compose_service_container_name() {
+  printf '%s_%s_1' "${HPCPERFSTATS_COMPOSE_PROJECT}" "$1"
+}
+
+wait_for_compose_service_running() {
+  local svc="$1"
+  local timeout="${2:-${HPCPERFSTATS_STACK_VERIFY_WAIT_TIMEOUT:-300}}"
+  local name elapsed=0
+  name="$(compose_service_container_name "${svc}")"
+  while [[ "${elapsed}" -lt "${timeout}" ]]; do
+    if [[ "$("${PODMAN[@]}" inspect --format '{{.State.Running}}' "${name}" 2>/dev/null)" == "true" ]]; then
+      return 0
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+  echo "rebuild_full_site.sh: timed out waiting for ${name} to run (${timeout}s)" >&2
+  "${PODMAN[@]}" logs --tail 50 "${name}" 2>&1 || true
+  return 1
 }
 
 verify_default_stack_running() {
-  local svc name
-  for svc in web pipeline redis proxy db rabbitmq; do
-    name="${HPCPERFSTATS_COMPOSE_PROJECT}_${svc}_1"
-    if [[ "$("${PODMAN[@]}" inspect --format '{{.State.Running}}' "${name}" 2>/dev/null)" != "true" ]]; then
-      echo "rebuild_full_site.sh: after up, ${name} is not running" >&2
+  local svc
+  # Dual-run PG18 migrate: Hub PG15 (db) stays live; db_pg18 profile service must run too.
+  local -a required=(web pipeline redis proxy db rabbitmq "${PG18_SERVICE}")
+  for svc in "${required[@]}"; do
+    if ! compose_service_container_exists "${svc}"; then
+      echo "rebuild_full_site.sh: required service container missing: ${svc} (full-site rebuild expects db + ${PG18_SERVICE} during migrate)" >&2
       return 1
     fi
+    wait_for_compose_service_running "${svc}" || return 1
   done
 }
 
