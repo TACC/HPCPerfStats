@@ -3000,24 +3000,27 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
     else:
       first = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True).head(1)
     if not first.empty:
-      hosts = first["host"].astype(object).to_numpy()
-      types = first["type"].astype(object).to_numpy()
-      devs = first["dev"].astype(object).to_numpy()
-      events = first["event"].astype(object).to_numpy()
+      keys = list(
+        zip(
+          *(first[col].tolist() for col in _COUNTER_GROUP_COLS),
+          strict=True,
+        )
+      )
       values = first["value"].to_numpy(dtype=np.float64, copy=False)
       idxs = first.index.to_numpy()
-      carry_deltas = np.full(len(first), np.nan, dtype=np.float64)
-      apply_mask = np.zeros(len(first), dtype=bool)
       raw = carry.raw
-      for i in range(len(first)):
-        prev = raw.get((hosts[i], types[i], devs[i], events[i]))
-        if prev is None:
-          continue
-        prev_value = prev[0] if isinstance(prev, tuple) else prev["value"]
-        carry_deltas[i] = float(values[i]) - float(prev_value)
-        apply_mask[i] = True
-      if apply_mask.any():
-        stats_df.loc[idxs[apply_mask], "delta"] = carry_deltas[apply_mask]
+      no_prev = (np.nan,)
+      prev_vals = np.fromiter(
+        (
+          (prev[0] if isinstance(prev, tuple) else prev["value"])
+          for prev in (raw.get(key, no_prev) for key in keys)
+        ),
+        dtype=np.float64,
+        count=len(keys),
+      )
+      hit = np.isfinite(prev_vals)
+      if hit.any():
+        stats_df.loc[idxs[hit], "delta"] = values[hit] - prev_vals[hit]
 
   wid = stats_df["wid"].to_numpy(dtype=np.float64, copy=False)
   delta = stats_df["delta"].to_numpy(dtype=np.float64, copy=False)
@@ -3034,22 +3037,25 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
     else:
       last = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True).tail(1)
     if not last.empty:
-      hosts = last["host"].astype(object).to_numpy()
-      types = last["type"].astype(object).to_numpy()
-      devs = last["dev"].astype(object).to_numpy()
-      events = last["event"].astype(object).to_numpy()
-      values = last["value"].to_numpy(dtype=np.float64, copy=False)
-      wids = last["wid"].to_numpy(copy=False)
-      mults = last["mult"].to_numpy(dtype=np.float64, copy=False)
-      times_last = last["time"].to_numpy(dtype=np.float64, copy=False)
-      raw = carry.raw
-      for i in range(len(last)):
-        raw[(hosts[i], types[i], devs[i], events[i])] = (
-          float(values[i]),
-          int(wids[i]),
-          float(mults[i]),
-          float(times_last[i]),
+      keys = list(
+        zip(
+          *(last[col].tolist() for col in _COUNTER_GROUP_COLS),
+          strict=True,
         )
+      )
+      carry.raw.update(
+        zip(
+          keys,
+          zip(
+            last["value"].to_numpy(dtype=np.float64, copy=False).tolist(),
+            last["wid"].to_numpy(dtype=np.int64, copy=False).tolist(),
+            last["mult"].to_numpy(dtype=np.float64, copy=False).tolist(),
+            last["time"].to_numpy(dtype=np.float64, copy=False).tolist(),
+            strict=True,
+          ),
+          strict=True,
+        )
+      )
 
   stats_df.drop(columns=["wid", "mult"], inplace=True)
   return stats_df

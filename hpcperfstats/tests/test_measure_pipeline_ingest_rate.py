@@ -733,3 +733,35 @@ def test_cli_script_runs_from_repo(tmp_path):
   assert proc.returncode == 0, proc.stderr
   assert "verdict_full_ingest=WINNING" in proc.stdout
   assert "ERROR:" not in proc.stdout
+
+
+def test_tier_stdout_prints_all_hold_medians(mod):
+  """Stdout tier lines carry every write and parse hold median once."""
+  mib = 1024 * 1024
+  lines = [
+    _ts(0) + "startup ingest gate cleared; ingest may begin",
+    _ts(1)
+    + (
+      "ingest file path=/arch/dense outcome=ingested ingest_ok=yes "
+      "db_skip=no "
+      f"size_bytes={16 * mib} elapsed_s=45.0 postgres_s=12.0 "
+      "feed_s=1.0 collapse_host_sum_s=2.0 parse_unaccounted_s=0.5 "
+      "orm_materialize_s=3.0"
+    ),
+  ]
+  outcomes = mod.analyze_lines(lines, exclude_startup=False)
+  text = mod.format_stdout(outcomes)
+  keys = [line.split("=", 1)[0] for line in text.splitlines()]
+  assert len(keys) == len(set(keys))
+  hold_names = list(
+    dict.fromkeys(mod._WRITE_PHASE_TOKEN_NAMES + mod._PARSE_HOLD_TOKEN_NAMES)
+  )
+  for tok in hold_names:
+    assert f"tier_8mib_64mib_median_{tok}" in keys
+  for tok in (
+    "collapse_host_sum_s",
+    "feed_s",
+    "parse_unaccounted_s",
+    "orm_materialize_s",
+  ):
+    assert f"tier_8mib_64mib_median_{tok}" in keys

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import time
 
 import numpy as np
@@ -9,6 +10,8 @@ import pandas as pd
 
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
   _COLLAPSE_GROUP_COLS,
+  _COUNTER_GROUP_COLS,
+  DeltaCarryState,
   _apply_counter_deltas,
   _collapse_stats_with_deltas,
   _groupby_sum_min_count,
@@ -615,6 +618,176 @@ def test_delta_e13_lexsort_multi_dev_retain():
   assert cand_mean < 60.0
   assert retain
   print("delta_wave2_retain_ok")
+
+
+def _apply_counter_deltas_row_loop_ref(stats_df, carry=None):
+  """Frozen pre-E16 per-row carry loops. Product code must match this."""
+  for col in _COUNTER_GROUP_COLS:
+    if col in stats_df.columns and not isinstance(
+      stats_df[col].dtype,
+      pd.CategoricalDtype,
+    ):
+      stats_df[col] = stats_df[col].astype("category")
+  code_cols = [
+    stats_df[col].cat.codes.to_numpy(dtype=np.int64, copy=False)
+    for col in _COUNTER_GROUP_COLS
+  ]
+  sizes = tuple(int(c.max()) + 1 for c in code_cols)
+  times = stats_df["time"].to_numpy(dtype=np.float64, copy=False)
+  if int(np.prod(sizes, dtype=np.float64)) <= (2**63 - 1):
+    gid = np.ravel_multi_index(np.vstack(code_cols), sizes)
+    order = np.lexsort((times, gid))
+    stats_df = stats_df.iloc[order].reset_index(drop=True)
+    gid = gid[order]
+    n = len(gid)
+    values = stats_df["value"].to_numpy(dtype=np.float64, copy=False)
+    same = np.ones(n, dtype=bool)
+    if n > 1:
+      same[1:] = gid[1:] == gid[:-1]
+    delta = np.empty(n, dtype=np.float64)
+    delta[0] = np.nan
+    if n > 1:
+      delta[1:] = np.where(same[1:], values[1:] - values[:-1], np.nan)
+    stats_df["delta"] = delta
+    is_first = np.ones(n, dtype=bool)
+    if n > 1:
+      is_first[1:] = gid[1:] != gid[:-1]
+    is_last = np.ones(n, dtype=bool)
+    if n > 1:
+      is_last[:-1] = gid[:-1] != gid[1:]
+  else:
+    stats_df = stats_df.sort_values(by=[*_COUNTER_GROUP_COLS, "time"])
+    stats_df["delta"] = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True)[
+      "value"
+    ].diff()
+    is_first = is_last = None
+
+  if carry is not None and carry.raw:
+    if is_first is not None:
+      first = stats_df.loc[is_first]
+    else:
+      first = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True).head(1)
+    if not first.empty:
+      hosts = first["host"].astype(object).to_numpy()
+      types = first["type"].astype(object).to_numpy()
+      devs = first["dev"].astype(object).to_numpy()
+      events = first["event"].astype(object).to_numpy()
+      values = first["value"].to_numpy(dtype=np.float64, copy=False)
+      idxs = first.index.to_numpy()
+      carry_deltas = np.full(len(first), np.nan, dtype=np.float64)
+      apply_mask = np.zeros(len(first), dtype=bool)
+      raw = carry.raw
+      for i in range(len(first)):
+        prev = raw.get((hosts[i], types[i], devs[i], events[i]))
+        if prev is None:
+          continue
+        prev_value = prev[0] if isinstance(prev, tuple) else prev["value"]
+        carry_deltas[i] = float(values[i]) - float(prev_value)
+        apply_mask[i] = True
+      if apply_mask.any():
+        stats_df.loc[idxs[apply_mask], "delta"] = carry_deltas[apply_mask]
+
+  wid = stats_df["wid"].to_numpy(dtype=np.float64, copy=False)
+  delta = stats_df["delta"].to_numpy(dtype=np.float64, copy=False)
+  wrap = (delta < 0) & np.isfinite(delta)
+  if wrap.any():
+    delta = delta.copy()
+    delta[wrap] = (2.0 ** wid[wrap]) + delta[wrap]
+  mult = stats_df["mult"].to_numpy(dtype=np.float64, copy=False)
+  stats_df["delta"] = delta * mult
+
+  if carry is not None:
+    if is_last is not None:
+      last = stats_df.loc[is_last]
+    else:
+      last = stats_df.groupby(_COUNTER_GROUP_COLS, observed=True).tail(1)
+    if not last.empty:
+      hosts = last["host"].astype(object).to_numpy()
+      types = last["type"].astype(object).to_numpy()
+      devs = last["dev"].astype(object).to_numpy()
+      events = last["event"].astype(object).to_numpy()
+      values = last["value"].to_numpy(dtype=np.float64, copy=False)
+      wids = last["wid"].to_numpy(copy=False)
+      mults = last["mult"].to_numpy(dtype=np.float64, copy=False)
+      times_last = last["time"].to_numpy(dtype=np.float64, copy=False)
+      raw = carry.raw
+      for i in range(len(last)):
+        raw[(hosts[i], types[i], devs[i], events[i])] = (
+          float(values[i]),
+          int(wids[i]),
+          float(mults[i]),
+          float(times_last[i]),
+        )
+
+  stats_df.drop(columns=["wid", "mult"], inplace=True)
+  return stats_df
+
+
+def _carry_split_frame() -> pd.DataFrame:
+  """Multi-host frame with a wrap, a late group, and a seeded carry key."""
+  rows = []
+  for host, dev, event, samples in (
+    ("h0", "0", "cas", ((10.0, 100.0), (20.0, 140.0), (30.0, 10.0))),
+    ("h0", "1", "cas", ((10.0, 50.0), (20.0, 80.0))),
+    ("h1", "", "cycles", ((15.0, 5.0), (25.0, 9.0), (35.0, 4.0))),
+    ("h2", "0", "late", ((40.0, 7.0),)),
+  ):
+    for stamp, value in samples:
+      rows.append((host, "cpu", dev, event, "none", stamp, value, 8, 2.0))
+  return pd.DataFrame(
+    rows,
+    columns=[
+      "host",
+      "type",
+      "dev",
+      "event",
+      "unit",
+      "time",
+      "value",
+      "wid",
+      "mult",
+    ],
+  )
+
+
+def test_apply_counter_deltas_carry_split_matches_single_pass():
+  """Chunked carry matches the frozen per-row loops, including wrap and gaps."""
+  frame = _carry_split_frame()
+  for n_chunks in (1, 2, 7, len(frame)):
+    edges = np.linspace(0, len(frame), n_chunks + 1, dtype=int)
+    parts = [
+      frame.iloc[start:end]
+      for start, end in itertools.pairwise(edges)
+      if end > start
+    ]
+    ref_carry = DeltaCarryState()
+    new_carry = DeltaCarryState()
+    ref_carry.raw[("h0", "cpu", "0", "cas")] = (90.0, 8, 2.0, 0.0)
+    new_carry.raw[("h0", "cpu", "0", "cas")] = (90.0, 8, 2.0, 0.0)
+    ref_out = [
+      _apply_counter_deltas_row_loop_ref(part.copy(), ref_carry)
+      for part in parts
+    ]
+    new_out = [_apply_counter_deltas(part.copy(), new_carry) for part in parts]
+    ref = pd.concat(ref_out, ignore_index=True)
+    got = pd.concat(new_out, ignore_index=True)
+    pd.testing.assert_frame_equal(got, ref, check_dtype=False)
+    assert ref_carry.raw.keys() == new_carry.raw.keys()
+    for key, ref_tuple in ref_carry.raw.items():
+      got_tuple = new_carry.raw[key]
+      assert len(got_tuple) == 4
+      assert got_tuple[0] == ref_tuple[0]
+      assert int(got_tuple[1]) == int(ref_tuple[1])
+      assert got_tuple[2] == ref_tuple[2]
+      assert got_tuple[3] == ref_tuple[3]
+    late = got[(got["host"] == "h2") & (got["event"] == "late")]
+    assert len(late) == 1
+    assert pd.isna(late["delta"].iloc[0])
+    wrapped = got[
+      (got["host"] == "h0") & (got["dev"] == "0") & (got["time"] == 30.0)
+    ]
+    assert len(wrapped) == 1
+    assert wrapped["delta"].iloc[0] == (2.0**8 + (10.0 - 140.0)) * 2.0
 
 
 def test_delta_collapse_hotpath_smoke_timing():

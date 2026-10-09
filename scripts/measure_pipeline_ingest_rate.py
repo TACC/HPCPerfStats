@@ -55,7 +55,6 @@ Attributes:
   _MID_TIER_NAME: Mid size-tier name for overnight decision pack.
   _MID_TIER_PREF: Preference order for overnight decision mid-tier selection.
   _DENSE_TIER_NAME: Horizon dense cohort for decision_next_dense.
-  _TIER_STDOUT_EXTRA_PARSE_TOKENS: Extra parse hold medians on stdout tier lines.
   _PARSE_DERIVED_HOLD_TOKENS: Derived parse tokens excluded from top-hold ranking.
   _PARSE_HOLD_TOKEN_NAMES: Parse-stage token names scraped from ingest lines.
   _PHASE_TOKEN_RES: Compiled named-field regexes for write/parse tokens.
@@ -157,13 +156,6 @@ _PHASE_TOKEN_RES = {
 _MID_TIER_NAME = "8mib_64mib"
 _DENSE_TIER_NAME = "8mib_64mib"
 _MID_TIER_MIN_SAMPLES = 12
-_TIER_STDOUT_EXTRA_PARSE_TOKENS = (
-  "collapse_gpu_s",
-  "delta_s",
-  "jid_invalidate_s",
-  "heap_release_s",
-  "write_setup_s",
-)
 _MIB_BYTES = 1024 * 1024
 _GIB_BYTES = 1024 * _MIB_BYTES
 # Horizon dense mid-files are ~13-17 MiB; split former lt_64mib so decision
@@ -1684,15 +1676,8 @@ def format_stdout(outcomes: dict[str, str]) -> str:
         f"tier_{tier}_median_postgres_frac",
       )
     )
-    for tok in (
-      "db_execute_s",
-      "copy_s",
-      "conflict_insert_s",
-      "orm_materialize_s",
-      "feed_s",
-      "collapse_s",
-      "build_df_s",
-      *_TIER_STDOUT_EXTRA_PARSE_TOKENS,
+    for tok in dict.fromkeys(
+      _WRITE_PHASE_TOKEN_NAMES + _PARSE_HOLD_TOKEN_NAMES
     ):
       tier_keys.append(f"tier_{tier}_median_{tok}")
   return "\n".join(
