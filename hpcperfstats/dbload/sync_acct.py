@@ -17,7 +17,7 @@ import os
 import sys
 import time
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NoReturn
 
 from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 
@@ -28,6 +28,7 @@ import pandas as pd
 from django.conf import settings
 from django.db import IntegrityError, close_old_connections, connections
 from pandas import read_csv, to_datetime, to_timedelta
+from pandas.errors import EmptyDataError, ParserError
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.date_utils import (
@@ -185,6 +186,144 @@ class AccountingFileShrinkError(Exception):
     )
 
 
+class AccountingFileLoadError(Exception):
+  """
+  One accounting file was skipped, with a sentence for the skip log.
+
+  This is separate from AccountingFileShrinkError, which refuses to
+  replace a daily file with a shorter payload. The daemon prints
+  ``reason`` after the path.
+
+  Attributes:
+    reason: Operator-facing sentence for this skip.
+  """
+
+  def __init__(self, reason: str) -> None:
+    """
+    Store the skip sentence and use it as the exception message.
+
+    Args:
+      reason (str): Text the daemon appends after the file path.
+
+    Returns:
+      None
+
+    Examples:
+      >>> err = AccountingFileLoadError("missing required sacct columns: JobID")
+      >>> err.reason
+      'missing required sacct columns: JobID'
+    """
+    self.reason = reason
+    super().__init__(reason)
+
+
+def _fail_acct_load(reason: str, exc: BaseException | None = None) -> NoReturn:
+  """
+  Raise AccountingFileLoadError, chaining a caught cause when given.
+
+  Args:
+    reason (str): Operator-facing sentence stored on the error.
+    exc (BaseException | None): Caught failure to chain with
+      ``raise ... from``. None when the check found the problem
+      without a caught exception.
+
+  Returns:
+    None: This function always raises.
+
+  Raises:
+    AccountingFileLoadError: Always, with ``reason`` on the instance.
+
+  Examples:
+    >>> try:
+    ...   _fail_acct_load("missing required sacct columns: JobID")
+    ... except AccountingFileLoadError as err:
+    ...   err.reason
+    'missing required sacct columns: JobID'
+  """
+  if exc is None:
+    raise AccountingFileLoadError(reason)
+  raise AccountingFileLoadError(reason) from exc
+
+
+def _acct_load_skip_reason(exc: BaseException) -> str:
+  """
+  Format the sentence the daemon prints for one skipped file.
+
+  Args:
+    exc (BaseException): Failure from loading that file.
+      AccountingFileLoadError contributes its ``reason``. Every other
+      type is formatted as ``TypeName: message``.
+
+  Returns:
+    str: Text placed after the path in the skip log.
+
+  Examples:
+    >>> _acct_load_skip_reason(RuntimeError("disk blew up"))
+    'RuntimeError: disk blew up'
+  """
+  if isinstance(exc, AccountingFileLoadError):
+    return exc.reason
+  return f"{type(exc).__name__}: {exc}"
+
+
+def _expand_acct_nodelist(jid: str, value: Any) -> list[str]:
+  """
+  Expand one sacct NodeList cell, naming the job when it is invalid.
+
+  Args:
+    jid (str): Job id carried into the skip sentence.
+    value (Any): NodeList cell. A string is passed to
+      ``hostlist.expand_hostlist``. Any other value, including a
+      missing cell, is a load error.
+
+  Returns:
+    list[str]: Host names from a well-formed NodeList.
+
+  Examples:
+    >>> _expand_acct_nodelist("100", "node1")
+    ['node1']
+  """
+  if not isinstance(value, str):
+    _fail_acct_load(
+      f"NodeList for jid={jid}: value is not text (value={value!r})"
+    )
+  try:
+    return hostlist.expand_hostlist(value)
+  except hostlist.BadHostlist as exc:
+    _fail_acct_load(
+      f"NodeList for jid={jid}: {exc} (value={value!r})",
+      exc,
+    )
+
+
+def _load_acct_file_for_daemon(path: str, jobs_in_db: Any) -> None:
+  """
+  Ingest one daily accounting file and log why it was skipped.
+
+  Args:
+    path (str): Accounting file path.
+    jobs_in_db (Any): Job ids already stored, forwarded to sync_acct.
+
+  Returns:
+    None
+
+  Raises:
+    Exception: Re-raised after the skip line when settings.DEBUG is
+    true, so the original traceback is kept.
+
+  Examples:
+    >>> _load_acct_file_for_daemon(
+    ...   "/tmp/no-such-acct.txt", set()
+    ... )  # doctest: +SKIP
+  """
+  try:
+    sync_acct(path, jobs_in_db)
+  except Exception as exc:
+    log_print(f"Unable to load file: {path}: {_acct_load_skip_reason(exc)}")
+    if settings.DEBUG:
+      raise
+
+
 def accounting_daily_file_path(ingest_date: Any) -> Any:
   """
   Return ``{acct_path}/{YYYY-MM-DD}.txt`` for a calendar ingest date.
@@ -301,6 +440,10 @@ def sync_acct_from_content(content: Any, jobs_in_db: Any) -> Any:
   Returns:
     Any: Value produced by this call (type depends on inputs).
 
+  Raises:
+    AccountingFileLoadError: When the payload has no header, the
+    pipe-delimited parse fails, or a later accounting check fails.
+
   Examples:
     >>> sync_acct_from_content(None, None)  # doctest: +SKIP
   """
@@ -308,9 +451,14 @@ def sync_acct_from_content(content: Any, jobs_in_db: Any) -> Any:
     content = content.decode("utf-8", errors="replace")
   if not content.strip():
     return 0
-  df = read_csv(
-    io.StringIO(content), sep="|", engine="python", on_bad_lines="skip"
-  )
+  try:
+    df = read_csv(
+      io.StringIO(content), sep="|", engine="python", on_bad_lines="skip"
+    )
+  except EmptyDataError as exc:
+    _fail_acct_load("sacct file has no header columns", exc)
+  except ParserError as exc:
+    _fail_acct_load(f"pipe-delimited sacct parse failed: {exc}", exc)
   return _sync_acct_dataframe(df, jobs_in_db)
 
 
@@ -327,12 +475,24 @@ def sync_acct(acct_file: str, jobs_in_db: Any) -> Any:
   Returns:
     Any: Value produced by this call (type depends on inputs).
 
+  Raises:
+    AccountingFileLoadError: When the read lock times out, the file
+    cannot be opened, or sync_acct_from_content rejects the payload.
+
   Examples:
     >>> sync_acct("x", None)  # doctest: +SKIP
   """
-  with file_read_lock_wait(acct_file):
-    with open(acct_file, encoding="utf-8", errors="replace") as f:
-      return sync_acct_from_content(f.read(), jobs_in_db)
+  try:
+    with file_read_lock_wait(acct_file):
+      with open(acct_file, encoding="utf-8", errors="replace") as fh:
+        return sync_acct_from_content(fh.read(), jobs_in_db)
+  except TimeoutError as exc:
+    _fail_acct_load(str(exc), exc)
+  except OSError as exc:
+    _fail_acct_load(
+      f"cannot read accounting file: {exc.strerror} (errno {exc.errno})",
+      exc,
+    )
 
 
 def _sync_acct_dataframe(df: Any, jobs_in_db: Any) -> Any:
@@ -350,9 +510,17 @@ def _sync_acct_dataframe(df: Any, jobs_in_db: Any) -> Any:
   Returns:
     Any: Value produced by this call (type depends on inputs).
 
+  Raises:
+    AccountingFileLoadError: When required columns, queues, times,
+    NodeList, node hours, row build, or the job-count queries fail.
+
   Examples:
     >>> _sync_acct_dataframe(None, None)  # doctest: +SKIP
   """
+  missing = [name for name in COLUMNS_TO_READ if name not in df.columns]
+  if missing:
+    _fail_acct_load("missing required sacct columns: " + ", ".join(missing))
+
   columns_to_read = COLUMNS_TO_READ
   # cycle through collumns so we can remove those we don't want to import.
   for c in df:
@@ -392,8 +560,16 @@ def _sync_acct_dataframe(df: Any, jobs_in_db: Any) -> Any:
   restricted_df_indices = []
 
   for i in range(df_len):
+    if not restricted_queue_keywords:
+      break
+    cell = df.iloc[i, queue_col_index]
+    if not isinstance(cell, str):
+      _fail_acct_load(
+        "queue value is not text for jid="
+        f"{df.iloc[i, job_id_col_index]}: {cell!r}"
+      )
     for q in restricted_queue_keywords:
-      if q in df.iloc[i, queue_col_index] and settings.DEBUG:
+      if q in cell and settings.DEBUG:
         restricted_job_ids.append(df.iloc[i, job_id_col_index])
         restricted_df_indices.append(i)
 
@@ -412,27 +588,48 @@ def _sync_acct_dataframe(df: Any, jobs_in_db: Any) -> Any:
   df["start_time"] = df["start_time"].replace("^Unknown$", pd.NA, regex=True)
   df["start_time"] = df["start_time"].fillna(df["end_time"])
 
-  df["start_time"] = to_datetime(df["start_time"]).dt.tz_localize(
-    local_timezone, ambiguous=False, nonexistent="shift_forward"
-  )
-  df["end_time"] = to_datetime(df["end_time"]).dt.tz_localize(
-    local_timezone, ambiguous=False, nonexistent="shift_forward"
-  )
-  df["submit_time"] = to_datetime(df["submit_time"]).dt.tz_localize(
-    local_timezone, ambiguous=False, nonexistent="shift_forward"
-  )
+  try:
+    df["start_time"] = to_datetime(df["start_time"]).dt.tz_localize(
+      local_timezone, ambiguous=False, nonexistent="shift_forward"
+    )
+    df["end_time"] = to_datetime(df["end_time"]).dt.tz_localize(
+      local_timezone, ambiguous=False, nonexistent="shift_forward"
+    )
+    df["submit_time"] = to_datetime(df["submit_time"]).dt.tz_localize(
+      local_timezone, ambiguous=False, nonexistent="shift_forward"
+    )
+  except Exception as exc:
+    _fail_acct_load(
+      f"could not parse Start, End, or Submit: {exc}",
+      exc,
+    )
 
   df["runtime"] = to_timedelta(
     df["end_time"] - df["start_time"]
   ).dt.total_seconds()
   df["timelimit"] = _acct_timelimit_to_seconds(df["timelimit"])
 
-  df["host_list"] = df["host_list"].apply(hostlist.expand_hostlist)
-  df["node_hrs"] = df["nhosts"] * df["runtime"] / 3600.0
-
-  objs = [
-    job_data_instance_from_acct_row(row) for row in df.itertuples(index=False)
+  df["host_list"] = [
+    _expand_acct_nodelist(str(jid), value)
+    for jid, value in zip(df["jid"], df["host_list"], strict=True)
   ]
+  try:
+    df["node_hrs"] = df["nhosts"] * df["runtime"] / 3600.0
+  except TypeError as exc:
+    _fail_acct_load(
+      f"could not compute node hours from NNodes and runtime: {exc}",
+      exc,
+    )
+
+  objs = []
+  for row in df.itertuples(index=False):
+    try:
+      objs.append(job_data_instance_from_acct_row(row))
+    except Exception as exc:
+      _fail_acct_load(
+        f"could not build job row jid={row.jid}: {type(exc).__name__}: {exc}",
+        exc,
+      )
 
   if not objs:
     log_print("Total number of new entries: 0")
@@ -441,9 +638,15 @@ def _sync_acct_dataframe(df: Any, jobs_in_db: Any) -> Any:
   # Compute an accurate count of rows actually inserted, even when using
   # ignore_conflicts (which silently skips duplicates at the DB level).
   jids = [obj.jid for obj in objs]
-  jids_before = frozenset(
-    job_data.objects.filter(jid__in=jids).values_list("jid", flat=True),
-  )
+  try:
+    jids_before = frozenset(
+      job_data.objects.filter(jid__in=jids).values_list("jid", flat=True),
+    )
+  except Exception as exc:
+    _fail_acct_load(
+      f"database error checking existing jobs: {type(exc).__name__}: {exc}",
+      exc,
+    )
 
   try:
     job_data.objects.bulk_create(objs, ignore_conflicts=True)
@@ -459,9 +662,17 @@ def _sync_acct_dataframe(df: Any, jobs_in_db: Any) -> Any:
     )
     return inserted
 
-  jids_after = frozenset(
-    job_data.objects.filter(jid__in=jids).values_list("jid", flat=True),
-  )
+  try:
+    jids_after = frozenset(
+      job_data.objects.filter(jid__in=jids).values_list("jid", flat=True),
+    )
+  except Exception as exc:
+    _fail_acct_load(
+      "database error counting inserted jobs after bulk insert "
+      "(rows may already be inserted): "
+      f"{type(exc).__name__}: {exc}",
+      exc,
+    )
   inserted_jids_list = [j for j in jids_after if j not in jids_before]
   inserted = len(inserted_jids_list)
   log_print("Total number of new entries:", inserted)
@@ -535,12 +746,7 @@ if __name__ == "__main__":
         continue
       if entry.name.startswith(str(startdate.date())):
         log_print(entry.path)
-        try:
-          sync_acct(entry.path, jobs_in_db)
-        except Exception as e:
-          if settings.DEBUG:
-            raise e
-          log_print(f"Unable to load file: {entry.path}")
+        _load_acct_file_for_daemon(entry.path, jobs_in_db)
     startdate += timedelta(days=1)
   log_print("loading time", time.time() - start)
 

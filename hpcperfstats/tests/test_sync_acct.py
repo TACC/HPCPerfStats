@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.db import IntegrityError
 from django.test import override_settings
+from pandas.errors import ParserError
 
 pytestmark = pytest.mark.django_db(databases=[])
 
@@ -387,3 +388,222 @@ def test_sync_acct_from_content_partition_limit_timelimit(mock_jd, mock_notify):
   assert by_jid["1202"].timelimit is None
   assert by_jid["1203"].timelimit == 93600.0
   mock_notify.assert_called_once()
+
+
+def _assert_load_reason(content, *needles):
+  from hpcperfstats.dbload.sync_acct import (
+    AccountingFileLoadError,
+    sync_acct_from_content,
+  )
+
+  with pytest.raises(AccountingFileLoadError) as exc_info:
+    sync_acct_from_content(content, set())
+  reason = exc_info.value.reason
+  for needle in needles:
+    assert needle in reason, reason
+  return reason
+
+
+def _header_and_row_without(column, **row_kwargs):
+  header_names = SACCT_HEADER.split("|")
+  row_names = _sacct_row(**row_kwargs).split("|")
+  index = header_names.index(column)
+  del header_names[index]
+  del row_names[index]
+  return "|".join(header_names) + "\n" + "|".join(row_names) + "\n"
+
+
+def test_sync_acct_from_content_missing_column_names_reason():
+  content = _header_and_row_without("JobID")
+  _assert_load_reason(content, "missing required sacct columns", "JobID")
+
+
+def test_sync_acct_from_content_bad_nodelist_names_jid():
+  content = _sacct_content(_sacct_row(jid="8801", nodelist="c[1"))
+  _assert_load_reason(content, "NodeList", "8801", "unbalanced brackets")
+
+
+def test_sync_acct_from_content_non_text_nodelist_names_jid():
+  content = _sacct_content(_sacct_row(jid="8802", nodelist=""))
+  _assert_load_reason(content, "NodeList", "8802")
+
+
+def test_sync_acct_from_content_bad_timestamp_reason():
+  content = _sacct_content(_sacct_row(jid="8803", start="not-a-time"))
+  _assert_load_reason(content, "could not parse Start, End, or Submit")
+
+
+@patch(
+  "hpcperfstats.dbload.sync_acct.cfg.get_restricted_queue_keywords",
+  return_value=["secret"],
+)
+def test_sync_acct_restricted_queue_non_text_names_jid(_keywords):
+  content = _sacct_content(_sacct_row(jid="8804", queue=""))
+  _assert_load_reason(content, "queue value is not text", "8804")
+
+
+@patch("hpcperfstats.dbload.sync_acct._notify_job_cache_after_acct_ingest")
+@patch("hpcperfstats.dbload.sync_acct.job_data")
+@patch(
+  "hpcperfstats.dbload.sync_acct.cfg.get_restricted_queue_keywords",
+  return_value=[],
+)
+def test_sync_acct_empty_keywords_allow_non_text_queue(
+  _keywords, mock_jd, _notify
+):
+  from hpcperfstats.dbload.sync_acct import sync_acct_from_content
+
+  content = _sacct_content(_sacct_row(jid="8805", queue=""))
+  filter_qs = MagicMock()
+  filter_qs.values_list.side_effect = [[], ["8805"]]
+  mock_jd.objects.filter.return_value = filter_qs
+
+  inserted = sync_acct_from_content(content, jobs_in_db=set())
+
+  assert inserted == 1
+
+
+def test_sync_acct_oserror_reason(tmp_path):
+  from hpcperfstats.dbload.sync_acct import (
+    AccountingFileLoadError,
+    sync_acct,
+  )
+
+  missing = tmp_path / "2024-06-01.txt"
+  with pytest.raises(AccountingFileLoadError) as exc_info:
+    sync_acct(str(missing), set())
+  reason = exc_info.value.reason
+  assert "cannot read accounting file" in reason
+  assert "errno" in reason
+
+
+@patch(
+  "hpcperfstats.dbload.sync_acct.file_read_lock_wait",
+  side_effect=TimeoutError(
+    "Timed out waiting for read lock: /tmp/acct.fnctl.lock"
+  ),
+)
+def test_sync_acct_lock_timeout_reason(_lock):
+  from hpcperfstats.dbload.sync_acct import (
+    AccountingFileLoadError,
+    sync_acct,
+  )
+
+  with pytest.raises(AccountingFileLoadError) as exc_info:
+    sync_acct("/tmp/2024-06-01.txt", set())
+  assert "timed out waiting for read lock" in exc_info.value.reason.lower()
+
+
+def test_sync_acct_load_reason_backstop_includes_exception_type():
+  from hpcperfstats.dbload.sync_acct import (
+    AccountingFileLoadError,
+    _acct_load_skip_reason,
+  )
+
+  plain = _acct_load_skip_reason(RuntimeError("disk blew up"))
+  assert plain == "RuntimeError: disk blew up"
+  named = AccountingFileLoadError("missing required sacct columns: JobID")
+  assert _acct_load_skip_reason(named) == named.reason
+  assert not _acct_load_skip_reason(named).startswith("AccountingFileLoadError")
+
+
+def test_sync_acct_from_content_empty_data_reason():
+  _assert_load_reason('"', "sacct file has no header columns")
+
+
+@patch(
+  "hpcperfstats.dbload.sync_acct.read_csv",
+  side_effect=ParserError("tokenizing data"),
+)
+def test_sync_acct_from_content_parser_error_reason(_read):
+  _assert_load_reason(
+    "JobID|User\n1|alice\n",
+    "pipe-delimited sacct parse failed",
+  )
+
+
+def test_sync_acct_from_content_node_hours_type_error_reason():
+  content = _sacct_content(_sacct_row(jid="8806", nodes="abc"))
+  _assert_load_reason(
+    content, "could not compute node hours from NNodes and runtime"
+  )
+
+
+@patch(
+  "hpcperfstats.dbload.sync_acct.job_data_instance_from_acct_row",
+  side_effect=AttributeError("bad field"),
+)
+def test_sync_acct_from_content_job_row_build_reason(_build):
+  content = _sacct_content(_sacct_row(jid="8807"))
+  _assert_load_reason(
+    content, "could not build job row jid=8807", "AttributeError"
+  )
+
+
+@patch("hpcperfstats.dbload.sync_acct.job_data")
+def test_sync_acct_database_error_before_insert_reason(mock_jd):
+  mock_jd.objects.filter.side_effect = RuntimeError("connection lost")
+  content = _sacct_content(_sacct_row(jid="8808"))
+  _assert_load_reason(
+    content,
+    "database error checking existing jobs",
+    "RuntimeError",
+    "connection lost",
+  )
+
+
+@patch("hpcperfstats.dbload.sync_acct._notify_job_cache_after_acct_ingest")
+@patch("hpcperfstats.dbload.sync_acct.job_data")
+def test_sync_acct_database_error_after_bulk_insert_reason(mock_jd, _notify):
+  calls = {"n": 0}
+
+  def _filter(*_args, **_kwargs):
+    calls["n"] += 1
+    query = MagicMock()
+    if calls["n"] == 1:
+      query.values_list.return_value = []
+    else:
+      query.values_list.side_effect = RuntimeError("count failed")
+    return query
+
+  mock_jd.objects.filter.side_effect = _filter
+  content = _sacct_content(_sacct_row(jid="8809"))
+  _assert_load_reason(
+    content,
+    "database error counting inserted jobs after bulk insert",
+    "rows may already be inserted",
+    "RuntimeError",
+  )
+
+
+@override_settings(DEBUG=True)
+@patch("hpcperfstats.dbload.sync_acct.log_print")
+@patch(
+  "hpcperfstats.dbload.sync_acct.sync_acct",
+  side_effect=RuntimeError("boom"),
+)
+def test_sync_acct_debug_logs_reason_then_reraises(_sync, mock_log):
+  from hpcperfstats.dbload.sync_acct import _load_acct_file_for_daemon
+
+  with pytest.raises(RuntimeError, match="boom"):
+    _load_acct_file_for_daemon("/tmp/2024-06-01.txt", set())
+  logged = mock_log.call_args[0][0]
+  assert logged == (
+    "Unable to load file: /tmp/2024-06-01.txt: RuntimeError: boom"
+  )
+
+
+@override_settings(DEBUG=False)
+@patch("hpcperfstats.dbload.sync_acct.log_print")
+@patch(
+  "hpcperfstats.dbload.sync_acct.sync_acct",
+  side_effect=RuntimeError("boom"),
+)
+def test_sync_acct_non_debug_logs_reason_and_continues(_sync, mock_log):
+  from hpcperfstats.dbload.sync_acct import _load_acct_file_for_daemon
+
+  _load_acct_file_for_daemon("/tmp/2024-06-01.txt", set())
+  logged = mock_log.call_args[0][0]
+  assert logged == (
+    "Unable to load file: /tmp/2024-06-01.txt: RuntimeError: boom"
+  )
