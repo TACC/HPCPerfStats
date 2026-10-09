@@ -4425,7 +4425,9 @@ def _build_archive_validation_cache_key(compressed_path: str) -> Any:
 
 _DAILY_ARCHIVE_MEMBERS_CACHE = {}
 _DAILY_ARCHIVE_MEMBERS_CACHE_LOCK = threading.RLock()
-_MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE: dict[str, dict[str, int]] = {}
+_MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE: dict[
+  str, tuple[int | None, int | None, dict[str, int]]
+] = {}
 _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE_LOCK = threading.RLock()
 
 
@@ -4488,7 +4490,8 @@ def get_mutable_tar_authority_member_map(tar_path: str) -> dict[str, int]:
   Return file member sizes from a mutable daily ``.tar`` on disk.
 
   Bypasses L1/store member caches so append and handoff partition agree with
-  the open tar Branch C uses for reclassify.
+  the open tar Branch C uses for reclassify. A cached map is reused only when
+  ``st_size`` and ``st_mtime_ns`` still match the file.
 
   Args:
     tar_path (str): Path to ``YYYY-MM-DD.tar``.
@@ -4507,25 +4510,111 @@ def get_mutable_tar_authority_member_map(tar_path: str) -> dict[str, int]:
   tar_norm = os.path.normpath(str(tar_path or ""))
   if not tar_norm:
     return {}
+  present = os.path.isfile(tar_norm)
+  size: int | None = None
+  mtime_ns: int | None = None
+  if present:
+    try:
+      st = os.stat(tar_norm)
+      size = int(st.st_size)
+      mtime_ns = int(st.st_mtime_ns)
+    except OSError:
+      present = False
   with _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE_LOCK:
     cached = _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.get(tar_norm)
-    if cached is not None:
-      return cached
+    if (
+      isinstance(cached, tuple)
+      and len(cached) == 3
+      and cached[0] == size
+      and cached[1] == mtime_ns
+      and isinstance(cached[2], dict)
+    ):
+      return cached[2]
+  if not present:
+    with _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE_LOCK:
+      _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE[tar_norm] = (None, None, {})
+    _trim_mutable_tar_authority_members_cache()
+    return {}
   members: dict[str, int] = {}
-  if os.path.isfile(tar_norm):
-    try:
-      with file_read_lock_wait(tar_norm):
-        members = _read_tar_file_member_sizes_unlocked(tar_norm)
-    except RuntimeError:
-      raise
-    except Exception:
-      members = {}
-    finally:
-      _remove_read_lock_sidecar(tar_norm)
+  try:
+    with file_read_lock_wait(tar_norm):
+      members = _read_tar_file_member_sizes_unlocked(tar_norm)
+      try:
+        st_after = os.stat(tar_norm)
+        size = int(st_after.st_size)
+        mtime_ns = int(st_after.st_mtime_ns)
+      except OSError:
+        pass
+  except RuntimeError:
+    raise
+  except Exception:
+    members = {}
+  finally:
+    _remove_read_lock_sidecar(tar_norm)
+  if size is None or mtime_ns is None:
+    with _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE_LOCK:
+      _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.pop(tar_norm, None)
+    return members
+  stored = dict(members)
   with _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE_LOCK:
-    _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE[tar_norm] = members
+    _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE[tar_norm] = (size, mtime_ns, stored)
   _trim_mutable_tar_authority_members_cache()
-  return members
+  return stored
+
+
+def update_mutable_tar_authority_after_append(
+  tar_path: str,
+  appended_members: dict[str, int],
+) -> bool:
+  """
+  Merge appended members into the open-tar map and stamp the post-append stat.
+
+  A missing prior map is dropped so the next lookup scans. Largest size wins
+  when a name is already cached.
+
+  Args:
+    tar_path (str): Path to ``YYYY-MM-DD.tar``.
+    appended_members (dict[str, int]): Member name to byte size just appended.
+
+  Returns:
+    bool: True when the in-place map was stored.
+
+  Examples:
+    >>> update_mutable_tar_authority_after_append("", {})
+    False
+  """
+  tar_norm = os.path.normpath(str(tar_path or ""))
+  if not tar_norm or not os.path.isfile(tar_norm):
+    invalidate_mutable_tar_authority_members(tar_norm)
+    return False
+  try:
+    st = os.stat(tar_norm)
+    size = int(st.st_size)
+    mtime_ns = int(st.st_mtime_ns)
+  except OSError:
+    invalidate_mutable_tar_authority_members(tar_norm)
+    return False
+  with _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE_LOCK:
+    cached = _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.get(tar_norm)
+    if not (
+      isinstance(cached, tuple)
+      and len(cached) == 3
+      and isinstance(cached[2], dict)
+    ):
+      _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.pop(tar_norm, None)
+      return False
+    merged = dict(cached[2])
+    for name, raw_size in (appended_members or {}).items():
+      try:
+        size_i = int(raw_size)
+      except TypeError, ValueError:
+        continue
+      prev = merged.get(str(name))
+      if prev is None or size_i > int(prev):
+        merged[str(name)] = size_i
+    _MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE[tar_norm] = (size, mtime_ns, merged)
+  _trim_mutable_tar_authority_members_cache()
+  return True
 
 
 def maybe_invalidate_open_tar_store_divergence_for_append_batch(

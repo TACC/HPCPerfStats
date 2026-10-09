@@ -166,7 +166,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   filter_files_to_add_to_archive,
   get_existing_archive_members_for_daily_archive,
   invalidate_after_daily_tar_mutation,
-  invalidate_mutable_tar_authority_members,
   load_checkpoint_path_set,
   merge_daily_archive_members_l1_cache,
   normalize_daily_compressed_path,
@@ -176,6 +175,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   repair_truncated_daily_tar_in_place,
   replace_corrupt_tar_from_compressed_backup,
   stats_file_is_active_segment,
+  update_mutable_tar_authority_after_append,
   verify_tar_archive_readable,
 )
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
@@ -5795,8 +5795,10 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         )
       if merged:
         merge_daily_archive_members_l1_cache(canonical, member_map)
-        # Open-tar authority is stale after append; store/L1 already merged.
-        invalidate_mutable_tar_authority_members(archive_tar_fname)
+        update_mutable_tar_authority_after_append(
+          archive_tar_fname,
+          member_map,
+        )
         day_date = calendar_date_from_daily_tar_path(archive_tar_fname)
         if DEBUG:
           log_print(

@@ -4744,6 +4744,29 @@ def test_census_log_always_includes_total_ingested():
   assert "ingest=0/0" in line
 
 
+def test_append_census_includes_writers_and_parked():
+  """Census token carries local writers, cap, and parked day-list claims."""
+  qo.note_mem_telem_runtime(
+    append_inflight_n=4,
+    append_writers_cap=4,
+    append_parked_n=26,
+  )
+  try:
+    token = qo.format_append_writers_census_token()
+    assert token == "append_writers=4/4 parked=26"
+    census_src = inspect.getsource(qo._reconstruct_coordinator_loop)
+    assert "format_append_writers_census_token()" in census_src
+    append_src = inspect.getsource(qo._append_coordinator_loop)
+    assert "append_parked_n=" in append_src
+    assert "append_writers_cap=" in append_src
+  finally:
+    qo.note_mem_telem_runtime(
+      append_inflight_n=0,
+      append_writers_cap=0,
+      append_parked_n=0,
+    )
+
+
 def test_regression_battery_script_nounset_empty_extra():
   """No-arg battery must not expand empty PYTEST_EXTRA under bash set -u."""
   script = (

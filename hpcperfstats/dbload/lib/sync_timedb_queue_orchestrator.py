@@ -3062,6 +3062,8 @@ _MEM_TELEM_RUNTIME: dict[str, Any] = {
   "inflight_sizes": {},
   "submitted": {},
   "append_inflight_n": 0,
+  "append_writers_cap": 0,
+  "append_parked_n": 0,
   "day_close_inflight_n": 0,
   "hot_used": 0,
   "catch_used": 0,
@@ -3126,8 +3128,8 @@ def note_mem_telem_runtime(**kwargs: Any) -> None:
 
   Args:
     **kwargs: Keys among ``submitted``, ``append_inflight_n``,
-      ``day_close_inflight_n``, ``hot_used``, ``catch_used``, ``fill_block``,
-      ``inflight_sizes``.
+      ``append_writers_cap``, ``append_parked_n``, ``day_close_inflight_n``,
+      ``hot_used``, ``catch_used``, ``fill_block``, ``inflight_sizes``.
 
   Returns:
     None
@@ -3236,6 +3238,29 @@ def format_ingest_mem_block_census_suffix() -> str:
   if not parts:
     return ""
   return " " + " ".join(parts)
+
+
+def format_append_writers_census_token() -> str:
+  """
+  Return the census token for local append writers and parked claims.
+
+  Returns:
+    str: ``append_writers=N/cap parked=M`` from the latest append-coordinator
+    snapshot (zeros until that loop publishes).
+
+  Examples:
+    >>> note_mem_telem_runtime(
+    ...   append_inflight_n=0,
+    ...   append_writers_cap=0,
+    ...   append_parked_n=0,
+    ... )
+    >>> format_append_writers_census_token()
+    'append_writers=0/0 parked=0'
+  """
+  writers_n = int(_MEM_TELEM_RUNTIME.get("append_inflight_n") or 0)
+  writers_cap = int(_MEM_TELEM_RUNTIME.get("append_writers_cap") or 0)
+  parked_n = int(_MEM_TELEM_RUNTIME.get("append_parked_n") or 0)
+  return f"append_writers={writers_n}/{writers_cap} parked={parked_n}"
 
 
 def _release_ingest_inflight_size(
@@ -5887,6 +5912,14 @@ def _append_coordinator_loop(
         archive_data_dir=directory,
         log_fn=log_fn,
       )
+      parked_n = 0
+      for day in _APPEND_DAY_LISTS.day_keys():
+        parked_n += _APPEND_DAY_LISTS.peek_len(day)
+      note_mem_telem_runtime(
+        append_inflight_n=len(append_inflight),
+        append_writers_cap=int(append_cap),
+        append_parked_n=parked_n,
+      )
       now = time.monotonic()
       if now - last_reap >= max(poll_s, 5.0):
         last_reap = now
@@ -6118,8 +6151,9 @@ def _reconstruct_coordinator_loop(
             total_ingested = _TOTAL_INGESTED
             total_completed = _TOTAL_COMPLETED
           mem_tok = format_ingest_mem_block_census_suffix()
+          writers_tok = format_append_writers_census_token()
           _log(
-            f"queue_orchestrator census {jq.format_queue_census(census)} total_ingested={total_ingested} total_completed={total_completed}{' ' + busy_tok if busy_tok else ''}{mem_tok}",
+            f"queue_orchestrator census {jq.format_queue_census(census)} total_ingested={total_ingested} total_completed={total_completed}{' ' + busy_tok if busy_tok else ''}{mem_tok} {writers_tok}",
             log_fn=log_fn,
           )
           snap = mem_telem.snapshot_pipeline_mem_telemetry(

@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import inspect
-import os
 import tarfile
-from pathlib import Path
 
 from hpcperfstats.dbload.lib import (
   sync_timedb_archive_helpers as helpers,
@@ -64,8 +62,11 @@ def test_day_raw_single_memo_form_no_flat_sidecar():
 
 
 def test_mutable_invalidate_helper_exists_for_append_merge():
+  """Invalidate stays for non-append mutations; success merge updates in place."""
+  import hpcperfstats.dbload.sync_timedb as st
+
   assert hasattr(helpers, "invalidate_mutable_tar_authority_members")
-  sync_src = Path(
-    os.path.join(os.path.dirname(helpers.__file__), "..", "sync_timedb.py"),
-  ).read_text()
-  assert "invalidate_mutable_tar_authority_members" in sync_src
+  assert hasattr(helpers, "update_mutable_tar_authority_after_append")
+  body = inspect.getsource(st._archive_stats_files_body)
+  assert "update_mutable_tar_authority_after_append(" in body
+  assert "invalidate_mutable_tar_authority_members(" not in body

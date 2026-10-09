@@ -10437,6 +10437,96 @@ def test_lookup_members_source_tar_scan_when_mutable_tar_exists(
   assert source == "tar_scan"
 
 
+def test_open_tar_append_merge_does_not_rescan(monkeypatch, tmp_path):
+  """After our append merge, same size/mtime reuses the map; a mtime change scans."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  helpers.clear_mutable_tar_authority_members_cache()
+  tar_path = tmp_path / "2024-06-03.tar"
+  inner = tmp_path / "a.txt"
+  inner.write_bytes(b"one")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(inner), arcname="member")
+  scan_calls = {"n": 0}
+  original = helpers._read_tar_file_member_sizes_unlocked
+
+  def counting_get_members(tar_p):
+    scan_calls["n"] += 1
+    return original(tar_p)
+
+  monkeypatch.setattr(
+    helpers,
+    "_read_tar_file_member_sizes_unlocked",
+    counting_get_members,
+  )
+  first = helpers.get_mutable_tar_authority_member_map(str(tar_path))
+  assert first["member"] == 3
+  assert scan_calls["n"] == 1
+  assert helpers.update_mutable_tar_authority_after_append(
+    str(tar_path),
+    {"member": 1, "member2": 4},
+  )
+  second = helpers.get_mutable_tar_authority_member_map(str(tar_path))
+  assert second["member"] == 3
+  assert second["member2"] == 4
+  assert scan_calls["n"] == 1
+  os.utime(tar_path, (1, 1))
+  helpers.get_mutable_tar_authority_member_map(str(tar_path))
+  assert scan_calls["n"] == 2
+  helpers.clear_mutable_tar_authority_members_cache()
+
+
+def test_open_tar_cache_hit_skips_pre_append_verify(monkeypatch, tmp_path):
+  """A cache hit stays members_source=tar_scan, so pre-append tar tf is skipped."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_members_coord as coord
+  import hpcperfstats.dbload.sync_timedb as st
+
+  helpers.clear_mutable_tar_authority_members_cache()
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  archive_key = str(daily / "2024-06-04.tar.zst")
+  Path(archive_key).write_bytes(b"sealed-placeholder")
+  tar_path = Path(daily_tar_path_from_compressed(archive_key))
+  existing = tmp_path / "1700000000"
+  existing.write_text("1700000000 job1 cn001\n")
+  new_raw = tmp_path / "1700000001"
+  new_raw.write_text("1700000001 job2 cn001\n")
+  member_name = helpers.get_tar_member_name(str(existing))
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(existing), arcname=member_name)
+  scan_calls = {"n": 0}
+  original = helpers._read_tar_file_member_sizes_unlocked
+
+  def counting_get_members(tar_p):
+    scan_calls["n"] += 1
+    return original(tar_p)
+
+  monkeypatch.setattr(
+    helpers,
+    "_read_tar_file_member_sizes_unlocked",
+    counting_get_members,
+  )
+  helpers.get_mutable_tar_authority_member_map(str(tar_path))
+  assert scan_calls["n"] == 1
+  verify_calls = {"n": 0}
+
+  def counting_verify(path):
+    verify_calls["n"] += 1
+    return True
+
+  monkeypatch.setattr(st, "verify_tar_archive_readable", counting_verify)
+  monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
+  monkeypatch.setattr(coord, "merge_appended_members", lambda *_a, **_k: True)
+  monkeypatch.setattr(st, "log_print", lambda *_a, **_k: None)
+  _patch_archive_gate_pass(monkeypatch)
+  result = st._archive_stats_files_body((archive_key, [str(new_raw)]))
+  assert result
+  assert scan_calls["n"] == 1
+  assert verify_calls["n"] == 1
+  helpers.clear_mutable_tar_authority_members_cache()
+
+
 def test_get_existing_archive_members_empty_when_no_archive_despite_l1(
   tmp_path,
 ):
