@@ -950,6 +950,74 @@ def test_threadsafe_ack_skips_stale_delivery_tag_after_reconnect(monkeypatch):
   listend.clear_amqp_connection()
 
 
+def _rebind_session_channels():
+  """Bind a consume session, then replace the channel before ack schedule."""
+  import hpcperfstats.listend as listend
+
+  class _Conn:
+    is_closed = False
+
+    def add_callback_threadsafe(self, callback):
+      callback()
+
+  class _Ch:
+    def __init__(self):
+      self.acked = []
+      self.nacked = []
+
+    def basic_ack(self, delivery_tag=None):
+      self.acked.append(delivery_tag)
+
+    def basic_nack(self, delivery_tag=None, requeue=True):
+      self.nacked.append((delivery_tag, requeue))
+
+  session = listend._AmqpConsumeSession(0)
+  old_conn, old_ch = _Conn(), _Ch()
+  session.bind(old_conn, old_ch)
+  enqueued = session.generation
+  new_conn, new_ch = _Conn(), _Ch()
+  session.bind(new_conn, new_ch)
+  return session, enqueued, old_ch, new_ch
+
+
+def test_threadsafe_ack_skips_tag_when_session_rebinds_before_schedule(
+  monkeypatch,
+):
+  """Enqueue generation must not basic_ack after session.bind."""
+  import hpcperfstats.listend as listend
+
+  monkeypatch.setattr(listend, "log_print", lambda _m: None)
+  session, enqueued, old_ch, new_ch = _rebind_session_channels()
+  assert session.generation != enqueued
+  listend._threadsafe_basic_ack(
+    665,
+    session=session,
+    ack_generation=enqueued,
+  )
+  assert old_ch.acked == []
+  assert new_ch.acked == []
+  assert session.reconnect_requested is False
+
+
+def test_threadsafe_nack_skips_tag_when_session_rebinds_before_schedule(
+  monkeypatch,
+):
+  """Enqueue generation must not basic_nack after session.bind."""
+  import hpcperfstats.listend as listend
+
+  monkeypatch.setattr(listend, "log_print", lambda _m: None)
+  session, enqueued, old_ch, new_ch = _rebind_session_channels()
+  listend._threadsafe_basic_nack(
+    665,
+    requeue=True,
+    session=session,
+    ack_generation=enqueued,
+  )
+  assert old_ch.nacked == []
+  assert new_ch.nacked == []
+  assert session.reconnect_requested is False
+
+
 def test_request_amqp_reconnect_from_worker_thread_does_not_close(
   monkeypatch,
 ):

@@ -211,6 +211,7 @@ class _ArchiveWorkItem(NamedTuple):
     is_dollar: True when the payload starts with ``$`` after whitespace.
     session: Originating ``_AmqpConsumeSession``, or None (global ack).
     recv_monotonic: ``time.monotonic()`` when queued.
+    ack_generation: Session generation at enqueue. ``0`` skips that check.
   """
 
   delivery_tag: Any
@@ -220,6 +221,7 @@ class _ArchiveWorkItem(NamedTuple):
   is_dollar: bool
   session: Any
   recv_monotonic: float
+  ack_generation: int = 0
 
 
 _message_timestamps = deque()
@@ -1500,22 +1502,27 @@ def _consume_connection_unusable(conn: Any, channel: Any = None) -> bool:
 
 def _consume_amqp_for_threadsafe_op(
   session: _AmqpConsumeSession | None = None,
+  *,
+  ack_generation: int = 0,
 ) -> tuple[Any, Any, int] | None:
   """
   Return the current consume connection snapshot, or ``None`` if unusable.
 
   Marks a connection-scoped reconnect when the stored connection is already
   closed/closing so archive threads never call ``add_callback_threadsafe``
-  on a dead ``BlockingConnection``.
+  on a dead ``BlockingConnection``. A non-zero enqueue generation that no
+  longer matches the live session is skipped without requesting reconnect.
 
   Args:
     session (_AmqpConsumeSession | None): Originating consume session, or
       ``None`` to use the process-global snapshot (tests / N=1).
+    ack_generation (int): Generation captured when the message was
+      enqueued. ``0`` keeps the schedule-time stale check only.
 
   Returns:
     tuple[Any, Any, int] | None: ``(connection, channel, generation)`` when
     an ack/nack may be scheduled; ``None`` when the consume session is
-    missing or already dead.
+    missing, already dead, or a different generation than enqueue.
 
   Examples:
     >>> _consume_amqp_for_threadsafe_op() is None
@@ -1524,28 +1531,25 @@ def _consume_amqp_for_threadsafe_op(
   if session is not None:
     conn = session.connection
     ch = session.channel
-    gen = session.generation
-    if conn is None or ch is None:
-      return None
-    if session.reconnect_requested or _consume_connection_unusable(conn, ch):
-      _request_amqp_full_reconnect(
-        ch,
-        "consume connection unusable before ack/nack",
-        session=session,
-      )
-      return None
-    return conn, ch, gen
-  conn = _amqp_connection
-  ch = _amqp_channel
-  gen = _amqp_connection_generation
+    live_generation = session.generation
+    reconnect = session.reconnect_requested
+  else:
+    conn = _amqp_connection
+    ch = _amqp_channel
+    live_generation = _amqp_connection_generation
+    reconnect = _amqp_reconnect_requested
+  if ack_generation and live_generation != ack_generation:
+    return None
   if conn is None or ch is None:
     return None
-  if _amqp_reconnect_requested or _consume_connection_unusable(conn, ch):
+  if reconnect or _consume_connection_unusable(conn, ch):
     _request_amqp_full_reconnect(
-      ch, "consume connection unusable before ack/nack"
+      ch,
+      "consume connection unusable before ack/nack",
+      session=session,
     )
     return None
-  return conn, ch, gen
+  return conn, ch, live_generation
 
 
 def _consume_amqp_callback_stale(
@@ -1951,6 +1955,7 @@ def _threadsafe_basic_ack(
   delivery_tag: Any,
   *,
   session: _AmqpConsumeSession | None = None,
+  ack_generation: int = 0,
 ) -> None:
   """
   Schedule ``basic_ack`` on the originating consume connection I/O thread.
@@ -1964,6 +1969,8 @@ def _threadsafe_basic_ack(
     delivery_tag (Any): AMQP delivery tag to acknowledge.
     session (_AmqpConsumeSession | None): Originating consume session, or
       ``None`` to use the process-global snapshot.
+    ack_generation (int): Generation captured when the message was
+      enqueued. ``0`` keeps the schedule-time stale check only.
 
   Returns:
     None
@@ -1974,7 +1981,9 @@ def _threadsafe_basic_ack(
   """
   if delivery_tag is None:
     return
-  snapshot = _consume_amqp_for_threadsafe_op(session)
+  snapshot = _consume_amqp_for_threadsafe_op(
+    session, ack_generation=ack_generation
+  )
   if snapshot is None:
     return
   conn, ch, gen = snapshot
@@ -2017,6 +2026,7 @@ def _threadsafe_basic_nack(
   *,
   requeue: bool = True,
   session: _AmqpConsumeSession | None = None,
+  ack_generation: int = 0,
 ) -> None:
   """
   Schedule ``basic_nack`` on the originating consume connection I/O thread.
@@ -2028,6 +2038,8 @@ def _threadsafe_basic_nack(
     requeue (bool): When ``True``, requeue the message on the broker.
     session (_AmqpConsumeSession | None): Originating consume session, or
       ``None`` to use the process-global snapshot.
+    ack_generation (int): Generation captured when the message was
+      enqueued. ``0`` keeps the schedule-time stale check only.
 
   Returns:
     None
@@ -2038,7 +2050,9 @@ def _threadsafe_basic_nack(
   """
   if delivery_tag is None:
     return
-  snapshot = _consume_amqp_for_threadsafe_op(session)
+  snapshot = _consume_amqp_for_threadsafe_op(
+    session, ack_generation=ack_generation
+  )
   if snapshot is None:
     return
   conn, ch, gen = snapshot
@@ -2082,6 +2096,7 @@ def _archive_and_submit_then_ack(
   message: Any,
   *,
   session: _AmqpConsumeSession | None = None,
+  ack_generation: int = 0,
 ) -> None:
   """
   Archive payload, threadsafe ack, then best-effort live-DB submit.
@@ -2095,6 +2110,8 @@ def _archive_and_submit_then_ack(
     message (Any): Monitor payload ``str`` or AMQP ``bytes``.
     session (_AmqpConsumeSession | None): Originating consume session, or
       ``None`` to ack on the process-global connection.
+    ack_generation (int): Generation captured when the message was
+      enqueued. ``0`` keeps the schedule-time stale check only.
 
   Returns:
     None
@@ -2106,7 +2123,9 @@ def _archive_and_submit_then_ack(
   ack_channel = session.channel if session is not None else _amqp_channel
   try:
     result = append_monitor_payload_to_archive(message)
-    _threadsafe_basic_ack(delivery_tag, session=session)
+    _threadsafe_basic_ack(
+      delivery_tag, session=session, ack_generation=ack_generation
+    )
     try:
       from hpcperfstats.dbload.lib.listend_db_ingest import (
         submit_listend_db_ingest,
@@ -2127,7 +2146,12 @@ def _archive_and_submit_then_ack(
       _request_amqp_full_reconnect(ack_channel, str(e), session=session)
       return
     log_print(f"Error processing message; leaving on server: {e}")
-    _threadsafe_basic_nack(delivery_tag, requeue=True, session=session)
+    _threadsafe_basic_nack(
+      delivery_tag,
+      requeue=True,
+      session=session,
+      ack_generation=ack_generation,
+    )
 
 
 def _archive_reorder_sort_key(
@@ -2201,7 +2225,10 @@ def _archive_worker_main(worker_idx: int, work_queue: queue.Queue) -> None:
     """
     try:
       _archive_and_submit_then_ack(
-        work.delivery_tag, work.message, session=work.session
+        work.delivery_tag,
+        work.message,
+        session=work.session,
+        ack_generation=work.ack_generation,
       )
     finally:
       _archive_inflight_add(-1)
@@ -2420,6 +2447,10 @@ def _dispatch_to_archive_pool(
 
   n = max(1, int(_archive_pool_n) if _archive_pool_n else 1)
   idx = host_affine_worker_index(host, n)
+  if session is not None:
+    ack_generation = int(session.generation)
+  else:
+    ack_generation = int(_amqp_connection_generation)
   _archive_queues[idx].put(
     _ArchiveWorkItem(
       delivery_tag=delivery_tag,
@@ -2429,6 +2460,7 @@ def _dispatch_to_archive_pool(
       is_dollar=bool(is_dollar),
       session=session,
       recv_monotonic=time.monotonic(),
+      ack_generation=ack_generation,
     )
   )
 
