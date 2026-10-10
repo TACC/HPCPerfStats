@@ -10353,6 +10353,119 @@ def test_archive_stats_files_body_gate_skip_returns_handoff_outcome(
   assert not hasattr(st, "_archive_task_succeeded")
 
 
+def test_append_body_mixed_batch_returns_ingest_pending_paths(
+  monkeypatch,
+  tmp_path,
+):
+  """A batch that appends some paths must return the DB-gate rejects."""
+  import hpcperfstats.dbload.sync_timedb as st
+
+  ready = tmp_path / "1709123456"
+  ready.write_text("1709123456 job1 cn001\n")
+  pending = tmp_path / "1709123457"
+  pending.write_text("1709123457 job2 cn002\n")
+  archive_key = str(tmp_path / "2024-03-06.tar.zst")
+
+  def _split(paths, **_k):
+    return [str(ready)], [str(pending)]
+
+  monkeypatch.setattr(st, "filter_paths_head_ingested", _split)
+  monkeypatch.setattr(
+    st,
+    "filter_files_to_add_to_archive",
+    lambda *_a, **_k: [],
+  )
+  result = st._archive_stats_files_body(
+    (archive_key, [str(ready), str(pending)]),
+  )
+  assert isinstance(result, st.ArchiveAppendOutcome)
+  assert result.ok is True
+  assert result.gate_skipped is False
+  assert result.ingest_pending_paths == (str(pending),)
+
+
+def test_append_post_success_skips_tf_when_size_grows(monkeypatch, tmp_path):
+  """Post-append tar tf is skipped when the mutable tar grew."""
+  import hpcperfstats.dbload.sync_timedb as st
+
+  raw = tmp_path / "1709123456"
+  raw.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-06.tar.zst")
+  verify_calls = {"n": 0}
+  _patch_archive_gate_pass(monkeypatch)
+  monkeypatch.setattr(
+    st,
+    "_lookup_existing_members_for_archive_append",
+    lambda *_a, **_k: ({}, "tar_scan"),
+  )
+  monkeypatch.setattr(
+    st,
+    "filter_files_to_add_to_archive",
+    lambda files, *_a, **_k: list(files),
+  )
+  monkeypatch.setattr(
+    st, "_restore_daily_tar_or_log_failure", lambda *_a, **_k: True
+  )
+
+  def _grow(dest, _files):
+    with open(dest, "ab") as fh:
+      fh.write(b"grew")
+
+  monkeypatch.setattr(st, "_append_to_tar", _grow)
+  monkeypatch.setattr(
+    st,
+    "verify_tar_archive_readable",
+    lambda *_a, **_k: (
+      verify_calls.__setitem__("n", verify_calls["n"] + 1) or True
+    ),
+  )
+  result = st._archive_stats_files_body((archive_key, [str(raw)]))
+  assert result
+  assert verify_calls["n"] == 0
+
+
+def test_append_post_success_runs_tf_when_size_unchanged(
+  monkeypatch,
+  tmp_path,
+):
+  """Post-append tar tf still runs when tar -r exits and the size does not grow."""
+  import hpcperfstats.dbload.sync_timedb as st
+
+  raw = tmp_path / "1709123456"
+  raw.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-06.tar.zst")
+  tar_path = daily_tar_path_from_compressed(archive_key)
+  os.makedirs(os.path.dirname(tar_path) or ".", exist_ok=True)
+  with open(tar_path, "wb") as fh:
+    fh.write(b"unchanged-tar")
+  verify_calls = {"n": 0}
+  _patch_archive_gate_pass(monkeypatch)
+  monkeypatch.setattr(
+    st,
+    "_lookup_existing_members_for_archive_append",
+    lambda *_a, **_k: ({}, "tar_scan"),
+  )
+  monkeypatch.setattr(
+    st,
+    "filter_files_to_add_to_archive",
+    lambda files, *_a, **_k: list(files),
+  )
+  monkeypatch.setattr(
+    st, "_restore_daily_tar_or_log_failure", lambda *_a, **_k: True
+  )
+  monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
+  monkeypatch.setattr(
+    st,
+    "verify_tar_archive_readable",
+    lambda *_a, **_k: (
+      verify_calls.__setitem__("n", verify_calls["n"] + 1) or True
+    ),
+  )
+  result = st._archive_stats_files_body((archive_key, [str(raw)]))
+  assert result
+  assert verify_calls["n"] >= 1
+
+
 def test_archive_stats_files_restores_when_to_add_positive_sealed(
   monkeypatch,
   tmp_path,

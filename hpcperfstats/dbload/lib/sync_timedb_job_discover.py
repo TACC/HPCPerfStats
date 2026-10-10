@@ -392,7 +392,11 @@ def stream_enqueue_ingest_from_find_records(
       )
       != "hot"
     ):
-      plan = replace(plan, needs_ingest=False)
+      plan = replace(
+        plan,
+        needs_ingest=False,
+        needs_append=plan.needs_append and not plan.needs_ingest,
+      )
     enqueued = jr.enqueue_reconstruct_jobs_for_closed_path(
       client,
       plan,

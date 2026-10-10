@@ -492,7 +492,7 @@ def test_closed_path_plan_kinds_empty_and_both():
     calendar_day=None,
     tar_path=None,
   )
-  assert both.kinds_to_enqueue() == ("ingest", "append")
+  assert both.kinds_to_enqueue() == ("ingest",)
 
 
 # --- persistence envelope ---

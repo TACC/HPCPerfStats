@@ -2322,6 +2322,7 @@ class ArchiveAppendOutcome:
     skipped_paths: Attribute.
     soft_requeue: Attribute.
     gate_skipped: Attribute.
+    ingest_pending_paths: Attribute.
   """
 
   ok: bool = True
@@ -2333,6 +2334,8 @@ class ArchiveAppendOutcome:
   soft_requeue: bool = False
   # DB ingest gate blocked every path; hand off to ingest before append ACK.
   gate_skipped: bool = False
+  # Mixed batch: paths the DB gate rejected while others appended.
+  ingest_pending_paths: tuple = ()
 
   def __bool__(self) -> Any:
     """
@@ -5465,6 +5468,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       stats_files = mark_ready + list(probed_ready)
     else:
       stats_files = mark_ready
+    ingest_pending_paths = tuple(gate_skipped or ())
     if not stats_files:
       job_outcome = "gate_skip"
       return ArchiveAppendOutcome(
@@ -5580,6 +5584,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       return ArchiveAppendOutcome(
         skip_finalize_invalidate=True,
         skipped_paths=skipped_oversized,
+        ingest_pending_paths=ingest_pending_paths,
       )
 
     # Restore / decompress only when append will mutate the daily tar.
@@ -5668,6 +5673,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
           return ArchiveAppendOutcome(
             skip_finalize_invalidate=True,
             skipped_paths=skipped_oversized,
+            ingest_pending_paths=ingest_pending_paths,
           )
       else:
         existing_members = {}
@@ -5700,6 +5706,11 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
           reason="pax_convert",
           log_fn=log_print,
         )
+    before_append_size = (
+      os.path.getsize(archive_tar_fname)
+      if os.path.isfile(archive_tar_fname)
+      else 0
+    )
     try:
       _append_to_tar(archive_tar_fname, stats_files_to_tar)
     except (subprocess.CalledProcessError, RuntimeError) as exc:
@@ -5710,7 +5721,15 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       return False
 
     if stats_files_to_tar:
-      if not verify_tar_archive_readable(archive_tar_fname):
+      after_append_size = (
+        os.path.getsize(archive_tar_fname)
+        if os.path.isfile(archive_tar_fname)
+        else 0
+      )
+      if (
+        after_append_size <= before_append_size
+        and not verify_tar_archive_readable(archive_tar_fname)
+      ):
         log_print(
           f"Daily tar failed integrity check after append; recovering from sealed archive or clearing for rebuild: {archive_tar_fname}",
           flush=True,
@@ -5827,6 +5846,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         store_merge_ok=merged,
         skip_finalize_invalidate=merged or worker_invalidated,
         skipped_paths=skipped_oversized,
+        ingest_pending_paths=ingest_pending_paths,
       )
     job_outcome = "ok"
     if DEBUG:
@@ -5837,6 +5857,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
     return ArchiveAppendOutcome(
       skip_finalize_invalidate=True,
       skipped_paths=skipped_oversized,
+      ingest_pending_paths=ingest_pending_paths,
     )
   finally:
     if append_inflight_set:

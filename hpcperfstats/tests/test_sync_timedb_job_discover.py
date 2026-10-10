@@ -343,3 +343,44 @@ def test_date_range_filter_streams_without_materializing():
   assert pulled["n"] == 0
   assert next(it) is rec
   assert pulled["n"] == 1
+
+
+def test_discover_capped_uningested_enqueues_neither(monkeypatch):
+  """Catchup at the ingest cap must not queue append for a path still needing ingest."""
+  monkeypatch.setattr(jq, "queue_has_capacity", lambda *_a, **_k: False)
+  client = SyncTimedbJobStore("")
+  stats = jd.stream_enqueue_ingest_from_find_records(
+    client,
+    [
+      FindStatsRecord(path="/archive/h/1700000000", mtime=1.0, size=10, inode=1)
+    ],
+    tgz_archive_dir="/daily",
+    today=date(2026, 8, 24),
+    calendar_day_fn=lambda _r: date(2026, 6, 1),
+    ingest_is_complete_fn=lambda **_k: False,
+    append_is_complete_fn=lambda **_k: False,
+  )
+  assert stats.enqueued_ingest == 0
+  assert stats.enqueued_append == 0
+  assert client.queued_count("ingest") == 0
+  assert client.queued_count("append") == 0
+
+
+def test_discover_capped_ingested_still_enqueues_append(monkeypatch):
+  """Catchup at the ingest cap still queues append when ingest is already complete."""
+  monkeypatch.setattr(jq, "queue_has_capacity", lambda *_a, **_k: False)
+  client = SyncTimedbJobStore("")
+  stats = jd.stream_enqueue_ingest_from_find_records(
+    client,
+    [
+      FindStatsRecord(path="/archive/h/1700000000", mtime=1.0, size=10, inode=1)
+    ],
+    tgz_archive_dir="/daily",
+    today=date(2026, 8, 24),
+    calendar_day_fn=lambda _r: date(2026, 6, 1),
+    ingest_is_complete_fn=lambda **_k: True,
+    append_is_complete_fn=lambda **_k: False,
+  )
+  assert stats.enqueued_ingest == 0
+  assert stats.enqueued_append == 1
+  assert client.list_slice("append", 0, -1) == ["/archive/h/1700000000"]

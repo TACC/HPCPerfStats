@@ -2,6 +2,9 @@
 
 Attributes:
   AppendDayClaimLists: Process-local day -> deque helper (coordinator only).
+  _DAY_REMAINDER_LOCK: Mutex for the in-memory day remainder maps.
+  _DAY_APPEND_LEFT: Calendar day -> queued append jobs still unacked.
+  _DAY_INGEST_LEFT: Calendar day -> queued ingest jobs still unacked.
 """
 
 from __future__ import annotations
@@ -161,6 +164,31 @@ class AppendDayClaimLists:
     with self._lock:
       return tuple(self._days.keys())
 
+  def claim_identities(self) -> tuple[str, ...]:
+    """
+    Return stats-file identities held in every day list.
+
+    Args:
+      None
+
+    Returns:
+      tuple[str, ...]: Identities currently parked, oldest day-key order.
+
+    Examples:
+      >>> lists = AppendDayClaimLists()
+      >>> lists.add("2026-08-01", type("C", (), {"identity": "/raw/a"})())
+      >>> lists.claim_identities()
+      ('/raw/a',)
+    """
+    with self._lock:
+      out: list[str] = []
+      for bucket in self._days.values():
+        for claim in bucket:
+          ident = str(getattr(claim, "identity", "") or "")
+          if ident:
+            out.append(ident)
+      return tuple(out)
+
   def clear(self) -> None:
     """
     Drop every day key (tests / coordinator restart in-process).
@@ -177,3 +205,81 @@ class AppendDayClaimLists:
     """
     with self._lock:
       self._days.clear()
+
+
+_DAY_REMAINDER_LOCK = threading.Lock()
+_DAY_APPEND_LEFT: dict[str, int] = {}
+_DAY_INGEST_LEFT: dict[str, int] = {}
+
+
+def note_day_remainder(kind: str, day: str, delta: int) -> None:
+  """
+  Adjust the in-memory count of queued ingest or append jobs for one day.
+
+  Args:
+    kind (str): ``ingest`` or ``append``.
+    day (str): Calendar day ``YYYY-MM-DD``.
+    delta (int): ``+1`` on enqueue, ``-1`` on ack or dead-letter.
+
+  Returns:
+    None
+
+  Examples:
+    >>> reset_day_remainder_for_tests()
+    >>> note_day_remainder("append", "2026-08-01", 1)
+    >>> day_remainder("append", "2026-08-01")
+    1
+  """
+  key = str(day or "")
+  which = str(kind or "")
+  if not key or which not in ("ingest", "append") or int(delta) == 0:
+    return
+  bucket = _DAY_APPEND_LEFT if which == "append" else _DAY_INGEST_LEFT
+  with _DAY_REMAINDER_LOCK:
+    cur = bucket.get(key, 0) + int(delta)
+    if cur <= 0:
+      bucket.pop(key, None)
+    else:
+      bucket[key] = cur
+
+
+def day_remainder(kind: str, day: str) -> int:
+  """
+  Return the in-memory queued-job count for one day and kind.
+
+  Args:
+    kind (str): ``ingest`` or ``append``.
+    day (str): Calendar day ``YYYY-MM-DD``.
+
+  Returns:
+    int: Count, or 0 when the day is absent.
+
+  Examples:
+    >>> day_remainder("append", "missing")
+    0
+  """
+  key = str(day or "")
+  which = str(kind or "")
+  if not key or which not in ("ingest", "append"):
+    return 0
+  bucket = _DAY_APPEND_LEFT if which == "append" else _DAY_INGEST_LEFT
+  with _DAY_REMAINDER_LOCK:
+    return int(bucket.get(key, 0))
+
+
+def reset_day_remainder_for_tests() -> None:
+  """
+  Clear process-local day remainder counts.
+
+  Returns:
+    None
+
+  Examples:
+    >>> note_day_remainder("ingest", "2026-08-01", 1)
+    >>> reset_day_remainder_for_tests()
+    >>> day_remainder("ingest", "2026-08-01")
+    0
+  """
+  with _DAY_REMAINDER_LOCK:
+    _DAY_APPEND_LEFT.clear()
+    _DAY_INGEST_LEFT.clear()

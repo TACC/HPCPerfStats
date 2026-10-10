@@ -289,9 +289,14 @@ def test_reconstruct_laws_empty_queues_and_checkpoint_not_sot():
   assert ".sync_timedb_state.json" not in jr.reconstruct_sources_of_truth()
 
 
-def test_reconstruct_never_ingested_enqueues_ingest_and_append():
+def test_reconstruct_enqueue_skips_append_until_ingest_complete():
   from hpcperfstats.dbload.lib import sync_timedb_job_reconstruct as jr
+  from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
+    day_remainder,
+    reset_day_remainder_for_tests,
+  )
 
+  reset_day_remainder_for_tests()
   client = _store()
   plan = jr.classify_closed_raw_path(
     "/archive/host/raw",
@@ -302,15 +307,17 @@ def test_reconstruct_never_ingested_enqueues_ingest_and_append():
     ingest_is_complete_fn=lambda **_k: False,
     append_is_complete_fn=lambda **_k: False,
   )
-  assert plan.kinds_to_enqueue() == ("ingest", "append")
+  assert plan.kinds_to_enqueue() == ("ingest",)
   enqueued = jr.enqueue_reconstruct_jobs_for_closed_path(
     client,
     plan,
     today=date(2026, 8, 24),
   )
-  assert enqueued == {"ingest": True, "append": True}
+  assert enqueued == {"ingest": True, "append": False}
   assert client.ingest_score(plan.identity) is not None
-  assert client.list_slice("append", 0, -1) == [plan.path]
+  assert client.list_slice("append", 0, -1) == []
+  assert day_remainder("ingest", "2026-08-20") == 1
+  assert day_remainder("append", "2026-08-20") == 0
 
 
 def test_reconstruct_ingested_not_in_tar_enqueues_append_only():

@@ -4067,6 +4067,213 @@ def test_drain_append_gate_skip_handoffs_before_ack(monkeypatch):
   assert acks == ["/raw/a"]
 
 
+def test_append_drain_mixed_batch_hands_off_pending_before_ack(monkeypatch):
+  """Successful append must hand DB-gate rejects to ingest before ACK."""
+  from hpcperfstats.dbload.sync_timedb import ArchiveAppendOutcome
+
+  handoffs: list[tuple] = []
+  acks: list[str] = []
+
+  def _handoff(client, tar, paths, **kwargs):
+    handoffs.append((tar, tuple(paths), kwargs.get("reason")))
+    return len(paths)
+
+  def _ack(client, *, kind, identity, owner_token):
+    acks.append(identity)
+
+  monkeypatch.setattr(qo, "_handoff_retryable_paths_to_ingest", _handoff)
+  monkeypatch.setattr(qo.jq, "ack_job", _ack)
+  monkeypatch.setattr(
+    qo.jr,
+    "enqueue_cheap_day_close_if_needed",
+    lambda *a, **k: True,
+  )
+  pending = ("/raw/pending",)
+  outcome = ArchiveAppendOutcome(
+    ok=True,
+    ingest_pending_paths=pending,
+  )
+
+  class _Ready:
+    def ready(self):
+      return True
+
+    def get(self, timeout=0):
+      return outcome
+
+  class _Claim:
+    identity = "/raw/ready"
+    owner_token = "tok"
+
+  n = qo._drain_append_ready(
+    SyncTimedbJobStore(""),
+    inflight={"/d/2026-07-17.tar": _Ready()},
+    claims={"/d/2026-07-17.tar": _Claim()},
+    tgz_archive_dir="/d",
+    archive_data_dir="/a",
+  )
+  assert n == 1
+  assert handoffs == [("/d/2026-07-17.tar", pending, "gate_skip")]
+  assert acks == ["/raw/ready"]
+
+
+def test_append_reap_skip_includes_held_stats_identities():
+  """Reap skip covers parked day-list identities and in-writer claim batches."""
+  parked = jq.ClaimedJob(
+    kind=jq.JOB_KIND_APPEND,
+    identity="/raw/parked",
+    owner_token="n:h:b:1",
+    deadline=1.0e9,
+    score=0.0,
+  )
+  held = jq.ClaimedJob(
+    kind=jq.JOB_KIND_APPEND,
+    identity="/raw/held",
+    owner_token="n:h:b:2",
+    deadline=1.0e9,
+    score=0.0,
+  )
+  qo.reset_append_day_lists_for_tests()
+  qo._APPEND_DAY_LISTS.add("2026-06-03", parked)
+  skip = qo._append_reap_skip_identities(
+    {"/d/2026-06-03.tar": object()},
+    {"/d/2026-06-03.tar": [held]},
+  )
+  assert "/raw/parked" in skip
+  assert "/raw/held" in skip
+  assert "/d/2026-06-03.tar" in skip
+
+
+def _append_fill_claim(identity: str):
+  return jq.ClaimedJob(
+    kind=jq.JOB_KIND_APPEND,
+    identity=identity,
+    owner_token="n:h:b:1",
+    deadline=1.0e9,
+    score=0.0,
+  )
+
+
+def test_append_fill_waits_for_full_batch_when_day_remainder_over_batch(
+  monkeypatch,
+):
+  """Under-full parked day waits while that day's append remainder exceeds the batch."""
+  from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
+    note_day_remainder,
+  )
+
+  qo.reset_append_day_lists_for_tests()
+  note_day_remainder("append", "2026-06-03", 8)
+  qo._APPEND_DAY_LISTS.add("2026-06-03", _append_fill_claim("/raw/a"))
+  monkeypatch.setattr(
+    qo, "daily_tar_path_for_stats_path", lambda _p, _d: "/d/2026-06-03.tar"
+  )
+  monkeypatch.setattr(qo, "_discover_bg_is_busy", lambda: False)
+  submitted = {"n": 0}
+
+  class _Pool:
+    def apply_async(self, *_a, **_k):
+      submitted["n"] += 1
+      return object()
+
+  n = qo._try_submit_pending_append_days(
+    client=SyncTimedbJobStore(""),
+    cap=4,
+    inflight={},
+    claims={},
+    archive_pool=_Pool(),
+    tgz_archive_dir="/d",
+    batch_size=4,
+    allow_partial=False,
+  )
+  assert n == 0
+  assert submitted["n"] == 0
+  assert qo._APPEND_DAY_LISTS.peek_len("2026-06-03") == 1
+
+
+def test_append_fill_submits_tail_when_day_remainder_at_or_under_batch(
+  monkeypatch,
+):
+  """The tail submits once parked claims cover a remainder at or under the batch."""
+  from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
+    note_day_remainder,
+  )
+
+  qo.reset_append_day_lists_for_tests()
+  note_day_remainder("append", "2026-06-03", 1)
+  qo._APPEND_DAY_LISTS.add("2026-06-03", _append_fill_claim("/raw/a"))
+  monkeypatch.setattr(
+    qo, "daily_tar_path_for_stats_path", lambda _p, _d: "/d/2026-06-03.tar"
+  )
+  monkeypatch.setattr(qo, "_discover_bg_is_busy", lambda: False)
+
+  class _Pool:
+    def apply_async(self, *_a, **_k):
+      return object()
+
+  n = qo._try_submit_pending_append_days(
+    client=SyncTimedbJobStore(""),
+    cap=4,
+    inflight={},
+    claims={},
+    archive_pool=_Pool(),
+    tgz_archive_dir="/d",
+    batch_size=4,
+    allow_partial=False,
+  )
+  assert n == 1
+  assert qo._APPEND_DAY_LISTS.peek_len("2026-06-03") == 0
+
+
+def test_append_fill_holds_tail_while_discover_busy_or_ingest_remains(
+  monkeypatch,
+):
+  """Tail flush stays off while discover-bg is busy or that day still has ingest jobs."""
+  from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
+    note_day_remainder,
+  )
+
+  qo.reset_append_day_lists_for_tests()
+  note_day_remainder("append", "2026-06-03", 1)
+  note_day_remainder("ingest", "2026-06-03", 1)
+  qo._APPEND_DAY_LISTS.add("2026-06-03", _append_fill_claim("/raw/a"))
+  monkeypatch.setattr(
+    qo, "daily_tar_path_for_stats_path", lambda _p, _d: "/d/2026-06-03.tar"
+  )
+  monkeypatch.setattr(qo, "_discover_bg_is_busy", lambda: False)
+
+  class _Pool:
+    def apply_async(self, *_a, **_k):
+      raise AssertionError("must not submit while ingest remains")
+
+  n = qo._try_submit_pending_append_days(
+    client=SyncTimedbJobStore(""),
+    cap=4,
+    inflight={},
+    claims={},
+    archive_pool=_Pool(),
+    tgz_archive_dir="/d",
+    batch_size=4,
+    allow_partial=False,
+  )
+  assert n == 0
+
+  note_day_remainder("ingest", "2026-06-03", -1)
+  monkeypatch.setattr(qo, "_discover_bg_is_busy", lambda: True)
+  n = qo._try_submit_pending_append_days(
+    client=SyncTimedbJobStore(""),
+    cap=4,
+    inflight={},
+    claims={},
+    archive_pool=_Pool(),
+    tgz_archive_dir="/d",
+    batch_size=4,
+    allow_partial=False,
+  )
+  assert n == 0
+  assert qo._APPEND_DAY_LISTS.peek_len("2026-06-03") == 1
+
+
 def test_drain_append_soft_requeue_requeues_without_ack(monkeypatch):
   """Restore soft_requeue must requeue append without ACK."""
   from hpcperfstats.dbload.sync_timedb import ArchiveAppendOutcome

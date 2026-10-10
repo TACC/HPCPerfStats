@@ -25,6 +25,9 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
+from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
+  note_day_remainder,
+)
 from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
   is_internal_archive_stats_path,
 )
@@ -582,12 +585,12 @@ class ClosedPathReconstructPlan:
       ...   calendar_day=None,
       ...   tar_path=None,
       ... ).kinds_to_enqueue()
-      ('ingest', 'append')
+      ('ingest',)
     """
     kinds: list[str] = []
     if self.needs_ingest:
       kinds.append(jq.JOB_KIND_INGEST)
-    if self.needs_append:
+    elif self.needs_append:
       kinds.append(jq.JOB_KIND_APPEND)
     return tuple(kinds)
 
@@ -782,15 +785,20 @@ def enqueue_reconstruct_jobs_for_closed_path(
         today=today,
         identity=plan.identity,
       )
-      jq.zadd_ingest_job(
+      if jq.zadd_ingest_job(
         client,
         identity=plan.identity,
         score=score,
         fingerprint=plan.fingerprint or None,
-      )
+      ):
+        note_day_remainder(
+          jq.JOB_KIND_INGEST,
+          day.isoformat(),
+          1,
+        )
       enqueued["ingest"] = True
 
-  if plan.needs_append:
+  if plan.needs_append and not plan.needs_ingest:
     if root and jq.identity_in_queue_dead_letter(
       root,
       kind=jq.JOB_KIND_APPEND,
@@ -798,12 +806,18 @@ def enqueue_reconstruct_jobs_for_closed_path(
     ):
       pass
     else:
-      jq.enqueue_list_job(
+      added = jq.enqueue_list_job(
         client,
         kind=jq.JOB_KIND_APPEND,
         identity=plan.path,
         dedupe=True,
       )
+      if added and plan.calendar_day is not None:
+        note_day_remainder(
+          jq.JOB_KIND_APPEND,
+          plan.calendar_day.isoformat(),
+          1,
+        )
       enqueued["append"] = True
 
   return enqueued

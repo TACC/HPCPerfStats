@@ -94,6 +94,9 @@ from hpcperfstats.dbload.lib.process_title import (
 )
 from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
   AppendDayClaimLists,
+  day_remainder,
+  note_day_remainder,
+  reset_day_remainder_for_tests,
 )
 from hpcperfstats.dbload.lib.sync_timedb_archive_dir_lock import (
   exclusive_archive_dir_flock,
@@ -815,6 +818,84 @@ def _iter_claim_jobs(claim: Any) -> list[Any]:
   if isinstance(claim, list):
     return [item for item in claim if item is not None]
   return [claim]
+
+
+def _epoch_basename_day(identity: str) -> str | None:
+  """
+  Calendar day from a numeric stats basename, without a filesystem call.
+
+  Args:
+    identity (str): Stats path or ingest identity.
+
+  Returns:
+    str | None: ``YYYY-MM-DD`` in local time, or ``None`` when the
+    basename is not an integer epoch.
+
+  Examples:
+    >>> _epoch_basename_day("/archive/host/not-epoch") is None
+    True
+  """
+  path = _path_from_ingest_identity(identity) or str(identity or "")
+  base = os.path.basename(path)
+  if not base.isdigit():
+    return None
+  try:
+    return datetime.fromtimestamp(int(base)).date().isoformat()
+  except OSError, OverflowError, ValueError:
+    return None
+
+
+def _release_day_remainder(kind: str, identity: str) -> None:
+  """
+  Drop one queued ingest or append job from the in-memory day count.
+
+  Args:
+    kind (str): Job kind.
+    identity (str): Job identity.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _release_day_remainder("discover", "/x") is None
+    True
+  """
+  if kind not in (jq.JOB_KIND_INGEST, jq.JOB_KIND_APPEND):
+    return
+  day = _epoch_basename_day(identity)
+  if day:
+    note_day_remainder(kind, day, -1)
+
+
+def _append_reap_skip_identities(
+  inflight: dict[str, Any],
+  leases: dict[str, Any],
+) -> tuple[str, ...]:
+  """
+  Identities the append reaper must not steal.
+
+  Covers daily-tar keys plus stats-file identities held in writer
+  batches and parked day lists.
+
+  Args:
+    inflight (dict[str, Any]): Daily tar -> async result.
+    leases (dict[str, Any]): Daily tar -> claim or claim list.
+
+  Returns:
+    tuple[str, ...]: Skip set for ``_reap_stale_inflight``.
+
+  Examples:
+    >>> _append_reap_skip_identities({}, {})
+    ()
+  """
+  held: list[str] = []
+  for claim in leases.values():
+    for job in _iter_claim_jobs(claim):
+      ident = str(getattr(job, "identity", "") or "")
+      if ident:
+        held.append(ident)
+  held.extend(_APPEND_DAY_LISTS.claim_identities())
+  return tuple(inflight) + tuple(leases) + tuple(held)
 
 
 def _calendar_day_for_ingest_path(
@@ -2613,6 +2694,7 @@ def _retry_or_dead_letter(
     identity=identity,
     owner_token=claim.owner_token,
   )
+  _release_day_remainder(kind, identity)
   _log(
     f"queue_orchestrator dead_letter kind={kind} identity={identity} attempt={attempt} reason={reason}",
     log_fn=log_fn,
@@ -3635,6 +3717,7 @@ def _fill_ingest_band(
           identity=claim.identity,
           owner_token=claim.owner_token,
         )
+        _release_day_remainder(jq.JOB_KIND_INGEST, claim.identity)
         skipped += 1
         stats["skip_lock"] += 1
         if skipped >= budget:
@@ -3662,6 +3745,7 @@ def _fill_ingest_band(
             identity=claim.identity,
             owner_token=claim.owner_token,
           )
+          _release_day_remainder(jq.JOB_KIND_INGEST, claim.identity)
         else:
           _requeue_ingest_fill_skip(
             client,
@@ -4319,12 +4403,14 @@ def _drain_ingest_ready(
       if outcome != "db_skip":
         _TOTAL_INGESTED += 1
     if need_archival and path:
-      jq.enqueue_list_job(
+      if jq.enqueue_list_job(
         client,
         kind=jq.JOB_KIND_APPEND,
         identity=path,
         dedupe=True,
-      )
+      ):
+        if day_tok:
+          note_day_remainder(jq.JOB_KIND_APPEND, day_tok, 1)
     if claim is not None:
       jq.ack_job(
         client,
@@ -4332,6 +4418,7 @@ def _drain_ingest_ready(
         identity=identity,
         owner_token=claim.owner_token,
       )
+      _release_day_remainder(jq.JOB_KIND_INGEST, identity)
   return done
 
 
@@ -4346,6 +4433,7 @@ def reset_append_day_lists_for_tests() -> None:
     >>> reset_append_day_lists_for_tests()
   """
   _APPEND_DAY_LISTS.clear()
+  reset_day_remainder_for_tests()
 
 
 def reset_total_ingested_for_tests() -> None:
@@ -4424,7 +4512,10 @@ def _try_submit_pending_append_days(
     archive_pool (Any): Archive thread pool.
     tgz_archive_dir (str): Daily archive directory.
     batch_size (int): Max paths per ``tar -T`` job.
-    allow_partial (bool): Submit leftover paths when the job-store LIST is empty.
+    allow_partial (bool): Submit leftover paths when the job-store LIST is
+      empty. A short day also submits when its in-memory append remainder
+      is at or under ``batch_size``, its ingest remainder is 0, parked
+      claims cover that remainder, and discover-bg is idle.
 
   Returns:
     int: Newly submitted append jobs this call.
@@ -4453,7 +4544,16 @@ def _try_submit_pending_append_days(
     pending_n = _APPEND_DAY_LISTS.peek_len(day)
     if pending_n <= 0:
       continue
-    if not allow_partial and pending_n < batch_size:
+    left = day_remainder(jq.JOB_KIND_APPEND, day)
+    ingest_left = day_remainder(jq.JOB_KIND_INGEST, day)
+    tail_ok = (
+      left > 0
+      and left <= batch_size
+      and ingest_left == 0
+      and not _discover_bg_is_busy()
+      and pending_n >= left
+    )
+    if not allow_partial and pending_n < batch_size and not tail_ok:
       continue
     first = _APPEND_DAY_LISTS.peek_first(day)
     identity = getattr(first, "identity", "") if first is not None else ""
@@ -4498,7 +4598,10 @@ def _fill_append_slots(
   (impossible work), bounded by ``APPEND_FILL_SKIP_BUDGET`` per tick. Other-tar
   FIFO items go onto their calendar-day list.
   Same-tar inflight holds claims in the day list until the writer slot frees.
-  Claiming stops once that parked batch is full.
+  Claiming stops once that parked batch is full. A partial batch submits
+  when the job-store LIST is exhausted, or when that day's in-memory
+  append remainder is at or under the batch size, its ingest remainder
+  is 0, and discover-bg is idle.
 
   Args:
     client (Any): job store.
@@ -4579,6 +4682,7 @@ def _fill_append_slots(
         identity=path,
         owner_token=claim.owner_token,
       )
+      _release_day_remainder(jq.JOB_KIND_APPEND, path)
       skipped += 1
       continue
     this_tar = daily_tar_path_for_stats_path(path, tgz_archive_dir)
@@ -4590,6 +4694,7 @@ def _fill_append_slots(
         identity=path,
         owner_token=claim.owner_token,
       )
+      _release_day_remainder(jq.JOB_KIND_APPEND, path)
       skipped += 1
       continue
     day_key = day_obj.isoformat()
@@ -4764,20 +4869,23 @@ def _drain_append_ready(
     )
     day_tok = _day_token_from_date(calendar_date_from_daily_tar_path(tar))
     if _archive_append_outcome_is_gate_skip(result):
-      skipped = tuple(getattr(result, "skipped_paths", ()) or ())
-      progress.record(day_tok, "gate_skip", len(skipped) or 1)
-      if skipped and tar:
-        _handoff_retryable_paths_to_ingest(
-          client,
-          tar,
-          skipped,
-          tgz_archive_dir=tgz_archive_dir,
-          archive_data_dir=archive_data_dir,
-          reason="gate_skip",
-          log_fn=log_fn,
-        )
+      handoff_paths = tuple(getattr(result, "skipped_paths", ()) or ())
+      progress.record(day_tok, "gate_skip", len(handoff_paths) or 1)
     else:
+      handoff_paths = tuple(getattr(result, "ingest_pending_paths", ()) or ())
       progress.record(day_tok, "archive", 1)
+      if handoff_paths:
+        progress.record(day_tok, "gate_skip", len(handoff_paths))
+    if handoff_paths and tar:
+      _handoff_retryable_paths_to_ingest(
+        client,
+        tar,
+        handoff_paths,
+        tgz_archive_dir=tgz_archive_dir,
+        archive_data_dir=archive_data_dir,
+        reason="gate_skip",
+        log_fn=log_fn,
+      )
     for job in jobs:
       jq.ack_job(
         client,
@@ -4785,6 +4893,7 @@ def _drain_append_ready(
         identity=job.identity,
         owner_token=job.owner_token,
       )
+      _release_day_remainder(jq.JOB_KIND_APPEND, job.identity)
     if tar:
       # Append coordinator must never run remaining-raw / archive find.
       jr.enqueue_cheap_day_close_if_needed(client, tar)
@@ -5926,7 +6035,10 @@ def _append_coordinator_loop(
         _reap_stale_inflight(
           client,
           kinds=(jq.JOB_KIND_APPEND,),
-          skip_identities=tuple(append_inflight) + tuple(append_leases),
+          skip_identities=_append_reap_skip_identities(
+            append_inflight,
+            append_leases,
+          ),
           log_fn=log_fn,
         )
       with busy_lock:
