@@ -1679,7 +1679,7 @@ def _clear_ingest_worker_memory_caches() -> None:
 
 # Mid-chunk heap release cadence (gc.collect + malloc_trim). End-of-file
 # ``_release_ingest_worker_memory`` still force-trims every task.
-_HEAP_RELEASE_EVERY_N_CHUNKS = 8
+_HEAP_RELEASE_EVERY_N_CHUNKS = 16
 _heap_release_chunk_n: contextvars.ContextVar[int] = contextvars.ContextVar(
   "heap_release_chunk_n",
   default=0,

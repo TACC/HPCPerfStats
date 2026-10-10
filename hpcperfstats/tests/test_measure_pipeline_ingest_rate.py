@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import re
 import subprocess
@@ -22,6 +23,12 @@ def _load_module():
   sys.modules[name] = mod
   spec.loader.exec_module(mod)
   return mod
+
+
+def test_script_imports_with_python_313_grammar():
+  """Analyzer syntax must remain valid on production Python before 3.14."""
+  source = _SCRIPT.read_text(encoding="utf-8")
+  ast.parse(source, filename=str(_SCRIPT), feature_version=(3, 13))
 
 
 @pytest.fixture

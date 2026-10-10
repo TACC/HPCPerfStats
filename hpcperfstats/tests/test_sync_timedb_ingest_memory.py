@@ -150,6 +150,7 @@ def test_release_ingest_worker_heap_throttles_collect_until_cadence(
   monkeypatch.setattr(st, "clear_daily_archive_members_cache", lambda: None)
   st._heap_release_chunk_n.set(0)
   n = st._HEAP_RELEASE_EVERY_N_CHUNKS
+  assert n == 16
   for _ in range(n - 1):
     st._release_ingest_worker_heap()
   assert collect_calls == []

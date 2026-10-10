@@ -318,7 +318,7 @@ def _optional_float_group(
   raw = match.group(group)
   try:
     return float(raw)
-  except TypeError, ValueError:
+  except (TypeError, ValueError):  # fmt: skip
     return None
 
 
@@ -348,7 +348,7 @@ def _record_full_ingest(metrics: LogMetrics, body: str) -> None:
   if size_match is not None:
     try:
       size_bytes = int(size_match.group("size"))
-    except TypeError, ValueError:
+    except (TypeError, ValueError):  # fmt: skip
       size_bytes = None
   if size_bytes is not None and size_bytes >= 0:
     metrics.full_ingest_bytes += size_bytes
@@ -428,7 +428,7 @@ def _decision_next(
     return "short_window_re_soak"
   try:
     ratio = float(ratio_ingest)
-  except TypeError, ValueError:
+  except (TypeError, ValueError):  # fmt: skip
     return "insufficient_rate_samples"
   mid_n = sum(
     int(metrics.full_ingest_count_by_tier.get(t, 0)) for t in _MID_TIER_PREF
