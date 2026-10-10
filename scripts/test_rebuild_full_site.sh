@@ -52,8 +52,12 @@ if ! grep -q 'podman_runtime_require' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must call podman_runtime_require" >&2
   exit 1
 fi
-if ! grep -q 'apply_pipeline_memory_high' "${FULL_SITE_SCRIPT}"; then
-  echo "rebuild_full_site.sh must call apply_pipeline_memory_high" >&2
+if grep -E '^[[:space:]]*apply_pipeline_memory_high([[:space:]]|\|)' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must keep apply_pipeline_memory_high commented out" >&2
+  exit 1
+fi
+if ! grep -q '^[[:space:]]*#[[:space:]]*apply_pipeline_memory_high' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must retain a commented apply_pipeline_memory_high call" >&2
   exit 1
 fi
 if ! grep -q 'do not source' "${FULL_SITE_SCRIPT}"; then

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Full-stack image rebuild: podman build web, proxy, db_pg18; compose down + up -d
-# --no-build. Optional live-soak PGO via --profile-phase. Sets pipeline cgroup
-# memory.high after pipeline is up. Never use podman-compose up --build here.
+# --no-build. Optional live-soak PGO via --profile-phase. Pipeline cgroup
+# memory.high is commented out (do not throttle below memory.max). Never use
+# podman-compose up --build here.
 #
 # Usage (from the git checkout that contains docker-compose.yaml):
 #   ./scripts/rebuild_full_site.sh
@@ -68,8 +69,8 @@ Only one of --profile-phase, --pgo-use, --pgo-skip may be passed.
 
 Options:
   --dry-run        Print planned steps only
-  --build-only     Build images only; do not up -d or set memory.high
-  --no-start       Build images, skip up -d and memory.high
+  --build-only     Build images only; do not up -d
+  --no-start       Build images, skip up -d
   -h, --help       Show this help
 EOF
 }
@@ -394,10 +395,11 @@ run_compose_up_memory_high_and_summary() {
   echo "=== rebuild_full_site.sh: starting podman-compose down + up (no --build) ==="
   run_stack_up_and_verify || exit 1
 
-  PHASE=memory_high
-  if [[ "${DRY_RUN}" -eq 0 ]]; then
-    apply_pipeline_memory_high || exit 1
-  fi
+  # memory.high left at the cgroup default (max). Do not call apply_pipeline_memory_high.
+  # PHASE=memory_high
+  # if [[ "${DRY_RUN}" -eq 0 ]]; then
+  #   apply_pipeline_memory_high || exit 1
+  # fi
 
   PHASE=summary
   print_stack_summary
@@ -425,10 +427,11 @@ main() {
 
   if [[ "${PGO_USE}" -eq 1 ]]; then
     run_pgo_use_path
-    PHASE=memory_high
-    if [[ "${DRY_RUN}" -eq 0 && "${BUILD_ONLY}" -eq 0 && "${NO_START}" -eq 0 ]]; then
-      apply_pipeline_memory_high || exit 1
-    fi
+    # memory.high left at the cgroup default (max). Do not call apply_pipeline_memory_high.
+    # PHASE=memory_high
+    # if [[ "${DRY_RUN}" -eq 0 && "${BUILD_ONLY}" -eq 0 && "${NO_START}" -eq 0 ]]; then
+    #   apply_pipeline_memory_high || exit 1
+    # fi
     PHASE=summary
     echo "Full-site PGO use rebuild complete."
     print_stack_summary
@@ -455,7 +458,7 @@ main() {
   fi
 
   run_compose_up_memory_high_and_summary
-  echo "Full-site rebuild complete (build + up + memory.high)."
+  echo "Full-site rebuild complete (build + up)."
 }
 
 main "$@"
