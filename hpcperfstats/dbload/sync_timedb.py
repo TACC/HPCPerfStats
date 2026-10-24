@@ -168,6 +168,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   clear_daily_archive_members_cache,
   consume_archive_members_populate_source,
   ensure_daily_tar_restored_for_append,
+  ensure_open_daily_tar_readable,
   filter_files_to_add_to_archive,
   get_existing_archive_members_for_daily_archive,
   invalidate_after_daily_tar_mutation,
@@ -177,8 +178,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   prepare_paths_for_giant_member_append,
   quarantine_ingest_failed_raw_path,
   raw_stats_path_tar_append_decision,
-  repair_truncated_daily_tar_in_place,
-  replace_corrupt_tar_from_compressed_backup,
   stats_file_is_active_segment,
   update_mutable_tar_authority_after_append,
   verify_tar_archive_readable,
@@ -6351,32 +6350,26 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         )
         return False
     if tar_unreadable:
-      log_print(
-        f"Daily tar unreadable before append; attempting in-place repair then sealed restore: {archive_tar_fname}",
-        flush=True,
-      )
-      repaired = repair_truncated_daily_tar_in_place(
+      pre_repair = ensure_open_daily_tar_readable(
         archive_tar_fname,
-        log_fn=log_print,
-        tgz_archive_dir=os.path.dirname(archive_tar_fname),
+        caller="append_pre_append",
         yield_phase="append_tar_repair",
+        log_fn=log_print,
+        zstd_threads=cfg.get_archive_zstd_threads(),
       )
-      if repaired and verify_tar_archive_readable(archive_tar_fname):
-        tar_unreadable = False
-      if tar_unreadable and (
-        not replace_corrupt_tar_from_compressed_backup(
-          archive_tar_fname,
-          zst_path,
-          gz_path,
-          cfg.get_archive_zstd_threads(),
+      if pre_repair.transient:
+        log_print(
+          f"WARNING: defer append until daily tar readable: {archive_tar_fname}",
+          flush=True,
         )
-        or not verify_tar_archive_readable(archive_tar_fname)
-      ):
+        return False
+      if not pre_repair.readable:
         log_print(
           f"ERROR: could not restore daily tar before append; leaving raw stats files in place: {archive_fname}",
           flush=True,
         )
         return False
+      tar_unreadable = False
       if tar_unreadable and os.path.exists(archive_tar_fname):
         existing_members, members_source = (
           _lookup_existing_members_for_archive_append(
@@ -6460,20 +6453,14 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
           f"Daily tar failed integrity check after append; recovering from sealed archive or clearing for rebuild: {archive_tar_fname}",
           flush=True,
         )
-        repaired = repair_truncated_daily_tar_in_place(
+        post_repair = ensure_open_daily_tar_readable(
           archive_tar_fname,
-          log_fn=log_print,
-          tgz_archive_dir=os.path.dirname(archive_tar_fname),
+          caller="append_post_append",
           yield_phase="append_tar_repair",
+          log_fn=log_print,
+          zstd_threads=cfg.get_archive_zstd_threads(),
         )
-        if not (
-          repaired and verify_tar_archive_readable(archive_tar_fname)
-        ) and not replace_corrupt_tar_from_compressed_backup(
-          archive_tar_fname,
-          zst_path,
-          gz_path,
-          cfg.get_archive_zstd_threads(),
-        ):
+        if post_repair.transient or not post_repair.readable:
           log_print(
             f"ERROR: could not restore daily tar from {archive_fname}; leaving raw stats files in place",
             flush=True,

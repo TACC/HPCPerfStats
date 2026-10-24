@@ -12,6 +12,7 @@ When code on the **ingest worker** hot path can read or decompress the **same fi
 
 - Changes under `hpcperfstats/dbload/sync_timedb*.py`, `sync_timedb_archive_helpers.py`, `sync_timedb_archive_members_store.py`, `sync_timedb_archive_members_coord.py`, **`sync_timedb_populate_pool.py`** that affect:
   - `daily_archive_has_member_with_size`, `_member_match_via_store_or_sealed_point`, `_sealed_archive_member_has_exact_size`, `_stream_compressed_archive_members`, `_run_gnu_tvf_file_members` / `_populate_members_from_tar_scan`, or callers from `_parse_stats_file_payload` / `raw_stats_path_needs_tar_append`.
+- **Open-tar GNU `tvf` on ingest:** when sibling **`YYYY-MM-DD.tar`** exists, **`daily_archive_has_member_with_size`** and tar populate **`_populate_members_from_tar_scan`** must call **`ensure_open_daily_tar_readable`** before authority **`get_mutable_tar_authority_member_map`** / **`_run_gnu_tvf_file_members`**. Transient restore/append → **`ArchiveMembersStoreUnavailableError`** (requeue); hard failure → **`archive_day_ingest_skip`** kind **`open_tar_gnu_tvf_failed`** and **`need_archival=False`** for that calendar day — not bare **`queue_orchestrator ingest fail … gnu tar tvf failed`** retry storms on recoverable truncated tars.
 - Any new ingest-worker lookup that streams a sealed daily archive or spawns `zstd` / tar reads keyed by calendar day.
 
 ## Required behavior

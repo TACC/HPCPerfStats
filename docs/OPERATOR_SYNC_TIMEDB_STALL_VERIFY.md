@@ -1622,6 +1622,18 @@ docker compose logs pipeline 2>&1 | grep -E 'dispatch_probe failed|proactive swa
 
 **Pass (T0):** `child_ingest` equals configured processes shortly after any `proactive swap` / idle recover. **Pass (T1):** census stays ≤ configured across further per-file timeouts; thin `in_flight_n` under long budgets is a separate utilization question, not proof of orphans.
 
+### T0 — ingest `gnu tar tvf failed` on open daily `.tar` (2026-10-24)
+
+**Failure signature (pre-fix):** `queue_orchestrator ingest fail identity=… err=RuntimeError detail=gnu tar tvf failed path=…/daily_archive/YYYY-MM-DD.tar` (often `Unexpected EOF`) while append/day-close repair may eventually heal the same day. Distinct from `append fail` on the same path.
+
+**Post-fix grep (pipeline):**
+
+```bash
+podman-compose -p hpcperfstats logs pipeline 2>&1 | grep -E 'daily_tar_repair caller=|archive_day_ingest_skip|open_tar_gnu_tvf_failed|gnu tar tvf failed path=' | tail -80
+```
+
+**Pass:** recoverable truncated tars show `daily_tar_repair caller=ingest_membership|populate_tar_scan|append_… outcome=ok` then ingest proceeds; sticky skip logs `open_tar_gnu_tvf_failed` once per day and **`gnu tar tvf failed`** storms drop for that calendar day. **Fail:** repeated ingest fail with no `daily_tar_repair` attempt on days where sibling `.tar` exists.
+
 ### T0 / T1 — ingest `DB lock wait` must not appear (2026-09-12)
 
 **Failure signature (pre-fix, hpcperfstats03 2026-08-27):** multi-hour `DB lock wait proc|host batch file=… wait=…` immediately before `ERROR: ingest per-file timeout` and coordinator `queue_orchestrator ingest fail … err=TimeoutError`, while `ingest_catchup` queued depth rises under a saturated pool. Operators may misread `DB lock wait` as Postgres `lock_timeout`.

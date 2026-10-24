@@ -16,6 +16,7 @@ Attributes:
   MIGRATE_GZ_STATUS_PLANNED: Attribute.
   MIGRATE_GZ_STATUS_SKIPPED_LOCKED: Attribute.
   MIGRATE_GZ_STATUS_SKIPPED_NO_GZ: Attribute.
+  SKIP_KIND_OPEN_TAR_GNU_TVF_FAILED: Sticky skip kind when open daily tar GNU tvf fails.
   SKIP_KIND_READ_ERROR: Attribute.
   SKIP_KIND_TAR_TRUNCATED: Attribute.
   SKIP_KIND_ZST_FRAME_INVALID: Attribute.
@@ -5106,6 +5107,11 @@ def daily_archive_has_member_with_size(
   canonical = normalize_daily_compressed_path(compressed_path)
   tar_path = daily_tar_path_from_compressed(canonical)
   if os.path.isfile(tar_path):
+    _ensure_open_tar_readable_for_ingest_lookup(
+      tar_path,
+      caller="ingest_membership",
+      compressed_canonical=canonical,
+    )
     open_members = get_mutable_tar_authority_member_map(tar_path)
     return open_members.get(member_name) == expected_size
   if not daily_archive_populate_source_exists(canonical):
@@ -5200,6 +5206,7 @@ _LOGGED_ARCHIVE_DAY_INGEST_SKIP_MAX = 256
 
 SKIP_KIND_ZST_FRAME_INVALID = "zst_frame_invalid"
 SKIP_KIND_TAR_TRUNCATED = "tar_truncated_or_unreadable"
+SKIP_KIND_OPEN_TAR_GNU_TVF_FAILED = "open_tar_gnu_tvf_failed"
 SKIP_KIND_READ_ERROR = "read_error"
 
 
@@ -5714,6 +5721,8 @@ def _log_archive_day_ingest_skip_once(exc: Any) -> None:
     )
   elif exc.kind == SKIP_KIND_ZST_FRAME_INVALID:
     reason_phrase = f"zst_frame_invalid (zstd -t failed: {exc.detail})"
+  elif exc.kind == SKIP_KIND_OPEN_TAR_GNU_TVF_FAILED:
+    reason_phrase = f"open_tar_gnu_tvf_failed ({exc.detail})"
   else:
     reason_phrase = f"{exc.kind} ({exc.detail})"
   log_print(
@@ -7057,8 +7066,10 @@ def _populate_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
       Any: Value produced by this call (type depends on inputs).
 
     Raises:
-      ArchiveMembersStoreUnavailableError: Raised when ``_scan_fn`` hits a
-      ``ArchiveMembersStoreUnavailableError`` failure path.
+      ArchiveMembersStoreUnavailableError: Transient defer during prep or fnctl
+      read-lock timeout.
+      Exception: Re-raised when open-tar prep raises
+      ``ArchiveDayIngestSkipError`` or ``ArchiveMembersStoreUnavailableError``.
 
     Examples:
       >>> _scan_fn(None)  # doctest: +SKIP
@@ -7068,6 +7079,24 @@ def _populate_members_from_tar_scan(tar_path: str, cache_key: Any) -> Any:
     saw_duplicates = False
     seen_names = set()
     try:
+      try:
+        _ensure_open_tar_readable_for_ingest_lookup(
+          tar_path,
+          caller="populate_tar_scan",
+          compressed_canonical=canonical,
+        )
+      except Exception as prep_exc:
+        from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+          ArchiveDayIngestSkipError,
+          ArchiveMembersStoreUnavailableError,
+        )
+
+        if isinstance(
+          prep_exc,
+          (ArchiveMembersStoreUnavailableError, ArchiveDayIngestSkipError),
+        ):
+          raise
+        return False, False, prep_exc
       with _populate_tar_file_read_lock_wait(tar_path):
         occurrences, rc, stderr = _run_gnu_tvf_file_members(tar_path)
       if rc != 0:
@@ -8637,6 +8666,290 @@ def _repair_truncated_daily_tar_via_extract_recreate(
       shutil.rmtree(work_root, ignore_errors=True)
 
 
+@dataclass(frozen=True)
+class OpenDailyTarEnsureResult:
+  """
+  Outcome of ``ensure_open_daily_tar_readable``.
+
+  Attributes:
+    readable (bool): GNU verify passes on the open daily tar.
+    transient (bool): Caller should defer (restore lease, lock timeout).
+    transient_reason (str): Diagnostic when ``transient`` is true.
+  """
+
+  readable: bool
+  transient: bool = False
+  transient_reason: str = ""
+
+
+def _log_daily_tar_repair_outcome(
+  log_fn: Any,
+  *,
+  caller: str,
+  day_token: str,
+  outcome: str,
+) -> None:
+  """
+  Log one ``daily_tar_repair`` line per repair attempt.
+
+  Args:
+    log_fn (Any): Logger callable.
+    caller (str): Label for ``daily_tar_repair`` logs (for example
+      ``ingest_membership``).
+    day_token (str): Calendar day ``YYYY-MM-DD``.
+    outcome (str): ``ok``, ``restore_deferred``, or ``repair_failed``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _log_daily_tar_repair_outcome(
+    ...   None, caller="t", day_token="d", outcome="ok"
+    ... )
+  """
+  if not log_fn:
+    return
+  log_fn(
+    f"INFO: daily_tar_repair caller={caller} day={day_token} outcome={outcome}",
+    flush=True,
+  )
+
+
+def ensure_open_daily_tar_readable(
+  tar_path: str,
+  *,
+  caller: str,
+  yield_phase: str = "tar_repair",
+  log_fn: Any = log_print,
+  zstd_threads: Any | None = None,
+  wait_for_restore_owner: bool = True,
+  require_recoverable_before_repair: bool = False,
+) -> OpenDailyTarEnsureResult:
+  """
+  Make open ``YYYY-MM-DD.tar`` GNU-readable via restore, in-place repair, or backup.
+
+  Append, reconcile, ingest membership, and populate tar scan use this helper.
+
+  Args:
+    tar_path (str): Path to daily ``.tar``.
+    caller (str): Label for ``daily_tar_repair`` logs.
+    yield_phase (str): Cooperative yield phase for in-place repair.
+    log_fn (Any): Logger callable.
+    zstd_threads (Any | None): Zstd threads for sealed restore.
+    wait_for_restore_owner (bool): Wait on foreign restore lease when true.
+    require_recoverable_before_repair (bool): Skip repair when unrecoverable.
+
+  Returns:
+    OpenDailyTarEnsureResult: Readable flag and transient defer metadata.
+
+  Raises:
+    DayCloseYieldError: From in-place repair on day-close paths.
+
+  Examples:
+    >>> ensure_open_daily_tar_readable(
+    ...   "/no.tar", caller="test"
+    ... )  # doctest: +SKIP
+  """
+  tar_norm = os.path.normpath(str(tar_path or ""))
+  day_token = str(calendar_date_from_daily_tar_path(tar_norm) or "?")
+  threads = (
+    zstd_threads if zstd_threads is not None else cfg.get_archive_zstd_threads()
+  )
+  zst_path, gz_path = compressed_sibling_paths(tar_norm)
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+    daily_tar_restore_in_progress_for_day,
+  )
+
+  if day_token not in (
+    "",
+    "?",
+    "unknown",
+  ) and daily_tar_restore_in_progress_for_day(day_token):
+    _log_daily_tar_repair_outcome(
+      log_fn,
+      caller=caller,
+      day_token=day_token,
+      outcome="restore_deferred",
+    )
+    return OpenDailyTarEnsureResult(
+      readable=False,
+      transient=True,
+      transient_reason="restore_in_progress",
+    )
+
+  if not os.path.isfile(tar_norm):
+    sealed_exists = os.path.isfile(zst_path) or os.path.isfile(gz_path)
+    if sealed_exists and not ensure_daily_tar_restored_for_append(
+      tar_norm,
+      threads,
+      wait_for_other_owner=wait_for_restore_owner,
+    ):
+      _log_daily_tar_repair_outcome(
+        log_fn,
+        caller=caller,
+        day_token=day_token,
+        outcome="repair_failed",
+      )
+      return OpenDailyTarEnsureResult(readable=False)
+    if not os.path.isfile(tar_norm):
+      return OpenDailyTarEnsureResult(readable=False)
+
+  try:
+    if verify_tar_archive_readable(tar_norm):
+      _log_daily_tar_repair_outcome(
+        log_fn,
+        caller=caller,
+        day_token=day_token,
+        outcome="ok",
+      )
+      return OpenDailyTarEnsureResult(readable=True)
+  except TimeoutError:
+    return OpenDailyTarEnsureResult(
+      readable=False,
+      transient=True,
+      transient_reason="tar_verify_timeout",
+    )
+
+  if require_recoverable_before_repair and (
+    not tar_members_recoverable_despite_gnu_tf_fail(tar_norm)
+  ):
+    _log_truncated_tar_recoverability(tar_norm, log_fn=log_fn)
+    _log_daily_tar_repair_outcome(
+      log_fn,
+      caller=caller,
+      day_token=day_token,
+      outcome="repair_failed",
+    )
+    return OpenDailyTarEnsureResult(readable=False)
+
+  if log_fn and caller.startswith("append"):
+    log_fn(
+      f"Daily tar unreadable before append; attempting in-place repair then sealed restore: {tar_norm}",
+      flush=True,
+    )
+
+  repaired = repair_truncated_daily_tar_in_place(
+    tar_norm,
+    log_fn=log_fn,
+    tgz_archive_dir=os.path.dirname(tar_norm),
+    yield_phase=yield_phase,
+  )
+  readable = bool(repaired) and verify_tar_archive_readable(tar_norm)
+  if not readable:
+    restored = replace_corrupt_tar_from_compressed_backup(
+      tar_norm,
+      zst_path,
+      gz_path,
+      threads,
+    )
+    readable = bool(restored) and verify_tar_archive_readable(tar_norm)
+  if readable:
+    invalidate_mutable_tar_authority_members(tar_norm)
+    _log_daily_tar_repair_outcome(
+      log_fn,
+      caller=caller,
+      day_token=day_token,
+      outcome="ok",
+    )
+    return OpenDailyTarEnsureResult(readable=True)
+  _log_daily_tar_repair_outcome(
+    log_fn,
+    caller=caller,
+    day_token=day_token,
+    outcome="repair_failed",
+  )
+  return OpenDailyTarEnsureResult(readable=False)
+
+
+def _ensure_open_tar_readable_for_ingest_lookup(
+  tar_path: str,
+  *,
+  caller: str,
+  compressed_canonical: str,
+) -> None:
+  """
+  Repair or defer before open-tar GNU membership lookup on ingest paths.
+
+  Args:
+    tar_path (str): Mutable daily ``.tar`` path.
+    caller (str): ``ingest_membership`` or ``populate_tar_scan``.
+    compressed_canonical (str): Normalized daily compressed canonical path.
+
+  Returns:
+    None
+
+  Raises:
+    ArchiveMembersStoreUnavailableError: Transient defer.
+    ArchiveDayIngestSkipError: Sticky day skip when unrecoverable.
+    skip_exc: Same as ``ArchiveDayIngestSkipError`` after skip state is recorded.
+
+  Examples:
+    >>> _ensure_open_tar_readable_for_ingest_lookup(
+    ...   "x", caller="t", compressed_canonical="x"
+    ... )  # doctest: +SKIP
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+    ArchiveDayIngestSkipError,
+    ArchiveMembersStoreUnavailableError,
+    archive_append_inflight_for_day,
+    build_archive_members_keys,
+    set_archive_day_ingest_skip,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+    DayCloseYieldError,
+  )
+
+  day_token = str(calendar_date_from_daily_tar_path(tar_path) or "?")
+  if day_token not in ("", "?", "unknown") and archive_append_inflight_for_day(
+    day_token
+  ):
+    raise ArchiveMembersStoreUnavailableError(
+      f"transient defer open-tar repair during append inflight day={day_token}",
+    )
+  try:
+    result = ensure_open_daily_tar_readable(
+      tar_path,
+      caller=caller,
+      yield_phase="ingest_tar_repair",
+      log_fn=log_print,
+      zstd_threads=get_ingest_zstd_thread_count(),
+      wait_for_restore_owner=True,
+    )
+  except DayCloseYieldError as exc:
+    raise ArchiveMembersStoreUnavailableError(
+      f"transient day_close yield during open-tar repair day={day_token}",
+    ) from exc
+  if result.transient:
+    raise ArchiveMembersStoreUnavailableError(
+      result.transient_reason or "transient open-tar repair defer",
+    )
+  if result.readable:
+    return
+  cache_key = _daily_archive_members_cache_key(compressed_canonical)
+  keys = build_archive_members_keys(cache_key)
+  detail = f"open tar unreadable after repair path={tar_path}"
+  set_archive_day_ingest_skip(
+    keys,
+    kind=SKIP_KIND_OPEN_TAR_GNU_TVF_FAILED,
+    detail=detail,
+  )
+  sealed = _resolve_sealed_path_for_day_token(keys.day_token)
+  _cache_ingest_skipped_calendar_day(
+    keys.day_token,
+    SKIP_KIND_OPEN_TAR_GNU_TVF_FAILED,
+    detail,
+    sealed,
+  )
+  skip_exc = ArchiveDayIngestSkipError(
+    keys.day_token,
+    sealed,
+    SKIP_KIND_OPEN_TAR_GNU_TVF_FAILED,
+    detail,
+  )
+  _log_archive_day_ingest_skip_once(skip_exc)
+  raise skip_exc
+
+
 def repair_truncated_daily_tar_in_place(
   tar_path: str,
   *,
@@ -9440,23 +9753,19 @@ def reconcile_open_tar_with_sealed_zst(
   except TimeoutError:
     return ReconcileResult(False, "skip", "tar_verify_timeout")
   if not tar_gnu_readable:
-    if not tar_members_recoverable_despite_gnu_tf_fail(tar_path):
-      _log_truncated_tar_recoverability(tar_path, log_fn=log_fn)
-      return ReconcileResult(False, "skip", "tar_unrecoverable")
-    if not repair_truncated_daily_tar_in_place(
+    repair_result = ensure_open_daily_tar_readable(
       tar_path,
-      log_fn=log_fn,
-      tgz_archive_dir=tgz_archive_dir,
+      caller="reconcile",
       yield_phase="tar_repair",
-    ):
-      return ReconcileResult(False, "skip", "tar_repair_failed")
-    tar_gnu_readable = bool(verify_tar_archive_readable(tar_path))
+      log_fn=log_fn,
+      zstd_threads=zstd_threads,
+      require_recoverable_before_repair=True,
+    )
+    if repair_result.transient:
+      reason = repair_result.transient_reason or "tar_repair_deferred"
+      return ReconcileResult(False, "skip", reason)
+    tar_gnu_readable = repair_result.readable
     if not tar_gnu_readable:
-      if log_fn:
-        log_fn(
-          f"WARNING: tar still unreadable after repair tar={tar_path}",
-          flush=True,
-        )
       return ReconcileResult(False, "skip", "tar_unrecoverable")
   try:
     tar_members = get_mutable_tar_authority_member_map(tar_path)

@@ -47,11 +47,13 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   daily_tar_seal_calendar_eligible,
   dedupe_tar_keep_largest_file_per_member,
   drop_legacy_gz_if_equivalent_to_zst,
+  ensure_open_daily_tar_readable,
   filter_files_to_add_to_archive,
   find_immediate_day_close_candidates,
   get_existing_archive_members,
   get_existing_archive_members_for_daily_archive,
   get_file_member_sizes_from_gzip_archive,
+  get_mutable_tar_authority_member_map,
   get_stats_chunk,
   get_tar_file_tasks,
   get_tar_member_name,
@@ -217,6 +219,185 @@ def test_repair_truncated_tar_mid_member_not_recoverable(tmp_path):
   tar_path.write_bytes(original)
   assert not repair_truncated_daily_tar_in_place(str(tar_path), log_fn=None)
   assert tar_path.read_bytes() == original
+
+
+def test_ensure_open_daily_tar_readable_repairs_truncated_tar(
+  tmp_path, monkeypatch
+):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_path = tmp_path / "2024-03-10.tar"
+  inner = tmp_path / "inner.txt"
+  inner.write_text("payload")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(inner), arcname="host/member")
+  raw = tar_path.read_bytes()
+  tar_path.write_bytes(raw[: max(512, len(raw) // 3)])
+  monkeypatch.setattr(
+    helpers,
+    "_gnu_tvf_file_member_map_despite_fail",
+    lambda _path: {"host/member": len(b"payload")},
+  )
+  result = ensure_open_daily_tar_readable(
+    str(tar_path),
+    caller="test_repair",
+    log_fn=None,
+  )
+  assert result.readable
+  assert get_mutable_tar_authority_member_map(str(tar_path))
+
+
+def test_ingest_membership_defers_while_daily_tar_restore_in_progress(
+  tmp_path, monkeypatch
+):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_members_coord as coord_mod
+
+  tar_path = tmp_path / "2024-03-11.tar"
+  tar_path.write_bytes(b"not-a-tar")
+  canonical = str(tmp_path / "2024-03-11.tar.zst")
+  monkeypatch.setattr(
+    coord_mod,
+    "daily_tar_restore_in_progress_for_day",
+    lambda _day: True,
+  )
+  monkeypatch.setattr(
+    coord_mod,
+    "archive_append_inflight_for_day",
+    lambda _day: False,
+  )
+  with pytest.raises(coord_mod.ArchiveMembersStoreUnavailableError):
+    helpers.daily_archive_has_member_with_size(canonical, "host/x", 1)
+
+
+def test_ingest_open_tar_tvf_failure_sets_day_skip_when_unrecoverable(
+  tmp_path, monkeypatch
+):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_members_coord as coord_mod
+
+  tar_path = tmp_path / "2024-03-12.tar"
+  inner = tmp_path / "big.txt"
+  inner.write_text("x" * 5000)
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(inner), arcname="host/big")
+  tar_path.write_bytes(tar_path.read_bytes()[:200])
+  canonical = str(tmp_path / "2024-03-12.tar.zst")
+  skip_calls = []
+  monkeypatch.setattr(
+    coord_mod,
+    "archive_append_inflight_for_day",
+    lambda _day: False,
+  )
+  monkeypatch.setattr(
+    coord_mod,
+    "daily_tar_restore_in_progress_for_day",
+    lambda _day: False,
+  )
+  monkeypatch.setattr(
+    coord_mod,
+    "set_archive_day_ingest_skip",
+    lambda keys, **kw: skip_calls.append((keys.day_token, kw.get("kind"))),
+  )
+  with pytest.raises(coord_mod.ArchiveDayIngestSkipError):
+    helpers.daily_archive_has_member_with_size(canonical, "host/big", 5000)
+  assert skip_calls
+  assert skip_calls[0][1] == helpers.SKIP_KIND_OPEN_TAR_GNU_TVF_FAILED
+  daily_dir = tmp_path / "daily"
+  daily_dir.mkdir()
+  host_dir = tmp_path / "archive" / "node1.hpc"
+  host_dir.mkdir(parents=True)
+  ts = "1709251200"
+  raw_path = host_dir / ts
+  raw_path.write_text(f"{ts} job1 node1\n")
+
+  def raise_skip(*_a, **_k):
+    raise coord_mod.ArchiveDayIngestSkipError(
+      "2024-03-12",
+      canonical,
+      helpers.SKIP_KIND_OPEN_TAR_GNU_TVF_FAILED,
+      "open tar unreadable",
+    )
+
+  monkeypatch.setattr(
+    helpers,
+    "daily_archive_has_member_with_size",
+    raise_skip,
+  )
+  monkeypatch.setattr(
+    helpers, "_log_archive_day_ingest_skip_once", lambda _e: None
+  )
+  needs, skip = raw_stats_path_tar_append_decision(
+    str(raw_path),
+    str(daily_dir),
+    first_ts=ts,
+  )
+  assert needs is False
+  assert "open_tar_gnu_tvf_failed" in skip
+
+
+def test_append_and_ingest_share_repair_helper(monkeypatch, tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.sync_timedb as st
+
+  ensure_calls = []
+
+  def _ensure(*args, **kwargs):
+    ensure_calls.append((args, kwargs.get("caller")))
+    return helpers.OpenDailyTarEnsureResult(readable=True)
+
+  monkeypatch.setattr(helpers, "ensure_open_daily_tar_readable", _ensure)
+  monkeypatch.setattr(st, "ensure_open_daily_tar_readable", _ensure)
+
+  raw_file = tmp_path / "1000"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-02.tar.zst")
+  tar_path = daily_tar_path_from_compressed(archive_key)
+  os.makedirs(os.path.dirname(tar_path), exist_ok=True)
+  inner = tmp_path / "inner.txt"
+  inner.write_text("payload")
+  with tarfile.open(tar_path, "w") as tf:
+    tf.add(str(inner), arcname="host/existing")
+  open(archive_key, "wb").write(b"sealed-placeholder")
+
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.sync_timedb.filter_paths_head_ingested",
+    lambda paths, log_fn=None, **_kwargs: (paths, []),
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.sync_timedb._append_to_tar",
+    lambda *a, **k: None,
+  )
+  real_verify = helpers.verify_tar_archive_readable
+  unreadable_once = {"done": False}
+
+  def _verify_once_unreadable(path: str, **kwargs: object) -> bool:
+    if not unreadable_once["done"] and os.path.normpath(
+      path
+    ) == os.path.normpath(tar_path):
+      unreadable_once["done"] = True
+      return False
+    return real_verify(path, **kwargs)
+
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.sync_timedb.verify_tar_archive_readable",
+    _verify_once_unreadable,
+  )
+  st._archive_stats_files_body((archive_key, [str(raw_file)]))
+  assert any(c[1] and c[1].startswith("append") for c in ensure_calls)
+
+  ensure_calls.clear()
+  coord_mod = __import__(
+    "hpcperfstats.dbload.lib.sync_timedb_archive_members_coord",
+    fromlist=["archive_append_inflight_for_day"],
+  )
+  monkeypatch.setattr(
+    coord_mod,
+    "archive_append_inflight_for_day",
+    lambda _day: False,
+  )
+  helpers.daily_archive_has_member_with_size(archive_key, "host/existing", 7)
+  assert any(c[1] == "ingest_membership" for c in ensure_calls)
 
 
 def _strip_trailing_eof_blocks(tar_path: Path, *, blocks: int = 2) -> None:
@@ -850,8 +1031,8 @@ def test_append_repairs_truncated_tar_before_restore_from_zst(
     lambda paths, log_fn=None, **_kwargs: (paths, []),
   )
   monkeypatch.setattr(
-    "hpcperfstats.dbload.sync_timedb.repair_truncated_daily_tar_in_place",
-    lambda *a, **k: True,
+    "hpcperfstats.dbload.sync_timedb.ensure_open_daily_tar_readable",
+    lambda *a, **k: helpers.OpenDailyTarEnsureResult(readable=True),
   )
   monkeypatch.setattr(
     "hpcperfstats.dbload.sync_timedb._append_to_tar",
@@ -860,10 +1041,6 @@ def test_append_repairs_truncated_tar_before_restore_from_zst(
   monkeypatch.setattr(
     "hpcperfstats.dbload.sync_timedb.verify_tar_archive_readable",
     _verify_once_unreadable,
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.sync_timedb.replace_corrupt_tar_from_compressed_backup",
-    lambda *a, **k: restore_calls.append(1) or False,
   )
   result = _archive_stats_files_body((archive_key, [str(raw_file)]))
   assert result is not False
