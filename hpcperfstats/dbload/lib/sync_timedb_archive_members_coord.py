@@ -258,6 +258,53 @@ def is_transient_fnctl_populate_unavailable(exc: Any) -> bool:
   return "timed out waiting" in msg and "fnctl.lock" in msg
 
 
+def is_transient_ingest_archive_coordination_error(exc: Any) -> bool:
+  """
+  True when *exc* is a transient open-tar / members coordination defer.
+
+  Ingest drain must requeue without burning job attempts (orchestrator
+  ``ingest defer``), not ``_retry_or_dead_letter``.
+
+  Args:
+    exc (Any): Exception from an ingest worker future.
+
+  Returns:
+    bool: True for append-inflight, day-close yield, restore, fnctl transient.
+
+  Examples:
+    >>> is_transient_ingest_archive_coordination_error(RuntimeError("x"))
+    False
+    >>> is_transient_ingest_archive_coordination_error(
+    ...   ArchiveMembersStoreUnavailableError(
+    ...     "transient defer open-tar repair during append inflight day=2026-01-01"
+    ...   )
+    ... )
+    True
+  """
+  if is_transient_fnctl_populate_unavailable(exc):
+    return True
+  if not isinstance(exc, ArchiveMembersStoreUnavailableError):
+    return False
+  if isinstance(
+    exc,
+    (
+      ArchiveMembersStoreConnectionError,
+      ArchiveMembersPopulateStalledError,
+    ),
+  ):
+    return False
+  msg = str(exc).lower()
+  return any(
+    marker in msg
+    for marker in (
+      "transient defer open-tar repair during append inflight",
+      "transient day_close yield during open-tar repair",
+      "restore_in_progress",
+      "transient open-tar repair defer",
+    )
+  )
+
+
 def is_populate_pool_unavailable_error(exc: Any) -> bool:
   """
   True when *exc* is populate-pool-down refuse-stream (recoverable).

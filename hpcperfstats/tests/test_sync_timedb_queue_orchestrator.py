@@ -2011,6 +2011,44 @@ def test_drain_other_exception_still_retries(monkeypatch, tmp_path):
   assert any("parse boom" in m for m in seen["logs"]), seen["logs"]
 
 
+def test_drain_append_inflight_unavailable_requeues_without_attempt_bump(
+  monkeypatch, tmp_path
+):
+  """Append-inflight open-tar defer requeues without attempt burn or dead letter."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+    ArchiveMembersStoreUnavailableError,
+  )
+
+  exc = ArchiveMembersStoreUnavailableError(
+    "transient defer open-tar repair during append inflight day=2026-10-22",
+  )
+  identity, seen = _drain_one_ingest_failure(monkeypatch, tmp_path, exc)
+  assert seen["requeues"] == [identity]
+  assert seen["bumps"] == []
+  assert seen["letters"] == []
+  assert seen["acks"] == []
+  assert any(
+    "ingest defer" in m and "append inflight" in m for m in seen["logs"]
+  ), seen["logs"]
+
+
+def test_drain_hard_archive_unavailable_still_retries(monkeypatch, tmp_path):
+  """Hard ArchiveMembersStoreUnavailableError still bumps attempt."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+    ArchiveMembersStoreUnavailableError,
+  )
+
+  identity, seen = _drain_one_ingest_failure(
+    monkeypatch,
+    tmp_path,
+    ArchiveMembersStoreUnavailableError("store down after prewarm"),
+  )
+  assert seen["bumps"] == [identity]
+  assert seen["requeues"] == [identity]
+  assert seen["letters"] == []
+  assert any("ingest fail" in m for m in seen["logs"]), seen["logs"]
+
+
 def test_sigterm_drains_and_releases_leases():
   """S1: SIGTERM is cooperative; drain timeout requeues outstanding claims."""
   src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
   ArchiveMembersKeys,
+  ArchiveMembersStoreUnavailableError,
+  is_transient_ingest_archive_coordination_error,
   lookup_full_members,
   members_cache_is_fully_warm,
   populate_archive_members,
@@ -91,3 +93,24 @@ def test_sticky_skip_survives_reload(tmp_path):
   payload = revived.get_day_skip("2026-08-02")
   assert payload is not None
   assert payload["kind"] == "read_error"
+
+
+def test_transient_ingest_archive_coordination_classifier():
+  """Orchestrator defer markers vs hard store unavailable."""
+  assert (
+    is_transient_ingest_archive_coordination_error(RuntimeError("x")) is False
+  )
+  assert (
+    is_transient_ingest_archive_coordination_error(
+      ArchiveMembersStoreUnavailableError(
+        "transient defer open-tar repair during append inflight day=2026-01-01",
+      ),
+    )
+    is True
+  )
+  assert (
+    is_transient_ingest_archive_coordination_error(
+      ArchiveMembersStoreUnavailableError("store down after prewarm"),
+    )
+    is False
+  )

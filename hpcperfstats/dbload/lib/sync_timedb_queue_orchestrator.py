@@ -107,6 +107,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
 )
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
   _rate_limited_day_info_log,
+  is_transient_ingest_archive_coordination_error,
 )
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
   SyncTimedbArchiveMembersStore,
@@ -4369,6 +4370,17 @@ def _drain_ingest_ready(
         submitted.pop(identity, None)
       _release_ingest_inflight_size(inflight_sizes, identity)
       done += 1
+      if is_transient_ingest_archive_coordination_error(exc):
+        _log(
+          f"queue_orchestrator ingest defer identity={identity} err={type(exc).__name__} detail={exc}",
+          log_fn=log_fn,
+        )
+        _requeue_claimed_job_without_attempt_bump(
+          client,
+          claim=claim,
+          log_fn=log_fn,
+        )
+        continue
       _log(
         f"queue_orchestrator ingest fail identity={identity} err={type(exc).__name__} detail={exc}",
         log_fn=log_fn,
