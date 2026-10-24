@@ -149,3 +149,25 @@ def test_gpu_agg_rows_uses_type_detail_batch_and_time_chunks(monkeypatch):
   out = g.gpu_agg_rows_for_job_window(j)
   assert out
   assert seen_batches == [jt_mod.TYPE_DETAIL_HOST_QUERY_BATCH]
+
+
+def test_shared_gpu_count_is_affinity_length(monkeypatch):
+  """Shared jobs count affinity devices, not the host gpu_count gauge."""
+  import hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary as summary
+
+  monkeypatch.setattr(summary, "job_is_shared_node", lambda jid: True)
+  monkeypatch.setattr(summary, "gpu_devs_for_job", lambda jid: ["0"])
+  job = type("J", (), {"jid": "65877"})()
+  assert summary.gpu_count_total_for_job_window(job) == 1
+
+
+def test_shared_empty_gpu_list_is_zero(monkeypatch):
+  """An empty affinity list is no GPUs, not the host inventory."""
+  import hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary as summary
+
+  monkeypatch.setattr(summary, "job_is_shared_node", lambda jid: True)
+  monkeypatch.setattr(summary, "gpu_devs_for_job", lambda jid: [])
+  job = type("J", (), {"jid": "65877", "acct_host_list": ["h"]})()
+  assert summary.gpu_count_total_for_job_window(job) == 0
+  assert summary.gpu_inventory_for_job_window(job) == []
+  assert summary.gpu_agg_rows_for_job_window(job) == []

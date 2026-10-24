@@ -571,12 +571,25 @@ def _apply_counter_deltas_legacy_sort_groupby(
   frame["delta"] = frame.groupby(
     ["host", "type", "dev", "event"], observed=True
   )["value"].diff()
+  values = frame["value"].to_numpy(dtype=np.float64, copy=False)
   wid = frame["wid"].to_numpy(dtype=np.float64, copy=False)
-  delta = frame["delta"].to_numpy(dtype=np.float64, copy=False)
-  wrap = (delta < 0) & np.isfinite(delta)
-  if wrap.any():
-    delta = delta.copy()
-    delta[wrap] = (2.0 ** wid[wrap]) + delta[wrap]
+  delta = np.array(
+    frame["delta"].to_numpy(dtype=np.float64, copy=False),
+    dtype=np.float64,
+    copy=True,
+  )
+  finite_neg = (delta < 0) & np.isfinite(delta)
+  if finite_neg.any():
+    modulus = np.power(2.0, wid)
+    prev = values - delta
+    one_wrap = (
+      finite_neg
+      & np.isfinite(prev)
+      & (prev >= (modulus * 0.5))
+      & (delta > -modulus)
+    )
+    delta[one_wrap] = modulus[one_wrap] + delta[one_wrap]
+    delta[finite_neg & ~one_wrap] = np.nan
   mult = frame["mult"].to_numpy(dtype=np.float64, copy=False)
   frame["delta"] = delta * mult
   frame.drop(columns=["wid", "mult"], inplace=True)
@@ -692,12 +705,25 @@ def _apply_counter_deltas_row_loop_ref(stats_df, carry=None):
       if apply_mask.any():
         stats_df.loc[idxs[apply_mask], "delta"] = carry_deltas[apply_mask]
 
+  sample_values = stats_df["value"].to_numpy(dtype=np.float64, copy=False)
   wid = stats_df["wid"].to_numpy(dtype=np.float64, copy=False)
-  delta = stats_df["delta"].to_numpy(dtype=np.float64, copy=False)
-  wrap = (delta < 0) & np.isfinite(delta)
-  if wrap.any():
-    delta = delta.copy()
-    delta[wrap] = (2.0 ** wid[wrap]) + delta[wrap]
+  delta = np.array(
+    stats_df["delta"].to_numpy(dtype=np.float64, copy=False),
+    dtype=np.float64,
+    copy=True,
+  )
+  finite_neg = (delta < 0) & np.isfinite(delta)
+  if finite_neg.any():
+    modulus = np.power(2.0, wid)
+    prev = sample_values - delta
+    one_wrap = (
+      finite_neg
+      & np.isfinite(prev)
+      & (prev >= (modulus * 0.5))
+      & (delta > -modulus)
+    )
+    delta[one_wrap] = modulus[one_wrap] + delta[one_wrap]
+    delta[finite_neg & ~one_wrap] = np.nan
   mult = stats_df["mult"].to_numpy(dtype=np.float64, copy=False)
   stats_df["delta"] = delta * mult
 
@@ -929,12 +955,25 @@ def _apply_counter_deltas_category_baseline(stats_df, carry=None):
       if hit.any():
         stats_df.loc[idxs[hit], "delta"] = values[hit] - prev_vals[hit]
 
+  sample_values = stats_df["value"].to_numpy(dtype=np.float64, copy=False)
   wid = stats_df["wid"].to_numpy(dtype=np.float64, copy=False)
-  delta = stats_df["delta"].to_numpy(dtype=np.float64, copy=False)
-  wrap = (delta < 0) & np.isfinite(delta)
-  if wrap.any():
-    delta = delta.copy()
-    delta[wrap] = (2.0 ** wid[wrap]) + delta[wrap]
+  delta = np.array(
+    stats_df["delta"].to_numpy(dtype=np.float64, copy=False),
+    dtype=np.float64,
+    copy=True,
+  )
+  finite_neg = (delta < 0) & np.isfinite(delta)
+  if finite_neg.any():
+    modulus = np.power(2.0, wid)
+    prev = sample_values - delta
+    one_wrap = (
+      finite_neg
+      & np.isfinite(prev)
+      & (prev >= (modulus * 0.5))
+      & (delta > -modulus)
+    )
+    delta[one_wrap] = modulus[one_wrap] + delta[one_wrap]
+    delta[finite_neg & ~one_wrap] = np.nan
   mult = stats_df["mult"].to_numpy(dtype=np.float64, copy=False)
   stats_df["delta"] = delta * mult
 

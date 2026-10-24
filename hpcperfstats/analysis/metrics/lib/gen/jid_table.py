@@ -2312,6 +2312,74 @@ def _coerce_jid_table_schema_dataframe(df: Any) -> Any:
   return out
 
 
+def _scoped_delta_sum_rows(
+  owner: Any,
+  hosts_list: Any,
+  tf_cur: Any,
+  typ: str,
+  events: Any,
+) -> list[dict[str, Any]]:
+  """
+  Sum ``delta`` by event for one hostxtime chunk.
+
+  Shared-node residual types collapse ``j:`` copies in SQL. Other reads
+  drop samples past the delta ceiling, then sum.
+
+  Args:
+    owner (Any): ``jid_table`` instance (jid and shared flag).
+    hosts_list (Any): Hostnames.
+    tf_cur (Any): Time filter dict.
+    typ (str): ``host_data.type``.
+    events (Any): Event names.
+
+  Returns:
+    list[dict[str, Any]]: Rows with ``event`` and ``delta_sum``.
+
+  Examples:
+    >>> _scoped_delta_sum_rows(None, [], {}, "nfs", [])  # doctest: +SKIP
+    []
+  """
+  shared = bool(getattr(owner, "_shared_node", False))
+  event_list = list(events or [])
+  if use_host_wide_residual_scope(typ, shared=shared):
+    from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import (
+      residual_event_counter_sums,
+    )
+
+    sql_rows = residual_event_counter_sums(
+      [str(host) for host in hosts_list],
+      tf_cur or {},
+      typ,
+      event_list,
+      "delta",
+    )
+    if sql_rows is not None:
+      return sql_rows
+  from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
+    MAX_SANE_COUNTER_DELTA,
+  )
+
+  qs = (
+    apply_job_or_host_wide_scope(
+      host_data.objects.filter(
+        host__in=hosts_list,
+        **(tf_cur or {}),
+        type=typ,
+        event__in=event_list,
+        delta__gt=-MAX_SANE_COUNTER_DELTA,
+        delta__lt=MAX_SANE_COUNTER_DELTA,
+      ),
+      owner.jid,
+      typ,
+      shared=shared,
+    )
+    .values("event")
+    .annotate(delta_sum=Sum("delta"))
+    .order_by("event")
+  )
+  return list(qs)
+
+
 class jid_table:
   """
   Job-scoped view of job_data and host_data using Django ORM. No raw connection.
@@ -3299,23 +3367,7 @@ class jid_table:
             >>> True
             True
           """
-          qs = (
-            apply_job_or_host_wide_scope(
-              host_data.objects.filter(
-                host__in=hosts_list,
-                **(tf_cur or {}),
-                type=_typ,
-                event__in=_probed,
-              ),
-              self.jid,
-              _typ,
-              shared=bool(getattr(self, "_shared_node", False)),
-            )
-            .values("event")
-            .annotate(delta_sum=Sum("delta"))
-            .order_by("event")
-          )
-          return list(qs)
+          return _scoped_delta_sum_rows(self, hosts_list, tf_cur, _typ, _probed)
 
         all_rows: list = []
         for host_chunk, tf in _iter_host_time_query_chunks(
@@ -3418,23 +3470,9 @@ class jid_table:
             >>> True
             True
           """
-          qs = (
-            apply_job_or_host_wide_scope(
-              host_data.objects.filter(
-                host__in=hosts_list,
-                **(tf_cur or {}),
-                type=_typ,
-                event__in=all_events,
-              ),
-              self.jid,
-              _typ,
-              shared=bool(getattr(self, "_shared_node", False)),
-            )
-            .values("event")
-            .annotate(delta_sum=Sum("delta"))
-            .order_by("event")
+          return _scoped_delta_sum_rows(
+            self, hosts_list, tf_cur, _typ, all_events
           )
-          return list(qs)
 
         typ_rows: list = []
         for host_chunk, tf in _iter_host_time_query_chunks(
@@ -3543,23 +3581,7 @@ class jid_table:
             >>> True
             True
           """
-          qs = (
-            apply_job_or_host_wide_scope(
-              host_data.objects.filter(
-                host__in=hosts_list,
-                **(tf_cur or {}),
-                type=_typ,
-                event__in=_probed,
-              ),
-              self.jid,
-              _typ,
-              shared=bool(getattr(self, "_shared_node", False)),
-            )
-            .values("event")
-            .annotate(delta_sum=Sum("delta"))
-            .order_by("event")
-          )
-          return list(qs)
+          return _scoped_delta_sum_rows(self, hosts_list, tf_cur, _typ, _probed)
 
         all_rows: list = []
         for host_chunk, tf in _iter_host_time_query_chunks(

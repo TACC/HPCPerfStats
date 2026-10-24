@@ -4,6 +4,7 @@ Set-based PostgreSQL helpers for metrics / update_metrics offload paths.
 Attributes:
   LIVE_DISTINCT_STATEMENT_TIMEOUT_MS: Local statement_timeout (ms) for live
     distinct freshen probes.
+  _COUNTER_VALUE_COLS: ``host_data`` columns safe to interpolate into SQL.
 """
 
 from __future__ import annotations
@@ -12,6 +13,46 @@ from typing import Any
 
 # Short budget for optional live-distinct freshen (not portal default ~120s).
 LIVE_DISTINCT_STATEMENT_TIMEOUT_MS = 15000
+_COUNTER_VALUE_COLS = frozenset({"arc", "value", "delta"})
+
+
+def _reduced_event_value_sql(val_col: str) -> str:
+  """
+  SQL CASE that sums hardware devs, else maxes ``j:`` copies, of one column.
+
+  Placeholders are two sane-ceiling binds, in order. ``%`` in ``LIKE`` is
+  doubled for psycopg.
+
+  Args:
+    val_col (str): ``arc``, ``value``, or ``delta``.
+
+  Returns:
+    str: SQL expression.
+
+  Raises:
+    ValueError: ``val_col`` is not ``arc``, ``value``, or ``delta``.
+
+  Examples:
+    >>> "MAX" in _reduced_event_value_sql("arc")
+    True
+  """
+  if val_col not in _COUNTER_VALUE_COLS:
+    raise ValueError(val_col)
+  return f"""
+    CASE
+      WHEN COUNT(*) FILTER (WHERE COALESCE(h.dev, '') NOT LIKE 'j:%%') > 0
+      THEN SUM(h.{val_col}) FILTER (
+        WHERE COALESCE(h.dev, '') NOT LIKE 'j:%%'
+          AND h.{val_col} IS NOT NULL
+          AND abs(h.{val_col}) < %s
+      )
+      ELSE MAX(h.{val_col}) FILTER (
+        WHERE COALESCE(h.dev, '') LIKE 'j:%%'
+          AND h.{val_col} IS NOT NULL
+          AND abs(h.{val_col}) < %s
+      )
+    END
+  """
 
 
 def in_window_per_host_min_max_rows(
@@ -208,25 +249,62 @@ def host_data_sum_metric_per_sample_rows(
     else:
       scope = job_host_data_scope_sql(table_alias="h")
       scope_params = [jid_s, jid_s]
-    sql = f"""
-      SELECT h.host::text AS host,
-             h.time AS sample_time,
-             SUM(h.{val_col})::double precision AS sum_val
-      FROM host_data h
-      WHERE h.host = ANY(%s::text[])
-        AND h.time >= %s AND h.time <= %s
-        AND h.type = %s AND h.event = ANY(%s::text[])
-        AND {scope}
-      GROUP BY h.host, h.time
-    """
-    params = [
-      list(hosts),
-      t0,
-      t1,
-      typ,
-      list(events),
-      *scope_params,
-    ]
+    from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
+      sane_counter_abs_limit,
+    )
+
+    limit = sane_counter_abs_limit(val_col)
+    if host_wide:
+      sql = f"""
+        SELECT g.host, g.sample_time,
+               SUM(g.evt_val)::double precision AS sum_val
+        FROM (
+          SELECT h.host::text AS host,
+                 h.time AS sample_time,
+                 {_reduced_event_value_sql(val_col)} AS evt_val
+          FROM host_data h
+          WHERE h.host = ANY(%s::text[])
+            AND h.time >= %s AND h.time <= %s
+            AND h.type = %s AND h.event = ANY(%s::text[])
+            AND {scope}
+          GROUP BY h.host, h.time, h.event
+        ) g
+        WHERE g.evt_val IS NOT NULL
+        GROUP BY g.host, g.sample_time
+      """
+      params = [
+        limit,
+        limit,
+        list(hosts),
+        t0,
+        t1,
+        typ,
+        list(events),
+        *scope_params,
+      ]
+    else:
+      sql = f"""
+        SELECT h.host::text AS host,
+               h.time AS sample_time,
+               SUM(h.{val_col})::double precision AS sum_val
+        FROM host_data h
+        WHERE h.host = ANY(%s::text[])
+          AND h.time >= %s AND h.time <= %s
+          AND h.type = %s AND h.event = ANY(%s::text[])
+          AND h.{val_col} IS NOT NULL
+          AND abs(h.{val_col}) < %s
+          AND {scope}
+        GROUP BY h.host, h.time
+      """
+      params = [
+        list(hosts),
+        t0,
+        t1,
+        typ,
+        list(events),
+        limit,
+        *scope_params,
+      ]
   else:
     sql = (
       "SELECT host, sample_time, sum_val "
@@ -239,6 +317,72 @@ def host_data_sum_metric_per_sample_rows(
     return [
       {"host": h, "time": st, "sum_val": float(sv) if sv is not None else 0.0}
       for h, st, sv in cursor.fetchall()
+    ]
+
+
+def residual_event_counter_sums(
+  hosts: list[str],
+  time_filter: dict[str, Any],
+  typ: str,
+  events: list[str],
+  val_col: str = "delta",
+) -> list[dict[str, Any]] | None:
+  """
+  Sum a host-wide residual counter by event, without adding ``j:`` copies.
+
+  Args:
+    hosts (list[str]): Hostnames.
+    time_filter (dict[str, Any]): ``time__gte`` / ``time__lte``.
+    typ (str): ``host_data.type``.
+    events (list[str]): Event names.
+    val_col (str): ``delta`` or ``arc``.
+
+  Returns:
+    list[dict[str, Any]] | None: ``event`` / ``delta_sum`` rows, or ``None``
+    when PostgreSQL is not the connection vendor.
+
+  Examples:
+    >>> residual_event_counter_sums([], {}, "nfs", [], "delta")
+    []
+  """
+  if val_col not in _COUNTER_VALUE_COLS or not hosts or not events:
+    return []
+  t0 = time_filter.get("time__gte")
+  t1 = time_filter.get("time__lte")
+  if t0 is None or t1 is None:
+    return []
+  from django.db import connection
+
+  if connection.vendor != "postgresql":
+    return None
+  from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
+    sane_counter_abs_limit,
+  )
+
+  limit = sane_counter_abs_limit(val_col)
+  reduced = _reduced_event_value_sql(val_col)
+  sql = f"""
+    SELECT g.event, SUM(g.evt_val)::double precision AS delta_sum
+    FROM (
+      SELECT h.event,
+             {reduced} AS evt_val
+      FROM host_data h
+      WHERE h.host = ANY(%s::text[])
+        AND h.time >= %s AND h.time <= %s
+        AND h.type = %s AND h.event = ANY(%s::text[])
+      GROUP BY h.host, h.time, h.event
+    ) g
+    WHERE g.evt_val IS NOT NULL
+    GROUP BY g.event
+  """
+  with connection.cursor() as cursor:
+    cursor.execute(
+      sql,
+      [limit, limit, list(hosts), t0, t1, typ, list(events)],
+    )
+    return [
+      {"event": event, "delta_sum": float(total) if total is not None else 0.0}
+      for event, total in cursor.fetchall()
     ]
 
 
@@ -311,25 +455,65 @@ def job_arc_cluster_aggregate_value(
 
   arc_filter = " AND arc >= 0" if nonnegative_rate else ""
   jid_s = str(jid).strip() if jid else ""
-  if jid_s and not use_host_wide_residual_scope(
+  host_wide = bool(jid_s) and use_host_wide_residual_scope(
     typ, shared=job_is_shared_node(jid_s)
-  ):
+  )
+  if jid_s and not host_wide:
     scope = " AND " + job_host_data_scope_sql(table_alias="")
     scope_params: list[Any] = [jid_s, jid_s]
   else:
     scope = ""
     scope_params = []
+  from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
+    sane_counter_abs_limit,
+  )
+
+  limit = sane_counter_abs_limit("arc")
+  if host_wide:
+    sample_sql = f"""
+      raw AS (
+        SELECT host, time, event, dev, arc
+        FROM host_data
+        WHERE host = ANY(%s::text[])
+          AND time >= %s AND time <= %s
+          AND type = %s AND event = ANY(%s::text[])
+          AND arc IS NOT NULL AND abs(arc) < %s
+          {arc_filter}
+          {scope}
+      ),
+      per_event AS (
+        SELECT host, time,
+          CASE
+            WHEN COUNT(*) FILTER (WHERE COALESCE(dev, '') NOT LIKE 'j:%%') > 0
+            THEN SUM(arc) FILTER (WHERE COALESCE(dev, '') NOT LIKE 'j:%%')
+            ELSE MAX(arc) FILTER (WHERE COALESCE(dev, '') LIKE 'j:%%')
+          END AS arc
+        FROM raw
+        GROUP BY host, time, event
+      ),
+      sample AS (
+        SELECT host, time, SUM(arc)::double precision AS arc
+        FROM per_event
+        WHERE arc IS NOT NULL
+        GROUP BY host, time
+      )
+    """
+  else:
+    sample_sql = f"""
+      sample AS (
+        SELECT host, time, SUM(arc)::double precision AS arc
+        FROM host_data
+        WHERE host = ANY(%s::text[])
+          AND time >= %s AND time <= %s
+          AND type = %s AND event = ANY(%s::text[])
+          AND arc IS NOT NULL AND abs(arc) < %s
+          {arc_filter}
+          {scope}
+        GROUP BY host, time
+      )
+    """
   sql = f"""
-    WITH sample AS (
-      SELECT host, time, SUM(arc)::double precision AS arc
-      FROM host_data
-      WHERE host = ANY(%s::text[])
-        AND time >= %s AND time <= %s
-        AND type = %s AND event = ANY(%s::text[])
-        {arc_filter}
-        {scope}
-      GROUP BY host, time
-    ),
+    WITH {sample_sql},
     bucketed AS (
       SELECT host,
              time_bucket('5 minutes', time) AS bucket,
@@ -365,7 +549,16 @@ def job_arc_cluster_aggregate_value(
       with connection.cursor() as cursor:
         cursor.execute(
           sql,
-          [chunk, t0, t1, typ, list(events), *scope_params, float(conv)],
+          [
+            chunk,
+            t0,
+            t1,
+            typ,
+            list(events),
+            limit,
+            *scope_params,
+            float(conv),
+          ],
         )
         row = cursor.fetchone()
     except OperationalError as exc:

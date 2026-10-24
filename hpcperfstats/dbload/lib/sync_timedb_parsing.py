@@ -3364,12 +3364,25 @@ def _apply_counter_deltas(stats_df: Any, carry: Any | None = None) -> Any:
       if hit.any():
         stats_df.loc[idxs[hit], "delta"] = values[hit] - prev_vals[hit]
 
+  values = stats_df["value"].to_numpy(dtype=np.float64, copy=False)
   wid = stats_df["wid"].to_numpy(dtype=np.float64, copy=False)
-  delta = stats_df["delta"].to_numpy(dtype=np.float64, copy=False)
-  wrap = (delta < 0) & np.isfinite(delta)
-  if wrap.any():
-    delta = delta.copy()
-    delta[wrap] = (2.0 ** wid[wrap]) + delta[wrap]
+  delta = np.array(
+    stats_df["delta"].to_numpy(dtype=np.float64, copy=False),
+    dtype=np.float64,
+    copy=True,
+  )
+  finite_neg = (delta < 0) & np.isfinite(delta)
+  if finite_neg.any():
+    modulus = np.power(2.0, wid)
+    prev = values - delta
+    one_wrap = (
+      finite_neg
+      & np.isfinite(prev)
+      & (prev >= (modulus * 0.5))
+      & (delta > -modulus)
+    )
+    delta[one_wrap] = modulus[one_wrap] + delta[one_wrap]
+    delta[finite_neg & ~one_wrap] = np.nan
   mult = stats_df["mult"].to_numpy(dtype=np.float64, copy=False)
   stats_df["delta"] = delta * mult
 

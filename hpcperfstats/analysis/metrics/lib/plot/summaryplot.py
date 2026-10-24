@@ -945,12 +945,18 @@ def _summary_nv_mem_used_y_range_end(df: Any) -> Any:
   return 1.1 * max(candidates)
 
 
-def _summary_nv_gpu_util_y_range_end(df: Any) -> Any:
+def _summary_nv_gpu_util_y_range_end(
+  df: Any,
+  *,
+  shared_gpu_count: int | None = None,
+) -> Any:
   """
   Upper y bound for GPU util: GPU_count * 100 when GPU count exists.
 
   Args:
-    df (Any): Df passed to this helper.
+    df (Any): Summary frame.
+    shared_gpu_count (int | None): Affinity GPU count on a shared job.
+      When set, the scale is that count times 100.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -958,6 +964,8 @@ def _summary_nv_gpu_util_y_range_end(df: Any) -> Any:
   Examples:
     >>> _summary_nv_gpu_util_y_range_end(None)  # doctest: +SKIP
   """
+  if shared_gpu_count is not None:
+    return float(shared_gpu_count) * 100.0
   if "nv_gpu_util" not in df.columns or "nv_gpu_count" not in df.columns:
     return None
   gpu_count_max = df["nv_gpu_count"].max()
@@ -1966,7 +1974,19 @@ class SummaryPlot:
       if name == "nv_mem_used_mb":
         y_top = _summary_nv_mem_used_y_range_end(df)
       elif name == "nv_gpu_util":
-        y_top = _summary_nv_gpu_util_y_range_end(df)
+        shared_gpu_count = None
+        jid = getattr(self.jt, "jid", None)
+        if isinstance(jid, (str, int)) and str(jid).strip():
+          from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
+            gpu_devs_for_job,
+            job_is_shared_node,
+          )
+
+          if job_is_shared_node(str(jid).strip()):
+            shared_gpu_count = len(gpu_devs_for_job(str(jid).strip()) or [])
+        y_top = _summary_nv_gpu_util_y_range_end(
+          df, shared_gpu_count=shared_gpu_count
+        )
       render_specs.append((name, label, y_top))
 
     render_specs.sort(key=lambda item: _summary_plot_order_key(item[0]))

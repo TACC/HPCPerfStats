@@ -2218,7 +2218,7 @@ class Metrics:
       "avg_blockbw": {
         "typename": HOST_BLOCK_TYPE,
         "events": ["rd_sectors", "wr_sectors"],
-        "conv": 1.0 / (1024 * 1024),
+        "conv": 1.0 / (1024**3),
         "units": "GB/s",
         "nonnegative_rate": True,
       },

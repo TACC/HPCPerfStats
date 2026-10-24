@@ -25,6 +25,7 @@ from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
   apply_gpu_affinity_dev_filter,
   apply_job_host_data_scope,
   gpu_devs_for_job,
+  job_is_shared_node,
 )
 from hpcperfstats.dbload.lib import conf_parser as cfg
 from hpcperfstats.lib.dcgm_blank import DCGM_FP64_BLANK, is_dcgm_numeric_blank
@@ -217,12 +218,14 @@ def gpu_agg_rows_for_job_window(j: Any) -> list[dict]:
   Examples:
     >>> gpu_agg_rows_for_job_window(None)  # doctest: +SKIP
   """
+  jid = _coerce_job_jid(j)
+  aff = gpu_devs_for_job(jid) if jid else None
+  if jid and job_is_shared_node(jid) and not aff:
+    return []
   hosts = getattr(j, "acct_host_list", None) or []
   if not hosts:
     return []
   tkw = _job_window_time_filter(j)
-  jid = _coerce_job_jid(j)
-  aff = gpu_devs_for_job(jid) if jid else None
   for gpu_typ in GPU_TYPE_PRECEDENCE:
     out = _collect_gpu_annotate_rows(
       hosts,
@@ -245,7 +248,8 @@ def gpu_agg_rows_for_job_window(j: Any) -> list[dict]:
 
 def gpu_count_total_for_job_window(j: Any) -> int | None:
   """
-  Sum over hosts of max(gpu_count) in window (nvidia -> amd -> intel).
+  Shared jobs return ``len(gpu_list)``. Exclusive jobs sum per-host
+  max(gpu_count) (nvidia -> amd -> intel).
 
   Args:
     j (Any): Job record (Django ``job_data`` or job-like mapping).
@@ -256,11 +260,13 @@ def gpu_count_total_for_job_window(j: Any) -> int | None:
   Examples:
     >>> gpu_count_total_for_job_window(None)  # doctest: +SKIP
   """
+  jid = _coerce_job_jid(j)
+  if jid and job_is_shared_node(jid):
+    return len(gpu_devs_for_job(jid) or [])
   hosts = getattr(j, "acct_host_list", None) or []
   if not hosts:
     return None
   tkw = _job_window_time_filter(j)
-  jid = _coerce_job_jid(j)
   aff = gpu_devs_for_job(jid) if jid else None
   for gpu_typ in GPU_TYPE_PRECEDENCE:
     rows = _collect_gpu_annotate_rows(
@@ -305,12 +311,14 @@ def gpu_inventory_for_job_window(j: Any) -> list[dict]:
   Examples:
     >>> gpu_inventory_for_job_window(None)  # doctest: +SKIP
   """
+  jid = _coerce_job_jid(j)
+  aff = gpu_devs_for_job(jid) if jid else None
+  if jid and job_is_shared_node(jid) and not aff:
+    return []
   hosts = getattr(j, "acct_host_list", None) or []
   if not hosts:
     return []
   tkw = _job_window_time_filter(j)
-  jid = _coerce_job_jid(j)
-  aff = gpu_devs_for_job(jid) if jid else None
   for gpu_typ in GPU_TYPE_PRECEDENCE:
     util_rows = _collect_gpu_annotate_rows(
       hosts,

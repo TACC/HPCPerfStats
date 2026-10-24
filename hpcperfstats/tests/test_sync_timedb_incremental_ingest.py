@@ -62,9 +62,22 @@ def _apply_counter_deltas_rowwise_ref(stats_df, carry=None):
       )
       stats_df.at[idx, "delta"] = delta
 
-  stats_df["delta"] = stats_df["delta"].mask(
-    stats_df["delta"] < 0, 2 ** stats_df["wid"] + stats_df["delta"]
-  )
+  delta = stats_df["delta"].to_numpy(dtype=np.float64, copy=True)
+  values = stats_df["value"].to_numpy(dtype=np.float64, copy=False)
+  wid = stats_df["wid"].to_numpy(dtype=np.float64, copy=False)
+  finite_neg = (delta < 0) & np.isfinite(delta)
+  if finite_neg.any():
+    modulus = np.power(2.0, wid)
+    prev = values - delta
+    one_wrap = (
+      finite_neg
+      & np.isfinite(prev)
+      & (prev >= (modulus * 0.5))
+      & (delta > -modulus)
+    )
+    delta[one_wrap] = modulus[one_wrap] + delta[one_wrap]
+    delta[finite_neg & ~one_wrap] = np.nan
+    stats_df["delta"] = delta
   stats_df["delta"] = stats_df["delta"] * stats_df["mult"]
 
   if carry is not None:

@@ -15,6 +15,8 @@ Attributes:
   SHARED_HOST_WIDE_HELP_FOOTER: User-facing red-footer copy for residual
     host-wide counters on shared jobs.
   HOST_WIDE_RESIDUAL_CACHE_REV: Redis day-frame cache revision.
+  MAX_SANE_COUNTER_DELTA: Per-sample ``delta`` ceiling below uint64 wrap.
+  MAX_SANE_COUNTER_RATE: Per-sample ``arc`` / ``value`` ceiling.
   _GPU_HOST_DATA_TYPES: Canonical GPU ``host_data.type`` names on the
     job-scoped allowlist.
 """
@@ -415,6 +417,92 @@ def calendar_days_covering(start: Any, end: Any) -> list[str]:
     return out
   except Exception:
     return []
+
+
+# Per-sample ceilings. Below a uint64 wrap (~1e19) and above a single host.
+MAX_SANE_COUNTER_RATE = 1.0e13
+MAX_SANE_COUNTER_DELTA = 1.0e17
+
+
+def sane_counter_abs_limit(value_key: str) -> float:
+  """
+  Absolute ceiling for one ``host_data`` sample before aggregation.
+
+  Args:
+    value_key (str): ``arc``, ``value``, or ``delta``.
+
+  Returns:
+    float: Rate ceiling, or the larger delta ceiling for ``delta``.
+
+  Examples:
+    >>> sane_counter_abs_limit("delta") > sane_counter_abs_limit("arc")
+    True
+  """
+  if value_key == "delta":
+    return MAX_SANE_COUNTER_DELTA
+  return MAX_SANE_COUNTER_RATE
+
+
+def collapse_residual_sample_copies(
+  rows: list[dict[str, Any]],
+  value_key: str = "value",
+) -> list[dict[str, Any]]:
+  """
+  One host series per (host, time, event).
+
+  Hardware ``dev`` values are summed. ``j:`` copies are used only when no
+  hardware dev is present, and then as a max so co-tenant stamps are not
+  added. Samples at or above the sane ceiling are dropped.
+
+  Args:
+    rows (list[dict[str, Any]]): Rows with ``host``, ``time``, ``dev``,
+      optional ``event``, and ``value_key``.
+    value_key (str): Numeric field to reduce.
+
+  Returns:
+    list[dict[str, Any]]: Collapsed rows.
+
+  Examples:
+    >>> collapse_residual_sample_copies([])
+    []
+  """
+  groups: dict[tuple[Any, Any, Any], list[dict[str, Any]]] = {}
+  for row in rows:
+    key = (row.get("host"), row.get("time"), row.get("event", ""))
+    groups.setdefault(key, []).append(row)
+  limit = sane_counter_abs_limit(value_key)
+  out: list[dict[str, Any]] = []
+  for key, items in groups.items():
+    hardware = [
+      row for row in items if not str(row.get("dev") or "").startswith("j:")
+    ]
+    chosen = hardware or [
+      row for row in items if str(row.get("dev") or "").startswith("j:")
+    ]
+    vals: list[float] = []
+    for row in chosen:
+      raw = row.get(value_key)
+      if raw is None:
+        continue
+      try:
+        val = float(raw)
+      except TypeError, ValueError:
+        continue
+      if val != val or abs(val) >= limit:
+        continue
+      vals.append(val)
+    if not vals:
+      continue
+    reduced = sum(vals) if hardware else max(vals)
+    out.append(
+      {
+        "host": key[0],
+        "time": key[1],
+        "event": key[2],
+        value_key: reduced,
+      }
+    )
+  return out
 
 
 def apply_gpu_affinity_dev_filter(
