@@ -1227,6 +1227,43 @@ def test_skip_only_deleting_not_in_tar_handoffs_not_freeze(tmp_path):
   assert kick_handoffs
 
 
+def test_reclassify_seal_invalid_open_tar_validate_fails_uses_sealed_map(
+  tmp_path,
+  monkeypatch,
+):
+  """Open-tar member map missing: reclassify skipped_seal_invalid via sealed .zst."""
+  day = datetime(2026, 8, 18)
+  seg = _make_closed_segment(tmp_path, "cluster.integration.test", day)
+  tar_path, zst = _seal_day(tmp_path, seg, day)
+  coord = _make_coordinator(tmp_path, ingest_ready_fn=lambda _p: True)
+  state = coord._get_or_create_day(tar_path)
+  state._record_entry(
+    str(seg),
+    zst,
+    "skipped_seal_invalid",
+    "seal_validation_failed",
+  )
+  with state._lock:
+    state._manifest["phase"] = PHASE_DONE
+    state._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+    state._manifest["skipped_count"] = 1
+    state._manifest["completed_at"] = time.time()
+    _save_manifest(state._manifest_path, state._manifest)
+
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal."
+    "validate_open_tar_for_raw_removal",
+    lambda *_a, **_k: (False, None),
+  )
+
+  upgraded = state._reclassify_retryable_skips_on_disk()
+  assert upgraded == 1
+  entry = state._manifest["entries"][str(seg)]
+  assert entry["status"] == "verified"
+  assert state._manifest["verified_count"] == 1
+  assert state._manifest["skipped_count"] == 0
+
+
 def test_reclassify_retryable_skip_upgrades_to_verified_when_tar_member(
   tmp_path,
 ):

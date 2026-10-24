@@ -559,6 +559,48 @@ def test_without_mark_and_without_host_data_still_skipped(
   assert readiness.stats_file_head_ingested_in_db(seg) is False
 
 
+def test_live_on_closed_head_tail_ready_without_marks(monkeypatch, tmp_path):
+  host_dir = tmp_path / "host.cluster"
+  host_dir.mkdir()
+  ts = int(datetime(2026, 5, 10, 12, 0, 0, tzinfo=UTC).timestamp())
+  seg = host_dir / str(ts)
+  seg.write_text(f"{ts} job1 cn001\nline\n")
+
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_listend_db_ingest_enabled", lambda: True)
+  monkeypatch.setattr(
+    readiness, "_path_ready_via_file_complete_mark", lambda _p: False
+  )
+  monkeypatch.setattr(
+    readiness, "_path_ready_via_zero_host_mark", lambda _p: False
+  )
+  monkeypatch.setattr(readiness, "_path_head_tail_ready_in_db", lambda _p: True)
+  assert readiness.stats_file_head_ingested_in_db(str(seg)) is True
+
+
+def test_live_on_closed_head_tail_not_ready_without_marks(
+  monkeypatch, tmp_path
+):
+  host_dir = tmp_path / "host.cluster"
+  host_dir.mkdir()
+  ts = int(datetime(2026, 5, 10, 13, 0, 0, tzinfo=UTC).timestamp())
+  seg = host_dir / str(ts)
+  seg.write_text(f"{ts} job1 cn001\nline\n")
+
+  monkeypatch.setattr(cfg, "get_sync_archive_require_db_ingest", lambda: True)
+  monkeypatch.setattr(cfg, "get_listend_db_ingest_enabled", lambda: True)
+  monkeypatch.setattr(
+    readiness, "_path_ready_via_file_complete_mark", lambda _p: False
+  )
+  monkeypatch.setattr(
+    readiness, "_path_ready_via_zero_host_mark", lambda _p: False
+  )
+  monkeypatch.setattr(
+    readiness, "_path_head_tail_ready_in_db", lambda _p: False
+  )
+  assert readiness.stats_file_head_ingested_in_db(str(seg)) is False
+
+
 def test_live_off_file_complete_ready_without_head_tail(monkeypatch, tmp_path):
   """Live-off file_complete mark is ready without host_data head+tail I/O."""
   host_dir = tmp_path / "host.cluster"

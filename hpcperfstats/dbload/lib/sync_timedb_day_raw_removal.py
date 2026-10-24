@@ -1381,27 +1381,46 @@ class _DayRawRemovalState:
           flush=True,
         )
       return 0
+    zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
+    gate_fn = (
+      self.ingest_ready_fn if cfg.get_sync_archive_require_db_ingest() else None
+    )
     ok, members = validate_open_tar_for_raw_removal(
       self.tar_path,
       log_fn=self.log_fn,
       validation_cache=self._validation_cache,
     )
-    if not ok or members is None:
-      return 0
-    zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
-    gate_fn = (
-      self.ingest_ready_fn if cfg.get_sync_archive_require_db_ingest() else None
-    )
+    if ok and members is not None:
+      classify_iter = classify_removable_raw_paths_for_open_tar(
+        self.tar_path,
+        retryable_paths,
+        ingest_ready_fn=gate_fn,
+        log_fn=self.log_fn,
+        validation_cache=self._validation_cache,
+        open_tar_members=members,
+      )
+    else:
+      with self._lock:
+        entries = dict(self._manifest.get("entries", {}))
+      seal_invalid_paths = [
+        path
+        for path in retryable_paths
+        if str(entries.get(path, {}).get("status") or "")
+        == "skipped_seal_invalid"
+      ]
+      if not seal_invalid_paths or not zst_path or not os.path.isfile(zst_path):
+        return 0
+      classify_iter = classify_removable_raw_paths_for_daily_gz(
+        zst_path,
+        seal_invalid_paths,
+        ingest_ready_fn=gate_fn,
+        allow_auto_seal=False,
+        log_fn=self.log_fn,
+        validation_cache=self._validation_cache,
+      )
     upgraded = 0
     still_skipped = 0
-    for path, status, reason in classify_removable_raw_paths_for_open_tar(
-      self.tar_path,
-      retryable_paths,
-      ingest_ready_fn=gate_fn,
-      log_fn=self.log_fn,
-      validation_cache=self._validation_cache,
-      open_tar_members=members,
-    ):
+    for path, status, reason in classify_iter:
       if status == "verified":
         with self._lock:
           prior = self._manifest.get("entries", {}).get(path)
