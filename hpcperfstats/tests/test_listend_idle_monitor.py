@@ -169,9 +169,9 @@ def test_idle_monitor_reports_real_queue_depth(monkeypatch):
     listend._message_timestamps.append(now - 10)
     listend._message_timestamps.append(now - 5)
     listend._message_timestamps.append(now - listend.MESSAGE_WINDOW_SECONDS - 1)
-    listend._unlink_timestamps.clear()
-    listend._unlink_timestamps.append(now - 10)
-    listend._unlink_timestamps.append(now - 5)
+    listend._unlink_events.clear()
+    listend._unlink_events.append((now - 10, 100))
+    listend._unlink_events.append((now - 5, 200))
 
   listend._last_idle_report_time = now - listend.MESSAGE_WINDOW_SECONDS - 1
   messages = []
@@ -184,7 +184,8 @@ def test_idle_monitor_reports_real_queue_depth(monkeypatch):
   assert any(
     "Messages consumed in the last 10 minutes: 2;" in m for m in messages
   )
-  assert not any("bytes)" in m for m in messages)
+  assert any("unlink_bytes_last_10=300" in m for m in messages)
+  assert any("average unlink file size: 150 bytes" in m for m in messages)
 
   messages.clear()
   listend._emit_idle_monitor_report(now + 1)
@@ -197,21 +198,22 @@ def test_consume_window_totals_counts_in_window_messages():
   now = 2_000_000.0
   with listend._timestamps_lock:
     listend._message_timestamps.clear()
-    listend._unlink_timestamps.clear()
+    listend._unlink_events.clear()
     listend._message_timestamps.append(now - 1)
     listend._message_timestamps.append(now - 2)
     listend._message_timestamps.append(now - listend.MESSAGE_WINDOW_SECONDS - 5)
-    listend._unlink_timestamps.append(now - 1)
+    listend._unlink_events.append((now - 1, 8192))
 
-  messages, unlinks = listend._consume_window_totals(now)
+  messages, unlinks, unlink_bytes = listend._consume_window_totals(now)
   assert messages == 2
   assert unlinks == 1
+  assert unlink_bytes == 8192
 
   with listend._timestamps_lock:
     listend._message_timestamps.clear()
-    listend._unlink_timestamps.clear()
-  messages, unlinks = listend._consume_window_totals(now)
-  assert (messages, unlinks) == (0, 0)
+    listend._unlink_events.clear()
+  messages, unlinks, unlink_bytes = listend._consume_window_totals(now)
+  assert (messages, unlinks, unlink_bytes) == (0, 0, 0)
 
 
 def test_append_records_timestamp_not_payload_bytes(tmp_path, monkeypatch):
@@ -222,15 +224,16 @@ def test_append_records_timestamp_not_payload_bytes(tmp_path, monkeypatch):
   )
   with listend._timestamps_lock:
     listend._message_timestamps.clear()
-    listend._unlink_timestamps.clear()
+    listend._unlink_events.clear()
 
   body = b"1710000001.0 1 bytehost.example.com extra\n"
   listend.append_monitor_payload_to_archive(body)
 
   now = listend.time.time()
-  messages, unlinks = listend._consume_window_totals(now)
+  messages, unlinks, unlink_bytes = listend._consume_window_totals(now)
   assert messages == 1
   assert unlinks == 0
+  assert unlink_bytes == 0
   with listend._timestamps_lock:
     entry = listend._message_timestamps[-1]
     assert isinstance(entry, float)

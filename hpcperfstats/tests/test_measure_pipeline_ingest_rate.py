@@ -917,3 +917,58 @@ def test_campaign_detail_and_supervisor_meters_outside_write_share(mod):
   assert "write_setup_s" in mod._WRITE_PHASE_TOKEN_NAMES
   assert "reconnect_s" not in mod._WRITE_PHASE_TOKEN_NAMES
   assert "census_s" not in mod._WRITE_PHASE_TOKEN_NAMES
+
+
+def test_listend_unlink_bytes_parsed_and_deduped(mod):
+  """Non-overlapping byte sum must follow the same keep policy as counts."""
+  lines = [
+    _ts(0) + "sync_timedb: pending rescan done pending=1000 elapsed_s=1.0",
+  ]
+  for minute in (0, 1, 9, 10, 19, 20):
+    lines.append(
+      _ts(minute)
+      + "Messages consumed in the last 10 minutes: 0; messages waiting "
+      "to be consumed: 0; current file unlinks (last 10 minutes): 2; "
+      "unlink_bytes_last_10=2000000000; average unlink file size: 1000000000 bytes"
+    )
+  lines.append(
+    _ts(20) + "Pending stats file list truncated pending=900 max=2000"
+  )
+  outcomes = mod.analyze_lines(lines, since_minutes=None, exclude_startup=False)
+  # Kept at t=0,10,20 -> 3 * 2e9 bytes over ~20 min window.
+  assert float(outcomes["listend_sealed_mib_per_min"]) == pytest.approx(
+    (3 * 2_000_000_000) / mod._MIB_BYTES / 20.0,
+    rel=1e-3,
+  )
+
+
+def test_verdict_full_ingest_mib_can_differ_from_file_verdict(mod):
+  """MiB/min compares sealed bytes to ingest bytes, not file counts."""
+  lines = [
+    _ts(0) + "sync_timedb: pending rescan done pending=100 elapsed_s=1.0",
+    _ts(0) + "Messages consumed in the last 10 minutes: 1; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 100; "
+    "unlink_bytes_last_10=1000000; average unlink file size: 10000 bytes",
+    _ts(10) + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 "
+    "ingest_ok=yes archive=yes db_skip=no size_bytes=10000000000 stats_rows=10",
+    _ts(20) + "Pending stats file list truncated pending=90 max=2000",
+  ]
+  outcomes = mod.analyze_lines(lines, since_minutes=None, exclude_startup=False)
+  assert outcomes["verdict_full_ingest"] == "LOSING"
+  assert outcomes["verdict_full_ingest_mib"] == "WINNING"
+
+
+def test_verdict_full_ingest_mib_na_without_byte_fields(mod, capsys):
+  lines = [
+    _ts(0) + "sync_timedb: pending rescan done pending=100 elapsed_s=1.0",
+    _ts(0) + "Messages consumed in the last 10 minutes: 1; messages waiting "
+    "to be consumed: 0; current file unlinks (last 10 minutes): 5",
+    _ts(10) + "ingest file path=/arch/host/1 outcome=ingested elapsed_s=1.0 "
+    "ingest_ok=yes archive=yes db_skip=no size_bytes=1000 stats_rows=10",
+    _ts(20) + "Pending stats file list truncated pending=90 max=2000",
+  ]
+  outcomes = mod.analyze_lines(lines, since_minutes=None, exclude_startup=False)
+  assert outcomes["verdict_full_ingest_mib"] == "N/A"
+  assert outcomes["ratio_listend_over_full_ingest_mib"] == "N/A"
+  captured = capsys.readouterr()
+  assert "verdict_full_ingest_mib is N/A" in captured.err

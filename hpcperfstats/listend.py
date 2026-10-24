@@ -34,7 +34,7 @@ Attributes:
   _recent_host_worker_stop_event: Attribute.
   _recent_host_worker_thread_started: Attribute.
   _timestamps_lock: Attribute.
-  _unlink_timestamps: Attribute.
+  _unlink_events: Attribute.
   _MIN_PLAUSIBLE_UNIX_SECONDS: Lowest unix seconds accepted as a stats
     timestamp (schema host line ``1 <fqdn>`` is below this).
   _DIGIT_EPOCH_NAME_MAX_ATTEMPTS: Max digit names to probe when finding a
@@ -225,7 +225,7 @@ class _ArchiveWorkItem(NamedTuple):
 
 
 _message_timestamps = deque()
-_unlink_timestamps = deque()
+_unlink_events: deque[tuple[float, int]] = deque()
 _timestamps_lock = Lock()
 _last_message_time = None
 _last_idle_report_time = None
@@ -955,6 +955,7 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
   payload_len = len(payload_bytes)
   write_offset = 0
   unlinked_current = False
+  closed_unlink_bytes = 0
   if is_dollar:
     _release_sticky_archive_writer(unlink_sidecar=True)
     os.makedirs(host_dir, exist_ok=True)
@@ -973,6 +974,7 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
               "current is not hardlinked to a digit epoch before unlink"
             )
 
+        closed_unlink_bytes = os.path.getsize(current_path)
         os.unlink(current_path)
         unlinked_current = True
 
@@ -1016,12 +1018,12 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
     _last_message_time = now
     _message_timestamps.append(now)
     if unlinked_current:
-      _unlink_timestamps.append(now)
+      _unlink_events.append((now, closed_unlink_bytes))
     cutoff_window = now - MESSAGE_WINDOW_SECONDS
     while _message_timestamps and _message_timestamps[0] < cutoff_window:
       _message_timestamps.popleft()
-    while _unlink_timestamps and _unlink_timestamps[0] < cutoff_window:
-      _unlink_timestamps.popleft()
+    while _unlink_events and _unlink_events[0][0] < cutoff_window:
+      _unlink_events.popleft()
 
   return ArchiveAppendResult(
     host=host,
@@ -2574,9 +2576,9 @@ def on_message(
     return
 
 
-def _consume_window_totals(now: float) -> tuple[int, int]:
+def _consume_window_totals(now: float) -> tuple[int, int, int]:
   """
-  Count in-window consumed messages and current file unlinks.
+  Count in-window consumed messages, unlinks, and sealed unlink bytes.
 
   Entries are unix timestamps recorded after a durable archive append.
 
@@ -2584,21 +2586,24 @@ def _consume_window_totals(now: float) -> tuple[int, int]:
     now (float): Unix time used as the window end.
 
   Returns:
-    tuple[int, int]: ``(messages, unlinks)`` whose timestamps are at or
-    after ``now - MESSAGE_WINDOW_SECONDS``.
+    tuple[int, int, int]: ``(messages, unlinks, unlink_bytes)`` for events
+    at or after ``now - MESSAGE_WINDOW_SECONDS``.
 
   Examples:
-    >>> n, u = _consume_window_totals(1_000_000.0)
-    >>> n >= 0 and u >= 0
+    >>> n, u, b = _consume_window_totals(1_000_000.0)
+    >>> n >= 0 and u >= 0 and b >= 0
     True
   """
   cutoff_10 = now - MESSAGE_WINDOW_SECONDS
   with _timestamps_lock:
     count_last_10 = sum(1 for ts in _message_timestamps if ts >= cutoff_10)
-    unlink_count_last_10 = sum(
-      1 for ts in _unlink_timestamps if ts >= cutoff_10
-    )
-  return count_last_10, unlink_count_last_10
+    unlink_count_last_10 = 0
+    unlink_bytes_last_10 = 0
+    for ts, nbytes in _unlink_events:
+      if ts >= cutoff_10:
+        unlink_count_last_10 += 1
+        unlink_bytes_last_10 += nbytes
+  return count_last_10, unlink_count_last_10, unlink_bytes_last_10
 
 
 def _emit_idle_monitor_report(now: float) -> None:
@@ -2622,7 +2627,14 @@ def _emit_idle_monitor_report(now: float) -> None:
   ):
     return
 
-  count_last_10, unlink_count_last_10 = _consume_window_totals(now)
+  count_last_10, unlink_count_last_10, unlink_bytes_last_10 = (
+    _consume_window_totals(now)
+  )
+  avg_unlink_bytes = (
+    unlink_bytes_last_10 // unlink_count_last_10
+    if unlink_count_last_10 > 0
+    else 0
+  )
 
   # Queue depth via a dedicated connection (see
   # ``_get_rmq_queue_depth_for_monitor``).
@@ -2645,7 +2657,7 @@ def _emit_idle_monitor_report(now: float) -> None:
     archive_suffix = _format_listend_idle_archive_suffix()
 
   log_print(
-    f"Messages consumed in the last 10 minutes: {count_last_10}; messages waiting to be consumed: {queue_depth}; current file unlinks (last 10 minutes): {unlink_count_last_10}{db_suffix}{archive_suffix}"
+    f"Messages consumed in the last 10 minutes: {count_last_10}; messages waiting to be consumed: {queue_depth}; current file unlinks (last 10 minutes): {unlink_count_last_10}; unlink_bytes_last_10={unlink_bytes_last_10}; average unlink file size: {avg_unlink_bytes} bytes{db_suffix}{archive_suffix}"
   )
 
   _last_idle_report_time = now

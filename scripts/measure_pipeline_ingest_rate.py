@@ -110,6 +110,7 @@ _CENSUS_INGEST_QUEUED_RE = re.compile(
 )
 _LISTEND_UNLINKS_RE = re.compile(
   r"current file unlinks \(last 10 minutes\): (\d+)"
+  r"(?:; unlink_bytes_last_10=(\d+); average unlink file size: (\d+) bytes)?"
 )
 _FULL_INGEST_RE = re.compile(
   r"ingest file path=\S+ .*outcome=ingested\b"
@@ -259,17 +260,21 @@ class LogMetrics:
     full_ingest_phases_by_tier: Per-tier write/parse phase sample lists.
     supervisor_samples: Process-level meter samples, including dead letters.
     last_ts: ``last_ts``.
-    listend_unlink_samples: Timestamped rolling-window unlink counts.
-    listend_unlink_sum: Effective non-overlapping unlink sum for rates.
+    listend_unlink_samples: Timestamped (ts, unlink_count, unlink_bytes) samples.
+    listend_unlink_sum: Effective non-overlapping unlink count sum for rates.
+    listend_unlink_bytes_sum: Non-overlapping sum of ``unlink_bytes_last_10``.
+    listend_unlink_bytes_incomplete: True when any report lacks byte fields.
     timestamped_lines: ``timestamped_lines``.
     census_ingest_queued: Timestamped queued side of census ``ingest=``.
     truncate_max_samples: ``truncate_max_samples``.
   """
 
-  listend_unlink_samples: list[tuple[datetime | None, int]] = field(
+  listend_unlink_samples: list[tuple[datetime | None, int, int]] = field(
     default_factory=list,
   )
   listend_unlink_sum: int = 0
+  listend_unlink_bytes_sum: int = 0
+  listend_unlink_bytes_incomplete: bool = False
   full_ingest_count: int = 0
   full_ingest_bytes: int = 0
   full_ingest_elapsed_by_tier: dict[str, list[float]] = field(
@@ -1015,8 +1020,14 @@ def parse_log_lines(
 
     unlink_match = _LISTEND_UNLINKS_RE.search(body)
     if unlink_match:
+      unlink_bytes_raw = unlink_match.group(2)
+      if unlink_bytes_raw is None:
+        metrics.listend_unlink_bytes_incomplete = True
+        unlink_bytes = 0
+      else:
+        unlink_bytes = int(unlink_bytes_raw)
       metrics.listend_unlink_samples.append(
-        (ts, int(unlink_match.group(1))),
+        (ts, int(unlink_match.group(1)), unlink_bytes),
       )
 
     if _FULL_INGEST_RE.search(body):
@@ -1052,8 +1063,8 @@ def parse_log_lines(
         )
       _record_supervisor_meters(metrics, body)
 
-  metrics.listend_unlink_sum = _nonoverlapping_listend_unlink_sum(
-    metrics.listend_unlink_samples,
+  metrics.listend_unlink_sum, metrics.listend_unlink_bytes_sum = (
+    _nonoverlapping_listend_window_totals(metrics.listend_unlink_samples)
   )
   return metrics
 
@@ -1255,13 +1266,13 @@ def _ratio_and_verdict(
   return f"{ratio:.4f}", verdict
 
 
-def _nonoverlapping_listend_unlink_sum(
-  samples: list[tuple[datetime | None, int]],
+def _nonoverlapping_listend_window_totals(
+  samples: list[tuple[datetime | None, int, int]],
   *,
   window_minutes: float = LISTEND_REPORT_WINDOW_MINUTES,
-) -> int:
+) -> tuple[int, int]:
   """
-  Sum rolling listend unlink counts without double-counting overlaps.
+  Sum rolling listend unlink counts and bytes without double-counting overlaps.
 
   Each listend line reports closures in the trailing ``window_minutes``.
   Keep a sample only when it starts a new non-overlapping window (gap
@@ -1270,34 +1281,63 @@ def _nonoverlapping_listend_unlink_sum(
   report as a full window via ``report_count * window_minutes``.
 
   Args:
-    samples (list[tuple[Optional[datetime], int]]): Ordered (timestamp,
-      unlink_count) samples from listend reports.
+    samples (list[tuple[Optional[datetime], int, int]]): Ordered
+      (timestamp, unlink_count, unlink_bytes_last_10) samples.
     window_minutes (float): Rolling report window length in minutes.
 
   Returns:
-    int: Non-overlapping unlink sum used for arrival-rate estimates.
+    tuple[int, int]: Non-overlapping (unlink_count_sum, unlink_bytes_sum).
 
   Examples:
     >>> from datetime import datetime, timezone
     >>> t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    >>> _nonoverlapping_listend_unlink_sum(
-    ...   [(t0, 10), (t0 + timedelta(minutes=1), 10)],
+    >>> _nonoverlapping_listend_window_totals(
+    ...   [(t0, 10, 1000), (t0 + timedelta(minutes=1), 10, 2000)],
     ... )
-    10
+    (10, 1000)
   """
   if not samples:
-    return 0
-  if any(ts is None for ts, _count in samples):
-    return sum(int(count) for _ts, count in samples)
+    return 0, 0
+  if any(ts is None for ts, _count, _bytes in samples):
+    count_sum = sum(int(count) for _ts, count, _bytes in samples)
+    bytes_sum = sum(int(nbytes) for _ts, _count, nbytes in samples)
+    return count_sum, bytes_sum
   window = timedelta(minutes=float(window_minutes))
-  kept_sum = 0
+  kept_count = 0
+  kept_bytes = 0
   last_kept: datetime | None = None
-  for ts, count in samples:
+  for ts, count, nbytes in samples:
     assert ts is not None  # guarded above
     if last_kept is None or (ts - last_kept) >= window:
-      kept_sum += int(count)
+      kept_count += int(count)
+      kept_bytes += int(nbytes)
       last_kept = ts
-  return kept_sum
+  return kept_count, kept_bytes
+
+
+def _nonoverlapping_listend_unlink_sum(
+  samples: list[tuple[datetime | None, int, int]],
+  *,
+  window_minutes: float = LISTEND_REPORT_WINDOW_MINUTES,
+) -> int:
+  """
+  Sum rolling listend unlink counts without double-counting overlaps.
+
+  Args:
+    samples (list[tuple[Optional[datetime], int, int]]): Ordered samples.
+    window_minutes (float): Rolling report window length in minutes.
+
+  Returns:
+    int: Non-overlapping unlink count sum.
+
+  Examples:
+    >>> _nonoverlapping_listend_unlink_sum([])  # doctest: +SKIP
+  """
+  count_sum, _bytes_sum = _nonoverlapping_listend_window_totals(
+    samples,
+    window_minutes=window_minutes,
+  )
+  return count_sum
 
 
 def _eta_hours(backlog: int | None, drain_per_min: float) -> str:
@@ -1488,8 +1528,8 @@ def build_outcomes(
   if window_minutes < 1.0:
     raise ValueError("insufficient log window for rate calculation")
 
-  metrics.listend_unlink_sum = _nonoverlapping_listend_unlink_sum(
-    metrics.listend_unlink_samples,
+  metrics.listend_unlink_sum, metrics.listend_unlink_bytes_sum = (
+    _nonoverlapping_listend_window_totals(metrics.listend_unlink_samples)
   )
   listend_rate = metrics.listend_unlink_sum / window_minutes
   ingest_rate = metrics.full_ingest_count / window_minutes
@@ -1546,17 +1586,37 @@ def build_outcomes(
       metrics.full_ingest_bytes / float(_MIB_BYTES)
     ) / window_minutes
 
+  listend_sealed_mib_per_min = 0.0
+  if window_minutes > 0:
+    listend_sealed_mib_per_min = (
+      metrics.listend_unlink_bytes_sum / float(_MIB_BYTES)
+    ) / window_minutes
+
+  ratio_ingest_mib = "N/A"
+  verdict_ingest_mib = "N/A"
+  if not metrics.listend_unlink_bytes_incomplete:
+    ratio_ingest_mib, verdict_ingest_mib = _ratio_and_verdict(
+      listend_sealed_mib_per_min,
+      mib_per_min,
+    )
+
   outcomes = {
     "window_minutes": f"{window_minutes:.2f}",
     "listend_closed_per_min": _fmt_rate(listend_rate),
     "sync_full_ingest_per_min": _fmt_rate(ingest_rate),
     "sync_full_ingest_mib_per_min": _fmt_rate(mib_per_min),
+    "listend_sealed_mib_per_min": _fmt_rate(listend_sealed_mib_per_min),
     "sync_archive_done_per_min": _fmt_rate(archive_rate),
     "ratio_listend_over_full_ingest": ratio_ingest,
     "verdict_full_ingest": verdict_ingest,
+    "ratio_listend_over_full_ingest_mib": ratio_ingest_mib,
+    "verdict_full_ingest_mib": verdict_ingest_mib,
     "ratio_listend_over_archive_done": ratio_archive,
     "verdict_archive_done": verdict_archive,
     "backlog_gap_full_ingest_per_min": _fmt_rate(listend_rate - ingest_rate),
+    "backlog_gap_full_ingest_mib_per_min": _fmt_rate(
+      listend_sealed_mib_per_min - mib_per_min,
+    ),
     "backlog_gap_archive_done_per_min": _fmt_rate(listend_rate - archive_rate),
     "ingest_start_utc": _fmt_ts(metrics.first_ts),
     "log_end_utc": _fmt_ts(metrics.last_ts),
@@ -1716,6 +1776,12 @@ def emit_warnings(metrics: LogMetrics, window_minutes: float) -> None:
     )
   if metrics.listend_unlink_sum == 0:
     print("WARN: no listend unlink reports found", file=sys.stderr)
+  if metrics.listend_unlink_bytes_incomplete:
+    print(
+      "WARN: listend unlink reports lack unlink_bytes_last_10; "
+      "verdict_full_ingest_mib is N/A",
+      file=sys.stderr,
+    )
   if metrics.full_ingest_count == 0:
     print("WARN: no full ingest lines found", file=sys.stderr)
   disk_n = _disk_sample_count(metrics)
@@ -1772,12 +1838,16 @@ def format_stdout(outcomes: dict[str, str]) -> str:
     "listend_closed_per_min",
     "sync_full_ingest_per_min",
     "sync_full_ingest_mib_per_min",
+    "listend_sealed_mib_per_min",
     "sync_archive_done_per_min",
     "ratio_listend_over_full_ingest",
     "verdict_full_ingest",
+    "ratio_listend_over_full_ingest_mib",
+    "verdict_full_ingest_mib",
     "ratio_listend_over_archive_done",
     "verdict_archive_done",
     "backlog_gap_full_ingest_per_min",
+    "backlog_gap_full_ingest_mib_per_min",
     "backlog_gap_archive_done_per_min",
     "ingest_start_utc",
     "log_end_utc",

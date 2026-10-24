@@ -270,7 +270,7 @@ def test_on_message_archives_previous_current_on_dollar_switch(
   # Reset globals that could be affected by previous tests.
   with listend._timestamps_lock:
     listend._message_timestamps.clear()
-    listend._unlink_timestamps.clear()
+    listend._unlink_events.clear()
     listend._last_message_time = None
 
   channel = _FakeChannel()
@@ -321,7 +321,7 @@ def test_on_message_counts_current_unlink_on_dollar_switch(
 
   with listend._timestamps_lock:
     listend._message_timestamps.clear()
-    listend._unlink_timestamps.clear()
+    listend._unlink_events.clear()
     listend._last_message_time = None
 
   channel = _FakeChannel()
@@ -338,8 +338,10 @@ def test_on_message_counts_current_unlink_on_dollar_switch(
   listend.on_message(channel, method_frame2, None, msg2)
 
   # The second '$' should unlink the existing `current` file before rotating.
-  assert len(listend._unlink_timestamps) == 1
-  assert listend._unlink_timestamps[0] > 1000.0
+  assert len(listend._unlink_events) == 1
+  unlink_ts, unlink_bytes = listend._unlink_events[0]
+  assert unlink_ts > 1000.0
+  assert unlink_bytes == len(msg1)
 
 
 def test_on_message_hardlinks_missing_epoch_before_unlink(
@@ -378,7 +380,7 @@ def test_on_message_hardlinks_missing_epoch_before_unlink(
 
   with listend._timestamps_lock:
     listend._message_timestamps.clear()
-    listend._unlink_timestamps.clear()
+    listend._unlink_events.clear()
     listend._last_message_time = None
 
   channel = _FakeChannel()
@@ -399,8 +401,10 @@ def test_on_message_hardlinks_missing_epoch_before_unlink(
   assert (host_dir / str(cutoff_epoch_ts)).read_bytes() == msg
 
   # Confirm listend counted exactly one unlink during rotation.
-  assert len(listend._unlink_timestamps) == 1
-  assert listend._unlink_timestamps[0] > cutoff_epoch_ts
+  assert len(listend._unlink_events) == 1
+  unlink_ts, unlink_bytes = listend._unlink_events[0]
+  assert unlink_ts > cutoff_epoch_ts
+  assert unlink_bytes == len(old_current.encode())
 
 
 def test_on_message_hardlinks_when_first_ts_epoch_is_other_inode(
@@ -447,7 +451,7 @@ def test_on_message_hardlinks_when_first_ts_epoch_is_other_inode(
 
   with listend._timestamps_lock:
     listend._message_timestamps.clear()
-    listend._unlink_timestamps.clear()
+    listend._unlink_events.clear()
     listend._last_message_time = None
 
   channel = _FakeChannel()
@@ -490,7 +494,7 @@ def test_on_message_same_second_double_dollar_preserves_closed_epoch(
 
   with listend._timestamps_lock:
     listend._message_timestamps.clear()
-    listend._unlink_timestamps.clear()
+    listend._unlink_events.clear()
     listend._last_message_time = None
 
   channel = _FakeChannel()
@@ -543,7 +547,7 @@ def test_dollar_rotate_digit_epoch_from_first_timestamp(tmp_path, monkeypatch):
 
   with listend._timestamps_lock:
     listend._message_timestamps.clear()
-    listend._unlink_timestamps.clear()
+    listend._unlink_events.clear()
     listend._last_message_time = None
 
   host = "c104-028.horizon.tacc.utexas.edu"
@@ -580,7 +584,7 @@ def test_dollar_rotate_digit_epoch_collision_plus_one(tmp_path, monkeypatch):
 
   with listend._timestamps_lock:
     listend._message_timestamps.clear()
-    listend._unlink_timestamps.clear()
+    listend._unlink_events.clear()
     listend._last_message_time = None
 
   host = "c104-028.horizon.tacc.utexas.edu"
