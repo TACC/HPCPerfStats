@@ -43,11 +43,28 @@ def main() -> int:
       lambda: width
     )
 
+  from tests.sync_timedb_benchmark.screening_runner import (
+    configure_loaded48_continuous_discover,
+  )
+
+  configure_loaded48_continuous_discover(orch)
+
   occupancy_samples: list[list[float | int]] = []
   t0 = time.monotonic()
+  last_occ_flush = 0.0
   if occ_path:
     orig_fill = orch._ingest_coordinator_fill_tick
     orig_drain = orch._drain_ingest_ready
+
+    def _flush_occ(force: bool = False) -> None:
+      nonlocal last_occ_flush
+      now = time.monotonic()
+      if not force and (now - last_occ_flush) < 2.0:
+        return
+      last_occ_flush = now
+      tmp = occ_path + ".tmp"
+      Path(tmp).write_text(json.dumps(occupancy_samples), encoding="utf-8")
+      os.replace(tmp, occ_path)
 
     def _fill_tick_with_occ(*args, **kwargs):
       result = orig_fill(*args, **kwargs)
@@ -60,6 +77,7 @@ def main() -> int:
       occupancy_samples.append(
         [time.monotonic() - t0, int(n), int(zcard), int(submitted)]
       )
+      _flush_occ()
       return result
 
     def _drain_with_occ(*args, **kwargs):
@@ -68,6 +86,7 @@ def main() -> int:
       occupancy_samples.append(
         [time.monotonic() - t0, int(n), 1 if n else 0, 0]
       )
+      _flush_occ()
       return orig_drain(*args, **kwargs)
 
     orch._ingest_coordinator_fill_tick = (  # type: ignore[method-assign]

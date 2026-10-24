@@ -27,6 +27,10 @@ Attributes:
   EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS: Attribute.
   EMPTY_QUEUE_RESCAN_SLEEP_SECONDS: Attribute.
   FINALIZE_POLL_TIMEOUT_SECONDS: Attribute.
+  _CODON_WRITE_PIPELINE_DEPTH: Outstanding Codon write frames before join.
+  _ingest_emit: Task-local emit mode (``insert`` or empty for COPY bytes).
+  _ingest_codon_slot_lock: Guards sticky Codon slot assignment.
+  _ingest_codon_slot_next: Next sticky slot index for an ingest thread.
   INGEST_PER_FILE_TIMEOUT_LOG_MIN_S: Attribute.
   INGEST_STALL_WATCHDOG_IDLE_S: Attribute.
   PENDING_RECONCILE_UNPROCESSED_HARD_CEILING_S: Attribute.
@@ -194,7 +198,9 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
   members_cache_is_fully_warm,
 )
 from hpcperfstats.dbload.lib.sync_timedb_host_data_insert import (
+  _write_host_copy_payload,
   bulk_insert_host_rows,
+  coerce_host_stats_to_columnar,
   host_insert_arm,
   insert_host_data_batch,
   use_copy_host_insert,
@@ -251,6 +257,7 @@ from hpcperfstats.dbload.lib.sync_timedb_persistence import (
   save_persistence_document,
 )
 from hpcperfstats.dbload.lib.sync_timedb_proc_data_insert import (
+  _write_proc_copy_payload,
   bulk_insert_proc_rows,
   insert_proc_data_batch,
   proc_insert_arm,
@@ -1887,12 +1894,95 @@ def _ingest_parse_flush_max_bytes() -> int:
   return max(1, int(cfg.get_sync_ingest_parse_flush_max_mib()) * 1024 * 1024)
 
 
+_CODON_WRITE_PIPELINE_DEPTH = 2
+
+_ingest_emit: contextvars.ContextVar[str] = contextvars.ContextVar(
+  "hpcperfstats_ingest_emit",
+  default="",
+)
+
+
+class CodonCopyFailed(RuntimeError):
+  """COPY body write failed; the orchestrator requeues with emit=insert."""
+
+
+def current_ingest_emit() -> str:
+  """
+  Return this task's ingest emit mode.
+
+  Returns:
+    str: ``insert`` for per-row INSERT, or empty for COPY bytes.
+
+  Examples:
+    >>> current_ingest_emit()
+    ''
+  """
+  return _ingest_emit.get()
+
+
+@contextmanager
+def bind_ingest_emit(emit: str) -> Iterator[None]:
+  """
+  Bind the ingest emit mode for the current task.
+
+  Args:
+    emit (str): ``insert`` or empty for COPY bytes.
+
+  Yields:
+    None: Scope where ``current_ingest_emit`` returns ``emit``.
+
+  Examples:
+    >>> with bind_ingest_emit("insert"):
+    ...   current_ingest_emit()
+    'insert'
+  """
+  token = _ingest_emit.set(str(emit or ""))
+  try:
+    yield
+  finally:
+    _ingest_emit.reset(token)
+
+
+def _join_ingest_write_payload(payload: Any) -> tuple[bool, bool]:
+  """
+  Wait for one enqueued write payload and return archival + success flags.
+
+  Args:
+    payload (Any): ``IngestWritePayload`` from the write stage.
+
+  Returns:
+    tuple[bool, bool]: ``(archival_out, ingest_ok)``.
+
+  Raises:
+    err: Re-raises ``payload.error`` when the write failed.
+
+  Examples:
+    >>> callable(_join_ingest_write_payload)
+    True
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_write_stage import (
+    ingest_write_stage_started,
+  )
+
+  queued = ingest_write_stage_started()
+  payload.done.wait()
+  if queued:
+    _apply_ingest_write_timing_from_payload(payload.write_timing)
+  err = payload.error
+  if err is not None:
+    raise err
+  return bool(payload.archival_out), bool(payload.ingest_ok)
+
+
 def _submit_stats_payload_write(
   stats_file: str,
   stats: Any,
   proc_stats: Any,
   *,
   need_archival: bool = True,
+  copy_unique: bool = False,
+  pipeline_depth: int = 0,
+  outstanding: list[Any] | None = None,
 ) -> tuple[str, bool, bool]:
   """
   Enqueue one flush on the ingest write stage and wait for completion.
@@ -1904,6 +1994,10 @@ def _submit_stats_payload_write(
     stats (Any): Host dataframe for this flush.
     proc_stats (Any): Proc dataframe for this flush.
     need_archival (bool): Archive-needed flag carried across flushes.
+    copy_unique (bool): Skip pre-COPY collapse on Codon-normalized SoA.
+    pipeline_depth (int): When >0 and write stage is running, keep up to
+      this many outstanding payloads (Codon marshaller pipeline).
+    outstanding (list[Any] | None): Mutable queue for pipeline mode.
 
   Returns:
     tuple[str, bool, bool]: ``(stats_file, archival_out, ingest_ok)``.
@@ -1918,6 +2012,7 @@ def _submit_stats_payload_write(
   from hpcperfstats.dbload.lib.sync_timedb_ingest_write_stage import (
     IngestWritePayload,
     ingest_write_stage_started,
+    submit_ingest_write,
     submit_ingest_write_and_wait,
   )
 
@@ -1927,7 +2022,20 @@ def _submit_stats_payload_write(
     stats=stats,
     proc_stats=proc_stats,
     need_archival=need_archival,
+    copy_unique=copy_unique,
+    emit=current_ingest_emit(),
   )
+  if pipeline_depth > 0 and outstanding is not None and queued:
+    submit_ingest_write(payload)
+    outstanding.append(payload)
+    archival_out = need_archival
+    ingest_ok = True
+    while len(outstanding) >= pipeline_depth:
+      front = outstanding.pop(0)
+      archival_out, ingest_ok = _join_ingest_write_payload(front)
+      if not ingest_ok:
+        return stats_file, archival_out, ingest_ok
+    return stats_file, archival_out, ingest_ok
   submit_ingest_write_and_wait(payload)
   if queued:
     _apply_ingest_write_timing_from_payload(payload.write_timing)
@@ -1935,6 +2043,32 @@ def _submit_stats_payload_write(
   if err is not None:
     raise err
   return stats_file, bool(payload.archival_out), bool(payload.ingest_ok)
+
+
+def _drain_ingest_write_pipeline(outstanding: list[Any]) -> tuple[bool, bool]:
+  """
+  Wait for all outstanding pipelined write payloads.
+
+  Args:
+    outstanding (list[Any]): Pending ``IngestWritePayload`` instances.
+
+  Returns:
+    tuple[bool, bool]: Final ``(archival_out, ingest_ok)``.
+
+  Raises:
+    BaseException: Re-raises the first write failure.
+
+  Examples:
+    >>> _drain_ingest_write_pipeline([])
+    (True, True)
+  """
+  archival_out = True
+  ingest_ok = True
+  while outstanding:
+    archival_out, ingest_ok = _join_ingest_write_payload(outstanding.pop(0))
+    if not ingest_ok:
+      break
+  return archival_out, ingest_ok
 
 
 _HOST_ITIMES_CACHE = sync_timedb_host_itimes._HOST_ITIMES_CACHE
@@ -2949,13 +3083,53 @@ def _try_db_complete_tail_window_fast_path(
   return None
 
 
+def _jids_from_host_or_proc_payload(payload: Any) -> set[str]:
+  """
+  Collect jid strings from a host/proc dataframe or columnar SoA Mapping.
+
+  Args:
+    payload (Any): DataFrame with a ``jid`` column, Mapping with a ``jid``
+      list, or ``None``/empty.
+
+  Returns:
+    set[str]: Distinct jid tokens (idle ``-`` omitted).
+
+  Examples:
+    >>> _jids_from_host_or_proc_payload({"jid": ["1", "-"]})
+    {'1'}
+  """
+  from collections.abc import Mapping
+
+  import pandas as pd
+
+  out: set[str] = set()
+  if payload is None:
+    return out
+  if isinstance(payload, Mapping) and not isinstance(payload, pd.DataFrame):
+    for x in payload.get("jid", []) or []:
+      if x is None:
+        continue
+      s = str(x)
+      if s and s not in ("-", "nan", "None"):
+        out.add(s)
+    return out
+  empty = getattr(payload, "empty", True)
+  columns = getattr(payload, "columns", ())
+  if empty or "jid" not in columns:
+    return out
+  out.update(
+    str(x) for x in payload["jid"].dropna().unique() if str(x) not in ("-",)
+  )
+  return out
+
+
 def _invalidate_jid_caches(stats: Any, proc_stats: Any) -> None:
   """
   Internal helper to handle invalidate job id caches.
 
   Args:
-    stats (Any): Stats passed to this helper.
-    proc_stats (Any): Proc stats passed to this helper.
+    stats (Any): Host dataframe or columnar SoA Mapping.
+    proc_stats (Any): Proc dataframe or empty.
 
   Returns:
     None
@@ -2969,15 +3143,8 @@ def _invalidate_jid_caches(stats: Any, proc_stats: Any) -> None:
       invalidate_job_plot_cache_keys_for_jids,
     )
 
-    jids = set()
-    if stats is not None and not stats.empty and "jid" in stats.columns:
-      jids.update(str(x) for x in stats["jid"].dropna().unique())
-    if (
-      proc_stats is not None
-      and not proc_stats.empty
-      and "jid" in proc_stats.columns
-    ):
-      jids.update(str(x) for x in proc_stats["jid"].dropna().unique())
+    jids = _jids_from_host_or_proc_payload(stats)
+    jids.update(_jids_from_host_or_proc_payload(proc_stats))
     if jids:
       invalidate_jid_derived_cache_keys(jids, ingest_fast=True)
       invalidate_job_plot_cache_keys_for_jids(jids, ingest_fast=True)
@@ -3155,6 +3322,61 @@ def _time_ingest_db_reconnect() -> None:
     connection.ensure_connection()
 
 
+def _copy_frame_row_count(frame: Any) -> int:
+  """
+  Return row count for a dataframe or columnar host SoA Mapping.
+
+  Args:
+    frame (Any): Host/proc dataframe or ``Mapping`` of parallel lists.
+
+  Returns:
+    int: Number of rows (``0`` when empty/unknown).
+
+  Examples:
+    >>> _copy_frame_row_count({"time": [1.0]})
+    1
+  """
+  from collections.abc import Mapping
+
+  import pandas as pd
+
+  if isinstance(frame, Mapping) and not isinstance(frame, pd.DataFrame):
+    times = frame.get("time")
+    return len(times) if times is not None else 0
+  try:
+    return len(frame)
+  except TypeError:
+    return 0
+
+
+def _slice_copy_frame(frame: Any, offset: int, end: int) -> Any:
+  """
+  Slice a COPY batch from a dataframe (``iloc``) or columnar SoA Mapping.
+
+  Args:
+    frame (Any): Host/proc dataframe or column Mapping.
+    offset (int): Inclusive start index.
+    end (int): Exclusive end index.
+
+  Returns:
+    Any: Same kind of object as ``frame``, restricted to ``[offset:end)``.
+
+  Examples:
+    >>> _slice_copy_frame({"time": [1.0, 2.0]}, 1, 2)["time"]
+    [2.0]
+  """
+  from collections.abc import Mapping
+
+  import pandas as pd
+
+  if isinstance(frame, Mapping) and not isinstance(frame, pd.DataFrame):
+    return {
+      key: list(vals[offset:end]) if hasattr(vals, "__getitem__") else vals
+      for key, vals in frame.items()
+    }
+  return frame.iloc[offset:end]
+
+
 def _write_copy_frame_batches(
   frame: Any,
   stats_file: str,
@@ -3162,17 +3384,19 @@ def _write_copy_frame_batches(
   insert_batch: Any,
 ) -> None:
   """
-  COPY ``frame`` in ``iloc`` slices.
+  COPY ``frame`` in ``iloc`` (or SoA list) slices.
 
   ``write_setup_s`` times each slice when telemetry is on. Byte encoding
   stays inside ``insert_batch`` under ``db_execute_s``. An empty frame
   does nothing.
 
   Args:
-    frame (Any): Host or proc dataframe. ``len`` and ``iloc`` are required.
+    frame (Any): Host or proc dataframe, or columnar host SoA Mapping
+      (``time`` list length is the row count). ``len``/``iloc`` or Mapping
+      list slices are required.
     stats_file (str): Path used by the per-file deadline.
     phase (str): Deadline phase, ``db_write_proc`` or ``db_write_host``.
-    insert_batch (Any): Callable that accepts one dataframe slice.
+    insert_batch (Any): Callable that accepts one dataframe or SoA slice.
 
   Returns:
     None
@@ -3186,7 +3410,7 @@ def _write_copy_frame_batches(
     ... )
   """
   step = _ingest_write_frame_slice_rows()
-  total = len(frame)
+  total = _copy_frame_row_count(frame)
   offset = 0
   while offset < total:
     _raise_if_ingest_per_file_deadline_exceeded(stats_file, phase)
@@ -3194,17 +3418,17 @@ def _write_copy_frame_batches(
     if _ingest_write_telem_on:
       with _held_ingest_write_timing():
         with _held_ingest_write_phase("write_setup_s"):
-          batch = frame.iloc[offset:end]
+          batch = _slice_copy_frame(frame, offset, end)
         offset = end
-        if len(batch) == 0:
+        if _copy_frame_row_count(batch) == 0:
           break
         with _held_ingest_write_phase("db_execute_s"):
           _raise_if_ingest_per_file_deadline_exceeded(stats_file, phase)
           insert_batch(batch)
     else:
-      batch = frame.iloc[offset:end]
+      batch = _slice_copy_frame(frame, offset, end)
       offset = end
-      if len(batch) == 0:
+      if _copy_frame_row_count(batch) == 0:
         break
       with _held_ingest_write_timing():
         _raise_if_ingest_per_file_deadline_exceeded(stats_file, phase)
@@ -3216,6 +3440,9 @@ def _write_stats_payload_to_db(
   stats: Any,
   proc_stats: Any,
   need_archival: bool = True,
+  *,
+  copy_unique: bool = False,
+  emit: str = "",
 ) -> Any:
   """
   Persist parsed payload into DB using fixed-size batches.
@@ -3228,11 +3455,16 @@ def _write_stats_payload_to_db(
     stats (Any): Stats passed to this helper.
     proc_stats (Any): Proc stats passed to this helper.
     need_archival (bool): Boolean flag for need archival.
+    copy_unique (bool): Skip pre-COPY collapse for Codon-normalized SoA.
+    emit (str): ``insert`` uses per-row INSERT. Empty writes COPY bytes
+      when ``stats`` contains ``host_copy``.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
 
   Raises:
+    CodonCopyFailed: When a prebuilt COPY body fails and the database
+      is still reachable.
     Exception: Raised when ``_write_stats_payload_to_db`` hits a ``Exception``
     failure path.
 
@@ -3240,8 +3472,61 @@ def _write_stats_payload_to_db(
     >>> _write_stats_payload_to_db("x", None, None, True)
   """
   update_worker_substage("db_write")
+  if emit == "insert":
+    from collections.abc import Mapping as _InsertMapping
+
+    import pandas as _insert_pd
+
+    if isinstance(stats, _InsertMapping) and not isinstance(
+      stats, _insert_pd.DataFrame
+    ):
+      cols = coerce_host_stats_to_columnar(stats)
+      stats = _insert_pd.DataFrame(
+        cols if cols.get("time") else {},
+      )
+    if not isinstance(proc_stats, _insert_pd.DataFrame):
+      proc_stats = _insert_pd.DataFrame(proc_stats or {})
+    _time_ingest_db_reconnect()
+    with _held_ingest_write_timing():
+      _insert_proc_data_individually(proc_stats)
+      individual_need = _insert_host_data_individually(stats)
+    return (
+      stats_file,
+      individual_need if individual_need is not None else need_archival,
+      True,
+    )
+  if isinstance(stats, dict) and "host_copy" in stats:
+    host_copy = stats.get("host_copy") or b""
+    proc_copy = stats.get("proc_copy") or b""
+    try:
+      _time_ingest_db_reconnect()
+      if host_copy:
+        _write_host_copy_payload(host_copy)
+      if proc_copy:
+        _write_proc_copy_payload(proc_copy)
+    except Exception as copy_exc:
+      _reraise_if_ingest_control_flow(copy_exc)
+      if is_database_unavailable_error(copy_exc):
+        log_and_raise_database_unavailable(
+          copy_exc,
+          context="sync_timedb copy bytes",
+        )
+      raise CodonCopyFailed(str(copy_exc)) from copy_exc
+    return stats_file, need_archival, True
   individual_need_archival = None
   copy_proc = use_copy_proc_insert()
+  from collections.abc import Mapping as _Mapping
+
+  import pandas as _pd
+
+  # Codon-hit may pass columnar SoA; ORM baseline still needs a DataFrame.
+  if (
+    isinstance(stats, _Mapping)
+    and not isinstance(stats, _pd.DataFrame)
+    and not use_copy_host_insert()
+  ):
+    cols = coerce_host_stats_to_columnar(stats)
+    stats = _pd.DataFrame(cols) if cols.get("time") else _pd.DataFrame()
   try:
     _time_ingest_db_reconnect()
     if copy_proc:
@@ -3249,7 +3534,7 @@ def _write_stats_payload_to_db(
         proc_stats,
         stats_file,
         "db_write_proc",
-        bulk_insert_proc_rows,
+        lambda batch: bulk_insert_proc_rows(batch, copy_unique=copy_unique),
       )
     elif _ingest_write_telem_on:
       with _held_ingest_write_timing():
@@ -3313,7 +3598,7 @@ def _write_stats_payload_to_db(
           stats,
           stats_file,
           "db_write_host",
-          bulk_insert_host_rows,
+          lambda batch: bulk_insert_host_rows(batch, copy_unique=copy_unique),
         )
       elif _ingest_write_telem_on:
         with _held_ingest_write_timing():
@@ -4312,7 +4597,13 @@ def _parse_stats_file_payload_impl_streaming(stats_file: str) -> Any:
           return
         update_worker_substage("parse:deltas_arc")
         if not stats_chunk.empty:
-          stats_chunk = compute_deltas_and_arc_chunk(stats_chunk, carry=carry)
+          if getattr(carry, "codon_finished_chunk", False):
+            # Codon already returned delta/arc for this chunk (bridge
+            # updated carry.raw/arc); do not re-run the CPython delta/arc
+            # path on top of an already-finished frame.
+            carry.codon_finished_chunk = False
+          else:
+            stats_chunk = compute_deltas_and_arc_chunk(stats_chunk, carry=carry)
           stats_parts.append(stats_chunk)
         if not proc_chunk.empty:
           proc_parts.append(proc_chunk)
@@ -4326,6 +4617,7 @@ def _parse_stats_file_payload_impl_streaming(stats_file: str) -> Any:
           flush_max_bytes=_ingest_parse_flush_max_bytes(),
           on_chunk=_on_parse_chunk,
           exclude_types_list=exclude_types,
+          delta_carry=carry,
         )
       except Exception as e:
         _reraise_if_ingest_control_flow(e)
@@ -4382,6 +4674,35 @@ def _parse_stats_file_payload_impl_streaming(stats_file: str) -> Any:
       )
 
 
+_ingest_codon_slot_lock = threading.Lock()
+_ingest_codon_slot_next = 0
+
+
+def _ensure_ingest_codon_sticky_slot() -> None:
+  """
+  Bind this ingest thread to a fixed Codon Popen worker index (once).
+
+  Returns:
+    None
+
+  Examples:
+    >>> _ensure_ingest_codon_sticky_slot()  # doctest: +SKIP
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_codon_bridge import (
+    bind_codon_worker_slot,
+    codon_context_pool_size,
+    codon_sticky_worker_slot,
+  )
+
+  if codon_sticky_worker_slot() is not None:
+    return
+  global _ingest_codon_slot_next
+  with _ingest_codon_slot_lock:
+    idx = _ingest_codon_slot_next % max(1, codon_context_pool_size())
+    _ingest_codon_slot_next += 1
+  bind_codon_worker_slot(idx)
+
+
 def _add_stats_file_to_db_streaming_incremental(
   stats_file: str,
   t0: Any,
@@ -4402,8 +4723,10 @@ def _add_stats_file_to_db_streaming_incremental(
   Examples:
     >>> _add_stats_file_to_db_streaming_incremental("x", None)
   """
+  _ensure_ingest_codon_sticky_slot()
   parse_t0 = time.time()
   carry = DeltaCarryState()
+  codon_write_outstanding: list[Any] = []
   total_stats_rows = 0
   total_stats_rows_parsed = 0
   total_proc_rows = 0
@@ -4427,6 +4750,8 @@ def _add_stats_file_to_db_streaming_incremental(
     """
     Build one chunk and enqueue it on the write stage (depth-1 wait).
 
+    Codon-finished host/proc payloads stay columnar SoA (no DataFrames).
+
     Args:
       stats_list (Any): Stats list passed to this helper.
       proc_stats_list (Any): Proc stats list passed to this helper.
@@ -4439,22 +4764,77 @@ def _add_stats_file_to_db_streaming_incremental(
     """
     nonlocal need_archival, ingest_ok, total_stats_rows
     nonlocal total_stats_rows_parsed, total_proc_rows
+    if isinstance(stats_list, dict) and "host_copy" in stats_list:
+      host_b = stats_list.get("host_copy") or b""
+      proc_b = stats_list.get("proc_copy") or b""
+      if not host_b and not proc_b:
+        return
+      try:
+        _unused, archival, chunk_ok = _submit_stats_payload_write(
+          stats_file,
+          stats_list,
+          {},
+          need_archival=need_archival,
+          copy_unique=True,
+          pipeline_depth=_CODON_WRITE_PIPELINE_DEPTH,
+          outstanding=codon_write_outstanding,
+        )
+        del _unused
+      finally:
+        with _held_parse_stage("heap_release_s"):
+          _release_ingest_worker_heap()
+      need_archival = archival
+      if not chunk_ok:
+        ingest_ok = False
+        return
+      total_stats_rows += host_b.count(b"\n")
+      total_proc_rows += proc_b.count(b"\n")
+      return
     with _held_parse_stage("chunk_setup_s"):
       parsed_stats_n = stats_payload_row_count(stats_list)
       update_worker_substage("parse:dataframes")
-    stats_chunk, proc_chunk = build_stats_dataframes(
-      stats_list, proc_stats_list
-    )
+    codon_hit = bool(getattr(carry, "codon_finished_chunk", False))
+    copy_unique = bool(getattr(carry, "codon_copy_unique", False))
+    if codon_hit:
+      carry.codon_finished_chunk = False
+      carry.codon_copy_unique = False
+      stats_chunk = coerce_host_stats_to_columnar(stats_list)
+      if isinstance(proc_stats_list, dict):
+        proc_chunk = proc_stats_list
+      else:
+        _empty_host, proc_chunk = build_stats_dataframes([], proc_stats_list)
+        del _empty_host
+    else:
+      stats_chunk, proc_chunk = build_stats_dataframes(
+        stats_list, proc_stats_list
+      )
     del stats_list
     del proc_stats_list
-    if stats_chunk.empty and proc_chunk.empty:
+    host_empty = (
+      stats_payload_row_count(stats_chunk) == 0
+      if codon_hit
+      else bool(getattr(stats_chunk, "empty", True))
+    )
+    proc_empty = (
+      stats_payload_row_count(proc_chunk) == 0
+      if isinstance(proc_chunk, dict)
+      else bool(getattr(proc_chunk, "empty", True))
+    )
+    if host_empty and proc_empty:
       del stats_chunk
       del proc_chunk
       return
     update_worker_substage("parse:deltas_arc")
-    stats_chunk = compute_deltas_and_arc_chunk(stats_chunk, carry=carry)
-    chunk_stats_rows = len(stats_chunk)
-    chunk_proc_rows = len(proc_chunk)
+    if not codon_hit:
+      stats_chunk = compute_deltas_and_arc_chunk(stats_chunk, carry=carry)
+    chunk_stats_rows = (
+      stats_payload_row_count(stats_chunk) if codon_hit else len(stats_chunk)
+    )
+    chunk_proc_rows = (
+      stats_payload_row_count(proc_chunk)
+      if isinstance(proc_chunk, dict)
+      else len(proc_chunk)
+    )
     if parsed_stats_n > 0 and chunk_stats_rows == 0:
       log_print(
         f"WARN: sync_timedb: nonempty stats frame collapsed to empty delta/arc path={stats_file} parsed_rows={parsed_stats_n}",
@@ -4470,6 +4850,9 @@ def _add_stats_file_to_db_streaming_incremental(
         stats_chunk,
         proc_chunk,
         need_archival=need_archival,
+        copy_unique=copy_unique,
+        pipeline_depth=(_CODON_WRITE_PIPELINE_DEPTH if codon_hit else 0),
+        outstanding=codon_write_outstanding if codon_hit else None,
       )
     finally:
       del stats_chunk
@@ -4537,7 +4920,15 @@ def _add_stats_file_to_db_streaming_incremental(
             flush_max_bytes=flush_max_bytes,
             on_chunk=_on_chunk,
             exclude_types_list=exclude_types,
+            delta_carry=carry,
           )
+          if codon_write_outstanding:
+            archival_d, ok_d = _drain_ingest_write_pipeline(
+              codon_write_outstanding
+            )
+            need_archival = archival_d
+            if not ok_d:
+              ingest_ok = False
         except Exception as e:
           _reraise_if_ingest_control_flow(e)
           return _pack_quarantine(
@@ -5241,7 +5632,7 @@ def _insert_host_data_individually(stats_df: Any) -> Any:
     need_archival.
 
   Args:
-    stats_df (Any): Stats df passed to this helper.
+    stats_df (Any): Host dataframe or columnar SoA Mapping.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -5249,6 +5640,13 @@ def _insert_host_data_individually(stats_df: Any) -> Any:
   Examples:
     >>> _insert_host_data_individually(None)  # doctest: +SKIP
   """
+  from collections.abc import Mapping as _Mapping
+
+  import pandas as _pd
+
+  if isinstance(stats_df, _Mapping) and not isinstance(stats_df, _pd.DataFrame):
+    cols = coerce_host_stats_to_columnar(stats_df)
+    stats_df = _pd.DataFrame(cols) if cols.get("time") else _pd.DataFrame()
   need_archival = True
   unique_violations = 0
   with warnings.catch_warnings():

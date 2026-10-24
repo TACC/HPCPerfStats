@@ -51,7 +51,7 @@ class IngestWritePayload:
 
   Attributes:
     stats_file: Absolute stats path for this flush.
-    stats: Host dataframe (or empty) for this flush.
+    stats: Host dataframe, columnar SoA Mapping (Codon-hit), or empty.
     proc_stats: Proc dataframe (or empty) for this flush.
     need_archival: Archive-needed flag carried across flushes.
     is_last: True when this is the last flush for the file.
@@ -61,6 +61,11 @@ class IngestWritePayload:
     ingest_ok: True when the write succeeded.
     write_timing: Snapshot of write-thread ContextVar timers for the
       parse thread to apply after ``done`` (empty when unset).
+    copy_unique: When True, host/proc SoA is COPY-unique and scalar-normalized
+      (Codon worker ``_finalize_codon_parse_copy_emit`` before IPC)
+      (Codon emit); write stage skips pre-COPY collapse.
+    emit: ``insert`` writes per-row INSERT. Empty writes COPY bytes when
+      ``stats`` carries ``host_copy`` / ``proc_copy``.
   """
 
   stats_file: str
@@ -68,6 +73,8 @@ class IngestWritePayload:
   proc_stats: Any
   need_archival: bool = True
   is_last: bool = False
+  copy_unique: bool = False
+  emit: str = ""
   done: threading.Event = field(default_factory=threading.Event)
   error: BaseException | None = None
   archival_out: bool = True
@@ -269,6 +276,41 @@ def stop_ingest_write_stage(*, join_timeout_s: float = 30.0) -> None:
     _SHUTDOWN.clear()
 
 
+def submit_ingest_write(payload: IngestWritePayload) -> IngestWritePayload:
+  """
+  Enqueue one write payload without waiting for completion.
+
+  When the write stage is not started, executes inline on the caller.
+
+  Args:
+    payload (IngestWritePayload): Flush or whole-file write unit.
+
+  Returns:
+    IngestWritePayload: Same payload (``done`` not yet set when queued).
+
+  Examples:
+    >>> callable(submit_ingest_write)
+    True
+  """
+  if not _STARTED or _WRITE_QUEUE is None:
+    _execute_write_payload(payload)
+    return payload
+  t0 = time.monotonic()
+  while True:
+    if _SHUTDOWN.is_set():
+      payload.error = RuntimeError("ingest write stage shutting down")
+      payload.ingest_ok = False
+      payload.done.set()
+      return payload
+    try:
+      _WRITE_QUEUE.put(payload, block=True, timeout=1.0)
+      break
+    except queue.Full:
+      continue
+  record_put_block_wait(time.monotonic() - t0)
+  return payload
+
+
 def submit_ingest_write_and_wait(
   payload: IngestWritePayload,
 ) -> IngestWritePayload:
@@ -288,22 +330,9 @@ def submit_ingest_write_and_wait(
     >>> callable(submit_ingest_write_and_wait)
     True
   """
+  submit_ingest_write(payload)
   if not _STARTED or _WRITE_QUEUE is None:
-    _execute_write_payload(payload)
     return payload
-  t0 = time.monotonic()
-  while True:
-    if _SHUTDOWN.is_set():
-      payload.error = RuntimeError("ingest write stage shutting down")
-      payload.ingest_ok = False
-      payload.done.set()
-      return payload
-    try:
-      _WRITE_QUEUE.put(payload, block=True, timeout=1.0)
-      break
-    except queue.Full:
-      continue
-  record_put_block_wait(time.monotonic() - t0)
   payload.done.wait()
   return payload
 
@@ -356,6 +385,8 @@ def _execute_write_payload(payload: IngestWritePayload) -> None:
         payload.stats,
         payload.proc_stats,
         need_archival=payload.need_archival,
+        copy_unique=bool(payload.copy_unique),
+        emit=str(payload.emit or ""),
       )
       del _path
       payload.archival_out = bool(archival)

@@ -134,6 +134,43 @@ def test_iter_stats_lock_hold_yields_after_shared_lock(tmp_path, monkeypatch):
   assert lines == ["1709123456 job1 cn001\n", "1709123457 job1 cn001\n"]
 
 
+def test_codon_parse_file_stream_holds_sh_lock(tmp_path, monkeypatch):
+  """Codon-primary file parse holds SH for the whole IPC session."""
+
+  stats = tmp_path / "host" / "1"
+  stats.parent.mkdir(parents=True)
+  stats.write_text(
+    "!cpu user,W=64,U=1\n1000.0 J1 h1\ncpu 0 @full 1.0\n",
+    encoding="utf-8",
+  )
+  held = {"n": 0}
+  monkeypatch.setattr(
+    parsing,
+    "_stats_file_read_lock",
+    _tracking_stats_lock(held),
+  )
+  seen: list[int] = []
+
+  def _fake_stream(path, flush_b, carry, on_chunk):
+    seen.append(held["n"])
+    on_chunk({"time": [1.0]}, {})
+
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_codon_bridge.codon_ingest_parse_enabled",
+    lambda: True,
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_codon_bridge.try_codon_parse_file_stream",
+    _fake_stream,
+  )
+  parsing.parse_stats_file_streaming_incremental(
+    str(stats),
+    flush_rows=1,
+    on_chunk=lambda *_a: None,
+  )
+  assert seen == [1]
+
+
 def test_feed_lines_lock_hold_outside_shared_lock(tmp_path, monkeypatch):
   from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     IncrementalStatsParser,

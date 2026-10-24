@@ -20,7 +20,7 @@ client-side peak-merge. A/B arm ``HPCPERFSTATS_PROC_INSERT_ARM``; default
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import pandas as pd
@@ -66,6 +66,45 @@ CREATE TEMP TABLE IF NOT EXISTS proc_data_ingest_stage (
 _PROC_STAGE_NAME = "proc_data_ingest_stage"
 _PROC_PASSTHROUGH_COLUMNS = frozenset(("jid", "host", "proc"))
 _PROC_CONFLICT_COLS: tuple[str, ...] = ("jid", "host", "proc")
+
+
+def _collapse_proc_columnar_conflict_keys(
+  cols: Mapping[str, Sequence[Any]],
+) -> dict[str, list[Any]]:
+  """
+  Peak-merge collapse on ``(jid, host, proc)`` for columnar proc SoA.
+
+  Args:
+    cols (Mapping[str, Sequence[Any]]): Proc column lists.
+
+  Returns:
+    dict[str, list[Any]]: Collapsed SoA aligned to ``PROC_DATA_COPY_COLUMNS``.
+
+  Examples:
+    >>> _collapse_proc_columnar_conflict_keys({"proc": []})["proc"]
+    []
+  """
+  n = len(cols.get("proc", []))
+  if n == 0:
+    return {c: list(cols.get(c, [])) for c in PROC_DATA_COPY_COLUMNS}
+  as_dicts: list[dict[str, Any]] = []
+  for i in range(n):
+    as_dicts.append(
+      {
+        c: (cols[c][i] if c in cols and i < len(cols[c]) else None)
+        for c in PROC_DATA_COPY_COLUMNS
+      }
+    )
+  keys = [(d.get("jid"), d.get("host"), d.get("proc")) for d in as_dicts]
+  if len(set(keys)) == len(keys):
+    return {
+      c: list(cols.get(c, [])) if c in cols else [None] * n
+      for c in PROC_DATA_COPY_COLUMNS
+    }
+  merged = _collapse_proc_conflict_keys(as_dicts)
+  if not merged:
+    return {c: [] for c in PROC_DATA_COPY_COLUMNS}
+  return {c: [row.get(c) for row in merged] for c in PROC_DATA_COPY_COLUMNS}
 
 
 def _collapse_proc_conflict_keys(
@@ -295,6 +334,87 @@ def _sql_literal(value: Any) -> str:
   )
 
 
+def coerce_proc_stats_to_columnar(
+  payload: Any,
+) -> dict[str, list[Any]]:
+  """
+  Normalize proc parse payload to parallel lists for COPY (no DataFrame).
+
+  Args:
+    payload (Any): Columnar Mapping, sequence of row dicts, or empty/``None``.
+
+  Returns:
+    dict[str, list[Any]]: Keys from ``PROC_DATA_COPY_COLUMNS`` when rows
+      exist; otherwise empty lists per column.
+
+  Examples:
+    >>> coerce_proc_stats_to_columnar([{"proc": "p", "vm_peak": 1}])["proc"]
+    ['p']
+  """
+  if payload is None:
+    return {c: [] for c in PROC_DATA_COPY_COLUMNS}
+  if isinstance(payload, Mapping) and not isinstance(payload, pd.DataFrame):
+    n = len(payload["proc"]) if "proc" in payload else 0
+    if n == 0:
+      return {c: [] for c in PROC_DATA_COPY_COLUMNS}
+    return {
+      c: list(payload[c]) if c in payload else [None] * n
+      for c in PROC_DATA_COPY_COLUMNS
+    }
+  if isinstance(payload, pd.DataFrame):
+    if payload.empty:
+      return {c: [] for c in PROC_DATA_COPY_COLUMNS}
+    n = len(payload)
+    return {
+      c: payload[c].tolist() if c in payload.columns else [None] * n
+      for c in PROC_DATA_COPY_COLUMNS
+    }
+  if not payload:
+    return {c: [] for c in PROC_DATA_COPY_COLUMNS}
+  cols: dict[str, list[Any]] = {c: [] for c in PROC_DATA_COPY_COLUMNS}
+  for row in payload:
+    for c in PROC_DATA_COPY_COLUMNS:
+      if isinstance(row, Mapping):
+        cols[c].append(row.get(c))
+      else:
+        cols[c].append(getattr(row, c, None))
+  return cols
+
+
+def normalize_proc_columnar_for_copy(
+  cols: Mapping[str, Sequence[Any]],
+) -> dict[str, list[Any]]:
+  """
+  Apply COPY bigint coercion row-wise (``_proc_copy_scalar`` on metrics).
+
+  Args:
+    cols (Mapping[str, Sequence[Any]]): Proc columnar SoA.
+
+  Returns:
+    dict[str, list[Any]]: COPY-ready parallel lists.
+
+  Examples:
+    >>> out = normalize_proc_columnar_for_copy(
+    ...   {"proc": ["p"], "vm_peak": [1.0], "jid": ["1"], "host": ["h"]}
+    ... )
+    >>> out["vm_peak"][0]
+    1
+  """
+  base = coerce_proc_stats_to_columnar(cols)
+  n = len(base.get("proc") or [])
+  if n == 0:
+    return base
+  out: dict[str, list[Any]] = {c: [] for c in PROC_DATA_COPY_COLUMNS}
+  for i in range(n):
+    for col in PROC_DATA_COPY_COLUMNS:
+      seq = base.get(col)
+      raw = seq[i] if seq is not None and i < len(seq) else None
+      if col not in _PROC_PASSTHROUGH_COLUMNS:
+        raw = _proc_copy_scalar(raw)
+      out[col].append(raw)
+  return out
+
+
 def _proc_copy_scalar(value: Any) -> Any:
   """
   Coerce one proc COPY cell the way ``_proc_field_or_none`` does.
@@ -364,7 +484,46 @@ def _proc_frame_to_copy_bytes(frame: pd.DataFrame) -> bytes:
   return ("\n".join(lines) + "\n").encode("utf-8")
 
 
-def proc_rows_to_copy_bytes(rows: Sequence[Any] | pd.DataFrame) -> bytes:
+def _proc_columns_to_copy_bytes(
+  columns: Mapping[str, Sequence[Any]],
+  *,
+  cells_normalized: bool = False,
+) -> bytes:
+  """
+  Serialize columnar proc SoA to COPY text.
+
+  Args:
+    columns (Mapping[str, Sequence[Any]]): Parallel proc columns.
+    cells_normalized (bool): When True, metric cells are already COPY scalars.
+
+  Returns:
+    bytes: UTF-8 COPY body.
+
+  Examples:
+    >>> _proc_columns_to_copy_bytes({"proc": []})
+    b''
+  """
+  n = len(columns.get("proc") or [])
+  if n == 0:
+    return b""
+  lines: list[str] = []
+  for i in range(n):
+    fields = []
+    for col in PROC_DATA_COPY_COLUMNS:
+      seq = columns.get(col)
+      value = seq[i] if seq is not None and i < len(seq) else None
+      if not cells_normalized and col not in _PROC_PASSTHROUGH_COLUMNS:
+        value = _proc_copy_scalar(value)
+      fields.append(_sql_literal(value))
+    lines.append("\t".join(fields))
+  return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def proc_rows_to_copy_bytes(
+  rows: Sequence[Any] | pd.DataFrame | Mapping[str, Sequence[Any]],
+  *,
+  copy_unique: bool = False,
+) -> bytes:
   """
   Serialize parsed proc rows to the same COPY body as model instances.
 
@@ -372,7 +531,9 @@ def proc_rows_to_copy_bytes(rows: Sequence[Any] | pd.DataFrame) -> bytes:
   kwargs walk used by the ORM fallback and existing callers.
 
   Args:
-    rows (Sequence[Any] | pd.DataFrame): Namedtuple rows or a proc frame.
+    rows (Sequence[Any] | pd.DataFrame | Mapping[str, Sequence[Any]]):
+      Namedtuple rows, a proc frame, or columnar SoA.
+    copy_unique (bool): Skip pre-COPY peak-merge when the SoA is already unique.
 
   Returns:
     bytes: UTF-8 COPY body.
@@ -381,6 +542,13 @@ def proc_rows_to_copy_bytes(rows: Sequence[Any] | pd.DataFrame) -> bytes:
     >>> proc_rows_to_copy_bytes([])
     b''
   """
+  if isinstance(rows, Mapping) and not isinstance(rows, pd.DataFrame):
+    if not (rows.get("proc") or []):
+      return b""
+    if copy_unique:
+      return _proc_columns_to_copy_bytes(rows, cells_normalized=True)
+    frame = pd.DataFrame(dict(rows), copy=False)
+    return _proc_frame_to_copy_bytes(_collapse_proc_conflict_keys(frame))
   rows = _collapse_proc_conflict_keys(rows)
   if isinstance(rows, pd.DataFrame):
     return _proc_frame_to_copy_bytes(rows)
@@ -482,12 +650,18 @@ def _write_proc_copy_payload(payload: bytes) -> None:
         raise
 
 
-def bulk_insert_proc_rows(rows: Sequence[Any] | pd.DataFrame) -> None:
+def bulk_insert_proc_rows(
+  rows: Sequence[Any] | pd.DataFrame | Mapping[str, Sequence[Any]],
+  *,
+  copy_unique: bool = False,
+) -> None:
   """
   Upsert parsed proc rows via COPY without building ``proc_data`` models.
 
   Args:
-    rows (Sequence[Any] | pd.DataFrame): Namedtuple rows or a proc frame.
+    rows (Sequence[Any] | pd.DataFrame | Mapping[str, Sequence[Any]]):
+      Namedtuple rows, a proc frame, or columnar SoA.
+    copy_unique (bool): Skip pre-COPY peak-merge collapse when True.
 
   Returns:
     None
@@ -495,12 +669,17 @@ def bulk_insert_proc_rows(rows: Sequence[Any] | pd.DataFrame) -> None:
   Examples:
     >>> bulk_insert_proc_rows([])
   """
-  if isinstance(rows, pd.DataFrame):
+  if isinstance(rows, Mapping) and not isinstance(rows, pd.DataFrame):
+    if not (rows.get("proc") or []):
+      return
+  elif isinstance(rows, pd.DataFrame):
     if rows.empty:
       return
   elif not rows:
     return
-  _write_proc_copy_payload(proc_rows_to_copy_bytes(rows))
+  _write_proc_copy_payload(
+    proc_rows_to_copy_bytes(rows, copy_unique=copy_unique)
+  )
 
 
 def bulk_insert_proc_data_update_conflicts(objs: Sequence[Any]) -> None:

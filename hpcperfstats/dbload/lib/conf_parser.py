@@ -269,7 +269,7 @@ INI_OPTION_DEFAULTS = {
   "metrics_readiness_start_margin_seconds": "600",
   "metrics_readiness_end_margin_seconds": "600",
   "sync_ingest_pool_processes": "64",
-  "sync_codon_context_pool_fraction": "0.5",
+  "sync_codon_context_pool_fraction": "1.0",
   "sync_ingest_write_pool_processes": "0",
   "sync_ingest_parse_queue_max": "32",
   "sync_ingest_parse_flush_max_mib": "512",
@@ -2222,15 +2222,12 @@ def get_sync_ingest_pool_processes() -> Any:
 
 def get_sync_codon_context_pool_fraction() -> Any:
   """
-  Fraction of parse-pool width used as Codon stripe slot count.
-
-  ``N = max(1, round(parse_pool * fraction))`` capped at 32. Default
-  **0.5** (64 parse threads → 32 Codon slots / bank cap). Comment-only in
-  ``hpcperfstats.ini.example`` when matching the registry default.
+  Legacy fraction key. Codon slot count is ``sync_ingest_pool_processes``
+  (capped at 128). This getter is not used to size the slot pool.
 
   Returns:
-    float: Positive fraction (clamped to ``> 0``; non-positive → treated
-    as ``0.5`` by callers via ``derive_codon_context_pool_size``).
+    float: Stored fraction. Non-positive values return ``0.5``. Slot
+    count does not read this value.
 
   Examples:
     >>> get_sync_codon_context_pool_fraction()  # doctest: +SKIP

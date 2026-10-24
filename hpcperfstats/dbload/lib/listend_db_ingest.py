@@ -414,11 +414,25 @@ def _submit_listend_write_frames(
   proc = _concat_pending_frames(proc_frames)
   if getattr(stats, "empty", True) and getattr(proc, "empty", True):
     return
+  from hpcperfstats.dbload.lib.sync_timedb_host_data_insert import (
+    host_rows_to_copy_bytes,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_proc_data_insert import (
+    proc_rows_to_copy_bytes,
+  )
+
+  host_copy = (
+    b"" if getattr(stats, "empty", True) else host_rows_to_copy_bytes(stats)
+  )
+  proc_copy = (
+    b"" if getattr(proc, "empty", True) else proc_rows_to_copy_bytes(proc)
+  )
   payload = IngestWritePayload(
     stats_file=f"listend://db-{int(worker_idx)}",
-    stats=stats,
-    proc_stats=proc,
+    stats={"host_copy": host_copy, "proc_copy": proc_copy},
+    proc_stats={},
     need_archival=False,
+    copy_unique=True,
   )
   submit_ingest_write_and_wait(payload)
   err = payload.error
@@ -1023,7 +1037,11 @@ def _worker_main(
         f"ERROR: listend db ingest flush failed worker={worker_idx}: {exc}",
         flush=True,
       )
-      if _listend_flush_error_is_poison(exc):
+      from hpcperfstats.dbload.sync_timedb import CodonCopyFailed
+
+      if isinstance(exc, CodonCopyFailed) or _listend_flush_error_is_poison(
+        exc
+      ):
         pending_stats = []
         pending_proc = []
         sample_count = 0

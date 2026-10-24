@@ -3175,11 +3175,27 @@ class DeltaCarryState:
   Cross-chunk state for counter deltas and arc rates during incremental ingest.
 
   Attributes:
-    arc: Attribute.
-    raw: Attribute.
+    arc: Cross-flush arc-rate carry (``\\0``-joined key -> last unix seconds).
+    raw: Cross-flush counter carry (``\\0``-joined key -> ``[value, wid,
+      mult, time]``).
+    codon_finished_chunk: True for one flush right after
+      ``try_codon_feed_batch_parse`` returns the finished-contract dict
+      (stats already include ``delta``/``arc``); callers must skip
+      ``compute_deltas_and_arc_chunk`` for that chunk and then clear the
+      flag.
+    codon_marks: Bound ``%jobs``/``%affinity`` mark dicts from the last
+      Codon finished flush (empty when divert-off or marks absent).
+    codon_copy_unique: When True, the current Codon frame is already
+      COPY-unique normalized; write stage skips pre-COPY collapse.
   """
 
-  __slots__ = ("arc", "raw")
+  __slots__ = (
+    "arc",
+    "codon_copy_unique",
+    "codon_finished_chunk",
+    "codon_marks",
+    "raw",
+  )
 
   def __init__(self) -> None:
     """
@@ -3193,6 +3209,9 @@ class DeltaCarryState:
     """
     self.raw = {}
     self.arc = {}
+    self.codon_finished_chunk = False
+    self.codon_copy_unique = False
+    self.codon_marks: list[dict[str, Any]] = []
 
 
 def _empty_delta_arc_frame() -> Any:
@@ -3467,7 +3486,7 @@ def _partition_job_stamped_rows(stats_df: Any) -> tuple[Any, Any]:
 
 def _collapse_stats_with_deltas(stats_df: Any) -> Any:
   """
-  Collapse multi-row samples. GPU types and ``j:`` job stamps keep ``dev``.
+  Collapse multi-row samples. Hardware ``dev`` stays in the group key.
 
   Args:
     stats_df (Any): Stats df passed to this helper.
@@ -3480,7 +3499,6 @@ def _collapse_stats_with_deltas(stats_df: Any) -> Any:
   """
   with _held_parse_stage("collapse_normalize_s"):
     stats_df = _normalize_collapse_dev_column(stats_df)
-    gcols = _COLLAPSE_GROUP_COLS
     gcols_gpu = _COLLAPSE_GROUP_COLS_WITH_DEV
     nv_df = stats_df[stats_df["type"] == "nvidia_gpu"]
     other_gpu_df = stats_df[stats_df["type"].isin({"amd_gpu", "intel_gpu"})]
@@ -3503,10 +3521,9 @@ def _collapse_stats_with_deltas(stats_df: Any) -> Any:
       if not rest_plain.empty:
         collapsed_rest = _groupby_sum_min_count(
           rest_plain,
-          gcols,
+          gcols_gpu,
           assume_duplicates=True,
         )
-        collapsed_rest["dev"] = ""
         parts.append(collapsed_rest)
       if not rest_job.empty:
         parts.append(
@@ -3520,8 +3537,7 @@ def _collapse_stats_with_deltas(stats_df: Any) -> Any:
     ccm_plain, ccm_job = _partition_job_stamped_rows(ccm_power_df)
     with _held_parse_stage("collapse_ccm_s"):
       if not ccm_plain.empty:
-        collapsed_ccm = _collapse_dcg_cpu_power_vectorized(ccm_plain, gcols)
-        collapsed_ccm["dev"] = ""
+        collapsed_ccm = _collapse_dcg_cpu_power_vectorized(ccm_plain, gcols_gpu)
         parts.append(collapsed_ccm)
       if not ccm_job.empty:
         parts.append(_collapse_dcg_cpu_power_vectorized(ccm_job, gcols_gpu))
@@ -3755,6 +3771,7 @@ def parse_stats_file_streaming_incremental(
   on_chunk: Any,
   line_batch_size: int = STREAM_PARSE_LINE_BATCH,
   exclude_types_list: Any | None = None,
+  delta_carry: Any | None = None,
 ) -> None:
   """
   Parse a large stats file, flushing complete time samples via ``on_chunk``.
@@ -3777,6 +3794,12 @@ def parse_stats_file_streaming_incremental(
     on_chunk (Any): Callable ``(stats_payload, proc_payload) -> None``.
     line_batch_size (int): Decode batch size.
     exclude_types_list (Any | None): Optional excluded event types.
+    delta_carry (Any | None): ``DeltaCarryState`` (or compatible object with
+      ``.raw``/``.arc`` dicts) passed to ``try_codon_feed_batch_parse`` for
+      cross-flush counter/arc-rate continuity on the Codon-primary path.
+      Ignored on the CPython ``IncrementalStatsParser`` path, where the
+      caller's own ``compute_deltas_and_arc_chunk(..., carry=...)`` call
+      owns that continuity instead.
 
   Returns:
     None
@@ -3789,7 +3812,9 @@ def parse_stats_file_streaming_incremental(
   emission_start = max(int(start_line_idx or 0), int(parse_start_idx or 0))
   # Codon-primary streaming: when divert is allowed and Codon is enabled, do
   # not dual-feed IncrementalStatsParser (that erased the parse-kernel win).
-  # Fail-closed to CPython IncrementalStatsParser when Codon returns None.
+  # Codon is the sole parser for the file once codon_primary is True: a
+  # None/failed divert mid-file raises instead of falling back (no silent
+  # CPython recovery; see try_codon_feed_batch_parse).
   parser = IncrementalStatsParser(emission_start, exclude_types_list)
   pending_flush = False
   use_bytes = flush_max_bytes is not None
@@ -3836,10 +3861,19 @@ def parse_stats_file_streaming_incremental(
 
   def _emit_codon_or_cpython_window() -> tuple[Any, Any] | None:
     """
-    Emit one buffered window via Codon, else CPython parse of the window.
+    Emit one buffered window via Codon when ``codon_primary``, else CPython.
+
+    Codon is the sole parser for the file once ``codon_primary`` is True:
+    a None result (extension became unavailable mid-file) raises instead
+    of silently falling back to ``IncrementalStatsParser`` (that erases
+    the parse-kernel win and risks double-applying counter deltas).
 
     Returns:
       tuple[Any, Any] | None: Payload for ``on_chunk``, or ``None`` if empty.
+
+    Raises:
+      RuntimeError: When ``codon_primary`` is True and the Codon call
+        returns None (enabled but unavailable mid-file).
 
     Examples:
       >>> callable(_emit_codon_or_cpython_window)
@@ -3849,18 +3883,8 @@ def parse_stats_file_streaming_incremental(
     if not window_lines and not schema_lines:
       return None
     bundled = schema_lines + window_lines
-    if codon_primary:
-      from hpcperfstats.dbload.lib.sync_timedb_codon_bridge import (
-        try_codon_feed_batch_parse,
-      )
-
-      codon = try_codon_feed_batch_parse(bundled)
-      if codon is not None:
-        _flush_marks_from_lines(bundled)
-        window_lines = []
-        window_sample_n = 0
-        return codon
-    # Fail-closed (or Codon disabled): parse window with IncrementalStatsParser.
+    # Codon-primary files use try_codon_parse_file_stream (early return above).
+    # Codon disabled for this file: parse window with IncrementalStatsParser.
     fb = IncrementalStatsParser(0, exclude_types_list)
     fb.feed_lines(bundled)
     stats_chunk = fb.take_stats_columns()
@@ -3874,6 +3898,23 @@ def parse_stats_file_streaming_incremental(
     ):
       return None
     return stats_chunk, proc_chunk
+
+  if codon_primary:
+    flush_b = max(1, int(flush_max_bytes or 1))
+    if not use_bytes:
+      flush_b = max(flush_b, flush_rows_n * 65536)
+    from hpcperfstats.dbload.lib.sync_timedb_codon_bridge import (
+      try_codon_parse_file_stream,
+    )
+
+    with _stats_file_read_lock(stats_file):
+      try_codon_parse_file_stream(
+        stats_file,
+        flush_b,
+        delta_carry,
+        on_chunk,
+      )
+    return
 
   advise_sequential_read_for_paths(stats_file)
   try:

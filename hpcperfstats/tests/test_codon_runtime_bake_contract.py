@@ -35,6 +35,9 @@ def test_build_script_is_in_image_only_no_podman_host_bake() -> None:
   assert "codon_parse_image" not in text
   assert "Py_MOD_GIL_NOT_USED" in text or "GIL_NOT_USED" in text
   assert "codon_pyext_314t_gil_off=pass" in text
+  assert "simd_insn_count zmm=" in text
+  assert "grep -A1 -E" in text
+  assert "target-cpu|tune-cpu" in text
   # Smoke must not put a Codon install tree on LD_LIBRARY_PATH.
   smoke = text.split("FT 3.14t import+fingerprint smoke")[1].split(
     "codon_pyext_314t=pass"

@@ -28,6 +28,80 @@ def _obj(**overrides):
   return host_data(**base)
 
 
+def test_host_soa_copy_unique_skips_collapse() -> None:
+  """copy_unique columnar SoA encodes without host conflict collapse pass."""
+  cols = {
+    "time": [datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)] * 2,
+    "host": ["h", "h"],
+    "jid": ["1", "1"],
+    "type": ["cpu", "cpu"],
+    "dev": ["", ""],
+    "event": ["user", "user"],
+    "unit": ["%", "%"],
+    "value": [1.0, 2.0],
+    "delta": [None, None],
+    "arc": [None, None],
+  }
+  raw = hdi.host_rows_to_copy_bytes(cols, copy_unique=True)
+  collapsed = hdi.host_rows_to_copy_bytes(cols, copy_unique=False)
+  assert raw.count(b"\n") == 2
+  assert collapsed.count(b"\n") == 1
+
+
+def test_copy_fail_falls_back_to_insert(monkeypatch):
+  """Host COPY failure uses individual INSERT without re-parse."""
+  import pandas as pd
+
+  from hpcperfstats.dbload import sync_timedb as st
+
+  individual: list[int] = []
+
+  def _copy_boom(*_a, **_k):
+    raise RuntimeError("copy failed")
+
+  monkeypatch.setenv("HPCPERFSTATS_HOST_INSERT_ARM", "candidate")
+  monkeypatch.setenv("HPCPERFSTATS_PROC_INSERT_ARM", "baseline")
+  monkeypatch.setattr(st, "bulk_insert_host_rows", _copy_boom)
+  monkeypatch.setattr(st, "bulk_insert_proc_rows", lambda *_a, **_k: None)
+  monkeypatch.setattr(
+    st,
+    "_insert_host_data_individually",
+    lambda df: individual.append(len(df)) or True,
+  )
+  monkeypatch.setattr(st, "_insert_proc_data_individually", lambda _df: None)
+  monkeypatch.setattr(st, "_invalidate_jid_caches", lambda *_a, **_k: None)
+  monkeypatch.setattr(
+    st,
+    "_raise_if_ingest_per_file_deadline_exceeded",
+    lambda *_a, **_k: None,
+  )
+  monkeypatch.setattr(st, "_ingest_write_frame_slice_rows", lambda: 100)
+  monkeypatch.setattr(st, "is_database_unavailable_error", lambda _e: False)
+  monkeypatch.setattr(
+    st,
+    "_reset_ingest_db_connection_after_write_error",
+    lambda: None,
+  )
+  stats = pd.DataFrame(
+    [
+      {
+        "time": datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC),
+        "host": "h",
+        "jid": "1",
+        "type": "cpu",
+        "dev": "",
+        "event": "user",
+        "unit": "%",
+        "value": 1.0,
+        "delta": 0.0,
+        "arc": None,
+      }
+    ]
+  )
+  st._write_stats_payload_to_db("/f", stats, pd.DataFrame(), copy_unique=True)
+  assert individual == [1]
+
+
 def test_host_insert_arm_default_candidate_after_retain(monkeypatch):
   monkeypatch.delenv("HPCPERFSTATS_HOST_INSERT_ARM", raising=False)
   monkeypatch.delenv("HPCPERFSTATS_SYNC_HOST_DATA_COPY", raising=False)

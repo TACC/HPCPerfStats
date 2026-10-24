@@ -1,6 +1,7 @@
 """Unit tests for ingest-width screening helpers."""
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -91,6 +92,60 @@ def test_refill_corpus_epochs_mixes_small_medium_large(tmp_path):
   assert sizes[-1] >= 10000
   # Span at least 10x between smallest and largest planted file.
   assert sizes[-1] >= sizes[0] * 10
+
+
+def test_loaded48_size_mix_is_the_same_for_both_arms(tmp_path):
+  """Arm A and arm B must plant the same small/medium/large sequence."""
+  from tests.sync_timedb_benchmark.screening_runner import (
+      loaded48_size_mix_templates,
+      plant_loaded48_queue_padding,
+  )
+
+  corpus = tmp_path / "corpus"
+  for name, size in (("a", 100), ("b", 5_000), ("c", 80_000)):
+    host = corpus / "benchhost0000.cluster_name.domain.edu"
+    host.mkdir(parents=True, exist_ok=True)
+    (host / name).write_bytes(b"x" * size)
+  arm_a = loaded48_size_mix_templates(corpus)
+  arm_b = loaded48_size_mix_templates(corpus)
+  assert [p.stat().st_size for p in arm_a] == [100, 5_000, 80_000]
+  assert [p.stat().st_size for p in arm_b] == [p.stat().st_size for p in arm_a]
+  hosts = ["benchhost0000.cluster_name.domain.edu"]
+  epoch = 2_000_000_000
+  assert plant_loaded48_queue_padding(
+      tmp_path / "arm-a",
+      hosts,
+      count=6,
+      templates=arm_a,
+      start_index=0,
+      epoch_base=epoch,
+  ) == 6
+  assert plant_loaded48_queue_padding(
+      tmp_path / "arm-b",
+      hosts,
+      count=3,
+      templates=arm_b,
+      start_index=0,
+      epoch_base=epoch,
+  ) == 3
+  assert plant_loaded48_queue_padding(
+      tmp_path / "arm-b",
+      hosts,
+      count=3,
+      templates=arm_b,
+      start_index=3,
+      epoch_base=epoch,
+  ) == 3
+
+  def _sizes(root):
+    files = sorted(
+        (p for p in root.rglob("*") if p.is_file()),
+        key=lambda path: int(path.name),
+    )
+    return [path.stat().st_size for path in files]
+
+  assert _sizes(tmp_path / "arm-a") == _sizes(tmp_path / "arm-b")
+  assert _sizes(tmp_path / "arm-a") == [100, 5_000, 80_000, 100, 5_000, 80_000]
 
 
 def test_loaded48_supervisor_child_hard_exits():
@@ -209,6 +264,8 @@ def test_plant_loaded48_queue_padding_writes_tiny_files(tmp_path):
   t2 = tmpl_dir / "1700000001"
   t1.write_bytes(b"real-a")
   t2.write_bytes(b"real-bb")
+  old = time.time() - 30 * 86400
+  os.utime(t1, (old, old))
   n = plant_loaded48_queue_padding(
       archive, hosts, count=4, templates=[t1, t2],
   )
@@ -216,6 +273,7 @@ def test_plant_loaded48_queue_padding_writes_tiny_files(tmp_path):
   files = [p for p in archive.rglob("*") if p.is_file()]
   assert len(files) == 4
   assert {p.stat().st_size for p in files} == {6, 7}
+  assert min(p.stat().st_mtime for p in files) > time.time() - 120
   # Must not plant under legacy template epoch basenames (day-close deletes).
   assert not any(p.name.startswith("170000000") for p in files)
   assert all(p.name.split("_")[0].isdigit() for p in files)

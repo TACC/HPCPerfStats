@@ -66,6 +66,8 @@ def test_feed_lines_full_gpu_keep_dev_and_j_stamp() -> None:
     _ph,
     _pp,
     _pf,
+    _pd,
+    _marks,
   ) = mod.feed_lines_full(lines, 0)
 
   by_key = {

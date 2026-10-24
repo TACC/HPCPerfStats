@@ -12,7 +12,7 @@ globs: hpcperfstats/listend.py,hpcperfstats/dbload/lib/listend_db_ingest.py,hpcp
 
 - **Two-stage pipeline (same as sync_timedb):** host-affine **parse** threads (`listend-db-N`) produce post-delta host/proc **dataframes** via ``ingest_monitor_sample_text`` (`sync_timedb_sample_ingest.py`); process-wide **write** threads (`sync_timedb_ingest_write_stage`) COPY/upsert via ``_write_stats_payload_to_db``. Parse threads must **not** open ingest DB write sessions or call host ``bulk_create``.
 - **Pool lifecycle:** ``ListendDbIngestPool.start`` / ``stop`` call ``start_ingest_write_stage`` / ``stop_ingest_write_stage`` with ``process_title="listend.py"``. Write width / queue depth reuse **sync** INI only: ``get_sync_ingest_write_pool_processes()`` and ``get_sync_ingest_parse_queue_max()``. Do **not** add ``listend_db_ingest_write_*`` knobs.
-- **Flush:** pending frames → ``IngestWritePayload`` + blocking ``submit_ingest_write_and_wait`` (``_submit_listend_write_frames``). Poison flush errors drop the batch; transient errors retain pending frames for retry.
+- **Flush:** pending frames → COPY ``bytes`` on ``IngestWritePayload`` + blocking ``submit_ingest_write_and_wait`` (``_submit_listend_write_frames``). A failed COPY does not INSERT and does not set ``emit=insert``; the archived sample stays for sync_timedb. Poison flush errors and COPY failures drop the batch; transient errors retain pending frames for retry. Live listend still never writes the file-complete mark.
 - **statement_timeout:** apply ``listend_db_ingest_statement_timeout_ms`` on write workers via ``worker_setup=_apply_listend_db_ingest_statement_timeout`` (not on parse threads). Proc peak-merge / dedupe / COPY live on the shared write path — not listend-private flush helpers.
 
 ## Invariants

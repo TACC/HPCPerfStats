@@ -1473,12 +1473,14 @@ def _idle_reconstruct_pass(
   return work
 
 
-def _ingest_parse_worker(path: str) -> Any:
+def _ingest_parse_worker(path: str, emit: str = "") -> Any:
   """
   Parse-pool ingest entry: parse one closed raw path; writes via write stage.
 
   Args:
     path (str): Absolute closed raw stats path.
+    emit (str): ``insert`` asks the parser for column lists. Empty uses
+      COPY bytes.
 
   Returns:
     Any: Packed ingest worker result from ``add_stats_file_to_db``.
@@ -1496,11 +1498,13 @@ def _ingest_parse_worker(path: str) -> Any:
     _pack_ingest_worker_result,
     _record_ingest_marks_from_worker_result,
     add_stats_file_to_db,
+    bind_ingest_emit,
   )
 
   _apply_ingest_session_statement_timeout()
   try:
-    result = add_stats_file_to_db(path)
+    with bind_ingest_emit(emit):
+      result = add_stats_file_to_db(path)
   except TimeoutError as exc:
     # Multiprocessing may surface IngestPerFileTimeoutError as TimeoutError.
     elapsed = float(getattr(exc, "elapsed_s", 0.0) or 0.0)
@@ -3942,7 +3946,7 @@ def _fill_ingest_band(
       try:
         async_res = ingest_pool.apply_async(
           _ingest_parse_worker,
-          (path,),
+          (path, str(getattr(claim, "emit", "") or "")),
         )
       except Exception:
         stats["submit_err"] += 1
@@ -4385,6 +4389,14 @@ def _drain_ingest_ready(
         )
         _release_day_remainder(jq.JOB_KIND_INGEST, identity)
         continue
+      if type(exc).__name__ == "CodonCopyFailed" and claim is not None:
+        jq.write_job_payload_field(
+          client,
+          kind=jq.JOB_KIND_INGEST,
+          identity=identity,
+          name="emit",
+          value="insert",
+        )
       _retry_or_dead_letter(
         client,
         kind=jq.JOB_KIND_INGEST,

@@ -297,7 +297,7 @@ if [[ "$LOADED48" -eq 1 ]]; then
   # Codon divert toggle for CPython-vs-Codon loaded48 A/B (Arm A sets DISABLE=1).
   [[ -n "${HPCPERFSTATS_CODON_PARSE_DISABLE:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_CODON_PARSE_DISABLE=${HPCPERFSTATS_CODON_PARSE_DISABLE}")
-  # Opt out of Codon Popen workers (FT soak teardown); in-process N=1 instead.
+  # Forward only when set. Unset stays in-process (N = ingest threads). =1 opts into the legacy Popen pool.
   [[ -n "${HPCPERFSTATS_CODON_PROCESS_POOL:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_CODON_PROCESS_POOL=${HPCPERFSTATS_CODON_PROCESS_POOL}")
   # Forward insert-path A/B arms into the soak (COPY vs bulk_create).
@@ -326,6 +326,11 @@ if [[ "$PROC_INSERT" -eq 1 ]]; then
 fi
 if [[ -n "$ARGS_FILE" ]]; then
   RUN_ARGS+=(-v "$ARGS_FILE:/tmp/hpcperfstats_pytest_extra_args:ro")
+fi
+if [[ -n "${HPCPERFSTATS_CODON_PYEXT_DIR:-}" \
+  && -f "${HPCPERFSTATS_CODON_PYEXT_DIR}/hpcperfstats_codon_parse.so" \
+  && -f "${HPCPERFSTATS_CODON_PYEXT_DIR}/libhpcperfstats_codon_kernel.so" ]]; then
+  RUN_ARGS+=(-v "${HPCPERFSTATS_CODON_PYEXT_DIR}:/opt/hpcperfstats/codon_parse:ro")
 fi
 RUN_ARGS+=(--entrypoint bash pipeline -s)
 

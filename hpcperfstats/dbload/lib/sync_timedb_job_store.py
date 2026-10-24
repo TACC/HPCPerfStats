@@ -93,6 +93,8 @@ class ClaimedJob:
     deadline: Epoch seconds after which a reaper may recover the job.
     score: Original ingest score, or None for LIST kinds.
     fingerprint: Optional payload fingerprint; empty when absent.
+    emit: Ingest payload mode. ``insert`` retries with per-row INSERT.
+      Empty means COPY bytes.
   """
 
   kind: str
@@ -101,6 +103,7 @@ class ClaimedJob:
   deadline: float
   score: float | None
   fingerprint: str = ""
+  emit: str = ""
 
 
 @dataclass(frozen=True)
@@ -1090,6 +1093,7 @@ class SyncTimedbJobStore:
             deadline,
             float(live),
             str(fields.get("fingerprint") or ""),
+            str(fields.get("emit") or ""),
           ),
         )
       if claimed_raw:
@@ -1104,8 +1108,9 @@ class SyncTimedbJobStore:
         deadline=dead,
         score=score,
         fingerprint=fp,
+        emit=emit,
       )
-      for kind, ident, token, dead, score, fp in claimed_raw
+      for kind, ident, token, dead, score, fp, emit in claimed_raw
     ]
 
   def claim_list(
@@ -1244,6 +1249,7 @@ class SyncTimedbJobStore:
       if str(kind) == JOB_KIND_INGEST:
         restore = CATCHUP_SCORE_BASE if score is None else float(score)
         self._ingest_set_locked(ident, restore)
+        self._shadow_sync_payload_locked(kind, ident)
       else:
         self._lists[kind].append(ident)
         self._pending[kind].add(ident)
@@ -2020,6 +2026,84 @@ def write_job_fingerprint(
       store._shadow_sync_payload_locked(kind, identity)
       store._mark_dirty_locked()
   store._maybe_persist_locked()
+
+
+def write_job_payload_field(
+  store: SyncTimedbJobStore,
+  *,
+  kind: str,
+  identity: str,
+  name: str,
+  value: str,
+) -> None:
+  """
+  Store one string field on a job payload.
+
+  Args:
+    store (SyncTimedbJobStore): In-process job store.
+    kind (str): Job kind.
+    identity (str): Job identity.
+    name (str): Payload key, such as ``emit``.
+    value (str): Field text.
+
+  Returns:
+    None
+
+  Examples:
+    >>> store = SyncTimedbJobStore("")
+    >>> write_job_payload_field(
+    ...   store,
+    ...   kind="ingest",
+    ...   identity="/a",
+    ...   name="emit",
+    ...   value="insert",
+    ... )
+  """
+  with store._lock:
+    store._payloads.setdefault((str(kind), str(identity)), {})[str(name)] = str(
+      value
+    )
+    if store._identity_is_queued_locked(kind, identity):
+      store._shadow_sync_payload_locked(kind, identity)
+    store._mark_dirty_locked()
+  store._maybe_persist_locked()
+
+
+def read_job_payload_field(
+  store: SyncTimedbJobStore,
+  *,
+  kind: str,
+  identity: str,
+  name: str,
+) -> str:
+  """
+  Return one stored payload field, or empty when unset.
+
+  Args:
+    store (SyncTimedbJobStore): In-process job store.
+    kind (str): Job kind.
+    identity (str): Job identity.
+    name (str): Payload key.
+
+  Returns:
+    str: Field text, or empty when unset.
+
+  Examples:
+    >>> read_job_payload_field(
+    ...   SyncTimedbJobStore(""),
+    ...   kind="ingest",
+    ...   identity="/a",
+    ...   name="emit",
+    ... )
+    ''
+  """
+  with store._lock:
+    return str(
+      store._payloads.get((str(kind), str(identity)), {}).get(
+        str(name),
+      )
+      or "",
+    )
 
 
 def read_job_fingerprint(

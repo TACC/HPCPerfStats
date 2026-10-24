@@ -34,6 +34,65 @@ def _obj(**overrides):
   return proc_data(**base)
 
 
+def test_proc_soa_peak_merge_copy() -> None:
+  """Columnar peak-merge matches DataFrame collapse + COPY bytes."""
+  import pandas as pd
+
+  cols = {
+    "jid": ["1", "1"],
+    "host": ["h", "h"],
+    "proc": ["bash", "bash"],
+    "device": ["d", "d"],
+    "uid": [1000, 1000],
+    "vm_peak": [10, 99],
+    "vm_size": [1, 1],
+    "vm_lck": [0, 0],
+    "vm_hwm": [1, 1],
+    "vm_rss": [1, 1],
+    "vm_data": [1, 1],
+    "vm_stk": [9, 3],
+    "vm_exe": [1, 1],
+    "vm_lib": [1, 1],
+    "vm_pte": [1, 1],
+    "vm_swap": [0, 0],
+    "threads": [1, 8],
+  }
+  frame = pd.DataFrame(cols)
+  via_frame = pdi.proc_rows_to_copy_bytes(frame, copy_unique=False)
+  via_soa = pdi.proc_rows_to_copy_bytes(
+    pdi._collapse_proc_columnar_conflict_keys(cols),
+    copy_unique=True,
+  )
+  assert via_frame == via_soa
+
+
+def test_proc_soa_copy_unique_skips_collapse() -> None:
+  """copy_unique columnar SoA encodes without peak-merge collapse pass."""
+  cols = {
+    "jid": ["1", "1"],
+    "host": ["h", "h"],
+    "proc": ["bash", "bash"],
+    "device": ["d", "d"],
+    "uid": [1000, 1000],
+    "vm_peak": [10, 99],
+    "vm_size": [1, 1],
+    "vm_lck": [0, 0],
+    "vm_hwm": [1, 1],
+    "vm_rss": [1, 1],
+    "vm_data": [1, 1],
+    "vm_stk": [1, 1],
+    "vm_exe": [1, 1],
+    "vm_lib": [1, 1],
+    "vm_pte": [1, 1],
+    "vm_swap": [0, 0],
+    "threads": [1, 1],
+  }
+  raw = pdi.proc_rows_to_copy_bytes(cols, copy_unique=True)
+  collapsed = pdi.proc_rows_to_copy_bytes(cols, copy_unique=False)
+  assert raw.count(b"\n") == 2
+  assert collapsed.count(b"\n") == 1
+
+
 def test_proc_insert_arm_default_candidate_after_retain(monkeypatch):
   monkeypatch.delenv("HPCPERFSTATS_PROC_INSERT_ARM", raising=False)
   monkeypatch.delenv("HPCPERFSTATS_SYNC_PROC_DATA_COPY", raising=False)

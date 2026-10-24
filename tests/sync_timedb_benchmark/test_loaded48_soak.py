@@ -14,21 +14,21 @@ from pathlib import Path
 import pytest
 
 from tests.sync_timedb_benchmark.screening_runner import (
-    build_loaded48_manifest,
-    corpus_files_under_max_bytes,
-    corpus_hosts,
-    loaded48_fixed_width,
-    loaded48_hours,
-    loaded48_mode_enabled,
-    loaded48_occupancy_ok,
-    loaded48_smoke_peak_ok,
-    plant_loaded48_queue_padding,
-    reset_screening_state,
-    summarize_width_replicates,
-    write_screening_artifact,
-    DEFAULT_LOADED48_MIN_FULL_FRAC,
-    DEFAULT_LOADED48_SAMPLE_S,
-    DEFAULT_LOADED48_WARMUP_S,
+  DEFAULT_LOADED48_MIN_FULL_FRAC,
+  DEFAULT_LOADED48_SAMPLE_S,
+  DEFAULT_LOADED48_WARMUP_S,
+  build_loaded48_manifest,
+  corpus_hosts,
+  loaded48_fixed_width,
+  loaded48_hours,
+  loaded48_mode_enabled,
+  loaded48_occupancy_ok,
+  loaded48_size_mix_templates,
+  loaded48_smoke_peak_ok,
+  plant_loaded48_queue_padding,
+  reset_screening_state,
+  summarize_width_replicates,
+  write_screening_artifact,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -107,7 +107,6 @@ def test_loaded48_continuous_fill_soak(monkeypatch):
 
   complete_counts: list[int] = []
   stop = threading.Event()
-  t0 = time.monotonic()
   # Occupancy is sampled in the supervisor child (Codon stays out of pytest).
   _ = orch  # keep import for monkeypatched width above
 
@@ -129,29 +128,24 @@ def test_loaded48_continuous_fill_soak(monkeypatch):
       elif child.is_file():
         child.unlink()
 
-  # Prefer ≤1 MiB corpus templates + tiny padding. Multi-MB exemplars can take
-  # >10 minutes each and outlive a short smoke wall (occupancy collapses).
-  smallish = corpus_files_under_max_bytes(corpus_dir, max_bytes=1_048_576)
+  # Same small/medium/large cycle for every arm. Order is size then path.
+  size_mix = loaded48_size_mix_templates(corpus_dir)
+  if not size_mix:
+    pytest.fail("corpus %s has no template files" % corpus_dir)
+  epoch_base = int(time.time())
+  plant_cursor = 0
 
-  def _plant_smallish_mix(copies: int) -> int:
-    if not smallish:
-      return 0
-    import shutil
-    import time as _time
-
-    now = int(_time.time())
-    planted = 0
-    for host_i, host in enumerate(hosts):
-      dst_host = archive_dir / host
-      dst_host.mkdir(parents=True, exist_ok=True)
-      for j in range(max(1, int(copies))):
-        src = smallish[(host_i + j) % len(smallish)]
-        # Fresh epoch — template names are old days that day-close deletes.
-        dst = dst_host / ("%d" % (now + host_i * 1000 + j))
-        if dst.exists():
-          continue
-        shutil.copy2(src, dst)
-        planted += 1
+  def _plant_mix(count: int) -> int:
+    nonlocal plant_cursor
+    planted = plant_loaded48_queue_padding(
+        archive_dir,
+        hosts,
+        count=int(count),
+        templates=size_mix,
+        start_index=plant_cursor,
+        epoch_base=epoch_base,
+    )
+    plant_cursor += int(count)
     return planted
 
   archive_dir.mkdir(parents=True, exist_ok=True)
@@ -165,13 +159,10 @@ def test_loaded48_continuous_fill_soak(monkeypatch):
       reset_inprocess=_reset_inprocess,
       max_file_bytes=0,  # create host dirs only; no legacy epoch files
   )
-  _plant_smallish_mix(max(2, ingest_width // 12))
-  plant_loaded48_queue_padding(
-      archive_dir,
-      hosts,
-      count=max(ingest_width * 2, 96),
-      templates=smallish,
-  )
+  # Deep mixed seed so large files hold slots through warmup while small
+  # and medium files still complete. Copy finishes before the soak clock.
+  # Refill continues the same cycle.
+  _plant_mix(max(ingest_width * 8, 512))
 
   def _count_complete() -> int:
     n = 0
@@ -204,17 +195,16 @@ def test_loaded48_continuous_fill_soak(monkeypatch):
     return n
 
   def _refill_loop() -> None:
+    planted = 0
+    # ~200 files per slot covers a 20-minute run when each file is short.
+    plant_cap = int(ingest_width) * 200
+    target = int(ingest_width) * 8
     while not stop.is_set():
       unfinished = _count_unfinished()
-      # Keep ~2–4 widths of unfinished work; always top up when low.
-      if unfinished < ingest_width * 2:
-        need = max(ingest_width * 2 - unfinished, ingest_width)
-        plant_loaded48_queue_padding(
-            archive_dir,
-            hosts,
-            count=int(need),
-            templates=smallish,
-        )
+      if planted < plant_cap and unfinished < target:
+        need = min(target - unfinished, plant_cap - planted)
+        need = max(int(need), int(ingest_width))
+        planted += _plant_mix(int(need))
       complete_counts.append(_count_complete())
       time.sleep(1.0)
 
@@ -228,6 +218,8 @@ def test_loaded48_continuous_fill_soak(monkeypatch):
   child_env["HPCPERFSTATS_LOADED48_OCC_PATH"] = str(occ_file)
   child_env["HPCPERFSTATS_LOADED48_DONE_PATH"] = str(done_file)
 
+  # Seed is already on disk. The wall clock starts here, not during the copy.
+  t0 = time.monotonic()
   refill_thr = threading.Thread(target=_refill_loop, name="loaded48-refill", daemon=True)
   refill_thr.start()
 
@@ -239,8 +231,32 @@ def test_loaded48_continuous_fill_soak(monkeypatch):
   )
   try:
     deadline = t0 + wall_s
+    # Stop a dead run. Do not sit through the whole window at inflight 0.
+    zero_check_at = t0 + 180.0
     while time.monotonic() < deadline and child.poll() is None:
-      time.sleep(1.0)
+      time.sleep(5.0)
+      if time.monotonic() < zero_check_at:
+        continue
+      peak = 0
+      if occ_file.is_file():
+        try:
+          raw = json.loads(occ_file.read_text(encoding="utf-8"))
+          peak = max((int(row[1]) for row in raw), default=0)
+        except (OSError, ValueError, TypeError, IndexError):
+          peak = 0
+      if peak > 0:
+        zero_check_at = deadline + 1.0
+        continue
+      child.send_signal(signal.SIGTERM)
+      try:
+        child.wait(timeout=60.0)
+      except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait(timeout=15.0)
+      pytest.fail(
+          "stopped: ingest occupancy still 0 after 180s (peak_inflight=%d)"
+          % peak
+      )
     if child.poll() is None:
       # Cooperative drain via SIGTERM (handlers → request_shutdown).
       child.send_signal(signal.SIGTERM)

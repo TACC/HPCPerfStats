@@ -6416,3 +6416,71 @@ def test_streaming_flush_respects_max_mib_with_sample_overage():
   assert "flush_max_bytes" in src
   assert "pending_flush" in src
   assert "_line_starts_time_sample" in src
+
+
+def test_copy_failed_sets_emit_insert(monkeypatch):
+  """A failed COPY requeues the ingest job with emit=insert."""
+  monkeypatch.setattr(jq, "job_max_attempts", lambda: 5)
+  client = SyncTimedbJobStore("")
+  jq.reset_job_queue_script_cache_for_tests()
+  assert client.zadd_ingest("/raw/copy-fail", 0.0) == 1
+  claim = jq.claim_ingest_job(
+    client,
+    band="hot",
+    owner_token="n:h:b:1",
+    ttl_s=60,
+    now_s=1000.0,
+  )
+  assert claim is not None
+
+  class _Fail:
+    def ready(self):
+      return True
+
+    def get(self, timeout=0):
+      del timeout
+      raise st.CodonCopyFailed("copy write failed")
+
+  n = qo._drain_ingest_ready(
+    client,
+    inflight={claim.identity: _Fail()},
+    claims={claim.identity: claim},
+    tgz_archive_dir="",
+    archive_data_dir="",
+    log_fn=lambda *_a, **_k: None,
+  )
+  assert n == 1
+  assert (
+    jq.read_job_payload_field(
+      client,
+      kind="ingest",
+      identity=claim.identity,
+      name="emit",
+    )
+    == "insert"
+  )
+  again = jq.claim_ingest_job(
+    client,
+    band="hot",
+    owner_token="n:h:b:2",
+    ttl_s=60,
+    now_s=2000.0,
+  )
+  assert again is not None
+  assert again.emit == "insert"
+
+
+def test_prebuilt_copy_failure_raises_codon_copy_failed(monkeypatch):
+  """Prebuilt COPY bytes do not fall through to per-row INSERT."""
+  monkeypatch.setattr(st, "_time_ingest_db_reconnect", lambda: None)
+
+  def _boom(_payload: bytes) -> None:
+    raise RuntimeError("copy.write failed")
+
+  monkeypatch.setattr(st, "_write_host_copy_payload", _boom)
+  with pytest.raises(st.CodonCopyFailed):
+    st._write_stats_payload_to_db(
+      "/x",
+      {"host_copy": b"row\n", "proc_copy": b""},
+      {},
+    )

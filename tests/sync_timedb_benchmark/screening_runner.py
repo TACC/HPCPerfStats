@@ -1748,7 +1748,7 @@ def corpus_template_files_by_size_tier(
     files.extend(path for path in host_dir.iterdir() if path.is_file())
   if not files:
     return [], [], []
-  files.sort(key=lambda path: path.stat().st_size)
+  files.sort(key=lambda path: (path.stat().st_size, str(path)))
   n = len(files)
   if n == 1:
     return files[:], [], []
@@ -1840,6 +1840,77 @@ def refill_corpus_epochs(
   return planted
 
 
+def configure_loaded48_continuous_discover(orch_mod: Any) -> None:
+  """
+  Keep a loaded48 soak discovering new files for the whole wall clock.
+
+  The boot path also enqueues one whole-archive scan. That scan holds the
+  single discover worker, so files planted after warmup never become ingest
+  jobs and the pool goes idle. This forces later scans to stay on the
+  one-day window and retries them every few seconds.
+
+  Args:
+    orch_mod (Any): ``sync_timedb_queue_orchestrator`` module.
+
+  Returns:
+    None
+
+  Examples:
+    >>> class _M:
+    ...   _IDLE_RECONSTRUCT_MIN_INTERVAL_S = 300.0
+    ...   @staticmethod
+    ...   def discover_job_identity(archive_dir, mtime_days=None):
+    ...     window = "all" if mtime_days is None else str(int(mtime_days))
+    ...     return f"{archive_dir}|{window}"
+    >>> configure_loaded48_continuous_discover(_M)
+    >>> _M.discover_job_identity("/a", None)
+    '/a|1'
+  """
+  orch_mod._IDLE_RECONSTRUCT_MIN_INTERVAL_S = 5.0
+  original = orch_mod.discover_job_identity
+
+  def _incremental_only(archive_dir: str, mtime_days: int | None = None) -> str:
+    if mtime_days is None:
+      mtime_days = 1
+    return original(archive_dir, mtime_days)
+
+  orch_mod.discover_job_identity = _incremental_only
+
+
+def loaded48_size_mix_templates(corpus_dir: Path) -> list[Path]:
+  """
+  Return a fixed small/medium/large template cycle for a loaded48 soak.
+
+  Terciles are sorted by size then path. The cycle is one round-robin pass
+  over those lists, so arm A and arm B plant the same sizes in the same order.
+
+  Args:
+    corpus_dir (Path): Template corpus root.
+
+  Returns:
+    list[Path]: Templates repeating small, medium, large. Empty when the
+      corpus has no files.
+
+  Examples:
+    >>> loaded48_size_mix_templates(Path("/tmp/missing"))
+    []
+  """
+  small, medium, large = corpus_template_files_by_size_tier(corpus_dir)
+  tiers = [
+      sorted(tier, key=lambda path: (path.stat().st_size, str(path)))
+      for tier in (small, medium, large)
+      if tier
+  ]
+  if not tiers:
+    return []
+  longest = max(len(tier) for tier in tiers)
+  mixed: list[Path] = []
+  for index in range(longest):
+    for tier in tiers:
+      mixed.append(tier[index % len(tier)])
+  return mixed
+
+
 def plant_loaded48_queue_padding(
     archive_dir: Path,
     hosts: Sequence[str],
@@ -1847,6 +1918,8 @@ def plant_loaded48_queue_padding(
     count: int,
     templates: Sequence[Path] | None = None,
     payload_bytes: int | None = None,
+    start_index: int = 0,
+    epoch_base: int | None = None,
 ) -> int:
   """
   Plant additional unfinished epoch files so ingest width can stay loaded.
@@ -1864,8 +1937,14 @@ def plant_loaded48_queue_padding(
     archive_dir (Path): Live archive root.
     hosts (Sequence[str]): Host directory names to plant under.
     count (int): Number of files to plant this call.
-    templates (Sequence[Path] | None): Real stats files to clone.
+    templates (Sequence[Path] | None): Real stats files to clone. A
+      ``loaded48_size_mix_templates`` list keeps small/medium/large order.
     payload_bytes (int | None): Synthetic size when no templates (tests only).
+    start_index (int): Offset into ``templates`` so a later call continues
+      the same cycle instead of restarting at the first file.
+    epoch_base (int | None): Integer added to ``start_index`` for basenames.
+      Default is the current unix time. Pass one value for a whole soak so
+      names do not collide across refill calls.
 
   Returns:
     int: Files planted.
@@ -1877,22 +1956,26 @@ def plant_loaded48_queue_padding(
   if not hosts or int(count) <= 0:
     return 0
   archive_dir.mkdir(parents=True, exist_ok=True)
-  now = int(time.time())
+  now = int(time.time()) if epoch_base is None else int(epoch_base)
+  origin = int(start_index)
   planted = 0
   tmpl = [Path(p) for p in (templates or ()) if Path(p).is_file()]
   if tmpl:
     for i in range(int(count)):
       host = hosts[i % len(hosts)]
-      src = tmpl[i % len(tmpl)]
+      src = tmpl[(origin + i) % len(tmpl)]
       dst_host = archive_dir / host
       dst_host.mkdir(parents=True, exist_ok=True)
       # Fresh epoch basename — never reuse template epoch (day-close delete).
-      dst = dst_host / ("%d" % (now + i))
+      dst = dst_host / ("%d" % (now + origin + i))
       if dst.exists():
         dst = dst_host / ("%d_%d" % (now, i))
       if dst.exists():
         continue
       shutil.copy2(src, dst)
+      # copy2 keeps the template mtime. A --changed-within scan then
+      # skips the clone and ingest stays empty.
+      os.utime(dst, None)
       planted += 1
     return planted
   if payload_bytes is None:

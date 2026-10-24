@@ -18,7 +18,7 @@ A/B arm ``HPCPERFSTATS_HOST_INSERT_ARM=baseline|candidate`` selects Django
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import pandas as pd
@@ -351,6 +351,187 @@ def _host_frame_cell(col: str, value: Any) -> Any:
   return value
 
 
+def coerce_host_stats_to_columnar(
+  payload: Any,
+) -> dict[str, list[Any]]:
+  """
+  Normalize host parse payload to parallel lists for COPY (no DataFrame).
+
+  Args:
+    payload (Any): Columnar Mapping, sequence of row dicts/namedtuples, or
+      empty/``None``.
+
+  Returns:
+    dict[str, list[Any]]: Keys from ``HOST_DATA_COPY_COLUMNS`` (missing
+      columns filled with ``None``). Empty when there are no rows.
+
+  Examples:
+    >>> coerce_host_stats_to_columnar([{"time": 1.0, "host": "h"}])["host"]
+    ['h']
+    >>> coerce_host_stats_to_columnar(None)["time"]
+    []
+  """
+  if payload is None:
+    return {c: [] for c in HOST_DATA_COPY_COLUMNS}
+  if isinstance(payload, Mapping) and not isinstance(payload, pd.DataFrame):
+    n = len(payload["time"]) if "time" in payload else 0
+    if n == 0:
+      return {c: [] for c in HOST_DATA_COPY_COLUMNS}
+    return {
+      c: list(payload[c]) if c in payload else [None] * n
+      for c in HOST_DATA_COPY_COLUMNS
+    }
+  if isinstance(payload, pd.DataFrame):
+    if payload.empty:
+      return {c: [] for c in HOST_DATA_COPY_COLUMNS}
+    n = len(payload)
+    return {
+      c: payload[c].tolist() if c in payload.columns else [None] * n
+      for c in HOST_DATA_COPY_COLUMNS
+    }
+  if not payload:
+    return {c: [] for c in HOST_DATA_COPY_COLUMNS}
+  cols: dict[str, list[Any]] = {c: [] for c in HOST_DATA_COPY_COLUMNS}
+  for row in payload:
+    for c in HOST_DATA_COPY_COLUMNS:
+      if isinstance(row, Mapping):
+        cols[c].append(row.get(c))
+      else:
+        cols[c].append(getattr(row, c, None))
+  return cols
+
+
+def normalize_host_columnar_for_copy(
+  cols: Mapping[str, Sequence[Any]],
+) -> dict[str, list[Any]]:
+  """
+  Apply COPY cell coercion row-wise (same rules as ``_host_frame_cell``).
+
+  Used on Codon parse output before IPC so the write stage can serialize
+  without re-normalizing scalars.
+
+  Args:
+    cols (Mapping[str, Sequence[Any]]): Host columnar SoA.
+
+  Returns:
+    dict[str, list[Any]]: COPY-ready parallel lists.
+
+  Examples:
+    >>> out = normalize_host_columnar_for_copy(
+    ...   {"time": [1.0], "jid": ["-"], "dev": [float("nan")], "host": ["h"]}
+    ... )
+    >>> out["jid"][0] is None
+    True
+    >>> out["dev"][0]
+    ''
+  """
+  base = coerce_host_stats_to_columnar(cols)
+  n = len(base.get("time") or [])
+  if n == 0:
+    return base
+  out: dict[str, list[Any]] = {c: [] for c in HOST_DATA_COPY_COLUMNS}
+  for i in range(n):
+    for col in HOST_DATA_COPY_COLUMNS:
+      seq = base.get(col)
+      raw = seq[i] if seq is not None and i < len(seq) else None
+      out[col].append(_host_frame_cell(col, raw))
+  return out
+
+
+def _host_columns_to_copy_bytes(
+  cols: Mapping[str, Sequence[Any]],
+  *,
+  cells_normalized: bool = False,
+) -> bytes:
+  """
+  Serialize columnar host SoA (parallel lists) to COPY text.
+
+  Args:
+    cols (Mapping[str, Sequence[Any]]): Column name -> values. Missing
+      ``HOST_DATA_COPY_COLUMNS`` keys are treated as all-NULL for that
+      column. Row count is ``len(cols[\"time\"])`` when present, else the
+      longest column length.
+    cells_normalized (bool): When True, cells are already COPY scalars.
+
+  Returns:
+    bytes: UTF-8 COPY body (empty when there are no rows).
+
+  Examples:
+    >>> _host_columns_to_copy_bytes({\"time\": []})
+    b''
+  """
+  n = len(cols["time"]) if "time" in cols else 0
+  if n == 0:
+    for col in HOST_DATA_COPY_COLUMNS:
+      seq = cols.get(col)
+      if seq is not None:
+        n = max(n, len(seq))
+  if n == 0:
+    return b""
+  columns = {
+    col: list(cols[col]) if col in cols else [None] * n
+    for col in HOST_DATA_COPY_COLUMNS
+  }
+  for col in HOST_DATA_COPY_COLUMNS:
+    if len(columns[col]) < n:
+      columns[col].extend([None] * (n - len(columns[col])))
+  lines: list[str] = []
+  for i in range(n):
+    fields = []
+    for col in HOST_DATA_COPY_COLUMNS:
+      cell = columns[col][i]
+      if not cells_normalized:
+        cell = _host_frame_cell(col, cell)
+      fields.append(_sql_literal(cell))
+    lines.append("\t".join(fields))
+  return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def _collapse_host_columnar_conflict_keys(
+  cols: Mapping[str, Sequence[Any]],
+) -> dict[str, list[Any]]:
+  """
+  Last-wins collapse on ``_HOST_CONFLICT_COLS`` for a columnar SoA.
+
+  Args:
+    cols (Mapping[str, Sequence[Any]]): Host column lists.
+
+  Returns:
+    dict[str, list[Any]]: Collapsed SoA (copy of lists).
+
+  Examples:
+    >>> _collapse_host_columnar_conflict_keys({\"time\": []})[\"time\"]
+    []
+  """
+  n = len(cols.get("time", []))
+  if n == 0:
+    return {c: list(cols.get(c, [])) for c in HOST_DATA_COPY_COLUMNS}
+  by_key: dict[tuple[Any, ...], int] = {}
+  order: list[int] = []
+  for i in range(n):
+    key = tuple(
+      _host_frame_cell(
+        c, cols[c][i] if c in cols and i < len(cols[c]) else None
+      )
+      for c in _HOST_CONFLICT_COLS
+    )
+    if key in by_key:
+      prev = by_key[key]
+      order[prev] = -1
+    by_key[key] = len(order)
+    order.append(i)
+  keep = [i for i in order if i >= 0]
+  if len(keep) == n:
+    return {
+      c: list(cols[c]) if c in cols else [None] * n
+      for c in HOST_DATA_COPY_COLUMNS
+    }
+  return {
+    c: [(cols[c][i] if c in cols and i < len(cols[c]) else None) for i in keep]
+    for c in HOST_DATA_COPY_COLUMNS
+  }
+
+
 def _host_frame_to_copy_bytes(frame: pd.DataFrame) -> bytes:
   """
   Serialize a host dataframe slice to COPY text.
@@ -372,25 +553,25 @@ def _host_frame_to_copy_bytes(frame: pd.DataFrame) -> bytes:
     col: frame[col].tolist() if col in frame.columns else [None] * n
     for col in HOST_DATA_COPY_COLUMNS
   }
-  lines: list[str] = []
-  for i in range(n):
-    fields = [
-      _sql_literal(_host_frame_cell(col, columns[col][i]))
-      for col in HOST_DATA_COPY_COLUMNS
-    ]
-    lines.append("\t".join(fields))
-  return ("\n".join(lines) + "\n").encode("utf-8")
+  return _host_columns_to_copy_bytes(columns)
 
 
-def host_rows_to_copy_bytes(rows: Sequence[Any] | pd.DataFrame) -> bytes:
+def host_rows_to_copy_bytes(
+  rows: Sequence[Any] | pd.DataFrame | Mapping[str, Sequence[Any]],
+  *,
+  copy_unique: bool = False,
+) -> bytes:
   """
   Serialize parsed host rows to the same COPY body as model instances.
 
-  A dataframe is walked by column. A sequence of namedtuples keeps the
+  A dataframe is walked by column. A columnar Mapping is encoded via
+  ``_host_columns_to_copy_bytes``. A sequence of namedtuples keeps the
   attribute walk used by the ORM fallback and existing callers.
 
   Args:
-    rows (Sequence[Any] | pd.DataFrame): Namedtuple rows or a host frame.
+    rows (Sequence[Any] | pd.DataFrame | Mapping[str, Sequence[Any]]):
+      Namedtuple rows, a host frame, or finished Codon SoA columns.
+    copy_unique (bool): Skip pre-COPY collapse when the SoA is already unique.
 
   Returns:
     bytes: UTF-8 COPY body.
@@ -399,6 +580,11 @@ def host_rows_to_copy_bytes(rows: Sequence[Any] | pd.DataFrame) -> bytes:
     >>> host_rows_to_copy_bytes([])
     b''
   """
+  if isinstance(rows, Mapping) and not isinstance(rows, pd.DataFrame):
+    if copy_unique:
+      return _host_columns_to_copy_bytes(rows, cells_normalized=True)
+    collapsed = _collapse_host_columnar_conflict_keys(rows)
+    return _host_columns_to_copy_bytes(collapsed)
   rows = _collapse_host_conflict_keys(rows)
   if isinstance(rows, pd.DataFrame):
     return _host_frame_to_copy_bytes(rows)
@@ -486,12 +672,18 @@ def _write_host_copy_payload(payload: bytes) -> None:
     _mark_copy_stage(connection, _HOST_STAGE_NAME)
 
 
-def bulk_insert_host_rows(rows: Sequence[Any] | pd.DataFrame) -> None:
+def bulk_insert_host_rows(
+  rows: Sequence[Any] | pd.DataFrame | Mapping[str, Sequence[Any]],
+  *,
+  copy_unique: bool = False,
+) -> None:
   """
   Insert parsed host rows via COPY without building ``host_data`` models.
 
   Args:
-    rows (Sequence[Any] | pd.DataFrame): Namedtuple rows or a host frame.
+    rows (Sequence[Any] | pd.DataFrame | Mapping[str, Sequence[Any]]):
+      Namedtuple rows, a host frame, or finished Codon SoA columns.
+    copy_unique (bool): Skip pre-COPY collapse when the SoA is already unique.
 
   Returns:
     None
@@ -499,12 +691,17 @@ def bulk_insert_host_rows(rows: Sequence[Any] | pd.DataFrame) -> None:
   Examples:
     >>> bulk_insert_host_rows([])
   """
-  if isinstance(rows, pd.DataFrame):
+  if isinstance(rows, Mapping) and not isinstance(rows, pd.DataFrame):
+    if not rows.get("time"):
+      return
+  elif isinstance(rows, pd.DataFrame):
     if rows.empty:
       return
   elif not rows:
     return
-  _write_host_copy_payload(host_rows_to_copy_bytes(rows))
+  _write_host_copy_payload(
+    host_rows_to_copy_bytes(rows, copy_unique=copy_unique)
+  )
 
 
 def bulk_insert_host_data_ignore_conflicts(objs: Sequence[Any]) -> None:
