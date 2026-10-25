@@ -284,6 +284,156 @@ def test_plant_loaded48_queue_padding_writes_tiny_files(tmp_path):
   assert n2 == 3
 
 
+def test_stamp_child_log_line_prefixes_utc_rfc3339():
+  """Soak child output has no timestamps; the analyzer needs a leading RFC3339."""
+  from datetime import datetime, timezone
+
+  from tests.sync_timedb_benchmark.screening_runner import stamp_child_log_line
+
+  now = datetime(2026, 10, 24, 13, 0, 5, 123456, tzinfo=timezone.utc)
+  assert (
+      stamp_child_log_line("ingest file path=/x\n", now=now)
+      == "2026-10-24T13:00:05.123456Z ingest file path=/x\n"
+  )
+  # bytes in, newline added, trailing CR/LF normalized
+  assert (
+      stamp_child_log_line(b"no newline", now=now)
+      == "2026-10-24T13:00:05.123456Z no newline\n"
+  )
+  assert (
+      stamp_child_log_line(b"crlf\r\n", now=now)
+      == "2026-10-24T13:00:05.123456Z crlf\n"
+  )
+
+
+def test_stamped_child_log_is_readable_by_pipeline_rate_analyzer():
+  """Format contract with scripts/measure_pipeline_ingest_rate.py."""
+  import importlib.util
+  import sys
+  from datetime import datetime, timezone
+
+  from tests.sync_timedb_benchmark.screening_runner import stamp_child_log_line
+
+  script = Path(__file__).resolve().parents[2] / "scripts" / (
+      "measure_pipeline_ingest_rate.py"
+  )
+  spec = importlib.util.spec_from_file_location("_mpir_for_stamp_test", script)
+  assert spec and spec.loader
+  mod = importlib.util.module_from_spec(spec)
+  sys.modules["_mpir_for_stamp_test"] = mod
+  spec.loader.exec_module(mod)
+  now = datetime(2026, 10, 24, 13, 0, 5, tzinfo=timezone.utc)
+  ts, body = mod._strip_log_prefix(
+      stamp_child_log_line("ingest file path=/x size_bytes=10\n", now=now)
+  )
+  assert ts is not None and ts.year == 2026 and ts.minute == 0
+  assert body.startswith("ingest file path=/x")
+
+
+def test_enable_stack_dumps_is_off_by_default_and_dumps_when_enabled(tmp_path):
+  """All-thread stack samples are opt-in; when on they land in the file."""
+  import faulthandler
+  import threading
+  import time as _time
+
+  from tests.sync_timedb_benchmark.screening_runner import enable_stack_dumps
+
+  dump = tmp_path / "stacks.txt"
+  assert enable_stack_dumps("", str(dump)) is None
+  assert enable_stack_dumps("0", str(dump)) is None
+  assert enable_stack_dumps("5", "") is None
+  assert not dump.exists()
+
+  parked = threading.Event()
+  t = threading.Thread(target=parked.wait, name="parked-for-test", daemon=True)
+  t.start()
+  fh = enable_stack_dumps("0.1", str(dump))
+  try:
+    assert fh is not None
+    deadline = _time.monotonic() + 5.0
+    text = ""
+    # The watchdog writes in pieces; wait for the parked thread's frame.
+    while _time.monotonic() < deadline and "wait" not in text:
+      _time.sleep(0.05)
+      text = dump.read_text(encoding="utf-8")
+    assert "Thread 0x" in text or "Current thread" in text
+    assert "wait" in text  # the parked thread's frame is visible
+  finally:
+    faulthandler.cancel_dump_traceback_later()
+    parked.set()
+    if fh is not None:
+      fh.close()
+
+
+def test_loaded48_conf_overrides_from_env():
+  """Test-only INI getter overrides for the soak child; none by default."""
+  from tests.sync_timedb_benchmark.screening_runner import (
+      loaded48_conf_overrides,
+  )
+
+  assert loaded48_conf_overrides({}) == {}
+  assert loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_MALLOC_TRIM": ""}) == {}
+  assert loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_MALLOC_TRIM": "yes"}) == {}
+  ov = loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_MALLOC_TRIM": "no"})
+  assert list(ov) == ["get_sync_ingest_malloc_trim_after_file"]
+  assert ov["get_sync_ingest_malloc_trim_after_file"]() is False
+  # case/whitespace tolerant, accepts the other falsy spellings
+  ov2 = loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_MALLOC_TRIM": " Off "})
+  assert ov2["get_sync_ingest_malloc_trim_after_file"]() is False
+
+
+def test_install_gc_probe_modes_trace_and_off():
+  """GC pause probe: off by default, trace counts collections, off disables GC."""
+  import gc
+
+  from tests.sync_timedb_benchmark.screening_runner import install_gc_probe
+
+  was_enabled = gc.isenabled()
+  try:
+    assert install_gc_probe("") is None
+    assert install_gc_probe("bogus") is None
+
+    probe = install_gc_probe("trace")
+    assert probe is not None
+    before = probe.snapshot()
+    gc.collect()
+    gc.collect()
+    after = probe.snapshot()
+    assert after["collections"] >= before["collections"] + 2
+    assert after["pause_s"] >= before["pause_s"] >= 0.0
+    assert after["max_pause_s"] <= after["pause_s"] + 1e-9
+    assert "gc_probe" in probe.format_line()
+    assert gc.isenabled()  # trace alone never disables GC
+    probe.uninstall()
+    n = probe.snapshot()["collections"]
+    gc.collect()
+    assert probe.snapshot()["collections"] == n  # callback removed
+
+    probe_off = install_gc_probe("off")
+    assert probe_off is not None
+    assert not gc.isenabled()
+    probe_off.uninstall()
+  finally:
+    if was_enabled:
+      gc.enable()
+
+
+def test_pump_stamped_child_log_writes_every_line(tmp_path):
+  """Both child streams are kept: nothing is dropped to DEVNULL."""
+  import io
+
+  from tests.sync_timedb_benchmark.screening_runner import (
+      pump_stamped_child_log,
+  )
+
+  log = tmp_path / "child.log"
+  n = pump_stamped_child_log(io.BytesIO(b"a\nb\r\nlast-no-newline"), log)
+  assert n == 3
+  lines = log.read_text(encoding="utf-8").splitlines()
+  assert [ln.split(" ", 1)[1] for ln in lines] == ["a", "b", "last-no-newline"]
+  assert all(ln.endswith("Z " + ln.split(" ", 1)[1]) for ln in lines)
+
+
 def test_summarize_and_winner_integration():
   points = [
       summarize_width_replicates(16, [8.0, 8.5]),

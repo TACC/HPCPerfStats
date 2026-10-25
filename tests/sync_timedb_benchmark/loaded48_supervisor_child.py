@@ -45,9 +45,33 @@ def main() -> int:
 
   from tests.sync_timedb_benchmark.screening_runner import (
     configure_loaded48_continuous_discover,
+    enable_stack_dumps,
+    install_gc_probe,
+    loaded48_conf_overrides,
   )
 
   configure_loaded48_continuous_discover(orch)
+  # Test-only INI-getter overrides (HPCPERFSTATS_LOADED48_MALLOC_TRIM=no, ...).
+  for _name, _fn in loaded48_conf_overrides(os.environ).items():
+    setattr(cfg, _name, _fn)
+    print("loaded48 conf override %s -> %r" % (_name, _fn()), flush=True)
+  # Opt-in GC pause probe: HPCPERFSTATS_LOADED48_GC_MODE=trace|off (test hosts only).
+  _gc_probe = install_gc_probe(os.environ.get("HPCPERFSTATS_LOADED48_GC_MODE", ""))
+  if _gc_probe is not None:
+    import threading
+
+    def _gc_report() -> None:
+      while True:
+        time.sleep(30.0)
+        print(_gc_probe.format_line(), flush=True)
+
+    print(_gc_probe.format_line(), flush=True)
+    threading.Thread(target=_gc_report, name="gc-probe", daemon=True).start()
+  # Opt-in: periodic all-thread stack dumps to show where threads are parked.
+  _stack_fh = enable_stack_dumps(
+    os.environ.get("HPCPERFSTATS_LOADED48_STACKDUMP_S", ""),
+    os.environ.get("HPCPERFSTATS_LOADED48_STACKDUMP_PATH", ""),
+  )
 
   occupancy_samples: list[list[float | int]] = []
   t0 = time.monotonic()
@@ -112,6 +136,8 @@ def main() -> int:
     pass
   if done_path:
     Path(done_path).write_text(f"rc={rc}\n", encoding="utf-8")
+  if _stack_fh is not None:
+    _stack_fh.flush()
   # Hard exit — skip FT interpreter teardown with Codon/.so mapped.
   os._exit(rc)
 

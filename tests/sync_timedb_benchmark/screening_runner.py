@@ -1,15 +1,19 @@
 """Shared helpers for sync_timedb ingest-width screening runs."""
 from __future__ import annotations
 
+import faulthandler
+import gc
 import json
 import os
 import random
 import shutil
 import statistics
+import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, BinaryIO, Callable, Sequence, TextIO
 
 SCREENING_WIDTHS: tuple[int, ...] = (
     1, 2, 4, 8, 16, 24, 32, 40, 48, 64, 80, 96,
@@ -1909,6 +1913,244 @@ def loaded48_size_mix_templates(corpus_dir: Path) -> list[Path]:
     for tier in tiers:
       mixed.append(tier[index % len(tier)])
   return mixed
+
+
+def stamp_child_log_line(
+    raw: bytes | str,
+    *,
+    now: datetime | None = None,
+) -> str:
+  """
+  Prefix one child output line with a UTC RFC3339 timestamp.
+
+  The loaded soak child prints without timestamps (the compose log driver adds
+  them in production). ``scripts/measure_pipeline_ingest_rate.py`` needs a
+  leading RFC3339 stamp to compute per-minute rates.
+
+  Args:
+    raw (bytes | str): One line, with or without a trailing newline.
+    now (datetime | None): Stamp time (UTC). Defaults to the current time.
+
+  Returns:
+    str: ``<ts>Z <line>\\n`` with CR/LF normalized.
+
+  Examples:
+    >>> stamp_child_log_line("x", now=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc))
+    '2026-01-02T03:04:05.000000Z x\\n'
+  """
+  text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+  stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+  return "%sZ %s\n" % (
+      stamp.strftime("%Y-%m-%dT%H:%M:%S.%f"),
+      text.rstrip("\r\n"),
+  )
+
+
+def pump_stamped_child_log(stream: BinaryIO, log_path: Path) -> int:
+  """
+  Copy ``stream`` to ``log_path`` line by line, stamping each line.
+
+  Args:
+    stream (BinaryIO): Child stdout/stderr pipe (read until EOF).
+    log_path (Path): Destination log; parent directories are created.
+
+  Returns:
+    int: Number of lines written.
+
+  Examples:
+    >>> import io, tempfile
+    >>> p = Path(tempfile.mkdtemp()) / "c.log"
+    >>> pump_stamped_child_log(io.BytesIO(b"a\\n"), p)
+    1
+  """
+  log_path.parent.mkdir(parents=True, exist_ok=True)
+  n = 0
+  with log_path.open("w", encoding="utf-8") as out:
+    for raw in iter(stream.readline, b""):
+      out.write(stamp_child_log_line(raw))
+      out.flush()
+      n += 1
+  return n
+
+
+def enable_stack_dumps(interval_s: str, path: str) -> TextIO | None:
+  """
+  Start periodic all-thread Python stack dumps (opt-in wait attribution).
+
+  Uses :func:`faulthandler.dump_traceback_later` so no code is injected into the
+  hot path. Each dump shows the file and line every thread is parked on.
+
+  Args:
+    interval_s (str): Seconds between dumps; empty, non-numeric or ``<= 0``
+      leaves dumps off.
+    path (str): Destination file; empty leaves dumps off.
+
+  Returns:
+    TextIO | None: Open dump file (caller keeps it open), or None when off.
+
+  Examples:
+    >>> enable_stack_dumps("", "") is None
+    True
+  """
+  try:
+    interval = float(interval_s)
+  except (TypeError, ValueError):
+    return None
+  if interval <= 0 or not path:
+    return None
+  Path(path).parent.mkdir(parents=True, exist_ok=True)
+  fh = open(path, "w", encoding="utf-8")
+  faulthandler.dump_traceback_later(interval, repeat=True, file=fh)
+  return fh
+
+
+class GcProbe:
+  """
+  Count garbage collections and the wall time they take.
+
+  On free-threaded CPython a collection stops every other thread, so the summed
+  pause is time the whole process spends parked on a futex.
+
+  Attributes:
+    collections (int): Completed collections seen.
+    pause_s (float): Summed wall seconds between each start and stop callback.
+    max_pause_s (float): Longest single collection.
+  """
+
+  def __init__(self, *, disable_gc: bool = False) -> None:
+    """
+    Install the callback; optionally turn automatic GC off.
+
+    Args:
+      disable_gc (bool): Call :func:`gc.disable` until :meth:`uninstall`.
+
+    Returns:
+      None
+
+    Examples:
+      >>> p = GcProbe(); p.uninstall(); p.collections
+      0
+    """
+    self._lock = threading.Lock()
+    self._t0: float | None = None
+    self.collections = 0
+    self.pause_s = 0.0
+    self.max_pause_s = 0.0
+    self._was_enabled = gc.isenabled()
+    self._disabled_by_us = bool(disable_gc)
+    gc.callbacks.append(self._on_gc)
+    if disable_gc:
+      gc.disable()
+
+  def _on_gc(self, phase: str, info: dict[str, Any]) -> None:
+    now = time.monotonic()
+    with self._lock:
+      if phase == "start":
+        self._t0 = now
+      elif phase == "stop" and self._t0 is not None:
+        dt = now - self._t0
+        self._t0 = None
+        self.collections += 1
+        self.pause_s += dt
+        self.max_pause_s = max(self.max_pause_s, dt)
+
+  def snapshot(self) -> dict[str, float]:
+    """
+    Return counters so far.
+
+    Returns:
+      dict[str, float]: ``collections``, ``pause_s``, ``max_pause_s``.
+
+    Examples:
+      >>> sorted(GcProbe().snapshot())  # doctest: +SKIP
+      ['collections', 'max_pause_s', 'pause_s']
+    """
+    with self._lock:
+      return {
+          "collections": self.collections,
+          "pause_s": self.pause_s,
+          "max_pause_s": self.max_pause_s,
+      }
+
+  def format_line(self) -> str:
+    """
+    Format one greppable log line.
+
+    Returns:
+      str: ``gc_probe collections=N pause_s=X max_pause_s=Y gc_enabled=bool``.
+
+    Examples:
+      >>> GcProbe().format_line().startswith("gc_probe")  # doctest: +SKIP
+      True
+    """
+    s = self.snapshot()
+    return "gc_probe collections=%d pause_s=%.3f max_pause_s=%.3f gc_enabled=%s" % (
+        int(s["collections"]), s["pause_s"], s["max_pause_s"], gc.isenabled(),
+    )
+
+  def uninstall(self) -> None:
+    """
+    Remove the callback and restore the prior automatic-GC state.
+
+    Returns:
+      None
+
+    Examples:
+      >>> GcProbe().uninstall()
+    """
+    try:
+      gc.callbacks.remove(self._on_gc)
+    except ValueError:
+      pass
+    if self._disabled_by_us and self._was_enabled:
+      gc.enable()
+
+
+def loaded48_conf_overrides(env: Any) -> dict[str, Callable[[], Any]]:
+  """
+  Test-only ``conf_parser`` getter overrides for the loaded soak child.
+
+  Mirrors the child's ingest-width override: the INI stays the production
+  surface (``no-production-env-for-ini-config``); this lets one soak flip a knob
+  without rebuilding the image.
+
+  Args:
+    env (Any): Mapping with the process environment (``os.environ``).
+
+  Returns:
+    dict[str, Callable[[], Any]]: Getter name to replacement callable.
+
+  Examples:
+    >>> loaded48_conf_overrides({})
+    {}
+  """
+  out: dict[str, Callable[[], Any]] = {}
+  raw = str(env.get("HPCPERFSTATS_LOADED48_MALLOC_TRIM", "")).strip().lower()
+  if raw in {"no", "off", "0", "false"}:
+    # Per-file and mid-chunk gc.collect()+malloc_trim (stop-the-world on 3.14t).
+    out["get_sync_ingest_malloc_trim_after_file"] = lambda: False
+  return out
+
+
+def install_gc_probe(mode: str) -> GcProbe | None:
+  """
+  Opt-in GC pause measurement for the loaded soak child.
+
+  Args:
+    mode (str): ``trace`` counts collections; ``off`` also disables automatic
+      GC (memory grows; test hosts only). Anything else leaves GC untouched.
+
+  Returns:
+    GcProbe | None: Installed probe, or None when ``mode`` is empty/unknown.
+
+  Examples:
+    >>> install_gc_probe("") is None
+    True
+  """
+  m = (mode or "").strip().lower()
+  if m not in {"trace", "off"}:
+    return None
+  return GcProbe(disable_gc=(m == "off"))
 
 
 def plant_loaded48_queue_padding(

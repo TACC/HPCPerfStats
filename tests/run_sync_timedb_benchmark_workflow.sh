@@ -297,6 +297,19 @@ if [[ "$LOADED48" -eq 1 ]]; then
   # Codon divert toggle for CPython-vs-Codon loaded48 A/B (Arm A sets DISABLE=1).
   [[ -n "${HPCPERFSTATS_CODON_PARSE_DISABLE:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_CODON_PARSE_DISABLE=${HPCPERFSTATS_CODON_PARSE_DISABLE}")
+  # Test-only ingest telemetry override (production uses INI sync_ingest_telemetry).
+  # Adds parse-stage and write-phase tokens to the child log for the time budget.
+  [[ -n "${HPCPERFSTATS_SYNC_INGEST_TELEMETRY:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_INGEST_TELEMETRY=${HPCPERFSTATS_SYNC_INGEST_TELEMETRY}")
+  # Test-only override of INI sync_ingest_malloc_trim_after_file for the soak child (no|off).
+  [[ -n "${HPCPERFSTATS_LOADED48_MALLOC_TRIM:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_MALLOC_TRIM=${HPCPERFSTATS_LOADED48_MALLOC_TRIM}")
+  # Opt-in GC pause probe for the soak child: trace | off (test hosts only).
+  [[ -n "${HPCPERFSTATS_LOADED48_GC_MODE:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_GC_MODE=${HPCPERFSTATS_LOADED48_GC_MODE}")
+  # Opt-in all-thread stack dumps every N seconds (wait attribution); see TESTING.md.
+  [[ -n "${HPCPERFSTATS_LOADED48_STACKDUMP_S:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_STACKDUMP_S=${HPCPERFSTATS_LOADED48_STACKDUMP_S}")
   # Forward only when set. Unset stays in-process (N = ingest threads). =1 opts into the legacy Popen pool.
   [[ -n "${HPCPERFSTATS_CODON_PROCESS_POOL:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_CODON_PROCESS_POOL=${HPCPERFSTATS_CODON_PROCESS_POOL}")

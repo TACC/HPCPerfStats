@@ -26,6 +26,7 @@ from tests.sync_timedb_benchmark.screening_runner import (
   loaded48_size_mix_templates,
   loaded48_smoke_peak_ok,
   plant_loaded48_queue_padding,
+  pump_stamped_child_log,
   reset_screening_state,
   summarize_width_replicates,
   write_screening_artifact,
@@ -223,12 +224,28 @@ def test_loaded48_continuous_fill_soak(monkeypatch):
   refill_thr = threading.Thread(target=_refill_loop, name="loaded48-refill", daemon=True)
   refill_thr.start()
 
+  # Keep the child's ingest outcome lines (timestamped) for
+  # scripts/measure_pipeline_ingest_rate.py; the child hard-exits, so no buffering.
+  child_env["PYTHONUNBUFFERED"] = "1"
+  child_log = (
+      REPO_ROOT / "test_runs" / "sync_timedb_bench"
+      / ("loaded48_child_%s_%d.log" % (time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()), os.getpid()))
+  )
+  # HPCPERFSTATS_LOADED48_STACKDUMP_S=<sec> writes all-thread stacks beside the log.
+  child_env["HPCPERFSTATS_LOADED48_STACKDUMP_PATH"] = str(child_log) + ".stacks"
   child = subprocess.Popen(
       [sys.executable, str(child_mod)],
       env=child_env,
-      stdout=subprocess.DEVNULL,
-      stderr=subprocess.PIPE,
+      stdout=subprocess.PIPE,
+      stderr=subprocess.STDOUT,
   )
+  log_thr = threading.Thread(
+      target=pump_stamped_child_log,
+      args=(child.stdout, child_log),
+      name="loaded48-child-log",
+      daemon=True,
+  )
+  log_thr.start()
   try:
     deadline = t0 + wall_s
     # Stop a dead run. Do not sit through the whole window at inflight 0.
@@ -271,14 +288,13 @@ def test_loaded48_continuous_fill_soak(monkeypatch):
       child.kill()
       child.wait(timeout=10.0)
     refill_thr.join(timeout=5.0)
+    log_thr.join(timeout=15.0)
 
   if child.returncode not in (0, -signal.SIGTERM) and not done_file.is_file():
-    err = b""
-    if child.stderr is not None:
-      err = child.stderr.read() or b""
+    err = child_log.read_text(encoding="utf-8", errors="replace") if child_log.is_file() else ""
     pytest.fail(
-        "loaded48 supervisor child failed rc=%s stderr=%r"
-        % (child.returncode, err[:2000])
+        "loaded48 supervisor child failed rc=%s log=%s tail=%r"
+        % (child.returncode, child_log, err[-2000:])
     )
 
   elapsed = max(1e-6, time.monotonic() - t0)
@@ -376,6 +392,17 @@ def test_loaded48_continuous_fill_soak(monkeypatch):
   )
   payload["host_insert_arm"] = host_arm
   payload["proc_insert_arm"] = proc_arm
+  # files_per_s above uses max(complete_files, orm_rows): record both so the
+  # unit (files vs rows) behind the headline number is auditable, plus the log
+  # (telemetry on when HPCPERFSTATS_SYNC_INGEST_TELEMETRY=1 is forwarded).
+  payload["complete_files"] = int(finals)
+  payload["orm_rows"] = int(orm_n)
+  payload["measure_s"] = float(measure_s)
+  payload["child_log"] = str(child_log)
+  payload["ingest_telemetry"] = bool(
+      os.environ.get("HPCPERFSTATS_SYNC_INGEST_TELEMETRY", "").strip().lower()
+      in {"1", "true", "yes", "on"}
+  )
   # Codon A/B: env divert flag (1/true = CPython arm).
   payload["codon_parse_disable"] = bool(
       os.environ.get("HPCPERFSTATS_CODON_PARSE_DISABLE", "").strip().lower()

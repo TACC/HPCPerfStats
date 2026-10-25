@@ -280,6 +280,37 @@ Artifacts: `test_runs/sync_timedb_bench/loaded48_arm_baseline_*.json`
 (`occupancy_ok`, files/s). Patch index:
 `docs/SYNC_TIMEDB_CAMPAIGN_PATCH_INDEX.md`.
 
+Each run also keeps the soak child's output as a timestamped log,
+`test_runs/sync_timedb_bench/loaded48_child_<utc>_<pid>.log` (path recorded as
+`child_log` in the artifact). The artifact records `complete_files`, `orm_rows`
+and `measure_s`, because the headline files/s uses `max(complete_files,
+orm_rows)`. Set the **test-only** telemetry override to get parse-stage and
+write-phase tokens on the `ingest file` lines (production uses INI
+`sync_ingest_telemetry`), then run the production analyzer on the log:
+
+```bash
+cd HPCPerfStats
+HPCPERFSTATS_SYNC_INGEST_TELEMETRY=1 HPCPERFSTATS_LOADED48_HOURS=0.5 \
+  tests/run_sync_timedb_benchmark_workflow.sh --loaded48 --skip-build
+python3 scripts/measure_pipeline_ingest_rate.py --log-file \
+  test_runs/sync_timedb_bench/loaded48_child_<utc>_<pid>.log
+```
+
+The analyzer needs Python 3.11+ (`datetime.UTC`); on this host use
+`../.venv/bin/python3`. To see where threads are parked, add
+`HPCPERFSTATS_LOADED48_STACKDUMP_S=30`: the child then writes an all-thread
+Python stack dump every 30 s to `<child_log>.stacks` (opt-in, off by default).
+`HPCPERFSTATS_LOADED48_GC_MODE=trace` logs a `gc_probe` line every 30 s (GC count
+and summed pause seconds; on free-threaded CPython a collection parks every
+other thread); `=off` also disables automatic GC for an A/B (memory grows, test
+hosts only). `HPCPERFSTATS_LOADED48_MALLOC_TRIM=no` is a test-only override of
+INI `sync_ingest_malloc_trim_after_file` for the soak child (skips the per-file and
+mid-chunk `gc.collect()` + `malloc_trim`; production uses the INI key). To run
+with a freshly baked Codon extension instead of the one in
+the image, set `HPCPERFSTATS_CODON_PYEXT_DIR` to a directory containing the whole
+`/opt/hpcperfstats/codon_parse` tree, and confirm the child log shows
+`codon_parse status=enabled`.
+
 Width sweep A/B (same continuous-refill harness; **report-only**): serial
 **48 → 64 → 96**, each **0.1h smoke + 3h soak**; baseline = this-run 3h@48.
 Must survive SSH disconnect — launch with `nohup setsid -f`:
