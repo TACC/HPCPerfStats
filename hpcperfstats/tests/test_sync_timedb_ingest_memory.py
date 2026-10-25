@@ -208,6 +208,28 @@ def test_release_ingest_worker_heap_skips_malloc_trim_when_disabled(
   assert st._HOST_ITIMES_CACHE == {}
 
 
+def test_release_spawn_pool_worker_memory_skips_gc_and_trim_when_disabled(
+  monkeypatch,
+):
+  """Trim=no must not run the stop-the-world gc.collect() on the per-file path."""
+  import gc
+
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.conf_parser.get_sync_ingest_malloc_trim_after_file",
+    lambda: False,
+  )
+  monkeypatch.setattr(
+    gc, "collect", lambda *_a, **_k: pytest.fail("gc.collect must not run")
+  )
+  monkeypatch.setattr(
+    worker_memory.ctypes,
+    "CDLL",
+    lambda _name: pytest.fail("CDLL should not run when trim disabled"),
+  )
+  worker_memory.reset_libc_handle_for_tests()
+  worker_memory.release_spawn_pool_worker_memory()
+
+
 def test_log_ingest_file_outcome_includes_rows_and_size(monkeypatch, capsys):
   monkeypatch.setattr(st, "stats_file_size_bytes", lambda _p: 4_900_000_000)
   outcome = st.IngestFileOutcome(
@@ -340,6 +362,28 @@ def test_mutable_tar_authority_cache_trims_to_max_entries(monkeypatch):
   archive_helpers._MUTABLE_TAR_AUTHORITY_MEMBERS_CACHE.clear()
 
 
+def test_conf_parser_malloc_trim_ini_yes_overrides_default_no(
+  temp_ini, monkeypatch
+):
+  """Horizon sets the key to yes; the shipped default is no."""
+  with open(temp_ini) as f:
+    content = f.read()
+  with open(temp_ini, "w") as f:
+    f.write(
+      content.replace(
+        "total_cores = 4",
+        "total_cores = 4\nsync_ingest_malloc_trim_after_file = yes\n",
+      )
+    )
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  importlib.reload(cfg)
+  assert cfg.get_sync_ingest_malloc_trim_after_file() is True
+
+
 def test_conf_parser_ingest_memory_defaults(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
@@ -348,7 +392,7 @@ def test_conf_parser_ingest_memory_defaults(temp_ini, monkeypatch):
 
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_pool_maxtasksperchild() == 0
-  assert cfg.get_sync_ingest_malloc_trim_after_file() is True
+  assert cfg.get_sync_ingest_malloc_trim_after_file() is False
   assert cfg.get_sync_ingest_worker_memory_telemetry() is False
   assert cfg.get_sync_ingest_telemetry() is False
   assert not hasattr(cfg, "get_sync_ingest_parse_stage_telemetry")

@@ -343,8 +343,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Default 0: supervisor retires only on failure/RSS (not path size). Set 1 to recycle every file.
 # sync_ingest_pool_maxtasksperchild = 0
 
-# Return freed worker heap to OS after each ingest task on Linux (default yes).
-# sync_ingest_malloc_trim_after_file = yes
+# Per-task gc.collect() + malloc_trim after each ingest task (default no); set yes on sites with a small RSS roof (Horizon), see docs/DEPLOY_CONCURRENCY_AND_NUMA.md.
+# sync_ingest_malloc_trim_after_file = no
 
 # Worker memory telemetry: one batch_summary line per ingest chunk (default no; enable for soak).
 # sync_ingest_worker_memory_telemetry = no

@@ -307,7 +307,7 @@ INI_OPTION_DEFAULTS = {
   "sync_ingest_stream_duplicate_scan_bytes": "8388608",
   "sync_ingest_db_complete_tail_window_lines": "500",
   "sync_ingest_pool_maxtasksperchild": "0",
-  "sync_ingest_malloc_trim_after_file": "yes",
+  "sync_ingest_malloc_trim_after_file": "no",
   "sync_ingest_worker_memory_telemetry": "no",
   "sync_ingest_worker_memory_telemetry_every_n_chunks": "1",
   "sync_timedb_mem_telemetry": "no",
@@ -3764,9 +3764,8 @@ def get_sync_ingest_malloc_trim_after_file() -> Any:
   """
   After each ingest pool task on Linux, gc.collect() and malloc_trim(0).
 
-    (default.
-
-    yes).
+    (default no; set yes on sites whose tree RSS roof is too small for
+    release-off ingest memory).
 
   Returns:
     Any: Open return polymorphism from
