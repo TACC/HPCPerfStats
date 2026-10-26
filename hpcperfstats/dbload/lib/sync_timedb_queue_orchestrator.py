@@ -25,6 +25,12 @@ Attributes:
   _FILL_BLOCK_KEYS: Ordered ingest fill failure counter names for telemetry.
   _INGEST_MEM_BLOCK_STATE: Process-local census fields when fill waits on
     the in-flight raw-byte budget (``ingest_mem_blocked=...``).
+  _RSS_PRESSURE_LOG_INTERVAL_S: Minimum seconds between ``rss_hold`` /
+    ``rss_release`` INFO lines of the same kind.
+  _RSS_PRESSURE_STATE: Process-local last-emit times and suppressed counts for
+    the RSS-pressure INFO limiter.
+  _WAIT_ROLE_CENSUS: Per-role CPU/run-queue census for the 60 s census line
+    (active only when ingest telemetry is on).
   _MEM_TELEM_RUNTIME: Best-effort inflight/submitted/queue snapshots for
     gated ``sync_timedb_mem_telemetry`` census lines.
   APPEND_FILL_SKIP_BUDGET: Max impossible append claims (missing path /
@@ -80,6 +86,7 @@ from hpcperfstats.dbload.lib import (
   sync_timedb_job_store as jq,
   sync_timedb_mem_telemetry as mem_telem,
   sync_timedb_progress_report as progress,
+  sync_timedb_wait_telemetry as wait_telem,
   sync_timedb_worker_memory as worker_memory,
 )
 from hpcperfstats.dbload.lib.print_utils import log_print
@@ -87,6 +94,7 @@ from hpcperfstats.dbload.lib.process_memory import (
   cgroup_admit_file_cache_ok,
   cgroup_admit_headroom_ok,
   effective_cgroup_admit_max_file_cache_mib,
+  effective_process_tree_rss_limit_mib,
   read_process_rss_bytes,
 )
 from hpcperfstats.dbload.lib.process_title import (
@@ -3203,6 +3211,7 @@ _FILL_BLOCK_KEYS = (
   "skip_budget_bytes",
   "skip_cgroup_headroom",
   "skip_file_cache_pressure",
+  "skip_rss_pressure",
   "skip_parse_queue_full",
   "band_cap",
   "submit_err",
@@ -3215,6 +3224,11 @@ _INGEST_MEM_BLOCK_STATE: dict[str, Any] = {
   "inflight_raw_mib": 0,
   "budget_mib": 0,
 }
+
+# RSS-pressure INFO is rate-limited per kind (hold / release) with suppressed_n.
+_RSS_PRESSURE_LOG_INTERVAL_S = 30.0
+_RSS_PRESSURE_STATE: dict[str, dict[str, Any]] = {"last": {}, "suppressed": {}}
+_WAIT_ROLE_CENSUS = wait_telem.ThreadRoleCensus()
 
 # Best-effort snapshots for mem telemetry census (updated by ingest fill).
 _MEM_TELEM_RUNTIME: dict[str, Any] = {
@@ -3279,6 +3293,92 @@ def _note_ingest_mem_block_state(
   )
   if isinstance(inflight_sizes, dict):
     _MEM_TELEM_RUNTIME["inflight_sizes"] = dict(inflight_sizes)
+
+
+def _rss_pressure_log(
+  kind: str,
+  detail: str,
+  *,
+  log_fn: Callable[..., None] | None = None,
+) -> None:
+  """
+  Emit one ``queue_orchestrator <kind>`` INFO, at most once per interval.
+
+  Suppressed emissions are counted and reported as ``suppressed_n=`` on the
+  next line of the same kind (``sync-timedb-anti-log-spam.mdc``).
+
+  Args:
+    kind (str): Token such as ``rss_hold`` or ``rss_release``.
+    detail (str): Space-separated ``key=value`` fields for the line.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _rss_pressure_log(
+    ...   "rss_hold", "rss_mib=1", log_fn=lambda *_a, **_k: None
+    ... )
+  """
+  now = time.monotonic()
+  last = _RSS_PRESSURE_STATE["last"].get(kind)
+  if last is not None and now - last < _RSS_PRESSURE_LOG_INTERVAL_S:
+    sup = _RSS_PRESSURE_STATE["suppressed"]
+    sup[kind] = int(sup.get(kind, 0)) + 1
+    return
+  _RSS_PRESSURE_STATE["last"][kind] = now
+  n = int(_RSS_PRESSURE_STATE["suppressed"].pop(kind, 0))
+  tail = f" suppressed_n={n}" if n else ""
+  _log(f"queue_orchestrator {kind} {detail}{tail}", log_fn=log_fn)
+
+
+def _rss_pressure_hold(
+  inflight: dict[str, Any],
+  *,
+  log_fn: Callable[..., None] | None = None,
+) -> bool:
+  """
+  Hold ingest fill while supervisor RSS is at the roof, then release once.
+
+  Ingest workers are threads in this process, so retiring workers frees
+  nothing. At or above ``effective_process_tree_rss_limit_mib()``: with ingest
+  in flight, return True so the coordinator skips fill and lets the work
+  drain; once ingest is idle, run one ``gc.collect()`` + ``malloc_trim`` and
+  return False so fill resumes (idle always admits, so retained heap that a
+  collect cannot lower cannot wedge ingest).
+
+  Args:
+    inflight (dict[str, Any]): Local ingest identity -> Future map.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    bool: True when this tick must not fill; False to fill as usual.
+
+  Examples:
+    >>> _rss_pressure_hold({"/a": 1})  # doctest: +SKIP
+    False
+  """
+  limit_mib = int(effective_process_tree_rss_limit_mib())
+  rss = int(read_process_rss_bytes() or 0)
+  if not worker_memory.ingest_rss_over_limit(rss, limit_mib):
+    return False
+  mib = 1024 * 1024
+  if inflight:
+    _rss_pressure_log(
+      "rss_hold",
+      f"rss_mib={rss // mib} limit_mib={limit_mib} inflight={len(inflight)}",
+      log_fn=log_fn,
+    )
+    return True
+  worker_memory.release_heap_under_pressure()
+  _rss_pressure_log(
+    "rss_release",
+    f"rss_mib_before={rss // mib} "
+    f"rss_mib_after={int(read_process_rss_bytes() or 0) // mib} "
+    f"limit_mib={limit_mib}",
+    log_fn=log_fn,
+  )
+  return False
 
 
 def note_mem_telem_runtime(**kwargs: Any) -> None:
@@ -5928,9 +6028,13 @@ def _ingest_coordinator_loop(
           "inflight_sizes": inflight_sizes,
           "log_fn": log_fn,
         }
-        did, hot_queued, zcard, _hot_n = _ingest_coordinator_fill_tick(
-          **fill_tick_kw,
-        )
+        # RSS roof: stop admitting, keep draining; release once when idle.
+        rss_hold = _rss_pressure_hold(ingest_inflight, log_fn=log_fn)
+        fill_stats["skip_rss_pressure"] += int(rss_hold)
+        if not rss_hold:
+          did, hot_queued, zcard, _hot_n = _ingest_coordinator_fill_tick(
+            **fill_tick_kw,
+          )
         fill_submitted += did
         did += _drain_ingest_ready(
           client,
@@ -5942,11 +6046,12 @@ def _ingest_coordinator_loop(
           archive_data_dir=directory,
           log_fn=log_fn,
         )
-        extra, hot_queued, zcard, _hot_n2 = _ingest_coordinator_fill_tick(
-          **fill_tick_kw,
-        )
-        did += extra
-        fill_submitted += extra
+        if not rss_hold:
+          extra, hot_queued, zcard, _hot_n2 = _ingest_coordinator_fill_tick(
+            **fill_tick_kw,
+          )
+          did += extra
+          fill_submitted += extra
         _MEM_TELEM_RUNTIME["admit_probes"] = int(
           fill_stats.get("admit_probes", 0) or 0
         )
@@ -6381,6 +6486,7 @@ def _reconstruct_coordinator_loop(
             total_completed = _TOTAL_COMPLETED
           from hpcperfstats.dbload.lib.sync_timedb_ingest_write_stage import (
             format_parse_put_block_census_token,
+            format_write_stage_census_token,
           )
 
           mem_tok = format_ingest_mem_block_census_suffix()
@@ -6388,12 +6494,23 @@ def _reconstruct_coordinator_loop(
           put_tok = format_parse_put_block_census_token()
           try:
             from hpcperfstats.dbload.lib.sync_timedb_codon_bridge import (
+              format_boehm_gc_census_token,
               format_codon_slot_occ_census_token,
             )
 
-            codon_tok = format_codon_slot_occ_census_token()
+            codon_tok = (
+              format_codon_slot_occ_census_token()
+              + format_boehm_gc_census_token()
+            )
           except Exception:
             codon_tok = ""
+          if wait_telem.enabled():
+            codon_tok += (
+              format_write_stage_census_token()
+              + wait_telem.format_system_wait_census_token()
+              + wait_telem.format_pygc_census_token()
+              + _WAIT_ROLE_CENSUS.format_token()
+            )
           _log(
             f"queue_orchestrator census {jq.format_queue_census(census)} total_ingested={total_ingested} total_completed={total_completed}{' ' + busy_tok if busy_tok else ''}{mem_tok} {writers_tok}{put_tok}{codon_tok}{census_tok}",
             log_fn=log_fn,

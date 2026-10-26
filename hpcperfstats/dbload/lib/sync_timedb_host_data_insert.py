@@ -21,6 +21,7 @@ import os
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from hpcperfstats.dbload.lib.date_utils import to_pydatetime_or_none
@@ -532,9 +533,86 @@ def _collapse_host_columnar_conflict_keys(
   }
 
 
+def _host_frame_to_copy_bytes_vectorized(frame: pd.DataFrame) -> bytes | None:
+  """
+  Encode a host frame to COPY text column-wise, byte-identical to the per-cell path.
+
+  Text columns are factorized so ``_host_frame_cell`` / ``_sql_literal`` run once
+  per unique value; ``time`` is formatted with NumPy; floats use ``repr``
+  (NaN becomes ``\\N``). Any column that is not plainly typed (NaT or NaN
+  time, non-string text, absent column) makes this return ``None`` so the
+  caller falls back to the exact per-cell encoder.
+
+  Args:
+    frame (pd.DataFrame): Slice of parsed host stats.
+
+  Returns:
+    bytes | None: UTF-8 COPY body (``b""`` for an empty frame), or ``None``
+      when the frame needs the per-cell path.
+
+  Examples:
+    >>> _host_frame_to_copy_bytes_vectorized(pd.DataFrame())
+    b''
+  """
+  if frame.empty:
+    return b""
+  if any(c not in frame.columns for c in HOST_DATA_COPY_COLUMNS):
+    return None
+  time_s = frame["time"]
+  if pd.api.types.is_datetime64_any_dtype(time_s):
+    if time_s.isna().any():
+      return None
+    utc = time_s.dt.tz_convert("UTC") if time_s.dt.tz is not None else time_s
+    micros = utc.dt.tz_localize(None).to_numpy().astype("datetime64[us]")
+  elif pd.api.types.is_float_dtype(time_s) or pd.api.types.is_integer_dtype(
+    time_s
+  ):
+    secs = time_s.to_numpy(dtype="float64")
+    if np.isnan(secs).any():
+      return None
+    micros = np.rint(secs * 1e6).astype("int64").astype("datetime64[us]")
+  else:
+    return None
+  # ``datetime.isoformat`` omits the fraction for whole seconds.
+  whole = micros.astype("datetime64[s]").astype("datetime64[us]") == micros
+  stamp = np.where(
+    whole,
+    np.datetime_as_string(micros, unit="s"),
+    np.datetime_as_string(micros, unit="us"),
+  )
+  cols: dict[str, list[str]] = {"time": np.char.add(stamp, "+00:00").tolist()}
+  for col in ("host", "jid", "type", "dev", "event", "unit"):
+    series = frame[col]
+    if pd.api.types.infer_dtype(series, skipna=True) not in ("string", "empty"):
+      return None
+    codes, uniques = pd.factorize(series, use_na_sentinel=False)
+    lit = np.empty(len(uniques), dtype=object)
+    for i, u in enumerate(uniques):
+      lit[i] = _sql_literal(_host_frame_cell(col, u))
+    cols[col] = lit.take(codes).tolist()
+  for col in ("value", "delta", "arc"):
+    series = frame[col]
+    if not pd.api.types.is_float_dtype(series) and pd.api.types.infer_dtype(
+      series, skipna=True
+    ) not in ("floating", "empty", "integer", "mixed-integer-float"):
+      return None
+    arr = pd.to_numeric(series, errors="coerce").to_numpy(dtype="float64")
+    text = list(map(repr, arr.tolist()))
+    for i in np.flatnonzero(np.isnan(arr)).tolist():
+      text[i] = "\\N"
+    cols[col] = text
+  ordered = [cols[c] for c in HOST_DATA_COPY_COLUMNS]
+  return ("\n".join(map("\t".join, zip(*ordered, strict=True))) + "\n").encode(
+    "utf-8"
+  )
+
+
 def _host_frame_to_copy_bytes(frame: pd.DataFrame) -> bytes:
   """
   Serialize a host dataframe slice to COPY text.
+
+  Tries ``_host_frame_to_copy_bytes_vectorized`` first and falls back to the
+  per-cell encoder when the frame is not plainly typed.
 
   Args:
     frame (pd.DataFrame): Slice of parsed host stats.
@@ -548,6 +626,9 @@ def _host_frame_to_copy_bytes(frame: pd.DataFrame) -> bytes:
   """
   if frame.empty:
     return b""
+  fast = _host_frame_to_copy_bytes_vectorized(frame)
+  if fast is not None:
+    return fast
   n = len(frame)
   columns = {
     col: frame[col].tolist() if col in frame.columns else [None] * n
@@ -699,9 +780,11 @@ def bulk_insert_host_rows(
       return
   elif not rows:
     return
-  _write_host_copy_payload(
-    host_rows_to_copy_bytes(rows, copy_unique=copy_unique)
-  )
+  from hpcperfstats.dbload import sync_timedb as st
+
+  with st._held_ingest_write_phase("copy_encode_s"):
+    payload = host_rows_to_copy_bytes(rows, copy_unique=copy_unique)
+  _write_host_copy_payload(payload)
 
 
 def bulk_insert_host_data_ignore_conflicts(objs: Sequence[Any]) -> None:

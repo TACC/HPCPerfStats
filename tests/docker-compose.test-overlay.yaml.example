@@ -21,6 +21,10 @@ services:
       - test_media_ram:/home/hpcperfstats/media-ram
       - redis_runtime:/run/redis
   pipeline:
+    # Test-only cgroup memory.max for the pipeline container (0 = unlimited).
+    # e.g. HPCPERFSTATS_TEST_PIPELINE_MEM=128g makes the sync_process_tree_rss_*
+    # roof and the ingest RSS-pressure gate active in sync_timedb benchmark soaks.
+    mem_limit: ${HPCPERFSTATS_TEST_PIPELINE_MEM:-0}
     volumes:
       - test_hpcperfstatsdata:/hpcperfstats/
       - test_ssh_keys:/hpcperfstats/.ssh/:ro

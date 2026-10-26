@@ -39,6 +39,8 @@ extern void feed_and_collapse_fingerprint_c(
   double *out_proc_rows
 );
 
+extern void codon_exclude_set_c(long slot, long n, char **ptr);
+
 extern void parse_stats_lines_codon_run_c(
   long slot,
   long n,
@@ -1393,17 +1395,43 @@ finish_slot_result(long slot, PyObject *stats, PyObject *procs)
   }
 }
 
+/* Replace the slot's excluded event-type list: NULL/None clears it, a list of
+ * str sets it, anything else raises TypeError before any parse starts. */
+static int
+apply_exclude_list(long slot, PyObject *exclude)
+{
+  if (exclude == NULL || exclude == Py_None) {
+    codon_exclude_set_c(slot, 0, NULL);
+    return 0;
+  }
+  if (!PyList_Check(exclude)) {
+    PyErr_SetString(PyExc_TypeError, "exclude must be a list of str or None");
+    return -1;
+  }
+  char **ptrs = NULL;
+  Py_ssize_t n = 0;
+  if (fill_char_ptrs(exclude, &ptrs, &n) < 0) {
+    return -1;
+  }
+  codon_exclude_set_c(slot, (long)n, ptrs);
+  free_char_ptrs(ptrs, n);
+  return 0;
+}
+
 static PyObject *
 parse_stats_lines_codon_py(PyObject *self, PyObject *args, PyObject *kwargs)
 {
-  static char *kwlist[] = {"lines", "slot", "carry_raw", "carry_arc", NULL};
+  static char *kwlist[] = {
+    "lines", "slot", "carry_raw", "carry_arc", "exclude", NULL
+  };
   PyObject *list_obj = NULL;
   long slot = 0;
   PyObject *carry_raw = NULL;
   PyObject *carry_arc = NULL;
+  PyObject *exclude = NULL;
   if (!PyArg_ParseTupleAndKeywords(
-        args, kwargs, "O!|lOO", kwlist,
-        &PyList_Type, &list_obj, &slot, &carry_raw, &carry_arc
+        args, kwargs, "O!|lOOO", kwlist,
+        &PyList_Type, &list_obj, &slot, &carry_raw, &carry_arc, &exclude
       )) {
     return NULL;
   }
@@ -1412,6 +1440,9 @@ parse_stats_lines_codon_py(PyObject *self, PyObject *args, PyObject *kwargs)
     return NULL;
   }
 
+  if (apply_exclude_list(slot, exclude) < 0) {
+    return NULL;
+  }
   /* Codon slot carry never leaks across unrelated calls; caller supplies
    * the full carry state to seed (empty dict/None for a fresh start). */
   codon_carry_clear_c(slot);
@@ -1438,20 +1469,25 @@ static PyObject *
 parse_stats_file_codon_open_py(PyObject *self, PyObject *args, PyObject *kwargs)
 {
   static char *kwlist[] = {
-    "path", "flush_max_bytes", "resume_byte", "slot", NULL
+    "path", "flush_max_bytes", "resume_byte", "slot", "exclude", NULL
   };
   PyObject *path_obj = NULL;
   long flush_max_bytes = 0;
   long resume_byte = 0;
   long slot = 0;
+  PyObject *exclude = NULL;
   if (!PyArg_ParseTupleAndKeywords(
-        args, kwargs, "O!|lll", kwlist,
-        &PyUnicode_Type, &path_obj, &flush_max_bytes, &resume_byte, &slot
+        args, kwargs, "O!|lllO", kwlist,
+        &PyUnicode_Type, &path_obj, &flush_max_bytes, &resume_byte, &slot,
+        &exclude
       )) {
     return NULL;
   }
   if (slot < 0 || slot >= MAX_CODON_SLOTS) {
     PyErr_SetString(PyExc_ValueError, "codon slot out of range");
+    return NULL;
+  }
+  if (apply_exclude_list(slot, exclude) < 0) {
     return NULL;
   }
   char *path_owned = NULL;

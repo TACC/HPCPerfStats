@@ -301,9 +301,30 @@ if [[ "$LOADED48" -eq 1 ]]; then
   # Adds parse-stage and write-phase tokens to the child log for the time budget.
   [[ -n "${HPCPERFSTATS_SYNC_INGEST_TELEMETRY:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_SYNC_INGEST_TELEMETRY=${HPCPERFSTATS_SYNC_INGEST_TELEMETRY}")
-  # Test-only override of INI sync_ingest_malloc_trim_after_file for the soak child (no|off).
+  # Test-only override of INI sync_ingest_malloc_trim_after_file for the soak child (yes|no).
   [[ -n "${HPCPERFSTATS_LOADED48_MALLOC_TRIM:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_MALLOC_TRIM=${HPCPERFSTATS_LOADED48_MALLOC_TRIM}")
+  # Test-only override of INI sync_codon_worker_processes (Codon file-parse processes).
+  [[ -n "${HPCPERFSTATS_LOADED48_CODON_WORKERS:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_CODON_WORKERS=${HPCPERFSTATS_LOADED48_CODON_WORKERS}")
+  # Test-only override of INI sync_timedb_mem_telemetry: inflight raw bytes vs RSS, anon/file in the child log.
+  [[ -n "${HPCPERFSTATS_LOADED48_MEM_TELEMETRY:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_MEM_TELEMETRY=${HPCPERFSTATS_LOADED48_MEM_TELEMETRY}")
+  # Test-only override of INI sync_process_tree_rss_limit_cgroup_pct (1-100); needs
+  # HPCPERFSTATS_TEST_PIPELINE_MEM (compose overlay mem_limit) so memory.max is set.
+  [[ -n "${HPCPERFSTATS_LOADED48_RSS_LIMIT_PCT:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_RSS_LIMIT_PCT=${HPCPERFSTATS_LOADED48_RSS_LIMIT_PCT}")
+  # Test-only overrides of INI sync_ingest_write_pool_processes / sync_ingest_parse_queue_max
+  # (1-4096): size the write stage to find the write bottleneck without an image rebuild.
+  [[ -n "${HPCPERFSTATS_LOADED48_WRITE_POOL:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_WRITE_POOL=${HPCPERFSTATS_LOADED48_WRITE_POOL}")
+  # Test-only: "<epoch_min>:<epoch_max>" pre-creates daily host_data chunks before ingest.
+  [[ -n "${HPCPERFSTATS_LOADED48_PRECREATE_CHUNKS:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_PRECREATE_CHUNKS=${HPCPERFSTATS_LOADED48_PRECREATE_CHUNKS}")
+  [[ -n "${HPCPERFSTATS_LOADED48_PARSE_QUEUE:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_PARSE_QUEUE=${HPCPERFSTATS_LOADED48_PARSE_QUEUE}")
+  [[ -n "${HPCPERFSTATS_LOADED48_BIG_CLONE_CAP:-}" ]] && \
+    RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_BIG_CLONE_CAP=${HPCPERFSTATS_LOADED48_BIG_CLONE_CAP}")
   # Opt-in GC pause probe for the soak child: trace | off (test hosts only).
   [[ -n "${HPCPERFSTATS_LOADED48_GC_MODE:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_GC_MODE=${HPCPERFSTATS_LOADED48_GC_MODE}")

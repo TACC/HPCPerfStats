@@ -369,6 +369,7 @@ def feed_lines(
 def feed_lines_full(
   lines: list[str],
   start_idx: int = 0,
+  exclude_types: list[str] = [],  # noqa: B006 (Codon: never mutated)
 ) -> tuple[
   list[float],
   list[str],
@@ -392,7 +393,13 @@ def feed_lines_full(
   Marks are ``dict[str, str]`` records (``kind`` ``jobs``/``affinity``) with
   ``time``/``host`` bound on the next digit sample header. Unbound trailing
   marks (no digit after) are omitted from the returned list.
+
+  ``exclude_types`` mirrors ``IncrementalStatsParser.exclude_types_list``: a
+  data line whose first token is listed is skipped before any host/proc work.
   """
+  excl: set[str] = set()
+  for et in exclude_types:
+    excl.add(et)
   insert = False
   has_tags = False
   tag_time = 0.0
@@ -477,6 +484,8 @@ def feed_lines_full(
       if len(parts) < 2:
         continue
       typ = parts[0]
+      if typ in excl:
+        continue
       rest = parts[1:]
       if not rest:
         continue
@@ -1909,6 +1918,7 @@ def feed_delta_collapse_arc(
   carry_raw: dict[str, list[float]],
   carry_arc: dict[str, float],
   start_idx: int = 0,
+  exclude_types: list[str] = [],  # noqa: B006 (Codon: never mutated)
 ) -> tuple[
   tuple[
     list[float | None],
@@ -1962,7 +1972,7 @@ def feed_delta_collapse_arc(
     proc_fields,
     proc_device,
     marks,
-  ) = feed_lines_full(lines, start_idx)
+  ) = feed_lines_full(lines, start_idx, exclude_types)
 
   (
     d_time,

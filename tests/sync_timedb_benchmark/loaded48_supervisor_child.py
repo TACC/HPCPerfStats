@@ -121,6 +121,15 @@ def main() -> int:
   rc = 0
   try:
     database_startup()
+    from tests.sync_timedb_benchmark.screening_runner import (
+      precreate_host_data_chunks,
+    )
+
+    _n = precreate_host_data_chunks(
+      os.environ.get("HPCPERFSTATS_LOADED48_PRECREATE_CHUNKS", "")
+    )
+    if _n:
+      print("loaded48 precreated host_data chunks days=%d" % _n, flush=True)
     run_sync_timedb_supervisor_from_parsed(False, None, None)
   except BaseException:
     rc = 1

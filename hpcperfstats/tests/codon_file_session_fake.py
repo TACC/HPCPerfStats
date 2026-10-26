@@ -24,6 +24,7 @@ def attach_parse_stats_file_codon_fake(
     flush_max_bytes: int,
     resume_byte: int = 0,
     slot: int = 0,
+    exclude: list[str] | None = None,
   ) -> bool:
     from hpcperfstats.dbload.lib.codon_file_bundles import (
       iter_codon_flush_line_bundles,
@@ -43,6 +44,7 @@ def attach_parse_stats_file_codon_fake(
       "it": it,
       "carry_raw": {},
       "carry_arc": {},
+      "exclude": list(exclude) if exclude else [],
     }
     return True
 

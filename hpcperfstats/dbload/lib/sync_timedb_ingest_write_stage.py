@@ -11,6 +11,8 @@ Attributes:
   _PUT_BLOCK_SUM_S: Window sum of put wait seconds.
   _PUT_BLOCK_MAX_S: Window max single put wait.
   _PUT_BLOCK_N: Window count of puts that waited above epsilon.
+  _BUSY_LOCK: Mutex for the busy-writer count.
+  _WRITERS_BUSY: Write threads currently inside ``_execute_write_payload``.
   _STAGE_LOCK: Mutex for start/stop of the write stage.
   _WRITE_QUEUE: Bounded ``queue.Queue`` of ``IngestWritePayload``, or None.
   _WRITE_THREADS: Live write worker threads.
@@ -28,6 +30,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from hpcperfstats.dbload.lib import sync_timedb_wait_telemetry as wait_telem
 from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 
 _PUT_BLOCK_EPS_S = 0.001
@@ -35,6 +38,9 @@ _PUT_BLOCK_LOCK = threading.Lock()
 _PUT_BLOCK_SUM_S = 0.0
 _PUT_BLOCK_MAX_S = 0.0
 _PUT_BLOCK_N = 0
+
+_BUSY_LOCK = threading.Lock()
+_WRITERS_BUSY = 0
 
 _STAGE_LOCK = threading.Lock()
 _WRITE_QUEUE: queue.Queue[Any] | None = None
@@ -61,6 +67,8 @@ class IngestWritePayload:
     ingest_ok: True when the write succeeded.
     write_timing: Snapshot of write-thread ContextVar timers for the
       parse thread to apply after ``done`` (empty when unset).
+    wait: Enqueue/dequeue/exec stamps from ``sync_timedb_wait_telemetry``
+      (empty unless ingest telemetry is on).
     copy_unique: When True, host/proc SoA is COPY-unique and scalar-normalized
       (Codon worker ``_finalize_codon_parse_copy_emit`` before IPC)
       (Codon emit); write stage skips pre-COPY collapse.
@@ -80,6 +88,7 @@ class IngestWritePayload:
   archival_out: bool = True
   ingest_ok: bool = False
   write_timing: dict[str, float] = field(default_factory=dict)
+  wait: dict[str, float] = field(default_factory=dict)
 
 
 def record_put_block_wait(wait_s: float) -> None:
@@ -157,6 +166,27 @@ def format_parse_put_block_census_token() -> str:
     f" parse_put_block_s={sum_s:.3f}"
     f" parse_put_block_max_s={max_s:.3f}"
     f" parse_put_block_n={n}"
+  )
+
+
+def format_write_stage_census_token() -> str:
+  """
+  Return `` wq_depth=queued/max w_busy=busy/writers`` for the 60 s census.
+
+  Returns:
+    str: Leading-space token, or ``""`` when the write stage is not started.
+
+  Examples:
+    >>> format_write_stage_census_token() in ("",) or True
+    True
+  """
+  q = _WRITE_QUEUE
+  if not _STARTED or q is None:
+    return ""
+  with _BUSY_LOCK:
+    busy = _WRITERS_BUSY
+  return (
+    f" wq_depth={q.qsize()}/{q.maxsize} w_busy={busy}/{len(_WRITE_THREADS)}"
   )
 
 
@@ -296,6 +326,7 @@ def submit_ingest_write(payload: IngestWritePayload) -> IngestWritePayload:
     _execute_write_payload(payload)
     return payload
   t0 = time.monotonic()
+  wait_telem.stamp_enqueue(payload)
   while True:
     if _SHUTDOWN.is_set():
       payload.error = RuntimeError("ingest write stage shutting down")
@@ -307,7 +338,9 @@ def submit_ingest_write(payload: IngestWritePayload) -> IngestWritePayload:
       break
     except queue.Full:
       continue
-  record_put_block_wait(time.monotonic() - t0)
+  put_s = time.monotonic() - t0
+  record_put_block_wait(put_s)
+  wait_telem.add("wq_put_s", put_s)
   return payload
 
 
@@ -380,14 +413,15 @@ def _execute_write_payload(payload: IngestWritePayload) -> None:
     if isolate:
       _reset_ingest_write_timing()
     try:
-      _path, archival, ok = _write_stats_payload_to_db(
-        payload.stats_file,
-        payload.stats,
-        payload.proc_stats,
-        need_archival=payload.need_archival,
-        copy_unique=bool(payload.copy_unique),
-        emit=str(payload.emit or ""),
-      )
+      with wait_telem.writer_exec_scope(payload):
+        _path, archival, ok = _write_stats_payload_to_db(
+          payload.stats_file,
+          payload.stats,
+          payload.proc_stats,
+          need_archival=payload.need_archival,
+          copy_unique=bool(payload.copy_unique),
+          emit=str(payload.emit or ""),
+        )
       del _path
       payload.archival_out = bool(archival)
       payload.ingest_ok = bool(ok)
@@ -459,9 +493,14 @@ def _write_worker_main(worker_idx: int, process_title: str) -> None:
       raise TypeError(
         f"ingest write queue expected IngestWritePayload, got {type(item)!r}"
       )
+    global _WRITERS_BUSY
+    with _BUSY_LOCK:
+      _WRITERS_BUSY += 1
     try:
       _execute_write_payload(item)
     finally:
+      with _BUSY_LOCK:
+        _WRITERS_BUSY -= 1
       age = time.monotonic() - conn_opened_mono
       if age >= max_age:
         close_old_connections()

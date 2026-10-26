@@ -209,6 +209,15 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Codon stripe slots as fraction of parse pool (default 0.5 → N=32 when parse=64).
 # sync_codon_context_pool_fraction = 1.0
 
+# Codon file-parse worker processes (one Codon runtime/GC each; default 64;
+# 0 = max(1, effective_cores // 4); always capped by sync_ingest_pool_processes).
+# ~1 GiB peak RSS per worker with the default 1 MiB parse window.
+# sync_codon_worker_processes = 64
+
+# Codon worker RSS in MiB above which the worker is replaced between files
+# (default 1536). Boehm's heap only grows; this bounds total worker memory.
+# sync_codon_worker_recycle_rss_mib = 1536
+
 # Ingest write-pool width / max concurrent ingest DB sessions (default 0 = max(1, parse//4)).
 # sync_ingest_write_pool_processes = 0
 
@@ -217,6 +226,10 @@ daily_archive_dir = %(data_dir)s/daily_archive
 
 # Soft max MiB per streaming parse→write flush chunk (default 512; sample-boundary overage OK).
 # sync_ingest_parse_flush_max_mib = 512
+
+# Codon file-session flush window cap in MiB (default 1); effective window is
+# min(this, sync_ingest_parse_flush_max_mib). Large windows slow Codon's GC.
+# sync_codon_parse_flush_max_mib = 1
 
 # Concurrent daily-tar append slots / archive spawn pool size (default 4).
 # sync_archive_pool_processes = 4

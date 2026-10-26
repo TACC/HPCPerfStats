@@ -373,13 +373,137 @@ def test_loaded48_conf_overrides_from_env():
 
   assert loaded48_conf_overrides({}) == {}
   assert loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_MALLOC_TRIM": ""}) == {}
-  assert loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_MALLOC_TRIM": "yes"}) == {}
-  ov = loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_MALLOC_TRIM": "no"})
+  ov =loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_MALLOC_TRIM": "no"})
   assert list(ov) == ["get_sync_ingest_malloc_trim_after_file"]
   assert ov["get_sync_ingest_malloc_trim_after_file"]() is False
   # case/whitespace tolerant, accepts the other falsy spellings
   ov2 = loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_MALLOC_TRIM": " Off "})
   assert ov2["get_sync_ingest_malloc_trim_after_file"]() is False
+
+
+def test_loaded48_conf_overrides_malloc_trim_yes_forces_release_on():
+  """``yes`` forces release on so the benchmark can A/B against the default."""
+  from tests.sync_timedb_benchmark.screening_runner import (
+      loaded48_conf_overrides,
+  )
+
+  for spelling in ("yes", " On ", "1", "TRUE"):
+    ov = loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_MALLOC_TRIM": spelling})
+    assert list(ov) == ["get_sync_ingest_malloc_trim_after_file"], spelling
+    assert ov["get_sync_ingest_malloc_trim_after_file"]() is True
+  assert loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_MALLOC_TRIM": "maybe"}) == {}
+
+
+def test_loaded48_conf_overrides_mem_telemetry_opt_in():
+  """Soaks can turn on ``sync_timedb_mem_telemetry`` (inflight raw vs RSS); off by default."""
+  from tests.sync_timedb_benchmark.screening_runner import (
+      loaded48_conf_overrides,
+  )
+
+  assert loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_MEM_TELEMETRY": ""}) == {}
+  assert loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_MEM_TELEMETRY": "no"}) == {}
+  ov = loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_MEM_TELEMETRY": " Yes "})
+  assert list(ov) == ["get_sync_timedb_mem_telemetry"]
+  assert ov["get_sync_timedb_mem_telemetry"]() is True
+  both = loaded48_conf_overrides(
+      {
+          "HPCPERFSTATS_LOADED48_MEM_TELEMETRY": "1",
+          "HPCPERFSTATS_LOADED48_MALLOC_TRIM": "no",
+      },
+  )
+  assert sorted(both) == [
+      "get_sync_ingest_malloc_trim_after_file",
+      "get_sync_timedb_mem_telemetry",
+  ]
+
+
+def test_loaded48_conf_overrides_rss_limit_pct():
+  """Soaks can lower the tree-RSS roof % so the pressure gate trips."""
+  from tests.sync_timedb_benchmark.screening_runner import (
+      loaded48_conf_overrides,
+  )
+
+  name = "get_sync_process_tree_rss_limit_cgroup_pct"
+  for bad in ("", "abc", "0", "-5", "101"):
+    assert loaded48_conf_overrides(
+        {"HPCPERFSTATS_LOADED48_RSS_LIMIT_PCT": bad},
+    ) == {}, bad
+  ov = loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_RSS_LIMIT_PCT": " 30 "})
+  assert list(ov) == [name]
+  assert ov[name]() == 30
+
+
+def test_loaded48_conf_overrides_write_pool_and_parse_queue():
+  """Soaks can size the writer pool / parse queue to find the write bottleneck."""
+  from tests.sync_timedb_benchmark.screening_runner import (
+      loaded48_conf_overrides,
+  )
+
+  pool = "get_sync_ingest_write_pool_processes"
+  queue = "get_sync_ingest_parse_queue_max"
+  for bad in ("", "abc", "0", "-5", "4097"):
+    assert loaded48_conf_overrides(
+        {"HPCPERFSTATS_LOADED48_WRITE_POOL": bad,
+         "HPCPERFSTATS_LOADED48_PARSE_QUEUE": bad},
+    ) == {}, bad
+  ov = loaded48_conf_overrides(
+      {"HPCPERFSTATS_LOADED48_WRITE_POOL": " 24 ",
+       "HPCPERFSTATS_LOADED48_PARSE_QUEUE": "48"},
+  )
+  assert sorted(ov) == [queue, pool]
+  assert ov[pool]() == 24
+  assert ov[queue]() == 48
+
+
+def test_plant_loaded48_big_clone_cap_limits_big_templates(tmp_path):
+  """A capped big template is cloned at most N times; small ones keep cycling."""
+  from tests.sync_timedb_benchmark.screening_runner import (
+      plant_loaded48_queue_padding,
+  )
+
+  hosts = ["benchhost0000.cluster_name.domain.edu"]
+  tmpl_dir = tmp_path / "tmpl"
+  tmpl_dir.mkdir()
+  small = tmpl_dir / "1700000000"
+  big = tmpl_dir / "1700000001"
+  small.write_bytes(b"s")
+  big.write_bytes(b"b" * 64)
+  counts: dict = {}
+  n = plant_loaded48_queue_padding(
+      tmp_path / "a", hosts, count=6, templates=[small, big],
+      big_clone_cap=1, big_bytes=32, clone_counts=counts,
+  )
+  files = sorted((tmp_path / "a" / hosts[0]).iterdir())
+  sizes = [f.stat().st_size for f in files]
+  assert n == 6
+  assert sizes.count(64) == 1
+  assert sizes.count(1) == 5
+  assert counts[big] == 1
+
+
+def test_plant_loaded48_big_clone_cap_only_big_plants_stops(tmp_path):
+  """When every template is an exhausted big one, nothing more is planted."""
+  from tests.sync_timedb_benchmark.screening_runner import (
+      plant_loaded48_queue_padding,
+  )
+
+  hosts = ["benchhost0000.cluster_name.domain.edu"]
+  big = tmp_path / "1700000001"
+  big.write_bytes(b"b" * 64)
+  counts: dict = {}
+  kw = dict(templates=[big], big_clone_cap=1, big_bytes=32, clone_counts=counts)
+  assert plant_loaded48_queue_padding(tmp_path / "a", hosts, count=3, **kw) == 1
+  assert plant_loaded48_queue_padding(tmp_path / "a", hosts, count=3, **kw) == 0
+
+
+def test_loaded48_big_clone_cap_env_parsing():
+  """The cap env is positive-int only; anything else means unlimited."""
+  from tests.sync_timedb_benchmark.screening_runner import loaded48_big_clone_cap
+
+  assert loaded48_big_clone_cap({}) is None
+  for bad in ("", "abc", "0", "-1"):
+    assert loaded48_big_clone_cap({"HPCPERFSTATS_LOADED48_BIG_CLONE_CAP": bad}) is None
+  assert loaded48_big_clone_cap({"HPCPERFSTATS_LOADED48_BIG_CLONE_CAP": " 2 "}) == 2
 
 
 def test_install_gc_probe_modes_trace_and_off():
@@ -1007,3 +1131,72 @@ def test_workflow_contention_flag_and_inner_target():
   ).read_text(encoding="utf-8")
   assert "test_contention_ab.py" in inner
   assert "HPCPERFSTATS_SYNC_TIMEDB_CONTENTION" in inner
+
+
+def test_loaded48_conf_overrides_codon_workers():
+  """``HPCPERFSTATS_LOADED48_CODON_WORKERS`` overrides the Codon worker count."""
+  from tests.sync_timedb_benchmark.screening_runner import (
+    loaded48_conf_overrides,
+  )
+
+  ov = loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_CODON_WORKERS": "64"})
+  assert ov["get_sync_codon_worker_processes"]() == 64
+  assert loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_CODON_WORKERS": "x"}) == {}
+
+
+def test_plant_padding_gives_each_clone_a_unique_hostname(tmp_path):
+  """Clones of one template must not share (host, time) keys (ON CONFLICT stalls)."""
+  from tests.sync_timedb_benchmark.screening_runner import (
+    plant_loaded48_queue_padding,
+  )
+
+  tmpl = tmp_path / "tmpl"
+  tmpl.write_text(
+    "$hpcperfstats 3.0\n$hostname hostA.c.d.edu\n!cpu user,W=64,U=1\n"
+    "1700000000.5 - hostA.c.d.edu\ncpu 0 @full 1.0\n",
+    encoding="utf-8",
+  )
+  arc = tmp_path / "arc"
+  assert plant_loaded48_queue_padding(arc, ["h1"], count=3, templates=[tmpl]) == 3
+  texts = [p.read_text() for p in sorted((arc / "h1").iterdir())]
+  hosts = [t.split("$hostname ")[1].split()[0] for t in texts]
+  assert len(set(hosts)) == 3 and all(h.endswith(".c.d.edu") for h in hosts)
+  for t, h in zip(texts, hosts, strict=True):
+    assert "1700000000.5 - " + h in t and "hostA.c.d.edu" not in t
+
+
+def test_plant_padding_without_hostname_line_copies_verbatim(tmp_path):
+  from tests.sync_timedb_benchmark.screening_runner import (
+    plant_loaded48_queue_padding,
+  )
+
+  tmpl = tmp_path / "tmpl"
+  tmpl.write_text("!cpu user\n", encoding="utf-8")
+  arc = tmp_path / "arc"
+  assert plant_loaded48_queue_padding(arc, ["h1"], count=1, templates=[tmpl]) == 1
+  assert next((arc / "h1").iterdir()).read_text() == "!cpu user\n"
+
+
+def test_plant_padding_publishes_clone_atomically(tmp_path):
+  """The clone appears only when complete, via a rename from outside the host dir."""
+  from tests.sync_timedb_benchmark.screening_runner import (
+    plant_loaded48_queue_padding,
+  )
+
+  tmpl = tmp_path / "tmpl"
+  tmpl.write_text("$hostname hostA.d\n1.5 - hostA.d\n", encoding="utf-8")
+  arc = tmp_path / "arc"
+  assert plant_loaded48_queue_padding(arc, ["h1"], count=2, templates=[tmpl]) == 2
+  assert sorted(p.name for p in arc.iterdir()) == [".plant_tmp", "h1"]
+  assert list((arc / ".plant_tmp").iterdir()) == []
+  assert all(p.stat().st_size > 0 for p in (arc / "h1").iterdir())
+
+
+def test_precreate_chunks_ignores_empty_and_malformed_spec():
+  from tests.sync_timedb_benchmark.screening_runner import (
+    precreate_host_data_chunks,
+  )
+
+  assert precreate_host_data_chunks("") == 0
+  assert precreate_host_data_chunks("abc:def") == 0
+  assert precreate_host_data_chunks("1700000000") == 0

@@ -30,6 +30,7 @@ Attributes:
   _codon_atexit_registered: Whether ``atexit`` kill-only shutdown is registered.
   _codon_load_lock: Serializes the first Codon import and bank warmup.
   _gc_lib: Loaded ``libgc`` handle after ``GC_allow_register_threads``.
+  _boehm_timing_started: True once Boehm's own collection timer was started.
   _gc_tls: Per-thread Boehm registration flag.
   _sticky_codon_slot: Ingest thread id -> sticky slot index.
 """
@@ -46,12 +47,15 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
+from hpcperfstats.dbload.lib import sync_timedb_wait_telemetry as wait_telem
 from hpcperfstats.dbload.lib.codon_process_worker import (
   _RESP_HDR,
   decode_response,
+  encode_parse_file_request,
   encode_request,
 )
 from hpcperfstats.dbload.lib.print_utils import log_print
@@ -283,6 +287,31 @@ def codon_slot_occupancy() -> tuple[int, int]:
     return int(_slot_held), codon_context_pool_size()
 
 
+def format_boehm_gc_census_token() -> str:
+  """
+  Return Boehm GC census tokens from the loaded Codon runtime.
+
+  Starts the collector's own timing once so ``boehm_gc_ms`` is meaningful.
+
+  Returns:
+    str: Leading-space tokens, or empty when telemetry is off or Codon's
+      runtime is not loaded.
+
+  Examples:
+    >>> isinstance(format_boehm_gc_census_token(), str)
+    True
+  """
+  global _boehm_timing_started
+  if _gc_lib is None or not wait_telem.enabled():
+    return ""
+  if not _boehm_timing_started:
+    start = getattr(_gc_lib, "GC_start_performance_measurement", None)
+    if start is not None:
+      start()
+    _boehm_timing_started = True
+  return wait_telem.format_boehm_census_token(_gc_lib)
+
+
 def format_codon_slot_occ_census_token() -> str:
   """
   Return greppable `` codon_slot_occ=held/N`` (leading space) or empty.
@@ -330,10 +359,12 @@ def _call_with_slot_lock(fn: Callable[..., Any]) -> Any:
     True
   """
   global _slot_held
+  wait_t0 = time.perf_counter()
   _codon_gc_enter()
   slot = _slot_for_thread()
   lock = _slot_locks[slot]
   lock.acquire()
+  wait_telem.add("slot_wait_s", time.perf_counter() - wait_t0)
   with _slot_held_lock:
     _slot_held += 1
   try:
@@ -370,6 +401,29 @@ def _use_codon_process_pool() -> bool:
   return os.path.isfile(so_path)
 
 
+def _use_codon_file_process_pool() -> bool:
+  """
+  Return True when file-owned Codon parses run in worker processes.
+
+  Threads sharing one Codon runtime contend on Boehm's allocation lock (8
+  threads parse slower than 1), so production FT + baked ``.so`` gives each
+  concurrent file its own process. Host fakes (``CODON_EXT_ENV``) stay
+  in-process.
+
+  Returns:
+    bool: True for FT builds with the baked ``.so`` and no test module override.
+
+  Examples:
+    >>> isinstance(_use_codon_file_process_pool(), bool)
+    True
+  """
+  if os.environ.get(CODON_EXT_ENV) or not _is_free_threaded_build():
+    return False
+  return os.path.isfile(
+    os.path.join(CODON_PARSE_DIR, "hpcperfstats_codon_parse.so")
+  )
+
+
 def _spawn_codon_worker() -> dict[str, Any]:
   """
   Start one Codon stdio server process (``codon_process_worker``).
@@ -383,6 +437,8 @@ def _spawn_codon_worker() -> dict[str, Any]:
   """
   env = os.environ.copy()
   env.setdefault("OMP_NUM_THREADS", "1")
+  if wait_telem.enabled():
+    env["HPCPERFSTATS_CODON_WORKER_MEM"] = "1"
   env["PYTHONPATH"] = f"{CODON_PARSE_DIR}:{env.get('PYTHONPATH', '')}".rstrip(
     ":"
   )
@@ -390,16 +446,14 @@ def _spawn_codon_worker() -> dict[str, Any]:
     [sys.executable, "-m", "hpcperfstats.dbload.lib.codon_process_worker"],
     stdin=subprocess.PIPE,
     stdout=subprocess.PIPE,
-    stderr=subprocess.DEVNULL,
     env=env,
-    bufsize=0,
   )
   return {"proc": proc, "lock": threading.Lock(), "busy": False}
 
 
 def _get_codon_pool() -> list[dict[str, Any]]:
   """
-  Lazily start ``N`` Codon Popen stdio servers.
+  Lazily start the configured number of Codon Popen stdio servers.
 
   Returns:
     list[dict[str, Any]]: Worker records.
@@ -411,7 +465,11 @@ def _get_codon_pool() -> list[dict[str, Any]]:
   global _codon_workers, _codon_atexit_registered
   with _codon_worker_cv:
     if not _codon_workers:
-      n = codon_context_pool_size()
+      from hpcperfstats.dbload.lib.conf_parser import (
+        get_sync_codon_worker_processes,
+      )
+
+      n = min(codon_context_pool_size(), get_sync_codon_worker_processes())
       _codon_workers = [_spawn_codon_worker() for _ in range(n)]
       if not _codon_atexit_registered:
         atexit.register(_shutdown_codon_pool)
@@ -419,9 +477,15 @@ def _get_codon_pool() -> list[dict[str, Any]]:
     return _codon_workers
 
 
-def _checkout_codon_worker() -> tuple[dict[str, Any], bool]:
+def _checkout_codon_worker(
+  *, sticky_ok: bool = True
+) -> tuple[dict[str, Any], bool]:
   """
   Check out one Codon Popen worker (sticky index or shared CV pool).
+
+  Args:
+    sticky_ok (bool): Honor the thread's sticky index. File streams hold a
+      worker for a whole file, so they pass False and queue on the CV pool.
 
   Returns:
     tuple[dict[str, Any], bool]: Worker record and whether occupancy was bumped.
@@ -435,7 +499,7 @@ def _checkout_codon_worker() -> tuple[dict[str, Any], bool]:
   """
   global _slot_held
   workers = _get_codon_pool()
-  sticky = codon_sticky_worker_slot()
+  sticky = codon_sticky_worker_slot() if sticky_ok else None
   if sticky is not None:
     idx = int(sticky) % len(workers)
     worker = workers[idx]
@@ -513,11 +577,109 @@ def _popen_read_parse_response(proc: subprocess.Popen[bytes]) -> Any:
   return decode_response("parse", hdr + body)
 
 
+def _worker_rss_over_limit(proc: subprocess.Popen[bytes]) -> bool:
+  """
+  Return True when ``proc`` resident memory exceeds the recycle threshold.
+
+  Args:
+    proc (subprocess.Popen[bytes]): Codon worker process.
+
+  Returns:
+    bool: True above ``sync_codon_worker_recycle_rss_mib``; False when RSS
+      cannot be read.
+
+  Examples:
+    >>> isinstance(_worker_rss_over_limit, Callable)
+    True
+  """
+  from hpcperfstats.dbload.lib.conf_parser import (
+    get_sync_codon_worker_recycle_rss_mib,
+  )
+
+  try:
+    with open(f"/proc/{proc.pid}/statm", encoding="ascii") as fh:
+      rss = int(fh.read().split()[1]) * os.sysconf("SC_PAGE_SIZE")
+  except OSError, ValueError, IndexError:
+    return False
+  return rss > int(get_sync_codon_worker_recycle_rss_mib()) << 20
+
+
+def _popen_parse_file_frames(
+  path: str,
+  flush_max_bytes: int,
+  resume_byte: int,
+  exclude: list[str] | None,
+  emit_insert: int,
+) -> Any:
+  """
+  Yield file-session frames from one Codon worker process until ``eof``.
+
+  The worker is held for the whole file. A stream that ends early (error,
+  consumer abandoned the generator) kills the worker so the next checkout
+  respawns it with no half-read session.
+
+  Args:
+    path (str): Absolute stats path.
+    flush_max_bytes (int): Soft max bytes per window.
+    resume_byte (int): Byte offset before reading.
+    exclude (list[str] | None): Event types to skip.
+    emit_insert (int): ``1`` for per-row INSERT frames, ``0`` for COPY bytes.
+
+  Yields:
+    dict[str, Any]: Decoded parse frames (same shape as in-process frames).
+
+  Raises:
+    RuntimeError: On worker EOF or a worker error response.
+
+  Examples:
+    >>> callable(_popen_parse_file_frames)
+    True
+  """
+  wait_t0 = time.perf_counter()
+  _codon_gc_enter()
+  worker, _held = _checkout_codon_worker(sticky_ok=False)
+  wait_telem.add("slot_wait_s", time.perf_counter() - wait_t0)
+  done = False
+  try:
+    with worker["lock"]:
+      if worker["proc"].poll() is not None:
+        worker["proc"] = _spawn_codon_worker()["proc"]
+      proc = worker["proc"]
+      proc.stdin.write(
+        encode_parse_file_request(
+          path, flush_max_bytes, resume_byte, exclude, emit_insert
+        )
+      )
+      proc.stdin.flush()
+      while not done:
+        frame = _popen_read_parse_response(proc)
+        done = bool(frame.get("eof"))
+        stats = frame.get("stats")
+        # An all-empty final COPY frame carries no rows (also the empty-file
+        # sentinel), so the caller never sees it.
+        if not (
+          done
+          and isinstance(stats, dict)
+          and "host_copy" in stats
+          and not (stats["host_copy"] or stats["proc_copy"])
+        ):
+          yield frame
+  finally:
+    if not done or _worker_rss_over_limit(worker["proc"]):
+      # Queued frames would be read as the next file's; a grown heap never shrinks.
+      with contextlib.suppress(Exception):
+        worker["proc"].kill()
+      worker["proc"] = _spawn_codon_worker()["proc"]
+    _release_codon_worker(worker, sticky=False)
+    _codon_gc_leave()
+
+
 def _popen_rpc(
   kind: str,
   lines: list[str],
   carry_raw: dict[str, list[float]] | None = None,
   carry_arc: dict[str, float] | None = None,
+  exclude: list[str] | None = None,
 ) -> Any:
   """
   Send binary ``kind``/lines frame to a free Codon Popen worker; return body.
@@ -533,6 +695,7 @@ def _popen_rpc(
       counter carry to seed before this window.
     carry_arc (dict[str, float] | None): ``parse`` only — cross-flush
       arc-rate carry to seed before this window.
+    exclude (list[str] | None): ``parse`` only — event types to skip.
 
   Returns:
     Any: Worker return payload.
@@ -554,7 +717,7 @@ def _popen_rpc(
         proc = worker["proc"]
       if proc.stdin is None or proc.stdout is None:
         raise RuntimeError("codon worker pipes missing")
-      frame = encode_request(kind, list(lines), carry_raw, carry_arc)
+      frame = encode_request(kind, list(lines), carry_raw, carry_arc, exclude)
       proc.stdin.write(frame)
       proc.stdin.flush()
       if kind == "fp":
@@ -576,6 +739,7 @@ def _call_via_codon_process_pool(
   lines: list[str],
   carry_raw: dict[str, list[float]] | None = None,
   carry_arc: dict[str, float] | None = None,
+  exclude: list[str] | None = None,
 ) -> Any:
   """
   Run Codon ``kind`` on the Popen worker pool; update occupancy.
@@ -587,6 +751,7 @@ def _call_via_codon_process_pool(
       counter carry to seed before this window.
     carry_arc (dict[str, float] | None): ``parse`` only — cross-flush
       arc-rate carry to seed before this window.
+    exclude (list[str] | None): ``parse`` only — event types to skip.
 
   Returns:
     Any: Worker return value.
@@ -595,7 +760,13 @@ def _call_via_codon_process_pool(
     >>> isinstance(_call_via_codon_process_pool, Callable)
     True
   """
-  return _popen_rpc(kind, lines, carry_raw=carry_raw, carry_arc=carry_arc)
+  return _popen_rpc(
+    kind,
+    lines,
+    carry_raw=carry_raw,
+    carry_arc=carry_arc,
+    exclude=exclude,
+  )
 
 
 def _shutdown_codon_pool() -> None:
@@ -732,7 +903,7 @@ def format_codon_parse_startup_line() -> str:
   return (
     f"codon_parse status=enabled module={mod_name} "
     f"api=parse_stats_lines_codon {gil_tok} contexts={n} "
-    f"codon_mode={'process_pool' if _use_codon_process_pool() else 'in_process'} "
+    f"codon_mode={'process_pool' if _use_codon_file_process_pool() or _use_codon_process_pool() else 'in_process'} "
     "codonrt_serialize=0"
   )
 
@@ -818,6 +989,7 @@ class _GcStackBase(ctypes.Structure):
 
 
 _gc_lib: Any = None
+_boehm_timing_started = False
 _gc_tls = threading.local()
 
 
@@ -1042,6 +1214,7 @@ def _invoke_parse_mod_fn(
   slot: int,
   carry_raw: dict[str, list[float]],
   carry_arc: dict[str, float],
+  exclude: list[str] | None = None,
 ) -> Any:
   """
   Call ``mod.parse_stats_lines_codon`` with carry kwargs; fall back for fakes.
@@ -1056,6 +1229,8 @@ def _invoke_parse_mod_fn(
     slot (int): Stripe slot index.
     carry_raw (dict[str, list[float]]): Cross-flush counter carry to seed.
     carry_arc (dict[str, float]): Cross-flush arc-rate carry to seed.
+    exclude (list[str] | None): Event types to skip. Passed as ``exclude=``
+      only when non-empty (the pyext clears the slot list when absent).
 
   Returns:
     Any: Callable return value — a finished-contract dict (real module) or
@@ -1071,6 +1246,14 @@ def _invoke_parse_mod_fn(
   """
   fn = mod.parse_stats_lines_codon
   try:
+    if exclude:
+      return fn(
+        list(lines),
+        slot,
+        carry_raw=carry_raw,
+        carry_arc=carry_arc,
+        exclude=list(exclude),
+      )
     return fn(list(lines), slot, carry_raw=carry_raw, carry_arc=carry_arc)
   except TypeError:
     pass
@@ -1254,6 +1437,7 @@ def try_codon_feed_collapse_fingerprint(
 def try_codon_parse_collapse(
   lines: list[str],
   carry: Any | None = None,
+  exclude: list[str] | None = None,
 ) -> tuple[Any, Any] | None:
   """
   Prefer Codon feed+delta+collapse+arc when the extension exposes full parse.
@@ -1272,6 +1456,8 @@ def try_codon_parse_collapse(
     lines (list[str]): Stats file text lines.
     carry (Any | None): ``DeltaCarryState``-like object with ``.raw``/
       ``.arc`` dict attributes to seed and update, or None.
+    exclude (list[str] | None): Event types to skip (the caller's
+      ``exclude_types_list`` as a list); ``None``/empty skips nothing.
 
   Returns:
     tuple[Any, Any] | None: ``(stats_records, proc_rows)``, or None only
@@ -1302,12 +1488,16 @@ def try_codon_parse_collapse(
   try:
     if _use_codon_process_pool():
       result = _call_via_codon_process_pool(
-        "parse", lines, carry_raw=carry_raw, carry_arc=carry_arc
+        "parse",
+        lines,
+        carry_raw=carry_raw,
+        carry_arc=carry_arc,
+        exclude=exclude,
       )
     else:
       result = _call_with_slot_lock(
         lambda *, slot: _invoke_parse_mod_fn(
-          mod, lines, slot, carry_raw, carry_arc
+          mod, lines, slot, carry_raw, carry_arc, exclude
         )
       )
   except Exception:
@@ -1324,6 +1514,7 @@ def _iter_codon_parse_file_frames(
   path: str,
   flush_max_bytes: int,
   resume_byte: int = 0,
+  exclude: list[str] | None = None,
 ) -> Any:
   """
   Yield parse result dicts for one file-owned Codon session.
@@ -1336,6 +1527,7 @@ def _iter_codon_parse_file_frames(
     path (str): Absolute stats path.
     flush_max_bytes (int): Soft max bytes per window.
     resume_byte (int): Byte offset before reading.
+    exclude (list[str] | None): Event types to skip for this session.
 
   Yields:
     dict[str, Any]: Decoded parse frames until ``eof`` is True.
@@ -1344,6 +1536,17 @@ def _iter_codon_parse_file_frames(
     >>> list(_iter_codon_parse_file_frames("/x", 1))  # doctest: +SKIP
     []
   """
+  if _use_codon_file_process_pool():
+    from hpcperfstats.dbload.sync_timedb import current_ingest_emit
+
+    yield from _popen_parse_file_frames(
+      path,
+      int(flush_max_bytes),
+      int(resume_byte),
+      exclude,
+      1 if current_ingest_emit() == "insert" else 0,
+    )
+    return
   from hpcperfstats.dbload.lib.codon_process_worker import (
     codon_worker_parse_file_frames,
   )
@@ -1356,8 +1559,10 @@ def _iter_codon_parse_file_frames(
   )
   lock = _slot_locks[slot]
   global _slot_held
+  wait_t0 = time.perf_counter()
   _codon_gc_enter()
   lock.acquire()
+  wait_telem.add("slot_wait_s", time.perf_counter() - wait_t0)
   with _slot_held_lock:
     _slot_held += 1
   try:
@@ -1366,6 +1571,7 @@ def _iter_codon_parse_file_frames(
       int(flush_max_bytes),
       int(resume_byte),
       slot=slot,
+      exclude=exclude,
     )
   finally:
     with _slot_held_lock:
@@ -1374,11 +1580,81 @@ def _iter_codon_parse_file_frames(
     _codon_gc_leave()
 
 
+def _coalesce_host_rows(frames: Any, min_rows: int) -> Any:
+  """
+  Merge consecutive COPY frames' host rows until a payload holds ``min_rows``.
+
+  Small parse windows bound Codon's heap (output rows, not input bytes, set it)
+  but a window is often only hundreds of rows, and each tiny COPY + INSERT
+  transaction contends on Postgres' lock manager. Host COPY text concatenates
+  (``ON CONFLICT DO NOTHING``). Proc rows are never merged: proc uses
+  ``DO UPDATE``, which rejects one key twice in a statement, so each window's
+  proc bytes go out as their own proc-only payload. ``eof`` and flags come
+  from the last frame; ``marks`` accumulate. Non-COPY frames pass through.
+
+  Args:
+    frames (Any): Iterable of decoded parse frames.
+    min_rows (int): Rows at which a pending host payload is emitted
+      (``<= 1`` disables merging).
+
+  Yields:
+    dict[str, Any]: Parse frames, host rows merged where possible.
+
+  Examples:
+    >>> f = lambda b, e: {"stats": {"host_copy": b, "proc_copy": b""}, "eof": e}
+    >>> [
+    ...   x["stats"]["host_copy"]
+    ...   for x in _coalesce_host_rows([f(b"a\\n", 0), f(b"b\\n", 1)], 5)
+    ... ]
+    [b'a\\nb\\n']
+  """
+  pend: dict[str, Any] | None = None
+  rows = 0
+  for frame in frames:
+    stats = frame.get("stats")
+    if min_rows <= 1 or not (isinstance(stats, dict) and "host_copy" in stats):
+      if pend is not None:
+        yield pend
+        pend, rows = None, 0
+      yield frame
+      continue
+    if stats.get("proc_copy"):
+      yield {
+        **frame,
+        "stats": {"host_copy": b"", "proc_copy": stats["proc_copy"]},
+        "marks": [],
+        "eof": False,
+      }
+    host = stats.get("host_copy") or b""
+    marks = list(frame.get("marks") or [])
+    if pend is None:
+      pend = dict(frame)
+      pend["stats"] = {"host_copy": b"", "proc_copy": b""}
+      pend["marks"] = []
+    else:
+      pend.update(
+        {k: v for k, v in frame.items() if k not in ("stats", "marks")}
+      )
+    pend["stats"] = {
+      "host_copy": pend["stats"]["host_copy"] + host,
+      "proc_copy": b"",
+    }
+    pend["marks"] = pend["marks"] + marks
+    rows += host.count(b"\n")
+    if rows >= min_rows or frame.get("eof"):
+      yield pend
+      pend, rows = None, 0
+  if pend is not None:
+    yield pend
+
+
 def try_codon_parse_file_stream(
   path: str,
   flush_max_bytes: int,
   carry: Any | None,
   on_chunk: Callable[[Any, Any], None],
+  exclude: list[str] | None = None,
+  coalesce_rows: int = 1,
 ) -> None:
   """
   File-owned Codon parse: stream SoA frames to ``on_chunk``.
@@ -1388,6 +1664,10 @@ def try_codon_parse_file_stream(
     flush_max_bytes (int): Soft max bytes per flush window.
     carry (Any | None): ``DeltaCarryState`` for carry/marks.
     on_chunk (Callable[[Any, Any], None]): Per-frame callback.
+    exclude (list[str] | None): Event types to skip (caller's
+      ``exclude_types_list`` as a list); ``None``/empty skips nothing.
+    coalesce_rows (int): Host rows per ``on_chunk`` payload (see
+      :func:`_coalesce_host_rows`); ``1`` disables merging.
 
   Returns:
     None
@@ -1409,7 +1689,12 @@ def try_codon_parse_file_stream(
       "codon parse file stream unavailable (no full parse API)"
     )
   try:
-    for result in _iter_codon_parse_file_frames(path, int(flush_max_bytes)):
+    for result in _coalesce_host_rows(
+      _iter_codon_parse_file_frames(
+        path, int(flush_max_bytes), exclude=exclude
+      ),
+      int(coalesce_rows),
+    ):
       stats, procs = _finish_codon_parse_result(
         result,
         carry,
@@ -1435,6 +1720,7 @@ def try_codon_parse_file_stream(
 def try_codon_feed_batch_parse(
   lines: list[str],
   carry: Any | None = None,
+  exclude: list[str] | None = None,
 ) -> tuple[Any, Any] | None:
   """
   Parse one streaming flush window via ``parse_stats_lines_codon``.
@@ -1448,6 +1734,8 @@ def try_codon_feed_batch_parse(
     lines (list[str]): Stats lines for one take/finish boundary.
     carry (Any | None): ``DeltaCarryState``-like object to seed/update with
       cross-flush counter/arc-rate carry, or None.
+    exclude (list[str] | None): Event types to skip; see
+      :func:`try_codon_parse_collapse`.
 
   Returns:
     tuple[Any, Any] | None: ``(stats_records, proc_rows)`` or None.
@@ -1461,4 +1749,4 @@ def try_codon_feed_batch_parse(
     ... )
     True
   """
-  return try_codon_parse_collapse(lines, carry=carry)
+  return try_codon_parse_collapse(lines, carry=carry, exclude=exclude)

@@ -303,13 +303,67 @@ Python stack dump every 30 s to `<child_log>.stacks` (opt-in, off by default).
 `HPCPERFSTATS_LOADED48_GC_MODE=trace` logs a `gc_probe` line every 30 s (GC count
 and summed pause seconds; on free-threaded CPython a collection parks every
 other thread); `=off` also disables automatic GC for an A/B (memory grows, test
-hosts only). `HPCPERFSTATS_LOADED48_MALLOC_TRIM=no` is a test-only override of
-INI `sync_ingest_malloc_trim_after_file` for the soak child (skips the per-file and
-mid-chunk `gc.collect()` + `malloc_trim`; production uses the INI key). To run
+hosts only). `HPCPERFSTATS_LOADED48_MALLOC_TRIM=yes|no` is a test-only override of
+INI `sync_ingest_malloc_trim_after_file` for the soak child (`no` skips the per-file and
+mid-chunk `gc.collect()` + `malloc_trim`, `yes` forces them on; production uses the INI
+key). `HPCPERFSTATS_LOADED48_MEM_TELEMETRY=yes` is a test-only override of INI
+`sync_timedb_mem_telemetry`: the child log then carries `sync_timedb_mem_telemetry:`
+lines with `inflight_raw_mib`, `budget_mib`, `peak_factor`, tree RSS and cgroup
+`anon_mib`/`file_mib`, which is the evidence for `PEAK_CGROUP_PER_RAW_FILE_BYTE`.
+`HPCPERFSTATS_TEST_PIPELINE_MEM=128g` (compose test overlay `mem_limit`, default `0` =
+unlimited) gives the container a cgroup `memory.max`, which turns on the
+`sync_process_tree_rss_*` roof and the in-flight raw-byte budget that are otherwise off
+(`budget_mib=0`) in the harness. `HPCPERFSTATS_LOADED48_RSS_LIMIT_PCT=30` is a test-only
+override of INI `sync_process_tree_rss_limit_cgroup_pct`; with the cap above it makes the
+ingest RSS-pressure gate trip in a short soak (`queue_orchestrator rss_hold` /
+`rss_release` lines and `skip_rss_pressure` in `fill_block=`).
+`HPCPERFSTATS_LOADED48_BIG_CLONE_CAP=N` (test-only) limits how many times any corpus template of at
+least 256 MiB is cloned into the soak (default unlimited); use it with a corpus that contains a
+multi-GB real file (`HPCPERFSTATS_SYNC_TIMEDB_SCREEN_CORPUS=test_runs/sync_timedb_bench/<corpus>`)
+so a 14 GB file is not copied hundreds of times. Planting stops when every template is exhausted.
+`HPCPERFSTATS_LOADED48_WRITE_POOL=N` and `HPCPERFSTATS_LOADED48_PARSE_QUEUE=N` and `HPCPERFSTATS_LOADED48_CODON_WORKERS=N` (Codon file-parse processes) (1-4096)
+are test-only overrides of INI `sync_ingest_write_pool_processes` /
+`sync_ingest_parse_queue_max` (default write pool is a quarter of the ingest width) for
+write-bottleneck experiments. **Wait attribution (Phase 2):** with
+`HPCPERFSTATS_SYNC_INGEST_TELEMETRY=1` (INI `sync_ingest_telemetry`) the `ingest file`
+lines carry `thr_cpu_s`/`thr_runq_s`/`thr_sleep_s` (schedstat split of the ingest thread's
+wall), per-stage `*_cpu_s`, `wq_put_s`/`wq_resid_s`/`wq_join_s`/`wq_n` (write-queue
+handoff), `w_exec_s`/`w_cpu_s`/`w_runq_s` (writer thread), `slot_wait_s`, `copy_encode_s`
+(Python COPY encoding) and `codon_primary`/`emit_start` (parse path); the 60 s census adds
+`psi_*10`, `sys_runnable`, per-role `cpu_*`/`runq_*` cores, `pygc_*`, `boehm_*`, `wq_depth`
+and `w_busy`. `tests/sync_timedb_benchmark/sample_phase2.sh OUT_PREFIX [interval]` samples
+container CPU and Postgres wait events beside a soak, and
+`scripts/analyze_ingest_wait_breakdown.py --log-file CHILD.log` /
+`scripts/analyze_ingest_stacks.py --stacks CHILD.log.stacks` (needs
+`HPCPERFSTATS_LOADED48_STACKDUMP_S=30`) turn the artifacts into tier tables. Host unit
+tests that use the Django DB fixtures (for example `test_sync_timedb_host_data_insert.py`,
+`test_sync_timedb_proc_data_insert.py`) error with `failed to resolve host 'db'` outside the
+compose workflows; `zstd` for `test_sync_timedb_day_raw_removal.py` must be on `PATH`. To run
 with a freshly baked Codon extension instead of the one in
 the image, set `HPCPERFSTATS_CODON_PYEXT_DIR` to a directory containing the whole
 `/opt/hpcperfstats/codon_parse` tree, and confirm the child log shows
 `codon_parse status=enabled`.
+
+Codon dynamic exclusion (`test_codon_exclude_parity.py`): the kernel/bridge/IPC cases run on
+the host venv; the three real-pyext cases skip unless `HPCPERFSTATS_CODON_PYEXT_DIR` holds a bake
+built from this tree **and** the interpreter is the free-threaded 3.14t (host `.venv` is not, so
+they skip there). To run them for real, bake with
+`podman build --target codon-build -t localhost/hpcperfstats-codon-build:exclude -f services-conf/pipeline_web.Dockerfile .`,
+`podman cp` `/opt/hpcperfstats/codon_parse/.` out, and run
+`test_runs/codon_exclude/pyext_smoke.py` under `/opt/python3.14t/bin/python3` with `PYEXT=<dir>`
+(prints `pyext_exclude_smoke=pass gil=off`).
+
+Codon process-pool soaks: `HPCPERFSTATS_LOADED48_CODON_WORKERS=N` sets the worker count (with 1 MiB windows N=32
+peaks at ~26 GiB combined worker RSS, ~52 GiB cgroup; with 16 MiB windows N=24 hit the 100g cap and OOM-killed a worker).
+Workers log `codon_worker_mem` lines (RSS split, Boehm heap/free/unmapped, GC count, frame sizes) when ingest
+telemetry is on. Compare Codon and CPython by DB `tup_inserted` over time, not completed-file MiB: dense files
+expand to millions of rows and finish in bursts, and
+`HPCPERFSTATS_LOADED48_PRECREATE_CHUNKS=<epoch_min>:<epoch_max>` pre-creates the daily `host_data`
+chunks (a fresh DB otherwise serializes every first insert of a day under a hypertable-wide
+`ShareUpdateExclusiveLock`). Planted queue clones now rename their own `$hostname` per clone (verbatim
+clones share keys and block each other's `ON CONFLICT`) and publish atomically via `.plant_tmp`. A killed
+soak leaves the `hpcperfstats-test_*` volume behind: `podman volume rm` it before the next run. Check a
+soak ~5 minutes after launch (files/min, quarantines, `parse_file failed`, OOM) instead of waiting for it.
 
 Width sweep A/B (same continuous-refill harness; **report-only**): serial
 **48 → 64 → 96**, each **0.1h smoke + 3h soak**; baseline = this-run 3h@48.

@@ -44,6 +44,20 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep 
 
 Production is **one** `sync_timedb.py` process per `archive_dir` (`run_sync_timedb_queue_orchestrator`, exclusive flock). Dual CLI ``backlog``/``current``, proximity heartbeat, `ArchiveJanitor` tick, handoff pins, and oldest-day **chunk gate** are **retired**. Operator census is **disk sidecars + thread titles** plus disk/DB reconstruct predicates — an empty `.sync_timedb_job_store.json` snapshot ≠ caught up. Pre-cutover T0 signatures below may mention Redis because that was the live job/members bus then; live census is the job-store sidecar and `.sync_timedb_archive_members/`.
 
+### RSS-pressure admission gate (`rss_hold` / `rss_release`, 2026-10-25)
+
+Expected on a release-off site (`sync_ingest_malloc_trim_after_file = no`) whose sync tree RSS reaches the roof (`sync_process_tree_rss_limit_cgroup_pct` × `memory.max`). Not a stall: admission pauses, completions keep draining, and the line is rate limited to one per 30 s with `suppressed_n=`. A `fill_block=skip_rss_pressure` token on the census/status line is the same event.
+
+- `rss_hold rss_mib=… limit_mib=… inflight=N` — admission paused with N files still running; it resumes by itself once RSS drops under `limit_mib`.
+- `rss_release rss_mib_before=… rss_mib_after=… limit_mib=…` — nothing was in flight and RSS was still over the roof, so one `gc.collect()` + `malloc_trim` ran. A small before/after gap means the heap is genuinely live, not retained garbage; raise the roof pct or lower `sync_ingest_pool_processes`.
+- Stall signature to escalate: `rss_hold` continuing for many minutes with `inflight=0` or `inflight` not falling (idle must always admit; this would be a gate bug).
+
+#### host — pipeline log, gate events (paste the matching lines)
+
+```bash
+podman-compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'queue_orchestrator rss_(hold|release)' | tail -40
+```
+
 ### Post-deploy tiers (orchestrator)
 
 | Tier | When | Pass criteria |

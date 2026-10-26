@@ -53,6 +53,7 @@ _cache_carry_arc: list[dict[str, float]] = []
 _cache_carry_raw_keys: list[list[str]] = []
 _cache_carry_arc_keys: list[list[str]] = []
 _cache_marks: list[list[dict[str, str]]] = []
+_cache_exclude: list[list[str]] = []
 _fs_active: list[int] = []
 _fs_flush_bytes: list[int] = []
 _fs_schema: list[list[str]] = []
@@ -118,6 +119,7 @@ def _ensure_slot_banks() -> None:
   global _cache_carry_raw_keys
   global _cache_carry_arc_keys
   global _cache_marks
+  global _cache_exclude
   global _fs_active
   global _fs_flush_bytes
   global _fs_schema
@@ -155,6 +157,7 @@ def _ensure_slot_banks() -> None:
   _cache_carry_raw_keys = []
   _cache_carry_arc_keys = []
   _cache_marks = []
+  _cache_exclude = []
   i = 0
   while i < MAX_CODON_SLOTS:
     empty_f: list[float | None] = []
@@ -201,6 +204,8 @@ def _ensure_slot_banks() -> None:
     _cache_carry_arc_keys.append(empty_cak)
     empty_marks: list[dict[str, str]] = []
     _cache_marks.append(empty_marks)
+    empty_excl: list[str] = []
+    _cache_exclude.append(empty_excl)
     _fs_active.append(0)
     _fs_flush_bytes.append(0)
     empty_fs_schema: list[str] = []
@@ -272,7 +277,11 @@ def _apply_lines_to_slot(slot: int, lines: list[str]) -> None:
   global _cache_marks
   (finished, proc, carry_raw_out, carry_arc_out, marks) = (
     feed_delta_collapse_arc(
-      lines, _cache_carry_raw[slot], _cache_carry_arc[slot], 0
+      lines,
+      _cache_carry_raw[slot],
+      _cache_carry_arc[slot],
+      0,
+      _cache_exclude[slot],
     )
   )
   _cache_marks[slot] = marks
@@ -481,6 +490,20 @@ def _lines_from_ptr(n: int, ptr: Ptr[cobj]) -> list[str]:
     lines.append(str.from_ptr(ptr[i]))
     i += 1
   return lines
+
+
+@export
+def codon_exclude_set_c(slot: int, n: int, ptr: Ptr[cobj]) -> None:
+  """Replace slot ``slot``'s excluded event-type list with ``n`` strings.
+
+  ``n == 0`` clears it. The pyext calls this before every open/parse so a
+  sticky slot never keeps the previous caller's list.
+  """
+  global _cache_exclude
+  _ensure_slot_banks()
+  if slot < 0 or slot >= MAX_CODON_SLOTS:
+    return
+  _cache_exclude[slot] = _lines_from_ptr(n, ptr)
 
 
 @export

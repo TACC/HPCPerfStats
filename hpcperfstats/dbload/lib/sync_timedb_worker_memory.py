@@ -141,8 +141,6 @@ def release_spawn_pool_worker_memory() -> None:
   Examples:
     >>> release_spawn_pool_worker_memory()  # doctest: +SKIP
   """
-  import gc
-
   import hpcperfstats.dbload.lib.conf_parser as cfg
   from hpcperfstats.dbload.lib import sync_timedb_host_itimes
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
@@ -155,12 +153,32 @@ def release_spawn_pool_worker_memory() -> None:
   sync_timedb_host_itimes.reset_host_itimes_caches()
   clear_daily_archive_members_cache()
   if cfg.get_sync_ingest_malloc_trim_after_file():
-    gc.collect()
-    libc = _libc_handle()
-    if libc is not None:
-      with contextlib.suppress(AttributeError):
-        libc.malloc_trim(0)
+    release_heap_under_pressure()
   clear_worker_stage()
+
+
+def release_heap_under_pressure() -> None:
+  """
+  Run a full ``gc.collect()`` then ``malloc_trim(0)`` in this process.
+
+  Stop-the-world on free-threaded CPython, so the orchestrator calls it only
+  once ingest has drained under RSS pressure. Ignores the INI per-file trim
+  flag; the per-file path in :func:`release_spawn_pool_worker_memory` still
+  honors it.
+
+  Returns:
+    None
+
+  Examples:
+    >>> release_heap_under_pressure()  # doctest: +SKIP
+  """
+  import gc
+
+  gc.collect()
+  libc = _libc_handle()
+  if libc is not None:
+    with contextlib.suppress(AttributeError):
+      libc.malloc_trim(0)
 
 
 def ingest_pool_width() -> Any:
@@ -259,6 +277,37 @@ def can_admit_ingest_raw_bytes(
   if cur + need <= budget:
     return True
   return bool(cur == 0 and need > budget)
+
+
+def ingest_rss_over_limit(rss_bytes: int | None, limit_mib: int) -> bool:
+  """
+  Return True when supervisor RSS has reached the process-tree RSS roof.
+
+  Ingest workers are threads in the supervisor process, so heap growth cannot
+  be reclaimed by retiring a worker; crossing the roof holds ingest admit and
+  triggers one :func:`release_heap_under_pressure` once ingest has drained.
+  Fails open when the roof is disabled (``limit_mib <= 0``) or RSS is
+  unreadable.
+
+  Args:
+    rss_bytes (int | None): Supervisor resident set size in bytes, or
+      ``None``/``0`` when unreadable.
+    limit_mib (int): Roof from
+      :func:`process_memory.effective_process_tree_rss_limit_mib`; ``0`` means
+      disabled.
+
+  Returns:
+    bool: True when ``rss_bytes`` is at or above the roof.
+
+  Examples:
+    >>> ingest_rss_over_limit(60 * 1024 * 1024, 50)
+    True
+    >>> ingest_rss_over_limit(60 * 1024 * 1024, 0)
+    False
+  """
+  if int(limit_mib or 0) <= 0:
+    return False
+  return int(rss_bytes or 0) >= int(limit_mib) * _MIB_BYTES
 
 
 def _worker_rss_mib() -> Any:

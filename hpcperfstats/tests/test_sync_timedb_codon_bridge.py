@@ -430,6 +430,8 @@ def test_codon_no_silent_cpython_fallback(
     flush_b: int,
     carry: Any,
     on_chunk: Any,
+    exclude: Any = None,
+    coalesce_rows: int = 1,
   ) -> None:
     raise RuntimeError("codon worker exploded")
 
@@ -497,11 +499,15 @@ def test_streaming_incremental_diverts_flush_to_codon(
     flush_b: int,
     carry: Any,
     on_chunk: Any,
+    exclude: Any = None,
+    coalesce_rows: int = 1,
   ) -> None:
     from hpcperfstats.dbload.lib.codon_process_worker import (
       codon_worker_parse_file_frames,
     )
+    from hpcperfstats.dbload.lib.sync_timedb_parsing import exclude_types
 
+    assert exclude == sorted(exclude_types)
     for frame in codon_worker_parse_file_frames(path, flush_b):
       stats, procs = frame.get("stats"), frame.get("procs")
       on_chunk(stats, procs)

@@ -23,6 +23,7 @@ import os
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
@@ -448,12 +449,73 @@ def _proc_copy_scalar(value: Any) -> Any:
   return value
 
 
+def _proc_frame_to_copy_bytes_vectorized(frame: pd.DataFrame) -> bytes | None:
+  """
+  Encode a proc frame to COPY text column-wise, byte-identical to the per-cell path.
+
+  Text columns (``jid``, ``host``, ``proc``, ``device``) are factorized so
+  ``_sql_literal`` runs once per unique value. Metric columns are float or
+  integer arrays truncated to ``int64`` text (NaN becomes ``\\N``). Any
+  column that is not plainly typed (absent, non-string text, object or bool
+  metrics, values outside the ``int64`` range) makes this return ``None`` so
+  the caller falls back to the per-cell encoder.
+
+  Args:
+    frame (pd.DataFrame): Slice of parsed proc stats.
+
+  Returns:
+    bytes | None: UTF-8 COPY body (``b""`` for an empty frame), or ``None``
+      when the frame needs the per-cell path.
+
+  Examples:
+    >>> _proc_frame_to_copy_bytes_vectorized(pd.DataFrame())
+    b''
+  """
+  if frame.empty:
+    return b""
+  if any(c not in frame.columns for c in PROC_DATA_COPY_COLUMNS):
+    return None
+  cols: list[list[str]] = []
+  for col in PROC_DATA_COPY_COLUMNS:
+    series = frame[col]
+    if col in ("jid", "host", "proc", "device"):
+      if pd.api.types.infer_dtype(series, skipna=True) not in (
+        "string",
+        "empty",
+      ):
+        return None
+      codes, uniques = pd.factorize(series, use_na_sentinel=False)
+      lit = np.empty(len(uniques), dtype=object)
+      for i, u in enumerate(uniques):
+        lit[i] = _sql_literal(_proc_copy_scalar(u))
+      cols.append(lit.take(codes).tolist())
+      continue
+    if not isinstance(series.dtype, np.dtype) or series.dtype.kind not in "fiu":
+      return None
+    if series.dtype.kind != "f":
+      cols.append(list(map(str, series.tolist())))
+      continue
+    arr = series.to_numpy(dtype="float64")
+    nan = np.isnan(arr)
+    if (np.abs(arr[~nan]) >= 9.0e18).any():
+      return None
+    text = list(map(str, np.where(nan, 0.0, arr).astype("int64").tolist()))
+    for i in np.flatnonzero(nan).tolist():
+      text[i] = "\\N"
+    cols.append(text)
+  return ("\n".join(map("\t".join, zip(*cols, strict=True))) + "\n").encode(
+    "utf-8"
+  )
+
+
 def _proc_frame_to_copy_bytes(frame: pd.DataFrame) -> bytes:
   """
   Serialize a proc dataframe slice to COPY text.
 
   ``jid``, ``host``, and ``proc`` pass through. Other columns use the
-  bigint coercion shared with the namedtuple builder.
+  bigint coercion shared with the namedtuple builder. Tries
+  ``_proc_frame_to_copy_bytes_vectorized`` first and falls back to the
+  per-cell encoder when the frame is not plainly typed.
 
   Args:
     frame (pd.DataFrame): Slice of parsed proc stats.
@@ -467,6 +529,9 @@ def _proc_frame_to_copy_bytes(frame: pd.DataFrame) -> bytes:
   """
   if frame.empty:
     return b""
+  fast = _proc_frame_to_copy_bytes_vectorized(frame)
+  if fast is not None:
+    return fast
   n = len(frame)
   columns = {
     col: frame[col].tolist() if col in frame.columns else [None] * n
@@ -677,9 +742,11 @@ def bulk_insert_proc_rows(
       return
   elif not rows:
     return
-  _write_proc_copy_payload(
-    proc_rows_to_copy_bytes(rows, copy_unique=copy_unique)
-  )
+  from hpcperfstats.dbload import sync_timedb as st
+
+  with st._held_ingest_write_phase("copy_encode_s"):
+    payload = proc_rows_to_copy_bytes(rows, copy_unique=copy_unique)
+  _write_proc_copy_payload(payload)
 
 
 def bulk_insert_proc_data_update_conflicts(objs: Sequence[Any]) -> None:

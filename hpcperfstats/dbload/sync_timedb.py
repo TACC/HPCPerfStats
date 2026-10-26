@@ -60,6 +60,7 @@ Attributes:
   INGEST_WRITE_DETAIL_KEYS: COPY detail phases nested under db_execute (logged).
   INGEST_WRITE_LOG_KEYS: Phase + detail keys emitted on ingest outcome lines.
   INGEST_FRESH_CAMPAIGN_LOG_KEYS: F1/F2 baseline tokens (not residual-summed).
+  INGEST_OUTCOME_TELEMETRY_KEYS: Every telemetry key on an ingest outcome line.
   _ingest_postgres_campaign: Process-wide postgres_s campaign total.
   _ingest_postgres_s: Per-file postgres_s ContextVar.
   _ingest_orm_rows: Per-file Django model row count when telemetry is on.
@@ -124,7 +125,10 @@ from django.db import (
 from django.db.utils import DatabaseError, OperationalError
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from hpcperfstats.dbload.lib import sync_timedb_host_itimes
+from hpcperfstats.dbload.lib import (
+  sync_timedb_host_itimes,
+  sync_timedb_wait_telemetry as wait_telem,
+)
 from hpcperfstats.dbload.lib.archive_compress import (
   compressed_sibling_paths,
   daily_compressed_path_for_date,
@@ -267,6 +271,10 @@ from hpcperfstats.dbload.lib.sync_timedb_queue_orchestrator import (
 )
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
   create_sync_timedb_thread_pool,
+)
+from hpcperfstats.dbload.lib.sync_timedb_wait_telemetry import (
+  WAIT_COUNT_KEYS,
+  WAIT_LOG_KEYS,
 )
 from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
   increment_worker_tasks_on_worker,
@@ -1964,7 +1972,9 @@ def _join_ingest_write_payload(payload: Any) -> tuple[bool, bool]:
   )
 
   queued = ingest_write_stage_started()
+  wait_t0 = time.perf_counter()
   payload.done.wait()
+  wait_telem.apply_payload(payload, time.perf_counter() - wait_t0)
   if queued:
     _apply_ingest_write_timing_from_payload(payload.write_timing)
   err = payload.error
@@ -2035,7 +2045,9 @@ def _submit_stats_payload_write(
       if not ingest_ok:
         return stats_file, archival_out, ingest_ok
     return stats_file, archival_out, ingest_ok
+  wait_t0 = time.perf_counter()
   submit_ingest_write_and_wait(payload)
+  wait_telem.apply_payload(payload, time.perf_counter() - wait_t0)
   if queued:
     _apply_ingest_write_timing_from_payload(payload.write_timing)
   err = payload.error
@@ -2295,6 +2307,7 @@ INGEST_WRITE_DETAIL_KEYS: tuple[str, ...] = (
   "conflict_insert_s",
   "stage_ddl_s",
   "reconnect_s",
+  "copy_encode_s",
 )
 INGEST_WRITE_LOG_KEYS: tuple[str, ...] = (
   INGEST_WRITE_PHASE_KEYS + INGEST_WRITE_DETAIL_KEYS
@@ -2304,6 +2317,13 @@ INGEST_WRITE_LOG_KEYS: tuple[str, ...] = (
 INGEST_FRESH_CAMPAIGN_LOG_KEYS: tuple[str, ...] = (
   "overlap_headroom_s",
   "orm_rows",
+)
+
+INGEST_OUTCOME_TELEMETRY_KEYS: tuple[str, ...] = (
+  *PARSE_STAGE_LOG_KEYS,
+  *INGEST_WRITE_LOG_KEYS,
+  *INGEST_FRESH_CAMPAIGN_LOG_KEYS,
+  *WAIT_LOG_KEYS,
 )
 
 _ingest_write_telem_on = False
@@ -2610,6 +2630,7 @@ def _merge_ingest_write_timing_into_meta(meta: Any) -> dict[str, Any]:
   stage = snapshot_parse_stage_timing()
   if stage:
     out.update(stage)
+    out.update(wait_telem.snapshot())
     attach_parse_unaccounted(out)
   if _ingest_write_telem_on:
     headroom = _fresh_overlap_headroom_s(
@@ -3376,6 +3397,39 @@ def _slice_copy_frame(frame: Any, offset: int, end: int) -> Any:
   return frame.iloc[offset:end]
 
 
+def _copy_bytes_slices(payload: bytes, rows: int) -> Iterator[bytes]:
+  """
+  Split COPY text into line-aligned slices of at most ``rows`` rows.
+
+  The DataFrame path writes ``_ingest_write_frame_slice_rows()`` rows per
+  COPY + INSERT transaction. A whole Codon payload as one statement held
+  table-extension / buffer locks for tens of seconds and stalled every other
+  writer, so prebuilt COPY bytes are sliced the same way.
+
+  Args:
+    payload (bytes): UTF-8 COPY text, one row per ``\\n``-terminated line.
+    rows (int): Maximum rows per slice (``>= 1``).
+
+  Yields:
+    bytes: Consecutive slices whose concatenation is ``payload``.
+
+  Examples:
+    >>> list(_copy_bytes_slices(b"a\\nb\\nc\\n", 2))
+    [b'a\\nb\\n', b'c\\n']
+  """
+  rows = max(1, int(rows))
+  start, end, n = 0, 0, len(payload)
+  while start < n:
+    for _ in range(rows):
+      nl = payload.find(b"\n", end)
+      if nl < 0:
+        end = n
+        break
+      end = nl + 1
+    yield payload[start:end]
+    start = end
+
+
 def _write_copy_frame_batches(
   frame: Any,
   stats_file: str,
@@ -3499,10 +3553,13 @@ def _write_stats_payload_to_db(
     proc_copy = stats.get("proc_copy") or b""
     try:
       _time_ingest_db_reconnect()
-      if host_copy:
-        _write_host_copy_payload(host_copy)
-      if proc_copy:
-        _write_proc_copy_payload(proc_copy)
+      step = _ingest_write_frame_slice_rows()
+      for part in _copy_bytes_slices(host_copy, step):
+        _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
+        _write_host_copy_payload(part)
+      for part in _copy_bytes_slices(proc_copy, step):
+        _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
+        _write_proc_copy_payload(part)
     except Exception as copy_exc:
       _reraise_if_ingest_control_flow(copy_exc)
       if is_database_unavailable_error(copy_exc):
@@ -3937,11 +3994,7 @@ def _ingest_file_outcome_from_worker(
   timeout_s = meta.get("timeout_s")
   stage = {
     key: float(meta[key])
-    for key in (
-      *PARSE_STAGE_LOG_KEYS,
-      *INGEST_WRITE_LOG_KEYS,
-      *INGEST_FRESH_CAMPAIGN_LOG_KEYS,
-    )
+    for key in INGEST_OUTCOME_TELEMETRY_KEYS
     if meta.get(key) is not None
   }
   return IngestFileOutcome(
@@ -4024,15 +4077,11 @@ def _log_ingest_file_outcome(
   if outcome.postgres_s is not None:
     parts.append(f"postgres_s={float(outcome.postgres_s):.1f}")
   if outcome.parse_stage:
-    for key in (
-      *PARSE_STAGE_LOG_KEYS,
-      *INGEST_WRITE_LOG_KEYS,
-      *INGEST_FRESH_CAMPAIGN_LOG_KEYS,
-    ):
+    for key in INGEST_OUTCOME_TELEMETRY_KEYS:
       if key not in outcome.parse_stage:
         continue
       value = float(outcome.parse_stage[key])
-      if key == "orm_rows":
+      if key == "orm_rows" or key in WAIT_COUNT_KEYS:
         parts.append(f"{key}={int(value)}")
       else:
         parts.append(f"{key}={value:.1f}")

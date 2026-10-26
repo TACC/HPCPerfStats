@@ -6,6 +6,7 @@ import gc
 import json
 import os
 import random
+import re
 import shutil
 import statistics
 import threading
@@ -2125,10 +2126,29 @@ def loaded48_conf_overrides(env: Any) -> dict[str, Callable[[], Any]]:
     {}
   """
   out: dict[str, Callable[[], Any]] = {}
+  falsy, truthy = {"no", "off", "0", "false"}, {"yes", "on", "1", "true"}
   raw = str(env.get("HPCPERFSTATS_LOADED48_MALLOC_TRIM", "")).strip().lower()
-  if raw in {"no", "off", "0", "false"}:
+  if raw in falsy | truthy:
     # Per-file and mid-chunk gc.collect()+malloc_trim (stop-the-world on 3.14t).
-    out["get_sync_ingest_malloc_trim_after_file"] = lambda: False
+    out["get_sync_ingest_malloc_trim_after_file"] = lambda: raw in truthy
+  mem = str(env.get("HPCPERFSTATS_LOADED48_MEM_TELEMETRY", "")).strip().lower()
+  if mem in truthy:
+    # Emits sync_timedb_mem_telemetry: lines (inflight_raw_mib vs tree RSS).
+    out["get_sync_timedb_mem_telemetry"] = lambda: True
+  pct = str(env.get("HPCPERFSTATS_LOADED48_RSS_LIMIT_PCT", "")).strip()
+  if pct.isdigit() and 1 <= int(pct) <= 100:
+    # Lower sync_process_tree_rss_limit_cgroup_pct so a short soak reaches the
+    # ingest RSS-pressure gate (needs a cgroup memory.max, see TESTING.md).
+    out["get_sync_process_tree_rss_limit_cgroup_pct"] = lambda: int(pct)
+  # Write-stage sizing (writers are DB sessions; queue is slot backpressure).
+  for var, getter in (
+      ("HPCPERFSTATS_LOADED48_WRITE_POOL", "get_sync_ingest_write_pool_processes"),
+      ("HPCPERFSTATS_LOADED48_PARSE_QUEUE", "get_sync_ingest_parse_queue_max"),
+      ("HPCPERFSTATS_LOADED48_CODON_WORKERS", "get_sync_codon_worker_processes"),
+  ):
+    val = str(env.get(var, "")).strip()
+    if val.isdigit() and 1 <= int(val) <= 4096:
+      out[getter] = lambda n=int(val): n
   return out
 
 
@@ -2153,6 +2173,109 @@ def install_gc_probe(mode: str) -> GcProbe | None:
   return GcProbe(disable_gc=(m == "off"))
 
 
+def loaded48_big_clone_cap(env: Any) -> int | None:
+  """
+  Read the test-only cap on clones of big loaded-soak templates.
+
+  Args:
+    env (Any): Mapping with the process environment (``os.environ``).
+
+  Returns:
+    int | None: Positive cap from ``HPCPERFSTATS_LOADED48_BIG_CLONE_CAP``,
+      or None (unlimited) when unset or not a positive integer.
+
+  Examples:
+    >>> loaded48_big_clone_cap({"HPCPERFSTATS_LOADED48_BIG_CLONE_CAP": "2"})
+    2
+    >>> loaded48_big_clone_cap({}) is None
+    True
+  """
+  val = str(env.get("HPCPERFSTATS_LOADED48_BIG_CLONE_CAP", "")).strip()
+  return int(val) if val.isdigit() and int(val) >= 1 else None
+
+
+def precreate_host_data_chunks(spec: str) -> int:
+  """
+  Create the daily ``host_data`` chunks for ``"<epoch_min>:<epoch_max>"``.
+
+  On a fresh benchmark DB the first insert into each day creates its chunk
+  under a hypertable-wide ``ShareUpdateExclusiveLock`` held for the whole
+  ``INSERT``, so a fast parser makes 15 writers queue behind one chunk
+  creator for minutes (production days already have chunks). A throwaway row
+  per day creates the chunk; the row is deleted and the chunk stays.
+
+  Args:
+    spec (str): ``"min:max"`` unix epochs; anything else is ignored.
+
+  Returns:
+    int: Days covered (0 when ``spec`` is empty or malformed).
+
+  Examples:
+    >>> precreate_host_data_chunks("")
+    0
+  """
+  m = re.fullmatch(r"(\d+):(\d+)", spec.strip())
+  if m is None:
+    return 0
+  lo, hi = int(m.group(1)), int(m.group(2))
+  from django.db import connection
+
+  with connection.cursor() as cur:
+    cur.execute(
+      "INSERT INTO host_data (time, host, type, event, dev, unit, value) "
+      "SELECT g, '__chunkwarm__', 'w', 'w', '', 'u', 0 "
+      "FROM generate_series(to_timestamp(%s), to_timestamp(%s), "
+      "interval '1 day') g",
+      [lo, hi],
+    )
+    n = cur.rowcount
+    cur.execute("DELETE FROM host_data WHERE host = '__chunkwarm__'")
+  return int(n)
+
+
+def _copy_with_unique_host(src: Path, dst: Path, tag: int) -> None:
+  """
+  Copy ``src`` to ``dst`` renaming the file's own ``$hostname`` per clone.
+
+  Verbatim clones carry identical ``(time, host, type, event, dev)`` keys, so
+  concurrent ``INSERT ... ON CONFLICT DO NOTHING`` payloads wait on each
+  other's uncommitted rows and fast parsers look slow (a benchmark artifact;
+  production rows are unique). The host token ``h.d`` becomes ``hc<tag>.d`` in
+  every line that carries it. Files without a ``$hostname`` line copy as-is.
+
+  Args:
+    src (Path): Template stats file.
+    dst (Path): Clone path.
+    tag (int): Per-clone ordinal (unique within a soak).
+
+  Returns:
+    None
+
+  Examples:
+    >>> _copy_with_unique_host.__name__
+    '_copy_with_unique_host'
+  """
+  with src.open("rb") as head:
+    first = head.read(8192)
+  m = re.search(rb"^\$hostname[ \t]+(\S+)", first, re.M)
+  if m is None:
+    shutil.copy2(src, dst)
+    return
+  old = m.group(1)
+  stem, dot, rest = old.partition(b".")
+  new = b"%sc%d%s%s" % (stem, tag, dot, rest)
+  # Write outside the scanned tree, then rename, so ingest never sees a
+  # half-written (empty) clone and quarantines it.
+  tmp_dir = dst.parent.parent / ".plant_tmp"
+  tmp_dir.mkdir(exist_ok=True)
+  tmp = tmp_dir / f"{dst.parent.name}.{dst.name}"
+  with src.open("rb") as fin, tmp.open("wb") as fout:
+    for line in fin:
+      fout.write(line.replace(old, new) if old in line else line)
+  os.utime(tmp, None)
+  os.replace(tmp, dst)
+
+
 def plant_loaded48_queue_padding(
     archive_dir: Path,
     hosts: Sequence[str],
@@ -2162,6 +2285,9 @@ def plant_loaded48_queue_padding(
     payload_bytes: int | None = None,
     start_index: int = 0,
     epoch_base: int | None = None,
+    big_clone_cap: int | None = None,
+    big_bytes: int = 256 << 20,
+    clone_counts: dict[Path, int] | None = None,
 ) -> int:
   """
   Plant additional unfinished epoch files so ingest width can stay loaded.
@@ -2187,6 +2313,13 @@ def plant_loaded48_queue_padding(
     epoch_base (int | None): Integer added to ``start_index`` for basenames.
       Default is the current unix time. Pass one value for a whole soak so
       names do not collide across refill calls.
+    big_clone_cap (int | None): Maximum clones of any template of at least
+      ``big_bytes``; exhausted templates are skipped so the cycle moves to
+      the next one. None means unlimited. Planting stops early when every
+      template is exhausted.
+    big_bytes (int): Size at which a template counts as big.
+    clone_counts (dict[Path, int] | None): Clone tally per template, shared
+      across calls so the cap is soak-wide. Defaults to a per-call dict.
 
   Returns:
     int: Files planted.
@@ -2202,10 +2335,25 @@ def plant_loaded48_queue_padding(
   origin = int(start_index)
   planted = 0
   tmpl = [Path(p) for p in (templates or ()) if Path(p).is_file()]
+  counts = clone_counts if clone_counts is not None else {}
+
+  def _capped(path: Path) -> bool:
+    return bool(
+        big_clone_cap
+        and path.stat().st_size >= big_bytes
+        and counts.get(path, 0) >= big_clone_cap,
+    )
+
   if tmpl:
     for i in range(int(count)):
       host = hosts[i % len(hosts)]
-      src = tmpl[(origin + i) % len(tmpl)]
+      src = next(
+          (c for c in (tmpl[(origin + i + j) % len(tmpl)] for j in range(len(tmpl)))
+           if not _capped(c)),
+          None,
+      )
+      if src is None:
+        break
       dst_host = archive_dir / host
       dst_host.mkdir(parents=True, exist_ok=True)
       # Fresh epoch basename — never reuse template epoch (day-close delete).
@@ -2214,11 +2362,12 @@ def plant_loaded48_queue_padding(
         dst = dst_host / ("%d_%d" % (now, i))
       if dst.exists():
         continue
-      shutil.copy2(src, dst)
-      # copy2 keeps the template mtime. A --changed-within scan then
+      _copy_with_unique_host(src, dst, origin + i)
+      # The copy keeps nothing of the template mtime. A --changed-within scan then
       # skips the clone and ingest stays empty.
       os.utime(dst, None)
       planted += 1
+      counts[src] = counts.get(src, 0) + 1
     return planted
   if payload_bytes is None:
     return 0

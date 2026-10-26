@@ -107,6 +107,8 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "metrics_readiness_end_margin_seconds"),
   ("PIPELINE", "sync_ingest_pool_processes"),
   ("PIPELINE", "sync_codon_context_pool_fraction"),
+  ("PIPELINE", "sync_codon_worker_processes"),
+  ("PIPELINE", "sync_codon_worker_recycle_rss_mib"),
   ("PIPELINE", "sync_archive_pool_processes"),
   ("PIPELINE", "sync_ingest_queue_max_size"),
   ("PIPELINE", "sync_ingest_rescan_mtime_days"),
@@ -137,6 +139,7 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "sync_ingest_write_pool_processes"),
   ("PIPELINE", "sync_ingest_parse_queue_max"),
   ("PIPELINE", "sync_ingest_parse_flush_max_mib"),
+  ("PIPELINE", "sync_codon_parse_flush_max_mib"),
   ("PIPELINE", "sync_supervisor_rss_limit_mb"),
   ("PIPELINE", "sync_process_tree_rss_limit_cgroup_pct"),
   ("PIPELINE", "sync_process_tree_rss_exit_cgroup_pct"),
@@ -270,9 +273,12 @@ INI_OPTION_DEFAULTS = {
   "metrics_readiness_end_margin_seconds": "600",
   "sync_ingest_pool_processes": "64",
   "sync_codon_context_pool_fraction": "1.0",
+  "sync_codon_worker_processes": "64",
+  "sync_codon_worker_recycle_rss_mib": "1536",
   "sync_ingest_write_pool_processes": "0",
   "sync_ingest_parse_queue_max": "32",
   "sync_ingest_parse_flush_max_mib": "512",
+  "sync_codon_parse_flush_max_mib": "1",
   "sync_archive_pool_processes": "4",
   "sync_ingest_queue_max_size": "3000",
   "sync_ingest_rescan_mtime_days": "1",
@@ -2239,6 +2245,29 @@ def get_sync_codon_context_pool_fraction() -> Any:
   return raw
 
 
+def get_sync_codon_worker_processes() -> Any:
+  """
+  Codon file-parse worker process count (one Codon runtime + GC per process).
+
+  One shared Codon runtime serializes on the Boehm allocation lock, so file
+  parses run in separate processes. INI default **64** (one worker per
+  default ingest thread; ~1 GiB peak per worker with 1 MiB parse windows).
+  ``0`` means ``max(1, effective_cores // 4)``. Always capped by the ingest
+  parse pool.
+
+  Returns:
+    int: Worker count (>= 1).
+
+  Examples:
+    >>> get_sync_codon_worker_processes()  # doctest: +SKIP
+  """
+  _ensure_cfg_loaded()
+  n = _pipeline_getint("sync_codon_worker_processes")
+  if n < 1:
+    n = get_worker_process_count(4)
+  return max(1, min(n, get_sync_ingest_pool_processes()))
+
+
 def get_sync_ingest_write_pool_processes() -> Any:
   """
   Ingest write-pool width (max concurrent ingest DB sessions).
@@ -2287,6 +2316,47 @@ def get_sync_ingest_parse_flush_max_mib() -> Any:
   """
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("sync_ingest_parse_flush_max_mib"))
+
+
+def get_sync_codon_worker_recycle_rss_mib() -> Any:
+  """
+  RSS in MiB above which a Codon worker is replaced after its file finishes.
+
+  Boehm's heap only grows: workers reached 2-6 GiB under the pipeline though one
+  file needs ~0.5 GiB. A hard heap cap aborted workers mid-file, so the parent
+  instead recycles a worker between files once it crosses this size.
+
+  Returns:
+    int: MiB (>= 1).
+
+  Examples:
+    >>> get_sync_codon_worker_recycle_rss_mib() >= 1  # doctest: +SKIP
+    True
+  """
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("sync_codon_worker_recycle_rss_mib"))
+
+
+def get_sync_codon_parse_flush_max_mib() -> Any:
+  """
+  Soft max MiB for one Codon file-session flush window.
+
+  Codon holds a whole window's per-row strings live and Boehm re-marks them on
+  every collection. Output rows, not input bytes, set the heap: a 12 MiB input
+  expanded to 316 MiB of COPY text and a 2.7 GiB heap. On the densest corpus
+  files worker RSS peaked at 5.7-7.7 GiB with 16 MiB windows, 2.6-2.9 GiB with
+  4 MiB and 0.9-1.1 GiB with 1 MiB (also faster per file). The effective window
+  is ``min(this, sync_ingest_parse_flush_max_mib)``.
+
+  Returns:
+    int: MiB (>= 1).
+
+  Examples:
+    >>> get_sync_codon_parse_flush_max_mib() >= 1  # doctest: +SKIP
+    True
+  """
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("sync_codon_parse_flush_max_mib"))
 
 
 def get_sync_archive_pool_processes() -> Any:

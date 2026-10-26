@@ -38,6 +38,8 @@ Attributes:
   _PROC_I32_COLS: Proc columns packed as 32-bit integers.
   _PROC_I64_COLS: Proc columns packed as 64-bit integers.
   _PROC_STR_COLS: Proc columns packed as strings.
+  WORKER_MEM_ENV: Env flag (``1``) that makes file sessions log ``codon_worker_mem``.
+  _BOEHM_STATS: ``(field, Boehm getter)`` pairs sampled for worker memory lines.
 """
 
 from __future__ import annotations
@@ -154,6 +156,7 @@ def codon_worker_parse(
   carry_arc: dict[str, float] | None = None,
   *,
   slot: int = 0,
+  exclude: list[str] | None = None,
 ) -> dict[str, Any]:
   """
   Full feed->delta->collapse->arc parse via baked Codon ``.so`` (slot 0).
@@ -166,6 +169,7 @@ def codon_worker_parse(
     carry_arc (dict[str, float] | None): Cross-flush arc-rate carry
       (``\\0``-joined keys -> last unix-seconds time), or None/empty.
     slot (int): Codon pyext stripe slot.
+    exclude (list[str] | None): Event types to skip (``None``/empty = none).
 
   Returns:
     dict[str, Any]: ``{"stats", "procs", "carry_raw", "carry_arc",
@@ -177,7 +181,11 @@ def codon_worker_parse(
   """
   mod = _import_codon_parse_mod()
   parsed = mod.parse_stats_lines_codon(
-    list(lines), int(slot), carry_raw or {}, carry_arc or {}
+    list(lines),
+    int(slot),
+    carry_raw or {},
+    carry_arc or {},
+    list(exclude) if exclude else None,
   )
   if isinstance(parsed, dict):
     return _finalize_codon_parse_copy_emit(parsed)
@@ -231,6 +239,7 @@ def encode_request(
   lines: list[str],
   carry_raw: dict[str, list[float]] | None = None,
   carry_arc: dict[str, float] | None = None,
+  exclude: list[str] | None = None,
 ) -> bytes:
   """
   Encode one parent→child request frame (header + UTF-8 body).
@@ -242,6 +251,8 @@ def encode_request(
       counter carry to seed before this window; ignored for ``fp``.
     carry_arc (dict[str, float] | None): ``parse`` only — cross-flush
       arc-rate carry to seed before this window; ignored for ``fp``.
+    exclude (list[str] | None): ``parse`` only — event types to skip; the
+      ``exclude`` key is omitted from the envelope when empty.
 
   Returns:
     bytes: Wire bytes including ``PROTO_VER`` header.
@@ -263,6 +274,8 @@ def encode_request(
       "carry_raw": carry_raw or {},
       "carry_arc": carry_arc or {},
     }
+    if exclude:
+      envelope["exclude"] = list(exclude)
     body = json.dumps(
       envelope, separators=(",", ":"), ensure_ascii=False
     ).encode("utf-8")
@@ -637,6 +650,8 @@ def encode_parse_file_request(
   path: str,
   flush_max_bytes: int,
   resume_byte: int = 0,
+  exclude: list[str] | None = None,
+  emit_insert: int = 0,
 ) -> bytes:
   """
   Encode a PROTO 4 file-owned parse request (no ``lines`` array).
@@ -648,6 +663,9 @@ def encode_parse_file_request(
     path (str): Absolute stats file path.
     flush_max_bytes (int): Soft max bytes per flush window.
     resume_byte (int): Byte offset to resume reading.
+    exclude (list[str] | None): Event types to skip; key omitted when empty.
+    emit_insert (int): ``1`` asks for per-row INSERT frames (default COPY
+      bytes); key omitted when ``0``.
 
   Returns:
     bytes: Wire bytes including ``PROTO_VER`` header.
@@ -661,10 +679,34 @@ def encode_parse_file_request(
     "flush_max_bytes": int(flush_max_bytes),
     "resume_byte": int(resume_byte),
   }
+  if exclude:
+    envelope["exclude"] = list(exclude)
+  if emit_insert:
+    envelope["emit_insert"] = 1
   body = json.dumps(envelope, separators=(",", ":"), ensure_ascii=False).encode(
     "utf-8"
   )
   return _REQ_HDR.pack(PROTO_VER, KIND_PARSE_FILE, len(body)) + body
+
+
+def _is_copy_frame(body: Mapping[str, Any]) -> bool:
+  """
+  Return True when ``body`` carries prebuilt COPY bytes (``stats["host_copy"]``).
+
+  Args:
+    body (Mapping[str, Any]): Parse result before binary encode.
+
+  Returns:
+    bool: True for COPY-bytes file-session frames.
+
+  Examples:
+    >>> _is_copy_frame({"stats": {"host_copy": b"x"}})
+    True
+    >>> _is_copy_frame({"stats": {}})
+    False
+  """
+  stats = body.get("stats")
+  return isinstance(stats, Mapping) and "host_copy" in stats
 
 
 def _parse_response_sidecar(body: Mapping[str, Any]) -> dict[str, Any]:
@@ -689,6 +731,7 @@ def _parse_response_sidecar(body: Mapping[str, Any]) -> dict[str, Any]:
     "finished": bool(body.get("finished", True)),
     "eof": bool(body.get("eof", False)),
     "copy_unique": bool(body.get("copy_unique", False)),
+    "copy_frame": _is_copy_frame(body),
   }
   if not body.get("file_session"):
     side["carry_raw"] = body.get("carry_raw", {})
@@ -755,9 +798,14 @@ def encode_response_ok(kind: str, body: Any) -> bytes:
     )
   elif kind == "parse":
     # Host + proc columnar SoA bytes + JSON sidecar (no pickle/msgpack).
-    stats_blob = encode_host_soa_bytes(body.get("stats") if body else None)
-    proc_blob = encode_proc_soa_bytes((body or {}).get("procs"))
-    side = _parse_response_sidecar(body or {})
+    body = body or {}
+    if _is_copy_frame(body):
+      stats_blob = bytes(body["stats"].get("host_copy") or b"")
+      proc_blob = bytes(body["stats"].get("proc_copy") or b"")
+    else:
+      stats_blob = encode_host_soa_bytes(body.get("stats"))
+      proc_blob = encode_proc_soa_bytes(body.get("procs"))
+    side = _parse_response_sidecar(body)
     side_bytes = json.dumps(
       side, separators=(",", ":"), ensure_ascii=False
     ).encode("utf-8")
@@ -844,10 +892,14 @@ def decode_response(kind: str, frame: bytes) -> Any:
     if len(proc_blob) != proc_n:
       raise RuntimeError("codon ipc proc soa body short")
     side = json.loads(payload[off:].decode("utf-8"))
-    procs = decode_proc_soa_bytes(proc_blob)
+    copy_frame = bool(side.get("copy_frame", False))
     return {
-      "stats": decode_host_soa_bytes(host_blob),
-      "procs": procs,
+      "stats": (
+        {"host_copy": host_blob, "proc_copy": proc_blob}
+        if copy_frame
+        else decode_host_soa_bytes(host_blob)
+      ),
+      "procs": {} if copy_frame else decode_proc_soa_bytes(proc_blob),
       "marks": side.get("marks", []),
       "carry_raw": side.get("carry_raw", {}),
       "carry_arc": side.get("carry_arc", {}),
@@ -858,12 +910,110 @@ def decode_response(kind: str, frame: bytes) -> Any:
   raise ValueError(f"unknown codon ipc kind={kind!r}")
 
 
+WORKER_MEM_ENV = "HPCPERFSTATS_CODON_WORKER_MEM"
+_BOEHM_STATS = (
+  ("heap_mib", "GC_get_heap_size"),
+  ("free_mib", "GC_get_free_bytes"),
+  ("unmapped_mib", "GC_get_unmapped_bytes"),
+  ("since_gc_mib", "GC_get_bytes_since_gc"),
+  ("alloc_total_mib", "GC_get_total_bytes"),
+)
+
+
+def _proc_status_mib() -> dict[str, int]:
+  """
+  Return this process's ``VmRSS`` / ``RssAnon`` / ``RssFile`` / ``VmHWM`` in MiB.
+
+  Returns:
+    dict[str, int]: Lowercased ``/proc/self/status`` fields in MiB (empty when
+      ``/proc`` is unavailable).
+
+  Examples:
+    >>> isinstance(_proc_status_mib(), dict)
+    True
+  """
+  want = {
+    "VmRSS": "rss",
+    "RssAnon": "rss_anon",
+    "RssFile": "rss_file",
+    "VmHWM": "hwm",
+  }
+  out: dict[str, int] = {}
+  try:
+    with open("/proc/self/status", encoding="ascii") as fh:
+      for line in fh:
+        key, _, rest = line.partition(":")
+        if key in want:
+          out[want[key]] = int(rest.split()[0]) // 1024
+  except OSError, ValueError, IndexError:
+    pass
+  return out
+
+
+def _boehm_stats_mib() -> dict[str, int]:
+  """
+  Return Boehm GC heap statistics (MiB) plus ``gc_no`` from the loaded runtime.
+
+  The Codon runtime (``libcodonrt``) is already mapped in this process, so
+  loading it again by path returns the same collector instance.
+
+  Returns:
+    dict[str, int]: ``heap_mib``, ``free_mib``, ``unmapped_mib``,
+      ``since_gc_mib``, ``alloc_total_mib`` and ``gc_no``; empty when the
+      runtime is not loadable.
+
+  Examples:
+    >>> isinstance(_boehm_stats_mib(), dict)
+    True
+  """
+  import ctypes
+
+  path = os.path.join(CODON_PARSE_DIR, "libcodonrt.so")
+  try:
+    lib = ctypes.CDLL(path)
+    out: dict[str, int] = {}
+    for key, fn in _BOEHM_STATS:
+      getter = getattr(lib, fn)
+      getter.restype = ctypes.c_size_t
+      out[key] = int(getter()) >> 20
+    lib.GC_get_gc_no.restype = ctypes.c_size_t
+    out["gc_no"] = int(lib.GC_get_gc_no())
+    return out
+  except OSError, AttributeError:
+    return {}
+
+
+def format_worker_mem_line(tag: str, **extra: Any) -> str:
+  """
+  Build one greppable ``codon_worker_mem`` line (process RSS split + Boehm).
+
+  Args:
+    tag (str): Sample point, ``open`` / ``win`` / ``eof``.
+    **extra (Any): Caller fields (``file``, ``win``, ``frame_kib`` ...).
+
+  Returns:
+    str: ``codon_worker_mem tag=… pid=… rss=… rss_anon=… rss_file=… hwm=… heap_mib=…``.
+
+  Examples:
+    >>> format_worker_mem_line("open", file="f").startswith(
+    ...   "codon_worker_mem tag=open"
+    ... )
+    True
+  """
+  fields = {"tag": tag, "pid": os.getpid(), **extra}
+  fields.update(_proc_status_mib())
+  fields.update(_boehm_stats_mib())
+  return "codon_worker_mem " + " ".join(f"{k}={v}" for k, v in fields.items())
+
+
 def codon_worker_parse_file_frames(
   path: str,
   flush_max_bytes: int,
   resume_byte: int = 0,
   *,
   slot: int = 0,
+  exclude: list[str] | None = None,
+  emit_insert: int | None = None,
 ) -> Any:
   """
   Open ``path`` in this process and yield one IPC-ready frame per flush window.
@@ -876,6 +1026,10 @@ def codon_worker_parse_file_frames(
     flush_max_bytes (int): Soft max bytes per window.
     resume_byte (int): Byte offset before reading.
     slot (int): Codon pyext stripe slot.
+    exclude (list[str] | None): Event types to skip (``None``/empty = none);
+      replaces the slot's previous list on every call.
+    emit_insert (int | None): ``1`` for per-row INSERT frames, ``0`` for COPY
+      bytes; ``None`` reads the calling task's ``current_ingest_emit()``.
 
   Yields:
     dict[str, Any]: Parse bodies suitable for ``encode_response_ok("parse",…)``.
@@ -900,15 +1054,38 @@ def codon_worker_parse_file_frames(
     int(flush_max_bytes),
     int(resume_byte),
     int(slot),
+    list(exclude) if exclude else None,
   )
   if not opened:
     return
-  from hpcperfstats.dbload.sync_timedb import current_ingest_emit
+  mem_on = os.environ.get(WORKER_MEM_ENV, "") == "1"
+  fname = os.path.basename(path)
+  if mem_on:
+    print(
+      format_worker_mem_line("open", file=fname), file=sys.stderr, flush=True
+    )
+  if emit_insert is None:
+    from hpcperfstats.dbload.sync_timedb import current_ingest_emit
 
-  pending: dict[str, Any] | None = None
-  while True:
     emit_insert = 1 if current_ingest_emit() == "insert" else 0
-    parsed = next_fn(int(slot), emit_insert=emit_insert)
+  pending: dict[str, Any] | None = None
+  win = 0
+  while True:
+    parsed = next_fn(int(slot), emit_insert=int(emit_insert))
+    if mem_on:
+      stats = (parsed or {}).get("stats") or {}
+      print(
+        format_worker_mem_line(
+          "win" if parsed is not None else "eof",
+          file=fname,
+          win=win,
+          host_kib=len(stats.get("host_copy") or b"") >> 10,
+          proc_kib=len(stats.get("proc_copy") or b"") >> 10,
+        ),
+        file=sys.stderr,
+        flush=True,
+      )
+    win += 1
     if parsed is None:
       break
     if pending is not None:
@@ -987,13 +1164,29 @@ def main() -> int:
           encode_response_ok("fp", codon_worker_fingerprint(list(payload))),
         )
       elif kind == "parse_file":
+        sent = False
         for frame in codon_worker_parse_file_frames(
           str(payload.get("path") or ""),
           int(payload.get("flush_max_bytes") or 1),
           int(payload.get("resume_byte") or 0),
           slot=0,
+          exclude=payload.get("exclude") or None,
+          emit_insert=int(payload.get("emit_insert") or 0),
         ):
           _send_frame(sys.stdout, encode_response_ok("parse", frame))
+          sent = True
+        if not sent:
+          # No frames (empty file): the parent waits for an ``eof`` frame.
+          _send_frame(
+            sys.stdout,
+            encode_response_ok(
+              "parse",
+              _ipc_frame_from_parsed(
+                {"stats": {"host_copy": b"", "proc_copy": b""}},
+                eof=True,
+              ),
+            ),
+          )
       elif kind == "parse":
         if os.environ.get(
           "HPCPERFSTATS_CODON_IPC_LEGACY_PARSE", ""
@@ -1011,6 +1204,7 @@ def main() -> int:
                 list(payload.get("lines") or []),
                 payload.get("carry_raw") or {},
                 payload.get("carry_arc") or {},
+                exclude=payload.get("exclude") or None,
               ),
             ),
           )

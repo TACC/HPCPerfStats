@@ -19,6 +19,7 @@ from tests.sync_timedb_benchmark.screening_runner import (
   DEFAULT_LOADED48_WARMUP_S,
   build_loaded48_manifest,
   corpus_hosts,
+  loaded48_big_clone_cap,
   loaded48_fixed_width,
   loaded48_hours,
   loaded48_mode_enabled,
@@ -135,6 +136,8 @@ def test_loaded48_continuous_fill_soak(monkeypatch):
     pytest.fail("corpus %s has no template files" % corpus_dir)
   epoch_base = int(time.time())
   plant_cursor = 0
+  big_clone_cap = loaded48_big_clone_cap(os.environ)
+  clone_counts: dict[Path, int] = {}
 
   def _plant_mix(count: int) -> int:
     nonlocal plant_cursor
@@ -145,6 +148,8 @@ def test_loaded48_continuous_fill_soak(monkeypatch):
         templates=size_mix,
         start_index=plant_cursor,
         epoch_base=epoch_base,
+        big_clone_cap=big_clone_cap,
+        clone_counts=clone_counts,
     )
     plant_cursor += int(count)
     return planted

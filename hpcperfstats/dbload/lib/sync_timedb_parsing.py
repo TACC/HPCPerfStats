@@ -64,7 +64,10 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame, concat
 
-from hpcperfstats.dbload.lib import sync_timedb_parsing_legacy as legacy_parsing
+from hpcperfstats.dbload.lib import (
+  sync_timedb_parsing_legacy as legacy_parsing,
+  sync_timedb_wait_telemetry as wait_telem,
+)
 from hpcperfstats.dbload.lib.file_locking import (
   LOCK_SUFFIX,
   file_read_lock_wait,
@@ -182,7 +185,7 @@ _parse_stage_flushed_s: contextvars.ContextVar[dict[str, float] | None] = (
   )
 )
 _parse_stage_hold_stack: contextvars.ContextVar[
-  list[tuple[str, float | None]] | None
+  list[tuple[str, float | None, float]] | None
 ] = contextvars.ContextVar(
   "parse_stage_hold_stack",
   default=None,
@@ -293,6 +296,8 @@ def reset_parse_stage_timing(*, enabled: bool | None = None) -> None:
   _parse_stage_s.set(dict.fromkeys(PARSE_STAGE_HOLD_KEYS, 0.0))
   _parse_stage_flushed_s.set(dict.fromkeys(PARSE_STAGE_HOLD_KEYS, 0.0))
   _parse_stage_hold_stack.set(None)
+  wait_telem.set_enabled(_parse_stage_telem_on)
+  wait_telem.begin_file()
 
 
 def snapshot_parse_stage_timing() -> dict[str, float]:
@@ -448,23 +453,25 @@ def _held_parse_stage(stage: str) -> Iterator[None]:
   if stack is None:
     stack = []
     _parse_stage_hold_stack.set(stack)
-  now = time.perf_counter()
+  now, cpu_now = time.perf_counter(), time.thread_time()
   if stack:
-    outer_stage, outer_t0 = stack[-1]
+    outer_stage, outer_t0, outer_c0 = stack[-1]
     if outer_t0 is not None:
       _add_parse_stage_s(outer_stage, now - outer_t0)
-    stack[-1] = (outer_stage, None)
-  stack.append((stage, now))
+      wait_telem.add_stage_cpu(outer_stage, cpu_now - outer_c0)
+    stack[-1] = (outer_stage, None, 0.0)
+  stack.append((stage, now, cpu_now))
   try:
     yield
   finally:
-    end = time.perf_counter()
-    cur_stage, t0 = stack.pop()
+    end, cpu_end = time.perf_counter(), time.thread_time()
+    cur_stage, t0, c0 = stack.pop()
     if t0 is not None:
       _add_parse_stage_s(cur_stage, end - t0)
+      wait_telem.add_stage_cpu(cur_stage, cpu_end - c0)
     if stack:
-      outer_stage, _paused = stack[-1]
-      stack[-1] = (outer_stage, end)
+      outer_stage, _paused, _c = stack[-1]
+      stack[-1] = (outer_stage, end, cpu_end)
     else:
       _flush_parse_stage_campaign_from_file_acc()
 
@@ -2985,6 +2992,33 @@ class IncrementalStatsParser:
     return stats_payload_to_records(self._stats_cols), self.take_proc_stats()
 
 
+def _codon_exclude_list(exclude_types_list: Any | None) -> list[str] | None:
+  """
+  Return the excluded event types as a sorted list for Codon.
+
+  Mirrors ``IncrementalStatsParser``: ``None`` means the module default
+  ``exclude_types``; an explicitly empty collection excludes nothing.
+
+  Args:
+    exclude_types_list (Any | None): Iterable of event-type names, or None.
+
+  Returns:
+    list[str] | None: Sorted names, or None when nothing is excluded.
+
+  Examples:
+    >>> _codon_exclude_list(frozenset({"b", "a"}))
+    ['a', 'b']
+    >>> _codon_exclude_list(frozenset()) is None
+    True
+    >>> _codon_exclude_list(None) == sorted(exclude_types)
+    True
+  """
+  chosen = exclude_types if exclude_types_list is None else exclude_types_list
+  if not chosen:
+    return None
+  return sorted(str(t) for t in chosen)
+
+
 def parse_stats_lines(
   lines: Any,
   start_idx: Any,
@@ -3012,12 +3046,14 @@ def parse_stats_lines(
   del eventmaps_by_type
   # Fail-closed Codon pyext (optional): full parse only when extension
   # exposes parse_stats_lines_codon; otherwise CPython IncrementalStatsParser.
-  if exclude_types_list is None and int(start_idx or 0) == 0:
+  if int(start_idx or 0) == 0:
     from hpcperfstats.dbload.lib.sync_timedb_codon_bridge import (
       try_codon_parse_collapse,
     )
 
-    codon_finished = try_codon_parse_collapse(list(lines))
+    codon_finished = try_codon_parse_collapse(
+      list(lines), exclude=_codon_exclude_list(exclude_types_list)
+    )
     if codon_finished is not None:
       return codon_finished
   parser = IncrementalStatsParser(start_idx, exclude_types_list)
@@ -3820,7 +3856,7 @@ def parse_stats_file_streaming_incremental(
   use_bytes = flush_max_bytes is not None
   flush_rows_n = max(1, int(flush_rows or 1))
   flush_bytes_n = max(1, int(flush_max_bytes or 1))
-  can_codon_divert = emission_start == 0 and exclude_types_list is None
+  can_codon_divert = emission_start == 0
   codon_primary = False
   if can_codon_divert:
     from hpcperfstats.dbload.lib.sync_timedb_codon_bridge import (
@@ -3828,6 +3864,8 @@ def parse_stats_file_streaming_incremental(
     )
 
     codon_primary = bool(codon_ingest_parse_enabled())
+  wait_telem.add("codon_primary", float(codon_primary))
+  wait_telem.add("emit_start", float(emission_start))
   schema_lines: list[str] = []
   window_lines: list[str] = []
   window_sample_n = 0
@@ -3903,9 +3941,18 @@ def parse_stats_file_streaming_incremental(
     flush_b = max(1, int(flush_max_bytes or 1))
     if not use_bytes:
       flush_b = max(flush_b, flush_rows_n * 65536)
+    from hpcperfstats.dbload.lib.conf_parser import (
+      get_sync_codon_parse_flush_max_mib,
+    )
     from hpcperfstats.dbload.lib.sync_timedb_codon_bridge import (
       try_codon_parse_file_stream,
     )
+
+    flush_b = min(flush_b, get_sync_codon_parse_flush_max_mib() << 20)
+    from hpcperfstats.dbload import sync_timedb as _st
+
+    # Tiny windows bound Codon's heap; write transactions stay CPython-sized.
+    coalesce_rows = _st._ingest_write_frame_slice_rows()
 
     with _stats_file_read_lock(stats_file):
       try_codon_parse_file_stream(
@@ -3913,6 +3960,8 @@ def parse_stats_file_streaming_incremental(
         flush_b,
         delta_carry,
         on_chunk,
+        exclude=_codon_exclude_list(exclude_types_list),
+        coalesce_rows=coalesce_rows,
       )
     return
 
