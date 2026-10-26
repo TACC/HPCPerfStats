@@ -344,6 +344,14 @@ the image, set `HPCPERFSTATS_CODON_PYEXT_DIR` to a directory containing the whol
 `/opt/hpcperfstats/codon_parse` tree, and confirm the child log shows
 `codon_parse status=enabled`.
 
+Host-runnable unit modules added by the throughput campaign (no DB needed):
+`test_codon_file_process_pool.py` (Codon worker-process pool: real `codon_process_worker` subprocess against the
+importable fake `codon_worker_fake_mod.py`; COPY-frame IPC, large-frame reads, abandon/respawn, recycle by RSS,
+host-row coalescing, 1 MiB window cap, `codon_worker_mem` lines), `test_sync_timedb_host_copy_vectorized.py` /
+`test_sync_timedb_proc_copy_vectorized.py` (vectorized COPY encoders byte-identical to the per-cell path),
+`test_sync_timedb_wait_telemetry.py`, `test_sync_timedb_ingest_rss_pressure.py`, and
+`test_analyze_ingest_stacks.py` / `test_analyze_ingest_wait_breakdown.py` (soak analyzers).
+
 Codon dynamic exclusion (`test_codon_exclude_parity.py`): the kernel/bridge/IPC cases run on
 the host venv; the three real-pyext cases skip unless `HPCPERFSTATS_CODON_PYEXT_DIR` holds a bake
 built from this tree **and** the interpreter is the free-threaded 3.14t (host `.venv` is not, so
