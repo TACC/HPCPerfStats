@@ -20,7 +20,7 @@ This document describes how `sync_timedb` uses **in-process thread pools**, **da
 | Pool | Module | Workers | Title role | Why threads |
 |------|--------|---------|------------|-------------|
 | `ingest_pool` (parse) | `sync_timedb_queue_orchestrator.py` | INI `sync_ingest_pool_processes` (default **64**) | `[thread:ingest-pool]` | Parse-only on 3.14t; enqueues flush payloads onto the write stage |
-| `ingest_write_pool` | `sync_timedb_ingest_write_stage.py` | INI `sync_ingest_write_pool_processes` (default **¼ parse**, e.g. **16** when parse=64) | `[thread:ingest-write-pool]` | Long-lived write threads; COPY/upsert; connection reuse until `get_db_conn_max_age()` |
+| `ingest_write_pool` | `sync_timedb_ingest_write_stage.py` | INI `sync_ingest_write_pool_processes` (default **½ parse**, e.g. **32** when parse=64) | `[thread:ingest-write-pool]` | Long-lived write threads; COPY/upsert; connection reuse until `get_db_conn_max_age()` |
 | `archive_pool` | `sync_timedb.py` / orchestrator append | INI `sync_archive_pool_processes` | `[thread:archive-pool]` | One daily tar per slot; I/O-heavy append |
 | `populate_pool` | `sync_timedb_populate_pool.py` | INI `sync_archive_members_populate_pool_processes` | `[thread:populate-pool]` | Sealed/tar member scans; ingest only enqueues and waits |
 | `sealed-archive-pool` | `sync_timedb_archive.py` | INI archive worker count | `[thread:sealed-archive-pool]` | Standalone sealed-archive ingest CLI |

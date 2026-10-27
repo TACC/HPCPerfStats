@@ -2265,7 +2265,7 @@ def get_sync_ingest_write_pool_processes() -> Any:
   """
   Ingest write-pool width (max concurrent ingest DB sessions).
 
-  When the INI key is omitted or ``0``, returns ``max(1, parse // 4)``.
+  When the INI key is omitted or ``0``, returns ``max(1, parse // 2)``.
 
   Returns:
     int: Write thread count (>= 1).
@@ -2277,7 +2277,7 @@ def get_sync_ingest_write_pool_processes() -> Any:
   _ensure_cfg_loaded()
   raw = int(_pipeline_getint("sync_ingest_write_pool_processes"))
   if raw <= 0:
-    return max(1, int(get_sync_ingest_pool_processes()) // 4)
+    return max(1, int(get_sync_ingest_pool_processes()) // 2)
   return max(1, raw)
 
 

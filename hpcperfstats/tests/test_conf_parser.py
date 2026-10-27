@@ -989,7 +989,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_archive_retry_backoff_max_seconds() == 60.0
   assert cfg.get_sync_checkpoint_flush_batch_size() == 100
   assert cfg.get_sync_timedb_tar_append_batch_size() == 256
-  assert cfg.get_sync_ingest_write_pool_processes() == 16
+  assert cfg.get_sync_ingest_write_pool_processes() == 32
   assert cfg.get_sync_ingest_parse_queue_max() == 32
   assert cfg.get_sync_ingest_parse_flush_max_mib() == 512
   assert not hasattr(cfg, "get_sync_bulk_create_batch_size")
