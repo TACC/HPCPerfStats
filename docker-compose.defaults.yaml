@@ -211,9 +211,10 @@ services:
       - max_wal_size=64GB
       - -c
       - wal_buffers=128MB
-      # PG15 Hub: boolean wal_compression only (pglz when on).
+      # PG15 Hub image is built with lz4 (verified on hpcperfstats04, 2026-10): pglz
+      # made 48 backends queue on LWLock WALInsert at ~127 MB/s of WAL.
       - -c
-      - wal_compression=on
+      - wal_compression=lz4
       - -c
       - bgwriter_lru_maxpages=800
       - -c

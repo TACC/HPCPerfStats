@@ -27,13 +27,13 @@ def _service_block(service: str) -> str:
 
 
 def test_docker_compose_db_pg15_checkpoint_io_gucs() -> None:
-  """Hub PG15 uses wal_compression=on (pglz); shares other checkpoint tuning with pg18."""
+  """Hub PG15 uses wal_compression=lz4 (image has lz4); shares checkpoint tuning with pg18."""
   block = _service_block("db")
   assert "timescale/timescaledb:2.28.3-pg15" in block
   for marker in _SHARED_GUC_MARKERS:
     assert marker in block, marker
-  assert "wal_compression=on" in block
-  assert "wal_compression=lz4" not in block
+  assert "wal_compression=lz4" in block
+  assert re.search(r"wal_compression=on\b", block) is None
   assert "io_method=io_uring" not in block
 
 
