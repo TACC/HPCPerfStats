@@ -4778,7 +4778,8 @@ class mem_hwm:
       u (Any): Job utils view.
 
     Returns:
-      Any: ``(value, HOST_MEM_JOB_TYPE, 'GiB')`` or ``None`` when absent.
+      Any: ``(value, resolved_type, 'GiB')`` (``resolved_type`` is the
+      host_mem_job type name actually found) or ``None`` when absent.
 
     Examples:
       >>> mem_hwm()._peak_host_mem_job(None)  # doctest: +SKIP
@@ -4812,7 +4813,9 @@ class mem_hwm:
       u (Any): Job utils view.
 
     Returns:
-      Any: ``(value_or_None, HOST_MEM_TYPE, 'GiB')``.
+      Any: ``(value_or_None, resolved_type, 'GiB')``. ``resolved_type`` is
+      the type name actually found (``host_mem`` or legacy ``mem``);
+      ``HOST_MEM_TYPE`` when none resolved.
 
     Examples:
       >>> mem_hwm()._peak_host_mem_numa(None)  # doctest: +SKIP
