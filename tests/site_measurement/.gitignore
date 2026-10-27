@@ -1,0 +1,10 @@
+results/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.pcap
+.DS_Store
+# Parser libraries must stay tracked even if a parent gitignore blankets lib/.
+!lib/
+!lib/**
+

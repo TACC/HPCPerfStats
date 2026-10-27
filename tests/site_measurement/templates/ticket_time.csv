@@ -1,0 +1,2 @@
+ticket_id,date,system,jid,had_hps_packet,review_minutes,outcome,notes
+example-1,2026-09-01,stampede3,12345,yes,,resolved,replace example; do not commit invented times

@@ -1,0 +1,21 @@
+{
+  "stream_on": null,
+  "stream_off": null,
+  "stream_units": "GB/s Triad",
+  "stream_delta_pct": null,
+  "ior_on": null,
+  "ior_off": null,
+  "ior_units": "GiB/s",
+  "ior_delta_pct": null,
+  "osu_on": null,
+  "osu_off": null,
+  "osu_units": "us latency",
+  "osu_delta_pct": null,
+  "app_name": null,
+  "app_on": null,
+  "app_off": null,
+  "app_units": "s wall",
+  "app_delta_pct": null,
+  "host": null,
+  "notes": "delta_pct = 100 * (on - off) / off. Leave null when not run."
+}

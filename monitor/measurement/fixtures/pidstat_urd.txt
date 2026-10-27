@@ -1,0 +1,7 @@
+Linux 5.14.0 (node.example) 	09/09/2026 	_x86_64_	(8 CPU)
+
+09:00:00 AM     UID       PID    %usr %system  %guest   %wait    %CPU   CPU  minflt/s  majflt/s     VSZ     RSS   %MEM   kB_rd/s   kB_wr/s   kB_ccwr/s  iodelay  Command
+09:00:10 AM     0      4242    0.00    0.00    0.00    0.00    0.00     1      0.00      0.00  120000   18000   0.05      0.00      0.00        0.00        0  hpcperfstatsd
+09:00:20 AM     0      4242    0.20    2.40    0.00    0.00    2.60     1      1.20      0.00  120000   18432   0.05      4.10     12.00        0.00        0  hpcperfstatsd
+09:00:30 AM     0      4242    0.00    0.00    0.00    0.00    0.00     1      0.00      0.00  120000   18432   0.05      0.00      0.00        0.00        0  hpcperfstatsd
+Average:        0      4242    0.07    0.80    0.00    0.00    0.87     -      0.40      0.00  120000   18288   0.05      1.37      4.00        0.00        0  hpcperfstatsd

@@ -1,0 +1,12 @@
+rss:	18432 kB
+pss:	16000 kB
+pss_anon:	12000 kB
+pss_file:	4000 kB
+Private_Clean:	2000 kB
+Private_Dirty:	10000 kB
+Shared_Clean:	6432 kB
+Shared_Dirty:	0 kB
+Pss:	16000 kB
+Pss_Anon:	12000 kB
+Pss_File:	4000 kB
+Rss:	18432 kB

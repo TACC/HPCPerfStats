@@ -8,6 +8,7 @@ C implementation of the **hpcperfstats** data collector: either a **RabbitMQ dae
 |------|---------|
 | `src/` | Production C sources and headers (`hpcperfstatsd`, collectors, schema, buffers). |
 | `tests/` | `check` targets: C unit drivers, shell regression, `Makefile.am`, `run_tests.sh`. Details: [tests/README.md](tests/README.md). |
+| `measurement/` | HUST 2026 **node** measurement kit (cadence, overhead, jitter); [measurement/RUNBOOK.md](measurement/RUNBOOK.md). Site/pipeline kit: `tests/site_measurement/`. |
 | `scripts/` | Static bundle and prefix helpers (`build_static_bundle.sh`, `ensure_dotbuild_prefix_static.sh`); plan-close **`run_valgrind_check.sh`** and **`run_cpp_linter.sh`**. |
 | `m4/`, `configure.ac` | Autotools. |
 | `README` | Legacy reference for **on-disk stats archive** format (headers, schema lines, record groups). |

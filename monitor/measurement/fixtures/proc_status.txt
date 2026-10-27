@@ -1,0 +1,9 @@
+Name:	hpcperfstatsd
+Pid:	4242
+VmSize:	  120000 kB
+VmRSS:	   18432 kB
+VmHWM:	   19000 kB
+RssAnon:	   12000 kB
+RssFile:	    6432 kB
+RssShmem:	       0 kB
+Threads:	1

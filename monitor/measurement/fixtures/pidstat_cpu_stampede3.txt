@@ -1,0 +1,14 @@
+Linux 5.14.0-611.24.1.el9_7.x86_64 (c512-122.stampede3.tacc.utexas.edu) 	08/14/2026 	_x86_64_	(112 CPU)
+
+04:23:47 PM   UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+04:23:57 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    65  hpcperfstatsd
+04:24:07 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    65  hpcperfstatsd
+04:25:07 PM     0   3695308    0.20    2.60    0.00    0.00    2.80    64  hpcperfstatsd
+04:25:17 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    64  hpcperfstatsd
+04:27:37 PM     0   3695308    0.20    2.70    0.00    0.00    2.90   105  hpcperfstatsd
+04:27:47 PM     0   3695308    0.00    0.00    0.00    0.00    0.00   105  hpcperfstatsd
+04:30:07 PM     0   3695308    0.20    2.80    0.00    0.00    3.00    85  hpcperfstatsd
+04:30:17 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    85  hpcperfstatsd
+04:32:37 PM     0   3695308    0.30    2.60    0.00    0.00    2.90    85  hpcperfstatsd
+04:32:47 PM     0   3695308    0.00    0.00    0.00    0.00    0.00    85  hpcperfstatsd
+Average:        0   3695308    0.02    0.18    0.00    0.00    0.19     -  hpcperfstatsd

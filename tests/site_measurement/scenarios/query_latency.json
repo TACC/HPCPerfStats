@@ -1,0 +1,108 @@
+{
+  "description": "Named Extended Search and Job Detail probes. Placeholders: {{TODAY}}, {{END_1D}}, {{END_7D}}, {{END_30D}}, {{END_365D}}, {{YEAR}}, {{JID}}, {{USERNAME}}, {{QUEUE}}, {{HOST}}.",
+  "scenarios": [
+    {
+      "name": "extended_search_1d",
+      "path": "/jobs/",
+      "query": {
+        "end_time__gte": "{{END_1D}}",
+        "end_time__lte": "{{TODAY}}",
+        "include_filter_options": "0",
+        "page": "1"
+      }
+    },
+    {
+      "name": "extended_search_7d",
+      "path": "/jobs/",
+      "query": {
+        "end_time__gte": "{{END_7D}}",
+        "end_time__lte": "{{TODAY}}",
+        "include_filter_options": "0",
+        "page": "1"
+      }
+    },
+    {
+      "name": "extended_search_30d",
+      "path": "/jobs/",
+      "query": {
+        "end_time__gte": "{{END_30D}}",
+        "end_time__lte": "{{TODAY}}",
+        "include_filter_options": "0",
+        "page": "1"
+      }
+    },
+    {
+      "name": "extended_search_365d",
+      "path": "/jobs/",
+      "query": {
+        "end_time__gte": "{{END_365D}}",
+        "end_time__lte": "{{TODAY}}",
+        "include_filter_options": "0",
+        "page": "1"
+      }
+    },
+    {
+      "name": "extended_search_queue_7d",
+      "path": "/jobs/",
+      "query": {
+        "end_time__gte": "{{END_7D}}",
+        "end_time__lte": "{{TODAY}}",
+        "queue": "{{QUEUE}}",
+        "include_filter_options": "0",
+        "page": "1"
+      },
+      "skip_if_empty": ["queue"]
+    },
+    {
+      "name": "extended_search_username_7d",
+      "path": "/jobs/",
+      "query": {
+        "end_time__gte": "{{END_7D}}",
+        "end_time__lte": "{{TODAY}}",
+        "username": "{{USERNAME}}",
+        "include_filter_options": "0",
+        "page": "1"
+      },
+      "skip_if_empty": ["username"]
+    },
+    {
+      "name": "extended_search_metric_threshold",
+      "path": "/jobs/",
+      "query": {
+        "end_time__gte": "{{END_7D}}",
+        "end_time__lte": "{{TODAY}}",
+        "metrics_avg_freq__gte": "1.5",
+        "include_filter_options": "0",
+        "page": "1"
+      }
+    },
+    {
+      "name": "job_list_histograms_7d",
+      "path": "/jobs/histograms/",
+      "query": {
+        "end_time__gte": "{{END_7D}}",
+        "end_time__lte": "{{TODAY}}",
+        "metric": "runtime"
+      }
+    },
+    {
+      "name": "job_detail",
+      "path": "/jobs/{{JID}}/",
+      "query": {
+        "light": "0"
+      }
+    },
+    {
+      "name": "job_detail_light",
+      "path": "/jobs/{{JID}}/",
+      "query": {
+        "light": "1"
+      }
+    },
+    {
+      "name": "job_plots",
+      "path": "/jobs/{{JID}}/plots/",
+      "query": {}
+    }
+  ]
+}

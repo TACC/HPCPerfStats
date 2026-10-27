@@ -1,0 +1,11 @@
+{
+  "backup_cadence": null,
+  "wal_pitr": null,
+  "replicas": null,
+  "rpo": null,
+  "restore_drill_date": null,
+  "compose_db_topology": "single TimescaleDB/PostgreSQL volume (Compose db service)",
+  "source_of_truth": "host archives until ingest+janitor succeed; sealed daily tar.zst",
+  "pg_dump_is_ha_contract": false,
+  "notes": "Fill only measured or operator-confirmed facts. Leave null otherwise."
+}
