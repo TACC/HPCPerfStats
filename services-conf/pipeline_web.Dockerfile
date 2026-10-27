@@ -861,6 +861,12 @@ RUN /bin/bash -o pipefail -c '\
   /usr/local/bin/zstd --version | grep -F 1.5.7 \
 '
 
+# Codon pyext lands via COPY --from=codon-build (above). Own for pipeline uid.
+RUN test -f /opt/hpcperfstats/codon_parse/hpcperfstats_codon_parse.so \
+  && test -f /opt/hpcperfstats/codon_parse/libcodonrt.so \
+  && chown -R hpcperfstats:hpcperfstats /opt/hpcperfstats/codon_parse
+
+
 # Gunicorn stays GIL (/usr/local/bin/gunicorn). background_thread:false is fork-safe for prefork.
 # Path B: LD_PRELOAD + ld.so.preload so manylinux wheels hit jemalloc (link-only is not enough).
 ENV LD_PRELOAD=/opt/jemalloc/lib/libjemalloc.so.2 \
@@ -875,11 +881,6 @@ ENV LD_PRELOAD=/opt/jemalloc/lib/libjemalloc.so.2 \
 WORKDIR /home/hpcperfstats
 
 COPY --chown=hpcperfstats:hpcperfstats . .
-
-# Codon pyext lands via COPY --from=codon-build (above). Own for pipeline uid.
-RUN test -f /opt/hpcperfstats/codon_parse/hpcperfstats_codon_parse.so \
-  && test -f /opt/hpcperfstats/codon_parse/libcodonrt.so \
-  && chown -R hpcperfstats:hpcperfstats /opt/hpcperfstats/codon_parse
 
 # .git is in the build context for frontend-builder SPA bake only — do not ship history.
 RUN rm -rf /home/hpcperfstats/.git
