@@ -1176,8 +1176,9 @@ def collapse_full_cols(
 ]:
   """Columnar port of ``_collapse_stats_with_deltas``.
 
-  Hardware ``dev`` stays in the group key, including CPU device ids.
-  ``j:`` shared-node stamps stay distinct the same way.
+  GPU types keep hardware ``dev`` in the group key and ``j:`` shared-node
+  stamps stay distinct the same way. Every other (whole-node) row has ``dev``
+  blanked first, so CPU/CCM/host rows sum across devices to ``dev=''``.
   Host-sum groups use ``sum(min_count=1)`` NaN semantics (all-NaN -> NaN).
   CCM power gauges (``host_cpu_hw``/``cpu_counter_metrics`` x DCGM CPU power
   events) use the cluster-mean-sum port. ``nvidia_gpu`` rows nan-out DCGM
@@ -1208,6 +1209,10 @@ def collapse_full_cols(
       out_delta,
     )
 
+  devs = [
+    devs[i] if _is_gpu_type(types[i]) or devs[i].startswith("j:") else ""
+    for i in range(n)
+  ]
   vals_work: list[float] = []
   for i in range(n):
     v = values[i]

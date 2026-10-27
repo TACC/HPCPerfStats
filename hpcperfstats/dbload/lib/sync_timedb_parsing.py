@@ -3522,7 +3522,9 @@ def _partition_job_stamped_rows(stats_df: Any) -> tuple[Any, Any]:
 
 def _collapse_stats_with_deltas(stats_df: Any) -> Any:
   """
-  Collapse multi-row samples. Hardware ``dev`` stays in the group key.
+  Collapse multi-row samples. GPU types and ``j:`` job stamps keep ``dev``.
+
+  Whole-node (unstamped) non-GPU rows sum across devices to ``dev=''``.
 
   Args:
     stats_df (Any): Stats df passed to this helper.
@@ -3535,6 +3537,7 @@ def _collapse_stats_with_deltas(stats_df: Any) -> Any:
   """
   with _held_parse_stage("collapse_normalize_s"):
     stats_df = _normalize_collapse_dev_column(stats_df)
+    gcols = _COLLAPSE_GROUP_COLS
     gcols_gpu = _COLLAPSE_GROUP_COLS_WITH_DEV
     nv_df = stats_df[stats_df["type"] == "nvidia_gpu"]
     other_gpu_df = stats_df[stats_df["type"].isin({"amd_gpu", "intel_gpu"})]
@@ -3557,9 +3560,10 @@ def _collapse_stats_with_deltas(stats_df: Any) -> Any:
       if not rest_plain.empty:
         collapsed_rest = _groupby_sum_min_count(
           rest_plain,
-          gcols_gpu,
+          gcols,
           assume_duplicates=True,
         )
+        collapsed_rest["dev"] = ""
         parts.append(collapsed_rest)
       if not rest_job.empty:
         parts.append(
@@ -3573,7 +3577,8 @@ def _collapse_stats_with_deltas(stats_df: Any) -> Any:
     ccm_plain, ccm_job = _partition_job_stamped_rows(ccm_power_df)
     with _held_parse_stage("collapse_ccm_s"):
       if not ccm_plain.empty:
-        collapsed_ccm = _collapse_dcg_cpu_power_vectorized(ccm_plain, gcols_gpu)
+        collapsed_ccm = _collapse_dcg_cpu_power_vectorized(ccm_plain, gcols)
+        collapsed_ccm["dev"] = ""
         parts.append(collapsed_ccm)
       if not ccm_job.empty:
         parts.append(_collapse_dcg_cpu_power_vectorized(ccm_job, gcols_gpu))

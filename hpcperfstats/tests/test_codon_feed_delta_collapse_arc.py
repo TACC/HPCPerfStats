@@ -150,9 +150,14 @@ def test_feed_delta_collapse_arc_matches_cpython_broad_corpus() -> None:
   got = _codon_rows(mod, lines)
   want = _cpython_oracle_rows(lines)
   _assert_rows_match(got, want)
+  # Whole-node CCM power collapses across cores: one '' row per timestamp.
   ccm_keys = [k for k in got if k[1] == "host_cpu_hw"]
-  assert len(ccm_keys) == 6
-  assert {k[2] for k in ccm_keys} == {"0", "1", "2"}
+  assert len(ccm_keys) == 2
+  assert {k[2] for k in ccm_keys} == {""}
+  # Whole-node CPU sums to '' too; GPU keeps hardware dev, host_mem_job j:.
+  assert {k[2] for k in got if k[1] == "cpu"} == {""}
+  assert {k[2] for k in got if k[1] == "nvidia_gpu"} == {"0", "1"}
+  assert {k[2] for k in got if k[1] == "host_mem_job"} == {"j:J1"}
 
 
 def test_feed_delta_collapse_arc_e6_corpus_smoke() -> None:

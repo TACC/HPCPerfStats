@@ -78,19 +78,26 @@ def test_kernel_host_normalize_matches_insert_helper() -> None:
       assert kernel_cols[col] == ref[col]
 
 
-def test_cpu_device_id_survives_collapse() -> None:
-  """cpu 0 and cpu 1 stay distinct. Collapse must not blank hardware dev."""
+def test_whole_node_cpu_sums_to_empty_dev_and_gpu_keeps_hardware_dev() -> None:
+  """Whole-node cpu 0/1 sum to one '' row; GPU rows keep their hardware dev."""
   mod = _load_feed_collapse()
   lines = [
     "!cpu user,W=64,U=1",
+    "!nvidia_gpu gpu_util,W=64,U=1",
     "1000.1 J9 h1",
     "cpu 0 @full 1.0",
     "cpu 1 @full 4.0",
+    "nvidia_gpu 0 @full 5.0",
+    "nvidia_gpu 1 @full 7.0",
   ]
   finished, _proc, *_ = mod.feed_delta_collapse_arc(lines, {}, {})
   cols = _host_soa_from_finished(finished)
-  assert cols["dev"] == ["0", "1"]
-  assert cols["value"] == [1.0, 4.0]
+  rows = list(zip(cols["type"], cols["dev"], cols["value"], strict=True))
+  assert sorted(rows) == [
+    ("cpu", "", 5.0),
+    ("nvidia_gpu", "0", 5.0),
+    ("nvidia_gpu", "1", 7.0),
+  ]
 
 
 def test_feed_delta_arc_host_matches_normalize_helper() -> None:
