@@ -99,3 +99,17 @@ cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
 ```
 
 Do **not** `ln -sf` `.cursor/hooks.json` — Cursor will not load a symlinked project hooks config. After copy, confirm **Settings → Hooks** and the Hooks output channel no longer show the symlink refuse / “No project hooks configuration found” errors.
+
+## Claude Code hooks
+
+`hpc_claude_hooks.py` ports the rule-dispatch core to Claude Code, wired in the checked-in `.claude/settings.json` (`$CLAUDE_PROJECT_DIR/cursor-hooks/...`, system `python3`, stdlib only). Same router (`hook_task_router.py`) as Cursor.
+
+| Event | Subcommand | Behavior |
+|-------|-----------|----------|
+| `UserPromptSubmit` | `prompt` | New turn: clear the Read ledger |
+| `PostToolUse` `Read` | `record` | Record Read `.mdc` rules and router `docs` |
+| `PreToolUse` `Edit\|Write\|MultiEdit\|NotebookEdit` | `pre-edit` | **deny** until triggered rules/docs were Read this turn |
+| `PostToolUse` edits | `post-edit` | Record edit; warn if a `cursor-rules/*.mdc` lacks dual registration |
+| `Stop` | `stop` | Block close if an edited rule lacks dual registration |
+
+Not ported (Cursor-only): CreatePlan / live `.cursor/plans` gates and the close-heading gate.
