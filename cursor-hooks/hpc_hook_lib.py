@@ -1447,7 +1447,11 @@ def record_turn_activity(
     if not path:
       return False
     is_template = is_plan_template_read_path(path)
-    if not (is_cursor_rule_read_path(path) or is_template):
+    if not (
+      is_cursor_rule_read_path(path)
+      or is_template
+      or router_doc_for_read_path(path)
+    ):
       return False
     entry = {
       "kind": LEDGER_KIND_READ,
@@ -1745,6 +1749,40 @@ def domain_rule_read_issues(
   return issues
 
 
+def router_doc_for_read_path(path: str) -> str | None:
+  """Router ``docs`` entry a Read path opens (suffix match), else None."""
+  normalized = (path or "").replace("\\", "/").lower()
+  from hook_task_router import all_router_docs
+
+  for doc in all_router_docs():
+    if normalized == doc.lower() or normalized.endswith("/" + doc.lower()):
+      return doc
+  return None
+
+
+def doc_read_issues(
+  required_docs: Iterable[str],
+  transcript_rows: list[dict],
+  extra_read_basenames: Iterable[str] = (),
+) -> list[str]:
+  """Like ``domain_rule_read_issues`` for router ``docs`` (non-rule files)."""
+  first_closeable = first_closeable_event_index(transcript_rows)
+  extra = {str(name).lower() for name in extra_read_basenames}
+  issues: list[str] = []
+  for doc in sorted(required_docs, key=str.lower):
+    read_indices = [
+      event_idx
+      for event_idx, part in iter_tool_parts(transcript_rows)
+      if router_doc_for_read_path(read_path_from_tool_part(part) or "") == doc
+    ]
+    if read_indices:
+      if first_closeable is not None and min(read_indices) > first_closeable:
+        issues.append(f"Doc read after first edit/plan: {doc}")
+    elif Path(doc).name.lower() not in extra:
+      issues.append(f"Doc not read: {doc}")
+  return issues
+
+
 def edge_cases_issues(assistant_text: str) -> list[str]:
   match = re.search(r"###\s*Edge cases", assistant_text or "", re.I)
   if not match:
@@ -1954,6 +1992,15 @@ def close_gate_issues(
   issues.extend(
     domain_rule_read_issues(
       required_rules,
+      transcript_rows,
+      extra_read_basenames=extra_reads,
+    ),
+  )
+  from hook_task_router import required_docs_for_paths
+
+  issues.extend(
+    doc_read_issues(
+      required_docs_for_paths(work_paths),
       transcript_rows,
       extra_read_basenames=extra_reads,
     ),

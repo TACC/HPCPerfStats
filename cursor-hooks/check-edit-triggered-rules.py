@@ -10,10 +10,11 @@ HOOK_DIR = Path(__file__).resolve().parent
 if str(HOOK_DIR) not in sys.path:
   sys.path.insert(0, str(HOOK_DIR))
 
-from hook_task_router import triggered_rules_for_paths
+from hook_task_router import required_docs_for_paths, triggered_rules_for_paths
 from hpc_hook_lib import (
   PLAN_AUTHORING_REQUIRED_MDC,
   READ_VERIFY_EXEMPT_MDC,
+  doc_read_issues,
   domain_rule_read_issues,
   edit_path_from_tool_part,
   emit_json,
@@ -61,7 +62,7 @@ def edited_path_from_payload(payload: dict) -> str:
   return edit_path_from_tool_part(part) or ""
 
 
-def triggered_rules_for_payload(payload: dict) -> list[str]:
+def work_paths_for_payload(payload: dict) -> list[str]:
   tool_name = tool_name_from_payload(payload)
   workspace_roots = payload.get("workspace_roots") or []
   rows = last_turn_rows(
@@ -76,7 +77,15 @@ def triggered_rules_for_payload(payload: dict) -> list[str]:
   elif edited_path := edited_path_from_payload(payload):
     if edited_path not in work_paths:
       work_paths.append(edited_path)
+  return work_paths
 
+
+def triggered_rules_for_payload(
+  payload: dict, work_paths: list[str] | None = None
+) -> list[str]:
+  tool_name = tool_name_from_payload(payload)
+  if work_paths is None:
+    work_paths = work_paths_for_payload(payload)
   triggered = triggered_rules_for_paths(work_paths)
   if tool_name == "CreatePlan":
     seen: dict[str, str] = {}
@@ -99,7 +108,8 @@ def main() -> int:
     emit_json({})
     return 0
 
-  triggered = triggered_rules_for_payload(payload)
+  work_paths = work_paths_for_payload(payload)
+  triggered = triggered_rules_for_payload(payload, work_paths)
   transcript_path = payload.get("transcript_path")
   if not transcript_path:
     emit_json({})
@@ -117,6 +127,13 @@ def main() -> int:
     triggered,
     rows,
     extra_read_basenames=extra_reads,
+  )
+  issues.extend(
+    doc_read_issues(
+      required_docs_for_paths(work_paths),
+      rows,
+      extra_read_basenames=extra_reads,
+    ),
   )
   if tool_name == "CreatePlan":
     issues.extend(
@@ -158,7 +175,8 @@ def main() -> int:
         "RULE DISPATCH (pre-close): %s triggers domain or plan-authoring "
         f"rules that must be Read before further work. Issues: "
         f"{', '.join(issues)}. "
-        f"Use the Read tool on each listed {rules_dir}/*.mdc "
+        f"Use the Read tool on each listed {rules_dir}/*.mdc, "
+        "each listed doc (checkout-relative), "
         "and the workspace PLAN_TEMPLATE.md "
         "(HPCPerfStats/monitor/docs/plans/ or HPCPerfStats/docs/plans/) "
         "for plan turns, then list them under ## Agent rule dispatch at close."

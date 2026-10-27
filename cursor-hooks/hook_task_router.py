@@ -15,9 +15,14 @@ class _RouterEntryRequired(TypedDict):
 
 
 class RouterEntry(_RouterEntryRequired, total=False):
-  """Optional ``exact_paths`` without ``NotRequired`` (stdlib hooks use system Python 3.9)."""
+  """Optional keys without ``NotRequired`` (stdlib hooks use system Python 3.9).
+
+  ``docs`` lists checkout-relative non-rule files (e.g. a state-machine doc) that
+  must be Read before editing a matching path, enforced like ``rules``.
+  """
 
   exact_paths: list[str]
+  docs: list[str]
 
 
 # Mirror agent-discipline-core.mdc task router. Update both in the same task when triggers change.
@@ -64,6 +69,22 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
       "test-first-discipline.mdc",
       "python-docstring-and-typing-contract.mdc",
     ],
+  },
+  {
+    "id": "sync_timedb_state_machine",
+    "patterns": [
+      "hpcperfstats/dbload/sync_timedb.py",
+      "hpcperfstats/dbload/sync_timedb_archive.py",
+      "hpcperfstats/dbload/lib/sync_timedb_*.py",
+      "hpcperfstats/dbload/lib/zstd_cli.py",
+      "scripts/sync_timedb_state_inventory.py",
+      "docs/SYNC_TIMEDB_STATE_MACHINE.md",
+      "hpcperfstats/tests/test_sync_timedb_state_doc_registry.py",
+      "hpcperfstats/tests/test_sync_timedb_negative_states.py",
+      "hpcperfstats/tests/test_sync_timedb_sealed_member_map.py",
+    ],
+    "rules": ["sync-timedb-state-machine-contract.mdc"],
+    "docs": ["docs/SYNC_TIMEDB_STATE_MACHINE.md"],
   },
   {
     "id": "listend_live_db_ingest",
@@ -1335,6 +1356,29 @@ def router_entries_for_profile(profile: str) -> list[RouterEntry]:
   if profile == "monitor":
     return MONITOR_ROUTER_ENTRIES
   return HPCPERFSTATS_ROUTER_ENTRIES
+
+
+def required_docs_for_paths(paths: Iterable[str]) -> list[str]:
+  """Checkout-relative docs (``RouterEntry["docs"]``) the paths require Read."""
+  seen: dict[str, str] = {}
+  for raw in paths:
+    normalized = normalize_repo_path(raw)
+    if not normalized:
+      continue
+    for entry in [*MONITOR_ROUTER_ENTRIES, *HPCPERFSTATS_ROUTER_ENTRIES]:
+      if entry_matches_path(normalized, entry):
+        for doc in entry.get("docs") or []:
+          seen.setdefault(doc.lower(), doc)
+  return list(seen.values())
+
+
+def all_router_docs() -> list[str]:
+  """Every ``RouterEntry["docs"]`` path across both router profiles."""
+  seen: dict[str, str] = {}
+  for entry in [*MONITOR_ROUTER_ENTRIES, *HPCPERFSTATS_ROUTER_ENTRIES]:
+    for doc in entry.get("docs") or []:
+      seen.setdefault(doc.lower(), doc)
+  return list(seen.values())
 
 
 def triggered_rules_for_paths(

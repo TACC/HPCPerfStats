@@ -2836,3 +2836,92 @@ def test_domain_rule_read_issues_last_turn_ignores_prior_turn_edit():
     ["testing-best-practices.mdc"], full
   )
   assert any("read after first edit" in item for item in full_issues)
+
+
+STATE_DOC = "docs/SYNC_TIMEDB_STATE_MACHINE.md"
+STATE_DOC_READ_PATH = f"/repo/HPCPerfStats/{STATE_DOC}"
+ORCHESTRATOR_PATH = "hpcperfstats/dbload/lib/sync_timedb_queue_orchestrator.py"
+
+
+def _tool_row(name: str, path: str) -> dict:
+  return {
+    "role": "assistant",
+    "message": {
+      "content": [{"type": "tool_use", "name": name, "input": {"path": path}}],
+    },
+  }
+
+
+def test_state_machine_paths_require_rule_and_doc():
+  from hook_task_router import all_router_docs, required_docs_for_paths
+
+  for path in (
+    ORCHESTRATOR_PATH,
+    "hpcperfstats/dbload/sync_timedb.py",
+    "hpcperfstats/dbload/lib/zstd_cli.py",
+    STATE_DOC,
+  ):
+    assert "sync-timedb-state-machine-contract.mdc" in (
+      triggered_rules_for_paths([path])
+    ), path
+    assert required_docs_for_paths([path]) == [STATE_DOC], path
+  assert required_docs_for_paths(["hpcperfstats/listend.py"]) == []
+  checkout = HOOKS_DIR.parent
+  for doc in all_router_docs():
+    assert (checkout / doc).is_file(), doc
+
+
+def test_doc_read_issues_requires_read_before_first_edit():
+  edit = _tool_row("Write", ORCHESTRATOR_PATH)
+  read = _tool_row("Read", STATE_DOC_READ_PATH)
+  assert lib.doc_read_issues([STATE_DOC], [edit]) == [
+    f"Doc not read: {STATE_DOC}"
+  ]
+  assert lib.doc_read_issues([STATE_DOC], [read, edit]) == []
+  assert lib.doc_read_issues([STATE_DOC], [edit, read]) == [
+    f"Doc read after first edit/plan: {STATE_DOC}"
+  ]
+  # A same-named file outside the router doc path does not count.
+  other = _tool_row("Read", "/repo/notes/SYNC_TIMEDB_STATE_MACHINE.md.bak")
+  assert lib.doc_read_issues([STATE_DOC], [other, edit]) != []
+
+
+def test_doc_read_ledger_fallback_counts_mid_turn_read(tmp_path):
+  transcript = _one_user_row_transcript(tmp_path, "doc-ledger.jsonl")
+  assert lib.record_turn_activity(
+    str(transcript), "Read", {"path": STATE_DOC_READ_PATH}
+  )
+  full_rows = lib.parse_transcript_lines(str(transcript))
+  extra = lib.ledger_read_basenames_this_turn(str(transcript), full_rows)
+  assert lib.doc_read_issues([STATE_DOC], [], extra_read_basenames=extra) == []
+  # Unrelated non-rule reads are still not recorded.
+  assert not lib.record_turn_activity(
+    str(transcript), "Read", {"path": "/repo/HPCPerfStats/docs/TESTING.md"}
+  )
+
+
+def test_check_edit_triggered_rules_flags_unread_state_doc(tmp_path):
+  transcript = _one_user_row_transcript(tmp_path, "doc-edit.jsonl")
+  payload = {
+    "tool_name": "StrReplace",
+    "tool_input": {"path": ORCHESTRATOR_PATH},
+    "transcript_path": str(transcript),
+  }
+  script = HOOKS_DIR / "check-edit-triggered-rules.py"
+  proc = subprocess.run(
+    [sys.executable, str(script)],
+    input=json.dumps(payload),
+    capture_output=True,
+    text=True,
+    check=False,
+  )
+  assert proc.returncode == 0
+  context = json.loads(proc.stdout.strip())["additional_context"]
+  assert f"Doc not read: {STATE_DOC}" in context
+  assert "sync-timedb-state-machine-contract.mdc" in context
+
+
+def test_close_gate_issues_flags_unread_state_doc():
+  rows = [_tool_row("Write", ORCHESTRATOR_PATH)]
+  issues = lib.close_gate_issues(assistant_text="", transcript_rows=rows)
+  assert f"Doc not read: {STATE_DOC}" in issues
