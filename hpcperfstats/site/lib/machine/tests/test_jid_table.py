@@ -733,6 +733,9 @@ def test_jid_table_get_llite_delta_by_event_cache_set_failure_still_returns_df()
   from hpcperfstats.site.lib.machine import cache_utils as cu
 
   class FakeQs:
+    def filter(self, *args, **kwargs):
+      return self
+
     def values(self, *args):
       return self
 
@@ -787,6 +790,9 @@ def test_jid_table_get_beegfs_delta_by_event_cache_set_failure_still_returns_df(
   from hpcperfstats.site.lib.machine import cache_utils as cu
 
   class FakeQs:
+    def filter(self, *args, **kwargs):
+      return self
+
     def values(self, *args):
       return self
 
@@ -841,6 +847,9 @@ def test_jid_table_get_nfs_delta_totals_mb_cache_set_failure_still_returns_list(
   from hpcperfstats.site.lib.machine import cache_utils as cu
 
   class FakeQs:
+    def filter(self, *args, **kwargs):
+      return self
+
     def values(self, *args):
       return self
 
@@ -1422,6 +1431,9 @@ def test_type_detail_get_aggregate_df_sql_fast_path(monkeypatch):
   filter_calls = []
 
   class Qs:
+    def filter(self, *args, **kwargs):
+      return self
+
     def values(self, *cols):
       return self
 
@@ -1714,6 +1726,7 @@ def test_full_host_data_rows_batched_uses_metrics_host_batch_and_time_slices(
 
   hosts = [f"h{i}.example.com" for i in range(20)]
   inst = jt_mod.jid_table.__new__(jt_mod.jid_table)
+  inst.jid = None
   inst.acct_host_list = hosts
   inst._base_filter = {
     "host__in": hosts,
@@ -1873,6 +1886,11 @@ def test_get_aggregate_df_nfs_first_host_chunk_is_eight(monkeypatch):
       "hpcperfstats.analysis.metrics.lib.gen.jid_table."
       "host_data_restore_time_column",
       lambda df: df,
+    ),
+    patch(
+      "hpcperfstats.analysis.metrics.lib.metrics_host_data_sql."
+      "host_data_sum_metric_per_sample_rows",
+      lambda *_a, **_k: [],
     ),
     patch(
       "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data",

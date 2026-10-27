@@ -13,8 +13,10 @@ def test_write_stage_returns_timing_on_payload(monkeypatch):
   """Write worker snapshots ContextVars onto payload.write_timing."""
   ws.stop_ingest_write_stage(join_timeout_s=1.0)
 
-  def _fake_write(path, stats, proc_stats, *, need_archival=True):
-    del path, stats, proc_stats, need_archival
+  def _fake_write(
+    path, stats, proc_stats, *, need_archival=True, copy_unique=False, emit=""
+  ):
+    del path, stats, proc_stats, need_archival, copy_unique, emit
     st._reset_ingest_write_timing(enabled=True)
     st._add_ingest_postgres_s(1.25)
     st._add_ingest_write_phase("conflict_insert_s", 0.5)
@@ -46,8 +48,10 @@ def test_submit_write_applies_timing_to_parse_thread(monkeypatch):
   """After cross-thread wait, parse-thread snapshot includes write totals."""
   ws.stop_ingest_write_stage(join_timeout_s=1.0)
 
-  def _fake_write(path, stats, proc_stats, *, need_archival=True):
-    del path, stats, proc_stats, need_archival
+  def _fake_write(
+    path, stats, proc_stats, *, need_archival=True, copy_unique=False, emit=""
+  ):
+    del path, stats, proc_stats, need_archival, copy_unique, emit
     st._add_ingest_postgres_s(2.0)
     st._add_ingest_write_phase("copy_s", 0.75)
     return ("/f", False, True)
@@ -80,8 +84,10 @@ def test_streaming_flushes_sum_write_timing(monkeypatch):
   ws.stop_ingest_write_stage(join_timeout_s=1.0)
   calls = {"n": 0}
 
-  def _fake_write(path, stats, proc_stats, *, need_archival=True):
-    del path, stats, proc_stats, need_archival
+  def _fake_write(
+    path, stats, proc_stats, *, need_archival=True, copy_unique=False, emit=""
+  ):
+    del path, stats, proc_stats, need_archival, copy_unique, emit
     calls["n"] += 1
     st._add_ingest_postgres_s(1.0)
     st._add_ingest_write_phase("db_execute_s", 0.25)
@@ -127,8 +133,10 @@ def test_inline_write_does_not_double_apply_timing(monkeypatch):
   """When the write stage is down, inline timing stays single-counted."""
   ws.stop_ingest_write_stage(join_timeout_s=1.0)
 
-  def _fake_write(path, stats, proc_stats, *, need_archival=True):
-    del path, stats, proc_stats, need_archival
+  def _fake_write(
+    path, stats, proc_stats, *, need_archival=True, copy_unique=False, emit=""
+  ):
+    del path, stats, proc_stats, need_archival, copy_unique, emit
     st._add_ingest_postgres_s(4.0)
     return ("/f", True, True)
 
@@ -147,8 +155,10 @@ def test_write_timing_visible_after_cross_thread_barrier(monkeypatch):
   ws.stop_ingest_write_stage(join_timeout_s=1.0)
   release = threading.Event()
 
-  def _fake_write(path, stats, proc_stats, *, need_archival=True):
-    del path, stats, proc_stats, need_archival
+  def _fake_write(
+    path, stats, proc_stats, *, need_archival=True, copy_unique=False, emit=""
+  ):
+    del path, stats, proc_stats, need_archival, copy_unique, emit
     st._add_ingest_postgres_s(1.5)
     release.wait(timeout=2.0)
     return ("/f", True, True)

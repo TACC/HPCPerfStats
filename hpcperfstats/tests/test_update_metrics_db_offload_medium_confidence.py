@@ -256,6 +256,7 @@ def test_compute_metrics_skips_full_host_data_df_without_complex_metrics(
         _base_filter={"host__in": ["h.example.org"]},
       )
       jt._host_data_qs = lambda **k: SimpleNamespace(exists=lambda: True)
+      jt.get_host_time_df = lambda: None
       return jt
 
     def __exit__(self, *a):

@@ -830,7 +830,18 @@ def test_max_fabricbw_rejects_packet_rate_scale_as_mb_s():
   assert value == pytest.approx(5.0e10 / 10.0 / (1024 * 1024))
 
 
+@pytest.fixture
+def job_arc_pandas_fallback(monkeypatch):
+  """Force ``job_arc`` onto the pandas path; the SQL fast path needs real PG."""
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.metrics_host_data_sql"
+    ".job_arc_cluster_aggregate_value",
+    lambda *_a, **_k: None,
+  )
+
+
 @pytest.mark.machine_unit_mock
+@pytest.mark.usefixtures("job_arc_pandas_fallback")
 def test_avg_cpuusage_sums_per_host_means():
   """avg_cpuusage persists sum of per-host busy-core means (not mean-of-hosts)."""
   import pandas as pd
@@ -882,6 +893,7 @@ def test_avg_cpuusage_sums_per_host_means():
 
 
 @pytest.mark.machine_unit_mock
+@pytest.mark.usefixtures("job_arc_pandas_fallback")
 def test_job_arc_means_samples_within_bucket_not_sum():
   """Multiple samples in one 5m bucket must mean (not sum) instantaneous totals.
 
@@ -934,6 +946,7 @@ def test_job_arc_means_samples_within_bucket_not_sum():
 
 
 @pytest.mark.machine_unit_mock
+@pytest.mark.usefixtures("job_arc_pandas_fallback")
 def test_job_arc_keeps_single_bucket_per_host():
   """Single remaining 5m bucket must not be dropped (short-job defensive)."""
   import pandas as pd

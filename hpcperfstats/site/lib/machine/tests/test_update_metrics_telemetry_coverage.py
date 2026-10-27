@@ -389,6 +389,9 @@ def test_compute_metrics_uses_passed_bounds_without_second_host_aggregate(
     schema = {}
     jid = "nobounds1"
 
+    def _host_data_qs(self, **_kw):
+      return SimpleNamespace(exists=lambda: False)
+
     def get_full_host_data_df(self, columns=None):
       return pd.DataFrame()
 

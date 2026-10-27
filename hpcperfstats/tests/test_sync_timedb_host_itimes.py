@@ -164,10 +164,23 @@ def test_second_present_cache_and_all_present_overflow_fallback(monkeypatch):
     "host_recent_timestamps_cached",
     lambda *_a, **_k: host_itimes.HOST_ITIMES_SET_OVERFLOW,
   )
+  batch_probes = []
+
+  def _present_batch(host_seconds):
+    probes = list(host_seconds)
+    batch_probes.append(probes)
+    return dict.fromkeys(probes, True)
+
+  monkeypatch.setattr(
+    host_itimes, "host_timestamp_seconds_present_batch", _present_batch
+  )
   assert (
     host_itimes.host_sampled_timestamp_seconds_all_present("h1", {100, 200})
     is True
   )
+  assert [sorted(probes) for probes in batch_probes] == [
+    [("h1", 100), ("h1", 200)]
+  ]
 
 
 def test_sampled_missing_second_false(monkeypatch):

@@ -515,22 +515,27 @@ class TestHistogramClosure:
 
 
 class TestSacctIngestClosure:
-  def test_body_decode_failure(self):
+  def test_invalid_utf8_body_is_decoded_with_replacement_not_rejected(self):
     from hpcperfstats.site.lib.machine import api
     from hpcperfstats.site.lib.machine.tests.test_api_coverage_gaps import (
       _plain_post,
     )
 
-    request = _plain_post("/api/sacct/ingest/?date=2024-01-01", b"x")
-    bad_body = MagicMock()
-    bad_body.__len__ = MagicMock(return_value=1)
-    bad_body.decode = MagicMock(side_effect=RuntimeError("decode fail"))
+    request = _plain_post(
+      "/api/sacct/ingest/?date=2024-01-01", b"JobID|State\n\xff1|COMPLETED\n"
+    )
+    vs = MagicMock()
+    vs.iterator.return_value = iter([])
     with (
       patch.object(api, "_require_staff", return_value=None),
-      patch.object(type(request), "body", new=property(lambda self: bad_body)),
+      patch.object(api, "persist_accounting_daily_file") as persist,
+      patch.object(api, "sync_acct_from_content", return_value=1),
+      patch.object(api.job_data.objects, "filter") as mock_filter,
     ):
+      mock_filter.return_value.values_list.return_value = vs
       response = api.sacct_ingest(request)
-    assert response.status_code == 400
+    assert response.status_code == 200
+    assert persist.call_args.args[1] == "JobID|State\n�1|COMPLETED\n"
 
   @override_settings(DEBUG=True)
   def test_sync_acct_debug_reraises(self):

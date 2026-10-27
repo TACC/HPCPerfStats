@@ -57,6 +57,9 @@ def test_type_detail_get_aggregate_df_batches_large_host_list():
   chunk_sizes = []
 
   class Qs:
+    def filter(self, *args, **kwargs):
+      return self
+
     def values(self, *cols):
       return self
 

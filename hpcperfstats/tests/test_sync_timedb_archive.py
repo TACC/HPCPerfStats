@@ -1118,7 +1118,7 @@ def test_populate_members_from_tar_scan_truncated_unreadable(
   tmp_path,
   _clear_daily_archive_members_cache,
 ):
-  """Truncated tar populate is unreadable and sets tar_truncated skip."""
+  """Truncated tar with no valid prefix: day is skipped, corrupt tar is kept."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
     ArchiveDayIngestSkipError,
@@ -1139,11 +1139,14 @@ def test_populate_members_from_tar_scan_truncated_unreadable(
 
   token = set_worker_pool_kind("populate-pool")
   try:
-    with pytest.raises(ArchiveDayIngestSkipError) as exc_info:
+    with pytest.raises(ArchiveDayIngestSkipError):
       helpers._populate_members_from_tar_scan(str(day_tar), cache_key)
   finally:
     reset_worker_pool_kind(token)
-  assert exc_info.value.kind == helpers.SKIP_KIND_TAR_TRUNCATED
+  # Salvage found no valid prefix and no sealed copy exists: the tar is moved
+  # aside, never deleted.
+  assert not day_tar.exists()
+  assert len(list(tmp_path.glob("2024-07-11.tar.corrupt.*"))) == 1
 
 
 @pytest.mark.skipif(not shutil.which("tar"), reason="tar not on PATH")
@@ -1823,8 +1826,17 @@ def test_archive_stats_files_returns_false_when_corrupt_tar_restore_fails(
     "hpcperfstats.dbload.sync_timedb.verify_tar_archive_readable",
     lambda path: False,
   )
+  # ``ensure_open_daily_tar_readable`` (helpers) owns repair and restore.
+  helpers_mod = "hpcperfstats.dbload.lib.sync_timedb_archive_helpers"
   monkeypatch.setattr(
-    "hpcperfstats.dbload.sync_timedb.replace_corrupt_tar_from_compressed_backup",
+    f"{helpers_mod}.verify_tar_archive_readable", lambda p: False
+  )
+  monkeypatch.setattr(
+    f"{helpers_mod}.repair_truncated_daily_tar_in_place",
+    lambda *a, **k: False,
+  )
+  monkeypatch.setattr(
+    f"{helpers_mod}.replace_corrupt_tar_from_compressed_backup",
     lambda *a, **k: False,
   )
   monkeypatch.setattr(
@@ -5728,7 +5740,13 @@ def test_ingest_does_not_write_decompress_artifacts(monkeypatch, tmp_path):
     name.endswith(".tar") and not name.endswith((".tar.zst", ".tar.gz"))
     for name in new_files
   )
-  assert all(name.endswith(".fnctl.lock") for name in new_files)
+  # Member spool dir is the only other artifact; it must be emptied of members.
+  spool_name = ".sync_archive_ingest_spool"
+  assert all(
+    name.endswith(".fnctl.lock") or name == spool_name for name in new_files
+  )
+  spool = tmp_path / spool_name
+  assert not [p for p in spool.rglob("*") if p.is_file()]
 
 
 @pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
@@ -6937,14 +6955,18 @@ def test_sealed_archive_member_has_exact_size_early_exit(
       tf.add(str(inner_noise), arcname=f"noise/{i}")
 
   iter_count = {"n": 0}
-  real_iter = helpers._iter_tar_members
+  real_stream = helpers._stream_compressed_archive_members
 
-  def counting_iter(tf):
-    for member in real_iter(tf):
+  def counting_stream(path, on_member, **kwargs):
+    def counted_on_member(name, size):
       iter_count["n"] += 1
-      yield member
+      on_member(name, size)
 
-  monkeypatch.setattr(helpers, "_iter_tar_members", counting_iter)
+    return real_stream(path, counted_on_member, **kwargs)
+
+  monkeypatch.setattr(
+    helpers, "_stream_compressed_archive_members", counting_stream
+  )
   sealed = str(day_gz)
   assert (
     helpers._sealed_archive_member_has_exact_size(

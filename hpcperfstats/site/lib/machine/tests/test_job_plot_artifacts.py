@@ -99,7 +99,7 @@ def test_fingerprint_changes_when_telemetry_first_time_moves():
 def test_app_plot_artifact_schema_version_bumped_for_telemetry_bounds():
   from hpcperfstats.site.lib.machine import job_plot_artifacts as plot_cfg
 
-  assert plot_cfg.APP_PLOT_ARTIFACT_SCHEMA_VERSION == 21
+  assert plot_cfg.APP_PLOT_ARTIFACT_SCHEMA_VERSION == 22
 
 
 @pytest.mark.machine_unit_mock

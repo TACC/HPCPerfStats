@@ -19,6 +19,9 @@ def test_invalidate_jid_derived_clears_host_data_schema_json():
     patch(
       "hpcperfstats.site.lib.machine.cache_utils.invalidate_jid_host_window_row_count_cache",
     ),
+    patch(
+      "hpcperfstats.site.lib.machine.cache_utils.invalidate_host_wide_residual_ht_for_jids",
+    ),
   ):
     qs = MagicMock()
     mock_filter.return_value = qs

@@ -90,6 +90,15 @@ def _unit_test_database_guards(request, monkeypatch):
     "run_with_db_retry",
     lambda func, **kwargs: func(),
   )
+  # ``job_is_shared_node`` reads ``job_affinity``; unit tests that need a shared
+  # job patch it themselves after this default.
+  for shared_node_owner in (
+    "hpcperfstats.analysis.metrics.lib.job_host_data_scope",
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table",
+  ):
+    monkeypatch.setattr(
+      f"{shared_node_owner}.job_is_shared_node", lambda _jid: False
+    )
   import hpcperfstats.dbload.lib.shutdown_utils as shutdown_utils
 
   monkeypatch.setattr(shutdown_utils, "shutdown_requested", [False])

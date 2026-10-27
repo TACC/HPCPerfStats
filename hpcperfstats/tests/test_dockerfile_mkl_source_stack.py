@@ -23,7 +23,7 @@ def _stage_body(dockerfile: str, stage_name: str) -> str:
 def _run_instructions(stage: str) -> list[str]:
   """Return each RUN instruction body from a Dockerfile stage."""
   return re.findall(
-    r"^RUN (?:--mount[^\n]*\n\s*)?/bin/bash -o pipefail -c '((?:\\'|[^'])*)'",
+    r"^RUN (?:\\\n\s*)?(?:--mount[^\n]*\n\s*)?/bin/bash -o pipefail -c '((?:\\'|[^'])*)'",
     stage,
     flags=re.MULTILINE | re.DOTALL,
   )

@@ -609,39 +609,39 @@ def test_compute_deltas_and_arc_two_timestamps():
   assert result.iloc[1]["arc"] == 15.0
 
 
+def _two_sample_counter_frame(first_value, second_value):
+  rows = [
+    {
+      "host": "h",
+      "type": "t",
+      "dev": "d",
+      "event": "e",
+      "unit": "#",
+      "time": time,
+      "value": value,
+      "wid": 48,
+      "mult": 1,
+    }
+    for time, value in ((100.0, first_value), (110.0, second_value))
+  ]
+  return pd.DataFrame(rows)
+
+
 def test_compute_deltas_and_arc_rollover():
-  """Negative delta is corrected for 48-bit rollover."""
-  stats_df = pd.DataFrame(
-    [
-      {
-        "host": "h",
-        "type": "t",
-        "dev": "d",
-        "event": "e",
-        "unit": "#",
-        "time": 100.0,
-        "value": 1000.0,
-        "wid": 48,
-        "mult": 1,
-      },
-      {
-        "host": "h",
-        "type": "t",
-        "dev": "d",
-        "event": "e",
-        "unit": "#",
-        "time": 110.0,
-        "value": 10.0,
-        "wid": 48,
-        "mult": 1,
-      },
-    ]
+  """Negative delta is corrected for a 48-bit wrap from the top half."""
+  result = compute_deltas_and_arc(
+    _two_sample_counter_frame(2.0**48 - 1000, 10.0)
   )
-  result = compute_deltas_and_arc(stats_df)
   assert len(result) == 2
-  expected_delta = (2**48 - 1000 + 10) * 1
   assert pd.isna(result.iloc[0]["delta"])
-  assert result.iloc[1]["delta"] == expected_delta
+  assert result.iloc[1]["delta"] == 1010
+
+
+def test_compute_deltas_and_arc_low_value_drop_is_gap_not_wrap():
+  """A drop from the bottom half of the range is a reset: delta is NaN."""
+  result = compute_deltas_and_arc(_two_sample_counter_frame(1000.0, 10.0))
+  assert len(result) == 2
+  assert pd.isna(result.iloc[1]["delta"])
 
 
 def test_compute_deltas_and_arc_zero_deltat_yields_nan_arc():

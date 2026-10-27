@@ -151,7 +151,10 @@ def test_codon_parse_file_stream_holds_sh_lock(tmp_path, monkeypatch):
   )
   seen: list[int] = []
 
-  def _fake_stream(path, flush_b, carry, on_chunk):
+  def _fake_stream(
+    path, flush_b, carry, on_chunk, exclude=None, coalesce_rows=1
+  ):
+    del exclude, coalesce_rows
     seen.append(held["n"])
     on_chunk({"time": [1.0]}, {})
 

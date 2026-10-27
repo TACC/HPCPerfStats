@@ -34,7 +34,11 @@ def test_decompress_to_path_does_not_dontneed_output_before_verify(
   monkeypatch.setattr(z, "zstd_executable", lambda: "zstd")
   monkeypatch.setattr(z, "_thread_args", lambda _n: [])
   monkeypatch.setattr(z, "_advise_sequential_read", lambda _p: None)
-  monkeypatch.setattr(z, "_run_zstd", _fake_run)
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_progress_io"
+    ".run_subprocess_with_progress",
+    _fake_run,
+  )
   monkeypatch.setattr(
     z,
     "drop_page_cache_for_paths",

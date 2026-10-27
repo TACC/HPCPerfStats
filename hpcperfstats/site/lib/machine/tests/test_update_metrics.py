@@ -194,6 +194,34 @@ def _patch_machine_unit_mock_scheduler_flow(monkeypatch, request):
   )
 
 
+def _patch_max_host_time_by_jid(monkeypatch, max_time_for_jids):
+  """Replace the jid max-sample-time lookup the proxy readiness path uses.
+
+  ``max_time_for_jids`` gets the list of jids and returns ``{jid: max_time}``;
+  like the real function, a lone string jid is accepted.
+  """
+
+  def _max_host_time_by_jid(jids):
+    return max_time_for_jids([jids] if isinstance(jids, str) else list(jids))
+
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.monitor_mark_side_ingest.max_host_time_by_jid",
+    _max_host_time_by_jid,
+  )
+
+
+def _patch_in_window_per_host_min_max_rows(monkeypatch, rows_for_chunk):
+  """Replace the per-host MIN/MAX(time) SQL one host x time chunk runs.
+
+  ``rows_for_chunk(hosts, time_filter)`` returns ``host``/``mn``/``mx`` dicts.
+  """
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.metrics_host_data_sql"
+    ".in_window_per_host_min_max_rows",
+    lambda hosts, time_filter: rows_for_chunk(list(hosts), time_filter),
+  )
+
+
 def _patch_connections_vendor(monkeypatch, vendor):
   """Make update_metrics see connections['default'].vendor == vendor."""
   fake_conn = MagicMock()
@@ -1635,32 +1663,24 @@ def test_ready_jids_batches_in_window_min_max_lookups(monkeypatch):
   start = datetime(2025, 4, 10, 11, 0, 0, tzinfo=timezone.utc)
   end = datetime(2025, 4, 10, 12, 0, 0, tzinfo=timezone.utc)
 
-  class _HostManager:
-    def filter(self, **kwargs):
-      filter_batches.append(tuple(sorted(kwargs.get("host__in") or ())))
-      time_filters.append((kwargs.get("time__gte"), kwargs.get("time__lte")))
-
-      class _Agg:
-        def values(self, *_names, **_kw):
-          return self
-
-        def annotate(self, **_ann):
-          return self
-
-        def __iter__(self):
-          for host in kwargs.get("host__in") or ():
-            yield {
-              "host": host,
-              "mn": start + timedelta(minutes=5),
-              "mx": end - timedelta(minutes=5),
-            }
-
-      return _Agg()
+  def in_window_rows(hosts, time_filter):
+    filter_batches.append(tuple(sorted(hosts)))
+    time_filters.append(
+      (time_filter.get("time__gte"), time_filter.get("time__lte"))
+    )
+    return [
+      {
+        "host": host,
+        "mn": start + timedelta(minutes=5),
+        "mx": end - timedelta(minutes=5),
+      }
+      for host in hosts
+    ]
 
   monkeypatch.setattr(
     update_metrics, "_host_name_suffix", lambda: ".example.org"
   )
-  monkeypatch.setattr(update_metrics.host_data, "objects", _HostManager())
+  _patch_in_window_per_host_min_max_rows(monkeypatch, in_window_rows)
 
   jobs = [
     {
@@ -2218,27 +2238,12 @@ def test_proxy_reject_not_ready_jids_batches_host_aggregates(monkeypatch):
     update_metrics.cfg, "get_metrics_proxy_reject_jid_batch_size", lambda: 2
   )
   host_batches = []
+  t_end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+  t_after = datetime(2025, 4, 1, 14, 0, 0, tzinfo=timezone.utc)
 
-  def host_filter(*_a, jid__in=None, **_k):
-    host_batches.append(tuple(jid__in))
-
-    class _HostAgg:
-      def values(self, *_names, **_kw):
-        return self
-
-      def annotate(self, **_kw):
-        return self
-
-      def __iter__(self):
-        t_end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
-        t_after = datetime(2025, 4, 1, 14, 0, 0, tzinfo=timezone.utc)
-        for j in jid__in:
-          yield {
-            "jid": j,
-            "max_time": t_after if j != "mid" else t_end,
-          }
-
-    return _HostAgg()
+  def max_times(jids):
+    host_batches.append(tuple(jids))
+    return {j: t_after if j != "mid" else t_end for j in jids}
 
   def job_filter(*_a, jid__in=None, **_k):
     class _JobVals:
@@ -2249,7 +2254,7 @@ def test_proxy_reject_not_ready_jids_batches_host_aggregates(monkeypatch):
 
     return _JobVals()
 
-  monkeypatch.setattr(update_metrics.host_data.objects, "filter", host_filter)
+  _patch_max_host_time_by_jid(monkeypatch, max_times)
   monkeypatch.setattr(update_metrics.job_data.objects, "filter", job_filter)
 
   jids = ["a", "mid", "c", "d", "e"]
@@ -2276,26 +2281,7 @@ def test_proxy_reject_not_ready_jids_partitions(monkeypatch):
   t_end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
   t_after = datetime(2025, 4, 1, 14, 0, 0, tzinfo=timezone.utc)
 
-  def host_filter(*_a, jid__in=None, **_k):
-    class _HostAgg:
-      def values(self, *_names, **_kw):
-        return self
-
-      def annotate(self, **_kw):
-        return self
-
-      def __iter__(self):
-        for j in jid__in:
-          if j == "j1":
-            yield {"jid": j, "max_time": t_after}
-          elif j == "j2":
-            yield {"jid": j, "max_time": t_end}
-          elif j == "j3":
-            yield {"jid": j, "max_time": t_after}
-          elif j == "j4":
-            pass
-
-    return _HostAgg()
+  by_jid = {"j1": t_after, "j2": t_end, "j3": t_after}
 
   def job_filter(*_a, jid__in=None, **_k):
     class _JobVals:
@@ -2305,7 +2291,9 @@ def test_proxy_reject_not_ready_jids_partitions(monkeypatch):
 
     return _JobVals()
 
-  monkeypatch.setattr(update_metrics.host_data.objects, "filter", host_filter)
+  _patch_max_host_time_by_jid(
+    monkeypatch, lambda jids: {j: by_jid[j] for j in jids if j in by_jid}
+  )
   monkeypatch.setattr(update_metrics.job_data.objects, "filter", job_filter)
 
   reject, unknown = update_metrics._proxy_reject_not_ready_jids(
@@ -2328,23 +2316,6 @@ def test_proxy_reject_legacy_end_by_jid_not_double_consumed(monkeypatch):
   t_after = datetime(2025, 4, 1, 14, 0, 0, tzinfo=timezone.utc)
   job_values_calls = []
 
-  def host_filter(*_a, jid__in=None, **_k):
-    class _HostAgg:
-      def values(self, *_names, **_kw):
-        return self
-
-      def annotate(self, **_kw):
-        return self
-
-      def __iter__(self):
-        for j in jid__in:
-          yield {
-            "jid": j,
-            "max_time": t_after if j == "j1" else t_end,
-          }
-
-    return _HostAgg()
-
   def job_filter(*_a, jid__in=None, **_k):
     class _JobVals:
       def values(self, *_names, **_kw):
@@ -2354,7 +2325,10 @@ def test_proxy_reject_legacy_end_by_jid_not_double_consumed(monkeypatch):
 
     return _JobVals()
 
-  monkeypatch.setattr(update_metrics.host_data.objects, "filter", host_filter)
+  _patch_max_host_time_by_jid(
+    monkeypatch,
+    lambda jids: {j: t_after if j == "j1" else t_end for j in jids},
+  )
   monkeypatch.setattr(update_metrics.job_data.objects, "filter", job_filter)
 
   reject, unknown = update_metrics._proxy_reject_not_ready_jids(["j1", "j2"])
@@ -2469,40 +2443,7 @@ def test_proxy_readiness_for_jid_matches_bulk_singletons(monkeypatch):
   t_end = datetime(2025, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
   t_after = datetime(2025, 4, 1, 14, 0, 0, tzinfo=timezone.utc)
 
-  def host_filter(*_a, jid=None, jid__in=None, **_k):
-    if jid is not None:
-
-      class _HostSingle:
-        def aggregate(self, **_kw):
-          if jid == "j1":
-            return {"max_time": t_after}
-          if jid == "j2":
-            return {"max_time": t_end}
-          if jid == "j3":
-            return {"max_time": t_after}
-          return {"max_time": None}
-
-      return _HostSingle()
-
-    class _HostAgg:
-      def values(self, *_names, **_kw):
-        return self
-
-      def annotate(self, **_kw):
-        return self
-
-      def __iter__(self):
-        for j in jid__in:
-          if j == "j1":
-            yield {"jid": j, "max_time": t_after}
-          elif j == "j2":
-            yield {"jid": j, "max_time": t_end}
-          elif j == "j3":
-            yield {"jid": j, "max_time": t_after}
-          elif j == "j4":
-            pass
-
-    return _HostAgg()
+  by_jid = {"j1": t_after, "j2": t_end, "j3": t_after}
 
   def job_filter(*_a, jid=None, jid__in=None, **_k):
     targets = [jid] if jid is not None else list(jid__in or ())
@@ -2522,7 +2463,9 @@ def test_proxy_readiness_for_jid_matches_bulk_singletons(monkeypatch):
 
     return _JobVals()
 
-  monkeypatch.setattr(update_metrics.host_data.objects, "filter", host_filter)
+  _patch_max_host_time_by_jid(
+    monkeypatch, lambda jids: {j: by_jid[j] for j in jids if j in by_jid}
+  )
   monkeypatch.setattr(update_metrics.job_data.objects, "filter", job_filter)
 
   for jid in ["j1", "j2", "j3", "j4"]:
@@ -5492,28 +5435,18 @@ def test_strict_in_window_bounds_query_count_bounded(monkeypatch):
   )
   query_count = [0]
 
-  class _HostManager:
-    def filter(self, **kwargs):
-      query_count[0] += 1
+  def in_window_rows(hosts, time_filter):
+    query_count[0] += 1
+    return [
+      {
+        "host": host,
+        "mn": time_filter.get("time__gte"),
+        "mx": time_filter.get("time__lte"),
+      }
+      for host in hosts
+    ]
 
-      class _Agg:
-        def values(self, *_a, **_k):
-          return self
-
-        def annotate(self, **_k):
-          return self
-
-        def __iter__(self):
-          for host in kwargs.get("host__in") or ():
-            yield {
-              "host": host,
-              "mn": kwargs.get("time__gte"),
-              "mx": kwargs.get("time__lte"),
-            }
-
-      return _Agg()
-
-  monkeypatch.setattr(update_metrics.host_data, "objects", _HostManager())
+  _patch_in_window_per_host_min_max_rows(monkeypatch, in_window_rows)
   monkeypatch.setattr(
     update_metrics, "_host_name_suffix", lambda: ".example.org"
   )
@@ -5565,29 +5498,19 @@ def test_ready_jids_from_job_rows_batched_matches_per_job_reference(
     },
   ]
 
-  class _HostManager:
-    def filter(self, **kwargs):
-      st = kwargs.get("time__gte")
-      et = kwargs.get("time__lte")
+  def in_window_rows(hosts, time_filter):
+    st = time_filter.get("time__gte")
+    et = time_filter.get("time__lte")
+    return [
+      {
+        "host": host,
+        "mn": st + timedelta(minutes=1) if st else None,
+        "mx": et - timedelta(minutes=1) if et else None,
+      }
+      for host in hosts
+    ]
 
-      class _Agg:
-        def values(self, *_a, **_k):
-          return self
-
-        def annotate(self, **_k):
-          return self
-
-        def __iter__(self):
-          for host in kwargs.get("host__in") or ():
-            yield {
-              "host": host,
-              "mn": st + timedelta(minutes=1) if st else None,
-              "mx": et - timedelta(minutes=1) if et else None,
-            }
-
-      return _Agg()
-
-  monkeypatch.setattr(update_metrics.host_data, "objects", _HostManager())
+  _patch_in_window_per_host_min_max_rows(monkeypatch, in_window_rows)
   monkeypatch.setattr(
     update_metrics, "_host_name_suffix", lambda: ".example.org"
   )
