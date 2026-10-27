@@ -93,6 +93,10 @@ def test_metrics_host_data_sql_jid_params_in_sum(monkeypatch):
       yield Cur()
 
   monkeypatch.setattr(djdb, "connection", Conn())
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.job_host_data_scope.job_is_shared_node",
+    lambda _jid: False,
+  )
 
   rows = m.host_data_sum_metric_per_sample_rows(
     ["h1"],

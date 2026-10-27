@@ -51,7 +51,9 @@ def test_mem_hwm_legacy_pascal_case_mem_type_kb_to_gib():
   stats = np.array([[2_097_152.0, 0.0, 0.0]], dtype=np.float64)
   u = _StubUtils({"mem": (schema, {"n1": stats})})
   value, typename, units = metrics.mem_hwm().compute_metric(u)
-  assert typename == "host_mem" and units == "GiB"
+  # mem_hwm reports the type it actually resolved, so a legacy ``mem`` job
+  # keeps ``mem`` (not the canonical ``host_mem``).
+  assert typename == "mem" and units == "GiB"
   assert value == pytest.approx(2.0)
 
 

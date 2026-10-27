@@ -403,7 +403,9 @@ def test_streaming_incremental_combined_path_writes_multiple_chunks(
   )
   write_calls = []
 
-  def fake_write(path, stats, proc_stats, need_archival=True):
+  def fake_write(
+    path, stats, proc_stats, need_archival=True, copy_unique=False, emit=""
+  ):
     write_calls.append((len(stats), len(proc_stats), need_archival))
     return path, need_archival, True
 
@@ -457,7 +459,9 @@ def test_streaming_incremental_one_chunk_rows_match_serial(
   """Chunk writes match one-shot delta/arc on the same file."""
   written = []
 
-  def fake_write(path, stats, proc_stats, need_archival=True):
+  def fake_write(
+    path, stats, proc_stats, need_archival=True, copy_unique=False, emit=""
+  ):
     del proc_stats
     written.append(stats.copy())
     return path, need_archival, True
@@ -509,7 +513,9 @@ def test_streaming_incremental_chunk_write_does_not_overlap_next_parse(
   }
   real_deltas = st.compute_deltas_and_arc_chunk
 
-  def fake_write(path, stats, proc_stats, need_archival=True):
+  def fake_write(
+    path, stats, proc_stats, need_archival=True, copy_unique=False, emit=""
+  ):
     del stats, proc_stats
     state["writes"] += 1
     if state["writes"] == 1:
@@ -549,7 +555,9 @@ def test_streaming_incremental_chunk_write_failure_skips_later_submits(
   """A failed chunk write does not submit another write for that file."""
   calls = {"n": 0}
 
-  def fake_write(path, stats, proc_stats, need_archival=True):
+  def fake_write(
+    path, stats, proc_stats, need_archival=True, copy_unique=False, emit=""
+  ):
     del stats, proc_stats, need_archival
     calls["n"] += 1
     return path, False, False
@@ -573,7 +581,9 @@ def test_streaming_incremental_folds_writer_postgres_s(
   """Parser outcome postgres_s includes time recorded on the writer thread."""
   st._reset_ingest_write_timing(enabled=True)
 
-  def fake_write(path, stats, proc_stats, need_archival=True):
+  def fake_write(
+    path, stats, proc_stats, need_archival=True, copy_unique=False, emit=""
+  ):
     del stats, proc_stats
     st._add_ingest_postgres_s(0.25)
     return path, need_archival, True
@@ -598,24 +608,27 @@ def test_streaming_incremental_chunk_write_stays_on_parser_thread(
   monkeypatch,
   tmp_path,
 ):
-  """Chunk writes run on the parser thread, not ingest-chunk-write."""
+  """Chunk writes run on the parser thread, not ingest-chunk-write.
+
+  A write-stage fault re-raises for the coordinator to retry (DE-2); it is
+  never swallowed into ``ingest_ok=False`` or quarantine.
+  """
   seen = []
 
-  def fake_write(path, stats, proc_stats, need_archival=True):
+  def fake_write(
+    path, stats, proc_stats, need_archival=True, copy_unique=False, emit=""
+  ):
     del stats, proc_stats
     seen.append(threading.current_thread().name)
     raise RuntimeError("chunk write failed")
 
-  _lines, result = _streaming_incremental_with_fake_write(
-    monkeypatch,
-    tmp_path,
-    fake_write,
-    extra_samples=4,
-  )
-  _path, _need_archival, ingest_ok, _elapsed, _meta = (
-    st._unpack_ingest_worker_result(result)
-  )
-  assert ingest_ok is False
+  with pytest.raises(RuntimeError, match="chunk write failed"):
+    _streaming_incremental_with_fake_write(
+      monkeypatch,
+      tmp_path,
+      fake_write,
+      extra_samples=4,
+    )
   assert seen
   assert "ingest-chunk-write" not in seen
 

@@ -23,6 +23,16 @@ from hpcperfstats.dbload.lib.monitor_naming.canonical import (
   INTEL_FP_ARITH_DOUBLE_EVENTS,
 )
 
+
+@pytest.fixture(autouse=True)
+def _no_job_affinity_db(monkeypatch):
+  """``plot_metric`` asks the shared-node helper, which queries job_affinity."""
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.job_host_data_scope.job_is_shared_node_from_jobish",
+    lambda _jt: False,
+  )
+
+
 # Canonical monitor typenames (dual-read: legacy aliases still accepted in mocks).
 _HOST_CPU_TYPES = ("host_cpu", "cpu")
 _HOST_MEM_TYPES = ("host_mem", "mem")
@@ -884,7 +894,7 @@ def test_summaryplot_orders_buckets_cpu_memory_compute_gpu_subblocks_network():
     if (
       typ in _HOST_MEM_TYPES
       and val_col == "value"
-      and ev in (["mem_used"], ["MemUsed"])
+      and set(ev) <= {"mem_used", "MemUsed"}
     ):
       return pd.DataFrame(
         [("n1.cluster", t0, 1024.0)],
@@ -1125,7 +1135,7 @@ def test_summaryplot_orders_lustre_nfs_before_network():
     if (
       typ in _HOST_MEM_TYPES
       and val_col == "value"
-      and ev in (["mem_used"], ["MemUsed"])
+      and set(ev) <= {"mem_used", "MemUsed"}
     ):
       return pd.DataFrame(
         [("n1.cluster", t0, 1024.0)],
