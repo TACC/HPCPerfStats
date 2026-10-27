@@ -717,6 +717,7 @@ def enqueue_reconstruct_jobs_for_closed_path(
   today: date,
   hot_days: int = DEFAULT_INGEST_HOT_DAYS,
   archive_data_dir: str | None = None,
+  over_cap: bool = False,
 ) -> dict[str, bool]:
   """
   Enqueue ingest/append jobs only for incomplete predicates on ``plan``.
@@ -731,6 +732,8 @@ def enqueue_reconstruct_jobs_for_closed_path(
     today (date): Local today for hot/catchup score encode.
     hot_days (int): Hot-band window length.
     archive_data_dir (str | None): Archive root for queue dead-letter skip.
+    over_cap (bool): Admit the ingest ``ZADD`` past the discover cap
+      (day-close handoff).
 
   Returns:
     dict[str, bool]: ``{\"ingest\": bool, \"append\": bool}`` for what was
@@ -791,6 +794,7 @@ def enqueue_reconstruct_jobs_for_closed_path(
         identity=plan.identity,
         score=score,
         fingerprint=plan.fingerprint or None,
+        over_cap=over_cap,
       ):
         remainder_day = remainder_day_for_identity(plan.identity)
         if remainder_day:

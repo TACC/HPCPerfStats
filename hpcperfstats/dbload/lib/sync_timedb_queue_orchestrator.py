@@ -1749,6 +1749,7 @@ def _handoff_retryable_paths_to_ingest(
         today=today_local,
         hot_days=hot_days,
         archive_data_dir=archive_data_dir,
+        over_cap=True,
       )
     except Exception as exc:
       quiet(
@@ -3290,6 +3291,7 @@ def _readmit_due_dead_letters(
           today=today,
           identity=identity,
         ),
+        over_cap=True,
       )
     else:
       added = jq.enqueue_list_job(

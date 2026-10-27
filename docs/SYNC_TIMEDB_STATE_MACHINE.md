@@ -186,6 +186,7 @@ stateDiagram-v2
 | DE-26 | seal while raw remains only when all remaining raw is in the tar; late raw reopens verify | `test_seal_with_raw_only_when_all_remaining_raw_in_tar`, `test_late_raw_resets_pre_seal_verify_stage` |
 | DE-27/32 | per-day append signal; one day function; boot rebuild | `test_wait_on_ingest_uses_per_day_append_remainder`, `test_day_remainder_rebuilt_from_job_store_at_boot` |
 | DE-28 | stage failure counter | `test_reconcile_failure_counts_toward_noprogress` |
+| DE-33 | `zadd_ingest` discover cap (`sync_ingest_queue_max_size`) no longer refuses day-close handoff or dead-letter readmit (`over_cap=True`); found on hpcperfstats04 2026-10-27 (3000 cap vs 387k queued: 1,999 raw files of 2026-08-24 never queued, `ingest_handoff` counted them) | `test_zadd_ingest_over_cap_admits_handoff_catchup` |
 | DE-29/30 | readability tri-state; space admission | `test_transient_oserror_is_not_corrupt_and_sets_no_day_skip`, `test_space_admit_denies_reseal_below_reserve` |
 | DL-1/2/3/5/8/12 | sealed-prefix restore gate, sealed-map delete gate, rewrite superset check, yield guard, gz containment | `test_restore_from_sealed_refused_when_tar_prefix_has_members_not_in_zst`, `test_raw_delete_requires_member_in_sealed_zst`, `test_rewrite_aborts_when_source_tar_changed_under_lock`, `test_migrate_refuses_unlink_when_new_zst_missing_members` |
 

@@ -929,18 +929,25 @@ class SyncTimedbJobStore:
     identity: str,
     score: float,
     fingerprint: str | None = None,
+    *,
+    over_cap: bool = False,
   ) -> int:
     """
     Queue or reband one ingest identity.
 
     New catchup identities are refused at the discover ingest cap
-    (``sync_ingest_queue_max_size``). New hot-band identities still
-    join so live listend files are not starved behind a full catchup.
+    (``sync_ingest_queue_max_size``) unless ``over_cap``. New hot-band
+    identities still join so live listend files are not starved behind a
+    full catchup.
 
     Args:
       identity (str): Normalized ingest path.
       score (float): Band-encoded score.
       fingerprint (str | None): Optional size/mtime payload.
+      over_cap (bool): Admit past the discover cap. Day-close handoff and
+        dead-letter readmit set it: their volume is bounded by the closing
+        day's remaining raw / the migration batch, and a refusal there is
+        a silent drop that leaves the day open forever.
 
     Returns:
       int: 1 when the identity is newly queued, else 0.
@@ -962,6 +969,7 @@ class SyncTimedbJobStore:
       existed = ident in self._ingest
       if (
         not existed
+        and not over_cap
         and not self._has_capacity_locked(
           JOB_KIND_INGEST,
           cap,
@@ -1715,6 +1723,7 @@ def zadd_ingest_job(
   identity: str,
   score: float | int,
   fingerprint: str | None = None,
+  over_cap: bool = False,
 ) -> int:
   """
   Queue an ingest identity onto the in-process ingest map.
@@ -1724,6 +1733,7 @@ def zadd_ingest_job(
     identity (str): Ingest member identity.
     score (float | int): Band-encoded score.
     fingerprint (str | None): Optional size/mtime payload.
+    over_cap (bool): Admit past the discover ingest cap (handoff, readmit).
 
   Returns:
     int: 1 when newly queued, else 0.
@@ -1733,7 +1743,9 @@ def zadd_ingest_job(
     >>> zadd_ingest_job(store, identity="/a", score=0)
     1
   """
-  return store.zadd_ingest(str(identity), float(score), fingerprint)
+  return store.zadd_ingest(
+    str(identity), float(score), fingerprint, over_cap=over_cap
+  )
 
 
 def enqueue_list_job(

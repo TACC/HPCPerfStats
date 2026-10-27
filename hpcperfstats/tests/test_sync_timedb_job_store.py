@@ -556,6 +556,39 @@ def test_zadd_ingest_refuses_new_catchup_at_discover_cap(tmp_path, monkeypatch):
 
 
 @pytest.mark.django_db(databases=[])
+def test_zadd_ingest_over_cap_admits_handoff_catchup(tmp_path, monkeypatch):
+  """Day-close handoff and readmit pass ``over_cap``: never silently dropped."""
+  import hpcperfstats.dbload.lib.sync_timedb_job_discover as discover_mod
+  import hpcperfstats.dbload.lib.sync_timedb_job_reconstruct as jr
+
+  monkeypatch.setattr(
+    discover_mod.cfg,
+    "get_sync_ingest_queue_max_size",
+    lambda: 1,
+  )
+  store = SyncTimedbJobStore(str(tmp_path / "archive"))
+  assert store.zadd_ingest("/c/1", float(CATCHUP_SCORE_BASE)) == 1
+  assert store.zadd_ingest("/c/2", float(CATCHUP_SCORE_BASE)) == 0
+  assert store.zadd_ingest("/c/2", float(CATCHUP_SCORE_BASE), over_cap=True) == 1
+  plan = jr.ClosedPathReconstructPlan(
+    path="/c/3",
+    identity="/c/3",
+    needs_ingest=True,
+    needs_append=False,
+    calendar_day=date(2026, 8, 24),
+    tar_path=None,
+  )
+  today = date(2026, 10, 27)
+  jr.enqueue_reconstruct_jobs_for_closed_path(store, plan, today=today)
+  assert store.ingest_score("/c/3") is None
+  jr.enqueue_reconstruct_jobs_for_closed_path(
+    store, plan, today=today, over_cap=True
+  )
+  assert store.ingest_score("/c/3") is not None
+  store.close()
+
+
+@pytest.mark.django_db(databases=[])
 def test_persist_io_only_on_writer_thread(tmp_path, monkeypatch):
   """save_persistence_document must run only on job-store-persist."""
   store = SyncTimedbJobStore(str(tmp_path / "archive"))
