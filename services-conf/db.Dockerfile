@@ -4,7 +4,7 @@
 # Do not use a floating Alpine tag. Do not copy docker-library --disable-rpath.
 
 # syntax=docker/dockerfile:1
-ARG ALPINE_VERSION=3.24.2
+ARG ALPINE_VERSION=3.24.3
 
 FROM alpine:${ALPINE_VERSION} AS db-build
 
@@ -177,8 +177,8 @@ strip --strip-unneeded /usr/local/bin/postgres /usr/local/bin/psql || true
 postgres --version
 BASH
 
-ARG TIMESCALEDB_VERSION=2.30.2
-ARG TIMESCALEDB_SHA256=a7003a70836477dc8d575d95a4c515d8a22ed219d0cb03b3640bb813f04e1b42
+ARG TIMESCALEDB_VERSION=2.31.0
+ARG TIMESCALEDB_SHA256=7a0135283240abb64c87713e3280d70461954028d6426374b7e4e59f7dca6a56
 ENV TIMESCALEDB_VERSION=${TIMESCALEDB_VERSION} TIMESCALEDB_SHA256=${TIMESCALEDB_SHA256}
 # --- TimescaleDB (not APACHE_ONLY). timescaledb.so must NOT DT_NEEDED jemalloc
 # (or lz4/zstd): the extension is loaded into the postgres process, which

@@ -143,9 +143,9 @@ def test_compiled_library_pins_are_latest_known():
   assert (
     "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3" in build
   )
-  assert "PYTHON_VERSION=3.14.8" in build
+  assert "PYTHON_VERSION=3.14.10" in build
   _py314_8_sha = (
-    "a65b20a728f169f4e66ae143f40b1bd3d33c38d770251663f627c9767b79b210"
+    "9e4996c19ae5a3df31f10c37723661f71d3455d73bd005f79df7098e5cc13192"
   )
   assert build.count(_py314_8_sha) == 2  # GIL + free-threaded source tarballs
   assert (

@@ -140,4 +140,4 @@ def test_main_uses_argv_root(
 def test_pyproject_pins_brotli():
   pyproject = Path(__file__).resolve().parents[4] / "pyproject.toml"
   text = pyproject.read_text(encoding="utf-8")
-  assert '"brotli==1.2.0"' in text
+  assert '"brotli==1.2.1"' in text

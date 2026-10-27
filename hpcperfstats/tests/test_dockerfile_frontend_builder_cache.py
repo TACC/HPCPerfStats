@@ -175,11 +175,20 @@ def test_nanoid_override_meets_dependabot_109_floor():
 
 
 def test_fast_uri_override_meets_dependabot_113_116_floor():
-  """Dependabot #113-#116 / GHSA-*-fast-uri: fast-uri < 4.1.3 is vulnerable."""
+  """fast-uri <= 4.2.2 is vulnerable (Dependabot #113-#116 plus 2026-10 GHSA host/scheme)."""
   _assert_npm_override_floor(
     "fast-uri",
-    (4, 1, 3),
-    reason="GHSA-5jgf-p345-68v8 / Dependabot #113-#116",
+    (4, 2, 3),
+    reason="GHSA-w74x-v6f9-j3xg / GHSA-5jgf-p345-68v8",
+  )
+
+
+def test_body_parser_override_meets_audit_floor():
+  """body-parser 2.0.0-2.3.0: GHSA-27r3-jxmh-p828 (trailing bytes DoS)."""
+  _assert_npm_override_floor(
+    "body-parser",
+    (2, 4, 0),
+    reason="GHSA-27r3-jxmh-p828",
   )
 
 

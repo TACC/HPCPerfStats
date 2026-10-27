@@ -11,7 +11,7 @@ edits, **no** Docker/supervisord ABI changes.
 |------|--------|
 | Codon version | **0.18.0** at `/data/user/$USER/codon/` (mounted into container) |
 | Install log | `test_runs/codon_install_20261007.log` |
-| Host CPython | `/data/HPCPerfStats/.venv/bin/python3` → **3.14.8** |
+| Host CPython | `/data/HPCPerfStats/.venv/bin/python3` → **3.14.10** |
 | Host `/opt/python3.14t` | **Unavailable** on spike host (use pipeline image) |
 | Container linker | **Clang 19** via `apt-get install clang` + PATH shim `g++` → `clang++` (Codon hardcodes argv `g++`; no `g++` package) |
 | `@python` shims in native kernel | **0** |

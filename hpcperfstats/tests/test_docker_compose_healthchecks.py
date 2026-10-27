@@ -118,9 +118,9 @@ def test_docker_compose_registry_images_are_fully_qualified_for_podman():
   repo_root = Path(__file__).resolve().parents[2]
   content = (repo_root / "docker-compose.defaults.yaml").read_text()
 
-  assert "image: docker.io/library/redis:8.10.2-alpine3.23" in content
+  assert "image: docker.io/library/redis:8.10.3-alpine3.23" in content
   assert "image: docker.io/timescale/timescaledb:2.28.3-pg15" in content
-  assert "image: docker.io/library/rabbitmq:4.3.6-management-alpine" in content
+  assert "image: docker.io/library/rabbitmq:4.3.7-management-alpine" in content
 
 
 def test_docker_compose_network_name_is_parameterized_with_production_default():
@@ -643,7 +643,7 @@ def test_proxy_dockerfile_uses_clang22_apk_toolchain() -> None:
   repo_root = Path(__file__).resolve().parents[2]
   dockerfile = (repo_root / "services-conf" / "proxy.Dockerfile").read_text()
   first_from = dockerfile.index("FROM ")
-  alpine_arg = dockerfile.index("ARG ALPINE_VERSION=3.24.2")
+  alpine_arg = dockerfile.index("ARG ALPINE_VERSION=3.24.3")
   assert alpine_arg < first_from, (
     "ALPINE_VERSION must be declared before first FROM"
   )

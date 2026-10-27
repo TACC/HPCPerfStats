@@ -34,10 +34,10 @@ def test_db_dockerfile_uses_clang22_apk_toolchain() -> None:
 
 def test_db_dockerfile_pins_alpine_3_24_not_latest_or_trixie() -> None:
   text = _dockerfile()
-  assert "ARG ALPINE_VERSION=3.24.2" in text
+  assert "ARG ALPINE_VERSION=3.24.3" in text
   assert "FROM alpine:${ALPINE_VERSION}" in text
   first_from = text.index("FROM ")
-  alpine_arg = text.index("ARG ALPINE_VERSION=3.24.2")
+  alpine_arg = text.index("ARG ALPINE_VERSION=3.24.3")
   assert alpine_arg < first_from, (
     "ALPINE_VERSION must be declared before first FROM"
   )
@@ -60,9 +60,9 @@ def test_db_dockerfile_pins_postgres_18_sha_and_timescale() -> None:
   assert (
     "555610c24d53e4316da5b7d3fc25c279d96856d5e0e23ee308c328c5fa881d9f" in text
   )
-  assert "ARG TIMESCALEDB_VERSION=2.30.2" in text
+  assert "ARG TIMESCALEDB_VERSION=2.31.0" in text
   assert (
-    "a7003a70836477dc8d575d95a4c515d8a22ed219d0cb03b3640bb813f04e1b42" in text
+    "7a0135283240abb64c87713e3280d70461954028d6426374b7e4e59f7dca6a56" in text
   )
 
 
