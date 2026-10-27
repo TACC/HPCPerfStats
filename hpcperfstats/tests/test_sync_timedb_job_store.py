@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import threading
 import time
 from collections import deque
@@ -683,3 +684,243 @@ def test_reorder_list_marks_dirty(tmp_path):
   assert store._dirty is True
   assert store._shadow_lists[JOB_KIND_APPEND] == ["b", "a"]
   store.close()
+
+
+# --- A2 dead-letter cooldown / re-admission / terminal; A17 rollout safety ---
+
+
+def test_dead_letter_readmits_after_cooldown(tmp_path):
+  """DE-1: a dead letter blocks only until readmit_at, then re-admits once."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
+
+  root = str(tmp_path)
+  entry = jq.upsert_queue_dead_letter(
+    root,
+    kind="ingest",
+    identity="/raw/h/1",
+    attempt=5,
+    reason="boom",
+    now=1000.0,
+  )
+  assert entry["cycle"] == 1 and entry["readmit_at"] == 1000.0 + 3600.0
+  assert jq.dead_letter_blocked(
+    root, kind="ingest", identity="/raw/h/1", now=2000.0
+  )
+  assert not jq.dead_letter_blocked(
+    root, kind="ingest", identity="/raw/h/1", now=5000.0
+  )
+  due = jq.due_dead_letter_readmissions(root, now=5000.0)
+  assert [e["identity"] for e in due] == ["/raw/h/1"]
+  jq.mark_dead_letters_readmitted(root, [("ingest", "/raw/h/1")], now=5000.0)
+  assert jq.due_dead_letter_readmissions(root, now=6000.0) == []
+  again = jq.upsert_queue_dead_letter(
+    root,
+    kind="ingest",
+    identity="/raw/h/1",
+    attempt=5,
+    reason="boom",
+    now=7000.0,
+  )
+  assert again["cycle"] == 2 and again["readmit_at"] == 7000.0 + 21600.0
+  assert len(jq._load_dead_letter_entries(root)) == 1, "one entry per path"
+
+
+def test_dead_letter_terminal_quarantines_raw(tmp_path):
+  """DE-1: after the last cooldown the raw file is quarantined (restorable)."""
+  from types import SimpleNamespace
+
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_store as jq,
+    sync_timedb_queue_orchestrator as qo,
+  )
+
+  root = tmp_path
+  raw = root / "host" / "1646347009"
+  raw.parent.mkdir()
+  raw.write_text("1646347009 x\n")
+  store = jq.SyncTimedbJobStore("")
+  outcomes = []
+  for _cycle in range(4):
+    for _attempt in range(jq.job_max_attempts()):
+      claim = SimpleNamespace(identity=str(raw), owner_token="t", score=1.0)
+      outcomes.append(
+        qo._retry_or_dead_letter(
+          store,
+          kind="ingest",
+          claim=claim,
+          archive_data_dir=str(root),
+          reason="parse_fail",
+          log_fn=lambda *a, **k: None,
+        )
+      )
+  assert outcomes.count("dead_letter") == 3
+  assert outcomes[-1] == "dead_letter_terminal"
+  assert not raw.exists()
+  manifest = json.loads((root / ".sync_timedb_unparsable_raw.json").read_text())
+  entry = manifest["entries"][0]
+  assert entry["failure_class"] == "exhausted"
+  assert entry["reason"] == "dead_letter_exhausted"
+
+
+def test_dead_letter_cleared_on_success(tmp_path):
+  """DE-1: a successful job removes its dead-letter entry."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
+
+  root = str(tmp_path)
+  jq.upsert_queue_dead_letter(
+    root, kind="append", identity="/raw/h/2", attempt=5, reason="append_failed"
+  )
+  assert jq.remove_queue_dead_letter(root, kind="append", identity="/raw/h/2")
+  assert not jq.remove_queue_dead_letter(
+    root, kind="append", identity="/raw/h/2"
+  )
+  assert jq._load_dead_letter_entries(root) == []
+
+
+def test_legacy_dead_letter_entry_readmits(tmp_path):
+  """DE-21: pre-cooldown entries re-admit; fill-skip debris immediately."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
+  from hpcperfstats.dbload.lib.sync_timedb_persistence import (
+    save_persistence_document,
+  )
+
+  root = str(tmp_path)
+  save_persistence_document(
+    jq.queue_dead_letter_path(root),
+    jq.QUEUE_DEAD_LETTER_KIND,
+    [
+      {
+        "kind": "ingest",
+        "identity": "/a",
+        "attempt": 5,
+        "reason": "OperationalError",
+        "recorded_at": 100.0,
+      },
+      {
+        "kind": "ingest",
+        "identity": "/b",
+        "attempt": 5,
+        "reason": "skip_cgroup_headroom",
+        "recorded_at": 100.0,
+      },
+    ],
+  )
+  assert jq.dead_letter_blocked(root, kind="ingest", identity="/a", now=200.0)
+  assert not jq.dead_letter_blocked(
+    root, kind="ingest", identity="/b", now=200.0
+  )
+  assert not jq.dead_letter_blocked(
+    root, kind="ingest", identity="/a", now=100.0 + 3600.0
+  )
+
+
+def test_migration_snapshot_verified_before_apply(tmp_path):
+  """A17: sidecars are copied and sha-verified once, before migrations."""
+  from hpcperfstats.dbload.lib import sync_timedb_negative_states as ns
+
+  root = tmp_path
+  (root / ".sync_timedb_day_raw_removal").mkdir()
+  (root / ".sync_timedb_day_raw_removal" / "2026-08-22.json").write_text("{}")
+  (root / ".sync_timedb_queue_dead_letter.json").write_text("[]")
+  ns._SNAPSHOT_FAILED["value"] = False
+  assert ns.snapshot_dead_end_sidecars(str(root))
+  snap = root / ns.MIGRATION_BACKUP_DIRNAME / ns.DEAD_END_MIGRATION_ID
+  assert (
+    snap / ".sync_timedb_day_raw_removal" / "2026-08-22.json"
+  ).read_text() == "{}"
+  assert (snap / ".complete").is_file()
+  assert ns.effective_remediation_mode() == "apply"
+  ns._SNAPSHOT_FAILED["value"] = True
+  try:
+    assert ns.effective_remediation_mode() == "report"
+  finally:
+    ns._SNAPSHOT_FAILED["value"] = False
+
+
+def test_report_mode_changes_nothing(tmp_path, monkeypatch):
+  """A17: report mode logs re-admissions and terminal quarantines only."""
+  from hpcperfstats.dbload.lib import (
+    conf_parser as cfg,
+    sync_timedb_job_store as jq,
+    sync_timedb_queue_orchestrator as qo,
+  )
+
+  monkeypatch.setattr(
+    cfg, "get_sync_dead_end_remediation_mode", lambda: "report"
+  )
+  root = str(tmp_path)
+  raw = tmp_path / "1646347009"
+  raw.write_text("x")
+  jq.upsert_queue_dead_letter(
+    root, kind="ingest", identity=str(raw), attempt=5, reason="x", now=0.0
+  )
+  store = jq.SyncTimedbJobStore("")
+  logs = []
+  assert (
+    qo._readmit_due_dead_letters(
+      store, root, log_fn=lambda m, **k: logs.append(m), now=10**9
+    )
+    == 0
+  )
+  assert store.queued_count("ingest") == 0
+  assert not qo._resolve_terminal_dead_letter(
+    "ingest",
+    str(raw),
+    root,
+    {"reason": "x"},
+    log_fn=lambda m, **k: logs.append(m),
+  )
+  assert raw.exists()
+  assert any("would readmit" in m for m in logs)
+  assert any("would quarantine" in m for m in logs)
+
+
+def test_readmit_batches_bounded(tmp_path, monkeypatch):
+  """A17: one reconstruct pass re-admits at most the configured batch."""
+  from datetime import datetime
+
+  from hpcperfstats.dbload.lib import (
+    conf_parser as cfg,
+    sync_timedb_job_store as jq,
+    sync_timedb_queue_orchestrator as qo,
+  )
+
+  monkeypatch.setattr(cfg, "get_sync_dead_end_migration_batch", lambda: 3)
+  root = str(tmp_path)
+  base = int(datetime(2026, 9, 26, 12).timestamp())
+  for i in range(7):
+    raw = tmp_path / str(base + i)
+    raw.write_text("x")
+    jq.upsert_queue_dead_letter(
+      root, kind="ingest", identity=str(raw), attempt=5, reason="x", now=0.0
+    )
+  store = jq.SyncTimedbJobStore("")
+
+  def log(*_a, **_k):
+    return None
+
+  assert qo._readmit_due_dead_letters(store, root, log_fn=log, now=10**9) == 3
+  assert store.queued_count("ingest") == 3
+  assert qo._readmit_due_dead_letters(store, root, log_fn=log, now=10**9) == 3
+  assert qo._readmit_due_dead_letters(store, root, log_fn=log, now=10**9) == 1
+  assert qo._readmit_due_dead_letters(store, root, log_fn=log, now=10**9) == 0
+
+
+def test_concurrent_dead_letter_upserts_lose_nothing(tmp_path):
+  """Coordinator threads upsert at once; no entry may be lost."""
+  from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
+
+  root = str(tmp_path)
+
+  def _write(i):
+    for j in range(10):
+      jq.upsert_queue_dead_letter(
+        root, kind="ingest", identity=f"/raw/{i}/{j}", attempt=5, reason="x"
+      )
+
+  threads = [threading.Thread(target=_write, args=(i,)) for i in range(8)]
+  for t in threads:
+    t.start()
+  for t in threads:
+    t.join()
+  assert len(jq._load_dead_letter_entries(root)) == 80

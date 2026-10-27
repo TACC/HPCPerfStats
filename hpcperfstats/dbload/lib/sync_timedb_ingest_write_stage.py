@@ -6,6 +6,7 @@ threads ``get``, COPY/upsert, and signal completion. Job-store ACK stays on
 the ingest coordinator drain after the parse worker returns success.
 
 Attributes:
+  IngestWriteStageShutdownError: Typed shutdown refusal (environment class).
   _PUT_BLOCK_EPS_S: Minimum put wait counted in ``parse_put_block_n``.
   _PUT_BLOCK_LOCK: Mutex for put-block census totals.
   _PUT_BLOCK_SUM_S: Window sum of put wait seconds.
@@ -89,6 +90,20 @@ class IngestWritePayload:
   ingest_ok: bool = False
   write_timing: dict[str, float] = field(default_factory=dict)
   wait: dict[str, float] = field(default_factory=dict)
+
+
+class IngestWriteStageShutdownError(RuntimeError):
+  """
+  A write was refused because the process-wide write stage is shutting down.
+
+  Subclasses ``RuntimeError`` (the type older callers caught) but is typed so
+  the ingest coordinator treats it as an environment condition: requeue
+  without burning the file's attempts, never quarantine (DE-2).
+
+  Examples:
+    >>> isinstance(IngestWriteStageShutdownError("x"), RuntimeError)
+    True
+  """
 
 
 def record_put_block_wait(wait_s: float) -> None:
@@ -329,7 +344,9 @@ def submit_ingest_write(payload: IngestWritePayload) -> IngestWritePayload:
   wait_telem.stamp_enqueue(payload)
   while True:
     if _SHUTDOWN.is_set():
-      payload.error = RuntimeError("ingest write stage shutting down")
+      payload.error = IngestWriteStageShutdownError(
+        "ingest write stage shutting down"
+      )
       payload.ingest_ok = False
       payload.done.set()
       return payload

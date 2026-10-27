@@ -710,3 +710,86 @@ def test_warm_lookup_across_shards(tmp_path):
   assert store.lookup_complete_map("2026-09-01", "id-a") == {"host/1": 11}
   assert store.lookup_member("2026-09-01", "id-b", "host/2") is None
   assert store.lookup_member("2026-09-02", "id-a", "host/1") is None
+
+
+def test_populate_pool_clears_tar_hot(tmp_path, monkeypatch):
+  """DE-7: the populate worker clears the ``populate_enqueue`` hot marker."""
+  import threading
+
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_members_coord as coord
+  from hpcperfstats.dbload.lib import sync_timedb_populate_pool as pp
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+    SyncTimedbArchiveMembersStore,
+    set_process_archive_members_store,
+  )
+
+  store = SyncTimedbArchiveMembersStore(str(tmp_path))
+  set_process_archive_members_store(store)
+  shutdown = threading.Event()
+  jobs = [{"canonical": "/d/2026-10-17.tar.zst", "day_token": "2026-10-17"}]
+
+  def _claim(timeout_s=1.0):
+    if jobs:
+      return jobs.pop()
+    shutdown.set()
+    return None
+
+  monkeypatch.setattr(coord, "archive_members_populate_queue_claim", _claim)
+  monkeypatch.setattr(coord, "complete_populate_queue_job", lambda job: None)
+  monkeypatch.setattr(
+    helpers, "execute_archive_members_populate_for_canonical", lambda c: {}
+  )
+  try:
+    coord.set_ingest_tar_hot("2026-10-17", reason="populate_enqueue")
+    coord.set_ingest_tar_hot("2026-10-18", reason="populate_wait")
+    assert coord.ingest_tar_hot_for_day("2026-10-17")
+    pp._populate_pool_worker_entry("t", None, shutdown)
+    assert not coord.ingest_tar_hot_for_day("2026-10-17")
+    assert coord.ingest_tar_hot_for_day("2026-10-18"), "waiter owns its marker"
+  finally:
+    set_process_archive_members_store(None)
+
+
+def test_populate_requeue_attempts_capped(tmp_path, monkeypatch):
+  """DE-16: a populate job that always fails stops after the attempt ceiling."""
+  import threading
+
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  import hpcperfstats.dbload.lib.sync_timedb_archive_members_coord as coord
+  from hpcperfstats.dbload.lib import (
+    conf_parser as cfg,
+    sync_timedb_populate_pool as pp,
+  )
+
+  monkeypatch.setattr(cfg, "get_sync_archive_retry_max_attempts", lambda: 3)
+  shutdown = threading.Event()
+  queue = [{"canonical": "/d/2026-10-19.tar.zst", "day_token": "2026-10-19"}]
+  seen = {"runs": 0, "requeue": 0, "complete": 0}
+
+  def _claim(timeout_s=1.0):
+    if queue:
+      return queue.pop()
+    shutdown.set()
+    return None
+
+  def _requeue(job):
+    seen["requeue"] += 1
+    queue.append(job)
+
+  def _fail(_c):
+    seen["runs"] += 1
+    raise RuntimeError("populate always fails")
+
+  monkeypatch.setattr(coord, "archive_members_populate_queue_claim", _claim)
+  monkeypatch.setattr(coord, "requeue_populate_queue_job", _requeue)
+  monkeypatch.setattr(
+    coord,
+    "complete_populate_queue_job",
+    lambda job: seen.__setitem__("complete", seen["complete"] + 1),
+  )
+  monkeypatch.setattr(
+    helpers, "execute_archive_members_populate_for_canonical", _fail
+  )
+  pp._populate_pool_worker_entry("t", None, shutdown)
+  assert seen == {"runs": 3, "requeue": 2, "complete": 1}

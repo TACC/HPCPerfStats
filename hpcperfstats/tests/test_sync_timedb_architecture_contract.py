@@ -153,33 +153,6 @@ def test_handoff_priority_paths_not_in_orchestrator():
   assert "handoff_priority_paths" not in src
 
 
-def test_handoff_priority_paths_removed_from_legacy_helpers():
-  """P-D: residual B handoff pins must not remain on processed-path helpers."""
-  import inspect
-
-  from hpcperfstats.dbload import sync_timedb as st
-  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as ah
-
-  assert (
-    "handoff_priority_paths"
-    not in inspect.signature(
-      st._add_processed_path,
-    ).parameters
-  )
-  assert (
-    "handoff_priority_paths"
-    not in inspect.signature(
-      st._transition_file_state,
-    ).parameters
-  )
-  assert (
-    "handoff_priority_paths"
-    not in inspect.signature(
-      ah.cap_pending_stats_with_blocked_retention,
-    ).parameters
-  )
-
-
 def test_job_store_has_no_lua_or_redis_reap():
   """In-process reap walks memory maps; Lua/HGETALL must not return."""
   import inspect
@@ -534,3 +507,737 @@ def test_arch_sync_timedb_code_has_no_redis_identifiers():
         continue
       failures.append(f"{path.name}:{token}")
   assert not failures, f"leftover redis identifiers: {failures}"
+
+
+def test_day_remainder_inc_dec_same_day_for_cross_midnight_file():
+  """DE-32: enqueue and ACK must count the same day for one file.
+
+  A segment named for 23:59 on day D whose first parsed sample falls on D+1
+  used to count +1 on D+1 (plan calendar day) and -1 on D (filename epoch),
+  leaving D+1 permanently positive and D clamped at zero.
+  """
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
+    day_remainder,
+    reset_day_remainder_for_tests,
+  )
+
+  reset_day_remainder_for_tests()
+  epoch = int(datetime(2026, 8, 20, 23, 59, 30).timestamp())
+  path = f"/raw/host/{epoch}"
+  client = SyncTimedbJobStore("")
+  plan = jr.classify_closed_raw_path(
+    path,
+    tgz_archive_dir="/daily",
+    size=10,
+    mtime_ns=20,
+    calendar_day=date(2026, 8, 21),  # first sample after midnight
+    ingest_is_complete_fn=lambda **k: False,
+    append_is_complete_fn=lambda **k: True,
+  )
+  jr.enqueue_reconstruct_jobs_for_closed_path(
+    client, plan, today=date(2026, 10, 1)
+  )
+  assert day_remainder(jq.JOB_KIND_INGEST, "2026-08-20") == 1
+  assert day_remainder(jq.JOB_KIND_INGEST, "2026-08-21") == 0
+  qo._release_day_remainder(jq.JOB_KIND_INGEST, plan.identity)
+  assert day_remainder(jq.JOB_KIND_INGEST, "2026-08-20") == 0
+  assert day_remainder(jq.JOB_KIND_INGEST, "2026-08-21") == 0
+
+
+def test_day_remainder_rebuilt_from_job_store_at_boot(tmp_path):
+  """DE-32: after a restart the counter must reflect the persisted store."""
+  from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
+    day_remainder,
+    rebuild_day_remainders_from_job_store,
+    reset_day_remainder_for_tests,
+  )
+
+  day = datetime(2026, 9, 26, 12, 0, 0)
+  store = SyncTimedbJobStore(str(tmp_path))
+  for i in range(3):
+    store.zadd_ingest(f"/raw/h/{int(day.timestamp()) + i}", 1.0)
+  store.enqueue_list("append", f"/raw/h/{int(day.timestamp()) + 9}")
+  store.persist(force=True)
+  store.close()
+  reset_day_remainder_for_tests()  # process restart: memory counter is empty
+
+  revived = SyncTimedbJobStore(str(tmp_path))
+  assert day_remainder(jq.JOB_KIND_INGEST, "2026-09-26") == 0
+  counts = rebuild_day_remainders_from_job_store(revived)
+  assert counts == {"ingest": 3, "append": 1}
+  assert day_remainder(jq.JOB_KIND_INGEST, "2026-09-26") == 3
+  assert day_remainder(jq.JOB_KIND_APPEND, "2026-09-26") == 1
+  revived.close()
+
+
+def test_day_close_without_tar_hands_off_remaining_raw(tmp_path, monkeypatch):
+  """DE-24: a day with closed raw but no open tar must still hand raw off."""
+  import os
+
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: None,
+  )
+  handed = []
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def requeue_closed_raw_paths_for_ingest(self, tar_path, *, reason):
+      handed.append((os.path.basename(tar_path), reason))
+      return ["/raw/h/1"]
+
+    def run_post_seal_verify_sync(self, _tar):
+      return False
+
+    def apply_batch_delete(self, _tar):
+      return 0
+
+    def has_closed_raw_on_disk(self, _tar):
+      return True
+
+    def phase(self, _tar):
+      return "verifying"
+
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
+  )
+  outcome = qo._run_day_close_job(
+    "2020-01-07",
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda *a, **k: None,
+  )
+  assert handed == [("2020-01-07.tar", "no_open_tar")]
+  assert outcome == "incomplete_raw"
+
+
+def test_daily_dir_scan_enqueues_zst_only_day_with_open_manifest(tmp_path):
+  """DE-24: zst-only days with an open day-removal manifest get day_close."""
+  import json
+
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  manifests = tmp_path / ".sync_timedb_day_raw_removal"
+  manifests.mkdir()
+  for day, phase in (
+    ("2020-02-01", "verification_complete"),
+    ("2020-02-02", "done"),
+  ):
+    (daily / f"{day}.tar.zst").write_bytes(b"zst")
+    (manifests / f"{day}.json").write_text(
+      json.dumps({"phase": phase, "entries": {}, "tar_path": "x"})
+    )
+  client = SyncTimedbJobStore("")
+  n = qo._enqueue_day_closes_for_daily_dir(
+    client,
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+  )
+  queued = client.list_slice(jq.JOB_KIND_DAY_CLOSE, 0, -1)
+  assert n == 1
+  assert [q for q in queued if "2020-02-01" in q]
+  assert not [q for q in queued if "2020-02-02" in q]
+
+
+def test_wait_on_ingest_uses_per_day_append_remainder(tmp_path):
+  """DE-27: another day's queued appends must not hold this day."""
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+  from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
+    note_day_remainder,
+    reset_day_remainder_for_tests,
+  )
+
+  reset_day_remainder_for_tests()
+  store = SyncTimedbJobStore("")
+  other = f"/raw/h/{int(datetime(2020, 3, 2, 12).timestamp())}"
+  jq.enqueue_list_job(store, kind=jq.JOB_KIND_APPEND, identity=other)
+  note_day_remainder(jq.JOB_KIND_APPEND, "2020-03-02", 1)
+  tar = str(tmp_path / "2020-03-01.tar")
+  try:
+    assert store.queued_count(jq.JOB_KIND_APPEND) == 1
+    assert (
+      qo._day_close_append_or_hot_active(store, tar, str(tmp_path)) is False
+    )
+    note_day_remainder(jq.JOB_KIND_APPEND, "2020-03-01", 1)
+    assert qo._day_close_append_or_hot_active(store, tar, str(tmp_path)) is True
+  finally:
+    reset_day_remainder_for_tests()
+
+
+# --- A2 / A8 / G1 / G2 bounded negative exits ---
+
+
+def test_handoff_respects_dead_letter_cooldown(tmp_path):
+  """DE-1: day_close handoff must not bypass a dead-letter cooldown."""
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  epoch = int(datetime(2022, 3, 3, 12).timestamp())
+  raw = tmp_path / "h" / str(epoch)
+  raw.parent.mkdir()
+  raw.write_text("x")
+  jq.upsert_queue_dead_letter(
+    str(tmp_path),
+    kind="ingest",
+    identity=str(raw),
+    attempt=5,
+    reason="PermissionError",
+  )
+  client = SyncTimedbJobStore("")
+  n = qo._handoff_retryable_paths_to_ingest(
+    client,
+    str(tmp_path / "2022-03-03.tar"),
+    [str(raw)],
+    tgz_archive_dir=str(tmp_path),
+    archive_data_dir=str(tmp_path),
+    reason="unit",
+    ingest_is_complete_fn=lambda **k: False,
+    append_is_complete_fn=lambda **k: True,
+  )
+  assert n == 0
+  assert client.queued_count(jq.JOB_KIND_INGEST) == 0
+
+
+def test_day_close_exception_bumps_attempt(monkeypatch, tmp_path):
+  """DE-12: a day_close exception bumps attempts (no hot unbumped loop)."""
+  from concurrent.futures import Future
+
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  monkeypatch.setattr(
+    qo,
+    "_run_day_close_job",
+    lambda *a, **k: (_ for _ in ()).throw(KeyError("x")),
+  )
+  assert qo._run_day_close_job.__name__  # patched only for clarity below
+  seen = []
+  monkeypatch.setattr(
+    jq, "bump_job_attempt", lambda *a, **k: seen.append("bump") or 1
+  )
+  monkeypatch.setattr(jq, "requeue_job", lambda *a, **k: seen.append("requeue"))
+  fut: Future = Future()
+  fut.set_result("error")
+  ident = str(tmp_path / "2020-01-09.tar")
+  claim = jq.ClaimedJob(
+    kind=jq.JOB_KIND_DAY_CLOSE,
+    identity=ident,
+    owner_token="n:h:b:1",
+    deadline=1.0,
+    score=0.0,
+  )
+  qo._drain_day_close_ready(
+    SyncTimedbJobStore(""),
+    inflight={ident: fut},
+    leases={ident: claim},
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda *a, **k: None,
+  )
+  assert seen == ["bump", "requeue"]
+
+
+def test_day_close_entry_gate_ignores_cooldown_identity(tmp_path):
+  """A2: a dead-lettered (cooling down) identity does not hold its day."""
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  epoch = int(datetime(2022, 6, 28, 12).timestamp())
+  ident = f"/raw/h/{epoch}"
+  jq.upsert_queue_dead_letter(
+    str(tmp_path), kind="ingest", identity=ident, attempt=5, reason="x"
+  )
+  store = SyncTimedbJobStore("")
+  assert not qo._day_close_ingest_jobs_active_for_day(
+    store, "2022-06-28", str(tmp_path)
+  )
+
+
+def test_single_stuck_file_day_reaches_terminal_resolution(tmp_path):
+  """02 single-file days: cycles end in a quarantine and the raw leaves."""
+  from types import SimpleNamespace
+
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  epoch = int(datetime(2022, 3, 3, 12).timestamp())
+  raw = tmp_path / "h" / str(epoch)
+  raw.parent.mkdir()
+  raw.write_text("")
+  store = SyncTimedbJobStore("")
+  now = 1_000_000.0
+  outcome = ""
+  for _cycle in range(10):
+    for _attempt in range(jq.job_max_attempts()):
+      outcome = qo._retry_or_dead_letter(
+        store,
+        kind="ingest",
+        claim=SimpleNamespace(identity=str(raw), owner_token="t", score=1.0),
+        archive_data_dir=str(tmp_path),
+        reason="PermissionError",
+        log_fn=lambda *a, **k: None,
+      )
+    if outcome == "dead_letter_terminal":
+      break
+    now += 10 * 86400
+    qo._readmit_due_dead_letters(store, str(tmp_path), now=now)
+  assert outcome == "dead_letter_terminal"
+  assert not raw.exists(), "the day can close"
+
+
+def test_operational_error_requeues_not_dropped(monkeypatch, tmp_path):
+  """A8/DE-14: OperationalError requeues; it is never ACK-dropped."""
+  from django.db.utils import OperationalError
+
+  from hpcperfstats.tests.test_sync_timedb_queue_orchestrator import (
+    _drain_one_ingest_failure,
+  )
+
+  identity, seen = _drain_one_ingest_failure(
+    monkeypatch, tmp_path, OperationalError("server closed the connection")
+  )
+  assert seen["acks"] == []
+  assert seen["requeues"] == [identity]
+  assert seen["bumps"] == []
+
+
+def test_noprogress_counter_escalates_unknown_livelock(monkeypatch, tmp_path):
+  """G1: an endless no-bump requeue escalates into the dead-letter cooldown."""
+  from types import SimpleNamespace
+
+  from hpcperfstats.dbload.lib import (
+    conf_parser as cfg,
+    sync_timedb_queue_orchestrator as qo,
+  )
+
+  monkeypatch.setattr(cfg, "get_sync_noprogress_escalate_after", lambda: 4)
+  store = SyncTimedbJobStore("")
+  claim = SimpleNamespace(
+    kind="ingest", identity="/raw/h/1700000000", owner_token="t", score=1.0
+  )
+  results = [
+    qo._requeue_bounded_without_attempt_bump(
+      store,
+      kind="ingest",
+      claim=claim,
+      counter="env_defer",
+      cap=cfg.get_sync_noprogress_escalate_after(),
+      reason="env:EAGAIN",
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+    )
+    for _ in range(4)
+  ]
+  assert results[:3] == ["requeued"] * 3
+  assert results[3] == "dead_letter"
+  entry = jq._dead_letter_index(str(tmp_path))[("ingest", claim.identity)]
+  assert entry["env"] is True, "environment schedule, not file attempts"
+
+
+def test_noprogress_resets_on_real_progress(tmp_path):
+  """G1: a successful ACK drops the counter with the payload."""
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  store = SyncTimedbJobStore("")
+  ident = "/raw/h/1700000001"
+  day, today = date(2023, 11, 14), date(2026, 10, 1)
+  band = jr.select_ingest_band(day, today=today, hot_days=1)
+  score = jq.encode_ingest_score(
+    band=band, day=day, today=today, identity=ident
+  )
+
+  def _claim():
+    store.zadd_ingest(ident, score)
+    return jq.claim_ingest_job(store, band=band, owner_token="n:h:b:1")
+
+  qo._requeue_bounded_without_attempt_bump(
+    store,
+    kind="ingest",
+    claim=_claim(),
+    counter="env_defer",
+    cap=10,
+    reason="env:x",
+    archive_data_dir="",
+    log_fn=lambda *a, **k: None,
+  )
+  assert (
+    jq.read_job_payload_field(
+      store, kind="ingest", identity=ident, name="env_defer"
+    )
+    == "1"
+  )
+  claim = jq.claim_ingest_job(store, band=band, owner_token="n:h:b:2")
+  assert claim is not None
+  assert store.ack(kind="ingest", identity=ident, owner_token=claim.owner_token)
+  assert (
+    jq.read_job_payload_field(
+      store, kind="ingest", identity=ident, name="env_defer"
+    )
+    == ""
+  )
+
+
+def test_every_negative_value_has_exit_entry():
+  """G2: every negative status/kind defined in code has an explicit exit."""
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_archive_helpers as ah,
+    sync_timedb_day_raw_removal as drr,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_negative_states import (
+    SYNC_TIMEDB_NEGATIVE_STATE_EXITS as table,
+  )
+
+  statuses = (
+    set(drr.RETRYABLE_SKIP_STATUSES)
+    | set(drr.REPAIR_REQUIRED_STATUSES)
+    | set(drr.QUARANTINE_SKIP_STATUSES)
+  )
+  assert statuses <= set(table["day_removal_status"])
+  kinds = {getattr(ah, n) for n in dir(ah) if n.startswith("SKIP_KIND_")}
+  assert kinds and kinds <= set(table["day_skip_kind"])
+  assert {"timeout", "lookup_budget", "ingest_mark_failed", "ingested"} <= set(
+    table["ingest_outcome"]
+  )
+  assert {"yielded", "incomplete_raw", "error", "verify_failed"} <= set(
+    table["day_close_outcome"]
+  )
+
+
+def test_unknown_negative_value_takes_default_exit():
+  """G2: an unknown value takes the bounded default, never 'stay forever'."""
+  from hpcperfstats.dbload.lib.sync_timedb_negative_states import (
+    DEFAULT_NEGATIVE_EXIT,
+    negative_state_exit,
+  )
+
+  assert (
+    negative_state_exit("ingest_outcome", "brand_new") == DEFAULT_NEGATIVE_EXIT
+  )
+  assert negative_state_exit("no_such_domain", "x") == DEFAULT_NEGATIVE_EXIT
+  assert DEFAULT_NEGATIVE_EXIT == "retry_or_dead_letter"
+
+
+def test_seal_with_raw_only_when_all_remaining_raw_in_tar(
+  tmp_path, monkeypatch
+):
+  """DE-26 seal gate: seal with raw remaining only if all of it is in the tar.
+
+  A remaining raw file that is not yet appended keeps the no-seal rule, so a
+  whole tar is not recompressed per late append; once every remaining raw
+  file is a same-size tar member the day seals (and can then delete it all).
+  """
+  import tarfile
+
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_archive_helpers as ah,
+    sync_timedb_queue_orchestrator as qo,
+  )
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  tar = daily / "2020-01-10.tar"
+  raw_in = tmp_path / "h" / "1578657600"
+  raw_late = tmp_path / "h" / "1578661200"
+  raw_in.parent.mkdir()
+  raw_in.write_text("in tar")
+  raw_late.write_text("not appended yet")
+  with tarfile.open(tar, "w") as tf:
+    tf.add(str(raw_in), arcname=str(raw_in).lstrip("/"))
+  ah.invalidate_mutable_tar_authority_members(str(tar))
+  remaining = {"paths": [str(raw_in), str(raw_late)]}
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+    qo, "_day_close_append_or_hot_active", lambda *a, **k: False
+  )
+  calls = []
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: calls.append(k["only_when_no_remaining_raw"]),
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def phase(self, _t):
+      return "verification_complete"
+
+    def run_pre_seal_verify_sync(self, _t):
+      return True
+
+    def run_post_seal_verify_sync(self, _t):
+      return False
+
+    def apply_batch_delete(self, _t):
+      return 0
+
+    def has_closed_raw_on_disk(self, _t):
+      return True
+
+    def closed_raw_paths_on_disk(self, _t):
+      return list(remaining["paths"])
+
+    def remaining_raw_paths_blocking_tar_drop(self, _t):
+      return {str(tar) + ".zst": list(remaining["paths"])}
+
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
+  )
+  monkeypatch.setattr(
+    qo,
+    "reconcile_open_tar_with_sealed_zst",
+    lambda *a, **k: None,
+    raising=False,
+  )
+
+  def _claim():
+    qo._run_day_close_job(
+      "2020-01-10",
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+    )
+
+  _claim()  # raw_late not in tar: no seal while raw remains
+  remaining["paths"] = [str(raw_in)]
+  _claim()  # all remaining raw is in the tar: seal
+  assert calls == [True, False]
+
+
+def _append_jobs(n, day=(2026, 10, 14)):
+  base = int(datetime(*day, 12).timestamp())
+  return [
+    jq.ClaimedJob(
+      kind=jq.JOB_KIND_APPEND,
+      identity=f"/raw/h/{base + i}",
+      owner_token=f"n:h:b:{i}",
+      deadline=1.0,
+      score=0.0,
+    )
+    for i in range(n)
+  ]
+
+
+def test_append_batch_failure_does_not_dead_letter_every_path(tmp_path):
+  """DE-18: one failed batch requeues its 256 paths without per-path bumps."""
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  store = SyncTimedbJobStore("")
+  tar = str(tmp_path / "2026-10-14.tar")
+  jobs = _append_jobs(256)
+  for _ in range(jq.job_max_attempts() - 1):
+    assert (
+      qo._fail_append_batch(
+        store,
+        tar,
+        jobs,
+        reason="append_failed:false",
+        archive_data_dir=str(tmp_path),
+        log_fn=lambda *a, **k: None,
+      )
+      == "requeued"
+    )
+  assert jq._dead_letter_index(str(tmp_path)) == {}
+  for job in jobs[:3]:
+    assert jq.read_job_attempt(store, kind="append", identity=job.identity) == 0
+
+
+def test_append_dead_letter_reason_carries_outcome(tmp_path):
+  """DE-18: an exhausted batch dead-letters with the outcome in the reason."""
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  store = SyncTimedbJobStore("")
+  tar = str(tmp_path / "2026-10-18.tar")
+  jobs = _append_jobs(3, day=(2026, 10, 18))
+  out = ""
+  for _ in range(jq.job_max_attempts()):
+    out = qo._fail_append_batch(
+      store,
+      tar,
+      jobs,
+      reason="append_failed:CalledProcessError",
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+    )
+  assert out == "dead_letter"
+  index = jq._dead_letter_index(str(tmp_path))
+  assert {e["reason"] for e in index.values()} == {
+    "append_failed:CalledProcessError"
+  }
+  assert all(not e["terminal"] for e in index.values()), "cooldown, not final"
+
+
+def test_release_steps_run_before_consume_steps(tmp_path, monkeypatch):
+  """A16: with a sealed copy, raw delete (release) runs before the reseal."""
+  from hpcperfstats.dbload.lib import sync_timedb_queue_orchestrator as qo
+
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  (daily / "2020-01-11.tar").write_bytes(b"tar")
+  (daily / "2020-01-11.tar.zst").write_bytes(b"zst")
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+    qo, "_day_close_append_or_hot_active", lambda *a, **k: False
+  )
+  order = []
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: order.append("seal"),
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def phase(self, _t):
+      return "verification_complete"
+
+    def run_pre_seal_verify_sync(self, _t):
+      return True
+
+    def run_post_seal_verify_sync(self, _t):
+      return False
+
+    def apply_batch_delete(self, _t):
+      order.append("release_delete")
+      return 0
+
+    def has_closed_raw_on_disk(self, _t):
+      return True
+
+    def remaining_raw_paths_blocking_tar_drop(self, _t):
+      return {"z": ["/raw/x"]}
+
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
+  )
+  monkeypatch.setattr(
+    qo,
+    "reconcile_open_tar_with_sealed_zst",
+    lambda *a, **k: None,
+    raising=False,
+  )
+  qo._run_day_close_job(
+    "2020-01-11",
+    tgz_archive_dir=str(daily),
+    archive_data_dir=str(tmp_path),
+    log_fn=lambda *a, **k: None,
+  )
+  assert order.index("release_delete") < order.index("seal")
+
+
+def test_reconcile_failure_counts_toward_noprogress(tmp_path, monkeypatch):
+  """DE-28: a deterministic reconcile failure escalates instead of looping."""
+  from hpcperfstats.dbload.lib import (
+    conf_parser as cfg,
+    sync_timedb_queue_orchestrator as qo,
+  )
+
+  monkeypatch.setattr(cfg, "get_sync_noprogress_escalate_after", lambda: 3)
+  daily = tmp_path / "daily"
+  daily.mkdir()
+  (daily / "2020-01-12.tar").write_bytes(b"tar")
+  monkeypatch.setattr(jr, "day_close_is_complete", lambda *a, **k: False)
+  monkeypatch.setattr(jr, "day_close_min_age_elapsed", lambda *a, **k: True)
+  monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
+  monkeypatch.setattr(
+    qo, "_day_close_append_or_hot_active", lambda *a, **k: False
+  )
+
+  def _boom(*_a, **_k):
+    raise RuntimeError("deterministic merge bug")
+
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.reconcile_open_tar_with_sealed_zst",
+    _boom,
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers.seal_dirty_daily_archives",
+    lambda *a, **k: None,
+  )
+
+  class _Coord:
+    def __init__(self, **_kw):
+      pass
+
+    def phase(self, _t):
+      return "verification_complete"
+
+    def run_pre_seal_verify_sync(self, _t):
+      return True
+
+    def run_post_seal_verify_sync(self, _t):
+      return False
+
+    def apply_batch_delete(self, _t):
+      return 0
+
+    def has_closed_raw_on_disk(self, _t):
+      return False
+
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal.DayRawRemovalCoordinator",
+    _Coord,
+  )
+  outs = [
+    qo._run_day_close_job(
+      "2020-01-12",
+      tgz_archive_dir=str(daily),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+    )
+    for _ in range(3)
+  ]
+  assert outs[:2] != ["error", "error"] and outs[2] == "error"
+
+
+def test_dead_worker_inflight_reaped_when_recycle_disabled(monkeypatch):
+  """DE-15: a terminated pool's pending future is requeued, not held forever."""
+  import threading
+
+  from hpcperfstats.dbload.lib import (
+    conf_parser as cfg,
+    sync_timedb_queue_orchestrator as qo,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+    SyncTimedbThreadPool,
+  )
+
+  monkeypatch.setattr(
+    cfg, "get_sync_ingest_stuck_inflight_recycle_s", lambda: 0
+  )
+  gate = threading.Event()
+  started = threading.Event()
+  pool = SyncTimedbThreadPool(max_workers=1, thread_role="ingest-pool")
+  running = pool.apply_async(lambda: started.set() or gate.wait())
+  started.wait(5)
+  pool.terminate()  # abandons the running task; its future stays pending
+  requeued = []
+  monkeypatch.setattr(
+    qo,
+    "_requeue_claimed_job_without_attempt_bump",
+    lambda client, claim, log_fn=None: requeued.append(claim),
+  )
+  inflight = {"/raw/h/1": running}
+  claims = {"/raw/h/1": "claim-1"}
+  try:
+    n = qo._reap_dead_owner_ingest_inflight(
+      object(), inflight=inflight, claims=claims, log_fn=lambda *a, **k: None
+    )
+  finally:
+    gate.set()
+  assert n == 1 and requeued == ["claim-1"] and inflight == {}

@@ -88,7 +88,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
 
 **Pass (T0):** one `[main]` sync_timedb; flock acquired; `.sync_timedb_job_store.json` present or reconstruct explains empty; `[thread:populate-pool]` plus ingest/append coordinator titles; SIGTERM of the process yields exit **143** (not 0); ingest success logs / file-complete marks grow when listend is on. **Local agent T0** is `tests/run_sync_timedb_regression_battery.sh` (host pytest). **T1/T2** remain post-deploy on the backlog site (this Mac cannot claim production catch-up). **Fail:** two orchestrators, CLI `backlog`/`current` still in supervisord, no-arg run that only walks the last 5 days, or `deferred_age` burning day_close attempts.
 
-**T0 — append-inflight ingest defer (post redeploy, backlog + hot append days):** expect **`queue_orchestrator ingest defer`** with **`transient defer open-tar repair during append inflight`** while append writers are busy; **`dead_letter kind=ingest … ArchiveMembersStoreUnavailableError`** should **not** grow for that signature (pre-fix dead letters are not auto-healed). Host grep (full pipeline log, not `--tail` before context):
+**T0 — append-inflight ingest defer (post redeploy, backlog + hot append days):** expect **`queue_orchestrator ingest defer`** with **`transient defer open-tar repair during append inflight`** while append writers are busy; **`dead_letter kind=ingest … ArchiveMembersStoreUnavailableError`** should **not** grow for that signature. Dead letters now **auto-heal**: each entry carries `cycle` / `readmit_at` and is re-admitted after its cooldown (log `queue_orchestrator dead_letter readmit n=`), then quarantined (restorable) after the last cycle; see *Dead-end remediation verify* below. Host grep (full pipeline log, not `--tail` before context):
 
 ```bash
 podman-compose -p hpcperfstats logs pipeline 2>&1 | grep -E 'queue_orchestrator ingest (defer|fail)|dead_letter kind=ingest|transient defer open-tar repair during append inflight' | tail -40
@@ -1993,3 +1993,14 @@ After a mass tar crash (or when many days need membership reassessment), restore
 **Pass (T0):** dry-run prints `scanned=… deleted=0 dry_run=True` and does not restart; real `--day` prints `deleted=` matching scanned membership sidecars, then `pipeline restart requested ok`; after pipeline is up, expect cold `chunk prewarm` / populate for that day (not sticky `store_warm` on a known-stale map). Coordination flags (`ingest_tar_hot`, `archive_append_inflight`, `daily_tar_restore`) remain. **Fail:** `--all` without `--yes` (non-dry); sidecars wiped but no restart when L1 must be cold (omit `--no-restart`); wrong `--compose-dir` / project.
 
 **Why ingest/archive stay on spawn:** CPU/RSS isolation, `maxtasksperchild` recycle, L1 host cache, and pool stall diagnostics (`Pool imap stalled`, exit **124**). Janitor and startup coordinators use **session thread executors** by design (two-queue model).
+
+## Dead-end remediation verify (sync_timedb state machine plan)
+
+State reference: `docs/SYNC_TIMEDB_STATE_MACHINE.md`. Compose cwd: the checkout containing `docker-compose.yaml`. Paths come from `conf_parser` getters (`compose-operator-terminal-commands.mdc`).
+
+**T0 (first boot after redeploy):** `dead_end migration snapshot verified` (or an ERROR plus report-mode lines), `queue_orchestrator day_remainder rebuilt ingest=… append=…`, `quarantine boot restore restored=…`, `Day raw removal reopen done … reason=blocking_raw_on_disk` for previously frozen days.
+
+**T1 (one day-close cycle):** dead-letter entries all carry `cycle`/`readmit_at` and new entries per day stop growing; `queue_orchestrator dead_letter readmit n=` appears each idle pass while entries are due; no `phase=done` manifest has on-disk raw in a non-terminal status; `skipped_seal_invalid` counts fall as frozen days reseal (`Sealed archive …` / `post_seal_verify result=ok`) and delete raw; `tar salvaged to valid prefix` (or `archive_space_admit deny … reason=env:ENOSPC`) for truncated tars; `.sync_timedb_tar_salvage/` and `*.pre-restore.*` empty after the day seals.
+
+**T2 (backlog site, several days):** archive free space rises; `sealed integrity sweep failed` lines map to `.sync_timedb_sealed_integrity.json` rows with `action=` (`operator_restore_needed` needs a Ranch restore); `ERROR: queue_orchestrator dead_letter terminal` / `reverify_cycles exhausted` are the only remaining operator-action signatures.
+

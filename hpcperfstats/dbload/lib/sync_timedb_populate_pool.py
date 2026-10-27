@@ -249,7 +249,9 @@ def _populate_pool_worker_entry(
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
     archive_members_populate_queue_claim,
+    clear_ingest_tar_hot,
     complete_populate_queue_job,
+    ingest_tar_hot_reason_for_day,
     requeue_populate_queue_job,
   )
 
@@ -282,9 +284,27 @@ def _populate_pool_worker_entry(
         f"ERROR: populate-pool scan failed canonical={canonical} day={day_token or '?'}: {exc}",
         flush=True,
       )
-      requeue_populate_queue_job(job)
+      # DE-16: bounded retries; past the ceiling drop the job (append and
+      # ingest fall back to the tar-scan member source) instead of churning.
+      job["attempt"] = int(job.get("attempt") or 0) + 1
+      if job["attempt"] < int(cfg.get_sync_archive_retry_max_attempts()):
+        requeue_populate_queue_job(job)
+      else:
+        complete_populate_queue_job(job)
+        log_print(
+          f"ERROR: populate-pool giving up canonical={canonical} "
+          f"day={day_token or '?'} attempts={job['attempt']}",
+          flush=True,
+        )
     finally:
       clear_worker_stage()
+      # DE-7: the discover cold probe marks the day hot with
+      # ``populate_enqueue`` and nothing else clears it; a ``populate_wait``
+      # marker belongs to its waiter, which clears its own.
+      if day_token and ingest_tar_hot_reason_for_day(day_token) == (
+        "populate_enqueue"
+      ):
+        clear_ingest_tar_hot(day_token)
       from hpcperfstats.dbload.lib.sync_timedb_worker_memory import (
         release_spawn_pool_worker_memory,
       )

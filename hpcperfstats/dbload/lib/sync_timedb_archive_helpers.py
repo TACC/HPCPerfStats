@@ -20,6 +20,18 @@ Attributes:
   SKIP_KIND_READ_ERROR: Attribute.
   SKIP_KIND_TAR_TRUNCATED: Attribute.
   SKIP_KIND_ZST_FRAME_INVALID: Attribute.
+  QUARANTINE_EMPTY_MARKERS: ``error_detail`` text of an empty-payload file.
+  QUARANTINE_PARSE_MARKERS: ``error_detail`` text of explicit parse failures.
+  QUARANTINE_TERMINAL_CLASSES: Quarantine classes never auto-restored.
+  SEAL_OUTPUT_FRACTION: Seal admission estimate, zst bytes = tar / N.
+  ZST_RESTORE_EXPANSION_FACTOR: Restore admission estimate, tar = zst * N.
+  TAR_APPEND_TAIL_SNAPSHOT_BYTES: Tail bytes kept to undo a failed append.
+  SALVAGE_DIRNAME: Directory (beside the daily tars) for salvage backups.
+  SKIP_KIND_SALVAGE_BACKUP_FAILED: ``day_skip`` kind when the salvage backup
+    cannot be made (space or I/O); G3 retries.
+  _TVR_LINE_RE: Parser for GNU ``tar -tvR`` block-prefixed lines.
+  PRE_RESTORE_INFIX: Basename infix of the renamed copy a corrupt-tar
+    restore keeps until post-seal parity passes (DL-1).
   STREAM_ARCHIVE_TASK: Attribute.
   SYNC_TIMEDB_UNPARSABLE_RAW_DIRNAME: Attribute.
   SYNC_TIMEDB_UNPARSABLE_RAW_MANIFEST_BASENAME: Attribute.
@@ -88,8 +100,21 @@ from hpcperfstats.dbload.lib.file_locking import (
   file_write_lock,
 )
 from hpcperfstats.dbload.lib.print_utils import janitorial_logging, log_print
+from hpcperfstats.dbload.lib.sync_timedb_negative_states import (
+  CORRUPT,
+  MISSING,
+  READABLE,
+  TRANSIENT,
+  is_environment_error,
+  stderr_reports_environment_error,
+)
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
   parse_first_timestamp_line,
+)
+from hpcperfstats.dbload.lib.sync_timedb_sealed_member_map import (
+  archive_identity,
+  sealed_members_lookup,
+  write_sealed_member_map,
 )
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
   iter_bounded_thread_pool,
@@ -514,6 +539,55 @@ def free_bytes_for_path(path: str) -> Any:
     return 0
 
 
+ZST_RESTORE_EXPANSION_FACTOR = 12
+SEAL_OUTPUT_FRACTION = 3
+
+
+def archive_space_admit(
+  path: str,
+  bytes_needed: int,
+  *,
+  op: str,
+  log_fn: Any = log_print,
+) -> bool:
+  """
+  Admit a space-consuming archive operation only above the free reserve (A16).
+
+  Reseal, restore, rebuild, repair, pax convert and salvage write a new copy
+  before the old one can go; a short write at ``ENOSPC`` mid-append is the
+  leading cause of 01's truncated tars. An operation is admitted only when the
+  archive filesystem keeps ``sync_archive_min_free_bytes`` free *after*
+  ``bytes_needed``. A denial is an environment condition (``env:ENOSPC``): the
+  caller defers, never fails, repairs, or sets ``day_skip``. Space-releasing
+  steps (raw delete against the sealed copy, tar drop) never call this.
+
+  Args:
+    path (str): Path on the archive filesystem (the file being rewritten).
+    bytes_needed (int): Estimated new bytes the operation writes.
+    op (str): Operation label for the log line.
+    log_fn (Any): Logger callable.
+
+  Returns:
+    bool: True when admitted.
+
+  Examples:
+    >>> archive_space_admit("/", 0, op="probe", log_fn=None) in (True, False)
+    True
+  """
+  free = free_bytes_for_path(path)
+  reserve = int(cfg.get_sync_archive_min_free_bytes())
+  if free - max(0, int(bytes_needed)) >= reserve:
+    return True
+  if log_fn:
+    log_fn(
+      f"WARNING: archive_space_admit deny op={op} path={path} "
+      f"need={int(bytes_needed)} free={free} reserve={reserve} "
+      "reason=env:ENOSPC",
+      flush=True,
+    )
+  return False
+
+
 def convert_daily_tar_to_pax_via_extract_recreate(
   tar_path: str,
   *,
@@ -539,13 +613,10 @@ def convert_daily_tar_to_pax_via_extract_recreate(
   if not os.path.isfile(tar_path):
     return True
   tar_size = os.path.getsize(tar_path)
-  free = free_bytes_for_path(tar_path)
-  if free < tar_size:
-    if log_fn:
-      log_fn(
-        f"WARNING: convert_fail reason=insufficient_free_space tar={tar_path} size={tar_size} free={free}",
-        flush=True,
-      )
+  # Extract + recreate holds a full extra copy (plus the reserve, A16).
+  if not archive_space_admit(
+    tar_path, 2 * tar_size, op="pax_convert", log_fn=log_fn
+  ):
     return False
   tar_bin = shutil.which("tar") or "/bin/tar"
   parent = os.path.dirname(tar_path) or "."
@@ -2460,6 +2531,157 @@ def _closed_raw_eligible_for_quarantine(path_norm: Any) -> Any:
   return not stats_file_is_active_segment(path_norm)
 
 
+QUARANTINE_PARSE_MARKERS = (
+  "initial_timestamp_not_found",
+  "initial_host_not_found",
+)
+QUARANTINE_EMPTY_MARKERS = ("empty stats and proc_stats",)
+QUARANTINE_TERMINAL_CLASSES = frozenset({"parse", "empty", "exhausted"})
+
+
+def quarantine_failure_class_for_detail(error_detail: Any) -> str:
+  """
+  Classify a quarantine ``error_detail`` into a ``failure_class`` (A3).
+
+  Only the parser's own explicit failure markers are true file defects
+  (``parse`` / ``empty``); anything else (TypeError text, write-stage
+  shutdown, empty detail) was a code or environment fault and is restorable.
+
+  Args:
+    error_detail (Any): Free-text detail stored with the entry.
+
+  Returns:
+    str: ``parse``, ``empty``, or ``code_fault``.
+
+  Examples:
+    >>> quarantine_failure_class_for_detail("empty stats and proc_stats")
+    'empty'
+    >>> quarantine_failure_class_for_detail("cannot unpack non-iterable int")
+    'code_fault'
+  """
+  text = str(error_detail or "")
+  if any(m in text for m in QUARANTINE_EMPTY_MARKERS):
+    return "empty"
+  if any(m in text for m in QUARANTINE_PARSE_MARKERS):
+    return "parse"
+  return "code_fault"
+
+
+def restore_restorable_quarantines(
+  archive_data_dir: str,
+  tgz_archive_dir: str,
+  *,
+  log_fn: Any = log_print,
+  report_only: bool = False,
+) -> dict[str, int]:
+  """
+  Move non-parse quarantines back to their original path at boot (A3).
+
+  Restores manifest entries whose ``failure_class`` (derived for legacy
+  entries) is not ``parse``/``empty``, plus orphan files in the quarantine
+  directory that have no manifest entry. A file is moved back only when its
+  original path is absent (never overwrite) and the day is not sealed-only
+  (an open ``.tar`` exists or the day has no archive yet); a sealed-only day
+  already closed, so the file is left for the operator. Boot discover
+  re-enqueues restored files; a truly broken one re-quarantines through the
+  bounded dead-letter cycle.
+
+  Args:
+    archive_data_dir (str): Archive data root (quarantine lives under it).
+    tgz_archive_dir (str): Daily archive directory.
+    log_fn (Any): Logger callable.
+    report_only (bool): Log what would be restored and change nothing.
+
+  Returns:
+    dict[str, int]: ``restored``, ``kept_terminal`` and ``skipped`` counts.
+
+  Examples:
+    >>> restore_restorable_quarantines("/nonexistent", "/nonexistent")
+    {'restored': 0, 'kept_terminal': 0, 'skipped': 0}
+  """
+  counts = {"restored": 0, "kept_terminal": 0, "skipped": 0}
+  manifest_path = manifest_path_for_archive(archive_data_dir)
+  quarantine_root = quarantine_dir_for_archive(archive_data_dir)
+  if not os.path.isdir(quarantine_root):
+    return counts
+  entries = _load_unparsable_raw_manifest(manifest_path)
+  known = {
+    os.path.normpath(str(e.get("quarantined_path") or ""))
+    for e in entries
+    if isinstance(e, dict)
+  }
+  candidates: list[tuple[dict | None, str, str]] = []
+  for e in entries:
+    if not isinstance(e, dict):
+      continue
+    klass = str(e.get("failure_class") or "") or (
+      quarantine_failure_class_for_detail(e.get("error_detail"))
+    )
+    if klass in QUARANTINE_TERMINAL_CLASSES:
+      counts["kept_terminal"] += 1
+      continue
+    candidates.append(
+      (
+        e,
+        os.path.normpath(str(e.get("quarantined_path") or "")),
+        os.path.normpath(str(e.get("original_path") or "")),
+      )
+    )
+  for dirpath, _dirs, files in os.walk(quarantine_root):
+    for name in files:
+      qpath = os.path.normpath(os.path.join(dirpath, name))
+      if qpath not in known:
+        rel = os.path.relpath(qpath, quarantine_root)
+        candidates.append(
+          (None, qpath, os.path.join(os.path.normpath(archive_data_dir), rel))
+        )
+  restored_entries: list[dict] = []
+  for entry, qpath, original in candidates:
+    day_tar = daily_tar_path_for_stats_path(original, tgz_archive_dir)
+    sealed_only = bool(
+      day_tar
+      and not os.path.isfile(day_tar)
+      and any(os.path.isfile(p) for p in compressed_sibling_paths(day_tar))
+    )
+    if (
+      not os.path.isfile(qpath)
+      or not original
+      or os.path.exists(original)
+      or sealed_only
+    ):
+      counts["skipped"] += 1
+      continue
+    if report_only:
+      if log_fn:
+        log_fn(
+          f"INFO: dead_end report would restore {qpath} -> {original}",
+          flush=True,
+        )
+      continue
+    try:
+      os.makedirs(os.path.dirname(original), exist_ok=True)
+      shutil.move(qpath, original)
+    except OSError as exc:
+      counts["skipped"] += 1
+      if log_fn:
+        log_fn(f"WARNING: quarantine restore failed {qpath}: {exc}", flush=True)
+      continue
+    counts["restored"] += 1
+    if entry is not None:
+      restored_entries.append(entry)
+  if restored_entries:
+    keep = [e for e in entries if not any(e is r for r in restored_entries)]
+    _save_unparsable_raw_manifest_atomic(manifest_path, keep)
+    invalidate_unmapped_disqualify_cache()
+  if log_fn and any(counts.values()):
+    log_fn(
+      "INFO: quarantine boot restore "
+      + " ".join(f"{k}={v}" for k, v in counts.items()),
+      flush=True,
+    )
+  return counts
+
+
 def _quarantine_one_closed_raw_path(
   path_norm: Any,
   archive_data_dir: str,
@@ -2471,6 +2693,7 @@ def _quarantine_one_closed_raw_path(
   quarantine_root: Any,
   log_fn: Any = log_print,
   error_detail: Any | None = None,
+  failure_class: str = "",
 ) -> Any:
   """
   Move one closed raw path into DLO when present on disk. Return True if.
@@ -2487,6 +2710,8 @@ def _quarantine_one_closed_raw_path(
     quarantine_root (Any): Quarantine root passed to this helper.
     log_fn (Any): Callable invoked by this helper.
     error_detail (Any | None): One of ``Any``, ``None``.
+    failure_class (str): ``parse`` / ``empty`` / ``exhausted`` /
+      ``env_<type>`` / ``code_fault``; empty derives it from ``error_detail``.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -2494,25 +2719,33 @@ def _quarantine_one_closed_raw_path(
   Examples:
     >>> _quarantine_one_closed_raw_path(0)  # doctest: +SKIP
   """
+  # DE-3: a manifest entry for a path that is on disk again is stale; move
+  # the file (dropping the entry) instead of reporting it handled.
   if path_norm in already_quarantined:
-    return True
+    if not os.path.isfile(path_norm):
+      return True
+    manifest_entries[:] = [
+      e
+      for e in manifest_entries
+      if not (isinstance(e, dict) and e.get("original_path") == path_norm)
+    ]
+    already_quarantined.discard(path_norm)
   if not _closed_raw_eligible_for_quarantine(path_norm):
     return False
-  dest_path = _quarantine_dest_path(
+  # DE-4: a destination collision gets a ``.N`` suffix instead of failing.
+  base_dest = _quarantine_dest_path(
     archive_data_dir, quarantine_root, path_norm
   )
+  dest_path = base_dest
+  suffix = 0
+  while os.path.exists(dest_path):
+    suffix += 1
+    dest_path = f"{base_dest}.{suffix}"
   try:
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     with file_write_lock(path_norm):
       if not os.path.isfile(path_norm):
         return path_norm in already_quarantined
-      if os.path.exists(dest_path):
-        if log_fn:
-          log_fn(
-            f"Unparsable raw quarantine skipped existing dest: {dest_path}",
-            flush=True,
-          )
-        return False
       try:
         shutil.move(path_norm, dest_path)
       except OSError as exc:
@@ -2527,6 +2760,8 @@ def _quarantine_one_closed_raw_path(
         "quarantined_path": os.path.normpath(dest_path),
         "quarantined_at": time.time(),
         "reason": reason,
+        "failure_class": failure_class
+        or quarantine_failure_class_for_detail(error_detail),
       }
       if error_detail:
         entry["error_detail"] = str(error_detail)
@@ -2566,6 +2801,7 @@ def quarantine_ingest_failed_raw_path(
   *,
   log_fn: Any = log_print,
   error_detail: Any | None = None,
+  failure_class: str = "",
 ) -> Any:
   """
   Move one ingest-failed closed raw path into DLO; return True when handled.
@@ -2576,6 +2812,8 @@ def quarantine_ingest_failed_raw_path(
     reason (Any): Reason passed to this helper.
     log_fn (Any): Callable invoked by this helper.
     error_detail (Any | None): One of ``Any``, ``None``.
+    failure_class (str): Structured class recorded on the manifest entry
+      (empty derives it from ``error_detail``).
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -2603,81 +2841,11 @@ def quarantine_ingest_failed_raw_path(
     quarantine_root=quarantine_root,
     log_fn=log_fn,
     error_detail=error_detail,
+    failure_class=failure_class,
   )
   if handled and len(manifest_entries) > manifest_len_before:
     invalidate_unmapped_disqualify_cache()
   return handled
-
-
-def quarantine_unparsable_closed_raw_paths(
-  paths: Any,
-  archive_data_dir: str,
-  *,
-  skip_paths: Any | None = None,
-  log_fn: Any = log_print,
-  max_moves: Any | None = None,
-) -> Any:
-  """
-  Move unparsable closed raw paths into the dead-letter office; return move.
-
-    count.
-
-  Args:
-    paths (Any): Iterable of filesystem paths as strings.
-    archive_data_dir (str): String for archive data dir.
-    skip_paths (Any | None): One of ``Any``, ``None``.
-    log_fn (Any): Callable invoked by this helper.
-    max_moves (Any | None): One of ``Any``, ``None``.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> quarantine_unparsable_closed_raw_paths(None, "x", None, None, None)
-  """
-  if not paths or not archive_data_dir:
-    return 0
-  if max_moves is None:
-    max_moves = len(tuple(paths))
-  max_moves = max(0, int(max_moves))
-  if max_moves <= 0:
-    return 0
-
-  skip_norm = {os.path.normpath(p) for p in (skip_paths or ()) if p}
-  manifest_path = manifest_path_for_archive(archive_data_dir)
-  manifest_entries = _load_unparsable_raw_manifest(manifest_path)
-  already_quarantined = _quarantined_original_paths_from_manifest(
-    manifest_entries
-  )
-  quarantine_root = quarantine_dir_for_archive(archive_data_dir)
-  moved = 0
-
-  for path in paths:
-    if moved >= max_moves:
-      break
-    path_norm = os.path.normpath(path)
-    if path_norm in skip_norm:
-      continue
-    if path_norm in already_quarantined:
-      continue
-    if not is_unparsable_closed_stats_path(path_norm):
-      continue
-    if _quarantine_one_closed_raw_path(
-      path_norm,
-      archive_data_dir,
-      UNPARSABLE_RAW_QUARANTINE_REASON,
-      manifest_path=manifest_path,
-      manifest_entries=manifest_entries,
-      already_quarantined=already_quarantined,
-      quarantine_root=quarantine_root,
-      log_fn=log_fn,
-    ):
-      moved += 1
-
-  if moved:
-    _save_unparsable_raw_manifest_atomic(manifest_path, manifest_entries)
-    invalidate_unmapped_disqualify_cache()
-  return moved
 
 
 def raw_stats_path_fingerprint(path: str) -> Any:
@@ -4235,7 +4403,6 @@ def _tar_list_executable() -> Any:
   return zstd_cli._tar_list_executable()
 
 
-@contextlib.contextmanager
 def _iter_tar_members(tf: Any) -> Iterator[Any]:
   """
   Yield tar members without forcing a full in-memory member list.
@@ -4256,52 +4423,73 @@ def _iter_tar_members(tf: Any) -> Iterator[Any]:
   yield from iterator
 
 
-def verify_tar_archive_readable(
+def probe_tar_archive_readability(
   tar_path: str,
   *,
   assume_write_lock_held: bool = False,
-) -> Any:
+) -> str:
   """
-  Return True if ``tar_path`` is a readable archive (full scan via ``tar tf``).
+  Classify ``tar_path`` as readable, corrupt, transient, or missing (DE-29).
 
-  For ``.tar.zst`` / ``.tar.gz``, uses ``zstd -d -c | tar tf -`` when zstd is
-  available; otherwise ``tar tf`` on the file. No ``tarfile`` fallback.
+  Full scan via ``tar tf`` (or ``zstd -d -c | tar tf -`` for sealed files).
+  A probe that fails because the **host** misbehaved (``EAGAIN`` spawning the
+  child, ``ENOMEM``/``ENOSPC``…, a child killed by a signal, or stderr naming
+  one of those errnos) is ``transient``: callers must defer and must not
+  repair, restore from sealed, or persist ``day_skip`` on it. Only a clean
+  non-zero exit of the listing itself is ``corrupt``.
 
   When ``assume_write_lock_held`` is True, skip ``file_read_lock_wait`` (caller
   holds ``file_write_lock`` on ``tar_path``).
 
   Args:
-    tar_path (str): String for tar path.
-    assume_write_lock_held (bool): Boolean flag for assume write lock held.
+    tar_path (str): Open ``.tar`` or sealed ``.tar.zst`` / ``.tar.gz`` path.
+    assume_write_lock_held (bool): Caller already holds the write lock.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    str: ``READABLE``, ``CORRUPT``, ``TRANSIENT`` or ``MISSING`` from
+    ``sync_timedb_negative_states``.
 
   Raises:
-    Exception: Raised when ``verify_tar_archive_readable`` hits a
-    ``Exception`` failure path.
+    TimeoutError: Read-lock wait timed out (callers already treat it as a
+      defer).
+    Exception: The same ``TimeoutError`` re-raised bare from the lock wait.
 
   Examples:
-    >>> verify_tar_archive_readable("x", True)  # doctest: +SKIP
+    >>> probe_tar_archive_readability("/nonexistent.tar")
+    'missing'
   """
   if not os.path.isfile(tar_path):
-    return False
+    return MISSING
   tar_bin = _tar_list_executable()
 
-  _locked_scan = lambda: (
-    zstd_compressed_archive_pipe_readable(
-      tar_path,
-      get_archive_zstd_thread_count(),
-    )
-    if detect_compressed_format(tar_path) in ("zst", "gz")
-    else subprocess.run(
+  def _locked_scan() -> str:
+    """
+    Run the listing and map its result to a readability class.
+
+    Returns:
+      str: Readability class.
+
+    Examples:
+      >>> _locked_scan()  # doctest: +SKIP
+      'readable'
+    """
+    if detect_compressed_format(tar_path) in ("zst", "gz"):
+      ok = zstd_compressed_archive_pipe_readable(
+        tar_path,
+        get_archive_zstd_thread_count(),
+      )
+      return READABLE if ok else CORRUPT
+    proc = subprocess.run(
       [tar_bin, "tf", tar_path],
       capture_output=True,
       text=True,
       check=False,
-    ).returncode
-    == 0
-  )
+    )
+    if proc.returncode == 0:
+      return READABLE
+    if proc.returncode < 0 or stderr_reports_environment_error(proc.stderr):
+      return TRANSIENT
+    return CORRUPT
 
   try:
     if assume_write_lock_held:
@@ -4309,12 +4497,47 @@ def verify_tar_archive_readable(
     with _archive_file_read_lock_wait(tar_path):
       return _locked_scan()
   except FileNotFoundError:
-    return False
+    return MISSING if not os.path.isfile(tar_path) else TRANSIENT
   except TimeoutError:
     raise
-  except OSError, subprocess.SubprocessError:
-    return False
-  return False
+  except OSError as exc:
+    return TRANSIENT if is_environment_error(exc) else CORRUPT
+  except subprocess.SubprocessError:
+    return TRANSIENT
+
+
+def verify_tar_archive_readable(
+  tar_path: str,
+  *,
+  assume_write_lock_held: bool = False,
+) -> bool:
+  """
+  Return True if ``tar_path`` is a readable archive (full scan via ``tar tf``).
+
+  Boolean view of ``probe_tar_archive_readability``. Destructive callers
+  (repair, restore from sealed, ``day_skip``) must use the probe instead so a
+  transient failure is never treated as corruption.
+
+  Args:
+    tar_path (str): String for tar path.
+    assume_write_lock_held (bool): Boolean flag for assume write lock held.
+
+  Returns:
+    bool: True only for ``READABLE``.
+
+  Raises:
+    TimeoutError: Read-lock wait timed out.
+
+  Examples:
+    >>> verify_tar_archive_readable("/nonexistent.tar")
+    False
+  """
+  return (
+    probe_tar_archive_readability(
+      tar_path, assume_write_lock_held=assume_write_lock_held
+    )
+    == READABLE
+  )
 
 
 def get_file_member_sizes_from_gzip_archive(gz_path: str) -> Any:
@@ -5640,6 +5863,21 @@ def mark_archive_day_ingest_skip_and_raise(
     raise ArchiveMembersStoreUnavailableError(
       f"transient fnctl read lock timeout during sealed populate day={keys.day_token} path={sealed_path or ''}",
     )
+  # DE-6b / DE-31: an environment errno (EAGAIN spawning zstd, ENOSPC…) or a
+  # read that raced a sealed rewrite is not a day defect; re-probe once and
+  # never persist a sticky day_skip for it.
+  if (
+    is_environment_error(stream_error)
+    or stderr_reports_environment_error(detail)
+    or (
+      sealed_path
+      and os.path.isfile(sealed_path)
+      and probe_tar_archive_readability(sealed_path) in (READABLE, TRANSIENT)
+    )
+  ):
+    raise ArchiveMembersStoreUnavailableError(
+      f"transient sealed populate read day={keys.day_token} kind={kind} path={sealed_path or ''}",
+    )
   if kind == SKIP_KIND_TAR_TRUNCATED and not (
     sealed_path and os.path.isfile(sealed_path)
   ):
@@ -5978,6 +6216,11 @@ def _sealed_archive_members_via_store_or_scan(
   Sealed-only days use the same single-flight populate path as ingest prewarm
   and duplicate-check (at most one ``zstd -d -c`` per calendar day).
 
+  With a sibling tar the persisted **sealed member map** (written at seal
+  after ``zstd -t``, keyed by the sealed file identity) answers first, so a
+  frozen day's validation does not re-stream a multi-GB zst on every claim;
+  a missing or stale map falls back to one stream, which then refreshes it.
+
   **Sibling-tar exemption (data safety).** Every caller of this helper compares
   the sealed archive against another object: day-close reconcile vs the open
   tar, raw-removal validation vs the open tar, seal-skip equivalence, and
@@ -6010,10 +6253,19 @@ def _sealed_archive_members_via_store_or_scan(
   if not sealed_path or not os.path.isfile(sealed_path):
     return False, {}
   if os.path.isfile(daily_tar_path_from_compressed(sealed_path)):
-    return _scan_compressed_archive_members_and_readable(
+    mapped = sealed_members_lookup(sealed_path, request_rebuild=False)
+    if mapped is not None:
+      return True, dict(mapped)
+    before = archive_identity(sealed_path)
+    readable, members = _scan_compressed_archive_members_and_readable(
       sealed_path,
       apply_priority_wrap=apply_priority_wrap,
     )
+    if readable:
+      write_sealed_member_map(
+        sealed_path, dict(members), source="rebuild", identity=before
+      )
+    return readable, members
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
     ArchiveDayIngestSkipError,
   )
@@ -6232,6 +6484,52 @@ def ensure_daily_tar_restored_for_append(
   return not (os.path.isfile(zst_path) or os.path.isfile(gz_path))
 
 
+PRE_RESTORE_INFIX = ".pre-restore."
+
+
+def _tar_readable_prefix_covered_by_sealed(
+  tar_path: str,
+  sealed_paths: Any,
+) -> tuple[bool, str]:
+  """
+  Return whether every readable-prefix member of ``tar_path`` is sealed (DL-1).
+
+  Lists the unreadable tar's prefix with GNU ``tar tvf`` (T1: seek-based on an
+  uncompressed tar, stops at the first bad header) and checks each member,
+  name and size, against the persisted **sealed member map** (T0). The open
+  tar may hold members appended after the last seal; overwriting it with the
+  older sealed copy would discard them. No zst is decompressed here: without a
+  valid map the answer is "not proven" and a background map rebuild is queued.
+
+  Args:
+    tar_path (str): Unreadable open daily ``.tar``.
+    sealed_paths (Any): Candidate sealed siblings (``.tar.zst`` then
+      ``.tar.gz``); the first existing one is checked.
+
+  Returns:
+    tuple[bool, str]: ``(covered, reason)``; ``reason`` names why not.
+
+  Examples:
+    >>> _tar_readable_prefix_covered_by_sealed("/nonexistent.tar", [])
+    (True, 'no_tar')
+  """
+  if not os.path.isfile(tar_path):
+    return True, "no_tar"
+  sealed = next((p for p in sealed_paths if p and os.path.isfile(p)), "")
+  if not sealed:
+    return False, "no_sealed"
+  occurrences, _rc, _err = _run_gnu_tvf_file_members(tar_path)
+  if not occurrences:
+    return True, "empty_prefix"
+  members = sealed_members_lookup(sealed)
+  if members is None:
+    return False, "sealed_map_pending"
+  for name, size in occurrences:
+    if members.get(name) != int(size):
+      return False, f"prefix_member_not_sealed:{name}"
+  return True, "prefix_sealed"
+
+
 def replace_corrupt_tar_from_compressed_backup(
   tar_path: str,
   zst_path: str,
@@ -6245,6 +6543,13 @@ def replace_corrupt_tar_from_compressed_backup(
   then ``os.replace`` onto ``tar_path`` under a short ``file_write_lock``
   only after decompress returns True. Never unlinks ``tar_path`` before a
   verified replacement exists.
+
+  **DL-1 (no destructive restore).** The restore runs only when every member
+  of the corrupt tar's readable prefix is in the sealed member map with the
+  same size (``_tar_readable_prefix_covered_by_sealed``); otherwise the tar is
+  left untouched (salvage handles it). Even then the old tar is **renamed**
+  to ``<tar>.pre-restore.<ts>`` rather than overwritten, and day close removes
+  that copy only after the next post-seal parity passes.
 
   Returns True when ``os.replace`` installed a replacement, or when no
   sealed backup exists (``tar_path`` is left as-is). Returns False when a
@@ -6263,6 +6568,23 @@ def replace_corrupt_tar_from_compressed_backup(
   Examples:
     >>> replace_corrupt_tar_from_compressed_backup("x", "x", "x", None)
   """
+  covered, why = _tar_readable_prefix_covered_by_sealed(
+    tar_path, (zst_path, gz_path)
+  )
+  if not covered and why != "no_sealed":
+    log_print(
+      f"WARN: corrupt tar restore refused tar={tar_path} reason={why} "
+      "gate=dl1_restore tier=T1",
+      flush=True,
+    )
+    return False
+  sealed_src = next((p for p in (zst_path, gz_path) if os.path.isfile(p)), "")
+  if sealed_src and not archive_space_admit(
+    tar_path,
+    os.path.getsize(sealed_src) * ZST_RESTORE_EXPANSION_FACTOR,
+    op="restore_corrupt_tar",
+  ):
+    return False
   rebuild = tar_path + ".decomp.tmp"
   try:
     if os.path.exists(rebuild):
@@ -6296,12 +6618,55 @@ def replace_corrupt_tar_from_compressed_backup(
     with file_write_lock(tar_path):
       if not os.path.isfile(rebuild):
         return False
+      if os.path.isfile(tar_path):
+        os.replace(tar_path, f"{tar_path}{PRE_RESTORE_INFIX}{int(time.time())}")
       os.replace(rebuild, tar_path)
       return True
   except TimeoutError:
     return False
   except OSError:
     return False
+
+
+def remove_pre_restore_tar_copies(
+  tar_path: str,
+  log_fn: Any = log_print,
+) -> int:
+  """
+  Delete ``<tar>.pre-restore.*`` copies once post-seal parity has passed.
+
+  Called by day close only after the sealed archive was re-verified equal to
+  the open tar, so the sealed copy now holds every member the old tar had.
+
+  Args:
+    tar_path (str): Open daily ``.tar`` path.
+    log_fn (Any): Logger callable.
+
+  Returns:
+    int: Number of copies removed.
+
+  Examples:
+    >>> remove_pre_restore_tar_copies("/nonexistent/2026-01-01.tar")
+    0
+  """
+  folder = os.path.dirname(tar_path) or "."
+  prefix = os.path.basename(tar_path) + PRE_RESTORE_INFIX
+  removed = 0
+  try:
+    names = os.listdir(folder)
+  except OSError:
+    return 0
+  for name in names:
+    if not name.startswith(prefix):
+      continue
+    try:
+      os.remove(os.path.join(folder, name))
+      removed += 1
+      if log_fn:
+        log_fn(f"Removed pre-restore tar copy after parity: {name}", flush=True)
+    except OSError:
+      pass
+  return removed
 
 
 def restore_tar_from_sealed_if_unreadable(
@@ -6329,8 +6694,19 @@ def restore_tar_from_sealed_if_unreadable(
   """
   if not tar_path or not os.path.isfile(tar_path):
     return False
-  if verify_tar_archive_readable(tar_path):
+  state = probe_tar_archive_readability(tar_path)
+  if state == READABLE:
     return True
+  if state != CORRUPT:
+    if log_fn:
+      log_fn(
+        f"Tar readability probe {state}; deferring restore: {tar_path}",
+        flush=True,
+      )
+    return False
+  salvaged = _salvage_open_tar_for_ensure(tar_path, zstd_threads, log_fn=log_fn)
+  if salvaged is not None:
+    return bool(salvaged.readable) and verify_tar_archive_readable(tar_path)
   zst_path, gz_path = compressed_sibling_paths(tar_path)
   if replace_corrupt_tar_from_compressed_backup(
     tar_path,
@@ -6835,7 +7211,7 @@ def _clear_stale_day_ingest_skip_if_tar_repaired(
   sealed_path: str,
 ) -> None:
   """
-  Drop sticky skip when sealed is gone and the mutable tar is readable.
+  Drop a sticky skip (and degraded) once the authoritative archive reads.
 
   Args:
     keys (Any): Archive-members day handle.
@@ -6868,17 +7244,31 @@ def _clear_stale_day_ingest_skip_if_tar_repaired(
   skip = get_archive_day_ingest_skip(keys)
   if skip is None:
     return
-  if sealed_path and os.path.isfile(sealed_path):
-    return
-  if not os.path.isfile(tar_path):
-    return
-  dirty = is_daily_tar_sealed_dirty(tar_path, zst_path, gz_path)
-  if not dirty and os.path.isfile(sealed_path or ""):
+  # A4/DE-6: the clear is gated on the authoritative archive itself (open
+  # tar when present, else the sealed file), not on "no sealed sibling", so
+  # sealed-only days and repaired open tars both get their flag back.
+  if os.path.isfile(tar_path):
+    authoritative = tar_path
+  elif sealed_path and os.path.isfile(sealed_path):
+    # G3: re-checking a sealed file streams it (T2), so only a flag older
+    # than ``sync_negative_flag_revalidate_s`` is re-validated; a still-bad
+    # file restarts the clock. Concurrent waiters never re-stream (RD-01).
+    age_s = time.time() - float((skip or {}).get("set_at") or 0.0)
+    revalidate_s = float(cfg.get_sync_negative_flag_revalidate_s())
+    if revalidate_s <= 0 or age_s < revalidate_s:
+      return
+    authoritative = sealed_path
+  else:
     return
   try:
-    if not verify_tar_archive_readable(tar_path):
-      return
+    state = probe_tar_archive_readability(authoritative)
   except TimeoutError:
+    return
+  if state != READABLE:
+    if authoritative == sealed_path:
+      store = get_process_archive_members_store()
+      if store is not None:
+        store.touch_day_skip(keys.day_token)
     return
   clear_archive_day_ingest_skip(keys)
   _INGEST_SKIPPED_CALENDAR_DAYS.pop(keys.day_token, None)
@@ -6888,7 +7278,8 @@ def _clear_stale_day_ingest_skip_if_tar_repaired(
     if store is not None:
       store.clear_degraded(keys.day_token)
   log_print(
-    f"INFO: cleared stale archive_day_ingest_skip day={keys.day_token} tar={tar_path} (sealed missing/dirty; tar readable)",
+    f"INFO: cleared stale archive_day_ingest_skip day={keys.day_token} "
+    f"archive={authoritative} (authoritative archive readable)",
     flush=True,
   )
 
@@ -7220,6 +7611,16 @@ def execute_archive_members_populate_for_canonical(canonical: Any) -> Any:
       return dict(members)
     tar_path = daily_tar_path_from_compressed(canonical)
     sealed_path = _resolve_sealed_daily_archive_path(canonical)
+    zst_path, gz_path = compressed_sibling_paths(tar_path)
+    # A4/DE-6: clear a stale skip (and degraded) *before* the degraded
+    # short-circuit, which otherwise returned {} forever on a readable day.
+    _clear_stale_day_ingest_skip_if_tar_repaired(
+      keys,
+      tar_path,
+      zst_path,
+      gz_path,
+      sealed_path,
+    )
     if populate_degraded_is_set(keys):
       if get_archive_day_ingest_skip(keys) is not None:
         return {}
@@ -7231,14 +7632,6 @@ def execute_archive_members_populate_for_canonical(canonical: Any) -> Any:
     if sealed_path is None and not os.path.isfile(tar_path):
       _store_daily_archive_members_cache(canonical, {})
       return {}
-    zst_path, gz_path = compressed_sibling_paths(tar_path)
-    _clear_stale_day_ingest_skip_if_tar_repaired(
-      keys,
-      tar_path,
-      zst_path,
-      gz_path,
-      sealed_path,
-    )
     use_tar, _reason = _populate_should_use_tar_scan(
       tar_path,
       zst_path,
@@ -7619,205 +8012,6 @@ def validate_post_seal_tar_zst_parity(
   return ok
 
 
-def remove_verified_archived_raw_files(
-  archive_data_dir: str,
-  host_name_ext: Any,
-  tgz_archive_dir: str,
-  *,
-  log_fn: Any = log_print,
-  archive_stats_files_fn: Any | None = None,
-  ingest_ready_fn: Any | None = None,
-  maintenance_snapshot: Any | None = None,
-  validation_cache: Any | None = None,
-  validated_days_out: Any | None = None,
-  skip_daily_tar_paths: Any | None = None,
-  only_daily_tar_paths: Any | None = None,
-  allow_auto_seal: bool = True,
-  max_deletes_per_pass: Any | None = None,
-  skip_raw_paths: Any | None = None,
-  require_fingerprint_at_delete: bool = False,
-) -> None:
-  """
-  Remove raw stats files only after tar + sealed archive validation.
-
-  For each daily ``.tar.zst`` (or legacy ``.tar.gz``), requires: sibling
-    ``.tar`` (if present) passes
-  ``verify_tar_archive_readable`` and yields file member sizes; ``.tar.gz``
-    passes
-  the same and yields sizes from the gzip archive only; the two maps must match.
-  Then deletes raw paths that match a member name and size.
-
-  When ``ingest_ready_fn`` is set (production: sampled timestamps in
-    ``host_data``),
-  bootstrap and removal apply only to paths for which it returns true.
-
-  Scans all closed segments under ``archive_data_dir`` (same rules as ingest).
-  Run after ``seal_dirty_daily_archives``. If only ``.tar.gz`` exists (no
-    sibling
-  ``.tar``), gzip alone is validated and its map is used.
-
-  If raw files map to a day but neither ``.tar`` nor ``.tar.gz`` exists yet
-  (e.g. ingest already finished and archival was never run for those paths),
-  this routine bootstraps the daily archive via ``archive_stats_files`` before
-  validation and removal.
-
-  Args:
-    archive_data_dir (str): String for archive data dir.
-    host_name_ext (Any): Host name ext passed to this helper.
-    tgz_archive_dir (str): String for tgz archive dir.
-    log_fn (Any): Callable invoked by this helper.
-    archive_stats_files_fn (Any | None): One of ``Any``, ``None``.
-    ingest_ready_fn (Any | None): One of ``Any``, ``None``.
-    maintenance_snapshot (Any | None): One of ``Any``, ``None``.
-    validation_cache (Any | None): One of ``Any``, ``None``.
-    validated_days_out (Any | None): One of ``Any``, ``None``.
-    skip_daily_tar_paths (Any | None): One of ``Any``, ``None``.
-    only_daily_tar_paths (Any | None): One of ``Any``, ``None``.
-    allow_auto_seal (bool): Boolean flag for allow auto seal.
-    max_deletes_per_pass (Any | None): One of ``Any``, ``None``.
-    skip_raw_paths (Any | None): One of ``Any``, ``None``.
-    require_fingerprint_at_delete (bool): Boolean flag for require fingerprint
-    at delete.
-
-  Returns:
-    None
-
-  Examples:
-    >>> remove_verified_archived_raw_files(0)  # doctest: +SKIP
-  """
-  ready_paths_set = None
-  if maintenance_snapshot is not None:
-    ready_paths_set = maintenance_snapshot.ready_paths
-    paths = maintenance_snapshot.closed_paths
-    mapping = maintenance_snapshot.mapping
-  else:
-    paths = collect_stats_files_in_range(
-      archive_data_dir, "all", None, host_name_ext
-    )
-    if not paths:
-      return
-    mapping = build_archive_mapping(paths, tgz_archive_dir)
-
-  if ready_paths_set is not None:
-    _path_ingest_ready = lambda path: path in ready_paths_set
-  elif ingest_ready_fn is None:
-    _path_ingest_ready = lambda path: True
-  else:
-    _path_ingest_ready = lambda path: bool(ingest_ready_fn(path))
-
-  skip_raw_norm = {os.path.normpath(p) for p in (skip_raw_paths or ()) if p}
-
-  if not paths:
-    return
-  _log = lambda msg: log_fn(msg, flush=True) if log_fn else None
-  if archive_stats_files_fn is None:
-    import hpcperfstats.dbload.sync_timedb as _sync_timedb_mod
-
-    archive_stats_files_fn = _sync_timedb_mod.archive_stats_files
-  if validation_cache is None:
-    validation_cache = {"hits": 0, "misses": 0}
-  validation_targets = []
-  for archive_path, stats_paths in mapping.items():
-    if detect_compressed_format(archive_path) is not None:
-      tar_path = daily_tar_path_from_compressed(archive_path)
-      if not daily_tar_path_in_maintenance_scope(
-        tar_path,
-        skip_daily_tar_paths=skip_daily_tar_paths,
-        only_daily_tar_paths=only_daily_tar_paths,
-      ):
-        continue
-      bootstrap_ready = [p for p in stats_paths if _path_ingest_ready(p)]
-      if (
-        not os.path.isfile(archive_path)
-        and not os.path.isfile(tar_path)
-        and bootstrap_ready
-      ):
-        _log(
-          f"Bootstrapping missing daily archive from {len(bootstrap_ready)} raw stats file(s): {archive_path}",
-        )
-        if not archive_stats_files_fn((archive_path, list(bootstrap_ready))):
-          _log(
-            f"Skipping removal: could not bootstrap daily archive: {archive_path}",
-          )
-          continue
-      elif (
-        not os.path.isfile(archive_path)
-        and not os.path.isfile(tar_path)
-        and stats_paths
-        and not bootstrap_ready
-      ):
-        _log(
-          f"Skipping bootstrap for {archive_path}: {len(stats_paths)} path(s) without sampled timestamps in DB",
-        )
-    validation_targets.append((archive_path, list(stats_paths)))
-
-  workers = (
-    _get_archive_validation_worker_count(len(validation_targets))
-    if validation_targets
-    else 1
-  )
-  validation_started = time.time()
-  success_count = 0
-  failed_count = 0
-  stats_paths_by_gz = dict(validation_targets)
-
-  for gz_path, ok, members in _iter_archive_validation_results_stream(
-    [gz_path for gz_path, _stats_paths in validation_targets],
-    log_fn=log_fn,
-    validation_cache=validation_cache if workers <= 1 else None,
-    allow_auto_seal=allow_auto_seal,
-  ):
-    if workers > 1:
-      validation_cache["misses"] = int(validation_cache.get("misses", 0)) + 1
-    if not ok or members is None:
-      failed_count += 1
-      continue
-    success_count += 1
-    _record_validated_day_hint(validated_days_out, gz_path, members)
-    deletes_this_pass = 0
-    for stats_path in stats_paths_by_gz.get(gz_path, []):
-      for path, status, _reason in classify_removable_raw_paths_for_members(
-        [stats_path],
-        members,
-        ingest_ready_fn=_path_ingest_ready,
-      ):
-        if status != "verified":
-          continue
-        if os.path.normpath(path) in skip_raw_norm:
-          continue
-        if (
-          max_deletes_per_pass is not None
-          and deletes_this_pass >= max_deletes_per_pass
-        ):
-          return
-        _log("removing stats file (scheduled archive maintenance): " + path)
-        if require_fingerprint_at_delete:
-          fp = raw_stats_path_fingerprint(path)
-          if not delete_raw_stats_path_if_fingerprint_unchanged(
-            path,
-            fp,
-            log_fn=log_fn,
-          ):
-            continue
-          deletes_this_pass += 1
-          continue
-        try:
-          with file_write_lock(path):
-            os.remove(path)
-          deletes_this_pass += 1
-        except OSError as exc:
-          _log(f"Could not remove {path}: {exc}")
-  _log_archive_validation_summary(
-    log_fn=log_fn,
-    validation_targets_count=len(validation_targets),
-    workers=workers,
-    success_count=success_count,
-    failed_count=failed_count,
-    validation_started=validation_started,
-    validation_cache=validation_cache,
-  )
-
-
 def build_remaining_raw_stats_by_daily_gz(
   archive_data_dir: str,
   host_name_ext: Any,
@@ -8111,9 +8305,7 @@ def remove_verified_uncompressed_daily_tars(
   """
   Remove ``YYYY-MM-DD.tar`` only after tar/tar.gz verification succeeds.
 
-  Called after ``remove_verified_archived_raw_files`` on every archive
-    maintenance
-  pass. Skips a day when ``remaining_raw_by_gz`` still lists closed raw stats
+  Called by day close after raw removal. Skips a day when ``remaining_raw_by_gz`` still lists closed raw stats
     for
   that calendar day (filesystem gate; not the DB head-ingest gate), unless
   ``force_remove_uncompressed_tar`` is true (startup maintenance only).
@@ -8598,13 +8790,9 @@ def _repair_truncated_daily_tar_via_extract_recreate(
     tar_size,
     expected_members,
   )
-  free = free_bytes_for_path(tar_path)
-  if free < required_free:
-    if log_fn:
-      log_fn(
-        f"WARNING: repair_fail reason=insufficient_free_space tar={tar_path} size={tar_size} required={required_free} free={free}",
-        flush=True,
-      )
+  if not archive_space_admit(
+    tar_path, required_free, op="repair_extract_recreate", log_fn=log_fn
+  ):
     return False
   tar_bin = shutil.which("tar") or "/bin/tar"
   parent = os.path.dirname(tar_path) or "."
@@ -8795,7 +8983,8 @@ def ensure_open_daily_tar_readable(
       return OpenDailyTarEnsureResult(readable=False)
 
   try:
-    if verify_tar_archive_readable(tar_norm):
+    state = probe_tar_archive_readability(tar_norm)
+    if state == READABLE:
       _log_daily_tar_repair_outcome(
         log_fn,
         caller=caller,
@@ -8803,13 +8992,40 @@ def ensure_open_daily_tar_readable(
         outcome="ok",
       )
       return OpenDailyTarEnsureResult(readable=True)
+    if state == TRANSIENT:
+      _log_daily_tar_repair_outcome(
+        log_fn,
+        caller=caller,
+        day_token=day_token,
+        outcome="probe_transient",
+      )
+      return OpenDailyTarEnsureResult(
+        readable=False,
+        transient=True,
+        transient_reason="tar_probe_transient",
+      )
   except TimeoutError:
     return OpenDailyTarEnsureResult(
       readable=False,
       transient=True,
       transient_reason="tar_verify_timeout",
     )
-
+  if log_fn and caller.startswith("append"):
+    log_fn(
+      f"Daily tar unreadable before append; attempting salvage, in-place repair then sealed restore: {tar_norm}",
+      flush=True,
+    )
+  salvaged = _salvage_open_tar_for_ensure(tar_norm, threads, log_fn=log_fn)
+  if salvaged is not None:
+    _log_daily_tar_repair_outcome(
+      log_fn,
+      caller=caller,
+      day_token=day_token,
+      outcome="salvaged"
+      if salvaged.readable
+      else (salvaged.transient_reason or "salvage_failed"),
+    )
+    return salvaged
   if require_recoverable_before_repair and (
     not tar_members_recoverable_despite_gnu_tf_fail(tar_norm)
   ):
@@ -8821,12 +9037,6 @@ def ensure_open_daily_tar_readable(
       outcome="repair_failed",
     )
     return OpenDailyTarEnsureResult(readable=False)
-
-  if log_fn and caller.startswith("append"):
-    log_fn(
-      f"Daily tar unreadable before append; attempting in-place repair then sealed restore: {tar_norm}",
-      flush=True,
-    )
 
   repaired = repair_truncated_daily_tar_in_place(
     tar_norm,
@@ -8858,6 +9068,116 @@ def ensure_open_daily_tar_readable(
     day_token=day_token,
     outcome="repair_failed",
   )
+  return OpenDailyTarEnsureResult(readable=False)
+
+
+def day_skip_blocks_tar_write(tar_path: str, log_fn: Any = log_print) -> bool:
+  """
+  Return True when the day's sticky ``day_skip`` forbids writing ``tar_path``.
+
+  A flagged day's open tar may be truncated; appending would bury new members
+  inside the truncated member's extent where no reader sees them. The write is
+  allowed again only after the tar probes ``READABLE`` now, in which case the
+  stale flag is cleared on the spot (finding #12: flags outlive repairs).
+
+  Args:
+    tar_path (str): Open daily ``.tar`` about to be appended.
+    log_fn (Any): Logger callable.
+
+  Returns:
+    bool: True to refuse the write.
+
+  Examples:
+    >>> day_skip_blocks_tar_write(
+    ...   "/nonexistent/2026-01-01.tar"
+    ... )  # doctest: +SKIP
+    False
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+    build_archive_members_keys,
+    clear_archive_day_ingest_skip,
+    get_archive_day_ingest_skip,
+  )
+
+  canonical = normalize_daily_compressed_path(
+    compressed_sibling_paths(tar_path)[0]
+  )
+  keys = build_archive_members_keys(_daily_archive_members_cache_key(canonical))
+  skip = get_archive_day_ingest_skip(keys)
+  if skip is None:
+    return False
+  try:
+    state = probe_tar_archive_readability(tar_path)
+  except TimeoutError:
+    state = TRANSIENT
+  if state in (READABLE, MISSING):
+    clear_archive_day_ingest_skip(keys)
+    _INGEST_SKIPPED_CALENDAR_DAYS.pop(keys.day_token, None)
+    if log_fn:
+      log_fn(
+        f"INFO: stale day_skip cleared day={keys.day_token} tar_state={state}",
+        flush=True,
+      )
+    return False
+  if log_fn:
+    log_fn(
+      f"WARNING: append refused day_skip day={keys.day_token} "
+      f"tar_state={state} tar={tar_path}",
+      flush=True,
+    )
+  return True
+
+
+def _salvage_open_tar_for_ensure(
+  tar_path: str,
+  zstd_threads: Any,
+  *,
+  log_fn: Any = log_print,
+) -> OpenDailyTarEnsureResult | None:
+  """
+  Run the copy-and-verify salvage for a corrupt open tar (DE-11/DE-23).
+
+  Returns None when the tar is not truncated (other repair paths apply).
+
+  Args:
+    tar_path (str): Open daily ``.tar`` that probed ``CORRUPT``.
+    zstd_threads (Any): Threads for a sealed restore after a corrupt rename.
+    log_fn (Any): Logger callable.
+
+  Returns:
+    OpenDailyTarEnsureResult | None: The ensure result, or None to fall back.
+
+  Examples:
+    >>> _salvage_open_tar_for_ensure("/nonexistent.tar", 1) is None
+    True
+  """
+  try:
+    result = salvage_truncated_tar_prefix(tar_path, log_fn=log_fn)
+  except TimeoutError:
+    return OpenDailyTarEnsureResult(
+      readable=False, transient=True, transient_reason="tar_salvage_lock"
+    )
+  if result.status in ("not_truncated", "no_prefix_sealed"):
+    return None
+  if result.status == "salvaged":
+    invalidate_after_daily_tar_mutation(
+      tar_path, reason="tar_salvage", log_fn=log_fn
+    )
+    return OpenDailyTarEnsureResult(readable=True)
+  if result.status == "space_denied":
+    return OpenDailyTarEnsureResult(
+      readable=False, transient=True, transient_reason="env:ENOSPC"
+    )
+  if result.status == "renamed_corrupt":
+    sealed = any(os.path.isfile(p) for p in compressed_sibling_paths(tar_path))
+    if not sealed:
+      # No archive left for the day: append recreates it (raw is on disk).
+      return OpenDailyTarEnsureResult(readable=True)
+    return OpenDailyTarEnsureResult(
+      readable=bool(
+        ensure_daily_tar_restored_for_append(tar_path, zstd_threads)
+      )
+    )
   return OpenDailyTarEnsureResult(readable=False)
 
 
@@ -8948,6 +9268,597 @@ def _ensure_open_tar_readable_for_ingest_lookup(
   )
   _log_archive_day_ingest_skip_once(skip_exc)
   raise skip_exc
+
+
+TAR_APPEND_TAIL_SNAPSHOT_BYTES = 2 * 10240
+
+
+def snapshot_tar_tail_for_append(
+  tar_path: str,
+  source_paths: Any,
+) -> dict[str, Any] | None:
+  """
+  Record what an append may overwrite so a failure can be rolled back (DE-23).
+
+  GNU ``tar -r`` writes from the first end-of-archive block, which lies inside
+  the last record, so the size plus the last ``TAR_APPEND_TAIL_SNAPSHOT_BYTES``
+  bytes reproduce the pre-append file exactly. Source sizes are recorded so
+  the rollback can prove the appended bytes still exist in the raw files.
+
+  Args:
+    tar_path (str): Open daily ``.tar`` (caller holds its write lock).
+    source_paths (Any): Raw files about to be appended.
+
+  Returns:
+    dict[str, Any] | None: Snapshot, or None when the tar does not exist yet.
+
+  Examples:
+    >>> snapshot_tar_tail_for_append("/nonexistent.tar", []) is None
+    True
+  """
+  try:
+    size = os.path.getsize(tar_path)
+  except OSError:
+    return None
+  start = max(0, size - TAR_APPEND_TAIL_SNAPSHOT_BYTES)
+  with open(tar_path, "rb") as fh:
+    fh.seek(start)
+    tail = fh.read(size - start)
+  sources = {}
+  for path in source_paths or ():
+    with contextlib.suppress(OSError):
+      sources[str(path)] = os.path.getsize(path)
+  return {"size": size, "start": start, "tail": tail, "sources": sources}
+
+
+def rollback_failed_tar_append(
+  tar_path: str,
+  snapshot: dict[str, Any] | None,
+  *,
+  log_fn: Any = log_print,
+) -> bool:
+  """
+  Return a tar to its pre-append bytes after a failed ``tar -r`` (DE-23).
+
+  Runs under the same write lock as the append. Refuses (leaving the tar for
+  the copy-and-verify salvage) unless every raw source of the batch is still
+  on disk at its recorded size: the bytes being discarded must exist there.
+
+  Args:
+    tar_path (str): Open daily ``.tar``.
+    snapshot (dict[str, Any] | None): ``snapshot_tar_tail_for_append`` output.
+    log_fn (Any): Logger callable.
+
+  Returns:
+    bool: True when the tar is byte-identical to before and GNU-readable.
+
+  Raises:
+    OSError: Internally when a source changed; caught and reported as a
+      refused rollback (False), never propagated.
+
+  Examples:
+    >>> rollback_failed_tar_append("/nonexistent.tar", None)
+    False
+  """
+  if not snapshot or not os.path.isfile(tar_path):
+    return False
+  for path, size in snapshot["sources"].items():
+    try:
+      if os.path.getsize(path) != size:
+        raise OSError("source changed")
+    except OSError:
+      if log_fn:
+        log_fn(
+          f"ERROR: tar append rollback refused tar={tar_path} "
+          f"source_missing_or_changed={path}; left for salvage",
+          flush=True,
+        )
+      return False
+  with open(tar_path, "r+b") as fh:
+    fh.truncate(snapshot["size"])
+    fh.seek(snapshot["start"])
+    fh.write(snapshot["tail"])
+    fh.flush()
+    os.fsync(fh.fileno())
+  invalidate_mutable_tar_authority_members(tar_path)
+  ok = probe_tar_archive_readability(tar_path, assume_write_lock_held=True) == (
+    READABLE
+  )
+  if log_fn:
+    log_fn(
+      f"WARNING: tar append rolled back tar={tar_path} "
+      f"size={snapshot['size']} readable={ok}",
+      flush=True,
+    )
+  return ok
+
+
+SALVAGE_DIRNAME = ".sync_timedb_tar_salvage"
+SKIP_KIND_SALVAGE_BACKUP_FAILED = "salvage_backup_failed"
+_TVR_LINE_RE = re.compile(r"^block (\d+): (.*)$")
+
+
+@dataclass(frozen=True)
+class TarSalvageResult:
+  """
+  Outcome of ``salvage_truncated_tar_prefix``.
+
+  Attributes:
+    status (str): ``salvaged``, ``not_truncated``, ``no_prefix_sealed``
+      (no valid prefix but a sealed copy exists: use the DL-1 restore),
+      ``renamed_corrupt``,
+      ``space_denied``, ``backup_failed``, ``verify_failed_restored``,
+      ``restore_failed`` (ERROR: backup kept for the operator).
+    cut (int): Cut offset ``C`` (end of the valid prefix).
+    size (int): Original size ``S``.
+    backup_path (str): Tail backup path, or empty.
+    kept (int): File members kept in the valid prefix.
+    dropped (tuple): Member names at or after the cut.
+  """
+
+  status: str
+  cut: int = 0
+  size: int = 0
+  backup_path: str = ""
+  kept: int = 0
+  dropped: tuple = ()
+
+
+def _sha256_file_range(path: str, start: int, end: int) -> str:
+  """
+  Return the hex SHA-256 of bytes ``[start, end)`` of ``path``.
+
+  Args:
+    path (str): File path.
+    start (int): First byte offset.
+    end (int): End offset (exclusive).
+
+  Returns:
+    str: Hex digest.
+
+  Examples:
+    >>> len(_sha256_file_range(__file__, 0, 10))  # doctest: +SKIP
+    64
+  """
+  import hashlib
+
+  digest = hashlib.sha256()
+  with open(path, "rb") as fh:
+    fh.seek(start)
+    left = max(0, end - start)
+    while left > 0:
+      chunk = fh.read(min(left, 1 << 20))
+      if not chunk:
+        break
+      digest.update(chunk)
+      left -= len(chunk)
+  return digest.hexdigest()
+
+
+def _tar_tvr_listing(tar_path: str) -> tuple[list[tuple[int, str, int]], int]:
+  """
+  List ``(block, name, size)`` per file member with GNU ``tar -tvR`` (T1).
+
+  Args:
+    tar_path (str): Uncompressed tar.
+
+  Returns:
+    tuple[list[tuple[int, str, int]], int]: Members in archive order and the
+    listing exit code (non-zero on ``Unexpected EOF``).
+
+  Examples:
+    >>> _tar_tvr_listing("/nonexistent.tar")[0]
+    []
+  """
+  if not os.path.isfile(tar_path):
+    return [], 1
+  proc = subprocess.run(
+    [_tar_list_executable(), "-tvR", "-f", tar_path],
+    capture_output=True,
+    text=True,
+    check=False,
+  )
+  members: list[tuple[int, str, int]] = []
+  for line in proc.stdout.splitlines():
+    m = _TVR_LINE_RE.match(line)
+    if not m:
+      continue
+    parsed = _parse_tar_tvf_size_and_name(m.group(2))
+    if parsed is not None:
+      members.append((int(m.group(1)), parsed[0], int(parsed[1])))
+  return members, int(proc.returncode)
+
+
+def _salvage_paths(tar_path: str, cut: int) -> tuple[str, str]:
+  """
+  Return ``(backup, manifest)`` paths for one salvage of ``tar_path``.
+
+  Args:
+    tar_path (str): Daily tar.
+    cut (int): Cut offset.
+
+  Returns:
+    tuple[str, str]: Tail backup and JSON manifest paths.
+
+  Examples:
+    >>> _salvage_paths("/d/2026-10-14.tar", 512)[0]
+    '/d/.sync_timedb_tar_salvage/2026-10-14.512.tail'
+  """
+  folder = os.path.join(os.path.dirname(tar_path) or ".", SALVAGE_DIRNAME)
+  day = os.path.basename(tar_path).split(".", 1)[0]
+  return (
+    os.path.join(folder, f"{day}.{cut}.tail"),
+    os.path.join(folder, f"{day}.{cut}.json"),
+  )
+
+
+def _salvage_restore(tar_path: str, manifest: dict[str, Any]) -> bool:
+  """
+  Put the backed-up bytes back so the tar is byte-identical to before.
+
+  Args:
+    tar_path (str): Daily tar.
+    manifest (dict[str, Any]): Salvage manifest (``backup_start``, ``size``,
+      ``sha256``, ``backup``).
+
+  Returns:
+    bool: True when the restored range re-hashes to the recorded sha256.
+
+  Examples:
+    >>> _salvage_restore(
+    ...   "/nonexistent.tar", {"backup": "/nope"}
+    ... )  # doctest: +SKIP
+    False
+  """
+  start = int(manifest["backup_start"])
+  with open(tar_path, "r+b") as out, open(manifest["backup"], "rb") as src:
+    out.truncate(start)
+    out.seek(start)
+    shutil.copyfileobj(src, out, 1 << 20)
+    out.flush()
+    os.fsync(out.fileno())
+  return (
+    os.path.getsize(tar_path) == int(manifest["size"])
+    and _sha256_file_range(tar_path, start, int(manifest["size"]))
+    == manifest["sha256"]
+  )
+
+
+def _salvage_write_manifest(path: str, manifest: dict[str, Any]) -> None:
+  """
+  Atomically persist a salvage manifest (fsync'd temp + replace).
+
+  Args:
+    path (str): Manifest path.
+    manifest (dict[str, Any]): Payload.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _salvage_write_manifest("/nonexistent/x.json", {})  # doctest: +SKIP
+  """
+  import json
+
+  tmp = path + ".tmp"
+  with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(manifest, fh, sort_keys=True)
+    fh.flush()
+    os.fsync(fh.fileno())
+  os.replace(tmp, path)
+
+
+def recover_interrupted_salvage(tar_path: str, log_fn: Any = log_print) -> str:
+  """
+  Finish or undo a salvage that stopped between backup and commit.
+
+  A manifest left at ``backed_up`` means the process died mid-salvage. If
+  the tar already has the verified cut shape (size ``C + 1024``, GNU-readable
+  with the recorded member count) the salvage is committed; otherwise the
+  tail is restored from the verified backup so no byte is lost.
+
+  Args:
+    tar_path (str): Daily tar.
+    log_fn (Any): Logger callable.
+
+  Returns:
+    str: ``none``, ``committed``, ``restored`` or ``restore_failed``.
+
+  Examples:
+    >>> recover_interrupted_salvage("/nonexistent/2026-01-01.tar")
+    'none'
+  """
+  import json
+
+  folder = os.path.join(os.path.dirname(tar_path) or ".", SALVAGE_DIRNAME)
+  day = os.path.basename(tar_path).split(".", 1)[0]
+  try:
+    names = sorted(os.listdir(folder))
+  except OSError:
+    return "none"
+  outcome = "none"
+  for name in names:
+    if not (name.startswith(day + ".") and name.endswith(".json")):
+      continue
+    path = os.path.join(folder, name)
+    try:
+      with open(path, encoding="utf-8") as fh:
+        manifest = json.load(fh)
+    except OSError, ValueError:
+      continue
+    if manifest.get("status") != "backed_up":
+      continue
+    cut = int(manifest["cut"])
+    members, rc = _tar_tvr_listing(tar_path)
+    if (
+      os.path.getsize(tar_path) == cut + 1024
+      and rc == 0
+      and len(members) == int(manifest["kept"])
+    ):
+      manifest["status"] = "salvaged"
+      outcome = "committed"
+    elif os.path.getsize(tar_path) == int(manifest["size"]) and (
+      _sha256_file_range(
+        tar_path, int(manifest["backup_start"]), int(manifest["size"])
+      )
+      == manifest["sha256"]
+    ):
+      manifest["status"] = "aborted_unchanged"
+      outcome = "restored"
+    elif _salvage_restore(tar_path, manifest):
+      manifest["status"] = "restored"
+      outcome = "restored"
+    else:
+      if log_fn:
+        log_fn(
+          f"ERROR: tar salvage restore failed tar={tar_path} "
+          f"backup={manifest['backup']} (kept for the operator)",
+          flush=True,
+        )
+      return "restore_failed"
+    _salvage_write_manifest(path, manifest)
+    if log_fn:
+      log_fn(
+        f"WARNING: tar salvage recovery tar={tar_path} {outcome}", flush=True
+      )
+  return outcome
+
+
+def salvage_truncated_tar_prefix(
+  tar_path: str,
+  *,
+  log_fn: Any = log_print,
+) -> TarSalvageResult:
+  """
+  Cut a truncated open tar back to its valid prefix with copy-and-verify.
+
+  DE-11/DE-23 (user requirement: no tar byte may be lost if anything goes
+  wrong). Under the tar write lock: list members with GNU ``tar -tvR`` (T1);
+  every listed member but the last is complete, so the cut ``C`` is the start
+  of the last listed member when the listing hit ``Unexpected EOF``. Bytes
+  below ``C`` are never opened for write. The tail ``[C, S)`` (or the whole
+  file with ``sync_tar_salvage_full_copy``) is copied, fsync'd and
+  sha256-verified against the tar before the cut; after the cut GNU
+  ``tar tf`` must pass with exactly the kept members and the size must be
+  ``C + 1024``, otherwise the backup is written back and re-verified. The
+  backup stays until post-seal parity (``remove_salvage_backups_after_parity``).
+  No valid prefix (``C == 0``) renames the tar to ``.tar.corrupt.<ts>`` when no
+  sealed copy exists; with one, the DL-1-gated restore handles it.
+  Space is admitted first (``2 × (S − C)`` plus the salvage reserve); a
+  denial changes nothing.
+
+  Args:
+    tar_path (str): Open daily ``.tar``.
+    log_fn (Any): Logger callable.
+
+  Returns:
+    TarSalvageResult: Status and offsets (see the class).
+
+  Raises:
+    TimeoutError: The tar write lock could not be taken (caller defers).
+    OSError: Internally on a backup sha mismatch; caught and reported as
+      ``backup_failed`` with the tar unchanged.
+
+  Examples:
+    >>> salvage_truncated_tar_prefix("/nonexistent.tar").status
+    'not_truncated'
+  """
+  if not os.path.isfile(tar_path):
+    return TarSalvageResult("not_truncated")
+  with file_write_lock(tar_path):
+    if recover_interrupted_salvage(tar_path, log_fn=log_fn) == "restore_failed":
+      return TarSalvageResult("restore_failed")
+    size = os.path.getsize(tar_path)
+    members, rc = _tar_tvr_listing(tar_path)
+    if rc == 0:
+      return TarSalvageResult("not_truncated", size=size)
+
+    def _data_end(member: tuple[int, str, int]) -> int:
+      """
+      Return the byte offset just past one member's padded data.
+
+      ``tar -tvR`` reports the member's own header block (after any pax
+      extended header), so header + padded data ends the member exactly.
+
+      Args:
+        member (tuple[int, str, int]): ``(block, name, size)``.
+
+      Returns:
+        int: End offset of the member's data blocks.
+
+      Examples:
+        >>> _data_end((2, "h/1", 600))  # doctest: +SKIP
+        2560
+      """
+      block, _name, msize = member
+      return (block + 1) * 512 + -(-msize // 512) * 512
+
+    cut, kept, dropped = 0, [], ()
+    if members and _data_end(members[-1]) <= size:
+      # The cut fell after the last member's data (inside the next header
+      # chain or the EOF blocks): keep every listed member.
+      cut, kept = _data_end(members[-1]), members
+    elif members:
+      # Drop the last (incomplete) member *including* its pax extended
+      # header: cut at the previous member's data end, never at the
+      # reported header block (that would leave a dangling pax header).
+      kept, dropped = members[:-1], (members[-1][1],)
+      cut = _data_end(kept[-1]) if kept else 0
+    if cut == 0:
+      if any(os.path.isfile(p) for p in compressed_sibling_paths(tar_path)):
+        # Nothing to keep and a sealed copy exists: the DL-1-gated restore
+        # (empty prefix is trivially covered; keeps a .pre-restore copy)
+        # is the better repair than a permanent .tar.corrupt file.
+        return TarSalvageResult("no_prefix_sealed", 0, size)
+      corrupt = f"{tar_path}.corrupt.{int(time.time())}"
+      os.replace(tar_path, corrupt)
+      if log_fn:
+        log_fn(
+          f"WARNING: tar salvage no valid prefix tar={tar_path} size={size} "
+          f"renamed={corrupt}",
+          flush=True,
+        )
+      return TarSalvageResult("renamed_corrupt", 0, size, corrupt)
+    start = 0 if cfg.get_sync_tar_salvage_full_copy() else cut
+    if not archive_space_admit(
+      tar_path,
+      2 * (size - start) + int(cfg.get_sync_tar_salvage_min_free_bytes()),
+      op="tar_salvage",
+      log_fn=log_fn,
+    ):
+      return TarSalvageResult("space_denied", cut, size)
+    backup, manifest_path = _salvage_paths(tar_path, cut)
+    os.makedirs(os.path.dirname(backup), exist_ok=True)
+    try:
+      with open(tar_path, "rb") as src, open(backup, "wb") as dst:
+        src.seek(start)
+        left = size - start
+        while left > 0:
+          chunk = src.read(min(left, 1 << 20))
+          if not chunk:
+            break
+          dst.write(chunk)
+          left -= len(chunk)
+        dst.flush()
+        os.fsync(dst.fileno())
+      sha = _sha256_file_range(tar_path, start, size)
+      if _sha256_file_range(backup, 0, size - start) != sha or (
+        os.path.getsize(backup) != size - start
+      ):
+        raise OSError("salvage backup sha256 mismatch")
+    except OSError as exc:
+      with contextlib.suppress(OSError):
+        os.remove(backup)
+      if log_fn:
+        log_fn(
+          f"ERROR: tar salvage backup failed tar={tar_path} err={exc}; "
+          "tar unchanged",
+          flush=True,
+        )
+      return TarSalvageResult("backup_failed", cut, size)
+    manifest = {
+      "tar_path": os.path.normpath(tar_path),
+      "cut": cut,
+      "size": size,
+      "backup_start": start,
+      "backup": backup,
+      "sha256": sha,
+      "kept": len(kept),
+      "dropped": list(dropped),
+      "status": "backed_up",
+      "written_at": time.time(),
+    }
+    _salvage_write_manifest(manifest_path, manifest)
+    with open(tar_path, "r+b") as fh:
+      fh.truncate(cut)
+      fh.seek(cut)
+      fh.write(b"\0" * 1024)
+      fh.flush()
+      os.fsync(fh.fileno())
+    after, rc_after = _tar_tvr_listing(tar_path)
+    if (
+      rc_after == 0
+      and len(after) == len(kept)
+      and os.path.getsize(tar_path) == cut + 1024
+    ):
+      manifest["status"] = "salvaged"
+      _salvage_write_manifest(manifest_path, manifest)
+      invalidate_mutable_tar_authority_members(tar_path)
+      if log_fn:
+        log_fn(
+          f"WARNING: tar salvaged to valid prefix tar={tar_path} cut={cut} "
+          f"size={size} kept={len(kept)} dropped={len(dropped)} "
+          f"backup={backup}",
+          flush=True,
+        )
+      return TarSalvageResult("salvaged", cut, size, backup, len(kept), dropped)
+    restored = _salvage_restore(tar_path, manifest)
+    manifest["status"] = "restored" if restored else "restore_failed"
+    _salvage_write_manifest(manifest_path, manifest)
+    if log_fn:
+      log_fn(
+        f"ERROR: tar salvage verify failed tar={tar_path} cut={cut} "
+        f"restored={restored} backup={backup}",
+        flush=True,
+      )
+    return TarSalvageResult(
+      "verify_failed_restored" if restored else "restore_failed",
+      cut,
+      size,
+      backup,
+    )
+
+
+def remove_salvage_backups_after_parity(
+  tar_path: str,
+  log_fn: Any = log_print,
+) -> int:
+  """
+  Delete committed salvage backups once the day's zst passed parity.
+
+  Args:
+    tar_path (str): Daily tar.
+    log_fn (Any): Logger callable.
+
+  Returns:
+    int: Backups removed (``restore_failed`` ones are always kept).
+
+  Examples:
+    >>> remove_salvage_backups_after_parity("/nonexistent/2026-01-01.tar")
+    0
+  """
+  import json
+
+  folder = os.path.join(os.path.dirname(tar_path) or ".", SALVAGE_DIRNAME)
+  day = os.path.basename(tar_path).split(".", 1)[0]
+  removed = 0
+  try:
+    names = sorted(os.listdir(folder))
+  except OSError:
+    return 0
+  for name in names:
+    if not (name.startswith(day + ".") and name.endswith(".json")):
+      continue
+    path = os.path.join(folder, name)
+    try:
+      with open(path, encoding="utf-8") as fh:
+        manifest = json.load(fh)
+    except OSError, ValueError:
+      continue
+    if manifest.get("status") not in (
+      "salvaged",
+      "restored",
+      "aborted_unchanged",
+    ):
+      continue
+    with contextlib.suppress(OSError):
+      os.remove(manifest.get("backup") or "")
+    with contextlib.suppress(OSError):
+      os.remove(path)
+    removed += 1
+    if log_fn:
+      log_fn(f"Removed tar salvage backup after parity: {name}", flush=True)
+  return removed
 
 
 def repair_truncated_daily_tar_in_place(
@@ -9492,6 +10403,13 @@ def rebuild_daily_tar_member_union_in_place(
 
   if not union_members:
     return False
+  if not archive_space_admit(
+    tar_path,
+    sum(int(v) for v in union_members.values()),
+    op="union_rebuild",
+    log_fn=log_fn,
+  ):
+    return False
   clock = monotonic_fn if callable(monotonic_fn) else time.monotonic
   warn_s = float(
     RECONCILE_STALL_WARN_S if stall_warn_s is None else stall_warn_s,
@@ -9630,6 +10548,10 @@ def rebuild_daily_tar_member_union_in_place(
       )
       if requested:
         raise DayCloseYieldError(tar_path, phase=yield_phase, reason=reason)
+      if not _rewrite_keeps_source_member_names(tar_path, tmp_path):
+        raise DayCloseYieldError(
+          tar_path, phase=yield_phase, reason="source_changed"
+        )
       os.replace(tmp_path, tar_path)
     invalidate_after_daily_tar_mutation(
       tar_path,
@@ -9860,6 +10782,42 @@ def reconcile_open_tar_with_sealed_zst(
   )
 
 
+def _rewrite_keeps_source_member_names(source_tar: str, new_tar: str) -> bool:
+  """
+  Return True when ``new_tar`` holds every member name of ``source_tar`` (DL-5).
+
+  Run under the source's ``file_write_lock`` right before ``os.replace``: a
+  rewrite built from an older member snapshot must not drop a member that a
+  concurrent append added meanwhile (its raw could later be deleted against
+  a stale ``verified``). Both listings are GNU ``tar tvf`` on uncompressed
+  tars (T1, seek-based).
+
+  Args:
+    source_tar (str): Live daily ``.tar`` about to be replaced.
+    new_tar (str): Rewritten temp tar.
+
+  Returns:
+    bool: True when names(new) is a superset of names(source).
+
+  Examples:
+    >>> _rewrite_keeps_source_member_names("/no.tar", "/no2.tar")
+    True
+  """
+  try:
+    old = _read_tar_file_member_sizes_unlocked(source_tar)
+    new = _read_tar_file_member_sizes_unlocked(new_tar)
+  except RuntimeError:
+    return False
+  missing = set(old) - set(new)
+  if missing:
+    log_print(
+      f"WARN: tar rewrite aborted source_changed tar={source_tar} "
+      f"missing_members={len(missing)} gate=dl5_rewrite tier=T1",
+      flush=True,
+    )
+  return not missing
+
+
 def dedupe_tar_keep_largest_file_per_member(
   tar_path: str,
   log_fn: Any = log_print,
@@ -9916,7 +10874,9 @@ def dedupe_tar_keep_largest_file_per_member(
         tgz_archive_dir=tgz_archive_dir,
         yield_phase=yield_phase,
       )
-      if not verify_tar_archive_readable(tmp_path):
+      if not verify_tar_archive_readable(
+        tmp_path
+      ) or not _rewrite_keeps_source_member_names(tar_path, tmp_path):
         with contextlib.suppress(OSError):
           os.remove(tmp_path)
         return False
@@ -11066,10 +12026,18 @@ def atomic_seal_tar_to_zst(
       os.remove(tmp_zst)
   except OSError:
     pass
+  if not archive_space_admit(
+    tar_path,
+    os.path.getsize(tar_path) // SEAL_OUTPUT_FRACTION,
+    op="seal",
+    log_fn=log_fn,
+  ):
+    return None
   sealed_member_snapshot = None
   try:
     with file_write_lock(tar_path):
       tar_members = _read_tar_file_member_sizes_unlocked(tar_path)
+      existing_members: dict[str, int] | None = {}
       if os.path.isfile(zst_path):
         existing_members = zst_members
         if existing_members is None:
@@ -11110,8 +12078,30 @@ def atomic_seal_tar_to_zst(
       )
       zstd_test(tmp_zst, num_threads)
       with file_write_lock(zst_path):
+        if os.path.isfile(zst_path) and existing_members is None:
+          # DE-9 / INV-COPY: never overwrite a sealed file we could not read.
+          # Confirm with ``zstd -t`` (T2 is allowed at seal); a pass means
+          # the earlier read failure was transient, so abort instead.
+          try:
+            zstd_test(zst_path, num_threads)
+          except OSError, subprocess.CalledProcessError, RuntimeError:
+            corrupt_copy = f"{zst_path}.corrupt.{int(time.time())}"
+            os.replace(zst_path, corrupt_copy)
+            if log_fn:
+              log_fn(
+                f"ERROR: sealed archive unreadable; kept as {corrupt_copy} "
+                f"and resealing from tar {tar_path}",
+                flush=True,
+              )
+          else:
+            raise RuntimeError(
+              f"seal aborted: sealed archive read failed but zstd -t passes "
+              f"(transient) {zst_path}"
+            )
         os.replace(tmp_zst, zst_path)
+        write_sealed_member_map(zst_path, dict(tar_members), source="seal")
       sealed_member_snapshot = dict(tar_members)
+      sealed_tar_identity = archive_identity(tar_path)
   except BaseException:
     try:
       if os.path.exists(tmp_zst):
@@ -11141,6 +12131,16 @@ def atomic_seal_tar_to_zst(
     try:
       drop_page_cache_for_paths(tar_path)
       with file_write_lock(tar_path):
+        # DL-4: drop only the tar that was sealed; an append between seal and
+        # drop changes its identity and its new members are not in the zst.
+        if archive_identity(tar_path) != sealed_tar_identity:
+          if log_fn:
+            log_fn(
+              f"Sealed archive keeping uncompressed tar (changed after seal): "
+              f"{tar_path}",
+              flush=True,
+            )
+          return sealed_member_snapshot
         os.remove(tar_path)
       if log_fn:
         log_fn(

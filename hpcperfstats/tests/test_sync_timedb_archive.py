@@ -69,7 +69,6 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   raw_stats_path_tar_append_decision,
   reconcile_open_tar_with_sealed_zst,
   remaining_raw_by_gz_has_paths_on_disk,
-  remove_verified_archived_raw_files,
   remove_verified_uncompressed_daily_tars,
   repair_truncated_daily_tar_in_place,
   replace_corrupt_tar_from_compressed_backup,
@@ -299,10 +298,15 @@ def test_ingest_open_tar_tvf_failure_sets_day_skip_when_unrecoverable(
     "set_archive_day_ingest_skip",
     lambda keys, **kw: skip_calls.append((keys.day_token, kw.get("kind"))),
   )
-  with pytest.raises(coord_mod.ArchiveDayIngestSkipError):
-    helpers.daily_archive_has_member_with_size(canonical, "host/big", 5000)
-  assert skip_calls
-  assert skip_calls[0][1] == helpers.SKIP_KIND_OPEN_TAR_GNU_TVF_FAILED
+  # DE-11 (dead-end plan): no valid prefix and no sealed copy -> the tar is
+  # renamed ``.tar.corrupt.<ts>`` (bytes kept) and the day restarts from raw;
+  # no sticky day_skip.
+  assert not helpers.daily_archive_has_member_with_size(
+    canonical, "host/big", 5000
+  )
+  assert not tar_path.exists()
+  assert list(tmp_path.glob("2024-03-12.tar.corrupt.*"))
+  assert skip_calls == []
   daily_dir = tmp_path / "daily"
   daily_dir.mkdir()
   host_dir = tmp_path / "archive" / "node1.hpc"
@@ -501,20 +505,22 @@ def test_reconcile_repairs_eof_truncated_tar_and_seals(tmp_path, monkeypatch):
         str(member),
         arcname=f"hpcperfstats/archive/host/{idx}",
       )
-  real_verify = helpers.verify_tar_archive_readable
+  real_probe = helpers.probe_tar_archive_readability
   calls = {"n": 0}
 
-  def _verify_until_repaired(path: str, **kwargs: object) -> bool:
+  def _corrupt_until_repaired(path: str, **kwargs: object) -> str:
+    # The repair entry (ensure_open_daily_tar_readable) classifies via the
+    # tri-state probe; report one corrupt read so the repair path runs.
     if (
       os.path.normpath(path) == os.path.normpath(str(tar_path))
-      and calls["n"] < 2
+      and calls["n"] < 1
     ):
       calls["n"] += 1
-      return False
-    return real_verify(path, **kwargs)
+      return "corrupt"
+    return real_probe(path, **kwargs)
 
   monkeypatch.setattr(
-    helpers, "verify_tar_archive_readable", _verify_until_repaired
+    helpers, "probe_tar_archive_readability", _corrupt_until_repaired
   )
   result = reconcile_open_tar_with_sealed_zst(
     str(tar_path),
@@ -525,6 +531,7 @@ def test_reconcile_repairs_eof_truncated_tar_and_seals(tmp_path, monkeypatch):
     tgz_archive_dir=str(tmp_path),
   )
   assert result.success, result.reason
+  assert calls["n"] == 1
   assert not tar_path.is_file()
   assert (tmp_path / "2026-08-21.tar.zst").is_file()
 
@@ -3123,155 +3130,6 @@ def test_get_existing_archive_members_for_daily_reads_gz_when_no_tar(tmp_path):
   assert m["onlymember"] == 3
 
 
-def test_remove_verified_archived_raw_files_removes_when_verified(tmp_path):
-  """Removal requires matching .tar and .tar.gz validation (same members/sizes)."""
-  arch_suffix = "cluster.integration.test"
-  host = tmp_path / ("n." + arch_suffix)
-  host.mkdir()
-  ts = int(datetime(2022, 5, 3, 15, 30, 0).timestamp())
-  seg = host / str(ts)
-  seg.write_text(f"{ts} job1 cn001\nline\n")
-  os.utime(seg, (ts, ts))
-  tgz_dir = tmp_path / "daily"
-  tgz_dir.mkdir()
-  gz_key = str(tgz_dir / "2022-05-03.tar.gz")
-  tar_path = daily_tar_path_from_compressed(gz_key)
-  arcname = get_tar_member_name(str(seg))
-  with tarfile.open(tar_path, "w") as tf:
-    tf.add(str(seg), arcname=arcname)
-  with tarfile.open(gz_key, "w:gz") as tf:
-    tf.add(str(seg), arcname=arcname)
-  assert validate_sealed_daily_archive_for_raw_removal(gz_key, log_fn=None)[0]
-  remove_verified_archived_raw_files(
-    str(tmp_path), arch_suffix, str(tgz_dir), log_fn=None
-  )
-  assert not seg.is_file()
-
-
-def test_remove_verified_archived_raw_files_bootstraps_missing_daily_archive(
-  tmp_path,
-  monkeypatch,
-):
-  """When neither .tar nor .tar.gz exists, removal pass must call archive before validate."""
-  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-
-  arch_suffix = "cluster.integration.test"
-  host = tmp_path / ("n." + arch_suffix)
-  host.mkdir()
-  ts = int(datetime(2026, 4, 15, 12, 0, 0).timestamp())
-  seg = host / str(ts)
-  seg.write_text(f"{ts} job1 cn001\nline\n")
-  os.utime(seg, (ts, ts))
-  tgz_dir = tmp_path / "daily"
-  tgz_dir.mkdir()
-  zst_key = str(tgz_dir / "2026-04-15.tar.zst")
-  tar_path = daily_tar_path_from_compressed(zst_key)
-  assert not os.path.isfile(zst_key)
-  assert not os.path.isfile(tar_path)
-
-  archive_calls = []
-
-  def fake_archive(info):
-    archive_calls.append(info)
-    return True
-
-  member_name = get_tar_member_name(str(seg))
-
-  def fake_validate(
-    sealed_path, log_fn=None, validation_cache=None, allow_auto_seal=True
-  ):
-    del validation_cache, allow_auto_seal
-    assert sealed_path == zst_key
-    return True, {member_name: os.path.getsize(seg)}
-
-  monkeypatch.setattr(
-    helpers,
-    "validate_sealed_daily_archive_for_raw_removal",
-    fake_validate,
-  )
-
-  remove_verified_archived_raw_files(
-    str(tmp_path),
-    arch_suffix,
-    str(tgz_dir),
-    log_fn=None,
-    archive_stats_files_fn=fake_archive,
-    ingest_ready_fn=lambda _p: True,
-  )
-  assert archive_calls == [(zst_key, [str(seg)])]
-  assert not seg.is_file()
-
-
-def test_remove_verified_archived_raw_files_skips_bootstrap_until_ingest_ready(
-  tmp_path,
-  monkeypatch,
-):
-  """Bootstrap must not run when ingest_ready_fn rejects paths."""
-  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-
-  arch_suffix = "cluster.integration.test"
-  host = tmp_path / ("n." + arch_suffix)
-  host.mkdir()
-  ts = int(datetime(2026, 4, 16, 12, 0, 0).timestamp())
-  seg = host / str(ts)
-  seg.write_text(f"{ts} job1 cn001\nline\n")
-  tgz_dir = tmp_path / "daily"
-  tgz_dir.mkdir()
-  archive_calls = []
-
-  def fake_archive(info):
-    archive_calls.append(info)
-    return True
-
-  monkeypatch.setattr(
-    helpers,
-    "validate_sealed_daily_archive_for_raw_removal",
-    lambda *_a, **_k: (True, {}),
-  )
-
-  remove_verified_archived_raw_files(
-    str(tmp_path),
-    arch_suffix,
-    str(tgz_dir),
-    log_fn=None,
-    archive_stats_files_fn=fake_archive,
-    ingest_ready_fn=lambda _p: False,
-  )
-  assert archive_calls == []
-  assert seg.is_file()
-
-
-def test_remove_verified_archived_raw_files_skips_removal_until_ingest_ready(
-  tmp_path,
-):
-  """Verified archive membership is not enough without ingest_ready_fn."""
-  arch_suffix = "cluster.integration.test"
-  host = tmp_path / ("n." + arch_suffix)
-  host.mkdir()
-  ts = int(datetime(2022, 5, 4, 15, 30, 0).timestamp())
-  seg = host / str(ts)
-  seg.write_text(f"{ts} job1 cn001\nline\n")
-  os.utime(seg, (ts, ts))
-  tgz_dir = tmp_path / "daily"
-  tgz_dir.mkdir()
-  gz_key = str(tgz_dir / "2022-05-04.tar.gz")
-  tar_path = daily_tar_path_from_compressed(gz_key)
-  arcname = get_tar_member_name(str(seg))
-  with tarfile.open(tar_path, "w") as tf:
-    tf.add(str(seg), arcname=arcname)
-  with tarfile.open(gz_key, "w:gz") as tf:
-    tf.add(str(seg), arcname=arcname)
-
-  remove_verified_archived_raw_files(
-    str(tmp_path),
-    arch_suffix,
-    str(tgz_dir),
-    log_fn=None,
-    ingest_ready_fn=lambda _p: False,
-  )
-  assert seg.is_file()
-
-
 def test_archive_stats_files_builds_gate_identities_once(monkeypatch, tmp_path):
   """Append body must collect gate identities once before filter_paths."""
   import hpcperfstats.dbload.sync_timedb as st
@@ -3732,52 +3590,6 @@ def test_archive_stats_files_fail_closed_when_decompress_fails(
   assert raw_file.exists()
 
 
-def test_not_ingested_raw_still_blocks_tar_removal_after_seal(
-  tmp_path, monkeypatch
-):
-  """Scheduled maintenance: filesystem gate blocks .tar removal while raw remains."""
-
-  arch_suffix = "cluster.integration.test"
-  host = tmp_path / ("n." + arch_suffix)
-  host.mkdir()
-  ts = int(datetime(2026, 4, 24, 12, 0, 0).timestamp())
-  seg = host / str(ts)
-  seg.write_text(f"{ts} job1 cn001\nline\n")
-  tgz_dir = tmp_path / "daily"
-  tgz_dir.mkdir()
-  gz_key = str(tgz_dir / "2026-04-24.tar.gz")
-  tar_path = tgz_dir / "2026-04-24.tar"
-  arcname = get_tar_member_name(str(seg))
-  with tarfile.open(str(tar_path), "w") as tf:
-    tf.add(str(seg), arcname=arcname)
-  with tarfile.open(gz_key, "w:gz") as tf:
-    tf.add(str(seg), arcname=arcname)
-
-  remaining = build_remaining_raw_stats_by_daily_gz(
-    str(tmp_path), arch_suffix, str(tgz_dir)
-  )
-  remove_verified_uncompressed_daily_tars(
-    str(tgz_dir), log_fn=None, remaining_raw_by_gz=remaining
-  )
-  assert tar_path.is_file()
-
-  remove_verified_archived_raw_files(
-    str(tmp_path),
-    arch_suffix,
-    str(tgz_dir),
-    log_fn=None,
-    ingest_ready_fn=lambda _p: True,
-  )
-  assert not seg.is_file()
-  remaining_after = build_remaining_raw_stats_by_daily_gz(
-    str(tmp_path), arch_suffix, str(tgz_dir)
-  )
-  remove_verified_uncompressed_daily_tars(
-    str(tgz_dir), log_fn=None, remaining_raw_by_gz=remaining_after
-  )
-  assert not tar_path.is_file()
-
-
 def test_validate_sealed_daily_archive_fails_on_tar_gz_mismatch(tmp_path):
   gz = tmp_path / "2022-01-01.tar.gz"
   tar_p = tmp_path / "2022-01-01.tar"
@@ -3899,48 +3711,6 @@ def test_validate_sealed_daily_archive_validation_cache_hits(
   assert cache["hits"] == 1
 
 
-def test_batch_raw_removal_parallel_validation_counts_misses_once_per_archive(
-  monkeypatch,
-  tmp_path,
-):
-  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-  from hpcperfstats.dbload.lib.sync_timedb_archive_maint import (
-    ArchiveMaintenanceSnapshot,
-  )
-
-  monkeypatch.setattr(
-    helpers, "_get_archive_validation_worker_count", lambda n: 2
-  )
-  mapping = {}
-  for day in ("2022-02-01", "2022-02-02"):
-    gz = tmp_path / (f"{day}.tar.gz")
-    member = tmp_path / (f"{day}.txt")
-    member.write_text(day)
-    tar_path = daily_tar_path_from_compressed(str(gz))
-    with tarfile.open(tar_path, "w") as tf:
-      tf.add(str(member), arcname=f"{day}.txt")
-    with tarfile.open(gz, "w:gz") as tf:
-      tf.add(str(member), arcname=f"{day}.txt")
-    mapping[str(gz)] = []
-
-  snapshot = ArchiveMaintenanceSnapshot(
-    closed_paths=[str(tmp_path / "closed-segment-placeholder")],
-    mapping=mapping,
-    ready_paths=set(),
-  )
-  cache = {"hits": 0, "misses": 0}
-  remove_verified_archived_raw_files(
-    str(tmp_path),
-    "suffix",
-    str(tmp_path),
-    log_fn=None,
-    maintenance_snapshot=snapshot,
-    validation_cache=cache,
-  )
-  assert cache["misses"] == 2
-  assert cache["hits"] == 0
-
-
 def test_validate_sealed_daily_archive_validation_cache_invalidates_on_mtime_change(
   monkeypatch, tmp_path
 ):
@@ -4019,60 +3789,6 @@ def test_get_archive_validation_worker_count_bounds(monkeypatch):
   assert helpers._get_archive_validation_worker_count(20) == 2
 
 
-def test_remove_verified_archived_raw_files_streaming_apply_follows_completion_order(
-  tmp_path, monkeypatch
-):
-  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-
-  seg_a = tmp_path / "seg_a"
-  seg_b = tmp_path / "seg_b"
-  seg_a.write_text("a")
-  seg_b.write_text("bbb")
-  gz_a = str(tmp_path / "2026-04-21.tar.gz")
-  gz_b = str(tmp_path / "2026-04-22.tar.gz")
-
-  monkeypatch.setattr(
-    helpers,
-    "collect_stats_files_in_range",
-    lambda *_a, **_k: [str(seg_a), str(seg_b)],
-  )
-  monkeypatch.setattr(
-    helpers,
-    "build_archive_mapping",
-    lambda *_a, **_k: {gz_a: [str(seg_a)], gz_b: [str(seg_b)]},
-  )
-
-  def fake_stream(
-    _gz_paths, *, log_fn=None, validation_cache=None, allow_auto_seal=True
-  ):
-    del log_fn, validation_cache, allow_auto_seal
-    members_b = {helpers.get_tar_member_name(str(seg_b)): seg_b.stat().st_size}
-    members_a = {helpers.get_tar_member_name(str(seg_a)): seg_a.stat().st_size}
-    yield gz_b, True, members_b
-    yield gz_a, True, members_a
-
-  monkeypatch.setattr(
-    helpers, "_iter_archive_validation_results_stream", fake_stream
-  )
-  logs = []
-  helpers.remove_verified_archived_raw_files(
-    str(tmp_path),
-    "unused.suffix",
-    str(tmp_path / "daily"),
-    log_fn=lambda msg, flush=True: logs.append(msg),
-    archive_stats_files_fn=lambda *_a, **_k: True,
-  )
-  assert not seg_a.exists()
-  assert not seg_b.exists()
-  removal_logs = [
-    l
-    for l in logs
-    if "removing stats file (scheduled archive maintenance):" in l
-  ]
-  assert removal_logs
-  assert str(seg_b) in removal_logs[0]
-
-
 def test_remove_verified_uncompressed_daily_tars_streaming_apply_order(
   tmp_path, monkeypatch
 ):
@@ -4112,34 +3828,6 @@ def test_remove_verified_uncompressed_daily_tars_streaming_apply_order(
   ]
   assert removed_logs
   assert str(tar_b) in removed_logs[0]
-
-
-def test_remove_verified_archived_raw_files_logs_cache_summary(tmp_path):
-  arch_suffix = "cluster.integration.test"
-  host = tmp_path / ("n." + arch_suffix)
-  host.mkdir()
-  ts = int(datetime(2022, 5, 4, 15, 30, 0).timestamp())
-  seg = host / str(ts)
-  seg.write_text(f"{ts} job1 cn001\nline\n")
-  os.utime(seg, (ts, ts))
-  tgz_dir = tmp_path / "daily"
-  tgz_dir.mkdir()
-  gz_key = str(tgz_dir / "2022-05-04.tar.gz")
-  tar_path = daily_tar_path_from_compressed(gz_key)
-  arcname = get_tar_member_name(str(seg))
-  with tarfile.open(tar_path, "w") as tf:
-    tf.add(str(seg), arcname=arcname)
-  with tarfile.open(gz_key, "w:gz") as tf:
-    tf.add(str(seg), arcname=arcname)
-
-  logs = []
-  remove_verified_archived_raw_files(
-    str(tmp_path),
-    arch_suffix,
-    str(tgz_dir),
-    log_fn=lambda msg, flush=True: logs.append(msg),
-  )
-  assert any("Archive validation cache summary hits=" in ln for ln in logs)
 
 
 def _tar_add_bytes(tf, name, data):
@@ -6850,152 +6538,6 @@ def test_quarantine_ingest_failed_raw_path_valid_head_corrupt_body(tmp_path):
   assert len(entries) == 1
   assert entries[0]["reason"] == helpers.INGEST_PARSE_FAILED_QUARANTINE_REASON
   assert "unpack" in entries[0]["error_detail"]
-
-
-def test_quarantine_unparsable_closed_raw_moves_file_and_writes_manifest(
-  tmp_path,
-):
-  import json
-
-  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-
-  archive_dir = tmp_path / "archive"
-  host_dir = archive_dir / "host.hpc"
-  host_dir.mkdir(parents=True)
-  raw_path = host_dir / "bad_raw"
-  raw_path.write_text("no-timestamp-here\n")
-
-  moved = helpers.quarantine_unparsable_closed_raw_paths(
-    [str(raw_path)],
-    str(archive_dir),
-    log_fn=lambda *_a, **_k: None,
-  )
-  assert moved == 1
-  assert not raw_path.exists()
-  quarantine_path = (
-    archive_dir
-    / helpers.SYNC_TIMEDB_UNPARSABLE_RAW_DIRNAME
-    / "host.hpc"
-    / "bad_raw"
-  )
-  assert quarantine_path.is_file()
-  manifest = json.loads(
-    (
-      archive_dir / helpers.SYNC_TIMEDB_UNPARSABLE_RAW_MANIFEST_BASENAME
-    ).read_text()
-  )
-  entries = manifest["entries"] if isinstance(manifest, dict) else manifest
-  assert len(entries) == 1
-  assert entries[0]["original_path"] == str(raw_path)
-  assert entries[0]["reason"] == helpers.UNPARSABLE_RAW_QUARANTINE_REASON
-  discovered = helpers.collect_stats_files_in_range(
-    str(archive_dir), "all", None, ".hpc"
-  )
-  assert str(raw_path) not in discovered
-
-
-def test_quarantine_move_before_manifest(monkeypatch, tmp_path):
-  import json
-
-  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-
-  archive_dir = tmp_path / "archive"
-  host_dir = archive_dir / "host.hpc"
-  host_dir.mkdir(parents=True)
-  raw_path = host_dir / "bad_raw"
-  raw_path.write_text("no-timestamp-here\n")
-  manifest_path = (
-    archive_dir / helpers.SYNC_TIMEDB_UNPARSABLE_RAW_MANIFEST_BASENAME
-  )
-  order = []
-
-  real_move = helpers.shutil.move
-
-  def track_move(src, dst):
-    if manifest_path.is_file():
-      payload = json.loads(manifest_path.read_text())
-      entries = payload.get("entries", payload)
-      order.append("manifest_has_entry" if entries else "manifest_empty")
-    order.append("move")
-    return real_move(src, dst)
-
-  monkeypatch.setattr(helpers.shutil, "move", track_move)
-
-  moved = helpers.quarantine_unparsable_closed_raw_paths(
-    [str(raw_path)],
-    str(archive_dir),
-    log_fn=lambda *_a, **_k: None,
-  )
-  assert moved == 1
-  assert "move" in order
-  assert order[0] == "move"
-
-
-def test_remove_verified_skips_delete_when_fingerprint_changes(
-  monkeypatch,
-  tmp_path,
-):
-  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
-
-  archive_dir = tmp_path / "archive"
-  tgz_dir = tmp_path / "tgz"
-  tgz_dir.mkdir()
-  host_dir = archive_dir / "host.hpc"
-  host_dir.mkdir(parents=True)
-  raw_path = host_dir / "1000000000"
-  raw_path.write_bytes(b"x" * 5)
-  zst_path = tgz_dir / "2020-01-01.tar.zst"
-  tar_path = tgz_dir / "2020-01-01.tar"
-  member_name = helpers.get_tar_member_name(str(raw_path))
-
-  import tarfile
-
-  with tarfile.open(tar_path, "w") as tf:
-    info = tarfile.TarInfo(name=member_name)
-    info.size = 5
-    tf.addfile(info, fileobj=__import__("io").BytesIO(b"x" * 5))
-
-  monkeypatch.setattr(
-    helpers,
-    "collect_stats_files_in_range",
-    lambda *_a, **_k: [str(raw_path)],
-  )
-  monkeypatch.setattr(
-    helpers,
-    "build_archive_mapping",
-    lambda paths, _tgz: {str(zst_path): list(paths)},
-  )
-  monkeypatch.setattr(
-    helpers,
-    "validate_sealed_daily_archive_for_raw_removal",
-    lambda *_a, **_k: (True, {member_name: 5}),
-  )
-  monkeypatch.setattr(
-    helpers,
-    "_iter_archive_validation_results_stream",
-    lambda paths, **_kw: [(paths[0], True, {member_name: 5})],
-  )
-
-  original_fp = helpers.raw_stats_path_fingerprint
-  calls = {"n": 0}
-
-  def fp_then_change(path):
-    calls["n"] += 1
-    if calls["n"] == 1:
-      return original_fp(path)
-    raw_path.write_bytes(b"yy")
-    return original_fp(path)
-
-  monkeypatch.setattr(helpers, "raw_stats_path_fingerprint", fp_then_change)
-
-  helpers.remove_verified_archived_raw_files(
-    str(archive_dir),
-    ".hpc",
-    str(tgz_dir),
-    log_fn=lambda *_a, **_k: None,
-    require_fingerprint_at_delete=True,
-  )
-  assert raw_path.is_file()
 
 
 def test_unparsable_unmapped_does_not_disqualify_day(tmp_path):
@@ -9805,45 +9347,6 @@ def test_build_live_unprocessed_blocked_drops_after_memory_checkpoint(
   assert cleared.get(tar_norm, []) == []
 
 
-def test_remove_processed_path_clears_checkpoint_entry(tmp_path):
-  from collections import deque
-
-  from hpcperfstats.dbload import sync_timedb as st_mod
-
-  checkpoint_path = str(tmp_path / ".sync_timedb_state.json")
-  raw_path = str(tmp_path / "host" / "12345")
-  os.makedirs(os.path.dirname(raw_path))
-  with open(raw_path, "w", encoding="utf-8") as fh:
-    fh.write("12345 job1 cn001\nline\n")
-  processed_files = set()
-  processed_files_order = deque()
-  checkpoint_entries = deque()
-  file_states = {}
-  st_mod._add_processed_path(
-    raw_path,
-    processed_files,
-    processed_files_order,
-    checkpoint_entries,
-    checkpoint_path,
-    file_states=file_states,
-  )
-  assert raw_path in processed_files
-  st_mod._remove_processed_path(
-    raw_path,
-    processed_files,
-    processed_files_order,
-    checkpoint_entries,
-    checkpoint_path,
-    file_states=file_states,
-    persist=True,
-  )
-  assert raw_path not in processed_files
-  assert len(checkpoint_entries) == 0
-  assert file_states[raw_path] == st_mod.SyncFileState.DISCOVERED
-  loaded = st_mod._load_sync_checkpoint(checkpoint_path)
-  assert loaded == []
-
-
 def test_oldest_checkpoint_incomplete_tar_returns_oldest_on_disk_day(tmp_path):
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     oldest_checkpoint_incomplete_tar,
@@ -12419,3 +11922,736 @@ def test_rate_limited_day_info_log_prunes_stale_days():
   assert emitted == ["INFO: probe"]
   assert "2026-01-03" in state
   assert "last_touch_mono" in state["2026-01-03"]
+
+
+# --- A14 data-loss gates (DL-1, DE-29, DL-5, DL-8) and the sealed member map ---
+
+
+def _a14_day(tmp_path, day="2026-10-23", names=("h/1", "h/2")):
+  """Build ``YYYY-MM-DD.tar`` with ``names`` and return (tar, zst, raw dir)."""
+  raw = tmp_path / "raw"
+  raw.mkdir(exist_ok=True)
+  tar_p = tmp_path / f"{day}.tar"
+  with tarfile.open(tar_p, "w") as tf:
+    for i, name in enumerate(names):
+      src = raw / f"m{i}"
+      src.write_bytes(b"x" * (600 + i))
+      tf.add(str(src), arcname=name)
+  return str(tar_p), str(tmp_path / f"{day}.tar.zst"), raw
+
+
+def _a14_seal(tar_p, zst_p):
+  return atomic_seal_tar_to_zst(
+    tar_p,
+    zst_p,
+    num_threads=1,
+    compress_level=3,
+    keep_uncompressed_tar=True,
+    log_fn=None,
+  )
+
+
+def _a14_cut_inside(tar_p, name, keep=100):
+  """Truncate ``tar_p`` ``keep`` bytes into ``name``'s data (01 shape)."""
+  with tarfile.open(tar_p) as tf:
+    off = [m for m in tf.getmembers() if m.name == name][-1].offset_data
+  with open(tar_p, "r+b") as fh:
+    fh.truncate(off + keep)
+
+
+def _a14_append(tar_p, raw, name, size=900):
+  src = raw / name.replace("/", "_")
+  src.write_bytes(b"y" * size)
+  with tarfile.open(tar_p, "a") as tf:
+    tf.add(str(src), arcname=name)
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_sealed_map_written_after_zstd_test_with_identity(tmp_path):
+  from hpcperfstats.dbload.lib import sync_timedb_sealed_member_map as smm
+
+  tar_p, zst_p, _raw = _a14_day(tmp_path)
+  assert _a14_seal(tar_p, zst_p) is not None
+  with open(smm.sealed_member_map_path(zst_p), encoding="utf-8") as fh:
+    doc = json.load(fh)
+  assert doc["source"] == "seal"
+  assert doc["zst_identity"] == smm.archive_identity(zst_p)
+  assert doc["entries"] == {"h/1": 600, "h/2": 601}
+  smm._CACHE.clear()
+  assert (
+    smm.sealed_members_lookup(zst_p, request_rebuild=False) == doc["entries"]
+  )
+  # Any change to the sealed file invalidates the map (T0 identity check).
+  st_ = os.stat(zst_p)
+  os.utime(zst_p, ns=(st_.st_atime_ns, st_.st_mtime_ns + 10**9))
+  assert smm.sealed_members_lookup(zst_p, request_rebuild=False) is None
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_validation_with_sibling_tar_uses_sealed_map_not_stream(
+  tmp_path, monkeypatch
+):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_p, zst_p, _raw = _a14_day(tmp_path)
+  _a14_seal(tar_p, zst_p)
+  streams = []
+  real = helpers._scan_compressed_archive_members_and_readable
+  monkeypatch.setattr(
+    helpers,
+    "_scan_compressed_archive_members_and_readable",
+    lambda *a, **k: streams.append(a) or real(*a, **k),
+  )
+  for _ in range(3):
+    ok, members = validate_sealed_daily_archive_for_raw_removal(
+      zst_p, log_fn=None
+    )
+    assert ok and members == {"h/1": 600, "h/2": 601}
+  assert streams == [], "frozen-day validation must not re-stream the zst"
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_restore_from_sealed_refused_when_tar_prefix_has_members_not_in_zst(
+  tmp_path,
+):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_p, zst_p, raw = _a14_day(tmp_path)
+  _a14_seal(tar_p, zst_p)
+  _a14_append(tar_p, raw, "h/late")  # appended after the seal
+  _a14_append(tar_p, raw, "h/cut", size=5000)
+  _a14_cut_inside(tar_p, "h/cut")
+  before = Path(tar_p).read_bytes()
+
+  # DL-1 gate itself (the repair chain salvages such a tar first).
+  zst_p2, gz_p2 = helpers.compressed_sibling_paths(tar_p)
+  restored = helpers.replace_corrupt_tar_from_compressed_backup(
+    tar_p, zst_p2, gz_p2, 1
+  )
+
+  assert restored is False
+  assert Path(tar_p).read_bytes() == before, "tar must be left untouched"
+  assert not list(tmp_path.glob("*.pre-restore.*"))
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_restore_from_sealed_keeps_pre_restore_copy(tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_p, zst_p, _raw = _a14_day(tmp_path)
+  _a14_seal(tar_p, zst_p)
+  _a14_cut_inside(tar_p, "h/2")  # cut inside the last (sealed) member
+  before = Path(tar_p).read_bytes()
+
+  zst_p2, gz_p2 = helpers.compressed_sibling_paths(tar_p)
+  assert helpers.replace_corrupt_tar_from_compressed_backup(
+    tar_p, zst_p2, gz_p2, 1
+  )
+
+  copies = list(tmp_path.glob("2026-10-23.tar.pre-restore.*"))
+  assert len(copies) == 1 and copies[0].read_bytes() == before
+  assert helpers.verify_tar_archive_readable(tar_p)
+  assert helpers.remove_pre_restore_tar_copies(tar_p, log_fn=None) == 1
+  assert not list(tmp_path.glob("*.pre-restore.*"))
+
+
+def test_transient_oserror_is_not_corrupt_and_sets_no_day_skip(
+  tmp_path, monkeypatch
+):
+  import errno
+
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+    ArchiveMembersStoreUnavailableError,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+    set_process_archive_members_store,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_negative_states import TRANSIENT
+
+  tar_p, _zst_p, _raw = _a14_day(tmp_path)
+  store = _install_members_store(tmp_path)
+  try:
+
+    def _eagain(*_a, **_k):
+      raise BlockingIOError(errno.EAGAIN, "Resource temporarily unavailable")
+
+    monkeypatch.setattr(helpers.subprocess, "run", _eagain)
+    destructive = []
+    monkeypatch.setattr(
+      helpers,
+      "repair_truncated_daily_tar_in_place",
+      lambda *a, **k: destructive.append("repair"),
+    )
+    monkeypatch.setattr(
+      helpers,
+      "replace_corrupt_tar_from_compressed_backup",
+      lambda *a, **k: destructive.append("restore"),
+    )
+    assert helpers.probe_tar_archive_readability(tar_p) == TRANSIENT
+    with pytest.raises(ArchiveMembersStoreUnavailableError):
+      helpers._ensure_open_tar_readable_for_ingest_lookup(
+        tar_p,
+        caller="ingest_membership",
+        compressed_canonical=tar_p + ".zst",
+      )
+    assert destructive == []
+    assert store.get_day_skip("2026-10-23") is None
+    assert not helpers.restore_tar_from_sealed_if_unreadable(
+      tar_p, 1, log_fn=None
+    )
+    assert destructive == []
+  finally:
+    set_process_archive_members_store(None)
+
+
+def test_append_refuses_day_skip_tar(tmp_path, monkeypatch):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+    set_process_archive_members_store,
+  )
+
+  tar_p, _zst_p, raw = _a14_day(tmp_path, day="2026-10-14")
+  _a14_append(tar_p, raw, "h/cut", size=5000)
+  _a14_cut_inside(tar_p, "h/cut")
+  store = _install_members_store(tmp_path)
+  try:
+    store.set_day_skip(
+      "2026-10-14", kind="open_tar_gnu_tvf_failed", detail="test"
+    )
+    assert helpers.day_skip_blocks_tar_write(tar_p, log_fn=None) is True
+    # The append body refuses before ``tar -r`` touches the flagged tar.
+    appended = []
+    monkeypatch.setattr(st, "_append_to_tar", lambda *a: appended.append(a))
+    assert store.get_day_skip("2026-10-14") is not None
+    # Once the tar reads cleanly again the stale flag clears and writes resume.
+    with tarfile.open(tmp_path / "fresh.tar", "w") as tf:
+      tf.add(str(raw / "m0"), arcname="h/1")
+    os.replace(tmp_path / "fresh.tar", tar_p)
+    assert helpers.day_skip_blocks_tar_write(tar_p, log_fn=None) is False
+    assert store.get_day_skip("2026-10-14") is None
+  finally:
+    set_process_archive_members_store(None)
+
+
+def test_rewrite_aborts_when_source_tar_changed_under_lock(tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_p, _zst_p, raw = _a14_day(tmp_path)
+  stale_copy = tmp_path / "stale.tar"
+  shutil.copyfile(tar_p, stale_copy)
+  _a14_append(tar_p, raw, "h/new")  # concurrent append after the snapshot
+  assert not helpers._rewrite_keeps_source_member_names(tar_p, str(stale_copy))
+  assert helpers._rewrite_keeps_source_member_names(str(stale_copy), tar_p)
+
+
+def test_dedupe_new_members_superset_of_old(tmp_path, monkeypatch):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_p, _zst_p, raw = _a14_day(tmp_path)
+  _a14_append(tar_p, raw, "h/1", size=700)  # duplicate name, larger wins
+  before = Path(tar_p).read_bytes()
+
+  def _lossy_rewrite(src, dst, **_k):
+    with tarfile.open(dst, "w") as tf:  # drops h/2: must be refused
+      tf.add(str(raw / "m0"), arcname="h/1")
+
+  monkeypatch.setattr(
+    helpers, "_rewrite_daily_tar_largest_member_wins", _lossy_rewrite
+  )
+  assert dedupe_tar_keep_largest_file_per_member(tar_p, log_fn=None) is False
+  assert Path(tar_p).read_bytes() == before
+
+
+def test_compress_yield_never_removes_live_zst(tmp_path, monkeypatch):
+  import hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation as coop
+  import hpcperfstats.dbload.lib.zstd_cli as zc
+  from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
+    DayCloseYieldError,
+  )
+
+  tar_p, _zst_p, _raw = _a14_day(tmp_path)
+  live = tmp_path / "2026-10-23.tar.zst"
+  live.write_bytes(b"sealed bytes")
+
+  def _yield_now(*_a, **_k):
+    raise DayCloseYieldError(tar_p, phase="seal", reason="test")
+
+  monkeypatch.setattr(coop, "check_day_close_yield_or_continue", _yield_now)
+  with pytest.raises(DayCloseYieldError):
+    zc.zstd_compress_tar_to_file(
+      tar_p, str(live), 1, 3, tgz_archive_dir=str(tmp_path)
+    )
+  assert live.exists(), "yield cleanup must only remove temp outputs"
+
+
+def test_iter_tar_members_is_a_plain_iterator(tmp_path):
+  """Regression: a stray @contextmanager made every caller raise TypeError.
+
+  Commit 0d76fe68 decorated ``_iter_tar_members`` with
+  ``contextlib.contextmanager``; ``for m in _iter_tar_members(tf)`` then
+  raised ``'_GeneratorContextManager' object is not iterable``, which broke
+  the tarfile truncated-tar recovery probe and the dedupe rewrite.
+  """
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  src = tmp_path / "a.txt"
+  src.write_text("a")
+  tar_p = tmp_path / "t.tar"
+  with tarfile.open(tar_p, "w") as tf:
+    tf.add(str(src), arcname="h/a")
+  with tarfile.open(tar_p, "r") as tf:
+    assert [m.name for m in helpers._iter_tar_members(tf)] == ["h/a"]
+  assert helpers.tar_members_recoverable_via_tarfile(str(tar_p))
+
+
+# --- A3: quarantine failure_class, DE-3 reappeared path, collisions, restore ---
+
+
+def _a3_raw(tmp_path, name="1646347009", text="1646347009 h\n"):
+  host = tmp_path / "c301-013.cluster"
+  host.mkdir(exist_ok=True)
+  raw = host / name
+  raw.write_text(text)
+  return raw
+
+
+def test_boot_restores_non_parse_quarantine(tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  raw = _a3_raw(tmp_path)
+  assert helpers.quarantine_ingest_failed_raw_path(
+    str(raw),
+    str(tmp_path),
+    "ingest_parse_failed",
+    log_fn=None,
+    error_detail="cannot unpack non-iterable NoneType object",
+  )
+  assert not raw.exists()
+  counts = helpers.restore_restorable_quarantines(
+    str(tmp_path), str(tmp_path / "daily"), log_fn=None
+  )
+  assert counts["restored"] == 1
+  assert raw.exists()
+  manifest = json.loads(
+    (tmp_path / ".sync_timedb_unparsable_raw.json").read_text()
+  )
+  assert manifest["entries"] == []
+
+
+def test_parse_quarantine_not_restored(tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  raw = _a3_raw(tmp_path, text="garbage without a timestamp\n")
+  assert helpers.quarantine_ingest_failed_raw_path(
+    str(raw),
+    str(tmp_path),
+    "ingest_parse_failed",
+    log_fn=None,
+    error_detail="initial_timestamp_not_found",
+  )
+  counts = helpers.restore_restorable_quarantines(
+    str(tmp_path), str(tmp_path / "daily"), log_fn=None
+  )
+  assert counts == {"restored": 0, "kept_terminal": 1, "skipped": 0}
+  assert not raw.exists()
+  manifest = json.loads(
+    (tmp_path / ".sync_timedb_unparsable_raw.json").read_text()
+  )
+  assert manifest["entries"][0]["failure_class"] == "parse"
+
+
+def test_reappeared_quarantined_path_is_moved(tmp_path):
+  """DE-3: a manifest entry for a path back on disk must not short-circuit."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  raw = _a3_raw(tmp_path)
+  assert helpers.quarantine_ingest_failed_raw_path(
+    str(raw),
+    str(tmp_path),
+    "ingest_parse_failed",
+    log_fn=None,
+    error_detail="initial_timestamp_not_found",
+  )
+  raw.write_text("1646347009 h\nagain\n")  # the path reappears
+  assert helpers.quarantine_ingest_failed_raw_path(
+    str(raw),
+    str(tmp_path),
+    "ingest_parse_failed",
+    log_fn=None,
+    error_detail="initial_timestamp_not_found",
+  )
+  assert not raw.exists(), "reappeared file must actually be moved"
+  manifest = json.loads(
+    (tmp_path / ".sync_timedb_unparsable_raw.json").read_text()
+  )
+  assert len(manifest["entries"]) == 1
+  assert os.path.isfile(manifest["entries"][0]["quarantined_path"])
+
+
+def test_quarantine_dest_collision_suffixes(tmp_path):
+  """DE-4: an existing quarantine destination gets a ``.N`` suffix."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  raw = _a3_raw(tmp_path)
+  root = helpers.quarantine_dir_for_archive(str(tmp_path))
+  dest = helpers._quarantine_dest_path(str(tmp_path), root, str(raw))
+  os.makedirs(os.path.dirname(dest), exist_ok=True)
+  with open(dest, "w") as fh:
+    fh.write("older copy")
+  assert helpers.quarantine_ingest_failed_raw_path(
+    str(raw),
+    str(tmp_path),
+    "ingest_parse_failed",
+    log_fn=None,
+    error_detail="initial_timestamp_not_found",
+  )
+  assert not raw.exists()
+  assert open(dest).read() == "older copy", "never overwrite"
+  assert os.path.isfile(dest + ".1")
+
+
+# --- A16: free-space admission ---
+
+
+def test_space_admit_denies_reseal_below_reserve(tmp_path, monkeypatch):
+  """A16: no reseal temp is written when it would eat into the reserve."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_p, zst_p, _raw = _a14_day(tmp_path)
+  free = helpers.free_bytes_for_path(tar_p)
+  monkeypatch.setattr(
+    helpers.cfg, "get_sync_archive_min_free_bytes", lambda: free + 1
+  )
+  logs = []
+  assert (
+    helpers.atomic_seal_tar_to_zst(
+      tar_p,
+      zst_p,
+      num_threads=1,
+      compress_level=3,
+      keep_uncompressed_tar=True,
+      log_fn=lambda m, **k: logs.append(m),
+    )
+    is None
+  )
+  assert not os.path.exists(zst_p) and not os.path.exists(zst_p + ".tmp")
+  assert any("archive_space_admit deny op=seal" in m for m in logs)
+  monkeypatch.setattr(helpers.cfg, "get_sync_archive_min_free_bytes", lambda: 0)
+  assert (
+    helpers.atomic_seal_tar_to_zst(
+      tar_p,
+      zst_p,
+      num_threads=1,
+      compress_level=3,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+    )
+    is not None
+  )
+
+
+def test_enospc_during_append_is_environment_not_corruption(
+  tmp_path, monkeypatch
+):
+  """A16/DE-29: ENOSPC is environment; a tar probe failing on it is transient."""
+  import errno
+  import subprocess as sp
+
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_negative_states import (
+    TRANSIENT,
+    is_environment_error,
+  )
+
+  assert is_environment_error(OSError(errno.ENOSPC, "No space left on device"))
+  tar_p, _zst_p, _raw = _a14_day(tmp_path)
+  monkeypatch.setattr(
+    helpers.subprocess,
+    "run",
+    lambda *a, **k: sp.CompletedProcess(
+      a[0], 2, "", "tar: write error: No space left on device"
+    ),
+  )
+  assert helpers.probe_tar_archive_readability(tar_p) == TRANSIENT
+
+
+# --- A7 / DE-11 / DE-23: copy-and-verify salvage and append rollback ---
+
+
+def _truncated_day(tmp_path, day="2026-10-14"):
+  """Three members; the tar is cut 100 bytes into the last one (01 shape)."""
+  tar_p, _zst, raw = _a14_day(tmp_path, day=day, names=("h/1", "h/2"))
+  _a14_append(tar_p, raw, "h/cut", size=6000)
+  before_cut = Path(tar_p).read_bytes()
+  _a14_cut_inside(tar_p, "h/cut", keep=100)
+  return tar_p, before_cut
+
+
+def test_salvage_backup_sha_matches_before_cut(tmp_path):
+  import hashlib
+
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_p, _ = _truncated_day(tmp_path)
+  original = Path(tar_p).read_bytes()
+  res = helpers.salvage_truncated_tar_prefix(tar_p, log_fn=None)
+  assert res.status == "salvaged", res
+  tail = original[res.cut :]
+  assert Path(res.backup_path).read_bytes() == tail
+  manifest = json.loads(Path(res.backup_path[:-5] + ".json").read_text())
+  assert manifest["sha256"] == hashlib.sha256(tail).hexdigest()
+  assert manifest["status"] == "salvaged" and manifest["dropped"] == ["h/cut"]
+  with tarfile.open(tar_p) as tf:
+    assert [m.name for m in tf.getmembers()] == ["h/1", "h/2"]
+
+
+def test_salvage_never_writes_below_cut_offset(tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_p, _ = _truncated_day(tmp_path)
+  original = Path(tar_p).read_bytes()
+  res = helpers.salvage_truncated_tar_prefix(tar_p, log_fn=None)
+  after = Path(tar_p).read_bytes()
+  assert after[: res.cut] == original[: res.cut]
+  assert after[res.cut :] == b"\0" * 1024
+
+
+def test_salvage_aborts_without_change_when_backup_mismatch_or_low_space(
+  tmp_path, monkeypatch
+):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_p, _ = _truncated_day(tmp_path)
+  original = Path(tar_p).read_bytes()
+  free = helpers.free_bytes_for_path(tar_p)
+  monkeypatch.setattr(
+    helpers.cfg, "get_sync_archive_min_free_bytes", lambda: free
+  )
+  assert helpers.salvage_truncated_tar_prefix(tar_p, log_fn=None).status == (
+    "space_denied"
+  )
+  assert Path(tar_p).read_bytes() == original
+  monkeypatch.setattr(helpers.cfg, "get_sync_archive_min_free_bytes", lambda: 0)
+  real_sha = helpers._sha256_file_range
+  monkeypatch.setattr(
+    helpers,
+    "_sha256_file_range",
+    lambda p, a, b: "bad" if p.endswith(".tail") else real_sha(p, a, b),
+  )
+  assert helpers.salvage_truncated_tar_prefix(tar_p, log_fn=None).status == (
+    "backup_failed"
+  )
+  assert Path(tar_p).read_bytes() == original
+
+
+def test_salvage_skipped_when_free_space_below_backup_need(
+  tmp_path, monkeypatch
+):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_p, _ = _truncated_day(tmp_path)
+  free = helpers.free_bytes_for_path(tar_p)
+  monkeypatch.setattr(
+    helpers.cfg, "get_sync_tar_salvage_min_free_bytes", lambda: free
+  )
+  monkeypatch.setattr(helpers.cfg, "get_sync_archive_min_free_bytes", lambda: 0)
+  res = helpers.salvage_truncated_tar_prefix(tar_p, log_fn=None)
+  assert res.status == "space_denied"
+  assert not (tmp_path / helpers.SALVAGE_DIRNAME).exists()
+
+
+def test_salvage_restores_byte_identical_tar_when_verify_fails(
+  tmp_path, monkeypatch
+):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_p, _ = _truncated_day(tmp_path)
+  original = Path(tar_p).read_bytes()
+  real = helpers._tar_tvr_listing
+  calls = {"n": 0}
+
+  def _listing(path):
+    calls["n"] += 1
+    members, rc = real(path)
+    return (members, 2) if calls["n"] >= 2 else (members, rc)
+
+  monkeypatch.setattr(helpers, "_tar_tvr_listing", _listing)
+  res = helpers.salvage_truncated_tar_prefix(tar_p, log_fn=None)
+  assert res.status == "verify_failed_restored"
+  assert Path(tar_p).read_bytes() == original
+
+
+def test_salvage_backup_kept_until_post_seal_parity(tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_p, _ = _truncated_day(tmp_path)
+  res = helpers.salvage_truncated_tar_prefix(tar_p, log_fn=None)
+  assert os.path.isfile(res.backup_path)
+  # Only the post-seal parity hook removes it (day_raw_removal calls this).
+  assert helpers.remove_salvage_backups_after_parity(tar_p, log_fn=None) == 1
+  assert not os.path.isfile(res.backup_path)
+
+
+def test_boot_repair_salvages_truncated_tail(tmp_path):
+  """DE-23: a crash after the cut is committed (or undone) on the next touch."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_p, _ = _truncated_day(tmp_path)
+  res = helpers.salvage_truncated_tar_prefix(tar_p, log_fn=None)
+  mpath = res.backup_path[:-5] + ".json"
+  manifest = json.loads(Path(mpath).read_text())
+  manifest["status"] = "backed_up"  # simulate a kill before commit
+  Path(mpath).write_text(json.dumps(manifest))
+  assert helpers.recover_interrupted_salvage(tar_p, log_fn=None) == "committed"
+  assert json.loads(Path(mpath).read_text())["status"] == "salvaged"
+  # Through the repair entry point a truncated tar becomes readable.
+  (tmp_path / "b").mkdir()
+  tar2, _ = _truncated_day(tmp_path / "b", day="2026-10-23")
+  result = helpers.ensure_open_daily_tar_readable(
+    tar2, caller="test", log_fn=None
+  )
+  assert result.readable and helpers.verify_tar_archive_readable(tar2)
+
+
+def test_interrupted_append_truncates_back_to_pre_append_size(tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_p, _zst, raw = _a14_day(tmp_path)
+  original = Path(tar_p).read_bytes()
+  src = raw / "late"
+  src.write_bytes(b"z" * 9000)
+  snap = helpers.snapshot_tar_tail_for_append(tar_p, [str(src)])
+  with tarfile.open(tar_p, "a") as tf:  # an append that "fails" half way
+    tf.add(str(src), arcname="h/late")
+  with open(tar_p, "r+b") as fh:
+    fh.truncate(len(original) + 700)
+  assert helpers.rollback_failed_tar_append(tar_p, snap, log_fn=None)
+  assert Path(tar_p).read_bytes() == original
+
+
+def test_append_enospc_rolls_back_only_when_sources_present(tmp_path):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  tar_p, _zst, raw = _a14_day(tmp_path)
+  src = raw / "late"
+  src.write_bytes(b"z" * 9000)
+  snap = helpers.snapshot_tar_tail_for_append(tar_p, [str(src)])
+  with tarfile.open(tar_p, "a") as tf:
+    tf.add(str(src), arcname="h/late")
+  partial = Path(tar_p).read_bytes()
+  src.unlink()  # the only other copy of the appended bytes is gone
+  assert not helpers.rollback_failed_tar_append(tar_p, snap, log_fn=None)
+  assert Path(tar_p).read_bytes() == partial, "left for salvage, untouched"
+
+
+def test_salvage_gnu_posix_append_tar_leaves_no_dangling_pax_header(tmp_path):
+  """Production shape: members appended with ``tar -r --posix`` (pax).
+
+  ``tar -tvR`` reports each member's own header block, after its pax
+  extended header; the cut must drop the extended header too.
+  """
+  import subprocess as sp
+
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  raw = tmp_path / "c511-132"
+  raw.mkdir()
+  tar_p = tmp_path / "2026-10-14.tar"
+  for i, size in enumerate((700, 900, 610387)):
+    f = raw / f"179200684{i}"
+    f.write_bytes(b"s" * size)
+    sp.run(
+      [
+        "tar",
+        "-r",
+        "--posix",
+        "-C",
+        str(tmp_path),
+        "-f",
+        str(tar_p),
+        f"c511-132/{f.name}",
+      ],
+      check=True,
+    )
+  _a14_cut_inside(str(tar_p), "c511-132/1792006842", keep=4096)
+  res = helpers.salvage_truncated_tar_prefix(str(tar_p), log_fn=None)
+  assert res.status == "salvaged", res
+  with tarfile.open(tar_p) as tf:  # strict reader: no dangling pax header
+    assert [m.name for m in tf.getmembers()] == [
+      "c511-132/1792006840",
+      "c511-132/1792006841",
+    ]
+  assert helpers.verify_tar_archive_readable(str(tar_p))
+
+
+# --- A18: sealed integrity sweep; DL-12 migrate containment ---
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_integrity_sweep_records_truncated_zst_without_touching_it(tmp_path):
+  from hpcperfstats.dbload.lib import sync_timedb_sealed_member_map as smm
+
+  tar_p, zst_p, _raw = _a14_day(tmp_path, day="2023-05-08")
+  _a14_seal(tar_p, zst_p)
+  os.remove(tar_p)
+  data = Path(zst_p).read_bytes()
+  Path(zst_p).write_bytes(data[: len(data) // 2])
+  before = Path(zst_p).read_bytes()
+  result = smm.sealed_integrity_sweep_once(str(tmp_path), log_fn=None)
+  assert result["status"] == "failed"
+  assert result["action"] == "operator_restore_needed"
+  assert Path(zst_p).read_bytes() == before, "never delete or rewrite"
+  census = json.loads(
+    (tmp_path / smm.SEALED_INTEGRITY_CENSUS_BASENAME).read_text()
+  )
+  assert census["2023-05-08"]["status"] == "failed"
+  assert smm.sealed_integrity_sweep_once(str(tmp_path), log_fn=None) is None
+
+
+@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
+def test_integrity_sweep_routes_readable_tar_to_reseal(tmp_path):
+  from hpcperfstats.dbload.lib import sync_timedb_sealed_member_map as smm
+
+  tar_p, zst_p, _raw = _a14_day(tmp_path, day="2026-09-30")
+  _a14_seal(tar_p, zst_p)
+  Path(zst_p).write_bytes(b"\x28\xb5\x2f\xfd" + b"x" * 40)
+  result = smm.sealed_integrity_sweep_once(str(tmp_path), log_fn=None)
+  assert result["status"] == "failed"
+  assert result["action"] == "reseal_from_tar" and result["tar_present"]
+  (tmp_path / "ok").mkdir()
+  ok_day, ok_zst, _ = _a14_day(tmp_path / "ok", day="2026-09-29")
+  _a14_seal(ok_day, ok_zst)
+  smm._CACHE.clear()
+  good = smm.sealed_integrity_sweep_once(str(tmp_path / "ok"), log_fn=None)
+  assert good["status"] == "ok"
+
+
+def test_migrate_refuses_unlink_when_new_zst_missing_members(tmp_path):
+  """DL-12: the legacy .gz is dropped only when the zst contains it."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  src = tmp_path / "a.txt"
+  src.write_text("a")
+  extra = tmp_path / "b.txt"
+  extra.write_text("bb")
+  gz = tmp_path / "2023-05-08.tar.gz"
+  with tarfile.open(gz, "w:gz") as tf:
+    tf.add(str(src), arcname="h/a")
+    tf.add(str(extra), arcname="h/b")
+  tar_p = tmp_path / "2023-05-08.tar"
+  with tarfile.open(tar_p, "w") as tf:
+    tf.add(str(src), arcname="h/a")  # h/b missing from the new archive
+  zst = tmp_path / "2023-05-08.tar.zst"
+  if not shutil.which("zstd"):
+    pytest.skip("zstd not on PATH")
+  _a14_seal(str(tar_p), str(zst))
+  helpers.drop_legacy_gz_if_equivalent_to_zst(str(gz), str(zst), log_fn=None)
+  assert gz.exists(), "gz holds h/b, which the new zst lacks"
+  # Positive control: once the zst contains every gz member the gz goes.
+  with tarfile.open(tar_p, "a") as tf:
+    tf.add(str(extra), arcname="h/b")
+  os.remove(zst)
+  _a14_seal(str(tar_p), str(zst))
+  helpers.drop_legacy_gz_if_equivalent_to_zst(str(gz), str(zst), log_fn=None)
+  assert not gz.exists()

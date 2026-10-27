@@ -96,7 +96,7 @@ def test_sticky_skip_survives_reload(tmp_path):
 
 
 def test_transient_ingest_archive_coordination_classifier():
-  """Orchestrator defer markers vs hard store unavailable."""
+  """Members-store unavailability is coordination, never a file defect."""
   assert (
     is_transient_ingest_archive_coordination_error(RuntimeError("x")) is False
   )
@@ -108,9 +108,227 @@ def test_transient_ingest_archive_coordination_classifier():
     )
     is True
   )
+  # A11/DE-17: type-based; any members-store unavailability is transient.
   assert (
     is_transient_ingest_archive_coordination_error(
       ArchiveMembersStoreUnavailableError("store down after prewarm"),
     )
-    is False
+    is True
   )
+
+
+# --- A4 (DE-6), A11 (DE-17/DE-20/DE-6b), G3 stale-flag re-validation ---
+
+import errno  # noqa: E402
+import tarfile  # noqa: E402
+import time  # noqa: E402
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture
+def _members_store(tmp_path):
+  """Install a process members store rooted in tmp_path."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+    SyncTimedbArchiveMembersStore,
+    set_process_archive_members_store,
+  )
+
+  store = SyncTimedbArchiveMembersStore(str(tmp_path / "members"))
+  set_process_archive_members_store(store)
+  yield store
+  set_process_archive_members_store(None)
+
+
+def _day_keys(sealed_or_tar):
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+    build_archive_members_keys,
+  )
+
+  canonical = helpers.normalize_daily_compressed_path(sealed_or_tar)
+  return build_archive_members_keys(
+    helpers._daily_archive_members_cache_key(canonical)
+  )
+
+
+def _sealed_only_day(tmp_path, day="2023-05-08", corrupt=False):
+  src = tmp_path / "m.txt"
+  src.write_text("x")
+  gz = tmp_path / f"{day}.tar.gz"
+  with tarfile.open(gz, "w:gz") as tf:
+    tf.add(str(src), arcname="h/1")
+  if corrupt:
+    data = gz.read_bytes()
+    gz.write_bytes(data[: len(data) // 2])
+  return str(gz)
+
+
+def _age_skip(store, day, seconds):
+  shard = store._shard(day)
+  with shard.lock:
+    shard.day_skip = dict(shard.day_skip, set_at=time.time() - seconds)
+
+
+def test_day_skip_clears_on_sealed_only_readable_day(tmp_path, _members_store):
+  """DE-6: a stale skip on a readable sealed-only day clears (02 2023-05-08)."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  gz = _sealed_only_day(tmp_path)
+  keys = _day_keys(gz)
+  _members_store.set_day_skip(
+    keys.day_token,
+    kind="tar_truncated_or_unreadable",
+    detail="unexpected end of data",
+  )
+  _members_store.set_degraded(keys.day_token)
+  _age_skip(_members_store, keys.day_token, 2 * 86400)
+  tar = helpers.daily_tar_path_from_compressed(gz)
+  helpers._clear_stale_day_ingest_skip_if_tar_repaired(
+    keys, tar, tar + ".zst", gz, gz
+  )
+  assert _members_store.get_day_skip(keys.day_token) is None
+
+
+def test_degraded_and_skip_does_not_short_circuit_clear(
+  tmp_path, _members_store
+):
+  """DE-6: degraded+skip no longer returns {} before the clear runs."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+    populate_degraded_is_set,
+  )
+
+  src = tmp_path / "m.txt"
+  src.write_text("x")
+  tar = tmp_path / "2026-09-30.tar"
+  with tarfile.open(tar, "w") as tf:
+    tf.add(str(src), arcname="h/1")
+  keys = _day_keys(str(tar) + ".zst")
+  _members_store.set_day_skip(
+    keys.day_token, kind="open_tar_gnu_tvf_failed", detail="stale"
+  )
+  _members_store.set_degraded(keys.day_token)
+  members = helpers.execute_archive_members_populate_for_canonical(
+    str(tar) + ".zst"
+  )
+  assert _members_store.get_day_skip(keys.day_token) is None
+  assert not populate_degraded_is_set(keys)
+  assert members == {"h/1": 1}
+
+
+def test_members_unavailable_any_message_is_transient():
+  """DE-17: classification is by type, never by message text."""
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+    ArchiveMembersStoreUnavailableError,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_negative_states import (
+    is_environment_error,
+  )
+
+  for msg in ("archive members lookup did not return members", "", "x"):
+    exc = ArchiveMembersStoreUnavailableError(msg)
+    assert is_transient_ingest_archive_coordination_error(exc)
+    assert is_environment_error(exc)
+
+
+def test_coord_defer_reaches_cooldown_not_quarantine(tmp_path):
+  """A11: repeated coordination defers end in an env cooldown, file untouched."""
+  from types import SimpleNamespace
+
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_store as jq,
+    sync_timedb_queue_orchestrator as qo,
+  )
+
+  raw = tmp_path / "h" / "1729700000"
+  raw.parent.mkdir()
+  raw.write_text("x")
+  store = jq.SyncTimedbJobStore("")
+  claim = SimpleNamespace(
+    kind="ingest", identity=str(raw), owner_token="t", score=1.0
+  )
+  out = ""
+  for _ in range(3):
+    out = qo._requeue_bounded_without_attempt_bump(
+      store,
+      kind="ingest",
+      claim=claim,
+      counter="env_defer",
+      cap=3,
+      reason="env:ArchiveMembersStoreUnavailableError",
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+    )
+  assert out == "dead_letter"
+  entry = jq._dead_letter_index(str(tmp_path))[("ingest", str(raw))]
+  assert entry["env"] and not entry["terminal"]
+  assert raw.exists(), "a coordination miss never quarantines the file"
+
+
+def test_permission_error_is_environment_not_file_fault():
+  """DE-20: PermissionError / EAGAIN / ENOSPC / DB errors are environment."""
+  from django.db.utils import OperationalError
+
+  from hpcperfstats.dbload.lib.sync_timedb_negative_states import (
+    environment_error_tag,
+    is_environment_error,
+  )
+
+  assert is_environment_error(PermissionError(13, "denied"))
+  assert is_environment_error(OSError(errno.ENOSPC, "full"))
+  assert is_environment_error(BlockingIOError(errno.EAGAIN, "again"))
+  assert is_environment_error(OperationalError("too many clients"))
+  assert not is_environment_error(ValueError("bad line"))
+  assert not is_environment_error(OSError(errno.ENOENT, "gone"))
+  assert environment_error_tag(OSError(errno.ENOSPC, "full")) == "env:ENOSPC"
+
+
+def test_eagain_zstd_spawn_does_not_set_day_skip(tmp_path, _members_store):
+  """DE-6b: EAGAIN spawning zstd is transient, never a sticky day_skip."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  gz = _sealed_only_day(tmp_path, day="2026-05-05")
+  keys = _day_keys(gz)
+  err = BlockingIOError(
+    errno.EAGAIN, "Resource temporarily unavailable: '/usr/local/bin/zstd'"
+  )
+  with pytest.raises(ArchiveMembersStoreUnavailableError):
+    helpers.mark_archive_day_ingest_skip_and_raise(gz, keys, None, err)
+  assert _members_store.get_day_skip(keys.day_token) is None
+
+
+def test_stale_day_skip_revalidated_and_cleared(tmp_path, _members_store):
+  """G3: only a flag older than the revalidate age triggers the (T2) check."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  gz = _sealed_only_day(tmp_path, day="2026-09-29")
+  keys = _day_keys(gz)
+  tar = helpers.daily_tar_path_from_compressed(gz)
+  _members_store.set_day_skip(keys.day_token, kind="read_error", detail="x")
+  helpers._clear_stale_day_ingest_skip_if_tar_repaired(
+    keys, tar, tar + ".zst", gz, gz
+  )
+  assert _members_store.get_day_skip(keys.day_token) is not None, "fresh flag"
+  _age_skip(_members_store, keys.day_token, 2 * 86400)
+  helpers._clear_stale_day_ingest_skip_if_tar_repaired(
+    keys, tar, tar + ".zst", gz, gz
+  )
+  assert _members_store.get_day_skip(keys.day_token) is None
+
+
+def test_stale_flag_kept_when_gate_still_fails(tmp_path, _members_store):
+  """G3: a still-unreadable archive keeps its flag and restarts the clock."""
+  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+
+  gz = _sealed_only_day(tmp_path, day="2026-10-14", corrupt=True)
+  keys = _day_keys(gz)
+  tar = helpers.daily_tar_path_from_compressed(gz)
+  _members_store.set_day_skip(keys.day_token, kind="read_error", detail="x")
+  _age_skip(_members_store, keys.day_token, 2 * 86400)
+  helpers._clear_stale_day_ingest_skip_if_tar_repaired(
+    keys, tar, tar + ".zst", gz, gz
+  )
+  skip = _members_store.get_day_skip(keys.day_token)
+  assert skip is not None
+  assert time.time() - float(skip["set_at"]) < 60, "clock restarted"

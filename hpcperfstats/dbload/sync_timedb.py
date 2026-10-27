@@ -53,7 +53,6 @@ Attributes:
   _INGEST_WRITE_FRAME_SLICE_ROWS: Internal COPY/ORM slice width per flush.
   _PROC_DATA_UPDATE_FIELDS: Attribute.
   _SUPERVISOR_CHILD_REAP_INTERVAL_S: Attribute.
-  _SYNC_STATE_TRANSITIONS: Attribute.
   _SYNC_TIMEDB_INGEST_INLINE_ENV: Attribute.
   _TREE_RSS_DEFER_SLEEP_SECONDS: Attribute.
   INGEST_WRITE_PHASE_KEYS: Closed-book write-phase timing key names.
@@ -106,7 +105,6 @@ import warnings
 from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, date as date_cls, datetime, timedelta
-from enum import StrEnum
 
 from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 from hpcperfstats.dbload.lib.process_title import set_daemon_process_title
@@ -171,6 +169,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   checkpoint_entries_snapshot,
   clear_daily_archive_members_cache,
   consume_archive_members_populate_source,
+  day_skip_blocks_tar_write,
   ensure_daily_tar_restored_for_append,
   ensure_open_daily_tar_readable,
   filter_files_to_add_to_archive,
@@ -182,6 +181,8 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   prepare_paths_for_giant_member_append,
   quarantine_ingest_failed_raw_path,
   raw_stats_path_tar_append_decision,
+  rollback_failed_tar_append,
+  snapshot_tar_tail_for_append,
   stats_file_is_active_segment,
   update_mutable_tar_authority_after_append,
   verify_tar_archive_readable,
@@ -2784,92 +2785,7 @@ def _handle_pool_worker_exit_fatal(
   hard_exit_pool_worker_error(exc)
 
 
-class SyncFileState(StrEnum):
-  """
-  Hold SyncFileState state and behavior.
-
-  Subclasses ``str``, extending that type with this class's fields and behavior.
-
-  Subclasses ``str``, extending that type with this class's fields and behavior.
-  """
-
-  DISCOVERED = "discovered"
-  PARSED = "parsed"
-  WRITTEN = "written"
-  ARCHIVE_QUEUED = "archive_queued"
-  ARCHIVE_FAILED_RETRYABLE = "archive_failed_retryable"
-  ARCHIVED = "archived"
-
-
-_SYNC_STATE_TRANSITIONS = {
-  SyncFileState.DISCOVERED: {
-    SyncFileState.WRITTEN,
-    SyncFileState.ARCHIVE_QUEUED,
-  },
-  SyncFileState.WRITTEN: {
-    SyncFileState.ARCHIVE_QUEUED,
-    SyncFileState.ARCHIVED,
-  },
-  SyncFileState.ARCHIVE_QUEUED: {
-    SyncFileState.ARCHIVE_FAILED_RETRYABLE,
-    SyncFileState.ARCHIVED,
-  },
-  SyncFileState.ARCHIVE_FAILED_RETRYABLE: {
-    SyncFileState.ARCHIVE_QUEUED,
-    SyncFileState.ARCHIVED,
-  },
-  SyncFileState.ARCHIVED: set(),
-}
-
 SYNC_TIMEDB_DEAD_LETTER_BASENAME = ".sync_timedb_dead_letter.json"
-
-
-def _transition_file_state(
-  file_states: Any,
-  path: str,
-  new_state: Any,
-) -> Any:
-  """
-  Best-effort state transition validator for per-file supervisor state.
-
-  Args:
-    file_states (Any): File states passed to this helper.
-    path (str): String for path.
-    new_state (Any): New state passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _transition_file_state(None, "x", None)  # doctest: +SKIP
-  """
-  current = file_states.get(path)
-  if current is None:
-    file_states[path] = new_state
-    return True
-  # Re-entrant ingest while raw remains on disk or archive dispatch replays:
-  # db-complete re-ingest may complete again before append finalizes.
-  if new_state == SyncFileState.WRITTEN and current in (
-    SyncFileState.ARCHIVE_QUEUED,
-    SyncFileState.ARCHIVED,
-  ):
-    file_states[path] = new_state
-    return True
-  # Archive replay may queue paths already marked ARCHIVED in checkpoint.
-  if (
-    current == SyncFileState.ARCHIVED
-    and new_state == SyncFileState.ARCHIVE_QUEUED
-  ):
-    return True
-  allowed = _SYNC_STATE_TRANSITIONS.get(current, set())
-  if new_state in allowed or new_state == current:
-    file_states[path] = new_state
-    return True
-  log_print(
-    f"Invalid sync_timedb file state transition path={path} current={current} new={new_state}",
-    flush=True,
-  )
-  return False
 
 
 def _host_recent_timestamps_cached(
@@ -4768,6 +4684,11 @@ def _add_stats_file_to_db_streaming_incremental(
   Returns:
     Any: Value produced by this call (type depends on inputs).
 
+  Raises:
+    Exception: Write-stage, shutdown, DB and code faults during the parse or
+      write drain are re-raised for the coordinator to retry (DE-2/DE-19),
+      never quarantined.
+
   Examples:
     >>> _add_stats_file_to_db_streaming_incremental("x", None)
   """
@@ -4979,13 +4900,12 @@ def _add_stats_file_to_db_streaming_incremental(
               ingest_ok = False
         except Exception as e:
           _reraise_if_ingest_control_flow(e)
-          return _pack_quarantine(
-            _parse_failure_after_quarantine(
-              stats_file,
-              _parse_elapsed(),
-              error_detail=str(e),
-            ),
-          )
+          # DE-2/DE-19: the streaming parser raises nothing for bad *input*
+          # (empty / no-timestamp files are handled as values above and
+          # below), so an exception here is a write-stage, shutdown, DB or
+          # code fault. Re-raise for the coordinator to retry (environment
+          # cooldown or attempts) instead of quarantining an intact file.
+          raise
         if (
           ingest_ok
           and total_stats_rows_parsed == 0
@@ -5003,7 +4923,9 @@ def _add_stats_file_to_db_streaming_incremental(
           )
       elapsed = time.time() - t0
       meta = _ingest_outcome_meta(
-        outcome="ingested",
+        # DE-22: a failed chunk write is not "ingested" (that pair was the
+        # ``ingested`` + ``ingest_ok=False`` dead letters on hpcperfstats04).
+        outcome="ingested" if ingest_ok else "write_failed",
         parse_elapsed_s=_parse_elapsed(),
         stats_rows=total_stats_rows,
         stats_rows_parsed=total_stats_rows_parsed,
@@ -5329,7 +5251,7 @@ def _add_stats_file_to_db_impl(
       elapsed_total = time.time() - t0
       meta = dict(outcome_meta)
       meta.update(
-        outcome="ingested",
+        outcome="ingested" if ingest_ok else "write_failed",
         parse_elapsed_s=parse_elapsed,
         stats_rows=stats_rows,
         proc_rows=proc_rows,
@@ -5532,7 +5454,7 @@ def _remove_processed_path(
     checkpoint_entries.clear()
     checkpoint_entries.extend(kept)
   if file_states is not None:
-    file_states[path] = SyncFileState.DISCOVERED
+    file_states.pop(path, None)
   if isinstance(host_scan_hints, dict):
     host_scan_hints.pop(path, None)
   if persist and checkpoint_path:
@@ -5943,6 +5865,8 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
     failure path (including idle stall with no tar size growth).
     subprocess.CalledProcessError: Raised when ``_append_to_tar`` hits a
     ``subprocess.CalledProcessError`` failure path.
+    Exception: An ``OSError`` from ``tar -r`` (for example ENOSPC) is
+      re-raised after the tar was rolled back (DE-23).
 
   Examples:
     >>> _append_to_tar("x", None)  # doctest: +SKIP
@@ -6004,6 +5928,9 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
           "-T",
           list_path,
         ]
+        # DE-23: an interrupted/failed ``tar -r`` (ENOSPC short write, kill)
+        # must not leave a truncated tail; roll back under this same lock.
+        snapshot = snapshot_tar_tail_for_append(tar_path, present)
         try:
           result = run_subprocess_with_progress(
             tar_args,
@@ -6015,9 +5942,15 @@ def _append_to_tar(tar_path: str, file_paths: Any) -> None:
             text=True,
           )
         except ProgressIdleError as exc:
+          rollback_failed_tar_append(tar_path, snapshot)
           raise RuntimeError(
             f"tar append idle stall path={tar_path} idle_s={getattr(exc, 'idle_s', None)}",
           ) from exc
+        except OSError:
+          rollback_failed_tar_append(tar_path, snapshot)
+          raise
+        if result.returncode != 0:
+          rollback_failed_tar_append(tar_path, snapshot)
     finally:
       if fd >= 0:
         with suppress(OSError):
@@ -6474,6 +6407,8 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
           reason="pax_convert",
           log_fn=log_print,
         )
+    if stats_files_to_tar and day_skip_blocks_tar_write(archive_tar_fname):
+      return False
     before_append_size = (
       os.path.getsize(archive_tar_fname)
       if os.path.isfile(archive_tar_fname)

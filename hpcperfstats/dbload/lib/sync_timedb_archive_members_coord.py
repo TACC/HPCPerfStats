@@ -269,7 +269,8 @@ def is_transient_ingest_archive_coordination_error(exc: Any) -> bool:
     exc (Any): Exception from an ingest worker future.
 
   Returns:
-    bool: True for append-inflight, day-close yield, restore, fnctl transient.
+    bool: True for any ``ArchiveMembersStoreUnavailableError`` subclass and
+    fnctl populate transients.
 
   Examples:
     >>> is_transient_ingest_archive_coordination_error(RuntimeError("x"))
@@ -281,27 +282,12 @@ def is_transient_ingest_archive_coordination_error(exc: Any) -> bool:
     ... )
     True
   """
-  if is_transient_fnctl_populate_unavailable(exc):
-    return True
-  if not isinstance(exc, ArchiveMembersStoreUnavailableError):
-    return False
-  if isinstance(
-    exc,
-    (
-      ArchiveMembersStoreConnectionError,
-      ArchiveMembersPopulateStalledError,
-    ),
-  ):
-    return False
-  msg = str(exc).lower()
-  return any(
-    marker in msg
-    for marker in (
-      "transient defer open-tar repair during append inflight",
-      "transient day_close yield during open-tar repair",
-      "restore_in_progress",
-      "transient open-tar repair defer",
-    )
+  # DE-17 (A11): classify by type, never by message substring. Every
+  # members-store unavailability (generic lookup miss, connection, populate
+  # stall, coordination defer) is about the store, not the file; the drain
+  # bounds repeats with a no-progress counter instead of file attempts.
+  return is_transient_fnctl_populate_unavailable(exc) or isinstance(
+    exc, ArchiveMembersStoreUnavailableError
   )
 
 

@@ -118,6 +118,15 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "sync_archive_retry_max_attempts"),
   ("PIPELINE", "sync_archive_retry_backoff_base_seconds"),
   ("PIPELINE", "sync_archive_retry_backoff_max_seconds"),
+  ("PIPELINE", "sync_dead_letter_readmit_backoff_s"),
+  ("PIPELINE", "sync_dead_letter_env_backoff_s"),
+  ("PIPELINE", "sync_noprogress_escalate_after"),
+  ("PIPELINE", "sync_negative_flag_revalidate_s"),
+  ("PIPELINE", "sync_tar_salvage_min_free_bytes"),
+  ("PIPELINE", "sync_tar_salvage_full_copy"),
+  ("PIPELINE", "sync_archive_min_free_bytes"),
+  ("PIPELINE", "sync_dead_end_remediation_mode"),
+  ("PIPELINE", "sync_dead_end_migration_batch"),
   ("PIPELINE", "sync_checkpoint_flush_batch_size"),
   ("PIPELINE", "sync_timedb_tar_append_batch_size"),
   ("PIPELINE", "sync_host_itimes_cache_max_timestamps_per_entry"),
@@ -288,6 +297,15 @@ INI_OPTION_DEFAULTS = {
   "sync_archive_retry_max_attempts": "5",
   "sync_archive_retry_backoff_base_seconds": "1",
   "sync_archive_retry_backoff_max_seconds": "60",
+  "sync_dead_letter_readmit_backoff_s": "3600,21600,86400",
+  "sync_dead_letter_env_backoff_s": "21600,86400,259200",
+  "sync_noprogress_escalate_after": "50",
+  "sync_negative_flag_revalidate_s": "86400",
+  "sync_tar_salvage_min_free_bytes": "1073741824",
+  "sync_tar_salvage_full_copy": "no",
+  "sync_archive_min_free_bytes": "10737418240",
+  "sync_dead_end_remediation_mode": "apply",
+  "sync_dead_end_migration_batch": "500",
   "sync_checkpoint_flush_batch_size": "100",
   "sync_timedb_tar_append_batch_size": "256",
   "sync_host_itimes_cache_max_timestamps_per_entry": "100000",
@@ -3614,6 +3632,181 @@ def get_sync_archive_retry_max_attempts() -> Any:
   """
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("sync_archive_retry_max_attempts"))
+
+
+def _backoff_schedule(option: str) -> list[float]:
+  """
+  Parse a comma-separated backoff schedule into positive seconds.
+
+  Args:
+    option (str): PIPELINE option name holding ``s1,s2,...``.
+
+  Returns:
+    list[float]: Ordered cooldowns; at least one entry (falls back to the
+    shipped default when the INI value is empty or invalid).
+
+  Examples:
+    >>> _backoff_schedule(
+    ...   "sync_dead_letter_readmit_backoff_s"
+    ... )  # doctest: +SKIP
+    [3600.0, 21600.0, 86400.0]
+  """
+  _ensure_cfg_loaded()
+  raw = str(_pipeline_get(option) or "")
+  out: list[float] = []
+  for part in raw.split(","):
+    try:
+      val = float(part.strip())
+    except ValueError:
+      continue
+    if val > 0:
+      out.append(val)
+  if out:
+    return out
+  return [float(x) for x in INI_OPTION_DEFAULTS[option].split(",")]
+
+
+def get_sync_dead_letter_readmit_backoff_s() -> list[float]:
+  """
+  Dead-letter re-admission cooldowns per cycle (default 1 h, 6 h, 24 h).
+
+  After the last cycle the entry is terminal and the raw file is quarantined
+  (restorable) so its day can close.
+
+  Returns:
+    list[float]: Cooldown seconds per cycle.
+
+  Examples:
+    >>> get_sync_dead_letter_readmit_backoff_s()  # doctest: +SKIP
+    [3600.0, 21600.0, 86400.0]
+  """
+  return _backoff_schedule("sync_dead_letter_readmit_backoff_s")
+
+
+def get_sync_dead_letter_env_backoff_s() -> list[float]:
+  """
+  Cooldowns for environment-class dead letters (default 6 h, 24 h, 72 h).
+
+  Environment errors (DB outage, EAGAIN, ENOSPC, permissions) do not burn file
+  attempts; this longer schedule bounds them before an ``env_*`` quarantine.
+
+  Returns:
+    list[float]: Cooldown seconds per cycle.
+
+  Examples:
+    >>> get_sync_dead_letter_env_backoff_s()  # doctest: +SKIP
+    [21600.0, 86400.0, 259200.0]
+  """
+  return _backoff_schedule("sync_dead_letter_env_backoff_s")
+
+
+def get_sync_noprogress_escalate_after() -> int:
+  """
+  Consecutive no-progress requeues before G1 escalates to a cooldown (50).
+
+  Returns:
+    int: Positive escalation threshold.
+
+  Examples:
+    >>> get_sync_noprogress_escalate_after()  # doctest: +SKIP
+    50
+  """
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("sync_noprogress_escalate_after"))
+
+
+def get_sync_negative_flag_revalidate_s() -> float:
+  """
+  Age after which a persisted negative flag is re-validated (G3; 24 h).
+
+  Returns:
+    float: Seconds; ``0`` disables re-validation.
+
+  Examples:
+    >>> get_sync_negative_flag_revalidate_s()  # doctest: +SKIP
+    86400.0
+  """
+  _ensure_cfg_loaded()
+  return max(0.0, float(_pipeline_get("sync_negative_flag_revalidate_s")))
+
+
+def get_sync_tar_salvage_min_free_bytes() -> int:
+  """
+  Free-space reserve kept on top of a truncated-tar salvage backup (1 GiB).
+
+  Returns:
+    int: Bytes.
+
+  Examples:
+    >>> get_sync_tar_salvage_min_free_bytes()  # doctest: +SKIP
+    1073741824
+  """
+  _ensure_cfg_loaded()
+  return max(0, _pipeline_getint("sync_tar_salvage_min_free_bytes"))
+
+
+def get_sync_tar_salvage_full_copy() -> bool:
+  """
+  Back up the whole tar (not only the tail past the cut) before a salvage.
+
+  Returns:
+    bool: True when ``sync_tar_salvage_full_copy = yes`` (default no).
+
+  Examples:
+    >>> get_sync_tar_salvage_full_copy()  # doctest: +SKIP
+    False
+  """
+  _ensure_cfg_loaded()
+  return bool(_parse_bool(_pipeline_get("sync_tar_salvage_full_copy")))
+
+
+def get_sync_archive_min_free_bytes() -> int:
+  """
+  Free-space reserve for space-consuming archive work (A16; 10 GiB).
+
+  Reseal, restore, rebuild, repair and salvage are admitted only when the
+  archive filesystem keeps this much free after the operation.
+
+  Returns:
+    int: Bytes.
+
+  Examples:
+    >>> get_sync_archive_min_free_bytes()  # doctest: +SKIP
+    10737418240
+  """
+  _ensure_cfg_loaded()
+  return max(0, _pipeline_getint("sync_archive_min_free_bytes"))
+
+
+def get_sync_dead_end_remediation_mode() -> str:
+  """
+  ``apply`` (default) runs dead-end migrations; ``report`` only logs them.
+
+  Returns:
+    str: ``apply`` or ``report`` (unknown values read as ``apply``).
+
+  Examples:
+    >>> get_sync_dead_end_remediation_mode()  # doctest: +SKIP
+    'apply'
+  """
+  _ensure_cfg_loaded()
+  mode = str(_pipeline_get("sync_dead_end_remediation_mode") or "").strip()
+  return "report" if mode.lower() == "report" else "apply"
+
+
+def get_sync_dead_end_migration_batch() -> int:
+  """
+  Max re-admissions / reopens per reconstruct pass (A17; default 500).
+
+  Returns:
+    int: Positive batch size.
+
+  Examples:
+    >>> get_sync_dead_end_migration_batch()  # doctest: +SKIP
+    500
+  """
+  _ensure_cfg_loaded()
+  return max(1, _pipeline_getint("sync_dead_end_migration_batch"))
 
 
 def get_sync_archive_retry_backoff_base_seconds() -> Any:

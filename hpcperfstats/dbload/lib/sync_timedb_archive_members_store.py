@@ -587,6 +587,8 @@ class SyncTimedbArchiveMembersStore:
       shard.day_skip = {
         "kind": str(kind),
         "detail": str(detail),
+        # G3: age of the flag, so a stale one is re-validated (not forever).
+        "set_at": time.time(),
       }
       events.extend(list(shard.events.values()))
       shard.events.clear()
@@ -615,6 +617,26 @@ class SyncTimedbArchiveMembersStore:
     if payload is None:
       return None
     return dict(payload)
+
+  def touch_day_skip(self, day_token: str) -> None:
+    """
+    Restart the G3 re-validation clock after a re-check that still failed.
+
+    Args:
+      day_token (str): ISO calendar day.
+
+    Returns:
+      None
+
+    Examples:
+      >>> SyncTimedbArchiveMembersStore("/tmp/empty").touch_day_skip("d")
+    """
+    shard = self._shard(day_token)
+    with shard.lock:
+      if shard.day_skip is None:
+        return
+      shard.day_skip = dict(shard.day_skip, set_at=time.time())
+    self.persist_day(day_token)
 
   def clear_day_skip(self, day_token: str) -> None:
     """

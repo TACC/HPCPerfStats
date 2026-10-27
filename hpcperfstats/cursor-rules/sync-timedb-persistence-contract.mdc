@@ -66,6 +66,17 @@ Increment `SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION` in the **same PR** as any c
 
 Add or extend `test_sync_timedb_persistence.py` and `test_sync_timedb_persistence_artifact_registry` drift guard.
 
+## Dead-end remediation state (2026-10-26, no contract bump)
+
+Added without bumping `SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION` (a bump would wipe live dead letters, marks and the job snapshot); every change is schema-compatible and migrates in place behind the A17 snapshot (`.sync_timedb_migration_backup/dead-ends-v1/`, sha256-verified) and `sync_dead_end_remediation_mode = report | apply`.
+
+- **Queue dead letter** entries: `kind`, `identity`, `attempt`, `reason`, `recorded_at`, `first_recorded_at`, `cycle`, `env`, `readmit_at`, `terminal`, `readmitted_at`. Legacy entries normalize to cycle 1 (`readmit_at = recorded_at + backoff[0]`); fill-skip reasons re-admit immediately. Trim drops terminal entries first.
+- **Quarantine manifest** entries add `failure_class`.
+- **Day-removal manifest** adds `reverify_cycles` and `verified_tar_identity`; only `skipped_quarantine` is terminal (`REPAIR_REQUIRED_STATUSES` block `phase=done`).
+- **Members `day_skip`** adds `set_at` (G3 re-validation age).
+- **Unregistered, self-validating sidecars beside the daily archives:** `.sync_timedb_sealed_members/<day>.json` (kind `sealed_member_map`, keyed by zst identity), `.sync_timedb_tar_salvage/`, `.sync_timedb_sealed_integrity.json`. A contract reset does not remove them; stale maps are rejected by identity.
+- Registry kinds `archive_dead_letter`, `archive_maint_hints`, `day_close_manifest` stay registered but unused (documented in `docs/SYNC_TIMEDB_STATE_MACHINE.md` §8).
+
 ## Archival ground-truth (hints ≠ done)
 
 Persisted manifests and **`archive_maint_hints`** (`day_phases`, debt) are **hints only** at decision time. Seal eligibility, delete, tar-drop, and **`is_complete`** must re-check **disk + DB** predicates (`has_closed_raw_on_disk`, **`_day_close_filesystem_complete`**, **`remaining_raw_by_gz_has_paths_on_disk`**) — stale hint/manifest **`phase=done`** or **`tar_dropped`** must not skip work. **`reopen_stale_done_all_skipped`** / **`reopen_done_days_with_verified_on_disk`** downgrade hints when ground truth disagrees. See **`test_try_finish_tar_drop_manifest_done_stale_accrual`** and **`test_reopen_done_days_with_verified_on_disk_at_delete_pass_start`** in `test_sync_timedb_day_raw_removal.py`.

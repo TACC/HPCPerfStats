@@ -25,6 +25,12 @@ Attributes:
   LEASE_CONFLICT_SCORE_PENALTY: Score bump applied on retry requeue.
   LeaseOwner: Parsed owner token.
   QUEUE_DEAD_LETTER_KIND: Persistence kind for queue dead letters.
+  NON_FATAL_DEAD_LETTER_REASONS: Legacy dead-letter reasons current code no
+    longer treats as fatal (fill skips); re-admitted immediately (DE-21).
+  _DEAD_LETTER_INDEX_CACHE: ``sidecar path -> (mtime_ns, index)`` cache for the
+    per-path dead-letter predicate.
+  _DEAD_LETTER_LOCK: Guards ``_DEAD_LETTER_INDEX_CACHE``.
+  _DEAD_LETTER_WRITE_LOCK: Serializes dead-letter sidecar writers.
   QUEUE_MAX_MEMBERS_FLOOR: Minimum accepted queue capacity bound.
   SCORE_STRIDE: Day/tie-break stride inside a band score range.
   SyncTimedbJobStore: Thread-safe in-process store.
@@ -2560,6 +2566,296 @@ def queue_dead_letter_path(archive_data_dir: str) -> str:
   return artifact_path(archive_data_dir, QUEUE_DEAD_LETTER_KIND)
 
 
+NON_FATAL_DEAD_LETTER_REASONS = frozenset(
+  {
+    "skip_cgroup_headroom",
+    "skip_budget_bytes",
+    "skip_file_cache_pressure",
+    "skip_fp",
+    "fp_refresh",
+  }
+)
+_DEAD_LETTER_INDEX_CACHE: dict[
+  str, tuple[int, dict[tuple[str, str], dict]]
+] = {}
+_DEAD_LETTER_LOCK = threading.Lock()
+# Serializes load-modify-save of the dead-letter sidecar across the ingest,
+# append and day_close coordinator threads (no lost updates).
+_DEAD_LETTER_WRITE_LOCK = threading.RLock()
+
+
+def _dead_letter_schedule(entry: dict[str, Any]) -> list[float]:
+  """
+  Return the cooldown schedule that applies to one dead-letter entry.
+
+  Args:
+    entry (dict[str, Any]): Dead-letter entry (``env`` selects the longer
+      environment schedule).
+
+  Returns:
+    list[float]: Seconds per cycle.
+
+  Examples:
+    >>> len(_dead_letter_schedule({"env": False})) >= 1  # doctest: +SKIP
+    True
+  """
+  if entry.get("env"):
+    return list(cfg.get_sync_dead_letter_env_backoff_s())
+  return list(cfg.get_sync_dead_letter_readmit_backoff_s())
+
+
+def _normalize_dead_letter_entry(entry: dict[str, Any]) -> dict[str, Any]:
+  """
+  Fill ``cycle`` / ``readmit_at`` / ``terminal`` on legacy entries (DE-21).
+
+  Entries written before cooldowns existed count as cycle 1 and re-admit
+  ``backoff[0]`` after ``recorded_at``; reasons that current code no longer
+  treats as fatal (fill skips) re-admit immediately.
+
+  Args:
+    entry (dict[str, Any]): Raw sidecar entry.
+
+  Returns:
+    dict[str, Any]: The same entry, normalized in place.
+
+  Examples:
+    >>> _normalize_dead_letter_entry(  # doctest: +SKIP
+    ...   {
+    ...     "kind": "ingest",
+    ...     "identity": "/a",
+    ...     "reason": "skip_fp",
+    ...     "recorded_at": 5.0,
+    ...   }
+    ... )["readmit_at"]
+    5.0
+  """
+  if "cycle" in entry:
+    return entry
+  recorded = float(entry.get("recorded_at") or 0.0)
+  reason = str(entry.get("reason") or "")
+  entry["cycle"] = 1
+  entry["terminal"] = False
+  entry["env"] = reason.startswith("env:")
+  entry["readmit_at"] = (
+    recorded
+    if reason in NON_FATAL_DEAD_LETTER_REASONS
+    else recorded + _dead_letter_schedule(entry)[0]
+  )
+  return entry
+
+
+def _load_dead_letter_entries(archive_data_dir: str) -> list[dict[str, Any]]:
+  """
+  Load and normalize the queue dead-letter list (empty when absent).
+
+  Args:
+    archive_data_dir (str): Archive data directory root.
+
+  Returns:
+    list[dict[str, Any]]: Normalized entries.
+
+  Examples:
+    >>> _load_dead_letter_entries("/nonexistent-dir")
+    []
+  """
+  path = queue_dead_letter_path(archive_data_dir)
+  entries = load_persistence_document(path, QUEUE_DEAD_LETTER_KIND, default=[])
+  if not isinstance(entries, list):
+    return []
+  return [
+    _normalize_dead_letter_entry(e) for e in entries if isinstance(e, dict)
+  ]
+
+
+def _dead_letter_index(
+  archive_data_dir: str,
+) -> dict[tuple[str, str], dict[str, Any]]:
+  """
+  Return ``(kind, identity) -> entry`` cached by sidecar mtime (hot path).
+
+  Reconstruct and handoff consult the dead letter per path; the cache keeps
+  that to one ``stat`` unless the sidecar changed.
+
+  Args:
+    archive_data_dir (str): Archive data directory root.
+
+  Returns:
+    dict[tuple[str, str], dict[str, Any]]: Latest entry per kind/identity.
+
+  Examples:
+    >>> _dead_letter_index("/nonexistent-dir")
+    {}
+  """
+  path = queue_dead_letter_path(archive_data_dir)
+  try:
+    mtime_ns = os.stat(path).st_mtime_ns
+  except OSError:
+    return {}
+  with _DEAD_LETTER_LOCK:
+    cached = _DEAD_LETTER_INDEX_CACHE.get(path)
+    if cached is not None and cached[0] == mtime_ns:
+      return cached[1]
+  index = {
+    (str(e.get("kind") or ""), str(e.get("identity") or "")): e
+    for e in _load_dead_letter_entries(archive_data_dir)
+  }
+  with _DEAD_LETTER_LOCK:
+    _DEAD_LETTER_INDEX_CACHE[path] = (mtime_ns, index)
+  return index
+
+
+def _save_dead_letter_entries(
+  archive_data_dir: str,
+  entries: list[dict[str, Any]],
+) -> bool:
+  """
+  Persist the dead-letter list and drop the cached index.
+
+  Args:
+    archive_data_dir (str): Archive data directory root.
+    entries (list[dict[str, Any]]): Entries to write.
+
+  Returns:
+    bool: True when written.
+
+  Examples:
+    >>> _save_dead_letter_entries("/nonexistent-dir", [])
+    False
+  """
+  path = queue_dead_letter_path(archive_data_dir)
+  try:
+    save_persistence_document(path, QUEUE_DEAD_LETTER_KIND, entries)
+  except OSError:
+    return False
+  with _DEAD_LETTER_LOCK:
+    _DEAD_LETTER_INDEX_CACHE.pop(path, None)
+  return True
+
+
+def upsert_queue_dead_letter(
+  archive_data_dir: str,
+  *,
+  kind: str,
+  identity: str,
+  attempt: int,
+  reason: str,
+  env: bool = False,
+  now: float | None = None,
+  max_entries: int = 5000,
+) -> dict[str, Any] | None:
+  """
+  Record (or advance) a job that exhausted its retries: cooldown, then terminal.
+
+  One entry per kind+identity (DE-1): each give-up bumps ``cycle`` and sets
+  ``readmit_at = now + backoff[cycle-1]``; past the last cooldown the entry is
+  ``terminal`` and the caller resolves it (quarantine the raw file, or an ERROR
+  for a day). The FIFO trim drops terminal entries first so a live cooldown is
+  never evicted silently.
+
+  Args:
+    archive_data_dir (str): Archive data directory root.
+    kind (str): Job kind.
+    identity (str): Job identity.
+    attempt (int): Attempt count at give-up time.
+    reason (str): Short failure reason (``env:*`` for environment errors).
+    env (bool): Use the environment cooldown schedule.
+    now (float | None): Clock override (tests).
+    max_entries (int): Cap on retained entries.
+
+  Returns:
+    dict[str, Any] | None: The stored entry, or None when the write failed.
+
+  Examples:
+    >>> upsert_queue_dead_letter(
+    ...   "/nonexistent-dir",
+    ...   kind="ingest",
+    ...   identity="x",
+    ...   attempt=5,
+    ...   reason="boom",
+    ... ) is None
+    True
+  """
+  ts = time.time() if now is None else float(now)
+  with _DEAD_LETTER_WRITE_LOCK:
+    return _upsert_queue_dead_letter_locked(
+      archive_data_dir,
+      str(kind),
+      str(identity),
+      int(attempt),
+      str(reason),
+      bool(env),
+      ts,
+      int(max_entries),
+    )
+
+
+def _upsert_queue_dead_letter_locked(
+  archive_data_dir: str,
+  kind: str,
+  identity: str,
+  attempt: int,
+  reason: str,
+  env: bool,
+  ts: float,
+  max_entries: int,
+) -> dict[str, Any] | None:
+  """
+  Body of ``upsert_queue_dead_letter`` (caller holds the write lock).
+
+  Args:
+    archive_data_dir (str): Archive data directory root.
+    kind (str): Job kind.
+    identity (str): Job identity.
+    attempt (int): Attempt count at give-up time.
+    reason (str): Failure reason.
+    env (bool): Use the environment cooldown schedule.
+    ts (float): Current time.
+    max_entries (int): Cap on retained entries.
+
+  Returns:
+    dict[str, Any] | None: Stored entry, or None when the write failed.
+
+  Examples:
+    >>> _upsert_queue_dead_letter_locked(  # doctest: +SKIP
+    ...   "/a", "ingest", "/x", 5, "r", False, 0.0, 10
+    ... )
+  """
+  entries = _load_dead_letter_entries(archive_data_dir)
+  key = (kind, identity)
+  prior = next(
+    (e for e in entries if (e.get("kind"), e.get("identity")) == key), None
+  )
+  entries = [e for e in entries if e is not prior]
+  entry = {
+    "kind": key[0],
+    "identity": key[1],
+    "attempt": int(attempt),
+    "reason": str(reason)[:500],
+    "recorded_at": ts,
+    "first_recorded_at": (prior or {}).get("first_recorded_at")
+    or (prior or {}).get("recorded_at")
+    or ts,
+    "cycle": int((prior or {}).get("cycle") or 0) + 1,
+    "env": bool(env or str(reason).startswith("env:")),
+  }
+  schedule = _dead_letter_schedule(entry)
+  entry["terminal"] = entry["cycle"] > len(schedule)
+  entry["readmit_at"] = (
+    None if entry["terminal"] else ts + schedule[entry["cycle"] - 1]
+  )
+  entries.append(entry)
+  if len(entries) > max_entries:
+    overflow = len(entries) - max_entries
+    terminal_old = [e for e in entries if e.get("terminal")][:overflow]
+    drop = {id(e) for e in terminal_old}
+    entries = [e for e in entries if id(e) not in drop]
+    if len(entries) > max_entries:
+      entries = entries[-max_entries:]
+  if not _save_dead_letter_entries(archive_data_dir, entries):
+    return None
+  return entry
+
+
 def append_queue_dead_letter(
   archive_data_dir: str,
   *,
@@ -2570,7 +2866,7 @@ def append_queue_dead_letter(
   max_entries: int = 5000,
 ) -> bool:
   """
-  Record a job that exhausted its retries so it is not silently dropped.
+  Record a job that exhausted its retries (see ``upsert_queue_dead_letter``).
 
   Args:
     archive_data_dir (str): Archive data directory root.
@@ -2578,7 +2874,7 @@ def append_queue_dead_letter(
     identity (str): Job identity.
     attempt (int): Attempt count at give-up time.
     reason (str): Short failure reason.
-    max_entries (int): Cap on retained entries (oldest trimmed first).
+    max_entries (int): Cap on retained entries.
 
   Returns:
     bool: True when the entry was persisted.
@@ -2593,40 +2889,66 @@ def append_queue_dead_letter(
     ... )
     False
   """
-  path = queue_dead_letter_path(archive_data_dir)
-  entries = load_persistence_document(
-    path,
-    QUEUE_DEAD_LETTER_KIND,
-    default=[],
+  return (
+    upsert_queue_dead_letter(
+      archive_data_dir,
+      kind=kind,
+      identity=identity,
+      attempt=attempt,
+      reason=reason,
+      max_entries=max_entries,
+    )
+    is not None
   )
-  if not isinstance(entries, list):
-    entries = []
-  entries.append(
-    {
-      "kind": str(kind),
-      "identity": str(identity),
-      "attempt": int(attempt),
-      "reason": str(reason)[:500],
-      "recorded_at": time.time(),
-    }
-  )
-  if len(entries) > max_entries:
-    entries = entries[-max_entries:]
-  try:
-    save_persistence_document(path, QUEUE_DEAD_LETTER_KIND, entries)
-  except OSError:
+
+
+def dead_letter_blocked(
+  archive_data_dir: str,
+  *,
+  kind: str,
+  identity: str,
+  now: float | None = None,
+) -> bool:
+  """
+  Return True while kind/identity is in dead-letter cooldown or terminal.
+
+  Replaces the permanent "ever dead-lettered" check (DE-1): once
+  ``readmit_at`` passes, reconstruct and handoff may enqueue the path again.
+
+  Args:
+    archive_data_dir (str): Archive data directory root.
+    kind (str): Job kind.
+    identity (str): Job identity.
+    now (float | None): Clock override (tests).
+
+  Returns:
+    bool: True when enqueue must be skipped.
+
+  Examples:
+    >>> dead_letter_blocked("/nope", kind="ingest", identity="x")
+    False
+  """
+  if not archive_data_dir or not identity:
     return False
-  return True
+  entry = _dead_letter_index(archive_data_dir).get((str(kind), str(identity)))
+  if entry is None:
+    return False
+  if entry.get("terminal"):
+    return True
+  ts = time.time() if now is None else float(now)
+  return ts < float(entry.get("readmit_at") or 0.0)
 
 
-def identity_in_queue_dead_letter(
+def remove_queue_dead_letter(
   archive_data_dir: str,
   *,
   kind: str,
   identity: str,
 ) -> bool:
   """
-  Return True when kind/identity is already in the queue dead-letter.
+  Drop the dead-letter entry for kind/identity after a successful job.
+
+  Cheap when absent (cached index lookup, no write).
 
   Args:
     archive_data_dir (str): Archive data directory root.
@@ -2634,32 +2956,93 @@ def identity_in_queue_dead_letter(
     identity (str): Job identity.
 
   Returns:
-    bool: True when a matching dead-letter entry exists.
+    bool: True when an entry was removed.
 
   Examples:
-    >>> identity_in_queue_dead_letter("/nope", kind="ingest", identity="x")
+    >>> remove_queue_dead_letter("/nope", kind="ingest", identity="x")
     False
   """
   if not archive_data_dir or not identity:
     return False
-  path = queue_dead_letter_path(archive_data_dir)
-  entries = load_persistence_document(
-    path,
-    QUEUE_DEAD_LETTER_KIND,
-    default=[],
-  )
-  if not isinstance(entries, list):
+  key = (str(kind), str(identity))
+  if key not in _dead_letter_index(archive_data_dir):
     return False
-  want_kind = str(kind)
-  want_id = str(identity)
-  for entry in entries:
-    if not isinstance(entry, dict):
-      continue
-    if str(entry.get("kind") or "") != want_kind:
-      continue
-    if str(entry.get("identity") or "") == want_id:
-      return True
-  return False
+  with _DEAD_LETTER_WRITE_LOCK:
+    entries = [
+      e
+      for e in _load_dead_letter_entries(archive_data_dir)
+      if (e.get("kind"), e.get("identity")) != key
+    ]
+    return _save_dead_letter_entries(archive_data_dir, entries)
+
+
+def due_dead_letter_readmissions(
+  archive_data_dir: str,
+  *,
+  now: float | None = None,
+  limit: int = 500,
+) -> list[dict[str, Any]]:
+  """
+  Return non-terminal entries whose cooldown elapsed and were not re-admitted.
+
+  Args:
+    archive_data_dir (str): Archive data directory root.
+    now (float | None): Clock override (tests).
+    limit (int): Batch cap (A17 rate limit).
+
+  Returns:
+    list[dict[str, Any]]: Oldest-due first, at most ``limit``.
+
+  Examples:
+    >>> due_dead_letter_readmissions("/nope")
+    []
+  """
+  if not archive_data_dir:
+    return []
+  ts = time.time() if now is None else float(now)
+  due = [
+    e
+    for e in _dead_letter_index(archive_data_dir).values()
+    if not e.get("terminal")
+    and float(e.get("readmit_at") or 0.0) <= ts
+    and float(e.get("readmitted_at") or -1.0)
+    < float(e.get("readmit_at") or 0.0)
+  ]
+  due.sort(key=lambda e: float(e.get("readmit_at") or 0.0))
+  return due[: max(0, int(limit))]
+
+
+def mark_dead_letters_readmitted(
+  archive_data_dir: str,
+  keys: list[tuple[str, str]],
+  *,
+  now: float | None = None,
+) -> bool:
+  """
+  Stamp ``readmitted_at`` so a due entry is re-admitted once per cycle.
+
+  Args:
+    archive_data_dir (str): Archive data directory root.
+    keys (list[tuple[str, str]]): ``(kind, identity)`` pairs re-admitted.
+    now (float | None): Clock override (tests).
+
+  Returns:
+    bool: True when written (or nothing to do).
+
+  Examples:
+    >>> mark_dead_letters_readmitted("/nope", [])
+    True
+  """
+  if not keys:
+    return True
+  ts = time.time() if now is None else float(now)
+  want = {(str(k), str(i)) for k, i in keys}
+  with _DEAD_LETTER_WRITE_LOCK:
+    entries = _load_dead_letter_entries(archive_data_dir)
+    for e in entries:
+      if (e.get("kind"), e.get("identity")) in want:
+        e["readmitted_at"] = ts
+    return _save_dead_letter_entries(archive_data_dir, entries)
 
 
 def parse_lease_owner(owner_token: str) -> LeaseOwner:

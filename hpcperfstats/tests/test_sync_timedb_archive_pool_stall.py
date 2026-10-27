@@ -135,3 +135,54 @@ def test_stall_poll_defers_with_active_worker_registry(monkeypatch):
     "sync_timedb_archive pool",
     {"active_pool": None, "in_flight_sample": ["/tmp/2024-01-01.tar.zst"]},
   )
+
+
+def test_decompress_idle_kill_releases_restore_token(tmp_path, monkeypatch):
+  """DE-8: a zstd restore that writes nothing is idle-killed, not left hung.
+
+  Before, ``_decompress_to_path`` ran a bare ``subprocess.run`` with no
+  progress bound, so a stuck zstd held the restore token (and every append
+  and day_close for that day) forever.
+  """
+  import os
+  import stat
+
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+  import hpcperfstats.dbload.lib.zstd_cli as zc
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+    daily_tar_restore_in_progress_for_day,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
+    SyncTimedbArchiveMembersStore,
+    set_process_archive_members_store,
+  )
+
+  fake = tmp_path / "zstd"
+  fake.write_text("#!/bin/sh\nexec sleep 60\n")
+  fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+  monkeypatch.setattr(zc, "zstd_executable", lambda: str(fake))
+  monkeypatch.setattr(cfg, "get_sync_ingest_stall_idle_s", lambda: 1.0)
+  sealed = tmp_path / "2026-10-20.tar.zst"
+  sealed.write_bytes(b"\x28\xb5\x2f\xfd" + b"\0" * 64)
+  tar = tmp_path / "2026-10-20.tar"
+  set_process_archive_members_store(
+    SyncTimedbArchiveMembersStore(str(tmp_path / "m"))
+  )
+  try:
+    t0 = time.monotonic()
+    ok = zc.decompress_compressed_to_tar(
+      str(sealed),
+      str(tar),
+      1,
+      remove_compressed=False,
+      restore_reason="corrupt_tar",
+      restore_caller="test",
+    )
+    elapsed = time.monotonic() - t0
+  finally:
+    set_process_archive_members_store(None)
+  assert ok is False
+  assert elapsed < 30, "idle kill, not the 60 s sleep"
+  assert not daily_tar_restore_in_progress_for_day("2026-10-20")
+  assert not os.path.exists(str(tar) + ".decomp.tmp")
+  assert sealed.exists()

@@ -11,6 +11,8 @@ Attributes:
   MAINT_HINTS_SCHEMA_VERSION: Attribute.
   MANIFEST_SCHEMA_VERSION: Attribute.
   QUEUE_DEAD_LETTER_SCHEMA_VERSION: Attribute.
+  SEALED_MEMBER_MAP_SCHEMA_VERSION: Schema of the per-day sealed member map
+    written beside the daily ``.tar.zst`` (``sealed_member_map`` kind).
   PERSISTENCE_ARTIFACT_REGISTRY: Attribute.
   PERSISTENCE_CONTRACT_BASENAME: Attribute.
   SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION: Attribute.
@@ -74,6 +76,7 @@ QUEUE_DEAD_LETTER_SCHEMA_VERSION = 1
 ZERO_HOST_INGEST_MARK_SCHEMA_VERSION = 1
 FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION = 1
 JOB_STORE_SNAPSHOT_SCHEMA_VERSION = 1
+SEALED_MEMBER_MAP_SCHEMA_VERSION = 1
 
 LogFn = Callable[..., Any] | None
 
@@ -88,6 +91,7 @@ _KIND_SCHEMA_VERSION: dict[str, int] = {
   "zero_host_ingest_mark": ZERO_HOST_INGEST_MARK_SCHEMA_VERSION,
   "file_complete_ingest_mark": FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION,
   "job_store_snapshot": JOB_STORE_SNAPSHOT_SCHEMA_VERSION,
+  "sealed_member_map": SEALED_MEMBER_MAP_SCHEMA_VERSION,
 }
 _LIST_ENTRY_KINDS = frozenset(
   {
@@ -107,6 +111,7 @@ _DICT_ENTRIES_KINDS = frozenset(
   {
     "zero_host_ingest_mark",
     "file_complete_ingest_mark",
+    "sealed_member_map",
   }
 )
 _DICT_PASSTHROUGH_KINDS = frozenset(
@@ -116,6 +121,7 @@ _DICT_PASSTHROUGH_KINDS = frozenset(
     "day_raw_removal",
     "zero_host_ingest_mark",
     "file_complete_ingest_mark",
+    "sealed_member_map",
   }
 )
 _KIND_LOAD_DEFAULT_FACTORY: dict[str, Callable[[], Any]] = {
@@ -128,6 +134,7 @@ _KIND_LOAD_DEFAULT_FACTORY: dict[str, Callable[[], Any]] = {
   "day_raw_removal": lambda: None,
   "zero_host_ingest_mark": lambda: {"entries": {}},
   "file_complete_ingest_mark": lambda: {"entries": {}},
+  "sealed_member_map": lambda: None,
   "job_store_snapshot": lambda: {
     "ingest": {},
     "lists": {},

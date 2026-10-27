@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -298,8 +298,11 @@ def test_reconstruct_enqueue_skips_append_until_ingest_complete():
 
   reset_day_remainder_for_tests()
   client = _store()
+  # DE-32: the remainder counts the path's daily-tar day (filename epoch),
+  # the same function the decrement uses.
+  epoch = int(datetime(2026, 8, 20, 12).timestamp())
   plan = jr.classify_closed_raw_path(
-    "/archive/host/raw",
+    f"/archive/host/{epoch}",
     tgz_archive_dir="/daily",
     size=100,
     mtime_ns=200,

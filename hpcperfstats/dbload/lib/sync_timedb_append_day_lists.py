@@ -267,6 +267,78 @@ def day_remainder(kind: str, day: str) -> int:
     return int(bucket.get(key, 0))
 
 
+def remainder_day_for_identity(identity: str) -> str | None:
+  """
+  Return the calendar day that owns ``identity`` in the remainder counter.
+
+  DE-32: increments and decrements must agree, and must agree with the
+  day-close entry gate (``_calendar_day_for_ingest_path``). All three use the
+  daily-tar day of the raw path: filename epoch, else mtime; never the parsed
+  first sample, which can fall on another day than the file name.
+
+  Args:
+    identity (str): Ingest or append identity (bare path; a legacy
+      ``path|size|mtime`` suffix is stripped).
+
+  Returns:
+    str | None: ``YYYY-MM-DD``, or None when unresolved.
+
+  Examples:
+    >>> remainder_day_for_identity("/no/such/dir/not-an-epoch") is None
+    True
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    _derive_stats_path_date,
+  )
+
+  text = str(identity or "")
+  path = text.rsplit("|", 2)[0] if "|" in text else text
+  if not path:
+    return None
+  day = _derive_stats_path_date(path, None)
+  return day.isoformat() if day is not None else None
+
+
+def rebuild_day_remainders_from_job_store(job_store: Any) -> dict[str, int]:
+  """
+  Recount queued plus in-flight ingest and append jobs per day from the store.
+
+  The counter is memory-only; after a restart it read zero while the persisted
+  job store still held work (DE-32). Call once at boot, before day close
+  claims, so per-day gates see the real backlog.
+
+  Args:
+    job_store (Any): ``SyncTimedbJobStore`` (needs ``ingest_identities``,
+      ``list_slice`` and the ``_inflight`` map).
+
+  Returns:
+    dict[str, int]: ``{"ingest": n, "append": n}`` identities counted.
+
+  Examples:
+    >>> rebuild_day_remainders_from_job_store(None)
+    {'ingest': 0, 'append': 0}
+  """
+  counts = {"ingest": 0, "append": 0}
+  with _DAY_REMAINDER_LOCK:
+    _DAY_APPEND_LEFT.clear()
+    _DAY_INGEST_LEFT.clear()
+  if job_store is None:
+    return counts
+  inflight = getattr(job_store, "_inflight", None) or {}
+  queued = {
+    "ingest": list(job_store.ingest_identities() or []),
+    "append": list(job_store.list_slice("append", 0, -1) or []),
+  }
+  for kind, idents in queued.items():
+    seen = set(idents) | set((inflight.get(kind) or {}).keys())
+    for ident in seen:
+      day = remainder_day_for_identity(ident)
+      if day:
+        note_day_remainder(kind, day, 1)
+        counts[kind] += 1
+  return counts
+
+
 def reset_day_remainder_for_tests() -> None:
   """
   Clear process-local day remainder counts.

@@ -559,3 +559,51 @@ def test_suspend_non_work_wait_touches_idle_progress(monkeypatch):
     assert prog.get_ingest_last_progress_mono() == 80.0
   finally:
     prog.end_ingest_progress(toks)
+
+
+def test_repeated_timeout_reaches_dead_letter(tmp_path, monkeypatch):
+  """DE-5: idle-kill timeouts are counted; past the ceiling they dead-letter.
+
+  Previously every packed ``outcome=timeout`` requeued without a bump and
+  without any per-path counter, so a file that always times out livelocked.
+  """
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_store as jq,
+    sync_timedb_queue_orchestrator as qo,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
+
+  monkeypatch.setattr(qo, "_log_orchestrator_ingest_timeout", lambda **k: None)
+  store = SyncTimedbJobStore("")
+  identity = "/raw/host/1700000000"
+  outcomes = []
+
+  class _Ready:
+    def ready(self):
+      return True
+
+    def get(self, timeout=0):
+      return (identity, False, False, 1.0, {"outcome": "timeout"})
+
+  for i in range(jq.job_max_attempts()):
+    claim = jq.ClaimedJob(
+      kind=jq.JOB_KIND_INGEST,
+      identity=identity,
+      owner_token=f"n:h:b:{i}",
+      deadline=1.0,
+      score=5.0,
+    )
+    qo._drain_ingest_ready(
+      store,
+      inflight={identity: _Ready()},
+      claims={identity: claim},
+      tgz_archive_dir=str(tmp_path),
+      archive_data_dir=str(tmp_path),
+      log_fn=lambda *a, **k: None,
+    )
+    outcomes.append(
+      jq._dead_letter_index(str(tmp_path)).get(("ingest", identity))
+    )
+  assert outcomes[:-1] == [None] * (jq.job_max_attempts() - 1)
+  assert outcomes[-1] is not None
+  assert outcomes[-1]["reason"] == "timeout:timeout"

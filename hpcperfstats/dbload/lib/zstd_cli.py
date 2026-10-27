@@ -619,6 +619,7 @@ def _decompress_to_path(
   Raises:
     ValueError: Raised when ``_decompress_to_path`` hits a ``ValueError``
     failure path.
+    ProgressIdleError: zstd wrote no output bytes for the idle window.
     subprocess.CalledProcessError: Raised when ``_decompress_to_path`` hits a
     ``subprocess.CalledProcessError`` failure path.
 
@@ -645,12 +646,20 @@ def _decompress_to_path(
     raise ValueError(
       f"unsupported compressed archive format: {compressed_path}"
     )
-  result = _run_zstd(
-    cmd,
+  from hpcperfstats.dbload.lib.sync_timedb_progress_io import (
+    run_subprocess_with_progress,
+  )
+
+  # DE-8: output-byte progress + idle kill (process group SIGTERM, grace,
+  # SIGKILL, reap) so a hung restore cannot hold the restore token forever.
+  result = run_subprocess_with_progress(
+    _maybe_wrap_zstd_cmd(cmd, apply_priority_wrap=True),
+    progress_path=output_path,
+    stage="zstd_decompress",
+    metric="bytes",
     stdout=subprocess.DEVNULL,
     stderr=subprocess.PIPE,
     text=True,
-    check=False,
   )
   if result.returncode != 0:
     raise subprocess.CalledProcessError(
@@ -824,7 +833,7 @@ def decompress_compressed_to_tar(
       pass
     try:
       _decompress_to_path(compressed_path, tmp_path, thread_count)
-    except OSError, subprocess.CalledProcessError, ValueError:
+    except OSError, subprocess.CalledProcessError, ValueError, RuntimeError:
       try:
         if os.path.exists(tmp_path):
           os.remove(tmp_path)
@@ -1437,7 +1446,9 @@ def zstd_compress_tar_to_file(
           _kill_process_group(proc)
           drain_subprocess_pipes(proc, timeout_s=0.5)
           try:
-            if os.path.isfile(zst_path):
+            # DL-8: only a temp output may be removed; a live sealed
+            # ``YYYY-MM-DD.tar.zst`` passed by mistake must survive the yield.
+            if os.path.isfile(zst_path) and not zst_path.endswith(".tar.zst"):
               os.remove(zst_path)
           except OSError:
             pass

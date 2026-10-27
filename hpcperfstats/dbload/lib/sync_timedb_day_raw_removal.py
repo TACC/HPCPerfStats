@@ -7,6 +7,8 @@ Attributes:
   MANIFEST_VERSION: Attribute.
   QUARANTINE_SKIP_REASONS: Attribute.
   QUARANTINE_SKIP_STATUSES: Attribute.
+  REPAIR_REQUIRED_STATUSES: Non-terminal, non-retryable statuses that block
+    ``phase=done`` until repaired (DE-25).
   RETRYABLE_SKIP_REASONS: Attribute.
   RETRYABLE_SKIP_STATUSES: Attribute.
   VERIFY_STAGE_NONE: Attribute.
@@ -46,6 +48,8 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   filter_remaining_raw_aligned_to_tar,
   quarantine_dir_for_archive,
   remaining_raw_by_gz_has_paths_on_disk,
+  remove_pre_restore_tar_copies,
+  remove_salvage_backups_after_parity,
   remove_verified_uncompressed_daily_tars,
   stats_file_is_active_segment,
   stats_path_aligned_to_daily_tar,
@@ -58,6 +62,11 @@ from hpcperfstats.dbload.lib.sync_timedb_ingest_readiness import (
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
   load_persistence_document,
   save_persistence_document,
+)
+from hpcperfstats.dbload.lib.sync_timedb_sealed_member_map import (
+  archive_identity,
+  raw_path_in_sealed_members,
+  sealed_members_lookup,
 )
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
   SessionSingleFlightExecutor,
@@ -96,6 +105,16 @@ RETRYABLE_SKIP_STATUSES = frozenset(
 )
 QUARANTINE_SKIP_REASONS = frozenset({"quarantine"})
 QUARANTINE_SKIP_STATUSES = frozenset({"skipped_quarantine"})
+# DE-25: on-disk raw in these statuses is neither verified nor terminal. It
+# needs a repair (reseal, stable fingerprint, segment rotation) and must keep
+# the day out of ``phase=done``; only quarantine is terminal.
+REPAIR_REQUIRED_STATUSES = frozenset(
+  {
+    "skipped_seal_invalid",
+    "skipped_fingerprint_changed",
+    "skipped_active_segment",
+  }
+)
 KICK_NO_HANDOFF_PROGRESS = frozenset({"noop", "quarantine_terminal"})
 
 VERIFY_STAGE_NONE = "none"
@@ -551,56 +570,6 @@ class _DayRawRemovalState:
       )
     return True
 
-  def promote_phase_if_verify_stage_ahead(self) -> bool:
-    """
-    Promote phase when verify_stage already past but phase stuck at verifying.
-
-    05-30 operator shape: ``phase=verifying`` +
-      ``verify_stage=post_seal_complete``
-    caused silent day-close re-enqueue (no delete start).
-
-    PRE_SEAL cousin: sealed day stuck ``phase=verifying`` +
-      ``pre_seal_complete``
-    with only ingest-waiting retryables - promote so handoff/delete eligibility
-    matches the POST_SEAL trap fix (do not silent-reenqueue forever).
-
-    Returns:
-      bool: True or False for this check.
-
-    Examples:
-      >>> _DayRawRemovalState().promote_phase_if_verify_stage_ahead()
-    """
-    if self.verification_complete():
-      return False
-    stage = self.verify_stage()
-    promote_reason = ""
-    if stage == VERIFY_STAGE_POST_SEAL:
-      promote_reason = "verify_stage already post_seal"
-    elif stage == VERIFY_STAGE_PRE_SEAL:
-      if not self._only_waiting_on_ingest_blocks_completion():
-        return False
-      from hpcperfstats.dbload.lib.archive_compress import (
-        compressed_sibling_paths,
-      )
-
-      zst_path, gz_path = compressed_sibling_paths(self.tar_path)
-      if not (os.path.isfile(zst_path) or os.path.isfile(gz_path)):
-        return False
-      promote_reason = "verify_stage pre_seal + sealed + waiting_on_ingest"
-    else:
-      return False
-    with self._lock:
-      self._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
-      _manifest_snap = copy.deepcopy(self._manifest)
-    _save_manifest(self._manifest_path, _manifest_snap)
-    if self.log_fn:
-      self.log_fn(
-        "Day raw removal promote phase=verification_complete "
-        f"({promote_reason}) day={self.day_date.isoformat()}",
-        flush=True,
-      )
-    return True
-
   def _resolve_maintenance_snapshot(self) -> Any:
     """
     Internal helper to resolve the maintenance snapshot.
@@ -1035,29 +1004,184 @@ class _DayRawRemovalState:
       >>> _DayRawRemovalState()._all_closed_raw_terminal_or_gone()
     """
     if self.verification_complete() and not self.delete_phase_done():
-      for _path, entry in self._manifest_entries_on_disk():
-        if self._entry_is_quarantine_terminal_skip(entry):
-          continue
-        if self._entry_is_retryable_skip(entry):
-          return False
-        if str(entry.get("status") or "") == "verified" and not entry.get(
-          "deleted"
-        ):
-          return False
-      return True
+      return not any(
+        self._entry_blocks_done(path, entry)
+        for path, entry in self._manifest_entries_on_disk()
+      )
     with self._lock:
       entries = dict(self._manifest.get("entries", {}))
     for path in self._closed_raw_paths_on_disk():
       if not os.path.isfile(path):
         continue
       entry = entries.get(path)
-      if entry is None:
-        return False
-      if self._entry_is_quarantine_terminal_skip(entry):
-        continue
-      if self._entry_is_retryable_skip(entry):
+      if entry is None or self._entry_blocks_done(path, entry):
         return False
     return True
+
+  def _entry_blocks_done(self, path: str, entry: dict[str, Any]) -> bool:
+    """
+    Return True when an on-disk manifest entry keeps the day out of done.
+
+    DE-25: only ``skipped_quarantine`` is terminal. Retryable skips, verified
+    entries still on disk, and ``REPAIR_REQUIRED_STATUSES`` all block, except
+    a segment that is *still* the host's active segment (it is not closed raw
+    yet, so it never blocked day close).
+
+    Args:
+      path (str): Raw path (exists on disk).
+      entry (dict[str, Any]): Its manifest entry.
+
+    Returns:
+      bool: True when ``phase=done`` must not be written.
+
+    Examples:
+      >>> _DayRawRemovalState()._entry_blocks_done(  # doctest: +SKIP
+      ...   "/r/1", {"status": "skipped_seal_invalid"}
+      ... )
+      True
+    """
+    if self._entry_is_quarantine_terminal_skip(entry):
+      return False
+    if str(entry.get("status") or "") == "skipped_active_segment":
+      return not stats_file_is_active_segment(path)
+    return True
+
+  def reopen_done_with_blocking_raw_on_disk(self) -> bool:
+    """
+    Reopen a ``phase=done`` manifest that still has blocking raw on disk.
+
+    DE-25: older releases wrote ``phase=done`` with ``skipped_seal_invalid``
+    (and friends) raw still on disk; the ``phase_done_sealed`` shortcut then
+    skipped reclassify and seal forever (01: 31,637, 04: 57,485 entries).
+    Reopen to ``verification_complete`` and drop ``verify_stage`` back to
+    pre-seal so the next claim reseals and re-runs post-seal parity.
+
+    Returns:
+      bool: True when the manifest was reopened.
+
+    Examples:
+      >>> _DayRawRemovalState().reopen_done_with_blocking_raw_on_disk()
+      False
+    """
+    if self.phase() != PHASE_DONE:
+      return False
+    blocking = [
+      path
+      for path, entry in self._manifest_entries_on_disk()
+      if self._entry_blocks_done(path, entry)
+    ]
+    if not blocking:
+      return False
+    with self._lock:
+      self._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
+      if self._manifest.get("verify_stage") == VERIFY_STAGE_POST_SEAL:
+        self._manifest["verify_stage"] = VERIFY_STAGE_PRE_SEAL
+      self._manifest["completed_at"] = None
+      self._manifest["reverify_cycles"] = (
+        int(self._manifest.get("reverify_cycles") or 0) + 1
+      )
+      _manifest_snap = copy.deepcopy(self._manifest)
+    _save_manifest(self._manifest_path, _manifest_snap)
+    if self.log_fn:
+      self.log_fn(
+        f"Day raw removal reopen done day={self.day_date.isoformat()} "
+        f"blocking_on_disk={len(blocking)} reason=blocking_raw_on_disk",
+        flush=True,
+      )
+    return True
+
+  def reopen_verify_if_tar_grew_since_verify(self) -> bool:
+    """
+    Reopen verify when the open tar changed after pre-seal verify (late raw).
+
+    DE-26: in ``verification_complete`` / ``deleting`` / ``done`` the closed
+    raw census is manifest-only (no find on giant days, H22), so raw that
+    arrived and was appended after verify was never classified and the day
+    could close around it. An append changes the tar identity (it may not
+    grow the size: GNU tar fills the trailing record padding first), so one
+    ``stat`` (T0) against the identity recorded at verify detects it; verify
+    then reruns once. A day-close rewrite (merge, dedupe) costs at most one
+    extra verify per mutation.
+
+    Returns:
+      bool: True when the manifest went back to ``verifying``.
+
+    Examples:
+      >>> _DayRawRemovalState().reopen_verify_if_tar_grew_since_verify()
+      False
+    """
+    with self._lock:
+      recorded = self._manifest.get("verified_tar_identity")
+      phase = str(self._manifest.get("phase") or "")
+    if not isinstance(recorded, dict) or phase not in (
+      PHASE_VERIFICATION_COMPLETE,
+      PHASE_DELETING,
+      PHASE_DONE,
+    ):
+      return False
+    live = archive_identity(self.tar_path)
+    if live is None or live == recorded:
+      return False
+    with self._lock:
+      self._manifest["phase"] = PHASE_VERIFYING
+      self._manifest["verify_stage"] = VERIFY_STAGE_NONE
+      self._manifest.pop("verified_tar_identity", None)
+      # Rebuild the classify list so late raw is included (a stale cursor
+      # would "complete" without seeing it). Late raw is progress, not a
+      # repair loop, so it does not count toward ``reverify_cycles``.
+      self._manifest.pop("pre_seal_classify_index", None)
+      self._manifest.pop("pre_seal_classify_paths", None)
+      _manifest_snap = copy.deepcopy(self._manifest)
+    _save_manifest(self._manifest_path, _manifest_snap)
+    if self.log_fn:
+      self.log_fn(
+        f"Day raw removal reopen verify day={self.day_date.isoformat()} "
+        f"reason=tar_changed_since_verify size={live['size']} "
+        f"was={recorded.get('size')}",
+        flush=True,
+      )
+    return True
+
+  def reverify_exhausted(self) -> bool:
+    """
+    Return True when repair reopens repeated without a passing parity (A7).
+
+    Each reopen (DE-25 frozen done, DE-26 late raw) bumps
+    ``reverify_cycles``; a passing post-seal parity resets it. Past
+    ``sync_noprogress_escalate_after`` the day stops looping silently and
+    surfaces as ``verify_failed`` (dead-letter cooldown, then a visible
+    terminal ERROR).
+
+    Returns:
+      bool: True when the bound is exceeded.
+
+    Examples:
+      >>> _DayRawRemovalState().reverify_exhausted()  # doctest: +SKIP
+      False
+    """
+    with self._lock:
+      cycles = int(self._manifest.get("reverify_cycles") or 0)
+    return cycles > int(cfg.get_sync_noprogress_escalate_after())
+
+  def note_sealed_archive_changed(self) -> None:
+    """
+    Drop ``verify_stage`` to pre-seal after the sealed archive was rewritten.
+
+    A post-seal parity result belongs to one sealed file; a reseal makes it
+    stale, so post-seal verify must run again before any delete or tar drop.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _DayRawRemovalState().note_sealed_archive_changed()  # doctest: +SKIP
+    """
+    with self._lock:
+      if self._manifest.get("verify_stage") != VERIFY_STAGE_POST_SEAL:
+        return
+      self._manifest["verify_stage"] = VERIFY_STAGE_PRE_SEAL
+      _manifest_snap = copy.deepcopy(self._manifest)
+    _save_manifest(self._manifest_path, _manifest_snap)
 
   def _unmanifested_closed_raw_paths(self) -> list[str]:
     """
@@ -1364,11 +1488,15 @@ class _DayRawRemovalState:
       PHASE_VERIFICATION_COMPLETE,
     ):
       return 0
-    retryable_paths = (
-      self._blocking_manifest_paths_on_disk()
-      if not self._manifest_verified_pending_count()
-      else self._manifest_retryable_paths_on_disk()
-    )
+    # DE-13: reclassify every blocking non-verified entry; a pending (for
+    # example ``delete_failed``) verified entry no longer suppresses it.
+    with self._lock:
+      entries_now = dict(self._manifest.get("entries", {}))
+    retryable_paths = [
+      path
+      for path in self._blocking_manifest_paths_on_disk()
+      if str((entries_now.get(path) or {}).get("status") or "") != "verified"
+    ]
     if not retryable_paths:
       return 0
     if not ensure_daily_tar_restored_for_append(
@@ -1430,6 +1558,14 @@ class _DayRawRemovalState:
         upgraded += 1
       else:
         still_skipped += 1
+        # DE-13: replace a stale repair-required status with the current
+        # classification so a now-retryable path is handed off, not frozen.
+        with self._lock:
+          prior = self._manifest.get("entries", {}).get(path)
+          prior_status = str((prior or {}).get("status") or "")
+        if prior_status in REPAIR_REQUIRED_STATUSES and status != prior_status:
+          self._record_entry(path, zst_path, status, reason)
+          upgraded += 1
     if upgraded:
       with self._lock:
         _manifest_snap = copy.deepcopy(self._manifest)
@@ -1638,9 +1774,9 @@ class _DayRawRemovalState:
       if not os.path.isfile(path):
         continue
       entry = entries.get(path)
-      if isinstance(entry, dict) and self._entry_is_retryable_skip(entry):
+      if isinstance(entry, dict) and self._entry_blocks_done(path, entry):
         retryable_count += 1
-    # F15: do not mark PHASE_DONE while retryable closed raw remains on disk.
+    # F15 / DE-25: no PHASE_DONE while blocking closed raw remains on disk.
     if retryable_count > 0:
       if self.log_fn:
         self.log_fn(
@@ -2270,6 +2406,8 @@ class _DayRawRemovalState:
     with self._lock:
       self._manifest["verify_stage"] = VERIFY_STAGE_PRE_SEAL
       self._manifest["phase"] = PHASE_VERIFICATION_COMPLETE
+      # DE-26: T0 marker for "the tar changed after this verify" (late raw).
+      self._manifest["verified_tar_identity"] = archive_identity(self.tar_path)
       self._manifest.pop("pre_seal_classify_index", None)
       self._manifest.pop("pre_seal_classify_paths", None)
       _manifest_snap = copy.deepcopy(self._manifest)
@@ -2304,6 +2442,7 @@ class _DayRawRemovalState:
     if ok:
       with self._lock:
         self._manifest["verify_stage"] = VERIFY_STAGE_POST_SEAL
+        self._manifest["reverify_cycles"] = 0  # real progress
         _manifest_snap = copy.deepcopy(self._manifest)
       _save_manifest(self._manifest_path, _manifest_snap)
       if self.log_fn:
@@ -2311,6 +2450,10 @@ class _DayRawRemovalState:
           f"Day raw removal post-seal verify complete day={self.day_date.isoformat()}",
           flush=True,
         )
+      # DL-1: the sealed copy now equals the tar, so a pre-restore copy kept
+      # by a corrupt-tar restore holds nothing that is not sealed.
+      remove_pre_restore_tar_copies(self.tar_path, log_fn=self.log_fn)
+      remove_salvage_backups_after_parity(self.tar_path, log_fn=self.log_fn)
     return ok
 
   def _batch_delete_completion_context(self, entries: Any) -> Any:
@@ -2396,6 +2539,15 @@ class _DayRawRemovalState:
       if phase not in (PHASE_VERIFICATION_COMPLETE, PHASE_DELETING):
         return 0
       self._manifest["phase"] = PHASE_DELETING
+    # INV-COPY (DL-2/DL-3): a stored ``verified`` status is not proof. Delete
+    # only when the raw file is a same-size member of the sealed archive that
+    # is on disk now, answered by the persisted sealed member map (T0: one
+    # stat + dict lookups; never a zst stream on this path).
+    sealed_members = None
+    for sealed in compressed_sibling_paths(self.tar_path):
+      if os.path.isfile(sealed):
+        sealed_members = sealed_members_lookup(sealed)
+        break
     for path in sorted(entries.keys()):
       if max_deletes and deleted >= max_deletes:
         break
@@ -2444,6 +2596,18 @@ class _DayRawRemovalState:
           if isinstance(entry, dict):
             entry["delete_deferred"] = "active_ingest"
         continue
+      if sealed_members is None or not raw_path_in_sealed_members(
+        path, sealed_members
+      ):
+        with self._lock:
+          entry = entries.get(path)
+          if isinstance(entry, dict):
+            if sealed_members is None:
+              entry["delete_deferred"] = "sealed_copy_unproven"
+            else:
+              entry["status"] = "skipped_not_in_archive"
+              entry["reason"] = "not_in_sealed_archive_at_delete"
+        continue
       if self.log_fn:
         self.log_fn(
           "removing stats file (day raw removal preflight): " + path,
@@ -2491,6 +2655,8 @@ class _DayRawRemovalState:
         if completion["unmanifested_paths"]:
           with self._lock:
             self._manifest["phase"] = PHASE_VERIFYING
+            # DE-26: late raw must be classified again before seal.
+            self._manifest["verify_stage"] = VERIFY_STAGE_NONE
             _manifest_snap = copy.deepcopy(self._manifest)
           _save_manifest(self._manifest_path, _manifest_snap)
           return deleted
@@ -2554,168 +2720,6 @@ def day_raw_delete_safe_during_chunk(
   if delete_day is None:
     return False
   return delete_day.isoformat() != chunk_calendar_day_hint
-
-
-def run_supervisor_day_raw_removal_delete_pass(
-  day_raw_removal: Any,
-  day_close_manifest: Any,
-  *,
-  chunk_in_progress: bool,
-  chunk_calendar_day_hint: str | None = None,
-  finalize_day_close_delete: Callable[[str], None],
-  sleep_fn: Callable[[float], None],
-  log_chunk_wait: Callable[[str | None, int], None] | None = None,
-  on_delete_batch_begin: Callable[[], None] | None = None,
-  on_delete_batch_end: Callable[[], None] | None = None,
-) -> bool:
-  """
-  One supervisor delete-driver pass; tar-drop runs before batch-delete chunk.
-
-    wait.
-
-  Returns True when the caller should keep spinning the delete driver.
-
-  Args:
-    day_raw_removal (Any): Day raw removal passed to this helper.
-    day_close_manifest (Any): Day close manifest passed to this helper.
-    chunk_in_progress (bool): Boolean flag for chunk in progress.
-    chunk_calendar_day_hint (Optional[str]): Chunk calendar day hint, or None
-    when absent.
-    finalize_day_close_delete (Callable[[str], None]): Finalize day close
-    delete.
-    sleep_fn (Callable[[float], None]): Sleep fn.
-    log_chunk_wait (Optional[Callable[[Optional[str], int], None]]): Log chunk
-    wait, or None when absent.
-    on_delete_batch_begin (Optional[Callable[[], None]]): On delete batch
-    begin, or None when absent.
-    on_delete_batch_end (Optional[Callable[[], None]]): On delete batch end,
-    or None when absent.
-
-  Returns:
-    bool: True or False for this check.
-
-  Examples:
-    >>> run_supervisor_day_raw_removal_delete_pass(0)  # doctest: +SKIP
-  """
-  with janitorial_logging():
-    return _run_supervisor_day_raw_removal_delete_pass_inner(
-      day_raw_removal,
-      day_close_manifest,
-      chunk_in_progress=chunk_in_progress,
-      chunk_calendar_day_hint=chunk_calendar_day_hint,
-      finalize_day_close_delete=finalize_day_close_delete,
-      sleep_fn=sleep_fn,
-      log_chunk_wait=log_chunk_wait,
-      on_delete_batch_begin=on_delete_batch_begin,
-      on_delete_batch_end=on_delete_batch_end,
-    )
-
-
-def _run_supervisor_day_raw_removal_delete_pass_inner(
-  day_raw_removal: Any,
-  day_close_manifest: Any,
-  *,
-  chunk_in_progress: bool,
-  chunk_calendar_day_hint: str | None = None,
-  finalize_day_close_delete: Callable[[str], None],
-  sleep_fn: Callable[[float], None],
-  log_chunk_wait: Callable[[str | None, int], None] | None = None,
-  on_delete_batch_begin: Callable[[], None] | None = None,
-  on_delete_batch_end: Callable[[], None] | None = None,
-) -> bool:
-  """
-  Internal helper to run the supervisor day raw removal delete pass inner.
-
-  Args:
-    day_raw_removal (Any): Day raw removal passed to this helper.
-    day_close_manifest (Any): Day close manifest passed to this helper.
-    chunk_in_progress (bool): Boolean flag for chunk in progress.
-    chunk_calendar_day_hint (Optional[str]): Chunk calendar day hint, or None
-    when absent.
-    finalize_day_close_delete (Callable[[str], None]): Finalize day close
-    delete.
-    sleep_fn (Callable[[float], None]): Sleep fn.
-    log_chunk_wait (Optional[Callable[[Optional[str], int], None]]): Log chunk
-    wait, or None when absent.
-    on_delete_batch_begin (Optional[Callable[[], None]]): On delete batch
-    begin, or None when absent.
-    on_delete_batch_end (Optional[Callable[[], None]]): On delete batch end,
-    or None when absent.
-
-  Returns:
-    bool: True or False for this check.
-
-  Examples:
-    >>> _run_supervisor_day_raw_removal_delete_pass_inner(0)  # doctest: +SKIP
-  """
-  if day_raw_removal is None or not day_raw_removal.enabled:
-    return False
-  reopen_fn = getattr(
-    day_raw_removal,
-    "reopen_done_days_with_verified_on_disk",
-    lambda: 0,
-  )
-  made_progress = reopen_fn() > 0
-  needs_delete = day_raw_removal.any_needs_delete_phase()
-  needs_tar_drop = day_raw_removal.any_needs_tar_drop_finish()
-  if not needs_delete and not needs_tar_drop:
-    advance_fn = getattr(
-      day_raw_removal,
-      "advance_raw_removal_blockers",
-      lambda: False,
-    )
-    return bool(day_raw_removal.any_active_raw_removal_work() and advance_fn())
-  tar_drop_targets: list[str] = []
-  if needs_tar_drop:
-    tar_drop_targets.extend(
-      day_raw_removal.days_needing_tar_drop_oldest_first()
-    )
-  for tar_norm in tar_drop_targets:
-    if day_raw_removal.try_finish_tar_drop_if_ready(tar_norm):
-      finalize_day_close_delete(tar_norm)
-      made_progress = True
-  if tar_drop_targets and getattr(day_raw_removal, "log_fn", None):
-    still_present = [t for t in tar_drop_targets if os.path.isfile(t)]
-    if still_present:
-      day_raw_removal.log_fn(
-        f"tar_drop_deferred oldest={still_present[0]} count={len(still_present)}",
-        flush=True,
-      )
-  if needs_delete:
-    if chunk_in_progress and not day_raw_delete_safe_during_chunk(
-      day_raw_removal,
-      chunk_calendar_day_hint,
-    ):
-      blocking_tar = day_raw_removal.oldest_day_needing_delete()
-      sleep_fn(0.1)
-      if log_chunk_wait is not None:
-        log_chunk_wait(blocking_tar, len(tar_drop_targets))
-      return True
-    if on_delete_batch_begin is not None:
-      on_delete_batch_begin()
-    try:
-      for tar_norm in day_raw_removal.days_needing_delete_oldest_first():
-        if day_raw_removal.phase(tar_norm) == PHASE_VERIFICATION_COMPLETE:
-          day_raw_removal.begin_deleting(tar_norm)
-        deleted = day_raw_removal.apply_batch_delete(tar_norm)
-        if deleted:
-          made_progress = True
-        if day_raw_removal.delete_phase_done(tar_norm):
-          finalize_day_close_delete(tar_norm)
-          made_progress = True
-          continue
-        if (
-          deleted == 0
-          and day_raw_removal.needs_delete_phase(tar_norm)
-          and not day_raw_removal.delete_phase_done(tar_norm)
-        ):
-          continue
-    finally:
-      if on_delete_batch_end is not None:
-        on_delete_batch_end()
-  return bool(
-    needs_delete and day_raw_removal.any_needs_delete_phase() and made_progress
-  )
 
 
 def remaining_raw_by_gz_blocking_tar_drop(
@@ -2933,6 +2937,11 @@ class DayRawRemovalCoordinator:
     """
     tar_norm = os.path.normpath(tar_path)
     with self._days_lock:
+      cached = self._days.get(tar_norm)
+    if cached is not None:
+      cached.reopen_verify_if_tar_grew_since_verify()
+      return cached
+    with self._days_lock:
       state = self._days.get(tar_norm)
       if state is not None:
         return state
@@ -2950,7 +2959,12 @@ class DayRawRemovalCoordinator:
         get_allow_day_scoped_closed_raw=self.get_allow_day_scoped_closed_raw,
       )
       self._days[tar_norm] = state
-      return state
+    # DE-25: frozen done days (written by older releases) reopen once per
+    # process when blocking raw is still on disk; DE-26: late raw appended
+    # after verify reopens verify (T0 size check on every lookup).
+    if not state.reopen_verify_if_tar_grew_since_verify():
+      state.reopen_done_with_blocking_raw_on_disk()
+    return state
 
   def phase(self, tar_path: str) -> str:
     """
@@ -3013,23 +3027,6 @@ class DayRawRemovalCoordinator:
       >>> DayRawRemovalCoordinator().post_seal_verification_complete("x")
     """
     return self._get_or_create_day(tar_path).post_seal_verification_complete()
-
-  def promote_phase_if_verify_stage_ahead(self, tar_path: str) -> bool:
-    """
-    Promote phase if verify stage ahead.
-
-    Args:
-      tar_path (str): String for tar path.
-
-    Returns:
-      bool: True or False for this check.
-
-    Examples:
-      >>> DayRawRemovalCoordinator().promote_phase_if_verify_stage_ahead("x")
-    """
-    return self._get_or_create_day(
-      tar_path
-    ).promote_phase_if_verify_stage_ahead()
 
   def should_handoff_before_seal(self, tar_path: str) -> bool:
     """
@@ -3314,40 +3311,6 @@ class DayRawRemovalCoordinator:
       ):
         reopened += 1
     return reopened
-
-  def advance_raw_removal_blockers(self) -> bool:
-    """
-    Kick verify/quarantine for days that block startup drain without delete.
-
-      work.
-
-    Returns:
-      bool: True or False for this check.
-
-    Examples:
-      >>> DayRawRemovalCoordinator().advance_raw_removal_blockers()
-    """
-    if not self.enabled:
-      return False
-    progressed = False
-    with self._days_lock:
-      states = list(self._days.values())
-    for state in states:
-      if not state.has_active_raw_removal_work():
-        continue
-      if state._async_verify_in_flight():
-        continue
-      if not state.verification_complete() or state.phase() == PHASE_VERIFYING:
-        self.start_async_verify(state.tar_path)
-        progressed = True
-        continue
-      kick = self.kick_closed_raw_unblock(
-        state.tar_path,
-        reason="startup_drain",
-      )
-      if kick not in KICK_NO_HANDOFF_PROGRESS:
-        progressed = True
-    return progressed
 
   def blocking_startup_drain_summary(self) -> tuple[int, str]:
     """
@@ -3966,50 +3929,6 @@ class DayRawRemovalCoordinator:
       reason=reason or "day_close_wait_on_ingest",
     )
 
-  def discover_closed_raw_on_disk_handoffs(
-    self,
-  ) -> list[tuple[str, list[str]]]:
-    """
-    Boot-time handoff for days with closed raw blockers (narrow path lists).
-
-    Returns:
-      List[Tuple[str, List[str]]]: List[Tuple[str, List[str]]] produced by
-      this call.
-
-    Examples:
-      >>> DayRawRemovalCoordinator().discover_closed_raw_on_disk_handoffs()
-    """
-    if not self.enabled:
-      return []
-    manifest_dir = day_removal_manifest_dir(self.archive_data_dir)
-    if not os.path.isdir(manifest_dir):
-      return []
-    handoffs: list[tuple[str, list[str]]] = []
-    for fname in sorted(os.listdir(manifest_dir)):
-      if not fname.endswith(".json"):
-        continue
-      tar_path = os.path.join(
-        self.tgz_archive_dir,
-        fname.replace(".json", ".tar"),
-      )
-      if not os.path.isfile(tar_path) and not os.path.isfile(tar_path + ".zst"):
-        continue
-      tar_norm = os.path.normpath(tar_path)
-      state = self._get_or_create_day(tar_path)
-      needs_kick = (
-        state.needs_ghost_delete_retry()
-        or self.needs_verify_for_closed_raw_block(tar_path)
-        or (not state.delete_phase_done() and not state.verification_complete())
-      )
-      paths: list[str] = []
-      if needs_kick or state.should_handoff_day_close_to_ingest():
-        paths = self.paths_for_closed_raw_handoff_requeue(tar_path)
-        needs_kick = needs_kick or bool(paths)
-      if not needs_kick:
-        continue
-      handoffs.append((tar_norm, paths))
-    return handoffs
-
   def _call_on_handoff_to_ingest(
     self,
     tar_norm: str,
@@ -4079,46 +3998,6 @@ class DayRawRemovalCoordinator:
     tar_norm = os.path.normpath(tar_path)
     self._call_on_handoff_to_ingest(tar_norm, paths, reason)
     return paths
-
-  def discover_manifest_handoffs(self) -> list[tuple[str, list[str]]]:
-    """
-    Scan persisted per-day manifests for retryable-only handoff candidates.
-
-    Returns:
-      List[Tuple[str, List[str]]]: List[Tuple[str, List[str]]] produced by
-      this call.
-
-    Examples:
-      >>> DayRawRemovalCoordinator().discover_manifest_handoffs()
-    """
-    if not self.enabled:
-      return []
-    manifest_dir = day_removal_manifest_dir(self.archive_data_dir)
-    if not os.path.isdir(manifest_dir):
-      return []
-    handoffs: list[tuple[str, list[str]]] = []
-    for fname in sorted(os.listdir(manifest_dir)):
-      if not fname.endswith(".json"):
-        continue
-      day_iso = fname[:-5]
-      try:
-        day_date = date.fromisoformat(day_iso)
-      except ValueError:
-        continue
-      tar_path = os.path.normpath(
-        os.path.join(self.tgz_archive_dir, f"{day_date.isoformat()}.tar"),
-      )
-      if not os.path.isfile(tar_path):
-        zst_path, gz_path = compressed_sibling_paths(tar_path)
-        if not (os.path.isfile(zst_path) or os.path.isfile(gz_path)):
-          continue
-      state = self._get_or_create_day(tar_path)
-      if not state.should_handoff_day_close_to_ingest():
-        continue
-      paths = state.handoff_paths_for_ingest()
-      if paths:
-        handoffs.append((state.tar_path, paths))
-    return handoffs
 
   def _try_handoff_to_ingest(self, tar_path: str, *, reason: str) -> bool:
     """

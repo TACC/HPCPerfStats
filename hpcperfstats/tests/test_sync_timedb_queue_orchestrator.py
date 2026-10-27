@@ -352,7 +352,8 @@ def test_day_close_skips_tar_drop_when_post_seal_verify_fails(
   assert outcome == "incomplete_raw"
   assert tar.exists()
   assert zst.exists()
-  assert deleted == [str(tar)]
+  # A16 release-before-consume pass, then the post-seal delete pass.
+  assert deleted == [str(tar), str(tar)]
 
 
 def test_day_close_skips_tar_drop_when_post_seal_returns_false(
@@ -484,7 +485,11 @@ def test_day_close_inventory_shrink_after_delete_and_tar_drop(
 def test_day_close_reseals_after_raw_delete_when_zst_missing(
   tmp_path, monkeypatch
 ):
-  """3J: skip_merge delete clears raw; same claim reseals and tar_drops."""
+  """3J: skip_merge delete clears raw; same claim reseals and tar_drops.
+
+  The remaining raw here is not a tar member, so the DE-26 seal-with-raw gate
+  (all remaining raw already in the tar) keeps the first seal a no-op.
+  """
   from hpcperfstats.dbload.lib import (
     sync_timedb_job_reconstruct as jr,
     sync_timedb_queue_orchestrator as qo,
@@ -503,7 +508,7 @@ def test_day_close_reseals_after_raw_delete_when_zst_missing(
   monkeypatch.setattr(qo, "_day_close_min_age_hours", lambda: 0)
 
   def _seal(*_a, **k):
-    seal_calls.append(1)
+    seal_calls.append(k)
     # Mirror only_when_no_remaining_raw: skip compress while closed raw remains.
     if k.get("only_when_no_remaining_raw") and k.get("remaining_raw_by_gz"):
       return
@@ -553,6 +558,7 @@ def test_day_close_reseals_after_raw_delete_when_zst_missing(
   )
   assert outcome == "complete"
   assert len(seal_calls) >= 2
+  assert seal_calls[0]["only_when_no_remaining_raw"] is True
   assert not tar.exists()
   assert zst.exists()
 
@@ -705,7 +711,8 @@ def test_day_close_phase_done_dual_tar_drops_despite_stale_has_closed(
 
 
 def test_day_close_dc01_stage_order(tmp_path, monkeypatch):
-  """DC-01 order: pre-seal -> reconcile -> pre-seal -> dedupe -> seal -> post-seal -> delete."""
+  """DC-01 order: pre-seal -> reconcile -> pre-seal -> dedupe -> (A16 release
+  delete when a sealed copy exists) -> seal -> post-seal -> delete."""
   from hpcperfstats.dbload.lib import (
     sync_timedb_job_reconstruct as jr,
     sync_timedb_queue_orchestrator as qo,
@@ -784,6 +791,7 @@ def test_day_close_dc01_stage_order(tmp_path, monkeypatch):
     "reconcile",
     "pre_seal",
     "dedupe",
+    "delete",
     "seal",
     "post_seal",
     "delete",
@@ -1951,6 +1959,11 @@ def _drain_one_ingest_failure(monkeypatch, tmp_path, exc):
     "append_queue_dead_letter",
     lambda *a, **k: seen["letters"].append(k) or True,
   )
+  monkeypatch.setattr(
+    jq,
+    "upsert_queue_dead_letter",
+    lambda *a, **k: seen["letters"].append(k) or {"cycle": 1},
+  )
 
   class _Ready:
     def ready(self):
@@ -1982,7 +1995,11 @@ def _drain_one_ingest_failure(monkeypatch, tmp_path, exc):
 def test_drain_operational_error_acks_without_dead_letter(
   monkeypatch, tmp_path
 ):
-  """Postgres refusal is logged with detail and ACKed; discover re-enqueues."""
+  """Postgres refusal is an environment error: requeue, no attempt burn.
+
+  A8/DE-14 (was: ACK-drop, which lost old-day files until a boot rescan):
+  the claim goes back to the queue without a file-attempt bump or dead letter.
+  """
   from django.db.utils import OperationalError
 
   identity, seen = _drain_one_ingest_failure(
@@ -1990,8 +2007,8 @@ def test_drain_operational_error_acks_without_dead_letter(
     tmp_path,
     OperationalError("FATAL:  sorry, too many clients already"),
   )
-  assert seen["acks"] == [identity]
-  assert seen["requeues"] == []
+  assert seen["acks"] == []
+  assert seen["requeues"] == [identity]
   assert seen["bumps"] == []
   assert seen["letters"] == []
   assert any(
@@ -2033,7 +2050,11 @@ def test_drain_append_inflight_unavailable_requeues_without_attempt_bump(
 
 
 def test_drain_hard_archive_unavailable_still_retries(monkeypatch, tmp_path):
-  """Hard ArchiveMembersStoreUnavailableError still bumps attempt."""
+  """Any members-store unavailability defers without an attempt bump (A11).
+
+  DE-17: the generic ``store down`` message used to count as a file defect
+  and burned 5 attempts (345 of 449 ingest dead letters on hpcperfstats01).
+  """
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
     ArchiveMembersStoreUnavailableError,
   )
@@ -2043,10 +2064,10 @@ def test_drain_hard_archive_unavailable_still_retries(monkeypatch, tmp_path):
     tmp_path,
     ArchiveMembersStoreUnavailableError("store down after prewarm"),
   )
-  assert seen["bumps"] == [identity]
+  assert seen["bumps"] == []
   assert seen["requeues"] == [identity]
   assert seen["letters"] == []
-  assert any("ingest fail" in m for m in seen["logs"]), seen["logs"]
+  assert any("ingest defer" in m for m in seen["logs"]), seen["logs"]
 
 
 def test_sigterm_drains_and_releases_leases():
@@ -2716,15 +2737,45 @@ def test_day_close_closed_raw_handoff_false_yields_before_merge(
   assert unblocks and unblocks[0][1] == "day_close_wait_on_ingest"
 
 
-def _enqueue_append_job(archive_dir: str, identity: str = "/raw/closed.stats"):
-  """Put one append LIST job in an in-process store (H17 hot-append)."""
+@pytest.fixture(autouse=True)
+def _reset_day_remainder():
+  """Isolate the process-wide per-day remainder counter between tests."""
+  from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
+    reset_day_remainder_for_tests,
+  )
+
+  reset_day_remainder_for_tests()
+  yield
+  reset_day_remainder_for_tests()
+
+
+_APPEND_DAY_EPOCH = int(datetime(2020, 1, 1, 12, 0, 0).timestamp())
+
+
+def _enqueue_append_job(
+  archive_dir: str,
+  identity: str = f"/raw/host/{_APPEND_DAY_EPOCH}",
+):
+  """Put one 2020-01-01 append job in an in-process store (H17 hot-append).
+
+  Counts it in the per-day remainder like the production enqueue sites, since
+  DE-27 measures this day's appends rather than the global LIST depth.
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
+    note_day_remainder,
+    remainder_day_for_identity,
+  )
+
   store = SyncTimedbJobStore(archive_dir)
-  jq.enqueue_list_job(
+  if jq.enqueue_list_job(
     store,
     kind=jq.JOB_KIND_APPEND,
     identity=identity,
     dedupe=True,
-  )
+  ):
+    note_day_remainder(
+      jq.JOB_KIND_APPEND, remainder_day_for_identity(identity), 1
+    )
   return store
 
 

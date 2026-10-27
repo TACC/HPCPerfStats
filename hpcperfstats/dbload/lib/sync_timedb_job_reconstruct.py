@@ -27,6 +27,7 @@ from typing import Any
 from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
 from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
   note_day_remainder,
+  remainder_day_for_identity,
 )
 from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
   is_internal_archive_stats_path,
@@ -767,7 +768,7 @@ def enqueue_reconstruct_jobs_for_closed_path(
   root = str(archive_data_dir or "").strip()
 
   if plan.needs_ingest:
-    if root and jq.identity_in_queue_dead_letter(
+    if root and jq.dead_letter_blocked(
       root,
       kind=jq.JOB_KIND_INGEST,
       identity=plan.identity,
@@ -791,15 +792,13 @@ def enqueue_reconstruct_jobs_for_closed_path(
         score=score,
         fingerprint=plan.fingerprint or None,
       ):
-        note_day_remainder(
-          jq.JOB_KIND_INGEST,
-          day.isoformat(),
-          1,
-        )
+        remainder_day = remainder_day_for_identity(plan.identity)
+        if remainder_day:
+          note_day_remainder(jq.JOB_KIND_INGEST, remainder_day, 1)
       enqueued["ingest"] = True
 
   if plan.needs_append and not plan.needs_ingest:
-    if root and jq.identity_in_queue_dead_letter(
+    if root and jq.dead_letter_blocked(
       root,
       kind=jq.JOB_KIND_APPEND,
       identity=plan.path,
@@ -812,12 +811,9 @@ def enqueue_reconstruct_jobs_for_closed_path(
         identity=plan.path,
         dedupe=True,
       )
-      if added and plan.calendar_day is not None:
-        note_day_remainder(
-          jq.JOB_KIND_APPEND,
-          plan.calendar_day.isoformat(),
-          1,
-        )
+      remainder_day = remainder_day_for_identity(plan.path) if added else None
+      if remainder_day:
+        note_day_remainder(jq.JOB_KIND_APPEND, remainder_day, 1)
       enqueued["append"] = True
 
   return enqueued

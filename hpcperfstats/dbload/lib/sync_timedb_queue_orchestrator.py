@@ -39,6 +39,13 @@ Attributes:
     jobs (coordinator only; job-store LIST remains durable SoT).
   SHUTDOWN_DRAIN_TIMEOUT_S: Bounded wall clock for the cooperative drain.
   _IDLE_RECONSTRUCT_MIN_INTERVAL_S: Min seconds between idle reconstruct passes.
+  _DAY_CLOSE_STAGE_FAILS: ``(day, stage) -> consecutive failures`` (DE-28).
+  _DAY_CLOSE_STAGE_FAILS_LOCK: Guards ``_DAY_CLOSE_STAGE_FAILS``.
+  _EMPTY_TAR_MAX_BYTES: Size bound for the DE-11 empty-tar check.
+  _CODE_FAULT_REASONS: Dead-letter reasons (exception names) classified as
+    our own code faults; their terminal quarantine stays restorable.
+  _SEALED_ONLY_MANIFEST_PHASE_CACHE: ``(manifest_path, mtime_ns) -> phase``
+    for the DE-24 sealed-only daily-dir scan.
   _SHUTDOWN_REQUESTED: Event set by ``SIGTERM``/``SIGINT`` handlers.
   _TRANSIENT_DAY_CLOSE_OUTCOMES: day_close results that requeue without
     burning a retry attempt.
@@ -76,8 +83,6 @@ from datetime import date, datetime
 from multiprocessing.pool import AsyncResult
 from typing import Any
 
-from django.db.utils import OperationalError
-
 from hpcperfstats.dbload.lib import (
   conf_parser as cfg,
   shutdown_utils as _shutdown_utils,
@@ -104,6 +109,8 @@ from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
   AppendDayClaimLists,
   day_remainder,
   note_day_remainder,
+  rebuild_day_remainders_from_job_store,
+  remainder_day_for_identity,
   reset_day_remainder_for_tests,
 )
 from hpcperfstats.dbload.lib.sync_timedb_archive_dir_lock import (
@@ -112,6 +119,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_dir_lock import (
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   calendar_date_from_daily_tar_path,
   daily_tar_path_for_stats_path,
+  restore_restorable_quarantines,
 )
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
   _rate_limited_day_info_log,
@@ -125,12 +133,25 @@ from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
   JanitorDeferTracker,
 )
 from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
+from hpcperfstats.dbload.lib.sync_timedb_negative_states import (
+  effective_remediation_mode,
+  environment_error_tag,
+  is_environment_error,
+  negative_state_exit,
+  snapshot_dead_end_sidecars,
+)
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
   ensure_persistence_contract,
+  load_persistence_document,
 )
 from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
   PopulatePoolController,
   set_populate_pool_controller,
+)
+from hpcperfstats.dbload.lib.sync_timedb_sealed_member_map import (
+  archive_identity,
+  raw_path_in_sealed_members,
+  sealed_integrity_sweep_once,
 )
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
   create_sync_timedb_thread_pool,
@@ -886,31 +907,6 @@ def _iter_claim_jobs(claim: Any) -> list[Any]:
   return [claim]
 
 
-def _epoch_basename_day(identity: str) -> str | None:
-  """
-  Calendar day from a numeric stats basename, without a filesystem call.
-
-  Args:
-    identity (str): Stats path or ingest identity.
-
-  Returns:
-    str | None: ``YYYY-MM-DD`` in local time, or ``None`` when the
-    basename is not an integer epoch.
-
-  Examples:
-    >>> _epoch_basename_day("/archive/host/not-epoch") is None
-    True
-  """
-  path = _path_from_ingest_identity(identity) or str(identity or "")
-  base = os.path.basename(path)
-  if not base.isdigit():
-    return None
-  try:
-    return datetime.fromtimestamp(int(base)).date().isoformat()
-  except OSError, OverflowError, ValueError:
-    return None
-
-
 def _release_day_remainder(kind: str, identity: str) -> None:
   """
   Drop one queued ingest or append job from the in-memory day count.
@@ -928,7 +924,7 @@ def _release_day_remainder(kind: str, identity: str) -> None:
   """
   if kind not in (jq.JOB_KIND_INGEST, jq.JOB_KIND_APPEND):
     return
-  day = _epoch_basename_day(identity)
+  day = remainder_day_for_identity(identity)
   if day:
     note_day_remainder(kind, day, -1)
 
@@ -1140,6 +1136,7 @@ def _boot_stream_discover(
   day_n = _enqueue_day_closes_for_daily_dir(
     client,
     tgz_archive_dir=tgz_archive_dir,
+    archive_data_dir=archive_dir,
   )
   rescan_tok = ""
   if time_rescan:
@@ -1317,17 +1314,66 @@ def _shutdown_background_discover() -> None:
       executor.shutdown(wait=False, cancel_futures=True)
 
 
+_SEALED_ONLY_MANIFEST_PHASE_CACHE: dict[tuple[str, int], str] = {}
+_CODE_FAULT_REASONS = frozenset(
+  {"TypeError", "ValueError", "AttributeError", "KeyError", "IndexError"}
+)
+
+
+def _sealed_only_day_manifest_open(manifest_path: str) -> bool:
+  """
+  Return True when a day-removal manifest exists and its phase is not done.
+
+  Cached by ``(path, mtime_ns)`` so the 300 s daily-dir scan does not re-parse
+  large manifests that did not change.
+
+  Args:
+    manifest_path (str): ``.sync_timedb_day_raw_removal/YYYY-MM-DD.json``.
+
+  Returns:
+    bool: True for an open (non-done) manifest.
+
+  Examples:
+    >>> _sealed_only_day_manifest_open("/nonexistent.json")
+    False
+  """
+  try:
+    mtime_ns = os.stat(manifest_path).st_mtime_ns
+  except OSError:
+    return False
+  key = (manifest_path, mtime_ns)
+  cached = _SEALED_ONLY_MANIFEST_PHASE_CACHE.get(key)
+  if cached is None:
+    doc = load_persistence_document(manifest_path, "day_raw_removal")
+    cached = (
+      str((doc or {}).get("phase") or "") if isinstance(doc, dict) else ""
+    )
+    _SEALED_ONLY_MANIFEST_PHASE_CACHE[key] = cached
+    while len(_SEALED_ONLY_MANIFEST_PHASE_CACHE) > 4096:
+      _SEALED_ONLY_MANIFEST_PHASE_CACHE.pop(
+        next(iter(_SEALED_ONLY_MANIFEST_PHASE_CACHE))
+      )
+  return bool(cached) and cached != "done"
+
+
 def _enqueue_day_closes_for_daily_dir(
   client: Any,
   *,
   tgz_archive_dir: str,
+  archive_data_dir: str = "",
 ) -> int:
   """
   Scan daily ``.tar`` siblings and enqueue incomplete day_close jobs.
 
+  DE-24: a day with only a sealed ``.tar.zst`` (no open tar) whose day-removal
+  manifest is still open is enqueued too (manifest listing, not a raw find);
+  otherwise only a discover pass that happened to see its raw re-enqueued it.
+
   Args:
     client (Any): job store with ``rpush``.
     tgz_archive_dir (str): Daily archive directory.
+    archive_data_dir (str): Archive data root holding day-removal manifests;
+      empty skips the sealed-only scan.
 
   Returns:
     int: Number of newly enqueued day_close identities.
@@ -1361,6 +1407,35 @@ def _enqueue_day_closes_for_daily_dir(
     ):
       enqueued += 1
       progress.record(day_token, "incomplete_seen", 1)
+      progress.record(day_token, "reconstruct_enq", 1)
+  manifest_dir = (
+    os.path.join(archive_data_dir, ".sync_timedb_day_raw_removal")
+    if archive_data_dir
+    else ""
+  )
+  try:
+    manifest_names = sorted(os.listdir(manifest_dir)) if manifest_dir else []
+  except OSError:
+    manifest_names = []
+  for name in manifest_names:
+    day_token = name[:10]
+    if not name.endswith(".json") or len(name) != 15:
+      continue
+    try:
+      cal = date.fromisoformat(day_token)
+    except ValueError:
+      continue
+    tar_path = os.path.normpath(os.path.join(root, f"{day_token}.tar"))
+    if os.path.isfile(tar_path) or not os.path.isfile(tar_path + ".zst"):
+      continue
+    if not _sealed_only_day_manifest_open(os.path.join(manifest_dir, name)):
+      continue
+    if jr.enqueue_cheap_day_close_if_needed(
+      client,
+      tar_path,
+      calendar_day=cal,
+    ):
+      enqueued += 1
       progress.record(day_token, "reconstruct_enq", 1)
   return enqueued
 
@@ -1424,6 +1499,7 @@ def _idle_reconstruct_pass(
     return _enqueue_day_closes_for_daily_dir(
       client,
       tgz_archive_dir=tgz_archive_dir,
+      archive_data_dir=archive_dir,
     )
   _last_idle_reconstruct_mono = now
   identity = discover_job_identity(archive_dir, mtime_days)
@@ -1478,7 +1554,13 @@ def _idle_reconstruct_pass(
   work += _enqueue_day_closes_for_daily_dir(
     client,
     tgz_archive_dir=tgz_archive_dir,
+    archive_data_dir=archive_dir,
   )
+  # A2: re-admit dead letters whose cooldown elapsed (bounded batch).
+  work += _readmit_due_dead_letters(client, archive_dir, log_fn=log_fn)
+  # A18: one sealed archive per pass gets a full integrity check.
+  with contextlib.suppress(Exception):
+    sealed_integrity_sweep_once(tgz_archive_dir, log_fn=log_fn)
   return work
 
 
@@ -1659,11 +1741,14 @@ def _handoff_retryable_paths_to_ingest(
         ingest_is_complete_fn=ingest_is_complete_fn,
         append_is_complete_fn=append_is_complete_fn,
       )
+      # DE-1: pass the archive root so the handoff respects dead-letter
+      # cooldowns instead of re-running 5 attempts per day_close claim.
       result = jr.enqueue_reconstruct_jobs_for_closed_path(
         client,
         plan,
         today=today_local,
         hot_days=hot_days,
+        archive_data_dir=archive_data_dir,
       )
     except Exception as exc:
       quiet(
@@ -1850,8 +1935,8 @@ def _day_close_append_or_hot_active(
   idle - day_close should kick verify/delete instead of forever-yielding.
 
   H20a: leftover ``ingest_tar_hot`` and a complete members map are not
-  live holders. Yield only for append LIST depth, append inflight, a
-  populate owner thread, or ingest jobs that resolve to this day.
+  live holders. Yield only for this day's append jobs (queued or claimed,
+  DE-27), a populate owner thread, or ingest jobs that resolve to this day.
 
   Args:
     job_store (Any | None): In-process job store, or None when unset.
@@ -1859,19 +1944,18 @@ def _day_close_append_or_hot_active(
     tgz_archive_dir (str): Daily archive directory.
 
   Returns:
-    bool: True when append depth is positive or ingest/populate is live.
+    bool: True when this day has append work or ingest/populate is live.
 
   Examples:
     >>> _day_close_append_or_hot_active(None, "/d/2020-01-01.tar", "/d")
     False
   """
-  if job_store is not None:
-    try:
-      append_n = int(job_store.queued_count("append") or 0)
-    except Exception:
-      append_n = 0
-    if append_n > 0:
-      return True
+  # DE-27: only this day's append backlog (queued or claimed, from the
+  # per-day remainder rebuilt at boot, DE-32) holds the day; a global append
+  # depth made every day wait for the whole fleet's appends to drain.
+  day = calendar_date_from_daily_tar_path(tar_path)
+  if day is not None and day_remainder(jq.JOB_KIND_APPEND, day.isoformat()) > 0:
+    return True
   return _day_close_live_ingest_or_populate(
     job_store,
     tar_path,
@@ -1994,6 +2078,146 @@ def _day_close_log_vacate_if_allowed(
     )
     return
   _log(line, log_fn=log_fn)
+
+
+def _remaining_raw_all_in_open_tar(
+  coord: Any,
+  tar_path: str,
+  remaining_raw_by_gz: dict[str, list[str]] | None,
+  remaining_is_sentinel: bool,
+) -> bool:
+  """
+  Return True when every remaining closed raw file is in the open tar.
+
+  Gate for sealing while raw remains (DE-26): the seal must capture all of
+  the day's raw so the sealed copy can back every delete. Membership comes
+  from the open-tar authority map (GNU ``tar tvf``, T1, cached by tar
+  identity); remaining paths come from the cheap manifest census when the
+  H19 path answered remaining-raw with a sentinel (no find at seal entry).
+
+  Args:
+    coord (Any): Day raw-removal coordinator.
+    tar_path (str): Open daily ``.tar``.
+    remaining_raw_by_gz (dict[str, list[str]] | None): Remaining raw map
+      (or the H19 sentinel).
+    remaining_is_sentinel (bool): True when the map is the H19 sentinel.
+
+  Returns:
+    bool: True only when there is at least one remaining path and each one is
+    a same-size tar member.
+
+  Examples:
+    >>> _remaining_raw_all_in_open_tar(None, "/nope/2020-01-01.tar", {}, False)
+    False
+  """
+  if remaining_is_sentinel:
+    lister = getattr(coord, "closed_raw_paths_on_disk", None)
+    paths = list(lister(tar_path) or []) if callable(lister) else []
+  else:
+    paths = [p for ps in (remaining_raw_by_gz or {}).values() for p in ps or ()]
+  if not paths or not os.path.isfile(tar_path):
+    return False
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    get_mutable_tar_authority_member_map,
+  )
+
+  try:
+    members = get_mutable_tar_authority_member_map(tar_path)
+  except OSError, RuntimeError, TimeoutError:
+    return False
+  return all(raw_path_in_sealed_members(path, members) for path in paths)
+
+
+_EMPTY_TAR_MAX_BYTES = 2 * 10240
+
+
+_DAY_CLOSE_STAGE_FAILS: dict[tuple[str, str], int] = {}
+_DAY_CLOSE_STAGE_FAILS_LOCK = threading.Lock()
+
+
+def _day_close_stage_failure(
+  day_token: str,
+  stage: str,
+  *,
+  failed: bool,
+) -> bool:
+  """
+  Count consecutive day_close stage failures; True once escalation is due.
+
+  DE-28: reconcile/dedupe failures used to log and continue, so a
+  deterministic failure ended every claim as ``incomplete_raw`` forever. Past
+  ``sync_noprogress_escalate_after`` consecutive failures the job returns
+  ``error`` (attempt bump, dead-letter cooldown). A success resets the count.
+
+  Args:
+    day_token (str): ``YYYY-MM-DD``.
+    stage (str): Stage name (``reconcile_merge`` / ``dedupe``).
+    failed (bool): True to count a failure, False to reset.
+
+  Returns:
+    bool: True when the caller must escalate this claim.
+
+  Examples:
+    >>> _day_close_stage_failure("2020-01-01", "dedupe", failed=False)
+    False
+  """
+  key = (str(day_token), str(stage))
+  with _DAY_CLOSE_STAGE_FAILS_LOCK:
+    if not failed:
+      _DAY_CLOSE_STAGE_FAILS.pop(key, None)
+      return False
+    n = _DAY_CLOSE_STAGE_FAILS.get(key, 0) + 1
+    escalate = n >= int(cfg.get_sync_noprogress_escalate_after())
+    _DAY_CLOSE_STAGE_FAILS[key] = 0 if escalate else n
+    return escalate
+
+
+def _drop_empty_open_tar(
+  coord: Any,
+  tar_path: str,
+  *,
+  log_fn: Callable[..., None] | None = None,
+) -> bool:
+  """
+  Drop a readable open tar with zero file members and no raw left (DE-11).
+
+  Such a tar can never pre-seal validate (``no file members``), so it used to
+  yield forever. It holds no data, so removing it loses nothing.
+
+  Args:
+    coord (Any): Day raw-removal coordinator.
+    tar_path (str): Open daily ``.tar``.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    bool: True when the tar was removed.
+
+  Examples:
+    >>> _drop_empty_open_tar(None, "/nonexistent/2020-01-01.tar")
+    False
+  """
+  # An archive with no members is only end-of-archive NUL blocks (>= 1024
+  # bytes, GNU pads to a 10240-byte record); anything else is not "empty".
+  try:
+    size = os.path.getsize(tar_path)
+    if size < 1024 or size > _EMPTY_TAR_MAX_BYTES:
+      return False
+    with open(tar_path, "rb") as fh:
+      if fh.read().strip(b"\0"):
+        return False
+  except OSError:
+    return False
+  has_raw = getattr(coord, "has_closed_raw_on_disk", None)
+  if callable(has_raw) and has_raw(tar_path):
+    return False
+  try:
+    os.remove(tar_path)
+  except OSError:
+    return False
+  _log(
+    f"queue_orchestrator day_close empty_tar_drop tar={tar_path}", log_fn=log_fn
+  )
+  return True
 
 
 def _run_day_close_job(
@@ -2196,6 +2420,17 @@ def _run_day_close_job(
           begin_memo()
       except Exception:
         day_state = None
+
+    exhausted_fn = getattr(day_state, "reverify_exhausted", None)
+    if callable(exhausted_fn) and exhausted_fn():
+      _log(
+        f"ERROR: queue_orchestrator day_close reverify_cycles exhausted "
+        f"day={day_token} (repairs keep reopening without a passing parity)",
+        log_fn=log_fn,
+      )
+      return "verify_failed"
+    if _drop_empty_open_tar(coord, tar_path, log_fn=log_fn):
+      tar_dropped = True
 
     def _run_pre_seal_verify() -> str | None:
       """
@@ -2427,6 +2662,7 @@ def _run_day_close_job(
             on_merge_progress=_on_merge_progress,
           )
           progress.record(day_token, "reconcile", 1)
+          _day_close_stage_failure(day_token, "reconcile_merge", failed=False)
           _stage_exit("reconcile_merge", result="ok")
         except DayCloseYieldError as exc:
           reason = str(getattr(exc, "reason", "") or "yield_requested")
@@ -2442,6 +2678,10 @@ def _run_day_close_job(
             result="fail",
             reason=type(exc).__name__,
           )
+          if _day_close_stage_failure(
+            day_token, "reconcile_merge", failed=True
+          ):
+            return "error"
 
         early = _run_pre_seal_verify()
         if early:
@@ -2459,6 +2699,7 @@ def _run_day_close_job(
             tgz_archive_dir=tgz_archive_dir,
           )
           progress.record(day_token, "dedupe", 1)
+          _day_close_stage_failure(day_token, "dedupe", failed=False)
           _stage_exit("dedupe", result="ok")
         except DayCloseYieldError as exc:
           reason = str(getattr(exc, "reason", "") or "yield_requested")
@@ -2470,13 +2711,34 @@ def _run_day_close_job(
             log_fn=log_fn,
           )
           _stage_exit("dedupe", result="fail", reason=type(exc).__name__)
+          if _day_close_stage_failure(day_token, "dedupe", failed=True):
+            return "error"
+    else:
+      # DE-24: no open tar (appends never landed, or the tar was dropped and
+      # raw came back). Without this the handoff/kick block above never ran
+      # for the day and its closed raw stayed on disk forever.
+      _stage_enter("no_tar_handoff")
+      requeue_fn = getattr(coord, "requeue_closed_raw_paths_for_ingest", None)
+      handed = (
+        requeue_fn(tar_path, reason="no_open_tar")
+        if callable(requeue_fn)
+        else []
+      )
+      _stage_exit("no_tar_handoff", result="ok", reason=f"paths={len(handed)}")
 
+    # A16: release space before consuming it. With a sealed copy on disk,
+    # delete the raw files it already proves (sealed-map gate, INV-COPY)
+    # before a reseal writes a new temp zst on a nearly full filesystem.
+    if os.path.isfile(tar_path + ".zst"):
+      _stage_enter("raw_delete_pre_seal")
+      released = int(coord.apply_batch_delete(tar_path) or 0)
+      _stage_exit(
+        "raw_delete_pre_seal", result="ok", reason=f"deleted={released}"
+      )
     _stage_enter("seal")
     # H19 skip_merge already answered remaining-raw cheaply; do not re-find
     # at seal entry (hpcperfstats01 2026-09-25: 07-28 hung after stage_enter
     # seal with no stage_exit on remaining_raw_paths_blocking_tar_drop).
-    # Pass a cheap non-empty map so only_when_no_remaining_raw still no-ops
-    # seal while remaining raw exists (empty {} would incorrectly compress).
     if skip_merge_remaining_raw:
       remaining_for_seal = {tar_path: ["skip_merge_remaining_raw"]}
     else:
@@ -2488,19 +2750,44 @@ def _run_day_close_job(
       remaining_for_seal = (
         remaining_fn(tar_path) if callable(remaining_fn) else {}
       )
+    # DE-26: seal (or reseal a tar that gained members) even while raw
+    # remains: the day is past min-age and append for it is idle (otherwise
+    # wait_on_ingest yielded above). Raw can only be deleted against the
+    # sealed copy (INV-COPY), so waiting for "no raw" before sealing was a
+    # circular dead end. Sealing never deletes raw; keep the tar while raw
+    # remains so tar_drop stays gated on its own checks.
+    raw_remains_for_seal = bool(
+      skip_merge_remaining_raw
+      or any(paths for paths in (remaining_for_seal or {}).values())
+    )
+    # Seal while raw remains only when every remaining raw file is already a
+    # same-size member of the open tar: the new zst then holds all of the
+    # day's raw, so one seal lets every raw file be deleted and the day close.
+    # A raw file not yet appended keeps the old "no seal with raw" rule, so a
+    # whole tar (up to 723 GB on 01) is not recompressed per late append.
+    seal_with_raw = raw_remains_for_seal and _remaining_raw_all_in_open_tar(
+      coord, tar_path, remaining_for_seal, skip_merge_remaining_raw
+    )
+    sealed_before = archive_identity(tar_path + ".zst")
     seal_dirty_daily_archives(
       tgz_archive_dir,
       local_tz=get_local_timezone(),
       zstd_threads=get_archive_zstd_threads(),
       compress_level=get_archive_zstd_level(),
-      keep_uncompressed_tar=get_archive_keep_uncompressed_tar(),
+      keep_uncompressed_tar=(
+        get_archive_keep_uncompressed_tar() or raw_remains_for_seal
+      ),
       idle_seconds=0,
       seal_immediately_if_dirty=True,
       only_daily_tar_paths={tar_path},
-      only_when_no_remaining_raw=True,
+      only_when_no_remaining_raw=not seal_with_raw,
       remaining_raw_by_gz=remaining_for_seal,
       log_fn=quiet,
     )
+    if archive_identity(tar_path + ".zst") != sealed_before:
+      note_fn = getattr(day_state, "note_sealed_archive_changed", None)
+      if callable(note_fn):
+        note_fn()
     _stage_exit("seal", result="ok")
 
     # H19 append_idle already answered remaining; do not re-find at post-seal
@@ -2673,7 +2960,9 @@ def _run_day_close_job(
       f"queue_orchestrator day_close error day={day_token} err={type(exc).__name__}",
       log_fn=log_fn,
     )
-    return "skipped"
+    # DE-12: a deterministic exception must consume attempts (cooldown, then
+    # a visible terminal) instead of an unbumped hot requeue loop.
+    return "error"
   finally:
     clear_memo = (
       getattr(day_state, "_clear_closed_raw_pass_memo", None)
@@ -2763,9 +3052,61 @@ def _retry_or_dead_letter(
       score=(score if score is not None else getattr(claim, "score", None)),
     )
     return "requeued"
+  return _dead_letter_claim(
+    client,
+    kind=kind,
+    claim=claim,
+    archive_data_dir=archive_data_dir,
+    reason=reason,
+    attempt=attempt,
+    log_fn=log_fn,
+  )
+
+
+def _dead_letter_claim(
+  client: Any,
+  *,
+  kind: str,
+  claim: Any,
+  archive_data_dir: str,
+  reason: str,
+  attempt: int,
+  log_fn: Callable[..., None] | None = None,
+) -> str:
+  """
+  Dead-letter one claim now: record the cooldown entry, ACK, resolve terminal.
+
+  Args:
+    client (Any): Job store.
+    kind (str): Job kind.
+    claim (Any): Claimed job.
+    archive_data_dir (str): Archive data root holding the sidecar.
+    reason (str): Failure reason (``env:*`` selects the env schedule).
+    attempt (int): Attempt count recorded on the entry.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    str: ``dead_letter`` or ``dead_letter_terminal``.
+
+  Examples:
+    >>> _dead_letter_claim(  # doctest: +SKIP
+    ...   store,
+    ...   kind="ingest",
+    ...   claim=claim,
+    ...   archive_data_dir="/a",
+    ...   reason="x",
+    ...   attempt=5,
+    ... )
+    'dead_letter'
+  """
+  identity = claim.identity
+  day_tok = None
+  if kind == jq.JOB_KIND_DAY_CLOSE:
+    day_tok = progress.day_token_from_day_close_identity(str(identity or ""))
+  entry = None
   if archive_data_dir:
     progress.get_progress_state().record_dead_letter(day_tok, kind, 1)
-    jq.append_queue_dead_letter(
+    entry = jq.upsert_queue_dead_letter(
       archive_data_dir,
       kind=kind,
       identity=identity,
@@ -2779,11 +3120,276 @@ def _retry_or_dead_letter(
     owner_token=claim.owner_token,
   )
   _release_day_remainder(kind, identity)
+  cycle = int((entry or {}).get("cycle") or 0)
   _log(
-    f"queue_orchestrator dead_letter kind={kind} identity={identity} attempt={attempt} reason={reason}",
+    f"queue_orchestrator dead_letter kind={kind} identity={identity} "
+    f"attempt={attempt} reason={reason} cycle={cycle} "
+    f"readmit_at={(entry or {}).get('readmit_at')}",
     log_fn=log_fn,
   )
+  if entry is not None and entry.get("terminal"):
+    _resolve_terminal_dead_letter(
+      kind, identity, archive_data_dir, entry, log_fn=log_fn
+    )
+    return "dead_letter_terminal"
   return "dead_letter"
+
+
+def _resolve_terminal_dead_letter(
+  kind: str,
+  identity: str,
+  archive_data_dir: str,
+  entry: dict[str, Any],
+  *,
+  log_fn: Callable[..., None] | None = None,
+) -> bool:
+  """
+  Resolve a dead letter whose cooldown cycles are exhausted (DE-1 terminal).
+
+  Ingest/append: quarantine the raw file (``failure_class`` ``exhausted`` or
+  ``env_<type>``, restorable by the A3 boot restore) so its day can close.
+  day_close: a day cannot be quarantined; log ERROR and keep the entry
+  visible to the census. Report mode logs the action without moving a file.
+
+  Args:
+    kind (str): Job kind.
+    identity (str): Job identity (raw path for ingest/append).
+    archive_data_dir (str): Archive data root.
+    entry (dict[str, Any]): The terminal dead-letter entry.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    bool: True when the raw file was quarantined.
+
+  Examples:
+    >>> _resolve_terminal_dead_letter(
+    ...   "day_close",
+    ...   "/d/2020-01-01.tar",
+    ...   "/nope",
+    ...   {"reason": "x"},
+    ...   log_fn=lambda *a, **k: None,
+    ... )
+    False
+  """
+  reason = str(entry.get("reason") or "")
+  if kind not in (jq.JOB_KIND_INGEST, jq.JOB_KIND_APPEND):
+    _log(
+      f"ERROR: queue_orchestrator dead_letter terminal kind={kind} "
+      f"identity={identity} reason={reason} (day stays in census)",
+      log_fn=log_fn,
+    )
+    return False
+  path = _path_from_ingest_identity(identity) or identity
+  env_tag = reason.split(":", 1)[1] if reason.startswith("env:") else ""
+  # Code faults (our own exception types) are restorable after a fix
+  # deploy; anything else that exhausted every cycle is terminal.
+  if env_tag:
+    failure_class = f"env_{env_tag}"
+  elif reason in _CODE_FAULT_REASONS:
+    failure_class = "code_fault"
+  else:
+    failure_class = "exhausted"
+  if effective_remediation_mode() == "report":
+    _log(
+      f"INFO: dead_end report would quarantine path={path} "
+      f"failure_class={failure_class} reason={reason}",
+      log_fn=log_fn,
+    )
+    return False
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    quarantine_ingest_failed_raw_path,
+  )
+
+  moved = bool(
+    quarantine_ingest_failed_raw_path(
+      path,
+      archive_data_dir,
+      "dead_letter_exhausted",
+      log_fn=log_fn or log_print,
+      error_detail=reason,
+      failure_class=failure_class,
+    )
+  )
+  _log(
+    f"{'WARNING' if moved else 'ERROR'}: queue_orchestrator dead_letter "
+    f"terminal quarantine path={path} moved={moved} "
+    f"failure_class={failure_class}",
+    log_fn=log_fn,
+  )
+  return moved
+
+
+def _readmit_due_dead_letters(
+  client: Any,
+  archive_data_dir: str,
+  *,
+  log_fn: Callable[..., None] | None = None,
+  now: float | None = None,
+) -> int:
+  """
+  Re-enqueue dead letters whose cooldown elapsed (A2), one bounded batch.
+
+  Discover only rescans recent days, so an old file that was dead-lettered is
+  never rediscovered without this pass. Attempts restart at zero; a further
+  failure advances the entry's cycle. Batched by
+  ``sync_dead_end_migration_batch``; report mode logs and changes nothing.
+
+  Args:
+    client (Any): Job store.
+    archive_data_dir (str): Archive data root.
+    log_fn (Callable[..., None] | None): Optional logger.
+    now (float | None): Clock override (tests).
+
+  Returns:
+    int: Identities re-enqueued.
+
+  Examples:
+    >>> _readmit_due_dead_letters(None, "/nope")
+    0
+  """
+  if client is None or not archive_data_dir:
+    return 0
+  due = jq.due_dead_letter_readmissions(
+    archive_data_dir,
+    now=now,
+    limit=cfg.get_sync_dead_end_migration_batch(),
+  )
+  if not due:
+    return 0
+  if effective_remediation_mode() == "report":
+    _log(
+      f"INFO: dead_end report would readmit dead_letters n={len(due)}",
+      log_fn=log_fn,
+    )
+    return 0
+  readmitted: list[tuple[str, str]] = []
+  today = _local_today()
+  for entry in due:
+    kind = str(entry.get("kind") or "")
+    identity = str(entry.get("identity") or "")
+    path = _path_from_ingest_identity(identity) or identity
+    if kind in (jq.JOB_KIND_INGEST, jq.JOB_KIND_APPEND) and not os.path.isfile(
+      path
+    ):
+      readmitted.append((kind, identity))  # gone: nothing left to retry
+      continue
+    jq.write_job_payload_field(
+      client, kind=kind, identity=identity, name="attempt", value="0"
+    )
+    if kind == jq.JOB_KIND_INGEST:
+      day_text = remainder_day_for_identity(identity)
+      if not day_text:
+        continue  # unresolved day cannot be banded (reconstruct rule)
+      day = date.fromisoformat(day_text)
+      added = jq.zadd_ingest_job(
+        client,
+        identity=identity,
+        score=jq.encode_ingest_score(
+          band=jr.select_ingest_band(day, today=today, hot_days=_hot_days()),
+          day=day,
+          today=today,
+          identity=identity,
+        ),
+      )
+    else:
+      added = jq.enqueue_list_job(
+        client, kind=kind, identity=identity, dedupe=True
+      )
+    if added and kind in (jq.JOB_KIND_INGEST, jq.JOB_KIND_APPEND):
+      remainder_day = remainder_day_for_identity(identity)
+      if remainder_day:
+        note_day_remainder(kind, remainder_day, 1)
+    readmitted.append((kind, identity))
+  jq.mark_dead_letters_readmitted(archive_data_dir, readmitted, now=now)
+  _log(
+    f"queue_orchestrator dead_letter readmit n={len(readmitted)}",
+    log_fn=log_fn,
+  )
+  return len(readmitted)
+
+
+def _requeue_bounded_without_attempt_bump(
+  client: Any,
+  *,
+  kind: str,
+  claim: Any,
+  counter: str,
+  cap: int,
+  reason: str,
+  archive_data_dir: str,
+  log_fn: Callable[..., None] | None = None,
+) -> str:
+  """
+  Requeue without a file-attempt bump, but bound repeats per identity (G1).
+
+  Environment defers, coordination misses and idle-kill timeouts are not the
+  file's fault, so they must not burn its attempts; but an unbounded requeue
+  is a silent livelock. A per-identity payload counter (``counter``) escalates
+  into the dead-letter cooldown once it reaches ``cap`` and resets there.
+
+  Args:
+    client (Any): Job store.
+    kind (str): Job kind.
+    claim (Any): Claimed job (None drops the call).
+    counter (str): Payload field name (``env_defer``, ``timeout_attempt``…).
+    cap (int): Consecutive requeues before escalation.
+    reason (str): Dead-letter reason on escalation (``env:*`` uses the env
+      schedule).
+    archive_data_dir (str): Archive data root for the dead-letter sidecar.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    str: ``requeued`` or a ``_dead_letter_claim`` outcome.
+
+  Examples:
+    >>> _requeue_bounded_without_attempt_bump(
+    ...   None,
+    ...   kind="ingest",
+    ...   claim=None,
+    ...   counter="c",
+    ...   cap=1,
+    ...   reason="r",
+    ...   archive_data_dir="",
+    ... )
+    'dropped_no_claim'
+  """
+  if claim is None or client is None:
+    return "dropped_no_claim"
+  identity = claim.identity
+  seen = (
+    int(
+      jq.read_job_payload_field(
+        client, kind=kind, identity=identity, name=counter
+      )
+      or 0
+    )
+    + 1
+  )
+  if seen < max(1, int(cap)):
+    jq.write_job_payload_field(
+      client, kind=kind, identity=identity, name=counter, value=str(seen)
+    )
+    _requeue_claimed_job_without_attempt_bump(
+      client, claim=claim, log_fn=log_fn
+    )
+    return "requeued"
+  jq.write_job_payload_field(
+    client, kind=kind, identity=identity, name=counter, value="0"
+  )
+  _log(
+    f"queue_orchestrator noprogress escalate kind={kind} identity={identity} "
+    f"counter={counter} n={seen} reason={reason}",
+    log_fn=log_fn,
+  )
+  return _dead_letter_claim(
+    client,
+    kind=kind,
+    claim=claim,
+    archive_data_dir=archive_data_dir,
+    reason=reason,
+    attempt=seen,
+    log_fn=log_fn,
+  )
 
 
 def _requeue_claimed_job_without_attempt_bump(
@@ -3103,6 +3709,62 @@ def _oldest_ingest_inflight_age_s(
   clock = float(time.monotonic() if now is None else now)
   oldest_id = min(submitted, key=lambda k: float(submitted[k]))
   return max(0.0, clock - float(submitted[oldest_id])), str(oldest_id)
+
+
+def _reap_dead_owner_ingest_inflight(
+  client: Any,
+  *,
+  inflight: dict[str, Any],
+  claims: dict[str, Any],
+  submitted: dict[str, float] | None = None,
+  inflight_sizes: dict[str, int] | None = None,
+  log_fn: Callable[..., None] | None = None,
+) -> int:
+  """
+  Requeue local ingest claims whose worker pool was terminated (DE-15).
+
+  A future whose owning pool is no longer active will never complete. Its
+  slot used to be held forever when stuck-cohort recycle was disabled
+  (``sync_ingest_stuck_inflight_recycle_s = 0``). Liveness here is the pool's
+  own state, not a timer; the claim goes back without an attempt bump.
+
+  Args:
+    client (Any): Job store.
+    inflight (dict[str, Any]): Local identity -> async result.
+    claims (dict[str, Any]): Local identity -> claim.
+    submitted (dict[str, float] | None): Submit monotonic times.
+    inflight_sizes (dict[str, int] | None): Identity -> ``st_size``.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    int: Claims requeued.
+
+  Examples:
+    >>> _reap_dead_owner_ingest_inflight(None, inflight={}, claims={})
+    0
+  """
+  dead = [
+    ident
+    for ident, res in list(inflight.items())
+    if not _is_ingest_timeout_sentinel(res)
+    and not res.ready()
+    and getattr(res, "pool", None) is not None
+    and not res.pool.is_active
+  ]
+  for ident in dead:
+    inflight.pop(ident, None)
+    if submitted is not None:
+      submitted.pop(ident, None)
+    _release_ingest_inflight_size(inflight_sizes, ident)
+    _requeue_claimed_job_without_attempt_bump(
+      client, claim=claims.pop(ident, None), log_fn=log_fn
+    )
+  if dead:
+    _log(
+      f"queue_orchestrator ingest dead_owner_reap n={len(dead)}",
+      log_fn=log_fn,
+    )
+  return len(dead)
 
 
 def _maybe_request_stuck_cohort_recycle(
@@ -4470,14 +5132,25 @@ def _drain_ingest_ready(
         submitted.pop(identity, None)
       _release_ingest_inflight_size(inflight_sizes, identity)
       done += 1
-      if is_transient_ingest_archive_coordination_error(exc):
+      if is_transient_ingest_archive_coordination_error(
+        exc
+      ) or is_environment_error(exc):
+        # A11/A8: environment and coordination errors never burn the file's
+        # attempts (and OperationalError is no longer ACK-dropped, DE-14);
+        # a per-identity no-progress counter bounds them into the
+        # environment cooldown instead.
         _log(
           f"queue_orchestrator ingest defer identity={identity} err={type(exc).__name__} detail={exc}",
           log_fn=log_fn,
         )
-        _requeue_claimed_job_without_attempt_bump(
+        _requeue_bounded_without_attempt_bump(
           client,
+          kind=jq.JOB_KIND_INGEST,
           claim=claim,
+          counter="env_defer",
+          cap=cfg.get_sync_noprogress_escalate_after(),
+          reason=environment_error_tag(exc),
+          archive_data_dir=archive_data_dir,
           log_fn=log_fn,
         )
         continue
@@ -4490,17 +5163,6 @@ def _drain_ingest_ready(
       )
       progress.record(day_tok, "ingest", 1)
       progress.record(day_tok, "fail", 1)
-      # DB refusal is not a file defect: ACK so discover re-enqueues, never
-      # burn attempts toward the dead-letter sidecar.
-      if isinstance(exc, OperationalError) and claim is not None:
-        jq.ack_job(
-          client,
-          kind=jq.JOB_KIND_INGEST,
-          identity=identity,
-          owner_token=claim.owner_token,
-        )
-        _release_day_remainder(jq.JOB_KIND_INGEST, identity)
-        continue
       if type(exc).__name__ == "CodonCopyFailed" and claim is not None:
         jq.write_job_payload_field(
           client,
@@ -4539,7 +5201,8 @@ def _drain_ingest_ready(
         _calendar_day_for_ingest_path(path or identity, tgz_archive_dir),
       )
       progress.record(day_tok, "ingest", 1)
-      if outcome in ("timeout", "lookup_budget"):
+      exit_edge = negative_state_exit("ingest_outcome", outcome)
+      if exit_edge == "bounded_timeout":
         progress.record(day_tok, "timeout", 1)
         _log_orchestrator_ingest_timeout(
           identity=identity,
@@ -4548,9 +5211,46 @@ def _drain_ingest_ready(
           result=result,
           outcome=outcome or "timeout",
         )
-        _requeue_claimed_job_without_attempt_bump(
+        # DE-5: idle-kill outcomes are counted; past the attempt ceiling the
+        # path takes the dead-letter cooldown instead of livelocking.
+        _requeue_bounded_without_attempt_bump(
           client,
+          kind=jq.JOB_KIND_INGEST,
           claim=claim,
+          counter="timeout_attempt",
+          cap=jq.job_max_attempts(),
+          reason=f"timeout:{outcome}",
+          archive_data_dir=archive_data_dir,
+          log_fn=log_fn,
+        )
+      elif exit_edge == "ack_rediscovered":
+        # Still the host's live segment: drop the claim; discover re-enqueues
+        # the file once it rotates (fresh mtime, inside the rescan window).
+        if claim is not None:
+          jq.ack_job(
+            client,
+            kind=jq.JOB_KIND_INGEST,
+            identity=identity,
+            owner_token=claim.owner_token,
+          )
+          _release_day_remainder(jq.JOB_KIND_INGEST, identity)
+      elif exit_edge == "env_requeue":
+        if outcome == "ingested":
+          _log(
+            "ERROR: queue_orchestrator ingest contract violation "
+            f"identity={identity} outcome=ingested ingest_ok=False",
+            log_fn=log_fn,
+          )
+        # DE-22: mark persistence (or a worker contract slip) is not a file
+        # defect: retry without burning attempts, bounded by no-progress.
+        _requeue_bounded_without_attempt_bump(
+          client,
+          kind=jq.JOB_KIND_INGEST,
+          claim=claim,
+          counter="env_defer",
+          cap=cfg.get_sync_noprogress_escalate_after(),
+          reason=f"env:{outcome}",
+          archive_data_dir=archive_data_dir,
           log_fn=log_fn,
         )
       else:
@@ -4605,8 +5305,9 @@ def _drain_ingest_ready(
         identity=path,
         dedupe=True,
       ):
-        if day_tok:
-          note_day_remainder(jq.JOB_KIND_APPEND, day_tok, 1)
+        append_day = remainder_day_for_identity(path)
+        if append_day:
+          note_day_remainder(jq.JOB_KIND_APPEND, append_day, 1)
     if claim is not None:
       jq.ack_job(
         client,
@@ -4615,6 +5316,9 @@ def _drain_ingest_ready(
         owner_token=claim.owner_token,
       )
       _release_day_remainder(jq.JOB_KIND_INGEST, identity)
+      jq.remove_queue_dead_letter(
+        archive_data_dir, kind=jq.JOB_KIND_INGEST, identity=identity
+      )
   return done
 
 
@@ -4913,6 +5617,93 @@ def _fill_append_slots(
   return submitted
 
 
+def _fail_append_batch(
+  client: Any,
+  batch_key: str,
+  jobs: list[Any],
+  *,
+  reason: str,
+  archive_data_dir: str,
+  log_fn: Callable[..., None] | None = None,
+) -> str:
+  """
+  Account one failed append batch against its tar, not every path (DE-18).
+
+  A batch-level failure (tar lock, restore, unreadable tar, disk) says
+  nothing about the individual raw files, so the batch counts one attempt on
+  a per-tar key and its jobs requeue without per-path bumps. Only when that
+  per-tar count reaches the attempt ceiling are the paths dead-lettered (into
+  the A2 cooldown, with ``reason`` naming the outcome) and the count resets.
+
+  Args:
+    client (Any): Job store.
+    batch_key (str): Append batch key (daily tar path).
+    jobs (list[Any]): Claimed append jobs in the batch.
+    reason (str): ``append_failed:<outcome or exception type>``.
+    archive_data_dir (str): Archive data root for the dead-letter sidecar.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    str: ``requeued`` or ``dead_letter``.
+
+  Examples:
+    >>> _fail_append_batch(
+    ...   None, "/d/2020-01-01.tar", [], reason="r", archive_data_dir=""
+    ... )
+    'requeued'
+  """
+  if client is None or not jobs:
+    return "requeued"
+  seen = (
+    int(
+      jq.read_job_payload_field(
+        client, kind=jq.JOB_KIND_APPEND, identity=batch_key, name="batch_fail"
+      )
+      or 0
+    )
+    + 1
+  )
+  if seen < jq.job_max_attempts():
+    jq.write_job_payload_field(
+      client,
+      kind=jq.JOB_KIND_APPEND,
+      identity=batch_key,
+      name="batch_fail",
+      value=str(seen),
+    )
+    for job in jobs:
+      jq.requeue_job(
+        client,
+        kind=jq.JOB_KIND_APPEND,
+        identity=job.identity,
+        owner_token=job.owner_token,
+      )
+    return "requeued"
+  jq.write_job_payload_field(
+    client,
+    kind=jq.JOB_KIND_APPEND,
+    identity=batch_key,
+    name="batch_fail",
+    value="0",
+  )
+  _log(
+    f"queue_orchestrator append batch exhausted tar={batch_key} "
+    f"jobs={len(jobs)} reason={reason}",
+    log_fn=log_fn,
+  )
+  for job in jobs:
+    _dead_letter_claim(
+      client,
+      kind=jq.JOB_KIND_APPEND,
+      claim=job,
+      archive_data_dir=archive_data_dir,
+      reason=reason,
+      attempt=seen,
+      log_fn=log_fn,
+    )
+  return "dead_letter"
+
+
 def _drain_append_ready(
   client: Any,
   *,
@@ -4979,15 +5770,14 @@ def _drain_append_ready(
         f"queue_orchestrator append fail path={key} err={type(exc).__name__} detail={exc}",
         log_fn=log_fn,
       )
-      for job in jobs:
-        _retry_or_dead_letter(
-          client,
-          kind=jq.JOB_KIND_APPEND,
-          claim=job,
-          archive_data_dir=archive_data_dir,
-          reason=type(exc).__name__,
-          log_fn=log_fn,
-        )
+      _fail_append_batch(
+        client,
+        key,
+        jobs,
+        reason=f"append_failed:{type(exc).__name__}",
+        archive_data_dir=archive_data_dir,
+        log_fn=log_fn,
+      )
     if failed:
       continue
     if _archive_append_outcome_is_soft_requeue(result):
@@ -5028,15 +5818,14 @@ def _drain_append_ready(
           )
         )
         progress.record(day_tok, "append_drop", 1)
-        for job in jobs:
-          _retry_or_dead_letter(
-            client,
-            kind=jq.JOB_KIND_APPEND,
-            claim=job,
-            archive_data_dir=archive_data_dir,
-            reason="append_failed",
-            log_fn=log_fn,
-          )
+        _fail_append_batch(
+          client,
+          key,
+          jobs,
+          reason="append_failed:ok_false",
+          archive_data_dir=archive_data_dir,
+          log_fn=log_fn,
+        )
         continue
     elif result is False:
       day_tok = _day_token_from_date(
@@ -5050,15 +5839,14 @@ def _drain_append_ready(
         )
       )
       progress.record(day_tok, "append_drop", 1)
-      for job in jobs:
-        _retry_or_dead_letter(
-          client,
-          kind=jq.JOB_KIND_APPEND,
-          claim=job,
-          archive_data_dir=archive_data_dir,
-          reason="append_failed",
-          log_fn=log_fn,
-        )
+      _fail_append_batch(
+        client,
+        key,
+        jobs,
+        reason="append_failed:false",
+        archive_data_dir=archive_data_dir,
+        log_fn=log_fn,
+      )
       continue
     tar = (
       key
@@ -5087,6 +5875,16 @@ def _drain_append_ready(
         reason="gate_skip",
         log_fn=log_fn,
       )
+    if jq.read_job_payload_field(
+      client, kind=jq.JOB_KIND_APPEND, identity=key, name="batch_fail"
+    ):
+      jq.write_job_payload_field(
+        client,
+        kind=jq.JOB_KIND_APPEND,
+        identity=key,
+        name="batch_fail",
+        value="0",
+      )
     for job in jobs:
       jq.ack_job(
         client,
@@ -5095,6 +5893,9 @@ def _drain_append_ready(
         owner_token=job.owner_token,
       )
       _release_day_remainder(jq.JOB_KIND_APPEND, job.identity)
+      jq.remove_queue_dead_letter(
+        archive_data_dir, kind=jq.JOB_KIND_APPEND, identity=job.identity
+      )
     if tar:
       # Append coordinator must never run remaining-raw / archive find.
       jr.enqueue_cheap_day_close_if_needed(client, tar)
@@ -5353,7 +6154,7 @@ def _drain_day_close_ready(
       vacate_outcome,
       log_fn=log_fn,
     )
-    if failure or outcome == "verify_failed":
+    if failure or outcome in ("verify_failed", "error"):
       saw_productive = True
       progress.record(
         day_tok,
@@ -5401,6 +6202,9 @@ def _drain_day_close_ready(
         kind=jq.JOB_KIND_DAY_CLOSE,
         identity=identity,
         owner_token=claim.owner_token,
+      )
+      jq.remove_queue_dead_letter(
+        archive_data_dir, kind=jq.JOB_KIND_DAY_CLOSE, identity=identity
       )
   if done == 0:
     cooperative_only = True
@@ -6101,6 +6905,14 @@ def _ingest_coordinator_loop(
         )
       # Coordinator wall-clock ingest watchdog retired (idle stall + statement
       # timeout own give-up; do not fall back to submit-age abandon).
+      _reap_dead_owner_ingest_inflight(
+        client,
+        inflight=ingest_inflight,
+        claims=ingest_leases,
+        submitted=ingest_submitted,
+        inflight_sizes=inflight_sizes,
+        log_fn=log_fn,
+      )
       if not draining:
         last_stuck_recycle = _maybe_request_stuck_cohort_recycle(
           recycle_gate=recycle_gate,
@@ -6642,6 +7454,16 @@ def run_sync_timedb_queue_orchestrator(
     client = SyncTimedbJobStore(directory)
     members_store = SyncTimedbArchiveMembersStore(directory)
     set_process_archive_members_store(members_store)
+    # A17: verified snapshot of the sidecars the dead-end migrations rewrite;
+    # a failure keeps every migration in report mode for this process.
+    snapshot_dead_end_sidecars(directory, log_fn=log_fn or log_print)
+    # A3: misquarantined (non-parse) files go back before boot discover.
+    restore_restorable_quarantines(
+      directory,
+      cfg.get_daily_archive_dir_path(),
+      log_fn=log_fn or log_print,
+      report_only=effective_remediation_mode() == "report",
+    )
 
     tgz_archive_dir = cfg.get_daily_archive_dir_path()
     install_cooperative_shutdown_handlers(log_fn=log_fn)
@@ -6657,6 +7479,14 @@ def run_sync_timedb_queue_orchestrator(
         log_fn=log_fn,
       )
     _reap_stale_inflight(client, log_fn=log_fn)
+    # DE-32: the per-day remainder counter is memory-only; rebuild it from
+    # the persisted job store before any day_close claim reads it.
+    rebuilt = rebuild_day_remainders_from_job_store(client)
+    _log(
+      "queue_orchestrator day_remainder rebuilt "
+      f"ingest={rebuilt['ingest']} append={rebuilt['append']}",
+      log_fn=log_fn,
+    )
 
     ingest_pool_size = max(1, int(cfg.get_sync_ingest_pool_processes()))
     hot_cap, catchup_cap = jq.ingest_band_slot_caps(ingest_pool_size)

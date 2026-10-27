@@ -9,21 +9,12 @@ from __future__ import annotations
 import inspect
 
 import hpcperfstats.listend as listend
-from hpcperfstats.dbload import sync_timedb as st, sync_timedb_archive as sta
+from hpcperfstats.dbload import sync_timedb as st
 from hpcperfstats.dbload.lib import (
   conf_parser as cfg,
   sync_timedb_archive_members_coord as coord,
   sync_timedb_ingest_timeout as ingest_timeout,
   sync_timedb_queue_orchestrator as qo,
-)
-from hpcperfstats.dbload.lib.sync_timedb_day_close_manifest import (
-  DayCloseManifestCoordinator,
-)
-from hpcperfstats.dbload.lib.sync_timedb_day_raw_removal import (
-  DayRawRemovalCoordinator,
-)
-from hpcperfstats.dbload.lib.sync_timedb_startup_archive_scan import (
-  StartupArchiveScanCoordinator,
 )
 from hpcperfstats.lib.rmq_quorum_queue import LISTEND_AMQP_FRAME_MAX
 
@@ -100,22 +91,6 @@ def test_ingest_timeout_resolve_and_stall_abort_helpers_gone():
     "default_giant_supplement_trigger_budget_s",
   ):
     assert not hasattr(ingest_timeout, name), name
-
-
-def test_compat_aliases_gone():
-  timed_src = inspect.getsource(st._run_ingest_timed)
-  assert "enable_sigalrm" not in timed_src
-  assert not hasattr(
-    DayCloseManifestCoordinator, "reconcile_supervisor_raw_delete_pending"
-  )
-  assert not hasattr(
-    DayCloseManifestCoordinator, "tar_paths_raw_delete_pending"
-  )
-  assert not hasattr(DayCloseManifestCoordinator, "shutdown")
-  assert not hasattr(DayRawRemovalCoordinator, "start_async_day_pipeline")
-  assert not hasattr(StartupArchiveScanCoordinator, "wait_or_build_snapshot")
-  assert not hasattr(sta, "_iter_stream_tasks_chunked")
-  assert not hasattr(sta, "_process_task_chunk_interruptibly")
 
 
 def test_sync_bulk_create_batch_size_leftover_gone():

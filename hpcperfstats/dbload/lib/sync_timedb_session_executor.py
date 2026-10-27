@@ -182,6 +182,7 @@ class ThreadPoolAsyncResult:
 
   Attributes:
     _future: Executor future for the submitted job.
+    pool: Owning ``SyncTimedbThreadPool`` (set by ``apply_async``), or None.
   """
 
   def __init__(self, future: Future[Any]) -> None:
@@ -199,6 +200,7 @@ class ThreadPoolAsyncResult:
       False
     """
     self._future = future
+    self.pool: Any = None
 
   def ready(self) -> bool:
     """
@@ -565,9 +567,11 @@ class SyncTimedbThreadPool:
     """
     del callback, error_callback
     kwargs = dict(kwds or {})
-    return ThreadPoolAsyncResult(
+    res = ThreadPoolAsyncResult(
       self._executor.submit(self._run_task, lambda: fn(*args, **kwargs)),
     )
+    res.pool = self  # DE-15: lets the coordinator see a terminated owner
+    return res
 
   def imap_unordered(
     self,

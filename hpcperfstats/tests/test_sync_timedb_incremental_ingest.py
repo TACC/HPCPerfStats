@@ -7,6 +7,7 @@ import threading
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from hpcperfstats.dbload import sync_timedb as st
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
@@ -663,3 +664,80 @@ def test_ingest_ok_false_when_individual_host_insert_fails():
   )
   src = inspect.getsource(st._write_stats_payload_to_db)
   assert "_ingest_ok_from_host_write_path" in src
+
+
+# --- A1 (DE-2) / A13 (DE-19): faults during parse/write never quarantine ---
+
+
+def _streaming_raise(monkeypatch, tmp_path, exc):
+  """Run the streaming ingest with the parser raising ``exc``."""
+  stats_file = tmp_path / "host.example.com" / "1709123456"
+  stats_file.parent.mkdir(parents=True)
+  stats_file.write_text("".join(_counter_fixture_lines(extra_samples=2)))
+  quarantined = []
+  monkeypatch.setattr(
+    st,
+    "_resolve_streaming_ingest_start",
+    lambda _path, _elapsed: (False, (0, True)),
+  )
+  monkeypatch.setattr(
+    st,
+    "_quarantine_failed_ingest_parse",
+    lambda *a, **k: quarantined.append(a) or True,
+  )
+
+  def _boom(*_a, **_k):
+    raise exc
+
+  monkeypatch.setattr(st, "parse_stats_file_streaming_incremental", _boom)
+  with pytest.raises(type(exc)):
+    st._add_stats_file_to_db_streaming_incremental(str(stats_file), 0.0)
+  return stats_file, quarantined
+
+
+def test_write_stage_error_is_retryable_not_quarantine(monkeypatch, tmp_path):
+  """DE-2: a write/COPY failure surfaces to the coordinator, file in place."""
+  stats_file, quarantined = _streaming_raise(
+    monkeypatch, tmp_path, RuntimeError("COPY host_data failed")
+  )
+  assert stats_file.is_file()
+  assert quarantined == []
+
+
+def test_shutdown_write_stage_error_requeues_without_bump(
+  monkeypatch, tmp_path
+):
+  """DE-2: write-stage shutdown is environment: requeue, no attempt burn."""
+  from hpcperfstats.dbload.lib.sync_timedb_ingest_write_stage import (
+    IngestWriteStageShutdownError,
+  )
+  from hpcperfstats.tests.test_sync_timedb_queue_orchestrator import (
+    _drain_one_ingest_failure,
+  )
+
+  stats_file, quarantined = _streaming_raise(
+    monkeypatch, tmp_path, IngestWriteStageShutdownError("shutting down")
+  )
+  assert stats_file.is_file() and quarantined == []
+  identity, seen = _drain_one_ingest_failure(
+    monkeypatch, tmp_path / "drain", IngestWriteStageShutdownError("x")
+  )
+  assert seen["requeues"] == [identity]
+  assert seen["bumps"] == [] and seen["letters"] == []
+
+
+def test_code_fault_is_not_quarantined(monkeypatch, tmp_path):
+  """DE-19: our own TypeError/ValueError is a code fault, not a bad file.
+
+  27 of 66 quarantines on hpcperfstats01 (55 on 02) were
+  ``cannot unpack non-iterable …`` / ``not enough values to unpack``.
+  """
+  for exc in (
+    TypeError("cannot unpack non-iterable int object"),
+    ValueError("not enough values to unpack (expected 3, got 1)"),
+  ):
+    sub = tmp_path / type(exc).__name__
+    sub.mkdir()
+    stats_file, quarantined = _streaming_raise(monkeypatch, sub, exc)
+    assert stats_file.is_file()
+    assert quarantined == []

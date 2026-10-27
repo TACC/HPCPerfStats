@@ -262,6 +262,31 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Max archive retry backoff seconds (default 60).
 # sync_archive_retry_backoff_max_seconds = 60
 
+# Dead-end remediation (sync_timedb state machine). Dead letters re-admit after
+# each cooldown (comma list, seconds); after the last one the raw file is
+# quarantined (restorable) so its day can close.
+# sync_dead_letter_readmit_backoff_s = 3600,21600,86400
+# Longer schedule for environment errors (DB outage, EAGAIN, ENOSPC, EPERM),
+# which never burn a file's attempts.
+# sync_dead_letter_env_backoff_s = 21600,86400,259200
+# Requeues without progress before a job escalates into the cooldown (G1).
+# sync_noprogress_escalate_after = 50
+# Age (s) after which a sticky negative flag (day_skip, degraded) is re-checked
+# and cleared when its gate passes (G3); 0 disables.
+# sync_negative_flag_revalidate_s = 86400
+# Free-space reserve on top of a truncated-tar salvage backup (bytes).
+# sync_tar_salvage_min_free_bytes = 1073741824
+# Back up the whole tar instead of only the tail past the cut (needs S free).
+# sync_tar_salvage_full_copy = no
+# Free-space reserve for reseal/restore/rebuild/repair/salvage (bytes); a
+# denial defers as env:ENOSPC, never a failure.
+# sync_archive_min_free_bytes = 10737418240
+# report: log what the boot migrations (re-admit, reopen, restore) would do
+# and change nothing; apply: run them.
+# sync_dead_end_remediation_mode = apply
+# Max re-admissions / reopens per reconstruct pass.
+# sync_dead_end_migration_batch = 500
+
 # Processed-file checkpoint writes per batch (default 100).
 # sync_checkpoint_flush_batch_size = 100
 

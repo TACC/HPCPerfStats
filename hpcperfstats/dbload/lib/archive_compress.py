@@ -173,6 +173,10 @@ def classify_daily_tar_zst_reconcile(
   if not zst_exists:
     return "seal_from_tar", "missing_zst"
   if not zst_readable or not zst_members:
+    # DE-9: a readable open tar reseals over an unreadable/empty sealed file
+    # (the seal keeps the old file as ``.zst.corrupt.<ts>``, never overwrite).
+    if tar_members:
+      return "seal_from_tar", "zst_unreadable_reseal"
     return "skip", "zst_unreadable"
   if archive_member_maps_equivalent(tar_members, zst_members):
     return "noop", "already_equivalent"
