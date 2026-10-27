@@ -30,7 +30,7 @@ FIND_POLICY_JOB = """
 SELECT job_id
 FROM timescaledb_information.jobs
 WHERE hypertable_name = 'host_data'
-  AND proc_name IN %s
+  AND proc_name::text = ANY(%s::text[])
 ORDER BY job_id
 LIMIT 1
 """
@@ -75,7 +75,7 @@ def _policy_job_id(cursor: Any) -> int | None:
   cursor.execute("SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'")
   if cursor.fetchone() is None:
     return None
-  cursor.execute(FIND_POLICY_JOB, [COMPRESSION_PROCS])
+  cursor.execute(FIND_POLICY_JOB, [list(COMPRESSION_PROCS)])
   row = cursor.fetchone()
   return None if row is None else int(row[0])
 

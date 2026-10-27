@@ -476,6 +476,30 @@ def test_compression_schedule_pins_daily_fixed_schedule_without_max_runtime(
   ]
 
 
+def test_compression_schedule_job_lookup_param_is_a_valid_array_literal():
+  """psycopg 3 sends a tuple as a composite literal; ``IN %s`` then fails.
+
+  Regression: web crash-looped on ``syntax error at or near
+  '(policy_compression,policy_columnstore)'``. Render the real parameter
+  through psycopg's adapter, which the fake cursors above do not exercise.
+  """
+  from psycopg import adapt
+
+  mod = _compression_schedule_module()
+  cursor = _FakeCursor()
+  mod.pin_compression_schedule(None, _FakeEditor(cursor))
+  lookups = [
+    e for e in cursor.executed if "timescaledb_information.jobs" in e[0]
+  ]
+  assert len(lookups) == 1
+  sql, params = lookups[0]
+  assert "ANY(" in sql
+  assert " IN %s" not in sql
+  literal = adapt.Transformer().as_literal(params[0])
+  assert literal.startswith(b"'{") and literal.endswith(b"}'")
+  assert b"policy_compression" in literal
+
+
 def test_compression_schedule_soft_skips_without_extension_policy_or_pg(
   monkeypatch,
 ):
