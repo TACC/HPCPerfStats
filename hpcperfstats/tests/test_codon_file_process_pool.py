@@ -260,6 +260,25 @@ def test_copy_bytes_are_written_in_row_slices(
   assert [h.count(b"\n") for h in host] == [10, 10, 5] and proc == [b"p\n"]
 
 
+def test_host_copy_branch_books_write_time_as_postgres_s(monkeypatch) -> None:
+  """Codon ``host_copy`` writes must count in ``postgres_s``, not parse time."""
+  import time
+
+  from hpcperfstats.dbload import sync_timedb as st
+
+  def _slow(_part: bytes) -> None:
+    time.sleep(0.05)
+
+  monkeypatch.setattr(st, "_time_ingest_db_reconnect", lambda: None)
+  monkeypatch.setattr(st, "_write_host_copy_payload", _slow)
+  monkeypatch.setattr(st, "_write_proc_copy_payload", _slow)
+  st._reset_ingest_write_timing(enabled=False)
+  st._write_stats_payload_to_db(
+    "f", {"host_copy": b"h\n", "proc_copy": b"p\n"}, None, True, copy_unique=True
+  )
+  assert st._snapshot_ingest_write_timing()["postgres_s"] >= 0.09
+
+
 def test_worker_mem_line_has_rss_split_and_extra_fields() -> None:
   line = w.format_worker_mem_line("win", file="f", win=3, host_kib=7)
   fields = dict(kv.split("=") for kv in line.split()[1:])

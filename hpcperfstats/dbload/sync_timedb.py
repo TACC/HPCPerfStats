@@ -3470,12 +3470,17 @@ def _write_stats_payload_to_db(
     try:
       _time_ingest_db_reconnect()
       step = _ingest_write_frame_slice_rows()
-      for part in _copy_bytes_slices(host_copy, step):
-        _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_host")
-        _write_host_copy_payload(part)
-      for part in _copy_bytes_slices(proc_copy, step):
-        _raise_if_ingest_per_file_deadline_exceeded(stats_file, "db_write_proc")
-        _write_proc_copy_payload(part)
+      with _held_ingest_write_timing():
+        for part in _copy_bytes_slices(host_copy, step):
+          _raise_if_ingest_per_file_deadline_exceeded(
+            stats_file, "db_write_host"
+          )
+          _write_host_copy_payload(part)
+        for part in _copy_bytes_slices(proc_copy, step):
+          _raise_if_ingest_per_file_deadline_exceeded(
+            stats_file, "db_write_proc"
+          )
+          _write_proc_copy_payload(part)
     except Exception as copy_exc:
       _reraise_if_ingest_control_flow(copy_exc)
       if is_database_unavailable_error(copy_exc):

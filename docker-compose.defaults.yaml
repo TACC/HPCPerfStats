@@ -204,8 +204,13 @@ services:
       - checkpoint_completion_target=0.9
       - -c
       - min_wal_size=4GB
+      # 2026-10: hpcperfstats04 under ingest hit max_wal_size every ~65 s (375 of 390
+      # checkpoints WAL-requested, 92% of WAL writes forced by a full wal_buffers, 49 backends
+      # queued on LWLock WALInsert). Larger spacing also cuts full-page-image WAL.
       - -c
-      - max_wal_size=12GB
+      - max_wal_size=64GB
+      - -c
+      - wal_buffers=128MB
       # PG15 Hub: boolean wal_compression only (pglz when on).
       - -c
       - wal_compression=on
@@ -306,8 +311,13 @@ services:
       - checkpoint_completion_target=0.9
       - -c
       - min_wal_size=4GB
+      # 2026-10: hpcperfstats04 under ingest hit max_wal_size every ~65 s (375 of 390
+      # checkpoints WAL-requested, 92% of WAL writes forced by a full wal_buffers, 49 backends
+      # queued on LWLock WALInsert). Larger spacing also cuts full-page-image WAL.
       - -c
-      - max_wal_size=12GB
+      - max_wal_size=64GB
+      - -c
+      - wal_buffers=128MB
       # PG18 homemade image: /opt/lz4 WAL compression (AVX-friendly native build).
       - -c
       - wal_compression=lz4

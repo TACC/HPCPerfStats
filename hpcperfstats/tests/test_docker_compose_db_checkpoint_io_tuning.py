@@ -11,7 +11,8 @@ _SHARED_GUC_MARKERS = (
   "checkpoint_timeout=30min",
   "checkpoint_completion_target=0.9",
   "min_wal_size=4GB",
-  "max_wal_size=12GB",
+  "max_wal_size=64GB",
+  "wal_buffers=128MB",
   "bgwriter_lru_maxpages=800",
   "bgwriter_lru_multiplier=5",
   "maintenance_io_concurrency=64",
@@ -19,7 +20,7 @@ _SHARED_GUC_MARKERS = (
 
 
 def _service_block(service: str) -> str:
-  content = (_REPO_ROOT / "docker-compose.yaml").read_text()
+  content = (_REPO_ROOT / "docker-compose.defaults.yaml").read_text()
   match = re.search(rf"(?ms)^  {service}:\n(.*?)(?=^  [a-z].*:|\Z)", content)
   assert match, f"{service} service not found"
   return match.group(0)
