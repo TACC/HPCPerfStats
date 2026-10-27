@@ -321,7 +321,7 @@ ingest RSS-pressure gate trip in a short soak (`queue_orchestrator rss_hold` /
 least 256 MiB is cloned into the soak (default unlimited); use it with a corpus that contains a
 multi-GB real file (`HPCPERFSTATS_SYNC_TIMEDB_SCREEN_CORPUS=test_runs/sync_timedb_bench/<corpus>`)
 so a 14 GB file is not copied hundreds of times. Planting stops when every template is exhausted.
-`HPCPERFSTATS_LOADED48_WRITE_POOL=N` and `HPCPERFSTATS_LOADED48_PARSE_QUEUE=N` and `HPCPERFSTATS_LOADED48_CODON_WORKERS=N` (Codon file-parse processes) (1-4096)
+`HPCPERFSTATS_LOADED48_WRITE_POOL=N` and `HPCPERFSTATS_LOADED48_PARSE_QUEUE=N` (1-4096)
 are test-only overrides of INI `sync_ingest_write_pool_processes` /
 `sync_ingest_parse_queue_max` (default write pool is a quarter of the ingest width) for
 write-bottleneck experiments. **Wait attribution (Phase 2):** with
@@ -361,7 +361,7 @@ they skip there). To run them for real, bake with
 `test_runs/codon_exclude/pyext_smoke.py` under `/opt/python3.14t/bin/python3` with `PYEXT=<dir>`
 (prints `pyext_exclude_smoke=pass gil=off`).
 
-Codon process-pool soaks: `HPCPERFSTATS_LOADED48_CODON_WORKERS=N` sets the worker count (with 1 MiB windows N=32
+Codon process-pool soaks: the worker count equals the ingest width (`HPCPERFSTATS_SYNC_TIMEDB_LOADED48_WIDTH`; with 1 MiB windows N=32
 peaks at ~26 GiB combined worker RSS, ~52 GiB cgroup; with 16 MiB windows N=24 hit the 100g cap and OOM-killed a worker).
 Workers log `codon_worker_mem` lines (RSS split, Boehm heap/free/unmapped, GC count, frame sizes) when ingest
 telemetry is on. Compare Codon and CPython by DB `tup_inserted` over time, not completed-file MiB: dense files

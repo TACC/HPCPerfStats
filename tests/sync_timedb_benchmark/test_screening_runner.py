@@ -1133,15 +1133,13 @@ def test_workflow_contention_flag_and_inner_target():
   assert "HPCPERFSTATS_SYNC_TIMEDB_CONTENTION" in inner
 
 
-def test_loaded48_conf_overrides_codon_workers():
-  """``HPCPERFSTATS_LOADED48_CODON_WORKERS`` overrides the Codon worker count."""
+def test_loaded48_conf_overrides_has_no_codon_worker_knob():
+  """Codon workers follow ingest width; the separate override is gone."""
   from tests.sync_timedb_benchmark.screening_runner import (
     loaded48_conf_overrides,
   )
 
-  ov = loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_CODON_WORKERS": "64"})
-  assert ov["get_sync_codon_worker_processes"]() == 64
-  assert loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_CODON_WORKERS": "x"}) == {}
+  assert loaded48_conf_overrides({"HPCPERFSTATS_LOADED48_CODON_WORKERS": "64"}) == {}
 
 
 def test_plant_padding_gives_each_clone_a_unique_hostname(tmp_path):

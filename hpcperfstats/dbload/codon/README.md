@@ -23,10 +23,10 @@ context, or run `build_codon_ext.sh` on the host as the prod artifact path.
 
 File parses run in **Codon worker processes** (`python -m
 hpcperfstats.dbload.lib.codon_process_worker`, one Codon runtime + Boehm GC
-each; INI `sync_codon_worker_processes`, default 64). Threads sharing one
-runtime serialize on Boehm's allocation lock, so processes are the parallel
-unit. Each file is streamed in `sync_codon_parse_flush_max_mib` (1 MiB)
-windows: the Boehm heap follows output rows, and the heap never shrinks, so
+each; one worker per ingest thread, INI `sync_ingest_pool_processes`).
+Threads sharing one runtime serialize on Boehm's allocation lock, so
+processes are the parallel unit. Each file is streamed in
+`sync_codon_parse_flush_max_mib` (1 MiB) windows: the Boehm heap follows output rows, and the heap never shrinks, so
 workers above `sync_codon_worker_recycle_rss_mib` are replaced between files.
 The C ABI takes a per-call event-type exclusion list (`codon_exclude_set_c`).
 

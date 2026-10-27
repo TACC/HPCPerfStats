@@ -2144,7 +2144,6 @@ def loaded48_conf_overrides(env: Any) -> dict[str, Callable[[], Any]]:
   for var, getter in (
       ("HPCPERFSTATS_LOADED48_WRITE_POOL", "get_sync_ingest_write_pool_processes"),
       ("HPCPERFSTATS_LOADED48_PARSE_QUEUE", "get_sync_ingest_parse_queue_max"),
-      ("HPCPERFSTATS_LOADED48_CODON_WORKERS", "get_sync_codon_worker_processes"),
   ):
     val = str(env.get(var, "")).strip()
     if val.isdigit() and 1 <= int(val) <= 4096:

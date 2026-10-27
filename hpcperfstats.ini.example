@@ -203,16 +203,11 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # End edge tolerance seconds (default 600): MAX(time) in window must be >= end - margin.
 # metrics_readiness_end_margin_seconds = 600
 
-# Absolute sync_timedb ingest **parse** pool size (default 64; threads on 3.14t).
+# Ingest parse pool size and Codon worker process count (default 64; capped at 128 Codon workers).
 # sync_ingest_pool_processes = 64
 
 # Codon stripe slots as fraction of parse pool (default 0.5 → N=32 when parse=64).
 # sync_codon_context_pool_fraction = 1.0
-
-# Codon file-parse worker processes (one Codon runtime/GC each; default 64;
-# 0 = max(1, effective_cores // 4); always capped by sync_ingest_pool_processes).
-# ~1 GiB peak RSS per worker with the default 1 MiB parse window.
-# sync_codon_worker_processes = 64
 
 # Codon worker RSS in MiB above which the worker is replaced between files
 # (default 1536). Boehm's heap only grows; this bounds total worker memory.

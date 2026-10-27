@@ -204,8 +204,9 @@ def configure_codon_context_pool_from_ini() -> int:
   """
   Configure Codon slot count from ``sync_ingest_pool_processes``.
 
-  One slot per ingest thread. ``sync_codon_context_pool_fraction`` is not
-  applied. The count is capped at ``MAX_CODON_SLOTS``.
+  One slot and one Codon worker process per ingest thread.
+  ``sync_codon_context_pool_fraction`` is not applied. The count is capped at
+  ``MAX_CODON_SLOTS``.
 
   Returns:
     int: Configured slot count ``N``.
@@ -453,7 +454,7 @@ def _spawn_codon_worker() -> dict[str, Any]:
 
 def _get_codon_pool() -> list[dict[str, Any]]:
   """
-  Lazily start the configured number of Codon Popen stdio servers.
+  Lazily start one Codon Popen stdio server per slot (one per ingest thread).
 
   Returns:
     list[dict[str, Any]]: Worker records.
@@ -465,11 +466,7 @@ def _get_codon_pool() -> list[dict[str, Any]]:
   global _codon_workers, _codon_atexit_registered
   with _codon_worker_cv:
     if not _codon_workers:
-      from hpcperfstats.dbload.lib.conf_parser import (
-        get_sync_codon_worker_processes,
-      )
-
-      n = min(codon_context_pool_size(), get_sync_codon_worker_processes())
+      n = codon_context_pool_size()
       _codon_workers = [_spawn_codon_worker() for _ in range(n)]
       if not _codon_atexit_registered:
         atexit.register(_shutdown_codon_pool)

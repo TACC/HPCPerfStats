@@ -107,7 +107,6 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "metrics_readiness_end_margin_seconds"),
   ("PIPELINE", "sync_ingest_pool_processes"),
   ("PIPELINE", "sync_codon_context_pool_fraction"),
-  ("PIPELINE", "sync_codon_worker_processes"),
   ("PIPELINE", "sync_codon_worker_recycle_rss_mib"),
   ("PIPELINE", "sync_archive_pool_processes"),
   ("PIPELINE", "sync_ingest_queue_max_size"),
@@ -282,7 +281,6 @@ INI_OPTION_DEFAULTS = {
   "metrics_readiness_end_margin_seconds": "600",
   "sync_ingest_pool_processes": "64",
   "sync_codon_context_pool_fraction": "1.0",
-  "sync_codon_worker_processes": "64",
   "sync_codon_worker_recycle_rss_mib": "1536",
   "sync_ingest_write_pool_processes": "0",
   "sync_ingest_parse_queue_max": "32",
@@ -2261,29 +2259,6 @@ def get_sync_codon_context_pool_fraction() -> Any:
   if raw <= 0.0:
     return 0.5
   return raw
-
-
-def get_sync_codon_worker_processes() -> Any:
-  """
-  Codon file-parse worker process count (one Codon runtime + GC per process).
-
-  One shared Codon runtime serializes on the Boehm allocation lock, so file
-  parses run in separate processes. INI default **64** (one worker per
-  default ingest thread; ~1 GiB peak per worker with 1 MiB parse windows).
-  ``0`` means ``max(1, effective_cores // 4)``. Always capped by the ingest
-  parse pool.
-
-  Returns:
-    int: Worker count (>= 1).
-
-  Examples:
-    >>> get_sync_codon_worker_processes()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  n = _pipeline_getint("sync_codon_worker_processes")
-  if n < 1:
-    n = get_worker_process_count(4)
-  return max(1, min(n, get_sync_ingest_pool_processes()))
 
 
 def get_sync_ingest_write_pool_processes() -> Any:

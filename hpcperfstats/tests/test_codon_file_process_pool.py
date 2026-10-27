@@ -26,12 +26,8 @@ FAKE = "hpcperfstats.tests.codon_worker_fake_mod"
 def pool(monkeypatch: pytest.MonkeyPatch):
   monkeypatch.setenv(bridge.CODON_EXT_ENV, FAKE)
   monkeypatch.setattr(bridge, "_use_codon_file_process_pool", lambda: True)
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.conf_parser.get_sync_codon_worker_processes",
-    lambda: 2,
-  )
   bridge.reset_codon_bridge_for_tests()
-  bridge._configure_slot_pool(4)
+  bridge._configure_slot_pool(2)
   yield
   bridge.reset_codon_bridge_for_tests()
 
@@ -140,25 +136,27 @@ def test_file_process_pool_off_for_fake_module(
   assert bridge._use_codon_file_process_pool() is False
 
 
-def test_worker_process_count_default_is_64() -> None:
+def test_worker_process_count_equals_ingest_slot_count(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  """One Codon worker per ingest thread; no separate worker-count knob."""
   from hpcperfstats.dbload.lib import conf_parser as cfg
 
-  assert cfg.INI_OPTION_DEFAULTS["sync_codon_worker_processes"] == "64"
-
-
-def test_worker_process_count_from_ini(monkeypatch: pytest.MonkeyPatch) -> None:
-  from hpcperfstats.dbload.lib import conf_parser as cfg
-
-  monkeypatch.setattr(cfg, "_ensure_cfg_loaded", lambda: None)
-  monkeypatch.setattr(cfg, "get_effective_cores", lambda: 28)
-  monkeypatch.setattr(cfg, "get_sync_ingest_pool_processes", lambda: 64)
-  monkeypatch.setattr(cfg, "_pipeline_getint", lambda _k: 0)
-  assert cfg.get_sync_codon_worker_processes() == 7
-  monkeypatch.setattr(cfg, "_pipeline_getint", lambda _k: 200)
-  assert cfg.get_sync_codon_worker_processes() == 64
-  monkeypatch.setattr(cfg, "get_sync_ingest_pool_processes", lambda: 4)
-  monkeypatch.setattr(cfg, "_pipeline_getint", lambda _k: 0)
-  assert cfg.get_sync_codon_worker_processes() == 4
+  assert "sync_codon_worker_processes" not in cfg.INI_OPTION_DEFAULTS
+  assert not hasattr(cfg, "get_sync_codon_worker_processes")
+  monkeypatch.setattr(
+    bridge, "_spawn_codon_worker", lambda: {"proc": None, "busy": False}
+  )
+  bridge.reset_codon_bridge_for_tests()
+  monkeypatch.setattr(cfg, "get_sync_ingest_pool_processes", lambda: 5)
+  assert bridge.configure_codon_context_pool_from_ini() == 5
+  assert len(bridge._get_codon_pool()) == 5
+  bridge._codon_workers = []
+  monkeypatch.setattr(cfg, "get_sync_ingest_pool_processes", lambda: 500)
+  n = bridge.configure_codon_context_pool_from_ini()
+  assert n == bridge.MAX_CODON_SLOTS == len(bridge._get_codon_pool())
+  bridge._codon_workers = []
+  bridge.reset_codon_bridge_for_tests()
 
 
 def test_frame_larger_than_pipe_buffer_is_read_in_full(
@@ -215,12 +213,8 @@ def test_worker_recycled_between_files_when_rss_over_limit(
     "hpcperfstats.dbload.lib.conf_parser.get_sync_codon_parse_flush_max_mib",
     lambda: 16,
   )
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.conf_parser.get_sync_codon_worker_processes",
-    lambda: 1,
-  )
   bridge.reset_codon_bridge_for_tests()
-  bridge._configure_slot_pool(2)
+  bridge._configure_slot_pool(1)
   path = tmp_path / "stats"
   path.write_text("a\n", encoding="utf-8")
   monkeypatch.setattr(

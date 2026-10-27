@@ -304,9 +304,6 @@ if [[ "$LOADED48" -eq 1 ]]; then
   # Test-only override of INI sync_ingest_malloc_trim_after_file for the soak child (yes|no).
   [[ -n "${HPCPERFSTATS_LOADED48_MALLOC_TRIM:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_MALLOC_TRIM=${HPCPERFSTATS_LOADED48_MALLOC_TRIM}")
-  # Test-only override of INI sync_codon_worker_processes (Codon file-parse processes).
-  [[ -n "${HPCPERFSTATS_LOADED48_CODON_WORKERS:-}" ]] && \
-    RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_CODON_WORKERS=${HPCPERFSTATS_LOADED48_CODON_WORKERS}")
   # Test-only override of INI sync_timedb_mem_telemetry: inflight raw bytes vs RSS, anon/file in the child log.
   [[ -n "${HPCPERFSTATS_LOADED48_MEM_TELEMETRY:-}" ]] && \
     RUN_ARGS+=(-e "HPCPERFSTATS_LOADED48_MEM_TELEMETRY=${HPCPERFSTATS_LOADED48_MEM_TELEMETRY}")
