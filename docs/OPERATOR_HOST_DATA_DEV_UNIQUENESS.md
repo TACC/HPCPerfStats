@@ -158,7 +158,7 @@ Catalog upgrade is **independent** of Stage 1 decompress / Stage 2 `0032`; do it
 
 ## Stage 2 — apply 5-column UNIQUE and restore compression (`0032`)
 
-Stage 2 ships in a **separate image** that includes migration `0032_host_data_unique_include_dev_db`. It replaces the live 4-column UNIQUE with `UNIQUE (time, host, type, event, dev)` and restores `add_compression_policy('host_data', compress_after => INTERVAL '8d')`.
+Stage 2 ships in a **separate image** that includes migration `0032_host_data_unique_include_dev_db`. It replaces the live 4-column UNIQUE with `UNIQUE (time, host, type, event, dev)` and restores `add_compression_policy('host_data', compress_after => INTERVAL '8d')`. Migration `0032` also pins the restored policy to the daily 01:00 fixed schedule (INI `timezone`, no `max_runtime`) via `hpcperfstats.site.lib.machine.compression_schedule`, the same schedule as `0040`; expect `next_start` at 01:00 local, not a floating 12 hour interval.
 
 **Do not run Stage 2 until** that site’s Stage 1 done gate is green (`compressed_chunks = 0`) and, on **hpcperfstats02**, the PK normalize block above has left only the 4-column UNIQUE (no `contype = p`). Migration `0032` does **not** drop or rewrite primary keys; if a multi-column PK remains, migrate soft-skips with a NOTICE and leaves uniqueness unchanged.
 
