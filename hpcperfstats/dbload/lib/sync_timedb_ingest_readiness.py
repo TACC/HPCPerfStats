@@ -418,8 +418,8 @@ def stats_file_head_ingested_in_db(
   Return True when the path is archive/delete ready.
 
   Closed segments are ready via durable file-complete or zero-host marks
-  (live on or off). When marks miss, host_data head+tail also qualifies
-  for closed segments (including when listend live DB ingest is on).
+  (live on or off). When listend live DB ingest is off and marks miss,
+  host_data head+tail also qualifies. Live-on never uses live-only head+tail.
 
   Args:
     path (str): String for path.
@@ -454,7 +454,7 @@ def stats_file_head_ingested_in_db(
       ready = _path_ready_via_file_complete_mark(
         path
       ) or _path_ready_via_zero_host_mark(path)
-      if not ready:
+      if not ready and not _live_db_ingest_enabled():
         ready = _path_head_tail_ready_in_db(path)
 
     with _PATH_READY_CACHE_LOCK:

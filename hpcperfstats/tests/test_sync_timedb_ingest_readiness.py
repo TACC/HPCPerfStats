@@ -409,27 +409,30 @@ def test_host_sampled_batch_uses_single_range_query(monkeypatch):
   assert query_calls["n"] == 1
 
 
-def test_host_sampled_overflow_falls_back_to_per_second_exists(monkeypatch):
+def test_host_sampled_overflow_falls_back_to_batched_per_second_probe(
+  monkeypatch,
+):
   monkeypatch.setattr(
     host_itimes,
     "host_recent_timestamps_cached",
     lambda *_a, **_k: host_itimes.HOST_ITIMES_SET_OVERFLOW,
   )
-  exists_calls = {"n": 0}
+  batch_calls = []
 
-  def _exists(host, unix_second):
-    del host
-    exists_calls["n"] += 1
-    return True
+  def _present_batch(host_seconds):
+    probes = list(host_seconds)
+    batch_calls.append(probes)
+    return dict.fromkeys(probes, True)
 
   monkeypatch.setattr(
-    host_itimes, "host_timestamp_second_present_in_db", _exists
+    host_itimes, "host_timestamp_seconds_present_batch", _present_batch
   )
   assert (
     host_itimes.host_sampled_timestamp_seconds_all_present("cn001", {100, 200})
     is True
   )
-  assert exists_calls["n"] == 2
+  assert len(batch_calls) == 1
+  assert sorted(batch_calls[0]) == [("cn001", 100), ("cn001", 200)]
 
 
 def test_build_head_ingest_ready_set_one_batch_probe_per_host(
@@ -559,7 +562,10 @@ def test_without_mark_and_without_host_data_still_skipped(
   assert readiness.stats_file_head_ingested_in_db(seg) is False
 
 
-def test_live_on_closed_head_tail_ready_without_marks(monkeypatch, tmp_path):
+def test_live_on_closed_head_tail_alone_is_not_ready_without_marks(
+  monkeypatch, tmp_path
+):
+  """Live ingest on: host_data head+tail proof alone must not open the gate."""
   host_dir = tmp_path / "host.cluster"
   host_dir.mkdir()
   ts = int(datetime(2026, 5, 10, 12, 0, 0, tzinfo=UTC).timestamp())
@@ -575,7 +581,7 @@ def test_live_on_closed_head_tail_ready_without_marks(monkeypatch, tmp_path):
     readiness, "_path_ready_via_zero_host_mark", lambda _p: False
   )
   monkeypatch.setattr(readiness, "_path_head_tail_ready_in_db", lambda _p: True)
-  assert readiness.stats_file_head_ingested_in_db(str(seg)) is True
+  assert readiness.stats_file_head_ingested_in_db(str(seg)) is False
 
 
 def test_live_on_closed_head_tail_not_ready_without_marks(
