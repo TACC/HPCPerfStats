@@ -216,8 +216,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Ingest write-pool width / max concurrent ingest DB sessions (default 0 = max(1, parse//2)).
 # sync_ingest_write_pool_processes = 0
 
-# Max parse→write queue slots (payload count, not bytes; default 32).
-# sync_ingest_parse_queue_max = 32
+# Max parse→write queue slots (payload count, not bytes; default 0 = 2x sync_ingest_pool_processes).
+# sync_ingest_parse_queue_max = 0
 
 # Soft max MiB per streaming parse→write flush chunk (default 512; sample-boundary overage OK).
 # sync_ingest_parse_flush_max_mib = 512

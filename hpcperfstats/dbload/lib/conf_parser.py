@@ -283,7 +283,7 @@ INI_OPTION_DEFAULTS = {
   "sync_codon_context_pool_fraction": "1.0",
   "sync_codon_worker_recycle_rss_mib": "1536",
   "sync_ingest_write_pool_processes": "0",
-  "sync_ingest_parse_queue_max": "32",
+  "sync_ingest_parse_queue_max": "0",
   "sync_ingest_parse_flush_max_mib": "512",
   "sync_codon_parse_flush_max_mib": "1",
   "sync_archive_pool_processes": "4",
@@ -2285,6 +2285,8 @@ def get_sync_ingest_parse_queue_max() -> Any:
   """
   Max parse→write queue slots (payload count, not bytes).
 
+  When the INI key is omitted or ``0``, returns ``2 * parse`` pool width.
+
   Returns:
     int: Queue maxsize (>= 1).
 
@@ -2293,7 +2295,10 @@ def get_sync_ingest_parse_queue_max() -> Any:
     True
   """
   _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_ingest_parse_queue_max"))
+  raw = int(_pipeline_getint("sync_ingest_parse_queue_max"))
+  if raw <= 0:
+    return max(1, 2 * int(get_sync_ingest_pool_processes()))
+  return max(1, raw)
 
 
 def get_sync_ingest_parse_flush_max_mib() -> Any:

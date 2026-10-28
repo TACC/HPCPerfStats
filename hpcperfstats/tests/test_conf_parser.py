@@ -147,6 +147,36 @@ def test_absolute_concurrency_ini_overrides(temp_ini, monkeypatch):
   assert cfg.get_metrics_plot_prewarm_mode() == "inline"
 
 
+def test_parse_queue_max_defaults_to_twice_parse_pool(temp_ini, monkeypatch):
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+    "total_cores = 4",
+    "total_cores = 4\nsync_ingest_pool_processes = 3\n",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  importlib.reload(cfg)
+  assert cfg.get_sync_ingest_parse_queue_max() == 6
+
+  with open(temp_ini) as f:
+    content = f.read()
+  with open(temp_ini, "w") as f:
+    f.write(
+      content.replace(
+        "sync_ingest_pool_processes = 3\n",
+        "sync_ingest_pool_processes = 3\nsync_ingest_parse_queue_max = 5\n",
+      )
+    )
+  importlib.reload(cfg)
+  assert cfg.get_sync_ingest_parse_queue_max() == 5
+
+
 def test_listend_db_ingest_backpressure_unknown_falls_back_to_drop(
   temp_ini, monkeypatch
 ):
@@ -990,7 +1020,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   assert cfg.get_sync_checkpoint_flush_batch_size() == 100
   assert cfg.get_sync_timedb_tar_append_batch_size() == 256
   assert cfg.get_sync_ingest_write_pool_processes() == 32
-  assert cfg.get_sync_ingest_parse_queue_max() == 32
+  assert cfg.get_sync_ingest_parse_queue_max() == 128
   assert cfg.get_sync_ingest_parse_flush_max_mib() == 512
   assert not hasattr(cfg, "get_sync_bulk_create_batch_size")
   assert cfg.get_sync_pool_poll_timeout_s() == 5.0
