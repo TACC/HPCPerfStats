@@ -15,6 +15,8 @@ Attributes:
   _INSERT_SQL: Insert of one planned whole-node row; an existing row wins.
   _DELETE_SQL: Delete of per-core rows that have a ``dev=''`` row at the same
     (host, type, event, time).
+  _NO_TIMEOUT_SQL: Disables the statement timeout for the current transaction;
+    one-off repair queries scan large windows and must not be cancelled.
 """
 
 from __future__ import annotations
@@ -62,6 +64,7 @@ _DELETE_SQL = (
   "WHERE w.host = hd.host AND w.type = hd.type AND w.event = hd.event "
   "AND w.time = hd.time AND w.dev = '')"
 )
+_NO_TIMEOUT_SQL = "SET LOCAL statement_timeout = 0"
 
 
 def _parse_day(value: str) -> dt.datetime:
@@ -225,7 +228,6 @@ class Command(BaseCommand):
     parser.add_argument("--window-hours", type=int, default=1)
     parser.add_argument("--host-batch", type=int, default=8)
     parser.add_argument("--lookback-minutes", type=int, default=120)
-    parser.add_argument("--statement-timeout-s", type=int, default=900)
 
   def handle(self, *args: Any, **options: Any) -> None:
     """Run the repair (override of ``BaseCommand.handle``).
@@ -235,8 +237,7 @@ class Command(BaseCommand):
     Args:
       *args (Any): Unused; Django may pass positional leftovers.
       **options (Any): Parsed options: ``since``, ``until``, ``apply``,
-        ``host``, ``window_hours``, ``host_batch``, ``lookback_minutes`` and
-        ``statement_timeout_s``.
+        ``host``, ``window_hours``, ``host_batch`` and ``lookback_minutes``.
 
     Returns:
       None
@@ -264,6 +265,9 @@ class Command(BaseCommand):
     )
     for start, end in _windows(since, until, options["window_hours"]):
       hosts = self._percore_hosts(start, end, options["host"])
+      self.stdout.write(
+        f"{start:%Y-%m-%d %H:%M} window hosts_with_percore={len(hosts)}"
+      )
       for batch in _chunks(hosts, options["host_batch"]):
         plan = self._migrate(start, end, batch, apply, options)
         totals["percore_rows"] += plan.percore_rows
@@ -285,6 +289,10 @@ class Command(BaseCommand):
   ) -> list[str]:
     """Return hosts with per-core rows in ``[start, end)``.
 
+    With an explicit allow-list no scan is needed: those hosts are returned
+    and a host without per-core rows is a cheap no-op in ``_migrate``.
+    Otherwise the scan runs with the statement timeout disabled.
+
     Args:
       start (dt.datetime): Window start (inclusive).
       end (dt.datetime): Window end (exclusive).
@@ -294,19 +302,18 @@ class Command(BaseCommand):
       list[str]: Sorted host names.
 
     Examples:
-      >>> # hosts = Command()._percore_hosts(start, end, [])
-      >>> Command._percore_hosts  # doctest: +SKIP
+      >>> Command()._percore_hosts(None, None, ["c002", "c001", "c001"])
+      ['c001', 'c002']
     """
-    sql = (
-      "SELECT DISTINCT host FROM host_data WHERE time >= %s AND time < %s "
-      f"AND host IS NOT NULL AND {_PERCORE_WHERE}"
-    )
-    params: list[Any] = [start, end, list(GPU_TYPES)]
     if only:
-      sql += " AND host = ANY(%s)"
-      params.append(only)
-    with connection.cursor() as cursor:
-      cursor.execute(sql, params)
+      return sorted(set(only))
+    with transaction.atomic(), connection.cursor() as cursor:
+      cursor.execute(_NO_TIMEOUT_SQL)
+      cursor.execute(
+        "SELECT DISTINCT host FROM host_data WHERE time >= %s AND time < %s "
+        f"AND host IS NOT NULL AND {_PERCORE_WHERE}",
+        [start, end, list(GPU_TYPES)],
+      )
       return sorted(row[0] for row in cursor.fetchall())
 
   def _migrate(
@@ -344,9 +351,7 @@ class Command(BaseCommand):
     lookback = dt.timedelta(minutes=options["lookback_minutes"])
     gpu = list(GPU_TYPES)
     with transaction.atomic(), connection.cursor() as cursor:
-      cursor.execute(
-        f"SET LOCAL statement_timeout = {int(options['statement_timeout_s']) * 1000}"
-      )
+      cursor.execute(_NO_TIMEOUT_SQL)
       cols = ", ".join(_COLUMNS)
       percore = _query_frame(
         cursor,

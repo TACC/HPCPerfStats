@@ -8,12 +8,16 @@ import io
 import pytest
 from django.core.management import call_command
 from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 HOST = "cmd-percore-h1"
 T0 = dt.datetime(2026, 10, 24, 12, 0, 0, tzinfo=dt.UTC)
 T1 = T0 + dt.timedelta(seconds=10)
 
 pytestmark = pytest.mark.django_db
+
+# The host-discovery scan; the planning query is "SELECT DISTINCT host, type...".
+_DISCOVERY = "SELECT DISTINCT host FROM host_data"
 
 
 def _insert(rows):
@@ -48,17 +52,36 @@ def seeded():
   _insert(rows)
 
 
-def _run(*, apply):
+def _run(*, apply, hosts=None):
   out = io.StringIO()
   call_command(
     "collapse_percore_host_data",
     since="2026-10-24",
     until="2026-10-24",
-    host=[HOST],
+    host=[HOST] if hosts is None else hosts,
     apply=apply,
     stdout=out,
   )
   return out.getvalue()
+
+
+def test_every_query_runs_with_the_statement_timeout_disabled(seeded):
+  """Regression: host discovery ran under the portal default and timed out."""
+  with CaptureQueriesContext(connection) as ctx:
+    _run(apply=False, hosts=[])
+  sqls = [q["sql"] for q in ctx.captured_queries]
+  disable = "SET LOCAL statement_timeout = 0"
+  discovery = next(i for i, s in enumerate(sqls) if _DISCOVERY in s)
+  assert disable in sqls[:discovery]
+  planning = next(i for i, s in enumerate(sqls) if "AND dev = ''" in s)
+  assert disable in sqls[discovery + 1 : planning]
+
+
+def test_explicit_host_skips_discovery(seeded):
+  with CaptureQueriesContext(connection) as ctx:
+    text = _run(apply=False)
+  assert not any(_DISCOVERY in q["sql"] for q in ctx.captured_queries)
+  assert "hosts_with_percore=1" in text
 
 
 def test_dry_run_changes_nothing(seeded):
