@@ -52,15 +52,15 @@ def seeded():
   _insert(rows)
 
 
-def _run(*, apply, hosts=None):
+def _run(*, apply, hosts=None, **dates):
   out = io.StringIO()
+  dates = dates or {"since": "2026-10-24", "until": "2026-10-24"}
   call_command(
     "collapse_percore_host_data",
-    since="2026-10-24",
-    until="2026-10-24",
     host=[HOST] if hosts is None else hosts,
     apply=apply,
     stdout=out,
+    **dates,
   )
   return out.getvalue()
 
@@ -115,3 +115,19 @@ def test_apply_twice_is_a_noop(seeded):
   text = _run(apply=True)
   assert "TOTAL percore_rows=0 " in text
   assert _rows() == after_first
+
+
+def test_no_dates_discovers_days_over_the_whole_table(seeded):
+  old = dt.datetime(2026, 8, 24, 3, 0, 0, tzinfo=dt.UTC)
+  _insert(
+    [
+      (old, HOST, "77", "cpu", "0", "user", "cs", 1.0, 1.0, 1.0),
+      (old, HOST, "77", "cpu", "1", "user", "cs", 2.0, 1.0, 1.0),
+    ]
+  )
+  text = _run(apply=True, since=None, until=None)
+  assert "all days with per-core cpu rows" in text
+  devs = {r[2] for r in _rows() if r[1] == "cpu"}
+  assert "0" not in devs and "1" not in devs
+  assert any(r[0] == old and r[2] == "" for r in _rows())
+

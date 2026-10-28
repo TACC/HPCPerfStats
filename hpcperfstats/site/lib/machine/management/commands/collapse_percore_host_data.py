@@ -15,6 +15,8 @@ Attributes:
   _INSERT_SQL: Insert of one planned whole-node row; an existing row wins.
   _DELETE_SQL: Delete of per-core rows that have a ``dev=''`` row at the same
     (host, type, event, time).
+  _DISCOVER_DAYS_SQL: Distinct UTC days that hold ``cpu`` rows whose ``dev``
+    starts with a digit (the per-core rows), found over the whole table.
   _NO_TIMEOUT_SQL: Disables the statement timeout for the current transaction;
     one-off repair queries scan large windows and must not be cancelled.
 """
@@ -63,6 +65,10 @@ _DELETE_SQL = (
   "AND hd.type <> ALL(%s) AND EXISTS (SELECT 1 FROM host_data w "
   "WHERE w.host = hd.host AND w.type = hd.type AND w.event = hd.event "
   "AND w.time = hd.time AND w.dev = '')"
+)
+_DISCOVER_DAYS_SQL = (
+  "SELECT DISTINCT date_trunc('day', time AT TIME ZONE 'UTC') FROM host_data "
+  "WHERE type = 'cpu' AND dev ~ '^[0-9]'"
 )
 _NO_TIMEOUT_SQL = "SET LOCAL statement_timeout = 0"
 
@@ -185,8 +191,9 @@ class Command(BaseCommand):
   commands (argument parsing, ``handle`` dispatch, stdout/stderr). This
   subclass adds the arguments and the repair loop. Requires PostgreSQL.
 
-  Invoke: ``manage.py collapse_percore_host_data --since 2026-10-22 --until
-  2026-10-27`` (dry run), add ``--apply`` to write.
+  Invoke: ``manage.py collapse_percore_host_data`` (dry run over every day
+  that holds per-core cpu rows), or ``--since 2026-10-22 --until 2026-10-27``
+  to limit the range; add ``--apply`` to write.
   """
 
   help = (
@@ -211,10 +218,12 @@ class Command(BaseCommand):
       >>> Command().add_arguments  # doctest: +SKIP
     """
     parser.add_argument(
-      "--since", required=True, help="First day, YYYY-MM-DD (UTC)."
+      "--since",
+      help="First day, YYYY-MM-DD (UTC). Omit with --until to search the "
+      "whole table for days holding per-core cpu rows.",
     )
     parser.add_argument(
-      "--until", required=True, help="Last day, YYYY-MM-DD (UTC), inclusive."
+      "--until", help="Last day, YYYY-MM-DD (UTC), inclusive."
     )
     parser.add_argument(
       "--apply", action="store_true", help="Write changes (default: dry run)."
@@ -254,16 +263,27 @@ class Command(BaseCommand):
     """
     if connection.vendor != "postgresql":
       raise CommandError("This command requires PostgreSQL.")
-    since = _parse_day(options["since"])
-    until = _parse_day(options["until"])
-    if until < since:
-      raise CommandError("--until must not be before --since")
+    if bool(options["since"]) != bool(options["until"]):
+      raise CommandError("give both --since and --until, or neither")
     apply = bool(options["apply"])
     totals = {"percore_rows": 0, "groups": 0, "kept_existing": 0, "new_rows": 0}
-    self.stdout.write(
-      f"{'APPLY' if apply else 'DRY RUN'} {since.date()}..{until.date()}"
-    )
-    for start, end in _windows(since, until, options["window_hours"]):
+    if options["since"]:
+      since = _parse_day(options["since"])
+      until = _parse_day(options["until"])
+      if until < since:
+        raise CommandError("--until must not be before --since")
+      ranges = [(since, until)]
+      label = f"{since.date()}..{until.date()}"
+    else:
+      days = self._discover_days()
+      ranges = [(day, day) for day in days]
+      label = f"all days with per-core cpu rows ({len(days)} days)"
+    self.stdout.write(f"{'APPLY' if apply else 'DRY RUN'} {label}")
+    for start, end in (
+      w
+      for first, last in ranges
+      for w in _windows(first, last, options["window_hours"])
+    ):
       hosts = self._percore_hosts(start, end, options["host"])
       self.stdout.write(
         f"{start:%Y-%m-%d %H:%M} window hosts_with_percore={len(hosts)}"
@@ -283,6 +303,24 @@ class Command(BaseCommand):
     self.stdout.write(
       "TOTAL " + " ".join(f"{k}={v}" for k, v in totals.items())
     )
+
+  def _discover_days(self) -> list[dt.datetime]:
+    """Return every UTC day that holds ``cpu`` rows with a digit-leading dev.
+
+    One scan of the whole table with the statement timeout disabled, so the
+    repair does not assume the backlog fits a date range.
+
+    Returns:
+      list[dt.datetime]: Sorted midnight-UTC datetimes.
+
+    Examples:
+      >>> # days = Command()._discover_days()
+      >>> Command._discover_days  # doctest: +SKIP
+    """
+    with transaction.atomic(), connection.cursor() as cursor:
+      cursor.execute(_NO_TIMEOUT_SQL)
+      cursor.execute(_DISCOVER_DAYS_SQL)
+      return sorted(row[0].replace(tzinfo=dt.UTC) for row in cursor.fetchall())
 
   def _percore_hosts(
     self, start: dt.datetime, end: dt.datetime, only: list[str]
