@@ -1029,7 +1029,7 @@ def _reband_claimed_ingest_if_needed(
     today=today_d,
     identity=claim.identity,
   )
-  penalized = _penalized_ingest_requeue_score(score)
+  penalized = jq.penalize_ingest_score(score)
   jq.requeue_job(
     client,
     kind=jq.JOB_KIND_INGEST,
@@ -3310,6 +3310,72 @@ def _readmit_due_dead_letters(
   return len(readmitted)
 
 
+def _normalize_queued_ingest_scores(
+  client: Any,
+  *,
+  tgz_archive_dir: str,
+  today: date,
+  hot_days: int,
+  log_fn: Callable[..., None] | None = None,
+) -> int:
+  """
+  Re-derive queued ingest scores whose band or day slot is wrong.
+
+  A queued ingest score is derived data (band, calendar day, hash tie-break),
+  but it is persisted in the job-store snapshot. Older releases added a whole
+  day per deprioritizing requeue, so a snapshot can carry scores days or
+  months away from the file's own day, which turns oldest-day-first claiming
+  into hash order. Boot discover cannot repair them: past
+  ``sync_ingest_queue_max_size`` it stops re-adding catchup identities. A
+  score already inside the right ``SCORE_STRIDE`` day slot (including a
+  bounded in-day penalty) is kept.
+
+  Args:
+    client (Any): Job store.
+    tgz_archive_dir (str): Daily archive directory (day resolution).
+    today (date): Local today for the hot window.
+    hot_days (int): Hot window length in days.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    int: Number of identities re-scored.
+
+  Examples:
+    >>> _normalize_queued_ingest_scores(
+    ...   jq.SyncTimedbJobStore(""),
+    ...   tgz_archive_dir="/d",
+    ...   today=date(2026, 10, 28),
+    ...   hot_days=3,
+    ... )
+    0
+  """
+  fixed = 0
+  for identity in client.ingest_identities():
+    stored = client.ingest_score(identity)
+    day = _calendar_day_for_ingest_path(identity, tgz_archive_dir)
+    if stored is None or day is None:
+      continue
+    canonical = jq.encode_ingest_score(
+      band=jr.select_ingest_band(day, today=today, hot_days=hot_days),
+      day=day,
+      today=today,
+      identity=identity,
+    )
+    slot = int(canonical) - int(canonical) % jq.SCORE_STRIDE
+    if slot <= int(stored) < slot + jq.SCORE_STRIDE:
+      continue
+    jq.zadd_ingest_job(
+      client, identity=identity, score=canonical, over_cap=True
+    )
+    fixed += 1
+  if fixed:
+    _log(
+      f"queue_orchestrator ingest score normalize fixed={fixed}",
+      log_fn=log_fn,
+    )
+  return fixed
+
+
 def _requeue_bounded_without_attempt_bump(
   client: Any,
   *,
@@ -4259,26 +4325,6 @@ def _dominant_ingest_fill_block(stats: dict[str, int]) -> str | None:
   return best_key
 
 
-def _penalized_ingest_requeue_score(score: float | int | None) -> float:
-  """
-  Return an ingest ZSET score deprioritized behind same-band peers (RC9).
-
-  Args:
-    score (float | int | None): Current claim score; defaults to catchup base.
-
-  Returns:
-    float: Score bumped by :data:`LEASE_CONFLICT_SCORE_PENALTY`.
-
-  Examples:
-    >>> _penalized_ingest_requeue_score(
-    ...   5.0
-    ... ) == 5.0 + jq.LEASE_CONFLICT_SCORE_PENALTY
-    True
-  """
-  base = float(jq.CATCHUP_SCORE_BASE if score is None else score)
-  return base + float(jq.LEASE_CONFLICT_SCORE_PENALTY)
-
-
 def _requeue_ingest_fill_skip(
   client: Any,
   *,
@@ -4322,7 +4368,7 @@ def _requeue_ingest_fill_skip(
     kind=jq.JOB_KIND_INGEST,
     identity=claim.identity,
     owner_token=claim.owner_token,
-    score=_penalized_ingest_requeue_score(
+    score=jq.penalize_ingest_score(
       score if score is not None else getattr(claim, "score", None),
     ),
   )
@@ -7487,6 +7533,13 @@ def run_sync_timedb_queue_orchestrator(
     _log(
       "queue_orchestrator day_remainder rebuilt "
       f"ingest={rebuilt['ingest']} append={rebuilt['append']}",
+      log_fn=log_fn,
+    )
+    _normalize_queued_ingest_scores(
+      client,
+      tgz_archive_dir=tgz_archive_dir,
+      today=_local_today(),
+      hot_days=_hot_days(),
       log_fn=log_fn,
     )
 

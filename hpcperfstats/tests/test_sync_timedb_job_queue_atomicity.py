@@ -106,7 +106,7 @@ def test_crashed_owner_ingest_job_is_reaped_back_onto_queue():
   assert reaped == ["p|1|1"]
   assert jq.read_inflight_entries(store, kind="ingest") == {}
   assert store.lease_token("ingest", "p|1|1") is None
-  assert store.ingest_score("p|1|1") == (7.0 + jq.LEASE_CONFLICT_SCORE_PENALTY)
+  assert store.ingest_score("p|1|1") == jq.penalize_ingest_score(7.0)
 
 
 def test_reaped_job_reclaim_survives_late_ack_from_dead_owner():

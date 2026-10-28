@@ -149,4 +149,4 @@ def test_requeue_ingest_fill_skip_no_attempt_burn(monkeypatch):
     assert letters == []
     assert len(requeues) == 1
     assert requeues[0]["identity"] == "/bp"
-    assert requeues[0]["score"] == qo._penalized_ingest_requeue_score(5.0)
+    assert requeues[0]["score"] == jq.penalize_ingest_score(5.0)

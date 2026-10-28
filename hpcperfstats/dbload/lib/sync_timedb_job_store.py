@@ -21,7 +21,8 @@ Attributes:
   JOB_STORE_PERSIST_INTERVAL_S: Default snapshot write interval.
   JOB_STORE_SNAPSHOT_KIND: Persistence registry kind for the job snapshot.
   JOB_STORE_SNAPSHOT_RELPATH: Sidecar basename for the job snapshot.
-  LEASE_CONFLICT_SCORE_PENALTY: Score bump applied on retry requeue.
+  INGEST_PENALTY_STEP: Score bump per deprioritizing requeue; the result is
+    clamped inside the file's own day (``penalize_ingest_score``).
   LeaseOwner: Parsed owner token.
   QUEUE_DEAD_LETTER_KIND: Persistence kind for queue dead letters.
   NON_FATAL_DEAD_LETTER_REASONS: Legacy dead-letter reasons current code no
@@ -71,7 +72,7 @@ JOB_KINDS_ALL = (JOB_KIND_INGEST, *JOB_KINDS_LIST)
 HOT_SCORE_BASE = 0
 CATCHUP_SCORE_BASE = 10**15
 SCORE_STRIDE = 10**6
-LEASE_CONFLICT_SCORE_PENALTY = SCORE_STRIDE
+INGEST_PENALTY_STEP = SCORE_STRIDE // 4
 JOB_ATTEMPT_MAX_DEFAULT = 5
 QUEUE_MAX_MEMBERS_FLOOR = 1000
 QUEUE_DEAD_LETTER_KIND = "queue_dead_letter"
@@ -1523,6 +1524,35 @@ def encode_ingest_score(
   if text == "catchup":
     return int(CATCHUP_SCORE_BASE + day_ord * SCORE_STRIDE + tie)
   raise ValueError(f"band must be 'hot' or 'catchup', got {band!r}")
+
+
+def penalize_ingest_score(score: float | int | None) -> float:
+  """
+  Defer a queued ingest job behind its same-day peers, never past its day.
+
+  Every deprioritizing requeue (fill backpressure skip, reband, expired
+  lease) goes through here. The bump is clamped below the next day's first
+  score, so no number of requeues can reorder days: the persisted score of a
+  day-D file always sorts before any day-D+1 file (oldest-day-first order).
+
+  Args:
+    score (float | int | None): Current score; ``None`` starts at the
+      catchup base.
+
+  Returns:
+    float: ``score + INGEST_PENALTY_STEP``, at most the last score of the
+    same ``SCORE_STRIDE`` day slot.
+
+  Examples:
+    >>> day = CATCHUP_SCORE_BASE + 5 * SCORE_STRIDE
+    >>> penalize_ingest_score(day) == day + INGEST_PENALTY_STEP
+    True
+    >>> penalize_ingest_score(day + SCORE_STRIDE - 1) == day + SCORE_STRIDE - 1
+    True
+  """
+  value = int(CATCHUP_SCORE_BASE if score is None else score)
+  last_in_day = value - value % SCORE_STRIDE + SCORE_STRIDE - 1
+  return float(min(value + INGEST_PENALTY_STEP, last_in_day))
 
 
 def job_lease_ttl_seconds() -> int:
@@ -3159,11 +3189,7 @@ def reap_expired_inflight(
       store._inflight[kind].pop(ident, None)
       store._leases.pop((kind, ident), None)
       if str(kind) == JOB_KIND_INGEST:
-        restore = CATCHUP_SCORE_BASE if score is None else float(score)
-        store._ingest_set_locked(
-          ident,
-          restore + float(LEASE_CONFLICT_SCORE_PENALTY),
-        )
+        store._ingest_set_locked(ident, penalize_ingest_score(score))
       else:
         store._lists[kind].append(ident)
         store._pending[kind].add(ident)
