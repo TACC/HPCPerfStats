@@ -12,6 +12,10 @@ the operator one-shot migrate path with ``web`` stopped.
 """
 from django.db import migrations
 
+from hpcperfstats.site.lib.machine.compression_schedule import (
+  pin_compression_schedule,
+)
+
 
 class Migration(migrations.Migration):
   # Non-atomic: SET statement_timeout + DO block; long UNIQUE on large sites.
@@ -135,5 +139,11 @@ class Migration(migrations.Migration):
           $$;
           """,
           reverse_sql=migrations.RunSQL.noop,
+      ),
+      # A policy re-added above defaults to a floating 12 hour schedule; pin it
+      # to the daily 01:00 schedule (idempotent; soft-skips with no policy).
+      migrations.RunPython(
+          pin_compression_schedule,
+          migrations.RunPython.noop,
       ),
   ]

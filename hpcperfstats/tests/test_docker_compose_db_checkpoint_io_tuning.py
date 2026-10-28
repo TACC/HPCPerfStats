@@ -35,6 +35,9 @@ def test_docker_compose_db_pg15_checkpoint_io_gucs() -> None:
   assert "wal_compression=lz4" in block
   assert re.search(r"wal_compression=on\b", block) is None
   assert "io_method=io_uring" not in block
+  # 64GB buffer pool on the 377 GiB ingest host (db has no mem_limit); the
+  # profile showed ~4-5% of Postgres CPU in OS page-cache read/copy at 12GB.
+  assert "shared_buffers=64GB" in block
 
 
 def test_docker_compose_db_pg18_checkpoint_io_gucs() -> None:

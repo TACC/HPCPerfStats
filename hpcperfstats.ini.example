@@ -213,7 +213,7 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # (default 1536). Boehm's heap only grows; this bounds total worker memory.
 # sync_codon_worker_recycle_rss_mib = 1536
 
-# Ingest write-pool width / max concurrent ingest DB sessions (default 0 = max(1, parse//4)).
+# Ingest write-pool width / max concurrent ingest DB sessions (default 0 = max(1, parse//2)).
 # sync_ingest_write_pool_processes = 0
 
 # Max parse→write queue slots (payload count, not bytes; default 32).

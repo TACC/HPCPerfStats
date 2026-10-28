@@ -204,7 +204,10 @@ def _0032_sql():
     ("machine", "0031_alter_job_plot_artifact_options_and_more")
   ]
   assert mod.Migration.atomic is False
-  assert len(mod.Migration.operations) == 1
+  # RunSQL (UNIQUE + policy restore) then RunPython re-pinning the schedule.
+  ops = mod.Migration.operations
+  assert len(ops) == 2
+  assert isinstance(ops[1], migrations.RunPython)
   op = mod.Migration.operations[0]
   assert isinstance(op, migrations.RunSQL)
   assert isinstance(op.sql, str)
@@ -404,3 +407,140 @@ def test_makemigrations_check_command_reports_no_changes(monkeypatch):
   assert "Migrations for" not in text, (
     "makemigrations --check would autogenerate new migration(s):\n" + text
   )
+
+
+class _FakeCursor:
+  """Records executed SQL; answers the extension and policy-job lookups."""
+
+  def __init__(self, *, extension=True, job_id=1003):
+    self.extension = extension
+    self.job_id = job_id
+    self.executed = []
+    self._last = ""
+
+  def __enter__(self):
+    return self
+
+  def __exit__(self, *exc):
+    return False
+
+  def execute(self, sql, params=None):
+    self.executed.append((" ".join(str(sql).split()), params))
+    self._last = str(sql)
+
+  def fetchone(self):
+    if "pg_extension" in self._last:
+      return (1,) if self.extension else None
+    if "timescaledb_information.jobs" in self._last:
+      return None if self.job_id is None else (self.job_id,)
+    return None
+
+
+class _FakeEditor:
+  def __init__(self, cursor, vendor="postgresql"):
+    self.connection = type(
+      "Conn", (), {"vendor": vendor, "cursor": lambda self_: cursor}
+    )()
+
+
+def _compression_schedule_module():
+  return importlib.import_module(
+    "hpcperfstats.site.lib.machine.compression_schedule"
+  )
+
+
+def _migration_module(name):
+  return importlib.import_module(
+    f"hpcperfstats.site.lib.machine.migrations.{name}"
+  )
+
+
+def test_compression_schedule_pins_daily_fixed_schedule_without_max_runtime(
+  monkeypatch,
+):
+  mod = _compression_schedule_module()
+  monkeypatch.setattr(mod.cfg, "get_timezone", lambda: "America/Chicago")
+  cursor = _FakeCursor()
+  mod.pin_compression_schedule(None, _FakeEditor(cursor))
+  alter = [e for e in cursor.executed if "alter_job" in e[0]]
+  assert len(alter) == 1
+  sql, params = alter[0]
+  assert "fixed_schedule => true" in sql
+  assert "INTERVAL '1 day'" in sql
+  assert "max_runtime => INTERVAL '0'" in sql
+  assert params == [
+    1003,
+    "America/Chicago",
+    "America/Chicago",
+    "America/Chicago",
+  ]
+
+
+def test_compression_schedule_job_lookup_param_is_a_valid_array_literal():
+  """psycopg 3 sends a tuple as a composite literal; ``IN %s`` then fails.
+
+  Regression: web crash-looped on ``syntax error at or near
+  '(policy_compression,policy_columnstore)'``. Render the real parameter
+  through psycopg's adapter, which the fake cursors above do not exercise.
+  """
+  from psycopg import adapt
+
+  mod = _compression_schedule_module()
+  cursor = _FakeCursor()
+  mod.pin_compression_schedule(None, _FakeEditor(cursor))
+  lookups = [
+    e for e in cursor.executed if "timescaledb_information.jobs" in e[0]
+  ]
+  assert len(lookups) == 1
+  sql, params = lookups[0]
+  assert "ANY(" in sql
+  assert " IN %s" not in sql
+  literal = adapt.Transformer().as_literal(params[0])
+  assert literal.startswith(b"'{") and literal.endswith(b"}'")
+  assert b"policy_compression" in literal
+
+
+def test_compression_schedule_soft_skips_without_extension_policy_or_pg(
+  monkeypatch,
+):
+  mod = _compression_schedule_module()
+  monkeypatch.setattr(mod.cfg, "get_timezone", lambda: "UTC")
+  for cursor, vendor in (
+    (_FakeCursor(extension=False), "postgresql"),
+    (_FakeCursor(job_id=None), "postgresql"),
+    (_FakeCursor(), "sqlite"),
+  ):
+    mod.pin_compression_schedule(None, _FakeEditor(cursor, vendor))
+    assert not [e for e in cursor.executed if "alter_job" in e[0]]
+
+
+def test_compression_schedule_restore_is_floating_12_hours():
+  mod = _compression_schedule_module()
+  cursor = _FakeCursor()
+  mod.restore_compression_schedule(None, _FakeEditor(cursor))
+  alter = [e for e in cursor.executed if "alter_job" in e[0]]
+  assert len(alter) == 1
+  assert "fixed_schedule => false" in alter[0][0]
+  assert "INTERVAL '12 hours'" in alter[0][0]
+
+
+def test_0040_pins_schedule_and_reverses_it():
+  mod = _migration_module("0040_host_data_compression_schedule")
+  helper = _compression_schedule_module()
+  op = mod.Migration.operations[0]
+  assert isinstance(op, migrations.RunPython)
+  assert op.code is helper.pin_compression_schedule
+  assert op.reverse_code is helper.restore_compression_schedule
+  assert mod.Migration.dependencies == [
+    ("machine", "0039_jid_scoped_distinct_host_filter")
+  ]
+
+
+def test_0032_phase2_repins_schedule_after_policy_readd():
+  mod = _migration_module("0032_host_data_unique_include_dev_db")
+  helper = _compression_schedule_module()
+  ops = mod.Migration.operations
+  assert isinstance(ops[0], migrations.RunSQL)
+  assert "add_compression_policy" in ops[0].sql
+  assert isinstance(ops[-1], migrations.RunPython)
+  assert ops[-1].code is helper.pin_compression_schedule

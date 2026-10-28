@@ -174,8 +174,9 @@ services:
     # Memory / connection budget (operator): max_connections=500 is headroom for many Django
     # workers + threads + pipeline pools, not permission to run 500 heavy queries at once.
     # Spike control: lower work_mem caps per-query RAM; parallel gather defaults are raised for
-    # bulk scans (see max_parallel_* below). Slightly lower shared_buffers frees container RAM
-    # for backends + OS cache (see README Postgres section).
+    # bulk scans (see max_parallel_* below). shared_buffers=64GB (was 12GB) on the 377 GiB
+    # ingest host: the profile showed ~4-5% of Postgres CPU in kernel read/copy from the OS
+    # page cache; db has no mem_limit (see README Postgres section).
     #
     # statement_timeout / idle_in_transaction_session_timeout: align with Django OPTIONS in settings
     # (defaults 120s / 300s in ms). Shed runaway queries; tune bulk jobs if needed.
@@ -189,7 +190,7 @@ services:
       - -c
       - idle_in_transaction_session_timeout=300000
       - -c
-      - shared_buffers=12GB
+      - shared_buffers=64GB
       - -c
       - work_mem=8MB
       - -c
