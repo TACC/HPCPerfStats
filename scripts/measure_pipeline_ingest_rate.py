@@ -5,23 +5,19 @@ Measure listend vs sync_timedb rates from pipeline logs.
 Reads pipeline container logs (stdin, --log-file, or --fetch-compose) and prints
 only summary outcome lines to stdout. Errors and caveats go to stderr.
 
-Backlog fields (backlog_at_start / backlog_latest / drained / empirical ETA) use
-**on-disk pending census only**:
-- ``pending rescan done pending=N`` (uncapped before queue cap; optional
-  historical ``sync_timedb:`` / ``ingest:`` body prefixes)
-- ``Pending stats file list truncated pending=N max=M`` (uncapped N at truncate)
+Backlog fields (backlog_at_start / backlog_latest / drained / empirical ETA)
+and ingest_queue_depth_* come from the queued side of the pipeline's
+``queue_orchestrator census ingest=<inflight>/<queued>`` line.
 
-Do **not** mix those with ``Throughput telemetry ... backlog=N``, which is capped
-in-memory ``len(pending_stats_files)`` (<= sync_ingest_queue_max_size, often
-2000). Queue occupancy is reported separately as ingest_queue_depth_*.
-
-The measurement window starts at **ingest start** by default (last ``startup
-ingest gate cleared; ingest may begin``), not supervisor/startup maintenance.
-Use ``--include-startup`` to measure from the first timestamped line. Fallback
-when no gate line is present: last ``chunk imap start``.
+The measurement window starts at **ingest start** by default (last
+``queue_orchestrator ingest write stage started``), not supervisor/startup
+maintenance. Use ``--include-startup`` to measure from the first timestamped
+line. ``sync_archive_batches_per_min`` sums ``archive=N`` on the 10-minute
+``queue_orchestrator progress day=`` lines; N counts tar append batches, not
+files, so it is not compared with the per-file listend/ingest rates.
 
 ``estimated_finish_local`` is log_end (or now) plus the first usable ETA among
-empirical / full_ingest / archive_done, formatted in the host local timezone
+empirical / full_ingest, formatted in the host local timezone
 (``YYYY-MM-DD HH:MM:SS ±HHMM``). ``estimated_finish_basis`` names which ETA was
 used.
 
@@ -36,16 +32,14 @@ Attributes:
   EVEN_RATIO_TOLERANCE: Attribute.
   LISTEND_REPORT_WINDOW_MINUTES: Attribute.
   _ANSI_ESCAPE_RE: Attribute.
-  _ARCHIVE_FINALIZE_RE: Attribute.
+  _ARCHIVE_PROGRESS_RE: Per-window ``archive=N`` (append batches, one per tar).
   _BOOT_MARKERS: Attribute.
   _CENSUS_INGEST_QUEUED_RE: Attribute.
-  _CHUNK_IMMEDIATE_RE: Attribute.
   _FULL_INGEST_RE: Attribute.
   _GIB_BYTES: Attribute.
   _INGEST_ELAPSED_S_RE: Attribute.
   _INGEST_POSTGRES_S_RE: Attribute.
   _INGEST_SIZE_BYTES_RE: Attribute.
-  _INGEST_START_FALLBACK_MARKERS: Attribute.
   _LISTEND_UNLINKS_RE: Attribute.
   _LOG_TS_CONTAINER_FIRST_RE: Attribute.
   _LOG_TS_CONTAINER_PIPE_RE: Attribute.
@@ -59,13 +53,9 @@ Attributes:
   _PARSE_DERIVED_HOLD_TOKENS: Derived parse tokens excluded from top-hold ranking.
   _PARSE_HOLD_TOKEN_NAMES: Parse-stage token names scraped from ingest lines.
   _PHASE_TOKEN_RES: Compiled named-field regexes for write/parse tokens.
-  _PENDING_RESCAN_RE: Attribute.
-  _PENDING_TRUNCATE_RE: Attribute.
-  _QUEUE_SATURATION_DISK_FACTOR: Attribute.
   _RFC3339_TS: Attribute.
   _SIZE_TIER_BOUNDS: Attribute.
   _SIZE_TIER_NAMES: Attribute.
-  _THROUGHPUT_BACKLOG_RE: Attribute.
   _WRITE_PHASE_TOKEN_NAMES: Write-phase token names scraped from ingest lines.
   _FRESH_CAMPAIGN_TOKEN_NAMES: F1 orm_rows and F2 overlap_headroom_s tokens.
   _DETAIL_REPORT_TOKEN_NAMES: Write detail clocks reported outside write share.
@@ -135,10 +125,31 @@ _FRESH_CAMPAIGN_TOKEN_NAMES = (
   "overlap_headroom_s",
   "orm_rows",
 )
-# Stage DDL and reconnect handshake. Logged on ingest lines, not write share.
+# Stage DDL, reconnect, COPY encode and wait/CPU telemetry. Logged on ingest
+# lines, not write share.
 _DETAIL_REPORT_TOKEN_NAMES = (
   "stage_ddl_s",
   "reconnect_s",
+  "copy_encode_s",
+  "thr_cpu_s",
+  "thr_runq_s",
+  "thr_sleep_s",
+  "stages_cpu_s",
+  "feed_cpu_s",
+  "build_df_cpu_s",
+  "delta_cpu_s",
+  "collapse_cpu_s",
+  "arc_cpu_s",
+  "wq_put_s",
+  "wq_resid_s",
+  "wq_join_s",
+  "wq_n",
+  "w_exec_s",
+  "w_cpu_s",
+  "w_runq_s",
+  "slot_wait_s",
+  "codon_primary",
+  "emit_start",
 )
 # Process-wide supervisor samples. Median is a magnitude, not a per-file share.
 _SUPERVISOR_METER_NAMES = (
@@ -183,7 +194,7 @@ _PARSE_DERIVED_HOLD_TOKENS = frozenset(
   ("stages_sum_s", "parse_unaccounted_s", "build_df_s", "collapse_s"),
 )
 _PHASE_TOKEN_RES = {
-  name: re.compile(rf"{re.escape(name)}=(?P<v>[0-9.]+)")
+  name: re.compile(rf"(?<![A-Za-z0-9_]){re.escape(name)}=(?P<v>[0-9.]+)")
   for name in (
     _WRITE_PHASE_TOKEN_NAMES
     + _PARSE_HOLD_TOKEN_NAMES
@@ -192,7 +203,7 @@ _PHASE_TOKEN_RES = {
   )
 }
 _SUPERVISOR_METER_RES = {
-  name: re.compile(rf"{re.escape(name)}=(?P<v>[0-9.]+)")
+  name: re.compile(rf"(?<![A-Za-z0-9_]){re.escape(name)}=(?P<v>[0-9.]+)")
   for name in _SUPERVISOR_METER_NAMES
 }
 _MID_TIER_NAME = "8mib_64mib"
@@ -216,26 +227,10 @@ _MID_TIER_PREF = (
   "8mib_64mib",
   "lt_8mib",
 )
-_CHUNK_IMMEDIATE_RE = re.compile(
-  r"(?:sync_timedb:\s+)?(?:ingest:\s+)?chunk ingest summary .*checkpoint_immediate_n=(\d+)"
+_ARCHIVE_PROGRESS_RE = re.compile(
+  r"queue_orchestrator progress day=\S+ (?:.*\s)?archive=(\d+)"
 )
-_ARCHIVE_FINALIZE_RE = re.compile(
-  r"(?:sync_timedb:\s+)?(?:ingest:\s+)?checkpoint deferred archive finalize count=(\d+)"
-)
-_PENDING_RESCAN_RE = re.compile(
-  r"(?:sync_timedb:\s+)?(?:ingest:\s+)?pending rescan done pending=(\d+)"
-)
-_PENDING_TRUNCATE_RE = re.compile(
-  r"Pending stats file list truncated pending=(\d+) max=(\d+)"
-)
-_THROUGHPUT_BACKLOG_RE = re.compile(
-  r"Throughput telemetry: active_workers=\d+ backlog=(\d+)"
-)
-_BOOT_MARKERS = ("startup ingest gate cleared; ingest may begin",)
-# Used only when no ingest-gate line is present in the log dump.
-_INGEST_START_FALLBACK_MARKERS = ("chunk imap start",)
-# Disk pending ≫ queue depth by at least this factor -> saturation WARN.
-_QUEUE_SATURATION_DISK_FACTOR = 2
+_BOOT_MARKERS = ("queue_orchestrator ingest write stage started",)
 
 EVEN_RATIO_TOLERANCE = 0.02
 LISTEND_REPORT_WINDOW_MINUTES = 10.0
@@ -247,10 +242,7 @@ class LogMetrics:
   Hold LogMetrics state and behavior.
 
   Attributes:
-    archive_finalize_sum: ``archive_finalize_sum``.
-    archive_immediate_sum: ``archive_immediate_sum``.
-    backlog_disk_samples: ``backlog_disk_samples``.
-    backlog_throughput_samples: ``backlog_throughput_samples``.
+    archive_batches_sum: Sum of ``archive=`` (tar append batches) on progress lines.
     first_ts: ``first_ts``.
     full_ingest_count: ``full_ingest_count``.
     full_ingest_bytes: Sum of ``size_bytes`` on full-ingest lines (0 when absent).
@@ -266,7 +258,6 @@ class LogMetrics:
     listend_unlink_bytes_incomplete: True when any report lacks byte fields.
     timestamped_lines: ``timestamped_lines``.
     census_ingest_queued: Timestamped queued side of census ``ingest=``.
-    truncate_max_samples: ``truncate_max_samples``.
   """
 
   listend_unlink_samples: list[tuple[datetime | None, int, int]] = field(
@@ -300,16 +291,7 @@ class LogMetrics:
       for name in _SIZE_TIER_NAMES
     },
   )
-  archive_immediate_sum: int = 0
-  archive_finalize_sum: int = 0
-  # Uncapped on-disk pending (rescan done + truncate pending=N).
-  backlog_disk_samples: list[tuple[datetime, int]] = field(default_factory=list)
-  # Observed truncate max= values (queue high watermark hints).
-  truncate_max_samples: list[int] = field(default_factory=list)
-  # Capped in-memory queue depth from Throughput telemetry backlog=.
-  backlog_throughput_samples: list[tuple[datetime, int]] = field(
-    default_factory=list
-  )
+  archive_batches_sum: int = 0
   first_ts: datetime | None = None
   last_ts: datetime | None = None
   timestamped_lines: int = 0
@@ -321,20 +303,6 @@ class LogMetrics:
       name: [] for name in (*_SUPERVISOR_METER_NAMES, "dead_letter")
     },
   )
-
-  @property
-  def backlog_rescan_samples(self) -> list[tuple[datetime, int]]:
-    """
-    Alias kept for older tests/callers; same as disk samples.
-
-    Returns:
-      list[tuple[datetime, int]]: list[tuple[datetime, int]] produced by
-      this call.
-
-    Examples:
-      >>> LogMetrics().backlog_rescan_samples()  # doctest: +SKIP
-    """
-    return self.backlog_disk_samples
 
 
 def _size_tier_name(size_bytes: int) -> str:
@@ -865,8 +833,7 @@ def _find_ingest_start_cutoff(lines: Iterable[str]) -> int | None:
   """
   Return index of last ingest-start marker line (inclusive), or None.
 
-  Prefer ``startup ingest gate cleared`` so later catch-up ``pending rescan
-  done`` lines do not shrink the window. Fall back to ``chunk imap start``.
+  The marker is ``queue_orchestrator ingest write stage started``.
 
   Args:
     lines (Iterable[str]): Lines.
@@ -878,16 +845,11 @@ def _find_ingest_start_cutoff(lines: Iterable[str]) -> int | None:
     >>> _find_ingest_start_cutoff(None)  # doctest: +SKIP
   """
   last_gate: int | None = None
-  last_fallback: int | None = None
   for idx, line in enumerate(lines):
     _, body = _strip_log_prefix(line)
     if any(marker in body for marker in _BOOT_MARKERS):
       last_gate = idx
-    elif any(marker in body for marker in _INGEST_START_FALLBACK_MARKERS):
-      last_fallback = idx
-  if last_gate is not None:
-    return last_gate
-  return last_fallback
+  return last_gate
 
 
 def _find_boot_cutoff(lines: Iterable[str]) -> int | None:
@@ -1033,29 +995,11 @@ def parse_log_lines(
     if _FULL_INGEST_RE.search(body):
       _record_full_ingest(metrics, body)
 
-    immediate_match = _CHUNK_IMMEDIATE_RE.search(body)
-    if immediate_match:
-      metrics.archive_immediate_sum += int(immediate_match.group(1))
-
-    finalize_match = _ARCHIVE_FINALIZE_RE.search(body)
-    if finalize_match:
-      metrics.archive_finalize_sum += int(finalize_match.group(1))
+    archive_match = _ARCHIVE_PROGRESS_RE.search(body)
+    if archive_match:
+      metrics.archive_batches_sum += int(archive_match.group(1))
 
     if ts is not None:
-      rescan_match = _PENDING_RESCAN_RE.search(body)
-      if rescan_match:
-        metrics.backlog_disk_samples.append((ts, int(rescan_match.group(1))))
-      truncate_match = _PENDING_TRUNCATE_RE.search(body)
-      if truncate_match:
-        metrics.backlog_disk_samples.append(
-          (ts, int(truncate_match.group(1))),
-        )
-        metrics.truncate_max_samples.append(int(truncate_match.group(2)))
-      backlog_match = _THROUGHPUT_BACKLOG_RE.search(body)
-      if backlog_match:
-        metrics.backlog_throughput_samples.append(
-          (ts, int(backlog_match.group(1))),
-        )
       census_match = _CENSUS_INGEST_QUEUED_RE.search(body)
       if census_match:
         metrics.census_ingest_queued.append(
@@ -1149,7 +1093,7 @@ def resolve_window_minutes(
 
 def _backlog_at_start(metrics: LogMetrics) -> int | None:
   """
-  First uncapped on-disk pending sample (rescan or truncate).
+  First census ingest queued sample.
 
   Args:
     metrics (LogMetrics): Metrics.
@@ -1160,14 +1104,13 @@ def _backlog_at_start(metrics: LogMetrics) -> int | None:
   Examples:
     >>> _backlog_at_start(None)  # doctest: +SKIP
   """
-  if metrics.backlog_disk_samples:
-    return metrics.backlog_disk_samples[0][1]
-  return None
+  samples = metrics.census_ingest_queued
+  return samples[0][1] if samples else None
 
 
 def _backlog_latest(metrics: LogMetrics) -> int | None:
   """
-  Latest uncapped on-disk pending sample (rescan or truncate).
+  Latest census ingest queued sample.
 
   Args:
     metrics (LogMetrics): Metrics.
@@ -1178,9 +1121,8 @@ def _backlog_latest(metrics: LogMetrics) -> int | None:
   Examples:
     >>> _backlog_latest(None)  # doctest: +SKIP
   """
-  if metrics.backlog_disk_samples:
-    return metrics.backlog_disk_samples[-1][1]
-  return None
+  samples = metrics.census_ingest_queued
+  return samples[-1][1] if samples else None
 
 
 def _disk_sample_count(metrics: LogMetrics) -> int:
@@ -1196,7 +1138,7 @@ def _disk_sample_count(metrics: LogMetrics) -> int:
   Examples:
     >>> _disk_sample_count(None)  # doctest: +SKIP
   """
-  return len(metrics.backlog_disk_samples)
+  return len(metrics.census_ingest_queued)
 
 
 def _queue_depth_at_start(metrics: LogMetrics) -> int | None:
@@ -1212,9 +1154,8 @@ def _queue_depth_at_start(metrics: LogMetrics) -> int | None:
   Examples:
     >>> _queue_depth_at_start(None)  # doctest: +SKIP
   """
-  if metrics.backlog_throughput_samples:
-    return metrics.backlog_throughput_samples[0][1]
-  return None
+  samples = metrics.census_ingest_queued
+  return samples[0][1] if samples else None
 
 
 def _queue_depth_latest(metrics: LogMetrics) -> int | None:
@@ -1230,9 +1171,8 @@ def _queue_depth_latest(metrics: LogMetrics) -> int | None:
   Examples:
     >>> _queue_depth_latest(None)  # doctest: +SKIP
   """
-  if metrics.backlog_throughput_samples:
-    return metrics.backlog_throughput_samples[-1][1]
-  return None
+  samples = metrics.census_ingest_queued
+  return samples[-1][1] if samples else None
 
 
 def _ratio_and_verdict(
@@ -1468,32 +1408,28 @@ def _estimated_finish_local(
   *,
   eta_empirical: str,
   eta_full_ingest: str,
-  eta_archive_done: str,
 ) -> tuple[str, str]:
   """
   Return (local finish stamp, eta field name) from the first usable ETA.
 
-  Preference: empirical drain, then full ingest net rate, then archive-done
-    net rate.
+  Preference: empirical drain, then full ingest net rate.
   Anchor is log_end when present, otherwise current UTC.
 
   Args:
     log_end (Optional[datetime]): Log end, or None when absent.
     eta_empirical (str): String for eta empirical.
     eta_full_ingest (str): String for eta full ingest.
-    eta_archive_done (str): String for eta archive done.
 
   Returns:
     tuple[str, str]: tuple[str, str] produced by this call.
 
   Examples:
-    >>> _estimated_finish_local(None, "x", "x", "x")  # doctest: +SKIP
+    >>> _estimated_finish_local(None, "x", "x")  # doctest: +SKIP
   """
   base = log_end if log_end is not None else datetime.now(UTC)
   for basis, eta_s in (
     ("eta_hours_empirical", eta_empirical),
     ("eta_hours_full_ingest", eta_full_ingest),
-    ("eta_hours_archive_done", eta_archive_done),
   ):
     hours = _parse_eta_hours(eta_s)
     if hours is None:
@@ -1533,15 +1469,9 @@ def build_outcomes(
   )
   listend_rate = metrics.listend_unlink_sum / window_minutes
   ingest_rate = metrics.full_ingest_count / window_minutes
-  archive_done_count = (
-    metrics.archive_immediate_sum + metrics.archive_finalize_sum
-  )
-  archive_rate = archive_done_count / window_minutes
+  archive_rate = metrics.archive_batches_sum / window_minutes
 
   ratio_ingest, verdict_ingest = _ratio_and_verdict(listend_rate, ingest_rate)
-  ratio_archive, verdict_archive = _ratio_and_verdict(
-    listend_rate, archive_rate
-  )
 
   backlog_start = _backlog_at_start(metrics)
   backlog_latest = _backlog_latest(metrics)
@@ -1568,16 +1498,13 @@ def build_outcomes(
       empirical_drain = drained / elapsed_minutes
 
   net_ingest = ingest_rate - listend_rate
-  net_archive = archive_rate - listend_rate
 
   eta_empirical = _eta_hours(backlog_latest, empirical_drain)
   eta_full_ingest = _eta_hours(backlog_latest, net_ingest)
-  eta_archive_done = _eta_hours(backlog_latest, net_archive)
   finish_local, finish_basis = _estimated_finish_local(
     metrics.last_ts,
     eta_empirical=eta_empirical,
     eta_full_ingest=eta_full_ingest,
-    eta_archive_done=eta_archive_done,
   )
 
   mib_per_min = 0.0
@@ -1606,18 +1533,15 @@ def build_outcomes(
     "sync_full_ingest_per_min": _fmt_rate(ingest_rate),
     "sync_full_ingest_mib_per_min": _fmt_rate(mib_per_min),
     "listend_sealed_mib_per_min": _fmt_rate(listend_sealed_mib_per_min),
-    "sync_archive_done_per_min": _fmt_rate(archive_rate),
+    "sync_archive_batches_per_min": _fmt_rate(archive_rate),
     "ratio_listend_over_full_ingest": ratio_ingest,
     "verdict_full_ingest": verdict_ingest,
     "ratio_listend_over_full_ingest_mib": ratio_ingest_mib,
     "verdict_full_ingest_mib": verdict_ingest_mib,
-    "ratio_listend_over_archive_done": ratio_archive,
-    "verdict_archive_done": verdict_archive,
     "backlog_gap_full_ingest_per_min": _fmt_rate(listend_rate - ingest_rate),
     "backlog_gap_full_ingest_mib_per_min": _fmt_rate(
       listend_sealed_mib_per_min - mib_per_min,
     ),
-    "backlog_gap_archive_done_per_min": _fmt_rate(listend_rate - archive_rate),
     "ingest_start_utc": _fmt_ts(metrics.first_ts),
     "log_end_utc": _fmt_ts(metrics.last_ts),
     "elapsed_hours": f"{elapsed_hours:.3f}",
@@ -1630,7 +1554,6 @@ def build_outcomes(
     "empirical_drain_per_min": _fmt_rate(empirical_drain),
     "eta_hours_empirical": eta_empirical,
     "eta_hours_full_ingest": eta_full_ingest,
-    "eta_hours_archive_done": eta_archive_done,
     "estimated_finish_local": finish_local,
     "estimated_finish_basis": finish_basis,
   }
@@ -1787,32 +1710,14 @@ def emit_warnings(metrics: LogMetrics, window_minutes: float) -> None:
   disk_n = _disk_sample_count(metrics)
   if disk_n == 0:
     print(
-      "WARN: no disk_pending samples found "
-      "(pending rescan done / truncated pending=); ETA may be N/A",
+      "WARN: no census ingest= backlog samples found; ETA may be N/A",
       file=sys.stderr,
     )
   elif disk_n == 1:
     print(
-      "WARN: insufficient disk_pending samples for drain "
-      "(need >=2 of rescan done / truncated pending=)",
+      "WARN: insufficient census ingest= samples for drain (need >=2)",
       file=sys.stderr,
     )
-  queue_latest = _queue_depth_latest(metrics)
-  backlog_latest = _backlog_latest(metrics)
-  if (
-    queue_latest is not None
-    and backlog_latest is not None
-    and queue_latest > 0
-    and backlog_latest >= queue_latest * _QUEUE_SATURATION_DISK_FACTOR
-  ):
-    watermark = queue_latest
-    if metrics.truncate_max_samples:
-      watermark = metrics.truncate_max_samples[-1]
-    if queue_latest >= watermark:
-      print(
-        f"WARN: ingest queue depth saturated at {queue_latest} while disk_pending={backlog_latest} (queue depth is not disk backlog)",
-        file=sys.stderr,
-      )
   if window_minutes < 60:
     print(
       f"WARN: short log window ({window_minutes:.1f} min); rates and ETA are noisy",
@@ -1839,16 +1744,13 @@ def format_stdout(outcomes: dict[str, str]) -> str:
     "sync_full_ingest_per_min",
     "sync_full_ingest_mib_per_min",
     "listend_sealed_mib_per_min",
-    "sync_archive_done_per_min",
+    "sync_archive_batches_per_min",
     "ratio_listend_over_full_ingest",
     "verdict_full_ingest",
     "ratio_listend_over_full_ingest_mib",
     "verdict_full_ingest_mib",
-    "ratio_listend_over_archive_done",
-    "verdict_archive_done",
     "backlog_gap_full_ingest_per_min",
     "backlog_gap_full_ingest_mib_per_min",
-    "backlog_gap_archive_done_per_min",
     "ingest_start_utc",
     "log_end_utc",
     "elapsed_hours",
@@ -1861,7 +1763,6 @@ def format_stdout(outcomes: dict[str, str]) -> str:
     "empirical_drain_per_min",
     "eta_hours_empirical",
     "eta_hours_full_ingest",
-    "eta_hours_archive_done",
     "estimated_finish_local",
     "estimated_finish_basis",
     "mid_tier_name",
@@ -2033,7 +1934,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     action="store_true",
     help=(
       "Include pre-ingest startup lines in the measurement window "
-      "(default starts at last 'startup ingest gate cleared')"
+      "(default starts at last 'queue_orchestrator ingest write stage started')"
     ),
   )
   parser.add_argument(
