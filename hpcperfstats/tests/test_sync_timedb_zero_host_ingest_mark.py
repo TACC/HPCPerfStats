@@ -5,10 +5,22 @@ from __future__ import annotations
 import json
 import os
 
-from hpcperfstats.dbload.lib import sync_timedb_zero_host_ingest_mark as zhm
+import pytest
+
+from hpcperfstats.dbload.lib import (
+  sync_timedb_write_behind as wb,
+  sync_timedb_zero_host_ingest_mark as zhm,
+)
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
   ZERO_HOST_INGEST_MARK_SCHEMA_VERSION,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_write_behind():
+  wb.reset_write_behind_for_tests(flush=False)
+  yield
+  wb.reset_write_behind_for_tests(flush=False)
 
 
 def _seg(tmp_path, name="host/1710000100", text="proc-only"):
@@ -91,7 +103,7 @@ def test_load_entries_malformed_list_and_non_dict_entries(tmp_path):
   mark = zhm.zero_host_ingest_mark_path(str(tmp_path))
   with open(mark, "w", encoding="utf-8") as handle:
     json.dump(["list-payload"], handle)
-  assert zhm._load_entries(mark) == {}
+  assert zhm._load_entries_uncached(mark) == {}
   with open(mark, "w", encoding="utf-8") as handle:
     json.dump(
       {
@@ -100,7 +112,7 @@ def test_load_entries_malformed_list_and_non_dict_entries(tmp_path):
       },
       handle,
     )
-  assert zhm._load_entries(mark) == {}
+  assert zhm._load_entries_uncached(mark) == {}
 
 
 def test_clear_empty_inputs_return_zero(tmp_path):
@@ -237,9 +249,6 @@ def test_default_archive_dir_empty_when_conf_none(monkeypatch):
 
 
 def test_has_zero_host_mark_cache_one_json_load(tmp_path, monkeypatch):
-  from hpcperfstats.dbload.lib import sync_timedb_mark_entries_cache as mec
-
-  mec.reset_mark_entries_cache_for_tests()
   seg = _seg(tmp_path)
   assert zhm.record_zero_host_ingest_mark(
     seg,
@@ -258,4 +267,4 @@ def test_has_zero_host_mark_cache_one_json_load(tmp_path, monkeypatch):
       seg,
       archive_data_dir=str(tmp_path),
     )
-  assert loads["n"] == 1
+  assert loads["n"] == 0

@@ -5,11 +5,24 @@ from __future__ import annotations
 import json
 import os
 
-from hpcperfstats.dbload.lib import sync_timedb_file_complete_ingest_mark as fcm
+import pytest
+
+from hpcperfstats.dbload.lib import (
+  sync_timedb_file_complete_ingest_mark as fcm,
+  sync_timedb_write_behind as wb,
+)
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
   FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION,
   load_persistence_document,
+  save_persistence_document,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_write_behind():
+  wb.reset_write_behind_for_tests(flush=False)
+  yield
+  wb.reset_write_behind_for_tests(flush=False)
 
 
 def _seg(tmp_path, name="host/1710000000", text="payload"):
@@ -111,7 +124,7 @@ def test_load_entries_rejects_malformed_list_payload(tmp_path):
   mark = fcm.file_complete_ingest_mark_path(str(tmp_path))
   with open(mark, "w", encoding="utf-8") as handle:
     json.dump([{"not": "a dict envelope"}], handle)
-  assert fcm._load_entries(mark) == {}
+  assert fcm._load_entries_uncached(mark) == {}
 
 
 def test_load_entries_rejects_entries_list(tmp_path):
@@ -130,7 +143,7 @@ def test_load_entries_rejects_entries_list(tmp_path):
     default={"entries": {}},
   )
   assert loaded == {"entries": {}}
-  assert fcm._load_entries(mark) == {}
+  assert fcm._load_entries_uncached(mark) == {}
 
 
 def test_load_entries_none_entries_is_empty(tmp_path):
@@ -142,7 +155,7 @@ def test_load_entries_none_entries_is_empty(tmp_path):
       },
       handle,
     )
-  assert fcm._load_entries(mark) == {}
+  assert fcm._load_entries_uncached(mark) == {}
 
 
 def test_clear_empty_paths_returns_zero(tmp_path):
@@ -202,7 +215,11 @@ def test_clear_drops_non_dict_meta_via_fingerprint_prefix(tmp_path):
   seg = _seg(tmp_path)
   key = fcm.path_fingerprint_key(seg)
   mark = fcm.file_complete_ingest_mark_path(str(tmp_path))
-  fcm._save_entries(mark, {key: "not-a-dict"})
+  save_persistence_document(
+    mark,
+    "file_complete_ingest_mark",
+    {"schema_version": 1, "entries": {key: "not-a-dict"}},
+  )
   removed = fcm.clear_file_complete_ingest_marks(
     [seg],
     archive_data_dir=str(tmp_path),
@@ -308,10 +325,7 @@ def test_default_archive_dir_uses_conf(monkeypatch):
 
 
 def test_has_file_complete_mark_cache_one_json_load(tmp_path, monkeypatch):
-  """N has_* against an unchanged mark file must hit disk load once."""
-  from hpcperfstats.dbload.lib import sync_timedb_mark_entries_cache as mec
-
-  mec.reset_mark_entries_cache_for_tests()
+  """N has_* after a record are served from memory (no disk load)."""
   seg = _seg(tmp_path)
   assert fcm.record_file_complete_ingest_mark(
     seg,
@@ -330,13 +344,10 @@ def test_has_file_complete_mark_cache_one_json_load(tmp_path, monkeypatch):
       seg,
       archive_data_dir=str(tmp_path),
     )
-  assert loads["n"] == 1
+  assert loads["n"] == 0
 
 
-def test_record_invalidates_file_complete_mark_cache(tmp_path, monkeypatch):
-  from hpcperfstats.dbload.lib import sync_timedb_mark_entries_cache as mec
-
-  mec.reset_mark_entries_cache_for_tests()
+def test_record_is_visible_without_disk_reload(tmp_path, monkeypatch):
   seg = _seg(tmp_path)
   assert fcm.record_file_complete_ingest_mark(
     seg,
@@ -354,7 +365,7 @@ def test_record_invalidates_file_complete_mark_cache(tmp_path, monkeypatch):
     seg,
     archive_data_dir=str(tmp_path),
   )
-  assert loads["n"] == 1
+  assert loads["n"] == 0
   assert fcm.record_file_complete_ingest_mark(
     seg,
     archive_data_dir=str(tmp_path),
@@ -363,4 +374,4 @@ def test_record_invalidates_file_complete_mark_cache(tmp_path, monkeypatch):
     seg,
     archive_data_dir=str(tmp_path),
   )
-  assert loads["n"] == 2
+  assert loads["n"] == 0

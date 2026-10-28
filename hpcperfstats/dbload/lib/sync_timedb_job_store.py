@@ -19,7 +19,6 @@ Attributes:
   JOB_KINDS_LIST: Tuple of kinds that use FIFO lists.
   JOB_LEASE_TTL_FLOOR_S: Minimum claim deadline seconds.
   JOB_STORE_PERSIST_INTERVAL_S: Default snapshot write interval.
-  _JOB_STORE_PERSIST_FORCE_TIMEOUT_S: Max seconds to wait for a forced flush.
   JOB_STORE_SNAPSHOT_KIND: Persistence registry kind for the job snapshot.
   JOB_STORE_SNAPSHOT_RELPATH: Sidecar basename for the job snapshot.
   LEASE_CONFLICT_SCORE_PENALTY: Score bump applied on retry requeue.
@@ -54,13 +53,13 @@ from itertools import islice
 from typing import Any
 
 from hpcperfstats.dbload.lib import conf_parser as cfg
-from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
   artifact_path,
   load_persistence_document,
   save_persistence_document,
 )
 from hpcperfstats.dbload.lib.sync_timedb_store_lock_timing import TimedRLock
+from hpcperfstats.dbload.lib.sync_timedb_write_behind import WriteBehindWriter
 
 JOB_KIND_DISCOVER = "discover"
 JOB_KIND_INGEST = "ingest"
@@ -82,7 +81,6 @@ ARCHIVE_MEMBERS_STORE_DIR_RELPATH = ".sync_timedb_archive_members"
 JOB_STORE_PERSIST_INTERVAL_S = 60.0
 JOB_LEASE_TTL_FLOOR_S = 60
 INFLIGHT_REAP_GRACE_FLOOR_S = 30
-_JOB_STORE_PERSIST_FORCE_TIMEOUT_S = 120.0
 
 _BOOT_ID_CACHE: str | None = None
 
@@ -146,19 +144,12 @@ class SyncTimedbJobStore:
     _ingest_heap_catchup: Lazy min-heap of catchup-band ``(score, id)``.
     _ingest_heap_hot: Lazy min-heap of hot-band ``(score, id)``.
     _inflight: Per-kind in-flight map of deadline, owner, and score.
-    _last_persist: Epoch seconds of the last successful snapshot write.
     _leases: Owner token by (kind, identity).
     _lists: FIFO deques for discover, append, and day_close.
     _lock: Re-entrant lock covering every mutation.
     _payloads: Fingerprint and attempt fields by (kind, identity).
     _pending: Dedupe sets mirroring queued LIST identities.
-    _persist_cv: Condition waking the dedicated persist writer.
-    _persist_error: Exception from the latest forced persist write.
-    _persist_force: True when a caller requested an immediate flush.
-    _persist_force_done: Set when a forced flush attempt finishes.
-    _persist_gen: Bumped on every durable dirty mark for coalesce.
-    _persist_stop: True when ``close()`` asked the writer to exit.
-    _persist_thread: Dedicated daemon thread that owns sidecar writes.
+    _writer: Write-behind writer owning the ``job-store-persist`` thread.
     _shadow_ingest: Incremental durable ingest score map for persist.
     _shadow_lists: Incremental durable LIST queues for persist.
     _shadow_payloads: Incremental queued-only payload rows for persist.
@@ -217,16 +208,11 @@ class SyncTimedbJobStore:
       kind: set() for kind in JOB_KINDS_LIST
     }
     self._shadow_payloads: dict[tuple[str, str], dict[str, str]] = {}
-    self._dirty = False
-    self._last_persist = 0.0
-    self._persist_gen = 0
-    self._persist_cv = threading.Condition()
-    self._persist_stop = False
-    self._persist_force = False
-    self._persist_error: BaseException | None = None
-    self._persist_force_done = threading.Event()
-    self._persist_force_done.set()
-    self._persist_thread: threading.Thread | None = None
+    self._writer = WriteBehindWriter(
+      name="job-store-persist",
+      write_fn=self._persist_write,
+      interval_s=self.persist_interval_s,
+    )
     if self.archive_dir:
       os.makedirs(self.archive_dir, exist_ok=True)
       self.load()
@@ -309,10 +295,7 @@ class SyncTimedbJobStore:
     if not self.archive_dir:
       return
     if force:
-      self._request_force_persist_and_wait()
-      return
-    with self._persist_cv:
-      self._persist_cv.notify()
+      self._writer.flush()
 
   def close(self) -> None:
     """
@@ -325,14 +308,55 @@ class SyncTimedbJobStore:
       >>> store = SyncTimedbJobStore("/tmp/empty")
       >>> store.close()
     """
-    thread = self._persist_thread
-    if thread is None:
-      return
-    with self._persist_cv:
-      self._persist_stop = True
-      self._persist_cv.notify_all()
-    thread.join(timeout=_JOB_STORE_PERSIST_FORCE_TIMEOUT_S)
-    self._persist_thread = None
+    self._writer.stop()
+
+  @property
+  def _dirty(self) -> bool:
+    """
+    True when durable queues changed since the last snapshot.
+
+    Returns:
+      bool: The write-behind writer's dirty flag.
+
+    Examples:
+      >>> SyncTimedbJobStore("")._dirty
+      False
+    """
+    return self._writer.dirty
+
+  @_dirty.setter
+  def _dirty(self, value: bool) -> None:
+    """
+    Set or clear the dirty flag (``load`` clears it after a restore).
+
+    Args:
+      value (bool): True marks dirty; False clears it.
+
+    Returns:
+      None
+
+    Examples:
+      >>> s = SyncTimedbJobStore("")
+      ... s._dirty = False
+    """
+    if value:
+      self._writer.mark_dirty()
+    else:
+      self._writer.clear_dirty()
+
+  @property
+  def _persist_gen(self) -> int:
+    """
+    Dirty-mark generation counter.
+
+    Returns:
+      int: Number of durable dirty marks so far.
+
+    Examples:
+      >>> SyncTimedbJobStore("")._persist_gen
+      0
+    """
+    return self._writer.generation
 
   def _start_persist_writer(self) -> None:
     """
@@ -342,150 +366,46 @@ class SyncTimedbJobStore:
       None
 
     Examples:
-      >>> store = SyncTimedbJobStore("")
-      >>> store._persist_thread is None
-      True
+      >>> SyncTimedbJobStore("")._start_persist_writer()
     """
-    if self._persist_thread is not None or not self.archive_dir:
-      return
-    self._persist_stop = False
-    thread = threading.Thread(
-      target=self._persist_writer_main,
-      name="job-store-persist",
-      daemon=True,
-    )
-    self._persist_thread = thread
-    thread.start()
+    if self.archive_dir:
+      self._writer.start()
 
-  def _request_force_persist_and_wait(self) -> None:
-    """
-    Ask the writer for an immediate flush and wait for completion.
-
-    Returns:
-      None
-
-    Raises:
-      OSError: Writer I/O failure from the forced attempt.
-      TimeoutError: Writer did not finish within the force timeout.
-      RuntimeError: Persist writer thread is not running.
-      err: Re-raised writer failure stored on ``_persist_error``.
-
-    Examples:
-      >>> store = SyncTimedbJobStore("/tmp/empty")
-      >>> store._request_force_persist_and_wait()
-    """
-    if self._persist_thread is None or not self._persist_thread.is_alive():
-      raise RuntimeError("job-store persist writer is not running")
-    with self._persist_cv:
-      self._persist_error = None
-      self._persist_force = True
-      self._persist_force_done.clear()
-      self._persist_cv.notify_all()
-    if not self._persist_force_done.wait(
-      timeout=_JOB_STORE_PERSIST_FORCE_TIMEOUT_S,
-    ):
-      raise TimeoutError("job-store force persist timed out")
-    err = self._persist_error
-    if err is not None:
-      raise err
-
-  def _persist_writer_main(self) -> None:
-    """
-    Single-flight loop: wait, handoff-copy shadow, write sidecar.
-
-    Returns:
-      None
-
-    Examples:
-      >>> # Started from SyncTimedbJobStore.__init__ when archive_dir set.
-      >>> True
-      True
-    """
-    set_daemon_thread_title(
-      "sync_timedb.py",
-      script_name="sync_timedb.py",
-      role="job-store-persist",
-    )
-    while True:
-      with self._persist_cv:
-        while True:
-          if self._persist_stop and not self._persist_force:
-            if not self._dirty:
-              return
-            break
-          if self._persist_force:
-            break
-          if self._dirty:
-            wait_s = self.persist_interval_s - (
-              time.time() - self._last_persist
-            )
-            if wait_s <= 0.0:
-              break
-            self._persist_cv.wait(timeout=wait_s)
-            continue
-          self._persist_cv.wait(timeout=1.0)
-        force = bool(self._persist_force)
-      wrote_ok = False
-      write_err: BaseException | None = None
-      try:
-        wrote_ok = self._persist_writer_flush_once(force=force)
-      except BaseException as exc:
-        write_err = exc
-        with self._lock:
-          self._dirty = True
-      with self._persist_cv:
-        if force:
-          self._persist_error = write_err
-          self._persist_force = False
-          self._persist_force_done.set()
-        if self._persist_stop and not self._dirty and not self._persist_force:
-          return
-      del wrote_ok
-
-  def _persist_writer_flush_once(self, *, force: bool = False) -> bool:
+  def _persist_write(self, force: bool) -> None:
     """
     Copy the durable shadow under the store lock, then write off-lock.
 
     Args:
-      force (bool): Ignore the persist interval for this flush.
+      force (bool): Unused; the writer owns interval and force policy.
 
     Returns:
-      bool: True when a sidecar write ran successfully.
+      None
 
     Raises:
       OSError: When ``save_persistence_document`` fails.
-      exc: Re-raised ``OSError`` after marking the store dirty.
 
     Examples:
-      >>> store = SyncTimedbJobStore("/tmp/empty")
-      >>> isinstance(store._persist_writer_flush_once(force=True), bool)
-      True
+      >>> SyncTimedbJobStore("")._persist_write(True)
     """
-    now = time.time()
-    snapshot = None
-    gen = 0
+    del force
     with self._lock:
       if not self.archive_dir:
-        return False
-      if not self._dirty and not force:
-        return False
-      if not force and (now - self._last_persist) < self.persist_interval_s:
-        return False
+        return
       queued = self._queued_identities_locked()
       live = queued | self._inflight_identities_locked()
       self._prune_orphan_payloads_locked(active=live)
       self._prune_shadow_payloads_locked(queued=queued)
-      gen = self._persist_gen
-      snapshot = (
-        artifact_path(self.archive_dir, JOB_STORE_SNAPSHOT_KIND),
-        dict(self._shadow_ingest),
-        {kind: list(items) for kind, items in self._shadow_lists.items()},
-        {kind: list(idents) for kind, idents in self._shadow_pending.items()},
-        {key: dict(fields) for key, fields in self._shadow_payloads.items()},
-      )
-    if snapshot is None:
-      return False
-    path, ingest_c, lists_c, pending_c, payloads_src = snapshot
+      path = artifact_path(self.archive_dir, JOB_STORE_SNAPSHOT_KIND)
+      ingest_c = dict(self._shadow_ingest)
+      lists_c = {
+        kind: list(items) for kind, items in self._shadow_lists.items()
+      }
+      pending_c = {
+        kind: list(idents) for kind, idents in self._shadow_pending.items()
+      }
+      payloads_src = {
+        key: dict(fields) for key, fields in self._shadow_payloads.items()
+      }
     payload = {
       "ingest": ingest_c,
       "lists": lists_c,
@@ -495,17 +415,7 @@ class SyncTimedbJobStore:
         for (kind, ident), fields in payloads_src.items()
       },
     }
-    try:
-      save_persistence_document(path, JOB_STORE_SNAPSHOT_KIND, payload)
-    except OSError as exc:
-      with self._lock:
-        self._dirty = True
-      raise exc
-    with self._lock:
-      self._last_persist = now
-      if self._persist_gen == gen:
-        self._dirty = False
-    return True
+    save_persistence_document(path, JOB_STORE_SNAPSHOT_KIND, payload)
 
   def load(self) -> None:
     """
@@ -906,8 +816,7 @@ class SyncTimedbJobStore:
       >>> store = SyncTimedbJobStore("/tmp/empty")
       >>> store._mark_dirty_locked()
     """
-    self._dirty = True
-    self._persist_gen += 1
+    self._writer.mark_dirty()
 
   def _maybe_persist_locked(self) -> None:
     """

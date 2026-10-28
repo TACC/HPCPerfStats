@@ -20,15 +20,13 @@ import time
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from hpcperfstats.dbload.lib.file_locking import file_write_lock
-from hpcperfstats.dbload.lib.sync_timedb_mark_entries_cache import (
-  clear_mark_entries_cache,
-  load_cached_mark_entries,
-)
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
   artifact_path,
   load_persistence_document,
-  save_persistence_document,
+)
+from hpcperfstats.dbload.lib.sync_timedb_write_behind import (
+  WriteBehindEntryStore,
+  get_entry_store,
 )
 
 FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION = 1
@@ -112,48 +110,25 @@ def _load_entries_uncached(mark_path: str) -> dict:
   return dict(entries)
 
 
-def _load_entries(mark_path: str) -> dict:
+def _store(mark_path: str) -> WriteBehindEntryStore:
   """
-  Load mark entries via process-local mtime/size L1 cache.
+  Return the write-behind master for this mark document.
 
   Args:
-    mark_path (str): Path to the file-complete mark JSON.
+    mark_path (str): Path to the mark JSON.
 
   Returns:
-    dict: Fingerprint -> metadata entries.
+    WriteBehindEntryStore: Process-wide in-memory master with lazy writes.
 
   Examples:
-    >>> _load_entries("x")  # doctest: +SKIP
+    >>> _store("x")  # doctest: +SKIP
   """
-  return load_cached_mark_entries(
-    mark_path,
-    load_uncached=_load_entries_uncached,
-  )
-
-
-def _save_entries(mark_path: str, entries: dict) -> None:
-  """
-  Persist mark entries and invalidate the process-local L1 cache.
-
-  Args:
-    mark_path (str): Path to the file-complete mark JSON.
-    entries (dict): Fingerprint -> metadata mapping to write.
-
-  Returns:
-    None
-
-  Examples:
-    >>> _save_entries("x", {})  # doctest: +SKIP
-  """
-  save_persistence_document(
+  return get_entry_store(
     mark_path,
     "file_complete_ingest_mark",
-    {
-      "schema_version": FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION,
-      "entries": entries,
-    },
+    schema_version=FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION,
+    load_entries=_load_entries_uncached,
   )
-  clear_mark_entries_cache(mark_path)
 
 
 def has_file_complete_ingest_mark(
@@ -185,10 +160,7 @@ def has_file_complete_ingest_mark(
   if not archive_dir:
     return False
   mark_path = file_complete_ingest_mark_path(archive_dir)
-  if not os.path.isfile(mark_path):
-    return False
-  entries = _load_entries(mark_path)
-  return key in entries
+  return _store(mark_path).contains(key)
 
 
 def record_file_complete_ingest_mark(
@@ -224,21 +196,19 @@ def record_file_complete_ingest_mark(
   mark_path = file_complete_ingest_mark_path(archive_dir)
   parent = os.path.dirname(mark_path) or "."
   os.makedirs(parent, exist_ok=True)
-  if not os.path.isfile(mark_path):
-    _save_entries(mark_path, {})
   try:
     st = os.stat(path)
   except OSError:
     return False
-  with file_write_lock(mark_path):
-    entries = _load_entries(mark_path)
-    entries[key] = {
+  _store(mark_path).set(
+    key,
+    {
       "path": os.path.normpath(path),
       "mtime": int(st.st_mtime),
       "size": int(st.st_size),
       "marked_at": time.time(),
-    }
-    _save_entries(mark_path, entries)
+    },
+  )
   if log_fn is not None:
     log_fn(
       f"INFO: file_complete_ingest_mark recorded path={path}",
@@ -276,26 +246,31 @@ def clear_file_complete_ingest_marks(
   if not archive_dir:
     return 0
   mark_path = file_complete_ingest_mark_path(archive_dir)
-  if not os.path.isfile(mark_path):
-    return 0
-  removed = 0
-  with file_write_lock(mark_path):
-    entries = _load_entries(mark_path)
-    keep = {}
-    for key, meta in entries.items():
-      meta_path = ""
-      if isinstance(meta, dict):
-        meta_path = os.path.normpath(str(meta.get("path") or ""))
-      fp_path = key.split("|", 1)[0] if "|" in key else ""
-      if meta_path in path_set or fp_path in path_set:
-        removed += 1
-        continue
-      if any(path_fingerprint_key(p) == key for p in path_set):
-        removed += 1
-        continue
-      keep[key] = meta
-    if removed:
-      _save_entries(mark_path, keep)
+
+  def _selected(key: str, meta: Any) -> bool:
+    """
+    Select entries whose path or fingerprint matches a cleared path.
+
+    Args:
+      key (str): Fingerprint key ``path|mtime|size``.
+      meta (Any): Stored entry value.
+
+    Returns:
+      bool: True when the entry should be removed.
+
+    Examples:
+      >>> True
+      True
+    """
+    meta_path = ""
+    if isinstance(meta, dict):
+      meta_path = os.path.normpath(str(meta.get("path") or ""))
+    fp_path = key.split("|", 1)[0] if "|" in key else ""
+    if meta_path in path_set or fp_path in path_set:
+      return True
+    return any(path_fingerprint_key(p) == key for p in path_set)
+
+  removed = _store(mark_path).remove_if(_selected)
   if removed and log_fn is not None:
     log_fn(
       f"INFO: file_complete_ingest_mark cleared n={removed}",
