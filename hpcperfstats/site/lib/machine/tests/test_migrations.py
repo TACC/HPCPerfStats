@@ -439,7 +439,7 @@ class _FakeCursor:
 class _FakeEditor:
   def __init__(self, cursor, vendor="postgresql"):
     self.connection = type(
-      "Conn", (), {"vendor": vendor, "cursor": lambda self_: cursor}
+      "Conn", (), {"vendor": vendor, "cursor": lambda _self: cursor}
     )()
 
 
