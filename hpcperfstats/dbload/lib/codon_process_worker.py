@@ -44,6 +44,7 @@ Attributes:
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import json
 import math
@@ -1221,5 +1222,31 @@ def main() -> int:
   return 0
 
 
+def run_worker() -> None:
+  """
+  Run ``main()`` then leave without interpreter finalization.
+
+  After stdin EOF (parent exited or closed the pipe) the Codon/Boehm runtime
+  threads can spin in ``sched_yield`` during normal shutdown and never exit
+  (hpcperfstats04 2026-10-27: 40 workers at 100% CPU, no files open). Flush
+  the stdio buffers and ``os._exit`` so EOF always ends the process.
+
+  Returns:
+    None
+
+  Examples:
+    >>> callable(run_worker)
+    True
+  """
+  code = 1
+  try:
+    code = main()
+  finally:
+    for stream in (sys.stdout, sys.stderr):
+      with contextlib.suppress(Exception):
+        stream.flush()
+    os._exit(code)
+
+
 if __name__ == "__main__":
-  raise SystemExit(main())
+  run_worker()
