@@ -281,6 +281,8 @@ def test_maybe_record_db_skip_full_scan_and_alias(tmp_path):
 
 def test_maybe_record_rejects_head_tail_and_empty_outcome(tmp_path):
   seg = _seg(tmp_path)
+  # Live ingest on: head/tail is weak proof (off-mode marking is covered in
+  # test_sync_timedb_discover_classify_cost.py).
   assert (
     fcm.maybe_record_file_complete_ingest_mark_from_outcome(
       seg,
@@ -288,6 +290,7 @@ def test_maybe_record_rejects_head_tail_and_empty_outcome(tmp_path):
       outcome="db_skip",
       db_skip="head_tail",
       archive_data_dir=str(tmp_path),
+      listend_enabled=True,
     )
     is False
   )

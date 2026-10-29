@@ -460,6 +460,7 @@ def test_file_complete_mark_roundtrip(tmp_path):
       outcome="db_skip",
       db_skip="head_tail",
       archive_data_dir=str(tmp_path),
+      listend_enabled=True,
     )
     is False
   )

@@ -6,7 +6,8 @@ Live listend dual-write can place head+tail ``host_data`` rows while middle
 samples were dropped from the live queue. Archive/delete readiness must not
 treat head+tail alone as complete when ``listend_db_ingest_enabled``.
 sync_timedb writes this fingerprint mark after successful ingest or
-``db_skip=full_scan``; listend never writes it.
+``db_skip=full_scan`` (and, while live ingest is off, a head/tail
+``db_skip``); listend never writes it.
 
 Attributes:
   FILE_COMPLETE_INGEST_MARK_SCHEMA_VERSION: Attribute.
@@ -287,11 +288,18 @@ def maybe_record_file_complete_ingest_mark_from_outcome(
   db_skip: str | None = None,
   log_fn: LogFn = None,
   archive_data_dir: str | None = None,
+  listend_enabled: bool | None = None,
 ) -> bool:
   """
-  Record mark when sync_timedb finished the path (ingest or full_scan skip).
+  Record mark when sync_timedb finished the path (ingest or a DB-complete skip).
 
-  Never after live-only head/tail. Live listend must not call this helper.
+  A ``full_scan`` skip always qualifies. A ``head_tail`` / ``tail_window``
+  skip qualifies only while listend live DB ingest is off, where head+tail
+  is already the archive/delete proof (DB-before-archive contract case 3);
+  marking it lets discover read marks only without requeueing the file on
+  every walk. With live ingest on (or the setting unreadable) head/tail is
+  never marked: live dual-write can leave middle samples out. Live listend
+  must not call this helper.
 
   Args:
     path (str): String for path.
@@ -300,29 +308,47 @@ def maybe_record_file_complete_ingest_mark_from_outcome(
     db_skip (str | None): One of ``str``, ``None``.
     log_fn (LogFn): Log fn.
     archive_data_dir (str | None): One of ``str``, ``None``.
+    listend_enabled (bool | None): Live listend DB ingest switch; ``None``
+      reads ``listend_db_ingest_enabled`` (treated as on when unreadable).
 
   Returns:
     bool: True or False for this check.
 
   Examples:
-    >>> maybe_record_file_complete_ingest_mark_from_outcome(0)  # doctest: +SKIP
+    >>> maybe_record_file_complete_ingest_mark_from_outcome(
+    ...   "/nope",
+    ...   ingest_ok=True,
+    ...   outcome="db_skip",
+    ...   db_skip="head_tail",
+    ...   listend_enabled=True,
+    ... )
+    False
   """
   if not ingest_ok:
     return False
   outcome_s = str(outcome or "")
-  if outcome_s == "ingested":
+  skip = str(db_skip or "") if outcome_s == "db_skip" else ""
+  head_tail = skip in (
+    "head_tail",
+    "tail_window",
+    "db_complete_head_tail",
+    "db_complete_tail_window",
+  )
+  if head_tail and listend_enabled is None:
+    try:
+      from hpcperfstats.dbload.lib import conf_parser as cfg
+
+      listend_enabled = bool(cfg.get_listend_db_ingest_enabled())
+    except Exception:
+      listend_enabled = True  # fail closed: never mark weak proof
+  if (
+    outcome_s == "ingested"
+    or skip in ("full_scan", "db_complete_full_scan")
+    or (head_tail and listend_enabled is False)
+  ):
     return record_file_complete_ingest_mark(
       path,
       archive_data_dir=archive_data_dir,
       log_fn=log_fn,
     )
-  if outcome_s == "db_skip":
-    skip = str(db_skip or "")
-    # Accept full_scan token only (not head_tail / tail_window).
-    if skip in ("full_scan", "db_complete_full_scan"):
-      return record_file_complete_ingest_mark(
-        path,
-        archive_data_dir=archive_data_dir,
-        log_fn=log_fn,
-      )
   return False

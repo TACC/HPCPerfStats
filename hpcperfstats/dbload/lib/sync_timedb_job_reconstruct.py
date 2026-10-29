@@ -384,6 +384,41 @@ def discover_append_is_complete(
   return not discover_raw_needs_tar_append(path, tgz_archive_dir)
 
 
+def discover_ingest_is_complete(
+  path: str,
+  archive_data_dir: str | None = None,
+  **_kwargs: Any,
+) -> bool:
+  """
+  Discover-scoped ``ingest_is_complete`` that reads the marks only.
+
+  The live-off head/tail DB probe runs once per unmarked file; the serial
+  discover walk did it against a DB saturated by ingest (hpcperfstats04
+  2026-10-29: about 7 files/s). An unmarked file is queued instead and the
+  ingest worker runs the same head/tail check: an already-ingested file
+  becomes ``db_skip`` and gets its file-complete mark, so later walks skip it.
+
+  Args:
+    path (str): Closed raw stats path.
+    archive_data_dir (str | None): Archive root for mark sidecars.
+    **_kwargs (Any): Extra kwargs from classify injectables (``listend_enabled``
+      is ignored: the marks are read either way).
+
+  Returns:
+    bool: True when the file-complete or zero-host mark exists.
+
+  Examples:
+    >>> discover_ingest_is_complete("/nope", archive_data_dir="/nope")
+    False
+  """
+  # listend_enabled=True stops ingest_is_complete after the marks.
+  return ingest_is_complete(
+    path,
+    archive_data_dir=archive_data_dir,
+    listend_enabled=True,
+  )
+
+
 def select_ingest_band(
   day: date,
   *,
@@ -557,7 +592,9 @@ class ClosedPathReconstructPlan:
     identity: Ingest ZSET identity (stable normalized path).
     fingerprint: Size/mtime encoding stored on the payload HASH.
     needs_ingest: True when ingest complete predicate is false.
-    needs_append: True when append complete predicate is false.
+    needs_append: True when append complete predicate is false; True
+      without a lookup while ``needs_ingest`` (append follows ingest, and
+      every consumer reads it only when ``needs_ingest`` is false).
     calendar_day: Resolved calendar day, if known.
     tar_path: Daily tar path for the day, if known.
   """
@@ -683,7 +720,13 @@ def classify_closed_raw_path(
       listend_enabled=listend_enabled,
     )
 
-  if append_is_complete_fn is not None:
+  # Append follows ingest: no open-tar lookup (a full tvf of a changing
+  # multi-GB tar) for a file that still needs ingest (hpcperfstats04
+  # 2026-10-29: 2 of 3 discover py-spy samples).
+  complete_append = False
+  if not complete_ingest:
+    pass
+  elif append_is_complete_fn is not None:
     complete_append = bool(
       append_is_complete_fn(
         path=norm,

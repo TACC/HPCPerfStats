@@ -38,7 +38,7 @@ All operator sidecars under `{archive_data_dir}` share one versioned persistence
 | `day_raw_removal_dir` | `.sync_timedb_day_raw_removal/` |
 | `unparsable_raw` | `.sync_timedb_unparsable_raw.json` |
 | `zero_host_ingest_mark` | `.sync_timedb_zero_host_ingest_mark.json` (fingerprint → successful zero-host-row ingest; archive/delete OR path) |
-| `file_complete_ingest_mark` | `.sync_timedb_file_complete_ingest_mark.json` (fingerprint → sync_timedb completed path via ingest or `db_skip=full_scan`; required for archive/delete when listend live DB ingest is on) |
+| `file_complete_ingest_mark` | `.sync_timedb_file_complete_ingest_mark.json` (fingerprint → sync_timedb completed path via ingest or `db_skip=full_scan`, or a head/tail `db_skip` while listend live DB ingest is off; required for archive/delete when listend live DB ingest is on) |
 
 **Write-behind (marks, job store):** these sidecars keep the master in memory and write one merged snapshot per interval from a named writer thread (`sync_timedb_write_behind.py`); only removals / `replace_all` are durable before return. The on-disk format and contract version are unchanged, so no sidecar reset is needed. New pool-shared sidecars must use this helper, not a per-event `file_write_lock` rewrite.
 

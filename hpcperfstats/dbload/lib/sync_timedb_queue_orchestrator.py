@@ -1159,6 +1159,7 @@ def _boot_stream_discover(
     ),
     startdate=startdate,
     enddate=enddate,
+    ingest_is_complete_fn=jr.discover_ingest_is_complete,
     append_is_complete_fn=jr.discover_append_is_complete,
   )
   day_n = _enqueue_day_closes_for_daily_dir(
