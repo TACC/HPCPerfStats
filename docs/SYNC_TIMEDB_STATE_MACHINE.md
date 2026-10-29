@@ -27,6 +27,7 @@ appendix with `python3 scripts/sync_timedb_state_inventory.py --write-doc`.
 | Sealed member maps | `{daily_dir}/.sync_timedb_sealed_members/<day>.json` | no | no (self-validated by zst identity) |
 | Salvage backups | `{daily_dir}/.sync_timedb_tar_salvage/` | no | no (removed after post-seal parity) |
 | Integrity census | `{daily_dir}/.sync_timedb_sealed_integrity.json` | no | no |
+| Archive scratch: `<day>.tar.{merge,dedupe,repair,decomp,zst}.tmp`, `hps_{union_extract,pax_convert,tar_repair}_*` dirs, `.atomic.*` and `*.json.tmp` write temps | `{daily_dir}`, `{archive_dir}` and their `.sync_timedb_*` subdirs | no | no (idle sweep removes a dead-day file unmodified for `sync_archive_scratch_max_idle_hours` while the day's tar and restore locks are free, or a day-less path whose whole tree is that idle; derived temporaries, never the only copy; safety copies (`.corrupt.*`, `.pre-restore.*`, salvage, quarantine) are never touched; `report` mode only logs) |
 | Migration snapshot | `.sync_timedb_migration_backup/dead-ends-v1/` | no | no |
 | Per-day remainder counters | memory | rebuilt from the job store at boot (DE-32) | n/a |
 

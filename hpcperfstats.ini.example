@@ -276,6 +276,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Free-space reserve for reseal/restore/rebuild/repair/salvage (bytes); a
 # denial defers as env:ENOSPC, never a failure.
 # sync_archive_min_free_bytes = 10737418240
+# Hours a stranded archive scratch file (<day>.tar.<kind>.tmp), hps_* staging dir or sidecar write temp (.atomic.*, *.json.tmp) may sit unmodified before the idle sweep removes it (default 24; 0 disables; report mode only logs).
+# sync_archive_scratch_max_idle_hours = 24
 # report: log what the boot migrations (re-admit, reopen, restore) would do
 # and change nothing; apply: run them.
 # sync_dead_end_remediation_mode = apply

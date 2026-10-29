@@ -132,6 +132,9 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
   SyncTimedbArchiveMembersStore,
   set_process_archive_members_store,
 )
+from hpcperfstats.dbload.lib.sync_timedb_archive_scratch import (
+  sweep_dead_archive_scratch,
+)
 from hpcperfstats.dbload.lib.sync_timedb_day_close_cooperation import (
   JanitorDeferTracker,
 )
@@ -1565,6 +1568,12 @@ def _idle_reconstruct_pass(
   # A18: one sealed archive per pass gets a full integrity check.
   with contextlib.suppress(Exception):
     sealed_integrity_sweep_once(tgz_archive_dir, log_fn=log_fn)
+  # Scratch files, staging dirs and sidecar write temps stranded by killed
+  # writers are swept here.
+  with contextlib.suppress(Exception):
+    sweep_dead_archive_scratch(
+      tgz_archive_dir, archive_dir=archive_dir, log_fn=log_fn
+    )
   return work
 
 

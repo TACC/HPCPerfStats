@@ -124,6 +124,7 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "sync_tar_salvage_min_free_bytes"),
   ("PIPELINE", "sync_tar_salvage_full_copy"),
   ("PIPELINE", "sync_archive_min_free_bytes"),
+  ("PIPELINE", "sync_archive_scratch_max_idle_hours"),
   ("PIPELINE", "sync_dead_end_remediation_mode"),
   ("PIPELINE", "sync_dead_end_migration_batch"),
   ("PIPELINE", "sync_checkpoint_flush_batch_size"),
@@ -302,6 +303,7 @@ INI_OPTION_DEFAULTS = {
   "sync_tar_salvage_min_free_bytes": "1073741824",
   "sync_tar_salvage_full_copy": "no",
   "sync_archive_min_free_bytes": "10737418240",
+  "sync_archive_scratch_max_idle_hours": "24",
   "sync_dead_end_remediation_mode": "apply",
   "sync_dead_end_migration_batch": "500",
   "sync_checkpoint_flush_batch_size": "100",
@@ -3756,6 +3758,26 @@ def get_sync_archive_min_free_bytes() -> int:
   """
   _ensure_cfg_loaded()
   return max(0, _pipeline_getint("sync_archive_min_free_bytes"))
+
+
+def get_sync_archive_scratch_max_idle_hours() -> int:
+  """
+  Hours archive scratch files, staging dirs and write temps may sit idle.
+
+  ``<day>.tar.{merge,dedupe,repair,decomp,zst}.tmp`` files, ``hps_*``
+  staging directories and ``.atomic.*`` / ``*.json.tmp`` sidecar write temps
+  idle longer than this (day files also need their day's locks free) are
+  removed by the idle sweep; ``0`` disables the sweep.
+
+  Returns:
+    int: Hours (default 24).
+
+  Examples:
+    >>> get_sync_archive_scratch_max_idle_hours()  # doctest: +SKIP
+    24
+  """
+  _ensure_cfg_loaded()
+  return max(0, _pipeline_getint("sync_archive_scratch_max_idle_hours"))
 
 
 def get_sync_dead_end_remediation_mode() -> str:
