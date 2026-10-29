@@ -189,7 +189,7 @@ stateDiagram-v2
 | DE-15/16 | dead-owner reap; populate attempt cap | `test_dead_worker_inflight_reaped_when_recycle_disabled`, `test_populate_requeue_attempts_capped` |
 | DE-17/20/22 | type-based environment class, G2 outcome table | `test_members_unavailable_any_message_is_transient`, `test_every_negative_value_has_exit_entry` |
 | DE-18 | per-tar batch failure accounting | `test_append_batch_failure_does_not_dead_letter_every_path` |
-| DE-24 | no-tar handoff; zst-only day enqueue | `test_day_close_without_tar_hands_off_remaining_raw` |
+| DE-24 | no-tar handoff; zst-only day enqueue; a day_close that finds the day already complete sets its open manifest to `done`, else the zst-only scan re-enqueues it forever (hpcperfstats04 2026-10-29: 08-07/09/11/12 claimed and vacated `complete` ~157 times each per run) | `test_day_close_without_tar_hands_off_remaining_raw`, `test_complete_day_close_closes_open_manifest_and_stops_requeue` |
 | DE-26 | seal while raw remains only when all remaining raw is in the tar; late raw reopens verify | `test_seal_with_raw_only_when_all_remaining_raw_in_tar`, `test_late_raw_resets_pre_seal_verify_stage` |
 | DE-27/32 | per-day append signal; one day function; boot rebuild | `test_wait_on_ingest_uses_per_day_append_remainder`, `test_day_remainder_rebuilt_from_job_store_at_boot` |
 | DE-28 | stage failure counter | `test_reconcile_failure_counts_toward_noprogress` |

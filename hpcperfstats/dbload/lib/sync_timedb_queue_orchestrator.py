@@ -155,6 +155,7 @@ from hpcperfstats.dbload.lib.sync_timedb_negative_states import (
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
   ensure_persistence_contract,
   load_persistence_document,
+  save_persistence_document,
 )
 from hpcperfstats.dbload.lib.sync_timedb_populate_pool import (
   PopulatePoolController,
@@ -2443,6 +2444,22 @@ def _run_day_close_job(
     calendar_day=cal,
     min_age_hours=min_age_h,
   ):
+    # DE-24: an open manifest makes the daily-dir scan re-enqueue this
+    # complete day forever; close it on the same predicate the scan reads.
+    manifest = os.path.join(
+      str(archive_data_dir or ""),
+      ".sync_timedb_day_raw_removal",
+      f"{day_token}.json",
+    )
+    if archive_data_dir and _sealed_only_day_manifest_open(manifest):
+      doc = load_persistence_document(manifest, "day_raw_removal")
+      doc.update(phase="done", completed_at=time.time())
+      save_persistence_document(manifest, "day_raw_removal", doc)
+      _log(
+        f"queue_orchestrator day_close manifest closed day={day_token} "
+        "reason=already_complete",
+        log_fn=log_fn,
+      )
     return "complete"
   if not jr.day_close_min_age_elapsed(cal, min_age_hours=min_age_h):
     return "deferred_age"
