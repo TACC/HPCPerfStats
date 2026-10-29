@@ -1001,18 +1001,26 @@ def test_seal_with_raw_only_when_all_remaining_raw_in_tar(
     raising=False,
   )
 
+  logs = []
+
   def _claim():
     qo._run_day_close_job(
       "2020-01-10",
       tgz_archive_dir=str(daily),
       archive_data_dir=str(tmp_path),
-      log_fn=lambda *a, **k: None,
+      log_fn=lambda msg, **_k: logs.append(msg),
     )
 
-  _claim()  # raw_late not in tar: no seal while raw remains
+  _claim()  # raw_late not in tar: seal is not even attempted
+  # hpcperfstats04 2026-10-28: the skip_merge placeholder never blocked the
+  # seal, so it ran while 4k-20k handed-off files were still being appended.
+  assert calls == []
+  assert any(
+    "stage=seal result=ok reason=deferred_raw_not_in_tar" in m for m in logs
+  )
   remaining["paths"] = [str(raw_in)]
   _claim()  # all remaining raw is in the tar: seal
-  assert calls == [True, False]
+  assert calls == [False]
 
 
 def _append_jobs(n, day=(2026, 10, 14)):
@@ -1137,7 +1145,10 @@ def test_release_steps_run_before_consume_steps(tmp_path, monkeypatch):
     archive_data_dir=str(tmp_path),
     log_fn=lambda *a, **k: None,
   )
-  assert order.index("release_delete") < order.index("seal")
+  # The remaining raw is not a tar member, so the seal is deferred; it must
+  # never run before the release step.
+  assert "release_delete" in order
+  assert "seal" not in order[: order.index("release_delete")]
 
 
 def test_reconcile_failure_counts_toward_noprogress(tmp_path, monkeypatch):

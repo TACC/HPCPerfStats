@@ -396,7 +396,7 @@ passthrough of an upstream literal listed above or a diagnostic string.
 | `sync_timedb_queue_orchestrator.py:_retry_or_dead_letter` kind | `kind` |
 | `sync_timedb_queue_orchestrator.py:_retry_or_dead_letter` reason | `reason` |
 | `sync_timedb_queue_orchestrator.py:_run_background_discover` kind | `jq.JOB_KIND_DISCOVER` |
-| `sync_timedb_queue_orchestrator.py:_run_day_close_job` reason | `'remaining_raw' if remaining_raw else 'tar_present'`; `'seal_failed' if failed else 'reseal_after_delete'`; `f'deleted={released}'`; `f'paths={len(handed)}'`; `reason`; `type(exc).__name__` |
+| `sync_timedb_queue_orchestrator.py:_run_day_close_job` reason | `'deferred_raw_not_in_tar' if seal_deferred else ''`; `'remaining_raw' if remaining_raw else 'tar_present'`; `'seal_failed' if failed else 'reseal_after_delete'`; `f'deleted={released}'`; `f'paths={len(handed)}'`; `reason`; `type(exc).__name__` |
 | `sync_timedb_queue_orchestrator.py:_run_pre_seal_verify` reason | `type(exc).__name__` |
 | `sync_timedb_queue_orchestrator.py:_try_submit_pending_append_days` kind | `jq.JOB_KIND_APPEND` |
 | `sync_timedb_queue_orchestrator.py:run_sync_timedb_queue_orchestrator` kind | `jq.JOB_KIND_DISCOVER` |

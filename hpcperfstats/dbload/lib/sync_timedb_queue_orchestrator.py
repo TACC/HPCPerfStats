@@ -2833,21 +2833,30 @@ def _run_day_close_job(
     seal_with_raw = raw_remains_for_seal and _remaining_raw_all_in_open_tar(
       coord, tar_path, remaining_for_seal, skip_merge_remaining_raw
     )
+    # The skip_merge placeholder in ``remaining_for_seal`` is not a file, so
+    # ``only_when_no_remaining_raw`` could never defer the seal on that path
+    # (04 2026-10-28: sealed while 4k-20k handed-off files were still being
+    # appended; zstd read a growing tar). Decide the deferral here instead.
+    seal_deferred = raw_remains_for_seal and not seal_with_raw
     sealed_before = archive_identity(tar_path + ".zst")
-    seal_failed = seal_dirty_daily_archives(
-      tgz_archive_dir,
-      local_tz=get_local_timezone(),
-      zstd_threads=get_archive_zstd_threads(),
-      compress_level=get_archive_zstd_level(),
-      keep_uncompressed_tar=(
-        get_archive_keep_uncompressed_tar() or raw_remains_for_seal
-      ),
-      idle_seconds=0,
-      seal_immediately_if_dirty=True,
-      only_daily_tar_paths={tar_path},
-      only_when_no_remaining_raw=not seal_with_raw,
-      remaining_raw_by_gz=remaining_for_seal,
-      log_fn=quiet,
+    seal_failed = (
+      []
+      if seal_deferred
+      else seal_dirty_daily_archives(
+        tgz_archive_dir,
+        local_tz=get_local_timezone(),
+        zstd_threads=get_archive_zstd_threads(),
+        compress_level=get_archive_zstd_level(),
+        keep_uncompressed_tar=(
+          get_archive_keep_uncompressed_tar() or raw_remains_for_seal
+        ),
+        idle_seconds=0,
+        seal_immediately_if_dirty=True,
+        only_daily_tar_paths={tar_path},
+        only_when_no_remaining_raw=not seal_with_raw,
+        remaining_raw_by_gz=remaining_for_seal,
+        log_fn=quiet,
+      )
     )
     if archive_identity(tar_path + ".zst") != sealed_before:
       note_fn = getattr(day_state, "note_sealed_archive_changed", None)
@@ -2856,7 +2865,11 @@ def _run_day_close_job(
     if tar_path in (seal_failed or ()):
       _stage_exit("seal", result="fail", reason="seal_failed")
     else:
-      _stage_exit("seal", result="ok")
+      _stage_exit(
+        "seal",
+        result="ok",
+        reason="deferred_raw_not_in_tar" if seal_deferred else "",
+      )
 
     # H19 append_idle already answered remaining; do not re-find at post-seal
     # (01 2026-09-26: hung on has_closed after seal exit, before post_seal).

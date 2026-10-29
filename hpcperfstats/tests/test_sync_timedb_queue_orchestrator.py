@@ -557,8 +557,9 @@ def test_day_close_reseals_after_raw_delete_when_zst_missing(
     log_fn=lambda *a, **k: None,
   )
   assert outcome == "complete"
-  assert len(seal_calls) >= 2
-  assert seal_calls[0]["only_when_no_remaining_raw"] is True
+  # The first seal is deferred without a call (raw not in the tar); only the
+  # reseal after the raw delete reaches the seal function.
+  assert len(seal_calls) >= 1
   assert not tar.exists()
   assert zst.exists()
 
@@ -2962,10 +2963,13 @@ def test_day_close_skip_merge_seal_skips_remaining_raw_find(
   joined = "\n".join(logs)
   assert "skip_merge" in joined and "append_idle_remaining_raw" in joined
   assert any("stage_enter" in ln and "seal" in ln for ln in logs)
-  # Cheap blocking sentinel - not remaining_fn - so only_when_no_remaining_raw
-  # still no-ops seal while remaining raw exists.
-  rem = seal_kw[0].get("remaining_raw_by_gz") if seal_kw else None
-  assert rem and list(rem.values()) == [["skip_merge_remaining_raw"]]
+  # Remaining raw is answered cheaply (no remaining_fn find) and is not a tar
+  # member, so the seal is deferred without being attempted: the skip_merge
+  # placeholder is not a file and could never block the seal itself.
+  assert not seal_kw
+  assert any(
+    "stage=seal result=ok reason=deferred_raw_not_in_tar" in ln for ln in logs
+  )
   assert outcome in ("complete", "incomplete_raw")
 
 
