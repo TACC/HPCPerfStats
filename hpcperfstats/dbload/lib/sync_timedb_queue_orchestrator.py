@@ -2249,8 +2249,9 @@ def _remaining_raw_all_in_open_tar(
     remaining_is_sentinel (bool): True when the map is the H19 sentinel.
 
   Returns:
-    bool: True only when there is at least one remaining path and each one is
-    a same-size tar member.
+    bool: True when the open tar exists and every remaining path (possibly
+    none) is a same-size tar member; False when the tar is missing, the
+    sentinel cannot be listed, or a path is not in the tar.
 
   Examples:
     >>> _remaining_raw_all_in_open_tar(None, "/nope/2020-01-01.tar", {}, False)
@@ -2258,11 +2259,17 @@ def _remaining_raw_all_in_open_tar(
   """
   if remaining_is_sentinel:
     lister = getattr(coord, "closed_raw_paths_on_disk", None)
-    paths = list(lister(tar_path) or []) if callable(lister) else []
+    if not callable(lister):
+      return False
+    # The sentinel predates raw_delete_pre_seal; an empty listing means the
+    # raw is gone, so nothing blocks the seal (04 2026-10-29: 09-18 deferred).
+    paths = list(lister(tar_path) or [])
   else:
     paths = [p for ps in (remaining_raw_by_gz or {}).values() for p in ps or ()]
-  if not paths or not os.path.isfile(tar_path):
+  if not os.path.isfile(tar_path):
     return False
+  if not paths:
+    return True
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     get_mutable_tar_authority_member_map,
   )

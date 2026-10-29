@@ -116,3 +116,58 @@ def test_incomplete_day_close_leaves_manifest_open(tmp_path, monkeypatch):
   monkeypatch.setattr(qo.jr, "day_close_min_age_elapsed", lambda *a, **k: False)
   assert _run(daily, tmp_path, day) == "deferred_age"
   assert _phase(manifest) == "verification_complete"
+
+
+class _Lister:
+  def __init__(self, paths):
+    self.paths = paths
+
+  def closed_raw_paths_on_disk(self, _tar):
+    return list(self.paths)
+
+
+def test_sentinel_with_no_raw_left_does_not_defer_the_seal(tmp_path):
+  """H19 sentinel, raw all deleted: nothing remains, so the seal may run.
+
+  hpcperfstats04 2026-10-29: 09-18 manifest ``done`` with 0 raw on disk, tar
+  10541 members vs zst 10526; the seal was deferred every claim and
+  ``post_seal_verify`` failed forever.
+  """
+  import tarfile
+
+  tar = tmp_path / "2020-01-10.tar"
+  with tarfile.open(tar, "w"):
+    pass
+  assert qo._remaining_raw_all_in_open_tar(
+    _Lister([]), str(tar), {str(tar): ["skip_merge_remaining_raw"]}, True
+  )
+
+
+def test_sentinel_without_lister_still_defers_the_seal(tmp_path):
+  """No way to list remaining raw: unknown is not none, keep deferring."""
+  import tarfile
+
+  tar = tmp_path / "2020-01-11.tar"
+  with tarfile.open(tar, "w"):
+    pass
+  assert not qo._remaining_raw_all_in_open_tar(
+    object(), str(tar), {str(tar): ["skip_merge_remaining_raw"]}, True
+  )
+
+
+def test_sentinel_with_raw_not_in_tar_still_defers_the_seal(tmp_path):
+  """A remaining raw file not yet appended keeps the DE-26 no-seal rule."""
+  import tarfile
+
+  tar = tmp_path / "2020-01-12.tar"
+  raw = tmp_path / "h" / "1578830400"
+  raw.parent.mkdir()
+  raw.write_text("late")
+  with tarfile.open(tar, "w"):
+    pass
+  assert not qo._remaining_raw_all_in_open_tar(
+    _Lister([str(raw)]),
+    str(tar),
+    {str(tar): ["skip_merge_remaining_raw"]},
+    True,
+  )
