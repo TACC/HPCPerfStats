@@ -138,8 +138,7 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Never supplement at or above this hard sample max (default 80000).
 # metrics_supplement_sample_hard_max = 80000
 
-# Plot prewarm: inline or pipeline_required (default pipeline_required).
-# Prewarm runs on metrics_pool_processes after successful metrics (no secondary pool).
+# Plot prewarm: inline or pipeline_required (default pipeline_required). Prewarm runs on metrics_pool_processes after successful metrics (no secondary pool).
 # metrics_plot_prewarm_mode = pipeline_required
 
 # Plot aggregate SQL time-slice seconds (default 3600); design 5000x48x60.
@@ -193,8 +192,7 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Quarantine time for repeatedly deferred jid seconds (default 300).
 # metrics_deferred_not_ready_quarantine_s = 300
 
-# Defer update_metrics until in-window host_data samples exist within margins of
-# Slurm start and end (job aggregate, any accounting host). Default yes.
+# Defer update_metrics until in-window host_data samples exist within margins of Slurm start and end (job aggregate, any accounting host). Default yes.
 # metrics_readiness_require_window_coverage = yes
 
 # Start edge tolerance seconds (default 600): MIN(time) in window must be <= start + margin.
@@ -206,11 +204,10 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Ingest parse pool size and Codon worker process count (default 64; capped at 128 Codon workers).
 # sync_ingest_pool_processes = 64
 
-# Codon stripe slots as fraction of parse pool (default 0.5 → N=32 when parse=64).
+# Codon stripe slots as fraction of parse pool (default 1.0; legacy 0.5 was retired).
 # sync_codon_context_pool_fraction = 1.0
 
-# Codon worker RSS in MiB above which the worker is replaced between files
-# (default 1536). Boehm's heap only grows; this bounds total worker memory.
+# Codon worker RSS in MiB above which the worker is replaced between files (default 1536). Boehm's heap only grows; this bounds total worker memory.
 # sync_codon_worker_recycle_rss_mib = 1536
 
 # Ingest write-pool width / max concurrent ingest DB sessions (default 0 = max(1, parse//2)).
@@ -222,8 +219,7 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Soft max MiB per streaming parse→write flush chunk (default 512; sample-boundary overage OK).
 # sync_ingest_parse_flush_max_mib = 512
 
-# Codon file-session flush window cap in MiB (default 1); effective window is
-# min(this, sync_ingest_parse_flush_max_mib). Large windows slow Codon's GC.
+# Codon file-session flush window cap in MiB (default 1); effective window is min(this, sync_ingest_parse_flush_max_mib). Large windows slow Codon's GC.
 # sync_codon_parse_flush_max_mib = 1
 
 # Concurrent daily-tar append slots / archive spawn pool size (default 4).
@@ -237,10 +233,6 @@ daily_archive_dir = %(data_dir)s/daily_archive
 
 # Incremental pending rescan: GNU find -mtime -N days (default 1 = last 24h).
 # sync_ingest_rescan_mtime_days = 1
-
-# Force full-age find every N incremental pending rescans (default 100).
-
-# Days within which CLI backlog exits when near a live current heartbeat (default 2).
 
 # Max in-memory archive work queue size (default 1000).
 # sync_archive_queue_max_size = 1000
@@ -257,30 +249,33 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Max archive retry backoff seconds (default 60).
 # sync_archive_retry_backoff_max_seconds = 60
 
-# Dead-end remediation (sync_timedb state machine). Dead letters re-admit after
-# each cooldown (comma list, seconds); after the last one the raw file is
-# quarantined (restorable) so its day can close.
+# Dead-end remediation (sync_timedb state machine). Dead letters re-admit after each cooldown (comma list, seconds); after the last one the raw file is quarantined (restorable) so its day can close.
 # sync_dead_letter_readmit_backoff_s = 3600,21600,86400
-# Longer schedule for environment errors (DB outage, EAGAIN, ENOSPC, EPERM),
-# which never burn a file's attempts.
+
+# Longer schedule for environment errors (DB outage, EAGAIN, ENOSPC, EPERM), which never burn a file's attempts.
 # sync_dead_letter_env_backoff_s = 21600,86400,259200
+
 # Requeues without progress before a job escalates into the cooldown (G1).
 # sync_noprogress_escalate_after = 50
-# Age (s) after which a sticky negative flag (day_skip, degraded) is re-checked
-# and cleared when its gate passes (G3); 0 disables.
+
+# Age (s) after which a sticky negative flag (day_skip, degraded) is re-checked and cleared when its gate passes (G3); 0 disables.
 # sync_negative_flag_revalidate_s = 86400
+
 # Free-space reserve on top of a truncated-tar salvage backup (bytes).
 # sync_tar_salvage_min_free_bytes = 1073741824
+
 # Back up the whole tar instead of only the tail past the cut (needs S free).
 # sync_tar_salvage_full_copy = no
-# Free-space reserve for reseal/restore/rebuild/repair/salvage (bytes); a
-# denial defers as env:ENOSPC, never a failure.
+
+# Free-space reserve for reseal/restore/rebuild/repair/salvage (bytes); a denial defers as env:ENOSPC, never a failure.
 # sync_archive_min_free_bytes = 10737418240
+
 # Hours a stranded archive scratch file (<day>.tar.<kind>.tmp), hps_* staging dir or sidecar write temp (.atomic.*, *.json.tmp) may sit unmodified before the idle sweep removes it (default 24; 0 disables; report mode only logs).
 # sync_archive_scratch_max_idle_hours = 24
-# report: log what the boot migrations (re-admit, reopen, restore) would do
-# and change nothing; apply: run them.
+
+# report: log what the boot migrations (re-admit, reopen, restore) would do and change nothing; apply: run them.
 # sync_dead_end_remediation_mode = apply
+
 # Max re-admissions / reopens per reconstruct pass.
 # sync_dead_end_migration_batch = 500
 
@@ -291,7 +286,7 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # sync_timedb_tar_append_batch_size = 256
 
 # Max DB timestamps cached per duplicate-detection window (default 100000).
-# sync_host_itimes_cache_max_timestamps_per_entry = 20000
+# sync_host_itimes_cache_max_timestamps_per_entry = 100000
 
 # Poll interval for sync_timedb pool waits seconds (default 5).
 # sync_pool_poll_timeout_s = 5
@@ -323,8 +318,7 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Max cached daily archive member maps per ingest/archive worker (default 64).
 # sync_archive_members_cache_max_entries = 64
 
-# Absolute populate wait wall; 0 = disabled (idle+heartbeat only; default 0).
-# Tar populate fnctl read-lock wait uses this value when > 0 (else fnctl INI below).
+# Populate wait wall seconds; 0 = idle+heartbeat only (default 0); fnctl lock uses fnctl INI when 0.
 # sync_archive_members_populate_max_seconds = 0
 
 # Exclusive sealed→tar restore lease TTL; renewed while zstd -o runs (default 14400).
@@ -342,11 +336,7 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Supervisor RSS limit MiB; 0 disables fail-fast exit (default 0).
 # sync_supervisor_rss_limit_mb = 0
 
-# Check supervisor RSS every N ingest chunks (default 1).
-
-# Process-tree defer roof as percent of pipeline cgroup memory.max (0–100; 0 off).
-# Default 40 → ~52428 MiB effective roof on 128g compose; ingest raw-byte budget
-# = effective_roof_bytes / PEAK 1.0 (~52428 MiB at default; no separate budget INI).
+# Process-tree defer roof as percent of pipeline cgroup memory.max (default 40; 0 off).
 # sync_process_tree_rss_limit_cgroup_pct = 40
 
 # Hard exit when process-tree RSS exceeds this percent of memory.max; 0 off.
@@ -361,68 +351,52 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Tail timestamp lines probed before full duplicate scan on large head-present files (default 500).
 # sync_ingest_db_complete_tail_window_lines = 500
 
-# Backfill idle ingest pool slots from pending tail while >=2GiB giants run (default yes).
-
-# Soft max bytes for preferred supplement pass; exclusive upper bound (default 1 GiB).
-
-# Hard max bytes for second-pass supplement; exclusive; paths at/above stay chunk-only (default 8 GiB).
-
-# Supplement reservoir = ingest_queue_max * this at batch start and mid-imap refresh (default 2 => 6000).
-
-# Min resolved per-file ingest budget (s) for in-flight path to count as giant (default 6600 ~= 2 GiB).
-
-# Allow pending-tail supplement when workers are idle even without a giant budget (default yes).
-
-# Recycle ingest pool workers after N files; 0 unlimited (default 0).
-# Ingest pool only; archive and sealed-archive spawn pools always maxtasksperchild=1.
-# Default 0: supervisor retires only on failure/RSS (not path size). Set 1 to recycle every file.
+# Recycle ingest pool workers after N files; 0 unlimited (default 0; archive pools always maxtasksperchild=1).
 # sync_ingest_pool_maxtasksperchild = 0
 
-# Per-task gc.collect() + malloc_trim after each ingest task (default no); set yes on sites with a small RSS roof (Horizon), see docs/DEPLOY_CONCURRENCY_AND_NUMA.md.
+# Per-task gc.collect() + malloc_trim after each ingest task (default no); set yes on sites with a small RSS roof (Horizon), see docs/DEPLOY_CONCURRENCY_AND_NUMA.md for Horizon RSS tuning.
 # sync_ingest_malloc_trim_after_file = no
 
 # Worker memory telemetry: one batch_summary line per ingest chunk (default no; enable for soak).
 # sync_ingest_worker_memory_telemetry = no
+
+# Emit worker memory telemetry every N ingest chunks (default 1).
 # sync_ingest_worker_memory_telemetry_every_n_chunks = 1
 
 # Exhaustive OOM attribution lines (cgroup/stat/RSS/inflight/headroom/file_cache). Default no.
 # sync_timedb_mem_telemetry = no
-# Require this many MiB free under memory.max before multi-file ingest admit / append fill (default 4096; 0=off).
-# Does not block alone-oversized ingest when inflight is empty. Soft roof unchanged.
+
+# Require this many MiB free under memory.max before multi-file ingest admit / append fill (default 4096; 0=off). Does not block alone-oversized ingest when inflight is empty. Soft roof unchanged.
 # sync_cgroup_admit_headroom_mib = 4096
-# Max cgroup memory.stat file as percent of memory.max before multi-file admit (default 60).
-# Effective MiB at runtime; 60 on 128g ≈78643 MiB. Set 0 on small compose to disable gate.
+
+# Max cgroup memory.stat file as percent of memory.max before multi-file admit (default 60). Effective MiB at runtime; 60 on 128g ≈78643 MiB. Set 0 on small compose to disable gate.
 # sync_cgroup_admit_max_file_cache_cgroup_pct = 60
-# Recycle ingest pool when oldest inflight submit age reaches this many seconds (default 3600; 0=off).
-# Requeues collateral without attempt burn via the MainThread pause protocol (stuck_cohort_recycle telem).
+
+# Recycle ingest pool when oldest inflight submit age reaches this many seconds (default 3600; 0=off). Requeues collateral without attempt burn via the MainThread pause protocol (stuck_cohort_recycle telem).
 # sync_ingest_stuck_inflight_recycle_s = 3600
 
-# Parse-stage + write/COPY shares on ingest outcome lines (default no; overnight soak).
-# Enable with sync_ingest_telemetry = yes on the same redeploy as CODE
-# (no-production-env-for-ini-config.mdc — not pipeline environment=).
-# Rename from retired sync_ingest_parse_stage_telemetry / sync_ingest_write_telemetry.
+# Parse-stage and write/COPY shares on ingest outcome lines (default no; enable via INI on redeploy, not pipeline env).
 # sync_ingest_telemetry = no
 
 # Cooperative recycle when maxtasksperchild=0 (supervisor retires worker after result).
 # sync_ingest_recycle_worker_on_failure = yes
+
+# Cooperative recycle RSS fraction of per-worker roof (default 0.5).
 # sync_ingest_cooperative_recycle_rss_fraction = 0.5
+
+# Delay ms before re-checking worker RSS for cooperative recycle (default 50).
 # sync_ingest_rss_recheck_delay_ms = 50
 
 # Ingest-first durability semantics: checkpoint after DB even if append fails (default yes).
 # sync_enable_ingest_first_durability_mode = yes
 
-# Require head+tail DB ingest readiness before tar append or raw delete (default yes).
-# When yes, first and last digit-leading timestamp seconds must exist in host_data.
-# When listend live DB ingest is on, archive/delete also requires a sync_timedb file-complete mark.
+# Require head+tail DB ingest readiness before tar append or raw delete (default yes). When yes, first and last digit-leading timestamp seconds must exist in host_data. When listend live DB ingest is on, archive/delete also requires a sync_timedb file-complete mark.
 # sync_archive_require_db_ingest = yes
-
-# Persist archive maintenance hints for faster restarts (default yes).
 
 # listend async dual-write of samples to Timescale after archive append (default no; opt-in = yes).
 # listend_db_ingest_enabled = no
 
-# Host-affine thread count for listend live DB ingest (default 32).
-# Size against Postgres max_connections alongside sync_ingest_pool_processes.
+# Host-affine thread count for listend live DB ingest (default 32). Size against Postgres max_connections alongside sync_ingest_pool_processes.
 # listend_db_ingest_pool_processes = 32
 
 # Total in-flight listend DB-queue memory budget in GiB across all workers (default 8; values above 8 are clipped to 8).
@@ -453,8 +427,7 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Competing AMQP consume threads, one BlockingConnection each (default 16; floor 1; no upper clamp). Archive writers are 2× this count.
 # listend_amqp_consumer_count = 16
 
-# Keep uncompressed YYYY-MM-DD.tar after sealing globally (default no).
-# Prior days drop at seal when raw is gone; calendar-today uses grace hours below.
+# Keep uncompressed YYYY-MM-DD.tar after sealing globally (default no). Prior days drop at seal when raw is gone; calendar-today uses grace hours below.
 # archive_keep_uncompressed_tar = no
 
 # Hours after local midnight to retain today's uncompressed .tar when global keep is off (default 24).
@@ -484,27 +457,14 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # zstd compression level 1-19 for .tar.zst (default 7; benchmark before raising above 9).
 # archive_zstd_level = 7
 
-# Linux-only: posix_fadvise SEQUENTIAL/DONTNEED on pipeline file I/O (ingest, archive, zstd).
-# Default yes when omitted; set no only for A/B tuning or debugging.
+# Linux-only: posix_fadvise SEQUENTIAL/DONTNEED on pipeline file I/O (ingest, archive, zstd). Default yes when omitted; set no only for A/B tuning or debugging.
 # sync_pipeline_drop_page_cache = yes
 
 # Legacy name for sync_pipeline_drop_page_cache (used when the new key is omitted).
 # archive_zstd_drop_page_cache = yes
 
-# Optional idle dwell before janitor tick budget bonus (default 300).
-
-# Archive janitor micro-batch wall budget per tick seconds (default 30).
-
-# Debt queue depth before temporary budget burst (default 50).
-
-# Budget multiplier when debt exceeds high watermark (default 1.5).
-
-# Cap in-memory janitor debt queue entries (default 200).
-
 # Max raw paths processed per day_close batch (default 1000; renamed from archive_janitor_raw_paths_per_tick).
 # sync_day_close_raw_paths_per_batch = 1000
-
-# Max wait for canonical startup archive snapshot before single-flight build (default 300s; min 120).
 
 # Hours after calendar day end before day_close seal/delete (default 32).
 # sync_day_close_min_age_hours = 32
@@ -518,12 +478,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Recover stale day-close manifest entries on coordinator init (default 7200s; 0 = off).
 # sync_day_close_manifest_stale_seconds = 7200
 
-# Log day-close candidate report (queued/disqualified only; default yes).
-
 # Max deletes per day-close delete loop iteration; 0 = unlimited per iteration (default 0).
 # sync_day_close_raw_removal_max_deletes_per_pass = 0
-
-# Deprecated: ignored. Concurrent daily-tar append slots follow sync_archive_pool_processes.
 
 # Seconds before logging an archive pool job as stalled (default 600).
 # sync_archive_worker_stall_seconds = 600
