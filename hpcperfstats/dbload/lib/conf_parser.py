@@ -289,7 +289,7 @@ INI_OPTION_DEFAULTS = {
   "sync_ingest_parse_flush_max_mib": "512",
   "sync_codon_parse_flush_max_mib": "1",
   "sync_archive_pool_processes": "4",
-  "sync_ingest_queue_max_size": "3000",
+  "sync_ingest_queue_max_size": "50000",
   "sync_ingest_rescan_mtime_days": "1",
   "sync_ingest_full_rescan_interval_hours": "6",
   "sync_archive_queue_max_size": "1000",
@@ -3538,7 +3538,7 @@ def get_metrics_proxy_reject_jid_batch_size() -> Any:
 
 def get_sync_ingest_queue_max_size() -> Any:
   """
-  Bound for in-memory ingest work queue (default 3000; no-supplement process.
+  Bound for in-memory ingest work queue (default 50000; no-supplement process.
 
     queue).
 

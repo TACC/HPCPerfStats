@@ -226,7 +226,7 @@ def discover_ingest_capacity_limit() -> int:
   try:
     ingest_cap = int(cfg.get_sync_ingest_queue_max_size())
   except Exception:
-    ingest_cap = 3000
+    ingest_cap = 50000
   return min(jq.queue_capacity_limit(), max(1, ingest_cap))
 
 
