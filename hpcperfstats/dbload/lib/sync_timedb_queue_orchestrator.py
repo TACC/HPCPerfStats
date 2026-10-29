@@ -2770,7 +2770,7 @@ def _run_day_close_job(
       coord, tar_path, remaining_for_seal, skip_merge_remaining_raw
     )
     sealed_before = archive_identity(tar_path + ".zst")
-    seal_dirty_daily_archives(
+    seal_failed = seal_dirty_daily_archives(
       tgz_archive_dir,
       local_tz=get_local_timezone(),
       zstd_threads=get_archive_zstd_threads(),
@@ -2789,7 +2789,10 @@ def _run_day_close_job(
       note_fn = getattr(day_state, "note_sealed_archive_changed", None)
       if callable(note_fn):
         note_fn()
-    _stage_exit("seal", result="ok")
+    if tar_path in (seal_failed or ()):
+      _stage_exit("seal", result="fail", reason="seal_failed")
+    else:
+      _stage_exit("seal", result="ok")
 
     # H19 append_idle already answered remaining; do not re-find at post-seal
     # (01 2026-09-26: hung on has_closed after seal exit, before post_seal).
@@ -2868,7 +2871,7 @@ def _run_day_close_job(
         remaining_for_reseal = (
           remaining_fn(tar_path) if callable(remaining_fn) else {}
         )
-      seal_dirty_daily_archives(
+      reseal_failed = seal_dirty_daily_archives(
         tgz_archive_dir,
         local_tz=get_local_timezone(),
         zstd_threads=get_archive_zstd_threads(),
@@ -2881,7 +2884,12 @@ def _run_day_close_job(
         remaining_raw_by_gz=remaining_for_reseal,
         log_fn=quiet,
       )
-      _stage_exit("seal", result="ok", reason="reseal_after_delete")
+      failed = tar_path in (reseal_failed or ())
+      _stage_exit(
+        "seal",
+        result="fail" if failed else "ok",
+        reason="seal_failed" if failed else "reseal_after_delete",
+      )
       if os.path.isfile(tar_path) or os.path.isfile(zst_path):
         _stage_enter("post_seal_verify")
         try:

@@ -12182,7 +12182,7 @@ def _seal_one_daily_tar(
   log_fn: Any,
   remaining_raw_by_gz: Any,
   force_remove_uncompressed_tar: bool,
-) -> None:
+) -> bool:
   """
   Internal helper to seal the one daily tar.
 
@@ -12199,7 +12199,8 @@ def _seal_one_daily_tar(
     uncompressed tar.
 
   Returns:
-    None
+    bool: True when the seal ran without raising, False when it failed (the
+    failure and zstd's stderr are logged).
 
   Examples:
     >>> _seal_one_daily_tar("x", "x", "x", None, None, None, None, None, True)
@@ -12225,8 +12226,15 @@ def _seal_one_daily_tar(
       zst_members=zst_members,
     )
   except (subprocess.CalledProcessError, RuntimeError, TimeoutError) as exc:
+    stderr = str(getattr(exc, "stderr", "") or "").strip()[-500:]
     if log_fn:
-      log_fn(f"Seal failed for {tar_path}: {exc}", flush=True)
+      log_fn(
+        f"Seal failed for {tar_path}: {exc}"
+        + (f" stderr={stderr!r}" if stderr else ""),
+        flush=True,
+      )
+    return False
+  return True
 
 
 def seal_dirty_daily_archives(
@@ -12244,7 +12252,7 @@ def seal_dirty_daily_archives(
   skip_daily_tar_paths: Any | None = None,
   only_daily_tar_paths: Any | None = None,
   only_when_no_remaining_raw: bool = False,
-) -> None:
+) -> list[str]:
   """
   Seal every dirty ``YYYY-MM-DD.tar`` under ``daily_archive_dir`` per policy.
 
@@ -12273,7 +12281,8 @@ def seal_dirty_daily_archives(
     raw.
 
   Returns:
-    None
+    list[str]: Daily tar paths whose seal failed (logged with zstd stderr);
+    empty when every candidate sealed or was skipped.
 
   Raises:
     err: Raised when ``seal_dirty_daily_archives`` hits a ``err`` failure
@@ -12283,7 +12292,7 @@ def seal_dirty_daily_archives(
     >>> seal_dirty_daily_archives(0)  # doctest: +SKIP
   """
   if not daily_archive_dir or not os.path.isdir(daily_archive_dir):
-    return
+    return []
   today_local = datetime.now(local_tz).date()
   candidates = []
   for tar_path in sorted(iter_daily_tar_paths(daily_archive_dir)):
@@ -12321,7 +12330,7 @@ def seal_dirty_daily_archives(
         continue
     candidates.append((tar_path, zst_path, gz_path))
   if not candidates:
-    return
+    return []
 
   seal_kwargs = {
     "zstd_threads": zstd_threads,
@@ -12333,14 +12342,17 @@ def seal_dirty_daily_archives(
   }
   workers = _get_archive_seal_worker_count(len(candidates))
   if workers <= 1 or len(candidates) <= 1:
-    for tar_path, zst_path, gz_path in candidates:
-      _seal_one_daily_tar(tar_path, zst_path, gz_path, **seal_kwargs)
-    return
+    return [
+      c[0]
+      for c in candidates
+      if not _seal_one_daily_tar(c[0], c[1], c[2], **seal_kwargs)
+    ]
 
   _seal_candidate = lambda candidate: _seal_one_daily_tar(
     candidate[0], candidate[1], candidate[2], **seal_kwargs
   )
-  for _candidate, _result, err in iter_bounded_thread_pool(
+  failed: list[str] = []
+  for candidate, result, err in iter_bounded_thread_pool(
     candidates,
     _seal_candidate,
     max_workers=workers,
@@ -12348,6 +12360,9 @@ def seal_dirty_daily_archives(
   ):
     if err is not None:
       raise err
+    if not result:
+      failed.append(candidate[0])
+  return failed
 
 
 def _planned_migrate_action_for_legacy_gz(
