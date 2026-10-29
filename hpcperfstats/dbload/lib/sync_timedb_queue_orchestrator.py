@@ -50,6 +50,9 @@ Attributes:
   _FULL_REDISCOVER_PENDING: Event set when a discover walk dropped incomplete
     catchup files at the ingest cap; the idle pass answers it with a
     whole-archive walk once the queue is below its low-water mark.
+  _BOOT_FULL_DISCOVER_PENDING: Event set when boot queues the whole-archive
+    discover walk and cleared when that walk ends (success or not); day_close
+    yields at the seal stage while it is set.
   _last_full_rediscover_mono: Monotonic time of the last whole-archive walk
     the idle pass requested (0 until the first idle pass; boot runs the
     first one).
@@ -208,6 +211,7 @@ _IDLE_RECONSTRUCT_MIN_INTERVAL_S = 300.0
 _last_idle_reconstruct_mono = 0.0
 _SHUTDOWN_REQUESTED = threading.Event()
 _FULL_REDISCOVER_PENDING = threading.Event()
+_BOOT_FULL_DISCOVER_PENDING = threading.Event()
 _last_full_rediscover_mono = 0.0
 _discover_bg_lock = threading.Lock()
 _discover_bg_executor: ThreadPoolExecutor | None = None
@@ -1226,6 +1230,7 @@ def _run_background_discover(
     return
   if claim is None:
     return
+  claimed_mtime_days = mtime_days
   try:
     claimed_mtime_days = _discover_mtime_days_from_identity(
       claim.identity,
@@ -1245,6 +1250,10 @@ def _run_background_discover(
     if getattr(stats, "dropped_at_capacity", 0):
       _FULL_REDISCOVER_PENDING.set()
   finally:
+    # Seals wait for the boot whole-archive walk; a failed walk must not hold
+    # them forever (INV-NEG terminal).
+    if claimed_mtime_days is None:
+      _BOOT_FULL_DISCOVER_PENDING.clear()
     with contextlib.suppress(Exception):
       jq.ack_job(
         client,
@@ -1623,6 +1632,8 @@ def _idle_reconstruct_pass(
       )
       work += int(stats.enqueued_ingest) + int(stats.enqueued_append)
       work += int(stats.enqueued_day_close)
+      if mtime_days is None:
+        _BOOT_FULL_DISCOVER_PENDING.clear()
       with contextlib.suppress(Exception):
         jq.ack_job(
           client,
@@ -2905,6 +2916,12 @@ def _run_day_close_job(
         "raw_delete_pre_seal", result="ok", reason=f"deleted={released}"
       )
     _stage_enter("seal")
+    # The seal only sees raw the manifest and queues know; until the boot
+    # whole-archive walk ends, undiscovered raw for this day can still exist
+    # and would force a full reseal (04 2026-10-29: 09-22..10-06 resealed).
+    if _BOOT_FULL_DISCOVER_PENDING.is_set():
+      _stage_exit("seal", result="yielded", reason="full_discover_pending")
+      return "yielded"
     # H19 skip_merge already answered remaining-raw cheaply; do not re-find
     # at seal entry (hpcperfstats01 2026-09-25: 07-28 hung after stage_enter
     # seal with no stage_exit on remaining_raw_paths_blocking_tar_drop).
@@ -7819,6 +7836,8 @@ def run_sync_timedb_queue_orchestrator(
           identity=discover_job_identity(directory, boot_mtime_days),
           dedupe=True,
         )
+        if boot_mtime_days is None:
+          _BOOT_FULL_DISCOVER_PENDING.set()
     except Exception as exc:
       _log(
         f"queue_orchestrator boot discover enqueue err={type(exc).__name__}",

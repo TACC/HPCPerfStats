@@ -63,6 +63,7 @@ Job kinds: `JOB_KIND_INGEST` (`ingest`), `JOB_KIND_APPEND` (`append`),
 | Flag | Polarity | Set | Clear / bound |
 |---|---|---|---|
 | `_FULL_REDISCOVER_PENDING` | negative, memory | a discover walk skipped incomplete catchup files at the ingest cap (`dropped_at_capacity > 0`) | cleared when the idle pass submits a whole-archive walk (catchup queue at or below half the cap); re-set only if that walk drops again; a walk that drops nothing ends the chain. `sync_ingest_full_rescan_interval_hours` (default 6) also forces a walk |
+| `_BOOT_FULL_DISCOVER_PENDING` | negative, memory | boot queues the whole-archive discover identity | cleared in the `finally` of the walk that ran it (background or `run_once` force pass), success or failure; while set, day_close returns `yielded` at the seal stage (`reason=full_discover_pending`, yield backoff 30-300 s, no attempt bump); pre-seal verify and raw deletes still run. Undiscovered raw for a just-sealed day forced full reseals (hpcperfstats04 2026-10-29) |
 
 ### Day-removal manifest
 
