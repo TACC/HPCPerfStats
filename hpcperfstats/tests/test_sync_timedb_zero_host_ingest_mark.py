@@ -152,91 +152,31 @@ def test_clear_removes_matching_path(tmp_path):
   assert any("cleared n=1" in line for line in logs)
 
 
-def test_maybe_record_rejects_failed_ingest_and_nonzero_rows(tmp_path):
+@pytest.mark.parametrize(
+  ("kwargs", "marked"),
+  [
+    ({"stats_rows": 0}, True),
+    ({"stats_rows": 0, "outcome": ""}, True),
+    ({"stats_rows": 4}, False),
+    ({"stats_rows": None}, False),
+    ({"stats_rows": 0, "ingest_ok": False}, False),
+    ({"stats_rows": 0, "outcome": "db_skip"}, False),
+  ],
+)
+def test_maybe_record_gates_on_host_rows_written(tmp_path, kwargs, marked):
+  """Mark = ingested with 0 host rows written to the DB, nothing else.
+
+  A file with no host and no proc lines never gets here (quarantined
+  ``empty`` at ingest); the parsed count is reported in the log only.
+  """
   seg = _seg(tmp_path)
-  assert (
-    zhm.maybe_record_zero_host_ingest_mark_from_outcome(
-      seg,
-      ingest_ok=False,
-      outcome="ingested",
-      stats_rows=0,
-      archive_data_dir=str(tmp_path),
-    )
-    is False
+  args = {"ingest_ok": True, "outcome": "ingested", **kwargs}
+  got = zhm.maybe_record_zero_host_ingest_mark_from_outcome(
+    seg, archive_data_dir=str(tmp_path), **args
   )
-  assert (
-    zhm.maybe_record_zero_host_ingest_mark_from_outcome(
-      seg,
-      ingest_ok=True,
-      outcome="ingested",
-      stats_rows=1,
-      archive_data_dir=str(tmp_path),
-    )
-    is False
-  )
-  assert (
-    zhm.maybe_record_zero_host_ingest_mark_from_outcome(
-      seg,
-      ingest_ok=True,
-      outcome="ingested",
-      stats_rows=None,
-      archive_data_dir=str(tmp_path),
-    )
-    is False
-  )
-  assert (
-    zhm.maybe_record_zero_host_ingest_mark_from_outcome(
-      seg,
-      ingest_ok=True,
-      outcome="db_skip",
-      stats_rows=0,
-      archive_data_dir=str(tmp_path),
-    )
-    is False
-  )
-
-
-def test_maybe_record_empty_outcome_and_parsed_zero_wins(tmp_path):
-  """RC-0: parsed count gates; empty outcome is treated as ingested."""
-  a = _seg(tmp_path, name="host/a")
-  b = _seg(tmp_path, name="host/b")
-  assert (
-    zhm.maybe_record_zero_host_ingest_mark_from_outcome(
-      a,
-      ingest_ok=True,
-      outcome="",
-      stats_rows=0,
-      archive_data_dir=str(tmp_path),
-    )
-    is True
-  )
-  assert (
-    zhm.maybe_record_zero_host_ingest_mark_from_outcome(
-      b,
-      ingest_ok=True,
-      outcome="ingested",
-      stats_rows=99,
-      stats_rows_parsed=0,
-      archive_data_dir=str(tmp_path),
-    )
-    is True
-  )
-  assert zhm.has_zero_host_ingest_mark(a, archive_data_dir=str(tmp_path))
-  assert zhm.has_zero_host_ingest_mark(b, archive_data_dir=str(tmp_path))
-
-
-def test_maybe_record_parsed_nonzero_blocks_even_if_stats_rows_zero(tmp_path):
-  seg = _seg(tmp_path)
-  assert (
-    zhm.maybe_record_zero_host_ingest_mark_from_outcome(
-      seg,
-      ingest_ok=True,
-      outcome="ingested",
-      stats_rows=0,
-      stats_rows_parsed=12,
-      archive_data_dir=str(tmp_path),
-    )
-    is False
+  assert got is marked
+  assert zhm.has_zero_host_ingest_mark(seg, archive_data_dir=str(tmp_path)) is (
+    marked
   )
 
 

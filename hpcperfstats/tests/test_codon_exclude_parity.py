@@ -168,7 +168,7 @@ def test_kernel_exclude_carry_continues_across_flushes() -> None:
   mod = _load_feed_collapse()
   lines = _corpus()
   split = lines.index("1001.0 J1 hostA")
-  _c1, _p1, craw, _carc, _m = mod.feed_delta_collapse_arc(
+  _c1, _p1, craw, _carc, _m, _np = mod.feed_delta_collapse_arc(
     lines[:split], {}, {}, 0, EXCLUDE
   )
   assert all("host_vfs" not in k for k in craw)

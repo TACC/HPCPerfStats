@@ -44,12 +44,60 @@ def test_copy_frame_wire_roundtrip() -> None:
     "eof": True,
     "copy_unique": True,
     "file_session": True,
+    "parsed_host_rows": 7,
   }
   out = w.decode_response("parse", w.encode_response_ok("parse", body))
   assert out["stats"] == {"host_copy": b"h\tx\n", "proc_copy": b"p\n"}
   assert (
     out["procs"] == {} and out["eof"] is True and out["copy_unique"] is True
   )
+  assert out["parsed_host_rows"] == 7
+
+
+def test_proto_ver_5_carries_parsed_host_rows_and_rejects_v4() -> None:
+  """The sidecar gained ``parsed_host_rows``; an old peer must fail closed."""
+  assert w.PROTO_VER == 5
+  frame = bytearray(w.encode_response_ok("parse", {"stats": [], "procs": []}))
+  assert w.decode_response("parse", bytes(frame))["parsed_host_rows"] is None
+  frame[0] = 4
+  with pytest.raises(RuntimeError, match="version mismatch"):
+    w.decode_response("parse", bytes(frame))
+
+
+def test_ipc_frame_keeps_the_kernel_parsed_host_rows() -> None:
+  frame = w._ipc_frame_from_parsed(
+    {"stats": {}, "procs": {}, "parsed_host_rows": 4}, eof=False
+  )
+  assert frame["parsed_host_rows"] == 4
+
+
+def test_process_worker_streams_parsed_host_rows_and_keeps_empty_eof_frame(
+  pool, tmp_path: Path
+) -> None:
+  """A last window whose host rows all collapsed away still reports them."""
+  path = tmp_path / "stats"
+  path.write_text("a\nparsed=3\n", encoding="utf-8")
+  frames = _frames(path)
+  assert [f["parsed_host_rows"] for f in frames] == [2, 3]
+  assert frames[-1]["eof"] is True and frames[-1]["stats"]["host_copy"] == b""
+
+
+def test_file_stream_hands_on_chunk_every_parsed_row_after_coalescing(
+  pool, tmp_path: Path
+) -> None:
+  """End to end: merged + split frames sum to the kernel's parsed rows."""
+  path = tmp_path / "stats"
+  path.write_text("a\nhp\nb\nparsed=3\n", encoding="utf-8")
+  seen: list[dict] = []
+  bridge.try_codon_parse_file_stream(
+    str(path),
+    1024,
+    None,
+    lambda stats, _procs: seen.append(stats),
+    coalesce_rows=1000,
+  )
+  assert sum(s["parsed_host_rows"] for s in seen) == 2 + 2 + 2 + 3
+  assert [s["proc_copy"] for s in seen if s["proc_copy"]] == [b"p\n"]
 
 
 def test_soa_frame_wire_unchanged_by_copy_flag() -> None:
@@ -274,7 +322,11 @@ def test_host_copy_branch_books_write_time_as_postgres_s(monkeypatch) -> None:
   monkeypatch.setattr(st, "_write_proc_copy_payload", _slow)
   st._reset_ingest_write_timing(enabled=False)
   st._write_stats_payload_to_db(
-    "f", {"host_copy": b"h\n", "proc_copy": b"p\n"}, None, True, copy_unique=True
+    "f",
+    {"host_copy": b"h\n", "proc_copy": b"p\n"},
+    None,
+    True,
+    copy_unique=True,
   )
   assert st._snapshot_ingest_write_timing()["postgres_s"] >= 0.09
 
@@ -312,15 +364,48 @@ def test_worker_streams_mem_lines_to_stderr_when_enabled(
 
 
 def _cf(
-  host: bytes, eof: bool, marks: list | None = None, proc: bytes = b""
+  host: bytes,
+  eof: bool,
+  marks: list | None = None,
+  proc: bytes = b"",
+  parsed: int | None = None,
 ) -> dict:
-  return {
+  frame = {
     "stats": {"host_copy": host, "proc_copy": proc},
     "procs": {},
     "marks": marks or [],
     "eof": eof,
     "copy_unique": True,
   }
+  if parsed is not None:
+    frame["parsed_host_rows"] = parsed
+  return frame
+
+
+def test_coalesce_sums_parsed_host_rows_and_split_proc_frames_carry_none() -> (
+  None
+):
+  """Merged payloads add up parsed rows; proc-only splits must not repeat them."""
+  frames = [
+    _cf(b"a\n", False, proc=b"p1\n", parsed=5),
+    _cf(b"", False, parsed=4),
+    _cf(b"b\n", True, proc=b"p2\n", parsed=6),
+  ]
+  out = list(bridge._coalesce_host_rows(frames, 1000))
+  assert sum(f.get("parsed_host_rows", 0) for f in out) == 15
+  for f in out:
+    if not f["stats"]["host_copy"]:
+      assert f["parsed_host_rows"] == 0
+  merged = [f for f in out if f["stats"]["host_copy"]]
+  assert len(merged) == 1 and merged[0]["parsed_host_rows"] == 15
+
+
+def test_coalesce_leaves_parsed_host_rows_absent_when_frames_lack_it() -> None:
+  """Old fakes without the field stay without it, so ingest falls back."""
+  out = list(
+    bridge._coalesce_host_rows([_cf(b"a\n", False), _cf(b"b\n", True)], 1000)
+  )
+  assert all("parsed_host_rows" not in f for f in out)
 
 
 def test_coalesce_host_rows_by_row_count_never_merges_proc() -> None:
@@ -353,3 +438,14 @@ def test_coalesce_host_rows_flushes_partial_at_eof_and_passes_others() -> None:
     {"host_copy": b"a\n", "proc_copy": b""},
     {"time": [1.0]},
   ]
+
+
+def test_finished_result_hands_parsed_host_rows_to_carry() -> None:
+  from hpcperfstats.dbload.lib.sync_timedb_parsing import DeltaCarryState
+
+  carry = DeltaCarryState()
+  assert carry.codon_parsed_host_rows is None
+  bridge._finish_codon_parse_result(
+    {"stats": {}, "procs": {}, "finished": True, "parsed_host_rows": 6}, carry
+  )
+  assert carry.codon_parsed_host_rows == 6

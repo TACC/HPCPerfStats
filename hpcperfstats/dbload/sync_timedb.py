@@ -4111,7 +4111,6 @@ def _record_ingest_marks_from_worker_result(
     ingest_ok=outcome.ingest_ok,
     outcome=outcome.outcome,
     stats_rows=outcome.stats_rows,
-    stats_rows_parsed=outcome.stats_rows_parsed,
     log_fn=log_fn,
   )
   from hpcperfstats.dbload.lib.sync_timedb_file_complete_ingest_mark import (
@@ -4609,7 +4608,9 @@ def _parse_stats_file_payload_impl_streaming(stats_file: str) -> Any:
           if proc_parts
           else empty_proc
         )
-      if stats.empty and proc_stats.empty:
+      # Quarantine only a file with no lines: host lines that collapse to no
+      # rows still ingest (zero-host marked downstream).
+      if parsed_n == 0 and proc_stats.empty:
         if DEBUG:
           log_print(f"Unable to process stats file {stats_file}")
         return _parse_failure_after_quarantine(
@@ -4741,7 +4742,14 @@ def _add_stats_file_to_db_streaming_incremental(
     if isinstance(stats_list, dict) and "host_copy" in stats_list:
       host_b = stats_list.get("host_copy") or b""
       proc_b = stats_list.get("proc_copy") or b""
+      host_rows = host_b.count(b"\n")
+      # RC-0: the kernel's pre-collapse host count. Only frames that lack it
+      # (host fakes, a pre-PROTO_VER-5 sender) fall back to the post-collapse
+      # COPY rows, which cannot see host lines dropped inside Codon.
+      parsed_rows = stats_list.get("parsed_host_rows")
+      parsed_rows = host_rows if parsed_rows is None else int(parsed_rows)
       if not host_b and not proc_b:
+        total_stats_rows_parsed += parsed_rows
         return
       try:
         _unused, archival, chunk_ok = _submit_stats_payload_write(
@@ -4761,13 +4769,8 @@ def _add_stats_file_to_db_streaming_incremental(
       if not chunk_ok:
         ingest_ok = False
         return
-      host_rows = host_b.count(b"\n")
       total_stats_rows += host_rows
-      # A Codon frame carries no pre-collapse count; the host rows it holds are
-      # the parsed figure, so ``stats_rows_parsed`` is no longer always 0 and a
-      # file with host rows is not zero-host marked (04 2026-10-29: 23,947 of
-      # 23,997 ingests logged parsed=0 and recorded the mark).
-      total_stats_rows_parsed += host_rows
+      total_stats_rows_parsed += parsed_rows
       total_proc_rows += proc_b.count(b"\n")
       return
     with _held_parse_stage("chunk_setup_s"):
@@ -4778,6 +4781,11 @@ def _add_stats_file_to_db_streaming_incremental(
     if codon_hit:
       carry.codon_finished_chunk = False
       carry.codon_copy_unique = False
+      # RC-0: Codon columns are post-collapse; count the kernel's parsed rows.
+      kernel_parsed = getattr(carry, "codon_parsed_host_rows", None)
+      carry.codon_parsed_host_rows = None
+      if kernel_parsed is not None:
+        parsed_stats_n = int(kernel_parsed)
       stats_chunk = coerce_host_stats_to_columnar(stats_list)
       if isinstance(proc_stats_list, dict):
         proc_chunk = proc_stats_list
@@ -4801,6 +4809,7 @@ def _add_stats_file_to_db_streaming_incremental(
       else bool(getattr(proc_chunk, "empty", True))
     )
     if host_empty and proc_empty:
+      total_stats_rows_parsed += parsed_stats_n
       del stats_chunk
       del proc_chunk
       return

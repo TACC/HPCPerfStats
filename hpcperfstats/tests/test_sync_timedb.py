@@ -4,6 +4,7 @@ import os
 from collections import namedtuple
 
 import pandas as pd
+import pytest
 
 from hpcperfstats.dbload.lib.io_helpers import host_data_instance_from_stats_row
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
@@ -1604,20 +1605,30 @@ def test_streaming_resume_emits_nothing_before_start_idx(tmp_path):
   assert 1709123456.0 not in times
 
 
-def test_zero_host_mark_not_recorded_when_stats_lines_parsed(
+def test_zero_host_mark_on_db_rows_and_log_reports_both_counts(
   monkeypatch, tmp_path
 ):
-  """Parsed stats > 0 with zero written rows must not bypass head+tail via mark."""
+  """0 host rows written marks the file; the log keeps the parser's count."""
   from hpcperfstats.dbload import sync_timedb as st
-  from hpcperfstats.dbload.lib import sync_timedb_zero_host_ingest_mark as zhm
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_file_complete_ingest_mark as fc,
+    sync_timedb_zero_host_ingest_mark as zhm,
+  )
 
   recorded = []
+  logged: list[str] = []
 
   def fake_record(path, **kwargs):
     recorded.append(path)
     return True
 
   monkeypatch.setattr(zhm, "record_zero_host_ingest_mark", fake_record)
+  monkeypatch.setattr(
+    fc,
+    "maybe_record_file_complete_ingest_mark_from_outcome",
+    lambda *a, **k: None,
+  )
+  monkeypatch.setattr(st, "log_print", lambda msg, **_k: logged.append(msg))
   outcome = st.IngestFileOutcome(
     path=str(tmp_path / "seg"),
     elapsed_s=1.0,
@@ -1629,14 +1640,19 @@ def test_zero_host_mark_not_recorded_when_stats_lines_parsed(
     proc_rows=3,
   )
   st._log_ingest_file_outcome(outcome)
-  zhm.maybe_record_zero_host_ingest_mark_from_outcome(
-    outcome.path,
-    ingest_ok=outcome.ingest_ok,
-    outcome=outcome.outcome,
-    stats_rows=outcome.stats_rows,
-    stats_rows_parsed=outcome.stats_rows_parsed,
+  st._record_ingest_marks_from_worker_result(
+    (
+      outcome.path,
+      True,
+      True,
+      1.0,
+      {"outcome": "ingested", "stats_rows": 0, "proc_rows": 3},
+    ),
+    log_fn=None,
   )
-  assert recorded == []
+  assert recorded == [outcome.path]
+  line = next(m for m in logged if m.startswith("ingest file path="))
+  assert " stats_rows=0 " in line and " stats_rows_parsed=12 " in line
 
 
 def test_nonempty_stats_frame_collapsing_to_empty_delta_logs_warning():
@@ -1713,8 +1729,69 @@ def test_parse_stats_file_payload_impl_resume_keeps_header_schema(
   assert 1709123457.0 in times
 
 
+def _quarantine_recorder(monkeypatch, st):
+  details: list[str] = []
+
+  def fake_quarantine(stats_file, error_detail=None):
+    details.append(str(error_detail))
+    return True
+
+  monkeypatch.setattr(st, "_quarantine_failed_ingest_parse", fake_quarantine)
+  return details
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_payload_with_host_lines_that_collapse_away_still_ingests(
+  monkeypatch, tmp_path, streaming
+):
+  """Host lines parsed but 0 host rows to write: not quarantined, ingested.
+
+  Only a file with no host and no proc lines is quarantined; this one gets a
+  zero-host mark downstream so it can archive.
+  """
+  from hpcperfstats.dbload import sync_timedb as st
+
+  lines = _resume_schema_fixture_lines()
+  stats_file = tmp_path / "host.example.com" / "1709123456"
+  stats_file.parent.mkdir(parents=True)
+  stats_file.write_text("".join(lines), encoding="utf-8")
+  monkeypatch.setattr(st, "close_old_connections", lambda: None)
+  monkeypatch.setattr(st, "update_worker_substage", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "stats_file_is_active_segment", lambda _p: False)
+  monkeypatch.setattr(
+    st, "_should_stream_stats_file", lambda *_a, **_k: streaming
+  )
+  monkeypatch.setattr(
+    st,
+    "_resolve_streaming_ingest_start",
+    lambda *_a, **_k: (False, (0, True)),
+  )
+  empty_stats, _empty_proc = build_stats_dataframes([], [])
+  monkeypatch.setattr(
+    st, "compute_deltas_and_arc", lambda _df, **_k: empty_stats.copy()
+  )
+  monkeypatch.setattr(
+    st, "compute_deltas_and_arc_chunk", lambda _df, **_k: empty_stats.copy()
+  )
+  details = _quarantine_recorder(monkeypatch, st)
+
+  impl = (
+    st._parse_stats_file_payload_impl_streaming
+    if streaming
+    else st._parse_stats_file_payload_impl
+  )
+  result = impl(str(stats_file))
+  _path, payload, _arch, ingest_ok, _el, meta = st._unpack_parse_payload_result(
+    result
+  )
+  assert meta["outcome"] == "ingested" and ingest_ok is True
+  assert details == []
+  assert payload is not None and payload[0].empty
+  assert int(meta["stats_rows_parsed"]) > 0 and meta["stats_rows"] == 0
+
+
 def test_payload_meta_includes_stats_rows_parsed(monkeypatch, tmp_path):
-  """Parsed hardware that collapses empty still records ``stats_rows_parsed``."""
+  """Parsed hardware that reaches the payload records ``stats_rows_parsed``."""
   from hpcperfstats.dbload import sync_timedb as st
 
   lines = _resume_schema_fixture_lines()
@@ -1732,14 +1809,6 @@ def test_payload_meta_includes_stats_rows_parsed(monkeypatch, tmp_path):
     lambda *_a, **_k: (False, (0, True)),
   )
 
-  empty_stats, _empty_proc = build_stats_dataframes([], [])
-
-  def collapse_to_empty(stats_df):
-    del stats_df
-    return empty_stats.copy()
-
-  monkeypatch.setattr(st, "compute_deltas_and_arc", collapse_to_empty)
-
   result = st._parse_stats_file_payload_impl(str(stats_file))
   (
     _path,
@@ -1752,10 +1821,10 @@ def test_payload_meta_includes_stats_rows_parsed(monkeypatch, tmp_path):
   assert ingest_ok is True
   assert payload is not None
   stats, _proc = payload
-  assert stats.empty
+  assert not stats.empty
   parsed_n = meta.get("stats_rows_parsed")
   assert parsed_n is not None
-  assert int(parsed_n) > 0
+  assert int(parsed_n) >= len(stats) > 0
 
 
 def test_parse_t0_includes_resolve_streaming_ingest_start():

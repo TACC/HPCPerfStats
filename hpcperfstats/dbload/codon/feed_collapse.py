@@ -1947,12 +1947,15 @@ def feed_delta_collapse_arc(
   dict[str, list[float]],
   dict[str, float],
   list[dict[str, str]],
+  int,
 ]:
   """Full feed -> delta -> collapse -> arc pipeline for one incremental flush.
 
   Mirrors ``compute_deltas_and_arc_chunk`` wired to ``IncrementalStatsParser``
   feed + ``DeltaCarryState``. Returns ``(finished_cols, proc_cols,
-  carry_raw_out, carry_arc_out, marks)`` where ``finished_cols`` are parallel
+  carry_raw_out, carry_arc_out, marks, parsed_host_rows)`` where
+  ``parsed_host_rows`` is the host record count fed in before delta/collapse
+  (the RC-0 zero-host gate input) and ``finished_cols`` are parallel
   lists ``(time, host, jid, type, dev, event, unit, value, delta, arc)``
   (``wid``/``mult`` dropped), ``proc_cols`` mirrors ``feed_lines_full``'s
   proc jid/host/proc/fields/device tuple, and ``marks`` are bound ``%jobs``/
@@ -2066,7 +2069,7 @@ def feed_delta_collapse_arc(
   proc = (proc_jid, proc_host, proc_proc, proc_fields, proc_device)
   finished, proc = finalize_copy_unique_emit(finished, proc)
   finished, proc = normalize_copy_unique_scalars(finished, proc)
-  return (finished, proc, carry_raw_out, carry_arc_out, marks)
+  return (finished, proc, carry_raw_out, carry_arc_out, marks, len(stats_time))
 
 
 def feed_and_collapse(lines: list[str]) -> tuple[int, int, float, float]:

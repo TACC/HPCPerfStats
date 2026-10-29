@@ -66,6 +66,12 @@ C_SYM="$(nm -D "${CODON_OUT}/libhpcperfstats_codon_kernel.so" | awk '/ feed_and_
 PARSE_SYM="$(nm -D "${CODON_OUT}/libhpcperfstats_codon_kernel.so" | awk '/ parse_stats_lines_codon_run_c$/ {print $3; exit}')"
 FILE_OPEN_SYM="$(nm -D "${CODON_OUT}/libhpcperfstats_codon_kernel.so" | awk '/ parse_stats_file_codon_open_c$/ {print $3; exit}')"
 FILE_NEXT_SYM="$(nm -D "${CODON_OUT}/libhpcperfstats_codon_kernel.so" | awk '/ parse_stats_file_codon_next_c$/ {print $3; exit}')"
+PARSED_N_SYM="$(nm -D "${CODON_OUT}/libhpcperfstats_codon_kernel.so" | awk '/ codon_host_parsed_n_c$/ {print $3; exit}')"
+if [[ -z "${PARSED_N_SYM}" ]]; then
+  echo "missing_export codon_host_parsed_n_c" >&2
+  nm -D "${CODON_OUT}/libhpcperfstats_codon_kernel.so" | head -40 >&2
+  exit 1
+fi
 if [[ -z "${C_SYM}" ]]; then
   echo "missing_export feed_and_collapse_fingerprint_c" >&2
   nm -D "${CODON_OUT}/libhpcperfstats_codon_kernel.so" | head -40 >&2
@@ -85,6 +91,7 @@ echo "c_export_sym=${C_SYM}"
 echo "parse_export_sym=${PARSE_SYM}"
 echo "file_open_export_sym=${FILE_OPEN_SYM}"
 echo "file_next_export_sym=${FILE_NEXT_SYM}"
+echo "parsed_n_export_sym=${PARSED_N_SYM}"
 
 # One objdump pass: sample lines + greppable zmm/ymm/xmm totals (pipefail-safe).
 _disasm_tmp="$(mktemp "${TMPDIR:-/tmp}/codon_kernel_disasm.XXXXXX")"
@@ -183,6 +190,7 @@ else:
 assert empty_result.get("marks", []) == [], empty_result
 assert empty_result["finished"] is True, empty_result
 assert empty_result["carry_raw"] == {} and empty_result["carry_arc"] == {}
+assert empty_result["parsed_host_rows"] == 0, empty_result
 
 lines = build_e6_payload_lines(40)
 codon_fp = m.feed_and_collapse_fingerprint(lines)
@@ -210,6 +218,10 @@ else:
 assert n_procs == int(codon_fp[3]), (n_procs, codon_fp[3], type(c_procs))
 assert isinstance(result["carry_raw"], dict) and isinstance(result["carry_arc"], dict)
 assert isinstance(result.get("marks"), list), result
+# RC-0: pre-collapse parsed host count equals the fingerprint's raw_stats.
+assert result["parsed_host_rows"] == codon_fp[0] > n_stats, (
+    result["parsed_host_rows"], codon_fp[0], n_stats
+)
 
 # Carry round-trip: feeding the same carry back in must not raise and must
 # keep returning finished rows (cross-flush continuity contract).
@@ -218,6 +230,31 @@ result2 = m.parse_stats_lines_codon(
 )
 assert result2["finished"] is True
 print("parse_stats_lines_codon_e6", n_stats, n_procs)
+
+# RC-0 file session (the production ingest path): every window reports its
+# pre-collapse host count and the windows sum to the fingerprint raw_stats.
+import os
+import tempfile
+
+with tempfile.NamedTemporaryFile("w", suffix=".stats", delete=False) as fh:
+  fh.write("".join(line + "\n" for line in lines))
+  stats_path = fh.name
+try:
+  assert m.parse_stats_file_codon_open(stats_path, 1024, 0, 1, None) is True
+  windows = []
+  while True:
+    frame = m.parse_stats_file_codon_next(1, emit_insert=0)
+    if frame is None:
+      break
+    assert "host_copy" in frame["stats"], frame.keys()
+    windows.append(frame["parsed_host_rows"])
+finally:
+  os.unlink(stats_path)
+file_parsed = sum(windows)
+assert len(windows) > 1, windows
+assert file_parsed == codon_fp[0], (file_parsed, codon_fp[0], windows)
+print("parse_stats_file_codon_e6 windows", len(windows), "parsed", file_parsed)
+print("codon_pyext_314t_parsed_host_rows=pass")
 print("codon_pyext_314t_import=pass")
 PY
 echo "codon_pyext_314t=pass"

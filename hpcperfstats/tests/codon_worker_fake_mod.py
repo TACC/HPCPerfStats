@@ -2,7 +2,10 @@
 
 ``parse_stats_file_codon_next`` returns one COPY-bytes frame per input line:
 ``host_copy = "<pid>|<exclude>|<emit_insert>|<line>"`` so tests can assert what
-crossed the process boundary. An empty file yields no frames.
+crossed the process boundary. An empty file yields no frames. Each frame
+reports ``parsed_host_rows=2``; a ``parsed=N`` line yields an empty host COPY
+frame that still parsed ``N`` host rows (all collapsed away), and an ``hp``
+line adds ``proc_copy`` so coalescing splits it.
 """
 
 from __future__ import annotations
@@ -11,6 +14,10 @@ import os
 from typing import Any
 
 _sessions: dict[int, dict[str, Any]] = {}
+
+
+def feed_and_collapse_fingerprint(lines, slot=0):
+  return (0, 0, 0.0, 0.0)
 
 
 def parse_stats_lines_codon(
@@ -35,8 +42,12 @@ def parse_stats_file_codon_next(slot=0, emit_insert=0):
   body = f"{os.getpid()}|{sess['exclude']}|{emit_insert}|{line}".encode()
   if line == "big":
     body += b"x" * 300_000
+  parsed = 2
+  if line.startswith("parsed="):
+    body, parsed = b"", int(line.split("=", 1)[1])
   return {
-    "stats": {"host_copy": body, "proc_copy": b""},
+    "stats": {"host_copy": body, "proc_copy": b"p\n" if line == "hp" else b""},
+    "parsed_host_rows": parsed,
     "procs": {},
     "marks": [],
     "finished": True,

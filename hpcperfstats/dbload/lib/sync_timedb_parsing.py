@@ -1019,8 +1019,8 @@ def stats_payload_row_count(payload: Any) -> int:
   """
   Return parsed hardware row count for a list of dicts or column dict.
 
-  Zero-host archive marks must use this parsed count, not post-collapse
-  lengths.
+  Reported as ``stats_rows_parsed`` beside the DB row count; a file is
+  quarantined as empty only when this and the proc count are both 0.
 
   Args:
     payload (Any): Columnar ``dict[str, list]``, sequence of row dicts, or
@@ -3223,6 +3223,10 @@ class DeltaCarryState:
       Codon finished flush (empty when divert-off or marks absent).
     codon_copy_unique: When True, the current Codon frame is already
       COPY-unique normalized; write stage skips pre-COPY collapse.
+    codon_parsed_host_rows: Host records the Codon kernel parsed before
+      collapse for the current finished flush, or ``None`` when the kernel
+      did not report it. Ingest counts it as ``stats_rows_parsed`` (RC-0)
+      and clears it with ``codon_finished_chunk``.
   """
 
   __slots__ = (
@@ -3230,6 +3234,7 @@ class DeltaCarryState:
     "codon_copy_unique",
     "codon_finished_chunk",
     "codon_marks",
+    "codon_parsed_host_rows",
     "raw",
   )
 
@@ -3248,6 +3253,7 @@ class DeltaCarryState:
     self.codon_finished_chunk = False
     self.codon_copy_unique = False
     self.codon_marks: list[dict[str, Any]] = []
+    self.codon_parsed_host_rows: int | None = None
 
 
 def _empty_delta_arc_frame() -> Any:

@@ -736,7 +736,7 @@ npm run test:coverage -- --run
 | `hpcperfstats/tests/test_sync_timedb_subprocess_hardening.py` | zstd pipe drain, nested `already_held` write lock, pax `tar tf` before replace, decompress stderr capture, tar append timeout. |
 | `hpcperfstats/tests/test_sync_timedb_archive_members_store_required.py` | Retired job store; asserts the process member store is installed. |
 | `hpcperfstats/tests/test_sync_timedb_file_complete_ingest_mark.py` | Durable file-complete mark helpers (empty/missing path, malformed sidecar, `db_skip` tokens, live-listend completeness). Host unit; no Postgres. |
-| `hpcperfstats/tests/test_sync_timedb_zero_host_ingest_mark.py` | Zero-host mark helpers (parsed-count RC-0 gate, empty archive dir, malformed entries). Host unit; no Postgres. |
+| `hpcperfstats/tests/test_sync_timedb_zero_host_ingest_mark.py` | Zero-host mark helpers (gate on host rows written to the DB, empty archive dir, malformed entries). Host unit; no Postgres. |
 | `hpcperfstats/tests/test_sync_timedb_day_close_cooperation.py` | Day-close yield/defer tracker, empty tar-path `normpath` (`.` ), write-lock backoff, chunk-day defer. Host unit mocks. |
 | `hpcperfstats/tests/test_sync_timedb_host_itimes.py` | Mocked `host_data` Unix-second probes: empty second sets, 24h chunk bounds, overflow, statement-timeout overflow. Host unit; no Postgres. |
 | `hpcperfstats/tests/test_sync_timedb_db_offload_high_confidence.py` | Compose-DB oracles for ingest offloads **#1–#5** (proc peak upsert, batched second-presence). Run via `tests/run_db_pytest_workflow.sh -- hpcperfstats/tests/test_sync_timedb_db_offload_high_confidence.py` (`HPCPERFSTATS_COMPOSE_NETWORK=1`). |

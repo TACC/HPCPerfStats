@@ -275,7 +275,7 @@ def test_codon_ipc_binary_roundtrip_no_pickle() -> None:
     assert "import pickle" not in text
     assert "pickle." not in text
     assert "import msgpack" not in text
-  assert worker.PROTO_VER == 4
+  assert worker.PROTO_VER == 5
   req = worker.encode_request("parse", ["a", "b"])
   assert worker.decode_request(req) == (
     "parse",

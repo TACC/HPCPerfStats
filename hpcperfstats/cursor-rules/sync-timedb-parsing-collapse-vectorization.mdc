@@ -61,7 +61,7 @@ Any parse that resumes at a mid-file line index must accumulate schema/state fro
 
 ## Payload parsed row counts
 
-Payload meta (`_parse_stats_file_payload_impl` / `_parse_stats_file_payload_impl_streaming`) must set `stats_rows_parsed` from `stats_payload_row_count` **before** collapse. Zero-host marks use parsed counts, not post-collapse `stats_rows`. Do not change the incremental combined path, which already accumulates parsed counts.
+Payload meta (`_parse_stats_file_payload_impl` / `_parse_stats_file_payload_impl_streaming`) must set `stats_rows_parsed` from `stats_payload_row_count` **before** collapse; it is reported beside `stats_rows`, and a file is quarantined as empty only when it and the proc count are both 0. Zero-host marks gate on host rows written (`stats_rows`), not on the parsed count (`sync-timedb-persistence-contract.mdc` RC-0). Do not change the incremental combined path, which already accumulates parsed counts.
 
 ## Sample-header ``jid`` on host_data
 
@@ -79,7 +79,7 @@ Digit-line jobid belongs on stats ``tags`` (same value as proc ``tags2``). Colla
 - `_compile_schema_bare_names` / `schema_bare` — proc basenames compiled at `!`
 - `_read_stats_line_batch_decode_after_lock` — rb batch under SH; decode after release
 - `IncrementalStatsParser` — compiled schema SoA + columnar `_stats_cols`; `take_stats_columns()` for production flushes; `parse_stats_lines` records adapter for tests
-- `stats_payload_row_count` — zero-host marks use parsed row counts, not post-collapse lengths
+- `stats_payload_row_count` — parsed (pre-collapse) row count reported as `stats_rows_parsed`
 - INI-gated parse-stage holds (`_held_parse_stage` / `PARSE_STAGE_HOLD_KEYS`) — measurement only; `build_df_s` is derived from `proc_merge_s`+`hw_df_s`+`proc_df_s`; never wrap the whole builder in an outer `build_df` hold
 - Parse-stage campaign totals: `_add_parse_stage_s` updates the per-file ContextVar only; take `_parse_stage_campaign_lock` only in `_flush_parse_stage_campaign_from_file_acc` / campaign snapshot (never per nested hold exit on the feed line path). Nested `_held_parse_stage` must be exclusive (pause outer) so `feed_s` + `proc_merge_s` do not double-count wall
 
@@ -92,6 +92,6 @@ Add or extend an equivalence test (`vectorized` vs apply / row-wise reference or
 - `bugfix-and-perf-change-playbook.mdc` — perf change verification
 - `duplicate-threshold-helper-mandate.mdc` — shared `_groupby_sum_min_count` for sum paths
 - `runtime-resource-and-metrics-safety.mdc` — ingest hot-path resource discipline
-- `sync-timedb-persistence-contract.mdc` — zero-host mark must use parsed row counts, not post-collapse lengths
+- `sync-timedb-persistence-contract.mdc` — zero-host mark gates on host rows written; only files with no lines are quarantined
 - **E6 campaign (parse_feed A/B):** closed-book dominant hold is `parse_feed_s` first; ship surgical Python `feed_line` changes only after paired A/B at fixed ingest width; **retain only** when candidate lower CI clears the campaign files/s gate; Cython/numba still forbidden until a post-patch flamegraph shows leftover exclusive time in `feed_line` / `split` / `float`
 - **E7 campaign (residual proc_merge/build_df A/B):** after Wave4 online `_proc_by_key`, paired A/B at width 48 for skip-redundant builder dedupe + columnar `take_proc` → `DataFrame(copy=False)` **retain=false** 2026-09-19 (`e7_proc_build_ab_da062d9bdc6f45ce8a1a11f95e02ebb6.json`); product reverted, harness `--e7` kept; do not re-land that patch without a new files/s CI win or larger-cohort/flamegraph evidence

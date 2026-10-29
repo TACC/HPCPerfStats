@@ -47,6 +47,25 @@ def test_build_script_is_in_image_only_no_podman_host_bake() -> None:
   assert "sys._is_gil_enabled()" in smoke or "_is_gil_enabled" in smoke
 
 
+def test_bake_gates_parsed_host_rows_export_and_file_session() -> None:
+  """RC-0: the bake must prove the kernel's pre-collapse count on both paths.
+
+  Host tests run fakes, so only the in-image smoke reaches the real slot bank
+  and ``parse_stats_file_codon_next_c`` store.
+  """
+  text = _BUILD.read_text(encoding="utf-8")
+  assert "missing_export codon_host_parsed_n_c" in text
+  smoke = text.split("FT 3.14t import+fingerprint smoke")[1].split(
+    'echo "codon_pyext_314t=pass"'
+  )[0]
+  assert 'empty_result["parsed_host_rows"] == 0' in smoke
+  assert 'result["parsed_host_rows"] == codon_fp[0]' in smoke
+  assert "parse_stats_file_codon_open(" in smoke
+  assert "parse_stats_file_codon_next(" in smoke
+  assert "file_parsed == codon_fp[0]" in smoke
+  assert "codon_pyext_314t_parsed_host_rows=pass" in smoke
+
+
 def test_dockerfile_codon_build_stage_copies_to_runtime() -> None:
   text = _DOCKERFILE.read_text(encoding="utf-8")
   codon = _stage_body(text, "codon-build")

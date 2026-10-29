@@ -6,6 +6,9 @@ non-hot incomplete file while the ingest queue is at the cap
 walk only runs at boot, so those files waited for the next restart. Separately
 the Codon COPY-frame branch never counted ``stats_rows_parsed``, so every
 Codon ingest logged ``stats_rows_parsed=0`` and recorded a zero-host mark.
+A file with any host or proc lines ingests; when no host rows reach the DB it
+gets a zero-host mark so it can archive. Only a file with no lines at all is
+quarantined (``empty``).
 """
 
 from __future__ import annotations
@@ -235,22 +238,43 @@ def test_dropped_files_are_still_rediscovered_when_the_periodic_walk_is_off(
   assert submitted == [None]
 
 
-def _codon_ingest(monkeypatch, tmp_path, host_copy, proc_copy):
+def _codon_ingest(
+  monkeypatch, tmp_path, host_copy, proc_copy, parsed=None, fake_parse=None
+):
+  """Run the streaming ingest on one fake Codon frame; return (meta, details).
+
+  ``details`` collects quarantine ``error_detail`` strings (the quarantine
+  move itself is faked as successful).
+  """
   stats_file = tmp_path / "host.example.com" / "1789000000"
   stats_file.parent.mkdir(parents=True)
   stats_file.write_text("x\n", encoding="utf-8")
+  frame = {"host_copy": host_copy, "proc_copy": proc_copy}
+  if parsed is not None:
+    frame["parsed_host_rows"] = parsed
 
-  def fake_parse(_path, *, on_chunk, **_kw):
-    on_chunk({"host_copy": host_copy, "proc_copy": proc_copy}, {})
+  def _copy_frame_parse(_path, *, on_chunk, **_kw):
+    on_chunk(frame, {})
+
+  details: list[str] = []
+
+  def _fake_quarantine(_stats_file, error_detail=None):
+    details.append(str(error_detail))
+    return True
 
   monkeypatch.setattr(st, "_ensure_ingest_codon_sticky_slot", lambda: None)
   monkeypatch.setattr(st, "update_worker_substage", lambda *a, **k: None)
   monkeypatch.setattr(st, "close_old_connections", lambda: None)
   monkeypatch.setattr(st, "_release_ingest_worker_heap", lambda *a, **k: None)
+  monkeypatch.setattr(st, "_quarantine_failed_ingest_parse", _fake_quarantine)
   monkeypatch.setattr(
     st, "_resolve_streaming_ingest_start", lambda *_a, **_k: (False, (0, True))
   )
-  monkeypatch.setattr(st, "parse_stats_file_streaming_incremental", fake_parse)
+  monkeypatch.setattr(
+    st,
+    "parse_stats_file_streaming_incremental",
+    fake_parse or _copy_frame_parse,
+  )
   monkeypatch.setattr(
     st, "_submit_stats_payload_write", lambda *a, **k: (None, True, True)
   )
@@ -260,34 +284,158 @@ def _codon_ingest(monkeypatch, tmp_path, host_copy, proc_copy):
   result = st._add_stats_file_to_db_streaming_incremental(
     str(stats_file), time.time()
   )
-  return st._unpack_ingest_worker_result(result)
+  return st._unpack_ingest_worker_result(result)[-1], details
+
+
+def _quarantine_class(details) -> str:
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    quarantine_failure_class_for_detail,
+  )
+
+  assert len(details) == 1, details
+  return quarantine_failure_class_for_detail(details[0])
+
+
+def _kernel_parsed_host_rows(lines) -> int:
+  import importlib.util
+  from pathlib import Path
+
+  path = Path(st.__file__).parent / "codon" / "feed_collapse.py"
+  spec = importlib.util.spec_from_file_location("fc_parsed_under_test", path)
+  mod = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(mod)
+  return mod.feed_delta_collapse_arc(lines, {}, {})[-1]
 
 
 def test_codon_ingest_reports_the_host_rows_it_parsed(monkeypatch, tmp_path):
-  unpacked = _codon_ingest(monkeypatch, tmp_path, b"r1\nr2\nr3\n", b"p1\np2\n")
-  meta = unpacked[-1]
+  """``stats_rows_parsed`` is the kernel's pre-collapse count, not COPY rows."""
+  meta, details = _codon_ingest(
+    monkeypatch, tmp_path, b"r1\nr2\nr3\n", b"p1\np2\n", parsed=9
+  )
+  assert meta["outcome"] == "ingested" and details == []
   assert meta["stats_rows"] == 3
-  assert meta["stats_rows_parsed"] == 3
+  assert meta["stats_rows_parsed"] == 9
   assert meta["proc_rows"] == 2
+  assert _marks_recorded(monkeypatch, meta) == []
 
 
-def test_codon_ingest_with_host_rows_does_not_qualify_for_a_zero_host_mark(
+def test_codon_frame_without_parsed_field_falls_back_to_host_rows(
   monkeypatch, tmp_path
 ):
-  from hpcperfstats.dbload.lib import sync_timedb_zero_host_ingest_mark as zh
+  meta, _details = _codon_ingest(monkeypatch, tmp_path, b"r1\nr2\n", b"")
+  assert meta["stats_rows_parsed"] == 2
 
-  meta = _codon_ingest(monkeypatch, tmp_path, b"r1\nr2\n", b"")[-1]
-  recorded = []
+
+def test_host_rows_without_proc_rows_ingest_and_archive_normally(
+  monkeypatch, tmp_path
+):
+  """Host>0, proc=0 (e.g. an idle node) ingests; head/tail proves it."""
+  meta, details = _codon_ingest(monkeypatch, tmp_path, b"r1\nr2\n", b"")
+  assert meta["outcome"] == "ingested" and details == []
+  assert meta["stats_rows"] == 2 and meta["proc_rows"] == 0
+  assert _marks_recorded(monkeypatch, meta) == []
+
+
+@pytest.mark.parametrize(
+  ("parsed", "proc_copy"),
+  [(3, b"p1\n"), (3, b""), (0, b"p1\n")],
+  ids=["host_lines_and_proc", "host_lines_only", "proc_only"],
+)
+def test_file_with_host_or_proc_lines_ingests_and_is_zero_host_marked(
+  monkeypatch, tmp_path, parsed, proc_copy
+):
+  """Any host or proc lines: never quarantined; no host rows written -> mark.
+
+  The mark lets the raw archive and delete without a head/tail DB proof
+  (which needs host rows). ``stats_rows_parsed`` stays in the ingest line.
+  """
+  meta, details = _codon_ingest(
+    monkeypatch, tmp_path, b"", proc_copy, parsed=parsed
+  )
+  assert meta["outcome"] == "ingested" and details == []
+  assert meta["stats_rows"] == 0 and meta["stats_rows_parsed"] == parsed
+  assert _marks_recorded(monkeypatch, meta) == ["/x/1789000000"]
+
+
+def test_kernel_proc_only_input_parses_no_host_rows(monkeypatch, tmp_path):
+  parsed = _kernel_parsed_host_rows(
+    [
+      "!host_proc uid,W=32 vm_peak,W=64",
+      "1000.0 J1 hostA",
+      "host_proc 12/a/0/0 @full 7 100",
+    ]
+  )
+  assert parsed == 0
+  meta, details = _codon_ingest(
+    monkeypatch, tmp_path, b"", b"p1\n", parsed=parsed
+  )
+  assert meta["outcome"] == "ingested" and details == []
+
+
+def test_file_with_no_lines_at_all_is_quarantined_empty(monkeypatch, tmp_path):
+  """Only a file with no host and no proc lines is quarantined."""
+  meta, details = _codon_ingest(monkeypatch, tmp_path, b"", b"", parsed=0)
+  assert meta["outcome"] == "quarantine"
+  assert _quarantine_class(details) == "empty"
+
+
+def test_codon_soa_frame_uses_the_kernel_parsed_count_from_carry(
+  monkeypatch, tmp_path
+):
+  """emit=insert / line-batch SoA columns are post-collapse; carry has parsed."""
+
+  def fake_parse(_path, *, on_chunk, delta_carry, **_kw):
+    delta_carry.codon_finished_chunk = True
+    delta_carry.codon_parsed_host_rows = 4
+    on_chunk({"time": []}, {})
+
+  meta, details = _codon_ingest(
+    monkeypatch, tmp_path, b"", b"", fake_parse=fake_parse
+  )
+  assert meta["outcome"] == "ingested" and details == []
+  assert meta["stats_rows"] == 0 and meta["stats_rows_parsed"] == 4
+
+
+def _marks_recorded(monkeypatch, meta) -> list[str]:
+  """Zero-host marks the production call site records for one outcome meta."""
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_file_complete_ingest_mark as fc,
+    sync_timedb_zero_host_ingest_mark as zh,
+  )
+
+  recorded: list[str] = []
   monkeypatch.setattr(
     zh,
     "record_zero_host_ingest_mark",
-    lambda *a, **k: recorded.append(a) or True,
+    lambda path, **_k: recorded.append(path) or True,
   )
-  assert not zh.maybe_record_zero_host_ingest_mark_from_outcome(
-    "/x/1789000000",
-    ingest_ok=True,
-    outcome="ingested",
-    stats_rows=meta["stats_rows"],
-    stats_rows_parsed=meta["stats_rows_parsed"],
+  monkeypatch.setattr(
+    fc,
+    "maybe_record_file_complete_ingest_mark_from_outcome",
+    lambda *a, **k: None,
   )
-  assert not recorded
+  st._record_ingest_marks_from_worker_result(
+    ("/x/1789000000", True, True, 1.0, meta), log_fn=None
+  )
+  return recorded
+
+
+def test_worker_result_marks_every_ingest_with_no_host_rows_written(
+  monkeypatch,
+):
+  """Production call site: 0 host rows written marks, whatever was parsed."""
+  base = {"outcome": "ingested", "stats_rows": 0}
+  for extra in (
+    {"stats_rows_parsed": 12, "proc_rows": 3},
+    {"stats_rows_parsed": 12, "proc_rows": 0},
+    {"stats_rows_parsed": 0, "proc_rows": 3},
+  ):
+    assert _marks_recorded(monkeypatch, {**base, **extra}) == [
+      "/x/1789000000"
+    ], extra
+  assert (
+    _marks_recorded(
+      monkeypatch, {"outcome": "ingested", "stats_rows": 4, "proc_rows": 3}
+    )
+    == []
+  )

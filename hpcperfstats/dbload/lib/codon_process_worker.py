@@ -11,15 +11,16 @@ Fingerprint requests/responses carry raw UTF-8 line blobs (request) / a
 JSON envelope ``{"lines": [...], "carry_raw": {...}, "carry_arc": {...}}``
 (cross-flush counter/arc-rate carry round-trip). Parse responses carry length-prefixed **columnar SoA bytes** for host
 ``stats`` plus proc SoA bytes and a UTF-8 JSON sidecar for ``marks``,
-``finished``, ``eof``, ``copy_unique`` (stdlib ``json`` only — pickle/msgpack
-forbidden on 3.14t). **``KIND_PARSE_FILE``** sessions keep counter/arc carry
+``finished``, ``eof``, ``copy_unique`` and ``parsed_host_rows`` (host records
+parsed before collapse, the RC-0 zero-host gate input; stdlib ``json`` only —
+pickle/msgpack forbidden on 3.14t). **``KIND_PARSE_FILE``** sessions keep counter/arc carry
 inside the worker only (not on the wire). Legacy ``KIND_PARSE`` (lines JSON)
 may still round-trip ``carry_*`` in the sidecar.
 
 Attributes:
   CODON_PARSE_DIR: Baked pyext directory (``/opt/hpcperfstats/codon_parse``).
   PROTO_VER: Wire-protocol version (mismatch fail-closed; 3 = columnar
-    SoA parse response + JSON sidecar).
+    SoA parse response + JSON sidecar; 5 = sidecar ``parsed_host_rows``).
   KIND_FP: Request kind for fingerprint.
   KIND_PARSE: Request kind for full parse.
   STATUS_OK: Response status success.
@@ -59,7 +60,7 @@ from hpcperfstats.dbload.lib.date_utils import to_pydatetime_or_none
 
 CODON_PARSE_DIR = "/opt/hpcperfstats/codon_parse"
 CODON_EXT_ENV = "HPCPERFSTATS_CODON_PARSE_MODULE"
-PROTO_VER = 4
+PROTO_VER = 5
 KIND_FP = 1
 KIND_PARSE = 2
 KIND_PARSE_FILE = 3
@@ -733,6 +734,7 @@ def _parse_response_sidecar(body: Mapping[str, Any]) -> dict[str, Any]:
     "eof": bool(body.get("eof", False)),
     "copy_unique": bool(body.get("copy_unique", False)),
     "copy_frame": _is_copy_frame(body),
+    "parsed_host_rows": body.get("parsed_host_rows"),
   }
   if not body.get("file_session"):
     side["carry_raw"] = body.get("carry_raw", {})
@@ -765,6 +767,7 @@ def _ipc_frame_from_parsed(
     "marks": parsed.get("marks", []),
     "finished": bool(parsed.get("finished", True)),
     "copy_unique": bool(parsed.get("copy_unique", True)),
+    "parsed_host_rows": parsed.get("parsed_host_rows"),
     "eof": eof,
     "file_session": True,
   }
@@ -850,7 +853,9 @@ def decode_response(kind: str, frame: bytes) -> Any:
 
   Returns:
     Any: Fingerprint 4-tuple, or the parse result dict ``{"stats", "procs",
-    "marks", "carry_raw", "carry_arc", "finished"}`` with columnar ``stats``.
+    "marks", "carry_raw", "carry_arc", "finished", "parsed_host_rows"}``
+    with columnar ``stats`` (``parsed_host_rows`` is ``None`` when the
+    sender did not report it).
 
   Raises:
     RuntimeError: On version/status/length errors or worker err payload.
@@ -907,6 +912,7 @@ def decode_response(kind: str, frame: bytes) -> Any:
       "finished": bool(side.get("finished", True)),
       "eof": bool(side.get("eof", False)),
       "copy_unique": bool(side.get("copy_unique", False)),
+      "parsed_host_rows": side.get("parsed_host_rows"),
     }
   raise ValueError(f"unknown codon ipc kind={kind!r}")
 

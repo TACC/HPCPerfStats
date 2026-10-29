@@ -41,6 +41,7 @@ _cache_delta: list[list[float | None]] = []
 _cache_arc: list[list[float | None]] = []
 _cache_unit: list[list[str]] = []
 _cache_host_n: list[int] = []
+_cache_host_parsed_n: list[int] = []
 _cache_proc_n: list[int] = []
 _cache_proc_flat: list[list[int]] = []
 _cache_proc_jid: list[list[str]] = []
@@ -107,6 +108,7 @@ def _ensure_slot_banks() -> None:
   global _cache_arc
   global _cache_unit
   global _cache_host_n
+  global _cache_host_parsed_n
   global _cache_proc_n
   global _cache_proc_flat
   global _cache_proc_jid
@@ -145,6 +147,7 @@ def _ensure_slot_banks() -> None:
   _cache_arc = []
   _cache_unit = []
   _cache_host_n = []
+  _cache_host_parsed_n = []
   _cache_proc_n = []
   _cache_proc_flat = []
   _cache_proc_jid = []
@@ -181,6 +184,7 @@ def _ensure_slot_banks() -> None:
     empty_s6: list[str] = []
     _cache_unit.append(empty_s6)
     _cache_host_n.append(0)
+    _cache_host_parsed_n.append(0)
     _cache_proc_n.append(0)
     empty_flat: list[int] = []
     _cache_proc_flat.append(empty_flat)
@@ -263,6 +267,7 @@ def _apply_lines_to_slot(slot: int, lines: list[str]) -> None:
   global _cache_arc
   global _cache_unit
   global _cache_host_n
+  global _cache_host_parsed_n
   global _cache_proc_n
   global _cache_proc_flat
   global _cache_proc_jid
@@ -275,7 +280,7 @@ def _apply_lines_to_slot(slot: int, lines: list[str]) -> None:
   global _cache_carry_raw_keys
   global _cache_carry_arc_keys
   global _cache_marks
-  (finished, proc, carry_raw_out, carry_arc_out, marks) = (
+  (finished, proc, carry_raw_out, carry_arc_out, marks, parsed_n) = (
     feed_delta_collapse_arc(
       lines,
       _cache_carry_raw[slot],
@@ -285,6 +290,7 @@ def _apply_lines_to_slot(slot: int, lines: list[str]) -> None:
     )
   )
   _cache_marks[slot] = marks
+  _cache_host_parsed_n[slot] = parsed_n
   (
     fin_time,
     fin_host,
@@ -441,8 +447,11 @@ def parse_stats_file_codon_next_c(
         bundled = _fs_schema[slot] + _fs_window[slot]
         _fs_window_start[slot] = batch_end
         _fs_pending_flush[slot] = 0
-        empty_win2: list[str] = []
-        _fs_window[slot] = empty_win2
+        # The next sample's header triggered this flush, so it opens the new
+        # window; skipping it orphaned that sample's lines and dropped them.
+        next_win: list[str] = [line]
+        _fs_window[slot] = next_win
+        _fs_line_index[slot] += 1
         ri += 1
         while ri < len(raw_batch):
           raw2 = raw_batch[ri]
@@ -620,6 +629,19 @@ def parse_stats_lines_codon_run_c(
   _apply_lines_to_slot(slot, lines)
   out_ns[0] = _cache_host_n[slot]
   out_np[0] = _cache_proc_n[slot]
+
+
+@export
+def codon_host_parsed_n_c(slot: int) -> int:
+  """Host records parsed before collapse in the slot's last window (RC-0).
+
+  Read after ``parse_stats_lines_codon_run_c`` / ``parse_stats_file_codon_next_c``;
+  a getter keeps both exports' signatures unchanged.
+  """
+  _ensure_slot_banks()
+  if slot < 0 or slot >= MAX_CODON_SLOTS:
+    return 0
+  return _cache_host_parsed_n[slot]
 
 
 @export

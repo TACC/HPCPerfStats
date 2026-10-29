@@ -653,12 +653,14 @@ def _popen_parse_file_frames(
         done = bool(frame.get("eof"))
         stats = frame.get("stats")
         # An all-empty final COPY frame carries no rows (also the empty-file
-        # sentinel), so the caller never sees it.
+        # sentinel), so the caller never sees it, unless host rows were
+        # parsed and all collapsed away (RC-0 must still count them).
         if not (
           done
           and isinstance(stats, dict)
           and "host_copy" in stats
           and not (stats["host_copy"] or stats["proc_copy"])
+          and not frame.get("parsed_host_rows")
         ):
           yield frame
   finally:
@@ -1348,7 +1350,9 @@ def _finish_codon_parse_result(
   "carry_arc", "finished": True}``) updates ``carry.raw``/``carry.arc``,
   stores normalized ``carry.codon_marks``, and sets
   ``carry.codon_finished_chunk = True`` so the caller skips
-  ``compute_deltas_and_arc_chunk``. ``stats`` may be columnar SoA Mapping.
+  ``compute_deltas_and_arc_chunk``, and copies the kernel's pre-collapse
+  ``parsed_host_rows`` to ``carry.codon_parsed_host_rows`` (RC-0).
+  ``stats`` may be columnar SoA Mapping.
   A legacy ``(stats, procs)`` tuple (old pre-carry host fakes) is returned
   unchanged and never sets the flag.
 
@@ -1382,6 +1386,7 @@ def _finish_codon_parse_result(
         carry.codon_finished_chunk = True
         carry.codon_marks = marks
         carry.codon_copy_unique = bool(result.get("copy_unique", False))
+        carry.codon_parsed_host_rows = result.get("parsed_host_rows")
     return stats, procs
   return result
 
@@ -1587,7 +1592,9 @@ def _coalesce_host_rows(frames: Any, min_rows: int) -> Any:
   (``ON CONFLICT DO NOTHING``). Proc rows are never merged: proc uses
   ``DO UPDATE``, which rejects one key twice in a statement, so each window's
   proc bytes go out as their own proc-only payload. ``eof`` and flags come
-  from the last frame; ``marks`` accumulate. Non-COPY frames pass through.
+  from the last frame; ``marks`` and ``parsed_host_rows`` accumulate (a
+  proc-only split reports 0 so no parsed row is counted twice). Non-COPY
+  frames pass through.
 
   Args:
     frames (Any): Iterable of decoded parse frames.
@@ -1621,17 +1628,25 @@ def _coalesce_host_rows(frames: Any, min_rows: int) -> Any:
         "stats": {"host_copy": b"", "proc_copy": stats["proc_copy"]},
         "marks": [],
         "eof": False,
+        "parsed_host_rows": 0,
       }
     host = stats.get("host_copy") or b""
     marks = list(frame.get("marks") or [])
+    parsed = frame.get("parsed_host_rows")
     if pend is None:
-      pend = dict(frame)
+      pend = {k: v for k, v in frame.items() if k != "parsed_host_rows"}
       pend["stats"] = {"host_copy": b"", "proc_copy": b""}
       pend["marks"] = []
     else:
       pend.update(
-        {k: v for k, v in frame.items() if k not in ("stats", "marks")}
+        {
+          k: v
+          for k, v in frame.items()
+          if k not in ("stats", "marks", "parsed_host_rows")
+        }
       )
+    if parsed is not None:
+      pend["parsed_host_rows"] = pend.get("parsed_host_rows", 0) + parsed
     pend["stats"] = {
       "host_copy": pend["stats"]["host_copy"] + host,
       "proc_copy": b"",
@@ -1697,6 +1712,11 @@ def try_codon_parse_file_stream(
         carry,
         sync_carry=False,
       )
+      parsed = result.get("parsed_host_rows")
+      if (
+        parsed is not None and isinstance(stats, dict) and "host_copy" in stats
+      ):
+        stats = {**stats, "parsed_host_rows": int(parsed)}
       marks = _normalize_codon_marks(result.get("marks"))
       if carry is not None and marks:
         from hpcperfstats.dbload.lib.monitor_mark_side_ingest import (

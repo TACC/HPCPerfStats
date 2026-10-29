@@ -40,7 +40,7 @@ def _shared_mark_corpus() -> list[str]:
 
 def test_codon_marks_affinity_and_jobs_bound() -> None:
   mod = _load_feed_collapse()
-  _cols, _proc, _cr, _ca, marks = mod.feed_delta_collapse_arc(
+  _cols, _proc, _cr, _ca, marks, _np = mod.feed_delta_collapse_arc(
     _shared_mark_corpus(), {}, {}
   )
   kinds = {m["kind"] for m in marks}
@@ -59,7 +59,9 @@ def test_codon_marks_match_incremental_ready() -> None:
 
   mod = _load_feed_collapse()
   lines = _shared_mark_corpus()
-  _c, _p, _cr, _ca, codon_marks = mod.feed_delta_collapse_arc(lines, {}, {})
+  _c, _p, _cr, _ca, codon_marks, _np = mod.feed_delta_collapse_arc(
+    lines, {}, {}
+  )
   parser = IncrementalStatsParser(0)
   parser.feed_lines(list(lines))
   ready = parser.take_ready_marks()
@@ -202,7 +204,7 @@ def test_codon_file_soa_matches_incremental_copy() -> None:
     "1710000002.0 9 hosta",
     "cpu 0 @full 2.0",
   ]
-  finished, _, _, _, _ = mod.feed_delta_collapse_arc(lines, {}, {})
+  finished, _, _, _, _, _ = mod.feed_delta_collapse_arc(lines, {}, {})
   host_cols = _host_soa_from_feed_finished(finished)
   frame = pd.DataFrame(host_cols)
   assert hdi.host_rows_to_copy_bytes(frame) == hdi.host_rows_to_copy_bytes(

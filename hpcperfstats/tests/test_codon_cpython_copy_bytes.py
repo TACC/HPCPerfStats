@@ -115,7 +115,9 @@ def test_codon_copy_bytes_match_cpython() -> None:
   finished = finished.sort_values(list(_HOST_SORT)).reset_index(drop=True)
   py_host = host_rows_to_copy_bytes(finished)
 
-  host_cols, proc, _cr, _ca, _marks = mod.feed_delta_collapse_arc(lines, {}, {})
+  host_cols, proc, _cr, _ca, _marks, _np = mod.feed_delta_collapse_arc(
+    lines, {}, {}
+  )
   names = (
     "time",
     "host",
@@ -206,7 +208,9 @@ def _sorted_copy_bytes(lines: list[str]) -> tuple[bytes, bytes, bytes, bytes]:
   finished = compute_deltas_and_arc(frame)
   finished = finished.sort_values(list(_HOST_SORT)).reset_index(drop=True)
   py_host = host_rows_to_copy_bytes(finished)
-  host_cols, proc, _cr, _ca, _marks = mod.feed_delta_collapse_arc(lines, {}, {})
+  host_cols, proc, _cr, _ca, _marks, _np = mod.feed_delta_collapse_arc(
+    lines, {}, {}
+  )
   names = (
     "time",
     "host",
@@ -258,7 +262,9 @@ def test_codon_copy_bytes_match_cpython_with_marks() -> None:
   assert py_proc == cd_proc, _first_mismatch(py_proc, cd_proc)
   assert b"j:9" in py_host
   mod = _load_feed_collapse()
-  _c, _p, _cr, _ca, codon_marks = mod.feed_delta_collapse_arc(lines, {}, {})
+  _c, _p, _cr, _ca, codon_marks, _np = mod.feed_delta_collapse_arc(
+    lines, {}, {}
+  )
   parser = IncrementalStatsParser(0)
   parser.feed_lines(list(lines))
   ready = parser.take_ready_marks()
@@ -327,7 +333,9 @@ def test_codon_insert_sql_bytes_match_cpython_with_marks() -> None:
   frame = pd.DataFrame(records, columns=cols)
   finished = compute_deltas_and_arc(frame)
   finished = finished.sort_values(list(_HOST_SORT)).reset_index(drop=True)
-  host_cols, proc, _cr, _ca, _marks = mod.feed_delta_collapse_arc(lines, {}, {})
+  host_cols, proc, _cr, _ca, _marks, _np = mod.feed_delta_collapse_arc(
+    lines, {}, {}
+  )
   names = (
     "time",
     "host",

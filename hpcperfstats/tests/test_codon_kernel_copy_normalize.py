@@ -109,7 +109,7 @@ def test_feed_delta_arc_host_matches_normalize_helper() -> None:
     "1710000002.0 - hosta",
     "cpu 0 @full 2.0",
   ]
-  finished, proc, _, _, _ = mod.feed_delta_collapse_arc(lines, {}, {})
+  finished, proc, _, _, _, _ = mod.feed_delta_collapse_arc(lines, {}, {})
   finished, proc = mod.normalize_copy_unique_scalars(finished, proc)
   kernel_cols = _host_soa_from_finished(finished)
   ref = normalize_host_columnar_for_copy(

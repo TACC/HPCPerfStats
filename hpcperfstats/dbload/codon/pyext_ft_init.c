@@ -11,8 +11,10 @@
  *
  * ``parse_stats_lines_codon`` runs the full feed->delta->collapse->arc
  * pipeline and returns a dict ``{"stats", "procs", "marks", "carry_raw",
- * "carry_arc", "finished": True}`` where ``stats``/``procs`` are columnar
- * SoA dicts (parallel lists) and ``marks`` is a list of bound mark dicts.
+ * "carry_arc", "parsed_host_rows", "finished": True}`` where ``stats``/
+ * ``procs`` are columnar SoA dicts (parallel lists), ``marks`` is a list of
+ * bound mark dicts, and ``parsed_host_rows`` counts host records parsed before
+ * delta/collapse (the RC-0 zero-host gate input; file-session ``next`` too).
  * Optional ``carry_raw``/``carry_arc`` dict kwargs seed the slot's
  * cross-flush counter/arc-rate carry before the run; the Codon slot carry
  * is always cleared first so stale state from a previous caller never
@@ -119,6 +121,7 @@ extern codon_str psp_pack_str_col_c(
 );
 extern long psp_export_fields_c(long slot, long n, long *out);
 extern long psm_count_c(long slot);
+extern long codon_host_parsed_n_c(long slot);
 extern codon_str psm_field_c(long slot, long i, long field_idx);
 
 /* Must match feed_collapse.HOST_PROC_KEYS order. */
@@ -1391,6 +1394,16 @@ finish_slot_result(long slot, PyObject *stats, PyObject *procs)
       Py_DECREF(result);
       return NULL;
     }
+    PyObject *parsed = PyLong_FromLong(codon_host_parsed_n_c(slot));
+    if (
+      parsed == NULL
+      || PyDict_SetItemString(result, "parsed_host_rows", parsed) < 0
+    ) {
+      Py_XDECREF(parsed);
+      Py_DECREF(result);
+      return NULL;
+    }
+    Py_DECREF(parsed);
     return result;
   }
 }

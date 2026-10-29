@@ -109,7 +109,9 @@ def _cpython_oracle_rows(lines: list[str]) -> dict[tuple, tuple]:
 
 
 def _codon_rows(mod, lines: list[str]) -> dict[tuple, tuple]:
-  cols, _proc, _cr, _ca, _marks = mod.feed_delta_collapse_arc(lines, {}, {})
+  cols, _proc, _cr, _ca, _marks, _np = mod.feed_delta_collapse_arc(
+    lines, {}, {}
+  )
   times, hosts, _jids, types, devs, events, _units, values, deltas, arcs = cols
   rows: dict[tuple, tuple] = {}
   for i in range(len(times)):
@@ -164,7 +166,7 @@ def test_feed_delta_collapse_arc_e6_corpus_smoke() -> None:
   """Regression lock for the exact smoke invocation used during development."""
   mod = _load_feed_collapse()
   lines = mod.build_e6_payload_lines(5)
-  cols, proc, carry_raw, carry_arc, _marks = mod.feed_delta_collapse_arc(
+  cols, proc, carry_raw, carry_arc, _marks, _np = mod.feed_delta_collapse_arc(
     lines, {}, {}
   )
   assert len(cols) == 10
@@ -345,8 +347,8 @@ def test_apply_arc_cols_carry_continuity_and_dropna() -> None:
 
 def test_feed_delta_collapse_arc_empty_lines() -> None:
   mod = _load_feed_collapse()
-  cols, proc, carry_raw, carry_arc, _marks = mod.feed_delta_collapse_arc(
-    [], {}, {}
+  cols, proc, carry_raw, carry_arc, _marks, parsed = (
+    mod.feed_delta_collapse_arc([], {}, {})
   )
   for col in cols:
     assert col == []
@@ -354,3 +356,30 @@ def test_feed_delta_collapse_arc_empty_lines() -> None:
     assert col == []
   assert carry_raw == {}
   assert carry_arc == {}
+  assert parsed == 0
+
+
+def test_parsed_host_rows_counts_host_records_before_collapse() -> None:
+  """RC-0: the zero-host gate needs host records parsed, not rows kept."""
+  mod = _load_feed_collapse()
+  lines = [
+    "!cpu user,E,W=64,U=1",
+    "1000.0 J1 hostA",
+    "cpu 0 @full 10.0",
+    "cpu 1 @full 20.0",
+  ]
+  cols, *_rest, parsed = mod.feed_delta_collapse_arc(lines, {}, {})
+  assert len(cols[0]) == 1
+  assert parsed == 2
+
+
+def test_parsed_host_rows_is_zero_for_proc_only_input() -> None:
+  mod = _load_feed_collapse()
+  lines = [
+    "!host_proc uid,W=32 vm_peak,W=64",
+    "1000.0 J1 hostA",
+    "host_proc 12/a/0/0 @full 7 100",
+  ]
+  cols, proc, *_rest, parsed = mod.feed_delta_collapse_arc(lines, {}, {})
+  assert cols[0] == [] and len(proc[0]) == 1
+  assert parsed == 0

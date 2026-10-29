@@ -255,25 +255,22 @@ def maybe_record_zero_host_ingest_mark_from_outcome(
   ingest_ok: bool,
   outcome: str | None,
   stats_rows: int | None,
-  stats_rows_parsed: int | None = None,
   log_fn: LogFn = None,
   archive_data_dir: str | None = None,
 ) -> bool:
   """
-  Record mark when ingest succeeded with zero host rows (proc-only / empty.
+  Record mark when ingest succeeded with zero host rows written to the DB.
 
-    stats).
-
-  Gate on **parsed** stats records when provided. Post-collapse / post-write row
-  counts must not certify archive readiness (RC-0: resumed streaming could drop
-  all hardware rows then mark the file deletable).
+  Gates on host rows written (``stats_rows``), not on the parser's count: a
+  file with host or proc lines must archive, and with no host rows in the DB
+  the head/tail proof can never pass. A file with no lines at all never gets
+  here (ingest quarantines it as ``empty``).
 
   Args:
     path (str): String for path.
     ingest_ok (bool): Boolean flag for ingest ok.
     outcome (str | None): One of ``str``, ``None``.
-    stats_rows (int | None): One of ``int``, ``None``.
-    stats_rows_parsed (int | None): One of ``int``, ``None``.
+    stats_rows (int | None): Host rows written to the DB, or ``None``.
     log_fn (LogFn): Log fn.
     archive_data_dir (str | None): One of ``str``, ``None``.
 
@@ -287,10 +284,7 @@ def maybe_record_zero_host_ingest_mark_from_outcome(
     return False
   if str(outcome or "") not in ("ingested", ""):
     return False
-  gate_rows = stats_rows_parsed if stats_rows_parsed is not None else stats_rows
-  if gate_rows is None:
-    return False
-  if int(gate_rows) != 0:
+  if stats_rows is None or int(stats_rows) != 0:
     return False
   return record_zero_host_ingest_mark(
     path,
