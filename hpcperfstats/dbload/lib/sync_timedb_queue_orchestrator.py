@@ -52,6 +52,7 @@ Attributes:
   _DAY_CLOSE_YIELD_BACKOFF: Sticky per-identity yield reclaim backoff tracker.
   _DAY_CLOSE_CLAIM_LOG_STATE: Rate-limit state for day_close claim INFO.
   _DAY_CLOSE_VACATE_LOG_STATE: Rate-limit state for day_close vacate INFO.
+  _HANDOFF_DEFER_LOG_STATE: Rate-limit state for the handoff deferred INFO.
   DAY_CLOSE_CLAIM_VACATE_LOG_INTERVAL_S: Seconds between claim/vacate INFO
     lines per calendar day (yielded reclaim spam guard).
   _day_close_identity_sort_key: Calendar sort key for oldest-first fill (H18).
@@ -80,6 +81,7 @@ import time
 from collections.abc import Callable, Iterable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import date, datetime
+from functools import partial
 from multiprocessing.pool import AsyncResult
 from typing import Any
 
@@ -119,6 +121,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_dir_lock import (
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   calendar_date_from_daily_tar_path,
   daily_tar_path_for_stats_path,
+  get_tar_member_name,
   restore_restorable_quarantines,
 )
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
@@ -189,6 +192,7 @@ _TRANSIENT_DAY_CLOSE_OUTCOMES = frozenset(
 _DAY_CLOSE_YIELD_BACKOFF = JanitorDeferTracker()
 _DAY_CLOSE_CLAIM_LOG_STATE: dict[str, dict[str, float]] = {}
 _DAY_CLOSE_VACATE_LOG_STATE: dict[str, dict[str, float]] = {}
+_HANDOFF_DEFER_LOG_STATE: dict[str, dict[str, float]] = {}
 DAY_CLOSE_CLAIM_VACATE_LOG_INTERVAL_S = 30.0
 _IDLE_RECONSTRUCT_MIN_INTERVAL_S = 300.0
 _last_idle_reconstruct_mono = 0.0
@@ -1660,6 +1664,31 @@ def _local_today() -> date:
   return datetime.now(tz).date()
 
 
+def _open_tar_member_complete(
+  members: dict[str, int], *, path: str, tgz_archive_dir: str
+) -> bool:
+  """
+  Return True when ``path`` is already a same-size member of the open tar.
+
+  Used as the batch ``append_is_complete_fn`` for a day-close handoff so one
+  member-map snapshot answers every path of the day.
+
+  Args:
+    members (dict[str, int]): Open-tar member name to byte size.
+    path (str): Closed raw stats path.
+    tgz_archive_dir (str): Daily archive directory (unused; call-shape parity
+      with ``jr.append_is_complete``).
+
+  Returns:
+    bool: True when the tar holds the member at the raw file's current size.
+
+  Examples:
+    >>> _open_tar_member_complete({}, path=__file__, tgz_archive_dir="/d")
+    False
+  """
+  return members.get(get_tar_member_name(path)) == os.path.getsize(path)
+
+
 def _handoff_retryable_paths_to_ingest(
   client: Any,
   tar_path: str,
@@ -1678,6 +1707,11 @@ def _handoff_retryable_paths_to_ingest(
 
   Uses reconstruct classify + enqueue so calendar day comes from the daily
   tar (never substituted with today) and complete predicates are skipped.
+  With an open tar and no injected append predicate, the tar's readability
+  and append-inflight state are checked once and its member map is read once
+  for the whole batch; a members-store coordination error defers the batch
+  with one rate-limited ``handoff deferred`` line and the raw stays for the
+  next day-close claim.
 
   Args:
     client (Any): job store, or ``None`` to no-op.
@@ -1724,6 +1758,36 @@ def _handoff_retryable_paths_to_ingest(
   hot_days = int(cfg.get_sync_ingest_hot_days())
   quiet = log_fn or (lambda *a, **k: None)
   enqueued_n = 0
+  paths = list(paths)
+  if append_is_complete_fn is None and os.path.isfile(tar_path):
+    # One readability/append-inflight check and one member map for the whole
+    # day: the answer is the same for every path (04 2026-10-28: a probe of a
+    # 27-46 GB tar and a failure line per path, 132k lines).
+    import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as ah
+
+    try:
+      ah._ensure_open_tar_readable_for_ingest_lookup(
+        tar_path,
+        caller="day_close_handoff",
+        compressed_canonical=ah.normalize_daily_compressed_path(
+          ah.compressed_sibling_paths(tar_path)[0]
+        ),
+      )
+      members = ah.get_mutable_tar_authority_member_map(tar_path)
+    except Exception as exc:
+      if is_transient_ingest_archive_coordination_error(exc):
+        _rate_limited_day_info_log(
+          _HANDOFF_DEFER_LOG_STATE,
+          _day_token_from_date(calendar_day) or "unknown",
+          f"queue_orchestrator day_close handoff deferred tar={tar_path} "
+          f"err={type(exc).__name__} paths={len(paths)}",
+          interval_s=DAY_CLOSE_CLAIM_VACATE_LOG_INTERVAL_S,
+          log_fn=quiet,
+          skip_unknown_day=False,
+        )
+        return 0
+    else:
+      append_is_complete_fn = partial(_open_tar_member_complete, members)
   for raw in paths:
     text = str(raw or "").strip()
     if not text or not os.path.isfile(text):
