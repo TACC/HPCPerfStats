@@ -24,6 +24,10 @@ from hpcperfstats.dbload.lib import (
   sync_timedb_job_reconstruct as jr,
   sync_timedb_job_store as jq,
 )
+from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
+  note_day_remainder,
+  remainder_day_for_identity,
+)
 from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
   FindStatsRecord,
   _is_lock_name,
@@ -47,8 +51,12 @@ class StreamingDiscoverStats:
       the walk. Catchup ingest stops; the find walk and hot-band ZADD
       continue.
     dropped_at_capacity: Incomplete catchup files the walk skipped because
-      the cap was hit. Nothing remembers them, so a non-zero count asks the
+      the cap was hit (plus backfill records past the frontier, which are
+      not classified). Nothing remembers them, so a non-zero count asks the
       orchestrator for another full walk once the queue drains.
+    frontier_day: Oldest backfill day the walk could not fully queue, or
+      None when every incomplete backfill file it saw is queued. Day close
+      holds backfill days on or after it.
   """
 
   seen: int
@@ -58,6 +66,7 @@ class StreamingDiscoverStats:
   enqueued_day_close: int = 0
   stopped_at_capacity: bool = False
   dropped_at_capacity: int = 0
+  frontier_day: date | None = None
 
 
 def find_record_mtime_ns(mtime: float) -> int:
@@ -275,6 +284,14 @@ def stream_enqueue_ingest_from_find_records(
   Does **not** wait for ``records`` to exhaust before the first ``ZADD``.
   Already-complete identities are skipped (residual-gap reconstruct-skip).
 
+  At the ingest cap an incomplete backfill file pushes out the youngest
+  queued backfill file that is younger than it; when nothing queued is
+  younger its day becomes the frontier, and later backfill records on or
+  after the frontier are counted as dropped without being classified.
+  With oldest-first input (``sort_oldest_first`` walks) the queue ends up
+  holding the oldest incomplete backfill files and every backfill day
+  before the frontier is fully queued.
+
   Args:
     client (Any): job store with ``zadd`` / ``rpush``.
     records (Iterable[FindStatsRecord]): Streaming find records (generator
@@ -294,7 +311,8 @@ def stream_enqueue_ingest_from_find_records(
     enddate (Any): Inclusive CLI end date, or ``None``.
 
   Returns:
-    StreamingDiscoverStats: Seen / enqueued / skipped counters.
+    StreamingDiscoverStats: Seen / enqueued / skipped counters and the
+    frontier day.
 
   Examples:
     >>> class _C:
@@ -338,6 +356,8 @@ def stream_enqueue_ingest_from_find_records(
   day_close_seen: set[str] = set()
   stopped_at_capacity = False
   dropped_at_capacity = 0
+  frontier: date | None = None
+  evicted: list[str] = []
   day_fn = calendar_day_fn or (
     lambda rec: calendar_day_from_find_record(rec, tgz_archive_dir)
   )
@@ -377,6 +397,15 @@ def stream_enqueue_ingest_from_find_records(
       except Exception:
         day_tok = None
         progress.record(None, "unresolved_day", 1)
+    backfill = (
+      cal is not None
+      and jr.select_ingest_band(cal, today=today, hot_days=hot_days) != "hot"
+    )
+    # Latched for the walk: room freed by ingest mid-walk must not admit
+    # younger days ahead of the dropped frontier day.
+    if backfill and frontier is not None and cal >= frontier:
+      dropped_at_capacity += 1  # older work fills the queue; skip classify
+      continue
     plan = jr.classify_closed_raw_path(
       rec.path,
       tgz_archive_dir=tgz_archive_dir,
@@ -388,21 +417,19 @@ def stream_enqueue_ingest_from_find_records(
       ingest_is_complete_fn=ingest_is_complete_fn,
       append_is_complete_fn=append_is_complete_fn,
     )
-    if not has_cap and (
-      plan.calendar_day is None
-      or jr.select_ingest_band(
-        plan.calendar_day,
-        today=today,
-        hot_days=hot_days,
-      )
-      != "hot"
+    if (
+      backfill
+      and not has_cap
+      and plan.needs_ingest
+      and not _ingest_queued(client, plan.identity)
     ):
-      dropped_at_capacity += int(plan.needs_ingest)
-      plan = replace(
-        plan,
-        needs_ingest=False,
-        needs_append=plan.needs_append and not plan.needs_ingest,
-      )
+      gone = _evict_younger(client, cal)
+      if gone is None:
+        frontier = cal if frontier is None else min(frontier, cal)
+        dropped_at_capacity += 1
+        plan = replace(plan, needs_ingest=False, needs_append=False)
+      else:
+        evicted.append(gone)
     enqueued = jr.enqueue_reconstruct_jobs_for_closed_path(
       client,
       plan,
@@ -429,6 +456,11 @@ def stream_enqueue_ingest_from_find_records(
         day_close_seen.add(tar)
         enqueued_day_close += 1
 
+  # A pushed-out file the walk did not queue again leaves its day open.
+  for gone in evicted:
+    gone_day = _basename_date(gone.rsplit("|", 2)[0])
+    if gone_day is not None and not _ingest_queued(client, gone):
+      frontier = gone_day if frontier is None else min(frontier, gone_day)
   return StreamingDiscoverStats(
     seen=seen,
     enqueued_ingest=enqueued_ingest,
@@ -437,7 +469,59 @@ def stream_enqueue_ingest_from_find_records(
     enqueued_day_close=enqueued_day_close,
     stopped_at_capacity=stopped_at_capacity,
     dropped_at_capacity=dropped_at_capacity,
+    frontier_day=frontier,
   )
+
+
+def _ingest_queued(client: Any, identity: str) -> bool:
+  """
+  Return True when an ingest identity is queued or claimed in the store.
+
+  Args:
+    client (Any): Job store; a client without ``ingest_score`` (test fakes)
+      reports nothing queued.
+    identity (str): Ingest identity.
+
+  Returns:
+    bool: True when queued or in flight.
+
+  Examples:
+    >>> _ingest_queued(jq.SyncTimedbJobStore(""), "/a")
+    False
+  """
+  score_fn = getattr(client, "ingest_score", None)
+  inflight_fn = getattr(client, "inflight_contains", None)
+  return bool(
+    (callable(score_fn) and score_fn(identity) is not None)
+    or (callable(inflight_fn) and inflight_fn(jq.JOB_KIND_INGEST, identity))
+  )
+
+
+def _evict_younger(client: Any, day: date) -> str | None:
+  """
+  Push the youngest queued backfill file younger than ``day`` out of the queue.
+
+  Releases the pushed-out file from its day's in-memory remainder count
+  (DE-32), the counterpart of the enqueue increment.
+
+  Args:
+    client (Any): Job store; a client without
+      ``evict_youngest_catchup_ingest`` (test fakes) never evicts.
+    day (date): Calendar day of the file waiting for room.
+
+  Returns:
+    str | None: Removed identity, or None when nothing queued is younger.
+
+  Examples:
+    >>> _evict_younger(jq.SyncTimedbJobStore(""), date(2026, 8, 1)) is None
+    True
+  """
+  evict_fn = getattr(client, "evict_youngest_catchup_ingest", None)
+  gone = evict_fn(day) if callable(evict_fn) else None
+  remainder_day = remainder_day_for_identity(gone) if gone else None
+  if remainder_day:
+    note_day_remainder(jq.JOB_KIND_INGEST, remainder_day, -1)
+  return gone
 
 
 def stream_enqueue_ingest_from_find_stdout_chunks(

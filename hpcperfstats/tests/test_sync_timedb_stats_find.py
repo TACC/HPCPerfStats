@@ -31,11 +31,11 @@ def _record_key(path: str) -> str:
 
 
 def _assert_fd_x_stat_contract(
-  argv: list[str], *, stat_bin: str, printf_fmt: str
+  argv: list[str], *, stat_bin: str, printf_fmt: str, threads: str = "4"
 ) -> None:
   assert argv[0]
   assert "--threads" in argv
-  assert argv[argv.index("--threads") + 1] == "4"
+  assert argv[argv.index("--threads") + 1] == threads
   assert "--no-ignore" in argv
   assert "--absolute-path" in argv
   assert "--batch-size" not in argv
@@ -63,8 +63,9 @@ def _assert_fd_x_stat_contract(
 
 def test_find_stats_argv_uses_fd_x_gnu_stat():
   argv = sf.build_find_stats_argv("/archive", find_bin="fd", stat_bin="gstat")
+  # Whole-archive walk (mtime_days=None) runs 16 walker threads.
   _assert_fd_x_stat_contract(
-    argv, stat_bin="gstat", printf_fmt=sf.STAT_PRINTF_FORMAT
+    argv, stat_bin="gstat", printf_fmt=sf.STAT_PRINTF_FORMAT, threads="16"
   )
   assert "%Y" in argv[argv.index("-X") + 2]
   assert "--exclude" in argv

@@ -10,9 +10,13 @@ On macOS host tests, prefer Homebrew ``fd`` via PATH order or
 
 Attributes:
   FD_THREADS: Attribute.
+  FD_THREADS_WHOLE_ARCHIVE: Walker threads for a whole-archive walk
+    (``mtime_days=None``).
   JID_NEIGHBOR_FILES: Attribute.
   STAT_CURRENT_INODE_PRINTF: Attribute.
   STAT_PRINTF_FORMAT: Attribute.
+  STAT_SORT_PRINTF_FORMAT: One tab-separated NUL record per file, so GNU
+    ``sort -z`` can order whole records.
   _FNCTL_LOCK_ENOENT_RE: Attribute.
   _host_fp_cache: Attribute.
   _path_fp_cache: Attribute.
@@ -40,8 +44,10 @@ from hpcperfstats.dbload.lib.file_locking import LOCK_SUFFIX
 # GNU stat --printf argv: interpret \0 as NUL (do not embed real NULs -
 # Python subprocess rejects embedded null bytes in argv on some platforms).
 STAT_PRINTF_FORMAT = "%n\\0%Y\\0%s\\0%i\\0"
+STAT_SORT_PRINTF_FORMAT = "%n\\t%Y\\t%s\\t%i\\0"
 STAT_CURRENT_INODE_PRINTF = "%n\\0%i\\0"
 FD_THREADS = 4
+FD_THREADS_WHOLE_ARCHIVE = 16
 
 _FNCTL_LOCK_ENOENT_RE = re.compile(
   r"No such file or directory.*\.fnctl\.lock|"
@@ -222,6 +228,7 @@ def _fd_x_stat_argv(
   glob: bool = False,
   exclude: str | None = None,
   mtime_days: int | None = None,
+  threads: int = FD_THREADS,
 ) -> list[str]:
   """
   Build one ``fd``/``fdfind -X`` GNU stat argv (no shell, no xargs).
@@ -237,6 +244,7 @@ def _fd_x_stat_argv(
     glob (bool): When True, pass ``--glob``.
     exclude (Optional[str]): Optional fd ``--exclude`` glob.
     mtime_days (Optional[int]): Optional ``--changed-within Nd`` window.
+    threads (int): fd ``--threads``.
 
   Returns:
     List[str]: argv for a single ``Popen`` (``-X`` last before ``stat``).
@@ -255,7 +263,7 @@ def _fd_x_stat_argv(
   argv = [
     find_bin,
     "--threads",
-    str(int(FD_THREADS)),
+    str(int(threads)),
     "--no-ignore",
     "--absolute-path",
     "--max-depth",
@@ -289,15 +297,22 @@ def build_find_stats_argv(
   mtime_days: int | None = None,
   find_bin: str = "fd",
   stat_bin: str = "stat",
+  printf_format: str = STAT_PRINTF_FORMAT,
 ) -> list[str]:
   """
   Build fd ``-X`` GNU stat argv for archive stats discovery (depth 2).
+
+  A whole-archive walk (``mtime_days=None``) uses
+  ``FD_THREADS_WHOLE_ARCHIVE`` walker threads; windowed walks keep
+  ``FD_THREADS``.
 
   Args:
     archive_dir (str): String for archive dir.
     mtime_days (Optional[int]): Mtime days, or None when absent.
     find_bin (str): Walker binary.
     stat_bin (str): GNU stat binary.
+    printf_format (str): GNU ``stat --printf`` format (four NUL fields, or
+      ``STAT_SORT_PRINTF_FORMAT`` for the sorted walk).
 
   Returns:
     List[str]: List[str] produced by this call.
@@ -312,9 +327,10 @@ def build_find_stats_argv(
     search_path=archive_dir,
     min_depth=2,
     max_depth=2,
-    printf_format=STAT_PRINTF_FORMAT,
+    printf_format=printf_format,
     exclude="current*",
     mtime_days=mtime_days,
+    threads=FD_THREADS_WHOLE_ARCHIVE if mtime_days is None else FD_THREADS,
   )
 
 
@@ -706,6 +722,7 @@ def iter_find_stats_stdout_chunks(
   find_bin: str | None = None,
   stat_bin: str | None = None,
   chunk_size: int = 65536,
+  sort_oldest_first: bool = False,
 ) -> Iterator[bytes]:
   """
   Run fd ``-X`` GNU stat and yield stdout chunks as they arrive (streaming).
@@ -716,19 +733,27 @@ def iter_find_stats_stdout_chunks(
   Early generator close closes/kills the child before ``wait()`` so a full
   stdout ``PIPE`` cannot deadlock the caller.
 
+  With ``sort_oldest_first`` the walker prints one tab-separated record per
+  file, GNU ``sort -z`` orders them by the filename epoch (oldest day
+  first; ISO and other names sort as their leading number), and ``tr``
+  turns the tabs back into the four NUL fields, so nothing is yielded until
+  the walk finishes (about 2 s for 732k files on hpcperfstats04).
+
   Args:
     archive_dir (str): Archive data directory (walker root).
     mtime_days (Optional[int]): Optional ``--changed-within`` window.
     find_bin (Optional[str]): Override walker binary path.
     stat_bin (Optional[str]): Override GNU stat binary path.
     chunk_size (int): Read size for ``stdout`` (minimum 1).
+    sort_oldest_first (bool): Pipe the walk through ``sort`` and ``tr``.
 
   Yields:
     bytes: Successive non-empty stdout chunks from GNU stat via fd ``-X``.
 
   Raises:
-    FindStatsDiscoveryError: When fd/fdfind or GNU stat is missing or the
-      walker exits non-zero (except benign fnctl race exit 1).
+    FindStatsDiscoveryError: When fd/fdfind, GNU stat, ``sort`` or ``tr``
+      is missing, the walker exits non-zero (except benign fnctl race exit
+      1), or ``sort``/``tr`` exits non-zero.
     RuntimeError: When the child stdout pipe is missing.
 
   Examples:
@@ -744,20 +769,45 @@ def iter_find_stats_stdout_chunks(
     mtime_days=mtime_days,
     find_bin=bin_path,
     stat_bin=stat_path,
+    printf_format=(
+      STAT_SORT_PRINTF_FORMAT if sort_oldest_first else STAT_PRINTF_FORMAT
+    ),
   )
+  # -t/ splits <archive_dir>/<host>/<name>: the name is two fields past it.
+  key = len(os.path.abspath(archive_dir).rstrip("/").split("/")) + 2
+  stages = [list(argv)]
+  if sort_oldest_first:
+    sort_bin = _resolve_named_binary("sort", kind="GNU sort")
+    stages += [
+      [sort_bin, "-z", "-s", "-t/", f"-k{key},{key}n"],
+      [_resolve_named_binary("tr", kind="tr"), "\\t", "\\0"],
+    ]
   read_n = max(1, int(chunk_size))
   stderr_file = tempfile.TemporaryFile()
+  procs: list[subprocess.Popen] = []
   try:
-    proc = subprocess.Popen(
-      list(argv),
-      stdout=subprocess.PIPE,
-      stderr=stderr_file,
-    )
+    for stage_argv in stages:
+      procs.append(
+        subprocess.Popen(
+          stage_argv,
+          stdin=procs[-1].stdout if procs else None,
+          stdout=subprocess.PIPE,
+          stderr=stderr_file,
+          env={**os.environ, "LC_ALL": "C"} if procs else None,
+        )
+      )
+      if len(procs) > 1 and procs[-2].stdout is not None:
+        procs[-2].stdout.close()  # the next stage owns it (SIGPIPE on close)
   except FileNotFoundError as exc:
+    for started in procs:
+      with contextlib.suppress(Exception):
+        started.kill()
+        started.wait()
     stderr_file.close()
     raise FindStatsDiscoveryError(
       "fd/fdfind or GNU stat not found (required for stats discovery)"
     ) from exc
+  proc = procs[-1]
   if proc.stdout is None:
     raise RuntimeError("subprocess stdout pipe missing")
   last_progress = time.monotonic()
@@ -799,15 +849,21 @@ def iter_find_stats_stdout_chunks(
       if not finished_stdout:
         with contextlib.suppress(Exception):
           proc.stdout.close()
-        if proc.poll() is None:
-          with contextlib.suppress(Exception):
-            proc.kill()
-      rc = proc.wait()
+        for started in procs:
+          if started.poll() is None:
+            with contextlib.suppress(Exception):
+              started.kill()
+      rcs = [started.wait() for started in procs]
       stderr_file.seek(0)
       stderr_b = stderr_file.read()
     finally:
       stderr_file.close()
   stderr_text = stderr_b.decode("utf-8", errors="replace")
+  rc = rcs[0]
+  if any(rcs[1:]):
+    raise FindStatsDiscoveryError(
+      f"discover sort/tr failed exit={rcs[1:]}: {stderr_text.strip() or '(no stderr)'}"
+    )
   if rc == 0:
     return
   if rc == 1 and _stderr_is_only_fnctl_races(stderr_text):

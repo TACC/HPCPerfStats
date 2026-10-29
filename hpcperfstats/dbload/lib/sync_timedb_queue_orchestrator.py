@@ -52,7 +52,12 @@ Attributes:
     whole-archive walk once the queue is below its low-water mark.
   _BOOT_FULL_DISCOVER_PENDING: Event set when boot queues the whole-archive
     discover walk and cleared when that walk ends (success or not); day_close
-    yields at the seal stage while it is set.
+    yields at the seal stage while it is set, and the day_close fill holds
+    every backfill day.
+  _DISCOVER_FRONTIER_LOCK: Guards ``_discover_frontier_day``.
+  _discover_frontier_day: Oldest backfill day the last discover walk could
+    not fully queue at the ingest cap (None = nothing undiscovered); the
+    day_close fill holds backfill days on or after it.
   _last_full_rediscover_mono: Monotonic time of the last whole-archive walk
     the idle pass requested (0 until the first idle pass; boot runs the
     first one).
@@ -212,6 +217,8 @@ _last_idle_reconstruct_mono = 0.0
 _SHUTDOWN_REQUESTED = threading.Event()
 _FULL_REDISCOVER_PENDING = threading.Event()
 _BOOT_FULL_DISCOVER_PENDING = threading.Event()
+_DISCOVER_FRONTIER_LOCK = threading.Lock()
+_discover_frontier_day: date | None = None
 _last_full_rediscover_mono = 0.0
 _discover_bg_lock = threading.Lock()
 _discover_bg_executor: ThreadPoolExecutor | None = None
@@ -1137,6 +1144,7 @@ def _boot_stream_discover(
   chunks = iter_find_stats_stdout_chunks(
     archive_dir,
     mtime_days=mtime_days,
+    sort_oldest_first=True,
   )
   stats = jd.stream_enqueue_ingest_from_find_stdout_chunks(
     client,
@@ -1168,6 +1176,126 @@ def _boot_stream_discover(
     log_fn=log_fn,
   )
   return stats
+
+
+def _discover_frontier() -> date | None:
+  """
+  Return the oldest backfill day the last discover walk could not queue.
+
+  Returns:
+    date | None: Frontier day, or None when nothing is undiscovered.
+
+  Examples:
+    >>> _set_discover_frontier(None)
+    >>> _discover_frontier() is None
+    True
+  """
+  with _DISCOVER_FRONTIER_LOCK:
+    return _discover_frontier_day
+
+
+def _set_discover_frontier(day: date | None) -> None:
+  """
+  Replace the discover frontier day.
+
+  Args:
+    day (date | None): New frontier, or None to release every held day.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _set_discover_frontier(date(2026, 9, 1))
+    >>> _discover_frontier()
+    datetime.date(2026, 9, 1)
+    >>> _set_discover_frontier(None)
+  """
+  global _discover_frontier_day
+  with _DISCOVER_FRONTIER_LOCK:
+    _discover_frontier_day = day
+
+
+def _record_discover_frontier(
+  stats: Any,
+  whole_archive: bool,
+  log_fn: Callable[..., None] | None,
+) -> None:
+  """
+  Move the discover frontier after a walk returns.
+
+  A whole-archive walk saw every file, so its frontier replaces the old one
+  (None releases every held day). A windowed walk saw only recent files, so
+  it can only lower the frontier. A walk that raised never gets here and
+  keeps the previous frontier. Logs one line when the frontier changes.
+
+  Args:
+    stats (Any): :class:`jd.StreamingDiscoverStats` of the walk.
+    whole_archive (bool): True for an ``mtime_days=None`` walk.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _set_discover_frontier(None)
+    >>> _record_discover_frontier(
+    ...   jd.StreamingDiscoverStats(0, 0, 0, 0, frontier_day=date(2026, 9, 1)),
+    ...   True,
+    ...   lambda *a, **k: None,
+    ... )
+    >>> _discover_frontier()
+    datetime.date(2026, 9, 1)
+    >>> _set_discover_frontier(None)
+  """
+  walked = getattr(stats, "frontier_day", None)
+  before = _discover_frontier()
+  after = walked
+  if not whole_archive and before is not None:
+    after = before if walked is None else min(before, walked)
+  _set_discover_frontier(after)
+  if after != before:
+    _log(
+      f"queue_orchestrator discover frontier day={after or 'none'} "
+      f"previous={before or 'none'} whole_archive={whole_archive}",
+      log_fn=log_fn,
+    )
+
+
+def _day_close_held_for_discover(identity: str) -> bool:
+  """
+  Return True when a backfill day still has files discover has not queued.
+
+  Holds every backfill day while the boot whole-archive walk runs, and days
+  on or after the discover frontier afterwards, so each day closes once
+  after a walk has queued all of its incomplete files (hpcperfstats04
+  2026-10-29: 56 days restored, appended and resealed every batch).
+  Hot-band days are never held.
+
+  Args:
+    identity (str): day_close identity (day token or daily tar path).
+
+  Returns:
+    bool: True when the day_close claim should wait.
+
+  Examples:
+    >>> _set_discover_frontier(None)
+    >>> _day_close_held_for_discover("/d/2026-08-01.tar")
+    False
+  """
+  try:
+    day = date.fromisoformat(
+      progress.day_token_from_day_close_identity(identity) or ""
+    )
+  except ValueError:
+    return False
+  if jr.select_ingest_band(day, today=_local_today(), hot_days=_hot_days()) == (
+    "hot"
+  ):
+    return False
+  frontier = _discover_frontier()
+  return _BOOT_FULL_DISCOVER_PENDING.is_set() or (
+    frontier is not None and day >= frontier
+  )
 
 
 def _discover_executor() -> ThreadPoolExecutor:
@@ -1249,6 +1377,7 @@ def _run_background_discover(
     # Files skipped at the ingest cap are forgotten; ask for another full walk.
     if getattr(stats, "dropped_at_capacity", 0):
       _FULL_REDISCOVER_PENDING.set()
+    _record_discover_frontier(stats, claimed_mtime_days is None, log_fn)
   finally:
     # Seals wait for the boot whole-archive walk; a failed walk must not hold
     # them forever (INV-NEG terminal).
@@ -1632,6 +1761,7 @@ def _idle_reconstruct_pass(
       )
       work += int(stats.enqueued_ingest) + int(stats.enqueued_append)
       work += int(stats.enqueued_day_close)
+      _record_discover_frontier(stats, mtime_days is None, log_fn)
       if mtime_days is None:
         _BOOT_FULL_DISCOVER_PENDING.clear()
       with contextlib.suppress(Exception):
@@ -6291,6 +6421,7 @@ def _fill_day_close_slots(
   # Bound silent backoff reclaim so a full LIST of backoffed days cannot
   # spin forever inside one fill tick.
   skip_budget = max(cap * 4, 16)
+  skipped: set[str] = set()
   while len(inflight) < cap and skip_budget > 0:
     claim = jq.claim_list_job(
       client,
@@ -6299,12 +6430,17 @@ def _fill_day_close_slots(
     )
     if claim is None:
       break
-    if tracker.yield_backoff_active(claim.identity):
+    if tracker.yield_backoff_active(
+      claim.identity
+    ) or _day_close_held_for_discover(claim.identity):
       _requeue_claimed_job_without_attempt_bump(
         client,
         claim=claim,
         log_fn=log_fn,
       )
+      if claim.identity in skipped:
+        break  # the pass went round the whole LIST
+      skipped.add(claim.identity)
       backoff_skips += 1
       skip_budget -= 1
       continue

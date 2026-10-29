@@ -143,6 +143,8 @@ class SyncTimedbJobStore:
     _dirty: True when durable queues changed since the last snapshot.
     _ingest: Identity to score map for queued ingest work.
     _ingest_heap_catchup: Lazy min-heap of catchup-band ``(score, id)``.
+    _ingest_heap_catchup_max: Lazy max-heap of catchup-band
+      ``(-score, id)``; finds the youngest queued backfill file to push out.
     _ingest_heap_hot: Lazy min-heap of hot-band ``(score, id)``.
     _inflight: Per-kind in-flight map of deadline, owner, and score.
     _leases: Owner token by (kind, identity).
@@ -188,6 +190,7 @@ class SyncTimedbJobStore:
     # skipped on claim when _ingest no longer matches.
     self._ingest_heap_hot: list[tuple[float, str]] = []
     self._ingest_heap_catchup: list[tuple[float, str]] = []
+    self._ingest_heap_catchup_max: list[tuple[float, str]] = []
     self._ingest_hot_n = 0
     self._ingest_catchup_n = 0
     self._lists: dict[str, deque[str]] = {
@@ -516,8 +519,20 @@ class SyncTimedbJobStore:
       True
     """
     scored = float(score)
-    heap = self._ingest_heap_for_band_locked(decode_ingest_band(scored))
-    heapq.heappush(heap, (scored, str(identity)))
+    band = decode_ingest_band(scored)
+    heapq.heappush(
+      self._ingest_heap_for_band_locked(band), (scored, str(identity))
+    )
+    if band == "catchup":
+      heap = self._ingest_heap_catchup_max
+      if len(heap) > 2 * len(self._ingest) + 1024:  # drop stale entries
+        heap[:] = [
+          (-s, i)
+          for i, s in self._ingest.items()
+          if decode_ingest_band(s) == "catchup"
+        ]
+        heapq.heapify(heap)
+      heapq.heappush(heap, (-scored, str(identity)))
 
   def _ingest_set_locked(self, identity: str, score: float) -> None:
     """
@@ -736,6 +751,7 @@ class SyncTimedbJobStore:
     """
     self._ingest_heap_hot = []
     self._ingest_heap_catchup = []
+    self._ingest_heap_catchup_max = []
     for ident, score in self._ingest.items():
       self._ingest_heap_push_locked(ident, float(score))
 
@@ -897,6 +913,46 @@ class SyncTimedbJobStore:
       self._mark_dirty_locked()
     self._maybe_persist_locked()
     return 0 if existed else 1
+
+  def evict_youngest_catchup_ingest(self, older_day: date) -> str | None:
+    """
+    Remove the youngest queued backfill file when it is younger than a day.
+
+    Discover calls this at the ingest cap so an older backfill file takes
+    the place of the youngest queued one (oldest-first admission). Hot-band
+    and in-flight work is never removed; the walk that called this reaches
+    the removed file again later because its input is sorted oldest first.
+
+    Args:
+      older_day (date): Calendar day of the file waiting for room.
+
+    Returns:
+      str | None: Removed identity, or None when nothing queued is younger.
+
+    Examples:
+      >>> store = SyncTimedbJobStore("")
+      >>> store.evict_youngest_catchup_ingest(date(2026, 8, 1)) is None
+      True
+    """
+    with self._lock:
+      heap = self._ingest_heap_catchup_max
+      while heap:
+        neg_score, ident = heap[0]
+        if self._ingest.get(ident) != -neg_score:
+          heapq.heappop(heap)  # stale: claimed, removed or re-scored
+          continue
+        day = decode_catchup_calendar_day(-neg_score)
+        if day is None or day <= older_day:
+          return None
+        heapq.heappop(heap)
+        self._ingest_pop_locked(ident)
+        self._payloads.pop((JOB_KIND_INGEST, ident), None)
+        self._mark_dirty_locked()
+        break
+      else:
+        return None
+    self._maybe_persist_locked()
+    return ident
 
   def enqueue_list(
     self,
