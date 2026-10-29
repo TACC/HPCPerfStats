@@ -58,6 +58,12 @@ Job kinds: `JOB_KIND_INGEST` (`ingest`), `JOB_KIND_APPEND` (`append`),
 `zst_frame_invalid`, `read_error`, `salvage_backup_failed`. Exit table:
 `SYNC_TIMEDB_NEGATIVE_STATE_EXITS["day_skip_kind"]`.
 
+### Orchestrator flags
+
+| Flag | Polarity | Set | Clear / bound |
+|---|---|---|---|
+| `_FULL_REDISCOVER_PENDING` | negative, memory | a discover walk skipped incomplete catchup files at the ingest cap (`dropped_at_capacity > 0`) | cleared when the idle pass submits a whole-archive walk (catchup queue at or below half the cap); re-set only if that walk drops again; a walk that drops nothing ends the chain. `sync_ingest_full_rescan_interval_hours` (default 6) also forces a walk |
+
 ### Day-removal manifest
 
 Phases: `verifying` → `verification_complete` → `deleting` → `done`.

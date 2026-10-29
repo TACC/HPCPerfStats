@@ -46,6 +46,9 @@ class StreamingDiscoverStats:
     stopped_at_capacity: True when the ingest member cap was hit during
       the walk. Catchup ingest stops; the find walk and hot-band ZADD
       continue.
+    dropped_at_capacity: Incomplete catchup files the walk skipped because
+      the cap was hit. Nothing remembers them, so a non-zero count asks the
+      orchestrator for another full walk once the queue drains.
   """
 
   seen: int
@@ -54,6 +57,7 @@ class StreamingDiscoverStats:
   skipped_complete: int
   enqueued_day_close: int = 0
   stopped_at_capacity: bool = False
+  dropped_at_capacity: int = 0
 
 
 def find_record_mtime_ns(mtime: float) -> int:
@@ -333,6 +337,7 @@ def stream_enqueue_ingest_from_find_records(
   skipped_complete = 0
   day_close_seen: set[str] = set()
   stopped_at_capacity = False
+  dropped_at_capacity = 0
   day_fn = calendar_day_fn or (
     lambda rec: calendar_day_from_find_record(rec, tgz_archive_dir)
   )
@@ -392,6 +397,7 @@ def stream_enqueue_ingest_from_find_records(
       )
       != "hot"
     ):
+      dropped_at_capacity += int(plan.needs_ingest)
       plan = replace(
         plan,
         needs_ingest=False,
@@ -430,6 +436,7 @@ def stream_enqueue_ingest_from_find_records(
     skipped_complete=skipped_complete,
     enqueued_day_close=enqueued_day_close,
     stopped_at_capacity=stopped_at_capacity,
+    dropped_at_capacity=dropped_at_capacity,
   )
 
 

@@ -47,6 +47,12 @@ Attributes:
   _SEALED_ONLY_MANIFEST_PHASE_CACHE: ``(manifest_path, mtime_ns) -> phase``
     for the DE-24 sealed-only daily-dir scan.
   _SHUTDOWN_REQUESTED: Event set by ``SIGTERM``/``SIGINT`` handlers.
+  _FULL_REDISCOVER_PENDING: Event set when a discover walk dropped incomplete
+    catchup files at the ingest cap; the idle pass answers it with a
+    whole-archive walk once the queue is below its low-water mark.
+  _last_full_rediscover_mono: Monotonic time of the last whole-archive walk
+    the idle pass requested (0 until the first idle pass; boot runs the
+    first one).
   _TRANSIENT_DAY_CLOSE_OUTCOMES: day_close results that requeue without
     burning a retry attempt.
   _DAY_CLOSE_YIELD_BACKOFF: Sticky per-identity yield reclaim backoff tracker.
@@ -200,6 +206,8 @@ DAY_CLOSE_CLAIM_VACATE_LOG_INTERVAL_S = 30.0
 _IDLE_RECONSTRUCT_MIN_INTERVAL_S = 300.0
 _last_idle_reconstruct_mono = 0.0
 _SHUTDOWN_REQUESTED = threading.Event()
+_FULL_REDISCOVER_PENDING = threading.Event()
+_last_full_rediscover_mono = 0.0
 _discover_bg_lock = threading.Lock()
 _discover_bg_executor: ThreadPoolExecutor | None = None
 _discover_bg_future: Future | None = None
@@ -1223,7 +1231,7 @@ def _run_background_discover(
       archive_dir,
       mtime_days,
     )
-    _boot_stream_discover(
+    stats = _boot_stream_discover(
       client,
       archive_dir,
       tgz_archive_dir=tgz_archive_dir,
@@ -1232,6 +1240,9 @@ def _run_background_discover(
       startdate=startdate,
       enddate=enddate,
     )
+    # Files skipped at the ingest cap are forgotten; ask for another full walk.
+    if getattr(stats, "dropped_at_capacity", 0):
+      _FULL_REDISCOVER_PENDING.set()
   finally:
     with contextlib.suppress(Exception):
       jq.ack_job(
@@ -1447,6 +1458,60 @@ def _enqueue_day_closes_for_daily_dir(
   return enqueued
 
 
+def _full_rediscover_due(
+  client: Any, log_fn: Callable[..., None] | None = None
+) -> bool:
+  """
+  Return True when this idle pass should walk the whole archive.
+
+  Idle passes only look at files changed in the last
+  ``sync_ingest_rescan_mtime_days``, and discover forgets every incomplete
+  catchup file it skips at the ingest cap, so the whole-archive walk that
+  boot runs is otherwise the only way an older file is found (04 2026-10-29:
+  732k raw files waited for a restart). A full walk is due when a walk
+  dropped files (``_FULL_REDISCOVER_PENDING``) or every
+  ``sync_ingest_full_rescan_interval_hours`` (0 disables), and only while the
+  catchup queue is at or below half the cap so the walk is not dropped again.
+  Clears the pending flag when it answers True.
+
+  Args:
+    client (Any): Job store (queue census).
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    bool: True when the caller should submit a whole-archive discover.
+
+  Examples:
+    >>> _FULL_REDISCOVER_PENDING.clear()
+    >>> _full_rediscover_due(None)
+    False
+  """
+  global _last_full_rediscover_mono
+  now = time.monotonic()
+  if _last_full_rediscover_mono == 0.0:
+    _last_full_rediscover_mono = now  # boot discover ran the first full walk
+  interval_s = float(cfg.get_sync_ingest_full_rescan_interval_hours()) * 3600.0
+  pending = _FULL_REDISCOVER_PENDING.is_set()
+  if not pending and not (
+    interval_s > 0 and now - _last_full_rediscover_mono >= interval_s
+  ):
+    return False
+  try:
+    _hot, catchup, _total = jq.ingest_queue_census(client)
+  except Exception:
+    return False
+  if catchup > max(1, jd.discover_ingest_capacity_limit() // 2):
+    return False
+  _FULL_REDISCOVER_PENDING.clear()
+  _last_full_rediscover_mono = now
+  _log(
+    f"queue_orchestrator full rediscover catchup_queued={catchup} "
+    f"reason={'dropped_at_cap' if pending else 'periodic'}",
+    log_fn=log_fn,
+  )
+  return True
+
+
 def _idle_reconstruct_pass(
   client: Any,
   archive_dir: str,
@@ -1509,6 +1574,12 @@ def _idle_reconstruct_pass(
       archive_data_dir=archive_dir,
     )
   _last_idle_reconstruct_mono = now
+  if (
+    not force
+    and mtime_days is not None
+    and _full_rediscover_due(client, log_fn)
+  ):
+    mtime_days = None
   identity = discover_job_identity(archive_dir, mtime_days)
   with contextlib.suppress(Exception):
     jq.enqueue_list_job(

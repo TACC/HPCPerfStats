@@ -4761,7 +4761,13 @@ def _add_stats_file_to_db_streaming_incremental(
       if not chunk_ok:
         ingest_ok = False
         return
-      total_stats_rows += host_b.count(b"\n")
+      host_rows = host_b.count(b"\n")
+      total_stats_rows += host_rows
+      # A Codon frame carries no pre-collapse count; the host rows it holds are
+      # the parsed figure, so ``stats_rows_parsed`` is no longer always 0 and a
+      # file with host rows is not zero-host marked (04 2026-10-29: 23,947 of
+      # 23,997 ingests logged parsed=0 and recorded the mark).
+      total_stats_rows_parsed += host_rows
       total_proc_rows += proc_b.count(b"\n")
       return
     with _held_parse_stage("chunk_setup_s"):

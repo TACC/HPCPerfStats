@@ -111,6 +111,7 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "sync_archive_pool_processes"),
   ("PIPELINE", "sync_ingest_queue_max_size"),
   ("PIPELINE", "sync_ingest_rescan_mtime_days"),
+  ("PIPELINE", "sync_ingest_full_rescan_interval_hours"),
   ("PIPELINE", "sync_archive_queue_max_size"),
   ("PIPELINE", "sync_job_queue_max_members"),
   ("PIPELINE", "sync_timedb_archive_max_concurrent_sealed_days"),
@@ -290,6 +291,7 @@ INI_OPTION_DEFAULTS = {
   "sync_archive_pool_processes": "4",
   "sync_ingest_queue_max_size": "3000",
   "sync_ingest_rescan_mtime_days": "1",
+  "sync_ingest_full_rescan_interval_hours": "6",
   "sync_archive_queue_max_size": "1000",
   "sync_job_queue_max_members": "2000000",
   "sync_timedb_archive_max_concurrent_sealed_days": "1",
@@ -3566,6 +3568,27 @@ def get_sync_ingest_rescan_mtime_days() -> Any:
   """
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("sync_ingest_rescan_mtime_days"))
+
+
+def get_sync_ingest_full_rescan_interval_hours() -> int:
+  """
+  Hours between whole-archive discover walks from the idle pass (default 6).
+
+  The idle rescan only sees files changed within
+  ``sync_ingest_rescan_mtime_days``; this walk re-checks every raw file on
+  disk so one skipped at the ingest cap or missed any other way is found
+  without a restart. ``0`` disables the periodic walk (a walk that dropped
+  files at the cap is still repeated once the queue drains).
+
+  Returns:
+    int: Hours between full walks; 0 disables the periodic walk.
+
+  Examples:
+    >>> get_sync_ingest_full_rescan_interval_hours()  # doctest: +SKIP
+    6
+  """
+  _ensure_cfg_loaded()
+  return max(0, _pipeline_getint("sync_ingest_full_rescan_interval_hours"))
 
 
 def get_sync_archive_queue_max_size() -> Any:

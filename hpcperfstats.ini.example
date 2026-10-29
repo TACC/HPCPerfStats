@@ -234,6 +234,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Incremental pending rescan: GNU find -mtime -N days (default 1 = last 24h).
 # sync_ingest_rescan_mtime_days = 1
 
+# Hours between whole-archive discover walks from the idle pass (default 6; 0 disables; a walk that dropped files at the queue cap is repeated once the queue drains).
+# sync_ingest_full_rescan_interval_hours = 6
+
 # Max in-memory archive work queue size (default 1000).
 # sync_archive_queue_max_size = 1000
 
