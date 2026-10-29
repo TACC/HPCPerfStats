@@ -69,7 +69,7 @@ from hpcperfstats.dbload.lib import (
   sync_timedb_wait_telemetry as wait_telem,
 )
 from hpcperfstats.dbload.lib.file_locking import (
-  LOCK_SUFFIX,
+  _maybe_reset_stale_lock_file,
   file_read_lock_wait,
 )
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
@@ -1840,9 +1840,9 @@ def _stats_file_read_lock(stats_file: str) -> Iterator[None]:
     with file_read_lock_wait(stats_file):
       yield
   finally:
-    lock_path = f"{stats_file}{LOCK_SUFFIX}"
-    with suppress(OSError):
-      os.remove(lock_path)
+    # Lock-safe removal: an unconditional unlink here could delete the sidecar
+    # of a write lock another thread holds on the same stats file.
+    _maybe_reset_stale_lock_file(stats_file, time.time(), 0)
 
 
 def load_stats_file_lines(

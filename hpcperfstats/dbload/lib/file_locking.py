@@ -187,6 +187,8 @@ def _try_open_write_lock_fd(target_path: str) -> Any:
     Any: Value produced by this call (type depends on inputs).
 
   Raises:
+    BlockingIOError: ``EAGAIN`` when the flocked sidecar was replaced, so the
+    caller polls again like a contended lock.
     Exception: Raised when ``_try_open_write_lock_fd`` hits a ``Exception``
     failure path.
 
@@ -196,11 +198,40 @@ def _try_open_write_lock_fd(target_path: str) -> Any:
   lock_fd = _open_lock_file(target_path)
   try:
     flock(lock_fd, LOCK_EX | LOCK_NB)
+    if not _sidecar_is_current(lock_fd):
+      raise BlockingIOError(errno.EAGAIN, "lock sidecar was replaced")
   except OSError:
     with suppress(OSError):
       lock_fd.close()
     raise
   return lock_fd
+
+
+def _sidecar_is_current(lock_fd: Any) -> bool:
+  """
+  Return True when the sidecar path still names the inode ``lock_fd`` locks.
+
+  A flock belongs to the inode, not the path. Once a releaser unlinks the
+  sidecar, the next contender recreates it as a different inode and locks
+  that one, so a lock taken on the old inode excludes nobody. Every acquire
+  re-checks this after ``flock`` and retries when it is False.
+
+  Args:
+    lock_fd (Any): Open sidecar file object holding the flock.
+
+  Returns:
+    bool: True when the path exists and is the same inode as ``lock_fd``.
+
+  Examples:
+    >>> _sidecar_is_current(open(__file__))
+    True
+  """
+  try:
+    on_disk = os.stat(lock_fd.name)
+  except OSError:
+    return False
+  held = os.fstat(lock_fd.fileno())
+  return (on_disk.st_dev, on_disk.st_ino) == (held.st_dev, held.st_ino)
 
 
 def _refresh_lock_sidecar_mtime(lock_fd: Any) -> None:
@@ -264,9 +295,9 @@ def _maybe_reset_stale_lock_file(
     # Only remove when we can prove no active holder exists.
     lock_fd = open(lock_path, "a+")
     flock(lock_fd, LOCK_EX | LOCK_NB)
-    flock(lock_fd, LOCK_UN)
-    lock_fd.close()
-    lock_fd = None
+    if not _sidecar_is_current(lock_fd):
+      return False
+    # Unlink while the probe lock is held; the close below releases it.
     os.remove(lock_path)
     return True
   except OSError:
@@ -489,19 +520,22 @@ def file_write_lock(
       _add_file_lock_timing("file_lock_ex_hold_s", time.monotonic() - hold_t0)
     lock_path = _lock_path(target_path)
     try:
-      flock(lock_fd, LOCK_UN)
+      # Unlink before unlocking: a waiter that locks this inode right after
+      # the unlock must find the path gone (and retry), not hold a lock on a
+      # deleted file next to a new contender's.
+      if _sidecar_is_current(lock_fd):
+        os.remove(lock_path)
+    except FileNotFoundError:
+      pass
+    except OSError:
+      # Best-effort cleanup; failure to remove the lock file should not
+      # break callers once the advisory lock itself is released.
+      print(f"WARNING: failed to remove lock sidecar: {lock_path}")
     finally:
       try:
-        lock_fd.close()
+        flock(lock_fd, LOCK_UN)
       finally:
-        try:
-          os.remove(lock_path)
-        except FileNotFoundError:
-          pass
-        except OSError:
-          # Best-effort cleanup; failure to remove the lock file should not
-          # break callers once the advisory lock itself is released.
-          print(f"WARNING: failed to remove lock sidecar: {lock_path}")
+        lock_fd.close()
 
 
 @contextmanager
@@ -544,6 +578,8 @@ def file_read_lock_wait(
     Iterator[Any]: Value produced by this call (type depends on inputs).
 
   Raises:
+    BlockingIOError: Internal ``EAGAIN`` when the flocked sidecar was
+    replaced; caught by the poll loop, never raised to callers.
     Exception: Raised when ``file_read_lock_wait`` hits a ``Exception``
     failure path.
     TimeoutError: Raised when ``file_read_lock_wait`` hits a ``TimeoutError``
@@ -562,6 +598,8 @@ def file_read_lock_wait(
     try:
       lock_fd = _open_lock_file(target_path)
       flock(lock_fd, LOCK_SH | LOCK_NB)
+      if not _sidecar_is_current(lock_fd):
+        raise BlockingIOError(errno.EAGAIN, "lock sidecar was replaced")
       break
     except OSError as exc:
       if lock_fd is not None:

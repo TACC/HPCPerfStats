@@ -96,6 +96,7 @@ from hpcperfstats.dbload.lib.archive_compress import (
 from hpcperfstats.dbload.lib.file_locking import (
   LOCK_EXPIRY_SECONDS,
   LOCK_SUFFIX,
+  _maybe_reset_stale_lock_file,
   file_read_lock_wait,
   file_write_lock,
 )
@@ -4206,6 +4207,11 @@ def _remove_read_lock_sidecar(target_path: str) -> None:
   """
   Best-effort cleanup for helper read-lock sidecars.
 
+  Removes the sidecar only when an exclusive probe proves nobody holds it
+  (unlinking while holding the probe lock). An unconditional ``os.remove``
+  deleted the sidecar of a live write lock, so the next contender locked a
+  new inode and ran next to the holder (04 2026-10-28: appends during a seal).
+
   Args:
     target_path (str): String for target path.
 
@@ -4213,10 +4219,9 @@ def _remove_read_lock_sidecar(target_path: str) -> None:
     None
 
   Examples:
-    >>> _remove_read_lock_sidecar("x")  # doctest: +SKIP
+    >>> _remove_read_lock_sidecar("/nonexistent/x")
   """
-  with contextlib.suppress(OSError):
-    os.remove(f"{target_path}{LOCK_SUFFIX}")
+  _maybe_reset_stale_lock_file(target_path, time.time(), 0)
 
 
 def read_stats_file_head_identity(
