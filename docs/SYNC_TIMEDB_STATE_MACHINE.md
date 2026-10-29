@@ -264,6 +264,12 @@ tokens `dead_letter readmit n=`, `noprogress escalate`, `day_remainder rebuilt`,
 `.sync_timedb_sealed_members/`, `.sync_timedb_tar_salvage/`,
 `.sync_timedb_migration_backup/`.
 
+The `queue_orchestrator census` line carries `raw_stats_files_on_disk=N`: the
+closed raw files discover would walk (lock sidecars and dot-prefixed sidecar
+directories excluded), re-counted by the same fd walk at most every
+`RAW_STATS_COUNT_INTERVAL_S` (600 s); a failed walk keeps the last value and
+the token is absent until the first count succeeds.
+
 ## §8 Dead-code appendix
 
 Removed in this release (no production callers): `SyncFileState`,

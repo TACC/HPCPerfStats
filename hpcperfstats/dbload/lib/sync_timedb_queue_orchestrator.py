@@ -15,6 +15,10 @@ supervisor loop.
 
 Attributes:
   CENSUS_LOG_INTERVAL_S: Minimum seconds between structured census log lines.
+  RAW_STATS_COUNT_INTERVAL_S: Minimum seconds between the census line's
+    ``raw_stats_files_on_disk`` re-walks of the archive tree.
+  _RAW_STATS_COUNT: Last ``raw_stats_files_on_disk`` count (``n``) and the
+    monotonic time of the last attempt (``at``); reconstruct-coordinator only.
   DAY_CLOSE_THREAD_NAME_PREFIX: Thread name prefix for day_close workers.
   INGEST_FILL_SKIP_BUDGET: Max unsubmittable ingest claims processed per fill
     tick before returning to the main loop.
@@ -178,11 +182,16 @@ from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
   create_sync_timedb_thread_pool,
 )
 from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
+  _is_lock_name,
+  is_internal_archive_stats_path,
+  iter_find_printf_records_streaming,
   iter_find_stats_stdout_chunks,
 )
 
 DAY_CLOSE_THREAD_NAME_PREFIX = "day-close"
 CENSUS_LOG_INTERVAL_S = 60.0
+RAW_STATS_COUNT_INTERVAL_S = 600.0
+_RAW_STATS_COUNT: dict[str, Any] = {"n": None, "at": None}
 PROGRESS_REPORT_INTERVAL_S = progress.PROGRESS_REPORT_INTERVAL_S
 SHUTDOWN_DRAIN_TIMEOUT_S = 120.0
 # Per-tick cap on fill continues (missing path, reband, fingerprint mismatch)
@@ -7601,6 +7610,76 @@ def _day_close_coordinator_loop(
     barrier.mark_drained(role)
 
 
+def _count_raw_stats_files_on_disk(archive_dir: str) -> int:
+  """
+  Count the closed raw stats files discover would walk under ``archive_dir``.
+
+  Same fd walk as discover (``<archive>/<host>/<file>``, ``current*``
+  excluded), minus lock sidecars and dot-prefixed sidecar directories.
+
+  Args:
+    archive_dir (str): Archive data directory (walker root).
+
+  Returns:
+    int: Raw stats file count (0 when the directory is missing).
+
+  Raises:
+    FindStatsDiscoveryError: When the walk fails (caller keeps the last
+      count).
+
+  Examples:
+    >>> _count_raw_stats_files_on_disk("/nope")
+    0
+  """
+  return sum(
+    1
+    for rec in iter_find_printf_records_streaming(
+      iter_find_stats_stdout_chunks(archive_dir)
+    )
+    if not is_internal_archive_stats_path(rec.path)
+    and not _is_lock_name(os.path.basename(rec.path))
+  )
+
+
+def _raw_stats_files_on_disk_token(
+  archive_dir: str,
+  *,
+  now: float | None = None,
+  count_fn: Callable[[str], int] | None = None,
+) -> str:
+  """
+  Return the census ``raw_stats_files_on_disk=N`` token (cached re-walk).
+
+  Re-counts at most every ``RAW_STATS_COUNT_INTERVAL_S`` (the fd walk is
+  about 2 s for 732k files on hpcperfstats04); a failed count keeps the
+  previous value, and nothing is shown before the first successful count.
+
+  Args:
+    archive_dir (str): Archive data directory.
+    now (float | None): Monotonic time (injectable for tests).
+    count_fn (Callable[[str], int] | None): Counter (default
+      :func:`_count_raw_stats_files_on_disk`).
+
+  Returns:
+    str: `` raw_stats_files_on_disk=N`` or an empty string.
+
+  Examples:
+    >>> _RAW_STATS_COUNT.update(n=None, at=None)
+    >>> _raw_stats_files_on_disk_token("/a", now=0.0, count_fn=lambda _d: 3)
+    ' raw_stats_files_on_disk=3'
+    >>> _RAW_STATS_COUNT.update(n=None, at=None)
+  """
+  now_s = time.monotonic() if now is None else float(now)
+  last = _RAW_STATS_COUNT["at"]
+  if last is None or now_s - last >= RAW_STATS_COUNT_INTERVAL_S:
+    _RAW_STATS_COUNT["at"] = now_s
+    with contextlib.suppress(Exception):
+      counter = count_fn or _count_raw_stats_files_on_disk
+      _RAW_STATS_COUNT["n"] = int(counter(archive_dir))
+  n = _RAW_STATS_COUNT["n"]
+  return "" if n is None else f" raw_stats_files_on_disk={n}"
+
+
 def _reconstruct_coordinator_loop(
   *,
   client: Any,
@@ -7720,8 +7799,9 @@ def _reconstruct_coordinator_loop(
               + wait_telem.format_pygc_census_token()
               + _WAIT_ROLE_CENSUS.format_token()
             )
+          raw_tok = _raw_stats_files_on_disk_token(directory)
           _log(
-            f"queue_orchestrator census {jq.format_queue_census(census)} total_ingested={total_ingested} total_completed={total_completed}{' ' + busy_tok if busy_tok else ''}{mem_tok} {writers_tok}{put_tok}{codon_tok}{census_tok}",
+            f"queue_orchestrator census {jq.format_queue_census(census)} total_ingested={total_ingested} total_completed={total_completed}{' ' + busy_tok if busy_tok else ''}{mem_tok} {writers_tok}{put_tok}{codon_tok}{raw_tok}{census_tok}",
             log_fn=log_fn,
           )
           snap = mem_telem.snapshot_pipeline_mem_telemetry(
