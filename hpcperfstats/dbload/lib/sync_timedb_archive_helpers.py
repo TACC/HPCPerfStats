@@ -4732,7 +4732,10 @@ def get_mutable_tar_authority_member_map(tar_path: str) -> dict[str, int]:
   except RuntimeError:
     raise
   except Exception:
+    # A lock timeout is not an empty tar: never cache it as the authority
+    # (04 2026-10-29: cached {} made appends re-add every file mid-seal).
     members = {}
+    size = None
   finally:
     _remove_read_lock_sidecar(tar_norm)
   if size is None or mtime_ns is None:

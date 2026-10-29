@@ -215,7 +215,7 @@ Every requeue / ACK / dead-letter / sticky-flag / quarantine invocation in
 | `sync_timedb_populate_pool.py:_populate_pool_worker_entry:requeue_populate_queue_job` | populate exception | job `attempt` | dropped at `sync_archive_retry_max_attempts` (DE-16) |
 | `sync_timedb_queue_orchestrator.py:_dead_letter_claim:ack_job` | dead-letter | n/a | A2 cooldown → terminal |
 | `sync_timedb_queue_orchestrator.py:_drain_append_ready:ack_job` | append success / gate-skip handoff | n/a | exit (success) |
-| `sync_timedb_queue_orchestrator.py:_drain_append_ready:requeue_job` | append soft_requeue (restore race) | no | restore owner finishes (DE-8 idle kill) |
+| `sync_timedb_queue_orchestrator.py:_drain_append_ready:_requeue_bounded_without_attempt_bump` | append soft_requeue (restore race; open-tar member scan returned nothing for a tar past one record, e.g. read-lock timeout under a seal) | G1 `env_defer` | lock holder finishes (DE-8 idle kill, seal progress); past `sync_noprogress_escalate_after` → A2 env cooldown |
 | `sync_timedb_queue_orchestrator.py:_drain_day_close_ready:_requeue_claimed_job_without_attempt_bump` | cooperative outcome (`yielded`, `incomplete_raw`, `deferred_age`, `skipped`) | no | yield backoff; DE-24/25/26/28 repairs, `reverify_cycles` → `verify_failed` |
 | `sync_timedb_queue_orchestrator.py:_drain_day_close_ready:ack_job` | `complete` | n/a | exit (success; dead letter removed) |
 | `sync_timedb_queue_orchestrator.py:_drain_ingest_ready:_requeue_claimed_job_without_attempt_bump` | bare TimeoutError sentinel path | no | store lease TTL reap |

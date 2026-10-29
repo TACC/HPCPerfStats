@@ -6051,12 +6051,18 @@ def _drain_append_ready(
       )
       progress.record(day_tok, "soft_requeue", 1)
       progress.record(day_tok, "requeue_noprogress", 1)
+      # INV-NEG: a lock holder (restore, seal) ends, but a soft requeue that
+      # never clears must still escalate instead of cycling forever.
       for job in jobs:
-        jq.requeue_job(
+        _requeue_bounded_without_attempt_bump(
           client,
           kind=jq.JOB_KIND_APPEND,
-          identity=job.identity,
-          owner_token=job.owner_token,
+          claim=job,
+          counter="env_defer",
+          cap=cfg.get_sync_noprogress_escalate_after(),
+          reason="append_soft_requeue",
+          archive_data_dir=archive_data_dir,
+          log_fn=log_fn,
         )
       continue
     if isinstance(result, ArchiveAppendOutcome) and not result.ok:

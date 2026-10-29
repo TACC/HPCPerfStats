@@ -6287,6 +6287,24 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         open_tar_tvf_ok = members_source == "tar_scan" and os.path.exists(
           archive_tar_fname
         )
+        # A tar past one 10240-byte record holds members; none means the scan
+        # failed (read-lock timeout under a seal), not that every file is new.
+        if (
+          open_tar_tvf_ok
+          and not existing_members
+          and os.path.getsize(archive_tar_fname) > 10240
+        ):
+          job_outcome = "soft_skip"
+          log_print(
+            f"INFO: archive_job soft_skip day={day_token} "
+            "reason=open_tar_members_unavailable",
+            flush=True,
+          )
+          return ArchiveAppendOutcome(
+            ok=False,
+            soft_requeue=True,
+            skip_finalize_invalidate=True,
+          )
         if store_warm_members is not None:
           maybe_invalidate_open_tar_store_divergence_for_append_batch(
             archive_fname,

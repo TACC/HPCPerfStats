@@ -4852,7 +4852,7 @@ def test_drain_append_soft_requeue_requeues_without_ack(monkeypatch):
   requeues: list[str] = []
   acks: list[str] = []
 
-  def _requeue(client, *, kind, identity, owner_token):
+  def _requeue(client, *, kind, identity, owner_token, **_kw):
     requeues.append(identity)
 
   def _ack(client, *, kind, identity, owner_token):
@@ -4875,6 +4875,7 @@ def test_drain_append_soft_requeue_requeues_without_ack(monkeypatch):
       return outcome
 
   class _Claim:
+    kind = qo.jq.JOB_KIND_APPEND
     identity = "/raw/a"
     owner_token = "tok"
 
