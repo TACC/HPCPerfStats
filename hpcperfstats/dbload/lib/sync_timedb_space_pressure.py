@@ -368,26 +368,53 @@ def fits_hard_reserve(path: str, need: int, *, restore_need: int = 0) -> bool:
   return left >= reserve
 
 
-def reserve(key: str, nbytes: int) -> None:
+def _tar_bytes_on_disk(tar_path: str) -> int:
+  """
+  Return the bytes a restore or append into ``tar_path`` has on disk.
+
+  Counts the tar and its ``.decomp.tmp`` restore temp, so a restore's
+  bytes are counted once before and after its ``os.replace``.
+
+  Args:
+    tar_path (str): Daily tar path, or ``""`` for none.
+
+  Returns:
+    int: Sum of both sizes (0 when ``tar_path`` is empty or missing).
+
+  Examples:
+    >>> _tar_bytes_on_disk("/nonexistent/2026-09-07.tar")
+    0
+  """
+  if not tar_path:
+    return 0
+  return _size(tar_path) + _size(f"{tar_path}.decomp.tmp")
+
+
+def reserve(key: str, nbytes: int, *, tar_path: str = "") -> None:
   """
   Hold ``nbytes`` for admitted work that has not written them yet.
 
   ``fits_hard_reserve`` subtracts every held reservation, so concurrent
-  admissions (append batches, day-close restores) see each other.
+  admissions (append batches, day-close restores) see each other. With
+  ``tar_path`` the reservation shrinks as that tar (and its restore temp)
+  grows, since ``free`` already reflects what was written.
 
   Args:
     key (str): Owner key (the daily tar path).
     nbytes (int): Bytes the work will write.
+    tar_path (str): Tar the work writes into; ``""`` keeps the full
+      reservation until ``release``.
 
   Returns:
     None
 
   Examples:
-    >>> reserve("/d/2026-09-07.tar", 10)
+    >>> reserve("/d/2026-09-07.tar", 10, tar_path="/d/2026-09-07.tar")
     >>> release("/d/2026-09-07.tar")
   """
+  base = _tar_bytes_on_disk(tar_path)
   with _LOCK:
-    _STATE["reserved"][str(key)] = max(0, int(nbytes))
+    _STATE["reserved"][str(key)] = (max(0, int(nbytes)), tar_path, base)
 
 
 def release(key: str) -> None:
@@ -409,27 +436,33 @@ def release(key: str) -> None:
 
 def reserved_bytes() -> int:
   """
-  Return the bytes held by all current reservations.
+  Return the bytes current reservations still have to write.
 
   Returns:
-    int: Sum of reservations.
+    int: Sum over reservations of ``nbytes`` minus what their tar has
+    grown since ``reserve`` (never below 0).
 
   Examples:
     >>> reserved_bytes() >= 0
     True
   """
   with _LOCK:
-    return sum(_STATE["reserved"].values())
+    held = list(_STATE["reserved"].values())
+  return sum(
+    max(0, nbytes - max(0, _tar_bytes_on_disk(tar) - base))
+    for nbytes, tar, base in held
+  )
 
 
 @contextlib.contextmanager
-def reserving(key: str, nbytes: int) -> Iterator[None]:
+def reserving(key: str, nbytes: int, *, tar_path: str = "") -> Iterator[None]:
   """
   Hold a reservation for the duration of a ``with`` block.
 
   Args:
     key (str): Owner key (the daily tar path).
     nbytes (int): Bytes the block will write.
+    tar_path (str): Tar the block writes into (see ``reserve``).
 
   Yields:
     None: While the reservation is held.
@@ -439,7 +472,7 @@ def reserving(key: str, nbytes: int) -> Iterator[None]:
     ...   reserved_bytes() >= 5
     True
   """
-  reserve(key, nbytes)
+  reserve(key, nbytes, tar_path=tar_path)
   try:
     yield
   finally:

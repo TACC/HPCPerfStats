@@ -5988,10 +5988,7 @@ def _append_batch_need(day: str, tar_path: str, take: int) -> int | None:
   if take <= 0 or cfg.get_sync_archive_space_pressure_free_bytes() <= 0:
     return 0
   restore = space.restore_bytes_estimate(tar_path)
-  raw = 0
-  for job in _APPEND_DAY_LISTS.peek_batch(day, take):
-    with contextlib.suppress(OSError):
-      raw += os.path.getsize(job.identity)
+  raw = _APPEND_DAY_LISTS.batch_bytes(day, take)
   if space.fits_hard_reserve(tar_path, restore + raw, restore_need=restore):
     return restore + raw
   space.log_deny("append", tar_path, restore + raw, reason="hard_reserve")
@@ -6087,9 +6084,13 @@ def _try_submit_pending_append_days(
     if not batch_claims:
       continue
     paths = [job.identity for job in batch_claims]
+    # Before submit, so the tar's size is measured before the worker writes;
+    # released in _drain_append_ready.
+    space.reserve(tar_path, need, tar_path=tar_path)
     try:
       async_res = archive_pool.apply_async(_append_worker, ((tar_path, paths),))
     except Exception:
+      space.release(tar_path)
       for job in batch_claims:
         jq.requeue_job(
           client,
@@ -6098,7 +6099,6 @@ def _try_submit_pending_append_days(
           owner_token=job.owner_token,
         )
       raise
-    space.reserve(tar_path, need)  # released in _drain_append_ready
     inflight[tar_path] = async_res
     claims[tar_path] = batch_claims
     submitted += 1

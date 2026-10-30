@@ -6485,7 +6485,7 @@ def ensure_daily_tar_restored_for_append(
     )
   # The append path ("off") holds its own reservation from dispatch.
   need = 0 if space_gate == "off" else sp.restore_bytes_estimate(tar_path)
-  with sp.reserving(f"restore:{tar_path}", need):
+  with sp.reserving(f"restore:{tar_path}", need, tar_path=tar_path):
     for sealed_src in (zst_path, gz_path):
       if not os.path.isfile(sealed_src):
         continue

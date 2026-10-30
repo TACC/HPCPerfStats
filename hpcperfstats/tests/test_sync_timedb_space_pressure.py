@@ -616,6 +616,104 @@ def test_submitted_batch_holds_a_reservation(monkeypatch, tmp_path):
   assert sp.reserved_bytes() == 5 * GIB + 1000
 
 
+def test_reservation_shrinks_as_its_tar_grows(tmp_path):
+  """F9: free already reflects written bytes; do not count them twice."""
+  tar = tmp_path / "2026-09-07.tar"
+  sp.reserve("k", 1000, tar_path=str(tar))
+  assert sp.reserved_bytes() == 1000
+  tmp = tmp_path / "2026-09-07.tar.decomp.tmp"
+  tmp.write_bytes(b"x" * 300)
+  assert sp.reserved_bytes() == 700
+  tmp.replace(tar)  # the restore's os.replace keeps the count
+  assert sp.reserved_bytes() == 700
+  with tar.open("ab") as fh:
+    fh.write(b"y" * 900)
+  assert sp.reserved_bytes() == 0
+  sp.reserve("plain", 50)
+  assert sp.reserved_bytes() == 50
+
+
+def test_reservation_ignores_a_tar_that_shrank(tmp_path):
+  tar = tmp_path / "2026-09-07.tar"
+  tar.write_bytes(b"x" * 500)
+  sp.reserve("k", 100, tar_path=str(tar))
+  tar.write_bytes(b"x" * 10)  # e.g. a rollback; never more than reserved
+  assert sp.reserved_bytes() == 100
+
+
+def _one_parked_day(monkeypatch, tmp_path, *, restore):
+  qo.reset_append_day_lists_for_tests()
+  raw = tmp_path / "raw-2026-09-01"
+  raw.write_bytes(b"r")
+  qo._APPEND_DAY_LISTS.add("2026-09-01", _claim(str(raw)))
+  monkeypatch.setattr(
+    qo,
+    "daily_tar_path_for_stats_path",
+    lambda p, d: f"{d}/{p.rsplit('raw-', 1)[1]}.tar",
+  )
+  monkeypatch.setattr(qo, "_discover_bg_is_busy", lambda: False)
+  monkeypatch.setattr(sp, "restore_bytes_estimate", lambda _t: restore)
+  _set(monkeypatch, threshold=TIB, free=TIB // 2)
+  return lambda pool: qo._try_submit_pending_append_days(
+    client=SyncTimedbJobStore(""),
+    cap=4,
+    inflight={},
+    claims={},
+    archive_pool=pool,
+    tgz_archive_dir=str(tmp_path),
+    batch_size=1,
+    allow_partial=True,
+  )
+
+
+def test_batch_is_reserved_before_the_worker_can_write(monkeypatch, tmp_path):
+  submit = _one_parked_day(monkeypatch, tmp_path, restore=GIB)
+  at_submit = []
+
+  class _Pool:
+    def apply_async(self, fn, args):
+      at_submit.append(sp.reserved_bytes())
+      return object()
+
+  assert submit(_Pool()) == 1
+  assert at_submit == [GIB + 1]
+
+
+def test_failed_submit_releases_its_reservation(monkeypatch, tmp_path):
+  submit = _one_parked_day(monkeypatch, tmp_path, restore=GIB)
+
+  class _Pool:
+    def apply_async(self, fn, args):
+      raise RuntimeError("pool closed")
+
+  with pytest.raises(RuntimeError):
+    submit(_Pool())
+  assert sp.reserved_bytes() == 0
+
+
+def test_parked_raw_sizes_are_read_once(monkeypatch, tmp_path):
+  """F10: the gate asked for every parked file's size on every tick."""
+  from hpcperfstats.dbload.lib import sync_timedb_append_day_lists as adl
+
+  lists = adl.AppendDayClaimLists()
+  for i in range(3):
+    raw = tmp_path / f"r{i}"
+    raw.write_bytes(b"x" * (i + 1))
+    lists.add("2026-09-01", _claim(str(raw)))
+  reads = []
+  real = adl.os.path.getsize
+  monkeypatch.setattr(
+    adl.os.path, "getsize", lambda p: reads.append(p) or real(p)
+  )
+  assert lists.batch_bytes("2026-09-01", 3) == 6
+  assert lists.batch_bytes("2026-09-01", 3) == 6
+  assert len(reads) == 3
+  lists.pop_batch("2026-09-01", 1)
+  assert lists.batch_bytes("2026-09-01", 5) == 5
+  assert len(reads) == 3
+  assert set(lists._sizes) == {str(tmp_path / "r1"), str(tmp_path / "r2")}
+
+
 def test_append_drain_releases_the_reservation():
   src = inspect.getsource(qo._drain_append_ready)
   assert "space.release(" in src

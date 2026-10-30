@@ -9,8 +9,10 @@ Attributes:
 
 from __future__ import annotations
 
+import os
 import threading
 from collections import deque
+from itertools import islice
 from typing import Any
 
 
@@ -28,6 +30,8 @@ class AppendDayClaimLists:
   Attributes:
     _lock: Mutex covering the day map.
     _days: Calendar day ``YYYY-MM-DD`` -> claim deque.
+    _sizes: Parked identity -> raw file size, filled by ``batch_bytes`` and
+      dropped when the claim is popped (a closed raw file does not grow).
   """
 
   def __init__(self, lock: threading.Lock | None = None) -> None:
@@ -46,6 +50,7 @@ class AppendDayClaimLists:
     """
     self._lock = lock if lock is not None else threading.Lock()
     self._days: dict[str, deque[Any]] = {}
+    self._sizes: dict[str, int] = {}
 
   def add(self, day: str, claim: Any) -> None:
     """
@@ -105,6 +110,7 @@ class AppendDayClaimLists:
         return []
       while take > 0 and bucket:
         out.append(bucket.popleft())
+        self._sizes.pop(str(getattr(out[-1], "identity", "") or ""), None)
         take -= 1
       if not bucket:
         del self._days[key]
@@ -149,7 +155,42 @@ class AppendDayClaimLists:
     key = str(day or "")
     with self._lock:
       bucket = self._days.get(key)
-      return [] if bucket is None else list(bucket)[: max(0, int(n))]
+      return [] if bucket is None else list(islice(bucket, max(0, int(n))))
+
+  def batch_bytes(self, day: str, n: int) -> int:
+    """
+    Return the raw bytes of the next ``n`` claims of ``day``.
+
+    Each size is read once while the claim is parked (the space gate asks
+    every tick under pressure); a file that cannot be read counts 0 and is
+    read again next time.
+
+    Args:
+      day (str): Calendar day ``YYYY-MM-DD``.
+      n (int): Number of oldest claims to measure.
+
+    Returns:
+      int: Sum of their file sizes.
+
+    Examples:
+      >>> lists = AppendDayClaimLists()
+      >>> lists.add("2026-06-01", type("C", (), {"identity": "/nope"})())
+      >>> lists.batch_bytes("2026-06-01", 5)
+      0
+    """
+    idents = [
+      str(getattr(c, "identity", "") or "") for c in self.peek_batch(day, n)
+    ]
+    with self._lock:
+      known = {i: self._sizes[i] for i in idents if i in self._sizes}
+    for ident in set(idents) - set(known):
+      try:
+        known[ident] = int(os.path.getsize(ident))
+      except OSError:
+        continue
+      with self._lock:
+        self._sizes[ident] = known[ident]
+    return sum(known.get(i, 0) for i in idents)
 
   def peek_first(self, day: str) -> Any:
     """
@@ -227,6 +268,7 @@ class AppendDayClaimLists:
     """
     with self._lock:
       self._days.clear()
+      self._sizes.clear()
 
 
 _DAY_REMAINDER_LOCK = threading.Lock()
