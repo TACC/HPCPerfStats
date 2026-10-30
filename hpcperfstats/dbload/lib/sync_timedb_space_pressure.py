@@ -100,27 +100,34 @@ def reset_for_tests() -> None:
 reset_for_tests()
 
 
-def _free_bytes(path: str) -> int:
+def _free_bytes(path: str) -> int | None:
   """
-  Return free bytes on the filesystem holding ``path`` (nearest existing dir).
+  Return free bytes on the filesystem holding ``path`` or its directory.
+
+  Only ``path`` and its parent (the daily dir of a tar not restored yet)
+  are tried: walking further up would measure the filesystem under a
+  missing archive mount.
 
   Args:
     path (str): File or directory on the archive filesystem.
 
   Returns:
-    int: Free bytes, or 0 when no ancestor can be read.
+    int | None: Free bytes, or None when neither exists or statfs fails
+    (unknown, not full).
 
   Examples:
     >>> _free_bytes("/") >= 0
     True
+    >>> _free_bytes("/nonexistent-dir/2026-09-07.tar") is None
+    True
   """
   target = os.path.abspath(str(path or "/"))
-  while not os.path.exists(target) and os.path.dirname(target) != target:
+  if not os.path.exists(target):
     target = os.path.dirname(target)
   try:
     return int(shutil.disk_usage(target).free)
   except OSError:
-    return 0
+    return None
 
 
 def _size(path: str) -> int:
@@ -164,6 +171,9 @@ def under_pressure(path: str = "") -> bool:
   """
   Update and return the pressure state (enter below X, leave at 2X free).
 
+  When free space cannot be read (statfs error, missing archive dir) the
+  state is left as it was: an unknown is not a full disk.
+
   Args:
     path (str): Path on the archive filesystem; empty uses the INI
       ``daily_archive_dir``.
@@ -182,7 +192,9 @@ def under_pressure(path: str = "") -> bool:
     else 0
   )
   with _LOCK:
-    if threshold > 0 and free < threshold:
+    if free is None:
+      pass  # unknown free space keeps the current state
+    elif threshold > 0 and free < threshold:
       _STATE["pressure"] = True
     elif threshold <= 0 or free >= 2 * threshold:
       _STATE.update(pressure=False, append_day=None, hold_since=None)
@@ -339,7 +351,8 @@ def fits_hard_reserve(path: str, need: int, *, restore_need: int = 0) -> bool:
 
   Returns:
     bool: True when ``free - need - restore_need / 2`` stays at or above
-    ``sync_archive_min_free_bytes``, or when nothing is written.
+    ``sync_archive_min_free_bytes``, or when nothing is written; False when
+    free space cannot be read.
 
   Examples:
     >>> fits_hard_reserve("/", 0)
@@ -347,10 +360,11 @@ def fits_hard_reserve(path: str, need: int, *, restore_need: int = 0) -> bool:
   """
   if int(need) <= 0:
     return True
+  free = _free_bytes(path)
+  if free is None:
+    return False  # cannot prove the reserve; callers defer
   reserve = int(cfg.get_sync_archive_min_free_bytes())
-  left = (
-    _free_bytes(path) - reserved_bytes() - int(need) - int(restore_need) // 2
-  )
+  left = free - reserved_bytes() - int(need) - int(restore_need) // 2
   return left >= reserve
 
 
@@ -571,7 +585,8 @@ def census_token(daily_dir: str) -> str:
   if threshold <= 0:
     return ""
   pressure = under_pressure(daily_dir)
-  free = _tib(_free_bytes(daily_dir or "/"))
+  known = _free_bytes(daily_dir or "/")
+  free = "unknown" if known is None else _tib(known)
   if not pressure:
     return f" space=ok free={free} pressure_below={_tib(threshold)}"
   with _LOCK:

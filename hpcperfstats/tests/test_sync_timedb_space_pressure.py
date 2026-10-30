@@ -84,6 +84,39 @@ def test_pressure_starts_below_x_and_ends_at_2x(monkeypatch):
   assert not sp.under_pressure("/d")
 
 
+def _statfs(monkeypatch, *, free=None, error=None):
+  def disk_usage(_path):
+    if error:
+      raise error
+    return type("U", (), {"free": free})()
+
+  monkeypatch.setattr(sp.shutil, "disk_usage", disk_usage)
+
+
+def test_statfs_error_is_unknown_not_a_full_disk(monkeypatch, tmp_path):
+  """F6: EIO on statfs used to read as 0 free and turn pressure on."""
+  monkeypatch.setattr(
+    cfg, "get_sync_archive_space_pressure_free_bytes", lambda: TIB
+  )
+  _statfs(monkeypatch, error=OSError(5, "EIO"))
+  assert not sp.under_pressure(str(tmp_path))
+  _statfs(monkeypatch, free=TIB // 2)
+  assert sp.under_pressure(str(tmp_path))
+  _statfs(monkeypatch, error=OSError(5, "EIO"))
+  assert sp.under_pressure(str(tmp_path))  # unknown keeps the state
+  assert not sp.fits_hard_reserve(str(tmp_path), 1)
+  assert "free=unknown" in sp.census_token(str(tmp_path))
+
+
+def test_missing_archive_dir_is_not_measured_on_a_parent(monkeypatch, tmp_path):
+  """F7: a lost mount must not be measured on the filesystem beneath it."""
+  missing = tmp_path / "mnt" / "daily"
+  assert sp._free_bytes(str(missing / "2026-09-07.tar")) is None
+  assert sp._free_bytes(str(missing)) is None
+  missing.mkdir(parents=True)
+  assert sp._free_bytes(str(missing / "2026-09-07.tar")) > 0
+
+
 def test_no_appends_while_a_day_close_finishes_a_day(monkeypatch):
   _set(monkeypatch, threshold=TIB, free=TIB // 2)
   sp.note_day_close_stage("2026-09-07", "seal")
