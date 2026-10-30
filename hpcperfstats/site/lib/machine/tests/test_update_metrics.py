@@ -7209,7 +7209,10 @@ def test_public_ef_refresher_refreshes_and_records_stats(monkeypatch):
     "hpcperfstats.dbload.lib.sync_timedb_session_executor.SyncTimedbThreadPool",
     _Pool,
   )
-  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  closed = []
+  monkeypatch.setattr(
+    update_metrics.connections, "close_all", lambda: closed.append(True)
+  )
   monkeypatch.setattr(
     update_metrics,
     "_run_public_ef_artifacts_parallel_phase",
@@ -7220,6 +7223,7 @@ def test_public_ef_refresher_refreshes_and_records_stats(monkeypatch):
   assert ref.snapshot() == {"tasks_total": 3, "degraded": 0}
   assert pools[0]["thread_role"] == "public-ef-pool"
   assert pools[0]["max_workers"] == update_metrics.PUBLIC_EF_POOL_THREADS
+  assert closed == [True]  # the refresher thread releases its DB backend
 
 
 @pytest.mark.machine_unit_mock

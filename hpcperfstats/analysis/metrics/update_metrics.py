@@ -7289,7 +7289,8 @@ class _PublicEfRefresher:
     finally:
       pool.close()
       pool.join()
-      close_old_connections()
+      # Long-lived thread: CONN_MAX_AGE never fires, release its backend.
+      connections.close_all()
     with self._lock:
       self._last = dict(stats or {})
       self._refreshes += 1
