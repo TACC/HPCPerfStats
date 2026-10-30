@@ -2448,7 +2448,11 @@ def _closed_raw_not_archived(
   that discover never queued would be left on disk unarchived when the day
   seals (hpcperfstats04 2026-10-29: 08-25 sealed without 189 of its files).
   A file counts as archived when it is a same-size member of the open tar or
-  of the sealed ``.tar.zst`` (sealed member map).
+  of the sealed ``.tar.zst`` (sealed member map). The day's raw comes from
+  the census fd walk streamed and kept by filename day, not the shared
+  day-scoped collect, which serializes on a process lock behind verify
+  passes and builds the whole archive listing (hpcperfstats04 2026-10-29:
+  08-27's seal waited 14+ minutes on that lock).
 
   Args:
     archive_data_dir (str): Raw stats archive root.
@@ -2467,13 +2471,24 @@ def _closed_raw_not_archived(
     sync_timedb_archive_helpers as ah,
     sync_timedb_sealed_member_map as smm,
   )
-  from hpcperfstats.dbload.lib.conf_parser import get_host_name_ext
 
+  day = calendar_date_from_daily_tar_path(tar_path)
+  # Host dirs end in host_name_ext (same rule as the discover filter).
+  suffix = (cfg.get_host_name_ext() or "").strip()
+  if day is None or not suffix:
+    return []
   try:
-    by_gz = ah.build_day_scoped_closed_raw_by_gz(
-      archive_data_dir, get_host_name_ext() or "", tgz_archive_dir, tar_path
-    )
-    raw = [path for paths in (by_gz or {}).values() for path in paths or ()]
+    raw = [
+      rec.path
+      for rec in iter_find_printf_records_streaming(
+        iter_find_stats_stdout_chunks(archive_data_dir)
+      )
+      if os.path.basename(os.path.dirname(rec.path)).endswith(suffix)
+      and not is_internal_archive_stats_path(rec.path)
+      and not _is_lock_name(os.path.basename(rec.path))
+      and jd.calendar_day_from_find_record(rec, tgz_archive_dir) == day
+      and not ah.stats_file_is_active_segment(rec.path)
+    ]
     if not raw:
       return []
     in_tar = {}

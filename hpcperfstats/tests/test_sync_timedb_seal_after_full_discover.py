@@ -9,7 +9,9 @@ reached c102-004/c102-005).
 """
 
 import contextlib
+import os
 import tarfile
+from datetime import datetime
 
 import pytest
 
@@ -33,8 +35,9 @@ def _seal_harness(tmp_path, monkeypatch):
   daily = tmp_path / "daily"
   daily.mkdir()
   tar = daily / "2020-01-10.tar"
-  raw_in = tmp_path / "h" / "1578657600"
-  raw_in.parent.mkdir()
+  # Raw archive and daily archive are separate trees (as on the sites).
+  raw_in = tmp_path / "archive" / "h" / "1578657600"
+  raw_in.parent.mkdir(parents=True)
   raw_in.write_text("in tar")
   with tarfile.open(tar, "w") as tf:
     tf.add(str(raw_in), arcname=str(raw_in).lstrip("/"))
@@ -92,7 +95,7 @@ def _seal_harness(tmp_path, monkeypatch):
     return qo._run_day_close_job(
       "2020-01-10",
       tgz_archive_dir=str(daily),
-      archive_data_dir=str(tmp_path),
+      archive_data_dir=str(tmp_path / "archive"),
       log_fn=lambda msg, **_k: logs.append(msg),
     )
 
@@ -161,20 +164,36 @@ def _day_raw(tmp_path, monkeypatch, sealed=None):
   daily = tmp_path / "daily"
   daily.mkdir()
   tar = daily / "2020-01-10.tar"
-  host = tmp_path / "h"
+  monkeypatch.setattr(qo.cfg, "get_host_name_ext", lambda: ".x.edu")
+  host = tmp_path / "c1.x.edu"
   host.mkdir()
-  in_tar, in_zst, nowhere = (host / n for n in ("1", "2", "3"))
-  for raw in (in_tar, in_zst, nowhere):
+  stray = tmp_path / "notahost"
+  stray.mkdir()
+  noon = int(datetime(2020, 1, 10, 12).timestamp())
+  in_tar, in_zst, nowhere, active = (host / str(noon + i) for i in range(4))
+  other_day = host / str(noon + 86400)
+  lock = host / f"{noon + 5}.fnctl.lock"
+  not_a_host = stray / str(noon + 6)
+  for raw in (in_tar, in_zst, nowhere, active, other_day, lock, not_a_host):
     raw.write_text("raw")
+  os.link(active, host / "current")  # listend is still writing it
   with tarfile.open(tar, "w") as tf:
     tf.add(str(in_tar), arcname=str(in_tar).lstrip("/"))
   ah.invalidate_mutable_tar_authority_members(str(tar))
+  walked = (in_tar, in_zst, nowhere, active, other_day, lock, not_a_host)
   monkeypatch.setattr(
-    ah,
-    "build_day_scoped_closed_raw_by_gz",
-    lambda *a, **k: {
-      str(tar) + ".zst": [str(in_tar), str(in_zst), str(nowhere)]
-    },
+    qo,
+    "iter_find_stats_stdout_chunks",
+    lambda *_a, **_k: iter(
+      ["\0".join((str(p), "1", "3", "1", "")).encode() for p in walked]
+    ),
+  )
+
+  def _no_shared_collect(*_a, **_k):
+    raise AssertionError("seal check must not use the shared day collect")
+
+  monkeypatch.setattr(
+    ah, "build_day_scoped_closed_raw_by_gz", _no_shared_collect
   )
   members = {str(in_zst).lstrip("/"): 3} if sealed is None else sealed
   monkeypatch.setattr(
@@ -189,6 +208,15 @@ def test_unarchived_raw_is_in_neither_the_open_tar_nor_the_sealed_copy(
 ):
   daily, tar, nowhere = _day_raw(tmp_path, monkeypatch)
   assert qo._closed_raw_not_archived(str(tmp_path), daily, tar) == [nowhere]
+
+
+def test_unarchived_check_does_not_wait_on_the_shared_day_collect_lock(
+  tmp_path, monkeypatch
+):
+  """04 2026-10-29: 08-27's seal waited 14+ min behind verify-pass collects."""
+  daily, tar, nowhere = _day_raw(tmp_path, monkeypatch)
+  with ah._DAY_SCOPED_CLOSED_RAW_COLLECT_LOCK:
+    assert qo._closed_raw_not_archived(str(tmp_path), daily, tar) == [nowhere]
 
 
 def test_unarchived_check_fails_closed_on_an_unreadable_open_tar(
