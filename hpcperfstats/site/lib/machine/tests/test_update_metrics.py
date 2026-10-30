@@ -6772,3 +6772,40 @@ def test_enqueue_ready_unique_never_queues_a_scheduled_jid_twice():
     )
     == 1
   )
+
+
+@pytest.mark.machine_unit_mock
+def test_candidate_rescan_failures_are_logged_not_swallowed(monkeypatch):
+  """S5: a failing rescan query leaves a counted, rate-limited log line."""
+  lines = []
+  monkeypatch.setattr(
+    update_metrics, "log_print", lambda msg, **k: lines.append(str(msg))
+  )
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+
+  def _boom(*a, **k):
+    raise OperationalError("canceling statement due to statement timeout")
+
+  monkeypatch.setattr(update_metrics, "_jobs_queryset", _boom)
+  stop = threading.Event()
+  thread = update_metrics._start_candidate_rescan_thread(
+    dates=[datetime(2026, 8, 15), datetime(2026, 8, 14)],
+    min_time=300,
+    rerun=False,
+    rescan_candidate_jids=deque(),
+    rescan_seen_jids=set(),
+    rescan_seen_order=deque(),
+    rescan_seen_cap=10,
+    rescan_lock=threading.Lock(),
+    stop_event=stop,
+  )
+  deadline = time.monotonic() + 2.0
+  while not lines and time.monotonic() < deadline:
+    time.sleep(0.01)
+  stop.set()
+  thread.join(timeout=2.0)
+  failed = [ln for ln in lines if "candidate rescan failed" in ln]
+  assert len(failed) == 1  # second day's failure is rate-limited
+  assert "day=2026-08-15" in failed[0]
+  assert "OperationalError" in failed[0] and "statement timeout" in failed[0]

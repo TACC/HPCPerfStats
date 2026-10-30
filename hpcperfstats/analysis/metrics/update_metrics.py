@@ -52,6 +52,7 @@ Attributes:
   READINESS_PROBE_TARGET_STEP: Attribute.
   RESCAN_FETCH_LIMIT: Attribute.
   RESCAN_IDLE_INTERVAL_MAX_SECONDS: Attribute.
+  RESCAN_ERROR_LOG_INTERVAL_SECONDS: Minimum seconds between rescan error logs.
   RESCAN_INTERVAL_SECONDS: Attribute.
   RESCAN_SEEN_MIN_CAP: Attribute.
   RESCAN_SEEN_MULTIPLIER: Attribute.
@@ -212,6 +213,8 @@ LISTING_QUERY_COOLDOWN_SECONDS = 60
 RESCAN_INTERVAL_SECONDS = 5.0
 # When rescan loops add no new jids, sleep backs off (capped) to cut duplicate SQL.
 RESCAN_IDLE_INTERVAL_MAX_SECONDS = 60.0
+# Rescan query failures are counted and logged at most this often.
+RESCAN_ERROR_LOG_INTERVAL_SECONDS = 300.0
 STALL_WARNING_EVERY_PASSES = 200
 STALL_EXIT_AFTER_SECONDS = 900.0
 # User-facing stall_reason strings (docs/TESTING.md); producer sets
@@ -5032,6 +5035,8 @@ def _start_candidate_rescan_thread(
     )
     close_old_connections()
     idle_rounds = 0
+    errors_total = 0
+    last_error_log_at = None
     try:
       while not shutdown_requested[0] and not stop_event.is_set():
         added_any = False
@@ -5050,7 +5055,20 @@ def _start_candidate_rescan_thread(
                 "host_list",
               )[:RESCAN_FETCH_LIMIT]
             )
-          except Exception:
+          except Exception as exc:
+            errors_total += 1
+            now = time.monotonic()
+            if (
+              last_error_log_at is None
+              or now - last_error_log_at >= RESCAN_ERROR_LOG_INTERVAL_SECONDS
+            ):
+              last_error_log_at = now
+              log_print(
+                f"metrics scheduler: candidate rescan failed day={d:%Y-%m-%d} "
+                f"errors_total={errors_total} {type(exc).__name__}: "
+                f"{_truncate_census_error_message(exc)}",
+                flush=True,
+              )
             continue
           if not candidates:
             continue
