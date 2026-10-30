@@ -7202,3 +7202,35 @@ def test_public_ef_refresher_refreshes_and_records_stats(monkeypatch):
   assert ref.snapshot() == {"tasks_total": 3, "degraded": 0}
   assert pools[0]["thread_role"] == "public-ef-pool"
   assert pools[0]["max_workers"] == update_metrics.PUBLIC_EF_POOL_THREADS
+
+
+@pytest.mark.machine_unit_mock
+def test_degraded_public_ef_refreshes_warn_and_reach_the_progress_line(
+  monkeypatch,
+):
+  """S11: a degraded /pub/ refresh is a counted warning, not a quiet line."""
+  lines = []
+  monkeypatch.setattr(
+    update_metrics, "log_print", lambda msg, **k: lines.append(str(msg))
+  )
+  monkeypatch.setattr(
+    update_metrics,
+    "_PUBLIC_EF_STATUS",
+    {
+      "refreshes": 0,
+      "degraded_refreshes": 0,
+      "consecutive_degraded": 0,
+      "last": {},
+    },
+  )
+  bad = {"degraded": 0, "worker_exceptions": 2, "pending_tasks": 1}
+  update_metrics._record_public_ef_refresh(bad)
+  status = update_metrics._record_public_ef_refresh({"error": "boom"})
+  assert status["consecutive_degraded"] == 2
+  assert sum("WARNING /pub/ EF refresh degraded" in ln for ln in lines) == 2
+  fields = update_metrics._public_ef_progress_fields({}, "background")
+  assert fields["public_ef_degraded"] == 2
+  update_metrics._record_public_ef_refresh({"degraded": 0, "tasks_total": 9})
+  fields = update_metrics._public_ef_progress_fields({}, "background")
+  assert fields["public_ef_degraded"] == 0
+  assert fields["public_ef_pending_tasks"] == 0

@@ -82,6 +82,8 @@ Attributes:
   _COVERAGE_MARGIN_WARN_LOGGED: Attribute.
   _METRICS_PREWARM_RETRY_ATTEMPTS: Retries for sync detail/plot prewarm.
   _WORKER_FAILURE_KINDS: Outcome kinds counted as worker failures.
+  _PUBLIC_EF_STATUS: Background /pub/ EF refresher counters and last stats.
+  _PUBLIC_EF_STATUS_LOCK: Guards ``_PUBLIC_EF_STATUS``.
 """
 
 from __future__ import annotations
@@ -5281,23 +5283,142 @@ def _run_public_ef_artifacts_parallel_phase(
     )
   if not isinstance(pub_stats, dict):
     pub_stats = {}
-  if (
-    int(pub_stats.get("degraded", 0)) > 0
-    or int(pub_stats.get("worker_exceptions", 0)) > 0
-    or int(pub_stats.get("watchdog_timeouts", 0)) > 0
-    or int(pub_stats.get("pending_tasks", 0)) > 0
-  ):
+  if _public_ef_is_degraded(pub_stats):
     log_print(
-      f"metrics scheduler: /pub/ EF artifacts degraded before job compute {pub_stats}",
+      f"metrics scheduler: /pub/ EF artifacts degraded {pub_stats}",
       flush=True,
     )
   else:
     log_print(
-      "metrics scheduler: finished /pub/ EF artifacts (parallel) before job compute "
-      f"{pub_stats}",
+      f"metrics scheduler: finished /pub/ EF artifacts (parallel) {pub_stats}",
       flush=True,
     )
   return pub_stats
+
+
+def _public_ef_is_degraded(pub_stats: Any) -> bool:
+  """
+  True when a /pub/ EF refresh did not rebuild every artifact cleanly.
+
+  Args:
+    pub_stats (Any): Stats from the parallel refresh (``error`` set when it
+      raised).
+
+  Returns:
+    bool: Degraded, failed, timed out, left tasks pending, or raised.
+
+  Examples:
+    >>> _public_ef_is_degraded({"degraded": 0, "pending_tasks": 0})
+    False
+    >>> _public_ef_is_degraded({"error": "OperationalError: x"})
+    True
+  """
+  stats = pub_stats if isinstance(pub_stats, dict) else {}
+  return bool(stats.get("error")) or any(
+    int(stats.get(key, 0) or 0) > 0
+    for key in (
+      "degraded",
+      "worker_exceptions",
+      "watchdog_timeouts",
+      "pending_tasks",
+    )
+  )
+
+
+# Background /pub/ EF refresher status for the hourly progress line.
+_PUBLIC_EF_STATUS: dict[str, Any] = {
+  "refreshes": 0,
+  "degraded_refreshes": 0,
+  "consecutive_degraded": 0,
+  "last": {},
+}
+_PUBLIC_EF_STATUS_LOCK = threading.Lock()
+
+
+def _public_ef_progress_fields(stats: Any, public_ef: str) -> dict[str, Any]:
+  """
+  /pub/ EF fields for the hourly progress line.
+
+  ``blocking`` passes report their own up-front phase; ``background`` passes
+  report the refresher's last refresh and its consecutive degraded count.
+
+  Args:
+    stats (Any): Scheduler stats (caller holds the stats lock).
+    public_ef (str): ``blocking`` or ``background``.
+
+  Returns:
+    dict[str, Any]: ``public_ef_*`` keys.
+
+  Examples:
+    >>> _public_ef_progress_fields(
+    ...   {
+    ...     "public_ef_degraded": 1,
+    ...     "public_ef_worker_exceptions_total": 0,
+    ...     "public_ef_watchdog_timeouts_total": 0,
+    ...     "public_ef_pending_tasks": 0,
+    ...   },
+    ...   "blocking",
+    ... )["public_ef_degraded"]
+    1
+  """
+  if public_ef == "background":
+    with _PUBLIC_EF_STATUS_LOCK:
+      last = dict(_PUBLIC_EF_STATUS["last"])
+      consecutive = int(_PUBLIC_EF_STATUS["consecutive_degraded"])
+    return {
+      "public_ef_degraded": consecutive,
+      "public_ef_worker_exceptions_total": int(
+        last.get("worker_exceptions", 0) or 0
+      ),
+      "public_ef_watchdog_timeouts_total": int(
+        last.get("watchdog_timeouts", 0) or 0
+      ),
+      "public_ef_pending_tasks": int(last.get("pending_tasks", 0) or 0),
+    }
+  return {
+    "public_ef_degraded": stats["public_ef_degraded"],
+    "public_ef_worker_exceptions_total": stats[
+      "public_ef_worker_exceptions_total"
+    ],
+    "public_ef_watchdog_timeouts_total": stats[
+      "public_ef_watchdog_timeouts_total"
+    ],
+    "public_ef_pending_tasks": stats["public_ef_pending_tasks"],
+  }
+
+
+def _record_public_ef_refresh(pub_stats: Any) -> dict[str, Any]:
+  """
+  Record one background /pub/ EF refresh and warn when it degraded.
+
+  Args:
+    pub_stats (Any): Stats of the finished refresh.
+
+  Returns:
+    dict[str, Any]: Copy of the updated ``_PUBLIC_EF_STATUS``.
+
+  Examples:
+    >>> _record_public_ef_refresh({"degraded": 0})["consecutive_degraded"]
+    0
+  """
+  degraded = _public_ef_is_degraded(pub_stats)
+  with _PUBLIC_EF_STATUS_LOCK:
+    _PUBLIC_EF_STATUS["refreshes"] += 1
+    _PUBLIC_EF_STATUS["last"] = dict(pub_stats or {})
+    if degraded:
+      _PUBLIC_EF_STATUS["degraded_refreshes"] += 1
+      _PUBLIC_EF_STATUS["consecutive_degraded"] += 1
+    else:
+      _PUBLIC_EF_STATUS["consecutive_degraded"] = 0
+    status = dict(_PUBLIC_EF_STATUS)
+  if degraded:
+    log_print(
+      "metrics scheduler: WARNING /pub/ EF refresh degraded "
+      f"consecutive={status['consecutive_degraded']} "
+      f"degraded_total={status['degraded_refreshes']} stats={pub_stats}",
+      flush=True,
+    )
+  return status
 
 
 def _reset_metrics_pool_after_public_phase(metrics_manager: Any) -> None:
@@ -7016,6 +7137,7 @@ class _PublicEfRefresher:
     with self._lock:
       self._last = dict(stats or {})
       self._refreshes += 1
+    _record_public_ef_refresh(stats)
     return stats
 
   def _run(self) -> None:
@@ -7221,14 +7343,7 @@ def update_metrics_for_dates(
             "attempted_total": stats["attempted_total"],
             "metrics_ok_total": stats["metrics_ok_total"],
             "prewarm_failed_total": stats["prewarm_failed_total"],
-            "public_ef_degraded": stats["public_ef_degraded"],
-            "public_ef_worker_exceptions_total": stats[
-              "public_ef_worker_exceptions_total"
-            ],
-            "public_ef_watchdog_timeouts_total": stats[
-              "public_ef_watchdog_timeouts_total"
-            ],
-            "public_ef_pending_tasks": stats["public_ef_pending_tasks"],
+            **_public_ef_progress_fields(stats, public_ef),
             "prewarm_backlog_jobs": prewarm_snapshot["prewarm_backlog_jobs"],
             "prewarm_oldest_pending_age_s": prewarm_snapshot[
               "prewarm_oldest_pending_age_s"
