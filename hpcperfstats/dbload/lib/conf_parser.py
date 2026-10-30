@@ -106,6 +106,7 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "metrics_readiness_require_window_coverage"),
   ("PIPELINE", "metrics_readiness_start_margin_seconds"),
   ("PIPELINE", "metrics_readiness_end_margin_seconds"),
+  ("PIPELINE", "metrics_readiness_host_wait_seconds"),
   ("PIPELINE", "sync_ingest_pool_processes"),
   ("PIPELINE", "sync_codon_context_pool_fraction"),
   ("PIPELINE", "sync_codon_worker_recycle_rss_mib"),
@@ -283,6 +284,7 @@ INI_OPTION_DEFAULTS = {
   "metrics_readiness_require_window_coverage": "yes",
   "metrics_readiness_start_margin_seconds": "600",
   "metrics_readiness_end_margin_seconds": "600",
+  "metrics_readiness_host_wait_seconds": "21600",
   "sync_ingest_pool_processes": "64",
   "sync_codon_context_pool_fraction": "1.0",
   "sync_codon_worker_recycle_rss_mib": "1536",
@@ -2891,6 +2893,30 @@ def get_metrics_readiness_end_margin_seconds() -> Any:
     )
   except TypeError, ValueError, OverflowError:
     return 600.0
+
+
+def get_metrics_readiness_host_wait_seconds() -> float:
+  """
+  Seconds after job end to wait for every host's telemetry before compute.
+
+  Readiness normally requires each allocated host to cover the job window.
+  Once a job ended this long ago, the hosts that did report are enough (a
+  dead node must not block a job forever); a later ingest of the missing
+  hosts marks the job dirty for a recompute.
+
+  Returns:
+    float: Non-negative seconds (``[PIPELINE]
+    metrics_readiness_host_wait_seconds``, default 21600).
+
+  Examples:
+    >>> get_metrics_readiness_host_wait_seconds()  # doctest: +SKIP
+    21600.0
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(0.0, float(_pipeline_get("metrics_readiness_host_wait_seconds")))
+  except TypeError, ValueError, OverflowError:
+    return 21600.0
 
 
 def get_metrics_run_poll_timeout_s() -> Any:

@@ -201,6 +201,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # End edge tolerance seconds (default 600): MAX(time) in window must be >= end - margin.
 # metrics_readiness_end_margin_seconds = 600
 
+# Seconds after job end to wait for every host to cover the window before computing with the hosts that reported (default 21600).
+# metrics_readiness_host_wait_seconds = 21600
+
 # Ingest parse pool size and Codon worker process count (default 64; capped at 128 Codon workers).
 # sync_ingest_pool_processes = 64
 

@@ -6709,3 +6709,75 @@ def test_consumer_stall_progress_counts_metrics_not_only_finished():
   assert not update_metrics._maybe_trigger_consumer_stall_exit(
     stats, time.monotonic() - 10_000.0, threading.Lock()
   )
+
+
+def _c1_job_rows(end_time):
+  """Two-host job whose window ends at ``end_time`` (6h long)."""
+  return [
+    {
+      "jid": "c1job",
+      "start_time": end_time - timedelta(hours=6),
+      "end_time": end_time,
+      "host_list": ["n1.x", "n2.x"],
+    }
+  ]
+
+
+def _c1_patch_one_host_covering(monkeypatch, rows):
+  """n1 covers the whole window; n2 only reported its first hour."""
+  start, end = rows[0]["start_time"], rows[0]["end_time"]
+  monkeypatch.setattr(
+    update_metrics.cfg,
+    "get_metrics_readiness_require_window_coverage",
+    lambda: True,
+  )
+  monkeypatch.setattr(
+    update_metrics.cfg,
+    "get_metrics_readiness_host_wait_seconds",
+    lambda: 3600.0,
+  )
+  monkeypatch.setattr(
+    update_metrics,
+    "_in_window_per_host_bounds",
+    lambda hosts, st, et: (
+      {"n1.x": start, "n2.x": start},
+      {"n1.x": end, "n2.x": start + timedelta(hours=1)},
+    ),
+  )
+  monkeypatch.setattr(
+    update_metrics,
+    "_maybe_persist_window_coverage_gate_failure",
+    lambda *a, **k: False,
+  )
+
+
+@pytest.mark.machine_unit_mock
+def test_readiness_waits_for_every_host_before_host_wait(monkeypatch):
+  """C1: union-of-hosts coverage is not enough while hosts may still report."""
+  rows = _c1_job_rows(timezone.now() - timedelta(minutes=20))
+  _c1_patch_one_host_covering(monkeypatch, rows)
+  bounds = update_metrics._in_window_min_max_by_job_rows(rows)
+  assert bounds.host_coverage["c1job"] == (1, 2)
+  ready, _ = update_metrics._ready_jids_and_bounds_from_job_rows(rows)
+  assert ready == []
+
+
+@pytest.mark.machine_unit_mock
+def test_readiness_accepts_reporting_hosts_after_host_wait(monkeypatch):
+  """C1: a dead node must not block a job forever."""
+  rows = _c1_job_rows(timezone.now() - timedelta(hours=2))
+  _c1_patch_one_host_covering(monkeypatch, rows)
+  ready, _ = update_metrics._ready_jids_and_bounds_from_job_rows(rows)
+  assert ready == ["c1job"]
+
+
+@pytest.mark.machine_unit_mock
+def test_readiness_plain_bounds_dict_keeps_aggregate_rule(monkeypatch):
+  """C1: precomputed plain dict bounds (no host_coverage) stay aggregate."""
+  rows = _c1_job_rows(timezone.now() - timedelta(minutes=5))
+  _c1_patch_one_host_covering(monkeypatch, rows)
+  plain = {"c1job": (rows[0]["start_time"], rows[0]["end_time"])}
+  ready, _ = update_metrics._ready_jids_and_bounds_from_job_rows(
+    rows, precomputed_bounds_by_jid=plain
+  )
+  assert ready == ["c1job"]

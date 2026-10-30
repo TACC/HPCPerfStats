@@ -3628,7 +3628,7 @@ def _log_metrics_deferred_coverage_once(jid: Any, reason: Any) -> None:
     return
   _COVERAGE_DEFER_LOGGED.add(jid)
   log_print(
-    f"metrics_deferred_coverage jid={jid} start_ok={reason.get('start_ok')} end_ok={reason.get('end_ok')} start_lag_s={reason.get('start_lag_s')} end_lag_s={reason.get('end_lag_s')} start_margin_s={reason.get('start_margin_s')} end_margin_s={reason.get('end_margin_s')}",
+    f"metrics_deferred_coverage jid={jid} start_ok={reason.get('start_ok')} end_ok={reason.get('end_ok')} start_lag_s={reason.get('start_lag_s')} end_lag_s={reason.get('end_lag_s')} start_margin_s={reason.get('start_margin_s')} end_margin_s={reason.get('end_margin_s')} hosts_covered={reason.get('hosts_covered')}/{reason.get('hosts_total')}",
     flush=True,
   )
 
@@ -3902,20 +3902,98 @@ def _in_window_min_max_by_job_rows_reference(jobs: Any) -> Any:
   return bounds
 
 
+class _WindowBounds(dict):
+  """
+  ``dict`` of jid -> ``(min_time, max_time)`` that also carries host coverage.
+
+  A plain ``dict`` keeps working everywhere bounds are read; readiness reads
+  the extra ``host_coverage`` map (jid -> ``(hosts_covering, hosts_total)``)
+  when present, so callers or stubs that build plain dicts keep the
+  aggregate-only behaviour.
+
+  Attributes:
+    host_coverage: jid -> ``(hosts whose own samples cover the window with
+      the readiness margins, hosts in the job's host list)``.
+  """
+
+  def __init__(self) -> None:
+    """
+    Create an empty bounds map with an empty coverage map.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _WindowBounds().host_coverage
+      {}
+    """
+    super().__init__()
+    self.host_coverage: dict[Any, tuple[int, int]] = {}
+
+
+def _hosts_covering_window(
+  hosts: Any,
+  host_min: Any,
+  host_max: Any,
+  start_time: Any,
+  end_time: Any,
+) -> int:
+  """
+  Count hosts whose own first/last in-window samples cover the job window.
+
+  Uses the same start / end margins as ``evaluate_job_window_coverage_ready``,
+  applied per host instead of to the min/max over all hosts.
+
+  Args:
+    hosts (Any): FQDN hosts of one job.
+    host_min (Any): host -> first in-window sample time.
+    host_max (Any): host -> last in-window sample time.
+    start_time (Any): Job start.
+    end_time (Any): Job end.
+
+  Returns:
+    int: Number of distinct hosts that cover the window.
+
+  Examples:
+    >>> from datetime import datetime
+    >>> t0, t1 = datetime(2026, 1, 1, 0), datetime(2026, 1, 1, 6)
+    >>> _hosts_covering_window(["a", "b"], {"a": t0}, {"a": t1}, t0, t1)
+    1
+  """
+  start_deadline = start_time + timedelta(
+    seconds=float(cfg.get_metrics_readiness_start_margin_seconds())
+  )
+  end_floor = end_time - timedelta(
+    seconds=float(cfg.get_metrics_readiness_end_margin_seconds())
+  )
+  return sum(
+    1
+    for host in set(hosts)
+    if host_min.get(host) is not None
+    and host_max.get(host) is not None
+    and host_min[host] <= start_deadline
+    and host_max[host] >= end_floor
+  )
+
+
 def _in_window_min_max_by_job_rows(jobs: Any) -> Any:
   """
   Map jid -> ``(min_time, max_time)`` using batched host aggregates per window.
+
+  The returned ``_WindowBounds`` also records per-job host coverage
+  (``host_coverage``) from the same per-host query, for C1 readiness.
 
   Args:
     jobs (Any): Jobs passed to this helper.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: ``_WindowBounds`` (a ``dict`` subclass).
 
   Examples:
-    >>> _in_window_min_max_by_job_rows(None)  # doctest: +SKIP
+    >>> _in_window_min_max_by_job_rows([])
+    {}
   """
-  bounds = {}
+  bounds = _WindowBounds()
   if not jobs:
     return bounds
   window_groups = defaultdict(list)
@@ -3938,6 +4016,10 @@ def _in_window_min_max_by_job_rows(jobs: Any) -> Any:
     )
     for jid, hosts in jid_to_hosts.items():
       bounds[jid] = _aggregate_bounds_from_host_map(hosts, host_min, host_max)
+      bounds.host_coverage[jid] = (
+        _hosts_covering_window(hosts, host_min, host_max, start_time, end_time),
+        len(set(hosts)),
+      )
   for row in jobs:
     bounds.setdefault(row["jid"], (None, None))
   return bounds
@@ -3993,6 +4075,8 @@ def _ready_jids_and_bounds_from_job_rows(
       if precomputed_bounds_by_jid is not None
       else _in_window_min_max_by_job_rows(jobs)
     )
+    host_coverage = getattr(bounds_by_jid, "host_coverage", None) or {}
+    host_wait = timedelta(seconds=cfg.get_metrics_readiness_host_wait_seconds())
     ready = []
     for row in jobs:
       jid = row["jid"]
@@ -4009,6 +4093,19 @@ def _ready_jids_and_bounds_from_job_rows(
         start_margin_s=start_margin_s,
         end_margin_s=end_margin_s,
       )
+      covered, total = host_coverage.get(jid, (0, 0))
+      if is_ready and covered < total:
+        # The union of hosts covers the window but some host has not; wait
+        # for it (no gate-failure row) until host_wait after the job ended.
+        now = (
+          django_timezone.now()
+          if django_timezone.is_aware(end_time)
+          else datetime.now()
+        )
+        reason = {**reason, "hosts_covered": covered, "hosts_total": total}
+        if now - end_time < host_wait:
+          _log_metrics_deferred_coverage_once(jid, reason)
+          continue
       if is_ready:
         ready.append(jid)
       else:

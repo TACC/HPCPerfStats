@@ -812,6 +812,38 @@ def test_get_metrics_readiness_window_coverage_defaults(temp_ini, monkeypatch):
   assert cfg.get_metrics_readiness_require_window_coverage() is True
   assert cfg.get_metrics_readiness_start_margin_seconds() == 600.0
   assert cfg.get_metrics_readiness_end_margin_seconds() == 600.0
+  assert cfg.get_metrics_readiness_host_wait_seconds() == 21600.0
+
+
+def test_get_metrics_readiness_host_wait_seconds_ini_override(
+  temp_ini, monkeypatch
+):
+  """C1: the per-host wait is an INI tunable; invalid values use 21600."""
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  with open(temp_ini) as f:
+    content = f.read()
+  with open(temp_ini, "w") as f:
+    f.write(
+      content.replace(
+        "total_cores = 4",
+        "total_cores = 4\nmetrics_readiness_host_wait_seconds = 3600",
+      )
+    )
+  importlib.reload(cfg)
+  assert cfg.get_metrics_readiness_host_wait_seconds() == 3600.0
+  with open(temp_ini, "w") as f:
+    f.write(
+      content.replace(
+        "total_cores = 4",
+        "total_cores = 4\nmetrics_readiness_host_wait_seconds = soon",
+      )
+    )
+  importlib.reload(cfg)
+  assert cfg.get_metrics_readiness_host_wait_seconds() == 21600.0
 
 
 def test_get_metrics_readiness_window_coverage_ini_override(
