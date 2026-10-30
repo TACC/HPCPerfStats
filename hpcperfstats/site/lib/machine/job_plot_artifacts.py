@@ -1019,14 +1019,6 @@ def persist_job_plot_artifacts_for_jid(
           _plot_artifact_storage_payload(plot_item, reason, bw_axis=bw_axis),
         )
       )
-  if not write_rows:
-    return
-  try:
+  if write_rows:
+    # A failed upsert must reach the prewarm retry and the job outcome.
     upsert_job_plot_artifact_batch(write_rows)
-  except Exception:
-    logger.warning(
-      "plot artifact batch upsert failed jid=%s rows=%s",
-      jid,
-      len(write_rows),
-      exc_info=True,
-    )

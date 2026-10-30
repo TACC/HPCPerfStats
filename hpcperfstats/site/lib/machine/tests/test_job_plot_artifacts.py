@@ -1,6 +1,7 @@
 """Tests for persisted job plot artifacts (gzip json_item + fingerprint)."""
 
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from django.utils import timezone
@@ -620,6 +621,59 @@ def test_persist_job_plot_artifacts_skips_interpreter_shutdown_poison(
   persist_job_plot_artifacts_for_jid(job.jid)
 
   assert job_plot_artifact.objects.filter(jid_id=job.jid).count() == 0
+
+
+class _NoDbPlotJt:
+  """jid_table stand-in for prewarm tests that must not touch the DB."""
+
+  host_list = ["n1"]
+  acct_host_list = ["n1"]
+
+  def get_host_time_df(self):
+    import pandas as pd
+
+    return pd.DataFrame({"host": ["n1"], "time": [timezone.now()]})
+
+  def get_aggregate_df(
+    self, _typ, _metric_column, _events, _conv, *, group_by_dev=False
+  ):
+    import pandas as pd
+
+    return pd.DataFrame(
+      {"host": ["n1"], "time": [timezone.now()], "sum_val": [1.0]}
+    )
+
+
+def _no_db_plot_context(jid, existing=None):
+  """Prewarm context with job, fingerprint and rows preloaded (no DB)."""
+  return {
+    "job": SimpleNamespace(jid=jid),
+    "plot_fingerprint": "f" * 64,
+    "existing_plot_rows": dict(existing or {}),
+  }
+
+
+@pytest.mark.machine_unit_mock
+def test_persist_job_plot_artifacts_raises_when_batch_upsert_fails(
+  monkeypatch,
+):
+  """S3: an upsert failure must not look like a successful prewarm."""
+  mod = "hpcperfstats.site.lib.machine.job_plot_artifacts"
+  monkeypatch.setattr(f"{mod}.jid_table.jid_table", lambda jid: _NoDbPlotJt())
+  monkeypatch.setattr(
+    f"{mod}.compute_plot_item_for_kind",
+    lambda j, kind, zoom_mode: ({"k": kind}, None, None),
+  )
+
+  def _boom(rows):
+    raise RuntimeError("upsert lost the connection")
+
+  monkeypatch.setattr(f"{mod}.upsert_job_plot_artifact_batch", _boom)
+
+  with pytest.raises(RuntimeError, match="upsert lost"):
+    persist_job_plot_artifacts_for_jid(
+      "upsertfail1", context=_no_db_plot_context("upsertfail1")
+    )
 
 
 @pytest.mark.django_db
