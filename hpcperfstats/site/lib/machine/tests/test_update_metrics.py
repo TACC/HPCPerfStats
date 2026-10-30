@@ -3,6 +3,7 @@
 import contextlib
 import inspect
 import os
+import re
 import threading
 import time
 from collections import deque
@@ -936,6 +937,23 @@ def test_jobs_queryset_live_distinct_catchup_sql_omits_host_data_distinct(
   assert "count(distinct" not in sql
   assert "live_distinct_time_count" not in sql
   assert "metrics_data" in sql
+
+
+@pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
+def test_jobs_queryset_counts_only_catalog_metric_rows(monkeypatch):
+  """C4: obsolete metric rows must not satisfy (or block) completeness."""
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  update_metrics._expected_job_metrics_row_count.cache_clear()
+  update_metrics._job_metrics_catalog_names.cache_clear()
+  names = update_metrics._job_metrics_catalog_names()
+  assert len(names) == len(set(names)) > 0
+  assert len(names) == update_metrics._expected_job_metrics_row_count()
+  qs = update_metrics._jobs_queryset(datetime(2026, 8, 15), 300, rerun=False)
+  sql = str(qs.query)
+  # Both the row-count and the stale-row subqueries carry the catalog filter.
+  assert len(re.findall(r'"U\d+"\."metric" IN \(', sql)) >= 2
+  assert "avg_cpuusage" in sql
 
 
 @pytest.mark.django_db(databases=[])

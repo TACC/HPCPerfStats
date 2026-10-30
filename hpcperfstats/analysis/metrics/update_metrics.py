@@ -2621,6 +2621,29 @@ def _expected_job_metrics_row_count() -> Any:
 
 
 @functools.lru_cache(maxsize=1)
+def _job_metrics_catalog_names() -> tuple[str, ...]:
+  """
+  Metric names of the current job catalog (cached per process).
+
+  The listing counts only these rows, so rows left behind by a renamed or
+  removed metric neither satisfy ``md_count >= expected`` nor keep a job
+  stale forever.
+
+  Returns:
+    tuple[str, ...]: Distinct catalog ``metric`` names, catalog order.
+
+  Examples:
+    >>> "avg_cpuusage" in _job_metrics_catalog_names()  # doctest: +SKIP
+    True
+  """
+  return tuple(
+    dict.fromkeys(
+      str(entry["metric"]) for entry in metrics.job_metrics_catalog_entries()
+    )
+  )
+
+
+@functools.lru_cache(maxsize=1)
 def _host_name_suffix() -> Any:
   """
   FQDN suffix used by host_data host names.
@@ -2734,16 +2757,15 @@ def _annotate_metrics_listing_gates(qs: Any) -> tuple[Any, Any]:
     Q(no_data_reason__isnull=True) | Q(no_data_reason="")
   )
   int0 = Value(0, output_field=IntegerField())
+  catalog_rows = metrics_data.objects.filter(
+    jid_id=OuterRef("jid"), metric__in=_job_metrics_catalog_names()
+  )
   md_total_sq = Subquery(
-    metrics_data.objects.filter(jid_id=OuterRef("jid"))
-    .values("jid_id")
-    .annotate(c=Count("id"))
-    .values("c")[:1],
+    catalog_rows.values("jid_id").annotate(c=Count("id")).values("c")[:1],
     output_field=IntegerField(),
   )
   stale_count_sq = Subquery(
-    metrics_data.objects.filter(jid_id=OuterRef("jid"))
-    .filter(stale_q)
+    catalog_rows.filter(stale_q)
     .values("jid_id")
     .annotate(c=Count("id"))
     .values("c")[:1],
