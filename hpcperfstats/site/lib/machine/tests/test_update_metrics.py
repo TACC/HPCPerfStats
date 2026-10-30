@@ -54,10 +54,12 @@ def _patch_strict_readiness_batch(monkeypatch, fn):
 
 @pytest.fixture(autouse=True)
 def _fresh_job_failure_memory():
-  """Failure backoff is process-global; isolate it per test."""
+  """Failure backoff and Phase B throttle are process-global; isolate them."""
   update_metrics._JOB_FAILURE_MEMORY.clear()
+  update_metrics._ARTIFACT_CATCHUP_LAST_SCAN.clear()
   yield
   update_metrics._JOB_FAILURE_MEMORY.clear()
+  update_metrics._ARTIFACT_CATCHUP_LAST_SCAN.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -1121,6 +1123,14 @@ def test_iter_date_listing_pks_runs_phase_a_then_phase_b(monkeypatch):
   assert calls == ["a", "b"]
   assert [chunk[0].jid for chunk, _t in out] == ["m1", "a1"]
   assert out[1][0][0].artifact_only is True
+  # T8: the next pass within the interval lists Phase A only.
+  calls.clear()
+  list(
+    update_metrics._iter_date_listing_pks(
+      datetime(2026, 8, 15).date(), 300, False, 10
+    )
+  )
+  assert calls == ["a"]
   # C2: the per-row live-distinct phase is gone (dirty stamps replace it).
   assert not hasattr(update_metrics, "_page_rows_needing_live_distinct_refresh")
 

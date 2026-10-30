@@ -88,6 +88,9 @@ Attributes:
   _JOB_FAILURE_MEMORY_LOCK: Guards ``_JOB_FAILURE_MEMORY``.
   _JOB_FAILURE_MEMORY_MAX: Entry cap (oldest dropped first).
   JOB_FAILURE_BACKOFF_S: Backoff seconds per failure count (then daily).
+  _ARTIFACT_CATCHUP_LAST_SCAN: Day -> monotonic time of its last Phase B scan.
+  _ARTIFACT_CATCHUP_LOCK: Guards ``_ARTIFACT_CATCHUP_LAST_SCAN``.
+  ARTIFACT_CATCHUP_INTERVAL_S: Minimum seconds between a day's Phase B scans.
 """
 
 from __future__ import annotations
@@ -3266,6 +3269,48 @@ def _iter_chunked_pks_artifact_catchup(
       yield chunk, total
 
 
+# Calendar day -> monotonic time of its last Phase B (artifact catch-up) scan.
+_ARTIFACT_CATCHUP_LAST_SCAN: dict[Any, float] = {}
+_ARTIFACT_CATCHUP_LOCK = threading.Lock()
+# Phase B re-scans a day at most this often; fresh jobs are prewarmed by the
+# compute path and failures retried on the failure backoff, so Phase B only
+# catches schema/fingerprint drift and retry-fingerprint rows.
+ARTIFACT_CATCHUP_INTERVAL_S = 3600.0
+
+
+def _artifact_catchup_due(date: Any) -> bool:
+  """
+  Claim this day's Phase B scan when the last one is old enough.
+
+  Args:
+    date (Any): Calendar day (date or datetime) being listed.
+
+  Returns:
+    bool: True (and the scan time is recorded) when Phase B should run.
+
+  Examples:
+    >>> from datetime import date
+    >>> _artifact_catchup_due(date(1999, 1, 1))
+    True
+    >>> _artifact_catchup_due(date(1999, 1, 1))
+    False
+  """
+  day = date.date() if isinstance(date, datetime) else date
+  now = time.monotonic()
+  with _ARTIFACT_CATCHUP_LOCK:
+    last = _ARTIFACT_CATCHUP_LAST_SCAN.get(day)
+    if last is not None and now - last < ARTIFACT_CATCHUP_INTERVAL_S:
+      return False
+    _ARTIFACT_CATCHUP_LAST_SCAN[day] = now
+    for stale in [
+      d
+      for d, t in _ARTIFACT_CATCHUP_LAST_SCAN.items()
+      if now - t > 7 * ARTIFACT_CATCHUP_INTERVAL_S
+    ]:
+      _ARTIFACT_CATCHUP_LAST_SCAN.pop(stale, None)
+    return True
+
+
 def _iter_date_listing_pks(
   date: Any,
   min_time: Any,
@@ -3300,6 +3345,8 @@ def _iter_date_listing_pks(
   # Unit-test stubs replace ``_jobs_queryset`` with non-QuerySet fakes;
   # skip Phase B there so host mocks never open a DB connection.
   if not isinstance(phase_a_qs, QuerySet):
+    return
+  if not _artifact_catchup_due(date):
     return
   for chunk, _phase_total in _iter_chunked_pks_artifact_catchup(
     _jobs_queryset_artifact_catchup(date, min_time), chunk_size
