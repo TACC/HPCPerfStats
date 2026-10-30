@@ -513,6 +513,23 @@ def test_drain_metrics_imap_returns_parent_persist_timeout_outcome(monkeypatch):
   assert out[0]["error_type"] == "DatabaseError"
 
 
+def test_persist_metrics_payload_empty_rows_is_failure_not_success(
+  monkeypatch,
+):
+  """S12: an ok payload with no rows must not report a persisted job."""
+  calls = []
+  monkeypatch.setattr(
+    metrics, "_persist_metrics_batch", lambda *a, **k: calls.append(a)
+  )
+  out = metrics._persist_metrics_payload(
+    {"jid": "j-empty", "status": "ok", "rows": [], "distinct_time_count": 3}
+  )
+  assert out["ok"] is False
+  assert out["status"] == "empty_rows"
+  assert out["persisted_rows"] == 0
+  assert calls == []
+
+
 def test_drain_metrics_imap_stall_clock_waits_for_persist(monkeypatch):
   """Stall clock must not refresh until parent persist returns (not at worker return)."""
   clock = {"t": 1000.0}

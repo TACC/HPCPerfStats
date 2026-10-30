@@ -1559,13 +1559,15 @@ def _persist_metrics_payload(payload: Any) -> Any:
   telemetry_first_time = payload.get("telemetry_first_time")
   telemetry_last_time = payload.get("telemetry_last_time")
   if not job_rows:
+    # compute_metrics always emits the full catalog; an empty row list would
+    # persist nothing and the listing would select the jid again every pass.
     return _metrics_run_outcome(
       jid,
-      ok=True,
-      status="ok",
-      persisted_rows=0,
+      ok=False,
+      status="empty_rows",
       distinct_time_count=distinct_n,
-      persist_s=0.0,
+      error_type="EmptyRows",
+      error_message="worker payload carried no metric rows",
     )
   persist_started_at = time.monotonic()
   try:
