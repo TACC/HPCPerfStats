@@ -483,7 +483,7 @@ def test_arch_sync_timedb_code_has_no_redis_identifiers():
       (checkout / "hpcperfstats" / "dbload" / "lib").glob("sync_timedb*.py")
     )
   )
-  paths.append(checkout / "scripts" / "seal_open_daily_tars_to_zst.py")
+  paths.append(checkout / "scripts" / "seal_open_daily_tars_to_zst.sh")
   paths.append(checkout / "scripts" / "verify_open_tar_matches_zst.py")
   paths.append(checkout / "hpcperfstats" / "dbload" / "lib" / "zstd_cli.py")
   leftover_files = (
