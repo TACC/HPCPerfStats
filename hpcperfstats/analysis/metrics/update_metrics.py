@@ -84,6 +84,10 @@ Attributes:
   _WORKER_FAILURE_KINDS: Outcome kinds counted as worker failures.
   _PUBLIC_EF_STATUS: Background /pub/ EF refresher counters and last stats.
   _PUBLIC_EF_STATUS_LOCK: Guards ``_PUBLIC_EF_STATUS``.
+  _JOB_FAILURE_MEMORY: jid -> failure count, retry time and last error.
+  _JOB_FAILURE_MEMORY_LOCK: Guards ``_JOB_FAILURE_MEMORY``.
+  _JOB_FAILURE_MEMORY_MAX: Entry cap (oldest dropped first).
+  JOB_FAILURE_BACKOFF_S: Backoff seconds per failure count (then daily).
 """
 
 from __future__ import annotations
@@ -335,6 +339,100 @@ def _consumer_progress_total(stats: Any) -> int:
     int(stats.get("processed", 0) or 0),
     int(stats.get("metrics_ok_total", 0) or 0),
   )
+
+
+# jid -> {"attempts", "retry_at", "kind", "error"}; survives passes of the
+# long-running loop, reset on process restart.
+_JOB_FAILURE_MEMORY: dict[Any, dict[str, Any]] = {}
+_JOB_FAILURE_MEMORY_LOCK = threading.Lock()
+_JOB_FAILURE_MEMORY_MAX = 100_000
+# Seconds a failing jid waits before its next attempt, per failure count;
+# past the end it is retried once a day.
+JOB_FAILURE_BACKOFF_S = (300.0, 1800.0, 7200.0, 21600.0, 86400.0)
+
+
+def _note_job_outcome(outcome: dict[str, Any]) -> None:
+  """
+  Remember a job failure (with backoff) or forget the job on success.
+
+  Shutdown interruptions are not failures. When a jid reaches the last
+  backoff step it is logged once with its last error and then retried daily.
+
+  Args:
+    outcome (dict[str, Any]): Scheduler outcome (``jid``, ``ok``,
+      ``failure_kind``, ``error_type``, ``error_message``).
+
+  Returns:
+    None
+
+  Examples:
+    >>> _note_job_outcome({"jid": "doc-1", "ok": True})
+  """
+  jid = outcome.get("jid")
+  kind = str(outcome.get("failure_kind") or "")
+  with _JOB_FAILURE_MEMORY_LOCK:
+    if outcome.get("ok"):
+      _JOB_FAILURE_MEMORY.pop(jid, None)
+      return
+    if kind == "sliding_session_interrupted":
+      return
+    entry = _JOB_FAILURE_MEMORY.setdefault(jid, {"attempts": 0})
+    entry["attempts"] += 1
+    step = min(entry["attempts"], len(JOB_FAILURE_BACKOFF_S)) - 1
+    entry["retry_at"] = time.monotonic() + JOB_FAILURE_BACKOFF_S[step]
+    entry["kind"] = kind
+    entry["error"] = (
+      f"{outcome.get('error_type')}: {outcome.get('error_message')}"
+    )
+    attempts = entry["attempts"]
+    while len(_JOB_FAILURE_MEMORY) > _JOB_FAILURE_MEMORY_MAX:
+      _JOB_FAILURE_MEMORY.pop(next(iter(_JOB_FAILURE_MEMORY)))
+  if attempts == len(JOB_FAILURE_BACKOFF_S):
+    log_print(
+      f"metrics scheduler: jid={jid} failed {attempts} times; retrying daily "
+      f"(last={kind} {entry['error'][:200]})",
+      flush=True,
+    )
+
+
+def _job_failure_backoff_active(jid: Any) -> bool:
+  """
+  True while a previously failing jid waits out its backoff.
+
+  Args:
+    jid (Any): Job id.
+
+  Returns:
+    bool: Skip this jid for now.
+
+  Examples:
+    >>> _job_failure_backoff_active("never-failed")
+    False
+  """
+  with _JOB_FAILURE_MEMORY_LOCK:
+    entry = _JOB_FAILURE_MEMORY.get(jid)
+    return entry is not None and entry["retry_at"] > time.monotonic()
+
+
+def _job_failure_census() -> dict[str, int]:
+  """
+  Count remembered failing jids and those on the daily retry.
+
+  Returns:
+    dict[str, int]: ``failing_jids`` and ``daily_retry_jids``.
+
+  Examples:
+    >>> sorted(_job_failure_census())
+    ['daily_retry_jids', 'failing_jids']
+  """
+  with _JOB_FAILURE_MEMORY_LOCK:
+    entries = list(_JOB_FAILURE_MEMORY.values())
+  return {
+    "failing_jids": len(entries),
+    "daily_retry_jids": sum(
+      1 for e in entries if e["attempts"] >= len(JOB_FAILURE_BACKOFF_S)
+    ),
+  }
 
 
 def _clear_consumer_stall_reason(stats: Any, batch_metrics_ok: int) -> None:
@@ -806,6 +904,7 @@ def _new_scheduler_stats() -> Any:
     "deferred_not_ready_due_now": 0,
     "deferred_quarantined_jids": 0,
     "deferred_meta_size": 0,
+    "failure_backoff_skips": 0,
     "stall_exit_triggered": 0,
     "stall_reason": "",
     "ready_enqueued_total": 0,
@@ -2113,6 +2212,7 @@ class _CompletionReporter:
             "per_jid_fallback_failures_total={} worker_failed_outcomes_total={} "
             "parent_persist_failures_total={} attempted_total={} "
             "metrics_ok_total={} prewarm_failed_total={} "
+            "failing_jids={} daily_retry_jids={} failure_backoff_skips={} "
             "public_ef_degraded={} public_ef_worker_exceptions_total={} "
             "public_ef_watchdog_timeouts_total={} public_ef_pending_tasks={} "
             "prewarm_backlog_jobs={} prewarm_oldest_pending_age_s={:.3f} "
@@ -2141,6 +2241,9 @@ class _CompletionReporter:
               int(extra_map.get("attempted_total", 0)),
               int(extra_map.get("metrics_ok_total", 0)),
               int(extra_map.get("prewarm_failed_total", 0)),
+              int(extra_map.get("failing_jids", 0)),
+              int(extra_map.get("daily_retry_jids", 0)),
+              int(extra_map.get("failure_backoff_skips", 0)),
               int(extra_map.get("public_ef_degraded", 0)),
               int(extra_map.get("public_ef_worker_exceptions_total", 0)),
               int(extra_map.get("public_ef_watchdog_timeouts_total", 0)),
@@ -4822,6 +4925,12 @@ def _fill_ready_queue(
       candidate if hasattr(candidate, "jid") else _candidate_ref(candidate)
       for candidate in list(pk_chunk)
     ]
+    # Jobs that keep failing wait out their backoff without readiness work.
+    backed_off = [c for c in ordered if _job_failure_backoff_active(c.jid)]
+    if backed_off:
+      ordered = [c for c in ordered if not _job_failure_backoff_active(c.jid)]
+      with scheduler_shared_lock:
+        stats["failure_backoff_skips"] += len(backed_off)
     candidate_by_jid = {candidate.jid: candidate for candidate in ordered}
     chunk_job_by_jid = {}
     chunk_bounds_by_jid = None
@@ -7343,6 +7452,8 @@ def update_metrics_for_dates(
             "attempted_total": stats["attempted_total"],
             "metrics_ok_total": stats["metrics_ok_total"],
             "prewarm_failed_total": stats["prewarm_failed_total"],
+            "failure_backoff_skips": stats["failure_backoff_skips"],
+            **_job_failure_census(),
             **_public_ef_progress_fields(stats, public_ef),
             "prewarm_backlog_jobs": prewarm_snapshot["prewarm_backlog_jobs"],
             "prewarm_oldest_pending_age_s": prewarm_snapshot[
@@ -7676,6 +7787,8 @@ def update_metrics_for_dates(
             if not outs:
               return
             recorded_jids.update(o["jid"] for o in outs)
+            for o in outs:
+              _note_job_outcome(o)
             with ready_queue_lock:
               scheduled_jids.difference_update(o["jid"] for o in outs)
             finished = sum(1 for o in outs if o["ok"])

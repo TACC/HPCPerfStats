@@ -53,6 +53,14 @@ def _patch_strict_readiness_batch(monkeypatch, fn):
 
 
 @pytest.fixture(autouse=True)
+def _fresh_job_failure_memory():
+  """Failure backoff is process-global; isolate it per test."""
+  update_metrics._JOB_FAILURE_MEMORY.clear()
+  yield
+  update_metrics._JOB_FAILURE_MEMORY.clear()
+
+
+@pytest.fixture(autouse=True)
 def _patch_scheduler_defaults(monkeypatch):
   monkeypatch.setattr(
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "strict_date"
@@ -7234,3 +7242,94 @@ def test_degraded_public_ef_refreshes_warn_and_reach_the_progress_line(
   fields = update_metrics._public_ef_progress_fields({}, "background")
   assert fields["public_ef_degraded"] == 0
   assert fields["public_ef_pending_tasks"] == 0
+
+
+@pytest.mark.machine_unit_mock
+def test_failing_job_backs_off_then_is_forgotten_on_success(monkeypatch):
+  """S13: a job that keeps failing is not recomputed every pass."""
+  clock = {"t": 1000.0}
+  monkeypatch.setattr(update_metrics.time, "monotonic", lambda: clock["t"])
+  lines = []
+  monkeypatch.setattr(
+    update_metrics, "log_print", lambda msg, **k: lines.append(str(msg))
+  )
+  fail = {
+    "jid": "bad",
+    "ok": False,
+    "failure_kind": "worker_compute_error",
+    "error_type": "ValueError",
+    "error_message": "nan",
+  }
+  update_metrics._note_job_outcome(fail)
+  assert update_metrics._job_failure_backoff_active("bad")
+  clock["t"] += update_metrics.JOB_FAILURE_BACKOFF_S[0] + 1
+  assert not update_metrics._job_failure_backoff_active("bad")
+  for _ in range(len(update_metrics.JOB_FAILURE_BACKOFF_S) - 1):
+    update_metrics._note_job_outcome(fail)
+  assert update_metrics._job_failure_census() == {
+    "failing_jids": 1,
+    "daily_retry_jids": 1,
+  }
+  assert sum("retrying daily" in ln for ln in lines) == 1
+  # Shutdown interruptions are not failures; success forgets the job.
+  update_metrics._note_job_outcome(
+    {"jid": "other", "ok": False, "failure_kind": "sliding_session_interrupted"}
+  )
+  assert update_metrics._job_failure_census()["failing_jids"] == 1
+  update_metrics._note_job_outcome({"jid": "bad", "ok": True})
+  assert update_metrics._job_failure_census()["failing_jids"] == 0
+
+
+@pytest.mark.machine_unit_mock
+def test_readiness_skips_jobs_in_failure_backoff(monkeypatch):
+  """S13: a backed-off jid costs no readiness query and is not queued."""
+  update_metrics._note_job_outcome(
+    {"jid": "bad", "ok": False, "failure_kind": "worker_db_error"}
+  )
+  monkeypatch.setattr(
+    update_metrics.cfg,
+    "get_metrics_readiness_require_window_coverage",
+    lambda: False,
+  )
+  probed = []
+  monkeypatch.setattr(
+    update_metrics,
+    "_proxy_reject_not_ready_jids",
+    lambda jids: (probed.extend(jids) or set(), list(jids)),
+  )
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
+  stats = update_metrics._new_scheduler_stats()
+  ready = deque()
+  state = {
+    "date": None,
+    "iter": iter(
+      [
+        (
+          [
+            update_metrics._candidate_ref("bad"),
+            update_metrics._candidate_ref("good"),
+          ],
+          2,
+        )
+      ]
+    ),
+    "done": False,
+    "pending_tail": None,
+    "listing_cooldown_until": 0.0,
+    "listing_needs_rebuild": False,
+  }
+  update_metrics._fill_ready_queue(
+    [state],
+    ready,
+    "strict_date",
+    prefetch_chunks=4,
+    phase_timer=update_metrics._PhaseTimer(),
+    stats=stats,
+    strict_check_state={"batch_size": 32, "max_batch_size": 64},
+    strict_check_cooldown_until={},
+    rr_cursor={"idx": 0},
+    scheduler_shared_lock=threading.Lock(),
+  )
+  assert [r.jid for r in ready] == ["good"]
+  assert probed == ["good"]
+  assert stats["failure_backoff_skips"] == 1
