@@ -10656,9 +10656,16 @@ def reconcile_open_tar_with_sealed_zst(
   stall_warn_s: float | None = None,
   stall_yield_s: float | None = None,
   on_merge_progress: Any | None = None,
+  defer_seal: bool = False,
 ) -> ReconcileResult:
   """
   Repair, merge, seal, and optionally drop an open daily tar against its zst.
+
+  With ``defer_seal`` (day close) a tar that is a superset of the zst, or a
+  divergent tar after its union merge, is left unsealed (``sealed=False``)
+  for the gated day-close seal stage, which waits while raw is still being
+  appended; reconcile then seals only the DE-9 unreadable-zst and
+  missing-zst cases.
 
   Args:
     tar_path (str): Open daily ``.tar`` path.
@@ -10674,6 +10681,7 @@ def reconcile_open_tar_with_sealed_zst(
     stall_warn_s (float | None): Override reconcile stall warn seconds.
     stall_yield_s (float | None): Override reconcile stall yield seconds.
     on_merge_progress (Any | None): Optional merge progress callback.
+    defer_seal (bool): Leave the superset / merged seal to the caller.
 
   Returns:
     ReconcileResult: Structured reconcile outcome.
@@ -10748,6 +10756,8 @@ def reconcile_open_tar_with_sealed_zst(
     ):
       return ReconcileResult(False, action, "merge_failed")
     tar_members = get_mutable_tar_authority_member_map(tar_path)
+  if defer_seal and reason in ("tar_superset_of_zst", "divergent_maps"):
+    return ReconcileResult(True, action, reason, sealed=False)
   if action == "noop":
     if force_remove_uncompressed_tar and zst_exists and zst_readable:
       try:

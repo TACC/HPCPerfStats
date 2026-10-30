@@ -3057,6 +3057,9 @@ def _run_day_close_job(
             tgz_archive_dir=tgz_archive_dir,
             keep_uncompressed_tar=get_archive_keep_uncompressed_tar(),
             on_merge_progress=_on_merge_progress,
+            # The seal stage seals once, behind its gates (raw not yet in the
+            # tar defers it); 02 2026-10-30 resealed 322 GB 09-11 here mid-append.
+            defer_seal=True,
           )
           progress.record(day_token, "reconcile", 1)
           _day_close_stage_failure(day_token, "reconcile_merge", failed=False)
