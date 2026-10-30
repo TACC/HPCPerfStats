@@ -3,6 +3,9 @@ Estimate peak Django PostgreSQL slots versus compose ``max_connections``.
 
 Attributes:
   COMPOSE_PG_MAX_CONNECTIONS: Compose ``db`` GUC; do not raise it to hide leaks.
+  PUBLIC_EF_SLOTS: Threads of update_metrics' background /pub/ EF refresher
+    (``update_metrics.PUBLIC_EF_POOL_THREADS``), concurrent with the metrics
+    pool.
   RESERVE_SLOTS: Superuser, maintenance, and leftover-process headroom.
   WARN_FRACTION: Log WARN when estimated peak reaches this fraction of the GUC.
 """
@@ -25,6 +28,7 @@ from hpcperfstats.dbload.lib.conf_parser import (
 
 COMPOSE_PG_MAX_CONNECTIONS = 500
 RESERVE_SLOTS = 32
+PUBLIC_EF_SLOTS = 4
 WARN_FRACTION = 0.80
 
 
@@ -58,7 +62,14 @@ def estimate_django_pg_slot_peak() -> dict[str, Any]:
   archive = max(0, int(get_sync_archive_pool_processes()))
   web = gunicorn * executor
   peak = (
-    web + listend + metrics_pool + ingest + day_close + archive + RESERVE_SLOTS
+    web
+    + listend
+    + metrics_pool
+    + PUBLIC_EF_SLOTS
+    + ingest
+    + day_close
+    + archive
+    + RESERVE_SLOTS
   )
   warn_threshold = int(COMPOSE_PG_MAX_CONNECTIONS * WARN_FRACTION)
   return {
@@ -72,6 +83,7 @@ def estimate_django_pg_slot_peak() -> dict[str, Any]:
       "web": web,
       "listend": listend,
       "metrics_pool": metrics_pool,
+      "public_ef_pool": PUBLIC_EF_SLOTS,
       "ingest": ingest,
       "day_close": day_close,
       "archive": archive,

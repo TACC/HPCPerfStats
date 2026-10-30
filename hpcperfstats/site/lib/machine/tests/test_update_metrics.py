@@ -5058,6 +5058,7 @@ def test_main_exits_on_scheduler_stall_without_sleep(monkeypatch):
     )
 
   monkeypatch.setattr(update_metrics, "update_metrics_for_dates", _raise_stall)
+  monkeypatch.setattr(update_metrics, "_PublicEfRefresher", _FakeEfRefresher)
 
   with pytest.raises(update_metrics.MetricsSchedulerStallExit):
     update_metrics.main(argv=["update_metrics.py"], sleep_after=True)
@@ -5065,9 +5066,39 @@ def test_main_exits_on_scheduler_stall_without_sleep(monkeypatch):
   assert sleeps == []
 
 
+class _FakeEfRefresher:
+  """Stand-in for _PublicEfRefresher (no /pub/ work in unit tests)."""
+
+  started = 0
+  stopped = 0
+
+  def __init__(self, interval_s):
+    self.interval_s = interval_s
+
+  def start(self):
+    _FakeEfRefresher.started += 1
+
+  def stop(self):
+    _FakeEfRefresher.stopped += 1
+
+  def snapshot(self):
+    return {}
+
+
+def _shutdown_after_sleeps(monkeypatch, sleeps, n):
+  """Stub sleep_until_shutdown: record seconds, request shutdown after n."""
+
+  def _sleep(secs, on_tick=None):
+    sleeps.append(secs)
+    if len(sleeps) >= n:
+      update_metrics.shutdown_requested[0] = True
+
+  monkeypatch.setattr(update_metrics, "sleep_until_shutdown", _sleep)
+
+
 @pytest.mark.machine_unit_mock
-def test_main_sleep_after_waits_60_seconds(monkeypatch):
-  """sleep_after mode should wait exactly 60s after metrics completion."""
+def test_main_sleep_after_runs_passes_in_process(monkeypatch):
+  """T1: supervised mode loops passes with a short idle, no 600 s exit."""
   monkeypatch.setattr(
     update_metrics,
     "_default_metrics_date_range",
@@ -5085,29 +5116,38 @@ def test_main_sleep_after_waits_60_seconds(monkeypatch):
   monkeypatch.setattr(
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
   )
+  passes = []
   monkeypatch.setattr(
     update_metrics,
     "update_metrics_for_dates",
-    lambda dates, **kwargs: None,
+    lambda dates, **kwargs: passes.append(kwargs),
+  )
+  monkeypatch.setattr(update_metrics, "_PublicEfRefresher", _FakeEfRefresher)
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_scheduler_pass_interval_s", lambda: 60.0
   )
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics.connections, "close_all", lambda: None)
   update_metrics.shutdown_requested[0] = False
   sleeps = []
-  monkeypatch.setattr(
-    update_metrics,
-    "sleep_until_shutdown",
-    lambda secs, on_tick=None: sleeps.append(secs),
-  )
-
-  update_metrics.main(argv=["update_metrics.py"], sleep_after=True)
-
-  assert sleeps == [600]
+  _shutdown_after_sleeps(monkeypatch, sleeps, 2)
+  stopped_before = _FakeEfRefresher.stopped
+  try:
+    assert (
+      update_metrics.main(argv=["update_metrics.py"], sleep_after=True) == 0
+    )
+  finally:
+    update_metrics.shutdown_requested[0] = False
+  assert sleeps == [60.0, 60.0]
+  assert len(passes) == 2  # shutdown arrives during the second idle
+  assert all(p["public_ef"] == "background" for p in passes)
+  assert all(p["allow_rollover"] is True for p in passes)
+  assert _FakeEfRefresher.stopped == stopped_before + 1
 
 
 @pytest.mark.machine_unit_mock
-def test_main_default_sleep_after_waits_60_seconds(monkeypatch):
-  """Default behavior should sleep after completion when not overridden."""
+def test_main_default_runs_continuous_scheduler(monkeypatch):
+  """T1: with no override the default entry point is the continuous loop."""
   monkeypatch.delenv(
     "HPCPERFSTATS_UPDATE_METRICS_MAIN_SLEEP_AFTER", raising=False
   )
@@ -5133,19 +5173,17 @@ def test_main_default_sleep_after_waits_60_seconds(monkeypatch):
     "update_metrics_for_dates",
     lambda dates, **kwargs: None,
   )
+  monkeypatch.setattr(update_metrics, "_PublicEfRefresher", _FakeEfRefresher)
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(update_metrics.connections, "close_all", lambda: None)
   update_metrics.shutdown_requested[0] = False
   sleeps = []
-  monkeypatch.setattr(
-    update_metrics,
-    "sleep_until_shutdown",
-    lambda secs, on_tick=None: sleeps.append(secs),
-  )
-
-  update_metrics.main(argv=["update_metrics.py"])
-
-  assert sleeps == [600]
+  _shutdown_after_sleeps(monkeypatch, sleeps, 1)
+  try:
+    update_metrics.main(argv=["update_metrics.py"])
+  finally:
+    update_metrics.shutdown_requested[0] = False
+  assert sleeps == [update_metrics.cfg.get_metrics_scheduler_pass_interval_s()]
 
 
 @pytest.mark.machine_unit_mock
@@ -7122,3 +7160,45 @@ def test_compute_batch_cap_recovers_after_a_downshift():
     )
     == update_metrics.COMPUTE_BATCH_MIN_CAP
   )
+
+
+@pytest.mark.machine_unit_mock
+def test_background_public_ef_mode_skips_the_blocking_phase(monkeypatch):
+  """T1: a background-EF pass neither runs /pub/ first nor at the end."""
+  import inspect as _inspect
+
+  src = _inspect.getsource(update_metrics.update_metrics_for_dates)
+  assert 'if public_ef == "blocking":' in src
+  assert src.count('public_ef == "blocking"') == 2
+
+
+@pytest.mark.machine_unit_mock
+def test_public_ef_refresher_refreshes_and_records_stats(monkeypatch):
+  """T1: the refresher runs the parallel phase on its own pool."""
+  pools = []
+
+  class _Pool:
+    def __init__(self, **kw):
+      pools.append(kw)
+
+    def close(self):
+      pass
+
+    def join(self):
+      pass
+
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_session_executor.SyncTimedbThreadPool",
+    _Pool,
+  )
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(
+    update_metrics,
+    "_run_public_ef_artifacts_parallel_phase",
+    lambda pool, timer: {"tasks_total": 3, "degraded": 0},
+  )
+  ref = update_metrics._PublicEfRefresher(3600.0)
+  assert ref.refresh_once() == {"tasks_total": 3, "degraded": 0}
+  assert ref.snapshot() == {"tasks_total": 3, "degraded": 0}
+  assert pools[0]["thread_role"] == "public-ef-pool"
+  assert pools[0]["max_workers"] == update_metrics.PUBLIC_EF_POOL_THREADS

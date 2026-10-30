@@ -24,10 +24,14 @@ The long-running ``global_priority`` scheduler rebuilds that default window
 when calendar today advances past the frozen window end (midnight rollover).
 CLI explicit start/end dates do not auto-extend.
 
-The global scheduler (**``update_metrics_for_dates``**) first finishes all
-`/pub/` expansion-factor aggregate artifacts using a metrics-sized thread pool
-(one calendar month or one calendar year per worker task), then switches the
-thread role and begins job readiness checks plus ``Metrics.run`` batches.
+Supervised default (no CLI dates): ``main`` runs passes back to back in one
+process (``_run_continuous_scheduler``), idling
+``metrics_scheduler_pass_interval_s`` between them, while
+``_PublicEfRefresher`` rebuilds the `/pub/` expansion-factor artifacts on its
+own small ``public-ef-pool`` every ``metrics_public_ef_interval_s``. One-shot
+runs (explicit dates, ``sleep_after`` off) keep the blocking order: `/pub/`
+artifacts on a metrics-sized pool first (one calendar month or year per
+task), then job readiness checks plus compute.
 
 Attributes:
   CHUNK_SIZE: Attribute.
@@ -46,6 +50,7 @@ Attributes:
   LAST_UPDATE_METRICS_DIAGNOSTICS: Attribute.
   METRICS_SCHEDULER_STALL_EXIT_CODE: Attribute.
   PUBLIC_EF_PHASE_NO_PROGRESS_TIMEOUT_SECONDS: Attribute.
+  PUBLIC_EF_POOL_THREADS: Threads of the background /pub/ EF refresher pool.
   PUBLIC_EF_PHASE_POLL_TIMEOUT_SECONDS: Attribute.
   READINESS_PROBE_TARGET_FAST_SUCCESS_S: Attribute.
   READINESS_PROBE_TARGET_MIN: Attribute.
@@ -258,6 +263,8 @@ STALL_RECOVERY_PER_JID_TIMEOUT_SECONDS = 60.0
 STALL_RECOVERY_PER_JID_POLL_TIMEOUT_SECONDS = 2.0
 STALL_RECOVERY_MAX_WALL_SECONDS = 300.0
 _METRICS_PREWARM_RETRY_ATTEMPTS = 2
+# Threads of the background /pub/ EF refresher pool (runs beside compute).
+PUBLIC_EF_POOL_THREADS = 4
 PUBLIC_EF_PHASE_POLL_TIMEOUT_SECONDS = float(
   os.environ.get("HPCPERFSTATS_PUBLIC_EF_PHASE_POLL_TIMEOUT_S", "5.0")
 )
@@ -6935,11 +6942,155 @@ def _compute_jid_outcomes_batch(
   return _require_prewarm_for_finished(outcomes, prewarm_ok)
 
 
+class _PublicEfRefresher:
+  """
+  Background thread that refreshes the /pub/ expansion-factor artifacts.
+
+  The long-running scheduler loop used to rebuild them before every pass's
+  job compute (blocking it) and again at its end. This thread owns them on
+  its own titled ``public-ef-pool`` (``PUBLIC_EF_POOL_THREADS`` threads) and
+  refreshes every ``metrics_public_ef_interval_s``, starting at once.
+
+  Attributes:
+    _interval_s: Seconds between refresh starts.
+    _stop: Event that ends the loop.
+    _thread: Worker thread, or None before ``start``.
+    _lock: Guards ``_last``.
+    _last: Stats dict of the last finished refresh (``{}`` before one).
+    _refreshes: Refreshes finished so far.
+  """
+
+  def __init__(self, interval_s: float) -> None:
+    """
+    Create a stopped refresher.
+
+    Args:
+      interval_s (float): Seconds between refresh starts.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _PublicEfRefresher(3600.0).snapshot()
+      {}
+    """
+    self._interval_s = max(1.0, float(interval_s))
+    self._stop = threading.Event()
+    self._thread = None
+    self._lock = threading.Lock()
+    self._last: dict[str, Any] = {}
+    self._refreshes = 0
+
+  def refresh_once(self) -> dict[str, Any]:
+    """
+    Run one parallel refresh on a dedicated pool and remember its stats.
+
+    Returns:
+      dict[str, Any]: Stats from ``refresh_public_expansion_factor_artifacts_parallel``
+      (``{"error": ...}`` when the refresh raised).
+
+    Examples:
+      >>> _PublicEfRefresher(60.0).refresh_once()  # doctest: +SKIP
+      {'tasks_total': 12, ...}
+    """
+    from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
+      SyncTimedbThreadPool,
+    )
+
+    pool = SyncTimedbThreadPool(
+      max_workers=PUBLIC_EF_POOL_THREADS,
+      thread_role="public-ef-pool",
+      process_title=UPDATE_METRICS_PROCESS_TITLE,
+    )
+    try:
+      stats = _run_public_ef_artifacts_parallel_phase(pool, _PhaseTimer())
+    except Exception as exc:
+      stats = {"error": f"{type(exc).__name__}: {exc}"}
+      log_print(
+        f"metrics scheduler: /pub/ EF refresh failed: {exc}", flush=True
+      )
+    finally:
+      pool.close()
+      pool.join()
+      close_old_connections()
+    with self._lock:
+      self._last = dict(stats or {})
+      self._refreshes += 1
+    return stats
+
+  def _run(self) -> None:
+    """
+    Refresh, then wait ``interval_s`` (or until stop), until stopped.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _PublicEfRefresher(60.0)._run()  # doctest: +SKIP
+    """
+    from hpcperfstats.dbload.lib.process_title import set_daemon_thread_title
+
+    set_daemon_thread_title(
+      "", script_name=UPDATE_METRICS_PROCESS_TITLE, role="public-ef-refresh"
+    )
+    while not self._stop.is_set() and not shutdown_requested[0]:
+      self.refresh_once()
+      self._stop.wait(self._interval_s)
+
+  def start(self) -> None:
+    """
+    Start the refresh thread (idempotent).
+
+    Returns:
+      None
+
+    Examples:
+      >>> _PublicEfRefresher(60.0).start()  # doctest: +SKIP
+    """
+    if self._thread is None:
+      self._thread = threading.Thread(
+        target=self._run, name="metrics-public-ef-refresh", daemon=True
+      )
+      self._thread.start()
+
+  def stop(self, timeout_s: float = 5.0) -> None:
+    """
+    Ask the thread to stop and wait briefly for it.
+
+    Args:
+      timeout_s (float): Join timeout seconds.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _PublicEfRefresher(60.0).stop()
+    """
+    self._stop.set()
+    if self._thread is not None:
+      self._thread.join(timeout=timeout_s)
+
+  def snapshot(self) -> dict[str, Any]:
+    """
+    Stats of the last finished refresh.
+
+    Returns:
+      dict[str, Any]: Copy of the last stats (``{}`` before the first).
+
+    Examples:
+      >>> _PublicEfRefresher(60.0).snapshot()
+      {}
+    """
+    with self._lock:
+      return dict(self._last)
+
+
 def update_metrics_for_dates(
   dates: Any,
   rerun: bool = False,
   *,
   allow_rollover: bool = False,
+  public_ef: str = "blocking",
 ) -> None:
   """
   Global scheduler across dates to keep workers saturated.
@@ -6953,6 +7104,9 @@ def update_metrics_for_dates(
     rerun (bool): Boolean flag for rerun.
     allow_rollover (bool): Rebuild default window on midnight; default
     False so one-shot / test date lists stay fixed.
+    public_ef (str): ``blocking`` refreshes the /pub/ EF artifacts before job
+      compute and again at the end (one-shot runs); ``background`` skips both
+      because the long-running loop's ``_PublicEfRefresher`` owns them.
 
   Returns:
     None
@@ -7122,11 +7276,13 @@ def update_metrics_for_dates(
         "queries may be slow on large databases.",
         flush=True,
       )
-      shared_pool = metrics_manager.ensure_pool(pool_kind="public-ef-pool")
-      log_print("Metrics thread pool ready.", flush=True)
-      pub_stats = _run_public_ef_artifacts_parallel_phase(
-        shared_pool, phase_timer
-      )
+      pub_stats = {}
+      if public_ef == "blocking":
+        shared_pool = metrics_manager.ensure_pool(pool_kind="public-ef-pool")
+        log_print("Metrics thread pool ready.", flush=True)
+        pub_stats = _run_public_ef_artifacts_parallel_phase(
+          shared_pool, phase_timer
+        )
       with scheduler_shared_lock:
         stats["public_ef_degraded"] = int(pub_stats.get("degraded", 0))
         stats["public_ef_worker_exceptions_total"] = int(
@@ -7625,7 +7781,8 @@ def update_metrics_for_dates(
           rescan_thread.join(timeout=2.0)
         with phase_timer.phase("prewarm_s"):
           prewarm_pipeline.finish()
-          refresh_public_expansion_factor_artifacts_safe()
+          if public_ef == "blocking":
+            refresh_public_expansion_factor_artifacts_safe()
         completion_reporter.stop()
         metrics_manager.close_pool()
 
@@ -7940,6 +8097,51 @@ def _main_one_jid(jid: Any) -> Any:
   return 0 if ok else 1
 
 
+def _run_continuous_scheduler() -> int:
+  """
+  Run scheduler passes over the default window until shutdown.
+
+  Each pass rebuilds the trailing window, runs ``update_metrics_for_dates``
+  with ``public_ef="background"``, closes DB connections and idles
+  ``metrics_scheduler_pass_interval_s``. ``MetricsSchedulerStallExit`` and
+  ``DatabaseUnavailableExit`` still propagate so supervisord restarts the
+  process.
+
+  Returns:
+    int: 0 after shutdown.
+
+  Examples:
+    >>> _run_continuous_scheduler()  # doctest: +SKIP
+    0
+  """
+  refresher = _PublicEfRefresher(cfg.get_metrics_public_ef_interval_s())
+  refresher.start()
+  passes = 0
+  try:
+    while not shutdown_requested[0]:
+      start, end = _default_metrics_date_range()
+      update_metrics_for_dates(
+        _newest_first_metrics_dates(start, end),
+        allow_rollover=True,
+        public_ef="background",
+      )
+      passes += 1
+      if shutdown_requested[0]:
+        break
+      close_old_connections()
+      connections.close_all()
+      idle_s = float(cfg.get_metrics_scheduler_pass_interval_s())
+      log_print(
+        f"metrics scheduler: pass {passes} done; next pass in {idle_s:.0f}s "
+        f"public_ef_last={refresher.snapshot()}",
+        flush=True,
+      )
+      sleep_until_shutdown(idle_s)
+  finally:
+    refresher.stop()
+  return 0
+
+
 def main(argv: Any | None = None, sleep_after: Any | None = None) -> Any:
   """
   Entry point for updating metrics_data for a date or date range.
@@ -8042,6 +8244,11 @@ def main(argv: Any | None = None, sleep_after: Any | None = None) -> Any:
       result = update_metrics(all_dates[day_idx])
       log_print(result)
       day_idx += 1
+  elif sleep_after and allow_rollover:
+    # Supervised default: passes run back to back in this process (no
+    # 600 s sleep, exit and supervisor restart between them); /pub/ EF runs
+    # on its own timer thread so it never holds job compute.
+    return _run_continuous_scheduler()
   else:
     result = update_metrics_for_dates(all_dates, allow_rollover=allow_rollover)
     log_print(result)

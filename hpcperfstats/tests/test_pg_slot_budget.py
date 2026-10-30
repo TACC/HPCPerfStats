@@ -19,7 +19,9 @@ def test_estimate_django_pg_slot_peak_formula(monkeypatch):
 
   est = budget.estimate_django_pg_slot_peak()
   web = 32 * 4
-  expected = web + 32 + 24 + 32 + 4 + 2 + budget.RESERVE_SLOTS
+  expected = (
+    web + 32 + 24 + budget.PUBLIC_EF_SLOTS + 32 + 4 + 2 + budget.RESERVE_SLOTS
+  )
   assert est["components"]["web"] == web
   assert est["components"]["listend"] == 32
   assert est["components"]["metrics_pool"] == 24
@@ -64,3 +66,10 @@ def test_log_pg_slot_budget_is_log_only_when_over_threshold(monkeypatch):
   result = budget.log_pg_slot_budget_if_needed(log_fn=lines.append)
   assert result["should_warn"] is True
   assert any("WARN" in line and "450" in line for line in lines)
+
+
+def test_public_ef_slots_match_update_metrics_refresher_pool():
+  """update_metrics T1: the background /pub/ EF pool is counted in the peak."""
+  from hpcperfstats.analysis.metrics import update_metrics
+
+  assert budget.PUBLIC_EF_SLOTS == update_metrics.PUBLIC_EF_POOL_THREADS

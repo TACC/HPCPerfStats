@@ -139,9 +139,9 @@ Raw stats on disk remain the **source of truth** until validated archive members
 
 Rough peak connections (code: ``estimate_django_pg_slot_peak()``):
 
-`gunicorn_workers × max(api_small_executor, parallel_db_prefetch) + listend_db_ingest_pool_processes + metrics_pool + sync_ingest_write_pool_processes + sync_day_close_max_inflight + sync_archive_pool_processes + reserve(32)`
+`gunicorn_workers × max(api_small_executor, parallel_db_prefetch) + listend_db_ingest_pool_processes + metrics_pool + public_ef_pool(4) + sync_ingest_write_pool_processes + sync_day_close_max_inflight + sync_archive_pool_processes + reserve(32)`
 
-Example (hs02 / ini defaults): `32 × 4 + 32 + 32 + 32 + 4 + 2 + 32 = 262` — well under **`max_connections=500`**. Use **`sync_ingest_write_pool_processes`** (default **½** of parse **64** → **32**), not parse width, for the ingest DB session term. A census of hundreds of **idle** backends from `pipeline` is a **leak** (detached `update_metrics` threads after `reset_pool_hard` whose Django sockets were not `connections.close_all()`'d). **Do not raise the GUC** to paper over that; worker `finally` must close thread-local backends because `CONN_MAX_AGE` never fires on abandoned threads.
+Example (hs02 / ini defaults): `32 × 4 + 32 + 32 + 4 + 32 + 4 + 2 + 32 = 266` — well under **`max_connections=500`**. Use **`sync_ingest_write_pool_processes`** (default **½** of parse **64** → **32**), not parse width, for the ingest DB session term. A census of hundreds of **idle** backends from `pipeline` is a **leak** (detached `update_metrics` threads after `reset_pool_hard` whose Django sockets were not `connections.close_all()`'d). **Do not raise the GUC** to paper over that; worker `finally` must close thread-local backends because `CONN_MAX_AGE` never fires on abandoned threads.
 
 Compose sets **`max_connections=500`** with **reduced `work_mem` / parallel gather / maintenance buffers** to limit RAM spikes while keeping slot headroom. The stack does **not** use an external pooler (no PgBouncer): sizing is direct Django → Postgres. Still use **`WEB_CONCURRENCY`**, **`metrics_pool_processes`**, **`sync_ingest_pool_processes`**, and **`parallel_db_prefetch_max`** so concurrent heavy queries stay bounded. Startup logs a **WARN** at **80%** of 500 (`log_pg_slot_budget_if_needed`); that check is log-only.
 

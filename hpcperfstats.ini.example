@@ -204,6 +204,12 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Seconds after job end to wait for every host to cover the window before computing with the hosts that reported (default 21600).
 # metrics_readiness_host_wait_seconds = 21600
 
+# Seconds the long-running update_metrics loop idles between scheduler passes (default 60).
+# metrics_scheduler_pass_interval_s = 60
+
+# Seconds between background /pub/ expansion-factor artifact refreshes, minimum 60 (default 3600).
+# metrics_public_ef_interval_s = 3600
+
 # Ingest parse pool size and Codon worker process count (default 64; capped at 128 Codon workers).
 # sync_ingest_pool_processes = 64
 

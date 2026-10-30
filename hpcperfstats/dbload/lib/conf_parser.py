@@ -107,6 +107,8 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "metrics_readiness_start_margin_seconds"),
   ("PIPELINE", "metrics_readiness_end_margin_seconds"),
   ("PIPELINE", "metrics_readiness_host_wait_seconds"),
+  ("PIPELINE", "metrics_scheduler_pass_interval_s"),
+  ("PIPELINE", "metrics_public_ef_interval_s"),
   ("PIPELINE", "sync_ingest_pool_processes"),
   ("PIPELINE", "sync_codon_context_pool_fraction"),
   ("PIPELINE", "sync_codon_worker_recycle_rss_mib"),
@@ -285,6 +287,8 @@ INI_OPTION_DEFAULTS = {
   "metrics_readiness_start_margin_seconds": "600",
   "metrics_readiness_end_margin_seconds": "600",
   "metrics_readiness_host_wait_seconds": "21600",
+  "metrics_scheduler_pass_interval_s": "60",
+  "metrics_public_ef_interval_s": "3600",
   "sync_ingest_pool_processes": "64",
   "sync_codon_context_pool_fraction": "1.0",
   "sync_codon_worker_recycle_rss_mib": "1536",
@@ -2917,6 +2921,44 @@ def get_metrics_readiness_host_wait_seconds() -> float:
     return max(0.0, float(_pipeline_get("metrics_readiness_host_wait_seconds")))
   except TypeError, ValueError, OverflowError:
     return 21600.0
+
+
+def get_metrics_scheduler_pass_interval_s() -> float:
+  """
+  Seconds the long-running update_metrics loop idles between passes.
+
+  Returns:
+    float: Non-negative seconds (``[PIPELINE]
+    metrics_scheduler_pass_interval_s``, default 60).
+
+  Examples:
+    >>> get_metrics_scheduler_pass_interval_s()  # doctest: +SKIP
+    60.0
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(0.0, float(_pipeline_get("metrics_scheduler_pass_interval_s")))
+  except TypeError, ValueError, OverflowError:
+    return 60.0
+
+
+def get_metrics_public_ef_interval_s() -> float:
+  """
+  Seconds between background /pub/ expansion-factor artifact refreshes.
+
+  Returns:
+    float: Seconds, at least 60 (``[PIPELINE] metrics_public_ef_interval_s``,
+    default 3600).
+
+  Examples:
+    >>> get_metrics_public_ef_interval_s()  # doctest: +SKIP
+    3600.0
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(60.0, float(_pipeline_get("metrics_public_ef_interval_s")))
+  except TypeError, ValueError, OverflowError:
+    return 3600.0
 
 
 def get_metrics_run_poll_timeout_s() -> Any:

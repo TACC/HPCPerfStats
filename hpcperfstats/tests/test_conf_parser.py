@@ -813,6 +813,8 @@ def test_get_metrics_readiness_window_coverage_defaults(temp_ini, monkeypatch):
   assert cfg.get_metrics_readiness_start_margin_seconds() == 600.0
   assert cfg.get_metrics_readiness_end_margin_seconds() == 600.0
   assert cfg.get_metrics_readiness_host_wait_seconds() == 21600.0
+  assert cfg.get_metrics_scheduler_pass_interval_s() == 60.0
+  assert cfg.get_metrics_public_ef_interval_s() == 3600.0
 
 
 def test_get_metrics_readiness_host_wait_seconds_ini_override(
