@@ -323,6 +323,33 @@ def _consumer_progress_total(stats: Any) -> int:
   )
 
 
+def _clear_consumer_stall_reason(stats: Any, batch_metrics_ok: int) -> None:
+  """
+  Drop a consumer stall reason once a batch persisted metrics again.
+
+  Consumer reasons (``compute_stuck_inflight``, ``compute_all_failed``, ...)
+  describe a stage that is not making progress; left set after a recovery
+  they label every later healthy pass. Producer reasons are left alone.
+
+  Args:
+    stats (Any): Scheduler stats (caller holds the stats lock).
+    batch_metrics_ok (int): Jobs whose metrics persisted in this batch.
+
+  Returns:
+    None
+
+  Examples:
+    >>> st = {"stall_reason": "compute_stuck_inflight"}
+    >>> _clear_consumer_stall_reason(st, 1)
+    >>> st["stall_reason"]
+    ''
+  """
+  if batch_metrics_ok > 0 and stats.get("stall_reason") in (
+    CONSUMER_STALL_EXIT_REASONS | {"compute_stuck_inflight"}
+  ):
+    stats["stall_reason"] = ""
+
+
 def _maybe_trigger_consumer_stall_exit(
   stats: Any,
   consumer_stall_since: Any,
@@ -7294,6 +7321,7 @@ def update_metrics_for_dates(
               1 for o in jid_outcomes if o.get("metrics_ok", o["ok"])
             )
             stats["metrics_ok_total"] += batch_metrics_ok
+            _clear_consumer_stall_reason(stats, batch_metrics_ok)
             stats["prewarm_failed_total"] += batch_metrics_ok - len(
               succeeded_jids
             )

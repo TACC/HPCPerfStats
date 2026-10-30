@@ -6846,3 +6846,19 @@ def test_candidate_rescan_only_queries_the_newest_days(monkeypatch):
   stop.set()
   thread.join(timeout=2.0)
   assert set(queried) == {15, 14}
+
+
+@pytest.mark.machine_unit_mock
+def test_consumer_stall_reason_clears_after_progress():
+  """S9: a recovered consumer must not report a stall reason forever."""
+  for reason in ("compute_stuck_inflight", "compute_all_failed"):
+    stats = {"stall_reason": reason}
+    update_metrics._clear_consumer_stall_reason(stats, 0)
+    assert stats["stall_reason"] == reason  # no progress yet
+    update_metrics._clear_consumer_stall_reason(stats, 2)
+    assert stats["stall_reason"] == ""
+  producer = {"stall_reason": "no_ready_candidates"}
+  update_metrics._clear_consumer_stall_reason(producer, 2)
+  assert producer["stall_reason"] == "no_ready_candidates"
+  src = inspect.getsource(update_metrics.update_metrics_for_dates)
+  assert "_clear_consumer_stall_reason(stats, batch_metrics_ok)" in src
