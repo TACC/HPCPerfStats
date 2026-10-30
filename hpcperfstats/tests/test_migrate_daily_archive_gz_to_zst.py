@@ -1,230 +1,254 @@
-"""Regression: migrate_daily_archive_gz_to_zst bootstraps Django before ORM paths."""
+"""scripts/migrate_daily_archive_gz_to_zst.sh never loses a daily archive.
+
+Each case runs the real script against a temp daily dir. A legacy .tar.gz is
+removed only after a byte-verified .tar.zst replacement exists; every failure
+path leaves the .tar.gz (and any .tar / .tar.zst) exactly as it was.
+"""
 
 from __future__ import annotations
 
-import importlib.util
+import gzip
+import hashlib
+import io
+import os
+import shutil
+import subprocess
+import tarfile
+import time
 from pathlib import Path
 
+import pytest
+
 _REPO = Path(__file__).resolve().parents[2]
-_SCRIPT = _REPO / "scripts" / "migrate_daily_archive_gz_to_zst.py"
+_SCRIPT = _REPO / "scripts" / "migrate_daily_archive_gz_to_zst.sh"
+
+pytestmark = pytest.mark.skipif(not shutil.which("zstd"), reason="needs zstd")
+
+DAY = "2024-03-05"
+MEMBERS = [
+  ("c1.example.com/1709618400", b"x" * 5000),
+  ("c2.example.com/1709622000", os.urandom(7000)),
+]
 
 
-def _load_migrate_script():
-  spec = importlib.util.spec_from_file_location(
-    "migrate_daily_archive_gz_to_zst",
-    _SCRIPT,
-  )
-  assert spec is not None and spec.loader is not None
-  mod = importlib.util.module_from_spec(spec)
-  spec.loader.exec_module(mod)
-  return mod
+def _tar_bytes(members: list[tuple[str, bytes]]) -> bytes:
+  buf = io.BytesIO()
+  with tarfile.open(fileobj=buf, mode="w", format=tarfile.GNU_FORMAT) as tf:
+    for name, data in members:
+      info = tarfile.TarInfo(name)
+      info.size = len(data)
+      info.mtime = 1700000000
+      tf.addfile(info, io.BytesIO(data))
+  return buf.getvalue()
 
 
-def test_migrate_script_source_calls_ensure_django():
-  """Static guard: CLI entry must bootstrap Django (ImproperlyConfigured fix)."""
-  source = _SCRIPT.read_text(encoding="utf-8")
-  assert "ensure_django" in source
-  assert "django_bootstrap" in source
+def _write_gz(daily: Path, members, day: str = DAY) -> Path:
+  gz = daily / f"{day}.tar.gz"
+  gz.write_bytes(gzip.compress(_tar_bytes(members)))
+  return gz
 
 
-def test_migrate_main_calls_ensure_django_before_remaining_raw(
-  monkeypatch, tmp_path
-):
-  """Regression: bare ``python3 ./scripts/migrate_daily_archive_gz_to_zst.py`` must
-  call ensure_django before build_remaining_raw_stats_by_daily_gz (ORM import).
-  """
-  mod = _load_migrate_script()
-  daily = tmp_path / "daily"
-  daily.mkdir()
-  order = []
-
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.conf_parser._ensure_cfg_loaded",
-    lambda: None,
+def _write_zst(daily: Path, members, day: str = DAY) -> Path:
+  zst = daily / f"{day}.tar.zst"
+  subprocess.run(
+    ["zstd", "-q", "-f", "-o", str(zst)],
+    input=_tar_bytes(members),
+    check=True,
   )
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.conf_parser.get_daily_archive_dir_path",
-    lambda: str(daily),
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.conf_parser.get_archive_dir_path",
-    lambda: str(tmp_path / "archive"),
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.conf_parser.get_host_name_ext",
-    lambda: "example.com",
-  )
-
-  def fake_ensure():
-    order.append("ensure_django")
-
-  def fake_remaining(*_a, **_k):
-    order.append("remaining_raw")
-    return {}
-
-  def fake_migrate(*_a, **_k):
-    order.append("migrate")
-    return {
-      "converted": 0,
-      "dropped_only": 0,
-      "failed": 0,
-      "gz_remaining": 0,
-    }
-
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.django_bootstrap.ensure_django",
-    fake_ensure,
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
-    "check_archive_migration_prerequisites",
-    lambda: None,
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
-    "build_remaining_raw_stats_by_daily_gz",
-    fake_remaining,
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
-    "migrate_legacy_daily_gz_archives",
-    fake_migrate,
-  )
-
-  rc = mod.main(["--daily-archive-dir", str(daily), "--dry-run"])
-  assert rc == 0
-  assert order[:2] == ["ensure_django", "remaining_raw"]
-  assert "migrate" in order
+  return zst
 
 
-def test_migrate_cli_installs_archive_members_store(monkeypatch, tmp_path):
-  """CLI must install the in-process members store from INI archive_dir."""
-  from hpcperfstats.dbload.lib.sync_timedb_archive_members_store import (
-    get_process_archive_members_store,
-    set_process_archive_members_store,
+def _zst_bytes(zst: Path) -> bytes:
+  return subprocess.run(
+    ["zstd", "-dc", str(zst)], capture_output=True, check=True
+  ).stdout
+
+
+def _run(daily: Path, *args: str, env: dict | None = None):
+  return subprocess.run(
+    [
+      "bash",
+      str(_SCRIPT),
+      "--daily",
+      str(daily),
+      "--margin-gb",
+      "0",
+      "--allow-running",
+      "--log",
+      str(daily.parent / "run.log"),
+      *args,
+    ],
+    capture_output=True,
+    text=True,
+    env=env,
+    timeout=120,
   )
 
-  mod = _load_migrate_script()
-  daily = tmp_path / "daily"
-  daily.mkdir()
-  archive = tmp_path / "archive"
-  archive.mkdir()
-  seen = {"during": None}
 
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.conf_parser._ensure_cfg_loaded",
-    lambda: None,
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.conf_parser.get_daily_archive_dir_path",
-    lambda: str(daily),
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.conf_parser.get_archive_dir_path",
-    lambda: str(archive),
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.conf_parser.get_host_name_ext",
-    lambda: "example.com",
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.django_bootstrap.ensure_django",
-    lambda: None,
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
-    "check_archive_migration_prerequisites",
-    lambda: None,
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
-    "build_remaining_raw_stats_by_daily_gz",
-    lambda *_a, **_k: {},
-  )
+def _snapshot(daily: Path) -> dict[str, str]:
+  return {
+    p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+    for p in sorted(daily.iterdir())
+    if not p.name.startswith(".")
+  }
 
-  def fake_migrate(*_a, **_k):
-    seen["during"] = get_process_archive_members_store()
-    return {
-      "converted": 0,
-      "dropped_only": 0,
-      "failed": 0,
-      "gz_remaining": 0,
-    }
 
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.sync_timedb_archive_helpers."
-    "migrate_legacy_daily_gz_archives",
-    fake_migrate,
+def _names(daily: Path) -> list[str]:
+  return sorted(p.name for p in daily.iterdir() if not p.name.startswith("."))
+
+
+@pytest.fixture
+def daily(tmp_path):
+  d = tmp_path / "daily_archive"
+  d.mkdir()
+  return d
+
+
+def test_dry_run_changes_nothing(daily):
+  _write_gz(daily, MEMBERS)
+  before = _snapshot(daily)
+  proc = _run(daily)
+  assert proc.returncode == 0, proc.stdout + proc.stderr
+  assert "WOULD CONVERT " + DAY in proc.stdout
+  assert _snapshot(daily) == before
+
+
+def test_gz_only_day_converts_byte_identical_and_drops_gz(daily):
+  gz = _write_gz(daily, MEMBERS)
+  raw = gzip.decompress(gz.read_bytes())
+  proc = _run(daily, "--apply")
+  assert proc.returncode == 0, proc.stdout + proc.stderr
+  zst = daily / f"{DAY}.tar.zst"
+  assert not gz.exists()
+  assert _zst_bytes(zst) == raw
+  assert _names(daily) == [zst.name]
+
+
+def test_truncated_gz_is_kept_and_no_zst_is_left(daily):
+  gz = _write_gz(daily, MEMBERS)
+  gz.write_bytes(gz.read_bytes()[:-40])
+  before = _snapshot(daily)
+  proc = _run(daily, "--apply")
+  assert proc.returncode != 0
+  assert "FAIL " + DAY in proc.stdout
+  assert _snapshot(daily) == before
+
+
+def test_bad_compressor_output_fails_verify_and_keeps_gz(daily, tmp_path):
+  """A zstd that silently drops bytes must be caught by the sha256 compare."""
+  _write_gz(daily, MEMBERS)
+  before = _snapshot(daily)
+  shim = tmp_path / "bin"
+  shim.mkdir()
+  real = shutil.which("zstd")
+  (shim / "zstd").write_text(
+    "#!/bin/bash\n"
+    'for a in "$@"; do [ "$a" = -o ] && { head -c -100 | '
+    f'"{real}" "$@"; exit; }}; done\n'
+    f'exec "{real}" "$@"\n'
   )
-  set_process_archive_members_store(None)
+  (shim / "zstd").chmod(0o755)
+  env = dict(os.environ, PATH=f"{shim}:{os.environ['PATH']}")
+  proc = _run(daily, "--apply", env=env)
+  assert proc.returncode != 0
+  assert "verify" in proc.stdout
+  assert _snapshot(daily) == before
+
+
+def test_gz_covered_by_existing_zst_is_dropped_zst_untouched(daily):
+  gz = _write_gz(daily, MEMBERS)
+  zst = _write_zst(daily, [*MEMBERS, ("c3.example.com/1709625600", b"z" * 10)])
+  zst_before = zst.read_bytes()
+  proc = _run(daily, "--apply")
+  assert proc.returncode == 0, proc.stdout + proc.stderr
+  assert "DROPPED " + DAY in proc.stdout
+  assert not gz.exists()
+  assert zst.read_bytes() == zst_before
+
+
+def test_gz_with_member_missing_from_zst_keeps_both(daily):
+  _write_gz(daily, MEMBERS)
+  _write_zst(daily, MEMBERS[:1])
+  before = _snapshot(daily)
+  proc = _run(daily, "--apply")
+  assert "KEEP BOTH " + DAY in proc.stdout
+  assert "c2.example.com/1709622000" in proc.stdout
+  assert _snapshot(daily) == before
+
+
+def test_gz_member_with_different_bytes_same_size_keeps_both(daily):
+  """Same name and size but different content is not a copy."""
+  name, data = MEMBERS[0]
+  _write_gz(daily, MEMBERS)
+  _write_zst(daily, [(name, b"y" * len(data)), MEMBERS[1]])
+  before = _snapshot(daily)
+  proc = _run(daily, "--apply")
+  assert "KEEP BOTH " + DAY in proc.stdout
+  assert _snapshot(daily) == before
+
+
+def test_corrupt_existing_zst_keeps_both(daily):
+  _write_gz(daily, MEMBERS)
+  zst = _write_zst(daily, MEMBERS)
+  zst.write_bytes(zst.read_bytes()[:-20])
+  before = _snapshot(daily)
+  proc = _run(daily, "--apply")
+  assert proc.returncode != 0
+  assert _snapshot(daily) == before
+
+
+def test_day_with_open_tar_is_left_alone(daily):
+  _write_gz(daily, MEMBERS)
+  (daily / f"{DAY}.tar").write_bytes(_tar_bytes(MEMBERS))
+  before = _snapshot(daily)
+  proc = _run(daily, "--apply")
+  assert proc.returncode == 0, proc.stdout + proc.stderr
+  assert "open .tar" in proc.stdout
+  assert _snapshot(daily) == before
+
+
+def test_stale_tmp_from_killed_run_is_replaced(daily):
+  gz = _write_gz(daily, MEMBERS)
+  raw = gzip.decompress(gz.read_bytes())
+  (daily / f"{DAY}.tar.zst.gz2zst.tmp").write_bytes(b"partial")
+  proc = _run(daily, "--apply")
+  assert proc.returncode == 0, proc.stdout + proc.stderr
+  assert _zst_bytes(daily / f"{DAY}.tar.zst") == raw
+  assert _names(daily) == [f"{DAY}.tar.zst"]
+
+
+def test_no_room_keeps_gz(daily):
+  _write_gz(daily, MEMBERS)
+  before = _snapshot(daily)
+  proc = _run(daily, "--apply", "--margin-gb", "100000000")
+  assert "not enough free space" in proc.stdout
+  assert _snapshot(daily) == before
+
+
+def test_parallel_jobs_convert_every_day(daily):
+  days = [f"2024-03-0{i}" for i in range(1, 6)]
+  raws = {}
+  for day in days:
+    raws[day] = gzip.decompress(_write_gz(daily, MEMBERS, day).read_bytes())
+  proc = _run(daily, "--apply", "--jobs", "3")
+  assert proc.returncode == 0, proc.stdout + proc.stderr
+  for day in days:
+    assert not (daily / f"{day}.tar.gz").exists()
+    assert _zst_bytes(daily / f"{day}.tar.zst") == raws[day]
+  assert "converted=5" in proc.stdout
+
+
+def test_second_concurrent_run_is_refused(daily):
+  _write_gz(daily, MEMBERS)
+  lock = daily / ".migrate_daily_archive_gz_to_zst.lock"
+  lock.touch()
+  holder = subprocess.Popen(["flock", str(lock), "sleep", "30"])
   try:
-    rc = mod.main(["--daily-archive-dir", str(daily), "--dry-run"])
+    time.sleep(0.5)
+    proc = _run(daily, "--apply")
   finally:
-    set_process_archive_members_store(None)
-  assert rc == 0
-  assert seen["during"] is not None
-  assert get_process_archive_members_store() is None
-
-
-def test_build_archive_maintenance_snapshot_ensures_django(monkeypatch):
-  """Shared helper must bootstrap Django before ingest_readiness/host_data import."""
-  from hpcperfstats.dbload.lib import sync_timedb_archive_maint as maint
-
-  order = []
-
-  def fake_ensure():
-    order.append("ensure_django")
-
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.django_bootstrap.ensure_django",
-    fake_ensure,
-  )
-
-  class _FakeReady:
-    @staticmethod
-    def build_head_ingest_ready_set(*_a, **_k):
-      order.append("ready_set")
-      return set()
-
-  import types
-
-  fake_mod = types.ModuleType("sync_timedb_ingest_readiness")
-  fake_mod.build_head_ingest_ready_set = _FakeReady.build_head_ingest_ready_set
-  monkeypatch.setitem(
-    __import__("sys").modules,
-    "hpcperfstats.dbload.lib.sync_timedb_ingest_readiness",
-    fake_mod,
-  )
-
-  monkeypatch.setattr(maint, "load_archive_maint_hints", lambda *_a, **_k: {})
-  monkeypatch.setattr(
-    maint,
-    "collect_stats_files_in_range",
-    lambda *_a, **_k: [],
-  )
-  monkeypatch.setattr(
-    maint,
-    "collect_head_metadata_for_paths",
-    lambda *_a, **_k: ({}, {}, {}),
-  )
-  monkeypatch.setattr(
-    maint,
-    "collect_gate_identities_for_paths",
-    lambda *_a, **_k: ({}, {}),
-  )
-  monkeypatch.setattr(maint, "build_archive_mapping", lambda *_a, **_k: {})
-  monkeypatch.setattr(
-    maint,
-    "remaining_raw_by_gz_from_mapping",
-    lambda *_a, **_k: {},
-  )
-
-  snap = maint.build_archive_maintenance_snapshot(
-    "/tmp/archive",
-    "example.com",
-    "/tmp/daily",
-    build_ready_set=True,
-    log_fn=None,
-  )
-  assert order[0] == "ensure_django"
-  assert snap is not None
+    holder.kill()
+    holder.wait()
+  assert proc.returncode == 2
+  assert "another run" in proc.stderr
+  assert (daily / f"{DAY}.tar.gz").exists()

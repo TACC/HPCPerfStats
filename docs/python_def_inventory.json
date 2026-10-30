@@ -58750,81 +58750,6 @@
       "kind": "module",
       "lineno": 1,
       "name": "<module>",
-      "path": "scripts/migrate_daily_archive_gz_to_zst.py",
-      "qualname": "<module>",
-      "repo": "HPCPerfStats",
-      "sig_annotated": true
-    },
-    {
-      "doc_ok": true,
-      "excluded": false,
-      "excluded_reason": "",
-      "has_docstring": true,
-      "is_trivial_dunder": false,
-      "issues": [],
-      "kind": "function",
-      "lineno": 33,
-      "name": "_parse_since",
-      "path": "scripts/migrate_daily_archive_gz_to_zst.py",
-      "qualname": "_parse_since",
-      "repo": "HPCPerfStats",
-      "sig_annotated": true
-    },
-    {
-      "doc_ok": true,
-      "excluded": false,
-      "excluded_reason": "",
-      "has_docstring": true,
-      "is_trivial_dunder": false,
-      "issues": [],
-      "kind": "function",
-      "lineno": 58,
-      "name": "_build_arg_parser",
-      "path": "scripts/migrate_daily_archive_gz_to_zst.py",
-      "qualname": "_build_arg_parser",
-      "repo": "HPCPerfStats",
-      "sig_annotated": true
-    },
-    {
-      "doc_ok": true,
-      "excluded": false,
-      "excluded_reason": "",
-      "has_docstring": true,
-      "is_trivial_dunder": false,
-      "issues": [],
-      "kind": "function",
-      "lineno": 150,
-      "name": "main",
-      "path": "scripts/migrate_daily_archive_gz_to_zst.py",
-      "qualname": "main",
-      "repo": "HPCPerfStats",
-      "sig_annotated": true
-    },
-    {
-      "doc_ok": true,
-      "excluded": false,
-      "excluded_reason": "",
-      "has_docstring": true,
-      "is_trivial_dunder": false,
-      "issues": [],
-      "kind": "function",
-      "lineno": 193,
-      "name": "_run_migrate_after_store",
-      "path": "scripts/migrate_daily_archive_gz_to_zst.py",
-      "qualname": "_run_migrate_after_store",
-      "repo": "HPCPerfStats",
-      "sig_annotated": true
-    },
-    {
-      "doc_ok": true,
-      "excluded": false,
-      "excluded_reason": "",
-      "has_docstring": true,
-      "is_trivial_dunder": false,
-      "issues": [],
-      "kind": "module",
-      "lineno": 1,
-      "name": "<module>",
       "path": "scripts/pg18_host_data_chunk_copy.py",
       "qualname": "<module>",
       "repo": "HPCPerfStats",
@@ -62858,7 +62783,7 @@
     "django_migrations": 84,
     "docs_scratch": 52,
     "monitor_read_only": 220,
-    "test_module": 9080,
+    "test_module": 9089,
     "test_tree": 226
   },
   "roots": [
@@ -62866,7 +62791,7 @@
     "/data/hpcperfstats_site/dev-env/HPCPerfStats/hpcperfstats-tools"
   ],
   "summary": {
-    "excluded": 10011,
+    "excluded": 10020,
     "excluded_by_reason": {
       "codon_compile_unit": 106,
       "codon_experiment": 67,
@@ -62874,13 +62799,13 @@
       "django_migrations": 84,
       "docs_scratch": 52,
       "monitor_read_only": 220,
-      "test_module": 9080,
+      "test_module": 9089,
       "test_tree": 226
     },
-    "in_scope": 4190,
+    "in_scope": 4185,
     "in_scope_failed": 0,
-    "in_scope_ok": 4190,
-    "total_defs": 14201
+    "in_scope_ok": 4185,
+    "total_defs": 14205
   },
   "version": 1
 }
