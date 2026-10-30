@@ -381,3 +381,91 @@ def test_artifact_only_refs_skip_compute_even_as_supplements():
   by_jid = {r["ref"].jid: r for r in rows}
   assert by_jid["sup-art"]["base_outcome"]["status"] == "artifact_only"
   assert by_jid["prim-art"]["prewarm_ok"] is True
+
+
+class _EchoPool:
+  """Pool whose metrics and prewarm tasks complete immediately."""
+
+  def __init__(self, prewarm_fn):
+    self.prewarm_fn = prewarm_fn
+    self.metrics_jids = []
+
+  def apply_async(self, fn, args):
+    if fn is self.prewarm_fn:
+      return _ReadyAsync({"jid": args[0], "ok": True})
+    self.metrics_jids.append(args[0][1].jid)
+    return _ReadyAsync({"jid": args[0][1].jid, "status": "ok", "rows": []})
+
+
+def _continuous_session(pool, ready, lock, should_stop, **kw):
+  """Run a continuous session with pass-through compute/persist."""
+  return mss.run_metrics_sliding_session(
+    primary_refs=[SimpleNamespace(jid="p0")],
+    metrics_obj=object(),
+    shared_pool=pool,
+    unwrap_fn=lambda a: a,
+    persist_fn=lambda payload: {"jid": payload["jid"], "ok": True},
+    prewarm_worker_fn=pool.prewarm_fn,
+    inline_prewarm_fn=None,
+    prewarm_mode="pipeline_required",
+    max_inflight=2,
+    poll_timeout_s=0.02,
+    ready_queue=ready,
+    ready_queue_lock=lock,
+    empty_supplement_sleep_s=0.01,
+    continuous=True,
+    should_stop=should_stop,
+    **kw,
+  )
+
+
+@pytest.mark.machine_unit_mock
+def test_continuous_session_keeps_slots_fed_until_producer_done():
+  """T2: work arriving later is taken by the same session; idle != stall."""
+
+  def _prewarm(jid):
+    return {"jid": jid, "ok": True}
+
+  pool = _EchoPool(_prewarm)
+  ready, lock, done = deque(), threading.Lock(), threading.Event()
+
+  def _producer():
+    for i in range(3):
+      time.sleep(0.15)  # idle gaps longer than stall_timeout_s
+      with lock:
+        ready.append(SimpleNamespace(jid=f"late{i}"))
+    done.set()
+
+  t = threading.Thread(target=_producer)
+  t.start()
+  rows = _continuous_session(
+    pool,
+    ready,
+    lock,
+    lambda: done.is_set() and not ready,
+    stall_timeout_s=0.1,
+  )
+  t.join()
+  assert pool.metrics_jids == ["p0", "late0", "late1", "late2"]
+  assert all(r["ok"] and r.get("prewarm_ok") for r in rows)
+  assert not [
+    r
+    for r in rows
+    if r["base_outcome"].get("status") == "sliding_session_stall"
+  ]
+
+
+@pytest.mark.machine_unit_mock
+def test_continuous_session_stop_leaves_queued_work_for_later():
+  """T2: should_stop() stops taking new work; queued refs stay queued."""
+
+  def _prewarm(jid):
+    return {"jid": jid, "ok": True}
+
+  pool = _EchoPool(_prewarm)
+  lock = threading.Lock()
+  ready = deque([SimpleNamespace(jid="q1"), SimpleNamespace(jid="q2")])
+  rows = _continuous_session(pool, ready, lock, lambda: True, stall_timeout_s=5)
+  assert pool.metrics_jids == ["p0"]
+  assert [r.jid for r in ready] == ["q1", "q2"]
+  assert [r["ref"].jid for r in rows] == ["p0"]

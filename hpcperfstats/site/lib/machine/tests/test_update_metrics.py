@@ -6989,3 +6989,109 @@ def test_sliding_outcomes_reach_the_consumer_while_the_session_runs(
   assert [o["jid"] for o in out] == ["m1"]
   src = inspect.getsource(update_metrics.update_metrics_for_dates)
   assert "on_outcome=lambda o: _record_outcomes([o])" in src
+
+
+@pytest.mark.django_db(databases=[])
+def test_scheduler_runs_one_continuous_sliding_session(monkeypatch):
+  """T2: the consumer feeds every ready job through one sliding session."""
+  monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS", "1")
+  for name, value in (
+    ("get_metrics_scheduler_mode", "global_fifo"),
+    ("get_metrics_scheduler_prefetch_chunks", 1),
+    ("get_metrics_scheduler_ready_queue_target", 2),
+    ("get_metrics_plot_prewarm_mode", "inline"),
+    ("get_metrics_idle_slot_supplement_enabled", True),
+    ("get_metrics_readiness_require_window_coverage", False),
+    ("get_metrics_run_poll_timeout_s", 0.02),
+  ):
+    monkeypatch.setattr(update_metrics.cfg, name, lambda v=value: v)
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(
+    update_metrics,
+    "_pg_session_statement_timeout_for_metrics_batch",
+    contextlib.nullcontext,
+  )
+  monkeypatch.setattr(
+    update_metrics, "_proxy_reject_not_ready_jids", lambda j: (set(), list(j))
+  )
+  _patch_strict_readiness_batch(monkeypatch, lambda jids: list(jids))
+  monkeypatch.setattr(
+    update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None
+  )
+  monkeypatch.setattr(update_metrics.gc, "collect", lambda: 0)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+
+  class _FakeQs:
+    def __init__(self, chunks):
+      self.chunks = chunks
+
+  jobs = {10: [([f"a{i}" for i in range(3)], 3)], 9: [(["b0", "b1"], 2)]}
+  monkeypatch.setattr(
+    update_metrics,
+    "_jobs_queryset",
+    lambda d, *_a, **_k: _FakeQs(list(jobs[d.day])),
+  )
+  monkeypatch.setattr(
+    update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks)
+  )
+
+  class _Ready:
+    def __init__(self, value):
+      self.value = value
+
+    def ready(self):
+      return True
+
+    def get(self, timeout=None):
+      return self.value
+
+  class _Pool:
+    _processes = 2
+
+    def apply_async(self, fn, args):
+      return _Ready(fn(*args))
+
+  computed = []
+  sessions = []
+  real_session = update_metrics.run_metrics_sliding_session
+
+  def _spy_session(**kwargs):
+    sessions.append(kwargs["continuous"])
+    return real_session(**kwargs)
+
+  monkeypatch.setattr(
+    update_metrics, "run_metrics_sliding_session", _spy_session
+  )
+  monkeypatch.setattr(
+    update_metrics.metrics,
+    "_unwrap_and_persist",
+    lambda args: (
+      computed.append(args[1].jid) or {"jid": args[1].jid, "ok": True}
+    ),
+  )
+
+  class FakeMetrics:
+    def ensure_pool(self, pool_kind="metrics-pool"):
+      return _Pool()
+
+    def close_pool(self):
+      return None
+
+    def reset_pool_hard(self):
+      return None
+
+    def _worker_thread_count(self):
+      return 2
+
+  monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: FakeMetrics())
+  monkeypatch.setattr(
+    update_metrics._PrewarmPipeline, "submit", lambda self, jid: True
+  )
+  update_metrics.update_metrics_for_dates(
+    [datetime(2025, 4, 10), datetime(2025, 4, 9)], rerun=False
+  )
+  assert sorted(computed) == ["a0", "a1", "a2", "b0", "b1"]
+  assert sessions == [True]
+  diag = update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS
+  assert diag["stats"]["processed"] == 5
+  assert diag["stats"]["inflight_jids"] == 0

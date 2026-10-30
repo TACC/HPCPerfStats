@@ -6261,6 +6261,8 @@ def _compute_jid_outcomes_sliding(
   ready_queue_lock: Any | None,
   on_supplements_taken: Any | None = None,
   on_outcome: Any | None = None,
+  continuous: bool = False,
+  should_stop: Any | None = None,
 ) -> Any:
   """
   Sliding metrics+prewarm session with optional ready-queue idle-slot fill.
@@ -6282,6 +6284,9 @@ def _compute_jid_outcomes_sliding(
         ready-queue dequeue / inflight accounting.
     on_outcome (Any | None): Optional ``(outcome: dict) -> None`` called as
         each job finishes, before the session returns.
+    continuous (bool): Keep every slot fed from ``ready_queue`` until
+        ``should_stop()`` (see ``run_metrics_sliding_session``).
+    should_stop (Any | None): ``() -> bool`` for continuous mode.
 
   Returns:
     Any: Sorted per-jid scheduler outcome dicts.
@@ -6433,6 +6438,8 @@ def _compute_jid_outcomes_sliding(
     on_stall_reset=_on_stall_reset,
     on_supplements_taken=on_supplements_taken,
     on_result=_on_row,
+    continuous=continuous,
+    should_stop=should_stop,
   )
   timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
   # Sliding interleaves metrics+prewarm; report full session as batch wall and
@@ -6453,6 +6460,8 @@ def _compute_jid_outcomes_batch(
   ready_queue_lock: Any | None = None,
   on_supplements_taken: Any | None = None,
   on_outcome: Any | None = None,
+  continuous: bool = False,
+  should_stop: Any | None = None,
 ) -> Any:
   """
   Run one compute session (closed Metrics.run or sliding feeder) then prewarm.
@@ -6484,6 +6493,9 @@ def _compute_jid_outcomes_batch(
     on_outcome (Any | None): Optional per-job callback (sliding path only)
         invoked as each job finishes; the barrier path returns outcomes at
         batch end.
+    continuous (bool): Sliding path only: one long-lived session fed from
+        ``ready_queue`` instead of a closed batch.
+    should_stop (Any | None): Sliding continuous ``() -> bool`` stop test.
 
   Returns:
     Any: Sorted per-jid scheduler outcome dicts.
@@ -6573,6 +6585,8 @@ def _compute_jid_outcomes_batch(
       ready_queue_lock=ready_queue_lock,
       on_supplements_taken=on_supplements_taken,
       on_outcome=on_outcome,
+      continuous=continuous,
+      should_stop=should_stop,
     )
 
   metrics_run_outcomes = []
@@ -7135,8 +7149,49 @@ def update_metrics_for_dates(
       telemetry_detail_fsio_fallback_queries = 0
       telemetry_detail_gpu_fallback_queries = 0
       batch_supplement_dequeued = [0]
+      session_stall_since = [None]
+
+      def _session_should_stop() -> bool:
+        """
+        Tell a continuous sliding session to stop taking new work.
+
+        True once the producer is done and the ready queue is empty, or when
+        nothing has persisted metrics for ``STALL_EXIT_AFTER_SECONDS`` while
+        jobs keep failing (``compute_all_failed`` stall exit).
+
+        Returns:
+          bool: Stop taking new work.
+
+        Examples:
+          >>> _session_should_stop()  # doctest: +SKIP
+          False
+        """
+        with scheduler_shared_lock:
+          progress = _consumer_progress_total(stats)
+          failed = int(stats["failed"])
+          if stats["stall_exit_triggered"]:
+            return True
+          if progress > 0 or failed == 0:
+            session_stall_since[0] = None
+          elif session_stall_since[0] is None:
+            session_stall_since[0] = time.monotonic()
+          elif (
+            time.monotonic() - session_stall_since[0]
+            >= STALL_EXIT_AFTER_SECONDS
+          ):
+            stats["stall_reason"] = (
+              stats["stall_reason"] or "compute_all_failed"
+            )
+            stats["stall_exit_triggered"] = 1
+            return True
+        with ready_queue_lock:
+          queue_empty = not ready_queue
+        return producer_done.is_set() and queue_empty
+
       try:
         while not shutdown_requested[0]:
+          if stats["stall_exit_triggered"]:
+            break
           if _maybe_trigger_consumer_stall_exit(
             stats,
             consumer_stall_since,
@@ -7348,6 +7403,8 @@ def update_metrics_for_dates(
                 ready_queue_lock=ready_queue_lock,
                 on_supplements_taken=_on_supplements_taken,
                 on_outcome=lambda o: _record_outcomes([o]),
+                continuous=True,
+                should_stop=_session_should_stop,
               )
             finally:
               compute_batch_heartbeat.clear()

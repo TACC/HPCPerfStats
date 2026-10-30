@@ -187,6 +187,8 @@ def run_metrics_sliding_session(
   empty_supplement_sleep_s: float = 0.05,
   on_supplements_taken: Any | None = None,
   on_result: Any | None = None,
+  continuous: bool = False,
+  should_stop: Any | None = None,
 ) -> list[dict[str, Any]]:
   """
   Pool-sized sliding metrics+prewarm session with sample-count idle-slot fill.
@@ -194,7 +196,9 @@ def run_metrics_sliding_session(
   Does not call ingest ``imap_sliding_window_watch_pool``. Primary refs are
   drained first; when the primary iterator is empty and original-batch work
   remains in flight, idle slots fill from ``ready_queue`` under soft/hard
-  sample caps (RC-E stops when no originals remain in flight).
+  sample caps (RC-E stops when no originals remain in flight). In
+  ``continuous`` mode the session instead keeps every slot fed from
+  ``ready_queue`` until ``should_stop()`` (no end-of-batch drain).
 
   Args:
     primary_refs (list[Any]): Original compute-batch candidate refs.
@@ -222,6 +226,13 @@ def run_metrics_sliding_session(
     on_result (Any | None): Optional ``(row: dict) -> None`` called as each
         ref finishes (metrics failure, prewarm done, stall, shutdown), so the
         caller can account per job instead of at session end.
+    continuous (bool): Keep every slot fed from ``ready_queue`` (FIFO, no
+        sample tiers, no original-batch gate) and wait for more work when
+        the queue is empty, instead of returning when the primary refs are
+        done. Ends when ``should_stop()`` is true and nothing is pending.
+    should_stop (Any | None): ``() -> bool`` for continuous mode; True stops
+        taking new work (producer finished and queue empty, or a scheduler
+        stall exit).
 
   Returns:
     list[dict[str, Any]]: Per-ref results with keys ``ref``, ``ok``,
@@ -243,7 +254,7 @@ def run_metrics_sliding_session(
     ... )
   """
   results: list[dict[str, Any]] = []
-  if not primary_refs:
+  if not primary_refs and not continuous:
     return results
 
   def _finish_row(row: dict[str, Any]) -> None:
@@ -420,7 +431,35 @@ def run_metrics_sliding_session(
       }
     )
 
-  while (primary or pending) and not _shutting_down():
+  def _take_fifo(max_n: int) -> list[Any]:
+    """
+    Pop up to ``max_n`` refs from the front of ``ready_queue`` (continuous).
+
+    Args:
+      max_n (int): Free slots.
+
+    Returns:
+      list[Any]: Refs taken, in queue order.
+
+    Examples:
+      >>> _take_fifo(0)  # doctest: +SKIP
+      []
+    """
+    if ready_queue is None or max_n <= 0:
+      return []
+    lock = (
+      ready_queue_lock
+      if ready_queue_lock is not None
+      else contextlib.nullcontext()
+    )
+    with lock:
+      return [
+        ready_queue.popleft() for _ in range(min(max_n, len(ready_queue)))
+      ]
+
+  while (primary or pending or continuous) and not _shutting_down():
+    stop = continuous and callable(should_stop) and bool(should_stop())
+    was_idle = not pending
     filled = False
     while len(pending) < cap and primary:
       ref = primary.popleft()
@@ -430,8 +469,21 @@ def run_metrics_sliding_session(
         session_total, completed_total + len(pending) + len(primary)
       )
 
+    while continuous and not stop and len(pending) < cap:
+      taken = _take_fifo(cap - len(pending))
+      if not taken:
+        break
+      if callable(on_supplements_taken):
+        with contextlib.suppress(Exception):
+          on_supplements_taken(len(taken))
+      for ref in taken:
+        _submit_metrics(ref, is_original=True)
+        filled = True
+        session_total += 1
+
     while (
-      supplement_enabled
+      not continuous
+      and supplement_enabled
       and len(pending) < cap
       and not primary
       and original_batch_work_inflight(pending)
@@ -456,7 +508,13 @@ def run_metrics_sliding_session(
         session_total += 1
 
     if not pending:
-      break
+      if not continuous or stop:
+        break
+      time.sleep(max(0.01, float(empty_supplement_sleep_s)))
+      continue
+    if was_idle and filled:
+      # Waiting for new work is not a stall: the clock starts with the work.
+      last_progress_at = time.monotonic()
 
     if not filled and not primary and not original_batch_work_inflight(pending):
       # Only supplement work left: drain it (already submitted); no new fill.
