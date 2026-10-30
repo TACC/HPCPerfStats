@@ -11476,7 +11476,12 @@ def test_decompress_restore_keeps_zst_on_active_ingest_day(
     return True
 
   monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _fake_decompress)
-  assert helpers.ensure_daily_tar_restored_for_append(str(tar_path), 1) is True
+  assert (
+    helpers.ensure_daily_tar_restored_for_append(
+      str(tar_path), 1, space_gate="growth"
+    )
+    is True
+  )
   assert captured.get("remove_compressed") is False
   assert zst_path.is_file()
 
@@ -11504,7 +11509,12 @@ def test_ensure_daily_tar_restored_does_not_treat_empty_dest_as_present(
     return True
 
   monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _fake_decompress)
-  assert helpers.ensure_daily_tar_restored_for_append(str(tar_path), 1) is True
+  assert (
+    helpers.ensure_daily_tar_restored_for_append(
+      str(tar_path), 1, space_gate="growth"
+    )
+    is True
+  )
   assert called == [(str(zst_path), str(tar_path))]
   assert tar_path.stat().st_size > 0
 
@@ -11557,7 +11567,10 @@ def test_ensure_daily_tar_restored_invalidates_stale_store_warm(
     )
     assert members_cache_is_fully_warm(keys)
     assert (
-      helpers.ensure_daily_tar_restored_for_append(str(tar_path), 1) is True
+      helpers.ensure_daily_tar_restored_for_append(
+        str(tar_path), 1, space_gate="growth"
+      )
+      is True
     )
     assert tar_path.is_file()
     assert zst_path.is_file()
@@ -11594,7 +11607,12 @@ def test_ensure_restore_does_not_build_full_maint_snapshot(
   monkeypatch.setattr(helpers, "build_remaining_raw_stats_by_daily_gz", _boom)
   monkeypatch.setattr(helpers, "decompress_compressed_to_tar", _fake_decompress)
 
-  assert helpers.ensure_daily_tar_restored_for_append(str(tar_path), 1) is True
+  assert (
+    helpers.ensure_daily_tar_restored_for_append(
+      str(tar_path), 1, space_gate="growth"
+    )
+    is True
+  )
   assert snapshot_calls == []
   assert len(decomp_calls) == 1
   assert decomp_calls[0][1] is False

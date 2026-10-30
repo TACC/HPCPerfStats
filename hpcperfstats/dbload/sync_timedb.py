@@ -655,6 +655,7 @@ def _prewarm_archive_members_for_days(
       if ensure_daily_tar_restored_for_append(
         tar_path,
         cfg.get_archive_zstd_threads(),
+        space_gate="growth",
       ):
         log_print(
           f"INFO: populate_prewarm restored tar day={day_token} path={tar_path}",

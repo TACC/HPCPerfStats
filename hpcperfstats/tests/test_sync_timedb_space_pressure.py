@@ -440,7 +440,10 @@ def test_growth_restore_denied_under_pressure(monkeypatch, tmp_path):
   tar, zst = _sealed_day(tmp_path)
   before = zst.read_bytes()
   _set(monkeypatch, threshold=TIB, free=TIB // 2)
-  assert ah.ensure_daily_tar_restored_for_append(str(tar), 1) is False
+  assert (
+    ah.ensure_daily_tar_restored_for_append(str(tar), 1, space_gate="growth")
+    is sp.SPACE_DENIED
+  )
   assert not tar.exists()
   assert zst.read_bytes() == before
 
@@ -459,9 +462,50 @@ def test_finish_restore_still_keeps_hard_reserve(monkeypatch, tmp_path):
   _set(monkeypatch, threshold=TIB, free=GIB)
   assert (
     ah.ensure_daily_tar_restored_for_append(str(tar), 1, space_gate="finish")
-    is False
+    is sp.SPACE_DENIED
   )
   assert not tar.exists()
+
+
+def test_space_gate_is_required():
+  """F13: a new caller must choose a mode, not inherit the strictest."""
+  param = inspect.signature(ah.ensure_daily_tar_restored_for_append).parameters[
+    "space_gate"
+  ]
+  assert param.default is inspect.Parameter.empty
+
+
+def test_space_denied_open_tar_restore_is_a_transient_defer(
+  monkeypatch, tmp_path
+):
+  """F13: a denied repair restore is env:ENOSPC, not repair_failed."""
+  tar, _zst = _sealed_day(tmp_path)
+  _set(monkeypatch, threshold=TIB, free=GIB)
+  got = ah.ensure_open_daily_tar_readable(str(tar), caller="test")
+  assert (got.readable, got.transient, got.transient_reason) == (
+    False,
+    True,
+    "env:ENOSPC",
+  )
+
+
+def test_space_denied_restore_never_sets_day_skip(monkeypatch, tmp_path):
+  """F13: the ingest lookup used to set a sticky open_tar_gnu_tvf_failed."""
+  from hpcperfstats.dbload.lib import sync_timedb_archive_members_coord as mc
+
+  tar, zst = _sealed_day(tmp_path)
+  _set(monkeypatch, threshold=TIB, free=GIB)
+  skipped = []
+  monkeypatch.setattr(
+    mc, "set_archive_day_ingest_skip", lambda *a, **k: skipped.append(a)
+  )
+  with pytest.raises(mc.ArchiveMembersStoreUnavailableError) as exc:
+    ah._ensure_open_tar_readable_for_ingest_lookup(
+      str(tar), caller="ingest_membership", compressed_canonical=str(zst)
+    )
+  assert not isinstance(exc.value, mc.ArchiveDayIngestSkipError)
+  assert "ENOSPC" in str(exc.value)
+  assert skipped == []
 
 
 def test_append_path_restore_is_not_regated(monkeypatch, tmp_path):

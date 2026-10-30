@@ -31,6 +31,7 @@ Attributes:
   ALL_DAYS: Sentinel from ``select_append_day``: no pressure, every day.
   DAY_CLOSE_START_GRACE_S: Seconds a finished append day waits for its close.
   FINISHING_STAGES: Day-close stages that finish a day (give space back).
+  SPACE_DENIED: Falsy restore result when ``admit_restore`` refused it.
   UNKNOWN_RATIO: Restore size multiple of a sealed file with no size header.
   _DENY_LOG_STATE: Rate-limit state for ``space_pressure deny`` lines.
   _LOCK: Guards ``_STATE`` across append, day-close and census threads.
@@ -68,6 +69,44 @@ FINISHING_STAGES = frozenset(
   }
 )
 
+
+class _SpaceDenied:
+  """
+  Falsy result of a restore the space gate refused (``SPACE_DENIED``).
+
+  ``ensure_daily_tar_restored_for_append`` returns it instead of ``False``
+  so callers that only test truthiness keep deferring, and the open-tar
+  repair path can tell an ``env:ENOSPC`` defer from a failed restore.
+  """
+
+  def __bool__(self) -> bool:
+    """
+    Return False so ``if not restored`` still treats a denial as no tar.
+
+    Returns:
+      bool: Always False.
+
+    Examples:
+      >>> bool(SPACE_DENIED)
+      False
+    """
+    return False
+
+  def __repr__(self) -> str:
+    """
+    Return the sentinel's name for logs and test failures.
+
+    Returns:
+      str: ``SPACE_DENIED``.
+
+    Examples:
+      >>> SPACE_DENIED
+      SPACE_DENIED
+    """
+    return "SPACE_DENIED"
+
+
+SPACE_DENIED = _SpaceDenied()
 _LOCK = threading.Lock()
 _STATE: dict[str, Any] = {}
 _DENY_LOG_STATE: dict[str, dict[str, float]] = {}

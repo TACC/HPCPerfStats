@@ -6437,15 +6437,17 @@ def ensure_daily_tar_restored_for_append(
   zstd_threads: Any,
   *,
   wait_for_other_owner: bool = True,
-  space_gate: str = "growth",
+  space_gate: str,
 ) -> Any:
   """
   Return True when sibling ``.tar`` exists or was restored from sealed backup.
 
   When no sealed ``.tar.zst`` / ``.tar.gz`` sibling exists, returns True so the
   caller may bootstrap a fresh ``.tar``. Returns False when a sealed sibling
-  remains but restore did not produce ``tar_path``, or when the space gate
-  (``sync_timedb_space_pressure.admit_restore``) refuses the restore.
+  remains but restore did not produce ``tar_path``. When the space gate
+  (``sync_timedb_space_pressure.admit_restore``) refuses the restore it
+  returns the falsy ``sp.SPACE_DENIED`` (an ``env:ENOSPC`` defer, never a
+  repair failure or ``day_skip``).
 
   ``wait_for_other_owner=False`` (day-close pre_seal) returns False immediately
   when another thread holds the exclusive restore lease, so the worker can
@@ -6455,9 +6457,9 @@ def ensure_daily_tar_restored_for_append(
     tar_path (str): String for tar path.
     zstd_threads (Any): Zstd threads passed to this helper.
     wait_for_other_owner (bool): Boolean flag for wait for other owner.
-    space_gate (str): ``growth`` (denied under space pressure), ``finish``
-      (day close; hard reserve only) or ``off`` (append path, gated at
-      dispatch).
+    space_gate (str): Required. ``growth`` (denied under space pressure),
+      ``finish`` (day close; hard reserve only) or ``off`` (append path,
+      gated at dispatch).
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -6470,7 +6472,7 @@ def ensure_daily_tar_restored_for_append(
   if _tar_dest_is_nonempty(tar_path):
     return True
   if not sp.admit_restore(tar_path, space_gate):
-    return False
+    return sp.SPACE_DENIED
   zst_path, gz_path = compressed_sibling_paths(tar_path)
   remove_compressed = _decompress_should_unlink_compressed(tar_path)
   sealed = (
@@ -8959,6 +8961,8 @@ def ensure_open_daily_tar_readable(
     ...   "/no.tar", caller="test"
     ... )  # doctest: +SKIP
   """
+  from hpcperfstats.dbload.lib import sync_timedb_space_pressure as sp
+
   tar_norm = os.path.normpath(str(tar_path or ""))
   day_token = str(calendar_date_from_daily_tar_path(tar_norm) or "?")
   threads = (
@@ -8988,12 +8992,17 @@ def ensure_open_daily_tar_readable(
 
   if not os.path.isfile(tar_norm):
     sealed_exists = os.path.isfile(zst_path) or os.path.isfile(gz_path)
-    if sealed_exists and not ensure_daily_tar_restored_for_append(
+    restored = not sealed_exists or ensure_daily_tar_restored_for_append(
       tar_norm,
       threads,
       wait_for_other_owner=wait_for_restore_owner,
       space_gate="finish",
-    ):
+    )
+    if restored is sp.SPACE_DENIED:
+      return OpenDailyTarEnsureResult(
+        readable=False, transient=True, transient_reason="env:ENOSPC"
+      )
+    if not restored:
       _log_daily_tar_repair_outcome(
         log_fn,
         caller=caller,
@@ -9173,6 +9182,8 @@ def _salvage_open_tar_for_ensure(
     >>> _salvage_open_tar_for_ensure("/nonexistent.tar", 1) is None
     True
   """
+  from hpcperfstats.dbload.lib import sync_timedb_space_pressure as sp
+
   try:
     result = salvage_truncated_tar_prefix(tar_path, log_fn=log_fn)
   except TimeoutError:
@@ -9195,12 +9206,14 @@ def _salvage_open_tar_for_ensure(
     if not sealed:
       # No archive left for the day: append recreates it (raw is on disk).
       return OpenDailyTarEnsureResult(readable=True)
+    restored = ensure_daily_tar_restored_for_append(
+      tar_path, zstd_threads, space_gate="finish"
+    )
+    denied = restored is sp.SPACE_DENIED
     return OpenDailyTarEnsureResult(
-      readable=bool(
-        ensure_daily_tar_restored_for_append(
-          tar_path, zstd_threads, space_gate="finish"
-        )
-      )
+      readable=bool(restored),
+      transient=denied,
+      transient_reason="env:ENOSPC" if denied else "",
     )
   return OpenDailyTarEnsureResult(readable=False)
 
