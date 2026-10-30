@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Full-stack image rebuild: podman build web, proxy, db_pg18; compose down + up -d
-# --no-build. CPython bake uses --enable-optimizations only (no custom Clang host profiles).
+# --no-build. The db_pg18 image is built, but its container (profile pg18-migrate) is NOT started.
+# CPython bake uses --enable-optimizations only (no custom Clang host profiles).
 # Pipeline cgroup memory.high is commented out (do not throttle below memory.max).
 # Never use podman-compose up --build here.
 #
@@ -31,18 +32,18 @@ DRY_RUN=0
 BUILD_ONLY=0
 NO_START=0
 
-PG18_PROFILE=pg18-migrate
 PG18_SERVICE=db_pg18
 
 usage() {
   cat <<'EOF'
 Usage: scripts/rebuild_full_site.sh [options]
 
-Build default-stack images and hpcperfstats-db (db_pg18 profile), then tear down
-the compose project (graceful stop, preserve volumes) and start:
+Build default-stack images and hpcperfstats-db (db_pg18 image), then tear down
+the compose project (graceful stop, preserve volumes) and start the default stack.
+The db_pg18 container (profile pg18-migrate) is built but NOT started:
 
   podman-compose down --remove-orphans
-  podman-compose --profile pg18-migrate up -d --no-build
+  podman-compose up -d --no-build
 
 Down uses each service stop_grace_period from compose (do not pass down -t; a global
 timeout overrides longer db/rabbitmq/pg18 grace and risks SIGKILL mid-shutdown).
@@ -197,12 +198,12 @@ compose_down_project() {
 
 compose_up_project_stack() {
   compose_down_project
-  LAST_STEP="podman-compose --profile ${PG18_PROFILE} up -d --no-build (full stack incl. ${PG18_SERVICE})"
+  LAST_STEP="podman-compose up -d --no-build (default stack; ${PG18_SERVICE} not started)"
   echo "rebuild_full_site.sh: ${LAST_STEP} ..."
-  run_cmd "${PODMAN_COMPOSE[@]}" --profile "${PG18_PROFILE}" up -d --no-build
+  run_cmd "${PODMAN_COMPOSE[@]}" up -d --no-build
 }
 
-# Legacy names kept for callers/tests; single profile up includes db_pg18 (no second up).
+# Legacy names kept for callers/tests; default-profile up never starts db_pg18.
 up_default_stack() {
   compose_up_project_stack
 }
@@ -234,11 +235,11 @@ wait_for_compose_service_running() {
 
 verify_default_stack_running() {
   local svc
-  # Dual-run PG18 migrate: Hub PG15 (db) stays live; db_pg18 profile service must run too.
-  local -a required=(web pipeline redis proxy db rabbitmq "${PG18_SERVICE}")
+  # Hub PG15 (db) stays live; db_pg18 (profile pg18-migrate) is intentionally not started.
+  local -a required=(web pipeline redis proxy db rabbitmq)
   for svc in "${required[@]}"; do
     if ! compose_service_container_exists "${svc}"; then
-      echo "rebuild_full_site.sh: required service container missing: ${svc} (full-site rebuild expects db + ${PG18_SERVICE} during migrate)" >&2
+      echo "rebuild_full_site.sh: required service container missing: ${svc}" >&2
       return 1
     fi
     wait_for_compose_service_running "${svc}" || return 1

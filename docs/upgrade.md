@@ -43,7 +43,7 @@ canonical layout.
    |------|---------|
    | Rebuild SPA in running stack (optional hot path; no pipeline restart) | `./scripts/rebuild_frontend.sh` |
    | Rebuild shared hpcperfstats image; down proxy; ``up -d web proxy pipeline`` (db/redis/rabbitmq stay up; proxy image not rebuilt); sets pipeline ``memory.high`` to ⅔ of ``memory.max`` | `./scripts/rebuild_pipeline.sh` |
-   | Full stack + ``db_pg18``: ``podman build`` web/proxy/db_pg18 (ThinLTO + CPython ``--enable-optimizations``); compose down + ``up -d --no-build``; does **not** set pipeline ``memory.high`` | `./scripts/rebuild_full_site.sh` |
+   | Full stack: ``podman build`` web/proxy/db_pg18 (ThinLTO + CPython ``--enable-optimizations``); compose down + ``up -d --no-build`` (default profile — the ``db_pg18`` container is built but **not** started); does **not** set pipeline ``memory.high`` | `./scripts/rebuild_full_site.sh` |
    | Detached recreate of web+pipeline only (no image build) | `./scripts/recreate_web_pipeline.sh` |
    | Rebuild just the app and keep persistent services running | `docker compose stop -t 30 web proxy && docker compose stop -t 480 pipeline && docker compose up --build -d web pipeline && docker compose start proxy` |
 
@@ -61,7 +61,7 @@ canonical layout.
    podman-compose -p hpcperfstats exec pipeline bash -lc 'for f in memory.max memory.high memory.current; do echo $f; cat /sys/fs/cgroup/$f; done'
    ```
 
-   After **`rebuild_pipeline.sh`**, expect **`memory.high`** ≈ **`memory.max * 2 / 3`** (integer bytes). After **`rebuild_full_site.sh`**, expect **`memory.high`** to stay **`max`**. Full-site rebuild also recreates **`db_pg18`** under profile **`pg18-migrate`**; host PG18 prereqs remain in **`docs/OPERATOR_PG18_MIGRATION.md`**.
+   After **`rebuild_pipeline.sh`**, expect **`memory.high`** ≈ **`memory.max * 2 / 3`** (integer bytes). After **`rebuild_full_site.sh`**, expect **`memory.high`** to stay **`max`**. Full-site rebuild builds the **`db_pg18`** image but does **not** start it (profile **`pg18-migrate`**; start it manually with `podman-compose --profile pg18-migrate up -d --no-build db_pg18`); host PG18 prereqs remain in **`docs/OPERATOR_PG18_MIGRATION.md`**.
 
    A successful **`./scripts/rebuild_full_site.sh`** (no flags) ends with **`Stack summary`**: compose network id, **`podman-compose ps -a`**, and per-service container/image ids. If the log stops at **`Successfully tagged localhost/hpcperfstats:latest`** right after Dockerfile **`collectstatic`**, with no **`=== starting podman-compose up`** banner, the script **failed during the build phase** (commonly **`proxy`** or **`db_pg18`** while **`web`** already tagged) — scroll above the trap line for **`Error`** / **`BUILD FAILED`**, or retry **`podman build -f services-conf/proxy.Dockerfile -t hpcperfstats-proxy .`** from the git checkout and paste the failure. Wrong command, **`--build-only`**, or an outdated script on the host are other causes.
 

@@ -37,7 +37,8 @@ def test_rebuild_full_site_compose_down_before_up() -> None:
   assert "HPCPERFSTATS_COMPOSE_DOWN_TIMEOUT:-30" not in script
   assert "up -d --force-recreate" not in script
   assert "up -d --no-build" in script
-  assert '--profile "${PG18_PROFILE}"' in script
+  assert "--profile" not in script.replace("--profile-phase", "")
+  assert "PG18_PROFILE" not in script
   down_pos = script.index("compose_down_project")
   up_pos = script.index("compose_up_project_stack()")
   assert down_pos < up_pos
@@ -64,3 +65,11 @@ def test_rebuild_full_site_refuses_legacy_pgo_flags() -> None:
   assert "custom Clang host profiling was removed" in script
   assert "PGO" + "_PHASE" not in script
   assert "source" not in script or ("pgo_" + "lib.sh") not in script
+
+
+def test_rebuild_full_site_builds_but_does_not_start_db_pg18() -> None:
+  script = (_repo_root() / "scripts" / "rebuild_full_site.sh").read_text()
+  assert "compose_build_db_pg18" in script
+  required = script[script.index("local -a required=") :].splitlines()[0]
+  assert "PG18_SERVICE" not in required
+  assert "db_pg18" not in required
