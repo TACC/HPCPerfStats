@@ -53,6 +53,7 @@ Attributes:
   RESCAN_FETCH_LIMIT: Attribute.
   RESCAN_IDLE_INTERVAL_MAX_SECONDS: Attribute.
   RESCAN_ERROR_LOG_INTERVAL_SECONDS: Minimum seconds between rescan error logs.
+  RESCAN_RECENT_DAYS: Newest window days the candidate rescan thread queries.
   RESCAN_INTERVAL_SECONDS: Attribute.
   RESCAN_SEEN_MIN_CAP: Attribute.
   RESCAN_SEEN_MULTIPLIER: Attribute.
@@ -215,6 +216,8 @@ RESCAN_INTERVAL_SECONDS = 5.0
 RESCAN_IDLE_INTERVAL_MAX_SECONDS = 60.0
 # Rescan query failures are counted and logged at most this often.
 RESCAN_ERROR_LOG_INTERVAL_SECONDS = 300.0
+# Only the newest window days are rescanned for jobs that end mid-pass.
+RESCAN_RECENT_DAYS = 2
 STALL_WARNING_EVERY_PASSES = 200
 STALL_EXIT_AFTER_SECONDS = 900.0
 # User-facing stall_reason strings (docs/TESTING.md); producer sets
@@ -5040,7 +5043,9 @@ def _start_candidate_rescan_thread(
     try:
       while not shutdown_requested[0] and not stop_event.is_set():
         added_any = False
-        for d in dates:
+        # New jobs end today (or yesterday around midnight); the producer's
+        # day iterators already page the older days.
+        for d in sorted(dates, reverse=True)[:RESCAN_RECENT_DAYS]:
           if shutdown_requested[0] or stop_event.is_set():
             break
           try:

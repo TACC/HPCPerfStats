@@ -6809,3 +6809,40 @@ def test_candidate_rescan_failures_are_logged_not_swallowed(monkeypatch):
   assert len(failed) == 1  # second day's failure is rate-limited
   assert "day=2026-08-15" in failed[0]
   assert "OperationalError" in failed[0] and "statement timeout" in failed[0]
+
+
+@pytest.mark.machine_unit_mock
+def test_candidate_rescan_only_queries_the_newest_days(monkeypatch):
+  """T9: the rescan replays the listing SQL for recent days only."""
+  queried = []
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+
+  class _Empty:
+    def values_list(self, *a, **k):
+      return []
+
+  def _qs(d, *a, **k):
+    queried.append(d.day)
+    return _Empty()
+
+  monkeypatch.setattr(update_metrics, "_jobs_queryset", _qs)
+  stop = threading.Event()
+  dates = [datetime(2026, 8, day) for day in (11, 15, 13, 14, 12)]
+  thread = update_metrics._start_candidate_rescan_thread(
+    dates=dates,
+    min_time=300,
+    rerun=False,
+    rescan_candidate_jids=deque(),
+    rescan_seen_jids=set(),
+    rescan_seen_order=deque(),
+    rescan_seen_cap=10,
+    rescan_lock=threading.Lock(),
+    stop_event=stop,
+  )
+  deadline = time.monotonic() + 2.0
+  while len(queried) < 2 and time.monotonic() < deadline:
+    time.sleep(0.01)
+  stop.set()
+  thread.join(timeout=2.0)
+  assert set(queried) == {15, 14}
