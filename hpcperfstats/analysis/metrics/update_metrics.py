@@ -6220,6 +6220,26 @@ def _prewarm_successful_refs_on_metrics_pool(
   return ok_by_jid
 
 
+def _persisted_outcome(outcome: Any) -> Any:
+  """
+  Pass a worker's already-persisted outcome through the sliding session.
+
+  The session calls ``persist_fn`` on each finished metrics task; with
+  ``metrics._unwrap_and_persist`` the task has persisted already.
+
+  Args:
+    outcome (Any): ``_metrics_run_outcome`` dict from the worker.
+
+  Returns:
+    Any: ``outcome`` unchanged.
+
+  Examples:
+    >>> _persisted_outcome({"jid": "1", "ok": True})
+    {'jid': '1', 'ok': True}
+  """
+  return outcome
+
+
 def _compute_jid_outcomes_sliding(
   *,
   job_refs: Any,
@@ -6295,21 +6315,6 @@ def _compute_jid_outcomes_sliding(
     fallback=worker_fallback,
   )
 
-  def _persist(payload: Any) -> Any:
-    """
-    Persist one metrics payload under database statement and lock timeouts.
-
-    Args:
-      payload (Any): Metrics worker payload to persist.
-
-    Returns:
-      Any: Persist outcome dict from ``_persist_metrics_payload``.
-
-    Examples:
-      >>> _persist(None)  # doctest: +SKIP
-    """
-    return metrics._persist_metrics_payload(payload)
-
   def _inline_prewarm(jid: Any) -> None:
     """
     Submit sync detail/plot prewarm for one jid on the parent process.
@@ -6357,8 +6362,10 @@ def _compute_jid_outcomes_sliding(
     primary_refs=primary,
     metrics_obj=metrics_manager,
     shared_pool=shared_pool,
-    unwrap_fn=metrics._unwrap,
-    persist_fn=_persist,
+    # Workers compute and persist; the harvester only collects outcomes, so
+    # one slow upsert cannot hold every slot's resubmission.
+    unwrap_fn=metrics._unwrap_and_persist,
+    persist_fn=_persisted_outcome,
     prewarm_worker_fn=_prewarm_jid_on_metrics_pool,
     inline_prewarm_fn=_inline_prewarm,
     prewarm_mode=prewarm_mode,

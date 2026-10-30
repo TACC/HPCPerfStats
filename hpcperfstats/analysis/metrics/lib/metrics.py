@@ -1406,6 +1406,26 @@ def _unwrap(args: Any) -> Any:
     }
 
 
+def _unwrap_and_persist(args: Any) -> Any:
+  """
+  Compute one job's metrics and persist them, both on the calling worker.
+
+  ``_unwrap`` isolates compute errors; ``_persist_metrics_payload`` turns the
+  payload (or a worker failure) into the per-jid outcome. Used by the
+  sliding session so persistence does not run on the harvesting thread.
+
+  Args:
+    args (Any): ``(metrics_obj, job_ref)`` as for ``_unwrap``.
+
+  Returns:
+    Any: ``_metrics_run_outcome`` dict.
+
+  Examples:
+    >>> _unwrap_and_persist((Metrics(), job_ref))  # doctest: +SKIP
+  """
+  return _persist_metrics_payload(_unwrap(args))
+
+
 def _persist_metrics_batch(
   job_results: Any,
   distinct_time_count: int,

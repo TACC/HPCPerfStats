@@ -6881,3 +6881,51 @@ def test_deferred_recheck_backs_off_exponentially_to_quarantine(monkeypatch):
   assert update_metrics._deferred_retry_after_s(9, 0.0) == (300.0, False)
   assert update_metrics._deferred_retry_after_s(30, 0.0) == (300.0, True)
   assert update_metrics._deferred_retry_after_s(2, 901.0) == (300.0, True)
+
+
+@pytest.mark.machine_unit_mock
+def test_sliding_session_persists_on_workers_not_the_harvester(monkeypatch):
+  """T10: compute+persist is one worker task; the harvester passes through."""
+  seen = {}
+
+  def _fake_sliding(**kwargs):
+    seen.update(kwargs)
+    return []
+
+  monkeypatch.setattr(
+    update_metrics, "run_metrics_sliding_session", _fake_sliding
+  )
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  mgr = MagicMock()
+  mgr._worker_thread_count.return_value = 2
+  update_metrics._compute_jid_outcomes_sliding(
+    job_refs=[],
+    metrics_job_refs=[SimpleNamespace(jid="m1")],
+    artifact_only_refs=[],
+    metrics_manager=mgr,
+    prewarm_pipeline=MagicMock(),
+    shared_pool=None,
+    timing={},
+    t_batch=time.monotonic(),
+    heartbeat=None,
+    progress_callback=None,
+    ready_queue=None,
+    ready_queue_lock=None,
+  )
+  assert seen["unwrap_fn"] is update_metrics.metrics._unwrap_and_persist
+  outcome = {"jid": "m1", "ok": True}
+  assert seen["persist_fn"](outcome) is outcome
+
+  calls = []
+  monkeypatch.setattr(
+    update_metrics.metrics, "_unwrap", lambda a: calls.append("unwrap") or {}
+  )
+  monkeypatch.setattr(
+    update_metrics.metrics,
+    "_persist_metrics_payload",
+    lambda p: calls.append("persist") or {"ok": True},
+  )
+  assert update_metrics.metrics._unwrap_and_persist((None, None)) == {
+    "ok": True
+  }
+  assert calls == ["unwrap", "persist"]
