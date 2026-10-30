@@ -84,6 +84,9 @@ Attributes:
   _TOTAL_COMPLETED: Process-lifetime successful ingest_ok ACK count
     (includes ``db_skip`` and other archive-complete outcomes).
   _TOTAL_INGESTED_LOCK: Guards ``_TOTAL_INGESTED`` and ``_TOTAL_COMPLETED``.
+  _LAST_INGESTED_BACKFILL_DAY: Calendar day (``YYYY-MM-DD``) of the most
+    recent backfill (non-hot) ingest ACK, for the census line; overwritten
+    without a lock, None until the first one.
   reset_total_ingested_for_tests: Zero both counters in unit tests.
   get_total_ingested_for_tests: Read the ingested counter in unit tests.
   get_total_completed_for_tests: Read the completed counter in unit tests.
@@ -207,6 +210,7 @@ _APPEND_DAY_LISTS = AppendDayClaimLists()
 _TOTAL_INGESTED = 0
 _TOTAL_COMPLETED = 0
 _TOTAL_INGESTED_LOCK = threading.Lock()
+_LAST_INGESTED_BACKFILL_DAY: str | None = None
 _TRANSIENT_DAY_CLOSE_OUTCOMES = frozenset(
   {
     "deferred_age",
@@ -5563,7 +5567,7 @@ def _drain_ingest_ready(
     ... )
     0
   """
-  global _TOTAL_INGESTED, _TOTAL_COMPLETED
+  global _TOTAL_INGESTED, _TOTAL_COMPLETED, _LAST_INGESTED_BACKFILL_DAY
   done = 0
   for identity, async_res in list(inflight.items()):
     if not async_res.ready():
@@ -5762,9 +5766,13 @@ def _drain_ingest_ready(
         log_fn=log_fn,
       )
       continue
-    day_tok = _day_token_from_date(
-      _calendar_day_for_ingest_path(path or identity, tgz_archive_dir),
-    )
+    cal = _calendar_day_for_ingest_path(path or identity, tgz_archive_dir)
+    day_tok = _day_token_from_date(cal)
+    if day_tok and (
+      jr.select_ingest_band(cal, today=_local_today(), hot_days=_hot_days())
+      != "hot"
+    ):
+      _LAST_INGESTED_BACKFILL_DAY = day_tok  # census only; no lock needed
     progress.record(day_tok, "ingest", 1)
     if outcome == "db_skip":
       # Keep existing success-path handling below for db_skip / append.
@@ -7883,6 +7891,10 @@ def _reconstruct_coordinator_loop(
               + _WAIT_ROLE_CENSUS.format_token()
             )
           raw_tok = _raw_stats_files_on_disk_token(directory)
+          if _LAST_INGESTED_BACKFILL_DAY:
+            raw_tok += (
+              f" last_ingested_backfill_day={_LAST_INGESTED_BACKFILL_DAY}"
+            )
           _log(
             f"queue_orchestrator census {jq.format_queue_census(census)} total_ingested={total_ingested} total_completed={total_completed}{' ' + busy_tok if busy_tok else ''}{mem_tok} {writers_tok}{put_tok}{codon_tok}{raw_tok}{census_tok}",
             log_fn=log_fn,
