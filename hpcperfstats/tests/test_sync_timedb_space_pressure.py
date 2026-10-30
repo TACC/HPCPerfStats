@@ -114,11 +114,91 @@ def test_one_day_at_a_time_then_hold_for_its_day_close(monkeypatch):
   assert sp.select_append_day(["2026-09-02"], {"2026-09-01"}) == "2026-09-01"
   # Its appends are done: hold so its day close can start.
   assert sp.select_append_day(["2026-09-02"], set()) is None
-  # Its day close finishes the day; once that ends, the next day starts.
+  # Its day close gives space back; once that ends, the next day starts.
   sp.note_day_close_stage("2026-09-01", "seal")
+  sp.note_space_freed()
   assert sp.select_append_day(["2026-09-02"], set()) is None
   sp.clear_day_close("2026-09-01")
   assert sp.select_append_day(["2026-09-02"], set()) == "2026-09-02"
+
+
+def test_a_day_close_that_frees_nothing_does_not_end_the_hold(monkeypatch):
+  """F1: reconcile then yield used to release the hold on stage entry."""
+  _set(monkeypatch, threshold=TIB, free=TIB // 2)
+  t = [1000.0]
+  monkeypatch.setattr(sp.time, "monotonic", lambda: t[0])
+  assert sp.select_append_day(["2026-09-01"], set()) == "2026-09-01"
+  assert sp.select_append_day(["2026-09-02"], set()) is None
+  for stage in ("reconcile_merge", "dedupe", "seal"):
+    sp.note_day_close_stage("2026-09-01", stage)
+  sp.clear_day_close("2026-09-01")
+  assert sp.select_append_day(["2026-09-02"], set()) is None
+  t[0] += sp.DAY_CLOSE_START_GRACE_S + 1
+  assert sp.select_append_day(["2026-09-02"], set()) == "2026-09-02"
+
+
+def test_space_freed_before_the_hold_does_not_end_it(monkeypatch):
+  """A free from an earlier day close does not count for this hold."""
+  _set(monkeypatch, threshold=TIB, free=TIB // 2)
+  sp.note_space_freed()
+  assert sp.select_append_day(["2026-09-01"], set()) == "2026-09-01"
+  assert sp.select_append_day(["2026-09-02"], set()) is None
+
+
+def test_seal_yield_checks_do_not_hold_appends(monkeypatch):
+  """F2: only the seal itself counts, not its unarchived/discover checks."""
+  _set(monkeypatch, threshold=TIB, free=TIB // 2)
+  sp.note_day_close_stage("2026-09-07", "seal_check")
+  assert sp.select_append_day(["2026-09-01"], set()) == "2026-09-01"
+
+
+def _seal_claim_stages(tmp_path, monkeypatch, *, found):
+  from hpcperfstats.tests.test_sync_timedb_seal_after_full_discover import (
+    _seal_harness,
+  )
+
+  claim, calls, _logs = _seal_harness(tmp_path, monkeypatch)
+  monkeypatch.setattr(qo, "_closed_raw_not_archived", lambda *a: found)
+  monkeypatch.setattr(
+    qo, "_handoff_retryable_paths_to_ingest", lambda *a, **k: 0
+  )
+  seen = []
+  monkeypatch.setattr(
+    sp, "note_day_close_stage", lambda _d, stage: seen.append(stage)
+  )
+  return claim, calls, seen
+
+
+def test_day_close_yielding_at_seal_never_reaches_a_finishing_stage(
+  tmp_path, monkeypatch
+):
+  claim, calls, seen = _seal_claim_stages(
+    tmp_path, monkeypatch, found=["/late"]
+  )
+  assert claim() == "yielded"
+  assert calls == []
+  assert seen[-1] == "seal_check"
+  assert "seal" not in seen[seen.index("seal_check") :]
+
+
+def test_day_close_that_seals_marks_the_seal_finishing(tmp_path, monkeypatch):
+  claim, calls, seen = _seal_claim_stages(tmp_path, monkeypatch, found=[])
+  claim()
+  assert calls == [False]
+  assert "seal" in seen[seen.index("seal_check") :]
+
+
+def test_raw_delete_notes_space_freed(tmp_path, monkeypatch):
+  from hpcperfstats.dbload.lib import sync_timedb_day_raw_removal as drr
+
+  claim, _calls, _seen = _seal_claim_stages(tmp_path, monkeypatch, found=[])
+  monkeypatch.setattr(
+    drr.DayRawRemovalCoordinator, "apply_batch_delete", lambda _s, _t: 3
+  )
+  freed = []
+  monkeypatch.setattr(sp, "note_space_freed", lambda: freed.append(1))
+  claim()
+  assert freed
 
 
 def test_hold_expires_when_no_day_close_ever_starts(monkeypatch):

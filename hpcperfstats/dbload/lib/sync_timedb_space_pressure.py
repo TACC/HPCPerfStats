@@ -6,10 +6,12 @@ starts when the daily archive filesystem has less than X free and lasts until
 it has 2X free. Under pressure:
 
 - appends wait while any day close is finishing a day (a stage in
-  ``FINISHING_STAGES``; the checks and pre-seal verify batches do not count);
+  ``FINISHING_STAGES``; the checks, pre-seal verify batches and the seal's
+  own yield checks do not count);
 - otherwise one day at a time (the oldest parked day whose next batch fits)
   gets appends; once that day has no parked or in-flight appends, the next
-  day waits until a day close has finished a day (or
+  day waits until a day close gives space back (``note_space_freed``: raw
+  deleted, tar sealed away or dropped; or
   ``DAY_CLOSE_START_GRACE_S`` passes with none starting, so a day that cannot
   close yet does not stop appends);
 - restores through ``space_gate="growth"`` (the default of
@@ -21,8 +23,8 @@ it has 2X free. Under pressure:
 - seal compression runs without the nice/ionice wrapper so appends cannot
   starve day close.
 
-INV-NEG: a held append day clears when a finishing day close ends, retries
-after ``DAY_CLOSE_START_GRACE_S`` without one, and pressure itself ends at 2X
+INV-NEG: a held append day clears when a day close gives space back,
+retries after ``DAY_CLOSE_START_GRACE_S`` without one, and pressure itself ends at 2X
 free (day close frees space and is never gated here).
 
 Attributes:
@@ -203,8 +205,23 @@ def note_day_close_stage(day: str, stage: str) -> None:
   """
   with _LOCK:
     _STATE["stages"][str(day)] = str(stage)
-    if stage in FINISHING_STAGES:
-      _STATE["finished_since_hold"] = True
+
+
+def note_space_freed() -> None:
+  """
+  Record that a day close gave space back (raw deleted, tar sealed/dropped).
+
+  This, not entering a ``FINISHING_STAGES`` stage, ends the hold after an
+  append day: a day close that reconciles and then yields frees nothing.
+
+  Returns:
+    None
+
+  Examples:
+    >>> note_space_freed()
+  """
+  with _LOCK:
+    _STATE["finished_since_hold"] = True
 
 
 def clear_day_close(day: str) -> None:
@@ -252,8 +269,8 @@ def select_append_day(
   Without pressure every day may (``ALL_DAYS``). Under pressure: ``None``
   while a day close is finishing a day; else the day holding the slot while
   it has an in-flight batch or parked appends that fit; else, right after
-  such a day finished its appends, ``None`` until a day close has finished a
-  day (or the grace passed with none starting); else the oldest parked day
+  such a day finished its appends, ``None`` until a day close has given
+  space back (``note_space_freed``; or the grace passed without one); else the oldest parked day
   whose next batch fits, or ``""`` when none is parked or none fits (keep
   claiming; choose again next tick). A held day whose batch no longer fits
   gives up the slot without a hold, so it cannot block every other day.
@@ -287,7 +304,7 @@ def select_append_day(
   candidates = [] if finishing else [d for d in parked if d != current]
   with _LOCK:
     if current is not None and current not in parked:
-      _STATE.update(hold_since=now, finished_since_hold=finishing)
+      _STATE.update(hold_since=now, finished_since_hold=False)
     _STATE["append_day"] = None
     hold_since = _STATE["hold_since"]
     waiting = hold_since is not None and not _STATE["finished_since_hold"]

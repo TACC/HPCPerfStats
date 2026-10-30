@@ -3134,10 +3134,15 @@ def _run_day_close_job(
     if os.path.isfile(tar_path + ".zst"):
       _stage_enter("raw_delete_pre_seal")
       released = int(coord.apply_batch_delete(tar_path) or 0)
+      if released:
+        space.note_space_freed()
       _stage_exit(
         "raw_delete_pre_seal", result="ok", reason=f"deleted={released}"
       )
     _stage_enter("seal")
+    # The checks below yield more often than they seal: appends under space
+    # pressure wait only once the seal itself runs (FINISHING_STAGES).
+    space.note_day_close_stage(day_token, "seal_check")
     # The seal only sees raw the manifest and queues know; until the boot
     # whole-archive walk ends, undiscovered raw for this day can still exist
     # and would force a full reseal (04 2026-10-29: 09-22..10-06 resealed).
@@ -3208,6 +3213,8 @@ def _run_day_close_job(
     # (04 2026-10-28: sealed while 4k-20k handed-off files were still being
     # appended; zstd read a growing tar). Decide the deferral here instead.
     seal_deferred = raw_remains_for_seal and not seal_with_raw
+    space.note_day_close_stage(day_token, "seal")
+    tar_before = os.path.isfile(tar_path)
     sealed_before = archive_identity(tar_path + ".zst")
     seal_failed = (
       []
@@ -3232,6 +3239,8 @@ def _run_day_close_job(
       note_fn = getattr(day_state, "note_sealed_archive_changed", None)
       if callable(note_fn):
         note_fn()
+    if tar_before and not os.path.isfile(tar_path):
+      space.note_space_freed()  # sealed without keeping the open tar
     if tar_path in (seal_failed or ()):
       _stage_exit("seal", result="fail", reason="seal_failed")
     else:
@@ -3298,6 +3307,7 @@ def _run_day_close_job(
     remaining_raw = _closed_raw_remains()
     if deleted > 0:
       progress.record(day_token, "raw_delete", 1)
+      space.note_space_freed()
     _stage_exit("raw_delete", result="ok")
     zst_path = tar_path + ".zst"
     if (
@@ -3375,6 +3385,7 @@ def _run_day_close_job(
           if tar_dropped:
             remaining_raw = False
             progress.record(day_token, "tar_delete", 1)
+            space.note_space_freed()
             _log(
               f"queue_orchestrator day_close tar_drop day={day_token}",
               log_fn=log_fn,
