@@ -293,6 +293,32 @@ class MetricsSchedulerStallExit(BaseException):
     super().__init__(f"metrics scheduler stalled ({self.stall_reason})")
 
 
+def _consumer_progress_total(stats: Any) -> int:
+  """
+  Return jobs whose metrics persisted this pass (consumer liveness signal).
+
+  ``processed`` counts finished jobs (metrics **and** artifacts); a broken
+  plot builder must not read as a wedged compute stage, so stall decisions
+  use the metrics half (``metrics_ok_total``) when it is present.
+
+  Args:
+    stats (Any): Scheduler stats mapping.
+
+  Returns:
+    int: ``max(processed, metrics_ok_total)``.
+
+  Examples:
+    >>> _consumer_progress_total({"processed": 0, "metrics_ok_total": 3})
+    3
+    >>> _consumer_progress_total({"processed": 2})
+    2
+  """
+  return max(
+    int(stats.get("processed", 0) or 0),
+    int(stats.get("metrics_ok_total", 0) or 0),
+  )
+
+
 def _maybe_trigger_consumer_stall_exit(
   stats: Any,
   consumer_stall_since: Any,
@@ -319,7 +345,7 @@ def _maybe_trigger_consumer_stall_exit(
   if time.monotonic() - consumer_stall_since < STALL_EXIT_AFTER_SECONDS:
     return False
   with scheduler_shared_lock:
-    if int(stats["processed"]) != 0:
+    if _consumer_progress_total(stats) != 0:
       return False
     reason = stats.get("stall_reason") or ""
     if reason not in CONSUMER_STALL_EXIT_REASONS:
@@ -719,6 +745,8 @@ def _new_scheduler_stats() -> Any:
   return {
     "processed": 0,
     "failed": 0,
+    "metrics_ok_total": 0,
+    "prewarm_failed_total": 0,
     "skipped_not_ready": 0,
     "candidate_jids": 0,
     "readiness_error_chunks": 0,
@@ -1580,7 +1608,7 @@ class _PrewarmPipeline:
       self._done += 1
     return timing
 
-  def submit(self, jid: Any) -> None:
+  def submit(self, jid: Any) -> bool:
     """
     Run prewarm synchronously for ``jid`` (no waiting queue / Future).
 
@@ -1588,7 +1616,8 @@ class _PrewarmPipeline:
       jid (Any): Job id to prewarm.
 
     Returns:
-      None
+      bool: True when detail and plot artifacts were written; False after a
+      logged failure.
 
     Examples:
       >>> _PrewarmPipeline().submit(None)  # doctest: +SKIP
@@ -1599,6 +1628,8 @@ class _PrewarmPipeline:
       with self._counters_lock:
         self._failed += 1
       log_print(f"plot artifact prewarm failed: {exc}")
+      return False
+    return True
 
   def has_pending(self) -> Any:
     """
@@ -1982,6 +2013,7 @@ class _CompletionReporter:
             "compute_batches_total={} batch_compute_exceptions_total={} "
             "per_jid_fallback_failures_total={} worker_failed_outcomes_total={} "
             "parent_persist_failures_total={} attempted_total={} "
+            "metrics_ok_total={} prewarm_failed_total={} "
             "public_ef_degraded={} public_ef_worker_exceptions_total={} "
             "public_ef_watchdog_timeouts_total={} public_ef_pending_tasks={} "
             "prewarm_backlog_jobs={} prewarm_oldest_pending_age_s={:.3f} "
@@ -2008,6 +2040,8 @@ class _CompletionReporter:
               int(extra_map.get("worker_failed_outcomes_total", 0)),
               int(extra_map.get("parent_persist_failures_total", 0)),
               int(extra_map.get("attempted_total", 0)),
+              int(extra_map.get("metrics_ok_total", 0)),
+              int(extra_map.get("prewarm_failed_total", 0)),
               int(extra_map.get("public_ef_degraded", 0)),
               int(extra_map.get("public_ef_worker_exceptions_total", 0)),
               int(extra_map.get("public_ef_watchdog_timeouts_total", 0)),
@@ -5706,6 +5740,7 @@ def _compute_and_prewarm_jid(
     0.0 if artifact_only else (time.monotonic() - t_metrics_start)
   )
   t_prewarm_start = time.monotonic()
+  prewarm_exc = None
   try:
     prewarm_timing = prewarm_pipeline.run_for_jid(
       context.jid, shared_context=context.artifact_context
@@ -5716,6 +5751,7 @@ def _compute_and_prewarm_jid(
       flush=True,
     )
     prewarm_timing = None
+    prewarm_exc = exc
   prewarm_elapsed = time.monotonic() - t_prewarm_start
   if prewarm_timing is not None:
     total_s = metrics_elapsed + float(prewarm_timing["prewarm_total_s"])
@@ -5729,15 +5765,23 @@ def _compute_and_prewarm_jid(
         f"jid={context.jid} compute complete total={total_s:.1f}s metrics={metrics_elapsed:.1f}s job_detail={float(prewarm_timing['detail_s']):.1f}s job_plots={float(prewarm_timing['plots_s']):.1f}s",
         flush=True,
       )
+  # A job is metrics and artifacts: a prewarm failure leaves it unfinished.
   return {
-    "ok": True,
+    "ok": prewarm_exc is None,
+    "metrics_ok": True,
     "jid": context.jid,
     "metrics_s": metrics_elapsed,
     "prewarm_s": prewarm_elapsed,
     "telemetry": telemetry,
-    "failure_kind": run_outcome.get("status"),
-    "error_type": run_outcome.get("error_type"),
-    "error_message": run_outcome.get("error_message"),
+    "failure_kind": "prewarm_failed"
+    if prewarm_exc is not None
+    else run_outcome.get("status"),
+    "error_type": type(prewarm_exc).__name__
+    if prewarm_exc is not None
+    else run_outcome.get("error_type"),
+    "error_message": str(prewarm_exc)
+    if prewarm_exc is not None
+    else run_outcome.get("error_message"),
     "persist_s": run_outcome.get("persist_s", 0.0),
   }
 
@@ -5770,9 +5814,14 @@ def _scheduler_jid_outcome(
   error_type: Any | None = None,
   error_message: Any | None = None,
   persist_s: float = 0.0,
+  metrics_ok: bool | None = None,
 ) -> Any:
   """
   Canonical scheduler-facing per-jid outcome dict.
+
+  ``ok`` means the job finished (metrics persisted **and** artifacts
+  prewarmed); ``metrics_ok`` records the metrics half alone (defaults to
+  ``ok``) for progress and stall accounting.
 
   Args:
     ok (Any): Ok passed to this helper.
@@ -5786,6 +5835,7 @@ def _scheduler_jid_outcome(
     error_type (Any | None): One of ``Any``, ``None``.
     error_message (Any | None): One of ``Any``, ``None``.
     persist_s (float): Floating-point value for persist s.
+    metrics_ok (bool | None): Metrics persisted; None means same as ``ok``.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -5795,6 +5845,7 @@ def _scheduler_jid_outcome(
   """
   return {
     "ok": bool(ok),
+    "metrics_ok": bool(ok if metrics_ok is None else metrics_ok),
     "jid": jid,
     "metrics_s": float(max(0.0, metrics_s)),
     "prewarm_s": float(max(0.0, prewarm_s)),
@@ -5806,6 +5857,46 @@ def _scheduler_jid_outcome(
     "error_message": error_message,
     "persist_s": float(max(0.0, persist_s)),
   }
+
+
+def _require_prewarm_for_finished(
+  outcomes: list[dict[str, Any]],
+  prewarm_ok_by_jid: dict[str, bool] | None,
+) -> list[dict[str, Any]]:
+  """
+  Mark metrics-successful outcomes finished only when their prewarm succeeded.
+
+  A job is its metrics **and** its plot / detail artifacts. Outcomes whose
+  metrics failed are left as they are; a metrics success whose prewarm
+  failed or did not run (shutdown, stall) becomes ``ok=False`` with
+  ``failure_kind="prewarm_failed"`` and keeps ``metrics_ok=True``.
+
+  Args:
+    outcomes (list[dict[str, Any]]): ``_scheduler_jid_outcome`` dicts.
+    prewarm_ok_by_jid (dict[str, bool] | None): Result of
+      ``_prewarm_successful_refs_on_metrics_pool``.
+
+  Returns:
+    list[dict[str, Any]]: The same dicts, updated in place.
+
+  Examples:
+    >>> out = [
+    ...   _scheduler_jid_outcome(
+    ...     ok=True, jid="1", metrics_s=0, prewarm_s=0, telemetry=None
+    ...   )
+    ... ]
+    >>> _require_prewarm_for_finished(out, {"1": False})[0]["failure_kind"]
+    'prewarm_failed'
+  """
+  ok_by_jid = prewarm_ok_by_jid or {}
+  for outcome in outcomes:
+    if not outcome.get("ok"):
+      continue
+    outcome["metrics_ok"] = True
+    if not ok_by_jid.get(str(outcome.get("jid"))):
+      outcome["ok"] = False
+      outcome["failure_kind"] = "prewarm_failed"
+  return outcomes
 
 
 def _rebind_metrics_shared_pool(
@@ -5857,7 +5948,7 @@ def _prewarm_successful_refs_on_metrics_pool(
   shared_pool: Any,
   progress_callback: Any | None = None,
   metrics_manager: Any | None = None,
-) -> None:
+) -> dict[str, bool]:
   """
   Run detail+plot prewarm for metrics-successful jids on pool B (wait fully).
 
@@ -5877,15 +5968,16 @@ def _prewarm_successful_refs_on_metrics_pool(
     and ``ensure_pool``.
 
   Returns:
-    None
+    dict[str, bool]: ``str(jid)`` → prewarm succeeded; jids missing from the
+    map (shutdown, stall) did not finish.
 
   Examples:
-    >>> _prewarm_successful_refs_on_metrics_pool(
-    ...   [], None, None
-    ... )  # doctest: +SKIP
+    >>> _prewarm_successful_refs_on_metrics_pool([], None, None)
+    {}
   """
+  ok_by_jid: dict[str, bool] = {}
   if not successful_refs or shutdown_requested[0]:
-    return
+    return ok_by_jid
   mode = cfg.get_metrics_plot_prewarm_mode()
   jids = [ref.jid for ref in successful_refs]
   if mode != "inline" and shared_pool is not None:
@@ -5895,14 +5987,15 @@ def _prewarm_successful_refs_on_metrics_pool(
       if shutdown_requested[0]:
         break
       try:
-        prewarm_pipeline.submit(jid)
+        ok_by_jid[str(jid)] = prewarm_pipeline.submit(jid) is not False
       except Exception as exc:
         prewarm_pipeline.record_pool_result(False)
+        ok_by_jid[str(jid)] = False
         log_print(f"plot artifact prewarm failed: {exc}")
       if callable(progress_callback):
         with contextlib.suppress(Exception):
           progress_callback(phase="prewarm", completed=idx + 1, total=len(jids))
-    return
+    return ok_by_jid
   poll_timeout_s = float(cfg.get_metrics_run_poll_timeout_s())
   stall_timeout_s = float(cfg.get_metrics_run_stall_timeout_s())
   results: list[Any] = []
@@ -5941,6 +6034,9 @@ def _prewarm_successful_refs_on_metrics_pool(
   for result in results:
     ok = bool(result and result.get("ok"))
     prewarm_pipeline.record_pool_result(ok)
+    if isinstance(result, dict) and result.get("jid") is not None:
+      ok_by_jid[str(result["jid"])] = ok
+  return ok_by_jid
 
 
 def _compute_jid_outcomes_sliding(
@@ -6107,7 +6203,7 @@ def _compute_jid_outcomes_sliding(
           completed=len(sliding_rows),
           total=len(sliding_rows) + len(artifact_as_metrics_done),
         )
-    _prewarm_successful_refs_on_metrics_pool(
+    artifact_prewarm_ok = _prewarm_successful_refs_on_metrics_pool(
       artifact_as_metrics_done,
       prewarm_pipeline,
       shared_pool,
@@ -6119,6 +6215,8 @@ def _compute_jid_outcomes_sliding(
         {
           "ref": ref,
           "ok": True,
+          "prewarm_ok": bool((artifact_prewarm_ok or {}).get(str(ref.jid))),
+          "prewarm_recorded": True,
           "base_outcome": {
             "jid": ref.jid,
             "ok": True,
@@ -6141,19 +6239,31 @@ def _compute_jid_outcomes_sliding(
   for row in sliding_rows:
     ref = row["ref"]
     base = row.get("base_outcome") or {}
-    if prewarm_mode != "inline" and base.get("ok") and "prewarm_ok" in row:
+    if (
+      prewarm_mode != "inline"
+      and base.get("ok")
+      and "prewarm_ok" in row
+      and not row.get("prewarm_recorded")
+    ):
       with contextlib.suppress(Exception):
         prewarm_pipeline.record_pool_result(bool(row.get("prewarm_ok")))
+    metrics_ok = bool(row.get("ok"))
+    finished = metrics_ok and bool(row.get("prewarm_ok"))
     outcomes.append(
       _scheduler_jid_outcome(
-        ok=bool(row.get("ok")),
+        ok=finished,
+        metrics_ok=metrics_ok,
         jid=ref.jid,
         metrics_s=float(row.get("metrics_s") or 0.0),
         prewarm_s=float(row.get("prewarm_s") or 0.0),
         telemetry=telem,
         failure_kind=None
-        if row.get("ok")
-        else str(base.get("status") or "failed"),
+        if finished
+        else (
+          "prewarm_failed"
+          if metrics_ok
+          else str(base.get("status") or "failed")
+        ),
         error_type=base.get("error_type"),
         error_message=base.get("error_message"),
         persist_s=float(base.get("persist_s") or 0.0),
@@ -6497,7 +6607,7 @@ def _compute_jid_outcomes_batch(
     if heartbeat is not None:
       heartbeat.set_phase("prewarm")
     shared_pool = _rebind_metrics_shared_pool(metrics_manager, shared_pool)
-    _prewarm_successful_refs_on_metrics_pool(
+    prewarm_ok = _prewarm_successful_refs_on_metrics_pool(
       recovery_success_refs,
       prewarm_pipeline,
       shared_pool,
@@ -6506,7 +6616,7 @@ def _compute_jid_outcomes_batch(
     )
     timing["prewarm_wall_s"] = max(0.0, time.monotonic() - t_prewarm)
     timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
-    return outcomes
+    return _require_prewarm_for_finished(outcomes, prewarm_ok)
   if t_metrics_start is not None:
     timing["metrics_wall_s"] = max(0.0, time.monotonic() - t_metrics_start)
   else:
@@ -6551,7 +6661,7 @@ def _compute_jid_outcomes_batch(
   if heartbeat is not None:
     heartbeat.set_phase("prewarm")
   shared_pool = _rebind_metrics_shared_pool(metrics_manager, shared_pool)
-  _prewarm_successful_refs_on_metrics_pool(
+  prewarm_ok = _prewarm_successful_refs_on_metrics_pool(
     successful_refs,
     prewarm_pipeline,
     shared_pool,
@@ -6563,7 +6673,7 @@ def _compute_jid_outcomes_batch(
   timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
   per_prewarm = prewarm_elapsed / n
   ordered = sorted(normalized, key=lambda item: item[0].jid)
-  return [
+  outcomes = [
     _scheduler_jid_outcome(
       ok=bool(base_outcome.get("ok")),
       jid=ref.jid,
@@ -6581,6 +6691,7 @@ def _compute_jid_outcomes_batch(
     )
     for ref, base_outcome in ordered
   ]
+  return _require_prewarm_for_finished(outcomes, prewarm_ok)
 
 
 def update_metrics_for_dates(
@@ -6713,6 +6824,8 @@ def update_metrics_for_dates(
               "parent_persist_failures_total"
             ],
             "attempted_total": stats["attempted_total"],
+            "metrics_ok_total": stats["metrics_ok_total"],
+            "prewarm_failed_total": stats["prewarm_failed_total"],
             "public_ef_degraded": stats["public_ef_degraded"],
             "public_ef_worker_exceptions_total": stats[
               "public_ef_worker_exceptions_total"
@@ -6874,7 +6987,7 @@ def update_metrics_for_dates(
               break
             if producer_done.is_set():
               with scheduler_shared_lock:
-                proc = int(stats["processed"])
+                proc = _consumer_progress_total(stats)
                 reason = stats.get("stall_reason") or ""
               if (
                 proc == 0
@@ -6891,7 +7004,7 @@ def update_metrics_for_dates(
             stall_iters += 1
             with scheduler_shared_lock:
               inflight = stats["inflight_jids"]
-              proc = int(stats["processed"])
+              proc = _consumer_progress_total(stats)
               if inflight > 0 and not stats.get("stall_reason"):
                 stats["stall_reason"] = "compute_stuck_inflight"
             if inflight > 0 and proc == 0:
@@ -7090,6 +7203,13 @@ def update_metrics_for_dates(
           with scheduler_shared_lock:
             stats["processed"] += len(succeeded_jids)
             stats["failed"] += failed_count
+            batch_metrics_ok = sum(
+              1 for o in jid_outcomes if o.get("metrics_ok", o["ok"])
+            )
+            stats["metrics_ok_total"] += batch_metrics_ok
+            stats["prewarm_failed_total"] += batch_metrics_ok - len(
+              succeeded_jids
+            )
             stats["attempted_total"] = stats["processed"] + stats["failed"]
             stats["compute_batches_total"] += 1
             if has_batch_exception:
@@ -7105,16 +7225,17 @@ def update_metrics_for_dates(
             proc_total = stats["processed"]
             fail_total = stats["failed"]
             attempted_total = stats["attempted_total"]
-            if attempted_total > 0 and proc_total == 0 and fail_total > 0:
+            progress_total = _consumer_progress_total(stats)
+            if attempted_total > 0 and progress_total == 0 and fail_total > 0:
               if parent_persist_failures > 0:
                 stats["stall_reason"] = "parent_persist_failed"
               elif worker_failed_outcomes > 0:
                 stats["stall_reason"] = "worker_failed_outcomes"
               else:
                 stats["stall_reason"] = "compute_all_failed"
-          if proc_total > 0:
+          if progress_total > 0:
             consumer_stall_since = None
-          elif proc_total == 0 and fail_total > 0:
+          elif fail_total > 0:
             with scheduler_shared_lock:
               reason = stats.get("stall_reason") or ""
             if reason in CONSUMER_STALL_EXIT_REASONS:
@@ -7247,6 +7368,8 @@ def update_metrics_for_dates(
             "parent_persist_failures_total"
           ],
           "attempted_total": stats["attempted_total"],
+          "metrics_ok_total": stats["metrics_ok_total"],
+          "prewarm_failed_total": stats["prewarm_failed_total"],
           "public_ef_degraded": stats["public_ef_degraded"],
           "public_ef_worker_exceptions_total": stats[
             "public_ef_worker_exceptions_total"
@@ -7264,6 +7387,8 @@ def update_metrics_for_dates(
       log_print(
         f"Finished metrics scheduler mode={scheduler_mode}: processed={snap['processed']} "
         f"failed={snap['failed']} "
+        f"metrics_ok_total={snap['metrics_ok_total']} "
+        f"prewarm_failed_total={snap['prewarm_failed_total']} "
         f"candidate_jids={snap['candidate_jids']} skipped_not_ready={snap['skipped_not_ready']} "
         f"readiness_error_chunks={snap['readiness_error_chunks']} "
         f"proxy_checked_chunks={snap['proxy_checked_chunks']} "

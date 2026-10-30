@@ -6536,3 +6536,139 @@ def test_reset_metrics_pool_after_public_phase_detaches_completed_executor():
     'ensure_pool(pool_kind="metrics-pool")' in src
     or "ensure_pool(pool_kind='metrics-pool')" in src
   )
+
+
+def _patch_batch_path_without_sliding(monkeypatch):
+  """Force ``_compute_jid_outcomes_batch`` onto the barrier batch path."""
+  monkeypatch.setattr(
+    update_metrics.cfg,
+    "get_metrics_plot_prewarm_mode",
+    lambda: "pipeline_required",
+  )
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  monkeypatch.setattr(
+    update_metrics, "should_use_metrics_sliding_session", lambda **k: False
+  )
+
+
+class _AllOkMetricsMgr:
+  """Metrics owner whose ``run`` reports every ref as persisted."""
+
+  def ensure_pool(self, pool_kind="metrics-pool"):
+    del pool_kind
+    return object()
+
+  def run(self, job_refs, pool=None, progress_callback=None):
+    del pool, progress_callback
+    return [
+      {"jid": ref.jid, "ok": True, "status": "ok", "persist_s": 0.0}
+      for ref in job_refs
+    ]
+
+
+@pytest.mark.machine_unit_mock
+def test_batch_outcome_requires_prewarm_for_finished_job(monkeypatch):
+  """S1: metrics ok + prewarm failed is not a finished (processed) job."""
+  _patch_batch_path_without_sliding(monkeypatch)
+  monkeypatch.setattr(
+    update_metrics,
+    "_prewarm_successful_refs_on_metrics_pool",
+    lambda refs, pipe, pool, **k: {"j1": True, "j2": False, "a1": False},
+  )
+  out = update_metrics._compute_jid_outcomes_batch(
+    [
+      SimpleNamespace(jid="j1", artifact_only=False),
+      SimpleNamespace(jid="j2", artifact_only=False),
+      SimpleNamespace(jid="a1", artifact_only=True),
+    ],
+    _AllOkMetricsMgr(),
+    MagicMock(),
+    object(),
+  )
+  by_jid = {o["jid"]: o for o in out}
+  assert by_jid["j1"]["ok"] is True
+  assert by_jid["j2"]["ok"] is False
+  assert by_jid["j2"]["metrics_ok"] is True
+  assert by_jid["j2"]["failure_kind"] == "prewarm_failed"
+  assert by_jid["a1"]["ok"] is False
+  assert by_jid["a1"]["failure_kind"] == "prewarm_failed"
+
+
+@pytest.mark.machine_unit_mock
+def test_sliding_outcome_requires_prewarm_for_finished_job(monkeypatch):
+  """S1: sliding rows with prewarm_ok=False and artifact-only failures."""
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline"
+  )
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  ok_base = {"ok": True, "status": "ok", "persist_s": 0.0}
+  monkeypatch.setattr(
+    update_metrics,
+    "run_metrics_sliding_session",
+    lambda **k: [
+      {
+        "ref": SimpleNamespace(jid="m1"),
+        "ok": True,
+        "prewarm_ok": True,
+        "base_outcome": ok_base,
+      },
+      {
+        "ref": SimpleNamespace(jid="m2"),
+        "ok": True,
+        "prewarm_ok": False,
+        "base_outcome": ok_base,
+      },
+    ],
+  )
+  monkeypatch.setattr(
+    update_metrics,
+    "_prewarm_successful_refs_on_metrics_pool",
+    lambda refs, pipe, pool, **k: {"a1": False},
+  )
+  mgr = MagicMock()
+  mgr._worker_thread_count.return_value = 2
+  out = update_metrics._compute_jid_outcomes_sliding(
+    job_refs=[],
+    metrics_job_refs=[SimpleNamespace(jid="m1"), SimpleNamespace(jid="m2")],
+    artifact_only_refs=[SimpleNamespace(jid="a1", artifact_only=True)],
+    metrics_manager=mgr,
+    prewarm_pipeline=MagicMock(),
+    shared_pool=None,
+    timing={},
+    t_batch=time.monotonic(),
+    heartbeat=None,
+    progress_callback=None,
+    ready_queue=None,
+    ready_queue_lock=None,
+  )
+  by_jid = {o["jid"]: o for o in out}
+  assert by_jid["m1"]["ok"] is True
+  assert (by_jid["m2"]["ok"], by_jid["m2"]["metrics_ok"]) == (False, True)
+  assert by_jid["m2"]["failure_kind"] == "prewarm_failed"
+  assert by_jid["a1"]["ok"] is False
+
+
+@pytest.mark.machine_unit_mock
+def test_compute_and_prewarm_jid_prewarm_failure_is_not_finished():
+  """S1: --jid path reports failure (exit 1) when artifacts fail."""
+  mgr = MagicMock()
+  mgr.run.return_value = [{"jid": "x1", "ok": True, "status": "ok"}]
+  pipe = MagicMock()
+  pipe.run_for_jid.side_effect = RuntimeError("plots broke")
+  out = update_metrics._compute_and_prewarm_jid(
+    mgr, pipe, SimpleNamespace(jid="x1", artifact_only=False), None
+  )
+  assert out["ok"] is False
+  assert out["metrics_ok"] is True
+  assert out["failure_kind"] == "prewarm_failed"
+
+
+@pytest.mark.machine_unit_mock
+def test_consumer_stall_progress_counts_metrics_not_only_finished():
+  """S1: prewarm-only failures must not look like a wedged compute stage."""
+  stats = {"processed": 0, "metrics_ok_total": 5, "stall_reason": ""}
+  assert update_metrics._consumer_progress_total(stats) == 5
+  stats["stall_reason"] = "compute_all_failed"
+  assert not update_metrics._maybe_trigger_consumer_stall_exit(
+    stats, time.monotonic() - 10_000.0, threading.Lock()
+  )
