@@ -560,10 +560,21 @@ def test_persist_job_plot_artifacts_marks_plot_exceptions_unavailable(
     "hpcperfstats.site.lib.machine.job_plot_artifacts.compute_plot_item_for_kind",
     _raise_plot_error,
   )
-
-  persist_job_plot_artifacts_for_jid(job.jid)
+  from hpcperfstats.site.lib.machine.job_plot_artifacts import (
+    ARTIFACT_BUILD_RETRY_LIMIT,
+    ArtifactBuildFailedError,
+  )
 
   fp = compute_plot_input_fingerprint(job, 1)
+  # Retryable failures stay misses (no terminal row under the real fp) ...
+  for _ in range(ARTIFACT_BUILD_RETRY_LIMIT - 1):
+    with pytest.raises(ArtifactBuildFailedError):
+      persist_job_plot_artifacts_for_jid(job.jid)
+    assert (
+      load_cached_job_plot_entry(job.jid, "summary_plot", "normal", fp) is None
+    )
+  # ... until the retry budget is spent.
+  persist_job_plot_artifacts_for_jid(job.jid)
   entry = load_cached_job_plot_entry(job.jid, "summary_plot", "normal", fp)
   assert entry is not None
   assert entry["plot_item"] is None
@@ -674,6 +685,71 @@ def test_persist_job_plot_artifacts_raises_when_batch_upsert_fails(
     persist_job_plot_artifacts_for_jid(
       "upsertfail1", context=_no_db_plot_context("upsertfail1")
     )
+
+
+@pytest.mark.machine_unit_mock
+def test_artifact_build_failure_fingerprint_counts_to_terminal():
+  """S2: retry fingerprints never equal fp until the budget is spent."""
+  from hpcperfstats.site.lib.machine import job_plot_artifacts as jpa
+
+  fp = "0123456789abcdef" * 4
+  seen = None
+  fps = []
+  for _ in range(jpa.ARTIFACT_BUILD_RETRY_LIMIT):
+    seen = jpa.artifact_build_failure_fingerprint(seen, fp)
+    fps.append(seen)
+  assert all(len(x) == 64 for x in fps)
+  assert fps[:-1] == [f"retry{n}:" + fp[:57] for n in (1, 2)]
+  assert fps[-1] == fp
+  # A retry row of other inputs restarts the count.
+  assert jpa.artifact_build_failure_count("retry2:" + "f" * 57, fp) == 0
+  assert jpa.artifact_build_failure_count(fp, fp) == 0
+
+
+def _failing_plot_builder(monkeypatch):
+  """Make every plot kind raise during prewarm (no DB)."""
+  mod = "hpcperfstats.site.lib.machine.job_plot_artifacts"
+  written = []
+  monkeypatch.setattr(f"{mod}.jid_table.jid_table", lambda jid: _NoDbPlotJt())
+
+  def _boom(_jt, _kind, _zoom_mode):
+    raise RuntimeError("statement timeout")
+
+  monkeypatch.setattr(f"{mod}.compute_plot_item_for_kind", _boom)
+  monkeypatch.setattr(
+    f"{mod}.upsert_job_plot_artifact_batch", lambda rows: written.extend(rows)
+  )
+  return written
+
+
+@pytest.mark.machine_unit_mock
+def test_plot_exception_stores_retry_fingerprint_and_raises(monkeypatch):
+  """S2: a transient builder failure must be rebuilt, not stored as current."""
+  from hpcperfstats.site.lib.machine.job_plot_artifacts import (
+    ArtifactBuildFailedError,
+  )
+
+  written = _failing_plot_builder(monkeypatch)
+  ctx = _no_db_plot_context("plotretry1")
+  with pytest.raises(ArtifactBuildFailedError) as ei:
+    persist_job_plot_artifacts_for_jid("plotretry1", context=ctx)
+  assert sorted(ei.value.parts) == sorted(JOB_PLOT_KINDS)
+  assert {row[3] for row in written} == {"retry1:" + ("f" * 64)[:57]}
+
+
+@pytest.mark.machine_unit_mock
+def test_plot_exception_turns_terminal_after_retry_budget(monkeypatch):
+  """S2: after the retry budget the failure row carries the real fp."""
+  fp = "f" * 64
+  written = _failing_plot_builder(monkeypatch)
+  prior = SimpleNamespace(
+    input_fingerprint="retry2:" + fp[:57], payload_compressed=b"x"
+  )
+  ctx = _no_db_plot_context(
+    "plotretry2", {(kind, "normal"): prior for kind in JOB_PLOT_KINDS}
+  )
+  persist_job_plot_artifacts_for_jid("plotretry2", context=ctx)
+  assert {row[3] for row in written} == {fp}
 
 
 @pytest.mark.django_db

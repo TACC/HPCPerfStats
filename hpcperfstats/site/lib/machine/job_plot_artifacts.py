@@ -12,6 +12,8 @@ Attributes:
   JOB_PLOT_LAYOUT_ZOOM_V3: Attribute.
   LIVE_DISTINCT_SQL_PROBE_ENABLED: When True, freshen via SQL; production False.
   PAYLOAD_ENCODING_GZIP_JSON: Attribute.
+  ARTIFACT_BUILD_RETRY_LIMIT: Builds a failing artifact gets before its
+    failure payload is stored under the real fingerprint (terminal).
   logger: Attribute.
 """
 
@@ -45,6 +47,104 @@ logger = logging.getLogger(__name__)
 # Optional live-distinct SQL probe (jid_scoped_distinct_host_time_count).
 # Disabled: portal load cancels even small windows; readiness uses persisted.
 LIVE_DISTINCT_SQL_PROBE_ENABLED = False
+
+ARTIFACT_BUILD_RETRY_LIMIT = 3
+
+
+class ArtifactBuildFailedError(RuntimeError):
+  """
+  Raised after a prewarm stored retryable failure payloads for a job.
+
+  A ``RuntimeError`` so generic handlers still see a failure; prewarm callers
+  treat it as "job not finished" and do not rebuild immediately, because the
+  failure rows already carry a retry fingerprint that the next listing pass
+  selects again.
+
+  Attributes:
+    jid: Job id whose artifacts are incomplete.
+    parts: Artifact parts (plot kind, ``type_detail:<type>``, ``job_detail``)
+      that failed and will be retried.
+  """
+
+  def __init__(self, jid: str, parts: Sequence[str]) -> None:
+    """
+    Record which artifact parts of ``jid`` failed.
+
+    Args:
+      jid (str): Job id.
+      parts (Sequence[str]): Failed artifact part names.
+
+    Returns:
+      None
+
+    Examples:
+      >>> str(ArtifactBuildFailedError("1", ["summary_plot"]))
+      'artifact build failed jid=1 parts=summary_plot'
+    """
+    self.jid = str(jid)
+    self.parts = list(parts)
+    super().__init__(
+      f"artifact build failed jid={self.jid} parts={','.join(self.parts)}"
+    )
+
+
+def artifact_build_failure_count(stored_fp: str | None, fp: str) -> int:
+  """
+  Return how many builds of the current inputs already failed.
+
+  A failed build is stored as ``retry<n>:`` followed by a prefix of the real
+  fingerprint ``fp``, so it never matches ``fp`` (listing and website treat
+  it as not built) yet stays tied to these inputs.
+
+  Args:
+    stored_fp (str | None): ``input_fingerprint`` of the existing row, or
+      None when there is no row.
+    fp (str): Current input fingerprint.
+
+  Returns:
+    int: Prior failures for ``fp`` (0 when the row is absent, current,
+    or belongs to other inputs).
+
+  Examples:
+    >>> artifact_build_failure_count(None, "ab" * 32)
+    0
+    >>> artifact_build_failure_count("retry2:" + ("ab" * 32)[:57], "ab" * 32)
+    2
+  """
+  head, sep, tail = str(stored_fp or "").partition(":")
+  if not sep or not head.startswith("retry") or not head[5:].isdigit():
+    return 0
+  return int(head[5:]) if fp.startswith(tail) and tail else 0
+
+
+def artifact_build_failure_fingerprint(stored_fp: str | None, fp: str) -> str:
+  """
+  Return the fingerprint to store with a failure payload built from ``fp``.
+
+  The first ``ARTIFACT_BUILD_RETRY_LIMIT - 1`` failures get a retry
+  fingerprint, so the next listing pass rebuilds them; the last one stores
+  ``fp`` itself, which is the existing terminal-unavailable state.
+
+  Args:
+    stored_fp (str | None): ``input_fingerprint`` of the existing row.
+    fp (str): Current input fingerprint (64 hex characters).
+
+  Returns:
+    str: ``retry<n>:<fp prefix>`` (64 characters) or ``fp`` when the retry
+    budget is spent.
+
+  Examples:
+    >>> artifact_build_failure_fingerprint(None, "ab" * 32)[:7]
+    'retry1:'
+    >>> fp = "ab" * 32
+    >>> artifact_build_failure_fingerprint("retry2:" + fp[:57], fp) == fp
+    True
+  """
+  attempt = artifact_build_failure_count(stored_fp, fp) + 1
+  if attempt >= ARTIFACT_BUILD_RETRY_LIMIT:
+    return fp
+  tag = f"retry{attempt}:"
+  return tag + fp[: max(1, 64 - len(tag))]
 
 
 class JobPlotKindSpec(NamedTuple):
@@ -911,7 +1011,9 @@ def persist_job_plot_artifacts_for_jid(
   Build and store artifacts for each plot kind (used by update_metrics prewarm).
 
   When every kind/layout already has a fingerprint-matching L2 payload, returns
-  without constructing ``jid_table`` or prefetching aggregates.
+  without constructing ``jid_table`` or prefetching aggregates. A builder
+  exception stores an unavailable payload under a retry fingerprint
+  (``artifact_build_failure_fingerprint``) until the retry budget is spent.
 
   Args:
     jid (str): String for jid.
@@ -920,6 +1022,10 @@ def persist_job_plot_artifacts_for_jid(
 
   Returns:
     None
+
+  Raises:
+    ArtifactBuildFailedError: After storing rows, when at least one kind
+      failed and will be rebuilt by a later pass.
 
   Examples:
     >>> persist_job_plot_artifacts_for_jid("x", None, None)  # doctest: +SKIP
@@ -979,12 +1085,14 @@ def persist_job_plot_artifacts_for_jid(
       pass
     shared["plot_jt"] = plot_jt
   write_rows = []
+  retry_parts = []
   for kind in JOB_PLOT_KINDS:
     for layout in layouts:
       zoom_mode = layout == JOB_PLOT_LAYOUT_ZOOM_V3
       row = existing.get((kind, layout))
       if row and row.input_fingerprint == fp and row.payload_compressed:
         continue
+      row_fp = fp
       try:
         plot_item, reason, bw_axis = compute_plot_item_for_kind(
           plot_jt, kind, zoom_mode
@@ -1002,6 +1110,12 @@ def persist_job_plot_artifacts_for_jid(
         plot_item = None
         reason = "Plot generation failed during artifact prewarm."
         bw_axis = None
+        # A transient failure must not become terminal under the real fp.
+        row_fp = artifact_build_failure_fingerprint(
+          row.input_fingerprint if row else None, fp
+        )
+        if row_fp != fp:
+          retry_parts.append(kind)
       if _is_prewarm_pool_poison_message(reason):
         logger.warning(
           "plot prewarm skipped poison unavailable_reason jid=%s kind=%s layout=%s",
@@ -1015,10 +1129,12 @@ def persist_job_plot_artifacts_for_jid(
           jid,
           kind,
           layout,
-          fp,
+          row_fp,
           _plot_artifact_storage_payload(plot_item, reason, bw_axis=bw_axis),
         )
       )
   if write_rows:
     # A failed upsert must reach the prewarm retry and the job outcome.
     upsert_job_plot_artifact_batch(write_rows)
+  if retry_parts:
+    raise ArtifactBuildFailedError(jid, retry_parts)

@@ -58,7 +58,9 @@ from hpcperfstats.analysis.metrics.lib.plot.job_detail_bokeh_plot_descriptions i
   researcher_use_for_job_detail_bokeh_plot,
 )
 from hpcperfstats.site.lib.machine.job_plot_artifacts import (
+  ArtifactBuildFailedError,
   _utc_iso_for_plot_fingerprint,
+  artifact_build_failure_fingerprint,
 )
 
 from .models import job_data, job_detail_artifact
@@ -388,34 +390,37 @@ def _metric_value_map(job: job_data) -> dict[str, float | None]:
   return out
 
 
-def _load_existing_type_detail_scope_set(
+def _load_type_detail_fingerprints(
   jid: str,
-  input_fingerprint: str,
   type_names: list[str],
-) -> set[str]:
+) -> dict[str, str]:
   """
-  Internal helper to load the existing type detail scope set.
+  Map each stored type-detail scope of ``jid`` to its input fingerprint.
+
+  Rows without a payload are left out, so callers rebuild them. A stored
+  value may be a retry fingerprint (see
+  ``artifact_build_failure_fingerprint``), which never equals the current
+  fingerprint.
 
   Args:
-    jid (str): String for jid.
-    input_fingerprint (str): String for input fingerprint.
-    type_names (list[str]): Sequence for type names.
+    jid (str): Job id.
+    type_names (list[str]): Schema type names to look up.
 
   Returns:
-    set[str]: set[str] produced by this call.
+    dict[str, str]: ``artifact_scope`` → stored ``input_fingerprint``.
 
   Examples:
-    >>> _load_existing_type_detail_scope_set("x", "x", [])  # doctest: +SKIP
+    >>> _load_type_detail_fingerprints("x", [])
+    {}
   """
   if not type_names:
-    return set()
+    return {}
   rows = job_detail_artifact.objects.filter(
     jid_id=jid,
     artifact_kind=ARTIFACT_KIND_TYPE_DETAIL,
     artifact_scope__in=type_names,
-    input_fingerprint=input_fingerprint,
-  ).values_list("artifact_scope", "payload_compressed")
-  return {scope for scope, payload in rows if payload}
+  ).values_list("artifact_scope", "input_fingerprint", "payload_compressed")
+  return {scope: fp for scope, fp, payload in rows if payload}
 
 
 def _gpu_detail_from_metric_values(
@@ -828,12 +833,20 @@ def persist_job_detail_artifacts_for_jid(
   """
   Prewarm derived payloads for user-facing API paths.
 
+  A failed FSIO / GPU-inventory sub-query or type-detail build stores its
+  payload under a retry fingerprint (``artifact_build_failure_fingerprint``)
+  so a later pass rebuilds it, until the retry budget is spent.
+
   Args:
     jid (str): String for jid.
     context (Optional[Dict[str, Any]]): Context, or None when absent.
 
   Returns:
     None
+
+  Raises:
+    ArtifactBuildFailedError: After storing rows, when a part failed and
+      will be rebuilt by a later pass.
 
   Examples:
     >>> persist_job_detail_artifacts_for_jid("x", None)  # doctest: +SKIP
@@ -866,11 +879,11 @@ def persist_job_detail_artifacts_for_jid(
   schema = getattr(job, "host_data_schema_json", None)
   if not isinstance(schema, dict) or not schema:
     schema = jt.schema or {}
-  existing_type_detail_scopes = _load_existing_type_detail_scope_set(
-    jid,
-    fingerprint,
-    sorted((schema or {}).keys()),
+  type_detail_fps = _load_type_detail_fingerprints(
+    jid, sorted((schema or {}).keys())
   )
+  # Parts whose build raised; a degraded payload must not look current.
+  failed_parts: list[str] = []
 
   metric_values = _metric_value_map(job)
   fsio, fsio_from_metrics = _fsio_from_metric_values(metric_values)
@@ -897,7 +910,7 @@ def persist_job_detail_artifacts_for_jid(
           float(write_row["delta_mb"].iloc[0]) if len(write_row) else 0.0,
         ]
   except Exception:
-    pass
+    failed_parts.append("fsio_llite")
 
   if (not fsio_from_metrics) and ("nfs" not in fsio):
     try:
@@ -909,7 +922,7 @@ def persist_job_detail_artifacts_for_jid(
       if nfs is not None:
         fsio["nfs"] = nfs
     except Exception:
-      pass
+      failed_parts.append("fsio_nfs")
 
   if (not fsio_from_metrics) and ("beegfs" not in fsio):
     try:
@@ -928,7 +941,7 @@ def persist_job_detail_artifacts_for_jid(
           float(write_row["delta_mb"].iloc[0]) if len(write_row) else 0.0,
         ]
     except Exception:
-      pass
+      failed_parts.append("fsio_beegfs")
 
   extend_fsio_payload_lists_with_peaks(fsio, jt)
 
@@ -940,6 +953,7 @@ def persist_job_detail_artifacts_for_jid(
       gpu_detail["gpu_inventory"] = gpu_inventory_for_job_window(jt)
     except Exception:
       gpu_detail["gpu_inventory"] = []
+      failed_parts.append("gpu_inventory")
   if telemetry is not None:
     if gpu_detail_from_metrics is not None:
       telemetry["detail_gpu_metrics_reused"] = (
@@ -949,11 +963,22 @@ def persist_job_detail_artifacts_for_jid(
       telemetry["detail_gpu_fallback_queries"] = (
         int(telemetry.get("detail_gpu_fallback_queries", 0)) + 1
       )
+  detail_fp = fingerprint
+  if failed_parts:
+    detail_fp = artifact_build_failure_fingerprint(
+      job_detail_artifact.objects.filter(
+        jid_id=jid, artifact_kind=ARTIFACT_KIND_JOB_DETAIL, artifact_scope=""
+      )
+      .values_list("input_fingerprint", flat=True)
+      .first(),
+      fingerprint,
+    )
+  retry_parts = list(failed_parts) if detail_fp != fingerprint else []
   upsert_job_detail_artifact(
     jid=jid,
     artifact_kind=ARTIFACT_KIND_JOB_DETAIL,
     artifact_scope="",
-    input_fingerprint=fingerprint,
+    input_fingerprint=detail_fp,
     payload={
       "host_list": jt.acct_host_list,
       "schema": schema,
@@ -974,7 +999,7 @@ def persist_job_detail_artifacts_for_jid(
   )
 
   for type_name in sorted((schema or {}).keys()):
-    if type_name in existing_type_detail_scopes:
+    if type_detail_fps.get(type_name) == fingerprint:
       continue
     try:
       provider = jid_table.TypeDetailDataProvider(
@@ -1024,11 +1049,16 @@ def persist_job_detail_artifacts_for_jid(
         type_name,
         exc_info=True,
       )
+      type_fp = artifact_build_failure_fingerprint(
+        type_detail_fps.get(type_name), fingerprint
+      )
+      if type_fp != fingerprint:
+        retry_parts.append(f"type_detail:{type_name}")
       upsert_job_detail_artifact(
         jid=jid,
         artifact_kind=ARTIFACT_KIND_TYPE_DETAIL,
         artifact_scope=type_name,
-        input_fingerprint=fingerprint,
+        input_fingerprint=type_fp,
         payload={
           "type_name": type_name,
           "jobid": jid,
@@ -1040,3 +1070,5 @@ def persist_job_detail_artifacts_for_jid(
           ),
         },
       )
+  if retry_parts:
+    raise ArtifactBuildFailedError(jid, retry_parts)

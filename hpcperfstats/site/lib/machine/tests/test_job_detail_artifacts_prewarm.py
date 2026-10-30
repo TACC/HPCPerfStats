@@ -85,6 +85,9 @@ def test_persist_job_detail_null_fsio_metrics_allows_host_fallback(monkeypatch):
     def get_nfs_delta_totals_mb(self):
       return None
 
+    def get_beegfs_delta_by_event(self):
+      return pd.DataFrame()
+
     def get_aggregate_df(self, *args, **kwargs):
       del args, kwargs
       return pd.DataFrame(columns=["host", "time", "sum_val"])
@@ -129,6 +132,9 @@ def test_persist_job_detail_skips_type_detail_when_artifact_is_fresh(
     def get_nfs_delta_totals_mb(self):
       return None
 
+    def get_beegfs_delta_by_event(self):
+      return pd.DataFrame()
+
   monkeypatch.setattr(
     "hpcperfstats.site.lib.machine.job_detail_artifacts.jid_table.jid_table",
     lambda _jid: _FakeJt(),
@@ -170,6 +176,9 @@ def test_persist_job_detail_records_type_detail_failure_as_fresh_unavailable(
     def get_nfs_delta_totals_mb(self):
       return None
 
+    def get_beegfs_delta_by_event(self):
+      return pd.DataFrame()
+
   class _FailingDevPlot:
     def __init__(self, _provider, _hosts):
       pass
@@ -199,9 +208,23 @@ def test_persist_job_detail_records_type_detail_failure_as_fresh_unavailable(
     _FailingDevPlot,
   )
 
-  jda.persist_job_detail_artifacts_for_jid(job.jid)
+  from hpcperfstats.site.lib.machine.job_plot_artifacts import (
+    ARTIFACT_BUILD_RETRY_LIMIT,
+    ArtifactBuildFailedError,
+  )
 
   fp = jda.compute_detail_input_fingerprint(job)
+  # Retryable type-detail failures are misses until the budget is spent.
+  for _ in range(ARTIFACT_BUILD_RETRY_LIMIT - 1):
+    with pytest.raises(ArtifactBuildFailedError):
+      jda.persist_job_detail_artifacts_for_jid(job.jid)
+    assert (
+      jda.load_job_detail_artifact(
+        job.jid, jda.ARTIFACT_KIND_TYPE_DETAIL, "cpu", fp
+      )
+      is None
+    )
+  jda.persist_job_detail_artifacts_for_jid(job.jid)
   payload = jda.load_job_detail_artifact(
     job.jid,
     jda.ARTIFACT_KIND_TYPE_DETAIL,
@@ -248,6 +271,9 @@ def test_persist_job_detail_prewarms_multiprecision_mix_payload(monkeypatch):
 
     def get_nfs_delta_totals_mb(self):
       return None
+
+    def get_beegfs_delta_by_event(self):
+      return pd.DataFrame()
 
   monkeypatch.setattr(
     "hpcperfstats.site.lib.machine.job_detail_artifacts.jid_table.jid_table",
@@ -302,6 +328,9 @@ def test_persist_job_detail_multiprecision_gpu_uses_available_widths_only(
     def get_nfs_delta_totals_mb(self):
       return None
 
+    def get_beegfs_delta_by_event(self):
+      return pd.DataFrame()
+
   monkeypatch.setattr(
     "hpcperfstats.site.lib.machine.job_detail_artifacts.jid_table.jid_table",
     lambda _jid: _FakeJt(),
@@ -352,6 +381,9 @@ def test_persist_job_detail_multiprecision_gpu_unavailable_without_metrics(
     def get_nfs_delta_totals_mb(self):
       return None
 
+    def get_beegfs_delta_by_event(self):
+      return pd.DataFrame()
+
   monkeypatch.setattr(
     "hpcperfstats.site.lib.machine.job_detail_artifacts.jid_table.jid_table",
     lambda _jid: _FakeJt(),
@@ -372,3 +404,100 @@ def test_persist_job_detail_multiprecision_gpu_unavailable_without_metrics(
     "Missing GPU precision-width mix metrics in job metrics "
     "(need positive avg_*_active shares)."
   )
+
+
+class _FailingFsioJt:
+  """jid_table stand-in whose Lustre fallback query fails (no DB)."""
+
+  acct_host_list = ["n1"]
+  schema = {}
+  start_time = None
+  end_time = None
+
+  def get_llite_delta_by_event(self):
+    from django.db.utils import OperationalError
+
+    raise OperationalError("canceling statement due to statement timeout")
+
+  def get_nfs_delta_totals_mb(self):
+    return None
+
+  def get_beegfs_delta_by_event(self):
+    return pd.DataFrame()
+
+
+def _patch_detail_without_db(monkeypatch, *, stored_detail_fp=None):
+  """Stub every DB / host_data touch of the job-detail prewarm."""
+  upserts = []
+  monkeypatch.setattr(jda, "_metric_value_map", lambda job: {})
+  monkeypatch.setattr(jda, "_fsio_from_metric_values", lambda mv: ({}, False))
+  monkeypatch.setattr(
+    jda, "extend_fsio_payload_lists_with_peaks", lambda fsio, jt: None
+  )
+  monkeypatch.setattr(
+    jda, "_gpu_detail_from_metric_values", lambda mv: {"gpu_inventory": [1]}
+  )
+  monkeypatch.setattr(jda, "_multiprecision_mix_payload", lambda *a, **k: {})
+  monkeypatch.setattr(jda, "_load_type_detail_fingerprints", lambda j, t: {})
+  monkeypatch.setattr(
+    jda, "upsert_job_detail_artifact", lambda **kw: upserts.append(kw)
+  )
+
+  class _Rows:
+    def filter(self, **kw):
+      return self
+
+    def values_list(self, *a, **k):
+      return self
+
+    def first(self):
+      return stored_detail_fp
+
+  monkeypatch.setattr(
+    jda, "job_detail_artifact", type("_M", (), {"objects": _Rows()})
+  )
+  return upserts
+
+
+@pytest.mark.machine_unit_mock
+def test_detail_fsio_failure_stores_retry_fingerprint_and_raises(monkeypatch):
+  """S2: a failed FSIO sub-query must not be stored as current detail."""
+  from types import SimpleNamespace
+
+  from hpcperfstats.site.lib.machine.job_plot_artifacts import (
+    ArtifactBuildFailedError,
+  )
+
+  upserts = _patch_detail_without_db(monkeypatch)
+  fp = "d" * 64
+  ctx = {
+    "job": SimpleNamespace(jid="fsiofail1", host_data_schema_json={}),
+    "jt": _FailingFsioJt(),
+    "detail_fingerprint": fp,
+  }
+  with pytest.raises(ArtifactBuildFailedError) as ei:
+    jda.persist_job_detail_artifacts_for_jid("fsiofail1", context=ctx)
+  assert ei.value.parts == ["fsio_llite"]
+  by_kind = {u["artifact_kind"]: u["input_fingerprint"] for u in upserts}
+  assert by_kind[jda.ARTIFACT_KIND_JOB_DETAIL].startswith("retry1:")
+  assert by_kind[jda.ARTIFACT_KIND_JOB_DETAIL] != fp
+  assert by_kind[jda.ARTIFACT_KIND_MULTIPRECISION_MIX] == fp
+
+
+@pytest.mark.machine_unit_mock
+def test_detail_fsio_failure_turns_terminal_after_retry_budget(monkeypatch):
+  """S2: the last allowed failure stores the real fingerprint, no raise."""
+  from types import SimpleNamespace
+
+  fp = "d" * 64
+  upserts = _patch_detail_without_db(
+    monkeypatch, stored_detail_fp="retry2:" + fp[:57]
+  )
+  ctx = {
+    "job": SimpleNamespace(jid="fsiofail2", host_data_schema_json={}),
+    "jt": _FailingFsioJt(),
+    "detail_fingerprint": fp,
+  }
+  jda.persist_job_detail_artifacts_for_jid("fsiofail2", context=ctx)
+  by_kind = {u["artifact_kind"]: u["input_fingerprint"] for u in upserts}
+  assert by_kind[jda.ARTIFACT_KIND_JOB_DETAIL] == fp

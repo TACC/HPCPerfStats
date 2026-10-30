@@ -171,6 +171,7 @@ from hpcperfstats.site.lib.machine.job_detail_artifacts import (
 from hpcperfstats.site.lib.machine.job_plot_artifacts import (
   JOB_PLOT_KINDS,
   JOB_PLOT_LAYOUT_NORMAL,
+  ArtifactBuildFailedError,
   get_live_distinct_time_count_for_jid,
   persist_job_plot_artifacts_for_jid,
 )
@@ -1493,6 +1494,8 @@ class _PrewarmPipeline:
 
     Raises:
       last_exc: Raised when ``_run_one`` hits a ``last_exc`` failure path.
+      Exception: ``ArtifactBuildFailedError`` re-raised at once (its failure
+        rows already carry a retry fingerprint).
 
     Examples:
       >>> _PrewarmPipeline()._run_one(None)  # doctest: +SKIP
@@ -1507,6 +1510,8 @@ class _PrewarmPipeline:
         try:
           self._persist_detail_plot_elapsed(jid, {})
           return
+        except ArtifactBuildFailedError:
+          raise  # failure rows already carry a retry fingerprint
         except Exception as exc:
           last_exc = exc
     raise last_exc
@@ -1529,6 +1534,8 @@ class _PrewarmPipeline:
 
     Raises:
       last_exc: Re-raised when every retry of detail+plot persist fails.
+      Exception: ``ArtifactBuildFailedError`` re-raised at once (its failure
+        rows already carry a retry fingerprint).
 
     Examples:
       >>> _PrewarmPipeline().run_for_jid(None, None)  # doctest: +SKIP
@@ -1548,6 +1555,8 @@ class _PrewarmPipeline:
             )
             last_exc = None
             break
+          except ArtifactBuildFailedError:
+            raise  # failure rows already carry a retry fingerprint
           except Exception as exc:
             last_exc = exc
       if last_exc is not None:
