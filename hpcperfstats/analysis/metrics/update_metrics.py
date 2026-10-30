@@ -5213,6 +5213,51 @@ def _reset_metrics_pool_after_public_phase(metrics_manager: Any) -> None:
       )
 
 
+def _enqueue_ready_unique(
+  ready_queue: Any,
+  ready_queue_lock: Any,
+  scheduled_jids: set[Any],
+  refs: Any,
+) -> int:
+  """
+  Append ready refs whose jid is not already queued or being computed.
+
+  ``scheduled_jids`` holds every jid between enqueue and the end of its
+  compute batch (the consumer removes them), so the date iterators, the
+  rescan thread and deferred rechecks cannot put the same job in flight
+  twice.
+
+  Args:
+    ready_queue (Any): Shared ready deque.
+    ready_queue_lock (Any): Lock guarding ``ready_queue`` and
+      ``scheduled_jids``.
+    scheduled_jids (set[Any]): Jids queued or in flight.
+    refs (Any): Candidate refs to enqueue.
+
+  Returns:
+    int: Number of refs appended.
+
+  Examples:
+    >>> import threading
+    >>> from collections import deque
+    >>> from types import SimpleNamespace as R
+    >>> q, seen = deque(), {"a"}
+    >>> _enqueue_ready_unique(
+    ...   q, threading.Lock(), seen, [R(jid="a"), R(jid="b")]
+    ... )
+    1
+  """
+  added = 0
+  with ready_queue_lock:
+    for ref in refs:
+      if ref.jid in scheduled_jids:
+        continue
+      scheduled_jids.add(ref.jid)
+      ready_queue.append(ref)
+      added += 1
+  return added
+
+
 def _start_readiness_producer(
   *,
   date_states: Any,
@@ -5237,6 +5282,7 @@ def _start_readiness_producer(
   min_time: Any,
   rerun: Any,
   allow_rollover: bool = False,
+  scheduled_jids: set[Any] | None = None,
 ) -> Any:
   """
   Start background producer that fills ready_queue from readiness checks.
@@ -5267,6 +5313,9 @@ def _start_readiness_producer(
     rerun (Any): Listing rerun flag.
     allow_rollover (bool): Rebuild the default window when calendar today
     advances past the frozen window end.
+    scheduled_jids (set[Any] | None): Jids queued or in flight, shared with
+      the consumer (guarded by ``ready_queue_lock``); None uses a private
+      set.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -5274,6 +5323,27 @@ def _start_readiness_producer(
   Examples:
     >>> _start_readiness_producer(0)  # doctest: +SKIP
   """
+  if scheduled_jids is None:
+    scheduled_jids = set()
+
+  def _enqueue(refs: Any) -> None:
+    """
+    Enqueue unique ready refs and count them in ``ready_enqueued_total``.
+
+    Args:
+      refs (Any): Ready candidate refs.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _enqueue([])  # doctest: +SKIP
+    """
+    added = _enqueue_ready_unique(
+      ready_queue, ready_queue_lock, scheduled_jids, refs
+    )
+    with scheduler_shared_lock:
+      stats["ready_enqueued_total"] += added
 
   def _producer_loop() -> None:
     """
@@ -5497,12 +5567,8 @@ def _start_readiness_producer(
               flush=True,
             )
             traceback.print_exc()
-            if local_ready:
-              with ready_queue_lock:
-                ready_queue.extend(local_ready)
-              with scheduler_shared_lock:
-                stats["ready_enqueued_total"] += len(local_ready)
-              local_ready.clear()
+            _enqueue(local_ready)
+            local_ready.clear()
             with scheduler_shared_lock:
               stats["stall_exit_triggered"] = 1
               stats["stall_reason"] = "listing_query_failed"
@@ -5518,10 +5584,7 @@ def _start_readiness_producer(
                 produced_ready=bool(local_ready),
                 max_target=prefetch_ready_cap,
               )
-            with ready_queue_lock:
-              ready_queue.extend(local_ready)
-            with scheduler_shared_lock:
-              stats["ready_enqueued_total"] += len(local_ready)
+            _enqueue(local_ready)
             continue
         try:
           _fill_ready_queue(
@@ -5549,12 +5612,8 @@ def _start_readiness_producer(
             flush=True,
           )
           traceback.print_exc()
-          if local_ready:
-            with ready_queue_lock:
-              ready_queue.extend(local_ready)
-            with scheduler_shared_lock:
-              stats["ready_enqueued_total"] += len(local_ready)
-            local_ready.clear()
+          _enqueue(local_ready)
+          local_ready.clear()
           with scheduler_shared_lock:
             stats["stall_exit_triggered"] = 1
             stats["stall_reason"] = "listing_query_failed"
@@ -5580,10 +5639,7 @@ def _start_readiness_producer(
             err_chunks - completion_reporter.readiness_errors_total()
           )
         if local_ready:
-          with ready_queue_lock:
-            ready_queue.extend(local_ready)
-          with scheduler_shared_lock:
-            stats["ready_enqueued_total"] += len(local_ready)
+          _enqueue(local_ready)
           continue
         with rescan_lock:
           has_rescan_backlog = bool(rescan_candidate_jids)
@@ -6941,6 +6997,7 @@ def update_metrics_for_dates(
         flush=True,
       )
       ready_queue_lock = threading.Lock()
+      scheduled_jids: set[Any] = set()
       producer_done = threading.Event()
       producer = _start_readiness_producer(
         date_states=date_states,
@@ -6965,6 +7022,7 @@ def update_metrics_for_dates(
         min_time=min_time,
         rerun=rerun,
         allow_rollover=allow_rollover,
+        scheduled_jids=scheduled_jids,
       )
       rescan_thread = _start_candidate_rescan_thread(
         dates=dates,
@@ -7149,6 +7207,10 @@ def update_metrics_for_dates(
               )
             finally:
               compute_batch_heartbeat.clear()
+              with ready_queue_lock:
+                scheduled_jids.difference_update(
+                  [r.jid for r in job_refs] + [o["jid"] for o in jid_outcomes]
+                )
             for jid_outcome in jid_outcomes:
               if jid_outcome["ok"]:
                 succeeded_jids.append(jid_outcome["jid"])

@@ -6721,3 +6721,26 @@ def test_dirty_catchup_listing_sql_targets_stamped_jobs_before_window(
   assert '"job_data"."metrics_dirty_at" IS NOT NULL' in sql
   assert '"job_data"."end_time" <' in sql
   assert "ORDER BY" in sql and "DESC" in sql
+
+
+@pytest.mark.machine_unit_mock
+def test_enqueue_ready_unique_never_queues_a_scheduled_jid_twice():
+  """C5: listing + rescan + deferred recheck cannot double-schedule a job."""
+  q = deque()
+  lock = threading.Lock()
+  scheduled = set()
+  refs = [SimpleNamespace(jid="j1"), SimpleNamespace(jid="j2")]
+  assert update_metrics._enqueue_ready_unique(q, lock, scheduled, refs) == 2
+  # Rescan / deferred path offers j1 again while it is queued.
+  again = [SimpleNamespace(jid="j1"), SimpleNamespace(jid="j3")]
+  assert update_metrics._enqueue_ready_unique(q, lock, scheduled, again) == 1
+  assert [r.jid for r in q] == ["j1", "j2", "j3"]
+  # After its batch finishes the consumer releases it; it may run again.
+  scheduled.discard("j1")
+  q.clear()
+  assert (
+    update_metrics._enqueue_ready_unique(
+      q, lock, scheduled, [SimpleNamespace(jid="j1")]
+    )
+    == 1
+  )
