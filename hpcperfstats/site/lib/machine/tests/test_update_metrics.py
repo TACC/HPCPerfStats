@@ -5833,7 +5833,7 @@ def test_prewarm_pipeline_run_for_jid_retries_hard_coded(monkeypatch):
     del shared_context
     attempts["n"] += 1
     if attempts["n"] < 2:
-      raise RuntimeError("transient")
+      raise OperationalError("server closed the connection unexpectedly")
     return 0.01, 0.02
 
   pipe = update_metrics._PrewarmPipeline()
@@ -5841,6 +5841,25 @@ def test_prewarm_pipeline_run_for_jid_retries_hard_coded(monkeypatch):
   timing = pipe.run_for_jid("jid-x", shared_context={})
   assert attempts["n"] == 2
   assert timing["prewarm_total_s"] > 0.0
+
+
+@pytest.mark.machine_unit_mock
+def test_prewarm_pipeline_does_not_rebuild_on_non_db_error(monkeypatch):
+  """T11: a deterministic builder error is not retried within the pass."""
+  attempts = {"n": 0}
+
+  def _boom(jid, shared_context=None):
+    del jid, shared_context
+    attempts["n"] += 1
+    raise ValueError("bokeh rejected the figure")
+
+  pipe = update_metrics._PrewarmPipeline()
+  monkeypatch.setattr(pipe, "_persist_detail_plot_elapsed", _boom)
+  with pytest.raises(ValueError):
+    pipe.run_for_jid("jid-y", shared_context={})
+  with pytest.raises(ValueError):
+    pipe._run_one("jid-y")
+  assert attempts["n"] == 2  # one attempt per call, not two
 
 
 @pytest.mark.machine_unit_mock

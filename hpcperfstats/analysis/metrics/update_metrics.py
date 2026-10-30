@@ -128,7 +128,7 @@ from django.db.models import (
 )
 from django.db.models.functions import Coalesce
 from django.db.models.query import QuerySet
-from django.db.utils import DatabaseError, OperationalError
+from django.db.utils import DatabaseError, InterfaceError, OperationalError
 from django.utils import timezone as django_timezone
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
@@ -171,7 +171,6 @@ from hpcperfstats.site.lib.machine.job_detail_artifacts import (
 from hpcperfstats.site.lib.machine.job_plot_artifacts import (
   JOB_PLOT_KINDS,
   JOB_PLOT_LAYOUT_NORMAL,
-  ArtifactBuildFailedError,
   get_live_distinct_time_count_for_jid,
   persist_job_plot_artifacts_for_jid,
 )
@@ -1521,9 +1520,9 @@ class _PrewarmPipeline:
       None
 
     Raises:
-      last_exc: Raised when ``_run_one`` hits a ``last_exc`` failure path.
-      Exception: ``ArtifactBuildFailedError`` re-raised at once (its failure
-        rows already carry a retry fingerprint).
+      last_exc: Raised when ``_run_one`` hits a ``last_exc`` failure path
+        (every attempt failed with a database error; other exceptions,
+        including ``ArtifactBuildFailedError``, propagate on the first try).
 
     Examples:
       >>> _PrewarmPipeline()._run_one(None)  # doctest: +SKIP
@@ -1538,10 +1537,8 @@ class _PrewarmPipeline:
         try:
           self._persist_detail_plot_elapsed(jid, {})
           return
-        except ArtifactBuildFailedError:
-          raise  # failure rows already carry a retry fingerprint
-        except Exception as exc:
-          last_exc = exc
+        except (DatabaseError, InterfaceError) as exc:
+          last_exc = exc  # only transient DB errors are worth a rebuild
     raise last_exc
 
   def run_for_jid(self, jid: Any, shared_context: Any | None = None) -> Any:
@@ -1561,9 +1558,8 @@ class _PrewarmPipeline:
       Any: Value produced by this call (type depends on inputs).
 
     Raises:
-      last_exc: Re-raised when every retry of detail+plot persist fails.
-      Exception: ``ArtifactBuildFailedError`` re-raised at once (its failure
-        rows already carry a retry fingerprint).
+      last_exc: Re-raised when every retry of detail+plot persist fails
+        with a database error; other exceptions propagate on the first try.
 
     Examples:
       >>> _PrewarmPipeline().run_for_jid(None, None)  # doctest: +SKIP
@@ -1583,10 +1579,8 @@ class _PrewarmPipeline:
             )
             last_exc = None
             break
-          except ArtifactBuildFailedError:
-            raise  # failure rows already carry a retry fingerprint
-          except Exception as exc:
-            last_exc = exc
+          except (DatabaseError, InterfaceError) as exc:
+            last_exc = exc  # only transient DB errors are worth a rebuild
       if last_exc is not None:
         raise last_exc
       timing = {
