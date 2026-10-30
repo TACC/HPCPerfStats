@@ -446,16 +446,21 @@ def run_metrics_sliding_session(
       if stalled_for >= max(0.0, float(stall_s)):
         for item in list(pending):
           ref = item["ref"]
-          base = item.get("base_outcome") or {
-            "jid": ref.jid,
-            "ok": False,
-            "status": "sliding_session_stall",
-            "error_type": "MetricsSlidingStall",
-            "error_message": f"no progress for {stalled_for:.1f}s",
-            "persist_s": 0.0,
-          }
-          if item["phase"] == "metrics":
-            base = {
+          metrics_s = float(item.get("metrics_s") or 0.0)
+          if item["phase"] == "prewarm":
+            # Metrics rows are already committed; only artifacts are missing.
+            results.append(
+              {
+                "ref": ref,
+                "ok": bool(item["base_outcome"].get("ok")),
+                "prewarm_ok": False,
+                "base_outcome": item["base_outcome"],
+                "metrics_s": metrics_s,
+                "prewarm_s": 0.0,
+              }
+            )
+          else:
+            stall = {
               "jid": ref.jid,
               "ok": False,
               "status": "sliding_session_stall",
@@ -463,7 +468,7 @@ def run_metrics_sliding_session(
               "error_message": f"no progress for {stalled_for:.1f}s",
               "persist_s": 0.0,
             }
-          _finalize_failed(ref, base, float(item.get("metrics_s") or 0.0))
+            _finalize_failed(ref, stall, metrics_s)
           completed_total += 1
         pending.clear()
         if callable(on_stall_reset):

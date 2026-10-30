@@ -292,3 +292,37 @@ def test_pop_supplement_rc_e_via_helper():
     )
     == []
   )
+
+
+@pytest.mark.machine_unit_mock
+def test_sliding_stall_in_prewarm_keeps_committed_metrics_outcome():
+  """S7: a prewarm-phase stall must not report persisted metrics as failed."""
+
+  class _Pool:
+    def apply_async(self, fn, args):
+      if fn is _prewarm:
+        return _SlowAsync()  # never finishes
+      return _ReadyAsync({"jid": args[0][1].jid, "status": "ok", "rows": []})
+
+  def _prewarm(jid):
+    return {"jid": jid, "ok": True}
+
+  rows = mss.run_metrics_sliding_session(
+    primary_refs=[SimpleNamespace(jid="p1", estimated_sample_count=5)],
+    metrics_obj=object(),
+    shared_pool=_Pool(),
+    unwrap_fn=lambda a: a,
+    persist_fn=lambda payload: {"jid": payload["jid"], "ok": True},
+    prewarm_worker_fn=_prewarm,
+    inline_prewarm_fn=None,
+    prewarm_mode="pipeline_required",
+    max_inflight=2,
+    poll_timeout_s=0.05,  # long enough to harvest the ready metrics task
+    stall_timeout_s=0.0,
+    supplement_enabled=False,
+    empty_supplement_sleep_s=0.0,
+  )
+  assert len(rows) == 1
+  assert rows[0]["ok"] is True
+  assert rows[0]["prewarm_ok"] is False
+  assert rows[0]["base_outcome"]["ok"] is True
