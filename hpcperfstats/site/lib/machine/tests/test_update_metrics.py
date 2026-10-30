@@ -6680,3 +6680,44 @@ def test_readiness_plain_bounds_dict_keeps_aggregate_rule(monkeypatch):
     rows, precomputed_bounds_by_jid=plain
   )
   assert ready == ["c1job"]
+
+
+@pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
+def test_date_iterators_add_dirty_catchup_before_window(monkeypatch):
+  """C7: dirty jobs older than the window get their own listing state."""
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  update_metrics._expected_job_metrics_row_count.cache_clear()
+  dates = [datetime(2026, 8, 15), datetime(2026, 8, 14)]
+  states = update_metrics._build_date_chunk_iterators(
+    dates, 300, False, update_metrics._PhaseTimer()
+  )
+  assert [s["date"] for s in states] == [*dates, None]
+  dirty = states[-1]
+  lo, _hi = update_metrics._end_time_calendar_day_half_open_bounds(dates[-1])
+  assert dirty["dirty_before"] == lo
+  rerun_states = update_metrics._build_date_chunk_iterators(
+    dates, 300, True, update_metrics._PhaseTimer()
+  )
+  assert [s["date"] for s in rerun_states] == dates
+
+
+@pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
+def test_dirty_catchup_listing_sql_targets_stamped_jobs_before_window(
+  monkeypatch,
+):
+  """C7: the catch-up keyset filters on the stamp and end_time < start."""
+  captured = {}
+
+  def _capture(qs, chunk_size):
+    captured["sql"] = str(qs.query)
+    return iter(())
+
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", _capture)
+  before = timezone.make_aware(datetime(2026, 8, 9))
+  assert list(update_metrics._iter_dirty_catchup_pks(before, 300, 10)) == []
+  sql = captured["sql"]
+  assert '"job_data"."metrics_dirty_at" IS NOT NULL' in sql
+  assert '"job_data"."end_time" <' in sql
+  assert "ORDER BY" in sql and "DESC" in sql

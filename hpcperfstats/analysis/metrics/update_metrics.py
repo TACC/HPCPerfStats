@@ -1285,7 +1285,13 @@ def _rebuild_date_listing_iter(state: Any, phase_timer: Any) -> None:
   sched_date = state.get("date")
   if sched_date is None:
     state["listing_needs_rebuild"] = False
-    state["iter"] = iter(())
+    before = state.get("dirty_before")
+    state["iter"] = (
+      _iter_dirty_catchup_pks(before, state.get("min_time", 300), CHUNK_SIZE)
+      if before is not None
+      else iter(())
+    )
+    state["pending_tail"] = None
     return
   min_time = state.get("min_time", 300)
   rerun = bool(state.get("rerun", False))
@@ -4468,9 +4474,10 @@ def _build_date_chunk_iterators(
     >>> _build_date_chunk_iterators(None, None, None, None)  # doctest: +SKIP
   """
   date_states = []
+  day_qs = None
   for d in dates:
     with phase_timer.phase("candidate_sql_s"):
-      _jobs_queryset(d, min_time, rerun)
+      day_qs = _jobs_queryset(d, min_time, rerun)
     date_states.append(
       {
         "date": d,
@@ -4483,7 +4490,64 @@ def _build_date_chunk_iterators(
         "listing_needs_rebuild": False,
       }
     )
+  # Same gate as Phase B: PostgreSQL and a real QuerySet (unit-test stubs
+  # replace _jobs_queryset and must not open a DB connection).
+  if (
+    dates
+    and not rerun
+    and connections["default"].vendor == "postgresql"
+    and isinstance(day_qs, QuerySet)
+  ):
+    # Jobs before the window whose host_data landed late (backfill days).
+    before = _end_time_calendar_day_half_open_bounds(min(dates))[0]
+    date_states.append(
+      {
+        "date": None,
+        "dirty_before": before,
+        "iter": _iter_dirty_catchup_pks(before, min_time, CHUNK_SIZE),
+        "done": False,
+        "pending_tail": None,
+        "min_time": min_time,
+        "rerun": rerun,
+        "listing_cooldown_until": 0.0,
+        "listing_needs_rebuild": False,
+      }
+    )
   return date_states
+
+
+def _iter_dirty_catchup_pks(
+  before: Any,
+  min_time: Any,
+  chunk_size: int = CHUNK_SIZE,
+) -> Iterator[Any]:
+  """
+  Page jobs that ended before ``before`` and carry a ``metrics_dirty_at`` stamp.
+
+  sync_timedb backfills days long past the trailing window; ingest stamps the
+  finished jobs it touches, and this listing hands them to readiness and
+  compute like Phase A does for in-window days (newest first, keyset pages,
+  partial index ``job_data_metrics_dirty_idx``).
+
+  Args:
+    before (Any): Exclusive upper bound on ``end_time`` (window start).
+    min_time (Any): Minimum runtime seconds (same rule as Phase A).
+    chunk_size (int): Keyset page size.
+
+  Yields:
+    Iterator[Any]: ``(candidate_refs, total_so_far)``.
+
+  Examples:
+    >>> isinstance(CHUNK_SIZE, int)
+    True
+  """
+  qs = (
+    job_data.objects.filter(metrics_dirty_at__isnull=False, end_time__lt=before)
+    .exclude(runtime__lt=min_time)
+    .annotate(artifact_only_candidate=Value(False, output_field=BooleanField()))
+    .order_by("-end_time", "-jid")
+  )
+  yield from _iter_chunked_pks(qs, chunk_size)
 
 
 def _fill_ready_queue(

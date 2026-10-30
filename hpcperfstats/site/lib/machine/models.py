@@ -102,6 +102,11 @@ class job_data(models.Model):
         fields=["end_time", "state"], name="job_data_end_time_state_idx"
       ),
       GinIndex(fields=["host_list"], name="job_data_host_list_gin_idx"),
+      models.Index(
+        fields=["metrics_dirty_at"],
+        name="job_data_metrics_dirty_idx",
+        condition=models.Q(metrics_dirty_at__isnull=False),
+      ),
     ]
 
   def __str__(self) -> Any:
