@@ -171,7 +171,6 @@ from hpcperfstats.site.lib.machine.job_detail_artifacts import (
 from hpcperfstats.site.lib.machine.job_plot_artifacts import (
   JOB_PLOT_KINDS,
   JOB_PLOT_LAYOUT_NORMAL,
-  get_live_distinct_time_count_for_jid,
   persist_job_plot_artifacts_for_jid,
 )
 from hpcperfstats.site.lib.machine.models import (
@@ -2081,8 +2080,8 @@ def _pg_session_statement_timeout_for_metrics_batch() -> Iterator[Any]:
 
     queries.
 
-  ``_jobs_queryset`` annotated scans (cheap metrics subqueries) and Phase A2
-  page live-distinct / Phase B fingerprint probes can exceed the default
+  ``_jobs_queryset`` annotated scans (cheap metrics subqueries) and Phase B
+  fingerprint probes can exceed the default
   session ``statement_timeout`` (often 2 minutes). Keyset pagination must not
   fall back to offset slicing on timeout - that repeats the same expensive SQL.
   Restore the configured timeout when the block exits.
@@ -2392,7 +2391,7 @@ def _metrics_day_listed_count(
   Count jobs the cheap Phase A listing predicate would return for one day.
 
   Uses ``_jobs_queryset`` only (md/stale/gate-failure gates) - never
-  live_distinct annotate, Phase A2 catch-up, or fingerprint annotate - so
+  live_distinct annotate, artifact catch-up, or fingerprint annotate - so
   empty-pass census cannot re-trigger hot-day ``host_data`` / sha256
   statement timeouts. ``listed=`` is metrics-incomplete + gate-failure
   candidates, not live-refresh or artifact-only backlog.
@@ -2700,7 +2699,8 @@ def _jobs_queryset(date: Any, min_time: Any, rerun: Any) -> Any:
   Newest first (``-end_time``, ``-jid``). Keyset SQL uses **cheap** metrics
   gates only (``md_count`` / ``stale_null`` / gate-failure ``Exists``). Does
   **not** embed correlated ``live_distinct`` ``host_data`` aggregates or
-  plot/detail sha256 fingerprints - those are Phase A2 and Phase B.
+  plot/detail sha256 fingerprints - those are Phase B. Jobs stamped
+  ``metrics_dirty_at`` by ingest (late host_data) are selected again.
 
   Args:
     date (Any): Calendar day (or datetime) for ``end_time`` half-open bounds.
@@ -2736,11 +2736,11 @@ def _jobs_queryset(date: Any, min_time: Any, rerun: Any) -> Any:
 
 def _annotate_metrics_listing_gates(qs: Any) -> tuple[Any, Any]:
   """
-  Annotate cheap metrics completeness gates used by Phase A / A2 / B keysets.
+  Annotate cheap metrics completeness gates used by Phase A / B keysets.
 
   Intentionally omits correlated ``live_distinct_host_time_count_expression``
-  (hot-day statement timeouts). Live vs persisted distinct is Phase A2
-  (``_page_rows_needing_live_distinct_refresh``).
+  (hot-day statement timeouts). Late host_data is signalled by the
+  ``metrics_dirty_at`` stamp that ingest sets (``mark_jids_metrics_dirty``).
 
   Args:
     qs (Any): ``job_data`` queryset already bounded to one calendar day.
@@ -2784,12 +2784,14 @@ def _annotate_metrics_listing_gates(qs: Any) -> tuple[Any, Any]:
     )
   )
   need_metrics |= gate_failure_recheck
+  # host_data landed after the metrics were persisted (sync_timedb ingest).
+  need_metrics |= Q(metrics_dirty_at__isnull=False)
   return annotated, need_metrics
 
 
 def _jobs_queryset_metrics_complete(date: Any, min_time: Any) -> Any:
   """
-  Metrics-complete day queryset (cheap gates) for Phase A2 / Phase B keysets.
+  Metrics-complete day queryset (cheap gates) for the Phase B keyset.
 
   Args:
     date (Any): Calendar day for ``end_time`` half-open bounds.
@@ -2822,25 +2824,6 @@ def _jobs_queryset_metrics_complete(date: Any, min_time: Any) -> Any:
   )
 
 
-def _jobs_queryset_live_distinct_catchup(date: Any, min_time: Any) -> Any:
-  """
-  Phase A2 keyset: metrics-complete jobs (live distinct checked per page).
-
-  Args:
-    date (Any): Calendar day for ``end_time`` half-open bounds.
-    min_time (Any): Minimum runtime seconds.
-
-  Returns:
-    Any: Django queryset (empty on non-PostgreSQL).
-
-  Examples:
-    >>> # Page filter uses get_live_distinct_time_count_for_jid.
-    >>> callable(get_live_distinct_time_count_for_jid)
-    True
-  """
-  return _jobs_queryset_metrics_complete(date, min_time)
-
-
 def _jobs_queryset_artifact_catchup(date: Any, min_time: Any) -> Any:
   """
   Phase B keyset: metrics-complete jobs that are not in Phase A.
@@ -2862,75 +2845,6 @@ def _jobs_queryset_artifact_catchup(date: Any, min_time: Any) -> Any:
     True
   """
   return _jobs_queryset_metrics_complete(date, min_time)
-
-
-def _page_rows_needing_live_distinct_refresh(rows: Any) -> list[Any]:
-  """
-  Keep Phase A2 page rows that still need a metrics refresh for Sample Count.
-
-  When persisted ``metrics_distinct_time_count`` is ``None`` or ``0``, probe
-  ``jid_scoped_distinct_host_time_count`` for the page row window (``SET LOCAL``
-  timeout) and keep the row if live ``> 0``. Otherwise compare
-  ``get_live_distinct_time_count_for_jid`` to stored (probe may stay off for
-  web). Never embeds correlated live distinct in day keyset SQL.
-
-  Args:
-    rows (Any): ``values_list`` tuples
-        ``(jid, end_time, start_time, artifact_only, nhosts, host_list)``.
-
-  Returns:
-    list[Any]: Subset of ``rows`` that still need a metrics refresh.
-
-  Examples:
-    >>> _page_rows_needing_live_distinct_refresh([])
-    []
-  """
-  if not rows:
-    return []
-  from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import (
-    jid_scoped_distinct_host_time_count,
-  )
-
-  jids = [row[0] for row in rows]
-  persisted: dict[Any, Any] = {}
-  for jid, cnt in job_data.objects.filter(jid__in=jids).values_list(
-    "jid",
-    "metrics_distinct_time_count",
-  ):
-    persisted[jid] = cnt
-  out: list[Any] = []
-  for row in rows:
-    jid = row[0]
-    stored = persisted.get(jid)
-    try:
-      stored_i = None if stored is None else int(stored)
-    except TypeError, ValueError:
-      continue
-    if stored_i is None or stored_i == 0:
-      end_time = row[1]
-      start_time = row[2]
-      host_list = row[5] if len(row) > 5 else None
-      try:
-        live = int(
-          jid_scoped_distinct_host_time_count(
-            str(jid),
-            start_time,
-            end_time,
-            hosts=list(host_list) if host_list else None,
-          )
-        )
-      except DatabaseError, OperationalError, TypeError, ValueError:
-        continue
-      if live > 0:
-        out.append(row)
-      continue
-    try:
-      live = int(get_live_distinct_time_count_for_jid(str(jid)))
-    except TypeError, ValueError:
-      continue
-    if live > stored_i:
-      out.append(row)
-  return out
 
 
 def _page_rows_needing_artifact_refresh(rows: Any) -> list[Any]:
@@ -3143,58 +3057,6 @@ def _iter_chunked_pks_artifact_catchup(
       yield chunk, total
 
 
-def _iter_chunked_pks_live_distinct_catchup(
-  queryset: Any,
-  chunk_size: int,
-) -> Iterator[Any]:
-  """
-  Keyset-paginate Phase A2 jobs and yield live-stale metrics candidates.
-
-  Args:
-    queryset (Any): Phase A2 queryset from
-        ``_jobs_queryset_live_distinct_catchup``.
-    chunk_size (int): Page size (same as Phase A ``CHUNK_SIZE``).
-
-  Yields:
-    Iterator[Any]: ``(candidate_refs, total_so_far)`` pairs.
-
-  Examples:
-    >>> list(
-    ...   _iter_chunked_pks_live_distinct_catchup(job_data.objects.none(), 10)
-    ... )
-    []
-  """
-  total = 0
-  last_end_time = None
-  last_jid = None
-  while True:
-    page_qs = queryset
-    if last_end_time is not None and last_jid is not None:
-      page_qs = page_qs.filter(
-        Q(end_time__lt=last_end_time)
-        | (Q(end_time=last_end_time) & Q(jid__lt=last_jid))
-      )
-    with _pg_local_readiness_timeouts():
-      rows = list(
-        page_qs.values_list(
-          "jid",
-          "end_time",
-          "start_time",
-          "artifact_only_candidate",
-          "nhosts",
-          "host_list",
-        )[:chunk_size]
-      )
-    if not rows:
-      break
-    last_jid, last_end_time = rows[-1][0], rows[-1][1]
-    needed = _page_rows_needing_live_distinct_refresh(rows)
-    if needed:
-      chunk = _chunk_rows_to_candidate_refs(needed)
-      total += len(chunk)
-      yield chunk, total
-
-
 def _iter_date_listing_pks(
   date: Any,
   min_time: Any,
@@ -3202,7 +3064,7 @@ def _iter_date_listing_pks(
   chunk_size: int = CHUNK_SIZE,
 ) -> Iterator[Any]:
   """
-  Three-phase day listing: cheap metrics, live-distinct A2, artifact catch-up.
+  Two-phase day listing: cheap metrics gates (incl. dirty), artifact catch-up.
 
   Args:
     date (Any): Calendar day for listing.
@@ -3227,25 +3089,12 @@ def _iter_date_listing_pks(
   if connections["default"].vendor != "postgresql":
     return
   # Unit-test stubs replace ``_jobs_queryset`` with non-QuerySet fakes;
-  # skip Phase A2/B there so host mocks never open a DB connection.
+  # skip Phase B there so host mocks never open a DB connection.
   if not isinstance(phase_a_qs, QuerySet):
     return
-  live_seen: set[Any] = set()
-  for chunk, _phase_total in _iter_chunked_pks_live_distinct_catchup(
-    _jobs_queryset_live_distinct_catchup(date, min_time), chunk_size
-  ):
-    for ref in chunk:
-      live_seen.add(ref.jid)
-    total += len(chunk)
-    yield chunk, total
   for chunk, _phase_total in _iter_chunked_pks_artifact_catchup(
     _jobs_queryset_artifact_catchup(date, min_time), chunk_size
   ):
-    if live_seen:
-      filtered = [ref for ref in chunk if ref.jid not in live_seen]
-      if not filtered:
-        continue
-      chunk = filtered
     total += len(chunk)
     yield chunk, total
 

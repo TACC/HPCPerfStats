@@ -291,3 +291,45 @@ def test_persist_metrics_payload_forwards_host_data_schema(sample_metric_row):
     )
   assert out["ok"] is True
   assert seen["host_data_schema"] == {"mem": ["used"]}
+
+
+@pytest.mark.django_db(databases=[])
+def test_persist_metrics_batch_clears_dirty_stamps_set_before_compute(
+  sample_metric_row,
+):
+  """C2: a recompute clears metrics_dirty_at only up to its own start."""
+  qs = MagicMock()
+  started = timezone.now()
+  with (
+    patch.object(metrics_module.metrics_data.objects, "bulk_create"),
+    patch.object(
+      metrics_module.job_data.objects, "filter", return_value=qs
+    ) as mock_filter,
+    patch.object(
+      metrics_module.transaction,
+      "atomic",
+      MagicMock(return_value=nullcontext()),
+    ),
+  ):
+    _persist_metrics_batch(
+      [sample_metric_row], None, compute_started_at=started
+    )
+  mock_filter.assert_called_with(pk__in=["j1"], metrics_dirty_at__lte=started)
+  qs.update.assert_called_with(metrics_dirty_at=None)
+
+
+@pytest.mark.django_db(databases=[])
+def test_mark_jids_metrics_dirty_only_stamps_ended_processed_jobs():
+  """C2: running / never-processed jobs and existing stamps are left alone."""
+  from hpcperfstats.site.lib.machine import cache_utils, models
+
+  qs = MagicMock()
+  qs.update.return_value = 2
+  with patch.object(models.job_data.objects, "filter", return_value=qs) as f:
+    assert cache_utils.mark_jids_metrics_dirty(["a", "b", None]) == 2
+  kwargs = f.call_args.kwargs
+  assert kwargs["jid__in"] == ["a", "b"]
+  assert kwargs["metrics_distinct_time_count__isnull"] is False
+  assert kwargs["metrics_dirty_at__isnull"] is True
+  assert kwargs["end_time__lt"] <= timezone.now()
+  assert cache_utils.mark_jids_metrics_dirty([]) == 0

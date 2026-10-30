@@ -41,6 +41,7 @@ import numpy as np
 from django.db import close_old_connections, connections, transaction
 from django.db.models import Max, Min
 from django.db.utils import DatabaseError, OperationalError
+from django.utils import timezone as django_timezone
 from numpy import amax, diff, isnan, maximum, mean, zeros
 from pandas import to_datetime
 
@@ -1360,6 +1361,7 @@ def _unwrap(args: Any) -> Any:
       with _pg_session_statement_timeout_for_metrics_worker():
         return metrics_obj.compute_metrics(job)
 
+    compute_started_at = django_timezone.now()
     payload = run_with_db_retry(_compute, attempts=2)
     if not isinstance(payload, dict):
       payload = {}
@@ -1371,6 +1373,7 @@ def _unwrap(args: Any) -> Any:
       "telemetry_first_time": payload.get("telemetry_first_time"),
       "telemetry_last_time": payload.get("telemetry_last_time"),
       "host_data_schema": payload.get("host_data_schema"),
+      "compute_started_at": compute_started_at,
       "error_type": None,
       "error_message": None,
     }
@@ -1409,6 +1412,7 @@ def _persist_metrics_batch(
   telemetry_first_time: Any | None = None,
   telemetry_last_time: Any | None = None,
   host_data_schema: dict[str, Any] | None = None,
+  compute_started_at: Any | None = None,
 ) -> None:
   """
   Upsert metrics_data rows for job_results; set.
@@ -1430,6 +1434,9 @@ def _persist_metrics_batch(
     host_data_schema (dict[str, Any] | None): ``jid_table.schema`` from the
       worker, stored in ``job_data.host_data_schema_json`` in the same
       transaction; None leaves the column alone.
+    compute_started_at (Any | None): When the worker started computing these
+      rows; clears ``metrics_dirty_at`` stamps set before then (a stamp set
+      during the compute stays, so that data is picked up next pass).
 
   Returns:
     None
@@ -1516,6 +1523,10 @@ def _persist_metrics_batch(
       job_data.objects.filter(pk__in=jids).update(
         host_data_schema_json=dict(host_data_schema)
       )
+    if compute_started_at is not None and jids:
+      job_data.objects.filter(
+        pk__in=jids, metrics_dirty_at__lte=compute_started_at
+      ).update(metrics_dirty_at=None)
 
   if wrote_metrics:
     try:
@@ -1568,6 +1579,7 @@ def _persist_metrics_payload(payload: Any) -> Any:
   telemetry_first_time = payload.get("telemetry_first_time")
   telemetry_last_time = payload.get("telemetry_last_time")
   host_data_schema = payload.get("host_data_schema")
+  compute_started_at = payload.get("compute_started_at")
   if not job_rows:
     # compute_metrics always emits the full catalog; an empty row list would
     # persist nothing and the listing would select the jid again every pass.
@@ -1588,6 +1600,7 @@ def _persist_metrics_payload(payload: Any) -> Any:
         telemetry_first_time=telemetry_first_time,
         telemetry_last_time=telemetry_last_time,
         host_data_schema=host_data_schema,
+        compute_started_at=compute_started_at,
       ),
       attempts=2,
     )
@@ -4167,6 +4180,11 @@ def persist_window_coverage_gate_failure(
   jid = str(jid or "").strip()
   if not jid:
     return False
+  # Readiness looked at the late data that dirtied the job and still found
+  # the window uncovered; without this the stamp would be listed forever.
+  job_data.objects.filter(pk=jid, metrics_dirty_at__isnull=False).update(
+    metrics_dirty_at=None
+  )
   if _gate_failure_catalog_already_clean(jid):
     return False
   # Never replace computed values with placeholders: a later recheck of a

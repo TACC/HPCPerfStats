@@ -472,7 +472,11 @@ def test_persist_window_coverage_gate_failure_writes_insufficient_catalog(
   )
   monkeypatch.setattr(
     "hpcperfstats.analysis.metrics.lib.metrics.job_data.objects",
-    SimpleNamespace(filter=lambda **kw: SimpleNamespace(first=lambda: None)),
+    SimpleNamespace(
+      filter=lambda **kw: SimpleNamespace(
+        first=lambda: None, update=lambda **u: 0
+      )
+    ),
   )
   monkeypatch.setattr(
     "hpcperfstats.site.lib.machine.cache_utils.invalidate_job_plot_cache_keys_for_jids",
@@ -542,6 +546,10 @@ def test_persist_window_coverage_gate_failure_keeps_computed_values(
     "hpcperfstats.analysis.metrics.lib.metrics.metrics_data.objects",
     SimpleNamespace(filter=lambda **kw: _ValuedQs()),
   )
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.metrics.job_data.objects",
+    SimpleNamespace(filter=lambda **kw: SimpleNamespace(update=lambda **u: 0)),
+  )
   assert persist_window_coverage_gate_failure("gate_valued") is False
 
 
@@ -591,6 +599,10 @@ def test_persist_window_coverage_gate_failure_idempotent_skip(monkeypatch):
   monkeypatch.setattr(
     "hpcperfstats.analysis.metrics.lib.metrics.metrics_data.objects",
     SimpleNamespace(filter=lambda **kw: _MdQs()),
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.metrics.job_data.objects",
+    SimpleNamespace(filter=lambda **kw: SimpleNamespace(update=lambda **u: 0)),
   )
   assert persist_window_coverage_gate_failure("gate_j2") is False
   assert called["delete"] is False

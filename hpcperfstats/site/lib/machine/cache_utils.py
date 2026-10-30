@@ -559,6 +559,43 @@ def invalidate_host_wide_residual_ht_for_jids(jids: Any) -> None:
     pass
 
 
+def mark_jids_metrics_dirty(jids: Any) -> int:
+  """
+  Stamp ``metrics_dirty_at`` on ended, already-processed jobs in ``jids``.
+
+  Called by ingest when host_data rows for these jobs land. A job counts as
+  processed once ``metrics_distinct_time_count`` is set (metrics or a gate
+  failure were persisted); running jobs and jobs not yet processed are left
+  alone, and an existing stamp is kept, so repeated chunks write once.
+  update_metrics lists stamped jobs again and clears the stamp when it
+  persists metrics computed after it.
+
+  Args:
+    jids (Any): Iterable of job ids from an ingest payload.
+
+  Returns:
+    int: Rows stamped.
+
+  Examples:
+    >>> mark_jids_metrics_dirty([])
+    0
+  """
+  ids = [str(j) for j in (jids or []) if j]
+  if not ids:
+    return 0
+  from django.utils import timezone as _tz
+
+  from hpcperfstats.site.lib.machine.models import job_data as _job_data_model
+
+  now = _tz.now()
+  return _job_data_model.objects.filter(
+    jid__in=ids,
+    end_time__lt=now,
+    metrics_distinct_time_count__isnull=False,
+    metrics_dirty_at__isnull=True,
+  ).update(metrics_dirty_at=now)
+
+
 def invalidate_jid_derived_cache_keys(
   jids: Any,
   *,

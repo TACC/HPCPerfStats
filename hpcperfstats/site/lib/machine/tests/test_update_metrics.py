@@ -922,25 +922,6 @@ def test_jobs_queryset_artifact_catchup_sql_omits_live_distinct_and_sha256(
 
 @pytest.mark.django_db(databases=[])
 @pytest.mark.machine_unit_mock
-def test_jobs_queryset_live_distinct_catchup_sql_omits_host_data_distinct(
-  monkeypatch,
-):
-  """Phase A2 keyset is metrics-complete cheap gates only (no host_data distinct)."""
-  monkeypatch.delenv(
-    "HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST", raising=False
-  )
-  _patch_connections_vendor(monkeypatch, "postgresql")
-  update_metrics._expected_job_metrics_row_count.cache_clear()
-  d = datetime(2026, 8, 15, 12, 0, 0)
-  qs = update_metrics._jobs_queryset_live_distinct_catchup(d, 300)
-  sql = str(qs.query).lower()
-  assert "count(distinct" not in sql
-  assert "live_distinct_time_count" not in sql
-  assert "metrics_data" in sql
-
-
-@pytest.mark.django_db(databases=[])
-@pytest.mark.machine_unit_mock
 def test_jobs_queryset_counts_only_catalog_metric_rows(monkeypatch):
   """C4: obsolete metric rows must not satisfy (or block) completeness."""
   _patch_connections_vendor(monkeypatch, "postgresql")
@@ -1023,85 +1004,6 @@ def test_jobs_queryset_includes_gate_failure_recheck(monkeypatch):
 
 
 @pytest.mark.machine_unit_mock
-def test_page_rows_needing_live_distinct_refresh_keeps_stale(monkeypatch):
-  """Phase A2 page filter keeps jids where live distinct exceeds persisted."""
-  et = datetime(2026, 8, 15, 18, 0, 0, tzinfo=timezone.utc)
-  st = et - timedelta(hours=1)
-  rows = [
-    ("live-stale", et, st, False, 2, ["h1", "h2"]),
-    ("live-fresh", et, st, False, 1, ["h1"]),
-  ]
-
-  class _Vals:
-    def values_list(self, *args, **kwargs):
-      del args, kwargs
-      return [
-        ("live-stale", 10),
-        ("live-fresh", 20),
-      ]
-
-  class _Mgr:
-    def filter(self, **kwargs):
-      del kwargs
-      return _Vals()
-
-  monkeypatch.setattr(update_metrics.job_data, "objects", _Mgr())
-  monkeypatch.setattr(
-    update_metrics,
-    "get_live_distinct_time_count_for_jid",
-    lambda jid: {"live-stale": 15, "live-fresh": 20}[jid],
-  )
-  kept = update_metrics._page_rows_needing_live_distinct_refresh(rows)
-  assert [row[0] for row in kept] == ["live-stale"]
-
-
-@pytest.mark.machine_unit_mock
-def test_page_rows_needing_live_distinct_refresh_heals_zero_persisted(
-  monkeypatch,
-):
-  """Null/zero persisted Sample Count heals via page-bounded SQL probe."""
-  et = datetime(2026, 8, 15, 18, 0, 0, tzinfo=timezone.utc)
-  st = et - timedelta(hours=1)
-  rows = [
-    ("zero-heal", et, st, False, 2, ["h1", "h2"]),
-    ("null-heal", et, st, False, 1, ["h1"]),
-    ("true-zero", et, st, False, 1, ["h1"]),
-  ]
-
-  class _Vals:
-    def values_list(self, *args, **kwargs):
-      del args, kwargs
-      return [
-        ("zero-heal", 0),
-        ("null-heal", None),
-        ("true-zero", 0),
-      ]
-
-  class _Mgr:
-    def filter(self, **kwargs):
-      del kwargs
-      return _Vals()
-
-  monkeypatch.setattr(update_metrics.job_data, "objects", _Mgr())
-
-  def _probe(jid, start, end, hosts=None):
-    del start, end, hosts
-    return {"zero-heal": 12, "null-heal": 8, "true-zero": 0}[str(jid)]
-
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.metrics_host_data_sql.jid_scoped_distinct_host_time_count",
-    _probe,
-  )
-  monkeypatch.setattr(
-    update_metrics,
-    "get_live_distinct_time_count_for_jid",
-    lambda jid: (_ for _ in ()).throw(AssertionError(f"stub used for {jid}")),
-  )
-  kept = update_metrics._page_rows_needing_live_distinct_refresh(rows)
-  assert [row[0] for row in kept] == ["zero-heal", "null-heal"]
-
-
-@pytest.mark.machine_unit_mock
 def test_jobs_queryset_still_lists_artifact_only_via_phase_b(monkeypatch):
   """Metrics-complete missing-plot job is selected as artifact_only in Phase B."""
   et = datetime(2026, 8, 15, 18, 0, 0, tzinfo=timezone.utc)
@@ -1165,17 +1067,13 @@ def test_census_listed_avoids_live_distinct_and_fingerprint_sql(monkeypatch):
   src = inspect.getsource(update_metrics._metrics_day_listed_count)
   assert "_jobs_queryset(" in src
   assert "_jobs_queryset_artifact_catchup" not in src
-  assert "_jobs_queryset_live_distinct_catchup" not in src
 
 
 @pytest.mark.machine_unit_mock
-def test_iter_date_listing_pks_runs_phase_a_a2_then_phase_b(monkeypatch):
-  """Listing yields Phase A, then live-distinct A2, then artifact Phase B."""
+def test_iter_date_listing_pks_runs_phase_a_then_phase_b(monkeypatch):
+  """Listing yields Phase A (incl. dirty jobs), then artifact Phase B."""
   phase_a = [
     ([SimpleNamespace(jid="m1", artifact_only=False)], 1),
-  ]
-  phase_a2 = [
-    ([SimpleNamespace(jid="live1", artifact_only=False)], 1),
   ]
   phase_b = [
     ([SimpleNamespace(jid="a1", artifact_only=True)], 1),
@@ -1187,11 +1085,6 @@ def test_iter_date_listing_pks_runs_phase_a_a2_then_phase_b(monkeypatch):
     calls.append("a")
     yield from phase_a
 
-  def _live(qs, chunk_size):
-    del qs, chunk_size
-    calls.append("a2")
-    yield from phase_a2
-
   def _catchup(qs, chunk_size):
     del qs, chunk_size
     calls.append("b")
@@ -1199,19 +1092,11 @@ def test_iter_date_listing_pks_runs_phase_a_a2_then_phase_b(monkeypatch):
 
   monkeypatch.setattr(update_metrics, "_iter_chunked_pks", _chunked)
   monkeypatch.setattr(
-    update_metrics, "_iter_chunked_pks_live_distinct_catchup", _live
-  )
-  monkeypatch.setattr(
     update_metrics, "_iter_chunked_pks_artifact_catchup", _catchup
   )
   monkeypatch.setattr(
     update_metrics,
     "_jobs_queryset",
-    lambda *a, **k: update_metrics.job_data.objects.none(),
-  )
-  monkeypatch.setattr(
-    update_metrics,
-    "_jobs_queryset_live_distinct_catchup",
     lambda *a, **k: update_metrics.job_data.objects.none(),
   )
   monkeypatch.setattr(
@@ -1225,9 +1110,23 @@ def test_iter_date_listing_pks_runs_phase_a_a2_then_phase_b(monkeypatch):
       datetime(2026, 8, 15).date(), 300, False, 10
     )
   )
-  assert calls == ["a", "a2", "b"]
-  assert [chunk[0].jid for chunk, _t in out] == ["m1", "live1", "a1"]
-  assert out[2][0][0].artifact_only is True
+  assert calls == ["a", "b"]
+  assert [chunk[0].jid for chunk, _t in out] == ["m1", "a1"]
+  assert out[1][0][0].artifact_only is True
+  # C2: the per-row live-distinct phase is gone (dirty stamps replace it).
+  assert not hasattr(update_metrics, "_page_rows_needing_live_distinct_refresh")
+
+
+@pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
+def test_jobs_queryset_selects_jobs_dirtied_by_late_host_data(monkeypatch):
+  """C2: a metrics_dirty_at stamp puts a computed job back in Phase A."""
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  update_metrics._expected_job_metrics_row_count.cache_clear()
+  sql = str(
+    update_metrics._jobs_queryset(datetime(2026, 8, 15), 300, rerun=False).query
+  )
+  assert '"job_data"."metrics_dirty_at" IS NOT NULL' in sql
 
 
 @pytest.mark.machine_unit_mock

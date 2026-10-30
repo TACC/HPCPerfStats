@@ -74,6 +74,9 @@ class job_data(models.Model):
   # Distinct host_data (type -> events) for the job window; written by update_metrics.
   # API uses this before falling back to live jid_table.schema queries.
   host_data_schema_json = models.JSONField(blank=True, null=True)
+  # Set by ingest when host_data for this ended job lands after its metrics
+  # were persisted; update_metrics recomputes it and clears the stamp.
+  metrics_dirty_at = models.DateTimeField(blank=True, null=True)
 
   class Meta:
     """

@@ -3078,6 +3078,7 @@ def _invalidate_jid_caches(stats: Any, proc_stats: Any) -> None:
     from hpcperfstats.site.lib.machine.cache_utils import (
       invalidate_jid_derived_cache_keys,
       invalidate_job_plot_cache_keys_for_jids,
+      mark_jids_metrics_dirty,
     )
 
     jids = _jids_from_host_or_proc_payload(stats)
@@ -3085,6 +3086,8 @@ def _invalidate_jid_caches(stats: Any, proc_stats: Any) -> None:
     if jids:
       invalidate_jid_derived_cache_keys(jids, ingest_fast=True)
       invalidate_job_plot_cache_keys_for_jids(jids, ingest_fast=True)
+      # Late rows for a finished job: update_metrics must recompute it.
+      mark_jids_metrics_dirty(jids)
   except Exception:
     pass
 

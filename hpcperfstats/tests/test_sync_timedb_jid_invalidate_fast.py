@@ -23,6 +23,11 @@ def test_invalidate_jid_caches_uses_ingest_fast(monkeypatch):
     "invalidate_job_plot_cache_keys_for_jids",
     _plots,
   )
+  monkeypatch.setattr(
+    cache_utils,
+    "mark_jids_metrics_dirty",
+    lambda jids: calls.append(("dirty", tuple(sorted(jids)))) or 0,
+  )
 
   import pandas as pd
 
@@ -31,6 +36,8 @@ def test_invalidate_jid_caches_uses_ingest_fast(monkeypatch):
 
   assert ("derived", True, ("100", "101")) in calls
   assert ("plots", True, ("100", "101")) in calls
+  # update_metrics C2: late rows for finished jobs mark them for recompute.
+  assert ("dirty", ("100", "101")) in calls
 
 
 def test_plot_invalidate_ingest_fast_skips_wildcard_scan(monkeypatch):
