@@ -438,23 +438,12 @@ def _patch_detail_without_db(monkeypatch, *, stored_detail_fp=None):
     jda, "_gpu_detail_from_metric_values", lambda mv: {"gpu_inventory": [1]}
   )
   monkeypatch.setattr(jda, "_multiprecision_mix_payload", lambda *a, **k: {})
-  monkeypatch.setattr(jda, "_load_type_detail_fingerprints", lambda j, t: {})
+  stored = {} if stored_detail_fp is None else stored_detail_fp
+  if isinstance(stored, str):
+    stored = {(jda.ARTIFACT_KIND_JOB_DETAIL, ""): stored}
+  monkeypatch.setattr(jda, "_load_detail_fingerprints", lambda j: dict(stored))
   monkeypatch.setattr(
     jda, "upsert_job_detail_artifact", lambda **kw: upserts.append(kw)
-  )
-
-  class _Rows:
-    def filter(self, **kw):
-      return self
-
-    def values_list(self, *a, **k):
-      return self
-
-    def first(self):
-      return stored_detail_fp
-
-  monkeypatch.setattr(
-    jda, "job_detail_artifact", type("_M", (), {"objects": _Rows()})
   )
   return upserts
 
@@ -501,3 +490,25 @@ def test_detail_fsio_failure_turns_terminal_after_retry_budget(monkeypatch):
   jda.persist_job_detail_artifacts_for_jid("fsiofail2", context=ctx)
   by_kind = {u["artifact_kind"]: u["input_fingerprint"] for u in upserts}
   assert by_kind[jda.ARTIFACT_KIND_JOB_DETAIL] == fp
+
+
+@pytest.mark.machine_unit_mock
+def test_detail_and_mix_with_current_fingerprint_are_not_rebuilt(monkeypatch):
+  """T6: current job_detail + mix rows skip the FSIO/GPU rebuild and upsert."""
+  from types import SimpleNamespace
+
+  fp = "d" * 64
+  upserts = _patch_detail_without_db(
+    monkeypatch,
+    stored_detail_fp={
+      (jda.ARTIFACT_KIND_JOB_DETAIL, ""): fp,
+      (jda.ARTIFACT_KIND_MULTIPRECISION_MIX, ""): fp,
+    },
+  )
+  ctx = {
+    "job": SimpleNamespace(jid="fresh1", host_data_schema_json={}),
+    "jt": _FailingFsioJt(),  # a rebuild would raise in the llite fallback
+    "detail_fingerprint": fp,
+  }
+  jda.persist_job_detail_artifacts_for_jid("fresh1", context=ctx)
+  assert upserts == []

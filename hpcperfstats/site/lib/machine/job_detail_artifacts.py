@@ -390,37 +390,31 @@ def _metric_value_map(job: job_data) -> dict[str, float | None]:
   return out
 
 
-def _load_type_detail_fingerprints(
-  jid: str,
-  type_names: list[str],
-) -> dict[str, str]:
+def _load_detail_fingerprints(jid: str) -> dict[tuple[str, str], str]:
   """
-  Map each stored type-detail scope of ``jid`` to its input fingerprint.
+  Map each stored detail artifact of ``jid`` to its input fingerprint.
 
-  Rows without a payload are left out, so callers rebuild them. A stored
-  value may be a retry fingerprint (see
+  One query covers ``job_detail``, ``multiprecision_mix`` and every
+  ``type_detail`` scope. Rows without a payload are left out, so callers
+  rebuild them. A stored value may be a retry fingerprint (see
   ``artifact_build_failure_fingerprint``), which never equals the current
   fingerprint.
 
   Args:
     jid (str): Job id.
-    type_names (list[str]): Schema type names to look up.
 
   Returns:
-    dict[str, str]: ``artifact_scope`` → stored ``input_fingerprint``.
+    dict[tuple[str, str], str]: ``(artifact_kind, artifact_scope)`` →
+    stored ``input_fingerprint``.
 
   Examples:
-    >>> _load_type_detail_fingerprints("x", [])
+    >>> _load_detail_fingerprints("x")  # doctest: +SKIP
     {}
   """
-  if not type_names:
-    return {}
-  rows = job_detail_artifact.objects.filter(
-    jid_id=jid,
-    artifact_kind=ARTIFACT_KIND_TYPE_DETAIL,
-    artifact_scope__in=type_names,
-  ).values_list("artifact_scope", "input_fingerprint", "payload_compressed")
-  return {scope: fp for scope, fp, payload in rows if payload}
+  rows = job_detail_artifact.objects.filter(jid_id=jid).values_list(
+    "artifact_kind", "artifact_scope", "input_fingerprint", "payload_compressed"
+  )
+  return {(kind, scope): fp for kind, scope, fp, payload in rows if payload}
 
 
 def _gpu_detail_from_metric_values(
@@ -826,62 +820,41 @@ def _fsio_from_metric_values(
   return out, True
 
 
-def persist_job_detail_artifacts_for_jid(
+def _persist_job_detail_and_mix(
   jid: str,
-  context: dict[str, Any] | None = None,
-) -> None:
+  job: Any,
+  jt: Any,
+  schema: dict[str, Any],
+  fingerprint: str,
+  telemetry: dict[str, Any] | None,
+  stored_detail_fp: str | None,
+) -> list[str]:
   """
-  Prewarm derived payloads for user-facing API paths.
+  Build and upsert the ``job_detail`` and ``multiprecision_mix`` artifacts.
 
-  A failed FSIO / GPU-inventory sub-query or type-detail build stores its
-  payload under a retry fingerprint (``artifact_build_failure_fingerprint``)
-  so a later pass rebuilds it, until the retry budget is spent.
+  FSIO and GPU values come from the persisted metrics when present, else
+  from host_data fallbacks; a fallback that raises is recorded and the
+  detail payload is stored under a retry fingerprint.
 
   Args:
-    jid (str): String for jid.
-    context (Optional[Dict[str, Any]]): Context, or None when absent.
+    jid (str): Job id.
+    job (Any): ``job_data`` row (with ``metrics_data_set``).
+    jt (Any): ``jid_table`` for fallbacks.
+    schema (dict[str, Any]): Host-data schema for the payload.
+    fingerprint (str): Current detail input fingerprint.
+    telemetry (dict[str, Any] | None): Optional prewarm telemetry counters.
+    stored_detail_fp (str | None): Fingerprint of the stored ``job_detail``
+      row (counts prior failures).
 
   Returns:
-    None
-
-  Raises:
-    ArtifactBuildFailedError: After storing rows, when a part failed and
-      will be rebuilt by a later pass.
+    list[str]: Failed parts that a later pass will rebuild.
 
   Examples:
-    >>> persist_job_detail_artifacts_for_jid("x", None)  # doctest: +SKIP
+    >>> _persist_job_detail_and_mix(  # doctest: +SKIP
+    ...   "1", job, jt, {}, "f" * 64, None, None
+    ... )
+    []
   """
-  shared = context if isinstance(context, dict) else {}
-  telemetry = (
-    shared.get("_telemetry")
-    if isinstance(shared.get("_telemetry"), dict)
-    else None
-  )
-  job = shared.get("job")
-  if job is None:
-    job = (
-      job_data.objects.filter(jid=jid)
-      .prefetch_related("metrics_data_set")
-      .first()
-    )
-    shared["job"] = job
-  if not job:
-    return
-  jt = shared.get("jt")
-  if jt is None:
-    jt = jid_table.jid_table(jid)
-    shared["jt"] = jt
-  fingerprint = shared.get("detail_fingerprint")
-  if fingerprint is None:
-    fingerprint = compute_detail_input_fingerprint(job)
-    shared["detail_fingerprint"] = fingerprint
-
-  schema = getattr(job, "host_data_schema_json", None)
-  if not isinstance(schema, dict) or not schema:
-    schema = jt.schema or {}
-  type_detail_fps = _load_type_detail_fingerprints(
-    jid, sorted((schema or {}).keys())
-  )
   # Parts whose build raised; a degraded payload must not look current.
   failed_parts: list[str] = []
 
@@ -966,12 +939,7 @@ def persist_job_detail_artifacts_for_jid(
   detail_fp = fingerprint
   if failed_parts:
     detail_fp = artifact_build_failure_fingerprint(
-      job_detail_artifact.objects.filter(
-        jid_id=jid, artifact_kind=ARTIFACT_KIND_JOB_DETAIL, artifact_scope=""
-      )
-      .values_list("input_fingerprint", flat=True)
-      .first(),
-      fingerprint,
+      stored_detail_fp, fingerprint
     )
   retry_parts = list(failed_parts) if detail_fp != fingerprint else []
   upsert_job_detail_artifact(
@@ -997,6 +965,82 @@ def persist_job_detail_artifacts_for_jid(
       is_shared_node=False,
     ),
   )
+  return retry_parts
+
+
+def persist_job_detail_artifacts_for_jid(
+  jid: str,
+  context: dict[str, Any] | None = None,
+) -> None:
+  """
+  Prewarm derived payloads for user-facing API paths.
+
+  A failed FSIO / GPU-inventory sub-query or type-detail build stores its
+  payload under a retry fingerprint (``artifact_build_failure_fingerprint``)
+  so a later pass rebuilds it, until the retry budget is spent.
+
+  Args:
+    jid (str): String for jid.
+    context (Optional[Dict[str, Any]]): Context, or None when absent.
+
+  Returns:
+    None
+
+  Raises:
+    ArtifactBuildFailedError: After storing rows, when a part failed and
+      will be rebuilt by a later pass.
+
+  Examples:
+    >>> persist_job_detail_artifacts_for_jid("x", None)  # doctest: +SKIP
+  """
+  shared = context if isinstance(context, dict) else {}
+  telemetry = (
+    shared.get("_telemetry")
+    if isinstance(shared.get("_telemetry"), dict)
+    else None
+  )
+  job = shared.get("job")
+  if job is None:
+    job = (
+      job_data.objects.filter(jid=jid)
+      .prefetch_related("metrics_data_set")
+      .first()
+    )
+    shared["job"] = job
+  if not job:
+    return
+  jt = shared.get("jt")
+  if jt is None:
+    jt = jid_table.jid_table(jid)
+    shared["jt"] = jt
+  fingerprint = shared.get("detail_fingerprint")
+  if fingerprint is None:
+    fingerprint = compute_detail_input_fingerprint(job)
+    shared["detail_fingerprint"] = fingerprint
+
+  schema = getattr(job, "host_data_schema_json", None)
+  if not isinstance(schema, dict) or not schema:
+    schema = jt.schema or {}
+  stored_fps = _load_detail_fingerprints(jid)
+  type_detail_fps = {
+    scope: fp
+    for (kind, scope), fp in stored_fps.items()
+    if kind == ARTIFACT_KIND_TYPE_DETAIL
+  }
+  retry_parts: list[str] = []
+  if not (
+    stored_fps.get((ARTIFACT_KIND_JOB_DETAIL, "")) == fingerprint
+    and stored_fps.get((ARTIFACT_KIND_MULTIPRECISION_MIX, "")) == fingerprint
+  ):
+    retry_parts = _persist_job_detail_and_mix(
+      jid,
+      job,
+      jt,
+      schema,
+      fingerprint,
+      telemetry,
+      stored_fps.get((ARTIFACT_KIND_JOB_DETAIL, "")),
+    )
 
   for type_name in sorted((schema or {}).keys()):
     if type_detail_fps.get(type_name) == fingerprint:
