@@ -8,14 +8,16 @@
 # In the pipeline container:
 #   bash /home/hpcperfstats/scripts/seal_open_daily_tars_to_zst.sh [--apply]
 #
-# Kept open: days with append jobs queued in the job store snapshot
-# (<archive>/.sync_timedb_job_store.json, lists.append + pending.append), plus
-# any --keep-open DAY. Appends that were in flight when the pipeline stopped
-# are not in the snapshot; pass those days with --keep-open.
+# Kept open (detected, no flags needed): a day with a raw file that is already
+# ingested (file-complete or zero-host mark, keyed path|mtime|size) but not a
+# same-size member of its tar, i.e. its append is queued, was in flight, or was
+# cut off by the stop; and a day with append jobs in the job store snapshot
+# (<archive>/.sync_timedb_job_store.json). --keep-open DAY adds days by hand.
 #
 # Per open tar <day>.tar (oldest first) it:
 #   1. skips days younger than --min-age-days (still being written)
-#   2. skips kept-open days
+#   2. skips kept-open days (snapshot / --keep-open, then ingested raw not in
+#      the tar once the tar is listed)
 #   3. lists the tar with GNU tar; any error or warning = corrupt, skipped
 #      (the pipeline repairs it on restart)
 #   4. with duplicate member names, dedupes while compressing: the tar is
@@ -143,19 +145,40 @@ fi
 for day in "${KEEP_OPEN[@]}"; do echo "$day manual" >>"$WORK/keep"; done
 while read -r day n; do log "KEEP OPEN $day (append queued: $n)"; done <"$WORK/keep"
 
-# Raw index for the report: "<day> <host>/<file> <size>".
+# Raw index: "<day> <host>/<file> <size> <ingested 0|1>". Ingested means a
+# file-complete or zero-host mark for the file's path|mtime|size.
 find "$ARCHIVE" -mindepth 2 -maxdepth 2 -type f -regex '.*/[0-9]+' \
-  -printf '%s %p\n' 2>/dev/null |
+  -printf '%s %T@ %p\n' 2>/dev/null |
   TZ=$TZ_LOCAL python3 -I -c '
-import sys, time
+import json, os, sys, time
+
 time.tzset()
+archive = sys.argv[1]
+marked = set()
+for name in (".sync_timedb_file_complete_ingest_mark.json",
+             ".sync_timedb_zero_host_ingest_mark.json"):
+  try:
+    with open(os.path.join(archive, name)) as fh:
+      doc = json.load(fh)
+  except (OSError, ValueError):
+    continue
+  stack = [doc]
+  while stack:
+    node = stack.pop()
+    if isinstance(node, dict):
+      entries = node.get("entries")
+      if isinstance(entries, dict):
+        marked.update(entries)
+      else:
+        stack.extend(node.values())
 for line in sys.stdin:
-  size, path = line.rstrip("\n").split(" ", 1)
+  size, mtime, path = line.rstrip("\n").split(" ", 2)
   parts = path.split("/")
   day = time.strftime("%Y-%m-%d", time.localtime(int(parts[-1])))
-  print(day, parts[-2] + "/" + parts[-1], size)
-' >"$WORK/raw.idx"
-log "raw files on disk: $(wc -l <"$WORK/raw.idx")"
+  key = "%s|%d|%s" % (os.path.normpath(path), int(float(mtime)), size)
+  print(day, parts[-2] + "/" + parts[-1], size, int(key in marked))
+' "$ARCHIVE" >"$WORK/raw.idx"
+log "raw files on disk: $(wc -l <"$WORK/raw.idx") ingested: $(awk '$4 == 1' "$WORK/raw.idx" | wc -l)"
 
 # "<name>\t<size>" sorted, from a GNU tar -tv listing on stdin.
 members() { awk '{print $6 "\t" $3}' | LC_ALL=C sort; }
@@ -220,6 +243,15 @@ for tar in "$DAILY"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].tar; do
   dups=$(cut -f1 "$WORK/t.all" | uniq -d | wc -l)
   dedupe_list <"$WORK/t.all" >"$WORK/t.lst"
 
+  # "<ingested raw not in tar> <not-yet-ingested raw not in tar>"
+  read -r ready pending <<<"$(awk -v d="$day" 'NR == FNR {split($0, f, "\t");
+      n = split(f[1], parts, "/"); t[parts[n - 1] "/" parts[n]] = f[2]; next}
+    $1 == d && (!($2 in t) || t[$2] != $3) {if ($4 == 1) r++; else p++}
+    END {print r + 0, p + 0}' "$WORK/t.lst" "$WORK/raw.idx")"
+  if [ "$ready" -gt 0 ]; then
+    skip "kept open: $ready ingested raw files waiting for append"; continue
+  fi
+
   if [ -f "$zst" ]; then
     if ! zstd -dc "$zst" 2>"$WORK/z.err" | tar -tvf - >"$WORK/z.raw" 2>>"$WORK/z.err" ||
       [ -s "$WORK/z.err" ]; then
@@ -242,10 +274,6 @@ for tar in "$DAILY"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].tar; do
     continue
   fi
 
-  pending=$(awk -v d="$day" 'NR == FNR {split($0, f, "\t");
-      n = split(f[1], parts, "/"); t[parts[n - 1] "/" parts[n]] = f[2]; next}
-    $1 == d && (!($2 in t) || t[$2] != $3) {p++} END {print p + 0}' \
-    "$WORK/t.lst" "$WORK/raw.idx")
   note="members=$(wc -l <"$WORK/t.lst") raw_not_in_tar=$pending"
   [ "$dups" -gt 0 ] && note="$note dedupe_names=$dups"
   [ -f "$zst" ] && note="$note replaces_existing_zst"
