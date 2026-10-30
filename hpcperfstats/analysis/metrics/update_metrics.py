@@ -76,6 +76,7 @@ Attributes:
   _COVERAGE_MARGIN_WARN_CAP_SECONDS: Attribute.
   _COVERAGE_MARGIN_WARN_LOGGED: Attribute.
   _METRICS_PREWARM_RETRY_ATTEMPTS: Retries for sync detail/plot prewarm.
+  _WORKER_FAILURE_KINDS: Outcome kinds counted as worker failures.
 """
 
 from __future__ import annotations
@@ -240,6 +241,10 @@ CONSUMER_STALL_EXIT_REASONS = frozenset(
   }
 )
 COMPUTE_BATCH_MIN_CAP = 16
+# Outcome failure kinds counted in ``worker_failed_outcomes_total``.
+_WORKER_FAILURE_KINDS = frozenset(
+  {"worker_db_error", "worker_compute_error", "worker_stall_timeout"}
+)
 COMPUTE_BATCH_DOWNSHIFT_FACTOR = 0.5
 COMPUTE_BATCH_UPSHIFT_STEP = 16
 COMPUTE_BATCH_WORKER_MULTIPLIER = 2
@@ -6255,6 +6260,7 @@ def _compute_jid_outcomes_sliding(
   ready_queue: Any | None,
   ready_queue_lock: Any | None,
   on_supplements_taken: Any | None = None,
+  on_outcome: Any | None = None,
 ) -> Any:
   """
   Sliding metrics+prewarm session with optional ready-queue idle-slot fill.
@@ -6274,6 +6280,8 @@ def _compute_jid_outcomes_sliding(
     ready_queue_lock (Any | None): Lock guarding the ready queue.
     on_supplements_taken (Any | None): Optional ``(n: int) -> None`` for
         ready-queue dequeue / inflight accounting.
+    on_outcome (Any | None): Optional ``(outcome: dict) -> None`` called as
+        each job finishes, before the session returns.
 
   Returns:
     Any: Sorted per-jid scheduler outcome dicts.
@@ -6358,7 +6366,50 @@ def _compute_jid_outcomes_sliding(
   # Artifact-only refs ride the same session; it prewarms them directly.
   primary = list(metrics_job_refs) + list(artifact_only_refs)
 
-  sliding_rows = run_metrics_sliding_session(
+  telem = _empty_jid_outcome_telemetry()
+  outcomes = []
+
+  def _on_row(row: dict[str, Any]) -> None:
+    """
+    Convert one finished session row to a scheduler outcome as it lands.
+
+    Args:
+      row (dict[str, Any]): Sliding-session result row.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _on_row({"ref": None})  # doctest: +SKIP
+    """
+    ref = row["ref"]
+    base = row.get("base_outcome") or {}
+    if prewarm_mode != "inline" and base.get("ok") and "prewarm_ok" in row:
+      with contextlib.suppress(Exception):
+        prewarm_pipeline.record_pool_result(bool(row.get("prewarm_ok")))
+    metrics_ok = bool(row.get("ok"))
+    finished = metrics_ok and bool(row.get("prewarm_ok"))
+    outcome = _scheduler_jid_outcome(
+      ok=finished,
+      metrics_ok=metrics_ok,
+      jid=ref.jid,
+      metrics_s=float(row.get("metrics_s") or 0.0),
+      prewarm_s=float(row.get("prewarm_s") or 0.0),
+      telemetry=telem,
+      failure_kind=None
+      if finished
+      else (
+        "prewarm_failed" if metrics_ok else str(base.get("status") or "failed")
+      ),
+      error_type=base.get("error_type"),
+      error_message=base.get("error_message"),
+      persist_s=float(base.get("persist_s") or 0.0),
+    )
+    outcomes.append(outcome)
+    if callable(on_outcome):
+      on_outcome(outcome)
+
+  run_metrics_sliding_session(
     primary_refs=primary,
     metrics_obj=metrics_manager,
     shared_pool=shared_pool,
@@ -6381,43 +6432,13 @@ def _compute_jid_outcomes_sliding(
     progress_callback=progress_callback,
     on_stall_reset=_on_stall_reset,
     on_supplements_taken=on_supplements_taken,
+    on_result=_on_row,
   )
   timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
   # Sliding interleaves metrics+prewarm; report full session as batch wall and
   # attribute the whole window to metrics_wall for phase diagnostics.
   timing["metrics_wall_s"] = float(timing["batch_wall_s"])
   timing["prewarm_wall_s"] = 0.0
-
-  telem = _empty_jid_outcome_telemetry()
-  outcomes = []
-  for row in sliding_rows:
-    ref = row["ref"]
-    base = row.get("base_outcome") or {}
-    if prewarm_mode != "inline" and base.get("ok") and "prewarm_ok" in row:
-      with contextlib.suppress(Exception):
-        prewarm_pipeline.record_pool_result(bool(row.get("prewarm_ok")))
-    metrics_ok = bool(row.get("ok"))
-    finished = metrics_ok and bool(row.get("prewarm_ok"))
-    outcomes.append(
-      _scheduler_jid_outcome(
-        ok=finished,
-        metrics_ok=metrics_ok,
-        jid=ref.jid,
-        metrics_s=float(row.get("metrics_s") or 0.0),
-        prewarm_s=float(row.get("prewarm_s") or 0.0),
-        telemetry=telem,
-        failure_kind=None
-        if finished
-        else (
-          "prewarm_failed"
-          if metrics_ok
-          else str(base.get("status") or "failed")
-        ),
-        error_type=base.get("error_type"),
-        error_message=base.get("error_message"),
-        persist_s=float(base.get("persist_s") or 0.0),
-      )
-    )
   return sorted(outcomes, key=lambda item: item["jid"])
 
 
@@ -6431,6 +6452,7 @@ def _compute_jid_outcomes_batch(
   ready_queue: Any | None = None,
   ready_queue_lock: Any | None = None,
   on_supplements_taken: Any | None = None,
+  on_outcome: Any | None = None,
 ) -> Any:
   """
   Run one compute session (closed Metrics.run or sliding feeder) then prewarm.
@@ -6459,6 +6481,9 @@ def _compute_jid_outcomes_batch(
     ready_queue_lock (Any | None): Lock guarding ``ready_queue``.
     on_supplements_taken (Any | None): Optional ``(n: int) -> None`` for
         ready-queue dequeue / inflight accounting during sliding fill.
+    on_outcome (Any | None): Optional per-job callback (sliding path only)
+        invoked as each job finishes; the barrier path returns outcomes at
+        batch end.
 
   Returns:
     Any: Sorted per-jid scheduler outcome dicts.
@@ -6547,6 +6572,7 @@ def _compute_jid_outcomes_batch(
       ready_queue=ready_queue,
       ready_queue_lock=ready_queue_lock,
       on_supplements_taken=on_supplements_taken,
+      on_outcome=on_outcome,
     )
 
   metrics_run_outcomes = []
@@ -7245,6 +7271,67 @@ def update_metrics_for_dates(
               stats["inflight_jids"] += int(n)
               batch_supplement_dequeued[0] += int(n)
 
+          recorded_jids: set[Any] = set()
+
+          def _record_outcomes(
+            outs: Any, recorded_jids: set[Any] = recorded_jids
+          ) -> None:
+            """
+            Account finished jobs: counters, inflight, scheduled set, rate.
+
+            Called per job from the sliding session (S8: the hourly
+            ``completed_last_hour`` moves as jobs finish, not when a long
+            session returns) and once at batch end for the rest.
+
+            Args:
+              outs (Any): Scheduler outcome dicts not yet recorded.
+              recorded_jids (set[Any]): This batch's already-recorded jids
+                (bound per batch).
+
+            Returns:
+              None
+
+            Examples:
+              >>> _record_outcomes([])  # doctest: +SKIP
+            """
+            outs = [o for o in outs if o["jid"] not in recorded_jids]
+            if not outs:
+              return
+            recorded_jids.update(o["jid"] for o in outs)
+            with ready_queue_lock:
+              scheduled_jids.difference_update(o["jid"] for o in outs)
+            finished = sum(1 for o in outs if o["ok"])
+            metrics_ok = sum(1 for o in outs if o.get("metrics_ok", o["ok"]))
+            with scheduler_shared_lock:
+              stats["processed"] += finished
+              stats["failed"] += len(outs) - finished
+              stats["metrics_ok_total"] += metrics_ok
+              stats["prewarm_failed_total"] += metrics_ok - finished
+              _clear_consumer_stall_reason(stats, metrics_ok)
+              stats["attempted_total"] = stats["processed"] + stats["failed"]
+              stats["per_jid_fallback_failures_total"] += sum(
+                1 for o in outs if o.get("_fallback_failed")
+              )
+              stats["worker_failed_outcomes_total"] += sum(
+                1
+                for o in outs
+                if not o["ok"]
+                and o.get("failure_kind") in _WORKER_FAILURE_KINDS
+              )
+              stats["parent_persist_failures_total"] += sum(
+                1
+                for o in outs
+                if not o["ok"]
+                and str(o.get("failure_kind") or "").startswith(
+                  "parent_persist"
+                )
+              )
+              stats["inflight_jids"] = max(
+                0, stats["inflight_jids"] - len(outs)
+              )
+              proc_now = stats["processed"]
+            completion_reporter.sync_completed_total(proc_now)
+
           with phase_timer.phase("metrics_compute_s"):
             succeeded_jids = []
             failed_count = 0
@@ -7260,13 +7347,22 @@ def update_metrics_for_dates(
                 ready_queue=ready_queue,
                 ready_queue_lock=ready_queue_lock,
                 on_supplements_taken=_on_supplements_taken,
+                on_outcome=lambda o: _record_outcomes([o]),
               )
             finally:
               compute_batch_heartbeat.clear()
+              _record_outcomes(jid_outcomes)
+              # Dequeued jobs that produced no outcome (shutdown, a raise).
+              unreported = (
+                len(job_refs) + int(batch_supplement_dequeued[0])
+              ) - len(recorded_jids)
               with ready_queue_lock:
-                scheduled_jids.difference_update(
-                  [r.jid for r in job_refs] + [o["jid"] for o in jid_outcomes]
-                )
+                scheduled_jids.difference_update(r.jid for r in job_refs)
+              if unreported > 0:
+                with scheduler_shared_lock:
+                  stats["inflight_jids"] = max(
+                    0, stats["inflight_jids"] - unreported
+                  )
             for jid_outcome in jid_outcomes:
               if jid_outcome["ok"]:
                 succeeded_jids.append(jid_outcome["jid"])
@@ -7341,13 +7437,7 @@ def update_metrics_for_dates(
           worker_failed_outcomes = sum(
             1
             for o in jid_outcomes
-            if (not o["ok"])
-            and o.get("failure_kind")
-            in (
-              "worker_db_error",
-              "worker_compute_error",
-              "worker_stall_timeout",
-            )
+            if (not o["ok"]) and o.get("failure_kind") in _WORKER_FAILURE_KINDS
           )
           parent_persist_failures = sum(
             1
@@ -7356,28 +7446,10 @@ def update_metrics_for_dates(
             and str(o.get("failure_kind") or "").startswith("parent_persist")
           )
           with scheduler_shared_lock:
-            stats["processed"] += len(succeeded_jids)
-            stats["failed"] += failed_count
-            batch_metrics_ok = sum(
-              1 for o in jid_outcomes if o.get("metrics_ok", o["ok"])
-            )
-            stats["metrics_ok_total"] += batch_metrics_ok
-            _clear_consumer_stall_reason(stats, batch_metrics_ok)
-            stats["prewarm_failed_total"] += batch_metrics_ok - len(
-              succeeded_jids
-            )
-            stats["attempted_total"] = stats["processed"] + stats["failed"]
+            # Per-job counters were recorded by _record_outcomes.
             stats["compute_batches_total"] += 1
             if has_batch_exception:
               stats["batch_compute_exceptions_total"] += 1
-            stats["per_jid_fallback_failures_total"] += fallback_failed
-            stats["worker_failed_outcomes_total"] += worker_failed_outcomes
-            stats["parent_persist_failures_total"] += parent_persist_failures
-            stats["inflight_jids"] = max(
-              0,
-              stats["inflight_jids"]
-              - (len(job_refs) + int(batch_supplement_dequeued[0])),
-            )
             proc_total = stats["processed"]
             fail_total = stats["failed"]
             attempted_total = stats["attempted_total"]
@@ -7403,7 +7475,6 @@ def update_metrics_for_dates(
                 scheduler_shared_lock,
               ):
                 break
-          completion_reporter.sync_completed_total(proc_total)
           compute_batches += 1
           if downshift:
             new_cap = max(

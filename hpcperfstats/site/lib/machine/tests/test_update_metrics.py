@@ -6002,6 +6002,7 @@ def test_compute_watchdog_downshifts_on_batch_wall_not_metrics_only(
     ready_queue=None,
     ready_queue_lock=None,
     on_supplements_taken=None,
+    **_kwargs,
   ):
     del metrics_manager, prewarm_pipeline, shared_pool, heartbeat
     del ready_queue, ready_queue_lock, on_supplements_taken
@@ -6562,10 +6563,19 @@ def test_sliding_outcome_requires_prewarm_for_finished_job(monkeypatch):
   )
   monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
   ok_base = {"ok": True, "status": "ok", "persist_s": 0.0}
+
+  def _fake_session(**k):
+    rows = _rows()
+    for row in rows:
+      k["on_result"](row)
+    return rows
+
   monkeypatch.setattr(
-    update_metrics,
-    "run_metrics_sliding_session",
-    lambda **k: [
+    update_metrics, "run_metrics_sliding_session", _fake_session
+  )
+
+  def _rows():
+    return [
       {
         "ref": SimpleNamespace(jid="m1"),
         "ok": True,
@@ -6584,8 +6594,8 @@ def test_sliding_outcome_requires_prewarm_for_finished_job(monkeypatch):
         "prewarm_ok": False,
         "base_outcome": {"ok": True, "status": "artifact_only"},
       },
-    ],
-  )
+    ]
+
   monkeypatch.setattr(
     update_metrics,
     "_prewarm_successful_refs_on_metrics_pool",
@@ -6863,7 +6873,7 @@ def test_consumer_stall_reason_clears_after_progress():
   update_metrics._clear_consumer_stall_reason(producer, 2)
   assert producer["stall_reason"] == "no_ready_candidates"
   src = inspect.getsource(update_metrics.update_metrics_for_dates)
-  assert "_clear_consumer_stall_reason(stats, batch_metrics_ok)" in src
+  assert "_clear_consumer_stall_reason(stats, metrics_ok)" in src
 
 
 @pytest.mark.machine_unit_mock
@@ -6929,3 +6939,53 @@ def test_sliding_session_persists_on_workers_not_the_harvester(monkeypatch):
     "ok": True
   }
   assert calls == ["unwrap", "persist"]
+
+
+@pytest.mark.machine_unit_mock
+def test_sliding_outcomes_reach_the_consumer_while_the_session_runs(
+  monkeypatch,
+):
+  """S8: per-job accounting happens as jobs finish, not at session end."""
+  delivered = []
+  observed_mid_session = []
+
+  def _fake_session(**k):
+    k["on_result"](
+      {
+        "ref": SimpleNamespace(jid="m1"),
+        "ok": True,
+        "prewarm_ok": True,
+        "base_outcome": {"ok": True, "status": "ok"},
+      }
+    )
+    observed_mid_session.extend(o["jid"] for o in delivered)
+    return []
+
+  monkeypatch.setattr(
+    update_metrics, "run_metrics_sliding_session", _fake_session
+  )
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_plot_prewarm_mode", lambda: "inline"
+  )
+  monkeypatch.setattr(update_metrics, "shutdown_requested", [False])
+  mgr = MagicMock()
+  mgr._worker_thread_count.return_value = 2
+  out = update_metrics._compute_jid_outcomes_sliding(
+    job_refs=[],
+    metrics_job_refs=[SimpleNamespace(jid="m1")],
+    artifact_only_refs=[],
+    metrics_manager=mgr,
+    prewarm_pipeline=MagicMock(),
+    shared_pool=None,
+    timing={},
+    t_batch=time.monotonic(),
+    heartbeat=None,
+    progress_callback=None,
+    ready_queue=None,
+    ready_queue_lock=None,
+    on_outcome=delivered.append,
+  )
+  assert observed_mid_session == ["m1"]
+  assert [o["jid"] for o in out] == ["m1"]
+  src = inspect.getsource(update_metrics.update_metrics_for_dates)
+  assert "on_outcome=lambda o: _record_outcomes([o])" in src

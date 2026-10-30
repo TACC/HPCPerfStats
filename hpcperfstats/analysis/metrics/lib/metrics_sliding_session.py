@@ -186,6 +186,7 @@ def run_metrics_sliding_session(
   on_stall_reset: Any | None = None,
   empty_supplement_sleep_s: float = 0.05,
   on_supplements_taken: Any | None = None,
+  on_result: Any | None = None,
 ) -> list[dict[str, Any]]:
   """
   Pool-sized sliding metrics+prewarm session with sample-count idle-slot fill.
@@ -218,6 +219,9 @@ def run_metrics_sliding_session(
     empty_supplement_sleep_s (float): Sleep when waiting with empty fill.
     on_supplements_taken (Any | None): Optional ``(n: int) -> None`` after
         each non-empty ready-queue supplement pop (scheduler dequeue counters).
+    on_result (Any | None): Optional ``(row: dict) -> None`` called as each
+        ref finishes (metrics failure, prewarm done, stall, shutdown), so the
+        caller can account per job instead of at session end.
 
   Returns:
     list[dict[str, Any]]: Per-ref results with keys ``ref``, ``ok``,
@@ -241,6 +245,23 @@ def run_metrics_sliding_session(
   results: list[dict[str, Any]] = []
   if not primary_refs:
     return results
+
+  def _finish_row(row: dict[str, Any]) -> None:
+    """
+    Record one finished ref and hand it to ``on_result``.
+
+    Args:
+      row (dict[str, Any]): Result row (``ref``, ``ok``, ``base_outcome`` ...).
+
+    Returns:
+      None
+
+    Examples:
+      >>> _finish_row({"ref": None, "ok": False})  # doctest: +SKIP
+    """
+    results.append(row)
+    if callable(on_result):
+      on_result(row)
 
   primary: deque[Any] = deque(primary_refs)
   pending: list[dict[str, Any]] = []
@@ -353,7 +374,7 @@ def run_metrics_sliding_session(
         except Exception:
           ok = False
       prewarm_s = max(0.0, time.monotonic() - t_pw)
-      results.append(
+      _finish_row(
         {
           "ref": ref,
           "ok": bool(item["base_outcome"].get("ok")),
@@ -389,7 +410,7 @@ def run_metrics_sliding_session(
     Examples:
       >>> _finalize_failed(None, {}, 0.0)  # doctest: +SKIP
     """
-    results.append(
+    _finish_row(
       {
         "ref": ref,
         "ok": False,
@@ -462,7 +483,7 @@ def run_metrics_sliding_session(
           metrics_s = float(item.get("metrics_s") or 0.0)
           if item["phase"] == "prewarm":
             # Metrics rows are already committed; only artifacts are missing.
-            results.append(
+            _finish_row(
               {
                 "ref": ref,
                 "ok": bool(item["base_outcome"].get("ok")),
@@ -556,7 +577,7 @@ def run_metrics_sliding_session(
       time.monotonic() - float(ready_item.get("t_prewarm0", last_progress_at)),
     )
     base = ready_item["base_outcome"]
-    results.append(
+    _finish_row(
       {
         "ref": ref,
         "ok": bool(base.get("ok")),
@@ -580,7 +601,7 @@ def run_metrics_sliding_session(
       "error_message": "sliding session interrupted",
       "persist_s": 0.0,
     }
-    results.append(
+    _finish_row(
       {
         "ref": ref,
         "ok": False,
