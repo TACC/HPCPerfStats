@@ -35,7 +35,7 @@ Attributes:
   _DENY_LOG_STATE: Rate-limit state for ``space_pressure deny`` lines.
   _LOCK: Guards ``_STATE`` across append, day-close and census threads.
   _STATE: Pressure flag, day-close stages by job identity, append day,
-    hold timestamps and byte reservations.
+    hold timestamps, byte reservations and the pressure-end ``epoch``.
 """
 
 from __future__ import annotations
@@ -93,6 +93,7 @@ def reset_for_tests() -> None:
       hold_since=None,
       finished_since_hold=False,
       reserved={},
+      epoch=0,
     )
 
 
@@ -185,6 +186,7 @@ def under_pressure(path: str = "") -> bool:
       _STATE["pressure"] = True
     elif threshold <= 0 or free >= 2 * threshold:
       _STATE.update(pressure=False, append_day=None, hold_since=None)
+      _STATE["epoch"] += 1  # a selection in progress must not write back
     return bool(_STATE["pressure"])
 
 
@@ -303,10 +305,13 @@ def select_append_day(
   with _LOCK:
     finishing = _finishing_locked()
     current = _STATE["append_day"]
+    epoch = _STATE["epoch"]
   if current in busy or (current in parked and fits(current)):
     return None if finishing else current
   candidates = [] if finishing else [d for d in parked if d != current]
   with _LOCK:
+    if _STATE["epoch"] != epoch:
+      return ALL_DAYS  # pressure ended while ``fits`` ran
     if current is not None and current not in parked:
       _STATE.update(hold_since=now, finished_since_hold=False)
     _STATE["append_day"] = None
@@ -317,6 +322,8 @@ def select_append_day(
     _STATE["hold_since"] = None
   chosen = next((d for d in candidates if fits(d)), "")
   with _LOCK:
+    if _STATE["epoch"] != epoch:
+      return ALL_DAYS
     _STATE["append_day"] = chosen or None
   return chosen
 

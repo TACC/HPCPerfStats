@@ -312,6 +312,36 @@ def test_pressure_end_resumes_all_days(monkeypatch):
   assert sp.select_append_day(["2026-09-02"], set()) is sp.ALL_DAYS
 
 
+def test_pressure_ending_mid_selection_leaves_no_append_day(monkeypatch):
+  """F5: a census under_pressure() that ends pressure while ``fits`` runs."""
+  _set(monkeypatch, threshold=TIB, free=TIB // 2)
+
+  def fits_then_pressure_ends(_day):
+    _set(monkeypatch, threshold=TIB, free=2 * TIB)
+    sp.under_pressure("/d")
+    return True
+
+  got = sp.select_append_day(["2026-09-01"], set(), fits_then_pressure_ends)
+  assert got is sp.ALL_DAYS
+  assert sp._STATE["append_day"] is None
+  assert sp._STATE["hold_since"] is None
+
+
+def test_pressure_ending_before_the_hold_write_sets_no_hold(monkeypatch):
+  _set(monkeypatch, threshold=TIB, free=TIB // 2)
+  assert sp.select_append_day(["2026-09-01"], set()) == "2026-09-01"
+
+  def fits_then_pressure_ends(_day):
+    _set(monkeypatch, threshold=TIB, free=2 * TIB)
+    sp.under_pressure("/d")
+    return False
+
+  # 09-01 still parked but no longer fits: the slot check calls ``fits``.
+  got = sp.select_append_day(["2026-09-01"], set(), fits_then_pressure_ends)
+  assert got is sp.ALL_DAYS
+  assert sp._STATE["hold_since"] is None
+
+
 def test_hard_reserve_check_leaves_room_for_the_reseal(monkeypatch):
   _set(monkeypatch, threshold=TIB, free=100 * GIB)
   # 100G - (40G restore + 10G raw) - 20G (reseal of the restore) = 30G.
