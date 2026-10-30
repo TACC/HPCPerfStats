@@ -34,8 +34,8 @@ Attributes:
   UNKNOWN_RATIO: Restore size multiple of a sealed file with no size header.
   _DENY_LOG_STATE: Rate-limit state for ``space_pressure deny`` lines.
   _LOCK: Guards ``_STATE`` across append, day-close and census threads.
-  _STATE: Pressure flag, day-close stages, append day, hold timestamps and
-    byte reservations.
+  _STATE: Pressure flag, day-close stages by job identity, append day,
+    hold timestamps and byte reservations.
 """
 
 from __future__ import annotations
@@ -188,23 +188,27 @@ def under_pressure(path: str = "") -> bool:
     return bool(_STATE["pressure"])
 
 
-def note_day_close_stage(day: str, stage: str) -> None:
+def note_day_close_stage(job: str, stage: str) -> None:
   """
-  Record the current day-close stage of ``day`` (from ``stage_enter``).
+  Record the current stage of day-close job ``job`` (from ``stage_enter``).
+
+  Keyed by job identity, not calendar day: a bare-day and a tar-path
+  identity for one day are two jobs, and one ending must not clear the
+  other's stage.
 
   Args:
-    day (str): Calendar day ``YYYY-MM-DD``.
+    job (str): Day-close job identity (daily tar path or bare day).
     stage (str): Stage name, for example ``seal`` or ``disk_remaining_raw``.
 
   Returns:
     None
 
   Examples:
-    >>> note_day_close_stage("2026-09-07", "seal")
-    >>> clear_day_close("2026-09-07")
+    >>> note_day_close_stage("/d/2026-09-07.tar", "seal")
+    >>> clear_day_close("/d/2026-09-07.tar")
   """
   with _LOCK:
-    _STATE["stages"][str(day)] = str(stage)
+    _STATE["stages"][str(job)] = str(stage)
 
 
 def note_space_freed() -> None:
@@ -224,21 +228,21 @@ def note_space_freed() -> None:
     _STATE["finished_since_hold"] = True
 
 
-def clear_day_close(day: str) -> None:
+def clear_day_close(job: str) -> None:
   """
-  Forget ``day``'s day-close stage once its job has ended.
+  Forget day-close job ``job``'s stage once the job has ended.
 
   Args:
-    day (str): Calendar day ``YYYY-MM-DD``.
+    job (str): Day-close job identity passed to ``note_day_close_stage``.
 
   Returns:
     None
 
   Examples:
-    >>> clear_day_close("2026-09-07")
+    >>> clear_day_close("/d/2026-09-07.tar")
   """
   with _LOCK:
-    _STATE["stages"].pop(str(day), None)
+    _STATE["stages"].pop(str(job), None)
 
 
 def _finishing_locked() -> bool:

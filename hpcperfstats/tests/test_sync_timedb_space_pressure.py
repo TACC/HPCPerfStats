@@ -145,6 +145,26 @@ def test_space_freed_before_the_hold_does_not_end_it(monkeypatch):
   assert sp.select_append_day(["2026-09-02"], set()) is None
 
 
+def test_drain_clears_only_its_own_job_for_a_shared_day(monkeypatch):
+  """F3: the tar-path job ending must not clear the bare-day job's seal."""
+  from concurrent.futures import Future
+
+  _set(monkeypatch, threshold=TIB, free=TIB // 2)
+  done = Future()
+  done.set_result("yielded")
+  sp.note_day_close_stage("2026-09-07", "seal")
+  qo._drain_day_close_ready(
+    SyncTimedbJobStore(""),
+    inflight={"/d/2026-09-07.tar": done},
+    leases={},
+  )
+  assert sp.select_append_day(["2026-09-01"], set()) is None
+  qo._drain_day_close_ready(
+    SyncTimedbJobStore(""), inflight={"2026-09-07": done}, leases={}
+  )
+  assert sp.select_append_day(["2026-09-01"], set()) == "2026-09-01"
+
+
 def test_seal_yield_checks_do_not_hold_appends(monkeypatch):
   """F2: only the seal itself counts, not its unarchived/discover checks."""
   _set(monkeypatch, threshold=TIB, free=TIB // 2)
@@ -186,6 +206,30 @@ def test_day_close_that_seals_marks_the_seal_finishing(tmp_path, monkeypatch):
   claim()
   assert calls == [False]
   assert "seal" in seen[seen.index("seal_check") :]
+
+
+def test_day_close_publishes_stages_under_its_job_identity(
+  tmp_path, monkeypatch
+):
+  from hpcperfstats.tests.test_sync_timedb_seal_after_full_discover import (
+    _seal_harness,
+  )
+
+  claim, _calls, _logs = _seal_harness(tmp_path, monkeypatch)
+  monkeypatch.setattr(qo, "_closed_raw_not_archived", lambda *a: [])
+  keys = set()
+  monkeypatch.setattr(
+    sp, "note_day_close_stage", lambda job, _stage: keys.add(job)
+  )
+  claim()  # identity "2020-01-10"
+  tar = str(tmp_path / "daily" / "2020-01-10.tar")
+  qo._run_day_close_job(
+    tar,
+    tgz_archive_dir=str(tmp_path / "daily"),
+    archive_data_dir=str(tmp_path / "archive"),
+    log_fn=lambda *_a, **_k: None,
+  )
+  assert keys == {"2020-01-10", tar}
 
 
 def test_raw_delete_notes_space_freed(tmp_path, monkeypatch):

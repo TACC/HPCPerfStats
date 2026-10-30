@@ -2770,7 +2770,7 @@ def _run_day_close_job(
       """
       nonlocal stage
       stage = name
-      space.note_day_close_stage(day_token, name)
+      space.note_day_close_stage(identity, name)
       _log(
         f"queue_orchestrator day_close stage_enter day={day_token} stage={name}",
         log_fn=log_fn,
@@ -3142,7 +3142,7 @@ def _run_day_close_job(
     _stage_enter("seal")
     # The checks below yield more often than they seal: appends under space
     # pressure wait only once the seal itself runs (FINISHING_STAGES).
-    space.note_day_close_stage(day_token, "seal_check")
+    space.note_day_close_stage(identity, "seal_check")
     # The seal only sees raw the manifest and queues know; until the boot
     # whole-archive walk ends, undiscovered raw for this day can still exist
     # and would force a full reseal (04 2026-10-29: 09-22..10-06 resealed).
@@ -3213,7 +3213,7 @@ def _run_day_close_job(
     # (04 2026-10-28: sealed while 4k-20k handed-off files were still being
     # appended; zstd read a growing tar). Decide the deferral here instead.
     seal_deferred = raw_remains_for_seal and not seal_with_raw
-    space.note_day_close_stage(day_token, "seal")
+    space.note_day_close_stage(identity, "seal")
     tar_before = os.path.isfile(tar_path)
     sealed_before = archive_identity(tar_path + ".zst")
     seal_failed = (
@@ -6789,7 +6789,7 @@ def _drain_day_close_ready(
         log_fn=log_fn,
       )
     day_tok = progress.day_token_from_day_close_identity(identity)
-    space.clear_day_close(day_tok)
+    space.clear_day_close(identity)
     vacate_outcome = failure or outcome
     _day_close_log_vacate_if_allowed(
       day_tok,
