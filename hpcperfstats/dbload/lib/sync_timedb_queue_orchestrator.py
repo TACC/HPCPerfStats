@@ -59,6 +59,8 @@ Attributes:
     yields at the seal stage while it is set, and the day_close fill holds
     every backfill day.
   _DISCOVER_FRONTIER_LOCK: Guards ``_discover_frontier_day``.
+  _SELECT_APPEND_DAY_HERE: Default of ``_try_submit_pending_append_days``
+    ``allowed_day``: select the day there (None means appends wait).
   _discover_frontier_day: Oldest backfill day the last discover walk could
     not fully queue at the ingest cap (None = nothing undiscovered); the
     day_close fill holds backfill days on or after it.
@@ -5895,31 +5897,69 @@ def get_total_completed_for_tests() -> int:
     return _TOTAL_COMPLETED
 
 
-def _select_append_day(inflight: dict[str, AsyncResult]) -> Any:
+# Default of ``_try_submit_pending_append_days(allowed_day=)``: select here.
+# None is a real answer ("appends wait"), so it cannot be the default.
+_SELECT_APPEND_DAY_HERE = object()
+
+
+def _select_append_day(
+  inflight: dict[str, AsyncResult],
+  tgz_archive_dir: str,
+  batch_size: int,
+) -> Any:
   """
   Return which day may get append batches now (space pressure gate).
 
   Args:
     inflight (dict[str, AsyncResult]): Daily tar -> in-flight append batch.
+    tgz_archive_dir (str): Daily archive directory.
+    batch_size (int): Max paths per ``tar -T`` job.
 
   Returns:
-    Any: ``space.ALL_DAYS`` without pressure, else one day or None.
+    Any: ``space.ALL_DAYS`` without pressure, else one day, ``""`` (none
+    chosen yet) or None (appends wait).
 
   Examples:
-    >>> _select_append_day({}) is not None or True
+    >>> _select_append_day({}, "/d", 1) is not None or True
     True
   """
+
+  def _fits(day: str) -> bool:
+    """
+    Return True when ``day``'s next parked batch fits on disk.
+
+    Args:
+      day (str): Calendar day ``YYYY-MM-DD``.
+
+    Returns:
+      bool: True when ``_append_batch_need`` admits the batch.
+
+    Examples:
+      >>> # nested predicate for space.select_append_day
+      >>> None is None
+      True
+    """
+    first = _APPEND_DAY_LISTS.peek_first(day)
+    tar_path = daily_tar_path_for_stats_path(
+      getattr(first, "identity", ""), tgz_archive_dir
+    )
+    take = min(batch_size, _APPEND_DAY_LISTS.peek_len(day))
+    return (
+      bool(tar_path) and _append_batch_need(day, tar_path, take) is not None
+    )
+
   busy = {os.path.basename(str(tar))[:10] for tar in inflight}
-  return space.select_append_day(_APPEND_DAY_LISTS.day_keys(), busy)
+  return space.select_append_day(_APPEND_DAY_LISTS.day_keys(), busy, _fits)
 
 
-def _append_batch_fits_space(day: str, tar_path: str, take: int) -> bool:
+def _append_batch_need(day: str, tar_path: str, take: int) -> int | None:
   """
-  Return True when the next ``take`` parked paths of ``day`` fit on disk.
+  Return the bytes the next ``take`` parked paths of ``day`` will write.
 
-  Only checked while ``sync_archive_space_pressure_free_bytes`` is set: the
+  Only measured while ``sync_archive_space_pressure_free_bytes`` is set: the
   batch's raw bytes plus a restore of a sealed day must keep the hard
-  reserve and room for that day's reseal. A refused batch stays parked.
+  reserve, room for that day's reseal and other admitted work's
+  reservations. A refused batch stays parked.
 
   Args:
     day (str): Calendar day ``YYYY-MM-DD``.
@@ -5927,23 +5967,24 @@ def _append_batch_fits_space(day: str, tar_path: str, take: int) -> bool:
     take (int): Number of parked claims the batch would pop.
 
   Returns:
-    bool: True when the batch may be submitted.
+    int | None: Bytes to reserve (0 when the gate is off), or None when the
+    batch does not fit.
 
   Examples:
-    >>> _append_batch_fits_space("2026-09-07", "/d/2026-09-07.tar", 0)
-    True
+    >>> _append_batch_need("2026-09-07", "/d/2026-09-07.tar", 0)
+    0
   """
   if take <= 0 or cfg.get_sync_archive_space_pressure_free_bytes() <= 0:
-    return True
+    return 0
   restore = space.restore_bytes_estimate(tar_path)
   raw = 0
   for job in _APPEND_DAY_LISTS.peek_batch(day, take):
     with contextlib.suppress(OSError):
       raw += os.path.getsize(job.identity)
   if space.fits_hard_reserve(tar_path, restore + raw, restore_need=restore):
-    return True
+    return restore + raw
   space.log_deny("append", tar_path, restore + raw, reason="hard_reserve")
-  return False
+  return None
 
 
 def _try_submit_pending_append_days(
@@ -5956,7 +5997,7 @@ def _try_submit_pending_append_days(
   tgz_archive_dir: str,
   batch_size: int,
   allow_partial: bool,
-  allowed_day: Any = None,
+  allowed_day: Any = _SELECT_APPEND_DAY_HERE,
 ) -> int:
   """
   Submit one GNU-tar batch per free daily tar from in-memory day lists.
@@ -5979,8 +6020,8 @@ def _try_submit_pending_append_days(
       is at or under ``batch_size``, its ingest remainder is 0, parked
       claims cover that remainder, and discover-bg is idle.
     allowed_day (Any): ``space.select_append_day`` result computed once by
-      the caller (``ALL_DAYS``, a day, or None for no day); omitted, it is
-      computed here.
+      the caller: ``ALL_DAYS``, a day, ``""`` or None (both: no day may
+      append); omitted, it is selected here.
 
   Returns:
     int: Newly submitted append jobs this call.
@@ -6003,8 +6044,8 @@ def _try_submit_pending_append_days(
     0
   """
   submitted = 0
-  if allowed_day is None:
-    allowed_day = _select_append_day(inflight)
+  if allowed_day is _SELECT_APPEND_DAY_HERE:
+    allowed_day = _select_append_day(inflight, tgz_archive_dir, batch_size)
   for day in _APPEND_DAY_LISTS.day_keys():
     if len(inflight) >= cap:
       break
@@ -6028,7 +6069,8 @@ def _try_submit_pending_append_days(
     if not tar_path or tar_path in inflight:
       continue
     take = min(batch_size, pending_n)
-    if not _append_batch_fits_space(day, tar_path, take):
+    need = _append_batch_need(day, tar_path, take)
+    if need is None:
       continue
     batch_claims = _APPEND_DAY_LISTS.pop_batch(day, take)
     if not batch_claims:
@@ -6045,6 +6087,7 @@ def _try_submit_pending_append_days(
           owner_token=job.owner_token,
         )
       raise
+    space.reserve(tar_path, need)  # released in _drain_append_ready
     inflight[tar_path] = async_res
     claims[tar_path] = batch_claims
     submitted += 1
@@ -6123,7 +6166,7 @@ def _fill_append_slots(
       return 0
     fill_cap = min(2, max(1, fill_cap))
     _emit_mem_telem_event("admit_alone", None, alone_progress=True)
-  allowed_day = _select_append_day(inflight)
+  allowed_day = _select_append_day(inflight, tgz_archive_dir, batch_size)
   if allowed_day is None:
     # Space pressure: a day close is finishing a day, or the last append
     # day waits for its close. Claims stay in the job store meanwhile.
@@ -6333,6 +6376,7 @@ def _drain_append_ready(
       continue
     claim = claims.pop(key, None)
     inflight.pop(key, None)
+    space.release(key)  # the batch's bytes are on disk (or never written)
     done += 1
     jobs = _iter_claim_jobs(claim)
     failed = False

@@ -6483,21 +6483,24 @@ def ensure_daily_tar_restored_for_append(
       f"INFO: archive decompress restore begin tar={tar_path} from={sealed} remove_compressed={remove_compressed}",
       flush=True,
     )
-  for sealed_src in (zst_path, gz_path):
-    if not os.path.isfile(sealed_src):
-      continue
-    if decompress_compressed_to_tar(
-      sealed_src,
-      tar_path,
-      zstd_threads,
-      remove_compressed=remove_compressed,
-      wait_for_other_owner=wait_for_other_owner,
-    ):
-      log_print(
-        f"INFO: archive decompress restore tar={tar_path} from={sealed_src} remove_compressed={remove_compressed}",
-        flush=True,
-      )
-      return True
+  # The append path ("off") holds its own reservation from dispatch.
+  need = 0 if space_gate == "off" else sp.restore_bytes_estimate(tar_path)
+  with sp.reserving(f"restore:{tar_path}", need):
+    for sealed_src in (zst_path, gz_path):
+      if not os.path.isfile(sealed_src):
+        continue
+      if decompress_compressed_to_tar(
+        sealed_src,
+        tar_path,
+        zstd_threads,
+        remove_compressed=remove_compressed,
+        wait_for_other_owner=wait_for_other_owner,
+      ):
+        log_print(
+          f"INFO: archive decompress restore tar={tar_path} from={sealed_src} remove_compressed={remove_compressed}",
+          flush=True,
+        )
+        return True
   return not (os.path.isfile(zst_path) or os.path.isfile(gz_path))
 
 

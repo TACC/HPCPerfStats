@@ -9,6 +9,7 @@ day's close runs before the next day starts.
 
 from __future__ import annotations
 
+import inspect
 import io
 import subprocess
 import tarfile
@@ -294,7 +295,9 @@ def _claim(identity: str):
   )
 
 
-def _submit(monkeypatch, tmp_path, days, *, free: int, restore=0):
+def _submit(
+  monkeypatch, tmp_path, days, *, free: int, restore=0, restore_for=None
+):
   from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
     note_day_remainder,
   )
@@ -311,7 +314,11 @@ def _submit(monkeypatch, tmp_path, days, *, free: int, restore=0):
     lambda p, d: f"{d}/{p.rsplit('raw-', 1)[1]}.tar",
   )
   monkeypatch.setattr(qo, "_discover_bg_is_busy", lambda: False)
-  monkeypatch.setattr(sp, "restore_bytes_estimate", lambda _t: restore)
+  monkeypatch.setattr(
+    sp,
+    "restore_bytes_estimate",
+    lambda t: (restore_for or {}).get(t.rsplit("/", 1)[1][:10], restore),
+  )
   _set(monkeypatch, threshold=TIB, free=free)
   submitted = []
 
@@ -363,6 +370,114 @@ def test_submit_skips_day_whose_restore_breaks_hard_reserve(
   )
   assert got == []
   assert qo._APPEND_DAY_LISTS.peek_len("2026-09-01") == 1
+
+
+def test_day_that_never_fits_gives_way_to_the_next_day(monkeypatch, tmp_path):
+  """Review #1: an oversized oldest day must not hold the slot forever."""
+  got = _submit(
+    monkeypatch,
+    tmp_path,
+    ["2026-09-01", "2026-09-02"],
+    free=100 * GIB,
+    restore_for={"2026-09-01": 90 * GIB},
+  )
+  assert got == ["2026-09-02.tar"]
+  assert qo._APPEND_DAY_LISTS.peek_len("2026-09-01") == 1
+
+
+def test_select_skips_days_that_do_not_fit(monkeypatch):
+  _set(monkeypatch, threshold=TIB, free=TIB // 2)
+  fits = {"2026-09-01": False, "2026-09-02": True}.get
+  assert sp.select_append_day(["2026-09-02", "2026-09-01"], set(), fits) == (
+    "2026-09-02"
+  )
+  sp.reset_for_tests()
+  assert sp.select_append_day(["2026-09-01"], set(), lambda _d: False) == ""
+
+
+def test_pre_seal_verify_alone_does_not_hold_appends(monkeypatch):
+  """Review #2: verify batches yield every claim; they are not finishing."""
+  _set(monkeypatch, threshold=TIB, free=TIB // 2)
+  sp.note_day_close_stage("2026-09-07", "pre_seal_verify")
+  assert sp.select_append_day(["2026-09-01"], set()) == "2026-09-01"
+
+
+@pytest.mark.parametrize(
+  ("raw", "expected"),
+  [("2T", 2 << 40), ("0", 0), ("1 TiB please", 1 << 40), ("", 0)],
+)
+def test_bad_ini_value_falls_back_to_default(raw, expected):
+  """Review #3: a typo must not raise on the append/census/seal threads."""
+  assert cfg.space_pressure_bytes_from_ini(raw) == expected
+
+
+def test_reservations_count_against_the_hard_reserve(monkeypatch):
+  """Review #4: concurrent admissions see each other's bytes."""
+  _set(monkeypatch, threshold=TIB, free=100 * GIB)
+  assert sp.fits_hard_reserve("/d/x.tar", 60 * GIB)
+  sp.reserve("/d/y.tar", 50 * GIB)
+  assert not sp.fits_hard_reserve("/d/x.tar", 60 * GIB)
+  sp.release("/d/y.tar")
+  assert sp.reserved_bytes() == 0
+
+
+def test_submitted_batch_holds_a_reservation(monkeypatch, tmp_path):
+  got = _submit(
+    monkeypatch, tmp_path, ["2026-09-01"], free=TIB // 2, restore=5 * GIB
+  )
+  assert got == ["2026-09-01.tar"]
+  assert sp.reserved_bytes() == 5 * GIB + 1000
+
+
+def test_append_drain_releases_the_reservation():
+  src = inspect.getsource(qo._drain_append_ready)
+  assert "space.release(" in src
+
+
+def test_day_close_restore_holds_a_reservation(monkeypatch, tmp_path):
+  tar, _zst = _sealed_day(tmp_path)
+  seen = []
+  real = ah.decompress_compressed_to_tar
+
+  def spy(*a, **k):
+    seen.append(sp.reserved_bytes())
+    return real(*a, **k)
+
+  monkeypatch.setattr(ah, "decompress_compressed_to_tar", spy)
+  _set(monkeypatch, threshold=TIB, free=TIB // 2)
+  assert ah.ensure_daily_tar_restored_for_append(
+    str(tar), 1, space_gate="finish"
+  )
+  assert seen and seen[0] > 0
+  assert sp.reserved_bytes() == 0
+
+
+def test_try_submit_none_means_blocked(monkeypatch, tmp_path):
+  """Review #8: None passed in is 'appends wait', not 'compute here'."""
+  qo.reset_append_day_lists_for_tests()
+  raw = tmp_path / "raw-2026-09-01"
+  raw.write_bytes(b"r")
+  qo._APPEND_DAY_LISTS.add("2026-09-01", _claim(str(raw)))
+  _set(monkeypatch, threshold=0, free=TIB)
+
+  class _Pool:
+    def apply_async(self, fn, args):
+      raise AssertionError("submitted while blocked")
+
+  assert (
+    qo._try_submit_pending_append_days(
+      client=SyncTimedbJobStore(""),
+      cap=4,
+      inflight={},
+      claims={},
+      archive_pool=_Pool(),
+      tgz_archive_dir=str(tmp_path),
+      batch_size=1,
+      allow_partial=True,
+      allowed_day=None,
+    )
+    == 0
+  )
 
 
 def test_seal_compress_drops_priority_wrapper_under_pressure(

@@ -6,14 +6,18 @@ starts when the daily archive filesystem has less than X free and lasts until
 it has 2X free. Under pressure:
 
 - appends wait while any day close is finishing a day (a stage in
-  ``FINISHING_STAGES``; the checks alone do not count);
-- otherwise one day at a time (the oldest with parked appends) gets appends;
-  once that day has no parked or in-flight appends, the next day waits until
-  a day close has finished a day (or ``DAY_CLOSE_START_GRACE_S`` passes with
-  none starting, so a day that cannot close yet does not stop appends);
-- restores outside the append path (ingest prewarm, repair) are denied; day
-  close restores and appends still keep the hard reserve
-  (``sync_archive_min_free_bytes``) plus room for the later reseal;
+  ``FINISHING_STAGES``; the checks and pre-seal verify batches do not count);
+- otherwise one day at a time (the oldest parked day whose next batch fits)
+  gets appends; once that day has no parked or in-flight appends, the next
+  day waits until a day close has finished a day (or
+  ``DAY_CLOSE_START_GRACE_S`` passes with none starting, so a day that cannot
+  close yet does not stop appends);
+- restores through ``space_gate="growth"`` (the default of
+  ``ensure_daily_tar_restored_for_append``) are denied; no production caller
+  uses it today (ingest prewarm passes no restore days). Day close and
+  repair restores (``finish``) and appends keep the hard reserve
+  (``sync_archive_min_free_bytes``) plus room for the later reseal, net of
+  the bytes other admitted work has reserved (``reserve`` / ``reserving``);
 - seal compression runs without the nice/ionice wrapper so appends cannot
   starve day close.
 
@@ -28,16 +32,18 @@ Attributes:
   UNKNOWN_RATIO: Restore size multiple of a sealed file with no size header.
   _DENY_LOG_STATE: Rate-limit state for ``space_pressure deny`` lines.
   _LOCK: Guards ``_STATE`` across append, day-close and census threads.
-  _STATE: Pressure flag, day-close stages, append day and hold timestamps.
+  _STATE: Pressure flag, day-close stages, append day, hold timestamps and
+    byte reservations.
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
 from hpcperfstats.dbload.lib import conf_parser as cfg
@@ -46,9 +52,10 @@ from hpcperfstats.dbload.lib.print_utils import log_print
 ALL_DAYS = object()
 DAY_CLOSE_START_GRACE_S = 600.0
 UNKNOWN_RATIO = 10
+# pre_seal_verify is left out: it runs one classify batch per claim and
+# yields, so with many days queued it is almost always running somewhere.
 FINISHING_STAGES = frozenset(
   {
-    "pre_seal_verify",
     "reconcile_merge",
     "dedupe",
     "raw_delete_pre_seal",
@@ -83,6 +90,7 @@ def reset_for_tests() -> None:
       append_day=None,
       hold_since=None,
       finished_since_hold=False,
+      reserved={},
     )
 
 
@@ -236,20 +244,25 @@ def _finishing_locked() -> bool:
 def select_append_day(
   parked_days: Iterable[str],
   busy_days: Iterable[str],
+  fits: Callable[[str], bool] | None = None,
 ) -> Any:
   """
   Return which day may get appends now.
 
   Without pressure every day may (``ALL_DAYS``). Under pressure: ``None``
   while a day close is finishing a day; else the day holding the slot while
-  it has parked or in-flight appends; else, right after such a day, ``None``
-  until a day close has finished a day (or the grace passed with none
-  starting); else the oldest parked day, or ``""`` when none is parked yet
-  (keep claiming so one can be chosen next tick).
+  it has an in-flight batch or parked appends that fit; else, right after
+  such a day finished its appends, ``None`` until a day close has finished a
+  day (or the grace passed with none starting); else the oldest parked day
+  whose next batch fits, or ``""`` when none is parked or none fits (keep
+  claiming; choose again next tick). A held day whose batch no longer fits
+  gives up the slot without a hold, so it cannot block every other day.
 
   Args:
     parked_days (Iterable[str]): Days with parked append claims.
     busy_days (Iterable[str]): Days with an append batch in flight.
+    fits (Callable[[str], bool] | None): Whether a day's next batch fits on
+      disk (``_append_batch_fits_space``); None treats every day as fitting.
 
   Returns:
     Any: ``ALL_DAYS``, a day string, ``""`` (no day chosen yet) or
@@ -262,27 +275,29 @@ def select_append_day(
   """
   if not under_pressure():
     return ALL_DAYS
+  fits = fits or (lambda _day: True)
   parked = sorted(str(d) for d in parked_days)
   busy = {str(d) for d in busy_days}
   now = time.monotonic()
   with _LOCK:
     finishing = _finishing_locked()
     current = _STATE["append_day"]
-    if current is not None and (current in busy or current in parked):
-      return None if finishing else current
-    if current is not None:
-      _STATE.update(
-        append_day=None, hold_since=now, finished_since_hold=finishing
-      )
+  if current in busy or (current in parked and fits(current)):
+    return None if finishing else current
+  candidates = [] if finishing else [d for d in parked if d != current]
+  with _LOCK:
+    if current is not None and current not in parked:
+      _STATE.update(hold_since=now, finished_since_hold=finishing)
+    _STATE["append_day"] = None
     hold_since = _STATE["hold_since"]
     waiting = hold_since is not None and not _STATE["finished_since_hold"]
     if finishing or (waiting and now - hold_since < DAY_CLOSE_START_GRACE_S):
       return None
     _STATE["hold_since"] = None
-    if not parked:
-      return ""
-    _STATE["append_day"] = parked[0]
-    return parked[0]
+  chosen = next((d for d in candidates if fits(d)), "")
+  with _LOCK:
+    _STATE["append_day"] = chosen or None
+  return chosen
 
 
 def fits_hard_reserve(path: str, need: int, *, restore_need: int = 0) -> bool:
@@ -305,8 +320,88 @@ def fits_hard_reserve(path: str, need: int, *, restore_need: int = 0) -> bool:
   if int(need) <= 0:
     return True
   reserve = int(cfg.get_sync_archive_min_free_bytes())
-  left = _free_bytes(path) - int(need) - int(restore_need) // 2
+  left = (
+    _free_bytes(path) - reserved_bytes() - int(need) - int(restore_need) // 2
+  )
   return left >= reserve
+
+
+def reserve(key: str, nbytes: int) -> None:
+  """
+  Hold ``nbytes`` for admitted work that has not written them yet.
+
+  ``fits_hard_reserve`` subtracts every held reservation, so concurrent
+  admissions (append batches, day-close restores) see each other.
+
+  Args:
+    key (str): Owner key (the daily tar path).
+    nbytes (int): Bytes the work will write.
+
+  Returns:
+    None
+
+  Examples:
+    >>> reserve("/d/2026-09-07.tar", 10)
+    >>> release("/d/2026-09-07.tar")
+  """
+  with _LOCK:
+    _STATE["reserved"][str(key)] = max(0, int(nbytes))
+
+
+def release(key: str) -> None:
+  """
+  Drop the reservation held under ``key`` (no-op when none).
+
+  Args:
+    key (str): Owner key passed to ``reserve``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> release("/d/2026-09-07.tar")
+  """
+  with _LOCK:
+    _STATE["reserved"].pop(str(key), None)
+
+
+def reserved_bytes() -> int:
+  """
+  Return the bytes held by all current reservations.
+
+  Returns:
+    int: Sum of reservations.
+
+  Examples:
+    >>> reserved_bytes() >= 0
+    True
+  """
+  with _LOCK:
+    return sum(_STATE["reserved"].values())
+
+
+@contextlib.contextmanager
+def reserving(key: str, nbytes: int) -> Iterator[None]:
+  """
+  Hold a reservation for the duration of a ``with`` block.
+
+  Args:
+    key (str): Owner key (the daily tar path).
+    nbytes (int): Bytes the block will write.
+
+  Yields:
+    None: While the reservation is held.
+
+  Examples:
+    >>> with reserving("/d/2026-09-07.tar", 5):
+    ...   reserved_bytes() >= 5
+    True
+  """
+  reserve(key, nbytes)
+  try:
+    yield
+  finally:
+    release(key)
 
 
 def admit_restore(tar_path: str, mode: str) -> bool:

@@ -14,6 +14,7 @@ Attributes:
   _PIPELINE_DERIVED_AUDIT_SKIP: Attribute.
   _PIPELINE_LEGACY: Attribute.
   _PIPELINE_PATH_OPTIONS: Attribute.
+  _SPACE_PRESSURE_BAD_VALUES_LOGGED: Bad pressure INI values already warned.
   _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES_DEFAULT: Attribute.
   _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES_DEFAULT: Attribute.
   _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_QUEUE_MULTIPLIER_DEFAULT: Attribute.
@@ -3826,9 +3827,44 @@ def get_sync_archive_space_pressure_free_bytes() -> int:
     1099511627776
   """
   _ensure_cfg_loaded()
-  return parse_byte_size(
+  return space_pressure_bytes_from_ini(
     _pipeline_get("sync_archive_space_pressure_free_bytes")
   )
+
+
+def space_pressure_bytes_from_ini(raw: Any) -> int:
+  """
+  Parse ``sync_archive_space_pressure_free_bytes``; a bad value uses ``1T``.
+
+  The getter runs on the append, census and seal threads, where an
+  exception would end the pipeline (fail-closed coordinator death), so an
+  unparsable value logs one warning and falls back to the default.
+
+  Args:
+    raw (Any): INI text.
+
+  Returns:
+    int: Bytes.
+
+  Examples:
+    >>> space_pressure_bytes_from_ini("2T") == 2 << 40
+    True
+  """
+  try:
+    return parse_byte_size(raw)
+  except ValueError:
+    default = INI_OPTION_DEFAULTS["sync_archive_space_pressure_free_bytes"]
+    if raw not in _SPACE_PRESSURE_BAD_VALUES_LOGGED:
+      _SPACE_PRESSURE_BAD_VALUES_LOGGED.add(raw)
+      print(
+        "WARNING: sync_archive_space_pressure_free_bytes="
+        f"{raw!r} is not a byte size; using {default}",
+        flush=True,
+      )
+    return parse_byte_size(default)
+
+
+_SPACE_PRESSURE_BAD_VALUES_LOGGED: set[Any] = set()
 
 
 def get_sync_archive_scratch_max_idle_hours() -> int:
