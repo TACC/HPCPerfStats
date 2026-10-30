@@ -60,9 +60,11 @@ usage: $0 [--apply] [-j|--jobs N] [--keep-open YYYY-MM-DD]... [--daily DIR]
 Dry run unless --apply. Defaults: daily=$DAILY archive=$ARCHIVE tz=$TZ_LOCAL
 level=$LEVEL min-age-days=$MIN_AGE_DAYS margin-gb=$MARGIN_GB jobs=$JOBS
 --jobs N: seal up to N days at once (more reads in flight on a SAN); each
-  running day reserves its estimated compressed size against free space.
-  A day with no room waits (WAIT) and is retried (RETRY) after a later day
-  finishes; it is skipped only when no running day is left to free space.
+  running day reserves its estimated compressed size (tar/3) against free
+  space minus the other reservations minus the --margin-gb floor, which is
+  kept free once for the whole run. A day with no room waits (WAIT) and is
+  retried (RETRY) only after space is given back; it is skipped only when
+  nothing running is left to free space.
 --no-job-store: do not read the job store snapshot (only --keep-open stays open)
 EOF
 }
@@ -225,27 +227,36 @@ with tarfile.open(src, "r:") as tin:
   out.close()
 PY
 
-mkdir -p "$WORK/res" "$WORK/resv" "$WORK/day"
+mkdir -p "$WORK/res" "$WORK/resv" "$WORK/day" "$WORK/freed"
+
+# Count of events that gave space back (a reservation released, a tmp file
+# removed, a tar deleted). Days that never held space do not add to it.
+freed_count() { find "$WORK/freed" -type f | wc -l; }
+mark_freed() { : >"$WORK/freed/$1.$BASHPID.$RANDOM$RANDOM"; }
 
 # Space for the compressed copies of all running days: reserve under a lock,
-# against free space minus what other running days already reserved.
+# against free space minus what other running days already reserved minus the
+# --margin-gb floor (kept free once, not per day). On no room prints
+# "<room> <freed count now>" so the day is retried only after space is given
+# back later.
 reserve() {
   (
     flock 9
     avail=$(df --output=avail -B1 "$DAILY" | tail -1)
     held=$(cat "$WORK"/resv/* 2>/dev/null | awk '{s += $1} END {print s + 0}')
-    [ $((avail - held)) -ge "$1" ] || { echo $((avail - held)); exit 1; }
+    room=$((avail - held - MARGIN_GB * 2 ** 30))
+    [ "$room" -ge "$1" ] || { echo "$room $(freed_count)"; exit 1; }
     echo "$1" >"$WORK/resv/$2"
   ) 9>"$WORK/resv.lock"
 }
 
-# One day: verify, compress, check, swap. Writes "<status> <bytes> <restore>"
-# to $WORK/res/<day> (status done|skip|fail|space; bytes freed, or tar size on
-# a dry run; restore 1 when raw not yet ingested is left outside the tar).
-# "space" means no room right now; the dispatcher retries the day after a
-# later day finishes and frees space.
+# One day: verify, compress, check, swap. Writes "<status> <n> <restore>" to
+# $WORK/res/<day> (status done|skip|fail|space; n = bytes freed, tar size on a
+# dry run, or for space the freed count when the day was turned away; restore
+# 1 when raw not yet ingested is left outside the tar). The dispatcher retries
+# a "space" day once the freed count has grown past its stamp.
 seal_day() {
-  local tar=$1 day zst size W ready pending dups missing need room note
+  local tar=$1 day zst size W ready pending dups missing need room stamp note
   local tmp="" before zsize rc
   day=$(basename "$tar" .tar)
   zst="$tar.zst"
@@ -253,8 +264,15 @@ seal_day() {
   W="$WORK/day/$day"
   mkdir -p "$W"
   result() { echo "$1 ${2:-0} ${3:-0}" >"$WORK/res/$day"; }
-  skip() { rm -f "$WORK/resv/$day"; log "SKIP $day $(gib "$size")GiB: $*"; result skip; }
-  fail() { rm -f "$WORK/resv/$day" "$tmp"; log "FAIL $day $*"; result fail; }
+  release() {
+    if [ -f "$WORK/resv/$day" ]; then rm -f "$WORK/resv/$day"; mark_freed "$day"; fi
+  }
+  skip() { release; log "SKIP $day $(gib "$size")GiB: $*"; result skip; }
+  fail() {
+    release
+    if [ -n "$tmp" ] && [ -e "$tmp" ]; then rm -f "$tmp"; mark_freed "$day"; fi
+    log "FAIL $day $*"; result fail
+  }
 
   if [ "$size" -le 20480 ]; then
     skip "empty tar (pipeline drops it)"; return
@@ -278,10 +296,11 @@ seal_day() {
   # Reserve before the costly .tar.zst listing, so a day waiting for space
   # does not decompress its old .tar.zst on every retry.
   if [ "$APPLY" -eq 1 ]; then
-    need=$((size / 3 + MARGIN_GB * 2 ** 30))
+    need=$((size / 3))
     if ! room=$(reserve "$need" "$day"); then
-      log "WAIT $day $(gib "$size")GiB: only $(gib "$room")GiB free after other running days, need $(gib "$need")GiB; retry after the next day finishes"
-      result space; return
+      read -r room stamp <<<"$room"
+      log "WAIT $day $(gib "$size")GiB: $(gib "$room")GiB usable after other running days and the ${MARGIN_GB}GiB floor, need $(gib "$need")GiB; retry when space is freed"
+      result space "$stamp"; return
     fi
   fi
 
@@ -334,40 +353,41 @@ seal_day() {
   mv -f "$tmp" "$zst"
   sync -f "$zst" 2>/dev/null || sync
   rm -f "$tar"
+  mark_freed "$day"
   zsize=$(stat -c %s "$zst")
   log "DONE $day tar=$(gib "$size")GiB zst=$(gib "$zsize")GiB"
   result done "$((size - zsize))" "$((pending > 0))"
   rm -rf "${W:?}"
 }
 
-# Days that found no room wait in RETRY with the count of finished days at the
-# time they were turned away (STAMP); each is retried, oldest first, once a
-# later finished day may have freed space (FINISHED > STAMP).
-running=0 FINISHED=0
+# Days that found no room wait in RETRY with the freed count recorded when
+# they were turned away (STAMP); each is retried, oldest first, only after
+# space was given back since then (FREED > STAMP). Days that end without ever
+# holding space (kept open, too new, corrupt) do not count.
+running=0 FREED=0
 RETRY=()
 declare -A STAMP=()
 
 start_day() { seal_day "$1" & running=$((running + 1)); }
 
 collect() {
-  local f st day
+  local f st n day
   for f in "$WORK"/res/*; do
     [ -e "$f" ] || continue
-    read -r st _ <"$f"
+    read -r st n _ <"$f"
     [ "$st" = space ] || continue
     day=${f##*/}
-    STAMP[$day]=$FINISHED
+    STAMP[$day]=$n
     RETRY+=("$day")
     rm -f "$f"
   done
-  # Any finished day released its reservation (done also freed its tar).
-  FINISHED=$(find "$WORK/res" -type f | wc -l)
+  FREED=$(freed_count)
 }
 
 start_retries() {
   local keep=() day
   for day in $(printf '%s\n' "${RETRY[@]}" | sort); do
-    if [ "$running" -lt "$JOBS" ] && [ "$FINISHED" -gt "${STAMP[$day]}" ]; then
+    if [ "$running" -lt "$JOBS" ] && [ "$FREED" -gt "${STAMP[$day]}" ]; then
       log "RETRY $day: space freed since it waited"
       start_day "$DAILY/$day.tar"
     else
