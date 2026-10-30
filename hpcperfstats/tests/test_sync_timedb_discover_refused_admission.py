@@ -84,7 +84,8 @@ def cap2(monkeypatch):
   reset_day_remainder_for_tests()
 
 
-def test_older_file_is_admitted_when_hot_files_hold_the_queue_over_cap(cap2):
+@pytest.mark.usefixtures("cap2")
+def test_older_file_is_admitted_when_hot_files_hold_the_queue_over_cap():
   client = SyncTimedbJobStore("")
   # Two younger backfill jobs fill the cap; a hot file then joins past it.
   _queue(client, _rec(date(2026, 10, 1), "y1"))
@@ -98,7 +99,8 @@ def test_older_file_is_admitted_when_hot_files_hold_the_queue_over_cap(cap2):
   assert stats.frontier_day == date(2026, 10, 1)
 
 
-def test_refused_older_file_sets_the_frontier_to_its_day(cap2, monkeypatch):
+@pytest.mark.usefixtures("cap2")
+def test_refused_older_file_sets_the_frontier_to_its_day(monkeypatch):
   client = SyncTimedbJobStore("")
   old = _rec(date(2026, 8, 25), "o")
   # Room at the capacity check, refused at the add (a concurrent hot add).
@@ -110,7 +112,8 @@ def test_refused_older_file_sets_the_frontier_to_its_day(cap2, monkeypatch):
   assert stats.enqueued_ingest == 0
 
 
-def test_dead_lettered_file_does_not_set_the_frontier(cap2, monkeypatch):
+@pytest.mark.usefixtures("cap2")
+def test_dead_lettered_file_does_not_set_the_frontier(monkeypatch):
   client = SyncTimedbJobStore("")
   monkeypatch.setattr(jq, "dead_letter_blocked", lambda *_a, **_k: True)
   stats = _discover(
@@ -120,14 +123,16 @@ def test_dead_lettered_file_does_not_set_the_frontier(cap2, monkeypatch):
   assert stats.dropped_at_capacity == 0
 
 
-def test_enqueue_reports_ingest_only_when_the_file_is_queued(cap2, monkeypatch):
+@pytest.mark.usefixtures("cap2")
+def test_enqueue_reports_ingest_only_when_the_file_is_queued(monkeypatch):
   client = SyncTimedbJobStore("")
   monkeypatch.setattr(client, "zadd_ingest", lambda *_a, **_k: 0)
   out = _queue(client, _rec(date(2026, 8, 25), "o"))
   assert out == {"ingest": False, "append": False}
 
 
-def test_enqueue_reports_an_already_queued_file_as_queued(cap2):
+@pytest.mark.usefixtures("cap2")
+def test_enqueue_reports_an_already_queued_file_as_queued():
   client = SyncTimedbJobStore("")
   rec = _rec(date(2026, 8, 25), "o")
   assert _queue(client, rec)["ingest"] is True
