@@ -3669,6 +3669,17 @@ def _maybe_persist_window_coverage_gate_failure(
     return False
   if start_time is None or end_time is None:
     return False
+  # A job that ended recently may only be waiting for its data: no
+  # "insufficient data" catalog until the host wait has passed.
+  now = (
+    django_timezone.now()
+    if django_timezone.is_aware(end_time)
+    else datetime.now()
+  )
+  if now - end_time < timedelta(
+    seconds=cfg.get_metrics_readiness_host_wait_seconds()
+  ):
+    return False
   if reason is None:
     _ready, reason = evaluate_job_window_coverage_ready(
       start_time,

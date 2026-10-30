@@ -1,5 +1,6 @@
 """Regression tests for window-coverage metrics readiness (dual-edge margins)."""
 
+import contextlib
 import threading
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -433,6 +434,34 @@ def test_persist_window_coverage_gate_failure_writes_insufficient_catalog(
       deleted.append(True)
       return (0, {})
 
+    def exists(self):
+      return False  # no computed values to protect
+
+  artifact_deletes = []
+
+  class _ArtQs:
+    def __init__(self, kind):
+      self.kind = kind
+
+    def filter(self, **kwargs):
+      return self
+
+    def delete(self):
+      artifact_deletes.append(self.kind)
+      return (0, {})
+
+  monkeypatch.setattr(
+    "hpcperfstats.site.lib.machine.models.job_plot_artifact.objects",
+    _ArtQs("plot"),
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.site.lib.machine.models.job_detail_artifact.objects",
+    _ArtQs("detail"),
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.metrics.transaction.atomic",
+    contextlib.nullcontext,
+  )
   monkeypatch.setattr(
     "hpcperfstats.analysis.metrics.lib.metrics._gate_failure_catalog_already_clean",
     lambda _jid: False,
@@ -481,6 +510,62 @@ def test_persist_window_coverage_gate_failure_writes_insufficient_catalog(
   )
   assert persisted["rows"][0]["value"] is None
   assert persisted["distinct_n"] == 7
+  # C3: artifacts go with the metrics so the catalog stays "clean".
+  assert sorted(artifact_deletes) == ["detail", "plot"]
+
+
+@pytest.mark.machine_unit_mock
+def test_persist_window_coverage_gate_failure_keeps_computed_values(
+  monkeypatch,
+):
+  """C3: a job with real metric values is never overwritten by placeholders."""
+  from hpcperfstats.analysis.metrics.lib.metrics import (
+    persist_window_coverage_gate_failure,
+  )
+
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.metrics._gate_failure_catalog_already_clean",
+    lambda _jid: False,
+  )
+
+  class _ValuedQs:
+    def filter(self, **kwargs):
+      return self
+
+    def exists(self):
+      return True
+
+    def delete(self):
+      raise AssertionError("must not delete computed metrics")
+
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.metrics.metrics_data.objects",
+    SimpleNamespace(filter=lambda **kw: _ValuedQs()),
+  )
+  assert persist_window_coverage_gate_failure("gate_valued") is False
+
+
+@pytest.mark.machine_unit_mock
+def test_maybe_persist_gate_failure_waits_for_data_after_recent_end(
+  monkeypatch,
+):
+  """C3: a just-ended job is only late, not insufficient: no write yet."""
+  _patch_coverage_on(monkeypatch)
+  monkeypatch.setattr(
+    um.cfg, "get_metrics_readiness_host_wait_seconds", lambda: 3600.0
+  )
+  calls = []
+  monkeypatch.setattr(
+    um,
+    "persist_window_coverage_gate_failure",
+    lambda jid, **kw: calls.append(jid) or True,
+  )
+  end = datetime.now(UTC) - timedelta(minutes=10)
+  start = end - timedelta(hours=2)
+  um._maybe_persist_window_coverage_gate_failure(
+    "gate_recent", start, end, start, end - timedelta(hours=1)
+  )
+  assert calls == []
 
 
 @pytest.mark.machine_unit_mock

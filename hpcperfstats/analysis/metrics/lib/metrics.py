@@ -4146,6 +4146,10 @@ def persist_window_coverage_gate_failure(
   """
   Remove stale metrics/plots and persist full catalog with gate-failure reason.
 
+  Skips (returns False) when the catalog is already clean or when any metric
+  row holds a value. The metric rows, plot artifacts and detail artifacts are
+  replaced in one transaction; caches are invalidated after it commits.
+
   Returns True when a write occurred; False when idempotent skip or invalid jid.
 
   Args:
@@ -4165,6 +4169,10 @@ def persist_window_coverage_gate_failure(
     return False
   if _gate_failure_catalog_already_clean(jid):
     return False
+  # Never replace computed values with placeholders: a later recheck of a
+  # job that was computed (rerun, catch-up) keeps its metrics.
+  if metrics_data.objects.filter(jid_id=jid, value__isnull=False).exists():
+    return False
 
   from hpcperfstats.site.lib.machine.cache_utils import (
     invalidate_jid_derived_cache_keys,
@@ -4173,14 +4181,14 @@ def persist_window_coverage_gate_failure(
   from hpcperfstats.site.lib.machine.job_plot_artifacts import (
     get_live_distinct_time_count_for_jid,
   )
-
-  invalidate_job_plot_cache_keys_for_jids([jid])
-  invalidate_jid_derived_cache_keys([jid])
+  from hpcperfstats.site.lib.machine.models import (
+    job_detail_artifact,
+    job_plot_artifact,
+  )
 
   if distinct_time_count is None:
     distinct_time_count = get_live_distinct_time_count_for_jid(jid)
 
-  metrics_data.objects.filter(jid_id=jid).delete()
   job_obj = job_data.objects.filter(pk=jid).first()
   job_ref = job_obj if job_obj is not None else jid
   rows = [
@@ -4194,12 +4202,20 @@ def persist_window_coverage_gate_failure(
     }
     for entry in job_metrics_catalog_entries()
   ]
-  _persist_metrics_batch(
-    rows,
-    distinct_time_count,
-    telemetry_first_time=telemetry_first_time,
-    telemetry_last_time=telemetry_last_time,
-  )
+  # One transaction: a crash cannot leave the job with no metric rows, and
+  # removing its artifacts leaves the catalog "clean" so rechecks stop here.
+  with transaction.atomic():
+    metrics_data.objects.filter(jid_id=jid).delete()
+    job_plot_artifact.objects.filter(jid_id=jid).delete()
+    job_detail_artifact.objects.filter(jid_id=jid).delete()
+    _persist_metrics_batch(
+      rows,
+      distinct_time_count,
+      telemetry_first_time=telemetry_first_time,
+      telemetry_last_time=telemetry_last_time,
+    )
+  invalidate_job_plot_cache_keys_for_jids([jid])
+  invalidate_jid_derived_cache_keys([jid])
   return True
 
 
