@@ -222,7 +222,6 @@ def test_compute_metrics_persists_per_host_distinct_sum(monkeypatch):
     telemetry_first_time=None,
     telemetry_last_time=None,
     host_data_schema_json=None,
-    save=lambda **kwargs: None,
   )
   monkeypatch.setattr(
     metrics,
@@ -236,6 +235,8 @@ def test_compute_metrics_persists_per_host_distinct_sum(monkeypatch):
   )
   out = m.compute_metrics(job)
   assert out["distinct_time_count"] == 4
+  # S4: the schema travels in the payload; the worker never saves the job.
+  assert out["host_data_schema"] == _FakeJidTable().schema
 
 
 class _FakeJidTableListyLabels:

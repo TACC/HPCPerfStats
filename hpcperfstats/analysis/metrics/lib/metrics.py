@@ -1370,6 +1370,7 @@ def _unwrap(args: Any) -> Any:
       "distinct_time_count": payload.get("distinct_time_count"),
       "telemetry_first_time": payload.get("telemetry_first_time"),
       "telemetry_last_time": payload.get("telemetry_last_time"),
+      "host_data_schema": payload.get("host_data_schema"),
       "error_type": None,
       "error_message": None,
     }
@@ -1407,6 +1408,7 @@ def _persist_metrics_batch(
   distinct_time_count: int,
   telemetry_first_time: Any | None = None,
   telemetry_last_time: Any | None = None,
+  host_data_schema: dict[str, Any] | None = None,
 ) -> None:
   """
   Upsert metrics_data rows for job_results; set.
@@ -1425,6 +1427,9 @@ def _persist_metrics_batch(
     distinct_time_count (int): Integer value for distinct time count.
     telemetry_first_time (Any | None): One of ``Any``, ``None``.
     telemetry_last_time (Any | None): One of ``Any``, ``None``.
+    host_data_schema (dict[str, Any] | None): ``jid_table.schema`` from the
+      worker, stored in ``job_data.host_data_schema_json`` in the same
+      transaction; None leaves the column alone.
 
   Returns:
     None
@@ -1507,6 +1512,10 @@ def _persist_metrics_batch(
       if telemetry_last_time is not None:
         update_fields.append("telemetry_last_time")
       job_data.objects.bulk_update(jobs_up, update_fields)
+    if host_data_schema is not None and jids:
+      job_data.objects.filter(pk__in=jids).update(
+        host_data_schema_json=dict(host_data_schema)
+      )
 
   if wrote_metrics:
     try:
@@ -1558,6 +1567,7 @@ def _persist_metrics_payload(payload: Any) -> Any:
   distinct_n = payload.get("distinct_time_count")
   telemetry_first_time = payload.get("telemetry_first_time")
   telemetry_last_time = payload.get("telemetry_last_time")
+  host_data_schema = payload.get("host_data_schema")
   if not job_rows:
     # compute_metrics always emits the full catalog; an empty row list would
     # persist nothing and the listing would select the jid again every pass.
@@ -1577,6 +1587,7 @@ def _persist_metrics_payload(payload: Any) -> Any:
         distinct_n,
         telemetry_first_time=telemetry_first_time,
         telemetry_last_time=telemetry_last_time,
+        host_data_schema=host_data_schema,
       ),
       attempts=2,
     )
@@ -3470,15 +3481,13 @@ class Metrics:
       # never from stubbed get_live_distinct_time_count_for_jid (probe off → 0).
       distinct_time_count = 0
       job_view = None
+      # The parent persists the schema with the metric rows (``job`` is often
+      # a scheduler candidate ref, not a model, so it cannot ``save()``).
+      sch = getattr(jt, "schema", None) or {}
+      schema_json = dict(sch) if isinstance(sch, dict) else {}
 
       if not jt._host_data_qs().exists():
         # Still persist schema + job-detail GPU/FSIO aggregates (ORM paths) for API.
-        try:
-          sch = getattr(jt, "schema", None) or {}
-          job.host_data_schema_json = dict(sch) if isinstance(sch, dict) else {}
-          job.save(update_fields=["host_data_schema_json"])
-        except Exception:
-          pass
         from hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary import (
           compute_job_gpu_summary_tuple,
         )
@@ -3567,6 +3576,7 @@ class Metrics:
           "distinct_time_count": distinct_time_count,
           "telemetry_first_time": telemetry_first_time,
           "telemetry_last_time": telemetry_last_time,
+          "host_data_schema": schema_json,
         }
 
       for metric_name, metric_obj in self.simple_metrics_list.items():
@@ -3840,13 +3850,6 @@ class Metrics:
       for row in compute_job_detail_fsio_metric_rows(jt):
         results.append({"jid": job, **row})
 
-      try:
-        sch = getattr(jt, "schema", None) or {}
-        job.host_data_schema_json = dict(sch) if isinstance(sch, dict) else {}
-        job.save(update_fields=["host_data_schema_json"])
-      except Exception:
-        pass
-
       if self.complex_metrics_list:
         job_view = _JobForMetrics(jt)
         distinct_time_count = int(job_view.per_host_distinct_time_sum)
@@ -3917,6 +3920,7 @@ class Metrics:
       "distinct_time_count": distinct_time_count,
       "telemetry_first_time": telemetry_first_time,
       "telemetry_last_time": telemetry_last_time,
+      "host_data_schema": schema_json,
     }
 
 

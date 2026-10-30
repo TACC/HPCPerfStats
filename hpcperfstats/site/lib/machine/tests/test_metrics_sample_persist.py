@@ -245,3 +245,49 @@ def test_persist_metrics_batch_dedupes_duplicate_keys_in_one_batch():
   assert (
     metrics_data.objects.get(jid_id=j.jid, metric="avg_cpuusage").value == 3.0
   )
+
+
+@pytest.mark.django_db(databases=[])
+def test_persist_metrics_batch_writes_host_data_schema(sample_metric_row):
+  """S4: the worker's schema lands on job_data in the persist transaction."""
+  qs = MagicMock()
+  with (
+    patch.object(metrics_module.metrics_data.objects, "bulk_create"),
+    patch.object(metrics_module.job_data.objects, "filter", return_value=qs),
+    patch.object(
+      metrics_module.transaction,
+      "atomic",
+      MagicMock(return_value=nullcontext()),
+    ),
+  ):
+    _persist_metrics_batch(
+      [sample_metric_row], None, host_data_schema={"cpu": ["user"]}
+    )
+  qs.update.assert_called_once_with(host_data_schema_json={"cpu": ["user"]})
+
+
+@pytest.mark.django_db(databases=[])
+def test_persist_metrics_payload_forwards_host_data_schema(sample_metric_row):
+  """S4: _persist_metrics_payload hands the worker schema to the batch."""
+  seen = {}
+
+  def _capture(rows, distinct, **kwargs):
+    seen.update(kwargs)
+
+  with (
+    patch.object(metrics_module, "_persist_metrics_batch", _capture),
+    patch.object(
+      metrics_module, "run_with_db_retry", lambda fn, attempts: fn()
+    ),
+  ):
+    out = metrics_module._persist_metrics_payload(
+      {
+        "jid": "j1",
+        "status": "ok",
+        "rows": [sample_metric_row],
+        "distinct_time_count": 3,
+        "host_data_schema": {"mem": ["used"]},
+      }
+    )
+  assert out["ok"] is True
+  assert seen["host_data_schema"] == {"mem": ["used"]}
