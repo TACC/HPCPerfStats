@@ -2750,7 +2750,7 @@ def test_update_metrics_for_dates_global_scheduler_interleaves_dates(
 def test_update_metrics_for_dates_exhausts_when_readiness_filters_all(
   monkeypatch,
 ):
-  """Readiness may drop every jid in a chunk; stall exit when none become ready."""
+  """Readiness may drop every jid; the pass still ends cleanly (S10)."""
   d1 = datetime(2025, 4, 10)
   d2 = datetime(2025, 4, 9)
   monkeypatch.delenv("HPCPERFSTATS_METRICS_SCHEDULER_MODE", raising=False)
@@ -2825,9 +2825,8 @@ def test_update_metrics_for_dates_exhausts_when_readiness_filters_all(
   monkeypatch.setattr(
     update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None
   )
-  with pytest.raises(update_metrics.MetricsSchedulerStallExit) as excinfo:
-    update_metrics.update_metrics_for_dates([d1, d2], rerun=False)
-  assert excinfo.value.stall_reason == "no_ready_candidates"
+  # No MetricsSchedulerStallExit: never-ready jobs wait for the next pass.
+  update_metrics.update_metrics_for_dates([d1, d2], rerun=False)
 
 
 @pytest.mark.machine_unit_mock
@@ -2967,10 +2966,10 @@ def test_update_metrics_stall_reason_doc_drift_guard():
 
 
 @pytest.mark.django_db(databases=[])
-def test_update_metrics_for_dates_sets_stall_diagnostics_on_no_progress(
+def test_update_metrics_for_dates_ends_pass_cleanly_when_only_not_ready_left(
   monkeypatch,
 ):
-  """Persistent not-ready loops should terminate with explicit stall diagnostics."""
+  """S10: a never-ready job ends the pass normally, not as a stall exit."""
   monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS", "1")
   monkeypatch.setattr(
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
@@ -3041,16 +3040,12 @@ def test_update_metrics_for_dates_sets_stall_diagnostics_on_no_progress(
     update_metrics, "persist_job_plot_artifacts_for_jid", lambda jid: None
   )
   update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS = None
-  with pytest.raises(update_metrics.MetricsSchedulerStallExit) as excinfo:
-    update_metrics.update_metrics_for_dates(
-      [datetime(2025, 4, 10)], rerun=False
-    )
-  assert excinfo.value.stall_reason == "no_ready_candidates"
+  update_metrics.update_metrics_for_dates([datetime(2025, 4, 10)], rerun=False)
   diag = update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS
   assert diag is not None
-  assert diag["stats"]["stall_exit_triggered"] == 1
+  assert diag["stats"]["stall_exit_triggered"] == 0
   assert diag["stats"]["strict_not_ready_jids"] >= 1
-  assert diag["stats"]["stall_reason"] == "no_ready_candidates"
+  assert diag["stats"]["stall_reason"] == ""
 
 
 @pytest.mark.machine_unit_mock
@@ -3303,7 +3298,7 @@ def test_producer_stall_skips_while_inflight_or_ready_queue(monkeypatch):
 @pytest.mark.machine_unit_mock
 @pytest.mark.django_db(databases=[])
 def test_producer_stall_still_fires_on_true_starvation(monkeypatch):
-  """Readiness filtering every candidate with no inflight must still stall-exit."""
+  """A listing that cannot finish (every page fails) must still stall-exit."""
   d1 = datetime(2025, 4, 10)
   monkeypatch.delenv("HPCPERFSTATS_METRICS_SCHEDULER_MODE", raising=False)
   monkeypatch.setattr(
@@ -3350,9 +3345,12 @@ def test_producer_stall_still_fires_on_true_starvation(monkeypatch):
     "_jobs_queryset",
     lambda d, *_args, **_kwargs: _FakeQs([([1001], 1)]),
   )
-  monkeypatch.setattr(
-    update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks)
-  )
+
+  def _failing_pages(qs, _chunk):
+    raise OperationalError("canceling statement due to statement timeout")
+    yield  # pragma: no cover - generator shape
+
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", _failing_pages)
 
   class FakeMetrics:
     simple_metrics_list = {}
@@ -3481,9 +3479,13 @@ def test_stall_exit_survives_closed_connection_on_timeout_restore(monkeypatch):
     "_jobs_queryset",
     lambda d, *_args, **_kwargs: _FakeQs(list(by_day[d.day])),
   )
-  monkeypatch.setattr(
-    update_metrics, "_iter_chunked_pks", lambda qs, _chunk: iter(qs.chunks)
-  )
+
+  def _failing_pages(qs, _chunk):
+    raise OperationalError("canceling statement due to statement timeout")
+    yield  # pragma: no cover - generator shape
+
+  # Listing that never finishes = true starvation (S10 keeps that a stall).
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", _failing_pages)
   monkeypatch.setattr(
     update_metrics, "_start_candidate_rescan_thread", lambda **kwargs: None
   )

@@ -5697,17 +5697,26 @@ def _start_readiness_producer(
           continue
         with rescan_lock:
           has_rescan_backlog = bool(rescan_candidate_jids)
-        if (
-          all(s["done"] for s in date_states)
-          and (not deferred_not_ready)
-          and (not has_rescan_backlog)
-        ):
-          break
         with ready_queue_lock:
           stall_depth = len(ready_queue)
         with scheduler_shared_lock:
           stall_inflight = int(stats.get("inflight_jids", 0) or 0)
-        if _producer_has_live_consumer_work(stall_depth, stall_inflight):
+        live_work = _producer_has_live_consumer_work(
+          stall_depth, stall_inflight
+        )
+        if all(s["done"] for s in date_states) and not has_rescan_backlog:
+          # Listing is finished. Deferred jids are rechecked while the
+          # consumer still works; once it is idle they are left to the next
+          # pass (a never-ready job is not a stalled scheduler).
+          if not deferred_not_ready or not live_work:
+            if deferred_not_ready:
+              log_print(
+                "metrics scheduler: listing done; leaving "
+                f"{len(deferred_not_ready)} not-ready jid(s) to the next pass",
+                flush=True,
+              )
+            break
+        if live_work:
           last_progress_at = time.monotonic()
           time.sleep(0.05)
           continue
