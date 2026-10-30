@@ -60,6 +60,11 @@ def test_byte_size_setting_accepts_suffixes(raw, expected):
   assert cfg.parse_byte_size(raw) == expected
 
 
+def test_default_pressure_threshold_is_one_tib():
+  raw = cfg.INI_OPTION_DEFAULTS["sync_archive_space_pressure_free_bytes"]
+  assert cfg.parse_byte_size(raw) == 1 << 40
+
+
 def test_gate_off_never_pressure(monkeypatch):
   _set(monkeypatch, threshold=0, free=0)
   assert not sp.under_pressure("/d")

@@ -149,6 +149,22 @@ def _archive_members_store_test_policy(tmp_path_factory):
   set_process_archive_members_store(None)
 
 
+@pytest.fixture(autouse=True)
+def _space_pressure_off_by_default(monkeypatch):
+  """Keep the 1T space-pressure default from tracking the test host's disk."""
+  from hpcperfstats.dbload.lib import (
+    conf_parser as cfg,
+    sync_timedb_space_pressure as space,
+  )
+
+  monkeypatch.setattr(
+    cfg, "get_sync_archive_space_pressure_free_bytes", lambda: 0
+  )
+  space.reset_for_tests()
+  yield
+  space.reset_for_tests()
+
+
 @pytest.fixture
 def temp_ini(tmp_path):
   """Create a minimal hpcperfstats.ini for tests that need conf_parser."""

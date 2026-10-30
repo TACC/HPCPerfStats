@@ -1,7 +1,7 @@
 """
 Archive free-space pressure for sync_timedb: growth yields to day close.
 
-Off unless ``sync_archive_space_pressure_free_bytes`` (X) is set. Pressure
+``sync_archive_space_pressure_free_bytes`` (X, default 1T; 0 = off). Pressure
 starts when the daily archive filesystem has less than X free and lasts until
 it has 2X free. Under pressure:
 

@@ -306,7 +306,7 @@ INI_OPTION_DEFAULTS = {
   "sync_tar_salvage_min_free_bytes": "1073741824",
   "sync_tar_salvage_full_copy": "no",
   "sync_archive_min_free_bytes": "10737418240",
-  "sync_archive_space_pressure_free_bytes": "0",
+  "sync_archive_space_pressure_free_bytes": "1T",
   "sync_archive_scratch_max_idle_hours": "24",
   "sync_dead_end_remediation_mode": "apply",
   "sync_dead_end_migration_batch": "500",
@@ -3811,7 +3811,7 @@ def parse_byte_size(raw: Any) -> int:
 
 def get_sync_archive_space_pressure_free_bytes() -> int:
   """
-  Free-space level below which archive growth yields to day close (0 = off).
+  Free-space level below which archive growth yields to day close (1T).
 
   Below it, appends run for one day at a time and wait while a day close is
   finishing a day, and restores outside the append path wait; normal running
@@ -3819,11 +3819,11 @@ def get_sync_archive_space_pressure_free_bytes() -> int:
   Accepts ``K``/``M``/``G``/``T`` suffixes.
 
   Returns:
-    int: Bytes; 0 disables the pressure mode.
+    int: Bytes (default ``1T``); 0 disables the pressure mode.
 
   Examples:
     >>> get_sync_archive_space_pressure_free_bytes()  # doctest: +SKIP
-    0
+    1099511627776
   """
   _ensure_cfg_loaded()
   return parse_byte_size(
