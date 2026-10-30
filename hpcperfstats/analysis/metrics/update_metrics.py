@@ -758,6 +758,7 @@ def _new_scheduler_stats() -> Any:
     "deferred_not_ready_queue_size": 0,
     "deferred_not_ready_due_now": 0,
     "deferred_quarantined_jids": 0,
+    "deferred_meta_size": 0,
     "stall_exit_triggered": 0,
     "stall_reason": "",
     "ready_enqueued_total": 0,
@@ -5584,6 +5585,8 @@ def _start_readiness_producer(
                 produced_ready=bool(local_ready),
                 max_target=prefetch_ready_cap,
               )
+            for candidate in local_ready:
+              deferred_meta.pop(candidate.jid, None)
             _enqueue(local_ready)
             continue
         try:
@@ -5631,6 +5634,7 @@ def _start_readiness_producer(
           err_chunks = stats["readiness_error_chunks"]
           stats["deferred_not_ready_queue_size"] = len(deferred_not_ready)
           stats["deferred_not_ready_due_now"] = len(deferred_due)
+          stats["deferred_meta_size"] = len(deferred_meta)
         if local_ready:
           for candidate in local_ready:
             deferred_meta.pop(candidate.jid, None)
@@ -7411,6 +7415,7 @@ def update_metrics_for_dates(
           ],
           "deferred_not_ready_due_now": stats["deferred_not_ready_due_now"],
           "deferred_quarantined_jids": stats["deferred_quarantined_jids"],
+          "deferred_meta_size": stats["deferred_meta_size"],
           "stall_exit_triggered": stats["stall_exit_triggered"],
           "stall_reason": stats["stall_reason"],
           "ready_enqueued_total": stats["ready_enqueued_total"],

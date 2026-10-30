@@ -4080,11 +4080,8 @@ def test_merge_deferred_retry_at_never_pushes_retry_later():
   )
 
 
-@pytest.mark.django_db(databases=[])
-def test_update_metrics_for_dates_rechecks_deferred_not_ready_jid_until_ready(
-  monkeypatch,
-):
-  """A jid skipped as not-ready should be retried later and processed once ready."""
+def _run_deferred_recheck_flow(monkeypatch, *, ready_target=4):
+  """Run one scheduler pass where jid 1001 is not ready, then ready."""
   monkeypatch.setattr(
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
   )
@@ -4094,7 +4091,7 @@ def test_update_metrics_for_dates_rechecks_deferred_not_ready_jid_until_ready(
   monkeypatch.setattr(
     update_metrics.cfg,
     "get_metrics_scheduler_ready_queue_target",
-    lambda: 4,
+    lambda: ready_target,
   )
   monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
   monkeypatch.setattr(
@@ -4174,8 +4171,28 @@ def test_update_metrics_for_dates_rechecks_deferred_not_ready_jid_until_ready(
   )
   d1 = datetime(2025, 4, 10)
   update_metrics.update_metrics_for_dates([d1], rerun=False)
+  return seen, readiness_calls["count"]
+
+
+@pytest.mark.django_db(databases=[])
+def test_update_metrics_for_dates_rechecks_deferred_not_ready_jid_until_ready(
+  monkeypatch,
+):
+  """A jid skipped as not-ready should be retried later and processed once ready."""
+  seen, calls = _run_deferred_recheck_flow(monkeypatch)
   assert seen == [1001]
-  assert readiness_calls["count"] >= 2
+  assert calls >= 2
+
+
+@pytest.mark.django_db(databases=[])
+def test_deferred_meta_released_when_recheck_makes_jid_ready(monkeypatch):
+  """C9: a jid that turns ready on the deferred-recheck path drops its meta."""
+  monkeypatch.setattr(update_metrics, "READINESS_PROBE_TARGET_MIN", 1)
+  monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS", "1")
+  seen, _calls = _run_deferred_recheck_flow(monkeypatch, ready_target=1)
+  assert seen == [1001]
+  diag = update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS
+  assert diag["stats"]["deferred_meta_size"] == 0
 
 
 @pytest.mark.django_db(databases=[])
