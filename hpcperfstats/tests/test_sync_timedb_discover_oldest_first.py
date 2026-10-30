@@ -181,7 +181,8 @@ def test_boot_stream_discover_sorts_the_walk(monkeypatch):
 # --- discover: oldest first into the free room, then a frontier -------------
 
 
-def test_discover_fills_free_room_oldest_first_then_sets_frontier(cap2):
+@pytest.mark.usefixtures("cap2")
+def test_discover_fills_free_room_oldest_first_then_sets_frontier():
   client = SyncTimedbJobStore("")
   days = [date(2026, 8, d) for d in (16, 17, 18, 19)]
   calls = []
@@ -194,7 +195,8 @@ def test_discover_fills_free_room_oldest_first_then_sets_frontier(cap2):
   assert stats.dropped_at_capacity == 2
 
 
-def test_frontier_stays_latched_when_ingest_frees_room_mid_walk(cap2):
+@pytest.mark.usefixtures("cap2")
+def test_frontier_stays_latched_when_ingest_frees_room_mid_walk():
   client = SyncTimedbJobStore("")
 
   def _records():
@@ -208,7 +210,8 @@ def test_frontier_stays_latched_when_ingest_frees_room_mid_walk(cap2):
   assert date(2026, 8, 19) not in _queued_days(client)
 
 
-def test_discover_still_admits_hot_files_past_the_frontier(cap2):
+@pytest.mark.usefixtures("cap2")
+def test_discover_still_admits_hot_files_past_the_frontier():
   client = SyncTimedbJobStore("")
   records = [_rec(date(2026, 8, d), inode=d) for d in (16, 17, 18)]
   records.append(_rec(TODAY, inode=99))
@@ -217,7 +220,8 @@ def test_discover_still_admits_hot_files_past_the_frontier(cap2):
   assert TODAY in _queued_days(client)
 
 
-def test_older_file_pushes_out_the_youngest_queued_backfill(cap2):
+@pytest.mark.usefixtures("cap2")
+def test_older_file_pushes_out_the_youngest_queued_backfill():
   client = SyncTimedbJobStore("")
   young = [_rec(date(2026, 10, 1), "y1"), _rec(date(2026, 10, 2), "y2")]
   for rec in young:
@@ -230,7 +234,8 @@ def test_older_file_pushes_out_the_youngest_queued_backfill(cap2):
   assert stats.frontier_day == date(2026, 10, 2)
 
 
-def test_pushed_out_file_the_walk_never_reaches_again_holds_its_day(cap2):
+@pytest.mark.usefixtures("cap2")
+def test_pushed_out_file_the_walk_never_reaches_again_holds_its_day():
   client = SyncTimedbJobStore("")
   for rec in (_rec(date(2026, 10, 1), "y1"), _rec(date(2026, 10, 2), "y2")):
     _queue(client, rec)
@@ -238,7 +243,8 @@ def test_pushed_out_file_the_walk_never_reaches_again_holds_its_day(cap2):
   assert stats.frontier_day == date(2026, 10, 2)
 
 
-def test_backlog_reloaded_from_the_snapshot_can_be_pushed_out(tmp_path, cap2):
+@pytest.mark.usefixtures("cap2")
+def test_backlog_reloaded_from_the_snapshot_can_be_pushed_out(tmp_path):
   # The random backlog from the old walks survives a restart in the snapshot.
   first = SyncTimedbJobStore(str(tmp_path))
   for rec in (_rec(date(2026, 10, 1), "y1"), _rec(date(2026, 10, 2), "y2")):
@@ -253,7 +259,8 @@ def test_backlog_reloaded_from_the_snapshot_can_be_pushed_out(tmp_path, cap2):
     reloaded.close()
 
 
-def test_hot_queued_files_are_never_pushed_out(cap2):
+@pytest.mark.usefixtures("cap2")
+def test_hot_queued_files_are_never_pushed_out():
   client = SyncTimedbJobStore("")
   for host in ("t1", "t2"):
     _queue(client, _rec(TODAY, host))
