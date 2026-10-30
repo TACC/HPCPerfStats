@@ -125,6 +125,7 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "sync_tar_salvage_min_free_bytes"),
   ("PIPELINE", "sync_tar_salvage_full_copy"),
   ("PIPELINE", "sync_archive_min_free_bytes"),
+  ("PIPELINE", "sync_archive_space_pressure_free_bytes"),
   ("PIPELINE", "sync_archive_scratch_max_idle_hours"),
   ("PIPELINE", "sync_dead_end_remediation_mode"),
   ("PIPELINE", "sync_dead_end_migration_batch"),
@@ -305,6 +306,7 @@ INI_OPTION_DEFAULTS = {
   "sync_tar_salvage_min_free_bytes": "1073741824",
   "sync_tar_salvage_full_copy": "no",
   "sync_archive_min_free_bytes": "10737418240",
+  "sync_archive_space_pressure_free_bytes": "0",
   "sync_archive_scratch_max_idle_hours": "24",
   "sync_dead_end_remediation_mode": "apply",
   "sync_dead_end_migration_batch": "500",
@@ -3781,6 +3783,52 @@ def get_sync_archive_min_free_bytes() -> int:
   """
   _ensure_cfg_loaded()
   return max(0, _pipeline_getint("sync_archive_min_free_bytes"))
+
+
+def parse_byte_size(raw: Any) -> int:
+  """
+  Parse a byte count with an optional ``K``/``M``/``G``/``T`` suffix (1024).
+
+  Args:
+    raw (Any): INI text such as ``4T``, ``500G`` or ``10737418240``; empty
+      means 0.
+
+  Returns:
+    int: Bytes (never negative).
+
+  Raises:
+    ValueError: When the text is not a number with an optional suffix.
+
+  Examples:
+    >>> parse_byte_size("1.5T") == int(1.5 * (1 << 40))
+    True
+  """
+  text = str(raw or "").strip().upper().removesuffix("B") or "0"
+  shift = {"K": 10, "M": 20, "G": 30, "T": 40}.get(text[-1], 0)
+  number = float(text[:-1] if shift else text)
+  return max(0, int(number * (1 << shift)))
+
+
+def get_sync_archive_space_pressure_free_bytes() -> int:
+  """
+  Free-space level below which archive growth yields to day close (0 = off).
+
+  Below it, appends run for one day at a time and wait while a day close is
+  finishing a day, and restores outside the append path wait; normal running
+  resumes at twice this much free (``sync_timedb_space_pressure.py``).
+  Accepts ``K``/``M``/``G``/``T`` suffixes.
+
+  Returns:
+    int: Bytes; 0 disables the pressure mode.
+
+  Examples:
+    >>> get_sync_archive_space_pressure_free_bytes()  # doctest: +SKIP
+    0
+  """
+  _ensure_cfg_loaded()
+  return parse_byte_size(
+    _pipeline_get("sync_archive_space_pressure_free_bytes")
+  )
 
 
 def get_sync_archive_scratch_max_idle_hours() -> int:

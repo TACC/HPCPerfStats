@@ -6437,13 +6437,15 @@ def ensure_daily_tar_restored_for_append(
   zstd_threads: Any,
   *,
   wait_for_other_owner: bool = True,
+  space_gate: str = "growth",
 ) -> Any:
   """
   Return True when sibling ``.tar`` exists or was restored from sealed backup.
 
   When no sealed ``.tar.zst`` / ``.tar.gz`` sibling exists, returns True so the
   caller may bootstrap a fresh ``.tar``. Returns False when a sealed sibling
-  remains but restore did not produce ``tar_path``.
+  remains but restore did not produce ``tar_path``, or when the space gate
+  (``sync_timedb_space_pressure.admit_restore``) refuses the restore.
 
   ``wait_for_other_owner=False`` (day-close pre_seal) returns False immediately
   when another thread holds the exclusive restore lease, so the worker can
@@ -6453,6 +6455,9 @@ def ensure_daily_tar_restored_for_append(
     tar_path (str): String for tar path.
     zstd_threads (Any): Zstd threads passed to this helper.
     wait_for_other_owner (bool): Boolean flag for wait for other owner.
+    space_gate (str): ``growth`` (denied under space pressure), ``finish``
+      (day close; hard reserve only) or ``off`` (append path, gated at
+      dispatch).
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -6460,8 +6465,12 @@ def ensure_daily_tar_restored_for_append(
   Examples:
     >>> ensure_daily_tar_restored_for_append("x", None, True)  # doctest: +SKIP
   """
+  from hpcperfstats.dbload.lib import sync_timedb_space_pressure as sp
+
   if _tar_dest_is_nonempty(tar_path):
     return True
+  if not sp.admit_restore(tar_path, space_gate):
+    return False
   zst_path, gz_path = compressed_sibling_paths(tar_path)
   remove_compressed = _decompress_should_unlink_compressed(tar_path)
   sealed = (
@@ -7906,6 +7915,7 @@ def validate_open_tar_for_raw_removal(
     if not ensure_daily_tar_restored_for_append(
       tar_path,
       get_archive_zstd_thread_count(),
+      space_gate="finish",
     ):
       if log_fn:
         log_fn(
@@ -8979,6 +8989,7 @@ def ensure_open_daily_tar_readable(
       tar_norm,
       threads,
       wait_for_other_owner=wait_for_restore_owner,
+      space_gate="finish",
     ):
       _log_daily_tar_repair_outcome(
         log_fn,
@@ -9183,7 +9194,9 @@ def _salvage_open_tar_for_ensure(
       return OpenDailyTarEnsureResult(readable=True)
     return OpenDailyTarEnsureResult(
       readable=bool(
-        ensure_daily_tar_restored_for_append(tar_path, zstd_threads)
+        ensure_daily_tar_restored_for_append(
+          tar_path, zstd_threads, space_gate="finish"
+        )
       )
     )
   return OpenDailyTarEnsureResult(readable=False)

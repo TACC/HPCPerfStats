@@ -129,6 +129,28 @@ class AppendDayClaimLists:
       bucket = self._days.get(key)
       return 0 if bucket is None else len(bucket)
 
+  def peek_batch(self, day: str, n: int) -> list[Any]:
+    """
+    Return up to ``n`` oldest claims for ``day`` without popping them.
+
+    Args:
+      day (str): Calendar day ``YYYY-MM-DD``.
+      n (int): Maximum claims to return (clamped to >= 0).
+
+    Returns:
+      list[Any]: Claims in FIFO order (may be shorter than ``n``).
+
+    Examples:
+      >>> lists = AppendDayClaimLists()
+      >>> lists.add("2026-06-01", "a")
+      >>> lists.peek_batch("2026-06-01", 5), lists.peek_len("2026-06-01")
+      (['a'], 1)
+    """
+    key = str(day or "")
+    with self._lock:
+      bucket = self._days.get(key)
+      return [] if bucket is None else list(bucket)[: max(0, int(n))]
+
   def peek_first(self, day: str) -> Any:
     """
     Return the oldest claim for ``day`` without popping.

@@ -5763,8 +5763,9 @@ def _decompress_compressed_archive(archive_compressed_path: str) -> Any:
   fmt = detect_compressed_format(archive_compressed_path)
   if fmt not in ("zst", "gz"):
     return os.path.isfile(tar_path)
+  # Append path: the space gate ran at dispatch (_try_submit_pending_append_days).
   return ensure_daily_tar_restored_for_append(
-    tar_path, cfg.get_archive_zstd_threads()
+    tar_path, cfg.get_archive_zstd_threads(), space_gate="off"
   )
 
 
@@ -5787,7 +5788,7 @@ def _restore_daily_tar_or_log_failure(
     >>> _restore_daily_tar_or_log_failure(None, None)  # doctest: +SKIP
   """
   if ensure_daily_tar_restored_for_append(
-    archive_tar_fname, cfg.get_archive_zstd_threads()
+    archive_tar_fname, cfg.get_archive_zstd_threads(), space_gate="off"
   ):
     return True
   log_print(

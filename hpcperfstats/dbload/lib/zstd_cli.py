@@ -1378,6 +1378,11 @@ def zstd_compress_tar_to_file(
     f"--size-hint={int(tar_bytes)}",
     tar_path,
   ]
+  from hpcperfstats.dbload.lib import sync_timedb_space_pressure as space
+
+  # Under space pressure the seal gives space back: drop nice/ionice so the
+  # appends it waits behind cannot starve it.
+  priority_wrap = not space.under_pressure(tar_path)
   if tgz_archive_dir:
     import hpcperfstats.dbload.lib.conf_parser as cfg
     from hpcperfstats.dbload.lib.sync_timedb_progress_io import (
@@ -1388,6 +1393,7 @@ def zstd_compress_tar_to_file(
 
     proc = _popen_zstd(
       cmd,
+      apply_priority_wrap=priority_wrap,
       stdout=subprocess.PIPE,
       stderr=subprocess.PIPE,
       start_new_session=True,
@@ -1472,7 +1478,13 @@ def zstd_compress_tar_to_file(
   else:
     # Non-cooperative callers (unit / one-shot): keep ``_run_zstd``. Production
     # seal passes ``tgz_archive_dir`` and uses progress + idle kill above.
-    result = _run_zstd(cmd, capture_output=True, text=True, check=False)
+    result = _run_zstd(
+      cmd,
+      apply_priority_wrap=priority_wrap,
+      capture_output=True,
+      text=True,
+      check=False,
+    )
     if result.returncode != 0:
       raise subprocess.CalledProcessError(
         result.returncode,

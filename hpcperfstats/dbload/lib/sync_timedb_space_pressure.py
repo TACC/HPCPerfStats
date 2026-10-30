@@ -1,0 +1,459 @@
+"""
+Archive free-space pressure for sync_timedb: growth yields to day close.
+
+Off unless ``sync_archive_space_pressure_free_bytes`` (X) is set. Pressure
+starts when the daily archive filesystem has less than X free and lasts until
+it has 2X free. Under pressure:
+
+- appends wait while any day close is finishing a day (a stage in
+  ``FINISHING_STAGES``; the checks alone do not count);
+- otherwise one day at a time (the oldest with parked appends) gets appends;
+  once that day has no parked or in-flight appends, the next day waits until
+  a day close has finished a day (or ``DAY_CLOSE_START_GRACE_S`` passes with
+  none starting, so a day that cannot close yet does not stop appends);
+- restores outside the append path (ingest prewarm, repair) are denied; day
+  close restores and appends still keep the hard reserve
+  (``sync_archive_min_free_bytes``) plus room for the later reseal;
+- seal compression runs without the nice/ionice wrapper so appends cannot
+  starve day close.
+
+INV-NEG: a held append day clears when a finishing day close ends, retries
+after ``DAY_CLOSE_START_GRACE_S`` without one, and pressure itself ends at 2X
+free (day close frees space and is never gated here).
+
+Attributes:
+  ALL_DAYS: Sentinel from ``select_append_day``: no pressure, every day.
+  DAY_CLOSE_START_GRACE_S: Seconds a finished append day waits for its close.
+  FINISHING_STAGES: Day-close stages that finish a day (give space back).
+  UNKNOWN_RATIO: Restore size multiple of a sealed file with no size header.
+  _DENY_LOG_STATE: Rate-limit state for ``space_pressure deny`` lines.
+  _LOCK: Guards ``_STATE`` across append, day-close and census threads.
+  _STATE: Pressure flag, day-close stages, append day and hold timestamps.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import threading
+import time
+from collections.abc import Iterable
+from typing import Any
+
+from hpcperfstats.dbload.lib import conf_parser as cfg
+from hpcperfstats.dbload.lib.print_utils import log_print
+
+ALL_DAYS = object()
+DAY_CLOSE_START_GRACE_S = 600.0
+UNKNOWN_RATIO = 10
+FINISHING_STAGES = frozenset(
+  {
+    "pre_seal_verify",
+    "reconcile_merge",
+    "dedupe",
+    "raw_delete_pre_seal",
+    "seal",
+    "post_seal_verify",
+    "raw_delete",
+    "tar_drop",
+  }
+)
+
+_LOCK = threading.Lock()
+_STATE: dict[str, Any] = {}
+_DENY_LOG_STATE: dict[str, dict[str, float]] = {}
+
+
+def reset_for_tests() -> None:
+  """
+  Clear pressure, day-close stages and the append-day slot.
+
+  Returns:
+    None
+
+  Examples:
+    >>> reset_for_tests()
+  """
+  _DENY_LOG_STATE.clear()
+  with _LOCK:
+    _STATE.clear()
+    _STATE.update(
+      pressure=False,
+      stages={},
+      append_day=None,
+      hold_since=None,
+      finished_since_hold=False,
+    )
+
+
+reset_for_tests()
+
+
+def _free_bytes(path: str) -> int:
+  """
+  Return free bytes on the filesystem holding ``path`` (nearest existing dir).
+
+  Args:
+    path (str): File or directory on the archive filesystem.
+
+  Returns:
+    int: Free bytes, or 0 when no ancestor can be read.
+
+  Examples:
+    >>> _free_bytes("/") >= 0
+    True
+  """
+  target = os.path.abspath(str(path or "/"))
+  while not os.path.exists(target) and os.path.dirname(target) != target:
+    target = os.path.dirname(target)
+  try:
+    return int(shutil.disk_usage(target).free)
+  except OSError:
+    return 0
+
+
+def _size(path: str) -> int:
+  """
+  Return the size of ``path`` in bytes, or 0 when it is missing.
+
+  Args:
+    path (str): File path.
+
+  Returns:
+    int: Size in bytes.
+
+  Examples:
+    >>> _size("/nonexistent-path")
+    0
+  """
+  try:
+    return int(os.path.getsize(path))
+  except OSError:
+    return 0
+
+
+def _tib(n: int) -> str:
+  """
+  Format bytes as TiB with one decimal and a ``T`` suffix.
+
+  Args:
+    n (int): Bytes.
+
+  Returns:
+    str: For example ``3.2T``.
+
+  Examples:
+    >>> _tib(1 << 40)
+    '1.0T'
+  """
+  return f"{n / (1 << 40):.1f}T"
+
+
+def under_pressure(path: str = "") -> bool:
+  """
+  Update and return the pressure state (enter below X, leave at 2X free).
+
+  Args:
+    path (str): Path on the archive filesystem; empty uses the INI
+      ``daily_archive_dir``.
+
+  Returns:
+    bool: True while under pressure; always False when X is 0.
+
+  Examples:
+    >>> isinstance(under_pressure("/"), bool)
+    True
+  """
+  threshold = int(cfg.get_sync_archive_space_pressure_free_bytes())
+  free = (
+    _free_bytes(path or cfg.get_daily_archive_dir_path() or "/")
+    if threshold > 0
+    else 0
+  )
+  with _LOCK:
+    if threshold > 0 and free < threshold:
+      _STATE["pressure"] = True
+    elif threshold <= 0 or free >= 2 * threshold:
+      _STATE.update(pressure=False, append_day=None, hold_since=None)
+    return bool(_STATE["pressure"])
+
+
+def note_day_close_stage(day: str, stage: str) -> None:
+  """
+  Record the current day-close stage of ``day`` (from ``stage_enter``).
+
+  Args:
+    day (str): Calendar day ``YYYY-MM-DD``.
+    stage (str): Stage name, for example ``seal`` or ``disk_remaining_raw``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> note_day_close_stage("2026-09-07", "seal")
+    >>> clear_day_close("2026-09-07")
+  """
+  with _LOCK:
+    _STATE["stages"][str(day)] = str(stage)
+    if stage in FINISHING_STAGES:
+      _STATE["finished_since_hold"] = True
+
+
+def clear_day_close(day: str) -> None:
+  """
+  Forget ``day``'s day-close stage once its job has ended.
+
+  Args:
+    day (str): Calendar day ``YYYY-MM-DD``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> clear_day_close("2026-09-07")
+  """
+  with _LOCK:
+    _STATE["stages"].pop(str(day), None)
+
+
+def _finishing_locked() -> bool:
+  """
+  Return True while any day close is in a ``FINISHING_STAGES`` stage.
+
+  The caller holds ``_LOCK``.
+
+  Returns:
+    bool: True when a stage that finishes a day is running.
+
+  Examples:
+    >>> with _LOCK:
+    ...   isinstance(_finishing_locked(), bool)
+    True
+  """
+  return any(s in FINISHING_STAGES for s in _STATE["stages"].values())
+
+
+def select_append_day(
+  parked_days: Iterable[str],
+  busy_days: Iterable[str],
+) -> Any:
+  """
+  Return which day may get appends now.
+
+  Without pressure every day may (``ALL_DAYS``). Under pressure: ``None``
+  while a day close is finishing a day; else the day holding the slot while
+  it has parked or in-flight appends; else, right after such a day, ``None``
+  until a day close has finished a day (or the grace passed with none
+  starting); else the oldest parked day, or ``""`` when none is parked yet
+  (keep claiming so one can be chosen next tick).
+
+  Args:
+    parked_days (Iterable[str]): Days with parked append claims.
+    busy_days (Iterable[str]): Days with an append batch in flight.
+
+  Returns:
+    Any: ``ALL_DAYS``, a day string, ``""`` (no day chosen yet) or
+    ``None`` (appends wait).
+
+  Examples:
+    >>> reset_for_tests()
+    >>> select_append_day(["2026-09-01"], []) is not None
+    True
+  """
+  if not under_pressure():
+    return ALL_DAYS
+  parked = sorted(str(d) for d in parked_days)
+  busy = {str(d) for d in busy_days}
+  now = time.monotonic()
+  with _LOCK:
+    finishing = _finishing_locked()
+    current = _STATE["append_day"]
+    if current is not None and (current in busy or current in parked):
+      return None if finishing else current
+    if current is not None:
+      _STATE.update(
+        append_day=None, hold_since=now, finished_since_hold=finishing
+      )
+    hold_since = _STATE["hold_since"]
+    waiting = hold_since is not None and not _STATE["finished_since_hold"]
+    if finishing or (waiting and now - hold_since < DAY_CLOSE_START_GRACE_S):
+      return None
+    _STATE["hold_since"] = None
+    if not parked:
+      return ""
+    _STATE["append_day"] = parked[0]
+    return parked[0]
+
+
+def fits_hard_reserve(path: str, need: int, *, restore_need: int = 0) -> bool:
+  """
+  Return True when ``need`` bytes plus a later reseal keep the hard reserve.
+
+  Args:
+    path (str): Path on the archive filesystem.
+    need (int): Bytes the operation writes (restore plus raw appended).
+    restore_need (int): Restored tar bytes; half is kept for its reseal.
+
+  Returns:
+    bool: True when ``free - need - restore_need / 2`` stays at or above
+    ``sync_archive_min_free_bytes``, or when nothing is written.
+
+  Examples:
+    >>> fits_hard_reserve("/", 0)
+    True
+  """
+  if int(need) <= 0:
+    return True
+  reserve = int(cfg.get_sync_archive_min_free_bytes())
+  left = _free_bytes(path) - int(need) - int(restore_need) // 2
+  return left >= reserve
+
+
+def admit_restore(tar_path: str, mode: str) -> bool:
+  """
+  Gate a restore of ``tar_path`` from its sealed copy.
+
+  Args:
+    tar_path (str): Daily tar the restore would write.
+    mode (str): ``growth`` (denied under pressure, else hard reserve),
+      ``finish`` (day close: hard reserve only) or ``off`` (the append
+      dispatch already gated it).
+
+  Returns:
+    bool: True when the restore may run.
+
+  Examples:
+    >>> admit_restore("/nonexistent/2026-09-07.tar", "off")
+    True
+  """
+  if mode == "off":
+    return True
+  need = restore_bytes_estimate(tar_path)
+  if mode != "finish" and need > 0 and under_pressure(tar_path):
+    reason = "space_pressure"
+  elif fits_hard_reserve(tar_path, need, restore_need=need):
+    return True
+  else:
+    reason = "hard_reserve"
+  log_deny("restore", tar_path, need, reason=f"{reason} mode={mode}")
+  return False
+
+
+def log_deny(op: str, tar_path: str, need: int, *, reason: str) -> None:
+  """
+  Log a space-gate denial, at most once per 300 s per day and op.
+
+  Args:
+    op (str): ``restore`` or ``append``.
+    tar_path (str): Daily tar the operation targets.
+    need (int): Bytes the operation would write.
+    reason (str): ``space_pressure`` or ``hard_reserve`` (plus detail).
+
+  Returns:
+    None
+
+  Examples:
+    >>> log_deny("append", "/d/2026-09-07.tar", 1, reason="hard_reserve")
+    ... # doctest: +ELLIPSIS
+    [...] WARNING: space_pressure deny op=append tar=/d/2026-09-07.tar need=1 ...
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+    _rate_limited_day_info_log,
+  )
+
+  day = os.path.basename(str(tar_path))[:10]
+  _rate_limited_day_info_log(
+    _DENY_LOG_STATE,
+    f"{day}:{op}",
+    f"WARNING: space_pressure deny op={op} tar={tar_path} need={int(need)} "
+    f"free={_free_bytes(tar_path)} reason={reason}",
+    interval_s=300.0,
+    log_fn=log_print,
+  )
+
+
+def _zst_frame_content_size(zst_path: str) -> int | None:
+  """
+  Return the uncompressed size recorded in the first zstd frame header.
+
+  Args:
+    zst_path (str): ``.zst`` file.
+
+  Returns:
+    int | None: Content size, or None when the header does not carry it.
+
+  Examples:
+    >>> _zst_frame_content_size("/nonexistent.zst") is None
+    True
+  """
+  try:
+    with open(zst_path, "rb") as fh:
+      head = fh.read(18)
+  except OSError:
+    return None
+  if len(head) < 6 or head[:4] != b"\x28\xb5\x2f\xfd":
+    return None
+  fhd = head[4]
+  single_segment = (fhd >> 5) & 1
+  fcs_len = (0, 2, 4, 8)[fhd >> 6] or (1 if single_segment else 0)
+  pos = 5 + (0 if single_segment else 1) + (0, 1, 2, 4)[fhd & 3]
+  field = head[pos : pos + fcs_len]
+  if not fcs_len or len(field) != fcs_len:
+    return None
+  value = int.from_bytes(field, "little")
+  return value + 256 if fcs_len == 2 else value
+
+
+def restore_bytes_estimate(tar_path: str) -> int:
+  """
+  Estimate the bytes a restore of ``tar_path`` from its sealed copy writes.
+
+  Args:
+    tar_path (str): Daily ``YYYY-MM-DD.tar`` path.
+
+  Returns:
+    int: 0 when the tar is present and non-empty or nothing is sealed; the
+    zstd frame content size when recorded; else ``UNKNOWN_RATIO`` times the
+    sealed file size.
+
+  Examples:
+    >>> restore_bytes_estimate("/nonexistent/2026-09-07.tar")
+    0
+  """
+  if _size(tar_path) > 0:
+    return 0
+  for sealed in (f"{tar_path}.zst", f"{tar_path}.gz"):
+    if os.path.isfile(sealed):
+      known = sealed.endswith(".zst") and _zst_frame_content_size(sealed)
+      return int(known) if known else _size(sealed) * UNKNOWN_RATIO
+  return 0
+
+
+def census_token(daily_dir: str) -> str:
+  """
+  Return the census token for the pressure state, or ``""`` when off.
+
+  Args:
+    daily_dir (str): Daily archive directory.
+
+  Returns:
+    str: `` space=ok free=… pressure_below=…`` or
+    `` space=pressure free=… resume_at=… append_day=…``.
+
+  Examples:
+    >>> isinstance(census_token("/"), str)
+    True
+  """
+  threshold = int(cfg.get_sync_archive_space_pressure_free_bytes())
+  if threshold <= 0:
+    return ""
+  pressure = under_pressure(daily_dir)
+  free = _tib(_free_bytes(daily_dir or "/"))
+  if not pressure:
+    return f" space=ok free={free} pressure_below={_tib(threshold)}"
+  with _LOCK:
+    day = _STATE["append_day"] or "none"
+  return (
+    f" space=pressure free={free} resume_at={_tib(2 * threshold)}"
+    f" append_day={day}"
+  )
