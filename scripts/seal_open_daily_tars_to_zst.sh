@@ -43,6 +43,7 @@ TZ_LOCAL=America/Chicago
 LEVEL=7
 MIN_AGE_DAYS=3
 MARGIN_GB=200
+JOBS=1
 APPLY=0
 ALLOW_RUNNING=0
 NO_JOB_STORE=0
@@ -52,11 +53,14 @@ KEEP_OPEN=()
 
 usage() {
   cat <<EOF
-usage: $0 [--apply] [--keep-open YYYY-MM-DD]... [--daily DIR] [--archive DIR]
-          [--tz TZ] [--level N] [--min-age-days N] [--margin-gb N]
-          [--only YYYY-MM-DD] [--no-job-store] [--allow-running] [--log FILE]
+usage: $0 [--apply] [-j|--jobs N] [--keep-open YYYY-MM-DD]... [--daily DIR]
+          [--archive DIR] [--tz TZ] [--level N] [--min-age-days N]
+          [--margin-gb N] [--only YYYY-MM-DD] [--no-job-store]
+          [--allow-running] [--log FILE]
 Dry run unless --apply. Defaults: daily=$DAILY archive=$ARCHIVE tz=$TZ_LOCAL
-level=$LEVEL min-age-days=$MIN_AGE_DAYS margin-gb=$MARGIN_GB
+level=$LEVEL min-age-days=$MIN_AGE_DAYS margin-gb=$MARGIN_GB jobs=$JOBS
+--jobs N: seal up to N days at once (more reads in flight on a SAN); each
+  running day reserves its estimated compressed size against free space
 --no-job-store: do not read the job store snapshot (only --keep-open stays open)
 EOF
 }
@@ -71,6 +75,7 @@ while [ $# -gt 0 ]; do
     --level) LEVEL=$2; shift ;;
     --min-age-days) MIN_AGE_DAYS=$2; shift ;;
     --margin-gb) MARGIN_GB=$2; shift ;;
+    -j|--jobs) JOBS=$2; shift ;;
     --only) ONLY=$2; shift ;;
     --no-job-store) NO_JOB_STORE=1 ;;
     --allow-running) ALLOW_RUNNING=1 ;;
@@ -85,7 +90,8 @@ LOG=${LOG:-$DAILY/seal_open_daily_tars.$(date +%Y%m%d-%H%M%S).log}
 log() { printf '%s %s\n' "$(date '+%F %T')" "$*" | tee -a "$LOG"; }
 gib() { awk -v b="$1" 'BEGIN{printf "%.1f", b/2^30}'; }
 
-for bin in tar zstd awk stat df python3 pgrep; do
+[[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "--jobs must be a positive integer" >&2; exit 2; }
+for bin in tar zstd awk stat df python3 pgrep flock; do
   command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 2; }
 done
 tar --version | head -1 | grep -q 'GNU tar' || { echo "need GNU tar" >&2; exit 2; }
@@ -95,10 +101,10 @@ if [ "$ALLOW_RUNNING" -eq 0 ] && pgrep -f 'sync_timedb\.py' >/dev/null; then
   exit 2
 fi
 
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/seal_open_daily_tars.XXXXXX")
-trap 'rm -rf "$WORK"' EXIT
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/seal_open_daily_tars.XXXXXX") || exit 2
+trap 'rm -rf "${WORK:?}"' EXIT
 CUTOFF=$(TZ=$TZ_LOCAL date -d "today - $MIN_AGE_DAYS days" +%F)
-log "start apply=$APPLY daily=$DAILY archive=$ARCHIVE cutoff<$CUTOFF level=$LEVEL"
+log "start apply=$APPLY jobs=$JOBS daily=$DAILY archive=$ARCHIVE cutoff<$CUTOFF level=$LEVEL"
 
 # Days kept open: "<day> <queued append files>".
 : >"$WORK/keep"
@@ -217,94 +223,102 @@ with tarfile.open(src, "r:") as tin:
   out.close()
 PY
 
-n_done=0 n_skip=0 n_fail=0 n_restore=0 freed=0
-for tar in "$DAILY"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].tar; do
-  [ -f "$tar" ] || continue
+mkdir -p "$WORK/res" "$WORK/resv" "$WORK/day"
+
+# Space for the compressed copies of all running days: reserve under a lock,
+# against free space minus what other running days already reserved.
+reserve() {
+  (
+    flock 9
+    avail=$(df --output=avail -B1 "$DAILY" | tail -1)
+    held=$(cat "$WORK"/resv/* 2>/dev/null | awk '{s += $1} END {print s + 0}')
+    [ $((avail - held)) -ge "$1" ] || { echo $((avail - held)); exit 1; }
+    echo "$1" >"$WORK/resv/$2"
+  ) 9>"$WORK/resv.lock"
+}
+
+# One day: verify, compress, check, swap. Writes "<status> <bytes> <restore>"
+# to $WORK/res/<day> (status done|skip|fail; bytes freed, or tar size on a
+# dry run; restore 1 when raw not yet ingested is left outside the tar).
+seal_day() {
+  local tar=$1 day zst size W ready pending dups missing need room note
+  local tmp before zsize rc
   day=$(basename "$tar" .tar)
-  [ -n "$ONLY" ] && [ "$day" != "$ONLY" ] && continue
   zst="$tar.zst"
   size=$(stat -c %s "$tar")
-  skip() { log "SKIP $day $(gib "$size")GiB: $*"; n_skip=$((n_skip + 1)); }
+  W="$WORK/day/$day"
+  mkdir -p "$W"
+  result() { echo "$1 ${2:-0} ${3:-0}" >"$WORK/res/$day"; }
+  skip() { log "SKIP $day $(gib "$size")GiB: $*"; result skip; }
+  fail() { log "FAIL $day $*"; rm -f "$tmp"; result fail; }
 
-  if [[ ! "$day" < "$CUTOFF" ]]; then
-    skip "younger than $MIN_AGE_DAYS days"; continue
-  fi
-  if grep -q "^$day " "$WORK/keep"; then
-    skip "kept open (append queued)"; continue
-  fi
   if [ "$size" -le 20480 ]; then
-    skip "empty tar (pipeline drops it)"; continue
+    skip "empty tar (pipeline drops it)"; return
   fi
-
-  if ! tar -tvf "$tar" >"$WORK/t.raw" 2>"$WORK/t.err" || [ -s "$WORK/t.err" ]; then
-    skip "tar listing failed, pipeline repairs it: $(head -1 "$WORK/t.err")"; continue
+  if ! tar -tvf "$tar" >"$W/t.raw" 2>"$W/t.err" || [ -s "$W/t.err" ]; then
+    skip "tar listing failed, pipeline repairs it: $(head -1 "$W/t.err")"; return
   fi
-  members <"$WORK/t.raw" >"$WORK/t.all"
-  dups=$(cut -f1 "$WORK/t.all" | uniq -d | wc -l)
-  dedupe_list <"$WORK/t.all" >"$WORK/t.lst"
+  members <"$W/t.raw" >"$W/t.all"
+  dups=$(cut -f1 "$W/t.all" | uniq -d | wc -l)
+  dedupe_list <"$W/t.all" >"$W/t.lst"
 
   # "<ingested raw not in tar> <not-yet-ingested raw not in tar>"
   read -r ready pending <<<"$(awk -v d="$day" 'NR == FNR {split($0, f, "\t");
       n = split(f[1], parts, "/"); t[parts[n - 1] "/" parts[n]] = f[2]; next}
     $1 == d && (!($2 in t) || t[$2] != $3) {if ($4 == 1) r++; else p++}
-    END {print r + 0, p + 0}' "$WORK/t.lst" "$WORK/raw.idx")"
+    END {print r + 0, p + 0}' "$W/t.lst" "$WORK/raw.idx")"
   if [ "$ready" -gt 0 ]; then
-    skip "kept open: $ready ingested raw files waiting for append"; continue
+    skip "kept open: $ready ingested raw files waiting for append"; return
   fi
 
   if [ -f "$zst" ]; then
-    if ! zstd -dc "$zst" 2>"$WORK/z.err" | tar -tvf - >"$WORK/z.raw" 2>>"$WORK/z.err" ||
-      [ -s "$WORK/z.err" ]; then
-      skip "existing .tar.zst unreadable: $(head -1 "$WORK/z.err")"; continue
+    if ! zstd -dc "$zst" 2>"$W/z.err" | tar -tvf - >"$W/z.raw" 2>>"$W/z.err" ||
+      [ -s "$W/z.err" ]; then
+      skip "existing .tar.zst unreadable: $(head -1 "$W/z.err")"; return
     fi
-    members <"$WORK/z.raw" >"$WORK/z.lst"
+    members <"$W/z.raw" >"$W/z.lst"
     missing=$(awk -F'\t' 'NR == FNR {t[$1] = $2; next}
       !($1 in t) || t[$1] + 0 < $2 + 0 {m++} END {print m + 0}' \
-      "$WORK/t.lst" "$WORK/z.lst")
+      "$W/t.lst" "$W/z.lst")
     if [ "$missing" -gt 0 ]; then
       skip "existing .tar.zst has $missing members the tar lacks or has smaller (pipeline reconcile)"
-      continue
+      return
     fi
   fi
 
-  avail=$(df --output=avail -B1 "$DAILY" | tail -1)
-  need=$((size / 3 + MARGIN_GB * 2 ** 30))
-  if [ "$avail" -lt "$need" ]; then
-    skip "only $(gib "$avail")GiB free, need $(gib "$need")GiB for the compressed copy"
-    continue
-  fi
-
-  note="members=$(wc -l <"$WORK/t.lst") raw_not_in_tar=$pending"
+  note="members=$(wc -l <"$W/t.lst") raw_not_in_tar=$pending"
   [ "$dups" -gt 0 ] && note="$note dedupe_names=$dups"
   [ -f "$zst" ] && note="$note replaces_existing_zst"
-  [ "$pending" -gt 0 ] && n_restore=$((n_restore + 1))
-
   if [ "$APPLY" -eq 0 ]; then
     log "WOULD SEAL $day $(gib "$size")GiB $note"
-    n_done=$((n_done + 1)); freed=$((freed + size)); continue
+    result done "$size" "$((pending > 0))"; return
   fi
 
+  need=$((size / 3 + MARGIN_GB * 2 ** 30))
+  if ! room=$(reserve "$need" "$day"); then
+    skip "only $(gib "$room")GiB free after other running days, need $(gib "$need")GiB"
+    return
+  fi
   tmp="$tar.zst.tmp"
   before=$(stat -c '%s %Y' "$tar")
   log "SEAL $day $(gib "$size")GiB $note"
   if [ "$dups" -gt 0 ]; then
-    python3 -I "$WORK/dedupe_stream.py" "$tar" 2>"$WORK/c.err" |
-      zstd -T0 "-$LEVEL" -q -f -o "$tmp" 2>>"$WORK/c.err"
+    python3 -I "$WORK/dedupe_stream.py" "$tar" 2>"$W/c.err" |
+      zstd -T0 "-$LEVEL" -q -f -o "$tmp" 2>>"$W/c.err"
   else
-    zstd -T0 "-$LEVEL" -q -f -o "$tmp" "$tar" 2>"$WORK/c.err"
+    zstd -T0 "-$LEVEL" -q -f -o "$tmp" "$tar" 2>"$W/c.err"
   fi
-  if [ $? -ne 0 ] || [ -s "$WORK/c.err" ]; then
-    log "FAIL $day compress: $(head -1 "$WORK/c.err")"; rm -f "$tmp"
-    n_fail=$((n_fail + 1)); continue
+  rc=$?
+  rm -f "$WORK/resv/$day"  # the tmp file now holds the space itself
+  if [ "$rc" -ne 0 ] || [ -s "$W/c.err" ]; then
+    fail "compress: $(head -1 "$W/c.err")"; return
   fi
-  if ! zstd -dc "$tmp" 2>"$WORK/v.err" | tar -tvf - 2>>"$WORK/v.err" | members >"$WORK/v.lst" ||
-    [ -s "$WORK/v.err" ] || ! cmp -s "$WORK/t.lst" "$WORK/v.lst"; then
-    log "FAIL $day verify: member list or checksum mismatch $(head -1 "$WORK/v.err")"
-    rm -f "$tmp"; n_fail=$((n_fail + 1)); continue
+  if ! zstd -dc "$tmp" 2>"$W/v.err" | tar -tvf - 2>>"$W/v.err" | members >"$W/v.lst" ||
+    [ -s "$W/v.err" ] || ! cmp -s "$W/t.lst" "$W/v.lst"; then
+    fail "verify: member list or checksum mismatch $(head -1 "$W/v.err")"; return
   fi
   if [ "$(stat -c '%s %Y' "$tar")" != "$before" ]; then
-    log "FAIL $day tar changed during compress (is the pipeline running?)"
-    rm -f "$tmp"; n_fail=$((n_fail + 1)); continue
+    fail "tar changed during compress (is the pipeline running?)"; return
   fi
   chown --reference="$tar" "$tmp" && chmod --reference="$tar" "$tmp"
   sync -f "$tmp" 2>/dev/null || sync
@@ -312,11 +326,36 @@ for tar in "$DAILY"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].tar; do
   sync -f "$zst" 2>/dev/null || sync
   rm -f "$tar"
   zsize=$(stat -c %s "$zst")
-  freed=$((freed + size - zsize))
-  n_done=$((n_done + 1))
   log "DONE $day tar=$(gib "$size")GiB zst=$(gib "$zsize")GiB"
-done
+  result done "$((size - zsize))" "$((pending > 0))"
+  rm -rf "${W:?}"
+}
 
+running=0
+for tar in "$DAILY"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].tar; do
+  [ -f "$tar" ] || continue
+  day=$(basename "$tar" .tar)
+  [ -n "$ONLY" ] && [ "$day" != "$ONLY" ] && continue
+  if [[ ! "$day" < "$CUTOFF" ]]; then
+    log "SKIP $day: younger than $MIN_AGE_DAYS days"; echo "skip 0 0" >"$WORK/res/$day"
+    continue
+  fi
+  if grep -q "^$day " "$WORK/keep"; then
+    log "SKIP $day: kept open (append queued)"; echo "skip 0 0" >"$WORK/res/$day"
+    continue
+  fi
+  seal_day "$tar" &
+  running=$((running + 1))
+  if [ "$running" -ge "$JOBS" ]; then
+    wait -n
+    running=$((running - 1))
+  fi
+done
+wait
+
+read -r n_done n_skip n_fail n_restore freed <<<"$(cat "$WORK"/res/* 2>/dev/null |
+  awk '{c[$1]++; b += $2; r += $3} END {printf "%d %d %d %d %d\n",
+    c["done"], c["skip"], c["fail"], r, b}')"
 if [ "$APPLY" -eq 1 ]; then
   log "end sealed=$n_done skipped=$n_skip failed=$n_fail freed=$(gib "$freed")GiB days_needing_restore_later=$n_restore"
 else
