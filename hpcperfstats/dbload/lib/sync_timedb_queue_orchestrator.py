@@ -2432,6 +2432,62 @@ def _remaining_raw_all_in_open_tar(
   return all(raw_path_in_sealed_members(path, members) for path in paths)
 
 
+def _closed_raw_not_archived(
+  archive_data_dir: str,
+  tgz_archive_dir: str,
+  tar_path: str,
+) -> list[str] | None:
+  """
+  List this day's closed raw on disk that no archive copy holds.
+
+  The seal otherwise sees only raw the manifest and queues know about; raw
+  that discover never queued would be left on disk unarchived when the day
+  seals (hpcperfstats04 2026-10-29: 08-25 sealed without 189 of its files).
+  A file counts as archived when it is a same-size member of the open tar or
+  of the sealed ``.tar.zst`` (sealed member map).
+
+  Args:
+    archive_data_dir (str): Raw stats archive root.
+    tgz_archive_dir (str): Daily archive directory.
+    tar_path (str): Open daily ``.tar``.
+
+  Returns:
+    list[str] | None: Unarchived closed raw paths (empty when none), or None
+    when the day scan or the open-tar member read failed.
+
+  Examples:
+    >>> _closed_raw_not_archived("/nope", "/nope", "/nope/2020-01-10.tar")
+    []
+  """
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_archive_helpers as ah,
+    sync_timedb_sealed_member_map as smm,
+  )
+  from hpcperfstats.dbload.lib.conf_parser import get_host_name_ext
+
+  try:
+    by_gz = ah.build_day_scoped_closed_raw_by_gz(
+      archive_data_dir, get_host_name_ext() or "", tgz_archive_dir, tar_path
+    )
+    raw = [path for paths in (by_gz or {}).values() for path in paths or ()]
+    if not raw:
+      return []
+    in_tar = {}
+    if os.path.isfile(tar_path):
+      in_tar = ah.get_mutable_tar_authority_member_map(tar_path) or {}
+      if not in_tar and os.path.getsize(tar_path) > _EMPTY_TAR_MAX_BYTES:
+        return None  # a failed member scan is not an empty tar
+    in_zst = smm.sealed_members_lookup(tar_path + ".zst") or {}
+  except Exception:
+    return None
+  return [
+    path
+    for path in raw
+    if not raw_path_in_sealed_members(path, in_tar)
+    and not raw_path_in_sealed_members(path, in_zst)
+  ]
+
+
 _EMPTY_TAR_MAX_BYTES = 2 * 10240
 
 
@@ -3061,6 +3117,33 @@ def _run_day_close_job(
     # and would force a full reseal (04 2026-10-29: 09-22..10-06 resealed).
     if _BOOT_FULL_DISCOVER_PENDING.is_set():
       _stage_exit("seal", result="yielded", reason="full_discover_pending")
+      return "yielded"
+    # Raw nothing queued (no archive holds it) goes to ingest; seal after.
+    unarchived = (
+      _closed_raw_not_archived(root, tgz_archive_dir, tar_path)
+      if os.path.isfile(tar_path)
+      else []
+    )
+    if unarchived is None or unarchived:
+      if unarchived:
+        _handoff_retryable_paths_to_ingest(
+          job_store,
+          tar_path,
+          unarchived,
+          tgz_archive_dir=tgz_archive_dir,
+          archive_data_dir=root,
+          reason="seal_unarchived_raw",
+          log_fn=quiet,
+        )
+      _stage_exit(
+        "seal",
+        result="yielded",
+        reason=(
+          "unarchived_raw_check_failed"
+          if unarchived is None
+          else f"unarchived_raw n={len(unarchived)}"
+        ),
+      )
       return "yielded"
     # H19 skip_merge already answered remaining-raw cheaply; do not re-find
     # at seal entry (hpcperfstats01 2026-09-25: 07-28 hung after stage_enter

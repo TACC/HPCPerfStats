@@ -417,7 +417,8 @@ def stream_enqueue_ingest_from_find_records(
       ingest_is_complete_fn=ingest_is_complete_fn,
       append_is_complete_fn=append_is_complete_fn,
     )
-    if (
+    # Hot files join past the cap, so one eviction may not make room.
+    while (
       backfill
       and not has_cap
       and plan.needs_ingest
@@ -425,11 +426,14 @@ def stream_enqueue_ingest_from_find_records(
     ):
       gone = _evict_younger(client, cal)
       if gone is None:
+        plan = replace(plan, needs_ingest=False, needs_append=False)
         frontier = cal if frontier is None else min(frontier, cal)
         dropped_at_capacity += 1
-        plan = replace(plan, needs_ingest=False, needs_append=False)
-      else:
-        evicted.append(gone)
+        break
+      evicted.append(gone)
+      has_cap = jq.queue_has_capacity(
+        client, kind=jq.JOB_KIND_INGEST, limit=cap
+      )
     enqueued = jr.enqueue_reconstruct_jobs_for_closed_path(
       client,
       plan,
@@ -437,6 +441,21 @@ def stream_enqueue_ingest_from_find_records(
       hot_days=hot_days,
       archive_data_dir=archive_data_dir,
     )
+    # Not queued and not dead-lettered: its day stays open for a later walk.
+    if (
+      backfill
+      and plan.needs_ingest
+      and not enqueued.get("ingest")
+      and not (
+        archive_data_dir
+        and jq.dead_letter_blocked(
+          archive_data_dir, kind=jq.JOB_KIND_INGEST, identity=plan.identity
+        )
+      )
+    ):
+      frontier = cal if frontier is None else min(frontier, cal)
+      dropped_at_capacity += 1
+      enqueued = {"ingest": False, "append": False}
     if enqueued.get("ingest"):
       enqueued_ingest += 1
     if enqueued.get("append"):

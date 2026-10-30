@@ -780,7 +780,8 @@ def enqueue_reconstruct_jobs_for_closed_path(
 
   Returns:
     dict[str, bool]: ``{\"ingest\": bool, \"append\": bool}`` for what was
-    enqueued.
+    enqueued; ``ingest`` is False when the store refused the add (cap) and
+    the file is neither queued nor in flight.
 
   Examples:
     >>> class _C:
@@ -832,17 +833,22 @@ def enqueue_reconstruct_jobs_for_closed_path(
         today=today,
         identity=plan.identity,
       )
-      if jq.zadd_ingest_job(
+      from hpcperfstats.dbload.lib.sync_timedb_job_discover import (
+        _ingest_queued,
+      )
+
+      added = jq.zadd_ingest_job(
         client,
         identity=plan.identity,
         score=score,
         fingerprint=plan.fingerprint or None,
         over_cap=over_cap,
-      ):
-        remainder_day = remainder_day_for_identity(plan.identity)
-        if remainder_day:
-          note_day_remainder(jq.JOB_KIND_INGEST, remainder_day, 1)
-      enqueued["ingest"] = True
+      )
+      remainder_day = remainder_day_for_identity(plan.identity)
+      if added and remainder_day:
+        note_day_remainder(jq.JOB_KIND_INGEST, remainder_day, 1)
+      # A refused add (ingest cap) is not queued; the caller must see that.
+      enqueued["ingest"] = bool(added) or _ingest_queued(client, plan.identity)
 
   if plan.needs_append and not plan.needs_ingest:
     if root and jq.dead_letter_blocked(
