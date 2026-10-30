@@ -7095,3 +7095,30 @@ def test_scheduler_runs_one_continuous_sliding_session(monkeypatch):
   diag = update_metrics.LAST_UPDATE_METRICS_DIAGNOSTICS
   assert diag["stats"]["processed"] == 5
   assert diag["stats"]["inflight_jids"] == 0
+
+
+@pytest.mark.machine_unit_mock
+def test_compute_batch_cap_recovers_after_a_downshift():
+  """T3: a halved cap grows back after full, clean batches."""
+  cap = 64
+  cap = update_metrics._next_compute_batch_cap(
+    cap, 64, batch_size=64, batch_failed=0, downshift=True
+  )
+  assert cap == 32
+  cap = update_metrics._next_compute_batch_cap(
+    cap, 64, batch_size=32, batch_failed=0, downshift=False
+  )
+  assert cap == 32 + update_metrics.COMPUTE_BATCH_UPSHIFT_STEP
+  # A failure in this batch (not the whole pass) holds the cap.
+  assert (
+    update_metrics._next_compute_batch_cap(
+      48, 64, batch_size=48, batch_failed=1, downshift=False
+    )
+    == 48
+  )
+  assert (
+    update_metrics._next_compute_batch_cap(
+      16, 64, batch_size=16, batch_failed=0, downshift=True
+    )
+    == update_metrics.COMPUTE_BATCH_MIN_CAP
+  )

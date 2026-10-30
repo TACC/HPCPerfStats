@@ -860,6 +860,58 @@ def _compute_batch_should_downshift(
   )
 
 
+def _next_compute_batch_cap(
+  current: int,
+  batch_cap: int,
+  *,
+  batch_size: int,
+  batch_failed: int,
+  downshift: bool,
+) -> int:
+  """
+  Next barrier-path compute batch cap after one batch.
+
+  Halves (floor ``COMPUTE_BATCH_MIN_CAP``) when the batch tripped the
+  watchdog; otherwise grows by ``COMPUTE_BATCH_UPSHIFT_STEP`` (up to
+  ``batch_cap``) after a full batch with no failures in that batch. The old
+  rule needed a full batch under 5 s and no failure in the whole pass, so
+  once halved the cap never grew back.
+
+  Args:
+    current (int): Current cap.
+    batch_cap (int): Upper bound.
+    batch_size (int): Jobs in the batch that just finished.
+    batch_failed (int): Failed jobs in that batch.
+    downshift (bool): The batch reached the watchdog.
+
+  Returns:
+    int: New cap.
+
+  Examples:
+    >>> _next_compute_batch_cap(
+    ...   32, 64, batch_size=32, batch_failed=0, downshift=True
+    ... )
+    16
+    >>> _next_compute_batch_cap(
+    ...   16, 64, batch_size=16, batch_failed=0, downshift=False
+    ... )
+    32
+  """
+  if downshift:
+    return max(
+      COMPUTE_BATCH_MIN_CAP,
+      min(
+        current,
+        int(
+          max(COMPUTE_BATCH_MIN_CAP, current) * COMPUTE_BATCH_DOWNSHIFT_FACTOR
+        ),
+      ),
+    )
+  if batch_size >= current and batch_failed == 0:
+    return min(batch_cap, current + COMPUTE_BATCH_UPSHIFT_STEP)
+  return current
+
+
 def _compute_batch_age_s(stats: Any) -> float:
   """
   Seconds since the current compute batch started, or ``0`` when idle.
@@ -7533,31 +7585,20 @@ def update_metrics_for_dates(
               ):
                 break
           compute_batches += 1
+          effective_batch_cap = _next_compute_batch_cap(
+            effective_batch_cap,
+            batch_cap,
+            batch_size=len(job_refs),
+            batch_failed=failed_count,
+            downshift=downshift,
+          )
           if downshift:
-            new_cap = max(
-              COMPUTE_BATCH_MIN_CAP,
-              int(
-                max(COMPUTE_BATCH_MIN_CAP, effective_batch_cap)
-                * COMPUTE_BATCH_DOWNSHIFT_FACTOR
-              ),
-            )
-            if new_cap < effective_batch_cap:
-              effective_batch_cap = new_cap
             log_print(
               f"metrics scheduler: compute watchdog metrics_phase_elapsed_s={metrics_phase_s:.1f} "
               f"prewarm_phase_elapsed_s={prewarm_phase_s:.1f} batch_wall_s={batch_wall_s:.1f} "
               f"metrics_watchdog_s={metrics_watchdog_s:.1f} total_watchdog_s={total_watchdog_s:.1f} size={len(job_refs)} attempted_total={attempted_total} "
               f"new_compute_batch_cap={effective_batch_cap}",
               flush=True,
-            )
-          elif (
-            len(job_refs) >= effective_batch_cap
-            and fail_total == 0
-            and batch_elapsed < 5.0
-          ):
-            effective_batch_cap = min(
-              batch_cap,
-              effective_batch_cap + COMPUTE_BATCH_UPSHIFT_STEP,
             )
           if compute_batches == 1 or compute_batches % 25 == 0:
             log_print(
