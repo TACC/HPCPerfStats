@@ -1499,7 +1499,14 @@ class _DayRawRemovalState:
     ]
     if not retryable_paths:
       return 0
-    if not ensure_daily_tar_restored_for_append(
+    zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
+    # Sealed day with no open tar: classify against the .tar.zst member map
+    # (INV-COPY) instead of restoring the whole tar (02 2026-10-30: 09-04 and
+    # 09-06, 300-600 GB each, restored by day close just to reclassify).
+    sealed_only = os.path.isfile(zst_path) and not (
+      os.path.isfile(self.tar_path) and os.path.getsize(self.tar_path) > 0
+    )
+    if not sealed_only and not ensure_daily_tar_restored_for_append(
       self.tar_path,
       cfg.get_archive_zstd_threads(),
       space_gate="finish",
@@ -1510,14 +1517,17 @@ class _DayRawRemovalState:
           flush=True,
         )
       return 0
-    zst_path, _gz_path = compressed_sibling_paths(self.tar_path)
     gate_fn = (
       self.ingest_ready_fn if cfg.get_sync_archive_require_db_ingest() else None
     )
-    ok, members = validate_open_tar_for_raw_removal(
-      self.tar_path,
-      log_fn=self.log_fn,
-      validation_cache=self._validation_cache,
+    ok, members = (
+      (False, None)
+      if sealed_only
+      else validate_open_tar_for_raw_removal(
+        self.tar_path,
+        log_fn=self.log_fn,
+        validation_cache=self._validation_cache,
+      )
     )
     if ok and members is not None:
       classify_iter = classify_removable_raw_paths_for_open_tar(
@@ -1534,7 +1544,8 @@ class _DayRawRemovalState:
       seal_invalid_paths = [
         path
         for path in retryable_paths
-        if str(entries.get(path, {}).get("status") or "")
+        if sealed_only
+        or str(entries.get(path, {}).get("status") or "")
         == "skipped_seal_invalid"
       ]
       if not seal_invalid_paths or not zst_path or not os.path.isfile(zst_path):

@@ -2799,6 +2799,61 @@ def test_reclassify_runs_with_delete_failed_pending(tmp_path):
   assert state._manifest["entries"][str(seg_b)]["status"] == "verified"
 
 
+def _sealed_only_day_with_skips(tmp_path, monkeypatch, *, in_zst):
+  """A zst-only day (tar dropped) with retryable raw left in the manifest."""
+  day = datetime(2026, 9, 4)
+  seg_a, seg_b = _two_segments(tmp_path, day)
+  tar_path, zst = _seal_day(tmp_path, seg_a, day)
+  if in_zst:
+    _append_member(tar_path, seg_b)
+    atomic_seal_tar_to_zst(
+      tar_path,
+      zst,
+      num_threads=1,
+      compress_level=3,
+      keep_uncompressed_tar=True,
+      log_fn=None,
+    )
+  os.remove(tar_path)
+  restores = []
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_day_raw_removal."
+    "ensure_daily_tar_restored_for_append",
+    lambda *a, **_k: restores.append(a[0]) or False,
+  )
+  coord = _make_coordinator(tmp_path)
+  state = _verified_ready_state(coord, tar_path, zst, [])
+  state._record_entry(
+    str(seg_b), zst, "skipped_not_in_archive", "not_in_sealed_archive"
+  )
+  return state, tar_path, seg_b, restores
+
+
+def test_reclassify_sealed_only_day_uses_zst_without_restore(
+  tmp_path, monkeypatch
+):
+  """02 2026-10-30: day close restored 300-600 GB 09-04/09-06 to reclassify."""
+  state, tar_path, seg_b, restores = _sealed_only_day_with_skips(
+    tmp_path, monkeypatch, in_zst=True
+  )
+  assert state._reclassify_retryable_skips_on_disk() == 1
+  assert state._manifest["entries"][str(seg_b)]["status"] == "verified"
+  assert restores == []
+  assert not os.path.exists(tar_path)
+
+
+def test_reclassify_sealed_only_day_keeps_raw_missing_from_zst_skipped(
+  tmp_path, monkeypatch
+):
+  state, tar_path, seg_b, restores = _sealed_only_day_with_skips(
+    tmp_path, monkeypatch, in_zst=False
+  )
+  assert state._reclassify_retryable_skips_on_disk() == 0
+  assert state._manifest["entries"][str(seg_b)]["status"] != "verified"
+  assert restores == []
+  assert not os.path.exists(tar_path)
+
+
 def test_stable_fingerprint_changed_is_handed_off(tmp_path):
   """DE-13: a now-stable changed file is reclassified, not left terminal."""
   day = datetime(2026, 9, 2)
