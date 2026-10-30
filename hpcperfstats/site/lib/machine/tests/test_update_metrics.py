@@ -6363,7 +6363,7 @@ def test_batch_rebinds_stale_shared_pool_before_sliding_submit(monkeypatch):
 
 
 @pytest.mark.machine_unit_mock
-def test_sliding_stall_reset_rebinds_shared_pool_for_artifact_prewarm(
+def test_sliding_stall_reset_rebinds_pool_and_artifact_refs_ride_session(
   monkeypatch,
 ):
   """Sliding _on_stall_reset must rebind shared_pool before artifact-only prewarm."""
@@ -6414,8 +6414,11 @@ def test_sliding_stall_reset_rebinds_shared_pool_for_artifact_prewarm(
     def record_pool_result(self, ok):
       del ok
 
+  session_primaries = []
+
   def _fake_sliding(**kwargs):
     inflight_caps.append(kwargs["max_inflight"])
+    session_primaries.extend(r.jid for r in kwargs["primary_refs"])
     on_stall = kwargs.get("on_stall_reset")
     if callable(on_stall):
       on_stall()
@@ -6450,7 +6453,9 @@ def test_sliding_stall_reset_rebinds_shared_pool_for_artifact_prewarm(
     ready_queue_lock=None,
   )
   assert resets == ["reset"]
-  assert prewarm_pools == [fresh]
+  # C6: artifact-only refs are prewarmed inside the session, not after it.
+  assert session_primaries == ["m1", "a1"]
+  assert prewarm_pools == []
   assert inflight_caps == [7]
 
 
@@ -6553,6 +6558,12 @@ def test_sliding_outcome_requires_prewarm_for_finished_job(monkeypatch):
         "ok": True,
         "prewarm_ok": False,
         "base_outcome": ok_base,
+      },
+      {
+        "ref": SimpleNamespace(jid="a1", artifact_only=True),
+        "ok": True,
+        "prewarm_ok": False,
+        "base_outcome": {"ok": True, "status": "artifact_only"},
       },
     ],
   )

@@ -326,3 +326,58 @@ def test_sliding_stall_in_prewarm_keeps_committed_metrics_outcome():
   assert rows[0]["ok"] is True
   assert rows[0]["prewarm_ok"] is False
   assert rows[0]["base_outcome"]["ok"] is True
+
+
+@pytest.mark.machine_unit_mock
+def test_artifact_only_refs_skip_compute_even_as_supplements():
+  """C6: an artifact-only ref is prewarmed, never sent to compute_metrics."""
+  submitted = []
+  slow = _SlowAsync()
+
+  class _Pool:
+    def apply_async(self, fn, args):
+      if fn is _prewarm:
+        submitted.append(("prewarm", args[0]))
+        return _ReadyAsync({"jid": args[0], "ok": True})
+      jid = args[0][1].jid
+      submitted.append(("metrics", jid))
+      if jid == "prim":
+        return slow  # keeps the original in flight so slots take supplements
+      return _ReadyAsync({"jid": jid, "status": "ok", "rows": []})
+
+  def _prewarm(jid):
+    return {"jid": jid, "ok": True}
+
+  def _finish():
+    time.sleep(0.1)
+    slow.mark_ready({"jid": "prim", "status": "ok", "rows": []})
+
+  ready = deque([SimpleNamespace(jid="sup-art", artifact_only=True)])
+  t = threading.Thread(target=_finish)
+  t.start()
+  rows = mss.run_metrics_sliding_session(
+    primary_refs=[
+      SimpleNamespace(jid="prim", estimated_sample_count=5),
+      SimpleNamespace(jid="prim-art", artifact_only=True),
+    ],
+    metrics_obj=object(),
+    shared_pool=_Pool(),
+    unwrap_fn=lambda a: a,
+    persist_fn=lambda payload: {"jid": payload["jid"], "ok": True},
+    prewarm_worker_fn=_prewarm,
+    inline_prewarm_fn=None,
+    prewarm_mode="pipeline_required",
+    max_inflight=3,
+    poll_timeout_s=0.02,
+    stall_timeout_s=5.0,
+    ready_queue=ready,
+    ready_queue_lock=threading.Lock(),
+    empty_supplement_sleep_s=0.0,
+  )
+  t.join()
+  assert ("metrics", "prim") in submitted
+  assert ("prewarm", "sup-art") in submitted  # taken as a supplement
+  assert not {("metrics", "prim-art"), ("metrics", "sup-art")} & set(submitted)
+  by_jid = {r["ref"].jid: r for r in rows}
+  assert by_jid["sup-art"]["base_outcome"]["status"] == "artifact_only"
+  assert by_jid["prim-art"]["prewarm_ok"] is True

@@ -294,6 +294,10 @@ def run_metrics_sliding_session(
     """
     Queue one metrics ``apply_async`` and track it in ``pending``.
 
+    An ``artifact_only`` ref (metrics already complete, artifacts missing or
+    stale) skips compute and goes straight to prewarm, whether it is a
+    primary or an idle-slot supplement.
+
     Args:
       ref (Any): Candidate job ref with a ``jid`` attribute.
       is_original (bool): True when ``ref`` came from ``primary_refs``.
@@ -304,18 +308,27 @@ def run_metrics_sliding_session(
     Examples:
       >>> _submit_metrics(None, is_original=True)  # doctest: +SKIP
     """
-    async_result = shared_pool.apply_async(unwrap_fn, ((metrics_obj, ref),))
-    pending.append(
-      {
-        "async_result": async_result,
-        "ref": ref,
-        "phase": "metrics",
-        "is_original": bool(is_original),
-        "t0": time.monotonic(),
-        "metrics_s": 0.0,
-        "base_outcome": None,
+    item = {
+      "ref": ref,
+      "phase": "metrics",
+      "is_original": bool(is_original),
+      "t0": time.monotonic(),
+      "metrics_s": 0.0,
+      "base_outcome": None,
+    }
+    if getattr(ref, "artifact_only", False):
+      item["base_outcome"] = {
+        "jid": ref.jid,
+        "ok": True,
+        "status": "artifact_only",
+        "persist_s": 0.0,
       }
+      _submit_prewarm(item)
+      return
+    item["async_result"] = shared_pool.apply_async(
+      unwrap_fn, ((metrics_obj, ref),)
     )
+    pending.append(item)
 
   def _submit_prewarm(item: dict[str, Any]) -> None:
     """

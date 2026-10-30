@@ -6262,8 +6262,8 @@ def _compute_jid_outcomes_sliding(
         )
     shared_pool = _rebind_metrics_shared_pool(metrics_manager, shared_pool)
 
-  primary = list(metrics_job_refs)
-  artifact_as_metrics_done = list(artifact_only_refs)
+  # Artifact-only refs ride the same session; it prewarms them directly.
+  primary = list(metrics_job_refs) + list(artifact_only_refs)
 
   sliding_rows = run_metrics_sliding_session(
     primary_refs=primary,
@@ -6287,40 +6287,6 @@ def _compute_jid_outcomes_sliding(
     on_stall_reset=_on_stall_reset,
     on_supplements_taken=on_supplements_taken,
   )
-  # Run artifact-only prewarms on the same pool path (closed small batch).
-  if artifact_as_metrics_done and not shutdown_requested[0]:
-    if progress_callback is not None:
-      with contextlib.suppress(Exception):
-        progress_callback(
-          phase="prewarm",
-          completed=len(sliding_rows),
-          total=len(sliding_rows) + len(artifact_as_metrics_done),
-        )
-    artifact_prewarm_ok = _prewarm_successful_refs_on_metrics_pool(
-      artifact_as_metrics_done,
-      prewarm_pipeline,
-      shared_pool,
-      progress_callback=progress_callback,
-      metrics_manager=metrics_manager,
-    )
-    for ref in artifact_as_metrics_done:
-      sliding_rows.append(
-        {
-          "ref": ref,
-          "ok": True,
-          "prewarm_ok": bool((artifact_prewarm_ok or {}).get(str(ref.jid))),
-          "prewarm_recorded": True,
-          "base_outcome": {
-            "jid": ref.jid,
-            "ok": True,
-            "status": "artifact_only",
-            "persist_s": 0.0,
-          },
-          "metrics_s": 0.0,
-          "prewarm_s": 0.0,
-        }
-      )
-
   timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
   # Sliding interleaves metrics+prewarm; report full session as batch wall and
   # attribute the whole window to metrics_wall for phase diagnostics.
@@ -6332,12 +6298,7 @@ def _compute_jid_outcomes_sliding(
   for row in sliding_rows:
     ref = row["ref"]
     base = row.get("base_outcome") or {}
-    if (
-      prewarm_mode != "inline"
-      and base.get("ok")
-      and "prewarm_ok" in row
-      and not row.get("prewarm_recorded")
-    ):
+    if prewarm_mode != "inline" and base.get("ok") and "prewarm_ok" in row:
       with contextlib.suppress(Exception):
         prewarm_pipeline.record_pool_result(bool(row.get("prewarm_ok")))
     metrics_ok = bool(row.get("ok"))
