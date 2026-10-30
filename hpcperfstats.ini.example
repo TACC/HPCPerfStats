@@ -180,7 +180,7 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Watchdog on full batch wall; 0 uses metrics-only watchdog (default 0).
 # metrics_compute_total_watchdog_s = 0
 
-# Retry interval for deferred not-ready jids seconds (default 10).
+# First retry delay for a deferred not-ready jid in seconds; doubles per attempt up to the quarantine time (default 10).
 # metrics_deferred_not_ready_retry_s = 10
 
 # Max retries for deferred not-ready jids (default 30).

@@ -6864,3 +6864,20 @@ def test_consumer_stall_reason_clears_after_progress():
   assert producer["stall_reason"] == "no_ready_candidates"
   src = inspect.getsource(update_metrics.update_metrics_for_dates)
   assert "_clear_consumer_stall_reason(stats, batch_metrics_ok)" in src
+
+
+@pytest.mark.machine_unit_mock
+def test_deferred_recheck_backs_off_exponentially_to_quarantine(monkeypatch):
+  """T7: not-ready rechecks double their delay instead of every 10 s."""
+  for name, value in (
+    ("get_metrics_deferred_not_ready_retry_s", 10.0),
+    ("get_metrics_deferred_not_ready_quarantine_s", 300.0),
+    ("get_metrics_deferred_not_ready_max_retries", 30),
+    ("get_metrics_deferred_not_ready_max_age_s", 900.0),
+  ):
+    monkeypatch.setattr(update_metrics.cfg, name, lambda v=value: v)
+  delays = [update_metrics._deferred_retry_after_s(n, 0.0) for n in (1, 2, 3)]
+  assert delays == [(10.0, False), (20.0, False), (40.0, False)]
+  assert update_metrics._deferred_retry_after_s(9, 0.0) == (300.0, False)
+  assert update_metrics._deferred_retry_after_s(30, 0.0) == (300.0, True)
+  assert update_metrics._deferred_retry_after_s(2, 901.0) == (300.0, True)

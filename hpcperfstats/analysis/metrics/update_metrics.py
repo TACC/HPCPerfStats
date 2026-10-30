@@ -5309,6 +5309,35 @@ def _enqueue_ready_unique(
   return added
 
 
+def _deferred_retry_after_s(attempts: int, age_s: float) -> tuple[float, bool]:
+  """
+  Delay before a not-ready jid is probed again, and whether it is quarantined.
+
+  Each recheck runs a per-host min/max query; the delay doubles per attempt
+  from ``metrics_deferred_not_ready_retry_s`` up to
+  ``metrics_deferred_not_ready_quarantine_s``, which also applies outright
+  once ``..._max_retries`` attempts or ``..._max_age_s`` seconds are reached.
+
+  Args:
+    attempts (int): Not-ready verdicts so far (>= 1).
+    age_s (float): Seconds since the jid was first deferred.
+
+  Returns:
+    tuple[float, bool]: ``(retry_after_s, quarantined)``.
+
+  Examples:
+    >>> _deferred_retry_after_s(1, 0.0)  # doctest: +SKIP
+    (10.0, False)
+  """
+  quarantine_s = float(cfg.get_metrics_deferred_not_ready_quarantine_s())
+  if attempts >= int(cfg.get_metrics_deferred_not_ready_max_retries()) or (
+    age_s >= float(cfg.get_metrics_deferred_not_ready_max_age_s())
+  ):
+    return quarantine_s, True
+  base = float(cfg.get_metrics_deferred_not_ready_retry_s())
+  return min(quarantine_s, base * (2 ** max(0, attempts - 1))), False
+
+
 def _start_readiness_producer(
   *,
   date_states: Any,
@@ -5490,16 +5519,12 @@ def _start_readiness_producer(
       if runtime_s is not None:
         meta["runtime_s"] = float(runtime_s)
       age_s = max(0.0, now - float(meta["first_seen"]))
-      max_retries = int(cfg.get_metrics_deferred_not_ready_max_retries())
-      use_quarantine = meta["attempts"] >= max_retries or age_s >= float(
-        cfg.get_metrics_deferred_not_ready_max_age_s()
+      retry_after, quarantined = _deferred_retry_after_s(
+        meta["attempts"], age_s
       )
-      if use_quarantine:
-        retry_after = float(cfg.get_metrics_deferred_not_ready_quarantine_s())
+      if quarantined:
         with scheduler_shared_lock:
           stats["deferred_quarantined_jids"] += 1
-      else:
-        retry_after = float(cfg.get_metrics_deferred_not_ready_retry_s())
       candidate_retry_at = now + retry_after
       deferred_not_ready[jid] = _merge_deferred_retry_at(
         deferred_not_ready.get(jid),
