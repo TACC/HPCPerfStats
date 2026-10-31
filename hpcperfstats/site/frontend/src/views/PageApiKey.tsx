@@ -26,7 +26,6 @@ export default function PageApiKey() {
     rotate,
     rotating,
     rotateError,
-    refetch,
     clearRawKeyFromCache,
   } = useUserApiKey();
   const [copyStatus, setCopyStatus] = useState("");
@@ -80,8 +79,9 @@ export default function PageApiKey() {
     setActionError("");
     setCopyStatus("");
     try {
+      // Do not refetch here: GET returns raw_key=null once a key exists, which
+      // would hide the newly minted key. The hook latches it from the response.
       await rotate();
-      await refetch();
     } catch (e: unknown) {
       setActionError(e instanceof Error ? e.message : "Unable to rotate API key.");
     }
