@@ -105,6 +105,28 @@ def _unit_test_database_guards(request, monkeypatch):
   monkeypatch.setattr(update_metrics_module, "shutdown_requested", [False])
 
 
+def skipped_off_compose_network(item) -> bool:
+  """Return True when ``item`` carries a compose-network ``skip``/``skipif`` mark.
+
+  The root conftest adds ``skip`` marks; modules such as
+  ``test_metrics_telemetry_bounds.py`` declare their own module-level
+  ``skipif``. Both name the compose network in ``reason`` and both must be
+  stripped of default-database marks, or pytest-django creates the test
+  database for the skipped item and every later test in the session errors.
+
+  Args:
+    item: Collected pytest item.
+
+  Returns:
+    bool: True when a ``skip`` or ``skipif`` mark mentions the compose network.
+  """
+  return any(
+    "Compose network" in str(mark.kwargs.get("reason", ""))
+    for name in ("skip", "skipif")
+    for mark in item.iter_markers(name)
+  )
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config, items):
   """Dropped default-database marks on tests already skipped off the compose network.
@@ -120,12 +142,7 @@ def pytest_collection_modifyitems(config, items):
   ):
     return
   for item in items:
-    skipped_off_compose = any(
-      mark.name == "skip"
-      and "Compose network" in str(mark.kwargs.get("reason", ""))
-      for mark in item.iter_markers("skip")
-    )
-    if not skipped_off_compose:
+    if not skipped_off_compose_network(item):
       continue
     item.own_markers[:] = [
       mark for mark in item.own_markers if mark.name != "django_db"
