@@ -45,6 +45,20 @@ if ! bash -n "${BAKE_FLAGS}"; then
   echo "bash -n failed for bake_clang_flags.sh" >&2
   exit 1
 fi
+BIND_GUARD="${SCRIPT_DIR}/lib/compose_bind_volume_guard.sh"
+if ! bash -n "${BIND_GUARD}"; then
+  echo "bash -n failed for compose_bind_volume_guard.sh" >&2
+  exit 1
+fi
+if ! grep -q 'source "${SCRIPT_DIR}/lib/compose_bind_volume_guard.sh"' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must source compose_bind_volume_guard.sh" >&2
+  exit 1
+fi
+if ! grep -q 'compose_bind_volumes_preflight' "${FULL_SITE_SCRIPT}" \
+  || ! grep -q 'compose_bind_volumes_verify_mounted' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must run the bind volume guard before and after up" >&2
+  exit 1
+fi
 
 if ! grep -q 'podman_runtime.sh' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must source podman_runtime.sh" >&2

@@ -27,6 +27,8 @@ source "${SCRIPT_DIR}/lib/compose_pipeline_memory_high.sh"
 source "${SCRIPT_DIR}/lib/compose_frontend_helpers.sh"
 # shellcheck source=lib/pipeline_supervisor_shutdown.sh
 source "${SCRIPT_DIR}/lib/pipeline_supervisor_shutdown.sh"
+# shellcheck source=lib/compose_bind_volume_guard.sh
+source "${SCRIPT_DIR}/lib/compose_bind_volume_guard.sh"
 
 DRY_RUN=0
 BUILD_ONLY=0
@@ -47,6 +49,12 @@ The db_pg18 container (profile pg18-migrate) is built but NOT started:
 
 Down uses each service stop_grace_period from compose (do not pass down -t; a global
 timeout overrides longer db/rabbitmq/pg18 grace and risks SIGKILL mid-shutdown).
+
+Bind volume guard (scripts/lib/compose_bind_volume_guard.sh): between down and up,
+missing o=bind volumes are created with their device: options and existing ones
+without them abort the rebuild (stack left down). After up, each container's bind
+mounts are checked by device:inode against the host path; on mismatch the
+offending containers and the pipeline are stopped and the script fails.
 
 Images bake ThinLTO + CPython --enable-optimizations (upstream mini profile path).
 There is no custom Clang host-profile bake path and no legacy profile-phase flags.
@@ -136,10 +144,15 @@ preflight() {
 }
 
 run_stack_up_and_verify() {
+  local rc=0
   PHASE=up
-  compose_up_project_stack
+  compose_up_project_stack || return 1
   if [[ "${DRY_RUN}" -eq 0 ]]; then
-    verify_default_stack_running || return 1
+    verify_default_stack_running || rc=1
+    # Runs even when a service failed to start: a running db on the wrong mount must stop.
+    LAST_STEP="bind volume guard (post-up mount check)"
+    compose_bind_volumes_verify_mounted || rc=1
+    [[ "${rc}" -eq 0 ]] || return 1
   fi
   UP_COMPLETED=1
 }
@@ -197,10 +210,18 @@ compose_down_project() {
 }
 
 compose_up_project_stack() {
-  compose_down_project
+  compose_down_project || return 1
+  LAST_STEP="bind volume guard (pre-up volume options)"
+  echo "rebuild_full_site.sh: ${LAST_STEP} ..."
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    echo "[dry-run] (not executed) compose_bind_volumes_preflight"
+  elif ! compose_bind_volumes_preflight; then
+    echo "rebuild_full_site.sh: refusing to start; stack left down (see bind volume guard above)" >&2
+    return 1
+  fi
   LAST_STEP="podman-compose up -d --no-build (default stack; ${PG18_SERVICE} not started)"
   echo "rebuild_full_site.sh: ${LAST_STEP} ..."
-  run_cmd "${PODMAN_COMPOSE[@]}" up -d --no-build
+  run_cmd "${PODMAN_COMPOSE[@]}" up -d --no-build || return 1
 }
 
 # Legacy names kept for callers/tests; default-profile up never starts db_pg18.
