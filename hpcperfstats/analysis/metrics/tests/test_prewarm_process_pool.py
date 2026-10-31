@@ -3,16 +3,17 @@ Regression tests for the update_metrics prewarm process pool.
 
 The Bokeh prewarm does not scale across free-threaded threads (shared
 ``sys.modules`` / ``_abc`` cache locks, stop-the-world GC), so it runs in
-forkserver worker processes that receive the job's decoded table. These tests
-pin the contract without starting real workers: sizing, child result
-translation (database errors keep the parent's retry), stall rebuild, the
+dedicated forkserver worker processes that receive the job's decoded table.
+These tests pin the contract without starting real workers: sizing, child
+result translation (database errors keep the parent's retry), per-worker
+stall and death handling (no neighbour is touched), the free-list bound, the
 scheduler's offload site, and the connection-budget term.
 """
 
 from __future__ import annotations
 
-import concurrent.futures
 import re
+import threading
 from pathlib import Path
 
 import pytest
@@ -27,39 +28,34 @@ SCHEDULER_SRC = (
 )
 
 
-class _FakeFuture:
-  def __init__(self, result=None, exc=None):
-    self._result = result
-    self._exc = exc
+class _FakeSlot:
+  """Stands in for ``PrewarmWorker``: scripted results, records calls."""
 
-  def result(self, timeout=None):
-    if self._exc is not None:
-      raise self._exc
-    return self._result
+  def __init__(self, script):
+    self.script = list(script)
+    self.calls = []
+    self.stopped = 0
 
+  def run(self, jid, table, timeout_s, max_tasks):
+    self.calls.append((jid, table, timeout_s, max_tasks))
+    item = self.script.pop(0)
+    if isinstance(item, Exception):
+      raise item
+    return item
 
-class _FakeExecutor:
-  def __init__(self, future):
-    self.future = future
-    self.submitted = []
-    self.shutdown_calls = []
-    self._processes = {}
-
-  def submit(self, fn, *args):
-    self.submitted.append((fn, args))
-    return self.future
-
-  def shutdown(self, wait=True, cancel_futures=False):
-    self.shutdown_calls.append((wait, cancel_futures))
+  def stop(self):
+    self.stopped += 1
 
 
-def _pool_with(future, monkeypatch, stall=0.0):
-  pool = ppp.PrewarmProcessPool(
-    2, max_tasks_per_child=None, stall_timeout_s=stall, log_fn=lambda s: None
+def _pool(slots, stall=0.0, recycle=None):
+  it = iter(slots)
+  return ppp.PrewarmProcessPool(
+    len(slots),
+    max_tasks_per_child=recycle,
+    stall_timeout_s=stall,
+    log_fn=lambda s: None,
+    worker_factory=lambda: next(it),
   )
-  fake = _FakeExecutor(future)
-  monkeypatch.setattr(pool, "_ensure", lambda: fake)
-  return pool, fake
 
 
 def test_prewarm_processes_auto_tracks_metrics_pool(monkeypatch):
@@ -86,6 +82,8 @@ def test_get_pool_is_singleton_sized_from_config(monkeypatch):
   monkeypatch.setattr(cfg, "get_metrics_prewarm_max_tasks_per_child", lambda: 0)
   monkeypatch.setattr(cfg, "get_metrics_run_stall_timeout_s", lambda: 123.0)
   monkeypatch.setattr(ppp, "_POOL", None)
+  # Slots are created eagerly (processes only on first use); keep them fake.
+  monkeypatch.setattr(ppp, "PrewarmWorker", lambda ctx: _FakeSlot([]))
   pool = ppp.get_prewarm_process_pool()
   assert pool is ppp.get_prewarm_process_pool()
   assert (pool.processes, pool.max_tasks_per_child, pool.stall_timeout_s) == (
@@ -95,59 +93,149 @@ def test_get_pool_is_singleton_sized_from_config(monkeypatch):
   )
   ppp.shutdown_prewarm_process_pool()
   assert ppp._POOL is None
+  assert all(slot.stopped == 1 for slot in pool._slots)
 
 
-def test_run_ships_table_and_returns_child_timings(monkeypatch):
-  pool, fake = _pool_with(
-    _FakeFuture({"ok": True, "detail_s": 1.5, "plots_s": 2.5}), monkeypatch
-  )
+def test_run_ships_table_and_returns_child_timings():
+  slot = _FakeSlot([{"ok": True, "detail_s": 1.5, "plots_s": 2.5}])
+  pool = _pool([slot], stall=900.0, recycle=100)
   sentinel = object()
   out = pool.run("42", sentinel)
   assert out["detail_s"] == 1.5 and out["plots_s"] == 2.5
-  assert fake.submitted == [(ppp.run_prewarm_in_child, ("42", sentinel))]
+  assert slot.calls == [("42", sentinel, 900.0, 100)]
+  assert pool._free.qsize() == 1  # slot returned to the free list
 
 
-def test_child_db_error_is_raised_as_database_error_for_retry(monkeypatch):
-  pool, _ = _pool_with(
-    _FakeFuture(
-      {"ok": False, "db_error": True, "error": "OperationalError: x"}
-    ),
-    monkeypatch,
+def test_child_db_error_is_raised_as_database_error_for_retry():
+  pool = _pool(
+    [
+      _FakeSlot(
+        [{"ok": False, "db_error": True, "error": "OperationalError: x"}]
+      )
+    ]
   )
   with pytest.raises(DatabaseError, match="OperationalError"):
     pool.run("1", None)
 
 
-def test_child_failure_is_prewarm_child_error(monkeypatch):
-  pool, _ = _pool_with(
-    _FakeFuture({"ok": False, "db_error": False, "error": "ValueError: bad"}),
-    monkeypatch,
+def test_child_failure_is_prewarm_child_error():
+  pool = _pool(
+    [_FakeSlot([{"ok": False, "db_error": False, "error": "ValueError: bad"}])]
   )
   with pytest.raises(ppp.PrewarmChildError, match="ValueError"):
     pool.run("1", None)
 
 
-def test_stall_rebuilds_pool_and_fails_job(monkeypatch):
-  pool, fake = _pool_with(
-    _FakeFuture(exc=concurrent.futures.TimeoutError()), monkeypatch, stall=7.0
-  )
-  pool._executor = fake  # the live executor the rebuild must drop
+def test_stall_replaces_only_the_stalled_worker():
+  stalled = _FakeSlot([ppp.PrewarmChildError("prewarm worker exceeded 7s")])
+  healthy = _FakeSlot([{"ok": True, "detail_s": 1.0, "plots_s": 1.0}])
+  pool = _pool([stalled, healthy], stall=7.0)
+  # Deterministic checkout order: the stalled slot is first in the free list.
   with pytest.raises(ppp.PrewarmChildError, match="exceeded 7s"):
     pool.run("9", None)
-  assert pool._executor is None
-  assert pool.generation == 1
-  assert fake.shutdown_calls == [(False, True)]
+  assert pool.rebuilds == 1
+  assert healthy.calls == []  # neighbour untouched
+  assert pool._free.qsize() == 2  # both slots available again
+  out = pool.run("10", None)
+  assert out["ok"] is True
+  assert healthy.calls or stalled.calls  # a slot served the next job
 
 
-def test_broken_pool_rebuilds(monkeypatch):
-  pool, fake = _pool_with(
-    _FakeFuture(exc=concurrent.futures.process.BrokenProcessPool("dead")),
-    monkeypatch,
-  )
-  pool._executor = fake
-  with pytest.raises(ppp.PrewarmChildError, match="broken"):
-    pool.run("9", None)
-  assert pool.generation == 1
+def test_free_list_bounds_concurrency():
+  release = threading.Event()
+
+  class _Blocking(_FakeSlot):
+    def run(self, jid, table, timeout_s, max_tasks):
+      release.wait(timeout=10)
+      return {"ok": True, "detail_s": 0.0, "plots_s": 0.0}
+
+  pool = _pool([_Blocking([])])
+  first = threading.Thread(target=lambda: pool.run("a", None))
+  first.start()
+  waited = threading.Event()
+
+  def second():
+    waited.set()
+    pool.run("b", None)
+
+  t2 = threading.Thread(target=second)
+  t2.start()
+  waited.wait(timeout=5)
+  assert pool._free.qsize() == 0  # second caller is blocked on the free list
+  release.set()
+  first.join(timeout=10)
+  t2.join(timeout=10)
+  assert pool._free.qsize() == 1
+
+
+def test_worker_slot_kill_and_recycle_logic(monkeypatch):
+  """``PrewarmWorker.run`` restarts dead processes and recycles at max_tasks."""
+
+  class _Proc:
+    def __init__(self):
+      self.alive = True
+      self.killed = 0
+
+    def is_alive(self):
+      return self.alive
+
+    def kill(self):
+      self.killed += 1
+      self.alive = False
+
+    def join(self, timeout=None):
+      pass
+
+    def start(self):
+      pass
+
+  class _Conn:
+    def __init__(self, replies):
+      self.sent = []
+      self.replies = list(replies)
+      self.closed = False
+
+    def send(self, msg):
+      self.sent.append(msg)
+
+    def poll(self, timeout=None):
+      return bool(self.replies)
+
+    def recv(self):
+      return self.replies.pop(0)
+
+    def close(self):
+      self.closed = True
+
+  class _Ctx:
+    def __init__(self):
+      self.procs = []
+      self.conns = []
+
+    def Pipe(self, duplex=True):
+      conn = _Conn([{"ok": True, "detail_s": 0.1, "plots_s": 0.2}])
+      self.conns.append(conn)
+      return conn, _Conn([])
+
+    def Process(self, target, args, daemon):
+      proc = _Proc()
+      self.procs.append(proc)
+      return proc
+
+  ctx = _Ctx()
+  slot = ppp.PrewarmWorker(ctx)
+  assert slot.run("1", None, 900.0, 1)["ok"] is True
+  assert slot.generation == 1 and slot.tasks == 1
+  # max_tasks=1 reached: the next run stops the old process and starts a new one.
+  assert slot.run("2", None, 900.0, 1)["ok"] is True
+  assert slot.generation == 2 and ctx.procs[0].killed == 1
+  # A stall kills the current process and raises; the slot restarts next time.
+  ctx.conns[-1].replies.clear()
+  with pytest.raises(ppp.PrewarmChildError, match="exceeded"):
+    slot.run("3", None, 0.01, None)
+  assert ctx.procs[1].killed == 1 and slot._proc is None
+  assert slot.run("4", None, 900.0, None)["ok"] is True
+  assert slot.generation == 3
 
 
 def test_scheduler_offloads_in_persist_detail_plot_elapsed():
@@ -158,7 +246,6 @@ def test_scheduler_offloads_in_persist_detail_plot_elapsed():
   assert "get_prewarm_process_pool(" in body
   assert "HANDOFF.pop(jid)" in body
   assert re.search(r"pool\.run\(jid, table\)", body)
-  # Shutdown path kills workers before the DB connections are closed.
   shutdown = src.split("def _shutdown_db_best_effort", 1)[1].split("\ndef ", 1)[
     0
   ]

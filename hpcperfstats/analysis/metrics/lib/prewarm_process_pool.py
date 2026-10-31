@@ -11,20 +11,28 @@ speed. Measured on hpcperfstats-dev (108 jobs): 16 threads 7.3 jobs/min,
 
 Metrics compute stays on the metrics thread pool. The thread that finished a
 job's metrics pops its ``ColumnarJobTable`` from the handoff and ships it
-(pickled NumPy arrays, one memcpy) to the child, which parks it in its own
+(pickled NumPy arrays, one memcpy) to a worker, which parks it in its own
 handoff so ``persist_job_detail_artifacts_for_jid`` reuses the decoded frame
 exactly as the in-thread path did. Artifact-only refs have no handoff entry
-and fall back to ``open_job_table`` in the child, as they do in-thread.
+and fall back to ``open_job_table`` in the worker, as they do in-thread.
+
+The pool is a free-list of dedicated worker processes (one forkserver
+``Process`` plus a ``Pipe`` each), not a shared task queue: a metrics thread
+checks a worker out, runs one job on it, and checks it back in. A worker that
+exceeds ``metrics_run_stall_timeout_s`` or dies is killed and replaced **on
+its own**; no other in-flight prewarm is affected. (A
+``ProcessPoolExecutor`` cannot do this: it does not expose which worker runs
+which future, and any worker death marks the whole executor broken.)
 
 Sizing: ``[PIPELINE] metrics_prewarm_processes`` (``auto`` = one per metrics
-thread; ``0`` keeps prewarm in-thread). Each child holds one PostgreSQL
-connection. A child that exceeds ``metrics_run_stall_timeout_s`` fails that
-job and the pool is rebuilt (hung workers are killed; other in-flight
-prewarms in that pool fail into failure-memory backoff).
+thread; ``0`` keeps prewarm in-thread). Each worker holds one PostgreSQL
+connection and is recycled after ``metrics_prewarm_max_tasks_per_child``
+jobs for RSS hygiene.
 
 Attributes:
-  PREWARM_POOL_KIND: Pool label used in child process titles.
-  UPDATE_METRICS_SCRIPT: Script name used in child process titles.
+  PREWARM_POOL_KIND: Pool label used in worker process titles.
+  UPDATE_METRICS_SCRIPT: Script name used in worker process titles.
+  _KILL_JOIN_S: Seconds to wait for a killed worker to exit.
   _POOL: Process-wide pool singleton (lazily created).
   _POOL_LOCK: Guards ``_POOL``.
 """
@@ -33,15 +41,10 @@ from __future__ import annotations
 
 import contextlib
 import multiprocessing
+import queue
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import (
-  CancelledError,
-  ProcessPoolExecutor,
-  TimeoutError as FutureTimeoutError,
-)
-from concurrent.futures.process import BrokenProcessPool
 from typing import Any
 
 from django.db import DatabaseError
@@ -53,6 +56,7 @@ from hpcperfstats.dbload.lib.process_title import (
 
 PREWARM_POOL_KIND = "prewarm-pool"
 UPDATE_METRICS_SCRIPT = "update_metrics.py"
+_KILL_JOIN_S = 5.0
 
 _POOL: PrewarmProcessPool | None = None
 _POOL_LOCK = threading.Lock()
@@ -93,7 +97,7 @@ def _child_initializer(script_name: str, pool_kind: str) -> None:
 
 def run_prewarm_in_child(jid: str, table: Any) -> dict[str, Any]:
   """
-  Child task: persist job-detail then job-plot artifacts for one jid.
+  Worker task: persist job-detail then job-plot artifacts for one jid.
 
   Args:
     jid (str): Job id.
@@ -134,7 +138,7 @@ def run_prewarm_in_child(jid: str, table: Any) -> dict[str, Any]:
       "db_error": True,
       "error": f"{type(exc).__name__}: {exc}",
     }
-  except Exception as exc:
+  except Exception as exc:  # reported to the parent as a job failure
     return {
       "ok": False,
       "db_error": False,
@@ -144,18 +148,186 @@ def run_prewarm_in_child(jid: str, table: Any) -> dict[str, Any]:
     HANDOFF.discard(jid)
 
 
-class PrewarmProcessPool:
+def _worker_main(conn: Any, script_name: str, pool_kind: str) -> None:
   """
-  Forkserver process pool that runs ``run_prewarm_in_child`` with a stall cap.
+  Worker process loop: initialise, then serve ``(jid, table)`` requests.
+
+  A ``None`` message or a closed pipe ends the loop.
+
+  Args:
+    conn (Any): Child end of the ``multiprocessing.Pipe``.
+    script_name (str): Daemon script basename for the process title.
+    pool_kind (str): Pool label for the process title.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _worker_main(
+    ...   conn, "update_metrics.py", "prewarm-pool"
+    ... )  # doctest: +SKIP
+  """
+  _child_initializer(script_name, pool_kind)
+  while True:
+    try:
+      message = conn.recv()
+    except EOFError, OSError:
+      return
+    if message is None:
+      return
+    jid, table = message
+    conn.send(run_prewarm_in_child(str(jid), table))
+    del table
+
+
+class PrewarmWorker:
+  """
+  One dedicated prewarm worker process behind a pipe.
 
   Attributes:
-    processes: Worker count.
-    max_tasks_per_child: Tasks before a worker is recycled (None = never).
-    stall_timeout_s: Seconds a job may take in a child before the pool is
-      rebuilt (0 = wait forever).
-    generation: Incremented on every rebuild (telemetry).
-    _executor: Live executor or None.
-    _lock: Guards executor replacement.
+    tasks: Jobs run on the current process.
+    generation: Processes started so far for this slot (telemetry).
+    _ctx: Multiprocessing context (forkserver).
+    _proc: Live process or None.
+    _conn: Parent end of the pipe or None.
+  """
+
+  def __init__(self, ctx: Any) -> None:
+    """
+    Create the slot; the process starts on first use.
+
+    Args:
+      ctx (Any): Multiprocessing context used for ``Process`` and ``Pipe``.
+
+    Returns:
+      None
+
+    Examples:
+      >>> PrewarmWorker(
+      ...   multiprocessing.get_context("forkserver")
+      ... )  # doctest: +SKIP
+    """
+    self._ctx = ctx
+    self._proc: Any = None
+    self._conn: Any = None
+    self.tasks = 0
+    self.generation = 0
+
+  def _start(self) -> None:
+    """
+    Start a fresh worker process for this slot.
+
+    Returns:
+      None
+
+    Examples:
+      >>> PrewarmWorker(ctx)._start()  # doctest: +SKIP
+    """
+    parent_conn, child_conn = self._ctx.Pipe(duplex=True)
+    proc = self._ctx.Process(
+      target=_worker_main,
+      args=(child_conn, UPDATE_METRICS_SCRIPT, PREWARM_POOL_KIND),
+      daemon=True,
+    )
+    proc.start()
+    child_conn.close()
+    self._proc, self._conn = proc, parent_conn
+    self.tasks = 0
+    self.generation += 1
+
+  def kill(self) -> None:
+    """
+    Kill this slot's process (if any) and drop the pipe.
+
+    Returns:
+      None
+
+    Examples:
+      >>> PrewarmWorker(ctx).kill()  # doctest: +SKIP
+    """
+    proc, conn = self._proc, self._conn
+    self._proc = self._conn = None
+    if conn is not None:
+      with contextlib.suppress(Exception):
+        conn.close()
+    if proc is not None:
+      with contextlib.suppress(Exception):
+        proc.kill()
+      with contextlib.suppress(Exception):
+        proc.join(_KILL_JOIN_S)
+
+  def stop(self) -> None:
+    """
+    Ask the process to exit after its current job, then kill it.
+
+    Returns:
+      None
+
+    Examples:
+      >>> PrewarmWorker(ctx).stop()  # doctest: +SKIP
+    """
+    if self._conn is not None:
+      with contextlib.suppress(Exception):
+        self._conn.send(None)
+    self.kill()
+
+  def run(
+    self, jid: str, table: Any, timeout_s: float, max_tasks: int | None
+  ) -> dict[str, Any]:
+    """
+    Run one job on this slot's process and return the child result dict.
+
+    Args:
+      jid (str): Job id.
+      table (Any): Handoff table to ship, or None.
+      timeout_s (float): Seconds to wait for the result; 0 waits forever.
+      max_tasks (int | None): Recycle the process after this many jobs.
+
+    Returns:
+      dict[str, Any]: The child's result dict (see ``run_prewarm_in_child``).
+
+    Raises:
+      PrewarmChildError: The process stalled past ``timeout_s`` or died; the
+        process has been killed and the slot will start a fresh one.
+
+    Examples:
+      >>> PrewarmWorker(ctx).run("1", None, 900.0, 100)  # doctest: +SKIP
+    """
+    if self._proc is not None and max_tasks and self.tasks >= max_tasks:
+      self.stop()
+    if self._proc is None or not self._proc.is_alive():
+      self.kill()
+      self._start()
+    try:
+      self._conn.send((jid, table))
+      del table
+      # The child always answers with a dict, so None marks a timeout.
+      result = self._conn.recv() if self._conn.poll(timeout_s or None) else None
+    except (EOFError, OSError) as exc:  # BrokenPipeError is an OSError
+      self.kill()
+      raise PrewarmChildError(f"prewarm worker died jid={jid}: {exc}") from exc
+    if result is None:
+      self.kill()
+      raise PrewarmChildError(
+        f"prewarm worker exceeded {timeout_s:.0f}s jid={jid}; killed"
+      )
+    self.tasks += 1
+    return result
+
+
+class PrewarmProcessPool:
+  """
+  Bounded free-list of ``PrewarmWorker`` slots with per-worker stall handling.
+
+  Attributes:
+    processes: Worker count (free-list size).
+    max_tasks_per_child: Jobs before a worker process is recycled (None =
+      never).
+    stall_timeout_s: Seconds a job may take in a worker before that worker is
+      killed (0 = wait forever).
+    rebuilds: Workers killed for stall or death so far (telemetry).
+    _free: Idle slots; a thread blocks here when every worker is busy.
+    _slots: Every slot, for shutdown.
     _log: Line logger.
   """
 
@@ -166,15 +338,18 @@ class PrewarmProcessPool:
     max_tasks_per_child: int | None,
     stall_timeout_s: float,
     log_fn: Callable[[str], Any] = print,
+    worker_factory: Callable[[], Any] | None = None,
   ) -> None:
     """
-    Create the pool wrapper; workers start on first use.
+    Create the slots; worker processes start on first use.
 
     Args:
       processes (int): Worker count (at least 1).
       max_tasks_per_child (int | None): Recycle cadence; None disables.
       stall_timeout_s (float): Per-job cap; 0 waits forever.
       log_fn (Callable[[str], Any]): Line logger.
+      worker_factory (Callable[[], Any] | None): Slot constructor (tests
+        inject fakes); default builds forkserver ``PrewarmWorker`` slots.
 
     Returns:
       None
@@ -186,67 +361,40 @@ class PrewarmProcessPool:
     self.processes = max(1, int(processes))
     self.max_tasks_per_child = max_tasks_per_child
     self.stall_timeout_s = float(stall_timeout_s)
-    self.generation = 0
-    self._executor: ProcessPoolExecutor | None = None
-    self._lock = threading.Lock()
+    self.rebuilds = 0
     self._log = log_fn
+    if worker_factory is None:
+      ctx = multiprocessing.get_context("forkserver")
 
-  def _ensure(self) -> ProcessPoolExecutor:
-    """
-    Return the live executor, creating it when absent.
+      def worker_factory() -> PrewarmWorker:
+        """
+        Build one forkserver worker slot.
 
-    Returns:
-      ProcessPoolExecutor: Executor with forkserver workers.
+        Returns:
+          PrewarmWorker: Idle slot.
 
-    Examples:
-      >>> PrewarmProcessPool(
-      ...   1, max_tasks_per_child=None, stall_timeout_s=0.0
-      ... )._ensure()  # doctest: +SKIP
-    """
-    with self._lock:
-      if self._executor is None:
-        self._executor = ProcessPoolExecutor(
-          max_workers=self.processes,
-          mp_context=multiprocessing.get_context("forkserver"),
-          initializer=_child_initializer,
-          initargs=(UPDATE_METRICS_SCRIPT, PREWARM_POOL_KIND),
-          max_tasks_per_child=self.max_tasks_per_child,
-        )
-        self._log(
-          f"prewarm process pool: started processes={self.processes} "
-          f"max_tasks_per_child={self.max_tasks_per_child} "
-          f"stall_timeout_s={self.stall_timeout_s:.0f} generation={self.generation}"
-        )
-      return self._executor
+        Examples:
+          >>> worker_factory()  # doctest: +SKIP
+        """
+        return PrewarmWorker(ctx)
 
-  def _rebuild(self, reason: str, jid: str) -> None:
-    """
-    Kill the current workers and drop the executor; the next run recreates it.
-
-    Args:
-      reason (str): ``stall`` or ``broken`` (log token).
-      jid (str): Job that triggered the rebuild.
-
-    Returns:
-      None
-
-    Examples:
-      >>> PrewarmProcessPool(
-      ...   1, max_tasks_per_child=None, stall_timeout_s=0.0
-      ... )._rebuild("stall", "1")  # doctest: +SKIP
-    """
-    with self._lock:
-      executor, self._executor = self._executor, None
-      self.generation += 1
+    self._slots = [worker_factory() for _ in range(self.processes)]
+    self._free: queue.Queue[Any] = queue.Queue()
+    for slot in self._slots:
+      self._free.put(slot)
     self._log(
-      f"prewarm process pool: rebuild reason={reason} jid={jid} "
-      f"generation={self.generation}"
+      f"prewarm process pool: ready processes={self.processes} "
+      f"max_tasks_per_child={self.max_tasks_per_child} "
+      f"stall_timeout_s={self.stall_timeout_s:.0f}"
     )
-    _shutdown_executor(executor)
 
   def run(self, jid: Any, table: Any) -> dict[str, Any]:
     """
-    Run one job's prewarm in a worker and return its timings.
+    Run one job's prewarm on a free worker and return its timings.
+
+    Blocks while every worker is busy. A stall or worker death kills only
+    that worker; the slot is returned to the free list and starts a new
+    process on its next job.
 
     Args:
       jid (Any): Job id.
@@ -265,18 +413,22 @@ class PrewarmProcessPool:
       ... ).run("1", None)  # doctest: +SKIP
     """
     jid = str(jid)
-    future = self._ensure().submit(run_prewarm_in_child, jid, table)
-    del table  # the child owns the frame now; do not hold it in two places
+    slot = self._free.get()
     try:
-      result = future.result(timeout=self.stall_timeout_s or None)
-    except FutureTimeoutError:
-      self._rebuild("stall", jid)
-      raise PrewarmChildError(
-        f"prewarm child exceeded {self.stall_timeout_s:.0f}s jid={jid}"
-      ) from None
-    except (BrokenProcessPool, CancelledError) as exc:
-      self._rebuild("broken", jid)
-      raise PrewarmChildError(f"prewarm pool broken jid={jid}: {exc}") from exc
+      try:
+        result = slot.run(
+          jid, table, self.stall_timeout_s, self.max_tasks_per_child
+        )
+      except PrewarmChildError as exc:
+        self.rebuilds += 1
+        self._log(
+          f"prewarm process pool: worker replaced reason={exc} "
+          f"rebuilds={self.rebuilds}"
+        )
+        raise PrewarmChildError(str(exc)) from exc
+    finally:
+      del table
+      self._free.put(slot)
     if result.get("ok"):
       return result
     if result.get("db_error"):
@@ -285,40 +437,22 @@ class PrewarmProcessPool:
 
   def close(self) -> None:
     """
-    Stop the workers without waiting for in-flight jobs (shutdown path).
+    Stop every worker without waiting for in-flight jobs (shutdown path).
 
     Returns:
       None
 
     Examples:
       >>> PrewarmProcessPool(
-      ...   1, max_tasks_per_child=None, stall_timeout_s=0.0
-      ... ).close()
+      ...   1,
+      ...   max_tasks_per_child=None,
+      ...   stall_timeout_s=0.0,
+      ...   worker_factory=object,
+      ... ).close()  # doctest: +SKIP
     """
-    with self._lock:
-      executor, self._executor = self._executor, None
-    _shutdown_executor(executor)
-
-
-def _shutdown_executor(executor: ProcessPoolExecutor | None) -> None:
-  """
-  Kill an executor's workers and release it; tolerates None.
-
-  Args:
-    executor (ProcessPoolExecutor | None): Executor to tear down.
-
-  Returns:
-    None
-
-  Examples:
-    >>> _shutdown_executor(None)
-  """
-  if executor is None:
-    return
-  for proc in list((getattr(executor, "_processes", None) or {}).values()):
-    with contextlib.suppress(Exception):  # already-dead workers
-      proc.kill()
-  executor.shutdown(wait=False, cancel_futures=True)
+    for slot in self._slots:
+      with contextlib.suppress(Exception):
+        slot.stop()
 
 
 def get_prewarm_process_pool(
@@ -355,7 +489,7 @@ def get_prewarm_process_pool(
 
 def shutdown_prewarm_process_pool() -> None:
   """
-  Kill prewarm workers at daemon exit; no-op when the pool never started.
+  Stop prewarm workers at daemon exit; no-op when the pool never started.
 
   Returns:
     None
