@@ -126,7 +126,7 @@ stateDiagram-v2
 
 | State | Entered | Left |
 |---|---|---|
-| `boot` | supervisord `sleep 90; exec python3.14t update_metrics.py` | after imports |
+| `boot` | supervisord `sleep 90; exec python3.14t update_metrics.py` | after imports and the Codon gate: `codon_metrics status=enabled …` logged; on `/opt/python3.14t` a missing `/opt/hpcperfstats/codon_metrics/hpcperfstats_codon_metrics.so` logs `codon_metrics status=disabled reason=… required=1` and exits (`SystemExit`, supervisord restarts; rebuild the image) |
 | `one_jid` | `--jid <JID>` | exit 0 when metrics **and** artifacts succeed, else 1 |
 | `single_pass` | explicit dates or `sleep_after` off | blocking `/pub/` phase, one pass, `/pub/` refresh, then 600 s sleep (explicit dates) and exit 0 |
 | `continuous` | supervised default | `_run_continuous_scheduler`: pass → close DB connections → idle `metrics_scheduler_pass_interval_s` → next pass; ends on shutdown |
@@ -168,6 +168,19 @@ metrics outcome) and resets the pool.
 Barrier path only: `effective_batch_cap` halves when a batch reaches
 `metrics_compute_watchdog_s` and grows by 16 after a full batch with no
 failure (`_next_compute_batch_cap`).
+
+**Per-job compute (columnar, pandas-free):** `compute_metrics` opens the
+job once (`open_job_table`: `jid_table` metadata + one psycopg `COPY …
+(FORMAT BINARY)` per host×time chunk, decoded by the Codon K0 kernel into a
+sorted `JobFrame`), computes every metric from `FrameIndex` reductions
+(Codon `group_reduce` / `grid_mean` / `join_sorted`, NumPy reference on
+hosts without the pyext) and leaves the table in `HANDOFF` for the detail
+and plot prewarm of the same job on the same pool thread (review finding
+T4 closed: one fetch per job). Kernels are single-threaded and write into
+caller buffers; parallelism is jobs across pool threads. With the kernel
+loaded, a kernel failure raises `CodonKernelError`, the job fails into the
+failure memory below and nothing falls back to NumPy. Contract:
+`update-metrics-columnar-codon-contract.mdc`.
 
 ### §4.4 Outcome statuses
 
@@ -234,6 +247,7 @@ same inputs stores the real fingerprint (terminal unavailable).
 - `metrics scheduler: candidate rescan failed day= errors_total=` (≤ once per 300 s).
 - `Finished metrics scheduler ... processed= failed= metrics_ok_total= prewarm_failed_total= ... deferred_meta_size= ...`.
 - `plot prewarm failed jid= kind=`, `type_detail artifact prewarm failed jid= type=` (Django logger, warning level).
+- `codon_metrics status=enabled module=hpcperfstats_codon_metrics gil=off dir=/opt/hpcperfstats/codon_metrics required=1` at boot (or `status=disabled reason=… required=0|1`; `required=1` exits).
 
 Exit codes: 0 normal / shutdown, 1 stall exit or `--jid` failure, 2 database
 unavailable, 143 SIGTERM.

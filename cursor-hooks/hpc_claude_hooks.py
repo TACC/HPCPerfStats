@@ -61,6 +61,9 @@ def ledger_path(payload: dict) -> Path:
   return LEDGER_DIR / f"{safe}.json"
 
 
+# Keep the parenthesised ``except``: the .claude copy of this file runs on the
+# host's PATH python3, which may predate PEP 758.
+# fmt: off
 def read_ledger(payload: dict) -> dict:
   try:
     data = json.loads(ledger_path(payload).read_text(encoding="utf-8"))
@@ -70,6 +73,7 @@ def read_ledger(payload: dict) -> dict:
     "reads": list(data.get("reads") or []),
     "edits": list(data.get("edits") or []),
   }
+# fmt: on
 
 
 def write_ledger(payload: dict, ledger: dict) -> None:

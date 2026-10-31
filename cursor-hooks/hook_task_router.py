@@ -181,6 +181,28 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     ],
   },
   {
+    "id": "update_metrics_columnar_codon",
+    "patterns": [
+      "hpcperfstats/analysis/metrics/lib/columnar/**",
+      "hpcperfstats/analysis/metrics/codon/**",
+      "hpcperfstats/analysis/metrics/lib/metrics.py",
+      "hpcperfstats/analysis/metrics/lib/gen/jid_table.py",
+      "hpcperfstats/analysis/metrics/lib/plot/**",
+      "hpcperfstats/analysis/metrics/tests/test_columnar_*.py",
+      "hpcperfstats/analysis/metrics/tests/test_codon_kernels.py",
+      "hpcperfstats/analysis/metrics/tests/test_bokeh_from_arrays.py",
+      "hpcperfstats/site/lib/machine/job_detail_artifacts.py",
+      "hpcperfstats/site/lib/machine/job_plot_artifacts.py",
+      "scripts/metrics_golden_corpus.py",
+      "scripts/metrics_codon_scaling_report.py",
+      "scripts/metrics_columnar_ab_report.py",
+    ],
+    "rules": [
+      "update-metrics-columnar-codon-contract.mdc",
+      "python-image-interpreter-contract.mdc",
+    ],
+  },
+  {
     "id": "metrics_batch",
     "patterns": [
       "hpcperfstats/analysis/metrics/*",

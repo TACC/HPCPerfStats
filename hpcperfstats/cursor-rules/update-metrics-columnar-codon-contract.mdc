@@ -1,0 +1,54 @@
+---
+description: update_metrics columnar path — one JobFrame per job, pandas-free, Codon kernels baked and required on 3.14t, hard-fail semantics, golden parity tolerances
+alwaysApply: false
+globs:
+  - hpcperfstats/analysis/metrics/lib/columnar/**
+  - hpcperfstats/analysis/metrics/codon/**
+  - hpcperfstats/analysis/metrics/lib/metrics.py
+  - hpcperfstats/analysis/metrics/lib/gen/jid_table.py
+  - hpcperfstats/analysis/metrics/lib/plot/**
+  - hpcperfstats/analysis/metrics/tests/test_columnar_*.py
+  - hpcperfstats/analysis/metrics/tests/test_codon_kernels.py
+  - hpcperfstats/analysis/metrics/tests/test_bokeh_from_arrays.py
+  - hpcperfstats/site/lib/machine/job_detail_artifacts.py
+  - hpcperfstats/site/lib/machine/job_plot_artifacts.py
+  - scripts/metrics_golden_corpus.py
+  - scripts/metrics_codon_scaling_report.py
+  - scripts/metrics_columnar_ab_report.py
+---
+
+# update_metrics columnar Codon contract
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+Plan: `update-metrics-codon-columnar` (2026-10-30). Review finding T4 is closed by this path.
+
+## Shape (what runs where)
+
+| Layer | Owner | Notes |
+|---|---|---|
+| COPY I/O | CPython `columnar/copy_fetch.py` | one psycopg `COPY … (FORMAT BINARY)` per host×time chunk, `_run_with_host_time_timeout_retry` bisect; shared jobs select `owned` (`jid` match or `dev='j:<jid>'`) and read residual types host-wide |
+| K0 decode | Codon `codon/metrics_kernels.py` (`copy_count_rows_c`/`copy_decode_c`), reference `k0_decode.decode_copy_binary_reference` | numeric columns + one distinct-name table per chunk; names are interned in CPython (`NameInterner`) |
+| JobFrame | CPython `columnar/jobframe.py` | sorted by `(series, host, dev, time)`; int64 µs; float64 NaN for NULL; `owned` uint8 |
+| Reductions | Codon `group_reduce_c` / `grid_mean_c` / `join_sorted_c`, NumPy reference in `columnar/segments.py` (`_np_*`) | the only Codon primitives; probe orders, first-win tries, name resolution, Coalesce rules stay in `kernels.FrameIndex` / `job_table.ColumnarJobTable` |
+| Metrics / detail / plot series | CPython `metrics.py`, `columnar/{summary,roofline,type_detail,detail}_series.py` | **one** `open_job_table(job)` per job; `HANDOFF` passes the table from the metrics worker to detail/plot prewarm on the same pool thread |
+| Bokeh | CPython `plot/summaryplot.py`, `plot/devplot.py`, `plot/roofline.py` | `ColumnDataSource` dicts of arrays (`SeriesFrame.columns`), `json_item` unchanged |
+
+## Laws
+
+1. **No pandas on the update_metrics path.** `hpcperfstats/tests/test_update_metrics_import_graph.py` fails when importing `update_metrics` loads `pandas` or any path module imports it. Do not reintroduce DataFrame accessors on `jid_table`; tests use `columnar/testing.py` (`table_from_records`, `MockJobTable`, `frame_from_df`).
+2. **Names stay in CPython; kernels see integers and caller buffers.** Codon exports take `Ptr` arguments and write into NumPy arrays the bridge allocates (`codon_bridge._ScratchBank`, grow-only per thread). No per-row Boehm allocation; `copy_decode_c`'s per-chunk name dictionary is the one heap user. No `@par`/OpenMP inside a job; parallelism is one job per metrics-pool thread (`python-image-interpreter-contract.mdc` unchanged; no worker processes).
+3. **Baked, never compiled at runtime; required on 3.14t.** Dockerfile `codon-build` runs `codon/build_codon_metrics_ext.sh` (`--mcpu=native`, ThinLTO, `--lib` + `pyext_metrics_init.c` with `Py_MOD_GIL_NOT_USED`, `$ORIGIN` rpaths, FT smoke gate `codon_metrics_pyext_314t=pass`) into `/opt/hpcperfstats/codon_metrics`; supervisord sets `PYTHONPATH` and `OMP_NUM_THREADS=1` for `update_metrics`. `codon_bridge.require_codon_metrics` logs `codon_metrics status=enabled|disabled …` at `main()` and **refuses scheduler start** (`SystemExit`) when the kernel is required (`sys.executable` under `/opt/python3.14t/`, or `HPCPERFSTATS_CODON_METRICS_REQUIRED=1`) and unavailable. Host `.venv` runs use the NumPy reference. `HPCPERFSTATS_CODON_METRICS_DIR` / `_DISABLE` are test and dev-build switches, not operator INI knobs.
+4. **Hard-fail, no fallback.** With the kernel loaded, a kernel exception becomes `CodonKernelError` and the job fails into failure-memory backoff (`update-metrics-batch-resilience.mdc`); the bridge never falls back to NumPy for that job (`test_columnar_bridge.py`). Only `CodonNameTableOverflow` is retried, by growing the decoder's name table.
+5. **Deterministic aggregate rule (D36).** A `(host, time)` group exists for every scoped sample; NULL and over-ceiling (`arc`/`delta` only: `MAX_SANE_COUNTER_RATE=1e13`, `MAX_SANE_COUNTER_DELTA=1e17`) samples do not contribute; empty groups are `0` (`Coalesce`) unless `coalesce_zero=False` (host plots); GPU types drop `value >= DCGM_FP64_BLANK`; residual types on shared jobs collapse `(host, time, event)` to hardware SUM else `j:` MAX.
+6. **Parity tolerances (user decision 2026-10-30): `rtol=1e-9`, `atol=0`, NaN-equal, ints/strings exact.** Every looser tolerance is per-metric and listed here: `SQL_SUM_RTOL=1e-5` for metric rows the pandas path summed in PostgreSQL `real` (float4 accumulation, D34; observed ≤1.6e-7); `GOLDEN_SCALE_DEFECTS` `nv_gpu_link_gbs` / `nv_gpu_mem_bw_gbs` ×`1e9/1024**3` (pandas cache ignored `conv`, D37); metric rows compared through the PostgreSQL float4 text oracle (shortest-decimal rounding, D38); D36 extra/missing columns, coalesce-zero rows and the IB→OPA `ibbw` source switch are listed deviations written to `test_runs/columnar_golden_deviation.json`; Bokeh plot JSON (`test_bokeh_from_arrays.py`, ids normalised, refs expanded, ndarray and list columns equal, the DataFrame-only `index` column ignored) compares floats at `PLOT_JSON_RTOL=1e-5` because the pandas path fed Bokeh float4 SQL sums read through the text protocol (same D34/D38 provenance), allows the D37 factor inside the two GPU link / HBM panels and their defect-named columns, and pairs Summary panels by y-axis label with the same D36 extra/missing-column explanations as the series test (D39). Codon vs NumPy on the same frame must match at the base tolerance (`test_codon_kernels.py`, golden frames included) and sums bit-for-bit (row-order summation).
+7. **Golden corpus lives outside git** (`HPCPERFSTATS_METRICS_GOLDEN_DIR`, default `/data/user/sharrell/hpcperfstats-metrics-golden`; `manifest.json` records `pandas_path_commit`). Tests skip with a reason when absent and fail only with `HPCPERFSTATS_METRICS_GOLDEN_REQUIRED=1`. Refresh: `scripts/metrics_golden_corpus.py seed-* / tag-edge-jobs / capture / verify --min-jobs 27` inside `tests/run_dev_container_pytest.sh --exec`; captures came from the pandas path at `pandas_path_commit` and are **not** regenerated from the columnar path.
+8. **Gates before a release:** golden parity green; `scripts/metrics_codon_scaling_report.py --check` ≥ 0.6× linear at 8 threads per kernel (below that is a kernel bug to fix, not a process-model change); `scripts/metrics_columnar_ab_report.py --check` ≥ 1.25× finished jobs/hour vs the pandas baseline on the same job set with peak RSS per slot not above the pandas arm. Rollback is the previous image; there is no `metrics_columnar_mode` flag.
+9. **Codon unit hygiene.** `hpcperfstats/analysis/metrics/codon/` holds exactly `metrics_kernels.py`, `pyext_metrics_init.c`, `build_codon_metrics_ext.sh`, `README.md`; the compile unit is class-free, imports nothing, and carries a file-level `# ruff: noqa: F821` (Codon builtins; no `pyproject.toml` change, which would invalidate the `python-build` image cache); `scripts/python_def_inventory.py` excludes the `codon` path segment. Tests: `hpcperfstats/tests/test_codon_metrics_bake_contract.py` (Dockerfile/supervisord/runner/gitignore), `test_codon_kernels.py` (container, `HPCPERFSTATS_CODON_METRICS_REQUIRED=1`).
+
+## Overlap
+
+- `codon-sync-timedb-parse-contract.mdc` — dbload bake precedent (shape shared, process model not)
+- `python-image-interpreter-contract.mdc` — 3.14t pipeline interpreter, no process pools
+- `update-metrics-batch-resilience.mdc` — failure memory the hard-fail lands in
+- `host-data-read-boundary.mdc` — host_data stays a pipeline-time source

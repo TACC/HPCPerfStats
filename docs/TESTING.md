@@ -135,6 +135,51 @@ When **`stall_exit_triggered=1`**, **`update_metrics.py`** logs the stall summar
 
 Optional env: **`HPCPERFSTATS_STRESS_PLOT_SEC`** (with manual plot sanity), **`HPCPERFSTATS_LARGE_JOB_HOST_DATA_ROWS`**, **`HPCPERFSTATS_LARGE_JOB_TIME_BUCKETS`**, **`HPCPERFSTATS_LARGE_JOB_WINDOW_ROW_COUNT_CACHE_TTL`** (seconds; `0` disables cached window `COUNT(*)` for large-job gating), **`HPCPERFSTATS_LARGE_JOB_TIME_SQL`** (`date_bin` default; set `ntile` for legacy distinct-time + NTILE sampling on PostgreSQL 14+), **`HPCPERFSTATS_METRICS_PLOT_AGGREGATE_TIME_SLICE_S`** / **`HPCPERFSTATS_PLOT_AGGREGATE_MAX_HOST_TIME_POINTS`** (plot aggregate host×time chunks and materialised-row budget for design capacity **`5000×48×60`** host-samples; INI `metrics_plot_aggregate_time_slice_s` / `metrics_plot_aggregate_max_host_time_points`), **`HPCPERFSTATS_LIVE_DISTINCT_LEGACY_HOSTLIST`** (`1` restores `unnest(host_list)` live distinct SQL; emergency rollback only—see `get_live_distinct_use_legacy_hostlist()` docstring), **`HPCPERFSTATS_UPDATE_METRICS_MAIN_SLEEP_AFTER`** (`1`/`true`/`yes` makes the **`update_metrics.py`** script entrypoint sleep 300s (5 minutes) after a run; default is exit without sleep).
 
+### Columnar `update_metrics` path: golden corpus, Codon kernels, A/B gates
+
+The metrics / Job Detail / plot path is pandas-free (plan
+`update-metrics-codon-columnar`, rule
+`hpcperfstats/cursor-rules/update-metrics-columnar-codon-contract.mdc`): one
+COPY BINARY fetch per job → `JobFrame` → NumPy reference reductions
+(`lib/columnar/segments.py`) or the baked Codon kernels
+(`hpcperfstats/analysis/metrics/codon/`, pyext `hpcperfstats_codon_metrics`).
+
+| Check | Command | Where |
+|---|---|---|
+| Unit kernels + bridge | `pytest -q hpcperfstats/analysis/metrics/tests/test_columnar_segments.py …/test_columnar_kernels.py …/test_columnar_bridge.py …/test_jobframe.py …/test_copy_decode.py …/test_copy_fetch.py` | host |
+| No pandas on the path | `pytest -q hpcperfstats/tests/test_update_metrics_import_graph.py` | host |
+| Bake contract (Dockerfile / supervisord / runner) | `pytest -q hpcperfstats/tests/test_codon_metrics_bake_contract.py` | host |
+| Golden parity (series, metric rows, detail, Bokeh JSON) | `HPCPERFSTATS_METRICS_GOLDEN_REQUIRED=1 pytest -q hpcperfstats/analysis/metrics/tests/test_columnar_golden.py hpcperfstats/analysis/metrics/tests/test_bokeh_from_arrays.py` | host (corpus mounted) |
+| Codon vs NumPy, GIL off, threads, golden frames | `HPCPERFSTATS_CODON_METRICS_REQUIRED=1 tests/run_dev_container_pytest.sh --ft hpcperfstats/analysis/metrics/tests/test_codon_kernels.py -q` | dev container (3.14t) |
+| Thread scaling (≥ 0.6× linear at 8 threads per kernel) | `tests/run_dev_container_pytest.sh --ft --exec '$PY' scripts/metrics_codon_scaling_report.py run` then `scripts/metrics_codon_scaling_report.py --check` | container run, host check |
+| A/B vs pandas baseline (≥ 1.25× jobs/hour, jobs/min and peak RSS not worse) | `scripts/metrics_columnar_ab_report.py run --arm pandas` from a worktree at the corpus `pandas_path_commit`, `run --arm columnar` from the current tree (both via the runner), then `compare` and `--check` on the host | container runs, host check |
+
+The golden corpus lives **outside git** at `HPCPERFSTATS_METRICS_GOLDEN_DIR`
+(dev host default `/data/user/sharrell/hpcperfstats-metrics-golden`; the
+runner mounts it): `manifest.json` (`pandas_path_commit`), `edge_jobs.json`,
+`jobs/<jid>.golden.json.gz` (pandas-path metric rows, detail payloads, plot
+JSON, pre-Bokeh series) and `jobs/<jid>.frame.npz` (the JobFrame). Golden
+tests skip with a reason when the corpus is absent and fail only with
+`HPCPERFSTATS_METRICS_GOLDEN_REQUIRED=1`. Rebuild with
+`scripts/metrics_golden_corpus.py seed-exemplars / seed-job-data /
+rewrite-host-suffix / seed-edge-jobs / tag-edge-jobs / capture / verify
+--min-jobs 27` inside `tests/run_dev_container_pytest.sh --exec`.
+
+Tolerances: base `rtol=1e-9`, `atol=0`, NaN-equal, ints/strings exact. The
+looser per-metric allowances (pandas-path float4 SQL sums `1e-5`, the
+conv-less GPU link/mem-bw cache scale, PostgreSQL float4 text rounding,
+Bokeh JSON floats at `1e-5`) are listed in the rule and written to
+`test_runs/columnar_golden_deviation.json` by the golden test.
+
+Before a bake is available in the image, build the metrics pyext in a
+`codon-build` container with the host Codon mounted at `/opt/codon`
+(`CODON_SRC=…/analysis/metrics/codon CODON_OUT=<dir>
+build_codon_metrics_ext.sh`) and point
+`HPCPERFSTATS_CODON_METRICS_BUILD_DIR=<dir>` at it; the runner mounts it at
+`/opt/hpcperfstats/codon_metrics`. In the image the scheduler refuses to
+start on `/opt/python3.14t` without `hpcperfstats_codon_metrics.so`
+(`codon_metrics status=disabled …` then `SystemExit`).
+
 ### Opt-in pipeline E2E (RabbitMQ → listend → sync_timedb → metrics → live web)
 
 The directory **`tests/pipeline_e2e/`** is outside default `pytest` `testpaths` (`hpcperfstats` only). Tests are skipped unless **`HPCPERFSTATS_PIPELINE_E2E=1`** (the workflow sets this inside the container).
