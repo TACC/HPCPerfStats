@@ -212,12 +212,14 @@ def test_worker_slot_kill_and_recycle_logic(monkeypatch):
       self.procs = []
       self.conns = []
 
-    def Pipe(self, duplex=True):
+    def Pipe(self, **kwargs):
+      del kwargs  # duplex flag irrelevant to the fake
       conn = _Conn([{"ok": True, "detail_s": 0.1, "plots_s": 0.2}])
       self.conns.append(conn)
       return conn, _Conn([])
 
-    def Process(self, target, args, daemon):
+    def Process(self, **kwargs):
+      del kwargs  # target/args/daemon irrelevant to the fake
       proc = _Proc()
       self.procs.append(proc)
       return proc
