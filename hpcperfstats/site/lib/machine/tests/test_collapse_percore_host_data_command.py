@@ -130,4 +130,3 @@ def test_no_dates_discovers_days_over_the_whole_table(seeded):
   devs = {r[2] for r in _rows() if r[1] == "cpu"}
   assert "0" not in devs and "1" not in devs
   assert any(r[0] == old and r[2] == "" for r in _rows())
-

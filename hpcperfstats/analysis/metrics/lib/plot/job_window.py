@@ -4,77 +4,111 @@ Parse job start/end from jid_table-like objects for plots (summary).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
-
-from pandas import isna as pd_isna, to_datetime
+from zoneinfo import ZoneInfo
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 
 
-def job_window_timestamps_utc(jt: Any) -> Any:
+def _as_utc(value: Any) -> datetime | None:
   """
-  Return (start_ts, end_ts) as UTC timestamps or (None, None) if invalid.
+  Coerce a window bound to an aware UTC datetime.
 
   Args:
-    jt (Any): Jt passed to this helper.
+    value (Any): Datetime, ISO text, epoch microseconds or None.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    datetime | None: UTC datetime.
 
   Examples:
-    >>> job_window_timestamps_utc(None)  # doctest: +SKIP
+    >>> _as_utc("2026-01-01T00:00:00+00:00").tzinfo is not None
+    True
+    >>> _as_utc(None) is None
+    True
   """
-  start = getattr(jt, "start_time", None)
-  end = getattr(jt, "end_time", None)
-  if start is None or end is None:
-    return (None, None)
-  try:
-    start_ts = to_datetime(start, utc=True)
-    end_ts = to_datetime(end, utc=True)
-  except TypeError, ValueError:
-    return (None, None)
-  if pd_isna(start_ts) or pd_isna(end_ts) or end_ts <= start_ts:
+  if value is None:
+    return None
+  if isinstance(value, datetime):
+    dt = value
+  elif isinstance(value, (int, float)) and not isinstance(value, bool):
+    dt = datetime.fromtimestamp(float(value) / 1_000_000.0, tz=UTC)
+  elif hasattr(value, "to_pydatetime"):
+    dt = value.to_pydatetime()
+  else:
+    try:
+      dt = datetime.fromisoformat(str(value))
+    except ValueError:
+      return None
+  if dt.tzinfo is None:
+    dt = dt.replace(tzinfo=UTC)
+  return dt.astimezone(UTC)
+
+
+def job_window_timestamps_utc(jt: Any) -> Any:
+  """
+  Return (start, end) as UTC datetimes or (None, None) if invalid.
+
+  Args:
+    jt (Any): Job table with ``start_time`` / ``end_time``.
+
+  Returns:
+    Any: ``(datetime, datetime)`` or ``(None, None)``.
+
+  Examples:
+    >>> job_window_timestamps_utc(
+    ...   type("J", (), {"start_time": None, "end_time": None})()
+    ... )
+    (None, None)
+  """
+  start_ts = _as_utc(getattr(jt, "start_time", None))
+  end_ts = _as_utc(getattr(jt, "end_time", None))
+  if start_ts is None or end_ts is None or end_ts <= start_ts:
     return (None, None)
   return (start_ts, end_ts)
 
 
 def job_window_bounds_local(jt: Any) -> Any:
   """
-  Return (start, end) in local timezone for Bokeh axes, or (None, None).
+  Return (start, end) in the cluster timezone for Bokeh axes, or (None, None).
 
   Args:
-    jt (Any): Jt passed to this helper.
+    jt (Any): Job table with ``start_time`` / ``end_time``.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: Aware local datetimes or ``(None, None)``.
 
   Examples:
-    >>> job_window_bounds_local(None)  # doctest: +SKIP
+    >>> job_window_bounds_local(
+    ...   type("J", (), {"start_time": None, "end_time": None})()
+    ... )
+    (None, None)
   """
   start_ts, end_ts = job_window_timestamps_utc(jt)
   if start_ts is None:
     return (None, None)
-  local_timezone = cfg.get_local_timezone()
-  return (
-    start_ts.tz_convert(local_timezone),
-    end_ts.tz_convert(local_timezone),
-  )
+  tz = cfg.get_local_timezone()
+  if isinstance(tz, str):
+    tz = ZoneInfo(tz)
+  return (start_ts.astimezone(tz), end_ts.astimezone(tz))
 
 
 def job_window_label_strings(jt: Any) -> Any:
   """
-  Return (start_label, end_label) as str(UTC timestamps) for plot axis, or.
-
-    (None, None).
+  Return (start_label, end_label) as str(UTC datetimes) for plot axes, or
+  (None, None).
 
   Args:
-    jt (Any): Jt passed to this helper.
+    jt (Any): Job table with ``start_time`` / ``end_time``.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: Two strings or ``(None, None)``.
 
   Examples:
-    >>> job_window_label_strings(None)  # doctest: +SKIP
+    >>> job_window_label_strings(
+    ...   type("J", (), {"start_time": None, "end_time": None})()
+    ... )
+    (None, None)
   """
   start_ts, end_ts = job_window_timestamps_utc(jt)
   if start_ts is None:

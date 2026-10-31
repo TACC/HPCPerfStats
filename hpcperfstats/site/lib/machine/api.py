@@ -637,7 +637,7 @@ from django.db.models import (
 )
 
 import hpcperfstats.analysis.metrics.lib.plot as plots
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import HostDataProvider
+from hpcperfstats.analysis.metrics.lib.columnar.job_table import host_data_table
 from hpcperfstats.site.xalt.models import join_run_object, lib, run
 
 
@@ -4335,7 +4335,7 @@ def host_plot(request: Any) -> Any:
     """
     try:
       with _pg_host_plot_statement_timeout():
-        ht = HostDataProvider(host_fqdn, start_dt, end_dt)
+        ht = host_data_table(host_fqdn, start_dt, end_dt)
         sp = plots.SummaryPlot(ht)
         plot = sp.plot()
         return json_item(plot)

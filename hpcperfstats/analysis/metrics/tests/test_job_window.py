@@ -57,7 +57,7 @@ def test_job_window_bounds_local_converts_timezone():
   ) as mock_tz:
     mock_tz.return_value = "America/Chicago"
     start_local, end_local = job_window_bounds_local(jt)
-  assert str(start_local.tz) == "America/Chicago"
+  assert str(start_local.tzinfo) == "America/Chicago"
   assert start_local < end_local
 
 

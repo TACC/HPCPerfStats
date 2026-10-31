@@ -1,41 +1,37 @@
 """
-Summary plot: multi-metric step plots for a job (FLOPS, BW, CPU, etc.) using
-jid_table aggregate data and Bokeh.
+Summary plot: multi-metric line plots for a job (FLOPS, BW, CPU, etc.) from
+the columnar job table and Bokeh.
+
+The series come from ``columnar.summary_series.build_summary_series`` (one
+``(host, time)`` base plus one column per metric); this module owns the
+spec tables, the subplot order and the Bokeh figure construction from
+arrays. No pandas.
 
 Attributes:
-  _BYTES_TO_GB: Attribute.
-  _BYTES_TO_GBPS: Attribute.
-  _BYTES_TO_MB: Attribute.
-  _CAS_BW_CONV: Attribute.
-  _CHA_ARC_EVENTS: Attribute.
-  _HARDWARE_ERROR_METRIC_COL: Attribute.
-  _IB_SUMMARY_ERROR_EVENTS: Attribute.
-  _MAX_SANE_GPU_LINK_GBPS: Attribute.
-  _NET_SUMMARY_ERROR_EVENTS: Attribute.
-  _SERIAL_SUMMARY_AGGREGATE_PREFETCH: Attribute.
-  get_summary_aggregate_prefetch_max_threads(): Attribute.
-  _SUMMARY_ALLOW_PARTIAL_NULL: Attribute.
-  _SUMMARY_FIRST_WIN_SPECS: Attribute.
-  _SUMMARY_SINGLE_SPECS: Attribute.
-  _SUMMARY_SKIP_PLOT_METRICS: Attribute.
-  _SUMMARY_TENSOR_SPLIT_METRICS: Attribute.
-  log: Attribute.
+  log: Module logger.
+  _CAS_BW_CONV: 64 B per CAS to GB/s.
+  _BYTES_TO_MB: Bytes to MiB.
+  _BYTES_TO_GBPS: Bytes to decimal GB/s.
+  _BYTES_TO_GB: Alias of ``_BYTES_TO_GBPS`` for GPU rate plots.
+  _CHA_ARC_EVENTS: Intel CHA counter events summed for the uncore subplot.
+  _SUMMARY_SINGLE_SPECS: One-aggregate subplot specs.
+  _SUMMARY_ALLOW_PARTIAL_NULL: Columns kept with NaN gaps.
+  _SUMMARY_SKIP_PLOT_METRICS: Columns merged for scaling only.
+  _SUMMARY_TENSOR_SPLIT_METRICS: Tensor-pipe split columns.
+  _SUMMARY_FIRST_WIN_SPECS: First-full-coverage subplot specs.
+  _MAX_SANE_GPU_LINK_GBPS: Ceiling for GPU link rates.
+  _IB_SUMMARY_ERROR_EVENTS: InfiniBand error counters.
+  _NET_SUMMARY_ERROR_EVENTS: Ethernet error counters.
+  _HARDWARE_ERROR_METRIC_COL: Shared hardware-error column name.
 """
 
 from __future__ import annotations
 
 import contextlib
-import contextvars
 import logging
-import math
 import time
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
-
-import hpcperfstats.dbload.lib.conf_parser as cfg
-
-log = logging.getLogger(__name__)
 
 import numpy as np
 from bokeh.layouts import gridplot
@@ -43,8 +39,6 @@ from bokeh.models import ColumnDataSource, HoverTool, Range1d
 from bokeh.palettes import d3
 from bokeh.plotting import figure
 from bokeh.transform import factor_cmap
-from django.db import close_old_connections
-from pandas import isna as pd_isna, to_datetime, to_numeric as pd_to_numeric
 
 from hpcperfstats.analysis.metrics.lib.beegfs_metadata_iops_events import (
   BEEGFS_METADATA_IOPS_EVENTS,
@@ -52,16 +46,9 @@ from hpcperfstats.analysis.metrics.lib.beegfs_metadata_iops_events import (
   BEEGFS_WRITE_BYTES_EVENTS,
 )
 from hpcperfstats.analysis.metrics.lib.bokeh_job_embed import figure_embed_kw
-from hpcperfstats.analysis.metrics.lib.gen.imc_cas_bw import (
-  agg_sum_val_to_bw_frame,
-  combine_cas_bw_frames,
-)
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-  begin_summary_aggregate_counting,
-  end_summary_aggregate_counting,
-)
+from hpcperfstats.analysis.metrics.lib.columnar.series_frame import SeriesFrame
 from hpcperfstats.analysis.metrics.lib.gen.utils import (
-  add_hover_plain_columns,
+  hover_plain_columns,
   non_degenerate_y_range_for_series,
   set_linear_axes_plain_numeric,
   timestamps_as_cluster_naive,
@@ -69,6 +56,9 @@ from hpcperfstats.analysis.metrics.lib.gen.utils import (
 )
 from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
   LLITE_METADATA_IOPS_EVENTS,
+)
+from hpcperfstats.analysis.metrics.lib.phase_profile import (
+  phase as _profile_phase,
 )
 from hpcperfstats.analysis.metrics.lib.plot import MSG_NO_METRIC_DATA
 from hpcperfstats.analysis.metrics.lib.plot.bokeh_job_detail_help_marker import (
@@ -85,7 +75,6 @@ from hpcperfstats.analysis.metrics.lib.plot.summary_metric_descriptions import (
   researcher_use_for_summary_metric,
 )
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
-  CHA_TYPENAME_PRIORITY,
   INTEL_FP_ARITH_DOUBLE_EVENTS,
   INTEL_FP_ARITH_SINGLE_EVENTS,
 )
@@ -105,56 +94,23 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
   type_probe_names,
 )
 
-# Hard cap for nested aggregate prefetch threads (see job_plots + api ThreadPoolExecutor).
-# Keeps DB connection and work_mem spikes bounded when summaryplot runs inside a worker thread.
-# Absolute INI [PORTAL] summary_aggregate_prefetch_max_threads (default 2).
-
-# When True (plot/detail prewarm threads), fetch aggregates serially so peak RSS
-# stays ~one hostxtime grid (design capacity 5000x48x60).
-_SERIAL_SUMMARY_AGGREGATE_PREFETCH = contextvars.ContextVar(
-  "hps_serial_summary_aggregate_prefetch",
-  default=False,
-)
-
-
-def set_serial_summary_aggregate_prefetch(enabled: bool) -> Any:
-  """
-  Enable or disable serial summary aggregate prefetch for this context.
-
-  Used by plot-artifact prewarm so nested ThreadPools do not multiply memory.
-
-  Args:
-    enabled (bool): True to force serial ``get_aggregate_df`` prefetch.
-
-  Returns:
-    Any: ContextVar reset token for ``ContextVar.reset``.
-
-  Examples:
-    >>> tok = set_serial_summary_aggregate_prefetch(True)
-    >>> _SERIAL_SUMMARY_AGGREGATE_PREFETCH.get()
-    True
-    >>> _SERIAL_SUMMARY_AGGREGATE_PREFETCH.reset(tok)
-  """
-  return _SERIAL_SUMMARY_AGGREGATE_PREFETCH.set(bool(enabled))
+log = logging.getLogger(__name__)
 
 
 @contextlib.contextmanager
 def serial_summary_aggregate_prefetch_context() -> Iterator[None]:
   """
-  Force serial summary aggregate prefetch for the duration of the block.
+  Compatibility no-op: the columnar table serves aggregates from memory, so
+  there is no aggregate prefetch pool left to serialise.
 
   Yields:
     None
 
   Examples:
     >>> with serial_summary_aggregate_prefetch_context():
-    ...   assert _SERIAL_SUMMARY_AGGREGATE_PREFETCH.get() is True
+    ...   pass
   """
-  token = _SERIAL_SUMMARY_AGGREGATE_PREFETCH.set(True)
-  try:
-    yield
-  finally:
-    _SERIAL_SUMMARY_AGGREGATE_PREFETCH.reset(token)
+  yield
 
 
 def _cycled_d3_category20_palette(n: Any) -> Any:
@@ -180,13 +136,21 @@ def _cycled_d3_category20_palette(n: Any) -> Any:
 
 
 _CAS_BW_CONV = 64 / (1024 * 1024 * 1024)
+
+
 _BYTES_TO_MB = 1 / (1024 * 1024)
+
+
 _BYTES_TO_GBPS = (
   1e-9  # decimal GB/s - match metrics avg_gpu_* / link conversions
 )
+
+
 _BYTES_TO_GB = (
   _BYTES_TO_GBPS  # GPU rate plots; prefer _BYTES_TO_GBPS for new call sites
 )
+
+
 # Intel CHA counter names after dbload event map (must match host_data.event strings).
 _CHA_ARC_EVENTS = (
   "SF_EVICTIONS_MES,E",
@@ -224,255 +188,6 @@ def _summary_type_events_feasible(schema: Any, typ: Any, events: Any) -> Any:
     if probed_events.intersection(schema[t]):
       return True
   return False
-
-
-def _empty_agg_df() -> Any:
-  """
-  Internal helper to handle empty agg DataFrame.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _empty_agg_df()  # doctest: +SKIP
-  """
-  import pandas as pd
-
-  return pd.DataFrame(columns=["host", "time", "sum_val"])
-
-
-def _get_agg_if_feasible(
-  jt: Any,
-  typ: Any,
-  val_col: Any,
-  events: Any,
-  conv: Any,
-  *,
-  group_by_dev: bool = False,
-) -> Any:
-  """
-  Like jt.get_aggregate_df with canonical + legacy type/event dual-read.
-
-  Args:
-    jt (Any): Job table with ``schema`` and ``get_aggregate_df``.
-    typ (Any): Canonical host_data type to probe.
-    val_col (Any): Column to aggregate (``arc`` or ``value``).
-    events (Any): Event name list (dual-read probed).
-    conv (Any): Multiplier applied inside ``get_aggregate_df``.
-    group_by_dev (bool): When True, keep per-device rows (no SUM across
-      ``dev``); used for Grace DCGM CPU power unique-watt collapse.
-
-  Returns:
-    Any: Aggregate DataFrame (``host``, ``time``[, ``dev``], ``sum_val``)
-      or empty frame when schema/events are infeasible.
-
-  Examples:
-    >>> _get_agg_if_feasible(None, None, None, None, None)  # doctest: +SKIP
-  """
-  raw_schema = getattr(jt, "schema", None)
-  schema = raw_schema if isinstance(raw_schema, dict) else {}
-  if not _summary_type_events_feasible(schema, typ, events):
-    return _empty_agg_df()
-  ev = events_probe_names(list(events), typ=typ)
-  for t in type_probe_names(typ):
-    if not _summary_type_events_feasible(schema, t, events):
-      continue
-    if group_by_dev:
-      agg = jt.get_aggregate_df(
-        t,
-        val_col,
-        ev,
-        conv,
-        group_by_dev=True,
-      )
-    else:
-      agg = jt.get_aggregate_df(t, val_col, ev, conv)
-    if agg is not None and not agg.empty:
-      return agg
-  return _empty_agg_df()
-
-
-def _get_dcgm_cpu_power_util_agg(jt: Any, conv: Any = 1.0) -> Any:
-  """
-  Aggregate Grace ``dcgm_cpu_power_util_w`` as sum of unique socket paints.
-
-  Fetches per-``dev`` rows then collapses identical per-CPU replicas via
-  ``sum_unique_watt_values_per_host_time`` so Ncoresxsocket_watts does not
-  overcount.
-
-  Args:
-    jt (Any): Job table with schema and aggregate accessors.
-    conv (Any): Multiplier for watt values (default 1.0).
-
-  Returns:
-    Any: DataFrame with ``host``, ``time``, ``sum_val`` (unique-watt sum).
-
-  Examples:
-    >>> _get_dcgm_cpu_power_util_agg(None)  # doctest: +SKIP
-  """
-  from hpcperfstats.analysis.metrics.lib.gen.dcgm_cpu_power_agg import (
-    sum_unique_watt_values_per_host_time,
-  )
-
-  agg = _get_agg_if_feasible(
-    jt,
-    "host_cpu_hw",
-    "value",
-    ["dcgm_cpu_power_util_w"],
-    conv,
-    group_by_dev=True,
-  )
-  return sum_unique_watt_values_per_host_time(agg)
-
-
-def _continuous_polyline_xy(times: Any, values: Any) -> Any:
-  """
-  Build x/y lists for a continuous polyline through (time, value) samples.
-
-  NaN values in ``values`` break Bokeh line segments (gaps). Callers that want
-  continuous segments across missing samples should drop NaNs before calling.
-
-  Args:
-    times (Any): Times passed to this helper.
-    values (Any): Values passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _continuous_polyline_xy(None, None)  # doctest: +SKIP
-  """
-  if times is None or len(times) == 0:
-    return [], []
-  t = times.tolist() if hasattr(times, "tolist") else list(times)
-  v = values.tolist() if hasattr(values, "tolist") else list(values)
-  if len(t) != len(v):
-    return [], []
-  return t, v
-
-
-def compute_summary_aggregate_prefetch_pool_size(num_specs: Any) -> Any:
-  """
-  Return ``ThreadPoolExecutor`` ``max_workers`` for summary aggregate prefetch.
-
-  Capped by ``get_summary_aggregate_prefetch_max_threads`` so nested parallelism
-    does not
-  multiply against ``site.machine.api``'s shared executor under ``job_plots``.
-
-  Args:
-    num_specs (Any): Num specs passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> compute_summary_aggregate_prefetch_pool_size(None)  # doctest: +SKIP
-  """
-  return max(
-    1,
-    min(
-      int(num_specs),
-      cfg.get_parallel_db_prefetch_max(),
-      cfg.get_summary_aggregate_prefetch_max_threads(),
-    ),
-  )
-
-
-def _prefetch_single_spec_aggregates(jt: Any, spec_rows: Any) -> Any:
-  """
-  Parallel fetch for (typ, val, events, conv, name) rows; returns name ->.
-
-    DataFrame.
-
-  Thread count is capped by ``get_summary_aggregate_prefetch_max_threads()`` so this
-    path
-  does not multiply against ``api.py``'s shared executor when building summary
-    plots.
-
-  Args:
-    jt (Any): Jt passed to this helper.
-    spec_rows (Any): Spec rows passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Raises:
-    RuntimeError: Re-raised when pool submit fails for a reason other than
-      interpreter/ThreadPool shutdown (those fall back to serial prefetch).
-    Exception: Propagated from worker futures (``fut.result()``) when aggregate
-      fetch fails for a subplot row.
-
-  Examples:
-    >>> _prefetch_single_spec_aggregates(None, None)  # doctest: +SKIP
-  """
-  import pandas as pd
-
-  raw_schema = getattr(jt, "schema", None)
-  schema = raw_schema if isinstance(raw_schema, dict) else {}
-
-  def _one(row: Any) -> Any:
-    """
-    Internal helper to handle one.
-
-    Args:
-      row (Any): Value to inspect (typically a numeric scalar).
-
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-
-    Examples:
-      >>> _one(None)  # doctest: +SKIP
-    """
-    typ, val, events, conv, name = row
-    close_old_connections()
-    try:
-      if not _summary_type_events_feasible(schema, typ, events):
-        return name, pd.DataFrame(columns=["host", "time", "sum_val"])
-      if name == "dcg_cpu_power_w":
-        return name, _get_dcgm_cpu_power_util_agg(jt, conv)
-      return name, jt.get_aggregate_df(typ, val, list(events), conv)
-    finally:
-      close_old_connections()
-
-  out = {}
-  if not spec_rows:
-    return out
-
-  def _run_serial() -> dict:
-    """
-    Fetch each aggregate row sequentially when the thread pool cannot start.
-
-    Returns:
-      dict: Mapping of subplot name to aggregate DataFrame.
-
-    Examples:
-      >>> _run_serial()  # doctest: +SKIP
-    """
-    serial = {}
-    for row in spec_rows:
-      name, df = _one(row)
-      serial[name] = df
-    return serial
-
-  if _SERIAL_SUMMARY_AGGREGATE_PREFETCH.get():
-    return _run_serial()
-  max_workers = compute_summary_aggregate_prefetch_pool_size(len(spec_rows))
-
-  try:
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-      futures = [pool.submit(_one, row) for row in spec_rows]
-      for fut in as_completed(futures):
-        name, df = fut.result()
-        out[name] = df
-  except RuntimeError as exc:
-    # Nested under a dying metrics/prewarm pool: do not poison artifacts.
-    if (
-      "interpreter shutdown" in str(exc).lower()
-      or "cannot schedule new futures" in str(exc).lower()
-    ):
-      return _run_serial()
-    raise
-  return out
 
 
 def _intel_core_tries(events: Any, conv: Any) -> Any:
@@ -798,6 +513,7 @@ _SUMMARY_SINGLE_SPECS = [
   ),
 ]
 
+
 # Metrics that may be sampled on a sparse (host, time) grid vs the union grid from
 # get_host_time_df(); do not drop the column when a left-merge leaves NaN gaps.
 _SUMMARY_ALLOW_PARTIAL_NULL = frozenset(
@@ -838,6 +554,7 @@ _SUMMARY_ALLOW_PARTIAL_NULL = frozenset(
   }
 )
 
+
 # Merged for scaling/context only; not rendered as its own subplot.
 _SUMMARY_SKIP_PLOT_METRICS = frozenset(
   {
@@ -849,31 +566,13 @@ _SUMMARY_SKIP_PLOT_METRICS = frozenset(
   }
 )
 
+
 # Prefer IMMA/HMMA/DFMA Summary subplots over lumped tensor_active (any-pipe).
 _SUMMARY_TENSOR_SPLIT_METRICS = (
   "nv_tensor_imma_active",
   "nv_tensor_hmma_active",
   "nv_tensor_dfma_active",
 )
-
-
-def _summary_has_tensor_split_series(df: Any) -> Any:
-  """
-  True when any tensor-pipe split column has at least one non-null sample.
-
-  Args:
-    df (Any): Df passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _summary_has_tensor_split_series(None)  # doctest: +SKIP
-  """
-  for name in _SUMMARY_TENSOR_SPLIT_METRICS:
-    if name in df.columns and df[name].notna().any():
-      return True
-  return False
 
 
 # First typename with full host/time coverage wins (same column name).
@@ -917,66 +616,6 @@ _SUMMARY_FIRST_WIN_SPECS = (
 )
 
 
-def _summary_nv_mem_used_y_range_end(df: Any) -> Any:
-  """
-  Upper y bound for GPU mem used plot: max(used, total) when total column.
-
-    exists.
-
-  Args:
-    df (Any): Df passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _summary_nv_mem_used_y_range_end(None)  # doctest: +SKIP
-  """
-  if "nv_mem_used_mb" not in df.columns or "nv_mem_total_mb" not in df.columns:
-    return None
-  candidates = []
-  for col in ("nv_mem_used_mb", "nv_mem_total_mb"):
-    mx = df[col].max()
-    if mx is not None and not pd_isna(mx):
-      with contextlib.suppress(TypeError, ValueError):
-        candidates.append(float(mx))
-  if not candidates:
-    return None
-  return 1.1 * max(candidates)
-
-
-def _summary_nv_gpu_util_y_range_end(
-  df: Any,
-  *,
-  shared_gpu_count: int | None = None,
-) -> Any:
-  """
-  Upper y bound for GPU util: GPU_count * 100 when GPU count exists.
-
-  Args:
-    df (Any): Summary frame.
-    shared_gpu_count (int | None): Affinity GPU count on a shared job.
-      When set, the scale is that count times 100.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _summary_nv_gpu_util_y_range_end(None)  # doctest: +SKIP
-  """
-  if shared_gpu_count is not None:
-    return float(shared_gpu_count) * 100.0
-  if "nv_gpu_util" not in df.columns or "nv_gpu_count" not in df.columns:
-    return None
-  gpu_count_max = df["nv_gpu_count"].max()
-  if gpu_count_max is None or pd_isna(gpu_count_max):
-    return None
-  try:
-    return float(gpu_count_max) * 100.0
-  except TypeError, ValueError:
-    return None
-
-
 def _summary_intel_imc_bw_tries() -> Any:
   """
   Diagnostic tries: dram CAS pairs then hbm CAS pairs per IMC type.
@@ -998,393 +637,8 @@ def _summary_intel_imc_bw_tries() -> Any:
   return tries
 
 
-def _merge_intel_imc_cas_mbw(df: Any, jt: Any) -> Any:
-  """
-  Fill ``mbw`` from first IMC type with usable dram and/or hbm CAS BW (sum when.
-
-    both).
-
-  Args:
-    df (Any): Df passed to this helper.
-    jt (Any): Jt passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _merge_intel_imc_cas_mbw(None, None)  # doctest: +SKIP
-  """
-  column_name = "mbw"
-  for imc_typ in imc_types_probe_order():
-    dram_bw = None
-    for read_ev, write_ev in dram_cas_read_write_pairs():
-      agg = _get_agg_if_feasible(
-        jt, imc_typ, "arc", [read_ev, write_ev], _CAS_BW_CONV
-      )
-      dram_bw = agg_sum_val_to_bw_frame(agg)
-      if dram_bw is not None:
-        break
-    hbm_bw = None
-    for read_ev, write_ev in hbm_cas_read_write_pairs():
-      agg = _get_agg_if_feasible(
-        jt, imc_typ, "arc", [read_ev, write_ev], _CAS_BW_CONV
-      )
-      hbm_bw = agg_sum_val_to_bw_frame(agg)
-      if hbm_bw is not None:
-        break
-    combined = combine_cas_bw_frames(dram_bw, hbm_bw)
-    if combined is None:
-      continue
-    merged = df.merge(
-      combined.rename(columns={"bw_gb": "sum_val"}),
-      on=["host", "time"],
-      how="left",
-    )
-    merged[column_name] = merged["sum_val"]
-    merged.drop(columns=["sum_val"], inplace=True)
-    if (
-      column_name in merged.columns
-      and merged[column_name].isnull().values.any()
-    ):
-      continue
-    return merged
-  return df
-
-
-def _merge_amd_df_mbw(df: Any, jt: Any) -> Any:
-  """
-  Fill ``amd_mbw`` from family DF ``dram_chan*_bytes`` or historical.
-
-    ``MBW_CHANNEL_*``.
-
-  Args:
-    df (Any): Df passed to this helper.
-    jt (Any): Jt passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _merge_amd_df_mbw(None, None)  # doctest: +SKIP
-  """
-  from hpcperfstats.dbload.lib.monitor_naming.canonical import (
-    AMD_DF_STATS_TYPES,
-  )
-  from hpcperfstats.dbload.lib.monitor_naming.resolve import (
-    amd_df_bw_event_conv_tries,
-    amd_df_types_probe_order,
-  )
-
-  column_name = "amd_mbw"
-  for df_typ in amd_df_types_probe_order():
-    tries = (
-      amd_df_bw_event_conv_tries()[:1]
-      if df_typ in AMD_DF_STATS_TYPES
-      else amd_df_bw_event_conv_tries()[::-1]
-    )
-    for events, conv in tries:
-      agg = _get_agg_if_feasible(jt, df_typ, "arc", list(events), conv)
-      if agg.empty or "sum_val" not in agg.columns:
-        continue
-      merged = df.merge(
-        agg[["host", "time", "sum_val"]],
-        on=["host", "time"],
-        how="left",
-      )
-      merged[column_name] = merged["sum_val"]
-      merged.drop(columns=["sum_val"], inplace=True)
-      if (
-        column_name in merged.columns
-        and merged[column_name].isnull().values.any()
-      ):
-        continue
-      return merged
-  return df
-
-
-def _merge_summary_mem_prefer_job(df: Any, jt: Any) -> Any:
-  """
-  Left-merge Summary ``mem``: prefer ``host_mem_job``, else NUMA ``host_mem``.
-
-  Accepts partial coverage (shared-node cgroup samples need not fill every
-  host/time cell). Does not fold ``host_mem_job`` into ``host_mem_type_names``.
-
-  Args:
-    df (Any): Summary base DataFrame (host, time, …).
-    jt (Any): ``jid_table`` with ``get_aggregate_df``.
-
-  Returns:
-    Any: ``df`` with ``mem`` column when any series is present.
-
-  Examples:
-    >>> _merge_summary_mem_prefer_job(None, None)  # doctest: +SKIP
-  """
-  conv = 1 / (1024 * 1024)
-  for typ, events in (
-    ("host_mem_job", ["mem_used"]),
-    ("host_mem", ["mem_used"]),
-  ):
-    agg = _get_agg_if_feasible(jt, typ, "value", events, conv)
-    if agg.empty or "sum_val" not in agg.columns:
-      continue
-    merged = df.merge(
-      agg[["host", "time", "sum_val"]],
-      on=["host", "time"],
-      how="left",
-    )
-    merged["mem"] = merged["sum_val"]
-    merged.drop(columns=["sum_val"], inplace=True)
-    if "mem" in merged.columns and merged["mem"].notna().any():
-      return merged
-  return df
-
-
-def _merge_first_full_coverage(
-  df: Any,
-  jt: Any,
-  column_name: Any,
-  val_col: Any,
-  tries: Any,
-) -> Any:
-  """
-  Left-merge first (typ, events, conv) whose aggregate has no nulls on base.
-
-    (host, time).
-
-  Args:
-    df (Any): Df passed to this helper.
-    jt (Any): Jt passed to this helper.
-    column_name (Any): Column name passed to this helper.
-    val_col (Any): Val col passed to this helper.
-    tries (Any): Tries passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _merge_first_full_coverage(None, None, None, None, None)
-  """
-  for typ, events, conv in tries:
-    agg = _get_agg_if_feasible(jt, typ, val_col, events, conv)
-    if agg.empty or "sum_val" not in agg.columns:
-      continue
-    merged = df.merge(
-      agg[["host", "time", "sum_val"]],
-      on=["host", "time"],
-      how="left",
-    )
-    merged[column_name] = merged["sum_val"]
-    merged.drop(columns=["sum_val"], inplace=True)
-    if (
-      column_name in merged.columns
-      and merged[column_name].isnull().values.any()
-    ):
-      continue
-    return merged
-  return df
-
-
-def _merge_nvidia_gpu_util_column(df: Any, jt: Any) -> Any:
-  """
-  Left-merge ``nv_gpu_util`` from ``nvidia_gpu`` ``value``: prefer.
-
-    ``gpu_util``,.
-
-    else ``utilization``.
-
-  Matches ``avg_gpuutil`` / job_detail GPU stats: newer monitor emits
-    ``gpu_util``;
-  older archives may only have ``utilization``.
-
-  Args:
-    df (Any): Df passed to this helper.
-    jt (Any): Jt passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _merge_nvidia_gpu_util_column(None, None)  # doctest: +SKIP
-  """
-  name = "nv_gpu_util"
-  for events in (["gpu_util"], ["utilization"]):
-    agg = _get_agg_if_feasible(jt, "nvidia_gpu", "value", events, 1.0)
-    if agg.empty or "sum_val" not in agg.columns:
-      continue
-    merged = df.merge(
-      agg[["host", "time", "sum_val"]],
-      on=["host", "time"],
-      how="left",
-    )
-    merged[name] = merged["sum_val"]
-    merged.drop(columns=["sum_val"], inplace=True)
-    if name in merged.columns and merged[name].isnull().values.any():
-      keep_sparse = (
-        name in _SUMMARY_ALLOW_PARTIAL_NULL and merged[name].notna().any()
-      )
-      if not keep_sparse:
-        del merged[name]
-        continue
-    return merged
-  return df
-
-
-def _merge_opa_fabric_if_no_ib_ext(df: Any, jt: Any) -> Any:
-  """
-  When ``host_ib`` bytes are absent, fill ``ibbw`` from Omni-Path (same scaling.
-
-    as ``avg_ibbw`` OPA path).
-
-  Args:
-    df (Any): Df passed to this helper.
-    jt (Any): Jt passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _merge_opa_fabric_if_no_ib_ext(None, None)  # doctest: +SKIP
-  """
-  if "ibbw" in df.columns and df["ibbw"].notna().any():
-    return df
-  agg = _get_agg_if_feasible(
-    jt,
-    "opa",
-    "arc",
-    ["PortXmitData", "PortRcvData"],
-    1.0 / 125000.0,
-  )
-  if agg.empty or "sum_val" not in agg.columns:
-    return df
-  merged = df.merge(
-    agg[["host", "time", "sum_val"]],
-    on=["host", "time"],
-    how="left",
-  )
-  merged["ibbw"] = merged["sum_val"]
-  merged.drop(columns=["sum_val"], inplace=True)
-  return merged
-
-
-def _merge_cha_counter_arc_sum(df: Any, jt: Any) -> Any:
-  """
-  Sum selected Intel CHA ``arc`` counters (all boxes); first matching CHA.
-
-    typename in schema.
-
-  Args:
-    df (Any): Df passed to this helper.
-    jt (Any): Jt passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _merge_cha_counter_arc_sum(None, None)  # doctest: +SKIP
-  """
-  raw_schema = getattr(jt, "schema", None)
-  schema = raw_schema if isinstance(raw_schema, dict) else {}
-  for cha_typ in CHA_TYPENAME_PRIORITY:
-    if cha_typ not in schema:
-      continue
-    have = set(schema[cha_typ])
-    evs = [e for e in _CHA_ARC_EVENTS if e in have]
-    if not evs:
-      continue
-    agg = _get_agg_if_feasible(jt, cha_typ, "arc", evs, 1.0)
-    if agg.empty or "sum_val" not in agg.columns:
-      continue
-    merged = df.merge(
-      agg[["host", "time", "sum_val"]],
-      on=["host", "time"],
-      how="left",
-    )
-    merged["cha_counter_arc_sum"] = merged["sum_val"]
-    merged.drop(columns=["sum_val"], inplace=True)
-    return merged
-  return df
-
-
-def _add_node_power_est_column(df: Any) -> Any:
-  """
-  Estimated on-node power (W): module-only when ``nv_module_power_w`` > 0, else.
-
-    CPU + GPU.
-
-  CPU side: ``dcg_cpu_power_w`` (Grace DCGM) if present, else Intel ``watts``,
-    else ``amd_pkg_w``.
-  GPU side: ``nv_power_w`` (summed per-GPU draw). Does **not** add module + DCGM
-    + per-GPU together.
-
-  Args:
-    df (Any): Df passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _add_node_power_est_column(None)  # doctest: +SKIP
-  """
-  n = len(df.index)
-  out = np.full(n, np.nan, dtype=np.float64)
-  use_mod = np.zeros(n, dtype=bool)
-  if "nv_module_power_w" in df.columns:
-    mod = pd_to_numeric(df["nv_module_power_w"], errors="coerce").to_numpy(
-      dtype=np.float64, copy=False
-    )
-    use_mod = (~np.isnan(mod)) & (mod > 0.0)
-    out = np.where(use_mod, mod, out)
-  cpu = np.full(n, np.nan, dtype=np.float64)
-  filled_cpu = np.zeros(n, dtype=bool)
-  for col_name in ("dcg_cpu_power_w", "watts", "amd_pkg_w"):
-    if col_name not in df.columns:
-      continue
-    col = pd_to_numeric(df[col_name], errors="coerce").to_numpy(
-      dtype=np.float64, copy=False
-    )
-    take = (~np.isnan(col)) & (~filled_cpu)
-    cpu = np.where(take, col, cpu)
-    filled_cpu |= take
-  gpu = np.full(n, np.nan, dtype=np.float64)
-  if "nv_power_w" in df.columns:
-    gv = pd_to_numeric(df["nv_power_w"], errors="coerce").to_numpy(
-      dtype=np.float64, copy=False
-    )
-    gpu = np.where(~np.isnan(gv), gv, gpu)
-  cpu_ok = np.isfinite(cpu)
-  gpu_ok = np.isfinite(gpu)
-  total = np.where(cpu_ok, cpu, 0.0) + np.where(gpu_ok, gpu, 0.0)
-  use_sum = (~use_mod) & (cpu_ok | gpu_ok)
-  out = np.where(use_sum, total, out)
-  df["node_power_est_w"] = out
-  return df
-
-
 # Keep in sync with ``metrics._MAX_SANE_GPU_LINK_GBPS`` (avoid circular import).
 _MAX_SANE_GPU_LINK_GBPS = 1.0e5
-
-
-def _clamp_summary_gpu_link_rates(df: Any) -> Any:
-  """
-  NaN-out wrap-class poison on ``nv_gpu_link_gbs`` so Y-range stays sane.
-
-  Args:
-    df (Any): Df passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _clamp_summary_gpu_link_rates(None)  # doctest: +SKIP
-  """
-  if df is None or df.empty or "nv_gpu_link_gbs" not in df.columns:
-    return df
-  s = df["nv_gpu_link_gbs"]
-  poison = s.notna() & (s.abs() > _MAX_SANE_GPU_LINK_GBPS)
-  if poison.any():
-    df = df.copy()
-    df.loc[poison, "nv_gpu_link_gbs"] = np.nan
-  return df
 
 
 def iter_summary_aggregate_attempts() -> Iterator[Any]:
@@ -1562,6 +816,7 @@ _IB_SUMMARY_ERROR_EVENTS = (
   "symbol_error",
 )
 
+
 _NET_SUMMARY_ERROR_EVENTS = (
   "rx_crc_errors",
   "rx_errors",
@@ -1605,39 +860,75 @@ def _iter_hardware_error_event_specs() -> Iterator[tuple[str, str, str]]:
   )
 
 
-def _one_error_host_series(jt: Any, typ: Any, event: Any) -> Any:
+def _continuous_polyline_xy(times: Any, values: Any) -> Any:
   """
-  Return hostxtime rates for one error counter, or None when unusable.
+  Build x/y lists for a continuous polyline through (time, value) samples.
 
-  Uses arc rates from ``_get_agg_if_feasible``. Returns None when the aggregate
-  is empty, all-NaN, or all zeros after fillna (no subplot for that counter).
+  NaN values in ``values`` break Bokeh line segments (gaps). Callers that want
+  continuous segments across missing samples should drop NaNs before calling.
 
   Args:
-    jt (Any): Job table / HostDataProvider with schema and get_aggregate_df.
-    typ (Any): Canonical monitor type (host_ib, net, opa).
-    event (Any): Counter event name within that type.
+    times (Any): Naive cluster-local ``datetime64`` samples.
+    values (Any): Values aligned with ``times``.
 
   Returns:
-    Any: DataFrame with columns host, time, summary_hardware_error_rates, or
-    None when the counter should not be plotted.
+    Any: ``(xs, ys)`` lists, or two empty lists on a length mismatch.
 
   Examples:
-    >>> _one_error_host_series(
-    ...   None, "host_ib", "port_rcv_errors"
-    ... )  # doctest: +SKIP
+    >>> _continuous_polyline_xy([], [])
+    ([], [])
   """
-  agg = _get_agg_if_feasible(jt, typ, "arc", [event], 1.0)
-  if agg.empty or "sum_val" not in agg.columns:
-    return None
-  out = agg[["host", "time", "sum_val"]].rename(
-    columns={"sum_val": _HARDWARE_ERROR_METRIC_COL}
+  if times is None or len(times) == 0:
+    return [], []
+  t = times.tolist() if hasattr(times, "tolist") else list(times)
+  v = values.tolist() if hasattr(values, "tolist") else list(values)
+  if len(t) != len(v):
+    return [], []
+  return t, v
+
+
+def _error_series_frame(
+  hosts: list[str], host_id: Any, time_us: Any, rates: Any
+) -> SeriesFrame:
+  """
+  Frame with one ``summary_hardware_error_rates`` column (``fillna(0)``).
+
+  Args:
+    hosts (list[str]): Host names by id.
+    host_id (Any): Host id per row.
+    time_us (Any): Sample time per row.
+    rates (Any): Error rate per row (NaN -> 0).
+
+  Returns:
+    SeriesFrame: Frame for :meth:`SummaryPlot.plot_metric`.
+
+  Examples:
+    >>> import numpy as np
+    >>> f = _error_series_frame(
+    ...   ["h"], np.array([0]), np.array([1]), np.array([np.nan])
+    ... )
+    >>> f.columns[_HARDWARE_ERROR_METRIC_COL].tolist()
+    [0.0]
+  """
+  frame = SeriesFrame.from_base(host_id, time_us, hosts)
+  order = np.lexsort((frame.time_us, frame.host_id))  # from_base reorders rows
+  del order
+  # Re-align the rates with the sorted base.
+  key_in = list(
+    zip(np.asarray(host_id).tolist(), np.asarray(time_us).tolist(), strict=True)
   )
-  if out.empty or not out[_HARDWARE_ERROR_METRIC_COL].notna().any():
-    return None
-  rates = out[_HARDWARE_ERROR_METRIC_COL].fillna(0.0)
-  if not rates.to_numpy().any():
-    return None
-  return out
+  lookup = dict(
+    zip(key_in, np.asarray(rates, dtype=np.float64).tolist(), strict=True)
+  )
+  aligned = np.array(
+    [
+      lookup[(int(h), int(t))]
+      for h, t in zip(frame.host_id, frame.time_us, strict=True)
+    ],
+    dtype=np.float64,
+  )
+  frame.set(_HARDWARE_ERROR_METRIC_COL, np.nan_to_num(aligned, nan=0.0))
+  return frame
 
 
 def plot_hardware_error_rate_figures(
@@ -1663,52 +954,62 @@ def plot_hardware_error_rate_figures(
     ...   SummaryPlot(jt), None
     ... )  # doctest: +SKIP
   """
+  from hpcperfstats.analysis.metrics.lib.columnar.summary_series import (
+    hardware_error_series,
+  )
+
   figures: list[Any] = []
-  for typ, event, label in _iter_hardware_error_event_specs():
-    df = _one_error_host_series(summary.jt, typ, event)
-    if df is None:
-      continue
-    figures.append(
-      summary.plot_metric(
-        df,
-        _HARDWARE_ERROR_METRIC_COL,
-        label,
-        x_range=x_range,
+  hosts = list(summary.jt.frame.hosts)
+  for _event, label, host_id, time_us, rates in hardware_error_series(
+    summary.jt
+  ):
+    frame = _error_series_frame(hosts, host_id, time_us, rates)
+    with _profile_phase("bokeh"):
+      figures.append(
+        summary.plot_metric(
+          frame, _HARDWARE_ERROR_METRIC_COL, label, x_range=x_range
+        )
       )
-    )
   return figures
 
 
 class SummaryPlot:
   """
-  Builds a grid of Bokeh continuous-line plots (one per metric) from jid_table.
+  Builds a grid of Bokeh continuous-line plots (one per metric) from the
+  columnar job table.
 
   Attributes:
-    host_list: Attribute.
-    jid: Attribute.
-    jt: Attribute.
+    host_list: Hosts with host_data in the job window (plot line order).
+    jid: Job id.
+    jt: ``ColumnarJobTable`` supplying the series.
+    hc: Host -> line color map, set by ``plot``.
+    last_series: ``SummarySeries`` of the last ``plot`` call (golden-corpus
+      capture and tests), or None.
   """
 
   def __init__(self, jt: Any) -> None:
     """
-    Store jid, jt, and host_list from the given jid_table (or HostDataProvider).
+    Store the job table and its host list.
 
     Args:
-      jt (Any): Jt passed to this helper.
+      jt (Any): ``ColumnarJobTable`` (``host_list``, ``schema``,
+        aggregates).
 
     Returns:
       None
 
     Examples:
-      >>> SummaryPlot(None)  # doctest: +SKIP
+      >>> SummaryPlot(jt)  # doctest: +SKIP
     """
-    self.jid = jt.jid
     self.jt = jt
-    self.host_list = jt.host_list
+    self.jid = getattr(jt, "jid", None)
+    self.host_list = list(getattr(jt, "host_list", []) or [])
+    self.hc: dict[str, str] = {}
+    self.last_series = None
 
   def plot_metric(
     self,
-    df: Any,
+    frame: SeriesFrame,
     metric: Any,
     label: Any,
     y_range_end: Any | None = None,
@@ -1719,32 +1020,30 @@ class SummaryPlot:
     Create one Bokeh figure with continuous per-host lines and scatter hits.
 
     Uses one multi_line glyph plus one scatter (HoverTool on data) and a
-      separate
-    HoverTool on a small "?" marker for metric documentation.
+    separate HoverTool on a small "?" marker for metric documentation.
 
     Args:
-      df (Any): Df passed to this helper.
-      metric (Any): Metric passed to this helper.
-      label (Any): Label passed to this helper.
-      y_range_end (Any | None): One of ``Any``, ``None``.
-      x_range (Any | None): One of ``Any``, ``None``.
-      variable_description (Any | None): One of ``Any``, ``None``.
+      frame (SeriesFrame): Series frame holding ``metric``.
+      metric (Any): Column name.
+      label (Any): Y-axis label.
+      y_range_end (Any | None): Explicit upper bound, or None.
+      x_range (Any | None): Shared ``Range1d``, or None.
+      variable_description (Any | None): Help text override.
 
     Returns:
-      Any: Value produced by this call (type depends on inputs).
+      Any: Bokeh figure.
 
     Examples:
-      >>> SummaryPlot().plot_metric(None, None, None, None, None, None)
+      >>> SummaryPlot(jt).plot_metric(frame, "cpu", "CPU")  # doctest: +SKIP
     """
     s = time.time()
-
-    df = df[["time", "host", metric]].copy()
-    df["host"] = df["host"].astype(str)
-    df["time"] = timestamps_as_cluster_naive(to_datetime(df["time"], utc=True))
-
-    y_range_start, y_range_end = non_degenerate_y_range_for_series(
-      df[metric], y_range_end=y_range_end
-    )
+    with _profile_phase("plot_series"):
+      values = np.asarray(frame.columns[metric], dtype=np.float64)
+      host_names = np.array(frame.host_names(), dtype=object)
+      times_local = timestamps_as_cluster_naive(frame.time_us)
+      y_range_start, y_range_end = non_degenerate_y_range_for_series(
+        values, y_range_end=y_range_end
+      )
 
     label_text = (label or "").strip() or metric
 
@@ -1759,9 +1058,7 @@ class SummaryPlot:
     )
     if x_range is not None:
       plot_kwargs["x_range"] = x_range
-    plot = figure(
-      **plot_kwargs,
-    )
+    plot = figure(**plot_kwargs)
     plot.xaxis.ticker.desired_num_ticks = 5
     plot.yaxis.axis_label_text_font_size = "9pt"
     plot.xaxis.axis_label_text_font_size = "9pt"
@@ -1771,18 +1068,20 @@ class SummaryPlot:
     xs_list = []
     ys_list = []
     colors_list = []
-    for h in self.host_list:
-      host_key = str(h)
-      # Keep NaN samples so multi_line breaks segments across gaps.
-      sub = df[df["host"] == host_key].sort_values("time")
-      if sub.empty:
-        xs_list.append([])
-        ys_list.append([])
-      else:
-        xi, yi = _continuous_polyline_xy(sub["time"], sub[metric])
-        xs_list.append(xi)
-        ys_list.append(yi)
-      colors_list.append(self.hc[h])
+    with _profile_phase("plot_series"):
+      for h in self.host_list:
+        host_key = str(h)
+        sel = np.nonzero(host_names == host_key)[0]
+        if sel.size == 0:
+          xs_list.append([])
+          ys_list.append([])
+        else:
+          order = sel[np.argsort(frame.time_us[sel], kind="stable")]
+          # Keep NaN samples so multi_line breaks segments across gaps.
+          xi, yi = _continuous_polyline_xy(times_local[order], values[order])
+          xs_list.append(xi)
+          ys_list.append(yi)
+        colors_list.append(self.hc[h])
 
     line_source = ColumnDataSource(
       data={"xs": xs_list, "ys": ys_list, "line_color": colors_list}
@@ -1795,12 +1094,19 @@ class SummaryPlot:
       line_width=1.5,
     )
 
-    scatter_df = add_hover_plain_columns(
-      df.dropna(subset=[metric]).sort_values(["host", "time"]),
-      [metric],
-      time_col="time",
-    )
-    scatter_source = ColumnDataSource(scatter_df)
+    with _profile_phase("plot_series"):
+      keep = ~np.isnan(values)
+      order = np.lexsort((frame.time_us[keep], host_names[keep].astype(str)))
+      idx = np.nonzero(keep)[0][order]
+      scatter_data: dict[str, Any] = {
+        "host": host_names[idx].tolist(),
+        "time": times_local[idx],
+        metric: values[idx],
+      }
+      scatter_data.update(
+        hover_plain_columns(times_local[idx], {metric: values[idx]})
+      )
+    scatter_source = ColumnDataSource(data=scatter_data)
     factors = [str(h) for h in self.host_list]
     palette = _cycled_d3_category20_palette(len(factors))
     scatter = plot.scatter(
@@ -1831,11 +1137,10 @@ class SummaryPlot:
     )
     from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
       is_job_scoped_host_data_type,
-      job_is_shared_node_from_jobish,
       show_shared_host_wide_help_footer,
     )
 
-    # Map summary column → host_data.type for residual footer gating.
+    # Map summary column -> host_data.type for residual footer gating.
     _metric_typ = None
     for spec in _SUMMARY_SINGLE_SPECS:
       if len(spec) >= 4 and spec[3] == metric:
@@ -1854,7 +1159,7 @@ class SummaryPlot:
       help_body,
       researcher_use,
       is_shared_node=show_shared_host_wide_help_footer(
-        is_shared_node=job_is_shared_node_from_jobish(self.jt),
+        is_shared_node=bool(getattr(self.jt, "_shared_node", False)),
         typ=_metric_typ,
         surface_job_scoped=_surface_job_scoped,
       ),
@@ -1864,148 +1169,50 @@ class SummaryPlot:
 
   def plot(self) -> Any:
     """
-    Build host_time_df, merge all configured metrics (amd64_pmc, intel_8pmc3,.
-
-      llite, cpu, mem, etc.), and return a gridplot of continuous-line plots.
+    Build the merged series, one figure per rendered metric, and return a
+    two-column ``gridplot``.
 
     Returns:
-      Any: Open return polymorphism from ``plot``: concrete type depends on
-      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+      Any: Bokeh ``GridPlot``.
 
     Raises:
-      ValueError: Raised when ``plot`` hits a ``ValueError`` failure path.
+      ValueError: ``MSG_NO_METRIC_DATA`` when the job has no series or no
+        renderable subplot.
 
     Examples:
-      >>> SummaryPlot().plot()  # doctest: +SKIP
+      >>> SummaryPlot(jt).plot()  # doctest: +SKIP
     """
+    from hpcperfstats.analysis.metrics.lib.columnar.summary_series import (
+      build_summary_series,
+    )
+
     palette = _cycled_d3_category20_palette(len(self.host_list))
     self.hc = {
       hostname: palette[i] for i, hostname in enumerate(self.host_list)
     }
-
     log.debug("Host Count: %s", len(self.host_list))
 
-    df = self.jt.get_host_time_df()
-    if df.empty or not self.host_list:
-      raise ValueError(MSG_NO_METRIC_DATA)
-
-    spec_rows = [
-      (typ, val, tuple(events), conv, name)
-      for typ, val, events, name, conv, label in _SUMMARY_SINGLE_SPECS
-      if name != "nv_gpu_util"
-    ]
-    prefetched = _prefetch_single_spec_aggregates(self.jt, spec_rows)
-
-    for _typ, _val, _events, name, _conv, label in _SUMMARY_SINGLE_SPECS:
-      if name == "nv_gpu_util":
-        continue
-      s = time.time()
-      agg = prefetched.get(name)
-      if agg is None:
-        agg = _empty_agg_df()
-      if agg.empty or "sum_val" not in agg.columns:
-        df[name] = float("nan")
-      else:
-        df = df.merge(
-          agg[["host", "time", "sum_val"]],
-          on=["host", "time"],
-          how="left",
-        )
-        df[name] = df["sum_val"]
-        df.drop(columns=["sum_val"], inplace=True)
-
-      if name == "amd_watts":
-        log.debug("amd_watts: %s", df[name].tolist())
-      if name in df.columns and df[name].isnull().values.any():
-        keep_sparse = (
-          name in _SUMMARY_ALLOW_PARTIAL_NULL and df[name].notna().any()
-        )
-        if not keep_sparse:
-          del df[name]
-      log.debug("time to compute %s: %s", name, time.time() - s)
-
-    df = _merge_nvidia_gpu_util_column(df, self.jt)
-    df = _merge_summary_mem_prefer_job(df, self.jt)
-
-    for fw in _SUMMARY_FIRST_WIN_SPECS:
-      s = time.time()
-      df = _merge_first_full_coverage(
-        df, self.jt, fw["name"], fw["val_col"], fw["tries"]
-      )
-      log.debug("time to compute %s: %s", fw["name"], time.time() - s)
-
-    df = _merge_intel_imc_cas_mbw(df, self.jt)
-    df = _merge_amd_df_mbw(df, self.jt)
-
-    df = _merge_cha_counter_arc_sum(df, self.jt)
-    df = _merge_opa_fabric_if_no_ib_ext(df, self.jt)
-    df = _add_node_power_est_column(df)
-    df = _clamp_summary_gpu_link_rates(df)
-
-    metrics = _summary_metric_specs()
-
-    if "acycles" in df.columns and "mcycles" in df.columns:
-      df["freq"] = 2.7 * df["acycles"] / df["mcycles"]
-      metrics += [("freq", "arc", [], "freq", 1, "CPU freq [GHz]")]
-      del df["mcycles"], df["acycles"], df["instr"]
-
-    if "amd_acycles" in df.columns and "amd_mcycles" in df.columns:
-      del df["amd_mcycles"], df["amd_acycles"], df["amd_instr"]
-    df = df.reset_index()
-
-    df["time"] = to_datetime(df["time"], utc=True)
-
-    render_specs = []
-    skip_lumped_tensor = _summary_has_tensor_split_series(df)
-    for _typ, _val, _events, name, _conv, label in metrics:
-      if name not in df.columns:
-        continue
-      if name == "node_power_est_w" and not df[name].notna().any():
-        continue
-      if name in _SUMMARY_SKIP_PLOT_METRICS:
-        continue
-      if name == "nv_tensor_active" and skip_lumped_tensor:
-        continue
-      if name == "freq":
-        freq_max = df[name].max()
-        if freq_max is None or math.isnan(freq_max) or freq_max <= 500:
-          continue
-      y_top = None
-      if name == "nv_mem_used_mb":
-        y_top = _summary_nv_mem_used_y_range_end(df)
-      elif name == "nv_gpu_util":
-        shared_gpu_count = None
-        jid = getattr(self.jt, "jid", None)
-        if isinstance(jid, (str, int)) and str(jid).strip():
-          from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
-            gpu_devs_for_job,
-            job_is_shared_node,
-          )
-
-          if job_is_shared_node(str(jid).strip()):
-            shared_gpu_count = len(gpu_devs_for_job(str(jid).strip()) or [])
-        y_top = _summary_nv_gpu_util_y_range_end(
-          df, shared_gpu_count=shared_gpu_count
-        )
-      render_specs.append((name, label, y_top))
-
-    render_specs.sort(key=lambda item: _summary_plot_order_key(item[0]))
+    with _profile_phase("plot_series"):
+      series = build_summary_series(self.jt)
+    self.last_series = series
 
     # Match plot series (cluster-naive wall clock) so Range1d aligns with glyphs.
     x_start_l, x_end_l = job_window_bounds_local(self.jt)
     if x_start_l is not None and x_end_l is not None:
       x_range = Range1d(
-        x_start_l.tz_localize(None),
-        x_end_l.tz_localize(None),
+        x_start_l.replace(tzinfo=None), x_end_l.replace(tzinfo=None)
       )
     else:
       x_range = None
 
     plots = []
-    for name, label, y_top in render_specs:
-      plots += [
-        self.plot_metric(df, name, label, y_range_end=y_top, x_range=x_range)
-      ]
+    for name, label, y_top in series.render_specs:
+      with _profile_phase("bokeh"):
+        plots += [
+          self.plot_metric(
+            series.frame, name, label, y_range_end=y_top, x_range=x_range
+          )
+        ]
 
     plots.extend(plot_hardware_error_rate_figures(self, x_range))
 
@@ -2013,9 +1220,10 @@ class SummaryPlot:
       raise ValueError(MSG_NO_METRIC_DATA)
     # Root GridPlot must stretch horizontally so the grid uses the full embed width
     # (child figures already use stretch_width via figure_embed_kw).
-    return gridplot(
-      plots, ncols=min(2, len(plots)), sizing_mode="stretch_width"
-    )
+    with _profile_phase("bokeh"):
+      return gridplot(
+        plots, ncols=min(2, len(plots)), sizing_mode="stretch_width"
+      )
 
 
 def plot_and_reason_summary_from_jid_table(jt: Any) -> Any:
@@ -2023,22 +1231,20 @@ def plot_and_reason_summary_from_jid_table(jt: Any) -> Any:
   Build summary plot and return (figure_or_none, unavailable_reason_or_none).
 
   Args:
-    jt (Any): Jt passed to this helper.
+    jt (Any): ``ColumnarJobTable`` of the job.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: ``(figure, None)`` or ``(None, reason)``.
 
   Examples:
-    >>> plot_and_reason_summary_from_jid_table(None)  # doctest: +SKIP
+    >>> plot_and_reason_summary_from_jid_table(jt)  # doctest: +SKIP
   """
   t0 = time.monotonic()
-  begin_summary_aggregate_counting()
   try:
     fig = SummaryPlot(jt).plot()
   except Exception as plot_exc:
-    end_summary_aggregate_counting()
-    host_time_df = jt.get_host_time_df()
-    if host_time_df.empty or not jt.host_list:
+    host_time = jt.get_host_time()
+    if host_time.empty or not jt.host_list:
       return (
         None,
         "No hosts/timestamps found in host_data for this job/time range",
@@ -2061,11 +1267,9 @@ def plot_and_reason_summary_from_jid_table(jt: Any) -> Any:
       f"Detail: {plot_exc!s}",
     )
   else:
-    n_aggs = end_summary_aggregate_counting()
     log.debug(
-      "summary plot success jid=%s elapsed_s=%.3f get_aggregate_df_calls=%s",
+      "summary plot success jid=%s elapsed_s=%.3f",
       getattr(jt, "jid", None),
       time.monotonic() - t0,
-      n_aggs,
     )
     return (fig, None)

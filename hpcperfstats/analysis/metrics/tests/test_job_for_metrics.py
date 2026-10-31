@@ -9,137 +9,107 @@ from django.db.utils import OperationalError
 from hpcperfstats.analysis.metrics.lib import metrics
 
 
-class _FakeJidTable:
-  def __init__(self):
-    self.jid = 123
-    self.host_list = ["host1", "host2"]
-    self.schema = {"cpu": ["user", "system"], "mem": ["used"]}
+def _two_host_table():
+  """Two hosts share two wall-clock times: per-host distinct sum = 2 + 2 = 4."""
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
 
-  def get_full_host_data_df(self, columns):
-    # Two hosts share two wall-clock times: global distinct times = 2,
-    # per-host distinct sum = 2 + 2 = 4 (invalidation / metrics_distinct_time_count).
-    data = [
-      {
-        "host": "host1",
-        "time": "2024-01-01T00:00:00Z",
-        "type": "cpu",
-        "event": "user",
-        "value": 10,
-      },
-      {
-        "host": "host1",
-        "time": "2024-01-01T00:00:00Z",
-        "type": "cpu",
-        "event": "system",
-        "value": 5,
-      },
-      {
-        "host": "host1",
-        "time": "2024-01-01T00:05:00Z",
-        "type": "cpu",
-        "event": "user",
-        "value": 11,
-      },
-      {
-        "host": "host1",
-        "time": "2024-01-01T00:05:00Z",
-        "type": "cpu",
-        "event": "system",
-        "value": 6,
-      },
-      {
-        "host": "host2",
-        "time": "2024-01-01T00:00:00Z",
-        "type": "cpu",
-        "event": "user",
-        "value": 20,
-      },
-      {
-        "host": "host2",
-        "time": "2024-01-01T00:00:00Z",
-        "type": "cpu",
-        "event": "system",
-        "value": 10,
-      },
-      {
-        "host": "host2",
-        "time": "2024-01-01T00:05:00Z",
-        "type": "cpu",
-        "event": "user",
-        "value": 21,
-      },
-      {
-        "host": "host2",
-        "time": "2024-01-01T00:05:00Z",
-        "type": "cpu",
-        "event": "system",
-        "value": 11,
-      },
-      {
-        "host": "host1",
-        "time": "2024-01-01T00:00:00Z",
-        "type": "mem",
-        "event": "used",
-        "value": 100,
-      },
-    ]
-    df = pd.DataFrame(data)
-    # Ensure only requested columns are returned; fill missing (e.g. arc).
-    for col in columns:
-      if col not in df.columns:
-        df[col] = np.nan
-    return df[list(columns)]
+  t0 = "2024-01-01T00:00:00+00:00"
+  t1 = "2024-01-01T00:05:00+00:00"
+  rows = []
+  for host, user0, sys0 in (("host1", 10, 5), ("host2", 20, 10)):
+    rows.append(
+      (pd.Timestamp(t0), host, "cpu", "user", None, float(user0), None, None)
+    )
+    rows.append(
+      (pd.Timestamp(t0), host, "cpu", "system", None, float(sys0), None, None)
+    )
+    rows.append(
+      (
+        pd.Timestamp(t1),
+        host,
+        "cpu",
+        "user",
+        None,
+        float(user0 + 1),
+        None,
+        None,
+      )
+    )
+    rows.append(
+      (
+        pd.Timestamp(t1),
+        host,
+        "cpu",
+        "system",
+        None,
+        float(sys0 + 1),
+        None,
+        None,
+      )
+    )
+  rows.append(
+    (pd.Timestamp(t0), "host1", "mem", "used", None, 100.0, None, None)
+  )
+  return table_from_records(
+    rows, jid="123", schema={"cpu": ["user", "system"], "mem": ["used"]}
+  )
 
 
-class _FakeJidTableSparseSlowTier:
-  """Slow-tier event sampled only on sparse timestamps (two-tier monitor cadence)."""
-
-  def __init__(self):
-    self.jid = 789
-    self.host_list = ["host1"]
-    self.schema = {"host_tt": ["a", "b"]}
-
-  def get_full_host_data_df(self, columns):
-    data = [
-      {
-        "host": "host1",
-        "time": "2024-01-01T00:00:00Z",
-        "type": "host_tt",
-        "event": "a",
-        "value": 1000.0,
-      },
-      {
-        "host": "host1",
-        "time": "2024-01-01T00:00:30Z",
-        "type": "host_tt",
-        "event": "a",
-        "value": 1100.0,
-      },
-      {
-        "host": "host1",
-        "time": "2024-01-01T00:10:00Z",
-        "type": "host_tt",
-        "event": "a",
-        "value": 2000.0,
-      },
-      {
-        "host": "host1",
-        "time": "2024-01-01T00:10:00Z",
-        "type": "host_tt",
-        "event": "b",
-        "value": 2500.0,
-      },
-    ]
-    df = pd.DataFrame(data)
-    for col in columns:
-      if col not in df.columns:
-        df[col] = np.nan
-    return df[list(columns)]
-
-
-def test_job_for_metrics_sparse_slow_tier_uses_nan_not_zero_fill():
+def test_metrics_view_sparse_slow_tier_uses_nan_not_zero_fill():
   """Missing slow-tier samples at fast timestamps must not become counter value 0."""
-  job = metrics._JobForMetrics(_FakeJidTableSparseSlowTier())
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
+
+  table = table_from_records(
+    [
+      (
+        pd.Timestamp("2024-01-01T00:00:00Z"),
+        "host1",
+        "host_tt",
+        "a",
+        None,
+        1000.0,
+        None,
+        None,
+      ),
+      (
+        pd.Timestamp("2024-01-01T00:00:30Z"),
+        "host1",
+        "host_tt",
+        "a",
+        None,
+        1100.0,
+        None,
+        None,
+      ),
+      (
+        pd.Timestamp("2024-01-01T00:10:00Z"),
+        "host1",
+        "host_tt",
+        "a",
+        None,
+        2000.0,
+        None,
+        None,
+      ),
+      (
+        pd.Timestamp("2024-01-01T00:10:00Z"),
+        "host1",
+        "host_tt",
+        "b",
+        None,
+        2500.0,
+        None,
+        None,
+      ),
+    ],
+    jid="789",
+    schema={"host_tt": ["a", "b"]},
+  )
+  job = table.metrics_view()
   agg = job.hosts["host1"].stats["host_tt"]["agg"]
   assert agg.shape == (3, 2)
   # Fast event a present at all three global timestamps.
@@ -155,26 +125,21 @@ def test_job_for_metrics_sparse_slow_tier_uses_nan_not_zero_fill():
   assert np.isnan(rates[1])
 
 
-def test_job_for_metrics_builds_time_axis_and_host_stats():
-  jt = _FakeJidTable()
-
-  job = metrics._JobForMetrics(jt)
-
-  # Times should be a sorted NumPy array with two unique timestamps (global axis).
-  assert isinstance(job.times, np.ndarray)
-  assert job.times.size == 2
+def test_metrics_view_builds_time_axis_and_host_stats():
+  job = _two_host_table().metrics_view()
+  assert job.jid == "123"
+  assert job.times.shape == (2,)
+  assert job.times[1] - job.times[0] == 300.0
+  assert set(job.hosts) == {"host1", "host2"}
+  assert list(job.schemas["cpu"].events) == ["user", "system"]
+  agg1 = job.hosts["host1"].stats["cpu"]["agg"]
+  assert agg1.tolist() == [[10.0, 5.0], [11.0, 6.0]]
+  agg2 = job.hosts["host2"].stats["cpu"]["agg"]
+  assert agg2.tolist() == [[20.0, 10.0], [21.0, 11.0]]
+  # host2 has no mem rows: no mem stats entry (utils.get_type skips the host).
+  assert "mem" not in job.hosts["host2"].stats
   assert job.per_host_distinct_time_sum == 4
-  assert job.hosts.keys() == {"host1", "host2"}
-  assert "cpu" in job.schemas
-  assert "mem" in job.schemas
-
-  host1_cpu = job.hosts["host1"].stats["cpu"]["agg"]
-  # Shape: (n_times, n_events) -> 2 timestamps x 2 events
-  assert host1_cpu.shape == (2, 2)
-
   cm_cpu = job.cluster_mean_by_type["cpu"]
-  assert cm_cpu.shape == (2, 2)
-  # Host-averaged user/system at each global timestamp (user col 0, system 1)
   assert abs(cm_cpu[0, 0] - 15.0) < 1e-9
   assert abs(cm_cpu[0, 1] - 7.5) < 1e-9
   assert abs(cm_cpu[1, 0] - 16.0) < 1e-9
@@ -182,36 +147,14 @@ def test_job_for_metrics_builds_time_axis_and_host_stats():
 
 
 def test_compute_metrics_persists_per_host_distinct_sum(monkeypatch):
-  """Sample Count must come from jid_table distinct sum, not stub live getter."""
-
-  class _Qs:
-    def exists(self):
-      return True
-
-  class _Jt(_FakeJidTable):
-    def _host_data_qs(self):
-      return _Qs()
-
-    def get_host_time_df(self):
-      df = self.get_full_host_data_df(
-        ["host", "time", "type", "event", "value"]
-      )
-      return df[["host", "time"]].drop_duplicates()
-
-  @contextlib.contextmanager
-  def _fake_jid_table(jid):
-    del jid
-    yield _Jt()
-
-  monkeypatch.setattr(metrics.jid_table, "jid_table", _fake_jid_table)
+  """Sample Count must come from the job table distinct sum, not stub live getter."""
+  table = _two_host_table()
+  monkeypatch.setattr(metrics, "open_job_table", lambda job, **_kw: table)
   monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.compute_job_gpu_summary_tuple",
-    lambda jt: (None, None, None, None),
+    metrics, "gpu_summary_tuple", lambda jt: (None, None, None, None)
   )
   monkeypatch.setattr(
-    metrics,
-    "compute_job_detail_fsio_metric_rows",
-    lambda jt: [],
+    metrics, "compute_job_detail_fsio_metric_rows", lambda jt: []
   )
 
   m = metrics.Metrics()
@@ -236,61 +179,7 @@ def test_compute_metrics_persists_per_host_distinct_sum(monkeypatch):
   out = m.compute_metrics(job)
   assert out["distinct_time_count"] == 4
   # S4: the schema travels in the payload; the worker never saves the job.
-  assert out["host_data_schema"] == _FakeJidTable().schema
-
-
-class _FakeJidTableListyLabels:
-  """Labels occasionally deserialize as list/tuple; grouping keys must stay hashable."""
-
-  def __init__(self):
-    self.jid = 456
-    self.host_list = ["host1"]
-    self.schema = {("cpu", "lane"): ["user", "system"]}
-
-  def get_full_host_data_df(self, columns):
-    data = [
-      {
-        "host": "host1",
-        "time": "2024-01-01T00:00:00Z",
-        "type": ["cpu", "lane"],
-        "event": ["user"],
-        "value": 10.0,
-      },
-      {
-        "host": "host1",
-        "time": "2024-01-01T00:00:00Z",
-        "type": ["cpu", "lane"],
-        "event": ["system"],
-        "value": 5.0,
-      },
-      {
-        "host": "host1",
-        "time": "2024-01-01T00:05:00Z",
-        "type": ["cpu", "lane"],
-        "event": ["user"],
-        "value": 11.0,
-      },
-      {
-        "host": "host1",
-        "time": "2024-01-01T00:05:00Z",
-        "type": ["cpu", "lane"],
-        "event": ["system"],
-        "value": 6.0,
-      },
-    ]
-    df = pd.DataFrame(data)
-    for col in columns:
-      if col not in df.columns:
-        df[col] = np.nan
-    return df[list(columns)]
-
-
-def test_job_for_metrics_coerces_list_like_labels_before_groupby():
-  job = metrics._JobForMetrics(_FakeJidTableListyLabels())
-  assert "cpu,lane" in job.schemas
-  assert job.hosts.keys() == {"host1"}
-  agg = job.hosts["host1"].stats["cpu,lane"]["agg"]
-  assert agg.shape == (2, 2)
+  assert out["host_data_schema"] == table.schema
 
 
 def test_coerce_metrics_identity_str_stable():
@@ -856,57 +745,6 @@ def test_pg_session_statement_timeout_for_metrics_worker_restore_swallows_db_err
     pass
 
 
-def test_host_data_metric_rows_with_host_chunk_retry_splits_on_timeout(
-  monkeypatch,
-):
-  """48-host / single-batch style: timeout on full chunk -> halve and succeed."""
-  hosts = [f"h{i}.example.com" for i in range(8)]
-  seen = []
-
-  class _QS:
-    def __init__(self, chunk):
-      self._chunk = chunk
-
-    def values(self, *args, **kwargs):
-      del args, kwargs
-      return self
-
-    def order_by(self, *args):
-      del args
-      return self
-
-    def __iter__(self):
-      size = len(self._chunk)
-      seen.append(size)
-      if size == 8:
-        raise OperationalError("canceling statement due to statement timeout")
-      for h in self._chunk:
-        yield {"host": h, "time": "t0", "value": 1.0}
-
-  class _HD:
-    objects = SimpleNamespace()
-
-  def _filter(**kwargs):
-    chunk = list(kwargs.get("host__in") or [])
-    return _QS(chunk)
-
-  _HD.objects.filter = _filter
-  monkeypatch.setattr(
-    "hpcperfstats.site.lib.machine.models.host_data",
-    _HD,
-  )
-  monkeypatch.setattr(metrics, "close_old_connections", lambda: None)
-  out = metrics._host_data_metric_rows_with_host_chunk_retry(
-    hosts,
-    {"time__gte": "a", "time__lte": "b"},
-    "cpu",
-    ["user"],
-    "value",
-  )
-  assert seen == [8, 4, 4]
-  assert len(out) == 8
-
-
 def test_metric_type_events_feasible_skips_impossible_types():
   assert (
     metrics._metric_type_events_feasible({}, "amd64_pmc", ["FLOPS"]) is True
@@ -959,51 +797,6 @@ def test_job_arc_skips_orm_when_schema_rules_out_type(monkeypatch):
     m.job_arc(jt, typename="amd64_pmc", events=["FLOPS"], conv=1e-9) is None
   )
   assert filter_calls == []
-
-
-def test_host_data_metric_rows_batched_uses_metrics_host_batch(monkeypatch):
-  """~48-host jobs must not issue a single 64-host query by default."""
-  n = metrics.METRICS_HOST_QUERY_BATCH + 2
-  hosts = [f"h{i}.x" for i in range(n)]
-  chunk_sizes = []
-
-  class _QS:
-    def __init__(self, chunk):
-      self._chunk = chunk
-
-    def values(self, *args, **kwargs):
-      del args, kwargs
-      return self
-
-    def order_by(self, *args):
-      del args
-      return self
-
-    def __iter__(self):
-      chunk_sizes.append(len(self._chunk))
-      return iter(())
-
-  class _HD:
-    objects = SimpleNamespace()
-
-  def _filter(**kwargs):
-    return _QS(list(kwargs.get("host__in") or []))
-
-  _HD.objects.filter = _filter
-  monkeypatch.setattr(
-    "hpcperfstats.site.lib.machine.models.host_data",
-    _HD,
-  )
-  monkeypatch.setattr(metrics, "close_old_connections", lambda: None)
-  rows = metrics._host_data_metric_rows_batched(
-    {"time__gte": "a", "time__lte": "b"},
-    hosts,
-    "net",
-    ["rx_bytes"],
-    "arc",
-  )
-  assert rows == []
-  assert chunk_sizes == [metrics.METRICS_HOST_QUERY_BATCH, 2]
 
 
 def test_ensure_pool_creates_titled_in_process_threads(monkeypatch):

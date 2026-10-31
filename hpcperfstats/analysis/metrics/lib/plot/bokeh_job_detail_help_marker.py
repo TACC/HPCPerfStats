@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import html
 import math
+from datetime import timedelta
 from typing import Any
 
 from bokeh.models import ColumnDataSource, HoverTool, Label, LogScale
@@ -35,18 +36,14 @@ def _span_x_numeric(plot: Any) -> Any:
   xs, xe = plot.x_range.start, plot.x_range.end
   span = xe - xs
   if hasattr(span, "total_seconds"):
-    from pandas import Timedelta
-
     if span.total_seconds() == 0:
-      span = Timedelta(seconds=60)
+      span = timedelta(seconds=60)
   else:
     try:
       if float(span) == 0.0:
         span = 1.0
     except TypeError, ValueError:
-      from pandas import Timedelta
-
-      span = Timedelta(seconds=60)
+      span = timedelta(seconds=60)
   return xs, xe, span
 
 

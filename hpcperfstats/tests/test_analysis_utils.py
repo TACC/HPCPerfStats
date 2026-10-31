@@ -1,89 +1,21 @@
-"""Unit tests for analysis.gen.utils (clean_dataframe, queryset_to_dataframe)."""
+"""Unit tests for analysis.gen.utils (plot value / time formatting helpers)."""
 
 import numpy as np
-import pandas as pd
 
 
-def test_clean_dataframe_fillna():
-  """clean_dataframe replaces NaN with empty string."""
-  from hpcperfstats.analysis.metrics.lib.gen.utils import clean_dataframe
-
-  df = pd.DataFrame({"a": [1, np.nan, 3]})
-  out = clean_dataframe(df)
-  assert out["a"].iloc[1] == ""
-
-
-def test_clean_dataframe_inf():
-  """clean_dataframe replaces inf with empty string."""
-  from hpcperfstats.analysis.metrics.lib.gen.utils import clean_dataframe
-
-  df = pd.DataFrame({"a": [1.0, np.inf, -np.inf]})
-  out = clean_dataframe(df)
-  assert out["a"].iloc[1] == ""
-  assert out["a"].iloc[2] == ""
-
-
-def test_queryset_to_dataframe_empty():
-  """queryset_to_dataframe returns empty DataFrame for None."""
+def test_non_degenerate_y_range_for_series_handles_nan_and_negatives():
   from hpcperfstats.analysis.metrics.lib.gen.utils import (
-    queryset_to_dataframe,
+    non_degenerate_y_range_for_series,
   )
 
-  out = queryset_to_dataframe(None)
-  assert isinstance(out, pd.DataFrame)
-  assert len(out) == 0
-
-
-def test_queryset_to_dataframe_mock_queryset():
-  """queryset_to_dataframe converts iterable of dicts (e.g. queryset) to DataFrame."""
-  from hpcperfstats.analysis.metrics.lib.gen.utils import (
-    queryset_to_dataframe,
+  assert non_degenerate_y_range_for_series([1.0, 3.0]) == (
+    0.0,
+    3.3000000000000003,
   )
-
-  class MockQs:
-    def __iter__(self):
-      return iter([{"a": 1, "b": 2}, {"a": 3, "b": 4}])
-
-  out = queryset_to_dataframe(MockQs())
-  assert isinstance(out, pd.DataFrame)
-  assert len(out) == 2
-  assert list(out.columns) == ["a", "b"]
-  assert out["a"].tolist() == [1, 3]
-
-
-def test_queryset_to_dataframe_empty_values_with_columns_kwarg():
-  """Empty values(*columns) still exposes column names for concat/sort."""
-  from hpcperfstats.analysis.metrics.lib.gen.utils import (
-    queryset_to_dataframe,
-  )
-
-  class QsEmpty:
-    def values(self, *cols):
-      return []
-
-  out = queryset_to_dataframe(QsEmpty(), columns=["host", "time"])
-  assert list(out.columns) == ["host", "time"]
-  assert len(out) == 0
-
-
-def test_queryset_to_dataframe_empty_iter_with_values_select():
-  """Empty .values() queryset: use query.values_select for DataFrame columns."""
-  from hpcperfstats.analysis.metrics.lib.gen.utils import (
-    queryset_to_dataframe,
-  )
-
-  class QsEmptyValues:
-    class _Query:
-      values_select = ("host", "time")
-
-    query = _Query()
-
-    def __iter__(self):
-      return iter([])
-
-  out = queryset_to_dataframe(QsEmptyValues())
-  assert list(out.columns) == ["host", "time"]
-  assert len(out) == 0
+  assert non_degenerate_y_range_for_series([np.nan, np.nan]) == (0.0, 1.0)
+  lo, hi = non_degenerate_y_range_for_series([-2.0, 4.0])
+  assert lo == -2.0 and hi > 4.0
+  assert non_degenerate_y_range_for_series([5.0], y_range_end=2.0) == (0.0, 2.0)
 
 
 def test_tz_aware_bokeh_tick_formatter_returns_datetime_formatter():
@@ -100,18 +32,21 @@ def test_tz_aware_bokeh_tick_formatter_returns_datetime_formatter():
 
 def test_timestamps_as_cluster_naive_matches_hover_wall_clock(monkeypatch):
   """Axis-bound naive times share wall clock with format_cluster_hover_datetime."""
-  import pandas as pd
+  from datetime import UTC, datetime
 
   from hpcperfstats.analysis.metrics.lib.gen import utils as u
 
   monkeypatch.setattr(u, "local_timezone", "America/Chicago")
-  utc = pd.Series([pd.Timestamp("2024-07-01T12:00:00Z")])
-  naive = u.timestamps_as_cluster_naive(utc)
+  utc = datetime(2024, 7, 1, 12, 0, tzinfo=UTC)
+  micros = np.array([int(utc.timestamp() * 1_000_000)], dtype=np.int64)
+  naive = u.timestamps_as_cluster_naive(micros)
   # 12:00 UTC -> 07:00 CDT in July
-  assert naive.iloc[0].hour == 7
-  assert naive.iloc[0].tzinfo is None
-  assert u.format_cluster_hover_datetime(naive.iloc[0]) == "7:00 AM"
-  assert u.format_cluster_hover_datetime(utc.iloc[0]) == "7:00 AM"
+  assert naive.dtype == np.dtype("datetime64[ms]")
+  assert naive[0].astype("datetime64[h]").astype(int) % 24 == 7
+  assert u.format_cluster_hover_datetime(naive[0]) == "7:00 AM"
+  assert u.format_cluster_hover_datetime(utc) == "7:00 AM"
+  assert u.format_cluster_hover_datetime(utc.timestamp() * 1000.0) == "7:00 AM"
+  assert u.format_cluster_hover_datetime(None) == ""
 
 
 def test_format_plain_decimal_avoids_scientific():
@@ -121,23 +56,16 @@ def test_format_plain_decimal_avoids_scientific():
   assert format_plain_decimal(0.00012) == "0.00"
 
 
-def test_add_hover_plain_columns_adds_formatted_fields():
-  import pandas as pd
+def test_hover_plain_columns_adds_formatted_fields():
+  from hpcperfstats.analysis.metrics.lib.gen import utils as u
 
-  from hpcperfstats.analysis.metrics.lib.gen.utils import (
-    add_hover_plain_columns,
+  times = u.timestamps_as_cluster_naive(
+    np.array([1_704_112_200_000_000], dtype=np.int64)
   )
-
-  df = pd.DataFrame(
-    {
-      "time": [pd.Timestamp("2024-01-01 12:30:00+00:00")],
-      "cpu": [1.5],
-    }
-  )
-  out = add_hover_plain_columns(df, ["cpu"])
-  assert "_hover_time" in out.columns
-  assert "cpu_plain" in out.columns
-  assert out.loc[0, "cpu_plain"] == "1.50"
+  out = u.hover_plain_columns(times, {"cpu": [1.5]})
+  assert "_hover_time" in out
+  assert out["cpu_plain"] == ["1.50"]
+  assert u.hover_plain_columns(None, {"x": [np.nan]}) == {"x_plain": ["nan"]}
 
 
 def test_plain_linear_tick_formatter_disables_scientific():
@@ -153,3 +81,14 @@ def test_plain_linear_tick_formatter_disables_scientific():
   p = figure(width=80, height=60)
   set_linear_axes_plain_numeric(p)
   assert p.yaxis.formatter.use_scientific is False
+
+
+def test_utils_module_has_no_pandas_dependency():
+  import importlib
+  import inspect
+
+  from hpcperfstats.analysis.metrics.lib.gen import utils as u
+
+  src = inspect.getsource(importlib.import_module(u.__name__))
+  assert "import pandas" not in src
+  assert "from pandas" not in src

@@ -18,18 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from django.db.models import Avg, Count, Max
-
-from hpcperfstats.analysis.metrics.lib.gen import jid_table as jid_table_mod
-from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
-  apply_gpu_affinity_dev_filter,
-  apply_job_host_data_scope,
-  gpu_devs_for_job,
-  job_is_shared_node,
-)
-from hpcperfstats.dbload.lib import conf_parser as cfg
-from hpcperfstats.lib.dcgm_blank import DCGM_FP64_BLANK, is_dcgm_numeric_blank
-from hpcperfstats.site.lib.machine.models import host_data
+from hpcperfstats.lib.dcgm_blank import is_dcgm_numeric_blank
 
 GPU_TYPE_PRECEDENCE: tuple[str, ...] = ("nvidia_gpu", "amd_gpu", "intel_gpu")
 _GPU_UTIL_EVENTS = ("gpu_util", "utilization")
@@ -61,331 +50,68 @@ def _coerce_job_jid(j: Any) -> str | None:
   return s or None
 
 
-def _blank_excluded_value_q(field: str = "value") -> Any:
-  """
-  ORM kwargs / Q fragment: exclude DCGM FP64 blank family (covers INT64 blanks).
-
-  Args:
-    field (str): String for field.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _blank_excluded_value_q("x")  # doctest: +SKIP
-  """
-  return {f"{field}__lt": DCGM_FP64_BLANK}
-
-
-def _job_window_time_filter(j: Any) -> Any:
-  """
-  Build ``time__gte`` / ``time__lte`` kwargs for a job-like object.
-
-  Args:
-    j (Any): Job with ``start_time`` / ``end_time``.
-
-  Returns:
-    Any: Time filter dict.
-
-  Examples:
-    >>> _job_window_time_filter(None)  # doctest: +SKIP
-  """
-  return {"time__gte": j.start_time, "time__lte": j.end_time}
-
-
-def _collect_gpu_annotate_rows(
-  hosts: Any,
-  tkw: Any,
-  *,
-  gpu_typ: str,
-  events: Any,
-  group_fields: Any,
-  annotate_kwargs: Any,
-  jid: Any | None = None,
-  affinity_devs: list[str] | None = None,
-) -> list[dict]:
-  """
-  Hostxtime chunked annotate query with statement_timeout split/retry.
-
-  When ``jid`` is set, rows are restricted to that job's ``jid`` /
-  ``dev=j:<jid>`` scope and optional ``job_affinity.gpu_list`` devices.
-
-  Args:
-    hosts (Any): Accounting hosts.
-    tkw (Any): Base time filter.
-    gpu_typ (str): ``host_data.type`` (nvidia/amd/intel).
-    events (Any): Event name or list for ``event`` / ``event__in``.
-    group_fields (Any): ``.values(...)`` grouping fields.
-    annotate_kwargs (Any): Annotate kwargs (Count/Max/Avg).
-    jid (Any | None): Optional job id for shared-node scope.
-    affinity_devs (list[str] | None): Precomputed ``gpu_devs_for_job`` result.
-
-  Returns:
-    List[dict]: Folded annotate rows across chunks.
-
-  Examples:
-    >>> _collect_gpu_annotate_rows(
-    ...   [],
-    ...   {},
-    ...   gpu_typ="nvidia_gpu",
-    ...   events=["gpu_util"],
-    ...   group_fields=["host"],
-    ...   annotate_kwargs={},
-    ... )
-    []
-  """
-  slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
-  batch = jid_table_mod.TYPE_DETAIL_HOST_QUERY_BATCH
-  event_filter: dict
-  if isinstance(events, (list, tuple)):
-    event_filter = {"event__in": list(events)}
-  else:
-    event_filter = {"event": events}
-  group = list(group_fields)
-  jid_s = str(jid) if jid else ""
-  aff = affinity_devs
-  if aff is None and jid_s:
-    aff = gpu_devs_for_job(jid_s)
-
-  def run(hosts_list: Any, tf_cur: Any) -> Any:
-    """
-    Run one annotate chunk.
-
-    Args:
-      hosts_list (Any): Hostnames for this attempt.
-      tf_cur (Any): Time filter dict.
-
-    Returns:
-      Any: List of annotate dicts.
-
-    Examples:
-      >>> True
-      True
-    """
-    qs = host_data.objects.filter(
-      type=gpu_typ,
-      host__in=hosts_list,
-      **_blank_excluded_value_q("value"),
-      **event_filter,
-      **(tf_cur or {}),
-    )
-    if jid_s:
-      qs = apply_job_host_data_scope(qs, jid_s)
-      qs = apply_gpu_affinity_dev_filter(qs, jid_s, affinity_devs=aff)
-    return list(qs.values(*group).annotate(**annotate_kwargs))
-
-  all_rows: list[dict] = []
-  for host_chunk, tf in jid_table_mod._iter_host_time_query_chunks(
-    hosts,
-    tkw,
-    batch_size=batch,
-    slice_s=slice_s,
-  ):
-    all_rows.extend(
-      jid_table_mod._run_with_host_time_timeout_retry(
-        host_chunk,
-        tf,
-        run,
-        jid_table_mod._merge_list_results,
-        empty=[],
-      )
-    )
-  if not all_rows:
-    return []
-  if "cnt" in annotate_kwargs and (
-    "vmax" in annotate_kwargs or "vmean" in annotate_kwargs
-  ):
-    return jid_table_mod._fold_count_max_avg_rows(all_rows, group)
-  if "mv" in annotate_kwargs:
-    return jid_table_mod._fold_max_by_key(all_rows, group, "mv")
-  if "pmax" in annotate_kwargs:
-    return jid_table_mod._fold_max_by_key(all_rows, group, "pmax")
-  return all_rows
-
-
 def gpu_agg_rows_for_job_window(j: Any) -> list[dict]:
   """
   Per-(host, dev, event) Count/Max/Avg for GPU util in the job window.
 
-  Uses the first vendor in ``GPU_TYPE_PRECEDENCE`` that has util rows.
+  Uses the first vendor in ``GPU_TYPE_PRECEDENCE`` that has util rows, read
+  from the job's JobFrame (``ColumnarJobTable``).
 
   Args:
-    j (Any): Job record (Django ``job_data`` or job-like mapping).
+    j (Any): ``ColumnarJobTable`` of the job.
 
   Returns:
-    List[dict]: List[dict] produced by this call.
+    List[dict]: Rows ``host, dev, event, cnt, vmax, vmean``.
 
   Examples:
     >>> gpu_agg_rows_for_job_window(None)  # doctest: +SKIP
   """
-  jid = _coerce_job_jid(j)
-  aff = gpu_devs_for_job(jid) if jid else None
-  if jid and job_is_shared_node(jid) and not aff:
-    return []
-  hosts = getattr(j, "acct_host_list", None) or []
-  if not hosts:
-    return []
-  tkw = _job_window_time_filter(j)
-  for gpu_typ in GPU_TYPE_PRECEDENCE:
-    out = _collect_gpu_annotate_rows(
-      hosts,
-      tkw,
-      gpu_typ=gpu_typ,
-      events=list(_GPU_UTIL_EVENTS),
-      group_fields=["host", "dev", "event"],
-      annotate_kwargs={
-        "cnt": Count("time"),
-        "vmax": Max("value"),
-        "vmean": Avg("value"),
-      },
-      jid=jid,
-      affinity_devs=aff,
-    )
-    if out:
-      return out
-  return []
+  from hpcperfstats.analysis.metrics.lib.columnar.detail_series import (
+    gpu_agg_rows,
+  )
+
+  return gpu_agg_rows(j)
 
 
 def gpu_count_total_for_job_window(j: Any) -> int | None:
   """
   Shared jobs return ``len(gpu_list)``. Exclusive jobs sum per-host
-  max(gpu_count) (nvidia -> amd -> intel).
+  max(gpu_count) (nvidia -> amd -> intel) from the JobFrame.
 
   Args:
-    j (Any): Job record (Django ``job_data`` or job-like mapping).
+    j (Any): ``ColumnarJobTable`` of the job.
 
   Returns:
-    Optional[int]: Optional[int] - the result, or None when unavailable.
+    Optional[int]: GPU count, or None when unavailable.
 
   Examples:
     >>> gpu_count_total_for_job_window(None)  # doctest: +SKIP
   """
-  jid = _coerce_job_jid(j)
-  if jid and job_is_shared_node(jid):
-    return len(gpu_devs_for_job(jid) or [])
-  hosts = getattr(j, "acct_host_list", None) or []
-  if not hosts:
-    return None
-  tkw = _job_window_time_filter(j)
-  aff = gpu_devs_for_job(jid) if jid else None
-  for gpu_typ in GPU_TYPE_PRECEDENCE:
-    rows = _collect_gpu_annotate_rows(
-      hosts,
-      tkw,
-      gpu_typ=gpu_typ,
-      events="gpu_count",
-      group_fields=["host"],
-      annotate_kwargs={"mv": Max("value")},
-      jid=jid,
-      affinity_devs=aff,
-    )
-    if not rows:
-      continue
-    total = 0
-    for r in rows:
-      v = r.get("mv")
-      if v is None or is_dcgm_numeric_blank(v):
-        continue
-      try:
-        total += round(float(v))
-      except TypeError, ValueError:
-        continue
-    if total > 0:
-      return total
-  return None
+  from hpcperfstats.analysis.metrics.lib.columnar.detail_series import (
+    gpu_count_total,
+  )
+
+  return gpu_count_total(j)
 
 
 def gpu_inventory_for_job_window(j: Any) -> list[dict]:
   """
   Per-(host, dev) util max/mean (+ optional power peak) for Resources inventory.
 
-  Uses the first vendor in ``GPU_TYPE_PRECEDENCE`` that has device-level util
-    rows.
-
   Args:
-    j (Any): Job record (Django ``job_data`` or job-like mapping).
+    j (Any): ``ColumnarJobTable`` of the job.
 
   Returns:
-    List[dict]: List[dict] produced by this call.
+    List[dict]: Inventory rows sorted by host then dev.
 
   Examples:
     >>> gpu_inventory_for_job_window(None)  # doctest: +SKIP
   """
-  jid = _coerce_job_jid(j)
-  aff = gpu_devs_for_job(jid) if jid else None
-  if jid and job_is_shared_node(jid) and not aff:
-    return []
-  hosts = getattr(j, "acct_host_list", None) or []
-  if not hosts:
-    return []
-  tkw = _job_window_time_filter(j)
-  for gpu_typ in GPU_TYPE_PRECEDENCE:
-    util_rows = _collect_gpu_annotate_rows(
-      hosts,
-      tkw,
-      gpu_typ=gpu_typ,
-      events=list(_GPU_UTIL_EVENTS),
-      group_fields=["host", "dev", "event"],
-      annotate_kwargs={
-        "cnt": Count("time"),
-        "vmax": Max("value"),
-        "vmean": Avg("value"),
-      },
-      jid=jid,
-      affinity_devs=aff,
-    )
-    if not util_rows:
-      continue
-    power_rows = _collect_gpu_annotate_rows(
-      hosts,
-      tkw,
-      gpu_typ=gpu_typ,
-      events="power_usage",
-      group_fields=["host", "dev"],
-      annotate_kwargs={"pmax": Max("value")},
-      jid=jid,
-      affinity_devs=aff,
-    )
-    per_device: dict = {}
-    for r in util_rows:
-      key = (str(r.get("host") or ""), str(r.get("dev") or ""))
-      event = str(r.get("event") or "")
-      slot = per_device.setdefault(
-        key, {"host": key[0], "dev": key[1], "type": gpu_typ}
-      )
-      if event == "gpu_util" or (
-        event == "utilization" and "util_max" not in slot
-      ):
-        vmax = r.get("vmax")
-        vmean = r.get("vmean")
-        if vmax is None or is_dcgm_numeric_blank(vmax):
-          continue
-        try:
-          slot["util_max"] = float(vmax)
-          slot["util_mean"] = (
-            None
-            if vmean is None or is_dcgm_numeric_blank(vmean)
-            else float(vmean)
-          )
-          slot["sample_count"] = int(r.get("cnt") or 0)
-        except TypeError, ValueError:
-          continue
-    for r in power_rows:
-      key = (str(r.get("host") or ""), str(r.get("dev") or ""))
-      if key not in per_device:
-        continue
-      pmax = r.get("pmax")
-      if pmax is None or is_dcgm_numeric_blank(pmax):
-        continue
-      try:
-        per_device[key]["power_max_w"] = float(pmax)
-      except TypeError, ValueError:
-        continue
-    out = [row for row in per_device.values() if "util_max" in row]
-    out.sort(key=lambda r: (r.get("host") or "", r.get("dev") or ""))
-    if out:
-      return out
-  return []
+  from hpcperfstats.analysis.metrics.lib.columnar.detail_series import (
+    gpu_inventory,
+  )
+
+  return gpu_inventory(j)
 
 
 def reduce_gpu_agg_to_util_stats(

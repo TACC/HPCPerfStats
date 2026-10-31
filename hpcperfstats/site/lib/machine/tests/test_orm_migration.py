@@ -13,18 +13,7 @@ pytestmark = pytest.mark.machine_unit_mock
 
 
 class TestORMHelpers(SimpleTestCase):
-  """Test queryset_to_dataframe and that models are queryable."""
-
-  def test_queryset_to_dataframe_empty(self):
-    """queryset_to_dataframe(job_data.objects.none()) returns empty DataFrame."""
-    from hpcperfstats.analysis.metrics.lib.gen.utils import (
-      queryset_to_dataframe,
-    )
-    from hpcperfstats.site.lib.machine.models import job_data
-
-    qs = job_data.objects.none()
-    df = queryset_to_dataframe(qs)
-    self.assertEqual(len(df), 0)
+  """Models are queryable through the ORM helpers."""
 
   def test_jid_table_missing_job_no_raise(self):
     """jid_table with non-existent jid should not raise; should set empty attrs."""

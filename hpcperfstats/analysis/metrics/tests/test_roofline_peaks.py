@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
+from hpcperfstats.analysis.metrics.lib.columnar.testing import MockJobTable
 from hpcperfstats.analysis.metrics.lib.plot.roofline_peaks import (
   ROOFLINE_CPU_PEAK_GFLOPS_AND_BW_GBPS,
   infer_cpu_roofline_peak_flops_and_bw_gbps,
@@ -14,7 +15,7 @@ from hpcperfstats.analysis.metrics.lib.plot.roofline_peaks import (
 
 
 def _make_jt(schema, aggregate_map=None):
-  jt = MagicMock()
+  jt = MockJobTable(["n1.cluster"])
   jt.schema = schema
   aggregate_map = aggregate_map or {}
 

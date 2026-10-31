@@ -1,4 +1,4 @@
-"""Regression tests for type_detail host_data scoping (time + hosts only; jid not in filters)."""
+"""Regression tests for the type_detail and host_plot API responses."""
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -6,91 +6,6 @@ from unittest.mock import patch
 
 import pytest
 from django.test import RequestFactory
-
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-  TYPE_DETAIL_HOST_QUERY_BATCH,
-)
-
-
-@pytest.mark.django_db(databases=[])
-def test_type_detail_host_data_filter_sql_has_no_jid_in_where_clause():
-  """Type-detail host_data queries must not filter on host_data.jid."""
-  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-    TypeDetailDataProvider,
-  )
-
-  st = datetime(2024, 1, 1, tzinfo=UTC)
-  et = datetime(2024, 1, 2, tzinfo=UTC)
-  provider = TypeDetailDataProvider(
-    jid="job123",
-    type_name="cpu",
-    start_time=st,
-    end_time=et,
-    host_list=["n1.example.com"],
-  )
-  qs = provider._qs()
-  sql = str(qs.query).lower()
-  # jid may appear in the SELECT list, but not in WHERE (filtering).
-  where_idx = sql.find(" where ")
-  where_sql = sql[where_idx:] if where_idx != -1 else ""
-  assert ".jid" not in where_sql
-
-
-@pytest.mark.django_db(databases=[])
-def test_type_detail_get_aggregate_df_batches_large_host_list():
-  """TypeDetailDataProvider runs bounded host__in when host_list exceeds batch size."""
-  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-    TypeDetailDataProvider,
-  )
-
-  st = datetime(2024, 1, 1, tzinfo=UTC)
-  et = datetime(2024, 1, 2, tzinfo=UTC)
-  n = TYPE_DETAIL_HOST_QUERY_BATCH + 1
-  hosts = [f"n{i}.example.com" for i in range(n)]
-  provider = TypeDetailDataProvider(
-    jid="job123",
-    type_name="cpu",
-    start_time=st,
-    end_time=et,
-    host_list=hosts,
-  )
-  chunk_sizes = []
-
-  class Qs:
-    def filter(self, *args, **kwargs):
-      return self
-
-    def values(self, *cols):
-      return self
-
-    def annotate(self, **kwargs):
-      return self
-
-    def order_by(self, *args):
-      return self
-
-    def __iter__(self):
-      return iter(())
-
-  class Mgr:
-    def filter(self, **kwargs):
-      chunk_sizes.append(len(kwargs.get("host__in") or []))
-      return Qs()
-
-  with (
-    patch(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data.objects",
-      Mgr(),
-    ),
-    patch(
-      "hpcperfstats.analysis.metrics.lib.gen.jid_table.cached_orm",
-      lambda _k, _ttl, fn: fn(),
-    ),
-  ):
-    provider.get_aggregate_df("some_event", metric="arc")
-  assert chunk_sizes
-  assert set(chunk_sizes) == {TYPE_DETAIL_HOST_QUERY_BATCH, 1}
-  assert chunk_sizes.count(TYPE_DETAIL_HOST_QUERY_BATCH) == chunk_sizes.count(1)
 
 
 @pytest.mark.django_db(databases=[])

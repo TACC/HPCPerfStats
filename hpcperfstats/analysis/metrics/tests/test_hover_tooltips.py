@@ -5,6 +5,15 @@ import html
 import pandas as pd
 from bokeh.models import HoverTool
 
+from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+  MockJobTable,
+  frame_from_df,
+  points_from_df,
+)
+from hpcperfstats.analysis.metrics.lib.columnar.type_detail_series import (
+  TypeDetailSeries,
+  build_type_detail_series,
+)
 from hpcperfstats.analysis.metrics.lib.plot.devplot import DevPlot
 from hpcperfstats.analysis.metrics.lib.plot.roofline import (
   _build_roofline_figure,
@@ -29,12 +38,7 @@ class _SummaryJt:
   host_list = ["h1", "h2"]
 
 
-def test_summaryplot_hover_uses_html_with_separators(monkeypatch):
-  # plot_metric imports this helper late; patch the defining module.
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.job_host_data_scope.job_is_shared_node_from_jobish",
-    lambda _jt: False,
-  )
+def test_summaryplot_hover_uses_html_with_separators():
   sp = SummaryPlot(_SummaryJt())
   sp.hc = {"h1": "#111111", "h2": "#222222"}
   df = pd.DataFrame(
@@ -48,7 +52,7 @@ def test_summaryplot_hover_uses_html_with_separators(monkeypatch):
     }
   )
 
-  plot = sp.plot_metric(df, "cpu", "CPU Usage [#cores]")
+  plot = sp.plot_metric(frame_from_df(df), "cpu", "CPU Usage [#cores]")
   hover = _get_series_hover_tool(plot, "@cpu_plain")
 
   assert isinstance(hover.tooltips, str)
@@ -71,39 +75,31 @@ def test_summaryplot_hover_uses_html_with_separators(monkeypatch):
   assert description_for_summary_metric("cpu") in tip_plain
 
 
-class _TypeDetailProvider:
-  pass
+def test_type_detail_series_uses_value_metric_when_amd_gpu_in_type_list():
+  """GPU gauge-style types use the value column; amd_gpu matches nvidia_gpu/mem."""
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
 
-
-def test_devplot_uses_value_metric_when_amd_gpu_in_type_list():
-  """GPU gauge-style types use value column; amd_gpu must match nvidia_gpu/mem."""
   t0 = pd.Timestamp("2024-01-01 00:00:00+00:00")
-  metric_calls = []
+  table = table_from_records(
+    [(t0, "h1", "amd_gpu", "gpu_util", "0", 50.0, 1.0, None)]
+  )
+  series = build_type_detail_series(
+    table, "amd_gpu", [("gpu_util", "%")], ["amd_gpu"]
+  )
+  assert series.metric == "value"
+  assert series.frame.columns["gpu_util"].tolist() == [50.0]
+  _series, grid = DevPlot(series, ["h1"]).plot()
+  assert grid is not None
 
-  class _Provider:
-    def get_host_time_df(self):
-      return pd.DataFrame([("h1", t0)], columns=["host", "time"])
 
-    def get_events_units(self):
-      return [("gpu_util", "%")]
-
-    def get_type_list(self):
-      return ["amd_gpu"]
-
-    def get_aggregate_df(self, event, metric="arc"):
-      metric_calls.append((event, metric))
-      return pd.DataFrame(
-        [("h1", t0, 50.0)], columns=["host", "time", "sum_val"]
-      )
-
-  dp = DevPlot(_Provider(), ["h1"])
-  _df, _grid = dp.plot()
-  assert ("gpu_util", "value") in metric_calls
+def _type_detail_series(df, event):
+  frame = frame_from_df(df)
+  return TypeDetailSeries("amd_x86_uncore_df", frame, [(event, "GB/s")], "arc")
 
 
 def test_devplot_hover_uses_html_with_separators():
-  dp = DevPlot(_TypeDetailProvider(), ["h1", "h2"])
-  dp.hc = {"h1": "#333333", "h2": "#444444"}
   df = pd.DataFrame(
     {
       "time": [
@@ -114,8 +110,10 @@ def test_devplot_hover_uses_html_with_separators():
       "MBW_CHANNEL_0": [3.0, 4.0],
     }
   )
+  dp = DevPlot(_type_detail_series(df, "MBW_CHANNEL_0"), ["h1", "h2"])
+  dp.hc = {"h1": "#333333", "h2": "#444444"}
 
-  plot = dp.plot_metric(df, "MBW_CHANNEL_0", "GB/s")
+  plot = dp.plot_metric("MBW_CHANNEL_0", "GB/s")
   hover = _get_series_hover_tool(plot, "@MBW_CHANNEL_0_plain")
 
   assert isinstance(hover.tooltips, str)
@@ -140,7 +138,7 @@ def test_roofline_job_hover_uses_html_with_separators():
   )
 
   plot = _build_roofline_figure(
-    df, peak_flops_gf=1000.0, peak_bw_gb=100.0, title="Roofline"
+    points_from_df(df), peak_flops_gf=1000.0, peak_bw_gb=100.0, title="Roofline"
   )
   assert plot is not None
 
@@ -173,7 +171,7 @@ def test_roofline_job_hover_shows_device_when_dev_present():
   )
 
   plot = _build_roofline_figure(
-    df, peak_flops_gf=1000.0, peak_bw_gb=100.0, title="Roofline"
+    points_from_df(df), peak_flops_gf=1000.0, peak_bw_gb=100.0, title="Roofline"
   )
   assert plot is not None
   job_source = plot.renderers[1].data_source.data
@@ -193,7 +191,7 @@ def test_roofline_roof_hover_includes_axis_units():
   )
 
   plot = _build_roofline_figure(
-    df, peak_flops_gf=1000.0, peak_bw_gb=100.0, title="Roofline"
+    points_from_df(df), peak_flops_gf=1000.0, peak_bw_gb=100.0, title="Roofline"
   )
   assert plot is not None
 
@@ -210,3 +208,20 @@ def test_roofline_roof_hover_includes_axis_units():
   assert "1,000.00 GFLOP/s" in tip_text
   assert "Peak bandwidth" in tip_text
   assert "100.00 GB/s" in tip_text
+
+
+def test_mock_job_table_converts_dataframes():
+  """The legacy-test shim turns DataFrame mocks into columnar tables."""
+  t0 = pd.Timestamp("2024-01-01 00:00:00+00:00")
+  jt = MockJobTable(["h1"])
+  jt.get_host_time_df.return_value = pd.DataFrame(
+    [("h1", t0)], columns=["host", "time"]
+  )
+  jt.get_aggregate_df.return_value = pd.DataFrame(
+    [("h1", t0, 2.0)], columns=["host", "time", "sum_val"]
+  )
+  ht = jt.get_host_time()
+  agg = jt.get_aggregate("host_cpu", "arc", ["user"], 1.0)
+  assert ht.host_names() == ["h1"]
+  assert agg.sum_val.tolist() == [2.0]
+  assert agg.time_us.tolist() == ht.time_us.tolist()

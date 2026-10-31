@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
 Type-detail plot: Bokeh continuous-line plots per event for a given type (e.g.
-llite, cpu).
+llite, cpu), built from a ``TypeDetailSeries`` (columnar job table).
 
-Uses TypeDetailDataProvider. Layout matches Summary: stretch_width figures in a
-2-column ``gridplot``.
+Layout matches Summary: stretch_width figures in a 2-column ``gridplot``.
 
 Attributes:
-  log: Attribute.
+  log: Module logger.
 """
 
 from __future__ import annotations
@@ -16,25 +15,28 @@ import logging
 import time
 from typing import Any
 
-log = logging.getLogger(__name__)
-
+import numpy as np
 from bokeh.layouts import gridplot
 from bokeh.models import ColumnDataSource, HoverTool, Range1d
 from bokeh.palettes import d3
 from bokeh.plotting import figure
-from pandas import to_datetime
 
 from hpcperfstats.analysis.metrics.lib.bokeh_job_embed import figure_embed_kw
+from hpcperfstats.analysis.metrics.lib.columnar.type_detail_series import (
+  TypeDetailSeries,
+)
 from hpcperfstats.analysis.metrics.lib.gen.utils import (
-  add_hover_plain_columns,
-  clean_dataframe,
+  hover_plain_columns,
   non_degenerate_y_range_for_series,
   set_linear_axes_plain_numeric,
   timestamps_as_cluster_naive,
   tz_aware_bokeh_tick_formatter,
 )
 from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
-  job_is_shared_node_from_jobish,
+  show_shared_host_wide_help_footer,
+)
+from hpcperfstats.analysis.metrics.lib.phase_profile import (
+  phase as _profile_phase,
 )
 from hpcperfstats.analysis.metrics.lib.plot.bokeh_job_detail_help_marker import (
   add_job_detail_bokeh_help_marker,
@@ -47,54 +49,67 @@ from hpcperfstats.analysis.metrics.lib.plot.job_detail_bokeh_plot_descriptions i
   researcher_use_for_job_detail_bokeh_plot,
 )
 
+log = logging.getLogger(__name__)
+
 
 class DevPlot:
   """
-  Type-detail plot using an ORM data provider (TypeDetailDataProvider).
+  Type-detail plot from a ``TypeDetailSeries``.
 
   Attributes:
-    data_provider: Attribute.
-    host_list: Attribute.
+    series: The per-type series (base rows plus one column per event).
+    host_list: Accounting hosts (line order and colors).
+    is_shared_node: Shared-node signal for the residual help footer.
+    hc: Host -> color map, set by ``plot``.
   """
 
-  def __init__(self, data_provider: Any, host_list: Any) -> None:
+  def __init__(
+    self,
+    series: TypeDetailSeries,
+    host_list: Any,
+    *,
+    is_shared_node: bool = False,
+  ) -> None:
     """
-    Store data provider and host list for plotting.
+    Store the series and host list for plotting.
 
     Args:
-      data_provider (Any): Data provider passed to this helper.
-      host_list (Any): Host list passed to this helper.
+      series (TypeDetailSeries): Built type-detail series.
+      host_list (Any): Accounting host names.
+      is_shared_node (bool): Shared-node job (help footer gating).
 
     Returns:
       None
 
     Examples:
-      >>> DevPlot(None, None)  # doctest: +SKIP
+      >>> DevPlot(series, ["h1"])  # doctest: +SKIP
     """
-    self.data_provider = data_provider
-    self.host_list = host_list
+    self.series = series
+    self.host_list = list(host_list or [])
+    self.is_shared_node = bool(is_shared_node)
+    self.hc: dict[str, str] = {}
 
-  def plot_metric(self, df: Any, event: Any, unit: Any | None = None) -> Any:
+  def plot_metric(self, event: Any, unit: Any | None = None) -> Any:
     """
     Create one Bokeh figure with continuous lines per host for the given event.
 
     Args:
-      df (Any): Df passed to this helper.
-      event (Any): Event passed to this helper.
-      unit (Any | None): One of ``Any``, ``None``.
+      event (Any): Event column of the series frame.
+      unit (Any | None): Unit label.
 
     Returns:
-      Any: Value produced by this call (type depends on inputs).
+      Any: Bokeh figure.
 
     Examples:
-      >>> DevPlot().plot_metric(None, None, None)  # doctest: +SKIP
+      >>> DevPlot(series, ["h1"]).plot_metric("user", "%")  # doctest: +SKIP
     """
     s = time.time()
-
-    df = df[["time", "host", event]].copy()
-    df["time"] = timestamps_as_cluster_naive(to_datetime(df["time"], utc=True))
-
-    y_range_start, y_range_end = non_degenerate_y_range_for_series(df[event])
+    frame = self.series.frame
+    with _profile_phase("plot_series"):
+      values = np.asarray(frame.columns[event], dtype=np.float64)
+      host_names = np.array(frame.host_names(), dtype=object)
+      times_local = timestamps_as_cluster_naive(frame.time_us)
+      y_range_start, y_range_end = non_degenerate_y_range_for_series(values)
 
     ylabel = event + " (" + (unit or "") + ")"
 
@@ -116,10 +131,18 @@ class DevPlot:
 
     circle_renderers = []
     for h in self.host_list:
-      host_df = df[df.host == h].sort_values("time")
-      source = ColumnDataSource(
-        add_hover_plain_columns(host_df, [event], time_col="time"),
-      )
+      with _profile_phase("plot_series"):
+        sel = np.nonzero(host_names == str(h))[0]
+        order = sel[np.argsort(frame.time_us[sel], kind="stable")]
+        data: dict[str, Any] = {
+          "host": host_names[order].tolist(),
+          "time": times_local[order],
+          event: values[order],
+        }
+        data.update(
+          hover_plain_columns(times_local[order], {event: values[order]})
+        )
+      source = ColumnDataSource(data=data)
       plot.line(
         x="time",
         y=event,
@@ -145,11 +168,6 @@ class DevPlot:
       )
     )
     help_key = "jobDetailPlot_type_detail_rates"
-    from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
-      show_shared_host_wide_help_footer,
-    )
-
-    typ = getattr(self.data_provider, "type_name", None)
     add_job_detail_bokeh_help_marker(
       plot,
       description_for_job_detail_bokeh_plot(help_key)
@@ -159,8 +177,8 @@ class DevPlot:
       ),
       researcher_use_for_job_detail_bokeh_plot(help_key),
       is_shared_node=show_shared_host_wide_help_footer(
-        is_shared_node=job_is_shared_node_from_jobish(self.data_provider),
-        typ=typ,
+        is_shared_node=self.is_shared_node,
+        typ=self.series.type_name,
       ),
     )
     log.debug("time to plot %s: %s", event, time.time() - s)
@@ -168,62 +186,30 @@ class DevPlot:
 
   def plot(self) -> Any:
     """
-    Build host_time_df, merge aggregate per event, and return (df, 2-col.
-
-      gridplot).
+    Return ``(series, gridplot)``: one figure per kept event, two columns.
 
     Returns:
-      Any: Open return polymorphism from ``plot``: concrete type depends on
-      inputs and branch (mapping, scalar, handle, or ``None``-like empty).
+      Any: ``(TypeDetailSeries, GridPlot)``; the grid holds no figure when
+      no event survived the series build.
 
     Examples:
-      >>> DevPlot().plot()  # doctest: +SKIP
+      >>> DevPlot(series, ["h1"]).plot()  # doctest: +SKIP
     """
-    self.hc = {}
     colors = d3["Category20"][20]
-    for i, hostname in enumerate(self.host_list):
-      self.hc[hostname] = colors[i % 20]
-
+    self.hc = {
+      hostname: colors[i % 20] for i, hostname in enumerate(self.host_list)
+    }
     log.debug("Host Count: %s", len(self.host_list))
 
-    df = self.data_provider.get_host_time_df()
-    event_list = self.data_provider.get_events_units()
-    type_list = self.data_provider.get_type_list()
-
-    metric = "arc"
-    if type_list and (
-      "mem" in type_list or "nvidia_gpu" in type_list or "amd_gpu" in type_list
-    ):
-      metric = "value"
-
-    for event, unit in event_list:
-      s = time.time()
-      agg = self.data_provider.get_aggregate_df(event, metric=metric)
-      if agg.empty or "sum_val" not in agg.columns:
-        df[event] = float("nan")
-      else:
-        df = df.merge(
-          agg[["host", "time", "sum_val"]],
-          on=["host", "time"],
-          how="left",
-        )
-        df[event] = df["sum_val"]
-        df.drop(columns=["sum_val"], inplace=True)
-      if event in df.columns and df[event].isnull().values.any():
-        del df[event]
-      log.debug("time to compute events %s: %s", event, time.time() - s)
-
-    df = df.reset_index()
-    if not df.empty and "time" in df.columns:
-      df["time"] = to_datetime(df["time"], utc=True)
-
-    df = clean_dataframe(df)
-
     plots = []
-    for event, unit in event_list:
-      if event not in df.columns:
+    for event, unit in self.series.events_units:
+      if event not in self.series.frame.columns:
         continue
-      plots += [self.plot_metric(df, event, unit)]
+      with _profile_phase("bokeh"):
+        plots += [self.plot_metric(event, unit)]
 
     ncols = min(2, len(plots)) if plots else 1
-    return df, gridplot(plots, ncols=ncols, sizing_mode="stretch_width")
+    with _profile_phase("bokeh"):
+      return self.series, gridplot(
+        plots, ncols=ncols, sizing_mode="stretch_width"
+      )

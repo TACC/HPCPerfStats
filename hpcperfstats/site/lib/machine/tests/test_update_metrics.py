@@ -2511,6 +2511,10 @@ def test_adjust_readiness_probe_target_backoff_and_growth():
   assert same == 256
 
 
+def _raise_statement_timeout():
+  raise OperationalError("canceling statement due to statement timeout")
+
+
 def test_adjust_strict_check_batch_size_backoff_and_growth():
   cur = update_metrics._adjust_strict_check_batch_size(
     current_size=128,
@@ -3365,8 +3369,9 @@ def test_producer_stall_still_fires_on_true_starvation(monkeypatch):
   )
 
   def _failing_pages(qs, _chunk):
-    raise OperationalError("canceling statement due to statement timeout")
-    yield  # pragma: no cover - generator shape
+    del qs
+    # Generator that raises on its first step (statement timeout mid-listing).
+    return (_raise_statement_timeout() for _ in (0,))
 
   monkeypatch.setattr(update_metrics, "_iter_chunked_pks", _failing_pages)
 
@@ -3499,8 +3504,9 @@ def test_stall_exit_survives_closed_connection_on_timeout_restore(monkeypatch):
   )
 
   def _failing_pages(qs, _chunk):
-    raise OperationalError("canceling statement due to statement timeout")
-    yield  # pragma: no cover - generator shape
+    del qs
+    # Generator that raises on its first step (statement timeout mid-listing).
+    return (_raise_statement_timeout() for _ in (0,))
 
   # Listing that never finishes = true starvation (S10 keeps that a stall).
   monkeypatch.setattr(update_metrics, "_iter_chunked_pks", _failing_pages)
@@ -4418,37 +4424,31 @@ def test_update_metrics_scheduler_runs_real_detail_prewarm_with_jid_table_stub(
 
   monkeypatch.setattr(update_metrics.metrics, "Metrics", lambda: _FakeMetrics())
 
-  # Keep detail prewarm real, but with lightweight providers so scheduler executes
-  # the actual symbol path ``job_detail_artifacts.jid_table`` without DB-heavy work.
+  # Keep detail prewarm real, but with an empty columnar table so the scheduler
+  # executes the actual ``job_detail_artifacts.open_job_table`` path without
+  # DB-heavy work.
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
   from hpcperfstats.site.lib.machine import job_detail_artifacts as jda
 
-  class _MiniJt:
-    schema = {}
-    acct_host_list = ["n1.example.org"]
-    start_time = datetime(2025, 4, 10, 0, 0, 0)
-    end_time = datetime(2025, 4, 10, 0, 5, 0)
-
-    def get_llite_delta_by_event(self):
-      import pandas as pd
-
-      return pd.DataFrame(columns=["event", "delta_sum"])
-
-    def get_nfs_delta_totals_mb(self):
-      return None
-
-  monkeypatch.setattr(jda.jid_table, "jid_table", lambda _jid: _MiniJt())
-  monkeypatch.setattr(
-    jda.jid_table, "TypeDetailDataProvider", lambda *a, **k: object()
+  mini_jt = table_from_records(
+    [],
+    jid="jid-1",
+    hosts=["n1.example.org"],
+    start_time=datetime(2025, 4, 10, 0, 0, 0),
+    end_time=datetime(2025, 4, 10, 0, 5, 0),
   )
+  mini_jt.get_llite_delta_by_event = dict
+  mini_jt.get_nfs_delta_totals_mb = lambda: None
+  monkeypatch.setattr(jda, "open_job_table", lambda _jid, **_k: mini_jt)
 
   class _MiniDevPlot:
-    def __init__(self, provider, hosts):
-      del provider, hosts
+    def __init__(self, series, hosts, is_shared_node=False):
+      del series, hosts, is_shared_node
 
     def plot(self):
-      import pandas as pd
-
-      return pd.DataFrame(), None
+      return None, None
 
   import types
 

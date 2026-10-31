@@ -9,37 +9,6 @@ import pytest
 
 _PKG = Path(__file__).resolve().parents[1]
 
-_JID_AGG_TAIL = (
-  "    key = make_cache_key_bounded(\n"
-  "      KEY_AGG_DF,\n"
-  "      self.jid,\n"
-  "      typ,\n"
-  "      val_col,\n"
-  "      events_key,\n"
-  '      "by_dev" if group_by_dev else "by_host",\n'
-  "      self._large_job_plot_cache_token,\n"
-  "    )\n"
-  "    import pandas as pd\n\n"
-  "    result = cached_orm(key, get_site_content_cache_timeout(), _fn)\n"
-  "    if result is not None:\n"
-  "      return result\n"
-  "    return pd.DataFrame(columns=empty_cols)"
-)
-
-_TYPE_DETAIL_HEAD = (
-  "    key = make_cache_key(\n"
-  "      KEY_TYPE_DETAIL_AGG,\n"
-  "      self.jid,\n"
-  "      self.type_name,\n"
-  "      event,\n"
-  "      metric,\n"
-  "      _st,\n"
-  "      _et,\n"
-  "    )\n"
-  "    import pandas as pd\n\n"
-  "    def _fn() -> Any:"
-)
-
 _ARTIFACT_NEEDLE = 'f"\'{{\\"artifact_schema\\":\' || %s::text || "'
 
 _BAD_PLOT_INNER_FORMAT = (
@@ -51,11 +20,6 @@ _BAD_PLOT_INNER_FORMAT = (
 @pytest.mark.parametrize(
   "rel,needles,forbidden",
   [
-    (
-      "analysis/metrics/lib/gen/jid_table.py",
-      [_JID_AGG_TAIL, _TYPE_DETAIL_HEAD],
-      [],
-    ),
     (
       "site/lib/machine/artifact_readiness_expressions.py",
       [_ARTIFACT_NEEDLE],

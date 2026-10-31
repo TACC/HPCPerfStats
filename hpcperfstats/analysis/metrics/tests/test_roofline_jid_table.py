@@ -1,10 +1,12 @@
 """Unit tests for roofline plot diagnostics and fallbacks."""
 
-from unittest.mock import MagicMock
-
 import pandas as pd
 import pytest
 
+from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+  MockJobTable,
+  points_from_df,
+)
 from hpcperfstats.analysis.metrics.lib.plot.roofline import (
   GPU_ROOFLINE_BW_AXIS_LINK,
   GPU_ROOFLINE_BW_AXIS_MEMORY,
@@ -54,7 +56,7 @@ def _make_jt(base_rows, agg_map):
     rows = agg_map.get((typ, val_col), [])
     return _agg_frame(rows, group_by_dev=group_by_dev)
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.side_effect = get_host_time_df
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -87,8 +89,6 @@ def test_roofline_reports_missing_reason_when_only_value_counters_exist():
 
 def test_roofline_intel_succeeds_with_non_skx_imc_bandwidth():
   """Intel roofline uses first IMC type in INTEL_IMC_STATS_TYPES with CAS data (e.g. HSW)."""
-  from unittest.mock import MagicMock
-
   import pandas as pd
 
   from hpcperfstats.analysis.metrics.lib.plot.roofline import (
@@ -134,7 +134,7 @@ def test_roofline_intel_succeeds_with_non_skx_imc_bandwidth():
         )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = pd.DataFrame(
     [("n1.cluster", t0)], columns=["host", "time"]
@@ -149,12 +149,12 @@ def test_roofline_intel_succeeds_with_non_skx_imc_bandwidth():
 
 def test_roofline_spr_hbm_cas_only_yields_bandwidth():
   """SPR with only hbm_cas_* still produces Intel roofline BW."""
-  from unittest.mock import MagicMock
-
   import pandas as pd
 
+  from hpcperfstats.analysis.metrics.lib.columnar.roofline_series import (
+    _intel_imc_bw as _intel_imc_bw_gb,
+  )
   from hpcperfstats.analysis.metrics.lib.plot.roofline import (
-    _intel_imc_bw_gb,
     plot_and_reason_roofline_from_jid_table,
   )
 
@@ -182,7 +182,7 @@ def test_roofline_spr_hbm_cas_only_yields_bandwidth():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = pd.DataFrame(
     [("n1.cluster", t0)], columns=["host", "time"]
@@ -191,7 +191,7 @@ def test_roofline_spr_hbm_cas_only_yields_bandwidth():
 
   bw = _intel_imc_bw_gb(jt, [])
   assert bw is not None
-  assert abs(float(bw["bw_gb"].iloc[0]) - 0.75) < 1e-12
+  assert abs(float(bw.sum_val[0]) - 0.75) < 1e-12
 
   fig, reason = plot_and_reason_roofline_from_jid_table(jt)
   assert fig is not None
@@ -200,11 +200,11 @@ def test_roofline_spr_hbm_cas_only_yields_bandwidth():
 
 def test_roofline_spr_sums_dram_and_hbm_cas_bandwidth():
   """SPR with both CAS families sums DDR+HBM for measured BW."""
-  from unittest.mock import MagicMock
-
   import pandas as pd
 
-  from hpcperfstats.analysis.metrics.lib.plot.roofline import _intel_imc_bw_gb
+  from hpcperfstats.analysis.metrics.lib.columnar.roofline_series import (
+    _intel_imc_bw as _intel_imc_bw_gb,
+  )
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   empty = pd.DataFrame(columns=["host", "time", "sum_val"])
@@ -224,11 +224,11 @@ def test_roofline_spr_sums_dram_and_hbm_cas_bandwidth():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.get_aggregate_df.side_effect = get_aggregate_df
   bw = _intel_imc_bw_gb(jt, [])
   assert bw is not None
-  assert abs(float(bw["bw_gb"].iloc[0]) - 3.0) < 1e-12
+  assert abs(float(bw.sum_val[0]) - 3.0) < 1e-12
 
 
 def test_roofline_succeeds_with_cpu_counter_metrics_flops_and_imc_bw():
@@ -261,7 +261,7 @@ def test_roofline_succeeds_with_cpu_counter_metrics_flops_and_imc_bw():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -296,7 +296,7 @@ def test_roofline_succeeds_with_arm_dcgm_approx_metrics():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -331,7 +331,7 @@ def test_roofline_succeeds_with_arm_dcgm_lowercase_dram_bw_only():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -366,7 +366,7 @@ def test_roofline_uses_arm_imc_cas_bandwidth_when_present():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -482,29 +482,6 @@ def test_gpu_roofline_blank_dev_still_one_point_per_host_time():
   assert len(job_source["dev"]) == 1
   assert job_source["dev"][0] == ""
   assert job_source["dev_display"][0] == "-"
-
-
-def test_assemble_sum_val_parts_keeps_dev_group_cols():
-  """Per-device assemble must not re-collapse devices into hostxtime."""
-  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-    _assemble_sum_val_parts_bounded,
-  )
-
-  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  part = pd.DataFrame(
-    [
-      ("n1.cluster", t0, "0", 1.0),
-      ("n1.cluster", t0, "1", 2.0),
-    ],
-    columns=["host", "time", "dev", "sum_val"],
-  )
-  out = _assemble_sum_val_parts_bounded(
-    [part], 1.0, 100, group_cols=("host", "time", "dev")
-  )
-  assert list(out.columns) == ["host", "time", "dev", "sum_val"]
-  assert len(out) == 2
-  assert sorted(out["dev"].tolist()) == ["0", "1"]
-  assert sorted(out["sum_val"].tolist()) == pytest.approx([1.0, 2.0])
 
 
 def test_gpu_roofline_prefers_mem_bw_when_both_mem_and_link_present():
@@ -853,7 +830,7 @@ def test_plot_and_reason_cpu_rejects_explicit_zero_peak_bw():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -875,9 +852,10 @@ def test_build_roofline_figure_returns_none_for_nonpositive_peaks():
       "bw_gb": [2.0],
     }
   )
+  points = points_from_df(df)
   assert (
     _build_roofline_figure(
-      df,
+      points,
       peak_flops_gf=100.0,
       peak_bw_gb=0.0,
       title="t",
@@ -887,7 +865,7 @@ def test_build_roofline_figure_returns_none_for_nonpositive_peaks():
   )
   assert (
     _build_roofline_figure(
-      df,
+      points,
       peak_flops_gf=float("nan"),
       peak_bw_gb=10.0,
       title="t",

@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.test import RequestFactory
 
-from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-  TYPE_DETAIL_HOST_QUERY_BATCH,
+from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+  table_from_records,
 )
 from hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary import (
   gpu_count_total_for_job_window,
@@ -270,51 +270,6 @@ def test_compute_job_gpu_stats_helper_uses_host_device_aware_active_count():
   assert gpu_count == 3
 
 
-def test_gpu_agg_rows_for_job_batches_host__in():
-  """GPU aggregate ORM path uses type-detail-sized host__in chunks."""
-  from hpcperfstats.site.lib.machine import api
-
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
-  j = MagicMock()
-  j.start_time = t0
-  j.end_time = t0
-  n = TYPE_DETAIL_HOST_QUERY_BATCH + 2
-  j.acct_host_list = [f"h{i}.x" for i in range(n)]
-  chunk_sizes = []
-
-  class Qs:
-    def values(self, *args):
-      return self
-
-    def annotate(self, **kwargs):
-      # Non-empty so nvidia_gpu wins and later vendors are not queried.
-      return [
-        {
-          "host": "h0.x",
-          "dev": "0",
-          "event": "gpu_util",
-          "cnt": 4,
-          "vmax": 1.0,
-          "vmean": 1.0,
-        }
-      ]
-
-    def __iter__(self):
-      return iter(())
-
-  class Mgr:
-    def filter(self, **kwargs):
-      chunk_sizes.append(len(kwargs.get("host__in") or []))
-      return Qs()
-
-  with patch(
-    "hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.host_data.objects",
-    Mgr(),
-  ):
-    api._gpu_agg_rows_for_job(j)
-  assert chunk_sizes == [TYPE_DETAIL_HOST_QUERY_BATCH, 2]
-
-
 def test_job_detail_gpu_from_metrics_data_skips_host_data_cache():
   """When all four detail_gpu_* rows exist, do not call host_data GPU cache path."""
   from hpcperfstats.site.lib.machine import api
@@ -416,68 +371,28 @@ def test_job_detail_gpu_from_metrics_data_skips_host_data_cache():
   assert gpu_cache_calls == []
 
 
-def test_gpu_count_total_prefers_nvidia_gpu_over_amd_gpu():
+def _gpu_count_table(rows):
   t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
-  j = MagicMock()
-  j.start_time = t0
-  j.end_time = t0
-  j.acct_host_list = ["n1.example.com"]
+  return table_from_records(
+    [
+      (t0, "n1.example.com", typ, "gpu_count", "0", val, None, None)
+      for typ, val in rows
+    ],
+    hosts=["n1.example.com"],
+  )
 
-  class _Query:
-    def __init__(self, rows):
-      self._rows = rows
 
-    def values(self, *args):
-      return self
-
-    def annotate(self, **kwargs):
-      return self._rows
-
-  class _Mgr:
-    def filter(self, **kwargs):
-      if kwargs.get("type") == "nvidia_gpu":
-        return _Query([{"host": "n1.example.com", "mv": 8.0}])
-      if kwargs.get("type") == "amd_gpu":
-        return _Query([{"host": "n1.example.com", "mv": 2.0}])
-      if kwargs.get("type") == "intel_gpu":
-        return _Query([{"host": "n1.example.com", "mv": 1.0}])
-      return _Query([])
-
-  with patch(
-    "hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.host_data.objects",
-    _Mgr(),
-  ):
-    assert gpu_count_total_for_job_window(j) == 8
+def test_gpu_count_total_prefers_nvidia_gpu_over_amd_gpu():
+  """Vendor precedence from the JobFrame: nvidia wins over amd and intel."""
+  table = _gpu_count_table(
+    [("nvidia_gpu", 8.0), ("amd_gpu", 2.0), ("intel_gpu", 1.0)]
+  )
+  assert gpu_count_total_for_job_window(table) == 8
 
 
 def test_gpu_count_total_uses_intel_when_nvidia_and_amd_absent():
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
-  j = MagicMock()
-  j.start_time = t0
-  j.end_time = t0
-  j.acct_host_list = ["n1.example.com"]
-
-  class _Query:
-    def __init__(self, rows):
-      self._rows = rows
-
-    def values(self, *args):
-      return self
-
-    def annotate(self, **kwargs):
-      return self._rows
-
-  class _Mgr:
-    def filter(self, **kwargs):
-      if kwargs.get("type") == "intel_gpu":
-        return _Query([{"host": "n1.example.com", "mv": 2.0}])
-      return _Query([])
-
-  with patch(
-    "hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.host_data.objects",
-    _Mgr(),
-  ):
-    assert gpu_count_total_for_job_window(j) == 2
+  table = _gpu_count_table([("intel_gpu", 2.0)])
+  assert gpu_count_total_for_job_window(table) == 2
 
 
 def test_gpu_detail_from_metric_values_all_null_falls_through():
@@ -496,28 +411,8 @@ def test_gpu_detail_from_metric_values_all_null_falls_through():
 
 
 def test_gpu_count_total_returns_none_when_no_gpu_rows_exist():
-  t0 = datetime(2024, 6, 1, 12, 0, tzinfo=UTC)
-  j = MagicMock()
-  j.start_time = t0
-  j.end_time = t0
-  j.acct_host_list = ["n1.example.com"]
-
-  class _Query:
-    def values(self, *args):
-      return self
-
-    def annotate(self, **kwargs):
-      return []
-
-  class _Mgr:
-    def filter(self, **kwargs):
-      return _Query()
-
-  with patch(
-    "hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary.host_data.objects",
-    _Mgr(),
-  ):
-    assert gpu_count_total_for_job_window(j) is None
+  table = _gpu_count_table([])
+  assert gpu_count_total_for_job_window(table) is None
 
 
 def test_compute_job_gpu_stats_degrades_when_cache_set_fails():

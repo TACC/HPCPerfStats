@@ -149,7 +149,9 @@ from django.db.utils import DatabaseError, InterfaceError, OperationalError
 from django.utils import timezone as django_timezone
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
-from hpcperfstats.analysis.metrics.lib import metrics
+from hpcperfstats.analysis.metrics.lib import metrics, phase_profile
+from hpcperfstats.analysis.metrics.lib.columnar import codon_bridge
+from hpcperfstats.analysis.metrics.lib.columnar.job_table import HANDOFF
 from hpcperfstats.analysis.metrics.lib.db_retry import run_with_db_retry
 from hpcperfstats.analysis.metrics.lib.metrics import (
   INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
@@ -1702,18 +1704,20 @@ class _PrewarmPipeline:
       >>> _PrewarmPipeline()._persist_detail_plot_elapsed(None, None)
     """
     close_old_connections()
-    t0 = time.monotonic()
-    try:
-      persist_job_detail_artifacts_for_jid(jid, context=shared_context)
-    except TypeError:
-      persist_job_detail_artifacts_for_jid(jid)
-    detail_s = time.monotonic() - t0
-    t1 = time.monotonic()
-    try:
-      persist_job_plot_artifacts_for_jid(jid, context=shared_context)
-    except TypeError:
-      persist_job_plot_artifacts_for_jid(jid)
-    plots_s = time.monotonic() - t1
+    with phase_profile.job_scope(jid, "prewarm"):
+      t0 = time.monotonic()
+      with phase_profile.phase("detail_build"):
+        try:
+          persist_job_detail_artifacts_for_jid(jid, context=shared_context)
+        except TypeError:
+          persist_job_detail_artifacts_for_jid(jid)
+      detail_s = time.monotonic() - t0
+      t1 = time.monotonic()
+      try:
+        persist_job_plot_artifacts_for_jid(jid, context=shared_context)
+      except TypeError:
+        persist_job_plot_artifacts_for_jid(jid)
+      plots_s = time.monotonic() - t1
     return detail_s, plots_s
 
   def _run_one(self, jid: Any) -> None:
@@ -6208,6 +6212,7 @@ def _compute_and_prewarm_jid(
         f"metrics scheduler: failed jid={context.jid}; skipping and continuing: {exc}",
         flush=True,
       )
+      HANDOFF.discard(context.jid)
       return {
         "ok": False,
         "jid": context.jid,
@@ -6247,6 +6252,7 @@ def _compute_and_prewarm_jid(
       f"metrics scheduler: failed jid={context.jid}; status={run_outcome.get('status')}; skipping prewarm error_type={run_outcome.get('error_type')} error={run_outcome.get('error_message')!r}",
       flush=True,
     )
+    HANDOFF.discard(context.jid)
     return {
       "ok": False,
       "jid": context.jid,
@@ -6275,6 +6281,8 @@ def _compute_and_prewarm_jid(
     prewarm_timing = None
     prewarm_exc = exc
   prewarm_elapsed = time.monotonic() - t_prewarm_start
+  # The prewarm pops the table; drop it when prewarm never reached that point.
+  HANDOFF.discard(context.jid)
   if prewarm_timing is not None:
     total_s = metrics_elapsed + float(prewarm_timing["prewarm_total_s"])
     if prewarm_timing.get("undivided"):
@@ -8458,6 +8466,9 @@ def main(argv: Any | None = None, sleep_after: Any | None = None) -> Any:
 
   set_daemon_process_title(name=UPDATE_METRICS_PROCESS_TITLE, role="main")
   log_python_abi_startup()
+  # Baked Codon kernels are mandatory on the pipeline interpreter: a missing
+  # .so refuses start instead of silently computing on the NumPy reference.
+  codon_bridge.require_codon_metrics(lambda line: log_print(line, flush=True))
   if argv is None:
     argv = sys.argv
 

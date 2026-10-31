@@ -70,17 +70,21 @@ def test_residual_poison_sample_is_dropped():
   assert rows == [{"host": "h", "time": 1, "event": "rd", "arc": 12.0}]
 
 
-def test_host_wide_sql_maxes_job_stamp_copies():
-  """The residual SQL sums hardware devs and maxes j: copies."""
-  from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import (
-    _reduced_event_value_sql,
+def test_host_wide_kernel_sums_hardware_devs_and_maxes_job_stamp_copies():
+  """The residual collapse sums hardware devs and maxes ``j:`` copies."""
+  import numpy as np
+
+  from hpcperfstats.analysis.metrics.lib.columnar.segments import (
+    collapse_residual_copies,
   )
 
-  sql = _reduced_event_value_sql("arc")
-  assert "NOT LIKE 'j:%%'" in sql
-  assert "LIKE 'j:%%'" in sql
-  assert "SUM(" in sql
-  assert "MAX(" in sql
+  keys = np.array([1, 1, 2, 2, 3, 3])
+  dev_id = np.array([1, 2, -1, -2, 1, -1])
+  values = np.array([1.0, 2.0, 5.0, 7.0, 4.0, 9.0])
+  k, v = collapse_residual_copies(keys, dev_id, values, np.ones(6, dtype=bool))
+  # key 1: hardware SUM; key 2: only j: copies -> MAX; key 3: hardware wins.
+  assert k.tolist() == [1, 2, 3]
+  assert v.tolist() == [3.0, 7.0, 4.0]
 
 
 def test_avg_blockbw_conv_is_gib_per_second():

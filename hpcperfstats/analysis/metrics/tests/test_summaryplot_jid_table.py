@@ -1,7 +1,6 @@
 """Unit tests for summary plot diagnostics from jid_table aggregates."""
 
 import threading
-from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
@@ -10,28 +9,21 @@ from bokeh.models.plots import GridPlot
 from bokeh.palettes import d3
 from bokeh.plotting import figure
 
+from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+  MockJobTable,
+  frame_from_df,
+)
 from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
   LLITE_METADATA_IOPS_EVENTS,
 )
 from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
   SummaryPlot,
   _cycled_d3_category20_palette,
-  compute_summary_aggregate_prefetch_pool_size,
   plot_and_reason_summary_from_jid_table,
 )
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
   INTEL_FP_ARITH_DOUBLE_EVENTS,
 )
-
-
-@pytest.fixture(autouse=True)
-def _no_job_affinity_db(monkeypatch):
-  """``plot_metric`` asks the shared-node helper, which queries job_affinity."""
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.job_host_data_scope.job_is_shared_node_from_jobish",
-    lambda _jt: False,
-  )
-
 
 # Canonical monitor typenames (dual-read: legacy aliases still accepted in mocks).
 _HOST_CPU_TYPES = ("host_cpu", "cpu")
@@ -81,28 +73,9 @@ def _hbm_cas_events_match(events):
   return {"hbm_cas_reads", "hbm_cas_writes"}.issubset(set(events))
 
 
-def test_compute_summary_aggregate_prefetch_pool_size_caps_at_two(monkeypatch):
-  """Nested summary prefetch must not use full parallel_db_prefetch_max (API stacking)."""
-  import hpcperfstats.analysis.metrics.lib.plot.summaryplot as sp
-
-  monkeypatch.setattr(sp.cfg, "get_parallel_db_prefetch_max", lambda: 99)
-  monkeypatch.setattr(
-    sp.cfg, "get_summary_aggregate_prefetch_max_threads", lambda: 2
-  )
-  assert compute_summary_aggregate_prefetch_pool_size(50) == 2
-  assert compute_summary_aggregate_prefetch_pool_size(1) == 1
-  monkeypatch.setattr(sp.cfg, "get_parallel_db_prefetch_max", lambda: 1)
-  assert compute_summary_aggregate_prefetch_pool_size(50) == 1
-  monkeypatch.setattr(
-    sp.cfg, "get_summary_aggregate_prefetch_max_threads", lambda: 1
-  )
-  monkeypatch.setattr(sp.cfg, "get_parallel_db_prefetch_max", lambda: 99)
-  assert compute_summary_aggregate_prefetch_pool_size(50) == 1
-
-
 def test_summary_plot_reports_missing_counter_reason():
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.schema = {"host_cpu": ["user"]}
   jt.get_host_time_df.return_value = pd.DataFrame(
@@ -136,7 +109,7 @@ def test_summaryplot_schema_skips_aggregates_for_absent_types():
       )
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.schema = {"host_cpu": ["user", "system", "nice"]}
   jt.get_host_time_df.return_value = pd.DataFrame(
@@ -180,7 +153,7 @@ def test_summaryplot_plot_includes_mbw_from_first_intel_imc_with_data():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -222,7 +195,7 @@ def test_summaryplot_mbw_from_spr_hbm_cas_only():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -233,7 +206,7 @@ def test_summaryplot_mbw_from_spr_hbm_cas_only():
 
 def test_summaryplot_mbw_sums_spr_dram_and_hbm_cas():
   """When SPR has both dram and hbm CAS, summary mbw uses the summed series."""
-  from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
+  from hpcperfstats.analysis.metrics.lib.columnar.summary_series import (
     _merge_intel_imc_cas_mbw,
   )
 
@@ -256,12 +229,13 @@ def test_summaryplot_mbw_sums_spr_dram_and_hbm_cas():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_aggregate_df.side_effect = get_aggregate_df
-  out = _merge_intel_imc_cas_mbw(base.copy(), jt)
+  out = frame_from_df(base)
+  _merge_intel_imc_cas_mbw(out, jt)
   assert "mbw" in out.columns
-  assert abs(float(out["mbw"].iloc[0]) - 4.0) < 1e-12
+  assert abs(float(out.columns["mbw"][0]) - 4.0) < 1e-12
 
 
 def test_summaryplot_skips_freq_plot_when_ghz_never_exceeds_500():
@@ -316,7 +290,7 @@ def test_summaryplot_skips_freq_plot_when_ghz_never_exceeds_500():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -409,7 +383,7 @@ def test_summaryplot_includes_nvidia_gpu_util_and_mem_used_mb_columns():
       return empty
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -514,7 +488,7 @@ def test_summaryplot_nv_gpu_util_falls_back_to_utilization_event():
       return empty
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -605,7 +579,7 @@ def test_summaryplot_keeps_nvidia_columns_when_merge_has_nan_gaps():
       return empty
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -633,13 +607,13 @@ def test_summaryplot_plot_metric_caps_time_tick_count_to_five():
     [("n1.cluster", t0, 1.0)],
     columns=["host", "time", "cpu"],
   )
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.jid = 123
   jt.host_list = ["n1.cluster"]
   summary = SummaryPlot(jt)
   summary.hc = {"n1.cluster": "#1f77b4"}
 
-  fig = summary.plot_metric(df, "cpu", "CPU Usage [#cores]")
+  fig = summary.plot_metric(frame_from_df(df), "cpu", "CPU Usage [#cores]")
   assert fig.xaxis[0].ticker.desired_num_ticks == 5
 
 
@@ -671,12 +645,14 @@ def test_summaryplot_plot_metric_palette_matches_factor_count_for_many_hosts():
   hosts = [f"h{i}.stampede3.tacc.utexas.edu" for i in range(40)]
   rows = [(h, t0, float(i)) for i, h in enumerate(hosts)]
   df = pd.DataFrame(rows, columns=["host", "time", "cpu"])
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = hosts
   summary = SummaryPlot(jt)
   base = d3["Category20"][20]
   summary.hc = {h: base[i % 20] for i, h in enumerate(hosts)}
-  fig = summary.plot_metric(df, "cpu", "CPU Usage [#cores]")
+  fig = summary.plot_metric(
+    frame_from_df(df, hosts), "cpu", "CPU Usage [#cores]"
+  )
   mapper = _scatter_categorical_color_mapper(fig)
   assert len(mapper.factors) == 40
   assert len(mapper.palette) == 40
@@ -710,7 +686,7 @@ def test_summaryplot_uses_job_window_for_x_range():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.start_time = job_start
   jt.end_time = job_end
@@ -731,8 +707,12 @@ def test_summaryplot_uses_job_window_for_x_range():
   assert seen_x_ranges
   x_start_l, x_end_l = job_window_bounds_local(jt)
   # plot() strips tz after local conversion so Range1d matches glyph times.
-  assert pd.Timestamp(seen_x_ranges[0].start) == x_start_l.tz_localize(None)
-  assert pd.Timestamp(seen_x_ranges[0].end) == x_end_l.tz_localize(None)
+  assert pd.Timestamp(seen_x_ranges[0].start) == pd.Timestamp(
+    x_start_l.replace(tzinfo=None)
+  )
+  assert pd.Timestamp(seen_x_ranges[0].end) == pd.Timestamp(
+    x_end_l.replace(tzinfo=None)
+  )
   assert pd.Timestamp(seen_x_ranges[0].start).tzinfo is None
 
 
@@ -749,10 +729,10 @@ def test_summaryplot_plot_metric_keeps_utc_epoch_for_data_and_x_range():
   t1 = pd.Timestamp("2024-06-01 10:05:00+00:00")
   job_start = pd.Timestamp("2024-06-01 09:55:00+00:00")
   job_end = pd.Timestamp("2024-06-01 10:10:00+00:00")
-  t0_n = timestamps_as_cluster_naive(pd.Series([t0])).iloc[0]
-  t1_n = timestamps_as_cluster_naive(pd.Series([t1])).iloc[0]
-  job_start_n = timestamps_as_cluster_naive(pd.Series([job_start])).iloc[0]
-  job_end_n = timestamps_as_cluster_naive(pd.Series([job_end])).iloc[0]
+  t0_n = timestamps_as_cluster_naive([t0])[0]
+  t1_n = timestamps_as_cluster_naive([t1])[0]
+  job_start_n = timestamps_as_cluster_naive([job_start])[0]
+  job_end_n = timestamps_as_cluster_naive([job_end])[0]
   x_range = Range1d(job_start_n, job_end_n)
 
   class _Jt:
@@ -769,7 +749,9 @@ def test_summaryplot_plot_metric_keeps_utc_epoch_for_data_and_x_range():
     }
   )
 
-  plot = sp.plot_metric(df, "cpu", "CPU Usage [#cores]", x_range=x_range)
+  plot = sp.plot_metric(
+    frame_from_df(df), "cpu", "CPU Usage [#cores]", x_range=x_range
+  )
   assert convert_datetime_type(plot.x_range.start) == convert_datetime_type(
     job_start_n
   )
@@ -853,7 +835,7 @@ def test_summaryplot_orders_cpu_then_gpu_then_ibbw():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -962,7 +944,7 @@ def test_summaryplot_orders_buckets_cpu_memory_compute_gpu_subblocks_network():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -1043,7 +1025,7 @@ def test_summaryplot_prefers_tensor_splits_over_lumped_pipe():
       return empty
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -1091,7 +1073,7 @@ def test_summaryplot_lumped_tensor_fallback_when_splits_absent():
       return empty
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -1230,7 +1212,7 @@ def test_summaryplot_orders_lustre_nfs_before_network():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -1348,7 +1330,7 @@ def test_summaryplot_lustre_and_nfs_read_write_use_per_host_time_series():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster", "n2.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -1364,7 +1346,13 @@ def test_summaryplot_lustre_and_nfs_read_write_use_per_host_time_series():
       "nfs_read_mb_s",
       "nfs_write_mb_s",
     ):
-      captured_series[metric] = df[["host", "time", metric]].copy()
+      captured_series[metric] = pd.DataFrame(
+        {
+          "host": df.host_names(),
+          "time": df.time_us,
+          metric: df.columns[metric],
+        }
+      )
     return figure(width=100, height=60)
 
   summary.plot_metric = fake_plot_metric
@@ -1432,7 +1420,7 @@ def test_summaryplot_liops_and_nfs_iops_are_separate_per_host():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster", "n2.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -1443,7 +1431,13 @@ def test_summaryplot_liops_and_nfs_iops_are_separate_per_host():
   def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
     del label, y_range_end, x_range
     if metric in ("liops", "nfs_iops"):
-      captured[metric] = df[["host", "time", metric]].copy()
+      captured[metric] = pd.DataFrame(
+        {
+          "host": df.host_names(),
+          "time": df.time_us,
+          metric: df.columns[metric],
+        }
+      )
     return figure(width=100, height=60)
 
   summary.plot_metric = fake_plot_metric
@@ -1539,7 +1533,7 @@ def test_summaryplot_node_power_est_w_intel_plus_gpu():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -1549,7 +1543,7 @@ def test_summaryplot_node_power_est_w_intel_plus_gpu():
   def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
     del label, y_range_end, x_range
     if metric == "node_power_est_w":
-      captured.append(float(df[metric].iloc[0]))
+      captured.append(float(df.columns[metric][0]))
     return figure(width=100, height=60)
 
   summary = SummaryPlot(jt)
@@ -1642,7 +1636,7 @@ def test_summaryplot_node_power_est_w_prefers_module_branch():
       )
     return empty
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
@@ -1652,7 +1646,7 @@ def test_summaryplot_node_power_est_w_prefers_module_branch():
   def fake_plot_metric(df, metric, label, y_range_end=None, x_range=None):
     del label, y_range_end, x_range
     if metric == "node_power_est_w":
-      captured.append(float(df[metric].iloc[0]))
+      captured.append(float(df.columns[metric][0]))
     return figure(width=100, height=60)
 
   summary = SummaryPlot(jt)
@@ -1671,6 +1665,8 @@ def _summary_with_error_hosts(jt, hosts):
 
   summary = SummaryPlot(jt)
   summary.host_list = list(hosts)
+  for h in hosts:
+    jt._host_id(h)
   palette = _cycled_d3_category20_palette(len(hosts))
   summary.hc = {h: palette[i] for i, h in enumerate(hosts)}
   return summary
@@ -1694,7 +1690,7 @@ def test_plot_hardware_error_rate_figures_per_host_when_ib_errors_present():
   )
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster", "n2.cluster"]
   jt.schema = {"host_ib": ["port_rcv_errors"]}
 
@@ -1726,7 +1722,7 @@ def test_plot_hardware_error_rate_figures_empty_when_all_zero():
   )
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.schema = {"host_ib": ["port_rcv_errors"]}
 
@@ -1749,7 +1745,7 @@ def test_plot_hardware_error_rate_figures_empty_when_schema_missing():
     plot_hardware_error_rate_figures,
   )
 
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.schema = {"host_cpu": ["user"]}
   jt.get_aggregate_df.return_value = pd.DataFrame(
@@ -1765,7 +1761,7 @@ def test_plot_hardware_error_rate_figures_splits_multiple_counters():
   )
 
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  jt = MagicMock()
+  jt = MockJobTable()
   jt.host_list = ["n1.cluster"]
   jt.schema = {
     "host_ib": ["port_rcv_errors", "symbol_error"],
@@ -1827,20 +1823,26 @@ def test_continuous_polyline_xy_keeps_sample_count():
 
 
 def test_clamp_summary_gpu_link_rates_drops_poison():
-  import pandas as pd
+  import numpy as np
 
+  from hpcperfstats.analysis.metrics.lib.columnar.series_frame import (
+    SeriesFrame,
+  )
+  from hpcperfstats.analysis.metrics.lib.columnar.summary_series import (
+    _clamp_gpu_link_rates,
+  )
   from hpcperfstats.analysis.metrics.lib.plot.summaryplot import (
     _MAX_SANE_GPU_LINK_GBPS,
-    _clamp_summary_gpu_link_rates,
   )
 
-  df = pd.DataFrame(
-    {
-      "host": ["a", "a", "b"],
-      "nv_gpu_link_gbs": [1.0, _MAX_SANE_GPU_LINK_GBPS * 10, 2.0],
-    }
+  frame = SeriesFrame.from_base(
+    np.array([0, 0, 1]), np.array([1, 2, 1]), ["a", "b"]
   )
-  out = _clamp_summary_gpu_link_rates(df)
-  assert out["nv_gpu_link_gbs"].iloc[0] == 1.0
-  assert pd.isna(out["nv_gpu_link_gbs"].iloc[1])
-  assert out["nv_gpu_link_gbs"].iloc[2] == 2.0
+  frame.set(
+    "nv_gpu_link_gbs", np.array([1.0, _MAX_SANE_GPU_LINK_GBPS * 10, 2.0])
+  )
+  _clamp_gpu_link_rates(frame)
+  out = frame.columns["nv_gpu_link_gbs"]
+  assert out[0] == 1.0
+  assert np.isnan(out[1])
+  assert out[2] == 2.0

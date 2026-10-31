@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
+import numpy as np
 import pandas as pd
 
+from hpcperfstats.analysis.metrics.lib.columnar.kernels import AggTable
+from hpcperfstats.analysis.metrics.lib.columnar.testing import MockJobTable
 from hpcperfstats.analysis.metrics.lib.gen.dcgm_cpu_power_agg import (
   sum_unique_watt_values_per_host_time,
 )
@@ -15,37 +16,35 @@ from hpcperfstats.analysis.metrics.lib.gen.node_power_est import (
 )
 
 
+def _dev_table(values):
+  n = len(values)
+  return AggTable(
+    np.zeros(n, dtype=np.int64),
+    np.ones(n, dtype=np.int64),
+    np.array(values, dtype=np.float64),
+    np.arange(1, n + 1, dtype=np.int64),
+  )
+
+
 def test_sum_unique_watt_identical_replicas_collapse_to_one():
-  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  rows = [("h1", t0, f"cpu{i}", 45.0) for i in range(72)]
-  raw = pd.DataFrame(rows, columns=["host", "time", "dev", "sum_val"])
-  out = sum_unique_watt_values_per_host_time(raw)
+  out = sum_unique_watt_values_per_host_time(_dev_table([45.0] * 72))
   assert len(out) == 1
-  assert float(out.iloc[0]["sum_val"]) == 45.0
+  assert float(out.sum_val[0]) == 45.0
 
 
 def test_sum_unique_watt_two_distinct_socket_paints_sum():
-  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  rows = [("h1", t0, "cpu0", 40.0), ("h1", t0, "cpu1", 40.0)]
-  rows += [("h1", t0, "cpu36", 50.0), ("h1", t0, "cpu37", 50.0)]
-  raw = pd.DataFrame(rows, columns=["host", "time", "dev", "sum_val"])
-  out = sum_unique_watt_values_per_host_time(raw)
+  out = sum_unique_watt_values_per_host_time(
+    _dev_table([40.0, 40.0, 50.0, 50.0])
+  )
   assert len(out) == 1
-  assert float(out.iloc[0]["sum_val"]) == 90.0
+  assert float(out.sum_val[0]) == 90.0
 
 
 def test_sum_unique_watt_float_noise_rounds_before_unique():
-  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  raw = pd.DataFrame(
-    [
-      ("h1", t0, 45.0001),
-      ("h1", t0, 45.0002),
-      ("h1", t0, 45.0004),
-    ],
-    columns=["host", "time", "sum_val"],
+  out = sum_unique_watt_values_per_host_time(
+    _dev_table([45.0001, 45.0002, 45.0004])
   )
-  out = sum_unique_watt_values_per_host_time(raw)
-  assert float(out.iloc[0]["sum_val"]) == 45.0
+  assert float(out.sum_val[0]) == 45.0
 
 
 def _jt_with_dcgm_cpu_replicas(
@@ -53,7 +52,7 @@ def _jt_with_dcgm_cpu_replicas(
   watts_by_dev: list[float],
   module_power: float | None = None,
   gpu_power: float | None = None,
-) -> MagicMock:
+) -> MockJobTable:
   t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
   base = pd.DataFrame([("h1", t0)], columns=["host", "time"])
 
@@ -96,14 +95,13 @@ def _jt_with_dcgm_cpu_replicas(
       )
     return pd.DataFrame(columns=["host", "time", "sum_val"])
 
-  schema = {
+  jt = MockJobTable(["h1"])
+  jt.schema = {
     "intel_x86_rapl": ["pkg_energy"],
     "amd_x86_rapl": ["pkg_energy"],
     "nvidia_gpu": ["power_usage", "module_power_usage"],
     "host_cpu_hw": ["dcgm_cpu_power_util_w"],
   }
-  jt = MagicMock()
-  jt.schema = schema
   jt.get_host_time_df.return_value = base
   jt.get_aggregate_df.side_effect = get_aggregate_df
   return jt
@@ -111,18 +109,18 @@ def _jt_with_dcgm_cpu_replicas(
 
 def test_node_power_est_identical_cpu_replicas_not_n_times_socket():
   jt = _jt_with_dcgm_cpu_replicas(watts_by_dev=[45.0] * 72)
-  df = build_node_power_est_dataframe(jt)
-  assert float(df.iloc[0]["dcg_cpu_power_w"]) == 45.0
-  assert float(df.iloc[0]["node_power_est_w"]) == 45.0
+  frame = build_node_power_est_dataframe(jt)
+  assert float(frame.columns["dcg_cpu_power_w"][0]) == 45.0
+  assert float(frame.columns["node_power_est_w"][0]) == 45.0
   assert max_node_power_est_w(jt) == 45.0
 
 
 def test_node_power_est_two_socket_unique_watts_sum():
   watts = [40.0] * 36 + [50.0] * 36
   jt = _jt_with_dcgm_cpu_replicas(watts_by_dev=watts)
-  df = build_node_power_est_dataframe(jt)
-  assert float(df.iloc[0]["dcg_cpu_power_w"]) == 90.0
-  assert float(df.iloc[0]["node_power_est_w"]) == 90.0
+  frame = build_node_power_est_dataframe(jt)
+  assert float(frame.columns["dcg_cpu_power_w"][0]) == 90.0
+  assert float(frame.columns["node_power_est_w"][0]) == 90.0
 
 
 def test_node_power_est_module_power_preferred_over_cpu_replicas():
@@ -131,6 +129,6 @@ def test_node_power_est_module_power_preferred_over_cpu_replicas():
     module_power=700.0,
     gpu_power=200.0,
   )
-  df = build_node_power_est_dataframe(jt)
-  assert float(df.iloc[0]["dcg_cpu_power_w"]) == 45.0
-  assert float(df.iloc[0]["node_power_est_w"]) == 700.0
+  frame = build_node_power_est_dataframe(jt)
+  assert float(frame.columns["dcg_cpu_power_w"][0]) == 45.0
+  assert float(frame.columns["node_power_est_w"][0]) == 700.0

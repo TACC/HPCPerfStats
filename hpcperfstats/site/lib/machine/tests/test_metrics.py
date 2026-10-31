@@ -4,6 +4,7 @@ import warnings
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pandas as pd
 import pytest
 from pandas import Timestamp
 
@@ -17,9 +18,6 @@ from hpcperfstats.analysis.metrics.lib.metrics import (
   Metrics,
   _EventIndex,
   _Host,
-  _host_data_metric_rows_batched,
-  _host_data_row_cache_key,
-  _jid_table_host_data_time_kwargs,
   _metric_type_events_feasible,
   _Schema,
   avg_ethbw,
@@ -830,70 +828,37 @@ def test_max_fabricbw_rejects_packet_rate_scale_as_mb_s():
   assert value == pytest.approx(5.0e10 / 10.0 / (1024 * 1024))
 
 
-@pytest.fixture
-def job_arc_pandas_fallback(monkeypatch):
-  """Force ``job_arc`` onto the pandas path; the SQL fast path needs real PG."""
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.metrics_host_data_sql"
-    ".job_arc_cluster_aggregate_value",
-    lambda *_a, **_k: None,
-  )
-
-
 @pytest.mark.machine_unit_mock
-@pytest.mark.usefixtures("job_arc_pandas_fallback")
 def test_avg_cpuusage_sums_per_host_means():
   """avg_cpuusage persists sum of per-host busy-core means (not mean-of-hosts)."""
   import pandas as pd
 
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
   from hpcperfstats.analysis.metrics.lib.metrics import Metrics
 
   m = Metrics()
-  t0 = pd.Timestamp("2024-01-01 00:00:00")
-  t1 = pd.Timestamp("2024-01-01 00:05:00")
-  t2 = pd.Timestamp("2024-01-01 00:10:00")
-  rows = []
+  t0 = pd.Timestamp("2024-01-01 00:00:00+00:00")
+  t1 = pd.Timestamp("2024-01-01 00:05:00+00:00")
+  t2 = pd.Timestamp("2024-01-01 00:10:00+00:00")
   # Host a: buckets mean 1.0; host b: buckets mean 3.0 -> sum 4.0 (mean would be 2.0).
-  for host, arc in (("a", 1.0), ("b", 3.0)):
-    for t in (t0, t1, t2):
-      rows.append({"host": host, "time": t, "arc": arc})
-
-  class FakeJt:
-    _base_filter = {
-      "host__in": ["a", "b"],
-      "time__gte": t0,
-      "time__lte": t2,
-    }
-
-  def fake_rows(*_a, **_k):
-    return rows
-
-  with (
-    patch(
-      "hpcperfstats.analysis.metrics.lib.metrics._host_data_metric_rows_batched",
-      fake_rows,
-    ),
-    patch(
-      "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
-      lambda typ: (typ,),
-    ),
-    patch(
-      "hpcperfstats.analysis.metrics.lib.metrics._jid_table_host_data_time_kwargs",
-      lambda _base: {"time__gte": t0, "time__lte": t2},
-    ),
-  ):
-    value = m.job_arc(
-      FakeJt(),
-      typename="host_cpu",
-      events=["user", "system", "nice"],
-      conv=1.0,
-      host_aggregate="sum",
-    )
+  records = [
+    (t, host, "host_cpu", "user", None, None, arc, None)
+    for host, arc in (("a", 1.0), ("b", 3.0))
+    for t in (t0, t1, t2)
+  ]
+  value = m.job_arc(
+    table_from_records(records),
+    typename="host_cpu",
+    events=["user", "system", "nice"],
+    conv=1.0,
+    host_aggregate="sum",
+  )
   assert value == pytest.approx(4.0)
 
 
 @pytest.mark.machine_unit_mock
-@pytest.mark.usefixtures("job_arc_pandas_fallback")
 def test_job_arc_means_samples_within_bucket_not_sum():
   """Multiple samples in one 5m bucket must mean (not sum) instantaneous totals.
 
@@ -902,93 +867,47 @@ def test_job_arc_means_samples_within_bucket_not_sum():
   """
   import pandas as pd
 
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
   from hpcperfstats.analysis.metrics.lib.metrics import Metrics
 
   m = Metrics()
-  # Three timestamps inside the same 5m bucket after the first-bucket drop.
-  # First bucket (t0) is dropped; remaining bucket has three samples of arc=2.0
-  # -> mean 2.0, not sum 6.0.
-  t0 = pd.Timestamp("2024-01-01 00:00:00")
-  t1 = pd.Timestamp("2024-01-01 00:05:00")
-  t2 = pd.Timestamp("2024-01-01 00:05:10")
-  t3 = pd.Timestamp("2024-01-01 00:05:20")
-  rows = [{"host": "a", "time": t, "arc": 2.0} for t in (t0, t1, t2, t3)]
-
-  class FakeJt:
-    _base_filter = {
-      "host__in": ["a"],
-      "time__gte": t0,
-      "time__lte": t3,
-    }
-
-  with (
-    patch(
-      "hpcperfstats.analysis.metrics.lib.metrics._host_data_metric_rows_batched",
-      lambda *_a, **_k: rows,
-    ),
-    patch(
-      "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
-      lambda typ: (typ,),
-    ),
-    patch(
-      "hpcperfstats.analysis.metrics.lib.metrics._jid_table_host_data_time_kwargs",
-      lambda _base: {"time__gte": t0, "time__lte": t3},
-    ),
-  ):
-    value = m.job_arc(
-      FakeJt(),
-      typename="host_cpu",
-      events=["user"],
-      conv=1.0,
-      host_aggregate="sum",
-    )
+  t0 = pd.Timestamp("2024-01-01 00:00:00+00:00")
+  t1 = pd.Timestamp("2024-01-01 00:05:00+00:00")
+  t2 = pd.Timestamp("2024-01-01 00:05:10+00:00")
+  t3 = pd.Timestamp("2024-01-01 00:05:20+00:00")
+  table = table_from_records(
+    [
+      (t, "a", "host_cpu", "user", None, None, 2.0, None)
+      for t in (t0, t1, t2, t3)
+    ]
+  )
+  value = m.job_arc(
+    table, typename="host_cpu", events=["user"], conv=1.0, host_aggregate="sum"
+  )
   assert value == pytest.approx(2.0)
 
 
 @pytest.mark.machine_unit_mock
-@pytest.mark.usefixtures("job_arc_pandas_fallback")
 def test_job_arc_keeps_single_bucket_per_host():
   """Single remaining 5m bucket must not be dropped (short-job defensive)."""
   import pandas as pd
 
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
   from hpcperfstats.analysis.metrics.lib.metrics import Metrics
 
   m = Metrics()
-  t0 = pd.Timestamp("2024-01-01 00:00:00")
-  t1 = pd.Timestamp("2024-01-01 00:01:00")
-  rows = [
-    {"host": "a", "time": t0, "arc": 5.0},
-    {"host": "a", "time": t1, "arc": 5.0},
-  ]
-
-  class FakeJt:
-    _base_filter = {
-      "host__in": ["a"],
-      "time__gte": t0,
-      "time__lte": t1,
-    }
-
-  with (
-    patch(
-      "hpcperfstats.analysis.metrics.lib.metrics._host_data_metric_rows_batched",
-      lambda *_a, **_k: rows,
-    ),
-    patch(
-      "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
-      lambda typ: (typ,),
-    ),
-    patch(
-      "hpcperfstats.analysis.metrics.lib.metrics._jid_table_host_data_time_kwargs",
-      lambda _base: {"time__gte": t0, "time__lte": t1},
-    ),
-  ):
-    value = m.job_arc(
-      FakeJt(),
-      typename="host_cpu",
-      events=["user"],
-      conv=1.0,
-      host_aggregate="mean",
-    )
+  t0 = pd.Timestamp("2024-01-01 00:00:00+00:00")
+  t1 = pd.Timestamp("2024-01-01 00:01:00+00:00")
+  table = table_from_records(
+    [(t, "a", "host_cpu", "user", None, None, 5.0, None) for t in (t0, t1)]
+  )
+  value = m.job_arc(
+    table, typename="host_cpu", events=["user"], conv=1.0, host_aggregate="mean"
+  )
   assert value == pytest.approx(5.0)
 
 
@@ -997,53 +916,28 @@ def test_avg_cpuusage_scales_to_allocated_ncores():
   """Node-wide /proc util scaled by ncores/nhosts (not raw host-wide busy cores)."""
   import pandas as pd
 
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
   from hpcperfstats.analysis.metrics.lib.metrics import Metrics
 
   m = Metrics()
-  t0 = pd.Timestamp("2024-01-01 00:00:00")
-  t1 = pd.Timestamp("2024-01-01 00:05:00")
-  t2 = pd.Timestamp("2024-01-01 00:10:00")
+  t0 = pd.Timestamp("2024-01-01 00:00:00+00:00")
+  t1 = pd.Timestamp("2024-01-01 00:05:00+00:00")
+  t2 = pd.Timestamp("2024-01-01 00:10:00+00:00")
   # After first-bucket drop, remaining buckets: util = busy/(busy+idle) = 100/200 = 0.5
   # cores_per_host = 2/2 = 1 -> per-host mean 0.5; sum hosts = 1.0
-  rows_busy = []
-  rows_idle = []
+  records = []
   for host in ("a", "b"):
     for t in (t0, t1, t2):
-      rows_busy.append({"host": host, "time": t, "arc": 100.0})
-      rows_idle.append({"host": host, "time": t, "arc": 100.0})
-
-  class FakeJt:
-    _base_filter = {
-      "host__in": ["a", "b"],
-      "time__gte": t0,
-      "time__lte": t2,
-    }
+      records.append((t, host, "host_cpu", "user", None, None, 100.0, None))
+      records.append((t, host, "host_cpu", "idle", None, None, 100.0, None))
 
   class FakeJob:
     ncores = 2
     nhosts = 2
 
-  def fake_rows(_tkw, _hosts, _typename, events, _metric_column, **_kwargs):
-    ev = set(events)
-    if ev & {"idle", "iowait", "irq", "softirq"}:
-      return list(rows_idle)
-    return list(rows_busy)
-
-  with (
-    patch(
-      "hpcperfstats.analysis.metrics.lib.metrics._host_data_metric_rows_batched",
-      fake_rows,
-    ),
-    patch(
-      "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
-      lambda typ: (typ,),
-    ),
-    patch(
-      "hpcperfstats.analysis.metrics.lib.metrics._jid_table_host_data_time_kwargs",
-      lambda _base: {"time__gte": t0, "time__lte": t2},
-    ),
-  ):
-    value = m._job_avg_cpuusage_allocated(FakeJt(), FakeJob())
+  value = m._job_avg_cpuusage_allocated(table_from_records(records), FakeJob())
   assert value == pytest.approx(1.0)
 
 
@@ -1123,41 +1017,37 @@ def test_job_cpu_gpu_watt_hours_integrates_and_gates():
   """Watt-hours requires CPU fragments (GPU optional); integrates Wxs/3600 per host."""
   import pandas as pd
 
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
   from hpcperfstats.analysis.metrics.lib.gen import node_power_est as npe
 
-  t0 = pd.Timestamp("2024-01-01 00:00:00")
-  t1 = pd.Timestamp("2024-01-01 00:01:00")
-  df = pd.DataFrame(
-    {
-      "host": ["h1", "h1"],
-      "time": [t0, t1],
-      "node_power_est_w": [100.0, 100.0],
-      "dcg_cpu_power_w": [40.0, 40.0],
-      "nv_power_w": [60.0, 60.0],
-    }
-  )
-
-  class FakeJt:
-    pass
-
-  with patch.object(npe, "build_node_power_est_dataframe", return_value=df):
-    wh = npe.job_cpu_gpu_watt_hours(FakeJt())
-  # 100 W x 60 s = 6000 J = 6000/3600 Wh
-  assert wh == pytest.approx(6000.0 / 3600.0)
-
-  df_cpu_only = df.drop(columns=["nv_power_w"])
-  with patch.object(
-    npe, "build_node_power_est_dataframe", return_value=df_cpu_only
-  ):
-    assert npe.job_cpu_gpu_watt_hours(FakeJt()) == pytest.approx(
-      6000.0 / 3600.0
+  t0 = pd.Timestamp("2024-01-01 00:00:00+00:00")
+  t1 = pd.Timestamp("2024-01-01 00:01:00+00:00")
+  rapl_conv = 0.00001526
+  cpu_rows = [
+    (
+      t,
+      "h1",
+      "intel_x86_rapl",
+      "pkg_energy",
+      None,
+      None,
+      40.0 / rapl_conv,
+      None,
     )
-
-  df_no_cpu = df.drop(columns=["dcg_cpu_power_w"])
-  with patch.object(
-    npe, "build_node_power_est_dataframe", return_value=df_no_cpu
-  ):
-    assert npe.job_cpu_gpu_watt_hours(FakeJt()) is None
+    for t in (t0, t1)
+  ]
+  gpu_rows = [
+    (t, "h1", "nvidia_gpu", "power_usage", "0", 60.0, None, None)
+    for t in (t0, t1)
+  ]
+  # 100 W x 60 s = 6000 J = 6000/3600 Wh
+  wh = npe.job_cpu_gpu_watt_hours(table_from_records(cpu_rows + gpu_rows))
+  assert wh == pytest.approx(6000.0 / 3600.0, rel=1e-9)
+  cpu_only = npe.job_cpu_gpu_watt_hours(table_from_records(cpu_rows))
+  assert cpu_only == pytest.approx(40.0 * 60.0 / 3600.0, rel=1e-9)
+  assert npe.job_cpu_gpu_watt_hours(table_from_records(gpu_rows)) is None
 
 
 @pytest.mark.machine_unit_mock
@@ -1793,24 +1683,6 @@ def test_metrics_run_uses_supplied_pool(monkeypatch):
   assert pool.joined is False
 
 
-def test_jid_table_host_data_time_kwargs_full_and_sampled():
-  assert _jid_table_host_data_time_kwargs({}) is None
-  assert _jid_table_host_data_time_kwargs({"host__in": []}) is None
-  assert _jid_table_host_data_time_kwargs(
-    {
-      "time__in": [1, 2],
-      "host__in": ["x"],
-    }
-  ) == {"time__in": [1, 2]}
-  assert _jid_table_host_data_time_kwargs(
-    {
-      "time__gte": 1,
-      "time__lte": 2,
-      "host__in": ["x"],
-    }
-  ) == {"time__gte": 1, "time__lte": 2}
-
-
 class _FakeHostDataQs:
   """Fake queryset accepting both the raw ``values()`` and per-sample-sum chains."""
 
@@ -1859,182 +1731,91 @@ def _agg_row(host, time, value):
 
 @pytest.mark.django_db(databases=[])
 def test_job_arc_uses_time__in_when_jid_table_large_job_sampled():
-  """Large-job jid_table uses time__in; job_arc must not require time__gte/time__lte."""
-  from types import SimpleNamespace
+  """Large-job tables carry ``time__in``; job_arc must not require time__gte/lte."""
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
 
-  from django.utils import timezone as django_tz
+  t0 = pd.Timestamp("2024-01-01 00:00:00+00:00")
+  t1 = pd.Timestamp("2024-01-01 00:05:00+00:00")
+  table = table_from_records(
+    [
+      (t0, "n.example.com", "net", "rx_bytes", None, None, 4.0, None),
+      (t1, "n.example.com", "net", "rx_bytes", None, None, 6.0, None),
+    ],
+    time_in=[t0, t1],
+  )
+  assert "time__in" in table._base_filter
+  assert "time__gte" not in table._base_filter
+  m = Metrics()
+  assert m.job_arc(
+    table, typename="net", events=["rx_bytes"], conv=1.0
+  ) == pytest.approx(6.0)
 
-  t1 = django_tz.now()
-  jt = SimpleNamespace(
-    _base_filter={
-      "time__in": [t1],
-      "host__in": ["n.example.com"],
-    }
+
+@pytest.mark.django_db(databases=[])
+def test_job_arc_nonnegative_rate_drops_negative_samples():
+  """``nonnegative_rate`` drops reset/wrap samples before the bucket fold."""
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
+
+  base = pd.Timestamp("2024-01-01 00:00:00+00:00")
+  arcs = [10.0, -10.0, 10.0, 10.0]
+  table = table_from_records(
+    [
+      (
+        base + pd.Timedelta(minutes=5 * i),
+        "h1.x",
+        "net",
+        "rx_bytes",
+        None,
+        None,
+        a,
+        None,
+      )
+      for i, a in enumerate(arcs)
+    ]
   )
   m = Metrics()
-  mgr = _FakeHostDataManager()
-  with patch("hpcperfstats.site.lib.machine.models.host_data.objects", mgr):
-    m.job_arc(jt, typename="net", events=["rx_bytes"], conv=1.0)
-  kwargs = mgr.filter_calls[0]
-  assert kwargs["time__in"] == [t1]
-  assert "time__gte" not in kwargs
-  assert "time__lte" not in kwargs
+  filtered = m.job_arc(
+    table, typename="net", events=["rx_bytes"], conv=1.0, nonnegative_rate=True
+  )
+  raw = m.job_arc(table, typename="net", events=["rx_bytes"], conv=1.0)
+  # Buckets 0,2,3 survive the filter; the first is dropped -> mean(10, 10).
+  assert filtered == pytest.approx(10.0)
+  # Without the filter: buckets 0..3, first dropped -> mean(-10, 10, 10).
+  assert raw == pytest.approx(10.0 / 3.0)
 
 
 @pytest.mark.django_db(databases=[])
-def test_host_data_metric_rows_batched_splits_host__in():
-  """Large host lists query host_data in METRICS_HOST_QUERY_BATCH chunks."""
-
-  n = METRICS_HOST_QUERY_BATCH + 2
-  hosts = [f"h{i}.x" for i in range(n)]
-  chunk_sizes = []
-  mgr = _FakeHostDataManager(
-    on_materialize=lambda chunk: chunk_sizes.append(len(chunk))
+def test_job_arc_many_hosts_averages_per_host_means():
+  """More hosts than the old query batch: one frame, mean across hosts."""
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
   )
-
-  tkw = {"time__gte": 1, "time__lte": 2}
-  with patch("hpcperfstats.site.lib.machine.models.host_data.objects", mgr):
-    rows = _host_data_metric_rows_batched(
-      tkw, hosts, "net", ["rx_bytes"], "arc"
-    )
-  assert rows == []
-  assert chunk_sizes == [METRICS_HOST_QUERY_BATCH, 2]
-
-
-@pytest.mark.django_db(databases=[])
-def test_host_data_metric_rows_batched_rows_cache_reuses_fetch():
-  """Same (tkw, typename, events, column) in one compute_metrics pass hits cache."""
-  chunk_passes = []
-  mgr = _FakeHostDataManager(
-    rows=[{"host": "h1", "time": 1, "arc": 2.0}],
-    on_materialize=lambda _chunk: chunk_passes.append(1),
-  )
-
-  tkw = {"time__gte": 1, "time__lte": 2}
-  cache = {}
-  with patch("hpcperfstats.site.lib.machine.models.host_data.objects", mgr):
-    r1 = _host_data_metric_rows_batched(
-      tkw, ["h1"], "net", ["rx_bytes"], "arc", rows_cache=cache
-    )
-    r2 = _host_data_metric_rows_batched(
-      tkw, ["h1"], "net", ["rx_bytes"], "arc", rows_cache=cache
-    )
-  assert r1 == r2
-  assert len(chunk_passes) == 1
-
-
-@pytest.mark.django_db(databases=[])
-def test_host_data_metric_rows_batched_normalizes_sql_sum_rows():
-  """Per-sample-sum rows are relabelled to the raw shape ``{host, time, column}``."""
-  mgr = _FakeHostDataManager(rows=[_agg_row("h1", 1, 7.0)])
-  tkw = {"time__gte": 1, "time__lte": 2}
-  with patch("hpcperfstats.site.lib.machine.models.host_data.objects", mgr):
-    rows = _host_data_metric_rows_batched(
-      tkw, ["h1"], "net", ["rx_bytes"], "arc", sum_per_sample=True
-    )
-  assert rows == [{"host": "h1", "time": 1, "arc": 7.0}]
-
-
-@pytest.mark.django_db(databases=[])
-def test_host_data_row_cache_key_separates_aggregate_variants():
-  """Raw rows and per-sample sums must not share one compute_metrics memo entry."""
-  tkw = {"time__gte": 1, "time__lte": 2}
-  raw = _host_data_row_cache_key(tkw, "net", ["rx_bytes"], "arc")
-  summed = _host_data_row_cache_key(
-    tkw, "net", ["rx_bytes"], "arc", sum_per_sample=True
-  )
-  nonneg = _host_data_row_cache_key(
-    tkw,
-    "net",
-    ["rx_bytes"],
-    "arc",
-    sum_per_sample=True,
-    nonnegative_only=True,
-  )
-  assert len({raw, summed, nonneg}) == 3
-
-
-@pytest.mark.django_db(databases=[])
-def test_job_arc_requests_sql_sum_and_nonnegative_filter(monkeypatch):
-  """job_arc must push the per-sample sum (and rate sign filter) into SQL."""
-  from types import SimpleNamespace
-
-  from django.utils import timezone as django_tz
-
-  t0 = django_tz.now()
-  jt = SimpleNamespace(
-    _base_filter={
-      "time__gte": t0,
-      "time__lte": t0,
-      "host__in": ["h1.x"],
-    }
-  )
-  seen = {}
-
-  def fake_rows(*_a, sum_per_sample=False, nonnegative_only=False, **_k):
-    seen["sum_per_sample"] = sum_per_sample
-    seen["nonnegative_only"] = nonnegative_only
-    return []
-
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.metrics_host_data_sql.job_arc_cluster_aggregate_value",
-    lambda *_a, **_k: None,
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.metrics._host_data_metric_rows_batched",
-    fake_rows,
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
-    lambda typename: (typename,),
-  )
-  Metrics().job_arc(
-    jt,
-    typename="net",
-    events=["rx_bytes"],
-    conv=1.0,
-    nonnegative_rate=True,
-  )
-  assert seen == {"sum_per_sample": True, "nonnegative_only": True}
-
-
-@pytest.mark.django_db(databases=[])
-def test_job_arc_issues_multiple_queries_when_many_hosts(monkeypatch):
-  from types import SimpleNamespace
-
-  from django.utils import timezone as django_tz
 
   n = METRICS_HOST_QUERY_BATCH + 1
-  hosts = [f"h{i}.x" for i in range(n)]
-  t0 = django_tz.now()
-  jt = SimpleNamespace(
-    _base_filter={
-      "time__gte": t0,
-      "time__lte": t0,
-      "host__in": hosts,
-    }
-  )
-  calls = []
-  mgr = _FakeHostDataManager(
-    on_materialize=lambda chunk: calls.append(len(chunk))
-  )
-
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.metrics_host_data_sql.job_arc_cluster_aggregate_value",
-    lambda *_a, **_k: None,
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.site.lib.machine.models.host_data.objects", mgr
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.metrics.type_probe_names",
-    lambda typename: (typename,),
-  )
+  base = pd.Timestamp("2024-01-01 00:00:00+00:00")
+  records = []
+  for i in range(n):
+    for k in range(2):
+      records.append(
+        (
+          base + pd.Timedelta(minutes=5 * k),
+          f"h{i}.x",
+          "net",
+          "rx_bytes",
+          None,
+          None,
+          float(i),
+          None,
+        )
+      )
+  table = table_from_records(records)
   m = Metrics()
-  m.job_arc(jt, typename="net", events=["rx_bytes"], conv=1.0)
-  assert len(calls) == 2
-  assert calls[0] == METRICS_HOST_QUERY_BATCH
-  assert calls[1] == 1
+  value = m.job_arc(table, typename="net", events=["rx_bytes"], conv=1.0)
+  assert value == pytest.approx(sum(range(n)) / n)
 
 
 class _ArcSqlCursor:
@@ -2060,179 +1841,6 @@ class _ArcSqlCursor:
 
   def fetchone(self):
     return self.row
-
-
-class _ArcSqlConnection:
-  """PostgreSQL connection stand-in for ``job_arc_cluster_aggregate_value``."""
-
-  vendor = "postgresql"
-
-  def __init__(self, sink, reply_for):
-    self.sink = sink
-    self.reply_for = reply_for
-
-  def cursor(self):
-    return _ArcSqlCursor(self.sink, self.reply_for)
-
-
-def _patch_arc_sql(monkeypatch, reply_for):
-  """Point Django's connection at a cursor double. Returns the call sink."""
-  sink = []
-  monkeypatch.setattr(
-    "django.db.connection",
-    _ArcSqlConnection(sink, reply_for),
-  )
-  monkeypatch.setattr("django.db.close_old_connections", lambda: None)
-  return sink
-
-
-@pytest.mark.django_db(databases=[])
-def test_job_arc_cluster_aggregate_folds_count_weighted_host_batches(
-  monkeypatch,
-):
-  """Nine nfs hosts become an 8-host batch plus one host, folded by count."""
-  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-    TYPE_DETAIL_HOST_QUERY_BATCH,
-  )
-  from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import (
-    job_arc_cluster_aggregate_value,
-  )
-
-  t0 = 1_700_000_000
-  t1 = t0 + 9 * 3600
-  hosts = [f"h{i}.nfs" for i in range(TYPE_DETAIL_HOST_QUERY_BATCH + 1)]
-
-  def reply_for(params):
-    n = len(params[0])
-    if n == TYPE_DETAIL_HOST_QUERY_BATCH:
-      return (10.0, n)
-    if n == 1:
-      return (30.0, 1)
-    return (None, 0)
-
-  sink = _patch_arc_sql(monkeypatch, reply_for)
-  value = job_arc_cluster_aggregate_value(
-    hosts,
-    {"time__gte": t0, "time__lte": t1},
-    "nfs",
-    ["READ_ops"],
-    1.0,
-  )
-  summed = job_arc_cluster_aggregate_value(
-    hosts,
-    {"time__gte": t0, "time__lte": t1},
-    "nfs",
-    ["READ_ops"],
-    1.0,
-    host_aggregate="sum",
-  )
-  assert len(sink) == 4
-  assert [len(call[1]) for call in sink] == [
-    TYPE_DETAIL_HOST_QUERY_BATCH,
-    1,
-    TYPE_DETAIL_HOST_QUERY_BATCH,
-    1,
-  ]
-  for _sql, _hosts, seen_t0, seen_t1 in sink:
-    assert seen_t0 == t0
-    assert seen_t1 == t1
-    assert "time_bucket('5 minutes'" in _sql
-  weighted = (10.0 * TYPE_DETAIL_HOST_QUERY_BATCH + 30.0) / (
-    TYPE_DETAIL_HOST_QUERY_BATCH + 1
-  )
-  assert value == weighted
-  assert value != (10.0 + 30.0) / 2
-  assert summed == 10.0 * TYPE_DETAIL_HOST_QUERY_BATCH + 30.0
-  empty = _patch_arc_sql(monkeypatch, lambda _params: (None, 0))
-  assert (
-    job_arc_cluster_aggregate_value(
-      hosts,
-      {"time__gte": t0, "time__lte": t1},
-      "nfs",
-      ["READ_ops"],
-      1.0,
-    )
-    is None
-  )
-  assert empty
-
-
-@pytest.mark.django_db(databases=[])
-def test_job_arc_cluster_aggregate_timeout_bisects_hosts_not_time(
-  monkeypatch,
-):
-  """A timeout splits the host list. The time bounds stay the full window."""
-  from django.db import OperationalError
-
-  from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import (
-    job_arc_cluster_aggregate_value,
-  )
-
-  t0 = 1_700_000_000
-  t1 = t0 + 3600
-  hosts = ["h0.block", "h1.block"]
-
-  def reply_for(params):
-    batch = list(params[0])
-    if len(batch) > 1:
-      raise OperationalError("canceling statement due to statement timeout")
-    return (10.0 if batch[0] == "h0.block" else 30.0, 1)
-
-  sink = _patch_arc_sql(monkeypatch, reply_for)
-  value = job_arc_cluster_aggregate_value(
-    hosts,
-    {"time__gte": t0, "time__lte": t1},
-    "host_block",
-    ["rd_sectors"],
-    1.0,
-  )
-  assert value == 20.0
-  assert [call[1] for call in sink] == [hosts, ["h0.block"], ["h1.block"]]
-  for _sql, _hosts, seen_t0, seen_t1 in sink:
-    assert seen_t0 == t0
-    assert seen_t1 == t1
-  refused = _patch_arc_sql(
-    monkeypatch,
-    lambda _params: OperationalError("connection refused"),
-  )
-  with pytest.raises(OperationalError, match="connection refused"):
-    job_arc_cluster_aggregate_value(
-      hosts,
-      {"time__gte": t0, "time__lte": t1},
-      "host_block",
-      ["rd_sectors"],
-      1.0,
-    )
-  assert len(refused) == 1
-
-
-@pytest.mark.django_db(databases=[])
-def test_job_arc_cluster_aggregate_one_host_timeout_raises(monkeypatch):
-  """A one-host statement timeout is not swallowed or time-sliced."""
-  from django.db import OperationalError
-
-  from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import (
-    job_arc_cluster_aggregate_value,
-  )
-
-  t0 = 1_700_000_000
-  t1 = t0 + 3600
-
-  def reply_for(_params):
-    raise OperationalError("canceling statement due to statement timeout")
-
-  sink = _patch_arc_sql(monkeypatch, reply_for)
-  with pytest.raises(OperationalError, match="statement timeout"):
-    job_arc_cluster_aggregate_value(
-      ["only.block"],
-      {"time__gte": t0, "time__lte": t1},
-      "nfs",
-      ["READ_ops", "WRITE_ops"],
-      1.0,
-    )
-  assert len(sink) == 1
-  assert sink[0][2] == t0
-  assert sink[0][3] == t1
 
 
 def test_metric_type_events_feasible_skips_impossible_types():

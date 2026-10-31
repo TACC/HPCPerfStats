@@ -7,27 +7,21 @@ Mirrors the ``SHARED_HOST_WIDE_HELP_FOOTER`` gate exercised for
 """
 
 import html
-from unittest.mock import patch
 
 import pandas as pd
 from bokeh.models import HoverTool
 
+from hpcperfstats.analysis.metrics.lib.columnar.testing import frame_from_df
+from hpcperfstats.analysis.metrics.lib.columnar.type_detail_series import (
+  TypeDetailSeries,
+)
 from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
   SHARED_HOST_WIDE_HELP_FOOTER,
 )
 from hpcperfstats.analysis.metrics.lib.plot.devplot import DevPlot
 
 
-class _TypeDetailProvider:
-  jid = "12345"
-
-  def __init__(self, type_name: str = "host_ib"):
-    self.type_name = type_name
-
-
 def _plot_metric_for_jid(is_shared: bool, type_name: str = "host_ib"):
-  dp = DevPlot(_TypeDetailProvider(type_name), ["h1", "h2"])
-  dp.hc = {"h1": "#111111", "h2": "#222222"}
   df = pd.DataFrame(
     {
       "time": [
@@ -38,11 +32,12 @@ def _plot_metric_for_jid(is_shared: bool, type_name: str = "host_ib"):
       "MBW_CHANNEL_0": [3.0, 4.0],
     }
   )
-  with patch(
-    "hpcperfstats.analysis.metrics.lib.plot.devplot.job_is_shared_node_from_jobish",
-    return_value=is_shared,
-  ):
-    return dp.plot_metric(df, "MBW_CHANNEL_0", "GB/s")
+  series = TypeDetailSeries(
+    type_name, frame_from_df(df), [("MBW_CHANNEL_0", "GB/s")], "arc"
+  )
+  dp = DevPlot(series, ["h1", "h2"], is_shared_node=is_shared)
+  dp.hc = {"h1": "#111111", "h2": "#222222"}
+  return dp.plot_metric("MBW_CHANNEL_0", "GB/s")
 
 
 def _help_hover_tip_text(plot) -> str:

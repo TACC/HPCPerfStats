@@ -36,7 +36,6 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-import pandas as pd
 
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
   HOST_ROOFLINE_PEAK_TYPE,
@@ -79,38 +78,28 @@ def _max_converted_sum_val(
   type_name: str = HOST_ROOFLINE_PEAK_TYPE,
 ) -> float | None:
   """
-  Internal helper to handle max converted sum val.
+  Maximum finite per-sample sum of one ``host_roofline_peak`` event
+  (``value`` then ``arc``) from the job's JobFrame.
 
   Args:
-    jt (Any): Jt passed to this helper.
-    event (str): String for event.
-    conv (float): Floating-point value for conv.
-    type_name (str): String for type name.
+    jt (Any): ``ColumnarJobTable`` of the job.
+    event (str): Peak event name.
+    conv (float): Multiplier applied to the sums.
+    type_name (str): Unused legacy default (probe names come from
+      ``host_roofline_peak_type_names``).
 
   Returns:
-    Optional[float]: Optional[float] - the result, or None when unavailable.
+    Optional[float]: Maximum, or None when the event is absent.
 
   Examples:
-    >>> _max_converted_sum_val(None, "x", 0, "x")  # doctest: +SKIP
+    >>> _max_converted_sum_val(None, "x", 1.0)  # doctest: +SKIP
   """
-  for value_column in ("value", "arc"):
-    for peak_typ in host_roofline_peak_type_names():
-      try:
-        df = jt.get_aggregate_df(peak_typ, value_column, [event], conv)
-      except Exception:
-        continue
-      if df is None or df.empty or "sum_val" not in df.columns:
-        continue
-      values = pd.to_numeric(df["sum_val"], errors="coerce").to_numpy(
-        dtype=float, copy=False
-      )
-      if values.size == 0:
-        continue
-      finite = values[np.isfinite(values)]
-      if finite.size == 0:
-        continue
-      return float(np.max(finite))
-  return None
+  del type_name
+  from hpcperfstats.analysis.metrics.lib.columnar.roofline_series import (
+    max_converted_sum_val,
+  )
+
+  return max_converted_sum_val(jt, event, conv)
 
 
 _BYTES_TO_GB = 1 / (1024**3)

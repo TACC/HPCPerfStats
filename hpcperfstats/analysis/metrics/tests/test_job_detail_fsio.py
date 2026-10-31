@@ -1,13 +1,12 @@
-"""Unit tests for job_detail_fsio (no Django DB)."""
-
-from unittest.mock import MagicMock
+"""Unit tests for job_detail_fsio on the columnar job table (no Django DB)."""
 
 import pandas as pd
 
 from hpcperfstats.analysis.metrics.lib.beegfs_metadata_iops_events import (
   BEEGFS_METADATA_IOPS_EVENTS,
-  BEEGFS_READ_BYTES_EVENTS,
-  BEEGFS_WRITE_BYTES_EVENTS,
+)
+from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+  table_from_records,
 )
 from hpcperfstats.analysis.metrics.lib.job_detail_fsio import (
   compute_job_detail_fsio_metric_rows,
@@ -16,9 +15,10 @@ from hpcperfstats.analysis.metrics.lib.job_detail_fsio import (
 )
 from hpcperfstats.analysis.metrics.lib.llite_metadata_iops_events import (
   LLITE_METADATA_IOPS_EVENTS,
-  LLITE_READ_BYTES_EVENTS,
-  LLITE_WRITE_BYTES_EVENTS,
 )
+
+_T0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
+_MB = 1024 * 1024
 
 
 def test_fsio_job_detail_catalog_has_twelve_metrics():
@@ -39,46 +39,77 @@ def test_fsio_job_detail_catalog_has_twelve_metrics():
   ]
 
 
-def _llite_agg(typ, val_col, events, conv=1.0, *, peak_iops=100.0):
-  """Mock get_aggregate_df; peak MB/s comes from read(4)+write(6) combined series."""
-  del val_col, conv
-  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  ev = list(events)
-  if typ in ("llite", "lustre_llite") and ev == list(LLITE_READ_BYTES_EVENTS):
-    return pd.DataFrame([("n1", t0, 4.0)], columns=["host", "time", "sum_val"])
-  if typ in ("llite", "lustre_llite") and ev == list(LLITE_WRITE_BYTES_EVENTS):
-    return pd.DataFrame([("n1", t0, 6.0)], columns=["host", "time", "sum_val"])
-  if typ in ("llite", "lustre_llite") and ev == list(
-    LLITE_METADATA_IOPS_EVENTS
-  ):
-    return pd.DataFrame(
-      [("n1", t0, peak_iops)], columns=["host", "time", "sum_val"]
+def _llite_rows(
+  *, read_event="vfs_read_bytes", write_event="vfs_write_bytes", peak_iops=100.0
+):
+  """Lustre rows: 1 MB read / 2 MB write deltas; 4 + 6 MB/s arcs; metadata IOPS."""
+  rows = [
+    (_T0, "n1", "lustre_llite", read_event, None, None, 4.0 * _MB, 1.0 * _MB),
+    (_T0, "n1", "lustre_llite", write_event, None, None, 6.0 * _MB, 2.0 * _MB),
+  ]
+  rows.append(
+    (
+      _T0,
+      "n1",
+      "lustre_llite",
+      LLITE_METADATA_IOPS_EVENTS[0],
+      None,
+      None,
+      peak_iops,
+      1.0,
     )
-  if typ in ("llite", "lustre_llite") and len(ev) > 2:
-    return pd.DataFrame(
-      [("n1", t0, peak_iops)], columns=["host", "time", "sum_val"]
-    )
-  if typ == "beegfs_client" and ev == list(BEEGFS_READ_BYTES_EVENTS):
-    return pd.DataFrame([("n1", t0, 3.0)], columns=["host", "time", "sum_val"])
-  if typ == "beegfs_client" and ev == list(BEEGFS_WRITE_BYTES_EVENTS):
-    return pd.DataFrame([("n1", t0, 5.0)], columns=["host", "time", "sum_val"])
-  if typ == "beegfs_client" and ev == list(BEEGFS_METADATA_IOPS_EVENTS):
-    return pd.DataFrame([("n1", t0, 40.0)], columns=["host", "time", "sum_val"])
-  return pd.DataFrame(columns=["host", "time", "sum_val"])
+  )
+  return rows
+
+
+def _nfs_rows():
+  """NFS rows: 10 MB read / 20 MB write deltas; 1 + 2 MB/s arcs; 50 IOPS."""
+  return [
+    (_T0, "n1", "nfs", "normal_read", None, None, 1.0 * _MB, 10.0 * _MB),
+    (_T0, "n1", "nfs", "normal_write", None, None, 2.0 * _MB, 20.0 * _MB),
+    (_T0, "n1", "nfs", "READ_ops", None, None, 30.0, 1.0),
+    (_T0, "n1", "nfs", "WRITE_ops", None, None, 20.0, 1.0),
+  ]
+
+
+def _beegfs_rows():
+  """BeeGFS rows: 2 MB read / 4 MB write deltas; 3 + 5 MB/s arcs; 40 IOPS."""
+  return [
+    (
+      _T0,
+      "n1",
+      "beegfs_client",
+      "vfs_read_bytes",
+      None,
+      None,
+      3.0 * _MB,
+      2.0 * _MB,
+    ),
+    (
+      _T0,
+      "n1",
+      "beegfs_client",
+      "vfs_write_bytes",
+      None,
+      None,
+      5.0 * _MB,
+      4.0 * _MB,
+    ),
+    (
+      _T0,
+      "n1",
+      "beegfs_client",
+      BEEGFS_METADATA_IOPS_EVENTS[0],
+      None,
+      None,
+      40.0,
+      1.0,
+    ),
+  ]
 
 
 def test_compute_llite_populates_llite_rows_and_omits_nfs_when_nfs_absent():
-  jt = MagicMock()
-  jt.get_llite_delta_by_event.return_value = pd.DataFrame(
-    [
-      {"event": "vfs_read_bytes", "delta_sum": 1048576.0},
-      {"event": "vfs_write_bytes", "delta_sum": 2097152.0},
-    ]
-  )
-  jt.get_nfs_delta_totals_mb.return_value = None
-  jt.get_beegfs_delta_by_event.return_value = pd.DataFrame()
-  jt.get_aggregate_df.side_effect = _llite_agg
-  rows = compute_job_detail_fsio_metric_rows(jt)
+  rows = compute_job_detail_fsio_metric_rows(table_from_records(_llite_rows()))
   by_m = {r["metric"]: r for r in rows}
   assert by_m["detail_fsio_llite_read_mb"]["value"] == 1.0
   assert by_m["detail_fsio_llite_write_mb"]["value"] == 2.0
@@ -90,64 +121,20 @@ def test_compute_llite_populates_llite_rows_and_omits_nfs_when_nfs_absent():
 
 
 def test_compute_llite_accepts_legacy_read_bytes_event_names():
-  """get_llite_delta may still surface legacy names before canonicalize; FSIO accepts both."""
-  jt = MagicMock()
-  jt.get_llite_delta_by_event.return_value = pd.DataFrame(
-    [
-      {"event": "read_bytes", "delta_sum": 1048576.0},
-      {"event": "write_bytes", "delta_sum": 2097152.0},
-    ]
+  """Legacy ``read_bytes`` / ``write_bytes`` rows are canonicalised to ``vfs_*``."""
+  table = table_from_records(
+    _llite_rows(read_event="read_bytes", write_event="write_bytes")
   )
-  jt.get_nfs_delta_totals_mb.return_value = None
-  jt.get_beegfs_delta_by_event.return_value = pd.DataFrame()
-  jt.get_aggregate_df.side_effect = _llite_agg
-  rows = compute_job_detail_fsio_metric_rows(jt)
+  rows = compute_job_detail_fsio_metric_rows(table)
   by_m = {r["metric"]: r for r in rows}
   assert by_m["detail_fsio_llite_read_mb"]["value"] == 1.0
   assert by_m["detail_fsio_llite_write_mb"]["value"] == 2.0
 
 
 def test_compute_dual_llite_and_nfs_when_both_present():
-  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  jt = MagicMock()
-  jt.get_llite_delta_by_event.return_value = pd.DataFrame(
-    [
-      {"event": "vfs_read_bytes", "delta_sum": 1048576.0},
-      {"event": "vfs_write_bytes", "delta_sum": 2097152.0},
-    ]
+  rows = compute_job_detail_fsio_metric_rows(
+    table_from_records(_llite_rows() + _nfs_rows())
   )
-  jt.get_nfs_delta_totals_mb.return_value = [10.0, 20.0]
-  jt.get_beegfs_delta_by_event.return_value = pd.DataFrame()
-
-  def _agg(typ, val_col, events, conv=1.0):
-    base = _llite_agg(typ, val_col, events, conv)
-    if not base.empty:
-      return base
-    ev = list(events)
-    if typ == "nfs" and set(ev) == {
-      "normal_read",
-      "direct_read",
-      "server_read",
-    }:
-      return pd.DataFrame(
-        [("n1", t0, 1.0)], columns=["host", "time", "sum_val"]
-      )
-    if typ == "nfs" and set(ev) == {
-      "normal_write",
-      "direct_write",
-      "server_write",
-    }:
-      return pd.DataFrame(
-        [("n1", t0, 2.0)], columns=["host", "time", "sum_val"]
-      )
-    if typ == "nfs" and set(ev) == {"READ_ops", "WRITE_ops"}:
-      return pd.DataFrame(
-        [("n1", t0, 50.0)], columns=["host", "time", "sum_val"]
-      )
-    return pd.DataFrame(columns=["host", "time", "sum_val"])
-
-  jt.get_aggregate_df.side_effect = _agg
-  rows = compute_job_detail_fsio_metric_rows(jt)
   by_m = {r["metric"]: r for r in rows}
   assert by_m["detail_fsio_llite_read_mb"]["value"] == 1.0
   assert by_m["detail_fsio_nfs_read_mb"]["value"] == 10.0
@@ -159,39 +146,7 @@ def test_compute_dual_llite_and_nfs_when_both_present():
 
 
 def test_compute_nfs_when_no_llite():
-  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  jt = MagicMock()
-  jt.get_llite_delta_by_event.return_value = pd.DataFrame()
-  jt.get_nfs_delta_totals_mb.return_value = [10.0, 20.0]
-  jt.get_beegfs_delta_by_event.return_value = pd.DataFrame()
-
-  def _agg(typ, val_col, events, conv=1.0):
-    del val_col, conv
-    ev = list(events)
-    if typ == "nfs" and set(ev) == {
-      "normal_read",
-      "direct_read",
-      "server_read",
-    }:
-      return pd.DataFrame(
-        [("n1", t0, 1.0)], columns=["host", "time", "sum_val"]
-      )
-    if typ == "nfs" and set(ev) == {
-      "normal_write",
-      "direct_write",
-      "server_write",
-    }:
-      return pd.DataFrame(
-        [("n1", t0, 2.0)], columns=["host", "time", "sum_val"]
-      )
-    if typ == "nfs" and set(ev) == {"READ_ops", "WRITE_ops"}:
-      return pd.DataFrame(
-        [("n1", t0, 50.0)], columns=["host", "time", "sum_val"]
-      )
-    return pd.DataFrame(columns=["host", "time", "sum_val"])
-
-  jt.get_aggregate_df.side_effect = _agg
-  rows = compute_job_detail_fsio_metric_rows(jt)
+  rows = compute_job_detail_fsio_metric_rows(table_from_records(_nfs_rows()))
   by_m = {r["metric"]: r for r in rows}
   assert by_m["detail_fsio_llite_read_mb"]["value"] is None
   assert by_m["detail_fsio_nfs_read_mb"]["value"] == 10.0
@@ -201,17 +156,7 @@ def test_compute_nfs_when_no_llite():
 
 
 def test_compute_beegfs_only_populates_beegfs_rows():
-  jt = MagicMock()
-  jt.get_llite_delta_by_event.return_value = pd.DataFrame()
-  jt.get_nfs_delta_totals_mb.return_value = None
-  jt.get_beegfs_delta_by_event.return_value = pd.DataFrame(
-    [
-      {"event": "vfs_read_bytes", "delta_sum": 2097152.0},
-      {"event": "vfs_write_bytes", "delta_sum": 4194304.0},
-    ]
-  )
-  jt.get_aggregate_df.side_effect = _llite_agg
-  rows = compute_job_detail_fsio_metric_rows(jt)
+  rows = compute_job_detail_fsio_metric_rows(table_from_records(_beegfs_rows()))
   by_m = {r["metric"]: r for r in rows}
   assert by_m["detail_fsio_beegfs_read_mb"]["value"] == 2.0
   assert by_m["detail_fsio_beegfs_write_mb"]["value"] == 4.0
@@ -222,51 +167,8 @@ def test_compute_beegfs_only_populates_beegfs_rows():
 
 
 def test_compute_triple_llite_nfs_beegfs_when_all_present():
-  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  jt = MagicMock()
-  jt.get_llite_delta_by_event.return_value = pd.DataFrame(
-    [
-      {"event": "vfs_read_bytes", "delta_sum": 1048576.0},
-      {"event": "vfs_write_bytes", "delta_sum": 2097152.0},
-    ]
-  )
-  jt.get_nfs_delta_totals_mb.return_value = [10.0, 20.0]
-  jt.get_beegfs_delta_by_event.return_value = pd.DataFrame(
-    [
-      {"event": "vfs_read_bytes", "delta_sum": 2097152.0},
-      {"event": "vfs_write_bytes", "delta_sum": 4194304.0},
-    ]
-  )
-
-  def _agg(typ, val_col, events, conv=1.0):
-    base = _llite_agg(typ, val_col, events, conv)
-    if not base.empty:
-      return base
-    ev = list(events)
-    if typ == "nfs" and set(ev) == {
-      "normal_read",
-      "direct_read",
-      "server_read",
-    }:
-      return pd.DataFrame(
-        [("n1", t0, 1.0)], columns=["host", "time", "sum_val"]
-      )
-    if typ == "nfs" and set(ev) == {
-      "normal_write",
-      "direct_write",
-      "server_write",
-    }:
-      return pd.DataFrame(
-        [("n1", t0, 2.0)], columns=["host", "time", "sum_val"]
-      )
-    if typ == "nfs" and set(ev) == {"READ_ops", "WRITE_ops"}:
-      return pd.DataFrame(
-        [("n1", t0, 50.0)], columns=["host", "time", "sum_val"]
-      )
-    return pd.DataFrame(columns=["host", "time", "sum_val"])
-
-  jt.get_aggregate_df.side_effect = _agg
-  rows = compute_job_detail_fsio_metric_rows(jt)
+  table = table_from_records(_llite_rows() + _nfs_rows() + _beegfs_rows())
+  rows = compute_job_detail_fsio_metric_rows(table)
   by_m = {r["metric"]: r for r in rows}
   assert by_m["detail_fsio_llite_read_mb"]["value"] == 1.0
   assert by_m["detail_fsio_nfs_read_mb"]["value"] == 10.0
@@ -277,18 +179,14 @@ def test_compute_triple_llite_nfs_beegfs_when_all_present():
 
 
 def test_extend_fsio_payload_lists_with_peaks_fills_legacy_two_tuple():
-  jt = MagicMock()
-  jt.get_aggregate_df.side_effect = lambda *a, **k: _llite_agg(
-    *a, **k, peak_iops=9.0
-  )
   fsio = {"llite": [1.0, 2.0]}
-  extend_fsio_payload_lists_with_peaks(fsio, jt)
+  extend_fsio_payload_lists_with_peaks(
+    fsio, table_from_records(_llite_rows(peak_iops=9.0))
+  )
   assert fsio["llite"] == [1.0, 2.0, 10.0, 9.0]
 
 
 def test_extend_fsio_payload_lists_with_peaks_fills_beegfs():
-  jt = MagicMock()
-  jt.get_aggregate_df.side_effect = _llite_agg
   fsio = {"beegfs": [2.0, 4.0]}
-  extend_fsio_payload_lists_with_peaks(fsio, jt)
+  extend_fsio_payload_lists_with_peaks(fsio, table_from_records(_beegfs_rows()))
   assert fsio["beegfs"] == [2.0, 4.0, 8.0, 40.0]

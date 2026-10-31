@@ -1539,9 +1539,7 @@ class TestHostPlotBuildCallback:
       patch.object(api, "_require_auth", return_value=None),
       patch.object(api, "get_site_content_cache_timeout", return_value=60),
       patch.object(api, "cached_orm", side_effect=_cached_orm),
-      patch.object(
-        api, "HostDataProvider", side_effect=RuntimeError("no data")
-      ),
+      patch.object(api, "host_data_table", side_effect=RuntimeError("no data")),
     ):
       response = api.host_plot(request)
     assert response.status_code == 200
@@ -2275,7 +2273,7 @@ class TestHostPlotJsonItemClosure:
       patch.object(api, "_require_auth", return_value=None),
       patch.object(api, "get_site_content_cache_timeout", return_value=60),
       patch.object(api, "cached_orm", side_effect=_cached_orm),
-      patch.object(api, "HostDataProvider", return_value=MagicMock()),
+      patch.object(api, "host_data_table", return_value=MagicMock()),
       patch.object(
         api.plots,
         "SummaryPlot",

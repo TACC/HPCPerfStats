@@ -4,11 +4,10 @@ Shared date parsing and range utilities for dbload and CLI scripts.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
-
-import pandas as pd
 
 from hpcperfstats.dbload.lib.print_utils import log_print
 
@@ -34,14 +33,20 @@ def to_pydatetime_or_none(ts: Any) -> Any:
     True
     >>> to_pydatetime_or_none(float("nan")) is None
     True
+    >>> class NAType:  # pandas.NA stand-in
+    ...   pass
+    >>> to_pydatetime_or_none(NAType()) is None
+    True
   """
   if ts is None:
     return None
-  try:
-    if pd.isna(ts):
-      return None
-  except TypeError, ValueError:
-    pass
+  if isinstance(ts, float) and math.isnan(ts):
+    return None
+  # pandas ``NaT`` / ``NA`` from accounting frames, matched by name so this
+  # module stays pandas-free (``pd.NA`` has no truth value; ``float()`` of it
+  # raises).
+  if type(ts).__name__ in ("NaTType", "NAType"):
+    return None
   to_py = getattr(ts, "to_pydatetime", None)
   if callable(to_py):
     dt = to_py(warn=False)

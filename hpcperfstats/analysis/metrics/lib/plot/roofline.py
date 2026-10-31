@@ -1,9 +1,11 @@
 """
-Roofline plot: arithmetic intensity vs performance (GFLOP/s) from jid_table
-FLOPS and memory bandwidth.
+Roofline plot: arithmetic intensity vs performance (GFLOP/s) from the columnar
+job table's FLOPS and memory-bandwidth samples.
 
 Uses the same PMC sources as SummaryPlot (AMD or Intel). Draws the roofline
-curve and scatter of (AI, perf) points.
+curve and scatter of (AI, perf) points. The sample selection lives in
+``columnar.roofline_series`` (probe orders and unavailable reasons are
+unchanged); this module owns the Bokeh figure.
 
 AMD path requires amd64_df MBW channels (monitor enables these on AMD family
 17h/19h only). Intel memory side tries IMC types in INTEL_IMC_STATS_TYPES (SNB
@@ -11,16 +13,16 @@ through SKX). Intel FLOPS use FP_ARITH when present, else SNB/IVB-style SSE/AVX
 double counter proxies.
 
 Attributes:
-  DEFAULT_PEAK_BW_GB: Default nominal peak bandwidth (GB/s).
-  DEFAULT_PEAK_FLOPS_GF: Default nominal peak FLOPS (GFLOP/s).
-  GPU_ROOFLINE_BW_AXIS_LINK: Measured-axis mode for PCIe/NVLink/Xe Link.
-  GPU_ROOFLINE_BW_AXIS_MEMORY: Measured-axis mode for GPU memory BW.
-  GPU_ROOFLINE_TITLE_LINK: Bokeh/SPA title when link BW is used.
-  GPU_ROOFLINE_TITLE_MEMORY: Bokeh/SPA title when memory BW is used.
+  DEFAULT_PEAK_FLOPS_GF: Fallback peak GFLOP/s.
+  DEFAULT_PEAK_BW_GB: Fallback peak GB/s.
+  GPU_ROOFLINE_BW_AXIS_MEMORY: GPU bandwidth axis tag (HBM).
+  GPU_ROOFLINE_BW_AXIS_LINK: GPU bandwidth axis tag (PCIe / NVLink).
+  GPU_ROOFLINE_TITLE_MEMORY: GPU figure title for the HBM axis.
+  GPU_ROOFLINE_TITLE_LINK: GPU figure title for the link axis.
+  _GPU_BYTES_TO_GIB: GiB/s conversion.
+  _NVIDIA_GPU_LINK_DIRECTIONAL_EVENTS: NVIDIA directional link byte arcs.
+  _INTEL_GPU_LINK_EVENTS: Intel PCIe + Xe Link byte arcs.
   ROOFLINE_NOMINAL_PEAKS_INVALID_REASON: Unavailable reason for bad peaks.
-  _GPU_BYTES_TO_GIB: Bytes/s to GiB/s conversion shared by mem + link axes.
-  _INTEL_GPU_LINK_EVENTS: Intel PCIe + Xe Link cumulative byte events.
-  _NVIDIA_GPU_LINK_DIRECTIONAL_EVENTS: NVIDIA per-direction link byte events.
 """
 
 from __future__ import annotations
@@ -33,45 +35,43 @@ from bokeh.models import ColumnDataSource, HoverTool
 from bokeh.plotting import figure
 
 from hpcperfstats.analysis.metrics.lib.bokeh_job_embed import figure_embed_kw
-from hpcperfstats.analysis.metrics.lib.gen.imc_cas_bw import (
-  agg_sum_val_to_bw_frame,
-  combine_cas_bw_frames,
+from hpcperfstats.analysis.metrics.lib.columnar.roofline_series import (
+  RooflinePoints,
+  cpu_roofline_points,
+  gpu_roofline_points,
 )
 from hpcperfstats.analysis.metrics.lib.gen.utils import format_plain_decimal
+from hpcperfstats.analysis.metrics.lib.phase_profile import (
+  phase as _profile_phase,
+)
 from hpcperfstats.analysis.metrics.lib.plot.roofline_peaks import (
   infer_cpu_roofline_peak_flops_and_bw_gbps,
   infer_gpu_roofline_peak_flops_and_bw_gbps,
 )
-from hpcperfstats.dbload.lib.monitor_naming.canonical import (
-  INTEL_FP_ARITH_ALL_EVENTS,
-  INTEL_LEGACY_SSE_FLOP_EVENTS,
-)
-from hpcperfstats.dbload.lib.monitor_naming.resolve import (
-  amd_df_type_names,
-  amd_pmc_type_names,
-  arm_dram_bw_event_names,
-  arm_est_flops_event_names,
-  arm_imc_types_probe_order,
-  core_pmc_types_probe_order,
-  dram_cas_read_write_pairs,
-  fp_ops_retired_event_names,
-  hbm_cas_read_write_pairs,
-  host_cpu_hw_type_names,
-  imc_types_probe_order,
-)
 
 # Default peak specs (GFLOP/s and GB/s) when not in config; ridge = peak_flops / peak_bw
 DEFAULT_PEAK_FLOPS_GF = 1000.0
+
+
 DEFAULT_PEAK_BW_GB = 100.0
+
 
 # GPU roofline measured-axis modes and user-facing titles.
 GPU_ROOFLINE_BW_AXIS_MEMORY = "memory_bw"
+
+
 GPU_ROOFLINE_BW_AXIS_LINK = "pcie_nvlink"
+
+
 GPU_ROOFLINE_TITLE_MEMORY = "GPU Roofline (Memory BW)"
+
+
 GPU_ROOFLINE_TITLE_LINK = "GPU Roofline (PCIe/NvLink)"
+
 
 # Match link-arc and host_roofline_peak conversions (GiB/s, not decimal GB/s).
 _GPU_BYTES_TO_GIB = 1 / (1024**3)
+
 
 _NVIDIA_GPU_LINK_DIRECTIONAL_EVENTS = (
   "gpu_pcie_tx_bytes",
@@ -79,11 +79,19 @@ _NVIDIA_GPU_LINK_DIRECTIONAL_EVENTS = (
   "gpu_nvlink_tx_bytes",
   "gpu_nvlink_rx_bytes",
 )
+
+
 _INTEL_GPU_LINK_EVENTS = (
   "gpu_pcie_tx_bytes",
   "gpu_pcie_rx_bytes",
   "gpu_xe_link_tx_bytes",
   "gpu_xe_link_rx_bytes",
+)
+
+
+ROOFLINE_NOMINAL_PEAKS_INVALID_REASON = (
+  "Roofline nominal peaks (GFLOP/s or GB/s) are non-finite or non-positive; "
+  "cannot render log-scaled roofline."
 )
 
 
@@ -113,12 +121,6 @@ def _nominal_roofline_peaks_valid(peak_flops_gf: Any, peak_bw_gb: Any) -> Any:
   )
 
 
-ROOFLINE_NOMINAL_PEAKS_INVALID_REASON = (
-  "Roofline nominal peaks (GFLOP/s or GB/s) are non-finite or non-positive; "
-  "cannot render log-scaled roofline."
-)
-
-
 def _hover_tooltip_html_roofline_job() -> Any:
   """
   Build HTML hover template with spacing between multi-point hits.
@@ -143,438 +145,62 @@ def _hover_tooltip_html_roofline_job() -> Any:
   """
 
 
-def _aggregate_arc(jt: Any, typ: Any, events: Any, conv: Any) -> Any:
+def _gpu_roofline_title_for_axis(bw_axis: str | None) -> str:
   """
-  Get aggregate df for typ/events from arc deltas.
+  Return the Bokeh figure title for the selected GPU bandwidth axis.
 
   Args:
-    jt (Any): Jt passed to this helper.
-    typ (Any): Typ passed to this helper.
-    events (Any): Events passed to this helper.
-    conv (Any): Conv passed to this helper.
+    bw_axis (Optional[str]): ``memory_bw``, ``pcie_nvlink``, or None.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    str: User-facing GPU roofline title.
 
   Examples:
-    >>> _aggregate_arc(None, None, None, None)  # doctest: +SKIP
+    >>> _gpu_roofline_title_for_axis(GPU_ROOFLINE_BW_AXIS_MEMORY)
+    'GPU Roofline (Memory BW)'
   """
-  agg = jt.get_aggregate_df(typ, "arc", events, conv)
-  return agg, "arc"
-
-
-def _aggregate_value(jt: Any, typ: Any, events: Any, conv: Any) -> Any:
-  """
-  Get aggregate df for typ/events from value samples.
-
-  Args:
-    jt (Any): Jt passed to this helper.
-    typ (Any): Typ passed to this helper.
-    events (Any): Events passed to this helper.
-    conv (Any): Conv passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _aggregate_value(None, None, None, None)  # doctest: +SKIP
-  """
-  agg = jt.get_aggregate_df(typ, "value", events, conv)
-  return agg, "value"
-
-
-def _aggregate_arc_by_dev(jt: Any, typ: Any, events: Any, conv: Any) -> Any:
-  """
-  Per-device arc aggregate for GPU roofline (keeps ``dev``).
-
-  Args:
-    jt (Any): Job ``jid_table`` with aggregate helpers.
-    typ (Any): ``host_data.type`` string.
-    events (Any): Event name list.
-    conv (Any): Multiplier applied to aggregates.
-
-  Returns:
-    Any: ``(DataFrame, \"arc\")`` with host/time/dev/sum_val when present.
-
-  Examples:
-    >>> _aggregate_arc_by_dev(None, None, None, None)  # doctest: +SKIP
-  """
-  agg = jt.get_aggregate_df(typ, "arc", events, conv, group_by_dev=True)
-  return agg, "arc"
-
-
-def _aggregate_value_by_dev(jt: Any, typ: Any, events: Any, conv: Any) -> Any:
-  """
-  Per-device value aggregate for GPU roofline (keeps ``dev``).
-
-  Args:
-    jt (Any): Job ``jid_table`` with aggregate helpers.
-    typ (Any): ``host_data.type`` string.
-    events (Any): Event name list.
-    conv (Any): Multiplier applied to aggregates.
-
-  Returns:
-    Any: ``(DataFrame, \"value\")`` with host/time/dev/sum_val when present.
-
-  Examples:
-    >>> _aggregate_value_by_dev(None, None, None, None)  # doctest: +SKIP
-  """
-  agg = jt.get_aggregate_df(typ, "value", events, conv, group_by_dev=True)
-  return agg, "value"
-
-
-def _merge_weighted_event_arcs(
-  jt: Any,
-  intel_typ: Any,
-  event_weights: Any,
-  attempts: Any,
-  label: Any,
-) -> Any:
-  """
-  Sum per-(host,time) arc-derived GF/s for events with different FLOP weights.
-
-  Args:
-    jt (Any): Jt passed to this helper.
-    intel_typ (Any): Intel typ passed to this helper.
-    event_weights (Any): Event weights passed to this helper.
-    attempts (Any): Attempts passed to this helper.
-    label (Any): Label passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _merge_weighted_event_arcs(None, None, None, None, None)
-  """
-  merged = None
-  for ev, weight in event_weights:
-    agg, src = _aggregate_arc(jt, intel_typ, [ev], 1e-9 * weight)
-    attempts.append(
-      f"{label}:{intel_typ} event={ev} rows={len(agg.index)} src={src}"
-    )
-    if agg.empty or "sum_val" not in agg.columns:
-      continue
-    part = agg[["host", "time", "sum_val"]].rename(
-      columns={"sum_val": "flops_gf"}
-    )
-    if merged is None:
-      merged = part
-    else:
-      merged = merged.merge(
-        part, on=["host", "time"], how="outer", suffixes=("_x", "_y")
-      )
-      merged["flops_gf"] = merged["flops_gf_x"].fillna(0) + merged[
-        "flops_gf_y"
-      ].fillna(0)
-      merged = merged[["host", "time", "flops_gf"]]
-  if merged is None or merged.empty:
-    return None
-  if (merged["flops_gf"].fillna(0) == 0).all():
-    return None
-  return merged
-
-
-def _intel_fp_arith_flops_gf(jt: Any, attempts: Any) -> Any:
-  """
-  GFLOP/s from summed FP_ARITH_INST_RETIRED_* on Intel PMC or host_cpu_hw.
-
-  Args:
-    jt (Any): Jt passed to this helper.
-    attempts (Any): Attempts passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _intel_fp_arith_flops_gf(None, None)  # doctest: +SKIP
-  """
-  fp_events = list(INTEL_FP_ARITH_ALL_EVENTS)
-  for core_typ in core_pmc_types_probe_order():
-    cand, cand_src = _aggregate_arc(jt, core_typ, fp_events, 1e-9)
-    attempts.append(
-      f"intel_fp_arith:{core_typ} rows(flops={len(cand.index)}) src={cand_src}"
-    )
-    if not cand.empty and "sum_val" in cand.columns:
-      return cand.rename(columns={"sum_val": "flops_gf"})[
-        ["host", "time", "flops_gf"]
-      ]
-  return None
-
-
-def _intel_legacy_sse_flops_gf(jt: Any, attempts: Any) -> Any:
-  """
-  GFLOP/s from SNB/IVB-style SSE/AVX double events when FP_ARITH is absent.
-
-  Args:
-    jt (Any): Jt passed to this helper.
-    attempts (Any): Attempts passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _intel_legacy_sse_flops_gf(None, None)  # doctest: +SKIP
-  """
-  for core_typ in core_pmc_types_probe_order():
-    merged = _merge_weighted_event_arcs(
-      jt,
-      core_typ,
-      INTEL_LEGACY_SSE_FLOP_EVENTS,
-      attempts,
-      "intel_legacy_sse",
-    )
-    if merged is not None:
-      return merged
-  return None
-
-
-def _intel_imc_bw_gb(jt: Any, attempts: Any) -> Any:
-  """
-  Memory bandwidth (GB/s): per IMC type, sum usable dram_cas_* and hbm_cas_*.
-
-    (64 B/CAS).
-
-  Args:
-    jt (Any): Jt passed to this helper.
-    attempts (Any): Attempts passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _intel_imc_bw_gb(None, None)  # doctest: +SKIP
-  """
-  conv = 64 / (1024**3)
-  for imc_typ in imc_types_probe_order():
-    dram_bw = None
-    for read_ev, write_ev in dram_cas_read_write_pairs():
-      agg_bw, bw_src = _aggregate_arc(jt, imc_typ, [read_ev, write_ev], conv)
-      attempts.append(
-        f"{imc_typ} rows(bw={len(agg_bw.index)}) "
-        f"events=({read_ev},{write_ev}) src(bw={bw_src})"
-      )
-      dram_bw = agg_sum_val_to_bw_frame(agg_bw)
-      if dram_bw is not None:
-        break
-    hbm_bw = None
-    for read_ev, write_ev in hbm_cas_read_write_pairs():
-      agg_bw, bw_src = _aggregate_arc(jt, imc_typ, [read_ev, write_ev], conv)
-      attempts.append(
-        f"{imc_typ} rows(hbm_bw={len(agg_bw.index)}) "
-        f"events=({read_ev},{write_ev}) src(bw={bw_src})"
-      )
-      hbm_bw = agg_sum_val_to_bw_frame(agg_bw)
-      if hbm_bw is not None:
-        break
-    combined = combine_cas_bw_frames(dram_bw, hbm_bw)
-    if combined is not None:
-      return combined
-  return None
-
-
-def _arm_dcgm_flops_bw(jt: Any, attempts: Any) -> Any:
-  """
-  Approximate ARM roofline from host_cpu_hw synthetic counters.
-
-  Args:
-    jt (Any): Jt passed to this helper.
-    attempts (Any): Attempts passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _arm_dcgm_flops_bw(None, None)  # doctest: +SKIP
-  """
-  for hw_typ in host_cpu_hw_type_names():
-    for flop_ev in arm_est_flops_event_names():
-      flops_agg, flops_src = _aggregate_arc(jt, hw_typ, [flop_ev], 1e-9)
-      bw_agg, bw_src = _aggregate_arc(
-        jt, hw_typ, list(arm_dram_bw_event_names()), 1 / (1024**3)
-      )
-      attempts.append(
-        f"arm_dcgm:{hw_typ} rows(flops={len(flops_agg.index)}, "
-        f"bw={len(bw_agg.index)}) src(flops={flops_src}, bw={bw_src})"
-      )
-      if (
-        not flops_agg.empty
-        and "sum_val" in flops_agg.columns
-        and not bw_agg.empty
-        and "sum_val" in bw_agg.columns
-      ):
-        flops = flops_agg.rename(columns={"sum_val": "flops_gf"})[
-          ["host", "time", "flops_gf"]
-        ]
-        bw = bw_agg.rename(columns={"sum_val": "bw_gb"})[
-          ["host", "time", "bw_gb"]
-        ]
-        return flops, bw
-  return None, None
-
-
-def _arm_imc_bw_gb(jt: Any, attempts: Any) -> Any:
-  """
-  Memory bandwidth (GB/s) from ARM IMC dram CAS events.
-
-  Args:
-    jt (Any): Jt passed to this helper.
-    attempts (Any): Attempts passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _arm_imc_bw_gb(None, None)  # doctest: +SKIP
-  """
-  conv = 64 / (1024**3)
-  for imc_typ in arm_imc_types_probe_order():
-    for read_ev, write_ev in dram_cas_read_write_pairs():
-      agg_bw, bw_src = _aggregate_arc(jt, imc_typ, [read_ev, write_ev], conv)
-      attempts.append(
-        f"arm_imc:{imc_typ} rows(bw={len(agg_bw.index)}) src(bw={bw_src})"
-      )
-      if not agg_bw.empty and "sum_val" in agg_bw.columns:
-        return agg_bw.rename(columns={"sum_val": "bw_gb"})[
-          ["host", "time", "bw_gb"]
-        ]
-  return None
+  if bw_axis == GPU_ROOFLINE_BW_AXIS_MEMORY:
+    return GPU_ROOFLINE_TITLE_MEMORY
+  return GPU_ROOFLINE_TITLE_LINK
 
 
 def _get_flops_bw_df_and_reason(jt: Any) -> Any:
   """
-  Get (df, reason) where df has host,time,flops_gf,bw_gb or None with.
-
-    detailed.
-
-    reason.
+  CPU roofline samples: ``(points, None)`` or ``(None, reason)``.
 
   Args:
-    jt (Any): Jt passed to this helper.
+    jt (Any): ``ColumnarJobTable`` of the job.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: ``(RooflinePoints | None, str | None)``.
 
   Examples:
-    >>> _get_flops_bw_df_and_reason(None)  # doctest: +SKIP
+    >>> _get_flops_bw_df_and_reason(jt)  # doctest: +SKIP
   """
-  base = jt.get_host_time_df()
-  if base.empty or not jt.host_list:
-    return (
-      None,
-      "No hosts/timestamps found in host_data for this job/time range",
-    )
+  return cpu_roofline_points(jt)
 
-  flops_gf = None
-  bw_gb = None
-  attempts = []
 
-  # AMD: fp_ops_retired and DF channel BW (family dram_chan*_bytes or historical MBW)
-  from hpcperfstats.dbload.lib.monitor_naming.canonical import (
-    AMD_DF_STATS_TYPES,
-  )
-  from hpcperfstats.dbload.lib.monitor_naming.resolve import (
-    amd_df_bw_event_conv_tries,
-  )
+def _get_gpu_flops_bw_df_and_reason(
+  jt: Any,
+) -> tuple[Any, str | None, str | None]:
+  """
+  GPU roofline samples: ``(points, reason, bw_axis)``.
 
-  for pmc_typ in amd_pmc_type_names():
-    for flop_ev in fp_ops_retired_event_names():
-      agg_flops, flops_src = _aggregate_arc(jt, pmc_typ, [flop_ev], 1e-9)
-      for df_typ in amd_df_type_names():
-        tries = (
-          amd_df_bw_event_conv_tries()[:1]
-          if df_typ in AMD_DF_STATS_TYPES
-          else amd_df_bw_event_conv_tries()[::-1]
-        )
-        for bw_events, bw_conv in tries:
-          agg_bw, bw_src = _aggregate_arc(
-            jt,
-            df_typ,
-            list(bw_events),
-            bw_conv,
-          )
-          attempts.append(
-            f"amd rows(flops={len(agg_flops.index)}, bw={len(agg_bw.index)}) "
-            f"src(flops={flops_src}, bw={bw_src})"
-          )
-          if (
-            not agg_flops.empty
-            and "sum_val" in agg_flops.columns
-            and not agg_bw.empty
-            and "sum_val" in agg_bw.columns
-          ):
-            flops_gf = agg_flops.rename(columns={"sum_val": "flops_gf"})[
-              ["host", "time", "flops_gf"]
-            ]
-            bw_gb = agg_bw.rename(columns={"sum_val": "bw_gb"})[
-              ["host", "time", "bw_gb"]
-            ]
-            break
-        if flops_gf is not None and bw_gb is not None:
-          break
-      if flops_gf is not None and bw_gb is not None:
-        break
-    if flops_gf is not None and bw_gb is not None:
-      break
+  Args:
+    jt (Any): ``ColumnarJobTable`` of the job.
 
-  # Intel: FP (FP_ARITH or legacy SSE) and IMC CAS_READS+CAS_WRITES
-  if flops_gf is None or bw_gb is None:
-    if flops_gf is None:
-      flops_gf = _intel_fp_arith_flops_gf(jt, attempts)
-    if flops_gf is None:
-      flops_gf = _intel_legacy_sse_flops_gf(jt, attempts)
-    if bw_gb is None:
-      bw_gb = _intel_imc_bw_gb(jt, attempts)
-    if bw_gb is None:
-      bw_gb = _arm_imc_bw_gb(jt, attempts)
+  Returns:
+    Tuple[Any, Optional[str], Optional[str]]: Points, unavailable reason,
+    bandwidth axis (``memory_bw`` / ``pcie_nvlink``).
 
-  # ARM/DCGM fallback: approximate FLOPS and DRAM bytes from synthetic
-  # cpu_counter_metrics events populated by the monitor.
-  if flops_gf is None or bw_gb is None:
-    arm_flops, arm_bw = _arm_dcgm_flops_bw(jt, attempts)
-    if flops_gf is None:
-      flops_gf = arm_flops
-    if bw_gb is None:
-      bw_gb = arm_bw
-
-  if flops_gf is None or bw_gb is None:
-    # Distinguish the common architecture-specific cases so users get a
-    # clearer message about what is missing.
-    attempted = "; ".join(attempts)
-    reason = (
-      "Missing roofline counters in host_data (need FLOPS + memory-bandwidth counters). "
-      f"Attempted: {attempted}"
-    )
-    # Heuristic: ARM/CPU via DCGM backends emit cpu_counter_metrics but may
-    # lack any IMC/DF CAS/MBW sources. Do not silently claim generic
-    # missing counters when only bandwidth is absent on ARM.
-    has_cpu_counter_metrics = any(
-      t in a for t in host_cpu_hw_type_names() for a in attempts
-    )
-    has_any_imc_or_df = any(
-      t.startswith("amd") or "imc" in t
-      for t in [att.split(":")[0] for att in attempts if att]
-    )
-    if has_cpu_counter_metrics and not has_any_imc_or_df:
-      reason = (
-        "Roofline not available on this job: cpu_counter_metrics FLOPS "
-        "are present (e.g. via DCGM backend), but no DRAM bandwidth "
-        "source (AMD DF or Intel/ARM DRAM CAS counters) was found "
-        "in host_data for these hosts."
-      )
-    return (None, reason)
-
-  df = base.merge(flops_gf, on=["host", "time"], how="inner")
-  df = df.merge(bw_gb, on=["host", "time"], how="inner")
-  if df.empty:
-    return (
-      None,
-      "Roofline counters found but no overlapping host/time samples after merge",
-    )
-  return (df, None)
+  Examples:
+    >>> _get_gpu_flops_bw_df_and_reason(jt)  # doctest: +SKIP
+  """
+  return gpu_roofline_points(jt)
 
 
 def _build_roofline_figure(
-  df: Any,
+  points: RooflinePoints | None,
   peak_flops_gf: Any,
   peak_bw_gb: Any,
   title: Any,
@@ -583,21 +209,58 @@ def _build_roofline_figure(
   is_shared_node: bool = False,
 ) -> Any:
   """
-  Render a roofline figure from host,time,flops_gf,bw_gb data.
+  Render a roofline figure from ``(host[, dev], time, flops_gf, bw_gb)`` points.
 
   Args:
-    df (Any): Df passed to this helper.
-    peak_flops_gf (Any): Peak flops gf passed to this helper.
-    peak_bw_gb (Any): Peak bw gb passed to this helper.
-    title (Any): Title passed to this helper.
-    help_plot_key (str): String for help plot key.
+    points (RooflinePoints | None): Samples.
+    peak_flops_gf (Any): Peak GFLOP/s (None -> default).
+    peak_bw_gb (Any): Peak GB/s (None -> default).
+    title (Any): Figure title.
+    help_plot_key (str): Help registry key.
     is_shared_node (bool): When True, append shared-node help footer.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: Bokeh figure, or None without usable points.
 
   Examples:
-    >>> _build_roofline_figure(None, None, None, None, "x")  # doctest: +SKIP
+    >>> _build_roofline_figure(None, None, None, "x")
+  """
+  with _profile_phase("bokeh"):
+    return _build_roofline_figure_impl(
+      points,
+      peak_flops_gf,
+      peak_bw_gb,
+      title,
+      help_plot_key,
+      is_shared_node=is_shared_node,
+    )
+
+
+def _build_roofline_figure_impl(
+  points: RooflinePoints | None,
+  peak_flops_gf: Any,
+  peak_bw_gb: Any,
+  title: Any,
+  help_plot_key: str = "jobDetailPlot_roofline_cpu",
+  *,
+  is_shared_node: bool = False,
+) -> Any:
+  """
+  Figure construction behind :func:`_build_roofline_figure`.
+
+  Args:
+    points (RooflinePoints | None): Samples.
+    peak_flops_gf (Any): Peak GFLOP/s (None -> default).
+    peak_bw_gb (Any): Peak GB/s (None -> default).
+    title (Any): Figure title.
+    help_plot_key (str): Help registry key.
+    is_shared_node (bool): When True, append shared-node help footer.
+
+  Returns:
+    Any: Bokeh figure, or None without usable points.
+
+  Examples:
+    >>> _build_roofline_figure_impl(None, None, None, "x")
   """
   peak_flops_gf = (
     peak_flops_gf if peak_flops_gf is not None else DEFAULT_PEAK_FLOPS_GF
@@ -605,26 +268,30 @@ def _build_roofline_figure(
   peak_bw_gb = peak_bw_gb if peak_bw_gb is not None else DEFAULT_PEAK_BW_GB
   if not _nominal_roofline_peaks_valid(peak_flops_gf, peak_bw_gb):
     return None
-
-  # Arithmetic intensity: FLOP/byte = (GFLOP/s) / (GB/s) = same ratio
-  df = df.copy()
-  df["bw_gb"] = df["bw_gb"].replace(0, numpy.nan)
-  df["ai"] = df["flops_gf"] / df["bw_gb"]
-  df = df.dropna(subset=["ai", "flops_gf"])
-  df = df[df["ai"] > 0]
-  df = df[df["flops_gf"] > 0]
-  if df.empty:
+  if points is None or points.empty:
     return None
 
-  ai = df["ai"].values
-  perf = df["flops_gf"].values
-  host = df["host"].tolist()
-  time_vals = df["time"].astype(str).tolist()
-  if "dev" in df.columns:
-    dev_vals = df["dev"].fillna("").astype(str).tolist()
-  else:
-    dev_vals = [""] * len(host)
-  dev_display = [d if d else "-" for d in dev_vals]
+  # Arithmetic intensity: FLOP/byte = (GFLOP/s) / (GB/s) = same ratio
+  with _profile_phase("plot_series"):
+    bw = numpy.where(points.bw_gb == 0, numpy.nan, points.bw_gb)
+    flops = numpy.asarray(points.flops_gf, dtype=numpy.float64)
+    with numpy.errstate(divide="ignore", invalid="ignore"):
+      ai_all = flops / bw
+    keep = (
+      ~numpy.isnan(ai_all) & ~numpy.isnan(flops) & (ai_all > 0) & (flops > 0)
+    )
+    if not keep.any():
+      return None
+    ai = ai_all[keep]
+    perf = flops[keep]
+    host = [h for h, k in zip(points.host_names(), keep, strict=True) if k]
+    time_vals = [
+      str(t)
+      for t, k in zip(_times_utc_text(points.time_us), keep, strict=True)
+      if k
+    ]
+    dev_vals = [d for d, k in zip(points.dev_names(), keep, strict=True) if k]
+    dev_display = [d if d else "-" for d in dev_vals]
 
   # Clamp AI for plot range (avoid log(0))
   ai_min, ai_max = max(1e-3, float(ai.min())), max(1e-2, float(ai.max()))
@@ -738,364 +405,30 @@ def _build_roofline_figure(
   return p
 
 
-def _merge_gpu_flops_bw_on_base(base: Any, flops_agg: Any, bw_agg: Any) -> Any:
+def _times_utc_text(time_us: Any) -> list[str]:
   """
-  Inner-join FLOPS and BW aggregates; prefer per-device keys when present.
+  ``str(pandas.Timestamp)`` of UTC sample times (``YYYY-MM-DD HH:MM:SS[.ffffff]+00:00``).
 
   Args:
-    base (Any): Optional host/time[/dev] base; unused when aggregates carry
-    join keys (GPU path builds points from aggregates alone).
-    flops_agg (Any): FLOPS aggregate with ``sum_val``.
-    bw_agg (Any): Bandwidth aggregate with ``sum_val``.
+    time_us (Any): int64 epoch microseconds.
 
   Returns:
-    Any: Merged frame with flops_gf/bw_gb, or None if empty/unusable.
+    list[str]: Text per sample, as the hover shows it.
 
   Examples:
-    >>> _merge_gpu_flops_bw_on_base(None, None, None)  # doctest: +SKIP
+    >>> _times_utc_text(numpy.array([0]))
+    ['1970-01-01 00:00:00+00:00']
   """
-  del base  # GPU path joins aggregates directly on host[/dev]/time.
-  if (
-    flops_agg.empty
-    or "sum_val" not in flops_agg.columns
-    or bw_agg.empty
-    or "sum_val" not in bw_agg.columns
-  ):
-    return None
-  join_keys = ["host", "time"]
-  if "dev" in flops_agg.columns and "dev" in bw_agg.columns:
-    join_keys = ["host", "dev", "time"]
-    flops_agg = flops_agg.copy()
-    bw_agg = bw_agg.copy()
-    flops_agg["dev"] = flops_agg["dev"].fillna("").astype(str)
-    bw_agg["dev"] = bw_agg["dev"].fillna("").astype(str)
-  flops_cols = [*join_keys, "flops_gf"]
-  bw_cols = [*join_keys, "bw_gb"]
-  flops_gf = flops_agg.rename(columns={"sum_val": "flops_gf"})[flops_cols]
-  bw_gb = bw_agg.rename(columns={"sum_val": "bw_gb"})[bw_cols]
-  df = flops_gf.merge(bw_gb, on=join_keys, how="inner")
-  return df if not df.empty else None
+  from datetime import UTC, datetime
 
-
-def _gpu_roofline_df_has_usable_bw(df: Any) -> bool:
-  """
-  True when *df* has at least one finite positive ``bw_gb`` sample.
-
-  Args:
-    df (Any): Merged FLOPS/BW frame, or None.
-
-  Returns:
-    bool: Whether the frame can drive a roofline scatter.
-
-  Examples:
-    >>> import pandas as pd
-    >>> _gpu_roofline_df_has_usable_bw(
-    ...   pd.DataFrame({"bw_gb": [0.0, 1.5], "flops_gf": [1.0, 2.0]})
-    ... )
-    True
-  """
-  if df is None or getattr(df, "empty", True):
-    return False
-  if "bw_gb" not in df.columns:
-    return False
-  bw = df["bw_gb"]
-  return bool(((bw > 0) & numpy.isfinite(bw)).any())
-
-
-def _try_gpu_roofline_flops_bw_merge(
-  jt: Any,
-  gpu_typ: Any,
-  base: Any,
-  source_tag: Any,
-  flops_aggregate_fn: Any,
-  flops_events: Any,
-  flops_conv: Any,
-  bw_aggregate_fn: Any,
-  bw_events: Any,
-  bw_conv: Any,
-) -> tuple[Any, str, str | None]:
-  """
-  One FLOPS+BW attempt for GPU roofline.
-
-  Args:
-    jt (Any): Job ``jid_table`` with aggregate helpers.
-    gpu_typ (Any): ``host_data.type`` (for example ``nvidia_gpu``).
-    base (Any): Host/time base DataFrame.
-    source_tag (Any): Short label for attempt logs (for example ``mem_value``).
-    flops_aggregate_fn (Any): Arc/value aggregator for FLOPS events.
-    flops_events (Any): FLOPS event name list.
-    flops_conv (Any): Multiplier applied to FLOPS aggregates.
-    bw_aggregate_fn (Any): Arc/value aggregator for bandwidth events.
-    bw_events (Any): Bandwidth event name list.
-    bw_conv (Any): Multiplier applied to bandwidth aggregates.
-
-  Returns:
-    Tuple[Any, str, Optional[str]]: ``(df_or_none, log_line,
-    overlap_miss_or_none)``.
-
-  Examples:
-    >>> _try_gpu_roofline_flops_bw_merge(  # doctest: +SKIP
-    ...   None,
-    ...   "nvidia_gpu",
-    ...   None,
-    ...   "mem_value",
-    ...   _aggregate_arc,
-    ...   ["gpu_flops"],
-    ...   1e-9,
-    ...   _aggregate_value,
-    ...   ["gpu_mem_bw_bytes_rate"],
-    ...   _GPU_BYTES_TO_GIB,
-    ... )
-  """
-  flops_agg, flops_src = flops_aggregate_fn(
-    jt, gpu_typ, flops_events, flops_conv
-  )
-  bw_agg, bw_src = bw_aggregate_fn(jt, gpu_typ, bw_events, bw_conv)
-  log_line = (
-    f"{gpu_typ}:{source_tag} "
-    f"rows(flops={len(flops_agg.index)}, bw={len(bw_agg.index)}) "
-    f"src(flops={flops_src}, bw={bw_src})"
-  )
-  df = _merge_gpu_flops_bw_on_base(base, flops_agg, bw_agg)
-  if df is not None and _gpu_roofline_df_has_usable_bw(df):
-    return df, log_line, None
-  overlap_miss = None
-  if (
-    not flops_agg.empty
-    and "sum_val" in flops_agg.columns
-    and not bw_agg.empty
-    and "sum_val" in bw_agg.columns
-  ):
-    if df is not None and not _gpu_roofline_df_has_usable_bw(df):
-      overlap_miss = (
-        f"{gpu_typ}: {source_tag} overlapped but BW samples were non-positive"
-      )
-    else:
-      overlap_miss = (
-        f"{gpu_typ}: counters found in {source_tag} but no overlapping "
-        "host/device/time samples"
-      )
-  return None, log_line, overlap_miss
-
-
-def _try_gpu_roofline_axis_attempt(
-  jt: Any,
-  base: Any,
-  attempts: list[str],
-  missing_reasons: list[str],
-  gpu_typ: str,
-  source_tag: str,
-  flops_fn: Any,
-  bw_fn: Any,
-  bw_events: Any,
-  bw_axis: str,
-) -> tuple[Any, str | None, str | None] | None:
-  """
-  Run one FLOPS+BW probe and record attempt/miss logs.
-
-  Args:
-    jt (Any): Job ``jid_table`` with aggregate helpers.
-    base (Any): Host/time base DataFrame.
-    attempts (list[str]): Mutable list of attempt log lines.
-    missing_reasons (list[str]): Mutable list of overlap/miss reasons.
-    gpu_typ (str): ``host_data.type`` name.
-    source_tag (str): Short label for attempt logs.
-    flops_fn (Any): FLOPS aggregator (prefer ``_aggregate_arc_by_dev`` /
-      ``_aggregate_value_by_dev`` for GPU).
-    bw_fn (Any): Bandwidth aggregator (same per-device helpers for GPU).
-    bw_events (Any): Bandwidth event name sequence.
-    bw_axis (str): ``memory_bw`` or ``pcie_nvlink`` when this attempt wins.
-
-  Returns:
-    Optional[Tuple[Any, Optional[str], Optional[str]]]: Success triple
-    ``(df, None, bw_axis)``, or None to continue probing.
-
-  Examples:
-    >>> _try_gpu_roofline_axis_attempt(  # doctest: +SKIP
-    ...   None,
-    ...   None,
-    ...   [],
-    ...   [],
-    ...   "nvidia_gpu",
-    ...   "mem_value",
-    ...   _aggregate_arc_by_dev,
-    ...   _aggregate_value_by_dev,
-    ...   ["gpu_mem_bw_bytes_rate"],
-    ...   GPU_ROOFLINE_BW_AXIS_MEMORY,
-    ... )
-  """
-  df, line, miss = _try_gpu_roofline_flops_bw_merge(
-    jt,
-    gpu_typ,
-    base,
-    source_tag,
-    flops_fn,
-    ["gpu_flops"],
-    1e-9,
-    bw_fn,
-    list(bw_events),
-    _GPU_BYTES_TO_GIB,
-  )
-  attempts.append(line)
-  if df is not None:
-    return (df, None, bw_axis)
-  if miss:
-    missing_reasons.append(miss)
-
-  # Estimated FLOP/s rate (same family as gpu_mem_bw_bytes_rate) when the
-  # cumulative gpu_flops arc is absent from host_data.
-  rate_tag = f"{source_tag}_flops_rate"
-  df, line, miss = _try_gpu_roofline_flops_bw_merge(
-    jt,
-    gpu_typ,
-    base,
-    rate_tag,
-    _aggregate_value_by_dev,
-    ["gpu_flops_rate"],
-    1e-9,
-    bw_fn,
-    list(bw_events),
-    _GPU_BYTES_TO_GIB,
-  )
-  attempts.append(line)
-  if df is not None:
-    return (df, None, bw_axis)
-  if miss:
-    missing_reasons.append(miss)
-  return None
-
-
-def _get_gpu_flops_bw_df_and_reason(
-  jt: Any,
-) -> tuple[Any, str | None, str | None]:
-  """
-  Build GPU roofline samples: prefer memory BW, else PCIe/NVLink/Xe Link.
-
-  Prefer ``gpu_flops`` arc, else ``gpu_flops_rate`` (value). Prefer
-  ``gpu_mem_bw_bytes_rate`` (value; same estimated rate Summary uses)
-  when usable overlapping samples exist on ``nvidia_gpu`` then ``amd_gpu``.
-  Otherwise try link bytes: ``gpu_io_link_total_bytes``, then NVIDIA
-  directional PCIe/NVLink arcs, then Intel PCIe+Xe Link (when FLOPS exist).
-  Aggregates are per ``(host, dev, time)`` so multi-GPU nodes plot one
-  point per device. Bandwidth and peaks use GiB/s via ``_GPU_BYTES_TO_GIB``.
-
-  Args:
-    jt (Any): Job ``jid_table`` with host list and aggregates.
-
-  Returns:
-    Tuple[Any, Optional[str], Optional[str]]: ``(df_or_none,
-    unavailable_reason_or_none, bw_axis_or_none)`` where *bw_axis* is
-    ``memory_bw`` or ``pcie_nvlink``.
-
-  Examples:
-    >>> _get_gpu_flops_bw_df_and_reason(None)  # doctest: +SKIP
-  """
-  base = jt.get_host_time_df()
-  if base.empty or not jt.host_list:
-    return (
-      None,
-      "No hosts/timestamps found in host_data for this job/time range",
-      None,
-    )
-
-  attempts: list[str] = []
-  missing_reasons: list[str] = []
-
-  # 1) Memory BW estimate (nvidia then amd). AMD has no link fallback.
-  for gpu_typ in ("nvidia_gpu", "amd_gpu"):
-    hit = _try_gpu_roofline_axis_attempt(
-      jt,
-      base,
-      attempts,
-      missing_reasons,
-      gpu_typ,
-      "mem_value",
-      _aggregate_arc_by_dev,
-      _aggregate_value_by_dev,
-      ["gpu_mem_bw_bytes_rate"],
-      GPU_ROOFLINE_BW_AXIS_MEMORY,
-    )
-    if hit is not None:
-      return hit
-
-  # 2) NVIDIA aggregate PROF PCIe+NVLink bytes.
-  hit = _try_gpu_roofline_axis_attempt(
-    jt,
-    base,
-    attempts,
-    missing_reasons,
-    "nvidia_gpu",
-    "link_arc_total",
-    _aggregate_arc_by_dev,
-    _aggregate_arc_by_dev,
-    ["gpu_io_link_total_bytes"],
-    GPU_ROOFLINE_BW_AXIS_LINK,
-  )
-  if hit is not None:
-    return hit
-
-  # 3) NVIDIA directional link bytes (archives / missing aggregate key).
-  hit = _try_gpu_roofline_axis_attempt(
-    jt,
-    base,
-    attempts,
-    missing_reasons,
-    "nvidia_gpu",
-    "link_arc_directional",
-    _aggregate_arc_by_dev,
-    _aggregate_arc_by_dev,
-    _NVIDIA_GPU_LINK_DIRECTIONAL_EVENTS,
-    GPU_ROOFLINE_BW_AXIS_LINK,
-  )
-  if hit is not None:
-    return hit
-
-  # 4) Intel PCIe + Xe Link when FLOPS also exist on intel_gpu.
-  hit = _try_gpu_roofline_axis_attempt(
-    jt,
-    base,
-    attempts,
-    missing_reasons,
-    "intel_gpu",
-    "link_arc_intel",
-    _aggregate_arc_by_dev,
-    _aggregate_arc_by_dev,
-    _INTEL_GPU_LINK_EVENTS,
-    GPU_ROOFLINE_BW_AXIS_LINK,
-  )
-  if hit is not None:
-    return hit
-
-  detail = (
-    "; ".join(missing_reasons) if missing_reasons else "; ".join(attempts)
-  )
-  return (
-    None,
-    "Missing strict GPU roofline counters in host_data "
-    "(need gpu_flops or gpu_flops_rate plus gpu_mem_bw_bytes_rate or "
-    "PCIe/NVLink/Xe Link bytes on nvidia_gpu, amd_gpu, or intel_gpu). "
-    f"Attempted: {detail}",
-    None,
-  )
-
-
-def _gpu_roofline_title_for_axis(bw_axis: str | None) -> str:
-  """
-  Return the Bokeh figure title for the selected GPU bandwidth axis.
-
-  Args:
-    bw_axis (Optional[str]): ``memory_bw``, ``pcie_nvlink``, or None.
-
-  Returns:
-    str: User-facing GPU roofline title.
-
-  Examples:
-    >>> _gpu_roofline_title_for_axis(GPU_ROOFLINE_BW_AXIS_MEMORY)
-    'GPU Roofline (Memory BW)'
-  """
-  if bw_axis == GPU_ROOFLINE_BW_AXIS_MEMORY:
-    return GPU_ROOFLINE_TITLE_MEMORY
-  return GPU_ROOFLINE_TITLE_LINK
+  out = []
+  for t in numpy.asarray(time_us, dtype=numpy.int64).tolist():
+    dt = datetime.fromtimestamp(t / 1_000_000.0, tz=UTC)
+    text = dt.strftime("%Y-%m-%d %H:%M:%S")
+    if dt.microsecond:
+      text += f".{dt.microsecond:06d}"
+    out.append(text + "+00:00")
+  return out
 
 
 def plot_roofline_from_jid_table(

@@ -14,11 +14,11 @@ from __future__ import annotations
 import math
 import warnings
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import numpy as np
-import pandas as pd
 from bokeh.models import (
   BasicTickFormatter,
   DatetimeTickFormatter,
@@ -214,75 +214,6 @@ class utils:
     return schema, stats
 
 
-def get_job_host_data_and_job_dict(jid: Any) -> Any:
-  """
-  Return (host_data_df, job_dict) for the given job id.
-
-  host_data_df: DataFrame of all host_data rows within the job's start/end
-  times and from only the hosts in the job (from job_data.host_list).
-  job_dict: dictionary of the job_data row matching jid, or None if not found.
-  Job row lookup is cached.
-
-  Args:
-    jid (Any): Jid passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> get_job_host_data_and_job_dict(None)  # doctest: +SKIP
-  """
-  from hpcperfstats.site.lib.machine.cache_utils import (
-    KEY_JOB_DICT,
-    cached_orm,
-    get_site_content_cache_timeout,
-    make_cache_key,
-  )
-
-  def _job_dict_fn() -> Any:
-    """
-    Internal helper to handle job dict function.
-
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-
-    Examples:
-      >>> _job_dict_fn()  # doctest: +SKIP
-    """
-    row = job_data.objects.filter(jid=jid).values().first()
-    return dict(row) if row is not None else None
-
-  global job_data, jid_table
-  if job_data is None:
-    from hpcperfstats.site.lib.machine.models import job_data as _job_data
-
-    job_data = _job_data
-  if jid_table is None:
-    from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
-      jid_table as _jid_table,
-    )
-
-    jid_table = _jid_table
-
-  try:
-    job_dict = cached_orm(
-      make_cache_key(KEY_JOB_DICT, jid),
-      get_site_content_cache_timeout(),
-      _job_dict_fn,
-    )
-  except Exception:
-    job_dict = None
-  if job_dict is None:
-    return pd.DataFrame(), None
-
-  jt = jid_table(jid)
-  if jt.start_time is None or jt.end_time is None:
-    return pd.DataFrame(), job_dict
-
-  host_df = jt.get_full_host_data_df()
-  return host_df, job_dict
-
-
 def iter_queryset_values_dicts(
   qs: Any,
   *fields: Any,
@@ -311,52 +242,6 @@ def iter_queryset_values_dicts(
   yield from qs.values(*fields).iterator(chunk_size=max(1, int(chunk_size)))
 
 
-def queryset_to_dataframe(qs: Any, columns: Any | None = None) -> Any:
-  """
-  Convert a Django QuerySet to a pandas DataFrame.
-
-  When columns is set, uses qs.values(*columns). When columns is None,
-  iterates the queryset as-is so annotated/grouped querysets are preserved.
-  Handles iterable of dicts, list of lists/tuples, or model instances
-  (via model_to_dict).
-
-  Args:
-    qs (Any): Qs passed to this helper.
-    columns (Any | None): One of ``Any``, ``None``.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> queryset_to_dataframe(None, None)  # doctest: +SKIP
-  """
-  import pandas as pd
-
-  if qs is None:
-    return pd.DataFrame()
-  if columns is not None and hasattr(qs, "values"):
-    rows = list(qs.values(*columns))
-    if not rows:
-      return pd.DataFrame(columns=list(columns))
-    return pd.DataFrame(rows)
-  data = list(qs)
-  if not data:
-    # Empty .values() querysets must keep column names so callers can sort/concat
-    # (e.g. jid_table.get_host_time_df); plain .none() has no values_select.
-    q = getattr(qs, "query", None)
-    vs = getattr(q, "values_select", None) if q is not None else None
-    if vs:
-      return pd.DataFrame(columns=list(vs))
-    return pd.DataFrame()
-  if isinstance(data[0], dict):
-    return pd.DataFrame(data)
-  if isinstance(data[0], (list, tuple)):
-    return pd.DataFrame(data)
-  from django.forms.models import model_to_dict
-
-  return pd.DataFrame([model_to_dict(row) for row in data])
-
-
 def non_degenerate_y_range_for_series(
   series: Any,
   y_range_end: Any | None = None,
@@ -365,44 +250,34 @@ def non_degenerate_y_range_for_series(
   Return (y_min, y_max) with NaN-safe non-degenerate bounds.
 
   Args:
-    series (Any): Series passed to this helper.
-    y_range_end (Any | None): One of ``Any``, ``None``.
+    series (Any): Array-like of numeric values (NaN allowed).
+    y_range_end (Any | None): Explicit upper bound, or None for
+      ``1.1 * max``.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: ``(float, float)`` with ``y_max > y_min``.
 
   Examples:
-    >>> non_degenerate_y_range_for_series(None, None)  # doctest: +SKIP
+    >>> non_degenerate_y_range_for_series([1.0, 3.0])
+    (0.0, 3.3000000000000003)
+    >>> non_degenerate_y_range_for_series([float("nan")])
+    (0.0, 1.0)
   """
-  y_min_value = series.min()
-  if y_range_end is None or pd.isna(y_range_end):
-    y_range_end = 1.1 * series.max()
-  y_range_start = y_min_value if y_min_value < 0 else 0
-  if pd.isna(y_range_end):
-    y_range_end = 0
-  if pd.isna(y_range_start):
-    y_range_start = 0
+  values = np.asarray(series, dtype=np.float64).reshape(-1)
+  finite = values[np.isfinite(values)]
+  y_min_value = float(finite.min()) if finite.size else float("nan")
+  if y_range_end is None or (
+    isinstance(y_range_end, float) and math.isnan(y_range_end)
+  ):
+    y_range_end = 1.1 * float(finite.max()) if finite.size else float("nan")
+  y_range_start = y_min_value if y_min_value < 0 else 0.0
+  if math.isnan(float(y_range_end)):
+    y_range_end = 0.0
+  if math.isnan(y_range_start):
+    y_range_start = 0.0
   if y_range_end <= y_range_start:
     y_range_end = y_range_start + 1
   return float(y_range_start), float(y_range_end)
-
-
-def clean_dataframe(df: Any) -> Any:
-  """
-  Replace NaN and inf with empty string for display/serialization.
-
-  Args:
-    df (Any): Df passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> clean_dataframe(None)  # doctest: +SKIP
-  """
-  df = df.fillna("")
-  df = df.replace([np.inf, -np.inf], "")
-  return df
 
 
 def format_plain_decimal(value: Any, precision: int = 2) -> Any:
@@ -417,7 +292,8 @@ def format_plain_decimal(value: Any, precision: int = 2) -> Any:
     Any: Value produced by this call (type depends on inputs).
 
   Examples:
-    >>> format_plain_decimal(None, 0)  # doctest: +SKIP
+    >>> format_plain_decimal(1234.5)
+    '1,234.50'
   """
   if value is None or value == "":
     return ""
@@ -430,83 +306,153 @@ def format_plain_decimal(value: Any, precision: int = 2) -> Any:
   return f"{number:,.{precision}f}"
 
 
+def _as_local_datetime(value: Any) -> datetime | None:
+  """
+  Coerce a plot time to a cluster-local aware datetime.
+
+  Naive datetimes and naive ``numpy.datetime64`` are cluster wall clock
+  (see :func:`timestamps_as_cluster_naive`); aware datetimes and epoch
+  milliseconds convert from UTC.
+
+  Args:
+    value (Any): Datetime, ``numpy.datetime64``, epoch ms number or None.
+
+  Returns:
+    datetime | None: Local aware datetime.
+
+  Examples:
+    >>> _as_local_datetime(None) is None
+    True
+  """
+  tz = ZoneInfo(local_timezone)
+  if value is None or value == "":
+    return None
+  if isinstance(value, np.datetime64):
+    if np.isnat(value):
+      return None
+    micros = int(value.astype("datetime64[us]").astype(np.int64))
+    naive = datetime(1970, 1, 1) + timedelta(microseconds=micros)
+    return naive.replace(tzinfo=tz)
+  if isinstance(value, (int, float, np.integer, np.floating)):
+    if not math.isfinite(float(value)):
+      return None
+    return datetime.fromtimestamp(float(value) / 1000.0, tz=UTC).astimezone(tz)
+  if hasattr(value, "to_pydatetime"):
+    value = value.to_pydatetime()
+  if isinstance(value, datetime):
+    return (
+      value.replace(tzinfo=tz) if value.tzinfo is None else value.astimezone(tz)
+    )
+  return None
+
+
 def format_cluster_hover_datetime(value: Any) -> Any:
   """
-  Format Bokeh datetime or epoch-ms in the configured cluster timezone.
-
-  Naive datetimes are treated as cluster wall clock (see
-  ``timestamps_as_cluster_naive``); aware/epoch-ms values convert from UTC.
+  Format a plot time in the configured cluster timezone (``H:MM AM``).
 
   Args:
-    value (Any): Value to inspect (typically a numeric scalar).
+    value (Any): Naive cluster-local datetime / ``datetime64``, aware
+      datetime, or epoch milliseconds.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: Formatted time, or ``""`` for None / empty.
 
   Examples:
-    >>> format_cluster_hover_datetime(None)  # doctest: +SKIP
+    >>> format_cluster_hover_datetime(None)
+    ''
   """
-  if value is None or value == "":
+  local = _as_local_datetime(value)
+  if local is None:
     return ""
-  if isinstance(value, (int, float)) and math.isfinite(value):
-    ts = pd.Timestamp(value, unit="ms", tz="UTC")
-    local = ts.tz_convert(ZoneInfo(local_timezone))
-  else:
-    ts = pd.Timestamp(value)
-    local = ts if ts.tzinfo is None else ts.tz_convert(ZoneInfo(local_timezone))
   formatted = local.strftime("%I:%M %p")
-  if formatted.startswith("0"):
-    formatted = formatted[1:]
-  return formatted
+  return formatted[1:] if formatted.startswith("0") else formatted
 
 
-def timestamps_as_cluster_naive(series: Any) -> Any:
+def timestamps_as_cluster_naive(times: Any) -> np.ndarray:
   """
-  UTC (or naive-as-UTC) timestamps -> naive cluster wall clock for Bokeh axes.
+  UTC sample times -> naive cluster wall clock (``datetime64[ms]``) for Bokeh.
 
-  Bokeh 3.9 ``DatetimeTickFormatter`` has no timezone property and formats in
+  Bokeh's ``DatetimeTickFormatter`` has no timezone property and formats in
   UTC. Shifting to naive cluster local makes axis ticks match
-  ``format_cluster_hover_datetime`` without CustomJS.
+  :func:`format_cluster_hover_datetime` without CustomJS.
 
   Args:
-    series (Any): Series passed to this helper.
+    times (Any): int64 epoch microseconds, ``datetime64`` array, or an
+      iterable of aware datetimes.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    np.ndarray: ``datetime64[ms]`` naive local timestamps.
 
   Examples:
-    >>> timestamps_as_cluster_naive(None)  # doctest: +SKIP
+    >>> timestamps_as_cluster_naive(np.array([0], dtype=np.int64)).dtype
+    dtype('<M8[ms]')
   """
-  utc = pd.to_datetime(series, utc=True)
-  local = utc.dt.tz_convert(ZoneInfo(local_timezone))
-  return local.dt.tz_localize(None)
+  arr = np.asarray(times)
+  if arr.dtype.kind == "M":
+    micros = arr.astype("datetime64[us]").astype(np.int64)
+  elif arr.dtype.kind in "iuf":
+    micros = arr.astype(np.int64)
+  else:
+    micros = np.array(
+      [
+        round(
+          (t if t.tzinfo else t.replace(tzinfo=UTC)).timestamp() * 1_000_000
+        )
+        for t in arr.tolist()
+      ],
+      dtype=np.int64,
+    )
+  tz = ZoneInfo(local_timezone)
+  if micros.size == 0:
+    return np.empty(0, dtype="datetime64[ms]")
+  # One UTC offset per distinct second: DST-safe and cheap for dense axes.
+  secs = micros // 1_000_000
+  uniq, inverse = np.unique(secs, return_inverse=True)
+  offsets = np.array(
+    [
+      int(
+        datetime.fromtimestamp(int(s), tz=UTC)
+        .astimezone(tz)
+        .utcoffset()
+        .total_seconds()
+      )
+      for s in uniq.tolist()
+    ],
+    dtype=np.int64,
+  )
+  local_us = micros + offsets[inverse] * 1_000_000
+  return (local_us // 1000).astype("datetime64[ms]")
 
 
-def add_hover_plain_columns(
-  df: Any,
-  numeric_cols: Any,
-  time_col: str = "time",
-) -> Any:
+def hover_plain_columns(
+  times: Any,
+  numeric: dict[str, Any],
+) -> dict[str, list[str]]:
   """
-  Add pre-formatted hover columns so HoverTool does not need CustomJS.
+  Pre-formatted hover columns so HoverTool needs no CustomJS.
 
   Args:
-    df (Any): Df passed to this helper.
-    numeric_cols (Any): Numeric cols passed to this helper.
-    time_col (str): String for time col.
+    times (Any): Naive cluster-local ``datetime64`` array (or None).
+    numeric (dict[str, Any]): Column name to numeric array.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    dict[str, list[str]]: ``_hover_time`` (when ``times`` is given) and one
+    ``<name>_plain`` list per numeric column.
 
   Examples:
-    >>> add_hover_plain_columns(None, None, "x")  # doctest: +SKIP
+    >>> hover_plain_columns(None, {"x": [1.5]})
+    {'x_plain': ['1.50']}
   """
-  out = df.copy()
-  if time_col in out.columns:
-    out["_hover_time"] = out[time_col].map(format_cluster_hover_datetime)
-  for col in numeric_cols:
-    if col in out.columns:
-      out[f"{col}_plain"] = out[col].map(format_plain_decimal)
+  out: dict[str, list[str]] = {}
+  if times is not None:
+    out["_hover_time"] = [
+      format_cluster_hover_datetime(t) for t in np.asarray(times).tolist()
+    ]
+  for name, values in numeric.items():
+    out[f"{name}_plain"] = [
+      format_plain_decimal(v)
+      for v in np.asarray(values, dtype=np.float64).tolist()
+    ]
   return out
 
 
@@ -518,12 +464,11 @@ def tz_aware_bokeh_tick_formatter() -> Any:
   strings match hover (cluster INI timezone).
 
   Returns:
-    Any: Open return polymorphism from ``tz_aware_bokeh_tick_formatter``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
+    Any: ``DatetimeTickFormatter``.
 
   Examples:
-    >>> tz_aware_bokeh_tick_formatter()  # doctest: +SKIP
+    >>> tz_aware_bokeh_tick_formatter().hours
+    '%I:%M %p'
   """
   return DatetimeTickFormatter(
     hours="%I:%M %p",
@@ -539,29 +484,26 @@ def new_plain_linear_tick_formatter() -> Any:
   Bokeh tick labels without scientific notation (new instance per axis/plot).
 
   Returns:
-    Any: Open return polymorphism from ``new_plain_linear_tick_formatter``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
+    Any: ``BasicTickFormatter``.
 
   Examples:
-    >>> new_plain_linear_tick_formatter()  # doctest: +SKIP
+    >>> new_plain_linear_tick_formatter().use_scientific
+    False
   """
   return BasicTickFormatter(use_scientific=False, precision=2)
 
 
 def new_plain_log_tick_formatter() -> Any:
   """
-  Log-scale tick labels without scientific notation (built-in.
-
-    BasicTickFormatter).
+  Log-scale tick labels without scientific notation (built-in
+  ``BasicTickFormatter``).
 
   Returns:
-    Any: Open return polymorphism from ``new_plain_log_tick_formatter``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
+    Any: ``BasicTickFormatter``.
 
   Examples:
-    >>> new_plain_log_tick_formatter()  # doctest: +SKIP
+    >>> new_plain_log_tick_formatter().use_scientific
+    False
   """
   return BasicTickFormatter(use_scientific=False, precision=2)
 
@@ -571,7 +513,7 @@ def set_linear_axes_plain_numeric(plot: Any) -> None:
   Apply non-scientific tick formatters to every LinearAxis on the figure.
 
   Args:
-    plot (Any): Plot passed to this helper.
+    plot (Any): Bokeh figure.
 
   Returns:
     None

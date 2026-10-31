@@ -2,7 +2,6 @@
 
 from datetime import timedelta
 
-import pandas as pd
 import pytest
 from django.utils import timezone
 
@@ -14,10 +13,10 @@ from hpcperfstats.site.lib.machine.models import (
 )
 
 
-def test_job_detail_artifacts_has_jid_table_import():
-  """Guard against NameError in prewarm path when jid_table import is dropped."""
-  assert hasattr(jda, "jid_table")
-  assert hasattr(jda.jid_table, "jid_table")
+def test_job_detail_artifacts_has_job_table_imports():
+  """Guard against NameError in the prewarm path when the table imports drop."""
+  assert hasattr(jda, "open_job_table")
+  assert hasattr(jda, "HANDOFF")
   assert hasattr(jda, "plots")
   assert hasattr(jda.plots, "DevPlot")
 
@@ -33,6 +32,31 @@ def _mk_job(jid="detailtest1"):
     username="u1",
     host_list=["n1"],
   )
+
+
+def _fake_table(job, *, schema=None, llite=None, nfs=None, beegfs=None):
+  """Real (empty) columnar table for ``job`` with the FSIO reads stubbed.
+
+  The detail prewarm calls every columnar accessor (GPU inventory, node
+  power, type detail); an empty JobFrame answers them with "no data" while
+  the stubbed Lustre / NFS / BeeGFS reads drive the FSIO fallback paths.
+  """
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
+
+  table = table_from_records(
+    [],
+    jid=str(job.jid),
+    hosts=["n1"],
+    schema=dict(schema or {}),
+    start_time=job.start_time,
+    end_time=job.end_time,
+  )
+  table.get_llite_delta_by_event = lambda: dict(llite or {})
+  table.get_nfs_delta_totals_mb = lambda: nfs
+  table.get_beegfs_delta_by_event = lambda: dict(beegfs or {})
+  return table
 
 
 @pytest.mark.django_db(transaction=True)
@@ -68,33 +92,16 @@ def test_persist_job_detail_null_fsio_metrics_allows_host_fallback(monkeypatch):
       no_data_reason=None,
     )
 
-  class _FakeJt:
-    acct_host_list = ["n1"]
-    schema = {}
-    start_time = job.start_time
-    end_time = job.end_time
-
-    def get_llite_delta_by_event(self):
-      return pd.DataFrame(
-        [
-          {"event": "read_bytes", "delta_sum": 1048576.0},
-          {"event": "write_bytes", "delta_sum": 0.0},
-        ]
-      )
-
-    def get_nfs_delta_totals_mb(self):
-      return None
-
-    def get_beegfs_delta_by_event(self):
-      return pd.DataFrame()
-
-    def get_aggregate_df(self, *args, **kwargs):
-      del args, kwargs
-      return pd.DataFrame(columns=["host", "time", "sum_val"])
-
+  fake_jt = _fake_table(
+    job,
+    schema={},
+    llite={"read_bytes": 1048576.0, "write_bytes": 0.0},
+    nfs=None,
+    beegfs={},
+  )
   monkeypatch.setattr(
-    "hpcperfstats.site.lib.machine.job_detail_artifacts.jid_table.jid_table",
-    lambda _jid: _FakeJt(),
+    "hpcperfstats.site.lib.machine.job_detail_artifacts.open_job_table",
+    lambda _jid, **_k: fake_jt,
   )
 
   telemetry = {}
@@ -120,24 +127,16 @@ def test_persist_job_detail_skips_type_detail_when_artifact_is_fresh(
     input_fingerprint=fp,
   )
 
-  class _FakeJt:
-    acct_host_list = ["n1"]
-    schema = {"cpu": ["user"]}
-    start_time = job.start_time
-    end_time = job.end_time
-
-    def get_llite_delta_by_event(self):
-      return pd.DataFrame()
-
-    def get_nfs_delta_totals_mb(self):
-      return None
-
-    def get_beegfs_delta_by_event(self):
-      return pd.DataFrame()
-
+  fake_jt = _fake_table(
+    job,
+    schema={"cpu": ["user"]},
+    llite={},
+    nfs=None,
+    beegfs={},
+  )
   monkeypatch.setattr(
-    "hpcperfstats.site.lib.machine.job_detail_artifacts.jid_table.jid_table",
-    lambda _jid: _FakeJt(),
+    "hpcperfstats.site.lib.machine.job_detail_artifacts.open_job_table",
+    lambda _jid, **_k: fake_jt,
   )
   monkeypatch.setattr(
     "hpcperfstats.site.lib.machine.job_detail_artifacts._gpu_detail_from_jid_table",
@@ -149,7 +148,7 @@ def test_persist_job_detail_skips_type_detail_when_artifact_is_fresh(
     },
   )
   monkeypatch.setattr(
-    "hpcperfstats.site.lib.machine.job_detail_artifacts.jid_table.TypeDetailDataProvider",
+    "hpcperfstats.site.lib.machine.job_detail_artifacts.build_type_detail_series",
     lambda *args, **kwargs: (_ for _ in ()).throw(
       AssertionError("type detail generation should be skipped")
     ),
@@ -169,15 +168,17 @@ def test_persist_job_detail_records_type_detail_failure_as_fresh_unavailable(
     schema = {"cpu": ["user"]}
     start_time = job.start_time
     end_time = job.end_time
+    units = {}
+    _shared_node = False
 
     def get_llite_delta_by_event(self):
-      return pd.DataFrame()
+      return {}
 
     def get_nfs_delta_totals_mb(self):
       return None
 
     def get_beegfs_delta_by_event(self):
-      return pd.DataFrame()
+      return {}
 
   class _FailingDevPlot:
     def __init__(self, _provider, _hosts):
@@ -187,8 +188,8 @@ def test_persist_job_detail_records_type_detail_failure_as_fresh_unavailable(
       raise RuntimeError("type detail blew up")
 
   monkeypatch.setattr(
-    "hpcperfstats.site.lib.machine.job_detail_artifacts.jid_table.jid_table",
-    lambda _jid: _FakeJt(),
+    "hpcperfstats.site.lib.machine.job_detail_artifacts.open_job_table",
+    lambda _jid, **_k: _FakeJt(),
   )
   monkeypatch.setattr(
     "hpcperfstats.site.lib.machine.job_detail_artifacts._gpu_detail_from_jid_table",
@@ -200,7 +201,7 @@ def test_persist_job_detail_records_type_detail_failure_as_fresh_unavailable(
     },
   )
   monkeypatch.setattr(
-    "hpcperfstats.site.lib.machine.job_detail_artifacts.jid_table.TypeDetailDataProvider",
+    "hpcperfstats.site.lib.machine.job_detail_artifacts.build_type_detail_series",
     lambda *args, **kwargs: object(),
   )
   monkeypatch.setattr(
@@ -260,24 +261,16 @@ def test_persist_job_detail_prewarms_multiprecision_mix_payload(monkeypatch):
       no_data_reason=None,
     )
 
-  class _FakeJt:
-    acct_host_list = ["n1"]
-    schema = {}
-    start_time = job.start_time
-    end_time = job.end_time
-
-    def get_llite_delta_by_event(self):
-      return pd.DataFrame()
-
-    def get_nfs_delta_totals_mb(self):
-      return None
-
-    def get_beegfs_delta_by_event(self):
-      return pd.DataFrame()
-
+  fake_jt = _fake_table(
+    job,
+    schema={},
+    llite={},
+    nfs=None,
+    beegfs={},
+  )
   monkeypatch.setattr(
-    "hpcperfstats.site.lib.machine.job_detail_artifacts.jid_table.jid_table",
-    lambda _jid: _FakeJt(),
+    "hpcperfstats.site.lib.machine.job_detail_artifacts.open_job_table",
+    lambda _jid, **_k: fake_jt,
   )
 
   jda.persist_job_detail_artifacts_for_jid(job.jid)
@@ -316,24 +309,16 @@ def test_persist_job_detail_multiprecision_gpu_uses_available_widths_only(
       no_data_reason=None,
     )
 
-  class _FakeJt:
-    acct_host_list = ["n1"]
-    schema = {}
-    start_time = job.start_time
-    end_time = job.end_time
-
-    def get_llite_delta_by_event(self):
-      return pd.DataFrame()
-
-    def get_nfs_delta_totals_mb(self):
-      return None
-
-    def get_beegfs_delta_by_event(self):
-      return pd.DataFrame()
-
+  fake_jt = _fake_table(
+    job,
+    schema={},
+    llite={},
+    nfs=None,
+    beegfs={},
+  )
   monkeypatch.setattr(
-    "hpcperfstats.site.lib.machine.job_detail_artifacts.jid_table.jid_table",
-    lambda _jid: _FakeJt(),
+    "hpcperfstats.site.lib.machine.job_detail_artifacts.open_job_table",
+    lambda _jid, **_k: fake_jt,
   )
 
   jda.persist_job_detail_artifacts_for_jid(job.jid)
@@ -369,24 +354,16 @@ def test_persist_job_detail_multiprecision_gpu_unavailable_without_metrics(
       no_data_reason=None,
     )
 
-  class _FakeJt:
-    acct_host_list = ["n1"]
-    schema = {}
-    start_time = job.start_time
-    end_time = job.end_time
-
-    def get_llite_delta_by_event(self):
-      return pd.DataFrame()
-
-    def get_nfs_delta_totals_mb(self):
-      return None
-
-    def get_beegfs_delta_by_event(self):
-      return pd.DataFrame()
-
+  fake_jt = _fake_table(
+    job,
+    schema={},
+    llite={},
+    nfs=None,
+    beegfs={},
+  )
   monkeypatch.setattr(
-    "hpcperfstats.site.lib.machine.job_detail_artifacts.jid_table.jid_table",
-    lambda _jid: _FakeJt(),
+    "hpcperfstats.site.lib.machine.job_detail_artifacts.open_job_table",
+    lambda _jid, **_k: fake_jt,
   )
 
   jda.persist_job_detail_artifacts_for_jid(job.jid)
@@ -407,12 +384,14 @@ def test_persist_job_detail_multiprecision_gpu_unavailable_without_metrics(
 
 
 class _FailingFsioJt:
-  """jid_table stand-in whose Lustre fallback query fails (no DB)."""
+  """Job table stand-in whose Lustre fallback read fails (no DB)."""
 
   acct_host_list = ["n1"]
   schema = {}
+  units = {}
   start_time = None
   end_time = None
+  _shared_node = False
 
   def get_llite_delta_by_event(self):
     from django.db.utils import OperationalError
@@ -423,19 +402,19 @@ class _FailingFsioJt:
     return None
 
   def get_beegfs_delta_by_event(self):
-    return pd.DataFrame()
+    return {}
 
 
 def _patch_detail_without_db(monkeypatch, *, stored_detail_fp=None):
   """Stub every DB / host_data touch of the job-detail prewarm."""
   upserts = []
   monkeypatch.setattr(jda, "_metric_value_map", lambda job: {})
-  monkeypatch.setattr(jda, "_fsio_from_metric_values", lambda mv: ({}, False))
+  monkeypatch.setattr(jda, "_fsio_from_metric_values", lambda *_a: ({}, False))
   monkeypatch.setattr(
     jda, "extend_fsio_payload_lists_with_peaks", lambda fsio, jt: None
   )
   monkeypatch.setattr(
-    jda, "_gpu_detail_from_metric_values", lambda mv: {"gpu_inventory": [1]}
+    jda, "_gpu_detail_from_metric_values", lambda *_a: {"gpu_inventory": [1]}
   )
   monkeypatch.setattr(jda, "_multiprecision_mix_payload", lambda *a, **k: {})
   stored = {} if stored_detail_fp is None else stored_detail_fp
@@ -466,7 +445,7 @@ def test_detail_fsio_failure_stores_retry_fingerprint_and_raises(monkeypatch):
   }
   with pytest.raises(ArtifactBuildFailedError) as ei:
     jda.persist_job_detail_artifacts_for_jid("fsiofail1", context=ctx)
-  assert ei.value.parts == ["fsio_llite"]
+  assert ei.value.parts == ["fsio"]
   by_kind = {u["artifact_kind"]: u["input_fingerprint"] for u in upserts}
   assert by_kind[jda.ARTIFACT_KIND_JOB_DETAIL].startswith("retry1:")
   assert by_kind[jda.ARTIFACT_KIND_JOB_DETAIL] != fp

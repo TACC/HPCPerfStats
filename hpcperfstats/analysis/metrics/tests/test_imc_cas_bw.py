@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 
+from hpcperfstats.analysis.metrics.lib.columnar.kernels import AggTable
+from hpcperfstats.analysis.metrics.lib.columnar.summary_series import (
+  bw_table,
+  combine_bw,
+)
 from hpcperfstats.analysis.metrics.lib.gen.imc_cas_bw import (
-  agg_sum_val_to_bw_frame,
-  combine_cas_bw_frames,
   combine_cas_bw_scalars,
 )
 
@@ -30,56 +32,40 @@ def test_combine_cas_bw_scalars_neither():
   assert combine_cas_bw_scalars(float("nan"), float("inf")) is None
 
 
-def _bw_frame(host, t0, value):
-  return pd.DataFrame(
-    [(host, t0, value)],
-    columns=["host", "time", "bw_gb"],
-  )
+def _bw(value, time_us=1):
+  return AggTable(np.array([0]), np.array([time_us]), np.array([value]))
 
 
-def test_combine_cas_bw_frames_dram_only():
-  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  out = combine_cas_bw_frames(_bw_frame("n1", t0, 4.0), None)
+def test_combine_bw_dram_only():
+  out = combine_bw(_bw(4.0), None)
   assert out is not None
-  assert list(out["bw_gb"]) == [4.0]
+  assert out.sum_val.tolist() == [4.0]
 
 
-def test_combine_cas_bw_frames_hbm_only():
-  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  out = combine_cas_bw_frames(None, _bw_frame("n1", t0, 5.0))
+def test_combine_bw_hbm_only():
+  out = combine_bw(None, _bw(5.0))
   assert out is not None
-  assert list(out["bw_gb"]) == [5.0]
+  assert out.sum_val.tolist() == [5.0]
 
 
-def test_combine_cas_bw_frames_sums_both():
-  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  out = combine_cas_bw_frames(
-    _bw_frame("n1", t0, 1.5),
-    _bw_frame("n1", t0, 2.5),
-  )
+def test_combine_bw_sums_both_on_outer_join():
+  out = combine_bw(_bw(1.5), _bw(2.5))
   assert out is not None
-  assert abs(float(out["bw_gb"].iloc[0]) - 4.0) < 1e-12
+  assert abs(float(out.sum_val[0]) - 4.0) < 1e-12
+  # Disjoint sample times: outer join keeps both rows, missing side counts 0.
+  out2 = combine_bw(_bw(1.0, time_us=1), _bw(2.0, time_us=2))
+  assert out2.time_us.tolist() == [1, 2]
+  assert out2.sum_val.tolist() == [1.0, 2.0]
 
 
-def test_combine_cas_bw_frames_rejects_all_non_finite():
-  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  bad = _bw_frame("n1", t0, np.nan)
-  assert combine_cas_bw_frames(bad, None) is None
-  assert combine_cas_bw_frames(None, bad) is None
-  assert combine_cas_bw_frames(None, None) is None
+def test_combine_bw_rejects_all_non_finite():
+  bad = _bw(np.nan)
+  assert combine_bw(bad, None) is None
+  assert combine_bw(None, bad) is None
+  assert combine_bw(None, None) is None
 
 
-def test_agg_sum_val_to_bw_frame():
-  t0 = pd.Timestamp("2024-06-01 12:00:00+00:00")
-  agg = pd.DataFrame(
-    [("n1", t0, 3.0)],
-    columns=["host", "time", "sum_val"],
-  )
-  out = agg_sum_val_to_bw_frame(agg)
-  assert out is not None
-  assert list(out.columns) == ["host", "time", "bw_gb"]
-  assert float(out["bw_gb"].iloc[0]) == 3.0
-  assert (
-    agg_sum_val_to_bw_frame(pd.DataFrame(columns=["host", "time", "sum_val"]))
-    is None
-  )
+def test_bw_table_drops_empty_or_non_finite():
+  assert bw_table(_bw(3.0)) is not None
+  assert bw_table(AggTable.zero()) is None
+  assert bw_table(_bw(np.nan)) is None

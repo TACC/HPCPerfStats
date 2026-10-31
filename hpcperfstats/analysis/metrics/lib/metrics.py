@@ -38,16 +38,27 @@ from typing import Any
 
 import numexpr as ne
 import numpy as np
-from django.db import close_old_connections, connections, transaction
+from django.db import connections, transaction
 from django.db.models import Max, Min
 from django.db.utils import DatabaseError, OperationalError
 from django.utils import timezone as django_timezone
 from numpy import amax, diff, isnan, maximum, mean, zeros
-from pandas import to_datetime
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.analysis.metrics.lib import phase_profile
 from hpcperfstats.analysis.metrics.lib.beegfs_metadata_iops_events import (
   BEEGFS_METADATA_IOPS_EVENTS,
+)
+from hpcperfstats.analysis.metrics.lib.columnar import segments as _columnar_sg
+from hpcperfstats.analysis.metrics.lib.columnar.detail_series import (
+  gpu_summary_tuple,
+  job_cpu_gpu_watt_hours,
+  max_node_power_est_w,
+  mean_node_power_est_w,
+)
+from hpcperfstats.analysis.metrics.lib.columnar.job_table import open_job_table
+from hpcperfstats.analysis.metrics.lib.columnar.kernels import (
+  bucketed_job_value,
 )
 from hpcperfstats.analysis.metrics.lib.db_retry import run_with_db_retry
 from hpcperfstats.analysis.metrics.lib.gen import jid_table
@@ -1126,160 +1137,6 @@ def _in_window_telemetry_bounds_for_job(job: Any) -> Any:
   return overall_mn, overall_mx
 
 
-class _JobForMetrics:
-  """
-  Minimal job-like object compatible with
-    hpcperfstats.analysis.metrics.lib.gen.utils.utils. Built from jid_table full
-    host_data DataFrame.
-
-  Attributes:
-    acct: Attribute.
-    cluster_mean_arc_by_type: Attribute.
-    cluster_mean_by_type: Attribute.
-    hosts: Attribute.
-    jid: Attribute.
-    per_host_distinct_time_sum: Attribute.
-    schemas: Attribute.
-    times: Attribute.
-  """
-
-  def __init__(self, jt: Any) -> None:
-    """
-    Build job-like view from jid_table full host_data DataFrame.
-
-    Args:
-      jt (Any): Jt passed to this helper.
-
-    Returns:
-      None
-
-    Examples:
-      >>> _JobForMetrics(None)  # doctest: +SKIP
-    """
-    self.jid = jt.jid
-    self.hosts = {}
-    self.schemas = {}
-    # Per-typename (n_times, n_events): mean of `value` across hosts at each
-    # global timestamp (for peak interval-rate metrics; avoids bogus diffs when
-    # nodes share a time axis but sparse samples per host).
-    self.cluster_mean_by_type = {}
-    # Same shape as cluster_mean_by_type but from ingest ``arc`` (already rates).
-    self.cluster_mean_arc_by_type = {}
-    self.acct = {"cores": 1, "nodes": 1}
-
-    df = jt.get_full_host_data_df(
-      columns=["host", "time", "type", "event", "value", "arc"]
-    )
-    # If there is no time information, we cannot build a valid time axis; treat
-    # as no data for this job (avoids KeyError when sorting by missing column).
-    if df.empty or "time" not in df.columns:
-      self.times = np.array([])
-      self.per_host_distinct_time_sum = 0
-      self.cluster_mean_by_type = {}
-      self.cluster_mean_arc_by_type = {}
-      return
-
-    # Global sorted time axis.
-    df["time"] = to_datetime(df["time"]).dt.tz_localize(None)
-    df = df.sort_values("time")
-    for col in ("host", "type", "event"):
-      if col in df.columns:
-        df[col] = df[col].map(_coerce_metrics_identity_str)
-    # Sample count for invalidation: per-host COUNT(DISTINCT time), summed
-    # (same semantics as live host_data subquery in update_metrics).
-    self.per_host_distinct_time_sum = int(
-      df.groupby("host")["time"].nunique().sum()
-    )
-    times = df["time"].drop_duplicates().sort_values()
-
-    # Use float seconds (NumPy) for simplicity; utils only uses differences
-    self.times = times.values.astype("datetime64[s]").astype(np.float64)
-
-    # Reduce memory: categorical for repeated string columns
-    # large DataFrames with many repeated host/type/event values use less memory.
-    for col in ("host", "type", "event"):
-      if col in df.columns and df[col].dtype == object:
-        df[col] = df[col].astype("category")
-
-    # Build schemas based on jt.schema (type -> [events])
-    for raw_typename, events in jt.schema.items():
-      typename = _coerce_metrics_identity_str(raw_typename)
-      ev_list = [_coerce_metrics_identity_str(e) for e in (events or [])]
-      self.schemas[typename] = _Schema(ev_list)
-
-    # Prepare host containers
-    host_list = df["host"].drop_duplicates().values
-    for host in host_list:
-      self.hosts[host] = _Host()
-
-    # Populate stats arrays per (host, type) via vectorized pivot/reindex
-    times_index = times.values
-    for typename, schema in self.schemas.items():
-      events = schema.events
-      nevents = len(events)
-      if nevents == 0:
-        continue
-
-      type_df = df[df["type"] == typename]
-      if type_df.empty:
-        continue
-
-      # Mean across hosts at each (time, event) for interval-rate peak metrics.
-      pavg = type_df[["time", "event", "value"]]
-      try:
-        cluster_pivot = (
-          pavg.groupby(["time", "event"])["value"]
-          .mean()
-          .unstack(fill_value=np.nan)
-        )
-        cluster_pivot = cluster_pivot.reindex(
-          index=times, fill_value=np.nan
-        ).reindex(columns=events, fill_value=np.nan)
-        self.cluster_mean_by_type[typename] = np.ascontiguousarray(
-          cluster_pivot.values, dtype=np.float64
-        )
-      except ValueError, KeyError:
-        self.cluster_mean_by_type[typename] = np.full(
-          (len(times_index), len(events)), np.nan, dtype=np.float64
-        )
-      if "arc" in type_df.columns:
-        try:
-          arc_pivot = (
-            type_df[["time", "event", "arc"]]
-            .groupby(["time", "event"])["arc"]
-            .mean()
-            .unstack(fill_value=np.nan)
-          )
-          arc_pivot = arc_pivot.reindex(index=times, fill_value=np.nan).reindex(
-            columns=events, fill_value=np.nan
-          )
-          self.cluster_mean_arc_by_type[typename] = np.ascontiguousarray(
-            arc_pivot.values, dtype=np.float64
-          )
-        except ValueError, KeyError:
-          self.cluster_mean_arc_by_type[typename] = np.full(
-            (len(times_index), len(events)),
-            np.nan,
-            dtype=np.float64,
-          )
-
-      for host, host_df in type_df.groupby("host"):
-        host_obj = self.hosts[host]
-        pivot = host_df.pivot_table(
-          index="time",
-          columns="event",
-          values="value",
-          aggfunc="mean",
-        )
-        pivot = pivot.reindex(index=times_index, fill_value=np.nan).reindex(
-          columns=events, fill_value=np.nan
-        )
-        stats = np.ascontiguousarray(pivot.values, dtype=np.float64)
-        host_obj.stats.setdefault(typename, {})
-        host_obj.stats[typename]["agg"] = stats
-      del type_df
-
-
 @contextlib.contextmanager
 def _pg_session_statement_timeout_for_metrics_worker() -> Iterator[Any]:
   """
@@ -1358,7 +1215,10 @@ def _unwrap(args: Any) -> Any:
       Examples:
         >>> _compute()  # doctest: +SKIP
       """
-      with _pg_session_statement_timeout_for_metrics_worker():
+      with (
+        _pg_session_statement_timeout_for_metrics_worker(),
+        phase_profile.phase("metrics_compute"),
+      ):
         return metrics_obj.compute_metrics(job)
 
     compute_started_at = django_timezone.now()
@@ -1423,7 +1283,8 @@ def _unwrap_and_persist(args: Any) -> Any:
   Examples:
     >>> _unwrap_and_persist((Metrics(), job_ref))  # doctest: +SKIP
   """
-  return _persist_metrics_payload(_unwrap(args))
+  with phase_profile.job_scope(_metrics_jid_value(args[1]), "metrics"):
+    return _persist_metrics_payload(_unwrap(args))
 
 
 def _persist_metrics_batch(
@@ -1613,17 +1474,18 @@ def _persist_metrics_payload(payload: Any) -> Any:
     )
   persist_started_at = time.monotonic()
   try:
-    run_with_db_retry(
-      lambda: _persist_metrics_batch(
-        job_rows,
-        distinct_n,
-        telemetry_first_time=telemetry_first_time,
-        telemetry_last_time=telemetry_last_time,
-        host_data_schema=host_data_schema,
-        compute_started_at=compute_started_at,
-      ),
-      attempts=2,
-    )
+    with phase_profile.phase("persist"):
+      run_with_db_retry(
+        lambda: _persist_metrics_batch(
+          job_rows,
+          distinct_n,
+          telemetry_first_time=telemetry_first_time,
+          telemetry_last_time=telemetry_last_time,
+          host_data_schema=host_data_schema,
+          compute_started_at=compute_started_at,
+        ),
+        attempts=2,
+      )
   except (OperationalError, DatabaseError) as exc:
     persist_elapsed = time.monotonic() - persist_started_at
     persist_status = (
@@ -1809,433 +1671,11 @@ def _drain_metrics_imap(
   return outcomes
 
 
-def _jid_table_host_data_time_kwargs(base: Any) -> Any:
-  """
-  ORM time scope from ``jid_table._base_filter`` (full window or sampled.
-
-    ``time__in``).
-
-  Args:
-    base (Any): Base passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _jid_table_host_data_time_kwargs(None)  # doctest: +SKIP
-  """
-  if not base:
-    return None
-  if "time__in" in base:
-    return {"time__in": base["time__in"]}
-  time_gte = base.get("time__gte")
-  time_lte = base.get("time__lte")
-  if time_gte is None or time_lte is None:
-    return None
-  return {"time__gte": time_gte, "time__lte": time_lte}
-
-
-# Skip row memo when strided ``time__in`` is huge (avoid giant cache keys and RAM).
-_HOST_DATA_ROWS_MEMO_MAX_TIME_IN = 4096
-
-
-def _host_data_row_cache_key(
-  tkw: Any,
-  typename: Any,
-  events: Any,
-  metric_column: Any,
-  *,
-  sum_per_sample: bool = False,
-  nonnegative_only: bool = False,
-  jid: Any | None = None,
-) -> Any:
-  """
-  Hashable key for one batched host_data fetch within a single.
-
-    ``compute_metrics`` pass.
-
-  Args:
-    tkw (Any): Tkw passed to this helper.
-    typename (Any): Typename passed to this helper.
-    events (Any): Events passed to this helper.
-    metric_column (Any): Metric column passed to this helper.
-    sum_per_sample (bool): Boolean flag for sum per sample.
-    nonnegative_only (bool): Boolean flag for nonnegative only.
-    jid (Any | None): Job id when the fetch is jid-scoped.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _host_data_row_cache_key(None, None, None, None, True, True)
-  """
-  if not tkw:
-    return None
-  ti = tkw.get("time__in")
-  if ti is not None:
-    try:
-      n = len(ti)
-    except TypeError:
-      return None
-    if n > _HOST_DATA_ROWS_MEMO_MAX_TIME_IN:
-      return None
-    # Same ``tkw`` dict is reused across metric helpers; ``id`` ties arc vs value passes.
-    t_part = ("time__in", id(ti))
-  else:
-    t_part = ("range", tkw.get("time__gte"), tkw.get("time__lte"))
-  return (
-    typename,
-    metric_column,
-    bool(sum_per_sample),
-    bool(nonnegative_only),
-    _hashable_metric_events_signature(events),
-    t_part,
-    None if jid is None else str(jid),
-  )
-
-
-def _host_data_metric_rows_queryset(
-  hosts: Any,
-  tkw: Any,
-  typename: Any,
-  events: Any,
-  metric_column: Any,
-  *,
-  sum_per_sample: bool = False,
-  nonnegative_only: bool = False,
-  jid: Any | None = None,
-) -> Any:
-  """
-  Rows for metric bucketing: raw samples, or one SQL-summed row per (host,.
-
-    time).
-
-  ``sum_per_sample`` moves the per-sample total across events and devices into
-  PostgreSQL, so a job with many events/devices transfers one row per sample
-    time
-  instead of ``events x devices`` rows. The aggregate queryset labels its
-    columns
-  with the ``jid_table`` aliases; ``_normalize_host_data_metric_rows`` maps them
-  back so both paths yield ``{host, time, <metric_column>}`` rows.
-
-  Args:
-    hosts (Any): Hosts passed to this helper.
-    tkw (Any): Tkw passed to this helper.
-    typename (Any): Typename passed to this helper.
-    events (Any): Events passed to this helper.
-    metric_column (Any): Metric column passed to this helper.
-    sum_per_sample (bool): Boolean flag for sum per sample.
-    nonnegative_only (bool): Boolean flag for nonnegative only.
-    jid (Any | None): When set, restrict to jid / ``dev=j:<jid>`` rows.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _host_data_metric_rows_queryset(0)  # doctest: +SKIP
-  """
-  from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
-    apply_job_or_host_wide_scope,
-    job_is_shared_node,
-  )
-  from hpcperfstats.site.lib.machine.models import host_data
-
-  qs = host_data.objects.filter(
-    **tkw,
-    host__in=hosts,
-    type=typename,
-    event__in=events,
-  )
-  if jid:
-    qs = apply_job_or_host_wide_scope(
-      qs,
-      str(jid),
-      typename,
-      shared=job_is_shared_node(str(jid)),
-    )
-  if sum_per_sample:
-    return jid_table.host_data_sum_val_per_sample_queryset(
-      qs, metric_column, nonnegative_only=nonnegative_only
-    )
-  return qs.values("host", "time", metric_column).order_by("host", "time")
-
-
-def _normalize_host_data_metric_rows(rows: Any, metric_column: Any) -> Any:
-  """
-  Relabel SQL-aggregate rows to the raw-fetch shape ``{host, time, column}``.
-
-  Args:
-    rows (Any): Rows passed to this helper.
-    metric_column (Any): Metric column passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _normalize_host_data_metric_rows(None, None)  # doctest: +SKIP
-  """
-  time_alias = jid_table.HOST_DATA_TIME_ALIAS
-  sum_alias = jid_table.HOST_DATA_SUM_VAL_ALIAS
-  return [
-    {
-      "host": row["host"],
-      "time": row[time_alias],
-      metric_column: row[sum_alias],
-    }
-    for row in rows
-  ]
-
-
-def _host_data_metric_rows_with_host_chunk_retry(
-  host_chunk: Any,
-  tkw: Any,
-  typename: Any,
-  events: Any,
-  metric_column: Any,
-  *,
-  min_hosts: int = 1,
-  max_attempts: int = 2,
-  sum_per_sample: bool = False,
-  nonnegative_only: bool = False,
-  jid: Any | None = None,
-) -> Any:
-  """
-  Materialize metric ``values()`` rows; split hosts or retry on statement.
-
-    timeout.
-
-  Mirrors ``jid_table._queryset_to_dataframe_with_host_chunk_retry`` for the
-  list-of-dicts path used by metric bucketing.
-
-  Args:
-    host_chunk (Any): Host chunk passed to this helper.
-    tkw (Any): Tkw passed to this helper.
-    typename (Any): Typename passed to this helper.
-    events (Any): Events passed to this helper.
-    metric_column (Any): Metric column passed to this helper.
-    min_hosts (int): Integer value for min hosts.
-    max_attempts (int): Integer value for max attempts.
-    sum_per_sample (bool): Boolean flag for sum per sample.
-    nonnegative_only (bool): Boolean flag for nonnegative only.
-    jid (Any | None): Optional job id for shared-node scope.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Raises:
-    Exception: Raised when ``_host_data_metric_rows_with_host_chunk_retry``
-    hits a ``Exception`` failure path.
-    last_exc: Raised when ``_host_data_metric_rows_with_host_chunk_retry``
-    hits a ``last_exc`` failure path.
-
-  Examples:
-    >>> _host_data_metric_rows_with_host_chunk_retry(0)  # doctest: +SKIP
-  """
-  hosts = [str(h) for h in host_chunk if h]
-  if not hosts:
-    return []
-  last_exc = None
-  for attempt in range(max_attempts):
-    try:
-      close_old_connections()
-      rows = list(
-        _host_data_metric_rows_queryset(
-          hosts,
-          tkw,
-          typename,
-          events,
-          metric_column,
-          sum_per_sample=sum_per_sample,
-          nonnegative_only=nonnegative_only,
-          jid=jid,
-        )
-      )
-      if sum_per_sample:
-        return _normalize_host_data_metric_rows(rows, metric_column)
-      return rows
-    except OperationalError as exc:
-      last_exc = exc
-      if not jid_table._is_statement_timeout_error(exc):
-        raise
-      if len(hosts) > min_hosts:
-        mid = max(1, len(hosts) // 2)
-        left = _host_data_metric_rows_with_host_chunk_retry(
-          hosts[:mid],
-          tkw,
-          typename,
-          events,
-          metric_column,
-          min_hosts=min_hosts,
-          max_attempts=max_attempts,
-          sum_per_sample=sum_per_sample,
-          nonnegative_only=nonnegative_only,
-          jid=jid,
-        )
-        right = _host_data_metric_rows_with_host_chunk_retry(
-          hosts[mid:],
-          tkw,
-          typename,
-          events,
-          metric_column,
-          min_hosts=min_hosts,
-          max_attempts=max_attempts,
-          sum_per_sample=sum_per_sample,
-          nonnegative_only=nonnegative_only,
-          jid=jid,
-        )
-        return left + right
-      if attempt + 1 >= max_attempts:
-        raise
-      close_old_connections()
-  if last_exc is not None:
-    raise last_exc
-  return []
-
-
 # Prefer hostxtime chunks sized like jid_table's default (16) so ~48-host jobs
 # issue several bounded queries; pairs with metrics_worker_statement_timeout_ms
 # so chunk-on-timeout split can fire before the batch stall budget. Equal to
 # ``jid_table.JID_TABLE_HOST_QUERY_BATCH`` (drift-tested).
 METRICS_HOST_QUERY_BATCH = 16
-
-
-def _host_data_metric_rows_batched(
-  tkw: Any,
-  hosts: Any,
-  typename: Any,
-  events: Any,
-  metric_column: Any,
-  rows_cache: Any | None = None,
-  *,
-  sum_per_sample: bool = False,
-  nonnegative_only: bool = False,
-  jid: Any | None = None,
-) -> Any:
-  """
-  Fetch host_data rows for metrics bucketing via hostxtime chunks.
-
-  Rows are always ``{host, time, <metric_column>}``. With ``sum_per_sample`` the
-  value is the per-sample total across events and devices, summed by PostgreSQL;
-  hostxtime chunks are disjoint and each chunk groups per (host, time), so rows
-  stay unique per (host, time) and callers can skip a pandas groupby.
-
-  Args:
-    tkw (Any): Time-filter kwargs for the job window.
-    hosts (Any): Hostnames for this job.
-    typename (Any): ``host_data.type`` string.
-    events (Any): Event name(s) for the metric probe.
-    metric_column (Any): Column name (``arc`` / ``value`` / ``delta``).
-    rows_cache (Any | None): Optional dict cache keyed by probe identity.
-    sum_per_sample (bool): When True, SQL-SUM per (host, sample time).
-    nonnegative_only (bool): When True, SUM only nonnegative samples.
-    jid (Any | None): Optional job id for shared-node scope.
-
-  Returns:
-    Any: List of row dicts (possibly empty).
-
-  Examples:
-    >>> _host_data_metric_rows_batched(0)  # doctest: +SKIP
-  """
-  from hpcperfstats.dbload.lib import conf_parser as cfg
-
-  host_list = list(hosts)
-  if not host_list:
-    return []
-  cache_key = None
-  if rows_cache is not None:
-    cache_key = _host_data_row_cache_key(
-      tkw,
-      typename,
-      events,
-      metric_column,
-      sum_per_sample=sum_per_sample,
-      nonnegative_only=nonnegative_only,
-      jid=jid,
-    )
-    if cache_key is not None and cache_key in rows_cache:
-      return rows_cache[cache_key]
-  batch = jid_table._coerce_jid_table_host_query_batch_size(
-    METRICS_HOST_QUERY_BATCH
-  )
-  ev = _flatten_event_names_for_host_data_query(events, typ=typename)
-  slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
-  rows: list = []
-
-  def run(hosts_list: Any, tf_cur: Any) -> Any:
-    """
-    Materialize metric rows for one hostxtime chunk.
-
-    Args:
-      hosts_list (Any): Hostnames for this attempt.
-      tf_cur (Any): Time filter dict.
-
-    Returns:
-      Any: List of row dicts.
-
-    Examples:
-      >>> True
-      True
-    """
-    return _host_data_metric_rows_with_host_chunk_retry(
-      hosts_list,
-      tf_cur or {},
-      typename,
-      ev,
-      metric_column,
-      sum_per_sample=sum_per_sample,
-      nonnegative_only=nonnegative_only,
-      jid=jid,
-    )
-
-  for host_chunk, tf in jid_table._iter_host_time_query_chunks(
-    host_list,
-    tkw,
-    batch_size=batch,
-    slice_s=slice_s,
-  ):
-    rows.extend(
-      jid_table._run_with_host_time_timeout_retry(
-        host_chunk,
-        tf,
-        run,
-        jid_table._merge_list_results,
-        empty=[],
-      )
-    )
-  if rows_cache is not None and cache_key is not None:
-    rows_cache[cache_key] = rows
-  return rows
-
-
-def _drop_first_bucket_per_host_if_safe(grouped: Any) -> Any:
-  """
-  Drop the first 5m bucket per host only when a later bucket remains.
-
-  Short jobs that land in a single bucket must keep that sample; otherwise
-  ``job_arc`` / ``job_value_mean`` return None even when host_data exists.
-
-  Args:
-    grouped (Any): Grouped passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _drop_first_bucket_per_host_if_safe(None)  # doctest: +SKIP
-  """
-  if grouped is None or getattr(grouped, "empty", True):
-    return grouped
-  if "host" not in grouped.columns:
-    return grouped
-  keep_idx = []
-  for _host, g in grouped.groupby("host", sort=False):
-    if len(g) <= 1:
-      keep_idx.extend(list(g.index))
-    else:
-      keep_idx.extend(list(g.index[1:]))
-  if not keep_idx:
-    return grouped.iloc[0:0]
-  return grouped.loc[keep_idx]
 
 
 class Metrics:
@@ -2635,46 +2075,39 @@ class Metrics:
     host_aggregate: str = "mean",
   ) -> Any:
     """
-    Aggregate arc by host and 5m time bucket via Django ORM.
+    Aggregate ``arc`` by host and 5-minute bucket from the job's JobFrame.
 
-    For each sample time: sum ``arc`` across events and devices (instantaneous
-    total). Within each 5m bucket: **mean** of those per-time totals (not a sum
-    of all rows - summing samples inflated rates by sample count). For each
-    host: mean of per-bucket values (after dropping the first bucket). By
-    default returns the **arithmetic mean of those per-host values** across
-    hosts (most ``avg_*`` simple metrics). When ``host_aggregate="sum"``
-    (``avg_cpuusage`` only), returns the **sum** of per-host means
-    (job-total busy cores).
-
-    When ``nonnegative_rate`` is True, negative ``arc`` samples are dropped
-      (NaN)
-    before bucketing. Use for cumulative byte counters (fabric bandwidth) where
-    a negative rate indicates reset, wrong rollover width, or bad samples.
+    For each sample time: sum ``arc`` across events and devices
+    (instantaneous total, NULL and over-ceiling samples dropped). Within
+    each 5-minute bucket: mean of those totals. Per host: mean of the
+    buckets after dropping the first one when a later bucket remains. Hosts
+    are then averaged (default) or summed (``host_aggregate="sum"``,
+    ``avg_cpuusage``). When no sample survives the filters, the
+    ``Coalesce(SUM, 0)`` rows of the same type are folded instead, as the
+    pandas path did. ``nonnegative_rate`` drops negative ``arc`` samples.
 
     Args:
-      jt (Any): Jt passed to this helper.
-      name (Any | None): One of ``Any``, ``None``.
-      typename (Any | None): One of ``Any``, ``None``.
-      events (Any | None): One of ``Any``, ``None``.
-      conv (int): Integer value for conv.
-      units (Any | None): One of ``Any``, ``None``.
-      cache (Any | None): One of ``Any``, ``None``.
-      rows_cache (Any | None): One of ``Any``, ``None``.
-      nonnegative_rate (bool): Boolean flag for nonnegative rate.
-      host_aggregate (str): String for host aggregate.
+      jt (Any): ``ColumnarJobTable`` of the job.
+      name (Any | None): Unused metric name (catalog spec compatibility).
+      typename (Any | None): Type alias to probe.
+      events (Any | None): Event names.
+      conv (int): Unit conversion applied to bucket means.
+      units (Any | None): Unused units label (catalog spec compatibility).
+      cache (Any | None): Per-job memo dict.
+      rows_cache (Any | None): Unused; the signature is kept stable.
+      nonnegative_rate (bool): Drop negative samples.
+      host_aggregate (str): ``mean`` or ``sum`` across hosts.
 
     Returns:
-      Any: Value produced by this call (type depends on inputs).
+      Any: Metric value, or None without samples.
 
     Examples:
-      >>> job_arc(0)  # doctest: +SKIP
+      >>> Metrics().job_arc(None)  # doctest: +SKIP
     """
-    import pandas as pd
-
+    del name, units, rows_cache
     if not getattr(jt, "_base_filter", None):
       return None
-    base = jt._base_filter
-    hosts = base.get("host__in") or []
+    hosts = jt._base_filter.get("host__in") or []
     if not hosts:
       return None
     agg = "sum" if host_aggregate == "sum" else "mean"
@@ -2690,87 +2123,21 @@ class Metrics:
       if cache_key in cache:
         return cache[cache_key]
     schema = getattr(jt, "schema", None)
-    if not _metric_type_events_feasible(schema, typename, events):
-      if cache is not None:
-        cache[cache_key] = None
-      return None
-    tkw = _jid_table_host_data_time_kwargs(base)
-    if not tkw:
-      return None
-    rows = []
-    for typ in type_probe_names(typename):
-      if not _metric_type_events_feasible(schema, typ, events):
-        continue
-      ev = _flatten_event_names_for_host_data_query(events, typ=typ)
-      from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import (
-        job_arc_cluster_aggregate_value,
-      )
-
-      sql_value = job_arc_cluster_aggregate_value(
-        list(hosts),
-        tkw,
-        typ,
-        ev,
-        float(conv),
-        nonnegative_rate=nonnegative_rate,
-        host_aggregate=agg,
-        jid=getattr(jt, "jid", None),
-      )
-      if sql_value is not None:
-        if cache is not None:
-          cache[cache_key] = sql_value
-        return sql_value
-      # Instantaneous total at each sample time (events x devices) is summed in
-      # SQL; pulling every device row into pandas exhausted the statement
-      # budget on multi-node PMC jobs.
-      rows = _host_data_metric_rows_batched(
-        tkw,
-        hosts,
-        typ,
-        events,
-        "arc",
-        rows_cache=rows_cache,
-        sum_per_sample=True,
-        nonnegative_only=nonnegative_rate,
-        jid=getattr(jt, "jid", None),
-      )
-      if rows:
-        break
-    if not rows:
-      if cache is not None:
-        cache[cache_key] = None
-      return None
-    per_time = pd.DataFrame(rows)
-    if per_time.empty:
-      if cache is not None:
-        cache[cache_key] = None
-      return None
-    if not pd.api.types.is_datetime64_any_dtype(per_time["time"]):
-      per_time["time"] = pd.to_datetime(per_time["time"])
-    per_time["bucket"] = per_time["time"].dt.floor("5min")
-    # Mean of instantaneous totals within each 5m bucket (not sum of samples).
-    grouped = (
-      per_time.groupby(["host", "bucket"], as_index=False)["arc"]
-      .mean()
-      .rename(columns={"bucket": "time", "arc": "sum"})
-    )
-    grouped["sum"] = grouped["sum"] * conv
-    if grouped.empty or "host" not in grouped.columns:
-      if cache is not None:
-        cache[cache_key] = None
-      return None
-    # Drop first bucket per host when at least one later bucket remains
-    # (short jobs with a single bucket must keep that sample).
-    grouped = _drop_first_bucket_per_host_if_safe(grouped)
-    if grouped.empty:
-      if cache is not None:
-        cache[cache_key] = None
-      return None
-    per_host_vals = grouped.groupby("host")["sum"].mean()
-    if agg == "sum":
-      value = float(per_host_vals.sum())
-    else:
-      value = float(per_host_vals.mean())
+    value = None
+    if _metric_type_events_feasible(schema, typename, events):
+      for typ in type_probe_names(typename):
+        if not _metric_type_events_feasible(schema, typ, events):
+          continue
+        ev = _flatten_event_names_for_host_data_query(events, typ=typ)
+        value = jt.job_arc_value(
+          typ,
+          ev,
+          float(conv),
+          nonnegative=nonnegative_rate,
+          host_aggregate=agg,
+        )
+        if value is not None:
+          break
     if cache is not None:
       cache[cache_key] = value
     return value
@@ -2787,35 +2154,35 @@ class Metrics:
     max_sane: Any | None = None,
   ) -> Any:
     """
-    Mean sampled ``value`` by host and 5m bucket (same bucketing as.
+    Mean sampled ``value`` by host and 5-minute bucket (same bucketing as
+    ``job_arc``) from the job's JobFrame.
 
-      ``job_arc``).
-
-    ``reject_dcgm_blank`` NaNs out DCGM blank-family gauges before means.
-    ``max_sane`` (after ``conv``) rejects impossible magnitudes as missing.
+    Raw samples (NULL kept as NaN) are averaged per ``(host, bucket)``; a
+    bucket of only NaN samples still counts for the first-bucket drop.
+    ``reject_dcgm_blank`` NaNs out DCGM blank-family gauges and drops
+    non-finite rows first. ``max_sane`` (after ``conv``) rejects impossible
+    magnitudes as missing.
 
     Args:
-      jt (Any): Jt passed to this helper.
-      typename (Any | None): One of ``Any``, ``None``.
-      events (Any | None): One of ``Any``, ``None``.
-      conv (float): Floating-point value for conv.
-      cache (Any | None): One of ``Any``, ``None``.
-      rows_cache (Any | None): One of ``Any``, ``None``.
-      reject_dcgm_blank (bool): Boolean flag for reject dcgm blank.
-      max_sane (Any | None): One of ``Any``, ``None``.
+      jt (Any): ``ColumnarJobTable`` of the job.
+      typename (Any | None): Type alias to probe.
+      events (Any | None): Event names.
+      conv (float): Unit conversion.
+      cache (Any | None): Per-job memo dict.
+      rows_cache (Any | None): Unused; the signature is kept stable.
+      reject_dcgm_blank (bool): Drop DCGM blank-family samples.
+      max_sane (Any | None): Absolute ceiling on the result.
 
     Returns:
-      Any: Value produced by this call (type depends on inputs).
+      Any: Mean value (NaN when every bucket is NaN), or None.
 
     Examples:
       >>> Metrics().job_value_mean(None, None, None, 0, None, None, True, None)
     """
-    import pandas as pd
-
+    del rows_cache
     if not getattr(jt, "_base_filter", None):
       return None
-    base = jt._base_filter
-    hosts = base.get("host__in") or []
+    hosts = jt._base_filter.get("host__in") or []
     if not hosts:
       return None
     cache_key = None
@@ -2835,68 +2202,28 @@ class Metrics:
       if cache is not None:
         cache[cache_key] = None
       return None
-    tkw = _jid_table_host_data_time_kwargs(base)
-    if not tkw:
-      return None
-    rows = []
+    host_id = time_us = vals = None
     for typ in type_probe_names(typename):
       if not _metric_type_events_feasible(schema, typ, events):
         continue
-      rows = _host_data_metric_rows_batched(
-        tkw,
-        hosts,
-        typ,
-        events,
-        "value",
-        rows_cache=rows_cache,
-        jid=getattr(jt, "jid", None),
-      )
-      if rows:
+      ev = _flatten_event_names_for_host_data_query(events, typ=typ)
+      host_id, time_us, vals = jt.raw_rows(typ, ev, "value")
+      if host_id.shape[0]:
         break
-    if not rows:
-      if cache is not None:
-        cache[cache_key] = None
-      return None
-    df = pd.DataFrame(rows)
-    if df.empty:
-      if cache is not None:
-        cache[cache_key] = None
-      return None
-    if reject_dcgm_blank and "value" in df.columns:
-      vals = nan_out_dcgm_numeric_blanks(
-        df["value"].to_numpy(dtype=np.float64, copy=True)
-      )
-      df = df.copy()
-      df["value"] = vals
-      df = df[np.isfinite(df["value"].to_numpy(dtype=np.float64))]
-      if df.empty:
-        if cache is not None:
-          cache[cache_key] = None
-        return None
-    if not pd.api.types.is_datetime64_any_dtype(df["time"]):
-      df["time"] = pd.to_datetime(df["time"])
-    df["bucket"] = df["time"].dt.floor("5min")
-    grouped = (
-      df.groupby(["host", "bucket"], as_index=False)["value"]
-      .mean()
-      .rename(columns={"bucket": "time", "value": "sum"})
-    )
-    grouped["sum"] = grouped["sum"] * float(conv)
-    if grouped.empty or "host" not in grouped.columns:
-      if cache is not None:
-        cache[cache_key] = None
-      return None
-    grouped = _drop_first_bucket_per_host_if_safe(grouped)
-    if grouped.empty:
-      if cache is not None:
-        cache[cache_key] = None
-      return None
-    per_host_vals = grouped.groupby("host")["sum"].mean()
-    value = float(per_host_vals.mean())
-    if max_sane is not None and (
-      not np.isfinite(value) or abs(value) > float(max_sane)
-    ):
-      value = None
+    value = None
+    if host_id is not None and host_id.shape[0]:
+      if reject_dcgm_blank:
+        vals = nan_out_dcgm_numeric_blanks(vals)
+        keep = np.isfinite(vals)
+        host_id, time_us, vals = host_id[keep], time_us[keep], vals[keep]
+      if host_id.shape[0]:
+        value = bucketed_job_value(host_id, time_us, vals, float(conv))
+      if (
+        value is not None
+        and max_sane is not None
+        and (not np.isfinite(value) or abs(value) > float(max_sane))
+      ):
+        value = None
     if cache is not None:
       cache[cache_key] = value
     return value
@@ -2914,26 +2241,25 @@ class Metrics:
     ``host_cpu`` arcs are node-wide (collapsed per-CPU jiffies). Raw sum across
     hosts can far exceed ``ncores`` on shared nodes. Scale each sample by
     ``util = busy / (busy + idle-family)`` times ``ncores / nhosts``, then sum
-    per-host means (same bucketing as ``job_arc``).
+    per-host means (same bucketing as ``job_arc``). Busy and idle per-sample
+    sums use the ``Coalesce(SUM, 0)`` rule of the pandas path.
 
     Args:
-      jt (Any): Jt passed to this helper.
+      jt (Any): ``ColumnarJobTable`` of the job.
       job (Any): Job record (Django ``job_data`` or job-like mapping).
-      cache (Any | None): One of ``Any``, ``None``.
-      rows_cache (Any | None): One of ``Any``, ``None``.
+      cache (Any | None): Per-job memo dict.
+      rows_cache (Any | None): Unused; the signature is kept stable.
 
     Returns:
-      Any: Value produced by this call (type depends on inputs).
+      Any: Allocated busy cores, or None.
 
     Examples:
       >>> Metrics()._job_avg_cpuusage_allocated(None, None, None, None)
     """
-    import pandas as pd
-
+    del rows_cache
     if not getattr(jt, "_base_filter", None):
       return None
-    base = jt._base_filter
-    hosts = base.get("host__in") or []
+    hosts = jt._base_filter.get("host__in") or []
     if not hosts:
       return None
     try:
@@ -2948,65 +2274,40 @@ class Metrics:
     idle_events = ["idle", "iowait", "irq", "softirq"]
     cache_key = None
     if cache is not None:
-      cache_key = (
-        "avg_cpuusage_alloc",
-        float(ncores),
-        float(nhosts),
-      )
+      cache_key = ("avg_cpuusage_alloc", float(ncores), float(nhosts))
       if cache_key in cache:
         return cache[cache_key]
-    tkw = _jid_table_host_data_time_kwargs(base)
-    if not tkw:
-      return None
+    schema = getattr(jt, "schema", None)
 
     def _sum_arc_events(events: Any) -> Any:
       """
-      Internal helper to handle sum arc events.
+      Per-sample ``arc`` sums for ``events`` from the first feasible type.
 
       Args:
-        events (Any): Events passed to this helper.
+        events (Any): Event names.
 
       Returns:
-        Any: Value produced by this call (type depends on inputs).
+        Any: ``AggTable`` or None.
 
       Examples:
         >>> Metrics()._sum_arc_events(None)  # doctest: +SKIP
       """
-      schema = getattr(jt, "schema", None)
       if not _metric_type_events_feasible(schema, HOST_CPU_TYPE, events):
         return None
-      rows = []
       for typ in type_probe_names(HOST_CPU_TYPE):
         if not _metric_type_events_feasible(schema, typ, events):
           continue
-        rows = _host_data_metric_rows_batched(
-          tkw,
-          hosts,
-          typ,
-          events,
-          "arc",
-          rows_cache=rows_cache,
-          sum_per_sample=True,
-          jid=getattr(jt, "jid", None),
-        )
-        if rows:
-          break
-      if not rows:
-        return None
-      df = pd.DataFrame(rows)
-      if df.empty:
-        return None
-      if not pd.api.types.is_datetime64_any_dtype(df["time"]):
-        df["time"] = pd.to_datetime(df["time"])
-      # Rows are already one per (host, time) from the SQL per-sample sum.
-      return df
+        ev = _flatten_event_names_for_host_data_query(events, typ=typ)
+        rows = jt.sample_sums_orm(typ, ev, "arc")
+        if not rows.empty:
+          return rows
+      return None
 
     busy = _sum_arc_events(busy_events)
     if busy is None or busy.empty:
       if cache is not None:
         cache[cache_key] = None
       return None
-    busy = busy.rename(columns={"arc": "busy"})
     idle = _sum_arc_events(idle_events)
     if idle is None or idle.empty:
       value = self.job_arc(
@@ -3016,30 +2317,34 @@ class Metrics:
         conv=0.01,
         units="#cores",
         cache=cache,
-        rows_cache=rows_cache,
         host_aggregate="sum",
       )
       if cache is not None:
         cache[cache_key] = value
       return value
-    idle = idle.rename(columns={"arc": "idle"})
-    merged = busy.merge(idle, on=["host", "time"], how="left")
-    merged["idle"] = merged["idle"].fillna(0.0)
-    denom = merged["busy"] + merged["idle"]
-    util = (merged["busy"] / denom).where(denom > 0, 0.0).clip(0.0, 1.0)
-    merged["sum"] = util * cores_per_host
-    merged["bucket"] = merged["time"].dt.floor("5min")
-    grouped = (
-      merged.groupby(["host", "bucket"], as_index=False)["sum"]
-      .mean()
-      .rename(columns={"bucket": "time"})
+    axis = np.union1d(busy.time_us, idle.time_us)
+    busy_keys = _columnar_sg.composite_key(
+      busy.host_id, np.searchsorted(axis, busy.time_us).astype(np.int64)
     )
-    grouped = _drop_first_bucket_per_host_if_safe(grouped)
-    if grouped.empty:
-      if cache is not None:
-        cache[cache_key] = None
-      return None
-    value = float(grouped.groupby("host")["sum"].mean().sum())
+    idle_keys = _columnar_sg.composite_key(
+      idle.host_id, np.searchsorted(axis, idle.time_us).astype(np.int64)
+    )
+    order = np.argsort(idle_keys, kind="stable")
+    idle_vals = _columnar_sg.lookup_keys(
+      busy_keys, idle_keys[order], idle.sum_val[order]
+    )
+    idle_vals = np.nan_to_num(idle_vals, nan=0.0)
+    denom = busy.sum_val + idle_vals
+    with np.errstate(divide="ignore", invalid="ignore"):
+      util = np.where(denom > 0, busy.sum_val / denom, 0.0)
+    util = np.clip(util, 0.0, 1.0)
+    value = bucketed_job_value(
+      busy.host_id,
+      busy.time_us,
+      util * cores_per_host,
+      1.0,
+      host_aggregate="sum",
+    )
     if cache is not None:
       cache[cache_key] = value
     return value
@@ -3506,7 +2811,7 @@ class Metrics:
       )
 
     # Job-scoped host_data via ORM (no temp table)
-    with jid_table.jid_table(job.jid) as jt:
+    with open_job_table(job) as jt:
       simple_metric_cache = {}
       host_data_rows_cache = {}
 
@@ -3519,15 +2824,9 @@ class Metrics:
       sch = getattr(jt, "schema", None) or {}
       schema_json = dict(sch) if isinstance(sch, dict) else {}
 
-      if not jt._host_data_qs().exists():
+      if not jt.has_host_data():
         # Still persist schema + job-detail GPU/FSIO aggregates (ORM paths) for API.
-        from hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary import (
-          compute_job_gpu_summary_tuple,
-        )
-
-        gpu_active, gpu_max, gpu_mean, gpu_count = (
-          compute_job_gpu_summary_tuple(jt)
-        )
+        gpu_active, gpu_max, gpu_mean, gpu_count = gpu_summary_tuple(jt)
         detail_values = (gpu_active, gpu_max, gpu_mean, gpu_count)
         for i, (metric_name, row_type, units) in enumerate(
           _GPU_JOB_DETAIL_CATALOG
@@ -3818,13 +3117,7 @@ class Metrics:
             }
           )
 
-      from hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary import (
-        compute_job_gpu_summary_tuple as _compute_job_gpu_summary_tuple,
-      )
-
-      gpu_active, gpu_max, gpu_mean, gpu_count = _compute_job_gpu_summary_tuple(
-        jt
-      )
+      gpu_active, gpu_max, gpu_mean, gpu_count = gpu_summary_tuple(jt)
       detail_values = (gpu_active, gpu_max, gpu_mean, gpu_count)
       for i, (metric_name, row_type, units) in enumerate(
         _GPU_JOB_DETAIL_CATALOG
@@ -3884,38 +3177,22 @@ class Metrics:
         results.append({"jid": job, **row})
 
       if self.complex_metrics_list:
-        job_view = _JobForMetrics(jt)
+        with phase_profile.phase("frame_build"):
+          job_view = jt.metrics_view()
         distinct_time_count = int(job_view.per_host_distinct_time_sum)
       else:
-        ht = jt.get_host_time_df()
-        distinct_time_count = (
-          int(ht.groupby("host")["time"].nunique().sum())
-          if ht is not None and not getattr(ht, "empty", True)
-          else 0
-        )
+        distinct_time_count = int(jt.distinct_time_count())
       u = utils(job_view) if job_view is not None else None
 
       for metric_name in self.complex_metrics_list:
         if metric_name == "max_node_power_est_w":
-          from hpcperfstats.analysis.metrics.lib.gen.node_power_est import (
-            max_node_power_est_w as _max_npe,
-          )
-
-          value = _max_npe(jt)
+          value = max_node_power_est_w(jt)
           typename, units = "job", "W"
         elif metric_name == "avg_node_power_est_w":
-          from hpcperfstats.analysis.metrics.lib.gen.node_power_est import (
-            mean_node_power_est_w as _mean_npe,
-          )
-
-          value = _mean_npe(jt)
+          value = mean_node_power_est_w(jt)
           typename, units = "job", "W"
         elif metric_name == "job_cpu_gpu_watt_hours":
-          from hpcperfstats.analysis.metrics.lib.gen.node_power_est import (
-            job_cpu_gpu_watt_hours as _job_wh,
-          )
-
-          value = _job_wh(jt)
+          value = job_cpu_gpu_watt_hours(jt)
           typename, units = "job", "Wh"
         else:
           value, typename, units = getattr(

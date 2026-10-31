@@ -38,8 +38,19 @@ from bokeh.transform import factor_cmap
 from django.db import connection
 from django.db.models.base import ModelState
 
-import hpcperfstats.analysis.metrics.lib.gen.jid_table as jid_table
 import hpcperfstats.analysis.metrics.lib.plot as plots
+from hpcperfstats.analysis.metrics.lib import phase_profile
+from hpcperfstats.analysis.metrics.lib.columnar.detail_series import fsio_totals
+from hpcperfstats.analysis.metrics.lib.columnar.job_table import (
+  HANDOFF,
+  open_job_table,
+)
+from hpcperfstats.analysis.metrics.lib.columnar.type_detail_series import (
+  build_type_detail_series,
+  events_units_for_first_host,
+  stats_data_rows,
+  type_list_for_first_host,
+)
 from hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary import (
   gpu_agg_rows_for_job_window,
   gpu_count_total_for_job_window,
@@ -266,27 +277,28 @@ def upsert_job_detail_artifact(
     >>> upsert_job_detail_artifact("x", "x", "x", "x", {})  # doctest: +SKIP
   """
   compressed, encoding = _compress_payload(payload)
-  job_detail_artifact.objects.bulk_create(
-    [
-      job_detail_artifact(
-        jid_id=jid,
-        artifact_kind=artifact_kind,
-        artifact_scope=artifact_scope,
-        payload_compressed=compressed,
-        payload_encoding=encoding,
-        input_fingerprint=input_fingerprint,
-        artifact_schema=APP_DETAIL_ARTIFACT_SCHEMA_VERSION,
-      )
-    ],
-    update_conflicts=True,
-    update_fields=[
-      "payload_compressed",
-      "payload_encoding",
-      "input_fingerprint",
-      "artifact_schema",
-    ],
-    unique_fields=["jid", "artifact_kind", "artifact_scope"],
-  )
+  with phase_profile.phase("persist"):
+    job_detail_artifact.objects.bulk_create(
+      [
+        job_detail_artifact(
+          jid_id=jid,
+          artifact_kind=artifact_kind,
+          artifact_scope=artifact_scope,
+          payload_compressed=compressed,
+          payload_encoding=encoding,
+          input_fingerprint=input_fingerprint,
+          artifact_schema=APP_DETAIL_ARTIFACT_SCHEMA_VERSION,
+        )
+      ],
+      update_conflicts=True,
+      update_fields=[
+        "payload_compressed",
+        "payload_encoding",
+        "input_fingerprint",
+        "artifact_schema",
+      ],
+      unique_fields=["jid", "artifact_kind", "artifact_scope"],
+    )
 
 
 def load_job_detail_artifact(
@@ -707,7 +719,8 @@ def _pie_item_from_precision_mix(
     researcher_use_for_job_detail_bokeh_plot(help_plot_key),
     is_shared_node=is_shared_node,
   )
-  return json_item(p), None
+  with phase_profile.phase("bokeh"):
+    return json_item(p), None
 
 
 def _multiprecision_mix_payload(
@@ -866,55 +879,17 @@ def _persist_job_detail_and_mix(
     telemetry["detail_fsio_metrics_reused"] = (
       int(telemetry.get("detail_fsio_metrics_reused", 0)) + 1
     )
-  try:
-    if (not fsio_from_metrics) and ("llite" not in fsio):
-      if telemetry is not None:
-        telemetry["detail_fsio_fallback_queries"] = (
-          int(telemetry.get("detail_fsio_fallback_queries", 0)) + 1
-        )
-      llite_df = jt.get_llite_delta_by_event()
-      if not llite_df.empty and "delta_sum" in llite_df.columns:
-        llite_df = llite_df.copy()
-        llite_df["delta_mb"] = llite_df["delta_sum"].fillna(0) / (1024 * 1024)
-        read_row = llite_df[llite_df["event"] == "read_bytes"]
-        write_row = llite_df[llite_df["event"] == "write_bytes"]
-        fsio["llite"] = [
-          float(read_row["delta_mb"].iloc[0]) if len(read_row) else 0.0,
-          float(write_row["delta_mb"].iloc[0]) if len(write_row) else 0.0,
-        ]
-  except Exception:
-    failed_parts.append("fsio_llite")
-
-  if (not fsio_from_metrics) and ("nfs" not in fsio):
-    try:
-      if telemetry is not None and "llite" in fsio:
-        telemetry["detail_fsio_fallback_queries"] = (
-          int(telemetry.get("detail_fsio_fallback_queries", 0)) + 1
-        )
-      nfs = jt.get_nfs_delta_totals_mb()
-      if nfs is not None:
-        fsio["nfs"] = nfs
-    except Exception:
-      failed_parts.append("fsio_nfs")
-
-  if (not fsio_from_metrics) and ("beegfs" not in fsio):
+  if not fsio_from_metrics:
     try:
       if telemetry is not None:
         telemetry["detail_fsio_fallback_queries"] = (
           int(telemetry.get("detail_fsio_fallback_queries", 0)) + 1
         )
-      beegfs_df = jt.get_beegfs_delta_by_event()
-      if not beegfs_df.empty and "delta_sum" in beegfs_df.columns:
-        beegfs_df = beegfs_df.copy()
-        beegfs_df["delta_mb"] = beegfs_df["delta_sum"].fillna(0) / (1024 * 1024)
-        read_row = beegfs_df[beegfs_df["event"] == "vfs_read_bytes"]
-        write_row = beegfs_df[beegfs_df["event"] == "vfs_write_bytes"]
-        fsio["beegfs"] = [
-          float(read_row["delta_mb"].iloc[0]) if len(read_row) else 0.0,
-          float(write_row["delta_mb"].iloc[0]) if len(write_row) else 0.0,
-        ]
+      for key, (read_mb, write_mb) in fsio_totals(jt).items():
+        if key not in fsio:
+          fsio[key] = [float(read_mb), float(write_mb)]
     except Exception:
-      failed_parts.append("fsio_beegfs")
+      failed_parts.append("fsio")
 
   extend_fsio_payload_lists_with_peaks(fsio, jt)
 
@@ -1011,7 +986,7 @@ def persist_job_detail_artifacts_for_jid(
     return
   jt = shared.get("jt")
   if jt is None:
-    jt = jid_table.jid_table(jid)
+    jt = HANDOFF.pop(jid) or open_job_table(jid, handoff=False)
     shared["jt"] = jt
   fingerprint = shared.get("detail_fingerprint")
   if fingerprint is None:
@@ -1046,30 +1021,21 @@ def persist_job_detail_artifacts_for_jid(
     if type_detail_fps.get(type_name) == fingerprint:
       continue
     try:
-      provider = jid_table.TypeDetailDataProvider(
-        jid,
-        type_name,
-        jt.start_time,
-        jt.end_time,
+      events_units = events_units_for_first_host(jt, type_name, jt.units)
+      type_list = type_list_for_first_host(jt, type_name)
+      with phase_profile.phase("plot_series"):
+        series = build_type_detail_series(
+          jt, type_name, events_units, type_list
+        )
+      sp = plots.DevPlot(
+        series,
         jt.acct_host_list,
+        is_shared_node=bool(getattr(jt, "_shared_node", False)),
       )
-      sp = plots.DevPlot(provider, jt.acct_host_list)
-      df, plot_comp = sp.plot()
-      tplot_item = json_item(plot_comp) if plot_comp is not None else None
-      schema_cols = (
-        [c for c in df.columns if c not in ("host", "time", "index")]
-        if not df.empty
-        else []
-      )
-      stats_data = []
-      if not df.empty and "time" in df.columns and schema_cols:
-        df = df.copy()
-        df["dt"] = df["time"].sub(df["time"].iloc[0]).astype("timedelta64[s]")
-        df1 = df.groupby("dt")[schema_cols].mean().reset_index()
-        for t in range(len(df1)):
-          vals = df1.loc[df1.index[t], schema_cols].values.flatten().tolist()
-          vals = [float(x) if hasattr(x, "__float__") else x for x in vals]
-          stats_data.append([str(df1["dt"].iloc[t]), vals])
+      _series, plot_comp = sp.plot()
+      with phase_profile.phase("bokeh"):
+        tplot_item = json_item(plot_comp) if plot_comp is not None else None
+      stats_data, schema_cols = stats_data_rows(series)
       upsert_job_detail_artifact(
         jid=jid,
         artifact_kind=ARTIFACT_KIND_TYPE_DETAIL,

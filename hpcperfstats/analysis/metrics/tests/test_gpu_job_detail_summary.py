@@ -1,9 +1,12 @@
-"""Unit tests for gpu_job_detail_summary (ORM aggregate reduction, no DB)."""
+"""Unit tests for gpu_job_detail_summary (JobFrame aggregates, no DB)."""
 
 from datetime import UTC
 from unittest.mock import MagicMock
 
 from hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary import (
+  gpu_agg_rows_for_job_window,
+  gpu_count_total_for_job_window,
+  gpu_inventory_for_job_window,
   reduce_gpu_agg_to_util_stats,
 )
 
@@ -107,67 +110,75 @@ def test_compute_job_gpu_summary_tuple_swallows_errors(monkeypatch):
   assert g.compute_job_gpu_summary_tuple(j) == (None, None, None, None)
 
 
-def test_gpu_agg_rows_uses_type_detail_batch_and_time_chunks(monkeypatch):
-  """GPU util aggregates must use batch=8 and hostxtime helpers."""
+def test_gpu_agg_rows_read_from_the_job_frame():
+  """Util rows come from the JobFrame: Count/Max/Avg per (host, dev, event)."""
   from datetime import datetime
 
-  from hpcperfstats.analysis.metrics.lib import gpu_job_detail_summary as g
-  from hpcperfstats.analysis.metrics.lib.gen import jid_table as jt_mod
-
-  j = MagicMock()
-  j.acct_host_list = [f"h{i}.example.com" for i in range(10)]
-  j.start_time = datetime(2024, 1, 1, tzinfo=UTC)
-  j.end_time = datetime(2024, 1, 1, 2, tzinfo=UTC)
-
-  seen_batches = []
-
-  def fake_iter(hosts, tkw, *, batch_size=None, slice_s=None):
-    seen_batches.append(batch_size)
-    yield (
-      ["h0.example.com"],
-      {"time__gte": j.start_time, "time__lte": j.end_time},
-    )
-
-  def fake_retry(hosts, tf, run, merge, **kwargs):
-    return [
-      {
-        "host": "h0.example.com",
-        "dev": "0",
-        "event": "gpu_util",
-        "cnt": 4,
-        "vmax": 50.0,
-        "vmean": 25.0,
-      }
-    ]
-
-  monkeypatch.setattr(jt_mod, "_iter_host_time_query_chunks", fake_iter)
-  monkeypatch.setattr(jt_mod, "_run_with_host_time_timeout_retry", fake_retry)
-  monkeypatch.setattr(
-    g.cfg, "get_metrics_plot_aggregate_time_slice_s", lambda: 3600
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
   )
 
-  out = g.gpu_agg_rows_for_job_window(j)
-  assert out
-  assert seen_batches == [jt_mod.TYPE_DETAIL_HOST_QUERY_BATCH]
+  t0 = datetime(2024, 1, 1, 1, tzinfo=UTC)
+  rows = [
+    (
+      t0.replace(minute=m),
+      "h0.example.com",
+      "nvidia_gpu",
+      "gpu_util",
+      "0",
+      v,
+      None,
+      None,
+    )
+    for m, v in ((0, 10.0), (1, 50.0), (2, 15.0), (3, 25.0))
+  ]
+  out = gpu_agg_rows_for_job_window(table_from_records(rows))
+  assert out == [
+    {
+      "host": "h0.example.com",
+      "dev": "0",
+      "event": "gpu_util",
+      "cnt": 4,
+      "vmax": 50.0,
+      "vmean": 25.0,
+    }
+  ]
 
 
-def test_shared_gpu_count_is_affinity_length(monkeypatch):
+def test_shared_gpu_count_is_affinity_length():
   """Shared jobs count affinity devices, not the host gpu_count gauge."""
-  import hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary as summary
+  from datetime import datetime
 
-  monkeypatch.setattr(summary, "job_is_shared_node", lambda jid: True)
-  monkeypatch.setattr(summary, "gpu_devs_for_job", lambda jid: ["0"])
-  job = type("J", (), {"jid": "65877"})()
-  assert summary.gpu_count_total_for_job_window(job) == 1
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
+
+  t0 = datetime(2024, 1, 1, 1, tzinfo=UTC)
+  table = table_from_records(
+    [(t0, "h", "nvidia_gpu", "gpu_count", "0", 4.0, None, None)],
+    shared=True,
+    gpu_affinity_devs=["0"],
+  )
+  assert gpu_count_total_for_job_window(table) == 1
 
 
-def test_shared_empty_gpu_list_is_zero(monkeypatch):
+def test_shared_empty_gpu_list_is_zero():
   """An empty affinity list is no GPUs, not the host inventory."""
-  import hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary as summary
+  from datetime import datetime
 
-  monkeypatch.setattr(summary, "job_is_shared_node", lambda jid: True)
-  monkeypatch.setattr(summary, "gpu_devs_for_job", lambda jid: [])
-  job = type("J", (), {"jid": "65877", "acct_host_list": ["h"]})()
-  assert summary.gpu_count_total_for_job_window(job) == 0
-  assert summary.gpu_inventory_for_job_window(job) == []
-  assert summary.gpu_agg_rows_for_job_window(job) == []
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
+
+  t0 = datetime(2024, 1, 1, 1, tzinfo=UTC)
+  table = table_from_records(
+    [
+      (t0, "h", "nvidia_gpu", "gpu_count", "0", 4.0, None, None),
+      (t0, "h", "nvidia_gpu", "gpu_util", "0", 40.0, None, None),
+    ],
+    shared=True,
+    gpu_affinity_devs=[],
+  )
+  assert gpu_count_total_for_job_window(table) == 0
+  assert gpu_inventory_for_job_window(table) == []
+  assert gpu_agg_rows_for_job_window(table) == []

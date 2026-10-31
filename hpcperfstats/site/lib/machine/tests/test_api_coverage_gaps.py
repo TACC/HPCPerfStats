@@ -229,7 +229,7 @@ class TestHostPlotApi:
       patch.object(api, "_require_auth", return_value=None),
       patch.object(api, "get_site_content_cache_timeout", return_value=60),
       patch.object(api, "_pg_host_plot_statement_timeout", _fake_timeout),
-      patch.object(api, "HostDataProvider", return_value=MagicMock()),
+      patch.object(api, "host_data_table", return_value=MagicMock()),
       patch.object(
         api.plots,
         "SummaryPlot",

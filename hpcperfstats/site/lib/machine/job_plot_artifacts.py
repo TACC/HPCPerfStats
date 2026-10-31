@@ -4,7 +4,6 @@ update_metrics prewarm).
 
 Attributes:
   APP_PLOT_ARTIFACT_SCHEMA_VERSION: Attribute.
-  COMMON_PLOT_AGGREGATE_BUNDLE: Attribute.
   JOB_PLOT_JSON_KEYS: Attribute.
   JOB_PLOT_KINDS: Attribute.
   JOB_PLOT_KIND_SPECS: Attribute.
@@ -32,9 +31,13 @@ from django.conf import settings
 from django.db import DatabaseError, connection
 from django.utils import timezone as dj_tz
 
-import hpcperfstats.analysis.metrics.lib.gen.jid_table as jid_table
 import hpcperfstats.analysis.metrics.lib.plot as plots
 import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.analysis.metrics.lib import phase_profile
+from hpcperfstats.analysis.metrics.lib.columnar.job_table import (
+  HANDOFF,
+  open_job_table,
+)
 
 from .bokeh_plot_layout import (
   _apply_zoom_layout_to_bokeh_model,
@@ -217,45 +220,6 @@ JOB_PLOT_JSON_KEYS: dict[str, tuple[str, str]] = {
 
 # Shared aggregate bundle for common roofline probes to reduce repeated
 # per-kind aggregate misses while preserving plot-specific fallback behavior.
-COMMON_PLOT_AGGREGATE_BUNDLE: tuple[
-  tuple[str, str, tuple[str, ...], float], ...
-] = (
-  ("amd64_pmc", "arc", ("FLOPS",), 1e-9),
-  (
-    "amd64_df",
-    "arc",
-    (
-      "MBW_CHANNEL_0",
-      "MBW_CHANNEL_1",
-      "MBW_CHANNEL_2",
-      "MBW_CHANNEL_3",
-      "MBW_CHANNEL_4",
-      "MBW_CHANNEL_5",
-      "MBW_CHANNEL_6",
-      "MBW_CHANNEL_7",
-    ),
-    2 / (1024**3),
-  ),
-  ("nvidia_gpu", "arc", ("gpu_flops",), 1e-9),
-  (
-    "nvidia_gpu",
-    "value",
-    ("gpu_mem_bw_bytes_rate",),
-    1 / (1024**3),
-  ),
-  ("nvidia_gpu", "arc", ("gpu_io_link_total_bytes",), 1 / (1024**3)),
-  (
-    "nvidia_gpu",
-    "arc",
-    (
-      "gpu_pcie_tx_bytes",
-      "gpu_pcie_rx_bytes",
-      "gpu_nvlink_tx_bytes",
-      "gpu_nvlink_rx_bytes",
-    ),
-    1 / (1024**3),
-  ),
-)
 
 
 def get_job_plot_redis_max_bytes() -> int:
@@ -683,188 +647,6 @@ def _load_rows_map(
   return {(row.plot_kind, row.layout): row for row in rows}
 
 
-class _JtMemoProxy:
-  """
-  Per-call memo wrapper for jid_table aggregate/dataframe reads.
-
-  Attributes:
-    _aggregate_cache: Attribute.
-    _host_time_df: Attribute.
-    _jt: Attribute.
-    _telemetry: Attribute.
-  """
-
-  def __init__(
-    self,
-    jt: Any,
-    telemetry: dict[str, int] | None = None,
-  ) -> None:
-    """
-    Initialize a new instance.
-
-    Args:
-      jt (Any): Jt passed to this helper.
-      telemetry (Optional[Dict[str, int]]): Telemetry, or None when absent.
-
-    Returns:
-      None
-
-    Examples:
-      >>> _JtMemoProxy(None, None)  # doctest: +SKIP
-    """
-    self._jt = jt
-    self._host_time_df = None
-    self._aggregate_cache: dict[
-      tuple[str, str, tuple[str, ...], float], Any
-    ] = {}
-    self._telemetry = telemetry if isinstance(telemetry, dict) else None
-
-  def __getattr__(self, name: Any) -> Any:
-    """
-    Internal helper to handle getattr.
-
-    Args:
-      name (Any): Name passed to this helper.
-
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-
-    Examples:
-      >>> __getattr__(None)  # doctest: +SKIP
-    """
-    return getattr(self._jt, name)
-
-  def _normalize_events(self, events: Any) -> Any:
-    """
-    Internal helper to normalize the events.
-
-    Args:
-      events (Any): Events passed to this helper.
-
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-
-    Examples:
-      >>> _JtMemoProxy()._normalize_events(None)  # doctest: +SKIP
-    """
-    return tuple(sorted(str(e) for e in (events or ())))
-
-  def _normalize_conv(self, conv: Any) -> Any:
-    """
-    Internal helper to normalize the conv.
-
-    Args:
-      conv (Any): Conv passed to this helper.
-
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-
-    Examples:
-      >>> _JtMemoProxy()._normalize_conv(None)  # doctest: +SKIP
-    """
-    try:
-      return round(float(conv), 12)
-    except Exception:
-      return conv
-
-  def get_host_time_df(self) -> Any:
-    """
-    Return the host time DataFrame.
-
-    Returns:
-      Any: Value produced by this call (type depends on inputs).
-
-    Examples:
-      >>> _JtMemoProxy().get_host_time_df()  # doctest: +SKIP
-    """
-    if self._host_time_df is None:
-      self._host_time_df = self._jt.get_host_time_df()
-    elif self._telemetry is not None:
-      self._telemetry["plot_jt_memo_host_time_hits"] = (
-        int(self._telemetry.get("plot_jt_memo_host_time_hits", 0)) + 1
-      )
-    return self._host_time_df.copy()
-
-  def get_aggregate_df(
-    self,
-    typ: Any,
-    metric_column: Any,
-    events: Any,
-    conv: Any,
-    *,
-    group_by_dev: bool = False,
-  ) -> Any:
-    """
-    Return a memoized copy of the inner ``jid_table`` aggregate DataFrame.
-
-    Signature stays keyword-compatible with
-    ``jid_table.get_aggregate_df``, including grain flags. Memo keys
-    include ``group_by_dev`` so host-sum Summary rows and per-device GPU
-    roofline rows for the same type/events/conv do not collide.
-
-    Args:
-      typ (Any): ``host_data.type`` probe name or alias.
-      metric_column (Any): Metric column (``arc``, ``value``, or
-      ``delta``).
-      events (Any): Event name or sequence of event names.
-      conv (Any): Multiplier applied to summed values.
-      group_by_dev (bool): When True, one row per (host, time, dev);
-      when False, sum devices at hostxtime grain.
-
-    Returns:
-      Any: Copy of the cached aggregate DataFrame from the inner table.
-
-    Examples:
-      >>> proxy.get_aggregate_df(  # doctest: +SKIP
-      ...   "nvidia_gpu", "arc", ["gpu_util"], 1.0, group_by_dev=True
-      ... )
-    """
-    key = (
-      str(typ),
-      str(metric_column),
-      self._normalize_events(events),
-      self._normalize_conv(conv),
-      bool(group_by_dev),
-    )
-    if key not in self._aggregate_cache:
-      self._aggregate_cache[key] = self._jt.get_aggregate_df(
-        typ,
-        metric_column,
-        events,
-        conv,
-        group_by_dev=group_by_dev,
-      )
-      if self._telemetry is not None:
-        self._telemetry["plot_jt_memo_aggregate_misses"] = (
-          int(self._telemetry.get("plot_jt_memo_aggregate_misses", 0)) + 1
-        )
-    elif self._telemetry is not None:
-      self._telemetry["plot_jt_memo_aggregate_hits"] = (
-        int(self._telemetry.get("plot_jt_memo_aggregate_hits", 0)) + 1
-      )
-    return self._aggregate_cache[key].copy()
-
-  def prefetch_aggregate_bundle(
-    self,
-    specs: Sequence[tuple[str, str, Sequence[str], float]],
-  ) -> None:
-    """
-    Prefetch aggregate bundle.
-
-    Args:
-      specs (Sequence[Tuple[str, str, Sequence[str], float]]): Sequence for
-      specs.
-
-    Returns:
-      None
-
-    Examples:
-      >>> _JtMemoProxy().prefetch_aggregate_bundle([])  # doctest: +SKIP
-    """
-    for typ, metric_column, events, conv in specs:
-      self.get_aggregate_df(typ, metric_column, events, conv)
-
-
 def load_cached_job_plot_entry(
   jid: str,
   plot_kind: str,
@@ -964,7 +746,8 @@ def compute_plot_item_for_kind(
   spec = JOB_PLOT_KIND_SPECS.get(plot_kind)
   if not spec:
     return None, "Unknown plot kind", None
-  result = spec.plot_fn(j)
+  with phase_profile.phase("plot_series"):
+    result = spec.plot_fn(j)
   bw_axis: str | None = None
   if isinstance(result, tuple) and len(result) == 3:
     plot_json, plot_reason, bw_axis = result
@@ -972,9 +755,10 @@ def compute_plot_item_for_kind(
     plot_json, plot_reason = result[0], result[1]
   if plot_json is None:
     return None, plot_reason or spec.empty_fallback, bw_axis
-  if zoom_mode:
-    _apply_zoom_layout_to_bokeh_model(plot_json)
-  return json_item(plot_json), None, bw_axis
+  with phase_profile.phase("bokeh"):
+    if zoom_mode:
+      _apply_zoom_layout_to_bokeh_model(plot_json)
+    return json_item(plot_json), None, bw_axis
 
 
 def _is_prewarm_pool_poison_message(message: str | None) -> bool:
@@ -1073,17 +857,10 @@ def persist_job_plot_artifacts_for_jid(
     return
   jt = shared.get("jt")
   if jt is None:
-    jt = jid_table.jid_table(jid)
+    jt = HANDOFF.pop(jid) or open_job_table(jid, handoff=False)
     shared["jt"] = jt
-  plot_jt = shared.get("plot_jt")
-  if plot_jt is None:
-    plot_jt = _JtMemoProxy(jt, telemetry=telemetry)
-    try:
-      plot_jt.prefetch_aggregate_bundle(COMMON_PLOT_AGGREGATE_BUNDLE)
-    except Exception:
-      # Plot builders still probe independently; bundle prefetch is best-effort.
-      pass
-    shared["plot_jt"] = plot_jt
+  # The columnar table memoises its aggregates; no proxy or prefetch bundle.
+  plot_jt = jt
   write_rows = []
   retry_parts = []
   for kind in JOB_PLOT_KINDS:
@@ -1135,6 +912,7 @@ def persist_job_plot_artifacts_for_jid(
       )
   if write_rows:
     # A failed upsert must reach the prewarm retry and the job outcome.
-    upsert_job_plot_artifact_batch(write_rows)
+    with phase_profile.phase("persist"):
+      upsert_job_plot_artifact_batch(write_rows)
   if retry_parts:
     raise ArtifactBuildFailedError(jid, retry_parts)
