@@ -767,7 +767,20 @@ RUN chmod +x /tmp/codon-src/build_codon_ext.sh \
   && test -f /opt/hpcperfstats/codon_parse/libgfortran.so.5 \
   && test -f /opt/hpcperfstats/codon_parse/libquadmath.so.0 \
   && test -f /opt/hpcperfstats/codon_parse/libgcc_s.so.1 \
-  && rm -rf /tmp/codon-src /opt/codon
+  && rm -rf /tmp/codon-src
+# update_metrics columnar kernels (COPY decode + segment reductions): same
+# bake shape, own pyext dir. Fail closed: the scheduler refuses to start
+# without hpcperfstats_codon_metrics.so on /opt/python3.14t.
+COPY hpcperfstats/analysis/metrics/codon/ /tmp/codon-metrics-src/
+RUN chmod +x /tmp/codon-metrics-src/build_codon_metrics_ext.sh \
+  && CODON_HOME=/opt/codon CODON_SRC=/tmp/codon-metrics-src \
+     CODON_OUT=/opt/hpcperfstats/codon_metrics \
+     /tmp/codon-metrics-src/build_codon_metrics_ext.sh \
+  && test -f /opt/hpcperfstats/codon_metrics/hpcperfstats_codon_metrics.so \
+  && test -f /opt/hpcperfstats/codon_metrics/libhpcperfstats_codon_metrics_kernel.so \
+  && test -f /opt/hpcperfstats/codon_metrics/libcodonrt.so \
+  && test -f /opt/hpcperfstats/codon_metrics/libomp.so \
+  && rm -rf /tmp/codon-metrics-src /opt/codon
 
 # Slim runtime: COPY only /opt install prefixes (never /usr/src or cmake build dirs).
 FROM debian:trixie-slim AS hpcperfstats-base
@@ -802,6 +815,7 @@ COPY --from=python-build /opt/python3.14t /opt/python3.14t
 # Bust when codon-build output changes but Buildah reuses a stale COPY --from layer.
 ARG HPCPERFSTATS_CODON_CACHEBUST=0
 COPY --from=codon-build /opt/hpcperfstats/codon_parse /opt/hpcperfstats/codon_parse
+COPY --from=codon-build /opt/hpcperfstats/codon_metrics /opt/hpcperfstats/codon_metrics
 
 # Default syslog-ng allowlist fragment (render overwrites at container start).
 RUN /bin/bash -o pipefail -c "printf '%s\n' \
@@ -864,7 +878,10 @@ RUN /bin/bash -o pipefail -c '\
 # Codon pyext lands via COPY --from=codon-build (above). Own for pipeline uid.
 RUN test -f /opt/hpcperfstats/codon_parse/hpcperfstats_codon_parse.so \
   && test -f /opt/hpcperfstats/codon_parse/libcodonrt.so \
-  && chown -R hpcperfstats:hpcperfstats /opt/hpcperfstats/codon_parse
+  && chown -R hpcperfstats:hpcperfstats /opt/hpcperfstats/codon_parse \
+  && test -f /opt/hpcperfstats/codon_metrics/hpcperfstats_codon_metrics.so \
+  && test -f /opt/hpcperfstats/codon_metrics/libcodonrt.so \
+  && chown -R hpcperfstats:hpcperfstats /opt/hpcperfstats/codon_metrics
 
 
 # Gunicorn stays GIL (/usr/local/bin/gunicorn). background_thread:false is fork-safe for prefork.

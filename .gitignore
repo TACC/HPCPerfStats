@@ -44,6 +44,7 @@ tacc_stats.egg-info/
 !services-conf/clang_march_native_probe.sh
 # Codon prod bake + experiment A/B / inventory runners (root *.sh otherwise drops them).
 !hpcperfstats/dbload/codon/*.sh
+!hpcperfstats/analysis/metrics/codon/*.sh
 !experiments/codon/*.sh
 *.so
 # Versioned ELF sonames (libgcc_s.so.1, libgfortran.so.5, …) — not matched by *.so
