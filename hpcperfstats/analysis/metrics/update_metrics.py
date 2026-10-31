@@ -117,6 +117,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
+# Must precede any ``bokeh.models`` import: Bokeh's validation toggle writes a
+# class attribute per model init, which exhausts the type-version budget of
+# ``Property`` during import and serializes every property lookup on the
+# free-threaded interpreter's type lock (see that module's docstring).
+import hpcperfstats.analysis.metrics.lib.plot.bokeh_validation_patch  # noqa: F401
 from hpcperfstats.analysis.metrics.lib.metrics_idle_slot_supplement import (
   estimated_sample_count_for_job,
   resolve_nhosts_for_ref,

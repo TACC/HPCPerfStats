@@ -17,6 +17,9 @@ MSG_NO_METRIC_DATA = "No metric data available for this job."
 MSG_NO_HOST_MSR_DATA = "No host-level MSR data available"
 MSG_NO_ROOFLINE_DATA = "No FLOPS/memory bandwidth data available for roofline."
 
+# Thread-safe Bokeh validation toggle; must be installed before bokeh.models.
+import hpcperfstats.analysis.metrics.lib.plot.bokeh_validation_patch  # noqa: F401
+
 # Import plots to run on data
 from hpcperfstats.analysis.metrics.lib.plot.devplot import DevPlot
 from hpcperfstats.analysis.metrics.lib.plot.roofline import (
