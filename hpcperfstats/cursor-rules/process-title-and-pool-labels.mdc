@@ -7,7 +7,7 @@ alwaysApply: false
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
-Supervisor/batch daemons (`sync_timedb`, `update_metrics`, `listend`, etc.) must label **main**, **process-pool worker**, and **helper thread** roles in `top`/`ps` without clobbering **gunicorn** worker titles. `update_metrics` uses threads only.
+Supervisor/batch daemons (`sync_timedb`, `update_metrics`, `listend`, etc.) must label **main**, **process-pool worker**, and **helper thread** roles in `top`/`ps` without clobbering **gunicorn** worker titles. `update_metrics` uses threads for metrics compute and forkserver worker processes for the Bokeh prewarm (`[worker:prewarm-pool]`).
 
 ## Canonical module
 
@@ -26,6 +26,7 @@ Supervisor/batch daemons (`sync_timedb`, `update_metrics`, `listend`, etc.) must
 | Pool worker | `sync_timedb.py [worker:ingest-pool]` / `[thread:ingest-write-pool]` |
 | Metrics compute thread | `update_metrics.py [thread:metrics-pool]` |
 | Public EF thread | `update_metrics.py [thread:public-ef-pool]` |
+| Bokeh prewarm worker process | `update_metrics.py [worker:prewarm-pool]` (`prewarm_process_pool.py`, forkserver; initializer `apply_pool_worker_process_title`) |
 | listend live-DB parse thread | `listend.py [thread:listend-db-N]` (not `[worker:listend-db-pool]`) |
 | listend / sync ingest write thread | `listend.py` / `sync_timedb.py` `[thread:ingest-write-pool]` (`sync_timedb_ingest_write_stage`) |
 | listend AMQP consume thread | `listend.py [thread:amqp-consumer-N]` (one BlockingConnection each) |

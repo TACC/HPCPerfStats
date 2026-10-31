@@ -32,7 +32,7 @@ globs: services-conf/pipeline_web.Dockerfile,services-conf/supervisord.conf
 **listend**, **sync_timedb**, and **update_metrics** workers use in-process threads sharing ordinary Python objects (no `/dev/shm` payload bus and no Redis payload bus). Do **not**:
 
 - Restore listend spawn Processes or POSIX SharedMemory
-- Restore update_metrics process pools, SIGALRM per-job timers, or process-worker fallbacks
+- Restore update_metrics process pools for **metrics compute**, SIGALRM per-job timers, or process-worker fallbacks. **Exception (2026-10-31):** the Bokeh **prewarm** runs in forkserver worker processes owned by `hpcperfstats/analysis/metrics/lib/prewarm_process_pool.py` (`[PIPELINE] metrics_prewarm_processes`, `auto` = one per metrics thread) because Bokeh model construction serialises on free-threaded interpreter locks (`sys.modules` dict, `_abc` cache sets) and the stop-the-world GC: 16 threads 7.3 jobs/min vs 28 processes 40.4 on hpcperfstats-dev. The parent thread ships the decoded `ColumnarJobTable` to the child; metrics compute, COPY reads and persistence stay on threads
 - Use Redis as a worker-data bus for daemon-private queues
 - Remove the in-process job store / disk sidecar (`.sync_timedb_job_store.json`) without a replacement durability path
 - Put gunicorn on 3.14t

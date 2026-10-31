@@ -20,6 +20,7 @@ from hpcperfstats.dbload.lib.conf_parser import (
   get_gunicorn_workers,
   get_listend_db_ingest_pool_processes,
   get_metrics_pool_processes,
+  get_metrics_prewarm_processes,
   get_parallel_db_prefetch_max,
   get_sync_archive_pool_processes,
   get_sync_day_close_max_inflight,
@@ -57,6 +58,8 @@ def estimate_django_pg_slot_peak() -> dict[str, Any]:
   )
   listend = max(0, int(get_listend_db_ingest_pool_processes()))
   metrics_pool = max(1, int(get_metrics_pool_processes()))
+  # One PostgreSQL connection per Bokeh prewarm worker process.
+  prewarm = max(0, int(get_metrics_prewarm_processes()))
   ingest = max(1, int(get_sync_ingest_pool_processes()))
   day_close = max(0, int(get_sync_day_close_max_inflight()))
   archive = max(0, int(get_sync_archive_pool_processes()))
@@ -65,6 +68,7 @@ def estimate_django_pg_slot_peak() -> dict[str, Any]:
     web
     + listend
     + metrics_pool
+    + prewarm
     + PUBLIC_EF_SLOTS
     + ingest
     + day_close
@@ -83,6 +87,7 @@ def estimate_django_pg_slot_peak() -> dict[str, Any]:
       "web": web,
       "listend": listend,
       "metrics_pool": metrics_pool,
+      "prewarm_processes": prewarm,
       "public_ef_pool": PUBLIC_EF_SLOTS,
       "ingest": ingest,
       "day_close": day_close,

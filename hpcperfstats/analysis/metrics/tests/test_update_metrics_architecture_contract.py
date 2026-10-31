@@ -1,4 +1,10 @@
-"""Architecture contracts for the in-process update_metrics worker model."""
+"""
+Architecture contracts for the update_metrics worker model.
+
+Metrics compute runs on titled in-process threads; the Bokeh prewarm runs in
+forkserver worker processes owned by ``lib/prewarm_process_pool.py`` (the one
+place a process pool is allowed), never from the scheduler module itself.
+"""
 
 from __future__ import annotations
 
@@ -26,6 +32,7 @@ def test_update_metrics_production_path_has_no_process_pool_contract() -> None:
 
   forbidden = (
     "multiprocessing.Pool(",
+    "ProcessPoolExecutor(",
     "apply_pool_worker_process_title",
     "abort_if_metrics_pool_workers_dead",
     "reap_metrics_main_zombie_children",

@@ -133,6 +133,10 @@ from hpcperfstats.analysis.metrics.lib.metrics_sliding_session import (
   run_metrics_sliding_session,
   should_use_metrics_sliding_session,
 )
+from hpcperfstats.analysis.metrics.lib.prewarm_process_pool import (
+  get_prewarm_process_pool,
+  shutdown_prewarm_process_pool,
+)
 from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 
 ensure_django()
@@ -1771,6 +1775,17 @@ class _PrewarmPipeline:
     Examples:
       >>> _PrewarmPipeline()._persist_detail_plot_elapsed(None, None)
     """
+    pool = get_prewarm_process_pool(log_fn=log_print)
+    if pool is not None:
+      # Ship the decoded frame to the worker process (one memcpy) instead of
+      # re-reading host_data there; artifact-only refs have no handoff entry
+      # and the child opens the table itself, as the in-thread path does.
+      table = (
+        shared_context.get("jt") if isinstance(shared_context, dict) else None
+      ) or HANDOFF.pop(jid)
+      with phase_profile.job_scope(jid, "prewarm"):
+        result = pool.run(jid, table)
+      return float(result["detail_s"]), float(result["plots_s"])
     close_old_connections()
     with phase_profile.job_scope(jid, "prewarm"):
       t0 = time.monotonic()
@@ -2822,6 +2837,8 @@ def _shutdown_db_best_effort() -> None:
   Examples:
     >>> _shutdown_db_best_effort()  # doctest: +SKIP
   """
+  with contextlib.suppress(Exception):
+    shutdown_prewarm_process_pool()
   try:
     close_old_connections()
     connections.close_all()

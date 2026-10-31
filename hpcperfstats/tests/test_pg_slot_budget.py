@@ -13,6 +13,7 @@ def test_estimate_django_pg_slot_peak_formula(monkeypatch):
     budget, "get_listend_db_ingest_pool_processes", lambda: 32
   )
   monkeypatch.setattr(budget, "get_metrics_pool_processes", lambda: 24)
+  monkeypatch.setattr(budget, "get_metrics_prewarm_processes", lambda: 24)
   monkeypatch.setattr(budget, "get_sync_ingest_pool_processes", lambda: 32)
   monkeypatch.setattr(budget, "get_sync_day_close_max_inflight", lambda: 4)
   monkeypatch.setattr(budget, "get_sync_archive_pool_processes", lambda: 2)
@@ -20,11 +21,20 @@ def test_estimate_django_pg_slot_peak_formula(monkeypatch):
   est = budget.estimate_django_pg_slot_peak()
   web = 32 * 4
   expected = (
-    web + 32 + 24 + budget.PUBLIC_EF_SLOTS + 32 + 4 + 2 + budget.RESERVE_SLOTS
+    web
+    + 32
+    + 24
+    + 24
+    + budget.PUBLIC_EF_SLOTS
+    + 32
+    + 4
+    + 2
+    + budget.RESERVE_SLOTS
   )
   assert est["components"]["web"] == web
   assert est["components"]["listend"] == 32
   assert est["components"]["metrics_pool"] == 24
+  assert est["components"]["prewarm_processes"] == 24
   assert est["peak"] == expected
   assert est["max_connections"] == budget.COMPOSE_PG_MAX_CONNECTIONS
   assert est["warn_threshold"] == int(
@@ -40,6 +50,7 @@ def test_estimate_django_pg_slot_peak_warns_at_eighty_percent(monkeypatch):
     budget, "get_listend_db_ingest_pool_processes", lambda: 32
   )
   monkeypatch.setattr(budget, "get_metrics_pool_processes", lambda: 24)
+  monkeypatch.setattr(budget, "get_metrics_prewarm_processes", lambda: 24)
   monkeypatch.setattr(budget, "get_sync_ingest_pool_processes", lambda: 32)
   monkeypatch.setattr(budget, "get_sync_day_close_max_inflight", lambda: 4)
   monkeypatch.setattr(budget, "get_sync_archive_pool_processes", lambda: 2)

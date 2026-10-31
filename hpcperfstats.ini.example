@@ -138,8 +138,14 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Never supplement at or above this hard sample max (default 80000).
 # metrics_supplement_sample_hard_max = 80000
 
-# Plot prewarm: inline or pipeline_required (default pipeline_required). Prewarm runs on metrics_pool_processes after successful metrics (no secondary pool).
+# Plot prewarm: inline or pipeline_required (default pipeline_required). Prewarm runs after successful metrics, in worker processes when metrics_prewarm_processes > 0.
 # metrics_plot_prewarm_mode = pipeline_required
+
+# Bokeh prewarm worker processes: auto = one per metrics thread, 0 = run prewarm on the metrics threads (default auto; one PostgreSQL connection each).
+# metrics_prewarm_processes = auto
+
+# Tasks a prewarm worker process runs before recycling for RSS hygiene; 0 = never (default 100).
+# metrics_prewarm_max_tasks_per_child = 100
 
 # Plot aggregate SQL time-slice seconds (default 3600); design 5000x48x60.
 # metrics_plot_aggregate_time_slice_s = 3600

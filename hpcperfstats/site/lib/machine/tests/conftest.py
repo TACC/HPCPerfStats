@@ -49,6 +49,18 @@ def _item_blocks_default_database(item):
 
 
 @pytest.fixture(autouse=True)
+def _no_prewarm_worker_processes(monkeypatch):
+  """Tests drive the prewarm pipeline in-thread; never start forkserver
+  prewarm worker processes from a test (the production INI default is
+  ``auto``). ``test_prewarm_process_pool.py`` covers the pool with fakes."""
+  import hpcperfstats.dbload.lib.conf_parser as conf_parser_module
+
+  monkeypatch.setattr(
+    conf_parser_module, "get_metrics_prewarm_processes", lambda: 0
+  )
+
+
+@pytest.fixture(autouse=True)
 def _unit_test_database_guards(request, monkeypatch):
   """Tests with ``django_db(databases=[])`` must not hit real PG cursors."""
   if not _item_blocks_default_database(request.node):

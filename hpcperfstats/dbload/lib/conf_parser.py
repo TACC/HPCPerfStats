@@ -86,6 +86,8 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "metrics_supplement_sample_soft_max"),
   ("PIPELINE", "metrics_supplement_sample_hard_max"),
   ("PIPELINE", "metrics_plot_prewarm_mode"),
+  ("PIPELINE", "metrics_prewarm_processes"),
+  ("PIPELINE", "metrics_prewarm_max_tasks_per_child"),
   ("PIPELINE", "metrics_plot_aggregate_time_slice_s"),
   ("PIPELINE", "metrics_plot_aggregate_max_host_time_points"),
   ("PIPELINE", "metrics_run_poll_timeout_s"),
@@ -264,6 +266,10 @@ INI_OPTION_DEFAULTS = {
   "metrics_supplement_sample_soft_max": "10000",
   "metrics_supplement_sample_hard_max": "80000",
   "metrics_plot_prewarm_mode": "pipeline_required",
+  # Bokeh prewarm worker processes: auto = one per metrics thread, 0 = in-thread.
+  "metrics_prewarm_processes": "auto",
+  # Tasks a prewarm worker runs before it is recycled (RSS hygiene); 0 = never.
+  "metrics_prewarm_max_tasks_per_child": "100",
   # Hostxtime SQL chunk wall seconds (1h @ 1-min sample); design 5000x48x60.
   "metrics_plot_aggregate_time_slice_s": "3600",
   # Max hostxtime rows materialised per plot aggregate DF (not 14.4M).
@@ -2512,6 +2518,53 @@ def get_metrics_supplement_sample_hard_max() -> int:
   _ensure_cfg_loaded()
   soft = get_metrics_supplement_sample_soft_max()
   return max(soft, _pipeline_getint("metrics_supplement_sample_hard_max"))
+
+
+def get_metrics_prewarm_processes() -> int:
+  """
+  Worker processes for the update_metrics Bokeh prewarm.
+
+  ``[PIPELINE] metrics_prewarm_processes``: ``auto`` (default) means one
+  process per metrics thread (``metrics_pool_processes``); ``0`` keeps the
+  prewarm on the metrics threads; a positive integer sets the pool width.
+  Each process holds one PostgreSQL connection.
+
+  Returns:
+    int: Process count, ``0`` for in-thread prewarm; never negative.
+
+  Examples:
+    >>> get_metrics_prewarm_processes()  # doctest: +SKIP
+    32
+  """
+  _ensure_cfg_loaded()
+  raw = str(_pipeline_get("metrics_prewarm_processes") or "auto").strip()
+  if raw.lower() == "auto":
+    return max(1, int(get_metrics_pool_processes()))
+  try:
+    return max(0, int(raw))
+  except TypeError, ValueError, OverflowError:
+    return max(1, int(get_metrics_pool_processes()))
+
+
+def get_metrics_prewarm_max_tasks_per_child() -> int:
+  """
+  Tasks a prewarm worker process runs before it is recycled.
+
+  ``[PIPELINE] metrics_prewarm_max_tasks_per_child`` (default **100**); ``0``
+  never recycles. Recycling bounds Bokeh/Django RSS growth per worker.
+
+  Returns:
+    int: Task count, ``0`` for never; never negative.
+
+  Examples:
+    >>> get_metrics_prewarm_max_tasks_per_child()  # doctest: +SKIP
+    100
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(0, int(_pipeline_get("metrics_prewarm_max_tasks_per_child")))
+  except TypeError, ValueError, OverflowError:
+    return 100
 
 
 def get_metrics_plot_prewarm_mode() -> Any:
