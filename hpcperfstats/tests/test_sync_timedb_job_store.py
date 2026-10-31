@@ -569,7 +569,9 @@ def test_zadd_ingest_over_cap_admits_handoff_catchup(tmp_path, monkeypatch):
   store = SyncTimedbJobStore(str(tmp_path / "archive"))
   assert store.zadd_ingest("/c/1", float(CATCHUP_SCORE_BASE)) == 1
   assert store.zadd_ingest("/c/2", float(CATCHUP_SCORE_BASE)) == 0
-  assert store.zadd_ingest("/c/2", float(CATCHUP_SCORE_BASE), over_cap=True) == 1
+  assert (
+    store.zadd_ingest("/c/2", float(CATCHUP_SCORE_BASE), over_cap=True) == 1
+  )
   plan = jr.ClosedPathReconstructPlan(
     path="/c/3",
     identity="/c/3",
