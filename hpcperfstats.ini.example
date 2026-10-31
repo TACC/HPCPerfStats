@@ -156,6 +156,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # statement_timeout ms for metrics thread compute; 0 disables it (default 120000).
 # metrics_worker_statement_timeout_ms = 120000
 
+# gc.set_threshold for update_metrics; higher = fewer stop-the-world GC pauses, 0 = interpreter default (default 0).
+# metrics_gc_threshold = 0
+
 # statement_timeout ms for metrics persistence (default 120000).
 # metrics_persist_statement_timeout_ms = 120000
 
@@ -281,6 +284,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 
 # Free-space reserve for reseal/restore/rebuild/repair/salvage (bytes); a denial defers as env:ENOSPC, never a failure.
 # sync_archive_min_free_bytes = 10737418240
+
+# Free bytes on the daily archive filesystem below which appends yield to day close; K/M/G/T suffixes, 0 disables (default 1T).
+# sync_archive_space_pressure_free_bytes = 1T
 
 # Hours a stranded archive scratch file (<day>.tar.<kind>.tmp), hps_* staging dir or sidecar write temp (.atomic.*, *.json.tmp) may sit unmodified before the idle sweep removes it (default 24; 0 disables; report mode only logs).
 # sync_archive_scratch_max_idle_hours = 24

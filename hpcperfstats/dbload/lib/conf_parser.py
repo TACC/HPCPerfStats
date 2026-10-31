@@ -91,6 +91,7 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "metrics_run_poll_timeout_s"),
   ("PIPELINE", "metrics_run_stall_timeout_s"),
   ("PIPELINE", "metrics_worker_statement_timeout_ms"),
+  ("PIPELINE", "metrics_gc_threshold"),
   ("PIPELINE", "metrics_persist_statement_timeout_ms"),
   ("PIPELINE", "metrics_persist_lock_timeout_ms"),
   ("PIPELINE", "metrics_proxy_reject_jid_batch_size"),
@@ -271,6 +272,9 @@ INI_OPTION_DEFAULTS = {
   "metrics_run_stall_timeout_s": "900",
   # Non-zero arms host__in chunk-on-timeout during compute (0 = disable).
   "metrics_worker_statement_timeout_ms": "120000",
+  # gc.set_threshold for the update_metrics process; 0 keeps the interpreter
+  # default (free-threaded GC is stop-the-world and scans the whole heap).
+  "metrics_gc_threshold": "0",
   "metrics_persist_statement_timeout_ms": "120000",
   "metrics_persist_lock_timeout_ms": "10000",
   "metrics_proxy_reject_jid_batch_size": "48",
@@ -3468,6 +3472,30 @@ def get_metrics_worker_statement_timeout_ms() -> Any:
     return max(0, int(_pipeline_get("metrics_worker_statement_timeout_ms")))
   except TypeError, ValueError, OverflowError:
     return 120000
+
+
+def get_metrics_gc_threshold() -> int:
+  """
+  Cyclic-GC allocation threshold for the ``update_metrics`` process.
+
+  ``[PIPELINE] metrics_gc_threshold`` is passed to ``gc.set_threshold`` at
+  scheduler start. The free-threaded collector is stop-the-world and walks
+  the whole heap on every collection, so a higher value trades fewer pauses
+  (and more uncollected Bokeh model cycles between them) against RSS.
+  ``0`` (default) keeps the interpreter default.
+
+  Returns:
+    int: Threshold, ``0`` for the interpreter default; never negative.
+
+  Examples:
+    >>> get_metrics_gc_threshold()  # doctest: +SKIP
+    0
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(0, int(_pipeline_get("metrics_gc_threshold")))
+  except TypeError, ValueError, OverflowError:
+    return 0
 
 
 def get_metrics_persist_statement_timeout_ms() -> Any:

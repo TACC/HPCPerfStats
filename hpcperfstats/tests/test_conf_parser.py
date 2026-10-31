@@ -906,6 +906,7 @@ def test_metrics_scheduler_tunables_without_prewarm_pool_keys(
   assert cfg.get_metrics_run_poll_timeout_s() == 5.0
   assert cfg.get_metrics_run_stall_timeout_s() == 900.0
   assert cfg.get_metrics_worker_statement_timeout_ms() == 120000
+  assert cfg.get_metrics_gc_threshold() == 0
   assert cfg.get_metrics_persist_statement_timeout_ms() == 120000
   assert cfg.get_metrics_persist_lock_timeout_ms() == 10000
   assert cfg.get_metrics_proxy_reject_jid_batch_size() == 48
@@ -934,6 +935,7 @@ def test_metrics_scheduler_tunables_without_prewarm_pool_keys(
     "metrics_run_poll_timeout_s = 1.5\n"
     "metrics_run_stall_timeout_s = 120\n"
     "metrics_worker_statement_timeout_ms = 300000\n"
+    "metrics_gc_threshold = 150000\n"
     "metrics_persist_statement_timeout_ms = 45000\n"
     "metrics_persist_lock_timeout_ms = 7000\n"
     "metrics_proxy_reject_jid_batch_size = 32",
@@ -948,6 +950,7 @@ def test_metrics_scheduler_tunables_without_prewarm_pool_keys(
   assert cfg.get_metrics_run_poll_timeout_s() == 1.5
   assert cfg.get_metrics_run_stall_timeout_s() == 120.0
   assert cfg.get_metrics_worker_statement_timeout_ms() == 300000
+  assert cfg.get_metrics_gc_threshold() == 150000
   assert cfg.get_metrics_persist_statement_timeout_ms() == 45000
   assert cfg.get_metrics_persist_lock_timeout_ms() == 7000
   assert cfg.get_metrics_proxy_reject_jid_batch_size() == 32

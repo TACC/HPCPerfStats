@@ -46,6 +46,8 @@ Attributes:
   DEFAULT_METRICS_RANGE_DAYS: Attribute.
   DOCUMENTED_SCHEDULER_STALL_REASONS: Attribute.
   GC_COLLECT_EVERY_N_CHUNKS: Attribute.
+  _GC_STATS: Process-wide cyclic-GC collection count and summed pause seconds
+    (filled by ``_gc_phase_callback``; surfaced on ``metrics progress``).
   GLOBAL_SCHEDULER_BATCH_SIZE: Attribute.
   LAST_UPDATE_METRICS_DIAGNOSTICS: Attribute.
   METRICS_SCHEDULER_STALL_EXIT_CODE: Attribute.
@@ -219,6 +221,67 @@ CHUNK_SIZE = 500
 
 # Running a full GC every chunk is expensive on large backfills; amortize it.
 GC_COLLECT_EVERY_N_CHUNKS = 20
+
+# Cyclic-GC telemetry. The free-threaded collector is stop-the-world and scans
+# the whole heap, so with a wide metrics pool its pauses are a visible share of
+# wall time (8 threads: ~8% on hpcperfstats-dev, 2026-10-31).
+_GC_STATS: dict[str, float] = {"collections": 0, "pause_s": 0.0, "_start": 0.0}
+
+
+def _gc_phase_callback(phase: str, info: dict[str, Any]) -> None:
+  """
+  ``gc.callbacks`` hook: count collections and sum their pause time.
+
+  Runs on the collecting thread while the world is stopped, so the plain
+  dict updates need no lock.
+
+  Args:
+    phase (str): ``"start"`` or ``"stop"`` as passed by the collector.
+    info (dict[str, Any]): Collector info dict (generation, collected, ...).
+
+  Returns:
+    None
+
+  Examples:
+    >>> _gc_phase_callback("start", {})
+    >>> _gc_phase_callback("stop", {"collected": 0})
+    >>> _GC_STATS["collections"] >= 1
+    True
+  """
+  del info
+  if phase == "start":
+    _GC_STATS["_start"] = time.monotonic()
+  else:
+    _GC_STATS["collections"] += 1
+    _GC_STATS["pause_s"] += time.monotonic() - _GC_STATS["_start"]
+
+
+def _apply_metrics_gc_config() -> int:
+  """
+  Install GC telemetry and the INI ``metrics_gc_threshold`` at scheduler start.
+
+  Idempotent for the callback (registered once). ``0`` leaves the interpreter
+  threshold alone; a positive value is passed to ``gc.set_threshold``.
+
+  Returns:
+    int: The threshold applied, ``0`` when the interpreter default was kept.
+
+  Examples:
+    >>> _apply_metrics_gc_config()  # doctest: +SKIP
+    0
+  """
+  if _gc_phase_callback not in gc.callbacks:
+    gc.callbacks.append(_gc_phase_callback)
+  threshold = int(cfg.get_metrics_gc_threshold())
+  if threshold > 0:
+    gc.set_threshold(threshold)
+  log_print(
+    f"Metrics gc: threshold={gc.get_threshold()[0]} configured={threshold} "
+    f"enabled={int(gc.isenabled())}",
+    flush=True,
+  )
+  return threshold
+
 
 # When argv has no start/end dates, process this many calendar days ending today.
 DEFAULT_METRICS_RANGE_DAYS = 7
@@ -2230,7 +2293,8 @@ class _CompletionReporter:
             "prewarm_backlog_jobs={} prewarm_oldest_pending_age_s={:.3f} "
             "prewarm_backpressure_events={} prewarm_inline_fallback_jobs={} "
             "compute_batch_phase={} compute_batch_age_s={:.1f} "
-            "compute_batch_completed_jids={} compute_batch_size={}".format(
+            "compute_batch_completed_jids={} compute_batch_size={} "
+            "gc_collections_total={} gc_pause_s_total={:.1f}".format(
               int(extra_map.get("strict_batch_size_current", 0)),
               int(extra_map.get("strict_check_calls", 0)),
               int(extra_map.get("strict_check_timeouts", 0)),
@@ -2268,6 +2332,8 @@ class _CompletionReporter:
               float(extra_map.get("compute_batch_age_s", 0.0)),
               int(extra_map.get("compute_batch_completed_jids", 0)),
               int(extra_map.get("compute_batch_size", 0)),
+              int(extra_map.get("gc_collections_total", 0)),
+              float(extra_map.get("gc_pause_s_total", 0.0)),
             )
           )
         except Exception:
@@ -7532,6 +7598,8 @@ def update_metrics_for_dates(
               "compute_batch_completed_jids"
             ],
             "compute_batch_size": stats["compute_batch_size"],
+            "gc_collections_total": int(_GC_STATS["collections"]),
+            "gc_pause_s_total": float(_GC_STATS["pause_s"]),
           }
 
       completion_reporter.set_extra_stats_getter(_extra_stats_snapshot)
@@ -8511,6 +8579,7 @@ def main(argv: Any | None = None, sleep_after: Any | None = None) -> Any:
   log_pg_slot_budget_if_needed(
     log_fn=lambda message: log_print(message, flush=True)
   )
+  _apply_metrics_gc_config()
 
   log_date_range("metrics to update", startdate, enddate)
   #################################################################

@@ -24,6 +24,22 @@ The SPA bundles **stock** **`@bokeh/bokehjs`** from npm (no `patch-package` vend
 
 If Bokeh regressions reappear in the browser console after upgrades, prefer fixing **`json_item`** contracts / React embed timing first; reintroducing a **`patch-package`** patch is a last resort (document why and keep **`postinstall`** + `patches/` in sync).
 
+## Python-side runtime shim (free-threaded pipeline) — re-verify on every bump
+
+`hpcperfstats/analysis/metrics/lib/plot/bokeh_validation_patch.py` monkeypatches three Bokeh internals at import (installed by `update_metrics.py` **before** any `bokeh.models` import, and first in `hpcperfstats/analysis/metrics/lib/plot/__init__.py`):
+
+| Patched | Why (hpcperfstats-dev, 3.14t, Bokeh 3.10.1, 2026-10-31) |
+|---------|------|
+| `bokeh.core.property.validation.validate.__init__` / `__exit__` and `bokeh.core.property.bases.validation_on` | Stock `validate()` writes the **class attribute** `Property._should_validate` per `HasProps._initialize`; each write invalidates the type cache of `Property` and all subclasses under the interpreter-wide type lock, and after 1000 writes (reached during `import bokeh.models`) every Bokeh property lookup is permanently uncacheable. The metrics pool was flat at 1.4–1.7 jobs/min for 1–4 threads and collapsed at 8+. The shim keeps the flag in a per-thread `ContextVar` (also removes a cross-thread race). |
+| `bokeh.core.property.descriptors.PropertyDescriptor.is_unstable` | Stock version runs two `import` statements per call; on the FT build every import takes the shared `sys.modules` dict lock (34% of contended lock acquisitions at 28 threads). Shim resolves `FunctionType` / `InstanceDefault` once. |
+
+**On every `bokeh==` bump, in the same task:**
+
+1. `grep -rn "_should_validate\|validation_on\|def is_unstable" <site-packages>/bokeh/` — the shim covers readers in `bases.py` (`prepare_value`) and the writer in `validation.py`. A **new** reader of `Property._should_validate`, a new writer, or a moved/renamed `InstanceDefault` means the shim must be extended (it fails at import if `InstanceDefault` moved; it silently misses a new reader).
+2. Run `hpcperfstats/analysis/metrics/tests/test_bokeh_validation_patch.py` (no class write inside `validate(False)`, per-thread isolation, hoisted `is_unstable` parity, fresh-interpreter ordering before `bokeh.models`).
+3. Inside the FT image, re-run the version-tag probe: `tp_versions_used` of `bokeh.core.property.bases.Property` must stay far below 1000 after importing `update_metrics` and a prewarm (`test_runs/scaling/type_version_scan.py` style; offsets 400/426 are for the 3.14t `PyTypeObject` layout and move with CPython bumps).
+4. If upstream Bokeh fixes either site, delete the corresponding patch function, keep the import-order contract, and record the fixed version here.
+
 ## Single-version sync (one table)
 
 | Location | What to sync |
@@ -46,6 +62,7 @@ If Bokeh regressions reappear in the browser console after upgrades, prefer fixi
 5. `npm test -- --run` (Vitest), including `bokehjs-bundle-entry` (UMD vendor assert) + Bokeh embed tests.
 6. `pytest hpcperfstats/site/lib/machine/tests/test_bokeh_job_list_embed_browser_e2e.py` (Playwright + CDN Bokeh; see below). For the **third** (Next-bundle) test, run **`npm run build`** first or that test skips. Confirm `_FAILURE_SUBSTRINGS` still includes **`could not resolve type`**.
 7. Regenerate **`test/fixtures/bokeh-*.json`** if schema changes; update **`docs/TESTING.md`** if workflow or commands change (`testing-doc-sync.mdc`).
+8. Re-verify the **Python-side runtime shim** (section above): grep the new Bokeh for `_should_validate` / `is_unstable` sites, run `test_bokeh_validation_patch.py`, and confirm `Property` keeps its type version tag in the FT image.
 ## Playwright vs production bundle
 
 `test_bokeh_job_list_embed_browser_e2e.py` loads Bokeh from **jsDelivr** at the same **version** as `package.json` for two tests, and a third serves the **Next static export** (`hpcperfstats_site/static/frontend/`) via `python3 -m http.server` so **`/static/frontend/bokeh-playwright-smoke/`** exercises the **same UMD vendor load path** as production (requires **`npm run build`** in `hpcperfstats/site/frontend` — or the third test skips). After Bokeh bumps, spot-check real pages (job list distributions, job detail plots) for console cleanliness if Vitest/Playwright are green.

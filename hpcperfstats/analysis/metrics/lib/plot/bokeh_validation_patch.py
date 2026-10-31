@@ -13,11 +13,20 @@ lock and the update_metrics thread pool stops scaling. This module keeps the
 flag in a ``contextvars.ContextVar`` instead: no class attribute is written,
 and the toggle is scoped to the current thread rather than the whole process.
 
+A second hot spot shows up once the type lock is gone:
+``PropertyDescriptor.is_unstable`` runs two ``import`` statements per call
+(``from types import FunctionType``, ``from .instance import
+InstanceDefault``), and on the free-threaded build every import statement
+takes the shared ``sys.modules`` dict lock, which was 34% of contended lock
+acquisitions at 28 threads. The shim replaces it with the same check against
+types resolved once at import.
+
 Import this module before ``bokeh.models`` (``update_metrics.py`` does so
 right after ``configure_blas_thread_env()``); importing it installs the shim.
 
 Attributes:
   _VALIDATION_ON: Context-local validation flag (default on).
+  _UNSTABLE_TYPES: Types ``is_unstable`` recognises as callable defaults.
   INSTALLED_BEFORE_BOKEH_MODELS: True when this module was imported before
     ``bokeh.models``, so the import-time version burn was prevented too.
 """
@@ -26,13 +35,16 @@ from __future__ import annotations
 
 import contextvars
 import sys
-from types import TracebackType
+from types import FunctionType, TracebackType
+from typing import Any
 
-from bokeh.core.property import bases, validation
+from bokeh.core.property import bases, descriptors, validation
+from bokeh.core.property.instance import InstanceDefault
 
 _VALIDATION_ON: contextvars.ContextVar[bool] = contextvars.ContextVar(
   "hpcperfstats_bokeh_validation_on", default=True
 )
+_UNSTABLE_TYPES: tuple[type, ...] = (FunctionType, InstanceDefault)
 INSTALLED_BEFORE_BOKEH_MODELS: bool = "bokeh.models" not in sys.modules
 
 
@@ -101,9 +113,30 @@ def _validate_exit(
   _VALIDATION_ON.set(self.old)
 
 
+def _is_unstable(cls: type, value: Any) -> bool:
+  """
+  Replacement ``PropertyDescriptor.is_unstable`` without per-call imports.
+
+  Args:
+    cls (type): The descriptor class (classmethod receiver, unused).
+    value (Any): A property default value.
+
+  Returns:
+    bool: True when ``value`` is a function or an ``InstanceDefault``, the
+    defaults Bokeh evaluates per instance.
+
+  Examples:
+    >>> _is_unstable(object, lambda: 1), _is_unstable(object, 5)
+    (True, False)
+  """
+  del cls
+  return isinstance(value, _UNSTABLE_TYPES)
+
+
 def install_threadsafe_bokeh_property_validation() -> bool:
   """
-  Patch Bokeh so validation toggling never writes a class attribute.
+  Patch Bokeh so validation toggling never writes a class attribute, and
+  ``is_unstable`` stops importing on every call.
 
   Idempotent: the second call is a no-op.
 
@@ -120,6 +153,7 @@ def install_threadsafe_bokeh_property_validation() -> bool:
   bases.validation_on = validation_on
   validation.validate.__init__ = _validate_init
   validation.validate.__exit__ = _validate_exit
+  descriptors.PropertyDescriptor.is_unstable = classmethod(_is_unstable)
   return True
 
 

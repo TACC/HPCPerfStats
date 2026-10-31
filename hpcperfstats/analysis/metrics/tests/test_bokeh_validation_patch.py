@@ -51,6 +51,30 @@ def test_install_is_idempotent_and_replaces_bokeh_hooks():
   assert validation.validate.__exit__ is patch._validate_exit
 
 
+def test_is_unstable_is_hoisted_and_keeps_bokeh_semantics():
+  descriptors = pytest.importorskip("bokeh.core.property.descriptors")
+  bound = descriptors.PropertyDescriptor.__dict__["is_unstable"]
+  assert isinstance(bound, classmethod)
+  assert bound.__func__ is patch._is_unstable
+  # Same answers Bokeh gives: functions and InstanceDefault are unstable.
+  assert descriptors.PropertyDescriptor.is_unstable(lambda: 1) is True
+  assert descriptors.PropertyDescriptor.is_unstable(5) is False
+  assert descriptors.PropertyDescriptor.is_unstable(None) is False
+  from bokeh.core.property.instance import InstanceDefault
+  from bokeh.models import ColumnDataSource
+
+  assert (
+    descriptors.PropertyDescriptor.is_unstable(
+      InstanceDefault(ColumnDataSource)
+    )
+    is True
+  )
+  # No import statement left in the replacement (that was the lock source).
+  import inspect
+
+  assert "import" not in inspect.getsource(patch._is_unstable).split('"""')[-1]
+
+
 def test_validate_toggle_never_writes_property_class_attribute():
   before = vars(bases.Property).get("_should_validate")
   assert bases.validation_on() is True
