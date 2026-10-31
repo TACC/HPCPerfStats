@@ -101,6 +101,7 @@ import os
 import signal
 import threading
 import time
+import traceback
 from collections.abc import Callable, Iterable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import date, datetime
@@ -1349,6 +1350,11 @@ def _run_background_discover(
   """
   Claim one discover job and stream GNU find off the orchestrator MainThread.
 
+  Nothing reads the returned Future, so a walk that raises is logged here
+  (``queue_orchestrator discover failed window=`` plus the traceback) and
+  sets ``_FULL_REDISCOVER_PENDING`` so the next idle pass walks the whole
+  archive again; the job is still ACKed in ``finally``.
+
   Args:
     client (Any): job store (pool-backed; command-safe across threads).
     archive_dir (str): Archive data directory.
@@ -1395,6 +1401,16 @@ def _run_background_discover(
     if getattr(stats, "dropped_at_capacity", 0):
       _FULL_REDISCOVER_PENDING.set()
     _record_discover_frontier(stats, claimed_mtime_days is None, log_fn)
+  except Exception as exc:
+    # Nothing reads this Future: log the walk's failure here, and rerun the
+    # whole-archive walk next idle pass since this one stopped part way.
+    _FULL_REDISCOVER_PENDING.set()
+    window = "all" if claimed_mtime_days is None else claimed_mtime_days
+    _log(
+      f"queue_orchestrator discover failed window={window} "
+      f"err={type(exc).__name__}: {exc}\n{traceback.format_exc()}",
+      log_fn=log_fn,
+    )
   finally:
     # Seals wait for the boot whole-archive walk; a failed walk must not hold
     # them forever (INV-NEG terminal).

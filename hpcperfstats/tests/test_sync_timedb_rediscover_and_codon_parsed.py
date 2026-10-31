@@ -125,6 +125,38 @@ def test_background_discover_without_drops_flags_nothing(monkeypatch, _pending):
   assert not _pending.is_set()
 
 
+def test_failed_whole_archive_walk_is_logged_and_retried(monkeypatch, _pending):
+  # hpcperfstats01 2026-10-31: the boot whole-archive walk raised inside the
+  # discover-bg Future, nothing read it, and every later line said seen=0.
+  client = SyncTimedbJobStore("")
+  ident = qo.discover_job_identity("/archive", None)
+  jq.enqueue_list_job(client, kind=jq.JOB_KIND_DISCOVER, identity=ident)
+  qo._BOOT_FULL_DISCOVER_PENDING.set()
+
+  def _boom(*_a, **_k):
+    raise RuntimeError("classify blew up on /archive/h/1700000000")
+
+  logged: list[str] = []
+  monkeypatch.setattr(qo, "_boot_stream_discover", _boom)
+  qo._run_background_discover(
+    client,
+    "/archive",
+    tgz_archive_dir="/daily",
+    log_fn=lambda msg, **_k: logged.append(str(msg)),
+    mtime_days=1,
+    startdate=None,
+    enddate=None,
+  )
+  failed = [m for m in logged if "queue_orchestrator discover failed" in m]
+  assert len(failed) == 1
+  assert "window=all" in failed[0]
+  assert "RuntimeError: classify blew up on /archive/h/1700000000" in failed[0]
+  assert _pending.is_set()  # next idle pass reruns the whole-archive walk
+  assert not qo._BOOT_FULL_DISCOVER_PENDING.is_set()  # seals not held forever
+  census = jq.queue_census(client)[jq.JOB_KIND_DISCOVER]
+  assert census["queued"] == 0 and census["inflight"] == 0
+
+
 def _idle_pass(
   monkeypatch,
   *,

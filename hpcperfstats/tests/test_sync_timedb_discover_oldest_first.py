@@ -17,7 +17,6 @@ days at or after that frontier until a later walk queues them.
 
 from __future__ import annotations
 
-import contextlib
 import os
 import stat
 from concurrent.futures import ThreadPoolExecutor
@@ -311,17 +310,20 @@ def _bg_walk(monkeypatch, *, mtime_days, frontier_day=None, raises=False):
   monkeypatch.setattr(
     qo, "_discover_mtime_days_from_identity", lambda *_a: mtime_days
   )
-  ctx = pytest.raises(RuntimeError) if raises else contextlib.nullcontext()
-  with ctx:
-    qo._run_background_discover(
-      client,
-      "/archive",
-      tgz_archive_dir="/daily",
-      log_fn=lambda *a, **k: None,
-      mtime_days=mtime_days,
-      startdate=None,
-      enddate=None,
-    )
+  qo._FULL_REDISCOVER_PENDING.clear()
+  # A raising walk is logged and swallowed (nothing reads the Future) and
+  # asks for another whole-archive walk.
+  qo._run_background_discover(
+    client,
+    "/archive",
+    tgz_archive_dir="/daily",
+    log_fn=lambda *a, **k: None,
+    mtime_days=mtime_days,
+    startdate=None,
+    enddate=None,
+  )
+  assert qo._FULL_REDISCOVER_PENDING.is_set() is raises
+  qo._FULL_REDISCOVER_PENDING.clear()
 
 
 def test_whole_walk_sets_the_frontier_and_a_clean_walk_clears_it(
