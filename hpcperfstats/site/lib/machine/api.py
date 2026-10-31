@@ -837,6 +837,13 @@ def _require_auth(request: Any) -> Any:
     session.setdefault("access_token", f"api-key:{api_key_obj.username}")
     return None
 
+  if api_key:
+    # A key was presented but did not match an active row (revoked, rotated,
+    # or minted against a different database). Say so for CLI clients.
+    return Response(
+      {"detail": "Invalid or inactive API key", "login_url": "/login_prompt"},
+      status=status.HTTP_401_UNAUTHORIZED,
+    )
   return Response(
     {"detail": "Authentication required", "login_url": "/login_prompt"},
     status=status.HTTP_401_UNAUTHORIZED,
@@ -4972,12 +4979,16 @@ def sacct_ingest(request: Any) -> Any:
   Examples:
     >>> sacct_ingest(None)  # doctest: +SKIP
   """
-  csrf_err = _require_csrf_for_session_post(request)
-  if csrf_err is not None:
-    return csrf_err
+  # Authenticate before the CSRF gate: CLI clients (hpcperfstats-tools
+  # sacct_gen) post with X-API-Key only, so an invalid/revoked key must surface
+  # as 401 "Invalid or inactive API key", not a misleading "CSRF token missing".
+  # Session-authenticated browser POSTs still hit the CSRF check below.
   err = _require_staff(request)
   if err is not None:
     return err
+  csrf_err = _require_csrf_for_session_post(request)
+  if csrf_err is not None:
+    return csrf_err
   max_body_bytes = int(
     getattr(settings, "SACCT_INGEST_MAX_BODY_BYTES", 8 * 1024 * 1024)
   )

@@ -221,3 +221,56 @@ class TestSessionMutatingPostCsrf:
       )
     assert response.status_code == 403
     assert response.json()["error"] == "Staff access required"
+
+  def test_sacct_ingest_invalid_api_key_returns_401_not_csrf(self):
+    """Revoked/unknown X-API-Key must report auth failure, not CSRF missing."""
+    from hpcperfstats.site.lib.machine import api
+
+    client = Client()
+    with (
+      patch.object(api.ApiKey, "hash_raw_key", return_value="hashed"),
+      patch.object(
+        api.ApiKey.objects, "get", side_effect=api.ApiKey.DoesNotExist
+      ),
+    ):
+      response = client.post(
+        "/api/sacct/ingest/?date=2024-01-01",
+        data="body",
+        content_type="text/plain",
+        HTTP_X_API_KEY="c" * 64,
+      )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid or inactive API key"
+
+  def test_sacct_ingest_no_credentials_returns_401(self):
+    client = Client()
+    response = client.post(
+      "/api/sacct/ingest/?date=2024-01-01",
+      data="body",
+      content_type="text/plain",
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Authentication required"
+
+  def test_sacct_ingest_staff_session_with_invalid_api_key_still_needs_csrf(
+    self,
+  ):
+    """A bad X-API-Key must not let a session POST skip the CSRF gate."""
+    from hpcperfstats.site.lib.machine import api
+
+    client = Client()
+    self._staff_session(client)
+    with (
+      patch.object(api.ApiKey, "hash_raw_key", return_value="hashed"),
+      patch.object(
+        api.ApiKey.objects, "get", side_effect=api.ApiKey.DoesNotExist
+      ),
+    ):
+      response = client.post(
+        "/api/sacct/ingest/?date=2024-01-01",
+        data="body",
+        content_type="text/plain",
+        HTTP_X_API_KEY="d" * 64,
+      )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "CSRF token missing"
