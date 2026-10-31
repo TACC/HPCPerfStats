@@ -26,12 +26,17 @@ resolution. §6 lists each negative state's exits.
 |---|---|---|---|
 | `metrics_data` (one row per catalog metric: `value` or `no_data_reason`) | PostgreSQL | worker task `_unwrap_and_persist` → `_persist_metrics_batch` (sliding path) or the parent (barrier path); `persist_window_coverage_gate_failure` | yes |
 | `job_data.metrics_distinct_time_count`, `telemetry_first_time`, `telemetry_last_time`, `host_data_schema_json` | PostgreSQL | `_persist_metrics_batch`, same transaction as the metric rows (S4) | yes |
-| `job_data.metrics_dirty_at` (migration 0041, partial index 0042) | PostgreSQL | set by sync_timedb ingest (`_invalidate_jid_caches` → `mark_jids_metrics_dirty`) on ended, already-processed jobs; cleared by `_persist_metrics_batch` (stamps older than `compute_started_at`) and by `persist_window_coverage_gate_failure` | yes |
+| `job_data.metrics_dirty_at` (migration 0041, partial index 0042) | PostgreSQL | set by sync_timedb ingest (`_invalidate_jid_caches` → `mark_jids_metrics_dirty`) on ended jobs: inside the 7-day window only already-processed ones, older than it every job (never-processed jobs reached by the archive backlog go to the backfill lane); cleared by `_persist_metrics_batch` (stamps older than `compute_started_at`), by `persist_window_coverage_gate_failure`, and by a backfill skip (`record_backfill_skips`, stamps older than the readiness check) | yes |
+| `job_data.metrics_version` (migration 0043, index `job_data_metrics_version_idx` on `(metrics_version, end_time)`) | PostgreSQL | `_persist_metrics_batch` writes `METRICS_CONTRACT_VERSION` (`lib/metrics.py`) with every persist; `persist_metrics_failed_final` after the daily backoff step. NULL = computed before 0043 (or never) | yes |
+| `job_data.metrics_coverage` (0043) | PostgreSQL | hosts covering the window / hosts in `host_list` as readiness measured it, written by the persist (`_attach_telemetry_bounds_to_candidate` → worker payload); `< 1.0` labels a partial result; a backfill skip stores the ratio it saw | yes |
+| `job_data.metrics_skipped_since` (0043) | PostgreSQL | set by a backfill skip (old job with incomplete host_data; `record_backfill_skips`), cleared by every persist; after `metrics_backfill_quiescence_days` without a newer dirty stamp the job is computed partial | yes |
+| `metrics_scheduler_state` row `backfill_cursor` (0043) | PostgreSQL | `_iter_backfill_pks`: `{version, end_time, jid}` of the last fully processed sweep page, written when the next page is requested, deleted when the sweep runs dry, ignored under another `METRICS_CONTRACT_VERSION` | yes |
 | `job_plot_artifact` (`plot_kind` × `layout=normal`; payload is a plot **or** an `unavailable_reason`; `input_fingerprint` is the real fingerprint or a `retry<n>:` fingerprint) | PostgreSQL | prewarm `persist_job_plot_artifacts_for_jid` | yes |
 | `job_detail_artifact` (`job_detail`, `multiprecision_mix`, `type_detail/<type>`; same fingerprint rule) | PostgreSQL | prewarm `persist_job_detail_artifacts_for_jid` | yes |
 | `/pub/` expansion-factor artifacts | PostgreSQL / cache | `_PublicEfRefresher` (background) or the blocking phase (one-shot runs) | yes |
 | Redis plot / detail / jid-derived cache keys | Redis | invalidated by persist, gate failure, `--jid`, sync_timedb ingest | yes (TTL) |
 | `_JOB_FAILURE_MEMORY` (jid → attempts, retry time, last error; ≤100k) | process memory | `_note_job_outcome` | no (passes yes) |
+| `_BACKFILL_ADMIT_TIMES` (hourly rate-brake window), `_BACKFILL_FAILED_FINAL` count, per-pass `backfill_*` stats and `backfill_inflight_jids` | process memory | backfill lane feeder / consumer accounting | no |
 | `_ARTIFACT_CATCHUP_LAST_SCAN` (day → last Phase B scan) | process memory | `_artifact_catchup_due` | no |
 | `_PUBLIC_EF_STATUS` (refreshes, degraded, consecutive degraded, last stats) | process memory | `_record_public_ef_refresh` | no |
 | Ready queue, `scheduled_jids`, deferred-not-ready map, strict cooldowns, rescan seen set, scheduler stats | process memory, per pass | scheduler threads | no |
@@ -60,7 +65,7 @@ flowchart TD
   end
 
   subgraph onepass[one pass]
-    lst[Listing per day\nPhase A: need metrics or dirty\nPhase B: artifact catch-up, <=1/h/day\n+ dirty catch-up before window] --> prod
+    lst[Listing per day\nPhase A: need metrics or dirty\nPhase B: artifact catch-up, <=1/h/day\n+ backfill lane before the window:\ndirty first, then metrics_version < current,\nnewest first, persisted cursor, slot-capped] --> prod
     resc[rescan thread\n2 newest days] --> prod
     prod[readiness producer\nskip failure backoff\nproxy reject → per-host coverage] -->|ready| rq[(ready_queue\nunique via scheduled_jids)]
     prod -->|not ready, wait not over| dq[(deferred\n10→300 s backoff)]
@@ -87,9 +92,12 @@ used only when the sliding session is disabled
 
 | State | Condition | Selected by | Next |
 |---|---|---|---|
-| `ineligible` | `runtime < 300`, or ended before the window and not dirty | nothing | none |
+| `ineligible` | `runtime < 300`, or ended before the window with the current `metrics_version`, not dirty and not skipped | nothing | none |
 | `needs_metrics` | fewer catalog-metric rows than `expected_job_metric_row_count()`, or a catalog row with no value and no reason (C4: only current catalog names count) | Phase A, rescan | readiness |
-| `dirty` | `metrics_dirty_at` set (late host_data) | Phase A in window; dirty catch-up before it (C7) | readiness, recompute |
+| `dirty` | `metrics_dirty_at` set (late host_data) | Phase A in window; backfill lane dirty pass before it (C7) | readiness, recompute |
+| `version_stale` | ended before the window, `metrics_version` NULL or `< METRICS_CONTRACT_VERSION`, not dirty, `metrics_skipped_since` NULL or older than the quiescence cutoff | backfill lane sweep (newest first, cursor) | backfill readiness (§4.5) |
+| `awaiting_ingest` | backfill lane found the host_data incomplete: `metrics_skipped_since` newer than the quiescence cutoff, no dirty stamp since | nothing (listed again when dirty or when the clock elapses) | `dirty` → full re-check; quiescence → `partial_final` |
+| `partial_final` | computed with the hosts that reported: current `metrics_version`, `metrics_coverage < 1.0`, `metrics_skipped_since` NULL (a persist clears it; a skip that only recorded a ratio is `awaiting_ingest`) | nothing | `dirty` (late rows) → full recompute |
 | `gate_failed` | catalog complete with `INSUFFICIENT_DATA_FOR_METRICS_PROCESSING` rows | Phase A recheck | readiness again |
 | `waiting_for_hosts` | union of hosts covers the window, some host does not, job ended < `metrics_readiness_host_wait_seconds` ago | deferred | ready once all hosts cover or the wait passes |
 | `waiting_for_data` | window not covered, job ended < host wait ago | deferred, no gate row | ready or `gate_failed` |
@@ -102,7 +110,12 @@ used only when the sliding session is disabled
 stateDiagram-v2
   [*] --> needs_metrics: job ends in window, runtime >= 300
   needs_metrics --> candidate: Phase A / rescan
-  dirty --> candidate: Phase A or dirty catch-up
+  dirty --> candidate: Phase A or backfill dirty pass
+  version_stale --> candidate: backfill sweep (slot-capped)
+  candidate --> awaiting_ingest: backfill lane, a host missing (skip)
+  awaiting_ingest --> candidate: dirty stamp, or quiescence elapsed
+  awaiting_ingest --> partial_final: quiescence elapsed, computed with reporting hosts
+  partial_final --> dirty: ingest stamps late rows
   gate_failed --> candidate: Phase A recheck
   candidate --> failing_skip: in failure backoff
   failing_skip --> candidate: backoff over
@@ -152,10 +165,29 @@ jid(s) to the next pass`); (b) listing **not** done and no progress for
 `STALL_EXIT_AFTER_SECONDS` with an idle consumer → `no_ready_candidates`
 stall exit; (c) unexpected fill exception → `listing_query_failed` stall exit.
 
+### §4.5 Backfill lane
+
+Plan `update-metrics-backfill-lane` (2026-10-31). Everything that ended
+before the 7-day window is the lane's domain; readiness there is decided
+from data arrival, never from `sync_timedb` day-close state (D4).
+
+| Step | Rule |
+|---|---|
+| listing (`_iter_backfill_pks`) | pass 1: `metrics_dirty_at IS NOT NULL AND end_time < window_start` (partial index, newest first). Pass 2: `metrics_version IS NULL OR < METRICS_CONTRACT_VERSION`, not dirty, `metrics_skipped_since` NULL or `<= now - metrics_backfill_quiescence_days`, newest first from the persisted cursor. Cheap `job_data` predicates only: no `host_data`, no fingerprints (`update-metrics-job-listing-new-data-type.mdc`). Disabled lane (`metrics_backfill_enabled = no`): pass 1 only (the old C7 catch-up) |
+| cursor | `metrics_scheduler_state["backfill_cursor"]` = `(end_time, jid)` of the last fully processed page, written when the next page is requested, cleared when the sweep runs dry (lap wrap), ignored after a version bump. A restart revisits at most one page |
+| order and slots | fresh days are listed first every fill; the lane is consulted last and only while its **work-conserving cap** has room and the hourly rate brake (`metrics_backfill_max_jobs_per_hour`) is open. `cap = max(metrics_backfill_min_slots, pool − metrics_backfill_fresh_reserve_slots − fresh_active)` (`_backfill_slot_cap`), where `fresh_active` = fresh jobs in flight + fresh refs queued; room = cap − (backfill in flight + queued). An idle fresh window therefore hands all but the reserve threads to the sweep (32 threads → 30), a busy one takes them back as its jobs queue, and the lane never drops below its floor (default pool // 5). The consumer pops fresh-lane refs before backfill refs (`pop_fresh_first`), so a backfill job never holds a slot a queued fresh job is waiting for |
+| readiness (`backfill=True`) | failure backoff → proxy → strict as the fresh lane, with two differences: **every** host must cover the window (no `metrics_readiness_host_wait_seconds` admission of partial data) and an uncovered window writes **no** gate-failure catalog. Not ready ⇒ **skip, do not defer**: `record_backfill_skips` sets `metrics_skipped_since = now`, stores the coverage ratio it saw and consumes the dirty stamp the check looked at |
+| quiescence | a listed job with `metrics_skipped_since` set and no dirty stamp has waited the quiescence period with no new data: admitted without a probe as `partial_final` (`backfill_partial_total`), `metrics_coverage < 1.0`. A later dirty stamp relists it in pass 1 and a full re-check either computes it whole or skips it again |
+| persist | every persist stamps `metrics_version = METRICS_CONTRACT_VERSION`, `metrics_coverage`, `metrics_skipped_since = NULL` (`_provenance_stamp_fields`); bumping the constant is the whole "recompute everything" operator action — the next pass relists in-window jobs through Phase A and the sweep restarts at the newest old job |
+| failure memory | same `_JOB_FAILURE_MEMORY`; at the daily step a backfill job whose **metrics** fail is closed out by `persist_metrics_failed_final` (missing catalog rows get `METRICS_FAILED_FINAL_REASON`, version stamped) so the sweep moves on (`backfill_failed_final`); prewarm-only failures keep their metrics and stay on daily retry |
+| pass lifetime | the lane keeps a pass open while old jobs remain; once every fresh day is listed the producer rebuilds the fresh day iterators in place every `metrics_scheduler_pass_interval_s` (`_maybe_relist_fresh_date_states`, log `fresh window relisted while the backfill lane keeps the pass open`), so the window is relisted at the same cadence as separate passes and the sweep never idles. Lane listing progress (skips included) advances the producer stall clock; a rate-brake wait is not a stall. A pass ends when the sweep wraps |
+| operator | `update_metrics.py --backfill-status` prints the census; `--backfill-finalize-partials [--before YYYY-MM-DD]` computes every still-skipped job before the date now (operator knows the range is fully ingested) |
+
 ### §4.3 Consumer and compute
 
 The consumer pops the first ready batch and runs **one continuous sliding
-session** (`continuous=True`): every slot is fed FIFO from `ready_queue`;
+session** (`continuous=True`): every slot is fed FIFO from `ready_queue`
+(fresh-lane refs first, then backfill);
 with an empty queue the session waits (the stall clock restarts when work
 resumes) until `_session_should_stop()` — producer done and queue empty, or
 failures with no metrics persisted for `STALL_EXIT_AFTER_SECONDS`
@@ -228,7 +260,10 @@ same inputs stores the real fingerprint (terminal unavailable).
 | not ready (deferred) | ready → queue, meta released | 10 s doubling to 300 s, in-pass while the consumer works | pass ends normally; next pass relists; after the host wait → `gate_failed` |
 | waiting for hosts | every host covers | same as deferred | after `metrics_readiness_host_wait_seconds` computes with the reporting hosts |
 | `gate_failed` | recompute overwrites | relisted every pass (Phase A recheck); late data sets `dirty` | stays until data arrives (dirty catch-up reaches it outside the window) |
-| `dirty` | persist clears stamps older than the compute start | relisted every pass | gate failure consumes the stamp when still uncovered |
+| `dirty` | persist clears stamps older than the compute start | relisted every pass (in window) / every lane fill (older) | gate failure consumes the stamp when still uncovered (in window); a backfill skip consumes it and starts the quiescence clock (older) |
+| `version_stale` | persist stamps the current version | sweep lap, newest first, cursor resumes after restart | `failed_final` after the daily backoff step (version stamped, missing rows reasoned) |
+| `awaiting_ingest` | dirty stamp → full re-check passes → computed whole | not relisted while waiting (no probes); dirty stamp relists at once | quiescence elapsed → `partial_final` (coverage < 1), or `--backfill-finalize-partials` |
+| `partial_final` | dirty stamp → full recompute (coverage 1.0) | n/a (terminal until data arrives) | stays partial, labeled by `metrics_coverage` |
 | compute / persist failure | finished outcome clears memory | 5 min → 30 min → 2 h → 6 h | daily retry, logged once |
 | prewarm failure | finished outcome | failure backoff; Phase B relists retry-fingerprint rows hourly | 3rd build stores the real fingerprint |
 | strict / listing cooldown | expires (30 s / 60 s) | yes | n/a |
@@ -237,7 +272,9 @@ same inputs stores the real fingerprint (terminal unavailable).
 
 ## §7 Operator census
 
-- `metrics progress: completed_last_hour= processed_total= ... metrics_ok_total= prewarm_failed_total= failing_jids= daily_retry_jids= failure_backoff_skips= ... public_ef_degraded= ...` (hourly). `completed_last_hour` / `processed_total` count **finished** jobs and move as jobs finish.
+- `metrics progress: completed_last_hour= processed_total= ... metrics_ok_total= prewarm_failed_total= failing_jids= daily_retry_jids= failure_backoff_skips= ... public_ef_degraded= ... backfill_version= backfill_remaining_dirty= backfill_remaining_stale= backfill_awaiting= backfill_partial_final= backfill_done_total= backfill_skipped_total= backfill_partial_total= backfill_failed_final= backfill_cursor_end_time= backfill_slots=k/n` (hourly). `completed_last_hour` / `processed_total` count **finished** jobs and move as jobs finish. The `backfill_remaining_*` / `awaiting` / `partial_final` counts are cheap `job_data` counts (`_backfill_census`; `n/a` when the census failed), `backfill_slots` is in flight / the cap in force (work-conserving, see §4.5).
+- `metrics backfill status: version= window_start= remaining_dirty= remaining_stale= awaiting_ingest= partial_final= cursor_end_time= slots= enabled= quiescence_days=` (`--backfill-status`).
+- `metrics backfill: jid= failed_final version= last_error=`; `metrics scheduler: fresh window relisted while the backfill lane keeps the pass open`.
 - `metrics scheduler: compute batch heartbeat phase= size= completed_jids= age_s=` (60 s).
 - `metrics_deferred_coverage jid= start_ok= end_ok= ... hosts_covered=N/M` (once per jid per pass).
 - `metrics scheduler: listing done; leaving N not-ready jid(s) to the next pass`.
@@ -268,9 +305,17 @@ unavailable, 143 SIGTERM.
 | `metrics_deferred_not_ready_retry_s` / `_max_retries` / `_max_age_s` / `_quarantine_s` | 10 / 30 / 900 / 300 | deferred readiness backoff |
 | `metrics_readiness_require_window_coverage` | yes | coverage gate + gate-failure writes |
 | `metrics_readiness_start_margin_seconds` / `_end_margin_seconds` | 600 / 600 | per-host coverage tolerance |
-| `metrics_readiness_host_wait_seconds` | 21600 | wait for every host; also the earliest gate-failure write |
+| `metrics_readiness_host_wait_seconds` | 21600 | wait for every host; also the earliest gate-failure write (fresh lane only) |
+| `metrics_backfill_enabled` | yes | backfill lane (§4.5); `no` keeps only the dirty catch-up of processed jobs |
+| `metrics_backfill_min_slots` | 0 | floor of the lane's work-conserving slot cap (slots it keeps while the fresh window is busy); 0 = `metrics_pool_processes // 5`, at least 1 |
+| `metrics_backfill_fresh_reserve_slots` | 2 | pool threads never given to the lane, so an arriving fresh job starts at once; clamped below the pool size |
+| `metrics_backfill_quiescence_days` | 7 | days a skipped old job waits with no new host_data before a partial compute |
+| `metrics_backfill_max_jobs_per_hour` | 0 | sliding-hour ceiling on backfill admits (DB load brake); 0 = unlimited |
 | `metrics_worker_statement_timeout_ms` / `metrics_persist_statement_timeout_ms` / `metrics_persist_lock_timeout_ms` | 120000 / 120000 / 10000 | DB timeouts |
 
 Code constants: `ARTIFACT_BUILD_RETRY_LIMIT = 3`, `JOB_FAILURE_BACKOFF_S`,
 `ARTIFACT_CATCHUP_INTERVAL_S = 3600`, `RESCAN_RECENT_DAYS = 2`,
-`PUBLIC_EF_POOL_THREADS = 4`, `STALL_EXIT_AFTER_SECONDS = 900`.
+`PUBLIC_EF_POOL_THREADS = 4`, `STALL_EXIT_AFTER_SECONDS = 900`,
+`METRICS_CONTRACT_VERSION` (`lib/metrics.py`; bump on any metric semantics
+change — catalog members, formulas, aggregation rules, units — and every
+job is recomputed by the lane, newest first), `BACKFILL_RATE_WINDOW_S = 3600`.

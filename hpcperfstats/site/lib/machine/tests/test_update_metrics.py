@@ -7347,3 +7347,745 @@ def test_readiness_skips_jobs_in_failure_backoff(monkeypatch):
   assert [r.jid for r in ready] == ["good"]
   assert probed == ["good"]
   assert stats["failure_backoff_skips"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Backfill lane (plan update-metrics-backfill-lane)
+# ---------------------------------------------------------------------------
+
+
+def _lane_stats():
+  stats = update_metrics._new_scheduler_stats()
+  return stats
+
+
+def _lane_state(refs, *, lane=True):
+  for ref in refs:
+    if lane:
+      ref.lane = update_metrics.BACKFILL_LANE
+  state = {
+    "date": None,
+    "dirty_before": timezone.now(),
+    "iter": iter([(list(refs), len(refs))]),
+    "done": False,
+    "pending_tail": None,
+    "min_time": 300,
+    "rerun": False,
+    "listing_cooldown_until": 0.0,
+    "listing_needs_rebuild": False,
+  }
+  if lane:
+    state["lane"] = update_metrics.BACKFILL_LANE
+  return state
+
+
+def _fresh_state(day, refs):
+  return {
+    "date": day,
+    "iter": iter([(list(refs), len(refs))]),
+    "done": False,
+    "pending_tail": None,
+    "min_time": 300,
+    "rerun": False,
+    "listing_cooldown_until": 0.0,
+    "listing_needs_rebuild": False,
+  }
+
+
+class _FakeJobRows:
+  """``job_data.objects.filter(jid__in=...).values(...)`` test double."""
+
+  def __init__(self, rows_by_jid):
+    self.rows_by_jid = rows_by_jid
+    self.objects = self
+
+  def filter(self, **kwargs):
+    jids = kwargs.get("jid__in") or []
+    self._selected = [
+      self.rows_by_jid[j] for j in jids if j in self.rows_by_jid
+    ]
+    return self
+
+  def values(self, *fields):
+    return [{f: row.get(f) for f in fields} for row in self._selected]
+
+
+def _patch_lane_env(monkeypatch, *, slots=2, strict_ready=None, rows=None):
+  _patch_connections_vendor(monkeypatch, "sqlite")
+  monkeypatch.setattr(
+    update_metrics.cfg,
+    "get_metrics_readiness_require_window_coverage",
+    lambda: False,
+  )
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_backfill_min_slots", lambda: slots
+  )
+  # pool = min_slots + 1 fresh job, reserve 0: the dynamic cap equals the
+  # floor while one fresh ref is queued and grows by one when it is gone.
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_pool_processes", lambda: slots + 1
+  )
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_backfill_fresh_reserve_slots", lambda: 0
+  )
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_backfill_max_jobs_per_hour", lambda: 0
+  )
+  monkeypatch.setattr(
+    update_metrics,
+    "_proxy_reject_not_ready_jids",
+    lambda jids: (set(), list(jids)),
+  )
+  strict_calls = []
+
+  def _strict(jids, **kwargs):
+    strict_calls.append((list(jids), kwargs))
+    ready = [j for j in jids if j in (strict_ready or set())]
+    return ready, dict.fromkeys(ready, (None, None))
+
+  monkeypatch.setattr(
+    update_metrics, "_filter_jids_with_samples_after_end_and_bounds", _strict
+  )
+  monkeypatch.setattr(update_metrics, "job_data", _FakeJobRows(rows or {}))
+  skips = []
+  monkeypatch.setattr(
+    update_metrics,
+    "record_backfill_skips",
+    lambda pairs, checked_at: (skips.extend(pairs), len(pairs))[1],
+  )
+  update_metrics._BACKFILL_ADMIT_TIMES.clear()
+  return strict_calls, skips
+
+
+def _run_fill(states, stats, ready=None):
+  ready = ready if ready is not None else []
+  update_metrics._fill_ready_queue(
+    states,
+    ready,
+    mode="global_priority",
+    prefetch_chunks=10,
+    phase_timer=update_metrics._PhaseTimer(),
+    stats=stats,
+    strict_check_state={
+      "batch_size": update_metrics.STRICT_CHECK_BATCH_MIN,
+      "max_batch_size": update_metrics.STRICT_CHECK_BATCH_MIN,
+    },
+    strict_check_cooldown_until={},
+    rr_cursor={"idx": 0},
+    scheduler_shared_lock=threading.Lock(),
+    on_not_ready_jid=None,
+    on_candidate_jid=None,
+  )
+  return ready
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_listing_sql_excludes_host_data_and_orders_dirty_first(
+  monkeypatch,
+):
+  """Stage 3: version-stale keyset uses cheap job_data predicates only,
+  honours the cursor, and the lane lists the dirty pass before it."""
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_backfill_quiescence_days", lambda: 7.0
+  )
+  cutoff = timezone.make_aware(datetime(2026, 8, 1))
+  before = timezone.make_aware(datetime(2026, 8, 9))
+  qs = update_metrics._backfill_stale_queryset(before, 300, cutoff)
+  sql = str(qs.query)
+  assert '"host_data".' not in sql and "encode(" not in sql
+  assert '"job_data"."metrics_version" IS NULL' in sql
+  assert '"job_data"."metrics_version" <' in sql
+  assert '"job_data"."metrics_skipped_since" IS NULL' in sql
+  assert '"job_data"."metrics_skipped_since" <=' in sql
+  assert '"job_data"."metrics_dirty_at" IS NULL' in sql
+  assert "ORDER BY" in sql and "DESC" in sql
+  cursor_qs = update_metrics._backfill_stale_queryset(
+    before,
+    300,
+    cutoff,
+    cursor=(timezone.make_aware(datetime(2026, 7, 1)), "zz"),
+  )
+  cursor_sql = str(cursor_qs.query)
+  assert '"job_data"."end_time" <' in cursor_sql
+  assert '"job_data"."jid" <' in cursor_sql
+  # Dirty pass first, then the stale sweep.
+  order = []
+  monkeypatch.setattr(
+    update_metrics,
+    "_iter_dirty_catchup_pks",
+    lambda b, m, c: iter([([SimpleNamespace(jid="dirty1")], 1)]),
+  )
+  monkeypatch.setattr(update_metrics, "_load_backfill_cursor", lambda: None)
+  monkeypatch.setattr(
+    update_metrics, "_clear_backfill_cursor", lambda: order.append("clear")
+  )
+  monkeypatch.setattr(
+    update_metrics,
+    "_iter_chunked_pks",
+    lambda qs, c, on_page=None: iter([([SimpleNamespace(jid="stale1")], 1)]),
+  )
+  pages = list(update_metrics._iter_backfill_pks(before, 300, 10))
+  assert [[r.jid for r in chunk] for chunk, _ in pages] == [
+    ["dirty1"],
+    ["stale1"],
+  ]
+  assert all(r.lane == "backfill" for chunk, _ in pages for r in chunk)
+  assert order == ["clear"]
+
+
+class _FakeStateStore:
+  """In-memory ``metrics_scheduler_state`` manager."""
+
+  def __init__(self):
+    self.rows = {}
+    self.objects = self
+
+  def filter(self, **kwargs):
+    key = kwargs.get("key")
+    self._key = key
+    return self
+
+  def first(self):
+    value = self.rows.get(self._key)
+    return None if value is None else SimpleNamespace(value=value)
+
+  def update_or_create(self, key, defaults):
+    self.rows[key] = defaults["value"]
+
+  def delete(self):
+    self.rows.pop(self._key, None)
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_cursor_persists_and_wraps(monkeypatch):
+  """Stage 3: the cursor is written when the next page is requested (last
+  fully processed page), ignored under another contract version, and
+  cleared when the sweep runs dry (lap wrap)."""
+  store = _FakeStateStore()
+  monkeypatch.setattr(update_metrics, "metrics_scheduler_state", store)
+  monkeypatch.setattr(
+    update_metrics, "_iter_dirty_catchup_pks", lambda *a: iter(())
+  )
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_backfill_quiescence_days", lambda: 7.0
+  )
+  t1 = timezone.make_aware(datetime(2026, 7, 10))
+  t2 = timezone.make_aware(datetime(2026, 7, 9))
+
+  def _pages(qs, chunk_size, on_page=None):
+    del qs, chunk_size
+    on_page("a", t1)
+    yield [SimpleNamespace(jid="a")], 1
+    on_page("b", t2)
+    yield [SimpleNamespace(jid="b")], 2
+
+  monkeypatch.setattr(update_metrics, "_iter_chunked_pks", _pages)
+  captured = {}
+
+  def _stale_qs(before, min_time, cutoff, cursor=None):
+    captured["cursor"] = cursor
+    return object()
+
+  monkeypatch.setattr(update_metrics, "_backfill_stale_queryset", _stale_qs)
+  before = timezone.make_aware(datetime(2026, 8, 9))
+  gen = update_metrics._iter_backfill_pks(before, 300, 1)
+  first, _ = next(gen)
+  assert [r.jid for r in first] == ["a"]
+  assert store.rows == {}  # page a still being processed
+  second, _ = next(gen)
+  assert [r.jid for r in second] == ["b"]
+  saved = store.rows[update_metrics.BACKFILL_CURSOR_KEY]
+  assert saved["jid"] == "a" and saved["end_time"] == t1.isoformat()
+  assert saved["version"] == update_metrics.METRICS_CONTRACT_VERSION
+  assert update_metrics._load_backfill_cursor() == (t1, "a")
+  with pytest.raises(StopIteration):
+    next(gen)
+  assert update_metrics.BACKFILL_CURSOR_KEY not in store.rows  # lap wrapped
+  # A restart resumes from the saved cursor ...
+  store.rows[update_metrics.BACKFILL_CURSOR_KEY] = saved
+  gen2 = update_metrics._iter_backfill_pks(before, 300, 1)
+  next(gen2)
+  assert captured["cursor"] == (t1, "a")
+  # ... unless the contract version moved: then the sweep restarts.
+  store.rows[update_metrics.BACKFILL_CURSOR_KEY] = {**saved, "version": -5}
+  assert update_metrics._load_backfill_cursor() is None
+
+
+@pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
+def test_date_iterators_add_backfill_lane_or_dirty_catchup(monkeypatch):
+  """Stage 4: enabled -> one lane state (dirty + stale) replaces C7; disabled
+  -> the plain dirty catch-up state remains."""
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  update_metrics._expected_job_metrics_row_count.cache_clear()
+  monkeypatch.setattr(update_metrics, "_load_backfill_cursor", lambda: None)
+  dates = [datetime(2026, 8, 15), datetime(2026, 8, 14)]
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_backfill_enabled", lambda: True
+  )
+  states = update_metrics._build_date_chunk_iterators(
+    dates, 300, False, update_metrics._PhaseTimer()
+  )
+  assert states[-1]["date"] is None
+  assert states[-1]["lane"] == update_metrics.BACKFILL_LANE
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_backfill_enabled", lambda: False
+  )
+  states = update_metrics._build_date_chunk_iterators(
+    dates, 300, False, update_metrics._PhaseTimer()
+  )
+  assert states[-1]["date"] is None and "lane" not in states[-1]
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_feeder_respects_slot_cap_and_fresh_priority(monkeypatch):
+  """Stage 4: fresh days list first; the lane admits at most its slot room
+  (slots - inflight - queued) and skips instead of deferring."""
+  strict_calls, skips = _patch_lane_env(
+    monkeypatch, slots=2, strict_ready={"f1", "b1", "b3", "b4"}
+  )
+  stats = _lane_stats()
+  lane_refs = [SimpleNamespace(jid=j) for j in ("b1", "b2", "b3", "b4")]
+  lane = _lane_state(lane_refs)
+  fresh = _fresh_state(datetime(2026, 8, 15), [SimpleNamespace(jid="f1")])
+  ready = _run_fill([lane, fresh], stats)
+  assert _ready_queue_jids(ready) == ["f1", "b1", "b3"]
+  assert [j for j, _cov in skips] == ["b2"]
+  assert stats["backfill_admitted_total"] == 2
+  assert stats["backfill_skipped_total"] == 1
+  assert stats["backfill_listed_total"] == 4
+  # b4 waits in the lane's pending tail; no more room this round.
+  assert [r.jid for r in lane["pending_tail"]] == ["b4"]
+  assert lane["done"] is False
+  # With both backfill jobs in flight and a fresh job also in flight the
+  # cap is the floor (2) and the lane is not even consulted.
+  stats["backfill_inflight"] = 2
+  stats["inflight_jids"] = 3
+  before = len(strict_calls)
+  ready2 = _run_fill([lane], stats)
+  assert ready2 == [] and len(strict_calls) == before
+  # The fresh job finishes: the cap expands to pool - reserve = 3 and the
+  # lane admits its waiting tail even though its two jobs still run.
+  stats["inflight_jids"] = 2
+  ready3 = _run_fill([lane], stats)
+  assert _ready_queue_jids(ready3) == ["b4"]
+  assert lane["done"] is False  # iterator exhausted on the next call
+  assert _run_fill([lane], stats) == [] and lane["done"] is True
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_skip_instead_of_defer_and_quiescence_partial_final(
+  monkeypatch,
+):
+  """Stage 4: a skipped job whose quiescence elapsed (metrics_skipped_since
+  set, no dirty stamp) is admitted without a readiness probe; a skipped job
+  with a newer dirty stamp is re-checked and skipped again on failure."""
+  old = timezone.now() - timedelta(days=30)
+  rows = {
+    "final1": {
+      "jid": "final1",
+      "start_time": old,
+      "end_time": old,
+      "host_list": ["n1"],
+      "metrics_skipped_since": old,
+      "metrics_dirty_at": None,
+    },
+    "dirty1": {
+      "jid": "dirty1",
+      "start_time": old,
+      "end_time": old,
+      "host_list": ["n1"],
+      "metrics_skipped_since": old,
+      "metrics_dirty_at": timezone.now(),
+    },
+  }
+  strict_calls, skips = _patch_lane_env(
+    monkeypatch, slots=5, strict_ready=set(), rows=rows
+  )
+  stats = _lane_stats()
+  lane = _lane_state(
+    [SimpleNamespace(jid="final1"), SimpleNamespace(jid="dirty1")]
+  )
+  ready = _run_fill([lane], stats)
+  assert _ready_queue_jids(ready) == ["final1"]
+  assert stats["backfill_partial_total"] == 1
+  assert [jids for jids, _kw in strict_calls] == [["dirty1"]]
+  assert strict_calls[0][1].get("backfill") is True
+  assert [j for j, _cov in skips] == ["dirty1"]
+  assert stats["backfill_skipped_total"] == 1
+  # No deferral bookkeeping for lane candidates.
+  assert stats["deferred_not_ready_queue_size"] == 0
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_readiness_requires_every_host_and_writes_no_gate_failure(
+  monkeypatch,
+):
+  """Stage 4: the fresh lane admits a job with a missing host once the host
+  wait passed; the backfill lane does not (skip -> quiescence)."""
+  rows = _c1_job_rows(timezone.now() - timedelta(hours=2))
+  _c1_patch_one_host_covering(monkeypatch, rows)
+  gate_calls = []
+  monkeypatch.setattr(
+    update_metrics,
+    "_maybe_persist_window_coverage_gate_failure",
+    lambda *a, **k: gate_calls.append(a[0]) or False,
+  )
+  fresh_ready, _ = update_metrics._ready_jids_and_bounds_from_job_rows(rows)
+  assert fresh_ready == ["c1job"]
+  lane_ready, bounds = update_metrics._ready_jids_and_bounds_from_job_rows(
+    rows, backfill=True
+  )
+  assert lane_ready == []
+  assert bounds.host_coverage["c1job"] == (1, 2)
+  # An uncovered window on the backfill lane writes no gate-failure catalog.
+  start = rows[0]["start_time"]
+  monkeypatch.setattr(
+    update_metrics,
+    "_in_window_per_host_bounds",
+    lambda hosts, st, et: (
+      {"n1.x": start},
+      {"n1.x": start + timedelta(minutes=5)},
+    ),
+  )
+  assert (
+    update_metrics._ready_jids_and_bounds_from_job_rows(rows, backfill=True)[0]
+    == []
+  )
+  assert gate_calls == []
+  update_metrics._ready_jids_and_bounds_from_job_rows(rows)
+  assert gate_calls == ["c1job"]
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_candidate_coverage_attached_from_host_coverage():
+  bounds = update_metrics._WindowBounds()
+  bounds["j1"] = (None, None)
+  bounds.host_coverage["j1"] = (3, 4)
+  ref = SimpleNamespace(jid="j1")
+  update_metrics._attach_telemetry_bounds_to_candidate(ref, bounds)
+  assert ref.metrics_coverage == 0.75
+  rebuilt = update_metrics._job_refs_from_jids(
+    [SimpleNamespace(jid="j1", lane="backfill", metrics_coverage=0.75)]
+  )[0]
+  assert rebuilt.lane == "backfill" and rebuilt.metrics_coverage == 0.75
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_failed_final_after_daily_backoff(monkeypatch):
+  """Stage 4: a backfill job that exhausts the backoff steps is closed out
+  with the current version; prewarm-only failures are not."""
+  calls = []
+  monkeypatch.setattr(
+    update_metrics,
+    "persist_metrics_failed_final",
+    lambda jid, err: calls.append(jid) or True,
+  )
+  update_metrics._BACKFILL_FAILED_FINAL["count"] = 0
+  steps = len(update_metrics.JOB_FAILURE_BACKOFF_S)
+  for _ in range(steps):
+    update_metrics._note_job_outcome(
+      {
+        "jid": "bf1",
+        "ok": False,
+        "failure_kind": "worker_compute_error",
+        "error_type": "E",
+        "error_message": "x",
+        "lane": "backfill",
+      }
+    )
+  assert calls == ["bf1"]
+  assert update_metrics._BACKFILL_FAILED_FINAL["count"] == 1
+  for _ in range(steps):
+    update_metrics._note_job_outcome(
+      {
+        "jid": "bf2",
+        "ok": False,
+        "failure_kind": "prewarm_failed",
+        "error_type": "E",
+        "error_message": "x",
+        "lane": "backfill",
+      }
+    )
+    update_metrics._note_job_outcome(
+      {
+        "jid": "fresh",
+        "ok": False,
+        "failure_kind": "worker_compute_error",
+        "error_type": "E",
+        "error_message": "x",
+      }
+    )
+  assert calls == ["bf1"]
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_pop_fresh_first_in_batch_and_sliding_take():
+  from hpcperfstats.analysis.metrics.lib import metrics_sliding_session as mss
+
+  q = deque(
+    [
+      SimpleNamespace(jid="b1", lane="backfill"),
+      SimpleNamespace(jid="f1"),
+      SimpleNamespace(jid="b2", lane="backfill"),
+      SimpleNamespace(jid="f2"),
+    ]
+  )
+  assert [r.jid for r in mss.pop_fresh_first(q, 3)] == ["f1", "f2", "b1"]
+  assert [r.jid for r in q] == ["b2"]
+  q = deque(
+    [SimpleNamespace(jid="b1", lane="backfill"), SimpleNamespace(jid="f1")]
+  )
+  out = update_metrics._pop_candidates_for_compute_batch_locked(q, 1)
+  assert [r.jid for r in out] == ["f1"] and [r.jid for r in q] == ["b1"]
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_rate_brake_and_slot_default(monkeypatch):
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_backfill_min_slots", lambda: 0
+  )
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_pool_processes", lambda: 32
+  )
+  assert update_metrics._backfill_min_slots() == 6
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_pool_processes", lambda: 3
+  )
+  assert update_metrics._backfill_min_slots() == 1
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_backfill_min_slots", lambda: 9
+  )
+  assert update_metrics._backfill_min_slots() == 9
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_backfill_max_jobs_per_hour", lambda: 2
+  )
+  update_metrics._BACKFILL_ADMIT_TIMES.clear()
+  assert update_metrics._backfill_rate_brake_blocked(now_mono=1000.0) is False
+  update_metrics._note_backfill_admitted(2, now_mono=1000.0)
+  assert update_metrics._backfill_rate_brake_blocked(now_mono=1001.0) is True
+  assert (
+    update_metrics._backfill_rate_brake_blocked(now_mono=1000.0 + 3601.0)
+    is False
+  )
+  stats = {"backfill_inflight": 1, "backfill_queued": 1}
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_backfill_max_jobs_per_hour", lambda: 0
+  )
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_backfill_fresh_reserve_slots", lambda: 2
+  )
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_pool_processes", lambda: 32
+  )
+  # Fresh lane idle: cap = 32 - 2 = 30; held = 1 + 1 + 1 local lane ref.
+  assert (
+    update_metrics._backfill_lane_room(
+      stats, threading.Lock(), [SimpleNamespace(jid="x", lane="backfill")]
+    )
+    == 27
+  )
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_cap_expands_when_fresh_lane_idle(monkeypatch):
+  """The lane may use every thread the fresh window is not using (minus the
+  fresh reserve) and never fewer than its guaranteed minimum."""
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_pool_processes", lambda: 32
+  )
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_backfill_min_slots", lambda: 0
+  )
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_backfill_fresh_reserve_slots", lambda: 2
+  )
+  lock = threading.Lock()
+
+  def _stats(inflight, bf_inflight, enq, deq, bf_queued):
+    return {
+      "inflight_jids": inflight,
+      "backfill_inflight": bf_inflight,
+      "ready_enqueued_total": enq,
+      "ready_dequeued_total": deq,
+      "backfill_queued": bf_queued,
+    }
+
+  # Nothing fresh anywhere: 30 of 32 threads.
+  assert update_metrics._backfill_slot_cap(_stats(0, 0, 0, 0, 0), lock) == 30
+  # Backfill-only work in flight does not shrink its own cap.
+  assert (
+    update_metrics._backfill_slot_cap(_stats(20, 20, 20, 20, 0), lock) == 30
+  )
+  # 10 fresh in flight + 4 fresh queued + 1 fresh in this fill: 32-2-15 = 15.
+  assert (
+    update_metrics._backfill_slot_cap(
+      _stats(14, 4, 30, 24, 2), lock, [SimpleNamespace(jid="f")]
+    )
+    == 15
+  )
+  # Fresh window saturates the pool: the guaranteed floor (32 // 5 = 6).
+  assert update_metrics._backfill_slot_cap(_stats(32, 0, 40, 32, 0), lock) == 6
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_backfill_min_slots", lambda: 9
+  )
+  assert update_metrics._backfill_slot_cap(_stats(32, 0, 40, 32, 0), lock) == 9
+  # Reserve is clamped below the pool size.
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_backfill_fresh_reserve_slots", lambda: 99
+  )
+  assert update_metrics._backfill_slot_cap(_stats(0, 0, 0, 0, 0), lock) == 9
+
+
+@pytest.mark.machine_unit_mock
+def test_fresh_days_relist_while_backfill_lane_keeps_pass_open(monkeypatch):
+  """The lane keeps a pass alive; done fresh days are rebuilt every pass
+  interval so the window stays as fresh as with separate passes."""
+  rebuilt = []
+  monkeypatch.setattr(
+    update_metrics,
+    "_rebuild_date_listing_iter",
+    lambda s, _phase_timer: rebuilt.append(s["date"]),
+  )
+  fresh = [{"date": "d1", "done": True}, {"date": "d2", "done": True}]
+  lane = {"date": None, "lane": "backfill", "done": False}
+  states = [*fresh, lane]
+  assert (
+    update_metrics._maybe_relist_fresh_date_states(
+      states, 100.0, None, interval_s=60.0, now_mono=150.0
+    )
+    is False
+  )
+  assert (
+    update_metrics._maybe_relist_fresh_date_states(
+      states, 100.0, None, interval_s=60.0, now_mono=161.0
+    )
+    is True
+  )
+  assert rebuilt == ["d1", "d2"] and all(not s["done"] for s in fresh)
+  # No lane, or a fresh day still listing, or a finished lane: no relist.
+  fresh[0]["done"] = True
+  assert (
+    update_metrics._maybe_relist_fresh_date_states(
+      [*fresh, {"date": None, "lane": "backfill", "done": True}],
+      0.0,
+      None,
+      interval_s=60.0,
+      now_mono=1000.0,
+    )
+    is False
+  )
+  assert (
+    update_metrics._maybe_relist_fresh_date_states(
+      fresh, 0.0, None, interval_s=60.0, now_mono=1000.0
+    )
+    is False
+  )
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_status_cli_and_census_line(monkeypatch):
+  """Stage 5: --backfill-* argv parsing and the hourly census tokens."""
+  parse = update_metrics._parse_backfill_cli_args
+  assert parse(["um", "--backfill-status"]) == ("status", None, None)
+  assert parse(["um", "--backfill-finalize-partials"]) == (
+    "finalize",
+    None,
+    None,
+  )
+  action, before, err = parse(
+    ["um", "--backfill-finalize-partials", "--before=2026-08-01"]
+  )
+  assert (action, before, err) == ("finalize", datetime(2026, 8, 1), None)
+  assert parse(["um", "--backfill-status", "2026-08-01"])[2]
+  assert parse(["um", "--backfill-status", "--before", "2026-08-01"])[2]
+  assert parse(["um", "--before", "2026-08-01"])[2]
+  assert parse(["um", "--backfill-finalize-partials", "--before", "soon"])[2]
+  assert parse(["um"]) == (None, None, None)
+  suffix = update_metrics._backfill_progress_suffix(
+    {
+      "backfill_version": 1,
+      "backfill_remaining_dirty": 2,
+      "backfill_remaining_stale": 30,
+      "backfill_awaiting": 4,
+      "backfill_partial_final": 5,
+      "backfill_done_total": 6,
+      "backfill_skipped_total": 7,
+      "backfill_partial_total": 8,
+      "backfill_failed_final": 9,
+      "backfill_cursor_end_time": "2026-07-01T00:00:00+00:00",
+      "backfill_inflight": 3,
+      "backfill_slots": 6,
+    }
+  )
+  for token in (
+    "backfill_version=1",
+    "backfill_remaining_dirty=2",
+    "backfill_remaining_stale=30",
+    "backfill_awaiting=4",
+    "backfill_partial_final=5",
+    "backfill_done_total=6",
+    "backfill_skipped_total=7",
+    "backfill_partial_total=8",
+    "backfill_failed_final=9",
+    "backfill_cursor_end_time=2026-07-01T00:00:00+00:00",
+    "backfill_slots=3/6",
+  ):
+    assert token in suffix, token
+  # Census failures degrade to n/a instead of killing the reporter thread.
+  monkeypatch.setattr(
+    update_metrics, "_backfill_census", lambda before, min_time: 1 / 0
+  )
+  monkeypatch.setattr(update_metrics, "connections", MagicMock())
+  monkeypatch.setattr(update_metrics, "close_old_connections", lambda: None)
+  fields = update_metrics._backfill_progress_fields(timezone.now())
+  assert fields["backfill_remaining_stale"] == "n/a"
+
+
+@pytest.mark.machine_unit_mock
+def test_main_backfill_status_dispatches_before_scheduler(monkeypatch):
+  monkeypatch.setattr(
+    update_metrics, "set_daemon_process_title", lambda **k: None, raising=False
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.process_title.set_daemon_process_title",
+    lambda **k: None,
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.python_abi_startup_log.log_python_abi_startup",
+    lambda: None,
+  )
+  monkeypatch.setattr(
+    update_metrics.codon_bridge, "require_codon_metrics", lambda log: None
+  )
+  called = []
+  monkeypatch.setattr(
+    update_metrics,
+    "_main_backfill_status",
+    lambda: called.append("status") or 0,
+  )
+  monkeypatch.setattr(
+    update_metrics,
+    "_main_backfill_finalize_partials",
+    lambda before: called.append(("finalize", before)) or 0,
+  )
+  monkeypatch.setattr(
+    update_metrics,
+    "update_metrics_for_dates",
+    lambda *a, **k: called.append("sched"),
+  )
+  assert (
+    update_metrics.main(["um", "--backfill-status"], sleep_after=False) == 0
+  )
+  assert (
+    update_metrics.main(
+      ["um", "--backfill-finalize-partials", "--before", "2026-08-01"],
+      sleep_after=False,
+    )
+    == 0
+  )
+  assert called == ["status", ("finalize", datetime(2026, 8, 1))]
+  assert (
+    update_metrics.main(["um", "--backfill-status", "x"], sleep_after=False)
+    == 1
+  )

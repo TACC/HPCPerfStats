@@ -110,6 +110,11 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "metrics_readiness_start_margin_seconds"),
   ("PIPELINE", "metrics_readiness_end_margin_seconds"),
   ("PIPELINE", "metrics_readiness_host_wait_seconds"),
+  ("PIPELINE", "metrics_backfill_enabled"),
+  ("PIPELINE", "metrics_backfill_min_slots"),
+  ("PIPELINE", "metrics_backfill_fresh_reserve_slots"),
+  ("PIPELINE", "metrics_backfill_quiescence_days"),
+  ("PIPELINE", "metrics_backfill_max_jobs_per_hour"),
   ("PIPELINE", "metrics_scheduler_pass_interval_s"),
   ("PIPELINE", "metrics_public_ef_interval_s"),
   ("PIPELINE", "sync_ingest_pool_processes"),
@@ -297,6 +302,15 @@ INI_OPTION_DEFAULTS = {
   "metrics_readiness_start_margin_seconds": "600",
   "metrics_readiness_end_margin_seconds": "600",
   "metrics_readiness_host_wait_seconds": "21600",
+  # Backfill lane: recompute old jobs whose metrics predate the contract.
+  "metrics_backfill_enabled": "yes",
+  # Guaranteed lane floor; 0 = one fifth of metrics_pool_processes (>= 1).
+  "metrics_backfill_min_slots": "0",
+  # Threads kept free of backfill so an arriving fresh job starts at once.
+  "metrics_backfill_fresh_reserve_slots": "2",
+  "metrics_backfill_quiescence_days": "7",
+  # 0 = unlimited.
+  "metrics_backfill_max_jobs_per_hour": "0",
   "metrics_scheduler_pass_interval_s": "60",
   "metrics_public_ef_interval_s": "3600",
   "sync_ingest_pool_processes": "64",
@@ -2978,6 +2992,112 @@ def get_metrics_readiness_host_wait_seconds() -> float:
     return max(0.0, float(_pipeline_get("metrics_readiness_host_wait_seconds")))
   except TypeError, ValueError, OverflowError:
     return 21600.0
+
+
+def get_metrics_backfill_enabled() -> bool:
+  """
+  Whether update_metrics runs the backfill lane behind the fresh window.
+
+  The lane recomputes, newest first and slot-capped, every job that ended
+  before the trailing window whose ``metrics_version`` is NULL or older
+  than ``METRICS_CONTRACT_VERSION`` or that ingest stamped dirty. Off keeps
+  only the dirty catch-up of already-processed jobs.
+
+  Returns:
+    bool: ``[PIPELINE] metrics_backfill_enabled`` (default yes).
+
+  Examples:
+    >>> get_metrics_backfill_enabled()  # doctest: +SKIP
+    True
+  """
+  _ensure_cfg_loaded()
+  return _parse_bool(_pipeline_get("metrics_backfill_enabled"), default=True)
+
+
+def get_metrics_backfill_min_slots() -> int:
+  """
+  Metrics-pool slots the backfill lane keeps when the fresh lane is busy.
+
+  The lane's cap is work-conserving (every thread the fresh window is not
+  using, minus the fresh reserve); this is its floor. 0 = pool // 5.
+
+  Returns:
+    int: Non-negative ``[PIPELINE] metrics_backfill_min_slots`` (default 0;
+    the scheduler turns 0 into one fifth of ``metrics_pool_processes``,
+    at least 1).
+
+  Examples:
+    >>> get_metrics_backfill_min_slots()  # doctest: +SKIP
+    0
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(0, _pipeline_getint("metrics_backfill_min_slots"))
+  except TypeError, ValueError:
+    return 0
+
+
+def get_metrics_backfill_fresh_reserve_slots() -> int:
+  """
+  Pool threads never given to the backfill lane (fresh-job headroom).
+
+  A fresh-window job that arrives while the sweep holds the rest of the
+  pool starts on one of these without waiting for a backfill job to end.
+
+  Returns:
+    int: Non-negative ``[PIPELINE] metrics_backfill_fresh_reserve_slots``
+    (default 2; the scheduler clamps it below the pool size).
+
+  Examples:
+    >>> get_metrics_backfill_fresh_reserve_slots()  # doctest: +SKIP
+    2
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(0, _pipeline_getint("metrics_backfill_fresh_reserve_slots"))
+  except TypeError, ValueError:
+    return 2
+
+
+def get_metrics_backfill_quiescence_days() -> float:
+  """
+  Days an old job's partial host_data must stay unchanged before compute.
+
+  A backfill job skipped for incomplete coverage is recomputed with the
+  hosts that reported once no new host_data has arrived for this long.
+
+  Returns:
+    float: Non-negative days (``[PIPELINE]
+    metrics_backfill_quiescence_days``, default 7).
+
+  Examples:
+    >>> get_metrics_backfill_quiescence_days()  # doctest: +SKIP
+    7.0
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(0.0, float(_pipeline_get("metrics_backfill_quiescence_days")))
+  except TypeError, ValueError, OverflowError:
+    return 7.0
+
+
+def get_metrics_backfill_max_jobs_per_hour() -> int:
+  """
+  Ceiling on backfill admits per sliding hour; 0 = unlimited.
+
+  Returns:
+    int: Non-negative ``[PIPELINE] metrics_backfill_max_jobs_per_hour``
+    (default 0).
+
+  Examples:
+    >>> get_metrics_backfill_max_jobs_per_hour()  # doctest: +SKIP
+    0
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(0, _pipeline_getint("metrics_backfill_max_jobs_per_hour"))
+  except TypeError, ValueError:
+    return 0
 
 
 def get_metrics_scheduler_pass_interval_s() -> float:

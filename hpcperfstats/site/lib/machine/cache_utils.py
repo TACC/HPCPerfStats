@@ -46,6 +46,8 @@ Attributes:
   KEY_XALT: Attribute.
   SITE_CACHE_TTL_FRESH_SECONDS: Attribute.
   SITE_FRESHNESS_WINDOW_DAYS: Attribute.
+  METRICS_FRESH_WINDOW_DAYS: update_metrics trailing window (days) used by
+    the ingest dirty stamp; equals ``DEFAULT_METRICS_RANGE_DAYS``.
   SITE_NEWEST_END_META_TTL_SECONDS: Attribute.
   TIMEOUT_ADMIN_STATS: Attribute.
   _CACHE_MISS: Attribute.
@@ -559,16 +561,24 @@ def invalidate_host_wide_residual_ht_for_jids(jids: Any) -> None:
     pass
 
 
+# Trailing window update_metrics lists on its own (must equal
+# ``update_metrics.DEFAULT_METRICS_RANGE_DAYS``; a drift test pins it).
+METRICS_FRESH_WINDOW_DAYS = 7
+
+
 def mark_jids_metrics_dirty(jids: Any) -> int:
   """
-  Stamp ``metrics_dirty_at`` on ended, already-processed jobs in ``jids``.
+  Stamp ``metrics_dirty_at`` on ended jobs in ``jids`` that need a recompute.
 
-  Called by ingest when host_data rows for these jobs land. A job counts as
-  processed once ``metrics_distinct_time_count`` is set (metrics or a gate
-  failure were persisted); running jobs and jobs not yet processed are left
-  alone, and an existing stamp is kept, so repeated chunks write once.
-  update_metrics lists stamped jobs again and clears the stamp when it
-  persists metrics computed after it.
+  Called by ingest when host_data rows for these jobs land. Inside the
+  trailing ``METRICS_FRESH_WINDOW_DAYS`` window a job is stamped once it was
+  processed (``metrics_distinct_time_count`` set: metrics or a gate failure
+  were persisted) because Phase A lists never-processed jobs there anyway.
+  Older than the window every ended job is stamped, processed or not, so
+  the archive backlog reaching a job that was never computed hands it to
+  the backfill lane's dirty pass. Running jobs are left alone and an
+  existing stamp is kept, so repeated chunks write once. update_metrics
+  clears the stamp when it persists metrics computed after it.
 
   Args:
     jids (Any): Iterable of job ids from an ingest payload.
@@ -583,17 +593,25 @@ def mark_jids_metrics_dirty(jids: Any) -> int:
   ids = [str(j) for j in (jids or []) if j]
   if not ids:
     return 0
+  from django.db.models import Q
   from django.utils import timezone as _tz
 
   from hpcperfstats.site.lib.machine.models import job_data as _job_data_model
 
   now = _tz.now()
-  return _job_data_model.objects.filter(
-    jid__in=ids,
-    end_time__lt=now,
-    metrics_distinct_time_count__isnull=False,
-    metrics_dirty_at__isnull=True,
-  ).update(metrics_dirty_at=now)
+  window_start = now - timedelta(days=METRICS_FRESH_WINDOW_DAYS)
+  return (
+    _job_data_model.objects.filter(
+      jid__in=ids,
+      end_time__lt=now,
+      metrics_dirty_at__isnull=True,
+    )
+    .filter(
+      Q(metrics_distinct_time_count__isnull=False)
+      | Q(end_time__lt=window_start)
+    )
+    .update(metrics_dirty_at=now)
+  )
 
 
 def invalidate_jid_derived_cache_keys(

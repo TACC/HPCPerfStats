@@ -90,6 +90,12 @@ Attributes:
   _JOB_FAILURE_MEMORY_LOCK: Guards ``_JOB_FAILURE_MEMORY``.
   _JOB_FAILURE_MEMORY_MAX: Entry cap (oldest dropped first).
   JOB_FAILURE_BACKOFF_S: Backoff seconds per failure count (then daily).
+  BACKFILL_CURSOR_KEY: metrics_scheduler_state row key of the sweep cursor.
+  BACKFILL_LANE: Lane tag on backfill candidate refs (``"backfill"``).
+  BACKFILL_RATE_WINDOW_S: Sliding window of the hourly backfill rate brake.
+  _BACKFILL_ADMIT_TIMES: Monotonic admit times inside that window.
+  _BACKFILL_FAILED_FINAL: Count of backfill jobs closed out as failed_final.
+  _BACKFILL_LOCK: Guards the two backfill process-global structures above.
   _ARTIFACT_CATCHUP_LAST_SCAN: Day -> monotonic time of its last Phase B scan.
   _ARTIFACT_CATCHUP_LOCK: Guards ``_ARTIFACT_CATCHUP_LAST_SCAN``.
   ARTIFACT_CATCHUP_INTERVAL_S: Minimum seconds between a day's Phase B scans.
@@ -166,8 +172,14 @@ from hpcperfstats.analysis.metrics.lib.columnar.job_table import HANDOFF
 from hpcperfstats.analysis.metrics.lib.db_retry import run_with_db_retry
 from hpcperfstats.analysis.metrics.lib.metrics import (
   INSUFFICIENT_DATA_FOR_METRICS_PROCESSING,
+  METRICS_CONTRACT_VERSION,
   expected_job_metric_row_count,
+  persist_metrics_failed_final,
   persist_window_coverage_gate_failure,
+  record_backfill_skips,
+)
+from hpcperfstats.analysis.metrics.lib.metrics_sliding_session import (
+  is_backfill_ref,
 )
 from hpcperfstats.dbload.lib.date_utils import (
   log_date_range,
@@ -208,6 +220,7 @@ from hpcperfstats.site.lib.machine.models import (
   job_detail_artifact,
   job_plot_artifact,
   metrics_data,
+  metrics_scheduler_state,
 )
 from hpcperfstats.site.lib.machine.public_metrics_artifacts import (
   refresh_public_expansion_factor_artifacts_parallel,
@@ -426,6 +439,17 @@ _JOB_FAILURE_MEMORY_MAX = 100_000
 # Seconds a failing jid waits before its next attempt, per failure count;
 # past the end it is retried once a day.
 JOB_FAILURE_BACKOFF_S = (300.0, 1800.0, 7200.0, 21600.0, 86400.0)
+# ``metrics_scheduler_state`` row holding the backfill lane's keyset cursor.
+BACKFILL_CURSOR_KEY = "backfill_cursor"
+# Sliding window for ``metrics_backfill_max_jobs_per_hour``.
+BACKFILL_RATE_WINDOW_S = 3600.0
+# Lane name carried on candidate refs listed by the backfill lane.
+BACKFILL_LANE = "backfill"
+_BACKFILL_LOCK = threading.Lock()
+# Backfill jobs closed out after the daily backoff step (process lifetime).
+_BACKFILL_FAILED_FINAL: dict[str, int] = {"count": 0}
+# Monotonic admit times of backfill candidates for the hourly rate brake.
+_BACKFILL_ADMIT_TIMES: deque[float] = deque()
 
 
 def _note_job_outcome(outcome: dict[str, Any]) -> None:
@@ -470,6 +494,19 @@ def _note_job_outcome(outcome: dict[str, Any]) -> None:
       f"(last={kind} {entry['error'][:200]})",
       flush=True,
     )
+    # A backfill job whose metrics keep failing is stamped with the current
+    # version (missing rows get a failure reason) so the sweep moves on; a
+    # prewarm-only failure keeps its good metrics and stays on daily retry.
+    if outcome.get("lane") == BACKFILL_LANE and kind != "prewarm_failed":
+      try:
+        if persist_metrics_failed_final(jid, entry["error"]):
+          with _BACKFILL_LOCK:
+            _BACKFILL_FAILED_FINAL["count"] += 1
+      except Exception as exc:
+        log_print(
+          f"metrics backfill: failed_final persist failed jid={jid}: {exc}",
+          flush=True,
+        )
 
 
 def _job_failure_backoff_active(jid: Any) -> bool:
@@ -765,21 +802,29 @@ def _pop_candidates_for_compute_batch_locked(ready_queue: Any, cap: Any) -> Any:
   sum_w = 0.0
   max_rt = 0.0
   while ready_queue and len(out) < cap:
-    ref = ready_queue[0]
+    # Fresh-lane refs are taken before backfill-lane refs (queue order kept
+    # within a lane), so a backfill job never holds a slot a fresh job wants.
+    idx = next(
+      (i for i, r in enumerate(ready_queue) if not is_backfill_ref(r)), 0
+    )
+    ref = ready_queue[idx]
     add_sum, add_max = _batch_window_cost_pair_for_ref(ref)
     new_sum = sum_w + add_sum
     new_max_rt = max(max_rt, add_max)
     if max_window > 0.0 and new_sum > max_window and out:
       break
     if max_window > 0.0 and new_sum > max_window and not out:
-      out.append(ready_queue.popleft())
+      out.append(ref)
+      del ready_queue[idx]
       break
     if max_single > 0.0 and new_max_rt > max_single and out:
       break
     if max_single > 0.0 and new_max_rt > max_single and not out:
-      out.append(ready_queue.popleft())
+      out.append(ref)
+      del ready_queue[idx]
       break
-    out.append(ready_queue.popleft())
+    out.append(ref)
+    del ready_queue[idx]
     sum_w = new_sum
     max_rt = new_max_rt
   return out
@@ -1005,6 +1050,14 @@ def _new_scheduler_stats() -> Any:
     "compute_batch_size": 0,
     "compute_batch_completed_jids": 0,
     "compute_batch_started_at": None,
+    # Backfill lane (out-of-window recompute) accounting.
+    "backfill_inflight": 0,
+    "backfill_queued": 0,
+    "backfill_listed_total": 0,
+    "backfill_admitted_total": 0,
+    "backfill_done_total": 0,
+    "backfill_skipped_total": 0,
+    "backfill_partial_total": 0,
   }
 
 
@@ -1562,11 +1615,14 @@ def _rebuild_date_listing_iter(state: Any, phase_timer: Any) -> None:
   if sched_date is None:
     state["listing_needs_rebuild"] = False
     before = state.get("dirty_before")
-    state["iter"] = (
-      _iter_dirty_catchup_pks(before, state.get("min_time", 300), CHUNK_SIZE)
-      if before is not None
-      else iter(())
-    )
+    min_time = state.get("min_time", 300)
+    if before is None:
+      state["iter"] = iter(())
+    elif state.get("lane") == BACKFILL_LANE:
+      # The persisted cursor resumes the version-stale sweep where it was.
+      state["iter"] = _iter_backfill_pks(before, min_time, CHUNK_SIZE)
+    else:
+      state["iter"] = _iter_dirty_catchup_pks(before, min_time, CHUNK_SIZE)
     state["pending_tail"] = None
     return
   min_time = state.get("min_time", 300)
@@ -2351,6 +2407,7 @@ class _CompletionReporter:
               float(extra_map.get("gc_pause_s_total", 0.0)),
             )
           )
+          extra += _backfill_progress_suffix(extra_map)
         except Exception:
           extra = ""
       log_print(
@@ -3447,7 +3504,11 @@ def _iter_date_listing_pks(
     yield chunk, total
 
 
-def _iter_chunked_pks(queryset: Any, chunk_size: int) -> Iterator[Any]:
+def _iter_chunked_pks(
+  queryset: Any,
+  chunk_size: int,
+  on_page: Any | None = None,
+) -> Iterator[Any]:
   """
   Yield (pk_list, total_so_far) in bounded chunks via queryset slicing.
 
@@ -3463,6 +3524,9 @@ def _iter_chunked_pks(queryset: Any, chunk_size: int) -> Iterator[Any]:
   Args:
     queryset (Any): Queryset passed to this helper.
     chunk_size (int): Integer value for chunk size.
+    on_page (Any | None): Optional ``(last_jid, last_end_time) -> None``
+      called with the keyset position of each real-ORM page just before it
+      is yielded (the backfill lane persists it once the page is consumed).
 
   Yields:
     Iterator[Any]: Value produced by this call (type depends on inputs).
@@ -3497,8 +3561,10 @@ def _iter_chunked_pks(queryset: Any, chunk_size: int) -> Iterator[Any]:
         break
       chunk = _chunk_rows_to_candidate_refs(rows)
       total += len(chunk)
-      yield chunk, total
       last_jid, last_end_time, _start_time, _artifact_only = rows[-1][:4]
+      if on_page is not None:
+        on_page(last_jid, last_end_time)
+      yield chunk, total
     return
 
   offset = 0
@@ -3540,6 +3606,8 @@ def _candidate_ref(
   nhosts: Any | None = None,
   estimated_sample_count: Any | None = None,
   host_list: Any | None = None,
+  lane: str | None = None,
+  metrics_coverage: Any | None = None,
 ) -> Any:
   """
   Build a lightweight candidate namespace for the metrics scheduler.
@@ -3553,6 +3621,10 @@ def _candidate_ref(
     nhosts (Any | None): Host count for sample-count sizing.
     estimated_sample_count (Any | None): Precomputed sample estimate.
     host_list (Any | None): Host names when ``nhosts`` is missing or zero.
+    lane (str | None): ``"backfill"`` for refs listed by the backfill lane;
+      None (fresh window) sets no attribute.
+    metrics_coverage (Any | None): Hosts covering / hosts total measured by
+      readiness, persisted with the metrics; None sets no attribute.
 
   Returns:
     Any: SimpleNamespace candidate ref.
@@ -3593,6 +3665,10 @@ def _candidate_ref(
     ns.telemetry_first_time = telemetry_first_time
   if telemetry_last_time is not None:
     ns.telemetry_last_time = telemetry_last_time
+  if lane is not None:
+    ns.lane = lane
+  if metrics_coverage is not None:
+    ns.metrics_coverage = float(metrics_coverage)
   return ns
 
 
@@ -3626,6 +3702,8 @@ def _job_refs_from_jids(jids: Any) -> Any:
           runtime_s=rt,
           telemetry_first_time=tft,
           telemetry_last_time=tlt,
+          lane=getattr(item, "lane", None),
+          metrics_coverage=getattr(item, "metrics_coverage", None),
         )
       )
     else:
@@ -3650,6 +3728,11 @@ def _attach_telemetry_bounds_to_candidate(
   Examples:
     >>> _attach_telemetry_bounds_to_candidate(None, None)  # doctest: +SKIP
   """
+  coverage = (getattr(bounds_by_jid, "host_coverage", None) or {}).get(
+    candidate.jid
+  )
+  if coverage and coverage[1] > 0:
+    candidate.metrics_coverage = coverage[0] / coverage[1]
   bounds = bounds_by_jid.get(candidate.jid)
   if not bounds:
     return candidate
@@ -4256,6 +4339,7 @@ def _ready_jids_and_bounds_from_job_rows(
   precomputed_bounds_by_jid: Any | None = None,
   stats: Any | None = None,
   scheduler_shared_lock: Any | None = None,
+  backfill: bool = False,
 ) -> Any:
   """
   Return ``(ready_jids, bounds_by_jid)`` for pre-fetched job rows.
@@ -4265,6 +4349,10 @@ def _ready_jids_and_bounds_from_job_rows(
     precomputed_bounds_by_jid (Any | None): One of ``Any``, ``None``.
     stats (Any | None): One of ``Any``, ``None``.
     scheduler_shared_lock (Any | None): One of ``Any``, ``None``.
+    backfill (bool): Backfill-lane rule for old jobs: every host must cover
+      the window (no host-wait admission of partial data) and an uncovered
+      window writes no gate-failure catalog; the caller skips the job and
+      stamps ``metrics_skipped_since`` instead.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -4311,11 +4399,13 @@ def _ready_jids_and_bounds_from_job_rows(
           else datetime.now()
         )
         reason = {**reason, "hosts_covered": covered, "hosts_total": total}
-        if now - end_time < host_wait:
+        if backfill or now - end_time < host_wait:
           _log_metrics_deferred_coverage_once(jid, reason)
           continue
       if is_ready:
         ready.append(jid)
+      elif backfill:
+        _log_metrics_deferred_coverage_once(jid, reason)
       else:
         _log_metrics_deferred_coverage_once(jid, reason)
         _maybe_persist_window_coverage_gate_failure(
@@ -4381,6 +4471,7 @@ def _filter_jids_with_samples_after_end_and_bounds(
   *,
   stats: Any | None = None,
   scheduler_shared_lock: Any | None = None,
+  backfill: bool = False,
 ) -> Any:
   """
   Like :func:`_filter_jids_with_samples_after_end` but also return bounds map.
@@ -4389,6 +4480,8 @@ def _filter_jids_with_samples_after_end_and_bounds(
     jids (Any): Jids passed to this helper.
     stats (Any | None): One of ``Any``, ``None``.
     scheduler_shared_lock (Any | None): One of ``Any``, ``None``.
+    backfill (bool): Backfill-lane readiness rule (see
+      ``_ready_jids_and_bounds_from_job_rows``).
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -4408,6 +4501,7 @@ def _filter_jids_with_samples_after_end_and_bounds(
     jobs,
     stats=stats,
     scheduler_shared_lock=scheduler_shared_lock,
+    backfill=backfill,
   )
 
 
@@ -4840,21 +4934,30 @@ def _build_date_chunk_iterators(
     and connections["default"].vendor == "postgresql"
     and isinstance(day_qs, QuerySet)
   ):
-    # Jobs before the window whose host_data landed late (backfill days).
+    # Jobs before the window: the backfill lane lists dirty ones first (late
+    # host_data) and then every job whose metrics predate the current
+    # contract, slot-capped behind the fresh days. With the lane disabled
+    # only the dirty catch-up (C7) remains.
     before = _end_time_calendar_day_half_open_bounds(min(dates))[0]
-    date_states.append(
-      {
-        "date": None,
-        "dirty_before": before,
-        "iter": _iter_dirty_catchup_pks(before, min_time, CHUNK_SIZE),
-        "done": False,
-        "pending_tail": None,
-        "min_time": min_time,
-        "rerun": rerun,
-        "listing_cooldown_until": 0.0,
-        "listing_needs_rebuild": False,
-      }
-    )
+    lane_enabled = bool(cfg.get_metrics_backfill_enabled())
+    state = {
+      "date": None,
+      "dirty_before": before,
+      "iter": (
+        _iter_backfill_pks(before, min_time, CHUNK_SIZE)
+        if lane_enabled
+        else _iter_dirty_catchup_pks(before, min_time, CHUNK_SIZE)
+      ),
+      "done": False,
+      "pending_tail": None,
+      "min_time": min_time,
+      "rerun": rerun,
+      "listing_cooldown_until": 0.0,
+      "listing_needs_rebuild": False,
+    }
+    if lane_enabled:
+      state["lane"] = BACKFILL_LANE
+    date_states.append(state)
   return date_states
 
 
@@ -4890,6 +4993,623 @@ def _iter_dirty_catchup_pks(
     .order_by("-end_time", "-jid")
   )
   yield from _iter_chunked_pks(qs, chunk_size)
+
+
+def _backfill_min_slots() -> int:
+  """
+  Metrics-pool slots the backfill lane keeps even when the fresh lane is busy.
+
+  ``metrics_backfill_min_slots = 0`` (default) means one fifth of
+  ``metrics_pool_processes``, at least one. This is the floor of the
+  work-conserving cap computed by ``_backfill_slot_cap``.
+
+  Returns:
+    int: Guaranteed slots (>= 1).
+
+  Examples:
+    >>> _backfill_min_slots() >= 1  # doctest: +SKIP
+    True
+  """
+  configured = int(cfg.get_metrics_backfill_min_slots())
+  if configured > 0:
+    return configured
+  return max(1, int(cfg.get_metrics_pool_processes()) // 5)
+
+
+def _backfill_slot_cap(
+  stats: Any,
+  scheduler_shared_lock: Any,
+  local_ready: Any = (),
+) -> int:
+  """
+  Work-conserving slot cap for the backfill lane right now.
+
+  The lane may use every pool thread the fresh window is not using, minus
+  ``metrics_backfill_fresh_reserve_slots`` kept free so a fresh job that
+  arrives starts at once, and never fewer than ``_backfill_min_slots``::
+
+    cap = max(min_slots, pool - reserve - fresh_active)
+
+  ``fresh_active`` counts fresh-lane jobs in flight plus fresh refs waiting
+  in the ready queue (and in this fill's local list), so an idle window
+  hands its threads to the sweep and a busy window takes them back as its
+  jobs are queued (fresh refs are popped first).
+
+  Args:
+    stats (Any): Scheduler stats (``inflight_jids``, ``backfill_inflight``,
+      ``ready_enqueued_total``, ``ready_dequeued_total``,
+      ``backfill_queued``).
+    scheduler_shared_lock (Any): Lock guarding ``stats``.
+    local_ready (Any): Refs collected by the current ``_fill_ready_queue``.
+
+  Returns:
+    int: Slot cap (>= ``_backfill_min_slots()``).
+
+  Examples:
+    >>> import threading
+    >>> _backfill_slot_cap(  # doctest: +SKIP
+    ...   {
+    ...     "inflight_jids": 0,
+    ...     "backfill_inflight": 0,
+    ...     "ready_enqueued_total": 0,
+    ...     "ready_dequeued_total": 0,
+    ...     "backfill_queued": 0,
+    ...   },
+    ...   threading.Lock(),
+    ... )
+  """
+  pool = max(1, int(cfg.get_metrics_pool_processes()))
+  reserve = max(
+    0, min(int(cfg.get_metrics_backfill_fresh_reserve_slots()), pool - 1)
+  )
+  with scheduler_shared_lock:
+    inflight = int(stats.get("inflight_jids", 0) or 0)
+    bf_inflight = int(stats.get("backfill_inflight", 0) or 0)
+    bf_queued = int(stats.get("backfill_queued", 0) or 0)
+    queued = int(stats.get("ready_enqueued_total", 0) or 0) - int(
+      stats.get("ready_dequeued_total", 0) or 0
+    )
+  fresh_active = max(0, inflight - bf_inflight) + max(0, queued - bf_queued)
+  fresh_active += sum(1 for ref in local_ready if not is_backfill_ref(ref))
+  return max(_backfill_min_slots(), pool - reserve - fresh_active)
+
+
+def _backfill_quiescence_cutoff(now: Any | None = None) -> Any:
+  """
+  Latest ``metrics_skipped_since`` that still counts as quiescent.
+
+  A skipped old job whose stamp is at or before this cutoff has waited
+  ``metrics_backfill_quiescence_days`` without new host_data and is computed
+  with the hosts that reported (``metrics_coverage < 1``).
+
+  Args:
+    now (Any | None): Aware reference time; defaults to ``timezone.now()``.
+
+  Returns:
+    Any: Aware datetime cutoff.
+
+  Examples:
+    >>> _backfill_quiescence_cutoff()  # doctest: +SKIP
+  """
+  base = now if now is not None else django_timezone.now()
+  return base - timedelta(
+    days=float(cfg.get_metrics_backfill_quiescence_days())
+  )
+
+
+def _load_backfill_cursor() -> tuple[Any, str] | None:
+  """
+  Read the persisted ``(end_time, jid)`` keyset position of the sweep.
+
+  A cursor written under another ``METRICS_CONTRACT_VERSION`` is ignored so
+  a version bump restarts the sweep at the newest job.
+
+  Returns:
+    tuple[Any, str] | None: ``(end_time, jid)`` or None to start fresh.
+
+  Examples:
+    >>> _load_backfill_cursor()  # doctest: +SKIP
+  """
+  row = metrics_scheduler_state.objects.filter(key=BACKFILL_CURSOR_KEY).first()
+  value = getattr(row, "value", None)
+  if not isinstance(value, dict):
+    return None
+  try:
+    if int(value.get("version", -1)) != METRICS_CONTRACT_VERSION:
+      return None
+    end_time = datetime.fromisoformat(str(value["end_time"]))
+    jid = str(value["jid"])
+  except KeyError, TypeError, ValueError:
+    return None
+  return end_time, jid
+
+
+def _save_backfill_cursor(end_time: Any, jid: Any) -> None:
+  """
+  Persist the keyset position of the last fully processed sweep page.
+
+  Args:
+    end_time (Any): ``end_time`` of the page's last row.
+    jid (Any): ``jid`` of the page's last row.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _save_backfill_cursor(None, "1")  # doctest: +SKIP
+  """
+  metrics_scheduler_state.objects.update_or_create(
+    key=BACKFILL_CURSOR_KEY,
+    defaults={
+      "value": {
+        "version": METRICS_CONTRACT_VERSION,
+        "end_time": end_time.isoformat(),
+        "jid": str(jid),
+      }
+    },
+  )
+
+
+def _clear_backfill_cursor() -> None:
+  """
+  Drop the sweep cursor so the next lap starts at the newest job.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _clear_backfill_cursor()  # doctest: +SKIP
+  """
+  metrics_scheduler_state.objects.filter(key=BACKFILL_CURSOR_KEY).delete()
+
+
+def _backfill_stale_queryset(
+  before: Any,
+  min_time: Any,
+  cutoff: Any,
+  cursor: tuple[Any, str] | None = None,
+) -> Any:
+  """
+  Version-stale jobs before the window, newest first, after ``cursor``.
+
+  Cheap ``job_data`` predicates only (no ``host_data``, no fingerprints):
+  ``metrics_version`` NULL or older than the contract, not dirty (the dirty
+  pass lists those), and either never skipped or skipped before ``cutoff``
+  (quiescence elapsed, so a partial compute is due).
+
+  Args:
+    before (Any): Exclusive ``end_time`` upper bound (window start).
+    min_time (Any): Minimum runtime seconds (Phase A rule).
+    cutoff (Any): ``_backfill_quiescence_cutoff`` value.
+    cursor (tuple[Any, str] | None): ``(end_time, jid)`` to resume after.
+
+  Returns:
+    Any: Django queryset ordered for keyset pagination.
+
+  Examples:
+    >>> _backfill_stale_queryset(None, 300, None)  # doctest: +SKIP
+  """
+  qs = (
+    job_data.objects.filter(end_time__lt=before)
+    .exclude(runtime__lt=min_time)
+    .filter(
+      Q(metrics_version__isnull=True)
+      | Q(metrics_version__lt=METRICS_CONTRACT_VERSION)
+    )
+    .filter(
+      Q(metrics_skipped_since__isnull=True)
+      | Q(metrics_skipped_since__lte=cutoff)
+    )
+    .filter(metrics_dirty_at__isnull=True)
+  )
+  if cursor is not None:
+    c_end, c_jid = cursor
+    qs = qs.filter(
+      Q(end_time__lt=c_end) | (Q(end_time=c_end) & Q(jid__lt=c_jid))
+    )
+  return qs.annotate(
+    artifact_only_candidate=Value(False, output_field=BooleanField())
+  ).order_by("-end_time", "-jid")
+
+
+def _tag_backfill_refs(chunk: Any) -> Any:
+  """
+  Mark every candidate ref of a page as listed by the backfill lane.
+
+  Args:
+    chunk (Any): Candidate refs from ``_iter_chunked_pks``.
+
+  Returns:
+    Any: The same list, each ref with ``lane = "backfill"``.
+
+  Examples:
+    >>> from types import SimpleNamespace
+    >>> _tag_backfill_refs([SimpleNamespace(jid="1")])[0].lane
+    'backfill'
+  """
+  for ref in chunk:
+    ref.lane = BACKFILL_LANE
+  return chunk
+
+
+def _iter_backfill_pks(
+  before: Any,
+  min_time: Any,
+  chunk_size: int = CHUNK_SIZE,
+) -> Iterator[Any]:
+  """
+  Backfill lane listing: dirty jobs first, then the version-stale sweep.
+
+  The dirty pass is ``_iter_dirty_catchup_pks`` (partial index, always from
+  the newest). The stale pass resumes at the persisted cursor; the cursor is
+  advanced only when the next page is requested, so a page that was being
+  processed when the pass ended is listed again (at most one page is
+  revisited after a restart; already computed or skipped rows no longer
+  match). When the stale pass runs dry the lap is over and the cursor is
+  cleared so the next lap starts at the newest job.
+
+  Args:
+    before (Any): Exclusive ``end_time`` upper bound (window start).
+    min_time (Any): Minimum runtime seconds.
+    chunk_size (int): Keyset page size.
+
+  Yields:
+    Iterator[Any]: ``(candidate_refs, total_so_far)`` with lane-tagged refs.
+
+  Examples:
+    >>> isinstance(BACKFILL_LANE, str)
+    True
+  """
+  total = 0
+  for chunk, _n in _iter_dirty_catchup_pks(before, min_time, chunk_size):
+    total += len(chunk)
+    yield _tag_backfill_refs(chunk), total
+  cursor = _load_backfill_cursor()
+  page_end: dict[str, Any] = {"key": None}
+
+  def _on_page(last_jid: Any, last_end_time: Any) -> None:
+    """
+    Remember the keyset position of the page about to be yielded.
+
+    Args:
+      last_jid (Any): ``jid`` of the page's last row.
+      last_end_time (Any): ``end_time`` of the page's last row.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _on_page("1", None)  # doctest: +SKIP
+    """
+    page_end["key"] = (last_end_time, last_jid)
+
+  stale_qs = _backfill_stale_queryset(
+    before, min_time, _backfill_quiescence_cutoff(), cursor
+  )
+  for chunk, _n in _iter_chunked_pks(stale_qs, chunk_size, on_page=_on_page):
+    total += len(chunk)
+    page_key = page_end["key"]
+    yield _tag_backfill_refs(chunk), total
+    # Resumed: the consumer finished that page; persist its position.
+    if page_key is not None:
+      _save_backfill_cursor(*page_key)
+  _clear_backfill_cursor()
+
+
+def _backfill_rate_brake_blocked(now_mono: float | None = None) -> bool:
+  """
+  True while ``metrics_backfill_max_jobs_per_hour`` admits were reached.
+
+  Args:
+    now_mono (float | None): Monotonic clock; defaults to ``time.monotonic()``.
+
+  Returns:
+    bool: Whether the lane must wait before admitting another job.
+
+  Examples:
+    >>> _backfill_rate_brake_blocked()  # doctest: +SKIP
+    False
+  """
+  limit = int(cfg.get_metrics_backfill_max_jobs_per_hour())
+  if limit <= 0:
+    return False
+  now = time.monotonic() if now_mono is None else float(now_mono)
+  with _BACKFILL_LOCK:
+    while (
+      _BACKFILL_ADMIT_TIMES
+      and now - _BACKFILL_ADMIT_TIMES[0] > BACKFILL_RATE_WINDOW_S
+    ):
+      _BACKFILL_ADMIT_TIMES.popleft()
+    return len(_BACKFILL_ADMIT_TIMES) >= limit
+
+
+def _note_backfill_admitted(n: int = 1, now_mono: float | None = None) -> None:
+  """
+  Record ``n`` backfill admits for the hourly rate brake.
+
+  Args:
+    n (int): Candidates admitted.
+    now_mono (float | None): Monotonic clock; defaults to ``time.monotonic()``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _note_backfill_admitted(0)
+  """
+  if n <= 0:
+    return
+  now = time.monotonic() if now_mono is None else float(now_mono)
+  with _BACKFILL_LOCK:
+    _BACKFILL_ADMIT_TIMES.extend([now] * int(n))
+
+
+def _backfill_lane_room(
+  stats: Any,
+  scheduler_shared_lock: Any,
+  local_ready: Any,
+) -> int:
+  """
+  Backfill candidates the producer may still admit right now.
+
+  Work-conserving cap (``_backfill_slot_cap``) minus backfill jobs in
+  flight, queued, and already in this fill's local ready list; zero while
+  the hourly rate brake is engaged.
+
+  Args:
+    stats (Any): Scheduler stats (``backfill_inflight`` / ``backfill_queued``).
+    scheduler_shared_lock (Any): Lock guarding ``stats``.
+    local_ready (Any): Refs collected by the current ``_fill_ready_queue``.
+
+  Returns:
+    int: Admits left (>= 0).
+
+  Examples:
+    >>> import threading
+    >>> _backfill_lane_room(  # doctest: +SKIP
+    ...   {"backfill_inflight": 0, "backfill_queued": 0},
+    ...   threading.Lock(),
+    ...   [],
+    ... )
+  """
+  if _backfill_rate_brake_blocked():
+    return 0
+  with scheduler_shared_lock:
+    held = int(stats.get("backfill_inflight", 0)) + int(
+      stats.get("backfill_queued", 0)
+    )
+  held += sum(1 for ref in local_ready if is_backfill_ref(ref))
+  cap = _backfill_slot_cap(stats, scheduler_shared_lock, local_ready)
+  return max(0, cap - held)
+
+
+def _flush_backfill_skips(
+  skips: Any,
+  checked_at: Any,
+  stats: Any,
+  scheduler_shared_lock: Any,
+) -> None:
+  """
+  Persist one page's backfill skips and count them.
+
+  Args:
+    skips (Any): ``(jid, coverage_or_None)`` pairs.
+    checked_at (Any): Aware datetime when readiness ran for the page.
+    stats (Any): Scheduler stats.
+    scheduler_shared_lock (Any): Lock guarding ``stats``.
+
+  Returns:
+    None
+
+  Examples:
+    >>> import threading
+    >>> _flush_backfill_skips([], None, {}, threading.Lock())
+  """
+  if not skips:
+    return
+  try:
+    stamped = record_backfill_skips(skips, checked_at)
+  except (OperationalError, DatabaseError) as exc:
+    if is_database_unavailable_error(exc):
+      log_and_raise_database_unavailable(
+        exc, context="update_metrics backfill skip stamp"
+      )
+    log_print(
+      f"metrics backfill: skip stamp failed n={len(skips)} "
+      f"{type(exc).__name__}: {_truncate_census_error_message(exc)}",
+      flush=True,
+    )
+    return
+  with scheduler_shared_lock:
+    stats["backfill_skipped_total"] += int(stamped)
+
+
+def _maybe_relist_fresh_date_states(
+  date_states: Any,
+  last_relist_mono: float,
+  phase_timer: Any,
+  *,
+  interval_s: float,
+  now_mono: float | None = None,
+) -> bool:
+  """
+  Re-list the fresh-window days while the backfill lane keeps a pass open.
+
+  Without the lane a pass ends when every day is listed and the next pass
+  (``metrics_scheduler_pass_interval_s`` later) lists the window again. The
+  lane keeps the pass alive for as long as old jobs remain, so the fresh
+  days are rebuilt in place at that same interval once they are all done;
+  the window therefore stays as fresh as before and the sweep never idles.
+
+  Args:
+    date_states (Any): Producer listing states (fresh days plus the lane).
+    last_relist_mono (float): Monotonic time of the last (re)list.
+    phase_timer (Any): Phase timer for candidate SQL accounting.
+    interval_s (float): Seconds between re-lists.
+    now_mono (float | None): Monotonic clock; defaults to ``time.monotonic()``.
+
+  Returns:
+    bool: True when the fresh states were rebuilt.
+
+  Examples:
+    >>> _maybe_relist_fresh_date_states([], 0.0, None, interval_s=60.0)
+    False
+  """
+  lane_open = any(
+    s.get("lane") == BACKFILL_LANE and not s.get("done") for s in date_states
+  )
+  fresh = [s for s in date_states if s.get("lane") != BACKFILL_LANE]
+  if not lane_open or not fresh or not all(s.get("done") for s in fresh):
+    return False
+  now = time.monotonic() if now_mono is None else float(now_mono)
+  if now - float(last_relist_mono) < float(interval_s):
+    return False
+  for state in fresh:
+    state["done"] = False
+    state["listing_cooldown_until"] = 0.0
+    _rebuild_date_listing_iter(state, phase_timer)
+  return True
+
+
+def _backfill_census(before: Any, min_time: Any = 300) -> dict[str, Any]:
+  """
+  Count what the backfill lane still has to do (cheap ``job_data`` counts).
+
+  Args:
+    before (Any): Window start (exclusive ``end_time`` bound).
+    min_time (Any): Minimum runtime seconds (Phase A rule).
+
+  Returns:
+    dict[str, Any]: ``remaining_dirty``, ``remaining_stale``, ``awaiting``
+    (skipped, quiescence not elapsed), ``partial_final`` (current version
+    with coverage < 1), ``cursor_end_time`` (ISO or ``none``), ``version``.
+
+  Examples:
+    >>> _backfill_census(None)  # doctest: +SKIP
+  """
+  cutoff = _backfill_quiescence_cutoff()
+  base = job_data.objects.filter(end_time__lt=before).exclude(
+    runtime__lt=min_time
+  )
+  stale = Q(metrics_version__isnull=True) | Q(
+    metrics_version__lt=METRICS_CONTRACT_VERSION
+  )
+  cursor = _load_backfill_cursor()
+  return {
+    "version": METRICS_CONTRACT_VERSION,
+    "remaining_dirty": base.filter(metrics_dirty_at__isnull=False).count(),
+    "remaining_stale": base.filter(stale, metrics_dirty_at__isnull=True)
+    .filter(
+      Q(metrics_skipped_since__isnull=True)
+      | Q(metrics_skipped_since__lte=cutoff)
+    )
+    .count(),
+    "awaiting": base.filter(
+      stale, metrics_dirty_at__isnull=True, metrics_skipped_since__gt=cutoff
+    ).count(),
+    # Computed under the current contract with hosts missing; a skip that
+    # merely recorded a ratio (skip clock set) is ``awaiting``, not this.
+    "partial_final": base.filter(
+      metrics_version=METRICS_CONTRACT_VERSION,
+      metrics_coverage__lt=1.0,
+      metrics_skipped_since__isnull=True,
+    ).count(),
+    "cursor_end_time": cursor[0].isoformat() if cursor else "none",
+  }
+
+
+def _backfill_progress_fields(
+  before: Any,
+  min_time: Any = 300,
+  slot_cap: int | None = None,
+) -> dict[str, Any]:
+  """
+  Backfill census for the hourly progress line; never raises.
+
+  Args:
+    before (Any): Window start, or None when no window is known.
+    min_time (Any): Minimum runtime seconds.
+    slot_cap (int | None): Current work-conserving cap
+      (``_backfill_slot_cap``); None reports the guaranteed minimum.
+
+  Returns:
+    dict[str, Any]: ``backfill_*`` keys (``n/a`` counts when the census
+    could not run) plus ``backfill_failed_final`` and ``backfill_slots``
+    (the cap in force when the line was built).
+
+  Examples:
+    >>> _backfill_progress_fields(None)["backfill_remaining_stale"]
+    'n/a'
+  """
+  census: dict[str, Any] = {}
+  if before is not None:
+    try:
+      census = _backfill_census(before, min_time)
+    except Exception as exc:
+      log_print(
+        f"metrics backfill: census failed {type(exc).__name__}: "
+        f"{_truncate_census_error_message(exc)}",
+        flush=True,
+      )
+      census = {}
+    finally:
+      # The hourly reporter thread must not keep an idle backend open.
+      with contextlib.suppress(Exception):
+        close_old_connections()
+        connections.close_all()
+  with _BACKFILL_LOCK:
+    failed_final = int(_BACKFILL_FAILED_FINAL["count"])
+  try:
+    slots = int(slot_cap) if slot_cap is not None else _backfill_min_slots()
+  except Exception:
+    slots = 0
+  return {
+    "backfill_version": METRICS_CONTRACT_VERSION,
+    "backfill_remaining_dirty": census.get("remaining_dirty", "n/a"),
+    "backfill_remaining_stale": census.get("remaining_stale", "n/a"),
+    "backfill_awaiting": census.get("awaiting", "n/a"),
+    "backfill_partial_final": census.get("partial_final", "n/a"),
+    "backfill_cursor_end_time": census.get("cursor_end_time", "n/a"),
+    "backfill_failed_final": failed_final,
+    "backfill_slots": slots,
+  }
+
+
+def _backfill_progress_suffix(extra_map: Any) -> str:
+  """
+  Format the backfill tokens appended to the hourly ``metrics progress`` line.
+
+  Args:
+    extra_map (Any): Extra stats snapshot (``backfill_*`` keys optional).
+
+  Returns:
+    str: Leading-space token string, or ``""`` when no backfill keys exist.
+
+  Examples:
+    >>> _backfill_progress_suffix({})
+    ''
+    >>> _backfill_progress_suffix(
+    ...   {"backfill_version": 1, "backfill_inflight": 2, "backfill_slots": 6}
+    ... )
+    ' backfill_version=1 backfill_remaining_dirty=n/a backfill_remaining_stale=n/a backfill_awaiting=n/a backfill_partial_final=n/a backfill_done_total=0 backfill_skipped_total=0 backfill_partial_total=0 backfill_failed_final=0 backfill_cursor_end_time=n/a backfill_slots=2/6'
+  """
+  if not any(str(k).startswith("backfill_") for k in extra_map):
+    return ""
+  get = extra_map.get
+  return (
+    f" backfill_version={get('backfill_version', 'n/a')}"
+    f" backfill_remaining_dirty={get('backfill_remaining_dirty', 'n/a')}"
+    f" backfill_remaining_stale={get('backfill_remaining_stale', 'n/a')}"
+    f" backfill_awaiting={get('backfill_awaiting', 'n/a')}"
+    f" backfill_partial_final={get('backfill_partial_final', 'n/a')}"
+    f" backfill_done_total={int(get('backfill_done_total', 0) or 0)}"
+    f" backfill_skipped_total={int(get('backfill_skipped_total', 0) or 0)}"
+    f" backfill_partial_total={int(get('backfill_partial_total', 0) or 0)}"
+    f" backfill_failed_final={int(get('backfill_failed_final', 0) or 0)}"
+    f" backfill_cursor_end_time={get('backfill_cursor_end_time', 'n/a')}"
+    f" backfill_slots={int(get('backfill_inflight', 0) or 0)}"
+    f"/{int(get('backfill_slots', 0) or 0)}"
+  )
 
 
 def _fill_ready_queue(
@@ -4997,6 +5717,7 @@ def _fill_ready_queue(
   def _strict_ready_fallback_one(
     jid: Any,
     candidate_by_jid: Any | None = None,
+    backfill: bool = False,
   ) -> Any:
     """
     Single-jid strict readiness after batch failure (same semantics as legacy.
@@ -5006,6 +5727,7 @@ def _fill_ready_queue(
     Args:
       jid (Any): Jid passed to this helper.
       candidate_by_jid (Any | None): One of ``Any``, ``None``.
+      backfill (bool): Backfill-lane readiness rule.
 
     Returns:
       Any: Value produced by this call (type depends on inputs).
@@ -5021,7 +5743,9 @@ def _fill_ready_queue(
       with phase_timer.phase("readiness_s"):
         with _pg_local_readiness_timeouts():
           strict_ready, bounds_by_jid = (
-            _filter_jids_with_samples_after_end_and_bounds([jid])
+            _filter_jids_with_samples_after_end_and_bounds(
+              [jid], **({"backfill": True} if backfill else {})
+            )
           )
     except (OperationalError, DatabaseError) as exc:
       if is_database_unavailable_error(exc):
@@ -5040,6 +5764,31 @@ def _fill_ready_queue(
 
   def _process_pk_chunk(state: Any, pk_chunk: Any) -> Any:
     """
+    Process one listing page; persist the backfill lane's skips afterwards.
+
+    Args:
+      state (Any): Per-day (or lane) producer state.
+      pk_chunk (Any): Candidate refs of the page (or a resumed tail).
+
+    Returns:
+      Any: ``True`` when the caller should stop filling in this invocation.
+
+    Examples:
+      >>> _process_pk_chunk(None, None)  # doctest: +SKIP
+    """
+    lane_skips: list[tuple[Any, Any]] = []
+    checked_at = django_timezone.now()
+    try:
+      return _process_pk_chunk_inner(state, pk_chunk, lane_skips)
+    finally:
+      _flush_backfill_skips(
+        lane_skips, checked_at, stats, scheduler_shared_lock
+      )
+
+  def _process_pk_chunk_inner(
+    state: Any, pk_chunk: Any, lane_skips: list[tuple[Any, Any]]
+  ) -> Any:
+    """
     Process ``pk_chunk`` in order; set ``pending_tail`` if prefetch fills mid-.
 
       chunk.
@@ -5048,22 +5797,37 @@ def _fill_ready_queue(
     should stop scheduling more readiness work in this invocation.
 
     Uses batched proxy rejection and batched strict readiness probes to avoid
-    per-jid round-trips on the producer thread.
+    per-jid round-trips on the producer thread. For the backfill lane a
+    not-ready job is **skipped** (appended to ``lane_skips``) instead of
+    deferred, no gate-failure catalog is written, a job whose quiescence
+    wait elapsed is admitted as a partial compute, and admits stop at the
+    lane's slot room.
 
     Args:
       state (Any): State passed to this helper.
       pk_chunk (Any): Pk chunk passed to this helper.
+      lane_skips (list[tuple[Any, Any]]): Collects ``(jid, coverage)`` for
+        backfill skips; the caller persists them.
 
     Returns:
       Any: Value produced by this call (type depends on inputs).
 
     Examples:
-      >>> _process_pk_chunk(None, None)  # doctest: +SKIP
+      >>> _process_pk_chunk_inner(None, None, [])  # doctest: +SKIP
     """
+    lane = state.get("lane") == BACKFILL_LANE
+    lane_room = [0]
     ordered = [
       candidate if hasattr(candidate, "jid") else _candidate_ref(candidate)
       for candidate in list(pk_chunk)
     ]
+    if lane:
+      lane_room[0] = _backfill_lane_room(
+        stats, scheduler_shared_lock, ready_queue
+      )
+      if lane_room[0] <= 0:
+        state["pending_tail"] = ordered
+        return True
     # Jobs that keep failing wait out their backoff without readiness work.
     backed_off = [c for c in ordered if _job_failure_backoff_active(c.jid)]
     if backed_off:
@@ -5073,17 +5837,84 @@ def _fill_ready_queue(
     candidate_by_jid = {candidate.jid: candidate for candidate in ordered}
     chunk_job_by_jid = {}
     chunk_bounds_by_jid = None
-    if (
-      connections["default"].vendor == "postgresql"
-      and cfg.get_metrics_readiness_require_window_coverage()
-    ):
+
+    def _coverage_ratio(jid: Any) -> Any:
+      """
+      Hosts-covering / hosts-total for ``jid`` from this page's bounds.
+
+      Args:
+        jid (Any): Job id.
+
+      Returns:
+        Any: Ratio in ``[0, 1]`` or None when unknown.
+
+      Examples:
+        >>> _coverage_ratio("1")  # doctest: +SKIP
+      """
+      hc = (getattr(chunk_bounds_by_jid, "host_coverage", None) or {}).get(jid)
+      if hc and hc[1] > 0:
+        return hc[0] / hc[1]
+      return None
+
+    def _notify_not_ready(jid: Any, candidate: Any) -> None:
+      """
+      Defer (fresh lane) or skip (backfill lane) a not-ready candidate.
+
+      Args:
+        jid (Any): Job id.
+        candidate (Any): Candidate ref.
+
+      Returns:
+        None
+
+      Examples:
+        >>> _notify_not_ready("1", None)  # doctest: +SKIP
+      """
+      if lane:
+        lane_skips.append((jid, _coverage_ratio(jid)))
+      elif on_not_ready_jid is not None:
+        on_not_ready_jid(jid, candidate)
+
+    def _after_admit(candidate: Any) -> bool:
+      """
+      Account a backfill admit; True when the lane's slot room is used up.
+
+      Args:
+        candidate (Any): Admitted candidate ref.
+
+      Returns:
+        bool: Stop admitting more backfill candidates in this page.
+
+      Examples:
+        >>> _after_admit(None)  # doctest: +SKIP
+        False
+      """
+      del candidate
+      if not lane:
+        return False
+      _note_backfill_admitted(1)
+      with scheduler_shared_lock:
+        stats["backfill_admitted_total"] += 1
+      lane_room[0] -= 1
+      return lane_room[0] <= 0
+
+    require_coverage = bool(cfg.get_metrics_readiness_require_window_coverage())
+    on_postgres = connections["default"].vendor == "postgresql"
+    if lane or (on_postgres and require_coverage):
       chunk_jids = [candidate.jid for candidate in ordered]
       chunk_job_rows = list(
         job_data.objects.filter(jid__in=chunk_jids).values(
-          "jid", "start_time", "end_time", "host_list"
+          "jid",
+          "start_time",
+          "end_time",
+          "host_list",
+          "metrics_skipped_since",
+          "metrics_dirty_at",
         )
       )
       chunk_job_by_jid = {row["jid"]: row for row in chunk_job_rows}
+    if on_postgres and require_coverage:
+      chunk_jids = [candidate.jid for candidate in ordered]
       chunk_bounds_by_jid = _in_window_min_max_by_job_rows(
         [chunk_job_by_jid[jid] for jid in chunk_jids if jid in chunk_job_by_jid]
       )
@@ -5114,12 +5945,43 @@ def _fill_ready_queue(
         on_candidate_jid(candidate)
       with scheduler_shared_lock:
         stats["candidate_jids"] += 1
+        if lane:
+          stats["backfill_listed_total"] += 1
+
+    if lane:
+      # Skipped long enough ago (quiescence) with no new data since: compute
+      # now with the hosts that reported; the persisted coverage labels it.
+      final = [
+        c
+        for c in ordered
+        if (row := chunk_job_by_jid.get(c.jid)) is not None
+        and row.get("metrics_skipped_since") is not None
+        and row.get("metrics_dirty_at") is None
+      ]
+      if final:
+        final_jids = {c.jid for c in final}
+        ordered = [c for c in ordered if c.jid not in final_jids]
+        reject_set -= final_jids
+        for i, candidate in enumerate(final):
+          if chunk_bounds_by_jid is not None:
+            _attach_telemetry_bounds_to_candidate(
+              candidate, chunk_bounds_by_jid
+            )
+          ready_queue.append(candidate)
+          with scheduler_shared_lock:
+            stats["backfill_partial_total"] += 1
+            stats["strict_ready_jids"] += 1
+          if _after_admit(candidate) or len(ready_queue) >= prefetch_chunks:
+            tail = final[i + 1 :] + ordered
+            if tail:
+              state["pending_tail"] = tail
+            return True
 
     for candidate in ordered:
       jid = candidate.jid
       if jid not in reject_set:
         continue
-      if cfg.get_metrics_readiness_require_window_coverage():
+      if not lane and cfg.get_metrics_readiness_require_window_coverage():
         row = chunk_job_by_jid.get(jid)
         if row is not None:
           min_t, max_t = (chunk_bounds_by_jid or {}).get(jid, (None, None))
@@ -5132,8 +5994,7 @@ def _fill_ready_queue(
             stats=stats,
             scheduler_shared_lock=scheduler_shared_lock,
           )
-      if on_not_ready_jid is not None:
-        on_not_ready_jid(jid, candidate)
+      _notify_not_ready(jid, candidate)
       with scheduler_shared_lock:
         stats["proxy_not_ready_jids"] += 1
         stats["proxy_rejected_jids"] += 1
@@ -5162,8 +6023,7 @@ def _fill_ready_queue(
         candidate for candidate in sub if candidate.jid not in cooldown_jid_set
       ]
       for candidate in cooldown_candidates:
-        if on_not_ready_jid is not None:
-          on_not_ready_jid(candidate.jid, candidate)
+        _notify_not_ready(candidate.jid, candidate)
         with scheduler_shared_lock:
           stats["strict_not_ready_jids"] += 1
           stats["strict_cooldown_skips"] += 1
@@ -5185,6 +6045,7 @@ def _fill_ready_queue(
                 precomputed_bounds_by_jid=chunk_bounds_by_jid,
                 stats=stats,
                 scheduler_shared_lock=scheduler_shared_lock,
+                backfill=lane,
               )
             else:
               ready_list, bounds_by_jid = (
@@ -5192,6 +6053,7 @@ def _fill_ready_queue(
                   [candidate.jid for candidate in work],
                   stats=stats,
                   scheduler_shared_lock=scheduler_shared_lock,
+                  **({"backfill": True} if lane else {}),
                 )
               )
       except (OperationalError, DatabaseError) as exc:
@@ -5203,12 +6065,11 @@ def _fill_ready_queue(
         prefetch_stop = False
         for candidate in work:
           ready_candidate = _strict_ready_fallback_one(
-            candidate.jid, candidate_by_jid
+            candidate.jid, candidate_by_jid, backfill=lane
           )
           if ready_candidate is None:
             failed_fallback_jids.append(candidate.jid)
-            if on_not_ready_jid is not None:
-              on_not_ready_jid(candidate.jid, candidate)
+            _notify_not_ready(candidate.jid, candidate)
             with scheduler_shared_lock:
               stats["strict_not_ready_jids"] += 1
               stats["skipped_not_ready"] += 1
@@ -5216,7 +6077,10 @@ def _fill_ready_queue(
             with scheduler_shared_lock:
               stats["strict_ready_jids"] += 1
             ready_queue.append(ready_candidate)
-            if len(ready_queue) >= prefetch_chunks:
+            if (
+              _after_admit(ready_candidate)
+              or len(ready_queue) >= prefetch_chunks
+            ):
               tail = []
               seen = False
               for j2 in work:
@@ -5252,14 +6116,13 @@ def _fill_ready_queue(
             stats["strict_ready_jids"] += 1
           _attach_telemetry_bounds_to_candidate(candidate, bounds_by_jid)
           ready_queue.append(candidate)
-          if len(ready_queue) >= prefetch_chunks:
+          if _after_admit(candidate) or len(ready_queue) >= prefetch_chunks:
             tail = work[k + 1 :] + unknown_ordered[pos:]
             if tail:
               state["pending_tail"] = tail
             return True
         else:
-          if on_not_ready_jid is not None:
-            on_not_ready_jid(candidate.jid, candidate)
+          _notify_not_ready(candidate.jid, candidate)
           with scheduler_shared_lock:
             stats["strict_not_ready_jids"] += 1
             stats["skipped_not_ready"] += 1
@@ -5296,12 +6159,23 @@ def _fill_ready_queue(
   active = [s for s in date_states if _date_state_listing_schedulable(s)]
   if not active:
     return
-  start = int(rr_cursor.get("idx", 0)) % len(active)
-  ordered = active[start:] + active[:start]
-  rr_cursor["idx"] = (start + 1) % len(active)
+  fresh = [s for s in active if s.get("lane") != BACKFILL_LANE]
+  lanes = [s for s in active if s.get("lane") == BACKFILL_LANE]
+  ordered = []
+  if fresh:
+    start = int(rr_cursor.get("idx", 0)) % len(fresh)
+    ordered = fresh[start:] + fresh[:start]
+    rr_cursor["idx"] = (start + 1) % len(fresh)
+  # The backfill lane lists after every fresh day and only with slot room.
+  ordered.extend(lanes)
   for state in ordered:
     if len(ready_queue) >= prefetch_chunks:
       break
+    if (
+      state.get("lane") == BACKFILL_LANE
+      and _backfill_lane_room(stats, scheduler_shared_lock, ready_queue) <= 0
+    ):
+      continue
     try:
       pk_chunk, is_new = _resume_or_next_pk_chunk(state)
     except (OperationalError, DatabaseError) as exc:
@@ -5702,6 +6576,7 @@ def _enqueue_ready_unique(
   ready_queue_lock: Any,
   scheduled_jids: set[Any],
   refs: Any,
+  added_refs: list[Any] | None = None,
 ) -> int:
   """
   Append ready refs whose jid is not already queued or being computed.
@@ -5717,6 +6592,8 @@ def _enqueue_ready_unique(
       ``scheduled_jids``.
     scheduled_jids (set[Any]): Jids queued or in flight.
     refs (Any): Candidate refs to enqueue.
+    added_refs (list[Any] | None): When given, extended with the refs that
+      were appended (lane accounting).
 
   Returns:
     int: Number of refs appended.
@@ -5739,6 +6616,8 @@ def _enqueue_ready_unique(
       scheduled_jids.add(ref.jid)
       ready_queue.append(ref)
       added += 1
+      if added_refs is not None:
+        added_refs.append(ref)
   return added
 
 
@@ -5852,11 +6731,16 @@ def _start_readiness_producer(
     Examples:
       >>> _enqueue([])  # doctest: +SKIP
     """
+    added_refs: list[Any] = []
     added = _enqueue_ready_unique(
-      ready_queue, ready_queue_lock, scheduled_jids, refs
+      ready_queue, ready_queue_lock, scheduled_jids, refs, added_refs
     )
+    backfill_added = sum(1 for ref in added_refs if is_backfill_ref(ref))
     with scheduler_shared_lock:
       stats["ready_enqueued_total"] += added
+      stats["backfill_queued"] = (
+        int(stats.get("backfill_queued", 0)) + backfill_added
+      )
 
   def _producer_loop() -> None:
     """
@@ -5890,7 +6774,9 @@ def _start_readiness_producer(
     last_processed_total = 0
     last_ready_enqueued_total = 0
     last_compute_batch_completed_jids = 0
+    last_backfill_listed_total = 0
     last_progress_at = time.monotonic()
+    fresh_relisted_at = time.monotonic()
 
     def _remember_candidate(candidate: Any) -> None:
       """
@@ -5974,6 +6860,26 @@ def _start_readiness_producer(
           phase_timer=phase_timer,
           allow_rollover=allow_rollover,
         ):
+          last_progress_at = time.monotonic()
+          fresh_relisted_at = time.monotonic()
+        if _maybe_relist_fresh_date_states(
+          date_states,
+          fresh_relisted_at,
+          phase_timer,
+          interval_s=float(cfg.get_metrics_scheduler_pass_interval_s()),
+        ):
+          fresh_relisted_at = time.monotonic()
+          last_progress_at = time.monotonic()
+          log_print(
+            "metrics scheduler: fresh window relisted while the backfill "
+            "lane keeps the pass open",
+            flush=True,
+          )
+        with scheduler_shared_lock:
+          listed_now = int(stats.get("backfill_listed_total", 0))
+        if listed_now > last_backfill_listed_total:
+          # The lane skipping or admitting old jobs is listing progress.
+          last_backfill_listed_total = listed_now
           last_progress_at = time.monotonic()
         with ready_queue_lock:
           current_depth = len(ready_queue)
@@ -6177,6 +7083,16 @@ def _start_readiness_producer(
         if live_work:
           last_progress_at = time.monotonic()
           time.sleep(0.05)
+          continue
+        if any(
+          s.get("lane") == BACKFILL_LANE
+          and not s.get("done")
+          and _backfill_rate_brake_blocked()
+          for s in date_states
+        ):
+          # Waiting on metrics_backfill_max_jobs_per_hour is not a stall.
+          last_progress_at = time.monotonic()
+          time.sleep(0.2)
           continue
         stalled_for_s = time.monotonic() - last_progress_at
         if stalled_for_s >= STALL_EXIT_AFTER_SECONDS:
@@ -6695,6 +7611,7 @@ def _compute_jid_outcomes_sliding(
   on_outcome: Any | None = None,
   continuous: bool = False,
   should_stop: Any | None = None,
+  on_refs_taken: Any | None = None,
 ) -> Any:
   """
   Sliding metrics+prewarm session with optional ready-queue idle-slot fill.
@@ -6719,6 +7636,8 @@ def _compute_jid_outcomes_sliding(
     continuous (bool): Keep every slot fed from ``ready_queue`` until
         ``should_stop()`` (see ``run_metrics_sliding_session``).
     should_stop (Any | None): ``() -> bool`` for continuous mode.
+    on_refs_taken (Any | None): Optional ``(refs) -> None`` with the refs
+        popped from ``ready_queue`` (backfill-lane slot accounting).
 
   Returns:
     Any: Sorted per-jid scheduler outcome dicts.
@@ -6872,6 +7791,7 @@ def _compute_jid_outcomes_sliding(
     on_result=_on_row,
     continuous=continuous,
     should_stop=should_stop,
+    on_refs_taken=on_refs_taken,
   )
   timing["batch_wall_s"] = max(0.0, time.monotonic() - t_batch)
   # Sliding interleaves metrics+prewarm; report full session as batch wall and
@@ -6894,6 +7814,7 @@ def _compute_jid_outcomes_batch(
   on_outcome: Any | None = None,
   continuous: bool = False,
   should_stop: Any | None = None,
+  on_refs_taken: Any | None = None,
 ) -> Any:
   """
   Run one compute session (closed Metrics.run or sliding feeder) then prewarm.
@@ -6928,6 +7849,8 @@ def _compute_jid_outcomes_batch(
     continuous (bool): Sliding path only: one long-lived session fed from
         ``ready_queue`` instead of a closed batch.
     should_stop (Any | None): Sliding continuous ``() -> bool`` stop test.
+    on_refs_taken (Any | None): Sliding path only: ``(refs) -> None`` with
+        the refs popped from ``ready_queue`` (backfill-lane accounting).
 
   Returns:
     Any: Sorted per-jid scheduler outcome dicts.
@@ -7019,6 +7942,7 @@ def _compute_jid_outcomes_batch(
       on_outcome=on_outcome,
       continuous=continuous,
       should_stop=should_stop,
+      on_refs_taken=on_refs_taken,
     )
 
   metrics_run_outcomes = []
@@ -7561,8 +8485,21 @@ def update_metrics_for_dates(
           >>> _extra_stats_snapshot()  # doctest: +SKIP
         """
         prewarm_snapshot = prewarm_pipeline.stats()
+        backfill_fields = _backfill_progress_fields(
+          _end_time_calendar_day_half_open_bounds(min(dates))[0]
+          if dates
+          else None,
+          min_time,
+          slot_cap=_backfill_slot_cap(stats, scheduler_shared_lock),
+        )
         with scheduler_shared_lock:
           return {
+            **backfill_fields,
+            "backfill_inflight": stats["backfill_inflight"],
+            "backfill_queued": stats["backfill_queued"],
+            "backfill_done_total": stats["backfill_done_total"],
+            "backfill_skipped_total": stats["backfill_skipped_total"],
+            "backfill_partial_total": stats["backfill_partial_total"],
             "strict_batch_size_current": stats["strict_batch_size_current"],
             "strict_check_calls": stats["strict_check_calls"],
             "strict_check_timeouts": stats["strict_check_timeouts"],
@@ -7674,6 +8611,32 @@ def update_metrics_for_dates(
       )
       ready_queue_lock = threading.Lock()
       scheduled_jids: set[Any] = set()
+      # Backfill-lane jids between dequeue and outcome (slot cap accounting).
+      backfill_inflight_jids: set[Any] = set()
+
+      def _note_lane_refs_taken(refs: Any) -> None:
+        """
+        Move backfill refs from queued to in flight when the consumer pops.
+
+        Args:
+          refs (Any): Candidate refs popped from ``ready_queue``.
+
+        Returns:
+          None
+
+        Examples:
+          >>> _note_lane_refs_taken([])  # doctest: +SKIP
+        """
+        lane_jids = [ref.jid for ref in refs if is_backfill_ref(ref)]
+        if not lane_jids:
+          return
+        with scheduler_shared_lock:
+          backfill_inflight_jids.update(lane_jids)
+          stats["backfill_queued"] = max(
+            0, int(stats["backfill_queued"]) - len(lane_jids)
+          )
+          stats["backfill_inflight"] = len(backfill_inflight_jids)
+
       producer_done = threading.Event()
       producer = _start_readiness_producer(
         date_states=date_states,
@@ -7790,6 +8753,8 @@ def update_metrics_for_dates(
             if jobs_this_round:
               stats["ready_dequeued_total"] += len(jobs_this_round)
               stats["inflight_jids"] += len(jobs_this_round)
+          if jobs_this_round:
+            _note_lane_refs_taken(jobs_this_round)
           if not jobs_this_round:
             if _maybe_trigger_consumer_stall_exit(
               stats,
@@ -7933,6 +8898,15 @@ def update_metrics_for_dates(
             if not outs:
               return
             recorded_jids.update(o["jid"] for o in outs)
+            with scheduler_shared_lock:
+              lane_done = 0
+              for o in outs:
+                if o["jid"] in backfill_inflight_jids:
+                  backfill_inflight_jids.discard(o["jid"])
+                  o["lane"] = BACKFILL_LANE
+                  lane_done += int(bool(o["ok"]))
+              stats["backfill_inflight"] = len(backfill_inflight_jids)
+              stats["backfill_done_total"] += lane_done
             for o in outs:
               _note_job_outcome(o)
             with ready_queue_lock:
@@ -7987,6 +8961,7 @@ def update_metrics_for_dates(
                 on_outcome=lambda o: _record_outcomes([o]),
                 continuous=True,
                 should_stop=_session_should_stop,
+                on_refs_taken=_note_lane_refs_taken,
               )
             finally:
               compute_batch_heartbeat.clear()
@@ -8002,6 +8977,10 @@ def update_metrics_for_dates(
                   stats["inflight_jids"] = max(
                     0, stats["inflight_jids"] - unreported
                   )
+                  backfill_inflight_jids.difference_update(
+                    r.jid for r in job_refs
+                  )
+                  stats["backfill_inflight"] = len(backfill_inflight_jids)
             for jid_outcome in jid_outcomes:
               if jid_outcome["ok"]:
                 succeeded_jids.append(jid_outcome["jid"])
@@ -8240,6 +9219,10 @@ def update_metrics_for_dates(
           "strict_check_calls": stats["strict_check_calls"],
           "strict_check_timeouts": stats["strict_check_timeouts"],
           "strict_check_avg_latency_ms": stats["strict_check_avg_latency_ms"],
+          "backfill_admitted_total": stats["backfill_admitted_total"],
+          "backfill_done_total": stats["backfill_done_total"],
+          "backfill_skipped_total": stats["backfill_skipped_total"],
+          "backfill_partial_total": stats["backfill_partial_total"],
         }
       log_print(
         f"Finished metrics scheduler mode={scheduler_mode}: processed={snap['processed']} "
@@ -8290,7 +9273,11 @@ def update_metrics_for_dates(
         f"prewarm_lag_seconds_p95={prewarm_stats['prewarm_lag_seconds_p95']:.3f} "
         f"prewarm_success_ratio={prewarm_stats['prewarm_success_ratio']:.3f} "
         f"prewarm_backpressure_events={prewarm_stats['prewarm_backpressure_events']} "
-        f"prewarm_inline_fallback_jobs={prewarm_stats['prewarm_inline_fallback_jobs']}"
+        f"prewarm_inline_fallback_jobs={prewarm_stats['prewarm_inline_fallback_jobs']} "
+        f"backfill_admitted_total={snap['backfill_admitted_total']} "
+        f"backfill_done_total={snap['backfill_done_total']} "
+        f"backfill_skipped_total={snap['backfill_skipped_total']} "
+        f"backfill_partial_total={snap['backfill_partial_total']}"
         f"{telemetry_suffix[:50]}",
         flush=True,
       )
@@ -8373,6 +9360,193 @@ def _parse_jid_cli_arg(argv: Any) -> Any:
       f"update_metrics.py --jid cannot be combined with date arguments: {' '.join(rest)}"
     )
   return jid, None
+
+
+def _parse_backfill_cli_args(argv: Any) -> tuple[Any, Any, Any]:
+  """
+  Parse ``--backfill-status`` / ``--backfill-finalize-partials [--before D]``.
+
+  Args:
+    argv (Any): CLI argument list (``sys.argv``-like).
+
+  Returns:
+    tuple[Any, Any, Any]: ``(action, before_date, error)`` where ``action``
+    is ``"status"``, ``"finalize"`` or None (not a backfill invocation),
+    ``before_date`` is a naive midnight datetime or None, and ``error`` is a
+    usage message (caller exits 1) or None.
+
+  Examples:
+    >>> _parse_backfill_cli_args(["update_metrics.py", "--backfill-status"])
+    ('status', None, None)
+    >>> _parse_backfill_cli_args(["update_metrics.py", "2026-08-01"])
+    (None, None, None)
+    >>> _parse_backfill_cli_args(
+    ...   [
+    ...     "update_metrics.py",
+    ...     "--backfill-finalize-partials",
+    ...     "--before",
+    ...     "2026-08-01",
+    ...   ]
+    ... )[1]
+    datetime.datetime(2026, 8, 1, 0, 0)
+  """
+  args = list(argv[1:]) if argv else []
+  action = None
+  before = None
+  rest = []
+  i = 0
+  while i < len(args):
+    a = str(args[i])
+    if a == "--backfill-status":
+      action = "status" if action is None else action
+      i += 1
+      continue
+    if a == "--backfill-finalize-partials":
+      action = "finalize" if action is None else action
+      i += 1
+      continue
+    if a == "--before" or a.startswith("--before="):
+      raw = a.split("=", 1)[1] if "=" in a else None
+      if raw is None:
+        if i + 1 >= len(args):
+          return None, None, "usage: --before YYYY-MM-DD"
+        raw = str(args[i + 1])
+        i += 1
+      try:
+        before = datetime.strptime(raw.strip(), "%Y-%m-%d")
+      except ValueError:
+        return None, None, f"usage: --before YYYY-MM-DD (got {raw!r})"
+      i += 1
+      continue
+    rest.append(a)
+    i += 1
+  if action is None:
+    if before is not None:
+      return None, None, "--before requires --backfill-finalize-partials"
+    return None, None, None
+  if rest:
+    return (
+      None,
+      None,
+      (
+        f"update_metrics.py --backfill-* cannot be combined with: {' '.join(rest)}"
+      ),
+    )
+  if action == "status" and before is not None:
+    return None, None, "--before only applies to --backfill-finalize-partials"
+  return action, before, None
+
+
+def _main_backfill_status() -> int:
+  """
+  Print the backfill lane census for the current window and exit 0.
+
+  Returns:
+    int: Process exit code (0).
+
+  Examples:
+    >>> _main_backfill_status()  # doctest: +SKIP
+    0
+  """
+  start, _end = _default_metrics_date_range()
+  before = _end_time_calendar_day_half_open_bounds(start)[0]
+  census = _backfill_census(before, 300)
+  log_print(
+    "metrics backfill status: "
+    f"version={census['version']} window_start={before.isoformat()} "
+    f"remaining_dirty={census['remaining_dirty']} "
+    f"remaining_stale={census['remaining_stale']} "
+    f"awaiting_ingest={census['awaiting']} "
+    f"partial_final={census['partial_final']} "
+    f"cursor_end_time={census['cursor_end_time']} "
+    f"min_slots={_backfill_min_slots()} "
+    f"fresh_reserve={int(cfg.get_metrics_backfill_fresh_reserve_slots())} "
+    f"pool={int(cfg.get_metrics_pool_processes())} "
+    f"enabled={int(bool(cfg.get_metrics_backfill_enabled()))} "
+    f"quiescence_days={float(cfg.get_metrics_backfill_quiescence_days()):g}",
+    flush=True,
+  )
+  return 0
+
+
+def _main_backfill_finalize_partials(before: Any | None) -> int:
+  """
+  Compute every still-skipped old job before ``before`` now (partial data).
+
+  For an operator who knows a date range is fully ingested: each job with a
+  ``metrics_skipped_since`` stamp that ended before ``before`` (default: the
+  fresh window start) is computed immediately with the hosts that reported,
+  as the quiescence rule would do later; ``metrics_coverage`` labels the
+  result and a later dirty stamp still triggers a full recompute.
+
+  Args:
+    before (Any | None): Exclusive ``end_time`` bound (naive midnight) or
+      None for the window start.
+
+  Returns:
+    int: 0 when every job finished, else 1.
+
+  Examples:
+    >>> _main_backfill_finalize_partials(None)  # doctest: +SKIP
+    0
+  """
+  if before is None:
+    start, _end = _default_metrics_date_range()
+    before = _end_time_calendar_day_half_open_bounds(start)[0]
+  else:
+    before = _end_time_calendar_day_half_open_bounds(before)[0]
+  rows = list(
+    job_data.objects.filter(
+      end_time__lt=before, metrics_skipped_since__isnull=False
+    )
+    .exclude(runtime__lt=300)
+    .order_by("-end_time", "-jid")
+    .values("jid", "start_time", "end_time", "host_list")
+  )
+  log_print(
+    f"update_metrics --backfill-finalize-partials: before={before.isoformat()} "
+    f"jobs={len(rows)}",
+    flush=True,
+  )
+  if not rows:
+    return 0
+  metrics_manager = metrics.Metrics()
+  prewarm_pipeline = _PrewarmPipeline()
+  ok_count = 0
+  failed = 0
+  try:
+    for row in rows:
+      if shutdown_requested[0]:
+        break
+      bounds = _in_window_min_max_by_job_rows([row])
+      ref = _candidate_ref(row["jid"], artifact_only=False, lane=BACKFILL_LANE)
+      _attach_telemetry_bounds_to_candidate(ref, bounds)
+      try:
+        outcome = _compute_and_prewarm_jid(
+          metrics_manager, prewarm_pipeline, ref, None
+        )
+      except Exception as exc:
+        log_print(
+          f"update_metrics --backfill-finalize-partials: jid={row['jid']} "
+          f"failed: {exc}",
+          flush=True,
+        )
+        failed += 1
+        continue
+      if outcome and outcome.get("ok"):
+        ok_count += 1
+      else:
+        failed += 1
+  finally:
+    with contextlib.suppress(Exception):
+      prewarm_pipeline.finish()
+    with contextlib.suppress(Exception):
+      metrics_manager.close_pool()
+  log_print(
+    f"update_metrics --backfill-finalize-partials: ok={ok_count} failed={failed}",
+    flush=True,
+  )
+  return 0 if failed == 0 else 1
 
 
 def _invalidate_caches_before_one_jid_recalc(jid: Any) -> None:
@@ -8568,6 +9742,16 @@ def main(argv: Any | None = None, sleep_after: Any | None = None) -> Any:
     return 1
   if jid is not None:
     return _main_one_jid(jid)
+  backfill_action, backfill_before, backfill_err = _parse_backfill_cli_args(
+    argv
+  )
+  if backfill_err is not None:
+    log_print(backfill_err, flush=True)
+    return 1
+  if backfill_action == "status":
+    return _main_backfill_status()
+  if backfill_action == "finalize":
+    return _main_backfill_finalize_partials(backfill_before)
 
   if sleep_after is None:
     env_sleep_after = (

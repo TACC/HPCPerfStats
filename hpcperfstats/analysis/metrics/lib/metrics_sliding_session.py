@@ -44,6 +44,70 @@ def resolve_metrics_pool_max_inflight(pool: Any, fallback: int = 1) -> int:
     return max(1, int(fallback))
 
 
+def is_backfill_ref(ref: Any) -> bool:
+  """
+  True when a candidate ref was listed by the update_metrics backfill lane.
+
+  Args:
+    ref (Any): Scheduler candidate ref (``lane`` attribute optional).
+
+  Returns:
+    bool: ``ref.lane == "backfill"``.
+
+  Examples:
+    >>> from types import SimpleNamespace
+    >>> is_backfill_ref(SimpleNamespace(jid="1", lane="backfill"))
+    True
+    >>> is_backfill_ref(SimpleNamespace(jid="1"))
+    False
+  """
+  return getattr(ref, "lane", None) == "backfill"
+
+
+def pop_fresh_first(ready_queue: Any, max_n: int) -> list[Any]:
+  """
+  Pop up to ``max_n`` refs, fresh-lane refs before backfill-lane refs.
+
+  Within each lane the queue order is kept. The caller holds the queue lock.
+
+  Args:
+    ready_queue (Any): Deque of candidate refs.
+    max_n (int): Free slots.
+
+  Returns:
+    list[Any]: Refs removed from the queue.
+
+  Examples:
+    >>> from collections import deque
+    >>> from types import SimpleNamespace as R
+    >>> q = deque([R(jid="b1", lane="backfill"), R(jid="f1"), R(jid="f2")])
+    >>> [r.jid for r in pop_fresh_first(q, 2)]
+    ['f1', 'f2']
+    >>> [r.jid for r in q]
+    ['b1']
+  """
+  if ready_queue is None or max_n <= 0 or not ready_queue:
+    return []
+  taken: list[Any] = []
+  keep: list[Any] = []
+  deferred_backfill: list[Any] = []
+  for ref in ready_queue:
+    if len(taken) >= max_n:
+      keep.append(ref)
+    elif is_backfill_ref(ref):
+      deferred_backfill.append(ref)
+    else:
+      taken.append(ref)
+  while deferred_backfill and len(taken) < max_n:
+    taken.append(deferred_backfill.pop(0))
+  if deferred_backfill or keep:
+    ready_queue.clear()
+    ready_queue.extend(deferred_backfill + keep)
+  else:
+    ready_queue.clear()
+  return taken
+
+
 def original_batch_work_inflight(pending: list[dict[str, Any]]) -> bool:
   """
   True when any original-batch jid still has metrics or prewarm in flight.
@@ -189,6 +253,7 @@ def run_metrics_sliding_session(
   on_result: Any | None = None,
   continuous: bool = False,
   should_stop: Any | None = None,
+  on_refs_taken: Any | None = None,
 ) -> list[dict[str, Any]]:
   """
   Pool-sized sliding metrics+prewarm session with sample-count idle-slot fill.
@@ -233,6 +298,9 @@ def run_metrics_sliding_session(
     should_stop (Any | None): ``() -> bool`` for continuous mode; True stops
         taking new work (producer finished and queue empty, or a scheduler
         stall exit).
+    on_refs_taken (Any | None): Optional ``(refs: list) -> None`` called with
+        the refs popped from ``ready_queue`` (lane accounting; fresh-lane
+        refs are popped before backfill-lane refs).
 
   Returns:
     list[dict[str, Any]]: Per-ref results with keys ``ref``, ``ok``,
@@ -453,9 +521,7 @@ def run_metrics_sliding_session(
       else contextlib.nullcontext()
     )
     with lock:
-      return [
-        ready_queue.popleft() for _ in range(min(max_n, len(ready_queue)))
-      ]
+      return pop_fresh_first(ready_queue, max_n)
 
   while (primary or pending or continuous) and not _shutting_down():
     stop = continuous and callable(should_stop) and bool(should_stop())
@@ -476,6 +542,9 @@ def run_metrics_sliding_session(
       if callable(on_supplements_taken):
         with contextlib.suppress(Exception):
           on_supplements_taken(len(taken))
+      if callable(on_refs_taken):
+        with contextlib.suppress(Exception):
+          on_refs_taken(list(taken))
       for ref in taken:
         _submit_metrics(ref, is_original=True)
         filled = True

@@ -1594,3 +1594,53 @@ def test_get_separate_test_login_true(temp_ini, monkeypatch):
     handle.write(content)
   importlib.reload(cfg)
   assert cfg.get_separate_test_login() is True
+
+
+def test_get_metrics_backfill_knobs_defaults_and_ini_override(
+  temp_ini, monkeypatch
+):
+  """Backfill lane knobs: defaults, INI override, invalid values fall back."""
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  with open(temp_ini) as f:
+    content = f.read()
+  importlib.reload(cfg)
+  assert cfg.get_metrics_backfill_enabled() is True
+  assert cfg.get_metrics_backfill_min_slots() == 0
+  assert cfg.get_metrics_backfill_fresh_reserve_slots() == 2
+  assert cfg.get_metrics_backfill_quiescence_days() == 7.0
+  assert cfg.get_metrics_backfill_max_jobs_per_hour() == 0
+  with open(temp_ini, "w") as f:
+    f.write(
+      content.replace(
+        "total_cores = 4",
+        "total_cores = 4\nmetrics_backfill_enabled = no\n"
+        "metrics_backfill_min_slots = 3\nmetrics_backfill_fresh_reserve_slots = 4\n"
+        "metrics_backfill_quiescence_days = 2.5\n"
+        "metrics_backfill_max_jobs_per_hour = 40",
+      )
+    )
+  importlib.reload(cfg)
+  assert cfg.get_metrics_backfill_enabled() is False
+  assert cfg.get_metrics_backfill_min_slots() == 3
+  assert cfg.get_metrics_backfill_fresh_reserve_slots() == 4
+  assert cfg.get_metrics_backfill_quiescence_days() == 2.5
+  assert cfg.get_metrics_backfill_max_jobs_per_hour() == 40
+  with open(temp_ini, "w") as f:
+    f.write(
+      content.replace(
+        "total_cores = 4",
+        "total_cores = 4\nmetrics_backfill_min_slots = many\n"
+        "metrics_backfill_fresh_reserve_slots = some\n"
+        "metrics_backfill_quiescence_days = soon\n"
+        "metrics_backfill_max_jobs_per_hour = lots",
+      )
+    )
+  importlib.reload(cfg)
+  assert cfg.get_metrics_backfill_min_slots() == 0
+  assert cfg.get_metrics_backfill_fresh_reserve_slots() == 2
+  assert cfg.get_metrics_backfill_quiescence_days() == 7.0
+  assert cfg.get_metrics_backfill_max_jobs_per_hour() == 0

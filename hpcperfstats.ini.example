@@ -213,6 +213,21 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Seconds after job end to wait for every host to cover the window before computing with the hosts that reported (default 21600).
 # metrics_readiness_host_wait_seconds = 21600
 
+# Recompute jobs older than the 7-day window whose metrics predate METRICS_CONTRACT_VERSION, slot-capped behind fresh work (default yes).
+# metrics_backfill_enabled = yes
+
+# Backfill lane floor: pool slots it keeps while the fresh window is busy; 0 = one fifth of metrics_pool_processes, at least 1 (default 0). Idle fresh-window threads above the floor go to the lane.
+# metrics_backfill_min_slots = 0
+
+# Pool threads never given to the backfill lane so an arriving fresh-window job starts at once (default 2).
+# metrics_backfill_fresh_reserve_slots = 2
+
+# Days an old job's incomplete host_data must stay unchanged before it is computed with the hosts that reported (default 7).
+# metrics_backfill_quiescence_days = 7
+
+# Ceiling on backfill jobs admitted per sliding hour; 0 = unlimited (default 0).
+# metrics_backfill_max_jobs_per_hour = 0
+
 # Seconds the long-running update_metrics loop idles between scheduler passes (default 60).
 # metrics_scheduler_pass_interval_s = 60
 

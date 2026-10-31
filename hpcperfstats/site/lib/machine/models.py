@@ -77,6 +77,17 @@ class job_data(models.Model):
   # Set by ingest when host_data for this ended job lands after its metrics
   # were persisted; update_metrics recomputes it and clears the stamp.
   metrics_dirty_at = models.DateTimeField(blank=True, null=True)
+  # METRICS_CONTRACT_VERSION the persisted metrics were computed under
+  # (lib/metrics.py); NULL until the first persist after migration 0043.
+  # The backfill lane recomputes every job whose version is NULL or older.
+  metrics_version = models.IntegerField(blank=True, null=True)
+  # hosts covering the window / hosts in host_list at compute time; < 1.0
+  # labels a partial result (a later dirty stamp recomputes it).
+  metrics_coverage = models.FloatField(blank=True, null=True)
+  # Set when the backfill lane found this old job's host_data incomplete and
+  # skipped it; after metrics_backfill_quiescence_days without new data the
+  # job is computed with the hosts that reported. Cleared by persist.
+  metrics_skipped_since = models.DateTimeField(blank=True, null=True)
 
   class Meta:
     """
@@ -106,6 +117,10 @@ class job_data(models.Model):
         fields=["metrics_dirty_at"],
         name="job_data_metrics_dirty_idx",
         condition=models.Q(metrics_dirty_at__isnull=False),
+      ),
+      models.Index(
+        fields=["metrics_version", "end_time"],
+        name="job_data_metrics_version_idx",
       ),
     ]
 
@@ -142,6 +157,47 @@ class job_data(models.Model):
     else:
       ret_val = "silver"
     return ret_val
+
+
+class metrics_scheduler_state(models.Model):
+  """
+  Small key/value rows the update_metrics scheduler persists across passes.
+
+  Today the only row is ``backfill_cursor``: the ``(end_time, jid)`` keyset
+  position of the backfill lane's version-stale sweep plus the contract
+  version it belongs to, so a restart resumes the lap instead of starting
+  from the newest job again.
+
+  Attributes:
+    key: Row name (primary key).
+    value: JSON payload for that key.
+    updated_at: Last write time (auto).
+  """
+
+  key = models.CharField(primary_key=True, max_length=64)
+  value = models.JSONField(blank=True, null=True)
+  updated_at = models.DateTimeField(auto_now=True)
+
+  class Meta:
+    """
+    Django model metadata for the enclosing model.
+    """
+
+    db_table = "metrics_scheduler_state"
+    managed = True
+
+  def __str__(self) -> str:
+    """
+    Return the row key.
+
+    Returns:
+      str: The ``key`` value.
+
+    Examples:
+      >>> str(metrics_scheduler_state(key="backfill_cursor"))
+      'backfill_cursor'
+    """
+    return str(self.key)
 
 
 class metrics_data(models.Model):

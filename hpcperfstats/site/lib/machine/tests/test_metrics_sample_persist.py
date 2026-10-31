@@ -1,6 +1,7 @@
 """Tests for metrics_distinct_time_count persistence and metrics_data upsert."""
 
 from contextlib import nullcontext
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -61,8 +62,15 @@ def test_persist_metrics_batch_sets_metrics_distinct_time_count(
   mock_jd_filter.assert_called()
   mock_jd_bulk_update.assert_called_once()
   bulk_args, _bulk_kw = mock_jd_bulk_update.call_args
-  assert bulk_args[1] == ["metrics_distinct_time_count"]
+  # The provenance stamp rides the same bulk_update as the sample count.
+  assert bulk_args[1] == [
+    "metrics_distinct_time_count",
+    "metrics_version",
+    "metrics_skipped_since",
+  ]
   assert job_row.metrics_distinct_time_count == 42
+  assert job_row.metrics_version == metrics_module.METRICS_CONTRACT_VERSION
+  assert job_row.metrics_skipped_since is None
   mock_bulk_create.assert_called_once()
   _rows, kwargs = mock_bulk_create.call_args
   assert kwargs["update_conflicts"] is True
@@ -319,17 +327,41 @@ def test_persist_metrics_batch_clears_dirty_stamps_set_before_compute(
 
 
 @pytest.mark.django_db(databases=[])
-def test_mark_jids_metrics_dirty_only_stamps_ended_processed_jobs():
-  """C2: running / never-processed jobs and existing stamps are left alone."""
+def test_mark_jids_metrics_dirty_stamps_never_processed_jobs_outside_window():
+  """Stage 2: in-window only processed jobs; older than the window every
+  ended job (the archive backlog reaching a never-computed job hands it to
+  the backfill lane); running jobs and existing stamps are left alone."""
   from hpcperfstats.site.lib.machine import cache_utils, models
 
   qs = MagicMock()
+  qs.filter.return_value = qs
   qs.update.return_value = 2
+  before = timezone.now()
   with patch.object(models.job_data.objects, "filter", return_value=qs) as f:
     assert cache_utils.mark_jids_metrics_dirty(["a", "b", None]) == 2
   kwargs = f.call_args.kwargs
   assert kwargs["jid__in"] == ["a", "b"]
-  assert kwargs["metrics_distinct_time_count__isnull"] is False
   assert kwargs["metrics_dirty_at__isnull"] is True
-  assert kwargs["end_time__lt"] <= timezone.now()
+  assert before <= kwargs["end_time__lt"] <= timezone.now()
+  # The processed-or-older-than-window rule is a single OR on the queryset.
+  (q_arg,), _ = qs.filter.call_args
+  sql_children = set(q_arg.children)
+  assert ("metrics_distinct_time_count__isnull", False) in sql_children
+  older = [c for c in q_arg.children if c[0] == "end_time__lt"]
+  assert len(older) == 1
+  window_days = cache_utils.METRICS_FRESH_WINDOW_DAYS
+  expected = kwargs["end_time__lt"] - timedelta(days=window_days)
+  assert older[0][1] == expected
+  assert q_arg.connector == "OR"
   assert cache_utils.mark_jids_metrics_dirty([]) == 0
+
+
+def test_cache_utils_fresh_window_days_matches_update_metrics_window():
+  """The stamp's window constant must track DEFAULT_METRICS_RANGE_DAYS."""
+  from hpcperfstats.analysis.metrics import update_metrics
+  from hpcperfstats.site.lib.machine import cache_utils
+
+  assert (
+    cache_utils.METRICS_FRESH_WINDOW_DAYS
+    == update_metrics.DEFAULT_METRICS_RANGE_DAYS
+  )

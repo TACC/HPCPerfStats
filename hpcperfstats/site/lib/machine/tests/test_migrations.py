@@ -3,7 +3,7 @@
 import importlib
 
 import pytest
-from django.db import migrations
+from django.db import migrations, models
 
 # Importlib / source-contract checks - no live PostgreSQL required on the host.
 pytestmark = pytest.mark.machine_unit_mock
@@ -544,3 +544,36 @@ def test_0032_phase2_repins_schedule_after_policy_readd():
   assert "add_compression_policy" in ops[0].sql
   assert isinstance(ops[-1], migrations.RunPython)
   assert ops[-1].code is helper.pin_compression_schedule
+
+
+def test_0043_adds_provenance_columns_cursor_table_and_concurrent_index():
+  """0043: three nullable job_data columns (no rewrite), the
+  metrics_scheduler_state table, and the version index built CONCURRENTLY
+  (atomic=False) so startup migrate never blocks job_data writes."""
+  mod = _migration_module("0043_job_data_metrics_version")
+  assert mod.Migration.atomic is False
+  assert mod.Migration.dependencies == [
+    ("machine", "0042_job_data_metrics_dirty_idx")
+  ]
+  ops = mod.Migration.operations
+  added = {op.name for op in ops if isinstance(op, migrations.AddField)}
+  assert added == {
+    "metrics_version",
+    "metrics_coverage",
+    "metrics_skipped_since",
+  }
+  for op in ops:
+    if isinstance(op, migrations.AddField):
+      assert op.field.null is True and op.field.default is models.NOT_PROVIDED
+  created = [op for op in ops if isinstance(op, migrations.CreateModel)]
+  assert [op.name for op in created] == ["metrics_scheduler_state"]
+  sep = [
+    op for op in ops if isinstance(op, migrations.SeparateDatabaseAndState)
+  ]
+  assert len(sep) == 1
+  sql = sep[0].database_operations[0].sql
+  assert (
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS job_data_metrics_version_idx"
+    in sql
+  )
+  assert "(metrics_version, end_time)" in sql

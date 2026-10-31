@@ -8,6 +8,10 @@ connections around each task; writes are done by the draining parent thread.
 
 Attributes:
   INSUFFICIENT_DATA_FOR_METRICS_PROCESSING: Attribute.
+  METRICS_CONTRACT_VERSION: Metrics contract version stamped on job_data;
+    bump on any metric semantics change (backfill lane recomputes).
+  METRICS_FAILED_FINAL_REASON: no_data_reason for rows a backfill job never
+    produced after the daily backoff step.
   METRICS_HOST_QUERY_BATCH: Attribute.
   METRIC_NOT_COMPUTED_YET: Attribute.
   NO_GPU_AGGREGATE_TELEMETRY: Attribute.
@@ -617,6 +621,15 @@ METRIC_NOT_COMPUTED_YET = "Metric not computed"
 INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
   "Insufficient Data For Metrics Processing"
 )
+# Version of the metrics contract persisted as ``job_data.metrics_version``.
+# Bump it whenever metric semantics change (catalog members, formulas,
+# aggregation rules, units): every job whose stamp is older is recomputed by
+# the update_metrics backfill lane, newest first, behind the fresh window.
+METRICS_CONTRACT_VERSION = 1
+# ``no_data_reason`` written for catalog rows a backfill job never produced
+# after it exhausted the failure-memory backoff (daily step); the job is
+# stamped with the current version so the sweep does not spin on it.
+METRICS_FAILED_FINAL_REASON = "Metrics computation failed repeatedly"
 
 # Persisted with ``compute_metrics`` (ORM GPU aggregates; same definition as job_detail).
 _GPU_JOB_DETAIL_CATALOG = (
@@ -1234,6 +1247,8 @@ def _unwrap(args: Any) -> Any:
       "telemetry_last_time": payload.get("telemetry_last_time"),
       "host_data_schema": payload.get("host_data_schema"),
       "compute_started_at": compute_started_at,
+      # Readiness attaches hosts-covering / hosts-total to the candidate ref.
+      "metrics_coverage": getattr(job, "metrics_coverage", None),
       "error_type": None,
       "error_message": None,
     }
@@ -1287,6 +1302,127 @@ def _unwrap_and_persist(args: Any) -> Any:
     return _persist_metrics_payload(_unwrap(args))
 
 
+def _provenance_stamp_fields(metrics_coverage: Any | None) -> dict[str, Any]:
+  """
+  ``job_data`` fields every metrics persist writes for provenance.
+
+  Args:
+    metrics_coverage (Any | None): Hosts covering / hosts total at compute
+      time, or None to leave the stored coverage unchanged.
+
+  Returns:
+    dict[str, Any]: ``update()`` kwargs: current ``metrics_version``,
+    ``metrics_skipped_since`` cleared, and ``metrics_coverage`` when given.
+
+  Examples:
+    >>> _provenance_stamp_fields(None) == {
+    ...   "metrics_version": METRICS_CONTRACT_VERSION,
+    ...   "metrics_skipped_since": None,
+    ... }
+    True
+    >>> _provenance_stamp_fields(0.5)["metrics_coverage"]
+    0.5
+  """
+  fields: dict[str, Any] = {
+    "metrics_version": METRICS_CONTRACT_VERSION,
+    "metrics_skipped_since": None,
+  }
+  if metrics_coverage is not None:
+    fields["metrics_coverage"] = max(0.0, min(1.0, float(metrics_coverage)))
+  return fields
+
+
+def record_backfill_skips(skips: Any, checked_at: Any) -> int:
+  """
+  Mark old jobs the backfill lane skipped because their host_data is partial.
+
+  Sets ``metrics_skipped_since`` to now (restarting the quiescence clock),
+  stores the measured coverage, and consumes a ``metrics_dirty_at`` stamp
+  set before ``checked_at`` (readiness looked at that data and still found
+  the job incomplete; a stamp set during the check stays).
+
+  Args:
+    skips (Any): Iterable of ``(jid, coverage_or_None)`` pairs.
+    checked_at (Any): Aware datetime when readiness ran.
+
+  Returns:
+    int: ``job_data`` rows stamped.
+
+  Examples:
+    >>> record_backfill_skips([], None)
+    0
+  """
+  by_coverage: dict[Any, list[str]] = {}
+  for jid, coverage in skips or ():
+    key = None if coverage is None else round(float(coverage), 6)
+    by_coverage.setdefault(key, []).append(_metrics_jid_value(jid))
+  if not by_coverage:
+    return 0
+  now = django_timezone.now()
+  stamped = 0
+  for coverage, jids in by_coverage.items():
+    fields: dict[str, Any] = {"metrics_skipped_since": now}
+    if coverage is not None:
+      fields["metrics_coverage"] = max(0.0, min(1.0, coverage))
+    stamped += job_data.objects.filter(pk__in=jids).update(**fields)
+    if checked_at is not None:
+      job_data.objects.filter(
+        pk__in=jids, metrics_dirty_at__lte=checked_at
+      ).update(metrics_dirty_at=None)
+  return stamped
+
+
+def persist_metrics_failed_final(jid: Any, error_text: Any = "") -> bool:
+  """
+  Close out a job that failed through the whole failure-memory backoff.
+
+  Fills the catalog rows the job never produced with
+  ``METRICS_FAILED_FINAL_REASON`` (existing rows, including real values, are
+  kept) and stamps the current contract version so the backfill sweep stops
+  listing it. A later ``metrics_dirty_at`` stamp (new host_data) lists it
+  again and a successful compute overwrites these rows.
+
+  Args:
+    jid (Any): Job id.
+    error_text (Any): Last error, logged for operator forensics.
+
+  Returns:
+    bool: True when the job row exists and was stamped.
+
+  Examples:
+    >>> persist_metrics_failed_final("no-such-job")  # doctest: +SKIP
+    False
+  """
+  jid = _metrics_jid_value(jid)
+  if not jid or not job_data.objects.filter(pk=jid).exists():
+    return False
+  now = django_timezone.now()
+  rows = [
+    metrics_data(
+      jid_id=jid,
+      type=entry["type"],
+      metric=entry["metric"],
+      units=entry["units"],
+      value=None,
+      no_data_reason=METRICS_FAILED_FINAL_REASON,
+    )
+    for entry in job_metrics_catalog_entries()
+  ]
+  with transaction.atomic():
+    if rows:
+      metrics_data.objects.bulk_create(rows, ignore_conflicts=True)
+    job_data.objects.filter(pk=jid).update(**_provenance_stamp_fields(None))
+    job_data.objects.filter(pk=jid, metrics_dirty_at__lte=now).update(
+      metrics_dirty_at=None
+    )
+  log_print(
+    f"metrics backfill: jid={jid} failed_final version="
+    f"{METRICS_CONTRACT_VERSION} last_error={str(error_text)[:200]!r}",
+    flush=True,
+  )
+  return True
+
+
 def _persist_metrics_batch(
   job_results: Any,
   distinct_time_count: int,
@@ -1294,6 +1430,7 @@ def _persist_metrics_batch(
   telemetry_last_time: Any | None = None,
   host_data_schema: dict[str, Any] | None = None,
   compute_started_at: Any | None = None,
+  metrics_coverage: Any | None = None,
 ) -> None:
   """
   Upsert metrics_data rows for job_results; set.
@@ -1305,7 +1442,9 @@ def _persist_metrics_batch(
   row-count matching (Django asserts that for plain bulk_create on PostgreSQL;
   some stacks violate it). Dedupes (jid, type, metric) within the batch so
   ON CONFLICT does not hit the same row twice.
-  Called in main process only.
+  Called in main process only. Every persist stamps
+  ``job_data.metrics_version = METRICS_CONTRACT_VERSION`` and clears
+  ``metrics_skipped_since`` (the provenance the backfill lane sweeps on).
 
   Args:
     job_results (Any): Job results passed to this helper.
@@ -1318,6 +1457,9 @@ def _persist_metrics_batch(
     compute_started_at (Any | None): When the worker started computing these
       rows; clears ``metrics_dirty_at`` stamps set before then (a stamp set
       during the compute stays, so that data is picked up next pass).
+    metrics_coverage (Any | None): Hosts covering the window over hosts in
+      the job, as readiness measured it (1.0 = every host reported); None
+      leaves ``job_data.metrics_coverage`` alone.
 
   Returns:
     None
@@ -1388,9 +1530,14 @@ def _persist_metrics_batch(
       )
     if distinct_time_count is not None and jids:
       jobs_up = list(job_data.objects.filter(pk__in=jids))
-      update_fields = ["metrics_distinct_time_count"]
+      # Provenance rides the same statement as the sample count: the
+      # contract version, a cleared backfill skip clock, and the coverage.
+      stamp = _provenance_stamp_fields(metrics_coverage)
+      update_fields = ["metrics_distinct_time_count", *stamp]
       for jo in jobs_up:
         jo.metrics_distinct_time_count = distinct_time_count
+        for field, value in stamp.items():
+          setattr(jo, field, value)
         if telemetry_first_time is not None:
           jo.telemetry_first_time = telemetry_first_time
         if telemetry_last_time is not None:
@@ -1461,6 +1608,7 @@ def _persist_metrics_payload(payload: Any) -> Any:
   telemetry_last_time = payload.get("telemetry_last_time")
   host_data_schema = payload.get("host_data_schema")
   compute_started_at = payload.get("compute_started_at")
+  metrics_coverage = payload.get("metrics_coverage")
   if not job_rows:
     # compute_metrics always emits the full catalog; an empty row list would
     # persist nothing and the listing would select the jid again every pass.
@@ -1483,6 +1631,7 @@ def _persist_metrics_payload(payload: Any) -> Any:
           telemetry_last_time=telemetry_last_time,
           host_data_schema=host_data_schema,
           compute_started_at=compute_started_at,
+          metrics_coverage=metrics_coverage,
         ),
         attempts=2,
       )
