@@ -135,9 +135,14 @@ def build_copy_sql(
     select = COPY_SELECT_COLUMNS
     scope = owned_sql
     params = [list(hosts), *time_params, jid, jid]
+  # One (host, time) index range per host: a flat ``host = ANY`` with the
+  # ``jid OR dev`` scope let the planner read the whole job's rows on every
+  # host bisect (hs04 timeouts down to 2-host x 1 h chunks). ``OFFSET 0``
+  # keeps the LATERAL from being flattened into a hash join.
   sql = (
-    f"COPY (SELECT {select} FROM host_data h "
-    f"WHERE h.host = ANY(%s::text[]) AND {time_sql} AND {scope}) "
+    f"COPY (SELECT {select} FROM unnest(%s::text[]) AS u(host) "
+    "CROSS JOIN LATERAL (SELECT h.* FROM host_data h "
+    f"WHERE h.host = u.host AND {time_sql} AND {scope} OFFSET 0) h) "
     "TO STDOUT (FORMAT BINARY)"
   )
   return sql, params

@@ -97,6 +97,10 @@ def test_build_copy_sql_non_shared_scopes_to_job_rows():
   assert "(h.jid = %s OR h.dev = ('j:' || %s))" in sql
   assert sql.endswith("TO STDOUT (FORMAT BINARY)")
   assert params == [["a", "b"], T0, T0 + timedelta(hours=1), "77", "77"]
+  # hs04: per-host (host, time) ranges via LATERAL, not a flat host = ANY.
+  assert "FROM unnest(%s::text[]) AS u(host) CROSS JOIN LATERAL" in sql
+  assert "WHERE h.host = u.host AND" in sql and "OFFSET 0) h)" in sql
+  assert "h.host = ANY" not in sql
 
 
 def test_build_copy_sql_shared_reads_residual_types_host_wide():
@@ -118,7 +122,7 @@ def test_build_copy_sql_shared_reads_residual_types_host_wide():
   assert params[:3] == ["77", "77", ["a"]]
   assert params[3] == T0
   assert params[5:7] == ["77", "77"]
-  select_part = sql.split(" FROM host_data h ")[0]
+  select_part = sql.split(" FROM unnest(")[0]
   assert select_part.count("%s") == 2
 
 

@@ -66,6 +66,163 @@ def in_window_per_host_min_max_rows(
     return [dict(zip(cols, row, strict=True)) for row in cursor.fetchall()]
 
 
+def _scope_sql(jid: str | None) -> tuple[str, list[Any]]:
+  """
+  Job-scope predicate on alias ``d`` and its binds (``TRUE`` when no jid).
+
+  Args:
+    jid (str | None): Job id, or ``None`` / empty for host-wide reads.
+
+  Returns:
+    tuple[str, list[Any]]: ``(sql, params)``.
+
+  Examples:
+    >>> _scope_sql(None)
+    ('TRUE', [])
+    >>> _scope_sql("7")[1]
+    ['7', '7']
+  """
+  if not jid:
+    return "TRUE", []
+  from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
+    job_host_data_scope_sql,
+  )
+
+  return job_host_data_scope_sql(table_alias="d"), [str(jid), str(jid)]
+
+
+def first_last_scoped_times(
+  hosts: list[str],
+  start: Any,
+  end: Any,
+  jid: str | None = None,
+) -> dict[str, tuple[Any, Any]]:
+  """
+  First / last (job-scoped) sample time per host via ``(host, time)`` probes.
+
+  Same ``ORDER BY time LIMIT 1`` shape as ``in_window_per_host_min_max_rows``
+  with the job scope as a filter, so an owned host answers after a few index
+  entries instead of reading every row of the window (``SELECT DISTINCT host``
+  over 12 h timed out on hpcperfstats04). Hosts with no scoped row map to
+  ``(None, None)``.
+
+  Args:
+    hosts (list[str]): Hostnames.
+    start (Any): Window start (inclusive).
+    end (Any): Window end (inclusive).
+    jid (str | None): Job id; ``None`` probes host-wide.
+
+  Returns:
+    dict[str, tuple[Any, Any]]: Host to ``(first, last)``.
+
+  Examples:
+    >>> first_last_scoped_times([], None, None)
+    {}
+  """
+  if not hosts or start is None or end is None:
+    return {}
+  from django.db import connection
+
+  scope, scope_params = _scope_sql(jid)
+  probe = (
+    "SELECT d.time FROM host_data d WHERE d.host = h.host"
+    f" AND d.time >= %s AND d.time <= %s AND {scope}"
+    " ORDER BY d.time {} LIMIT 1"
+  )
+  sql = (
+    f"SELECT h.host, ({probe.format('ASC')}), ({probe.format('DESC')})"
+    " FROM unnest(%s::text[]) AS h(host)"
+  )
+  one = [start, end, *scope_params]
+  with _profile_phase("db_fetch"), connection.cursor() as cursor:
+    cursor.execute(sql, [*one, *one, list(hosts)])
+    return {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
+
+
+def schema_rows_near_bounds(
+  host: str,
+  first: Any,
+  last: Any,
+  slice_s: int,
+  jid: str | None = None,
+) -> list[tuple[Any, Any, Any]]:
+  """
+  Distinct ``(type, event, unit)`` from the first ``slice_s`` and last sample.
+
+  The monitor forces a full collect (every fast and slow key) on schema and
+  job-boundary payloads, so the job's first and last samples carry the whole
+  schema; reading only those slices bounds the cost by ``slice_s`` instead of
+  the job length.
+
+  Args:
+    host (str): Hostname.
+    first (Any): First scoped sample time.
+    last (Any): Last scoped sample time.
+    slice_s (int): Seconds read after ``first``.
+    jid (str | None): Job id; ``None`` reads host-wide.
+
+  Returns:
+    list[tuple[Any, Any, Any]]: Distinct schema triples.
+
+  Examples:
+    >>> schema_rows_near_bounds("h", None, None, 600)
+    []
+  """
+  if first is None or last is None:
+    return []
+  from datetime import timedelta
+
+  from django.db import connection
+
+  scope, scope_params = _scope_sql(jid)
+  sql = (
+    "SELECT DISTINCT d.type, d.event, d.unit FROM host_data d"
+    " WHERE d.host = %s AND ((d.time >= %s AND d.time <= %s) OR d.time = %s)"
+    f" AND {scope}"
+  )
+  hi = min(last, first + timedelta(seconds=max(1, int(slice_s))))
+  with _profile_phase("db_fetch"), connection.cursor() as cursor:
+    cursor.execute(sql, [host, first, hi, last, *scope_params])
+    return [tuple(row) for row in cursor.fetchall()]
+
+
+def rows_per_sample_estimate(hosts: list[str], start: Any, end: Any) -> int:
+  """
+  Max rows in one mid-window sample across ``hosts`` (index probes only).
+
+  Replaces the exact window ``COUNT(*)`` behind the large-job sampling
+  heuristic: one ``(host, time)`` probe finds each host's first sample at or
+  after the window midpoint, then counts that sample's rows.
+
+  Args:
+    hosts (list[str]): Hostnames (callers pass one bounded batch).
+    start (Any): Window start.
+    end (Any): Window end.
+
+  Returns:
+    int: Rows per host-sample (0 when nothing is found).
+
+  Examples:
+    >>> rows_per_sample_estimate([], None, None)
+    0
+  """
+  if not hosts or start is None or end is None:
+    return 0
+  from django.db import connection
+
+  mid = start + (end - start) / 2
+  sql = (
+    "SELECT COALESCE(MAX((SELECT COUNT(*) FROM host_data d"
+    " WHERE d.host = h.host AND d.time = (SELECT d2.time FROM host_data d2"
+    " WHERE d2.host = h.host AND d2.time >= %s AND d2.time <= %s"
+    " ORDER BY d2.time LIMIT 1))), 0) FROM unnest(%s::text[]) AS h(host)"
+  )
+  with _profile_phase("db_fetch"), connection.cursor() as cursor:
+    cursor.execute(sql, [mid, end, list(hosts)])
+    row = cursor.fetchone()
+  return int(row[0] or 0) if row else 0
+
+
 def jid_scoped_distinct_host_time_count(
   jid: str,
   start: Any,

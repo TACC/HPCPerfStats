@@ -554,38 +554,6 @@ def test_iter_acct_host_batches_non_numeric_batch_size_uses_default_chunking():
   assert len(chunks[1]) == 5
 
 
-def test_count_host_data_rows_for_window_flattens_nested_acct_hosts(
-  monkeypatch,
-):
-  captured_host_chunks = []
-
-  class _FakeCountQuerySet:
-    def count(self):
-      return 7
-
-  class _FakeObjects:
-    def filter(self, **kwargs):
-      captured_host_chunks.append(kwargs["host__in"])
-      return _FakeCountQuerySet()
-
-  class _FakeHostData:
-    objects = _FakeObjects()
-
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data",
-    _FakeHostData(),
-  )
-  start = datetime(2026, 5, 1, 0, 0, 0)
-  end = datetime(2026, 5, 1, 0, 5, 0)
-  n = _count_host_data_rows_for_window(
-    start,
-    end,
-    [["n1.example"], ["n2.example", ["n3.example"]]],
-  )
-  assert n == 7
-  assert captured_host_chunks == [["n1.example", "n2.example", "n3.example"]]
-
-
 def test_distinct_times_in_window_batched_uses_host_chunks(monkeypatch):
   """Strided-time prep runs one DISTINCT-time ORM query per host__in batch."""
   chunk_lens = []
@@ -623,94 +591,6 @@ def test_distinct_times_in_window_batched_uses_host_chunks(monkeypatch):
   assert len(chunk_lens) == 2
   assert chunk_lens[0] == JID_TABLE_HOST_QUERY_BATCH
   assert chunk_lens[1] == 5
-
-
-def test_count_host_data_rows_for_window_chunked_single_batch(monkeypatch):
-  """Row-count probe uses chunked ORM; one batch when host list fits batch size."""
-  hosts = ["n1.example.com", "n2.example.com", "n3.example.com"]
-
-  class FakeCountQS:
-    def __init__(self, n):
-      self._n = n
-
-    def count(self):
-      return self._n
-
-  class FakeManager:
-    def filter(self, **kwargs):
-      return FakeCountQS(len(kwargs["host__in"]))
-
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data.objects",
-    FakeManager(),
-  )
-
-  st = datetime(2026, 5, 1, 0, 0, 0)
-  et = datetime(2026, 5, 1, 0, 1, 0)
-  out = _count_host_data_rows_for_window(st, et, hosts)
-  assert out == len(hosts)
-
-
-def test_count_host_data_rows_for_window_chunked_multiple_batches(monkeypatch):
-  """Row-count probe sums one COUNT per host__in batch (no raw SQL)."""
-  n = JID_TABLE_HOST_QUERY_BATCH + 5
-  hosts = [f"n{i}.example.com" for i in range(n)]
-
-  class FakeCountQS:
-    def __init__(self, n_chunk):
-      self._n_chunk = n_chunk
-
-    def count(self):
-      return self._n_chunk
-
-  class FakeManager:
-    def filter(self, **kwargs):
-      return FakeCountQS(len(kwargs["host__in"]))
-
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data.objects",
-    FakeManager(),
-  )
-
-  st = datetime(2026, 5, 1, 0, 0, 0)
-  et = datetime(2026, 5, 1, 0, 1, 0)
-  out = _count_host_data_rows_for_window(st, et, hosts)
-  assert out == n
-
-
-def test_count_host_data_rows_retries_after_lost_sync(monkeypatch):
-  """One retry with close_old_connections after psycopg desynchronization."""
-  calls = {"n": 0}
-
-  class FakeCountQS:
-    def count(self):
-      calls["n"] += 1
-      if calls["n"] == 1:
-        raise OperationalError(
-          'lost synchronization with server: got message type "1", length 942485560'
-        )
-      return 7
-
-  class FakeManager:
-    def filter(self, **_kwargs):
-      return FakeCountQS()
-
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data.objects",
-    FakeManager(),
-  )
-  closed = []
-
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table.close_old_connections",
-    lambda: closed.append(1),
-  )
-  st = datetime(2026, 5, 1, 0, 0, 0)
-  et = datetime(2026, 5, 1, 0, 1, 0)
-  out = _count_host_data_rows_for_window(st, et, ["h1.example.com"])
-  assert out == 7
-  assert calls["n"] == 2
-  assert len(closed) == 2
 
 
 def test_is_statement_timeout_error_detects_operational_timeout():
@@ -933,3 +813,99 @@ def test_jid_table_host_query_batch_matches_metrics_batch():
   assert JID_TABLE_HOST_QUERY_BATCH == 16
   assert JID_TABLE_HOST_QUERY_BATCH == METRICS_HOST_QUERY_BATCH
   assert JID_TABLE_HOST_QUERY_BATCH != 64
+
+
+def _patch_rows_per_sample(monkeypatch, fn):
+  import hpcperfstats.analysis.metrics.lib.metrics_host_data_sql as sql_mod
+
+  monkeypatch.setattr(sql_mod, "rows_per_sample_estimate", fn)
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.close_old_connections",
+    lambda: None,
+  )
+
+
+def test_count_host_data_rows_for_window_estimates_without_count(monkeypatch):
+  """hs04: window COUNT(*) timed out; estimate = per-sample x hosts x minutes."""
+  seen = []
+
+  def _per_sample(hosts, start, end):
+    seen.append(list(hosts))
+    return 10
+
+  _patch_rows_per_sample(monkeypatch, _per_sample)
+
+  class _NoCount:
+    def filter(self, **_k):
+      raise AssertionError("window COUNT(*) must not run")
+
+  monkeypatch.setattr(
+    "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data.objects",
+    _NoCount(),
+  )
+  n = JID_TABLE_HOST_QUERY_BATCH + 5
+  hosts = [[f"n{i}.example"] for i in range(n)]
+  st = datetime(2026, 5, 1, 0, 0, 0)
+  et = datetime(2026, 5, 1, 1, 0, 0)
+  out = _count_host_data_rows_for_window(st, et, hosts)
+  assert out == 10 * n * 60
+  # One probe over the first host batch only, nested lists flattened.
+  assert seen == [[f"n{i}.example" for i in range(JID_TABLE_HOST_QUERY_BATCH)]]
+
+
+def test_count_host_data_rows_retries_after_lost_sync(monkeypatch):
+  """One retry with close_old_connections after psycopg desynchronization."""
+  calls = {"n": 0}
+
+  def _per_sample(_hosts, _start, _end):
+    calls["n"] += 1
+    if calls["n"] == 1:
+      raise OperationalError(
+        'lost synchronization with server: got message type "1", length 9'
+      )
+    return 7
+
+  _patch_rows_per_sample(monkeypatch, _per_sample)
+  st = datetime(2026, 5, 1, 0, 0, 0)
+  et = datetime(2026, 5, 1, 0, 1, 0)
+  assert _count_host_data_rows_for_window(st, et, ["h1.example.com"]) == 7
+  assert calls["n"] == 2
+
+
+def test_jid_table_host_list_and_schema_use_index_probes(monkeypatch):
+  """hs04: DISTINCT host / DISTINCT type,event over the window timed out."""
+  import hpcperfstats.analysis.metrics.lib.metrics_host_data_sql as sql_mod
+
+  probe_calls = []
+  schema_calls = []
+
+  def _bounds(hosts, start, end, jid=None):
+    probe_calls.append((tuple(hosts), jid))
+    return {h: ((start, end) if h != "idle.x" else (None, None)) for h in hosts}
+
+  def _schema(host, first, last, slice_s, jid=None):
+    schema_calls.append((host, slice_s, jid))
+    return [("cpu", "user", "cs")] if jid else [("host_mem", "used", "kB")]
+
+  monkeypatch.setattr(sql_mod, "first_last_scoped_times", _bounds)
+  monkeypatch.setattr(sql_mod, "schema_rows_near_bounds", _schema)
+  mod = "hpcperfstats.analysis.metrics.lib.gen.jid_table"
+  st = datetime(2026, 5, 1, tzinfo=UTC)
+  et = datetime(2026, 5, 1, 2, tzinfo=UTC)
+  window = iter([(["a.x", "idle.x"], st, et)])
+
+  def _cached(_key, _ttl, fn):
+    return next(window, None) or fn()
+
+  monkeypatch.setattr(f"{mod}.cached_orm", _cached)
+  monkeypatch.setattr(f"{mod}._build_acct_host_fqdns", list)
+  monkeypatch.setattr(f"{mod}.job_is_shared_node", lambda _j: True)
+  monkeypatch.setattr(
+    f"{mod}.jid_table._apply_large_job_time_sampling_if_needed",
+    lambda self: None,
+  )
+  jt = jid_table("77")
+  assert jt.host_list == ["a.x"]
+  assert probe_calls[0] == (("a.x", "idle.x"), "77")
+  assert jt.schema == {"cpu": ["user"], "host_mem": ["used"]}
+  assert [c[2] for c in schema_calls] == ["77", None]

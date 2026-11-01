@@ -8,6 +8,8 @@ Attributes:
   HOST_DATA_SUM_VAL_ALIAS: ``HOST_DATA_SUM_VAL_ALIAS``.
   HOST_DATA_TIME_ALIAS: ``HOST_DATA_TIME_ALIAS``.
   JID_TABLE_HOST_QUERY_BATCH: ``JID_TABLE_HOST_QUERY_BATCH``.
+  JID_TABLE_SCHEMA_PROBE_SLICE_S: Seconds read after the first scoped
+    sample when building the jid_table schema.
   TYPE_DETAIL_HOST_QUERY_BATCH: ``TYPE_DETAIL_HOST_QUERY_BATCH``.
   _DENSE_PLOT_AGG_TYPES: NFS/llite type names that use the dense (8) host batch.
   _GPU_AFF_UNSET: Sentinel for unloaded ``job_affinity`` GPU cache.
@@ -40,8 +42,8 @@ from django.db import (
 )
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
+from hpcperfstats.analysis.metrics.lib import metrics_host_data_sql
 from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
-  apply_job_host_data_scope,
   gpu_devs_for_job,
   is_job_scoped_host_data_type,
   job_is_shared_node,
@@ -70,6 +72,11 @@ _GPU_AFF_UNSET: object = object()
 # Prior value 64 let ~48-host NFS Summary SUM(arc) fit in one first attempt
 # and burn the full 120s statement_timeout before any bisect (hs04).
 JID_TABLE_HOST_QUERY_BATCH = 16
+
+# Seconds of the first scoped sample read for the jid_table schema. Job
+# boundary samples are full collects (every key); a short slice bounds the
+# DISTINCT by index range instead of the whole job window (hs04 timeouts).
+JID_TABLE_SCHEMA_PROBE_SLICE_S = 600
 
 
 _STATEMENT_TIMEOUT_ERROR_MARKERS = (
@@ -696,11 +703,12 @@ def _count_host_data_rows_for_window(
   acct_hosts: Any,
 ) -> Any:
   """
-  Total host_data rows in [start, end] for accounting FQDNs.
+  Estimated host_data rows in [start, end] for accounting FQDNs.
 
-  Always uses chunked ``host__in`` queries. A previous PostgreSQL fast path
-  used ``ANY(%s::text[])`` on a shared Django connection and could corrupt the
-  psycopg wire protocol (``lost synchronization with server``).
+  ``rows_per_sample_estimate`` (one mid-window sample per host of the first
+  host batch, index probes only) x hosts x estimated 1-minute samples. The
+  exact chunked ``COUNT(*)`` read every row of the window and timed out on
+  hpcperfstats04; the large-job sampling gate only needs the magnitude.
 
   Retries once after :func:`close_old_connections` when the connection is
   desynchronized (same class of errors as raw-SQL / concurrent use).
@@ -724,27 +732,23 @@ def _count_host_data_rows_for_window(
   end_dt = _normalize_window_bound_datetime(end)
   if start_dt is None or end_dt is None:
     return 0
-  hosts = _listify_acct_hosts(acct_hosts)
+  hosts = [
+    h
+    for h in map(
+      _normalize_host_cell_for_host_data, _listify_acct_hosts(acct_hosts)
+    )
+    if h
+  ]
   if not hosts:
     return 0
   for attempt in range(2):
     try:
       close_old_connections()
-      total = 0
-      for host_chunk in _iter_acct_host_batches(hosts):
-        clean_chunk = [
-          h
-          for h in (_normalize_host_cell_for_host_data(h) for h in host_chunk)
-          if h
-        ]
-        if not clean_chunk:
-          continue
-        total += host_data.objects.filter(
-          time__gte=start_dt,
-          time__lte=end_dt,
-          host__in=clean_chunk,
-        ).count()
-      return total
+      per_sample = metrics_host_data_sql.rows_per_sample_estimate(
+        next(_iter_acct_host_batches(hosts)), start_dt, end_dt
+      )
+      samples = _estimate_one_min_samples_for_window(start_dt, end_dt)
+      return per_sample * len(hosts) * samples
     except Exception as exc:
       if attempt == 0 and _is_psycopg_connection_desync(exc):
         continue
@@ -1652,21 +1656,12 @@ class jid_table:
       """
       found = set()
       for host_chunk in _iter_acct_host_batches(self.acct_host_list):
-        host_qs = (
-          apply_job_host_data_scope(
-            host_data.objects.filter(
-              time__gte=self._base_filter["time__gte"],
-              time__lte=self._base_filter["time__lte"],
-              host__in=host_chunk,
-            ),
-            self.jid,
-          )
-          .values_list("host", flat=True)
-          .distinct()
+        bounds = metrics_host_data_sql.first_last_scoped_times(
+          list(host_chunk), self.start_time, self.end_time, str(self.jid)
         )
-        for raw_host in host_qs:
+        for raw_host, (first, _last) in bounds.items():
           nh = _normalize_host_cell_for_host_data(raw_host)
-          if nh:
+          if nh and first is not None:
             found.add(nh)
       return list(found)
 
@@ -1706,29 +1701,32 @@ class jid_table:
       """
       if not self.host_list:
         return {"rows": []}
-      raw_rows = list(
-        apply_job_host_data_scope(
-          host_data.objects.filter(
-            host=str(self.host_list[0]),
-            time__gte=self._base_filter["time__gte"],
-            time__lte=self._base_filter["time__lte"],
-          ),
-          self.jid,
+      host0 = str(self.host_list[0])
+
+      def _near_bounds(jid: str | None) -> list[tuple[Any, Any, Any]]:
+        """
+        Schema triples of ``host0`` read near its first/last scoped sample.
+
+        Args:
+          jid (str | None): Job id, or ``None`` for host-wide residual rows.
+
+        Returns:
+          list[tuple[Any, Any, Any]]: Distinct ``(type, event, unit)``.
+
+        Examples:
+          >>> _near_bounds("7")  # doctest: +SKIP
+          [('host_cpu', 'user', 'cs')]
+        """
+        first, last = metrics_host_data_sql.first_last_scoped_times(
+          [host0], self.start_time, self.end_time, jid
+        ).get(host0, (None, None))
+        return metrics_host_data_sql.schema_rows_near_bounds(
+          host0, first, last, JID_TABLE_SCHEMA_PROBE_SLICE_S, jid
         )
-        .values_list("type", "event", "unit")
-        .distinct()
-      )
-      rows = [tuple(r[:3]) for r in raw_rows if len(r) >= 3]
+
+      rows = [tuple(r[:3]) for r in _near_bounds(str(self.jid)) if len(r) >= 3]
       if getattr(self, "_shared_node", False):
-        host_wide_rows = list(
-          host_data.objects.filter(
-            host=str(self.host_list[0]),
-            time__gte=self._base_filter["time__gte"],
-            time__lte=self._base_filter["time__lte"],
-          )
-          .values_list("type", "event", "unit")
-          .distinct()
-        )
+        host_wide_rows = _near_bounds(None)
         seen = {(r[0], r[1]) for r in rows}
         for r in host_wide_rows:
           if len(r) < 3:

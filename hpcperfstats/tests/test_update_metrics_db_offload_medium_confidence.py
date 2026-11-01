@@ -222,3 +222,72 @@ def test_in_window_per_host_bounds_sql_matches_orm_oracle():
   host_min, host_max = um._in_window_per_host_bounds([host], start, end)
   assert host_min[host] == orm_rows[0]["mn"]
   assert host_max[host] == orm_rows[0]["mx"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_jid_table_index_probes_match_full_scan_oracle():
+  """Probe rewrites (hs04 jid_table / COPY timeouts) equal the full scans."""
+  oracles.skip_unless_compose_db()
+  from django.db.models import Max, Min, Q
+
+  from hpcperfstats.analysis.metrics.lib.columnar import copy_fetch
+  from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import (
+    first_last_scoped_times,
+    rows_per_sample_estimate,
+    schema_rows_near_bounds,
+  )
+  from hpcperfstats.site.lib.machine.models import host_data
+
+  own, shared, idle = (f"n-{x}.probe.test" for x in ("own", "shr", "idle"))
+  jid = "930777"
+  start = datetime(2026, 8, 2, 0, 0, tzinfo=UTC)
+  end = start + timedelta(hours=3)
+  host_data.objects.filter(host__in=[own, shared, idle]).delete()
+  rows = []
+  for minute in range(0, 180, 1):
+    t = start + timedelta(minutes=minute)
+    rows.append((own, jid, "cpu", "user", "0", t))
+    rows.append((own, jid, "cpu", "sys", "0", t))
+    rows.append((shared, None, "cpu", "user", f"j:{jid}", t))
+    rows.append((shared, "1", "cpu", "user", "j:1", t))
+    rows.append((idle, "2", "cpu", "user", "0", t))
+  # Slow key only in the boundary (first) sample, like a monitor full collect.
+  rows.append((own, jid, "host_mem", "used", "", start))
+  host_data.objects.bulk_create(
+    host_data(
+      host=h, jid=j, type=ty, event=ev, dev=d, unit="u", time=t, value=1
+    )
+    for h, j, ty, ev, d, t in rows
+  )
+  scope = Q(jid=jid) | Q(dev=f"j:{jid}")
+  hosts = [own, shared, idle]
+  bounds = first_last_scoped_times(hosts, start, end, jid)
+  for h in hosts:
+    agg = host_data.objects.filter(
+      scope, host=h, time__gte=start, time__lte=end
+    )
+    oracle = agg.aggregate(mn=Min("time"), mx=Max("time"))
+    assert bounds[h] == (oracle["mn"], oracle["mx"])
+  assert bounds[idle] == (None, None)
+  full = set(
+    host_data.objects.filter(scope, host=own, time__gte=start, time__lte=end)
+    .values_list("type", "event", "unit")
+    .distinct()
+  )
+  first, last = bounds[own]
+  assert set(schema_rows_near_bounds(own, first, last, 600, jid)) == full
+  assert rows_per_sample_estimate([own, shared], start, end) == 2
+  sql, params = copy_fetch.build_copy_sql(
+    hosts, {"time__gte": start, "time__lte": end}, jid, shared=False
+  )
+  inner = sql.removeprefix("COPY (").removesuffix(") TO STDOUT (FORMAT BINARY)")
+  from django.db import connection
+
+  with connection.cursor() as cur:
+    cur.execute(f"SELECT COUNT(*) FROM ({inner}) s", params)
+    n_copy = cur.fetchone()[0]
+  n_orm = host_data.objects.filter(
+    scope, host__in=hosts, time__gte=start, time__lte=end
+  ).count()
+  assert n_copy == n_orm == 180 * 3 + 1
+  host_data.objects.filter(host__in=hosts).delete()
