@@ -84,6 +84,16 @@ Expect `redis_version:8.8.x` (or the pin in compose). Roll back by restoring the
 
 ---
 
+## PostgreSQL over the shared Unix socket
+
+`web` and `pipeline` now connect to the PG15 `db` service through a Unix socket on the **`postgres_runtime`** tmpfs named volume (`/run/postgresql`), not TCP. TCP **5432** stays published on `hpcperfstats_net` for everything else. `db` also loads **`services-conf/postgres_pg_hba.conf`** through `-c hba_file=`, so socket logins need the password (scram-sha-256, same as network logins) instead of the image default `trust`. That file overrides `$PGDATA/pg_hba.conf` on existing data dirs. Loopback (`exec db psql -h localhost`) keeps `trust`; `exec db psql` without `-h` now uses the socket and fails with `fe_sendauth: no password supplied` (or a password prompt), so keep `-h localhost` on every in-container `psql` / `pg_dump`.
+
+1. Bake **`[DEFAULT] host = /run/postgresql`** into the site `hpcperfstats.ini` (keep `port = 5432`; it names the socket file).
+2. Run **`./scripts/rebuild_full_site.sh`**. It bakes the new ini into the image, then runs `down --remove-orphans` and `up -d --no-build`, so **`db`**, **`web`**, and **`pipeline`** are recreated together and all mount `postgres_runtime`. After `up` it fails the rebuild if `web` or `pipeline` cannot see `/run/postgresql/.s.PGSQL.5432` within `HPCPERFSTATS_STACK_VERIFY_WAIT_TIMEOUT` (default 300 s). Do **not** recreate only `web`/`pipeline`: with the new ini and an old `db` they wait forever for a socket that never appears, and still show as running.
+3. Check: `podman-compose -p hpcperfstats exec -T db psql -h localhost -U hpcperfstats -Atc "SHOW hba_file; SELECT count(*) FROM pg_stat_activity WHERE client_addr IS NULL AND backend_type = 'client backend';"` returns `/etc/postgresql/pg_hba.conf` and a non-zero count of socket clients once web/pipeline are up.
+
+To roll back, set `host = db` again; the socket volume and hba file are harmless with TCP clients.
+
 ## INI layout (legacy sections)
 
 **Upgrading from an older ini layout:** PostgreSQL keys moved from **`[PORTAL]`** to **`[DEFAULT]`**; ingest/archive/metrics keys moved from **`[DEFAULT]`** / **`[PORTAL]`** to **`[PIPELINE]`**. Existing deployments keep working via legacy section fallbacks in `conf_parser` until you migrate keys into the new sections. Compare production INI to **`hpcperfstats.ini.example`** on the next image bake (immutable-image policy: bake INI into the image; do not bind-mount a mutable INI over production).

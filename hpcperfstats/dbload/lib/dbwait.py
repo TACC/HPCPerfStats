@@ -119,3 +119,104 @@ def wait_for_host_port_resolution(
     if time.time() >= deadline:
       raise TimeoutError(f"Timed out waiting to resolve {host}:{port}")
     time.sleep(interval_seconds)
+
+
+def postgres_unix_socket_path(host: str, port: str) -> str | None:
+  """
+  Return the libpq Unix socket file for ``host``/``port``, or None for TCP.
+
+  libpq treats a ``host`` that starts with ``/`` as the socket directory and
+  connects to ``<dir>/.s.PGSQL.<port>``.
+
+  Args:
+    host (str): PostgreSQL host name, or socket directory when it starts
+      with ``/``.
+    port (str): PostgreSQL port; it names the socket file.
+
+  Returns:
+    str | None: Socket file path, or None when ``host`` is a TCP host.
+
+  Examples:
+    >>> postgres_unix_socket_path("/run/postgresql", "5432")
+    '/run/postgresql/.s.PGSQL.5432'
+    >>> postgres_unix_socket_path("db", "5432") is None
+    True
+  """
+  if not str(host).startswith("/"):
+    return None
+  return os.path.join(str(host), f".s.PGSQL.{port}")
+
+
+def _postgres_accepts_connection(
+  host: str, port: str, connect_timeout_seconds: float
+) -> bool:
+  """
+  Return True when one TCP or Unix-socket connect to Postgres succeeds.
+
+  Args:
+    host (str): PostgreSQL host name, or socket directory when it starts
+      with ``/``.
+    port (str): PostgreSQL port.
+    connect_timeout_seconds (float): Timeout for this connect attempt.
+
+  Returns:
+    bool: True when the server accepted the connection, else False.
+
+  Examples:
+    >>> _postgres_accepts_connection("/nonexistent-dir", "5432", 0.1)
+    False
+  """
+  sock_path = postgres_unix_socket_path(host, port)
+  try:
+    if sock_path is None:
+      socket.create_connection(
+        (host, int(port)), timeout=connect_timeout_seconds
+      ).close()
+    else:
+      with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(connect_timeout_seconds)
+        sock.connect(sock_path)
+    return True
+  except OSError:
+    return False
+
+
+def wait_for_postgres_available(
+  host: str,
+  port: str,
+  *,
+  dns_timeout_seconds: int = 60,
+  connect_timeout_seconds: float = 2.0,
+  interval_seconds: float = 0.25,
+) -> None:
+  """
+  Block until PostgreSQL accepts a connection over TCP or its Unix socket.
+
+  A TCP host first waits (bounded) for name resolution, since Compose DNS
+  lags on container start. A socket directory skips that step. The connect
+  loop then waits, unbounded like the old ``nc -z`` loop, until the server
+  listens.
+
+  Args:
+    host (str): PostgreSQL host name, or socket directory when it starts
+      with ``/``.
+    port (str): PostgreSQL port.
+    dns_timeout_seconds (int): Name-resolution budget for a TCP host.
+    connect_timeout_seconds (float): Timeout for each connect attempt.
+    interval_seconds (float): Sleep between attempts.
+
+  Returns:
+    None
+
+  Examples:
+    >>> wait_for_postgres_available("/run/postgresql", "5432")  # doctest: +SKIP
+  """
+  if postgres_unix_socket_path(host, port) is None:
+    wait_for_host_port_resolution(
+      host,
+      port,
+      timeout_seconds=dns_timeout_seconds,
+      interval_seconds=interval_seconds,
+    )
+  while not _postgres_accepts_connection(host, port, connect_timeout_seconds):
+    time.sleep(interval_seconds)

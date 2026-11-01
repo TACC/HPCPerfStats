@@ -149,6 +149,10 @@ run_stack_up_and_verify() {
   compose_up_project_stack || return 1
   if [[ "${DRY_RUN}" -eq 0 ]]; then
     verify_default_stack_running || rc=1
+    LAST_STEP="postgres socket check (web/pipeline see db socket)"
+    if [[ "${rc}" -eq 0 ]]; then
+      verify_postgres_socket_shared || rc=1
+    fi
     # Runs even when a service failed to start: a running db on the wrong mount must stop.
     LAST_STEP="bind volume guard (post-up mount check)"
     compose_bind_volumes_verify_mounted || rc=1
@@ -264,6 +268,30 @@ verify_default_stack_running() {
       return 1
     fi
     wait_for_compose_service_running "${svc}" || return 1
+  done
+}
+
+# web/pipeline connect to db over the Unix socket on the shared postgres_runtime
+# tmpfs ([DEFAULT] host = /run/postgresql). "Running" is not enough: a container
+# whose ini points at the socket but that does not share db's socket volume
+# waits forever in its startup script and still shows as running.
+verify_postgres_socket_shared() {
+  local sock=/run/postgresql/.s.PGSQL.5432
+  local timeout="${HPCPERFSTATS_STACK_VERIFY_WAIT_TIMEOUT:-300}"
+  local svc name elapsed
+  for svc in web pipeline; do
+    name="$(compose_service_container_name "${svc}")"
+    elapsed=0
+    until "${PODMAN[@]}" exec "${name}" test -S "${sock}" 2>/dev/null; do
+      if [[ "${elapsed}" -ge "${timeout}" ]]; then
+        echo "rebuild_full_site.sh: ${svc} cannot see the db socket ${sock} after ${timeout}s;" \
+          "db, web and pipeline must all mount postgres_runtime (recreate them together)" >&2
+        "${PODMAN[@]}" logs --tail 20 "${name}" 2>&1 || true
+        return 1
+      fi
+      sleep 2
+      elapsed=$((elapsed + 2))
+    done
   done
 }
 

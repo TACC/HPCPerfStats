@@ -874,8 +874,12 @@ E2E_SEED_CMD="python your_seed_script.py" tests/run_web_e2e_workflow.sh
 
 ### `tests/run_db_pytest_workflow.sh` (Podman Compose full Python suite)
 
-Use this when you need **Django / Postgres** tests with `host=db` on the
-isolated Compose network; host-side pytest cannot resolve that service alias.
+Use this when you need **Django / Postgres** tests against the compose `db`
+service. The baked ini uses `host = /run/postgresql`: `web` / `pipeline`
+connect over the shared `postgres_runtime` tmpfs socket (password auth via
+`services-conf/postgres_pg_hba.conf`); host-side pytest has neither that
+socket nor the `db` alias. `tests/run_dev_container_pytest.sh` mounts the dev
+project's `postgres_runtime` volume, so the dev `db` must be recreated with it.
 
 From the `HPCPerfStats/` directory (where `docker-compose.yaml` lives):
 

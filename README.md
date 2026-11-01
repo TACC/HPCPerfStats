@@ -356,7 +356,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    - `timezone` - your machine's local timezone
    - `total_cores` - CPU budget for app parallelism (omit to use code default **40**; see `docs/DEPLOY_CONCURRENCY_AND_NUMA.md`)
    - `secret_key` - a random string
-   - PostgreSQL connection: `engine_name`, `dbname`, `username`, `password`, `host`, `port` (Compose uses `host=db` in the image-built ini)
+   - PostgreSQL connection: `engine_name`, `dbname`, `username`, `password`, `host`, `port`. Compose uses **`host = /run/postgresql`**: **`web`** and **`pipeline`** reach the PG15 **`db`** service over its Unix socket on the shared **`postgres_runtime`** tmpfs volume (not a host bind). Socket logins require the `password` (scram-sha-256, same as network logins) via the committed **`services-conf/postgres_pg_hba.conf`** (`-c hba_file=`). TCP **`5432`** stays up on `hpcperfstats_net`; use `host = db` only for a Postgres that does not share the socket volume.
 
    Optional tuning lives in other sections (see `hpcperfstats.ini.example`):
 
@@ -545,7 +545,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 | Existing-stack rebuilds / Redis / PG18 / INI | **[docs/upgrade.md](docs/upgrade.md)** |
 | Restart proxy after cert renew or `server=` change | `docker compose restart proxy` |
 | View logs  | `podman-compose -p hpcperfstats logs` |
-| PostgreSQL shell | `docker compose exec db psql -h localhost -U hpcperfstats` |
+| PostgreSQL shell | `docker compose exec db psql -h localhost -U hpcperfstats` (keep `-h localhost`: without it `psql` uses the Unix socket, which asks for the password) |
 | Pipeline shell (data/processing) | `docker compose exec pipeline su hpcperfstats` |
 | Get queues and message counts from rabbitmq | `docker compose exec rabbitmq rabbitmqctl list_queues name messages consumers` |
 | RabbitMQ default queue type | Compose mounts `services-conf/rabbitmq_default_queue_type.conf` (`default_queue_type = quorum`). New durable monitor ingest queues are declared quorum. Existing brokers: **[docs/upgrade.md](docs/upgrade.md)**. |

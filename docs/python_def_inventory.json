@@ -17422,6 +17422,51 @@
       "has_docstring": true,
       "is_trivial_dunder": false,
       "issues": [],
+      "kind": "function",
+      "lineno": 124,
+      "name": "postgres_unix_socket_path",
+      "path": "hpcperfstats/dbload/lib/dbwait.py",
+      "qualname": "postgres_unix_socket_path",
+      "repo": "HPCPerfStats",
+      "sig_annotated": true
+    },
+    {
+      "doc_ok": true,
+      "excluded": false,
+      "excluded_reason": "",
+      "has_docstring": true,
+      "is_trivial_dunder": false,
+      "issues": [],
+      "kind": "function",
+      "lineno": 150,
+      "name": "_postgres_accepts_connection",
+      "path": "hpcperfstats/dbload/lib/dbwait.py",
+      "qualname": "_postgres_accepts_connection",
+      "repo": "HPCPerfStats",
+      "sig_annotated": true
+    },
+    {
+      "doc_ok": true,
+      "excluded": false,
+      "excluded_reason": "",
+      "has_docstring": true,
+      "is_trivial_dunder": false,
+      "issues": [],
+      "kind": "function",
+      "lineno": 184,
+      "name": "wait_for_postgres_available",
+      "path": "hpcperfstats/dbload/lib/dbwait.py",
+      "qualname": "wait_for_postgres_available",
+      "repo": "HPCPerfStats",
+      "sig_annotated": true
+    },
+    {
+      "doc_ok": true,
+      "excluded": false,
+      "excluded_reason": "",
+      "has_docstring": true,
+      "is_trivial_dunder": false,
+      "issues": [],
       "kind": "module",
       "lineno": 1,
       "name": "<module>",
@@ -67628,7 +67673,7 @@
     "django_migrations": 90,
     "docs_scratch": 52,
     "monitor_read_only": 235,
-    "test_module": 9334,
+    "test_module": 9342,
     "test_tree": 234
   },
   "roots": [
@@ -67636,7 +67681,7 @@
     "/data/HPCPerfStats/HPCPerfStats/hpcperfstats-tools"
   ],
   "summary": {
-    "excluded": 10308,
+    "excluded": 10316,
     "excluded_by_reason": {
       "codon_compile_unit": 120,
       "codon_experiment": 67,
@@ -67644,13 +67689,13 @@
       "django_migrations": 90,
       "docs_scratch": 52,
       "monitor_read_only": 235,
-      "test_module": 9334,
+      "test_module": 9342,
       "test_tree": 234
     },
-    "in_scope": 4508,
+    "in_scope": 4511,
     "in_scope_failed": 0,
-    "in_scope_ok": 4508,
-    "total_defs": 14816
+    "in_scope_ok": 4511,
+    "total_defs": 14827
   },
   "version": 1
 }

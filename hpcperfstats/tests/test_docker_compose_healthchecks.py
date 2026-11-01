@@ -1218,3 +1218,53 @@ def test_docker_compose_pipeline_has_no_process_pool_shared_memory_override():
   )
   assert db_m, "db service not found"
   assert 'shm_size: "16gb"' in db_m.group(0)
+
+
+def test_docker_compose_postgres_unix_socket_shared_with_password_auth():
+  """web/pipeline reach PG15 over the shared tmpfs socket; socket needs scram.
+
+  The image default ``local all all trust`` would let any socket client log
+  in as the superuser without a password, unlike network clients (scram).
+  TCP 5432 must stay on: only the default ini host moves to the socket.
+  """
+  repo_root = Path(__file__).resolve().parents[2]
+  content = (repo_root / "docker-compose.defaults.yaml").read_text()
+  example = (repo_root / "docker-compose.yaml.example").read_text()
+  overlay = (
+    repo_root / "tests" / "docker-compose.test-overlay.yaml.example"
+  ).read_text()
+  ini_example = (repo_root / "hpcperfstats.ini.example").read_text()
+  hba = (repo_root / "services-conf" / "postgres_pg_hba.conf").read_text()
+
+  # db + web + pipeline share the socket dir; db_pg18 must not (same port).
+  assert content.count("postgres_runtime:/run/postgresql") == 3
+  pg18 = content.split("  db_pg18:\n", 1)[1].split("\n  rabbitmq:\n", 1)[0]
+  assert "postgres_runtime" not in pg18
+  assert "hba_file" not in pg18
+  assert "  postgres_runtime:\n    driver: local\n" in content
+  assert "      type: tmpfs\n" in content
+  assert "postgres_runtime:" not in example
+  assert overlay.count("postgres_runtime:/run/postgresql") == 3
+  assert "postgres_pg_hba.conf:/etc/postgresql/pg_hba.conf:ro" in overlay
+
+  assert "      - hba_file=/etc/postgresql/pg_hba.conf\n" in content
+  assert (
+    "./services-conf/postgres_pg_hba.conf:/etc/postgresql/pg_hba.conf:ro"
+    in content
+  )
+  rules = [
+    line.split()
+    for line in hba.splitlines()
+    if line.strip() and not line.lstrip().startswith("#")
+  ]
+  local_methods = {r[-1] for r in rules if r[0] == "local"}
+  assert local_methods == {"scram-sha-256"}
+  assert ["host", "all", "all", "all", "scram-sha-256"] in rules
+  assert not any(r[-1] == "trust" and r[0] == "local" for r in rules)
+
+  # Network path stays: port and healthcheck unchanged.
+  assert (
+    "pg_isready -U hpcperfstats -d postgres -h 127.0.0.1 -p 5432" in content
+  )
+  assert "\nhost = /run/postgresql\n" in ini_example
+  assert "\nport = 5432\n" in ini_example

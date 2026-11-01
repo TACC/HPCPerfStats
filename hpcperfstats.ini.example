@@ -43,8 +43,8 @@ username = hpcperfstats
 # PostgreSQL password.
 password = hpcperfstats
 
-# PostgreSQL host (compose service name in default install).
-host = db
+# PostgreSQL host, or Unix socket dir when it starts with / (compose: shared postgres_runtime tmpfs).
+host = /run/postgresql
 
 # PostgreSQL port.
 port = 5432

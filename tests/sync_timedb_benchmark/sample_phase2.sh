@@ -33,7 +33,7 @@ while kill -0 "$pid" 2>/dev/null; do
       printf '%s\t%s\t%s\t%s\n' "$ep" "$name" "${cpu%\%}" "$mem"
     done >>"$STATS"
   if [[ -n "$DB" ]]; then
-    podman exec "$DB" psql -U hpcperfstats -d hpcperfstats -At -F $'\t' -c \
+    podman exec "$DB" psql -h localhost -U hpcperfstats -d hpcperfstats -At -F $'\t' -c \
       "SELECT coalesce(wait_event_type,'cpu'), coalesce(wait_event,'-'), state, count(*) FROM pg_stat_activity WHERE datname='hpcperfstats' AND pid<>pg_backend_pid() AND backend_type='client backend' GROUP BY 1,2,3" \
       2>/dev/null | awk -v ep="$ep" -F'\t' '{print ep"\t"$0}' >>"$PGW"
   fi

@@ -20,6 +20,7 @@ services:
       - test_staticfiles_ram:/home/hpcperfstats/staticfiles-ram
       - test_media_ram:/home/hpcperfstats/media-ram
       - redis_runtime:/run/redis
+      - postgres_runtime:/run/postgresql
   pipeline:
     # Test-only cgroup memory.max for the pipeline container (0 = unlimited).
     # e.g. HPCPERFSTATS_TEST_PIPELINE_MEM=128g makes the sync_process_tree_rss_*
@@ -29,6 +30,7 @@ services:
       - test_hpcperfstatsdata:/hpcperfstats/
       - test_ssh_keys:/hpcperfstats/.ssh/:ro
       - redis_runtime:/run/redis
+      - postgres_runtime:/run/postgresql
   proxy:
     volumes:
       - test_staticfiles_ram:/srv/static:ro
@@ -37,6 +39,8 @@ services:
   db:
     volumes:
       - test_postgres_data:/var/lib/postgresql/data/
+      - postgres_runtime:/run/postgresql
+      - ./services-conf/postgres_pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
   db_pg18:
     volumes:
       - test_postgres_data_pg18:/var/lib/postgresql

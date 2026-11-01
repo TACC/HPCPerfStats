@@ -43,6 +43,7 @@ services:
       - media_ram:/home/hpcperfstats/media-ram
       - hpcperfstatsdata:/hpcperfstats/
       - redis_runtime:/run/redis
+      - postgres_runtime:/run/postgresql
     networks:
       hpcperfstats_net:
         aliases:
@@ -68,6 +69,7 @@ services:
       - hpcperfstatsdata:/hpcperfstats/
       - ssh_keys:/hpcperfstats/.ssh/:ro
       - redis_runtime:/run/redis
+      - postgres_runtime:/run/postgresql
     networks:
       hpcperfstats_net:
         aliases:
@@ -234,6 +236,11 @@ services:
       # exceed TimescaleDB's default 100k tuple decompress cap per transaction.
       - -c
       - timescaledb.max_tuples_decompressed_per_dml_transaction=1000000
+      # Committed client auth (services-conf/postgres_pg_hba.conf): the Unix socket
+      # web/pipeline use requires scram-sha-256, like the network; image default
+      # for local is trust. Overrides $PGDATA/pg_hba.conf on existing data dirs.
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
     restart: always
     healthcheck:
       test:
@@ -246,6 +253,10 @@ services:
     stop_grace_period: 10m
     volumes:
       - postgres_data:/var/lib/postgresql/data/
+      # unix_socket_directories default; web/pipeline mount the same tmpfs at
+      # /run/postgresql and connect with [DEFAULT] host = /run/postgresql.
+      - postgres_runtime:/run/postgresql
+      - ./services-conf/postgres_pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
     environment:
       - POSTGRES_USER=hpcperfstats
       - POSTGRES_PASSWORD=hpcperfstats
@@ -417,6 +428,15 @@ volumes:
   # Ephemeral Redis Unix socket dir shared by redis, web, and pipeline.
   # Not a host bind — Docker/Podman named volume only.
   redis_runtime:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=4m
+  # Ephemeral PostgreSQL Unix socket dir shared by db (PG15), web, and pipeline.
+  # TCP 5432 stays up on hpcperfstats_net; same-host containers use the socket.
+  # Not a host bind — Docker/Podman named volume only (like redis_runtime).
+  postgres_runtime:
     driver: local
     driver_opts:
       type: tmpfs

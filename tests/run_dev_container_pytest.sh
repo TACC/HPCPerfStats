@@ -84,6 +84,7 @@ run_args=(
   -v "${ROOT_DIR}:/home/hpcperfstats:rw"
   -v "${HPCPERFSTATS_HOST_CACHE}/dev-container-pycache:/tmp/pycache:rw"
   -v "${HPCPERFSTATS_COMPOSE_PROJECT}_redis_runtime:/run/redis:rw"
+  -v "${HPCPERFSTATS_COMPOSE_PROJECT}_postgres_runtime:/run/postgresql:rw"
   -e HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini
   -e HPCPERFSTATS_COMPOSE_NETWORK=1
   -e DOCKER_PYTEST_BIND_MOUNT=1

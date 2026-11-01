@@ -311,6 +311,16 @@ The compose **`db`** role is **`hpcperfstats`**, not the stock Postgres superuse
 |----|-------|
 | `docker compose exec db psql -h localhost -U hpcperfstats -c "…"` | `psql -U postgres …` / omit `-h localhost` when the peer map expects TCP |
 
+### Anti-pattern — `exec db psql` without `-h localhost` (Unix socket needs a password)
+
+`db` loads the committed **`services-conf/postgres_pg_hba.conf`** (`-c hba_file=/etc/postgresql/pg_hba.conf`). **Unix-socket** logins (`local`) use **`scram-sha-256`**, the same as network logins from `web` / `pipeline`; only **loopback** (`127.0.0.1` / `::1`) inside `db` stays `trust`. `psql` / `pg_dump` with no `-h` use the socket, so a bare `exec db psql -U hpcperfstats` prompts **`Password for user hpcperfstats:`** (with `-T`: **`fe_sendauth: no password supplied`**), and the paste hangs or comes back empty. Same for `podman exec hpcperfstats_db_1 psql …` and in-container scripts.
+
+| Do | Don't |
+|----|-------|
+| `podman-compose -p hpcperfstats exec -T db psql -h localhost -U hpcperfstats -c "…"` | `exec db psql -U hpcperfstats -c "…"` (no `-h`, socket → password prompt) |
+| `exec -T db pg_dump -h localhost -U hpcperfstats …` | `exec db pg_dump -U hpcperfstats …` |
+| From `web` / `pipeline` (socket at `/run/postgresql`): Django ORM / `manage.py dbshell` (password from INI) | `psql -h db` from the host (no compose DNS) |
+
 ### Anti-pattern — `psql` census when `db` is at `max_connections` (hpcperfstats01)
 
 When backends are exhausted, `psql` itself is refused with **`FATAL: sorry, too many clients already`** (hpcperfstats01 2026-10 census), so a `pg_stat_activity` query yields no rows. Count backends from the process table instead and map client IPs to services.

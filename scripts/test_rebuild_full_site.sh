@@ -60,6 +60,13 @@ if ! grep -q 'compose_bind_volumes_preflight' "${FULL_SITE_SCRIPT}" \
   exit 1
 fi
 
+if ! grep -q '^verify_postgres_socket_shared() {' "${FULL_SITE_SCRIPT}" \
+  || ! grep -q 'verify_postgres_socket_shared || rc=1' "${FULL_SITE_SCRIPT}" \
+  || ! grep -q '/run/postgresql/.s.PGSQL.5432' "${FULL_SITE_SCRIPT}"; then
+  echo "rebuild_full_site.sh must check web/pipeline see the shared db socket after up" >&2
+  exit 1
+fi
+
 if ! grep -q 'podman_runtime.sh' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must source podman_runtime.sh" >&2
   exit 1

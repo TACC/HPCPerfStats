@@ -20,22 +20,20 @@ echo "Waiting for PostgreSQL at ${DB_WAIT_HOST}:${DB_WAIT_PORT}..."
 DNS_TIMEOUT_SECONDS="${POSTGRES_DNS_WAIT_TIMEOUT_SECONDS:-60}"
 POSTGRES_CONNECT_TIMEOUT_SECONDS="${POSTGRES_CONNECT_TIMEOUT_SECONDS:-2}"
 
-# Docker's internal DNS can lag briefly on container startup; wait for name
-# resolution before attempting TCP connect.
+# host may be a Unix socket dir (/run/postgresql, shared tmpfs) or a TCP host.
+# TCP: wait for Compose DNS (it lags on start), then connect. Socket: connect.
 /usr/local/bin/python3 -c '
 import sys
-from hpcperfstats.dbload.lib.dbwait import wait_for_host_port_resolution
+from hpcperfstats.dbload.lib.dbwait import wait_for_postgres_available
 
-host = sys.argv[1]
-port = sys.argv[2]
-timeout_seconds = int(sys.argv[3])
-wait_for_host_port_resolution(host, port, timeout_seconds=timeout_seconds)
-' "${DB_WAIT_HOST}" "${DB_WAIT_PORT}" "${DNS_TIMEOUT_SECONDS}"
-
-while ! nc -z -w "${POSTGRES_CONNECT_TIMEOUT_SECONDS}" \
-  "${DB_WAIT_HOST}" "${DB_WAIT_PORT}" 2>/dev/null; do
-  sleep 0.25
-done
+wait_for_postgres_available(
+  sys.argv[1],
+  sys.argv[2],
+  dns_timeout_seconds=int(sys.argv[3]),
+  connect_timeout_seconds=float(sys.argv[4]),
+)
+' "${DB_WAIT_HOST}" "${DB_WAIT_PORT}" "${DNS_TIMEOUT_SECONDS}" \
+  "${POSTGRES_CONNECT_TIMEOUT_SECONDS}"
 
 echo "PostgreSQL started"
 
