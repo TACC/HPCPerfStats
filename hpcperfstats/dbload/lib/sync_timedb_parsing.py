@@ -944,7 +944,7 @@ def _compile_schema_token(token: str) -> tuple[str, int, float, str]:
   mult: float | int = 1
   unit = "#"
   for ele in eve_parts[1:]:
-    if "W=" in ele:
+    if "W=" in ele and ele.lstrip("W=").isdigit():
       width = int(ele.lstrip("W="))
     if "U=" in ele:
       ele = ele.lstrip("U=")
@@ -1133,6 +1133,14 @@ def _append_compiled_stats_columns(
       stacklevel=3,
     )
     return
+  try:
+    values = [float(v) for v in vals]
+  except ValueError:
+    warnings.warn(
+      f"non-numeric stats value for type={typ} dev={dev}: {vals!r}",
+      stacklevel=3,
+    )
+    return
   cols["time"].extend((time,) * n)
   cols["host"].extend((host,) * n)
   cols["jid"].extend((jid,) * n)
@@ -1142,7 +1150,7 @@ def _append_compiled_stats_columns(
   cols["wid"].extend(compiled["wids"])
   cols["mult"].extend(compiled["mults"])
   cols["unit"].extend(compiled["units"])
-  cols["value"].extend([float(v) for v in vals])
+  cols["value"].extend(values)
 
 
 def _decode_stats_readline(raw: bytes | str) -> str:
@@ -2830,7 +2838,10 @@ class IncrementalStatsParser:
       return
 
     if s[0].isalpha() and self.insert:
-      typ, dev, vals = s.split(maxsplit=2)
+      parts = s.split(maxsplit=2)
+      if len(parts) < 3:
+        return
+      typ, dev, vals = parts
       vals = vals.split()
       if typ in self.exclude_types_list:
         return
@@ -2939,9 +2950,15 @@ class IncrementalStatsParser:
       if parsed is None:
         return
       t, jid, host = parsed
+      # A bad sample time drops that sample's lines (they need ``insert``).
+      try:
+        t = float(t)
+      except ValueError:
+        self.insert = False
+        return
       self.insert = True
       # Same sample-header jid as tags2; idle monitors emit "-".
-      ctx = {"time": float(t), "host": host, "jid": jid}
+      ctx = {"time": t, "host": host, "jid": jid}
       self.line_ctx["tags"] = ctx
       self.line_ctx["tags2"] = ctx
       self._bind_pending_marks(float(t), host, jid)

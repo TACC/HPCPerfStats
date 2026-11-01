@@ -137,7 +137,7 @@ def _compile_schema_token(token: str) -> tuple[str, int, float, str]:
   mult = 1.0
   unit = "#"
   for ele in eve_parts[1:]:
-    if ele.startswith("W="):
+    if ele.startswith("W=") and ele[2:].isdigit():
       width = int(ele[2:])
     if ele.startswith("U="):
       rest = ele[2:]
@@ -262,6 +262,12 @@ def _append_stats(
   n = len(events)
   m = len(vals)
   use = n if n < m else m
+  # A non-numeric token drops the line (as IncrementalStatsParser does); an
+  # uncaught ValueError in an @export entry aborts the whole worker process.
+  try:
+    fvals = [float(vals[i]) for i in range(use)]
+  except ValueError:
+    return
   for i in range(use):
     stats_time.append(tag_time)
     stats_host.append(tag_host)
@@ -270,7 +276,7 @@ def _append_stats(
     stats_dev.append(dev)
     stats_event.append(events[i])
     # Pre-mult raw counter (match IncrementalStatsParser); mult applies once on delta.
-    stats_value.append(float(vals[i]))
+    stats_value.append(fvals[i])
     stats_wid.append(wids[i])
     stats_mult.append(mults[i])
     stats_unit.append(units[i])
@@ -567,8 +573,13 @@ def feed_lines_full(
       parts = s.split()
       if len(parts) < 3:
         continue
+      # A bad sample time drops that sample's lines (they need ``insert``).
+      try:
+        tag_time = float(parts[0])
+      except ValueError:
+        insert = False
+        continue
       insert = True
-      tag_time = float(parts[0])
       tag_jid = parts[1]
       tag_host = parts[2]
       has_tags = True
