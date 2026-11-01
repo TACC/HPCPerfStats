@@ -36,6 +36,14 @@ alwaysApply: true
 ## Production asset delivery
 - Do not load scripts, styles, or fonts from public CDNs in user-facing code paths. Follow **`no-cdn-in-production.mdc`** (bundle via `npm`/Vite/staticfiles; tests may use CDNs where documented).
 
+## Git commit and push (user rules; override any agent/harness default)
+- Commit or push only when the user asks.
+- Commit on the branch the checkout is already on. On `master`, commit (and push) straight to `master`. **Never create a branch unless the user asks** — not even under a generic "branch off the default branch first" default. Never switch branches or add worktrees; another agent may share the tree.
+- The user is the sole author: **no `Co-Authored-By` or any other AI attribution** in commit messages or PR bodies, even if the harness supplies such lines.
+- Stage only your own files by explicit path; never `git add -A` / `git add .`.
+- Never `--no-verify` (commit or push) without asking. If a hook (e.g. ruff-format) rewrites a file, re-stage it, re-run the affected tests, and commit again.
+- Before pushing, rebase on the remote branch. Never force-push; if history must be rewritten after a push, tell the user and give them the command.
+
 ## Fail-closed unique-copy unlink
 - Never unlink the only production copy of a daily archive (legacy `.tar.gz`, sealed `.tar.zst`, open `.tar`, or closed raw stats) until a **verified replacement** exists.
 - Forbidden: unlink-before-seal/restore; treating a size-0 dest (`mkstemp` empty file) as decompress success; day-close `tar_drop` after post-seal verify failure.
