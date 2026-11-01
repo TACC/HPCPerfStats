@@ -7888,6 +7888,117 @@ def test_backfill_rate_brake_and_slot_default(monkeypatch):
 
 
 @pytest.mark.machine_unit_mock
+def test_backfill_lane_gets_turn_when_fresh_fills_prefetch(monkeypatch):
+  """hs04 2026-11-01: a fresh day filling the round's prefetch ``break``-ed
+  the fill loop, so the lane (listed last) never listed a page
+  (``backfill_cursor_end_time=none`` with 28718 stale). The lane must still
+  admit up to its slot room in the same round."""
+  fresh_jids = [f"f{i:02d}" for i in range(12)]
+  _strict_calls, _skips = _patch_lane_env(
+    monkeypatch, slots=2, strict_ready={*fresh_jids, "b1", "b2"}
+  )
+  stats = _lane_stats()
+  fresh = _fresh_state(
+    datetime(2026, 11, 1), [SimpleNamespace(jid=j) for j in fresh_jids]
+  )
+  lane = _lane_state([SimpleNamespace(jid=j) for j in ("b1", "b2", "b3")])
+  ready = _run_fill([fresh, lane], stats)
+  jids = _ready_queue_jids(ready)
+  # Fresh stops at prefetch_chunks=10; the lane still admits its room (2).
+  assert jids == [*fresh_jids[:10], "b1", "b2"]
+  assert [r.jid for r in fresh["pending_tail"]] == fresh_jids[10:]
+  assert [r.jid for r in lane["pending_tail"]] == ["b3"]
+  assert stats["backfill_admitted_total"] == 2
+
+
+@pytest.mark.machine_unit_mock
+def test_in_window_bounds_sql_probes_each_host_via_index(monkeypatch):
+  """hs04 2026-11-01: ``GROUP BY host`` MIN/MAX read ~1.4M index entries per
+  16 hosts x 1h (5-14 s on the SAN). The probe must be two ``LIMIT 1``
+  index lookups per host over ``unnest`` - no ``GROUP BY`` scan."""
+  from hpcperfstats.analysis.metrics.lib import metrics_host_data_sql as sql_mod
+
+  executed = []
+
+  class _Cursor:
+    description = [("host",), ("mn",), ("mx",)]
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *exc):
+      return False
+
+    def execute(self, sql, params):
+      executed.append((sql, params))
+
+    def fetchall(self):
+      return [("h1", 1, 2), ("h2", None, None)]
+
+  monkeypatch.setattr(
+    "django.db.connection", SimpleNamespace(cursor=lambda: _Cursor())
+  )
+  t0 = datetime(2026, 10, 27, 19, 0, tzinfo=timezone.utc)
+  t1 = t0 + timedelta(hours=10)
+  rows = sql_mod.in_window_per_host_min_max_rows(
+    ["h1", "h2"], {"time__gte": t0, "time__lte": t1}
+  )
+  assert rows == [
+    {"host": "h1", "mn": 1, "mx": 2},
+    {"host": "h2", "mn": None, "mx": None},
+  ]
+  ((sql, params),) = executed
+  flat = " ".join(sql.split())
+  assert "GROUP BY" not in flat and "MIN(" not in flat
+  assert "unnest(%s::text[])" in flat
+  assert flat.count("LIMIT 1") == 2
+  assert "ORDER BY d.time ASC" in flat and "ORDER BY d.time DESC" in flat
+  assert params == [t0, t1, t0, t1, ["h1", "h2"]]
+  executed.clear()
+  sql_mod.in_window_per_host_min_max_rows(
+    ["h1"], {"time__gte": t0, "time__lt": t1}
+  )
+  assert "d.time < %s" in " ".join(executed[0][0].split())
+
+
+@pytest.mark.machine_unit_mock
+def test_in_window_bounds_one_query_per_host_batch_not_per_hour(monkeypatch):
+  """Per-host index probes cost the same for any window, so the bounds walk
+  host batches over the full window instead of one query per hour slice
+  (a 10 h job was 10x the queries at the 3600 s default)."""
+  from hpcperfstats.analysis.metrics.lib import metrics as metrics_lib
+
+  monkeypatch.setattr(metrics_lib, "METRICS_HOST_QUERY_BATCH", 2)
+  monkeypatch.setattr(
+    update_metrics.cfg, "get_metrics_plot_aggregate_time_slice_s", lambda: 3600
+  )
+  calls = []
+
+  def in_window_rows(hosts, time_filter):
+    calls.append(
+      (tuple(hosts), time_filter.get("time__gte"), time_filter.get("time__lte"))
+    )
+    return [
+      {
+        "host": h,
+        "mn": time_filter["time__gte"],
+        "mx": time_filter["time__lte"],
+      }
+      for h in hosts
+    ]
+
+  _patch_in_window_per_host_min_max_rows(monkeypatch, in_window_rows)
+  start = datetime(2026, 10, 27, 19, 0, tzinfo=timezone.utc)
+  end = start + timedelta(hours=10)
+  host_min, host_max = update_metrics._in_window_per_host_bounds(
+    ["a", "b", "c"], start, end
+  )
+  assert calls == [(("a", "b"), start, end), (("c",), start, end)]
+  assert host_min == dict.fromkeys("abc", start)
+  assert host_max == dict.fromkeys("abc", end)
+
+
+@pytest.mark.machine_unit_mock
 def test_backfill_cap_expands_when_fresh_lane_idle(monkeypatch):
   """The lane may use every thread the fresh window is not using (minus the
   fresh reserve) and never fewer than its guaranteed minimum."""

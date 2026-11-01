@@ -24,7 +24,12 @@ def in_window_per_host_min_max_rows(
   time_filter: dict[str, Any],
 ) -> list[dict[str, Any]]:
   """
-  Per-host ``MIN(time)`` / ``MAX(time)`` in one ``GROUP BY host`` query.
+  Per-host first / last sample time in ``[t0, t1]`` via index probes.
+
+  Two ``ORDER BY time LIMIT 1`` lookups per host on ``(host, time)`` over
+  ``unnest(hosts)``, so the cost no longer scales with rows in the window
+  (a ``GROUP BY host`` MIN/MAX read every row: 5-14 s per 16 hosts x 1 h on
+  network storage). Hosts without samples come back with ``None`` bounds.
 
   Args:
     hosts (list[str]): Hostnames (non-empty).
@@ -46,22 +51,17 @@ def in_window_per_host_min_max_rows(
     return []
   from django.db import connection
 
-  if t_lt is not None and t1 is None:
-    upper_sql = "time < %s"
-    upper_param = t_lt
-  else:
-    upper_sql = "time <= %s"
-    upper_param = t1
-  sql = f"""
-    SELECT host, MIN(time) AS mn, MAX(time) AS mx
-    FROM host_data
-    WHERE host = ANY(%s::text[])
-      AND time >= %s
-      AND {upper_sql}
-    GROUP BY host
-  """
+  upper_op, upper_param = ("<", t_lt) if t1 is None else ("<=", t1)
+  probe = (
+    "SELECT d.time FROM host_data d WHERE d.host = h.host"
+    f" AND d.time >= %s AND d.time {upper_op} %s ORDER BY d.time {{}} LIMIT 1"
+  )
+  sql = (
+    f"SELECT h.host, ({probe.format('ASC')}) AS mn,"
+    f" ({probe.format('DESC')}) AS mx FROM unnest(%s::text[]) AS h(host)"
+  )
   with _profile_phase("db_fetch"), connection.cursor() as cursor:
-    cursor.execute(sql, [list(hosts), t0, upper_param])
+    cursor.execute(sql, [t0, upper_param, t0, upper_param, list(hosts)])
     cols = [c[0] for c in cursor.description]
     return [dict(zip(cols, row, strict=True)) for row in cursor.fetchall()]
 

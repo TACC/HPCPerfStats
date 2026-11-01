@@ -4050,8 +4050,9 @@ def _in_window_per_host_bounds(
   """
   Return ``(host_min_map, host_max_map)`` for ``hosts`` in ``[start, end]``.
 
-  Uses hostxtime chunking with timeout split/retry so a multi-day window of
-  ~48 hosts cannot burn a single statement_timeout.
+  Host batches of ``METRICS_HOST_QUERY_BATCH`` over the full window with
+  timeout split/retry. No hour slicing: each host costs two index probes
+  (``in_window_per_host_min_max_rows``) whatever the window length.
 
   Args:
     hosts (Any): Hostnames to probe.
@@ -4066,7 +4067,6 @@ def _in_window_per_host_bounds(
   """
   from hpcperfstats.analysis.metrics.lib import metrics as metrics_lib
   from hpcperfstats.analysis.metrics.lib.gen import jid_table as jid_table_mod
-  from hpcperfstats.dbload.lib import conf_parser as cfg
 
   host_min = {}
   host_max = {}
@@ -4074,12 +4074,12 @@ def _in_window_per_host_bounds(
     return host_min, host_max
   host_list = sorted(set(hosts))
   tkw = {"time__gte": start_time, "time__lte": end_time}
-  slice_s = int(cfg.get_metrics_plot_aggregate_time_slice_s())
+  slice_s = int((end_time - start_time).total_seconds()) + 60
   batch = metrics_lib.METRICS_HOST_QUERY_BATCH
 
   def run(hosts_list: Any, tf_cur: Any) -> Any:
     """
-    Per-host Min/Max time for one hostxtime chunk (single SQL GROUP BY).
+    Per-host first/last sample time for one host batch (index probes).
 
     Args:
       hosts_list (Any): Hostnames for this attempt.
@@ -5816,6 +5816,9 @@ def _fill_ready_queue(
       >>> _process_pk_chunk_inner(None, None, [])  # doctest: +SKIP
     """
     lane = state.get("lane") == BACKFILL_LANE
+    # The lane stops at its slot room (``_after_admit``), never at the fresh
+    # prefetch the fresh days may already have filled this round.
+    stop_at = float("inf") if lane else prefetch_chunks
     lane_room = [0]
     ordered = [
       candidate if hasattr(candidate, "jid") else _candidate_ref(candidate)
@@ -5971,7 +5974,7 @@ def _fill_ready_queue(
           with scheduler_shared_lock:
             stats["backfill_partial_total"] += 1
             stats["strict_ready_jids"] += 1
-          if _after_admit(candidate) or len(ready_queue) >= prefetch_chunks:
+          if _after_admit(candidate) or len(ready_queue) >= stop_at:
             tail = final[i + 1 :] + ordered
             if tail:
               state["pending_tail"] = tail
@@ -6006,7 +6009,7 @@ def _fill_ready_queue(
     bs = max(1, int(strict_check_state["batch_size"]))
     pos = 0
     while pos < len(unknown_ordered):
-      if len(ready_queue) >= prefetch_chunks:
+      if len(ready_queue) >= stop_at:
         state["pending_tail"] = unknown_ordered[pos:]
         return True
       sub_end = min(pos + bs, len(unknown_ordered))
@@ -6077,10 +6080,7 @@ def _fill_ready_queue(
             with scheduler_shared_lock:
               stats["strict_ready_jids"] += 1
             ready_queue.append(ready_candidate)
-            if (
-              _after_admit(ready_candidate)
-              or len(ready_queue) >= prefetch_chunks
-            ):
+            if _after_admit(ready_candidate) or len(ready_queue) >= stop_at:
               tail = []
               seen = False
               for j2 in work:
@@ -6116,7 +6116,7 @@ def _fill_ready_queue(
             stats["strict_ready_jids"] += 1
           _attach_telemetry_bounds_to_candidate(candidate, bounds_by_jid)
           ready_queue.append(candidate)
-          if _after_admit(candidate) or len(ready_queue) >= prefetch_chunks:
+          if _after_admit(candidate) or len(ready_queue) >= stop_at:
             tail = work[k + 1 :] + unknown_ordered[pos:]
             if tail:
               state["pending_tail"] = tail
@@ -6166,15 +6166,16 @@ def _fill_ready_queue(
     start = int(rr_cursor.get("idx", 0)) % len(fresh)
     ordered = fresh[start:] + fresh[:start]
     rr_cursor["idx"] = (start + 1) % len(fresh)
-  # The backfill lane lists after every fresh day and only with slot room.
+  # Fresh days list first; a full prefetch ends only the fresh days. The lane
+  # then always gets its turn, bounded by its slot room (not the prefetch), so
+  # a busy or slow fresh window cannot starve it below its guaranteed floor.
   ordered.extend(lanes)
   for state in ordered:
-    if len(ready_queue) >= prefetch_chunks:
-      break
     if (
-      state.get("lane") == BACKFILL_LANE
-      and _backfill_lane_room(stats, scheduler_shared_lock, ready_queue) <= 0
-    ):
+      _backfill_lane_room(stats, scheduler_shared_lock, ready_queue)
+      if state.get("lane") == BACKFILL_LANE
+      else prefetch_chunks - len(ready_queue)
+    ) <= 0:
       continue
     try:
       pk_chunk, is_new = _resume_or_next_pk_chunk(state)
@@ -6193,8 +6194,7 @@ def _fill_ready_queue(
     if is_new:
       with scheduler_shared_lock:
         stats["proxy_checked_chunks"] += 1
-    if _process_pk_chunk(state, pk_chunk):
-      break
+    _process_pk_chunk(state, pk_chunk)
 
 
 def _start_candidate_rescan_thread(
