@@ -34,6 +34,13 @@
 #   8. copies owner/mode, fsyncs, renames over <day>.tar.zst, removes <day>.tar
 # It reports how many raw files of each sealed day are not in the tar yet
 # (each such day is restored once when the pipeline appends them).
+#
+# --seal-all seals every open tar the member checks can vouch for, ignoring
+# steps 1 and 2: no age cutoff, no kept-open days (the job store is not read,
+# --keep-open is ignored, ingested raw waiting for append does not hold the
+# day), and empty tars are sealed. Still enforced: the pipeline-running check
+# (--allow-running), the tar listing (3), the existing .tar.zst member check
+# (5), free space, the member-list verify (7), and the tar-unchanged check.
 # POSIX awk only (the pipeline image ships mawk); day math runs in python3.
 set -uo pipefail
 
@@ -47,6 +54,7 @@ JOBS=1
 APPLY=0
 ALLOW_RUNNING=0
 NO_JOB_STORE=0
+SEAL_ALL=0
 ONLY=""
 LOG=""
 KEEP_OPEN=()
@@ -56,7 +64,7 @@ usage() {
 usage: $0 [--apply] [-j|--jobs N] [--keep-open YYYY-MM-DD]... [--daily DIR]
           [--archive DIR] [--tz TZ] [--level N] [--min-age-days N]
           [--margin-gb N] [--only YYYY-MM-DD] [--no-job-store]
-          [--allow-running] [--log FILE]
+          [--allow-running] [--seal-all] [--log FILE]
 Dry run unless --apply. Defaults: daily=$DAILY archive=$ARCHIVE tz=$TZ_LOCAL
 level=$LEVEL min-age-days=$MIN_AGE_DAYS margin-gb=$MARGIN_GB jobs=$JOBS
 --jobs N: seal up to N days at once (more reads in flight on a SAN); each
@@ -66,6 +74,9 @@ level=$LEVEL min-age-days=$MIN_AGE_DAYS margin-gb=$MARGIN_GB jobs=$JOBS
   retried (RETRY) only after space is given back; it is skipped only when
   nothing running is left to free space.
 --no-job-store: do not read the job store snapshot (only --keep-open stays open)
+--seal-all: seal every open tar regardless of age, kept-open days or
+  pending appends, and seal empty tars; the member checks (tar listing,
+  existing .tar.zst subset, post-compress verify) still apply
 EOF
 }
 
@@ -82,6 +93,7 @@ while [ $# -gt 0 ]; do
     -j|--jobs) JOBS=$2; shift ;;
     --only) ONLY=$2; shift ;;
     --no-job-store) NO_JOB_STORE=1 ;;
+    --seal-all) SEAL_ALL=1 ;;
     --allow-running) ALLOW_RUNNING=1 ;;
     --log) LOG=$2; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -108,11 +120,11 @@ fi
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/seal_open_daily_tars.XXXXXX") || exit 2
 trap 'rm -rf "${WORK:?}"' EXIT
 CUTOFF=$(TZ=$TZ_LOCAL date -d "today - $MIN_AGE_DAYS days" +%F)
-log "start apply=$APPLY jobs=$JOBS daily=$DAILY archive=$ARCHIVE cutoff<$CUTOFF level=$LEVEL"
+log "start apply=$APPLY jobs=$JOBS seal_all=$SEAL_ALL daily=$DAILY archive=$ARCHIVE cutoff<$CUTOFF level=$LEVEL"
 
-# Days kept open: "<day> <queued append files>".
+# Days kept open: "<day> <queued append files>". --seal-all keeps none open.
 : >"$WORK/keep"
-if [ "$NO_JOB_STORE" -eq 0 ]; then
+if [ "$NO_JOB_STORE" -eq 0 ] && [ "$SEAL_ALL" -eq 0 ]; then
   SNAP="$ARCHIVE/.sync_timedb_job_store.json"
   [ -f "$SNAP" ] || { log "no job store snapshot $SNAP (use --no-job-store)"; exit 2; }
   if ! TZ=$TZ_LOCAL python3 -I - "$SNAP" >"$WORK/keep" 2>"$WORK/keep.err" <<'PY'
@@ -152,6 +164,8 @@ PY
     log "cannot read job store snapshot: $(head -1 "$WORK/keep.err")"; exit 2
   fi
 fi
+[ "$SEAL_ALL" -eq 1 ] && [ "${#KEEP_OPEN[@]}" -gt 0 ] &&
+  log "--seal-all: ignoring --keep-open ${KEEP_OPEN[*]}" && KEEP_OPEN=()
 for day in "${KEEP_OPEN[@]}"; do echo "$day manual" >>"$WORK/keep"; done
 while read -r day n; do log "KEEP OPEN $day (append queued: $n)"; done <"$WORK/keep"
 
@@ -274,7 +288,7 @@ seal_day() {
     log "FAIL $day $*"; result fail
   }
 
-  if [ "$size" -le 20480 ]; then
+  if [ "$size" -le 20480 ] && [ "$SEAL_ALL" -eq 0 ]; then
     skip "empty tar (pipeline drops it)"; return
   fi
   if ! tar -tvf "$tar" >"$W/t.raw" 2>"$W/t.err" || [ -s "$W/t.err" ]; then
@@ -289,9 +303,10 @@ seal_day() {
       n = split(f[1], parts, "/"); t[parts[n - 1] "/" parts[n]] = f[2]; next}
     $1 == d && (!($2 in t) || t[$2] != $3) {if ($4 == 1) r++; else p++}
     END {print r + 0, p + 0}' "$W/t.lst" "$WORK/raw.idx")"
-  if [ "$ready" -gt 0 ]; then
+  if [ "$ready" -gt 0 ] && [ "$SEAL_ALL" -eq 0 ]; then
     skip "kept open: $ready ingested raw files waiting for append"; return
   fi
+  pending=$((pending + ready))  # --seal-all: appends still to come
 
   # Reserve before the costly .tar.zst listing, so a day waiting for space
   # does not decompress its old .tar.zst on every retry.
@@ -408,7 +423,7 @@ for tar in "$DAILY"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].tar; do
   [ -f "$tar" ] || continue
   day=$(basename "$tar" .tar)
   [ -n "$ONLY" ] && [ "$day" != "$ONLY" ] && continue
-  if [[ ! "$day" < "$CUTOFF" ]]; then
+  if [ "$SEAL_ALL" -eq 0 ] && [[ ! "$day" < "$CUTOFF" ]]; then
     log "SKIP $day: younger than $MIN_AGE_DAYS days"; echo "skip 0 0" >"$WORK/res/$day"
     continue
   fi
