@@ -705,10 +705,11 @@ def _count_host_data_rows_for_window(
   """
   Estimated host_data rows in [start, end] for accounting FQDNs.
 
-  ``rows_per_sample_estimate`` (one mid-window sample per host of the first
-  host batch, index probes only) x hosts x estimated 1-minute samples. The
-  exact chunked ``COUNT(*)`` read every row of the window and timed out on
-  hpcperfstats04; the large-job sampling gate only needs the magnitude.
+  ``rows_per_sample_estimate`` (one mid-window sample of the first host,
+  index probes only) x hosts x estimated 1-minute samples. The exact chunked
+  ``COUNT(*)`` read every row of the window and timed out on hpcperfstats04;
+  probing an 8-host batch still cost ~7.5 s of unvacuumed heap reads there.
+  Hosts of one job share a partition, and the gate only needs the magnitude.
 
   Retries once after :func:`close_old_connections` when the connection is
   desynchronized (same class of errors as raw-SQL / concurrent use).
@@ -745,7 +746,7 @@ def _count_host_data_rows_for_window(
     try:
       close_old_connections()
       per_sample = metrics_host_data_sql.rows_per_sample_estimate(
-        next(_iter_acct_host_batches(hosts)), start_dt, end_dt
+        hosts[:1], start_dt, end_dt
       )
       samples = _estimate_one_min_samples_for_window(start_dt, end_dt)
       return per_sample * len(hosts) * samples

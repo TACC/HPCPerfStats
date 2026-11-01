@@ -97,10 +97,7 @@ def test_build_copy_sql_non_shared_scopes_to_job_rows():
   assert "(h.jid = %s OR h.dev = ('j:' || %s))" in sql
   assert sql.endswith("TO STDOUT (FORMAT BINARY)")
   assert params == [["a", "b"], T0, T0 + timedelta(hours=1), "77", "77"]
-  # hs04: per-host (host, time) ranges via LATERAL, not a flat host = ANY.
-  assert "FROM unnest(%s::text[]) AS u(host) CROSS JOIN LATERAL" in sql
-  assert "WHERE h.host = u.host AND" in sql and "OFFSET 0) h)" in sql
-  assert "h.host = ANY" not in sql
+  assert "WHERE h.host = ANY(%s::text[])" in sql
 
 
 def test_build_copy_sql_shared_reads_residual_types_host_wide():
@@ -122,7 +119,7 @@ def test_build_copy_sql_shared_reads_residual_types_host_wide():
   assert params[:3] == ["77", "77", ["a"]]
   assert params[3] == T0
   assert params[5:7] == ["77", "77"]
-  select_part = sql.split(" FROM unnest(")[0]
+  select_part = sql.split(" FROM host_data h ")[0]
   assert select_part.count("%s") == 2
 
 
@@ -200,3 +197,27 @@ def test_empty_hosts_or_window_gives_empty_frame():
   jt = _fake_table([])
   frame = copy_fetch.fetch_job_frame(jt, copy_runner=lambda s, p: b"")
   assert len(frame) == 0 and frame.jid == "77"
+
+
+def test_fetch_caps_default_time_slice_for_cold_copy(monkeypatch):
+  """hs04: 16 hosts x 1 h COPY (~320 s cold) burned two 120 s timeouts."""
+  from hpcperfstats.analysis.metrics.lib.gen import jid_table as jt_mod
+
+  seen = []
+  real = jt_mod._iter_host_time_query_chunks
+
+  def _spy(hosts, tkw, *, batch_size=None, slice_s=None):
+    seen.append(slice_s)
+    return real(hosts, tkw, batch_size=batch_size, slice_s=slice_s)
+
+  monkeypatch.setattr(jt_mod, "_iter_host_time_query_chunks", _spy)
+  monkeypatch.setattr(
+    jt_mod.cfg, "get_metrics_plot_aggregate_time_slice_s", lambda: 3600
+  )
+  copy_fetch.fetch_job_frame(_fake_table(["a"]), copy_runner=_Server())
+  monkeypatch.setattr(
+    jt_mod.cfg, "get_metrics_plot_aggregate_time_slice_s", lambda: 300
+  )
+  copy_fetch.fetch_job_frame(_fake_table(["a"]), copy_runner=_Server())
+  assert seen == [copy_fetch.COPY_MAX_TIME_SLICE_S, 300]
+  assert copy_fetch.COPY_MAX_TIME_SLICE_S == 900

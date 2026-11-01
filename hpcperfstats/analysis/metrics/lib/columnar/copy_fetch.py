@@ -14,6 +14,7 @@ the residual (non-allowlisted) types are read host-wide and carry
 hardware-SUM-else-``j:``-MAX rule the SQL aggregates use today.
 
 Attributes:
+  COPY_MAX_TIME_SLICE_S: Largest COPY time slice in seconds (cold-read cap).
   COPY_SELECT_COLUMNS: SQL select list in K0 stream order.
 """
 
@@ -37,6 +38,13 @@ from hpcperfstats.analysis.metrics.lib.columnar.k0_decode import (
 COPY_SELECT_COLUMNS = (
   "h.time, h.host, h.type, h.event, h.dev, h.value, h.arc, h.delta"
 )
+
+# Upper bound on the COPY time slice (the INI plot slice still wins when
+# smaller). COPY returns every owned row (~3500 per host-minute on Horizon);
+# cold reads on hs04 ran ~20 s per host-hour, so 16 hosts x 1 h (~320 s)
+# always burned two 120 s timeouts before a 4-host bisect fit. 16 x 15 min
+# (~80 s cold) fits the first attempt.
+COPY_MAX_TIME_SLICE_S = 900
 
 
 def _time_clause(time_filter: dict[str, Any] | None) -> tuple[str, list[Any]]:
@@ -135,14 +143,9 @@ def build_copy_sql(
     select = COPY_SELECT_COLUMNS
     scope = owned_sql
     params = [list(hosts), *time_params, jid, jid]
-  # One (host, time) index range per host: a flat ``host = ANY`` with the
-  # ``jid OR dev`` scope let the planner read the whole job's rows on every
-  # host bisect (hs04 timeouts down to 2-host x 1 h chunks). ``OFFSET 0``
-  # keeps the LATERAL from being flattened into a hash join.
   sql = (
-    f"COPY (SELECT {select} FROM unnest(%s::text[]) AS u(host) "
-    "CROSS JOIN LATERAL (SELECT h.* FROM host_data h "
-    f"WHERE h.host = u.host AND {time_sql} AND {scope} OFFSET 0) h) "
+    f"COPY (SELECT {select} FROM host_data h "
+    f"WHERE h.host = ANY(%s::text[]) AND {time_sql} AND {scope}) "
     "TO STDOUT (FORMAT BINARY)"
   )
   return sql, params
@@ -199,7 +202,8 @@ def fetch_job_frame(
     batch_size (int | None): Hosts per chunk (default
       ``METRICS_HOST_QUERY_BATCH``).
     slice_s (int | None): Seconds per time slice (default INI
-      ``metrics_plot_aggregate_time_slice_s``).
+      ``metrics_plot_aggregate_time_slice_s`` capped at
+      ``COPY_MAX_TIME_SLICE_S``).
     copy_runner (Callable | None): ``(sql, params) -> bytes`` override for
       tests; default ``run_copy_to_bytes``.
     job_scoped (bool): False fetches every row of the hosts (single-host
@@ -231,6 +235,11 @@ def fetch_job_frame(
   scoped_types = sorted(_job_scoped_host_data_types()) if shared else ()
   if batch_size is None:
     batch_size = METRICS_HOST_QUERY_BATCH
+  if slice_s is None:
+    slice_s = min(
+      int(jt_mod.cfg.get_metrics_plot_aggregate_time_slice_s()),
+      COPY_MAX_TIME_SLICE_S,
+    )
 
   def run(hosts_list: Any, tf_cur: Any) -> DecodedChunk:
     """

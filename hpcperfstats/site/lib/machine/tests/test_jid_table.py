@@ -849,8 +849,9 @@ def test_count_host_data_rows_for_window_estimates_without_count(monkeypatch):
   et = datetime(2026, 5, 1, 1, 0, 0)
   out = _count_host_data_rows_for_window(st, et, hosts)
   assert out == 10 * n * 60
-  # One probe over the first host batch only, nested lists flattened.
-  assert seen == [[f"n{i}.example" for i in range(JID_TABLE_HOST_QUERY_BATCH)]]
+  # One probe on the first (flattened) host only: hs04 batch probes cost
+  # ~7.5 s of unvacuumed heap reads per 8 hosts.
+  assert seen == [["n0.example"]]
 
 
 def test_count_host_data_rows_retries_after_lost_sync(monkeypatch):
