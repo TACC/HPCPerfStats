@@ -22,6 +22,9 @@ import numpy as np
 
 N_SAMPLES = 400
 REPS = 80
+# 10000-01-01T00:00:00Z: the pyext COPY writer (gmtime_r, %04d year) and
+# datetime stop at year 9999 (sync_timedb_parsing.MAX_SAMPLE_TIME_S).
+MAX_SAMPLE_TIME_S = 253402300800.0
 
 GPU_TYPES = ["nvidia_gpu", "amd_gpu", "intel_gpu"]
 
@@ -573,13 +576,15 @@ def feed_lines_full(
       parts = s.split()
       if len(parts) < 3:
         continue
-      # A bad sample time drops that sample's lines (they need ``insert``).
       try:
         tag_time = float(parts[0])
       except ValueError:
-        insert = False
+        tag_time = -1.0
+      # A bad or out-of-range (nan, inf, 1e300) sample time drops that
+      # sample's lines (they need ``insert``).
+      insert = 0.0 <= tag_time < MAX_SAMPLE_TIME_S
+      if not insert:
         continue
-      insert = True
       tag_jid = parts[1]
       tag_host = parts[2]
       has_tags = True

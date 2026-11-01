@@ -122,7 +122,24 @@ extern codon_str psp_pack_str_col_c(
 extern long psp_export_fields_c(long slot, long n, long *out);
 extern long psm_count_c(long slot);
 extern long codon_host_parsed_n_c(long slot);
+extern codon_str codon_last_error_c(long slot);
 extern codon_str psm_field_c(long slot, long i, long field_idx);
+
+/* Raise the exception the kernel caught on ``slot`` (an uncaught Codon
+ * exception in an @export entry aborts the whole process). Returns -1 when
+ * an error was raised, 0 otherwise. */
+static int
+raise_if_kernel_error(long slot)
+{
+  codon_str err = codon_last_error_c(slot);
+  if (err.ptr == NULL || err.len <= 0) {
+    return 0;
+  }
+  PyErr_Format(
+    PyExc_RuntimeError, "codon kernel: %.*s", (int)err.len, err.ptr
+  );
+  return -1;
+}
 
 /* Must match feed_collapse.HOST_PROC_KEYS order. */
 static const char *const HOST_PROC_KEYS[] = {
@@ -568,6 +585,13 @@ copy_buf_time(CopyBuf *buf, double unix_s)
   struct tm tm_buf;
   char text[64];
   int n;
+  /* The kernel drops samples outside [0, year 10000); anything else that
+   * reaches here is a bad value, not an allocation failure (the builder's
+   * fail path reports an unset error as MemoryError). */
+  if (!isfinite(unix_s)) {
+    PyErr_Format(PyExc_ValueError, "sample time not finite: %f", unix_s);
+    return -1;
+  }
   if (frac < 0.0) {
     frac += 1.0;
     whole -= 1.0;
@@ -582,6 +606,7 @@ copy_buf_time(CopyBuf *buf, double unix_s)
   }
   sec = (time_t)whole;
   if (gmtime_r(&sec, &tm_buf) == NULL) {
+    PyErr_Format(PyExc_ValueError, "sample time out of range: %.17g", unix_s);
     return -1;
   }
   if (usec == 0) {
@@ -1475,6 +1500,9 @@ parse_stats_lines_codon_py(PyObject *self, PyObject *args, PyObject *kwargs)
   long n_procs = 0;
   parse_stats_lines_codon_run_c(slot, (long)n, ptrs, &n_stats, &n_procs);
   free_char_ptrs(ptrs, n);
+  if (raise_if_kernel_error(slot) < 0) {
+    return NULL;
+  }
   return build_finished_parse_dict_from_slot(slot, n_stats, n_procs, 1);
 }
 
@@ -1511,6 +1539,9 @@ parse_stats_file_codon_open_py(PyObject *self, PyObject *args, PyObject *kwargs)
     slot, path_owned, flush_max_bytes, resume_byte
   );
   PyMem_Free(path_owned);
+  if (raise_if_kernel_error(slot) < 0) {
+    return NULL;
+  }
   return PyBool_FromLong(ok);
 }
 
@@ -1536,6 +1567,9 @@ parse_stats_file_codon_next_py(PyObject *self, PyObject *args, PyObject *kwargs)
   parse_stats_file_codon_next_c(
     slot, &has_frame, &eof, &n_stats, &n_procs
   );
+  if (raise_if_kernel_error(slot) < 0) {
+    return NULL;
+  }
   if (!has_frame) {
     return Py_NewRef(Py_None);
   }

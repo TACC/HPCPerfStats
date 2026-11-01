@@ -545,6 +545,32 @@ def _release_codon_worker(worker: dict[str, Any], *, sticky: bool) -> None:
     _codon_worker_cv.notify()
 
 
+def _codon_worker_eof(proc: subprocess.Popen[bytes]) -> str:
+  """
+  Describe a Codon worker whose stdout closed mid-response.
+
+  The exit status says why the worker died: ``-6`` is an abort (an exception
+  escaped the Codon kernel), ``-9`` a SIGKILL (OOM killer), ``None`` still
+  running after a short reap wait. Bare ``codon worker EOF`` gave no hint.
+
+  Args:
+    proc (subprocess.Popen[bytes]): Worker whose response was cut short.
+
+  Returns:
+    str: ``codon worker EOF rc=<status>`` for the caller's RuntimeError.
+
+  Examples:
+    >>> import subprocess, sys
+    >>> _codon_worker_eof(subprocess.Popen([sys.executable, "-c", "pass"]))
+    'codon worker EOF rc=0'
+  """
+  try:
+    rc = proc.wait(timeout=1.0)
+  except subprocess.TimeoutExpired:
+    rc = None
+  return f"codon worker EOF rc={rc}"
+
+
 def _popen_read_parse_response(proc: subprocess.Popen[bytes]) -> Any:
   """
   Read one ``parse`` response frame from a Codon worker stdout.
@@ -566,11 +592,11 @@ def _popen_read_parse_response(proc: subprocess.Popen[bytes]) -> Any:
     raise RuntimeError("codon worker pipes missing")
   hdr = proc.stdout.read(_RESP_HDR.size)
   if not hdr or len(hdr) < _RESP_HDR.size:
-    raise RuntimeError("codon worker EOF")
+    raise RuntimeError(_codon_worker_eof(proc))
   _ver, _status, n = struct.unpack_from("!BBI", hdr, 0)
   body = proc.stdout.read(n) if n else b""
   if len(body) < n:
-    raise RuntimeError("codon worker EOF")
+    raise RuntimeError(_codon_worker_eof(proc))
   return decode_response("parse", hdr + body)
 
 
@@ -722,11 +748,11 @@ def _popen_rpc(
       if kind == "fp":
         hdr = proc.stdout.read(_RESP_HDR.size)
         if not hdr or len(hdr) < _RESP_HDR.size:
-          raise RuntimeError("codon worker EOF")
+          raise RuntimeError(_codon_worker_eof(proc))
         _ver, _status, n = struct.unpack_from("!BBI", hdr, 0)
         body = proc.stdout.read(n) if n else b""
         if len(body) < n:
-          raise RuntimeError("codon worker EOF")
+          raise RuntimeError(_codon_worker_eof(proc))
         return decode_response(kind, hdr + body)
       return _popen_read_parse_response(proc)
   finally:

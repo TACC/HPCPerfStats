@@ -66,6 +66,8 @@ _fs_read_batch: list[int] = []
 _fs_eof: list[int] = []
 _fs_fd: list = []
 _fs_read_buf: list = []
+# Last exception text per slot ("" = none); read by codon_last_error_c.
+_cache_err: list[str] = []
 _banks_ready: int = 0
 
 
@@ -133,9 +135,11 @@ def _ensure_slot_banks() -> None:
   global _fs_eof
   global _fs_fd
   global _fs_read_buf
+  global _cache_err
   global _banks_ready
   if _banks_ready == 1:
     return
+  _cache_err = []
   _cache_time = []
   _cache_host = []
   _cache_jid = []
@@ -223,6 +227,7 @@ def _ensure_slot_banks() -> None:
     _fs_eof.append(0)
     _fs_fd.append(0)
     _fs_read_buf.append("")
+    _cache_err.append("")
     i += 1
   _banks_ready = 1
 
@@ -355,6 +360,24 @@ def stats_file_session_close_c(slot: int) -> None:
 
 
 @export
+def codon_last_error_c(slot: int) -> str:
+  """``Type: message`` of the exception that ended the slot's last call.
+
+  ``""`` when the last open/next/run call returned normally. An exception
+  that escapes an @export entry aborts the process (SIGABRT), so each entry
+  catches it here and the pyext raises it as a Python ``RuntimeError``.
+  """
+  _ensure_slot_banks()
+  if slot < 0 or slot >= MAX_CODON_SLOTS:
+    return ""
+  return _cache_err[slot]
+
+
+def _record_kernel_error(slot: int, e) -> None:
+  _cache_err[slot] = e.typename + ": " + e.message
+
+
+@export
 def parse_stats_file_codon_open_c(
   slot: int,
   path_ptr: Ptr[UInt[8]],
@@ -365,6 +388,21 @@ def parse_stats_file_codon_open_c(
   _ensure_slot_banks()
   if slot < 0 or slot >= MAX_CODON_SLOTS:
     return 0
+  _cache_err[slot] = ""
+  try:
+    return _file_open_body(slot, path_ptr, flush_max_bytes, resume_byte)
+  except Exception as e:
+    stats_file_session_close_c(slot)
+    _record_kernel_error(slot, e)
+    return 0
+
+
+def _file_open_body(
+  slot: int,
+  path_ptr: Ptr[UInt[8]],
+  flush_max_bytes: int,
+  resume_byte: int,
+) -> int:
   stats_file_session_close_c(slot)
   path = str.from_ptr(path_ptr)
   flush_n = flush_max_bytes
@@ -403,6 +441,24 @@ def parse_stats_file_codon_next_c(
   out_eof[0] = 0
   out_ns[0] = 0
   out_np[0] = 0
+  if 0 <= slot < MAX_CODON_SLOTS:
+    _cache_err[slot] = ""
+  try:
+    _file_next_body(slot, out_has_frame, out_eof, out_ns, out_np)
+  except Exception as e:
+    stats_file_session_close_c(slot)
+    _record_kernel_error(slot, e)
+    out_has_frame[0] = 0
+    out_eof[0] = 1
+
+
+def _file_next_body(
+  slot: int,
+  out_has_frame: Ptr[int],
+  out_eof: Ptr[int],
+  out_ns: Ptr[int],
+  out_np: Ptr[int],
+) -> None:
   if slot < 0 or slot >= MAX_CODON_SLOTS or _fs_active[slot] != 1:
     out_eof[0] = 1
     return
@@ -621,12 +677,16 @@ def parse_stats_lines_codon_run_c(
   global _cache_carry_arc_keys
   global _cache_marks
   _ensure_slot_banks()
+  out_ns[0] = 0
+  out_np[0] = 0
   if slot < 0 or slot >= MAX_CODON_SLOTS:
-    out_ns[0] = 0
-    out_np[0] = 0
     return
-  lines = _lines_from_ptr(n, ptr)
-  _apply_lines_to_slot(slot, lines)
+  _cache_err[slot] = ""
+  try:
+    _apply_lines_to_slot(slot, _lines_from_ptr(n, ptr))
+  except Exception as e:
+    _record_kernel_error(slot, e)
+    return
   out_ns[0] = _cache_host_n[slot]
   out_np[0] = _cache_proc_n[slot]
 

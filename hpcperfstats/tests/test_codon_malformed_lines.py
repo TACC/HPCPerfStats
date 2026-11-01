@@ -59,6 +59,24 @@ CASES: dict[str, tuple[list[str], int, set[float]]] = {
   ),
   "short_line": ([SCHEMA, "1000.0 J1 h", "cpu 0", "cpu 1 3 4"], 2, set()),
 }
+# A digit-led header time that parses but is no datetime (``1e300`` reached
+# the pyext COPY writer, ``gmtime_r`` failed, and the worker reported a bare
+# ``MemoryError:``; stampede3 c519-104/1745532817) drops its sample too.
+# Lines not led by a digit (``nan``, ``-5``) are never headers.
+for _bad in ("1e300", "1745532817e9", "253402300800"):
+  CASES[f"out_of_range_time_{_bad}"] = (
+    [
+      SCHEMA,
+      "1000.0 J1 h",
+      "cpu 0 1 2",
+      f"{_bad} J1 h",
+      "cpu 0 9 9",
+      "1020.0 J1 h",
+      "cpu 0 5 6",
+    ],
+    4,
+    {9.0},
+  )
 
 
 @pytest.mark.parametrize("name", sorted(CASES))
@@ -106,6 +124,33 @@ def test_codon_line_batch_skips_malformed_line(pyext: Any, name: str) -> None:
   result = pyext.parse_stats_lines_codon(lines, 0)
   assert result["parsed_host_rows"] == rows
   assert not absent & set(result["stats"].get("value") or [])
+
+
+def test_codon_kernel_error_raises_instead_of_killing_the_worker(
+  pyext: Any,
+) -> None:
+  """An exception inside a kernel @export entry used to abort the process.
+
+  It now reaches Python as a RuntimeError naming the Codon exception; before,
+  a vanished file aborted the worker (``codon worker EOF``, no reason).
+  """
+  with pytest.raises(RuntimeError, match="codon kernel: .*Error"):
+    pyext.parse_stats_file_codon_open("/nonexistent/stats", 1 << 20, 0, 0)
+
+
+def test_worker_eof_reports_exit_status() -> None:
+  """A dead worker's EOF names its exit status (-6 abort, -9 OOM kill)."""
+  import subprocess
+
+  from hpcperfstats.dbload.lib import sync_timedb_codon_bridge as bridge
+
+  proc = subprocess.Popen(
+    [sys.executable, "-c", "import sys; sys.exit(3)"],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+  )
+  with pytest.raises(RuntimeError, match=r"codon worker EOF rc=3"):
+    bridge._popen_read_parse_response(proc)
 
 
 @pytest.mark.parametrize("name", sorted(CASES))

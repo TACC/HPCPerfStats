@@ -8,6 +8,8 @@ Attributes:
   HOST_PROC_PEAK_KEYS: Attribute.
   OnlineMergedProcRows: Marker list for already peak-merged host_proc rows.
   STREAM_PARSE_LINE_BATCH: Attribute.
+  MAX_SAMPLE_TIME_S: Exclusive upper bound for a sample-header unix time
+    (year 10000); a time outside ``[0, MAX_SAMPLE_TIME_S)`` drops its sample.
   _HOST_PROC_KEY_SET: Attribute.
   PARSE_STAGE_BUILD_DF_PARTS: Attribute.
   PARSE_STAGE_COLLAPSE_PARTS: Collapse sub-hold keys summed into derived collapse_s.
@@ -126,6 +128,8 @@ HOST_PROC_KEYS = (
   "threads",
 )
 _HOST_PROC_KEY_SET = frozenset(HOST_PROC_KEYS)
+# 10000-01-01T00:00:00Z: datetime and the Codon COPY writer stop at year 9999.
+MAX_SAMPLE_TIME_S = 253402300800.0
 
 # Exhaustive parse-stage telemetry (INI-gated; default off).
 # Hold keys are timed; build_df_s / collapse_s / stages_sum_s /
@@ -2950,13 +2954,15 @@ class IncrementalStatsParser:
       if parsed is None:
         return
       t, jid, host = parsed
-      # A bad sample time drops that sample's lines (they need ``insert``).
       try:
         t = float(t)
       except ValueError:
-        self.insert = False
+        t = -1.0
+      # A bad or out-of-range (nan, inf, 1e300) sample time drops that
+      # sample's lines (they need ``insert``).
+      self.insert = 0.0 <= t < MAX_SAMPLE_TIME_S
+      if not self.insert:
         return
-      self.insert = True
       # Same sample-header jid as tags2; idle monitors emit "-".
       ctx = {"time": t, "host": host, "jid": jid}
       self.line_ctx["tags"] = ctx
