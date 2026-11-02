@@ -110,3 +110,62 @@ def test_seal_marks_the_tar_for_the_whole_compress(tmp_path, monkeypatch):
   assert seen == [True]
   assert os.path.isfile(tar_path + ".zst")
   assert not helpers.tar_seal_in_progress(tar_path)
+
+
+def test_append_dispatch_parks_a_sealing_day(monkeypatch):
+  """A sealing day's batch stays parked; it is not submitted into a 60 s wait.
+
+  hpcperfstats01 2026-11-02: 325 append batches for 2026-07-31 each waited
+  the 60 s read lock behind the seal, logged ``archive_job soft_skip
+  reason=open_tar_members_unavailable`` and were requeued, holding an append
+  writer the whole time. Parked claims keep their leases (no requeue, no
+  attempt bump) and submit once the seal ends.
+  """
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_job_store as jq,
+    sync_timedb_queue_orchestrator as qo,
+  )
+  from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
+
+  tar_path = os.path.normpath(f"/d/{DAY}.tar")
+  qo.reset_append_day_lists_for_tests()
+  qo._APPEND_DAY_LISTS.add(
+    DAY,
+    jq.ClaimedJob(
+      kind=jq.JOB_KIND_APPEND,
+      identity="/raw/a",
+      owner_token="n:h:b:1",
+      deadline=1.0e9,
+      score=0.0,
+    ),
+  )
+  monkeypatch.setattr(qo, "daily_tar_path_for_stats_path", lambda *_a: tar_path)
+  monkeypatch.setattr(qo, "_append_batch_need", lambda *_a: 0)
+  submitted = []
+
+  class _Pool:
+    def apply_async(self, *a, **_k):
+      submitted.append(a)
+      return object()
+
+  def _submit():
+    return qo._try_submit_pending_append_days(
+      client=SyncTimedbJobStore(""),
+      cap=4,
+      inflight={},
+      claims={},
+      archive_pool=_Pool(),
+      tgz_archive_dir="/d",
+      batch_size=4,
+      allow_partial=True,
+      allowed_day=qo.space.ALL_DAYS,
+    )
+
+  with helpers.tar_sealing(tar_path):
+    assert _submit() == 0
+    assert submitted == []
+    assert qo._APPEND_DAY_LISTS.peek_len(DAY) == 1
+  assert _submit() == 1
+  assert len(submitted) == 1
+  assert qo._APPEND_DAY_LISTS.peek_len(DAY) == 0
+  qo.reset_append_day_lists_for_tests()

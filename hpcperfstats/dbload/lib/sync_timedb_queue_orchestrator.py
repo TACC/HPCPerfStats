@@ -149,6 +149,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   daily_tar_path_for_stats_path,
   get_tar_member_name,
   restore_restorable_quarantines,
+  tar_seal_in_progress,
 )
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
   _rate_limited_day_info_log,
@@ -6088,6 +6089,7 @@ def _try_submit_pending_append_days(
   With ``sync_archive_space_pressure_free_bytes`` set, only the days
   ``_select_append_day`` allows get a batch (every day without pressure;
   under pressure every clone-only day plus at most one restore/copy day),
+  a day whose tar this process is sealing stays parked until the seal ends,
   and a batch is submitted only when its new bytes plus any restore of a
   sealed day keep the hard reserve and, for a restore, the restore slot is
   free; the rest stay parked.
@@ -6155,7 +6157,10 @@ def _try_submit_pending_append_days(
     first = _APPEND_DAY_LISTS.peek_first(day)
     identity = getattr(first, "identity", "") if first is not None else ""
     tar_path = daily_tar_path_for_stats_path(identity, tgz_archive_dir)
-    if not tar_path or tar_path in inflight:
+    # A sealing tar holds its write lock for hours: the batch would wait the
+    # 60 s read lock and soft-requeue on a loop, so it stays parked (lease
+    # kept, no attempt bump) until the seal ends.
+    if not tar_path or tar_path in inflight or tar_seal_in_progress(tar_path):
       continue
     take = min(batch_size, pending_n)
     need = _append_batch_need(day, tar_path, take)
