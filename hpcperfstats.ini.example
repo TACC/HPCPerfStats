@@ -162,6 +162,9 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # statement_timeout ms for metrics thread compute; 0 disables it (default 120000).
 # metrics_worker_statement_timeout_ms = 120000
 
+# statement_timeout ms for each metrics host_data COPY read; 0 disables it (default 600000).
+# metrics_copy_statement_timeout_ms = 600000
+
 # gc.set_threshold for update_metrics; higher = fewer stop-the-world GC pauses, 0 = interpreter default (default 0).
 # metrics_gc_threshold = 0
 

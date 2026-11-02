@@ -93,6 +93,7 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "metrics_run_poll_timeout_s"),
   ("PIPELINE", "metrics_run_stall_timeout_s"),
   ("PIPELINE", "metrics_worker_statement_timeout_ms"),
+  ("PIPELINE", "metrics_copy_statement_timeout_ms"),
   ("PIPELINE", "metrics_gc_threshold"),
   ("PIPELINE", "metrics_persist_statement_timeout_ms"),
   ("PIPELINE", "metrics_persist_lock_timeout_ms"),
@@ -283,6 +284,8 @@ INI_OPTION_DEFAULTS = {
   "metrics_run_stall_timeout_s": "900",
   # Non-zero arms host__in chunk-on-timeout during compute (0 = disable).
   "metrics_worker_statement_timeout_ms": "120000",
+  # Per-COPY host_data read timeout (I/O bound; below the 900 s stall clock).
+  "metrics_copy_statement_timeout_ms": "600000",
   # gc.set_threshold for the update_metrics process; 0 keeps the interpreter
   # default (free-threaded GC is stop-the-world and scans the whole heap).
   "metrics_gc_threshold": "0",
@@ -3645,6 +3648,31 @@ def get_metrics_worker_statement_timeout_ms() -> Any:
     return max(0, int(_pipeline_get("metrics_worker_statement_timeout_ms")))
   except TypeError, ValueError, OverflowError:
     return 120000
+
+
+def get_metrics_copy_statement_timeout_ms() -> int:
+  """
+  PostgreSQL ``statement_timeout`` ms for one update_metrics host_data COPY.
+
+  ``copy_fetch.run_copy_to_bytes`` applies it with ``set_config(..., true)``
+  so it covers that COPY only; the worker session keeps
+  ``metrics_worker_statement_timeout_ms`` for every other query. A COPY is a
+  bounded index scan whose cost is the rows it reads, so a cancel only
+  discards work the host bisect then repeats. ``0`` disables the timeout for
+  the COPY. Default ``600000`` stays under ``metrics_run_stall_timeout_s``.
+
+  Returns:
+    int: Milliseconds (``>= 0``); ``600000`` when the INI value is invalid.
+
+  Examples:
+    >>> get_metrics_copy_statement_timeout_ms() >= 0  # doctest: +SKIP
+    True
+  """
+  _ensure_cfg_loaded()
+  try:
+    return max(0, int(_pipeline_get("metrics_copy_statement_timeout_ms")))
+  except TypeError, ValueError, OverflowError:
+    return 600000
 
 
 def get_metrics_gc_threshold() -> int:

@@ -14,6 +14,7 @@ the residual (non-allowlisted) types are read host-wide and carry
 hardware-SUM-else-``j:``-MAX rule the SQL aggregates use today.
 
 Attributes:
+  COPY_HOST_BATCH: Default hosts per COPY chunk.
   COPY_MAX_TIME_SLICE_S: Largest COPY time slice in seconds (cold-read cap).
   COPY_SELECT_COLUMNS: SQL select list in K0 stream order.
 """
@@ -24,6 +25,7 @@ from collections.abc import Callable, Sequence
 from datetime import timedelta
 from typing import Any
 
+import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.analysis.metrics.lib.columnar.jobframe import (
   JobFrame,
   NameInterner,
@@ -35,6 +37,7 @@ from hpcperfstats.analysis.metrics.lib.columnar.k0_decode import (
   decode_copy_binary,
   empty_chunk,
 )
+from hpcperfstats.dbload.lib.process_title import running_under_gunicorn
 
 COPY_SELECT_COLUMNS = (
   "h.time, h.host, h.type, h.event, h.dev, h.value, h.arc, h.delta"
@@ -46,6 +49,12 @@ COPY_SELECT_COLUMNS = (
 # always burned two 120 s timeouts before a 4-host bisect fit. 16 x 15 min
 # (~80 s cold) fits the first attempt.
 COPY_MAX_TIME_SLICE_S = 900
+
+# Hosts per COPY chunk. hs04 2026-11-02 (reads ~10 ms under storage
+# contention): 4 hosts x 15 min alone took 268 s, so 8 x 15 min (~540 s)
+# fits ``metrics_copy_statement_timeout_ms`` (600 s) where 16 would not.
+# Rows read per job are the same; only the statement count changes.
+COPY_HOST_BATCH = 8
 
 
 def _time_clause(time_filter: dict[str, Any] | None) -> tuple[str, list[Any]]:
@@ -203,7 +212,12 @@ def run_copy_to_bytes(sql: str, params: Sequence[Any]) -> bytes:
   Execute a COPY TO STDOUT through Django's psycopg connection.
 
   Errors are wrapped into Django exceptions (``OperationalError`` for
-  ``statement_timeout``) so the bisect helper can classify them.
+  ``statement_timeout``) so the bisect helper can classify them. The COPY
+  runs in its own transaction with a local ``statement_timeout`` of
+  ``metrics_copy_statement_timeout_ms``: the read is I/O bound and a cancel
+  only makes the bisect re-read the same rows, while the worker session
+  keeps its shorter timeout for every other query. Under gunicorn (web
+  plot / detail builds) the portal session timeout stays in force.
 
   Args:
     sql (str): ``COPY (…) TO STDOUT (FORMAT BINARY)`` statement.
@@ -222,13 +236,15 @@ def run_copy_to_bytes(sql: str, params: Sequence[Any]) -> bytes:
   conn.ensure_connection()
   raw = conn.connection
   chunks: list[bytes] = []
-  with (
-    conn.wrap_database_errors,
-    raw.cursor() as cur,
-    cur.copy(sql, list(params)) as copy,
-  ):
-    for data in copy:
-      chunks.append(bytes(data))
+  with conn.wrap_database_errors, raw.transaction(), raw.cursor() as cur:
+    if not running_under_gunicorn():
+      cur.execute(
+        "SELECT set_config('statement_timeout', %s, true)",
+        [str(cfg.get_metrics_copy_statement_timeout_ms())],
+      )
+    with cur.copy(sql, list(params)) as copy:
+      for data in copy:
+        chunks.append(bytes(data))
   return b"".join(chunks)
 
 
@@ -246,8 +262,7 @@ def fetch_job_frame(
   Args:
     jt (Any): ``jid_table`` for the job (``jid``, ``acct_host_list``,
       ``_base_filter`` / ``_host_data_time_filter_kwargs``, ``_shared_node``).
-    batch_size (int | None): Hosts per chunk (default
-      ``METRICS_HOST_QUERY_BATCH``).
+    batch_size (int | None): Hosts per chunk (default ``COPY_HOST_BATCH``).
     slice_s (int | None): Seconds per time slice (default INI
       ``metrics_plot_aggregate_time_slice_s`` capped at
       ``COPY_MAX_TIME_SLICE_S``).
@@ -266,9 +281,6 @@ def fetch_job_frame(
   from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
     _job_scoped_host_data_types,
   )
-  from hpcperfstats.analysis.metrics.lib.metrics import (
-    METRICS_HOST_QUERY_BATCH,
-  )
 
   runner = copy_runner or run_copy_to_bytes
   interner = NameInterner()
@@ -281,7 +293,7 @@ def fetch_job_frame(
   shared = bool(getattr(jt, "_shared_node", False)) and job_scoped
   scoped_types = sorted(_job_scoped_host_data_types()) if shared else ()
   if batch_size is None:
-    batch_size = METRICS_HOST_QUERY_BATCH
+    batch_size = COPY_HOST_BATCH
   if slice_s is None:
     slice_s = min(
       int(jt_mod.cfg.get_metrics_plot_aggregate_time_slice_s()),

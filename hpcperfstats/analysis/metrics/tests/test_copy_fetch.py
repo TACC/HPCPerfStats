@@ -204,6 +204,94 @@ def test_empty_hosts_or_window_gives_empty_frame():
   assert len(frame) == 0 and frame.jid == "77"
 
 
+def test_run_copy_raises_statement_timeout_for_the_copy_only(monkeypatch):
+  """hs04 2026-11-02: 4 hosts x 15 min alone took 268 s (26k reads at
+  ~10 ms); the 120 s worker timeout cancelled every slice, and each bisect
+  re-read the same rows. The COPY runs in its own transaction with a local
+  ``metrics_copy_statement_timeout_ms``; the session timeout is untouched."""
+  events = []
+
+  class _Copy:
+    def __enter__(self):
+      return iter([b"ab", b"c"])
+
+    def __exit__(self, *exc):
+      return False
+
+  class _Cursor:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *exc):
+      return False
+
+    def execute(self, sql, params=None):
+      events.append(("execute", sql, params))
+
+    def copy(self, sql, params):
+      events.append(("copy", sql, params))
+      return _Copy()
+
+  class _Txn:
+    def __enter__(self):
+      events.append(("begin",))
+
+    def __exit__(self, *exc):
+      events.append(("end",))
+      return False
+
+  raw = SimpleNamespace(cursor=_Cursor, transaction=_Txn)
+  conn = SimpleNamespace(
+    ensure_connection=lambda: None,
+    connection=raw,
+    wrap_database_errors=_Txn(),
+  )
+  monkeypatch.setattr("django.db.connections", {"default": conn})
+  monkeypatch.setattr(
+    copy_fetch.cfg, "get_metrics_copy_statement_timeout_ms", lambda: 600000
+  )
+  monkeypatch.setattr(copy_fetch, "running_under_gunicorn", lambda: False)
+  events.clear()
+  out = copy_fetch.run_copy_to_bytes("COPY (SELECT 1) TO STDOUT", ["p"])
+  assert out == b"abc"
+  # wrap_database_errors adds the outer begin/end pair.
+  assert events == [
+    ("begin",),
+    ("begin",),
+    (
+      "execute",
+      "SELECT set_config('statement_timeout', %s, true)",
+      ["600000"],
+    ),
+    ("copy", "COPY (SELECT 1) TO STDOUT", ["p"]),
+    ("end",),
+    ("end",),
+  ]
+  # Web (gunicorn) builds keep the portal session timeout.
+  monkeypatch.setattr(copy_fetch, "running_under_gunicorn", lambda: True)
+  events.clear()
+  assert copy_fetch.run_copy_to_bytes("COPY x", []) == b"abc"
+  assert not [e for e in events if e[0] == "execute"]
+
+
+def test_fetch_default_copy_host_batch_is_eight(monkeypatch):
+  """Smaller COPY host batches fit the timeout on slow storage; total rows
+  read are the same, only the statement count changes."""
+  from hpcperfstats.analysis.metrics.lib.gen import jid_table as jt_mod
+
+  seen = []
+  real = jt_mod._iter_host_time_query_chunks
+
+  def _spy(hosts, tkw, *, batch_size=None, slice_s=None):
+    seen.append(batch_size)
+    return real(hosts, tkw, batch_size=batch_size, slice_s=slice_s)
+
+  monkeypatch.setattr(jt_mod, "_iter_host_time_query_chunks", _spy)
+  copy_fetch.fetch_job_frame(_fake_table(["a"]), copy_runner=_Server())
+  assert seen == [copy_fetch.COPY_HOST_BATCH]
+  assert copy_fetch.COPY_HOST_BATCH == 8
+
+
 def test_fetch_caps_default_time_slice_for_cold_copy(monkeypatch):
   """hs04: 16 hosts x 1 h COPY (~320 s cold) burned two 120 s timeouts."""
   from hpcperfstats.analysis.metrics.lib.gen import jid_table as jt_mod

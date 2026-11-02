@@ -312,6 +312,7 @@ unavailable, 143 SIGTERM.
 | `metrics_backfill_quiescence_days` | 7 | days a skipped old job waits with no new host_data before a partial compute |
 | `metrics_backfill_max_jobs_per_hour` | 0 | sliding-hour ceiling on backfill admits (DB load brake); 0 = unlimited |
 | `metrics_worker_statement_timeout_ms` / `metrics_persist_statement_timeout_ms` / `metrics_persist_lock_timeout_ms` | 120000 / 120000 / 10000 | DB timeouts |
+| `metrics_copy_statement_timeout_ms` | 600000 | Local timeout for each host_data COPY (8 hosts x ≤15 min); pipeline only, web keeps the portal timeout |
 
 Code constants: `ARTIFACT_BUILD_RETRY_LIMIT = 3`, `JOB_FAILURE_BACKOFF_S`,
 `ARTIFACT_CATCHUP_INTERVAL_S = 3600`, `RESCAN_RECENT_DAYS = 2`,
