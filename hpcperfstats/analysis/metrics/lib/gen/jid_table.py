@@ -1813,7 +1813,10 @@ class jid_table:
     Activates when ``COUNT(*)`` exceeds the large-job threshold **or** when
     ``n_hosts x estimated_1min_samples`` exceeds
     ``get_plot_aggregate_max_host_time_points()`` (design ``5000x48x60``).
-    Bucket count is ``min(configured, floor(budget / n_hosts))``.
+    Bucket count is ``min(configured, floor(budget / n_hosts))``. Never
+    thins when the window has no more estimated samples than buckets: the
+    strided axis would keep every sample, and on hs04 its query timed out
+    and fell back to ``[start, mid, end]`` (3-point plots and metrics).
 
     Returns:
       None
@@ -1829,6 +1832,9 @@ class jid_table:
     est_samples = _estimate_one_min_samples_for_window(
       self.start_time, self.end_time
     )
+    n_buckets = _resolve_plot_aggregate_time_bucket_count(n_hosts)
+    if est_samples <= n_buckets:
+      return
     need_sampling = (n_hosts * est_samples) > budget
     n = None
     threshold = cfg.get_large_job_host_data_row_threshold()
@@ -1848,7 +1854,6 @@ class jid_table:
         return
     if not need_sampling:
       return
-    n_buckets = _resolve_plot_aggregate_time_bucket_count(n_hosts)
     try:
       sampled = _strided_distinct_times_for_large_job(
         self.start_time, self.end_time, self.acct_host_list, n_buckets

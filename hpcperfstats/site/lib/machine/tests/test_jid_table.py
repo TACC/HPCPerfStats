@@ -910,3 +910,52 @@ def test_jid_table_host_list_and_schema_use_index_probes(monkeypatch):
   assert probe_calls[0] == (("a.x", "idle.x"), "77")
   assert jt.schema == {"cpu": ["user"], "host_mem": ["used"]}
   assert [c[2] for c in schema_calls] == ["77", None]
+
+
+def test_apply_large_job_sampling_skips_when_samples_fit_buckets(monkeypatch):
+  """hs04: 24 hosts x 9.3 h crossed the row threshold, the strided query
+  timed out and the fallback left a 3-point axis. With <= n_buckets samples
+  thinning keeps every sample anyway, so it must not run at all."""
+  from hpcperfstats.analysis.metrics.lib.gen import jid_table as jt_mod
+
+  inst = jt_mod.jid_table.__new__(jt_mod.jid_table)
+  inst.jid = "69000"
+  inst.acct_host_list = [f"n{i}" for i in range(24)]
+  inst.start_time = datetime(2026, 10, 25, 2, 42, tzinfo=UTC)
+  inst.end_time = datetime(2026, 10, 25, 12, 2, tzinfo=UTC)
+  inst._base_filter = {
+    "host__in": inst.acct_host_list,
+    "time__gte": inst.start_time,
+    "time__lte": inst.end_time,
+  }
+  monkeypatch.setattr(
+    jt_mod.cfg, "get_plot_aggregate_max_host_time_points", lambda: 1_000_000
+  )
+  monkeypatch.setattr(jt_mod.cfg, "get_large_job_time_buckets", lambda: 2048)
+  monkeypatch.setattr(
+    jt_mod.cfg, "get_large_job_host_data_row_threshold", lambda: 1_500_000
+  )
+
+  def _no_call(*_a, **_k):
+    raise AssertionError("row estimate / strided query must not run")
+
+  monkeypatch.setattr(
+    jt_mod, "_count_host_data_rows_for_window_cached", _no_call
+  )
+  monkeypatch.setattr(jt_mod, "_strided_distinct_times_for_large_job", _no_call)
+  jt_mod.jid_table._apply_large_job_time_sampling_if_needed(inst)
+  assert "time__in" not in inst._base_filter
+  assert inst._large_job_plot_cache_token == "full"
+
+
+def test_scoped_probe_sql_cannot_use_jid_or_dev_indexes():
+  """hs04: plain jid/dev predicates let the planner pick the jid / j: indexes
+  (whole 64-host job, then host filter + sort) and the probe timed out."""
+  from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import _scope_sql
+
+  sql, params = _scope_sql("69000")
+  assert sql == (
+    "(COALESCE(d.jid, '') = %s OR COALESCE(d.dev, '') = ('j:' || %s))"
+  )
+  assert params == ["69000", "69000"]
+  assert _scope_sql("") == ("TRUE", [])

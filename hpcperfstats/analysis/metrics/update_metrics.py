@@ -3147,6 +3147,10 @@ def _annotate_metrics_listing_gates(qs: Any) -> tuple[Any, Any]:
   need_metrics |= gate_failure_recheck
   # host_data landed after the metrics were persisted (sync_timedb ingest).
   need_metrics |= Q(metrics_dirty_at__isnull=False)
+  # Computed under an older METRICS_CONTRACT_VERSION: the backfill lane only
+  # sees jobs older than the fresh window, so recent jobs relist here. NULL
+  # (pre-versioning) is left to the backfill lane.
+  need_metrics |= Q(metrics_version__lt=METRICS_CONTRACT_VERSION)
   return annotated, need_metrics
 
 

@@ -625,7 +625,11 @@ INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
 # Bump it whenever metric semantics change (catalog members, formulas,
 # aggregation rules, units): every job whose stamp is older is recomputed by
 # the update_metrics backfill lane, newest first, behind the fresh window.
-METRICS_CONTRACT_VERSION = 1
+# 2 (2026-11-01): jid_table large-job time thinning no longer runs when the
+# window has <= n_buckets samples; its strided query timed out and fell back
+# to a 3-point axis, so stored metrics / sample counts were wrong. The
+# corrected sample count changes the plot fingerprint, so plots rebuild too.
+METRICS_CONTRACT_VERSION = 2
 # ``no_data_reason`` written for catalog rows a backfill job never produced
 # after it exhausted the failure-memory backoff (daily step); the job is
 # stamped with the current version so the sweep does not spin on it.

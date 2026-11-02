@@ -1147,6 +1147,27 @@ def test_jobs_queryset_selects_jobs_dirtied_by_late_host_data(monkeypatch):
   assert '"job_data"."metrics_dirty_at" IS NOT NULL' in sql
 
 
+@pytest.mark.django_db(databases=[])
+@pytest.mark.machine_unit_mock
+def test_jobs_queryset_relists_fresh_jobs_on_older_metrics_version(
+  monkeypatch,
+):
+  """A METRICS_CONTRACT_VERSION bump must recompute fresh-window jobs too
+  (2026-11-01: 3-point thinning ran on recent jobs; backfill only sees jobs
+  older than the window)."""
+  from hpcperfstats.analysis.metrics.lib.metrics import (
+    METRICS_CONTRACT_VERSION,
+  )
+
+  _patch_connections_vendor(monkeypatch, "postgresql")
+  update_metrics._expected_job_metrics_row_count.cache_clear()
+  sql = str(
+    update_metrics._jobs_queryset(datetime(2026, 8, 15), 300, rerun=False).query
+  )
+  assert f'"job_data"."metrics_version" < {METRICS_CONTRACT_VERSION}' in sql
+  assert METRICS_CONTRACT_VERSION >= 2
+
+
 @pytest.mark.machine_unit_mock
 def test_sliding_supplements_invoke_on_supplements_taken(monkeypatch):
   """Idle-slot pops notify caller so ready_dequeued/inflight stay honest."""

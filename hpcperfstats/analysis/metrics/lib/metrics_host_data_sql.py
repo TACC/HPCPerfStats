@@ -68,13 +68,19 @@ def in_window_per_host_min_max_rows(
 
 def _scope_sql(jid: str | None) -> tuple[str, list[Any]]:
   """
-  Job-scope predicate on alias ``d`` and its binds (``TRUE`` when no jid).
+  Job-scope filter on alias ``d`` that cannot use the jid / dev indexes.
+
+  Same rows as ``job_host_data_scope_sql`` (a NULL ``jid`` / ``dev`` never
+  equals the job id), but wrapped in ``COALESCE`` so the planner must walk
+  ``(host, time)`` in time order. With the plain predicate, hs04 picked the
+  jid / ``j:`` indexes for a 64-host job (all of its rows, then host filter
+  and sort) and the per-host ``ORDER BY time LIMIT 1`` probe timed out.
 
   Args:
     jid (str | None): Job id, or ``None`` / empty for host-wide reads.
 
   Returns:
-    tuple[str, list[Any]]: ``(sql, params)``.
+    tuple[str, list[Any]]: ``(sql, params)``; ``("TRUE", [])`` without jid.
 
   Examples:
     >>> _scope_sql(None)
@@ -84,11 +90,8 @@ def _scope_sql(jid: str | None) -> tuple[str, list[Any]]:
   """
   if not jid:
     return "TRUE", []
-  from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
-    job_host_data_scope_sql,
-  )
-
-  return job_host_data_scope_sql(table_alias="d"), [str(jid), str(jid)]
+  sql = "(COALESCE(d.jid, '') = %s OR COALESCE(d.dev, '') = ('j:' || %s))"
+  return sql, [str(jid), str(jid)]
 
 
 def first_last_scoped_times(
