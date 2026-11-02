@@ -129,9 +129,26 @@ def test_parse_stats_lines_bang_without_events_raises():
     parsing.parse_stats_lines(["!\n"], 0)
 
 
-def test_parse_stats_lines_malformed_time_raises():
-  with pytest.raises(ValueError):
-    parsing.parse_stats_lines(["1.2.3 job host\n"], 0)
+def test_parse_stats_lines_malformed_time_drops_that_sample():
+  """6fef42ae: a non-numeric header time drops that sample's lines (it used
+  to raise and abort the worker); the next good header resumes."""
+  assert parsing.parse_stats_lines(["1.2.3 job host\n"], 0) == ([], [])
+  stats, procs = parsing.parse_stats_lines(
+    [
+      "1.2.3 job1 cn001\n",
+      "!cpu user sys\n",
+      "cpu 0 1 2\n",
+      "1709123456 job1 cn001\n",
+      "cpu 0 3 4\n",
+    ],
+    0,
+  )
+  assert procs == []
+  assert {r["time"] for r in stats} == {1709123456.0}
+  assert [(r["event"], r["value"]) for r in stats] == [
+    ("user", 3.0),
+    ("sys", 4.0),
+  ]
 
 
 def test_parse_stats_lines_skips_unknown_type_and_excluded():

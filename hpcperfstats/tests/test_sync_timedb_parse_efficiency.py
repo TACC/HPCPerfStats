@@ -360,8 +360,11 @@ def test_append_compiled_stats_value_extend_is_materialized_list():
   start = text.index("def _append_compiled_stats_columns(")
   end = text.index("\ndef ", start + 1)
   body = text[start:end]
-  assert 'cols["value"].extend([float(v) for v in vals])' in body
-  assert 'cols["value"].extend(float(v) for v in vals)' not in body
+  # 6fef42ae: floats are parsed into a list before any column is appended,
+  # so a non-numeric token drops the line with the columns still aligned.
+  assert "values = [float(v) for v in vals]" in body
+  assert 'cols["value"].extend(values)' in body
+  assert "float(v) for v in vals)" not in body.replace("[float(v)", "")
 
 
 def test_sparse_host_proc_omits_missing_keys():

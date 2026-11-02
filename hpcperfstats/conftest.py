@@ -122,15 +122,16 @@ def pytest_collection_modifyitems(config, items):
       "Run: tests/run_db_pytest_workflow.sh"
     ),
   )
+  # pytest-django sizes the session DB setup from every item's closest
+  # django_db marker, skipped or not: shadow it so a skipped default-DB test
+  # cannot make the host session try (and fail) to create a test database.
   for item in items:
-    path = str(item.fspath).replace("\\", "/")
-    if "/site/lib/machine/tests/" not in path:
-      continue
     if item.get_closest_marker("machine_unit_mock"):
       continue
     if not _django_db_needs_default_database(item):
       continue
     item.add_marker(skip_compose)
+    item.add_marker(pytest.mark.django_db(databases=[]), append=False)
 
 
 @pytest.fixture(autouse=True)
