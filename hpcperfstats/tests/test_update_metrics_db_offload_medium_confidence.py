@@ -141,41 +141,50 @@ def test_jid_scoped_distinct_host_filter_parity():
 
 
 @pytest.mark.django_db(transaction=True)
-def test_strided_distinct_times_db_function_matches_grouped_max_sql():
+def test_large_job_time_slot_copy_keeps_every_host_per_slot():
+  """Thinned COPY (time__slots) returns each host's own sample in every slot.
+
+  The old strided axis kept one cross-host MAX(time) per bucket, so
+  ``time = ANY`` matched about one host per bucket (hs04 COPY time lists).
+  """
   oracles.skip_unless_compose_db()
-  from hpcperfstats.analysis.metrics.lib.gen import jid_table as jt_mod
-  from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import (
-    strided_bucket_max_times,
-  )
-  from hpcperfstats.site.lib.machine.models import host_data, job_data
+  from hpcperfstats.analysis.metrics.lib.columnar import copy_fetch
+  from hpcperfstats.site.lib.machine.models import host_data
 
   jid = "920002"
-  host = "n-stride.dboff.test"
+  hosts = ["n-slot-a.dboff.test", "n-slot-b.dboff.test"]
   start = datetime(2026, 7, 1, 0, 0, tzinfo=UTC)
-  end = start + timedelta(hours=1)
-  host_data.objects.filter(jid=jid).delete()
-  job_data.objects.filter(jid=jid).delete()
-  oracles.seed_minimal_job(jid=jid, start=start, end=end, host_list=[host])
-  base = int(start.timestamp())
-  for i in range(20):
-    host_data.objects.create(
-      jid=jid,
-      host=host,
-      time=datetime.fromtimestamp(base + i * 60, tz=UTC),
-      type="cpu_counter_metrics",
-      event="APERF",
-      dev="",
-      unit="count",
-      value=float(i),
-    )
-  nb = 8
-  via_fn = strided_bucket_max_times([host], start, end, nb)
-  distinct = jt_mod._distinct_times_in_window_batched(start, end, [host])
-  span = (end - start).total_seconds()
-  step = max(span / float(max(nb - 1, 1)), 1e-9)
-  expected = jt_mod._date_bin_bucket_maxima(distinct, start, step)
-  assert via_fn
-  assert via_fn == expected
+  host_data.objects.filter(host__in=hosts).delete()
+  rows = []
+  for minute in range(120):
+    for k, h in enumerate(hosts):
+      # Hosts sample at different sub-minute offsets, like production.
+      t = start + timedelta(minutes=minute, seconds=7 + 31 * k)
+      rows.append(
+        host_data(
+          jid=jid,
+          host=h,
+          time=t,
+          type="cpu",
+          event="user",
+          dev="0",
+          unit="cs",
+          value=float(minute),
+        )
+      )
+  host_data.objects.bulk_create(rows)
+  slots = [start + timedelta(minutes=10 * i) for i in range(12)]
+  sql, params = copy_fetch.build_copy_sql(
+    hosts, {"time__slots": slots, "time__slot_s": 60}, jid, shared=False
+  )
+  inner = sql.removeprefix("COPY (").removesuffix(") TO STDOUT (FORMAT BINARY)")
+  from django.db import connection
+
+  with connection.cursor() as cur:
+    cur.execute(f"SELECT host, COUNT(*) FROM ({inner}) s GROUP BY 1", params)
+    per_host = dict(cur.fetchall())
+  assert per_host == {hosts[0]: 12, hosts[1]: 12}
+  host_data.objects.filter(host__in=hosts).delete()
 
 
 @pytest.mark.django_db(transaction=True)

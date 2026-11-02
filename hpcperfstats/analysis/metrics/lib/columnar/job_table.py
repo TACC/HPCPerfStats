@@ -137,6 +137,38 @@ def _parse_dt(value: Any) -> datetime | None:
   return datetime.fromisoformat(str(value))
 
 
+def _slot_delta_scale(base: dict[str, Any]) -> float:
+  """
+  Delta-total multiplier for a ``jid_table`` base filter.
+
+  Thinned windows (``time__slots``) read ``time__slot_s`` seconds out of
+  every slot spacing, so a summed per-sample ``delta`` covers only that
+  fraction of the job; scaling by ``spacing / slot`` restores the total
+  whatever the sampling cadence.
+
+  Args:
+    base (dict[str, Any]): ``jid_table._base_filter``.
+
+  Returns:
+    float: ``1.0`` unless thinned to two or more slots.
+
+  Examples:
+    >>> _slot_delta_scale({})
+    1.0
+    >>> from datetime import datetime, timedelta
+    >>> t = datetime(2026, 1, 1)
+    >>> _slot_delta_scale(
+    ...   {"time__slots": [t, t + timedelta(minutes=3)], "time__slot_s": 60}
+    ... )
+    3.0
+  """
+  slots = base.get("time__slots") or []
+  width = base.get("time__slot_s")
+  if len(slots) < 2 or not width:
+    return 1.0
+  return max(1.0, (slots[1] - slots[0]).total_seconds() / float(width))
+
+
 class ColumnarJobTable:
   """
   Job view for metrics, Job Detail and plots backed by one JobFrame.
@@ -151,6 +183,8 @@ class ColumnarJobTable:
     start_time: Window start.
     end_time: Window end.
     time_in: Sampled time axis for large jobs, or None.
+    delta_scale: Multiplier for summed ``delta`` totals (1.0 unless the
+      window was thinned to time slots: slot spacing / slot width).
     gpu_affinity_devs: ``gpu_devs_for_job`` result or None.
     units: ``(type, event) -> unit`` labels (type-detail plots).
     coalesce_zero: Aggregate rule for groups without a valid sample.
@@ -175,6 +209,7 @@ class ColumnarJobTable:
     gpu_affinity_devs: Sequence[str] | None = None,
     units: dict[tuple[str, str], str] | None = None,
     coalesce_zero: bool = True,
+    delta_scale: float = 1.0,
   ) -> None:
     """
     Wrap a frame with the job metadata the consumers read from ``jid_table``.
@@ -194,6 +229,9 @@ class ColumnarJobTable:
         labels for the type-detail plots.
       coalesce_zero (bool): Aggregate groups without a valid sample sum to
         ``0`` (job plots) or stay NaN (single-host plots).
+      delta_scale (float): Multiplier for summed ``delta`` totals; a thinned
+        window keeps ``slot / spacing`` of the time, so totals scale back up
+        by ``spacing / slot``.
 
     Returns:
       None
@@ -251,6 +289,7 @@ class ColumnarJobTable:
     )
     self.units: dict[tuple[str, str], str] = dict(units or {})
     self.coalesce_zero = bool(coalesce_zero)
+    self.delta_scale = float(delta_scale)
     self._agg_memo: dict[tuple[Any, ...], AggTable] = {}
 
   # -- construction -------------------------------------------------------
@@ -288,7 +327,8 @@ class ColumnarJobTable:
       schema=getattr(jt, "schema", None) or {},
       start_time=getattr(jt, "start_time", None),
       end_time=getattr(jt, "end_time", None),
-      time_in=base.get("time__in"),
+      time_in=base.get("time__in") or base.get("time__slots"),
+      delta_scale=_slot_delta_scale(base),
       shared=bool(getattr(jt, "_shared_node", False)),
       gpu_affinity_devs=aff() if callable(aff) else None,
       units=getattr(jt, "units", None) or {},
@@ -727,7 +767,7 @@ class ColumnarJobTable:
       out: dict[str, float] = {}
       for ev, total in sums.items():
         canon = canonical_event_name_for_type(typ, str(ev))
-        out[canon] = out.get(canon, 0.0) + float(total)
+        out[canon] = out.get(canon, 0.0) + float(total) * self.delta_scale
       return dict(sorted(out.items()))
     return {}
 
@@ -807,8 +847,9 @@ class ColumnarJobTable:
         break
     if not rows:
       return None
-    read_total = sum(v for e, v in rows.items() if e in read_events)
-    write_total = sum(v for e, v in rows.items() if e in write_events)
+    scale = self.delta_scale
+    read_total = sum(v for e, v in rows.items() if e in read_events) * scale
+    write_total = sum(v for e, v in rows.items() if e in write_events) * scale
     if read_total == 0.0 and write_total == 0.0:
       return None
     return [read_total / (1024 * 1024), write_total / (1024 * 1024)]

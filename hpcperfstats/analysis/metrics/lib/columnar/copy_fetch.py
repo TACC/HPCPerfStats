@@ -51,15 +51,16 @@ def _time_clause(time_filter: dict[str, Any] | None) -> tuple[str, list[Any]]:
   """
   SQL predicate and params for a ``jid_table`` time filter dict.
 
-  Supports ``time__in`` (large-job strided axis) and ``time__gte`` with
-  ``time__lte`` or ``time__lt`` (host x time chunks).
+  Supports ``time__in`` (exact sample times, golden / test tables) and
+  ``time__gte`` with ``time__lte`` or ``time__lt`` (host x time chunks).
+  Large-job ``time__slots`` live in the FROM join (``_from_clause``).
 
   Args:
     time_filter (dict[str, Any] | None): Django-style time kwargs.
 
   Returns:
     tuple[str, list[Any]]: ``(sql_fragment, params)``; ``("TRUE", [])`` for
-    an empty filter.
+    an empty filter or slots.
 
   Examples:
     >>> _time_clause({"time__gte": 1, "time__lt": 2})
@@ -67,7 +68,7 @@ def _time_clause(time_filter: dict[str, Any] | None) -> tuple[str, list[Any]]:
     >>> _time_clause({"time__in": [1, 2]})
     ('h.time = ANY(%s::timestamptz[])', [[1, 2]])
   """
-  if not time_filter:
+  if not time_filter or "time__slots" in time_filter:
     return "TRUE", []
   if "time__in" in time_filter:
     return "h.time = ANY(%s::timestamptz[])", [list(time_filter["time__in"])]
@@ -88,6 +89,35 @@ def _time_clause(time_filter: dict[str, Any] | None) -> tuple[str, list[Any]]:
   if not parts:
     return "TRUE", []
   return " AND ".join(parts), params
+
+
+def _from_clause(time_filter: dict[str, Any] | None) -> tuple[str, list[Any]]:
+  """
+  FROM clause and params: ``host_data h``, or the large-job slot join.
+
+  ``time__slots`` (with ``time__slot_s``) joins an ``unnest`` of slot starts
+  on ``h.time >= t0 AND h.time < t0 + slot``, so every host keeps its own
+  sample in every slot through ``(host, time)`` index ranges.
+
+  Args:
+    time_filter (dict[str, Any] | None): Time kwargs for this chunk.
+
+  Returns:
+    tuple[str, list[Any]]: ``(from_sql, params)``.
+
+  Examples:
+    >>> _from_clause({"time__gte": 1, "time__lte": 2})
+    ('host_data h', [])
+    >>> _from_clause({"time__slots": [1], "time__slot_s": 60})[1]
+    [[1], 60]
+  """
+  if not time_filter or "time__slots" not in time_filter:
+    return "host_data h", []
+  return (
+    "unnest(%s::timestamptz[]) AS g(t0) JOIN host_data h"
+    " ON h.time >= g.t0 AND h.time < g.t0 + %s * interval '1 second'",
+    [list(time_filter["time__slots"]), int(time_filter["time__slot_s"])],
+  )
 
 
 def build_copy_sql(
@@ -126,25 +156,29 @@ def build_copy_sql(
     >>> "FORMAT BINARY" in sql and params[-2:] == ["9", "9"]
     True
   """
+  from_sql, from_params = _from_clause(time_filter)
   time_sql, time_params = _time_clause(time_filter)
   owned_sql = "(h.jid = %s OR h.dev = ('j:' || %s))"
   # Parameters follow placeholder order: SELECT list first (shared ``owned``
-  # column), then WHERE host / time / scope.
+  # column), then FROM (large-job slots), then WHERE host / time / scope.
   if not job_scoped:
     select = COPY_SELECT_COLUMNS
     scope = "TRUE"
-    params: list[Any] = [list(hosts), *time_params]
+    head: list[Any] = []
+    tail: list[Any] = []
   elif shared:
     select = f"{COPY_SELECT_COLUMNS}, ({owned_sql})::int AS owned"
     scope = f"({owned_sql} OR NOT (h.type = ANY(%s::text[])))"
-    params = [jid, jid, list(hosts), *time_params]
-    params += [jid, jid, list(job_scoped_types)]
+    head = [jid, jid]
+    tail = [jid, jid, list(job_scoped_types)]
   else:
     select = COPY_SELECT_COLUMNS
     scope = owned_sql
-    params = [list(hosts), *time_params, jid, jid]
+    head = []
+    tail = [jid, jid]
+  params = [*head, *from_params, list(hosts), *time_params, *tail]
   sql = (
-    f"COPY (SELECT {select} FROM host_data h "
+    f"COPY (SELECT {select} FROM {from_sql} "
     f"WHERE h.host = ANY(%s::text[]) AND {time_sql} AND {scope}) "
     "TO STDOUT (FORMAT BINARY)"
   )

@@ -221,3 +221,67 @@ def test_fetch_caps_default_time_slice_for_cold_copy(monkeypatch):
   copy_fetch.fetch_job_frame(_fake_table(["a"]), copy_runner=_Server())
   assert seen == [copy_fetch.COPY_MAX_TIME_SLICE_S, 300]
   assert copy_fetch.COPY_MAX_TIME_SLICE_S == 900
+
+
+def test_build_copy_sql_time_slots_join_keeps_each_host_sample():
+  """Large-job slots join an unnest of slot starts (per-host samples), and
+  parameters still follow placeholder order on shared jobs."""
+  slots = [T0, T0 + timedelta(minutes=10)]
+  sql, params = copy_fetch.build_copy_sql(
+    ["a", "b"],
+    {"time__slots": slots, "time__slot_s": 60},
+    "77",
+    shared=True,
+    job_scoped_types=["host_cpu"],
+  )
+  assert (
+    "FROM unnest(%s::timestamptz[]) AS g(t0) JOIN host_data h ON "
+    "h.time >= g.t0 AND h.time < g.t0 + %s * interval '1 second'"
+  ) in sql
+  assert "h.time = ANY" not in sql
+  assert sql.count("%s") == len(params)
+  assert params[:5] == ["77", "77", slots, 60, ["a", "b"]]
+  assert params[-1] == ["host_cpu"]
+
+
+def test_thinned_table_scales_fsio_delta_totals_by_slot_fraction():
+  """Time slots keep slot/spacing of the window: summed ``delta`` totals
+  (NFS / Lustre / BeeGFS bytes) scale back by spacing/slot; rates do not."""
+  from types import SimpleNamespace
+
+  from hpcperfstats.analysis.metrics.lib.columnar.job_table import (
+    ColumnarJobTable,
+  )
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
+
+  mb = 1024.0 * 1024.0
+  rows = [
+    (T0, "h1", "nfs", "normal_read", "", None, None, 2 * mb),
+    (T0, "h1", "nfs", "normal_write", "", None, None, 1 * mb),
+    (T0, "h1", "lustre_llite", "vfs_read_bytes", "", None, None, 10.0),
+  ]
+  plain = table_from_records(rows)
+  assert plain.delta_scale == 1.0
+  assert plain.get_nfs_delta_totals_mb() == [2.0, 1.0]
+  slots = [T0, T0 + timedelta(minutes=3)]
+  jt = SimpleNamespace(
+    jid="1",
+    host_list=["h1"],
+    acct_host_list=["h1"],
+    schema=plain.schema,
+    start_time=T0,
+    end_time=T0 + timedelta(minutes=6),
+    _base_filter={
+      "time__slots": slots,
+      "time__slot_s": 60,
+      "host__in": ["h1"],
+    },
+    _shared_node=False,
+    units={},
+  )
+  thinned = ColumnarJobTable.from_jid_table(jt, frame=plain.frame)
+  assert thinned.delta_scale == 3.0
+  assert thinned.get_nfs_delta_totals_mb() == [6.0, 3.0]
+  assert thinned.get_llite_delta_by_event() == {"vfs_read_bytes": 30.0}

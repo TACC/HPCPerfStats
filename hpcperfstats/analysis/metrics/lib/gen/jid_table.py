@@ -10,6 +10,7 @@ Attributes:
   JID_TABLE_HOST_QUERY_BATCH: ``JID_TABLE_HOST_QUERY_BATCH``.
   JID_TABLE_SCHEMA_PROBE_SLICE_S: Seconds read after the first scoped
     sample when building the jid_table schema.
+  LARGE_JOB_SLOT_S: Seconds per large-job time slot (one sample per host).
   TYPE_DETAIL_HOST_QUERY_BATCH: ``TYPE_DETAIL_HOST_QUERY_BATCH``.
   _DENSE_PLOT_AGG_TYPES: NFS/llite type names that use the dense (8) host batch.
   _GPU_AFF_UNSET: Sentinel for unloaded ``job_affinity`` GPU cache.
@@ -38,7 +39,6 @@ from django.db import (
   InterfaceError,
   OperationalError,
   close_old_connections,
-  connections,
 )
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
@@ -61,7 +61,7 @@ from hpcperfstats.site.lib.machine.cache_utils import (
   get_site_content_cache_timeout,
   make_cache_key,
 )
-from hpcperfstats.site.lib.machine.models import host_data, job_data
+from hpcperfstats.site.lib.machine.models import job_data
 
 # Sentinel: affinity GPU list not loaded yet (distinct from None = unrestricted).
 _GPU_AFF_UNSET: object = object()
@@ -77,6 +77,11 @@ JID_TABLE_HOST_QUERY_BATCH = 16
 # boundary samples are full collects (every key); a short slice bounds the
 # DISTINCT by index range instead of the whole job window (hs04 timeouts).
 JID_TABLE_SCHEMA_PROBE_SLICE_S = 600
+
+# Width of one large-job time slot: one sample per host at the 1-minute
+# monitor cadence. Slots start every window / n_buckets seconds; thinning
+# only runs when that spacing is at least this wide (slots never overlap).
+LARGE_JOB_SLOT_S = 60
 
 
 _STATEMENT_TIMEOUT_ERROR_MARKERS = (
@@ -233,42 +238,6 @@ def _listify_acct_hosts(acct_hosts: Any) -> Any:
   return deduped
 
 
-@contextlib.contextmanager
-def _pg_relax_statement_timeout_for_large_job_time_sql() -> Iterator[Any]:
-  """
-  Disable PostgreSQL ``statement_timeout`` for long strided-time sampling SQL.
-
-  ``DISTINCT`` + ``NTILE`` and wide-window ``date_bin`` aggregates can exceed
-    the
-  default session limit; restore the configured timeout when the block exits
-  (same pattern as metrics batch queries in ``update_metrics``).
-
-  Yields:
-    Iterator[Any]: Open return polymorphism from
-    ``_pg_relax_statement_timeout_for_large_job_time_sql``: concrete type
-    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
-    empty).
-
-  Examples:
-    >>> _pg_relax_statement_timeout_for_large_job_time_sql()  # doctest: +SKIP
-  """
-  conn = connections["default"]
-  if conn.vendor != "postgresql":
-    yield
-    return
-  restore_ms = cfg.get_db_statement_timeout_ms()
-  with conn.cursor() as cursor:
-    cursor.execute("SET statement_timeout = 0")
-  try:
-    yield
-  finally:
-    with conn.cursor() as cursor:
-      if restore_ms > 0:
-        cursor.execute("SET statement_timeout = %s", [restore_ms])
-      else:
-        cursor.execute("SET statement_timeout = 0")
-
-
 def _iter_acct_host_batches(
   acct_host_list: Any,
   batch_size: Any | None = None,
@@ -363,6 +332,28 @@ def _resolve_plot_aggregate_time_bucket_count(n_hosts: int) -> int:
   return max(32, min(configured, by_budget))
 
 
+def _time_list_key(time_filter: Any) -> str | None:
+  """
+  Name of the list-valued time key (``time__slots`` / ``time__in``), if any.
+
+  Args:
+    time_filter (Any): Time filter dict.
+
+  Returns:
+    str | None: ``"time__slots"``, ``"time__in"``, or ``None`` for a window.
+
+  Examples:
+    >>> _time_list_key({"time__slots": [1], "time__slot_s": 60})
+    'time__slots'
+    >>> _time_list_key({"time__gte": 1, "time__lte": 2}) is None
+    True
+  """
+  for key in ("time__slots", "time__in"):
+    if key in time_filter:
+      return key
+  return None
+
+
 def _iter_aggregate_time_filter_chunks(
   tkw: Any,
   slice_s: int,
@@ -384,13 +375,15 @@ def _iter_aggregate_time_filter_chunks(
   slice_s = max(60, int(slice_s or 3600))
   if not isinstance(tkw, dict) or not tkw:
     return
-  if "time__in" in tkw:
-    times = list(tkw.get("time__in") or [])
+  key = _time_list_key(tkw)
+  if key:
+    times = list(tkw.get(key) or [])
     if not times:
       return
+    extra = {k: v for k, v in tkw.items() if k == "time__slot_s"}
     chunk_n = max(1, int(slice_s // 60))
     for i in range(0, len(times), chunk_n):
-      yield {"time__in": times[i : i + chunk_n]}
+      yield {key: times[i : i + chunk_n], **extra}
     return
   gte = tkw.get("time__gte")
   lte = tkw.get("time__lte")
@@ -427,14 +420,16 @@ def _split_time_filter_for_timeout(time_filter: Any) -> Any:
   """
   if not isinstance(time_filter, dict):
     return None
-  if "time__in" in time_filter:
-    times = list(time_filter.get("time__in") or [])
+  key = _time_list_key(time_filter)
+  if key:
+    times = list(time_filter.get(key) or [])
     if len(times) < 2:
       return None
     mid = max(1, len(times) // 2)
+    extra = {k: v for k, v in time_filter.items() if k == "time__slot_s"}
     return (
-      {"time__in": times[:mid]},
-      {"time__in": times[mid:]},
+      {key: times[:mid], **extra},
+      {key: times[mid:], **extra},
     )
   gte = time_filter.get("time__gte")
   lte = time_filter.get("time__lte")
@@ -937,383 +932,6 @@ def _count_host_data_rows_for_window_cached(
   return coerced_n
 
 
-def _distinct_times_in_window_batched(
-  start: Any,
-  end: Any,
-  acct_hosts: Any,
-  batch_size: Any | None = None,
-) -> Any:
-  """
-  UNION of DISTINCT ``host_data.time`` in ``[start, end]`` across hosts.
-
-  Uses chunked ``host__in`` ORM queries (same batch size as row counts). Raw SQL
-  with ``ANY(%s::text[])`` on Django's shared connection previously corrupted
-    the
-  psycopg wire protocol (``lost synchronization with server``).
-
-  Retries once after :func:`close_old_connections` on connection desync.
-
-  Args:
-    start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
-    end (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
-    acct_hosts (Any): Acct hosts passed to this helper.
-    batch_size (Any | None): One of ``Any``, ``None``.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Raises:
-    Exception: Raised when ``_distinct_times_in_window_batched`` hits a
-    ``Exception`` failure path.
-
-  Examples:
-    >>> _distinct_times_in_window_batched(None, None, None, None)
-  """
-  if start is None or end is None:
-    return []
-  hosts = _listify_acct_hosts(acct_hosts)
-  if not hosts:
-    return []
-  for attempt in range(2):
-    try:
-      close_old_connections()
-      all_ts = set()
-      with _pg_relax_statement_timeout_for_large_job_time_sql():
-        for host_chunk in _iter_acct_host_batches(hosts, batch_size):
-          qs = (
-            host_data.objects.filter(
-              time__gte=start,
-              time__lte=end,
-              host__in=list(host_chunk),
-            )
-            .values_list("time", flat=True)
-            .distinct()
-          )
-          for ts in qs:
-            if ts is not None:
-              all_ts.add(ts)
-      return sorted(all_ts)
-    except Exception as exc:
-      if attempt == 0 and _is_psycopg_connection_desync(exc):
-        continue
-      raise
-
-
-def _ntile_bucket_max_timestamps(sorted_ts: Any, n_buckets: Any) -> Any:
-  """
-  Replicate ``NTILE(n_buckets) OVER (ORDER BY ts)`` then ``MAX(ts)`` per bucket.
-
-  Args:
-    sorted_ts (Any): Sorted ts passed to this helper.
-    n_buckets (Any): N buckets passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _ntile_bucket_max_timestamps(None, None)  # doctest: +SKIP
-  """
-  L = len(sorted_ts)
-  if L == 0:
-    return []
-  try:
-    nb = int(n_buckets)
-  except TypeError, ValueError, OverflowError:
-    nb = 2048
-  if nb < 2:
-    return [sorted_ts[-1]]
-  base = L // nb
-  rem = L % nb
-  out = []
-  idx = 0
-  for b in range(nb):
-    sz = base + (1 if b < rem else 0)
-    if sz == 0:
-      continue
-    out.append(sorted_ts[idx + sz - 1])
-    idx += sz
-  return out
-
-
-def _date_bin_bucket_maxima(sorted_ts: Any, start: Any, step_sec: Any) -> Any:
-  """
-  ``MAX(ts)`` per ``date_bin(step, ts, start)``-style bucket (sorted input).
-
-  Args:
-    sorted_ts (Any): Sorted ts passed to this helper.
-    start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
-    step_sec (Any): Step sec passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _date_bin_bucket_maxima(None, None, None)  # doctest: +SKIP
-  """
-  if not sorted_ts:
-    return []
-  bins = {}
-  for ts in sorted_ts:
-    k = 0 if step_sec <= 0 else int((ts - start).total_seconds() // step_sec)
-    bins[k] = ts
-  return [bins[k] for k in sorted(bins)]
-
-
-def _strided_distinct_times_postgresql(
-  start: Any,
-  end: Any,
-  acct_hosts: Any,
-  n_buckets: Any,
-) -> Any:
-  """
-  Up to n_buckets timestamps, one per NTILE bucket over DISTINCT time (ordered).
-
-  Args:
-    start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
-    end (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
-    acct_hosts (Any): Acct hosts passed to this helper.
-    n_buckets (Any): N buckets passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _strided_distinct_times_postgresql(None, None, None, None)
-  """
-  if not acct_hosts or start is None or end is None or n_buckets < 2:
-    return []
-  distinct_sorted = _distinct_times_in_window_batched(start, end, acct_hosts)
-  if not distinct_sorted:
-    return []
-  return _ntile_bucket_max_timestamps(distinct_sorted, n_buckets)
-
-
-def _strided_distinct_times_date_bin_via_grouped_max_sql(
-  start: Any,
-  end: Any,
-  acct_hosts: Any,
-  n_buckets: Any,
-  batch_size: Any | None = None,
-) -> Any:
-  """
-  One ``MAX(time)`` per wall-clock stride bucket, merged across host chunks.
-
-  Matches the stride grid used by :func:`_date_bin_bucket_maxima` without
-  materializing every distinct ``time`` in Python (which is expensive on very
-  large windows).
-
-  Args:
-    start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
-    end (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
-    acct_hosts (Any): Acct hosts passed to this helper.
-    n_buckets (Any): N buckets passed to this helper.
-    batch_size (Any | None): One of ``Any``, ``None``.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Raises:
-    Exception: Raised when
-    ``_strided_distinct_times_date_bin_via_grouped_max_sql`` hits a
-    ``Exception`` failure path.
-
-  Examples:
-    >>> _strided_distinct_times_date_bin_via_grouped_max_sql(
-    ...   0
-    ... )  # doctest: +SKIP
-  """
-  start_dt = _normalize_window_bound_datetime(start)
-  end_dt = _normalize_window_bound_datetime(end)
-  hosts = _listify_acct_hosts(acct_hosts)
-  if not hosts or start_dt is None or end_dt is None:
-    return []
-  span_sec = (end_dt - start_dt).total_seconds()
-  if span_sec <= 0:
-    return [start_dt]
-  try:
-    nb = max(2, int(n_buckets))
-  except TypeError, ValueError, OverflowError:
-    nb = 2
-  step_sec = max(span_sec / float(nb - 1), 1e-9)
-
-  from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import (
-    strided_bucket_max_times,
-  )
-
-  via_fn = strided_bucket_max_times(hosts, start_dt, end_dt, nb)
-  if via_fn:
-    return via_fn
-
-  conn = connections["default"]
-  if conn.vendor != "postgresql":
-    return []
-
-  meta = host_data._meta
-  ops = conn.ops
-  tbl = ops.quote_name(meta.db_table)
-  tcol = ops.quote_name(meta.get_field("time").column)
-  hcol = ops.quote_name(meta.get_field("host").column)
-  merged = {}
-
-  for attempt in range(2):
-    try:
-      close_old_connections()
-      with _pg_relax_statement_timeout_for_large_job_time_sql():
-        for host_chunk in _iter_acct_host_batches(hosts, batch_size):
-          clean_chunk = [
-            h
-            for h in (_normalize_host_cell_for_host_data(h) for h in host_chunk)
-            if h
-          ]
-          if not clean_chunk:
-            continue
-          placeholders = ", ".join(["%s"] * len(clean_chunk))
-          sql = (
-            "SELECT (FLOOR(EXTRACT(EPOCH FROM ("
-            + tbl
-            + "."
-            + tcol
-            + " - %s)) / %s))::bigint AS grp, "
-            "MAX(" + tbl + "." + tcol + ") AS mx FROM " + tbl + " "
-            "WHERE "
-            + tbl
-            + "."
-            + tcol
-            + " >= %s AND "
-            + tbl
-            + "."
-            + tcol
-            + " <= %s AND "
-            + tbl
-            + "."
-            + hcol
-            + " IN ("
-            + placeholders
-            + ") GROUP BY 1"
-          )
-          params = [
-            start_dt,
-            step_sec,
-            start_dt,
-            end_dt,
-            *clean_chunk,
-          ]
-          with conn.cursor() as cursor:
-            cursor.execute(sql, params)
-            for grp, mx in cursor.fetchall():
-              if mx is None:
-                continue
-              prev = merged.get(grp)
-              if prev is None or mx > prev:
-                merged[grp] = mx
-      break
-    except Exception as exc:
-      if attempt == 0 and _is_psycopg_connection_desync(exc):
-        continue
-      raise
-
-  if not merged:
-    return []
-  return [merged[k] for k in sorted(merged)]
-
-
-def _strided_distinct_times_date_bin_postgresql(
-  start: Any,
-  end: Any,
-  acct_hosts: Any,
-  n_buckets: Any,
-) -> Any:
-  """
-  Up to ~n_buckets timestamps via date-bin-style buckets (Python, same grid as.
-
-    PG).
-
-  Args:
-    start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
-    end (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
-    acct_hosts (Any): Acct hosts passed to this helper.
-    n_buckets (Any): N buckets passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _strided_distinct_times_date_bin_postgresql(None, None, None, None)
-  """
-  if not acct_hosts or start is None or end is None or n_buckets < 2:
-    return []
-  span_sec = (end - start).total_seconds()
-  if span_sec <= 0:
-    return [start]
-  if connections["default"].vendor == "postgresql":
-    try:
-      via_sql = _strided_distinct_times_date_bin_via_grouped_max_sql(
-        start, end, acct_hosts, n_buckets
-      )
-      if via_sql:
-        return via_sql
-    except Exception:
-      _logger.warning(
-        "jid_table date_bin grouped-max SQL failed; falling back to DISTINCT",
-        exc_info=True,
-      )
-  distinct_sorted = _distinct_times_in_window_batched(start, end, acct_hosts)
-  if not distinct_sorted:
-    return []
-  step_sec = max(span_sec / float(max(n_buckets - 1, 1)), 1e-9)
-  return _date_bin_bucket_maxima(distinct_sorted, start, step_sec)
-
-
-def _strided_distinct_times_for_large_job(
-  start: Any,
-  end: Any,
-  acct_hosts: Any,
-  n_buckets: Any,
-) -> Any:
-  """
-  Strided sample timestamps: ``date_bin`` when configured, else NTILE path.
-
-  Args:
-    start (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
-    end (Any): Time value (``datetime``, ISO string, sentinel, or ``None``).
-    acct_hosts (Any): Acct hosts passed to this helper.
-    n_buckets (Any): N buckets passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _strided_distinct_times_for_large_job(None, None, None, None)
-  """
-  if cfg.get_large_job_time_sample_sql_mode() == "date_bin":
-    try:
-      out = _strided_distinct_times_date_bin_postgresql(
-        start, end, acct_hosts, n_buckets
-      )
-      if out:
-        return out
-    except Exception:
-      logging.getLogger(__name__).warning(
-        "jid_table date_bin strided times failed; falling back to NTILE",
-        exc_info=True,
-      )
-  try:
-    return _strided_distinct_times_postgresql(start, end, acct_hosts, n_buckets)
-  except Exception:
-    logging.getLogger(__name__).warning(
-      "jid_table NTILE strided times failed; falling back to fixed window points",
-      exc_info=True,
-    )
-    # Keep sampling active even when DB striding paths fail (e.g. statement_timeout)
-    # so downstream queries avoid full-window scans for very large jobs.
-    if start is None or end is None:
-      return []
-    if end <= start:
-      return [start]
-    mid = start + ((end - start) / 2)
-    return [start, mid, end]
-
-
 local_timezone = cfg.get_local_timezone()
 _logger = logging.getLogger(__name__)
 
@@ -1786,20 +1404,22 @@ class jid_table:
 
   def _host_data_time_filter_kwargs(self) -> Any:
     """
-    Time scope for host_data queries: full window or sampled ``time__in``.
+    Time scope for host_data queries: full window or large-job time slots.
 
     Returns:
-      Any: Open return polymorphism from ``_host_data_time_filter_kwargs``:
-      concrete type depends on inputs and branch (mapping, scalar, handle, or
-      ``None``-like empty).
+      Any: ``{}`` without a window; ``{"time__gte", "time__lte"}`` for the
+      full window; ``{"time__slots", "time__slot_s"}`` when thinned.
 
     Examples:
       >>> jid_table()._host_data_time_filter_kwargs()  # doctest: +SKIP
     """
     if not self._base_filter:
       return {}
-    if "time__in" in self._base_filter:
-      return {"time__in": self._base_filter["time__in"]}
+    if "time__slots" in self._base_filter:
+      return {
+        "time__slots": self._base_filter["time__slots"],
+        "time__slot_s": self._base_filter["time__slot_s"],
+      }
     return {
       "time__gte": self._base_filter["time__gte"],
       "time__lte": self._base_filter["time__lte"],
@@ -1807,15 +1427,20 @@ class jid_table:
 
   def _apply_large_job_time_sampling_if_needed(self) -> None:
     """
-    Thin time axis when raw rows or hostsxsamples exceed the plot memory budget.
+    Thin the time axis to evenly spaced slots for very long jobs.
 
-    Activates when ``COUNT(*)`` exceeds the large-job threshold **or** when
-    ``n_hosts x estimated_1min_samples`` exceeds
-    ``get_plot_aggregate_max_host_time_points()`` (design ``5000x48x60``).
-    Bucket count is ``min(configured, floor(budget / n_hosts))``. Never
-    thins when the window has no more estimated samples than buckets: the
-    strided axis would keep every sample, and on hs04 its query timed out
-    and fell back to ``[start, mid, end]`` (3-point plots and metrics).
+    Activates when the estimated row count exceeds the large-job threshold
+    **or** ``n_hosts x estimated_1min_samples`` exceeds
+    ``get_plot_aggregate_max_host_time_points()`` (design ``5000x48x60``),
+    and only when the slot spacing (window / bucket count, bucket count
+    ``min(configured, floor(budget / n_hosts))``) is at least
+    ``LARGE_JOB_SLOT_S``; shorter windows keep every sample.
+
+    Each slot is ``[t_i, t_i + LARGE_JOB_SLOT_S)``, so every host keeps its
+    own sample per slot and no query picks the times. The old strided axis
+    kept one cross-host ``MAX(time)`` per bucket, which matched roughly one
+    host's sample per bucket, and its full-window ``GROUP BY`` timed out on
+    hs04 into a 3-point ``[start, mid, end]`` fallback.
 
     Returns:
       None
@@ -1828,57 +1453,42 @@ class jid_table:
       return
     n_hosts = len(self.acct_host_list)
     budget = int(cfg.get_plot_aggregate_max_host_time_points())
+    n_buckets = _resolve_plot_aggregate_time_bucket_count(n_hosts)
+    step = (self.end_time - self.start_time) / n_buckets
+    if step.total_seconds() < LARGE_JOB_SLOT_S:
+      return
     est_samples = _estimate_one_min_samples_for_window(
       self.start_time, self.end_time
     )
-    n_buckets = _resolve_plot_aggregate_time_bucket_count(n_hosts)
-    if est_samples <= n_buckets:
-      return
     need_sampling = (n_hosts * est_samples) > budget
     n = None
-    threshold = cfg.get_large_job_host_data_row_threshold()
     try:
       n = _count_host_data_rows_for_window_cached(
         self.jid, self.start_time, self.end_time, self.acct_host_list
       )
-      if n > threshold:
-        need_sampling = True
+      need_sampling |= n > cfg.get_large_job_host_data_row_threshold()
     except Exception as exc:
       _logger.warning(
-        "jid_table large-job row count failed jid=%s: %s",
-        self.jid,
-        exc,
+        "jid_table large-job row count failed jid=%s: %s", self.jid, exc
       )
-      if not need_sampling:
-        return
     if not need_sampling:
       return
-    try:
-      sampled = _strided_distinct_times_for_large_job(
-        self.start_time, self.end_time, self.acct_host_list, n_buckets
-      )
-    except Exception as exc:
-      _logger.warning(
-        "jid_table strided times failed jid=%s: %s",
-        self.jid,
-        exc,
-      )
-      return
-    if not sampled:
-      return
+    slots = [self.start_time + step * i for i in range(n_buckets)]
     self._base_filter = {
-      "time__in": sampled,
+      "time__slots": slots,
+      "time__slot_s": LARGE_JOB_SLOT_S,
       "host__in": self.acct_host_list,
     }
-    self._large_job_plot_cache_token = f"lb{len(sampled)}"
+    self._large_job_plot_cache_token = f"lb{len(slots)}"
     _logger.info(
-      "jid_table large-job time sampling jid=%s hosts=%s budget=%s "
-      "rows~%s bucket_times=%s est_host_samples=%s",
+      "jid_table large-job time slots jid=%s hosts=%s budget=%s rows~%s "
+      "slots=%s step_s=%.0f est_host_samples=%s",
       self.jid,
       n_hosts,
       budget,
       n if n is not None else "n/a",
-      len(sampled),
+      len(slots),
+      step.total_seconds(),
       n_hosts * est_samples,
     )
 

@@ -982,22 +982,6 @@ def test_metrics_scheduler_tunables_without_prewarm_pool_keys(
   assert cfg.get_metrics_deferred_not_ready_retry_s() == 15.0
 
 
-def test_get_large_job_time_sample_sql_mode_defaults_and_env(
-  temp_ini, monkeypatch
-):
-  """Default strided time SQL mode is date_bin; ntile is opt-in via env."""
-  monkeypatch.delenv("HPCPERFSTATS_LARGE_JOB_TIME_SQL", raising=False)
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-
-  importlib.reload(cfg)
-  assert cfg.get_large_job_time_sample_sql_mode() == "date_bin"
-  monkeypatch.setenv("HPCPERFSTATS_LARGE_JOB_TIME_SQL", "ntile")
-  assert cfg.get_large_job_time_sample_sql_mode() == "ntile"
-
-
 def test_large_job_numeric_env_invalid_falls_back_to_defaults(
   temp_ini, monkeypatch
 ):

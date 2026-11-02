@@ -1,15 +1,14 @@
 """Unit tests for analysis.gen.jid_table (_ensure_tz) and utils.queryset_to_dataframe."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 pytestmark = pytest.mark.django_db(databases=[])
 
-from contextlib import nullcontext
 from unittest.mock import patch
 
-from django.db import OperationalError, connections
+from django.db import OperationalError
 
 from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
   JID_TABLE_HOST_QUERY_BATCH,
@@ -18,7 +17,6 @@ from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
   _coerce_nonnegative_window_row_count,
   _count_host_data_rows_for_window,
   _count_host_data_rows_for_window_cached,
-  _distinct_times_in_window_batched,
   _ensure_tz,
   _iter_acct_host_batches,
   _listify_acct_hosts,
@@ -26,9 +24,6 @@ from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
   _normalize_host_data_schema_label,
   _normalize_job_accounting_host_list,
   _normalize_window_bound_datetime,
-  _ntile_bucket_max_timestamps,
-  _strided_distinct_times_date_bin_postgresql,
-  _strided_distinct_times_for_large_job,
   _unpack_cached_job_window_row,
   gpu_acct_window_for_job_data,
   jid_table,
@@ -266,16 +261,13 @@ def test_count_host_data_rows_for_window_cached_handles_non_numeric_count(
 def test_count_host_data_rows_for_window_rejects_non_datetime_bounds(
   monkeypatch,
 ):
-  class _FailingObjects:
-    def filter(self, **kwargs):
-      raise AssertionError("ORM filter should not run for non-datetime bounds")
-
-  class _FailingHostData:
-    objects = _FailingObjects()
+  def _fail(*_a, **_k):
+    raise AssertionError("estimate should not run for non-datetime bounds")
 
   monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data",
-    _FailingHostData(),
+    "hpcperfstats.analysis.metrics.lib.metrics_host_data_sql."
+    "rows_per_sample_estimate",
+    _fail,
   )
   n = _count_host_data_rows_for_window(
     start=["bad"], end=["bad"], acct_hosts=["h.x"]
@@ -286,18 +278,13 @@ def test_count_host_data_rows_for_window_rejects_non_datetime_bounds(
 def test_count_host_data_rows_for_window_rejects_deque_list_bounds(monkeypatch):
   from collections import deque
 
-  class _FailingObjects:
-    def filter(self, **kwargs):
-      raise AssertionError(
-        "ORM filter should not run for list-like bound wrappers"
-      )
-
-  class _FailingHostData:
-    objects = _FailingObjects()
+  def _fail(*_a, **_k):
+    raise AssertionError("estimate should not run for list-like bounds")
 
   monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data",
-    _FailingHostData(),
+    "hpcperfstats.analysis.metrics.lib.metrics_host_data_sql."
+    "rows_per_sample_estimate",
+    _fail,
   )
   n = _count_host_data_rows_for_window(
     start=deque([["bad"]]),
@@ -344,11 +331,34 @@ def test_jid_table_host_data_time_filter_kwargs_full_window():
 
 
 def test_jid_table_host_data_time_filter_kwargs_sampled():
-  """Large-job sampling replaces the window with a finite time__in list."""
+  """Large-job thinning replaces the window with time slots + width."""
   inst = jid_table.__new__(jid_table)
-  times = [10, 20, 30]
-  inst._base_filter = {"time__in": times, "host__in": ["a.example.com"]}
-  assert inst._host_data_time_filter_kwargs() == {"time__in": times}
+  slots = [10, 20, 30]
+  inst._base_filter = {
+    "time__slots": slots,
+    "time__slot_s": 60,
+    "host__in": ["a.example.com"],
+  }
+  assert inst._host_data_time_filter_kwargs() == {
+    "time__slots": slots,
+    "time__slot_s": 60,
+  }
+
+
+def test_time_slot_filters_chunk_and_bisect_keep_slot_width():
+  """Slot lists split like time__in lists and every piece keeps the width."""
+  from hpcperfstats.analysis.metrics.lib.gen.jid_table import (
+    _iter_aggregate_time_filter_chunks,
+    _split_time_filter_for_timeout,
+  )
+
+  tkw = {"time__slots": list(range(130)), "time__slot_s": 60}
+  chunks = list(_iter_aggregate_time_filter_chunks(tkw, 3600))
+  assert [len(c["time__slots"]) for c in chunks] == [60, 60, 10]
+  assert all(c["time__slot_s"] == 60 for c in chunks)
+  left, right = _split_time_filter_for_timeout(chunks[2])
+  assert left == {"time__slots": [120, 121, 122, 123, 124], "time__slot_s": 60}
+  assert right["time__slot_s"] == 60 and len(right["time__slots"]) == 5
 
 
 def test_iter_queryset_values_dicts_yields_rows():
@@ -368,121 +378,6 @@ def test_iter_queryset_values_dicts_yields_rows():
   qs = FakeQs()
   got = list(iter_queryset_values_dicts(qs, "a", "b", chunk_size=1))
   assert got == [{"a": 1, "b": 2}, {"a": 3, "b": 4}]
-
-
-def test_strided_distinct_times_date_bin_postgresql_skips_distinct_when_sql_nonempty(
-  monkeypatch,
-):
-  """Grouped-max SQL path must not call the batched DISTINCT time enumerator."""
-  from datetime import timedelta
-
-  monkeypatch.setattr(connections["default"], "vendor", "postgresql")
-  distinct_calls = []
-
-  def fake_sql(*_a, **_k):
-    st = datetime(2025, 1, 1, 0, 0, tzinfo=UTC)
-    return [st, st + timedelta(seconds=30)]
-
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table._strided_distinct_times_date_bin_via_grouped_max_sql",
-    fake_sql,
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table._distinct_times_in_window_batched",
-    lambda *a, **k: distinct_calls.append(1),
-  )
-  st = datetime(2025, 1, 1, 0, 0, tzinfo=UTC)
-  en = st + timedelta(minutes=5)
-  out = _strided_distinct_times_date_bin_postgresql(
-    st, en, ["n1.example.com"], 64
-  )
-  assert out == [st, st + timedelta(seconds=30)]
-  assert distinct_calls == []
-
-
-def test_strided_distinct_times_date_bin_postgresql_falls_back_when_sql_empty(
-  monkeypatch,
-):
-  """When grouped-max SQL returns no rows, fall back to DISTINCT + Python bins."""
-  from datetime import timedelta
-
-  monkeypatch.setattr(connections["default"], "vendor", "postgresql")
-  distinct_calls = []
-  st = datetime(2025, 1, 1, 0, 0, tzinfo=UTC)
-
-  def fake_distinct(*_a, **_k):
-    distinct_calls.append(1)
-    return [st + timedelta(seconds=i) for i in range(10)]
-
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table._strided_distinct_times_date_bin_via_grouped_max_sql",
-    lambda *_a, **_k: [],
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table._distinct_times_in_window_batched",
-    fake_distinct,
-  )
-  en = st + timedelta(seconds=100)
-  out = _strided_distinct_times_date_bin_postgresql(
-    st, en, ["n1.example.com"], 8
-  )
-  assert distinct_calls == [1]
-  assert out
-  assert out[0] >= st
-  assert out[-1] <= en
-
-
-def test_strided_distinct_times_for_large_job_falls_back_to_fixed_window_points(
-  monkeypatch,
-):
-  """When SQL striding paths fail, return deterministic start/mid/end samples."""
-  from datetime import timedelta
-
-  from django.utils import timezone as django_tz
-
-  start = django_tz.now()
-  end = start + timedelta(minutes=30)
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table._strided_distinct_times_postgresql",
-    lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("timeout")),
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_large_job_time_sample_sql_mode",
-    lambda: "ntile",
-  )
-  sampled = _strided_distinct_times_for_large_job(
-    start, end, ["n1.example.com"], 64
-  )
-  assert sampled[0] == start
-  assert sampled[-1] == end
-  assert len(sampled) == 3
-
-
-def test_strided_distinct_times_for_large_job_degenerate_window_returns_start(
-  monkeypatch,
-):
-  """Fallback sample for zero-width windows is a single timestamp."""
-  from django.utils import timezone as django_tz
-
-  start = django_tz.now()
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table._strided_distinct_times_postgresql",
-    lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("timeout")),
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table.cfg.get_large_job_time_sample_sql_mode",
-    lambda: "ntile",
-  )
-  sampled = _strided_distinct_times_for_large_job(
-    start, start, ["n1.example.com"], 64
-  )
-  assert sampled == [start]
-
-
-def test_ntile_bucket_max_timestamps_ten_into_three_buckets():
-  """NTILE(3) over 10 ordered rows uses bucket sizes 4,3,3; maxima at last of each."""
-  ts = list(range(10))
-  assert _ntile_bucket_max_timestamps(ts, 3) == [3, 6, 9]
 
 
 def test_coerce_jid_table_host_query_batch_size_rejects_non_numeric_strings():
@@ -552,45 +447,6 @@ def test_iter_acct_host_batches_non_numeric_batch_size_uses_default_chunking():
   assert len(chunks) == 2
   assert len(chunks[0]) == JID_TABLE_HOST_QUERY_BATCH
   assert len(chunks[1]) == 5
-
-
-def test_distinct_times_in_window_batched_uses_host_chunks(monkeypatch):
-  """Strided-time prep runs one DISTINCT-time ORM query per host__in batch."""
-  chunk_lens = []
-
-  class FakeQS:
-    def __init__(self, n_hosts):
-      self._n_hosts = n_hosts
-
-    def values_list(self, *_a, **_k):
-      return self
-
-    def distinct(self):
-      chunk_lens.append(self._n_hosts)
-      return self
-
-    def __iter__(self):
-      return iter(())
-
-  class FakeManager:
-    def filter(self, **kwargs):
-      return FakeQS(len(kwargs["host__in"]))
-
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table._pg_relax_statement_timeout_for_large_job_time_sql",
-    nullcontext,
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data.objects",
-    FakeManager(),
-  )
-
-  n = JID_TABLE_HOST_QUERY_BATCH + 5
-  hosts = [f"h{i}.x" for i in range(n)]
-  _distinct_times_in_window_batched(1, 2, hosts)
-  assert len(chunk_lens) == 2
-  assert chunk_lens[0] == JID_TABLE_HOST_QUERY_BATCH
-  assert chunk_lens[1] == 5
 
 
 def test_is_statement_timeout_error_detects_operational_timeout():
@@ -683,7 +539,9 @@ def test_split_time_filter_for_timeout_bisects_time_in():
 
 
 def test_apply_large_job_sampling_uses_host_sample_budget(monkeypatch):
-  """5000x48x60 estimate must sample even when COUNT(*) is below 1.5M threshold."""
+  """5000x48x60 must thin even when the row estimate is small: 200 slots
+  (budget / hosts), one per window / 200, each LARGE_JOB_SLOT_S wide, and
+  no query picks the times."""
   from hpcperfstats.analysis.metrics.lib.gen import jid_table as jt_mod
 
   inst = jt_mod.jid_table.__new__(jt_mod.jid_table)
@@ -696,31 +554,23 @@ def test_apply_large_job_sampling_uses_host_sample_budget(monkeypatch):
     "time__gte": inst.start_time,
     "time__lte": inst.end_time,
   }
-  from datetime import timedelta as _td
-
-  sampled_times = [inst.start_time + _td(minutes=i * 15) for i in range(200)]
   monkeypatch.setattr(
-    jt_mod.cfg,
-    "get_plot_aggregate_max_host_time_points",
-    lambda: 1_000_000,
+    jt_mod.cfg, "get_plot_aggregate_max_host_time_points", lambda: 1_000_000
   )
   monkeypatch.setattr(jt_mod.cfg, "get_large_job_time_buckets", lambda: 2048)
   monkeypatch.setattr(
     jt_mod.cfg, "get_large_job_host_data_row_threshold", lambda: 1_500_000
   )
   monkeypatch.setattr(
-    jt_mod,
-    "_count_host_data_rows_for_window_cached",
-    lambda *_a, **_k: 1000,
-  )
-  monkeypatch.setattr(
-    jt_mod,
-    "_strided_distinct_times_for_large_job",
-    lambda *_a, **_k: sampled_times,
+    jt_mod, "_count_host_data_rows_for_window_cached", lambda *_a, **_k: 1000
   )
   jt_mod.jid_table._apply_large_job_time_sampling_if_needed(inst)
-  assert "time__in" in inst._base_filter
-  assert len(inst._base_filter["time__in"]) == 200
+  slots = inst._base_filter["time__slots"]
+  assert len(slots) == 200
+  assert inst._base_filter["time__slot_s"] == jt_mod.LARGE_JOB_SLOT_S == 60
+  assert slots[0] == inst.start_time
+  assert slots[1] - slots[0] == timedelta(minutes=14, seconds=24)
+  assert "time__in" not in inst._base_filter
   assert inst._large_job_plot_cache_token == "lb200"
 
 
@@ -840,7 +690,7 @@ def test_count_host_data_rows_for_window_estimates_without_count(monkeypatch):
       raise AssertionError("window COUNT(*) must not run")
 
   monkeypatch.setattr(
-    "hpcperfstats.analysis.metrics.lib.gen.jid_table.host_data.objects",
+    "hpcperfstats.site.lib.machine.models.host_data.objects",
     _NoCount(),
   )
   n = JID_TABLE_HOST_QUERY_BATCH + 5
@@ -941,12 +791,11 @@ def test_apply_large_job_sampling_skips_when_samples_fit_buckets(monkeypatch):
   )
 
   def _no_call(*_a, **_k):
-    raise AssertionError("row estimate / strided query must not run")
+    raise AssertionError("row estimate must not run")
 
   monkeypatch.setattr(
     jt_mod, "_count_host_data_rows_for_window_cached", _no_call
   )
-  monkeypatch.setattr(jt_mod, "_strided_distinct_times_for_large_job", _no_call)
   jt_mod.jid_table._apply_large_job_time_sampling_if_needed(inst)
   assert "time__in" not in inst._base_filter
   assert inst._large_job_plot_cache_token == "full"

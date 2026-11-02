@@ -629,7 +629,10 @@ INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
 # window has <= n_buckets samples; its strided query timed out and fell back
 # to a 3-point axis, so stored metrics / sample counts were wrong. The
 # corrected sample count changes the plot fingerprint, so plots rebuild too.
-METRICS_CONTRACT_VERSION = 2
+# 3 (2026-11-01): long jobs thin to per-host time slots (every host keeps
+# its own sample per slot) instead of one cross-host MAX(time) per bucket,
+# which matched about one host per bucket.
+METRICS_CONTRACT_VERSION = 3
 # ``no_data_reason`` written for catalog rows a backfill job never produced
 # after it exhausted the failure-memory backoff (daily step); the job is
 # stamped with the current version so the sweep does not spin on it.

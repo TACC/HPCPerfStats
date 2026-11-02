@@ -43,8 +43,8 @@ an empty queryset).
   jid_table sampling (see ``conf_parser``).
 
 Profiling lines are printed as ``stress_timing: ...``; the JSON report lists phases.
-When ``jid_table_init`` runs, additional phases ``jid_init_row_count_sql`` and
-``jid_init_strided_times_sql`` break out large-job gate SQL (skipped when below threshold).
+When ``jid_table_init`` runs, an additional phase ``jid_init_row_count_sql``
+breaks out the large-job row estimate (large-job time slots need no query).
 """
 from __future__ import annotations
 
@@ -209,7 +209,6 @@ def test_massive_host_data_stress_full_pipeline():
     invalidate_job_plot_cache_keys_for_jids([jid])
 
     _orig_row_count = jid_table_mod._count_host_data_rows_for_window
-    _orig_strided = jid_table_mod._strided_distinct_times_for_large_job
 
     def _wrap_row_count(*args, **kwargs):
       t0 = time.perf_counter()
@@ -221,24 +220,12 @@ def test_massive_host_data_stress_full_pipeline():
             time.perf_counter() - t0,
         )
 
-    def _wrap_strided(*args, **kwargs):
-      t0 = time.perf_counter()
-      try:
-        return _orig_strided(*args, **kwargs)
-      finally:
-        profiler.record_phase(
-            "jid_init_strided_times_sql",
-            time.perf_counter() - t0,
-        )
-
     def _jt():
       jid_table_mod._count_host_data_rows_for_window = _wrap_row_count
-      jid_table_mod._strided_distinct_times_for_large_job = _wrap_strided
       try:
         return jid_table_mod.jid_table(jid)
       finally:
         jid_table_mod._count_host_data_rows_for_window = _orig_row_count
-        jid_table_mod._strided_distinct_times_for_large_job = _orig_strided
 
     jt = profiler.phase("jid_table_init", _jt)
     _log("jid_table token={} hosts={}".format(

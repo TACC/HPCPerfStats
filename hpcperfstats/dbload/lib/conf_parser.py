@@ -5445,34 +5445,6 @@ def get_large_job_window_row_count_cache_ttl() -> Any:
     return 300
 
 
-def get_large_job_time_sample_sql_mode() -> Any:
-  """
-  How to pick strided sample timestamps for large jobs: ``ntile`` or.
-
-    ``date_bin``.
-
-  Default ``date_bin``: PostgreSQL uses per-stride-bucket ``MAX(time)`` queries
-  merged across host chunks (same stride grid as the legacy Python path),
-  avoiding a full-window batched ``DISTINCT time`` pass when that succeeds.
-  Set env ``HPCPERFSTATS_LARGE_JOB_TIME_SQL=ntile`` for the legacy index-space
-  stride (distinct times, equal-count buckets in Python).
-
-  Returns:
-    Any: Open return polymorphism from ``get_large_job_time_sample_sql_mode``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-
-  Examples:
-    >>> get_large_job_time_sample_sql_mode()  # doctest: +SKIP
-  """
-  env = os.environ.get("HPCPERFSTATS_LARGE_JOB_TIME_SQL", "").strip().lower()
-  if env in ("ntile",):
-    return "ntile"
-  if env in ("date_bin", "date-bin"):
-    return "date_bin"
-  return "date_bin"
-
-
 def get_live_distinct_use_legacy_hostlist() -> Any:
   """
   If True, ``LiveDistinctHostTimeCount`` unnests ``host_list`` (legacy).
