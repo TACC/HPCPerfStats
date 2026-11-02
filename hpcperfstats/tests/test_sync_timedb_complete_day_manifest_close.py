@@ -171,3 +171,30 @@ def test_sentinel_with_raw_not_in_tar_still_defers_the_seal(tmp_path):
     {str(tar): ["skip_merge_remaining_raw"]},
     True,
   )
+
+
+def test_job_entry_completeness_check_logs_stage_enter_first(
+  tmp_path, monkeypatch
+):
+  """The zst-only completeness check walks the raw tree: log it first.
+
+  hpcperfstats01 2026-11-02: 05-01, 06-20, 06-22 and 06-26 held day_close
+  slots for ~10 hours inside this check with nothing after their claim line.
+  """
+  day = "2020-02-03"
+  daily, _manifest = _zst_only_day_with_open_manifest(
+    tmp_path, day, "verification_complete"
+  )
+  lines = []
+
+  def _check(*_a, **_k):
+    assert any(
+      f"stage_enter day={day} stage=complete_check" in ln for ln in lines
+    )
+    return True
+
+  monkeypatch.setattr(
+    qo, "_day_close_live_ingest_or_populate", lambda *a, **k: False
+  )
+  monkeypatch.setattr(qo.jr, "day_close_is_complete", _check)
+  assert _run(daily, tmp_path, day, lines) == "complete"

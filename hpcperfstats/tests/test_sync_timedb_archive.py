@@ -4686,59 +4686,131 @@ def test_day_scoped_closed_raw_serializes_archive_wide_collect(
   monkeypatch,
   tmp_path,
 ):
-  """Concurrent day-close workers must not fan out full archive walks."""
+  """Concurrent day-close workers never run two archive walks at once.
+
+  hpcperfstats01 2026-11-02: four day_close slots (05-01, 06-20, 06-22,
+  06-26) sat 10 hours in day_close_is_complete, each waiting a process lock
+  to run its own walk of 1.4M raw files. Now one walk answers every day that
+  was waiting when it started.
+  """
   from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
 
   first_entered = threading.Event()
-  second_started = threading.Event()
-  second_entered = threading.Event()
   release_first = threading.Event()
-  calls = 0
-  calls_lock = threading.Lock()
+  active = 0
+  overlapped = []
+  walks = []
+  lock = threading.Lock()
 
-  def _collect(*_args, **_kwargs):
-    nonlocal calls
-    with calls_lock:
-      calls += 1
-      call_n = calls
-    if call_n == 1:
-      first_entered.set()
-      assert release_first.wait(timeout=2.0)
-    else:
-      second_entered.set()
-    return []
+  def _walk(directory, start, end, ext):
+    nonlocal active
+    with lock:
+      active += 1
+      overlapped.append(active > 1)
+      walks.append((start, end))
+      first = len(walks) == 1
+    try:
+      if first:
+        first_entered.set()
+        assert release_first.wait(timeout=5.0)
+      return []
+    finally:
+      with lock:
+        active -= 1
 
-  monkeypatch.setattr(helpers, "collect_stats_files_in_range", _collect)
+  monkeypatch.setattr(helpers, "_walk_closed_raw_records", _walk)
   daily = tmp_path / "daily"
   daily.mkdir()
   args = (str(tmp_path), ".cluster.test", str(daily))
-  first = threading.Thread(
-    target=helpers.build_day_scoped_closed_raw_by_gz,
-    args=(*args, str(daily / "2026-01-01.tar")),
-  )
 
-  def _run_second():
-    second_started.set()
-    helpers.build_day_scoped_closed_raw_by_gz(
-      *args,
-      str(daily / "2026-01-02.tar"),
+  def _day(token):
+    return threading.Thread(
+      target=helpers.build_day_scoped_closed_raw_by_gz,
+      args=(*args, str(daily / f"{token}.tar")),
     )
 
-  second = threading.Thread(
-    target=_run_second,
-  )
+  first = _day("2026-01-01")
   first.start()
-  assert first_entered.wait(timeout=1.0)
-  second.start()
-  assert second_started.wait(timeout=1.0)
-  overlapped = second_entered.wait(timeout=0.5)
+  assert first_entered.wait(timeout=2.0)
+  waiters = [_day(f"2026-01-0{n}") for n in (2, 3, 4)]
+  for t in waiters:
+    t.start()
+  deadline = time.monotonic() + 2.0
+  while (
+    len(helpers._DAY_SCOPED_CLOSED_RAW_WALK._pending) < 3
+    and time.monotonic() < deadline
+  ):
+    time.sleep(0.01)
   release_first.set()
-  first.join(timeout=2.0)
-  second.join(timeout=2.0)
+  for t in (first, *waiters):
+    t.join(timeout=5.0)
+    assert not t.is_alive()
+  assert not any(overlapped)
+  # The first walk, then one walk for the three days that waited on it.
+  assert len(walks) == 2
+  assert walks[1][0] == datetime(2026, 1, 2)
+  assert walks[1][1] == datetime(2026, 1, 5)
 
-  assert not overlapped
-  assert not first.is_alive() and not second.is_alive()
-  assert calls == 2
+
+def test_day_scoped_closed_raw_walk_splits_paths_by_day_and_shares_errors(
+  monkeypatch,
+  tmp_path,
+):
+  """Each day gets only its own files; a failed walk fails every request."""
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib.sync_timedb_stats_find import FindStatsRecord
+
+  host = tmp_path / f"c001{_ARCH_HOST_SUFFIX}"
+  host.mkdir()
+  recs = []
+  for day in (2, 3):
+    epoch = int(datetime(2026, 1, day, 12).timestamp())
+    path = host / str(epoch)
+    path.write_bytes(b"x")
+    recs.append(
+      FindStatsRecord(path=str(path), mtime=float(epoch), size=1, inode=day)
+    )
+  batch = {
+    1: (
+      str(tmp_path),
+      datetime(2026, 1, 2),
+      datetime(2026, 1, 3),
+      _ARCH_HOST_SUFFIX,
+    ),
+    2: (
+      str(tmp_path),
+      datetime(2026, 1, 3),
+      datetime(2026, 1, 4),
+      _ARCH_HOST_SUFFIX,
+    ),
+  }
+  monkeypatch.setattr(helpers, "_walk_closed_raw_records", lambda *_a: recs)
+  out = helpers._BatchedClosedRawWalk._walk(batch)
+  # Same answer each day's own walk gave (collect_stats_files_in_range).
+  from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
+    filter_and_sort_find_records,
+  )
+
+  for rid, (_d, start, end, ext) in batch.items():
+    assert out[rid] == [
+      r.path for r in filter_and_sort_find_records(recs, ext, start, end)
+    ]
+  assert out[1] == [recs[0].path]
+
+  def _boom(*_a):
+    raise OSError("fd exit 1")
+
+  monkeypatch.setattr(helpers, "_walk_closed_raw_records", _boom)
+  out = helpers._BatchedClosedRawWalk._walk(batch)
+  assert all(isinstance(v, OSError) for v in out.values())
+  with pytest.raises(OSError):
+    helpers._DAY_SCOPED_CLOSED_RAW_WALK.collect(
+      str(tmp_path),
+      datetime(2026, 1, 2),
+      datetime(2026, 1, 3),
+      _ARCH_HOST_SUFFIX,
+    )
+  assert not helpers._DAY_SCOPED_CLOSED_RAW_WALK._running
 
 
 def test_build_unprocessed_uses_find_backed_collect(monkeypatch, tmp_path):

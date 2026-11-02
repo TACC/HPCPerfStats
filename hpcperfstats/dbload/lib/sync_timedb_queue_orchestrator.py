@@ -2696,6 +2696,14 @@ def _run_day_close_job(
   except ValueError:
     return "skipped"
   min_age_h = _day_close_min_age_hours()
+  # Without an open tar this check walks the raw tree (shared batched walk):
+  # say so, or a slot waiting on it shows nothing after its claim line.
+  if not os.path.isfile(tar_path):
+    _log(
+      f"queue_orchestrator day_close stage_enter day={day_token} "
+      "stage=complete_check",
+      log_fn=log_fn,
+    )
   if jr.day_close_is_complete(
     tar_path,
     calendar_day=cal,

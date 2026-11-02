@@ -45,7 +45,8 @@ Attributes:
   _DAILY_TAR_BASENAME_RE: Attribute.
   _DAILY_ZST_BASENAME_RE: Attribute.
   _DAY_CLOSE_DISQUALIFY_CODES: Attribute.
-  _DAY_SCOPED_CLOSED_RAW_COLLECT_LOCK: Attribute.
+  _DAY_SCOPED_CLOSED_RAW_WALK: Shared batched raw-tree walk for
+    ``build_day_scoped_closed_raw_by_gz`` (``_BatchedClosedRawWalk``).
   _SEALING_TARS: Normalized daily ``.tar`` paths whose seal holds the write
     lock right now (in-process; see ``tar_sealing``).
   _SEALING_TARS_LOCK: Guards ``_SEALING_TARS``.
@@ -134,7 +135,6 @@ from hpcperfstats.dbload.lib.zstd_cli import (
   zstd_test,
 )
 
-_DAY_SCOPED_CLOSED_RAW_COLLECT_LOCK = threading.Lock()
 _SEALING_TARS: set[str] = set()
 _SEALING_TARS_LOCK = threading.Lock()
 
@@ -7824,6 +7824,193 @@ def build_remaining_raw_stats_by_daily_gz(
   return snapshot.remaining_raw_by_gz
 
 
+def _walk_closed_raw_records(
+  directory: str,
+  startdate: datetime,
+  enddate: datetime,
+  host_name_ext: str,
+) -> list[Any]:
+  """
+  Walk the whole raw tree once and keep the closed files in a date range.
+
+  Same walk ``collect_stats_files_in_range(..., force_full_scan=True)`` runs
+  (fd ``-X`` stat, no mtime window, active segments skipped), returning the
+  records so one walk can be split across several days.
+
+  Args:
+    directory (str): Archive data directory (raw tree root).
+    startdate (datetime): Inclusive range start (day midnight).
+    enddate (datetime): Range end (midnight after the last day).
+    host_name_ext (str): Host directory suffix filter.
+
+  Returns:
+    list[Any]: ``FindStatsRecord`` rows in range, oldest first.
+
+  Examples:
+    >>> _walk_closed_raw_records(
+    ...   "/nope", datetime(2026, 1, 1), datetime(2026, 1, 2), ""
+    ... )
+    []
+  """
+  if not (host_name_ext or "").strip():
+    return []
+  from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
+    discover_stats_records,
+  )
+
+  return discover_stats_records(
+    directory, startdate, enddate, host_name_ext, mtime_days=None
+  )
+
+
+class _BatchedClosedRawWalk:
+  """
+  Batch per-day closed-raw requests into one raw-tree walk at a time.
+
+  Every day close that needs a day's closed raw (completeness check, verify,
+  tar drop) used to walk the whole raw tree itself under a process lock, so N
+  waiting days cost N serial walks (hpcperfstats01 2026-11-02: 1.4M files,
+  four slots stuck about 10 hours). Now the first caller walks; callers that
+  arrive meanwhile queue, and when the walk ends one of them walks once for
+  all of them (the union of their date ranges) and each gets only its own
+  day's paths. A request is answered only by a walk that started after it
+  was made, so results are never older than the old per-day walk.
+
+  Attributes:
+    _cond (threading.Condition): Guards every field below.
+    _running (bool): A walk is in progress.
+    _pending (dict[int, tuple]): Request id -> (dir, start, end, ext) not yet
+      taken by a walk.
+    _done (dict[int, Any]): Request id -> paths list, or the exception the
+      walk raised; popped by the requester.
+    _next_id (int): Next request id.
+  """
+
+  def __init__(self) -> None:
+    """
+    Start with no walk running and no requests.
+
+    Returns:
+      None
+
+    Examples:
+      >>> _BatchedClosedRawWalk()._running
+      False
+    """
+    self._cond = threading.Condition()
+    self._running = False
+    self._pending: dict[int, tuple[str, datetime, datetime, str]] = {}
+    self._done: dict[int, Any] = {}
+    self._next_id = 0
+
+  def collect(
+    self,
+    directory: str,
+    startdate: datetime,
+    enddate: datetime,
+    host_name_ext: str,
+  ) -> list[str]:
+    """
+    Return closed raw paths in range from a walk that started after this call.
+
+    Args:
+      directory (str): Archive data directory.
+      startdate (datetime): Day midnight.
+      enddate (datetime): Midnight after the day.
+      host_name_ext (str): Host directory suffix filter.
+
+    Returns:
+      list[str]: Paths, oldest first (same as the per-day collect).
+
+    Raises:
+      out: Re-raises the exception (any ``Exception`` subclass, e.g. an fd
+        walk ``OSError``) the walk serving this request hit.
+
+    Examples:
+      >>> _BatchedClosedRawWalk().collect(
+      ...   "/nope", datetime(2026, 1, 1), datetime(2026, 1, 2), ""
+      ... )
+      []
+    """
+    with self._cond:
+      rid = self._next_id
+      self._next_id += 1
+      self._pending[rid] = (
+        str(directory),
+        startdate,
+        enddate,
+        str(host_name_ext or ""),
+      )
+      while rid not in self._done and self._running:
+        self._cond.wait()
+      batch = None
+      if rid not in self._done:
+        self._running = True
+        batch, self._pending = self._pending, {}
+    if batch is not None:
+      results: dict[int, Any] = {}
+      try:
+        results = self._walk(batch)
+      finally:
+        with self._cond:
+          for key in batch:
+            self._done[key] = results.get(
+              key, RuntimeError("closed raw walk aborted")
+            )
+          self._running = False
+          self._cond.notify_all()
+    with self._cond:
+      out = self._done.pop(rid)
+    if isinstance(out, BaseException):
+      raise out
+    return out
+
+  @staticmethod
+  def _walk(batch: dict[int, tuple[str, datetime, datetime, str]]) -> dict:
+    """
+    Walk once per (directory, suffix) and split the records per request.
+
+    Args:
+      batch (dict[int, tuple]): Request id -> (dir, start, end, ext).
+
+    Returns:
+      dict: Request id -> paths list, or the exception its walk raised.
+
+    Examples:
+      >>> _BatchedClosedRawWalk._walk({})
+      {}
+    """
+    from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
+      filter_and_sort_find_records,
+    )
+
+    groups: dict[tuple[str, str], list[int]] = defaultdict(list)
+    for rid, (directory, _start, _end, ext) in batch.items():
+      groups[(directory, ext)].append(rid)
+    out: dict[int, Any] = {}
+    for (directory, ext), rids in groups.items():
+      try:
+        records = _walk_closed_raw_records(
+          directory,
+          min(batch[rid][1] for rid in rids),
+          max(batch[rid][2] for rid in rids),
+          ext,
+        )
+        for rid in rids:
+          out[rid] = [
+            rec.path
+            for rec in filter_and_sort_find_records(
+              records, ext, batch[rid][1], batch[rid][2]
+            )
+          ]
+      except Exception as exc:
+        out.update(dict.fromkeys(rids, exc))
+    return out
+
+
+_DAY_SCOPED_CLOSED_RAW_WALK = _BatchedClosedRawWalk()
+
+
 def build_day_scoped_closed_raw_by_gz(
   archive_data_dir: str,
   host_name_ext: Any,
@@ -7876,15 +8063,9 @@ def build_day_scoped_closed_raw_by_gz(
     # ``ts > enddate`` filter (same as single-day ingest windows).
     day_start = datetime(day.year, day.month, day.day)
     day_end = day_start + timedelta(days=1)
-    with _DAY_SCOPED_CLOSED_RAW_COLLECT_LOCK:
-      paths = collect_stats_files_in_range(
-        archive_data_dir,
-        day_start,
-        day_end,
-        host_name_ext,
-        force_full_scan=True,
-        log_fn=None,
-      )
+    paths = _DAY_SCOPED_CLOSED_RAW_WALK.collect(
+      archive_data_dir, day_start, day_end, host_name_ext
+    )
   aligned = []
   for path in paths or ():
     if not path or not os.path.isfile(path):

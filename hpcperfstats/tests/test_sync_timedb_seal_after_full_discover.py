@@ -215,8 +215,9 @@ def test_unarchived_check_does_not_wait_on_the_shared_day_collect_lock(
 ):
   """04 2026-10-29: 08-27's seal waited 14+ min behind verify-pass collects."""
   daily, tar, nowhere = _day_raw(tmp_path, monkeypatch)
-  with ah._DAY_SCOPED_CLOSED_RAW_COLLECT_LOCK:
-    assert qo._closed_raw_not_archived(str(tmp_path), daily, tar) == [nowhere]
+  # A shared walk in progress would block any day-scoped collect forever.
+  monkeypatch.setattr(ah._DAY_SCOPED_CLOSED_RAW_WALK, "_running", True)
+  assert qo._closed_raw_not_archived(str(tmp_path), daily, tar) == [nowhere]
 
 
 def test_unarchived_check_fails_closed_on_an_unreadable_open_tar(
