@@ -94,7 +94,12 @@ def test_build_copy_sql_non_shared_scopes_to_job_rows():
   )
   assert sql.startswith("COPY (SELECT h.time, h.host, h.type, h.event, h.dev")
   assert "owned" not in sql
-  assert "(h.jid = %s OR h.dev = ('j:' || %s))" in sql
+  # hs04 2026-11-02: the bare ``h.jid = …`` filter let the planner pick the
+  # jid / dev indexes; COALESCE keeps the (host, time) index walk.
+  assert (
+    "(COALESCE(h.jid, '') = %s OR COALESCE(h.dev, '') = ('j:' || %s))" in sql
+  )
+  assert "h.jid = %s" not in sql
   assert sql.endswith("TO STDOUT (FORMAT BINARY)")
   assert params == [["a", "b"], T0, T0 + timedelta(hours=1), "77", "77"]
   assert "WHERE h.host = ANY(%s::text[])" in sql
@@ -242,6 +247,14 @@ def test_build_copy_sql_time_slots_join_keeps_each_host_sample():
   assert sql.count("%s") == len(params)
   assert params[:5] == ["77", "77", slots, 60, ["a", "b"]]
   assert params[-1] == ["host_cpu"]
+  # hs04 2026-11-02: without constant outer bounds Timescale cannot exclude
+  # chunks at plan time and a 1-host, 1-slot COPY scanned every chunk (120 s
+  # statement timeout with parallel workers).
+  assert "AND h.time >= %s AND h.time < %s AND" in sql
+  assert params[5:7] == [slots[0], slots[-1] + timedelta(seconds=60)]
+  # The owned SELECT column stays plain; only the WHERE scope is COALESCEd.
+  assert "((h.jid = %s OR h.dev = ('j:' || %s)))::int AS owned" in sql
+  assert sql.split(" WHERE ")[1].count("COALESCE(h.jid, '')") == 1
 
 
 def test_thinned_table_scales_fsio_delta_totals_by_slot_fraction():

@@ -21,6 +21,7 @@ Attributes:
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from datetime import timedelta
 from typing import Any
 
 from hpcperfstats.analysis.metrics.lib.columnar.jobframe import (
@@ -53,14 +54,17 @@ def _time_clause(time_filter: dict[str, Any] | None) -> tuple[str, list[Any]]:
 
   Supports ``time__in`` (exact sample times, golden / test tables) and
   ``time__gte`` with ``time__lte`` or ``time__lt`` (host x time chunks).
-  Large-job ``time__slots`` live in the FROM join (``_from_clause``).
+  Large-job ``time__slots`` select rows in the FROM join (``_from_clause``);
+  here they add the constant outer window ``[first, last + slot)`` so
+  Timescale excludes chunks at plan time (hs04: without it a 1-host,
+  1-slot COPY scanned every chunk and hit the statement timeout).
 
   Args:
     time_filter (dict[str, Any] | None): Django-style time kwargs.
 
   Returns:
     tuple[str, list[Any]]: ``(sql_fragment, params)``; ``("TRUE", [])`` for
-    an empty filter or slots.
+    an empty filter.
 
   Examples:
     >>> _time_clause({"time__gte": 1, "time__lt": 2})
@@ -68,8 +72,12 @@ def _time_clause(time_filter: dict[str, Any] | None) -> tuple[str, list[Any]]:
     >>> _time_clause({"time__in": [1, 2]})
     ('h.time = ANY(%s::timestamptz[])', [[1, 2]])
   """
-  if not time_filter or "time__slots" in time_filter:
+  if not time_filter:
     return "TRUE", []
+  if "time__slots" in time_filter:
+    slots = list(time_filter["time__slots"])
+    width = timedelta(seconds=int(time_filter["time__slot_s"]))
+    return "h.time >= %s AND h.time < %s", [min(slots), max(slots) + width]
   if "time__in" in time_filter:
     return "h.time = ANY(%s::timestamptz[])", [list(time_filter["time__in"])]
   parts: list[str] = []
@@ -159,6 +167,11 @@ def build_copy_sql(
   from_sql, from_params = _from_clause(time_filter)
   time_sql, time_params = _time_clause(time_filter)
   owned_sql = "(h.jid = %s OR h.dev = ('j:' || %s))"
+  # WHERE form: same rows, but COALESCE keeps the planner off the jid / dev
+  # indexes and on (host, time) (hs04 COPY timeouts, as in 4a0ce6bb probes).
+  where_owned = (
+    "(COALESCE(h.jid, '') = %s OR COALESCE(h.dev, '') = ('j:' || %s))"
+  )
   # Parameters follow placeholder order: SELECT list first (shared ``owned``
   # column), then FROM (large-job slots), then WHERE host / time / scope.
   if not job_scoped:
@@ -168,12 +181,12 @@ def build_copy_sql(
     tail: list[Any] = []
   elif shared:
     select = f"{COPY_SELECT_COLUMNS}, ({owned_sql})::int AS owned"
-    scope = f"({owned_sql} OR NOT (h.type = ANY(%s::text[])))"
+    scope = f"({where_owned} OR NOT (h.type = ANY(%s::text[])))"
     head = [jid, jid]
     tail = [jid, jid, list(job_scoped_types)]
   else:
     select = COPY_SELECT_COLUMNS
-    scope = owned_sql
+    scope = where_owned
     head = []
     tail = [jid, jid]
   params = [*head, *from_params, list(hosts), *time_params, *tail]
