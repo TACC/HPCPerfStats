@@ -20,21 +20,19 @@ This document summarizes how **thread/process counts** relate to **PostgreSQL `m
 
 **Ini reference:** optional tuning keys and defaults are documented in **`hpcperfstats.ini.example`** (one comment per key). The canonical list of wired options is **`INI_OPTION_REGISTRY`** in **`hpcperfstats/dbload/lib/conf_parser.py`**; drift tests in **`hpcperfstats/tests/test_hpcperfstats_ini_example.py`** keep the example aligned.
 
-## Archive zstd priority (shared hosts)
+## Archive zstd (shared hosts)
 
 Daily monitor archives are sealed inside the **`pipeline`** container. **`web`**, **`db`**, and **`pipeline`** share the same CPU scheduler and often the same physical disk (`postgres_data` vs `/data/hpcperfstats_data/site_data`).
 
 | `[PIPELINE]` key | Default | Role |
 |----------------|---------|------|
-| **`archive_zstd_threads`** | **`0`** | Niced seal/restore/decompress: **`0`** → zstd **`-T0`** (all logical cores per zstd process); **`N>0`** → explicit **`-TN`** |
-| **`ingest_zstd_threads`** | **`4`** | Un-niced ingest/populate sealed streams: **`4`** → **`-T4`**; **`0`** → **`-T0`** |
+| **`archive_zstd_threads`** | **`0`** | Seal/restore/archive decompress: **`0`** → zstd **`-T0`** (all logical cores per zstd process); **`N>0`** → explicit **`-TN`** |
+| **`ingest_zstd_threads`** | **`4`** | Ingest/populate sealed streams: **`4`** → **`-T4`**; **`0`** → **`-T0`** |
 | **`archive_seal_parallel_workers`** | **`4`** | Max concurrent daily tar seals during maintenance |
-| **`archive_zstd_nice`** | **`10`** | CPU deprioritization for archive (niced) zstd children (`0` disables) |
-| **`archive_zstd_ionice_class`** / **`archive_zstd_ionice_level`** | **`2`** / **`6`** | Best-effort I/O class; higher level yields disk to Postgres |
 | **`archive_zstd_level`** | **`7`** | Compression level; benchmark before raising above **9** |
 | **`sync_pipeline_drop_page_cache`** | **`yes`** | Linux-only **`posix_fadvise`** on pipeline file I/O (ingest streaming, archive zstd, tar paths); legacy **`archive_zstd_drop_page_cache`** when this key is omitted |
 
-**Tuning:** If seals are too slow, raise **`sync_day_close_max_inflight`** (parallel day-close workers, default **8**). If web/API or Postgres latency spikes during seal/zstd, raise **`archive_zstd_nice`** or **`archive_zstd_ionice_level`**. Override env **`SYNC_ARCHIVE_SEAL_WORKERS`** mirrors validation fanout.
+**Tuning:** If seals are too slow, raise **`sync_day_close_max_inflight`** (parallel day-close workers, default **8**). If web/API or Postgres latency spikes during seal/zstd, lower **`archive_seal_parallel_workers`** or **`archive_zstd_threads`**. Archive zstd runs at normal CPU and I/O priority: the `nice`/`ionice` wrapper (`archive_zstd_nice`, `archive_zstd_ionice_class`, `archive_zstd_ionice_level`) was removed 2026-11-02 because it stretched multi-TB seals past nine hours on a saturated shared volume, and space only comes back when a seal finishes; those INI keys are ignored. Override env **`SYNC_ARCHIVE_SEAL_WORKERS`** mirrors validation fanout.
 
 **Page cache:** Large daily archives and parallel ingest raw reads fill the Linux page cache. With **`sync_pipeline_drop_page_cache=yes`** (default), **`zstd_cli.py`** issues **`POSIX_FADV_SEQUENTIAL`** before large scans and **`POSIX_FADV_DONTNEED`** after one-shot paths and streaming read batches (not a substitute for lowering ingest pool width). Hint only (not **`O_DIRECT`**); macOS dev hosts no-op. **192g pipeline cgroup:** at **60%** file-cache admit, effective cap ≈ **117965 MiB** — tune via **`sync_cgroup_admit_max_file_cache_cgroup_pct`** only as an admit tripwire; primary relief is fadvise + P0 restart, not pool cuts. When the file-cache gate is sticky, empty-inflight **alone-progress** still admits one ingest/append job so fill cannot deadlock at `local_inflight=0`.
 

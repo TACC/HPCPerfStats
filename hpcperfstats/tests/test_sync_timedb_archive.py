@@ -5532,67 +5532,35 @@ def test_ingest_does_not_write_decompress_artifacts(monkeypatch, tmp_path):
   assert not [p for p in spool.rglob("*") if p.is_file()]
 
 
-@pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
-def test_sealed_stream_uses_zstd_priority_wrap(monkeypatch, tmp_path):
-  zst_p, _tar_p = _write_sealed_daily_archive(tmp_path, day="2024-03-10")
-  wrap_calls = []
-  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
-
-  real_cmd = helpers._gnu_sealed_decompress_cmd
-
-  def _spy_cmd(path, thread_count, *, apply_priority_wrap=True):
-    wrap_calls.append(apply_priority_wrap)
-    return real_cmd(
-      path,
-      thread_count,
-      apply_priority_wrap=apply_priority_wrap,
-    )
-
-  monkeypatch.setattr(helpers, "_gnu_sealed_decompress_cmd", _spy_cmd)
-  list(iter_sealed_daily_archive_member_lines(zst_p))
-  assert wrap_calls
-  assert all(v is True for v in wrap_calls)
-
-
-def test_zstd_thread_count_for_wrap_splits_ingest_and_archive(monkeypatch):
+def test_zstd_thread_count_for_splits_ingest_and_archive(monkeypatch):
   from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
 
   monkeypatch.setattr(helpers, "get_archive_zstd_thread_count", lambda: 0)
   monkeypatch.setattr(helpers, "get_ingest_zstd_thread_count", lambda: 4)
-  assert helpers.zstd_thread_count_for_wrap(True) == 0
-  assert helpers.zstd_thread_count_for_wrap(False) == 4
+  assert helpers.zstd_thread_count_for(True) == 0
+  assert helpers.zstd_thread_count_for(False) == 4
 
 
 @pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")
-def test_unniced_stream_uses_ingest_zstd_thread_count(monkeypatch, tmp_path):
+def test_ingest_stream_uses_ingest_zstd_thread_count(monkeypatch, tmp_path):
   zst_p, _tar_p = _write_sealed_daily_archive(tmp_path, day="2024-03-12")
   thread_calls = []
   from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
 
   real_cmd = helpers._gnu_sealed_decompress_cmd
 
-  def _spy_cmd(path, thread_count, *, apply_priority_wrap=True):
-    thread_calls.append((thread_count, apply_priority_wrap))
-    return real_cmd(
-      path,
-      thread_count,
-      apply_priority_wrap=apply_priority_wrap,
-    )
+  def _spy_cmd(path, thread_count):
+    thread_calls.append(thread_count)
+    return real_cmd(path, thread_count)
 
   monkeypatch.setattr(helpers, "get_archive_zstd_thread_count", lambda: 0)
   monkeypatch.setattr(helpers, "get_ingest_zstd_thread_count", lambda: 4)
   monkeypatch.setattr(helpers, "_gnu_sealed_decompress_cmd", _spy_cmd)
-  helpers._stream_compressed_archive_members(
-    zst_p,
-    apply_priority_wrap=False,
-  )
-  assert thread_calls == [(4, False)]
+  helpers._stream_compressed_archive_members(zst_p, archive_threads=False)
+  assert thread_calls == [4]
   thread_calls.clear()
-  helpers._stream_compressed_archive_members(
-    zst_p,
-    apply_priority_wrap=True,
-  )
-  assert thread_calls == [(0, True)]
+  helpers._stream_compressed_archive_members(zst_p, archive_threads=True)
+  assert thread_calls == [0]
 
 
 @pytest.mark.skipif(not shutil.which("zstd"), reason="zstd not on PATH")

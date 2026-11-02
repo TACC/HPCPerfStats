@@ -475,20 +475,11 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Hours after local midnight to retain today's uncompressed .tar when global keep is off (default 24).
 # archive_today_uncompressed_tar_grace_hours = 24
 
-# zstd -T thread count for niced seal/restore/decompress; 0 uses -T0 (all cores per job, default).
+# zstd -T thread count for seal/restore/archive decompress; 0 uses -T0 (all cores per job, default).
 # archive_zstd_threads = 0
 
-# zstd -T for un-niced ingest/populate sealed streams (default 4).
+# zstd -T for ingest/populate sealed streams (default 4).
 # ingest_zstd_threads = 4
-
-# Added nice for archive zstd subprocesses; 0 disables (default 10).
-# archive_zstd_nice = 10
-
-# ionice class for archive zstd: 0=none, 2=best-effort, 3=idle (default 2).
-# archive_zstd_ionice_class = 2
-
-# ionice level within class for archive zstd, 0-7 (default 6).
-# archive_zstd_ionice_level = 6
 
 # Max concurrent daily tar seals during maintenance (default 4).
 # archive_seal_parallel_workers = 4

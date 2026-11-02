@@ -316,7 +316,7 @@ def test_sealed_on_member_lock_hold_after_shared_lock(tmp_path, monkeypatch):
   monkeypatch.setattr(
     helpers,
     "_run_gnu_tvf_file_members",
-    lambda _p, *, apply_priority_wrap=True: ([("h/1", 4)], 0, ""),
+    lambda _p, *, archive_threads=True: ([("h/1", 4)], 0, ""),
   )
   monkeypatch.setattr(helpers, "detect_compressed_format", lambda _p: "zst")
   seen = []
@@ -357,7 +357,7 @@ def test_sealed_on_member_lock_hold_in_stream_early_exit(tmp_path, monkeypatch):
   monkeypatch.setattr(
     helpers,
     "_run_gnu_tvf_file_members",
-    lambda _p, *, apply_priority_wrap=True: ([("h/1", 4)], 0, ""),
+    lambda _p, *, archive_threads=True: ([("h/1", 4)], 0, ""),
   )
   monkeypatch.setattr(helpers, "detect_compressed_format", lambda _p: "zst")
 

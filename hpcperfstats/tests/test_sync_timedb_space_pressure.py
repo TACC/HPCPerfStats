@@ -26,7 +26,6 @@ from hpcperfstats.dbload.lib import (
   sync_timedb_job_store as jq,
   sync_timedb_queue_orchestrator as qo,
   sync_timedb_space_pressure as sp,
-  zstd_cli,
 )
 from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 
@@ -1023,23 +1022,3 @@ def test_try_submit_none_means_blocked(monkeypatch, tmp_path):
     )
     == 0
   )
-
-
-def test_seal_compress_drops_priority_wrapper_under_pressure(
-  monkeypatch, tmp_path
-):
-  seen = {}
-
-  def fake_run(cmd, *, apply_priority_wrap=True, **_k):
-    seen["wrap"] = apply_priority_wrap
-    return subprocess.CompletedProcess(cmd, 0, "", "")
-
-  monkeypatch.setattr(zstd_cli, "_run_zstd", fake_run)
-  tar = tmp_path / "2026-09-07.tar"
-  tar.write_bytes(b"x")
-  _set(monkeypatch, threshold=TIB, free=TIB // 2)
-  zstd_cli.zstd_compress_tar_to_file(str(tar), str(tar) + ".zst.tmp", 1, 3)
-  assert seen["wrap"] is False
-  _set(monkeypatch, threshold=TIB, free=3 * TIB)
-  zstd_cli.zstd_compress_tar_to_file(str(tar), str(tar) + ".zst.tmp", 1, 3)
-  assert seen["wrap"] is True

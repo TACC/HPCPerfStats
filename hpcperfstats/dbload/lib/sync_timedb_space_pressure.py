@@ -30,9 +30,7 @@ it has 2X free. Under pressure:
   uses it today (ingest prewarm passes no restore days). Day close and
   repair restores (``finish``) and appends keep the hard reserve
   (``sync_archive_min_free_bytes``) plus room for the later reseal, net of
-  the bytes other admitted work has reserved (``reserve`` / ``reserving``);
-- seal compression runs without the nice/ionice wrapper so appends cannot
-  starve day close.
+  the bytes other admitted work has reserved (``reserve`` / ``reserving``).
 
 INV-NEG: a held append day clears when a day close gives space back,
 retries after ``DAY_CLOSE_START_GRACE_S`` without one, and pressure itself ends at 2X

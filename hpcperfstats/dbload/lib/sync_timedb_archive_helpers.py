@@ -166,22 +166,25 @@ def get_ingest_zstd_thread_count() -> Any:
   return cfg.get_ingest_zstd_threads()
 
 
-def zstd_thread_count_for_wrap(apply_priority_wrap: Any) -> Any:
+def zstd_thread_count_for(archive_threads: bool) -> int:
   """
-  Niced archive paths use ``archive_zstd_threads``; un-niced ingest uses.
+  Pick the zstd ``-T`` count for an archive or an ingest decompress.
 
-    ``ingest_zstd_threads``.
+  Archive work (seal, restore, census scans) uses ``archive_zstd_threads``
+  (default 0, all cores); ingest/populate sealed streams use
+  ``ingest_zstd_threads`` (default 4) so many workers cannot each take every
+  core.
 
   Args:
-    apply_priority_wrap (Any): Apply priority wrap passed to this helper.
+    archive_threads (bool): True for archive work, False for ingest/populate.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    int: Thread count for ``zstd -T``.
 
   Examples:
-    >>> zstd_thread_count_for_wrap(None)  # doctest: +SKIP
+    >>> zstd_thread_count_for(False)  # doctest: +SKIP
   """
-  if apply_priority_wrap:
+  if archive_threads:
     return get_archive_zstd_thread_count()
   return get_ingest_zstd_thread_count()
 
@@ -5089,7 +5092,7 @@ def _sealed_archive_member_has_exact_size(
     readable, _, _, _stream_error = _stream_compressed_archive_members(
       sealed_path,
       on_member,
-      apply_priority_wrap=False,
+      archive_threads=False,
       defer_on_member=False,
     )
     if not readable:
@@ -5374,7 +5377,6 @@ def classify_sealed_archive_stream_failure(
       zstd_cli.zstd_test(
         sealed_path,
         get_ingest_zstd_thread_count(),
-        apply_priority_wrap=False,
       )
       detail = stream_detail or "tar stream unreadable"
       return SKIP_KIND_TAR_TRUNCATED, detail
@@ -5761,7 +5763,7 @@ def _stream_compressed_archive_members(
   compressed_path: str,
   on_member: Any | None = None,
   *,
-  apply_priority_wrap: bool = True,
+  archive_threads: bool = True,
   already_locked: bool = False,
   defer_on_member: bool = True,
 ) -> Any:
@@ -5778,7 +5780,7 @@ def _stream_compressed_archive_members(
   Args:
     compressed_path (str): String for compressed path.
     on_member (Any | None): One of ``Any``, ``None``.
-    apply_priority_wrap (bool): Boolean flag for apply priority wrap.
+    archive_threads (bool): Archive (True) or ingest (False) zstd threads.
     already_locked (bool): Skip the shared fnctl wait when the caller already
     holds the exclusive write lock on ``compressed_path``.
     defer_on_member (bool): Invoke ``on_member`` after releasing the shared
@@ -5809,7 +5811,7 @@ def _stream_compressed_archive_members(
     with lock_cm:
       tvf_rows, rc, stderr_text = _run_gnu_tvf_file_members(
         compressed_path,
-        apply_priority_wrap=apply_priority_wrap,
+        archive_threads=archive_threads,
       )
       if rc != 0:
         err = RuntimeError(
@@ -5854,7 +5856,7 @@ def _stream_compressed_archive_members(
 def _scan_compressed_archive_members_and_readable(
   compressed_path: str,
   *,
-  apply_priority_wrap: bool = True,
+  archive_threads: bool = True,
   already_locked: bool = False,
 ) -> Any:
   """
@@ -5862,7 +5864,7 @@ def _scan_compressed_archive_members_and_readable(
 
   Args:
     compressed_path (str): String for compressed path.
-    apply_priority_wrap (bool): Boolean flag for apply priority wrap.
+    archive_threads (bool): Archive (True) or ingest (False) zstd threads.
     already_locked (bool): Skip the shared fnctl wait when the caller already
     holds the exclusive write lock on ``compressed_path``.
 
@@ -5875,7 +5877,7 @@ def _scan_compressed_archive_members_and_readable(
   readable, members, _duplicates, _stream_error = (
     _stream_compressed_archive_members(
       compressed_path,
-      apply_priority_wrap=apply_priority_wrap,
+      archive_threads=archive_threads,
       already_locked=already_locked,
     )
   )
@@ -5885,7 +5887,7 @@ def _scan_compressed_archive_members_and_readable(
 def _sealed_archive_members_via_store_or_scan(
   sealed_path: str,
   *,
-  apply_priority_wrap: bool = True,
+  archive_threads: bool = True,
 ) -> Any:
   """
   Return ``(readable, members)`` for sealed-side raw-removal / validation reads.
@@ -5913,8 +5915,8 @@ def _sealed_archive_members_via_store_or_scan(
 
   Args:
     sealed_path (str): String for sealed path.
-    apply_priority_wrap (bool): Whether the direct sealed scan may wrap the
-      decompress in the I/O priority helper.
+    archive_threads (bool): Use ``archive_zstd_threads`` (True) or
+      ``ingest_zstd_threads`` (False) for a direct sealed scan.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -5936,7 +5938,7 @@ def _sealed_archive_members_via_store_or_scan(
     before = archive_identity(sealed_path)
     readable, members = _scan_compressed_archive_members_and_readable(
       sealed_path,
-      apply_priority_wrap=apply_priority_wrap,
+      archive_threads=archive_threads,
     )
     if readable:
       write_sealed_member_map(
@@ -6427,8 +6429,6 @@ def restore_tar_from_sealed_if_unreadable(
 def _gnu_sealed_decompress_cmd(
   archive_path: str,
   thread_count: Any,
-  *,
-  apply_priority_wrap: bool = True,
 ) -> list[str] | None:
   """
   Build ``zstd -d -c`` argv for a sealed ``.tar.zst`` / ``.tar.gz``.
@@ -6436,7 +6436,6 @@ def _gnu_sealed_decompress_cmd(
   Args:
     archive_path (str): Sealed archive path.
     thread_count (Any): Zstd ``-T`` thread count for the decompress child.
-    apply_priority_wrap (bool): When True, wrap with archive nice/ionice.
 
   Returns:
     list[str] | None: Decompress command argv, or ``None`` when unsupported.
@@ -6449,44 +6448,37 @@ def _gnu_sealed_decompress_cmd(
   if fmt not in ("zst", "gz"):
     return None
   from hpcperfstats.dbload.lib.zstd_cli import (
-    _maybe_wrap_zstd_cmd,
     _thread_args,
     zstd_executable,
   )
 
   zstd_bin = zstd_executable()
   if fmt == "zst" and shutil.which("zstd"):
-    return _maybe_wrap_zstd_cmd(
-      [
-        zstd_bin,
-        "-d",
-        "-c",
-        *_thread_args(thread_count),
-        "-q",
-        archive_path,
-      ],
-      apply_priority_wrap=apply_priority_wrap,
-    )
+    return [
+      zstd_bin,
+      "-d",
+      "-c",
+      *_thread_args(thread_count),
+      "-q",
+      archive_path,
+    ]
   if fmt == "gz" and zstd_gzip_supported():
-    return _maybe_wrap_zstd_cmd(
-      [
-        zstd_bin,
-        "-d",
-        "--format=gzip",
-        "-c",
-        *_thread_args(thread_count),
-        "-q",
-        archive_path,
-      ],
-      apply_priority_wrap=apply_priority_wrap,
-    )
+    return [
+      zstd_bin,
+      "-d",
+      "--format=gzip",
+      "-c",
+      *_thread_args(thread_count),
+      "-q",
+      archive_path,
+    ]
   return None
 
 
 def _run_gnu_tvf_file_members(
   tar_path: str,
   *,
-  apply_priority_wrap: bool = True,
+  archive_threads: bool = True,
 ) -> tuple[list[tuple[str, int]], int, str]:
   """
   Run ``tar tvf`` (plain or sealed decompress pipe) and parse file members.
@@ -6494,7 +6486,7 @@ def _run_gnu_tvf_file_members(
   Args:
     tar_path (str): Uncompressed daily ``.tar`` or sealed ``.tar.zst`` /
       ``.tar.gz``.
-    apply_priority_wrap (bool): Nice/ionice wrap for sealed zstd decompress.
+    archive_threads (bool): Archive (True) or ingest (False) zstd threads.
 
   Returns:
     tuple[list[tuple[str, int]], int, str]: Occurrences ``(name, size)`` in
@@ -6514,8 +6506,7 @@ def _run_gnu_tvf_file_members(
   if fmt in ("zst", "gz"):
     decompress_cmd = _gnu_sealed_decompress_cmd(
       tar_path,
-      zstd_thread_count_for_wrap(apply_priority_wrap),
-      apply_priority_wrap=apply_priority_wrap,
+      zstd_thread_count_for(archive_threads),
     )
     if decompress_cmd is None:
       return [], 1, "unsupported compressed archive format"
@@ -6610,7 +6601,6 @@ def _run_gnu_tf_member_names(archive_path: str) -> tuple[list[str], int, str]:
     decompress_cmd = _gnu_sealed_decompress_cmd(
       archive_path,
       get_archive_zstd_thread_count(),
-      apply_priority_wrap=True,
     )
     if decompress_cmd is None:
       return [], 1, "unsupported compressed archive format"
@@ -7053,7 +7043,7 @@ def _populate_members_from_sealed_scan(
     _stream_compressed_archive_members(
       sealed_path,
       on_member,
-      apply_priority_wrap=False,
+      archive_threads=False,
       defer_on_member=True,
     )
   )
@@ -9637,7 +9627,7 @@ def _gnu_tar_extract_named_member(
   extract_dir: str,
   *,
   from_zst: bool = False,
-  apply_priority_wrap: bool = True,
+  archive_threads: bool = True,
 ) -> bool:
   """
   Extract one named member with GNU/BSD ``tar -x`` (sealed via ``zstd -d -c``).
@@ -9648,7 +9638,7 @@ def _gnu_tar_extract_named_member(
     extract_dir (str): Destination directory for the member file.
     from_zst (bool): True when caller knows ``source_path`` is sealed zst
       (also auto-detected from path suffix).
-    apply_priority_wrap (bool): Nice/ionice wrap for sealed zstd decompress.
+    archive_threads (bool): Archive (True) or ingest (False) zstd threads.
 
   Returns:
     bool: True when tar extract exited 0.
@@ -9668,8 +9658,7 @@ def _gnu_tar_extract_named_member(
   if use_pipe:
     decompress_cmd = _gnu_sealed_decompress_cmd(
       source_path,
-      zstd_thread_count_for_wrap(apply_priority_wrap),
-      apply_priority_wrap=apply_priority_wrap,
+      zstd_thread_count_for(archive_threads),
     )
     if decompress_cmd is None:
       return False
@@ -10318,7 +10307,7 @@ def reconcile_open_tar_with_sealed_zst(
   if zst_exists:
     zst_readable, zst_members = _sealed_archive_members_via_store_or_scan(
       zst_path,
-      apply_priority_wrap=False,
+      archive_threads=False,
     )
   action, reason = classify_daily_tar_zst_reconcile(
     tar_members,
@@ -10746,7 +10735,7 @@ def _iter_sealed_daily_archive_spooled_members(
   """
   tvf_rows, rc, stderr_text = _run_gnu_tvf_file_members(
     sealed_path,
-    apply_priority_wrap=True,
+    archive_threads=True,
   )
   if rc != 0:
     raise RuntimeError(
@@ -10775,7 +10764,7 @@ def _iter_sealed_daily_archive_spooled_members(
       sealed_path,
       member_name,
       spool_root,
-      apply_priority_wrap=True,
+      archive_threads=True,
     ):
       if on_member_skipped is not None:
         on_member_skipped()

@@ -133,7 +133,7 @@ def _log_archive_ingest_startup(
     >>> _log_archive_ingest_startup(None, None)  # doctest: +SKIP
   """
   log_print(
-    f"sync_timedb_archive: pool_processes={_archive_worker_process_count()} zstd_threads={cfg.get_archive_zstd_threads()} ionice=c{cfg.get_archive_zstd_ionice_class()}-n{cfg.get_archive_zstd_ionice_level()} nice={cfg.get_archive_zstd_nice()} sealed_days={sealed_days} skipped_tar_only={skipped_tar_only} max_concurrent_sealed={cfg.get_sync_timedb_archive_max_concurrent_sealed_days()}",
+    f"sync_timedb_archive: pool_processes={_archive_worker_process_count()} zstd_threads={cfg.get_archive_zstd_threads()} sealed_days={sealed_days} skipped_tar_only={skipped_tar_only} max_concurrent_sealed={cfg.get_sync_timedb_archive_max_concurrent_sealed_days()}",
     flush=True,
   )
 

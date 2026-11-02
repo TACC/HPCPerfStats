@@ -203,9 +203,6 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "archive_zstd_threads"),
   ("PIPELINE", "ingest_zstd_threads"),
   ("PIPELINE", "archive_zstd_level"),
-  ("PIPELINE", "archive_zstd_nice"),
-  ("PIPELINE", "archive_zstd_ionice_class"),
-  ("PIPELINE", "archive_zstd_ionice_level"),
   ("PIPELINE", "archive_zstd_drop_page_cache"),
   ("PIPELINE", "sync_pipeline_drop_page_cache"),
   ("PIPELINE", "archive_seal_parallel_workers"),
@@ -401,9 +398,6 @@ INI_OPTION_DEFAULTS = {
   "archive_zstd_threads": "0",
   "ingest_zstd_threads": "4",
   "archive_zstd_level": "7",
-  "archive_zstd_nice": "10",
-  "archive_zstd_ionice_class": "2",
-  "archive_zstd_ionice_level": "6",
   "archive_zstd_drop_page_cache": "yes",
   "sync_pipeline_drop_page_cache": "yes",
   "archive_seal_parallel_workers": "4",
@@ -1248,7 +1242,7 @@ def get_archive_zstd_threads() -> Any:
 
 def get_ingest_zstd_threads() -> Any:
   """
-  zstd ``-T`` for un-niced ingest/populate sealed streams. Default 4 (-T4).
+  zstd ``-T`` for ingest/populate sealed streams. Default 4 (-T4).
 
   Returns:
     Any: Open return polymorphism from ``get_ingest_zstd_threads``: concrete
@@ -1265,73 +1259,6 @@ def get_ingest_zstd_threads() -> Any:
     legacy_sections=("PORTAL",),
   )
   return max(0, int(raw))
-
-
-def get_archive_zstd_nice() -> Any:
-  """
-  Added nice for archive zstd child processes (0 disables). Default 10.
-
-  Returns:
-    Any: Open return polymorphism from ``get_archive_zstd_nice``: concrete
-    type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-
-  Examples:
-    >>> get_archive_zstd_nice()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  raw = _ini_get_from_registry(
-    "PIPELINE",
-    "archive_zstd_nice",
-    legacy_sections=("PORTAL",),
-  )
-  return max(0, int(raw))
-
-
-def get_archive_zstd_ionice_class() -> Any:
-  """
-  I/O scheduling class for archive zstd (0=none, 2=best-effort, 3=idle).
-
-    Default.
-
-    2.
-
-  Returns:
-    Any: Open return polymorphism from ``get_archive_zstd_ionice_class``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-
-  Examples:
-    >>> get_archive_zstd_ionice_class()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  raw = _ini_get_from_registry(
-    "PIPELINE",
-    "archive_zstd_ionice_class",
-    legacy_sections=("PORTAL",),
-  )
-  return max(0, min(3, int(raw)))
-
-
-def get_archive_zstd_ionice_level() -> Any:
-  """
-  I/O priority level within class for archive zstd (0-7). Default 6.
-
-  Returns:
-    Any: Open return polymorphism from ``get_archive_zstd_ionice_level``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-
-  Examples:
-    >>> get_archive_zstd_ionice_level()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  raw = _ini_get_from_registry(
-    "PIPELINE",
-    "archive_zstd_ionice_level",
-    legacy_sections=("PORTAL",),
-  )
-  return max(0, min(7, int(raw)))
 
 
 def get_sync_pipeline_drop_page_cache() -> Any:

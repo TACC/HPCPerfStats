@@ -3,7 +3,6 @@ Run zstd for daily archive compress/decompress (native .zst and --format=gzip).
 
 Attributes:
   _GZIP_FORMAT: Attribute.
-  _PRIORITY_TOOLS_WARNED: Attribute.
 """
 
 from __future__ import annotations
@@ -35,7 +34,6 @@ from hpcperfstats.dbload.lib.sync_timedb_tar_clone_append import (
 )
 
 _GZIP_FORMAT = ("--format=gzip",)
-_PRIORITY_TOOLS_WARNED = False
 
 
 def _page_cache_hints_enabled() -> bool:
@@ -261,25 +259,6 @@ def _thread_args(thread_count: int) -> list[str]:
   return [f"-T{max(1, int(thread_count))}"]
 
 
-def _archive_zstd_priority_settings() -> Any:
-  """
-  Internal helper to archive the zstd priority settings.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _archive_zstd_priority_settings()  # doctest: +SKIP
-  """
-  from hpcperfstats.dbload.lib import conf_parser as cfg_mod
-
-  return (
-    cfg_mod.get_archive_zstd_nice(),
-    cfg_mod.get_archive_zstd_ionice_class(),
-    cfg_mod.get_archive_zstd_ionice_level(),
-  )
-
-
 def zstd_thread_cli_args(thread_count: int) -> list[str]:
   """
   Zstd thread cli args.
@@ -294,92 +273,6 @@ def zstd_thread_cli_args(thread_count: int) -> list[str]:
     >>> zstd_thread_cli_args(0)  # doctest: +SKIP
   """
   return _thread_args(thread_count)
-
-
-def _wrap_zstd_cmd(cmd: list[str]) -> list[str]:
-  """
-  Prefix archive zstd with ionice/nice when configured and tools exist.
-
-  Args:
-    cmd (list[str]): Sequence for cmd.
-
-  Returns:
-    list[str]: list[str] produced by this call.
-
-  Examples:
-    >>> _wrap_zstd_cmd([])  # doctest: +SKIP
-  """
-  global _PRIORITY_TOOLS_WARNED
-  nice_inc, ionice_class, ionice_level = _archive_zstd_priority_settings()
-  prefix: list[str] = []
-  if ionice_class in (1, 2, 3):
-    ionice_bin = shutil.which("ionice")
-    if ionice_bin:
-      prefix.extend(
-        [
-          ionice_bin,
-          f"-c{int(ionice_class)}",
-          f"-n{max(0, min(7, int(ionice_level)))}",
-        ]
-      )
-    elif not _PRIORITY_TOOLS_WARNED:
-      log_print(
-        "archive zstd: ionice not on PATH; skipping I/O priority wrapper",
-        flush=True,
-      )
-      _PRIORITY_TOOLS_WARNED = True
-  if nice_inc > 0:
-    nice_bin = shutil.which("nice")
-    if nice_bin:
-      prefix.extend([nice_bin, f"-n{int(nice_inc)}"])
-    elif not _PRIORITY_TOOLS_WARNED:
-      log_print(
-        "archive zstd: nice not on PATH; skipping CPU priority wrapper",
-        flush=True,
-      )
-      _PRIORITY_TOOLS_WARNED = True
-  if prefix:
-    return prefix + list(cmd)
-  return list(cmd)
-
-
-def wrap_archive_zstd_cmd(cmd: list[str]) -> list[str]:
-  """
-  Wrap archive zstd cmd.
-
-  Args:
-    cmd (list[str]): Sequence for cmd.
-
-  Returns:
-    list[str]: list[str] produced by this call.
-
-  Examples:
-    >>> wrap_archive_zstd_cmd([])  # doctest: +SKIP
-  """
-  return _wrap_zstd_cmd(cmd)
-
-
-def _maybe_wrap_zstd_cmd(
-  cmd: list[str],
-  *,
-  apply_priority_wrap: bool,
-) -> list[str]:
-  """
-  Internal helper to handle maybe wrap zstd cmd.
-
-  Args:
-    cmd (list[str]): Sequence for cmd.
-    apply_priority_wrap (bool): Boolean flag for apply priority wrap.
-
-  Returns:
-    list[str]: list[str] produced by this call.
-
-  Examples:
-    >>> _maybe_wrap_zstd_cmd([], True)  # doctest: +SKIP
-  """
-  if apply_priority_wrap:
-    return _wrap_zstd_cmd(cmd)
-  return list(cmd)
 
 
 def _tar_list_executable() -> str:
@@ -452,8 +345,6 @@ def _tar_readable_via_decompress_tar_pipe(
 def zstd_compressed_archive_pipe_readable(
   compressed_path: str,
   thread_count: int,
-  *,
-  apply_priority_wrap: bool = True,
 ) -> bool:
   """
   Return True when ``zstd -d -c | tar tf -`` succeeds for a sealed daily.
@@ -463,13 +354,12 @@ def zstd_compressed_archive_pipe_readable(
   Args:
     compressed_path (str): String for compressed path.
     thread_count (int): Integer value for thread count.
-    apply_priority_wrap (bool): Boolean flag for apply priority wrap.
 
   Returns:
     bool: True or False for this check.
 
   Examples:
-    >>> zstd_compressed_archive_pipe_readable("x", 0, True)  # doctest: +SKIP
+    >>> zstd_compressed_archive_pipe_readable("x", 0)  # doctest: +SKIP
   """
   if not os.path.isfile(compressed_path):
     return False
@@ -477,17 +367,14 @@ def zstd_compressed_archive_pipe_readable(
   if compressed_path.endswith(DAILY_ARCHIVE_ZST_SUFFIX) and shutil.which(
     "zstd"
   ):
-    cmd = _maybe_wrap_zstd_cmd(
-      [
-        zstd_executable(),
-        "-d",
-        "-c",
-        *_thread_args(thread_count),
-        "-q",
-        compressed_path,
-      ],
-      apply_priority_wrap=apply_priority_wrap,
-    )
+    cmd = [
+      zstd_executable(),
+      "-d",
+      "-c",
+      *_thread_args(thread_count),
+      "-q",
+      compressed_path,
+    ]
     return _tar_readable_via_decompress_tar_pipe(
       cmd,
       tar_bin,
@@ -496,18 +383,15 @@ def zstd_compressed_archive_pipe_readable(
   if (
     compressed_path.endswith(DAILY_ARCHIVE_GZ_SUFFIX) and zstd_gzip_supported()
   ):
-    cmd = _maybe_wrap_zstd_cmd(
-      [
-        zstd_executable(),
-        "-d",
-        "--format=gzip",
-        "-c",
-        *_thread_args(thread_count),
-        "-q",
-        compressed_path,
-      ],
-      apply_priority_wrap=apply_priority_wrap,
-    )
+    cmd = [
+      zstd_executable(),
+      "-d",
+      "--format=gzip",
+      "-c",
+      *_thread_args(thread_count),
+      "-q",
+      compressed_path,
+    ]
     return _tar_readable_via_decompress_tar_pipe(
       cmd,
       tar_bin,
@@ -518,8 +402,6 @@ def zstd_compressed_archive_pipe_readable(
 
 def _run_zstd(
   cmd: list[str],
-  *,
-  apply_priority_wrap: bool = True,
   **kwargs: Any,
 ) -> Any:
   """
@@ -527,7 +409,6 @@ def _run_zstd(
 
   Args:
     cmd (list[str]): Sequence for cmd.
-    apply_priority_wrap (bool): Boolean flag for apply priority wrap.
     **kwargs (Any): Extra keyword arguments forwarded to the wrapped API; keys
     and value types match that callee's signature.
 
@@ -535,18 +416,16 @@ def _run_zstd(
     Any: Value produced by this call (type depends on inputs).
 
   Examples:
-    >>> _run_zstd([], True)  # doctest: +SKIP
+    >>> _run_zstd(["zstd", "--version"], check=False)  # doctest: +SKIP
   """
   return subprocess.run(
-    _maybe_wrap_zstd_cmd(cmd, apply_priority_wrap=apply_priority_wrap),
+    cmd,
     **kwargs,
   )
 
 
 def _popen_zstd(
   cmd: list[str],
-  *,
-  apply_priority_wrap: bool = True,
   **kwargs: Any,
 ) -> subprocess.Popen:
   """
@@ -554,7 +433,6 @@ def _popen_zstd(
 
   Args:
     cmd (list[str]): Sequence for cmd.
-    apply_priority_wrap (bool): Boolean flag for apply priority wrap.
     **kwargs (Any): Extra keyword arguments forwarded to the wrapped API; keys
     and value types match that callee's signature.
 
@@ -562,10 +440,10 @@ def _popen_zstd(
     subprocess.Popen: subprocess.Popen produced by this call.
 
   Examples:
-    >>> _popen_zstd([], True)  # doctest: +SKIP
+    >>> _popen_zstd(["zstd", "--version"])  # doctest: +SKIP
   """
   return subprocess.Popen(
-    _maybe_wrap_zstd_cmd(cmd, apply_priority_wrap=apply_priority_wrap),
+    cmd,
     **kwargs,
   )
 
@@ -656,7 +534,7 @@ def _decompress_to_path(
   # DE-8: output-byte progress + idle kill (process group SIGTERM, grace,
   # SIGKILL, reap) so a hung restore cannot hold the restore token forever.
   result = run_subprocess_with_progress(
-    _maybe_wrap_zstd_cmd(cmd, apply_priority_wrap=True),
+    cmd,
     progress_path=output_path,
     stage="zstd_decompress",
     metric="bytes",
@@ -955,7 +833,6 @@ def _wait_decompress_proc(proc: subprocess.Popen, args: list) -> None:
 def _decompress_stdout(
   cmd: list[str],
   *,
-  apply_priority_wrap: bool = True,
   input_path: str | None = None,
 ) -> Iterator[BinaryIO]:
   """
@@ -963,7 +840,6 @@ def _decompress_stdout(
 
   Args:
     cmd (list[str]): Sequence for cmd.
-    apply_priority_wrap (bool): Boolean flag for apply priority wrap.
     input_path (str | None): One of ``str``, ``None``.
 
   Yields:
@@ -973,7 +849,7 @@ def _decompress_stdout(
     RuntimeError: When the child stdout pipe is missing.
 
   Examples:
-    >>> _decompress_stdout([], True, None)  # doctest: +SKIP
+    >>> _decompress_stdout(["zstd", "-dc", "x.zst"])  # doctest: +SKIP
   """
   if input_path:
     _advise_sequential_read(input_path)
@@ -981,7 +857,6 @@ def _decompress_stdout(
     cmd,
     stdout=subprocess.PIPE,
     stderr=subprocess.DEVNULL,
-    apply_priority_wrap=apply_priority_wrap,
   )
   if proc.stdout is None:
     raise RuntimeError("subprocess stdout pipe missing")
@@ -1031,8 +906,6 @@ def zstd_decompress_verbose(
 def zstd_decompress_stdout(
   zst_path: str,
   thread_count: int,
-  *,
-  apply_priority_wrap: bool = True,
 ) -> Iterator[BinaryIO]:
   """
   Zstd decompress stdout.
@@ -1040,13 +913,12 @@ def zstd_decompress_stdout(
   Args:
     zst_path (str): String for zst path.
     thread_count (int): Integer value for thread count.
-    apply_priority_wrap (bool): Boolean flag for apply priority wrap.
 
   Yields:
     Iterator[BinaryIO]: Iterator[BinaryIO] produced by this call.
 
   Examples:
-    >>> zstd_decompress_stdout("x", 0, True)  # doctest: +SKIP
+    >>> zstd_decompress_stdout("x.tar.zst", 0)  # doctest: +SKIP
   """
   cmd = [
     zstd_executable(),
@@ -1058,7 +930,6 @@ def zstd_decompress_stdout(
   ]
   with _decompress_stdout(
     cmd,
-    apply_priority_wrap=apply_priority_wrap,
     input_path=zst_path,
   ) as stdout:
     yield stdout
@@ -1067,8 +938,6 @@ def zstd_decompress_stdout(
 def zstd_test(
   zst_path: str,
   thread_count: int,
-  *,
-  apply_priority_wrap: bool = True,
 ) -> subprocess.CompletedProcess:
   """
   Zstd test.
@@ -1076,7 +945,6 @@ def zstd_test(
   Args:
     zst_path (str): String for zst path.
     thread_count (int): Integer value for thread count.
-    apply_priority_wrap (bool): Boolean flag for apply priority wrap.
 
   Returns:
     subprocess.CompletedProcess: subprocess.CompletedProcess produced by this
@@ -1087,7 +955,7 @@ def zstd_test(
     ``subprocess.CalledProcessError`` failure path.
 
   Examples:
-    >>> zstd_test("x", 0, True)  # doctest: +SKIP
+    >>> zstd_test("x.tar.zst", 0)  # doctest: +SKIP
   """
   _advise_sequential_read(zst_path)
   cmd = [
@@ -1102,7 +970,6 @@ def zstd_test(
     capture_output=True,
     text=True,
     check=False,
-    apply_priority_wrap=apply_priority_wrap,
   )
   if result.returncode != 0:
     raise subprocess.CalledProcessError(
@@ -1154,8 +1021,6 @@ def zstd_gzip_decompress_verbose(
 def zstd_gzip_decompress_stdout(
   gz_path: str,
   thread_count: int,
-  *,
-  apply_priority_wrap: bool = True,
 ) -> Iterator[BinaryIO]:
   """
   Zstd gzip decompress stdout.
@@ -1163,13 +1028,12 @@ def zstd_gzip_decompress_stdout(
   Args:
     gz_path (str): String for gz path.
     thread_count (int): Integer value for thread count.
-    apply_priority_wrap (bool): Boolean flag for apply priority wrap.
 
   Yields:
     Iterator[BinaryIO]: Iterator[BinaryIO] produced by this call.
 
   Examples:
-    >>> zstd_gzip_decompress_stdout("x", 0, True)  # doctest: +SKIP
+    >>> zstd_gzip_decompress_stdout("x.tar.gz", 0)  # doctest: +SKIP
   """
   cmd = [
     zstd_executable(),
@@ -1182,7 +1046,6 @@ def zstd_gzip_decompress_stdout(
   ]
   with _decompress_stdout(
     cmd,
-    apply_priority_wrap=apply_priority_wrap,
     input_path=gz_path,
   ) as stdout:
     yield stdout
@@ -1385,11 +1248,6 @@ def zstd_compress_tar_to_file(
     f"--size-hint={int(tar_bytes)}",
     tar_path,
   ]
-  from hpcperfstats.dbload.lib import sync_timedb_space_pressure as space
-
-  # Under space pressure the seal gives space back: drop nice/ionice so the
-  # appends it waits behind cannot starve it.
-  priority_wrap = not space.under_pressure(tar_path)
   if tgz_archive_dir:
     import hpcperfstats.dbload.lib.conf_parser as cfg
     from hpcperfstats.dbload.lib.sync_timedb_progress_io import (
@@ -1400,7 +1258,6 @@ def zstd_compress_tar_to_file(
 
     proc = _popen_zstd(
       cmd,
-      apply_priority_wrap=priority_wrap,
       stdout=subprocess.PIPE,
       stderr=subprocess.PIPE,
       start_new_session=True,
@@ -1487,7 +1344,6 @@ def zstd_compress_tar_to_file(
     # seal passes ``tgz_archive_dir`` and uses progress + idle kill above.
     result = _run_zstd(
       cmd,
-      apply_priority_wrap=priority_wrap,
       capture_output=True,
       text=True,
       check=False,

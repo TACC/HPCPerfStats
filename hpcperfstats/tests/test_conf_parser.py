@@ -278,16 +278,21 @@ def test_get_worker_process_count(temp_ini, monkeypatch):
   assert cfg.get_worker_process_count(8) == 1  # 4//8 = 0 -> clamped to 1
 
 
-def test_get_archive_zstd_priority_defaults(temp_ini, monkeypatch):
+def test_archive_zstd_nice_ionice_keys_are_retired(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
 
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
-  assert cfg.get_archive_zstd_nice() == 10
-  assert cfg.get_archive_zstd_ionice_class() == 2
-  assert cfg.get_archive_zstd_ionice_level() == 6
+  for key in (
+    "archive_zstd_nice",
+    "archive_zstd_ionice_class",
+    "archive_zstd_ionice_level",
+  ):
+    assert key not in cfg.INI_OPTION_DEFAULTS
+    assert ("PIPELINE", key) not in cfg._INI_OPTION_REGISTRY_KEYS
+    assert not hasattr(cfg, f"get_{key}")
   assert cfg.get_archive_seal_parallel_workers() == 4
   assert cfg.get_archive_zstd_drop_page_cache() is True
 

@@ -17,7 +17,6 @@ from hpcperfstats.dbload.lib.zstd_cli import (
   decompress_compressed_to_tar,
   drop_page_cache_for_fd,
   drop_page_cache_for_paths,
-  wrap_archive_zstd_cmd,
   zstd_compress_tar_to_file,
   zstd_decompress_stdout,
   zstd_decompress_verbose,
@@ -38,63 +37,54 @@ def test_zstd_thread_cli_args_positive():
   assert zstd_thread_cli_args(4) == ["-T4"]
 
 
-def test_wrap_archive_zstd_cmd_adds_ionice_and_nice(monkeypatch):
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.zstd_cli._archive_zstd_priority_settings",
-    lambda: (10, 2, 6),
-  )
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.zstd_cli.shutil.which",
-    lambda name: (
-      f"/usr/bin/{name}" if name in ("ionice", "nice", "zstd") else None
-    ),
-  )
-  wrapped = wrap_archive_zstd_cmd(["/usr/bin/zstd", "-T0", "-q", "x.zst"])
-  assert wrapped[0:8] == [
-    "/usr/bin/ionice",
-    "-c2",
-    "-n6",
-    "/usr/bin/nice",
-    "-n10",
-    "/usr/bin/zstd",
-    "-T0",
-    "-q",
-  ]
-  assert wrapped[8] == "x.zst"
+def test_archive_zstd_never_runs_under_nice_or_ionice(monkeypatch, tmp_path):
+  """Seal, test and stream zstd run as plain zstd, never nice/ionice.
 
+  hpcperfstats01 2026-11-02: four multi-TB seals under ``ionice -c2 -n6`` and
+  ``nice -n10`` ran 9+ hours on a saturated shared volume while the space they
+  free only comes back when the seal ends; the wrapper was removed.
+  """
+  import hpcperfstats.dbload.lib.zstd_cli as zc
 
-def test_ingest_member_scan_zstd_without_nice(monkeypatch):
-  captured = []
+  monkeypatch.setattr(zc.shutil, "which", lambda name: f"/usr/bin/{name}")
+  argvs = []
+  real_popen = subprocess.Popen
 
-  def _fake_popen(cmd, stdout, stderr, apply_priority_wrap=True):
-    captured.append((cmd, apply_priority_wrap))
-    proc = subprocess.Popen(
-      ["echo"],
-      stdout=subprocess.PIPE,
-      stderr=subprocess.DEVNULL,
+  def _fake_run(cmd, *args, **kwargs):
+    argvs.append(list(cmd))
+    return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+  def _fake_popen(cmd, *args, **kwargs):
+    argvs.append(list(cmd))
+    return real_popen(
+      ["echo"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
     )
-    return proc
 
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.zstd_cli._popen_zstd",
-    _fake_popen,
-  )
-  with zstd_decompress_stdout("/tmp/day.tar.zst", 0, apply_priority_wrap=False):
-    pass
-  assert captured
-  cmd, wrapped = captured[0]
-  assert wrapped is False
-  assert cmd[0] == zstd_executable()
-  assert "nice" not in cmd[:3]
-
-
-def test_wrap_archive_zstd_cmd_skips_when_disabled(monkeypatch):
-  monkeypatch.setattr(
-    "hpcperfstats.dbload.lib.zstd_cli._archive_zstd_priority_settings",
-    lambda: (0, 0, 0),
-  )
-  base = ["/usr/bin/zstd", "-d", "x.zst"]
-  assert wrap_archive_zstd_cmd(base) == base
+  tar_path = tmp_path / "day.tar"
+  tar_path.write_bytes(b"payload")
+  with (
+    patch.object(zc.subprocess, "run", side_effect=_fake_run),
+    patch.object(zc.subprocess, "Popen", side_effect=_fake_popen),
+  ):
+    zstd_compress_tar_to_file(
+      str(tar_path), str(tmp_path / "day.tar.zst"), 0, 7
+    )
+    zstd_test(str(tmp_path / "day.tar.zst"), 0)
+    with zstd_decompress_stdout(str(tmp_path / "day.tar.zst"), 0):
+      pass
+  assert len(argvs) == 3
+  for argv in argvs:
+    assert argv[0] == zstd_executable()
+    assert not {"/usr/bin/nice", "/usr/bin/ionice", "nice", "ionice"} & set(
+      argv
+    )
+  for gone in (
+    "wrap_archive_zstd_cmd",
+    "_wrap_zstd_cmd",
+    "_maybe_wrap_zstd_cmd",
+    "_archive_zstd_priority_settings",
+  ):
+    assert not hasattr(zc, gone)
 
 
 def test_zstd_compress_tar_to_file_uses_t0_when_thread_count_zero(
@@ -314,7 +304,7 @@ def test_zstd_test_applies_page_cache_hints_on_linux(monkeypatch, tmp_path):
     lambda p: dropped.append(p),
   )
 
-  def _fake_run(cmd, *args, apply_priority_wrap=True, **kwargs):
+  def _fake_run(cmd, *args, **kwargs):
     return subprocess.CompletedProcess(cmd, 0)
 
   with patch(
