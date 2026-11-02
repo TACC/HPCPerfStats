@@ -315,3 +315,44 @@ def test_forced_whole_archive_pass_clears_the_boot_flag(tmp_path, monkeypatch):
     mtime_days=None,
   )
   assert not qo._BOOT_FULL_DISCOVER_PENDING.is_set()
+
+
+def test_seal_slot_cap_counts_tars_and_frees_on_release(monkeypatch):
+  """At most archive_seal_parallel_workers tars seal at once, process-wide."""
+  monkeypatch.setattr(ah.cfg, "get_archive_seal_parallel_workers", lambda: 2)
+  a, b, c = "/d/2020-01-01.tar", "/d/2020-01-02.tar", "/d/2020-01-03.tar"
+  try:
+    assert ah.try_claim_seal_slot(a)
+    assert ah.try_claim_seal_slot(b)
+    assert not ah.try_claim_seal_slot(c)
+    ah.release_seal_slot(a)
+    assert ah.try_claim_seal_slot(c)
+  finally:
+    for t in (a, b, c):
+      ah.release_seal_slot(t)
+  assert not ah._SEAL_SLOTS_HELD
+
+
+def test_seal_yields_its_day_close_slot_while_the_seal_cap_is_full(
+  tmp_path, monkeypatch
+):
+  """hpcperfstats01 2026-11-02: four multi-TB seals shared one saturated
+  volume (~50 MB/s each); none freed space for 6+ hours. With the cap full
+  the day yields (no attempt bump) instead of starting another seal or
+  holding a day_close slot while it waits.
+  """
+  claim, calls, logs = _seal_harness(tmp_path, monkeypatch)
+  monkeypatch.setattr(ah.cfg, "get_archive_seal_parallel_workers", lambda: 1)
+  other = "/other/2020-01-09.tar"
+  assert ah.try_claim_seal_slot(other)
+  try:
+    assert claim() == "yielded"
+    assert calls == []
+    assert any(
+      "stage=seal result=yielded reason=seal_slot_busy" in m for m in logs
+    )
+  finally:
+    ah.release_seal_slot(other)
+  claim()
+  assert calls == [False]
+  assert not ah._SEAL_SLOTS_HELD

@@ -50,6 +50,8 @@ Attributes:
   _SEALING_TARS: Normalized daily ``.tar`` paths whose seal holds the write
     lock right now (in-process; see ``tar_sealing``).
   _SEALING_TARS_LOCK: Guards ``_SEALING_TARS``.
+  _SEAL_SLOTS_HELD: Normalized daily ``.tar`` paths holding one of the
+    ``archive_seal_parallel_workers`` process-wide seal slots.
   _DEFERRED_PREWARM_FLUSH_HOOK: Attribute.
   _FNCTL_POPULATE_RETRY_DELAYS_S: Attribute.
   _INGEST_SKIPPED_CALENDAR_DAYS: Attribute.
@@ -137,6 +139,7 @@ from hpcperfstats.dbload.lib.zstd_cli import (
 
 _SEALING_TARS: set[str] = set()
 _SEALING_TARS_LOCK = threading.Lock()
+_SEAL_SLOTS_HELD: set[str] = set()
 
 
 @contextlib.contextmanager
@@ -170,6 +173,53 @@ def tar_sealing(tar_path: str) -> Iterator[None]:
   finally:
     with _SEALING_TARS_LOCK:
       _SEALING_TARS.discard(key)
+
+
+def try_claim_seal_slot(tar_path: str) -> bool:
+  """
+  Take one of the ``archive_seal_parallel_workers`` process-wide seal slots.
+
+  Seals are disk-bound: on a saturated shared volume four multi-TB seals at
+  ~50 MB/s each freed nothing for 6+ hours (hpcperfstats01 2026-11-02),
+  while the same seals one or two at a time free each tar's space sooner for
+  the same total time. Non-blocking, so a day close that cannot seal now
+  yields its slot instead of waiting. A tar already holding a slot gets it
+  again (no second slot).
+
+  Args:
+    tar_path (str): Daily ``.tar`` path about to be sealed.
+
+  Returns:
+    bool: True when the tar holds a slot; release with ``release_seal_slot``.
+
+  Examples:
+    >>> try_claim_seal_slot("/d/2026-07-30.tar")  # doctest: +SKIP
+    True
+  """
+  key = os.path.normpath(str(tar_path or ""))
+  cap = max(1, int(cfg.get_archive_seal_parallel_workers()))
+  with _SEALING_TARS_LOCK:
+    if key not in _SEAL_SLOTS_HELD and len(_SEAL_SLOTS_HELD) >= cap:
+      return False
+    _SEAL_SLOTS_HELD.add(key)
+    return True
+
+
+def release_seal_slot(tar_path: str) -> None:
+  """
+  Give back the seal slot ``try_claim_seal_slot`` took (no-op when none).
+
+  Args:
+    tar_path (str): Daily ``.tar`` path.
+
+  Returns:
+    None
+
+  Examples:
+    >>> release_seal_slot("/d/2026-07-30.tar")
+  """
+  with _SEALING_TARS_LOCK:
+    _SEAL_SLOTS_HELD.discard(os.path.normpath(str(tar_path or "")))
 
 
 def tar_seal_in_progress(tar_path: str) -> bool:

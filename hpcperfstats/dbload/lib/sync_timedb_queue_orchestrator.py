@@ -148,8 +148,10 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   calendar_date_from_daily_tar_path,
   daily_tar_path_for_stats_path,
   get_tar_member_name,
+  release_seal_slot,
   restore_restorable_quarantines,
   tar_seal_in_progress,
+  try_claim_seal_slot,
 )
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
   _rate_limited_day_info_log,
@@ -3242,28 +3244,36 @@ def _run_day_close_job(
     # (04 2026-10-28: sealed while 4k-20k handed-off files were still being
     # appended; zstd read a growing tar). Decide the deferral here instead.
     seal_deferred = raw_remains_for_seal and not seal_with_raw
-    space.note_day_close_stage(identity, "seal")
-    tar_before = os.path.isfile(tar_path)
-    sealed_before = archive_identity(tar_path + ".zst")
-    seal_failed = (
-      []
-      if seal_deferred
-      else seal_dirty_daily_archives(
-        tgz_archive_dir,
-        local_tz=get_local_timezone(),
-        zstd_threads=get_archive_zstd_threads(),
-        compress_level=get_archive_zstd_level(),
-        keep_uncompressed_tar=(
-          get_archive_keep_uncompressed_tar() or raw_remains_for_seal
-        ),
-        idle_seconds=0,
-        seal_immediately_if_dirty=True,
-        only_daily_tar_paths={tar_path},
-        only_when_no_remaining_raw=not seal_with_raw,
-        remaining_raw_by_gz=remaining_for_seal,
-        log_fn=quiet,
+    # Seals share the disk: past archive_seal_parallel_workers the day yields
+    # (no attempt bump) and its slot goes to work that is not a seal.
+    if not seal_deferred and not try_claim_seal_slot(tar_path):
+      _stage_exit("seal", result="yielded", reason="seal_slot_busy")
+      return "yielded"
+    try:
+      space.note_day_close_stage(identity, "seal")
+      tar_before = os.path.isfile(tar_path)
+      sealed_before = archive_identity(tar_path + ".zst")
+      seal_failed = (
+        []
+        if seal_deferred
+        else seal_dirty_daily_archives(
+          tgz_archive_dir,
+          local_tz=get_local_timezone(),
+          zstd_threads=get_archive_zstd_threads(),
+          compress_level=get_archive_zstd_level(),
+          keep_uncompressed_tar=(
+            get_archive_keep_uncompressed_tar() or raw_remains_for_seal
+          ),
+          idle_seconds=0,
+          seal_immediately_if_dirty=True,
+          only_daily_tar_paths={tar_path},
+          only_when_no_remaining_raw=not seal_with_raw,
+          remaining_raw_by_gz=remaining_for_seal,
+          log_fn=quiet,
+        )
       )
-    )
+    finally:
+      release_seal_slot(tar_path)
     if archive_identity(tar_path + ".zst") != sealed_before:
       note_fn = getattr(day_state, "note_sealed_archive_changed", None)
       if callable(note_fn):
@@ -3357,19 +3367,25 @@ def _run_day_close_job(
         remaining_for_reseal = (
           remaining_fn(tar_path) if callable(remaining_fn) else {}
         )
-      reseal_failed = seal_dirty_daily_archives(
-        tgz_archive_dir,
-        local_tz=get_local_timezone(),
-        zstd_threads=get_archive_zstd_threads(),
-        compress_level=get_archive_zstd_level(),
-        keep_uncompressed_tar=get_archive_keep_uncompressed_tar(),
-        idle_seconds=0,
-        seal_immediately_if_dirty=True,
-        only_daily_tar_paths={tar_path},
-        only_when_no_remaining_raw=True,
-        remaining_raw_by_gz=remaining_for_reseal,
-        log_fn=quiet,
-      )
+      if not try_claim_seal_slot(tar_path):
+        _stage_exit("seal", result="yielded", reason="seal_slot_busy")
+        return "yielded"
+      try:
+        reseal_failed = seal_dirty_daily_archives(
+          tgz_archive_dir,
+          local_tz=get_local_timezone(),
+          zstd_threads=get_archive_zstd_threads(),
+          compress_level=get_archive_zstd_level(),
+          keep_uncompressed_tar=get_archive_keep_uncompressed_tar(),
+          idle_seconds=0,
+          seal_immediately_if_dirty=True,
+          only_daily_tar_paths={tar_path},
+          only_when_no_remaining_raw=True,
+          remaining_raw_by_gz=remaining_for_reseal,
+          log_fn=quiet,
+        )
+      finally:
+        release_seal_slot(tar_path)
       failed = tar_path in (reseal_failed or ())
       _stage_exit(
         "seal",
