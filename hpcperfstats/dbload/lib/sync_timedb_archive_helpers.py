@@ -6127,7 +6127,8 @@ def ensure_daily_tar_restored_for_append(
     zstd_threads (Any): Zstd threads passed to this helper.
     wait_for_other_owner (bool): Boolean flag for wait for other owner.
     space_gate (str): Required. ``growth`` (denied under space pressure),
-      ``finish`` (day close; hard reserve only) or ``off`` (append path,
+      ``finish`` (day close; hard reserve, and under pressure the restore
+      slot: one sealed day expanded at a time) or ``off`` (append path,
       gated at dispatch).
 
   Returns:
@@ -6142,21 +6143,24 @@ def ensure_daily_tar_restored_for_append(
     return True
   if not sp.admit_restore(tar_path, space_gate):
     return sp.SPACE_DENIED
-  zst_path, gz_path = compressed_sibling_paths(tar_path)
-  remove_compressed = _decompress_should_unlink_compressed(tar_path)
-  sealed = (
-    zst_path
-    if os.path.isfile(zst_path)
-    else (gz_path if os.path.isfile(gz_path) else "")
-  )
-  if sealed:
-    log_print(
-      f"INFO: archive decompress restore begin tar={tar_path} from={sealed} remove_compressed={remove_compressed}",
-      flush=True,
-    )
-  # The append path ("off") holds its own reservation from dispatch.
+  # The append path ("off") holds its own reservation from dispatch. Any
+  # other admitted restore already holds a provisional ``restore:<tar>``
+  # reservation (the restore slot); ``reserving`` takes it over with the
+  # same key immediately, so an exception below cannot strand the slot.
   need = 0 if space_gate == "off" else sp.restore_bytes_estimate(tar_path)
   with sp.reserving(f"restore:{tar_path}", need, tar_path=tar_path):
+    zst_path, gz_path = compressed_sibling_paths(tar_path)
+    remove_compressed = _decompress_should_unlink_compressed(tar_path)
+    sealed = (
+      zst_path
+      if os.path.isfile(zst_path)
+      else (gz_path if os.path.isfile(gz_path) else "")
+    )
+    if sealed:
+      log_print(
+        f"INFO: archive decompress restore begin tar={tar_path} from={sealed} remove_compressed={remove_compressed}",
+        flush=True,
+      )
     for sealed_src in (zst_path, gz_path):
       if not os.path.isfile(sealed_src):
         continue

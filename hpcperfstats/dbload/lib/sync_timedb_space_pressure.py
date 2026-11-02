@@ -5,7 +5,18 @@ Archive free-space pressure for sync_timedb: growth yields to day close.
 starts when the daily archive filesystem has less than X free and lasts until
 it has 2X free. Under pressure:
 
-- appends wait while any day close is finishing a day (a stage in
+- appends that cannot grow the filesystem do not wait: a reflink clone
+  append to a day whose open ``.tar`` already exists (or a new tar) writes
+  only headers (``sync_timedb_tar_clone_append``); the orchestrator
+  classifies each parked day and only passes the rest (days that need a
+  restore from their sealed copy, or whose data would be copied) to
+  ``select_append_day``;
+- at most one sealed day is expanded at a time (the **restore slot**): an
+  append restore or a ``growth`` / ``finish`` restore is refused while
+  another day's restore is in flight or its restored ``.tar`` is still on
+  disk (``note_expansion``; the slot clears when that tar is sealed away
+  or dropped, or the restore failed);
+- gated appends (restore or copy) wait while any day close is finishing a day (a stage in
   ``FINISHING_STAGES``; the checks, pre-seal verify batches and the seal's
   own yield checks do not count);
 - otherwise one day at a time (the oldest parked day whose next batch fits)
@@ -25,7 +36,11 @@ it has 2X free. Under pressure:
 
 INV-NEG: a held append day clears when a day close gives space back,
 retries after ``DAY_CLOSE_START_GRACE_S`` without one, and pressure itself ends at 2X
-free (day close frees space and is never gated here).
+free (day close frees space and is never gated here). A busy restore slot
+clears when the expanded day's tar is sealed away or dropped (its own day
+close, never gated here: its appends are clone appends once the tar
+exists) or its restore fails; a refused restore defers (``SPACE_DENIED`` /
+parked claims), never fails.
 
 Attributes:
   ALL_DAYS: Sentinel from ``select_append_day``: no pressure, every day.
@@ -36,7 +51,8 @@ Attributes:
   _DENY_LOG_STATE: Rate-limit state for ``space_pressure deny`` lines.
   _LOCK: Guards ``_STATE`` across append, day-close and census threads.
   _STATE: Pressure flag, day-close stages by job identity, append day,
-    hold timestamps, byte reservations and the pressure-end ``epoch``.
+    hold timestamps, byte reservations, the pressure-end ``epoch`` and the
+    ``expanded`` tars (restores admitted by this process, the restore slot).
 """
 
 from __future__ import annotations
@@ -133,6 +149,7 @@ def reset_for_tests() -> None:
       finished_since_hold=False,
       reserved={},
       epoch=0,
+      expanded=set(),
     )
 
 
@@ -518,6 +535,133 @@ def reserving(key: str, nbytes: int, *, tar_path: str = "") -> Iterator[None]:
     release(key)
 
 
+def note_expansion(tar_path: str) -> None:
+  """
+  Record that a restore of ``tar_path`` from its sealed copy was admitted.
+
+  The day holds the restore slot while its restore is in flight (a held
+  reservation keyed by the tar or ``restore:<tar>``) or its restored tar is
+  on disk; ``restore_slot_free`` prunes it once neither is true. Admission
+  paths use ``try_claim_restore_slot`` (check and mark in one step).
+
+  Args:
+    tar_path (str): Daily tar the admitted restore writes.
+
+  Returns:
+    None
+
+  Examples:
+    >>> note_expansion("/nonexistent/2026-09-07.tar")
+    >>> restore_slot_free("/nonexistent/2026-09-08.tar")
+    True
+  """
+  with _LOCK:
+    _STATE["expanded"].add(str(tar_path))
+
+
+def try_claim_restore_slot(tar_path: str, key: str, need: int) -> bool:
+  """
+  Atomically take the restore slot for ``tar_path`` (check, mark, reserve).
+
+  Under pressure refuses while another day holds the slot. On success the
+  day is marked expanded and ``need`` bytes are reserved under ``key`` (the
+  caller's later ``reserve`` / ``reserving`` with the same key replaces
+  it), so the claim is held from this instant: a second thread cannot see
+  a free slot between the check and the restore starting. Without
+  pressure it always succeeds (the mark still counts if pressure begins).
+
+  Args:
+    tar_path (str): Daily tar the restore writes.
+    key (str): Reservation key the caller uses for the restore's bytes
+      (the tar path on the append dispatch, ``restore:<tar>`` otherwise).
+    need (int): Restore bytes to reserve.
+
+  Returns:
+    bool: True when the slot is held for ``tar_path``.
+
+  Examples:
+    >>> try_claim_restore_slot("/nonexistent/2026-09-07.tar", "k", 0)
+    True
+    >>> release("k")
+  """
+  tar = str(tar_path)
+  pressure = under_pressure(tar)
+  base = _tar_bytes_on_disk(tar)
+  with _LOCK:
+    if pressure and _slot_holders_locked(tar):
+      return False
+    _STATE["expanded"].add(tar)
+    _STATE["reserved"][str(key)] = (max(0, int(need)), tar, base)
+  return True
+
+
+def restore_slot_free(tar_path: str) -> bool:
+  """
+  Return True when ``tar_path`` may expand its sealed copy now.
+
+  Without pressure always True. Under pressure True only when no other day
+  holds the restore slot: every other admitted restore has finished and its
+  tar is gone (sealed away or dropped) or never appeared (restore failed).
+
+  Args:
+    tar_path (str): Daily tar a restore would write.
+
+  Returns:
+    bool: True when the restore may run.
+
+  Examples:
+    >>> restore_slot_free("/nonexistent/2026-09-07.tar")
+    True
+  """
+  if not under_pressure(tar_path):
+    return True
+  return not _slot_holders(str(tar_path))
+
+
+def _slot_holders(exclude: str = "") -> list[str]:
+  """
+  Return the expanded tars that still hold the restore slot (pruned).
+
+  Args:
+    exclude (str): Tar to leave out (the one asking).
+
+  Returns:
+    list[str]: Tars with a restore in flight or a restored tar on disk.
+
+  Examples:
+    >>> _slot_holders()
+    []
+  """
+  with _LOCK:
+    return _slot_holders_locked(exclude)
+
+
+def _slot_holders_locked(exclude: str = "") -> list[str]:
+  """
+  Prune ``expanded`` and return its live tars; the caller holds ``_LOCK``.
+
+  Args:
+    exclude (str): Tar to leave out (the one asking).
+
+  Returns:
+    list[str]: Tars with a held reservation (restore in flight) or a
+    restored tar still on disk, sorted.
+
+  Examples:
+    >>> with _LOCK:
+    ...   _slot_holders_locked()
+    []
+  """
+  held = set(_STATE["reserved"])
+  live = {
+    t
+    for t in _STATE["expanded"]
+    if os.path.isfile(t) or t in held or f"restore:{t}" in held
+  }
+  _STATE["expanded"] = live
+  return sorted(t for t in live if t != exclude)
+
+
 def admit_restore(tar_path: str, mode: str) -> bool:
   """
   Gate a restore of ``tar_path`` from its sealed copy.
@@ -525,11 +669,11 @@ def admit_restore(tar_path: str, mode: str) -> bool:
   Args:
     tar_path (str): Daily tar the restore would write.
     mode (str): ``growth`` (denied under pressure, else hard reserve),
-      ``finish`` (day close: hard reserve only) or ``off`` (the append
-      dispatch already gated it).
+      ``finish`` (day close: hard reserve, and under pressure the restore
+      slot) or ``off`` (the append dispatch already gated it).
 
   Returns:
-    bool: True when the restore may run.
+    bool: True when the restore may run (and then holds the restore slot).
 
   Examples:
     >>> admit_restore("/nonexistent/2026-09-07.tar", "off")
@@ -540,10 +684,14 @@ def admit_restore(tar_path: str, mode: str) -> bool:
   need = restore_bytes_estimate(tar_path)
   if mode != "finish" and need > 0 and under_pressure(tar_path):
     reason = "space_pressure"
-  elif fits_hard_reserve(tar_path, need, restore_need=need):
+  elif not fits_hard_reserve(tar_path, need, restore_need=need):
+    reason = "hard_reserve"
+  elif need <= 0 or try_claim_restore_slot(
+    tar_path, f"restore:{tar_path}", need
+  ):
     return True
   else:
-    reason = "hard_reserve"
+    reason = "restore_slot_busy"
   log_deny("restore", tar_path, need, reason=f"{reason} mode={mode}")
   return False
 
@@ -647,7 +795,9 @@ def census_token(daily_dir: str) -> str:
 
   Returns:
     str: `` space=ok free=… pressure_below=…`` or
-    `` space=pressure free=… resume_at=… append_day=…``.
+    `` space=pressure free=… resume_at=… append_day=… restore_slot=…``
+    (``append_day`` is the gated restore/copy day; clone appends do not
+    need it; ``restore_slot`` is the expanded day or ``none``).
 
   Examples:
     >>> isinstance(census_token("/"), str)
@@ -663,7 +813,8 @@ def census_token(daily_dir: str) -> str:
     return f" space=ok free={free} pressure_below={_tib(threshold)}"
   with _LOCK:
     day = _STATE["append_day"] or "none"
+  slot = ",".join(os.path.basename(t)[:10] for t in _slot_holders()) or "none"
   return (
     f" space=pressure free={free} resume_at={_tib(2 * threshold)}"
-    f" append_day={day}"
+    f" append_day={day} restore_slot={slot}"
   )

@@ -5939,16 +5939,24 @@ def _select_append_day(
   batch_size: int,
 ) -> Any:
   """
-  Return which day may get append batches now (space pressure gate).
+  Return which days may get append batches now (space pressure gate).
+
+  Under pressure each parked day is classified by its next batch: a clone
+  append that cannot grow the filesystem (its open ``.tar`` exists or it
+  has no archive yet, and ``clone_capable`` for its raw) may always go; the
+  rest (a restore from the sealed copy, or a copying append) go through
+  ``space.select_append_day`` (one day at a time, waiting on finishing day
+  closes).
 
   Args:
     inflight (dict[str, AsyncResult]): Daily tar -> in-flight append batch.
     tgz_archive_dir (str): Daily archive directory.
-    batch_size (int): Max paths per ``tar -T`` job.
+    batch_size (int): Max paths per append job.
 
   Returns:
-    Any: ``space.ALL_DAYS`` without pressure, else one day, ``""`` (none
-    chosen yet) or None (appends wait).
+    Any: ``space.ALL_DAYS`` without pressure; else a frozenset of allowed
+    days (empty: none yet, keep claiming); or None (nothing may go: claim
+    nothing).
 
   Examples:
     >>> _select_append_day({}, "/d", 1) is not None or True
@@ -5979,8 +5987,43 @@ def _select_append_day(
       bool(tar_path) and _append_batch_need(day, tar_path, take) is not None
     )
 
+  def _cannot_grow(day: str) -> bool:
+    """
+    Return True when ``day``'s next batch is a clone append, no restore.
+
+    Args:
+      day (str): Calendar day ``YYYY-MM-DD``.
+
+    Returns:
+      bool: True when no sealed-only restore is needed and the tar's
+      filesystem can reflink the day's first parked raw file.
+
+    Examples:
+      >>> # nested predicate for _select_append_day
+      >>> None is None
+      True
+    """
+    sample = str(getattr(_APPEND_DAY_LISTS.peek_first(day), "identity", ""))
+    tar_path = daily_tar_path_for_stats_path(sample, tgz_archive_dir)
+    return (
+      bool(tar_path)
+      and space.restore_bytes_estimate(tar_path) == 0
+      and tca.clone_capable(tar_path, sample)
+    )
+
   busy = {os.path.basename(str(tar))[:10] for tar in inflight}
-  return space.select_append_day(_APPEND_DAY_LISTS.day_keys(), busy, _fits)
+  parked = _APPEND_DAY_LISTS.day_keys()
+  if not space.under_pressure(tgz_archive_dir):
+    return space.ALL_DAYS
+  free = {day for day in parked if _cannot_grow(day)}
+  gated = space.select_append_day(
+    [d for d in parked if d not in free], busy - free, _fits
+  )
+  if gated is space.ALL_DAYS:
+    return space.ALL_DAYS
+  if gated is None and not free:
+    return None
+  return frozenset(free | ({gated} if gated else set()))
 
 
 def _append_batch_need(day: str, tar_path: str, take: int) -> int | None:
@@ -6011,6 +6054,9 @@ def _append_batch_need(day: str, tar_path: str, take: int) -> int | None:
   if take <= 0 or cfg.get_sync_archive_space_pressure_free_bytes() <= 0:
     return 0
   restore = space.restore_bytes_estimate(tar_path)
+  if restore > 0 and not space.restore_slot_free(tar_path):
+    space.log_deny("append", tar_path, restore, reason="restore_slot_busy")
+    return None
   first = _APPEND_DAY_LISTS.peek_first(day)
   sample = str(getattr(first, "identity", "") or "") or None
   raw = (
@@ -6037,12 +6083,14 @@ def _try_submit_pending_append_days(
   allowed_day: Any = _SELECT_APPEND_DAY_HERE,
 ) -> int:
   """
-  Submit one GNU-tar batch per free daily tar from in-memory day lists.
+  Submit one clone-append batch per free daily tar from in-memory day lists.
 
-  With ``sync_archive_space_pressure_free_bytes`` set, only the day
-  ``space.select_append_day`` allows gets a batch (every day without
-  pressure), and a batch is submitted only when its raw bytes plus any
-  restore of a sealed day keep the hard reserve; the rest stay parked.
+  With ``sync_archive_space_pressure_free_bytes`` set, only the days
+  ``_select_append_day`` allows get a batch (every day without pressure;
+  under pressure every clone-only day plus at most one restore/copy day),
+  and a batch is submitted only when its new bytes plus any restore of a
+  sealed day keep the hard reserve and, for a restore, the restore slot is
+  free; the rest stay parked.
 
   Args:
     client (Any): Job store used to requeue popped claims on submit fail.
@@ -6056,9 +6104,9 @@ def _try_submit_pending_append_days(
       empty. A short day also submits when its in-memory append remainder
       is at or under ``batch_size``, its ingest remainder is 0, parked
       claims cover that remainder, and discover-bg is idle.
-    allowed_day (Any): ``space.select_append_day`` result computed once by
-      the caller: ``ALL_DAYS``, a day, ``""`` or None (both: no day may
-      append); omitted, it is selected here.
+    allowed_day (Any): ``_select_append_day`` result computed once by the
+      caller: ``ALL_DAYS``, a frozenset of days, a single day string, or
+      ``""`` / None (no day may append); omitted, it is selected here.
 
   Returns:
     int: Newly submitted append jobs this call.
@@ -6087,7 +6135,11 @@ def _try_submit_pending_append_days(
     if len(inflight) >= cap:
       break
     pending_n = _APPEND_DAY_LISTS.peek_len(day)
-    if pending_n <= 0 or allowed_day not in (space.ALL_DAYS, day):
+    if pending_n <= 0 or not (
+      allowed_day is space.ALL_DAYS
+      or day == allowed_day
+      or (isinstance(allowed_day, frozenset) and day in allowed_day)
+    ):
       continue
     left = day_remainder(jq.JOB_KIND_APPEND, day)
     ingest_left = day_remainder(jq.JOB_KIND_INGEST, day)
@@ -6109,8 +6161,16 @@ def _try_submit_pending_append_days(
     need = _append_batch_need(day, tar_path, take)
     if need is None:
       continue
+    # A batch that restores a sealed day takes the restore slot atomically
+    # (a day-close restore may race it); the reservation under the tar key
+    # holds it until _drain_append_ready releases the batch.
+    if space.restore_bytes_estimate(
+      tar_path
+    ) > 0 and not space.try_claim_restore_slot(tar_path, tar_path, need):
+      continue
     batch_claims = _APPEND_DAY_LISTS.pop_batch(day, take)
     if not batch_claims:
+      space.release(tar_path)
       continue
     paths = [job.identity for job in batch_claims]
     # Before submit, so the tar's size is measured before the worker writes;
