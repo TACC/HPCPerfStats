@@ -5948,8 +5948,9 @@ def _lookup_existing_members_for_archive_append(
   Return (members, members_source) for archive append.
 
   When a sibling mutable ``.tar`` exists, membership comes from an open-tar
-  scan (authoritative for append). store/sealed fast paths apply only when the
-  mutable ``.tar`` is absent (sealed-only days).
+  scan (authoritative for append). Sealed-only days (no mutable ``.tar``)
+  answer from the sealed member map when it is valid for the zst identity,
+  else from the store / sealed stream.
 
   Args:
     archive_fname (Any): Archive fname passed to this helper.
@@ -5957,7 +5958,7 @@ def _lookup_existing_members_for_archive_append(
 
   Returns:
     Any: ``(member_map, members_source)`` where ``members_source`` is one of
-    ``store``, ``sealed_stream``, or ``tar_scan``.
+    ``sealed_map``, ``store``, ``sealed_stream``, or ``tar_scan``.
 
   Examples:
     >>> _lookup_existing_members_for_archive_append(None, None)
@@ -5975,13 +5976,23 @@ def _lookup_existing_members_for_archive_append(
     )
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     _daily_archive_members_cache_key,
+    _resolve_sealed_daily_archive_path,
   )
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
     archive_pre_append_member_lookup_context,
     build_archive_members_keys,
     members_cache_is_fully_warm,
   )
+  from hpcperfstats.dbload.lib.sync_timedb_sealed_member_map import (
+    sealed_members_lookup,
+  )
 
+  # T0 sealed member map (keyed by zst identity) first: a store/populate
+  # answer of {} restored whole sealed days (hpcperfstats01 2026-11-02).
+  sealed = _resolve_sealed_daily_archive_path(canonical)
+  mapped = sealed_members_lookup(sealed) if sealed else None
+  if mapped is not None:
+    return dict(mapped), "sealed_map"
   keys = build_archive_members_keys(
     _daily_archive_members_cache_key(canonical),
   )
@@ -6203,17 +6214,19 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         open_tar_tvf_ok = members_source == "tar_scan" and os.path.exists(
           archive_tar_fname
         )
-        # A tar past one 10240-byte record holds members; none means the scan
-        # failed (read-lock timeout under a seal), not that every file is new.
-        if (
-          open_tar_tvf_ok
-          and not existing_members
-          and os.path.getsize(archive_tar_fname) > 10240
+        # No members from a tar past one 10240-byte record (read-lock timeout
+        # under a seal), or from a sealed-only day without a valid sealed map
+        # (store/populate {}), is a failed read, not "every file is new".
+        unproven = "open_tar" if open_tar_tvf_ok else "sealed"
+        if not existing_members and (
+          os.path.getsize(archive_tar_fname) > 10240
+          if open_tar_tvf_ok
+          else members_source != "sealed_map"
         ):
           job_outcome = "soft_skip"
           log_print(
             f"INFO: archive_job soft_skip day={day_token} "
-            "reason=open_tar_members_unavailable",
+            f"reason={unproven}_members_unavailable",
             flush=True,
           )
           return ArchiveAppendOutcome(
