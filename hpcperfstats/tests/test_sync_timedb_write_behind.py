@@ -69,6 +69,28 @@ def test_writer_coalesces_dirty_notifications_into_one_write():
   assert writer.dirty is False
 
 
+def test_first_change_after_start_waits_for_the_interval():
+  """``_last`` started at 0.0 against ``time.monotonic()`` (seconds since
+  boot), so on any host up longer than ``interval_s`` the first change was
+  written at once. Flaked ``test_set_does_no_disk_io_until_flush`` about
+  one run in five (hpcperfstats-dev, 7 days uptime, 2026-11-02)."""
+  calls = []
+  writer = wb.WriteBehindWriter(
+    name="t-first-wait",
+    write_fn=lambda force: calls.append(force) or True,
+    interval_s=3600.0,
+  )
+  writer.start()
+  try:
+    writer.mark_dirty()
+    time.sleep(0.3)
+    assert calls == []
+    writer.flush()
+    assert calls == [True]
+  finally:
+    writer.stop(final_flush=False)
+
+
 def test_writer_does_not_write_when_clean():
   calls = []
   writer = wb.WriteBehindWriter(

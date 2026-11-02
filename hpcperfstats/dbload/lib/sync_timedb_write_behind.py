@@ -135,6 +135,7 @@ class WriteBehindWriter:
       if self._thread is not None and self._thread.is_alive():
         return
       self._stop = False
+      self._last = time.monotonic()
       self._thread = threading.Thread(
         target=self._main, name=self.name, daemon=True
       )
