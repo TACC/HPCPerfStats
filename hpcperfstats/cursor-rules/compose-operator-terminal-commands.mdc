@@ -898,6 +898,9 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 | `grep -o "day_skip.: *{.kind.: *…"` (or any grep that assumes JSON field **insertion** order) on sync_timedb sidecars | **Empty histogram** (hpcperfstats01 2026-10-25 members census): `save_persistence_document` defaults to `compact=True` → `json.dump(…, separators=(",", ":"), sort_keys=True)`, so keys are **alphabetical with no spaces** (`"day_skip":{"detail":…,"kind":…}`; dead-letter entries `attempt, identity, kind, reason, recorded_at`) | Match the whole object, e.g. `grep -ho "day_skip.:{[^}]*}" "$A"/.sync_timedb_archive_members/*.json \| cut -c1-240 \| sort \| uniq -c`, or anchor on **alphabetical** neighbours (`identity.:.[^,]*,.kind.:.ingest.,.reason.:.X`). Never assume code insertion order for sidecar JSON |
 | Bucketing queue dead-letter **ingest** identities with `grep -o "/[0-9]\{9,\}[\|]"` (assuming `path\|size\|mtime`) | **Empty** ingest-by-day buckets on hpcperfstats01/02 (2026-10-25) while append buckets worked: `ingest_identity()` returns the **bare normalized path** (`sync_timedb_job_store.py`), the same as append | Anchor on the alphabetical neighbour instead: `grep -o "/[0-9]\{9,\}.,.kind.:.ingest.,.reason.:.[A-Za-z_]*" "$DL" \| sed "s/^.\([0-9]*\).*reason.:.\(.*\)$/\1 \2/" \| while read e r; do echo "$(date -d @$e +%F) $r"; done \| sort \| uniq -c` |
 | Very long **single-line** `sh -c '…'` census (1300+ chars) copied from chat or a plan into a terminal | The copy path **hard-wrapped** the line mid-token: `date` became `da` / `te` → **`sh: 1: da: not found`** (hpcperfstats02 + hpcperfstats04 2026-10-25 dead-letter `recorded_at` section) | Put each `echo == section` statement on **its own physical line inside the single-quoted `sh -c` script** (newlines are legal inside `'…'`), keeping every line short (< ~200 chars). Never rely on one giant line surviving copy/paste |
+| Host-side `grep daily_archive_dir /home/hpcperfstats/hpcperfstats.ini` | The INI exists **only inside the container** (`HPCPERFSTATS_INI`) → `No such file`, empty `DAILY`, every later path empty (hpcperfstats01 2026-11-01 append-throughput) | `podman exec hpcperfstats_pipeline_1 python3 -c "import hpcperfstats.dbload.lib.conf_parser as c; print(c.get_daily_archive_dir_path())"` (unlabeled print), captured into a host var |
+| Container→host path via `podman inspect` mounts with `s=$1 substr(p,length($2)+1)` | Mount destination is **`/hpcperfstats/`** (trailing slash) → host path glued as **`…/_dataarchive`** (hpcperfstats01 2026-11-01); `df`/`ls`/`findmnt` then hit a nonexistent path | Strip trailing slashes from **both** source and destination and match on `d` or `d"/"` prefix (see **Good — container path to host path** below) |
+| `iostat -xm` / `cat /proc/pressure/io` for device busy on the host | `iostat` (sysstat) not installed and PSI disabled on the EL9 kernel → **no output** (hpcperfstats01 2026-11-01) | Two `/proc/diskstats` samples 10 s apart; per-device read/write MB/s and `io_ticks` util% (see **Good — device busy from `/proc/diskstats`** below) |
 | Operator classify / day-resolve paste with `SAMPLE_PATH` / `REPLACE_WITH_PATH` / `REPLACE_WITH` literals | Commands fail or classify nonsense; empty-ingest root-cause hunt stalls (hpcperfstats03 2026-08-26 ingest-empty-append-flood) | Resolve a **real** path first (`LLEN`/`LRANGE` append LIST, or `find` under INI `archive_dir`); bake that absolute path into the `python3 -c` classify / day-resolve one-liner — never leave placeholders |
 
 **Good** — ingest-pool parent for py-spy (not `pgrep … [main] | head -1`):
@@ -925,6 +928,22 @@ for pid, ppid, args in rows:
 ```
 
 Then dump **each** printed `INGEST_SUP` (a site may have two ingest trees; one may lack janitor/day-close). Confirm `ps` args before `py-spy`.
+
+**Good** — container path to host path (INI via `conf_parser` inside the container; trailing-slash-safe mount map):
+
+```bash
+DAILY_C=$(podman exec hpcperfstats_pipeline_1 python3 -c "import hpcperfstats.dbload.lib.conf_parser as c; print(c.get_daily_archive_dir_path())" 2>/dev/null | tail -n1)
+MAP=$(podman inspect hpcperfstats_pipeline_1 --format '{{range .Mounts}}{{.Source}}|{{.Destination}}{{println}}{{end}}')
+to_host() { echo "$MAP" | awk -F'|' -v p="$1" '{s=$1; d=$2; sub(/\/+$/,"",s); sub(/\/+$/,"",d)} d!="" && (p==d || index(p,d"/")==1) && length(d)>m {m=length(d); r=s substr(p,length(d)+1)} END{print r}'; }
+DAILY_H=$(to_host "$DAILY_C"); echo "DAILY_C=$DAILY_C DAILY_H=$DAILY_H"; ls -ld "$DAILY_H"
+```
+
+**Good** — device busy from `/proc/diskstats` (no `iostat` / PSI needed):
+
+```bash
+sort -k3,3 /proc/diskstats | awk '{print $3, $6, $10, $13}' > /tmp/hps_ds1; sleep 10; sort -k3,3 /proc/diskstats | awk '{print $3, $6, $10, $13}' > /tmp/hps_ds2
+join /tmp/hps_ds1 /tmp/hps_ds2 | awk '{rd=($5-$2)*512/1e7; wr=($6-$3)*512/1e7; u=($7-$4)/100; if (rd+wr>0) printf "%-14s read_MBps=%.1f write_MBps=%.1f util_pct=%.0f\n", $1, rd, wr, u}'
+```
 
 **Good** — podman service check + filtered log tail (paths from INI first):
 
