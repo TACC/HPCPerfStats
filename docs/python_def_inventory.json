@@ -7837,8 +7837,23 @@
       "has_docstring": true,
       "is_trivial_dunder": false,
       "issues": [],
+      "kind": "nested",
+      "lineno": 157,
+      "name": "_sample",
+      "path": "hpcperfstats/analysis/metrics/lib/metrics_host_data_sql.py",
+      "qualname": "first_last_scoped_times._sample",
+      "repo": "HPCPerfStats",
+      "sig_annotated": true
+    },
+    {
+      "doc_ok": true,
+      "excluded": false,
+      "excluded_reason": "",
+      "has_docstring": true,
+      "is_trivial_dunder": false,
+      "issues": [],
       "kind": "function",
-      "lineno": 145,
+      "lineno": 198,
       "name": "hosts_owning_mid_sample",
       "path": "hpcperfstats/analysis/metrics/lib/metrics_host_data_sql.py",
       "qualname": "hosts_owning_mid_sample",
@@ -7853,7 +7868,7 @@
       "is_trivial_dunder": false,
       "issues": [],
       "kind": "function",
-      "lineno": 195,
+      "lineno": 248,
       "name": "schema_rows_near_bounds",
       "path": "hpcperfstats/analysis/metrics/lib/metrics_host_data_sql.py",
       "qualname": "schema_rows_near_bounds",
@@ -7868,7 +7883,7 @@
       "is_trivial_dunder": false,
       "issues": [],
       "kind": "function",
-      "lineno": 242,
+      "lineno": 295,
       "name": "rows_per_sample_estimate",
       "path": "hpcperfstats/analysis/metrics/lib/metrics_host_data_sql.py",
       "qualname": "rows_per_sample_estimate",
@@ -7883,7 +7898,7 @@
       "is_trivial_dunder": false,
       "issues": [],
       "kind": "function",
-      "lineno": 279,
+      "lineno": 332,
       "name": "jid_scoped_distinct_host_time_count",
       "path": "hpcperfstats/analysis/metrics/lib/metrics_host_data_sql.py",
       "qualname": "jid_scoped_distinct_host_time_count",
@@ -68033,7 +68048,7 @@
     "django_migrations": 90,
     "docs_scratch": 52,
     "monitor_read_only": 235,
-    "test_module": 9455,
+    "test_module": 9461,
     "test_tree": 234
   },
   "roots": [
@@ -68041,7 +68056,7 @@
     "/data/HPCPerfStats/HPCPerfStats/hpcperfstats-tools"
   ],
   "summary": {
-    "excluded": 10433,
+    "excluded": 10439,
     "excluded_by_reason": {
       "codon_compile_unit": 124,
       "codon_experiment": 67,
@@ -68049,13 +68064,13 @@
       "django_migrations": 90,
       "docs_scratch": 52,
       "monitor_read_only": 235,
-      "test_module": 9455,
+      "test_module": 9461,
       "test_tree": 234
     },
-    "in_scope": 4535,
+    "in_scope": 4536,
     "in_scope_failed": 0,
-    "in_scope_ok": 4535,
-    "total_defs": 14968
+    "in_scope_ok": 4536,
+    "total_defs": 14975
   },
   "version": 1
 }

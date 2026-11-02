@@ -814,6 +814,65 @@ def test_scoped_probe_sql_cannot_use_jid_or_dev_indexes():
   assert _scope_sql("") == ("TRUE", [])
 
 
+def test_first_last_scoped_times_bisects_instead_of_walking_untagged_tail(
+  monkeypatch,
+):
+  """hs04 job 71526: c117-002 carried no job rows for the last 1 h 48 min of
+  the window (681k untagged rows), so the scoped ``ORDER BY time DESC LIMIT
+  1`` walk timed out. Bounds come from per-sample bisection: the scope only
+  ever filters one sample (``d.time = s.t``), and the step count is bounded
+  by the window length in microseconds, not by rows."""
+  import re
+
+  from django.db import connection
+
+  import hpcperfstats.analysis.metrics.lib.metrics_host_data_sql as sql_mod
+
+  st = datetime(2026, 10, 27, 15, 13, 2, tzinfo=UTC)
+  et = datetime(2026, 10, 27, 20, 13, 12, tzinfo=UTC)
+  samples = [st + timedelta(seconds=54 + 60 * i) for i in range(300)]
+  first_own = datetime(2026, 10, 27, 15, 13, 56, tzinfo=UTC)
+  # Job-end payload 1 us after a periodic sample: bisection must not stop
+  # at the earlier neighbour.
+  last_own = datetime(2026, 10, 27, 18, 24, 56, 1, tzinfo=UTC)
+  samples = sorted([*samples, last_own])
+  owned = {s for s in samples if first_own <= s <= last_own}
+  seen = []
+
+  class _Cur:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *_a):
+      return False
+
+    def execute(self, sql, params):
+      seen.append(sql)
+      assert "d.time = s.t AND (COALESCE(d.jid, '')" in sql
+      assert not re.search(r"d\.time [<>]=? %s AND \(COALESCE", sql)
+      _h, _j1, _j2, _h2, a, b = params
+      if "ORDER BY d2.time ASC" in sql:
+        hit = [s for s in samples if a <= s < b][:1]
+      else:
+        hit = [s for s in samples if a < s <= b][-1:]
+      self._row = (hit[0], 1 if hit[0] in owned else None) if hit else None
+
+    def fetchone(self):
+      return self._row
+
+  monkeypatch.setattr(connection, "cursor", lambda: _Cur())
+  out = sql_mod.first_last_scoped_times(["c117-002.x"], st, et, "71526")
+  assert out == {"c117-002.x": (first_own, last_own)}
+  assert len(seen) <= 80
+
+  # Not owned at the midpoint sample (accounting host without job rows).
+  owned = set()
+  seen.clear()
+  out = sql_mod.first_last_scoped_times(["idle.x"], st, et, "71526")
+  assert out == {"idle.x": (None, None)}
+  assert len(seen) == 1
+
+
 def test_hosts_owning_mid_sample_checks_one_sample_not_the_window(monkeypatch):
   """hs04: accounting hosts without job rows made a scoped "first owned row"
   probe read the host's whole window (job 71526, 5 of 16 hosts timed out).

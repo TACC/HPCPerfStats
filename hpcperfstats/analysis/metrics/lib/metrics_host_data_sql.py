@@ -103,11 +103,16 @@ def first_last_scoped_times(
   """
   First / last (job-scoped) sample time per host via ``(host, time)`` probes.
 
-  Same ``ORDER BY time LIMIT 1`` shape as ``in_window_per_host_min_max_rows``
-  with the job scope as a filter, so an owned host answers after a few index
-  entries instead of reading every row of the window (``SELECT DISTINCT host``
-  over 12 h timed out on hpcperfstats04). Hosts with no scoped row map to
-  ``(None, None)``.
+  Host-wide (no ``jid``) is ``in_window_per_host_min_max_rows``. With a job,
+  a scoped ``ORDER BY time LIMIT 1`` walk reads every unowned row between
+  the window edge and the job's rows (hs04 job 71526: c117-002 untagged for
+  the last 1 h 48 min of the window, 681k rows, statement timeout). Instead
+  each host's midpoint sample anchors a bisection on each side: one step
+  finds the nearest sample in a half interval on ``(host, time)`` and checks
+  only that sample's rows against the job scope. Job rows on a host are one
+  contiguous run of samples, so ~35 steps per side reach microsecond
+  precision. Hosts not owned at their midpoint sample (the
+  ``hosts_owning_mid_sample`` test) map to ``(None, None)``.
 
   Args:
     hosts (list[str]): Hostnames.
@@ -124,22 +129,70 @@ def first_last_scoped_times(
   """
   if not hosts or start is None or end is None:
     return {}
+  if not jid:
+    rows = in_window_per_host_min_max_rows(
+      list(hosts), {"time__gte": start, "time__lte": end}
+    )
+    return {r["host"]: (r["mn"], r["mx"]) for r in rows}
+  from datetime import timedelta
+
   from django.db import connection
 
   scope, scope_params = _scope_sql(jid)
-  probe = (
-    "SELECT d.time FROM host_data d WHERE d.host = h.host"
-    f" AND d.time >= %s AND d.time <= %s AND {scope}"
-    " ORDER BY d.time {} LIMIT 1"
+  # Nearest sample in a half-open interval plus whether it has a job row;
+  # the scope only filters rows of that one sample (``d.time = s.t``).
+  step = (
+    "SELECT s.t, (SELECT 1 FROM host_data d WHERE d.host = %s"
+    " AND d.time = s.t AND " + scope + " LIMIT 1) FROM (SELECT d2.time AS t"
+    " FROM host_data d2 WHERE d2.host = %s AND d2.time {} %s"
+    " AND d2.time {} %s ORDER BY d2.time {} LIMIT 1) s"
   )
-  sql = (
-    f"SELECT h.host, ({probe.format('ASC')}), ({probe.format('DESC')})"
-    " FROM unnest(%s::text[]) AS h(host)"
-  )
-  one = [start, end, *scope_params]
+  earliest_in = step.format(">=", "<", "ASC")  # [a, b)
+  latest_in = step.format(">", "<=", "DESC")  # (a, b]
+  tick = timedelta(microseconds=1)
+  out: dict[str, tuple[Any, Any]] = {}
   with _profile_phase("db_fetch"), connection.cursor() as cursor:
-    cursor.execute(sql, [*one, *one, list(hosts)])
-    return {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
+    for host in hosts:
+
+      def _sample(sql: str, a: Any, b: Any, host: str = host) -> tuple:
+        """
+        Nearest sample time between ``a`` and ``b`` and whether it is owned.
+
+        Args:
+          sql (str): ``earliest_in`` (``[a, b)``) or ``latest_in``
+            (``(a, b]``).
+          a (Any): Lower bound.
+          b (Any): Upper bound.
+          host (str): Hostname (bound per loop iteration).
+
+        Returns:
+          tuple: ``(time or None, owned)``.
+
+        Examples:
+          >>> _sample(earliest_in, start, end)  # doctest: +SKIP
+          (datetime.datetime(2026, 10, 27, 15, 14), True)
+        """
+        cursor.execute(sql, [host, *scope_params, host, a, b])
+        row = cursor.fetchone()
+        return (None, False) if row is None else (row[0], row[1] is not None)
+
+      mid = start + (end - start) / 2
+      anchor, owned = _sample(earliest_in, mid, end + tick)
+      if not owned:
+        out[host] = (None, None)
+        continue
+      lo, hi = start - tick, anchor  # first owned sample is in (lo, hi]
+      while hi - lo > tick:
+        mid = lo + (hi - lo) / 2
+        t, own = _sample(latest_in, lo, mid)
+        lo, hi = (lo, t) if own else (mid, hi)
+      first, lo, hi = hi, anchor, end + tick  # last owned is in [lo, hi)
+      while hi - lo > tick:
+        mid = lo + (hi - lo) / 2
+        t, own = _sample(earliest_in, mid, hi)
+        lo, hi = (t, hi) if own else (lo, mid)
+      out[host] = (first, lo)
+  return out
 
 
 def hosts_owning_mid_sample(

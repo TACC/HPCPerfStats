@@ -249,13 +249,18 @@ def test_jid_table_index_probes_match_full_scan_oracle():
   from hpcperfstats.site.lib.machine.models import host_data
 
   own, shared, idle = (f"n-{x}.probe.test" for x in ("own", "shr", "idle"))
+  tail = "n-tail.probe.test"
   jid = "930777"
   start = datetime(2026, 8, 2, 0, 0, tzinfo=UTC)
   end = start + timedelta(hours=3)
-  host_data.objects.filter(host__in=[own, shared, idle]).delete()
+  host_data.objects.filter(host__in=[own, shared, idle, tail]).delete()
   rows = []
   for minute in range(0, 180, 1):
     t = start + timedelta(minutes=minute)
+    # hs04 job 71526: job rows stop long before the window end.
+    rows.append(
+      (tail, jid if 5 <= minute < 120 else None, "cpu", "user", "0", t)
+    )
     rows.append((own, jid, "cpu", "user", "0", t))
     rows.append((own, jid, "cpu", "sys", "0", t))
     rows.append((shared, None, "cpu", "user", f"j:{jid}", t))
@@ -279,6 +284,10 @@ def test_jid_table_index_probes_match_full_scan_oracle():
     oracle = agg.aggregate(mn=Min("time"), mx=Max("time"))
     assert bounds[h] == (oracle["mn"], oracle["mx"])
   assert bounds[idle] == (None, None)
+  assert first_last_scoped_times([tail], start, end, jid)[tail] == (
+    start + timedelta(minutes=5),
+    start + timedelta(minutes=119),
+  )
   # Midpoint ownership (hs04: job 71526 accounting hosts without job rows
   # made "first owned row" probes read the whole window): owned and shared
   # (j: stamp) hosts count, a host with only other jobs' rows does not.
