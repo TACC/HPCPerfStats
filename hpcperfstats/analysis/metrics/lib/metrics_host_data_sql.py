@@ -142,6 +142,53 @@ def first_last_scoped_times(
     return {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
 
 
+def hosts_owning_mid_sample(
+  hosts: list[str],
+  start: Any,
+  end: Any,
+  jid: str,
+) -> set[str]:
+  """
+  Hosts whose first sample at or after the window midpoint has a job row.
+
+  One ``(host, time)`` probe per host finds that sample; only its rows are
+  checked against the job scope. A host the job runs on carries job rows at
+  every sample, so the midpoint decides ownership in one sample's worth of
+  rows. A "first owned row" probe instead reads the host's whole window
+  when the job owns nothing there (accounting hosts without job rows: job
+  71526 on hpcperfstats04 timed out on 5 of 16 hosts).
+
+  Args:
+    hosts (list[str]): Hostnames.
+    start (Any): Window start.
+    end (Any): Window end.
+    jid (str): Job id.
+
+  Returns:
+    set[str]: Hosts with a job-owned row at their midpoint sample.
+
+  Examples:
+    >>> hosts_owning_mid_sample([], None, None, "1")
+    set()
+  """
+  if not hosts or start is None or end is None or not jid:
+    return set()
+  from django.db import connection
+
+  scope, scope_params = _scope_sql(jid)
+  mid = start + (end - start) / 2
+  sql = (
+    "SELECT h.host FROM unnest(%s::text[]) AS h(host) WHERE EXISTS ("
+    "SELECT 1 FROM host_data d WHERE d.host = h.host AND d.time = ("
+    "SELECT d2.time FROM host_data d2 WHERE d2.host = h.host"
+    " AND d2.time >= %s AND d2.time <= %s ORDER BY d2.time LIMIT 1)"
+    f" AND {scope})"
+  )
+  with _profile_phase("db_fetch"), connection.cursor() as cursor:
+    cursor.execute(sql, [list(hosts), mid, end, *scope_params])
+    return {row[0] for row in cursor.fetchall()}
+
+
 def schema_rows_near_bounds(
   host: str,
   first: Any,

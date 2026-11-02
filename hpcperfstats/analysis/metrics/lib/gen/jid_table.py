@@ -1657,13 +1657,12 @@ class jid_table:
       """
       found = set()
       for host_chunk in _iter_acct_host_batches(self.acct_host_list):
-        bounds = metrics_host_data_sql.first_last_scoped_times(
+        owned = metrics_host_data_sql.hosts_owning_mid_sample(
           list(host_chunk), self.start_time, self.end_time, str(self.jid)
         )
-        for raw_host, (first, _last) in bounds.items():
-          nh = _normalize_host_cell_for_host_data(raw_host)
-          if nh and first is not None:
-            found.add(nh)
+        found.update(
+          nh for nh in map(_normalize_host_cell_for_host_data, owned) if nh
+        )
       return list(found)
 
     _st = self.start_time.isoformat() if self.start_time else ""

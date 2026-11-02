@@ -233,6 +233,7 @@ def test_jid_table_index_probes_match_full_scan_oracle():
   from hpcperfstats.analysis.metrics.lib.columnar import copy_fetch
   from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import (
     first_last_scoped_times,
+    hosts_owning_mid_sample,
     rows_per_sample_estimate,
     schema_rows_near_bounds,
   )
@@ -269,6 +270,10 @@ def test_jid_table_index_probes_match_full_scan_oracle():
     oracle = agg.aggregate(mn=Min("time"), mx=Max("time"))
     assert bounds[h] == (oracle["mn"], oracle["mx"])
   assert bounds[idle] == (None, None)
+  # Midpoint ownership (hs04: job 71526 accounting hosts without job rows
+  # made "first owned row" probes read the whole window): owned and shared
+  # (j: stamp) hosts count, a host with only other jobs' rows does not.
+  assert hosts_owning_mid_sample(hosts, start, end, jid) == {own, shared}
   full = set(
     host_data.objects.filter(scope, host=own, time__gte=start, time__lte=end)
     .values_list("type", "event", "unit")

@@ -881,14 +881,18 @@ def test_jid_table_host_list_and_schema_use_index_probes(monkeypatch):
   schema_calls = []
 
   def _bounds(hosts, start, end, jid=None):
+    return dict.fromkeys(hosts, (start, end))
+
+  def _owning(hosts, start, end, jid):
     probe_calls.append((tuple(hosts), jid))
-    return {h: ((start, end) if h != "idle.x" else (None, None)) for h in hosts}
+    return {h for h in hosts if h != "idle.x"}
 
   def _schema(host, first, last, slice_s, jid=None):
     schema_calls.append((host, slice_s, jid))
     return [("cpu", "user", "cs")] if jid else [("host_mem", "used", "kB")]
 
   monkeypatch.setattr(sql_mod, "first_last_scoped_times", _bounds)
+  monkeypatch.setattr(sql_mod, "hosts_owning_mid_sample", _owning)
   monkeypatch.setattr(sql_mod, "schema_rows_near_bounds", _schema)
   mod = "hpcperfstats.analysis.metrics.lib.gen.jid_table"
   st = datetime(2026, 5, 1, tzinfo=UTC)
@@ -959,3 +963,44 @@ def test_scoped_probe_sql_cannot_use_jid_or_dev_indexes():
   )
   assert params == ["69000", "69000"]
   assert _scope_sql("") == ("TRUE", [])
+
+
+def test_hosts_owning_mid_sample_checks_one_sample_not_the_window(monkeypatch):
+  """hs04: accounting hosts without job rows made a scoped "first owned row"
+  probe read the host's whole window (job 71526, 5 of 16 hosts timed out).
+  Ownership is decided on the host's first sample at/after the midpoint."""
+  from django.db import connection
+
+  import hpcperfstats.analysis.metrics.lib.metrics_host_data_sql as sql_mod
+
+  seen = []
+
+  class _Cur:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *_a):
+      return False
+
+    def execute(self, sql, params):
+      seen.append((sql, params))
+
+    def fetchall(self):
+      return [("a.x",)]
+
+  monkeypatch.setattr(connection, "cursor", lambda: _Cur())
+  st = datetime(2026, 10, 27, 15, tzinfo=UTC)
+  et = datetime(2026, 10, 27, 20, tzinfo=UTC)
+  out = sql_mod.hosts_owning_mid_sample(["a.x", "b.x"], st, et, "71526")
+  assert out == {"a.x"}
+  sql, params = seen[0]
+  assert "d.time = (SELECT d2.time FROM host_data d2" in sql
+  assert "ORDER BY d2.time LIMIT 1" in sql
+  assert "COALESCE(d.jid, '')" in sql
+  assert params == [
+    ["a.x", "b.x"],
+    datetime(2026, 10, 27, 17, 30, tzinfo=UTC),
+    et,
+    "71526",
+    "71526",
+  ]
