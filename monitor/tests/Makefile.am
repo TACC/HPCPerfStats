@@ -199,6 +199,8 @@ test_likwid_uncore_adapter_SOURCES = \
 test_host_edac_mem_topology_SOURCES = \
 	test_host_edac_mem_topology.c \
 	$(top_srcdir)/src/host_edac_mem_topology.c
+# Regression: getpid() was used without <unistd.h> (implicit declaration; C99 forbids it).
+test_host_edac_mem_topology_CFLAGS = $(AM_CFLAGS) -Werror=implicit-function-declaration
 
 test_intel_skx_imc_schema_SOURCES = test_intel_skx_imc_schema.c
 test_intel_icx_imc_schema_SOURCES = test_intel_icx_imc_schema.c

@@ -57,6 +57,29 @@ static void test_injected_hooks(void)
   dcgm_gpu_dyn_test_set_hooks(NULL);
 }
 
+/* Defined in dcgm_gpu_dyn.c (non-static) so tests can check that unload drops injected hooks. */
+extern struct dcgm_gpu_dyn_test_hooks g_test_hooks_storage;
+
+/* Regression: unload used memset on the g_test_hooks pointer, leaving stale fake functions in
+ * g_test_hooks_storage. Unload must drop all injected hooks. */
+static void test_unload_clears_injected_hooks(void)
+{
+  static const struct dcgm_gpu_dyn_test_hooks zero;
+  struct dcgm_gpu_dyn_test_hooks hooks;
+
+  memset(&hooks, 0, sizeof(hooks));
+  hooks.dcgmInit = fake_dcgmInit;
+  hooks.errorString = fake_errorString;
+  dcgm_gpu_dyn_test_set_hooks(&hooks);
+
+  dcgm_gpu_dyn_unload();
+
+  g_fake_init_calls = 0;
+  assert(dcgm_gpu_dyn_dcgmInit() == DCGM_ST_UNINITIALIZED);
+  assert(g_fake_init_calls == 0);
+  assert(memcmp(&g_test_hooks_storage, &zero, sizeof(zero)) == 0);
+}
+
 static void test_idempotent_load_failure(void)
 {
   dcgm_gpu_dyn_unload();
@@ -71,6 +94,7 @@ int main(void)
   test_not_loaded_init_fails();
   test_load_missing_lib_fails();
   test_injected_hooks();
+  test_unload_clears_injected_hooks();
   test_idempotent_load_failure();
   printf("test_dcgm_gpu_dyn passed\n");
   return 0;

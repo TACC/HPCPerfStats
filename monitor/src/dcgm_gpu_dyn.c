@@ -159,8 +159,7 @@ void dcgm_gpu_dyn_unload(void)
     g_dcgm_handle = NULL;
   }
   g_dcgm_loaded = 0;
-  g_test_hooks_active = 0;
-  memset(&g_test_hooks, 0, sizeof(g_test_hooks));
+  dcgm_gpu_dyn_test_set_hooks(NULL);
 #define X(name) p_##name = NULL;
   DCGM_GPU_DYN_SYM_LIST
 #undef X
