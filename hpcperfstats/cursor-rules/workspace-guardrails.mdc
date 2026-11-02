@@ -6,6 +6,7 @@ alwaysApply: true
 # Workspace Guardrails
 - Do not modify any code under `HPCPerfStats/monitor/` (including the path form `@HPCPerfStats/monitor`). Inspection and analysis are allowed.
 - If the user explicitly requests changes inside that directory, ask for confirmation and pause until they explicitly allow proceeding.
+- **Dual workspace exception:** when `<workspace_root>/.cursor/workspace-profile` exists and its first word is `dual`, the workspace is set up for both container and monitor work. Monitor edits are then allowed without the confirmation pause, but they are governed by `HPCPerfStats/monitor/cursor-rules/` (its always-on rules plus the rules its router triggers; for a same-named rule, the monitor copy wins), not by this tree. Without that marker, the two bullets above apply unchanged.
 
 ## Monitor Executable -> RabbitMQ -> listend.py Link
 - You may inspect and analyze how the executable built from `@HPCPerfStats/monitor/` publishes output to RabbitMQ and how those messages are consumed/handled by `@HPCPerfStats/hpcperfstats/listend.py`.

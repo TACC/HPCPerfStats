@@ -11,13 +11,14 @@ When the user **explicitly authorizes** code changes outside `HPCPerfStats/monit
 
 - Applies when the user overrides **monitor-workspace-contract** for a given turn (e.g. “fix `listend.py`”, “update Django …”, “change `docker-compose.yaml`”).
 - Does **not** apply to read-only inspection of non-monitor code for monitor integration (still monitor-default scope unless the user asks for edits there).
+- **Dual workspace** (`<workspace_root>/.cursor/workspace-profile` first word `dual`): every edit outside `HPCPerfStats/monitor/` counts as authorized, so this rule applies to all such edits without a per-chat override. `workspace-guardrails.mdc` carries the matching exception for monitor edits.
 
 ## What to follow
 
 1. **Read** the relevant `.mdc` files under `HPCPerfStats/hpcperfstats/cursor-rules/` before implementing.
 2. Apply every rule there with **`alwaysApply: true`** for the session while that authorized work is in progress.
 3. Apply **file-scoped** rules whose **`globs`** match files you create or modify (e.g. `**/*.py`, `**/frontend/**`, compose/nginx paths).
-4. When several rules overlap, use their stated precedence; **`workspace-guardrails.mdc`** still forbids monitor edits unless the user separately authorizes monitor changes in the same chat.
+4. When several rules overlap, use their stated precedence; **`workspace-guardrails.mdc`** still forbids monitor edits unless the user separately authorizes monitor changes in the same chat (or the workspace is dual, see Trigger).
 
 ## Precedence vs monitor workspace rules
 
@@ -25,6 +26,7 @@ When the user **explicitly authorizes** code changes outside `HPCPerfStats/monit
 |--------|------------------|
 | Edits under `HPCPerfStats/monitor/` | `.cursor/rules/` monitor rules (static bundle, dual verify, contract, etc.) |
 | Authorized edits outside `HPCPerfStats/monitor/` | `HPCPerfStats/hpcperfstats/cursor-rules/` |
+| Dual workspace (`.cursor/workspace-profile` = `dual`) | By path: `HPCPerfStats/monitor/**` → `HPCPerfStats/monitor/cursor-rules/`; everything else → `HPCPerfStats/hpcperfstats/cursor-rules/` (`.cursor/rules` symlinks there) |
 | Analysis only (no edit authorization) | Monitor contract; hpcperfstats rules optional unless needed for accuracy |
 
 Monitor build/verification rules (**monitor-static-build-verification**, **monitor-dual-verify-cross-and-static**, etc.) do **not** replace hpcperfstats test or compose gates for non-monitor changes.

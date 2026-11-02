@@ -9,7 +9,7 @@ Loaded every agent turn. Keep these short; do not add more `alwaysApply: true` f
 | `agent-discipline-core.mdc` | **Control plane** — pre-close checklist, task router, when to Read domain rules |
 | `plan-completion-gate.mdc` | Close sequence (senior review + self-review) |
 | `every-error-regression-test.mdc` | Regression test law for fixes |
-| `monitor-workspace-contract.mdc` | Monitor-only scope; RabbitMQ/listend message contract |
+| `monitor-workspace-contract.mdc` | Monitor-only scope (container edits allowed when `.cursor/workspace-profile` = `dual`); RabbitMQ/listend message contract |
 | `python-venv-enforcement.mdc` | `.venv` path |
 | `workspace-single-cursor-directory.mdc` | Exactly one `<workspace_root>/.cursor/`; no nested `.cursor/` under git paths |
 | `out-of-monitor-hpcperfstats-rules.mdc` | Authorized non-monitor work loads `hpcperfstats/cursor-rules/` |

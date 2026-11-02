@@ -30,6 +30,8 @@ alwaysApply: true
   hooks.json   → real file copy of HPCPerfStats/cursor-hooks/hooks.json
                  (Cursor refuses a symlinked project hooks.json)
   plans/       → real directory (live *.plan.md; outside git)
+  workspace-profile → optional real file; first word `dual` = combined container + monitor
+                 workspace (see below)
 ```
 
 Setup after clone or when hooks move:
@@ -43,6 +45,8 @@ cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json
 ```
 
 Full-stack checkouts symlink `.cursor/rules` to `HPCPerfStats/hpcperfstats/cursor-rules` instead. After editing checked-in `hooks.json`, re-`cp` to `.cursor/hooks.json`.
+
+**Dual workspace:** a full-stack checkout that also does monitor work keeps `.cursor/rules` → `HPCPerfStats/hpcperfstats/cursor-rules` and adds `.cursor/workspace-profile` containing `dual`. Monitor rules are then read from `HPCPerfStats/monitor/cursor-rules/` for `HPCPerfStats/monitor/**` edits (no second `.cursor/` directory and no second `rules` link). Delete the file to return to single-profile behaviour.
 
 ## Overlap
 

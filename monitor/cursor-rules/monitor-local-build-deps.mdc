@@ -9,8 +9,11 @@ alwaysApply: false
 
 ## Prefix layout
 
-- Prefer dependency install prefix: `/home1/01623/sharrell/hpcperfstats_monitor_dev/.build/prefix`.
-- Keep downloaded sources under `/home1/01623/sharrell/hpcperfstats_monitor_dev/.build/src`.
+`<workspace_root>` is the directory that holds `.venv/` and `HPCPerfStats/` (the scripts' `REPO_ROOT`, i.e. `monitor/../..`). Do not hard-code a host path.
+
+- Prefer dependency install prefix: `<workspace_root>/.build/prefix` (the `ensure_dotbuild_prefix_static.sh` default). `build_static_bundle.sh` defaults to `<workspace_root>/.build/prefix-static` with sources in `<workspace_root>/.build/src-static`; override with `PREFIX` / `SRCDIR`.
+- Keep downloaded sources under `<workspace_root>/.build/src`.
+- Example: on TACC (`hpcperfstats_monitor_dev`) the prefix is `/home1/01623/sharrell/hpcperfstats_monitor_dev/.build/prefix`; on hpcperfstats-dev it is `/data/HPCPerfStats/.build/prefix`.
 
 ## Third-party stack (monitor)
 
@@ -32,9 +35,9 @@ Pinned versions for scripted builds: see `HPCPerfStats/monitor/scripts/build_sta
 
 Export when using the local prefix:
 
-- `CPPFLAGS="-I.../.build/prefix/include"`
-- `LDFLAGS="-L.../.build/prefix/lib -L.../.build/prefix/lib64"` (add `-Wl,-rpath,...` if you need runtime resolution for non-static parts).
-- `PKG_CONFIG_PATH=".../.build/prefix/lib/pkgconfig:.../.build/prefix/lib64/pkgconfig"`
+- `CPPFLAGS="-I<workspace_root>/.build/prefix/include"`
+- `LDFLAGS="-L<workspace_root>/.build/prefix/lib -L<workspace_root>/.build/prefix/lib64"` (add `-Wl,-rpath,...` if you need runtime resolution for non-static parts).
+- `PKG_CONFIG_PATH="<workspace_root>/.build/prefix/lib/pkgconfig:<workspace_root>/.build/prefix/lib64/pkgconfig"`
 
 Typical minimal configure for bring-up:
 

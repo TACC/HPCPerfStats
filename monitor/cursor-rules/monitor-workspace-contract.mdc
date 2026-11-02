@@ -9,6 +9,7 @@ alwaysApply: true
 - Make code changes only under `HPCPerfStats/monitor/` (primarily `HPCPerfStats/monitor/src/` for C sources).
 - You may analyze files outside `HPCPerfStats/monitor/` when needed to understand interfaces, behavior, or integration points.
 - Do not modify non-monitor code unless the user explicitly overrides this rule in the current chat.
+- **Dual workspace exception:** when `<workspace_root>/.cursor/workspace-profile` exists and its first word is `dual`, the workspace is set up for both container and monitor work, so the edit-scope bullets above apply only to edits under `HPCPerfStats/monitor/`. Non-monitor edits need no per-chat override and follow `HPCPerfStats/hpcperfstats/cursor-rules/` (the workspace `.cursor/rules`) per **out-of-monitor-hpcperfstats-rules**. The integration context, message contract, and change-validation sections below still apply to every monitor emit change, including when the same task also edits `listend.py`.
 
 ## Integration Context
 
