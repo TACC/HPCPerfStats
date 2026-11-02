@@ -400,7 +400,7 @@ INI_OPTION_DEFAULTS = {
   "archive_zstd_level": "7",
   "archive_zstd_drop_page_cache": "yes",
   "sync_pipeline_drop_page_cache": "yes",
-  "archive_seal_parallel_workers": "2",
+  "archive_seal_parallel_workers": "1",
   "sync_day_close_raw_paths_per_batch": "1000",
   "sync_day_close_min_age_hours": "32",
   "sync_ingest_hot_days": "3",
@@ -1295,11 +1295,12 @@ def get_archive_zstd_drop_page_cache() -> Any:
 
 def get_archive_seal_parallel_workers() -> Any:
   """
-  Max daily tar seals running at once in the process. Default 2.
+  Max daily tar seals running at once in the process. Default 1.
 
   Day close takes a slot before it seals (``try_claim_seal_slot``) and
-  yields the day when none is free; seals are disk-bound, so fewer at once
-  frees each tar's space sooner for the same total time.
+  yields the day when none is free; seals are disk-bound, so one at a time
+  frees each tar's space soonest for the same total time. Raise it only on
+  storage one seal cannot saturate.
 
   Returns:
     Any: Open return polymorphism from ``get_archive_seal_parallel_workers``:

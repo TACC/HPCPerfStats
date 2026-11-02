@@ -293,7 +293,9 @@ def test_archive_zstd_nice_ionice_keys_are_retired(temp_ini, monkeypatch):
     assert key not in cfg.INI_OPTION_DEFAULTS
     assert ("PIPELINE", key) not in cfg._INI_OPTION_REGISTRY_KEYS
     assert not hasattr(cfg, f"get_{key}")
-  assert cfg.get_archive_seal_parallel_workers() == 2
+  # One seal at a time: seals are disk-bound and space only comes back when
+  # each finishes (hpcperfstats01 2026-11-02).
+  assert cfg.get_archive_seal_parallel_workers() == 1
   assert cfg.get_archive_zstd_drop_page_cache() is True
 
 

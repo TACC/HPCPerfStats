@@ -28,7 +28,7 @@ Daily monitor archives are sealed inside the **`pipeline`** container. **`web`**
 |----------------|---------|------|
 | **`archive_zstd_threads`** | **`0`** | Seal/restore/archive decompress: **`0`** → zstd **`-T0`** (all logical cores per zstd process); **`N>0`** → explicit **`-TN`** |
 | **`ingest_zstd_threads`** | **`4`** | Ingest/populate sealed streams: **`4`** → **`-T4`**; **`0`** → **`-T0`** |
-| **`archive_seal_parallel_workers`** | **`2`** | Max daily tar seals running at once (process-wide seal slots); a day close with no free slot yields `reason=seal_slot_busy` and its day_close slot does other work. Use **`1`** on a saturated or shared volume: same total time, but each tar's space comes back sooner |
+| **`archive_seal_parallel_workers`** | **`1`** | Max daily tar seals running at once (process-wide seal slots); a day close with no free slot yields `reason=seal_slot_busy` and its day_close slot does other work. One at a time frees each tar's space soonest for the same total time on a disk-bound volume; raise only on storage a single seal cannot saturate |
 | **`archive_zstd_level`** | **`7`** | Compression level; benchmark before raising above **9** |
 | **`sync_pipeline_drop_page_cache`** | **`yes`** | Linux-only **`posix_fadvise`** on pipeline file I/O (ingest streaming, archive zstd, tar paths); legacy **`archive_zstd_drop_page_cache`** when this key is omitted |
 
