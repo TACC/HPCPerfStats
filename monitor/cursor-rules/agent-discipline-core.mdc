@@ -61,7 +61,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 | `secure_path.*`, `dyn_lib_path.*`, `fileio.h`, `daemonize.c`, `monitor_daemon.c` (dump list), `stats_buffer_debug_shm.*`, `*_dyn.c` (env dlopen), `beegfs*`, `intel_gpu_xpumcli.c`, `hwdetect.c`, `roofline_hw_peak*`, `hpcperfstats.spec` (conf mode), `scripts/check_unsafe_c_patterns*` | `monitor-security-hardening.mdc` |
 | `hpcperfstats.service`, `hpcperfstats.spec`, `tests/test_hpcperfstats_service*.sh`, `tests/test_service_unit_lshw.sh` | `monitor-systemd-service-contract.mdc` |
 | `monitor_cli.c`, `monitor_options.c`, `hpcperfstats.service`, `hpcperfstats.spec`, `tests/test_monitor_cli.c`, `tests/test_hpcperfstats_service*.sh` | `monitor-runtime-path-coherence.mdc` |
-| `job_proc_discover.*`, `job_gpu_assign.*`, `job_sched_affinity.*`, `job_shared_emit.*`, `job_cgroup_mem.*`, `host_mem_job.*`, shared-node paths in `monitor_daemon.c` / `monitor.c`, `tests/test_job_*`, `tests/test_host_mem_job*` | `shared-node-affinity-monitor-contract.mdc` |
+| `job_proc_discover.*`, `job_gpu_assign.*`, `job_sched_affinity.*`, `job_shared_emit.*`, `job_emit_filter.*`, `job_cgroup_mem.*`, `host_mem_job.*`, shared-node paths in `monitor_daemon.c` / `monitor.c`, `tests/test_job_*`, `tests/test_host_mem_job*` | `shared-node-affinity-monitor-contract.mdc` |
 
 ### Emit contract, RabbitMQ, schema
 

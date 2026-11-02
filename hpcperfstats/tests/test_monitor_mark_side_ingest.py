@@ -184,3 +184,43 @@ def test_membership_is_host_data_dev_not_a_second_hypertable():
   assert "job_affinity" in migration
   assert "create_hypertable" not in migration
   assert "host_sample_jid" not in migration
+
+
+def test_jobs_mark_without_affinity_writes_no_affinity_row(monkeypatch):
+  """horizon-idle-allocation-tagging: an idle (title-named) job on a
+  multi-job node is in ``%jobs`` but never gets an ``%affinity`` line. Its
+  non-GPU rows still take the ``j:<jid>`` stamp, GPU rows keep hardware
+  ``dev``, and no ``job_affinity`` row is written (so the job stays
+  unrestricted on GPUs instead of getting an empty grant)."""
+  lines = [
+    "!host_mem_job mem_used\n",
+    "!nvidia_gpu util\n",
+    "%jobs jids=111,79249\n",
+    "%affinity jid=111 cpus=0-3 gpus=0 cg=sched\n",
+    "1710000001.0 111 hosta\n",
+    "nvidia_gpu 0 5\n",
+    "host_mem_job j:111 10\n",
+    "%jobs jids=111,79249\n",
+    "1710000001.0 79249 hosta\n",
+    "host_mem_job j:79249 20\n",
+    "nvidia_gpu 1 7\n",
+  ]
+  rows = _collapsed_devs(lines)
+  assert ("host_mem_job", "j:79249", "79249") in rows
+  assert ("nvidia_gpu", "1", "79249") in rows
+  marks = collect_marks(lines)
+  assert [m["kind"] for m in marks] == ["jobs", "affinity", "jobs"]
+  assert [m["jid"] for m in marks if m["kind"] == "affinity"] == ["111"]
+
+  written = []
+
+  class _Objects:
+    @staticmethod
+    def update_or_create(jid, host, defaults):
+      written.append((jid, host, defaults["gpu_list"]))
+
+  import hpcperfstats.site.lib.machine.models as models
+
+  monkeypatch.setattr(models.job_affinity, "objects", _Objects)
+  persist_monitor_marks(marks)
+  assert written == [("111", "hosta", ["0"])]

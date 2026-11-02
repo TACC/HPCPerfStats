@@ -5,6 +5,7 @@ globs:
   - HPCPerfStats/monitor/src/job_gpu_assign.*
   - HPCPerfStats/monitor/src/job_sched_affinity.*
   - HPCPerfStats/monitor/src/job_shared_emit.*
+  - HPCPerfStats/monitor/src/job_emit_filter.*
   - HPCPerfStats/monitor/src/job_cgroup_mem.*
   - HPCPerfStats/monitor/src/host_mem_job.*
   - HPCPerfStats/monitor/src/monitor_daemon.c
@@ -27,9 +28,12 @@ alwaysApply: false
 
 ## Discovery
 
-- Group pids by cgroup v2 `slurmstepd.scope/<token>/`; name groups from `SLURM_JOB_ID` in non-root environ.
-- Token is never emitted. No cgroup `job_<id>` parse.
-- Store cgroup relpath (after `0::`) on each jid entry for memory reads; empty on environ-only fallback.
+- Group pids by cgroup v2 `slurmstepd.scope/<token>/`. Name sources, in order:
+  1. `SLURM_JOB_ID` in a non-root pid's environ (env always wins).
+  2. For a token still unnamed: the root `slurmstepd` title of the extern step — first pid of `<cgroup_root>/system.slice/slurmstepd.scope/<token>/step_extern/slurm/cgroup.procs`, then `/proc/<pid>/cmdline` = `slurmstepd: [<jid>.<step>]` or `[<jid>:namespace]` (`job_proc_jid_from_stepd_title`; all-digit jid). Sets `named_from_title`. Needed because the `/proc` walk skips root-owned pid dirs (`proc_filter`), so an idle allocation (only root stepds left) is otherwise never seen. Cost: one scandir of `slurmstepd.scope` plus two small reads per unnamed token per sample; fail-open on any miss.
+- `jid_require_step_id` drops env-named groups without `SLURM_STEP_ID`; title-named groups are allocation presence and are kept.
+- Token is never emitted. No cgroup `job_<id>` parse (Horizon tokens are opaque, e.g. `s4TDM6EWYAH400`).
+- Store cgroup relpath (after `0::`) on each jid entry for memory reads; title-named entries use `/system.slice/slurmstepd.scope/<token>/step_extern/slurm`; empty on environ-only fallback.
 - Never exec `scontrol` or `nvidia-smi`. Never `sched_setaffinity`.
 - Never read `CUDA_VISIBLE_DEVICES`, `ROCR_VISIBLE_DEVICES`, or `ZE_AFFINITY_MASK`.
 - Never walk `cpuset.cpus` / `cpuset.mems`.
@@ -44,6 +48,7 @@ host_mem_job j:<jid> [@fast|@full] <mem_used> <mem_peak> <anon_pages> <file_page
 
 - One sample block = one header jobid token (≤32 bare jid).
 - Sole jid with exact online CPUs **and** exact available GPU grant: ordinary unmarked payload (**still** may include `host_mem_job j:<jid>`).
+- **Title-named entries never emit `%affinity`** (no `SLURM_JOB_GPUS`; stepd fds/affinity are not the grant) and claim no CPUs/GPUs. Sole title-named entry → unmarked payload with every available GPU (an empty-grant `job_affinity` row would hide the job's GPUs). `|J|>=2` → listed in `%jobs`, no `%affinity`, payload carries only its `host_mem_job` (no CPU/GPU/proc/node-wide rows); its CPUs/GPUs stay on the `-` remainder. Decisions live in linkable `job_emit_filter.c` (`job_emit_sole_ctx`, `job_emit_multi_ctx`, `job_emit_entry_emits_affinity`).
 - `|J|>=2`: N jid payloads + one `-` node-wide payload; same frozen timestamp.
 - DEBUG shm: `fast`/`full` keep last jid only; `fast.burst`/`full.burst` hold the full tick.
 - GPU `dev` = collector index; unknown inventory never takes the no-mark fast path.

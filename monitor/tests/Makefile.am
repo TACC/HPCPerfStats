@@ -231,6 +231,9 @@ test_proc_filter_SOURCES = \
 test_job_proc_discover_SOURCES = \
 	test_job_proc_discover.c \
 	$(top_srcdir)/src/job_proc_discover.c \
+	$(top_srcdir)/src/job_cgroup_mem.c \
+	$(top_srcdir)/src/path_read.c \
+	$(top_srcdir)/src/path_open_fail_once.c \
 	$(top_srcdir)/src/proc_filter.c \
 	$(top_srcdir)/src/monitor_log.c
 
@@ -238,6 +241,9 @@ test_job_gpu_assign_SOURCES = \
 	test_job_gpu_assign.c \
 	$(top_srcdir)/src/job_gpu_assign.c \
 	$(top_srcdir)/src/job_proc_discover.c \
+	$(top_srcdir)/src/job_cgroup_mem.c \
+	$(top_srcdir)/src/path_read.c \
+	$(top_srcdir)/src/path_open_fail_once.c \
 	$(top_srcdir)/src/proc_filter.c \
 	$(top_srcdir)/src/monitor_log.c
 
@@ -246,12 +252,19 @@ test_job_sched_affinity_SOURCES = \
 	$(top_srcdir)/src/job_sched_affinity.c \
 	$(top_srcdir)/src/job_gpu_assign.c \
 	$(top_srcdir)/src/job_proc_discover.c \
+	$(top_srcdir)/src/job_cgroup_mem.c \
+	$(top_srcdir)/src/path_read.c \
+	$(top_srcdir)/src/path_open_fail_once.c \
 	$(top_srcdir)/src/proc_filter.c \
 	$(top_srcdir)/src/monitor_log.c
 
 test_job_discovery_marks_SOURCES = \
 	test_job_discovery_marks.c \
 	$(top_srcdir)/src/job_proc_discover.c \
+	$(top_srcdir)/src/job_cgroup_mem.c \
+	$(top_srcdir)/src/path_read.c \
+	$(top_srcdir)/src/path_open_fail_once.c \
+	$(top_srcdir)/src/job_emit_filter.c \
 	$(top_srcdir)/src/job_gpu_assign.c \
 	$(top_srcdir)/src/job_sched_affinity.c \
 	$(top_srcdir)/src/proc_filter.c \

@@ -319,4 +319,7 @@ Code constants: `ARTIFACT_BUILD_RETRY_LIMIT = 3`, `JOB_FAILURE_BACKOFF_S`,
 `PUBLIC_EF_POOL_THREADS = 4`, `STALL_EXIT_AFTER_SECONDS = 900`,
 `METRICS_CONTRACT_VERSION` (`lib/metrics.py`; bump on any metric semantics
 change — catalog members, formulas, aggregation rules, units — and every
-job is recomputed by the lane, newest first), `BACKFILL_RATE_WINDOW_S = 3600`.
+job is recomputed by the lane, newest first; currently **4** since 2026-11-02:
+untagged `host_data` rows on hosts a job holds alone now count toward the job,
+see `job_exclusive_hosts` in `lib/job_host_data_scope.py`),
+`BACKFILL_RATE_WINDOW_S = 3600`.

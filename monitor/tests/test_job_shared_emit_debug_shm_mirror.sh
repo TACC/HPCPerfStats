@@ -57,10 +57,21 @@ grep -q 'job_sched_affinity_remainder_cpulist' "${SRC}" \
     echo "job_shared_emit must compute CPU remainder via job_sched_affinity_remainder_cpulist" >&2
     exit 1
   }
-grep -q 'is_cpu_type' "${SRC}" \
+# Row filter (CPU affinity split) lives in the linkable job_emit_filter.c unit.
+grep -q 'is_cpu_type' "${ROOT}/src/job_emit_filter.c" \
   || {
-    echo "job_shared_emit must filter host_cpu/host_cpu_hw by affinity" >&2
+    echo "job_emit_filter must filter host_cpu/host_cpu_hw by affinity" >&2
     exit 1
   }
+
+# Idle allocations (title-named jids) never emit %affinity: emit must route through the
+# filter helpers that encode that rule (unit-tested in test_job_discovery_marks).
+for sym in job_emit_sole_ctx job_emit_multi_ctx job_emit_entry_emits_affinity; do
+  grep -q "${sym}" "${SRC}" \
+    || {
+      echo "job_shared_emit must call ${sym}" >&2
+      exit 1
+    }
+done
 
 echo "test_job_shared_emit_debug_shm_mirror passed"

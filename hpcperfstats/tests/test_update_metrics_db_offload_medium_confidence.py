@@ -314,3 +314,207 @@ def test_jid_table_index_probes_match_full_scan_oracle():
   ).count()
   assert n_copy == n_orm == 180 * 3 + 1
   host_data.objects.filter(host__in=hosts).delete()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_idle_tail_attributed_on_exclusive_host_only():
+  """horizon-idle-allocation-tagging (job 71526 shape): the job's steps end on
+  a host early and the shared-node monitor switches to the ``-`` payload, so
+  the rest of the allocation is NULL-tagged. On a host no other job overlaps,
+  those rows belong to the job; on a host where another job overlaps (strict
+  window overlap) they stay out. Edge-touching jobs do not block."""
+  oracles.skip_unless_compose_db()
+  from django.db import connection
+
+  from hpcperfstats.analysis.metrics.lib.columnar import copy_fetch
+  from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
+    job_exclusive_hosts,
+  )
+  from hpcperfstats.analysis.metrics.lib.metrics_host_data_sql import (
+    first_last_scoped_times,
+    hosts_owning_mid_sample,
+  )
+  from hpcperfstats.site.lib.machine.models import host_data, job_data
+
+  excl, cot, edge = "n-excl", "n-cot", "n-edge"
+  suffix = ".idle.test"
+  hosts = [f"{h}{suffix}" for h in (excl, cot, edge)]
+  jid, other, touching = "931001", "931002", "931003"
+  start = datetime(2026, 8, 3, 0, 0, tzinfo=UTC)
+  end = start + timedelta(hours=3)
+  host_data.objects.filter(host__in=hosts).delete()
+  job_data.objects.filter(jid__in=[jid, other, touching]).delete()
+  base = {"submit_time": start, "username": "u", "state": "TIMEOUT"}
+  job_data.objects.create(
+    jid=jid, start_time=start, end_time=end, host_list=[excl, cot, edge], **base
+  )
+  job_data.objects.create(
+    jid=other,
+    start_time=start + timedelta(hours=2),
+    end_time=end + timedelta(hours=1),
+    host_list=[cot],
+    **base,
+  )
+  job_data.objects.create(
+    jid=touching,
+    start_time=end,
+    end_time=end + timedelta(hours=1),
+    host_list=[edge],
+    **base,
+  )
+  rows = []
+  for minute in range(180):
+    t = start + timedelta(minutes=minute)
+    tag = jid if minute < 60 else None  # steps end at +60 min
+    for h in hosts:
+      rows.append((h, tag, "", t))
+    if minute >= 120:  # co-tenant payload on a multi-job node: j: stamp
+      rows.append((hosts[1], other, f"j:{other}", t))
+  host_data.objects.bulk_create(
+    host_data(
+      host=h, jid=j, type="cpu", event="user", dev=d, unit="u", time=t, value=1
+    )
+    for h, j, d, t in rows
+  )
+  try:
+    raw = job_exclusive_hosts(jid, [excl, cot, edge], start, end, shared=False)
+    assert raw == [excl, edge]
+    exclusive = [f"{h}{suffix}" for h in raw]
+
+    def count_copy(**kw: object) -> int:
+      sql, params = copy_fetch.build_copy_sql(
+        hosts,
+        {"time__gte": start, "time__lte": end},
+        jid,
+        shared=False,
+        **kw,
+      )
+      inner = sql.removeprefix("COPY (").removesuffix(
+        ") TO STDOUT (FORMAT BINARY)"
+      )
+      with connection.cursor() as cur:
+        cur.execute(
+          f"SELECT host, COUNT(DISTINCT time) FROM ({inner}) s GROUP BY host",
+          params,
+        )
+        return dict(cur.fetchall())
+
+    assert count_copy() == dict.fromkeys(hosts, 60)
+    attributed = count_copy(exclusive_hosts=exclusive)
+    assert attributed[hosts[0]] == 180  # idle tail counts
+    assert attributed[hosts[2]] == 180  # edge-touching job does not block
+    assert attributed[hosts[1]] == 60  # co-tenant host stays strict
+    bounds = first_last_scoped_times(
+      hosts, start, end, jid, exclusive_hosts=exclusive
+    )
+    assert bounds[hosts[0]] == (start, start + timedelta(minutes=179))
+    assert bounds[hosts[2]] == (start, start + timedelta(minutes=179))
+    # Strict host: job rows end before the window midpoint, so the
+    # midpoint-anchored probe reports it unowned (unchanged behavior).
+    assert bounds[hosts[1]] == (None, None)
+    # Midpoint (+90 min) is untagged everywhere: only exclusive hosts own it.
+    assert hosts_owning_mid_sample(hosts, start, end, jid) == set()
+    assert hosts_owning_mid_sample(
+      hosts, start, end, jid, exclusive_hosts=exclusive
+    ) == {hosts[0], hosts[2]}
+  finally:
+    host_data.objects.filter(host__in=hosts).delete()
+    job_data.objects.filter(jid__in=[jid, other, touching]).delete()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_unaccounted_co_tenant_blocks_and_late_accounting_marks_dirty():
+  """sacct ingest lists only ended jobs. A co-tenant still running when our
+  metrics are computed is visible only through its live job_affinity row
+  (listend, %affinity) and must block exclusive attribution on that host.
+  When its accounting row lands, computed non-shared jobs it overlaps are
+  stamped metrics_dirty_at so the stored attribution is recomputed."""
+  oracles.skip_unless_compose_db()
+  from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
+    job_exclusive_hosts,
+  )
+  from hpcperfstats.site.lib.machine.cache_utils import (
+    mark_overlapping_jobs_metrics_dirty,
+  )
+  from hpcperfstats.site.lib.machine.models import job_affinity, job_data
+
+  suffix = ".late.test"
+  mine, edge, shared_job, fresh, cot = (
+    "932001",
+    "932002",
+    "932003",
+    "932004",
+    "932009",
+  )
+  jids = [mine, edge, shared_job, fresh, cot]
+  start = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
+  end = start + timedelta(hours=3)
+  job_data.objects.filter(jid__in=jids).delete()
+  job_affinity.objects.filter(jid__in=jids).delete()
+  base = {"submit_time": start, "username": "u", "state": "COMPLETED"}
+
+  def mk(jid, st, et, hosts, computed=True):
+    job_data.objects.create(
+      jid=jid,
+      start_time=st,
+      end_time=et,
+      host_list=hosts,
+      metrics_distinct_time_count=10 if computed else None,
+      **base,
+    )
+
+  try:
+    mk(mine, start, end, ["n-a", "n-b"])
+    # Neighbours of the co-tenant on n-c (not our hosts):
+    # starts exactly when the co-tenant ends (touching, no overlap) ...
+    mk(edge, end + timedelta(hours=4), end + timedelta(hours=5), ["n-c"])
+    # ... a shared-node job (affinity rows) and a never-computed job.
+    mk(shared_job, start, end, ["n-c"])
+    mk(fresh, start, end, ["n-c"], computed=False)
+    job_affinity.objects.create(
+      jid=shared_job, host=f"n-c{suffix}", reported_at=start
+    )
+    # Co-tenant still running on n-a: affinity row, no accounting yet.
+    job_affinity.objects.create(
+      jid=cot,
+      host=f"n-a{suffix}",
+      reported_at=start + timedelta(hours=2),
+    )
+
+    def fqdn(h):
+      return f"{h}{suffix}"
+
+    assert job_exclusive_hosts(
+      mine, ["n-a", "n-b"], start, end, shared=False, to_host_data=fqdn
+    ) == ["n-b"]
+    # A co-tenant whose accounting shows it ended before our start does not
+    # block, even with a later affinity report time recorded.
+    mk(cot, start - timedelta(hours=5), start - timedelta(hours=1), ["n-a"])
+    assert job_exclusive_hosts(
+      mine, ["n-a", "n-b"], start, end, shared=False, to_host_data=fqdn
+    ) == ["n-a", "n-b"]
+    job_data.objects.filter(jid=cot).delete()
+
+    # The co-tenant's accounting lands: it overlapped us on n-a.
+    mk(
+      cot,
+      start + timedelta(hours=1),
+      end + timedelta(hours=4),
+      ["n-a", "n-c"],
+    )
+    assert mark_overlapping_jobs_metrics_dirty([cot]) == 1
+    dirty = dict(
+      job_data.objects.filter(jid__in=jids).values_list(
+        "jid", "metrics_dirty_at"
+      )
+    )
+    assert dirty[mine] is not None
+    assert dirty[edge] is None  # only touches the co-tenant's end
+    assert dirty[shared_job] is None  # shared jobs never attribute
+    assert dirty[fresh] is None  # not computed yet: Phase A lists it anyway
+    assert dirty[cot] is None  # the new job itself
+    # Idempotent: an existing stamp is kept, nothing new stamped.
+    assert mark_overlapping_jobs_metrics_dirty([cot]) == 0
+  finally:
+    job_affinity.objects.filter(jid__in=jids).delete()
+    job_data.objects.filter(jid__in=jids).delete()

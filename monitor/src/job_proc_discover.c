@@ -1,4 +1,5 @@
-/* Discover Slurm jids via slurmstepd.scope token groups + SLURM_JOB_ID environ. */
+/* Discover Slurm jids via slurmstepd.scope token groups: SLURM_JOB_ID environ, then the
+ * root slurmstepd process title for tokens no job process named (idle allocations). */
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -9,12 +10,17 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "job_cgroup_mem.h"
 #include "job_proc_discover.h"
 #include "monitor_log.h"
 #include "proc_filter.h"
 
 #define JOB_PROC_TOKEN_MAX 64
 #define JOB_PROC_SCOPE_MAX 512
+/* slurmstepd.scope location under the cgroup v2 root (Slurm cgroup/v2 plugin). */
+#define JOB_PROC_STEPD_SCOPE_REL "/system.slice/slurmstepd.scope"
+#define JOB_PROC_STEPD_TITLE_PREFIX "slurmstepd: ["
+#define JOB_PROC_CMDLINE_MAX 128
 
 struct scope_bucket {
   char token[JOB_PROC_TOKEN_MAX];
@@ -26,6 +32,7 @@ struct scope_bucket {
   char cgroup_relpath[JOB_PROC_CGROUP_RELPATH_MAX];
   int have_step;
   int named;
+  int named_from_title;
 };
 
 static int g_discover_warned;
@@ -334,6 +341,113 @@ static struct scope_bucket *find_or_add_bucket(struct scope_bucket **arr, size_t
   return nb;
 }
 
+int job_proc_jid_from_stepd_title(const char *title, size_t len, char *jid_out, size_t jid_cap)
+{
+  const size_t plen = sizeof(JOB_PROC_STEPD_TITLE_PREFIX) - 1;
+  size_t i;
+
+  if (title == NULL || jid_out == NULL || jid_cap == 0 || len <= plen ||
+      memcmp(title, JOB_PROC_STEPD_TITLE_PREFIX, plen) != 0)
+    return -1;
+  for (i = plen; i < len && isdigit((unsigned char)title[i]); i++)
+    ;
+  /* Digits must be followed by the step separator ('.' step / ':' namespace). */
+  if (i == plen || i >= len || (title[i] != '.' && title[i] != ':') || i - plen >= jid_cap)
+    return -1;
+  memcpy(jid_out, title + plen, i - plen);
+  jid_out[i - plen] = '\0';
+  return job_proc_jid_acceptable(jid_out) ? 0 : -1;
+}
+
+/*! First pid listed in a cgroup.procs file, or -1 (missing, empty, malformed). */
+static int read_first_cgroup_pid(const char *path)
+{
+  FILE *f = fopen(path, "re");
+  int pid = -1;
+
+  if (f == NULL)
+    return -1;
+  if (fscanf(f, "%d", &pid) != 1 || pid <= 0)
+    pid = -1;
+  fclose(f);
+  return pid;
+}
+
+/*! Name an unnamed bucket from the stepd title of its extern step (one bounded read each
+ *  of cgroup.procs and /proc/<pid>/cmdline). Fail-open: any read/parse miss leaves it unnamed.
+ *  Returns 0, or -1 on allocation failure. */
+static int name_bucket_from_stepd_title(const char *proc_root, const char *scope_dir,
+                                        struct scope_bucket *b)
+{
+  char path[JOB_PROC_SCOPE_MAX + JOB_PROC_TOKEN_MAX + 64];
+  char title[JOB_PROC_CMDLINE_MAX];
+  char jid[JOB_PROC_JID_MAX + 1];
+  FILE *f;
+  size_t got;
+  int pid;
+  int n;
+
+  n = snprintf(path, sizeof(path), "%s/%s/step_extern/slurm/cgroup.procs", scope_dir, b->token);
+  if (n < 0 || (size_t)n >= sizeof(path) || (pid = read_first_cgroup_pid(path)) < 0)
+    return 0;
+  n = snprintf(path, sizeof(path), "%s/%d/cmdline", proc_root, pid);
+  if (n < 0 || (size_t)n >= sizeof(path) || (f = fopen(path, "re")) == NULL)
+    return 0;
+  got = fread(title, 1, sizeof(title), f);
+  fclose(f);
+  if (job_proc_jid_from_stepd_title(title, got, jid, sizeof(jid)) < 0)
+    return 0;
+  if (bucket_add_pid(b, pid) < 0)
+    return -1;
+  snprintf(b->jid, sizeof(b->jid), "%s", jid);
+  if (b->cgroup_relpath[0] == '\0')
+    snprintf(b->cgroup_relpath, sizeof(b->cgroup_relpath),
+             JOB_PROC_STEPD_SCOPE_REL "/%s/step_extern/slurm", b->token);
+  b->named = 1;
+  b->named_from_title = 1;
+  return 0;
+}
+
+/*! Visit every job token under <cgroup_root>/slurmstepd.scope; name tokens that no job
+ *  process named from their root stepd title. Root pid dirs are skipped by the /proc walk
+ *  (proc_filter), so an idle allocation is only visible here. Sets *any_scope when a job
+ *  token exists. Returns 0, or -1 on allocation failure. */
+static int name_unnamed_scopes_from_stepd_titles(const char *proc_root,
+                                                 struct scope_bucket **buckets, size_t *nbuckets,
+                                                 size_t *bcap, int *any_scope)
+{
+  char scope_dir[JOB_PROC_SCOPE_MAX];
+  struct dirent **tokens = NULL;
+  int ntok;
+  int i;
+  int rc = 0;
+  int n;
+
+  n = snprintf(scope_dir, sizeof(scope_dir), "%s" JOB_PROC_STEPD_SCOPE_REL,
+               job_cgroup_mem_cgroup_root());
+  if (n < 0 || (size_t)n >= sizeof(scope_dir))
+    return 0;
+  ntok = scandir(scope_dir, &tokens, NULL, alphasort);
+  if (ntok < 0)
+    return 0; /* no slurmstepd.scope on this node: fail-open */
+  for (i = 0; i < ntok; i++) {
+    const char *name = tokens[i]->d_name;
+    struct scope_bucket *b;
+
+    if (rc == 0 && name[0] != '.' && strcmp(name, "system") != 0 &&
+        strlen(name) < JOB_PROC_TOKEN_MAX &&
+        (tokens[i]->d_type == DT_DIR || tokens[i]->d_type == DT_UNKNOWN)) {
+      *any_scope = 1;
+      b = find_or_add_bucket(buckets, nbuckets, bcap, name);
+      if (b == NULL || (!b->named && name_bucket_from_stepd_title(proc_root, scope_dir, b) < 0))
+        rc = -1;
+    }
+    free(tokens[i]);
+  }
+  free(tokens);
+  return rc;
+}
+
 static int merge_named_into_result(struct job_proc_discover_result *out, struct scope_bucket *b)
 {
   size_t i;
@@ -357,7 +471,9 @@ static int merge_named_into_result(struct job_proc_discover_result *out, struct 
       snprintf(e->job_gpus, sizeof(e->job_gpus), "%s", b->job_gpus);
     if (b->cgroup_relpath[0])
       snprintf(e->cgroup_relpath, sizeof(e->cgroup_relpath), "%s", b->cgroup_relpath);
+    e->named_from_title = b->named_from_title;
   } else {
+    e->named_from_title = e->named_from_title && b->named_from_title;
     if (e->job_gpus[0] == '\0' && b->job_gpus[0])
       snprintf(e->job_gpus, sizeof(e->job_gpus), "%s", b->job_gpus);
     if (e->cgroup_relpath[0] == '\0' && b->cgroup_relpath[0])
@@ -437,19 +553,19 @@ int job_proc_discover(struct job_proc_discover_result *out, int require_step_id,
       continue;
     if (parse_scope_token(cgroup, token, sizeof(token)) == 0) {
       char rel[JOB_PROC_CGROUP_RELPATH_MAX];
+      int root = pid_uid_is_root(proc_root, pid);
 
       any_scope = 1;
       b = find_or_add_bucket(&buckets, &nbuckets, &bcap, token);
       if (b == NULL)
         goto oom;
-      if (parse_cgroup_relpath(cgroup, rel, sizeof(rel)) == 0) {
-        /* Prefer non-root (job) leaf path; first scope pid may be root stepd. */
-        if (b->cgroup_relpath[0] == '\0' || !pid_uid_is_root(proc_root, pid))
-          snprintf(b->cgroup_relpath, sizeof(b->cgroup_relpath), "%s", rel);
-      }
+      /* Prefer non-root (job) leaf path; first scope pid may be root stepd. */
+      if (parse_cgroup_relpath(cgroup, rel, sizeof(rel)) == 0 &&
+          (b->cgroup_relpath[0] == '\0' || !root))
+        snprintf(b->cgroup_relpath, sizeof(b->cgroup_relpath), "%s", rel);
       if (bucket_add_pid(b, pid) < 0)
         goto oom;
-      if (pid_uid_is_root(proc_root, pid))
+      if (root)
         continue;
       env_rc = read_environ_keys(proc_root, pid, jid, sizeof(jid), gpus, sizeof(gpus), &have_step);
       if (env_rc == 0 && !b->named && job_proc_jid_acceptable(jid)) {
@@ -462,6 +578,9 @@ int job_proc_discover(struct job_proc_discover_result *out, int require_step_id,
         b->have_step = 1;
     }
   }
+
+  if (name_unnamed_scopes_from_stepd_titles(proc_root, &buckets, &nbuckets, &bcap, &any_scope) < 0)
+    goto oom;
 
   if (!any_scope) {
     /* Fallback: no slurmstepd.scope on node — per-pid environ SLURM_JOB_ID. */
@@ -504,7 +623,7 @@ int job_proc_discover(struct job_proc_discover_result *out, int require_step_id,
 
       if (!b->named)
         continue;
-      if (require_step_id && !b->have_step)
+      if (require_step_id && !b->have_step && !b->named_from_title)
         continue;
       if (merge_named_into_result(&scratch, b) < 0)
         goto oom;

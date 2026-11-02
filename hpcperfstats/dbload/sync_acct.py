@@ -103,7 +103,9 @@ def _notify_job_cache_after_acct_ingest(
   """
   Invalidate site/reference caches; optionally warm KEY_JOB after accounting.
 
-    ingest.
+  Also stamps ``metrics_dirty_at`` on already-computed jobs the new jobs
+  overlap (``mark_overlapping_jobs_metrics_dirty``), so exclusive-host
+  attribution computed before a co-tenant's accounting landed is redone.
 
   Args:
     inserted (Any): Inserted passed to this helper.
@@ -132,6 +134,23 @@ def _notify_job_cache_after_acct_ingest(
         warm_job_cache_entries(job_objs, get_site_content_cache_timeout())
   except Exception:
     pass
+  if not inserted_jids:
+    return
+  # New accounting can reveal a co-tenant a computed job did not see (sacct
+  # lists only ended jobs); hand those jobs back to update_metrics.
+  try:
+    from hpcperfstats.site.lib.machine.cache_utils import (
+      mark_overlapping_jobs_metrics_dirty,
+    )
+
+    stamped = mark_overlapping_jobs_metrics_dirty(inserted_jids)
+    if stamped:
+      log_print("Overlapping computed jobs marked metrics-dirty:", stamped)
+  except Exception as exc:
+    log_print(
+      "WARNING: overlap metrics-dirty stamp failed:",
+      f"{type(exc).__name__}: {exc}",
+    )
 
 
 COLUMNS_TO_READ = [

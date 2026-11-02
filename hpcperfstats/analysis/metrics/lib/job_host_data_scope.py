@@ -19,14 +19,24 @@ Attributes:
   MAX_SANE_COUNTER_RATE: Per-sample ``arc`` / ``value`` ceiling.
   _GPU_HOST_DATA_TYPES: Canonical GPU ``host_data.type`` names on the
     job-scoped allowlist.
+  _logger: Module logger (exclusive-host fallback warnings).
+
+Exclusive allocations: on a host the job holds alone (no ``job_affinity``
+rows, no overlapping ``job_data``), untagged rows in the window also belong
+to the job (``job_exclusive_hosts`` / ``job_host_data_scope_sql_params``),
+so allocated-but-idle time counts. Ingest still never stamps them.
 """
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from functools import lru_cache
 from typing import Any
 
 from django.db.models import Q
+
+_logger: logging.Logger = logging.getLogger(__name__)
 
 SHARED_HOST_WIDE_HELP_FOOTER: str = (
   "This counter is node-wide (host-level) on a shared node — it is not "
@@ -113,6 +123,191 @@ def job_host_data_scope_sql(
   prefix = f"{table_alias}." if table_alias else ""
   p = jid_param_placeholder
   return f"({prefix}jid = {p} OR {prefix}dev = ('j:' || {p}))"
+
+
+def job_host_data_scope_sql_params(
+  jid: str,
+  *,
+  table_alias: str = "h",
+  coalesce: bool = True,
+  exclusive_hosts: Any = (),
+) -> tuple[str, list[Any]]:
+  """
+  The one bind-param job predicate for raw SQL ``host_data`` reads.
+
+  ``coalesce=True`` wraps ``jid`` / ``dev`` in ``COALESCE`` (same rows) so
+  the planner keeps the ``(host, time)`` index walk instead of the jid /
+  ``j:`` indexes (hs04 COPY and probe timeouts). ``exclusive_hosts`` adds
+  the exclusive-allocation arm: untagged rows (``jid`` NULL, ``''`` or
+  ``'-'`` and no ``j:`` stamp) on hosts the job holds alone (see
+  ``job_exclusive_hosts``). An empty set returns today's strict predicate
+  byte for byte.
+
+  Args:
+    jid (str): Job id.
+    table_alias (str): ``host_data`` alias (empty for bare columns).
+    coalesce (bool): Wrap the jid / dev comparisons in ``COALESCE``.
+    exclusive_hosts (Any): Iterable of host FQDNs for the untagged arm;
+      callers pass only the hosts of the current query batch.
+
+  Returns:
+    tuple[str, list[Any]]: Parenthesized predicate and its parameters
+    (jid twice, then the sorted host list when the arm is present).
+
+  Examples:
+    >>> job_host_data_scope_sql_params("7")[1]
+    ['7', '7']
+    >>> job_host_data_scope_sql_params("7", exclusive_hosts=["b", "a"])[1]
+    ['7', '7', ['a', 'b']]
+  """
+  prefix = f"{table_alias}." if table_alias else ""
+  jid_s = str(jid)
+  if coalesce:
+    strict = (
+      f"COALESCE({prefix}jid, '') = %s OR "
+      f"COALESCE({prefix}dev, '') = ('j:' || %s)"
+    )
+  else:
+    strict = job_host_data_scope_sql(table_alias=table_alias)[1:-1]
+  hosts = sorted({str(h) for h in exclusive_hosts or () if h})
+  if not hosts:
+    return f"({strict})", [jid_s, jid_s]
+  untagged = (
+    f"({prefix}host = ANY(%s::text[]) AND COALESCE({prefix}jid, '') IN "
+    f"('', '-') AND COALESCE({prefix}dev, '') NOT LIKE 'j:%%')"
+  )
+  return f"({strict} OR {untagged})", [jid_s, jid_s, hosts]
+
+
+def exclusive_hosts_cache_token(exclusive_hosts: Any) -> str:
+  """
+  Short, order-free cache-key token for a job's exclusive host set.
+
+  Cached host lists / schemas depend on the scope, so their keys carry this
+  token; a change in co-tenancy (a late accounting row) picks a new key.
+
+  Args:
+    exclusive_hosts (Any): Iterable of host names.
+
+  Returns:
+    str: ``xh-`` when empty, else ``xh`` plus 12 hex digits.
+
+  Examples:
+    >>> exclusive_hosts_cache_token([])
+    'xh-'
+    >>> len(exclusive_hosts_cache_token(["a", "b"]))
+    14
+  """
+  import hashlib
+
+  hosts = sorted({str(h) for h in exclusive_hosts or () if h})
+  if not hosts:
+    return "xh-"
+  digest = hashlib.sha1(",".join(hosts).encode(), usedforsecurity=False)
+  return "xh" + digest.hexdigest()[:12]
+
+
+def job_exclusive_hosts(
+  jid: str,
+  hosts: Any,
+  start: Any,
+  end: Any,
+  *,
+  shared: bool,
+  normalize: Callable[[Any], list[str]] | None = None,
+  to_host_data: Callable[[str], str] | None = None,
+) -> list[str]:
+  """
+  Accounting hosts on which the job's untagged ``host_data`` rows count.
+
+  A host qualifies when the job is not a shared-node job (no
+  ``job_affinity`` rows: ``shared`` False) and no other job is known to
+  overlap the window on it. Two sources, neither a ``host_data`` probe:
+
+  * ``job_data`` (accounting): another job on the host whose window
+    overlaps strictly (``start_time < end`` and ``end_time > start``), so a
+    job that only touches an edge does not block. sacct ingest only lists
+    ended jobs, so a co-tenant still running is not here yet.
+  * ``job_affinity`` (live, written by listend from ``%affinity`` marks):
+    another jid reported on the host at or after our start. When that jid
+    has accounting, its window decides; without accounting (running or not
+    yet ingested) it blocks the host (fail closed).
+
+  When a co-tenant's accounting row lands later, sync_acct stamps this job
+  ``metrics_dirty_at`` (``mark_overlapping_jobs_metrics_dirty``), so a
+  stored attribution is recomputed. On a database error the set is empty
+  and the job keeps today's strict scope.
+
+  Args:
+    jid (str): Job id.
+    hosts (Any): The job's accounting host names (``job_data.host_list``).
+    start (Any): Window start.
+    end (Any): Window end.
+    shared (bool): ``job_is_shared_node(jid)``.
+    normalize (Callable[[Any], list[str]] | None): Maps one raw
+      ``host_list`` value to host names comparable with ``hosts``; default
+      strips each entry.
+    to_host_data (Callable[[str], str] | None): Maps an accounting host
+      name to the ``host_data`` / ``job_affinity`` host (FQDN); default
+      identity.
+
+  Returns:
+    list[str]: Subset of ``hosts`` (input order) held by this job alone.
+
+  Examples:
+    >>> job_exclusive_hosts("7", ["a"], None, None, shared=False)
+    []
+  """
+  host_list = [str(h) for h in hosts or () if h]
+  if shared or not str(jid or "").strip() or not host_list:
+    return []
+  if start is None or end is None:
+    return []
+  from django.db import DatabaseError
+
+  from hpcperfstats.site.lib.machine.models import job_affinity, job_data
+
+  norm = normalize or (lambda raw: [str(h).strip() for h in raw or ()])
+  fqdn = {h: (to_host_data or str)(h) for h in host_list}
+  try:
+    others = (
+      job_data.objects.filter(
+        host_list__overlap=host_list,
+        start_time__lt=end,
+        end_time__gt=start,
+      )
+      .exclude(jid=str(jid))
+      .values_list("host_list", flat=True)
+    )
+    busy = {h for raw in others for h in norm(raw)}
+    live = list(
+      job_affinity.objects.filter(
+        host__in=sorted(set(fqdn.values())), reported_at__gte=start
+      )
+      .exclude(jid=str(jid))
+      .values_list("jid", "host")
+    )
+    windows = dict.fromkeys({j for j, _h in live})
+    for j, st, et in job_data.objects.filter(jid__in=list(windows)).values_list(
+      "jid", "start_time", "end_time"
+    ):
+      windows[j] = (st, et)
+    live_busy = {
+      h
+      for j, h in live
+      if windows[j] is None or (windows[j][0] < end and windows[j][1] > start)
+    }
+  except DatabaseError as exc:
+    _logger.warning(
+      "job_exclusive_hosts jid=%s hosts=%d failed (%s: %s); "
+      "using strict job scope",
+      jid,
+      len(host_list),
+      type(exc).__name__,
+      str(exc)[:200],
+    )
+    return []
+  return [h for h in host_list if h not in busy and fqdn[h] not in live_busy]
 
 
 def gpu_devs_for_job(

@@ -44,8 +44,10 @@ from django.db import (
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.analysis.metrics.lib import metrics_host_data_sql
 from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
+  exclusive_hosts_cache_token,
   gpu_devs_for_job,
   is_job_scoped_host_data_type,
+  job_exclusive_hosts,
   job_is_shared_node,
 )
 from hpcperfstats.analysis.metrics.lib.phase_profile import (
@@ -1181,6 +1183,8 @@ class jid_table:
     _gpu_affinity_devs_cache: Cached ``gpu_devs_for_job`` result or unset.
     _large_job_plot_cache_token: ``_large_job_plot_cache_token``.
     _shared_node: Affinity-based shared-node signal for residual host-wide reads.
+    _exclusive_hosts: Host FQDNs this job holds alone; untagged rows there
+      count as job rows (``job_exclusive_hosts``).
     acct_host_list: ``acct_host_list``.
     end_time: ``end_time``.
     host_list: ``host_list``.
@@ -1212,6 +1216,7 @@ class jid_table:
     self._gpu_affinity_devs_cache: list[str] | object | None = _GPU_AFF_UNSET
     self._large_job_plot_cache_token = "full"
     self._shared_node = False
+    self._exclusive_hosts: list[str] = []
 
     try:
       row = cached_orm(
@@ -1254,6 +1259,20 @@ class jid_table:
     self.start_time = _ensure_tz(st)
     self.end_time = _ensure_tz(et)
     self._shared_node = job_is_shared_node(str(jid))
+    # Hosts held by this job alone: their untagged (idle-allocation) rows
+    # count toward the job in every scoped read (D3; one job_data query).
+    self._exclusive_hosts = _build_acct_host_fqdns(
+      job_exclusive_hosts(
+        str(jid),
+        _normalize_job_accounting_host_list(hl_raw),
+        self.start_time,
+        self.end_time,
+        shared=self._shared_node,
+        normalize=_normalize_job_accounting_host_list,
+        to_host_data=_as_host_data_fqdn,
+      )
+    )
+    _xh = exclusive_hosts_cache_token(self._exclusive_hosts)
     self._base_filter = {
       "time__gte": self.start_time,
       "time__lte": self.end_time,
@@ -1276,7 +1295,11 @@ class jid_table:
       found = set()
       for host_chunk in _iter_acct_host_batches(self.acct_host_list):
         owned = metrics_host_data_sql.hosts_owning_mid_sample(
-          list(host_chunk), self.start_time, self.end_time, str(self.jid)
+          list(host_chunk),
+          self.start_time,
+          self.end_time,
+          str(self.jid),
+          exclusive_hosts=self._exclusive_hosts,
         )
         found.update(
           nh for nh in map(_normalize_host_cell_for_host_data, owned) if nh
@@ -1288,7 +1311,7 @@ class jid_table:
     with _profile_phase("db_fetch"):
       self.host_list = (
         cached_orm(
-          make_cache_key(KEY_JOB_HOST_LIST, jid, _st, _et),
+          make_cache_key(KEY_JOB_HOST_LIST, jid, _st, _et, _xh),
           get_site_content_cache_timeout(),
           _host_list_fn,
         )
@@ -1335,11 +1358,17 @@ class jid_table:
           >>> _near_bounds("7")  # doctest: +SKIP
           [('host_cpu', 'user', 'cs')]
         """
+        excl = self._exclusive_hosts if jid else ()
         first, last = metrics_host_data_sql.first_last_scoped_times(
-          [host0], self.start_time, self.end_time, jid
+          [host0], self.start_time, self.end_time, jid, exclusive_hosts=excl
         ).get(host0, (None, None))
         return metrics_host_data_sql.schema_rows_near_bounds(
-          host0, first, last, JID_TABLE_SCHEMA_PROBE_SLICE_S, jid
+          host0,
+          first,
+          last,
+          JID_TABLE_SCHEMA_PROBE_SLICE_S,
+          jid,
+          exclusive_hosts=excl,
         )
 
       rows = [tuple(r[:3]) for r in _near_bounds(str(self.jid)) if len(r) >= 3]
@@ -1365,7 +1394,7 @@ class jid_table:
 
     with _profile_phase("db_fetch"):
       schema_rows = cached_orm(
-        make_cache_key(KEY_JOB_SCHEMA, jid, self.host_list[0], "v2"),
+        make_cache_key(KEY_JOB_SCHEMA, jid, self.host_list[0], "v2", _xh),
         get_site_content_cache_timeout(),
         _schema_fn,
       )

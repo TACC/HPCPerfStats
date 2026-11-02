@@ -12,10 +12,10 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_host_key_alias.c` | `host_key_alias_lookup` / `host_key_alias_emit` |
 | `test_proc_status_order.c` | `host_proc` deferred Uid/Vm*/Threads flush; Name: deny list |
 | `test_proc_filter.c` | `/proc` pid filter denylist; NULL NSS name must not exclude |
-| `test_job_proc_discover.c` | Shared-node jid discovery (`slurmstepd.scope` + `SLURM_JOB_ID`) |
+| `test_job_proc_discover.c` | Shared-node jid discovery (`slurmstepd.scope` + `SLURM_JOB_ID`, then root stepd title for idle allocations; fake `/proc` + `HPCPERFSTATS_CGROUP_ROOT`) |
 | `test_job_gpu_assign.c` | `SLURM_JOB_GPUS` / AutoDetect grant mapping (c122-018 minor map hooks) |
 | `test_job_sched_affinity.c` | `sched_getaffinity` union inject + full-resource GPU equality |
-| `test_job_discovery_marks.c` | `%jobs` / `%affinity` wire shape + full-resource predicate |
+| `test_job_discovery_marks.c` | `%jobs` / `%affinity` wire shape, full-resource predicate, and per-payload row filter (`job_emit_filter.c`: title-named jobs never emit `%affinity`) |
 | `test_schema_emit.c` | `stats_format_emit_*` banner/schema/mark helpers |
 | `test_procfile_kv.c` | `proc_kv_into_stats` (header-only) |
 | `test_collect_str.c` | `str_collect_key_list` / `str_collect_prefix_key_list` |

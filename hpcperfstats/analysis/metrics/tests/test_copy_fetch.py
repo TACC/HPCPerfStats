@@ -386,3 +386,76 @@ def test_thinned_table_scales_fsio_delta_totals_by_slot_fraction():
   assert thinned.delta_scale == 3.0
   assert thinned.get_nfs_delta_totals_mb() == [6.0, 3.0]
   assert thinned.get_llite_delta_by_event() == {"vfs_read_bytes": 30.0}
+
+
+def test_build_copy_sql_exclusive_hosts_adds_untagged_arm():
+  """horizon-idle-allocation-tagging: an exclusive allocation keeps its
+  untagged (idle, ``-`` payload) rows; the arm binds the batch's hosts."""
+  sql, params = copy_fetch.build_copy_sql(
+    ["a", "b"],
+    {"time__gte": T0, "time__lte": T0 + timedelta(hours=1)},
+    "77",
+    shared=False,
+    exclusive_hosts=["b"],
+  )
+  assert "OR (h.host = ANY(%s::text[]) AND COALESCE(h.jid, '') IN" in sql
+  assert sql.count("%s") == len(params)
+  assert params == [
+    ["a", "b"],
+    T0,
+    T0 + timedelta(hours=1),
+    "77",
+    "77",
+    ["b"],
+  ]
+  # Empty exclusive set: byte-identical to the strict scope.
+  strict = copy_fetch.build_copy_sql(
+    ["a", "b"],
+    {"time__gte": T0, "time__lte": T0 + timedelta(hours=1)},
+    "77",
+    shared=False,
+  )
+  assert (
+    copy_fetch.build_copy_sql(
+      ["a", "b"],
+      {"time__gte": T0, "time__lte": T0 + timedelta(hours=1)},
+      "77",
+      shared=False,
+      exclusive_hosts=[],
+    )
+    == strict
+  )
+
+
+def test_fetch_passes_only_batch_exclusive_hosts():
+  """The arm carries the current COPY batch's exclusive hosts (<= 8), never
+  the job's whole exclusive set (80-host jobs)."""
+  hosts = [f"h{i:02d}" for i in range(12)]
+  jt = _fake_table(hosts)
+  jt._exclusive_hosts = ["h01", "h10", "zz"]
+  seen = []
+
+  def runner(sql, params):
+    seen.append(
+      (list(params[0]), params[-1] if "IN ('', '-')" in sql else None)
+    )
+    return encode_copy_binary([])
+
+  copy_fetch.fetch_job_frame(jt, batch_size=8, slice_s=7200, copy_runner=runner)
+  by_batch = {tuple(h): ex for h, ex in seen}
+  assert by_batch[tuple(hosts[:8])] == ["h01"]
+  assert by_batch[tuple(hosts[8:])] == ["h10"]
+
+
+def test_fetch_without_exclusive_attribute_stays_strict():
+  hosts = ["a"]
+  sqls = []
+
+  def runner(sql, params):
+    sqls.append(sql)
+    return encode_copy_binary([])
+
+  copy_fetch.fetch_job_frame(
+    _fake_table(hosts), batch_size=8, slice_s=7200, copy_runner=runner
+  )
+  assert sqls and all("IN ('', '-')" not in s for s in sqls)

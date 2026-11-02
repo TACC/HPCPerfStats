@@ -730,14 +730,14 @@ def test_jid_table_host_list_and_schema_use_index_probes(monkeypatch):
   probe_calls = []
   schema_calls = []
 
-  def _bounds(hosts, start, end, jid=None):
+  def _bounds(hosts, start, end, jid=None, exclusive_hosts=()):
     return dict.fromkeys(hosts, (start, end))
 
-  def _owning(hosts, start, end, jid):
+  def _owning(hosts, start, end, jid, exclusive_hosts=()):
     probe_calls.append((tuple(hosts), jid))
     return {h for h in hosts if h != "idle.x"}
 
-  def _schema(host, first, last, slice_s, jid=None):
+  def _schema(host, first, last, slice_s, jid=None, exclusive_hosts=()):
     schema_calls.append((host, slice_s, jid))
     return [("cpu", "user", "cs")] if jid else [("host_mem", "used", "kB")]
 
@@ -764,6 +764,71 @@ def test_jid_table_host_list_and_schema_use_index_probes(monkeypatch):
   assert probe_calls[0] == (("a.x", "idle.x"), "77")
   assert jt.schema == {"cpu": ["user"], "host_mem": ["used"]}
   assert [c[2] for c in schema_calls] == ["77", None]
+
+
+def test_jid_table_exclusive_hosts_reach_window_probes(monkeypatch):
+  """Idle-but-allocated hosts of an exclusive job count as owned: the
+  exclusive set (D3) is computed once per window and passed to every scoped
+  probe; the host-list cache key carries its fingerprint."""
+  import hpcperfstats.analysis.metrics.lib.metrics_host_data_sql as sql_mod
+
+  seen = {"owning": [], "bounds": [], "schema": [], "keys": []}
+
+  def _bounds(hosts, start, end, jid=None, exclusive_hosts=()):
+    seen["bounds"].append((jid, tuple(exclusive_hosts)))
+    return dict.fromkeys(hosts, (start, end))
+
+  def _owning(hosts, start, end, jid, exclusive_hosts=()):
+    seen["owning"].append((tuple(hosts), tuple(exclusive_hosts)))
+    return set(hosts)
+
+  def _schema(host, first, last, slice_s, jid=None, exclusive_hosts=()):
+    seen["schema"].append((jid, tuple(exclusive_hosts)))
+    return [("cpu", "user", "cs")]
+
+  monkeypatch.setattr(sql_mod, "first_last_scoped_times", _bounds)
+  monkeypatch.setattr(sql_mod, "hosts_owning_mid_sample", _owning)
+  monkeypatch.setattr(sql_mod, "schema_rows_near_bounds", _schema)
+  mod = "hpcperfstats.analysis.metrics.lib.gen.jid_table"
+  st = datetime(2026, 5, 1, tzinfo=UTC)
+  et = datetime(2026, 5, 1, 2, tzinfo=UTC)
+  window = iter([(["a.x", "busy.x"], st, et)])
+
+  def _cached(key, _ttl, fn):
+    seen["keys"].append(key)
+    return next(window, None) or fn()
+
+  calls = []
+
+  def _exclusive(
+    jid, hosts, start, end, *, shared, normalize=None, to_host_data=None
+  ):
+    assert to_host_data is not None
+    calls.append((jid, list(hosts), start, end, shared))
+    return [h for h in hosts if h != "busy.x"]
+
+  monkeypatch.setattr(f"{mod}.cached_orm", _cached)
+  monkeypatch.setattr(f"{mod}._build_acct_host_fqdns", list)
+  monkeypatch.setattr(f"{mod}._normalize_job_accounting_host_list", list)
+  monkeypatch.setattr(f"{mod}.job_is_shared_node", lambda _j: False)
+  monkeypatch.setattr(f"{mod}.job_exclusive_hosts", _exclusive)
+  monkeypatch.setattr(
+    f"{mod}.jid_table._apply_large_job_time_sampling_if_needed",
+    lambda self: None,
+  )
+  jt = jid_table("71526")
+  assert calls == [("71526", ["a.x", "busy.x"], st, et, False)]
+  assert jt._exclusive_hosts == ["a.x"]
+  assert seen["owning"] == [(("a.x", "busy.x"), ("a.x",))]
+  assert seen["bounds"] == [("71526", ("a.x",))]
+  assert seen["schema"] == [("71526", ("a.x",))]
+  from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
+    exclusive_hosts_cache_token,
+  )
+
+  token = exclusive_hosts_cache_token(["a.x"])
+  assert token != exclusive_hosts_cache_token([])
+  assert any(token in str(k) for k in seen["keys"])
 
 
 def test_apply_large_job_sampling_skips_when_samples_fit_buckets(monkeypatch):
@@ -812,6 +877,11 @@ def test_scoped_probe_sql_cannot_use_jid_or_dev_indexes():
   )
   assert params == ["69000", "69000"]
   assert _scope_sql("") == ("TRUE", [])
+  ex_sql, ex_params = _scope_sql("69000", ["h1.x"])
+  assert ex_sql.startswith(sql[:-1] + " OR (d.host = ANY(%s::text[])")
+  assert ex_params == ["69000", "69000", ["h1.x"]]
+  # No jid: host-wide read, exclusive hosts are irrelevant.
+  assert _scope_sql("", ["h1.x"]) == ("TRUE", [])
 
 
 def test_first_last_scoped_times_bisects_instead_of_walking_untagged_tail(

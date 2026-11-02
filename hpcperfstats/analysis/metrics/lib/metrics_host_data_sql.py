@@ -66,18 +66,21 @@ def in_window_per_host_min_max_rows(
     return [dict(zip(cols, row, strict=True)) for row in cursor.fetchall()]
 
 
-def _scope_sql(jid: str | None) -> tuple[str, list[Any]]:
+def _scope_sql(
+  jid: str | None, exclusive_hosts: Any = ()
+) -> tuple[str, list[Any]]:
   """
   Job-scope filter on alias ``d`` that cannot use the jid / dev indexes.
 
-  Same rows as ``job_host_data_scope_sql`` (a NULL ``jid`` / ``dev`` never
-  equals the job id), but wrapped in ``COALESCE`` so the planner must walk
-  ``(host, time)`` in time order. With the plain predicate, hs04 picked the
-  jid / ``j:`` indexes for a 64-host job (all of its rows, then host filter
-  and sort) and the per-host ``ORDER BY time LIMIT 1`` probe timed out.
+  ``job_host_data_scope_sql_params`` in its ``COALESCE`` form, so the
+  planner must walk ``(host, time)`` in time order. With the plain
+  predicate, hs04 picked the jid / ``j:`` indexes for a 64-host job (all of
+  its rows, then host filter and sort) and the per-host ``ORDER BY time
+  LIMIT 1`` probe timed out.
 
   Args:
     jid (str | None): Job id, or ``None`` / empty for host-wide reads.
+    exclusive_hosts (Any): Hosts the job holds alone (untagged rows count).
 
   Returns:
     tuple[str, list[Any]]: ``(sql, params)``; ``("TRUE", [])`` without jid.
@@ -90,8 +93,13 @@ def _scope_sql(jid: str | None) -> tuple[str, list[Any]]:
   """
   if not jid:
     return "TRUE", []
-  sql = "(COALESCE(d.jid, '') = %s OR COALESCE(d.dev, '') = ('j:' || %s))"
-  return sql, [str(jid), str(jid)]
+  from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
+    job_host_data_scope_sql_params,
+  )
+
+  return job_host_data_scope_sql_params(
+    jid, table_alias="d", exclusive_hosts=exclusive_hosts
+  )
 
 
 def first_last_scoped_times(
@@ -99,6 +107,7 @@ def first_last_scoped_times(
   start: Any,
   end: Any,
   jid: str | None = None,
+  exclusive_hosts: Any = (),
 ) -> dict[str, tuple[Any, Any]]:
   """
   First / last (job-scoped) sample time per host via ``(host, time)`` probes.
@@ -119,6 +128,8 @@ def first_last_scoped_times(
     start (Any): Window start (inclusive).
     end (Any): Window end (inclusive).
     jid (str | None): Job id; ``None`` probes host-wide.
+    exclusive_hosts (Any): Hosts the job holds alone; their untagged
+      samples count as owned, so bounds reach the window edges.
 
   Returns:
     dict[str, tuple[Any, Any]]: Host to ``(first, last)``.
@@ -138,7 +149,8 @@ def first_last_scoped_times(
 
   from django.db import connection
 
-  scope, scope_params = _scope_sql(jid)
+  excl = set(exclusive_hosts or ())
+  scope, scope_params = _scope_sql(jid, [h for h in hosts if h in excl])
   # Nearest sample in a half-open interval plus whether it has a job row;
   # the scope only filters rows of that one sample (``d.time = s.t``).
   step = (
@@ -200,6 +212,7 @@ def hosts_owning_mid_sample(
   start: Any,
   end: Any,
   jid: str,
+  exclusive_hosts: Any = (),
 ) -> set[str]:
   """
   Hosts whose first sample at or after the window midpoint has a job row.
@@ -216,6 +229,8 @@ def hosts_owning_mid_sample(
     start (Any): Window start.
     end (Any): Window end.
     jid (str): Job id.
+    exclusive_hosts (Any): Hosts the job holds alone (an untagged midpoint
+      sample is owned there: allocated-but-idle hosts belong to the job).
 
   Returns:
     set[str]: Hosts with a job-owned row at their midpoint sample.
@@ -228,7 +243,8 @@ def hosts_owning_mid_sample(
     return set()
   from django.db import connection
 
-  scope, scope_params = _scope_sql(jid)
+  excl = set(exclusive_hosts or ())
+  scope, scope_params = _scope_sql(jid, [h for h in hosts if h in excl])
   mid = start + (end - start) / 2
   # Scalar subquery in the SELECT list, never ``WHERE EXISTS``: hs04 v3
   # flattened EXISTS into a hash semi-join over every job-scoped row of
@@ -251,6 +267,7 @@ def schema_rows_near_bounds(
   last: Any,
   slice_s: int,
   jid: str | None = None,
+  exclusive_hosts: Any = (),
 ) -> list[tuple[Any, Any, Any]]:
   """
   Distinct ``(type, event, unit)`` from the first ``slice_s`` and last sample.
@@ -266,6 +283,7 @@ def schema_rows_near_bounds(
     last (Any): Last scoped sample time.
     slice_s (int): Seconds read after ``first``.
     jid (str | None): Job id; ``None`` reads host-wide.
+    exclusive_hosts (Any): Hosts the job holds alone (untagged rows count).
 
   Returns:
     list[tuple[Any, Any, Any]]: Distinct schema triples.
@@ -280,7 +298,9 @@ def schema_rows_near_bounds(
 
   from django.db import connection
 
-  scope, scope_params = _scope_sql(jid)
+  scope, scope_params = _scope_sql(
+    jid, [host] if host in set(exclusive_hosts or ()) else ()
+  )
   sql = (
     "SELECT DISTINCT d.type, d.event, d.unit FROM host_data d"
     " WHERE d.host = %s AND ((d.time >= %s AND d.time <= %s) OR d.time = %s)"

@@ -145,6 +145,7 @@ def build_copy_sql(
   shared: bool,
   job_scoped_types: Sequence[str] = (),
   job_scoped: bool = True,
+  exclusive_hosts: Sequence[str] = (),
 ) -> tuple[str, list[Any]]:
   """
   Build the ``COPY (SELECT …) TO STDOUT (FORMAT BINARY)`` statement.
@@ -162,6 +163,8 @@ def build_copy_sql(
       job-scoped on shared nodes (``_job_scoped_host_data_types``).
     job_scoped (bool): False reads every row of the hosts in the window
       (single-host plots); ``shared`` is then ignored.
+    exclusive_hosts (Sequence[str]): Hosts of this chunk the job holds
+      alone; their untagged rows count as job rows (empty for shared jobs).
 
   Returns:
     tuple[str, list[Any]]: SQL and parameters.
@@ -173,13 +176,19 @@ def build_copy_sql(
     >>> "FORMAT BINARY" in sql and params[-2:] == ["9", "9"]
     True
   """
+  from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
+    job_host_data_scope_sql_params,
+  )
+
   from_sql, from_params = _from_clause(time_filter)
   time_sql, time_params = _time_clause(time_filter)
-  owned_sql = "(h.jid = %s OR h.dev = ('j:' || %s))"
+  owned_sql, owned_params = job_host_data_scope_sql_params(
+    jid, coalesce=False, exclusive_hosts=exclusive_hosts
+  )
   # WHERE form: same rows, but COALESCE keeps the planner off the jid / dev
   # indexes and on (host, time) (hs04 COPY timeouts, as in 4a0ce6bb probes).
-  where_owned = (
-    "(COALESCE(h.jid, '') = %s OR COALESCE(h.dev, '') = ('j:' || %s))"
+  where_owned, where_params = job_host_data_scope_sql_params(
+    jid, exclusive_hosts=exclusive_hosts
   )
   # Parameters follow placeholder order: SELECT list first (shared ``owned``
   # column), then FROM (large-job slots), then WHERE host / time / scope.
@@ -191,13 +200,13 @@ def build_copy_sql(
   elif shared:
     select = f"{COPY_SELECT_COLUMNS}, ({owned_sql})::int AS owned"
     scope = f"({where_owned} OR NOT (h.type = ANY(%s::text[])))"
-    head = [jid, jid]
-    tail = [jid, jid, list(job_scoped_types)]
+    head = owned_params
+    tail = [*where_params, list(job_scoped_types)]
   else:
     select = COPY_SELECT_COLUMNS
     scope = where_owned
     head = []
-    tail = [jid, jid]
+    tail = where_params
   params = [*head, *from_params, list(hosts), *time_params, *tail]
   sql = (
     f"COPY (SELECT {select} FROM {from_sql} "
@@ -261,7 +270,8 @@ def fetch_job_frame(
 
   Args:
     jt (Any): ``jid_table`` for the job (``jid``, ``acct_host_list``,
-      ``_base_filter`` / ``_host_data_time_filter_kwargs``, ``_shared_node``).
+      ``_base_filter`` / ``_host_data_time_filter_kwargs``, ``_shared_node``,
+      optional ``_exclusive_hosts``).
     batch_size (int | None): Hosts per chunk (default ``COPY_HOST_BATCH``).
     slice_s (int | None): Seconds per time slice (default INI
       ``metrics_plot_aggregate_time_slice_s`` capped at
@@ -291,6 +301,9 @@ def fetch_job_frame(
     return _frame_from_chunks(jid, interner, [])
   tkw = jt._host_data_time_filter_kwargs()
   shared = bool(getattr(jt, "_shared_node", False)) and job_scoped
+  exclusive = (
+    set(getattr(jt, "_exclusive_hosts", None) or ()) if job_scoped else set()
+  )
   scoped_types = sorted(_job_scoped_host_data_types()) if shared else ()
   if batch_size is None:
     batch_size = COPY_HOST_BATCH
@@ -322,6 +335,7 @@ def fetch_job_frame(
       shared=shared,
       job_scoped_types=scoped_types,
       job_scoped=job_scoped,
+      exclusive_hosts=[h for h in hosts_list if h in exclusive],
     )
     return decode_copy_binary(
       runner(sql, params), interner, has_owned_column=shared

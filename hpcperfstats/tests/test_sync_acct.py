@@ -136,11 +136,17 @@ def test_sync_acct_filters_restricted_queue(mock_jd, _notify, _keywords):
   assert created[0].jid == "602"
 
 
+@patch(
+  "hpcperfstats.site.lib.machine.cache_utils.mark_overlapping_jobs_metrics_dirty",
+  return_value=0,
+)
 @patch("hpcperfstats.site.lib.machine.cache_utils.warm_job_cache_entries")
 @patch(
   "hpcperfstats.site.lib.machine.cache_utils.invalidate_after_job_data_ingest"
 )
-def test_notify_job_cache_after_acct_ingest_warms(mock_inv, mock_warm):
+def test_notify_job_cache_after_acct_ingest_warms(
+  mock_inv, mock_warm, mock_dirty
+):
   from hpcperfstats.dbload.sync_acct import (
     _notify_job_cache_after_acct_ingest,
   )
@@ -149,6 +155,51 @@ def test_notify_job_cache_after_acct_ingest_warms(mock_inv, mock_warm):
   _notify_job_cache_after_acct_ingest(1, [obj], inserted_jids=["777"])
   mock_inv.assert_called_once()
   mock_warm.assert_called_once()
+  mock_dirty.assert_called_once_with(["777"])
+
+
+@patch("hpcperfstats.site.lib.machine.cache_utils.warm_job_cache_entries")
+@patch(
+  "hpcperfstats.site.lib.machine.cache_utils.invalidate_after_job_data_ingest"
+)
+def test_notify_overlap_dirty_stamp_failure_is_logged_not_raised(
+  _mock_inv, _mock_warm
+):
+  """horizon-idle-allocation-tagging: a failed overlap stamp must not fail
+  accounting ingest, and must be visible in the log."""
+  from hpcperfstats.dbload.sync_acct import (
+    _notify_job_cache_after_acct_ingest,
+  )
+
+  with (
+    patch(
+      "hpcperfstats.site.lib.machine.cache_utils."
+      "mark_overlapping_jobs_metrics_dirty",
+      side_effect=RuntimeError("db down"),
+    ),
+    patch("hpcperfstats.dbload.sync_acct.log_print") as log,
+  ):
+    _notify_job_cache_after_acct_ingest(1, [], inserted_jids=["777"])
+  log.assert_called_once_with(
+    "WARNING: overlap metrics-dirty stamp failed:", "RuntimeError: db down"
+  )
+
+
+@patch(
+  "hpcperfstats.site.lib.machine.cache_utils.mark_overlapping_jobs_metrics_dirty"
+)
+@patch(
+  "hpcperfstats.site.lib.machine.cache_utils.invalidate_after_job_data_ingest"
+)
+def test_notify_skips_overlap_stamp_without_inserted_jids(
+  _mock_inv, mock_dirty
+):
+  from hpcperfstats.dbload.sync_acct import (
+    _notify_job_cache_after_acct_ingest,
+  )
+
+  _notify_job_cache_after_acct_ingest(0, None, inserted_jids=[])
+  mock_dirty.assert_not_called()
 
 
 @patch("hpcperfstats.dbload.sync_acct.job_data_instance_from_acct_row")

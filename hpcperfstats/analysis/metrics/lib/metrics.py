@@ -632,7 +632,11 @@ INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
 # 3 (2026-11-01): long jobs thin to per-host time slots (every host keeps
 # its own sample per slot) instead of one cross-host MAX(time) per bucket,
 # which matched about one host per bucket.
-METRICS_CONTRACT_VERSION = 3
+# 4 (2026-11-02): on hosts a job holds alone (no job_affinity rows, no
+# overlapping job_data), untagged host_data rows in the window count toward
+# the job (horizon-idle-allocation-tagging: allocated-but-idle time after the
+# job's steps ended on a node was dropped from every metric).
+METRICS_CONTRACT_VERSION = 4
 # ``no_data_reason`` written for catalog rows a backfill job never produced
 # after it exhausted the failure-memory backoff (daily step); the job is
 # stamped with the current version so the sweep does not spin on it.

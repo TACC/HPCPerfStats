@@ -453,6 +453,12 @@ class job_affinity(models.Model):
     """
 
     db_table = "job_affinity"
+    indexes = [
+      # Live co-tenancy check in job_exclusive_hosts (migration 0044).
+      models.Index(
+        fields=["host", "reported_at"], name="job_affinity_host_reported_idx"
+      ),
+    ]
 
 
 class job_plot_artifact(models.Model):

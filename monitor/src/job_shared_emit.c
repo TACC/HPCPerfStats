@@ -5,6 +5,7 @@
 #include <time.h>
 
 #include "job_cgroup_mem.h"
+#include "job_emit_filter.h"
 #include "job_gpu_assign.h"
 #include "job_proc_discover.h"
 #include "job_sched_affinity.h"
@@ -21,37 +22,6 @@
 #if defined(MONITOR_HAVE_NVIDIA_GPU)
 #include "nvidia_gpu_dcgm_watch.h"
 #endif
-
-struct emit_filter_ctx {
-  const struct job_proc_jid_entry *entry; /* NULL = node-wide only (no proc/gpu) */
-  const struct job_gpu_set *gpus;         /* NULL = no gpu filter (emit none for gpu types) */
-  const char *cpulist; /* non-NULL: filter host_cpu/host_cpu_hw; NULL: use include_node_wide */
-  int include_node_wide;
-  int include_proc;
-  int include_gpu;
-};
-
-static int is_gpu_type(const char *st_name)
-{
-  return st_name != NULL && (strcmp(st_name, "nvidia_gpu") == 0 ||
-                             strcmp(st_name, "amd_gpu") == 0 || strcmp(st_name, "intel_gpu") == 0);
-}
-
-static int is_proc_type(const char *st_name)
-{
-  return st_name != NULL && strcmp(st_name, "host_proc") == 0;
-}
-
-static int is_job_mem_type(const char *st_name)
-{
-  return st_name != NULL && strcmp(st_name, "host_mem_job") == 0;
-}
-
-static int is_cpu_type(const char *st_name)
-{
-  return st_name != NULL &&
-         (strcmp(st_name, "host_cpu") == 0 || strcmp(st_name, "host_cpu_hw") == 0);
-}
 
 /*! Fill cgroup_relpath from first readable pid when discovery left it empty. */
 static void fill_cgroup_relpath_from_pids(struct job_proc_jid_entry *e)
@@ -148,86 +118,6 @@ static void populate_host_mem_job(struct job_proc_discover_result *disc)
     stats_set(st, "writeback", kb.writeback);
     stats_set(st, "page_tables", kb.page_tables);
   }
-}
-
-static int proc_dev_pid(const char *dev, int *pid_out)
-{
-  /* host_proc device: name/pid/cmask/mmask */
-  const char *slash;
-  const char *p;
-  char *end;
-  long pid;
-
-  if (dev == NULL)
-    return -1;
-  slash = strchr(dev, '/');
-  if (slash == NULL)
-    return -1;
-  p = slash + 1;
-  pid = strtol(p, &end, 10);
-  if (end == p || (*end != '/' && *end != '\0'))
-    return -1;
-  *pid_out = (int)pid;
-  return 0;
-}
-
-static int pid_in_entry(const struct job_proc_jid_entry *e, int pid)
-{
-  size_t i;
-
-  if (e == NULL)
-    return 0;
-  for (i = 0; i < e->npids; i++) {
-    if (e->pids[i] == pid)
-      return 1;
-  }
-  return 0;
-}
-
-static int gpu_dev_in_set(const struct job_gpu_set *set, const char *dev)
-{
-  size_t i;
-
-  if (set == NULL || dev == NULL)
-    return 0;
-  for (i = 0; i < set->n; i++) {
-    if (strcmp(set->devs[i], dev) == 0)
-      return 1;
-  }
-  return 0;
-}
-
-static int emit_row_filter(const char *st_name, const char *dev, void *ctx)
-{
-  struct emit_filter_ctx *c = ctx;
-
-  if (c == NULL)
-    return 1;
-  if (is_proc_type(st_name)) {
-    int pid;
-
-    if (!c->include_proc || c->entry == NULL)
-      return 0;
-    if (proc_dev_pid(dev, &pid) < 0)
-      return 0;
-    return pid_in_entry(c->entry, pid);
-  }
-  if (is_gpu_type(st_name)) {
-    if (!c->include_gpu)
-      return 0;
-    return gpu_dev_in_set(c->gpus, dev);
-  }
-  if (is_cpu_type(st_name)) {
-    if (c->cpulist != NULL)
-      return job_sched_affinity_cpu_dev_in_list(c->cpulist, dev);
-    return c->include_node_wide ? 1 : 0;
-  }
-  if (is_job_mem_type(st_name)) {
-    if (c->entry == NULL)
-      return 0; /* "-" / idle: omit all host_mem_job */
-    return job_cgroup_mem_keep_dev(c->entry->jid, dev);
-  }
-  return c->include_node_wide ? 1 : 0;
 }
 
 static void fill_available_gpus(struct job_gpu_set *available)
@@ -339,9 +229,9 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
   populate_host_mem_job(&disc);
 
   if (disc.n == 0) {
-    struct emit_filter_ctx ctx = {.include_node_wide = 1, .include_proc = 0, .include_gpu = 0};
+    struct job_emit_filter_ctx ctx = {.include_node_wide = 1, .include_proc = 0, .include_gpu = 0};
 
-    stats_buffer_set_row_filter(emit_row_filter, &ctx);
+    stats_buffer_set_row_filter(job_emit_row_filter, &ctx);
     insert_serialized(w, "-", NULL, NULL, 1, &burst_tier);
     goto done;
   }
@@ -350,27 +240,24 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
     struct job_gpu_set granted;
     struct job_gpu_set in_use;
     struct job_gpu_set g_union;
-    char cpulist[512];
+    char cpulist[512] = "";
     enum job_cpu_coverage cov = JOB_CPU_UNKNOWN;
+    struct job_emit_filter_ctx ctx;
 
-    job_gpu_assign_map_grant(disc.entries[0].job_gpus, &granted);
-    job_gpu_assign_scan_fds(disc.entries[0].pids, disc.entries[0].npids, &in_use);
-    job_gpu_set_union(&granted, &in_use, &g_union);
-    (void)job_sched_affinity_union_cpulist(disc.entries[0].pids, disc.entries[0].npids,
-                                           affinity_pid_sample_limit, cpulist, sizeof(cpulist),
-                                           &cov);
-    if (cov == JOB_CPU_EXACT_ALL && available.inventory_known &&
-        job_gpu_set_exact_equal(&granted, &available))
-      full_resource = 1;
-
+    memset(&granted, 0, sizeof(granted));
+    memset(&g_union, 0, sizeof(g_union));
+    /* Title-named (idle allocation): no grant, and stepd fds/affinity are not the job's. */
+    if (job_emit_entry_emits_affinity(&disc.entries[0])) {
+      job_gpu_assign_map_grant(disc.entries[0].job_gpus, &granted);
+      job_gpu_assign_scan_fds(disc.entries[0].pids, disc.entries[0].npids, &in_use);
+      job_gpu_set_union(&granted, &in_use, &g_union);
+      (void)job_sched_affinity_union_cpulist(disc.entries[0].pids, disc.entries[0].npids,
+                                             affinity_pid_sample_limit, cpulist, sizeof(cpulist),
+                                             &cov);
+    }
+    full_resource = job_emit_sole_ctx(&disc.entries[0], cov, &granted, &g_union, &available, &ctx);
+    stats_buffer_set_row_filter(job_emit_row_filter, &ctx);
     if (full_resource) {
-      struct emit_filter_ctx ctx = {.entry = &disc.entries[0],
-                                    .gpus = &g_union,
-                                    .include_node_wide = 1,
-                                    .include_proc = 1,
-                                    .include_gpu = 1};
-
-      stats_buffer_set_row_filter(emit_row_filter, &ctx);
       insert_serialized(w, disc.entries[0].jid, NULL, NULL, 1, &burst_tier);
       goto done;
     }
@@ -379,11 +266,6 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
       char jobs_mark[256];
       char aff_mark[768];
       char gpus_wire[256];
-      struct emit_filter_ctx ctx = {.entry = &disc.entries[0],
-                                    .gpus = &g_union,
-                                    .include_node_wide = 1,
-                                    .include_proc = 1,
-                                    .include_gpu = 1};
 
       format_jobs_csv(&disc, jobs_csv, sizeof(jobs_csv));
       snprintf(jobs_mark, sizeof(jobs_mark), "jobs jids=%s", jobs_csv);
@@ -393,7 +275,6 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
                  disc.entries[0].jid, cpulist, gpus_wire);
       else
         aff_mark[0] = '\0';
-      stats_buffer_set_row_filter(emit_row_filter, &ctx);
       insert_serialized(w, disc.entries[0].jid, jobs_mark, aff_mark[0] ? aff_mark : NULL, 1,
                         &burst_tier);
     }
@@ -418,12 +299,15 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
       struct job_gpu_set g_union;
       enum job_cpu_coverage cov = JOB_CPU_UNKNOWN;
 
+      cpu_lists[i][0] = '\0';
+      /* Title-named jobs claim no CPUs/GPUs: those stay on the node-wide '-' payload. */
+      if (!job_emit_entry_emits_affinity(&disc.entries[i]))
+        continue;
       job_gpu_assign_map_grant(disc.entries[i].job_gpus, &granted);
       job_gpu_assign_scan_fds(disc.entries[i].pids, disc.entries[i].npids, &in_use);
       job_gpu_set_union(&granted, &in_use, &g_union);
       job_gpu_set_union(&claimed, &g_union, &tmp);
       claimed = tmp;
-      cpu_lists[i][0] = '\0';
       (void)job_sched_affinity_union_cpulist(disc.entries[i].pids, disc.entries[i].npids,
                                              affinity_pid_sample_limit, cpu_lists[i],
                                              sizeof(cpu_lists[i]), &cov);
@@ -441,16 +325,15 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
       char jobs_mark[256];
       char aff_mark[768];
       char gpus_wire[256];
-      struct emit_filter_ctx ctx = {.entry = &disc.entries[i],
-                                    .gpus = &g_union,
-                                    .cpulist = cpu_lists[i],
-                                    .include_node_wide = 0,
-                                    .include_proc = 1,
-                                    .include_gpu = 1};
+      struct job_emit_filter_ctx ctx;
 
-      job_gpu_assign_map_grant(disc.entries[i].job_gpus, &granted);
-      job_gpu_assign_scan_fds(disc.entries[i].pids, disc.entries[i].npids, &in_use);
-      job_gpu_set_union(&granted, &in_use, &g_union);
+      memset(&g_union, 0, sizeof(g_union));
+      if (job_emit_entry_emits_affinity(&disc.entries[i])) {
+        job_gpu_assign_map_grant(disc.entries[i].job_gpus, &granted);
+        job_gpu_assign_scan_fds(disc.entries[i].pids, disc.entries[i].npids, &in_use);
+        job_gpu_set_union(&granted, &in_use, &g_union);
+      }
+      job_emit_multi_ctx(&disc.entries[i], &g_union, cpu_lists[i], &ctx);
       snprintf(jobs_mark, sizeof(jobs_mark), "jobs jids=%s", jobs_csv);
       job_gpu_set_format_wire(&g_union, gpus_wire, sizeof(gpus_wire));
       if (cpu_lists[i][0])
@@ -458,18 +341,18 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
                  disc.entries[i].jid, cpu_lists[i], gpus_wire);
       else
         aff_mark[0] = '\0';
-      stats_buffer_set_row_filter(emit_row_filter, &ctx);
+      stats_buffer_set_row_filter(job_emit_row_filter, &ctx);
       insert_serialized(w, disc.entries[i].jid, jobs_mark, aff_mark[0] ? aff_mark : NULL, 1,
                         &burst_tier);
     }
     {
-      struct emit_filter_ctx ctx = {.gpus = &remainder,
-                                    .cpulist = rem_cpus,
-                                    .include_node_wide = 1,
-                                    .include_proc = 0,
-                                    .include_gpu = available.inventory_known ? 1 : 0};
+      struct job_emit_filter_ctx ctx = {.gpus = &remainder,
+                                        .cpulist = rem_cpus,
+                                        .include_node_wide = 1,
+                                        .include_proc = 0,
+                                        .include_gpu = available.inventory_known ? 1 : 0};
 
-      stats_buffer_set_row_filter(emit_row_filter, &ctx);
+      stats_buffer_set_row_filter(job_emit_row_filter, &ctx);
       /* Do not mirror: would clobber last jid sample in DEBUG shm fast/full. */
       insert_serialized(w, "-", NULL, NULL, 0, &burst_tier);
     }

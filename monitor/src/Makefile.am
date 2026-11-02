@@ -177,6 +177,8 @@ hpcperfstatsd_SOURCES += \
 	job_gpu_assign.h \
 	job_cgroup_mem.c \
 	job_cgroup_mem.h \
+	job_emit_filter.c \
+	job_emit_filter.h \
 	job_shared_emit.c \
 	job_shared_emit.h \
 	host_mem_job.c \

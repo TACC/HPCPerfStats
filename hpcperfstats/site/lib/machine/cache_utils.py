@@ -614,6 +614,63 @@ def mark_jids_metrics_dirty(jids: Any) -> int:
   )
 
 
+def mark_overlapping_jobs_metrics_dirty(jids: Any) -> int:
+  """
+  Stamp ``metrics_dirty_at`` on computed jobs that newly ingested jobs overlap.
+
+  Exclusive-host attribution (``job_exclusive_hosts``) counts untagged rows
+  on a host toward a job when no other job is known there. sacct ingest only
+  lists ended jobs, so a co-tenant that was still running when a job's
+  metrics were computed arrives later; this hands every already-computed,
+  non-shared job (no ``job_affinity`` rows) whose ``host_list`` and window
+  strictly overlap a newly ingested job back to update_metrics, which then
+  recomputes it with that host strict. One ``UPDATE`` per 500 new jobs,
+  driven from the new rows (primary key, then the ``host_list`` GIN index),
+  no ``host_data`` reads. An existing stamp is kept.
+
+  Args:
+    jids (Any): Iterable of job ids inserted by accounting ingest.
+
+  Returns:
+    int: Rows stamped.
+
+  Examples:
+    >>> mark_overlapping_jobs_metrics_dirty([])
+    0
+  """
+  ids = sorted({str(j) for j in (jids or []) if j})
+  if not ids:
+    return 0
+  from django.db import connection
+  from django.utils import timezone as _tz
+
+  from hpcperfstats.site.lib.machine.models import (
+    job_affinity,
+    job_data as _job_data_model,
+  )
+
+  jt = connection.ops.quote_name(_job_data_model._meta.db_table)
+  at = connection.ops.quote_name(job_affinity._meta.db_table)
+  sql = (
+    f"UPDATE {jt} AS o SET metrics_dirty_at = %s WHERE o.jid IN ("
+    f"SELECT o2.jid FROM {jt} AS n JOIN {jt} AS o2"
+    " ON o2.host_list && n.host_list AND o2.start_time < n.end_time"
+    " AND o2.end_time > n.start_time"
+    " WHERE n.jid = ANY(%s) AND o2.jid <> ALL(%s))"
+    " AND o.metrics_distinct_time_count IS NOT NULL"
+    " AND o.metrics_dirty_at IS NULL"
+    f" AND NOT EXISTS (SELECT 1 FROM {at} AS a WHERE a.jid = o.jid)"
+  )
+  now = _tz.now()
+  stamped = 0
+  with connection.cursor() as cur:
+    for i in range(0, len(ids), 500):
+      batch = ids[i : i + 500]
+      cur.execute(sql, [now, batch, batch])
+      stamped += max(0, cur.rowcount)
+  return stamped
+
+
 def invalidate_jid_derived_cache_keys(
   jids: Any,
   *,
