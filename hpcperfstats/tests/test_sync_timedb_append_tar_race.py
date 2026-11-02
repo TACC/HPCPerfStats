@@ -14,15 +14,22 @@ from hpcperfstats.dbload.lib import (
 from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
 
 
-def test_append_to_tar_uses_r_unconditionally_inside_lock():
-  """A1: existence sampling and tar -c vs -r must happen under the write lock."""
+def test_append_to_tar_samples_existence_and_appends_inside_lock():
+  """A1: existence sampling and the append both happen under the write lock.
+
+  The clone writer appends at the logical end of an existing tar and only
+  creates one (temp + hard link, which fails if it exists) when it is
+  missing, so it can never recreate a tar another writer just made.
+  """
   source = inspect.getsource(st._append_to_tar)
   exists_idx = source.find("os.path.exists(tar_path)")
   lock_idx = source.find("with file_write_lock(tar_path)")
+  append_idx = source.find("clone_append(")
   assert lock_idx != -1
   assert exists_idx == -1 or exists_idx > lock_idx
+  assert append_idx > lock_idx
   assert '"-c"' not in source and "'-c'" not in source
-  assert '"-r"' in source or "'-r'" in source
+  assert '"-r"' not in source and "'-r'" not in source
 
 
 def test_concurrent_append_never_recreates_tar(tmp_path):

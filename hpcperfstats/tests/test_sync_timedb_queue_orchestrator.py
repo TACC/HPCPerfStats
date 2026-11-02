@@ -6578,3 +6578,46 @@ def test_prebuilt_copy_failure_raises_codon_copy_failed(monkeypatch):
       {"host_copy": b"row\n", "proc_copy": b""},
       {},
     )
+
+
+def test_orchestrator_startup_recovers_journals():
+  """Group F: a journal left by a killed append is applied at startup,
+  before pools start and before the first append can be submitted."""
+  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  recover = src.index("recover_all_interrupted_appends(tgz_archive_dir")
+  assert recover < src.index("def _new_ingest_pool")
+  assert recover < src.index("populate.start(")
+  assert recover < src.index("_spawn(")
+
+
+def test_startup_recovery_applies_every_daily_dir_journal(tmp_path):
+  import json
+  import subprocess
+
+  from hpcperfstats.dbload.lib import sync_timedb_tar_clone_append as tca
+
+  raw = tmp_path / "raw" / "m"
+  raw.parent.mkdir()
+  raw.write_bytes(b"x" * 5000)
+  tar = tmp_path / "2026-07-31.tar"
+  subprocess.run(
+    ["tar", "-c", "--posix", "-C", "/", "-f", str(tar), str(raw).lstrip("/")],
+    check=True,
+  )
+  before = tar.read_bytes()
+  fd = os.open(tar, os.O_RDWR)
+  st_ = os.fstat(fd)
+  end = tca.logical_end(fd, st_.st_size)
+  journal = {
+    "old_end": end,
+    "old_size": st_.st_size,
+    "st_dev": st_.st_dev,
+    "st_ino": st_.st_ino,
+    "tail_sha256": tca._tail_sha256(fd, end),
+  }
+  os.pwrite(fd, b"half-written member" * 300, end)
+  os.close(fd)
+  tca._write_durable(tca.journal_path(str(tar)), json.dumps(journal).encode())
+  assert qo.recover_all_interrupted_appends(str(tmp_path), log_fn=None) == 1
+  assert tar.read_bytes() == before
+  assert not os.path.exists(tca.journal_path(str(tar)))

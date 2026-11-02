@@ -27,7 +27,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep 
 - **Stuck-inflight (hpcperfstats02 2026-09-13):** `ingest=pool/deep` (pool **full**, e.g. `128/809x`) plus **frozen** `total_completed` (and frozen `total_ingested` when the work is not db_skip catch-up) is a **completion-rate** stall, not RC7–RC9 underfill. Pair with `parse_elapsed_s` hours, host CPUs **not** at `nproc`, thread `wchan=futex_do_wait`, and **`readlink /proc/<sync_timedb pid>/exe`**. PATH `python3` is GIL and is **not** the daemon. Sticky `discover=1/0` does **not** occupy ingest slots. Do **not** raise `sync_day_close_max_inflight`.
 - **`ingest fill empty deep_queue`** — rate-limited when local inflight is zero but the ingest score map is deep; includes `fill_block=` and per-reason `stats=` counters plus **`hot_used=` / `catch_used=`** census.
 - **`ingest fill under-capacity`** — rate-limited when local inflight is **below pool** (may be non-zero) but the score map is deep and the fill submitted 0; same `fill_block=` / `stats=` tokens and census fields.
-- **`archive_job_done`** — single INFO per append job (`tar_bytes`, `members_source`, `mapped`/`to_add`/`appended`, `outcome=`). Do not require `archive_job_begin` / `archive_job_duty` / `Archived batch` at INFO.
+- **`archive_job_done`** — single INFO per append job (`tar_bytes`, `members_source`, `mapped`/`to_add`/`appended`, `cloned`/`copied`/`write_s`, `outcome=`). On a reflink filesystem expect `cloned=` equal to `appended=`, `copied=0` and `write_s` in seconds for a 25-50 GB batch; `copied>0` means the copy fallback ran (other filesystem or no reflink). A killed append logs `archive append recovered tar= old_end= dropped_bytes=` at the next startup, write-lock holder or sweep (`archive scratch recovered journal`). Do not require `archive_job_begin` / `archive_job_duty` / `Archived batch` at INFO.
 - **Archive throughput (gate-tail / tvf reuse):** after the live-off file_complete + skip-collect / skip-redundant-`tar tf` wave, expect mark-ready append jobs without long `Gate tail metadata` batches for file_complete paths; open-tar jobs with `members_source=tar_scan` should not pay a second full pre-append `tar tf`. Smaller `sync_timedb_tar_append_batch_size` (default **256**) shortens per-job wall time; `sync_archive_pool_processes` (default **4**) raises multi-day append concurrency.
 - **`ingest per-file timeout`** — includes `size_bytes=` and `bytes_per_s=` for size/time judgment.
 - **Not primary:** `Archive/delete gate: skipped` and `handoff_to_ingest … reason=gate_skip` (demoted; use day `gate_skip=` / `ingest_handoff=`).
@@ -758,24 +758,21 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | \
 
 **Pass (T2):** daily `.tar` mtimes advance on active days; no perpetual all-`to_add=0` census while closed raw remains on disk.
 
-### T0 / T1 — tar append exit 2 / large member (`out of off_t range`, 2026-07)
+### T0 / T1 — tar append failures and giant members (clone writer, 2026-11-01)
 
-Members larger than **8 GiB − 1** fail classic ustar without pax headers (`value N out of off_t range 0..8589934591`). Production always passes **`--posix`** on tar create/append (`-C /` + relative `-T` members). When the daily tar is **not pax-capable** (bare `POSIX tar archive` without pax headers; GNU labels need no convert), the **archive pool** job logs **`must_convert`**, attempts **extract + `tar --format=pax` recreate**, then appends. On convert failure: **`convert_fail_skip`** oversized members (original tar untouched) and continue with remaining paths. **`archive_job_done`** includes **`outcome=ok|fail`** (do not treat `archive_job_done` alone as success).
+The daily-tar append is the in-process clone writer (`clone_append`): pax members with 4 KiB-aligned reflinked data, so members larger than **8 GiB − 1** append to any archive format and the old **`must_convert` / `convert_fail_skip` / `out of off_t range`** path no longer exists (historical only). **`archive_job_done`** includes **`outcome=ok|fail`** (do not treat `archive_job_done` alone as success).
 
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | tee /tmp/pipeline-full.log
 
-# T0 — failure signatures
-grep -E 'ERROR: (retry )?tar append failed|tar append stderr:|out of off_t range|marker=off_t_range' /tmp/pipeline-full.log | tail -40
+# T0 — failure signatures (errno text is in the ERROR line; tar append idle stall = dd copy fallback stopped growing the tar)
+grep -E 'ERROR: (retry )?tar append failed|tar append idle stall|daily tar not walkable|archive append (recovered|journal)' /tmp/pipeline-full.log | tail -40
 
-# T0 — convert path / skip fallback
-grep -E 'must_convert|convert_start|convert_done|convert_fail_skip|archive_job_done.*outcome=' /tmp/pipeline-full.log | tail -40
-
-# T0 — confirm archive-pool progress continues
-grep -E 'Archived batch|archive_job_done|chunk ingest summary' /tmp/pipeline-full.log | tail -30
+# T0 — clone vs copy and write time per job
+grep -E 'archive_job_done' /tmp/pipeline-full.log | grep -oE 'day=[^ ]+ elapsed_s=[^ ]+ outcome=[^ ]+|appended=[0-9]+ cloned=[0-9]+ copied=[0-9]+ write_s=[^ ]+' | tail -40
 ```
 
-**Pass (T0):** no new unexplained **`out of off_t range`** on giant-member append after convert; ERROR includes **`tar append stderr:`** and often **`marker=off_t_range`**. Convert is archive-worker only (never supervisor/ingest). High **`incomplete_n`** + **`handoff_priority`** can be **slow gated progress**, not a hard stall — confirm with subsequent `chunk ingest summary` / `archive_job_done outcome=ok`.
+**Pass (T0):** `archive_job_done … outcome=ok` with `cloned=` equal to `appended=` and `copied=0` on reflink sites; no repeating `tar append failed` for one day. A `copied>0` site is correct but pays a data copy (check `df` that raw and daily archive dirs share a reflink XFS).
 
 **False stall note:** a snapshot with large `incomplete_n` on the oldest day is not proof of a freeze if the pipeline later continues.
 

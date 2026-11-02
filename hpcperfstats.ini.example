@@ -321,7 +321,7 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # Processed-file checkpoint writes per batch (default 100).
 # sync_checkpoint_flush_batch_size = 100
 
-# Max raw paths per tar -T append batch in sync_timedb (default 256).
+# Max raw paths per sync_timedb append batch (one archive job per daily tar; default 256).
 # sync_timedb_tar_append_batch_size = 256
 
 # Max DB timestamps cached per duplicate-detection window (default 100000).

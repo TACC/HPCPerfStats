@@ -289,3 +289,42 @@ def test_log_helpers_none_log_fn_no_raise():
     log_fn=lambda msg, **_k: logs.append(msg),
   )
   assert logs
+
+
+def test_tar_drop_removes_append_journal(tmp_path, monkeypatch):
+  """Dropping ``<day>.tar`` also drops its append journal (never orphaned)."""
+  import hashlib
+  import json
+
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_archive_helpers as helpers,
+    sync_timedb_tar_clone_append as tca,
+  )
+
+  tar = tmp_path / "2026-07-31.tar"
+  tar.write_bytes(bytes(10240))
+  zst = tmp_path / "2026-07-31.tar.zst"
+  zst.write_bytes(b"sealed")
+  st_ = os.stat(tar)
+  open(tca.journal_path(str(tar)), "w").write(
+    json.dumps(
+      {
+        "old_end": 0,
+        "old_size": 10240,
+        "st_dev": st_.st_dev,
+        "st_ino": st_.st_ino,
+        "tail_sha256": hashlib.sha256(b"").hexdigest(),  # empty prefix
+      }
+    )
+  )
+  monkeypatch.setattr(
+    helpers,
+    "_iter_archive_validation_results_stream",
+    lambda targets, **_k: iter([(t, True, {}) for t in targets]),
+  )
+  helpers.remove_verified_uncompressed_daily_tars(
+    str(tmp_path), log_fn=None, remaining_raw_by_gz={}
+  )
+  assert not tar.exists()
+  assert not os.path.exists(tca.journal_path(str(tar)))
+  assert zst.exists()

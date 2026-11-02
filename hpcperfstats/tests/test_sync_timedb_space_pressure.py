@@ -34,8 +34,53 @@ TIB = 1 << 40
 def _reset(monkeypatch):
   sp.reset_for_tests()
   monkeypatch.setattr(cfg, "get_sync_archive_min_free_bytes", lambda: GIB)
+  # tmp_path is on a reflink filesystem; these tests measure raw-byte
+  # (copying) appends. test_append_batch_need_clone_capable covers cloning.
+  monkeypatch.setattr(qo.tca, "clone_capable", lambda *_a, **_k: False)
   yield
   sp.reset_for_tests()
+
+
+@pytest.mark.parametrize(
+  ("capable", "expected"),
+  [(True, 7 + 3 * qo.tca.CLONE_HEADER_BYTES), (False, 7 + 3 * 1000)],
+)
+def test_append_batch_need_clone_capable(
+  monkeypatch, tmp_path, capable, expected
+):
+  """A cloned append writes headers, not data: reserve per-member bytes."""
+  qo.reset_append_day_lists_for_tests()
+  for i in range(3):
+    raw = tmp_path / f"raw{i}"
+    raw.write_bytes(b"r" * 1000)
+    qo._APPEND_DAY_LISTS.add("2026-09-01", _claim(str(raw)))
+  seen = []
+
+  def _capable(tar, sample):
+    seen.append((tar, sample))
+    return capable
+
+  monkeypatch.setattr(qo.tca, "clone_capable", _capable)
+  monkeypatch.setattr(sp, "restore_bytes_estimate", lambda _t: 7)
+  _set(monkeypatch, threshold=TIB, free=TIB // 2)
+  tar = str(tmp_path / "2026-09-01.tar")
+  assert qo._append_batch_need("2026-09-01", tar, 3) == expected
+  assert seen == [(tar, str(tmp_path / "raw0"))]
+  qo.reset_append_day_lists_for_tests()
+
+
+def test_append_batch_need_unknown_day_reserves_raw_bytes(
+  monkeypatch, tmp_path
+):
+  qo.reset_append_day_lists_for_tests()
+  monkeypatch.setattr(sp, "restore_bytes_estimate", lambda _t: 0)
+  _set(monkeypatch, threshold=TIB, free=TIB // 2)
+  calls = []
+  monkeypatch.setattr(
+    qo.tca, "clone_capable", lambda *a: calls.append(a) or True
+  )
+  assert qo._append_batch_need("2026-09-02", str(tmp_path / "x.tar"), 2) == 0
+  assert calls == []
 
 
 def _set(monkeypatch, *, threshold: int, free: int):

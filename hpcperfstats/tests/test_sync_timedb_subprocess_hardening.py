@@ -52,18 +52,17 @@ def test_file_write_lock_already_held_skips_acquire(tmp_path):
     pass
 
 
-def test_pax_convert_verifies_tar_before_replace():
-  """A8: pax recreate must tar-tf the new archive before os.replace."""
-  source = inspect.getsource(
-    helpers.convert_daily_tar_to_pax_via_extract_recreate
-  )
-  tf_idx = source.find('"tf"')
-  if tf_idx < 0:
-    tf_idx = source.find("'tf'")
-  replace_idx = source.find("os.replace(new_tar, tar_path)")
-  assert tf_idx != -1
-  assert replace_idx != -1
-  assert tf_idx < replace_idx
+def test_pax_convert_path_is_gone():
+  """A8 retired: the clone writer emits pax members on any archive format.
+
+  A giant member never needs the archive rewritten (extract + recreate), so
+  the convert path and its verify-before-replace step no longer exist.
+  """
+  for name in (
+    "convert_daily_tar_to_pax_via_extract_recreate",
+    "prepare_paths_for_giant_member_append",
+  ):
+    assert not hasattr(helpers, name), name
 
 
 def test_decompress_stderr_is_devnull_to_avoid_pipe_deadlock():
@@ -78,10 +77,14 @@ def test_decompress_stderr_is_devnull_to_avoid_pipe_deadlock():
 
 
 def test_tar_append_subprocess_has_progress_idle_protection():
-  """A4: tar append must stop a wedged process after no byte progress."""
-  from hpcperfstats.dbload import sync_timedb as st
+  """A4: the append's only long subprocess (copy fallback) is idle-killed.
 
-  source = inspect.getsource(st._append_to_tar)
+  Cloning is one metadata ioctl per member; a copy (no reflink) runs ``dd``
+  under ``run_subprocess_with_progress`` with the tar as the progress path.
+  """
+  from hpcperfstats.dbload.lib import sync_timedb_tar_clone_append as tca
+
+  source = inspect.getsource(tca._copy_range)
   assert "run_subprocess_with_progress(" in source
   assert "progress_path=tar_path" in source
-  assert "except ProgressIdleError" in source
+  assert "subprocess.run(" not in source and "timeout=" not in source

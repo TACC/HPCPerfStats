@@ -118,6 +118,7 @@ from hpcperfstats.dbload.lib import (
   sync_timedb_mem_telemetry as mem_telem,
   sync_timedb_progress_report as progress,
   sync_timedb_space_pressure as space,
+  sync_timedb_tar_clone_append as tca,
   sync_timedb_wait_telemetry as wait_telem,
   sync_timedb_worker_memory as worker_memory,
 )
@@ -193,6 +194,9 @@ from hpcperfstats.dbload.lib.sync_timedb_stats_find import (
   is_internal_archive_stats_path,
   iter_find_printf_records_streaming,
   iter_find_stats_stdout_chunks,
+)
+from hpcperfstats.dbload.lib.sync_timedb_tar_clone_append import (
+  recover_all_interrupted_appends,
 )
 
 DAY_CLOSE_THREAD_NAME_PREFIX = "day-close"
@@ -5984,9 +5988,12 @@ def _append_batch_need(day: str, tar_path: str, take: int) -> int | None:
   Return the bytes the next ``take`` parked paths of ``day`` will write.
 
   Only measured while ``sync_archive_space_pressure_free_bytes`` is set: the
-  batch's raw bytes plus a restore of a sealed day must keep the hard
+  batch's new bytes plus a restore of a sealed day must keep the hard
   reserve, room for that day's reseal and other admitted work's
-  reservations. A refused batch stays parked.
+  reservations. A refused batch stays parked. When the tar's filesystem can
+  reflink the batch's raw files (``clone_capable``) an append shares their
+  blocks and writes only ``CLONE_HEADER_BYTES`` per member; otherwise (or
+  when unknown) it copies, so the raw byte total is reserved.
 
   Args:
     day (str): Calendar day ``YYYY-MM-DD``.
@@ -6004,7 +6011,13 @@ def _append_batch_need(day: str, tar_path: str, take: int) -> int | None:
   if take <= 0 or cfg.get_sync_archive_space_pressure_free_bytes() <= 0:
     return 0
   restore = space.restore_bytes_estimate(tar_path)
-  raw = _APPEND_DAY_LISTS.batch_bytes(day, take)
+  first = _APPEND_DAY_LISTS.peek_first(day)
+  sample = str(getattr(first, "identity", "") or "") or None
+  raw = (
+    take * tca.CLONE_HEADER_BYTES
+    if sample and tca.clone_capable(tar_path, sample)
+    else _APPEND_DAY_LISTS.batch_bytes(day, take)
+  )
   if space.fits_hard_reserve(tar_path, restore + raw, restore_need=restore):
     return restore + raw
   space.log_deny("append", tar_path, restore + raw, reason="hard_reserve")
@@ -8201,6 +8214,9 @@ def run_sync_timedb_queue_orchestrator(
     )
 
     tgz_archive_dir = cfg.get_daily_archive_dir_path()
+    # A clone append killed with the previous process left its journal; undo
+    # each uncommitted append before any append, seal or restore can run.
+    recover_all_interrupted_appends(tgz_archive_dir, log_fn=log_fn or log_print)
     install_cooperative_shutdown_handlers(log_fn=log_fn)
     try:
       stolen = jq.steal_dead_owner_leases(client)

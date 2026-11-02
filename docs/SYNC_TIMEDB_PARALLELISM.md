@@ -11,7 +11,7 @@ This document describes how `sync_timedb` uses **in-process thread pools**, **da
 | **A. Hot-path thread pools** | `create_sync_timedb_thread_pool` (`SyncTimedbThreadPool`) | Session-static (orchestrator lifetime) | Ingest parse/DB, archive tar append, populate scans |
 | **B. Session thread executors** | `ThreadPoolExecutor` for day_close (max `sync_day_close_max_inflight`) | Orchestrator lifetime | Seal → raw removal → tar-drop |
 | **C. Ephemeral burst threads** | `ThreadPoolExecutor` in `with` block | Per maintenance call | Archive metadata reads, parallel seal/validation/migrate |
-| **D. Subprocess CLI** | `subprocess` | Per command | `zstd`, GNU `tar -r`, decompress helpers |
+| **D. Subprocess CLI** | `subprocess` | Per command | `zstd`, GNU `tar` reads, `dd` copy fallback for appends, decompress helpers |
 
 **Not a Python pool:** zstd compression uses the **zstd CLI** via subprocess, not a worker pool. Do **not** restore `create_sync_timedb_spawn_pool` on the `sync_timedb` hot path.
 
@@ -72,7 +72,8 @@ Per-task `set_daemon_thread_title(role=...)` for operator `ps`/logs. Validation 
 | Tool | Module | Purpose |
 |------|--------|---------|
 | zstd | `zstd_cli.py` | compress/decompress/pipe |
-| GNU tar | `sync_timedb.py` `_append_to_tar` | `tar -r` append |
+| In-process clone writer | `sync_timedb.py` `_append_to_tar` → `sync_timedb_tar_clone_append.clone_append` | pax headers + `FICLONERANGE` reflink of raw data (no subprocess); journal-protected |
+| dd | `sync_timedb_tar_clone_append._copy_range` | copy fallback when the filesystem cannot reflink, under `run_subprocess_with_progress` idle kill |
 | Restore paths | `sync_timedb_archive_helpers.py` | decompress archives |
 
 ## Raw `threading.Thread` (exception)

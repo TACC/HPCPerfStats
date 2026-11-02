@@ -11,6 +11,7 @@ import threading
 import time
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -23,7 +24,7 @@ from hpcperfstats.dbload.lib.archive_compress import (
   daily_tar_path_from_compressed,
   normalize_daily_compressed_path,
 )
-from hpcperfstats.dbload.lib.file_locking import LOCK_SUFFIX
+from hpcperfstats.dbload.lib.file_locking import LOCK_SUFFIX, file_write_lock
 from hpcperfstats.dbload.lib.shutdown_utils import shutdown_requested
 from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   ARCHIVE_SKIP_ACTIVE_SEGMENT,
@@ -85,6 +86,9 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
 )
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
   parse_first_timestamp_line,
+)
+from hpcperfstats.dbload.lib.sync_timedb_tar_clone_append import (
+  CloneAppendResult,
 )
 from hpcperfstats.dbload.lib.zstd_cli import (
   zstd_executable,
@@ -370,7 +374,7 @@ def test_append_and_ingest_share_repair_helper(monkeypatch, tmp_path):
   )
   monkeypatch.setattr(
     "hpcperfstats.dbload.sync_timedb._append_to_tar",
-    lambda *a, **k: None,
+    _noop_append,
   )
   real_verify = helpers.verify_tar_archive_readable
   unreadable_once = {"done": False}
@@ -1043,7 +1047,7 @@ def test_append_repairs_truncated_tar_before_restore_from_zst(
   )
   monkeypatch.setattr(
     "hpcperfstats.dbload.sync_timedb._append_to_tar",
-    lambda *a, **k: None,
+    _noop_append,
   )
   monkeypatch.setattr(
     "hpcperfstats.dbload.sync_timedb.verify_tar_archive_readable",
@@ -1841,7 +1845,7 @@ def test_archive_stats_files_returns_false_when_corrupt_tar_restore_fails(
   )
   monkeypatch.setattr(
     "hpcperfstats.dbload.sync_timedb._append_to_tar",
-    lambda *a, **k: None,
+    _noop_append,
   )
   result = _archive_stats_files_body((gz_path, [str(raw_file)]))
   assert result is False
@@ -3213,7 +3217,7 @@ def test_archive_stats_files_skips_gate_tail_collect_when_marks_ready(
     lambda *_a, **_k: ({}, "store"),
   )
   monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
-  monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "_append_to_tar", _noop_append)
   monkeypatch.setattr(
     st,
     "filter_files_to_add_to_archive",
@@ -3319,16 +3323,11 @@ def test_archive_stats_files_skips_pre_append_tf_after_successful_tvf(
     lambda *_a, **_k: ({}, "tar_scan"),
   )
   monkeypatch.setattr(st, "verify_tar_archive_readable", _count_verify)
-  monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "_append_to_tar", _noop_append)
   monkeypatch.setattr(
     st,
     "filter_files_to_add_to_archive",
     lambda files, *_a, **_k: list(files),
-  )
-  monkeypatch.setattr(
-    st,
-    "prepare_paths_for_giant_member_append",
-    lambda _tar, files, **_k: (list(files), []),
   )
   monkeypatch.setattr(
     st,
@@ -3367,7 +3366,7 @@ def test_archive_stats_files_skips_append_when_not_head_ingested(
   monkeypatch.setattr(
     st,
     "_append_to_tar",
-    lambda *_a, **_k: append_calls.__setitem__("n", append_calls["n"] + 1),
+    lambda *_a, **_k: _count_append(append_calls),
   )
 
   # Gate-skip is a non-ok outcome carrying the skipped paths so the append
@@ -3594,7 +3593,7 @@ def test_archive_stats_files_fail_closed_when_decompress_fails(
   monkeypatch.setattr(
     st,
     "_append_to_tar",
-    lambda *_a, **_k: append_calls.__setitem__("n", append_calls["n"] + 1),
+    lambda *_a, **_k: _count_append(append_calls),
   )
 
   assert archive_stats_files((archive_key, [str(raw_file)])) is False
@@ -4111,142 +4110,73 @@ def test_filter_files_to_add_to_archive_mixed(tmp_path):
   assert set(to_add) == {str(f1), str(f3)}
 
 
-# --- sync_timedb._append_to_tar (tar -r --null -T) ---
+def _noop_append(*_a, **_k):
+  """Stand-in for ``_append_to_tar`` that appends nothing."""
+  return CloneAppendResult()
 
 
-@pytest.mark.skipif(not shutil.which("tar"), reason="tar binary required")
-def test_append_to_tar_writes_members_via_files_from(tmp_path):
+def _count_append(calls):
+  """Count an ``_append_to_tar`` call and return an empty result."""
+  calls["n"] += 1
+  return CloneAppendResult()
+
+
+# --- sync_timedb._append_to_tar (clone_append under the tar write lock) ---
+
+
+def test_append_to_tar_writes_members_via_clone(tmp_path):
   from hpcperfstats.dbload.sync_timedb import _append_to_tar
 
   f1 = tmp_path / "segment1"
   f1.write_text("segment-body")
   tar_path = tmp_path / "2024-06-01.tar"
-  _append_to_tar(str(tar_path), [str(f1)])
-  assert tar_path.is_file()
+  res = _append_to_tar(str(tar_path), [str(f1)])
+  assert res.appended == 1 and res.cloned + res.copied == 1
   with tarfile.open(tar_path, "r") as tf:
-    bodies = [
-      tf.extractfile(m).read()
-      for m in tf.getmembers()
-      if m.isfile() and tf.extractfile(m) is not None
-    ]
-  assert b"segment-body" in bodies
+    bodies = [tf.extractfile(m).read() for m in tf.getmembers() if m.isfile()]
+  assert bodies == [b"segment-body"]
+  assert _append_to_tar(str(tar_path), []).appended == 0
 
 
-def test_append_to_tar_argv_always_includes_posix(monkeypatch, tmp_path):
-  """Append always passes -r/--posix/-C / and never -c.
-
-  ``tar -r`` is unconditional (GNU tar creates a missing archive), per
-  sync-timedb-lock-and-archive-contract. ``--posix`` and ``-C /`` keep pax
-  headers available for large members.
-  """
+def test_append_to_tar_skips_paths_that_vanished_under_the_lock(tmp_path):
   from hpcperfstats.dbload import sync_timedb as st
-  from hpcperfstats.dbload.lib import sync_timedb_progress_io as progress_io
 
   f1 = tmp_path / "segment1"
-  f1.write_bytes(b"a")
-  f2 = tmp_path / "segment2"
-  f2.write_bytes(b"b")
-  tar_path = tmp_path / "2024-06-01.tar"
-  captured = []
-
-  class _Ok:
-    returncode = 0
-    stdout = ""
-    stderr = ""
-    args = ()
-
-  def _run(args, **_kwargs):
-    captured.append(list(args))
-    if not tar_path.exists():
-      tar_path.write_bytes(b"ustar\0")
-    return _Ok()
-
-  # Long tar/zstd work goes through run_subprocess_with_progress, not
-  # subprocess.run (sync-timedb-no-timers.mdc).
-  monkeypatch.setattr(progress_io, "run_subprocess_with_progress", _run)
-  monkeypatch.setattr(
-    st, "file_write_lock", lambda *_a, **_k: contextlib.nullcontext()
+  f1.write_text("a")
+  res = st._append_to_tar(
+    str(tmp_path / "2024-06-01.tar"), [str(f1), str(tmp_path / "gone")]
   )
-  st._append_to_tar(str(tar_path), [str(f1)])
-  st._append_to_tar(str(tar_path), [str(f2)])
-  assert len(captured) == 2
-  for argv in captured:
-    assert "-r" in argv
-    assert "-c" not in argv
-    assert "--posix" in argv
-    assert "-C" in argv and argv[argv.index("-C") + 1] == "/"
+  assert res.appended == 1
 
 
-def test_append_to_tar_respects_ini_batch_size(monkeypatch, tmp_path):
-  """sync_timedb_tar_append_batch_size caps paths per tar -T invocation."""
+def test_append_to_tar_maps_unwalkable_tar_to_runtime_error(tmp_path):
   from hpcperfstats.dbload import sync_timedb as st
-  from hpcperfstats.dbload.lib import sync_timedb_progress_io as progress_io
 
-  paths = []
-  for i in range(5):
-    p = tmp_path / (f"seg{i}")
-    p.write_bytes(b"x")
-    paths.append(str(p))
+  f1 = tmp_path / "segment1"
+  f1.write_text("a")
   tar_path = tmp_path / "2024-06-01.tar"
-  captured = []
-
-  class _Ok:
-    returncode = 0
-    stdout = ""
-    stderr = ""
-
-  def _run(args, **_kwargs):
-    captured.append(list(args))
-    if not tar_path.exists():
-      tar_path.write_bytes(b"ustar\0")
-    return _Ok()
-
-  monkeypatch.setattr(
-    st.cfg,
-    "get_sync_timedb_tar_append_batch_size",
-    lambda: 2,
-  )
-  monkeypatch.setattr(progress_io, "run_subprocess_with_progress", _run)
-  monkeypatch.setattr(
-    st, "file_write_lock", lambda *_a, **_k: contextlib.nullcontext()
-  )
-  st._append_to_tar(str(tar_path), paths)
-  assert len(captured) == 3
+  tar_path.write_bytes(b"not a tar" * 200)
+  before = tar_path.read_bytes()
+  with pytest.raises(RuntimeError, match="not walkable"):
+    st._append_to_tar(str(tar_path), [str(f1)])
+  assert tar_path.read_bytes() == before
 
 
-def test_format_tar_append_failure_log_includes_stderr():
+def test_format_tar_append_failure_log():
   from hpcperfstats.dbload.sync_timedb import format_tar_append_failure_log
 
-  exc = subprocess.CalledProcessError(
-    2,
-    ["tar", "-r", "-f", "day.tar"],
-    output="",
-    stderr=(
-      "/usr/bin/tar: value 11109288094 out of off_t range 0..8589934591\n"
-    ),
-  )
+  exc = OSError(28, "No space left on device")
   msg = format_tar_append_failure_log("day.tar", exc, retry=False)
-  assert msg.startswith("ERROR: tar append failed for day.tar")
-  assert "tar append stderr:" in msg
-  assert "out of off_t range" in msg
-  assert "8589934591" in msg
-  assert "marker=off_t_range" in msg
-  retry_msg = format_tar_append_failure_log("day.tar", exc, retry=True)
-  assert retry_msg.startswith("ERROR: retry tar append failed for day.tar")
-  assert "tar append stderr:" in retry_msg
-  assert "marker=off_t_range" in retry_msg
+  assert msg == (
+    "ERROR: tar append failed for day.tar ([Errno 28] No space left on device);"
+    " leaving raw stats files in place"
+  )
+  assert format_tar_append_failure_log("day.tar", exc, retry=True).startswith(
+    "ERROR: retry tar append failed for day.tar"
+  )
 
 
-def test_archive_stats_files_error_log_includes_tar_stderr(
-  monkeypatch, tmp_path
-):
-  """ERROR: tar append failed must fold CalledProcessError.stderr for grep."""
-  raw_file = tmp_path / "1000"
-  raw_file.write_text("1709123456 job1 cn001\n")
-  archive_key = str(tmp_path / "2024-03-01.tar.zst")
-
-  import hpcperfstats.dbload.sync_timedb as st
-
+def _patch_append_body(monkeypatch, st):
   _patch_archive_gate_pass(monkeypatch)
   monkeypatch.setattr(
     st, "_decompress_compressed_archive", lambda *_a, **_k: True
@@ -4266,40 +4196,64 @@ def test_archive_stats_files_error_log_includes_tar_stderr(
     st, "_restore_daily_tar_or_log_failure", lambda *a, **k: True
   )
 
+
+@pytest.mark.parametrize(
+  "exc",
+  [OSError(28, "No space left on device"), RuntimeError("tar append idle")],
+)
+def test_archive_stats_files_error_log_outcome_fail(monkeypatch, tmp_path, exc):
+  """A failed append returns False (never raises through the pool)."""
+  raw_file = tmp_path / "1000"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-01.tar.zst")
+
+  import hpcperfstats.dbload.sync_timedb as st
+
+  _patch_append_body(monkeypatch, st)
+
   def _boom(*_a, **_k):
-    raise subprocess.CalledProcessError(
-      2,
-      ["tar", "-r", "--posix"],
-      output="",
-      stderr="tar: value 9000000000 out of off_t range 0..8589934591\n",
-    )
+    raise exc
 
   monkeypatch.setattr(st, "_append_to_tar", _boom)
   logs = []
   monkeypatch.setattr(st, "log_print", lambda msg, **_k: logs.append(str(msg)))
 
   assert st.archive_stats_files((archive_key, [str(raw_file)])) is False
-  error_lines = [
-    line for line in logs if line.startswith("ERROR: tar append failed")
-  ]
-  assert error_lines
-  assert "tar append stderr:" in error_lines[0]
-  assert "out of off_t range" in error_lines[0]
+  error = [line for line in logs if line.startswith("ERROR: tar append failed")]
+  assert error and str(exc) in error[0]
+  done = [line for line in logs if "archive_job_done" in line]
+  assert done and "outcome=fail" in done[0]
+  assert "cloned=0 copied=0 write_s=0.000" in done[0]
   assert raw_file.exists()
 
 
-def test_partition_and_sort_archive_items_helpers(tmp_path):
+def test_archive_job_done_reports_clone_counts(monkeypatch, tmp_path):
+  raw_file = tmp_path / "1000"
+  raw_file.write_text("1709123456 job1 cn001\n")
+  archive_key = str(tmp_path / "2024-03-01.tar.zst")
+
+  import hpcperfstats.dbload.sync_timedb as st
+
+  _patch_append_body(monkeypatch, st)
+  monkeypatch.setattr(
+    st,
+    "_append_to_tar",
+    lambda *_a, **_k: CloneAppendResult(
+      appended=1, cloned=1, copied=0, write_s=0.25
+    ),
+  )
+  logs = []
+  monkeypatch.setattr(st, "log_print", lambda msg, **_k: logs.append(str(msg)))
+  assert st.archive_stats_files((archive_key, [str(raw_file)]))
+  done = [line for line in logs if "archive_job_done" in line]
+  assert len(done) == 1
+  assert "appended=1 cloned=1 copied=0 write_s=0.250" in done[0]
+
+
+def test_sort_archive_items_oldest_day_first():
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-    USTAR_MAX_MEMBER_BYTES,
-    partition_paths_by_ustar_member_limit,
     sort_archive_items_oldest_day_first,
   )
-
-  small = tmp_path / "small"
-  small.write_bytes(b"abc")
-  within, oversized = partition_paths_by_ustar_member_limit([str(small)])
-  assert within == [str(small)]
-  assert oversized == []
 
   items = [
     ("/d/2026-03-02.tar.zst", ["b"]),
@@ -4309,177 +4263,6 @@ def test_partition_and_sort_archive_items_helpers(tmp_path):
     "/d/2026-03-01.tar.zst",
     "/d/2026-03-02.tar.zst",
   ]
-  assert USTAR_MAX_MEMBER_BYTES == 8589934591
-
-
-@pytest.mark.skipif(not shutil.which("tar"), reason="tar binary required")
-def test_convert_daily_tar_to_pax_via_extract_recreate(tmp_path, monkeypatch):
-  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
-
-  member = tmp_path / "m1"
-  member.write_bytes(b"payload")
-  tar_path = tmp_path / "2026-06-01.tar"
-  # Classic ustar create (no --format=pax).
-  subprocess.run(
-    ["tar", "-cf", str(tar_path), "-C", str(tmp_path), member.name],
-    check=True,
-    capture_output=True,
-  )
-  logs = []
-  monkeypatch.setattr(
-    helpers, "file_write_lock", lambda *_a, **_k: contextlib.nullcontext()
-  )
-  assert helpers.convert_daily_tar_to_pax_via_extract_recreate(
-    str(tar_path),
-    log_fn=lambda m, **_k: logs.append(str(m)),
-  )
-  assert any("convert_done" in line for line in logs)
-  assert tar_path.is_file()
-
-
-def test_prepare_paths_convert_fail_skips_oversized(monkeypatch, tmp_path):
-  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
-
-  small = tmp_path / "small"
-  small.write_bytes(b"ok")
-  giant = tmp_path / "giant"
-  giant.write_bytes(b"g")
-  tar_path = tmp_path / "2026-06-01.tar"
-  tar_path.write_bytes(b"ustar\0")
-
-  monkeypatch.setattr(
-    helpers,
-    "partition_paths_by_ustar_member_limit",
-    lambda paths, **_k: ([str(small)], [str(giant)]),
-  )
-  monkeypatch.setattr(
-    helpers, "is_pax_capable_daily_tar", lambda *_a, **_k: False
-  )
-  monkeypatch.setattr(
-    helpers,
-    "classify_daily_tar_file_label",
-    lambda *_a, **_k: "POSIX tar archive",
-  )
-  monkeypatch.setattr(
-    helpers,
-    "convert_daily_tar_to_pax_via_extract_recreate",
-    lambda *_a, **_k: False,
-  )
-  logs = []
-  to_append, skipped = helpers.prepare_paths_for_giant_member_append(
-    str(tar_path),
-    [str(small), str(giant)],
-    log_fn=lambda m, **_k: logs.append(str(m)),
-  )
-  assert to_append == [str(small)]
-  assert skipped == [str(giant)]
-  assert any("must_convert" in line for line in logs)
-  assert any("convert_fail_skip" in line for line in logs)
-
-
-def test_archive_stats_files_convert_fail_skip_outcome(monkeypatch, tmp_path):
-  """Convert fail skips giants; job still outcome=ok when remaining appends."""
-  raw_small = tmp_path / "1000"
-  raw_small.write_text("1709123456 job1 cn001\n")
-  raw_giant = tmp_path / "1001"
-  raw_giant.write_text("1709123457 job2 cn002\n")
-  archive_key = str(tmp_path / "2024-03-01.tar.zst")
-  tar_path = daily_tar_path_from_compressed(archive_key)
-  os.makedirs(os.path.dirname(tar_path) or ".", exist_ok=True)
-  Path(tar_path).write_bytes(b"ustar\0")
-
-  import hpcperfstats.dbload.sync_timedb as st
-
-  _patch_archive_gate_pass(monkeypatch)
-  monkeypatch.setattr(
-    st, "_decompress_compressed_archive", lambda *_a, **_k: True
-  )
-  monkeypatch.setattr(
-    st,
-    "_lookup_existing_members_for_archive_append",
-    lambda *_a, **_k: ({}, "tar_scan"),
-  )
-  monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
-  monkeypatch.setattr(
-    st,
-    "filter_files_to_add_to_archive",
-    lambda files, *_a, **_k: list(files),
-  )
-  monkeypatch.setattr(
-    st, "_restore_daily_tar_or_log_failure", lambda *a, **k: True
-  )
-  monkeypatch.setattr(
-    st,
-    "prepare_paths_for_giant_member_append",
-    lambda tar, files, **_k: ([str(raw_small)], [str(raw_giant)]),
-  )
-  appended = []
-
-  def _append(tar, paths):
-    appended.extend(list(paths))
-
-  monkeypatch.setattr(st, "_append_to_tar", _append)
-  logs = []
-  monkeypatch.setattr(st, "log_print", lambda msg, **_k: logs.append(str(msg)))
-
-  result = st.archive_stats_files(
-    (archive_key, [str(raw_small), str(raw_giant)]),
-  )
-  assert result
-  assert appended == [str(raw_small)]
-  assert getattr(result, "skipped_paths", ()) == (str(raw_giant),)
-  assert any(
-    "outcome=ok" in line for line in logs if "archive_job_done" in line
-  )
-
-
-def test_archive_stats_files_error_log_outcome_fail(monkeypatch, tmp_path):
-  raw_file = tmp_path / "1000"
-  raw_file.write_text("1709123456 job1 cn001\n")
-  archive_key = str(tmp_path / "2024-03-01.tar.zst")
-
-  import hpcperfstats.dbload.sync_timedb as st
-
-  _patch_archive_gate_pass(monkeypatch)
-  monkeypatch.setattr(
-    st, "_decompress_compressed_archive", lambda *_a, **_k: True
-  )
-  monkeypatch.setattr(
-    st,
-    "_lookup_existing_members_for_archive_append",
-    lambda *_a, **_k: ({}, "tar_scan"),
-  )
-  monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
-  monkeypatch.setattr(
-    st,
-    "filter_files_to_add_to_archive",
-    lambda files, *_a, **_k: list(files),
-  )
-  monkeypatch.setattr(
-    st, "_restore_daily_tar_or_log_failure", lambda *a, **k: True
-  )
-  monkeypatch.setattr(
-    st,
-    "prepare_paths_for_giant_member_append",
-    lambda tar, files, **_k: (list(files), []),
-  )
-
-  def _boom(*_a, **_k):
-    raise subprocess.CalledProcessError(
-      2,
-      ["tar", "-r", "--posix"],
-      output="",
-      stderr="tar: value 9000000000 out of off_t range 0..8589934591\n",
-    )
-
-  monkeypatch.setattr(st, "_append_to_tar", _boom)
-  logs = []
-  monkeypatch.setattr(st, "log_print", lambda msg, **_k: logs.append(str(msg)))
-
-  assert st.archive_stats_files((archive_key, [str(raw_file)])) is False
-  assert any(
-    "archive_job_done" in line and "outcome=fail" in line for line in logs
-  )
 
 
 # --- get_verified_files_to_remove ---
@@ -5328,7 +5111,7 @@ def test_archive_stats_files_does_not_raise_on_append_failure(
   )
 
   def _boom(*_a, **_k):
-    raise subprocess.CalledProcessError(2, ["tar", "-r"])
+    raise OSError(28, "No space left on device")
 
   monkeypatch.setattr(st, "_append_to_tar", _boom)
 
@@ -5419,7 +5202,7 @@ def test_archive_stats_files_skips_dedupe_in_append_path(monkeypatch, tmp_path):
     "filter_files_to_add_to_archive",
     lambda files, *_a, **_k: list(files),
   )
-  monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "_append_to_tar", _noop_append)
 
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
@@ -9735,7 +9518,7 @@ def test_tar_append_merges_store_without_invalidate(monkeypatch, tmp_path):
   invalidated = []
   _patch_archive_gate_pass(monkeypatch)
   monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
-  monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "_append_to_tar", _noop_append)
   monkeypatch.setattr(
     st,
     "invalidate_after_daily_tar_mutation",
@@ -9806,7 +9589,7 @@ def test_archive_stats_files_body_uses_open_tar_not_store_when_mutable_tar_exist
   monkeypatch.setattr(
     st,
     "_append_to_tar",
-    lambda *_a, **_k: append_calls.__setitem__("n", append_calls["n"] + 1),
+    lambda *_a, **_k: _count_append(append_calls),
   )
 
   assert st._archive_stats_files_body((archive_key, [str(new_raw)]))
@@ -9874,7 +9657,7 @@ def test_archive_stats_files_body_noop_when_open_tar_contains_all_batch_members(
   monkeypatch.setattr(
     st,
     "_append_to_tar",
-    lambda *_a, **_k: append_calls.__setitem__("n", append_calls["n"] + 1),
+    lambda *_a, **_k: _count_append(append_calls),
   )
 
   result = st._archive_stats_files_body(
@@ -9935,7 +9718,7 @@ def test_archive_stats_files_skips_restore_when_to_add_zero_sealed(
   monkeypatch.setattr(
     st,
     "_append_to_tar",
-    lambda *_a, **_k: append_calls.__setitem__("n", append_calls["n"] + 1),
+    lambda *_a, **_k: _count_append(append_calls),
   )
   tar_scan_calls = {"n": 0}
 
@@ -10109,6 +9892,7 @@ def test_append_post_success_skips_tf_when_size_grows(monkeypatch, tmp_path):
   def _grow(dest, _files):
     with open(dest, "ab") as fh:
       fh.write(b"grew")
+    return CloneAppendResult(appended=1, cloned=1)
 
   monkeypatch.setattr(st, "_append_to_tar", _grow)
   monkeypatch.setattr(
@@ -10152,7 +9936,7 @@ def test_append_post_success_runs_tf_when_size_unchanged(
   monkeypatch.setattr(
     st, "_restore_daily_tar_or_log_failure", lambda *_a, **_k: True
   )
-  monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "_append_to_tar", _noop_append)
   monkeypatch.setattr(
     st,
     "verify_tar_archive_readable",
@@ -10215,7 +9999,7 @@ def test_archive_stats_files_restores_when_to_add_positive_sealed(
   monkeypatch.setattr(
     st,
     "_append_to_tar",
-    lambda *_a, **_k: append_calls.__setitem__("n", append_calls["n"] + 1),
+    lambda *_a, **_k: _count_append(append_calls),
   )
   _patch_archive_gate_pass(monkeypatch)
 
@@ -10328,7 +10112,7 @@ def test_open_tar_cache_hit_skips_pre_append_verify(monkeypatch, tmp_path):
     return True
 
   monkeypatch.setattr(st, "verify_tar_archive_readable", counting_verify)
-  monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "_append_to_tar", _noop_append)
   monkeypatch.setattr(coord, "merge_appended_members", lambda *_a, **_k: True)
   monkeypatch.setattr(st, "log_print", lambda *_a, **_k: None)
   _patch_archive_gate_pass(monkeypatch)
@@ -10396,7 +10180,7 @@ def test_archive_stats_files_body_to_add_when_store_warm_no_archive_on_disk(
   monkeypatch.setattr(
     st,
     "_append_to_tar",
-    lambda *_a, **_k: append_calls.__setitem__("n", append_calls["n"] + 1),
+    lambda *_a, **_k: _count_append(append_calls),
   )
 
   assert st._archive_stats_files_body((archive_key, [str(raw)]))
@@ -10530,7 +10314,7 @@ def test_archive_append_cold_store_completes_with_inflight_first(
   monkeypatch.setattr(st, "log_print", lambda msg, **kw: logs.append(str(msg)))
   _patch_archive_gate_pass(monkeypatch)
   monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
-  monkeypatch.setattr(st, "_append_to_tar", lambda *_a, **_k: None)
+  monkeypatch.setattr(st, "_append_to_tar", _noop_append)
 
   assert st._archive_stats_files_body((archive_key, [str(new_raw)]))
   assert "inflight" in call_order
@@ -12555,34 +12339,54 @@ def test_boot_repair_salvages_truncated_tail(tmp_path):
 
 
 def test_interrupted_append_truncates_back_to_pre_append_size(tmp_path):
+  """DE-23: a killed append (journal left, half a member written) is undone."""
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+  from hpcperfstats.dbload.lib import sync_timedb_tar_clone_append as tca
 
   tar_p, _zst, raw = _a14_day(tmp_path)
   original = Path(tar_p).read_bytes()
   src = raw / "late"
   src.write_bytes(b"z" * 9000)
-  snap = helpers.snapshot_tar_tail_for_append(tar_p, [str(src)])
-  with tarfile.open(tar_p, "a") as tf:  # an append that "fails" half way
-    tf.add(str(src), arcname="h/late")
-  with open(tar_p, "r+b") as fh:
-    fh.truncate(len(original) + 700)
-  assert helpers.rollback_failed_tar_append(tar_p, snap, log_fn=None)
+  with (
+    mock.patch.object(
+      tca, "_remove_durable", side_effect=KeyboardInterrupt("killed")
+    ),
+    pytest.raises(KeyboardInterrupt),
+  ):
+    tca.clone_append(tar_p, [str(src)], log_fn=None)
+  assert os.path.exists(tca.journal_path(tar_p))
+  # Next write-lock holder recovers before touching the tar.
+  with file_write_lock(tar_p):
+    assert tca.recover_interrupted_append(tar_p, log_fn=None) == "recovered"
   assert Path(tar_p).read_bytes() == original
+  assert helpers.verify_tar_archive_readable(tar_p)
 
 
-def test_append_enospc_rolls_back_only_when_sources_present(tmp_path):
-  import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
+def test_append_enospc_rolls_back_to_pre_append_bytes(tmp_path):
+  """DE-23: ENOSPC mid-append restores the old bytes; raw files untouched."""
+  from hpcperfstats.dbload.lib import sync_timedb_tar_clone_append as tca
 
   tar_p, _zst, raw = _a14_day(tmp_path)
-  src = raw / "late"
-  src.write_bytes(b"z" * 9000)
-  snap = helpers.snapshot_tar_tail_for_append(tar_p, [str(src)])
-  with tarfile.open(tar_p, "a") as tf:
-    tf.add(str(src), arcname="h/late")
-  partial = Path(tar_p).read_bytes()
-  src.unlink()  # the only other copy of the appended bytes is gone
-  assert not helpers.rollback_failed_tar_append(tar_p, snap, log_fn=None)
-  assert Path(tar_p).read_bytes() == partial, "left for salvage, untouched"
+  original = Path(tar_p).read_bytes()
+  srcs = []
+  for i in range(3):
+    src = raw / f"late{i}"
+    src.write_bytes(b"z" * 9000)
+    srcs.append(str(src))
+  real = tca._clone_range
+  calls = []
+
+  def _enospc(s, d, off):
+    calls.append(off)
+    if len(calls) == 2:
+      raise OSError(28, "No space left on device")
+    real(s, d, off)
+
+  with mock.patch.object(tca, "_clone_range", _enospc), pytest.raises(OSError):
+    tca.clone_append(tar_p, srcs, log_fn=None)
+  assert Path(tar_p).read_bytes() == original
+  assert not os.path.exists(tca.journal_path(tar_p))
+  assert all(os.path.getsize(p) == 9000 for p in srcs)
 
 
 def test_salvage_gnu_posix_append_tar_leaves_no_dangling_pax_header(tmp_path):

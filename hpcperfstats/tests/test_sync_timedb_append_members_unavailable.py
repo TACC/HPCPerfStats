@@ -20,6 +20,9 @@ from hpcperfstats.dbload.lib.archive_compress import (
   daily_tar_path_from_compressed,
 )
 from hpcperfstats.dbload.lib.sync_timedb_job_store import SyncTimedbJobStore
+from hpcperfstats.dbload.lib.sync_timedb_tar_clone_append import (
+  CloneAppendResult,
+)
 
 
 def _tar_with_member(tmp_path, day="2024-03-05", pad=0):
@@ -95,7 +98,11 @@ def test_append_still_runs_for_a_genuinely_empty_tar(tmp_path, monkeypatch):
     st, "filter_paths_head_ingested", lambda paths, **_: (list(paths), [])
   )
   monkeypatch.setattr(st, "verify_tar_archive_readable", lambda *_a, **_k: True)
-  monkeypatch.setattr(st, "_append_to_tar", lambda *a, **k: appends.append(a))
+  monkeypatch.setattr(
+    st,
+    "_append_to_tar",
+    lambda *a, **k: appends.append(a) or CloneAppendResult(appended=1),
+  )
   st._archive_stats_files_body((archive_key, [str(new_raw)]))
   assert len(appends) == 1
 

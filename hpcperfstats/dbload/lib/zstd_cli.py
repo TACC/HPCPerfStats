@@ -30,6 +30,9 @@ from hpcperfstats.dbload.lib.file_locking import (
   try_file_write_lock,
 )
 from hpcperfstats.dbload.lib.print_utils import log_print
+from hpcperfstats.dbload.lib.sync_timedb_tar_clone_append import (
+  recover_interrupted_append,
+)
 
 _GZIP_FORMAT = ("--format=gzip",)
 _PRIORITY_TOOLS_WARNED = False
@@ -855,10 +858,14 @@ def decompress_compressed_to_tar(
       log_fn=log_print,
     )
     try:
+      # A leftover append journal describes the tar being replaced; recover
+      # (or drop it as stale) under the lock so it never outlives that tar.
       if already_locked:
+        recover_interrupted_append(tar_path, log_fn=log_print)
         os.replace(tmp_path, tar_path)
       else:
         with file_write_lock(tar_path):
+          recover_interrupted_append(tar_path, log_fn=log_print)
           os.replace(tmp_path, tar_path)
     except OSError, TimeoutError:
       try:

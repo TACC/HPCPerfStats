@@ -7,6 +7,7 @@ threads as sacred law.
 
 from __future__ import annotations
 
+import inspect
 import re
 from datetime import date, datetime
 
@@ -165,8 +166,75 @@ def test_job_store_has_no_lua_or_redis_reap():
   assert "redis.call" not in src
 
 
+def _daily_tar_write_lock_bodies():
+  """Yield ``(module, function, first statement)`` per daily-tar write lock."""
+  import ast
+
+  from hpcperfstats.dbload import sync_timedb as st
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_archive_helpers as helpers,
+    zstd_cli,
+  )
+
+  for mod in (st, helpers, zstd_cli):
+    tree = ast.parse(inspect.getsource(mod))
+    for fn in ast.walk(tree):
+      if not isinstance(fn, ast.FunctionDef):
+        continue
+      for node in ast.walk(fn):
+        if not isinstance(node, ast.With):
+          continue
+        for item in node.items:
+          call = item.context_expr
+          if (
+            isinstance(call, ast.Call)
+            and getattr(call.func, "id", "") == "file_write_lock"
+            and call.args
+            and isinstance(call.args[0], ast.Name)
+            and call.args[0].id in ("tar_path", "tar_norm")
+          ):
+            yield mod.__name__, fn.name, node.body[0]
+
+
+def test_tar_write_lock_holders_recover_journal_first():
+  """Group F: every daily-tar write-lock holder applies a leftover append
+  journal before it reads, rewrites, replaces or drops the tar.
+
+  ``_append_to_tar`` delegates to ``clone_append``, which recovers first.
+  A new holder that skips recovery fails here.
+  """
+  import ast
+
+  seen = set()
+  for mod, fn, first in _daily_tar_write_lock_bodies():
+    seen.add(fn)
+    src = ast.unparse(first)
+    assert "recover_interrupted_append(" in src or (fn == "_append_to_tar"), (
+      f"{mod}.{fn} does not recover the append journal first: {src}"
+    )
+  assert {
+    "_append_to_tar",
+    "replace_corrupt_tar_from_compressed_backup",
+    "remove_verified_uncompressed_daily_tars",
+    "salvage_truncated_tar_prefix",
+    "repair_truncated_daily_tar_in_place",
+    "rebuild_daily_tar_member_union_in_place",
+    "reconcile_open_tar_with_sealed_zst",
+    "dedupe_tar_keep_largest_file_per_member",
+    "atomic_seal_tar_to_zst",
+    "_run_owned_restore",
+  } <= seen, seen
+
+
+def test_clone_append_recovers_journal_before_writing():
+  from hpcperfstats.dbload.lib import sync_timedb_tar_clone_append as tca
+
+  src = inspect.getsource(tca.clone_append)
+  assert src.index("recover_interrupted_append(") < src.index("_write_durable(")
+
+
 def test_append_to_tar_refilters_under_write_lock():
-  """F13: lexists filter for tar -r must run under file_write_lock."""
+  """F13: lexists filter for the append must run under file_write_lock."""
   import inspect
 
   from hpcperfstats.dbload import sync_timedb as st
@@ -394,12 +462,16 @@ def test_arch_no_internal_wall_timers_append_and_ingest():
   import inspect
 
   from hpcperfstats.dbload import sync_timedb as st
-  from hpcperfstats.dbload.lib import sync_timedb_ingest_timeout as ito
+  from hpcperfstats.dbload.lib import (
+    sync_timedb_ingest_timeout as ito,
+    sync_timedb_tar_clone_append as tca,
+  )
 
   append_src = inspect.getsource(st._append_to_tar)
+  copy_src = inspect.getsource(tca._copy_range)
   timed_src = inspect.getsource(st._run_ingest_timed)
-  assert "run_subprocess_with_progress" in append_src
-  assert "timeout=3600" not in append_src
+  assert "run_subprocess_with_progress" in copy_src
+  assert "timeout=3600" not in append_src + copy_src
   assert "setitimer" not in timed_src
   assert "signal.alarm" not in timed_src
   assert not hasattr(ito, "stall_abort_polls_for_paths")

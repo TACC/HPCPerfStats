@@ -26,8 +26,9 @@ appendix with `python3 scripts/sync_timedb_state_inventory.py --write-doc`.
 | Quarantine | `.sync_timedb_unparsable_raw/` + `.sync_timedb_unparsable_raw.json` | no | manifest only (files stay; boot restore re-reads orphans) |
 | Sealed member maps | `{daily_dir}/.sync_timedb_sealed_members/<day>.json` | no | no (self-validated by zst identity) |
 | Salvage backups | `{daily_dir}/.sync_timedb_tar_salvage/` | no | no (removed after post-seal parity) |
+| Append journal (clone append) | `{daily_dir}/<day>.tar.append_journal` (`{old_end, old_size, st_dev, st_ino, tail_sha256}`) | no | no (exists only between journal write and commit; a killed append's journal is applied by `recover_interrupted_append` at startup, first thing under every daily-tar write lock, or by the sweep: truncates the tar to `old_end` when identity and tail hash match, else drops the stale journal; unreadable → `.corrupt.<ts>`, tar untouched) |
 | Integrity census | `{daily_dir}/.sync_timedb_sealed_integrity.json` | no | no |
-| Archive scratch: `<day>.tar.{merge,dedupe,repair,decomp,zst}.tmp`, `hps_{union_extract,pax_convert,tar_repair}_*` dirs, `.atomic.*` and `*.json.tmp` write temps | `{daily_dir}`, `{archive_dir}` and their `.sync_timedb_*` subdirs | no | no (idle sweep removes a dead-day file unmodified for `sync_archive_scratch_max_idle_hours` while the day's tar and restore locks are free, or a day-less path whose whole tree is that idle; derived temporaries, never the only copy; safety copies (`.corrupt.*`, `.pre-restore.*`, salvage, quarantine) are never touched; `report` mode only logs) |
+| Archive scratch: `<day>.tar.{merge,dedupe,repair,decomp,zst}.tmp`, `hps_{union_extract,pax_convert,tar_repair}_*` dirs (`pax_convert` is residue only; the convert path is gone), `.atomic.*` (including clone-append journal and new-tar temps) and `*.json.tmp` write temps | `{daily_dir}`, `{archive_dir}` and their `.sync_timedb_*` subdirs | no | no (idle sweep removes a dead-day file unmodified for `sync_archive_scratch_max_idle_hours` while the day's tar and restore locks are free, or a day-less path whose whole tree is that idle; derived temporaries, never the only copy; safety copies (`.corrupt.*`, `.pre-restore.*`, salvage, quarantine) are never touched; `report` mode only logs) |
 | Migration snapshot | `.sync_timedb_migration_backup/dead-ends-v1/` | no | no |
 | Per-day remainder counters | memory | rebuilt from the job store at boot (DE-32) | n/a |
 
@@ -187,7 +188,7 @@ stateDiagram-v2
 | DE-8 | restore decompress progress idle kill | `test_decompress_idle_kill_releases_restore_token` |
 | DE-9 | reseal over unreadable zst, old kept | `test_unreadable_zst_reseals_from_tar` |
 | DE-10/25 | only quarantine is terminal; frozen done days reopen | `test_seal_invalid_not_terminal_phase_done_not_written`, `test_frozen_production_manifest_closes_end_to_end` |
-| DE-11/23 | copy-and-verify salvage; append rollback; empty tar drop | `test_truncated_open_tar_salvaged_to_valid_prefix`, `test_interrupted_append_truncates_back_to_pre_append_size`, `test_empty_open_tar_completes` |
+| DE-11/23 | copy-and-verify salvage; append rollback (clone writer journal: truncate to the journalled old end; 2026-11-01); empty tar drop | `test_truncated_open_tar_salvaged_to_valid_prefix`, `test_interrupted_append_truncates_back_to_pre_append_size`, `test_append_enospc_rolls_back_to_pre_append_bytes`, `test_clone_append_kill_at_every_step`, `test_empty_open_tar_completes` |
 | DE-13 | reclassify decoupled; fresh status recorded | `test_reclassify_runs_with_delete_failed_pending` |
 | DE-14 | OperationalError requeues (environment) | `test_operational_error_requeues_not_dropped` |
 | DE-15/16 | dead-owner reap; populate attempt cap | `test_dead_worker_inflight_reaped_when_recycle_disabled`, `test_populate_requeue_attempts_capped` |

@@ -95,15 +95,23 @@ def test_byte_progress_resets_idle(tmp_path):
 
 
 def test_append_to_tar_uses_progress_helper_not_timeout_3600():
-  """Tar append must use progress+idle kill; no absolute 3600 wall."""
-  src = inspect.getsource(st._append_to_tar)
+  """Tar append copy fallback uses progress+idle kill; no absolute wall."""
+  from hpcperfstats.dbload.lib import sync_timedb_tar_clone_append as tca
+
+  src = inspect.getsource(tca._copy_range)
   assert "run_subprocess_with_progress" in src
-  assert "timeout=3600" not in src
-  assert "tar_timeout_s" not in src
+  for body in (src, inspect.getsource(st._append_to_tar)):
+    assert "timeout=3600" not in body
+    assert "tar_timeout_s" not in body
 
 
 def test_append_to_tar_idle_kill(monkeypatch, tmp_path):
-  """Hung tar append with flat size raises RuntimeError idle stall."""
+  """Hung copy fallback with flat tar size raises a RuntimeError idle stall."""
+  from hpcperfstats.dbload.lib import sync_timedb_tar_clone_append as tca
+
+  monkeypatch.setattr(
+    tca, "_clone_range", lambda *_a: (_ for _ in ()).throw(OSError(18, "EXDEV"))
+  )
   tar_path = tmp_path / "day.tar"
   subprocess.run(
     ["tar", "cf", str(tar_path), "-T", "/dev/null"],

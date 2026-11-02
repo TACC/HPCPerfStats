@@ -25,7 +25,6 @@ Attributes:
   QUARANTINE_TERMINAL_CLASSES: Quarantine classes never auto-restored.
   SEAL_OUTPUT_FRACTION: Seal admission estimate, zst bytes = tar / N.
   ZST_RESTORE_EXPANSION_FACTOR: Restore admission estimate, tar = zst * N.
-  TAR_APPEND_TAIL_SNAPSHOT_BYTES: Tail bytes kept to undo a failed append.
   SALVAGE_DIRNAME: Directory (beside the daily tars) for salvage backups.
   SKIP_KIND_SALVAGE_BACKUP_FAILED: ``day_skip`` kind when the salvage backup
     cannot be made (space or I/O); G3 retries.
@@ -36,7 +35,6 @@ Attributes:
   SYNC_TIMEDB_UNPARSABLE_RAW_DIRNAME: Attribute.
   SYNC_TIMEDB_UNPARSABLE_RAW_MANIFEST_BASENAME: Attribute.
   UNPARSABLE_RAW_QUARANTINE_REASON: Attribute.
-  USTAR_MAX_MEMBER_BYTES: Attribute.
   _ARCHIVE_MEMBERS_INVALIDATION_HOOK: Attribute.
   _DAILY_ARCHIVE_MEMBERS_CACHE: Attribute.
   _DAILY_ARCHIVE_MEMBERS_CACHE_LOCK: FT-safe RLock for L1 members cache.
@@ -119,6 +117,9 @@ from hpcperfstats.dbload.lib.sync_timedb_sealed_member_map import (
 )
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
   iter_bounded_thread_pool,
+)
+from hpcperfstats.dbload.lib.sync_timedb_tar_clone_append import (
+  recover_interrupted_append,
 )
 from hpcperfstats.dbload.lib.zstd_cli import (
   _tar_dest_is_nonempty,
@@ -376,150 +377,6 @@ def calendar_date_from_daily_tar_path(tar_path: str) -> Any:
     return None
 
 
-# Classic ustar size field (octal) max before GNU/pax extended headers.
-USTAR_MAX_MEMBER_BYTES = 8589934591
-
-
-def partition_paths_by_ustar_member_limit(
-  paths: Any,
-  *,
-  limit: int = USTAR_MAX_MEMBER_BYTES,
-) -> Any:
-  """
-  Split paths into (within_limit, oversized) by ``os.path.getsize``.
-
-  Args:
-    paths (Any): Iterable of filesystem paths as strings.
-    limit (int): Integer value for limit.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> partition_paths_by_ustar_member_limit(None, 0)  # doctest: +SKIP
-  """
-  within = []
-  oversized = []
-  for path in paths or ():
-    try:
-      size = os.path.getsize(path)
-    except OSError:
-      within.append(path)
-      continue
-    if size > int(limit):
-      oversized.append(path)
-    else:
-      within.append(path)
-  return within, oversized
-
-
-def classify_daily_tar_file_label(tar_path: str) -> Any:
-  """
-  Return ``file -b`` label for a daily ``.tar`` (empty string on failure).
-
-  Args:
-    tar_path (str): String for tar path.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> classify_daily_tar_file_label("x")  # doctest: +SKIP
-  """
-  if not tar_path or not os.path.isfile(tar_path):
-    return ""
-  file_bin = shutil.which("file") or "file"
-  try:
-    result = subprocess.run(
-      [file_bin, "-b", tar_path],
-      capture_output=True,
-      text=True,
-      check=False,
-      timeout=60,
-    )
-  except OSError, subprocess.TimeoutExpired:
-    return ""
-  return (result.stdout or "").strip()
-
-
-def tar_file_label_is_gnu(label: Any) -> Any:
-  """
-  True when ``file`` label indicates GNU tar (``--posix`` unlocks giants).
-
-  Args:
-    label (Any): Label passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> tar_file_label_is_gnu(None)  # doctest: +SKIP
-  """
-  return "GNU" in str(label or "").upper()
-
-
-def daily_tar_has_pax_extended_headers(
-  tar_path: str,
-  *,
-  max_members: int = 40,
-) -> Any:
-  """
-  True when the first ``max_members`` entries include pax extended headers.
-
-  Args:
-    tar_path (str): String for tar path.
-    max_members (int): Integer value for max members.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> daily_tar_has_pax_extended_headers("x", 0)  # doctest: +SKIP
-  """
-  if not tar_path or not os.path.isfile(tar_path):
-    return False
-  try:
-    with tarfile.open(tar_path, "r:") as tf:
-      for idx, member in enumerate(tf):
-        if idx >= int(max_members):
-          break
-        if getattr(member, "pax_headers", None):
-          return True
-        mtype = getattr(member, "type", None)
-        if mtype in (
-          getattr(tarfile, "XHDTYPE", b"x"),
-          getattr(tarfile, "XGLTYPE", b"g"),
-        ):
-          return True
-  except OSError, tarfile.TarError:
-    return False
-  return False
-
-
-def is_pax_capable_daily_tar(tar_path: str) -> Any:
-  """
-  True when giant members can append without extract+pax recreate.
-
-  Missing tar (first create with ``--posix``) and GNU labels are capable;
-  bare ``POSIX tar archive`` without pax headers is not.
-
-  Args:
-    tar_path (str): String for tar path.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> is_pax_capable_daily_tar("x")  # doctest: +SKIP
-  """
-  if not tar_path or not os.path.isfile(tar_path):
-    return True
-  label = classify_daily_tar_file_label(tar_path)
-  if tar_file_label_is_gnu(label):
-    return True
-  return daily_tar_has_pax_extended_headers(tar_path)
-
-
 def free_bytes_for_path(path: str) -> Any:
   """
   Free bytes on the filesystem containing ``path`` (0 on error).
@@ -587,194 +444,6 @@ def archive_space_admit(
       flush=True,
     )
   return False
-
-
-def convert_daily_tar_to_pax_via_extract_recreate(
-  tar_path: str,
-  *,
-  log_fn: Any = log_print,
-) -> Any:
-  """
-  Rewrite ``tar_path`` as ``--format=pax`` via extract + recreate.
-
-  Holds ``file_write_lock`` for the mutate window. On any failure leaves the
-  original tar untouched and returns ``False``.
-
-  Args:
-    tar_path (str): String for tar path.
-    log_fn (Any): Callable invoked by this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> convert_daily_tar_to_pax_via_extract_recreate("x", None)
-  """
-  tar_path = os.path.abspath(str(tar_path or ""))
-  if not os.path.isfile(tar_path):
-    return True
-  tar_size = os.path.getsize(tar_path)
-  # Extract + recreate holds a full extra copy (plus the reserve, A16).
-  if not archive_space_admit(
-    tar_path, 2 * tar_size, op="pax_convert", log_fn=log_fn
-  ):
-    return False
-  tar_bin = shutil.which("tar") or "/bin/tar"
-  parent = os.path.dirname(tar_path) or "."
-  work_root = tempfile.mkdtemp(prefix="hps_pax_convert_", dir=parent)
-  extract_dir = os.path.join(work_root, "extract")
-  new_tar = os.path.join(work_root, "new.tar")
-  os.makedirs(extract_dir, exist_ok=True)
-  try:
-    with file_write_lock(tar_path):
-      if log_fn:
-        log_fn(
-          f"INFO: convert_start phase=extract tar={tar_path}",
-          flush=True,
-        )
-      extract = subprocess.run(
-        [tar_bin, "-xf", tar_path, "-C", extract_dir],
-        capture_output=True,
-        text=True,
-        check=False,
-      )
-      if extract.returncode != 0:
-        if log_fn:
-          log_fn(
-            f"WARNING: convert_fail phase=extract tar={tar_path} rc={extract.returncode} stderr={(extract.stderr or '').strip()}",
-            flush=True,
-          )
-        return False
-      if log_fn:
-        log_fn(
-          f"INFO: convert_start phase=recreate tar={tar_path}",
-          flush=True,
-        )
-      from hpcperfstats.dbload.lib.sync_timedb_progress_io import (
-        ProgressIdleError,
-        run_subprocess_with_progress,
-      )
-
-      try:
-        recreate = run_subprocess_with_progress(
-          [tar_bin, "--format=pax", "-cf", new_tar, "-C", extract_dir, "."],
-          progress_path=new_tar,
-          stage="pax_recreate",
-          metric="bytes",
-          stdout=subprocess.PIPE,
-          stderr=subprocess.PIPE,
-          text=True,
-        )
-      except ProgressIdleError as exc:
-        if log_fn:
-          log_fn(
-            f"WARNING: convert_fail phase=recreate idle_stall tar={tar_path} exc={exc}",
-            flush=True,
-          )
-        return False
-      if recreate.returncode != 0 or not os.path.isfile(new_tar):
-        if log_fn:
-          log_fn(
-            f"WARNING: convert_fail phase=recreate tar={tar_path} rc={recreate.returncode} stderr={(recreate.stderr or '').strip()}",
-            flush=True,
-          )
-        return False
-      line_count = {"n": 0}
-
-      try:
-        listed = run_subprocess_with_progress(
-          [tar_bin, "tf", new_tar],
-          progress_path=new_tar,
-          stage="pax_tf",
-          metric="lines",
-          progress_fn=lambda: int(line_count["n"]),
-          stdout=subprocess.PIPE,
-          stderr=subprocess.PIPE,
-          text=True,
-        )
-        # Count listed members as unit progress after completion (tf is fast).
-        line_count["n"] = len((listed.stdout or "").splitlines())
-      except ProgressIdleError as exc:
-        if log_fn:
-          log_fn(
-            f"WARNING: convert_fail phase=tf idle_stall tar={tar_path} exc={exc}",
-            flush=True,
-          )
-        return False
-      if listed.returncode != 0:
-        if log_fn:
-          log_fn(
-            f"WARNING: convert_fail phase=tf tar={tar_path} rc={listed.returncode} stderr={(listed.stderr or '').strip()}",
-            flush=True,
-          )
-        return False
-      os.replace(new_tar, tar_path)
-    if log_fn:
-      log_fn(f"INFO: convert_done tar={tar_path}", flush=True)
-    return True
-  except (OSError, subprocess.SubprocessError, TimeoutError) as exc:
-    if log_fn:
-      log_fn(
-        f"WARNING: convert_fail tar={tar_path} exc={exc}",
-        flush=True,
-      )
-    return False
-  finally:
-    shutil.rmtree(work_root, ignore_errors=True)
-
-
-def prepare_paths_for_giant_member_append(
-  tar_path: str,
-  stats_files: Any,
-  *,
-  log_fn: Any = log_print,
-) -> Any:
-  """
-  Ensure tar can accept giants, or skip oversized paths after convert fail.
-
-  Returns ``(paths_to_append, skipped_oversized)``.
-
-  Args:
-    tar_path (str): String for tar path.
-    stats_files (Any): Iterable of filesystem paths as strings.
-    log_fn (Any): Callable invoked by this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> prepare_paths_for_giant_member_append("x", None, None)  # doctest: +SKIP
-  """
-  within, oversized = partition_paths_by_ustar_member_limit(stats_files)
-  if not oversized:
-    return list(stats_files or ()), []
-  if is_pax_capable_daily_tar(tar_path):
-    return list(stats_files or ()), []
-  max_size = 0
-  for path in oversized:
-    with contextlib.suppress(OSError):
-      max_size = max(max_size, int(os.path.getsize(path)))
-  label = (
-    classify_daily_tar_file_label(tar_path)
-    if os.path.isfile(tar_path)
-    else "missing"
-  )
-  if log_fn:
-    log_fn(
-      f"INFO: must_convert tar={tar_path} reason=size_gt_ustar_not_pax_capable file_label={label!r} oversized_n={len(oversized)} max_member_bytes={max_size} ustar_limit={USTAR_MAX_MEMBER_BYTES}",
-      flush=True,
-    )
-  if not os.path.isfile(tar_path):
-    # First create uses ``--posix``; no on-disk convert required.
-    return list(stats_files or ()), []
-  if convert_daily_tar_to_pax_via_extract_recreate(tar_path, log_fn=log_fn):
-    return list(stats_files or ()), []
-  if log_fn:
-    log_fn(
-      f"WARNING: convert_fail_skip tar={tar_path} skipped_n={len(oversized)} sample_paths={[os.path.basename(p) for p in oversized[:5]]}",
-      flush=True,
-    )
-  return within, list(oversized)
 
 
 def sort_archive_items_oldest_day_first(items: Any) -> Any:
@@ -6638,6 +6307,7 @@ def replace_corrupt_tar_from_compressed_backup(
         pass
       return not (os.path.isfile(zst_path) or os.path.isfile(gz_path))
     with file_write_lock(tar_path):
+      recover_interrupted_append(tar_path, log_fn=log_print)
       if not os.path.isfile(rebuild):
         return False
       if os.path.isfile(tar_path):
@@ -8411,6 +8081,7 @@ def remove_verified_uncompressed_daily_tars(
       continue
     try:
       with file_write_lock(tar_path):
+        recover_interrupted_append(tar_path, log_fn=log_fn)
         if os.path.isfile(tar_path):
           os.remove(tar_path)
       _log(f"Maintenance removed verified uncompressed tar: {tar_path}")
@@ -9307,109 +8978,6 @@ def _ensure_open_tar_readable_for_ingest_lookup(
   raise skip_exc
 
 
-TAR_APPEND_TAIL_SNAPSHOT_BYTES = 2 * 10240
-
-
-def snapshot_tar_tail_for_append(
-  tar_path: str,
-  source_paths: Any,
-) -> dict[str, Any] | None:
-  """
-  Record what an append may overwrite so a failure can be rolled back (DE-23).
-
-  GNU ``tar -r`` writes from the first end-of-archive block, which lies inside
-  the last record, so the size plus the last ``TAR_APPEND_TAIL_SNAPSHOT_BYTES``
-  bytes reproduce the pre-append file exactly. Source sizes are recorded so
-  the rollback can prove the appended bytes still exist in the raw files.
-
-  Args:
-    tar_path (str): Open daily ``.tar`` (caller holds its write lock).
-    source_paths (Any): Raw files about to be appended.
-
-  Returns:
-    dict[str, Any] | None: Snapshot, or None when the tar does not exist yet.
-
-  Examples:
-    >>> snapshot_tar_tail_for_append("/nonexistent.tar", []) is None
-    True
-  """
-  try:
-    size = os.path.getsize(tar_path)
-  except OSError:
-    return None
-  start = max(0, size - TAR_APPEND_TAIL_SNAPSHOT_BYTES)
-  with open(tar_path, "rb") as fh:
-    fh.seek(start)
-    tail = fh.read(size - start)
-  sources = {}
-  for path in source_paths or ():
-    with contextlib.suppress(OSError):
-      sources[str(path)] = os.path.getsize(path)
-  return {"size": size, "start": start, "tail": tail, "sources": sources}
-
-
-def rollback_failed_tar_append(
-  tar_path: str,
-  snapshot: dict[str, Any] | None,
-  *,
-  log_fn: Any = log_print,
-) -> bool:
-  """
-  Return a tar to its pre-append bytes after a failed ``tar -r`` (DE-23).
-
-  Runs under the same write lock as the append. Refuses (leaving the tar for
-  the copy-and-verify salvage) unless every raw source of the batch is still
-  on disk at its recorded size: the bytes being discarded must exist there.
-
-  Args:
-    tar_path (str): Open daily ``.tar``.
-    snapshot (dict[str, Any] | None): ``snapshot_tar_tail_for_append`` output.
-    log_fn (Any): Logger callable.
-
-  Returns:
-    bool: True when the tar is byte-identical to before and GNU-readable.
-
-  Raises:
-    OSError: Internally when a source changed; caught and reported as a
-      refused rollback (False), never propagated.
-
-  Examples:
-    >>> rollback_failed_tar_append("/nonexistent.tar", None)
-    False
-  """
-  if not snapshot or not os.path.isfile(tar_path):
-    return False
-  for path, size in snapshot["sources"].items():
-    try:
-      if os.path.getsize(path) != size:
-        raise OSError("source changed")
-    except OSError:
-      if log_fn:
-        log_fn(
-          f"ERROR: tar append rollback refused tar={tar_path} "
-          f"source_missing_or_changed={path}; left for salvage",
-          flush=True,
-        )
-      return False
-  with open(tar_path, "r+b") as fh:
-    fh.truncate(snapshot["size"])
-    fh.seek(snapshot["start"])
-    fh.write(snapshot["tail"])
-    fh.flush()
-    os.fsync(fh.fileno())
-  invalidate_mutable_tar_authority_members(tar_path)
-  ok = probe_tar_archive_readability(tar_path, assume_write_lock_held=True) == (
-    READABLE
-  )
-  if log_fn:
-    log_fn(
-      f"WARNING: tar append rolled back tar={tar_path} "
-      f"size={snapshot['size']} readable={ok}",
-      flush=True,
-    )
-  return ok
-
-
 SALVAGE_DIRNAME = ".sync_timedb_tar_salvage"
 SKIP_KIND_SALVAGE_BACKUP_FAILED = "salvage_backup_failed"
 _TVR_LINE_RE = re.compile(r"^block (\d+): (.*)$")
@@ -9703,6 +9271,7 @@ def salvage_truncated_tar_prefix(
   if not os.path.isfile(tar_path):
     return TarSalvageResult("not_truncated")
   with file_write_lock(tar_path):
+    recover_interrupted_append(tar_path, log_fn=log_fn)
     if recover_interrupted_salvage(tar_path, log_fn=log_fn) == "restore_failed":
       return TarSalvageResult("restore_failed")
     size = os.path.getsize(tar_path)
@@ -9944,6 +9513,7 @@ def repair_truncated_daily_tar_in_place(
 
   try:
     with file_write_lock(tar_path):
+      recover_interrupted_append(tar_path, log_fn=log_fn)
       ok = False
       if partial_gnu:
         expected = _gnu_tvf_file_member_map_despite_fail(tar_path)
@@ -10578,6 +10148,7 @@ def rebuild_daily_tar_member_union_in_place(
         os.remove(tmp_path)
       return False
     with file_write_lock(tar_path):
+      recover_interrupted_append(tar_path, log_fn=log_fn)
       requested, reason = day_close_yield_requested(
         tar_path,
         tgz_archive_dir=tgz_archive_dir,
@@ -10780,6 +10351,7 @@ def reconcile_open_tar_with_sealed_zst(
         zstd_test(zst_path, zstd_threads)
         drop_page_cache_for_paths(tar_path)
         with file_write_lock(tar_path):
+          recover_interrupted_append(tar_path, log_fn=log_fn)
           os.remove(tar_path)
         invalidate_after_daily_tar_mutation(
           zst_path,
@@ -10915,6 +10487,7 @@ def dedupe_tar_keep_largest_file_per_member(
     pass
   try:
     with file_write_lock(tar_path):
+      recover_interrupted_append(tar_path, log_fn=log_fn)
       _rewrite_daily_tar_largest_member_wins(
         tar_path,
         tmp_path,
@@ -12083,6 +11656,7 @@ def atomic_seal_tar_to_zst(
   sealed_member_snapshot = None
   try:
     with file_write_lock(tar_path):
+      recover_interrupted_append(tar_path, log_fn=log_fn)
       tar_members = _read_tar_file_member_sizes_unlocked(tar_path)
       existing_members: dict[str, int] | None = {}
       if os.path.isfile(zst_path):
@@ -12178,6 +11752,9 @@ def atomic_seal_tar_to_zst(
     try:
       drop_page_cache_for_paths(tar_path)
       with file_write_lock(tar_path):
+        # A journal here means an append died after the seal read the tar;
+        # recovering it changes the identity, so the DL-4 check keeps the tar.
+        recover_interrupted_append(tar_path, log_fn=log_fn)
         # DL-4: drop only the tar that was sealed; an append between seal and
         # drop changes its identity and its new members are not in the zst.
         if archive_identity(tar_path) != sealed_tar_identity:

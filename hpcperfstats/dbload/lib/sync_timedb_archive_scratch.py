@@ -10,15 +10,24 @@ day starts. A process killed mid-write, or a day that later closed another
 way, strands them forever (hpcperfstats04 2026-10-29: 94 GB of ``merge.tmp``
 from August and September). The idle reconstruct pass sweeps them.
 
-Safety copies (``.corrupt.*``, ``.pre-restore.*``, salvage backups, the
-unparsable-raw quarantine), the real ``.tar`` / ``.tar.zst``, sidecar data,
-lock sidecars and every other name never match.
+A ``<day>.tar.append_journal`` left by a killed clone append is not
+deleted: under the same day guards and locks it is applied
+(``recover_interrupted_append`` truncates the tar back to the journalled end
+or drops a stale journal), which also removes it. A clone append's journal
+and new-tar temps are ``.atomic.*`` names, swept as write temps.
+
+Safety copies (``.corrupt.*`` including corrupt journals, ``.pre-restore.*``,
+salvage backups, the unparsable-raw quarantine), the real ``.tar`` /
+``.tar.zst``, sidecar data, lock sidecars and every other name never match.
 
 Attributes:
   SCRATCH_NAME_RE: ``<day>.tar.<kind>.tmp`` with ``kind`` one of ``merge``,
     ``dedupe``, ``repair``, ``decomp`` or ``zst`` (needs the day's locks).
-  STAGING_DIR_RE: ``hps_union_extract_``, ``hps_pax_convert_`` or
-    ``hps_tar_repair_`` plus the 8 characters ``tempfile.mkdtemp`` appends.
+  JOURNAL_NAME_RE: ``<day>.tar.append_journal`` (recovered, not deleted;
+    needs the day's locks, no idle age).
+  STAGING_DIR_RE: ``hps_union_extract_``, ``hps_pax_convert_`` (residue of
+    the retired pax convert) or ``hps_tar_repair_`` plus the 8 characters
+    ``tempfile.mkdtemp`` appends.
   WRITE_TEMP_RE: A sidecar atomic-write temp: ``.atomic.<8 chars><name>``
     (``tempfile.mkstemp`` in ``sync_timedb_persistence``) or ``*.json.tmp``.
   PROTECTED_SUBDIRS: ``.sync_timedb_*`` directories the sweep never enters.
@@ -44,6 +53,9 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
 from hpcperfstats.dbload.lib.sync_timedb_negative_states import (
   effective_remediation_mode,
 )
+from hpcperfstats.dbload.lib.sync_timedb_tar_clone_append import (
+  recover_interrupted_append,
+)
 
 SCRATCH_NAME_RE = re.compile(
   r"^(\d{4}-\d{2}-\d{2})\.tar\.(?:merge|dedupe|repair|decomp|zst)\.tmp$"
@@ -51,6 +63,7 @@ SCRATCH_NAME_RE = re.compile(
 STAGING_DIR_RE = re.compile(
   r"^hps_(?:union_extract|pax_convert|tar_repair)_[A-Za-z0-9_]{8}$"
 )
+JOURNAL_NAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.tar\.append_journal$")
 WRITE_TEMP_RE = re.compile(
   r"^(?:\.atomic\.[A-Za-z0-9_]{8}.+|[\w.-]+\.json\.tmp)$"
 )
@@ -160,7 +173,10 @@ def sweep_dead_archive_scratch(
   for its day, and both the day's tar write lock and its restore lock are
   free (the age is re-checked while holding them). A ``STAGING_DIR_RE``
   directory or ``WRITE_TEMP_RE`` file has no day in its name, so it is dead
-  when nothing at or under it was modified for that long.
+  when nothing at or under it was modified for that long. A
+  ``JOURNAL_NAME_RE`` append journal is applied with
+  ``recover_interrupted_append`` (never plainly deleted) as soon as the
+  day's guards and both locks allow, whatever its age.
   ``sync_dead_end_remediation_mode = report`` only logs what would go.
 
   Args:
@@ -170,7 +186,8 @@ def sweep_dead_archive_scratch(
     now (float | None): Epoch seconds override for tests; ``None`` is now.
 
   Returns:
-    int: Number of files and directories removed (0 in report mode).
+    int: Files and directories removed plus append journals applied (0 in
+    report mode).
 
   Examples:
     >>> sweep_dead_archive_scratch("/nonexistent/daily")
@@ -189,12 +206,16 @@ def sweep_dead_archive_scratch(
     except OSError:
       continue
     for name in names:
-      match = SCRATCH_NAME_RE.match(name)
+      journal = JOURNAL_NAME_RE.match(name)
+      match = SCRATCH_NAME_RE.match(name) or journal
       is_dir = STAGING_DIR_RE.match(name) is not None
       if match is None and not is_dir and not WRITE_TEMP_RE.match(name):
         continue
       path = os.path.join(directory, name)
-      if _dead_scratch_idle_and_bytes(path, now_s, max_idle_s) is None:
+      if (
+        not journal
+        and _dead_scratch_idle_and_bytes(path, now_s, max_idle_s) is None
+      ):
         continue
       day = match.group(1) if match else ""
       if day and (
@@ -208,6 +229,22 @@ def sweep_dead_archive_scratch(
           if day:
             locks.enter_context(try_file_write_lock(tar_path))
             locks.enter_context(try_file_write_lock(f"{tar_path}.decomp"))
+          if journal:
+            # Recover, never plain-delete: the journal records where the
+            # tar's good data ends. Holding the tar lock proves no live
+            # writer owns it, so no idle age is needed.
+            if not apply:
+              emit(
+                f"archive scratch would recover journal path={path}", flush=True
+              )
+              continue
+            outcome = recover_interrupted_append(tar_path, log_fn=emit)
+            removed += outcome != "none"
+            emit(
+              f"archive scratch recovered journal path={path} outcome={outcome}",
+              flush=True,
+            )
+            continue
           dead = _dead_scratch_idle_and_bytes(path, now_s, max_idle_s)
           if dead is None:
             continue

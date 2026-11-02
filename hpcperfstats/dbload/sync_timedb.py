@@ -95,11 +95,9 @@ from hpcperfstats.dbload.lib.blas_thread_env import configure_blas_thread_env
 
 configure_blas_thread_env()
 
-import shutil
 import signal
-import subprocess
 import sys
-import tempfile
+import tarfile
 import time
 import warnings
 from collections import deque
@@ -178,11 +176,8 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   load_checkpoint_path_set,
   merge_daily_archive_members_l1_cache,
   normalize_daily_compressed_path,
-  prepare_paths_for_giant_member_append,
   quarantine_ingest_failed_raw_path,
   raw_stats_path_tar_append_decision,
-  rollback_failed_tar_append,
-  snapshot_tar_tail_for_append,
   stats_file_is_active_segment,
   update_mutable_tar_authority_after_append,
   verify_tar_archive_readable,
@@ -267,11 +262,16 @@ from hpcperfstats.dbload.lib.sync_timedb_proc_data_insert import (
   proc_insert_arm,
   use_copy_proc_insert,
 )
+from hpcperfstats.dbload.lib.sync_timedb_progress_io import ProgressIdleError
 from hpcperfstats.dbload.lib.sync_timedb_queue_orchestrator import (
   run_sync_timedb_queue_orchestrator,
 )
 from hpcperfstats.dbload.lib.sync_timedb_session_executor import (
   create_sync_timedb_thread_pool,
+)
+from hpcperfstats.dbload.lib.sync_timedb_tar_clone_append import (
+  CloneAppendResult,
+  clone_append,
 )
 from hpcperfstats.dbload.lib.sync_timedb_wait_telemetry import (
   WAIT_COUNT_KEYS,
@@ -5836,170 +5836,81 @@ def format_tar_append_failure_log(
   retry: bool = False,
 ) -> Any:
   """
-  Build ERROR line for tar append failure; fold CalledProcessError.stderr.
+  Build the ERROR line for a failed daily-tar append.
 
   Args:
-    tar_path (str): String for tar path.
-    exc (Any): Exception instance being classified or logged.
-    retry (bool): Boolean flag for retry.
+    tar_path (str): Daily tar the append targeted.
+    exc (Any): Exception the append raised.
+    retry (bool): True for the post-repair retry append.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: The ``ERROR: [retry ]tar append failed`` line.
 
   Examples:
-    >>> format_tar_append_failure_log("x", None, True)  # doctest: +SKIP
+    >>> format_tar_append_failure_log("/d/x.tar", OSError(28, "No space"))
+    'ERROR: tar append failed for /d/x.tar ([Errno 28] No space); leaving raw stats files in place'
   """
   prefix = (
     "ERROR: retry tar append failed" if retry else "ERROR: tar append failed"
   )
-  stderr = getattr(exc, "stderr", None)
-  if isinstance(stderr, bytes):
-    stderr = stderr.decode("utf-8", errors="replace")
-  stderr_text = (stderr or "").strip()
-  marker = ""
-  if "out of off_t range" in stderr_text:
-    marker = " marker=off_t_range"
-  elif stderr_text and "tar:" in stderr_text.lower():
-    marker = " marker=tar_warning_or_error"
-  if stderr_text:
-    return f"{prefix} for {tar_path} ({exc}){marker}; tar append stderr: {stderr_text}; leaving raw stats files in place"
-  return (
-    f"{prefix} for {tar_path} ({exc}){marker}; leaving raw stats files in place"
-  )
+  return f"{prefix} for {tar_path} ({exc}); leaving raw stats files in place"
 
 
-def _append_to_tar(tar_path: str, file_paths: Any) -> None:
+def _append_to_tar(tar_path: str, file_paths: Any) -> CloneAppendResult:
   """
-  Append file_paths to tar at tar_path. Does nothing if file_paths is empty.
+  Append ``file_paths`` to the daily tar by cloning their blocks into it.
 
-  Uses GNU/BSD ``tar -r -f`` with ``-C /``, ``--null -T`` and relative member
-  paths so argv stays tiny and absolute ``-T`` path warnings are avoided.
-  Always passes ``--posix`` (pax) so members larger than 8 GiB - 1 succeed on
-  pax-capable archives. Skips paths that disappeared before append (race).
-  Batches via ``sync_timedb_tar_append_batch_size`` (default 256).
+  Under ``file_write_lock(tar_path)``: re-filter paths that vanished (F13),
+  refuse to create a tar while a sealed sibling exists, then run
+  ``clone_append`` (pax members, 4 KiB-aligned cloned data, ``dd`` copy
+  fallback under the progress idle kill, journal + truncate rollback).
 
   Args:
-    tar_path (str): String for tar path.
-    file_paths (Any): Iterable of filesystem paths as strings.
+    tar_path (str): Daily ``.tar`` path.
+    file_paths (Any): Sequence of raw stats paths.
 
   Returns:
-    None
+    CloneAppendResult: Append counts and timing (empty when nothing to add).
 
   Raises:
-    RuntimeError: Raised when ``_append_to_tar`` hits a ``RuntimeError``
-    failure path (including idle stall with no tar size growth).
-    subprocess.CalledProcessError: Raised when ``_append_to_tar`` hits a
-    ``subprocess.CalledProcessError`` failure path.
-    Exception: An ``OSError`` from ``tar -r`` (for example ENOSPC) is
-      re-raised after the tar was rolled back (DE-23).
+    RuntimeError: A sealed sibling exists without the tar, the tar cannot be
+      walked, or the copy fallback stalled (``ProgressIdleError``); the tar
+      was left or rolled back to its pre-append content.
+    OSError: A write failed (for example ENOSPC) after the rollback (DE-23).
 
   Examples:
-    >>> _append_to_tar("x", None)  # doctest: +SKIP
+    >>> _append_to_tar("/d/2026-07-31.tar", []).appended
+    0
   """
-  from hpcperfstats.dbload.lib.sync_timedb_progress_io import (
-    ProgressIdleError,
-    run_subprocess_with_progress,
-  )
-
   if not file_paths:
-    return
-  # Amortize subprocess overhead for large archive bursts.
-  batch = max(1, int(cfg.get_sync_timedb_tar_append_batch_size()))
-  if len(file_paths) >= 512:
-    batch = max(batch, 256)
-  elif len(file_paths) >= 128:
-    batch = max(batch, 128)
-  for off in range(0, len(file_paths), batch):
-    chunk = file_paths[off : off + batch]
-    fd, list_path = tempfile.mkstemp(prefix="hps_tar_append_", suffix=".lst")
-    result = None
-    try:
-      tar_bin = shutil.which("tar") or "/bin/tar"
-      with file_write_lock(tar_path):
-        # F13: re-filter under the write lock so concurrent delete/day_close
-        # cannot race lexists → tar -r with a stale path list.
-        present = [p for p in chunk if os.path.lexists(p)]
-        n_missing = len(chunk) - len(present)
-        if n_missing:
-          log_print(
-            f"Archive append: skipped {n_missing} missing path(s) in batch {off + 1}-{off + len(chunk)}",
-            flush=True,
-          )
-        if not present:
-          continue
-        with os.fdopen(fd, "wb") as lf:
-          fd = -1  # ownership transferred
-          for p in present:
-            # Member path relative to ``-C /`` (no leading slash in -T file).
-            abs_p = os.path.abspath(p)
-            rel = abs_p[1:] if abs_p.startswith(os.sep) else abs_p
-            lf.write(os.fsencode(rel) + b"\0")
-        zst_path, gz_path = compressed_sibling_paths(tar_path)
-        if not os.path.exists(tar_path) and (
-          os.path.isfile(zst_path) or os.path.isfile(gz_path)
-        ):
-          raise RuntimeError(
-            f"refusing to create daily tar while sealed archive exists without restored sibling: {tar_path}",
-          )
-        tar_args = [
-          tar_bin,
-          "-r",
-          "--posix",
-          "-C",
-          "/",
-          "-f",
-          tar_path,
-          "--null",
-          "-T",
-          list_path,
-        ]
-        # DE-23: an interrupted/failed ``tar -r`` (ENOSPC short write, kill)
-        # must not leave a truncated tail; roll back under this same lock.
-        snapshot = snapshot_tar_tail_for_append(tar_path, present)
-        try:
-          result = run_subprocess_with_progress(
-            tar_args,
-            progress_path=tar_path,
-            stage="tar_append",
-            metric="bytes",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-          )
-        except ProgressIdleError as exc:
-          rollback_failed_tar_append(tar_path, snapshot)
-          raise RuntimeError(
-            f"tar append idle stall path={tar_path} idle_s={getattr(exc, 'idle_s', None)}",
-          ) from exc
-        except OSError:
-          rollback_failed_tar_append(tar_path, snapshot)
-          raise
-        if result.returncode != 0:
-          rollback_failed_tar_append(tar_path, snapshot)
-    finally:
-      if fd >= 0:
-        with suppress(OSError):
-          os.close(fd)
-      with suppress(OSError):
-        os.remove(list_path)
-    if result is None:
-      continue
-    if result.stdout:
-      log_print(result.stdout, flush=True)
-    if result.stderr:
-      log_print(result.stderr, flush=True)
-    if result.returncode != 0:
-      raise subprocess.CalledProcessError(
-        result.returncode,
-        result.args,
-        output=result.stdout,
-        stderr=result.stderr,
-      )
-    if DEBUG:
+    return CloneAppendResult()
+  with file_write_lock(tar_path):
+    # F13: re-filter under the write lock so a concurrent delete/day_close
+    # cannot race lexists with a stale path list.
+    present = [p for p in file_paths if os.path.lexists(p)]
+    if len(present) < len(file_paths):
       log_print(
-        f"Archived batch {off + 1}-{off + len(present)} ({len(present)} file(s)) -> {tar_path}",
+        f"Archive append: skipped {len(file_paths) - len(present)} missing path(s) tar={tar_path}",
         flush=True,
       )
+    zst_path, gz_path = compressed_sibling_paths(tar_path)
+    if not os.path.exists(tar_path) and (
+      os.path.isfile(zst_path) or os.path.isfile(gz_path)
+    ):
+      raise RuntimeError(
+        f"refusing to create daily tar while sealed archive exists without restored sibling: {tar_path}",
+      )
+    try:
+      return clone_append(tar_path, present, log_fn=log_print)
+    except ProgressIdleError as exc:
+      # Operator grep token (OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md).
+      raise RuntimeError(
+        f"tar append idle stall path={tar_path} idle_s={getattr(exc, 'idle_s', None)}",
+      ) from exc
+    except tarfile.TarError as exc:
+      raise RuntimeError(
+        f"daily tar not walkable for append tar={tar_path}: {exc}"
+      ) from exc
 
 
 def archive_stats_files(archive_info: Any) -> Any:
@@ -6134,7 +6045,7 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
   to_add_n = 0
   appended_n = 0
   append_inflight_set = False
-  skipped_oversized = ()
+  append_stats: list[CloneAppendResult] = []
 
   def _ensure_job_begin_logged(source: Any) -> None:
     """
@@ -6333,7 +6244,6 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         )
       return ArchiveAppendOutcome(
         skip_finalize_invalidate=True,
-        skipped_paths=skipped_oversized,
         ingest_pending_paths=ingest_pending_paths,
       )
 
@@ -6416,7 +6326,6 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
             )
           return ArchiveAppendOutcome(
             skip_finalize_invalidate=True,
-            skipped_paths=skipped_oversized,
             ingest_pending_paths=ingest_pending_paths,
           )
       else:
@@ -6428,28 +6337,6 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       ):
         return False
       _ensure_job_begin_logged(members_source)
-      before_convert_mtime = (
-        os.path.getmtime(archive_tar_fname)
-        if os.path.isfile(archive_tar_fname)
-        else None
-      )
-      stats_files_to_tar, skipped_list = prepare_paths_for_giant_member_append(
-        archive_tar_fname,
-        stats_files_to_tar,
-        log_fn=log_print,
-      )
-      skipped_oversized = tuple(skipped_list)
-      to_add_n = len(stats_files_to_tar)
-      if (
-        before_convert_mtime is not None
-        and os.path.isfile(archive_tar_fname)
-        and os.path.getmtime(archive_tar_fname) != before_convert_mtime
-      ):
-        invalidate_after_daily_tar_mutation(
-          archive_fname,
-          reason="pax_convert",
-          log_fn=log_print,
-        )
     if stats_files_to_tar and day_skip_blocks_tar_write(archive_tar_fname):
       return False
     before_append_size = (
@@ -6458,8 +6345,8 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       else 0
     )
     try:
-      _append_to_tar(archive_tar_fname, stats_files_to_tar)
-    except (subprocess.CalledProcessError, RuntimeError) as exc:
+      append_stats.append(_append_to_tar(archive_tar_fname, stats_files_to_tar))
+    except (RuntimeError, OSError) as exc:
       log_print(
         format_tar_append_failure_log(archive_tar_fname, exc, retry=False),
         flush=True,
@@ -6512,8 +6399,8 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
           ):
             return False
           try:
-            _append_to_tar(archive_tar_fname, to_retry)
-          except (subprocess.CalledProcessError, RuntimeError) as exc:
+            append_stats.append(_append_to_tar(archive_tar_fname, to_retry))
+          except (RuntimeError, OSError) as exc:
             log_print(
               format_tar_append_failure_log(archive_tar_fname, exc, retry=True),
               flush=True,
@@ -6585,7 +6472,6 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       return ArchiveAppendOutcome(
         store_merge_ok=merged,
         skip_finalize_invalidate=merged or worker_invalidated,
-        skipped_paths=skipped_oversized,
         ingest_pending_paths=ingest_pending_paths,
       )
     job_outcome = "ok"
@@ -6596,7 +6482,6 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
       )
     return ArchiveAppendOutcome(
       skip_finalize_invalidate=True,
-      skipped_paths=skipped_oversized,
       ingest_pending_paths=ingest_pending_paths,
     )
   finally:
@@ -6607,8 +6492,11 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
 
       clear_archive_append_inflight(day_token)
     if job_begin_logged:
+      cloned = sum(r.cloned for r in append_stats)
+      copied = sum(r.copied for r in append_stats)
+      write_s = sum(r.write_s for r in append_stats)
       log_print(
-        f"INFO: archive_job_done day={day_token} elapsed_s={time.monotonic() - job_start:.3f} outcome={job_outcome} tar_bytes={tar_bytes} members_source={members_source} mapped={mapped_n} to_add={to_add_n} appended={appended_n}",
+        f"INFO: archive_job_done day={day_token} elapsed_s={time.monotonic() - job_start:.3f} outcome={job_outcome} tar_bytes={tar_bytes} members_source={members_source} mapped={mapped_n} to_add={to_add_n} appended={appended_n} cloned={cloned} copied={copied} write_s={write_s:.3f}",
         flush=True,
       )
 

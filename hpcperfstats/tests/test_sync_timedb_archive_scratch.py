@@ -330,3 +330,125 @@ def test_idle_reconstruct_pass_runs_the_sweep():
   src = inspect.getsource(qo._idle_reconstruct_pass)
   assert "sweep_dead_archive_scratch" in src
   assert "archive_dir=archive_dir" in src
+
+
+# --- clone-append journals: recovered (never plain-deleted), then gone ---
+
+
+def _journal_for(tar_path, *, old_end=None, garbage=b""):
+  import json
+
+  from hpcperfstats.dbload.lib import sync_timedb_tar_clone_append as tca
+
+  fd = os.open(tar_path, os.O_RDWR)
+  try:
+    st = os.fstat(fd)
+    end = tca.logical_end(fd, st.st_size) if old_end is None else old_end
+    journal = {
+      "v": 1,
+      "old_end": end,
+      "old_size": st.st_size,
+      "st_dev": st.st_dev,
+      "st_ino": st.st_ino,
+      "tail_sha256": tca._tail_sha256(fd, end),
+    }
+    if garbage:
+      os.pwrite(fd, garbage, end)
+  finally:
+    os.close(fd)
+  tca._write_durable(
+    tca.journal_path(str(tar_path)), json.dumps(journal).encode()
+  )
+  return tca.journal_path(str(tar_path))
+
+
+def _day_tar(daily):
+  import subprocess
+
+  member = daily / "raw" / "m"
+  member.parent.mkdir(parents=True, exist_ok=True)
+  member.write_bytes(b"x" * 3000)
+  tar = daily / f"{DAY}.tar"
+  subprocess.run(
+    [
+      "tar",
+      "-c",
+      "--posix",
+      "-C",
+      "/",
+      "-f",
+      str(tar),
+      str(member).lstrip("/"),
+    ],
+    check=True,
+  )
+  return tar
+
+
+def test_sweep_recovers_then_removes_append_journal(tmp_path):
+  tar = _day_tar(tmp_path)
+  before = tar.read_bytes()
+  journal = _journal_for(tar, garbage=b"half a member" * 500)
+  assert tar.read_bytes() != before
+  logs: list[str] = []
+  assert _sweep(tmp_path, logs) == 1
+  assert tar.read_bytes() == before
+  assert not os.path.exists(journal)
+  assert any(
+    "recovered journal" in m and "outcome=recovered" in m for m in logs
+  )
+
+
+def test_sweep_recovers_a_fresh_journal_without_waiting_for_idle_age(tmp_path):
+  tar = _day_tar(tmp_path)
+  journal = _journal_for(tar, garbage=b"g" * 4096)
+  stamp = time.time()  # brand new, far younger than the idle limit
+  os.utime(journal, (stamp, stamp))
+  assert _sweep(tmp_path) == 1
+  assert not os.path.exists(journal)
+
+
+def test_sweep_keeps_journal_while_the_tar_lock_is_held(tmp_path):
+  tar = _day_tar(tmp_path)
+  journal = _journal_for(tar, garbage=b"g" * 4096)
+  with file_write_lock(str(tar)):
+    assert _sweep(tmp_path) == 0
+  assert os.path.exists(journal)
+
+
+@pytest.mark.parametrize(
+  "busy",
+  ["archive_append_inflight_for_day", "daily_tar_restore_in_progress_for_day"],
+)
+def test_sweep_keeps_journal_while_the_day_is_busy(tmp_path, monkeypatch, busy):
+  tar = _day_tar(tmp_path)
+  journal = _journal_for(tar, garbage=b"g" * 4096)
+  monkeypatch.setattr(scratch, busy, lambda _day: True)
+  assert _sweep(tmp_path) == 0
+  assert os.path.exists(journal)
+
+
+def test_sweep_removes_orphan_journal_without_tar(tmp_path):
+  tar = _day_tar(tmp_path)
+  journal = _journal_for(tar)
+  tar.unlink()
+  assert _sweep(tmp_path) == 1
+  assert not os.path.exists(journal)
+
+
+def test_sweep_report_mode_only_logs_journal(tmp_path, monkeypatch):
+  monkeypatch.setattr(scratch, "effective_remediation_mode", lambda: "report")
+  tar = _day_tar(tmp_path)
+  journal = _journal_for(tar, garbage=b"g" * 4096)
+  after = tar.read_bytes()
+  logs: list[str] = []
+  assert _sweep(tmp_path, logs) == 0
+  assert os.path.exists(journal) and tar.read_bytes() == after
+  assert any("would recover journal" in m for m in logs)
+
+
+def test_old_journal_write_temp_is_removed_and_corrupt_journal_kept(tmp_path):
+  temp = _file(tmp_path, f".atomic.abcdefgh{DAY}.tar.append_journal")
+  kept = _file(tmp_path, f"{DAY}.tar.append_journal.corrupt.1730000000")
+  assert _sweep(tmp_path) == 1
+  assert not temp.exists() and kept.exists()
