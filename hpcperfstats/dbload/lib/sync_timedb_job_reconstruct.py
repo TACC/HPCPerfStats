@@ -275,7 +275,8 @@ def discover_raw_needs_tar_append(
 
   Open mutable ``.tar`` and warm members store ``HGET`` may still skip enqueue. Cold
   a cold members store (sealed-only day) returns ``True`` so discover
-  enqueues append (at-least-once). Workers keep
+  enqueues append (at-least-once). A tar this process is sealing returns
+  ``False`` without reading it (``tar_seal_in_progress``). Workers keep
   :func:`raw_stats_path_needs_tar_append` / ``populate_and_wait``.
 
   Args:
@@ -303,6 +304,7 @@ def discover_raw_needs_tar_append(
     get_tar_member_name,
     normalize_daily_compressed_path,
     stats_file_is_active_segment,
+    tar_seal_in_progress,
   )
 
   text = str(stats_path or "").strip()
@@ -325,8 +327,14 @@ def discover_raw_needs_tar_append(
   canonical = normalize_daily_compressed_path(compressed_path)
   tar_path = daily_tar_path_from_compressed(canonical)
   if os.path.isfile(tar_path):
-    open_members = get_mutable_tar_authority_member_map(tar_path)
-    return open_members.get(member_name) != expected_size
+    # A seal holds the tar's write lock for hours and starts only once every
+    # closed raw file of the day is in the tar or its sealed copy, so the day
+    # needs no append; reading it would wait 60 s per file and, timed out,
+    # queue one anyway (hpcperfstats01 2026-11-02: 647 waits on 07-31).
+    return not tar_seal_in_progress(tar_path) and (
+      get_mutable_tar_authority_member_map(tar_path).get(member_name)
+      != expected_size
+    )
   if not daily_archive_populate_source_exists(canonical):
     return True
   members = _lookup_daily_archive_members_cache(compressed_path)

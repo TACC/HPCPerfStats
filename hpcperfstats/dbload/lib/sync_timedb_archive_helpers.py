@@ -46,6 +46,9 @@ Attributes:
   _DAILY_ZST_BASENAME_RE: Attribute.
   _DAY_CLOSE_DISQUALIFY_CODES: Attribute.
   _DAY_SCOPED_CLOSED_RAW_COLLECT_LOCK: Attribute.
+  _SEALING_TARS: Normalized daily ``.tar`` paths whose seal holds the write
+    lock right now (in-process; see ``tar_sealing``).
+  _SEALING_TARS_LOCK: Guards ``_SEALING_TARS``.
   _DEFERRED_PREWARM_FLUSH_HOOK: Attribute.
   _FNCTL_POPULATE_RETRY_DELAYS_S: Attribute.
   _INGEST_SKIPPED_CALENDAR_DAYS: Attribute.
@@ -132,6 +135,59 @@ from hpcperfstats.dbload.lib.zstd_cli import (
 )
 
 _DAY_SCOPED_CLOSED_RAW_COLLECT_LOCK = threading.Lock()
+_SEALING_TARS: set[str] = set()
+_SEALING_TARS_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def tar_sealing(tar_path: str) -> Iterator[None]:
+  """
+  Mark ``tar_path`` as being sealed for the duration of the ``with`` block.
+
+  The seal holds the tar's write lock for the whole zstd compress (hours on
+  a multi-TB tar). Readers that would otherwise wait on that lock (discover's
+  open-tar member read, append dispatch) ask ``tar_seal_in_progress`` and
+  skip the day instead. The mark clears on exit, success or failure.
+
+  Args:
+    tar_path (str): Daily ``.tar`` path being sealed.
+
+  Yields:
+    None: Control while the mark is set.
+
+  Examples:
+    >>> with tar_sealing("/d/2026-07-31.tar"):
+    ...   tar_seal_in_progress("/d/2026-07-31.tar")
+    True
+    >>> tar_seal_in_progress("/d/2026-07-31.tar")
+    False
+  """
+  key = os.path.normpath(str(tar_path or ""))
+  with _SEALING_TARS_LOCK:
+    _SEALING_TARS.add(key)
+  try:
+    yield
+  finally:
+    with _SEALING_TARS_LOCK:
+      _SEALING_TARS.discard(key)
+
+
+def tar_seal_in_progress(tar_path: str) -> bool:
+  """
+  Return True while this process is sealing ``tar_path`` (see ``tar_sealing``).
+
+  Args:
+    tar_path (str): Daily ``.tar`` path.
+
+  Returns:
+    bool: True when a seal holds the tar's write lock in this process.
+
+  Examples:
+    >>> tar_seal_in_progress("/d/2026-08-01.tar")
+    False
+  """
+  with _SEALING_TARS_LOCK:
+    return os.path.normpath(str(tar_path or "")) in _SEALING_TARS
 
 
 def get_archive_zstd_thread_count() -> Any:
@@ -11648,7 +11704,7 @@ def atomic_seal_tar_to_zst(
     return None
   sealed_member_snapshot = None
   try:
-    with file_write_lock(tar_path):
+    with file_write_lock(tar_path), tar_sealing(tar_path):
       recover_interrupted_append(tar_path, log_fn=log_fn)
       tar_members = _read_tar_file_member_sizes_unlocked(tar_path)
       existing_members: dict[str, int] | None = {}
