@@ -835,7 +835,7 @@ def test_hosts_owning_mid_sample_checks_one_sample_not_the_window(monkeypatch):
       seen.append((sql, params))
 
     def fetchall(self):
-      return [("a.x",)]
+      return [("a.x", 1), ("b.x", None)]
 
   monkeypatch.setattr(connection, "cursor", lambda: _Cur())
   st = datetime(2026, 10, 27, 15, tzinfo=UTC)
@@ -846,10 +846,14 @@ def test_hosts_owning_mid_sample_checks_one_sample_not_the_window(monkeypatch):
   assert "d.time = (SELECT d2.time FROM host_data d2" in sql
   assert "ORDER BY d2.time LIMIT 1" in sql
   assert "COALESCE(d.jid, '')" in sql
+  # hs04 v3: WHERE EXISTS was flattened into a hash semi-join over all of
+  # host_data; the check must stay a SELECT-list subquery per host.
+  assert "EXISTS" not in sql
+  assert sql.startswith("SELECT h.host, (SELECT 1 FROM host_data d")
   assert params == [
-    ["a.x", "b.x"],
     datetime(2026, 10, 27, 17, 30, tzinfo=UTC),
     et,
     "71526",
     "71526",
+    ["a.x", "b.x"],
   ]

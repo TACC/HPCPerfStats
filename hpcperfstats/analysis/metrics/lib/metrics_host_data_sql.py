@@ -177,16 +177,19 @@ def hosts_owning_mid_sample(
 
   scope, scope_params = _scope_sql(jid)
   mid = start + (end - start) / 2
+  # Scalar subquery in the SELECT list, never ``WHERE EXISTS``: hs04 v3
+  # flattened EXISTS into a hash semi-join over every job-scoped row of
+  # host_data (all chunks, all hosts) and it timed out. A target-list
+  # subquery stays a per-host SubPlan with the midpoint probe as InitPlan.
   sql = (
-    "SELECT h.host FROM unnest(%s::text[]) AS h(host) WHERE EXISTS ("
-    "SELECT 1 FROM host_data d WHERE d.host = h.host AND d.time = ("
-    "SELECT d2.time FROM host_data d2 WHERE d2.host = h.host"
+    "SELECT h.host, (SELECT 1 FROM host_data d WHERE d.host = h.host"
+    " AND d.time = (SELECT d2.time FROM host_data d2 WHERE d2.host = h.host"
     " AND d2.time >= %s AND d2.time <= %s ORDER BY d2.time LIMIT 1)"
-    f" AND {scope})"
+    f" AND {scope} LIMIT 1) FROM unnest(%s::text[]) AS h(host)"
   )
   with _profile_phase("db_fetch"), connection.cursor() as cursor:
-    cursor.execute(sql, [list(hosts), mid, end, *scope_params])
-    return {row[0] for row in cursor.fetchall()}
+    cursor.execute(sql, [mid, end, *scope_params, list(hosts)])
+    return {row[0] for row in cursor.fetchall() if row[1] is not None}
 
 
 def schema_rows_near_bounds(
