@@ -143,6 +143,30 @@ def test_preflight_slurm_and_load():
     assert "load" in orchestrator.check_load(5.0, 28)
 
 
+def test_invoking_user_finds_reservation_owner_from_root_shell(tmp_path, monkeypatch):
+    """Regression: on Horizon c122-018 (`su -`, so SUDO_USER unset and USER=root) the
+    preflight refused the operator's own `sharrell` reservation as another user's job."""
+    monkeypatch.setattr(orchestrator.pwd, "getpwuid",
+                        lambda uid: {812345: type("P", (), {"pw_name": "sharrell"})}[uid])
+    loginuid = tmp_path / "loginuid"
+    root_shell = {"USER": "root"}
+
+    loginuid.write_text("812345")
+    assert orchestrator.invoking_user(root_shell, loginuid) == "sharrell"
+    assert orchestrator.check_slurm_jobs("sharrell\n", orchestrator.invoking_user(root_shell, loginuid)) == []
+    assert orchestrator.invoking_user({"USER": "root", "SUDO_USER": "alice"}, loginuid) == "alice"
+    assert orchestrator.invoking_user({"USER": "root", "SLURM_JOB_USER": "bob"}, loginuid) == "bob"
+    # Root login (uid 0), unset audit uid, unknown uid, junk, missing file: fall back to USER.
+    for text in ("0", "4294967295", "999", "garbage"):
+        loginuid.write_text(text)
+        assert orchestrator.invoking_user(root_shell, loginuid) == "root", text
+    assert orchestrator.invoking_user(root_shell, tmp_path / "missing") == "root"
+    assert orchestrator.invoking_user({}, tmp_path / "missing") is None
+    # A root login still has the explicit override.
+    args = orchestrator.build_parser().parse_args(["--rpm", "x.rpm", "--allocation-user", "sharrell"])
+    assert args.allocation_user == "sharrell"
+
+
 def test_restore_script_restores_conf_and_state(tmp_path):
     text = orchestrator.restore_script_text(saved_conf=tmp_path / "site.conf",
                                             was_active=True, was_enabled=False,

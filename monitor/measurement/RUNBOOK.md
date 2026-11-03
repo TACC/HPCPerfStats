@@ -47,7 +47,9 @@ sudo ./measurement/bin/run_overhead_profile.sh --rpm rpmbuild/RPMS/x86_64/hpcper
 
 ### What it does
 
-1. **Preflight** (fails closed): root; no other user's Slurm job on the node; 1-min load
+1. **Preflight** (fails closed): root; no other user's Slurm job on the node (your own
+   reservation is found from `SUDO_USER`, `SLURM_JOB_USER`, the audit login uid that survives
+   `su -`, then `USER`; from a direct root login pass `--allocation-user NAME`); 1-min load
    below 0.1 × nproc; ≥ 2 GiB free; the site conf must not set `disable_types` or a
    non-default `collection_profile`, and `/etc/sysconfig/hpcperfstatsd` must not set
    `HPCPERFSTATS_DISABLE_TYPES` / `HPCPERFSTATS_COLLECTION_PROFILE` (so ALL really is

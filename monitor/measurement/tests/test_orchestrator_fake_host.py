@@ -164,6 +164,31 @@ def test_execute_aborts_and_restores_on_unmapped_type(fake_host, monkeypatch):
     assert (fake_host["run"] / "raw" / "run.json").is_file()
 
 
+def test_preflight_root_shell_allocation_user(fake_host, tmp_path, monkeypatch):
+    """Regression: from a `su -` root shell the operator's own reservation was refused as
+    another user's job; --allocation-user names it, and the refusal says how."""
+    _stub(tmp_path / "bin", "squeue", "#!/usr/bin/env bash\necho resv_owner\n")
+    monkeypatch.setenv("USER", "root")
+    for var in ("SUDO_USER", "SLURM_JOB_USER"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(orchestrator.pwd, "getpwuid", lambda uid: (_ for _ in ()).throw(KeyError(uid)))
+
+    def preflight(*extra):
+        args = orchestrator.build_parser().parse_args([
+            "--rpm", str(fake_host["rpm"]), "--force", "--rmq-mgmt-port", "1", *extra])
+        run = orchestrator.Run(args)
+        run.out = run.raw = tmp_path
+        run.host, run.flags = orchestrator.Host(tmp_path / "commands.log"), {}
+        run.preflight()
+        return run, [r for r in run.flags.get("not_idle_reasons", []) if "Slurm" in r]
+
+    run, slurm = preflight()
+    assert run.state["allocation_user"] == "root"
+    assert slurm and "resv_owner" in slurm[0] and "--allocation-user" in slurm[0]
+    run, slurm = preflight("--allocation-user", "resv_owner")
+    assert run.state["allocation_user"] == "resv_owner" and slurm == []
+
+
 def test_execute_refuses_packaged_conf_without_conf_flag(fake_host):
     fake_host["site"].write_text("server localhost\nqueue default\nuser guest\npassword guest\n")
     args = argparse.Namespace(**vars(orchestrator.build_parser().parse_args(

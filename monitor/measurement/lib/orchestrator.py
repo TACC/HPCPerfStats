@@ -24,13 +24,14 @@ import argparse
 import datetime as dt
 import json
 import os
+import pwd
 import re
 import shutil
 import signal
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -168,6 +169,31 @@ def check_slurm_jobs(squeue_users: str, invoking_user: str | None) -> list[str]:
     return sorted({u.strip() for u in squeue_users.splitlines() if u.strip()} - {invoking_user})
 
 
+def invoking_user(env: Mapping[str, str], loginuid: Path = Path("/proc/self/loginuid")) -> str | None:
+    """Return the login that reserved the node, even from a root shell.
+
+    ``USER`` is ``root`` after ``su -`` or a root login, so it is the last resort. The sudo
+    caller, the Slurm job owner, then the audit login uid (kept across ``su``; 0 and the unset
+    value 4294967295 are skipped) come first.
+
+    Args:
+        env: Process environment (``os.environ`` in production).
+        loginuid: Audit login uid file.
+
+    Returns:
+        The user name, or None when nothing names one.
+    """
+    if env.get("SUDO_USER") or env.get("SLURM_JOB_USER"):
+        return env.get("SUDO_USER") or env.get("SLURM_JOB_USER")
+    try:
+        uid = int(loginuid.read_text().strip())
+        if 0 < uid < 4294967295:
+            return pwd.getpwuid(uid).pw_name
+    except (OSError, ValueError, KeyError):
+        pass
+    return env.get("USER")
+
+
 def check_load(load1: float, nproc: int) -> str | None:
     limit = 0.1 * nproc
     return None if load1 < limit else f"load {load1:.2f} >= {limit:.2f} (0.1 x nproc)"
@@ -242,6 +268,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rmq-mgmt-port", type=int, default=rmq_cleanup.DEFAULT_MGMT_PORT)
     p.add_argument("--force", action="store_true",
                    help="run on a non-idle node; results are flagged `not_idle: smoke only`")
+    p.add_argument("--allocation-user",
+                   help="owner of this node's Slurm reservation (default: SUDO_USER, "
+                        "SLURM_JOB_USER, audit login uid, then USER)")
     p.add_argument("--dry-run", action="store_true", help="print the plan; change nothing")
     p.add_argument("--dry-run-types", help="dry run: comma list standing in for Enabled types")
     return p
@@ -412,9 +441,11 @@ class Run:
         if shutil.which("squeue"):
             short = os.uname().nodename.split(".")[0]
             res = self.host.run(["squeue", "-h", "-w", short, "-o", "%u"], check=False)
-            others = check_slurm_jobs(res.stdout, os.environ.get("SUDO_USER") or os.environ.get("USER"))
+            owner = self.state["allocation_user"] = a.allocation_user or invoking_user(os.environ)
+            others = check_slurm_jobs(res.stdout, owner)
             if others:
-                problems.append("Slurm jobs of other users on this node: " + ",".join(others))
+                problems.append(f"Slurm jobs of other users on this node: {','.join(others)} (you are "
+                                f"{owner}; pass --allocation-user NAME if the reservation is yours)")
         load1 = float(Path("/proc/loadavg").read_text().split()[0])
         msg = check_load(load1, os.cpu_count() or 1)
         if msg:
