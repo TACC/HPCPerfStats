@@ -79,6 +79,17 @@ def build_overhead_report(capture_dir: Path) -> dict[str, Any]:
         )
     if before_net and after_net:
         proc["net_delta"] = delta_net(parse_net_dev(before_net), parse_net_dev(after_net))
+    samples = capture_dir / "samples.jsonl"
+    if samples.is_file():
+        from .leg_summary import load_samples, process_summary_from_samples
+
+        exact = process_summary_from_samples(load_samples(samples))
+        if exact is not None:
+            proc["exact"] = {k: exact[k] for k in (
+                "cpu_core_s_per_h", "cpu_pct_one_core", "cpu_pct_node", "cpu_1s_pct",
+                "cpu_resolution", "rss_mib", "uss_mib", "rss_peak_mib", "fds", "perf_event_fds",
+                "broker_bytes_acked_per_h", "pid_changes")}
+            proc["exact_source"] = "samples.jsonl (1 Hz, /proc/<pid>/schedstat)"
     ss_text = _read(capture_dir / "ss_amqp.txt")
     if ss_text:
         proc["ss_amqp"] = ss_text.strip().splitlines()

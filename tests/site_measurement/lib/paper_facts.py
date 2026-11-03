@@ -65,6 +65,46 @@ def load_json(path: Path) -> dict[str, Any] | None:
     return None
 
 
+GPU_TYPES = frozenset({"nvidia_gpu", "amd_gpu", "intel_gpu"})
+FABRIC_GROUPS = frozenset({"ib_mad"})
+
+
+def collector_delta_pct(profile: dict[str, Any]) -> dict[str, float | None]:
+    """GPU / fabric collector cost as % of one core from a monitor overhead ``profile.json``.
+
+    Reads the per-driver table (SOLO − NONE, paired within block) written by
+    ``monitor/measurement/bin/run_overhead_profile.sh``. A slot stays unset unless a measured
+    driver row actually ran a GPU collector type (GPU) or the IB/OPA MAD driver (fabric);
+    smoke runs flagged ``not_idle`` never fill slots.
+
+    Args:
+        profile: Parsed ``profile.json``.
+
+    Returns:
+        Slot name to percent of one core, or None when not measured.
+    """
+    out: dict[str, float | None] = {
+        "overhead.gpu_collector_delta_cpu_pct": None,
+        "overhead.fabric_collector_delta_cpu_pct": None,
+    }
+    if profile.get("not_idle"):
+        return out
+    rows = (profile.get("collector_matrix") or {}).get("rows") or []
+    gpu = fabric = None
+    for row in rows:
+        cpu = row.get("cpu_core_s_per_h") if row.get("status") == "ok" else None
+        if not cpu:
+            continue
+        pct = cpu["mean"] / 3600.0 * 100.0
+        if GPU_TYPES & set(row.get("types_measured") or []):
+            gpu = (gpu or 0.0) + pct
+        if row.get("group") in FABRIC_GROUPS:
+            fabric = (fabric or 0.0) + pct
+    out["overhead.gpu_collector_delta_cpu_pct"] = gpu
+    out["overhead.fabric_collector_delta_cpu_pct"] = fabric
+    return out
+
+
 def merge_results_dir(results_dir: Path) -> dict[str, Any]:
     """Populate slots from capture JSON files under a results directory."""
     facts = empty_facts()
@@ -101,18 +141,10 @@ def merge_results_dir(results_dir: Path) -> dict[str, Any]:
         _set_if_present(facts, "overhead.net_tx_bytes", net.get("total_tx_bytes"))
         _set_if_present(facts, "overhead.net_rx_bytes", net.get("total_rx_bytes"))
 
-    isolation = load_json(results_dir / "collector_isolation.json")
-    if isolation:
-        _set_if_present(
-            facts,
-            "overhead.gpu_collector_delta_cpu_pct",
-            isolation.get("gpu_delta_peak_cpu_pct"),
-        )
-        _set_if_present(
-            facts,
-            "overhead.fabric_collector_delta_cpu_pct",
-            isolation.get("fabric_delta_peak_cpu_pct"),
-        )
+    profile = load_json(results_dir / "profile.json")
+    if profile:
+        for slot, value in collector_delta_pct(profile).items():
+            _set_if_present(facts, slot, value)
 
     jitter = load_json(results_dir / "jitter.json")
     if jitter:

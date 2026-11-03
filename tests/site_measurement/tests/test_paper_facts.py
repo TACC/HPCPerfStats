@@ -49,3 +49,35 @@ def test_merge_reads_overhead_and_query_json(tmp_path: Path) -> None:
     assert facts["overhead.uss_peak_kib"] == 12000
     assert facts["query.extended_search_7d_p50_ms"] == 123.4
     assert facts["query.job_detail_p50_ms"] == NOT_MEASURED
+
+
+def _profile(not_idle=None) -> dict:
+    return {
+        "not_idle": not_idle,
+        "collector_matrix": {"rows": [
+            {"group": "dcgm", "status": "ok", "types_measured": ["nvidia_gpu"],
+             "cpu_core_s_per_h": {"mean": 36.0}},
+            {"group": "ib_mad", "status": "ok", "types_measured": ["host_ib"],
+             "cpu_core_s_per_h": {"mean": 18.0}},
+            {"group": "likwid", "status": "ok", "types_measured": ["host_cpu_hw"],
+             "cpu_core_s_per_h": {"mean": 99.0}},
+            {"group": "amd_gpu", "status": "NOT_MEASURED", "types": ["amd_gpu"]},
+        ]},
+    }
+
+
+def test_collector_delta_slots_come_from_overhead_profile(tmp_path: Path) -> None:
+    (tmp_path / "profile.json").write_text(json.dumps(_profile()), encoding="utf-8")
+    facts = merge_results_dir(tmp_path)
+    assert facts["overhead.gpu_collector_delta_cpu_pct"] == 1.0
+    assert facts["overhead.fabric_collector_delta_cpu_pct"] == 0.5
+
+
+def test_collector_delta_slots_ignore_smoke_runs_and_legacy_isolation(tmp_path: Path) -> None:
+    (tmp_path / "profile.json").write_text(json.dumps(_profile("smoke only")), encoding="utf-8")
+    (tmp_path / "collector_isolation.json").write_text(
+        json.dumps({"gpu_delta_peak_cpu_pct": 9.0, "fabric_delta_peak_cpu_pct": 9.0}),
+        encoding="utf-8")
+    facts = merge_results_dir(tmp_path)
+    assert facts["overhead.gpu_collector_delta_cpu_pct"] == NOT_MEASURED
+    assert facts["overhead.fabric_collector_delta_cpu_pct"] == NOT_MEASURED

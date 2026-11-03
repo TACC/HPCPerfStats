@@ -71,6 +71,11 @@ void metric_profiler_collect_end(const char *name)
 {
   (void)name;
 }
+void metric_profiler_cycle_begin(void) {}
+void metric_profiler_cycle_end(FILE *stream)
+{
+  (void)stream;
+}
 void monitor_log_error(const char *fmt, ...)
 {
   (void)fmt;

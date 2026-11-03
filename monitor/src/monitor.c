@@ -10,6 +10,7 @@
 #include <ev.h>
 
 #include "daemonize.h"
+#include "metric_profiler.h"
 #include "monitor_cli.h"
 #include "monitor_daemon.h"
 #include "monitor_log.h"
@@ -283,6 +284,11 @@ int main(int argc, char *argv[])
 
   ev_run(EV_DEFAULT, 0);
 
+#ifdef MONITOR_METRIC_PROFILER
+  /* Instrumented builds only: periodic reports come every 120 collect cycles, so emit the
+   * cumulative per-type timing once at shutdown for runs shorter than that. */
+  metric_profiler_report(log_stream);
+#endif
   monitor_log_info("Stopped %s\n", app_name);
 
   monitor_cli_free_heap();

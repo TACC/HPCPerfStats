@@ -1,10 +1,16 @@
 results/
-__pycache__/
-*.pyc
 .pytest_cache/
 *.pcap
 .DS_Store
-# Parser libraries must stay tracked even if a parent gitignore blankets lib/.
+# Parser libraries and capture scripts must stay tracked even though the checkout-root
+# .gitignore blankets lib/ and bin/.
 !lib/
 !lib/**
-
+!bin/
+!bin/**
+# Re-ignore build/cache output after the negations above (later rules win).
+__pycache__/
+*.pyc
+# fwq is compiled at run time with the host gcc (lib/fwq.py); never commit the binary.
+src/fwq
+fwq

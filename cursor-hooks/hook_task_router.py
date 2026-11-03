@@ -882,6 +882,20 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
     ],
   },
   {
+    "id": "monitor_overhead_measurement",
+    "patterns": [
+      "HPCPerfStats/monitor/measurement/**",
+      "HPCPerfStats/monitor/scripts/prepare_rpmbuild_dirs.sh",
+      "HPCPerfStats/monitor/scripts/lib/measure_overhead.sh",
+      "monitor/measurement/**",
+      "monitor/scripts/prepare_rpmbuild_dirs.sh",
+      "monitor/scripts/lib/measure_overhead.sh",
+    ],
+    "rules": [
+      "monitor-overhead-measurement.mdc",
+    ],
+  },
+  {
     "id": "monitor_systemd_service_contract",
     "patterns": [
       "HPCPerfStats/monitor/src/hpcperfstats.service",

@@ -13,7 +13,7 @@
 Summary: Job-level Monitoring Client
 Name: hpcperfstatsd
 Version: 3.0
-Release: 6%{?dist}
+Release: 7%{?dist}
 License: GPL
 Vendor: Texas Advanced Computing Center
 Group: System Environment/Base
@@ -123,6 +123,16 @@ install -m 0600 src/hpcperfstats.conf %{buildroot}%{_sysconfdir}/hpcperfstats/hp
 install -m 0644 src/hpcperfstatsd.sysconfig %{buildroot}%{_sysconfdir}/sysconfig/hpcperfstatsd
 install -m 0644 src/hpcperfstats.service %{buildroot}%{_unitdir}/hpcperfstats.service
 install -m 0755 scripts/stubs/lshw %{buildroot}%{_libexecdir}/hpcperfstats/stubs/lshw
+# Every build: stash capabilities outside %%{buildroot} (payload unchanged) for the overhead
+# profile's provenance (prepare_rpmbuild_dirs.sh --measure-overhead --build-info). Release
+# builds emit the file best-effort, so a missing file is not an error here.
+mkdir -p "%{_topdir}/build-info"
+if test -f .build-static/monitor-build-capabilities.json; then
+  cp -f .build-static/monitor-build-capabilities.json \
+    "%{_topdir}/build-info/monitor-build-capabilities.json"
+else
+  rm -f "%{_topdir}/build-info/monitor-build-capabilities.json"
+fi
 %if 0%{?hpc_debug_build}
 # Survive EL10 rpmbuild rmbuild: stash capabilities outside BUILD for rpm_debug_shm_verify.sh.
 mkdir -p "%{_topdir}/debug-verify"
@@ -163,6 +173,13 @@ fi
 %systemd_postun_with_restart hpcperfstats.service
 
 %changelog
+* Mon Nov 02 2026 sharrell@tacc.utexas.edu - 3.0-7
+- %%install: stash monitor-build-capabilities.json under %%{_topdir}/build-info for all builds
+  (outside the buildroot; payload unchanged) so prepare_rpmbuild_dirs.sh --measure-overhead
+  records the release build's capabilities.
+- emit_build_capabilities.py: ignore `#`-commented Automake conditional lines, so release
+  builds are no longer stamped `debug` / shared-node in the capabilities JSON and `$build`.
+
 * Tue Jul 21 2026 sharrell@tacc.utexas.edu - 3.0-6
 - Debug %%install: stash monitor-build-capabilities.json under %%{_topdir}/debug-verify
   so rpm_debug_shm_verify.sh works after EL10 rpmbuild rmbuild deletes BUILD/.

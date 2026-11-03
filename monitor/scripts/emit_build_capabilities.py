@@ -57,7 +57,12 @@ def _parse_config_log(build_dir: Path) -> dict[str, bool]:
 def _parse_src_makefile(
     build_dir: Path,
 ) -> tuple[set[str], str | None, bool, bool, bool, bool, bool]:
-    text = _read_text(build_dir / "src" / "Makefile")
+    # Automake writes a false conditional's lines with a leading `#`; they are not flags.
+    text = "\n".join(
+        line
+        for line in _read_text(build_dir / "src" / "Makefile").splitlines()
+        if not line.lstrip().startswith("#")
+    )
     features = set(_RE_MONITOR_WITH.findall(text))
     cpu_m = _RE_CPU_BACKEND.search(text)
     cpu_backend = cpu_m.group(1).lower() if cpu_m else None

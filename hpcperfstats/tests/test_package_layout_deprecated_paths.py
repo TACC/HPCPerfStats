@@ -98,6 +98,11 @@ def test_pycache_under_package_lib_is_gitignored():
   samples = [
     "hpcperfstats/dbload/lib/__pycache__/shutdown_utils.cpython-312.pyc",
     "hpcperfstats/site/lib/machine/__pycache__/models.cpython-312.pyc",
+    # Measurement kits negate lib/ (and bin/) in their own .gitignore; the
+    # re-ignore must come after the negation (regression: 9 tracked .pyc).
+    "monitor/measurement/lib/__pycache__/procfs.cpython-314.pyc",
+    "monitor/measurement/bin/__pycache__/sample_proc.cpython-314.pyc",
+    "tests/site_measurement/lib/__pycache__/paper_facts.cpython-314.pyc",
   ]
   for rel in samples:
     proc = subprocess.run(
@@ -109,6 +114,19 @@ def test_pycache_under_package_lib_is_gitignored():
     )
     assert proc.returncode == 0, f"{rel} must be gitignored"
     assert "__pycache__" in proc.stdout or ".pyc" in proc.stdout
+
+
+def test_no_python_bytecode_is_tracked():
+  import subprocess
+
+  proc = subprocess.run(
+    ["git", "ls-files", "*.pyc", "*.pyo"],
+    cwd=REPO_ROOT,
+    capture_output=True,
+    text=True,
+    check=True,
+  )
+  assert proc.stdout.split() == []
 
 
 def test_metrics_tests_live_under_tests_package_only():

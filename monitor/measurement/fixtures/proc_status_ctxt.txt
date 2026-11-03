@@ -1,0 +1,5 @@
+VmHWM:	   11728 kB
+VmRSS:	   11728 kB
+Threads:	1
+voluntary_ctxt_switches:	11
+nonvoluntary_ctxt_switches:	3

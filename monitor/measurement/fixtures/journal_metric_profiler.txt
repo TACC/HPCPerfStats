@@ -1,0 +1,9 @@
+1793660000.100000 c1 hpcperfstatsd[4242]: Enabled types: host_cpu,host_mem
+1793663600.200000 c1 hpcperfstatsd[4242]: metric-profiler: cycles=120 tracked_metrics=40 tracked_types=2 overflow=0
+1793663600.200100 c1 hpcperfstatsd[4242]: metric-profiler:type=host_cpu calls=120 wall_ns=120000000 cpu_ns=96000000 wait_ns=24000000 avg_wall_ns=1000000
+1793663600.200200 c1 hpcperfstatsd[4242]: metric-profiler:type=host_mem calls=120 wall_ns=60000000 cpu_ns=60000000 wait_ns=0 avg_wall_ns=500000
+1793663600.200300 c1 hpcperfstatsd[4242]: metric-profiler:metric=host_cpu/cpu0/user calls=120 wall_ns=1200 cpu_ns=1000 wait_ns=200 avg_wall_ns=10 min_wall_ns=5 max_wall_ns=40
+1793664000.300000 c1 hpcperfstatsd[4242]: metric-profiler: cycles=134 tracked_metrics=40 tracked_types=2 overflow=0
+1793664000.300100 c1 hpcperfstatsd[4242]: metric-profiler:type=host_cpu calls=134 wall_ns=134000000 cpu_ns=107200000 wait_ns=26800000 avg_wall_ns=1000000
+1793664000.300200 c1 hpcperfstatsd[4242]: metric-profiler:type=host_mem calls=134 wall_ns=67000000 cpu_ns=67000000 wait_ns=0 avg_wall_ns=500000
+1793664000.300300 c1 hpcperfstatsd[4242]: Stopped /usr/sbin/hpcperfstatsd

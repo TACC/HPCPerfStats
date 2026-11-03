@@ -1448,6 +1448,29 @@ class EmitBuildCapabilitiesFleetTests(unittest.TestCase):
             self.assertFalse(opadyn)
             self.assertTrue(shared)
 
+    def test_parse_makefile_ignores_disabled_automake_conditionals(self) -> None:
+        """Regression: release builds were stamped debug/shared-node from `#`-commented
+        Automake conditional branches (`@DEBUG_TRUE@` -> `#` when the condition is false)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            td = Path(tmp)
+            src = td / "src"
+            src.mkdir()
+            (src / "Makefile").write_text(
+                "DEFS = -DHAVE_CONFIG_H\n"
+                "#am__append_1 = \\\n"
+                "#\t-DDEBUG\n"
+                "#am__append_3 = -DMONITOR_SHARED_NODE_MULTI_JID\n"
+                "#am__append_5 = -DMONITOR_WITH_OPA -DMONITOR_IB_MAD_DLOPEN\n"
+                "am__append_4 = -DMONITOR_WITH_GPU -DMONITOR_CPU_BACKEND_LIKWID\n",
+                encoding="utf-8",
+            )
+            features, cpu, debug, ibdyn, _o, _ov, shared = ebc._parse_src_makefile(td)
+            self.assertFalse(debug)
+            self.assertFalse(shared)
+            self.assertFalse(ibdyn)
+            self.assertEqual(features, {"GPU"})
+            self.assertEqual(cpu, "likwid")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -182,6 +182,11 @@ void metric_profiler_cycle_end(FILE *out)
 #endif
 }
 
+void metric_profiler_report(FILE *out)
+{
+  emit_report(out);
+}
+
 void metric_profiler_collect_begin(const char *type_name)
 {
   (void)type_name;

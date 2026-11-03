@@ -1,0 +1,7 @@
+Started hpcperfstatsd version 3.0
+Enabled types: host_block,host_cpu,host_cpu_hw,host_mem,intel_x86_rapl,intel_x86_uncore_imc_spr,host_ib
+Disabled types: nvidia_gpu
+Config: server=rmq port=5672 sample_freq=30.0s send_freq=300.0s buffer=720 (6.00h) enable_slow_tier=1 sample_freq_slow=600.0s; probe nvidia=no amd=no intel=no ib=yes opa=no
+Started hpcperfstatsd version 3.0
+Enabled types: host_block,host_cpu,host_mem
+Disabled types: host_cpu_hw,intel_x86_rapl,intel_x86_uncore_imc_spr,host_ib,nvidia_gpu

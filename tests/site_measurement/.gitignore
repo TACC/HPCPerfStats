@@ -1,10 +1,11 @@
 results/
-__pycache__/
-*.pyc
 .pytest_cache/
 *.pcap
 .DS_Store
 # Parser libraries must stay tracked even if a parent gitignore blankets lib/.
 !lib/
 !lib/**
+# Re-ignore bytecode after the negations above (later rules win).
+__pycache__/
+*.pyc
 

@@ -1,8 +1,19 @@
 # Node monitor measurement kit (HUST 2026)
 
-Operator scripts and parsers for **compute-node** captures: `hpcperfstatsd` cadence,
-CPU/memory/I/O/network overhead, collector isolation, OS jitter, microbenchmarks,
+Operator scripts and parsers for **compute-node** captures: the whole-machine overhead
+profile of the release RPM (`bin/run_overhead_profile.sh`, or
+`scripts/prepare_rpmbuild_dirs.sh --measure-overhead` to build and measure in one step),
+`hpcperfstatsd` cadence, legacy pidstat overhead capture, OS jitter, microbenchmarks,
 and the hardware-error **catalog** (coverage vs reviewer classes — not a new collector).
+
+| Piece | Role |
+|---|---|
+| `bin/run_overhead_profile.sh` → `lib/orchestrator.py` | preflight, install, discovery, OFF/NONE/ALL/SOLO blocks, restore |
+| `bin/sample_proc.py` (`lib/procsample.py`, `nodesample.py`, `tcpinfo.py`, `rapl.py`) | 1 Hz daemon + node sampler |
+| `src/fwq.c`, `lib/fwq.py` | Fixed Work Quanta OS-noise probe (compiled at run time) |
+| `lib/profiler_lines.py` | `metric-profiler:` journal parser for the optional `--profile-collectors` leg |
+| `lib/stats.py`, `collector_matrix.py`, `driver_map.py`, `schedule.py`, `leg_summary.py`, `profile_report.py` | statistics, per-driver table, report |
+| `bin/summarize_profile.py`, `bin/aggregate_profiles.py` | rebuild a report; cross-architecture CSV/Markdown/LaTeX |
 
 **Runbook:** [RUNBOOK.md](RUNBOOK.md)
 

@@ -1,0 +1,68 @@
+---
+description: Whole-machine overhead profile of the release RPM — headline numbers, leg design, collector sets, NOT_MEASURED, provenance
+globs:
+  - HPCPerfStats/monitor/measurement/**
+  - HPCPerfStats/monitor/scripts/prepare_rpmbuild_dirs.sh
+  - HPCPerfStats/monitor/scripts/lib/measure_overhead.sh
+alwaysApply: false
+---
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+# Monitor overhead measurement
+
+Applies to `monitor/measurement/**` (harness, sampler, FWQ, report) and the
+`prepare_rpmbuild_dirs.sh --measure-overhead` path.
+
+## Laws
+
+1. **Headline numbers come only from the release RPM under its real unit properties.** The
+   harness installs the `rpmbuild -ba` release RPM and runs it as `hpcperfstats.service`
+   (Nice, IOSchedulingClass, sandbox unchanged). An instrumented build (debug, metric
+   profiler) is never a headline number; label it and keep it out of `HEADLINE_METRICS`.
+2. **Bracketed, replicated blocks.** OFF → NONE → ALL → SOLO(driver groups, seeded shuffle) →
+   ALL → OFF, the closing OFF shared with the next block. SOLO deltas are paired with the
+   **same block's** NONE leg. Report the interaction residual
+   `ALL − [NONE + Σ(SOLO − NONE)]` with its CI and the drift check across blocks. Do not
+   replace this with peak-%CPU subtraction or leave-one-out legs.
+3. **Collector sets come only from the runtime drop-in**
+   `/run/systemd/system/hpcperfstats.service.d/90-measure.conf`
+   (`HPCPERFSTATS_DISABLE_TYPES`). Never edit the site conf to disable collectors; preflight
+   refuses a site conf with `disable_types` / non-default `collection_profile` and a
+   sysconfig that sets those variables. Verify each leg against its own `Enabled types:`
+   journal line.
+4. **Partial payloads never reach the production queue.** NONE / SOLO / CADENCE legs point
+   `ExecStart` at a `/run` copy of the site conf whose only change is
+   `queue <queue>_measure` (CADENCE also changes `sample_freq`). Do **not** use `-q` /
+   `--sample-frequency` for this: the daemon reads the conf after the CLI, so conf keys win
+   (`test_daemon_reads_conf_after_cli_so_queue_needs_a_conf_copy`). Cleanup deletes only
+   `<production>_measure` and prints the `rabbitmqctl` command when it cannot.
+5. **`NOT_MEASURED`, never 0 or an estimate.** Every metric slot is
+   `{value, unit, ci95, n, source}` or `{status: NOT_MEASURED, reason}`. Missing perf, RAPL,
+   PSI, broker socket, OFF legs, or an interrupted run each have a named reason.
+6. **Provenance is mandatory**: host/CPU/microcode/NUMA/kernel, RPM NVRA + sha256, binary
+   sha256, git commit + dirty flag, build capabilities, redacted conf, unit properties, tool
+   versions, harness and schema versions. Every reported number must be recomputable from
+   `raw/` (`bin/summarize_profile.py`).
+7. **A cadence sweep measures; it does not change defaults** (`monitor-jitter-and-fidelity-priority.mdc`).
+8. **Driver groups, not types.** A type in an `Enabled types:` line with no group in
+   `lib/driver_map.py` fails preflight; `test_driver_map_covers_all_st_names` fails when a new
+   `.st_name` lands unmapped. Add the type to the map in the same change as the collector.
+9. **Restore on every exit path**: drop-in removed, measure queue deleted, site conf and
+   service active/enabled state restored; `restore.sh` is written before the first change.
+   The measured package stays installed (reserved node).
+
+## Tests
+
+`.venv/bin/python3 -m pytest -p no:django -q HPCPerfStats/monitor/measurement/tests` and
+`monitor/measurement/bin/run_local_checks.sh`; prepare flag:
+`monitor/tests/test_prepare_rpmbuild_measure_flag.sh` (registered in `tests/Makefile.am`).
+Statistics use fixed seeds; parsers use fixtures captured from a real `/proc`.
+
+## Overlap
+
+- **`monitor-jitter-and-fidelity-priority.mdc`** — cadence is not changed to cut cost.
+- **`monitor-systemd-service-contract.mdc`** — measured unit is the shipped unit; the drop-in lives under `/run` only.
+- **`monitor-version-and-packaging.mdc`** — spec `build-info/` stash, `Release:` bumps.
+- **`monitor-workspace-contract.mdc`** — listend consumes only configured queues; `_measure` is never ingested.
+- **`test-runs-output-directory.mdc`** — trial-run logs under `test_runs/`; committed profiles under `docs/measurements/`.

@@ -1,0 +1,10 @@
+# started on Mon Nov  2 10:00:00 2026
+
+1834.21,msec,task-clock,1834210000,100.00,0.001,CPUs utilized
+412,,context-switches,1834210000,100.00,224.623,/sec
+3,,cpu-migrations,1834210000,100.00,1.636,/sec
+1204,,page-faults,1834210000,100.00,656.413,/sec
+4012345678,,cycles,1834210000,100.00,2.188,GHz
+6018518517,,instructions,1834210000,100.00,1.50,insn per cycle
+<not supported>,,cache-references,0,100.00,,
+<not counted>,,cache-misses,0,0.00,,

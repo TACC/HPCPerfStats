@@ -76,6 +76,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 |---------------|------------------|
 | `HPCPerfStats/monitor/configure.ac`, `Makefile.am`, `src/Makefile.am` | `configure-autoconf-awk-m4.mdc`, `monitor-c-conventions.mdc` |
 | `HPCPerfStats/monitor/scripts/**`, `hpcperfstats.spec` | `monitor-static-build-verification.mdc`, `monitor-static-bundle-feature-matrix.mdc`, `monitor-dual-verify-cross-and-static.mdc`, `monitor-post-verify-distclean.mdc`, `monitor-build-clean-workspace.mdc`, `monitor-version-and-packaging.mdc`, `monitor-local-build-deps.mdc`, `tacc-lmod-build-environment.mdc`, `monitor-valgrind-cpp-linter-gate.mdc` |
+| `HPCPerfStats/monitor/measurement/**`, `scripts/prepare_rpmbuild_dirs.sh`, `scripts/lib/measure_overhead.sh` (overhead profile) | `monitor-overhead-measurement.mdc` |
 | `HPCPerfStats/monitor/**` (substantive C/build change) | `global-testing-discipline.mdc` |
 | Shell / build on TACC HPC (`*.tacc.utexas.edu`, `$TACC_SYSTEM`) | `tacc-lmod-build-environment.mdc` — fix MODULEPATH, `module avail` / `module load` before assuming missing OS tools |
 

@@ -14,6 +14,11 @@
 # Usage (from anywhere; paths are anchored to HPCPerfStats/monitor):
 #   ./scripts/prepare_rpmbuild_dirs.sh
 #   ./scripts/prepare_rpmbuild_dirs.sh --debug-build
+#   ./scripts/prepare_rpmbuild_dirs.sh --measure-overhead [--measure-arg ARG]...
+#
+# --measure-overhead: after prepare, run the release rpmbuild, then the whole-machine overhead
+# profile (measurement/bin/run_overhead_profile.sh) on this host as root (sudo -n unless already
+# root). sudo and the build tools are checked before any build step.
 #
 # Footer: prints only the rpmbuild command for the requested build. Validation
 # notes and the debug verify chain appear only with --debug-build.
@@ -30,18 +35,33 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=lib/monitor_tree_clean.sh
 source "${SCRIPT_DIR}/lib/monitor_tree_clean.sh"
+# shellcheck source=lib/measure_overhead.sh
+source "${SCRIPT_DIR}/lib/measure_overhead.sh"
 readonly SPEC_SRC="${MONITOR_DIR}/hpcperfstats.spec"
 readonly EMBED_PREFIX="${MONITOR_DIR}/embedded-static-prefix"
 
 debug_build=0
+measure_overhead=0
+measure_args=()
 while (($# > 0)); do
   case "$1" in
     --debug-build)
       debug_build=1
       ;;
+    --measure-overhead)
+      measure_overhead=1
+      ;;
+    --measure-arg)
+      if (($# < 2)); then
+        echo "--measure-arg needs a value" >&2
+        exit 1
+      fi
+      measure_args+=("$2")
+      shift
+      ;;
     -h|--help)
       cat <<EOF
-Usage: ./scripts/prepare_rpmbuild_dirs.sh [--debug-build]
+Usage: ./scripts/prepare_rpmbuild_dirs.sh [--debug-build | --measure-overhead [--measure-arg ARG]...]
 
   Default:           Print only the release rpmbuild -ba command.
   --debug-build      Print only the debug rpmbuild (hpc_debug_build 1) chained with
@@ -50,6 +70,12 @@ Usage: ./scripts/prepare_rpmbuild_dirs.sh [--debug-build]
 
   Release (default): rpmbuild without hpc_debug_build — production RPM, no /dev/shm mirror.
   Debug (opt-in):    rpmbuild with hpc_debug_build 1 — -g symbols and --enable-debug.
+
+  --measure-overhead Run the release rpmbuild, then measurement/bin/run_overhead_profile.sh
+                     on this host as root (sudo -n). Fails before building when sudo would
+                     prompt or a build tool is missing. See measurement/RUNBOOK.md section 0.
+  --measure-arg ARG  Pass ARG to run_overhead_profile.sh (repeatable), e.g.
+                     --measure-arg --max-hours --measure-arg 8
 
   See README.md "DEBUG /dev/shm mirror" for the RPM debug workflow.
 EOF
@@ -62,6 +88,18 @@ EOF
   esac
   shift
 done
+
+if test "${debug_build}" = "1" && test "${measure_overhead}" = "1"; then
+  echo "--measure-overhead measures the release RPM; it cannot be combined with --debug-build" >&2
+  exit 1
+fi
+if test "${#measure_args[@]}" -gt 0 && test "${measure_overhead}" != "1"; then
+  echo "--measure-arg requires --measure-overhead" >&2
+  exit 1
+fi
+if test "${measure_overhead}" = "1"; then
+  measure_overhead_preflight "${MONITOR_DIR}" "${measure_args[@]}" || exit 1
+fi
 
 monitor_spec_field() {
   local field="$1"
@@ -288,6 +326,21 @@ Debug verify notes:
   - Payload mirror: /dev/shm/hpcperfstatsd-debug/{schema,fast,full}
   - Override base dir: HPCPERFSTATS_DEBUG_SHM_DIR
 EOF
+elif test "${measure_overhead}" = "1"; then
+  case "${topdir}${specs_dir}" in
+    *[\"\$\`]*)
+      echo "--measure-overhead: refusing to run rpmbuild from a path containing quote, \$ or backtick" >&2
+      exit 1
+      ;;
+  esac
+  echo "Building the release RPM:"
+  echo "  ${release_rpmbuild}"
+  eval "${release_rpmbuild}"
+  rpm_path="$(measure_overhead_find_rpm "${topdir}" "${ver}")" || exit 1
+  measure_cmd="$(measure_overhead_command "${MONITOR_DIR}" "${rpm_path}" "${topdir}/build-info" "${measure_args[@]}")"
+  echo "Measuring ${rpm_path}:"
+  echo "  ${measure_cmd}"
+  eval "${measure_cmd}"
 else
   echo "Build binary and source RPMs with:"
   echo "  ${release_rpmbuild}"

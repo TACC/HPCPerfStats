@@ -137,6 +137,7 @@ LSPCI dumps: `tests/fixtures/ls6_lspci_profiles/{genoa,milan,a100}`. Per-queue s
 - Static bundle integration: when `--with-metric-profiler-backend=ebpf` is passed through `scripts/build_static_bundle.sh`, the script also downloads and builds pinned static `libbpf` into the same `PREFIX` tree.
 
 Profiling output is emitted periodically as `metric-profiler:*` lines and includes aggregated call counts, total/avg/min/max wall time, CPU time, and inferred wait time (`wall-cpu` clamped at zero).
+Both the RabbitMQ daemon and the batch client profile every collect cycle through `stats_runtime_collect_cycle` (`metric_profiler_cycle_begin` / `_end`). The periodic report comes every 120 cycles (one hour at `sample_freq 30`), so the daemon also prints the cumulative report once at shutdown (`metric_profiler_report`, under `#ifdef MONITOR_METRIC_PROFILER` in `monitor.c`). Without `--enable-metric-profiler` none of this is compiled. `measurement/bin/run_overhead_profile.sh --profile-collectors` uses it for one labelled, non-headline leg.
 
 ## Key source modules
 
@@ -567,6 +568,26 @@ goldens when present; **exit 77 skip** otherwise). Local run logs belong under
   - **`cpu`** keeps one `FILE *` on `/proc/stat` and **`rewind`**s each sample; the stream is closed when collect caches are invalidated.
   - **`net`** caches **up** interface names and **re-scans** `/sys/class/net` every 32 samples (and on SIGHUP / jobid–rotate reset / shutdown) to avoid `opendir`/`readdir` and per-iface `flags` reads every tick.
 - **Invalidation**: `stats_buffer_runtime_caches_reset()` (SIGHUP), `monitor_reset_all_stats_types()` (log rotation / jobid-driven re-init), and SIGINT shutdown call `cpu_stats_invalidate_file_caches()` and `net_stats_invalidate_iface_cache()` so cached fds and iface lists are not stale across reconfigure or exit.
+
+## Overhead measurement
+
+The paper-facing overhead numbers come from the **unmodified release RPM** under its real
+systemd unit, measured by `measurement/bin/run_overhead_profile.sh` on an idle, reserved node
+per CPU architecture. One command builds and measures:
+
+```bash
+./scripts/prepare_rpmbuild_dirs.sh --measure-overhead            # fleet wrappers pass it through
+./scripts/prepare_rpmbuild_dirs.sh --measure-overhead --measure-arg --max-hours --measure-arg 8
+```
+
+The flag checks `sudo -n` and the build tools before building, runs the release
+`rpmbuild -ba`, then runs the harness as root. It cannot be combined with `--debug-build`.
+The harness runs bracketed OFF / NONE / ALL / SOLO(driver group) legs, samples the daemon and
+node at 1 Hz, runs the FWQ noise probe, and writes `profile.json`, `report.md` and
+`profile_row.csv` (every slot measured or `NOT_MEASURED`). Partial-payload legs publish to
+`<queue>_measure`, which listend never consumes. The release `%install` stashes
+`monitor-build-capabilities.json` under `rpmbuild/build-info/` for provenance. Full procedure:
+[measurement/RUNBOOK.md](measurement/RUNBOOK.md) section 0.
 
 ## Profiling `hpcperfstatsd`
 

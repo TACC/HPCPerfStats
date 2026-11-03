@@ -78,3 +78,23 @@ def test_overhead_report_from_capture_dir(tmp_path: Path) -> None:
     assert report["proc"]["uss_peak_kib"] == 12000
     assert report["proc"]["io_delta"]["write_bytes"] == 8192
     assert report["proc"]["net_delta"]["total_tx_bytes"] == 6000
+
+
+def test_overhead_report_adds_exact_sampler_block(tmp_path):
+    import json
+
+    from lib.overhead_report import build_overhead_report
+
+    lines = []
+    for i in range(30):
+        proc = {"pid": 7, "starttime": 1, "run_ns": i * 20_000_000, "utime": i, "stime": 0,
+                "rss_kib": 10240, "uss_kib": 8192, "num_threads": 2, "fds": 9,
+                "perf_event_fds": 0, "vol_ctxt": i, "invol_ctxt": 0, "minflt": 0, "majflt": 0,
+                "io": None, "threads": {}}
+        lines.append(json.dumps({"t": i, "wall": 1000.0 + i, "proc": proc,
+                                 "node": {"online_cpus": 4}, "tcp": None}))
+    (tmp_path / "samples.jsonl").write_text("\n".join(lines) + "\n")
+    exact = build_overhead_report(tmp_path)["proc"]["exact"]
+    assert abs(exact["cpu_core_s_per_h"]["mean"] - 72.0) < 1e-6
+    assert abs(exact["cpu_pct_node"] - 0.5) < 1e-9
+    assert exact["rss_mib"] == 10.0

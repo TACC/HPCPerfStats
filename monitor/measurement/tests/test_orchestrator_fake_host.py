@@ -1,0 +1,189 @@
+"""End-to-end ``Run.execute`` on a fake host (no root): stub systemctl/journalctl/rpm,
+a fake ``hpcperfstatsd`` process, system paths redirected under tmp, very short legs.
+
+Proves the real-run control flow: install over a site conf (the stub RPM overwrites it the
+way the real spec does), discovery from the journal, drop-ins per leg, per-leg verification,
+summaries after each leg, and the restore path (drop-in gone, conf restored, queue cleanup
+recorded) — everything except the privileged commands themselves.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import signal
+import stat
+from pathlib import Path
+
+import pytest
+from lib import orchestrator
+
+ALL_TYPES = "host_cpu,host_mem,host_cpu_hw,intel_x86_rapl"
+
+SYSTEMCTL = r"""#!/usr/bin/env bash
+S="${FAKE_STATE:?}"
+alive() { test -f "$S/pid" && kill -0 "$(cat "$S/pid")" 2>/dev/null; }
+stop() { if alive; then kill "$(cat "$S/pid")"; fi; rm -f "$S/pid"; }
+case "$1" in
+  show)
+    if test "$2" = "-p"; then alive && cat "$S/pid" || echo 0
+    else printf 'ExecStart={ path=/usr/sbin/hpcperfstatsd }\nNice=10\nIOSchedulingClass=idle\n'; fi ;;
+  is-active) alive ;;
+  is-enabled) exit 1 ;;
+  stop)
+    if grep -q hpcperfstatsd-profiler "$FAKE_DROPIN" 2>/dev/null && alive; then
+      now="$(date +%s.%N)"
+      printf '%s c1 hpcperfstatsd[1]: metric-profiler: cycles=4 tracked_metrics=1 tracked_types=1 overflow=0\n' "$now" >> "$S/journal"
+      printf '%s c1 hpcperfstatsd[1]: metric-profiler:type=host_cpu calls=4 wall_ns=4000000 cpu_ns=2000000 wait_ns=2000000 avg_wall_ns=1000000\n' "$now" >> "$S/journal"
+    fi
+    stop ;;
+  restart)
+    stop
+    dis="$(sed -n 's/^Environment=HPCPERFSTATS_DISABLE_TYPES=//p' "$FAKE_DROPIN" 2>/dev/null)"
+    en="$(echo "${FAKE_TYPES}" | tr ',' '\n' | grep -vxF -f <(echo "$dis" | tr ',' '\n' | sed '/^$/d') | paste -sd, -)"
+    test -n "$dis" || en="${FAKE_TYPES}"
+    setsid "$S/hpcperfstatsd" 100000 >/dev/null 2>&1 < /dev/null &
+    echo $! > "$S/pid"
+    printf '%s c1 hpcperfstatsd[%s]: Enabled types: %s\n' "$(date +%s.%N)" "$!" "${en:-(none)}" >> "$S/journal"
+    ;;
+  *) exit 0 ;;
+esac
+"""
+JOURNALCTL = r"""#!/usr/bin/env bash
+S="${FAKE_STATE:?}"; since=0; fmt=short-unix
+while test $# -gt 0; do case "$1" in --since) since="${2#@}"; shift ;; -o) fmt="$2"; shift ;; esac; shift; done
+test -f "$S/journal" || exit 0
+if test "$fmt" = cat; then sed 's/^[^:]*: //' "$S/journal"
+else awk -v s="$since" '$1 >= s' "$S/journal"; fi
+"""
+RPM = r"""#!/usr/bin/env bash
+case "$1" in
+  -q) exit 1 ;;
+  -Uvh) printf 'server localhost\nqueue default\nuser guest\npassword guest\n' > "$FAKE_SITE_CONF" ;;
+  -qip) echo "Name : hpcperfstatsd" ;;
+esac
+exit 0
+"""
+
+SITE = "server 127.0.0.1\nqueue fake_site\nport 5672\nuser u\npassword p\nsample_freq 30\n"
+
+
+def _stub(bindir: Path, name: str, body: str) -> None:
+    path = bindir / name
+    path.write_text(body)
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
+@pytest.fixture
+def fake_host(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    bindir = tmp_path / "bin"
+    etc = tmp_path / "etc"
+    for d in (state, bindir, etc):
+        d.mkdir()
+    shutil.copy(shutil.which("sleep"), state / "hpcperfstatsd")
+    for name, body in (("systemctl", SYSTEMCTL), ("journalctl", JOURNALCTL), ("rpm", RPM)):
+        _stub(bindir, name, body)
+    site = etc / "hpcperfstats.conf"
+    site.write_text(SITE)
+    run_dir = tmp_path / "run"
+    paths = {"SITE_CONF": str(site), "SYSCONFIG": str(etc / "sysconfig"),
+             "DROPIN_DIR": str(tmp_path / "dropin"),
+             "DROPIN_PATH": str(tmp_path / "dropin" / "90-measure.conf"),
+             "MEASURE_DIR": str(tmp_path / "measure"),
+             "MEASURE_CONF": str(tmp_path / "measure" / "hpcperfstats.conf"),
+             "PROFILER_BINARY": str(tmp_path / "measure" / "hpcperfstatsd-profiler"),
+             "DISCOVERY_SECONDS": 1, "TYPES_WAIT_SECONDS": 10}
+    for key, value in paths.items():
+        monkeypatch.setattr(orchestrator, key, value)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ['PATH']}")
+    monkeypatch.setenv("FAKE_STATE", str(state))
+    monkeypatch.setenv("FAKE_DROPIN", paths["DROPIN_PATH"])
+    monkeypatch.setenv("FAKE_TYPES", ALL_TYPES)
+    monkeypatch.setenv("FAKE_SITE_CONF", str(site))
+    rpm = tmp_path / "hpcperfstatsd-3.0-7.el9.x86_64.rpm"
+    rpm.write_bytes(b"rpm")
+    yield {"site": site, "run": run_dir, "rpm": rpm, "paths": paths, "state": state}
+    pid_file = state / "pid"
+    if pid_file.is_file():
+        try:
+            os.kill(int(pid_file.read_text()), signal.SIGKILL)
+        except (ProcessLookupError, ValueError):
+            pass
+
+
+def test_execute_full_run_on_fake_host(fake_host):
+    args = orchestrator.build_parser().parse_args([
+        "--rpm", str(fake_host["rpm"]), "--out", str(fake_host["run"]), "--leg-seconds", "3",
+        "--settle-seconds", "2", "--fwq-seconds", "1", "--blocks", "1", "--seed", "5",
+        "--fwq-quantum-us", "200", "--force", "--rmq-mgmt-port", "1", "--fwq-cpus", "0"])
+    assert orchestrator.Run(args).execute() == 0
+    run = fake_host["run"]
+    profile = json.loads((run / "profile.json").read_text())
+    assert profile["run_complete"] is True, profile["legs_missing"]
+    assert profile["groups"] == {"filesystem": ["host_cpu", "host_mem"],
+                                 "likwid": ["host_cpu_hw", "intel_x86_rapl"]}
+    legs = {leg["leg_id"]: leg for leg in profile["legs"]}
+    assert [leg["kind"] for leg in profile["legs"]].count("SOLO") == 2
+    solo = legs["b1-SOLO-likwid"]
+    assert solo["status"] == "ok" and solo["verified_types"] == ["host_cpu_hw", "intel_x86_rapl"]
+    assert solo["missing_types"] == []
+    assert legs["b1-NONE-"]["verified_types"] == []
+    # This dev host is busy, so legs are contaminated; --force turns the run into a smoke run.
+    if any(leg["contaminated"] for leg in profile["legs"]):
+        assert profile["not_idle"] == "smoke only"
+        assert any("contaminated" in r for r in profile["flags"]["not_idle_reasons"])
+    cpu = profile["metrics"]["daemon_cpu_core_s_per_h"]
+    assert cpu.get("unit") == "core-s/h", cpu
+    assert profile["metrics"]["fwq_mean_slowdown_pct"].get("unit") == "%"
+    assert profile["provenance"]["build"]["prior_nvra"] is None
+    # restore path
+    assert not Path(fake_host["paths"]["DROPIN_PATH"]).exists()
+    assert not Path(fake_host["paths"]["DROPIN_DIR"]).exists()
+    assert not Path(fake_host["paths"]["MEASURE_DIR"]).exists()
+    assert fake_host["site"].read_text() == SITE
+    run_json = json.loads((run / "raw" / "run.json").read_text())
+    assert run_json["flags"]["measure_queue_left"] is True
+    assert run_json["state"]["cleanup"]["measure_queue"]["admin_command"].endswith("fake_site_measure")
+    assert (run / "restore.sh").is_file() and (run / "report.md").is_file()
+    measure_conf = (run / "raw" / "legs" / "b1-NONE-" / "meta.json")
+    assert measure_conf.is_file()
+    assert not (fake_host["state"] / "pid").exists()  # was inactive before: stopped again
+
+
+def test_execute_aborts_and_restores_on_unmapped_type(fake_host, monkeypatch):
+    monkeypatch.setenv("FAKE_TYPES", "host_cpu,brand_new_collector")
+    args = orchestrator.build_parser().parse_args([
+        "--rpm", str(fake_host["rpm"]), "--out", str(fake_host["run"]), "--force",
+        "--rmq-mgmt-port", "1", "--fwq-cpus", "0", "--fwq-quantum-us", "200"])
+    with pytest.raises(orchestrator.driver_map.UnmappedTypeError):
+        orchestrator.Run(args).execute()
+    assert fake_host["site"].read_text() == SITE
+    assert (fake_host["run"] / "raw" / "run.json").is_file()
+
+
+def test_execute_refuses_packaged_conf_without_conf_flag(fake_host):
+    fake_host["site"].write_text("server localhost\nqueue default\nuser guest\npassword guest\n")
+    args = argparse.Namespace(**vars(orchestrator.build_parser().parse_args(
+        ["--rpm", str(fake_host["rpm"]), "--out", str(fake_host["run"]), "--force"])))
+    with pytest.raises(orchestrator.PreflightError, match="packaged localhost/guest"):
+        orchestrator.Run(args).execute()
+
+
+def test_execute_profile_collectors_leg_on_fake_host(fake_host):
+    binary = fake_host["state"] / "hpcperfstatsd"
+    args = orchestrator.build_parser().parse_args([
+        "--rpm", str(fake_host["rpm"]), "--out", str(fake_host["run"]), "--leg-seconds", "2",
+        "--settle-seconds", "1", "--fwq-seconds", "1", "--blocks", "1", "--seed", "5",
+        "--fwq-quantum-us", "200", "--force", "--rmq-mgmt-port", "1", "--fwq-cpus", "0",
+        "--profile-collectors", "--profiler-binary", str(binary)])
+    assert orchestrator.Run(args).execute() == 0
+    profile = json.loads((fake_host["run"] / "profile.json").read_text())
+    cp = profile["collector_profile"]
+    assert cp["status"] == "ok", cp
+    assert cp["types"]["host_cpu"]["calls"] == 4
+    prof_leg = next(leg for leg in profile["legs"] if leg["kind"] == "PROFILE")
+    assert prof_leg["status"] == "ok" and prof_leg["leg_id"] == "b1-PROFILE-"
+    assert not Path(fake_host["paths"]["DROPIN_PATH"]).exists()
