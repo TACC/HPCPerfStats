@@ -15,10 +15,16 @@ MANAGE=${COLLAPSE_MANAGE:-/home/hpcperfstats/hpcperfstats/site/manage.py}
 SELF=$(readlink -f "$0")
 
 die() { echo "ERROR: $*" >&2; exit 1; }
-psql_q() {
-  podman exec -i -e PGOPTIONS='-c statement_timeout=0' "$DB" \
-    psql -U hpcperfstats -d hpcperfstats -v ON_ERROR_STOP=1 -X -At "$@"
+# psql inside the db container, first argument the PGOPTIONS. -w never prompts:
+# with no terminal a password prompt waits forever (hpcperfstats04 hung 10 h on
+# one). The password comes from the container's PGPASSWORD or POSTGRES_PASSWORD.
+psql_in_db() {
+  local opts=$1; shift
+  podman exec -i -e PGOPTIONS="$opts" "$DB" sh -c \
+    'PGPASSWORD="${PGPASSWORD:-${POSTGRES_PASSWORD:-}}" exec psql -w "$@"' sh \
+    -U hpcperfstats -d hpcperfstats -X -At "$@"
 }
+psql_q() { psql_in_db '-c statement_timeout=0' -v ON_ERROR_STOP=1 "$@"; }
 repair_count() {
   local n
   n=$(podman exec "$PIPE" pgrep -fc collapse_percore_host_data 2>/dev/null)
@@ -186,7 +192,7 @@ survey() {
       if [ "$comp" = "f" ]; then
         c=$(psql_q -c "SELECT coalesce(round(100.0 * avg(CASE WHEN dev <> '' AND dev NOT LIKE 'j:%' AND type NOT IN ('nvidia_gpu','amd_gpu','intel_gpu') THEN 1 ELSE 0 END), 1)::text, 'empty') FROM $chunk TABLESAMPLE SYSTEM (0.01) REPEATABLE (7);" < /dev/null)
       else
-        c=$(podman exec -i -e PGOPTIONS='-c statement_timeout=60000' "$DB" psql -U hpcperfstats -d hpcperfstats -X -At \
+        c=$(psql_in_db '-c statement_timeout=60000' \
           -c "SELECT 'has_percore=' || EXISTS (SELECT 1 FROM $chunk WHERE type IN ('host_cpu','host_cpu_hw') AND dev <> '' AND dev NOT LIKE 'j:%');" < /dev/null 2>/dev/null || echo "has_percore=unknown(timeout)")
       fi
       echo "$day|$comp|$size|$est|$c"

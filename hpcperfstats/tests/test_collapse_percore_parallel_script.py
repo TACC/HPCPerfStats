@@ -12,8 +12,10 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "collapse_percore_parallel.sh"
 
-# Stands in for `podman exec` into the db and pipeline containers. SQL is
-# answered by keyword; manage.py calls are recorded in calls.log.
+# Stands in for `podman exec` into the db and pipeline containers. In the db
+# container the command runs as given (the script's sh -c wrapper included),
+# with the container's POSTGRES_PASSWORD and the fake psql below on PATH.
+# manage.py calls are recorded in calls.log.
 _FAKE_PODMAN = r"""#!/bin/bash
 ST=${FAKE_STATE:?}
 [ "$1" = ps ] && { echo "hpcperfstats_db_1  Up"; exit 0; }
@@ -21,6 +23,30 @@ ST=${FAKE_STATE:?}
 while [[ "$1" == -* ]]; do case "$1" in -e) shift 2;; *) shift;; esac; done
 C=$1; shift
 if [ "$C" = hpcperfstats_db_1 ]; then
+  POSTGRES_PASSWORD=${FAKE_DB_PASSWORD:-} PATH="$FAKE_DB_BIN:$PATH" exec "$@"
+fi
+case "$1" in
+  pgrep) n=$(ls $ST/running.* 2>/dev/null | wc -l); echo $n; [ $n -gt 0 ];;
+  pkill) echo "pkill $*" >> $ST/pkill.log;;
+  python3)
+    if [ "$2" = -c ]; then echo "${FAKE_FIX:-FIXED}"; exit 0; fi
+    echo "$*" >> $ST/calls.log; m=$ST/running.$$; touch $m; sleep 0.2
+    echo "TOTAL percore_rows=10 groups=2 kept_existing=0 new_rows=2"; rm -f $m;;
+esac
+"""
+
+# psql in the db container. With FAKE_NEED_PW set the server wants that
+# password: without -w psql sits at a prompt (the hpcperfstats04 hang), with a
+# wrong one it fails. SQL is answered by keyword.
+_FAKE_PSQL = r"""#!/bin/bash
+ST=${FAKE_STATE:?}
+if [ -n "${FAKE_NEED_PW:-}" ]; then
+  case " $* " in *" -w "*) ;; *) echo "prompt" >> $ST/prompt.log; sleep 30; exit 1;; esac
+  if [ "${PGPASSWORD:-}" != "$FAKE_NEED_PW" ]; then
+    echo "psql: error: password authentication failed" >&2; exit 2
+  fi
+fi
+{
   SQL=""; while [ $# -gt 0 ]; do [ "$1" = -c ] && SQL=$2; shift; done
   [ -z "$SQL" ] && SQL=$(cat)
   day=$(grep -o "20[0-9-]\{8\}" <<< "$SQL" | head -1)
@@ -40,31 +66,27 @@ if [ "$C" = hpcperfstats_db_1 ]; then
     *"SELECT count(*) FROM pg_stat_activity"*) echo 0;;
     *) echo "(fake rows)";;
   esac
-  exit 0
-fi
-case "$1" in
-  pgrep) n=$(ls $ST/running.* 2>/dev/null | wc -l); echo $n; [ $n -gt 0 ];;
-  pkill) echo "pkill $*" >> $ST/pkill.log;;
-  python3)
-    if [ "$2" = -c ]; then echo "${FAKE_FIX:-FIXED}"; exit 0; fi
-    echo "$*" >> $ST/calls.log; m=$ST/running.$$; touch $m; sleep 0.2
-    echo "TOTAL percore_rows=10 groups=2 kept_existing=0 new_rows=2"; rm -f $m;;
-esac
+}
 """
 
 
 @pytest.fixture
 def env(tmp_path):
   bin_dir = tmp_path / "bin"
-  bin_dir.mkdir()
-  fake = bin_dir / "podman"
-  fake.write_text(_FAKE_PODMAN)
-  fake.chmod(0o755)
+  db_bin = tmp_path / "db_bin"
+  for path, text in (
+    (bin_dir / "podman", _FAKE_PODMAN),
+    (db_bin / "psql", _FAKE_PSQL),
+  ):
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(text)
+    path.chmod(0o755)
   state = tmp_path / "state"
   state.mkdir()
   return {
     **os.environ,
     "PATH": f"{bin_dir}:{os.environ['PATH']}",
+    "FAKE_DB_BIN": str(db_bin),
     "FAKE_STATE": str(state),
     "COLLAPSE_RUN_DIR": str(tmp_path / "run"),
     "COLLAPSE_SHARD_ROWS": "100",
@@ -158,6 +180,30 @@ def test_job_without_a_day_or_host_file_is_refused(env):
   refused = (Path(env["COLLAPSE_RUN_DIR"]) / "refused.log").read_text()
   assert refused.count("REFUSED") == 3
   assert _calls(env) == []
+
+
+def test_password_server_uses_the_container_password_and_never_prompts(env):
+  """Regression: psql sat at a password prompt for 10 h on hpcperfstats04."""
+  pw = {"FAKE_NEED_PW": "s3cret", "FAKE_DB_PASSWORD": "s3cret"}
+  survey = _run(env, "survey", "2026-10-01", **pw)
+  assert survey.returncode == 0, survey.stderr
+  assert "2026-10-24|f|200 GB|700|98.9" in survey.stdout
+  assert "2026-10-01|t|10 GB|1000|has_percore=true" in survey.stdout
+  assert _run(env, "start", "2026-10-24", **pw).returncode == 0
+  _wait_finished(env, 2)
+  assert len(_calls(env)) == 2
+  assert not (Path(env["FAKE_STATE"]) / "prompt.log").exists()
+
+
+def test_wrong_password_fails_fast_instead_of_hanging(env):
+  pw = {"FAKE_NEED_PW": "s3cret", "FAKE_DB_PASSWORD": "wrong"}
+  started = time.monotonic()
+  out = _run(env, "start", "2026-10-24", **pw)
+  assert out.returncode == 1
+  assert "psql failed" in out.stderr
+  assert time.monotonic() - started < 20
+  assert _calls(env) == []
+  assert not (Path(env["FAKE_STATE"]) / "prompt.log").exists()
 
 
 def test_survey_reports_fix_state_and_per_day_share(env):
