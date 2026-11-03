@@ -115,6 +115,8 @@ def test_start_runs_every_shard_once_with_a_day_and_its_hosts(env):
   assert len(calls) == 6
   for call in calls:
     assert "--apply" in call
+    # Regression: system checks connected to an unreachable xalt MySQL host.
+    assert "--skip-checks" in call
     assert "--since 2026-10-2" in call and "--host c" in call
   hosts = [w for c in calls for w in c.split() if w.endswith(".example")]
   assert len(hosts) == len(set(hosts)) == 10

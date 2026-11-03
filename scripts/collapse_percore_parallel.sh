@@ -56,8 +56,10 @@ job() {
   done < "$file"
   log="$(dirname "$file")/logs/$(basename "$file").log"
   echo "start $(date -u +%FT%TZ) day=$day hosts=${#args[@]}" > "$log"
+  # --skip-checks: Django's model field checks connect to every configured
+  # database (e.g. an unreachable xalt MySQL host) and abort the command.
   podman exec "$PIPE" python3 "$MANAGE" collapse_percore_host_data \
-    --since "$day" --until "$day" "${args[@]}" --apply >> "$log" 2>&1
+    --skip-checks --since "$day" --until "$day" "${args[@]}" --apply >> "$log" 2>&1
   rc=$?
   echo "rc=$rc end $(date -u +%FT%TZ)" >> "$log"
   return 0
