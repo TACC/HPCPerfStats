@@ -8,6 +8,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 
 | Artifact | Role |
 |----------|------|
+| `test_assert_live.c` | Built with `-DNDEBUG`; fails if `assert()` is compiled out (see `test_assert_live.h`) |
 | `test_dict.c` | `dict_*` hash table (init/set/ref/remv/for_each; null/zero/corrupt-table guards) |
 | `test_host_key_alias.c` | `host_key_alias_lookup` / `host_key_alias_emit` |
 | `test_proc_status_order.c` | `host_proc` deferred Uid/Vm*/Threads flush; Name: deny list |
@@ -198,6 +199,7 @@ Follow **monitor-c-testing-standards** (`.cursor/rules/monitor-c-testing-standar
 - **Cover contracts** — return values, NUL termination, emitted keys/strings; at least one NULL/bounds and one error path per exported function.
 - **Stub `stats_set`** — use `test_stats_stub.c` / `test_stats_stub_bind()` when linking units that emit stats without full `stats.c`.
 - **Register** every driver in `Makefile.am` and this layout table.
+- **`assert()` stays live in release builds** — `AM_CPPFLAGS` force-includes `test_assert_live.h` (`#undef NDEBUG`), so drivers may put required calls inside `assert()` even when `HPC_BUNDLE_RELEASE_BUILD=1` adds `-DNDEBUG`. Keep `$(AM_CPPFLAGS)` in any per-target `*_CPPFLAGS`.
 
 ## Configure-sliced tests
 
