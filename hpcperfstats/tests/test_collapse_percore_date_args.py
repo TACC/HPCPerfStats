@@ -76,6 +76,17 @@ def test_discovery_sql_uses_the_percore_predicate_over_the_whole_table():
   assert "time >=" not in cmd_mod._DISCOVER_DAYS_SQL
 
 
+def test_delete_probe_is_bounded_to_the_window():
+  """Regression: the EXISTS probe had no time bound, so on hpcperfstats01 each
+  deleted row probed every chunk (most compressed) and a window never ended.
+  """
+  sql = cmd_mod._DELETE_SQL
+  probe = sql[sql.index("EXISTS") :]
+  assert "w.time >= %s AND w.time < %s" in probe
+  # Placeholders: hosts, start, end, GPU types, then the probe's start, end.
+  assert sql.replace("%%", "").count("%s") == 6
+
+
 def test_discover_days_binds_the_gpu_types():
   cursor = mock.MagicMock()
   cursor.fetchall.return_value = []
