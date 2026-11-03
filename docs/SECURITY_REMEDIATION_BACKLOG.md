@@ -14,6 +14,7 @@ Prioritized follow-ups from [SECURITY_AUDIT.md](SECURITY_AUDIT.md). Update this 
 
 - **shadcn CLI transitive `braces` (npm audit):** 7 high in dev-only `shadcn` / `@shadcn/registry` tree (GHSA-vfj7-8cjw-p6xm); not shipped in production static export. 2026-10-15 audit still reports this chain after the pin refresh. Track upstream. Do not `npm audit fix --force`.
 - **`sprintf-js` via `@bokeh/bokehjs@3.10.1` (npm audit residual):** Dependabot [#120](https://github.com/TACC/HPCPerfStats/security/dependabot/120) (GHSA-hp3w-g68c-fv3c / CVE-2026-97058) dismissed **inaccurate** on 2026-10-20 — NVD marks CVE-2026-97058 **Rejected** by its CNA; no patched `sprintf-js` exists (latest 1.1.3); npm’s suggested “fix” downgrades Bokeh to 3.3.4 and would break the 3.10.1 Python/JS lockstep. `npm audit` may still report the GHSA until GitHub withdraws it. Do not override or force-downgrade Bokeh.
+- **`deepmerge@4.3.1` (dev-only, no upstream fix):** Dependabot [#121](https://github.com/TACC/HPCPerfStats/security/dependabot/121) (GHSA-gcqx-w48m-w2h4 / CVE-2026-93753, low) — transitive of `shadcn` / `@shadcn/registry` and `@bokeh/bokehjs` → `choices.js`; lock `"dev": true`; vendored `bokeh.min.js` does not inline it (only `bokeh-widgets*` does). Upstream TehShrike/deepmerge#273 closed without a release, so there is nothing to override to. Guard: `test_deepmerge_stays_dev_only_for_dependabot_121`. Revisit if deepmerge reaches runtime deps or widgets get vendored.
 - **Audit workflow:** `.github/workflows/security-audit.yaml` installs rootless Podman, stores images under `/data/podman/$USER`, and calls `tests/run_security_audit_workflow.sh`. That runner builds `web` unless `--skip-build` is set, then runs `pip-audit` in the image and `npm audit` on the host frontend tree.
 
 ## Done
@@ -48,6 +49,7 @@ Prioritized follow-ups from [SECURITY_AUDIT.md](SECURITY_AUDIT.md). Update this 
 
 | Date       | Change |
 |------------|--------|
+| 2026-11-02 | Dependabot #121 (`deepmerge` / CVE-2026-93753, low, no patched release): dev-only tolerable risk; P2 note + regression guard `test_deepmerge_stays_dev_only_for_dependabot_121`. Log: [`test_runs/dependabot_121_deepmerge_2026-11-02.md`](../test_runs/dependabot_121_deepmerge_2026-11-02.md). |
 | 2026-10-20 | Dependabot #120 (`sprintf-js` / rejected CVE-2026-97058) dismissed inaccurate; open Dependabot alerts **0**; P2 note kept for npm-audit residual until GHSA withdraws. |
 | 2026-10-05 | Dependabot #117 + Next 16.3.8 + CodeQL #28 monitor TOCTOU; P2 note for shadcn/braces dev-tree audit residual. |
 | 2026-09-02 | Dependabot #110–#116: `fast-uri` / `qs` / `@xmldom/xmldom` override floors; SECURITY_AUDIT npm snapshot updated; local `npm audit` clean (GitHub alert dismiss awaits push/rescan). |

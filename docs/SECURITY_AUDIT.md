@@ -1,6 +1,6 @@
 # Security audit memo (HPCPerfStats)
 
-Internal reference for security posture review. **Last reviewed:** 2026-10-20 (Dependabot #120 `sprintf-js` / CVE-2026-97058 dismissed **inaccurate** — CVE Rejected at NVD; open Dependabot alert count **0**. Prior 2026-10-15: Dependabot #119 lock `@modelcontextprotocol/sdk@1.32.1`; CodeQL #42–#44 local fixes; security-audit workflow uses rootless Podman; same-line pin refresh including Bokeh 3.10.1. Prior 2026-10-05: Dependabot #117 `dompurify@^3.4.16`; `next@^16.3.6` lock **16.3.8**).
+Internal reference for security posture review. **Last reviewed:** 2026-11-02 (Dependabot [#121](https://github.com/TACC/HPCPerfStats/security/dependabot/121) `deepmerge@4.3.1` / CVE-2026-93753, low: no patched release upstream; dev-only via `shadcn` and `@bokeh/bokehjs` → `choices.js`, not in the shipped `bokeh.min.js` or static export; tolerable risk, guarded by `test_deepmerge_stays_dev_only_for_dependabot_121`. Prior 2026-10-20: Dependabot #120 `sprintf-js` / CVE-2026-97058 dismissed **inaccurate** — CVE Rejected at NVD; open Dependabot alert count **0**. Prior 2026-10-15: Dependabot #119 lock `@modelcontextprotocol/sdk@1.32.1`; CodeQL #42–#44 local fixes; security-audit workflow uses rootless Podman; same-line pin refresh including Bokeh 3.10.1. Prior 2026-10-05: Dependabot #117 `dompurify@^3.4.16`; `next@^16.3.6` lock **16.3.8**).
 
 ## Executive summary
 

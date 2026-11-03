@@ -232,6 +232,38 @@ def test_mcp_sdk_lock_meets_dependabot_119_floor():
     )
 
 
+def test_deepmerge_stays_dev_only_for_dependabot_121():
+  """Dependabot #121 / GHSA-gcqx-w48m-w2h4: deepmerge has no patched release.
+
+  Dismissed as tolerable risk only while every lock copy is dev-only (shadcn CLI,
+  bokehjs -> choices.js) and the vendored Bokeh bundle is ``bokeh.min.js``, not
+  ``bokeh-widgets*.js`` (which inlines choices.js + deepmerge).
+  """
+  import json
+
+  frontend = _repo_root() / "hpcperfstats/site/frontend"
+  lock = json.loads(
+    (frontend / "package-lock.json").read_text(encoding="utf-8")
+  )
+  entries = {
+    name: pkg
+    for name, pkg in (lock.get("packages") or {}).items()
+    if name.endswith("node_modules/deepmerge")
+  }
+  assert entries, (
+    "package-lock.json missing deepmerge; re-check Dependabot #121"
+  )
+  runtime = sorted(name for name, pkg in entries.items() if not pkg.get("dev"))
+  assert not runtime, (
+    f"deepmerge reached runtime deps {runtime}; revisit Dependabot #121 dismissal"
+  )
+  vendor = (frontend / "scripts/sync-bokeh-vendor.mjs").read_text(
+    encoding="utf-8"
+  )
+  assert '"build/js/bokeh.min.js"' in vendor
+  assert "bokeh-widgets" not in vendor
+
+
 def test_build_prod_runs_write_site_identity_hook():
   """build:prod must generate gitignored site-identity.ts (Docker uses build:prod, not build)."""
   import json
