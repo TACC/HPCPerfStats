@@ -44,6 +44,7 @@ case "$1" in
     dis="$(sed -n 's/^Environment=HPCPERFSTATS_DISABLE_TYPES=//p' "$FAKE_DROPIN" 2>/dev/null)"
     en="$(echo "${FAKE_TYPES}" | tr ',' '\n' | grep -vxF -f <(echo "$dis" | tr ',' '\n' | sed '/^$/d') | paste -sd, -)"
     test -n "$dis" || en="${FAKE_TYPES}"
+    test -n "$dis" && test -n "${FAKE_STICKY:-}" && en="$(printf '%s,%s' "$en" "$FAKE_STICKY" | sed 's/^,//')"
     setsid "$S/hpcperfstatsd" 100000 >/dev/null 2>&1 < /dev/null &
     echo $! > "$S/pid"
     printf '%s c1 hpcperfstatsd[%s]: Enabled types: %s\n' "$(date +%s.%N)" "$!" "${en:-(none)}" >> "$S/journal"
@@ -187,6 +188,22 @@ def test_preflight_root_shell_allocation_user(fake_host, tmp_path, monkeypatch):
     assert slurm and "resv_owner" in slurm[0] and "--allocation-user" in slurm[0]
     run, slurm = preflight("--allocation-user", "resv_owner")
     assert run.state["allocation_user"] == "resv_owner" and slurm == []
+
+
+def test_execute_aborts_when_daemon_keeps_disabled_types(fake_host, monkeypatch):
+    """Regression: the daemon kept host_mem on in NONE/SOLO (stats_type_get missed it) and the
+    run carried on for 8 h with every leg `ok`. Now the first such leg aborts and restores."""
+    monkeypatch.setenv("FAKE_STICKY", "host_mem")
+    args = orchestrator.build_parser().parse_args([
+        "--rpm", str(fake_host["rpm"]), "--out", str(fake_host["run"]), "--leg-seconds", "2",
+        "--settle-seconds", "1", "--fwq-seconds", "1", "--blocks", "1", "--seed", "5",
+        "--fwq-quantum-us", "200", "--force", "--rmq-mgmt-port", "1", "--fwq-cpus", "0"])
+    with pytest.raises(orchestrator.PreflightError, match=r"kept types it was told to disable: host_mem"):
+        orchestrator.Run(args).execute()
+    summary = json.loads((fake_host["run"] / "raw" / "legs" / "b1-NONE-" / "summary.json").read_text())
+    assert summary["status"] == "type_mismatch" and summary["extra_types"] == ["host_mem"]
+    assert fake_host["site"].read_text() == SITE
+    assert not Path(fake_host["paths"]["DROPIN_PATH"]).exists()
 
 
 def test_execute_refuses_packaged_conf_without_conf_flag(fake_host):

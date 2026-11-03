@@ -1,7 +1,9 @@
 """Per-process /proc sampling for hpcperfstatsd (stdlib only; runs on any node python3).
 
-CPU time comes from ``/proc/<pid>/schedstat`` (nanoseconds, the only resolution fine enough
-for small per-driver deltas); the user/system split comes from ``stat`` jiffies. When the
+CPU time comes from schedstat (nanoseconds, the only resolution fine enough for small
+per-driver deltas), summed over ``/proc/<pid>/task/*/schedstat``: ``/proc/<pid>/schedstat``
+alone is the main thread only (``process_run_ns_delta``). The user/system split comes from
+``stat`` jiffies, which already cover every thread. When the
 kernel has no schedstat, CPU falls back to jiffies and the delta says ``cpu_resolution:
 jiffies``. Memory and I/O reuse the ``procfs`` parsers.
 """
@@ -123,12 +125,40 @@ def sample_process(pid: int, proc_root: Path | str = "/proc") -> dict[str, Any] 
     }
 
 
+def process_run_ns_delta(s0: dict[str, Any], s1: dict[str, Any]) -> int | None:
+    """On-CPU nanoseconds of the whole process between two snapshots of the same PID.
+
+    Sums per-thread schedstat deltas; a thread born in between counts from zero and one that
+    exited loses only its last interval. Without per-thread data in both snapshots this is
+    the main thread's own schedstat (right for single-threaded processes only).
+
+    Args:
+        s0: Earlier ``sample_process`` snapshot.
+        s1: Later snapshot of the same PID.
+
+    Returns:
+        Nanoseconds, or None when neither source is available.
+    """
+    t0s, t1s = s0.get("threads") or {}, s1.get("threads") or {}
+    total, seen = 0, False
+    for tid, t1 in t1s.items() if t0s else ():
+        before = t0s.get(tid, {"run_ns": 0})["run_ns"]  # born since s0: counts from zero
+        if t1.get("run_ns") is not None and before is not None:
+            total, seen = total + max(0, t1["run_ns"] - before), True
+    if seen:
+        return total
+    if s0.get("run_ns") is None or s1.get("run_ns") is None:
+        return None
+    return s1["run_ns"] - s0["run_ns"]
+
+
 def cpu_delta(s0: dict[str, Any], s1: dict[str, Any]) -> dict[str, Any]:
     """CPU seconds between two snapshots of the same PID."""
     user_s = (s1["utime"] - s0["utime"]) / CLK_TCK
     system_s = (s1["stime"] - s0["stime"]) / CLK_TCK
-    if s0.get("run_ns") is not None and s1.get("run_ns") is not None:
-        cpu_s = (s1["run_ns"] - s0["run_ns"]) / 1e9
+    run_ns = process_run_ns_delta(s0, s1)
+    if run_ns is not None:
+        cpu_s = run_ns / 1e9
         resolution = "schedstat_ns"
     else:
         cpu_s = user_s + system_s

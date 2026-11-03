@@ -768,6 +768,9 @@ class Run:
                 self.run_leg(leg, self.plan)
                 self.summarize()
                 summary = json.loads((self.raw / "legs" / leg["leg_id"] / "summary.json").read_text())
+                if summary.get("extra_types"):
+                    raise PreflightError(f"leg {leg['leg_id']}: the daemon kept types it was told to "
+                                         f"disable: {','.join(summary['extra_types'])}; aborting")
                 if summary.get("contaminated"):
                     self.flags.setdefault("contaminated_legs", []).append(leg["leg_id"])
                     if not a.force:

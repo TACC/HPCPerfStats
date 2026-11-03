@@ -77,27 +77,16 @@ void stats_type_destroy(struct stats_type *type)
   dict_destroy(&type->st_current_dict, &key_stats_destroy);
 }
 
+/* Linear scan: stats_registry.c is ordered by legacy variable names, not st_name, so a
+ * binary search missed renamed types (lustre_*, host_mem, nvidia_gpu, host_opa, host_proc). */
 struct stats_type *stats_type_get(const char *name)
 {
-  size_t begin = 0;
-  size_t end = stats_type_nr;
+  size_t i = 0;
+  struct stats_type *type;
 
-  if (name == NULL)
-    return NULL;
-
-  while (begin < end) {
-    size_t mid = begin + (end - begin) / 2;
-    struct stats_type *type = stats_type_table[mid];
-    int cmp = strcmp(name, type->st_name);
-
-    if (cmp < 0)
-      end = mid;
-    else if (cmp > 0)
-      begin = mid + 1;
-    else
+  while (name != NULL && (type = stats_type_for_each(&i)) != NULL)
+    if (strcmp(name, type->st_name) == 0)
       return type;
-  }
-
   return NULL;
 }
 

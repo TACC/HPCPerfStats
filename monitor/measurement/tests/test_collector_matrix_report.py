@@ -89,6 +89,19 @@ def test_solo_leg_mismatch_partial_group():
     assert "init failed in isolation" in rows["likwid"]["reason"]
 
 
+def test_type_mismatch_legs_name_their_status_not_init_failure():
+    """Regression (Horizon c122-018): NONE/SOLO legs the daemon could not trim reported
+    "init failed in isolation" and "the zero-collector daemon failed"; neither was true."""
+    legs = _legs()
+    for leg in legs:
+        if leg["kind"] in ("NONE", "SOLO"):
+            leg["status"] = "type_mismatch"
+    m = collector_matrix.build_matrix(legs, GROUPS, ACTIVE)
+    assert "type_mismatch" in m["framework"]["reason"]
+    for row in m["rows"]:
+        assert row["status"] == "NOT_MEASURED" and "type_mismatch" in row["reason"], row
+
+
 def test_burst_cost_model():
     # 1 Hz CPU-seconds series: idle 0.001 s/s, fast sample every 30 s (+0.02 s),
     # full sample every 600 s (+0.2 s), send every 300 s offset 7 s (+0.05 s).

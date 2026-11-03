@@ -121,7 +121,9 @@ def build_matrix(legs: list[dict[str, Any]], groups: dict[str, list[str]],
             if not ran:
                 row["reason"] = "run interrupted" if interrupted else "no SOLO leg ran"
             else:
-                row["reason"] = "init failed in isolation"
+                bad = sorted({str(b["SOLO"][group].get("status")) for b in blocks.values()
+                              if b["SOLO"].get(group) and not _ok(b["SOLO"][group])})
+                row["reason"] = f"SOLO leg status {', '.join(bad)}" if bad else "init failed in isolation"
             rows.append(row)
             continue
         row["types_measured"] = sorted(measured)
@@ -166,8 +168,10 @@ def build_matrix(legs: list[dict[str, Any]], groups: dict[str, list[str]],
 
     framework: dict[str, Any]
     if none_cpu is None:
+        bad = sorted({str(b["NONE"].get("status")) for b in blocks.values() if b.get("NONE")})
         framework = {"status": "NOT_MEASURED",
-                     "reason": "NONE leg did not run or the zero-collector daemon failed"}
+                     "reason": f"NONE leg status {', '.join(bad)}" if bad
+                     else "NONE leg did not run or the zero-collector daemon failed"}
     else:
         framework = {"status": "ok", "cpu_core_s_per_h": none_cpu}
     return {

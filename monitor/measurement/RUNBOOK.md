@@ -75,7 +75,12 @@ sudo ./measurement/bin/run_overhead_profile.sh --rpm rpmbuild/RPMS/x86_64/hpcper
    whose only change is `queue <queue>_measure` (CADENCE legs also change `sample_freq`).
    A copy is required because the daemon reads the conf after the CLI, so `-q` cannot
    override the conf queue. listend never consumes `_measure`, so no partial data reaches
-   the database. Each leg's own `Enabled types:` line is checked against the intended set.
+   the database. Each leg's own `Enabled types:` line is checked against the intended set:
+   a type the daemon kept although the drop-in disabled it marks the leg `type_mismatch`
+   (`extra_types`) and aborts the run, because NONE/SOLO would measure the wrong set.
+   Daemon CPU is the sum of every thread's schedstat (`/proc/<pid>/schedstat` alone is the
+   main thread); reports from older harness versions rebuild correctly with
+   `bin/summarize_profile.py`, since `raw/` keeps the per-thread values.
 6. **Restore** (every exit path, including SIGINT/SIGTERM/SIGHUP): remove the drop-in,
    delete `<queue>_measure` through the management API (port 15672, conf credentials; if
    that fails it prints `rabbitmqctl delete_queue -p / <queue>_measure` and records

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from . import fwq, perfstat, rapl, stats
-from .procsample import CLK_TCK
+from .procsample import CLK_TCK, process_run_ns_delta
 
 CONTAMINATION_MIN_CORES = 0.25
 _BUSY = ("user", "nice", "system", "irq", "softirq", "steal")
@@ -58,8 +58,9 @@ def _proc_cpu_series(samples: list[dict[str, Any]]) -> tuple[list[tuple[float, f
         if pa["pid"] != pb["pid"] or pa.get("starttime") != pb.get("starttime"):
             pid_changes += 1
             continue
-        if pa.get("run_ns") is not None and pb.get("run_ns") is not None:
-            cpu = (pb["run_ns"] - pa["run_ns"]) / 1e9
+        run_ns = process_run_ns_delta(pa, pb)
+        if run_ns is not None:
+            cpu = run_ns / 1e9
         else:
             resolution = "jiffies"
             cpu = ((pb["utime"] + pb["stime"]) - (pa["utime"] + pa["stime"])) / CLK_TCK
@@ -339,8 +340,13 @@ def summarize_leg(leg_dir: Path) -> dict[str, Any]:
     proc = _process_summary(meta, settle, quiet, load) if meta["kind"] != "OFF" else None
     node = _node_summary(quiet, proc)
     status = meta.get("status", "ok")
+    # Types the daemon kept although the drop-in disabled them (e.g. a failed name lookup):
+    # NONE/SOLO then measure a different collector set than their label.
+    extra = sorted(set(meta.get("verified_types") or []) - set(meta.get("intended_types") or []))
     if meta["kind"] != "OFF" and proc is None and status == "ok":
         status = "no_process_samples"
+    if extra and status == "ok":
+        status = "type_mismatch"
     contaminated = False
     if node and node.get("non_daemon_busy_cores") is not None:
         limit = max(CONTAMINATION_MIN_CORES, 0.01 * (node_online(quiet) or 1))
@@ -360,6 +366,7 @@ def summarize_leg(leg_dir: Path) -> dict[str, Any]:
         "intended_types": meta.get("intended_types", []),
         "verified_types": meta.get("verified_types", []),
         "missing_types": meta.get("missing_types", []),
+        "extra_types": extra,
         "process": proc, "node": node, "fwq": fwq_summary, "perf": perf,
         "n_samples": len(samples), "n_quiet": len(quiet),
     }
