@@ -21,14 +21,22 @@ class Migration(migrations.Migration):
   operations = [
     migrations.SeparateDatabaseAndState(
       database_operations=[
+        # CONCURRENTLY waits out every open transaction, which can exceed the
+        # 120s session statement_timeout; a cancel leaves an INVALID index
+        # that IF NOT EXISTS would then keep, so drop any leftover first.
         migrations.RunSQL(
-          sql="""
-          CREATE INDEX CONCURRENTLY IF NOT EXISTS job_affinity_host_reported_idx
-          ON job_affinity (host, reported_at);
-          """,
-          reverse_sql="""
-          DROP INDEX CONCURRENTLY IF EXISTS job_affinity_host_reported_idx;
-          """,
+          sql=[
+            "SET statement_timeout = 0",
+            "DROP INDEX CONCURRENTLY IF EXISTS job_affinity_host_reported_idx",
+            "CREATE INDEX CONCURRENTLY job_affinity_host_reported_idx"
+            " ON job_affinity (host, reported_at)",
+            "RESET statement_timeout",
+          ],
+          reverse_sql=[
+            "SET statement_timeout = 0",
+            "DROP INDEX CONCURRENTLY IF EXISTS job_affinity_host_reported_idx",
+            "RESET statement_timeout",
+          ],
         ),
       ],
       state_operations=[

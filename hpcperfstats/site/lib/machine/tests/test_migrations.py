@@ -577,3 +577,24 @@ def test_0043_adds_provenance_columns_cursor_table_and_concurrent_index():
     in sql
   )
   assert "(metrics_version, end_time)" in sql
+
+
+def test_0044_concurrent_index_lifts_timeout_and_drops_invalid_leftover():
+  """0044: CREATE INDEX CONCURRENTLY waits for every open transaction, so it
+  must run with session statement_timeout = 0 (prod hit the 120s default and
+  was cancelled). A cancelled build leaves an INVALID index that IF NOT EXISTS
+  would keep, so the leftover is dropped before an unconditional create."""
+  mod = _migration_module("0044_job_affinity_host_reported_idx")
+  assert mod.Migration.atomic is False
+  (sep,) = mod.Migration.operations
+  run_sql = sep.database_operations[0]
+  # A list runs one statement per execute, outside any transaction block.
+  assert run_sql.sql == [
+    "SET statement_timeout = 0",
+    "DROP INDEX CONCURRENTLY IF EXISTS job_affinity_host_reported_idx",
+    "CREATE INDEX CONCURRENTLY job_affinity_host_reported_idx"
+    " ON job_affinity (host, reported_at)",
+    "RESET statement_timeout",
+  ]
+  assert run_sql.reverse_sql[0] == "SET statement_timeout = 0"
+  assert "DROP INDEX CONCURRENTLY IF EXISTS" in run_sql.reverse_sql[1]
