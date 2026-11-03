@@ -210,6 +210,61 @@ def test_find_stats_fail_closed_missing_gnu_stat(tmp_path):
   assert "stat" in str(excinfo.value).lower()
 
 
+def test_stat_probe_spawn_failure_names_cause_and_is_not_cached(
+  tmp_path, monkeypatch
+):
+  # hpcperfstats04 2026-11-02: a failed probe spawn under load logged
+  # "GNU stat --printf is required ... (rejected /usr/bin/stat)" for a
+  # real GNU stat. The real cause must surface, and a later walk must
+  # probe again.
+  stat_bin = tmp_path / "stat"
+  stat_bin.write_text("#!/bin/sh\nprintf '%s' \"$2\"\n")
+  stat_bin.chmod(0o755)
+  real_run = sf.subprocess.run
+  sf._gnu_stat_supports_printf.cache_clear()
+
+  def eagain(*_args, **_kwargs):
+    raise BlockingIOError(11, "Resource temporarily unavailable")
+
+  monkeypatch.setattr(sf.subprocess, "run", eagain)
+  with pytest.raises(sf.FindStatsDiscoveryError) as excinfo:
+    sf._resolve_stat_bin(str(stat_bin))
+  assert "rejected" not in str(excinfo.value)
+  assert "Resource temporarily unavailable" in str(excinfo.value)
+
+  calls = []
+
+  def counting_run(*args, **kwargs):
+    calls.append(args)
+    return real_run(*args, **kwargs)
+
+  monkeypatch.setattr(sf.subprocess, "run", counting_run)
+  assert sf._resolve_stat_bin(str(stat_bin)) == str(stat_bin)
+  assert sf._resolve_stat_bin(str(stat_bin)) == str(stat_bin)
+  assert len(calls) == 1
+  sf._gnu_stat_supports_printf.cache_clear()
+
+
+def test_stat_probe_has_no_wall_timeout(tmp_path, monkeypatch):
+  # hpcperfstats04 2026-11-02: under cgroup memory.high reclaim a real GNU
+  # stat took >5 s to start, so a 5 s probe timeout failed every discover.
+  stat_bin = tmp_path / "stat"
+  stat_bin.write_text("#!/bin/sh\nprintf '%s' \"$2\"\n")
+  stat_bin.chmod(0o755)
+  real_run = sf.subprocess.run
+  seen_kwargs = []
+
+  def recording_run(*args, **kwargs):
+    seen_kwargs.append(kwargs)
+    return real_run(*args, **kwargs)
+
+  sf._gnu_stat_supports_printf.cache_clear()
+  monkeypatch.setattr(sf.subprocess, "run", recording_run)
+  assert sf._resolve_stat_bin(str(stat_bin)) == str(stat_bin)
+  assert seen_kwargs and "timeout" not in seen_kwargs[0]
+  sf._gnu_stat_supports_printf.cache_clear()
+
+
 def test_find_stats_fail_closed_missing_walker(tmp_path):
   fake = tmp_path / "not-fd"
   fake.write_text("#!/bin/sh\necho 'not a walker' >&2\nexit 1\n")

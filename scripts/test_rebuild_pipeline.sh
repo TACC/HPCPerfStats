@@ -123,8 +123,14 @@ if ! grep -q 'compose_pipeline_memory_high.sh' "${PIPELINE_SCRIPT}"; then
   echo "rebuild_pipeline.sh must source compose_pipeline_memory_high.sh" >&2
   exit 1
 fi
-if ! grep -q 'apply_pipeline_memory_high' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must call apply_pipeline_memory_high" >&2
+# memory.high below memory.max throttled every new process in the pipeline cgroup
+# (hpcperfstats04 2026-11-02: stat probe timed out, podman exec hung).
+if grep -E '^[[:space:]]*apply_pipeline_memory_high([[:space:]]|\|)' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must keep apply_pipeline_memory_high commented out" >&2
+  exit 1
+fi
+if ! grep -q '^[[:space:]]*#[[:space:]]*apply_pipeline_memory_high' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must retain a commented apply_pipeline_memory_high call" >&2
   exit 1
 fi
 if ! grep -q 'State.CgroupPath' "${MEMORY_LIB}"; then
@@ -141,12 +147,6 @@ if ! grep -q '/sys/fs/cgroup' "${MEMORY_LIB}"; then
 fi
 if grep -qE 'exec -u 0.*> /sys/fs/cgroup/memory\.high' "${MEMORY_LIB}"; then
   echo "compose_pipeline_memory_high.sh must not write memory.high only inside container (ro cgroup)" >&2
-  exit 1
-fi
-apply_line="$(awk '/^main\(\)/ {m=1} m && /apply_pipeline_memory_high/ {print NR; exit}' "${PIPELINE_SCRIPT}")"
-start_line="$(awk '/^main\(\)/ {m=1} m && /start_web_proxy_pipeline/ {print NR; exit}' "${PIPELINE_SCRIPT}")"
-if [[ -z "${apply_line}" || -z "${start_line}" || "${apply_line}" -le "${start_line}" ]]; then
-  echo "rebuild_pipeline.sh must call apply_pipeline_memory_high after start_web_proxy_pipeline" >&2
   exit 1
 fi
 

@@ -25,6 +25,7 @@ Attributes:
 from __future__ import annotations
 
 import contextlib
+import functools
 import os
 import re
 import shutil
@@ -576,15 +577,24 @@ def _resolve_named_binary(candidate: str, *, kind: str) -> str:
   return resolved
 
 
+@functools.lru_cache(maxsize=8)
 def _gnu_stat_supports_printf(stat_bin: str) -> bool:
   """
-  Return True when ``stat_bin`` accepts GNU ``--printf``.
+  Return True when ``stat_bin`` accepts GNU ``--printf`` (cached per path).
+
+  Only a probe that ran is an answer: a spawn failure raises (never cached)
+  instead of reading as "not GNU stat". No wall timeout: a slow start (cgroup
+  memory reclaim) waits like the fd walk it guards, which has none either.
 
   Args:
     stat_bin (str): Candidate ``stat`` / ``gstat`` path.
 
   Returns:
     bool: True when ``--printf=%n`` succeeds against ``stat_bin``.
+
+  Raises:
+    FindStatsDiscoveryError: When the probe could not be spawned
+      (``OSError``).
 
   Examples:
     >>> isinstance(_gnu_stat_supports_printf("/bin/sh"), bool)
@@ -595,10 +605,11 @@ def _gnu_stat_supports_printf(stat_bin: str) -> bool:
       [stat_bin, "--printf=%n", stat_bin],
       capture_output=True,
       check=False,
-      timeout=5,
     )
-  except OSError, subprocess.TimeoutExpired:
-    return False
+  except OSError as exc:
+    raise FindStatsDiscoveryError(
+      f"GNU stat probe could not run {stat_bin}: {exc!r}"
+    ) from exc
   return proc.returncode == 0 and bool(proc.stdout)
 
 

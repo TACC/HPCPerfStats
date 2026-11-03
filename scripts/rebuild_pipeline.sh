@@ -51,7 +51,7 @@ stays up, then cut over: down proxy / web / pipeline and
   docker compose up -d web proxy pipeline
 
 Leaves db / db_pg18 / redis / rabbitmq running. Does not rebuild the proxy image.
-After start, sets pipeline cgroup memory.high to two-thirds of memory.max.
+Leaves pipeline cgroup memory.high at the default (max).
 
 IMPORTANT: This does NOT ship SPA/OpenAPI/Orval fixes. After frontend changes run:
   ./scripts/rebuild_frontend.sh
@@ -315,7 +315,9 @@ main() {
         "${CONTAINER_STATIC_ROOT_FRONTEND}" \
         "STATIC_ROOT/frontend (post-rebuild)" || true
     fi
-    apply_pipeline_memory_high || exit 1
+    # memory.high left at the cgroup default (max), as in rebuild_full_site.sh:
+    # below memory.max it throttles every new process (hpcperfstats04 2026-11-02).
+    # apply_pipeline_memory_high || exit 1
   fi
 
   echo "Rebuild complete (built while up → cut over to new image). Status:"
