@@ -258,6 +258,42 @@ def test_count_host_data_rows_for_window_cached_handles_non_numeric_count(
   assert n == 0
 
 
+def test_rows_per_sample_estimate_bounds_outer_lookup_by_constants(
+  monkeypatch,
+):
+  """hs04 2026-11-02: a probe whose only ``d.time`` filter is
+  ``= (SELECT ...)`` is planned over, and locks, every daily chunk, so any
+  chunk lock (compression) blocks it until statement timeout. The outer
+  lookup repeats the constant window for plan-time chunk exclusion."""
+  from django.db import connection
+
+  import hpcperfstats.analysis.metrics.lib.metrics_host_data_sql as sql_mod
+
+  seen = []
+
+  class _Cur:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *_a):
+      return False
+
+    def execute(self, sql, params):
+      seen.append((sql, params))
+
+    def fetchone(self):
+      return (7,)
+
+  monkeypatch.setattr(connection, "cursor", lambda: _Cur())
+  st = datetime(2026, 10, 27, 15, tzinfo=UTC)
+  et = datetime(2026, 10, 27, 20, tzinfo=UTC)
+  assert sql_mod.rows_per_sample_estimate(["a.x"], st, et) == 7
+  sql, params = seen[0]
+  assert "d.host = h.host AND d.time >= %s AND d.time <= %s AND" in sql
+  mid = datetime(2026, 10, 27, 17, 30, tzinfo=UTC)
+  assert params == [mid, et, mid, et, ["a.x"]]
+
+
 def test_count_host_data_rows_for_window_rejects_non_datetime_bounds(
   monkeypatch,
 ):
@@ -920,7 +956,15 @@ def test_first_last_scoped_times_bisects_instead_of_walking_untagged_tail(
       seen.append(sql)
       assert "d.time = s.t AND (COALESCE(d.jid, '')" in sql
       assert not re.search(r"d\.time [<>]=? %s AND \(COALESCE", sql)
-      _h, _j1, _j2, _h2, a, b = params
+      _h, a0, b0, _j1, _j2, _h2, a, b = params
+      # hs04 2026-11-02: ``d`` carries the probe's constant interval so
+      # TimescaleDB excludes chunks at plan time.
+      assert (a0, b0) == (a, b)
+      assert re.search(
+        r"WHERE d\.host = %s AND d\.time >?=? %s AND d\.time "
+        r"<=? %s AND d\.time = s\.t",
+        sql,
+      )
       if "ORDER BY d2.time ASC" in sql:
         hit = [s for s in samples if a <= s < b][:1]
       else:
@@ -979,7 +1023,10 @@ def test_hosts_owning_mid_sample_checks_one_sample_not_the_window(monkeypatch):
   # host_data; the check must stay a SELECT-list subquery per host.
   assert "EXISTS" not in sql
   assert sql.startswith("SELECT h.host, (SELECT 1 FROM host_data d")
+  assert "d.host = h.host AND d.time >= %s AND d.time <= %s AND" in sql
   assert params == [
+    datetime(2026, 10, 27, 17, 30, tzinfo=UTC),
+    et,
     datetime(2026, 10, 27, 17, 30, tzinfo=UTC),
     et,
     "71526",

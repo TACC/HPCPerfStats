@@ -152,12 +152,15 @@ def first_last_scoped_times(
   excl = set(exclusive_hosts or ())
   scope, scope_params = _scope_sql(jid, [h for h in hosts if h in excl])
   # Nearest sample in a half-open interval plus whether it has a job row;
-  # the scope only filters rows of that one sample (``d.time = s.t``).
+  # the scope only filters rows of that one sample (``d.time = s.t``). The
+  # constant interval is repeated on ``d`` so TimescaleDB excludes chunks at
+  # plan time: a runtime ``d.time = s.t`` alone plans and locks every chunk
+  # (hs04 2026-11-02: ~25 probes blocked together and timed out at once).
   step = (
-    "SELECT s.t, (SELECT 1 FROM host_data d WHERE d.host = %s"
-    " AND d.time = s.t AND " + scope + " LIMIT 1) FROM (SELECT d2.time AS t"
-    " FROM host_data d2 WHERE d2.host = %s AND d2.time {} %s"
-    " AND d2.time {} %s ORDER BY d2.time {} LIMIT 1) s"
+    "SELECT s.t, (SELECT 1 FROM host_data d WHERE d.host = %s AND d.time {0}"
+    " %s AND d.time {1} %s AND d.time = s.t AND " + scope + " LIMIT 1)"
+    " FROM (SELECT d2.time AS t FROM host_data d2 WHERE d2.host = %s"
+    " AND d2.time {0} %s AND d2.time {1} %s ORDER BY d2.time {2} LIMIT 1) s"
   )
   earliest_in = step.format(">=", "<", "ASC")  # [a, b)
   latest_in = step.format(">", "<=", "DESC")  # (a, b]
@@ -184,7 +187,7 @@ def first_last_scoped_times(
           >>> _sample(earliest_in, start, end)  # doctest: +SKIP
           (datetime.datetime(2026, 10, 27, 15, 14), True)
         """
-        cursor.execute(sql, [host, *scope_params, host, a, b])
+        cursor.execute(sql, [host, a, b, *scope_params, host, a, b])
         row = cursor.fetchone()
         return (None, False) if row is None else (row[0], row[1] is not None)
 
@@ -250,14 +253,17 @@ def hosts_owning_mid_sample(
   # flattened EXISTS into a hash semi-join over every job-scoped row of
   # host_data (all chunks, all hosts) and it timed out. A target-list
   # subquery stays a per-host SubPlan with the midpoint probe as InitPlan.
+  # ``d`` repeats the constant window for plan-time chunk exclusion (see
+  # ``first_last_scoped_times``).
   sql = (
     "SELECT h.host, (SELECT 1 FROM host_data d WHERE d.host = h.host"
+    " AND d.time >= %s AND d.time <= %s"
     " AND d.time = (SELECT d2.time FROM host_data d2 WHERE d2.host = h.host"
     " AND d2.time >= %s AND d2.time <= %s ORDER BY d2.time LIMIT 1)"
     f" AND {scope} LIMIT 1) FROM unnest(%s::text[]) AS h(host)"
   )
   with _profile_phase("db_fetch"), connection.cursor() as cursor:
-    cursor.execute(sql, [mid, end, *scope_params, list(hosts)])
+    cursor.execute(sql, [mid, end, mid, end, *scope_params, list(hosts)])
     return {row[0] for row in cursor.fetchall() if row[1] is not None}
 
 
@@ -339,12 +345,13 @@ def rows_per_sample_estimate(hosts: list[str], start: Any, end: Any) -> int:
   mid = start + (end - start) / 2
   sql = (
     "SELECT COALESCE(MAX((SELECT COUNT(*) FROM host_data d"
-    " WHERE d.host = h.host AND d.time = (SELECT d2.time FROM host_data d2"
+    " WHERE d.host = h.host AND d.time >= %s AND d.time <= %s"
+    " AND d.time = (SELECT d2.time FROM host_data d2"
     " WHERE d2.host = h.host AND d2.time >= %s AND d2.time <= %s"
     " ORDER BY d2.time LIMIT 1))), 0) FROM unnest(%s::text[]) AS h(host)"
   )
   with _profile_phase("db_fetch"), connection.cursor() as cursor:
-    cursor.execute(sql, [mid, end, list(hosts)])
+    cursor.execute(sql, [mid, end, mid, end, list(hosts)])
     row = cursor.fetchone()
   return int(row[0] or 0) if row else 0
 
