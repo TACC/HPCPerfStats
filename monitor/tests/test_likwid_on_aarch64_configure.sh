@@ -29,6 +29,20 @@ if grep -q 'MONITOR_CPU_PAPI_FLOPS' "${ac}"; then
   exit 1
 fi
 
+# Regression (c122-018 native bundle, 2026-11-03): DCGM builds compile likwid_uncore_adapter.c
+# under `if LIKWID` (the Grace overlay links LIKWID), and it calls cpu_counter_metrics_likwid_ready().
+# The DCGM stub lives in cpu_counter_metrics_likwid_begin.c, so the CPU_BACKEND_DCGM block must
+# compile it; only --gc-sections release links hid the undefined reference.
+am="${ROOT}/src/Makefile.am"
+awk '
+  /^if CPU_BACKEND_DCGM$/ { inblk = 1; depth = 0; next }
+  inblk && /^if / { depth++ }
+  inblk && /^endif/ { if (depth == 0) { inblk = 0 } else { depth-- } }
+  inblk && /cpu_counter_metrics_likwid_begin\.c/ { found = 1 }
+  END { exit found ? 0 : 1 }
+' "${am}" \
+  || { echo "src/Makefile.am CPU_BACKEND_DCGM must compile cpu_counter_metrics_likwid_begin.c (DCGM likwid_ready stub)" >&2; exit 1; }
+
 grep -q 'build_likwid' "${bundle}" \
   || { echo "build_static_bundle.sh must define build_likwid" >&2; exit 1; }
 if grep -q 'build_papi' "${bundle}"; then

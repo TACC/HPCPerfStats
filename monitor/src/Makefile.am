@@ -267,6 +267,13 @@ TYPES += \
 	cpu_counter_metrics_dcgm_state.h \
 	cpu_counter_metrics_dcgm_util.c \
 	cpu_counter_metrics_dcgm_util.h
+if LIKWID
+# likwid_uncore_adapter.c (built under `if LIKWID`) calls cpu_counter_metrics_likwid_ready();
+# its DCGM stub is the #else branch of this file.
+hpcperfstatsd_SOURCES += \
+	cpu_counter_metrics_likwid_begin.c \
+	cpu_counter_metrics_likwid_begin.h
+endif
 if CPU_LIKWID_OVERLAY
 TYPES += \
 	cpu_counter_metrics_likwid_overlay.c \
