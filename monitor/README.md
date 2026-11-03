@@ -145,7 +145,8 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 
 | Area | Files (under `src/`) |
 |------|----------------------|
-| Stats type registry (sorted `st_name` table for lookup / iteration) | `stats_registry.c`, `stats_registry.h` (optional modules guarded by configure **`MONITOR_WITH_*`** / backend macros — keep aligned with `Makefile.am` **`TYPES`**). |
+| Stats type registry (`st_name` table for lookup / iteration; ordered by legacy variable names, so `stats_type_get` scans linearly) | `stats_registry.c`, `stats_registry.h` (optional modules guarded by configure **`MONITOR_WITH_*`** / backend macros — keep aligned with `Makefile.am` **`TYPES`**). |
+| DCGM watch cadence: `dcgmWatchFields` refresh = collect interval (`sample_freq`, set on conf load/SIGHUP), history = 2 refreshes; batch client keeps each caller's fallback | `dcgm_watch_policy.c`, `dcgm_watch_policy.h` (used by `cpu_counter_metrics.c` and `nvidia_gpu_dcgm_watch.c`). `dcgm_session.c` starts the embedded engine with the NVSwitch module denied (`DcgmModuleIdNvSwitch`) and logs which start path ran. |
 | Prepare/teardown and sink-facing collect cycles | `stats_runtime.c`, `stats_runtime.h`, `stats_sink.h`. |
 | Shared UTF-8 text for archive/buffer rows, schema suffixes, `%` marks | `stats_text_format.c`, `stats_text_format.h`. |
 | Long **`configure`/daemon-style options** and argv parsing | `monitor_options.c`, `monitor_options.h`; thin entrypoints `monitor_cli.c`, `monitor_cli.h` (shared literals `monitor_cli_lit_*` with `monitor_daemon.c`). |

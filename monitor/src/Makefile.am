@@ -72,6 +72,8 @@ hpcperfstatsd_CPPFLAGS += \
 endif
 
 hpcperfstatsd_SOURCES = \
+	dcgm_watch_policy.c \
+	dcgm_watch_policy.h \
 	collect.h \
 	collect.c \
 	collect_tier.h \

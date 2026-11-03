@@ -45,7 +45,7 @@ Applies to `monitor/measurement/**` (harness, sampler, FWQ, report) and the
    versions, harness and schema versions. Every reported number must be recomputable from
    `raw/` (`bin/summarize_profile.py`).
 7. **A cadence sweep measures; it does not change defaults** (`monitor-jitter-and-fidelity-priority.mdc`).
-8. **Driver groups, not types.** A type in an `Enabled types:` line with no group in
+8. **Driver groups, not types** (`dcgm_cpu` and `dcgm_gpu` are separate groups). A type in an `Enabled types:` line with no group in
    `lib/driver_map.py` fails preflight; `test_driver_map_covers_all_st_names` fails when a new
    `.st_name` lands unmapped. Add the type to the map in the same change as the collector.
 9. **Restore on every exit path**: drop-in removed, measure queue deleted, site conf and

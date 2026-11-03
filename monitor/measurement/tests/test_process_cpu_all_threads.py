@@ -66,6 +66,45 @@ def test_leg_cpu_is_whole_process(tmp_path):
     assert abs(proc["user_s_per_h"] + proc["system_s_per_h"] - 252.0) < 1e-6
 
 
+def test_leg_thread_top_ranks_threads_by_cpu(tmp_path):
+    """c122-018 needed a hand-run per-tid paste to see that one DCGM thread burned 130
+    core-s/h; the leg summary carries that table now (tid, comm, core-s/h, hottest first)."""
+    _write_leg(tmp_path / "b1-ALL-first", intended=["host_mem"], verified=["host_mem"], kind="ALL")
+    proc = leg_summary.summarize_leg(tmp_path / "b1-ALL-first")["process"]
+    top = proc["thread_top"]
+    assert [t["tid"] for t in top] == ["8", "7"]
+    assert all(t["comm"] == "hpcperfstatsd" for t in top)
+    assert abs(top[0]["core_s_per_h"] - 216.0) < 1e-6 and abs(top[1]["core_s_per_h"] - 36.0) < 1e-6
+    assert abs(sum(proc["thread_split"].values()) - 1.0) < 1e-12  # by-comm view unchanged
+    # Without per-thread data there is no table, not an empty or invented one.
+    rows = [json.loads(line) for line in (tmp_path / "b1-ALL-first" / "samples.jsonl").read_text().splitlines()]
+    for row in rows:
+        row["proc"]["threads"] = {}
+    (tmp_path / "b1-ALL-first" / "samples.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    assert leg_summary.summarize_leg(tmp_path / "b1-ALL-first")["process"]["thread_top"] is None
+
+
+def test_leg_thread_top_is_bounded():
+    threads = {str(t): {"comm": f"w{t}", "run_ns": 0} for t in range(20)}
+    later = {str(t): {"comm": f"w{t}", "run_ns": (t + 1) * 1_000_000} for t in range(20)}
+    seg = [{"wall": 0.0, "proc": {"pid": 1, "threads": threads}},
+           {"wall": 10.0, "proc": {"pid": 1, "threads": later}}]
+    top = leg_summary.thread_top([seg])
+    assert len(top) == leg_summary.THREAD_TOP_N == 8
+    assert top[0]["tid"] == "19" and top[-1]["tid"] == "12"
+
+
+def test_report_renders_thread_top_table(tmp_path):
+    from lib import profile_report
+
+    profile = {"legs": [{"leg_id": "b1-ALL-first", "kind": "ALL", "status": "ok", "contaminated": False,
+                         "thread_top": [{"tid": "8", "comm": "hpcperfstatsd", "core_s_per_h": 216.0}]}]}
+    md = "\n".join(profile_report.thread_top_lines(profile))
+    assert "## Daemon threads (hottest, first usable ALL leg)" in md
+    assert "| 8 | hpcperfstatsd | 216 |" in md
+    assert "NOT_MEASURED" in "\n".join(profile_report.thread_top_lines({"legs": []}))
+
+
 def test_leg_with_types_the_daemon_kept_is_type_mismatch(tmp_path):
     _write_leg(tmp_path / "b1-NONE-", intended=[], verified=["host_mem", "nvidia_gpu"])
     summary = leg_summary.summarize_leg(tmp_path / "b1-NONE-")

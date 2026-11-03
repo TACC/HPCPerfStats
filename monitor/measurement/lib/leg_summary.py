@@ -99,6 +99,38 @@ def _rate(segs: list[list[dict[str, Any]]], getter, per: float) -> float | None:
     return total / secs * per if secs > 0 else None
 
 
+THREAD_TOP_N = 8
+
+
+def _per_tid_ns(segs: list[list[dict[str, Any]]]) -> dict[str, tuple[str, float]]:
+    """tid → (comm, on-CPU ns) between the first and last sample of each same-PID segment."""
+    out: dict[str, tuple[str, float]] = {}
+    for seg in segs:
+        first, last = seg[0]["proc"].get("threads") or {}, seg[-1]["proc"].get("threads") or {}
+        for tid, t1 in last.items():
+            t0 = first.get(tid)
+            if t0 and t0.get("run_ns") is not None and t1.get("run_ns") is not None:
+                key = str(tid)
+                out[key] = (t1["comm"], out.get(key, ("", 0.0))[1] + t1["run_ns"] - t0["run_ns"])
+    return out
+
+
+def thread_top(segs: list[list[dict[str, Any]]],
+               per_tid: dict[str, tuple[str, float]] | None = None) -> list[dict[str, Any]] | None:
+    """The THREAD_TOP_N hottest daemon threads as {tid, comm, core_s_per_h}, hottest first.
+
+    Worker threads of embedded libraries (DCGM, NVML) inherit the daemon's comm, so the tid is
+    what ties a row to a stack trace. None when the samples carry no per-thread data.
+    """
+    per_tid = _per_tid_ns(segs) if per_tid is None else per_tid
+    secs = sum(seg[-1]["wall"] - seg[0]["wall"] for seg in segs if len(seg) >= 2)
+    if not per_tid or secs <= 0:
+        return None
+    rows = sorted(per_tid.items(), key=lambda kv: -kv[1][1])[:THREAD_TOP_N]
+    return [{"tid": tid, "comm": comm, "core_s_per_h": ns / 1e9 / secs * 3600.0}
+            for tid, (comm, ns) in rows]
+
+
 def _median(xs: list[float]) -> float | None:
     return stats.percentile(xs, 50)
 
@@ -191,13 +223,10 @@ def _process_summary(meta: dict[str, Any], settle: list[dict[str, Any]],
     def io(key: str):
         return lambda s: (s["proc"].get("io") or {}).get(key)
 
+    per_tid = _per_tid_ns(segs)
     thread_cpu: dict[str, float] = {}
-    for seg in segs:
-        first, last = seg[0]["proc"].get("threads") or {}, seg[-1]["proc"].get("threads") or {}
-        for tid, t1 in last.items():
-            t0 = first.get(tid)
-            if t0 and t0.get("run_ns") is not None and t1.get("run_ns") is not None:
-                thread_cpu[t1["comm"]] = thread_cpu.get(t1["comm"], 0) + t1["run_ns"] - t0["run_ns"]
+    for comm, ns in per_tid.values():
+        thread_cpu[comm] = thread_cpu.get(comm, 0) + ns
     tot = sum(thread_cpu.values())
     vol = _rate(segs, lambda s: s["proc"].get("vol_ctxt"), 1.0)
     invol = _rate(segs, lambda s: s["proc"].get("invol_ctxt"), 1.0)
@@ -228,6 +257,7 @@ def _process_summary(meta: dict[str, Any], settle: list[dict[str, Any]],
         **{k: model[k] for k in ("ms_per_fast_sample", "ms_per_full_sample", "ms_per_send")},
         "burst_counts": {k: model[k] for k in ("n_fast", "n_full", "n_send")},
         "thread_split": {k: v / tot for k, v in sorted(thread_cpu.items())} if tot else None,
+        "thread_top": thread_top(segs, per_tid),
         "wakeups_per_s": (vol or 0) + (invol or 0) if vol is not None or invol is not None else None,
         "vol_ctxt_per_s": vol,
         "invol_ctxt_per_s": invol,

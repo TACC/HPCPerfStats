@@ -62,7 +62,8 @@ sudo ./measurement/bin/run_overhead_profile.sh --rpm rpmbuild/RPMS/x86_64/hpcper
    `--conf PATH`. The measured package stays installed afterwards (reserved node).
 3. **Discovery**: one 2-minute ALL start; the daemon's `Enabled types:` journal line is the
    active collector list. Each type maps to a **driver group** (`filesystem`, `likwid`,
-   `dcgm`, `perf_event`, `ib_mad`, …; `lib/driver_map.py`); an unmapped type fails.
+   `dcgm_cpu` (Grace `host_cpu_hw`), `dcgm_gpu` (`nvidia_gpu`), `perf_event`, `ib_mad`, …;
+   `lib/driver_map.py`); an unmapped type fails.
 4. **Blocks** (default 2): OFF → NONE → ALL → SOLO(each group, seeded random order) → ALL →
    OFF (shared with the next block). Legs are `--leg-seconds` (1800) after a 60 s settle;
    OFF/NONE/ALL add a `--fwq-seconds` (300) FWQ phase on every CPU but the sampler's. The
@@ -92,7 +93,7 @@ sudo ./measurement/bin/run_overhead_profile.sh --rpm rpmbuild/RPMS/x86_64/hpcper
 | File | Content |
 |---|---|
 | `profile.json` | schema v1; every metric `{value, unit, ci95, n, source}` or `{status: NOT_MEASURED, reason}` |
-| `report.md` | headline table, per-driver table (SOLO − NONE paired within block, share of ALL, interaction residual), legs |
+| `report.md` | headline table, per-driver table (SOLO − NONE paired within block, share of ALL, interaction residual), hottest daemon threads (`thread_top`: tid, comm, core-s/h from the first usable ALL leg; embedded DCGM/NVML workers share the daemon's name, so match tids with `gdb -p PID -batch -ex 'thread apply all bt'`), legs |
 | `profile_row.csv` | one row of headline metrics |
 | `raw/` | `samples.jsonl` per leg (1 Hz), FWQ quanta, `perf.csv`, journal excerpts, `provenance.json`, `run.json`, `commands.log` |
 

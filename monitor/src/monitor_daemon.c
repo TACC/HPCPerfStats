@@ -26,6 +26,7 @@
 #include "stats.h"
 #include "collect.h"
 #include "collect_tier.h"
+#include "dcgm_watch_policy.h"
 #include "stats_buffer.h"
 #include "stats_buffer_debug_shm.h"
 #include "stats_buffer_rmq_policy.h"
@@ -341,6 +342,7 @@ void monitor_daemon_finalize_runtime_settings(void)
   if (disable_types != NULL)
     str_trim_inplace(disable_types);
   stats_runtime_daemon_set_type_controls(collection_profile, disable_types);
+  dcgm_watch_policy_set_interval(sample_freq); /* before types prepare: start and SIGHUP */
   collect_tier_set_enabled(enable_slow_tier);
   monitor_daemon_apply_dynamic_buffer_size_if_needed();
 }

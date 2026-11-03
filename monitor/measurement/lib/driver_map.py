@@ -12,7 +12,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-DRIVER_GROUPS = ("filesystem", "likwid", "dcgm", "perf_event", "ib_mad", "amd_gpu", "intel_gpu")
+# DCGM is split: on Grace the CPU backend (sysmon module) and the GPU collector have very
+# different costs, and one shared SOLO leg could not tell them apart.
+DRIVER_GROUPS = ("filesystem", "likwid", "dcgm_cpu", "dcgm_gpu", "perf_event", "ib_mad", "amd_gpu",
+                 "intel_gpu")
 
 _FILESYSTEM = (
     "host_cpu", "host_mem", "host_mem_job", "host_vm", "host_numa", "host_block", "host_net",
@@ -30,7 +33,7 @@ _LIKWID = (
 STATIC_GROUP: dict[str, str] = {
     **dict.fromkeys(_FILESYSTEM, "filesystem"),
     **dict.fromkeys(_LIKWID, "likwid"),
-    "nvidia_gpu": "dcgm",
+    "nvidia_gpu": "dcgm_gpu",
     "arm_aarch64_imc": "perf_event",
     "host_opa": "ib_mad",
     "amd_gpu": "amd_gpu",
@@ -70,7 +73,7 @@ def _ib_mad(caps: dict[str, Any] | None) -> bool:
 def group_for_type(name: str, caps: dict[str, Any] | None) -> str:
     """Driver group for one collector type under a given build."""
     if name == "host_cpu_hw":
-        return _cpu_backend(caps)
+        return "dcgm_cpu" if _cpu_backend(caps) == "dcgm" else "likwid"
     if name == "host_ib":
         return "ib_mad" if _ib_mad(caps) else "filesystem"
     try:

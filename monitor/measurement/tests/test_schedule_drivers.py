@@ -17,7 +17,7 @@ def _kinds(plan):
 
 
 def test_schedule_blocks_and_autofit():
-    groups = ["filesystem", "likwid", "ib_mad", "dcgm"]
+    groups = ["filesystem", "likwid", "ib_mad", "dcgm_cpu"]
     plan = schedule.build_schedule(groups, blocks=2, seed=42)
     kinds = _kinds(plan)
     assert kinds[0] == ("OFF", None) and kinds[1] == ("NONE", None) and kinds[2] == ("ALL", None)
@@ -109,7 +109,7 @@ def test_driver_map_backend_resolution():
     arm = {"arch": "aarch64", "configure": {"cpu_backend": "dcgm", "ib_mad_dlopen": False,
                                              "infiniband": False}}
     assert driver_map.group_for_type("host_cpu_hw", x86) == "likwid"
-    assert driver_map.group_for_type("host_cpu_hw", arm) == "dcgm"
+    assert driver_map.group_for_type("host_cpu_hw", arm) == "dcgm_cpu"
     assert driver_map.group_for_type("host_ib", x86) == "ib_mad"
     assert driver_map.group_for_type("host_ib", arm) == "filesystem"
     assert driver_map.group_for_type("host_proc", x86) == "filesystem"
@@ -119,6 +119,23 @@ def test_driver_map_backend_resolution():
         driver_map.groups_for_enabled(["host_cpu", "brand_new_collector"], x86)
     groups = driver_map.groups_for_enabled(["host_cpu", "host_cpu_hw", "intel_x86_rapl"], x86)
     assert groups == {"filesystem": ["host_cpu"], "likwid": ["host_cpu_hw", "intel_x86_rapl"]}
+
+
+def test_driver_map_dcgm_split_cpu_from_gpu():
+    """Round 1 of the CPU-seconds plan: on Grace the DCGM CPU backend (sysmon module, ~157
+    core-s/h on c122-018) and the GPU collector shared one SOLO leg, so their costs could not
+    be told apart. They are separate driver groups now."""
+    arm = {"arch": "aarch64", "configure": {"cpu_backend": "dcgm"}}
+    x86 = {"arch": "x86_64", "configure": {"cpu_backend": "likwid"}}
+    assert driver_map.group_for_type("host_cpu_hw", arm) == "dcgm_cpu"
+    assert driver_map.group_for_type("host_cpu_hw", None) == "likwid"
+    assert driver_map.group_for_type("host_cpu_hw", {"arch": "aarch64"}) == "dcgm_cpu"
+    assert driver_map.group_for_type("nvidia_gpu", x86) == "dcgm_gpu"
+    assert "dcgm" not in driver_map.DRIVER_GROUPS
+    assert {"dcgm_cpu", "dcgm_gpu"} <= set(driver_map.DRIVER_GROUPS)
+    groups = driver_map.groups_for_enabled(["host_cpu_hw", "nvidia_gpu", "host_mem"], arm)
+    assert groups == {"dcgm_cpu": ["host_cpu_hw"], "dcgm_gpu": ["nvidia_gpu"],
+                      "filesystem": ["host_mem"]}
 
 
 def test_disable_csv_for_legs():

@@ -345,8 +345,9 @@ def build_profile(run_dir: Path) -> dict[str, Any]:
         "schedule": run.get("schedule"),
         "active_types": run.get("active_types"),
         "groups": groups,
-        "legs": [{k: leg.get(k) for k in ("leg_id", "kind", "block", "group", "status", "contaminated",
-                                          "verified_types", "missing_types")} for leg in legs],
+        "legs": [{**{k: leg.get(k) for k in ("leg_id", "kind", "block", "group", "status",
+                                              "contaminated", "verified_types", "missing_types")},
+                  "thread_top": (leg.get("process") or {}).get("thread_top")} for leg in legs],
         "provenance": prov,
     }
     return profile
@@ -421,6 +422,7 @@ def _md(profile: dict[str, Any]) -> str:
                          f"{ty['wall_ms_per_call']:.4g} | {ty['wait_ms_per_call']:.4g} |")
     else:
         lines.append(f"NOT_MEASURED ({cp.get('reason')})")
+    lines += [""] + thread_top_lines(profile)
     lines += ["", "## Legs", "", "| Leg | Status | Contaminated | Verified types |",
               "| --- | --- | --- | --- |"]
     for leg in profile.get("legs", []):
@@ -428,6 +430,20 @@ def _md(profile: dict[str, Any]) -> str:
                      f"{', '.join(leg.get('verified_types') or [])} |")
     lines.append("")
     return "\n".join(lines)
+
+
+def thread_top_lines(profile: dict[str, Any]) -> list[str]:
+    """Markdown table of the hottest daemon threads from the first usable ALL leg."""
+    lines = ["## Daemon threads (hottest, first usable ALL leg)", ""]
+    leg = next((lg for lg in profile.get("legs", []) if lg.get("kind") == "ALL" and _usable(lg)
+                and lg.get("thread_top")), None)
+    if leg is None:
+        return lines + ["NOT_MEASURED (no ALL leg with per-thread samples)"]
+    lines += [f"Leg {leg['leg_id']}. Embedded DCGM/NVML workers inherit the daemon's name; match "
+              "a tid to its library with `gdb -p PID -batch -ex 'thread apply all bt'`.", "",
+              "| tid | comm | core-s/h |", "| --- | --- | --- |"]
+    lines += [f"| {t['tid']} | {t['comm']} | {t['core_s_per_h']:.4g} |" for t in leg["thread_top"]]
+    return lines
 
 
 def profile_row(profile: dict[str, Any]) -> dict[str, Any]:

@@ -11,6 +11,7 @@
 #include "collect.h"
 #include "dcgm_gpu_api.h"
 #include "dcgm_session.h"
+#include "dcgm_watch_policy.h"
 #include "nvidia_gpu.h"
 #include "monitor_log.h"
 #include "stats.h"
@@ -226,6 +227,7 @@ int nvidia_gpu_runtime_prepare(int *fail_stage)
       unsigned int nf = 0;
       const unsigned short *fid = NULL;
       const char *profile_name = NULL;
+      struct dcgm_watch_policy pol;
 
       if (nvidia_gpu_watch_profile_select(attempt, &fid, &nf, &profile_name) < 0 || fid == NULL) {
         *fail_stage = NVIDIA_GPU_FAIL_FIELD_GROUP_CREATE;
@@ -244,8 +246,11 @@ int nvidia_gpu_runtime_prepare(int *fail_stage)
         continue;
       }
 
+      /* Refresh at the collect interval; 10 s only when none is known (batch client). */
+      (void)dcgm_watch_policy_get(10000000LL, &pol);
       rc = dcgmWatchFields(g_nvidia_gpu_runtime_handle, g_nvidia_gpu_runtime_group,
-                           g_nvidia_gpu_runtime_field_group, 10000000, 3600.0, 3600);
+                           g_nvidia_gpu_runtime_field_group, pol.update_us, pol.keep_age_s,
+                           pol.keep_samples);
       if (rc != DCGM_ST_OK) {
         *fail_stage = NVIDIA_GPU_FAIL_WATCH_FIELDS;
         if (attempt == last_attempt)

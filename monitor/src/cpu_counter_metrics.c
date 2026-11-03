@@ -18,6 +18,7 @@
 #include "dcgm_fields.h"
 #include "dcgm_structs.h"
 #include "dcgm_session.h"
+#include "dcgm_watch_policy.h"
 #include "cpu_counter_metrics_dcgm_state.h"
 #include "cpu_counter_metrics_dcgm_publish.h"
 #include "cpu_counter_metrics_dcgm_util.h"
@@ -101,6 +102,9 @@ double *g_dcgm_sock_power_util = NULL;
 double *g_dcgm_sock_power_limit = NULL;
 static int g_dcgm_sock_map_mismatch_logged = 0;
 static int g_dcgm_power_limit_blank_warned = 0;
+/* Watch refresh when no collect interval is known (batch client); the daemon sets one. */
+#define DCGM_CPU_WATCH_FALLBACK_US 1000000LL
+
 static const unsigned short g_dcgm_cpu_power_field_ids[] = {DCGM_FI_DEV_CPU_POWER_UTIL_CURRENT,
                                                             DCGM_FI_DEV_CPU_POWER_LIMIT};
 #define DCGM_CPU_POWER_NFIELDS                                                                     \
@@ -603,6 +607,7 @@ map_fail:
 static int dcgm_cpu_sock_watch_install(void)
 {
   dcgmReturn_t rc;
+  struct dcgm_watch_policy pol;
   int j;
 
   if (g_dcgm_handle == (dcgmHandle_t)NULL || g_dcgm_ncpu_entities <= 0 ||
@@ -623,7 +628,9 @@ static int dcgm_cpu_sock_watch_install(void)
                             &g_dcgm_sock_fg);
   if (rc != DCGM_ST_OK)
     goto sock_fail;
-  rc = dcgmWatchFields(g_dcgm_handle, g_dcgm_sock_group, g_dcgm_sock_fg, 1000000LL, 3600.0, 3600);
+  (void)dcgm_watch_policy_get(DCGM_CPU_WATCH_FALLBACK_US, &pol);
+  rc = dcgmWatchFields(g_dcgm_handle, g_dcgm_sock_group, g_dcgm_sock_fg, pol.update_us,
+                       pol.keep_age_s, pol.keep_samples);
   if (rc != DCGM_ST_OK)
     goto sock_fail;
   return 0;
@@ -811,6 +818,7 @@ static int dcgm_cpu_watch_install(void)
 {
   int chunk, i, start, end;
   dcgmReturn_t rc;
+  struct dcgm_watch_policy pol;
 
   dcgm_cpu_watch_cleanup();
   if (nr_cpus <= 0)
@@ -852,8 +860,9 @@ static int dcgm_cpu_watch_install(void)
                              (unsigned short *)g_dcgm_cpu_field_ids, fname, &g_dcgm_cpu_fgs[chunk]);
     if (rc != DCGM_ST_OK)
       goto watch_fail;
-    rc = dcgmWatchFields(g_dcgm_handle, g_dcgm_cpu_groups[chunk], g_dcgm_cpu_fgs[chunk], 1000000LL,
-                         3600.0, 3600);
+    (void)dcgm_watch_policy_get(DCGM_CPU_WATCH_FALLBACK_US, &pol);
+    rc = dcgmWatchFields(g_dcgm_handle, g_dcgm_cpu_groups[chunk], g_dcgm_cpu_fgs[chunk],
+                         pol.update_us, pol.keep_age_s, pol.keep_samples);
     if (rc != DCGM_ST_OK)
       goto watch_fail;
   }

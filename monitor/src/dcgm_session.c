@@ -2,6 +2,7 @@
 #include <string.h>
 #include "dcgm_gpu_api.h"
 #include "dcgm_session.h"
+#include "monitor_log.h"
 
 static int g_dcgm_session_refcount;
 static dcgmHandle_t g_dcgm_session_handle;
@@ -19,12 +20,18 @@ static dcgmReturn_t monitor_dcgm_try_embedded(dcgmHandle_t *outh)
   ep.opMode = DCGM_OPERATION_MODE_AUTO;
   ep.logFile = NULL;
   ep.severity = DcgmLoggingSeverityNone;
+  /* No monitor field reads NVSwitch entities; on c122-018 the module cost 28 core-s/h. */
+  ep.blackListCount = 1;
+  ep.blackList[0] = DcgmModuleIdNvSwitch;
 
   rc = dcgmStartEmbedded_v2(&ep);
   if (rc == DCGM_ST_OK && ep.dcgmHandle != (dcgmHandle_t)0) {
+    monitor_log_info("DCGM embedded engine started (v2, NVSwitch module denied)\n");
     *outh = ep.dcgmHandle;
     return DCGM_ST_OK;
   }
+  /* v2 rejects a params layout that differs from the runtime's (version check). */
+  monitor_log_info("DCGM embedded v2 start failed (rc=%d); v1 start loads every module\n", (int)rc);
   return dcgmStartEmbedded(DCGM_OPERATION_MODE_AUTO, outh);
 }
 
