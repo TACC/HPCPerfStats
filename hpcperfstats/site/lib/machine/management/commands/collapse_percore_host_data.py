@@ -14,8 +14,7 @@ Attributes:
   _COLUMNS: ``host_data`` columns read for planning and written on insert.
   _INSERT_SQL: Insert of one planned whole-node row; an existing row wins.
   _DELETE_SQL: Delete of per-core rows that have a ``dev=''`` row at the same
-    (host, type, event, time); the probe is bounded to the window so it reads
-    one chunk, not every chunk of the hypertable.
+    (host, type, event, time).
   _DISCOVER_DAYS_SQL: Distinct UTC days that hold per-core rows
     (``_PERCORE_WHERE``), found over the whole table.
   _NO_TIMEOUT_SQL: Disables the statement timeout for the current transaction;
@@ -65,7 +64,7 @@ _DELETE_SQL = (
   "AND hd.dev NOT LIKE 'j:%%' AND hd.type IS NOT NULL "
   "AND hd.type <> ALL(%s) AND EXISTS (SELECT 1 FROM host_data w "
   "WHERE w.host = hd.host AND w.type = hd.type AND w.event = hd.event "
-  "AND w.time = hd.time AND w.time >= %s AND w.time < %s AND w.dev = '')"
+  "AND w.time = hd.time AND w.dev = '')"
 )
 _DISCOVER_DAYS_SQL = (
   "SELECT DISTINCT date_trunc('day', time AT TIME ZONE 'UTC') FROM host_data "
@@ -422,7 +421,7 @@ class Command(BaseCommand):
       if len(plan.new_rows):
         cursor.executemany(_INSERT_SQL, _records(plan.new_rows))
         self._verify(cursor, plan.new_rows, hosts, start, end, gpu)
-      cursor.execute(_DELETE_SQL, [hosts, start, end, gpu, start, end])
+      cursor.execute(_DELETE_SQL, [hosts, start, end, gpu])
       if cursor.rowcount != plan.percore_rows:
         raise CommandError(
           f"{start:%Y-%m-%d %H:%M}: deleted {cursor.rowcount} per-core rows but "
