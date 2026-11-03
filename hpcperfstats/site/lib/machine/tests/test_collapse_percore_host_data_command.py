@@ -130,3 +130,28 @@ def test_no_dates_discovers_days_over_the_whole_table(seeded):
   devs = {r[2] for r in _rows() if r[1] == "cpu"}
   assert "0" not in devs and "1" not in devs
   assert any(r[0] == old and r[2] == "" for r in _rows())
+
+
+def test_discovery_finds_monitor_type_names_and_non_numeric_devs(seeded):
+  """Regression: discovery only matched type 'cpu' with a digit-leading dev."""
+  from hpcperfstats.site.lib.machine.management.commands import (
+    collapse_percore_host_data as cmd_mod,
+  )
+
+  def at(day):
+    return dt.datetime(2026, 8, day, 3, 0, 0, tzinfo=dt.UTC)
+
+  _insert(
+    [
+      (at(1), HOST, "77", "host_cpu", "17", "user", "cs", 1.0, 1.0, 1.0),
+      (at(2), HOST, "77", "host_net", "em1", "rx_bytes", "B", 1.0, 1.0, 1.0),
+      (at(3), HOST, "77", "host_vm", "-", "pgfault", "#", 1.0, 1.0, 1.0),
+      # Days holding only rows that legitimately keep (or lack) a dev.
+      (at(4), HOST, "77", "nvidia_gpu", "0", "gpu_util", "%", 1.0, 0, 0),
+      (at(5), HOST, "77", "host_cpu", "j:88", "user", "cs", 1.0, 0, 0),
+      (at(6), HOST, "77", "host_cpu", "", "user", "cs", 1.0, 0, 0),
+    ]
+  )
+  found = {d.date() for d in cmd_mod.Command()._discover_days()}
+  assert {at(1).date(), at(2).date(), at(3).date(), T0.date()} <= found
+  assert not found & {at(4).date(), at(5).date(), at(6).date()}

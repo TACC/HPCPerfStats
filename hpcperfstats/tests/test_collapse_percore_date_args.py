@@ -64,7 +64,28 @@ def test_no_dates_walks_every_discovered_day_not_a_range():
   assert "2026-09" not in text
 
 
-def test_discovery_sql_targets_digit_leading_cpu_dev():
-  assert "type = 'cpu'" in cmd_mod._DISCOVER_DAYS_SQL
-  assert "dev ~ '^[0-9]'" in cmd_mod._DISCOVER_DAYS_SQL
+def test_discovery_sql_uses_the_percore_predicate_over_the_whole_table():
+  """Regression: discovery matched only type 'cpu' with a digit-leading dev.
+
+  The monitor writes ``host_cpu``/``host_cpu_hw`` and non-numeric devs
+  (``em1``, ``sda``, ``-``), so that predicate missed days the per-window
+  repair predicate (``_PERCORE_WHERE``) selects.
+  """
+  assert cmd_mod._PERCORE_WHERE in cmd_mod._DISCOVER_DAYS_SQL
+  assert "type = 'cpu'" not in cmd_mod._DISCOVER_DAYS_SQL
   assert "time >=" not in cmd_mod._DISCOVER_DAYS_SQL
+
+
+def test_discover_days_binds_the_gpu_types():
+  cursor = mock.MagicMock()
+  cursor.fetchall.return_value = []
+  conn = mock.MagicMock()
+  conn.cursor.return_value.__enter__.return_value = cursor
+  with (
+    mock.patch.object(cmd_mod, "connection", conn),
+    mock.patch.object(cmd_mod.transaction, "atomic"),
+  ):
+    assert cmd_mod.Command()._discover_days() == []
+  cursor.execute.assert_any_call(
+    cmd_mod._DISCOVER_DAYS_SQL, [list(cmd_mod.GPU_TYPES)]
+  )

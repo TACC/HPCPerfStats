@@ -15,8 +15,8 @@ Attributes:
   _INSERT_SQL: Insert of one planned whole-node row; an existing row wins.
   _DELETE_SQL: Delete of per-core rows that have a ``dev=''`` row at the same
     (host, type, event, time).
-  _DISCOVER_DAYS_SQL: Distinct UTC days that hold ``cpu`` rows whose ``dev``
-    starts with a digit (the per-core rows), found over the whole table.
+  _DISCOVER_DAYS_SQL: Distinct UTC days that hold per-core rows
+    (``_PERCORE_WHERE``), found over the whole table.
   _NO_TIMEOUT_SQL: Disables the statement timeout for the current transaction;
     one-off repair queries scan large windows and must not be cancelled.
 """
@@ -68,7 +68,7 @@ _DELETE_SQL = (
 )
 _DISCOVER_DAYS_SQL = (
   "SELECT DISTINCT date_trunc('day', time AT TIME ZONE 'UTC') FROM host_data "
-  "WHERE type = 'cpu' AND dev ~ '^[0-9]'"
+  f"WHERE {_PERCORE_WHERE}"
 )
 _NO_TIMEOUT_SQL = "SET LOCAL statement_timeout = 0"
 
@@ -305,7 +305,7 @@ class Command(BaseCommand):
     )
 
   def _discover_days(self) -> list[dt.datetime]:
-    """Return every UTC day that holds ``cpu`` rows with a digit-leading dev.
+    """Return every UTC day that holds per-core rows (any non-GPU type).
 
     One scan of the whole table with the statement timeout disabled, so the
     repair does not assume the backlog fits a date range.
@@ -319,7 +319,7 @@ class Command(BaseCommand):
     """
     with transaction.atomic(), connection.cursor() as cursor:
       cursor.execute(_NO_TIMEOUT_SQL)
-      cursor.execute(_DISCOVER_DAYS_SQL)
+      cursor.execute(_DISCOVER_DAYS_SQL, [list(GPU_TYPES)])
       return sorted(row[0].replace(tzinfo=dt.UTC) for row in cursor.fetchall())
 
   def _percore_hosts(
