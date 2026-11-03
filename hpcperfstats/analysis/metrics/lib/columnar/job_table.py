@@ -1217,18 +1217,28 @@ class JobTableHandoff:
   Thread-safe per-jid handoff of a ColumnarJobTable from the metrics worker
   to the detail/plot prewarm (T4: one fetch per job).
 
+  The barrier batch path runs metrics for a whole batch before its prewarm,
+  so every table of the batch waits here; the cap is on frame bytes as well
+  as count (hs04 2026-11-02: 169 parked multi-GB frames, 219 GB anon RSS,
+  cgroup OOM kill). An evicted jid's prewarm re-fetches its own frame
+  (``open_job_table(jid, handoff=False)``), so eviction costs a read only.
+
   Attributes:
     _lock: Guard.
     _tables: Pending tables by jid.
-    max_entries: Cap; oldest entries are dropped past it.
+    _bytes: Frame array bytes of each pending table, by jid.
+    _total_bytes: Sum of ``_bytes``.
+    max_entries: Count cap; oldest entries are dropped past it.
+    max_bytes: Byte cap; oldest entries are dropped past it.
   """
 
-  def __init__(self, max_entries: int = 256) -> None:
+  def __init__(self, max_entries: int = 256, max_bytes: int = 16 << 30) -> None:
     """
     Create an empty handoff.
 
     Args:
       max_entries (int): Maximum pending tables.
+      max_bytes (int): Maximum summed frame array bytes of pending tables.
 
     Returns:
       None
@@ -1239,11 +1249,16 @@ class JobTableHandoff:
     """
     self._lock = threading.Lock()
     self._tables: dict[str, ColumnarJobTable] = {}
+    self._bytes: dict[str, int] = {}
+    self._total_bytes = 0
     self.max_entries = int(max_entries)
+    self.max_bytes = int(max_bytes)
 
   def put(self, table: ColumnarJobTable) -> None:
     """
-    Store a table for its jid (replacing any pending one).
+    Store a table for its jid (replacing any pending one), then drop the
+    oldest tables while the count or byte cap is exceeded (a table larger
+    than ``max_bytes`` is not kept at all).
 
     Args:
       table (ColumnarJobTable): Table.
@@ -1267,11 +1282,22 @@ class JobTableHandoff:
       >>> h.pop("1").jid
       '1'
     """
+    size = sum(
+      v.nbytes for v in vars(table.frame).values() if isinstance(v, np.ndarray)
+    )
     with self._lock:
+      self._total_bytes -= self._bytes.pop(table.jid, 0)
+      self._tables.pop(table.jid, None)
       self._tables[table.jid] = table
-      while len(self._tables) > self.max_entries:
+      self._bytes[table.jid] = size
+      self._total_bytes += size
+      while self._tables and (
+        len(self._tables) > self.max_entries
+        or self._total_bytes > self.max_bytes
+      ):
         oldest = next(iter(self._tables))
         del self._tables[oldest]
+        self._total_bytes -= self._bytes.pop(oldest)
 
   def pop(self, jid: str) -> ColumnarJobTable | None:
     """
@@ -1288,6 +1314,7 @@ class JobTableHandoff:
       True
     """
     with self._lock:
+      self._total_bytes -= self._bytes.pop(str(jid), 0)
       return self._tables.pop(str(jid), None)
 
   def discard(self, jid: str) -> None:
@@ -1304,6 +1331,7 @@ class JobTableHandoff:
       >>> JobTableHandoff().discard("x")
     """
     with self._lock:
+      self._total_bytes -= self._bytes.pop(str(jid), 0)
       self._tables.pop(str(jid), None)
 
 
