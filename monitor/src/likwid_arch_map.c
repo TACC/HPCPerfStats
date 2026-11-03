@@ -81,6 +81,13 @@ const char *likwid_arch_eventset_grace(void)
   return "CPU_CYCLES:PMC0,INST_RETIRED:PMC1";
 }
 
+const char *likwid_arch_eventset_grace_scf(void)
+{
+  /* CYC+INS plus Grace SCF uncore DRAM traffic (LIKWID nvidia_grace MEM group events) in the
+   * same group, so arm_aarch64_imc needs no second group and no per-tick re-arm. */
+  return "CPU_CYCLES:PMC0,INST_RETIRED:PMC1,CMEM_RD_DATA:SCF0,CMEM_WR_TOTAL_BYTES:SCF1";
+}
+
 const char *likwid_arch_eventset_grace_cyc_only(void)
 {
   return "CPU_CYCLES:PMC0";

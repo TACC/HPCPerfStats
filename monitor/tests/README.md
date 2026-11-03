@@ -11,6 +11,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_assert_live.c` | Built with `-DNDEBUG`; fails if `assert()` is compiled out (see `test_assert_live.h`) |
 | `test_dict.c` | `dict_*` hash table (init/set/ref/remv/for_each; null/zero/corrupt-table guards) |
 | `test_dcgm_session.c` | DCGM session refcount (single Init, shutdown on last release); embedded start denies the NVSwitch module and falls back to v1 when v2 fails |
+| `test_arm_imc_scf.c` | Grace SCF helpers for `arm_aarch64_imc`: socket lead CPUs from `nvidia_scf_pmu_<N>/cpumask` (ordered, bounded, bad entries skipped) and CAS units (reads = 32 B beats / 2, writes = bytes / 64) |
 | `test_dcgm_watch_policy.c` | `dcgm_watch_policy_*`: refresh follows the collect interval (60 s → 60,000,000 µs, keep 120 s / 2 samples), clamps 1 s–1 h, fallback when unset/invalid, NULL out |
 | `test_stats_type_get.c` | `stats_type_get` finds every `st_name` in registry (legacy variable-name) order, so `disable_types` works for renamed types; unknown/NULL return NULL |
 | `test_host_key_alias.c` | `host_key_alias_lookup` / `host_key_alias_emit` |
@@ -26,7 +27,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_cpu_counter_dcgm_util.c` | DCGM CPU util math (`cpu_counter_metrics_dcgm_util.c`; **DCGM backend only**) |
 | `test_cpu_counter_dcgm_publish.c` | DCGM publish/accumulate helpers (**DCGM backend only**; also built as `test_cpu_counter_dcgm_publish_likwid` with `-DMONITOR_CPU_LIKWID_OVERLAY`) |
 | `test_likwid_overlay_map.c` | DCGM+LIKWID overlay key mapping (overwrite cycles only if > 0) |
-| `test_likwid_arch_map_grace.c` | Grace CYC+INS / CYC-only eventset goldens |
+| `test_likwid_arch_map_grace.c` | Grace CYC+INS / CYC-only eventset goldens; CYC+INS+SCF (`CMEM_RD_DATA:SCF0,CMEM_WR_TOTAL_BYTES:SCF1`, no `GMEM`) |
 | `test_ib_schema_contract.c` | `ib.h` KEYS rename contract |
 | `test_host_schema_contract.c` | Host collector schema token contract |
 | `test_lustre_schema_contract.c` | Lustre collector schema token contract |

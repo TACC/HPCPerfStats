@@ -27,6 +27,9 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events, 
                                 int max_ctrs);
 /* Overlay: extract measured cycles/instr without writing DCGM fail-soft keys.
  * Caller must have a fresh likwid_pmc_adapter_read_group() this tick. */
+/* Raw result of the active group's event named @p event_name (e.g. CMEM_RD_DATA) on @p cpu.
+ * Caller must have a fresh likwid_pmc_adapter_read_group() this tick. 0 on success. */
+int likwid_pmc_adapter_read_event(const char *event_name, int cpu, unsigned long long *out);
 int likwid_pmc_adapter_read_cpu_cycles_instr(int cpu, unsigned long long *cycles_out,
                                              unsigned long long *instr_out);
 

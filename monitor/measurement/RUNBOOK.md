@@ -135,6 +135,26 @@ for diagnosis and never feeds a headline number.
 
 ---
 
+## 0b. Grace DRAM CAS verification (`arm_aarch64_imc` via LIKWID SCF)
+
+On a Grace node, as root, after `build_static_bundle.sh` has populated the static prefix:
+
+```bash
+./measurement/bin/verify_grace_scf_imc.sh
+```
+
+It stops `hpcperfstats.service` for the run (restored on exit) and checks, against a known
+`likwid-bench` volume on socket 0: (A) the SCF units with `likwid-perfctr`
+(`CMEM_RD_DATA` = 32-byte beats, `CMEM_WR_TOTAL_BYTES` = bytes, idle subtracted); (B) a DEBUG
+build of the daemon run as a transient unit (broker unreachable, dumps to the result dir,
+`/dev/shm/hpcperfstatsd-scf-verify` mirror): `arm_aarch64_imc` `scf0` deltas match the volume
+in 64-byte CAS within 0.75–1.5x and `scf1` stays below 0.25x; (C) the DCGM NVSwitch module is
+denied and not mapped. Output: `measurement/results/grace_scf_<host>_<UTC>/summary.txt`, last
+line `GRACE_SCF_VERIFY_OK` or `GRACE_SCF_VERIFY_FAIL`. Parsing and verdicts:
+`lib/grace_scf_verify.py` (unit-tested in `tests/test_grace_scf_verify.py`).
+
+---
+
 ## 1. Monitor cadence (AUTHOR_NOTES §1)
 
 On the **measured** compute node (the one you will pidstat):

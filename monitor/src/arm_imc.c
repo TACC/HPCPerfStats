@@ -15,6 +15,13 @@
 #include "stats.h"
 #include "trace.h"
 #include "arm_imc.h"
+#include "arm_imc_scf.h"
+#include "monitor_log.h"
+#ifdef MONITOR_CPU_LIKWID_OVERLAY
+#include "cpu_counter_metrics_likwid_overlay.h"
+#include "cpu_counter_metrics_likwid_overlay_map.h"
+#include "likwid_pmc_adapter.h"
+#endif
 
 #define ARM_AARCH64_IMC_MAX_DEVS 32
 
@@ -28,10 +35,15 @@ struct arm_aarch64_imc_dev {
   uint64_t acc_read;
   uint64_t acc_write;
   int valid;
+  /* Grace SCF via the LIKWID overlay group: [0] reads (32 B beats), [1] writes (bytes). */
+  unsigned long long scf_life[2];
+  unsigned long long scf_prev[2];
+  int scf_interval[2];
 };
 
 static struct arm_aarch64_imc_dev g_arm_aarch64_imc[ARM_AARCH64_IMC_MAX_DEVS];
 static int g_arm_aarch64_imc_n = 0;
+static int g_arm_aarch64_imc_scf; /* devices are Grace sockets read from the LIKWID group */
 
 static void arm_aarch64_imc_cleanup(void)
 {
@@ -51,6 +63,7 @@ static void arm_aarch64_imc_cleanup(void)
     g_arm_aarch64_imc[i].fd_write = -1;
   }
   g_arm_aarch64_imc_n = 0;
+  g_arm_aarch64_imc_scf = 0;
 }
 
 static long perf_event_open_wrap(struct perf_event_attr *attr, pid_t pid, int cpu, int group_fd,
@@ -315,6 +328,63 @@ static int arm_aarch64_imc_register_pmu(const char *pmu_name)
   return 1;
 }
 
+#ifdef MONITOR_CPU_LIKWID_OVERLAY
+/* Grace: SCF0/SCF1 (CMEM_RD_DATA, CMEM_WR_TOTAL_BYTES) ride in the host_cpu_hw overlay group;
+ * one device per socket, read at that socket's SCF PMU lead CPU. */
+static int arm_aarch64_imc_begin_scf(void)
+{
+  int cpus[ARM_AARCH64_IMC_MAX_DEVS];
+  int n;
+  int i;
+
+  if (!cpu_counter_metrics_likwid_overlay_has_scf())
+    return 0;
+  n = arm_imc_scf_lead_cpus(ARM_IMC_SCF_DEVICES_DIR, cpus, ARM_AARCH64_IMC_MAX_DEVS);
+  for (i = 0; i < n; i++) {
+    struct arm_aarch64_imc_dev *dev = &g_arm_aarch64_imc[i];
+
+    memset(dev, 0, sizeof(*dev));
+    snprintf(dev->name, sizeof(dev->name), "scf%d", i);
+    dev->cpu = cpus[i];
+    dev->fd_read = -1;
+    dev->fd_write = -1;
+    dev->valid = 1;
+  }
+  g_arm_aarch64_imc_n = n;
+  g_arm_aarch64_imc_scf = (n > 0);
+  if (n > 0)
+    monitor_log_info("arm_aarch64_imc: Grace SCF DRAM CAS via LIKWID on %d socket(s)\n", n);
+  return n > 0;
+}
+
+static void arm_aarch64_imc_collect_scf(struct stats_type *type)
+{
+  int i;
+
+  if (likwid_pmc_adapter_read_group() != 0)
+    return;
+  for (i = 0; i < g_arm_aarch64_imc_n; i++) {
+    struct arm_aarch64_imc_dev *dev = &g_arm_aarch64_imc[i];
+    unsigned long long rd = 0;
+    unsigned long long wr = 0;
+    struct stats *s;
+
+    if (likwid_pmc_adapter_read_event("CMEM_RD_DATA", dev->cpu, &rd) != 0 ||
+        likwid_pmc_adapter_read_event("CMEM_WR_TOTAL_BYTES", dev->cpu, &wr) != 0)
+      continue;
+    (void)likwid_overlay_lifetime_advance(&dev->scf_life[0], &dev->scf_prev[0],
+                                          &dev->scf_interval[0], rd);
+    (void)likwid_overlay_lifetime_advance(&dev->scf_life[1], &dev->scf_prev[1],
+                                          &dev->scf_interval[1], wr);
+    s = get_current_stats(type, dev->name);
+    if (s == NULL)
+      continue;
+    stats_set(s, "dram_cas_reads", arm_imc_scf_rd_beats_to_cas(dev->scf_life[0]));
+    stats_set(s, "dram_cas_writes", arm_imc_scf_wr_bytes_to_cas(dev->scf_life[1]));
+  }
+}
+#endif
+
 static int arm_aarch64_imc_begin(struct stats_type *type)
 {
   DIR *d;
@@ -323,7 +393,11 @@ static int arm_aarch64_imc_begin(struct stats_type *type)
   if (type == NULL)
     return -1;
   arm_aarch64_imc_cleanup();
-  d = opendir("/sys/bus/event_source/devices");
+#ifdef MONITOR_CPU_LIKWID_OVERLAY
+  if (arm_aarch64_imc_begin_scf())
+    return 0;
+#endif
+  d = opendir(ARM_IMC_SCF_DEVICES_DIR);
   if (d == NULL) {
     type->st_enabled = 0;
     return 0;
@@ -347,6 +421,12 @@ static void arm_aarch64_imc_collect(struct stats_type *type)
 
   if (type == NULL)
     return;
+#ifdef MONITOR_CPU_LIKWID_OVERLAY
+  if (g_arm_aarch64_imc_scf) {
+    arm_aarch64_imc_collect_scf(type);
+    return;
+  }
+#endif
   for (i = 0; i < g_arm_aarch64_imc_n; i++) {
     uint64_t cur_r = 0;
     uint64_t cur_w = 0;

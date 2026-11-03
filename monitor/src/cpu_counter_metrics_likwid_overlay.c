@@ -14,6 +14,7 @@
 #include "trace.h"
 
 static int g_overlay_ready;
+static int g_overlay_scf; /* group carries SCF0/SCF1 DRAM events (arm_aarch64_imc) */
 static unsigned long long *g_life_cycles;
 static unsigned long long *g_life_instr;
 static unsigned long long *g_prev_cycles;
@@ -64,17 +65,23 @@ int cpu_counter_metrics_likwid_overlay_ready(void)
   return g_overlay_ready;
 }
 
+int cpu_counter_metrics_likwid_overlay_has_scf(void)
+{
+  return g_overlay_ready && g_overlay_scf;
+}
+
 void cpu_counter_metrics_likwid_overlay_cleanup(void)
 {
   if (g_overlay_ready)
     likwid_pmc_adapter_finalize();
   g_overlay_ready = 0;
+  g_overlay_scf = 0;
   overlay_lifetime_free();
 }
 
 int cpu_counter_metrics_likwid_overlay_begin(struct stats_type *type)
 {
-  const char *eventset = likwid_arch_eventset_grace();
+  const char *eventset = likwid_arch_eventset_grace_scf();
   int init_rc;
   int setup_rc;
 
@@ -90,7 +97,15 @@ int cpu_counter_metrics_likwid_overlay_begin(struct stats_type *type)
     g_overlay_ready = 0;
     return 0;
   }
+  /* CYC+INS+SCF first (Grace DRAM CAS for arm_aarch64_imc), then CYC+INS, then CYC only. */
   setup_rc = likwid_pmc_adapter_setup_events(eventset);
+  g_overlay_scf = (setup_rc == 0);
+  if (setup_rc != 0) {
+    monitor_log_info("host_cpu_hw: LIKWID SCF uncore events unavailable; "
+                     "arm_aarch64_imc uses the perf dmc/imc scan\n");
+    eventset = likwid_arch_eventset_grace();
+    setup_rc = likwid_pmc_adapter_setup_events(eventset);
+  }
   if (setup_rc != 0) {
     eventset = likwid_arch_eventset_grace_cyc_only();
     setup_rc = likwid_pmc_adapter_setup_events(eventset);

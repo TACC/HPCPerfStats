@@ -22,7 +22,7 @@ alwaysApply: false
 - **Fail-soft cycles (mandatory on Grace):** always accumulate and publish DCGM util×freq estimates even when `MONITOR_CPU_LIKWID_OVERLAY` is set: **`cpu_clock_est_cycles` and `aperf` = active** (flat when util≈0); **`mperf` = reference** (wall×freq). Overlay must **not** clear those keys when measured cycles are 0. Do **not** publish DCGM-synthesized FLOPs/instr under overlay (SP/DP/`arm_est_flops` stay overlay-owned).
 - Emit contract: every overlay collect that has SP/DP must set **both** scalar keys **and** `arm_est_flops = SP + DP`. Do **not** fold int8/int16 into `arm_est_flops`.
 - Integer ops: map only when the eventset programs them; production Grace eventset is **CYC+INS only** (`CPU_CYCLES:PMC0,INST_RETIRED:PMC1`) with CYC-only fallback. Packed 128/256/512 FP buckets stay 0 unless a future event maps them.
-- **Keep `arm_imc.c`** for DRAM CAS until LIKWID Grace uncore is proven equivalent to DMC CAS.
+- **Grace DRAM CAS (`arm_aarch64_imc`)**: the overlay first tries `likwid_arch_eventset_grace_scf()` = CYC+INS **plus** `CMEM_RD_DATA:SCF0,CMEM_WR_TOTAL_BYTES:SCF1` in the **same** group (no second uncore group, no per-tick re-arm). When it succeeds, `cpu_counter_metrics_likwid_overlay_has_scf()` is 1 and `arm_imc.c` reads one device per socket (`scf<N>`, lead CPU from `nvidia_scf_pmu_<N>/cpumask`, `arm_imc_scf.c`) via `likwid_pmc_adapter_read_event`, accumulating lifetime `E` with `likwid_overlay_lifetime_advance`; units are 64-byte CAS (reads = 32 B beats / 2, writes = bytes / 64). Use `cmem_*` only — `gmem_*` is GPU memory. When the SCF eventset fails setup, the ladder falls back to CYC+INS, then CYC only, and **keep** `arm_imc.c`'s perf `dmc`/`imc` scan as the fallback. DCGM `arm_dram_bw_bytes` stays as a second source (user decision 2026-11-03).
 
 ## Static link
 
@@ -32,7 +32,7 @@ alwaysApply: false
 
 ## Runtime
 
-- Eventset: `likwid_arch_eventset_grace()` then `likwid_arch_eventset_grace_cyc_only()` on setup failure.
+- Eventset ladder: `likwid_arch_eventset_grace_scf()`, then `likwid_arch_eventset_grace()`, then `likwid_arch_eventset_grace_cyc_only()` on setup failure. `cpu_counter_metrics_likwid_ready()` on DCGM builds stays the stub `0` — Grace SCF does not go through `likwid_uncore_adapter`.
 - Overlay init fail: **do not** disable `host_cpu_hw`; DCGM util/power stays. Exclusive ARM LIKWID still fail-closes the type (no DCGM fallback).
 - **Lifetime vs DCGM soft-fail:** overlay must **survive** DCGM `UpdateAllFields` soft-reset. Tear down DCGM only; do **not** `HPMfinalize` / `cpu_counter_metrics_likwid_overlay_cleanup()` when only the DCGM session is torn down.
 - Collect: one `prepare_collect` + `read_group` per tick; per-CPU `read_cpu_cycles_instr` must not re-`readGroupCounters`.

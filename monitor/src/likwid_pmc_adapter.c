@@ -414,6 +414,39 @@ int likwid_pmc_adapter_read_group(void)
 #endif
 }
 
+int likwid_pmc_adapter_read_event(const char *event_name, int cpu, unsigned long long *out)
+{
+#ifdef HAVE_LIKWID
+  int i;
+  int n_events;
+
+  if (out != NULL)
+    *out = 0;
+  if (!g_initialized || g_group < 0 || cpu < 0 || event_name == NULL || out == NULL)
+    return -1;
+  n_events = perfmon_getNumberOfEvents(g_group);
+  for (i = 0; i < n_events; i++) {
+    const char *name = perfmon_getEventName(g_group, i);
+
+    if (name == NULL || strcmp(name, event_name) != 0)
+      continue;
+    if (likwid_result_to_ull(perfmon_getResult(g_group, i, cpu), ~(unsigned long long)0, out) < 0 ||
+        likwid_pmc_result_is_invalid(*out)) {
+      *out = 0;
+      return -1;
+    }
+    return 0;
+  }
+  return -1;
+#else
+  (void)event_name;
+  (void)cpu;
+  if (out != NULL)
+    *out = 0;
+  return -1;
+#endif
+}
+
 int likwid_pmc_adapter_read_cpu_cycles_instr(int cpu, unsigned long long *cycles_out,
                                              unsigned long long *instr_out)
 {

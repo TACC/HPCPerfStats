@@ -146,6 +146,7 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | Area | Files (under `src/`) |
 |------|----------------------|
 | Stats type registry (`st_name` table for lookup / iteration; ordered by legacy variable names, so `stats_type_get` scans linearly) | `stats_registry.c`, `stats_registry.h` (optional modules guarded by configure **`MONITOR_WITH_*`** / backend macros — keep aligned with `Makefile.am` **`TYPES`**). |
+| Grace DRAM CAS (`arm_aarch64_imc`): SCF0/SCF1 in the LIKWID overlay group, one `scf<N>` device per socket; perf `dmc`/`imc` scan as fallback | `arm_imc.c`, `arm_imc_scf.c`, `arm_imc_scf.h` (`likwid_arch_eventset_grace_scf`, `likwid_pmc_adapter_read_event`). |
 | DCGM watch cadence: `dcgmWatchFields` refresh = collect interval (`sample_freq`, set on conf load/SIGHUP), history = 2 refreshes; batch client keeps each caller's fallback | `dcgm_watch_policy.c`, `dcgm_watch_policy.h` (used by `cpu_counter_metrics.c` and `nvidia_gpu_dcgm_watch.c`). `dcgm_session.c` starts the embedded engine with the NVSwitch module denied (`DcgmModuleIdNvSwitch`) and logs which start path ran. |
 | Prepare/teardown and sink-facing collect cycles | `stats_runtime.c`, `stats_runtime.h`, `stats_sink.h`. |
 | Shared UTF-8 text for archive/buffer rows, schema suffixes, `%` marks | `stats_text_format.c`, `stats_text_format.h`. |

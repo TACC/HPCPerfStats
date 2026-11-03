@@ -284,9 +284,11 @@ hpcperfstatsd_SOURCES += \
 endif
 if MONITOR_ARCH_ARM
 TYPES += \
-	arm_imc.c
+	arm_imc.c \
+	arm_imc_scf.c
 hpcperfstatsd_SOURCES += \
-	arm_imc.h
+	arm_imc.h \
+	arm_imc_scf.h
 endif
 endif
 endif
