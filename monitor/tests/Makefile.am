@@ -47,11 +47,8 @@ check_PROGRAMS = test_cpuid_signature test_amd_cpuid_match test_amd_df_likwid_pr
 if INFINIBAND
 check_PROGRAMS += test_ib_mad_backoff test_ib_mad_decode test_ib_mad_sw_swap
 endif
-if CPU_BACKEND_DCGM
-check_PROGRAMS += test_dcgm_pkg_uniq
-endif
 # Pure DCGM util/publish math must run on LIKWID hosts too (blank watts, util@clock=0).
-check_PROGRAMS += test_cpu_counter_dcgm_util test_cpu_counter_dcgm_publish \
+check_PROGRAMS += test_dcgm_pkg_uniq test_cpu_counter_dcgm_util test_cpu_counter_dcgm_publish \
 	test_cpu_counter_dcgm_publish_likwid \
 	test_cpu_counter_metrics_likwid_ready_dcgm
 if RABBITMQ
@@ -438,6 +435,8 @@ test_gpu_schema_contract_SOURCES = \
 test_dcgm_pkg_uniq_SOURCES = \
 	test_dcgm_pkg_uniq.c \
 	$(top_srcdir)/src/cpu_counter_metrics_dcgm_util.c
+# Regression: helper was declared only under MONITOR_CPU_BACKEND_DCGM (implicit declaration elsewhere).
+test_dcgm_pkg_uniq_CFLAGS = $(AM_CFLAGS) -Werror=implicit-function-declaration
 
 test_cpu_counter_metrics_schema_SOURCES = test_cpu_counter_metrics_schema.c
 

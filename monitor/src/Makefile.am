@@ -452,6 +452,7 @@ EXTRA_DIST = hpcperfstats.conf hpcperfstats.service hpcperfstatsd.sysconfig \
 	$(top_srcdir)/scripts/run_valgrind_check.sh \
 	$(top_srcdir)/scripts/valgrind.supp \
 	$(top_srcdir)/scripts/run_cpp_linter.sh \
+	$(top_srcdir)/scripts/lib/compile_db_dedupe.py \
 	$(top_srcdir)/scripts/gpu_lspci_probe.sh \
 	$(top_srcdir)/scripts/gpu_lspci_detect.awk \
 	$(top_srcdir)/scripts/fleet/README \

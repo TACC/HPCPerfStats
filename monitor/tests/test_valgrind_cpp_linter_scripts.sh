@@ -52,4 +52,24 @@ grep -q 'MONITOR_DIR}/src' scripts/run_cpp_linter.sh \
 grep -q 'MONITOR_DIR}/tests' scripts/run_cpp_linter.sh \
   || { echo "run_cpp_linter.sh must scan tests/" >&2; exit 1; }
 
+# Regression: stats_buffer.c has a src/ and a tests/ compile DB entry; clang-tidy ran
+# both in one process and failed on the generated monitor_capability_slug.h.
+grep -q 'lib/compile_db_dedupe.py' scripts/run_cpp_linter.sh \
+  || { echo "run_cpp_linter.sh must dedupe the compile DB" >&2; exit 1; }
+PY="${ROOT}/../../.venv/bin/python3"
+test -x "${PY}" || PY="$(command -v python3)"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/test_cpp_linter_db.XXXXXX")"
+trap 'rm -rf "${TMP}"' EXIT
+cat >"${TMP}/in.json" <<'EOF'
+[{"directory": "/b/src", "file": "../../src/stats_buffer.c", "command": "gcc -I. -c x"},
+ {"directory": "/b/tests", "file": "../../tests/../src/stats_buffer.c", "command": "gcc -I. -c y"},
+ {"directory": "/b/tests", "file": "../../tests/test_dict.c", "command": "gcc -c z"}]
+EOF
+"${PY}" scripts/lib/compile_db_dedupe.py "${TMP}/in.json" "${TMP}/out.json"
+"${PY}" - "${TMP}/out.json" <<'EOF' || { echo "compile_db_dedupe.py kept duplicate entries" >&2; exit 1; }
+import json, sys
+db = json.load(open(sys.argv[1]))
+assert [e["command"] for e in db] == ["gcc -I. -c x", "gcc -c z"], db
+EOF
+
 echo "test_valgrind_cpp_linter_scripts passed"

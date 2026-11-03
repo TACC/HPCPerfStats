@@ -130,15 +130,24 @@ fi
 
 if test "${SKIP_CLANG_TIDY:-0}" != "1"; then
   TIDY_ARGS=()
-  if test -n "${COMPILE_COMMANDS:-}" && test -f "${COMPILE_COMMANDS}"; then
-    TIDY_ARGS+=(-p "$(dirname "${COMPILE_COMMANDS}")")
-    log "clang-tidy using compile DB: ${COMPILE_COMMANDS}"
-  elif test -f "${MONITOR_DIR}/.build-valgrind/compile_commands.json"; then
-    TIDY_ARGS+=(-p "${MONITOR_DIR}/.build-valgrind")
-    log "clang-tidy using compile DB: ${MONITOR_DIR}/.build-valgrind/compile_commands.json"
-  elif test -f "${MONITOR_DIR}/.build-static/compile_commands.json"; then
-    TIDY_ARGS+=(-p "${MONITOR_DIR}/.build-static")
-    log "clang-tidy using compile DB: ${MONITOR_DIR}/.build-static/compile_commands.json"
+  compile_db=""
+  for cand in "${COMPILE_COMMANDS:-}" "${MONITOR_DIR}/.build-valgrind/compile_commands.json" \
+    "${MONITOR_DIR}/.build-static/compile_commands.json"; do
+    if test -n "${cand}" && test -f "${cand}"; then
+      compile_db="${cand}"
+      break
+    fi
+  done
+  if test -n "${compile_db}"; then
+    # One entry per file: clang-tidy runs all matching entries in one process and
+    # their shared file cache breaks generated headers (see compile_db_dedupe.py).
+    dedup_dir="$(mktemp -d "${TMPDIR:-/tmp}/cpp-linter-db.XXXXXX")"
+    trap 'rm -rf "${dedup_dir}"' EXIT
+    py="$(resolve_tool python3 "")" || die "python3 not found (needed to dedupe ${compile_db})"
+    "${py}" "${SCRIPT_DIR}/lib/compile_db_dedupe.py" "${compile_db}" \
+      "${dedup_dir}/compile_commands.json" || die "compile DB dedupe failed for ${compile_db}"
+    TIDY_ARGS+=(-p "${dedup_dir}")
+    log "clang-tidy using compile DB: ${compile_db} (deduplicated per source file)"
   else
     # Prefer a configured Autotools tree so config.h / STATS_* macros resolve.
     local_cfg=""

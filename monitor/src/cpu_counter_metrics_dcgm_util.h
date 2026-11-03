@@ -14,6 +14,7 @@ unsigned long long dcgm_watts_dbl_to_ull(double v);
 int dcgm_host_cpu_hw_collect_active(int dcgm_ready, int overlay_ready, int util_bufs_ok);
 /* True when retry_after is unset or now is past the backoff deadline. */
 int dcgm_backend_retry_due(time_t now, time_t retry_after);
+int dcgm_count_unique_sorted_ints(const int *sorted, int n);
 
 #ifdef MONITOR_CPU_BACKEND_DCGM
 #include "cpu_counter_metrics_dcgm_publish.h"
@@ -26,7 +27,6 @@ double dcgm_clamp_percent(double v);
 void dcgm_cpu_scale_util_if_fraction(struct dcgm_cpu_sample *s);
 void dcgm_cpu_sample_from_jiffy_diff(struct dcgm_cpu_sample *s, const struct dcgm_cpu_jifs *cur,
                                      const struct dcgm_cpu_jifs *prev);
-int dcgm_count_unique_sorted_ints(const int *sorted, int n);
 #endif
 
 #endif

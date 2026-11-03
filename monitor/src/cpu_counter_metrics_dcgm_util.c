@@ -41,6 +41,20 @@ int dcgm_backend_retry_due(time_t now, time_t retry_after)
   return (now >= retry_after) ? 1 : 0;
 }
 
+int dcgm_count_unique_sorted_ints(const int *sorted, int n)
+{
+  int i, nu;
+
+  if (n <= 0 || sorted == NULL)
+    return 0;
+  nu = 1;
+  for (i = 1; i < n; i++) {
+    if (sorted[i] != sorted[i - 1])
+      nu++;
+  }
+  return nu;
+}
+
 #ifdef MONITOR_CPU_BACKEND_DCGM
 
 double dcgm_clamp_percent(double v)
@@ -104,20 +118,6 @@ void dcgm_cpu_sample_from_jiffy_diff(struct dcgm_cpu_sample *s, const struct dcg
   s->util_sys = dcgm_clamp_percent(100.0 * (double)d_sy / (double)d_tot);
   s->util_irq = dcgm_clamp_percent(100.0 * (double)(d_iq + d_sft) / (double)d_tot);
   s->util_nice = 0.0;
-}
-
-int dcgm_count_unique_sorted_ints(const int *sorted, int n)
-{
-  int i, nu;
-
-  if (n <= 0 || sorted == NULL)
-    return 0;
-  nu = 1;
-  for (i = 1; i < n; i++) {
-    if (sorted[i] != sorted[i - 1])
-      nu++;
-  }
-  return nu;
 }
 
 #endif /* MONITOR_CPU_BACKEND_DCGM */

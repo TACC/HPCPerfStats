@@ -205,7 +205,7 @@ Some drivers are omitted or skipped depending on the configured build:
 
 | Condition | Affected tests |
 |-----------|----------------|
-| `CPU_BACKEND_DCGM` | `test_cpu_counter_dcgm_util`, `test_cpu_counter_dcgm_publish`, `test_dcgm_pkg_uniq` |
+| (always) | `test_cpu_counter_dcgm_util`, `test_cpu_counter_dcgm_publish`, `test_dcgm_pkg_uniq` (pure DCGM util math; no libdcgm, runs on LIKWID hosts too) |
 | (always) | `test_likwid_rapl_support` links production `likwid_rapl.c` (PWR collect stubs allowed; support asserts do not require live LIKWID) |
 | `RABBITMQ` | `test_monitor_cli`, `test_ring_buffer`, `test_stats_buffer_collect`, `test_stats_buffer_debug_shm`, `test_debug_shm_emit_golden`, `test_monitor_timing` |
 | `DEBUG` | `test_stats_buffer_debug_shm`, `test_debug_shm_emit_golden` (meaningful assertions; otherwise skipped) |
