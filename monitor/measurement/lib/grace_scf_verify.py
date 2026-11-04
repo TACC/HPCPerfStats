@@ -2,7 +2,8 @@
 
 Used by ``bin/verify_grace_scf_imc.sh``. Pure parsing and checks, unit-tested on the dev host:
 
-* ``likwid-perfctr`` text output (custom eventset ``CMEM_RD_DATA:SCF0,CMEM_WR_TOTAL_BYTES:SCF1``),
+* ``perf stat -x,`` CSV for the kernel SCF PMU events (``nvidia_scf_pmu_0/cmem_rd_data/``,
+  ``.../cmem_wr_total_bytes/``), an independent path from LIKWID,
 * ``likwid-bench`` "Data volume (Byte)",
 * the DEBUG ``/dev/shm/.../schema`` + ``full`` payloads written by hpcperfstatsd,
 
@@ -21,42 +22,27 @@ from typing import Any
 NUM = re.compile(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
 
 
-def perfctr_value(text: str, event: str, counter: str) -> float | None:
-    """Last number on the table row that names ``event`` and ``counter``.
+def perf_stat_value(text: str, event: str) -> float | None:
+    """Count for ``event`` from ``perf stat -x,`` output.
 
-    likwid-perfctr prints rows such as ``|   CMEM_RD_DATA    |   SCF0  |  1.234567e+08 |``.
+    CSV rows are ``count,unit,event,run_time,pct,...``; ``-a`` on an uncore PMU aggregates to
+    one row per event. ``<not counted>`` / ``<not supported>`` mean no reading (None), not 0.
 
     Args:
-        text: Full likwid-perfctr output.
-        event: Event name in the first cell.
-        counter: Counter name in the second cell.
+        text: Full ``perf stat -x, -o FILE`` output.
+        event: Event spec as given to ``-e`` (``nvidia_scf_pmu_0/cmem_rd_data/``).
 
     Returns:
-        The value, or None when no such row exists.
+        The count, or None when the event row is missing or was not counted.
     """
     for line in text.splitlines():
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) >= 3 and cells[0] == event and cells[1] == counter:
-            nums = NUM.findall(cells[-1])
-            if nums:
-                return float(nums[-1])
+        parts = line.split(",")
+        if len(parts) >= 3 and parts[2].strip() == event:
+            try:
+                return float(parts[0])
+            except ValueError:
+                return None
     return None
-
-
-def perfctr_cannot_run(text: str) -> bool:
-    """True when likwid-perfctr failed to load its library rather than measure.
-
-    The static bundle installs only ``liblikwid.a``; the Lua front end needs ``liblikwid.so``
-    and prints ``module 'liblikwid' not found`` (or the loader's shared-library error). That
-    is a missing tool, not a units failure, so the shell driver reports NOT_RUN.
-
-    Args:
-        text: likwid-perfctr output.
-
-    Returns:
-        Whether the output is a library load failure.
-    """
-    return bool(re.search(r"module 'liblikwid' not found|error while loading shared libraries", text))
 
 
 def bench_volume_bytes(text: str) -> int | None:
@@ -210,7 +196,7 @@ def util_check(before: dict, mid: dict, after: dict, cpus: list[str], tol: float
 
 
 def main(argv: list[str]) -> int:
-    """CLI for the shell driver: ``unit``, ``loaderr``, ``rows``, ``daemon`` or ``util``; prints one JSON line.
+    """CLI for the shell driver: ``unit``, ``rows``, ``daemon`` or ``util``; prints one JSON line.
 
     Args:
         argv: ``sys.argv``.
@@ -219,13 +205,11 @@ def main(argv: list[str]) -> int:
         0 when the verdict is ok, 1 when it is not, 2 on a usage error.
     """
     cmd = argv[1] if len(argv) > 1 else ""
-    if cmd == "unit" and len(argv) == 10:  # unit PERF IDLE BENCH EVENT COUNTER BPU BENCH_S IDLE_S
+    if cmd == "unit" and len(argv) == 9:  # unit PERF IDLE BENCH EVENT BPU BENCH_S IDLE_S
         perf, idle, bench = (open(p, encoding="utf-8").read() for p in argv[2:5])
-        res = unit_check(bench_volume_bytes(bench) or 0, perfctr_value(perf, argv[5], argv[6]) or 0.0,
-                         perfctr_value(idle, argv[5], argv[6]) or 0.0, float(argv[7]),
-                         bench_secs=float(argv[8]), idle_secs=float(argv[9]))
-    elif cmd == "loaderr" and len(argv) >= 3:  # loaderr PERFCTR_OUT... (exit 0 when unusable)
-        res = {"ok": any(perfctr_cannot_run(open(p, encoding="utf-8").read()) for p in argv[2:])}
+        res = unit_check(bench_volume_bytes(bench) or 0, perf_stat_value(perf, argv[5]) or 0.0,
+                         perf_stat_value(idle, argv[5]) or 0.0, float(argv[6]),
+                         bench_secs=float(argv[7]), idle_secs=float(argv[8]))
     elif cmd == "rows" and len(argv) == 4:  # rows SCHEMA PAYLOAD
         schema = parse_schema(open(argv[2], encoding="utf-8").read())
         rows = parse_payload(open(argv[3], encoding="utf-8").read(), schema)
@@ -244,7 +228,7 @@ def main(argv: list[str]) -> int:
         lo, _, hi = argv[6].partition("-")
         res = util_check(*snaps, [str(c) for c in range(int(lo), int(hi or lo) + 1)])
     else:
-        print("usage: grace_scf_verify.py unit|loaderr|rows|daemon|util ...", file=sys.stderr)
+        print("usage: grace_scf_verify.py unit|rows|daemon|util ...", file=sys.stderr)
         return 2
     print(json.dumps(res, sort_keys=True))
     return 0 if res.get("ok") else 1

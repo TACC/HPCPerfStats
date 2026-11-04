@@ -2,20 +2,20 @@
 
 The SCF write unit is the open question (LIKWID's MEM group text treats CMEM_WR_TOTAL_BYTES as
 bytes in one formula and x32 in another), so the unit verdict must flag a 32x error, not hide it.
+The units phase reads the same SCF events through kernel perf, independent of LIKWID.
 """
 
 from __future__ import annotations
 
 from lib import grace_scf_verify as g
 
-PERFCTR = """\
---------------------------------------------------------------------------------
-+-----------------------+---------+--------------+
-|         Event         | Counter |  HWThread 0  |
-+-----------------------+---------+--------------+
-|      CMEM_RD_DATA     |   SCF0  | 6.250000e+07 |
-|  CMEM_WR_TOTAL_BYTES  |   SCF1  |    123456    |
-+-----------------------+---------+--------------+
+# perf stat -x, -a -e nvidia_scf_pmu_0/cmem_rd_data/,nvidia_scf_pmu_0/cmem_wr_total_bytes/ (c122-018
+# kernel arm_cspmu NVIDIA SCF PMU; independent of LIKWID).
+PERF = """\
+# started on Tue Nov  4 09:00:00 2026
+
+62500000,,nvidia_scf_pmu_0/cmem_rd_data/,5001234567,100.00,,
+123456,,nvidia_scf_pmu_0/cmem_wr_total_bytes/,5001234567,100.00,,
 """
 BENCH = "Cycles:\t\t1\nData volume (Byte):\t2000000000\nMByte/s:\t\t1000.00\n"
 SCHEMA = ("$hpcperfstats 3.0\n$hostname c122-018\n"
@@ -29,26 +29,14 @@ def payload(r0, w0, r1, w1):
             "host_cpu_hw 0 @full 5 6\nunknown_type x 1 2\n")
 
 
-def test_perfctr_value_reads_table_cells():
-    assert g.perfctr_value(PERFCTR, "CMEM_RD_DATA", "SCF0") == 6.25e7
-    assert g.perfctr_value(PERFCTR, "CMEM_WR_TOTAL_BYTES", "SCF1") == 123456.0
-    assert g.perfctr_value(PERFCTR, "CMEM_RD_DATA", "SCF1") is None
-    assert g.perfctr_value("", "CMEM_RD_DATA", "SCF0") is None
-
-
-LUA_LOAD_ERROR = """lua: /root/taccstats_testing/.build/prefix-static/bin/likwid-perfctr:41: module 'liblikwid' not found:
-    no field package.preload['liblikwid']
-    no file '/usr/local/lib/lua/5.4/liblikwid.lua'
-    no file '/root/taccstats_testing/.build/prefix-static/lib/liblikwid.so'
-"""
-
-
-def test_perfctr_cannot_run_flags_missing_liblikwid_only():
-    """c122-018: the static prefix has no liblikwid.so, so phase A read 0 and reported FAIL."""
-    assert g.perfctr_cannot_run(LUA_LOAD_ERROR)
-    assert g.perfctr_cannot_run("likwid-perfctr: error while loading shared libraries: liblikwid.so.5.5")
-    assert not g.perfctr_cannot_run(PERFCTR)
-    assert not g.perfctr_cannot_run("")
+def test_perf_stat_value_reads_csv_rows():
+    assert g.perf_stat_value(PERF, "nvidia_scf_pmu_0/cmem_rd_data/") == 6.25e7
+    assert g.perf_stat_value(PERF, "nvidia_scf_pmu_0/cmem_wr_total_bytes/") == 123456.0
+    assert g.perf_stat_value(PERF, "nvidia_scf_pmu_1/cmem_rd_data/") is None
+    assert g.perf_stat_value("", "nvidia_scf_pmu_0/cmem_rd_data/") is None
+    # perf marks an event it could not count; that is no reading, not zero traffic.
+    missing = "<not supported>,,nvidia_scf_pmu_0/cmem_rd_data/,0,100.00,,\n"
+    assert g.perf_stat_value(missing, "nvidia_scf_pmu_0/cmem_rd_data/") is None
 
 
 def test_bench_volume():
@@ -131,18 +119,16 @@ def test_util_check_dcgm_matches_jiffies_without_lag():
 
 
 def test_main_cli(tmp_path, capsys):
-    (tmp_path / "perf").write_text(PERFCTR)
-    (tmp_path / "idle").write_text(PERFCTR.replace("6.250000e+07", "0"))
+    (tmp_path / "perf").write_text(PERF)
+    (tmp_path / "idle").write_text(PERF.replace("62500000,", "0,"))
     (tmp_path / "bench").write_text(BENCH)
     rc = g.main(["x", "unit", str(tmp_path / "perf"), str(tmp_path / "idle"), str(tmp_path / "bench"),
-                 "CMEM_RD_DATA", "SCF0", "32", "2.0", "2.0"])
+                 "nvidia_scf_pmu_0/cmem_rd_data/", "32", "2.0", "2.0"])
     assert rc == 0 and '"ok": true' in capsys.readouterr().out
     (tmp_path / "schema").write_text(SCHEMA)
     (tmp_path / "p").write_text(payload(1, 2, 3, 4))
     assert g.main(["x", "rows", str(tmp_path / "schema"), str(tmp_path / "p")]) == 0
-    (tmp_path / "lua").write_text(LUA_LOAD_ERROR)
-    assert g.main(["x", "loaderr", str(tmp_path / "perf"), str(tmp_path / "lua")]) == 0
-    assert g.main(["x", "loaderr", str(tmp_path / "perf")]) == 1
+    assert g.main(["x", "loaderr", str(tmp_path / "perf")]) == 2  # retired with likwid-perfctr
     assert g.main(["x", "bogus"]) == 2
 
 
@@ -155,6 +141,9 @@ def test_verifier_script_pins_bench_iterations_and_reads_raw_log():
     script = (pathlib.Path(__file__).resolve().parents[1] / "bin" / "verify_grace_scf_imc.sh").read_text()
     benches = [ln for ln in script.splitlines() if re.search(r"\blikwid-bench -t\b", ln)]
     assert benches and all(" -i " in ln for ln in benches)
+    # Units phase is kernel perf on the SCF PMU, independent of LIKWID (no liblikwid.so needed).
+    assert "likwid-perfctr" not in script
+    assert "nvidia_scf_pmu_0/cmem_rd_data/" in script and "perf stat -x," in script
     for needle in ("Grace SCF DRAM CAS via LIKWID", "DCGM embedded engine started"):
         line = next(ln for ln in script.splitlines() if needle in ln and "grep" in ln)
         assert '"${DAEMON_LOG}"' in line and "grep -a" in line

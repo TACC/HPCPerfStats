@@ -144,14 +144,17 @@ On a Grace node, as root, after `build_static_bundle.sh` has populated the stati
 ```
 
 It stops `hpcperfstats.service` for the run (restored on exit) and checks, against a known
-`likwid-bench` volume on socket 0: (A) the SCF units with `likwid-perfctr`
-(`CMEM_RD_DATA` = 32-byte beats, `CMEM_WR_TOTAL_BYTES` = bytes, idle subtracted); (B) a DEBUG
+`likwid-bench` volume on socket 0 (fixed `-i 10`, no calibration passes): (A) the SCF units
+through kernel `perf stat` on `nvidia_scf_pmu_0/cmem_rd_data/` and `/cmem_wr_total_bytes/`,
+independent of LIKWID (reads = 32-byte beats, writes = bytes, idle subtracted; `NOT_RUN` when
+`perf` or those events are missing); (B) a DEBUG
 build of the daemon run as a transient unit (broker unreachable, dumps to the result dir,
 `/dev/shm/hpcperfstatsd-scf-verify` mirror): `arm_aarch64_imc` `scf0` deltas match the volume
 in 64-byte CAS within 0.75–1.5x and `scf1` stays below 0.25x; (B2) with DCGM refreshing at
 `sample_freq`, `host_cpu_hw` user util on 8 pinned busy CPUs matches `host_cpu` `/proc/stat`
 user time within 5% and is not a sample behind mid-load; (C) the DCGM NVSwitch module is
-denied and not mapped. Output: `measurement/results/grace_scf_<host>_<UTC>/summary.txt`, last
+denied and not mapped. Output: `measurement/results/grace_scf_<host>_<UTC>/summary.txt` (daemon
+stdout/stderr in `daemon_output.log`, not the journal, which rate-limits the DEBUG build), last
 line `GRACE_SCF_VERIFY_OK` or `GRACE_SCF_VERIFY_FAIL`. Parsing and verdicts:
 `lib/grace_scf_verify.py` (unit-tested in `tests/test_grace_scf_verify.py`).
 

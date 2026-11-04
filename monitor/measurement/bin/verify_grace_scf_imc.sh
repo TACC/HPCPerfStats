@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Verify Grace DRAM CAS (arm_aarch64_imc via LIKWID SCF) end to end on a Grace node, as root.
 #
-#   A. Units: likwid-perfctr around likwid-bench load/store with a known data volume
-#      (CMEM_RD_DATA must be 32-byte beats, CMEM_WR_TOTAL_BYTES bytes; idle background removed).
-#      NOT_RUN (not FAIL) when likwid-perfctr cannot load liblikwid.so (static-only prefix).
+#   A. Units, independent of LIKWID: kernel perf stat on nvidia_scf_pmu_0 (cmem_rd_data,
+#      cmem_wr_total_bytes) around likwid-bench load/store with a known data volume (reads must be
+#      32-byte beats, writes bytes; idle background removed). NOT_RUN (not FAIL) when perf or
+#      those PMU events are missing; the PMU's event list is kept in OUT.
 #   B. Daemon: a DEBUG build of hpcperfstatsd runs as a transient unit (broker unreachable, dumps
 #      to a temp dir, lshw stub bound like the shipped unit). Its /dev/shm mirror must show
 #      arm_aarch64_imc scf0/scf1, and the scf0 delta across a known socket-0 load must match the
@@ -36,7 +37,9 @@ while [ $# -gt 0 ]; do
 done
 UNIT=hpcperfstats-scf-verify
 SHM=/dev/shm/hpcperfstatsd-scf-verify
-EVENTS="CMEM_RD_DATA:SCF0,CMEM_WR_TOTAL_BYTES:SCF1"
+SCF0_PMU=/sys/bus/event_source/devices/nvidia_scf_pmu_0
+PERF_RD="nvidia_scf_pmu_0/cmem_rd_data/"
+PERF_WR="nvidia_scf_pmu_0/cmem_wr_total_bytes/"
 # Fixed iterations: without -i likwid-bench calibrates first, and those passes move DRAM traffic
 # the daemon counts but "Data volume" omits (c122-018: ratios 1.79 / 1.88).
 BENCH_ITERS=10
@@ -73,32 +76,40 @@ mkdir -p "${OUT}/dump" || exit 2
 ls -d /sys/bus/event_source/devices/nvidia_scf_pmu_* > "${OUT}/scf_pmus.txt" 2>&1 \
   || { say "FAIL preflight no nvidia_scf_pmu_* in sysfs"; exit 1; }
 export PATH="${PREFIX}/bin:${PATH}" LD_LIBRARY_PATH="${PREFIX}/lib:${LD_LIBRARY_PATH:-}"
-command -v likwid-perfctr >/dev/null && command -v likwid-bench >/dev/null \
-  || { say "FAIL preflight likwid-perfctr/likwid-bench not under ${PREFIX}/bin (run build_static_bundle.sh)"; exit 1; }
+command -v likwid-bench >/dev/null \
+  || { say "FAIL preflight likwid-bench not under ${PREFIX}/bin (run build_static_bundle.sh)"; exit 1; }
 say "host $(hostname -s) kernel $(uname -r) git $(git -C "${MON}" log --oneline -1 2>/dev/null) out ${OUT}"
 
 if [ "${WAS_ACTIVE}" = active ]; then systemctl stop hpcperfstats; say "stopped hpcperfstats.service for the run (restored on exit)"; fi
 
 # ---- A. units ------------------------------------------------------------------------------
 now() { date +%s.%N; }
-perfctr() { likwid-perfctr -f -C S0:0 -g "${EVENTS}" "$@"; }
-t0=$(now); perfctr sleep 5 > "${OUT}/idle_perfctr.txt" 2>&1; t1=$(now)
-IDLE_S=$(awk -v a="$t0" -v b="$t1" 'BEGIN{print b-a}')
-for k in load store; do
-  t0=$(now)
-  perfctr likwid-bench -t "$k" -i "${BENCH_ITERS}" -w S0:8GB:1 > "${OUT}/${k}_perfctr.txt" 2>&1
-  t1=$(now)
-  secs=$(awk -v a="$t0" -v b="$t1" 'BEGIN{print b-a}')
-  if [ "$k" = load ]; then ev=CMEM_RD_DATA; ctr=SCF0; bpu=32; else ev=CMEM_WR_TOTAL_BYTES; ctr=SCF1; bpu=1; fi
-  # The static bundle ships no liblikwid.so, which likwid-perfctr (Lua) needs: not a unit failure.
-  if "${PY}" "${LIB}" loaderr "${OUT}/${k}_perfctr.txt" "${OUT}/idle_perfctr.txt" >/dev/null; then
-    say "NOT_RUN units_${k}_${ev} likwid-perfctr cannot load liblikwid (static-only prefix); see ${k}_perfctr.txt"
-    NOTRUN=$((NOTRUN + 1))
-    continue
-  fi
-  verdict "units_${k}_${ev}_bytes_per_unit" \
-    "$("${PY}" "${LIB}" unit "${OUT}/${k}_perfctr.txt" "${OUT}/idle_perfctr.txt" "${OUT}/${k}_perfctr.txt" "$ev" "$ctr" "$bpu" "$secs" "${IDLE_S}")"
-done
+ls "${SCF0_PMU}/events" > "${OUT}/scf_pmu0_events.txt" 2>&1
+UNITS_SKIP=""
+if ! command -v perf >/dev/null; then
+  UNITS_SKIP="perf not installed"
+elif [ ! -e "${SCF0_PMU}/events/cmem_rd_data" ] || [ ! -e "${SCF0_PMU}/events/cmem_wr_total_bytes" ]; then
+  UNITS_SKIP="nvidia_scf_pmu_0 lacks cmem_rd_data/cmem_wr_total_bytes (see scf_pmu0_events.txt)"
+fi
+perfstat() { local o=$1; shift; perf stat -x, -a -e "${PERF_RD},${PERF_WR}" -o "$o" -- "$@"; }
+if [ -n "${UNITS_SKIP}" ]; then
+  for k in load store; do say "NOT_RUN units_${k} ${UNITS_SKIP}"; NOTRUN=$((NOTRUN + 1)); done
+else
+  t0=$(now); perfstat "${OUT}/idle_perf.txt" sleep 5 > /dev/null 2>&1; t1=$(now)
+  IDLE_S=$(awk -v a="$t0" -v b="$t1" 'BEGIN{print b-a}')
+  for k in load store; do
+    if [ "$k" = load ]; then ev="${PERF_RD}"; bpu=32; else ev="${PERF_WR}"; bpu=1; fi
+    t0=$(now)
+    if ! perfstat "${OUT}/${k}_perf.txt" likwid-bench -t "$k" -i "${BENCH_ITERS}" -w S0:8GB:1 \
+         > "${OUT}/${k}_bench_perf.txt" 2>&1; then
+      say "FAIL units_${k} perf stat failed (see ${k}_perf.txt)"; FAILS=$((FAILS + 1)); continue
+    fi
+    t1=$(now)
+    secs=$(awk -v a="$t0" -v b="$t1" 'BEGIN{print b-a}')
+    verdict "units_${k}_${ev}_bytes_per_unit" \
+      "$("${PY}" "${LIB}" unit "${OUT}/${k}_perf.txt" "${OUT}/idle_perf.txt" "${OUT}/${k}_bench_perf.txt" "$ev" "$bpu" "$secs" "${IDLE_S}")"
+  done
+fi
 
 # ---- B. daemon -----------------------------------------------------------------------------
 if [ "${BUILD}" = 1 ]; then
