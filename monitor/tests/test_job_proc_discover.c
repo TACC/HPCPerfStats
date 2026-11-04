@@ -46,9 +46,11 @@ static void mk_pid(int pid, uid_t uid, const char *cgroup, const char *environ_b
   snprintf(status, sizeof(status), "Name:\ttask\nUid:\t%u\t%u\t%u\t%u\n", uid, uid, uid, uid);
   snprintf(path, sizeof(path), "%s/status", dir);
   write_file(path, status);
-  /* Filter uses st_uid of the process directory (stat). chown when permitted. */
-  if (uid == 0 && geteuid() == 0)
-    (void)chown(dir, 0, 0);
+  /* Filter uses st_uid of the process directory (stat) and skips root-owned dirs. As root
+   * every fixture dir would be root-owned, so give each one its intended owner (make check
+   * as root on Horizon c122-018 dropped every job pid: r.n == 0). */
+  if (geteuid() == 0)
+    assert(chown(dir, uid, uid) == 0);
 }
 
 static void test_jid_acceptable(void)
