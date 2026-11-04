@@ -818,13 +818,22 @@ describe("JobDetail", () => {
     });
 
     renderJobDetail("12345", { is_staff: false }, "tab=summary");
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /^help: cpu$/i })).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByRole("button", { name: /^help: cpu$/i }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /^help: node_power_est_w$/i }),
+    );
     expect(
       screen.getByTestId("variable-info-shared-node-footer"),
     ).toHaveTextContent(/shared node/i);
+  });
+
+  it("omits the shared-node help footer for job-scoped CPU in the Summary plot metric-help strip", async () => {
+    setJobDetailQueryMock({
+      data: { ...minimalJobDetailResponse, is_shared_node: true },
+    });
+
+    renderJobDetail("12345", { is_staff: false }, "tab=summary");
+    fireEvent.click(await screen.findByRole("button", { name: /^help: cpu$/i }));
+    expect(screen.queryByTestId("variable-info-shared-node-footer")).not.toBeInTheDocument();
   });
 
   it("splits job-level metrics row-major into two tables for wide layout when more than one metric", async () => {
