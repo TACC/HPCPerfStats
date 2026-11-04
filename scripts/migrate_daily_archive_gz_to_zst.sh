@@ -27,7 +27,7 @@
 set -uo pipefail
 
 DAILY=/hpcperfstats/daily_archive
-LEVEL=7
+LEVEL=19
 MARGIN_GB=200
 JOBS=1
 APPLY=0

@@ -397,7 +397,7 @@ INI_OPTION_DEFAULTS = {
   "archive_today_uncompressed_tar_grace_hours": "24.0",
   "archive_zstd_threads": "0",
   "ingest_zstd_threads": "4",
-  "archive_zstd_level": "7",
+  "archive_zstd_level": "19",
   "archive_zstd_drop_page_cache": "yes",
   "sync_pipeline_drop_page_cache": "yes",
   "archive_seal_parallel_workers": "2",
@@ -1221,7 +1221,7 @@ def _ini_bool(value: Any, default: bool = False) -> Any:
 
 def get_archive_zstd_level() -> Any:
   """
-  Native zstd compression level (1--19) for sealing ``.tar.zst``. Default 7.
+  Native zstd compression level (1--19) for sealing ``.tar.zst``. Default 19.
 
   Returns:
     Any: Open return polymorphism from ``get_archive_zstd_level``: concrete

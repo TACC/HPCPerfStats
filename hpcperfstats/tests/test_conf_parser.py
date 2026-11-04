@@ -392,7 +392,7 @@ def test_get_archive_zstd_level_clamps(temp_ini, monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
-  assert cfg.get_archive_zstd_level() == 7
+  assert cfg.get_archive_zstd_level() == 19
 
   with open(temp_ini) as f:
     base = f.read()
@@ -405,6 +405,22 @@ def test_get_archive_zstd_level_clamps(temp_ini, monkeypatch):
       f.write(content)
     importlib.reload(cfg)
     assert cfg.get_archive_zstd_level() == expected
+
+
+def test_archive_compress_scripts_default_to_ini_zstd_level():
+  """Operator seal/migrate scripts compress at the same level as the seal."""
+  from pathlib import Path
+
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  root = Path(__file__).resolve().parents[2]
+  level = cfg.INI_OPTION_DEFAULTS["archive_zstd_level"]
+  assert level == "19"
+  for script in (
+    "scripts/seal_open_daily_tars_to_zst.sh",
+    "scripts/migrate_daily_archive_gz_to_zst.sh",
+  ):
+    assert f"\nLEVEL={level}\n" in (root / script).read_text(), script
 
 
 def test_get_archive_zstd_threads_override(temp_ini, monkeypatch):

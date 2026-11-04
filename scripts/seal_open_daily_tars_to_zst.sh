@@ -47,7 +47,7 @@ set -uo pipefail
 DAILY=/hpcperfstats/daily_archive
 ARCHIVE=/hpcperfstats/archive
 TZ_LOCAL=America/Chicago
-LEVEL=7
+LEVEL=19
 MIN_AGE_DAYS=3
 MARGIN_GB=200
 JOBS=1
