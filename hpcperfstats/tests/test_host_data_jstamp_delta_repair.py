@@ -145,3 +145,61 @@ def test_tables_match_the_monitor_schema_declarations():
     if m:
       numeric_units[event] = float(m.group(1))
   assert numeric_units == {e: m for (_t, e), m in EVENT_MULTIPLIER.items()}
+
+
+def test_update_is_bounded_to_the_slice_window():
+  """Regression (hpcperfstats04, 2026-11-04): the batched UPDATE joined times
+  from VALUES with no constant time bounds, so TimescaleDB could not exclude
+  chunks and every 1000-row batch scanned the host's whole history (37 min
+  of DataFileRead on the first batch). It must carry the slice's [start, end).
+  """
+  import datetime as dt
+
+  from hpcperfstats.dbload.lib.host_data_jstamp_delta_repair import RowFix
+  from hpcperfstats.site.lib.machine.management.commands import (
+    repair_jstamp_deltas as cmd,
+  )
+
+  a = dt.datetime(2026, 11, 3, tzinfo=dt.UTC)
+  b = a + dt.timedelta(hours=6)
+  fix = RowFix(a + dt.timedelta(minutes=1), "user", 1.0, 0.5)
+  sql, params = cmd._update_params([("host_cpu", fix)], "h1", "j:7", a, b)
+  assert "h.time >= %s AND h.time < %s" in sql
+  assert params[-4:] == ["h1", "j:7", a, b]
+  assert sql.count("%s") == len(params)
+
+
+def test_cutoff_parses_days_and_times_as_utc():
+  """--before takes a day or an ISO time; naive values are UTC."""
+  import datetime as dt
+
+  from django.core.management.base import CommandError
+
+  from hpcperfstats.site.lib.machine.management.commands import (
+    repair_jstamp_deltas as cmd,
+  )
+
+  utc = dt.UTC
+  assert cmd._parse_cutoff("2026-11-04") == dt.datetime(2026, 11, 4, tzinfo=utc)
+  assert cmd._parse_cutoff("2026-11-04T06:30") == dt.datetime(
+    2026, 11, 4, 6, 30, tzinfo=utc
+  )
+  aware = cmd._parse_cutoff("2026-11-04T06:30-06:00")
+  assert aware == dt.datetime(2026, 11, 4, 12, 30, tzinfo=utc)
+  with pytest.raises(CommandError):
+    cmd._parse_cutoff("not-a-time")
+
+
+def test_repair_refuses_to_run_without_a_cutoff():
+  """Regression (side-agent review, 2026-11-04): rows ingested after the
+  pipeline rebuild already hold exact per-device deltas; without a cutoff
+  the repair would overwrite them with float4-rounded ones. Every non-census
+  run must name --before.
+  """
+  from django.core.management import call_command
+  from django.core.management.base import CommandError
+
+  with pytest.raises(CommandError, match="--before"):
+    call_command("repair_jstamp_deltas", apply=True)
+  with pytest.raises(CommandError, match="--before"):
+    call_command("repair_jstamp_deltas", jid=["79282"])

@@ -78,6 +78,8 @@ def _deltas(host, typ):
 
 def _run(**opts):
   out = io.StringIO()
+  # Cutoff after every seeded row unless a test sets its own.
+  opts.setdefault("before", "2100-01-01")
   call_command("repair_jstamp_deltas", jid=[JID], stdout=out, **opts)
   return out.getvalue()
 
@@ -110,3 +112,19 @@ def test_apply_recomputes_from_values_and_marks_job_dirty(seeded):
     assert cur.fetchone()[0] is not None
   # Idempotent: a second pass finds nothing to change.
   assert "fixed=0" in _run(apply=True)
+
+
+def test_rows_at_or_after_the_cutoff_are_never_touched(seeded):
+  """Post-rebuild rows already hold exact deltas: --before must protect them."""
+  cutoff = (T0 + dt.timedelta(minutes=2)).isoformat()
+  _run(apply=True, before=cutoff)
+  cpu = _deltas(HOST, "host_cpu")
+  assert cpu[1] == (pytest.approx(60.0), pytest.approx(1.0))
+  # Samples at minutes 2 and 3 are at/after the cutoff: still the seeded pair.
+  assert cpu[2] == (pytest.approx(9e8),) * 2
+  assert cpu[3] == (pytest.approx(9e8),) * 2
+
+
+def test_jobs_starting_at_or_after_the_cutoff_are_not_units(seeded):
+  out = _run(census=True, before=T0.isoformat())
+  assert "units=0" in out

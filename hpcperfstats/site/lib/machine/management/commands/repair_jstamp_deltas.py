@@ -72,8 +72,8 @@ _ROWS_SQL = (
 _UPDATE_SQL = (
   "UPDATE host_data AS h SET delta = v.delta, arc = v.arc FROM (VALUES "
   "{values}) AS v(time, type, event, delta, arc) WHERE h.host = %s "
-  "AND h.dev = %s AND h.time = v.time AND h.type = v.type "
-  "AND h.event = v.event"
+  "AND h.dev = %s AND h.time >= %s AND h.time < %s AND h.time = v.time "
+  "AND h.type = v.type AND h.event = v.event"
 )
 _WINDOW_PAD = dt.timedelta(minutes=10)
 _UPDATE_BATCH = 1000
@@ -140,6 +140,33 @@ def _parse_day(value: str) -> dt.datetime:
   return day.replace(tzinfo=dt.UTC)
 
 
+def _parse_cutoff(value: str) -> dt.datetime:
+  """Parse the ``--before`` cutoff (a day or an ISO time; naive is UTC).
+
+  Args:
+    value (str): ``YYYY-MM-DD`` or an ISO-8601 date-time.
+
+  Returns:
+    dt.datetime: Timezone-aware cutoff in UTC.
+
+  Raises:
+    CommandError: When ``value`` is not an ISO date or date-time.
+
+  Examples:
+    >>> _parse_cutoff("2026-11-04T06:30").isoformat()
+    '2026-11-04T06:30:00+00:00'
+  """
+  try:
+    when = dt.datetime.fromisoformat(value)
+  except ValueError as exc:
+    raise CommandError(
+      f"--before: expected an ISO time, got {value!r}"
+    ) from exc
+  if when.tzinfo is None:
+    when = when.replace(tzinfo=dt.UTC)
+  return when.astimezone(dt.UTC)
+
+
 def _slices(
   start: dt.datetime, end: dt.datetime, hours: int
 ) -> Iterator[tuple[dt.datetime, dt.datetime]]:
@@ -168,23 +195,33 @@ def _slices(
 
 
 def _update_params(
-  fixes: list[tuple[str, RowFix]], host: str, dev: str
+  fixes: list[tuple[str, RowFix]],
+  host: str,
+  dev: str,
+  start: dt.datetime,
+  end: dt.datetime,
 ) -> tuple[str, list[Any]]:
-  """Build one batched UPDATE for ``(type, fix)`` pairs of a unit.
+  """Build one batched UPDATE for ``(type, fix)`` pairs of a unit slice.
+
+  The slice's constant ``[start, end)`` lets TimescaleDB exclude every other
+  chunk at plan time; times joined from ``VALUES`` alone made each batch
+  scan the host's whole history (hpcperfstats04: 37 min on the first batch).
 
   Args:
     fixes (list[tuple[str, RowFix]]): ``(type, fix)`` rows.
     host (str): ``host_data.host``.
     dev (str): The unit's ``j:<jid>`` stamp.
+    start (dt.datetime): Slice start (inclusive).
+    end (dt.datetime): Slice end (exclusive).
 
   Returns:
     tuple[str, list[Any]]: SQL and its parameters.
 
   Examples:
     >>> fix = RowFix("2026-11-03T00:00:00+00:00", "user", 1.0, 0.5)
-    >>> sql, params = _update_params([("host_cpu", fix)], "h", "j:7")
-    >>> params[-2:], sql.count("%s::real")
-    (['h', 'j:7'], 2)
+    >>> sql, params = _update_params([("host_cpu", fix)], "h", "j:7", 1, 2)
+    >>> params[-4:], sql.count("%s::real")
+    (['h', 'j:7', 1, 2], 2)
   """
   values = ", ".join(
     "(%s::timestamptz, %s::text, %s::text, %s::real, %s::real)" for _ in fixes
@@ -192,7 +229,7 @@ def _update_params(
   params: list[Any] = []
   for typ, fix in fixes:
     params += [fix.time, typ, fix.event, fix.delta, fix.arc]
-  return _UPDATE_SQL.format(values=values), [*params, host, dev]
+  return _UPDATE_SQL.format(values=values), [*params, host, dev, start, end]
 
 
 class Command(BaseCommand):
@@ -204,7 +241,10 @@ class Command(BaseCommand):
   units. Requires PostgreSQL.
 
   Invoke: ``manage.py repair_jstamp_deltas --census`` (scope only), then
-  ``--jid 79282`` (dry run of one job), then ``--apply`` for everything.
+  ``--before <rebuild time> --jid 79282`` (dry run of one job), then
+  ``--before <rebuild time> --apply`` for everything. ``--before`` is
+  required outside ``--census``: rows ingested after the fixed parser went
+  live already hold exact per-device deltas and must never be rewritten.
   """
 
   help = (
@@ -246,6 +286,12 @@ class Command(BaseCommand):
     parser.add_argument(
       "--jid", action="append", default=[], help="Limit to this job (repeat)."
     )
+    parser.add_argument(
+      "--before",
+      help="Cutoff (YYYY-MM-DD or ISO time, naive = UTC): when the fixed "
+      "parser went live. Rows at/after it are never read or written; jobs "
+      "starting at/after it are skipped. Required except with --census.",
+    )
     parser.add_argument("--since", help="First job end day, YYYY-MM-DD UTC.")
     parser.add_argument("--until", help="Last job end day, YYYY-MM-DD UTC.")
     parser.add_argument("--workers", type=int, default=4)
@@ -259,15 +305,17 @@ class Command(BaseCommand):
     Args:
       *args (Any): Unused; Django may pass positional leftovers.
       **options (Any): Parsed options: ``census``, ``sample``, ``apply``,
-        ``jid``, ``since``, ``until``, ``workers`` and ``slice_hours``.
+        ``jid``, ``before``, ``since``, ``until``, ``workers`` and
+        ``slice_hours``.
 
     Returns:
       None
 
     Raises:
-      CommandError: When the database is not PostgreSQL, the date range is
-        invalid, or an UPDATE touches a different row count than planned
-        (that slice is rolled back).
+      CommandError: When the database is not PostgreSQL, ``--before`` is
+        missing outside ``--census``, the date range is invalid, or an UPDATE
+        touches a different row count than planned (that slice is rolled
+        back).
 
     Examples:
       >>> # manage.py repair_jstamp_deltas --census
@@ -275,7 +323,13 @@ class Command(BaseCommand):
     """
     if connection.vendor != "postgresql":
       raise CommandError("This command requires PostgreSQL.")
-    units = self._units(options)
+    if not options.get("before") and not options.get("census"):
+      raise CommandError(
+        "--before is required: give the time the fixed parser went live "
+        "(the pipeline rebuild); later rows already hold exact deltas"
+      )
+    cutoff = _parse_cutoff(options["before"]) if options.get("before") else None
+    units = self._units(options, cutoff)
     if options["census"]:
       self._census(units, int(options["sample"] or 0))
       return
@@ -288,7 +342,7 @@ class Command(BaseCommand):
     repaired: set[str] = set()
     with ThreadPoolExecutor(max_workers=max(1, options["workers"])) as pool:
       futures = [
-        pool.submit(self._run_unit, u, apply, options["slice_hours"])
+        pool.submit(self._run_unit, u, apply, options["slice_hours"], cutoff)
         for u in units
       ]
       for fut in as_completed(futures):
@@ -315,12 +369,17 @@ class Command(BaseCommand):
       + f" jobs_marked_dirty={len(repaired) if apply else 0}"
     )
 
-  def _units(self, options: dict[str, Any]) -> list[Unit]:
+  def _units(
+    self, options: dict[str, Any], cutoff: dt.datetime | None
+  ) -> list[Unit]:
     """Return the ``(jid, host)`` units selected by the options.
 
     Args:
       options (dict[str, Any]): Parsed options (``jid``, ``since``,
         ``until``).
+      cutoff (dt.datetime | None): ``--before``; jobs starting at or after
+        it are not units (their rows came from the fixed parser). ``None``
+        only for ``--census`` without ``--before``.
 
     Returns:
       list[Unit]: Units, newest job first.
@@ -330,9 +389,12 @@ class Command(BaseCommand):
         the range is reversed.
 
     Examples:
-      >>> Command()._units({"jid": ["1"], "since": None})  # doctest: +SKIP
+      >>> Command()._units({"jid": ["1"]}, None)  # doctest: +SKIP
     """
     where, params = [], []
+    if cutoff is not None:
+      where.append("AND j.start_time < %s")
+      params.append(cutoff)
     if options.get("jid"):
       where.append("AND j.jid = ANY(%s)")
       params.append([str(j) for j in options["jid"]])
@@ -400,16 +462,24 @@ class Command(BaseCommand):
         (n,) = cursor.fetchone()
       self.stdout.write(f"sample jid={u.jid} host={u.host} stamped_rows={n}")
 
-  def _run_unit(self, unit: Unit, apply: bool, slice_hours: int) -> UnitResult:
+  def _run_unit(
+    self,
+    unit: Unit,
+    apply: bool,
+    slice_hours: int,
+    cutoff: dt.datetime | None = None,
+  ) -> UnitResult:
     """Repair (or plan) one unit slice by slice on this worker thread.
 
     Each slice reads and, with ``apply``, writes in one transaction; carry
-    keeps every series continuous across slices.
+    keeps every series continuous across slices. The window stops just
+    before ``cutoff``: rows at or after it hold exact per-device deltas.
 
     Args:
       unit (Unit): The unit.
       apply (bool): Write when true, plan only when false.
       slice_hours (int): Hours per slice.
+      cutoff (dt.datetime | None): ``--before``; ``None`` is no limit.
 
     Returns:
       UnitResult: Counts for the unit.
@@ -425,10 +495,12 @@ class Command(BaseCommand):
     dev = job_dev_token(unit.jid)
     carries: dict[tuple[str, str], SeriesCarry | None] = {}
     rows = fixed = nulled = 0
+    stop = unit.end + _WINDOW_PAD
+    if cutoff is not None:
+      # _slices includes its end instant; stay strictly before the cutoff.
+      stop = min(stop, cutoff - dt.timedelta(microseconds=1))
     try:
-      for a, b in _slices(
-        unit.start - _WINDOW_PAD, unit.end + _WINDOW_PAD, slice_hours
-      ):
+      for a, b in _slices(unit.start - _WINDOW_PAD, stop, slice_hours):
         with transaction.atomic(), connection.cursor() as cursor:
           cursor.execute(_NO_TIMEOUT_SQL)
           cursor.execute(_ROWS_SQL, [unit.host, a, b, dev, list(SKIP_TYPES)])
@@ -446,7 +518,7 @@ class Command(BaseCommand):
             cursor.execute(_DML_DECOMPRESS_SQL)
             for i in range(0, len(plan), _UPDATE_BATCH):
               batch = plan[i : i + _UPDATE_BATCH]
-              sql, params = _update_params(batch, unit.host, dev)
+              sql, params = _update_params(batch, unit.host, dev, a, b)
               cursor.execute(sql, params)
               if cursor.rowcount != len(batch):
                 raise CommandError(
