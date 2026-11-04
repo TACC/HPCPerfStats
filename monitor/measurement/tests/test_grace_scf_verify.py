@@ -36,6 +36,21 @@ def test_perfctr_value_reads_table_cells():
     assert g.perfctr_value("", "CMEM_RD_DATA", "SCF0") is None
 
 
+LUA_LOAD_ERROR = """lua: /root/taccstats_testing/.build/prefix-static/bin/likwid-perfctr:41: module 'liblikwid' not found:
+    no field package.preload['liblikwid']
+    no file '/usr/local/lib/lua/5.4/liblikwid.lua'
+    no file '/root/taccstats_testing/.build/prefix-static/lib/liblikwid.so'
+"""
+
+
+def test_perfctr_cannot_run_flags_missing_liblikwid_only():
+    """c122-018: the static prefix has no liblikwid.so, so phase A read 0 and reported FAIL."""
+    assert g.perfctr_cannot_run(LUA_LOAD_ERROR)
+    assert g.perfctr_cannot_run("likwid-perfctr: error while loading shared libraries: liblikwid.so.5.5")
+    assert not g.perfctr_cannot_run(PERFCTR)
+    assert not g.perfctr_cannot_run("")
+
+
 def test_bench_volume():
     assert g.bench_volume_bytes(BENCH) == 2_000_000_000
     assert g.bench_volume_bytes("no volume here") is None
@@ -125,4 +140,7 @@ def test_main_cli(tmp_path, capsys):
     (tmp_path / "schema").write_text(SCHEMA)
     (tmp_path / "p").write_text(payload(1, 2, 3, 4))
     assert g.main(["x", "rows", str(tmp_path / "schema"), str(tmp_path / "p")]) == 0
+    (tmp_path / "lua").write_text(LUA_LOAD_ERROR)
+    assert g.main(["x", "loaderr", str(tmp_path / "perf"), str(tmp_path / "lua")]) == 0
+    assert g.main(["x", "loaderr", str(tmp_path / "perf")]) == 1
     assert g.main(["x", "bogus"]) == 2

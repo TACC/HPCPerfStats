@@ -43,7 +43,9 @@ struct arm_aarch64_imc_dev {
 
 static struct arm_aarch64_imc_dev g_arm_aarch64_imc[ARM_AARCH64_IMC_MAX_DEVS];
 static int g_arm_aarch64_imc_n = 0;
-static int g_arm_aarch64_imc_scf; /* devices are Grace sockets read from the LIKWID group */
+static int g_arm_aarch64_imc_mode;                               /* enum arm_imc_mode */
+static int g_arm_aarch64_imc_scf_cpus[ARM_AARCH64_IMC_MAX_DEVS]; /* SCF lead CPU per socket */
+static int g_arm_aarch64_imc_scf_n;
 
 static void arm_aarch64_imc_cleanup(void)
 {
@@ -63,7 +65,8 @@ static void arm_aarch64_imc_cleanup(void)
     g_arm_aarch64_imc[i].fd_write = -1;
   }
   g_arm_aarch64_imc_n = 0;
-  g_arm_aarch64_imc_scf = 0;
+  g_arm_aarch64_imc_mode = ARM_IMC_MODE_DISABLED;
+  g_arm_aarch64_imc_scf_n = 0;
 }
 
 static long perf_event_open_wrap(struct perf_event_attr *attr, pid_t pid, int cpu, int group_fd,
@@ -328,35 +331,28 @@ static int arm_aarch64_imc_register_pmu(const char *pmu_name)
   return 1;
 }
 
-#ifdef MONITOR_CPU_LIKWID_OVERLAY
 /* Grace: SCF0/SCF1 (CMEM_RD_DATA, CMEM_WR_TOTAL_BYTES) ride in the host_cpu_hw overlay group;
- * one device per socket, read at that socket's SCF PMU lead CPU. */
-static int arm_aarch64_imc_begin_scf(void)
+ * one device per socket, read at that socket's SCF PMU lead CPU (cached at begin). */
+static void arm_aarch64_imc_attach_scf(void)
 {
-  int cpus[ARM_AARCH64_IMC_MAX_DEVS];
-  int n;
   int i;
 
-  if (!cpu_counter_metrics_likwid_overlay_has_scf())
-    return 0;
-  n = arm_imc_scf_lead_cpus(ARM_IMC_SCF_DEVICES_DIR, cpus, ARM_AARCH64_IMC_MAX_DEVS);
-  for (i = 0; i < n; i++) {
+  for (i = 0; i < g_arm_aarch64_imc_scf_n; i++) {
     struct arm_aarch64_imc_dev *dev = &g_arm_aarch64_imc[i];
 
     memset(dev, 0, sizeof(*dev));
     snprintf(dev->name, sizeof(dev->name), "scf%d", i);
-    dev->cpu = cpus[i];
+    dev->cpu = g_arm_aarch64_imc_scf_cpus[i];
     dev->fd_read = -1;
     dev->fd_write = -1;
     dev->valid = 1;
   }
-  g_arm_aarch64_imc_n = n;
-  g_arm_aarch64_imc_scf = (n > 0);
-  if (n > 0)
-    monitor_log_info("arm_aarch64_imc: Grace SCF DRAM CAS via LIKWID on %d socket(s)\n", n);
-  return n > 0;
+  g_arm_aarch64_imc_n = g_arm_aarch64_imc_scf_n;
+  monitor_log_info("arm_aarch64_imc: Grace SCF DRAM CAS via LIKWID on %d socket(s)\n",
+                   g_arm_aarch64_imc_n);
 }
 
+#ifdef MONITOR_CPU_LIKWID_OVERLAY
 static void arm_aarch64_imc_collect_scf(struct stats_type *type)
 {
   int i;
@@ -389,28 +385,33 @@ static int arm_aarch64_imc_begin(struct stats_type *type)
 {
   DIR *d;
   struct dirent *de;
+  int overlay_build = 0;
+  int has_scf = 0;
 
   if (type == NULL)
     return -1;
   arm_aarch64_imc_cleanup();
+  g_arm_aarch64_imc_scf_n = arm_imc_scf_lead_cpus(
+      ARM_IMC_SCF_DEVICES_DIR, g_arm_aarch64_imc_scf_cpus, ARM_AARCH64_IMC_MAX_DEVS);
 #ifdef MONITOR_CPU_LIKWID_OVERLAY
-  if (arm_aarch64_imc_begin_scf())
-    return 0;
+  overlay_build = 1;
+  has_scf = cpu_counter_metrics_likwid_overlay_has_scf();
 #endif
-  d = opendir(ARM_IMC_SCF_DEVICES_DIR);
-  if (d == NULL) {
-    type->st_enabled = 0;
-    return 0;
+  d = (has_scf && g_arm_aarch64_imc_scf_n > 0) ? NULL : opendir(ARM_IMC_SCF_DEVICES_DIR);
+  while (d != NULL && (de = readdir(d)) != NULL && g_arm_aarch64_imc_n < ARM_AARCH64_IMC_MAX_DEVS) {
+    if (de->d_name[0] != '.' && arm_aarch64_imc_probe_pmu(de->d_name))
+      (void)arm_aarch64_imc_register_pmu(de->d_name);
   }
-  while ((de = readdir(d)) != NULL && g_arm_aarch64_imc_n < ARM_AARCH64_IMC_MAX_DEVS) {
-    if (de->d_name[0] == '.')
-      continue;
-    if (!arm_aarch64_imc_probe_pmu(de->d_name))
-      continue;
-    (void)arm_aarch64_imc_register_pmu(de->d_name);
-  }
-  closedir(d);
-  if (g_arm_aarch64_imc_n == 0)
+  if (d != NULL)
+    closedir(d);
+  g_arm_aarch64_imc_mode =
+      arm_imc_scf_begin_mode(overlay_build, has_scf, g_arm_aarch64_imc_scf_n, g_arm_aarch64_imc_n);
+  if (g_arm_aarch64_imc_mode == ARM_IMC_MODE_SCF)
+    arm_aarch64_imc_attach_scf();
+  else if (g_arm_aarch64_imc_mode == ARM_IMC_MODE_PENDING)
+    monitor_log_info("arm_aarch64_imc: %d SCF PMU(s); waiting for the LIKWID overlay group\n",
+                     g_arm_aarch64_imc_scf_n);
+  else if (g_arm_aarch64_imc_mode == ARM_IMC_MODE_DISABLED)
     type->st_enabled = 0;
   return 0;
 }
@@ -422,7 +423,15 @@ static void arm_aarch64_imc_collect(struct stats_type *type)
   if (type == NULL)
     return;
 #ifdef MONITOR_CPU_LIKWID_OVERLAY
-  if (g_arm_aarch64_imc_scf) {
+  /* The overlay begins with the DCGM backend, possibly after this type began: attach late. */
+  if (g_arm_aarch64_imc_mode == ARM_IMC_MODE_PENDING) {
+    g_arm_aarch64_imc_mode = arm_imc_scf_collect_mode(g_arm_aarch64_imc_mode,
+                                                      cpu_counter_metrics_likwid_overlay_has_scf(),
+                                                      g_arm_aarch64_imc_scf_n);
+    if (g_arm_aarch64_imc_mode == ARM_IMC_MODE_SCF)
+      arm_aarch64_imc_attach_scf();
+  }
+  if (g_arm_aarch64_imc_mode == ARM_IMC_MODE_SCF) {
     arm_aarch64_imc_collect_scf(type);
     return;
   }

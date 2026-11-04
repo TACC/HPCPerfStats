@@ -111,13 +111,18 @@ static void stats_runtime_begin_one_type(struct stats_type *type)
     (*type->st_begin)(type);
 }
 
-/*! Registry iteration is sorted by st_name; AMD DF/RAPL types sort before host_cpu_hw.
- *  LIKWID HPMinit runs in host_cpu_hw begin, so begin that type first. */
+/*! Registry iteration is sorted by st_name; AMD DF/RAPL and arm_aarch64_imc sort before
+ *  host_cpu_hw. LIKWID HPMinit (exclusive backend or the Grace DCGM overlay, whose group carries
+ *  the SCF DRAM events arm_aarch64_imc reads) runs in host_cpu_hw begin, so begin it first. */
+#if defined(MONITOR_WITH_HARDWARE) &&                                                              \
+    (defined(MONITOR_CPU_BACKEND_LIKWID) || defined(MONITOR_CPU_LIKWID_OVERLAY))
+#define STATS_RUNTIME_BEGIN_CPU_HW_FIRST 1
+#endif
 static void stats_runtime_begin_enabled_types(void)
 {
   size_t i = 0;
   struct stats_type *type;
-#if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_LIKWID)
+#ifdef STATS_RUNTIME_BEGIN_CPU_HW_FIRST
   struct stats_type *host_cpu_hw;
 
   host_cpu_hw = stats_type_get(CPU_COUNTER_METRICS_ST_NAME);
@@ -129,7 +134,7 @@ static void stats_runtime_begin_enabled_types(void)
   while ((type = stats_type_for_each(&i)) != NULL) {
     if (!type->st_enabled)
       continue;
-#if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_LIKWID)
+#ifdef STATS_RUNTIME_BEGIN_CPU_HW_FIRST
     if (host_cpu_hw != NULL && type == host_cpu_hw)
       continue;
 #endif

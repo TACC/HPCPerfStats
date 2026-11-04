@@ -3,6 +3,7 @@
 #
 #   A. Units: likwid-perfctr around likwid-bench load/store with a known data volume
 #      (CMEM_RD_DATA must be 32-byte beats, CMEM_WR_TOTAL_BYTES bytes; idle background removed).
+#      NOT_RUN (not FAIL) when likwid-perfctr cannot load liblikwid.so (static-only prefix).
 #   B. Daemon: a DEBUG build of hpcperfstatsd runs as a transient unit (broker unreachable, dumps
 #      to a temp dir, lshw stub bound like the shipped unit). Its /dev/shm mirror must show
 #      arm_aarch64_imc scf0/scf1, and the scf0 delta across a known socket-0 load must match the
@@ -12,6 +13,7 @@
 #      trail it by a sample mid-load.
 #   C. Round-1 checks on the same daemon: NVSwitch module denied, libdcgmmodulenvswitch not mapped.
 #
+# On a daemon failure the shm mirror and a DEBUG-noise-filtered journal are kept in OUT.
 # Stops hpcperfstats.service for the run and restores its state on every exit path.
 # Usage: verify_grace_scf_imc.sh [--no-build] [--out DIR]
 set -uo pipefail
@@ -36,11 +38,22 @@ UNIT=hpcperfstats-scf-verify
 SHM=/dev/shm/hpcperfstatsd-scf-verify
 EVENTS="CMEM_RD_DATA:SCF0,CMEM_WR_TOTAL_BYTES:SCF1"
 FAILS=0
+NOTRUN=0
 WAS_ACTIVE=$(systemctl is-active hpcperfstats 2>/dev/null)
 
 say() { printf '%s\n' "$*" | tee -a "${OUT}/summary.txt"; }
 verdict() { # name json-line
   if printf '%s' "$2" | grep -q '"ok": true'; then say "PASS $1 $2"; else say "FAIL $1 $2"; FAILS=$((FAILS + 1)); fi
+}
+# DEBUG noise excluded from journal excerpts (per-key schema/stats lines).
+NOISE='parse_schema_entry|schema_fill_entry_array|stats_type_init|stats_set:|path_open_record|stats_wr_hdr'
+# The DEBUG daemon logs ~25k lines/30 s; journald rate-limits that and drops the begin lines the
+# checks need (c122-018), so its stdout/stderr go to a file instead of the journal.
+DAEMON_LOG="${OUT}/daemon_output.log"
+save_daemon_evidence() { # copy the shm mirror and a filtered daemon log into OUT before cleanup
+  journalctl -u "${UNIT}" --no-pager > "${OUT}/daemon_journal.txt" 2>&1
+  grep -vE "${NOISE}" "${DAEMON_LOG}" > "${OUT}/daemon_journal_filtered.txt" 2>/dev/null
+  [ -d "${SHM}" ] && cp -a "${SHM}" "${OUT}/shm" 2>/dev/null
 }
 cleanup() {
   systemctl stop "${UNIT}" >/dev/null 2>&1
@@ -74,6 +87,12 @@ for k in load store; do
   t1=$(now)
   secs=$(awk -v a="$t0" -v b="$t1" 'BEGIN{print b-a}')
   if [ "$k" = load ]; then ev=CMEM_RD_DATA; ctr=SCF0; bpu=32; else ev=CMEM_WR_TOTAL_BYTES; ctr=SCF1; bpu=1; fi
+  # The static bundle ships no liblikwid.so, which likwid-perfctr (Lua) needs: not a unit failure.
+  if "${PY}" "${LIB}" loaderr "${OUT}/${k}_perfctr.txt" "${OUT}/idle_perfctr.txt" >/dev/null; then
+    say "NOT_RUN units_${k}_${ev} likwid-perfctr cannot load liblikwid (static-only prefix); see ${k}_perfctr.txt"
+    NOTRUN=$((NOTRUN + 1))
+    continue
+  fi
   verdict "units_${k}_${ev}_bytes_per_unit" \
     "$("${PY}" "${LIB}" unit "${OUT}/${k}_perfctr.txt" "${OUT}/idle_perfctr.txt" "${OUT}/${k}_perfctr.txt" "$ev" "$ctr" "$bpu" "$secs" "${IDLE_S}")"
 done
@@ -102,7 +121,9 @@ BIND=()
 [ -x "${STUB}" ] && BIND=(-p "BindReadOnlyPaths=-${STUB}:/usr/bin/lshw" -p "BindReadOnlyPaths=-${STUB}:/usr/sbin/lshw")
 rm -rf "${SHM}"
 systemctl reset-failed "${UNIT}" >/dev/null 2>&1
+: > "${DAEMON_LOG}"
 systemd-run --quiet --unit "${UNIT}" "${BIND[@]}" --setenv=HPCPERFSTATS_DEBUG_SHM_DIR="${SHM}" \
+  -p StandardOutput="append:${DAEMON_LOG}" -p StandardError="append:${DAEMON_LOG}" \
   "${BIN}" -c "${OUT}/verify.conf" -t "${OUT}/dump" || { say "FAIL start transient daemon"; exit 1; }
 
 wait_new_full() { # wait for a full payload newer than $1 (epoch), up to $2 seconds
@@ -115,8 +136,13 @@ wait_new_full() { # wait for a full payload newer than $1 (epoch), up to $2 seco
   return 1
 }
 if ! wait_new_full 0 180; then
-  journalctl -u "${UNIT}" --no-pager > "${OUT}/daemon_journal.txt" 2>&1
-  say "FAIL daemon produced no arm_aarch64_imc rows in ${SHM}/full within 180 s (see daemon_journal.txt)"
+  save_daemon_evidence
+  if [ -s "${SHM}/full" ]; then
+    say "FAIL daemon writes ${SHM}/full but it has no arm_aarch64_imc rows after 180 s (see shm/, daemon_journal_filtered.txt)"
+  else
+    say "FAIL daemon wrote no ${SHM}/full payload within 180 s (see daemon_journal_filtered.txt)"
+  fi
+  grep -iE 'arm_aarch64_imc|SCF|overlay|DCGM|Enabled types' "${OUT}/daemon_journal_filtered.txt" | tail -15 | tee -a "${OUT}/summary.txt"
   exit 1
 fi
 cp "${SHM}/schema" "${OUT}/schema.txt"
@@ -151,17 +177,17 @@ else
 fi
 
 # ---- C. round-1 checks on the same daemon --------------------------------------------------
-journalctl -u "${UNIT}" --no-pager > "${OUT}/daemon_journal.txt" 2>&1
+save_daemon_evidence
 PID=$(systemctl show -p MainPID --value "${UNIT}")
-grep -q 'Grace SCF DRAM CAS via LIKWID on [0-9]* socket' "${OUT}/daemon_journal.txt" \
+grep -q 'Grace SCF DRAM CAS via LIKWID on [0-9]* socket' "${OUT}/daemon_journal_filtered.txt" \
   && say "PASS journal arm_aarch64_imc uses LIKWID SCF" || { say "FAIL journal has no 'Grace SCF DRAM CAS via LIKWID' line"; FAILS=$((FAILS + 1)); }
-grep -q 'DCGM embedded engine started (v2, NVSwitch module denied)' "${OUT}/daemon_journal.txt" \
+grep -q 'DCGM embedded engine started (v2, NVSwitch module denied)' "${OUT}/daemon_journal_filtered.txt" \
   && say "PASS journal DCGM v2 start with NVSwitch denied" || { say "FAIL journal has no NVSwitch-denied DCGM start line"; FAILS=$((FAILS + 1)); }
 if [ -n "${PID}" ] && [ "${PID}" != 0 ]; then
   if grep -q libdcgmmodulenvswitch "/proc/${PID}/maps"; then say "FAIL libdcgmmodulenvswitch mapped"; FAILS=$((FAILS + 1)); else say "PASS libdcgmmodulenvswitch not mapped"; fi
 fi
-grep -E 'Enabled types|SCF|DCGM embedded' "${OUT}/daemon_journal.txt" | tail -5 | tee -a "${OUT}/summary.txt"
+grep -E 'Enabled types|SCF|DCGM embedded|waiting for the LIKWID overlay' "${OUT}/daemon_journal_filtered.txt" | tail -8 | tee -a "${OUT}/summary.txt"
 
-if [ "${FAILS}" -eq 0 ]; then say "GRACE_SCF_VERIFY_OK results in ${OUT}"; exit 0; fi
+if [ "${FAILS}" -eq 0 ]; then say "GRACE_SCF_VERIFY_OK (${NOTRUN} not run) results in ${OUT}"; exit 0; fi
 say "GRACE_SCF_VERIFY_FAIL ${FAILS} check(s) failed; results in ${OUT}"
 exit 1

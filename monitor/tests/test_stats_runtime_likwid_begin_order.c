@@ -1,3 +1,7 @@
+/* host_cpu_hw begins before every other type when LIKWID runs in it: the exclusive x86/ARM
+ * backend (HPMinit before AMD DF/RAPL) and the Grace DCGM+LIKWID overlay (built again as
+ * test_stats_runtime_overlay_begin_order). c122-018 regression: on the overlay build types began
+ * in name order, so arm_aarch64_imc began before the overlay group carried the SCF events. */
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -163,7 +167,8 @@ static void test_daemon_prepare_begins_host_cpu_hw_first(void)
   int host_idx;
   int df_idx;
 
-#if !defined(MONITOR_WITH_HARDWARE) || !defined(MONITOR_CPU_BACKEND_LIKWID)
+#if !defined(MONITOR_WITH_HARDWARE) ||                                                             \
+    !(defined(MONITOR_CPU_BACKEND_LIKWID) || defined(MONITOR_CPU_LIKWID_OVERLAY))
   return;
 #endif
 
@@ -193,7 +198,8 @@ static void test_main_prepare_begins_host_cpu_hw_first(void)
   };
   int host_idx;
 
-#if !defined(MONITOR_WITH_HARDWARE) || !defined(MONITOR_CPU_BACKEND_LIKWID)
+#if !defined(MONITOR_WITH_HARDWARE) ||                                                             \
+    !(defined(MONITOR_CPU_BACKEND_LIKWID) || defined(MONITOR_CPU_LIKWID_OVERLAY))
   return;
 #endif
 

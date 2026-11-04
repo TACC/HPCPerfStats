@@ -43,6 +43,22 @@ def perfctr_value(text: str, event: str, counter: str) -> float | None:
     return None
 
 
+def perfctr_cannot_run(text: str) -> bool:
+    """True when likwid-perfctr failed to load its library rather than measure.
+
+    The static bundle installs only ``liblikwid.a``; the Lua front end needs ``liblikwid.so``
+    and prints ``module 'liblikwid' not found`` (or the loader's shared-library error). That
+    is a missing tool, not a units failure, so the shell driver reports NOT_RUN.
+
+    Args:
+        text: likwid-perfctr output.
+
+    Returns:
+        Whether the output is a library load failure.
+    """
+    return bool(re.search(r"module 'liblikwid' not found|error while loading shared libraries", text))
+
+
 def bench_volume_bytes(text: str) -> int | None:
     """``Data volume (Byte):`` from likwid-bench output.
 
@@ -194,7 +210,7 @@ def util_check(before: dict, mid: dict, after: dict, cpus: list[str], tol: float
 
 
 def main(argv: list[str]) -> int:
-    """CLI for the shell driver: ``unit``, ``rows`` or ``daemon``; prints one JSON line.
+    """CLI for the shell driver: ``unit``, ``loaderr``, ``rows``, ``daemon`` or ``util``; prints one JSON line.
 
     Args:
         argv: ``sys.argv``.
@@ -208,6 +224,8 @@ def main(argv: list[str]) -> int:
         res = unit_check(bench_volume_bytes(bench) or 0, perfctr_value(perf, argv[5], argv[6]) or 0.0,
                          perfctr_value(idle, argv[5], argv[6]) or 0.0, float(argv[7]),
                          bench_secs=float(argv[8]), idle_secs=float(argv[9]))
+    elif cmd == "loaderr" and len(argv) >= 3:  # loaderr PERFCTR_OUT... (exit 0 when unusable)
+        res = {"ok": any(perfctr_cannot_run(open(p, encoding="utf-8").read()) for p in argv[2:])}
     elif cmd == "rows" and len(argv) == 4:  # rows SCHEMA PAYLOAD
         schema = parse_schema(open(argv[2], encoding="utf-8").read())
         rows = parse_payload(open(argv[3], encoding="utf-8").read(), schema)
@@ -226,7 +244,7 @@ def main(argv: list[str]) -> int:
         lo, _, hi = argv[6].partition("-")
         res = util_check(*snaps, [str(c) for c in range(int(lo), int(hi or lo) + 1)])
     else:
-        print("usage: grace_scf_verify.py unit|rows|daemon|util ...", file=sys.stderr)
+        print("usage: grace_scf_verify.py unit|loaderr|rows|daemon|util ...", file=sys.stderr)
         return 2
     print(json.dumps(res, sort_keys=True))
     return 0 if res.get("ok") else 1

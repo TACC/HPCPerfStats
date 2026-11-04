@@ -78,6 +78,32 @@ static void test_cas_units(void)
   assert(arm_imc_scf_wr_bytes_to_cas(6400) == 100);
 }
 
+static void test_begin_mode_pending_until_overlay_has_scf(void)
+{
+  /* c122-018 regression: arm_aarch64_imc began before the DCGM-deferred overlay was up, saw no
+   * SCF and no dmc/imc PMU, and disabled itself for the whole run. */
+  assert(arm_imc_scf_begin_mode(1, 0, 2, 0) == ARM_IMC_MODE_PENDING);
+  assert(arm_imc_scf_begin_mode(1, 1, 2, 0) == ARM_IMC_MODE_SCF);
+  assert(arm_imc_scf_begin_mode(1, 1, 2, 3) == ARM_IMC_MODE_SCF); /* SCF wins over perf */
+  assert(arm_imc_scf_begin_mode(1, 0, 2, 3) == ARM_IMC_MODE_PERF);
+  assert(arm_imc_scf_begin_mode(0, 0, 0, 3) == ARM_IMC_MODE_PERF);
+  /* No overlay build or no SCF PMU: nothing can attach later. */
+  assert(arm_imc_scf_begin_mode(0, 0, 2, 0) == ARM_IMC_MODE_DISABLED);
+  assert(arm_imc_scf_begin_mode(1, 1, 0, 0) == ARM_IMC_MODE_DISABLED);
+  assert(arm_imc_scf_begin_mode(1, 0, 0, 0) == ARM_IMC_MODE_DISABLED);
+}
+
+static void test_collect_mode_attaches_once_overlay_ready(void)
+{
+  assert(arm_imc_scf_collect_mode(ARM_IMC_MODE_PENDING, 0, 2) == ARM_IMC_MODE_PENDING);
+  assert(arm_imc_scf_collect_mode(ARM_IMC_MODE_PENDING, 1, 2) == ARM_IMC_MODE_SCF);
+  assert(arm_imc_scf_collect_mode(ARM_IMC_MODE_PENDING, 1, 0) == ARM_IMC_MODE_PENDING);
+  /* Settled modes never change in collect. */
+  assert(arm_imc_scf_collect_mode(ARM_IMC_MODE_PERF, 1, 2) == ARM_IMC_MODE_PERF);
+  assert(arm_imc_scf_collect_mode(ARM_IMC_MODE_SCF, 0, 2) == ARM_IMC_MODE_SCF);
+  assert(arm_imc_scf_collect_mode(ARM_IMC_MODE_DISABLED, 1, 2) == ARM_IMC_MODE_DISABLED);
+}
+
 int main(void)
 {
   snprintf(g_root, sizeof(g_root), "%s/test_arm_imc_scf.XXXXXX",
@@ -86,6 +112,8 @@ int main(void)
   test_lead_cpus_ordered_by_socket_index();
   test_lead_cpus_rejects_bad_inputs();
   test_cas_units();
+  test_begin_mode_pending_until_overlay_has_scf();
+  test_collect_mode_attaches_once_overlay_ready();
   rm_tree();
   printf("test_arm_imc_scf: ok\n");
   return 0;

@@ -75,3 +75,17 @@ unsigned long long arm_imc_scf_wr_bytes_to_cas(unsigned long long bytes)
 {
   return bytes / 64ULL;
 }
+
+int arm_imc_scf_begin_mode(int overlay_build, int has_scf, int n_scf_leads, int n_perf_devs)
+{
+  if (has_scf && n_scf_leads > 0)
+    return ARM_IMC_MODE_SCF;
+  if (n_perf_devs > 0)
+    return ARM_IMC_MODE_PERF;
+  return (overlay_build && n_scf_leads > 0) ? ARM_IMC_MODE_PENDING : ARM_IMC_MODE_DISABLED;
+}
+
+int arm_imc_scf_collect_mode(int cur, int has_scf, int n_scf_leads)
+{
+  return (cur == ARM_IMC_MODE_PENDING && has_scf && n_scf_leads > 0) ? ARM_IMC_MODE_SCF : cur;
+}
