@@ -41,6 +41,14 @@ int dcgm_backend_retry_due(time_t now, time_t retry_after)
   return (now >= retry_after) ? 1 : 0;
 }
 
+long long dcgm_cpu_sample_delta_us(long long wall_us, long long ts, long long last_ts,
+                                   int from_dcgm)
+{
+  if (!from_dcgm || ts <= 0 || last_ts <= 0 || ts < last_ts || ts - last_ts >= 3600LL * 1000000LL)
+    return wall_us;
+  return ts - last_ts;
+}
+
 int dcgm_count_unique_sorted_ints(const int *sorted, int n)
 {
   int i, nu;

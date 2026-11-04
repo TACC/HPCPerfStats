@@ -164,8 +164,25 @@ static void test_backend_retry_due(void)
   assert(!dcgm_backend_retry_due(0, 100));
 }
 
+static void test_sample_delta_us(void)
+{
+  /* First sample / no DCGM timestamp / jiffy-derived util: the wall interval. */
+  assert(dcgm_cpu_sample_delta_us(5000000, 0, 0, 1) == 5000000);
+  assert(dcgm_cpu_sample_delta_us(5000000, 100, 0, 1) == 5000000);
+  assert(dcgm_cpu_sample_delta_us(5000000, 100, 50, 0) == 5000000);
+  /* DCGM refreshed: credit DCGM's own interval. */
+  assert(dcgm_cpu_sample_delta_us(5000000, 10200000, 5000000, 1) == 5200000);
+  /* c122-018 regression: DCGM watch refresh == sample_freq, so a tick can read the same DCGM
+   * sample twice; crediting the wall delta again overcounted a 30 s load by ~16%. */
+  assert(dcgm_cpu_sample_delta_us(5000000, 5000000, 5000000, 1) == 0);
+  /* Timestamp went backwards or jumped >= 1 h: fall back to the wall interval. */
+  assert(dcgm_cpu_sample_delta_us(5000000, 4000000, 5000000, 1) == 5000000);
+  assert(dcgm_cpu_sample_delta_us(5000000, 5000000 + 3600LL * 1000000LL, 5000000, 1) == 5000000);
+}
+
 int main(void)
 {
+  test_sample_delta_us();
   test_clamp_percent();
   test_scale_util_if_fraction();
   test_sample_from_jiffy_diff();

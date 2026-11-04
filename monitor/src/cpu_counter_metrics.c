@@ -1103,8 +1103,9 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
       continue;
     {
       struct dcgm_cpu_sample sample;
-      long long delta_us = delta_us_collect;
+      long long delta_us;
       int rd = -1;
+      int from_jiffy = 0;
 
       memset(&sample, 0, sizeof(sample));
       if (g_dcgm_ready) {
@@ -1118,19 +1119,16 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
         if (rd == 0)
           dcgm_cpu_scale_util_if_fraction(&sample);
       }
-      if ((rd != 0 || sample.util_total <= 0.0) && proc_stat_ok && g_dcgm_stat_seeded)
+      if ((rd != 0 || sample.util_total <= 0.0) && proc_stat_ok && g_dcgm_stat_seeded) {
         dcgm_cpu_sample_from_jiffy_diff(&sample, &g_dcjm_cur[i], &g_dcjm_prev[i]);
-
-      if (rd == 0 && sample.ts > 0) {
-        if (g_dcgm_last_ts != NULL && g_dcgm_last_ts[i] > 0 && sample.ts > g_dcgm_last_ts[i]) {
-          long long dts = sample.ts - g_dcgm_last_ts[i];
-
-          if (dts > 0 && dts < 3600LL * 1000000LL)
-            delta_us = dts;
-        }
-        if (g_dcgm_last_ts != NULL)
-          g_dcgm_last_ts[i] = sample.ts;
+        from_jiffy = 1;
       }
+
+      delta_us = dcgm_cpu_sample_delta_us(delta_us_collect, sample.ts,
+                                          g_dcgm_last_ts != NULL ? g_dcgm_last_ts[i] : 0,
+                                          rd == 0 && !from_jiffy);
+      if (rd == 0 && sample.ts > 0 && g_dcgm_last_ts != NULL)
+        g_dcgm_last_ts[i] = sample.ts;
 
       if (sample.clock_khz <= 0.0)
         sample.clock_khz = dcgm_cpu_nominal_freq_khz(i);

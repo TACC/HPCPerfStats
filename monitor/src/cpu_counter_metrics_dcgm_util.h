@@ -14,6 +14,11 @@ unsigned long long dcgm_watts_dbl_to_ull(double v);
 int dcgm_host_cpu_hw_collect_active(int dcgm_ready, int overlay_ready, int util_bufs_ok);
 /* True when retry_after is unset or now is past the backoff deadline. */
 int dcgm_backend_retry_due(time_t now, time_t retry_after);
+/* Interval (us) one DCGM util sample covers. DCGM refreshes at sample_freq, so a tick can read
+ * the same sample again (ts == last_ts): credit 0, not the wall delta. Jiffy-derived util
+ * (from_dcgm 0), a first sample, or a ts that went back / jumped >= 1 h use wall_us. */
+long long dcgm_cpu_sample_delta_us(long long wall_us, long long ts, long long last_ts,
+                                   int from_dcgm);
 int dcgm_count_unique_sorted_ints(const int *sorted, int n);
 
 #ifdef MONITOR_CPU_BACKEND_DCGM
