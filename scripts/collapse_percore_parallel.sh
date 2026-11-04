@@ -1,5 +1,7 @@
 #!/bin/bash
 # Parallel repair of per-core host_data rows (collapse_percore_host_data --apply, sharded by host).
+#   collapse_percore_parallel.sh auto [SINCE_DAY]     stop any run, survey, repair every day with per-core rows,
+#                                                     retry days the merge holds; stays open, status every 5 min
 #   collapse_percore_parallel.sh stop                 stop every repair (runner, jobs, DB sessions; never the psql merge)
 #   collapse_percore_parallel.sh start DAY [DAY ...]  shard each day by host and run collapse_percore_host_data --apply
 #   collapse_percore_parallel.sh restart              stop the current run and start its days again
@@ -12,6 +14,9 @@ RUN=${COLLAPSE_RUN_DIR:-$HOME/collapse_run}
 DB=${COLLAPSE_DB_CONTAINER:-hpcperfstats_db_1}
 PIPE=${COLLAPSE_PIPELINE_CONTAINER:-hpcperfstats_pipeline_1}
 PAR=${COLLAPSE_PARALLEL:-4}
+POLL_S=${COLLAPSE_POLL_S:-60}
+STATUS_S=${COLLAPSE_STATUS_S:-300}
+MERGE_RETRY_S=${COLLAPSE_MERGE_RETRY_S:-300}
 SHARD_ROWS=${COLLAPSE_SHARD_ROWS:-100000000}
 MANAGE=${COLLAPSE_MANAGE:-/home/hpcperfstats/hpcperfstats/site/manage.py}
 SELF=$(readlink -f "$0")
@@ -152,9 +157,14 @@ start() {
     JOIN pg_stat_activity a ON a.pid = l.pid JOIN pg_class cl ON cl.oid = l.relation
     JOIN timescaledb_information.chunks c ON c.chunk_name = cl.relname AND c.hypertable_name = 'host_data'
     WHERE l.locktype = 'relation' AND a.pid <> pg_backend_pid() AND a.query ILIKE 'insert into host_data%';") || die "psql failed"
+  local -a todo=()
   for day in "$@"; do
-    grep -qx "$day" <<< "$merge_days" && die "the merge is writing to $day; leave it out until the merge commits"
+    if grep -qx "$day" <<< "$merge_days"; then
+      echo "SKIPPED $day: the merge is writing to it; run '$0 start $day' after the merge commits"
+    else todo+=("$day"); fi
   done
+  [ ${#todo[@]} -gt 0 ] || die "the merge is writing to every requested day; start them after it commits"
+  set -- "${todo[@]}"
 
   local dir est nh k f
   dir="$RUN/run_$(date -u +%Y%m%dT%H%M%SZ)"
@@ -248,13 +258,74 @@ restart() {
   start $days
 }
 
+# One status line for the current run: jobs finished, failed, running, and
+# per-core rows collapsed so far (from the job logs' per-batch lines).
+progress_line() {
+  local dir; dir=$(current)
+  local total=0 done_n=0 failed=0 rows=0
+  if [ -n "$dir" ] && [ -f "$dir/queue" ]; then
+    total=$(wc -l < "$dir/queue")
+    done_n=$(grep -l '^rc=' "$dir"/logs/*.log 2>/dev/null | wc -l)
+    failed=$(grep -l '^rc=[1-9]' "$dir"/logs/*.log 2>/dev/null | wc -l)
+    rows=$(grep -h ' hosts=[0-9]* percore_rows=' "$dir"/logs/*.log 2>/dev/null \
+      | sed 's/.* percore_rows=\([0-9]*\).*/\1/' | awk '{s += $1} END {print s + 0}')
+  fi
+  echo "== $(date -u +%FT%TZ) jobs finished=$done_n/$total failed=$failed running=$(repair_count) per-core rows collapsed=$rows"
+}
+
+# Wait until no runner of this script and no repair process is left, printing
+# a status line every STATUS_S seconds.
+wait_for_run() {
+  local last=0 now
+  while pgrep -f "xargs .*-L 1 $SELF _job" > /dev/null || [ "$(repair_count)" != "0" ]; do
+    now=$(date +%s)
+    if [ $((now - last)) -ge "$STATUS_S" ]; then progress_line; last=$now; fi
+    sleep "$POLL_S"
+  done
+  progress_line
+}
+
+# Survey, then (re)start the repair on every day with per-core rows: an
+# uncompressed day with any per-core share, a compressed day whose check found
+# per-core rows or could not decide. Stops the current run first; days already
+# repaired are no-ops. Days start skipped (the merge is writing them) are
+# retried after each run until none is left; any other start failure ends auto.
+# Returns once the last run has finished; prints a status line while waiting.
+auto() {
+  local out days rc
+  out=$(survey "${1:-2026-09-15}") || die "survey failed"
+  echo "$out"
+  days=$(awk -F'|' '($2 == "f" && $5 ~ /^[0-9.]+$/ && $5 + 0 > 0) || ($2 == "t" && $5 ~ /^has_percore=(true|unknown)/) {print $1}' <<< "$out" | sort -u | tr '\n' ' ')
+  if [ -z "${days// /}" ]; then echo "== no day with per-core rows; nothing to repair"; return 0; fi
+  echo "== repairing every day with per-core rows: $days"
+  stop
+  while [ -n "${days// /}" ]; do
+    out=$(start $days 2>&1); rc=$?
+    echo "$out"
+    if [ $rc -ne 0 ] && ! grep -q 'the merge is writing to every requested day' <<< "$out"; then
+      die "start failed; auto stops (see the error above)"
+    fi
+    # start prints one SKIPPED line per day the merge holds (also when it then
+    # gives up because the merge holds them all).
+    days=$(sed -n 's/^SKIPPED \([0-9-]*\): the merge.*/\1/p' <<< "$out" | tr '\n' ' ')
+    [ -n "${days// /}" ] || break
+    echo "== $(date -u +%FT%TZ) waiting to retry days the merge holds: $days"
+    wait_for_run
+    sleep "$MERGE_RETRY_S"
+  done
+  wait_for_run
+  echo "== $(date -u +%FT%TZ) auto done: every affected day has run"
+  status
+}
+
 case "${1:-}" in
   _job) shift; job "$@" ;;
   stop) stop ;;
   start) shift; start "$@" ;;
   restart) restart ;;
+  auto) shift; auto "$@" ;;
   resume-policy) resume_policy ;;
   status) status ;;
   survey) shift; survey "$@" ;;
-  *) die "usage: $0 {stop|start DAY [DAY ...]|restart|resume-policy|status|survey [SINCE_DAY]}" ;;
+  *) die "usage: $0 {auto [SINCE_DAY]|stop|start DAY [DAY ...]|restart|resume-policy|status|survey [SINCE_DAY]}" ;;
 esac

@@ -30,10 +30,13 @@ if [ "$C" = hpcperfstats_db_1 ]; then
 fi
 case "$1" in
   pgrep) n=$(ls $ST/running.* 2>/dev/null | wc -l); echo $n; [ $n -gt 0 ];;
-  pkill) echo "pkill $*" >> $ST/pkill.log;;
+  pkill)
+    echo "pkill $*" >> $ST/pkill.log
+    for f in $ST/running.*; do [ -e "$f" ] && kill "${f##*.}" 2>/dev/null; rm -f "$f"; done;;
   python3)
     if [ "$2" = -c ]; then echo "${FAKE_FIX:-FIXED}"; exit 0; fi
-    echo "$*" >> $ST/calls.log; m=$ST/running.$$; touch $m; sleep 0.2
+    echo "$*" >> $ST/calls.log; m=$ST/running.$$; touch $m; sleep "${FAKE_JOB_S:-0.2}"
+    echo "2026-10-24 00:00 hosts=8 percore_rows=10 groups=2 kept_existing=0 new_rows=2"
     echo "TOTAL percore_rows=10 groups=2 kept_existing=0 new_rows=2"; rm -f $m;;
 esac
 """
@@ -55,15 +58,15 @@ fi
   day=$(grep -o "20[0-9-]\{8\}" <<< "$SQL" | head -1)
   case "$SQL" in
     *pg_size_pretty*) printf '2026-10-01|t|_ti.c1|10 GB|1000\n2026-10-24|f|_ti.c2|200 GB|700\n';;
-    *TABLESAMPLE*) echo 98.9;;
-    *has_percore*) echo has_percore=true;;
+    *TABLESAMPLE*) if [ -n "${FAKE_PCT_NONE:-}" ]; then echo 0.0; else echo 98.9; fi;;
+    *has_percore*) if [ -n "${FAKE_PCT_NONE:-}" ]; then echo has_percore=false; else echo has_percore=true; fi;;
     *"bool_or(is_compressed)"*)
       if [[ " ${FAKE_COMP:-} " == *" $day "* ]]; then echo t; else echo f; fi;;
     *"proc_name = 'policy_compression' LIMIT 1"*) echo "${FAKE_POLICY:-}";;
     *alter_job*) echo "$SQL" >> $ST/alter.log; echo done;;
     *pg_replication_slots*) echo "${FAKE_SLOTS:-0}";;
     *"SHOW archive_mode"*) echo "${FAKE_ARCH:-off}";;
-    *pg_locks*) printf '%s\n' ${FAKE_MERGE_DAYS:-};;
+    *pg_locks*) printf '%s\n' ${FAKE_MERGE_DAYS:-}; cat $ST/merge_days 2>/dev/null || true;;
     *"WITH RECURSIVE"*)
       n=5; [ "$day" = 2026-10-09 ] && n=0
       for i in $(seq 1 $n); do echo "c$i-$day.example"; done;;
@@ -96,6 +99,9 @@ def env(tmp_path):
     "COLLAPSE_RUN_DIR": str(tmp_path / "run"),
     "COLLAPSE_SHARD_ROWS": "100",
     "COLLAPSE_PARALLEL": "3",
+    "COLLAPSE_POLL_S": "0.2",
+    "COLLAPSE_STATUS_S": "0",
+    "COLLAPSE_MERGE_RETRY_S": "0.5",
   }
 
 
@@ -152,11 +158,102 @@ def test_start_runs_every_shard_once_with_a_day_and_its_hosts(env):
   assert "percore_rows=60" in status.stdout
 
 
+def test_auto_repairs_every_day_with_percore_rows_compressed_included(env):
+  """One command per machine: survey, then repair every affected day."""
+  out = _run(env, "auto", "2026-10-01")
+  assert out.returncode == 0, out.stderr
+  assert "repairing every day with per-core rows: 2026-10-01 2026-10-24" in (
+    out.stdout
+  )
+  _wait_finished(env, 4)
+  days = {c.split("--since ")[1].split()[0] for c in _calls(env)}
+  assert days == {"2026-10-01", "2026-10-24"}
+
+
+def test_auto_waits_for_the_merge_then_repairs_the_skipped_day(env):
+  """auto loops back to days the merge held and repairs them once it is gone."""
+  merge = Path(env["FAKE_STATE"]) / "merge_days"
+  merge.write_text("2026-10-24\n")
+  fast = {**env, "COLLAPSE_POLL_S": "0.2", "COLLAPSE_MERGE_RETRY_S": "0.5"}
+  proc = subprocess.Popen(
+    [str(SCRIPT), "auto", "2026-10-01"],
+    env=fast,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True,
+  )
+  deadline = time.monotonic() + 30
+  while (
+    "waiting to retry days the merge holds"
+    not in "".join(
+      (Path(env["FAKE_STATE"]) / "calls.log").read_text()
+      if (Path(env["FAKE_STATE"]) / "calls.log").exists()
+      else ""
+    )
+    and time.monotonic() < deadline
+  ):
+    if len(_calls(env)) >= 2:
+      break
+    time.sleep(0.2)
+  merge.unlink()  # the merge commits
+  out, _ = proc.communicate(timeout=60)
+  assert proc.returncode == 0, out
+  assert "SKIPPED 2026-10-24: the merge is writing to it" in out
+  assert "waiting to retry days the merge holds: 2026-10-24" in out
+  assert "auto done: every affected day has run" in out
+  days = [c.split("--since ")[1].split()[0] for c in _calls(env)]
+  assert sorted(set(days)) == ["2026-10-01", "2026-10-24"]
+  assert days.count("2026-10-24") == 2  # its two shards, once
+
+
+def test_auto_stops_the_previous_run_before_starting(env):
+  """The user asked: auto must stop previous jobs, not run alongside them."""
+  first = _run(env, "start", "2026-10-25", FAKE_JOB_S="30")
+  assert first.returncode == 0, first.stderr
+  runner = int(first.stdout.split("runner pid=")[1].split()[0])
+  time.sleep(1)
+  assert _run(env, "status").stdout.count("start ") >= 1  # jobs running
+  out = _run(env, "auto", "2026-10-01")
+  assert out.returncode == 0, out.stderr
+  assert "repair processes left=0" in out.stdout
+  assert not Path(f"/proc/{runner}").exists()  # first run's runner is gone
+  pkills = (Path(env["FAKE_STATE"]) / "pkill.log").read_text()
+  assert "pkill -f collapse_percore_host_data" in pkills
+  assert "jobs finished=" in out.stdout  # status lines while waiting
+  assert "auto done: every affected day has run" in out.stdout
+
+
+def test_auto_stops_on_a_start_failure_that_is_not_the_merge(env):
+  out = _run(env, "auto", "2026-10-01", FAKE_FIX="NOT_FIXED")
+  assert out.returncode == 1
+  assert "start failed; auto stops" in out.stderr
+  assert _calls(env) == []
+
+
+def test_auto_with_nothing_affected_starts_nothing(env):
+  out = _run(env, "auto", "2026-10-01", FAKE_PCT_NONE="1")
+  assert out.returncode == 0, out.stderr
+  assert "nothing to repair" in out.stdout
+  assert _calls(env) == []
+
+
+def test_a_day_the_merge_writes_is_skipped_and_the_rest_run(env):
+  out = _run(
+    env, "start", "2026-10-24", "2026-10-25", FAKE_MERGE_DAYS="2026-10-24"
+  )
+  assert out.returncode == 0, out.stderr
+  assert "SKIPPED 2026-10-24: the merge is writing to it" in out.stdout
+  _wait_finished(env, 4)
+  assert {c.split("--since ")[1].split()[0] for c in _calls(env)} == {
+    "2026-10-25"
+  }
+
+
 @pytest.mark.parametrize(
   ("extra", "message"),
   [
     ({"FAKE_FIX": "NOT_FIXED"}, "pipeline code state is NOT_FIXED"),
-    ({"FAKE_MERGE_DAYS": "2026-10-24"}, "the merge is writing to 2026-10-24"),
+    ({"FAKE_MERGE_DAYS": "2026-10-24"}, "the merge is writing to every"),
     ({"FAKE_SLOTS": "1"}, "replication_slots=1"),
     ({"FAKE_ARCH": "on"}, "archive_mode=on"),
   ],
