@@ -555,28 +555,91 @@ def test_0043_adds_provenance_columns_cursor_table_and_concurrent_index():
   assert mod.Migration.dependencies == [
     ("machine", "0042_job_data_metrics_dirty_idx")
   ]
-  ops = mod.Migration.operations
-  added = {op.name for op in ops if isinstance(op, migrations.AddField)}
-  assert added == {
+  state_sep, run_py, index_sep = mod.Migration.operations
+  assert state_sep.database_operations == []
+  added = {
+    op.name
+    for op in state_sep.state_operations
+    if isinstance(op, migrations.AddField)
+  }
+  assert (
+    added
+    == set(mod._COLUMNS)
+    == {
+      "metrics_version",
+      "metrics_coverage",
+      "metrics_skipped_since",
+    }
+  )
+  for op in state_sep.state_operations:
+    if isinstance(op, migrations.AddField):
+      assert op.field.null is True and op.field.default is models.NOT_PROVIDED
+  created = [
+    op
+    for op in state_sep.state_operations
+    if isinstance(op, migrations.CreateModel)
+  ]
+  assert [op.name for op in created] == ["metrics_scheduler_state"]
+  assert isinstance(run_py, migrations.RunPython)
+  assert run_py.code is mod._create_missing
+  assert run_py.reverse_code is mod._drop_created
+  assert index_sep.database_operations[0].sql == [
+    "SET statement_timeout = 0",
+    "DROP INDEX CONCURRENTLY IF EXISTS job_data_metrics_version_idx",
+    "CREATE INDEX CONCURRENTLY job_data_metrics_version_idx"
+    " ON job_data (metrics_version, end_time)",
+    "RESET statement_timeout",
+  ]
+
+
+def _run_0043_create_missing(present_columns, present_tables):
+  """Run 0043's RunPython against a fake schema editor; return its calls."""
+  from types import SimpleNamespace
+  from unittest import mock
+
+  mod = _migration_module("0043_job_data_metrics_version")
+  introspection = mock.Mock()
+  introspection.get_table_description.return_value = [
+    SimpleNamespace(name=n) for n in ("jid", *present_columns)
+  ]
+  introspection.table_names.return_value = ["job_data", *present_tables]
+  editor = mock.MagicMock()
+  editor.connection.introspection = introspection
+  job_data = mock.Mock()
+  job_data._meta.get_field.side_effect = lambda name: name
+  state_model = mock.Mock()
+  apps = mock.Mock()
+  apps.get_model.side_effect = lambda app, name: (
+    job_data if name == "job_data" else state_model
+  )
+  mod._create_missing(apps, editor)
+  added = [c.args[1] for c in editor.add_field.call_args_list]
+  created = [c.args[0] for c in editor.create_model.call_args_list]
+  return added, created, state_model
+
+
+def test_0043_rerun_after_partial_apply_skips_existing_columns():
+  """hpcperfstats02: the first non-atomic run committed metrics_version
+  before the index build was cancelled, so the rerun hit DuplicateColumn
+  on AddField. Only the missing schema pieces may be created."""
+  added, created, _ = _run_0043_create_missing(["metrics_version"], [])
+  assert added == ["metrics_coverage", "metrics_skipped_since"]
+  assert len(created) == 1
+  added, created, _ = _run_0043_create_missing(
+    ["metrics_version", "metrics_coverage", "metrics_skipped_since"],
+    ["metrics_scheduler_state"],
+  )
+  assert added == [] and created == []
+
+
+def test_0043_fresh_database_creates_every_column_and_the_table():
+  added, created, state_model = _run_0043_create_missing([], [])
+  assert added == [
     "metrics_version",
     "metrics_coverage",
     "metrics_skipped_since",
-  }
-  for op in ops:
-    if isinstance(op, migrations.AddField):
-      assert op.field.null is True and op.field.default is models.NOT_PROVIDED
-  created = [op for op in ops if isinstance(op, migrations.CreateModel)]
-  assert [op.name for op in created] == ["metrics_scheduler_state"]
-  sep = [
-    op for op in ops if isinstance(op, migrations.SeparateDatabaseAndState)
   ]
-  assert len(sep) == 1
-  sql = sep[0].database_operations[0].sql
-  assert (
-    "CREATE INDEX CONCURRENTLY IF NOT EXISTS job_data_metrics_version_idx"
-    in sql
-  )
-  assert "(metrics_version, end_time)" in sql
+  assert created == [state_model]
 
 
 def test_0044_concurrent_index_lifts_timeout_and_drops_invalid_leftover():
