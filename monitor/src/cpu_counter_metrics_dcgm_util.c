@@ -41,6 +41,13 @@ int dcgm_backend_retry_due(time_t now, time_t retry_after)
   return (now >= retry_after) ? 1 : 0;
 }
 
+int dcgm_cpu_util_from_jiffies(int jiffies_ready, int dcgm_rd, double dcgm_util_total)
+{
+  (void)dcgm_rd;
+  (void)dcgm_util_total;
+  return jiffies_ready ? 1 : 0;
+}
+
 long long dcgm_cpu_sample_delta_us(long long wall_us, long long ts, long long last_ts,
                                    int from_dcgm)
 {

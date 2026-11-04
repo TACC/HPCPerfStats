@@ -1119,7 +1119,7 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
         if (rd == 0)
           dcgm_cpu_scale_util_if_fraction(&sample);
       }
-      if ((rd != 0 || sample.util_total <= 0.0) && proc_stat_ok && g_dcgm_stat_seeded) {
+      if (dcgm_cpu_util_from_jiffies(proc_stat_ok && g_dcgm_stat_seeded, rd, sample.util_total)) {
         dcgm_cpu_sample_from_jiffy_diff(&sample, &g_dcjm_cur[i], &g_dcjm_prev[i]);
         from_jiffy = 1;
       }

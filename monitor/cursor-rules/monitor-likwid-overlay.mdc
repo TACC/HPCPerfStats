@@ -14,7 +14,7 @@ alwaysApply: false
 
 | Source | Keys |
 |--------|------|
-| **DCGM** | `cpu_util_*_accum_us`, `dcgm_cpu_power_util_w`, `dcgm_cpu_power_limit_w`, `arm_dram_bw_bytes`; **fail-soft** `cpu_clock_est_cycles` (= **active** util×freq), `aperf` (=act), `mperf` (=ref) |
+| **DCGM** | `cpu_util_*_accum_us` (from `/proc/stat` jiffies when seeded, DCGM util as fallback — `monitor-dcgm-integration.mdc`), `dcgm_cpu_power_util_w`, `dcgm_cpu_power_limit_w`, `arm_dram_bw_bytes`; **fail-soft** `cpu_clock_est_cycles` (= **active** util×freq), `aperf` (=act), `mperf` (=ref) |
 | **LIKWID overlay** | Overwrites `aperf` / `mperf` / `cpu_clock_est_cycles` **only when measured cycles &gt; 0**; owns `fp_arith_inst_retired_scalar_*`, `arm_est_flops` (= SP+DP only), `arm_int8_ops`, `arm_int16_ops`, optional `instr_retired` |
 
 - aarch64 **`auto` stays `--with-cpu-counter-backend=dcgm`**. LIKWID overlay is an additive layer (`MONITOR_CPU_LIKWID_OVERLAY`), not a separate exclusive backend. Exclusive `--with-cpu-counter-backend=likwid` is allowed on ARM and **loses DCGM watts/util**.

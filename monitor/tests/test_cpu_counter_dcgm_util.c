@@ -180,8 +180,21 @@ static void test_sample_delta_us(void)
   assert(dcgm_cpu_sample_delta_us(5000000, 5000000 + 3600LL * 1000000LL, 5000000, 1) == 5000000);
 }
 
+static void test_util_from_jiffies(void)
+{
+  /* c122-018: DCGM util is a point reading per 5 s refresh, so a 30 s load's edges were off by
+   * up to one refresh (1.00 / 1.005 / 1.069 vs /proc/stat on the same code). /proc/stat jiffies
+   * are exact for the daemon's own interval: use them whenever seeded, DCGM only as fallback. */
+  assert(dcgm_cpu_util_from_jiffies(1, 0, 75.0));  /* DCGM read OK with util: jiffies still win */
+  assert(dcgm_cpu_util_from_jiffies(1, -1, 0.0));  /* DCGM read failed */
+  assert(dcgm_cpu_util_from_jiffies(1, 0, 0.0));   /* DCGM idle core */
+  assert(!dcgm_cpu_util_from_jiffies(0, 0, 75.0)); /* /proc/stat not read or not seeded */
+  assert(!dcgm_cpu_util_from_jiffies(0, -1, 0.0));
+}
+
 int main(void)
 {
+  test_util_from_jiffies();
   test_sample_delta_us();
   test_clamp_percent();
   test_scale_util_if_fraction();
