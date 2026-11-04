@@ -1266,5 +1266,10 @@ def test_docker_compose_postgres_unix_socket_shared_with_password_auth():
   assert (
     "pg_isready -U hpcperfstats -d postgres -h 127.0.0.1 -p 5432" in content
   )
-  assert "\nhost = /run/postgresql\n" in ini_example
-  assert "\nport = 5432\n" in ini_example
+  # The socket is the code default; the example documents it commented.
+  from hpcperfstats.dbload.lib import conf_parser
+
+  assert conf_parser.ini_registry_default("host") == "/run/postgresql"
+  assert "\n# host = /run/postgresql\n" in ini_example
+  assert conf_parser.ini_registry_default("port") == "5432"
+  assert "\n# port = 5432\n" in ini_example

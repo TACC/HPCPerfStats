@@ -238,7 +238,7 @@ _INI_OPTION_REGISTRY_KEYS = (
 INI_OPTION_DEFAULTS = {
   "machine": None,
   "host_name_ext": None,
-  "data_dir": None,
+  "data_dir": "/hpcperfstats/",
   "server": None,
   "restricted_queue_keywords": None,
   "debug": "no",
@@ -246,12 +246,12 @@ INI_OPTION_DEFAULTS = {
   "timezone": None,
   "secret_key": None,
   "total_cores": "40",
-  "engine_name": None,
-  "dbname": None,
-  "username": None,
-  "password": None,
-  "host": None,
-  "port": None,
+  "engine_name": "django.db.backends.postgresql",
+  "dbname": "hpcperfstats",
+  "username": "hpcperfstats",
+  "password": "hpcperfstats",
+  "host": "/run/postgresql",
+  "port": "5432",
   "cors_origin_scheme": "",
   "gunicorn_workers": "32",
   "summary_aggregate_prefetch_max_threads": "2",
@@ -390,9 +390,9 @@ INI_OPTION_DEFAULTS = {
   "listend_db_ingest_statement_timeout_ms": "600000",
   "listend_amqp_prefetch": "32",
   "listend_amqp_consumer_count": "16",
-  "acct_path": None,
-  "archive_dir": None,
-  "daily_archive_dir": None,
+  "acct_path": "%(data_dir)s/accounting",
+  "archive_dir": "%(data_dir)s/archive",
+  "daily_archive_dir": "%(data_dir)s/daily_archive",
   "archive_keep_uncompressed_tar": "no",
   "archive_today_uncompressed_tar_grace_hours": "24.0",
   "archive_zstd_threads": "0",
@@ -413,12 +413,12 @@ INI_OPTION_DEFAULTS = {
   "client_key": None,
   "oauth_base_url": None,
   "authorize_url": None,
-  "rmq_server": None,
-  "rmq_queue": None,
+  "rmq_server": "rabbitmq",
+  "rmq_queue": "%(machine)s",
   "allow_from": "",
   "listen_tcp": "yes",
   "listen_udp": "yes",
-  "redis_location": None,
+  "redis_location": "unix:///run/redis/redis.sock?db=1",
   "xalt_engine": None,
   "xalt_name": None,
   "xalt_user": None,
@@ -491,25 +491,43 @@ def _ini_get_from_registry(
   legacy_sections: tuple[Any, ...] = (),
 ) -> Any:
   """
-  Like ``_ini_get`` but uses ``INI_OPTION_DEFAULTS`` for the fallback.
+  Read *option* from the ini, else interpolate its ``INI_OPTION_DEFAULTS`` value.
+
+  The ini wins (primary section, then legacy sections). A default containing
+  ``%(name)s`` is interpolated against the ini like a written value, with
+  each referenced option the ini lacks filled from its own registry default,
+  so the ``archive_dir`` default ``%(data_dir)s/archive`` works with no
+  ``data_dir`` line. A reference with no value anywhere (``%(machine)s``)
+  raises ``InterpolationMissingOptionError``.
 
   Args:
-    primary_section (Any): Primary section passed to this helper.
-    option (Any): Option passed to this helper.
-    legacy_sections (tuple[Any, ...]): Sequence for legacy sections.
+    primary_section (Any): Section the option belongs in (``"PIPELINE"``).
+    option (Any): Ini option name (``"archive_dir"``).
+    legacy_sections (tuple[Any, ...]): Older sections still read when the
+      primary section lacks the option (``("PORTAL",)``).
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: The option's ``str`` value from the ini or the interpolated default.
+
+  Raises:
+    configparser.NoOptionError: The option is absent and its registry
+      default is ``None`` (required key).
 
   Examples:
-    >>> _ini_get_from_registry(None, None, [])  # doctest: +SKIP
+    >>> _ini_get_from_registry("PIPELINE", "archive_dir")  # doctest: +SKIP
+    '/hpcperfstats//archive'
   """
-  return _ini_get(
-    primary_section,
-    option,
-    fallback=_ini_registry_default_str(option),
-    legacy_sections=legacy_sections,
-  )
+  _ensure_cfg_loaded()
+  for section in (primary_section, *legacy_sections):
+    if _ini_has_option(section, option):
+      return cfg.get(section, option)
+  default = _ini_registry_default_str(option)
+  context = primary_section if cfg.has_section(primary_section) else "DEFAULT"
+  extra = {option: default}
+  for name in re.findall(r"%\((\w+)\)s", default):
+    if not cfg.has_option(context, name) and ini_registry_default(name):
+      extra[name] = str(ini_registry_default(name))
+  return cfg.get(context, option, vars=extra)
 
 
 def ini_option_registry_pairs() -> Any:
@@ -1002,7 +1020,9 @@ def get_db_name() -> Any:
   Examples:
     >>> get_db_name()  # doctest: +SKIP
   """
-  return _ini_option("DEFAULT", "dbname", legacy_sections=("PORTAL",))
+  return _ini_get_from_registry(
+    "DEFAULT", "dbname", legacy_sections=("PORTAL",)
+  )
 
 
 def get_debug() -> Any:
@@ -1060,7 +1080,7 @@ def get_archive_dir_path() -> Any:
   Examples:
     >>> get_archive_dir_path()  # doctest: +SKIP
   """
-  raw = _ini_option(
+  raw = _ini_get_from_registry(
     "PIPELINE", "archive_dir", legacy_sections=("PORTAL",)
   ).strip()
   return os.path.normpath(raw) if raw else raw
@@ -1108,7 +1128,9 @@ def get_accounting_path() -> Any:
   Examples:
     >>> get_accounting_path()  # doctest: +SKIP
   """
-  return _ini_option("PIPELINE", "acct_path", legacy_sections=("PORTAL",))
+  return _ini_get_from_registry(
+    "PIPELINE", "acct_path", legacy_sections=("PORTAL",)
+  )
 
 
 def get_daily_archive_dir_path() -> Any:
@@ -1123,7 +1145,7 @@ def get_daily_archive_dir_path() -> Any:
   Examples:
     >>> get_daily_archive_dir_path()  # doctest: +SKIP
   """
-  raw = _ini_option(
+  raw = _ini_get_from_registry(
     "PIPELINE",
     "daily_archive_dir",
     legacy_sections=("PORTAL",),
@@ -1331,7 +1353,7 @@ def get_rmq_server() -> Any:
   Examples:
     >>> get_rmq_server()  # doctest: +SKIP
   """
-  return _get("RMQ", "rmq_server")
+  return _ini_get_from_registry("RMQ", "rmq_server")
 
 
 def get_rmq_queue() -> Any:
@@ -1346,7 +1368,7 @@ def get_rmq_queue() -> Any:
   Examples:
     >>> get_rmq_queue()  # doctest: +SKIP
   """
-  return _get("RMQ", "rmq_queue")
+  return _ini_get_from_registry("RMQ", "rmq_queue")
 
 
 def get_server_name() -> Any:
@@ -1467,7 +1489,7 @@ def get_data_dir_path() -> Any:
   Examples:
     >>> get_data_dir_path()  # doctest: +SKIP
   """
-  return _get("DEFAULT", "data_dir")
+  return _ini_get_from_registry("DEFAULT", "data_dir")
 
 
 def get_syslog_allow_from_ipv4_networks() -> Any:
@@ -1634,7 +1656,9 @@ def get_engine_name() -> Any:
   Examples:
     >>> get_engine_name()  # doctest: +SKIP
   """
-  return _ini_option("DEFAULT", "engine_name", legacy_sections=("PORTAL",))
+  return _ini_get_from_registry(
+    "DEFAULT", "engine_name", legacy_sections=("PORTAL",)
+  )
 
 
 def get_username() -> Any:
@@ -1648,7 +1672,9 @@ def get_username() -> Any:
   Examples:
     >>> get_username()  # doctest: +SKIP
   """
-  return _ini_option("DEFAULT", "username", legacy_sections=("PORTAL",))
+  return _ini_get_from_registry(
+    "DEFAULT", "username", legacy_sections=("PORTAL",)
+  )
 
 
 def get_password() -> Any:
@@ -1662,7 +1688,9 @@ def get_password() -> Any:
   Examples:
     >>> get_password()  # doctest: +SKIP
   """
-  return _ini_option("DEFAULT", "password", legacy_sections=("PORTAL",))
+  return _ini_get_from_registry(
+    "DEFAULT", "password", legacy_sections=("PORTAL",)
+  )
 
 
 def get_host() -> Any:
@@ -1676,7 +1704,7 @@ def get_host() -> Any:
   Examples:
     >>> get_host()  # doctest: +SKIP
   """
-  return _ini_option("DEFAULT", "host", legacy_sections=("PORTAL",))
+  return _ini_get_from_registry("DEFAULT", "host", legacy_sections=("PORTAL",))
 
 
 def get_port() -> Any:
@@ -1690,7 +1718,7 @@ def get_port() -> Any:
   Examples:
     >>> get_port()  # doctest: +SKIP
   """
-  return _ini_option("DEFAULT", "port", legacy_sections=("PORTAL",))
+  return _ini_get_from_registry("DEFAULT", "port", legacy_sections=("PORTAL",))
 
 
 def get_xalt_engine() -> Any:
@@ -5308,22 +5336,19 @@ def get_redis_location() -> Any:
   """
   Return the Redis URL for cache from CACHE config.
 
-  Defaults to redis://127.0.0.1:6379/1 if [CACHE] or redis_location is missing.
+  A missing or blank ``redis_location`` uses the registry default, the
+  compose stack's shared Unix socket ``unix:///run/redis/redis.sock?db=1``.
 
   Returns:
-    Any: Open return polymorphism from ``get_redis_location``: concrete type
-    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
-    empty).
+    Any: The Redis URL as a ``str``.
 
   Examples:
     >>> get_redis_location()  # doctest: +SKIP
+    'unix:///run/redis/redis.sock?db=1'
   """
-  _ensure_cfg_loaded()
-  if cfg.has_section("CACHE") and cfg.has_option("CACHE", "redis_location"):
-    return (
-      cfg.get("CACHE", "redis_location").strip() or "redis://127.0.0.1:6379/1"
-    )
-  return "redis://127.0.0.1:6379/1"
+  return _ini_get_from_registry("CACHE", "redis_location").strip() or str(
+    ini_registry_default("redis_location")
+  )
 
 
 def get_large_job_host_data_row_threshold() -> Any:

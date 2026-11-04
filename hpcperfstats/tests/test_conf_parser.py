@@ -504,7 +504,7 @@ def test_get_redis_location_default(temp_ini, monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
-  assert cfg.get_redis_location() == "redis://127.0.0.1:6379/1"
+  assert cfg.get_redis_location() == "unix:///run/redis/redis.sock?db=1"
 
 
 def test_get_redis_location_from_config(temp_ini, monkeypatch):

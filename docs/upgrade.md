@@ -88,11 +88,24 @@ Expect `redis_version:8.8.x` (or the pin in compose). Roll back by restoring the
 
 `web` and `pipeline` now connect to the PG15 `db` service through a Unix socket on the **`postgres_runtime`** tmpfs named volume (`/run/postgresql`), not TCP. TCP **5432** stays published on `hpcperfstats_net` for everything else. `db` also loads **`services-conf/postgres_pg_hba.conf`** through `-c hba_file=`, so socket logins need the password (scram-sha-256, same as network logins) instead of the image default `trust`. That file overrides `$PGDATA/pg_hba.conf` on existing data dirs. Loopback (`exec db psql -h localhost`) keeps `trust`; `exec db psql` without `-h` now uses the socket and fails with `fe_sendauth: no password supplied` (or a password prompt), so keep `-h localhost` on every in-container `psql` / `pg_dump`.
 
-1. Bake **`[DEFAULT] host = /run/postgresql`** into the site `hpcperfstats.ini` (keep `port = 5432`; it names the socket file).
+1. Make the site `hpcperfstats.ini` use the socket: **`/run/postgresql`** is now the code default for `[DEFAULT] host` (and `5432` for `port`, which names the socket file), so delete or comment out an old `host = db` line (or run `scripts/rewrite_hpcperfstats_ini.sh`, below).
 2. Run **`./scripts/rebuild_full_site.sh`**. It bakes the new ini into the image, then runs `down --remove-orphans` and `up -d --no-build`, so **`db`**, **`web`**, and **`pipeline`** are recreated together and all mount `postgres_runtime`. After `up` it fails the rebuild if `web` or `pipeline` cannot see `/run/postgresql/.s.PGSQL.5432` within `HPCPERFSTATS_STACK_VERIFY_WAIT_TIMEOUT` (default 300 s). Do **not** recreate only `web`/`pipeline`: with the new ini and an old `db` they wait forever for a socket that never appears, and still show as running.
 3. Check: `podman-compose -p hpcperfstats exec -T db psql -h localhost -U hpcperfstats -Atc "SHOW hba_file; SELECT count(*) FROM pg_stat_activity WHERE client_addr IS NULL AND backend_type = 'client backend';"` returns `/etc/postgresql/pg_hba.conf` and a non-zero count of socket clients once web/pipeline are up.
 
 To roll back, set `host = db` again; the socket volume and hba file are harmless with TCP clients.
+
+## Rewrite a site ini onto the current example
+
+`scripts/rewrite_hpcperfstats_ini.py` (run via `scripts/rewrite_hpcperfstats_ini.sh`) rebuilds the site `hpcperfstats.ini` from the current **`hpcperfstats.ini.example`**: every comment, section and new key comes from the example, and only the site's own settings are filled in. A site value equal to the `conf_parser` code default stays a commented `# key = default` line. A value that differs is written on an active `key = value` line directly under its commented default, so both are visible. Required keys (no code default) replace the example placeholder. Keys found in a legacy section (for example `host` under `[PORTAL]`) move to the example's section. Keys the example no longer documents are dropped and printed (`dropped (not in example): …`). Before writing, the script checks that every key's effective value (site value, else default) is unchanged and refuses to write if not. In place it keeps the old file as `hpcperfstats.ini.bak.<UTC timestamp>`.
+
+The host has no project Python, so run it through **`scripts/rewrite_hpcperfstats_ini.sh`**: it starts a throwaway container from the built image (`localhost/hpcperfstats:latest`, `--network none`) with the checkout mounted at `/work` and runs the checkout's copy of the script with the image's Python. The code and defaults it compares against are therefore this checkout's (pull the release first); no running container is touched and no redeploy is needed beforehand. From the checkout holding the site ini:
+
+```bash
+./scripts/rewrite_hpcperfstats_ini.sh --dry-run
+./scripts/rewrite_hpcperfstats_ini.sh
+```
+
+The ini argument defaults to `hpcperfstats.ini`; `--output PATH` writes elsewhere and leaves the ini untouched; `--image IMAGE` picks another built image. Paths are relative to the current directory, which must be inside the checkout. Then rebuild as usual (for example `./scripts/rebuild_full_site.sh`) to bake the rewritten ini into the image (immutable-image policy).
 
 ## INI layout (legacy sections)
 

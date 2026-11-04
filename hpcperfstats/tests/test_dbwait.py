@@ -1,7 +1,4 @@
-import configparser
 import importlib
-
-import pytest
 
 
 def test_resolve_postgres_wait_target_prefers_postgres_host_port(monkeypatch):
@@ -74,9 +71,10 @@ def test_can_resolve_host_port_invalid_host():
   assert can_resolve_host_port("not-a-real-hostname.invalid", "5432") is False
 
 
-def test_resolve_postgres_wait_target_raises_when_unconfigured(
+def test_resolve_postgres_wait_target_defaults_to_compose_socket(
   monkeypatch, tmp_path
 ):
+  """An ini without host/port waits on the compose PostgreSQL socket."""
   ini = tmp_path / "missing-host-port.ini"
   ini.write_text(
     "[DEFAULT]\n"
@@ -124,8 +122,7 @@ def test_resolve_postgres_wait_target_raises_when_unconfigured(
 
   from hpcperfstats.dbload.lib.dbwait import resolve_postgres_wait_target
 
-  with pytest.raises(configparser.NoOptionError):
-    resolve_postgres_wait_target()
+  assert resolve_postgres_wait_target() == ("/run/postgresql", "5432")
 
 
 def test_postgres_unix_socket_path_maps_dir_to_libpq_socket_file():

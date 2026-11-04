@@ -7,8 +7,8 @@ machine = cluster_name
 # FQDN suffix for node dirs under archive_dir (dirname must end with this string).
 host_name_ext = %(machine)s.domain.edu
 
-# Root directory for HPCPerfStats file data (archive, accounting, logs).
-data_dir = /hpcperfstats/
+# Root directory for HPCPerfStats file data (archive, accounting, logs; default /hpcperfstats/).
+# data_dir = /hpcperfstats/
 
 # Comma-separated FQDNs for the web/proxy host (TLS allowlist and Django ALLOWED_HOSTS).
 server = servername.domain.edu, stats.cluster.domain.edu
@@ -16,8 +16,8 @@ server = servername.domain.edu, stats.cluster.domain.edu
 # Queue name substrings that exclude jobs from listings (Python list syntax).
 restricted_queue_keywords = ['secure', 'secret']
 
-# Verbose logging in container logs (yes/true/1 or no).
-debug = True
+# Verbose logging in container logs (yes/true/1 or no; default no).
+# debug = no
 
 # Email domain suffix marking staff users who can see all jobs.
 staff_email_domain = lab.hpcisgreat.edu
@@ -32,22 +32,22 @@ secret_key = change-me-to-a-long-random-string
 # total_cores = 40
 
 # Django database engine backend.
-engine_name = django.db.backends.postgresql
+# engine_name = django.db.backends.postgresql
 
 # PostgreSQL database name.
-dbname = hpcperfstats
+# dbname = hpcperfstats
 
 # PostgreSQL username.
-username = hpcperfstats
+# username = hpcperfstats
 
-# PostgreSQL password.
-password = hpcperfstats
+# PostgreSQL password (default matches POSTGRES_PASSWORD in docker-compose.defaults.yaml).
+# password = hpcperfstats
 
 # PostgreSQL host, or Unix socket dir when it starts with / (compose: shared postgres_runtime tmpfs).
-host = /run/postgresql
+# host = /run/postgresql
 
 # PostgreSQL port.
-port = 5432
+# port = 5432
 
 [OAUTH2]
 # OAuth2 client id from your identity provider.
@@ -64,10 +64,10 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 
 [RMQ]
 # RabbitMQ hostname (compose service name in default install).
-rmq_server = rabbitmq
+# rmq_server = rabbitmq
 
 # Queue name for monitor payloads (interpolates machine).
-rmq_queue = %(machine)s
+# rmq_queue = %(machine)s
 
 [SYSLOG]
 # Comma-separated IPv4 CIDRs allowed on port 514; empty allows all IPv4.
@@ -109,13 +109,13 @@ rmq_queue = %(machine)s
 
 [PIPELINE]
 # Directory for Slurm accounting logs.
-acct_path = %(data_dir)s/accounting
+# acct_path = %(data_dir)s/accounting
 
 # Per-host raw stats tree; subdir names must end with host_name_ext.
-archive_dir = %(data_dir)s/archive
+# archive_dir = %(data_dir)s/archive
 
 # Daily sealed monitor archive directory.
-daily_archive_dir = %(data_dir)s/daily_archive
+# daily_archive_dir = %(data_dir)s/daily_archive
 
 # Absolute update_metrics + plot/detail prewarm thread pool size (default 32).
 # metrics_pool_processes = 32
@@ -519,7 +519,7 @@ daily_archive_dir = %(data_dir)s/daily_archive
 
 [CACHE]
 # Redis URL for Django/listend cache (compose default is the shared Unix socket).
-redis_location = unix:///run/redis/redis.sock?db=1
+# redis_location = unix:///run/redis/redis.sock?db=1
 
 [XALT]
 # XALT database engine when XALT integration is enabled.
