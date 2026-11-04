@@ -22,6 +22,9 @@ Attributes:
     (``_PERCORE_WHERE``), found over the whole table.
   _NO_TIMEOUT_SQL: Disables the statement timeout for the current transaction;
     one-off repair queries scan large windows and must not be cancelled.
+  _DML_DECOMPRESS_SQL: Lifts Timescale's per-transaction cap on rows
+    decompressed by INSERT/DELETE (default 100000), so a window can be
+    repaired in place on a compressed chunk.
 """
 
 from __future__ import annotations
@@ -70,6 +73,9 @@ _DISCOVER_DAYS_SQL = (
   f"WHERE {_PERCORE_WHERE}"
 )
 _NO_TIMEOUT_SQL = "SET LOCAL statement_timeout = 0"
+_DML_DECOMPRESS_SQL = (
+  "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"
+)
 
 
 def _parse_day(value: str) -> dt.datetime:
@@ -389,6 +395,7 @@ class Command(BaseCommand):
     gpu = list(GPU_TYPES)
     with transaction.atomic(), connection.cursor() as cursor:
       cursor.execute(_NO_TIMEOUT_SQL)
+      cursor.execute(_DML_DECOMPRESS_SQL)
       cols = ", ".join(_COLUMNS)
       percore = _query_frame(
         cursor,

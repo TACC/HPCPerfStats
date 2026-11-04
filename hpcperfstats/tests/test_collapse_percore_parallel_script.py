@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -57,6 +59,8 @@ fi
     *has_percore*) echo has_percore=true;;
     *"bool_or(is_compressed)"*)
       if [[ " ${FAKE_COMP:-} " == *" $day "* ]]; then echo t; else echo f; fi;;
+    *"proc_name = 'policy_compression' LIMIT 1"*) echo "${FAKE_POLICY:-}";;
+    *alter_job*) echo "$SQL" >> $ST/alter.log; echo done;;
     *pg_replication_slots*) echo "${FAKE_SLOTS:-0}";;
     *"SHOW archive_mode"*) echo "${FAKE_ARCH:-off}";;
     *pg_locks*) printf '%s\n' ${FAKE_MERGE_DAYS:-};;
@@ -152,7 +156,6 @@ def test_start_runs_every_shard_once_with_a_day_and_its_hosts(env):
   ("extra", "message"),
   [
     ({"FAKE_FIX": "NOT_FIXED"}, "pipeline code state is NOT_FIXED"),
-    ({"FAKE_COMP": "2026-10-24"}, "2026-10-24 is compressed"),
     ({"FAKE_MERGE_DAYS": "2026-10-24"}, "the merge is writing to 2026-10-24"),
     ({"FAKE_SLOTS": "1"}, "replication_slots=1"),
     ({"FAKE_ARCH": "on"}, "archive_mode=on"),
@@ -184,6 +187,95 @@ def test_job_without_a_day_or_host_file_is_refused(env):
 
 
 _CMD = "site/lib/machine/management/commands/collapse_percore_host_data.py"
+
+
+def test_compressed_days_are_repaired_in_place_not_refused(env):
+  """The user wants compressed days repaired even if slow (hpcperfstats04)."""
+  out = _run(env, "start", "2026-10-24", FAKE_COMP="2026-10-24")
+  assert out.returncode == 0, out.stderr
+  _wait_finished(env, 2)
+  assert all("--since 2026-10-24" in c for c in _calls(env))
+  assert len(_calls(env)) == 2
+
+
+def test_start_pauses_an_enabled_policy_and_resume_policy_restores_it(env):
+  alter = Path(env["FAKE_STATE"]) / "alter.log"
+  out = _run(env, "start", "2026-10-24", FAKE_POLICY="1003 t")
+  assert out.returncode == 0, out.stderr
+  assert "paused compression policy job 1003" in out.stdout
+  assert "alter_job(1003, scheduled => false)" in alter.read_text()
+  _wait_finished(env, 2)
+  out = _run(env, "resume-policy")
+  assert "job 1003 is scheduled again" in out.stdout
+  assert "alter_job(1003, scheduled => true)" in alter.read_text()
+  assert "no compression policy was paused" in _run(env, "resume-policy").stdout
+
+
+def test_start_leaves_a_paused_policy_alone(env):
+  assert _run(env, "start", "2026-10-24", FAKE_POLICY="1003 f").returncode == 0
+  assert not (Path(env["FAKE_STATE"]) / "alter.log").exists()
+
+
+def _like_patterns() -> list[re.Pattern[str]]:
+  """The LIKE prefixes in the script's REPAIR_SESSIONS, as regexes."""
+  text = SCRIPT.read_text()
+  block = text[text.index('REPAIR_SESSIONS="') : text.index("POLICY_NOTE=")]
+  pats = re.findall(r"'((?:[^']|'')*%)'", block)
+  return [
+    re.compile(re.escape(p.replace("''", "'")).replace("%", ".*"), re.S)
+    for p in pats
+  ]
+
+
+def test_stop_cancels_only_the_repair_commands_own_statements():
+  """Regression: stop cancelled live update_metrics queries on hpcperfstats04
+  because it matched any non-psql session touching host_data.
+  """
+  from unittest import mock
+
+  from hpcperfstats.dbload.lib.host_data_percore_collapse import (
+    _empty_output,
+  )
+  from hpcperfstats.site.lib.machine.management.commands import (
+    collapse_percore_host_data as cmd_mod,
+  )
+
+  cursor = mock.MagicMock()
+  cursor.fetchall.return_value = []
+  conn = mock.MagicMock()
+  conn.cursor.return_value.__enter__.return_value = cursor
+  opts = {"lookback_minutes": 120}
+  t0 = dt.datetime(2026, 10, 25, tzinfo=dt.UTC)
+  t1 = t0 + dt.timedelta(hours=1)
+  with (
+    mock.patch.object(cmd_mod, "connection", conn),
+    mock.patch.object(cmd_mod.transaction, "atomic"),
+  ):
+    cmd = cmd_mod.Command()
+    cmd._migrate(t0, t1, ["h"], True, opts)
+    cmd._percore_hosts(t0, t1, [])
+    planned = _empty_output()
+    planned["time"] = planned["time"].astype("datetime64[s, UTC]")
+    cmd._verify(cursor, planned, ["h"], t0, t1, [])
+  sqls = [c.args[0] for c in cursor.execute.call_args_list]
+  # Each repair window lifts Timescale's DML decompression cap (compressed
+  # days are repaired in place).
+  assert cmd_mod._DML_DECOMPRESS_SQL in sqls
+  sqls += [cmd_mod._INSERT_SQL, cmd_mod._DELETE_SQL, cmd_mod._DISCOVER_DAYS_SQL]
+  statements = [s.replace("%%", "%") for s in sqls if "host_data" in s]
+  pats = _like_patterns()
+  for sql in statements:
+    assert any(p.fullmatch(sql) for p in pats), sql
+  others = [
+    "COPY (SELECT h.time, h.host, h.type, h.event, h.dev FROM host_data h",
+    "SELECT s.t, (SELECT 1 FROM host_data d WHERE d.host = 'c1')",
+    "\nINSERT INTO host_data (\n  time, host, jid, type, dev, event, unit",
+  ]
+  for sql in others:
+    assert not any(p.fullmatch(sql) for p in pats), sql
+  assert "application_name <> 'psql' AND query ILIKE '%host_data%'" not in (
+    SCRIPT.read_text()
+  )
 
 
 def test_start_copies_this_checkouts_repair_command_into_the_pipeline(env):

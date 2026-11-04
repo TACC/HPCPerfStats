@@ -3,6 +3,7 @@
 #   collapse_percore_parallel.sh stop                 stop every repair (runner, jobs, DB sessions; never the psql merge)
 #   collapse_percore_parallel.sh start DAY [DAY ...]  shard each day by host and run collapse_percore_host_data --apply
 #   collapse_percore_parallel.sh restart              stop the current run and start its days again
+#   collapse_percore_parallel.sh resume-policy        re-enable the compression policy start paused
 #   collapse_percore_parallel.sh status               progress of the current run
 #   collapse_percore_parallel.sh survey [SINCE_DAY]   read-only: deployed fix, writers, WAL, per-day per-core share
 set -uo pipefail
@@ -54,9 +55,39 @@ elif 'sum across devices to' not in open(m.origin).read(): print('NOT_FIXED')
 else: print('FIXED')
 " 2>/dev/null || echo "PIPELINE_UNREACHABLE"
 }
-chunk_compressed() {
-  psql_q -c "SELECT coalesce(bool_or(is_compressed), false) FROM timescaledb_information.chunks
-    WHERE hypertable_name = 'host_data' AND range_start = '$1 00:00+00';"
+# Sessions running the repair command's own statements (prefixes of the SQL in
+# collapse_percore_host_data.py). stop cancels only these: a broader host_data
+# filter also cancelled live update_metrics queries on hpcperfstats04.
+REPAIR_SESSIONS="datname = current_database() AND pid <> pg_backend_pid() AND state <> 'idle'
+  AND application_name <> 'psql' AND query LIKE ANY (ARRAY[
+  'SELECT time, host, jid, type, dev, event, unit, value, delta, arc FROM host_data %',
+  'SELECT host, type, event, time FROM host_data %',
+  'SELECT DISTINCT host, type, event, time FROM host_data %',
+  'SELECT DISTINCT host FROM host_data WHERE time >= %',
+  'SELECT DISTINCT date_trunc(''day'', time AT TIME ZONE ''UTC'') FROM host_data %',
+  'SELECT host, type, event, time, value, delta FROM host_data %',
+  'INSERT INTO host_data (time, host, jid, type, dev, event, unit, value, delta, arc) VALUES %',
+  'DELETE FROM host_data WHERE host = ANY%',
+  'DELETE FROM host_data hd WHERE hd.host = ANY%'])"
+POLICY_NOTE="$RUN/compression_policy_paused"
+# Pause an enabled compression policy for the repair (it would compress days
+# before they are repaired, and compress_chunk blocks the repair); note its
+# job id so resume-policy turns it back on. A paused or absent policy is left.
+pause_compression_policy() {
+  local row
+  row=$(psql_q -c "SELECT job_id || ' ' || scheduled FROM timescaledb_information.jobs
+    WHERE hypertable_name = 'host_data' AND proc_name = 'policy_compression' LIMIT 1;")
+  [ "${row#* }" = "t" ] || return 0
+  psql_q -c "SELECT alter_job(${row%% *}, scheduled => false);" > /dev/null || die "could not pause compression policy ${row%% *}"
+  mkdir -p "$RUN" && echo "${row%% *}" > "$POLICY_NOTE"
+  echo "paused compression policy job ${row%% *} for the repair; turn it back on with: $0 resume-policy"
+}
+resume_policy() {
+  [ -s "$POLICY_NOTE" ] || { echo "no compression policy was paused by this script"; return 0; }
+  local job; job=$(cat "$POLICY_NOTE")
+  psql_q -c "SELECT alter_job($job, scheduled => true);" > /dev/null || die "could not resume compression policy $job"
+  rm -f "$POLICY_NOTE"
+  echo "compression policy job $job is scheduled again"
 }
 
 # One shard: invoked by xargs as "SELF _job DAY HOSTFILE".
@@ -90,23 +121,16 @@ stop() {
   pkill -f "$RUN/run_one.sh" 2>/dev/null
   podman exec "$PIPE" pkill -f collapse_percore_host_data 2>/dev/null
   sleep 3
-  echo "== cancelling repair DB sessions (psql sessions, including the merge, are never touched)"
+  echo "== cancelling repair DB sessions (only the repair command's own statements)"
   psql_q -c "SELECT pid, now()-query_start, left(query, 80), pg_cancel_backend(pid)
-    FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()
-    AND state <> 'idle' AND application_name <> 'psql' AND query ILIKE '%host_data%';"
+    FROM pg_stat_activity WHERE $REPAIR_SESSIONS;"
   local i left
   for i in $(seq 1 12); do
-    left=$(psql_q -c "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()
-      AND pid <> pg_backend_pid() AND state <> 'idle' AND application_name <> 'psql'
-      AND query ILIKE '%host_data%';")
+    left=$(psql_q -c "SELECT count(*) FROM pg_stat_activity WHERE $REPAIR_SESSIONS;")
     [ "$left" = "0" ] && break
     sleep 5
   done
   echo "repair processes left=$(repair_count) repair DB sessions left=${left:-?}"
-  echo "== non-idle host_data sessions now (the merge should be the only one)"
-  psql_q -c "SELECT pid, application_name, now()-query_start, left(query, 80) FROM pg_stat_activity
-    WHERE datname = current_database() AND pid <> pg_backend_pid() AND state <> 'idle'
-    AND query ILIKE '%host_data%';"
 }
 
 start() {
@@ -121,9 +145,9 @@ start() {
   local fix; fix=$(fix_state)
   [ "$fix" = "FIXED" ] || die "pipeline code state is $fix; deploy dbcabf0e or later before repairing"
   sync_command || die "could not copy the repair command into $PIPE"
-  for day in "$@"; do
-    [ "$(chunk_compressed "$day")" = "f" ] || die "$day is compressed (or has no chunk); decide on decompress_chunk first"
-  done
+  # Compressed days are repaired in place (the command lifts Timescale's DML
+  # decompression cap); slower, but no decompress_chunk lock blocks the run.
+  pause_compression_policy
   merge_days=$(psql_q -c "SELECT DISTINCT c.range_start::date FROM pg_locks l
     JOIN pg_stat_activity a ON a.pid = l.pid JOIN pg_class cl ON cl.oid = l.relation
     JOIN timescaledb_information.chunks c ON c.chunk_name = cl.relname AND c.hypertable_name = 'host_data'
@@ -229,7 +253,8 @@ case "${1:-}" in
   stop) stop ;;
   start) shift; start "$@" ;;
   restart) restart ;;
+  resume-policy) resume_policy ;;
   status) status ;;
   survey) shift; survey "$@" ;;
-  *) die "usage: $0 {stop|start DAY [DAY ...]|restart|status|survey [SINCE_DAY]}" ;;
+  *) die "usage: $0 {stop|start DAY [DAY ...]|restart|resume-policy|status|survey [SINCE_DAY]}" ;;
 esac
