@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=80", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,14 +8,14 @@ version = "0.2.0"
 description = "Command-line tools for querying an HPCPerfStats deployment"
 readme = "README.md"
 requires-python = ">=3.14"
-license = { file = "LICENSE" }
+license = "LGPL-2.1-only"
+license-files = ["LICENSE"]
 authors = [
   { name = "Texas Advanced Computing Center", email = "sharrell@tacc.utexas.edu" },
 ]
 classifiers = [
   "Environment :: Console",
   "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: GNU Lesser General Public License v2.1 (LGPLv2.1)",
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
 ]

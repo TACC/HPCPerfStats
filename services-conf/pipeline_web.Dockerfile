@@ -437,14 +437,15 @@ RUN /bin/bash -o pipefail -c '\
     Path(\"/tmp/requirements-mkl-pandas.txt\").write_text(\"\\n\".join(pandas_reqs) + \"\\n\"); \
     Path(\"/tmp/requirements-mkl-brotli.txt\").write_text(\"\\n\".join(brotli_reqs) + \"\\n\"); \
     Path(\"/tmp/requirements-mkl-after-numpy.txt\").write_text(\"\\n\".join(after_numpy) + \"\\n\"); \
-    Path(\"/tmp/requirements-build.txt\").write_text(\"\\n\".join(build) + \"\\n\")"'
+    Path(\"/tmp/requirements-build.txt\").write_text(\"\\n\".join(build) + \"\\n\"); \
+    Path(\"/tmp/requirements-backend.txt\").write_text(\"\\n\".join(tomllib.loads(Path(\"pyproject.toml\").read_text())[\"build-system\"][\"requires\"]) + \"\\n\")"'
 
 # 2) GIL image-build wheels only (MKL + toolchain).
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   export PATH="/opt/python3.14/bin:/usr/local/bin:/opt/zstd/bin:${PATH}"; \
   python3 -m pip install --no-cache-dir --upgrade pip; \
-  python3 -m pip install --no-cache-dir -r /tmp/requirements-build.txt; \
+  python3 -m pip install --no-cache-dir -r /tmp/requirements-build.txt -r /tmp/requirements-backend.txt; \
   test "$(command -v cython)" = "/opt/python3.14/bin/cython"; \
   if command -v cython3 >/dev/null 2>&1; then \
     test "$(command -v cython3)" = "/opt/python3.14/bin/cython3"; \
@@ -545,7 +546,7 @@ RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   export PATH="/opt/python3.14t/bin:/usr/local/bin:/opt/zstd/bin:${PATH}"; \
   /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir --upgrade pip; \
-  /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir -r /tmp/requirements-build.txt; \
+  /opt/python3.14t/bin/python3.14t -m pip install --no-cache-dir -r /tmp/requirements-build.txt -r /tmp/requirements-backend.txt; \
   test "$(command -v cython)" = "/opt/python3.14t/bin/cython"; \
   if command -v cython3 >/dev/null 2>&1; then \
     test "$(command -v cython3)" = "/opt/python3.14t/bin/cython3"; \

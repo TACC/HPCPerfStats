@@ -67,6 +67,34 @@ def test_image_build_extra_includes_setuptools_for_no_build_isolation():
   assert "setuptools" in dockerfile
 
 
+def test_image_build_installs_build_system_floor_before_source_builds():
+  """Regression: --no-build-isolation builds must see setuptools >= the
+  [build-system] floor (PEP 639 license expression needs setuptools>=77).
+
+  Both ABIs install requirements-backend.txt (written from
+  build-system.requires) with the image-build set, before any
+  --no-build-isolation build in that ABI.
+  """
+  dockerfile = (
+    _repo_root() / "services-conf" / "pipeline_web.Dockerfile"
+  ).read_text()
+  assert '[\\"build-system\\"][\\"requires\\"]' in dockerfile
+  assert "/tmp/requirements-backend.txt" in dockerfile
+  both = "-r /tmp/requirements-build.txt -r /tmp/requirements-backend.txt"
+  for py in ("python3 -m pip", "/opt/python3.14t/bin/python3.14t -m pip"):
+    install = dockerfile.index(f"{py} install --no-cache-dir {both}")
+    first_iso = dockerfile.index(
+      f"{py} install --no-cache-dir --no-build-isolation"
+    )
+    assert install < first_iso, py
+  # Bare installs without the backend floor would reopen the drift.
+  assert not re.search(r"-r /tmp/requirements-build\.txt;", dockerfile)
+  backend = tomllib.loads((_repo_root() / "pyproject.toml").read_text())[
+    "build-system"
+  ]["requires"]
+  assert any(_pep508_name(r) == "setuptools" for r in backend)
+
+
 def test_image_build_extra_includes_versioneer_for_pandas_meson():
   """Regression: pandas 3 meson generate_version.py imports versioneer under --no-build-isolation."""
   proj = tomllib.loads((_repo_root() / "pyproject.toml").read_text())["project"]

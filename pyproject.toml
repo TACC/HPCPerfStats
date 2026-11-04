@@ -8,7 +8,8 @@ version = "3.0"
 description = "A performance monitoring and analysis package for High Performance Computing Platforms"
 readme = "README.md"
 requires-python = ">=3.14"
-license = { file = "LICENSE" }
+license = "LGPL-2.1-only"
+license-files = ["LICENSE"]
 authors = [
   { name = "Texas Advanced Computing Center", email = "sharrell@tacc.utexas.edu" },
 ]
