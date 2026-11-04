@@ -21,7 +21,7 @@ When editing files that affect authentication, authorization, browser security h
 
 ## Trigger conditions (non-exhaustive)
 
-- Django **`SECRET_KEY`**, **`DEBUG`**, **`ALLOWED_HOSTS`**, session/cookie flags, **`CORS_*`**, **`REST_FRAMEWORK`**, cache/Redis settings.
+- Django **`SECRET_KEY`**, **`DEBUG`**, **`ALLOWED_HOSTS`**, session/cookie flags, **`CORS_*`**, **`REST_FRAMEWORK`**, cache/Valkey settings.
 - **Middleware:** CSP, Permissions-Policy, COOP, cache-control, or new security headers.
 - **OAuth / API keys:** [`oauth2.py`](hpcperfstats/site/lib/machine/oauth2.py), [`ApiKey`](hpcperfstats/site/lib/machine/models.py), [`_require_auth`](hpcperfstats/site/lib/machine/api.py) / `_require_staff`, new API routes.
 - **Public or unusual HTTP methods:** `csrf_exempt` (justify and bound abuse: size limits, rate limits where appropriate), **`/csp-report/`** (browsers do not send Django CSRF tokens).

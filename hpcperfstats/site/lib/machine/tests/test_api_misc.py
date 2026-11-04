@@ -7,6 +7,7 @@ Covers:
 
 import contextlib
 from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -191,7 +192,7 @@ class TestAdminMonitorRefresh:
 @pytest.mark.django_db(databases=[])
 class TestAdminMonitorHostStatsTimeout:
   def test_admin_monitor_hosts_sets_statement_timeout_on_3h_fallback(self):
-    """Redis-empty path uses 3h GROUP BY under SET LOCAL statement_timeout."""
+    """Valkey-empty path uses 3h GROUP BY under SET LOCAL statement_timeout."""
     from hpcperfstats.site.lib.machine import api
 
     factory = RequestFactory()
@@ -214,7 +215,7 @@ class TestAdminMonitorHostStatsTimeout:
         side_effect=lambda _key, _timeout, query_fn: query_fn(),
       ),
       patch(
-        "hpcperfstats.site.lib.machine.api._list_recent_host_fqdns_from_redis",
+        "hpcperfstats.site.lib.machine.api._list_recent_host_fqdns_from_valkey",
         return_value=[],
       ),
       patch(
@@ -247,8 +248,8 @@ class TestAdminMonitorHostStatsTimeout:
       "SET LOCAL statement_timeout = %s", [55000]
     )
 
-  def test_admin_monitor_hosts_uses_redis_lateral_without_8d_max(self):
-    """Redis inventory uses LATERAL helper; never 8-day Max aggregate."""
+  def test_admin_monitor_hosts_uses_valkey_lateral_without_8d_max(self):
+    """Valkey inventory uses LATERAL helper; never 8-day Max aggregate."""
     from hpcperfstats.site.lib.machine import api
 
     factory = RequestFactory()
@@ -266,7 +267,7 @@ class TestAdminMonitorHostStatsTimeout:
         side_effect=lambda _key, _timeout, query_fn: query_fn(),
       ),
       patch(
-        "hpcperfstats.site.lib.machine.api._list_recent_host_fqdns_from_redis",
+        "hpcperfstats.site.lib.machine.api._list_recent_host_fqdns_from_valkey",
         return_value=["c1.example.org"],
       ),
       patch(
@@ -472,7 +473,7 @@ class TestInvalidateCacheForPage:
         return_value=None,
       ),
       patch(
-        "hpcperfstats.site.lib.machine.api._get_redis_cache_client",
+        "hpcperfstats.site.lib.machine.api.get_valkey_client",
         return_value=mock_client,
       ),
       patch("hpcperfstats.site.lib.machine.api.hashlib.md5") as mock_md5,
@@ -519,7 +520,7 @@ class TestInvalidateCacheForPage:
         return_value=None,
       ),
       patch(
-        "hpcperfstats.site.lib.machine.api._get_redis_cache_client",
+        "hpcperfstats.site.lib.machine.api.get_valkey_client",
         return_value=mock_client,
       ),
       patch(
@@ -555,7 +556,7 @@ class TestInvalidateCacheForPage:
         return_value=None,
       ),
       patch(
-        "hpcperfstats.site.lib.machine.api._get_redis_cache_client",
+        "hpcperfstats.site.lib.machine.api.get_valkey_client",
         return_value=mock_client,
       ),
       patch(
@@ -855,7 +856,9 @@ class TestCacheStats:
   def test_get_cache_stats_includes_total_cache_usable(self):
     from hpcperfstats.site.lib.machine import api
 
-    class _FakeRedisClient:
+    class _FakeValkeyClient:
+      connection_pool = SimpleNamespace(connection_kwargs={"db": 1})
+
       def info(self):
         return {
           "used_memory": 1024,
@@ -867,21 +870,17 @@ class TestCacheStats:
       def scan_iter(self, count=None):
         return []
 
-    class _FakeCacheBackend:
-      def get_client(self):
-        return _FakeRedisClient()
-
     class _FakeCache:
-      def __init__(self):
-        self._cache = _FakeCacheBackend()
-
       def get(self, key):
         return None
 
       def set(self, key, value, timeout=None):
         return None
 
-    with patch("hpcperfstats.site.lib.machine.api.cache", _FakeCache()):
+    with (
+      patch("hpcperfstats.site.lib.machine.api.cache", _FakeCache()),
+      patch.object(api, "get_valkey_client", return_value=_FakeValkeyClient()),
+    ):
       stats = api._get_cache_stats()
 
     assert stats["total_cache_usable_bytes"] == 4096
@@ -984,10 +983,10 @@ class TestAdminMonitor:
     assert result["total_jids"] == 0
     assert log_exc.called
 
-  def test_get_recent_rabbitmq_host_stats_reads_redis_keys(self):
+  def test_get_recent_rabbitmq_host_stats_reads_valkey_keys(self):
     from hpcperfstats.site.lib.machine import api
 
-    class _FakeRedisClient:
+    class _FakeValkeyClient:
       def scan_iter(self, match=None, count=None):
         return [
           b"recent_host:node1.example.com",
@@ -1001,21 +1000,17 @@ class TestAdminMonitor:
           return b"1710000300"
         return None
 
-    class _FakeCacheBackend:
-      def get_client(self):
-        return _FakeRedisClient()
-
     class _FakeCache:
-      def __init__(self):
-        self._cache = _FakeCacheBackend()
-
       def get(self, key):
         return None
 
       def set(self, key, value, timeout=None):
         return None
 
-    with patch("hpcperfstats.site.lib.machine.api.cache", _FakeCache()):
+    with (
+      patch("hpcperfstats.site.lib.machine.api.cache", _FakeCache()),
+      patch.object(api, "get_valkey_client", return_value=_FakeValkeyClient()),
+    ):
       host_stats = api._get_recent_rabbitmq_host_stats()
 
     hosts = sorted([row["host"] for row in host_stats])
@@ -1024,7 +1019,7 @@ class TestAdminMonitor:
 
 @pytest.mark.django_db(databases=[])
 class TestAgeBucket:
-  """_age_bucket matches Redis and DB-backed admin host stats labeling."""
+  """_age_bucket matches Valkey and DB-backed admin host stats labeling."""
 
   @pytest.mark.parametrize(
     "age,expected",

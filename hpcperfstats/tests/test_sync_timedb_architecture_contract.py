@@ -154,8 +154,8 @@ def test_handoff_priority_paths_not_in_orchestrator():
   assert "handoff_priority_paths" not in src
 
 
-def test_job_store_has_no_lua_or_redis_reap():
-  """In-process reap walks memory maps; Lua/HGETALL must not return."""
+def test_job_store_has_no_lua_or_external_kv_reap():
+  """In-process reap walks memory maps; Lua/HGETALL/KV clients must not return."""
   import inspect
 
   from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
@@ -163,7 +163,9 @@ def test_job_store_has_no_lua_or_redis_reap():
   src = inspect.getsource(jq)
   assert "_REAP_LUA" not in src
   assert "HGETALL" not in src
+  # Lua API name is the same in Valkey, so the guard stays meaningful.
   assert "redis.call" not in src
+  assert not re.search(r"^\s*(import|from)\s+(valkey|redis)\b", src, re.M)
 
 
 def _daily_tar_write_lock_bodies():

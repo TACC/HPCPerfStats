@@ -1,6 +1,6 @@
-"""Unit tests for cache_utils.cached_orm (Redis-backed query caching).
+"""Unit tests for cache_utils.cached_orm (Valkey-backed query caching).
 
-Uses unittest.mock to patch Django cache so tests run without Django/Redis.
+Uses unittest.mock to patch Django cache so tests run without Django/Valkey.
 """
 
 from datetime import UTC
@@ -98,7 +98,7 @@ def test_cached_orm_caches_none_as_tuple():
 def test_cached_orm_exception_falls_back_to_query_fn():
   """If cache.get raises, cached_orm falls back to query_fn result."""
   mock_cache = MagicMock()
-  mock_cache.get.side_effect = RuntimeError("redis down")
+  mock_cache.get.side_effect = RuntimeError("valkey down")
 
   with patch("hpcperfstats.site.lib.machine.cache_utils.cache", mock_cache):
     from hpcperfstats.site.lib.machine import cache_utils
@@ -110,7 +110,7 @@ def test_cached_orm_exception_falls_back_to_query_fn():
 def test_cached_orm_get_failure_does_not_call_set():
   """If cache.get raises, do not attempt cache.set (degraded read path)."""
   mock_cache = MagicMock()
-  mock_cache.get.side_effect = ConnectionError("redis unreachable")
+  mock_cache.get.side_effect = ConnectionError("valkey unreachable")
 
   with patch("hpcperfstats.site.lib.machine.cache_utils.cache", mock_cache):
     from hpcperfstats.site.lib.machine import cache_utils
@@ -127,7 +127,7 @@ def test_cached_orm_set_failure_still_returns_query_fn_result():
   mock_cache.get.side_effect = lambda key, default=None: stored.get(
     key, default
   )
-  mock_cache.set.side_effect = RuntimeError("redis read-only replica")
+  mock_cache.set.side_effect = RuntimeError("valkey read-only replica")
 
   calls = []
 
@@ -163,7 +163,7 @@ def test_get_site_content_cache_timeout_fresh_when_newest_within_window():
 
 
 def test_get_site_content_cache_timeout_none_when_newest_stale():
-  """Newest job end older than window => None (no Redis expiry)."""
+  """Newest job end older than window => None (no Valkey expiry)."""
   from datetime import datetime, timedelta
 
   from hpcperfstats.site.lib.machine import cache_utils
@@ -180,7 +180,7 @@ def test_get_site_content_cache_timeout_none_when_newest_stale():
 
 
 def test_get_site_newest_job_end_time_coerces_unix_int_from_cache():
-  """Redis/serializer may return epoch seconds as int; still drives TTL logic."""
+  """Valkey/serializer may return epoch seconds as int; still drives TTL logic."""
   from datetime import datetime
 
   from hpcperfstats.site.lib.machine import cache_utils
@@ -479,7 +479,7 @@ def test_residual_cache_invalidation_drops_host_day():
   mock_client.delete.side_effect = lambda k: deleted.append(k)
 
   with (
-    patch.object(cache_utils, "_get_redis_py_client", return_value=mock_client),
+    patch.object(cache_utils, "get_valkey_client", return_value=mock_client),
     patch("hpcperfstats.site.lib.machine.models.job_data.objects") as mock_jd,
   ):
     mock_jd.filter.return_value.values_list.return_value = [
@@ -489,3 +489,40 @@ def test_residual_cache_invalidation_drops_host_day():
 
   assert deleted
   mock_client.scan_iter.assert_called()
+
+
+def test_get_valkey_client_none_on_locmem():
+  """Under pytest settings (LocMemCache) the helper soft-fails to None."""
+  from django.conf import settings as dj_settings
+
+  from hpcperfstats.site.lib.machine import cache_utils
+
+  backend = dj_settings.CACHES["default"]["BACKEND"]
+  assert backend.endswith("LocMemCache")
+  assert cache_utils.get_valkey_client() is None
+
+
+def test_get_valkey_client_none_on_valkey_error():
+  """A Valkey connection error from django-valkey maps to None, not a raise."""
+  from valkey.exceptions import ConnectionError as ValkeyConnectionError
+
+  from hpcperfstats.site.lib.machine import cache_utils
+
+  with patch.object(
+    cache_utils,
+    "get_valkey_connection",
+    side_effect=ValkeyConnectionError("down"),
+  ):
+    assert cache_utils.get_valkey_client() is None
+
+
+def test_get_valkey_client_returns_connection():
+  """The helper returns django-valkey's default connection unchanged."""
+  from hpcperfstats.site.lib.machine import cache_utils
+
+  sentinel = object()
+  with patch.object(
+    cache_utils, "get_valkey_connection", return_value=sentinel
+  ) as mock_conn:
+    assert cache_utils.get_valkey_client() is sentinel
+  mock_conn.assert_called_once_with("default")

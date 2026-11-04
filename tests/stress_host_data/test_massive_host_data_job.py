@@ -3,7 +3,7 @@
 **Not run by default.** This directory is outside ``pyproject.toml`` ``testpaths``
 (``hpcperfstats`` only). CI and ``python scripts/run_tests.py`` never collect these tests.
 
-**Default: Docker Compose workflow** (PostgreSQL + Redis, migrate, env in-container):
+**Default: Docker Compose workflow** (PostgreSQL + Valkey, migrate, env in-container):
 
 .. code-block:: bash
 

@@ -334,7 +334,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml up -d db_pg18 && docker co
 ### E4 — start app stack against alias `db` (paste status)
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml up -d redis rabbitmq web pipeline proxy && docker compose -p hpcperfstats -f docker-compose.yaml ps
+docker compose -p hpcperfstats -f docker-compose.yaml up -d valkey rabbitmq web pipeline proxy && docker compose -p hpcperfstats -f docker-compose.yaml ps
 ```
 
 ### E5 — web — confirm Django talks to PG18 (paste output)
@@ -364,7 +364,7 @@ with connection.cursor() as cur:
 ```bash
 docker compose -p hpcperfstats -f docker-compose.yaml stop web pipeline proxy db_pg18
 docker compose -p hpcperfstats -f docker-compose.yaml up -d db
-docker compose -p hpcperfstats -f docker-compose.yaml up -d redis rabbitmq web pipeline proxy
+docker compose -p hpcperfstats -f docker-compose.yaml up -d valkey rabbitmq web pipeline proxy
 ```
 
 After a successful soak, operators may archive/delete `/data/hpcperfstats_db/pg15` — **not automatic**.

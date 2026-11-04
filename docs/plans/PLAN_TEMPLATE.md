@@ -210,7 +210,7 @@ cd HPCPerfStats && ../.venv/bin/python3 -m pytest -q path/to/tests …
 **Validation runbook** (`logic-change-checklist.mdc`):
 
 1. Run smallest targeted test modules first.
-2. Escalate to the committed rootless Podman workflows when DB/Redis/RabbitMQ semantics apply (`compose-required-for-data-services-changes.mdc`, `podman-runtime.mdc`). The runtime must pass its rootless and `/data` storage checks; do not substitute Docker CLI/socket compatibility or rootful Podman.
+2. Escalate to the committed rootless Podman workflows when DB/Valkey/RabbitMQ semantics apply (`compose-required-for-data-services-changes.mdc`, `podman-runtime.mdc`). The runtime must pass its rootless and `/data` storage checks; do not substitute Docker CLI/socket compatibility or rootful Podman.
 3. Append results to `test_runs/test_run_log_YYYY-MM-DD.md` (command, exit code, blockers) — not `docs/`.
 4. Record residual risks if anything was skipped.
 

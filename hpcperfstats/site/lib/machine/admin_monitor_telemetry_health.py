@@ -2,18 +2,18 @@
 Staff Admin Monitor telemetry-health scan over recent host_data.
 
 Reports severity-classified findings (actionable core missing/all-zero vs
-informational idle zeros), joins Redis ``monitor_identity`` for sampled hosts,
+informational idle zeros), joins Valkey ``monitor_identity`` for sampled hosts,
 and authors ``monitor_handoff_markdown`` for monitor-focused Cursor handoffs.
-Scoped to a Redis ``recent_host`` sample (not a site-wide hypertable GROUP BY).
+Scoped to a Valkey ``recent_host`` sample (not a site-wide hypertable GROUP BY).
 Excludes names containing ``error`` (case-insensitive). Soft-fails on
-PostgreSQL statement timeout or an empty Redis inventory.
+PostgreSQL statement timeout or an empty Valkey inventory.
 
 Attributes:
   ACTIONABLE_FINDING_KINDS: Finding kinds shown by default in UI/handoff.
   ALL_ZERO_RESULT_LIMIT: Max all-zero (type, event) rows retained overall.
   EXPECTED_CORE_TYPES: Small always-on CPU-node type list for missing checks.
   HOST_BATCH_SIZE: Hosts per ``host = ANY`` SQL batch.
-  HOST_SAMPLE_LIMIT: Max Redis FQDNs included in the aggregate scan.
+  HOST_SAMPLE_LIMIT: Max Valkey FQDNs included in the aggregate scan.
   INFORMATIONAL_ALL_ZERO_CAP: Cap for low-severity all-zero findings retained.
   STATEMENT_TIMEOUT_MS: Per-query PostgreSQL statement_timeout (milliseconds).
   WINDOW_HOURS: Lookback window for the aggregate scan.
@@ -43,10 +43,10 @@ from hpcperfstats.lib.monitor_identity import load_monitor_identities_for_hosts
 from hpcperfstats.site.lib.machine.cache_utils import (
   KEY_ADMIN_TELEMETRY_HEALTH,
   TIMEOUT_ADMIN_STATS,
-  _get_redis_py_client,
+  get_valkey_client,
 )
 from hpcperfstats.site.lib.machine.host_data_latest import (
-  list_recent_host_fqdns_from_redis,
+  list_recent_host_fqdns_from_valkey,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ ALL_ZERO_RESULT_LIMIT = 500
 # Informational (non-core) all-zero findings retained for optional expand.
 INFORMATIONAL_ALL_ZERO_CAP = 50
 
-# Cap Redis inventory sample (hpcperfstats04 EXPLAIN: 8 hosts ~1.88e6 cost).
+# Cap Valkey inventory sample (hpcperfstats04 EXPLAIN: 8 hosts ~1.88e6 cost).
 HOST_SAMPLE_LIMIT = 16
 
 # Hosts per ``host = ANY`` batch (two batches max at HOST_SAMPLE_LIMIT).
@@ -88,7 +88,7 @@ ACTIONABLE_FINDING_KINDS: frozenset[str] = frozenset(
 
 
 class EmptyRecentHostInventory(Exception):
-  """Raised when Redis has no ``recent_host:*`` FQDNs to sample."""
+  """Raised when Valkey has no ``recent_host:*`` FQDNs to sample."""
 
 
 def _finding(
@@ -160,7 +160,7 @@ def _format_monitor_handoff_markdown(
   Args:
     computed_at_iso (str): ISO timestamp of the scan.
     window_hours (int): Lookback hours.
-    hosts_sampled_fqdns (Sequence[str]): Sampled Redis FQDNs.
+    hosts_sampled_fqdns (Sequence[str]): Sampled Valkey FQDNs.
     monitor_identities (Sequence[Mapping[str, Any]]): Joined identity docs.
     findings (Sequence[Mapping[str, Any]]): Classified findings list.
     timed_out (bool): Incomplete-scan flag.
@@ -202,7 +202,7 @@ def _format_monitor_handoff_markdown(
   lines.extend(["", "## Monitor signatures", ""])
   if not monitor_identities:
     lines.append(
-      "No `monitor_identity:{fqdn}` Redis documents for sampled hosts "
+      "No `monitor_identity:{fqdn}` Valkey documents for sampled hosts "
       "(slug pending RPM / listend identity not yet written)."
     )
   else:
@@ -348,10 +348,10 @@ def build_telemetry_health_payload(
       findings; defaults to ``INFORMATIONAL_ALL_ZERO_CAP``.
     window_hours (int | None): Window hours reported in the payload; defaults
       to ``WINDOW_HOURS``.
-    hosts_sampled (int | None): Count of Redis FQDNs included in the scan;
+    hosts_sampled (int | None): Count of Valkey FQDNs included in the scan;
       included in ``ok_summary`` when not None.
     hosts_sampled_fqdns (Sequence[str] | None): Sampled FQDN list.
-    monitor_identities (Sequence[Mapping[str, Any]] | None): Redis identity
+    monitor_identities (Sequence[Mapping[str, Any]] | None): Valkey identity
       documents for sampled hosts.
 
   Returns:
@@ -596,7 +596,7 @@ def build_telemetry_health_payload(
           kind="signature_absent",
           severity="medium",
           message=(
-            "No Redis monitor_identity for this sampled host "
+            "No Valkey monitor_identity for this sampled host "
             "(slug pending / identity not yet written)."
           ),
           fqdn=fqdn,
@@ -753,9 +753,9 @@ def _fetch_type_event_aggregates(
   host_batch_size: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
   """
-  Run Redis-scoped ``host_data`` GROUP BY batches under statement_timeout.
+  Run Valkey-scoped ``host_data`` GROUP BY batches under statement_timeout.
 
-  Reads FQDNs from Redis ``recent_host:*``, caps the sample, and queries
+  Reads FQDNs from Valkey ``recent_host:*``, caps the sample, and queries
   ``WHERE host = ANY(%s::text[])`` in batches so Timescale can use
   host+time indexes. Does **not** fall back to a site-wide GROUP BY.
 
@@ -771,7 +771,7 @@ def _fetch_type_event_aggregates(
     ``event``, ``row_count``, ``has_nonzero``, plus the sampled FQDN list.
 
   Raises:
-    EmptyRecentHostInventory: When Redis has no FQDN inventory.
+    EmptyRecentHostInventory: When Valkey has no FQDN inventory.
     Exception: Propagates DB errors (including statement timeout) to the
       caller for soft-fail handling.
 
@@ -791,10 +791,10 @@ def _fetch_type_event_aggregates(
     1,
     int(host_batch_size if host_batch_size is not None else HOST_BATCH_SIZE),
   )
-  fqdns = sorted(set(list_recent_host_fqdns_from_redis()))
+  fqdns = sorted(set(list_recent_host_fqdns_from_valkey()))
   if not fqdns:
     raise EmptyRecentHostInventory(
-      "No recent_host FQDN inventory in Redis; "
+      "No recent_host FQDN inventory in Valkey; "
       "telemetry health scan skipped (not a healthy signal)."
     )
   sampled = fqdns[:sample_limit]
@@ -848,10 +848,10 @@ def compute_telemetry_health(*, force_refresh: bool = False) -> dict[str, Any]:
   """
   Compute (and optionally cache) Admin Monitor telemetry health.
 
-  On PostgreSQL timeout, empty Redis inventory, or other DB failure, returns
+  On PostgreSQL timeout, empty Valkey inventory, or other DB failure, returns
   a structured ``timed_out`` / error payload instead of raising (HTTP 200
   soft-fail). Never invents missing-core anomalies from a failed scan.
-  Joins Redis ``monitor_identity:{fqdn}`` for sampled hosts when available.
+  Joins Valkey ``monitor_identity:{fqdn}`` for sampled hosts when available.
 
   Args:
     force_refresh (bool): When True, skip reading the Django cache entry
@@ -890,7 +890,7 @@ def compute_telemetry_health(*, force_refresh: bool = False) -> dict[str, Any]:
       identities: list[dict[str, Any]] = []
       try:
         identities = load_monitor_identities_for_hosts(
-          _get_redis_py_client(),
+          get_valkey_client(),
           sampled_fqdns,
         )
       except Exception:
@@ -909,7 +909,7 @@ def compute_telemetry_health(*, force_refresh: bool = False) -> dict[str, Any]:
       computed_at=computed_at,
       timed_out=True,
       error=(
-        "No recent_host FQDN inventory in Redis; results are "
+        "No recent_host FQDN inventory in Valkey; results are "
         "incomplete (not a healthy signal)."
       ),
       hosts_sampled=0,

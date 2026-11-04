@@ -77,7 +77,7 @@ Listend and sync_timedb (line parse and streaming) call the same helper. Writes 
 
 **Job-scoped vs residual types (shared jobs):** Allowlist in `is_job_scoped_host_data_type` — CPU family, GPU (`nvidia_gpu`/`amd_gpu`/`intel_gpu`), `host_mem_job`, core CPU-PMC types. Those keep `apply_job_host_data_scope` (jid OR `dev=j:<jid>` + GPU affinity). **Residual** types (NUMA `host_mem`, IB/OPA/LNet, eth, NFS/Lustre/BeeGFS, block, …) use **host-wide** Job Detail / metrics reads (`host_list` + time only) via `apply_job_or_host_wide_scope`. Exclusive / non-shared jobs always job-scope.
 
-**Residual day-frame cache:** Redis `KEY_HOST_WIDE_RESIDUAL_HT` is keyed by sorted host fingerprint + type + calendar day + rev (**no jid**). Co-tenant jobs slice to their window after load. Ingest `invalidate_jid_derived_cache_keys` also drops matching residual host-day keys. Do **not** share per-jid `job_*_artifact` / `JOB_PLOTS_*` rows across jids.
+**Residual day-frame cache:** Valkey `KEY_HOST_WIDE_RESIDUAL_HT` is keyed by sorted host fingerprint + type + calendar day + rev (**no jid**). Co-tenant jobs slice to their window after load. Ingest `invalidate_jid_derived_cache_keys` also drops matching residual host-day keys. Do **not** share per-jid `job_*_artifact` / `JOB_PLOTS_*` rows across jids.
 
 **Red help footer:** Append `SHARED_HOST_WIDE_HELP_FOOTER` only when shared **and** the surface is residual / non-disambiguated (`show_shared_host_wide_help_footer` / SPA `showSharedHostWideHelpFooter`). Job-scoped CPU/GPU/cgroup-mem / Roofline / Multiprecision omit the red footer. Exclusive jobs omit it.
 

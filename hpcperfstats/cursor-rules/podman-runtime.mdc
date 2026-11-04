@@ -41,5 +41,5 @@ configuration, container workflow scripts, or the shared Podman adapter.
 ## Overlap
 
 - `docker-compose-non-unit-testing.mdc` and
-  `full-test-with-db-redis.mdc` define which committed workflow to run.
+  `full-test-with-db-valkey.mdc` define which committed workflow to run.
 - `workspace-layout-and-python-env.mdc` defines the host Python environment.

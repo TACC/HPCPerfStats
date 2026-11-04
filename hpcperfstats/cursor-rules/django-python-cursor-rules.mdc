@@ -32,7 +32,7 @@ You are an expert in Python, Django, and scalable web application development.
   - Django
   - Django REST Framework (for API development)
   - Celery (for background tasks)
-  - Redis (for caching and task queues)
+  - Valkey via django-valkey (for caching)
   - PostgreSQL or MySQL (preferred databases for production)
 
   Django-Specific Guidelines
@@ -46,7 +46,7 @@ You are an expert in Python, Django, and scalable web application development.
 
   Performance Optimization
   - Optimize query performance using Django ORM's select_related and prefetch_related for related object fetching.
-  - Use Django’s cache framework with backend support (e.g., Redis or Memcached) to reduce database load.
+  - Use Django’s cache framework with backend support (this project: cache with Valkey via django-valkey) to reduce database load.
   - Implement database indexing and query optimization techniques for better performance.
   - Use asynchronous views and background tasks for I/O-bound or long-running operations.
   - Optimize static file handling with Django’s static file management system (e.g., WhiteNoise or CDN integration).

@@ -19,11 +19,11 @@ Use this checklist for every correctness/completeness change that affects runtim
 
 - Define expected invariants before and after change (idempotence, monotonic counters, bounded percentages, cache freshness).
 - Verify non-staff/staff behavior and no-data fallbacks remain deterministic.
-- Verify runtime config assumptions (`db`, `redis`, compose network aliases, required env vars).
+- Verify runtime config assumptions (`db`, `valkey`, compose network aliases, required env vars).
 
 ## Failure Modes
 
-- List at least one transient failure scenario (DB/Redis/network/cache write failure) and expected fallback.
+- List at least one transient failure scenario (DB/Valkey/network/cache write failure) and expected fallback.
 - Confirm exceptions are logged with actionable context and do not silently corrupt behavior.
 - Confirm retry and timeout behavior is bounded and configurable.
 
@@ -36,7 +36,7 @@ Use this checklist for every correctness/completeness change that affects runtim
 ## Validation Runbook
 
 - Run smallest targeted test modules first.
-- Run compose-backed validation for DB/Redis dependent paths.
+- Run compose-backed validation for DB/Valkey dependent paths.
 - Record what passed, what was skipped, and residual risks.
 
 ## Overlap

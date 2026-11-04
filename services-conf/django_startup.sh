@@ -2,28 +2,28 @@
 set -e
 export STATIC_ROOT="${STATIC_ROOT:-/home/hpcperfstats/staticfiles}"
 
-echo "Waiting for Redis..."
+echo "Waiting for Valkey..."
 
-REDIS_WAIT_URL=$(
-  /usr/local/bin/python3 -c "from hpcperfstats.dbload.lib.rediswait import redis_wait_url; print(redis_wait_url())"
+VALKEY_WAIT_URL=$(
+  /usr/local/bin/python3 -c "from hpcperfstats.dbload.lib.valkeywait import valkey_wait_url; print(valkey_wait_url())"
 )
 
-REDIS_WAIT_TIMEOUT_SECONDS="${REDIS_WAIT_TIMEOUT_SECONDS:-60}"
-REDIS_PING_TIMEOUT_SECONDS="${REDIS_PING_TIMEOUT_SECONDS:-2}"
+VALKEY_WAIT_TIMEOUT_SECONDS="${VALKEY_WAIT_TIMEOUT_SECONDS:-60}"
+VALKEY_PING_TIMEOUT_SECONDS="${VALKEY_PING_TIMEOUT_SECONDS:-2}"
 
 /usr/local/bin/python3 -c '
 import sys
-from hpcperfstats.dbload.lib.rediswait import wait_for_redis_available
+from hpcperfstats.dbload.lib.valkeywait import wait_for_valkey_available
 
-wait_for_redis_available(
+wait_for_valkey_available(
   sys.argv[1],
   timeout_seconds=int(sys.argv[2]),
   interval_seconds=0.25,
   ping_timeout_seconds=float(sys.argv[3]),
 )
-' "${REDIS_WAIT_URL}" "${REDIS_WAIT_TIMEOUT_SECONDS}" "${REDIS_PING_TIMEOUT_SECONDS}"
+' "${VALKEY_WAIT_URL}" "${VALKEY_WAIT_TIMEOUT_SECONDS}" "${VALKEY_PING_TIMEOUT_SECONDS}"
 
-echo "Redis started"
+echo "Valkey started"
 
 echo "Waiting for postgres..."
 

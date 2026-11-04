@@ -1010,7 +1010,7 @@ class TestAdminMonitorView:
       patch.object(api, "cached_orm", side_effect=_cached_orm),
       patch.object(
         api,
-        "_list_recent_host_fqdns_from_redis",
+        "_list_recent_host_fqdns_from_valkey",
         return_value=["n1.example.com"],
       ),
       patch.object(
@@ -2415,14 +2415,10 @@ class TestInvalidateCachePageClosure:
       def delete(self, raw_key):
         raise RuntimeError("del fail")
 
-    backend = MagicMock()
-    backend.get_client.return_value = _Client()
-    fake_cache = MagicMock()
-    fake_cache._cache = backend
     with (
       patch.object(api, "_require_staff", return_value=None),
-      patch.object(api, "cache", fake_cache),
-      patch.object(api, "_get_redis_cache_client", return_value=_Client()),
+      patch.object(api, "cache", MagicMock()),
+      patch.object(api, "get_valkey_client", return_value=_Client()),
       patch.object(
         api,
         "_delete_django_cache_page_entries_for_request",
@@ -2430,7 +2426,7 @@ class TestInvalidateCachePageClosure:
       ),
       patch.object(
         api,
-        "_redis_delete_cache_page_keys_matching_digests",
+        "_valkey_delete_cache_page_keys_matching_digests",
         return_value=0,
       ),
       patch.object(

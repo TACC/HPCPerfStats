@@ -222,17 +222,17 @@ JOB_PLOT_JSON_KEYS: dict[str, tuple[str, str]] = {
 # per-kind aggregate misses while preserving plot-specific fallback behavior.
 
 
-def get_job_plot_redis_max_bytes() -> int:
+def get_job_plot_valkey_max_bytes() -> int:
   """
-  Return the job plot redis max bytes.
+  Return the job plot valkey max bytes.
 
   Returns:
     int: int produced by this call.
 
   Examples:
-    >>> get_job_plot_redis_max_bytes()  # doctest: +SKIP
+    >>> get_job_plot_valkey_max_bytes()  # doctest: +SKIP
   """
-  return int(getattr(settings, "JOB_PLOT_REDIS_MAX_BYTES", 512 * 1024))
+  return int(getattr(settings, "JOB_PLOT_VALKEY_MAX_BYTES", 512 * 1024))
 
 
 def _utc_iso_for_plot_fingerprint(dt: Any) -> str:

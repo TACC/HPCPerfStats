@@ -96,7 +96,7 @@ def profile_jobs(
     jids (list[str]): Job ids to process sequentially on this thread.
     reset_artifacts (bool): Delete existing plot/detail artifacts first so
       prewarm builds instead of skipping on a matching fingerprint.
-    flush_cache (bool): Clear the Django cache (Redis) so ``jid_table`` reads
+    flush_cache (bool): Clear the Django cache (Valkey) so ``jid_table`` reads
       hit PostgreSQL instead of cached frames.
 
   Returns:

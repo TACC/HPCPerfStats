@@ -33,9 +33,9 @@ globs: services-conf/django_startup.sh,hpcperfstats/site/lib/machine/migrations/
 
 - `test_migrations.py` — Phase 1 `0030` contracts; `0031` state-only; Phase 2 `0032` soft-skips / no PK drop / 5-col UNIQUE / 8d policy; Autodetector + host `call_command(makemigrations --check --dry-run)` (history check stubbed) for 0031-class Meta drift
 - `test_makemigrations_check_compose.py` — compose runs unpatched `makemigrations --check --dry-run` against live Timescale
-- `test_rediswait.py::test_django_startup_does_not_run_makemigrations` — startup script guard
-- `test_rediswait.py::test_django_startup_compresses_static_sidecars_after_heal` — sidecar compress after SPA heal
-- `test_rediswait.py::test_django_startup_publishes_ram_after_compress` — static then media ram publish before gunicorn
+- `test_valkeywait.py::test_django_startup_does_not_run_makemigrations` — startup script guard
+- `test_valkeywait.py::test_django_startup_compresses_static_sidecars_after_heal` — sidecar compress after SPA heal
+- `test_valkeywait.py::test_django_startup_publishes_ram_after_compress` — static then media ram publish before gunicorn
 - Operator Stage 1 decompress + Stage 2 one-shot migrate: `docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md`
 
 ## Overlap

@@ -24,7 +24,7 @@ When changing **machine API** behavior visible to scripts, API keys, or external
 4. **Tests:**
    - Host mock matrix (`test_api_view_matrix.py`) for branch coverage.
    - At least one **view-level** test for throttle/status contracts (for example `test_api_security_throttles.py`), not only throttle-class unit tests.
-   - When status behavior depends on DB/Redis, add or extend a compose-backed smoke test per `testing-best-practices.mdc`.
+   - When status behavior depends on DB/Valkey, add or extend a compose-backed smoke test per `testing-best-practices.mdc`.
 
 ## Overlap
 

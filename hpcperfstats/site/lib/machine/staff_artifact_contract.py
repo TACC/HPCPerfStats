@@ -51,7 +51,7 @@ def staff_artifact_contract_payload(jid: str) -> dict[str, Any]:
 
   ``db_plot`` / ``db_detail`` omit null (legacy) rows; empty list means no
   readable **schema column** for that family - not that plots/detail are
-  missing. Plots may still serve from Redis L1 or fingerprint-matched L2
+  missing. Plots may still serve from Valkey L1 or fingerprint-matched L2
   (including NULL ``artifact_schema``).
 
   Args:

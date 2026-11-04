@@ -30,7 +30,7 @@ Also follow **`pub-surface-and-robots-sync.mdc`** when changing anonymous **`/pu
   - `robots.txt` and `csp-report` endpoints.
 - Before each E2E run, use **`tests/run_web_e2e_workflow.sh`**. It verifies
   rootless Podman, resets only the isolated test project, builds `web`, starts
-  `db`/`redis`, and waits for health.
+  `db`/`valkey`, and waits for health.
 - After the workflow, **`podman_compose_teardown`** removes only project-owned
   containers and volumes unless `--keep-env`; global prune is forbidden.
 - Recreate/seed any data required by the E2E scenario before running the tests.

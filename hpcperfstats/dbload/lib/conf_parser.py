@@ -227,7 +227,7 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("SYSLOG", "listen_tcp"),
   ("SYSLOG", "listen_udp"),
   # [CACHE] - section optional
-  ("CACHE", "redis_location"),
+  ("CACHE", "valkey_location"),
   # [XALT]
   ("XALT", "xalt_engine"),
   ("XALT", "xalt_name"),
@@ -418,7 +418,7 @@ INI_OPTION_DEFAULTS = {
   "allow_from": "",
   "listen_tcp": "yes",
   "listen_udp": "yes",
-  "redis_location": "unix:///run/redis/redis.sock?db=1",
+  "valkey_location": "unix:///run/valkey/valkey.sock?db=1",
   "xalt_engine": None,
   "xalt_name": None,
   "xalt_user": None,
@@ -5332,22 +5332,22 @@ def get_listend_amqp_consumer_count() -> int:
   return max(1, n)
 
 
-def get_redis_location() -> Any:
+def get_valkey_location() -> str:
   """
-  Return the Redis URL for cache from CACHE config.
+  Return the Valkey cache URL from ``[CACHE] valkey_location``.
 
-  A missing or blank ``redis_location`` uses the registry default, the
-  compose stack's shared Unix socket ``unix:///run/redis/redis.sock?db=1``.
+  A missing or blank ``valkey_location`` uses the registry default, the
+  compose stack's shared Unix socket ``unix:///run/valkey/valkey.sock?db=1``.
 
   Returns:
-    Any: The Redis URL as a ``str``.
+    str: The Valkey URL (``unix://``, ``valkey://`` or ``valkeys://``).
 
   Examples:
-    >>> get_redis_location()  # doctest: +SKIP
-    'unix:///run/redis/redis.sock?db=1'
+    >>> get_valkey_location()  # doctest: +SKIP
+    'unix:///run/valkey/valkey.sock?db=1'
   """
-  return _ini_get_from_registry("CACHE", "redis_location").strip() or str(
-    ini_registry_default("redis_location")
+  return _ini_get_from_registry("CACHE", "valkey_location").strip() or str(
+    ini_registry_default("valkey_location")
   )
 
 

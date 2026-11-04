@@ -36,7 +36,7 @@ def test_supporting_knobs_sequential_sweeps(monkeypatch):
   """
   Sweep supporting knobs one factor at a time at fixed ingest width 48.
 
-  Requires compose db/redis (``HPCPERFSTATS_COMPOSE_NETWORK=1``), the long-bench
+  Requires compose db/valkey (``HPCPERFSTATS_COMPOSE_NETWORK=1``), the long-bench
   env flag, and ``HPCPERFSTATS_SYNC_TIMEDB_KNOBS=1``. Does not run
   ``update_metrics`` in the timed window. Does not write production INI.
   """

@@ -37,7 +37,7 @@ def test_ingest_width_screening_smoke(monkeypatch):
   """
   Sweep ingest widths against a planted smoke corpus; write screening JSON.
 
-  Requires compose db/redis (``HPCPERFSTATS_COMPOSE_NETWORK=1``), the long-bench
+  Requires compose db/valkey (``HPCPERFSTATS_COMPOSE_NETWORK=1``), the long-bench
   env flag, and ``HPCPERFSTATS_SYNC_TIMEDB_SCREENING=1``. Does not run
   ``update_metrics`` in the timed window.
   """

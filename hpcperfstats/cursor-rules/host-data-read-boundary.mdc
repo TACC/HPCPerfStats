@@ -17,20 +17,20 @@ globs: hpcperfstats/site/lib/machine/api.py,hpcperfstats/site/lib/machine/job_pl
 - Direct `host_data` reads are allowed only for:
   - ingest/sync scripts and metrics/update pipelines,
   - **staff** monitor paths (`job monitor`, `admin monitor`, and related monitor diagnostics),
-    including Admin Monitor `?section=telemetry_health` (Redis
+    including Admin Monitor `?section=telemetry_health` (Valkey
     ``recent_host:*``-scoped, host-batched 12h aggregate with
     ``host = ANY`` + ``SET LOCAL statement_timeout``, Django cache key
-    ``KEY_ADMIN_TELEMETRY_HEALTH``, soft-fail on timeout or empty Redis
+    ``KEY_ADMIN_TELEMETRY_HEALTH``, soft-fail on timeout or empty Valkey
     inventory — **not** a site-wide ``GROUP BY type, event``; payload includes
     severity ``findings``, ``monitor_handoff_markdown`` for Copy, and joins
-    Redis ``monitor_identity:{fqdn}`` written by listend on ``$`` schema
+    Valkey ``monitor_identity:{fqdn}`` written by listend on ``$`` schema
     rotation — ``$build`` optional until monitor RPM ships),
   - **`host_plot`** (authenticated users; live `HostDataProvider` — rarely used; harden statement timeouts; do **not** convert to prewarm in the same task as Job Detail plots).
 
 ## Required implementation behavior
 
 1. If a user-facing endpoint needs data currently coming from `host_data`, add/update an artifact prewarm path in `update_metrics` first.
-2. Invalidate both Redis and DB-backed derived artifacts from ingest/sync invalidation hooks when raw telemetry changes.
+2. Invalidate both Valkey and DB-backed derived artifacts from ingest/sync invalidation hooks when raw telemetry changes.
 3. User-facing endpoints must return deterministic `loading/not ready` responses when artifacts are missing; do not query `host_data` as runtime fallback.
 4. Keep monitor/admin-only direct read paths explicit (auth-gated and documented in code).
 5. **`job_plots` / Job Detail plots** are artifact-only (L1/L2). Fingerprint from persisted **`metrics_distinct_time_count`** only — never a live `host_data` distinct-time COUNT on the website. Null `plot_item` + `unavailable_reason` on a fingerprint-matching L2 row is **terminal unavailable**, not a miss.

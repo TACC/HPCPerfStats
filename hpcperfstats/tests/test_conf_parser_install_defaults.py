@@ -1,7 +1,7 @@
 """Install defaults: a minimal hpcperfstats.ini resolves the compose-stack keys.
 
 data_dir, debug, the PostgreSQL connection, RabbitMQ, the archive paths and
-the Redis cache URL all have code defaults in ``INI_OPTION_DEFAULTS``. Path
+the Valkey cache URL all have code defaults in ``INI_OPTION_DEFAULTS``. Path
 defaults interpolate ``%(data_dir)s`` / ``%(machine)s`` like ini values do.
 """
 
@@ -39,7 +39,7 @@ def test_minimal_ini_resolves_every_install_default(tmp_path, monkeypatch):
   )
   assert cfg.get_archive_dir_path() == "/hpcperfstats/archive"
   assert cfg.get_daily_archive_dir_path() == "/hpcperfstats/daily_archive"
-  assert cfg.get_redis_location() == "unix:///run/redis/redis.sock?db=1"
+  assert cfg.get_valkey_location() == "unix:///run/valkey/valkey.sock?db=1"
 
 
 def test_path_defaults_interpolate_the_ini_data_dir(tmp_path, monkeypatch):
@@ -61,14 +61,14 @@ def test_ini_values_and_legacy_sections_beat_defaults(tmp_path, monkeypatch):
     "[DEFAULT]\nmachine = c1\ndebug = yes\n"
     "[PORTAL]\nhost = legacy-db\narchive_dir = /legacy/archive\n"
     "[RMQ]\nrmq_server = mq.example\n"
-    "[CACHE]\nredis_location = redis://redis:6379/1\n",
+    "[CACHE]\nvalkey_location = valkey://valkey:6379/1\n",
   )
 
   assert cfg.get_debug() is True
   assert cfg.get_host() == "legacy-db"
   assert cfg.get_archive_dir_path() == "/legacy/archive"
   assert cfg.get_rmq_server() == "mq.example"
-  assert cfg.get_redis_location() == "redis://redis:6379/1"
+  assert cfg.get_valkey_location() == "valkey://valkey:6379/1"
 
 
 def test_rmq_queue_default_still_needs_machine(tmp_path, monkeypatch):

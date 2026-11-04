@@ -1,4 +1,4 @@
-"""Unit tests for Redis monitor_identity parse/set helpers."""
+"""Unit tests for Valkey monitor_identity parse/set helpers."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def test_parse_rejects_non_fqdn_and_non_dollar():
 def test_set_and_load_monitor_identity_roundtrip():
   store: dict[str, str] = {}
 
-  class FakeRedis:
+  class FakeValkey:
     def set(self, name, value, ex=None):
       store[name] = value
       store["_ex"] = ex
@@ -72,14 +72,14 @@ def test_set_and_load_monitor_identity_roundtrip():
     "schema_types": ["host_cpu"],
     "updated_at": 42,
   }
-  mi.set_monitor_identity(FakeRedis(), ident, ttl_seconds=99)
+  mi.set_monitor_identity(FakeValkey(), ident, ttl_seconds=99)
   assert store["_ex"] == 99
   loaded = mi.load_monitor_identities_for_hosts(
-    FakeRedis(), ["a.example.com", "missing.example.com"]
+    FakeValkey(), ["a.example.com", "missing.example.com"]
   )
   assert len(loaded) == 1
   assert loaded[0]["fqdn"] == "a.example.com"
   assert loaded[0]["capability_slug"] is None
-  assert json.loads(store[mi.monitor_identity_redis_key("a.example.com")])[
+  assert json.loads(store[mi.monitor_identity_valkey_key("a.example.com")])[
     "schema_types"
   ] == ["host_cpu"]

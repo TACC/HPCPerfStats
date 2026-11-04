@@ -71,7 +71,7 @@ def test_host_data_insert_ab_write_only(monkeypatch):
   """
   Time baseline vs COPY insert on ≥100k host_data rows; write retain artifact.
 
-  Requires compose db/redis and ``HPCPERFSTATS_SYNC_TIMEDB_HOST_INSERT=1``.
+  Requires compose db/valkey and ``HPCPERFSTATS_SYNC_TIMEDB_HOST_INSERT=1``.
   """
   if not host_insert_mode_enabled():
     pytest.fail("HPCPERFSTATS_SYNC_TIMEDB_HOST_INSERT=1 required")

@@ -487,7 +487,7 @@ def _describe_any_param(bare: str) -> str:
     "mtime",
   ):
     return "Time value (``datetime``, ISO string, sentinel, or ``None``)."
-  if lower in ("lock", "redis_lock", "mutex"):
+  if lower in ("lock", "mutex"):
     return "Lock object used to serialize access."
   if lower in (
     "tasks",

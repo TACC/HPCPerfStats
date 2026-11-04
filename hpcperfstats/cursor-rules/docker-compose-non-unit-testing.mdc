@@ -1,10 +1,10 @@
 ---
-description: Use Docker Compose workflows for integration, stress, E2E, and DB/Redis-backed tests.
+description: Use Docker Compose workflows for integration, stress, E2E, and DB/Valkey-backed tests.
 ---
 
 # Podman Compose for Non-Unit Testing
 
-Host-side `pytest` often **cannot** resolve `db` / `redis`, match production DB
+Host-side `pytest` often **cannot** resolve `db` / `valkey`, match production DB
 settings, or provide Timescale behavior. Use committed rootless Podman workflows
 for integration tests; bare host pytest is for explicit unit/mock coverage.
 
@@ -24,7 +24,7 @@ paths under `/data`; see `podman-runtime.mdc`.
 | Goal | Script |
 |------|--------|
 | Full Python tree + DB + optional browser E2E | `tests/run_db_pytest_workflow.sh` |
-| Live Redis cache integration | `tests/run_redis_cache_pytest_workflow.sh` |
+| Live Valkey cache integration | `tests/run_valkey_cache_pytest_workflow.sh` |
 | Web HTTP + Playwright E2E | `tests/run_web_e2e_workflow.sh` |
 | **Massive `host_data` stress** (`tests/stress_host_data/`) | **`tests/run_stress_host_data_workflow.sh`** |
 
@@ -42,7 +42,7 @@ Stress tests are **opt-in** (`HPCPERFSTATS_STRESS_HOST_DATA=1`); the workflow sc
 
 ## Overlap
 
-- Complements `full-test-with-db-redis.mdc` and `local-compose-db-lifecycle-for-web-tests.mdc`.
+- Complements `full-test-with-db-valkey.mdc` and `local-compose-db-lifecycle-for-web-tests.mdc`.
 - Stress-specific: `job-plot-artifacts-caching.mdc` / `runtime-resource-and-metrics-safety.mdc` when touching plot persistence or metrics.
 - Host Python location: **`workspace-layout-and-python-env.mdc`**.
 - Runtime and storage: **`podman-runtime.mdc`**.

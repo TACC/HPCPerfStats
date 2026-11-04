@@ -25,7 +25,7 @@ The **hpcperfstats** package is split into two parts:
 | [**measurements/**](docs/measurements/) | Recorded ops measurements (for example node-daemon CPU overhead on Stampede3 SPR). |
 | [**using-the-website-as-a-researcher.md**](docs/using-the-website-as-a-researcher.md) | How to read the Django/React job UI—plots, metrics, and diagnostic themes—for HPC users and researchers. |
 | [**TESTING.md**](docs/TESTING.md) | Test commands, CI, compose-backed workflows, Playwright/Vitest, and host vs container pytest notes. |
-| [**upgrade.md**](docs/upgrade.md) | Existing stacks only: image rebuilds, Redis/INI/volume layout, RabbitMQ recreate, PG18 dual-run. |
+| [**upgrade.md**](docs/upgrade.md) | Existing stacks only: image rebuilds, Valkey/INI/volume layout, RabbitMQ recreate, PG18 dual-run. |
 | [**OPERATOR_HOST_DATA_DEV_UNIQUENESS.md**](docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md) | `host_data` 5-col uniqueness: Stage 1 decompress (+ 02 PK normalize) and Stage 2 one-shot migrate for `0032` / compress_after 8d. |
 
 **Maintaining `MONITOR_VARIABLES.md`:** the catalog is generated and augmented by maintainer scripts in the same folder: [`regenerate_monitor_variables_catalog.py`](docs/regenerate_monitor_variables_catalog.py), [`augment_monitor_variables_diagnostics.py`](docs/augment_monitor_variables_diagnostics.py).
@@ -45,7 +45,7 @@ The **hpcperfstats** container orchestration sets up a Django/PostgreSQL ingest 
 
 ## Installation
 
-These steps are a **fresh install** on a new host. For an existing Compose stack (rebuilds, Redis/INI/volume/RabbitMQ changes, PostgreSQL 18 dual-run), use **[docs/upgrade.md](docs/upgrade.md)** instead.
+These steps are a **fresh install** on a new host. For an existing Compose stack (rebuilds, Valkey/INI/volume/RabbitMQ changes, PostgreSQL 18 dual-run), use **[docs/upgrade.md](docs/upgrade.md)** instead.
 
 ### Monitor subpackage
 
@@ -217,7 +217,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    podman system migrate
    ```
 
-   **Redis / Linux kernel:** Redis warns when **`vm.overcommit_memory`** is
+   **Valkey / Linux kernel:** Valkey warns when **`vm.overcommit_memory`** is
    disabled; background saves use `fork()`, and the kernel can reject that fork
    even with free RAM. Enable it on the Linux Podman host:
 
@@ -228,14 +228,14 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    Persist across reboots:
 
    ```bash
-   echo 'vm.overcommit_memory = 1' | sudo tee /etc/sysctl.d/99-redis-overcommit.conf
+   echo 'vm.overcommit_memory = 1' | sudo tee /etc/sysctl.d/99-valkey-overcommit.conf
    sudo sysctl --system
    ```
 
    Alternatively, add **`vm.overcommit_memory = 1`** to `/etc/sysctl.conf` and
    reboot (or run the `sysctl -w` command once).
 
-   Compose pins **Redis Open Source 8.10** (`redis:8.10.3-alpine3.23`) with **`maxmemory 16gb`**, **`volatile-lru`** (Django cache keys keep TTL and remain evictable), **`--io-threads 4`** / **`--io-threads-do-reads yes`**, Redis 8.10 compact hashes (**`--hash-min-template-entries 1`**, default 0 disables auto-conversion), and a Unix domain socket at **`/run/redis/redis.sock`** shared by **`redis`**, **`web`**, and **`pipeline`** via the **`redis_runtime`** named volume (not a host bind). Do **not** put Redis on **`web`** / **`pipeline`** `depends_on` (any **`condition:`**, including **`service_started`** / **`service_healthy`**) — podman-compose can create `hpcperfstats_redis_1` and never start it, so `logs redis` stays empty. Redis still has a TCP+socket `PING` healthcheck for `ps`. Startup wait uses **`[CACHE] redis_location`**, remaps Compose hostname **`redis`** (including baked **`redis://redis:6379/1`**) to **`unix:///run/redis/redis.sock?db=1`**, and falls back to that socket URL when the INI key is missing. TCP **`6379`** stays up for `redis-cli` and external Redis URLs. Do **not** use **`allkeys-*`** for Django/listend cache keys. Redis has no persistence volume (`appendonly no`). Size the host (or Colima) so Redis can use that cap alongside Postgres `shm_size` / `shared_buffers`. Redis image bumps on an existing host: **[docs/upgrade.md](docs/upgrade.md)**.
+   Compose pins **Valkey 9.1** (`docker.io/valkey/valkey:9.1.3-alpine3.24`, run as `valkey-server` so the image entrypoint drops root) with **`maxmemory 16gb`**, **`volatile-lru`** (Django cache keys keep TTL and remain evictable), **`--io-threads 4`**, and a Unix domain socket at **`/run/valkey/valkey.sock`** shared by **`valkey`**, **`web`**, and **`pipeline`** via the **`valkey_runtime`** named volume (not a host bind). Do **not** put Valkey on **`web`** / **`pipeline`** `depends_on` (any **`condition:`**, including **`service_started`** / **`service_healthy`**) — podman-compose can create `hpcperfstats_valkey_1` and never start it, so `logs valkey` stays empty. Valkey still has a TCP+socket `PING` healthcheck for `ps`. Startup wait uses **`[CACHE] valkey_location`**, remaps Compose hostname **`valkey`** (including baked **`valkey://valkey:6379/1`**) to **`unix:///run/valkey/valkey.sock?db=1`**, and falls back to that socket URL when the INI key is missing. TCP **`6379`** stays up for `valkey-cli` and external Valkey URLs. Do **not** use **`allkeys-*`** for Django/listend cache keys. Valkey has no persistence volume (`appendonly no`). Size the host (or Colima) so Valkey can use that cap alongside Postgres `shm_size` / `shared_buffers`. Valkey image bumps on an existing host: **[docs/upgrade.md](docs/upgrade.md)**.
 
 2. **Enable container restart after reboot:**
 
@@ -310,7 +310,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    **Daily monitor archive compression:** `sync_timedb` seals each day’s `YYYY-MM-DD.tar` to **`YYYY-MM-DD.tar.zst`** with **zstd**. Defaults: **`archive_zstd_threads=0`** (**`-T0`**, seal/restore), **`ingest_zstd_threads=4`** (**`-T4`**, ingest/populate streams), **`archive_seal_parallel_workers=2`** (seals running at once; set `1` on a saturated shared volume); zstd runs at normal CPU/I/O priority (no `nice`/`ionice`) — see **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** (Archive zstd). Other **`[PIPELINE]`** key: `archive_zstd_level` in `hpcperfstats.ini.example`. When inspecting archives by hand, use for example `zstd -d -o YYYY-MM-DD.tar YYYY-MM-DD.tar.zst` (legacy `.tar.gz` uses `zstd -d --format=gzip`). Before raising `archive_zstd_level` above **9** on production data, benchmark a representative daily tar on the pipeline host: `zstd -b3 -e12 -T0 -S -- ./YYYY-MM-DD.tar`.
 
-   **Daily archive member cache:** `sync_timedb` keeps complete member maps in process memory and persists them under **`{archive_dir}/.sync_timedb_archive_members/`**. Dedicated **`[thread:populate-pool]`** workers stream sealed/tar archives into that store. Django **`[CACHE] redis_location`** remains for the web/listend cache only. Ingest duplicate-check zstd runs at normal priority; janitor seal paths keep archive `nice`/`ionice`. Member maps are invalidated after tar append, dedupe, seal, and archive finalize — wipe day sidecars with `scripts/invalidate_archive_members.py` (never `.sync_timedb_job_store.json`). See **`sync_archive_members_populate_*`** / **`sync_archive_members_wait_poll_seconds`** in `hpcperfstats.ini.example` and **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`**.
+   **Daily archive member cache:** `sync_timedb` keeps complete member maps in process memory and persists them under **`{archive_dir}/.sync_timedb_archive_members/`**. Dedicated **`[thread:populate-pool]`** workers stream sealed/tar archives into that store. Django **`[CACHE] valkey_location`** remains for the web/listend cache only. Ingest duplicate-check zstd runs at normal priority; janitor seal paths keep archive `nice`/`ionice`. Member maps are invalidated after tar append, dedupe, seal, and archive finalize — wipe day sidecars with `scripts/invalidate_archive_members.py` (never `.sync_timedb_job_store.json`). See **`sync_archive_members_populate_*`** / **`sync_archive_members_wait_poll_seconds`** in `hpcperfstats.ini.example` and **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`**.
 
    **Ingest-first durability vs archive failure:** with **`sync_enable_ingest_first_durability_mode=yes`** (default), DB-ingested raw may be checkpointed as processed when archive append retries are exhausted (`ingest_first_archive_abandoned_raw` in logs; entry also in **`.sync_timedb_dead_letter.json`**). Raw is **not** deleted until a later pass verifies tar+sealed archive membership. Recovery: fix archive/tar issues, clear or replay dead-letter entries, and rescan — do not delete raw manually unless you have confirmed DB and archive parity.
 
@@ -363,9 +363,9 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 
    - **`[PORTAL]`** — Gunicorn/Django web stack only: `gunicorn_workers`, `parallel_db_prefetch_max`, `api_small_executor_max_workers`, `db_conn_max_age`, `db_statement_timeout_ms`, `db_idle_in_transaction_timeout_ms`, `cors_origin_scheme`, and development-only `separate_test_login` (default **no**)
    - **`[PIPELINE]`** — ingest, archive, and metrics: paths `acct_path`, `archive_dir`, `daily_archive_dir` default to `accounting`, `archive`, `daily_archive` under `data_dir`; optional `sync_*`, `metrics_*`, `archive_*`, `metrics_pool_processes`, and related keys
-   - **`[RMQ]`** (`rmq_server` default `rabbitmq`, `rmq_queue` default `%(machine)s`), **`[OAUTH2]`**, optional **`[CACHE]`** (`redis_location` default `unix:///run/redis/redis.sock?db=1`), **`[SYSLOG]`**, **`[XALT]`** — integration sections
+   - **`[RMQ]`** (`rmq_server` default `rabbitmq`, `rmq_queue` default `%(machine)s`), **`[OAUTH2]`**, optional **`[CACHE]`** (`valkey_location` default `unix:///run/valkey/valkey.sock?db=1`), **`[SYSLOG]`**, **`[XALT]`** — integration sections
 
-   For a fresh Docker install you typically edit **`[DEFAULT]`** as above; the **`[RMQ]`**, PostgreSQL, Redis and path defaults are already wired for Compose. Do not change **`[RMQ]`** hostnames unless your RabbitMQ layout differs. For **cluster syslog**, add or edit the optional **`[SYSLOG]`** section (see `hpcperfstats.ini.example` and the compose step above).
+   For a fresh Docker install you typically edit **`[DEFAULT]`** as above; the **`[RMQ]`**, PostgreSQL, Valkey and path defaults are already wired for Compose. Do not change **`[RMQ]`** hostnames unless your RabbitMQ layout differs. For **cluster syslog**, add or edit the optional **`[SYSLOG]`** section (see `hpcperfstats.ini.example` and the compose step above).
 
    **`hpcperfstats.ini.example` layout:** each setting has a one-line `#` comment directly above it; keys whose value is the `conf_parser` code default appear commented (`# key = default`); active lines are required keys or overrides. To bring an older site `hpcperfstats.ini` onto the current example layout, run **`scripts/rewrite_hpcperfstats_ini.sh`** (see **[docs/upgrade.md](docs/upgrade.md)**). Pipeline/archive behavior (zstd seal, DB-before-append gate **`sync_archive_require_db_ingest`** under **`[PIPELINE]`**, syslog allowlist) is described in the bullets above and in **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`**.
 
@@ -543,7 +543,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
 |------|---------|
 | Build and start container stack | `podman-compose -p hpcperfstats up --build -d` |
 | Stop and remove containers | `podman-compose -p hpcperfstats down` |
-| Existing-stack rebuilds / Redis / PG18 / INI | **[docs/upgrade.md](docs/upgrade.md)** |
+| Existing-stack rebuilds / Valkey / PG18 / INI | **[docs/upgrade.md](docs/upgrade.md)** |
 | Restart proxy after cert renew or `server=` change | `docker compose restart proxy` |
 | View logs  | `podman-compose -p hpcperfstats logs` |
 | PostgreSQL shell | `docker compose exec db psql -h localhost -U hpcperfstats` (keep `-h localhost`: without it `psql` uses the Unix socket, which asks for the password) |

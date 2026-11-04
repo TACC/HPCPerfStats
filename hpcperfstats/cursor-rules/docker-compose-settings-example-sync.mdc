@@ -29,7 +29,7 @@ When you change **`docker-compose.yaml`** in a way operators need after `cp …e
 | Top-level **`volumes:`** bind **`device:`** paths | All seven named volumes (including **`proxy_ssl_source`**); keep comments for SSH keys and LE override |
 
 | Commented optional **`services:`** knobs | `web`/`db`/`rabbitmq` host ports, pipeline `cap_add`, mem/grace overrides |
-| Volume **names** used by defaults compose | Service mounts in **`docker-compose.defaults.yaml`** must match volume keys in the example for **site binds**; **do not** put empty/null volume stubs in defaults (podman-compose cannot merge `None` with operator dicts). **`redis_runtime`** is a named Docker volume in **defaults** (Unix socket dir) — **not** an operator bind and must **not** appear in `.example` |
+| Volume **names** used by defaults compose | Service mounts in **`docker-compose.defaults.yaml`** must match volume keys in the example for **site binds**; **do not** put empty/null volume stubs in defaults (podman-compose cannot merge `None` with operator dicts). **`valkey_runtime`** is a named Docker volume in **defaults** (Unix socket dir) — **not** an operator bind and must **not** appear in `.example` |
 
 Service bodies for **`web`** / **`pipeline`** / infra live in **`docker-compose.defaults.yaml`** — do not reintroduce an app overlay.
 

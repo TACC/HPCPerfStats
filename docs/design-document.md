@@ -41,7 +41,7 @@ HPC centers need **multi-resolution visibility** into how jobs use nodes: CPU, m
 
 Operational signals used in this repo (not a complete SLO spec):
 
-- Compose **healthchecks** for `db`, `redis`, `rabbitmq`, and `proxy` (`docker-compose.yaml`).
+- Compose **healthchecks** for `db`, `valkey`, `rabbitmq`, and `proxy` (`docker-compose.yaml`).
 - Automated tests for **listend** message handling, **sync_timedb** archive edge cases, metrics updates, and web/API behavior (`HPCPerfStats/docs/TESTING.md`).
 - **Idempotent** metrics recomputation expectations where documented under ingestion/metrics rules.
 
@@ -65,22 +65,21 @@ flowchart LR
   UM[update_metrics.py]
   WEB[Django + Gunicorn]
   FE[React / Next.js SPA]
-  REDIS[(Redis container)]
+  VALKEY[(Valkey container)]
   PXY[Nginx proxy]
 
   M -->|UTF-8 payloads| RMQ
   RMQ --> L
   L --> ARC
-  L -.->|recent-host keys| REDIS
+  L -.->|recent-host keys| VALKEY
   ARC --> ST
   ST --> DB
-  ST -.->|archive-members cache| REDIS
   SA --> DB
   DB --> UM
   UM --> DB
-  UM -.->|invalidate plot/job keys| REDIS
+  UM -.->|invalidate plot/job keys| VALKEY
   WEB --> DB
-  WEB --> REDIS
+  WEB --> VALKEY
   FE --> WEB
   PXY --> WEB
   PXY --> FE
@@ -98,15 +97,15 @@ flowchart TB
     WEB[web — Django / Gunicorn]
     PIPE[pipeline — supervisord ingest]
     DB[(db — TimescaleDB / PostgreSQL 15)]
-    REDIS[redis — Redis 8.10 Alpine]
+    VALKEY[valkey — Valkey 9.1 Alpine]
     RMQ[rabbitmq — broker]
   end
 
   PXY -->|reverse proxy| WEB
   WEB -->|SQL| DB
-  WEB -->|Django cache + plot L1| REDIS
+  WEB -->|Django cache + plot L1| VALKEY
   PIPE -->|SQL| DB
-  PIPE -->|listend / sync_timedb keys| REDIS
+  PIPE -->|listend keys| VALKEY
   PIPE -->|consume| RMQ
   WEB -.->|depends_on healthy| DB
   PIPE -.->|depends_on| WEB
@@ -115,7 +114,7 @@ flowchart TB
 **Deployment split:**
 
 - **On nodes:** C monitor (`HPCPerfStats/monitor/`), typically via RPM/systemd (`hpcperfstats` service).
-- **Central stack:** Docker Compose (`docker-compose.yaml` includes `docker-compose.yaml`): **`web`**, **`pipeline`**, **`db`**, **`redis`**, **`rabbitmq`**, **`proxy`**.
+- **Central stack:** Docker Compose (`docker-compose.yaml` includes `docker-compose.yaml`): **`web`**, **`pipeline`**, **`db`**, **`valkey`**, **`rabbitmq`**, **`proxy`**.
 
 ---
 
@@ -143,17 +142,17 @@ Primary maintainer contact appears in `pyproject.toml` authors (Texas Advanced C
 
 | Service | Role |
 |---------|------|
-| **web** | Builds from `services-conf/pipeline_web.Dockerfile` with context `./` (`hpcperfstats-full`); runs Django via `services-conf/django_startup.sh`; exposes app port (default host `8000` via `HPCPERFSTATS_WEB_PORT`). **Depends on healthy `db` and healthy `redis`.** |
-| **pipeline** | Same image as `web`; runs `supervisor_startup.sh` to supervise long-running ingest/processing programs (see §6). Uses the **`hpcperfstatsdata`** bind for archive, accounting, daily archive, and **cluster syslog** under **`/hpcperfstats/logs/`** (bind `device:` in **`docker-compose.yaml`**). Reaches **`db`**, **`redis`**, and **`rabbitmq`** on `hpcperfstats_net`. |
+| **web** | Builds from `services-conf/pipeline_web.Dockerfile` with context `./` (`hpcperfstats-full`); runs Django via `services-conf/django_startup.sh`; exposes app port (default host `8000` via `HPCPERFSTATS_WEB_PORT`). **Depends on healthy `db`**; waits for `valkey` at startup (`valkeywait.py`), since `valkey` is not in `depends_on`. |
+| **pipeline** | Same image as `web`; runs `supervisor_startup.sh` to supervise long-running ingest/processing programs (see §6). Uses the **`hpcperfstatsdata`** bind for archive, accounting, daily archive, and **cluster syslog** under **`/hpcperfstats/logs/`** (bind `device:` in **`docker-compose.yaml`**). Reaches **`db`**, **`valkey`**, and **`rabbitmq`** on `hpcperfstats_net`. |
 | **db** | TimescaleDB on PostgreSQL 15 (`timescale/timescaledb:2.28.3-pg15`); primary system of record until PG18 cutover. Compose sets large **`shm_size`** and Postgres tuning (`shared_buffers`, timeouts, WAL) for concurrent Django + pipeline load. |
 | **db_pg18** | Optional dual-run homemade PostgreSQL 18 + TimescaleDB (`hpcperfstats-db` from `services-conf/db.Dockerfile`; profile **`pg18-migrate`**, alias **`db18`**). Logical migrate runbook: `docs/OPERATOR_PG18_MIGRATION.md`. Same **`shm_size: "16gb"`** plus **`io_method=io_uring`**. |
-| **redis** | **Dedicated Compose container** (`redis:8.10.3-alpine3.23` in `docker-compose.yaml`). Network alias **`redis`**. Shared instance for Django cache (TTL keys) and listend auxiliaries (`recent_host:*`, `monitor_identity:*`). **`sync_timedb` does not use Redis** — jobs and archive-member maps live in-process with disk sidecars. **`maxmemory` 16gb** with **`volatile-lru`**. `appendonly no`; **`--io-threads 4`**; compact hashes via **`hash-min-template-entries` 1**; Unix socket **`unix:///run/redis/redis.sock?db=1`** on volume **`redis_runtime`**. Healthcheck: TCP `PING` and socket `PING`. |
+| **valkey** | **Dedicated Compose container** (`docker.io/valkey/valkey:9.1.3-alpine3.24`, `valkey-server`, in `docker-compose.defaults.yaml`). Network alias **`valkey`**. Shared instance for Django cache (TTL keys) and listend auxiliaries (`recent_host:*`, `monitor_identity:*`). **`sync_timedb` does not use Valkey** — jobs and archive-member maps live in-process with disk sidecars. **`maxmemory` 16gb** with **`volatile-lru`**. `appendonly no`; **`--io-threads 4`**; Unix socket **`unix:///run/valkey/valkey.sock?db=1`** on volume **`valkey_runtime`**. Healthcheck: TCP `PING` and socket `PING`. |
 | **rabbitmq** | Broker for monitor→site message delivery (`rabbitmq:4.3.7-management-alpine`, AMQP **5672** published; management HTTP **15672** compose-internal only). Admin Monitor queue/node stats use the management API from `web`, not AMQP. Memory cap: Compose **`mem_limit` / `memswap_limit` 96g** plus **`vm_memory_high_watermark.absolute = 80GiB`** (`services-conf/rabbitmq_vm_memory.conf`) so publishers block ~16 GiB below the cgroup wall instead of growing unbounded or hitting Erlang `binary_alloc`. Erlang allocator: **`ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512`**. |
 | **proxy** | Nginx TLS/front door; **`docker-compose.yaml`** mounts committed **`services-conf/nginx.conf`** as **`default.conf`** and **`proxy_ssl_source:/mnt/ssl-source:ro`**; image build **`cp`**s **`nginx.conf`**, generates **`hps-proxy-allowed-hosts.inc`** from INI; **`proxy_entrypoint.sh`** materializes TLS PEMs from the settings mount into fixed paths under **`/etc/ssl/hpcperfstats`**. Serves staticfiles/media and proxies API/HTML to **`web`**. |
 
 ### 5.3 Python package layout (concise)
 
-- **`hpcperfstats/listend.py`** — RabbitMQ consumer; archive writer (§7.2); optional Redis recent-host tracking.
+- **`hpcperfstats/listend.py`** — RabbitMQ consumer; archive writer (§7.2); optional Valkey recent-host tracking.
 - **`hpcperfstats/dbload/`** — Time-series and accounting loaders (`sync_timedb.py`, `sync_acct.py`, helpers); in-process archive-members / job stores under `dbload/lib/`.
 - **`hpcperfstats/analysis/`** — Metrics computation, plotting, roofline and vendor-specific logic; **`update_metrics.py`** persists plot/detail artifacts after recompute.
 - **`hpcperfstats/site/`** — Django project, DRF APIs, OpenAPI schema, React/Next frontend under `site/frontend/`.
@@ -170,7 +169,7 @@ The tracked supervisor configuration (`services-conf/supervisord.conf`) runs **s
 
 - **`listend.py`** — RabbitMQ listener (archive append/rotation).
 - **`sync_timedb.py backlog`** — Imports node-level data from the archive into the database; runs until stopped, rescans for new files after each wave, and sleeps when the queue is empty. Startup still runs the archive snapshot + boot handoff for ingest catch-up. Under dual-mode with ``current``, CLI **`all` is ingest-only for day-close** (no day-close discover / seal / delete). Date-window runs and CLI ``current`` own day-close. Archive-member prewarm/coordination uses the in-process members store (`sync_timedb_archive_members_store` / `sync_timedb_archive_members_coord`).
-- **`update_metrics.py`** — Builds/updates job-indexed and secondary metrics from DB state; persists **`job_plot_artifact`** / **`job_detail_artifact`** and invalidates related Redis keys.
+- **`update_metrics.py`** — Builds/updates job-indexed and secondary metrics from DB state; persists **`job_plot_artifact`** / **`job_detail_artifact`** and invalidates related Valkey keys.
 
 It also includes **`rsync_data`** (via **`rsync_data_wrapper.sh`**, preferring guarded **`rsync_data.sh`** then **`rsync_data.sh.example`**). **Cluster syslog** (`syslog-ng`, **`render_syslog_ng_generated`**, **`seal_syslog_daily`**) remains in the image and under **`[SYSLOG]`** / **`data_dir/logs/`**, but those programs are **not** supervised — enable manually as root when needed (see `README.md`).
 
@@ -207,7 +206,7 @@ It also includes **`rsync_data`** (via **`rsync_data_wrapper.sh`**, preferring g
 
 - Time-series and job tables are read by **`update_metrics.py`** to populate derived metrics used by the site and plots.
 - **Deterministic, DB-backed aggregation** is preferred over ad-hoc recompute (runtime/metrics safety rule).
-- Durable plot/detail embeds live in PostgreSQL as **`job_plot_artifact`** and **`job_detail_artifact`** (gzip JSON); Redis holds only short-TTL / L1 copies where configured.
+- Durable plot/detail embeds live in PostgreSQL as **`job_plot_artifact`** and **`job_detail_artifact`** (gzip JSON); Valkey holds only short-TTL / L1 copies where configured.
 
 ### 7.4 Monitor ↔ analysis contract (`host_data.type`)
 
@@ -219,19 +218,19 @@ Canonical Python references (see `HPCPerfStats/hpcperfstats/cursor-rules/monitor
 - `hpcperfstats/analysis/metrics/lib/plot/roofline_peaks.py` — peak tables and inference.
 - `hpcperfstats/analysis/metrics/lib/plot/roofline.py` — merge logic.
 
-### 7.5 Redis roles (same container, multiple key namespaces)
+### 7.5 Valkey roles (same container, multiple key namespaces)
 
-The **`redis` Compose service** is the single shared Redis instance. Django configures it via `cfg.get_redis_location()` (`django.core.cache.backends.redis.RedisCache`, key prefix `hpcperfstats`). Host pytest normally uses LocMem unless `HPCPERFSTATS_PYTEST_LIVE_REDIS=1` (compose Redis workflows).
+The **`valkey` Compose service** is the single shared Valkey instance. Django configures it via `cfg.get_valkey_location()` (`django_valkey.cache.ValkeyCache`, key prefix `hpcperfstats`, default pickle serializer). Raw commands (SADD/SMEMBERS/SCAN/INFO) go through `cache_utils.get_valkey_client()`, which wraps `django_valkey.get_valkey_connection`; listend uses valkey-py `valkey.from_url`. Host pytest normally uses LocMem unless `HPCPERFSTATS_PYTEST_LIVE_VALKEY=1` (compose Valkey workflows).
 
 | Role | Typical consumers | Notes |
 |------|-------------------|--------|
 | **Django / ORM view cache** | `web` (`cache_utils.py`) | Versioned keys such as **`KEY_JOB`** (pickled `job_data`), site filter facets, GPU/XALT/proc helpers. Stale pickled prefetch must be refreshed on read when metrics rows change. |
-| **Job plot L1** | `web` (`job_plots` / `job_plot_artifacts`) | Short-lived Bokeh `json_item` embeds; oversized payloads may skip Redis. L2 durable store is **`job_plot_artifact`** in Postgres. |
+| **Job plot L1** | `web` (`job_plots` / `job_plot_artifacts`) | Short-lived Bokeh `json_item` embeds; oversized payloads may skip Valkey. L2 durable store is **`job_plot_artifact`** in Postgres. |
 | **Invalidation** | `update_metrics`, ingest/sync paths | Deletes plot keysets and related job keys so recomputes are visible after refresh. |
-| **Archive-members coordination** | `pipeline` / `sync_timedb` | In-process members store + disk sidecars (`SyncTimedbArchiveMembersStore`). Not a Redis key namespace. |
+| **Archive-members coordination** | `pipeline` / `sync_timedb` | In-process members store + disk sidecars (`SyncTimedbArchiveMembersStore`). Not a Valkey key namespace. |
 | **listend auxiliaries** | `pipeline` / `listend.py` | Recent-host tracking and similar operational keys—not a substitute for the on-disk archive. |
 
-Operator tuning for this container (memory cap, LRU, threads) is in **`docker-compose.yaml`** under **`redis:`**; see also `docs/DEPLOY_CONCURRENCY_AND_NUMA.md` when aligning host/VM sizing.
+Operator tuning for this container (memory cap, LRU, threads) is in **`docker-compose.yaml`** under **`valkey:`**; see also `docs/DEPLOY_CONCURRENCY_AND_NUMA.md` when aligning host/VM sizing.
 
 ---
 
@@ -250,7 +249,7 @@ Operator tuning for this container (memory cap, LRU, threads) is in **`docker-co
 - **Configuration** is driven by `hpcperfstats.ini` (container path commonly `/home/hpcperfstats/hpcperfstats.ini`) and files under `services-conf/`. `*.example` files document intended shapes; copy/rename per `README.md`. **Immutable-image policy:** bake INI into the image; do not bind-mount a mutable INI over production containers unless an explicit local-dev exception applies.
 - **Secrets** (TLS certs, API keys) are environment- and deployment-specific; TLS PEMs are read from the **`proxy_ssl_source`** settings volume at **`proxy`** container start and materialized under **`/etc/ssl/hpcperfstats`**; Django settings and nginx consume fixed paths defined in `services-conf/`.
 - **CSP** changes should be minimal and scoped when touching frontend pages (React workspace rule).
-- **Redis** holds no durable user data; flushing Redis is safe for correctness after a cold start (expect temporary cache misses and higher DB/plot rebuild cost). Archive files and Postgres remain authoritative.
+- **Valkey** holds no durable user data; flushing Valkey is safe for correctness after a cold start (expect temporary cache misses and higher DB/plot rebuild cost). Archive files and Postgres remain authoritative.
 
 ---
 
@@ -258,7 +257,7 @@ Operator tuning for this container (memory cap, LRU, threads) is in **`docker-co
 
 - **Python:** pytest with Django settings (`pyproject.toml`); many tests under `hpcperfstats/tests/` and `hpcperfstats/site/.../tests/`.
 - **Web E2E:** `test_web_pages_e2e.py` and Playwright `test_web_pages_browser_e2e.py` must be updated when web routes or SPA behavior changes.
-- **Compose workflows:** For DB/Redis-dependent tests, use the Docker Compose network so hostnames like `db` and **`redis`** resolve (see `full-test-with-db-redis` and `local-compose-db-lifecycle-for-web-tests` rules; Redis cache workflow: `tests/run_redis_cache_pytest_workflow.sh`).
+- **Compose workflows:** For DB/Valkey-dependent tests, use the Docker Compose network so hostnames like `db` and **`valkey`** resolve (see `full-test-with-db-valkey` and `local-compose-db-lifecycle-for-web-tests` rules; Valkey cache workflow: `tests/run_valkey_cache_pytest_workflow.sh`).
 - **Testing entrypoints:** `HPCPerfStats/docs/TESTING.md` must stay in sync when test commands or runners change.
 
 ---
@@ -272,15 +271,15 @@ This section records **typical** tradeoffs implicit in the design—not a formal
 | Pull-based polling from nodes | Push via RabbitMQ decouples node connectivity from DB availability and buffers bursts. |
 | Single monolithic “do everything” container | Split **web** vs **pipeline** isolates request serving from long-running ingest loops. |
 | Only API-based accounting | File-based **`sync_acct.py`** remains supported for sites that batch-export `sacct` output to disk. |
-| Persist all plot payloads only in Redis | Durable **`job_plot_artifact` / `job_detail_artifact`** in Postgres survive Redis eviction; Redis is L1 / coordination only. |
-| Co-locate Redis inside the web image | A **dedicated `redis` Compose service** keeps cache lifecycle, healthchecks, and memory policy independent of Gunicorn restarts. |
+| Persist all plot payloads only in Valkey | Durable **`job_plot_artifact` / `job_detail_artifact`** in Postgres survive Valkey eviction; Valkey is L1 / coordination only. |
+| Co-locate Valkey inside the web image | A **dedicated `valkey` Compose service** keeps cache lifecycle, healthchecks, and memory policy independent of Gunicorn restarts. |
 
 ---
 
 ## 12. Open questions and follow-ups
 
 - **Exact production scheduling** for `sync_acct.py` vs API-only ingest varies by site; document operator runbooks per deployment.
-- **Capacity planning** (RabbitMQ queue depth, archive storage growth, DB retention, Redis `maxmemory`) is deployment-specific and not fully specified in-repo.
+- **Capacity planning** (RabbitMQ queue depth, archive storage growth, DB retention, Valkey `maxmemory`) is deployment-specific and not fully specified in-repo.
 - **Per-site hostname allowlists and INI paths** (`HPCPERFSTATS_INI`) must match compose mounts—verify on each environment.
 
 ---
@@ -290,15 +289,15 @@ This section records **typical** tradeoffs implicit in the design—not a formal
 | Topic | Location |
 |-------|-----------|
 | Fresh install, monitor RPM, broker config, and **index of all `docs/`** | `HPCPerfStats/README.md` |
-| Existing-stack upgrades (rebuild, Redis/INI, PG18 dual-run) | `docs/upgrade.md` |
+| Existing-stack upgrades (rebuild, Valkey/INI, PG18 dual-run) | `docs/upgrade.md` |
 | Telemetry / variable definitions (canonical) | `docs/MONITOR_VARIABLES.md` |
 | Regenerate / augment `MONITOR_VARIABLES.md` | `docs/regenerate_monitor_variables_catalog.py`, `docs/augment_monitor_variables_diagnostics.py` |
 | Researcher-facing web UI guide | `docs/using-the-website-as-a-researcher.md` |
 | Architecture-agnostic analysis | `hpcperfstats/analysis/README_ARCH_AGNOSTIC.md` |
-| Compose topology (**redis** / db / rabbitmq / proxy / web / pipeline) | `docker-compose.yaml`, `docker-compose.yaml.example` |
+| Compose topology (**valkey** / db / rabbitmq / proxy / web / pipeline) | `docker-compose.yaml`, `docker-compose.yaml.example` |
 | Supervisor programs | `services-conf/supervisord.conf` (rsync via `rsync_data_wrapper.sh`) |
 | Job plot / detail caching | `hpcperfstats/cursor-rules/job-plot-artifacts-caching.mdc`, `site/lib/machine/job_plot_artifacts.py` |
-| Workspace guardrails (monitor/tools/nginx/redis) | `HPCPerfStats/hpcperfstats/cursor-rules/workspace-guardrails.mdc` |
+| Workspace guardrails (monitor/tools/nginx/valkey) | `HPCPerfStats/hpcperfstats/cursor-rules/workspace-guardrails.mdc` |
 | Monitor message contract | `HPCPerfStats/monitor/cursor-rules/monitor-workspace-contract.mdc` |
 | Monitor ↔ analysis type sync | `HPCPerfStats/hpcperfstats/cursor-rules/monitor-analysis-architecture-sync.mdc` |
 | Deploy concurrency / pool sizing | `docs/DEPLOY_CONCURRENCY_AND_NUMA.md` |

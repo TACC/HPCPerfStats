@@ -38,7 +38,7 @@ def test_contention_ab_arm(monkeypatch):
   """
   Measure one contention wave arm at width 48; merge A/B when candidate.
 
-  Requires compose db/redis, ``HPCPERFSTATS_SYNC_TIMEDB_CONTENTION=1``,
+  Requires compose db/valkey, ``HPCPERFSTATS_SYNC_TIMEDB_CONTENTION=1``,
   ``HPCPERFSTATS_CONTENTION_WAVE=<id>``, and
   ``HPCPERFSTATS_CONTENTION_ARM=baseline|candidate``. Baseline writes
   ``contention_<wave>_arm_baseline_*.json``. Candidate loads the latest

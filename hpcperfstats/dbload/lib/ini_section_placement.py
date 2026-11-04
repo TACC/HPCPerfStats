@@ -75,7 +75,7 @@ RMQ_OPTIONS = frozenset({"rmq_server", "rmq_queue"})
 
 SYSLOG_OPTIONS = frozenset({"allow_from", "listen_tcp", "listen_udp"})
 
-CACHE_OPTIONS = frozenset({"redis_location"})
+CACHE_OPTIONS = frozenset({"valkey_location"})
 
 XALT_OPTIONS = frozenset(
   {

@@ -5,49 +5,46 @@ from pathlib import Path
 import pytest
 
 
-def test_redis_url_uses_unix_socket_detects_unix_schemes():
-  from hpcperfstats.dbload.lib import rediswait
+def test_valkey_url_uses_unix_socket_detects_unix_scheme():
+  from hpcperfstats.dbload.lib import valkeywait
 
-  assert rediswait.redis_url_uses_unix_socket(
-    "unix:///run/redis/redis.sock?db=1"
+  assert valkeywait.valkey_url_uses_unix_socket(
+    "unix:///run/valkey/valkey.sock?db=1"
   )
-  assert rediswait.redis_url_uses_unix_socket(
-    "redis+unix:///run/redis/redis.sock?db=1"
-  )
-  assert not rediswait.redis_url_uses_unix_socket("redis://redis:6379/1")
-  assert not rediswait.redis_url_uses_unix_socket("redis://127.0.0.1:6379/1")
+  assert not valkeywait.valkey_url_uses_unix_socket("valkey://valkey:6379/1")
+  assert not valkeywait.valkey_url_uses_unix_socket("valkey://127.0.0.1:6379/1")
 
 
-def test_wait_for_redis_available_unix_skips_dns_wait(monkeypatch):
-  import redis
+def test_wait_for_valkey_available_unix_skips_dns_wait(monkeypatch):
+  import valkey
 
-  from hpcperfstats.dbload.lib import rediswait
+  from hpcperfstats.dbload.lib import valkeywait
 
   def fail_dns(*args, **kwargs):
-    raise AssertionError("unix Redis URLs must not wait on TCP DNS")
+    raise AssertionError("unix Valkey URLs must not wait on TCP DNS")
 
-  monkeypatch.setattr(rediswait, "wait_for_host_port_resolution", fail_dns)
+  monkeypatch.setattr(valkeywait, "wait_for_host_port_resolution", fail_dns)
 
   class FakeClient:
     def ping(self):
       return True
 
-  monkeypatch.setattr(redis.Redis, "from_url", lambda *a, **k: FakeClient())
-  rediswait.wait_for_redis_available(
-    "unix:///run/redis/redis.sock?db=1",
+  monkeypatch.setattr(valkey.Valkey, "from_url", lambda *a, **k: FakeClient())
+  valkeywait.wait_for_valkey_available(
+    "unix:///run/valkey/valkey.sock?db=1",
     timeout_seconds=1,
     interval_seconds=0.01,
     ping_timeout_seconds=0.01,
   )
 
 
-def test_wait_for_redis_available_retries_until_ping_success(monkeypatch):
-  import redis
+def test_wait_for_valkey_available_retries_until_ping_success(monkeypatch):
+  import valkey
 
-  from hpcperfstats.dbload.lib import rediswait
+  from hpcperfstats.dbload.lib import valkeywait
 
   monkeypatch.setattr(
-    rediswait,
+    valkeywait,
     "wait_for_host_port_resolution",
     lambda *args, **kwargs: None,
   )
@@ -58,16 +55,13 @@ def test_wait_for_redis_available_retries_until_ping_success(monkeypatch):
     def ping(self):
       attempt["n"] += 1
       if attempt["n"] < 3:
-        raise redis.exceptions.ConnectionError("not ready")
+        raise valkey.exceptions.ConnectionError("not ready")
       return True
 
-  def fake_from_url(*args, **kwargs):
-    return FakeClient()
+  monkeypatch.setattr(valkey.Valkey, "from_url", lambda *a, **k: FakeClient())
 
-  monkeypatch.setattr(redis.Redis, "from_url", fake_from_url)
-
-  rediswait.wait_for_redis_available(
-    "redis://fake:6379/1",
+  valkeywait.wait_for_valkey_available(
+    "valkey://fake:6379/1",
     timeout_seconds=1,
     interval_seconds=0.01,
     ping_timeout_seconds=0.01,
@@ -75,13 +69,13 @@ def test_wait_for_redis_available_retries_until_ping_success(monkeypatch):
   assert attempt["n"] == 3
 
 
-def test_wait_for_redis_available_raises_timeout(monkeypatch):
-  import redis
+def test_wait_for_valkey_available_raises_timeout(monkeypatch):
+  import valkey
 
-  from hpcperfstats.dbload.lib import rediswait
+  from hpcperfstats.dbload.lib import valkeywait
 
   monkeypatch.setattr(
-    rediswait,
+    valkeywait,
     "wait_for_host_port_resolution",
     lambda *args, **kwargs: None,
   )
@@ -95,24 +89,21 @@ def test_wait_for_redis_available_raises_timeout(monkeypatch):
   def fake_sleep(interval):
     t["now"] += interval
 
-  monkeypatch.setattr(rediswait.time, "time", fake_time)
-  monkeypatch.setattr(rediswait.time, "sleep", fake_sleep)
+  monkeypatch.setattr(valkeywait.time, "time", fake_time)
+  monkeypatch.setattr(valkeywait.time, "sleep", fake_sleep)
 
   attempt = {"n": 0}
 
   class FakeClient:
     def ping(self):
       attempt["n"] += 1
-      raise redis.exceptions.ConnectionError("unreachable")
+      raise valkey.exceptions.ConnectionError("unreachable")
 
-  def fake_from_url(*args, **kwargs):
-    return FakeClient()
-
-  monkeypatch.setattr(redis.Redis, "from_url", fake_from_url)
+  monkeypatch.setattr(valkey.Valkey, "from_url", lambda *a, **k: FakeClient())
 
   with pytest.raises(TimeoutError):
-    rediswait.wait_for_redis_available(
-      "redis://fake:6379/1",
+    valkeywait.wait_for_valkey_available(
+      "valkey://fake:6379/1",
       timeout_seconds=0.1,
       interval_seconds=0.05,
       ping_timeout_seconds=0.01,
@@ -121,61 +112,47 @@ def test_wait_for_redis_available_raises_timeout(monkeypatch):
   assert attempt["n"] == 2
 
 
-def test_django_startup_script_waits_for_redis():
+@pytest.mark.parametrize(
+  "script", ["django_startup.sh", "supervisor_startup.sh"]
+)
+def test_startup_scripts_wait_for_valkey_without_tcp_hostname(script):
   repo_root = Path(__file__).resolve().parents[2]
-  script_path = repo_root / "services-conf" / "django_startup.sh"
-  content = script_path.read_text()
+  content = (repo_root / "services-conf" / script).read_text()
 
-  assert "wait_for_redis_available" in content
-  assert "redis_wait_url" in content
-  assert "redis://redis:6379/1" not in content
-
-
-def test_supervisor_startup_script_waits_for_redis_without_tcp_hostname_fallback():
-  repo_root = Path(__file__).resolve().parents[2]
-  content = (repo_root / "services-conf" / "supervisor_startup.sh").read_text()
-
-  assert "wait_for_redis_available" in content
-  assert "redis_wait_url" in content
-  assert "redis://redis:6379/1" not in content
+  assert "wait_for_valkey_available" in content
+  assert "valkey_wait_url" in content
+  assert "valkey://valkey:6379/1" not in content
 
 
-def test_redis_wait_url_prefers_ini_then_compose_unix(monkeypatch):
-  from hpcperfstats.dbload.lib import rediswait
+def test_valkey_wait_url_prefers_ini_then_compose_unix(monkeypatch):
+  from hpcperfstats.dbload.lib import conf_parser as cfg, valkeywait
 
   monkeypatch.setattr(
-    rediswait,
-    "_ini_redis_location",
-    lambda: "redis://example:6379/2",
+    cfg, "get_valkey_location", lambda: "valkey://example:6379/2"
   )
-  assert rediswait.redis_wait_url() == "redis://example:6379/2"
-
-  monkeypatch.setattr(rediswait, "_ini_redis_location", lambda: "")
-  assert rediswait.redis_wait_url() == rediswait.COMPOSE_REDIS_UNIX_URL
+  assert valkeywait.valkey_wait_url() == "valkey://example:6379/2"
 
   def boom() -> str:
     raise RuntimeError("ini unreadable")
 
-  monkeypatch.setattr(rediswait, "_ini_redis_location", boom)
-  assert rediswait.redis_wait_url() == rediswait.COMPOSE_REDIS_UNIX_URL
+  monkeypatch.setattr(cfg, "get_valkey_location", boom)
+  assert valkeywait.valkey_wait_url() == valkeywait.COMPOSE_VALKEY_UNIX_URL
 
 
-def test_redis_wait_url_remaps_compose_hostname_redis_to_unix(monkeypatch):
-  """Baked redis://redis:6379/1 must not DNS-wait before redis joins the net."""
-  from hpcperfstats.dbload.lib import rediswait
+def test_valkey_wait_url_remaps_compose_hostname_valkey_to_unix(monkeypatch):
+  """A valkey://valkey:6379/1 INI must not DNS-wait before valkey joins."""
+  from hpcperfstats.dbload.lib import conf_parser as cfg, valkeywait
 
-  assert rediswait.compose_redis_tcp_wait_should_use_unix(
-    "redis://redis:6379/1"
+  assert valkeywait.compose_valkey_tcp_wait_should_use_unix(
+    "valkey://valkey:6379/1"
   )
-  assert not rediswait.compose_redis_tcp_wait_should_use_unix(
-    "redis://example:6379/1"
+  assert not valkeywait.compose_valkey_tcp_wait_should_use_unix(
+    "valkey://example:6379/1"
   )
   monkeypatch.setattr(
-    rediswait,
-    "_ini_redis_location",
-    lambda: "redis://redis:6379/1",
+    cfg, "get_valkey_location", lambda: "valkey://valkey:6379/1"
   )
-  assert rediswait.redis_wait_url() == rediswait.COMPOSE_REDIS_UNIX_URL
+  assert valkeywait.valkey_wait_url() == valkeywait.COMPOSE_VALKEY_UNIX_URL
 
 
 def test_django_startup_invokes_spa_static_root_heal():

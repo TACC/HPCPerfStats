@@ -262,8 +262,8 @@ def test_compute_telemetry_health_timeout_logs_without_traceback():
   assert kwargs.get("exc_info") in (None, False)
 
 
-def test_compute_telemetry_health_redis_empty_is_incomplete():
-  marker = "UNIQUE_REDIS_EMPTY_EXC_DETAIL_xyz"
+def test_compute_telemetry_health_valkey_empty_is_incomplete():
+  marker = "UNIQUE_VALKEY_EMPTY_EXC_DETAIL_xyz"
   with (
     patch.object(th.cache, "get", return_value=None),
     patch.object(th.cache, "set"),
@@ -345,7 +345,7 @@ def test_merge_type_event_batches_sums_counts_and_ors_nonzero():
   assert by_key[("host_mem", "used")]["has_nonzero"] is True
 
 
-def test_fetch_aggregates_scopes_sql_to_redis_hosts():
+def test_fetch_aggregates_scopes_sql_to_valkey_hosts():
   exec_log: list[tuple[str, object]] = []
 
   class FakeCursor:
@@ -373,7 +373,7 @@ def test_fetch_aggregates_scopes_sql_to_redis_hosts():
   with (
     patch.object(th, "transaction") as txn,
     patch.object(th, "connection", fake_conn),
-    patch.object(th, "list_recent_host_fqdns_from_redis", return_value=hosts),
+    patch.object(th, "list_recent_host_fqdns_from_valkey", return_value=hosts),
   ):
     txn.atomic.return_value = contextlib.nullcontext()
     rows, sampled = th._fetch_type_event_aggregates(
@@ -419,7 +419,7 @@ def test_fetch_aggregates_caps_host_sample():
   with (
     patch.object(th, "transaction") as txn,
     patch.object(th, "connection", fake_conn),
-    patch.object(th, "list_recent_host_fqdns_from_redis", return_value=hosts),
+    patch.object(th, "list_recent_host_fqdns_from_valkey", return_value=hosts),
   ):
     txn.atomic.return_value = contextlib.nullcontext()
     _rows, sampled = th._fetch_type_event_aggregates(
@@ -470,7 +470,7 @@ def test_fetch_aggregates_merges_batches():
   with (
     patch.object(th, "transaction") as txn,
     patch.object(th, "connection", fake_conn),
-    patch.object(th, "list_recent_host_fqdns_from_redis", return_value=hosts),
+    patch.object(th, "list_recent_host_fqdns_from_valkey", return_value=hosts),
   ):
     txn.atomic.return_value = contextlib.nullcontext()
     rows, sampled = th._fetch_type_event_aggregates(
@@ -484,8 +484,8 @@ def test_fetch_aggregates_merges_batches():
   assert rows[0]["has_nonzero"] is True
 
 
-def test_fetch_aggregates_raises_on_empty_redis():
-  with patch.object(th, "list_recent_host_fqdns_from_redis", return_value=[]):
+def test_fetch_aggregates_raises_on_empty_valkey():
+  with patch.object(th, "list_recent_host_fqdns_from_valkey", return_value=[]):
     with pytest.raises(th.EmptyRecentHostInventory):
       th._fetch_type_event_aggregates(window_hours=12)
 

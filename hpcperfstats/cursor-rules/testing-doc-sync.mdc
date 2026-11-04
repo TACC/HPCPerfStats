@@ -17,7 +17,7 @@ When test behavior, test scope, or test execution workflow changes, update
 - Changes to test runners/scripts (for example `scripts/run_tests.py`,
   `tests/run_web_e2e_workflow.sh`, compose-based test workflows, or
   `pyproject.toml` test runner metadata).
-- Changes to test prerequisites (DB/Redis/Playwright/setup steps).
+- Changes to test prerequisites (DB/Valkey/Playwright/setup steps).
 
 ## Required actions
 - Update `HPCPerfStats/docs/TESTING.md` to reflect the new commands, scope, and prerequisites.

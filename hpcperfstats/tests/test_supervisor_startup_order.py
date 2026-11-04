@@ -99,21 +99,21 @@ def test_supervisord_rabbitmq_watcher_program_uses_gil_python3():
   assert 'HOME="/home/hpcperfstats"' in config.get(section, "environment")
 
 
-def test_supervisor_startup_wait_order_is_db_then_redis_then_web():
+def test_supervisor_startup_wait_order_is_db_then_valkey_then_web():
   repo_root = _repo_root()
   script_path = repo_root / "services-conf" / "supervisor_startup.sh"
   content = script_path.read_text()
 
   db_marker = "Waiting for postgres..."
-  redis_marker = "Waiting for Redis..."
+  valkey_marker = "Waiting for Valkey..."
   web_marker = "Waiting for $URL to become available..."
 
   assert db_marker in content
-  assert redis_marker in content
+  assert valkey_marker in content
   assert web_marker in content
 
-  assert content.index(db_marker) < content.index(redis_marker)
-  assert content.index(redis_marker) < content.index(web_marker)
+  assert content.index(db_marker) < content.index(valkey_marker)
+  assert content.index(valkey_marker) < content.index(web_marker)
   # HTTP wait uses curl; image hpcperfstats-base must apt-install it (not only
   # python-build). Regression: trixie-slim had no curl -> "curl: not found".
   assert 'curl -s -o /dev/null -w "%{http_code}"' in content

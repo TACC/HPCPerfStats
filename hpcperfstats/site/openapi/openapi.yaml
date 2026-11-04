@@ -8,7 +8,7 @@ paths:
     get:
       operationId: admin_monitor_retrieve
       description: |-
-        Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Redis,
+        Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Valkey,
         RabbitMQ, TimescaleDB stats, telemetry health).
 
         Supports a lightweight, per-section API via the optional 'section' query
@@ -108,14 +108,14 @@ paths:
 
         Deletes Django ``@cache_page`` / ``dynamic_cache_page`` rows via
           ``cache.delete``
-        (correct key prefix/versioning), then raw Redis ``SCAN`` for keys whose
+        (correct key prefix/versioning), then raw Valkey ``SCAN`` for keys whose
           names
         embed the same URL MD5 as Django's cache layer (covers ``Vary`` variants).
 
         For any ``/machine`` or ``/machine/...`` path, also targets ``/api/home/``
           and
         drops ``home_options`` ORM cache keys (dates, metrics list, queues, states,
-        site newest job end). Works without a raw Redis client (LocMem): ORM +
+        site newest job end). Works without a raw Valkey client (LocMem): ORM +
           Django
         cache deletes still run.
 
@@ -666,7 +666,7 @@ paths:
     get:
       operationId: jobs_plots_retrieve
       description: |-
-        Job-level plots from Redis L1 / ``job_plot_artifact`` L2 only.
+        Job-level plots from Valkey L1 / ``job_plot_artifact`` L2 only.
 
         No request-time ``jid_table`` / ``host_data`` compute. Fingerprint uses
         persisted ``metrics_distinct_time_count`` only. Null ``plot_item`` with

@@ -37,8 +37,8 @@ def _compose_has_named_tmpfs_volume(
   return False
 
 
-def _compose_has_redis_runtime_named_volume(content: str) -> bool:
-  """Return True when top-level volumes define redis_runtime as driver: local.
+def _compose_has_valkey_runtime_named_volume(content: str) -> bool:
+  """Return True when top-level volumes define valkey_runtime as driver: local.
 
   Comment lines under ``volumes:`` are skipped with a linear scan. CodeQL
   py/redos (alerts 26 and 27) flagged a DOTALL nested comment-line star that
@@ -54,20 +54,20 @@ def _compose_has_redis_runtime_named_volume(content: str) -> bool:
     i += 1
   return (
     i + 1 < len(lines)
-    and lines[i] == "  redis_runtime:"
+    and lines[i] == "  valkey_runtime:"
     and lines[i + 1] == "    driver: local"
   )
 
 
-def test_compose_has_redis_runtime_named_volume_skips_comments_linearly():
+def test_compose_has_valkey_runtime_named_volume_skips_comments_linearly():
   """Regression: CodeQL py/redos on DOTALL comment-star skip (alerts 26, 27)."""
-  assert _compose_has_redis_runtime_named_volume(
-    "volumes:\n  # a\n  # b\n  redis_runtime:\n    driver: local\n"
+  assert _compose_has_valkey_runtime_named_volume(
+    "volumes:\n  # a\n  # b\n  valkey_runtime:\n    driver: local\n"
   )
-  assert not _compose_has_redis_runtime_named_volume(
-    "volumes:\n  # redis_runtime:\n    driver: local\n"
+  assert not _compose_has_valkey_runtime_named_volume(
+    "volumes:\n  # valkey_runtime:\n    driver: local\n"
   )
-  assert not _compose_has_redis_runtime_named_volume("services:\n  redis:\n")
+  assert not _compose_has_valkey_runtime_named_volume("services:\n  valkey:\n")
   src = Path(__file__).read_text()
   banned = "".join(("(?:  #.", r"*\n)*"))
   assert banned not in src
@@ -79,11 +79,13 @@ def test_docker_compose_has_healthchecks_for_core_services():
   content = compose_path.read_text()
 
   # Core infrastructure services defined in docker-compose.yaml
-  for service in ["redis", "proxy", "db", "rabbitmq"]:
+  for service in ["valkey", "proxy", "db", "rabbitmq"]:
     assert f"{service}:" in content
     assert "healthcheck:" in content
 
-  assert "redis-cli ping && redis-cli -s /run/redis/redis.sock ping" in content
+  assert (
+    "valkey-cli ping && valkey-cli -s /run/valkey/valkey.sock ping" in content
+  )
   assert "nc -z 127.0.0.1 80" in content
   assert "pg_isready" in content
   assert "rabbitmq-diagnostics" in content
@@ -118,7 +120,7 @@ def test_docker_compose_registry_images_are_fully_qualified_for_podman():
   repo_root = Path(__file__).resolve().parents[2]
   content = (repo_root / "docker-compose.defaults.yaml").read_text()
 
-  assert "image: docker.io/library/redis:8.10.3-alpine3.23" in content
+  assert "image: docker.io/valkey/valkey:9.1.3-alpine3.24" in content
   assert "image: docker.io/timescale/timescaledb:2.28.3-pg15" in content
   assert "image: docker.io/library/rabbitmq:4.3.7-management-alpine" in content
 
@@ -149,7 +151,7 @@ def test_docker_compose_json_file_logging_rotated():
   for service in [
     "web",
     "pipeline",
-    "redis",
+    "valkey",
     "proxy",
     "db",
     "db_pg18",
@@ -168,24 +170,25 @@ def test_docker_compose_commands_and_healthchecks_use_yaml_list_form():
   assert "command: [" not in content
   assert "test:\n        [" not in content
   assert 'test: ["' not in content
-  assert "hps-redis-entrypoint.sh" in content
-  redis_entrypoint = repo_root / "services-conf" / "redis_entrypoint.sh"
-  assert redis_entrypoint.is_file(), (
-    "redis_entrypoint.sh must be a file; a directory is a leftover Podman bind"
+  assert "hps-valkey-entrypoint.sh" in content
+  valkey_entrypoint = repo_root / "services-conf" / "valkey_entrypoint.sh"
+  assert valkey_entrypoint.is_file(), (
+    "valkey_entrypoint.sh must be a file; a directory is a leftover Podman bind"
   )
-  assert "chmod 1777 /run/redis" in redis_entrypoint.read_text()
-  assert "command:\n      - redis-server\n" in content
+  assert "chmod 1777 /run/valkey" in valkey_entrypoint.read_text()
+  assert "command:\n      - valkey-server\n" in content
   assert "      - --maxmemory\n      - 16gb\n" in content
   assert "      - --maxmemory-policy\n      - volatile-lru\n" in content
   assert '      - --io-threads\n      - "4"\n' in content
-  assert '      - --io-threads-do-reads\n      - "yes"\n' in content
-  assert "      - --unixsocket\n      - /run/redis/redis.sock\n" in content
+  assert "      - --unixsocket\n      - /run/valkey/valkey.sock\n" in content
   assert '      - --unixsocketperm\n      - "777"\n' in content
-  assert '      - --hash-min-template-entries\n      - "1"\n' in content
-  assert '      - --hash-max-template-entries\n      - "0"\n' in content
+  # Valkey rejects the Valkey 8.10 compact-hash template flags (FATAL) and
+  # ignores io-threads-do-reads; none of them may come back.
+  assert "template-entries" not in content
+  assert "io-threads-do-reads" not in content
   assert (
     "test:\n        - CMD-SHELL\n"
-    "        - redis-cli ping && redis-cli -s /run/redis/redis.sock ping\n"
+    "        - valkey-cli ping && valkey-cli -s /run/valkey/valkey.sock ping\n"
   ) in content
   assert (
     "test:\n        - CMD-SHELL\n        - nc -z 127.0.0.1 80 || exit 1\n"
@@ -202,17 +205,17 @@ def test_docker_compose_commands_and_healthchecks_use_yaml_list_form():
   assert "command:\n      - -c\n      - max_connections=500\n" in content
 
 
-def test_redis_entrypoint_sh_is_tracked_file_not_gitignored():
-  """Root *.sh must not hide the Redis bind-mount entrypoint.
+def test_valkey_entrypoint_sh_is_tracked_file_not_gitignored():
+  """Root *.sh must not hide the Valkey bind-mount entrypoint.
 
   Signature (hpcperfstats04): missing file -> Podman creates
-  services-conf/redis_entrypoint.sh as a directory; Redis exits 0 in <1ms.
+  services-conf/valkey_entrypoint.sh as a directory; Valkey exits 0 in <1ms.
   """
   repo_root = Path(__file__).resolve().parents[2]
-  path = repo_root / "services-conf" / "redis_entrypoint.sh"
+  path = repo_root / "services-conf" / "valkey_entrypoint.sh"
   assert path.is_file(), "must be a file; a directory is a leftover Podman bind"
   ignored = subprocess.run(
-    ["git", "check-ignore", "-v", "services-conf/redis_entrypoint.sh"],
+    ["git", "check-ignore", "-v", "services-conf/valkey_entrypoint.sh"],
     cwd=repo_root,
     check=False,
     capture_output=True,
@@ -223,16 +226,16 @@ def test_redis_entrypoint_sh_is_tracked_file_not_gitignored():
   # print the ``!`` exception and exit 0. A ``*.sh`` hit without ``!`` is the
   # bug that left this file off production checkouts.
   if ignored.returncode == 0:
-    assert "!services-conf/redis_entrypoint.sh" in detail, detail
+    assert "!services-conf/valkey_entrypoint.sh" in detail, detail
   else:
     assert ignored.returncode == 1, detail
   assert (
-    "!services-conf/redis_entrypoint.sh"
+    "!services-conf/valkey_entrypoint.sh"
     in (repo_root / ".gitignore").read_text()
   )
 
 
-def test_docker_compose_redis_maxmemory_policy_is_volatile_lru():
+def test_docker_compose_valkey_maxmemory_policy_is_volatile_lru():
   """job:v1 keys are TTL-free; allkeys-* would evict them (Q9)."""
   repo_root = Path(__file__).resolve().parents[2]
   content = (repo_root / "docker-compose.defaults.yaml").read_text()
@@ -242,8 +245,8 @@ def test_docker_compose_redis_maxmemory_policy_is_volatile_lru():
   assert "allkeys-random" not in content
 
 
-def test_readme_and_design_doc_redis_policy_is_volatile_lru():
-  """Operator install docs must match the compose Redis eviction policy."""
+def test_readme_and_design_doc_valkey_policy_is_volatile_lru():
+  """Operator install docs must match the compose Valkey eviction policy."""
   repo_root = Path(__file__).resolve().parents[2]
   readme = (repo_root / "README.md").read_text()
   design = (repo_root / "docs" / "design-document.md").read_text()
@@ -253,8 +256,7 @@ def test_readme_and_design_doc_redis_policy_is_volatile_lru():
   assert "volatile-lru" in design
   assert "allkeys-lru" not in design
   for text in (readme, design, upgrade):
-    assert "hash-min-template-entries" in text
-    assert "unix:///run/redis/redis.sock" in text
+    assert "unix:///run/valkey/valkey.sock" in text
     assert (
       "--io-threads 4" in text
       or "`--io-threads` **4**" in text
@@ -262,52 +264,56 @@ def test_readme_and_design_doc_redis_policy_is_volatile_lru():
     )
 
 
-def test_docker_compose_web_and_pipeline_do_not_depend_on_redis():
-  """podman-compose ``depends_on`` ``condition:`` for redis never starts it.
+def test_docker_compose_web_and_pipeline_do_not_depend_on_valkey():
+  """podman-compose ``depends_on`` ``condition:`` for valkey never starts it.
 
-  Signature: hpcperfstats_redis_1 exists, ``logs redis`` empty, ``up`` hangs.
-  ``service_started`` still hangs; do not add redis to web/pipeline depends_on.
-  Startup wait uses the Unix socket in rediswait.py instead.
+  Signature: hpcperfstats_valkey_1 exists, ``logs valkey`` empty, ``up`` hangs.
+  ``service_started`` still hangs; do not add valkey to web/pipeline depends_on.
+  Startup wait uses the Unix socket in valkeywait.py instead.
   """
   repo_root = Path(__file__).resolve().parents[2]
   content = (repo_root / "docker-compose.defaults.yaml").read_text()
   web_m = re.search(r"(?ms)^  web:\n(.*?)(?=^  [a-z].*:|\Z)", content)
   pipeline_m = re.search(r"(?ms)^  pipeline:\n(.*?)(?=^  [a-z].*:|\Z)", content)
-  redis_m = re.search(r"(?ms)^  redis:\n(.*?)(?=^  [a-z].*:|\Z)", content)
+  valkey_m = re.search(r"(?ms)^  valkey:\n(.*?)(?=^  [a-z].*:|\Z)", content)
   assert web_m, "web service not found"
   assert pipeline_m, "pipeline service not found"
-  assert redis_m, "redis service not found"
+  assert valkey_m, "valkey service not found"
   web = web_m.group(0)
   pipeline = pipeline_m.group(0)
-  redis = redis_m.group(0)
+  valkey = valkey_m.group(0)
   web_deps = re.search(r"(?ms)^    depends_on:\n(.*?)(?=^    [a-z]|\Z)", web)
   pipe_deps = re.search(
     r"(?ms)^    depends_on:\n(.*?)(?=^    [a-z]|\Z)", pipeline
   )
-  assert web_deps is None, "web must not depends_on redis (podman-compose hang)"
+  assert web_deps is None, (
+    "web must not depends_on valkey (podman-compose hang)"
+  )
   assert pipe_deps, "pipeline service not found depends_on"
   assert "- web" in pipe_deps.group(0)
-  assert "redis" not in pipe_deps.group(0)
+  assert "valkey" not in pipe_deps.group(0)
   assert "condition:" not in pipe_deps.group(0)
-  assert "healthcheck:" in redis
-  assert "redis-cli ping && redis-cli -s /run/redis/redis.sock ping" in redis
+  assert "healthcheck:" in valkey
+  assert (
+    "valkey-cli ping && valkey-cli -s /run/valkey/valkey.sock ping" in valkey
+  )
 
 
-def test_docker_compose_redis_unix_socket_volume_is_shared():
-  """Unix socket is applicable only when redis/web/pipeline share the runtime dir."""
+def test_docker_compose_valkey_unix_socket_volume_is_shared():
+  """Unix socket is applicable only when valkey/web/pipeline share the runtime dir."""
   repo_root = Path(__file__).resolve().parents[2]
   content = (repo_root / "docker-compose.defaults.yaml").read_text()
   example = (repo_root / "docker-compose.yaml.example").read_text()
   overlay = (
     repo_root / "tests" / "docker-compose.test-overlay.yaml.example"
   ).read_text()
-  assert "redis_runtime:/run/redis" in content
-  assert content.count("redis_runtime:/run/redis") >= 3
-  assert _compose_has_redis_runtime_named_volume(content), (
-    "redis_runtime is a named volume in base compose, not a settings bind"
+  assert "valkey_runtime:/run/valkey" in content
+  assert content.count("valkey_runtime:/run/valkey") >= 3
+  assert _compose_has_valkey_runtime_named_volume(content), (
+    "valkey_runtime is a named volume in base compose, not a settings bind"
   )
-  assert "redis_runtime:" not in example
-  assert "redis_runtime:/run/redis" in overlay
+  assert "valkey_runtime:" not in example
+  assert "valkey_runtime:/run/valkey" in overlay
 
 
 def test_readme_install_is_fresh_only_and_upgrade_doc_holds_existing_stack():
@@ -321,7 +327,7 @@ def test_readme_install_is_fresh_only_and_upgrade_doc_holds_existing_stack():
   assert "docs/upgrade.md" in readme
   assert "fresh install" in install.lower()
   forbidden_in_install = (
-    "Upgrading the Compose Redis server",
+    "## Compose Valkey service",
     "Upgrading from an older ini layout",
     "Migrating from the old layout",
     "PostgreSQL 18 migrate",
@@ -329,12 +335,12 @@ def test_readme_install_is_fresh_only_and_upgrade_doc_holds_existing_stack():
     "kernel.io_uring_disabled",
     "./scripts/rebuild_frontend.sh",
     "./scripts/rebuild_pipeline.sh",
-    "docker compose pull redis",
+    "podman-compose -p hpcperfstats pull valkey",
   )
   for phrase in forbidden_in_install:
     assert phrase not in install, phrase
   required_in_upgrade = (
-    "docker compose pull redis",
+    "podman-compose -p hpcperfstats pull valkey",
     "Upgrading from an older ini layout",
     "docker-compose.app.yaml",
     "pg18-migrate",
@@ -950,7 +956,7 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
   settings = (repo_root / "docker-compose.yaml.example").read_text()
   # Site bind volumes live only in settings (include). Bare `name:` under
   # volumes parses as null and breaks podman-compose rec_merge_one.
-  # redis_runtime is a named Docker volume in base compose - not a setting.
+  # valkey_runtime is a named Docker volume in base compose - not a setting.
   assert re.search(r"(?m)^volumes:\s*$", settings) is not None
   bind_names = (
     "hpcperfstatsdata",
@@ -968,8 +974,8 @@ def test_docker_compose_base_omits_null_volume_stubs_for_podman_compose():
     # Service mounts in base still reference the volume names.
     assert name in base
     assert not re.search(rf"(?m)^  {name}:\s*$", base)
-  assert _compose_has_redis_runtime_named_volume(base)
-  assert "redis_runtime:" not in settings
+  assert _compose_has_valkey_runtime_named_volume(base)
+  assert "valkey_runtime:" not in settings
   assert "ssl_certs:" not in settings
   assert "ssl_certs:/etc/ssl/hpcperfstats" not in base
   assert "proxy_ssl_source:/mnt/ssl-source:ro" in base
@@ -1167,7 +1173,7 @@ def test_docker_compose_test_overlay_clears_host_binds():
       "test_proxy_ssl_source",
     ):
       assert name in overlay_path.read_text()
-    assert "redis_runtime:/run/redis" in overlay_path.read_text()
+    assert "valkey_runtime:/run/valkey" in overlay_path.read_text()
     assert "test_ssl_certs" not in overlay_path.read_text()
   for name in (
     "test_hpcperfstatsdata",

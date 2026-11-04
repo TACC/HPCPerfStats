@@ -265,3 +265,78 @@ def test_owner_that_cannot_be_restored_is_reported(tmp_path, capsys):
   foreign = os.stat_result(fields)
   cli.write_with_permissions(tmp_path / "out.ini", "x = 1\n", foreign)
   assert "could not restore owner" in capsys.readouterr().err
+
+
+def _migrate_site(tmp_path, capsys, cache_lines):
+  """Rewrite _SITE plus a [CACHE] block via main(); return (stdout, text)."""
+  cli = _load_cli()
+  ini = tmp_path / "hpcperfstats.ini"
+  ini.write_text(_SITE + "\n[CACHE]\n" + cache_lines)
+  out = tmp_path / "out.ini"
+  assert (
+    cli.main([str(ini), "--example", str(_EXAMPLE), "--output", str(out)]) == 0
+  )
+  return capsys.readouterr().out, out.read_text()
+
+
+def test_redis_location_compose_socket_becomes_commented_valkey_default(
+  tmp_path, capsys
+):
+  stdout, text = _migrate_site(
+    tmp_path, capsys, "redis_location = unix:///run/redis/redis.sock?db=1\n"
+  )
+  assert "renamed: [CACHE] redis_location -> valkey_location" in stdout
+  assert "redis_location" not in text
+  assert "# valkey_location = unix:///run/valkey/valkey.sock?db=1" in _lines(
+    text
+  )
+  assert not any(line.startswith("valkey_location") for line in _lines(text))
+
+
+def test_redis_location_non_default_db_keeps_index(tmp_path, capsys):
+  _stdout, text = _migrate_site(
+    tmp_path, capsys, "redis_location = unix:///run/redis/redis.sock?db=3\n"
+  )
+  assert "valkey_location = unix:///run/valkey/valkey.sock?db=3" in _lines(text)
+
+
+def test_redis_location_compose_host_maps_to_valkey_host(tmp_path, capsys):
+  _stdout, text = _migrate_site(
+    tmp_path, capsys, "redis_location = redis://redis:6379/1\n"
+  )
+  assert "valkey_location = valkey://valkey:6379/1" in _lines(text)
+
+
+@pytest.mark.parametrize(
+  ("old", "new"),
+  [
+    (
+      "redis://u:p@cache.example.org:6380/2",
+      "valkey://u:p@cache.example.org:6380/2",
+    ),
+    ("rediss://cache.example.org:6380/0", "valkeys://cache.example.org:6380/0"),
+  ],
+)
+def test_redis_location_external_url_keeps_host(tmp_path, capsys, old, new):
+  """External caches must survive the rename (no silent fall back to socket)."""
+  _stdout, text = _migrate_site(tmp_path, capsys, f"redis_location = {old}\n")
+  assert f"valkey_location = {new}" in _lines(text)
+
+
+def test_valkey_location_wins_over_redis_location(tmp_path, capsys):
+  stdout, text = _migrate_site(
+    tmp_path,
+    capsys,
+    "redis_location = redis://old:6379/1\n"
+    "valkey_location = valkey://new:6379/1\n",
+  )
+  assert "renamed:" not in stdout
+  assert "dropped (not in example): [CACHE] redis_location" in stdout
+  assert "valkey_location = valkey://new:6379/1" in _lines(text)
+  assert "redis_location" not in text
+
+
+def test_site_without_cache_section_reports_no_rename(tmp_path, capsys):
+  cli = _load_cli()
+  site = cli.parse_ini_text(_SITE)
+  assert cli.migrate_renamed_options(site) == []

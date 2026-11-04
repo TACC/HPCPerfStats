@@ -33,7 +33,7 @@ Applies to **in-scope** Python in the HPCPerfStats checkout and the in-tree **`h
    - **`Args:`** for every documentable param as `name (type): description`
    - **`Returns:`** (or **`Yields:`** for generators) with type + description, or exactly **`None`**
    - **`Raises:`** when AST finds a named (or bare) `raise` — one entry per exception type
-   - **`Examples:`** on **every** def — at least one `>>>` doctest prompt with **real usage** (concrete args, CLI comment + call, or constructor). Use `# doctest: +SKIP` only when the example needs live DB/Redis/daemons; **forbidden** as the sole content: `>>> name(...)  # doctest: +SKIP` or `>>> ...  # doctest: +SKIP`
+   - **`Examples:`** on **every** def — at least one `>>>` doctest prompt with **real usage** (concrete args, CLI comment + call, or constructor). Use `# doctest: +SKIP` only when the example needs live DB/Valkey/daemons; **forbidden** as the sole content: `>>> name(...)  # doctest: +SKIP` or `>>> ...  # doctest: +SKIP`
    - **Line length** — wrap to Ruff ``line-length`` (**80** HPCPerfStats, **88** tools)
 3. **Polymorphism** — document unions/optionals/open ``Any`` variants and real `*args`/`**kwargs` protocols (framework contract or keys read in the body). **Forbidden deferrals:** "see callers", "see return sites", "call site(s)", "by call site", "vary by call site", "depending on call-site", "Keyword-arg polymorphism", "Variadic positional polymorphism".
 4. **No upgrade-helper AI slop** — forbidden templates include "Internal helper for …", "Compute or apply …", "… type." class stubs, "Value/Open/… polymorphism", "Result of ``name`` as ``Type``.", and Args of the form "`name` as ``Type``.". Prefer human prose (e.g. "Internal helper to check if the DataFrame is usable.").

@@ -30,7 +30,7 @@ DEPRECATED_ROOT_MODULES = [
   "process_memory.py",
   "django_bootstrap.py",
   "dbwait.py",
-  "rediswait.py",
+  "valkeywait.py",
   "ini_section_placement.py",
 ]
 

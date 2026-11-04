@@ -421,7 +421,7 @@ def test_compute_job_gpu_stats_degrades_when_cache_set_fails():
 
   mock_cache = MagicMock()
   mock_cache.get.side_effect = lambda key, default=None: default
-  mock_cache.set.side_effect = OSError("redis read-only")
+  mock_cache.set.side_effect = OSError("valkey read-only")
 
   job = MagicMock()
   job.jid = "j-gpu-cache-set-fail"
@@ -464,7 +464,7 @@ def test_compute_job_gpu_stats_degrades_when_cache_get_raises():
   from hpcperfstats.site.lib.machine import api, cache_utils as cu
 
   mock_cache = MagicMock()
-  mock_cache.get.side_effect = ConnectionError("redis down")
+  mock_cache.get.side_effect = ConnectionError("valkey down")
 
   job = MagicMock()
   job.jid = "j-gpu-cache-get-fail"

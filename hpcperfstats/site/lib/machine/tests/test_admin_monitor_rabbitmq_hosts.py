@@ -11,12 +11,12 @@ from django.test import RequestFactory
 
 @pytest.mark.machine_unit_mock
 class TestRabbitmqHostsSilentCensus:
-  """Merge Redis recent_host rows with last-7-day job_data FQDNs."""
+  """Merge Valkey recent_host rows with last-7-day job_data FQDNs."""
 
   def test_appends_silent_hosts_as_gt_week_with_null_last_time(self):
     from hpcperfstats.site.lib.machine import api
 
-    redis_row = {
+    valkey_row = {
       "host": "seen.example.com",
       "last_time": "2026-09-14T10:00:00+00:00",
       "age_bucket": "ok",
@@ -25,7 +25,7 @@ class TestRabbitmqHostsSilentCensus:
       patch.object(
         api,
         "_get_recent_rabbitmq_host_stats",
-        return_value=[redis_row],
+        return_value=[valkey_row],
       ),
       patch.object(
         api,
@@ -36,7 +36,7 @@ class TestRabbitmqHostsSilentCensus:
     ):
       rows = api._get_rabbitmq_hosts_section()
 
-    assert rows[0] == redis_row
+    assert rows[0] == valkey_row
     silent = [r for r in rows if r["host"] == "silent.example.com"]
     assert silent == [
       {
@@ -46,10 +46,10 @@ class TestRabbitmqHostsSilentCensus:
       }
     ]
 
-  def test_casefold_dedupes_redis_and_job_table_hosts(self):
+  def test_casefold_dedupes_valkey_and_job_table_hosts(self):
     from hpcperfstats.site.lib.machine import api
 
-    redis_row = {
+    valkey_row = {
       "host": "NODE.example.com",
       "last_time": "2026-09-14T10:00:00+00:00",
       "age_bucket": "ok",
@@ -58,7 +58,7 @@ class TestRabbitmqHostsSilentCensus:
       patch.object(
         api,
         "_get_recent_rabbitmq_host_stats",
-        return_value=[redis_row],
+        return_value=[valkey_row],
       ),
       patch.object(
         api,
@@ -72,10 +72,10 @@ class TestRabbitmqHostsSilentCensus:
     assert len(rows) == 1
     assert rows[0]["host"] == "NODE.example.com"
 
-  def test_census_error_keeps_redis_rows_only(self):
+  def test_census_error_keeps_valkey_rows_only(self):
     from hpcperfstats.site.lib.machine import api
 
-    redis_row = {
+    valkey_row = {
       "host": "seen.example.com",
       "last_time": "2026-09-14T10:00:00+00:00",
       "age_bucket": "ok",
@@ -84,7 +84,7 @@ class TestRabbitmqHostsSilentCensus:
       patch.object(
         api,
         "_get_recent_rabbitmq_host_stats",
-        return_value=[redis_row],
+        return_value=[valkey_row],
       ),
       patch.object(
         api,
@@ -94,7 +94,7 @@ class TestRabbitmqHostsSilentCensus:
     ):
       rows = api._get_rabbitmq_hosts_section()
 
-    assert rows == [redis_row]
+    assert rows == [valkey_row]
 
   def test_job_table_sql_uses_unnest_not_btrim(self):
     from hpcperfstats.site.lib.machine import api
@@ -178,10 +178,10 @@ class TestRabbitmqHostsSilentCensus:
     assert hosts == ["c101-001.local"]
     assert not any("none assigned" in h.casefold() for h in hosts)
 
-  def test_section_skips_none_assigned_from_redis_and_census(self):
+  def test_section_skips_none_assigned_from_valkey_and_census(self):
     from hpcperfstats.site.lib.machine import api
 
-    redis_row = {
+    valkey_row = {
       "host": "None Assigned.example.com",
       "last_time": "2026-09-14T10:00:00+00:00",
       "age_bucket": "ok",
@@ -195,7 +195,7 @@ class TestRabbitmqHostsSilentCensus:
       patch.object(
         api,
         "_get_recent_rabbitmq_host_stats",
-        return_value=[redis_row, real_row],
+        return_value=[valkey_row, real_row],
       ),
       patch.object(
         api,

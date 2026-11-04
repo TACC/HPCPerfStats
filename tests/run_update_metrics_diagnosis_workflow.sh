@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Opt-in Compose workflow: PostgreSQL + Redis; seeds mixed-scale jobs and runs update_metrics diagnosis pytest.
+# Opt-in Compose workflow: PostgreSQL + Valkey; seeds mixed-scale jobs and runs update_metrics diagnosis pytest.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -112,29 +112,29 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   compose_test build web
 fi
 
-echo "Starting db/redis..."
-compose_test up -d db redis
+echo "Starting db/valkey..."
+compose_test up -d db valkey
 
-echo "Waiting for healthy db/redis..."
+echo "Waiting for healthy db/valkey..."
 db_health=""
-redis_health=""
+valkey_health=""
 for _ in $(seq 1 60); do
   db_id="$(compose_service_container_id db)"
-  redis_id="$(compose_service_container_id redis)"
+  valkey_id="$(compose_service_container_id valkey)"
 
-  if [[ -n "$db_id" && -n "$redis_id" ]]; then
+  if [[ -n "$db_id" && -n "$valkey_id" ]]; then
     db_health="$(compose_container_health "$db_id" 2>/dev/null || true)"
-    redis_health="$(compose_container_health "$redis_id" 2>/dev/null || true)"
-    if [[ "$db_health" == "healthy" && "$redis_health" == "healthy" ]]; then
-      echo "db and redis are healthy."
+    valkey_health="$(compose_container_health "$valkey_id" 2>/dev/null || true)"
+    if [[ "$db_health" == "healthy" && "$valkey_health" == "healthy" ]]; then
+      echo "db and valkey are healthy."
       break
     fi
   fi
   sleep 2
 done
 
-if [[ "$db_health" != "healthy" || "$redis_health" != "healthy" ]]; then
-  echo "Timed out waiting for db/redis health." >&2
+if [[ "$db_health" != "healthy" || "$valkey_health" != "healthy" ]]; then
+  echo "Timed out waiting for db/valkey health." >&2
   compose_test ps
   exit 1
 fi

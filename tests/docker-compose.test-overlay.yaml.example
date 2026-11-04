@@ -19,7 +19,7 @@ services:
       - test_media_data:/home/hpcperfstats/hpcperfstats/site/hpcperfstats_site/media
       - test_staticfiles_ram:/home/hpcperfstats/staticfiles-ram
       - test_media_ram:/home/hpcperfstats/media-ram
-      - redis_runtime:/run/redis
+      - valkey_runtime:/run/valkey
       - postgres_runtime:/run/postgresql
   pipeline:
     # Test-only cgroup memory.max for the pipeline container (0 = unlimited).
@@ -29,7 +29,7 @@ services:
     volumes:
       - test_hpcperfstatsdata:/hpcperfstats/
       - test_ssh_keys:/hpcperfstats/.ssh/:ro
-      - redis_runtime:/run/redis
+      - valkey_runtime:/run/valkey
       - postgres_runtime:/run/postgresql
   proxy:
     volumes:

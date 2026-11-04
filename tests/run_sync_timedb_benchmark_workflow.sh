@@ -189,8 +189,8 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   compose_test build pipeline
 fi
 
-echo "Starting db/redis for sync_timedb benchmark workflow..."
-compose_test up -d db redis
+echo "Starting db/valkey for sync_timedb benchmark workflow..."
+compose_test up -d db valkey
 echo "Waiting for PostgreSQL readiness..."
 ready=0
 for _ in $(seq 1 60); do

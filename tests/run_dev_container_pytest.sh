@@ -18,8 +18,8 @@
 #     --exec   run the remaining arguments as a command instead of pytest
 #              (``$PY`` expands to the selected interpreter)
 #
-# Requires the hpcperfstats-dev db (and redis for cache tests) containers to be
-# running: ``podman start hpcperfstats-dev_db_1 hpcperfstats-dev_redis_1``.
+# Requires the hpcperfstats-dev db (and valkey for cache tests) containers to be
+# running: ``podman start hpcperfstats-dev_db_1 hpcperfstats-dev_valkey_1``.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -59,7 +59,7 @@ done
 db_state="$("${PODMAN[@]}" inspect --format '{{.State.Status}}' "$DB_CONTAINER" 2>/dev/null || true)"
 if [[ "$db_state" != "running" ]]; then
   echo "run_dev_container_pytest: ${DB_CONTAINER} is not running (state=${db_state:-missing});" >&2
-  echo "start it with: podman start ${DB_CONTAINER} ${HPCPERFSTATS_COMPOSE_PROJECT}_redis_1" >&2
+  echo "start it with: podman start ${DB_CONTAINER} ${HPCPERFSTATS_COMPOSE_PROJECT}_valkey_1" >&2
   exit 69
 fi
 
@@ -83,7 +83,7 @@ run_args=(
   --network "$NETWORK"
   -v "${ROOT_DIR}:/home/hpcperfstats:rw"
   -v "${HPCPERFSTATS_HOST_CACHE}/dev-container-pycache:/tmp/pycache:rw"
-  -v "${HPCPERFSTATS_COMPOSE_PROJECT}_redis_runtime:/run/redis:rw"
+  -v "${HPCPERFSTATS_COMPOSE_PROJECT}_valkey_runtime:/run/valkey:rw"
   -v "${HPCPERFSTATS_COMPOSE_PROJECT}_postgres_runtime:/run/postgresql:rw"
   -e HPCPERFSTATS_INI=/home/hpcperfstats/hpcperfstats.ini
   -e HPCPERFSTATS_COMPOSE_NETWORK=1

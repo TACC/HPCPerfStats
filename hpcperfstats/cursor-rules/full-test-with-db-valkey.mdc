@@ -1,15 +1,15 @@
 ---
-description: Run full tests with rootless Podman db and redis
+description: Run full tests with rootless Podman db and valkey
 alwaysApply: false
 globs: tests/run_*_workflow.sh
 ---
 
-# Full Test Workflow (DB + Redis)
+# Full Test Workflow (DB + Valkey)
 
 **Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
 
 When asked to run "full tests" for this workspace, use the rootless Podman
-Compose networked workflow so `db` and `redis` resolve correctly.
+Compose networked workflow so `db` and `valkey` resolve correctly.
 
 ## Required process
 
@@ -20,7 +20,7 @@ Compose networked workflow so `db` and `redis` resolve correctly.
    - Prefer **`tests/run_db_pytest_workflow.sh`** or another **`tests/run_*_workflow.sh`** runner rather than ad-hoc compose commands.
 3. Rebuild runtime image and start dependencies:
    - use the workflow's `compose_test build web`
-   - use the workflow's `compose_test up -d db redis`
+   - use the workflow's `compose_test up -d db valkey`
 4. Wait for health checks to pass before tests:
    - inspect the project `ps` table and confirm both services are healthy.
 5. Recreate/seed any data required by tests before executing pytest.
@@ -33,14 +33,14 @@ Compose networked workflow so `db` and `redis` resolve correctly.
 
 ## `run_all_compose_workflows.sh` scope
 
-The orchestrator runs DB pytest, Redis cache, web E2E, pipeline E2E,
+The orchestrator runs DB pytest, Valkey cache, web E2E, pipeline E2E,
 update_metrics diagnosis, the 400,000-row stress smoke, security audit, and
 Bokeh browser E2E. Keep `docs/TESTING.md` synchronized when this matrix changes.
 
 ## Why this is required
 
 - Host-side pytest may fail with `failed to resolve host 'db'` because `db` is a compose-network alias, not a host DNS name.
-- Running tests in the `web` service ensures Django DB and Redis settings match deployment topology.
+- Running tests in the `web` service ensures Django DB and Valkey settings match deployment topology.
 
 ## Reporting expectations
 

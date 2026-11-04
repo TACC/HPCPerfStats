@@ -1,7 +1,7 @@
 """Targeted API view tests for branches under-covered by integration tests.
 
 Use ``django_db(databases=[])`` so they run on the host without compose ``db``.
-ORM is mocked where views would otherwise query. LocMem cache avoids Redis
+ORM is mocked where views would otherwise query. LocMem cache avoids Valkey
 during ``@dynamic_cache_page`` wrapping.
 """
 
@@ -64,7 +64,7 @@ class _EmptyQueryChain:
 
 
 class TestInvalidateCacheForPage:
-  """invalidate_cache_for_page staff gate, validation, and Redis scan path."""
+  """invalidate_cache_for_page staff gate, validation, and Valkey scan path."""
 
   def test_requires_staff(self):
     from hpcperfstats.site.lib.machine import api
@@ -96,7 +96,7 @@ class TestInvalidateCacheForPage:
     assert response.status_code == 400
     assert "page_path" in str(response.data.get("error", "")).lower()
 
-  def test_non_scannable_redis_still_ok_without_raw_client(self):
+  def test_non_scannable_valkey_still_ok_without_raw_client(self):
     from hpcperfstats.site.lib.machine import api
 
     factory = APIRequestFactory()
@@ -109,7 +109,7 @@ class TestInvalidateCacheForPage:
     request.META["HTTP_HOST"] = "testserver"
     with (
       patch.object(api, "_require_staff", return_value=None),
-      patch.object(api, "_get_redis_cache_client", return_value=object()),
+      patch.object(api, "get_valkey_client", return_value=object()),
     ):
       response = api.invalidate_cache_for_page(request)
     assert response.status_code == 200
@@ -127,7 +127,7 @@ class TestInvalidateCacheForPage:
     )
     request.META["HTTP_HOST"] = "testserver"
 
-    class _FakeRedis:
+    class _FakeValkey:
       def __init__(self):
         self.deleted = []
 
@@ -139,10 +139,10 @@ class TestInvalidateCacheForPage:
         self.deleted.append(raw_key)
         return 1
 
-    fake = _FakeRedis()
+    fake = _FakeValkey()
     with (
       patch.object(api, "_require_staff", return_value=None),
-      patch.object(api, "_get_redis_cache_client", return_value=fake),
+      patch.object(api, "get_valkey_client", return_value=fake),
     ):
       response = api.invalidate_cache_for_page(request)
     assert response.status_code == 200

@@ -8,6 +8,7 @@ from __future__ import annotations
 import sys
 from concurrent.futures import Future
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -202,21 +203,6 @@ class TestJobListQuerysetClosure:
     chain.order_by.assert_called()
 
 
-class TestRedisCacheClientClosure:
-  def test_get_client_exceptions_fall_back(self):
-    from hpcperfstats.site.lib.machine import api
-
-    backend = MagicMock()
-    backend.get_client.side_effect = RuntimeError("fail")
-    client_holder = MagicMock()
-    client_holder.get_client.side_effect = RuntimeError("fail2")
-    fake_cache = MagicMock()
-    fake_cache._cache = backend
-    fake_cache.client = client_holder
-    with patch.object(api, "cache", fake_cache):
-      assert api._get_redis_cache_client() is None
-
-
 class TestCacheInvalidationClosure:
   def test_delete_django_cache_page_all_branches(self):
     from hpcperfstats.site.lib.machine import api
@@ -232,7 +218,7 @@ class TestCacheInvalidationClosure:
       )
     assert deleted >= 2
 
-  def test_redis_delete_scan_typeerror_and_delete_errors(self):
+  def test_valkey_delete_scan_typeerror_and_delete_errors(self):
     from hpcperfstats.site.lib.machine import api
 
     class _Client:
@@ -245,11 +231,11 @@ class TestCacheInvalidationClosure:
         raise RuntimeError("del fail")
 
     assert (
-      api._redis_delete_cache_page_keys_matching_digests(_Client(), {"digest"})
+      api._valkey_delete_cache_page_keys_matching_digests(_Client(), {"digest"})
       == 0
     )
 
-  def test_redis_delete_success_path(self):
+  def test_valkey_delete_success_path(self):
     from hpcperfstats.site.lib.machine import api
 
     class _Client:
@@ -261,7 +247,7 @@ class TestCacheInvalidationClosure:
         return 1
 
     assert (
-      api._redis_delete_cache_page_keys_matching_digests(_Client(), {"digest"})
+      api._valkey_delete_cache_page_keys_matching_digests(_Client(), {"digest"})
       == 1
     )
 
@@ -270,7 +256,9 @@ class TestCacheStatsClosure:
   def test_cache_get_exception_and_outer_scan_abort(self):
     from hpcperfstats.site.lib.machine import api
 
-    class _BadRedis:
+    class _BadValkey:
+      connection_pool = SimpleNamespace(connection_kwargs={"db": 1})
+
       def info(self):
         return {"used_memory": 1}
 
@@ -281,17 +269,15 @@ class TestCacheStatsClosure:
       def memory_usage(self, key):
         return 10
 
-    backend = MagicMock()
-    backend.get_client.return_value = _BadRedis()
     fake_cache = MagicMock()
     fake_cache.get.side_effect = RuntimeError("cache get fail")
-    fake_cache._cache = backend
     with (
       patch.object(api, "cache", fake_cache),
+      patch.object(api, "get_valkey_client", return_value=_BadValkey()),
       patch.object(
         api.settings,
         "CACHES",
-        {"default": {"LOCATION": "redis://x", "TIMEOUT": 1}},
+        {"default": {"LOCATION": "valkey://x", "TIMEOUT": 1}},
       ),
     ):
       stats = api._get_cache_stats()
@@ -300,17 +286,19 @@ class TestCacheStatsClosure:
   def test_cache_set_exception_still_returns_stats(self):
     from hpcperfstats.site.lib.machine import api
 
-    class _Redis:
+    class _Valkey:
+      connection_pool = SimpleNamespace(connection_kwargs={"db": 1})
+
       def info(self):
         return {"used_memory": 5}
 
-    backend = MagicMock()
-    backend.get_client.return_value = _Redis()
     fake_cache = MagicMock()
     fake_cache.get.return_value = None
     fake_cache.set.side_effect = RuntimeError("set fail")
-    fake_cache._cache = backend
-    with patch.object(api, "cache", fake_cache):
+    with (
+      patch.object(api, "cache", fake_cache),
+      patch.object(api, "get_valkey_client", return_value=_Valkey()),
+    ):
       stats = api._get_cache_stats()
     assert stats.get("total_data_cached_bytes") == 5
 
@@ -441,21 +429,20 @@ class TestRecentRabbitmqHostsClosure:
           return b"not-a-number"
         return str(int(datetime(2024, 1, 1, tzinfo=UTC).timestamp()))
 
-    backend = MagicMock()
-    backend.get_client.return_value = _Client()
     fake_cache = MagicMock()
-    fake_cache._cache = backend
-    with patch.object(api, "cache", fake_cache):
+    with (
+      patch.object(api, "cache", fake_cache),
+      patch.object(api, "get_valkey_client", return_value=_Client()),
+    ):
       rows = api._get_recent_rabbitmq_host_stats()
-    assert isinstance(rows, list)
+    assert [row["host"] for row in rows] == ["n2.example.com"]
 
   def test_outer_exception_returns_empty_list(self):
     from hpcperfstats.site.lib.machine import api
 
-    fake_cache = MagicMock()
-    fake_cache._cache = MagicMock()
-    fake_cache._cache.get_client.side_effect = RuntimeError("boom")
-    with patch.object(api, "cache", fake_cache):
+    with patch.object(
+      api, "get_valkey_client", side_effect=RuntimeError("boom")
+    ):
       assert api._get_recent_rabbitmq_host_stats() == []
 
 
@@ -774,27 +761,30 @@ class TestRemainingHelperLinesClosure:
       )
     assert deleted >= 2
 
-  def test_cache_stats_db0_string_parse_failure(self):
+  def test_cache_stats_ignores_keyspace_of_other_db(self):
     from hpcperfstats.site.lib.machine import api
 
-    class _Redis:
+    class _Valkey:
+      connection_pool = SimpleNamespace(connection_kwargs={"db": 1})
+
       def info(self):
-        return {"used_memory": 1, "db0": "keys=bad,expires=0"}
+        return {"used_memory": 1, "db0": {"keys": 7, "expires": 0}}
 
       def scan_iter(self, count=500):
         return iter([])
 
-    backend = MagicMock()
-    backend.get_client.return_value = _Redis()
     fake_cache = MagicMock()
     fake_cache.get.return_value = None
-    fake_cache._cache = backend
-    with patch.object(api, "cache", fake_cache):
+    with (
+      patch.object(api, "cache", fake_cache),
+      patch.object(api, "get_valkey_client", return_value=_Valkey()),
+    ):
       stats = api._get_cache_stats()
     assert stats["total_data_cached_bytes"] == 1
-    assert "db0_keys" not in stats
+    # db0's 7 keys belong to another DB; the configured db1 is absent (empty).
+    assert stats["keys"] == 0
 
-  def test_redis_delete_typeerror_scan_and_skip_non_cache_keys(self):
+  def test_valkey_delete_typeerror_scan_and_skip_non_cache_keys(self):
     from hpcperfstats.site.lib.machine import api
 
     class _Client:
@@ -811,44 +801,44 @@ class TestRemainingHelperLinesClosure:
 
     client = _Client()
     assert (
-      api._redis_delete_cache_page_keys_matching_digests(client, {"d"}) == 0
+      api._valkey_delete_cache_page_keys_matching_digests(client, {"d"}) == 0
     )
 
   def test_cache_stats_info_branches_and_no_client(self):
     from hpcperfstats.site.lib.machine import api
 
-    class _Redis:
+    class _Valkey:
+      connection_pool = SimpleNamespace(connection_kwargs={"db": 1})
+
       def info(self):
         return {
           "used_memory": 100,
           "used_memory_human": "100B",
           "maxmemory": 200,
           "maxmemory_human": "200B",
-          "db0": "keys=1,expires=0",
+          "db1": {"keys": 1, "expires": 0},
         }
 
       def scan_iter(self, count=500):
         return iter([])
 
-    backend = MagicMock()
-    backend.get_client.return_value = _Redis()
     fake_cache = MagicMock()
     fake_cache.get.return_value = None
-    fake_cache._cache = backend
     with (
       patch.object(api, "cache", fake_cache),
+      patch.object(api, "get_valkey_client", return_value=_Valkey()),
       patch.object(
         api.settings,
         "CACHES",
-        {"default": {"LOCATION": "redis://x", "TIMEOUT": 1}},
+        {"default": {"LOCATION": "valkey://x", "TIMEOUT": 1}},
       ),
     ):
       stats = api._get_cache_stats()
     assert stats["total_cache_usable_human"] == "200B"
     assert stats["total_data_cached_bytes"] == 100
-    assert stats["db0_keys"] == 1
+    assert stats["keys"] == 1
 
-    with patch.object(api, "_get_redis_cache_client", return_value=None):
+    with patch.object(api, "get_valkey_client", return_value=None):
       stats2 = api._get_cache_stats()
     assert "location" in stats2
 
@@ -903,7 +893,7 @@ class TestRemainingHelperLinesClosure:
       )
     assert deleted >= 2
 
-  def test_redis_delete_inner_delete_exception(self):
+  def test_valkey_delete_inner_delete_exception(self):
     from hpcperfstats.site.lib.machine import api
 
     digest = "abc123"
@@ -916,11 +906,11 @@ class TestRemainingHelperLinesClosure:
         raise RuntimeError("del fail")
 
     assert (
-      api._redis_delete_cache_page_keys_matching_digests(_Client(), {digest})
+      api._valkey_delete_cache_page_keys_matching_digests(_Client(), {digest})
       == 0
     )
 
-  def test_redis_delete_typeerror_fallback_then_delete(self):
+  def test_valkey_delete_typeerror_fallback_then_delete(self):
     from hpcperfstats.site.lib.machine import api
 
     client = MagicMock()
@@ -930,7 +920,7 @@ class TestRemainingHelperLinesClosure:
     ]
     client.delete.return_value = 1
     assert (
-      api._redis_delete_cache_page_keys_matching_digests(client, {"digest"})
+      api._valkey_delete_cache_page_keys_matching_digests(client, {"digest"})
       == 1
     )
 
@@ -942,24 +932,26 @@ class TestRemainingHelperLinesClosure:
 
     class _BadClient:
       def info(self):
-        raise RuntimeError("redis down")
+        raise RuntimeError("valkey down")
 
     with (
       patch.object(api.cache, "get", return_value=None),
-      patch.object(api, "_get_redis_cache_client", return_value=_BadClient()),
+      patch.object(api, "get_valkey_client", return_value=_BadClient()),
       patch.object(
-        api.settings, "CACHES", {"default": {"LOCATION": "redis://x"}}
+        api.settings, "CACHES", {"default": {"LOCATION": "valkey://x"}}
       ),
     ):
       stats = api._get_cache_stats()
-    assert stats.get("location") == "redis://x"
+    assert stats.get("location") == "valkey://x"
 
   def test_cache_stats_scan_break_and_memory_usage_failure(self):
     from hpcperfstats.site.lib.machine import api
 
-    class _Redis:
+    class _Valkey:
+      connection_pool = SimpleNamespace(connection_kwargs={"db": 1})
+
       def info(self):
-        return {"used_memory": 1, "db0": "not=valid"}
+        return {"used_memory": 1}
 
       def scan_iter(self, count=500):
         for i in range(600):
@@ -968,12 +960,12 @@ class TestRemainingHelperLinesClosure:
       def memory_usage(self, key):
         raise RuntimeError("mem fail")
 
-    backend = MagicMock()
-    backend.get_client.return_value = _Redis()
     fake_cache = MagicMock()
     fake_cache.get.return_value = None
-    fake_cache._cache = backend
-    with patch.object(api, "cache", fake_cache):
+    with (
+      patch.object(api, "cache", fake_cache),
+      patch.object(api, "get_valkey_client", return_value=_Valkey()),
+    ):
       stats = api._get_cache_stats()
     assert stats["total_data_cached_bytes"] == 1
     assert "most_used_cached_keys" in stats
@@ -981,19 +973,21 @@ class TestRemainingHelperLinesClosure:
   def test_cache_stats_top_keys_scan_exception(self):
     from hpcperfstats.site.lib.machine import api
 
-    class _Redis:
+    class _Valkey:
+      connection_pool = SimpleNamespace(connection_kwargs={"db": 1})
+
       def info(self):
         return {"used_memory": 1}
 
       def scan_iter(self, count=500):
         raise RuntimeError("scan boom")
 
-    backend = MagicMock()
-    backend.get_client.return_value = _Redis()
     fake_cache = MagicMock()
     fake_cache.get.return_value = None
-    fake_cache._cache = backend
-    with patch.object(api, "cache", fake_cache):
+    with (
+      patch.object(api, "cache", fake_cache),
+      patch.object(api, "get_valkey_client", return_value=_Valkey()),
+    ):
       stats = api._get_cache_stats()
     assert stats["total_data_cached_bytes"] == 1
 
@@ -1008,12 +1002,8 @@ class TestRemainingHelperLinesClosure:
     ):
       assert api._get_rabbitmq_stats() == {}
 
-  def test_recent_rabbitmq_get_client_exception_and_bad_values(self):
+  def test_recent_rabbitmq_bad_values_return_empty(self):
     from hpcperfstats.site.lib.machine import api
-
-    class _Backend:
-      def get_client(self):
-        raise RuntimeError("no client")
 
     class _Client:
       def scan_iter(self, match=None, count=1000):
@@ -1025,10 +1015,7 @@ class TestRemainingHelperLinesClosure:
           raise RuntimeError("get fail")
         return "not-a-ts"
 
-    fake_cache = MagicMock()
-    fake_cache._cache = _Backend()
-    fake_cache.client = _Client()
-    with patch.object(api, "cache", fake_cache):
+    with patch.object(api, "get_valkey_client", return_value=_Client()):
       rows = api._get_recent_rabbitmq_host_stats()
     assert rows == []
 
@@ -1044,12 +1031,7 @@ class TestRemainingHelperLinesClosure:
       def get(self, key):
         return str(ts).encode("utf-8")
 
-    backend = MagicMock()
-    backend.get_client.side_effect = RuntimeError("unwrap fail")
-    fake_cache = MagicMock()
-    fake_cache._cache = backend
-    fake_cache.client = _Client()
-    with patch.object(api, "cache", fake_cache):
+    with patch.object(api, "get_valkey_client", return_value=_Client()):
       rows = api._get_recent_rabbitmq_host_stats()
     assert len(rows) == 1
 
@@ -1071,12 +1053,7 @@ class TestRemainingHelperLinesClosure:
           return str(ts).encode("utf-8")
         return None
 
-    backend = MagicMock()
-    backend.get_client.side_effect = RuntimeError("unwrap fail")
-    fake_cache = MagicMock()
-    fake_cache._cache = backend
-    fake_cache.client = _Client()
-    with patch.object(api, "cache", fake_cache):
+    with patch.object(api, "get_valkey_client", return_value=_Client()):
       rows = api._get_recent_rabbitmq_host_stats()
     assert len(rows) == 1
     assert rows[0]["host"] == "n3.example.com"
@@ -1131,30 +1108,10 @@ class TestRemainingHelperLinesClosure:
     payload = {"doc": {"roots": {"root_ids": ["a"]}}, "root_ids": []}
     assert api._is_valid_bokeh_json_item_payload(payload) is False
 
-  def test_recent_rabbitmq_get_client_failures_return_empty(self):
+  def test_recent_rabbitmq_no_valkey_client_returns_empty(self):
     from hpcperfstats.site.lib.machine import api
 
-    class _Cache:
-      _cache = type(
-        "_Backend",
-        (),
-        {
-          "get_client": staticmethod(
-            lambda: (_ for _ in ()).throw(RuntimeError("unwrap"))
-          )
-        },
-      )()
-      client = type(
-        "_Wrapper",
-        (),
-        {
-          "get_client": staticmethod(
-            lambda: (_ for _ in ()).throw(RuntimeError("wrap"))
-          )
-        },
-      )()
-
-    with patch.object(api, "cache", _Cache()):
+    with patch.object(api, "get_valkey_client", return_value=None):
       assert api._get_recent_rabbitmq_host_stats() == []
 
   def test_recent_rabbitmq_all_skip_and_success_paths(self):
@@ -1181,20 +1138,7 @@ class TestRemainingHelperLinesClosure:
           return "not-a-ts"
         return str(ts)
 
-    class _Cache:
-      _cache = type(
-        "_Backend",
-        (),
-        {
-          "get_client": staticmethod(
-            lambda: (_ for _ in ()).throw(RuntimeError("unwrap"))
-          )
-        },
-      )()
-
-    cache_obj = _Cache()
-    cache_obj.client = _Client()
-    with patch.object(api, "cache", cache_obj):
+    with patch.object(api, "get_valkey_client", return_value=_Client()):
       rows = api._get_recent_rabbitmq_host_stats()
     assert len(rows) == 1
     assert rows[0]["host"] == "n7.example.com"
@@ -1206,11 +1150,7 @@ class TestRemainingHelperLinesClosure:
       def scan_iter(self, match=None, count=1000):
         raise RuntimeError("scan boom")
 
-    class _Cache:
-      _cache = None
-      client = _Client()
-
-    with patch.object(api, "cache", _Cache()):
+    with patch.object(api, "get_valkey_client", return_value=_Client()):
       assert api._get_recent_rabbitmq_host_stats() == []
 
   def test_job_plots_progressive_miss_returns_partial_without_executor(self):

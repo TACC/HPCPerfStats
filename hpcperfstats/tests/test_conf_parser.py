@@ -496,22 +496,22 @@ def test_total_cores_defaults_to_40_when_missing(monkeypatch, tmp_path):
   assert cfg.get_effective_cores() == 4
 
 
-def test_get_redis_location_default(temp_ini, monkeypatch):
-  """get_redis_location returns default when CACHE section missing."""
+def test_get_valkey_location_default(temp_ini, monkeypatch):
+  """get_valkey_location returns default when CACHE section missing."""
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
 
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
-  assert cfg.get_redis_location() == "unix:///run/redis/redis.sock?db=1"
+  assert cfg.get_valkey_location() == "unix:///run/valkey/valkey.sock?db=1"
 
 
-def test_get_redis_location_from_config(temp_ini, monkeypatch):
-  """get_redis_location returns value from [CACHE] when set."""
+def test_get_valkey_location_from_config(temp_ini, monkeypatch):
+  """get_valkey_location returns value from [CACHE] when set."""
   with open(temp_ini) as f:
     content = f.read()
-  content += "\n[CACHE]\nredis_location = redis://192.168.1.1:6379/2\n"
+  content += "\n[CACHE]\nvalkey_location = valkey://192.168.1.1:6379/2\n"
   with open(temp_ini, "w") as f:
     f.write(content)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
@@ -520,7 +520,7 @@ def test_get_redis_location_from_config(temp_ini, monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
-  assert cfg.get_redis_location() == "redis://192.168.1.1:6379/2"
+  assert cfg.get_valkey_location() == "valkey://192.168.1.1:6379/2"
 
 
 def test_get_secret_key_missing(temp_ini, monkeypatch):

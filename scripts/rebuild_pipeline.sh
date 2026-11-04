@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Rebuild the shared hpcperfstats image (Python/pipeline; no npm), then recreate
-# web + pipeline. Leaves db, redis, rabbitmq alone. Does NOT rebuild the proxy
+# web + pipeline. Leaves db, valkey, rabbitmq alone. Does NOT rebuild the proxy
 # image — proxy is taken down, then restored via ``up -d web proxy pipeline``.
 #
 # Flow (minimize downtime — build while old containers keep running):
@@ -50,7 +50,7 @@ stays up, then cut over: down proxy / web / pipeline and
 
   docker compose up -d web proxy pipeline
 
-Leaves db / db_pg18 / redis / rabbitmq running. Does not rebuild the proxy image.
+Leaves db / db_pg18 / valkey / rabbitmq running. Does not rebuild the proxy image.
 Leaves pipeline cgroup memory.high at the default (max).
 
 IMPORTANT: This does NOT ship SPA/OpenAPI/Orval fixes. After frontend changes run:
@@ -236,9 +236,9 @@ build_pipeline_image() {
 }
 
 # Stop/rm pipeline + web; always down proxy (no proxy image rebuild).
-# Never touch db / redis / rabbitmq.
+# Never touch db / valkey / rabbitmq.
 stop_and_remove_web_pipeline() {
-  echo "Leaving db / redis / rabbitmq running. Not rebuilding proxy image."
+  echo "Leaving db / valkey / rabbitmq running. Not rebuilding proxy image."
   echo "Shutting down pipeline supervisord ..."
   pipeline_supervisor_shutdown
   echo "Stopping pipeline (grace ${PIPELINE_STOP_TIMEOUT}s) ..."

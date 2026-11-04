@@ -21,7 +21,7 @@ When the task is a traceback fix, timeout fix, memory/runtime reduction, or oper
 ## Verification defaults
 
 - Add or extend targeted regression tests for the specific failure mode.
-- For DB/Redis/networked behavior, validate in compose-network workflows, not host-only assumptions.
+- For DB/Valkey/networked behavior, validate in compose-network workflows, not host-only assumptions.
 - When fix scope changes test commands or runner prerequisites, update `docs/TESTING.md` in the same task.
 
 ## Guardrails
@@ -32,6 +32,6 @@ When the task is a traceback fix, timeout fix, memory/runtime reduction, or oper
 ## Overlap
 
 - **`implementation-review-workflow.mdc`** — plan before patching, ask when the failure context is incomplete, self-review after the fix.
-- Complements `runtime-resource-and-metrics-safety.mdc`, `docker-compose-non-unit-testing.mdc`, `full-test-with-db-redis.mdc`, and `testing-doc-sync.mdc`.
+- Complements `runtime-resource-and-metrics-safety.mdc`, `docker-compose-non-unit-testing.mdc`, `full-test-with-db-valkey.mdc`, and `testing-doc-sync.mdc`.
 - See also `exhaustive-error-path-analysis.mdc` to require searching and analyzing all plausible code paths for a failure signature before finalizing a fix.
 - **`grok-surgical-bug-fix-mandate.mdc`** — zero-expansion: compress the root-cause block; chat RCA + compression metrics before the first product-code edit; no unrelated adjacent cleanup.

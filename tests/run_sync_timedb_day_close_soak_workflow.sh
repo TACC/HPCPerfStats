@@ -74,7 +74,7 @@ if [[ "${HPCPERFSTATS_DAY_CLOSE_SOAK_COMPOSE:-0}" == "1" ]]; then
   compose_prepare_bind_mount || exit 1
   compose_run_inner_script_prepare_env
   compose_web_repo_bind_mount_args || exit 1
-  compose_test up -d db redis
+  compose_test up -d db valkey
   set +e
   compose_test run --rm -T \
     -e HPCPERFSTATS_COMPOSE_NETWORK=1 \

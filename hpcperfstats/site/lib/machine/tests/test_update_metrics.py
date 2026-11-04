@@ -4989,7 +4989,7 @@ def test_main_jid_invalidate_failure_exits_one_without_compute(monkeypatch):
   monkeypatch.setattr(
     update_metrics,
     "_invalidate_caches_before_one_jid_recalc",
-    lambda jid: (_ for _ in ()).throw(RuntimeError("redis down")),
+    lambda jid: (_ for _ in ()).throw(RuntimeError("valkey down")),
   )
   monkeypatch.setattr(
     update_metrics,

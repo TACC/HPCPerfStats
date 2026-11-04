@@ -261,7 +261,7 @@ wait_for_compose_service_running() {
 verify_default_stack_running() {
   local svc
   # Hub PG15 (db) stays live; db_pg18 (profile pg18-migrate) is intentionally not started.
-  local -a required=(web pipeline redis proxy db rabbitmq)
+  local -a required=(web pipeline valkey proxy db rabbitmq)
   for svc in "${required[@]}"; do
     if ! compose_service_container_exists "${svc}"; then
       echo "rebuild_full_site.sh: required service container missing: ${svc}" >&2
@@ -331,7 +331,7 @@ print_stack_summary() {
     --format 'table {{.Names}}\t{{.ID}}\t{{.ImageID}}\t{{.Status}}' 2>/dev/null || true
   echo ""
   echo "--- Per-service inspect (container + image) ---"
-  for svc in web pipeline redis proxy db rabbitmq "${PG18_SERVICE}"; do
+  for svc in web pipeline valkey proxy db rabbitmq "${PG18_SERVICE}"; do
     name="${HPCPERFSTATS_COMPOSE_PROJECT}_${svc}_1"
     if "${PODMAN[@]}" container exists "${name}" 2>/dev/null; then
       "${PODMAN[@]}" inspect "${name}" --format "${svc}: container={{.Id}} image={{.Image}}" 2>/dev/null || true

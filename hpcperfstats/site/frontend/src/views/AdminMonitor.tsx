@@ -834,7 +834,7 @@ export default function AdminMonitor() {
             <Table className="border-0 text-sm">
                 <TableCaption className="sr-only">
                   Hosts seen via RabbitMQ plus last-7-day job-table hosts with no
-                  Redis recent_host key, and their last data timestamps. Sort by
+                  Valkey recent_host key, and their last data timestamps. Sort by
                   host, last timestamp, or status freshness using the column
                   header buttons.
                 </TableCaption>
@@ -1068,8 +1068,8 @@ export default function AdminMonitor() {
         open={cacheExpanded}
         onOpenChange={setCacheExpanded}
         panelId="admin-monitor-cache-stats"
-        ariaLabel="Cache and Redis statistics"
-        title="Cache / Redis statistics"
+        ariaLabel="Cache and Valkey statistics"
+        title="Cache / Valkey statistics"
       >
           <AdminMonitorSectionRefreshButton
             initialLoading={cacheInitialLoading}
@@ -1086,7 +1086,7 @@ export default function AdminMonitor() {
           {!cacheInitialLoading && !cacheError && cacheStats && Object.keys(cacheStats).length > 0 && (
             <Table className="border text-sm">
               <TableCaption className="sr-only">
-                Cache and Redis key statistics for the application.
+                Cache and Valkey key statistics for the application.
               </TableCaption>
               <TableBody>
                 {Object.entries(cacheStats).map(([key, value]) => {
@@ -1252,7 +1252,7 @@ export default function AdminMonitor() {
                   Bounded scan of non-error <code>host_data</code>{" "}
                   <code>(type, event)</code> pairs over the last{" "}
                   {telemetryHealth.window_hours ?? 12} hours, sampling recently
-                  reporting hosts from Redis
+                  reporting hosts from Valkey
                   {typeof telemetryHealth.ok_summary?.hosts_sampled === "number"
                     ? ` (${telemetryHealth.ok_summary.hosts_sampled} host${
                         telemetryHealth.ok_summary.hosts_sampled === 1 ? "" : "s"
@@ -1284,7 +1284,7 @@ export default function AdminMonitor() {
                 <p className="font-medium">Monitor signatures</p>
                 {(telemetryHealth.monitor_identities ?? []).length === 0 ? (
                   <p className="text-muted-foreground">
-                    No Redis monitor identity for sampled hosts (slug pending
+                    No Valkey monitor identity for sampled hosts (slug pending
                     RPM / identity not yet written).
                   </p>
                 ) : (

@@ -154,7 +154,7 @@ def test_format_host_data_newest_iso():
 
 
 @pytest.mark.machine_unit_mock
-def test_list_recent_host_fqdns_from_redis_filters_fqdns(monkeypatch):
+def test_list_recent_host_fqdns_from_valkey_filters_fqdns(monkeypatch):
   class FakeClient:
     def scan_iter(self, match=None, count=None):
       assert match == "recent_host:*"
@@ -165,14 +165,14 @@ def test_list_recent_host_fqdns_from_redis_filters_fqdns(monkeypatch):
 
   monkeypatch.setattr(
     host_data_latest,
-    "_get_redis_py_client",
+    "get_valkey_client",
     lambda: FakeClient(),
   )
-  out = host_data_latest.list_recent_host_fqdns_from_redis()
+  out = host_data_latest.list_recent_host_fqdns_from_valkey()
   assert out == ["c101-001.example.com", "c102-002.example.com"]
 
 
 @pytest.mark.machine_unit_mock
-def test_list_recent_host_fqdns_from_redis_empty_without_client(monkeypatch):
-  monkeypatch.setattr(host_data_latest, "_get_redis_py_client", lambda: None)
-  assert host_data_latest.list_recent_host_fqdns_from_redis() == []
+def test_list_recent_host_fqdns_from_valkey_empty_without_client(monkeypatch):
+  monkeypatch.setattr(host_data_latest, "get_valkey_client", lambda: None)
+  assert host_data_latest.list_recent_host_fqdns_from_valkey() == []

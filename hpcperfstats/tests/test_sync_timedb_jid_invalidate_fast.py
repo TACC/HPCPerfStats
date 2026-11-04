@@ -1,4 +1,4 @@
-"""Ingest-fast jid cache invalidation skips Redis wildcard SCAN."""
+"""Ingest-fast jid cache invalidation skips Valkey wildcard SCAN."""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ def test_plot_invalidate_ingest_fast_skips_wildcard_scan(monkeypatch):
       scan_calls.append((match, count))
       return iter(())
 
-  monkeypatch.setattr(cache_utils, "_get_redis_py_client", lambda: _Client())
+  monkeypatch.setattr(cache_utils, "get_valkey_client", lambda: _Client())
   monkeypatch.setattr(
     "hpcperfstats.site.lib.machine.models.job_plot_artifact.objects.filter",
     lambda *a, **k: type("Q", (), {"delete": lambda self: 0})(),
@@ -90,7 +90,7 @@ def test_plot_invalidate_default_still_scans_legacy_keys(monkeypatch):
       scan_calls.append(match)
       return iter(())
 
-  monkeypatch.setattr(cache_utils, "_get_redis_py_client", lambda: _Client())
+  monkeypatch.setattr(cache_utils, "get_valkey_client", lambda: _Client())
   monkeypatch.setattr(
     "hpcperfstats.site.lib.machine.models.job_plot_artifact.objects.filter",
     lambda *a, **k: type("Q", (), {"delete": lambda self: 0})(),

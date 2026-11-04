@@ -29,7 +29,7 @@ Answer **YES** or **N/A (one-line reason)** for each row. If any row is **NO**, 
 | 3 | **Regression test** added/updated for every failure/bug fixed (`every-error-regression-test.mdc`) |
 | 4 | **Relevant tests executed**; pass/fail reported; log under `test_runs/` if run |
 | 5 | **Triggered domain rules** below were **Read** (Read tool on the `.mdc` path) before editing — list them under **`## Agent rule dispatch`** at close; hook verifies Read calls for listed domain rules |
-| 6 | **Compose workflows** run with rootless Podman when DB/Redis/RabbitMQ/ingest semantics changed (`compose-required-for-data-services-changes.mdc`, `podman-runtime.mdc`) |
+| 6 | **Compose workflows** run with rootless Podman when DB/Valkey/RabbitMQ/ingest semantics changed (`compose-required-for-data-services-changes.mdc`, `podman-runtime.mdc`) |
 | 7 | **Plan YAML** todos synced if implementing a plan (`plan-completion-gate.mdc`) |
 | 8 | **New/re-triggered domain rules** dual-registered in **both** this file (task router) and `cursor-hooks/hook_task_router.py` (`ROUTER_ENTRIES`), then **`cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json`** — verify in **Final code review** when the diff touches `cursor-rules/*.mdc` |
 
@@ -94,7 +94,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 
 | Trigger paths | Read these rules |
 |---------------|------------------|
-| `docker-compose*.yaml`, `tests/run_*_workflow.sh`, `tests/podman_*.sh`, `tests/compose_test_cmd.sh`, `scripts/lib/podman_runtime.sh` | `podman-runtime.mdc`, `compose-required-for-data-services-changes.mdc`, `docker-compose-non-unit-testing.mdc`, `full-test-with-db-redis.mdc`, `no-production-env-for-ini-config.mdc` |
+| `docker-compose*.yaml`, `tests/run_*_workflow.sh`, `tests/podman_*.sh`, `tests/compose_test_cmd.sh`, `scripts/lib/podman_runtime.sh` | `podman-runtime.mdc`, `compose-required-for-data-services-changes.mdc`, `docker-compose-non-unit-testing.mdc`, `full-test-with-db-valkey.mdc`, `no-production-env-for-ini-config.mdc` |
 | `docker-compose.yaml` `db` / `db_pg18`, `services-conf/db.Dockerfile`, `services-conf/db-docker-*.sh`, `scripts/pg18_host_data_chunk_copy.py`, `docs/OPERATOR_PG18_MIGRATION.md`, `hpcperfstats/tests/test_dockerfile_db_postgres.py`, `hpcperfstats/tests/test_pg18_chunk_copy.py` | `postgres-custom-image-and-migrate-contract.mdc`, `postgres-docker-shared-memory.mdc`, `readme-installation-sync.mdc` |
 | `docker-compose.yaml` `rabbitmq` service, `services-conf/rabbitmq_vm_memory.conf`, `services-conf/rabbitmq_*.conf` | `rabbitmq-memory-cgroup-contract.mdc`, `readme-installation-sync.mdc` |
 | `docker-compose.yaml`, `docker-compose.yaml.example`, `docker-compose.defaults.yaml` | `docker-compose-settings-example-sync.mdc`, `readme-installation-sync.mdc`, `minimal-compose-install-footprint.mdc` |

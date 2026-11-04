@@ -20,4 +20,4 @@ alwaysApply: false
 ## Overlap
 
 - **`postgres-custom-image-and-migrate-contract.mdc`** — homemade PG18 dual-run also keeps **`shm_size: "16gb"`**.
-- Composes with **`local-compose-db-lifecycle-for-web-tests.mdc`** / **`full-test-with-db-redis.mdc`** when validating DB health after compose edits.
+- Composes with **`local-compose-db-lifecycle-for-web-tests.mdc`** / **`full-test-with-db-valkey.mdc`** when validating DB health after compose edits.

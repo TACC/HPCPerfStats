@@ -66,8 +66,8 @@ fi
 
 FAIL=0
 run_step "1. run_db_pytest_workflow.sh" tests/run_db_pytest_workflow.sh "${DB_EXTRA[@]}" || FAIL=$?
-run_step "2. run_redis_cache_pytest_workflow.sh" \
-  tests/run_redis_cache_pytest_workflow.sh "${REST_EXTRA[@]}" || FAIL=$?
+run_step "2. run_valkey_cache_pytest_workflow.sh" \
+  tests/run_valkey_cache_pytest_workflow.sh "${REST_EXTRA[@]}" || FAIL=$?
 run_step "3. run_web_e2e_workflow.sh" \
   tests/run_web_e2e_workflow.sh "${REST_EXTRA[@]}" || FAIL=$?
 run_step "4. run_pipeline_e2e_workflow.sh" \

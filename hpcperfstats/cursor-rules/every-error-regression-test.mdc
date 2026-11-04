@@ -19,7 +19,7 @@ This is **non-negotiable project law** for the whole codebase: **no fix or behav
 1. **Identify the failure signature** (stack line, failing assertion, bad output).
 2. **Add or update the smallest test** that reproduces it or asserts the corrected contract (prefer failing first when feasible).
 3. **Apply the fix**; keep the test green.
-4. **Run** the relevant test scope (host unit vs compose-backed per `docker-compose-non-unit-testing.mdc` / `full-test-with-db-redis.mdc`).
+4. **Run** the relevant test scope (host unit vs compose-backed per `docker-compose-non-unit-testing.mdc` / `full-test-with-db-valkey.mdc`).
 
 ## Regression examples (chat audit 2026-06)
 

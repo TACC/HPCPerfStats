@@ -12,6 +12,9 @@ the site's own settings filled in:
 * a required key (no code default) replaces the example's placeholder line;
 * a key the site file sets in an old section (``host`` under ``[PORTAL]``)
   moves to the example's section;
+* a renamed key (``RENAMED_OPTIONS``, e.g. ``[CACHE] redis_location`` ->
+  ``valkey_location``) is migrated first, its value mapped onto the new
+  names, and reported as ``renamed: …`` on stdout;
 * site keys the example no longer documents are dropped and listed on stdout;
 * the ini's owner, group and mode are captured first and applied to the
   rewritten file (also to ``--output``) and to the backup.
@@ -36,6 +39,10 @@ Attributes:
   ACTIVE_OPTION_RE: Matches an uncommented ``key = value`` line.
   COMMENTED_OPTION_RE: Matches a commented ``# key = value`` line.
   SECTION_RE: Matches a ``[SECTION]`` header line.
+  RENAMED_OPTIONS: ``(section, old option)`` -> ``(new option, value
+    mapper)`` for keys a release renamed. One-shot migration table for
+    site files; runtime ``conf_parser`` never reads the old names. Delete an
+    entry once every site has been rewritten past that release.
 """
 
 from __future__ import annotations
@@ -48,6 +55,8 @@ import os
 import re
 import stat
 import sys
+import urllib.parse
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -104,6 +113,81 @@ def parse_ini_text(text: str) -> configparser.ConfigParser:
   )
   parser.read_string(text)
   return parser
+
+
+def _valkey_url(url: str) -> str:
+  """
+  Map a pre-Valkey cache URL onto the Valkey names, keeping everything else.
+
+  The old compose socket ``/run/redis/redis.sock`` becomes
+  ``/run/valkey/valkey.sock``, the old compose host ``redis`` becomes
+  ``valkey``, and ``redis://`` / ``rediss://`` become ``valkey://`` /
+  ``valkeys://`` (valkey-py parses both forms alike). Credentials, port,
+  path, ``db`` index and query of any other (external) URL are kept.
+
+  Args:
+    url (str): Old ``[CACHE] redis_location`` value.
+
+  Returns:
+    str: The equivalent ``[CACHE] valkey_location`` value.
+
+  Examples:
+    >>> _valkey_url("unix:///run/redis/redis.sock?db=1")
+    'unix:///run/valkey/valkey.sock?db=1'
+    >>> _valkey_url("redis://redis:6379/1")
+    'valkey://valkey:6379/1'
+    >>> _valkey_url("rediss://u:p@cache.example.org:6380/2")
+    'valkeys://u:p@cache.example.org:6380/2'
+  """
+  parts = urllib.parse.urlsplit(url.strip())
+  scheme = {"redis": "valkey", "rediss": "valkeys"}.get(
+    parts.scheme.lower(), parts.scheme
+  )
+  userinfo, at, hostport = parts.netloc.rpartition("@")
+  if (parts.hostname or "").lower() == "redis":
+    hostport = "valkey" + hostport[len("redis") :]
+  path = parts.path.replace("/run/redis/redis.sock", "/run/valkey/valkey.sock")
+  # Assembled by hand: urlunsplit drops the empty authority of unix:///path.
+  query = f"?{parts.query}" if parts.query else ""
+  fragment = f"#{parts.fragment}" if parts.fragment else ""
+  return f"{scheme}://{userinfo}{at}{hostport}{path}{query}{fragment}"
+
+
+RENAMED_OPTIONS: dict[tuple[str, str], tuple[str, Callable[[str], str]]] = {
+  ("CACHE", "redis_location"): ("valkey_location", _valkey_url),
+}
+
+
+def migrate_renamed_options(site: configparser.ConfigParser) -> list[str]:
+  """
+  Rename old keys in *site* in place, mapping their values to the new names.
+
+  Runs before the rewrite and the effective-value check, so both see the
+  migrated file. A key is moved only when its new name is absent from that
+  section; when both are set the new one wins and the old one is left for
+  the ``dropped`` report.
+
+  Args:
+    site (configparser.ConfigParser): Site ini from ``parse_ini_text``.
+
+  Returns:
+    list[str]: One ``renamed: [SECTION] old -> new`` line per migration.
+
+  Examples:
+    >>> site = parse_ini_text("[CACHE]\\nredis_location = redis://redis/1\\n")
+    >>> migrate_renamed_options(site)
+    ['renamed: [CACHE] redis_location -> valkey_location']
+    >>> site.get("CACHE", "valkey_location")
+    'valkey://valkey/1'
+  """
+  report: list[str] = []
+  for (section, old), (new, convert) in RENAMED_OPTIONS.items():
+    if not site.has_option(section, old) or site.has_option(section, new):
+      continue
+    site.set(section, new, convert(site.get(section, old)))
+    site.remove_option(section, old)
+    report.append(f"renamed: [{section}] {old} -> {new}")
+  return report
 
 
 def value_equals_default(value: str, default: str | None) -> bool:
@@ -417,6 +501,8 @@ def main(argv: list[str] | None = None) -> int:
 
   original = args.ini.read_text(encoding="utf-8")
   site = parse_ini_text(original)
+  for line in migrate_renamed_options(site):
+    print(line)
   result = rewrite_from_example(site, args.example.read_text(encoding="utf-8"))
 
   changed = changed_effective_values(site, result)

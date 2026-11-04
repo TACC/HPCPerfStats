@@ -2,7 +2,7 @@
 Job-scoped host_data access via Django ORM. Provides jid_table,.
 
 TypeDetailDataProvider, and HostDataProvider for querying job/host metrics
-without raw SQL. Uses Redis caching for heavy queries.
+without raw SQL. Uses Valkey caching for heavy queries.
 
 Attributes:
   HOST_DATA_SUM_VAL_ALIAS: ``HOST_DATA_SUM_VAL_ALIAS``.

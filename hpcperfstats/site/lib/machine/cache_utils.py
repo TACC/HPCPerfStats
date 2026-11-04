@@ -1,5 +1,5 @@
 """
-Redis-backed caching for Django ORM query results.
+Valkey-backed caching for Django ORM query results.
 
 Use cached_orm() to wrap any callable that performs a read and returns a
 cacheable value (e.g. list of dicts, model instance, DataFrame-serializable).
@@ -70,6 +70,9 @@ from django.db import close_old_connections
 from django.db.models import Max
 from django.db.models.query import prefetch_related_objects
 from django.utils import timezone
+from django_valkey import get_valkey_connection
+from valkey import Valkey
+from valkey.exceptions import ValkeyError
 
 # Sentinel so we can cache None (e.g. "job not found")
 _CACHE_MISS = object()
@@ -155,7 +158,7 @@ def cached_orm(cache_key: Any, timeout: int, query_fn: Any) -> Any:
   The value must be picklable (e.g. list of dicts from .values(), or None).
   None is stored as a wrapped tuple so we can distinguish "missing key" from
     "cached None".
-  If the cache backend is unavailable (e.g. Redis down), query_fn() is used and
+  If the cache backend is unavailable (e.g. Valkey down), query_fn() is used and
     the result is not cached.
   When DEBUG or HPCPERF_CACHE_DEBUG is enabled, log basic hit/miss and timing
   information for visibility into heavy ORM/cache usage.
@@ -390,7 +393,7 @@ def invalidate_after_job_data_ingest(
 
 def make_job_detail_cache_key(jid: Any) -> Any:
   """
-  Redis key for cached job_data rows used by job detail (versioned for prefetch.
+  Valkey key for cached job_data rows used by job detail (versioned for prefetch.
 
     shape).
 
@@ -408,7 +411,7 @@ def make_job_detail_cache_key(jid: Any) -> Any:
 
 def ensure_job_metrics_data_prefetched(job: Any) -> Any:
   """
-  Always refresh metrics_data_set from DB (Redis may pickle a stale prefetch).
+  Always refresh metrics_data_set from DB (Valkey may pickle a stale prefetch).
 
   Django can pickle ``_prefetched_objects_cache`` into KEY_JOB. Trusting that
   cache after metrics persist left Job Detail Resources (e.g. watt-hours) blank
@@ -499,7 +502,7 @@ def warm_job_cache_entries(job_instances: Any, timeout: int) -> None:
 
 def invalidate_host_wide_residual_ht_for_jids(jids: Any) -> None:
   """
-  Drop residual host-by-time day-frame Redis keys for hosts of the given jids.
+  Drop residual host-by-time day-frame Valkey keys for hosts of the given jids.
 
   Keys are jid-independent (``KEY_HOST_WIDE_RESIDUAL_HT``). SCAN matches the
   prefix and deletes entries whose host-fingerprint part includes any of the
@@ -531,7 +534,7 @@ def invalidate_host_wide_residual_ht_for_jids(jids: Any) -> None:
     return
   if not hosts:
     return
-  client = _get_redis_py_client()
+  client = get_valkey_client()
   if client is None:
     return
   try:
@@ -717,35 +720,27 @@ def invalidate_jid_derived_cache_keys(
     invalidate_host_wide_residual_ht_for_jids(jids)
 
 
-def _get_redis_py_client() -> Any:
+def get_valkey_client() -> Valkey | None:
   """
-  Best-effort redis-py client from Django's default cache (for SCAN).
+  Return the raw valkey-py client behind Django's default cache, or None.
+
+  Uses django-valkey's public ``get_valkey_connection("default")`` for
+  commands the Django cache API lacks (SCAN, SADD/SMEMBERS, INFO, MEMORY
+  USAGE). Returns ``None`` when the backend is not django-valkey (LocMem
+  under tests) or the connection cannot be built, so callers soft-fail.
 
   Returns:
-    Any: Open return polymorphism from ``_get_redis_py_client``: concrete type
-    depends on inputs and branch (mapping, scalar, handle, or ``None``-like
-    empty).
+    Valkey | None: Raw client for the cache database, or ``None``.
 
   Examples:
-    >>> _get_redis_py_client()  # doctest: +SKIP
+    >>> client = get_valkey_client()  # doctest: +SKIP
+    >>> client is None or hasattr(client, "scan_iter")  # doctest: +SKIP
+    True
   """
-  backend = getattr(cache, "_cache", None)
-  if backend is None:
+  try:
+    return get_valkey_connection("default")
+  except NotImplementedError, ValkeyError:
     return None
-  client = backend
-  if hasattr(client, "get_client"):
-    try:
-      client = client.get_client()
-    except Exception:
-      return None
-  if client is None:
-    client = getattr(cache, "client", None)
-    if hasattr(client, "get_client"):
-      try:
-        client = client.get_client()
-      except Exception:
-        client = None
-  return client
 
 
 def invalidate_job_plot_cache_keys_for_jids(
@@ -754,7 +749,7 @@ def invalidate_job_plot_cache_keys_for_jids(
   ingest_fast: bool = False,
 ) -> None:
   """
-  Delete JOB_PLOTS_JSON / JOB_PLOTS_DATA Redis keys for the given jids (SCAN).
+  Delete JOB_PLOTS_JSON / JOB_PLOTS_DATA Valkey keys for the given jids (SCAN).
 
   Args:
     jids (Any): Jids passed to this helper.
@@ -768,7 +763,7 @@ def invalidate_job_plot_cache_keys_for_jids(
   """
   if not jids:
     return
-  client = _get_redis_py_client()
+  client = get_valkey_client()
   if client is not None:
     try:
       for jid in jids:
@@ -878,7 +873,7 @@ KEY_ADMIN_XALT_STATS = "admin_monitor_xalt_stats"
 KEY_ADMIN_TELEMETRY_HEALTH = "admin_monitor_telemetry_health"
 KEY_JOB_PLOT_KEYSET = "job_plot_keyset"
 
-# HPCPerfStats Monitor Redis/RabbitMQ stats: short TTL to avoid hammering backends
+# HPCPerfStats Monitor Valkey/RabbitMQ stats: short TTL to avoid hammering backends
 TIMEOUT_ADMIN_STATS = 10
 
 
@@ -952,7 +947,7 @@ def register_job_plot_cache_key(jid: Any, cache_key: Any) -> None:
   """
   if not jid or not cache_key:
     return
-  client = _get_redis_py_client()
+  client = get_valkey_client()
   if client is None:
     return
   with contextlib.suppress(Exception):
@@ -972,7 +967,7 @@ def invalidate_jid_host_window_row_count_cache(
 
   Args:
     jids (Any): Jids passed to this helper.
-    ingest_fast (bool): When True, skip Redis wildcard SCAN (TTL expiry).
+    ingest_fast (bool): When True, skip Valkey wildcard SCAN (TTL expiry).
 
   Returns:
     None
@@ -982,7 +977,7 @@ def invalidate_jid_host_window_row_count_cache(
   """
   if not jids or ingest_fast:
     return
-  client = _get_redis_py_client()
+  client = get_valkey_client()
   if client is None:
     return
   try:

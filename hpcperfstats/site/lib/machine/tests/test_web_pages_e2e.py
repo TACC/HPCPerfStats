@@ -175,7 +175,7 @@ class TestWebPagesEndToEnd:
     session["is_staff"] = True
     session.save()
 
-    # Keep this test isolated from external DB/Redis dependencies by stubbing
+    # Keep this test isolated from external DB/Valkey dependencies by stubbing
     # expensive data paths. We only validate staff gating behavior here.
     with (
       override_settings(

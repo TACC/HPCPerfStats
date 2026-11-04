@@ -42,12 +42,12 @@ canonical layout.
    | Task | Command |
    |------|---------|
    | Rebuild SPA in running stack (optional hot path; no pipeline restart) | `./scripts/rebuild_frontend.sh` |
-   | Rebuild shared hpcperfstats image; down proxy; ``up -d web proxy pipeline`` (db/redis/rabbitmq stay up; proxy image not rebuilt); does **not** set pipeline ``memory.high`` | `./scripts/rebuild_pipeline.sh` |
+   | Rebuild shared hpcperfstats image; down proxy; ``up -d web proxy pipeline`` (db/valkey/rabbitmq stay up; proxy image not rebuilt); does **not** set pipeline ``memory.high`` | `./scripts/rebuild_pipeline.sh` |
    | Full stack: ``podman build`` web/proxy/db_pg18 (ThinLTO + CPython ``--enable-optimizations``); compose down + ``up -d --no-build`` (default profile — the ``db_pg18`` container is built but **not** started); does **not** set pipeline ``memory.high`` | `./scripts/rebuild_full_site.sh` |
    | Detached recreate of web+pipeline only (no image build) | `./scripts/recreate_web_pipeline.sh` |
    | Rebuild just the app and keep persistent services running | `docker compose stop -t 30 web proxy && docker compose stop -t 480 pipeline && docker compose up --build -d web pipeline && docker compose start proxy` |
 
-   **`./scripts/rebuild_pipeline.sh`** rebuilds **`hpcperfstats`**, preserves live SPA, takes **proxy** down (same image), then starts **web**, **proxy**, and **pipeline** through the shared Podman adapter. Leaves **db** / **redis** / **rabbitmq** running. After Let's Encrypt renew or changing **`server=`** / TLS source path, run **`podman-compose -p hpcperfstats restart proxy`**.
+   **`./scripts/rebuild_pipeline.sh`** rebuilds **`hpcperfstats`**, preserves live SPA, takes **proxy** down (same image), then starts **web**, **proxy**, and **pipeline** through the shared Podman adapter. Leaves **db** / **valkey** / **rabbitmq** running. After Let's Encrypt renew or changing **`server=`** / TLS source path, run **`podman-compose -p hpcperfstats restart proxy`**.
 
    **Codon parse pyext:** the same image build runs Dockerfile stage **`codon-build`** (in-image `hpcperfstats/dbload/codon/build_codon_ext.sh`) and ships `/opt/hpcperfstats/codon_parse` for `sync_timedb` (`PYTHONPATH` in supervisord). After cutover, confirm `codon_parse status=enabled` in pipeline/`sync_timedb` logs (see **`docs/OPERATOR_SYNC_TIMEDB_STALL_VERIFY.md`** → *Codon parse bridge*). Do **not** host-prebuild or stage `.so` files into the build context.
 
@@ -67,20 +67,38 @@ canonical layout.
 
 ---
 
-## Compose Redis image
+## Compose Valkey service
 
-`docker-compose.yaml` pins **Redis Open Source 8.10** (`redis:8.10.3-alpine3.23`) with **`maxmemory 16gb`**, **`volatile-lru`** (Django cache keys keep TTL and remain evictable), **`--io-threads 4`** / **`--io-threads-do-reads yes`**, compact hashes (**`--hash-min-template-entries 1`**), and Unix socket **`unix:///run/redis/redis.sock?db=1`** on the **`redis_runtime`** named volume (TCP **6379** remains for `redis-cli` and non-compose Redis). Do **not** put Redis on **`web`** / **`pipeline`** `depends_on` (podman-compose -p hpcperfstats **`condition:`** leaves Redis created with empty logs). Startup wait remaps hostname **`redis`** to the Unix socket URL, not **`redis://redis:6379/1`** (that hostname is missing until Redis joins the network). Do **not** use **`allkeys-*`** for Django/listend cache keys. `sync_timedb` no longer stores queues or member maps in Redis; durable ingest/append state is `.sync_timedb_job_store.json` plus `.sync_timedb_archive_members/`. Redis has no persistence volume (`appendonly no`), so upgrading still clears cached pages/plots until they are recomputed. Size the Linux Podman host so Redis can use that cap alongside Postgres `shm_size` / `shared_buffers`. After pulling this Redis wiring, recreate **`redis`**, **`web`**, and **`pipeline`** so they all mount **`redis_runtime`**, and bake **`[CACHE] redis_location = unix:///run/redis/redis.sock?db=1`**. Keep **`redis://redis:6379/1`** only for an external Redis host.
+`docker-compose.defaults.yaml` pins **Valkey 9.1** (`docker.io/valkey/valkey:9.1.3-alpine3.24`) and runs `valkey-server --appendonly no --maxmemory 16gb --maxmemory-policy volatile-lru --io-threads 4 --unixsocket /run/valkey/valkey.sock --unixsocketperm 777`. The command must stay `valkey-server`: the image entrypoint drops root only for that name. `services-conf/valkey_entrypoint.sh` creates **`/run/valkey`** on the **`valkey_runtime`** named volume, which **`valkey`**, **`web`** and **`pipeline`** all mount, so the cache URL is **`unix:///run/valkey/valkey.sock?db=1`** (TCP **6379** remains for `valkey-cli` and non-compose clients). Do **not** put `valkey` on **`web`** / **`pipeline`** `depends_on` (podman-compose **`condition:`** leaves the container created with empty logs). Startup wait (`valkeywait.py`) remaps hostname **`valkey`** to the Unix socket URL, since that hostname is missing until the container joins the network. Do **not** use **`allkeys-*`** for Django/listend cache keys. `sync_timedb` stores no queues or member maps in Valkey; durable ingest/append state is `.sync_timedb_job_store.json` plus `.sync_timedb_archive_members/`. Valkey has no persistence volume (`appendonly no`), so every recreate clears cached pages/plots until they are recomputed. Size the Linux Podman host so Valkey can use the 16 GiB cap alongside Postgres `shm_size` / `shared_buffers`.
 
-On the deployment host:
+The app talks to Valkey through **valkey-py** (`valkey==6.2.0`) and **django-valkey** (`django-valkey==0.4.1`, backend `django_valkey.cache.ValkeyCache`, default pickle serializer). Both are pure-Python wheels; the optional `libvalkey` C parser extra is intentionally not installed, so the free-threaded pipeline interpreter keeps the GIL disabled. Wheel sha256 for audit: django-valkey `50509c60be59f61f6094720c3e326a22f54c6a3537e4729b9c63aa2e83c69e0b`, valkey `94a12c87cd070e356b2c89e2946fa582d9f65ec2e003ab1867e987220e2beae8`.
+
+Bump the image tag on a running host:
 
 ```bash
-docker compose pull redis
-docker compose up -d redis
-docker compose exec redis redis-cli INFO server | grep redis_version
-docker compose restart web pipeline
+podman-compose -p hpcperfstats pull valkey
+podman-compose -p hpcperfstats up -d valkey
+podman-compose -p hpcperfstats exec valkey valkey-cli INFO server | grep -E '^(server_name|valkey_version):'
+podman-compose -p hpcperfstats restart web pipeline
 ```
 
-Expect `redis_version:8.8.x` (or the pin in compose). Roll back by restoring the previous image tag in `docker-compose.yaml`, then `pull` / `up -d redis` and restart **web** and **pipeline**. If **`[CACHE] redis_location`** in `hpcperfstats.ini` points at an **external** Redis host (not the Compose service), upgrade that server separately per [Redis OSS standalone upgrade](https://redis.io/docs/latest/operate/oss_and_stack/install/upgrade/standalone/) (supported path: 7.x → 8.x), then restart app services that use the cache.
+Expect `server_name:valkey` and `valkey_version:9.1.x` (or the pin in compose). Roll back by restoring the previous image tag, then `pull` / `up -d valkey` and restart **web** and **pipeline**. If **`[CACHE] valkey_location`** points at an **external** server (not the Compose service), upgrade that server separately, then restart the app services that use the cache.
+
+### Redis → Valkey cutover (one-time)
+
+This release replaces the Compose `redis` service (Redis Open Source 8.10) with `valkey` and renames every project-owned name: service, container `hpcperfstats_valkey_1`, volume `valkey_runtime`, socket `/run/valkey/valkey.sock`, and INI key **`[CACHE] valkey_location`**. `conf_parser` does not read the old **`[CACHE] redis_location`** key, so the site ini must be migrated by the rewrite script (below). On the Python side, redis-py and Django's built-in `RedisCache` are replaced by valkey-py 6.2.0 + django-valkey 0.4.1 (sha256 above); the image rebuild installs them. The settings env override **`JOB_PLOT_REDIS_MAX_BYTES`** is now **`JOB_PLOT_VALKEY_MAX_BYTES`** (rename it wherever a host sets it).
+
+From the checkout holding the site ini, after `git pull` to this release:
+
+```bash
+./scripts/rewrite_hpcperfstats_ini.sh --dry-run
+./scripts/rewrite_hpcperfstats_ini.sh
+./scripts/rebuild_full_site.sh
+podman rm -f hpcperfstats_redis_1
+podman volume rm hpcperfstats_redis_runtime
+```
+
+The dry run must print `renamed: [CACHE] redis_location -> valkey_location`, or nothing for that key if the site never set it. If it prints nothing while the site ini does set `redis_location`, the checkout was not pulled to the release. `rebuild_full_site.sh` bakes the rewritten ini, then runs `down --remove-orphans` and `up -d`, so `valkey`, `web` and `pipeline` start together on the new socket. The last two lines are cleanup only: nothing mounts the old container or volume any more. The cache starts empty (there was no persistence), as after any restart: job plots fall back to the DB artifact and `recent_host:*` refills within the listend TTL.
 
 ---
 
@@ -96,7 +114,7 @@ To roll back, set `host = db` again; the socket volume and hba file are harmless
 
 ## Rewrite a site ini onto the current example
 
-`scripts/rewrite_hpcperfstats_ini.py` (run via `scripts/rewrite_hpcperfstats_ini.sh`) rebuilds the site `hpcperfstats.ini` from the current **`hpcperfstats.ini.example`**: every comment, section and new key comes from the example, and only the site's own settings are filled in. A site value equal to the `conf_parser` code default stays a commented `# key = default` line. A value that differs is written on an active `key = value` line directly under its commented default, so both are visible. Required keys (no code default) replace the example placeholder. Keys found in a legacy section (for example `host` under `[PORTAL]`) move to the example's section. Keys the example no longer documents are dropped and printed (`dropped (not in example): …`). Before writing, the script checks that every key's effective value (site value, else default) is unchanged and refuses to write if not. In place it keeps the old file as `hpcperfstats.ini.bak.<UTC timestamp>`. The ini's owner, group and mode are captured before anything is written and applied to the rewritten file (or `--output` file) and to the `.bak`; both are written at `0600` first so the secrets are never readable by others mid-write. The `owner=` it prints is the container's view (under rootless podman `0:0` is the host user who ran it).
+`scripts/rewrite_hpcperfstats_ini.py` (run via `scripts/rewrite_hpcperfstats_ini.sh`) rebuilds the site `hpcperfstats.ini` from the current **`hpcperfstats.ini.example`**: every comment, section and new key comes from the example, and only the site's own settings are filled in. A site value equal to the `conf_parser` code default stays a commented `# key = default` line. A value that differs is written on an active `key = value` line directly under its commented default, so both are visible. Required keys (no code default) replace the example placeholder. Keys found in a legacy section (for example `host` under `[PORTAL]`) move to the example's section. Renamed keys are migrated first through the script's `RENAMED_OPTIONS` table and printed (`renamed: [CACHE] redis_location -> valkey_location`); the value moves only when the new key is absent. For that key the old compose socket `/run/redis/redis.sock` becomes `/run/valkey/valkey.sock`, host `redis` becomes `valkey`, and `redis://` / `rediss://` become `valkey://` / `valkeys://`; any other host, port, credentials and the db index are kept. If the site sets both keys, the new one wins and the old one is reported as dropped. Keys the example no longer documents are dropped and printed (`dropped (not in example): …`). Before writing, the script checks that every key's effective value (site value, else default) is unchanged and refuses to write if not. In place it keeps the old file as `hpcperfstats.ini.bak.<UTC timestamp>`. The ini's owner, group and mode are captured before anything is written and applied to the rewritten file (or `--output` file) and to the `.bak`; both are written at `0600` first so the secrets are never readable by others mid-write. The `owner=` it prints is the container's view (under rootless podman `0:0` is the host user who ran it).
 
 The host has no project Python, so run it through **`scripts/rewrite_hpcperfstats_ini.sh`**: it starts a throwaway container from the built image (`localhost/hpcperfstats:latest`, `--network none`) with the checkout mounted at `/work` and runs the checkout's copy of the script with the image's Python. The code and defaults it compares against are therefore this checkout's (pull the release first); no running container is touched and no redeploy is needed beforehand. From the checkout holding the site ini:
 

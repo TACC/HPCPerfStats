@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared podman-compose invocation for test workflows (source, do not execute).
 # Usage: . "$(dirname "${BASH_SOURCE[0]}")/compose_test_cmd.sh"
-#        compose_test up -d db redis
+#        compose_test up -d db valkey
 
 _compose_test_repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ "${HPCPERFSTATS_COMPOSE_DEVELOPMENT:-0}" == "1" ]]; then

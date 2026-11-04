@@ -40,7 +40,8 @@ dependencies = [
   "cryptography>=50.0.2",
   "pillow>=13.0.0",
   "tzdata==2026.5",
-  "redis==8.1.0",
+  "django-valkey==0.4.1",
+  "valkey==6.2.0",
   "djangorestframework==3.18.3",
   "drf-spectacular>=0.30.0",
   "django-cors-headers==4.9.0",
@@ -94,7 +95,7 @@ filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
 markers = [
   "django: marks tests requiring Django (dbs, settings).",
   "machine_unit_mock: site.lib.machine.tests mocks only; no DB (see hpcperfstats/conftest.py).",
-  "live_redis: live Redis cache integration; requires HPCPERFSTATS_PYTEST_LIVE_REDIS=1 and compose redis.",
+  "live_valkey: live Valkey cache integration; requires HPCPERFSTATS_PYTEST_LIVE_VALKEY=1 and compose valkey.",
     "stress_host_data: optional Timescale stress in tests/stress_host_data; requires HPCPERFSTATS_STRESS_HOST_DATA=1.",
     "pipeline_e2e: optional full-stack pipeline tests in tests/pipeline_e2e; requires HPCPERFSTATS_PIPELINE_E2E=1 and compose.",
 ]
@@ -293,7 +294,7 @@ docstring-code-format = true
 [tool.hpcperfstats.testing]
 web_e2e_runner = "tests/run_web_e2e_workflow.sh"
 db_pytest_runner = "tests/run_db_pytest_workflow.sh"
-redis_cache_pytest_runner = "tests/run_redis_cache_pytest_workflow.sh"
+valkey_cache_pytest_runner = "tests/run_valkey_cache_pytest_workflow.sh"
 
 [tool.coverage.run]
 branch = true

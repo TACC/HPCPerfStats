@@ -30,7 +30,7 @@ Attributes:
   _archive_pool_n: Number of archive worker threads.
   _archive_pool_lock: Guard for start/stop of the archive pool.
   _recent_host_queue: Attribute.
-  _recent_host_redis_client: Attribute.
+  _recent_host_valkey_client: Attribute.
   _recent_host_worker_stop_event: Attribute.
   _recent_host_worker_thread_started: Attribute.
   _timestamps_lock: Attribute.
@@ -76,7 +76,7 @@ from typing import Any, NamedTuple
 from urllib.parse import quote
 
 import pika
-import redis
+import valkey
 from pika.exceptions import (
   AMQPChannelError,
   ChannelWrongStateError,
@@ -234,7 +234,7 @@ _idle_monitor_stop_event = Event()
 _recent_host_worker_thread_started = False
 _recent_host_worker_stop_event = Event()
 _recent_host_queue = queue.Queue(maxsize=100000)
-_recent_host_redis_client = None
+_recent_host_valkey_client = None
 # Set when on_message stops consume for live-DB queue backpressure.
 _db_backpressure_pause = False
 # Set when on_message detects a dead AMQP channel/connection and requests
@@ -555,36 +555,36 @@ def _digit_epoch_start_ts_for_new_current(
   return int(fallback_ts)
 
 
-def _get_recent_host_redis_client() -> Any:
+def _get_recent_host_valkey_client() -> Any:
   """
-  Get or create the Redis client used for recent-host timestamps.
+  Get or create the Valkey client used for recent-host timestamps.
 
   Returns:
-    Any: Open return polymorphism from ``_get_recent_host_redis_client``:
+    Any: Open return polymorphism from ``_get_recent_host_valkey_client``:
     concrete type depends on inputs and branch (mapping, scalar, handle, or
     ``None``-like empty).
 
   Examples:
-    >>> _get_recent_host_redis_client()  # doctest: +SKIP
+    >>> _get_recent_host_valkey_client()  # doctest: +SKIP
   """
-  global _recent_host_redis_client
-  if _recent_host_redis_client is not None:
-    return _recent_host_redis_client
+  global _recent_host_valkey_client
+  if _recent_host_valkey_client is not None:
+    return _recent_host_valkey_client
   try:
-    _recent_host_redis_client = redis.from_url(
-      cfg.get_redis_location(), decode_responses=True
+    _recent_host_valkey_client = valkey.from_url(
+      cfg.get_valkey_location(), decode_responses=True
     )
   except Exception:
-    _recent_host_redis_client = None
-  return _recent_host_redis_client
+    _recent_host_valkey_client = None
+  return _recent_host_valkey_client
 
 
-def _set_recent_host_timestamp(redis_client: Any, host: Any) -> None:
+def _set_recent_host_timestamp(valkey_client: Any, host: Any) -> None:
   """
   Set `recent_host:<fqdn>` to current epoch seconds.
 
   Args:
-    redis_client (Any): Redis client passed to this helper.
+    valkey_client (Any): Valkey client passed to this helper.
     host (Any): Host passed to this helper.
 
   Returns:
@@ -595,7 +595,7 @@ def _set_recent_host_timestamp(redis_client: Any, host: Any) -> None:
   """
   if not host or "." not in host:
     return
-  redis_client.set(
+  valkey_client.set(
     f"recent_host:{host}",
     str(int(time.time())),
     ex=RECENT_HOST_TTL_SECONDS,
@@ -604,7 +604,7 @@ def _set_recent_host_timestamp(redis_client: Any, host: Any) -> None:
 
 def _enqueue_recent_host_update(host: Any) -> None:
   """
-  Queue a best-effort Redis host timestamp update.
+  Queue a best-effort Valkey host timestamp update.
 
   Args:
     host (Any): Host FQDN string (must contain ``.``).
@@ -621,12 +621,12 @@ def _enqueue_recent_host_update(host: Any) -> None:
     _recent_host_queue.put_nowait(host)
   except queue.Full:
     if DEBUG:
-      log_print(f"Recent-host Redis queue is full; dropping update for {host}")
+      log_print(f"Recent-host Valkey queue is full; dropping update for {host}")
 
 
 def _enqueue_monitor_identity_update(identity: Any) -> None:
   """
-  Queue a best-effort Redis ``monitor_identity:{fqdn}`` SET.
+  Queue a best-effort Valkey ``monitor_identity:{fqdn}`` SET.
 
   Identity writes ride the same background worker as ``recent_host`` so
   RabbitMQ ack / archive I/O timing is unchanged. Missing ``$build`` is
@@ -652,16 +652,16 @@ def _enqueue_monitor_identity_update(identity: Any) -> None:
   except queue.Full:
     if DEBUG:
       log_print(
-        f"Recent-host Redis queue is full; dropping monitor_identity for {fqdn}"
+        f"Recent-host Valkey queue is full; dropping monitor_identity for {fqdn}"
       )
 
 
 def _recent_host_worker() -> None:
   """
-  Background worker that writes recent-host and monitor-identity keys to Redis.
+  Background worker that writes recent-host and monitor-identity keys to Valkey.
 
   Queue items are either an FQDN ``str`` (``recent_host`` timestamp) or an
-  identity ``dict`` (``monitor_identity`` JSON). Redis-only; no DB writes,
+  identity ``dict`` (``monitor_identity`` JSON). Valkey-only; no DB writes,
   pause/ack, or archive-gate changes.
 
   Returns:
@@ -682,21 +682,21 @@ def _recent_host_worker() -> None:
       continue
 
     try:
-      redis_client = _get_recent_host_redis_client()
-      if redis_client is not None:
+      valkey_client = _get_recent_host_valkey_client()
+      if valkey_client is not None:
         if isinstance(item, dict):
           set_monitor_identity(
-            redis_client,
+            valkey_client,
             item,
             ttl_seconds=RECENT_HOST_TTL_SECONDS,
           )
         else:
-          _set_recent_host_timestamp(redis_client, item)
+          _set_recent_host_timestamp(valkey_client, item)
     except Exception as e:
       if DEBUG:
         label = item.get("fqdn") if isinstance(item, dict) else item
         log_print(
-          f"Failed to update recent-host/monitor_identity Redis for {label}: {e}"
+          f"Failed to update recent-host/monitor_identity Valkey for {label}: {e}"
         )
     finally:
       _recent_host_queue.task_done()
@@ -999,7 +999,7 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
       payload_bytes,
     )
   _enqueue_recent_host_update(host)
-  # Redis-only identity snapshot on ``$`` rotation (tolerant if ``$build``
+  # Valkey-only identity snapshot on ``$`` rotation (tolerant if ``$build``
   # absent). Does not change ack, pause/resume, or archive/DB gate semantics.
   if is_dollar:
     try:

@@ -108,7 +108,7 @@ if grep -Eq 'mktemp[[:space:]]+(-d[[:space:]]+)?(/tmp|~|\$\{?HOME)' \
   exit 1
 fi
 
-if grep -Eq '"\$\{PODMAN_COMPOSE\[@\]\}" ps[[:space:]]+(web|pipeline|proxy|rabbitmq|redis|db)([[:space:]]|$)' \
+if grep -Eq '"\$\{PODMAN_COMPOSE\[@\]\}" ps[[:space:]]+(web|pipeline|proxy|rabbitmq|valkey|db)([[:space:]]|$)' \
   "${PIPELINE_SCRIPT}" "${RECREATE_SCRIPT}" "${HELPERS}"; then
   echo "podman-compose ps must not receive positional service arguments" >&2
   exit 1
@@ -193,9 +193,9 @@ if ! awk '
   exit 1
 fi
 
-# Never stop/rm db, redis, rabbitmq.
-if grep -Eiq 'docker compose stop.*(redis|rabbitmq|db_pg18)|compose_podman_rm_service_containers.*(redis|rabbitmq)' "${PIPELINE_SCRIPT}"; then
-  echo "rebuild_pipeline.sh must not stop/rm db, redis, or rabbitmq" >&2
+# Never stop/rm db, valkey, rabbitmq.
+if grep -Eiq 'docker compose stop.*(valkey|rabbitmq|db_pg18)|compose_podman_rm_service_containers.*(valkey|rabbitmq)' "${PIPELINE_SCRIPT}"; then
+  echo "rebuild_pipeline.sh must not stop/rm db, valkey, or rabbitmq" >&2
   exit 1
 fi
 

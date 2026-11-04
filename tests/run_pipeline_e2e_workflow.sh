@@ -88,31 +88,31 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   compose_test build web
 fi
 
-echo "Starting db, redis, rabbitmq..."
-compose_test up -d db redis rabbitmq
+echo "Starting db, valkey, rabbitmq..."
+compose_test up -d db valkey rabbitmq
 
-echo "Waiting for healthy db, redis, rabbitmq..."
+echo "Waiting for healthy db, valkey, rabbitmq..."
 db_health=""
-redis_health=""
+valkey_health=""
 rmq_health=""
 for _ in $(seq 1 60); do
   db_id="$(compose_service_container_id db 2>/dev/null || true)"
-  redis_id="$(compose_service_container_id redis 2>/dev/null || true)"
+  valkey_id="$(compose_service_container_id valkey 2>/dev/null || true)"
   rmq_id="$(compose_service_container_id rabbitmq 2>/dev/null || true)"
 
-  if [[ -n "$db_id" && -n "$redis_id" && -n "$rmq_id" ]]; then
+  if [[ -n "$db_id" && -n "$valkey_id" && -n "$rmq_id" ]]; then
     db_health="$(compose_container_health "$db_id" 2>/dev/null || true)"
-    redis_health="$(compose_container_health "$redis_id" 2>/dev/null || true)"
+    valkey_health="$(compose_container_health "$valkey_id" 2>/dev/null || true)"
     rmq_health="$(compose_container_health "$rmq_id" 2>/dev/null || true)"
-    if [[ "$db_health" == "healthy" && "$redis_health" == "healthy" && "$rmq_health" == "healthy" ]]; then
-      echo "db, redis, and rabbitmq are healthy."
+    if [[ "$db_health" == "healthy" && "$valkey_health" == "healthy" && "$rmq_health" == "healthy" ]]; then
+      echo "db, valkey, and rabbitmq are healthy."
       break
     fi
   fi
   sleep 2
 done
 
-if [[ "$db_health" != "healthy" || "$redis_health" != "healthy" || "$rmq_health" != "healthy" ]]; then
+if [[ "$db_health" != "healthy" || "$valkey_health" != "healthy" || "$rmq_health" != "healthy" ]]; then
   echo "Timed out waiting for service health." >&2
   compose_test ps
   exit 1

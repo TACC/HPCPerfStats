@@ -5,6 +5,7 @@ Uses ``django_db(databases=[])`` and LocMem cache (same contract as
 """
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -472,10 +473,10 @@ class TestPageCacheHelpers:
     )
     assert deleted >= 0
 
-  def test_redis_delete_cache_page_keys_matching_digests(self):
+  def test_valkey_delete_cache_page_keys_matching_digests(self):
     from hpcperfstats.site.lib.machine import api
 
-    class _FakeRedis:
+    class _FakeValkey:
       def __init__(self):
         self.deleted = []
 
@@ -487,29 +488,21 @@ class TestPageCacheHelpers:
         self.deleted.append(raw_key)
         return 1
 
-    client = _FakeRedis()
-    n = api._redis_delete_cache_page_keys_matching_digests(client, {"deadbeef"})
+    client = _FakeValkey()
+    n = api._valkey_delete_cache_page_keys_matching_digests(
+      client, {"deadbeef"}
+    )
     assert n == 1
     assert len(client.deleted) == 1
 
-  def test_redis_delete_returns_zero_without_client_or_digests(self):
+  def test_valkey_delete_returns_zero_without_client_or_digests(self):
     from hpcperfstats.site.lib.machine import api
 
-    assert api._redis_delete_cache_page_keys_matching_digests(None, {"x"}) == 0
+    assert api._valkey_delete_cache_page_keys_matching_digests(None, {"x"}) == 0
     assert (
-      api._redis_delete_cache_page_keys_matching_digests(MagicMock(), set())
+      api._valkey_delete_cache_page_keys_matching_digests(MagicMock(), set())
       == 0
     )
-
-  def test_get_redis_cache_client_unwraps_backend(self):
-    from hpcperfstats.site.lib.machine import api
-
-    inner = MagicMock()
-    backend = MagicMock()
-    backend.get_client.return_value = inner
-    with patch.object(api, "cache") as mock_cache:
-      mock_cache._cache = backend
-      assert api._get_redis_cache_client() is inner
 
 
 class TestJSONResponseAndSiteCacheTimeout:
@@ -1206,22 +1199,60 @@ class TestRabbitmqStatsErrorBranches:
 
 
 class TestCacheStatsScanPaths:
-  def test_scan_iter_builds_top_keys_and_parses_db0_string(self):
+  def test_cache_stats_reports_valkey_version_and_configured_db_keys(self):
+    """Regression: keys come from the configured DB (1), not db0.
+
+    Valkey INFO also carries a frozen wire-compat version; only the real
+    server version is surfaced and the old db0_keys field is gone.
+    """
+    from hpcperfstats.site.lib.machine import api
+
+    class _FakeValkey:
+      connection_pool = SimpleNamespace(connection_kwargs={"db": 1})
+
+      def info(self):
+        return {
+          "valkey_version": "9.1.3",
+          "redis_version": "7.2.4",
+          "used_memory": 1,
+          "db0": {"keys": 99, "expires": 0},
+          "db1": {"keys": 4, "expires": 1},
+        }
+
+      def scan_iter(self, count=500):
+        return iter([])
+
+    fake_cache = MagicMock()
+    fake_cache.get.return_value = None
+    with (
+      patch.object(api, "cache", fake_cache),
+      patch.object(api, "get_valkey_client", return_value=_FakeValkey()),
+    ):
+      stats = api._get_cache_stats()
+
+    assert stats["valkey_version"] == "9.1.3"
+    assert stats["keys"] == 4
+    assert "redis_version" not in stats
+    assert "db0_keys" not in stats
+
+  def test_scan_iter_builds_top_keys_and_hit_counters(self):
     from django.conf import settings
 
     from hpcperfstats.site.lib.machine import api
 
-    class _FakeRedis:
+    class _FakeValkey:
+      connection_pool = SimpleNamespace(connection_kwargs={"db": 1})
+
       def info(self):
         return {
-          "redis_version": "7.0",
+          "valkey_version": "9.1.3",
           "used_memory": 2048,
           "used_memory_human": "2K",
           "maxmemory": 4096,
           "maxmemory_human": "4K",
           "keyspace_hits": 100,
           "keyspace_misses": 5,
-          "db0": "keys=42,expires=1",
+          "db1": {"keys": 42, "expires": 1},
         }
 
       def scan_iter(self, count=500):
@@ -1233,23 +1264,21 @@ class TestCacheStatsScanPaths:
           return 900
         return 10
 
-    backend = MagicMock()
-    backend.get_client.return_value = _FakeRedis()
     fake_cache = MagicMock()
     fake_cache.get.return_value = None
-    fake_cache._cache = backend
 
     with (
       patch.object(api, "cache", fake_cache),
+      patch.object(api, "get_valkey_client", return_value=_FakeValkey()),
       patch.object(
         settings,
         "CACHES",
-        {"default": {"LOCATION": "redis://x", "TIMEOUT": 300}},
+        {"default": {"LOCATION": "valkey://x", "TIMEOUT": 300}},
       ),
     ):
       stats = api._get_cache_stats()
 
-    assert stats["db0_keys"] == 42
+    assert stats["keys"] == 42
     assert stats["cache_hits"] == 100
     assert stats["most_used_cached_keys"][0]["key"] == "big:key"
     assert stats["total_data_cached_bytes_sampled"] == 910
@@ -1257,7 +1286,9 @@ class TestCacheStatsScanPaths:
   def test_memory_usage_failure_still_samples_keys(self):
     from hpcperfstats.site.lib.machine import api
 
-    class _FakeRedis:
+    class _FakeValkey:
+      connection_pool = SimpleNamespace(connection_kwargs={"db": 1})
+
       def info(self):
         return {"used_memory": 1}
 
@@ -1267,13 +1298,13 @@ class TestCacheStatsScanPaths:
       def memory_usage(self, key):
         raise RuntimeError("no memory_usage")
 
-    backend = MagicMock()
-    backend.get_client.return_value = _FakeRedis()
     fake_cache = MagicMock()
     fake_cache.get.return_value = None
-    fake_cache._cache = backend
 
-    with patch.object(api, "cache", fake_cache):
+    with (
+      patch.object(api, "cache", fake_cache),
+      patch.object(api, "get_valkey_client", return_value=_FakeValkey()),
+    ):
       stats = api._get_cache_stats()
     assert stats["most_used_cached_keys"][0]["approx_size_bytes"] == 0
 

@@ -15,7 +15,7 @@ Attributes:
   DIR: Attribute.
   INSTALLED_APPS: Attribute.
   INTERNAL_IPS: Attribute.
-  JOB_PLOT_REDIS_MAX_BYTES: Attribute.
+  JOB_PLOT_VALKEY_MAX_BYTES: Attribute.
   LANGUAGE_CODE: Attribute.
   LOGGING: Attribute.
   MANAGERS: Attribute.
@@ -60,7 +60,7 @@ Attributes:
   _default_db: Attribute.
   _default_engine: Attribute.
   _static_dir: Attribute.
-  _use_live_redis_cache: Attribute.
+  _use_live_valkey_cache: Attribute.
 """
 
 from __future__ import annotations
@@ -249,9 +249,9 @@ def _is_non_http_management_command() -> Any:
   return False
 
 
-# Skip Redis caching for job plot json_items when UTF-8 JSON exceeds this size (default 512 KiB).
-JOB_PLOT_REDIS_MAX_BYTES = int(
-  os.environ.get("JOB_PLOT_REDIS_MAX_BYTES", "524288")
+# Skip Valkey caching for job plot json_items when UTF-8 JSON exceeds this size (default 512 KiB).
+JOB_PLOT_VALKEY_MAX_BYTES = int(
+  os.environ.get("JOB_PLOT_VALKEY_MAX_BYTES", "524288")
 )
 SACCT_INGEST_MAX_BODY_BYTES = _env_int(
   "SACCT_INGEST_MAX_BODY_BYTES", 8 * 1024 * 1024
@@ -457,11 +457,12 @@ TEMPLATES = [
   },
 ]
 
-# Redis for ORM and view caching
+# Valkey (django-valkey) for ORM and view caching. Default pickle serializer:
+# dynamic_cache_page stores HttpResponse objects.
 CACHES = {
   "default": {
-    "BACKEND": "django.core.cache.backends.redis.RedisCache",
-    "LOCATION": cfg.get_redis_location(),
+    "BACKEND": "django_valkey.cache.ValkeyCache",
+    "LOCATION": cfg.get_valkey_location(),
     "OPTIONS": {},
     "KEY_PREFIX": "hpcperfstats",
     "TIMEOUT": 300,
@@ -475,12 +476,13 @@ warnings.filterwarnings(
   module=r"django\.core\.cache\.backends\.base",
 )
 
-# During test runs, avoid requiring a real Redis instance by switching to the
+# During test runs, avoid requiring a real Valkey instance by switching to the
 # in-memory cache backend. This keeps production configuration unchanged.
-# Set HPCPERFSTATS_PYTEST_LIVE_REDIS=1 (e.g. tests/run_redis_cache_pytest_workflow.sh)
-# to exercise Django's RedisCache against a real Redis on the compose network.
-_use_live_redis_cache = os.environ.get(
-  "HPCPERFSTATS_PYTEST_LIVE_REDIS", ""
+# Set HPCPERFSTATS_PYTEST_LIVE_VALKEY=1 (e.g. tests/run_valkey_cache_pytest_workflow.sh)
+# to exercise the django-valkey backend against a real Valkey on the compose
+# network.
+_use_live_valkey_cache = os.environ.get(
+  "HPCPERFSTATS_PYTEST_LIVE_VALKEY", ""
 ).strip().lower() in ("1", "yes", "true")
 
 
@@ -506,7 +508,7 @@ def _running_under_pytest() -> Any:
   return "_pytest" in sys.modules
 
 
-if _running_under_pytest() and not _use_live_redis_cache:
+if _running_under_pytest() and not _use_live_valkey_cache:
   CACHES["default"] = {
     "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
     "LOCATION": "hpcperfstats-tests",

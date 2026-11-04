@@ -14,7 +14,7 @@ apply only to those residual / host-wide surfaces.
 Attributes:
   SHARED_HOST_WIDE_HELP_FOOTER: User-facing red-footer copy for residual
     host-wide counters on shared jobs.
-  HOST_WIDE_RESIDUAL_CACHE_REV: Redis day-frame cache revision.
+  HOST_WIDE_RESIDUAL_CACHE_REV: Valkey day-frame cache revision.
   MAX_SANE_COUNTER_DELTA: Per-sample ``delta`` ceiling below uint64 wrap.
   MAX_SANE_COUNTER_RATE: Per-sample ``arc`` / ``value`` ceiling.
   _GPU_HOST_DATA_TYPES: Canonical GPU ``host_data.type`` names on the
@@ -561,7 +561,7 @@ def host_wide_residual_ht_cache_key(
   day_iso: str,
 ) -> str:
   """
-  Redis key for residual host-by-time day frames (no jid).
+  Valkey key for residual host-by-time day frames (no jid).
 
   Args:
     host_fingerprint (str): Stable sorted-host fingerprint.

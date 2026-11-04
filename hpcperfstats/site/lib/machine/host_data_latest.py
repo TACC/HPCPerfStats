@@ -20,30 +20,30 @@ from django.db import connections, transaction
 from django.db.models import Max
 from django.utils import timezone
 
-from hpcperfstats.site.lib.machine.cache_utils import _get_redis_py_client
+from hpcperfstats.site.lib.machine.cache_utils import get_valkey_client
 from hpcperfstats.site.lib.machine.models import host_data
 
 
-def list_recent_host_fqdns_from_redis() -> list[str]:
+def list_recent_host_fqdns_from_valkey() -> list[str]:
   """
-  Return FQDNs from Django-cache Redis ``recent_host:*`` keys.
+  Return FQDNs from Django-cache Valkey ``recent_host:*`` keys.
 
-  listend writes ``recent_host:<fqdn>`` into the cache Redis DB. Keys whose
-  host portion lacks a ``.`` (not an FQDN) are skipped. On Redis errors or a
+  listend writes ``recent_host:<fqdn>`` into the cache Valkey DB. Keys whose
+  host portion lacks a ``.`` (not an FQDN) are skipped. On Valkey errors or a
   missing client, returns an empty list.
 
   Returns:
     list[str]: Distinct FQDNs discovered via ``SCAN``, order undefined.
 
   Examples:
-    >>> list_recent_host_fqdns_from_redis()  # doctest: +SKIP
+    >>> list_recent_host_fqdns_from_valkey()  # doctest: +SKIP
     ['c101-001.example.com']
   """
   hosts: list[str] = []
 
   def _decode_key(raw_key: Any) -> str:
     """
-    Decode a Redis key to a UTF-8 string for ``recent_host:`` parsing.
+    Decode a Valkey key to a UTF-8 string for ``recent_host:`` parsing.
 
     Args:
       raw_key (Any): Raw SCAN key (bytes or str).
@@ -60,7 +60,7 @@ def list_recent_host_fqdns_from_redis() -> list[str]:
     return str(raw_key)
 
   try:
-    client = _get_redis_py_client()
+    client = get_valkey_client()
     if client is None or not hasattr(client, "scan_iter"):
       return hosts
     for key in client.scan_iter(match="recent_host:*", count=1000):
@@ -155,7 +155,7 @@ def latest_sample_time_by_host_in_window(window: Any | None = None) -> Any:
   """
   Map host -> max(time) for hosts with samples in ``window`` (default 3h).
 
-  Last-resort Admin Monitor path when Redis ``recent_host`` inventory is
+  Last-resort Admin Monitor path when Valkey ``recent_host`` inventory is
     empty.
   Never use multi-day (e.g. 8d) windows here.
 

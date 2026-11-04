@@ -1,5 +1,5 @@
 """
-Per-host monitor signature persisted in Redis on ``$`` schema rotation.
+Per-host monitor signature persisted in Valkey on ``$`` schema rotation.
 
 listend parses ``$hpcperfstats`` / ``$uname`` / optional ``$build`` and ``!``
 schema type names from the monitor banner, then SETs
@@ -7,7 +7,7 @@ schema type names from the monitor banner, then SETs
 for sampled hosts. Missing ``$build`` (old RPMs) is tolerated.
 
 Attributes:
-  MONITOR_IDENTITY_KEY_PREFIX: Redis key prefix before the FQDN.
+  MONITOR_IDENTITY_KEY_PREFIX: Valkey key prefix before the FQDN.
   SCHEMA_TYPES_CAP: Max ``!`` type names stored per identity document.
 """
 
@@ -22,9 +22,9 @@ MONITOR_IDENTITY_KEY_PREFIX = "monitor_identity:"
 SCHEMA_TYPES_CAP = 200
 
 
-def monitor_identity_redis_key(fqdn: str) -> str:
+def monitor_identity_valkey_key(fqdn: str) -> str:
   """
-  Return the Redis key for a host's monitor identity document.
+  Return the Valkey key for a host's monitor identity document.
 
   Args:
     fqdn (str): Fully-qualified hostname (must contain a ``.``).
@@ -33,7 +33,7 @@ def monitor_identity_redis_key(fqdn: str) -> str:
     str: ``monitor_identity:{fqdn}`` key string.
 
   Examples:
-    >>> monitor_identity_redis_key("c101-001.cluster.example")
+    >>> monitor_identity_valkey_key("c101-001.cluster.example")
     'monitor_identity:c101-001.cluster.example'
   """
   return f"{MONITOR_IDENTITY_KEY_PREFIX}{fqdn}"
@@ -148,7 +148,7 @@ def parse_monitor_identity_from_dollar_message(
 
 
 def set_monitor_identity(
-  redis_client: Any,
+  valkey_client: Any,
   identity: Mapping[str, Any],
   *,
   ttl_seconds: int,
@@ -157,10 +157,10 @@ def set_monitor_identity(
   Best-effort SET of ``monitor_identity:{fqdn}`` JSON with a TTL.
 
   Args:
-    redis_client (Any): redis-py client with ``set(name, value, ex=...)``.
+    valkey_client (Any): valkey-py client with ``set(name, value, ex=...)``.
     identity (Mapping[str, Any]): Document from
       ``parse_monitor_identity_from_dollar_message`` (must include ``fqdn``).
-    ttl_seconds (int): Redis key TTL in seconds (aligned with
+    ttl_seconds (int): Valkey key TTL in seconds (aligned with
       ``recent_host``).
 
   Returns:
@@ -189,7 +189,7 @@ def set_monitor_identity(
   fqdn = str(identity.get("fqdn") or "")
   if not fqdn or "." not in fqdn:
     return
-  if redis_client is None:
+  if valkey_client is None:
     return
   payload = {
     "fqdn": fqdn,
@@ -199,25 +199,25 @@ def set_monitor_identity(
     "schema_types": list(identity.get("schema_types") or []),
     "updated_at": int(identity.get("updated_at") or time.time()),
   }
-  redis_client.set(
-    monitor_identity_redis_key(fqdn),
+  valkey_client.set(
+    monitor_identity_valkey_key(fqdn),
     json.dumps(payload, separators=(",", ":"), sort_keys=True),
     ex=max(1, int(ttl_seconds)),
   )
 
 
 def load_monitor_identities_for_hosts(
-  redis_client: Any,
+  valkey_client: Any,
   fqdns: Sequence[str],
 ) -> list[dict[str, Any]]:
   """
-  Load Redis ``monitor_identity:*`` JSON documents for the given FQDNs.
+  Load Valkey ``monitor_identity:*`` JSON documents for the given FQDNs.
 
   Missing keys and malformed JSON are skipped (callers may emit
   ``signature_absent`` findings for sampled hosts with no document).
 
   Args:
-    redis_client (Any): redis-py client supporting ``get``, or ``None``.
+    valkey_client (Any): valkey-py client supporting ``get``, or ``None``.
     fqdns (Sequence[str]): Hostnames to look up.
 
   Returns:
@@ -231,7 +231,7 @@ def load_monitor_identities_for_hosts(
     >>> load_monitor_identities_for_hosts(_R(), ["a.example.com"])
     []
   """
-  if redis_client is None:
+  if valkey_client is None:
     return []
   out: list[dict[str, Any]] = []
   for fqdn in fqdns:
@@ -239,7 +239,7 @@ def load_monitor_identities_for_hosts(
     if not host or "." not in host:
       continue
     try:
-      raw = redis_client.get(monitor_identity_redis_key(host))
+      raw = valkey_client.get(monitor_identity_valkey_key(host))
     except Exception:
       continue
     if raw is None:

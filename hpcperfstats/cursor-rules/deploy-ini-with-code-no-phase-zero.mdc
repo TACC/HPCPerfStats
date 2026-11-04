@@ -12,7 +12,7 @@ globs: docs/plans/**,hpcperfstats.ini.example,docs/DEPLOY*.md
 
 | Action | Redeploy? | In plans |
 |--------|-----------|----------|
-| **Read-only data gathering** — `docker compose exec`, `logs`, `ps`, `grep` ini, `stat` paths, `psql`, `redis-cli` | **No** | **Encouraged** — resolve paths from INI first (`compose-operator-terminal-commands.mdc`); filtered service-specific logs, not raw pipeline firehose |
+| **Read-only data gathering** — `docker compose exec`, `logs`, `ps`, `grep` ini, `stat` paths, `psql`, `valkey-cli` | **No** | **Encouraged** — resolve paths from INI first (`compose-operator-terminal-commands.mdc`); filtered service-specific logs, not raw pipeline firehose |
 | **INI edit + pipeline/container restart** | **Yes** — same work as shipping new code | **Forbidden as a pre-code step** — bundle with the code release |
 
 Changing production `hpcperfstats.ini` and recreating the pipeline container **is a redeploy**, not a lightweight workaround. Do **not** ask the operator to redeploy (INI or image) **before** gathering data or **before** code that needs that INI is available.

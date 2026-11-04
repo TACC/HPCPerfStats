@@ -413,7 +413,7 @@ def test_invalidate_job_browse_path_also_targets_job_list_api_cache():
       return_value=None,
     ),
     patch(
-      "hpcperfstats.site.lib.machine.api._get_redis_cache_client",
+      "hpcperfstats.site.lib.machine.api.get_valkey_client",
       return_value=mock_client,
     ),
     patch(

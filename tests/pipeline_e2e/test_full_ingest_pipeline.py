@@ -32,7 +32,7 @@ from .monitor_payloads import pipeline_e2e_publish_bodies_multihost
 @pytest.mark.django_db(transaction=True)
 def test_full_rabbitmq_ingest_metrics_pipeline():
   if os.environ.get("HPCPERFSTATS_COMPOSE_NETWORK", "").strip() != "1":
-    pytest.skip("Requires compose network (db, rabbitmq, redis); run workflow script.")
+    pytest.skip("Requires compose network (db, rabbitmq, valkey); run workflow script.")
   if os.environ.get("HPCPERFSTATS_PIPELINE_E2E", "").strip().lower() not in (
       "1", "yes", "true"):
     pytest.skip("Pipeline E2E gate is disabled (set HPCPERFSTATS_PIPELINE_E2E=1).")

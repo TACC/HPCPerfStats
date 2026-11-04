@@ -48,7 +48,7 @@ When adding a new tunable whose example value is the registry default, add it **
 | **`[OAUTH2]`** | OAuth2 client/tenant URLs only | `client_id`, `authorize_url`, … |
 | **`[RMQ]`** | RabbitMQ monitor ingest only | `rmq_server`, `rmq_queue` |
 | **`[SYSLOG]`** | Pipeline syslog-ng allowlist/listeners only | `allow_from`, `listen_tcp`, … |
-| **`[CACHE]`** | Django Redis cache URL only | `redis_location` |
+| **`[CACHE]`** | Django Valkey cache URL only | `valkey_location` |
 | **`[XALT]`** | Optional XALT DB integration only | `xalt_*` |
 
 **`[DEFAULT]` block order:** install/site identity → PostgreSQL connection → **`total_cores`** (and other site-wide non-pipeline keys).

@@ -16,7 +16,7 @@ _WORKFLOWS = tuple(
 )
 _INNER_WORKFLOWS = (
   "tests/run_db_pytest_workflow.sh",
-  "tests/run_redis_cache_pytest_workflow.sh",
+  "tests/run_valkey_cache_pytest_workflow.sh",
   "tests/run_stress_host_data_workflow.sh",
   "tests/run_update_metrics_diagnosis_workflow.sh",
 )
@@ -299,7 +299,7 @@ def test_workflows_use_project_scoped_podman_ids_not_compose_ps_services():
   compose = _read("tests/compose_test_cmd.sh")
   workflows = (
     "tests/run_db_pytest_workflow.sh",
-    "tests/run_redis_cache_pytest_workflow.sh",
+    "tests/run_valkey_cache_pytest_workflow.sh",
     "tests/run_web_e2e_workflow.sh",
     "tests/run_pipeline_e2e_workflow.sh",
     "tests/run_update_metrics_diagnosis_workflow.sh",
@@ -320,7 +320,7 @@ def test_container_workflow_python_commands_use_canonical_python3():
     "tests/compose_inner_pip_install.sh",
     "tests/pip_compose_test_extras_fallback.sh",
     "tests/run_db_pytest_inner.sh",
-    "tests/run_redis_cache_pytest_inner.sh",
+    "tests/run_valkey_cache_pytest_inner.sh",
     "tests/run_stress_host_data_inner.sh",
     "tests/run_update_metrics_diagnosis_inner.sh",
     "tests/run_web_e2e_workflow.sh",
@@ -467,7 +467,7 @@ def test_full_orchestrator_runs_complete_matrix_without_recursion():
   orchestrator = _read("tests/run_all_compose_workflows.sh")
   required_workflows = (
     "run_db_pytest_workflow.sh",
-    "run_redis_cache_pytest_workflow.sh",
+    "run_valkey_cache_pytest_workflow.sh",
     "run_web_e2e_workflow.sh",
     "run_pipeline_e2e_workflow.sh",
     "run_update_metrics_diagnosis_workflow.sh",

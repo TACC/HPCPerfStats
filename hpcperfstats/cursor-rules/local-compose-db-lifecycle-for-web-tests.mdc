@@ -19,7 +19,7 @@ web/DB availability, keep local runtime and data lifecycle consistent for UI tes
 
 - Before each web E2E test, use **`tests/run_web_e2e_workflow.sh`**. It
   verifies rootless Podman, resets only `hpcperfstats-test`, builds `web`, and
-  starts `db`, `redis`, and `web`.
+  starts `db`, `valkey`, and `web`.
 - Ensure local services are reachable:
   - web at `http://localhost:8000`
   - db at `db:5432` on the compose network

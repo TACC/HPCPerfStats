@@ -149,6 +149,7 @@ from .cache_utils import (
   cached_orm,
   ensure_job_metrics_data_prefetched,
   get_site_content_cache_timeout,
+  get_valkey_client,
   invalidate_home_options_query_cache,
   make_cache_key,
   make_job_detail_cache_key,
@@ -158,7 +159,7 @@ from .host_data_latest import (
   format_host_data_newest_iso,
   latest_sample_time_by_host,
   latest_sample_time_by_host_in_window,
-  list_recent_host_fqdns_from_redis,
+  list_recent_host_fqdns_from_valkey,
 )
 from .job_detail_artifacts import (
   ARTIFACT_KIND_JOB_DETAIL,
@@ -303,7 +304,7 @@ def _get_admin_host_stats_statement_timeout_ms() -> Any:
   """
   Statement timeout for Admin Monitor 3h GROUP BY fallback only.
 
-  Primary path uses Redis inventory + LATERAL LIMIT 1 (no long timeout).
+  Primary path uses Valkey inventory + LATERAL LIMIT 1 (no long timeout).
   Never floor at 600s - that matched the old 8-day GroupAggregate hang.
 
   Returns:
@@ -643,7 +644,7 @@ from hpcperfstats.site.xalt.models import join_run_object, lib, run
 
 def _age_bucket(age: timedelta) -> str:
   """
-  Map last-seen age to admin monitor bucket labels (Redis + DB host stats).
+  Map last-seen age to admin monitor bucket labels (Valkey + DB host stats).
 
   Args:
     age (timedelta): Age.
@@ -675,7 +676,7 @@ def _admin_monitor_is_node_fqdn(host: Any) -> bool:
   not nodes.
 
   Args:
-    host (Any): Hostname or FQDN from Redis, ``job_data.host_list``, or
+    host (Any): Hostname or FQDN from Valkey, ``job_data.host_list``, or
       census inventory. Non-strings are coerced with ``str``.
 
   Returns:
@@ -1188,34 +1189,6 @@ def _build_job_list_queryset_from_request(
   return queryset, fields, cur_metrics, order_by
 
 
-def _get_redis_cache_client() -> Any:
-  """
-  Best-effort unwrap of a redis-py client from Django's cache backend.
-
-  Returns:
-    Any: Open return polymorphism from ``_get_redis_cache_client``: concrete
-    type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-
-  Examples:
-    >>> _get_redis_cache_client()  # doctest: +SKIP
-  """
-  client = getattr(cache, "_cache", None)
-  if hasattr(client, "get_client"):
-    try:
-      client = client.get_client()
-    except Exception:
-      client = None
-  if client is None:
-    client = getattr(cache, "client", None)
-    if hasattr(client, "get_client"):
-      try:
-        client = client.get_client()
-      except Exception:
-        client = None
-  return client
-
-
 def _full_page_cache_url_digests_for_request_paths(
   request: Any,
   paths: Any,
@@ -1296,12 +1269,12 @@ def _delete_django_cache_page_entries_for_request(
   return deleted
 
 
-def _redis_delete_cache_page_keys_matching_digests(
+def _valkey_delete_cache_page_keys_matching_digests(
   client: Any,
   digests: Any,
 ) -> Any:
   """
-  Delete raw Redis keys for ``cache_page`` / ``cache_header`` rows matching.
+  Delete raw Valkey keys for ``cache_page`` / ``cache_header`` rows matching.
 
     URL digests.
 
@@ -1318,7 +1291,7 @@ def _redis_delete_cache_page_keys_matching_digests(
     Any: Value produced by this call (type depends on inputs).
 
   Examples:
-    >>> _redis_delete_cache_page_keys_matching_digests(None, None)
+    >>> _valkey_delete_cache_page_keys_matching_digests(None, None)
   """
   if not digests or client is None or not hasattr(client, "scan_iter"):
     return 0
@@ -1354,7 +1327,7 @@ def _redis_delete_cache_page_keys_matching_digests(
 
 def _get_cache_stats() -> Any:
   """
-  Return basic Redis/cache statistics for the HPCPerfStats Monitor.
+  Return basic Valkey/cache statistics for the HPCPerfStats Monitor.
 
   Returns:
     Any: Open return polymorphism from ``_get_cache_stats``: concrete type
@@ -1364,7 +1337,7 @@ def _get_cache_stats() -> Any:
   Examples:
     >>> _get_cache_stats()  # doctest: +SKIP
   """
-  # First try to return a recently cached snapshot of the Redis stats so that
+  # First try to return a recently cached snapshot of the Valkey stats so that
   # repeated HPCPerfStats Monitor polls do not issue heavy INFO/SCAN calls.
   try:
     cached_stats = cache.get(KEY_ADMIN_CACHE_STATS)
@@ -1382,19 +1355,18 @@ def _get_cache_stats() -> Any:
       stats["location"] = default_cache_cfg.get("LOCATION")
       stats["default_timeout"] = default_cache_cfg.get("TIMEOUT")
 
-    # Try to unwrap the real Redis client from Django's cache backend.
-    # Django's built-in Redis cache exposes a RedisCacheClient instance on
-    # _cache, which must be further unwrapped via get_client() to get the
-    # actual redis-py client that implements .info(), .scan_iter(), etc.
-    client = _get_redis_cache_client()
+    # Raw valkey-py client (INFO, SCAN, MEMORY USAGE); None under LocMem.
+    client = get_valkey_client()
 
     if client is not None and hasattr(client, "info"):
       info = client.info()
-      stats["redis_version"] = info.get("redis_version")
+      # Valkey's INFO also carries a frozen wire-compatibility version
+      # (7.2.4); only the real server version is surfaced.
+      stats["valkey_version"] = info.get("valkey_version")
       stats["connected_clients"] = info.get("connected_clients")
       stats["uptime_in_seconds"] = info.get("uptime_in_seconds")
 
-      # Total data cached (memory used by Redis).
+      # Total data cached (memory used by Valkey).
       total_bytes = info.get("used_memory")
       if total_bytes is not None:
         stats["total_data_cached_bytes"] = total_bytes
@@ -1402,7 +1374,7 @@ def _get_cache_stats() -> Any:
       if used_memory_human is not None:
         stats["total_data_cached_human"] = used_memory_human
 
-      # Total cache usable (configured Redis memory limit).
+      # Total cache usable (configured Valkey memory limit).
       maxmemory_bytes = info.get("maxmemory")
       if maxmemory_bytes is not None:
         stats["total_cache_usable_bytes"] = maxmemory_bytes
@@ -1418,24 +1390,13 @@ def _get_cache_stats() -> Any:
       if misses is not None:
         stats["cache_misses"] = misses
 
-      db0 = info.get("db0") or {}
-      keys = None
-      if isinstance(db0, dict):
-        keys = db0.get("keys")
-      elif isinstance(db0, str):
-        try:
-          parts = dict(
-            part.split("=", 1) for part in db0.split(",") if "=" in part
-          )
-          if "keys" in parts:
-            keys = int(parts["keys"])
-        except Exception:
-          keys = None
-      if keys is not None:
-        stats["db0_keys"] = keys
+      # Keyspace of the configured cache DB (``?db=1``), not DB 0. INFO omits
+      # an empty DB entirely, so a missing entry means zero keys.
+      db_index = client.connection_pool.connection_kwargs.get("db", 0)
+      stats["keys"] = (info.get(f"db{db_index}") or {}).get("keys", 0)
 
       # Attempt to identify the most memory-heavy cached keys.
-      # This uses SCAN and MEMORY USAGE to avoid blocking Redis too long.
+      # This uses SCAN and MEMORY USAGE to avoid blocking Valkey too long.
       try:
         top_keys = []
         total_sampled_bytes = 0
@@ -1466,7 +1427,7 @@ def _get_cache_stats() -> Any:
         # detailed per-key section and fall back to the top-level memory stats.
         pass
   except Exception:
-    # If anything goes wrong (e.g., Redis down), return whatever we have.
+    # If anything goes wrong (e.g., Valkey down), return whatever we have.
     pass
 
   # Best-effort cache of the freshly gathered stats; if this fails we still
@@ -1660,21 +1621,21 @@ def _get_timescaledb_stats() -> Any:
   return stats
 
 
-def _list_recent_host_fqdns_from_redis() -> list[str]:
+def _list_recent_host_fqdns_from_valkey() -> list[str]:
   """
-  Alias for ``list_recent_host_fqdns_from_redis`` (Admin Monitor freshness).
+  Alias for ``list_recent_host_fqdns_from_valkey`` (Admin Monitor freshness).
 
   Kept so existing tests that patch
-  ``api._list_recent_host_fqdns_from_redis`` continue to work.
+  ``api._list_recent_host_fqdns_from_valkey`` continue to work.
 
   Returns:
-    list[str]: FQDNs from Redis ``recent_host:*`` keys.
+    list[str]: FQDNs from Valkey ``recent_host:*`` keys.
 
   Examples:
-    >>> _list_recent_host_fqdns_from_redis()  # doctest: +SKIP
+    >>> _list_recent_host_fqdns_from_valkey()  # doctest: +SKIP
     ['c101-001.example.com']
   """
-  return list_recent_host_fqdns_from_redis()
+  return list_recent_host_fqdns_from_valkey()
 
 
 def _get_rabbitmq_stats() -> Any:
@@ -1689,7 +1650,7 @@ def _get_rabbitmq_stats() -> Any:
     - RABBITMQ_MANAGEMENT_PASSWORD (default: guest)
 
   The ~24h publish estimate is derived from deltas of the cumulative publish
-  counter between Redis snapshots (``KEY_ADMIN_RMQ_SNAPSHOT``).
+  counter between Valkey snapshots (``KEY_ADMIN_RMQ_SNAPSHOT``).
 
   Returns:
     Any: Open return polymorphism from ``_get_rabbitmq_stats``: concrete
@@ -1893,7 +1854,7 @@ def _get_rabbitmq_stats() -> Any:
 
 def _get_recent_rabbitmq_host_stats() -> Any:
   """
-  Return per-host last-seen timestamps sourced directly from Redis keys.
+  Return per-host last-seen timestamps sourced directly from Valkey keys.
 
   Returns:
     Any: Open return polymorphism from ``_get_recent_rabbitmq_host_stats``:
@@ -1924,7 +1885,7 @@ def _get_recent_rabbitmq_host_stats() -> Any:
     return str(raw_key)
 
   try:
-    client = _get_redis_cache_client()
+    client = get_valkey_client()
     if client is not None and hasattr(client, "scan_iter"):
       for key in client.scan_iter(match="recent_host:*", count=1000):
         key_str = _decode_key(key)
@@ -2009,12 +1970,12 @@ def _job_table_host_fqdns_last_7d() -> list[str]:
 
 def _get_rabbitmq_hosts_section() -> list[dict[str, Any]]:
   """
-  Redis recent_host rows plus last-7-day job_data hosts missing from Redis.
+  Valkey recent_host rows plus last-7-day job_data hosts missing from Valkey.
 
   Silent hosts are appended as ``gt_week`` rows with ``last_time`` ``None``
   (``_admin_monitor_host_stat_dict`` skips missing timestamps). Census
   inventory is cached under ``KEY_ADMIN_RMQ_JOB_HOSTS_7D``. Census errors
-  leave Redis rows unchanged.
+  leave Valkey rows unchanged.
 
   Returns:
     list[dict[str, Any]]: ``host``, ``last_time`` (ISO or ``None``),
@@ -2289,14 +2250,14 @@ def invalidate_cache_for_page(request: Any) -> Any:
 
   Deletes Django ``@cache_page`` / ``dynamic_cache_page`` rows via
     ``cache.delete``
-  (correct key prefix/versioning), then raw Redis ``SCAN`` for keys whose
+  (correct key prefix/versioning), then raw Valkey ``SCAN`` for keys whose
     names
   embed the same URL MD5 as Django's cache layer (covers ``Vary`` variants).
 
   For any ``/machine`` or ``/machine/...`` path, also targets ``/api/home/``
     and
   drops ``home_options`` ORM cache keys (dates, metrics list, queues, states,
-  site newest job end). Works without a raw Redis client (LocMem): ORM +
+  site newest job end). Works without a raw Valkey client (LocMem): ORM +
     Django
   cache deletes still run.
 
@@ -2351,13 +2312,13 @@ def invalidate_cache_for_page(request: Any) -> Any:
     request, paths_sorted
   )
 
-  client = _get_redis_cache_client()
-  redis_deleted = 0
+  client = get_valkey_client()
+  valkey_deleted = 0
   scanned_count = 0
   matched_keys = []
   max_legacy_scan = 5000
   if client is not None and hasattr(client, "scan_iter"):
-    redis_deleted += _redis_delete_cache_page_keys_matching_digests(
+    valkey_deleted += _valkey_delete_cache_page_keys_matching_digests(
       client, digests
     )
     for raw_key in client.scan_iter(count=500):
@@ -2373,13 +2334,13 @@ def invalidate_cache_for_page(request: Any) -> Any:
       if not has_path_match:
         continue
       try:
-        redis_deleted += int(client.delete(raw_key) or 0)
+        valkey_deleted += int(client.delete(raw_key) or 0)
         if len(matched_keys) < 25:
           matched_keys.append(key_str)
       except Exception:
         continue
 
-  deleted_count += redis_deleted
+  deleted_count += valkey_deleted
 
   return Response(
     {
@@ -3969,7 +3930,7 @@ def job_detail(request: Any, pk: Any) -> Any:
 @throttle_classes([ExpensiveReadThrottle])
 def job_plots(request: Any, pk: Any) -> Any:
   """
-  Job-level plots from Redis L1 / ``job_plot_artifact`` L2 only.
+  Job-level plots from Valkey L1 / ``job_plot_artifact`` L2 only.
 
   No request-time ``jid_table`` / ``host_data`` compute. Fingerprint uses
   persisted ``metrics_distinct_time_count`` only. Null ``plot_item`` with
@@ -4563,7 +4524,7 @@ def _get_xalt_jid_coverage(
 @throttle_classes([ExpensiveReadThrottle])
 def admin_monitor(request: Any) -> Any:
   """
-  Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Redis,
+  Staff-only: HPCPerfStats Monitor data (host timestamps, cache/Valkey,
   RabbitMQ, TimescaleDB stats, telemetry health).
 
   Supports a lightweight, per-section API via the optional 'section' query
@@ -4600,9 +4561,9 @@ def admin_monitor(request: Any) -> Any:
     """
     Return per-host last_seen timestamps and age buckets for admin monitor.
 
-    Primary: Redis ``recent_host:*`` inventory + LATERAL ``ORDER BY time
+    Primary: Valkey ``recent_host:*`` inventory + LATERAL ``ORDER BY time
       DESC
-    LIMIT 1`` per host. Fallback when Redis is empty: 3h ``GROUP BY`` Max
+    LIMIT 1`` per host. Fallback when Valkey is empty: 3h ``GROUP BY`` Max
     under a short statement timeout (never 8-day aggregate / 600s floor).
 
     Returns:
@@ -4616,12 +4577,12 @@ def admin_monitor(request: Any) -> Any:
     now = timezone.now()
     host_stats_local = []
     try:
-      fqdns = _list_recent_host_fqdns_from_redis()
+      fqdns = _list_recent_host_fqdns_from_valkey()
       if fqdns:
         latest_by_host = latest_sample_time_by_host(fqdns)
       else:
         logger.info(
-          "admin_monitor host_stats: Redis recent_host empty; "
+          "admin_monitor host_stats: Valkey recent_host empty; "
           "using 3h GROUP BY fallback"
         )
         with _pg_session_statement_timeout_for_admin_host_stats_query():

@@ -16,11 +16,11 @@ podman_runtime_require
 
 compose_ensure_settings_yaml
 compose_ensure_test_overlay_yaml
-compose_test up -d db redis rabbitmq web pipeline proxy
+compose_test up -d db valkey rabbitmq web pipeline proxy
 
 for _ in $(seq 1 60); do
   unhealthy=0
-  for service in db redis rabbitmq web pipeline proxy; do
+  for service in db valkey rabbitmq web pipeline proxy; do
     container_id="$(compose_service_container_id "$service")"
     if [[ -z "$container_id" ]]; then
       unhealthy=1

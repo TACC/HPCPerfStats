@@ -56,7 +56,7 @@ def test_on_message_acks_on_success(tmp_path, monkeypatch):
   assert (tmp_path / "myhost" / "current").exists()
 
 
-def test_on_message_enqueues_recent_host_redis_update(tmp_path, monkeypatch):
+def test_on_message_enqueues_recent_host_valkey_update(tmp_path, monkeypatch):
   import hpcperfstats.listend as listend
 
   monkeypatch.setattr(
@@ -122,15 +122,15 @@ def test_on_message_dollar_enqueues_monitor_identity_without_build(
 def test_recent_host_worker_sets_monitor_identity_dict(monkeypatch):
   import hpcperfstats.listend as listend
 
-  class _FakeRedis:
+  class _FakeValkey:
     def __init__(self):
       self.writes = []
 
     def set(self, key, value, ex=None):
       self.writes.append((key, ex, value))
 
-  fake = _FakeRedis()
-  monkeypatch.setattr(listend, "_get_recent_host_redis_client", lambda: fake)
+  fake = _FakeValkey()
+  monkeypatch.setattr(listend, "_get_recent_host_valkey_client", lambda: fake)
   # Drain one identity item then stop.
   items = [
     {
@@ -226,10 +226,10 @@ def test_on_message_acks_monitor_sample_with_leading_newline(
   assert (tmp_path / "c001.example.edu" / "current").exists()
 
 
-def test_set_recent_host_timestamp_writes_expected_redis_key(monkeypatch):
+def test_set_recent_host_timestamp_writes_expected_valkey_key(monkeypatch):
   import hpcperfstats.listend as listend
 
-  class _FakeRedis:
+  class _FakeValkey:
     def __init__(self):
       self.writes = []
 
@@ -237,11 +237,11 @@ def test_set_recent_host_timestamp_writes_expected_redis_key(monkeypatch):
       self.writes.append((key, ex, value))
 
   monkeypatch.setattr(listend.time, "time", lambda: 1710000000.9)
-  fake_redis = _FakeRedis()
+  fake_valkey = _FakeValkey()
 
-  listend._set_recent_host_timestamp(fake_redis, "node1.example.com")
+  listend._set_recent_host_timestamp(fake_valkey, "node1.example.com")
 
-  assert fake_redis.writes == [
+  assert fake_valkey.writes == [
     (
       "recent_host:node1.example.com",
       listend.RECENT_HOST_TTL_SECONDS,

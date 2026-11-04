@@ -58,7 +58,7 @@ def test_e2_closed_book_mid_size(monkeypatch):
   """
   Run one mid-size ingest with closed-book timers; write residual artifact.
 
-  Requires compose db/redis and ``HPCPERFSTATS_SYNC_TIMEDB_E2=1``. Does not
+  Requires compose db/valkey and ``HPCPERFSTATS_SYNC_TIMEDB_E2=1``. Does not
   run ``update_metrics`` in the timed window.
   """
   corpus_env = os.environ.get("HPCPERFSTATS_SYNC_TIMEDB_SCREEN_CORPUS", "").strip()

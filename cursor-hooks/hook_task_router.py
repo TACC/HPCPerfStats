@@ -456,7 +456,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
       "podman-runtime.mdc",
       "compose-required-for-data-services-changes.mdc",
       "docker-compose-non-unit-testing.mdc",
-      "full-test-with-db-redis.mdc",
+      "full-test-with-db-valkey.mdc",
       "no-production-env-for-ini-config.mdc",
     ],
   },

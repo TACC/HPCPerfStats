@@ -10,7 +10,7 @@ Runs Metrics().run(jobs_list). With no CLI date arguments, processes the last
 seven calendar days through today.
 
 One-shot operator path: ``update_metrics.py --jid <JID>`` (also ``--jid=<JID>``)
-invalidates Redis/DB plot+detail artifacts and per-jid derived caches for that
+invalidates Valkey/DB plot+detail artifacts and per-jid derived caches for that
 job, recalculates metrics plus job-detail / multiprecision and plot artifacts
 via ``_compute_and_prewarm_jid``, then exits (no date-range scheduler, no post-
 run sleep). Exit **0** on success, **1** on missing job / compute failure / bad
@@ -9555,10 +9555,10 @@ def _main_backfill_finalize_partials(before: Any | None) -> int:
 
 def _invalidate_caches_before_one_jid_recalc(jid: Any) -> None:
   """
-  Drop Redis + durable artifacts so --jid rebuilds are visible on the frontend.
+  Drop Valkey + durable artifacts so --jid rebuilds are visible on the frontend.
 
-  Deletes job-plot Redis keys, ``job_plot_artifact`` / ``job_detail_artifact``
-  rows, public-metrics artifacts for the jid, per-jid derived Redis keys
+  Deletes job-plot Valkey keys, ``job_plot_artifact`` / ``job_detail_artifact``
+  rows, public-metrics artifacts for the jid, per-jid derived Valkey keys
   (GPU agg, jid_table window, ...), and the versioned job-detail ``KEY_JOB``
   entry. Runs before ``_compute_and_prewarm_jid`` so fingerprint-matched
   artifact skips cannot keep stale payloads after a formula/code change.

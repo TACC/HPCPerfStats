@@ -1,7 +1,7 @@
 #!/bin/sh
 # Prepare the shared Unix socket directory, then hand off to the official
-# Redis image entrypoint (root → redis user).
+# Valkey image entrypoint (root -> valkey user when argv[0] is valkey-server).
 set -eu
-mkdir -p /run/redis
-chmod 1777 /run/redis
+mkdir -p /run/valkey
+chmod 1777 /run/valkey
 exec docker-entrypoint.sh "$@"

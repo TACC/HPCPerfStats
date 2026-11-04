@@ -34,7 +34,7 @@ resolution. §6 lists each negative state's exits.
 | `job_plot_artifact` (`plot_kind` × `layout=normal`; payload is a plot **or** an `unavailable_reason`; `input_fingerprint` is the real fingerprint or a `retry<n>:` fingerprint) | PostgreSQL | prewarm `persist_job_plot_artifacts_for_jid` | yes |
 | `job_detail_artifact` (`job_detail`, `multiprecision_mix`, `type_detail/<type>`; same fingerprint rule) | PostgreSQL | prewarm `persist_job_detail_artifacts_for_jid` | yes |
 | `/pub/` expansion-factor artifacts | PostgreSQL / cache | `_PublicEfRefresher` (background) or the blocking phase (one-shot runs) | yes |
-| Redis plot / detail / jid-derived cache keys | Redis | invalidated by persist, gate failure, `--jid`, sync_timedb ingest | yes (TTL) |
+| Valkey plot / detail / jid-derived cache keys | Valkey | invalidated by persist, gate failure, `--jid`, sync_timedb ingest | yes (TTL) |
 | `_JOB_FAILURE_MEMORY` (jid → attempts, retry time, last error; ≤100k) | process memory | `_note_job_outcome` | no (passes yes) |
 | `_BACKFILL_ADMIT_TIMES` (hourly rate-brake window), `_BACKFILL_FAILED_FINAL` count, per-pass `backfill_*` stats and `backfill_inflight_jids` | process memory | backfill lane feeder / consumer accounting | no |
 | `_ARTIFACT_CATCHUP_LAST_SCAN` (day → last Phase B scan) | process memory | `_artifact_catchup_due` | no |

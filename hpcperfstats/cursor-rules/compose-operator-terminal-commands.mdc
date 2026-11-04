@@ -6,15 +6,15 @@ globs: docs/plans/**,.cursor/plans/**,docs/TESTING.md,docs/upgrade.md,HPCPerfSta
 
 # Compose Operator Terminal Commands
 
-**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Also **Read** when a plan or implementation is **blocked** and you need the operator to run terminal commands to gather facts (logs, DB rows, Redis keys, queue depth, config inside a service).
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Also **Read** when a plan or implementation is **blocked** and you need the operator to run terminal commands to gather facts (logs, DB rows, Valkey keys, queue depth, config inside a service).
 
-When a **plan**, **implementation**, or **diagnostic step** needs more information from a terminal and the agent cannot run it locally, give the operator **copy/paste-ready** commands that run **inside the correct Compose service** — not bare host commands that assume `db` / `redis` / Django settings resolve on the Linux host.
+When a **plan**, **implementation**, or **diagnostic step** needs more information from a terminal and the agent cannot run it locally, give the operator **copy/paste-ready** commands that run **inside the correct Compose service** — not bare host commands that assume `db` / `valkey` / Django settings resolve on the Linux host.
 
 ## Mandatory format
 
 1. **Working directory (prose only)** — state once in plan/chat prose that the operator runs compose from the checkout containing `docker-compose.yaml` (typically `HPCPerfStats/`). **Do not** put `cd …` before `podman-compose` in operator paste blocks.
 2. **No host `cd` before Compose** — on this Linux workspace, fenced operator blocks start with `podman-compose -p hpcperfstats …`. Do not substitute another runtime's command form. **`cd` inside** an `exec`/`run` shell is fine when the path is inside the container.
-3. **One block per service** — if multiple commands target the same container (`web`, `db`, `redis`, `rabbitmq`, `pipeline`, `proxy`), **combine them into a single command** (chain with `&&`, or wrap in `sh -lc '…'` / `bash -lc '…'`).
+3. **One block per service** — if multiple commands target the same container (`web`, `db`, `valkey`, `rabbitmq`, `pipeline`, `proxy`), **combine them into a single command** (chain with `&&`, or wrap in `sh -lc '…'` / `bash -lc '…'`).
 4. **Copy/paste** — each service gets **one fenced `bash` block** the operator can run as-is; label the block with the **service name** and **what output to paste back**.
 5. **Prefer `exec` on a running stack** — `podman-compose -p hpcperfstats exec <service> …` when services are already up; use `run --rm` only for one-off tasks that do not need the full running stack.
 6. **Do not split** — avoid numbered micro-steps like “run A, then run B, then run C” on the same service when they can be one block.
@@ -101,7 +101,7 @@ if os.path.isfile(mf):
 "'
 ```
 
-**Anti-pattern — Redis archive-member census after the in-process cutover:** `sync_timedb` no longer stores member maps or job queues in Redis. Census durable maps on disk:
+**Anti-pattern — Valkey archive-member census after the in-process cutover:** `sync_timedb` no longer stores member maps or job queues in Valkey. Census durable maps on disk:
 
 | Concern | Sidecar |
 |---------|---------|
@@ -296,7 +296,7 @@ docker compose logs pipeline
 |------|---------|---------------|
 | Django / pytest / manage.py / app Python | `web` | `docker compose exec web bash -lc '…'` |
 | PostgreSQL / Timescale | `db` | `docker compose exec db psql -h localhost -U hpcperfstats -c "…"` |
-| Redis | `redis` | `docker compose exec redis redis-cli …` |
+| Valkey | `valkey` | `podman-compose -p hpcperfstats exec valkey valkey-cli -n 1 …` |
 | RabbitMQ | `rabbitmq` | `docker compose exec rabbitmq rabbitmqctl …` |
 | Ingest / sync_timedb / pipeline data | `pipeline` | `docker compose exec pipeline su hpcperfstats -c '…'` |
 | nginx / proxy logs | `proxy` | `docker compose logs proxy 2>&1 \| grep -E 'error\|warn' \| tail -40` |
@@ -609,34 +609,34 @@ if host0 and t0 and t1:
 
 ### Anti-pattern — Admin Monitor / freshness: 8-day `GROUP BY host, max(time)` (hpcperfstats04)
 
-On large hypertables, **`SELECT host, max(time) FROM host_data WHERE time >= now() - interval '8 days' GROUP BY host`** costs ~**2e7+** and can hang ~10 minutes under a **600s** statement timeout. Admin Monitor now uses Redis **`recent_host:*`** + LATERAL **`ORDER BY time DESC LIMIT 1`**, with a **3h** `GROUP BY` only when Redis is empty.
+On large hypertables, **`SELECT host, max(time) FROM host_data WHERE time >= now() - interval '8 days' GROUP BY host`** costs ~**2e7+** and can hang ~10 minutes under a **600s** statement timeout. Admin Monitor now uses Valkey **`recent_host:*`** + LATERAL **`ORDER BY time DESC LIMIT 1`**, with a **3h** `GROUP BY` only when Valkey is empty.
 
 | Do | Don't |
 |----|-------|
 | `SELECT time FROM host_data WHERE time > now() - interval '3 hours' ORDER BY time DESC LIMIT 1` | `SELECT max(time) …` over multi-day windows without LIMIT |
-| Per-host: LATERAL / index probe for known FQDNs from Redis DB `/1` | 8-day `GROUP BY host, max(time)` for Admin Monitor |
+| Per-host: LATERAL / index probe for known FQDNs from Valkey DB `/1` | 8-day `GROUP BY host, max(time)` for Admin Monitor |
 | 3h `GROUP BY` only as last-resort fallback (≤60s timeout) | Floor statement_timeout at **600000** ms for host freshness |
 
 ### Anti-pattern — Admin Monitor telemetry_health: site-wide 12h `GROUP BY type, event` (hpcperfstats04 2026-08-12)
 
-On large hypertables, **`SELECT type, event, COUNT(*), BOOL_OR(...) FROM host_data WHERE time >= now() - interval '12 hours' … GROUP BY type, event`** plans at cost ~**5.79e6** (tens of millions of rows via time-index / seq scan) and hits **`canceling statement due to statement timeout`**. Admin Monitor `telemetry_health` now samples Redis **`recent_host:*`** (cap 16 FQDNs) and runs **`WHERE host = ANY(%s::text[])`** batches of 8 so Timescale uses host+time indexes (EXPLAIN ~**1.88e6** for 8 hosts). Empty Redis → soft-fail incomplete payload — **no** site-wide fallback. UI defaults to **actionable** findings only (core missing / core all-zero); informational idle IB/GPU/PMC zeros are collapsed. Use **Copy monitor handoff report** for monitor-focused Cursor paste (server `monitor_handoff_markdown`). listend may also SET Redis **`monitor_identity:{fqdn}`** on `$` schema rotation (`$build` optional until RPM).
+On large hypertables, **`SELECT type, event, COUNT(*), BOOL_OR(...) FROM host_data WHERE time >= now() - interval '12 hours' … GROUP BY type, event`** plans at cost ~**5.79e6** (tens of millions of rows via time-index / seq scan) and hits **`canceling statement due to statement timeout`**. Admin Monitor `telemetry_health` now samples Valkey **`recent_host:*`** (cap 16 FQDNs) and runs **`WHERE host = ANY(%s::text[])`** batches of 8 so Timescale uses host+time indexes (EXPLAIN ~**1.88e6** for 8 hosts). Empty Valkey → soft-fail incomplete payload — **no** site-wide fallback. UI defaults to **actionable** findings only (core missing / core all-zero); informational idle IB/GPU/PMC zeros are collapsed. Use **Copy monitor handoff report** for monitor-focused Cursor paste (server `monitor_handoff_markdown`). listend may also SET Valkey **`monitor_identity:{fqdn}`** on `$` schema rotation (`$build` optional until RPM).
 
 | Do | Don't |
 |----|-------|
-| Redis `recent_host:*` → cap ≤16 → `host = ANY` + 12h `GROUP BY type, event` in batches of 8 | Site-wide 12h `GROUP BY type, event` for Admin Monitor telemetry health |
-| Soft-fail when Redis inventory is empty | Fall back to unscoped type/event aggregate |
+| Valkey `recent_host:*` → cap ≤16 → `host = ANY` + 12h `GROUP BY type, event` in batches of 8 | Site-wide 12h `GROUP BY type, event` for Admin Monitor telemetry health |
+| Soft-fail when Valkey inventory is empty | Fall back to unscoped type/event aggregate |
 
 **Anti-pattern — `time >= max(range_start)` as a “cheap” bound:** joining or filtering with **`max(range_start)` from `timescaledb_information.chunks`** still scans many chunks (cost ~**1.5e7** on hpcperfstats04). Prefer **`ORDER BY time DESC LIMIT 1`** in a short wall-clock window.
 
-**Anti-pattern — bare `redis-cli` without `-n N`:** Django cache `redis_location` often ends in **`/1`**. Bare `redis-cli` (or `redis-cli` without `-n`) defaults to **DB0**, which can be empty while **DB1** has hundreds of `recent_host:*` keys. Always:
+**Anti-pattern — bare `valkey-cli` without `-n N`:** Django cache `valkey_location` often ends in **`/1`**. Bare `valkey-cli` (or `valkey-cli` without `-n`) defaults to **DB0**, which can be empty while **DB1** has hundreds of `recent_host:*` keys. Always:
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml exec redis sh -lc 'redis-cli -n 1 DBSIZE; redis-cli -n 1 --scan --pattern "recent_host:*" | wc -l; redis-cli -n 1 --scan --pattern "recent_host:*" | head -5'
+docker compose -p hpcperfstats -f docker-compose.yaml exec valkey sh -lc 'valkey-cli -n 1 DBSIZE; valkey-cli -n 1 --scan --pattern "recent_host:*" | wc -l; valkey-cli -n 1 --scan --pattern "recent_host:*" | head -5'
 ```
 
-Resolve **`N`** from `redis://…/N` in INI / Django settings when unsure.
+Resolve **`N`** from `valkey://…/N` in INI / Django settings when unsure.
 
-**Anti-pattern — Redis `job:v1` census after the in-process cutover:** durable ingest/append/discover/day_close queues live in `.sync_timedb_job_store.json` and process heap. Django `[CACHE]` Redis remains for web/listend only (`recent_host:*`, plots). Compose Redis **`volatile-lru`** still matters for those TTL cache keys. **Post-deploy only** — a pre-deploy empty snapshot is a false negative.
+**Anti-pattern — Valkey `job:v1` census after the in-process cutover:** durable ingest/append/discover/day_close queues live in `.sync_timedb_job_store.json` and process heap. Django `[CACHE]` Valkey remains for web/listend only (`recent_host:*`, plots). Compose Valkey **`volatile-lru`** still matters for those TTL cache keys. **Post-deploy only** — a pre-deploy empty snapshot is a false negative.
 
 **Anti-pattern — `count_inflight_by_band(client, kind=…)` (hpcperfstats04 2026-08-29):** API is **`hot_infl, catch_infl = count_inflight_by_band(store)`** on the in-process job store — ingest-only, **no** `kind=` kwarg.
 
@@ -672,7 +672,7 @@ The **`hpcperfstats-base`** image ( **`pipeline`**, **`web`**, and siblings buil
 | **`lsof`** | `apt` (`lsof`) | Open files / sockets for a PID (`lsof -p <pid>`) — archive dirs, log fds, stale locks |
 | **`ps`**, **`top`**, **`pgrep`** | `apt` (`procps`) | Process tree, RSS/CPU, worker PIDs (`ps auxf`, `top -b -n1`) |
 | **`strace`** | `apt` (`strace`) | Syscall trace for hang diagnosis — **short** captures only (`strace -p <pid> -f -tt -e trace=…` for 10–30 s, not unbounded) |
-| **`nc`** | `apt` (`netcat-openbsd`) | TCP reachability (`nc -zv db 5432`, `nc -zv redis 6379`) from inside the compose network |
+| **`nc`** | `apt` (`netcat-openbsd`) | TCP reachability (`nc -zv db 5432`, `nc -zv valkey 6379`) from inside the compose network |
 
 **Rules:**
 
@@ -803,7 +803,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep 
 **Example** — compose DNS / port check from pipeline:
 
 ```bash
-docker compose exec pipeline su hpcperfstats -c 'nc -zv db 5432 && nc -zv redis 6379'
+docker compose exec pipeline su hpcperfstats -c 'nc -zv db 5432 && nc -zv valkey 6379'
 ```
 
 ## Examples
@@ -875,10 +875,11 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 | Tail-only hygiene greps (`tail -200 LOG \| grep …`) for overnight silence | Hygiene may be absent for hours; a short tail cannot prove count 0 over the incident window | Full `docker compose logs pipeline 2>&1 \| grep -cE '…'` (no `--tail` before grep); optional `\| tail` **after** grep for samples only |
 | `docker compose exec pipeline python3 - <<'PY'` (heredoc through exec) | podman-compose passes stdin to **interactive Python REPL** (`>>>`) — script echoed line-by-line, hangs at `...`; **not** a pipeline hang | **Forbidden.** Use `su hpcperfstats -c 'python3 -c "…"'` one-liner (single-quoted outer shell) for pipeline introspection |
 | `docker compose logs pipeline --tail=N` (any N) | **Empty or stale grep** on long-running pipeline — stall lines are often **outside** the tail window (podman-compose retains full stdout buffer) | `docker compose logs pipeline 2>&1` **without `--tail`**, then `grep -E '…'`; optional `\| tail -40` **after** grep |
-| `docker compose … exec redis` with a missing compose file or wrong cwd | Compose cannot load **`docker-compose.yaml`** (or volume binds fail) | From the checkout: ensure operator compose exists (`cp docker-compose.yaml.example docker-compose.yaml`), then `podman-compose -p hpcperfstats exec redis …` (test overlay is workflow-only) |
-| Empty/null top-level volume stubs in **`docker-compose.yaml`** (`hpcperfstatsdata:` with no body) merged with settings dicts | **podman-compose** `rec_merge`: **`ValueError: can't merge value of [hpcperfstatsdata] of type NoneType and dict`** on `up`/`down` (hpcperfstats04 2026-08-29) | Define named volumes **only** in **`docker-compose.yaml`** (dicts with `driver` / `driver_opts`). Base compose mounts by name; do **not** reintroduce bare volume stubs in base. **`redis_runtime`** is the exception: a named volume in **base** compose (Unix socket dir), not a settings bind |
-| `depends_on` **`condition:`** for **redis** (`service_healthy` or `service_started`) on web/pipeline | **podman-compose** creates `hpcperfstats_redis_1` then waits forever; Redis never starts; `logs redis` is empty (2026-09-06). `service_started` still hangs | Do **not** list Redis under web/pipeline `depends_on`. Keep the Redis healthcheck for `ps`. Startup wait remaps hostname `redis` to the Unix socket in `rediswait.py`. If already stuck: interrupt `up`, then `podman start hpcperfstats_redis_1` |
-| `git checkout -- service-conf/redis_entrypoint.sh` (or no whitelist) | Path is **`services-conf/`**. Root **`*.sh`** ignored the script, so Git never shipped it; Podman created a **directory** at the bind path and Redis exited 0 in <1ms (hpcperfstats04 2026-09-06) | Keep **`!services-conf/redis_entrypoint.sh`** in `.gitignore`. On a host that already has the directory: `rmdir` it, write the script file, `podman rm -f hpcperfstats_redis_1`, then `up -d redis` |
+| `docker compose … exec valkey` with a missing compose file or wrong cwd | Compose cannot load **`docker-compose.yaml`** (or volume binds fail) | From the checkout: ensure operator compose exists (`cp docker-compose.yaml.example docker-compose.yaml`), then `podman-compose -p hpcperfstats exec valkey …` (test overlay is workflow-only) |
+| Empty/null top-level volume stubs in **`docker-compose.yaml`** (`hpcperfstatsdata:` with no body) merged with settings dicts | **podman-compose** `rec_merge`: **`ValueError: can't merge value of [hpcperfstatsdata] of type NoneType and dict`** on `up`/`down` (hpcperfstats04 2026-08-29) | Define named volumes **only** in **`docker-compose.yaml`** (dicts with `driver` / `driver_opts`). Base compose mounts by name; do **not** reintroduce bare volume stubs in base. **`valkey_runtime`** is the exception: a named volume in **base** compose (Unix socket dir), not a settings bind |
+| `depends_on` **`condition:`** for **valkey** (`service_healthy` or `service_started`) on web/pipeline | **podman-compose** creates `hpcperfstats_valkey_1` then waits forever; the cache server never starts; `logs valkey` is empty (2026-09-06). `service_started` still hangs | Do **not** list Valkey under web/pipeline `depends_on`. Keep the Valkey healthcheck for `ps`. Startup wait remaps hostname `valkey` to the Unix socket in `valkeywait.py`. If already stuck: interrupt `up`, then `podman start hpcperfstats_valkey_1` |
+| `git checkout -- service-conf/valkey_entrypoint.sh` (or no whitelist) | Path is **`services-conf/`**. Root **`*.sh`** ignored the script, so Git never shipped it; Podman created a **directory** at the bind path and the cache server exited 0 in <1ms (hpcperfstats04 2026-09-06) | Keep **`!services-conf/valkey_entrypoint.sh`** in `.gitignore`. On a host that already has the directory: `rmdir` it, write the script file, `podman rm -f hpcperfstats_valkey_1`, then `up -d valkey` |
+| `redis-server` as the **valkey** container command | Runs as **root**: the image `docker-entrypoint.sh` drops privileges only when the command is `valkey-server` (the `redis-*` names are symlinks it does not match) | Always `valkey-server …` in compose `command:` |
 | Async DAY_CLOSE manifest: `entries[:15]` | **`entries` is a dict** keyed by tar path, not a list → **KeyError** | `sorted(data.get('entries', {}).items())[:15]` or filter by on-disk `.tar` days |
 | `find … \| wc -l` under nested `sh -lc` / podman quoting | **False zero** — pipeline/quoting can drop find stdout; `wc -l` reports 0 while find never ran | Prefer **`find … -printf '.' \| wc -c`** (one byte per match) inside `bash -lc` |
 | `/usr/bin/time find …` inside pipeline image | **`/usr/bin/time: No such file or directory`** — find never runs; printed counts are fake | Use bash builtin: `TIMEFORMAT='elapsed_sec=%R'; { time find …; } 2>&1` |
@@ -1008,7 +1009,7 @@ Do **not** use **`pg_ls_waldir()`** column alias forms that PG15 rejects; aggreg
 - In **`.cursor/plans/*.plan.md`** (live plans), record operator commands under **`## Operator discovery`** → **`### Pending commands`** with service-labeled blocks and **expected output** to return. On results, append **`### Completed findings`** (asked vs found), **remove** the spent command block, and update **Problem and facts** if needed (`plan-live-disk-sync.mdc`).
 - **Pending `bash` fences must be fully executable as pasted.** Forbidden inside fences: `#` comments, “Operator: …”, placeholders that require the operator to invent steps, or prose that is not a shell command. Intent / paste-back expectations live only in the `#### service — …` label and prose **outside** the fence.
 - In committed **`docs/plans/`** design baselines, use the same **Operator discovery** shape when the baseline documents operator steps.
-- **Proactively request read-only pastes** during planning when logs, RSS, cgroup stats, file sizes, or DB/Redis facts would improve root-cause analysis or fix design — **no redeploy required** (`deploy-ini-with-code-no-phase-zero.mdc`).
+- **Proactively request read-only pastes** during planning when logs, RSS, cgroup stats, file sizes, or DB/Valkey facts would improve root-cause analysis or fix design — **no redeploy required** (`deploy-ini-with-code-no-phase-zero.mdc`).
 - Also use commands when **blocked** mid-implementation or for **post-deploy verification** after a release redeploy.
 - **Do not** use command blocks to ask for production **INI edits or container restart** before code ships — that is a redeploy, not data gathering.
 - When facts are missing and would change the plan, **do not guess** — ask for the paste (`plan-creation-contract.mdc` → *Grounding*).
