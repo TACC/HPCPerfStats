@@ -1,6 +1,6 @@
 # Security audit memo (HPCPerfStats)
 
-Internal reference for security posture review. **Last reviewed:** 2026-11-02 (Dependabot [#121](https://github.com/TACC/HPCPerfStats/security/dependabot/121) `deepmerge@4.3.1` / CVE-2026-93753, low: no patched release upstream; dev-only via `shadcn` and `@bokeh/bokehjs` → `choices.js`, not in the shipped `bokeh.min.js` or static export; tolerable risk, guarded by `test_deepmerge_stays_dev_only_for_dependabot_121`. Prior 2026-10-20: Dependabot #120 `sprintf-js` / CVE-2026-97058 dismissed **inaccurate** — CVE Rejected at NVD; open Dependabot alert count **0**. Prior 2026-10-15: Dependabot #119 lock `@modelcontextprotocol/sdk@1.32.1`; CodeQL #42–#44 local fixes; security-audit workflow uses rootless Podman; same-line pin refresh including Bokeh 3.10.1. Prior 2026-10-05: Dependabot #117 `dompurify@^3.4.16`; `next@^16.3.6` lock **16.3.8**).
+Internal reference for security posture review. **Last reviewed:** 2026-11-04 (Dependabot [#122](https://github.com/TACC/HPCPerfStats/security/dependabot/122) `minimatch` GHSA-g3hv-75wg-m249, medium globParts DoS: `overrides.minimatch@^11.0.4` (lock **11.0.4**, dev-only via eslint / typescript-eslint / ts-morph, which still declare `^10`; upstream will not backport), guarded by `test_minimatch_override_meets_dependabot_122_floor`. Prior 2026-11-02: Dependabot [#121](https://github.com/TACC/HPCPerfStats/security/dependabot/121) `deepmerge@4.3.1` / CVE-2026-93753, low: no patched release upstream; dev-only via `shadcn` and `@bokeh/bokehjs` → `choices.js`, not in the shipped `bokeh.min.js` or static export; tolerable risk, guarded by `test_deepmerge_stays_dev_only_for_dependabot_121`. Prior 2026-10-20: Dependabot #120 `sprintf-js` / CVE-2026-97058 dismissed **inaccurate** — CVE Rejected at NVD; open Dependabot alert count **0**. Prior 2026-10-15: Dependabot #119 lock `@modelcontextprotocol/sdk@1.32.1`; CodeQL #42–#44 local fixes; security-audit workflow uses rootless Podman; same-line pin refresh including Bokeh 3.10.1. Prior 2026-10-05: Dependabot #117 `dompurify@^3.4.16`; `next@^16.3.6` lock **16.3.8**).
 
 ## Executive summary
 
@@ -74,6 +74,7 @@ HPCPerfStats combines a Django + DRF backend, a **Next.js static-export React SP
 | `hono@^4.13.0` | GHSA-8j4g-w8fx-2239 CORS ReDoS (via MCP SDK / shadcn) |
 | `ip-address@^10.4.0` | GHSA-mwp4-54f8-5fhr / related SSRF trust-boundary issues (express-rate-limit tree) |
 | `undici@^7.29.0` | GHSA-8xcm-r25x-g524 and related undici 7.0–7.28 advisories (jsdom / shadcn) |
+| `minimatch@^11.0.4` | GHSA-g3hv-75wg-m249 / Dependabot #122 — `**/../` globParts amplification DoS (< 11.0.1). eslint, typescript-eslint and ts-morph pin `^10`; fix is 11.x only. Dev-only (lint/shadcn CLI). |
 
 ### bandit
 
@@ -181,4 +182,5 @@ Source: operator scan PDF `2026-08-05-hpcperfstats04.pdf` against the public TLS
 | 2026-09-02 | Dependabot #110–#116: `fast-uri@^4.1.3` (lock **4.1.4**), `qs@^6.16.0`, `@xmldom/xmldom@^0.9.12`; `npm audit` 0; override-floor tests. CodeQL #23/#25 dismissed won't-fix (no credential leak; test-only hostname assert). |
 | 2026-09-02 | Documented INI-gated development test-login (`separate_test_login`, hashed singleton, 404 when off, synthetic `test-login:` sessions). |
 | 2026-09-17 | Dependency pin refresh: OpenSSL 3.5.8, Timescale 2.30.1, redis 8.10.1, rabbitmq 4.3.5, jemalloc 5.4.0, zlib-ng 2.3.3, Orval exact 8.33.0, next 16.3.5; `npm audit` 0; host pin-assert pytest 85 green. Compose bake deferred (local Docker disabled). |
+| 2026-11-04 | Dependabot #122: `overrides.minimatch@^11.0.4` (GHSA-g3hv-75wg-m249); lock **11.0.4**; lint, typecheck:all, build:prod green; residual `npm audit` = 5 low `deepmerge` (#121, dismissed). Override-floor regression test. |
 | 2026-09-03 | Frontend npm pin refresh: Next 16.3.4, Vitest 5, Orval exact 8.27.0 (8.28 incomplete on npm), override floors (`esbuild` 0.28.2, `js-yaml` 4.3.2, `dompurify` 3.4.14, …); `npm audit` 0 (739 pkgs); Vitest 712 green. |

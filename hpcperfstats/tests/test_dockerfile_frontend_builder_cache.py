@@ -174,6 +174,19 @@ def test_nanoid_override_meets_dependabot_109_floor():
   )
 
 
+def test_minimatch_override_meets_dependabot_122_floor():
+  """Dependabot #122 / GHSA-g3hv-75wg-m249: minimatch < 11.0.1 globParts DoS.
+
+  eslint, typescript-eslint and ts-morph still declare ``^10``; the fix is
+  11.x only (upstream will not backport), so the override forces the major.
+  """
+  _assert_npm_override_floor(
+    "minimatch",
+    (11, 0, 1),
+    reason="GHSA-g3hv-75wg-m249 / Dependabot #122",
+  )
+
+
 def test_fast_uri_override_meets_dependabot_113_116_floor():
   """fast-uri <= 4.2.2 is vulnerable (Dependabot #113-#116 plus 2026-10 GHSA host/scheme)."""
   _assert_npm_override_floor(

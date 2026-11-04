@@ -49,6 +49,7 @@ Prioritized follow-ups from [SECURITY_AUDIT.md](SECURITY_AUDIT.md). Update this 
 
 | Date       | Change |
 |------------|--------|
+| 2026-11-04 | Dependabot #122 (`minimatch` GHSA-g3hv-75wg-m249, medium): fixed via `overrides.minimatch@^11.0.4` (lock 11.0.4, dev-only); guard `test_minimatch_override_meets_dependabot_122_floor`. Log: [`test_runs/dependabot_122_minimatch_2026-11-04.log`](../test_runs/dependabot_122_minimatch_2026-11-04.log). |
 | 2026-11-02 | Dependabot #121 (`deepmerge` / CVE-2026-93753, low, no patched release): dev-only tolerable risk; P2 note + regression guard `test_deepmerge_stays_dev_only_for_dependabot_121`. Log: [`test_runs/dependabot_121_deepmerge_2026-11-02.md`](../test_runs/dependabot_121_deepmerge_2026-11-02.md). |
 | 2026-10-20 | Dependabot #120 (`sprintf-js` / rejected CVE-2026-97058) dismissed inaccurate; open Dependabot alerts **0**; P2 note kept for npm-audit residual until GHSA withdraws. |
 | 2026-10-05 | Dependabot #117 + Next 16.3.8 + CodeQL #28 monitor TOCTOU; P2 note for shadcn/braces dev-tree audit residual. |
