@@ -47,9 +47,9 @@ static void rmq_debug_log_amqp_status(const char *ctx, int st)
   int save_e = errno;
   const char *s = amqp_error_string2(st);
 
-  ERROR("%s: %s (%d)", ctx, s != NULL ? s : "?", st);
+  ERROR("%s: %s (%d)\n", ctx, s != NULL ? s : "?", st);
   if (st == AMQP_STATUS_SOCKET_ERROR || st == AMQP_STATUS_TCP_ERROR)
-    ERROR("%s: errno=%d (%s)", ctx, save_e, strerror(save_e));
+    ERROR("%s: errno=%d (%s)\n", ctx, save_e, strerror(save_e));
 }
 
 static void rmq_debug_append_reply_text(char *buf, size_t buflen, const amqp_bytes_t *text)
@@ -70,35 +70,35 @@ static void rmq_debug_log_rpc_reply(const char *ctx, amqp_rpc_reply_t r)
 
   switch (r.reply_type) {
   case AMQP_RESPONSE_NORMAL:
-    ERROR("%s: unexpected AMQP_RESPONSE_NORMAL in error path", ctx);
+    ERROR("%s: unexpected AMQP_RESPONSE_NORMAL in error path\n", ctx);
     return;
   case AMQP_RESPONSE_NONE:
-    ERROR("%s: AMQP_RESPONSE_NONE (unexpected EOF or incomplete read from broker)", ctx);
+    ERROR("%s: AMQP_RESPONSE_NONE (unexpected EOF or incomplete read from broker)\n", ctx);
     return;
   case AMQP_RESPONSE_LIBRARY_EXCEPTION:
     rmq_debug_log_amqp_status(ctx, r.library_error);
     return;
   case AMQP_RESPONSE_SERVER_EXCEPTION:
     mn = amqp_method_name(r.reply.id);
-    ERROR("%s: broker error method=%s id=0x%x", ctx, mn != NULL ? mn : "?", (unsigned)r.reply.id);
+    ERROR("%s: broker error method=%s id=0x%x\n", ctx, mn != NULL ? mn : "?", (unsigned)r.reply.id);
     if (r.reply.id == AMQP_CONNECTION_CLOSE_METHOD && r.reply.decoded != NULL) {
       amqp_connection_close_t *m = (amqp_connection_close_t *)r.reply.decoded;
       char textbuf[256];
 
       rmq_debug_append_reply_text(textbuf, sizeof(textbuf), &m->reply_text);
-      ERROR("%s: connection.close reply_code=%u class_id=%u method_id=%u text=%s", ctx,
+      ERROR("%s: connection.close reply_code=%u class_id=%u method_id=%u text=%s\n", ctx,
             (unsigned)m->reply_code, (unsigned)m->class_id, (unsigned)m->method_id, textbuf);
     } else if (r.reply.id == AMQP_CHANNEL_CLOSE_METHOD && r.reply.decoded != NULL) {
       amqp_channel_close_t *m = (amqp_channel_close_t *)r.reply.decoded;
       char textbuf[256];
 
       rmq_debug_append_reply_text(textbuf, sizeof(textbuf), &m->reply_text);
-      ERROR("%s: channel.close reply_code=%u class_id=%u method_id=%u text=%s", ctx,
+      ERROR("%s: channel.close reply_code=%u class_id=%u method_id=%u text=%s\n", ctx,
             (unsigned)m->reply_code, (unsigned)m->class_id, (unsigned)m->method_id, textbuf);
     }
     return;
   default:
-    ERROR("%s: unknown reply_type=%d", ctx, (int)r.reply_type);
+    ERROR("%s: unknown reply_type=%d\n", ctx, (int)r.reply_type);
     return;
   }
 }
@@ -356,7 +356,7 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
 #ifdef DEBUG
     ERROR("RMQ: connect backoff active, skipping connect attempt (exp+jitter, cap "
           "min(send_freq,%ds), "
-          "floor %ds)",
+          "floor %ds)\n",
           STATS_BUFFER_RMQ_BACKOFF_CAP_ABS_SEC, STATS_BUFFER_RMQ_BACKOFF_MIN_SEC);
 #endif
     return -1;
@@ -368,14 +368,14 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
     rmq_stored_free();
 
 #ifdef DEBUG
-  ERROR("RMQ: connecting to %s:%s user=%s vhost=%s", sf->sf_host, sf->sf_port, sf->sf_user,
+  ERROR("RMQ: connecting to %s:%s user=%s vhost=%s\n", sf->sf_host, sf->sf_port, sf->sf_user,
         RMQ_VHOST);
 #endif
 
   rmq_conn = amqp_new_connection();
   if (rmq_conn == NULL) {
 #ifdef DEBUG
-    ERROR("amqp_new_connection failed (out of memory?)");
+    ERROR("amqp_new_connection failed (out of memory?)\n");
 #endif
     rmq_arm_connect_backoff();
     return -1;
@@ -392,7 +392,7 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
 
   if (!rmq_stored_matches(sf) && rmq_stored_save(sf) < 0) {
 #ifdef DEBUG
-    ERROR("RMQ: failed to stash broker credentials after connect (strdup)");
+    ERROR("RMQ: failed to stash broker credentials after connect (strdup)\n");
 #endif
     close_rmq_connection(rmq_conn, rmq_channel_open);
     rmq_conn = NULL;
@@ -402,7 +402,7 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
   }
 
 #ifdef DEBUG
-  ERROR("RMQ: TCP + login + channel open OK");
+  ERROR("RMQ: TCP + login + channel open OK\n");
 #endif
   rmq_mark_connected();
   return 0;
@@ -439,7 +439,7 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
   *socket_out = socket;
   if (!socket) {
 #ifdef DEBUG
-    ERROR("RMQ: amqp_tcp_socket_new failed");
+    ERROR("RMQ: amqp_tcp_socket_new failed\n");
 #endif
     return -1;
   }
@@ -466,7 +466,7 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
 
   if (rmq_apply_sock_timeouts(socket) < 0) {
 #ifdef DEBUG
-    ERROR("RMQ: setsockopt SO_RCVTIMEO/SO_SNDTIMEO failed errno=%d (%s)", errno, strerror(errno));
+    ERROR("RMQ: setsockopt SO_RCVTIMEO/SO_SNDTIMEO failed errno=%d (%s)\n", errno, strerror(errno));
 #endif
     return -1;
   }

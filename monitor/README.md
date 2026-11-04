@@ -365,6 +365,15 @@ with a single sysfs walk per cycle. Migration notes for historical archives:
 
 See `HPCPerfStats/docs/monitor_variable_rename_map.yaml` for rename-map entries.
 
+### `host_cpu_hw` util accumulators (`cpu_util_*_accum_us`, DCGM backend)
+
+`cpu_util_{total,user,sys,irq,nice}_accum_us` are now **CPU microseconds** (util% / 100 x wall
+µs). Earlier builds published util **percent** x µs, i.e. 100x the real value (found on Horizon
+c122-018: DCGM user time was 100.04x `/proc/stat` user time on loaded CPUs). Key names and the
+`E` schema are unchanged; archives span a 100x step at the upgrade. No `hpcperfstats/` code
+reads these keys today; anything that derived seconds from them divided by 1e6 and must now
+not also divide by 100.
+
 ### Lustre collectors (`lustre_mdc` / `lustre_osc` / `lustre_llite`)
 
 | Topic | Behavior |

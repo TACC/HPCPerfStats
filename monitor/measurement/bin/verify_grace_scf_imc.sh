@@ -37,6 +37,9 @@ done
 UNIT=hpcperfstats-scf-verify
 SHM=/dev/shm/hpcperfstatsd-scf-verify
 EVENTS="CMEM_RD_DATA:SCF0,CMEM_WR_TOTAL_BYTES:SCF1"
+# Fixed iterations: without -i likwid-bench calibrates first, and those passes move DRAM traffic
+# the daemon counts but "Data volume" omits (c122-018: ratios 1.79 / 1.88).
+BENCH_ITERS=10
 FAILS=0
 NOTRUN=0
 WAS_ACTIVE=$(systemctl is-active hpcperfstats 2>/dev/null)
@@ -46,7 +49,7 @@ verdict() { # name json-line
   if printf '%s' "$2" | grep -q '"ok": true'; then say "PASS $1 $2"; else say "FAIL $1 $2"; FAILS=$((FAILS + 1)); fi
 }
 # DEBUG noise excluded from journal excerpts (per-key schema/stats lines).
-NOISE='parse_schema_entry|schema_fill_entry_array|stats_type_init|stats_set:|path_open_record|stats_wr_hdr'
+NOISE='parse_schema_entry|schema_fill_entry_array|stats_type_init|stats_set:|path_open_record|stats_wr_hdr|proc_filter_pid_at_root|get_current_stats:'
 # The DEBUG daemon logs ~25k lines/30 s; journald rate-limits that and drops the begin lines the
 # checks need (c122-018), so its stdout/stderr go to a file instead of the journal.
 DAEMON_LOG="${OUT}/daemon_output.log"
@@ -83,7 +86,7 @@ t0=$(now); perfctr sleep 5 > "${OUT}/idle_perfctr.txt" 2>&1; t1=$(now)
 IDLE_S=$(awk -v a="$t0" -v b="$t1" 'BEGIN{print b-a}')
 for k in load store; do
   t0=$(now)
-  perfctr likwid-bench -t "$k" -w S0:8GB:1 > "${OUT}/${k}_perfctr.txt" 2>&1
+  perfctr likwid-bench -t "$k" -i "${BENCH_ITERS}" -w S0:8GB:1 > "${OUT}/${k}_perfctr.txt" 2>&1
   t1=$(now)
   secs=$(awk -v a="$t0" -v b="$t1" 'BEGIN{print b-a}')
   if [ "$k" = load ]; then ev=CMEM_RD_DATA; ctr=SCF0; bpu=32; else ev=CMEM_WR_TOTAL_BYTES; ctr=SCF1; bpu=1; fi
@@ -152,7 +155,7 @@ for k in load store; do
   if [ "$k" = load ]; then key=dram_cas_reads; else key=dram_cas_writes; fi
   wait_new_full "$(date +%s)" 30 || { say "FAIL daemon stopped sampling before ${k}"; FAILS=$((FAILS + 1)); continue; }
   cp "${SHM}/full" "${OUT}/${k}_before.txt"
-  likwid-bench -t "$k" -w S0:8GB:1 > "${OUT}/${k}_bench_daemon.txt" 2>&1
+  likwid-bench -t "$k" -i "${BENCH_ITERS}" -w S0:8GB:1 > "${OUT}/${k}_bench_daemon.txt" 2>&1
   wait_new_full "$(date +%s)" 30 && wait_new_full "$(date +%s)" 30
   cp "${SHM}/full" "${OUT}/${k}_after.txt"
   verdict "daemon_${k}_${key}_scf0_vs_volume" \
@@ -179,9 +182,9 @@ fi
 # ---- C. round-1 checks on the same daemon --------------------------------------------------
 save_daemon_evidence
 PID=$(systemctl show -p MainPID --value "${UNIT}")
-grep -q 'Grace SCF DRAM CAS via LIKWID on [0-9]* socket' "${OUT}/daemon_journal_filtered.txt" \
+grep -aq 'Grace SCF DRAM CAS via LIKWID on [0-9]* socket' "${DAEMON_LOG}" \
   && say "PASS journal arm_aarch64_imc uses LIKWID SCF" || { say "FAIL journal has no 'Grace SCF DRAM CAS via LIKWID' line"; FAILS=$((FAILS + 1)); }
-grep -q 'DCGM embedded engine started (v2, NVSwitch module denied)' "${OUT}/daemon_journal_filtered.txt" \
+grep -aq 'DCGM embedded engine started (v2, NVSwitch module denied)' "${DAEMON_LOG}" \
   && say "PASS journal DCGM v2 start with NVSwitch denied" || { say "FAIL journal has no NVSwitch-denied DCGM start line"; FAILS=$((FAILS + 1)); }
 if [ -n "${PID}" ] && [ "${PID}" != 0 ]; then
   if grep -q libdcgmmodulenvswitch "/proc/${PID}/maps"; then say "FAIL libdcgmmodulenvswitch mapped"; FAILS=$((FAILS + 1)); else say "PASS libdcgmmodulenvswitch not mapped"; fi

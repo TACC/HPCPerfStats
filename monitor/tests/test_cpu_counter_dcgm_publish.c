@@ -103,11 +103,13 @@ static void test_accumulate_from_util_sample(void)
 
   reset_dcgm_arrays();
   dcgm_accumulate_from_util_sample(0, &sample, 1000000LL);
-  assert(s_ctr0[0] == 50000000ULL);
-  assert(s_ctr1[0] == 30000000ULL);
-  assert(s_ctr2[0] == 10000000ULL);
-  assert(s_ctr3[0] == 5000000ULL);
-  assert(s_ctr4[0] == 5000000ULL);
+  /* *_accum_us are CPU microseconds (util% / 100 x wall us). c122-018 regression: percent x us
+   * was published, 100x the /proc/stat user time of the loaded CPUs. */
+  assert(s_ctr0[0] == 500000ULL);
+  assert(s_ctr1[0] == 300000ULL);
+  assert(s_ctr2[0] == 100000ULL);
+  assert(s_ctr3[0] == 50000ULL);
+  assert(s_ctr4[0] == 50000ULL);
 #ifdef MONITOR_CPU_LIKWID_OVERLAY
   /* Hybrid: util + act cycles (ctr5/aperf); mperf=ref; FLOPs/instr stay 0 (overlay-owned). */
   assert(s_ctr5[0] == 1000000000ULL);
@@ -123,7 +125,7 @@ static void test_accumulate_from_util_sample(void)
 #endif
 
   dcgm_accumulate_from_util_sample(0, &sample, 0);
-  assert(s_ctr0[0] == 50000000ULL);
+  assert(s_ctr0[0] == 500000ULL);
 
   /* Idle util=0: ctr5/aperf flat; mperf still advances (ref). */
   reset_dcgm_arrays();
@@ -148,8 +150,8 @@ static void test_accumulate_from_util_sample(void)
   sample.util_nice = 5.0;
   sample.clock_khz = 0.0;
   dcgm_accumulate_from_util_sample(0, &sample, 1000000LL);
-  assert(s_ctr0[0] == 50000000ULL);
-  assert(s_ctr1[0] == 30000000ULL);
+  assert(s_ctr0[0] == 500000ULL);
+  assert(s_ctr1[0] == 300000ULL);
   assert(s_ctr5[0] == 0ULL);
   assert(s_arm_dram[0] == 0ULL);
   assert(s_mperf[0] == 0ULL);

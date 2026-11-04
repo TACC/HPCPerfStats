@@ -144,3 +144,17 @@ def test_main_cli(tmp_path, capsys):
     assert g.main(["x", "loaderr", str(tmp_path / "perf"), str(tmp_path / "lua")]) == 0
     assert g.main(["x", "loaderr", str(tmp_path / "perf")]) == 1
     assert g.main(["x", "bogus"]) == 2
+
+
+def test_verifier_script_pins_bench_iterations_and_reads_raw_log():
+    """c122-018: likwid-bench calibration passes inflated the daemon delta (1.79x / 1.88x), and the
+    DCGM start line was lost because checks read the noise-filtered log."""
+    import pathlib
+    import re
+
+    script = (pathlib.Path(__file__).resolve().parents[1] / "bin" / "verify_grace_scf_imc.sh").read_text()
+    benches = [ln for ln in script.splitlines() if re.search(r"\blikwid-bench -t\b", ln)]
+    assert benches and all(" -i " in ln for ln in benches)
+    for needle in ("Grace SCF DRAM CAS via LIKWID", "DCGM embedded engine started"):
+        line = next(ln for ln in script.splitlines() if needle in ln and "grep" in ln)
+        assert '"${DAEMON_LOG}"' in line and "grep -a" in line

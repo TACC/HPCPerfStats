@@ -81,16 +81,19 @@ void dcgm_accumulate_from_util_sample(int i, struct dcgm_cpu_sample *sample, lon
 {
   double ref_cycles;
   double act_cycles;
+  double us_per_pct;
 
   if (delta_us <= 0 || sample == NULL)
     return;
 
-  /* Util accumulators always from DCGM/proc — do not require clock_khz. */
-  g_dcgm_ctr0[i] += (unsigned long long)((sample->util_total * (double)delta_us) + 0.5);
-  g_dcgm_ctr1[i] += (unsigned long long)((sample->util_user * (double)delta_us) + 0.5);
-  g_dcgm_ctr2[i] += (unsigned long long)((sample->util_sys * (double)delta_us) + 0.5);
-  g_dcgm_ctr3[i] += (unsigned long long)((sample->util_irq * (double)delta_us) + 0.5);
-  g_dcgm_ctr4[i] += (unsigned long long)((sample->util_nice * (double)delta_us) + 0.5);
+  /* Util accumulators always from DCGM/proc — do not require clock_khz. util_* are percent;
+   * *_accum_us are CPU microseconds, so scale by delta_us / 100. */
+  us_per_pct = (double)delta_us / 100.0;
+  g_dcgm_ctr0[i] += (unsigned long long)((sample->util_total * us_per_pct) + 0.5);
+  g_dcgm_ctr1[i] += (unsigned long long)((sample->util_user * us_per_pct) + 0.5);
+  g_dcgm_ctr2[i] += (unsigned long long)((sample->util_sys * us_per_pct) + 0.5);
+  g_dcgm_ctr3[i] += (unsigned long long)((sample->util_irq * us_per_pct) + 0.5);
+  g_dcgm_ctr4[i] += (unsigned long long)((sample->util_nice * us_per_pct) + 0.5);
 
   if (sample->clock_khz <= 0.0)
     return;

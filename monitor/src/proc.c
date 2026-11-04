@@ -166,7 +166,7 @@ static void proc_collect(struct stats_type *type)
   if (n < 0) {
     g_proc_collect_failures++;
     g_proc_collect_skip_until = time(NULL) + cooldown_sec;
-    ERROR("Not enough memory.");
+    ERROR("Not enough memory.\n");
   } else {
     n_scanned = n;
     while (n--) {

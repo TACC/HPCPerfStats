@@ -35,7 +35,7 @@ int proc_filter_pid_at_root(const char *proc_root, const struct dirent *dir)
     return 0;
 
   if (stat(path, &dirinfo) < 0 || dirinfo.st_uid == 0) {
-    TRACE("Do not include this proc entry %s", path);
+    TRACE("Do not include this proc entry %s\n", path);
     return 0;
   }
 
