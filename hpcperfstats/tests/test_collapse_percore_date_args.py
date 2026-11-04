@@ -8,6 +8,7 @@ from unittest import mock
 import pytest
 from django.core.management.base import CommandError, OutputWrapper
 
+from hpcperfstats.dbload.lib.host_data_percore_collapse import CollapsePlan
 from hpcperfstats.site.lib.machine.management.commands import (
   collapse_percore_host_data as cmd_mod,
 )
@@ -100,3 +101,80 @@ def test_discover_days_binds_the_gpu_types():
   cursor.execute.assert_any_call(
     cmd_mod._DISCOVER_DAYS_SQL, [list(cmd_mod.GPU_TYPES)]
   )
+
+
+def _lock_error(code: str = "55P03") -> cmd_mod.OperationalError:
+  cause = type("PgError", (Exception,), {"sqlstate": code})()
+  err = cmd_mod.OperationalError("canceling statement due to lock timeout")
+  err.__cause__ = cause
+  return err
+
+
+def _plan(rows: int = 3) -> CollapsePlan:
+  return CollapsePlan([None] * rows, rows, rows, 0)
+
+
+@pytest.mark.parametrize("code", ["55P03", "40P01"])
+def test_locked_batch_is_deferred_and_retried_until_it_runs(code):
+  """A window that cannot get its locks is skipped and come back to."""
+  cmd, buf = _command()
+  calls = []
+
+  def migrate(start, end, hosts, apply, options):
+    calls.append(hosts[0])
+    if hosts[0] == "h1" and calls.count("h1") < 3:
+      raise _lock_error(code)
+    return _plan()
+
+  opts = {
+    **_BASE,
+    "window_hours": 24,
+    "host_batch": 1,
+    "lock_retry_sleep_seconds": 7.0,
+  }
+  with (
+    mock.patch.object(
+      cmd_mod.Command, "_percore_hosts", return_value=["h1", "h2"]
+    ),
+    mock.patch.object(cmd_mod.Command, "_migrate", side_effect=migrate),
+    mock.patch.object(cmd_mod.time, "sleep") as sleep,
+  ):
+    cmd.handle(since="2026-10-25", until="2026-10-25", **opts)
+  text = buf.getvalue()
+  assert calls == ["h1", "h2", "h1", "h1"]  # h2 is not held up by h1
+  assert text.count(f"LOCKED sqlstate={code}") == 2
+  assert "RETRY pass=1 locked_batches=1 in 7s" in text
+  assert "RETRY pass=2" in text and "RETRY pass=3" not in text
+  assert sleep.call_args_list == [mock.call(7.0), mock.call(7.0)]
+  assert "TOTAL percore_rows=6 " in text  # both batches counted once
+
+
+def test_other_database_errors_still_stop_the_command():
+  cmd, _ = _command()
+  with (
+    mock.patch.object(cmd_mod.Command, "_percore_hosts", return_value=["h1"]),
+    mock.patch.object(
+      cmd_mod.Command,
+      "_migrate",
+      side_effect=cmd_mod.OperationalError("server closed the connection"),
+    ),
+    pytest.raises(cmd_mod.OperationalError),
+  ):
+    cmd.handle(since="2026-10-25", until="2026-10-25", **_BASE)
+
+
+def test_each_window_sets_a_lock_timeout():
+  cursor = mock.MagicMock()
+  cursor.fetchall.return_value = []
+  conn = mock.MagicMock()
+  conn.cursor.return_value.__enter__.return_value = cursor
+  t0 = cmd_mod._parse_day("2026-10-25")
+  with (
+    mock.patch.object(cmd_mod, "connection", conn),
+    mock.patch.object(cmd_mod.transaction, "atomic"),
+  ):
+    cmd_mod.Command()._migrate(
+      t0, t0, ["h"], True, {"lookback_minutes": 120, "lock_timeout_seconds": 9}
+    )
+  sqls = [c.args[0] for c in cursor.execute.call_args_list]
+  assert "SET LOCAL lock_timeout = '9s'" in sqls

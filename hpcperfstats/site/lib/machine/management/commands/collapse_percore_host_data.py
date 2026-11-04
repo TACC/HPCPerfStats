@@ -25,18 +25,22 @@ Attributes:
   _DML_DECOMPRESS_SQL: Lifts Timescale's per-transaction cap on rows
     decompressed by INSERT/DELETE (default 100000), so a window can be
     repaired in place on a compressed chunk.
+  _LOCK_SQLSTATES: SQLSTATEs of a window that could not get its locks in
+    time (lock_not_available from lock_timeout, deadlock_detected); such a
+    window is rolled back, deferred and retried later.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import time
 from collections.abc import Iterator, Sequence
 from typing import Any
 
 import numpy as np
 import pandas as pd
 from django.core.management.base import BaseCommand, CommandError
-from django.db import connection, transaction
+from django.db import OperationalError, connection, transaction
 
 from hpcperfstats.dbload.lib.host_data_percore_collapse import (
   GPU_TYPES,
@@ -76,6 +80,36 @@ _NO_TIMEOUT_SQL = "SET LOCAL statement_timeout = 0"
 _DML_DECOMPRESS_SQL = (
   "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"
 )
+_LOCK_SQLSTATES = frozenset({"55P03", "40P01"})
+
+
+def _lock_sqlstate(exc: BaseException) -> str | None:
+  """Return the SQLSTATE when ``exc`` is a lock wait that ran out.
+
+  Django re-raises the driver's error as ``OperationalError`` with the
+  original as ``__cause__``; psycopg 3 names its code ``sqlstate``,
+  psycopg2 ``pgcode``.
+
+  Args:
+    exc (BaseException): Error raised by a window's transaction.
+
+  Returns:
+    str | None: ``"55P03"`` (lock_timeout) or ``"40P01"`` (deadlock), else
+    ``None`` for any other error.
+
+  Examples:
+    >>> class E(Exception):
+    ...   sqlstate = "55P03"
+    >>> err = OperationalError("x")
+    >>> err.__cause__ = E()
+    >>> _lock_sqlstate(err)
+    '55P03'
+    >>> _lock_sqlstate(OperationalError("x")) is None
+    True
+  """
+  cause = exc.__cause__
+  code = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
+  return code if code in _LOCK_SQLSTATES else None
 
 
 def _parse_day(value: str) -> dt.datetime:
@@ -242,6 +276,19 @@ class Command(BaseCommand):
     parser.add_argument("--window-hours", type=int, default=1)
     parser.add_argument("--host-batch", type=int, default=8)
     parser.add_argument("--lookback-minutes", type=int, default=120)
+    parser.add_argument(
+      "--lock-timeout-seconds",
+      type=int,
+      default=30,
+      help="Give up a window whose locks are not granted in this time, "
+      "defer it and retry it later (0 waits forever).",
+    )
+    parser.add_argument(
+      "--lock-retry-sleep-seconds",
+      type=float,
+      default=60.0,
+      help="Pause between passes over deferred (locked) windows.",
+    )
 
   def handle(self, *args: Any, **options: Any) -> None:
     """Run the repair (override of ``BaseCommand.handle``).
@@ -251,7 +298,8 @@ class Command(BaseCommand):
     Args:
       *args (Any): Unused; Django may pass positional leftovers.
       **options (Any): Parsed options: ``since``, ``until``, ``apply``,
-        ``host``, ``window_hours``, ``host_batch`` and ``lookback_minutes``.
+        ``host``, ``window_hours``, ``host_batch``, ``lookback_minutes``,
+        ``lock_timeout_seconds`` and ``lock_retry_sleep_seconds``.
 
     Returns:
       None
@@ -284,6 +332,7 @@ class Command(BaseCommand):
       ranges = [(day, day) for day in days]
       label = f"all days with per-core cpu rows ({len(days)} days)"
     self.stdout.write(f"{'APPLY' if apply else 'DRY RUN'} {label}")
+    deferred: list[tuple[dt.datetime, dt.datetime, list[str]]] = []
     for start, end in (
       w
       for first, last in ranges
@@ -293,21 +342,82 @@ class Command(BaseCommand):
       self.stdout.write(
         f"{start:%Y-%m-%d %H:%M} window hosts_with_percore={len(hosts)}"
       )
-      for batch in _chunks(hosts, options["host_batch"]):
-        plan = self._migrate(start, end, batch, apply, options)
-        totals["percore_rows"] += plan.percore_rows
-        totals["groups"] += plan.groups
-        totals["kept_existing"] += plan.kept_existing
-        totals["new_rows"] += len(plan.new_rows)
-        if plan.percore_rows:
-          self.stdout.write(
-            f"{start:%Y-%m-%d %H:%M} hosts={len(batch)} "
-            f"percore_rows={plan.percore_rows} groups={plan.groups} "
-            f"kept_existing={plan.kept_existing} new_rows={len(plan.new_rows)}"
-          )
+      deferred += [
+        (start, end, batch)
+        for batch in _chunks(hosts, options["host_batch"])
+        if not self._run_batch(start, end, batch, apply, options, totals)
+      ]
+    passes = 0
+    while deferred:
+      passes += 1
+      sleep_s = options.get("lock_retry_sleep_seconds", 60.0)
+      self.stdout.write(
+        f"RETRY pass={passes} locked_batches={len(deferred)} in {sleep_s:g}s"
+      )
+      time.sleep(sleep_s)
+      deferred = [
+        w for w in deferred if not self._run_batch(*w, apply, options, totals)
+      ]
     self.stdout.write(
       "TOTAL " + " ".join(f"{k}={v}" for k, v in totals.items())
     )
+
+  def _run_batch(
+    self,
+    start: dt.datetime,
+    end: dt.datetime,
+    hosts: list[str],
+    apply: bool,
+    options: dict[str, Any],
+    totals: dict[str, int],
+  ) -> bool:
+    """Repair one host batch in one window, or defer it when it is locked.
+
+    A window whose locks are not granted within ``--lock-timeout-seconds``
+    (another session holds the chunk, for example a compress, decompress or
+    VACUUM) or that hits a deadlock is rolled back and reported ``LOCKED``;
+    the caller retries it later. Any other error propagates.
+
+    Args:
+      start (dt.datetime): Window start (inclusive).
+      end (dt.datetime): Window end (exclusive).
+      hosts (list[str]): Host batch.
+      apply (bool): Write when true, plan only when false.
+      options (dict[str, Any]): Parsed command options.
+      totals (dict[str, int]): Running totals, updated for a finished batch.
+
+    Returns:
+      bool: ``True`` when the batch finished, ``False`` when it was deferred.
+
+    Raises:
+      OperationalError: A database error that is not a lock wait or deadlock.
+
+    Examples:
+      >>> # done = Command()._run_batch(start, end, ["c001"], True, opts, t)
+      >>> Command._run_batch  # doctest: +SKIP
+    """
+    try:
+      plan = self._migrate(start, end, hosts, apply, options)
+    except OperationalError as exc:
+      code = _lock_sqlstate(exc)
+      if code is None:
+        raise OperationalError(*exc.args) from exc
+      self.stdout.write(
+        f"{start:%Y-%m-%d %H:%M} hosts={len(hosts)} LOCKED sqlstate={code}; "
+        "rolled back, deferred, will retry"
+      )
+      return False
+    totals["percore_rows"] += plan.percore_rows
+    totals["groups"] += plan.groups
+    totals["kept_existing"] += plan.kept_existing
+    totals["new_rows"] += len(plan.new_rows)
+    if plan.percore_rows:
+      self.stdout.write(
+        f"{start:%Y-%m-%d %H:%M} hosts={len(hosts)} "
+        f"percore_rows={plan.percore_rows} groups={plan.groups} "
+        f"kept_existing={plan.kept_existing} new_rows={len(plan.new_rows)}"
+      )
+    return True
 
   def _discover_days(self) -> list[dt.datetime]:
     """Return every UTC day that holds per-core rows (any non-GPU type).
@@ -396,6 +506,8 @@ class Command(BaseCommand):
     with transaction.atomic(), connection.cursor() as cursor:
       cursor.execute(_NO_TIMEOUT_SQL)
       cursor.execute(_DML_DECOMPRESS_SQL)
+      lock_s = int(options.get("lock_timeout_seconds", 30))
+      cursor.execute(f"SET LOCAL lock_timeout = '{lock_s}s'")
       cols = ", ".join(_COLUMNS)
       percore = _query_frame(
         cursor,

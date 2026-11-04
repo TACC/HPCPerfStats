@@ -155,3 +155,55 @@ def test_discovery_finds_monitor_type_names_and_non_numeric_devs(seeded):
   found = {d.date() for d in cmd_mod.Command()._discover_days()}
   assert {at(1).date(), at(2).date(), at(3).date(), T0.date()} <= found
   assert not found & {at(4).date(), at(5).date(), at(6).date()}
+
+
+@pytest.mark.django_db(transaction=True)
+def test_locked_window_is_deferred_then_repaired_once_the_lock_is_gone():
+  """Regression: a window blocked by another session's lock (compress,
+  decompress, VACUUM) waited forever; now it is deferred and retried.
+  """
+  from unittest import mock
+
+  from django.db import connections
+
+  from hpcperfstats.site.lib.machine.management.commands import (
+    collapse_percore_host_data as cmd_mod,
+  )
+
+  rows = []
+  for t, vals in ((T0, (1.0, 4.0)), (T1, (2.0, 6.0))):
+    for dev, value in zip(("0", "1"), vals, strict=True):
+      rows.append((t, HOST, "77", "cpu", dev, "user", "cs", value, 1.0, 1.0))
+  _insert(rows)
+  other = connections.create_connection("default")
+  other.set_autocommit(False)
+  with other.cursor() as cur:
+    cur.execute("LOCK TABLE host_data IN ACCESS EXCLUSIVE MODE")
+  released = []
+
+  def release(_seconds):
+    other.rollback()
+    released.append(True)
+
+  out = io.StringIO()
+  try:
+    with mock.patch.object(cmd_mod.time, "sleep", side_effect=release):
+      call_command(
+        "collapse_percore_host_data",
+        since="2026-10-24",
+        until="2026-10-24",
+        host=[HOST],
+        apply=True,
+        window_hours=24,
+        lock_timeout_seconds=1,
+        lock_retry_sleep_seconds=0,
+        stdout=out,
+      )
+  finally:
+    other.rollback()
+    other.close()
+  text = out.getvalue()
+  assert "LOCKED sqlstate=55P03" in text
+  assert "RETRY pass=1" in text and released
+  devs = {r[2] for r in _rows() if r[1] == "cpu"}
+  assert devs == {""}
