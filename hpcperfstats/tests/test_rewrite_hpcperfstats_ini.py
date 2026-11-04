@@ -2,6 +2,7 @@
 
 import configparser
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -194,3 +195,73 @@ def test_missing_required_key_keeps_example_line_and_warns(tmp_path):
 )
 def test_value_equals_default(value, default, equal):
   assert _load_cli().value_equals_default(value, default) is equal
+
+
+def _mode(path):
+  return os.stat(path).st_mode & 0o7777
+
+
+def test_rewrite_keeps_the_ini_mode_and_owner(tmp_path):
+  cli = _load_cli()
+  ini = tmp_path / "hpcperfstats.ini"
+  ini.write_text(_SITE)
+  ini.chmod(0o640)
+  before = os.stat(ini)
+  old_umask = os.umask(0o022)
+  try:
+    assert cli.main([str(ini), "--example", str(_EXAMPLE)]) == 0
+  finally:
+    os.umask(old_umask)
+  after = os.stat(ini)
+  assert after.st_ino != before.st_ino  # replaced, not edited in place
+  assert _mode(ini) == 0o640
+  assert (after.st_uid, after.st_gid) == (before.st_uid, before.st_gid)
+  (backup,) = tmp_path.glob("hpcperfstats.ini.bak.*")
+  assert _mode(backup) == 0o640
+  bst = os.stat(backup)
+  assert (bst.st_uid, bst.st_gid) == (before.st_uid, before.st_gid)
+  assert backup.read_text() == _SITE
+
+
+def test_output_file_gets_the_ini_permissions(tmp_path):
+  cli = _load_cli()
+  ini = tmp_path / "hpcperfstats.ini"
+  ini.write_text(_SITE)
+  ini.chmod(0o600)
+  out = tmp_path / "new.ini"
+  args = [str(ini), "--example", str(_EXAMPLE), "--output", str(out)]
+  assert cli.main(args) == 0
+  assert _mode(out) == 0o600 and _mode(ini) == 0o600
+  assert ini.read_text() == _SITE
+
+
+def test_secret_file_is_never_world_readable_while_written(tmp_path):
+  cli = _load_cli()
+  path = tmp_path / "f.ini"
+  seen = []
+  real_write = os.write
+
+  def spy(fd, data):
+    seen.append(os.fstat(fd).st_mode & 0o777)
+    return real_write(fd, data)
+
+  original = os.write
+  os.write = spy
+  try:
+    cli.write_with_permissions(path, "x = 1\n", os.stat(tmp_path))
+  finally:
+    os.write = original
+  assert seen and all(m & 0o077 == 0 for m in seen)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can chown to anyone")
+def test_owner_that_cannot_be_restored_is_reported(tmp_path, capsys):
+  cli = _load_cli()
+  ini = tmp_path / "hpcperfstats.ini"
+  ini.write_text(_SITE)
+  st = os.stat(ini)
+  fields = list(st)
+  fields[4] = st.st_uid + 4242  # st_uid
+  foreign = os.stat_result(fields)
+  cli.write_with_permissions(tmp_path / "out.ini", "x = 1\n", foreign)
+  assert "could not restore owner" in capsys.readouterr().err

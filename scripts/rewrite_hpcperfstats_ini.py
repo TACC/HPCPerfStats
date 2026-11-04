@@ -12,7 +12,9 @@ the site's own settings filled in:
 * a required key (no code default) replaces the example's placeholder line;
 * a key the site file sets in an old section (``host`` under ``[PORTAL]``)
   moves to the example's section;
-* site keys the example no longer documents are dropped and listed on stdout.
+* site keys the example no longer documents are dropped and listed on stdout;
+* the ini's owner, group and mode are captured first and applied to the
+  rewritten file (also to ``--output``) and to the backup.
 
 The effective value of every registry key (ini value, else default) is
 checked to be identical before and after; on a mismatch nothing is written.
@@ -44,6 +46,7 @@ import datetime
 import difflib
 import os
 import re
+import stat
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -298,6 +301,58 @@ def effective_values(site: configparser.ConfigParser) -> dict[str, str | None]:
   return effective
 
 
+def write_with_permissions(
+  path: Path, text: str, source_stat: os.stat_result
+) -> None:
+  """
+  Write *text* to *path* with the owner and mode captured in *source_stat*.
+
+  The file is created (or truncated) at mode ``0600`` and the data written
+  and synced, so the ini's secrets are never readable by others while it is
+  written, whatever the umask. Then the captured owner and group are set
+  (``chown`` clears setuid/setgid bits, so it goes first) and the captured
+  mode last.
+  An owner the process may not set (non-root, foreign uid) is reported on
+  stderr and the file keeps the process's owner; the mode is still applied.
+
+  Args:
+    path (Path): File to create or replace in place.
+    text (str): Contents, written as UTF-8.
+    source_stat (os.stat_result): ``os.stat`` of the original ini, taken
+      before anything was written.
+
+  Returns:
+    None
+
+  Examples:
+    >>> st = os.stat("hpcperfstats.ini")  # doctest: +SKIP
+    >>> write_with_permissions(
+    ...   Path("new.ini"), "x = 1\\n", st
+    ... )  # doctest: +SKIP
+  """
+  fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+  try:
+    os.fchmod(fd, 0o600)
+    data = text.encode("utf-8")
+    while data:
+      data = data[os.write(fd, data) :]
+    os.fsync(fd)
+    owner = (source_stat.st_uid, source_stat.st_gid)
+    try:
+      os.fchown(fd, *owner)
+    except PermissionError:
+      st = os.fstat(fd)
+      if (st.st_uid, st.st_gid) != owner:
+        print(
+          f"WARNING: could not restore owner {owner[0]}:{owner[1]} on "
+          f"{path} (now {st.st_uid}:{st.st_gid})",
+          file=sys.stderr,
+        )
+    os.fchmod(fd, stat.S_IMODE(source_stat.st_mode))
+  finally:
+    os.close(fd)
+
+
 def changed_effective_values(
   site: configparser.ConfigParser, result: RewriteResult
 ) -> list[str]:
@@ -384,15 +439,19 @@ def main(argv: list[str] | None = None) -> int:
       )
     )
     return 0
+  ini_stat = os.stat(args.ini)
   if target == args.ini:
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
     backup = args.ini.with_name(f"{args.ini.name}.bak.{stamp}")
-    backup.write_text(original, encoding="utf-8")
+    write_with_permissions(backup, original, ini_stat)
     print(f"backup: {backup}")
   tmp = target.with_name(f".{target.name}.rewrite.tmp")
-  tmp.write_text(result.text, encoding="utf-8")
+  write_with_permissions(tmp, result.text, ini_stat)
   os.replace(tmp, target)
-  print(f"wrote: {target}")
+  print(
+    f"wrote: {target} mode={stat.S_IMODE(ini_stat.st_mode):04o} "
+    f"owner={ini_stat.st_uid}:{ini_stat.st_gid}"
+  )
   return 0
 
 
