@@ -239,8 +239,11 @@ survey() {
       if [ "$comp" = "f" ]; then
         c=$(psql_q -c "SELECT coalesce(round(100.0 * avg(CASE WHEN dev <> '' AND dev NOT LIKE 'j:%' AND type NOT IN ('nvidia_gpu','amd_gpu','intel_gpu') THEN 1 ELSE 0 END), 1)::text, 'empty') FROM $chunk TABLESAMPLE SYSTEM (0.01) REPEATABLE (7);" < /dev/null)
       else
+        # Three one-hour slices, not the whole day: compressed batches carry
+        # their time range, so only those slices are unpacked. A whole-day
+        # EXISTS timed out (and logged an ERROR) on every large chunk.
         c=$(psql_in_db '-c statement_timeout=60000' \
-          -c "SELECT 'has_percore=' || EXISTS (SELECT 1 FROM $chunk WHERE type IN ('host_cpu','host_cpu_hw') AND dev <> '' AND dev NOT LIKE 'j:%');" < /dev/null 2>/dev/null || echo "has_percore=unknown(timeout)")
+          -c "SELECT 'has_percore=' || EXISTS (SELECT 1 FROM $chunk WHERE (time >= '$day 00:00+00' AND time < '$day 01:00+00' OR time >= '$day 12:00+00' AND time < '$day 13:00+00' OR time >= '$day 20:00+00' AND time < '$day 21:00+00') AND type IN ('host_cpu','host_cpu_hw') AND dev <> '' AND dev NOT LIKE 'j:%');" < /dev/null 2>/dev/null || echo "has_percore=unknown(timeout)")
       fi
       echo "$day|$comp|$size|$est|$c"
     done

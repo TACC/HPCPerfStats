@@ -59,7 +59,8 @@ fi
   case "$SQL" in
     *pg_size_pretty*) printf '2026-10-01|t|_ti.c1|10 GB|1000\n2026-10-24|f|_ti.c2|200 GB|700\n';;
     *TABLESAMPLE*) if [ -n "${FAKE_PCT_NONE:-}" ]; then echo 0.0; else echo 98.9; fi;;
-    *has_percore*) if [ -n "${FAKE_PCT_NONE:-}" ]; then echo has_percore=false; else echo has_percore=true; fi;;
+    *has_percore*) echo "$SQL" >> $ST/has_percore.sql
+      if [ -n "${FAKE_PCT_NONE:-}" ]; then echo has_percore=false; else echo has_percore=true; fi;;
     *"bool_or(is_compressed)"*)
       if [[ " ${FAKE_COMP:-} " == *" $day "* ]]; then echo t; else echo f; fi;;
     *"proc_name = 'policy_compression' LIMIT 1"*) echo "${FAKE_POLICY:-}";;
@@ -427,3 +428,14 @@ def test_survey_reports_fix_state_and_per_day_share(env):
   assert "pipeline code: FIXED" in out.stdout
   assert "2026-10-01|t|10 GB|1000|has_percore=true" in out.stdout
   assert "2026-10-24|f|200 GB|700|98.9" in out.stdout
+
+
+def test_compressed_check_reads_three_hour_slices_not_the_whole_day(env):
+  """Regression: a whole-day EXISTS on large compressed chunks hit the 60 s
+  timeout on hpcperfstats04 and logged an ERROR for every chunk.
+  """
+  assert _run(env, "survey", "2026-10-01").returncode == 0
+  sql = (Path(env["FAKE_STATE"]) / "has_percore.sql").read_text()
+  for hour in ("00", "01", "12", "13", "20", "21"):
+    assert f"'2026-10-01 {hour}:00+00'" in sql
+  assert sql.count("time >= ") == 3 and sql.count("time < ") == 3
