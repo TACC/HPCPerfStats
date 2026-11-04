@@ -83,6 +83,38 @@ def test_daemon_delta_check_per_socket():
     assert not g.daemon_delta_check({}, after, "scf0", "dram_cas_reads", 1, None)["ok"]
 
 
+UTIL_SCHEMA = ("!host_cpu user,E,U=cs nice,E,U=cs system,E,U=cs\n"
+               "!host_cpu_hw cpu_util_total_accum_us,E cpu_util_user_accum_us,E\n")
+
+
+def util_payload(jiffies, hw_us):
+    rows = [f"host_cpu {c} @full {j} 0 0" for c, j in jiffies.items()]
+    rows += [f"host_cpu_hw {c} @full 0 {u}" for c, u in hw_us.items()]
+    return "1 - h\n" + "\n".join(rows) + "\n"
+
+
+def test_util_check_dcgm_matches_jiffies_without_lag():
+    """Round-1 gate D1/G13: with DCGM refreshing at sample_freq, host_cpu_hw user util must still
+    match /proc/stat user time on loaded CPUs, and must not trail it by a whole sample."""
+    sch = g.parse_schema(UTIL_SCHEMA)
+    cpus = ["8", "9"]
+    before = g.parse_payload(util_payload({"8": 100, "9": 100}, {"8": 1_000_000, "9": 1_000_000}), sch)
+    # 30 s at 100% user on each CPU: +3000 cs = +30 s = +30e6 us.
+    mid = g.parse_payload(util_payload({"8": 1600, "9": 1600}, {"8": 16_000_000, "9": 16_000_000}), sch)
+    after = g.parse_payload(util_payload({"8": 3100, "9": 3100}, {"8": 31_000_000, "9": 31_000_000}), sch)
+    res = g.util_check(before, mid, after, cpus)
+    assert res["ok"] and res["total_ratio"] == 1.0 and res["mid_ratio"] == 1.0
+    # DCGM one sample (5 s) behind at the mid snapshot: mid ratio 10/15 -> fails the lag gate.
+    lag = g.parse_payload(util_payload({"8": 1600, "9": 1600}, {"8": 11_000_000, "9": 11_000_000}), sch)
+    assert not g.util_check(before, lag, after, cpus)["ok"]
+    # Total off by 20% fails.
+    short = g.parse_payload(util_payload({"8": 3100, "9": 3100}, {"8": 25_000_000, "9": 25_000_000}), sch)
+    assert not g.util_check(before, mid, short, cpus)["ok"]
+    # No load seen (jiffies flat) and a missing CPU row both fail.
+    assert not g.util_check(before, before, before, cpus)["ok"]
+    assert not g.util_check(before, mid, after, ["8", "77"])["ok"]
+
+
 def test_main_cli(tmp_path, capsys):
     (tmp_path / "perf").write_text(PERFCTR)
     (tmp_path / "idle").write_text(PERFCTR.replace("6.250000e+07", "0"))

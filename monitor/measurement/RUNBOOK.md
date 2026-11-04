@@ -148,7 +148,9 @@ It stops `hpcperfstats.service` for the run (restored on exit) and checks, again
 (`CMEM_RD_DATA` = 32-byte beats, `CMEM_WR_TOTAL_BYTES` = bytes, idle subtracted); (B) a DEBUG
 build of the daemon run as a transient unit (broker unreachable, dumps to the result dir,
 `/dev/shm/hpcperfstatsd-scf-verify` mirror): `arm_aarch64_imc` `scf0` deltas match the volume
-in 64-byte CAS within 0.75–1.5x and `scf1` stays below 0.25x; (C) the DCGM NVSwitch module is
+in 64-byte CAS within 0.75–1.5x and `scf1` stays below 0.25x; (B2) with DCGM refreshing at
+`sample_freq`, `host_cpu_hw` user util on 8 pinned busy CPUs matches `host_cpu` `/proc/stat`
+user time within 5% and is not a sample behind mid-load; (C) the DCGM NVSwitch module is
 denied and not mapped. Output: `measurement/results/grace_scf_<host>_<UTC>/summary.txt`, last
 line `GRACE_SCF_VERIFY_OK` or `GRACE_SCF_VERIFY_FAIL`. Parsing and verdicts:
 `lib/grace_scf_verify.py` (unit-tested in `tests/test_grace_scf_verify.py`).

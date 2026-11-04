@@ -157,6 +157,42 @@ def daemon_delta_check(before: dict, after: dict, dev: str, key: str, volume: in
     return res
 
 
+def util_check(before: dict, mid: dict, after: dict, cpus: list[str], tol: float = 0.05,
+               lag_floor: float = 0.85) -> dict[str, Any]:
+    """Compare DCGM user util (host_cpu_hw, us) with /proc/stat user time (host_cpu, cs).
+
+    Round-1 gate for DCGM refreshing at sample_freq: over the whole loaded window the totals must
+    agree within ``tol``, and at a mid-load snapshot DCGM must not trail by a whole sample
+    (ratio at least ``lag_floor``).
+
+    Args:
+        before: Parsed payload before the CPU load.
+        mid: Parsed payload partway through the load.
+        after: Parsed payload after the load ended.
+        cpus: Loaded CPU device names.
+        tol: Allowed relative error of the whole-window ratio.
+        lag_floor: Minimum mid-window ratio.
+
+    Returns:
+        Verdict dict with ``ok``, ``total_ratio`` and ``mid_ratio``.
+    """
+    def totals(snap: dict) -> tuple[float, float]:
+        hw = sum(snap[("host_cpu_hw", c)]["cpu_util_user_accum_us"] for c in cpus)
+        jif = sum(snap[("host_cpu", c)]["user"] for c in cpus) * 1e4  # centiseconds -> us
+        return hw, jif
+
+    try:
+        (hw0, j0), (hw1, j1), (hw2, j2) = totals(before), totals(mid), totals(after)
+    except KeyError as err:
+        return {"ok": False, "reason": f"missing row/key {err}"}
+    if j2 - j0 <= 0 or j1 - j0 <= 0:
+        return {"ok": False, "reason": "no user time on the loaded CPUs"}
+    total = (hw2 - hw0) / (j2 - j0)
+    midr = (hw1 - hw0) / (j1 - j0)
+    return {"ok": abs(total - 1.0) <= tol and midr >= lag_floor, "total_ratio": round(total, 3),
+            "mid_ratio": round(midr, 3), "cpus": len(cpus)}
+
+
 def main(argv: list[str]) -> int:
     """CLI for the shell driver: ``unit``, ``rows`` or ``daemon``; prints one JSON line.
 
@@ -184,8 +220,13 @@ def main(argv: list[str]) -> int:
         res = daemon_delta_check(before, after, argv[6], argv[7],
                                  bench_volume_bytes(open(argv[5], encoding="utf-8").read()) or 0,
                                  argv[8] or None)
+    elif cmd == "util" and len(argv) == 7:  # util SCHEMA BEFORE MID AFTER CPU_LIST(a-b)
+        schema = parse_schema(open(argv[2], encoding="utf-8").read())
+        snaps = [parse_payload(open(p, encoding="utf-8").read(), schema) for p in argv[3:6]]
+        lo, _, hi = argv[6].partition("-")
+        res = util_check(*snaps, [str(c) for c in range(int(lo), int(hi or lo) + 1)])
     else:
-        print("usage: grace_scf_verify.py unit|rows|daemon ...", file=sys.stderr)
+        print("usage: grace_scf_verify.py unit|rows|daemon|util ...", file=sys.stderr)
         return 2
     print(json.dumps(res, sort_keys=True))
     return 0 if res.get("ok") else 1

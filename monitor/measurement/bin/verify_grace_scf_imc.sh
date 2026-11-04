@@ -7,6 +7,9 @@
 #      to a temp dir, lshw stub bound like the shipped unit). Its /dev/shm mirror must show
 #      arm_aarch64_imc scf0/scf1, and the scf0 delta across a known socket-0 load must match the
 #      volume (64-byte CAS) while scf1 stays quiet. Same for writes.
+#   B2. Round-1 DCGM cadence (watch refresh = sample_freq): host_cpu_hw DCGM user util on 8 pinned
+#      busy CPUs must match host_cpu /proc/stat user time within 5% over the window, and must not
+#      trail it by a sample mid-load.
 #   C. Round-1 checks on the same daemon: NVSwitch module denied, libdcgmmodulenvswitch not mapped.
 #
 # Stops hpcperfstats.service for the run and restores its state on every exit path.
@@ -129,6 +132,23 @@ for k in load store; do
   verdict "daemon_${k}_${key}_scf0_vs_volume" \
     "$("${PY}" "${LIB}" daemon "${OUT}/schema.txt" "${OUT}/${k}_before.txt" "${OUT}/${k}_after.txt" "${OUT}/${k}_bench_daemon.txt" scf0 "$key" scf1)"
 done
+
+# ---- B2. DCGM util fidelity at sample_freq cadence -----------------------------------------
+LOADCPUS=8-15
+if wait_new_full "$(date +%s)" 30; then
+  cp "${SHM}/full" "${OUT}/util_before.txt"
+  PIDS=()
+  for c in $(seq 8 15); do taskset -c "$c" timeout 30 sh -c 'while :; do :; done' & PIDS+=($!); done
+  sleep 15
+  wait_new_full "$(date +%s)" 10 && cp "${SHM}/full" "${OUT}/util_mid.txt"
+  wait "${PIDS[@]}" 2>/dev/null
+  wait_new_full "$(date +%s)" 30 && wait_new_full "$(date +%s)" 30
+  cp "${SHM}/full" "${OUT}/util_after.txt"
+  verdict "dcgm_util_vs_proc_stat_cpus_${LOADCPUS}" \
+    "$("${PY}" "${LIB}" util "${OUT}/schema.txt" "${OUT}/util_before.txt" "${OUT}/util_mid.txt" "${OUT}/util_after.txt" "${LOADCPUS}")"
+else
+  say "FAIL daemon stopped sampling before the util check"; FAILS=$((FAILS + 1))
+fi
 
 # ---- C. round-1 checks on the same daemon --------------------------------------------------
 journalctl -u "${UNIT}" --no-pager > "${OUT}/daemon_journal.txt" 2>&1
