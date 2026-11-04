@@ -27,6 +27,10 @@ REPS = 80
 MAX_SAMPLE_TIME_S = 253402300800.0
 
 GPU_TYPES = ["nvidia_gpu", "amd_gpu", "intel_gpu"]
+# Shared stamps carry the hardware dev (``j:<jid>\x1f<dev>``) through the
+# counter-delta step; collapse cuts it back to ``j:<jid>`` (parity with
+# ``sync_timedb_parsing._JOB_STAMP_DEV_SEP``).
+JOB_STAMP_DEV_SEP = "\x1f"
 
 HOST_PROC_KEYS = [
   "uid",
@@ -239,7 +243,7 @@ def _shared_row_dev(dev: str, typ: str, jid: str, shared: bool) -> str:
     return "j:" + jid
   if not shared:
     return dev
-  return "j:" + jid
+  return "j:" + jid + JOB_STAMP_DEV_SEP + dev
 
 
 def _append_stats(
@@ -1226,7 +1230,11 @@ def collapse_full_cols(
     )
 
   devs = [
-    devs[i] if _is_gpu_type(types[i]) or devs[i].startswith("j:") else ""
+    devs[i]
+    if _is_gpu_type(types[i])
+    else devs[i].split(JOB_STAMP_DEV_SEP)[0]
+    if devs[i].startswith("j:")
+    else ""
     for i in range(n)
   ]
   vals_work: list[float] = []

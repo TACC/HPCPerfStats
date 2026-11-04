@@ -45,7 +45,7 @@ import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.analysis.metrics.lib import metrics_host_data_sql
 from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
   exclusive_hosts_cache_token,
-  gpu_devs_for_job,
+  gpu_devs_by_host_for_job,
   is_job_scoped_host_data_type,
   job_exclusive_hosts,
   job_is_shared_node,
@@ -1180,7 +1180,8 @@ class jid_table:
   Attributes:
     units: ``(type, event) -> unit`` labels of the schema host.
     _base_filter: ``_base_filter``.
-    _gpu_affinity_devs_cache: Cached ``gpu_devs_for_job`` result or unset.
+    _gpu_affinity_devs_cache: Cached ``gpu_devs_by_host_for_job`` result
+      or unset.
     _large_job_plot_cache_token: ``_large_job_plot_cache_token``.
     _shared_node: Affinity-based shared-node signal for residual host-wide reads.
     _exclusive_hosts: Host FQDNs this job holds alone; untagged rows there
@@ -1213,7 +1214,9 @@ class jid_table:
     _logger.debug("Initializing jid_table for job %s", jid)
 
     self.jid = jid
-    self._gpu_affinity_devs_cache: list[str] | object | None = _GPU_AFF_UNSET
+    self._gpu_affinity_devs_cache: dict[str, list[str]] | object | None = (
+      _GPU_AFF_UNSET
+    )
     self._large_job_plot_cache_token = "full"
     self._shared_node = False
     self._exclusive_hosts: list[str] = []
@@ -1413,22 +1416,25 @@ class jid_table:
     with _profile_phase("db_fetch"):
       self._apply_large_job_time_sampling_if_needed()
 
-  def _gpu_affinity_devs_cached(self) -> list[str] | None:
+  def _gpu_affinity_devs_cached(self) -> dict[str, list[str]] | None:
     """
-    Return ``job_affinity`` GPU ``dev`` list for this jid (cached per instance).
+    Return per-host ``job_affinity`` GPU lists for this jid (cached).
 
-    ``None`` means no affinity rows (unrestricted). An empty list means
-    affinity exists but no GPUs are assigned.
+    ``None`` means no affinity rows (unrestricted). A host missing from the
+    map has no affinity row for the job and keeps every GPU; an empty list
+    means that host's row assigns no GPUs.
 
     Returns:
-      list[str] | None: Allowed hardware GPU device ids, or ``None``.
+      dict[str, list[str]] | None: ``{host: allowed GPU devs}`` or ``None``.
 
     Examples:
       >>> jid_table("1")._gpu_affinity_devs_cached()  # doctest: +SKIP
       None
     """
     if self._gpu_affinity_devs_cache is _GPU_AFF_UNSET:
-      self._gpu_affinity_devs_cache = gpu_devs_for_job(str(self.jid or ""))
+      self._gpu_affinity_devs_cache = gpu_devs_by_host_for_job(
+        str(self.jid or "")
+      )
     return self._gpu_affinity_devs_cache  # type: ignore[return-value]
 
   def _host_data_time_filter_kwargs(self) -> Any:

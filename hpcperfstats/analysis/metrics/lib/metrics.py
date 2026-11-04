@@ -636,7 +636,11 @@ INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
 # overlapping job_data), untagged host_data rows in the window count toward
 # the job (horizon-idle-allocation-tagging: allocated-but-idle time after the
 # job's steps ended on a node was dropped from every metric).
-METRICS_CONTRACT_VERSION = 4
+# 5 (2026-11-03): GPU affinity is scoped per host (a host with no
+# job_affinity row keeps every GPU; shared GPU count sums each host's list),
+# and the job schema includes every fetched type, not host_list[0]'s only
+# (jid 79282: its one unmarked 4-GPU node showed no GPU metrics).
+METRICS_CONTRACT_VERSION = 5
 # ``no_data_reason`` written for catalog rows a backfill job never produced
 # after it exhausted the failure-memory backoff (daily step); the job is
 # stamped with the current version so the sweep does not spin on it.

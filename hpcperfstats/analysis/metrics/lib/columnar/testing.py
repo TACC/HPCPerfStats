@@ -62,7 +62,7 @@ def table_from_records(
   start_time: Any = None,
   end_time: Any = None,
   shared: bool = False,
-  gpu_affinity_devs: Sequence[str] | None = None,
+  gpu_affinity_devs: Sequence[str] | dict[str, list[str]] | None = None,
   time_in: Sequence[Any] | None = None,
 ) -> ColumnarJobTable:
   """
@@ -81,7 +81,9 @@ def table_from_records(
     start_time (Any): Window start (default: first sample).
     end_time (Any): Window end (default: last sample).
     shared (bool): Shared-node job.
-    gpu_affinity_devs (Sequence[str] | None): Allowed GPU devices.
+    gpu_affinity_devs (Sequence[str] | dict[str, list[str]] | None): Allowed
+      GPU devices per host (hosts absent keep every GPU), one list for
+      every host, or None.
     time_in (Sequence[Any] | None): Sampled time axis (large-job
       ``time__in`` filter) instead of the window.
 
@@ -300,7 +302,7 @@ class MockJobTable:
     self.start_time: Any = None
     self.end_time: Any = None
     self.units: dict[tuple[str, str], str] = {}
-    self.gpu_affinity_devs: list[str] | None = None
+    self.gpu_affinity_devs: list[str] | dict[str, list[str]] | None = None
     self.coalesce_zero = True
     self._shared_node = False
     self._base_filter = {"host__in": list(self.host_list)}

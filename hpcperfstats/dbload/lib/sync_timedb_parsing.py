@@ -31,6 +31,8 @@ Attributes:
   _GPU_STATS_TYPES: Attribute.
   _HOST_CPU_HW_TYPES: Attribute.
   _HOST_MEM_JOB_TYPE: Attribute.
+  _JOB_STAMP_DEV_SEP: Separator between a shared ``j:<jid>`` stamp and the
+    hardware ``dev`` it carries until collapse, so deltas stay per device.
   _NVIDIA_GPU_KNOWN_EVENTS: Attribute.
   _NVIDIA_GPU_MAX_EVENTS: Attribute.
   _NVIDIA_GPU_MEAN_EVENTS: Attribute.
@@ -845,6 +847,9 @@ _HOST_CPU_HW_TYPES = frozenset({HOST_CPU_HW_TYPE, LEGACY_HOST_CPU_HW_TYPE})
 _GPU_STATS_TYPES = frozenset({"nvidia_gpu", "amd_gpu", "intel_gpu"})
 # Job-scoped cgroup memory (monitor ``host_mem_job``); always ``dev=j:<jid>``.
 _HOST_MEM_JOB_TYPE = "host_mem_job"
+# Shared-node stamps carry the hardware ``dev`` (``j:<jid>\x1f<dev>``) through
+# the counter-delta step; collapse cuts it back to ``j:<jid>``.
+_JOB_STAMP_DEV_SEP = "\x1f"
 
 # Non-GPU collapse drops hardware ``dev`` (sum across devices) unless the
 # token is a shared-node job stamp ``j:<jid>``, which stays in the group key.
@@ -2385,7 +2390,9 @@ def _shared_row_dev(dev: str, typ: str, jid: Any, shared: bool) -> str:
   Stamp shared-node non-GPU rows with ``j:<jid>`` before collapse.
 
   ``host_mem_job`` always stamps ``j:<jid>`` (even without ``%jobs``), because
-  sole full-resource samples still emit per-jid cgroup memory.
+  sole full-resource samples still emit per-jid cgroup memory. Other shared
+  rows keep their hardware ``dev`` after ``_JOB_STAMP_DEV_SEP`` so counter
+  deltas stay per device; collapse drops it (``_partition_job_stamped_rows``).
 
   Args:
     dev (str): Monitor device token.
@@ -2398,7 +2405,7 @@ def _shared_row_dev(dev: str, typ: str, jid: Any, shared: bool) -> str:
 
   Examples:
     >>> _shared_row_dev("0", "cpu", "42", True)
-    'j:42'
+    'j:42\\x1f0'
     >>> _shared_row_dev("0", "nvidia_gpu", "42", True)
     '0'
     >>> _shared_row_dev("62909", "host_mem_job", "62909", False)
@@ -2414,7 +2421,7 @@ def _shared_row_dev(dev: str, typ: str, jid: Any, shared: bool) -> str:
     return f"j:{jid}"[:64]
   if not shared:
     return dev
-  return f"j:{jid}"[:64]
+  return f"j:{jid}"[:64] + _JOB_STAMP_DEV_SEP + str(dev or "")
 
 
 class IncrementalStatsParser:
@@ -3525,6 +3532,9 @@ def _partition_job_stamped_rows(stats_df: Any) -> tuple[Any, Any]:
   """
   Split rows whose ``dev`` is a ``j:`` job stamp from hardware-dev rows.
 
+  Stamped rows lose the hardware ``dev`` carried after ``_JOB_STAMP_DEV_SEP``
+  (kept only for per-device deltas), so they group on ``j:<jid>``.
+
   Args:
     stats_df (Any): Frame that includes a ``dev`` column.
 
@@ -3535,7 +3545,7 @@ def _partition_job_stamped_rows(stats_df: Any) -> tuple[Any, Any]:
   Examples:
     >>> import pandas as pd
     >>> plain, stamped = _partition_job_stamped_rows(
-    ...   pd.DataFrame({"dev": ["0", "j:9"]})
+    ...   pd.DataFrame({"dev": ["0", "j:9\\x1f3"]})
     ... )
     >>> list(stamped["dev"])
     ['j:9']
@@ -3546,7 +3556,9 @@ def _partition_job_stamped_rows(stats_df: Any) -> tuple[Any, Any]:
   mask = stats_df["dev"].str.startswith("j:", na=False)
   if not bool(mask.any()):
     return stats_df, empty
-  return stats_df.loc[~mask], stats_df.loc[mask]
+  stamped = stats_df.loc[mask]
+  job_dev = stamped["dev"].str.split(_JOB_STAMP_DEV_SEP, n=1).str[0]
+  return stats_df.loc[~mask], stamped.assign(dev=job_dev)
 
 
 def _collapse_stats_with_deltas(stats_df: Any) -> Any:

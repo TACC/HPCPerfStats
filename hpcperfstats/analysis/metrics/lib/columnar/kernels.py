@@ -29,7 +29,7 @@ Attributes:
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -168,7 +168,10 @@ class FrameIndex:
     series_type: Type index per series id.
     series_bounds: Row range ``[bounds[s], bounds[s+1])`` per series id.
     host_wide_type_ids: Type indices read host-wide (shared-node residual).
-    dev_allow_ids: Hardware dev ids allowed by ``job_affinity`` or None.
+    gpu_restricted_hosts: Host ids scoped by ``job_affinity`` or None
+      (no host restricted).
+    gpu_allowed_keys: ``host_id * len(devs) + dev_id`` keys allowed on the
+      restricted hosts.
     owned: Boolean ownership mask per row.
     n_rows: Row count of the frame.
     _time_axis: Sorted distinct times of the frame (int64 µs).
@@ -181,7 +184,9 @@ class FrameIndex:
     *,
     shared: bool = False,
     residual_types: Iterable[str] = (),
-    gpu_affinity_devs: Iterable[str] | None = None,
+    gpu_affinity_devs: Iterable[str]
+    | Mapping[str, Iterable[str]]
+    | None = None,
   ) -> None:
     """
     Build lookup tables for one frame.
@@ -191,8 +196,10 @@ class FrameIndex:
       shared (bool): Shared-node job (affinity rows exist).
       residual_types (Iterable[str]): Types that are not on the job-scoped
         allowlist (read host-wide when ``shared``).
-      gpu_affinity_devs (Iterable[str] | None): ``gpu_devs_for_job``
-        result; None means unrestricted.
+      gpu_affinity_devs (Iterable[str] | Mapping[str, Iterable[str]] |
+        None): ``gpu_devs_by_host_for_job`` map (hosts absent from it keep
+        every GPU), one device list applied to every host (golden
+        fixtures), or None (unrestricted).
 
     Returns:
       None
@@ -216,12 +223,27 @@ class FrameIndex:
     self.host_wide_type_ids: frozenset[int] = frozenset(
       type_index[t] for t in residual_types if self.shared and t in type_index
     )
-    if gpu_affinity_devs is None:
-      self.dev_allow_ids: frozenset[int] | None = None
-    else:
-      allowed = {str(d) for d in gpu_affinity_devs}
-      self.dev_allow_ids = frozenset(
-        i for i, name in enumerate(frame.devs) if i > 0 and name in allowed
+    self.gpu_restricted_hosts: np.ndarray | None = None
+    self.gpu_allowed_keys = np.empty(0, dtype=np.int64)
+    if gpu_affinity_devs is not None:
+      per_host = (
+        gpu_affinity_devs
+        if isinstance(gpu_affinity_devs, Mapping)
+        else {h: tuple(gpu_affinity_devs) for h in frame.hosts}
+      )
+      host_ids = {name: i for i, name in enumerate(frame.hosts)}
+      dev_ids = {name: i for i, name in enumerate(frame.devs) if i > 0}
+      n_dev = len(frame.devs)
+      scoped = [(host_ids[h], d) for h, d in per_host.items() if h in host_ids]
+      self.gpu_restricted_hosts = np.array([h for h, _ in scoped], np.int64)
+      self.gpu_allowed_keys = np.array(
+        [
+          h * n_dev + dev_ids[str(d)]
+          for h, devs in scoped
+          for d in devs
+          if str(d) in dev_ids
+        ],
+        dtype=np.int64,
       )
     self.owned = frame.owned.astype(bool)
     self._time_axis = frame.time_axis()
@@ -359,12 +381,14 @@ class FrameIndex:
       ... ).tolist()
       []
     """
-    if self.dev_allow_ids is None:
+    if self.gpu_restricted_hosts is None:
       return np.ones(rows.shape[0], dtype=bool)
-    if not self.dev_allow_ids:
-      return np.zeros(rows.shape[0], dtype=bool)
-    allow = np.fromiter(self.dev_allow_ids, dtype=np.int64)
-    return np.isin(self.frame.dev_id[rows].astype(np.int64), allow)
+    host = self.frame.host_id[rows].astype(np.int64)
+    dev = self.frame.dev_id[rows].astype(np.int64)
+    keys = host * len(self.frame.devs) + dev
+    return ~np.isin(host, self.gpu_restricted_hosts) | np.isin(
+      keys, self.gpu_allowed_keys
+    )
 
   def _col(self, name: str) -> np.ndarray:
     """

@@ -30,6 +30,9 @@ from hpcperfstats.analysis.metrics.lib.columnar.series_frame import (
   SeriesFrame,
   outer_join_sum,
 )
+from hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary import (
+  GPU_TYPE_PRECEDENCE,
+)
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
   AMD_DF_STATS_TYPES,
   CHA_TYPENAME_PRIORITY,
@@ -735,7 +738,9 @@ def build_summary_series(jt: Any) -> SummarySeries:
   )
   shared_gpu_count = None
   if getattr(jt, "_shared_node", False):
-    shared_gpu_count = len(getattr(jt, "gpu_affinity_devs", None) or [])
+    # Per-host affinity counts each host's list (hosts without a row add
+    # their inventory); len() of the per-host map would count hosts.
+    shared_gpu_count = jt.gpu_count_total(GPU_TYPE_PRECEDENCE) or 0
   for _typ, _val, _events, name, _conv, label in metrics:
     if name not in frame.columns:
       continue

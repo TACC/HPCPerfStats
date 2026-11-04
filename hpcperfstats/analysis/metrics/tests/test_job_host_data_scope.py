@@ -388,3 +388,23 @@ def test_exclusive_attribution_bumps_metrics_contract_version():
   from hpcperfstats.analysis.metrics.lib import metrics
 
   assert metrics.METRICS_CONTRACT_VERSION >= 4
+
+
+def test_gpu_devs_by_host_for_job_keeps_each_hosts_list():
+  """Per-host GPU lists; hosts without an affinity row are absent."""
+  from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
+    gpu_devs_by_host_for_job,
+  )
+
+  with patch("hpcperfstats.site.lib.machine.models.job_affinity") as ja:
+    ja.objects.filter.return_value.values_list.return_value = [
+      ("c107-003.x", []),
+      ("c110-001.x", ["2", 3]),
+    ]
+    assert gpu_devs_by_host_for_job("79282") == {
+      "c107-003.x": [],
+      "c110-001.x": ["2", "3"],
+    }
+    ja.objects.filter.return_value.values_list.return_value = []
+    assert gpu_devs_by_host_for_job("79282") is None
+  assert gpu_devs_by_host_for_job("") is None

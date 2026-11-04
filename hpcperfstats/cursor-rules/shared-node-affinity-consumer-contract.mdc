@@ -29,9 +29,11 @@ Sample header stays one jobid token. Unknown `%` lines (`%begin`, `%end`) stay i
 
 | Case | Marks |
 | --- | --- |
-| Sole jid, full CPU **and** full GPU | neither `%jobs` nor `%affinity` |
-| Full CPU but not all GPUs (or reverse) | `%jobs` + `%affinity` when known |
-| Sole partial jid | `%jobs jids=<that jid>` (+ `%affinity` when known) |
+| Sole jid on every online CPU (any GPU grant, including none) | neither `%jobs` nor `%affinity`; payload carries every available GPU (monitor M2, 2026-11-03) |
+| Sole jid on part of the CPUs | `%jobs jids=<that jid>` (+ `%affinity` when known) on its payload, plus one unmarked `-` payload at the same timestamp with the unassigned CPUs, unscheduled GPUs and node-wide rows (monitor M3) |
+| Two or more jids | `%jobs` + `%affinity` per jid payload, plus the `-` remainder payload |
+
+Monitor CPU coverage (`%affinity cpus=`) is the extern-step `slurmstepd` affinity (the job cpuset), not a sample of MPI-pinned task pids (monitor M1). Rows from monitors before M1–M3 still carry under-reported `cpus=` and `gpus=-` marks on whole-node jobs.
 
 ## Side table
 
@@ -42,6 +44,8 @@ Sample header stays one jobid token. Unknown `%` lines (`%begin`, `%end`) stay i
 ## Stamp
 
 After a shared sample header whose jid is not `-`, non-GPU rows get `dev=j:<jid>` **before** collapse and collapse keeps that token in the group key. GPU types keep hardware `dev`. Exclusive payloads and sole full-resource payloads (no `%jobs`) still collapse to `dev=''` **except** `host_mem_job`.
+
+**Deltas stay per device (2026-11-03):** the feed stamp carries the hardware device as `j:<jid>\x1f<dev>` (`_JOB_STAMP_DEV_SEP` / Codon `JOB_STAMP_DEV_SEP`) so counter deltas key on the hardware device; collapse cuts it back to `j:<jid>` (`_partition_job_stamped_rows` / `collapse_full_cols`). Stamping the bare `j:<jid>` before the delta step diffed every core against its neighbour (jid 79282: IB 1.9 TB/s, NFS 90 PB). Regression: `test_codon_shared_stamp_per_device_deltas.py` (CPython + Codon). Rows written before the fix are repaired from `value` by `manage.py repair_jstamp_deltas` (`--census` first; dry run unless `--apply`).
 
 ## `host_mem_job` (job-scoped cgroup memory)
 
@@ -61,7 +65,7 @@ Listend and sync_timedb (line parse and streaming) call the same helper. Writes 
 
 **Exclusive-host attribution (2026-11-02, `METRICS_CONTRACT_VERSION` 4):** a read-path rule, not an ingest stamp — ingest still never invents membership or `dev=j:` for unmarked samples. On a host the job holds alone, untagged rows in its window (`jid` NULL/`''`/`'-'`, no `j:` stamp) count as job rows, so allocated-but-idle time is measured (monitors before the stepd-title fix tag an idle allocation `-`). `job_exclusive_hosts` decides the set once per `jid_table` window; empty when the job has `job_affinity` rows (shared) or on a DB error (strict). A host is **not** exclusive when (1) another `job_data` row on it overlaps strictly (touching edges allowed), or (2) another jid has a `job_affinity` row on it with `reported_at >= start` — that jid's accounting window decides, and without accounting (sacct lists only ended jobs, so a running co-tenant is absent) it blocks. Index `job_affinity_host_reported_idx` (migration `0044`). Self-heal: sync_acct calls `cache_utils.mark_overlapping_jobs_metrics_dirty` for inserted jids, stamping computed non-shared overlapping jobs `metrics_dirty_at`. One SQL builder `job_host_data_scope_sql_params(jid, exclusive_hosts=…)` serves COPY (`build_copy_sql`, only the batch's exclusive hosts) and the window probes (`metrics_host_data_sql._scope_sql`); an empty set is byte-identical to the strict predicate. `LiveJidScopedDistinctHostTimeCount` and PG `jid_scoped_distinct_host_time_count` stay tagged-only (correlated / readiness counters, not metrics scope).
 
-**GPU:** keep hardware `dev`; when `job_affinity.gpu_list` exists for the jid, restrict with `apply_gpu_affinity_dev_filter` / `gpu_devs_for_job`. Empty list → no devices; no affinity rows → unrestricted. On a shared job, `detail_gpu_count` and the Summary util “out of N×100” scale are `len(gpu_list)`, not `Max(gpu_count)`.
+**GPU (per host, 2026-11-03, `METRICS_CONTRACT_VERSION` 5):** keep hardware `dev`; each host is scoped by **its own** `job_affinity` row (`gpu_devs_by_host_for_job` → `{host: gpu_list}`, applied per `(host, dev)` in `kernels.FrameIndex`). A host with no affinity row for the jid keeps every GPU (the monitor wrote it unmarked); an empty list → no devices on that host; no rows at all → unrestricted. Never merge every host's list into one filter: jid 79282's unmarked 4-GPU node was hidden by the other hosts' empty lists. On a shared job, `detail_gpu_count` and the Summary util “out of N×100” scale sum each scoped host's `len(gpu_list)` plus `Max(gpu_count)` of the unscoped hosts (`ColumnarJobTable.gpu_count_total`), not `len()` of a merged list.
 
 **Residual copies:** host-wide residual aggregates sum hardware `dev` rows. `dev=j:<jid>` copies contribute only when no hardware dev is present, and then as a max, so co-tenant stamps of the same host counter are not added. A negative counter delta is a gap (NaN) unless it is one modulus wrap from the top half of the counter range (`sync_timedb_parsing._apply_counter_deltas`).
 

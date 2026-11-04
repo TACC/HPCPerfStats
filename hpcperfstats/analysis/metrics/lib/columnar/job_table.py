@@ -20,7 +20,7 @@ Attributes:
 from __future__ import annotations
 
 import threading
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -185,7 +185,9 @@ class ColumnarJobTable:
     time_in: Sampled time axis for large jobs, or None.
     delta_scale: Multiplier for summed ``delta`` totals (1.0 unless the
       window was thinned to time slots: slot spacing / slot width).
-    gpu_affinity_devs: ``gpu_devs_for_job`` result or None.
+    gpu_affinity_devs: ``{host: GPU devs}`` from ``gpu_devs_by_host_for_job``
+      (hosts absent keep every GPU), one list for every host (golden
+      fixtures), or None.
     units: ``(type, event) -> unit`` labels (type-detail plots).
     coalesce_zero: Aggregate rule for groups without a valid sample.
     _shared_node: Shared-node flag (affinity rows exist).
@@ -206,7 +208,9 @@ class ColumnarJobTable:
     end_time: Any,
     time_in: Sequence[Any] | None = None,
     shared: bool = False,
-    gpu_affinity_devs: Sequence[str] | None = None,
+    gpu_affinity_devs: Sequence[str]
+    | Mapping[str, Sequence[str]]
+    | None = None,
     units: dict[tuple[str, str], str] | None = None,
     coalesce_zero: bool = True,
     delta_scale: float = 1.0,
@@ -224,7 +228,9 @@ class ColumnarJobTable:
       end_time (Any): Window end (datetime or ISO text).
       time_in (Sequence[Any] | None): Sampled times for large jobs.
       shared (bool): Shared-node job.
-      gpu_affinity_devs (Sequence[str] | None): Allowed GPU devices.
+      gpu_affinity_devs (Sequence[str] | Mapping[str, Sequence[str]] |
+        None): Allowed GPU devices per host (hosts absent keep every GPU),
+        one list for every host, or None (unrestricted).
       units (dict[tuple[str, str], str] | None): ``(type, event) -> unit``
         labels for the type-detail plots.
       coalesce_zero (bool): Aggregate groups without a valid sample sum to
@@ -255,8 +261,12 @@ class ColumnarJobTable:
     residual = [
       t for t, _e in frame.series if not is_job_scoped_host_data_type(t)
     ]
-    self.gpu_affinity_devs = (
-      None if gpu_affinity_devs is None else [str(d) for d in gpu_affinity_devs]
+    self.gpu_affinity_devs: list[str] | dict[str, list[str]] | None = (
+      None
+      if gpu_affinity_devs is None
+      else {str(h): [str(d) for d in v] for h, v in gpu_affinity_devs.items()}
+      if isinstance(gpu_affinity_devs, Mapping)
+      else [str(d) for d in gpu_affinity_devs]
     )
     self.index = FrameIndex(
       frame,
@@ -266,7 +276,13 @@ class ColumnarJobTable:
     )
     self.host_list = [str(h) for h in host_list]
     self.acct_host_list = [str(h) for h in acct_host_list]
-    self.schema = dict(schema or {})
+    # ``jid_table`` probes one host for the schema; a GPU node that is not
+    # ``host_list[0]`` must still expose its fetched types (jid 79282).
+    self.schema = {t: list(evs) for t, evs in (schema or {}).items()}
+    for typ, event in frame.series:
+      events = self.schema.setdefault(typ, [])
+      if event not in events:
+        events.append(event)
     self.start_time = _parse_dt(start_time)
     self.end_time = _parse_dt(end_time)
     self.time_in = list(time_in) if time_in else None
@@ -984,8 +1000,9 @@ class ColumnarJobTable:
 
   def gpu_count_total(self, precedence: Sequence[str]) -> int | None:
     """
-    ``gpu_count_total_for_job_window``: shared jobs count affinity GPUs,
-    exclusive jobs sum per-host ``max(gpu_count)`` by vendor precedence.
+    ``gpu_count_total_for_job_window``: each host scoped by an affinity row
+    counts its ``gpu_list``; every other host adds its ``max(gpu_count)``
+    by vendor precedence (a single list, from golden fixtures, counts once).
 
     Args:
       precedence (Sequence[str]): GPU type precedence.
@@ -1005,23 +1022,22 @@ class ColumnarJobTable:
       ... ).gpu_count_total(("nvidia_gpu",)) is None
       True
     """
-    if self._shared_node:
-      return len(self.gpu_affinity_devs or [])
-    if not self.acct_host_list:
-      return None
-    for gpu_typ in precedence:
-      rows = self.gpu_max_per_host(gpu_typ, "gpu_count")
-      if not rows:
-        continue
-      total = 0
-      for r in rows:
-        v = r.get("mv")
-        if v is None or is_dcgm_numeric_blank(v):
-          continue
-        total += round(float(v))
-      if total > 0:
-        return total
-    return None
+    aff = self.gpu_affinity_devs
+    if isinstance(aff, list):
+      return len(aff)
+    scoped = aff or {}
+    total = sum(len(devs) for devs in scoped.values())
+    for gpu_typ in precedence if self.acct_host_list else ():
+      inventory = sum(
+        round(float(r["mv"]))
+        for r in self.gpu_max_per_host(gpu_typ, "gpu_count")
+        if r["host"] not in scoped
+        and r.get("mv") is not None
+        and not is_dcgm_numeric_blank(r["mv"])
+      )
+      if inventory > 0:
+        return total + inventory
+    return total if scoped else None
 
   # -- metrics view -------------------------------------------------------
 

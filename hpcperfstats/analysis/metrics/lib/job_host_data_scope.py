@@ -360,6 +360,39 @@ def gpu_devs_for_job(
   return out
 
 
+def gpu_devs_by_host_for_job(jid: str) -> dict[str, list[str]] | None:
+  """
+  Per-host ``job_affinity.gpu_list`` for one job, or ``None`` without rows.
+
+  Each host is scoped by its own row: a host with no affinity row for the
+  job is absent from the map and keeps every GPU (the monitor wrote it
+  unmarked, so the job held it alone). Merging all hosts into one list hid
+  an unmarked 4-GPU host behind other hosts' empty lists (jid 79282).
+
+  Args:
+    jid (str): Job id.
+
+  Returns:
+    dict[str, list[str]] | None: ``{host: allowed GPU devs}`` (an empty list
+    means no GPUs on that host), or ``None`` when the job has no rows.
+
+  Examples:
+    >>> gpu_devs_by_host_for_job("") is None
+    True
+  """
+  jid_s = str(jid or "").strip()
+  if not jid_s:
+    return None
+  from hpcperfstats.site.lib.machine.models import job_affinity
+
+  rows = job_affinity.objects.filter(jid=jid_s).values_list("host", "gpu_list")
+  out = {
+    str(host): [str(d).strip() for d in gl or () if str(d).strip()]
+    for host, gl in rows
+  }
+  return out or None
+
+
 def apply_job_host_data_scope(qs: Any, jid: str) -> Any:
   """
   Filter a ``host_data`` queryset to one job's rows.
