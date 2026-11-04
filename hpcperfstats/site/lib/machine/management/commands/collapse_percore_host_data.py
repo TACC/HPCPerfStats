@@ -13,8 +13,11 @@ Attributes:
   _PERCORE_WHERE: SQL predicate selecting per-core rows (non-GPU, hardware dev).
   _COLUMNS: ``host_data`` columns read for planning and written on insert.
   _INSERT_SQL: Insert of one planned whole-node row; an existing row wins.
-  _DELETE_SQL: Delete of per-core rows that have a ``dev=''`` row at the same
-    (host, type, event, time).
+  _DELETE_SQL: Delete of the window's per-core rows, with the same predicate
+    the plan read them by. It runs after every key was given a ``dev=''`` row
+    and checked, so it needs no per-row probe for one (that probe read every
+    device row of a (host, time) per deleted row and made a window take
+    tens of minutes on hpcperfstats01). The row count must match the plan.
   _DISCOVER_DAYS_SQL: Distinct UTC days that hold per-core rows
     (``_PERCORE_WHERE``), found over the whole table.
   _NO_TIMEOUT_SQL: Disables the statement timeout for the current transaction;
@@ -59,12 +62,8 @@ _INSERT_SQL = (
   f"VALUES ({', '.join(['%s'] * len(_COLUMNS))}) ON CONFLICT DO NOTHING"
 )
 _DELETE_SQL = (
-  "DELETE FROM host_data hd WHERE hd.host = ANY(%s) AND hd.time >= %s "
-  "AND hd.time < %s AND hd.dev IS NOT NULL AND hd.dev <> '' "
-  "AND hd.dev NOT LIKE 'j:%%' AND hd.type IS NOT NULL "
-  "AND hd.type <> ALL(%s) AND EXISTS (SELECT 1 FROM host_data w "
-  "WHERE w.host = hd.host AND w.type = hd.type AND w.event = hd.event "
-  "AND w.time = hd.time AND w.dev = '')"
+  "DELETE FROM host_data WHERE host = ANY(%s) AND time >= %s AND time < %s "
+  f"AND {_PERCORE_WHERE}"
 )
 _DISCOVER_DAYS_SQL = (
   "SELECT DISTINCT date_trunc('day', time AT TIME ZONE 'UTC') FROM host_data "

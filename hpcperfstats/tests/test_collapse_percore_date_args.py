@@ -76,6 +76,17 @@ def test_discovery_sql_uses_the_percore_predicate_over_the_whole_table():
   assert "time >=" not in cmd_mod._DISCOVER_DAYS_SQL
 
 
+def test_delete_uses_the_planning_predicate_without_a_per_row_probe():
+  """Regression: the EXISTS probe for a dev='' row read every device row of a
+  (host, time) per deleted row; one 8-host hour took 20+ min on hpcperfstats01.
+  """
+  sql = cmd_mod._DELETE_SQL
+  assert "EXISTS" not in sql and " w " not in sql
+  assert sql.endswith(f"AND {cmd_mod._PERCORE_WHERE}")
+  # hosts, start, end, then the GPU types inside _PERCORE_WHERE
+  assert sql.replace("%%", "").count("%s") == 4
+
+
 def test_discover_days_binds_the_gpu_types():
   cursor = mock.MagicMock()
   cursor.fetchall.return_value = []

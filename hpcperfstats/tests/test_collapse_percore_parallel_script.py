@@ -19,6 +19,7 @@ SCRIPT = REPO_ROOT / "scripts" / "collapse_percore_parallel.sh"
 _FAKE_PODMAN = r"""#!/bin/bash
 ST=${FAKE_STATE:?}
 [ "$1" = ps ] && { echo "hpcperfstats_db_1  Up"; exit 0; }
+[ "$1" = cp ] && { echo "$2 $3" >> $ST/cp.log; [ -f "$2" ]; exit; }
 [ "$1" = exec ] || exit 2; shift
 while [[ "$1" == -* ]]; do case "$1" in -e) shift 2;; *) shift;; esac; done
 C=$1; shift
@@ -180,6 +181,31 @@ def test_job_without_a_day_or_host_file_is_refused(env):
   refused = (Path(env["COLLAPSE_RUN_DIR"]) / "refused.log").read_text()
   assert refused.count("REFUSED") == 3
   assert _calls(env) == []
+
+
+_CMD = "site/lib/machine/management/commands/collapse_percore_host_data.py"
+
+
+def test_start_copies_this_checkouts_repair_command_into_the_pipeline(env):
+  """A fix to the command must reach the jobs with a git pull, no rebuild."""
+  assert _run(env, "start", "2026-10-24").returncode == 0
+  _wait_finished(env, 2)
+  src, dst = (Path(env["FAKE_STATE"]) / "cp.log").read_text().split()
+  assert Path(src).resolve() == REPO_ROOT / "hpcperfstats" / _CMD
+  assert (
+    dst == f"hpcperfstats_pipeline_1:/home/hpcperfstats/hpcperfstats/{_CMD}"
+  )
+
+
+def test_restart_reruns_the_same_days(env):
+  assert _run(env, "start", "2026-10-24", "2026-10-25").returncode == 0
+  _wait_finished(env, 6)
+  first = sorted(_calls(env))
+  out = _run(env, "restart")
+  assert out.returncode == 0, out.stderr
+  assert "restarting days: 2026-10-24 2026-10-25" in out.stdout
+  _wait_finished(env, 6)
+  assert sorted(_calls(env)) == sorted(first * 2)
 
 
 def test_password_server_uses_the_container_password_and_never_prompts(env):

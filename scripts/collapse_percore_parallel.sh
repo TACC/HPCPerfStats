@@ -2,6 +2,7 @@
 # Parallel repair of per-core host_data rows (collapse_percore_host_data --apply, sharded by host).
 #   collapse_percore_parallel.sh stop                 stop every repair (runner, jobs, DB sessions; never the psql merge)
 #   collapse_percore_parallel.sh start DAY [DAY ...]  shard each day by host and run collapse_percore_host_data --apply
+#   collapse_percore_parallel.sh restart              stop the current run and start its days again
 #   collapse_percore_parallel.sh status               progress of the current run
 #   collapse_percore_parallel.sh survey [SINCE_DAY]   read-only: deployed fix, writers, WAL, per-day per-core share
 set -uo pipefail
@@ -32,6 +33,16 @@ repair_count() {
 }
 valid_day() { [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; }
 current() { readlink -f "$RUN/current" 2>/dev/null; }
+# Copy this checkout's repair command into the pipeline container, so a fix
+# to it reaches the jobs with a git pull instead of an image rebuild.
+CMD_REL=site/lib/machine/management/commands/collapse_percore_host_data.py
+sync_command() {
+  local src="$(dirname "$SELF")/../hpcperfstats/$CMD_REL"
+  local dst="${MANAGE%/site/manage.py}/$CMD_REL"
+  [ -f "$src" ] || { echo "no repair command at $src" >&2; return 1; }
+  podman cp "$src" "$PIPE:$dst" || return 1
+  echo "repair command copied from this checkout into $PIPE:$dst"
+}
 # FIXED when the pipeline image has the dbcabf0e collapse fix and the repair command.
 fix_state() {
   podman exec "$PIPE" python3 -c "
@@ -72,9 +83,10 @@ job() {
 }
 
 stop() {
-  pkill -f "xargs -r -P [0-9]+ -L 1 $SELF _job" 2>/dev/null
+  # Runners first (so they start no new job), then the jobs: this script's and
+  # the hand-built $RUN/run_one.sh runner used on hpcperfstats02.
+  pkill -f "xargs .*-L 1 .*($SELF _job|$RUN/run_one.sh)" 2>/dev/null
   pkill -f "$SELF _job" 2>/dev/null
-  pkill -f 'xargs -P 8 -L 1' 2>/dev/null
   pkill -f "$RUN/run_one.sh" 2>/dev/null
   podman exec "$PIPE" pkill -f collapse_percore_host_data 2>/dev/null
   sleep 3
@@ -108,6 +120,7 @@ start() {
   [ "$slots" = "0" ] && [ "$arch" = "off" ] || die "replication_slots=$slots archive_mode=$arch (WAL would pile up)"
   local fix; fix=$(fix_state)
   [ "$fix" = "FIXED" ] || die "pipeline code state is $fix; deploy dbcabf0e or later before repairing"
+  sync_command || die "could not copy the repair command into $PIPE"
   for day in "$@"; do
     [ "$(chunk_compressed "$day")" = "f" ] || die "$day is compressed (or has no chunk); decide on decompress_chunk first"
   done
@@ -199,11 +212,24 @@ survey() {
     done
 }
 
+# Stop the current run and start its days again (with the repair command
+# copied fresh from this checkout). Windows already repaired are no-ops.
+restart() {
+  local q days
+  q="$(current)/queue"; [ -s "$q" ] || q="$RUN/queue"
+  [ -s "$q" ] || die "no run to restart (no queue in $RUN)"
+  days=$(awk '{print $1}' "$q" | sort -u | tr '\n' ' ')
+  echo "== restarting days: $days"
+  stop
+  start $days
+}
+
 case "${1:-}" in
   _job) shift; job "$@" ;;
   stop) stop ;;
   start) shift; start "$@" ;;
+  restart) restart ;;
   status) status ;;
   survey) shift; survey "$@" ;;
-  *) die "usage: $0 {stop|start DAY [DAY ...]|status|survey [SINCE_DAY]}" ;;
+  *) die "usage: $0 {stop|start DAY [DAY ...]|restart|status|survey [SINCE_DAY]}" ;;
 esac
