@@ -481,8 +481,8 @@ daily_archive_dir = %(data_dir)s/daily_archive
 # zstd -T for ingest/populate sealed streams (default 4).
 # ingest_zstd_threads = 4
 
-# Max daily tar seals running at once; raise only on storage one seal cannot saturate (default 1).
-# archive_seal_parallel_workers = 1
+# Max daily tar seals running at once; set 1 on a saturated shared volume (default 2).
+# archive_seal_parallel_workers = 2
 
 # Max parallel threads for sealed/tar validation read-lock scope (default 2).
 # sync_archive_validation_max_workers = 2
