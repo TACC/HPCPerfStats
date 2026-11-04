@@ -74,4 +74,32 @@ for sym in job_emit_sole_ctx job_emit_multi_ctx job_emit_entry_emits_affinity; d
     }
 done
 
+# M1: CPU coverage for %affinity / the sole fast path reads the extern stepd (job cpuset)
+# through job_emit_entry_cpulist, never a raw task-pid union in the emit path.
+grep -q 'job_emit_entry_cpulist' "${SRC}" \
+  || {
+    echo "job_shared_emit must compute CPU coverage via job_emit_entry_cpulist" >&2
+    exit 1
+  }
+if grep -q 'job_sched_affinity_union_cpulist' "${SRC}"; then
+  echo "job_shared_emit must not call job_sched_affinity_union_cpulist directly (M1)" >&2
+  exit 1
+fi
+# M3: a sole marked jid uses the split path, so exactly one jid insert carries no marks
+# (the sole fast path) and the '-' remainder ctx comes from the linkable helper.
+sole_unmarked="$(grep -cE 'insert_serialized\(w, disc\.entries\[0\]\.jid, NULL, NULL, 1,' "${SRC}" || true)"
+if test "${sole_unmarked}" -ne 1; then
+  echo "expected exactly one unmarked sole insert (got ${sole_unmarked})" >&2
+  exit 1
+fi
+if grep -qE 'insert_serialized\(w, disc\.entries\[0\]\.jid, jobs_mark' "${SRC}"; then
+  echo "sole marked jid must use the per-jid + '-' split path, not a sole-only insert (M3)" >&2
+  exit 1
+fi
+grep -q 'job_emit_remainder_ctx' "${SRC}" \
+  || {
+    echo "job_shared_emit must build the '-' remainder via job_emit_remainder_ctx" >&2
+    exit 1
+  }
+
 echo "test_job_shared_emit_debug_shm_mirror passed"

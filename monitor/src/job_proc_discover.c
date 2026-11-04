@@ -33,6 +33,7 @@ struct scope_bucket {
   int have_step;
   int named;
   int named_from_title;
+  int stepd_pid;
 };
 
 static int g_discover_warned;
@@ -373,11 +374,12 @@ static int read_first_cgroup_pid(const char *path)
   return pid;
 }
 
-/*! Name an unnamed bucket from the stepd title of its extern step (one bounded read each
- *  of cgroup.procs and /proc/<pid>/cmdline). Fail-open: any read/parse miss leaves it unnamed.
- *  Returns 0, or -1 on allocation failure. */
-static int name_bucket_from_stepd_title(const char *proc_root, const char *scope_dir,
-                                        struct scope_bucket *b)
+/*! Record the bucket's extern-step root stepd pid (first pid of step_extern/slurm/cgroup.procs;
+ *  its affinity is the job cpuset) and, when no job process named the bucket, name it from that
+ *  stepd's title (one bounded read each of cgroup.procs and /proc/<pid>/cmdline). Fail-open: any
+ *  read/parse miss leaves stepd_pid 0 and the bucket unnamed. Returns 0, or -1 on alloc failure. */
+static int scan_bucket_extern_stepd(const char *proc_root, const char *scope_dir,
+                                    struct scope_bucket *b)
 {
   char path[JOB_PROC_SCOPE_MAX + JOB_PROC_TOKEN_MAX + 64];
   char title[JOB_PROC_CMDLINE_MAX];
@@ -389,6 +391,9 @@ static int name_bucket_from_stepd_title(const char *proc_root, const char *scope
 
   n = snprintf(path, sizeof(path), "%s/%s/step_extern/slurm/cgroup.procs", scope_dir, b->token);
   if (n < 0 || (size_t)n >= sizeof(path) || (pid = read_first_cgroup_pid(path)) < 0)
+    return 0;
+  b->stepd_pid = pid;
+  if (b->named)
     return 0;
   n = snprintf(path, sizeof(path), "%s/%d/cmdline", proc_root, pid);
   if (n < 0 || (size_t)n >= sizeof(path) || (f = fopen(path, "re")) == NULL)
@@ -408,10 +413,10 @@ static int name_bucket_from_stepd_title(const char *proc_root, const char *scope
   return 0;
 }
 
-/*! Visit every job token under <cgroup_root>/slurmstepd.scope; name tokens that no job
- *  process named from their root stepd title. Root pid dirs are skipped by the /proc walk
- *  (proc_filter), so an idle allocation is only visible here. Sets *any_scope when a job
- *  token exists. Returns 0, or -1 on allocation failure. */
+/*! Visit every job token under <cgroup_root>/slurmstepd.scope; record its extern stepd pid and
+ *  name tokens that no job process named from that stepd title. Root pid dirs are skipped by
+ *  the /proc walk (proc_filter), so an idle allocation and the stepd pid are only visible here.
+ *  Sets *any_scope when a job token exists. Returns 0, or -1 on allocation failure. */
 static int name_unnamed_scopes_from_stepd_titles(const char *proc_root,
                                                  struct scope_bucket **buckets, size_t *nbuckets,
                                                  size_t *bcap, int *any_scope)
@@ -439,7 +444,7 @@ static int name_unnamed_scopes_from_stepd_titles(const char *proc_root,
         (tokens[i]->d_type == DT_DIR || tokens[i]->d_type == DT_UNKNOWN)) {
       *any_scope = 1;
       b = find_or_add_bucket(buckets, nbuckets, bcap, name);
-      if (b == NULL || (!b->named && name_bucket_from_stepd_title(proc_root, scope_dir, b) < 0))
+      if (b == NULL || scan_bucket_extern_stepd(proc_root, scope_dir, b) < 0)
         rc = -1;
     }
     free(tokens[i]);
@@ -472,8 +477,11 @@ static int merge_named_into_result(struct job_proc_discover_result *out, struct 
     if (b->cgroup_relpath[0])
       snprintf(e->cgroup_relpath, sizeof(e->cgroup_relpath), "%s", b->cgroup_relpath);
     e->named_from_title = b->named_from_title;
+    e->stepd_pid = b->stepd_pid;
   } else {
     e->named_from_title = e->named_from_title && b->named_from_title;
+    if (e->stepd_pid <= 0)
+      e->stepd_pid = b->stepd_pid;
     if (e->job_gpus[0] == '\0' && b->job_gpus[0])
       snprintf(e->job_gpus, sizeof(e->job_gpus), "%s", b->job_gpus);
     if (e->cgroup_relpath[0] == '\0' && b->cgroup_relpath[0])

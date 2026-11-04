@@ -1,5 +1,8 @@
 /* Phase 4: wire mark strings + jid/gpu helpers for shared-node payloads. */
+#define _GNU_SOURCE
 #include <assert.h>
+#include <errno.h>
+#include <sched.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -95,7 +98,7 @@ static void test_job_shared_emit_title_named_sole_is_unmarked(void)
   memset(&empty, 0, sizeof(empty));
   gpu_set_of(&available, 4);
   /* No SLURM_JOB_GPUS and unknown CPU coverage: still the unmarked (no %jobs) payload. */
-  assert(job_emit_sole_ctx(&e, JOB_CPU_UNKNOWN, &empty, &empty, &available, &c) == 1);
+  assert(job_emit_sole_ctx(&e, JOB_CPU_UNKNOWN, &empty, &available, &c) == 1);
   assert(keep(&c, "nvidia_gpu", "3") == 1); /* whole node, every GPU */
   assert(keep(&c, "host_cpu", "17") == 1);
   assert(keep(&c, "ib", "mlx5_0.1") == 1);
@@ -106,7 +109,7 @@ static void test_job_shared_emit_title_named_sole_is_unmarked(void)
   /* CPU-only node: same unmarked decision. */
   memset(&available, 0, sizeof(available));
   available.inventory_known = 1;
-  assert(job_emit_sole_ctx(&e, JOB_CPU_UNKNOWN, &empty, &empty, &available, &c) == 1);
+  assert(job_emit_sole_ctx(&e, JOB_CPU_UNKNOWN, &empty, &available, &c) == 1);
 }
 
 static void test_job_shared_emit_env_named_sole_keeps_full_resource_rule(void)
@@ -121,15 +124,132 @@ static void test_job_shared_emit_env_named_sole_keeps_full_resource_rule(void)
   gpu_set_of(&available, 4);
   gpu_set_of(&granted, 4);
   gpu_set_of(&partial, 1);
-  assert(job_emit_sole_ctx(&e, JOB_CPU_EXACT_ALL, &granted, &granted, &available, &c) == 1);
-  assert(job_emit_sole_ctx(&e, JOB_CPU_PARTIAL, &granted, &granted, &available, &c) == 0);
-  assert(job_emit_sole_ctx(&e, JOB_CPU_EXACT_ALL, &partial, &partial, &available, &c) == 0);
+  assert(job_emit_sole_ctx(&e, JOB_CPU_EXACT_ALL, &granted, &available, &c) == 1);
+  assert(job_emit_sole_ctx(&e, JOB_CPU_PARTIAL, &granted, &available, &c) == 0);
   /* Marked path filters GPUs to the job's set. */
+  assert(job_emit_sole_ctx(&e, JOB_CPU_PARTIAL, &partial, &available, &c) == 0);
   assert(keep(&c, "nvidia_gpu", "0") == 1);
   assert(keep(&c, "nvidia_gpu", "2") == 0);
   available.inventory_known = 0;
-  assert(job_emit_sole_ctx(&e, JOB_CPU_EXACT_ALL, &granted, &granted, &available, &c) == 0);
-  assert(job_emit_sole_ctx(NULL, JOB_CPU_EXACT_ALL, &granted, &granted, &available, &c) == 0);
+  assert(job_emit_sole_ctx(&e, JOB_CPU_EXACT_ALL, &granted, &available, &c) == 0);
+  assert(job_emit_sole_ctx(NULL, JOB_CPU_EXACT_ALL, &granted, &available, &c) == 0);
+  assert(job_emit_sole_ctx(&e, JOB_CPU_EXACT_ALL, &granted, NULL, &c) == 0);
+}
+
+/* M2 regression (jid 79282, hpcperfstats04): a sole job on every online CPU that requested
+ * no GPUs (empty SLURM_JOB_GPUS on a 4-GPU node) was marked gpus=- and every GPU row was
+ * dropped. Holding all CPUs means no second job fits: unmarked, with every available GPU. */
+static void test_job_shared_emit_sole_all_cpus_owns_gpus_without_grant(void)
+{
+  int pid = 6001;
+  struct job_proc_jid_entry e = entry_of("79282", &pid, 0);
+  struct job_gpu_set empty;
+  struct job_gpu_set partial;
+  struct job_gpu_set available;
+  struct job_emit_filter_ctx c;
+
+  memset(&empty, 0, sizeof(empty));
+  gpu_set_of(&partial, 1);
+  gpu_set_of(&available, 4);
+  assert(job_emit_sole_ctx(&e, JOB_CPU_EXACT_ALL, &empty, &available, &c) == 1);
+  assert(keep(&c, "nvidia_gpu", "0") == 1);
+  assert(keep(&c, "nvidia_gpu", "3") == 1);
+  assert(keep(&c, "host_cpu", "143") == 1);
+  assert(keep(&c, "ib", "mlx5_0.1") == 1);
+  /* A partial grant does not mark a whole-CPU job either. */
+  assert(job_emit_sole_ctx(&e, JOB_CPU_EXACT_ALL, &partial, &available, &c) == 1);
+  assert(keep(&c, "nvidia_gpu", "2") == 1);
+  /* CPU-only node (known-empty inventory): unmarked too. */
+  memset(&available, 0, sizeof(available));
+  available.inventory_known = 1;
+  assert(job_emit_sole_ctx(&e, JOB_CPU_EXACT_ALL, &empty, &available, &c) == 1);
+}
+
+/* M3: a sole job on part of the node is split like N >= 2: its payload keeps only its CPUs and
+ * GPUs, and the '-' remainder carries the rest instead of the rows being dropped. */
+static void test_job_shared_emit_sole_partial_splits_remainder(void)
+{
+  int pid = 6001;
+  struct job_proc_jid_entry e = entry_of("72352", &pid, 0);
+  struct job_gpu_set mine;
+  struct job_gpu_set available;
+  struct job_gpu_set remainder;
+  struct job_emit_filter_ctx jid_ctx;
+  struct job_emit_filter_ctx rem_ctx;
+  const char *claimed[] = {"0-71"};
+  char rem_cpus[64];
+
+  gpu_set_of(&mine, 2); /* GPUs 0,1 */
+  gpu_set_of(&available, 4);
+  job_gpu_set_diff(&available, &mine, &remainder);
+  assert(job_sched_affinity_cpulist_subtract("0-143", claimed, 1, rem_cpus, sizeof(rem_cpus)) == 0);
+  assert(strcmp(rem_cpus, "72-143") == 0);
+
+  job_emit_multi_ctx(&e, &mine, "0-71", &jid_ctx);
+  job_emit_remainder_ctx(&remainder, rem_cpus, 1, &rem_ctx);
+  assert(keep(&jid_ctx, "host_cpu", "10") == 1 && keep(&rem_ctx, "host_cpu", "10") == 0);
+  assert(keep(&jid_ctx, "host_cpu", "100") == 0 && keep(&rem_ctx, "host_cpu", "100") == 1);
+  assert(keep(&jid_ctx, "nvidia_gpu", "1") == 1 && keep(&rem_ctx, "nvidia_gpu", "1") == 0);
+  assert(keep(&jid_ctx, "nvidia_gpu", "3") == 0 && keep(&rem_ctx, "nvidia_gpu", "3") == 1);
+  assert(keep(&rem_ctx, "ib", "mlx5_0.1") == 1);
+  assert(keep(&rem_ctx, "host_mem_job", "j:72352") == 0);
+  assert(keep(&rem_ctx, "host_proc", "a.out/6001/f/1") == 0);
+  /* Unknown inventory: '-' carries no GPU rows. */
+  job_emit_remainder_ctx(&remainder, rem_cpus, 0, &rem_ctx);
+  assert(keep(&rem_ctx, "nvidia_gpu", "3") == 0);
+  job_emit_remainder_ctx(&remainder, rem_cpus, 1, NULL); /* no-op */
+}
+
+/* M1: CPU coverage comes from the extern stepd (job cpuset), not MPI-pinned task pids. */
+static cpu_set_t *g_online_mask;
+static size_t g_online_size;
+
+static int inject_stepd_vs_tasks(pid_t pid, cpu_set_t *set, size_t setsize)
+{
+  memset(set, 0, setsize);
+  if (pid == 100) { /* stepd: the whole node */
+    memcpy(set, g_online_mask, setsize < g_online_size ? setsize : g_online_size);
+    return 0;
+  }
+  if (pid == 101 || pid == 102) { /* ranks pinned to CPU 0 and 1 */
+    CPU_SET_S((size_t)(pid - 101), setsize, set);
+    return 0;
+  }
+  errno = ESRCH;
+  return -1;
+}
+
+static void test_job_emit_entry_cpulist_prefers_stepd(void)
+{
+  int pids[] = {101, 102};
+  struct job_proc_jid_entry e = entry_of("79282", pids, 0);
+  size_t ncpus = 0;
+  char out[512];
+  enum job_cpu_coverage cov = JOB_CPU_UNKNOWN;
+
+  e.npids = 2;
+  if (job_sched_affinity_read_online(&g_online_mask, &g_online_size, &ncpus) < 0)
+    return; /* no /sys online list on this host */
+  g_online_size = CPU_ALLOC_SIZE(ncpus);
+  job_sched_affinity_set_inject(inject_stepd_vs_tasks);
+
+  e.stepd_pid = 100;
+  assert(job_emit_entry_cpulist(&e, 8, out, sizeof(out), &cov) == 0);
+  assert(cov == JOB_CPU_EXACT_ALL);
+
+  /* No stepd known (environ-only fallback): the old pinned-task union. */
+  e.stepd_pid = 0;
+  assert(job_emit_entry_cpulist(&e, 8, out, sizeof(out), &cov) == 0);
+  assert(strcmp(out, "0-1") == 0);
+  /* stepd vanished (ESRCH): falls back to the task sample. */
+  e.stepd_pid = 99;
+  assert(job_emit_entry_cpulist(&e, 8, out, sizeof(out), &cov) == 0);
+  assert(strcmp(out, "0-1") == 0);
+  assert(job_emit_entry_cpulist(NULL, 8, out, sizeof(out), &cov) == -1);
+
+  job_sched_affinity_set_inject(NULL);
+  CPU_FREE(g_online_mask);
+  g_online_mask = NULL;
 }
 
 static void test_job_shared_emit_title_named_multi_omits_affinity(void)
@@ -198,6 +318,9 @@ int main(void)
   test_host_mem_job_dev_format();
   test_job_shared_emit_title_named_sole_is_unmarked();
   test_job_shared_emit_env_named_sole_keeps_full_resource_rule();
+  test_job_shared_emit_sole_all_cpus_owns_gpus_without_grant();
+  test_job_shared_emit_sole_partial_splits_remainder();
+  test_job_emit_entry_cpulist_prefers_stepd();
   test_job_shared_emit_title_named_multi_omits_affinity();
   test_job_shared_emit_env_named_multi_keeps_split();
   test_node_wide_filter_ctx();

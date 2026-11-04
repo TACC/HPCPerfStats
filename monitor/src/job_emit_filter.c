@@ -113,20 +113,19 @@ int job_emit_entry_emits_affinity(const struct job_proc_jid_entry *e)
 }
 
 int job_emit_sole_ctx(const struct job_proc_jid_entry *e, enum job_cpu_coverage cov,
-                      const struct job_gpu_set *granted, const struct job_gpu_set *g_union,
-                      const struct job_gpu_set *available, struct job_emit_filter_ctx *out)
+                      const struct job_gpu_set *g_union, const struct job_gpu_set *available,
+                      struct job_emit_filter_ctx *out)
 {
   int unmarked;
 
   if (e == NULL || out == NULL || available == NULL)
     return 0;
-  unmarked = !job_emit_entry_emits_affinity(e) ||
-             (cov == JOB_CPU_EXACT_ALL && available->inventory_known && granted != NULL &&
-              job_gpu_set_exact_equal(granted, available));
+  /* Every online CPU (or an idle allocation): no second job fits, so the node is the job's. */
+  unmarked =
+      !job_emit_entry_emits_affinity(e) || (cov == JOB_CPU_EXACT_ALL && available->inventory_known);
   memset(out, 0, sizeof(*out));
   out->entry = e;
-  /* Title-named: the allocation owns the node, so keep every available GPU. */
-  out->gpus = e->named_from_title ? available : g_union;
+  out->gpus = unmarked ? available : g_union;
   out->include_node_wide = 1;
   out->include_proc = 1;
   out->include_gpu = 1;
@@ -147,4 +146,29 @@ void job_emit_multi_ctx(const struct job_proc_jid_entry *e, const struct job_gpu
   out->cpulist = split ? cpulist : NULL;
   out->include_proc = split;
   out->include_gpu = split;
+}
+
+void job_emit_remainder_ctx(const struct job_gpu_set *remainder, const char *rem_cpus,
+                            int inventory_known, struct job_emit_filter_ctx *out)
+{
+  if (out == NULL)
+    return;
+  memset(out, 0, sizeof(*out));
+  out->gpus = remainder;
+  out->cpulist = rem_cpus;
+  out->include_node_wide = 1;
+  out->include_gpu = inventory_known ? 1 : 0;
+}
+
+int job_emit_entry_cpulist(const struct job_proc_jid_entry *e, int sample_limit, char *out,
+                           size_t out_cap, enum job_cpu_coverage *cov)
+{
+  int stepd;
+
+  if (e == NULL)
+    return -1;
+  stepd = e->stepd_pid;
+  if (stepd > 0 && job_sched_affinity_union_cpulist(&stepd, 1, 1, out, out_cap, cov) == 0)
+    return 0;
+  return job_sched_affinity_union_cpulist(e->pids, e->npids, sample_limit, out, out_cap, cov);
 }

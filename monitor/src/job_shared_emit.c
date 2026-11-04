@@ -237,51 +237,26 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
   }
 
   if (disc.n == 1) {
-    struct job_gpu_set granted;
-    struct job_gpu_set in_use;
-    struct job_gpu_set g_union;
     char cpulist[512] = "";
     enum job_cpu_coverage cov = JOB_CPU_UNKNOWN;
     struct job_emit_filter_ctx ctx;
 
-    memset(&granted, 0, sizeof(granted));
-    memset(&g_union, 0, sizeof(g_union));
-    /* Title-named (idle allocation): no grant, and stepd fds/affinity are not the job's. */
-    if (job_emit_entry_emits_affinity(&disc.entries[0])) {
-      job_gpu_assign_map_grant(disc.entries[0].job_gpus, &granted);
-      job_gpu_assign_scan_fds(disc.entries[0].pids, disc.entries[0].npids, &in_use);
-      job_gpu_set_union(&granted, &in_use, &g_union);
-      (void)job_sched_affinity_union_cpulist(disc.entries[0].pids, disc.entries[0].npids,
-                                             affinity_pid_sample_limit, cpulist, sizeof(cpulist),
-                                             &cov);
-    }
-    full_resource = job_emit_sole_ctx(&disc.entries[0], cov, &granted, &g_union, &available, &ctx);
-    stats_buffer_set_row_filter(job_emit_row_filter, &ctx);
+    /* Title-named (idle allocation): stepd affinity is not a task's, but the node is the job's. */
+    if (job_emit_entry_emits_affinity(&disc.entries[0]))
+      (void)job_emit_entry_cpulist(&disc.entries[0], affinity_pid_sample_limit, cpulist,
+                                   sizeof(cpulist), &cov);
+    full_resource = job_emit_sole_ctx(&disc.entries[0], cov, NULL, &available, &ctx);
     if (full_resource) {
+      stats_buffer_set_row_filter(job_emit_row_filter, &ctx);
       insert_serialized(w, disc.entries[0].jid, NULL, NULL, 1, &burst_tier);
       goto done;
     }
-
-    {
-      char jobs_mark[256];
-      char aff_mark[768];
-      char gpus_wire[256];
-
-      format_jobs_csv(&disc, jobs_csv, sizeof(jobs_csv));
-      snprintf(jobs_mark, sizeof(jobs_mark), "jobs jids=%s", jobs_csv);
-      job_gpu_set_format_wire(&g_union, gpus_wire, sizeof(gpus_wire));
-      if (cov != JOB_CPU_UNKNOWN && cpulist[0])
-        snprintf(aff_mark, sizeof(aff_mark), "affinity jid=%s cpus=%s gpus=%s cg=sched",
-                 disc.entries[0].jid, cpulist, gpus_wire);
-      else
-        aff_mark[0] = '\0';
-      insert_serialized(w, disc.entries[0].jid, jobs_mark, aff_mark[0] ? aff_mark : NULL, 1,
-                        &burst_tier);
-    }
-    goto done;
+    /* Sole jid on part of the node: same per-jid + '-' remainder split as N >= 2 below, so
+     * unassigned CPUs/GPUs are sent on '-' instead of dropped. */
   }
 
-  /* N >= 2: per-jid payloads + one node-wide '-' (remainder GPU/CPU). */
+  /* Marked tick (N >= 2, or a sole partial jid): per-jid payloads + one node-wide '-'
+   * (remainder GPU/CPU). */
   format_jobs_csv(&disc, jobs_csv, sizeof(jobs_csv));
   {
     struct job_gpu_set claimed;
@@ -308,9 +283,8 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
       job_gpu_set_union(&granted, &in_use, &g_union);
       job_gpu_set_union(&claimed, &g_union, &tmp);
       claimed = tmp;
-      (void)job_sched_affinity_union_cpulist(disc.entries[i].pids, disc.entries[i].npids,
-                                             affinity_pid_sample_limit, cpu_lists[i],
-                                             sizeof(cpu_lists[i]), &cov);
+      (void)job_emit_entry_cpulist(&disc.entries[i], affinity_pid_sample_limit, cpu_lists[i],
+                                   sizeof(cpu_lists[i]), &cov);
       if (cpu_lists[i][0])
         cpu_ptrs[n_cpu_lists++] = cpu_lists[i];
     }
@@ -346,12 +320,9 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
                         &burst_tier);
     }
     {
-      struct job_emit_filter_ctx ctx = {.gpus = &remainder,
-                                        .cpulist = rem_cpus,
-                                        .include_node_wide = 1,
-                                        .include_proc = 0,
-                                        .include_gpu = available.inventory_known ? 1 : 0};
+      struct job_emit_filter_ctx ctx;
 
+      job_emit_remainder_ctx(&remainder, rem_cpus, available.inventory_known, &ctx);
       stats_buffer_set_row_filter(job_emit_row_filter, &ctx);
       /* Do not mirror: would clobber last jid sample in DEBUG shm fast/full. */
       insert_serialized(w, "-", NULL, NULL, 0, &burst_tier);

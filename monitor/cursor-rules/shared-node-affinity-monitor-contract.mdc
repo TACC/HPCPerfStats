@@ -31,6 +31,8 @@ alwaysApply: false
 - Group pids by cgroup v2 `slurmstepd.scope/<token>/`. Name sources, in order:
   1. `SLURM_JOB_ID` in a non-root pid's environ (env always wins).
   2. For a token still unnamed: the root `slurmstepd` title of the extern step — first pid of `<cgroup_root>/system.slice/slurmstepd.scope/<token>/step_extern/slurm/cgroup.procs`, then `/proc/<pid>/cmdline` = `slurmstepd: [<jid>.<step>]` or `[<jid>:namespace]` (`job_proc_jid_from_stepd_title`; all-digit jid). Sets `named_from_title`. Needed because the `/proc` walk skips root-owned pid dirs (`proc_filter`), so an idle allocation (only root stepds left) is otherwise never seen. Cost: one scandir of `slurmstepd.scope` plus two small reads per unnamed token per sample; fail-open on any miss.
+- Every token (named or not) records that extern-step root stepd pid as `stepd_pid` (0 when `cgroup.procs` is missing or empty). Same file read as title naming; no extra cost for unnamed tokens, one small read per env-named token per sample.
+- **CPU allocation (M1, 2026-11-03):** `job_emit_entry_cpulist` reads `sched_getaffinity(stepd_pid)` — the stepd sits in the job cgroup unpinned, so its mask is the job cpuset — and falls back to the union over ≤`affinity_pid_sample_limit` task pids only when `stepd_pid` is unknown or unreadable. Task pids alone under-report: MPI binds each rank to one core (hpcperfstats04, 2026-11-03: 9,589 of 15,475 `debug`-queue affinity rows were below the allocation, min 1 CPU). Still no `cpuset.cpus` reads.
 - `jid_require_step_id` drops env-named groups without `SLURM_STEP_ID`; title-named groups are allocation presence and are kept.
 - Token is never emitted. No cgroup `job_<id>` parse (Horizon tokens are opaque, e.g. `s4TDM6EWYAH400`).
 - Store cgroup relpath (after `0::`) on each jid entry for memory reads; title-named entries use `/system.slice/slurmstepd.scope/<token>/step_extern/slurm`; empty on environ-only fallback.
@@ -47,13 +49,14 @@ host_mem_job j:<jid> [@fast|@full] <mem_used> <mem_peak> <anon_pages> <file_page
 ```
 
 - One sample block = one header jobid token (≤32 bare jid).
-- Sole jid with exact online CPUs **and** exact available GPU grant: ordinary unmarked payload (**still** may include `host_mem_job j:<jid>`).
-- **Title-named entries never emit `%affinity`** (no `SLURM_JOB_GPUS`; stepd fds/affinity are not the grant) and claim no CPUs/GPUs. Sole title-named entry → unmarked payload with every available GPU (an empty-grant `job_affinity` row would hide the job's GPUs). `|J|>=2` → listed in `%jobs`, no `%affinity`, payload carries only its `host_mem_job` (no CPU/GPU/proc/node-wide rows); its CPUs/GPUs stay on the `-` remainder. Decisions live in linkable `job_emit_filter.c` (`job_emit_sole_ctx`, `job_emit_multi_ctx`, `job_emit_entry_emits_affinity`).
-- `|J|>=2`: N jid payloads + one `-` node-wide payload; same frozen timestamp.
+- **Sole jid holding every online CPU** (M2, 2026-11-03): ordinary unmarked payload with **every available GPU**, whatever its GPU grant (**still** may include `host_mem_job j:<jid>`). Slurm cannot start a second job on a node with no free CPU, so the node is the job's. The old rule also required `SLURM_JOB_GPUS` to equal the inventory, which marked whole-node jobs that requested no GPUs (`gpus=-`) and dropped every GPU row (jid 79282, 11 of 12 nodes). Unknown GPU inventory still takes the marked path.
+- **Sole jid on part of the node** (M3, 2026-11-03): marked, and split exactly like `|J|>=2` — the jid payload keeps its affinity CPUs / `G(jid)` / its procs / `host_mem_job`; one `-` payload (same frozen timestamp) carries the unassigned CPUs, unscheduled GPUs and the node-wide rows. Before this the sole marked payload carried every CPU and node-wide row and dropped the GPUs outside the grant, with no `-` payload.
+- **Title-named entries never emit `%affinity`** (no `SLURM_JOB_GPUS`; stepd fds/affinity are not the grant) and claim no CPUs/GPUs. Sole title-named entry → unmarked payload with every available GPU (an empty-grant `job_affinity` row would hide the job's GPUs). `|J|>=2` → listed in `%jobs`, no `%affinity`, payload carries only its `host_mem_job` (no CPU/GPU/proc/node-wide rows); its CPUs/GPUs stay on the `-` remainder. Decisions live in linkable `job_emit_filter.c` (`job_emit_sole_ctx`, `job_emit_multi_ctx`, `job_emit_remainder_ctx`, `job_emit_entry_cpulist`, `job_emit_entry_emits_affinity`).
+- Marked tick (`|J|>=2`, or a sole partial jid): N jid payloads + one `-` node-wide payload; same frozen timestamp.
 - DEBUG shm: `fast`/`full` keep last jid only; `fast.burst`/`full.burst` hold the full tick.
 - GPU `dev` = collector index; unknown inventory never takes the no-mark fast path.
-- `|J|>=2` GPU filter: each jid keeps `G(jid)`; `-` keeps **unscheduled** `G_available − ∪G(jid)` (omit GPU rows on `-` when inventory unknown).
-- `|J|>=2` CPU filter: each jid keeps `host_cpu` / `host_cpu_hw` devices in its affinity cpulist; `-` keeps the online remainder (same split shape as GPU).
+- Marked-tick GPU filter: each jid keeps `G(jid)`; `-` keeps **unscheduled** `G_available − ∪G(jid)` (omit GPU rows on `-` when inventory unknown).
+- Marked-tick CPU filter: each jid keeps `host_cpu` / `host_cpu_hw` devices in its affinity cpulist; `-` keeps the online remainder (same split shape as GPU).
 
 ## `host_mem_job` (job cgroup memory)
 

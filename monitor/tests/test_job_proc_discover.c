@@ -243,8 +243,10 @@ static void test_names_root_only_scope_from_stepd_title(void)
   assert(strcmp(r.entries[0].cgroup_relpath,
                 "/system.slice/slurmstepd.scope/s4TDM6EWYAH400/step_extern/slurm") == 0);
   assert(r.entries[0].job_gpus[0] == '\0');
+  assert(r.entries[0].stepd_pid == 5001);
   assert(strcmp(r.entries[1].jid, "79250") == 0);
   assert(r.entries[1].named_from_title == 1);
+  assert(r.entries[1].stepd_pid == 5101); /* first pid of cgroup.procs */
   job_proc_discover_result_clear(&r);
 }
 
@@ -267,9 +269,11 @@ static void test_env_name_wins_over_stepd_title(void)
   assert(r.n == 1);
   assert(strcmp(r.entries[0].jid, "111") == 0);
   assert(r.entries[0].named_from_title == 0);
-  /* Env-named bucket keeps the non-root leaf path; stepd pid is not added. */
+  /* Env-named bucket keeps the non-root leaf path; stepd pid is not added to pids. */
   assert(strstr(r.entries[0].cgroup_relpath, "/step_0/user/task_0") != NULL);
   assert(r.entries[0].npids == 1 && r.entries[0].pids[0] == 6001);
+  /* M1: the extern stepd pid is still recorded so CPU coverage reads the job cpuset. */
+  assert(r.entries[0].stepd_pid == 6000);
   job_proc_discover_result_clear(&r);
 }
 
@@ -336,6 +340,7 @@ static void test_require_step_skips_env_only(void)
   assert(r.n == 1);
   assert(strcmp(r.entries[0].jid, "444") == 0);
   assert(r.entries[0].named_from_title == 1);
+  assert(r.entries[0].stepd_pid == 9100);
   job_proc_discover_result_clear(&r);
 
   /* Without the step filter both groups are kept. */
@@ -343,6 +348,7 @@ static void test_require_step_skips_env_only(void)
   assert(job_proc_discover(&r, 0, 4096) == 0);
   assert(r.n == 2);
   assert(strcmp(r.entries[0].jid, "333") == 0 && r.entries[0].named_from_title == 0);
+  assert(r.entries[0].stepd_pid == 0); /* tokNoStep has no cgroup.procs: unknown */
   job_proc_discover_result_clear(&r);
 }
 

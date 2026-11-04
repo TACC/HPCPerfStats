@@ -20,19 +20,34 @@ struct job_emit_filter_ctx {
 int job_emit_row_filter(const char *st_name, const char *dev, void *ctx);
 
 /*! Sole discovered jid: fill *out and return 1 when the payload is unmarked (no %jobs /
- *  %affinity): a title-named entry (idle allocation, whole node with every available GPU),
- *  or exact online CPUs plus an exact grant of known inventory. Returns 0 for the marked
- *  path (GPU filter = g_union). NULL entry or out → 0. */
+ *  %affinity) and owns every available GPU: a title-named entry (idle allocation), or a job
+ *  holding every online CPU of known GPU inventory (Slurm cannot start a second job on a node
+ *  with no free CPU, so its GPU grant does not matter). Returns 0 for the marked path (GPU
+ *  filter = g_union; the caller then emits the per-jid / '-' remainder split).
+ *  NULL entry, available or out → 0. */
 int job_emit_sole_ctx(const struct job_proc_jid_entry *e, enum job_cpu_coverage cov,
-                      const struct job_gpu_set *granted, const struct job_gpu_set *g_union,
-                      const struct job_gpu_set *available, struct job_emit_filter_ctx *out);
+                      const struct job_gpu_set *g_union, const struct job_gpu_set *available,
+                      struct job_emit_filter_ctx *out);
 
-/*! |J|>=2 jid payload filter. Title-named entries keep only their host_mem_job device (no
- *  CPU, GPU, proc or node-wide rows); env-named entries keep their CPU/GPU/proc split. */
+/*! |J|>=1 marked jid payload filter. Title-named entries keep only their host_mem_job device
+ *  (no CPU, GPU, proc or node-wide rows); env-named entries keep their CPU/GPU/proc split. */
 void job_emit_multi_ctx(const struct job_proc_jid_entry *e, const struct job_gpu_set *g_union,
                         const char *cpulist, struct job_emit_filter_ctx *out);
 
+/*! Node-wide '-' payload filter for a marked tick: unscheduled GPUs (omitted when the GPU
+ *  inventory is unknown), the online CPUs no job claimed, every node-wide row, no proc or
+ *  host_mem_job rows. NULL out is a no-op. */
+void job_emit_remainder_ctx(const struct job_gpu_set *remainder, const char *rem_cpus,
+                            int inventory_known, struct job_emit_filter_ctx *out);
+
 /*! 1 when the entry may carry %affinity and claim CPUs/GPUs (env-named), 0 otherwise. */
 int job_emit_entry_emits_affinity(const struct job_proc_jid_entry *e);
+
+/*! The job's CPU allocation as a Linux cpulist in out, with *cov set like
+ *  job_sched_affinity_union_cpulist. Reads the extern-step slurmstepd affinity (the job cpuset)
+ *  when e->stepd_pid is known, else the union over up to sample_limit task pids (MPI binding
+ *  can narrow those to one core each). Returns 0, or -1 when neither source is readable. */
+int job_emit_entry_cpulist(const struct job_proc_jid_entry *e, int sample_limit, char *out,
+                           size_t out_cap, enum job_cpu_coverage *cov);
 
 #endif

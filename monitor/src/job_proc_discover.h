@@ -22,6 +22,10 @@ struct job_proc_jid_entry {
    * slurmstepd process title (idle allocation: only the extern step is left).
    * Such entries never emit %affinity (no SLURM_JOB_GPUS, stepd affinity is not the grant). */
   int named_from_title;
+  /* Root slurmstepd pid of the extern step (first pid of step_extern/slurm/cgroup.procs),
+   * 0 when unknown. Its sched affinity is the job's cpuset on this node, unlike task pids
+   * that MPI binding narrows to one core. Never emitted on the wire. */
+  int stepd_pid;
 };
 
 struct job_proc_discover_result {
