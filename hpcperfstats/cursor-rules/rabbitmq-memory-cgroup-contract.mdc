@@ -14,7 +14,7 @@ globs:
 ## Law
 
 1. **Compose `mem_limit` and `memswap_limit`** on the **`rabbitmq`** service must both be set (canonical production: **`96g`**).
-2. **`vm_memory_high_watermark.absolute`** in `services-conf/rabbitmq_vm_memory.conf` must be **strictly below** that cgroup limit (canonical: **`80GiB`** under **`96g`** — ~16 GiB headroom). Watermark is a **publisher throttle**, not a hard Erlang RSS ceiling.
+2. **`vm_memory_high_watermark.absolute`** in `services-conf/rabbitmq_vm_memory.conf` must be **strictly below** that cgroup limit (canonical: **`64GiB`** under **`96g`** — ~32 GiB headroom). Watermark is a **publisher throttle**, not a hard Erlang RSS ceiling.
 3. Never ship absolute watermark **equal** to the cgroup wall — publishers must block before Erlang `binary_alloc` hits the hard limit.
 4. Prefer **absolute** watermarks over **relative** so huge hosts cannot use 40% of all RAM.
 5. After changing compose limits, the watermark conf, **`ERL_FLAGS`**, logging conf, or crash-dump knobs, **recreate** the `rabbitmq` service (`docker compose up -d --force-recreate rabbitmq` or podman equivalent). Canonical **`ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512`** (address-order best fit + 512 KiB largest mbc for binary and heap allocators).
@@ -35,7 +35,7 @@ globs:
 
 ## Regression tests
 
-- `test_docker_compose_rabbitmq_vm_memory_cap_is_96gib` asserts compose `96g` limits + **80GiB** watermark + docs sync.
+- `test_docker_compose_rabbitmq_vm_memory_cap_is_96gib` asserts compose `96g` limits + **64GiB** watermark + docs sync.
 - `test_docker_compose_rabbitmq_sets_erl_flags_allocator_tuning` asserts **`ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512`** + docs sync.
 - `test_docker_compose_rabbitmq_logging_warning_not_info` asserts warning console + connection/channel error.
 - `test_docker_compose_rabbitmq_disables_crash_dumps` asserts **`ERL_CRASH_DUMP_SECONDS=0`** + **`core: 0`**.

@@ -430,7 +430,7 @@ def test_docker_compose_rabbitmq_defaults_to_quorum_queue_type():
 
 
 def test_docker_compose_rabbitmq_vm_memory_cap_is_96gib():
-  """Unbounded RMQ RSS OOM'd the host; 96g cgroup + 80GiB watermark headroom."""
+  """Unbounded RMQ RSS OOM'd the host; 96g cgroup + 64GiB watermark headroom (lowered from 80GiB)."""
   repo_root = Path(__file__).resolve().parents[2]
   compose_path = repo_root / "docker-compose.defaults.yaml"
   content = compose_path.read_text()
@@ -445,18 +445,21 @@ def test_docker_compose_rabbitmq_vm_memory_cap_is_96gib():
   assert "mem_limit: 96g" in rabbitmq_block
   assert "memswap_limit: 96g" in rabbitmq_block
   conf_text = conf_path.read_text()
-  assert "vm_memory_high_watermark.absolute = 80GiB" in conf_text
+  assert "vm_memory_high_watermark.absolute = 64GiB" in conf_text
+  assert "vm_memory_high_watermark.absolute = 80GiB" not in conf_text
   assert "vm_memory_high_watermark.absolute = 96GiB" not in conf_text
   assert "vm_memory_high_watermark.relative" not in conf_text
   readme = (repo_root / "README.md").read_text()
   design = (repo_root / "docs" / "design-document.md").read_text()
   deploy = (repo_root / "docs" / "DEPLOY_CONCURRENCY_AND_NUMA.md").read_text()
-  assert "80GiB" in readme
+  assert "64GiB" in readme
   assert (
     "mem_limit: 96g" in readme or "mem_limit` / `memswap_limit` 96g" in readme
   )
-  assert "80GiB" in design
-  assert "80GiB" in deploy
+  assert "64GiB" in design
+  assert "64GiB" in deploy
+  for doc in (readme, design, deploy):
+    assert "80GiB" not in doc
 
 
 def test_docker_compose_rabbitmq_logging_warning_not_info():

@@ -7,7 +7,7 @@ Use this after Erlang `binary_alloc` OOM, quorum consume **541** storms, or when
 | Item | Contract |
 |------|----------|
 | Cgroup | Compose `mem_limit` / `memswap_limit` **96g** |
-| Publisher throttle | `vm_memory_high_watermark.absolute = 80GiB` — **throttle**, not a hard RSS ceiling |
+| Publisher throttle | `vm_memory_high_watermark.absolute = 64GiB` — **throttle**, not a hard RSS ceiling |
 | Console logs | `log.console.level = warning` (not `info` — connection flood under thousands of publishers); `log.connection` / `log.channel` = `error` |
 | Crash dumps | `ERL_CRASH_DUMP_SECONDS=0` + `ulimits.core: 0` — no `erl_crash.dump` / OS core by default |
 | Nodename | Static `hostname: rabbitmq-prod` / `RABBITMQ_NODENAME=rabbit@rabbitmq-prod` |
@@ -22,7 +22,7 @@ epmd may still answer while Erlang is down. Prefer a single `sh -c` paste for co
 podman-compose -p hpcperfstats -f docker-compose.yaml exec rabbitmq sh -c 'echo === conf.d ===; for f in /etc/rabbitmq/conf.d/*.conf; do echo ---- $f ----; cat "$f"; done; echo === cgroup ===; echo CGROUP_MAX=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes); echo CGROUP_CUR=$(cat /sys/fs/cgroup/memory.current 2>/dev/null || cat /sys/fs/cgroup/memory/memory.usage_in_bytes); echo === mnesia ===; du -sh /var/lib/rabbitmq/mnesia/* 2>/dev/null | sort -h | tail -20; echo === nodename ===; echo $RABBITMQ_NODENAME; hostname'
 ```
 
-Confirm `CGROUP_MAX` is numeric **96g** (e.g. `103079215104`), watermark **80GiB**, logging **warning** (not `info` / not `error`-only).
+Confirm `CGROUP_MAX` is numeric **96g** (e.g. `103079215104`), watermark **64GiB**, logging **warning** (not `info` / not `error`-only).
 
 ## Preserve / extract stale `rabbit@*` dirs
 
@@ -49,7 +49,7 @@ Then:
 podman-compose -p hpcperfstats -f docker-compose.yaml exec rabbitmq rabbitmqctl status
 ```
 
-Check **Alarms**, Memory vs 80 GiB watermark, and that listend reaches consume (not only `Starting Connection`). Filtered pipeline AMQP lines:
+Check **Alarms**, Memory vs 64 GiB watermark, and that listend reaches consume (not only `Starting Connection`). Filtered pipeline AMQP lines:
 
 ```bash
 podman-compose -p hpcperfstats -f docker-compose.yaml logs pipeline 2>&1 | grep -E 'AMQP quorum consume-setup|Begining Consume|Starting Connection|timed out consuming' | tail -80
