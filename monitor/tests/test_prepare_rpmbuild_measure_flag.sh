@@ -95,14 +95,18 @@ grep -q 'eval "env ${measure_caller_env}${release_rpmbuild}"' "${PREP}" \
 
 # 6. c122-018 regression: --measure-overhead ran rpmbuild with prepare's exported LIBS, which put
 # -lm inside %build's -Wl,-Bstatic group (ld: cannot find -lm). rpmbuild must see the caller's
-# values: set ones restored (spaces intact), unset ones removed.
-got="$(LIBS='-lcaller x' bash -c '
-  unset CPPFLAGS PREFIX
+# values: set ones restored (spaces intact), unset ones removed. The environment is pinned for
+# every listed variable (make check exports some of them), and a set variable (PREFIX) precedes
+# an unset one (CPPFLAGS): env(1) stops option parsing at the first VAR=value, so -u after it
+# ran as a command ("env: '-u': No such file or directory" under valgrind make check).
+got="$(bash -c '
   . ./scripts/lib/measure_overhead.sh
+  for v in ${MEASURE_OVERHEAD_PREPARE_ENV}; do unset "${v}"; done
+  export PREFIX=/caller LIBS="-lcaller x"
   e="$(measure_overhead_caller_env)"
   export LIBS="-Wl,--start-group -llikwid -Wl,--end-group -lm" CPPFLAGS=-Ileaked PREFIX=/leaked
-  eval "env ${e}sh -c '\''printf \"%s|%s|%s\" \"\$LIBS\" \"\${CPPFLAGS-unset}\" \"\${PREFIX-unset}\"'\''"')"
-test "${got}" = "-lcaller x|unset|unset" || fail "caller env not restored for rpmbuild: ${got}"
+  eval "env ${e}sh -c '\''printf \"%s|%s|%s|%s\" \"\$LIBS\" \"\${CPPFLAGS-unset}\" \"\${PREFIX-unset}\" \"\${LDFLAGS-unset}\"'\''"')"
+test "${got}" = "-lcaller x|unset|/caller|unset" || fail "caller env not restored for rpmbuild: ${got}"
 # Every variable prepare exports must be in the restore list.
 for v in $(sed -n 's/^export \([A-Z_][A-Z0-9_]*\)=.*/\1/p' "${PREP}"); do
   bash -c ". ./scripts/lib/measure_overhead.sh; case \" \${MEASURE_OVERHEAD_PREPARE_ENV} \" in *\" ${v} \"*) ;; *) exit 1;; esac" \

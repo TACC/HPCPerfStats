@@ -14,15 +14,18 @@ MEASURE_OVERHEAD_PREPARE_ENV="PREFIX SRCDIR HPC_BUNDLE_RELEASE_BUILD CPPFLAGS LD
 # prepare's exports and run rpmbuild as `env <these> rpmbuild ...`, so %build sees the same
 # environment as the printed rpmbuild run from the operator's shell. c122-018: prepare's LIBS
 # leaked into %build, put -lm inside the -Wl,-Bstatic group, and the link failed (no libm.a).
+# All -u options come first: env(1) stops option parsing at the first VAR=value, so a set
+# variable followed by an unset one ran `-u` as the command (make check: CPPFLAGS set).
 measure_overhead_caller_env() {
-  local v
+  local v unset_opts="" set_args=""
   for v in ${MEASURE_OVERHEAD_PREPARE_ENV}; do
     if test "${!v+set}" = set; then
-      printf '%q ' "${v}=${!v}"
+      set_args+="$(printf '%q ' "${v}=${!v}")"
     else
-      printf -- '-u %s ' "${v}"
+      unset_opts+="-u ${v} "
     fi
   done
+  printf '%s%s' "${unset_opts}" "${set_args}"
 }
 
 measure_overhead_harness() {
