@@ -218,7 +218,11 @@ def test_auto_stops_the_previous_run_before_starting(env):
   out = _run(env, "auto", "2026-10-01")
   assert out.returncode == 0, out.stderr
   assert "repair processes left=0" in out.stdout
-  assert not Path(f"/proc/{runner}").exists()  # first run's runner is gone
+  # First run's runner is gone. A zombie counts as gone: in the compose test
+  # container pytest is PID 1, inherits the detached runner and never reaps
+  # it, so /proc/<pid> outlives the kill (host init reaps it at once).
+  stat = Path(f"/proc/{runner}/stat")
+  assert not stat.exists() or stat.read_text().split(") ", 1)[1][0] == "Z"
   pkills = (Path(env["FAKE_STATE"]) / "pkill.log").read_text()
   assert "pkill -f collapse_percore_host_data" in pkills
   assert "jobs finished=" in out.stdout  # status lines while waiting

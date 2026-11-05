@@ -9,9 +9,14 @@ export PYTHONPYCACHEPREFIX="${XDG_CACHE_HOME:-/tmp}/python-pycache"
 
 compose_inner_pip_install
 
-if ! command -v git >/dev/null 2>&1; then
+# Test-only tools the runtime image does not ship: git, and filefrag
+# (e2fsprogs) for test_clone_append_shares_extents_with_the_raw_file.
+_apt_pkgs=()
+command -v git >/dev/null 2>&1 || _apt_pkgs+=(git)
+command -v filefrag >/dev/null 2>&1 || _apt_pkgs+=(e2fsprogs)
+if [[ ${#_apt_pkgs[@]} -gt 0 ]]; then
   apt-get update -qq
-  apt-get install -y --no-install-recommends git
+  apt-get install -y --no-install-recommends "${_apt_pkgs[@]}"
   rm -rf /var/lib/apt/lists/*
 fi
 
@@ -46,7 +51,12 @@ elif [[ -d "$_pytest_args_file" ]]; then
   echo "WARNING: ${_pytest_args_file} is a directory; ignoring forwarded pytest args" >&2
 fi
 
+# tmp_path must support reflink (test_sync_timedb_tar_clone_append fails, by
+# design, rather than skip without it). Container /tmp cannot; the bind-mounted
+# checkout is the host /data XFS (reflink=1). test_runs/ is git/docker-ignored.
+BASETEMP=(--basetemp "${PWD}/test_runs/compose-db-pytest-tmp")
+
 if [[ ${#ARGS[@]} -gt 0 ]]; then
-  exec python3 -m pytest -q "${IGNORE[@]}" "${ARGS[@]}"
+  exec python3 -m pytest -q "${BASETEMP[@]}" "${IGNORE[@]}" "${ARGS[@]}"
 fi
-exec python3 -m pytest -q hpcperfstats "${IGNORE[@]}"
+exec python3 -m pytest -q "${BASETEMP[@]}" hpcperfstats "${IGNORE[@]}"

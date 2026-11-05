@@ -354,8 +354,10 @@ def test_db_inner_isolates_migrated_bytecode_and_bootstraps_test_tools():
     'export PYTHONPYCACHEPREFIX="${XDG_CACHE_HOME:-/tmp}/python-pycache"'
     in source
   )
-  assert "command -v git" in source
-  assert "apt-get install -y --no-install-recommends git" in source
+  assert "command -v git >/dev/null 2>&1 || _apt_pkgs+=(git)" in source
+  assert (
+    'apt-get install -y --no-install-recommends "${_apt_pkgs[@]}"' in source
+  )
 
 
 def test_container_gate_does_not_run_shared_compose_project_concurrently():
@@ -549,3 +551,36 @@ def test_all_owned_shell_scripts_are_bash_syntax_clean():
     _REPO_ROOT / "scripts/lib/podman_runtime.sh",
   ]
   subprocess.run(["/bin/bash", "-n", *map(str, paths)], check=True)
+
+
+def test_db_pytest_basetemp_is_on_the_reflink_bind_mount():
+  """Regression (compose DB pytest, 2026-11-04): 23 reflink setup errors.
+
+  ``test_sync_timedb_tar_clone_append`` fails (by design) when ``tmp_path``
+  cannot reflink. Container ``/tmp`` cannot; the bind-mounted checkout is the
+  host ``/data`` XFS. Both pytest exec lines must pass that ``--basetemp``,
+  under the git/docker-ignored ``test_runs/``.
+  """
+  source = (_REPO_ROOT / "tests/run_db_pytest_inner.sh").read_text()
+  assert (
+    'BASETEMP=(--basetemp "${PWD}/test_runs/compose-db-pytest-tmp")' in source
+  )
+  execs = [ln for ln in source.splitlines() if "exec python3 -m pytest" in ln]
+  assert len(execs) == 2
+  assert all('"${BASETEMP[@]}"' in ln for ln in execs)
+  assert source.index("cd /home/hpcperfstats") < source.index("BASETEMP=(")
+
+
+def test_db_pytest_installs_filefrag_for_the_extent_sharing_test():
+  """Regression (compose DB pytest, 2026-11-04): ``filefrag`` not found.
+
+  The runtime image has no e2fsprogs; the extent-sharing clone test shells
+  out to ``filefrag -v``. The inner script installs it with git.
+  """
+  source = (_REPO_ROOT / "tests/run_db_pytest_inner.sh").read_text()
+  assert (
+    "command -v filefrag >/dev/null 2>&1 || _apt_pkgs+=(e2fsprogs)" in source
+  )
+  assert (
+    'apt-get install -y --no-install-recommends "${_apt_pkgs[@]}"' in source
+  )
