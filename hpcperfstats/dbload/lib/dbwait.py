@@ -14,6 +14,8 @@ import socket
 import time
 from collections.abc import Mapping
 
+import psycopg
+
 
 def resolve_postgres_wait_target(
   env: Mapping[str, str] | None = None,
@@ -151,7 +153,13 @@ def _postgres_accepts_connection(
   host: str, port: str, connect_timeout_seconds: float
 ) -> bool:
   """
-  Return True when one TCP or Unix-socket connect to Postgres succeeds.
+  Return True when Postgres is serving: TCP connect, or a socket session.
+
+  Over the socket a bare ``connect()`` is not enough: the image entrypoint's
+  first-boot init server owns the same shared socket with
+  ``listen_addresses=''`` and is then shut down mid-session. Ready means a
+  libpq session (``hpcperfstats.ini`` credentials) whose server listens on
+  TCP. The init server has no TCP listener, so TCP mode needs no session.
 
   Args:
     host (str): PostgreSQL host name, or socket directory when it starts
@@ -166,18 +174,25 @@ def _postgres_accepts_connection(
     >>> _postgres_accepts_connection("/nonexistent-dir", "5432", 0.1)
     False
   """
-  sock_path = postgres_unix_socket_path(host, port)
   try:
-    if sock_path is None:
+    if postgres_unix_socket_path(host, port) is None:
       socket.create_connection(
         (host, int(port)), timeout=connect_timeout_seconds
       ).close()
-    else:
-      with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-        sock.settimeout(connect_timeout_seconds)
-        sock.connect(sock_path)
-    return True
-  except OSError:
+      return True
+    from hpcperfstats.dbload.lib import conf_parser as cfg
+
+    with psycopg.connect(
+      host=host,
+      port=port,
+      dbname=cfg.get_db_name(),
+      user=cfg.get_username(),
+      password=cfg.get_password(),
+      connect_timeout=max(1, int(connect_timeout_seconds)),
+    ) as conn:
+      sql = "SELECT current_setting('listen_addresses')"
+      return conn.execute(sql).fetchone()[0] != ""
+  except OSError, psycopg.Error:
     return False
 
 

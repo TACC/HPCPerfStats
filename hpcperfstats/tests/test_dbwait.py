@@ -152,17 +152,16 @@ def test_wait_for_postgres_available_unix_socket_skips_dns(
     raise AssertionError("socket-dir host must not wait on DNS")
 
   monkeypatch.setattr(dbwait, "wait_for_host_port_resolution", _no_dns)
+  # A bare AF_UNIX listener is not a ready Postgres (that is exactly the
+  # init-server race); readiness itself is covered by the
+  # test_postgres_socket_* tests below.
+  monkeypatch.setattr(dbwait, "_postgres_accepts_connection", lambda *_a: True)
   sock_dir = tmp_path / "pg"
   sock_dir.mkdir()
-  server = socket_mod.socket(socket_mod.AF_UNIX, socket_mod.SOCK_STREAM)
-  server.bind(str(sock_dir / ".s.PGSQL.5432"))
-  server.listen(1)
-  try:
-    dbwait.wait_for_postgres_available(
-      str(sock_dir), "5432", connect_timeout_seconds=1, interval_seconds=0.01
-    )
-  finally:
-    server.close()
+  dbwait.wait_for_postgres_available(
+    str(sock_dir), "5432", connect_timeout_seconds=1, interval_seconds=0.01
+  )
+  assert socket_mod.AF_UNIX  # socket-dir host path, no DNS lookup
 
 
 def test_wait_for_postgres_available_unix_socket_retries_until_listening(
@@ -206,3 +205,109 @@ def test_postgres_accepts_connection_false_when_socket_missing(tmp_path):
   from hpcperfstats.dbload.lib.dbwait import _postgres_accepts_connection
 
   assert _postgres_accepts_connection(str(tmp_path), "5432", 0.1) is False
+
+
+class _FakePgConn:
+  """psycopg connection stub answering ``current_setting('listen_addresses')``."""
+
+  def __init__(self, listen_addresses):
+    self.listen_addresses = listen_addresses
+    self.sql = []
+
+  def __enter__(self):
+    return self
+
+  def __exit__(self, *_exc):
+    return False
+
+  def execute(self, sql):
+    self.sql.append(sql)
+    return self
+
+  def fetchone(self):
+    return (self.listen_addresses,)
+
+
+def _patch_socket_connect(monkeypatch, outcome):
+  """Route dbwait's psycopg.connect to ``outcome`` (conn or exception)."""
+  import psycopg
+
+  from hpcperfstats.dbload.lib import conf_parser as cfg
+
+  seen = {}
+
+  def _connect(**kwargs):
+    seen.update(kwargs)
+    if isinstance(outcome, BaseException):
+      raise outcome
+    return outcome
+
+  monkeypatch.setattr(psycopg, "connect", _connect)
+  monkeypatch.setattr(cfg, "get_db_name", lambda: "hpcperfstats")
+  monkeypatch.setattr(cfg, "get_username", lambda: "hpcperfstats")
+  monkeypatch.setattr(cfg, "get_password", lambda: "pw")
+  return seen
+
+
+def test_postgres_socket_init_server_is_not_ready(tmp_path, monkeypatch):
+  """Regression (hpcperfstats-dev, 2026-11-04): first-boot init server.
+
+  The Postgres image entrypoint runs a temporary server with
+  ``listen_addresses=''`` on the shared ``/run/postgresql`` socket while it
+  initdbs, then fast-shuts it down. web passed the old raw-socket wait,
+  migrated ``machine.0001`` against it, lost the connection before the
+  ``django_migrations`` row was written, and crash-looped forever on
+  ``relation "host_data" already exists``.
+  """
+  from hpcperfstats.dbload.lib import dbwait
+
+  seen = _patch_socket_connect(monkeypatch, _FakePgConn(""))
+  assert dbwait._postgres_accepts_connection(str(tmp_path), "5432", 2) is False
+  assert seen["host"] == str(tmp_path)
+  assert seen["port"] == "5432"
+  assert seen["dbname"] == "hpcperfstats"
+
+
+def test_postgres_socket_real_server_is_ready(tmp_path, monkeypatch):
+  """The real server (TCP listener configured) is ready over the socket."""
+  from hpcperfstats.dbload.lib import dbwait
+
+  conn = _FakePgConn("*")
+  _patch_socket_connect(monkeypatch, conn)
+  assert dbwait._postgres_accepts_connection(str(tmp_path), "5432", 2) is True
+  assert conn.sql == ["SELECT current_setting('listen_addresses')"]
+
+
+def test_postgres_socket_connect_error_is_not_ready(tmp_path, monkeypatch):
+  """Auth/db-missing/shutdown errors mid-init mean retry, not crash."""
+  import psycopg
+
+  from hpcperfstats.dbload.lib import dbwait
+
+  _patch_socket_connect(
+    monkeypatch, psycopg.OperationalError("the database system is starting up")
+  )
+  assert dbwait._postgres_accepts_connection(str(tmp_path), "5432", 2) is False
+
+
+def test_postgres_tcp_wait_stays_raw_connect(monkeypatch):
+  """TCP mode never needs credentials: the init server has no TCP listener."""
+  import psycopg
+
+  from hpcperfstats.dbload.lib import dbwait
+
+  def _no_psycopg(**_kw):
+    raise AssertionError("TCP readiness must not open a libpq session")
+
+  monkeypatch.setattr(psycopg, "connect", _no_psycopg)
+  opened = []
+
+  class _Sock:
+    def close(self):
+      opened.append("closed")
+
+  monkeypatch.setattr(
+    dbwait.socket, "create_connection", lambda addr, timeout: _Sock()
+  )
+  assert dbwait._postgres_accepts_connection("db", "5432", 2) is True
+  assert opened == ["closed"]
