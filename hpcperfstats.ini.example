@@ -475,8 +475,8 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 # Hours after local midnight to retain today's uncompressed .tar when global keep is off (default 24).
 # archive_today_uncompressed_tar_grace_hours = 24
 
-# zstd -T thread count for seal/restore/archive decompress; 0 uses -T0 (all cores per job, default).
-# archive_zstd_threads = 0
+# zstd -T thread count for seal/restore/archive decompress (default 4 -> -T4); 0 uses -T0 (all cores per job).
+# archive_zstd_threads = 4
 
 # zstd -T for ingest/populate sealed streams (default 4).
 # ingest_zstd_threads = 4
@@ -487,8 +487,8 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 # Max parallel threads for sealed/tar validation read-lock scope (default 2).
 # sync_archive_validation_max_workers = 2
 
-# zstd compression level 1-19 for .tar.zst (default 19, max ratio; lower it if seals cannot keep up).
-# archive_zstd_level = 19
+# zstd compression level 1-19 for .tar.zst (default 9: fastest level above the disk at -T4; 17-19 halve the size but seal at 10-16 MB/s).
+# archive_zstd_level = 9
 
 # Linux-only: posix_fadvise SEQUENTIAL/DONTNEED on pipeline file I/O (ingest, archive, zstd). Default yes when omitted; set no only for A/B tuning or debugging.
 # sync_pipeline_drop_page_cache = yes

@@ -640,7 +640,7 @@ def copy_one_chunk(
       with path.open("wb") as out_f, src.cursor() as scur:
         scur.execute("SET statement_timeout = 0")
         zstd = subprocess.Popen(
-          ["zstd", "-T0", "-19"],
+          ["zstd", "-T4", "-19"],
           stdin=subprocess.PIPE,
           stdout=out_f,
         )

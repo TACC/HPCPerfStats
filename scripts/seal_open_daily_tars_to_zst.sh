@@ -27,7 +27,7 @@
 #   5. with an existing <day>.tar.zst: requires every zst member to be in the
 #      (deduped) tar at the same or larger size, else skipped (pipeline
 #      reconcile)
-#   6. compresses to <day>.tar.zst.tmp (zstd -T0 -<level>, the pipeline's flags)
+#   6. compresses to <day>.tar.zst.tmp (zstd -T<threads> -<level>, the pipeline's flags)
 #   7. decompresses the tmp and compares the full member list (name + size)
 #      with the tar's (deduped) list; any difference or zstd checksum error
 #      aborts that day
@@ -47,10 +47,11 @@ set -uo pipefail
 DAILY=/hpcperfstats/daily_archive
 ARCHIVE=/hpcperfstats/archive
 TZ_LOCAL=America/Chicago
-LEVEL=19
+LEVEL=9
+THREADS=4
 MIN_AGE_DAYS=3
 MARGIN_GB=200
-RESERVE_PCT=10
+RESERVE_PCT=15
 JOBS=1
 APPLY=0
 ALLOW_RUNNING=0
@@ -63,14 +64,14 @@ KEEP_OPEN=()
 usage() {
   cat <<EOF
 usage: $0 [--apply] [-j|--jobs N] [--keep-open YYYY-MM-DD]... [--daily DIR]
-          [--archive DIR] [--tz TZ] [--level N] [--min-age-days N]
+          [--archive DIR] [--tz TZ] [--level N] [--threads N] [--min-age-days N]
           [--margin-gb N] [--reserve-pct N] [--only YYYY-MM-DD] [--no-job-store]
           [--allow-running] [--seal-all] [--log FILE]
 Dry run unless --apply. Defaults: daily=$DAILY archive=$ARCHIVE tz=$TZ_LOCAL
-level=$LEVEL min-age-days=$MIN_AGE_DAYS margin-gb=$MARGIN_GB reserve-pct=$RESERVE_PCT jobs=$JOBS
+level=$LEVEL threads=$THREADS min-age-days=$MIN_AGE_DAYS margin-gb=$MARGIN_GB reserve-pct=$RESERVE_PCT jobs=$JOBS
 --jobs N: seal up to N days at once (more reads in flight on a SAN); each
   running day reserves its estimated compressed size (--reserve-pct of the
-  tar; zstd -19 writes ~4%) against free space minus the other reservations
+  tar; zstd -9 writes ~11%, -19 ~5%) against free space minus the other reservations
   minus the --margin-gb floor, which is kept free once for the whole run. The
   reservation is checked before the tar is listed. A day with no room waits (WAIT) and is
   retried (RETRY) only after space is given back; it is skipped only when
@@ -90,6 +91,7 @@ while [ $# -gt 0 ]; do
     --archive) ARCHIVE=$2; shift ;;
     --tz) TZ_LOCAL=$2; shift ;;
     --level) LEVEL=$2; shift ;;
+    --threads) THREADS=$2; shift ;;
     --min-age-days) MIN_AGE_DAYS=$2; shift ;;
     --margin-gb) MARGIN_GB=$2; shift ;;
     --reserve-pct) RESERVE_PCT=$2; shift ;;
@@ -351,9 +353,9 @@ seal_day() {
   log "SEAL $day $(gib "$size")GiB $note"
   if [ "$dups" -gt 0 ]; then
     python3 -I "$WORK/dedupe_stream.py" "$tar" 2>"$W/c.err" |
-      zstd -T0 "-$LEVEL" -q -f -o "$tmp" 2>>"$W/c.err"
+      zstd -T"$THREADS" "-$LEVEL" -q -f -o "$tmp" 2>>"$W/c.err"
   else
-    zstd -T0 "-$LEVEL" -q -f -o "$tmp" "$tar" 2>"$W/c.err"
+    zstd -T"$THREADS" "-$LEVEL" -q -f -o "$tmp" "$tar" 2>"$W/c.err"
   fi
   rc=$?
   rm -f "$WORK/resv/$day"  # the tmp file now holds the space itself

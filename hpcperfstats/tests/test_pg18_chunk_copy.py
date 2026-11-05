@@ -591,3 +591,14 @@ def test_copy_one_chunk_recopies_when_counts_unknown(
   )
   assert outcome == "copied"
   assert any("DELETE FROM host_data" in s for s in executed)
+
+
+def test_chunk_dump_compresses_with_four_zstd_threads() -> None:
+  """The optional chunk dump uses -T4 like archive seals, never all cores."""
+  src = (
+    Path(__file__).resolve().parents[2]
+    / "scripts"
+    / "pg18_host_data_chunk_copy.py"
+  ).read_text()
+  assert '["zstd", "-T4", "-19"]' in src
+  assert '"-T0"' not in src

@@ -13,7 +13,7 @@
 #     against the new .tar.zst)
 #   no .tar.zst -> convert: the gzip stream is decompressed with
 #     zstd --format=gzip (CRC + length checked) and recompressed with
-#     zstd -T0 -<level> into <day>.tar.zst.gz2zst.tmp while the uncompressed
+#     zstd -T<threads> -<level> into <day>.tar.zst.gz2zst.tmp while the uncompressed
 #     bytes are hashed; the tmp is then decompressed again and must hash to
 #     the same sha256 (byte-identical tar, duplicates and all). Then owner/mode
 #     are copied, fsync, the tmp is hard-linked to <day>.tar.zst (fails if one
@@ -27,7 +27,8 @@
 set -uo pipefail
 
 DAILY=/hpcperfstats/daily_archive
-LEVEL=19
+LEVEL=9
+THREADS=4
 MARGIN_GB=200
 JOBS=1
 APPLY=0
@@ -37,7 +38,7 @@ LOG=""
 
 usage() {
   cat <<EOF
-usage: $0 [--apply] [-j|--jobs N] [--daily DIR] [--level N] [--margin-gb N]
+usage: $0 [--apply] [-j|--jobs N] [--daily DIR] [--level N] [--threads N] [--margin-gb N]
           [--only YYYY-MM-DD] [--allow-running] [--log FILE]
 Dry run unless --apply. Defaults: daily=$DAILY level=$LEVEL
 margin-gb=$MARGIN_GB jobs=$JOBS
@@ -56,6 +57,7 @@ while [ $# -gt 0 ]; do
     --apply) APPLY=1 ;;
     --daily) DAILY=$2; shift ;;
     --level) LEVEL=$2; shift ;;
+    --threads) THREADS=$2; shift ;;
     --margin-gb) MARGIN_GB=$2; shift ;;
     -j|--jobs) JOBS=$2; shift ;;
     --only) ONLY=$2; shift ;;
@@ -89,7 +91,7 @@ gib() { awk -v b="$1" 'BEGIN{printf "%.2f", b/2^30}'; }
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/migrate_gz_to_zst.XXXXXX") || exit 2
 trap 'rm -rf "${WORK:?}"' EXIT
-log "start apply=$APPLY jobs=$JOBS daily=$DAILY level=$LEVEL margin=${MARGIN_GB}GiB"
+log "start apply=$APPLY jobs=$JOBS daily=$DAILY level=$LEVEL threads=$THREADS margin=${MARGIN_GB}GiB"
 
 # Reads a tar stream on stdin; prints one sorted line per regular file:
 # "<sha256>\t<size>\t<json name>". Exits non-zero on any tar error.
@@ -219,7 +221,7 @@ migrate_day() {
   sha256sum <"$W/fifo" >"$W/src.sha" &
   local shapid=$!
   zstd -dc --format=gzip -- "$gz" 2>"$W/d.err" | tee "$W/fifo" |
-    zstd -T0 "-$LEVEL" -q -f -o "$tmp" 2>"$W/c.err"
+    zstd -T"$THREADS" "-$LEVEL" -q -f -o "$tmp" 2>"$W/c.err"
   st=("${PIPESTATUS[@]}")
   wait "$shapid"
   local shrc=$?

@@ -395,9 +395,9 @@ INI_OPTION_DEFAULTS = {
   "daily_archive_dir": "%(data_dir)s/daily_archive",
   "archive_keep_uncompressed_tar": "no",
   "archive_today_uncompressed_tar_grace_hours": "24.0",
-  "archive_zstd_threads": "0",
+  "archive_zstd_threads": "4",
   "ingest_zstd_threads": "4",
-  "archive_zstd_level": "19",
+  "archive_zstd_level": "9",
   "archive_zstd_drop_page_cache": "yes",
   "sync_pipeline_drop_page_cache": "yes",
   "archive_seal_parallel_workers": "2",
@@ -1221,7 +1221,10 @@ def _ini_bool(value: Any, default: bool = False) -> Any:
 
 def get_archive_zstd_level() -> Any:
   """
-  Native zstd compression level (1--19) for sealing ``.tar.zst``. Default 19.
+  Native zstd compression level (1--19) for sealing ``.tar.zst``. Default 9.
+
+  At ``-T4`` level 9 compresses ~250 MB/s at ~9x on daily tars, above what
+  one seal reads from a busy archive volume; 13+ drops below 50 MB/s.
 
   Returns:
     Any: Open return polymorphism from ``get_archive_zstd_level``: concrete
@@ -1243,7 +1246,9 @@ def get_archive_zstd_level() -> Any:
 
 def get_archive_zstd_threads() -> Any:
   """
-  zstd ``-T`` thread count for archive compress/decompress. Default 0 (-T0).
+  zstd ``-T`` thread count for archive compress/decompress. Default 4 (-T4).
+
+  ``0`` means ``-T0`` (one worker per core).
 
   Returns:
     Any: Open return polymorphism from ``get_archive_zstd_threads``: concrete

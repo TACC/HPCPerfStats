@@ -349,7 +349,7 @@ def test_get_archive_zstd_threads_default_and_override(temp_ini, monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
-  assert cfg.get_archive_zstd_threads() == 0
+  assert cfg.get_archive_zstd_threads() == 4
 
   with open(temp_ini) as f:
     content = f.read()
@@ -392,7 +392,7 @@ def test_get_archive_zstd_level_clamps(temp_ini, monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
-  assert cfg.get_archive_zstd_level() == 19
+  assert cfg.get_archive_zstd_level() == 9
 
   with open(temp_ini) as f:
     base = f.read()
@@ -415,12 +415,35 @@ def test_archive_compress_scripts_default_to_ini_zstd_level():
 
   root = Path(__file__).resolve().parents[2]
   level = cfg.INI_OPTION_DEFAULTS["archive_zstd_level"]
-  assert level == "19"
+  assert level == "9"
   for script in (
     "scripts/seal_open_daily_tars_to_zst.sh",
     "scripts/migrate_daily_archive_gz_to_zst.sh",
   ):
     assert f"\nLEVEL={level}\n" in (root / script).read_text(), script
+  # Level 9 writes ~11% of the tar on hpcperfstats01 data (x9.1); the seal
+  # script's space reservation must cover that, not level 19's ~5%.
+  seal = (root / "scripts/seal_open_daily_tars_to_zst.sh").read_text()
+  assert "\nRESERVE_PCT=15\n" in seal
+
+
+def test_archive_compress_scripts_default_to_ini_zstd_threads():
+  """Operator seal/migrate scripts compress with the seal's -T default (4)."""
+  from pathlib import Path
+
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  root = Path(__file__).resolve().parents[2]
+  threads = cfg.INI_OPTION_DEFAULTS["archive_zstd_threads"]
+  assert threads == "4"
+  for script in (
+    "scripts/seal_open_daily_tars_to_zst.sh",
+    "scripts/migrate_daily_archive_gz_to_zst.sh",
+  ):
+    text = (root / script).read_text()
+    assert f"\nTHREADS={threads}\n" in text, script
+    assert "-T0" not in text, script
+    assert '-T"$THREADS"' in text, script
 
 
 def test_get_archive_zstd_threads_override(temp_ini, monkeypatch):
@@ -430,18 +453,18 @@ def test_get_archive_zstd_threads_override(temp_ini, monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
-  assert cfg.get_archive_zstd_threads() == 0
+  assert cfg.get_archive_zstd_threads() == 4
 
   with open(temp_ini) as f:
     base = f.read()
   content = base.replace(
     "daily_archive_dir = /tmp",
-    "daily_archive_dir = /tmp\narchive_zstd_threads = 4",
+    "daily_archive_dir = /tmp\narchive_zstd_threads = 0",
   )
   with open(temp_ini, "w") as f:
     f.write(content)
   importlib.reload(cfg)
-  assert cfg.get_archive_zstd_threads() == 4
+  assert cfg.get_archive_zstd_threads() == 0
 
 
 def test_get_effective_cores_caps_by_host(temp_ini, monkeypatch):
