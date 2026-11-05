@@ -95,6 +95,9 @@ podman_runtime_require
 
 cleanup() {
   cleanup_args_file
+  if [[ -n "${PYTEST_TMP_HOST:-}" ]]; then
+    rm -rf "$PYTEST_TMP_HOST" || true
+  fi
   compose_cleanup_bind_mount
   if [[ "$KEEP_ENV" -eq 1 ]]; then
     echo "Keeping compose environment (--keep-env)."
@@ -111,6 +114,11 @@ fi
 
 ARGS_FILE="$(mktemp "${HPCPERFSTATS_HOST_TMP}/pytest-extra-args.XXXXXX")"
 ARGS_FILE_OWNED=1
+# pytest tmp_path must reflink (test_sync_timedb_tar_clone_append fails, by
+# design, without it) and sit outside the checkout (tests run from tmp_path
+# as "outside the repo"; the def inventory excludes test_runs/). Container
+# /tmp cannot reflink; HPCPERFSTATS_HOST_TMP is on /data (XFS reflink=1).
+PYTEST_TMP_HOST="$(mktemp -d "${HPCPERFSTATS_HOST_TMP}/db-pytest-tmp.XXXXXX")"
 if [[ ${#PYTEST_EXTRA[@]} -gt 0 ]]; then
   printf '%s\n' "${PYTEST_EXTRA[@]}" > "$ARGS_FILE"
 else
@@ -159,6 +167,7 @@ fi
 export DOCKER_PYTEST_SEED_CMD="$SEED_CMD"
 export DOCKER_PYTEST_SKIP_BROWSER="$SKIP_BROWSER_E2E"
 export DOCKER_PYTEST_SKIP_MIGRATE="$SKIP_MIGRATE"
+export DOCKER_PYTEST_BASETEMP=/var/tmp/hpcperfstats-pytest/basetemp
 
 echo "Running pytest in web container..."
 # Mount repo (or virtiofs-safe work copy) so tests use current source without rebuilding the image.
@@ -166,6 +175,8 @@ compose_run_inner_script tests/run_db_pytest_inner.sh \
   -e DOCKER_PYTEST_SEED_CMD \
   -e DOCKER_PYTEST_SKIP_BROWSER \
   -e DOCKER_PYTEST_SKIP_MIGRATE \
-  -v "$ARGS_FILE:/tmp/hpcperfstats_pytest_extra_args.list:ro"
+  -e DOCKER_PYTEST_BASETEMP \
+  -v "$ARGS_FILE:/tmp/hpcperfstats_pytest_extra_args.list:ro" \
+  -v "$PYTEST_TMP_HOST:/var/tmp/hpcperfstats-pytest:rw"
 
 echo "DB pytest workflow completed."

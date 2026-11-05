@@ -553,22 +553,33 @@ def test_all_owned_shell_scripts_are_bash_syntax_clean():
   subprocess.run(["/bin/bash", "-n", *map(str, paths)], check=True)
 
 
-def test_db_pytest_basetemp_is_on_the_reflink_bind_mount():
-  """Regression (compose DB pytest, 2026-11-04): 23 reflink setup errors.
+def test_db_pytest_basetemp_reflinks_outside_the_checkout():
+  """Regression (compose DB pytest, 2026-11-04).
 
   ``test_sync_timedb_tar_clone_append`` fails (by design) when ``tmp_path``
-  cannot reflink. Container ``/tmp`` cannot; the bind-mounted checkout is the
-  host ``/data`` XFS. Both pytest exec lines must pass that ``--basetemp``,
-  under the git/docker-ignored ``test_runs/``.
+  cannot reflink: container ``/tmp`` cannot (23 setup errors). A basetemp
+  inside the checkout broke tests that treat ``tmp_path`` as outside the repo
+  (``test_refuses_cwd_outside_the_checkout``) and the def inventory, which
+  excludes ``test_runs/``. The workflow bind-mounts a dir under
+  ``HPCPERFSTATS_HOST_TMP`` (/data XFS) and both pytest exec lines use it.
   """
-  source = (_REPO_ROOT / "tests/run_db_pytest_inner.sh").read_text()
+  workflow = (_REPO_ROOT / "tests/run_db_pytest_workflow.sh").read_text()
+  inner = (_REPO_ROOT / "tests/run_db_pytest_inner.sh").read_text()
   assert (
-    'BASETEMP=(--basetemp "${PWD}/test_runs/compose-db-pytest-tmp")' in source
+    'PYTEST_TMP_HOST="$(mktemp -d "${HPCPERFSTATS_HOST_TMP}/db-pytest-tmp.'
+    in workflow
   )
-  execs = [ln for ln in source.splitlines() if "exec python3 -m pytest" in ln]
+  assert '-v "$PYTEST_TMP_HOST:/var/tmp/hpcperfstats-pytest:rw"' in workflow
+  assert (
+    "export DOCKER_PYTEST_BASETEMP=/var/tmp/hpcperfstats-pytest/" in workflow
+  )
+  assert "-e DOCKER_PYTEST_BASETEMP" in workflow
+  assert 'rm -rf "$PYTEST_TMP_HOST" || true' in workflow
+  assert 'BASETEMP=(--basetemp "$DOCKER_PYTEST_BASETEMP")' in inner
+  assert "test_runs" not in inner.split("BASETEMP=()", 1)[1]
+  execs = [ln for ln in inner.splitlines() if "exec python3 -m pytest" in ln]
   assert len(execs) == 2
   assert all('"${BASETEMP[@]}"' in ln for ln in execs)
-  assert source.index("cd /home/hpcperfstats") < source.index("BASETEMP=(")
 
 
 def test_db_pytest_installs_filefrag_for_the_extent_sharing_test():

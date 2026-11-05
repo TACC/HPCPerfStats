@@ -51,10 +51,12 @@ elif [[ -d "$_pytest_args_file" ]]; then
   echo "WARNING: ${_pytest_args_file} is a directory; ignoring forwarded pytest args" >&2
 fi
 
-# tmp_path must support reflink (test_sync_timedb_tar_clone_append fails, by
-# design, rather than skip without it). Container /tmp cannot; the bind-mounted
-# checkout is the host /data XFS (reflink=1). test_runs/ is git/docker-ignored.
-BASETEMP=(--basetemp "${PWD}/test_runs/compose-db-pytest-tmp")
+# Reflink-capable tmp_path outside the checkout, bind-mounted by
+# run_db_pytest_workflow.sh (see the PYTEST_TMP_HOST comment there).
+BASETEMP=()
+if [[ -n "${DOCKER_PYTEST_BASETEMP:-}" ]]; then
+  BASETEMP=(--basetemp "$DOCKER_PYTEST_BASETEMP")
+fi
 
 if [[ ${#ARGS[@]} -gt 0 ]]; then
   exec python3 -m pytest -q "${BASETEMP[@]}" "${IGNORE[@]}" "${ARGS[@]}"
