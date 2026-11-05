@@ -1,5 +1,77 @@
 import importlib
 
+import pytest
+
+# Minimal valid INI: no host/port, password = p (not the session INI).
+_MINIMAL_INI = (
+  "[DEFAULT]\n"
+  "debug = no\n"
+  "host_name_ext = local\n"
+  "restricted_queue_keywords =\n"
+  "machine = test\n"
+  "server = test\n"
+  "data_dir = /tmp\n"
+  "staff_email_domain = local\n"
+  "timezone = UTC\n"
+  "total_cores = 4\n"
+  "engine_name = django.db.backends.postgresql\n"
+  "dbname = test\n"
+  "username = u\n"
+  "password = p\n"
+  "[PIPELINE]\n"
+  "archive_dir = /tmp\n"
+  "acct_path = /tmp\n"
+  "daily_archive_dir = /tmp\n"
+  "[RMQ]\n"
+  "rmq_server = localhost\n"
+  "rmq_queue = test\n"
+  "[XALT]\n"
+  "xalt_engine = django.db.backends.sqlite3\n"
+  "xalt_name = xalt\n"
+  "xalt_user = u\n"
+  "xalt_password = p\n"
+  "xalt_host = localhost\n"
+  "[OAUTH2]\n"
+  "client_id = id\n"
+  "client_key = key\n"
+  "authorize_url = http://localhost\n"
+  "oauth_base_url = http://localhost\n"
+)
+
+
+def _reload_conf_parser():
+  """Re-read ``conf_parser`` from the current ``HPCPERFSTATS_INI``."""
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  return importlib.reload(cfg)
+
+
+@pytest.fixture(autouse=True)
+def _restore_conf_parser_after_test():
+  """Undo per-test ``importlib.reload(cfg)`` against a temporary INI.
+
+  Set up before ``monkeypatch``, so it tears down after the env is restored.
+  Without this the temp INI (``password = p``) leaked into the rest of the
+  session; ``wait_for_postgres_available`` then retried a failed socket login
+  forever in ``test_postgres_unix_socket_live.py`` (compose DB pytest hung
+  4h, 2026-11-04).
+  """
+  yield
+  _reload_conf_parser()
+
+
+def test_reload_after_temp_ini_restores_session_credentials(
+  monkeypatch, tmp_path
+):
+  """Regression: reloading after the env is restored drops the temp INI."""
+  before = _reload_conf_parser().get_password()
+  temp = tmp_path / "leak.ini"
+  temp.write_text(_MINIMAL_INI)
+  monkeypatch.setenv("HPCPERFSTATS_INI", str(temp))
+  assert _reload_conf_parser().get_password() == "p"
+  monkeypatch.undo()
+  assert _reload_conf_parser().get_password() == before
+
 
 def test_resolve_postgres_wait_target_prefers_postgres_host_port(monkeypatch):
   from hpcperfstats.dbload.lib.dbwait import resolve_postgres_wait_target
@@ -76,40 +148,7 @@ def test_resolve_postgres_wait_target_defaults_to_compose_socket(
 ):
   """An ini without host/port waits on the compose PostgreSQL socket."""
   ini = tmp_path / "missing-host-port.ini"
-  ini.write_text(
-    "[DEFAULT]\n"
-    "debug = no\n"
-    "host_name_ext = local\n"
-    "restricted_queue_keywords =\n"
-    "machine = test\n"
-    "server = test\n"
-    "data_dir = /tmp\n"
-    "staff_email_domain = local\n"
-    "timezone = UTC\n"
-    "total_cores = 4\n"
-    "engine_name = django.db.backends.postgresql\n"
-    "dbname = test\n"
-    "username = u\n"
-    "password = p\n"
-    "[PIPELINE]\n"
-    "archive_dir = /tmp\n"
-    "acct_path = /tmp\n"
-    "daily_archive_dir = /tmp\n"
-    "[RMQ]\n"
-    "rmq_server = localhost\n"
-    "rmq_queue = test\n"
-    "[XALT]\n"
-    "xalt_engine = django.db.backends.sqlite3\n"
-    "xalt_name = xalt\n"
-    "xalt_user = u\n"
-    "xalt_password = p\n"
-    "xalt_host = localhost\n"
-    "[OAUTH2]\n"
-    "client_id = id\n"
-    "client_key = key\n"
-    "authorize_url = http://localhost\n"
-    "oauth_base_url = http://localhost\n"
-  )
+  ini.write_text(_MINIMAL_INI)
   monkeypatch.setenv("HPCPERFSTATS_INI", str(ini))
   monkeypatch.delenv("POSTGRES_HOST", raising=False)
   monkeypatch.delenv("POSTGRES_PORT", raising=False)
