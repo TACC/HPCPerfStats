@@ -640,7 +640,9 @@ INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
 # job_affinity row keeps every GPU; shared GPU count sums each host's list),
 # and the job schema includes every fetched type, not host_list[0]'s only
 # (jid 79282: its one unmarked 4-GPU node showed no GPU metrics).
-METRICS_CONTRACT_VERSION = 5
+# 6 (2026-11-05): avg_cpuusage reads ncores/nhosts from job_data when the
+# scheduler's jid-only ref lacks them (it was NULL on every scheduled job).
+METRICS_CONTRACT_VERSION = 6
 # ``no_data_reason`` written for catalog rows a backfill job never produced
 # after it exhausted the failure-memory backoff (daily step); the job is
 # stamped with the current version so the sweep does not spin on it.
@@ -2426,9 +2428,17 @@ class Metrics:
     hosts = jt._base_filter.get("host__in") or []
     if not hosts:
       return None
+    counts = (getattr(job, "ncores", None), getattr(job, "nhosts", None))
+    if not all(counts):  # scheduler passes jid-only refs (_job_refs_from_jids)
+      counts = (
+        job_data.objects.filter(jid=_metrics_jid_value(job))
+        .values_list("ncores", "nhosts")
+        .first()
+        or counts
+      )
     try:
-      ncores = float(getattr(job, "ncores", None) or 0)
-      nhosts = float(getattr(job, "nhosts", None) or 0)
+      ncores = float(counts[0] or 0)
+      nhosts = float(counts[1] or 0)
     except TypeError, ValueError:
       return None
     if ncores <= 0 or nhosts <= 0:

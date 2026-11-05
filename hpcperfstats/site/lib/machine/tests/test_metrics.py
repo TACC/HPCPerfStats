@@ -942,6 +942,55 @@ def test_avg_cpuusage_scales_to_allocated_ncores():
 
 
 @pytest.mark.machine_unit_mock
+def test_avg_cpuusage_reads_core_counts_for_jid_only_scheduler_refs(
+  monkeypatch,
+):
+  """Regression (hpcperfstats04, jid 79282, 2026-11-05): the scheduler passes
+  jid-only refs (``_job_refs_from_jids``), so ``ncores``/``nhosts`` were
+  missing and every scheduled job stored ``avg_cpuusage`` as NULL ("No
+  host_data samples") while a direct compute gave 104.6 cores.
+  """
+  from types import SimpleNamespace
+
+  import pandas as pd
+
+  import hpcperfstats.analysis.metrics.lib.metrics as metrics_mod
+  from hpcperfstats.analysis.metrics.lib.columnar.testing import (
+    table_from_records,
+  )
+
+  asked = []
+
+  class _Rows:
+    def __init__(self, jid):
+      asked.append(jid)
+
+    def values_list(self, *fields):
+      assert fields == ("ncores", "nhosts")
+      return SimpleNamespace(first=lambda: (2, 2))
+
+  monkeypatch.setattr(
+    metrics_mod,
+    "job_data",
+    SimpleNamespace(objects=SimpleNamespace(filter=lambda jid: _Rows(jid))),
+  )
+  records = []
+  for host in ("a", "b"):
+    for minute in (0, 5, 10):
+      t = pd.Timestamp("2024-01-01 00:00:00+00:00") + pd.Timedelta(
+        minutes=minute
+      )
+      records.append((t, host, "host_cpu", "user", None, None, 100.0, None))
+      records.append((t, host, "host_cpu", "idle", None, None, 100.0, None))
+  ref = SimpleNamespace(jid="79282")  # what _candidate_ref carries
+  value = metrics_mod.Metrics()._job_avg_cpuusage_allocated(
+    table_from_records(records, jid="79282"), ref
+  )
+  assert value == pytest.approx(1.0)
+  assert asked == ["79282"]
+
+
+@pytest.mark.machine_unit_mock
 def test_gpu_activity_zero_mean_gate_accepts_zero():
   """GPU activity presence gate must accept mean 0 (idle ≠ missing samples)."""
   from pathlib import Path
