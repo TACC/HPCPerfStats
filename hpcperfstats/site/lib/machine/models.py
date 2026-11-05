@@ -346,9 +346,9 @@ class host_data(models.Model):
 
     db_table = "host_data"
     unique_together = (("time", "host", "type", "event", "dev"),)
+    # (host, time) / (jid, time) duplicated the DESC pair below; dropped in
+    # 0045 (equality on the leading column, btrees scan either direction).
     indexes = [
-      models.Index(fields=["host", "time"]),
-      models.Index(fields=["jid", "time"]),
       models.Index(
         fields=["host", "-time"], name="host_data_host_time_desc_idx"
       ),
@@ -628,9 +628,7 @@ class ApiKey(models.Model):
 
     db_table = "api_keys"
     managed = True
-    indexes = [
-      models.Index(fields=["username"], name="api_keys_username_idx"),
-    ]
+    # username is already db_index=True; the Meta duplicate was dropped in 0045.
 
   def __str__(self) -> Any:
     """

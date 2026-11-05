@@ -689,3 +689,67 @@ def test_0032_fails_closed_without_null_dev_backfill_marker():
     / "backfill_host_data_null_dev.sh"
   ).read_text(encoding="utf-8")
   assert 'NULL_DEV_MARKER="hpcperfstats:null-dev-backfill-complete"' in script
+
+
+def test_0045_drops_duplicate_indexes_retrying_lock_then_raising():
+  """0045: drop indexes that duplicate another on the same columns. host_data
+  is a hypertable (no CONCURRENTLY), so each attempt is bounded by
+  lock_timeout. Regression: a busy lock used to soft-skip with a NOTICE, so
+  Django recorded 0045 applied with the duplicates still present and no later
+  migrate retried. Now it retries a bounded number of times, then raises so
+  0045 stays unapplied."""
+  mod = _migration_module("0045_drop_duplicate_indexes")
+  assert mod.Migration.atomic is False
+  assert mod.Migration.dependencies == [
+    ("machine", "0044_job_affinity_host_reported_idx")
+  ]
+  (sep,) = mod.Migration.operations
+  assert isinstance(sep, migrations.SeparateDatabaseAndState)
+  (run_sql,) = sep.database_operations
+  stmts = run_sql.sql
+  assert stmts[0] == "SET statement_timeout = 0"
+  assert stmts[1] == f"SET lock_timeout = '{mod.LOCK_WAIT}'"
+  do_block = stmts[2]
+  assert (
+    "DROP INDEX IF EXISTS public.host_data_host_eda1c8_idx,"
+    " public.host_data_jid_9e84c4_idx;"
+  ) in do_block
+  assert "CONCURRENTLY" not in do_block
+  handler = do_block[do_block.index("EXCEPTION WHEN lock_not_available") :]
+  # The handler must end in RAISE EXCEPTION after the bounded attempts, never
+  # fall through to success.
+  assert f"IF attempt >= {mod.LOCK_ATTEMPTS} THEN" in handler
+  assert handler.index("RAISE EXCEPTION") < handler.index("RAISE NOTICE")
+  assert f"pg_sleep({mod.RETRY_PAUSE_S})" in handler
+  assert "skipping" not in do_block
+  # Bounded: worst case stays a couple of minutes for startup migrate.
+  wait_s = int(mod.LOCK_WAIT.rstrip("s"))
+  assert mod.LOCK_ATTEMPTS * (wait_s + mod.RETRY_PAUSE_S) <= 180
+  assert stmts[3:] == [
+    "RESET lock_timeout",
+    "DROP INDEX CONCURRENTLY IF EXISTS job_data_end_time_idx",
+    "DROP INDEX CONCURRENTLY IF EXISTS api_keys_username_idx",
+    "RESET statement_timeout",
+  ]
+  # The surviving twin of each pair must never be dropped.
+  joined = "\n".join(stmts)
+  for kept in (
+    "host_data_host_time_desc_idx",
+    "host_data_jid_time_desc_idx",
+    "job_data_end_time_92c40c24",
+    "api_keys_username_aab1bc62",
+  ):
+    assert kept not in joined
+  removed = [
+    (op.model_name, op.name)
+    for op in sep.state_operations
+    if isinstance(op, migrations.RemoveIndex)
+  ]
+  assert removed == [
+    ("host_data", "host_data_host_eda1c8_idx"),
+    ("host_data", "host_data_jid_9e84c4_idx"),
+    ("apikey", "api_keys_username_idx"),
+  ]
+  assert all(
+    "CREATE INDEX IF NOT EXISTS" in s for s in run_sql.reverse_sql[1:-1]
+  )
