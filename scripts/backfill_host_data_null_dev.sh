@@ -15,8 +15,14 @@
 #   ./scripts/backfill_host_data_null_dev.sh           # concurrency 30
 #   ./scripts/backfill_host_data_null_dev.sh 16
 #   ./scripts/backfill_host_data_null_dev.sh 8
+#   HPCPERFSTATS_NULL_DEV_FROM=2026-05-14 ./scripts/backfill_host_data_null_dev.sh 6
 #
-# Optional post-run verify: see OPERATOR_HOST_DATA_DEV_UNIQUENESS.md (null_dev_rows).
+# Resume: HPCPERFSTATS_NULL_DEV_FROM=<date or timestamptz> skips chunks whose
+# range_start is earlier (chunks run oldest first, so the earliest in-flight
+# chunk of a stopped run is a safe resume point). Unset = every chunk.
+#
+# On success writes the host_data.dev completion marker that migration 0032
+# requires; any failed chunk exits 1 without it (OPERATOR_HOST_DATA_DEV_UNIQUENESS.md).
 set -euo pipefail
 
 CONCURRENCY="${1:-30}"
@@ -32,6 +38,17 @@ VACUUM_PARALLEL="${HPCPERFSTATS_NULL_DEV_VACUUM_PARALLEL:-8}"
 if ! [[ "$VACUUM_PARALLEL" =~ ^[1-9][0-9]*$ ]]; then
   echo "HPCPERFSTATS_NULL_DEV_VACUUM_PARALLEL must be a positive integer" >&2
   exit 2
+fi
+
+NULL_DEV_FROM="${HPCPERFSTATS_NULL_DEV_FROM:-}"
+from_sql=""
+if [[ -n "$NULL_DEV_FROM" ]]; then
+  # Strict shape check: the value is interpolated into SQL.
+  if ! [[ "$NULL_DEV_FROM" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}([\ T][0-9:.]+)?([+-][0-9:]+|Z)?$ ]]; then
+    echo "HPCPERFSTATS_NULL_DEV_FROM must be a date or timestamp (e.g. 2026-05-14)" >&2
+    exit 2
+  fi
+  from_sql="AND range_start >= '${NULL_DEV_FROM}'::timestamptz"
 fi
 
 COMPOSE=(docker compose -p hpcperfstats -f docker-compose.yaml)
@@ -108,6 +125,7 @@ remaining_chunks() {
                 FROM timescaledb_information.chunks
                 WHERE hypertable_name = 'host_data'
                   AND NOT is_compressed
+                  ${from_sql}
                   ${excl_sql};")"
   printf '%s' "${n//$'\r'/}"
 }
@@ -132,6 +150,7 @@ next_chunk_row() {
            FROM timescaledb_information.chunks
            WHERE hypertable_name = 'host_data'
              AND NOT is_compressed
+             ${from_sql}
              ${excl_sql}
            ORDER BY range_start
            LIMIT 1;" | tr -d '\r'
@@ -285,12 +304,33 @@ prev_left=""
 stall=0
 vacuum_since=0
 
-echo "parallel host_data.dev NULL→'' backfill: concurrency=${CONCURRENCY} (time-range chunks; async VACUUM every ${VACUUM_EVERY}, PARALLEL ${VACUUM_PARALLEL})"
+# Migration 0032 refuses to add the 5-column UNIQUE on a non-empty host_data
+# without this marker: proving "no NULL dev rows" any other way scans every
+# chunk. Written only when every chunk succeeded and none is compressed.
+NULL_DEV_MARKER="hpcperfstats:null-dev-backfill-complete"
+
+finish() {
+  local comp_end
+  drain_vacuums
+  comp_end="$(compressed_n)"
+  if [[ "$total_failed" -gt 0 || "$comp_end" != "0" ]]; then
+    echo "INCOMPLETE (ok=${total_ok} failed=${total_failed} compressed=${comp_end}); marker not written, 0032 will refuse. Failed chunks:" >&2
+    printf '  %s\n' "${!skipped[@]}" >&2
+    exit 1
+  fi
+  psql_cmd "COMMENT ON COLUMN public.host_data.dev IS '${NULL_DEV_MARKER}';"
+  echo "done (ok=${total_ok}); wrote host_data.dev marker ${NULL_DEV_MARKER}${NULL_DEV_FROM:+ (chunks before ${NULL_DEV_FROM} assumed done by an earlier run)}"
+  exit 0
+}
+
+echo "parallel host_data.dev NULL→'' backfill: concurrency=${CONCURRENCY} (time-range chunks; async VACUUM every ${VACUUM_EVERY}, PARALLEL ${VACUUM_PARALLEL})${NULL_DEV_FROM:+ from=${NULL_DEV_FROM}}"
 
 comp="$(compressed_n)"
 if [[ "$comp" =~ ^[0-9]+$ && "$comp" -gt 0 ]]; then
   echo "warning: ${comp} compressed host_data chunk(s) — not in worklist; decompress first for a complete backfill" >&2
 fi
+# A stale marker must not vouch for this run; finish() rewrites it on success.
+psql_cmd "COMMENT ON COLUMN public.host_data.dev IS NULL;"
 
 while true; do
   reap_finished_vacuums
@@ -303,18 +343,14 @@ while true; do
   echo "remaining_chunks=${left} inflight=${#inflight[@]}/${CONCURRENCY} vacuums=${#vacuum_inflight[@]} completed=${#completed[@]} skipped=${#skipped[@]} ok=${total_ok} failed=${total_failed}"
 
   if [[ "$left" == "0" && "${#inflight[@]}" -eq 0 ]]; then
-    drain_vacuums
-    echo "done (ok=${total_ok} skipped_failures=${total_failed})"
-    exit 0
+    finish
   fi
 
   fill_slots
 
   if [[ "${#inflight[@]}" -eq 0 ]]; then
     if [[ "$left" == "0" ]]; then
-      drain_vacuums
-      echo "done (ok=${total_ok} skipped_failures=${total_failed})"
-      exit 0
+      finish
     fi
     echo "aborting: ${left} uncompressed chunk(s) remain but none could be started (all skipped or unavailable)" >&2
     drain_vacuums

@@ -81,3 +81,55 @@ def test_backfill_host_data_null_dev_fixed_cli_concurrency_no_load_detection():
   assert "drain_vacuums" in code_only
   # VACUUM is backgrounded so fill_slots is not blocked on it.
   assert "launched vacuum pid=" in text
+
+
+@pytest.mark.machine_unit_mock
+@pytest.mark.parametrize(
+  "bad_from", ["2026-05-14'; DROP TABLE host_data;--", "05/14/2026", "x"]
+)
+def test_backfill_host_data_null_dev_rejects_bad_resume_from(bad_from):
+  """Resume value is interpolated into SQL: reject before any psql call."""
+  completed = subprocess.run(
+    [str(SCRIPT), "4"],
+    check=False,
+    capture_output=True,
+    text=True,
+    env={"PATH": "/usr/bin:/bin", "HPCPERFSTATS_NULL_DEV_FROM": bad_from},
+  )
+  assert completed.returncode == 2
+  assert "HPCPERFSTATS_NULL_DEV_FROM must be a date" in completed.stderr
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_host_data_null_dev_resume_filters_both_catalog_queries():
+  """Regression: a restart re-scanned every finished chunk (no resume)."""
+  text = SCRIPT.read_text(encoding="utf-8")
+  assert 'NULL_DEV_FROM="${HPCPERFSTATS_NULL_DEV_FROM:-}"' in text
+  assert "AND range_start >= '${NULL_DEV_FROM}'::timestamptz" in text
+  # remaining_chunks (progress) and next_chunk_row (picker) must agree.
+  assert text.count("${from_sql}") == 2
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_host_data_null_dev_finish_fails_closed_on_skipped_chunks():
+  """Regression: skipped (failed) chunks drop out of remaining_chunks, so the
+  run printed "done" and exited 0 with NULL rows left. finish() must exit 1
+  and only write the 0032 marker when no chunk failed or stayed compressed."""
+  text = SCRIPT.read_text(encoding="utf-8")
+  code_only = "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+  assert 'echo "done (ok=${total_ok} skipped_failures' not in code_only
+  body = code_only[code_only.index("finish() {") :]
+  body = body[: body.index("\n}\n")]
+  fail = body.index('if [[ "$total_failed" -gt 0 || "$comp_end" != "0" ]]')
+  mark = body.index(
+    "COMMENT ON COLUMN public.host_data.dev IS '${NULL_DEV_MARKER}'"
+  )
+  assert fail < body.index("exit 1") < mark < body.index("exit 0")
+  # Every successful exit of the main loop goes through finish().
+  loop = code_only[code_only.index("while true; do") :]
+  assert "exit 0" not in loop
+  calls = [ln.strip() for ln in loop.splitlines()]
+  assert calls.count("finish") == 2
+  # Stale marker from an earlier run is cleared before any UPDATE starts.
+  clear = code_only.index("COMMENT ON COLUMN public.host_data.dev IS NULL;")
+  assert clear < code_only.index("while true; do")
