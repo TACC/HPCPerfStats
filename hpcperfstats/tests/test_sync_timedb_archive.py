@@ -12019,6 +12019,7 @@ def test_dedupe_new_members_superset_of_old(tmp_path, monkeypatch):
   def _lossy_rewrite(src, dst, **_k):
     with tarfile.open(dst, "w") as tf:  # drops h/2: must be refused
       tf.add(str(raw / "m0"), arcname="h/1")
+    return True  # tmp written (False would mean "no duplicates, skip")
 
   monkeypatch.setattr(
     helpers, "_rewrite_daily_tar_largest_member_wins", _lossy_rewrite

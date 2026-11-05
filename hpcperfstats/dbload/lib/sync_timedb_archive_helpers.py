@@ -148,9 +148,10 @@ def tar_sealing(tar_path: str) -> Iterator[None]:
   Mark ``tar_path`` as being sealed for the duration of the ``with`` block.
 
   The seal holds the tar's write lock for the whole zstd compress (hours on
-  a multi-TB tar). Readers that would otherwise wait on that lock (discover's
-  open-tar member read, append dispatch) ask ``tar_seal_in_progress`` and
-  skip the day instead. The mark clears on exit, success or failure.
+  a multi-TB tar), and day-close dedupe holds it for its whole rewrite.
+  Readers that would otherwise wait on that lock (discover's open-tar member
+  read, append dispatch) ask ``tar_seal_in_progress`` and skip the day
+  instead. The mark clears on exit, success or failure.
 
   Args:
     tar_path (str): Daily ``.tar`` path being sealed.
@@ -8659,18 +8660,28 @@ def _rewrite_daily_tar_largest_member_wins(
   *,
   tgz_archive_dir: str,
   yield_phase: str,
+  skip_without_duplicates: bool = False,
 ) -> bool:
   """
   Rewrite ``tar_path`` to ``tmp_path`` keeping largest file member per name.
+
+  The first pass reads headers only. With ``skip_without_duplicates`` a tar
+  in which no file name repeats is not copied: day-close dedupe used to copy
+  every multi-hundred-GB open tar under its write lock for hours with nothing
+  to drop (hpcperfstats02 2026-11-05). The truncated-tar repair still needs
+  the copy and leaves the flag off.
 
   Args:
     tar_path (str): Source daily tar.
     tmp_path (str): Destination temp tar path.
     tgz_archive_dir (str): Daily archive directory for yield checks.
     yield_phase (str): Cooperative yield phase label.
+    skip_without_duplicates (bool): Return False without writing
+      ``tmp_path`` when no file member name appears twice.
 
   Returns:
-    bool: True when rewrite completed.
+    bool: True when ``tmp_path`` was written; False only when
+    ``skip_without_duplicates`` found no duplicate name.
 
   Raises:
     DayCloseYieldError: When day-close cooperative yield is requested.
@@ -8685,6 +8696,7 @@ def _rewrite_daily_tar_largest_member_wins(
   )
 
   file_keep: dict[str, tuple[int, int]] = {}
+  file_n = 0
   last_yield_poll = time.monotonic()
   with tarfile.open(tar_path, "r") as tin:
     for idx, member in enumerate(_iter_tar_members(tin)):
@@ -8696,6 +8708,7 @@ def _rewrite_daily_tar_largest_member_wins(
       )
       if not member.isfile():
         continue
+      file_n += 1
       prev = file_keep.get(member.name)
       if (
         prev is None
@@ -8703,6 +8716,8 @@ def _rewrite_daily_tar_largest_member_wins(
         or (member.size == prev[0] and idx > prev[1])
       ):
         file_keep[member.name] = (member.size, idx)
+  if skip_without_duplicates and file_n == len(file_keep):
+    return False
   with tarfile.open(tar_path, "r") as tin:
     with tarfile.open(tmp_path, "w") as tout:
       for idx, member in enumerate(_iter_tar_members(tin)):
@@ -10766,14 +10781,18 @@ def dedupe_tar_keep_largest_file_per_member(
   except OSError:
     pass
   try:
-    with file_write_lock(tar_path):
+    # tar_sealing: discover and append dispatch skip this tar instead of
+    # waiting 60 s per file on the write lock (hpcperfstats02 2026-11-05).
+    with file_write_lock(tar_path), tar_sealing(tar_path):
       recover_interrupted_append(tar_path, log_fn=log_fn)
-      _rewrite_daily_tar_largest_member_wins(
+      if not _rewrite_daily_tar_largest_member_wins(
         tar_path,
         tmp_path,
         tgz_archive_dir=tgz_archive_dir,
         yield_phase=yield_phase,
-      )
+        skip_without_duplicates=True,
+      ):
+        return True
       if not verify_tar_archive_readable(
         tmp_path
       ) or not _rewrite_keeps_source_member_names(tar_path, tmp_path):
