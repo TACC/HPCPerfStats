@@ -107,6 +107,21 @@ def test_seal_all_flag_is_documented_and_parses():
 
 
 @pytest.mark.machine_unit_mock
+def test_start_line_logs_level_and_threads(env: dict):
+  """The start line shows both zstd knobs so operators can see -T in use.
+
+  hpcperfstats01 2026-11-05: the start line printed level= only, so an old
+  image's -T0 -19 copy could not be told apart from the new defaults.
+  """
+  res = _run(env, "--no-job-store", "--level", "7", "--threads", "2")
+  assert res.returncode == 0, res.stderr
+  start = next(
+    line for line in res.stdout.splitlines() if " start apply=" in line
+  )
+  assert "level=7 threads=2" in start
+
+
+@pytest.mark.machine_unit_mock
 def test_default_run_skips_young_and_kept_open_days(env: dict):
   """Without --seal-all the age and --keep-open gates still hold days open."""
   days = _scenario(env)

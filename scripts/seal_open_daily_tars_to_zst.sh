@@ -126,7 +126,7 @@ fi
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/seal_open_daily_tars.XXXXXX") || exit 2
 trap 'rm -rf "${WORK:?}"' EXIT
 CUTOFF=$(TZ=$TZ_LOCAL date -d "today - $MIN_AGE_DAYS days" +%F)
-log "start apply=$APPLY jobs=$JOBS seal_all=$SEAL_ALL daily=$DAILY archive=$ARCHIVE cutoff<$CUTOFF level=$LEVEL"
+log "start apply=$APPLY jobs=$JOBS seal_all=$SEAL_ALL daily=$DAILY archive=$ARCHIVE cutoff<$CUTOFF level=$LEVEL threads=$THREADS"
 
 # Days kept open: "<day> <queued append files>". --seal-all keeps none open.
 : >"$WORK/keep"
