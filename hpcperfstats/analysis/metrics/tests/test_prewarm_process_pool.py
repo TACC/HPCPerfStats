@@ -264,3 +264,52 @@ def test_child_initializer_installs_shim_before_django():
   assert body.find("apply_pool_worker_process_title") < body.find(
     "bokeh_validation_patch"
   )
+
+
+def test_worker_start_passes_parent_database_name(monkeypatch):
+  """Regression (compose pipeline e2e + host_data stress, 2026-11-04).
+
+  A forkserver child rebuilds Django from ``hpcperfstats.ini``. When the
+  parent runs against another database (pytest-django's ``test_*``), the
+  child read ``job_data`` from the INI database, found no job, persisted
+  nothing and still reported ``ok`` -- zero ``job_plot_artifact`` rows.
+  """
+  from django.db import connections
+
+  monkeypatch.setitem(connections.databases["default"], "NAME", "test_parent")
+  seen = {}
+
+  class _FakeEnd:
+    def close(self):
+      pass
+
+  class _FakeProc:
+    def start(self):
+      pass
+
+  class _Ctx:
+    def Pipe(self, **_kw):
+      return _FakeEnd(), _FakeEnd()
+
+    def Process(self, **kwargs):
+      seen.update(kwargs)
+      return _FakeProc()
+
+  ppp.PrewarmWorker(_Ctx())._start()
+  assert seen["target"] is ppp._worker_main
+  assert seen["args"][-1] == "test_parent"
+
+
+def test_child_initializer_uses_parent_database_name(monkeypatch):
+  """The child connects to the parent's database, not the INI default."""
+  from django.db import connections
+
+  import hpcperfstats.dbload.lib.blas_thread_env as blas
+  import hpcperfstats.dbload.lib.django_bootstrap as boot
+
+  monkeypatch.setattr(ppp, "apply_pool_worker_process_title", lambda *_a: None)
+  monkeypatch.setattr(blas, "configure_blas_thread_env", lambda: None)
+  monkeypatch.setattr(boot, "ensure_django", lambda: None)
+  monkeypatch.setitem(connections.databases["default"], "NAME", "from_ini")
+  ppp._child_initializer("update_metrics.py", "prewarm-pool", "test_parent")
+  assert connections.databases["default"]["NAME"] == "test_parent"

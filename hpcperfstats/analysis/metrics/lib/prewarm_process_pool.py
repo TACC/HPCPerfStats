@@ -66,20 +66,26 @@ class PrewarmChildError(RuntimeError):
   """A prewarm worker process failed, stalled, or died for one job."""
 
 
-def _child_initializer(script_name: str, pool_kind: str) -> None:
+def _child_initializer(script_name: str, pool_kind: str, db_name: str) -> None:
   """
   Worker start: title, Bokeh shim, BLAS caps, Django, no inherited sockets.
+
+  ``ensure_django`` reads the database from ``hpcperfstats.ini``; the child
+  then switches to ``db_name``, the parent's live database, so a parent on a
+  different database (pytest-django ``test_*``) never has its prewarm read
+  and write the INI one. In production the two names are equal.
 
   Args:
     script_name (str): Daemon script basename for the process title.
     pool_kind (str): Pool label for the process title.
+    db_name (str): Parent's ``DATABASES["default"]["NAME"]``.
 
   Returns:
     None
 
   Examples:
     >>> _child_initializer(
-    ...   "update_metrics.py", "prewarm-pool"
+    ...   "update_metrics.py", "prewarm-pool", "hpcperfstats"
     ... )  # doctest: +SKIP
   """
   apply_pool_worker_process_title(script_name, pool_kind)
@@ -93,6 +99,7 @@ def _child_initializer(script_name: str, pool_kind: str) -> None:
   from django.db import connections
 
   connections.close_all()
+  connections.databases["default"]["NAME"] = db_name
 
 
 def run_prewarm_in_child(jid: str, table: Any) -> dict[str, Any]:
@@ -148,7 +155,9 @@ def run_prewarm_in_child(jid: str, table: Any) -> dict[str, Any]:
     HANDOFF.discard(jid)
 
 
-def _worker_main(conn: Any, script_name: str, pool_kind: str) -> None:
+def _worker_main(
+  conn: Any, script_name: str, pool_kind: str, db_name: str
+) -> None:
   """
   Worker process loop: initialise, then serve ``(jid, table)`` requests.
 
@@ -158,16 +167,17 @@ def _worker_main(conn: Any, script_name: str, pool_kind: str) -> None:
     conn (Any): Child end of the ``multiprocessing.Pipe``.
     script_name (str): Daemon script basename for the process title.
     pool_kind (str): Pool label for the process title.
+    db_name (str): Parent's database name (see ``_child_initializer``).
 
   Returns:
     None
 
   Examples:
     >>> _worker_main(
-    ...   conn, "update_metrics.py", "prewarm-pool"
+    ...   conn, "update_metrics.py", "prewarm-pool", "hpcperfstats"
     ... )  # doctest: +SKIP
   """
-  _child_initializer(script_name, pool_kind)
+  _child_initializer(script_name, pool_kind, db_name)
   while True:
     try:
       message = conn.recv()
@@ -223,10 +233,13 @@ class PrewarmWorker:
     Examples:
       >>> PrewarmWorker(ctx)._start()  # doctest: +SKIP
     """
+    from django.db import connections
+
+    db_name = str(connections.databases["default"]["NAME"])
     parent_conn, child_conn = self._ctx.Pipe(duplex=True)
     proc = self._ctx.Process(
       target=_worker_main,
-      args=(child_conn, UPDATE_METRICS_SCRIPT, PREWARM_POOL_KIND),
+      args=(child_conn, UPDATE_METRICS_SCRIPT, PREWARM_POOL_KIND, db_name),
       daemon=True,
     )
     proc.start()
