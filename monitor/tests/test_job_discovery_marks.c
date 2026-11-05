@@ -200,6 +200,20 @@ static void test_job_shared_emit_sole_partial_splits_remainder(void)
   job_emit_remainder_ctx(&remainder, rem_cpus, 1, NULL); /* no-op */
 }
 
+/* Regression (c122-018, 2026-11-05): an idle node's '-' sample dropped every GPU row
+ * (include_gpu = 0). With no jobs, '-' is the whole-node remainder: all GPUs and CPUs. */
+static void test_job_shared_emit_idle_node_keeps_all_gpus(void)
+{
+  struct job_gpu_set available;
+  struct job_emit_filter_ctx ctx;
+
+  gpu_set_of(&available, 4);
+  job_emit_remainder_ctx(&available, NULL, 1, &ctx);
+  assert(keep(&ctx, "nvidia_gpu", "0") == 1 && keep(&ctx, "nvidia_gpu", "3") == 1);
+  assert(keep(&ctx, "host_cpu", "143") == 1 && keep(&ctx, "ib", "mlx5_0.1") == 1);
+  assert(keep(&ctx, "host_mem_job", "j:1") == 0 && keep(&ctx, "host_proc", "a/1/f/1") == 0);
+}
+
 /* M1: CPU coverage comes from the extern stepd (job cpuset), not MPI-pinned task pids. */
 static cpu_set_t *g_online_mask;
 static size_t g_online_size;
@@ -320,6 +334,7 @@ int main(void)
   test_job_shared_emit_env_named_sole_keeps_full_resource_rule();
   test_job_shared_emit_sole_all_cpus_owns_gpus_without_grant();
   test_job_shared_emit_sole_partial_splits_remainder();
+  test_job_shared_emit_idle_node_keeps_all_gpus();
   test_job_emit_entry_cpulist_prefers_stepd();
   test_job_shared_emit_title_named_multi_omits_affinity();
   test_job_shared_emit_env_named_multi_keeps_split();

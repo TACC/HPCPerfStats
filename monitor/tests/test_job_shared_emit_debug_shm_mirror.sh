@@ -46,6 +46,13 @@ grep -q 'stats_buffer_debug_shm_burst_commit' "${SRC}" \
     exit 1
   }
 
+# Idle '-' (no jids) is the whole-node remainder; c122-018 2026-11-05 dropped all GPU rows.
+grep -q 'job_emit_remainder_ctx(&available, NULL, available.inventory_known' "${SRC}" \
+  || {
+    echo "idle '-' must use job_emit_remainder_ctx(&available, NULL, ...) to keep GPU rows" >&2
+    exit 1
+  }
+
 # |J|>=2 host '-' must emit unscheduled GPUs (remainder) and affinity-split CPUs.
 grep -q 'job_gpu_set_diff' "${SRC}" \
   || {

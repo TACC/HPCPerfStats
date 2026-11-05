@@ -229,8 +229,9 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
   populate_host_mem_job(&disc);
 
   if (disc.n == 0) {
-    struct job_emit_filter_ctx ctx = {.include_node_wide = 1, .include_proc = 0, .include_gpu = 0};
+    struct job_emit_filter_ctx ctx;
 
+    job_emit_remainder_ctx(&available, NULL, available.inventory_known, &ctx); /* all unscheduled */
     stats_buffer_set_row_filter(job_emit_row_filter, &ctx);
     insert_serialized(w, "-", NULL, NULL, 1, &burst_tier);
     goto done;
