@@ -50,6 +50,7 @@ TZ_LOCAL=America/Chicago
 LEVEL=19
 MIN_AGE_DAYS=3
 MARGIN_GB=200
+RESERVE_PCT=10
 JOBS=1
 APPLY=0
 ALLOW_RUNNING=0
@@ -63,14 +64,15 @@ usage() {
   cat <<EOF
 usage: $0 [--apply] [-j|--jobs N] [--keep-open YYYY-MM-DD]... [--daily DIR]
           [--archive DIR] [--tz TZ] [--level N] [--min-age-days N]
-          [--margin-gb N] [--only YYYY-MM-DD] [--no-job-store]
+          [--margin-gb N] [--reserve-pct N] [--only YYYY-MM-DD] [--no-job-store]
           [--allow-running] [--seal-all] [--log FILE]
 Dry run unless --apply. Defaults: daily=$DAILY archive=$ARCHIVE tz=$TZ_LOCAL
-level=$LEVEL min-age-days=$MIN_AGE_DAYS margin-gb=$MARGIN_GB jobs=$JOBS
+level=$LEVEL min-age-days=$MIN_AGE_DAYS margin-gb=$MARGIN_GB reserve-pct=$RESERVE_PCT jobs=$JOBS
 --jobs N: seal up to N days at once (more reads in flight on a SAN); each
-  running day reserves its estimated compressed size (tar/3) against free
-  space minus the other reservations minus the --margin-gb floor, which is
-  kept free once for the whole run. A day with no room waits (WAIT) and is
+  running day reserves its estimated compressed size (--reserve-pct of the
+  tar; zstd -19 writes ~4%) against free space minus the other reservations
+  minus the --margin-gb floor, which is kept free once for the whole run. The
+  reservation is checked before the tar is listed. A day with no room waits (WAIT) and is
   retried (RETRY) only after space is given back; it is skipped only when
   nothing running is left to free space.
 --no-job-store: do not read the job store snapshot (only --keep-open stays open)
@@ -90,6 +92,7 @@ while [ $# -gt 0 ]; do
     --level) LEVEL=$2; shift ;;
     --min-age-days) MIN_AGE_DAYS=$2; shift ;;
     --margin-gb) MARGIN_GB=$2; shift ;;
+    --reserve-pct) RESERVE_PCT=$2; shift ;;
     -j|--jobs) JOBS=$2; shift ;;
     --only) ONLY=$2; shift ;;
     --no-job-store) NO_JOB_STORE=1 ;;
@@ -107,6 +110,7 @@ log() { printf '%s %s\n' "$(date '+%F %T')" "$*" | tee -a "$LOG"; }
 gib() { awk -v b="$1" 'BEGIN{printf "%.1f", b/2^30}'; }
 
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "--jobs must be a positive integer" >&2; exit 2; }
+[[ "$RESERVE_PCT" =~ ^[1-9][0-9]*$ ]] || { echo "--reserve-pct must be a positive integer" >&2; exit 2; }
 for bin in tar zstd awk stat df python3 pgrep flock; do
   command -v "$bin" >/dev/null || { echo "missing $bin" >&2; exit 2; }
 done
@@ -291,6 +295,17 @@ seal_day() {
   if [ "$size" -le 20480 ] && [ "$SEAL_ALL" -eq 0 ]; then
     skip "empty tar (pipeline drops it)"; return
   fi
+  # Reserve before any listing: a day waiting for space must not re-read a
+  # multi-TB tar (or decompress its old .tar.zst) on every WAIT and RETRY.
+  if [ "$APPLY" -eq 1 ]; then
+    need=$((size * RESERVE_PCT / 100))
+    if ! room=$(reserve "$need" "$day"); then
+      read -r room stamp <<<"$room"
+      log "WAIT $day $(gib "$size")GiB: $(gib "$room")GiB usable after other running days and the ${MARGIN_GB}GiB floor, need $(gib "$need")GiB; retry when space is freed"
+      result space "$stamp"; return
+    fi
+  fi
+
   if ! tar -tvf "$tar" >"$W/t.raw" 2>"$W/t.err" || [ -s "$W/t.err" ]; then
     skip "tar listing failed, pipeline repairs it: $(head -1 "$W/t.err")"; return
   fi
@@ -307,17 +322,6 @@ seal_day() {
     skip "kept open: $ready ingested raw files waiting for append"; return
   fi
   pending=$((pending + ready))  # --seal-all: appends still to come
-
-  # Reserve before the costly .tar.zst listing, so a day waiting for space
-  # does not decompress its old .tar.zst on every retry.
-  if [ "$APPLY" -eq 1 ]; then
-    need=$((size / 3))
-    if ! room=$(reserve "$need" "$day"); then
-      read -r room stamp <<<"$room"
-      log "WAIT $day $(gib "$size")GiB: $(gib "$room")GiB usable after other running days and the ${MARGIN_GB}GiB floor, need $(gib "$need")GiB; retry when space is freed"
-      result space "$stamp"; return
-    fi
-  fi
 
   if [ -f "$zst" ]; then
     if ! zstd -dc "$zst" 2>"$W/z.err" | tar -tvf - >"$W/z.raw" 2>>"$W/z.err" ||
@@ -376,8 +380,8 @@ seal_day() {
 }
 
 # Days that found no room wait in RETRY with the freed count recorded when
-# they were turned away (STAMP); each is retried, oldest first, only after
-# space was given back since then (FREED > STAMP). Days that end without ever
+# they were turned away (STAMP); once every day was tried, each is retried,
+# oldest first, only after space was given back since then (FREED > STAMP). Days that end without ever
 # holding space (kept open, too new, corrupt) do not count.
 running=0 FREED=0
 RETRY=()
@@ -412,12 +416,10 @@ start_retries() {
   RETRY=("${keep[@]}")
 }
 
-reap() {
-  wait -n
-  running=$((running - 1))
-  collect
-  start_retries
-}
+# Retries never start while untried days remain: a retry that waits again
+# would take the slot and starve every later day (hpcperfstats01 2026-11-04:
+# 10 of 54 tars ever looked at, the slot cycling through RETRY/WAIT).
+reap() { wait -n; running=$((running - 1)); collect; }
 
 for tar in "$DAILY"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].tar; do
   [ -f "$tar" ] || continue
@@ -434,10 +436,11 @@ for tar in "$DAILY"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].tar; do
   while [ "$running" -ge "$JOBS" ]; do reap; done
   start_day "$tar"
 done
-while [ "$running" -gt 0 ]; do reap; done
-collect
-start_retries
-while [ "$running" -gt 0 ]; do reap; done
+while :; do
+  start_retries
+  [ "$running" -gt 0 ] || break
+  reap
+done
 for day in "${RETRY[@]}"; do
   log "SKIP $day: not enough free space even after every other day finished"
   echo "skip 0 0" >"$WORK/res/$day"
