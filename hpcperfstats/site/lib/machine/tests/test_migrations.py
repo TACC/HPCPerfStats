@@ -342,9 +342,14 @@ def test_0035_widens_job_data_jid_without_using_cast():
     assert name in reverse
 
 
-def test_0032_coalesces_null_dev():
+def test_0032_has_no_host_data_null_dev_update():
+  """Regression: the NULL dev -> '' UPDATE scanned every chunk (no index on
+  dev), hours to a day on hpcperfstats03 even after the operator backfill;
+  an EXISTS guard costs the same full scan. Backfill is operator-side only."""
   sql = _0032_sql().lower()
-  assert "update host_data set dev = '' where dev is null" in sql
+  assert "update host_data" not in sql
+  assert "dev is null" not in sql
+  assert "backfill_host_data_null_dev.sh" in sql
 
 
 def test_no_pending_model_migrations():
@@ -661,3 +666,26 @@ def test_0044_concurrent_index_lifts_timeout_and_drops_invalid_leftover():
   ]
   assert run_sql.reverse_sql[0] == "SET statement_timeout = 0"
   assert "DROP INDEX CONCURRENTLY IF EXISTS" in run_sql.reverse_sql[1]
+
+
+def test_0032_fails_closed_without_null_dev_backfill_marker():
+  """Regression: with the UPDATE gone, 0032 must not build the 5-col UNIQUE
+  over leftover NULL dev rows. The backfill script's column-comment marker
+  is the cheap proof; a missing marker on a non-empty table raises (a
+  soft-skip would record 0032 applied and never retry)."""
+  sql = _0032_sql()
+  marker = "'hpcperfstats:null-dev-backfill-complete'"
+  assert marker in sql
+  assert "IF EXISTS (SELECT 1 FROM host_data)" in sql
+  assert "col_description(" in sql
+  gate = sql.index(marker)
+  assert "RAISE EXCEPTION" in sql[gate : gate + 400]
+  # Gate precedes the constraint swap.
+  assert gate < sql.index("DROP CONSTRAINT %I")
+  assert gate < sql.index("UNIQUE (time, host, type, event, dev)")
+  script = (
+    importlib.import_module("pathlib").Path(__file__).resolve().parents[5]
+    / "scripts"
+    / "backfill_host_data_null_dev.sh"
+  ).read_text(encoding="utf-8")
+  assert 'NULL_DEV_MARKER="hpcperfstats:null-dev-backfill-complete"' in script

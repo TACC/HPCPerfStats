@@ -73,8 +73,25 @@ class Migration(migrations.Migration):
               RETURN;
             END IF;
 
-            -- Prefer empty string over NULL so UNIQUE works for absent GPU ids.
-            UPDATE host_data SET dev = '' WHERE dev IS NULL;
+            -- NULL dev -> '' is the operator backfill
+            -- (scripts/backfill_host_data_null_dev.sh), not migrate: with no
+            -- index on dev, even a no-op UPDATE (or EXISTS proving no NULLs)
+            -- scans every chunk, hours to a day on large sites. NULLs are
+            -- distinct in a UNIQUE, so a leftover NULL row would sit beside a
+            -- re-ingested '' row. The script writes this column comment only
+            -- after every chunk succeeded; fail closed (not a soft-skip, which
+            -- would record 0032 as applied) so migrate retries after backfill.
+            IF EXISTS (SELECT 1 FROM host_data)
+               AND col_description(
+                     'public.host_data'::regclass,
+                     (SELECT attnum FROM pg_attribute
+                       WHERE attrelid = 'public.host_data'::regclass
+                         AND attname = 'dev')
+                   ) IS DISTINCT FROM 'hpcperfstats:null-dev-backfill-complete'
+            THEN
+              RAISE EXCEPTION
+                '0032_host_data_unique_include_dev_db: host_data.dev NULL backfill not marked complete; run scripts/backfill_host_data_null_dev.sh until it prints done (docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md)';
+            END IF;
 
             FOR con IN
               SELECT c.oid, c.conname
