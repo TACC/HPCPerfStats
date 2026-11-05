@@ -8,6 +8,12 @@ under /run (gone on reboot, removed by the restore path):
   NONE, SOLO(D)   Environment=HPCPERFSTATS_DISABLE_TYPES=<csv> and ExecStart pointed at
                   MEASURE_CONF, a copy of the site conf whose only change is
                   ``queue <queue>_measure`` (CADENCE legs also change ``sample_freq``)
+  VARIANT(V)      as SOLO(base) with one measurement-only daemon knob (driver_map.VARIANTS,
+                  e.g. HPCPERFSTATS_LIKWID_GRACE_SCF=0); paired with SOLO(base) per block
+
+After every leg that publishes to ``<queue>_measure`` the queue is drained through the
+management API and the last ``$`` schema message is kept as ``raw/legs/<id>/schema.txt``, so
+the run records each type's emitted keys (lib/schema_capture.py).
 
 Why a conf copy and not ``-q``: the daemon parses the CLI first and the conf file second
 (monitor.c main), so the conf ``queue`` key would override ``-q`` and partial payloads would
@@ -43,6 +49,7 @@ from . import (
     provenance,
     rmq_cleanup,
     schedule,
+    schema_capture,
 )
 from .nodesample import parse_cpu_list
 from .perfstat import DEFAULT_EVENTS
@@ -58,6 +65,8 @@ MEASURE_DIR = "/run/hpcperfstats-measure"
 MEASURE_CONF = MEASURE_DIR + "/hpcperfstats.conf"
 MEASUREMENT_ROOT = Path(__file__).resolve().parents[1]
 CHECKOUT = MEASUREMENT_ROOT.parents[1]
+# Legs whose payloads go to <queue>_measure (drained for the schema after each one).
+MEASURE_QUEUE_KINDS = ("NONE", "SOLO", "VARIANT", "CADENCE")
 FORBIDDEN_SYSCONFIG = ("HPCPERFSTATS_DISABLE_TYPES", "HPCPERFSTATS_COLLECTION_PROFILE")
 UNIT_PROPS = ("ExecStart", "Nice", "IOSchedulingClass", "IOSchedulingPriority", "Environment",
               "EnvironmentFiles", "CPUAffinity", "LimitNOFILE", "ProtectSystem", "Restart",
@@ -152,13 +161,16 @@ def measure_conf_text(site_text: str, sample_freq: float | None = None) -> str:
 
 
 def dropin_text(kind: str, active: list[str], groups: dict[str, list[str]],
-                group: str | None = None, binary: str = DAEMON) -> str | None:
+                group: str | None = None, binary: str = DAEMON,
+                env: Mapping[str, str] | None = None) -> str | None:
     if kind in ("ALL", "OFF"):
         return None
     body = ["[Service]"]
     csv = driver_map.disable_csv(kind, active, groups, group)
     if csv is not None:
         body.append(f"Environment=HPCPERFSTATS_DISABLE_TYPES={csv}")
+    # VARIANT legs: measurement-only daemon knobs (driver_map.VARIANTS), same runtime drop-in.
+    body += [f"Environment={k}={v}" for k, v in sorted((env or {}).items())]
     # PROFILE runs every collector with full payloads, so it keeps the production conf/queue.
     conf = SITE_CONF if kind == "PROFILE" else MEASURE_CONF
     body += ["ExecStart=", f"ExecStart={binary} -c {conf}"]
@@ -276,13 +288,22 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _schedule(args: argparse.Namespace, groups: list[str], seed: int) -> dict[str, Any]:
+def _schedule(args: argparse.Namespace, groups: dict[str, list[str]], seed: int,
+              caps: dict[str, Any] | None) -> dict[str, Any]:
     sweep = [float(x) for x in args.cadence_sweep.split(",")] if args.cadence_sweep else []
-    return schedule.build_schedule(
-        groups, blocks=args.blocks, seed=seed, leg_seconds=args.leg_seconds,
+    variants = driver_map.variants_for(groups, caps)
+    plan = schedule.build_schedule(
+        list(groups), blocks=args.blocks, seed=seed, leg_seconds=args.leg_seconds,
         settle_seconds=args.settle_seconds, fwq_seconds=args.fwq_seconds,
         max_hours=args.max_hours, off_legs=not args.no_off_legs, cadence_sweep=sweep,
-        profile_collectors=args.profile_collectors)
+        profile_collectors=args.profile_collectors, variants=variants)
+    plan["variant_specs"] = variants
+    return plan
+
+
+def leg_groups(groups: dict[str, list[str]], plan: dict[str, Any]) -> dict[str, list[str]]:
+    """Driver groups plus each scheduled variant's type list (for disable_csv on any leg)."""
+    return {**groups, **{n: v["types"] for n, v in (plan.get("variant_specs") or {}).items()}}
 
 
 def _load_caps(build_info: Path | None) -> dict[str, Any] | None:
@@ -295,12 +316,14 @@ def _leg_line(i: int, leg: dict[str, Any], plan: dict[str, Any], active: list[st
               groups: dict[str, list[str]]) -> str:
     dur = plan["leg_seconds"] + plan["settle_seconds"] + (plan["fwq_seconds"] if leg["fwq"] else 0)
     label = leg["kind"]
-    if leg["kind"] == "SOLO":
+    if leg["kind"] in ("SOLO", "VARIANT"):
         label += f" {leg['group']}"
     if leg["kind"] == "CADENCE":
         label += f" sample_freq={leg['sample_freq']:g}"
-    csv = driver_map.disable_csv(leg["kind"], active, groups, leg.get("group"))
+    csv = driver_map.disable_csv(leg["kind"], active, leg_groups(groups, plan), leg.get("group"))
     extra = f"disable={csv or '(none)'}" if csv is not None else "production ExecStart"
+    if leg.get("env"):
+        extra += " " + " ".join(f"{k}={v}" for k, v in sorted(leg["env"].items()))
     if leg["kind"] == "OFF":
         extra = "service stopped"
     if leg["kind"] == "PROFILE":
@@ -316,6 +339,8 @@ def print_plan(args: argparse.Namespace, active: list[str], groups: dict[str, li
     out(f"Install: rpm -Uvh --replacepkgs {args.rpm}  (site conf saved first, restored right after)")
     out("Active types: " + ",".join(active))
     out("Driver groups: " + "; ".join(f"{g}: {','.join(t)}" for g, t in groups.items()))
+    for name, v in (plan.get("variant_specs") or {}).items():
+        out(f"Variant {name}: {','.join(v['types'])} vs SOLO {v['base']} ({v['label']})")
     steps = ", ".join(f"{s['step']}" for s in plan["fit_steps"]) or "none"
     out(f"Schedule (seed {plan['seed']}, blocks {plan['blocks']}, leg {plan['leg_seconds']} s, "
         f"settle {plan['settle_seconds']} s, fwq {plan['fwq_seconds']} s, fit steps: {steps}):")
@@ -578,7 +603,7 @@ class Run:
             groups = driver_map.groups_for_enabled(types, _load_caps(self.args.build_info))
         except driver_map.UnmappedTypeError:
             return  # the new build may map it; discovery decides
-        _schedule(self.args, list(groups), seed)
+        _schedule(self.args, groups, seed, _load_caps(self.args.build_info))
 
     def discover(self) -> list[str]:
         self.set_dropin(None)
@@ -599,14 +624,16 @@ class Run:
         settle, quiet = plan["settle_seconds"], plan["leg_seconds"]
         load = plan["fwq_seconds"] if leg["fwq"] else 0
         meta: dict[str, Any] = {k: leg.get(k) for k in ("leg_id", "kind", "block", "group",
-                                                         "brackets", "sample_freq")}
+                                                         "brackets", "sample_freq", "base", "env",
+                                                         "marker")}
         meta["status"] = "ok"
         cad = provenance.parse_monitor_conf(self.conf_text)
         if leg["kind"] == "CADENCE":
             cad["sample_freq"] = leg["sample_freq"]
         meta["cadence"] = {k: cad.get(k) for k in ("sample_freq", "sample_freq_slow", "send_freq",
                                                     "enable_slow_tier")}
-        disabled = driver_map.disable_csv(leg["kind"], self.active, self.groups, leg.get("group"))
+        groups = leg_groups(self.groups, plan)
+        disabled = driver_map.disable_csv(leg["kind"], self.active, groups, leg.get("group"))
         off = set((disabled or "").split(",")) - {""}
         meta["intended_types"] = [t for t in self.active if t not in off] if leg["kind"] != "OFF" else []
         t0 = time.time()
@@ -620,8 +647,8 @@ class Run:
                 shutil.copy2(self.profiler_src, PROFILER_BINARY)
                 os.chmod(PROFILER_BINARY, 0o755)
                 binary = PROFILER_BINARY
-            self.set_dropin(dropin_text(leg["kind"], self.active, self.groups, leg.get("group"),
-                                        binary=binary), leg.get("sample_freq"))
+            self.set_dropin(dropin_text(leg["kind"], self.active, groups, leg.get("group"),
+                                        binary=binary, env=leg.get("env")), leg.get("sample_freq"))
             t0 = time.time()
             self.systemctl("restart", UNIT)
         meta["t_start"] = t0
@@ -667,6 +694,9 @@ class Run:
                            fmt_cpus(self.fwq_cpus), "-t", str(len(self.fwq_cpus))], check=False,
                           timeout=180)
         sampler.wait(timeout=120)
+        if leg["kind"] in MEASURE_QUEUE_KINDS:
+            # After the sampler stopped, so the drain is never inside a measured window.
+            meta["schema_capture"] = self.capture_schema(leg_dir)
         if leg["kind"] != "OFF":
             end_pid = self.main_pid()
             meta["pid_start"], meta["pid_end"] = pid, end_pid
@@ -675,6 +705,17 @@ class Run:
             (leg_dir / "journal.txt").write_text(self.journal_since(t0 - 1))
         (leg_dir / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
         return meta
+
+    def capture_schema(self, leg_dir: Path) -> str:
+        """Drain ``<queue>_measure``; keep the leg's last ``$`` schema message as schema.txt."""
+        res = rmq_cleanup.drain_measure_queue(self.conf, mgmt_port=self.args.rmq_mgmt_port)
+        if res["status"] != "ok":
+            return res["status"]
+        text = schema_capture.last_schema_message(res["messages"])
+        if text is None:
+            return f"no schema message among {len(res['messages'])} drained"
+        (leg_dir / "schema.txt").write_text(text)
+        return "ok"
 
     @staticmethod
     def _mk(path: Path) -> Path:
@@ -760,7 +801,7 @@ class Run:
             self.fwq_work = int(cal.stdout.strip())
             self.active = self.discover()
             self.groups = driver_map.groups_for_enabled(self.active, self.caps)
-            self.plan = _schedule(a, list(self.groups), seed)
+            self.plan = _schedule(a, self.groups, seed, self.caps)
             self.write_run_json()
             print_plan(a, self.active, self.groups, self.plan, out=lambda s: print(s, flush=True))
             for leg in self.plan["legs"]:
@@ -806,7 +847,7 @@ def main(argv: list[str] | None = None) -> int:
             caps = _load_caps(args.build_info)
             groups = driver_map.groups_for_enabled(types, caps)
             seed = args.seed if args.seed is not None else int(time.time()) % 1_000_000
-            print_plan(args, sorted(types), groups, _schedule(args, list(groups), seed))
+            print_plan(args, sorted(types), groups, _schedule(args, groups, seed, caps))
             return 0
         if os.geteuid() != 0:
             print("ERROR: the measurement must run as root (sudo); use --dry-run to preview",

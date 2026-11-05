@@ -92,10 +92,10 @@ sudo ./measurement/bin/run_overhead_profile.sh --rpm rpmbuild/RPMS/x86_64/hpcper
 
 | File | Content |
 |---|---|
-| `profile.json` | schema v1; every metric `{value, unit, ci95, n, source}` or `{status: NOT_MEASURED, reason}` |
+| `profile.json` | schema v1; every metric `{value, unit, ci95, n, source}` or `{status: NOT_MEASURED, reason}`; `collector_matrix.variants` (paired VARIANT rows) and `schema_keys` (emitted keys per type) |
 | `report.md` | headline table, per-driver table (SOLO − NONE paired within block, share of ALL, interaction residual), hottest daemon threads (`thread_top`: tid, comm, core-s/h from the first usable ALL leg; embedded DCGM/NVML workers share the daemon's name, so match tids with `gdb -p PID -batch -ex 'thread apply all bt'`), legs |
 | `profile_row.csv` | one row of headline metrics |
-| `raw/` | `samples.jsonl` per leg (1 Hz), FWQ quanta, `perf.csv`, journal excerpts, `provenance.json`, `run.json`, `commands.log` |
+| `raw/` | `samples.jsonl` per leg (1 Hz), FWQ quanta, `perf.csv`, journal excerpts, `schema.txt` (last `$` schema message drained from `<queue>_measure` on NONE/SOLO/VARIANT/CADENCE legs), `provenance.json`, `run.json`, `commands.log` |
 
 `bin/summarize_profile.py RESULT_DIR` rebuilds every output from `raw/` (it also runs after
 each leg, so an interrupted run still has a valid partial report). Merge architectures:
@@ -103,6 +103,21 @@ each leg, so an interrupted run still has a valid partial report). Merge archite
 ```bash
 python3 bin/aggregate_profiles.py --out results/cross_arch results/*/profile.json
 # profiles.csv, profiles.md, profiles.tex (booktabs fragment)
+```
+
+**Grace SCF cost (overlay builds).** `arm_aarch64_imc` sits in `dcgm_cpu`, and each block adds
+a `VARIANT dcgm_cpu_noscf` leg: `host_cpu_hw` alone with `HPCPERFSTATS_LIKWID_GRACE_SCF=0` in
+the runtime drop-in (the overlay starts at CYC+INS, no SCF counters). `report.md` → *Paired
+variants* gives SCF counters + `arm_aarch64_imc` = SOLO(`dcgm_cpu`) − VARIANT in the same block,
+with perf FDs Δ (expect 4 on a 2-socket Grace). `NOT_MEASURED (... marker)` means the daemon did
+not log `SCF uncore events off` — the RPM predates the knob, so the pair would be two identical
+legs. Both RPMs of a comparison need the knob for a variant row in each.
+
+**Emitted keys across two runs** (e.g. NVLink keys under `nvidia_gpu` after a DCGM change):
+
+```bash
+python3 bin/compare_schema_keys.py results/BASE/profile.json results/CAND/profile.json --type nvidia_gpu
+# SCHEMA_KEYS_OK (exit 0) / SCHEMA_KEYS_REMOVED (exit 1) / NOT_MEASURED (exit 2: a run had no capture)
 ```
 
 ### Per-architecture checklist

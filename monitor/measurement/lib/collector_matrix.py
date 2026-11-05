@@ -3,6 +3,8 @@
 framework           = NONE                        (daemon with zero collectors)
 driver D            = SOLO_b(D) − NONE_b          (same block, so slow drift cancels)
 interaction residual = ALL_b − [NONE_b + Σ_D (SOLO_b(D) − NONE_b)]
+variant V of D       = SOLO_b(D) − VARIANT_b(V)  (same block; V is D with one change, e.g.
+                                                 dcgm_cpu without the Grace SCF counters)
 share of ALL        = (SOLO − NONE) / ALL         (process metrics: the OFF daemon cost is 0)
 
 Replicate blocks are combined with ``stats.combine_replicates``. When a block's NONE leg did
@@ -51,14 +53,55 @@ def _value(leg: dict[str, Any], key: str) -> Any:
 def _blocks(legs: Iterable[dict[str, Any]]) -> dict[int, dict[str, Any]]:
     out: dict[int, dict[str, Any]] = {}
     for leg in legs:
-        b = out.setdefault(leg["block"], {"NONE": None, "ALL": [], "SOLO": {}})
+        b = out.setdefault(leg["block"], {"NONE": None, "ALL": [], "SOLO": {}, "VARIANT": {}})
         if leg["kind"] == "NONE":
             b["NONE"] = leg
         elif leg["kind"] == "ALL" and _ok(leg):
             b["ALL"].append(leg)
-        elif leg["kind"] == "SOLO":
-            b["SOLO"][leg["group"]] = leg
+        elif leg["kind"] in ("SOLO", "VARIANT"):
+            b[leg["kind"]][leg["group"]] = leg
     return out
+
+
+def _variant_rows(blocks: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Cost of what a VARIANT leg removes: SOLO(base) − VARIANT, paired within each block."""
+    names = sorted({v for b in blocks.values() for v in b["VARIANT"]})
+    rows = []
+    for name in names:
+        row: dict[str, Any] = {"variant": name, "notes": [], "status": "ok"}
+        per_col: dict[str, list[dict[str, Any]]] = {col: [] for _, col, _ in COLUMNS}
+        for bnum, block in sorted(blocks.items()):
+            var = block["VARIANT"].get(name)
+            if var is None:
+                continue
+            row["base"] = var.get("base")
+            solo = block["SOLO"].get(var.get("base"))
+            if not (_ok(var) and _ok(solo)):
+                row["notes"].append(f"block {bnum}: VARIANT or SOLO {var.get('base')} leg not ok")
+                continue
+            if var.get("marker_seen") is not True:
+                # Without the marker the daemon ignored the knob: both legs ran the same set.
+                row["notes"].append(f"block {bnum}: daemon did not log the variant marker")
+                continue
+            for key, col, _ in COLUMNS:
+                d = stats.diff_ci(_as_ci(_value(solo, key)), _as_ci(_value(var, key)))
+                if d is not None:
+                    per_col[col].append(d)
+        if not per_col["cpu_core_s_per_h"]:
+            row["status"] = "NOT_MEASURED"
+            row["reason"] = "; ".join(row["notes"]) or "no VARIANT leg ran"
+            rows.append(row)
+            continue
+        for _key, col, interval in COLUMNS:
+            comb = stats.combine_replicates(per_col[col])
+            if comb is None:
+                row[col] = None
+            elif interval:
+                row[col] = {**comb, "n_blocks": len(per_col[col])}
+            else:
+                row[col] = comb["mean"]
+        rows.append(row)
+    return rows
 
 
 def _all_ci(block: dict[str, Any], key: str) -> dict[str, Any] | None:
@@ -176,6 +219,7 @@ def build_matrix(legs: list[dict[str, Any]], groups: dict[str, list[str]],
         framework = {"status": "ok", "cpu_core_s_per_h": none_cpu}
     return {
         "rows": rows,
+        "variants": _variant_rows(blocks),
         "framework": framework,
         "all": {"cpu_core_s_per_h": all_cpu, "types": list(active)},
         "residual": ({"status": "NOT_MEASURED", "reason": "no block had NONE, ALL and every SOLO",

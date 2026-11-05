@@ -34,12 +34,27 @@ STATIC_GROUP: dict[str, str] = {
     **dict.fromkeys(_FILESYSTEM, "filesystem"),
     **dict.fromkeys(_LIKWID, "likwid"),
     "nvidia_gpu": "dcgm_gpu",
-    "arm_aarch64_imc": "perf_event",
     "host_opa": "ib_mad",
     "amd_gpu": "amd_gpu",
     "intel_gpu": "intel_gpu",
 }
-BACKEND_TYPES = ("host_cpu_hw", "host_ib")
+BACKEND_TYPES = ("host_cpu_hw", "host_ib", "arm_aarch64_imc")
+
+# Paired variant legs (run like SOLO, compared against their base group in the same block,
+# not against NONE). Grace overlay builds: the overlay programs the SCF counters inside
+# host_cpu_hw's group whether or not arm_aarch64_imc is enabled, so SCF cost is only visible
+# as dcgm_cpu (SCF on + arm_aarch64_imc) minus dcgm_cpu with HPCPERFSTATS_LIKWID_GRACE_SCF=0.
+# ``marker`` must appear in the leg's journal or the pair is NOT_MEASURED (a daemon without
+# the knob would run two identical legs and report a false zero).
+VARIANTS: dict[str, dict[str, Any]] = {
+    "dcgm_cpu_noscf": {
+        "base": "dcgm_cpu",
+        "drop": ("arm_aarch64_imc",),
+        "env": {"HPCPERFSTATS_LIKWID_GRACE_SCF": "0"},
+        "marker": "SCF uncore events off (HPCPERFSTATS_LIKWID_GRACE_SCF=0)",
+        "label": "Grace SCF counters + arm_aarch64_imc",
+    },
+}
 KNOWN_TYPES = tuple(sorted({*STATIC_GROUP, *BACKEND_TYPES}))
 
 # Every build shape the map must resolve (CPU backend × IB MAD), used by the drift test.
@@ -47,6 +62,8 @@ CAPABILITY_VARIANTS = (
     {"arch": "x86_64", "configure": {"cpu_backend": "likwid", "ib_mad_dlopen": True, "infiniband": True}},
     {"arch": "x86_64", "configure": {"cpu_backend": "likwid", "ib_mad_dlopen": False, "infiniband": False}},
     {"arch": "aarch64", "configure": {"cpu_backend": "dcgm", "ib_mad_dlopen": True, "infiniband": True}},
+    {"arch": "aarch64", "configure": {"cpu_backend": "dcgm", "likwid_overlay": True,
+                                      "ib_mad_dlopen": True, "infiniband": True}},
     {"arch": "aarch64", "configure": {"cpu_backend": "dcgm", "ib_mad_dlopen": False, "infiniband": False}},
 )
 
@@ -70,8 +87,16 @@ def _ib_mad(caps: dict[str, Any] | None) -> bool:
     return True
 
 
+def _likwid_overlay(caps: dict[str, Any] | None) -> bool:
+    cfg = (caps or {}).get("configure") or {}
+    return bool(cfg.get("likwid_overlay") or cfg.get("papi_hybrid"))
+
+
 def group_for_type(name: str, caps: dict[str, Any] | None) -> str:
     """Driver group for one collector type under a given build."""
+    if name == "arm_aarch64_imc":
+        # Overlay builds read SCF through host_cpu_hw's LIKWID group; alone it only waits.
+        return "dcgm_cpu" if _likwid_overlay(caps) and _cpu_backend(caps) == "dcgm" else "perf_event"
     if name == "host_cpu_hw":
         return "dcgm_cpu" if _cpu_backend(caps) == "dcgm" else "likwid"
     if name == "host_ib":
@@ -91,13 +116,32 @@ def groups_for_enabled(types: Iterable[str], caps: dict[str, Any] | None) -> dic
     return out
 
 
+def variants_for(groups: dict[str, list[str]], caps: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """Variant legs this build can run: ``{name: {base, types, env, marker, label}}``."""
+    out: dict[str, dict[str, Any]] = {}
+    if not _likwid_overlay(caps):
+        return out
+    for name, spec in VARIANTS.items():
+        base = groups.get(spec["base"], [])
+        if not any(t in base for t in spec["drop"]):
+            continue
+        types = [t for t in base if t not in spec["drop"]]
+        if types:
+            out[name] = {**spec, "drop": list(spec["drop"]), "types": types}
+    return out
+
+
 def disable_csv(kind: str, active: Iterable[str], groups: dict[str, list[str]],
                 group: str | None = None) -> str | None:
-    """``HPCPERFSTATS_DISABLE_TYPES`` for a leg; None means no drop-in (ALL / OFF)."""
+    """``HPCPERFSTATS_DISABLE_TYPES`` for a leg; None means no drop-in (ALL / OFF).
+
+    A VARIANT leg's ``group`` is a variant name; pass ``groups`` merged with the variants'
+    type lists (``{**groups, name: variant["types"]}``).
+    """
     active = sorted(set(active))
     if kind == "NONE":
         return ",".join(active)
-    if kind == "SOLO":
+    if kind in ("SOLO", "VARIANT"):
         keep = set(groups[group])
         return ",".join(t for t in active if t not in keep)
     return None

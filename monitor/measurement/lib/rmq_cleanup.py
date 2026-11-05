@@ -26,10 +26,14 @@ def measure_queue_name(production_queue: str) -> str:
 
 
 def _request(method: str, host: str, port: int, vhost: str, user: str, password: str,
-             queue: str, timeout: float) -> tuple[int, bytes]:
+             queue: str, timeout: float, suffix: str = "",
+             body: dict[str, Any] | None = None) -> tuple[int, bytes]:
     url = (f"http://{host}:{port}/api/queues/{urllib.parse.quote(vhost, safe='')}/"
-           f"{urllib.parse.quote(queue, safe='')}")
-    req = urllib.request.Request(url, method=method)
+           f"{urllib.parse.quote(queue, safe='')}{suffix}")
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(url, method=method, data=data)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
     token = base64.b64encode(f"{user}:{password}".encode()).decode()
     req.add_header("Authorization", f"Basic {token}")
     try:
@@ -72,6 +76,34 @@ def delete_measure_queue(conf: dict[str, str], mgmt_port: int = DEFAULT_MGMT_POR
                 "reason": "queue did not exist"}
     return {"queue": queue, "deleted": False, "measure_queue_left": True,
             "reason": f"management API returned HTTP {status}", "admin_command": admin_command(queue)}
+
+
+def drain_measure_queue(conf: dict[str, str], mgmt_port: int = DEFAULT_MGMT_PORT,
+                        count: int = 2000, truncate: int = 4 << 20,
+                        timeout: float = 30.0) -> dict[str, Any]:
+    """Consume up to ``count`` messages from ``<queue>_measure`` (never the production queue).
+
+    Returns ``{status, messages}``; ``status`` is ``ok``, or a reason the payloads could not
+    be read (management API unreachable / HTTP error), recorded as NOT_MEASURED upstream.
+    """
+    prod = conf["queue"]
+    queue = measure_queue_name(prod)
+    _guard(queue, prod)
+    body = {"count": count, "ackmode": "ack_requeue_false", "encoding": "auto",
+            "truncate": truncate}
+    try:
+        status, raw = _request("POST", conf["server"], mgmt_port, DAEMON_VHOST,
+                               conf.get("user", ""), conf.get("password", ""), queue, timeout,
+                               suffix="/get", body=body)
+    except (OSError, urllib.error.URLError) as err:
+        return {"status": f"management API unreachable: {err}", "messages": []}
+    if status != 200:
+        return {"status": f"management API returned HTTP {status}", "messages": []}
+    try:
+        docs = json.loads(raw or b"[]")
+    except json.JSONDecodeError:
+        return {"status": "management API returned non-JSON", "messages": []}
+    return {"status": "ok", "messages": [str(d.get("payload") or "") for d in docs]}
 
 
 def measure_queue_preflight(conf: dict[str, str], mgmt_port: int = DEFAULT_MGMT_PORT,

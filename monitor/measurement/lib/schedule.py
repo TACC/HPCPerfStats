@@ -1,7 +1,8 @@
 """Bracketed, replicated leg schedule (decision 10) with budget auto-fit.
 
-Block b: OFF → NONE → ALL → SOLO(D…) in seeded random order → ALL → OFF, and the closing OFF
-is shared with block b+1. Headline legs (OFF/NONE/ALL) add the FWQ phase. When the projection
+Block b: OFF → NONE → ALL → SOLO(D…) and VARIANT(V…) in seeded random order → ALL → OFF, and
+the closing OFF is shared with block b+1. A VARIANT leg (driver_map.VARIANTS) runs a base group
+with one change and is paired with that base group's SOLO leg in the same block. Headline legs (OFF/NONE/ALL) add the FWQ phase. When the projection
 exceeds ``max_hours``, reductions apply in a fixed order and each is recorded in
 ``fit_steps``: (1) shorten legs 1800 → 1200 → 600 s, (2) drop the second ALL leg per block,
 (3) run SOLO legs only in the first block. If it still does not fit, ScheduleDoesNotFit carries
@@ -11,7 +12,7 @@ the minimum hours so the operator can raise ``--max-hours``.
 from __future__ import annotations
 
 import random
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 LEG_SHORTENINGS = (1200, 600)
@@ -37,7 +38,9 @@ def _leg(kind: str, block: int, group: str | None = None, **extra: Any) -> dict[
 
 def _legs(groups: Sequence[str], blocks: int, seed: int, off_legs: bool, second_all: bool,
           solo_blocks: int, cadence_sweep: Sequence[float],
-          profile_collectors: bool = False) -> list[dict[str, Any]]:
+          profile_collectors: bool = False,
+          variants: Mapping[str, Mapping[str, Any]] | None = None) -> list[dict[str, Any]]:
+    variants = variants or {}
     rng = random.Random(seed)
     legs: list[dict[str, Any]] = []
     if off_legs:
@@ -46,9 +49,10 @@ def _legs(groups: Sequence[str], blocks: int, seed: int, off_legs: bool, second_
         legs.append(_leg("NONE", b))
         legs.append(_leg("ALL", b, position="first"))
         if b <= solo_blocks:
-            order = list(groups)
+            order = list(groups) + [v for v in variants if variants[v]["base"] in groups]
             rng.shuffle(order)
-            legs.extend(_leg("SOLO", b, g) for g in order)
+            legs.extend(_leg("VARIANT", b, g, **{k: variants[g][k] for k in ("base", "env", "marker")})
+                        if g in variants else _leg("SOLO", b, g) for g in order)
         if second_all:
             legs.append(_leg("ALL", b, position="second"))
         if off_legs:
@@ -75,7 +79,8 @@ def build_schedule(groups: Sequence[str], blocks: int = 2, seed: int = 0,
                    leg_seconds: int = 1800, settle_seconds: int = 60, fwq_seconds: int = 300,
                    max_hours: float = 12.0, off_legs: bool = True,
                    cadence_sweep: Sequence[float] = (), setup_seconds: int = 1800,
-                   profile_collectors: bool = False) -> dict[str, Any]:
+                   profile_collectors: bool = False,
+                   variants: Mapping[str, Mapping[str, Any]] | None = None) -> dict[str, Any]:
     """Return ``{legs, leg_seconds, projected_seconds, fit_steps, seed, ...}``."""
     budget = max_hours * 3600
     if profile_collectors:
@@ -85,7 +90,7 @@ def build_schedule(groups: Sequence[str], blocks: int = 2, seed: int = 0,
 
     def plan() -> tuple[list[dict[str, Any]], int]:
         legs = _legs(groups, blocks, seed, off_legs, state["second_all"], state["solo_blocks"],
-                     cadence_sweep, profile_collectors)
+                     cadence_sweep, profile_collectors, variants)
         return legs, _project(legs, state["leg_seconds"], settle_seconds, fwq_seconds,
                               setup_seconds)
 
@@ -103,6 +108,7 @@ def build_schedule(groups: Sequence[str], blocks: int = 2, seed: int = 0,
     if total > budget:
         raise ScheduleDoesNotFit(total / 3600, max_hours)
     return {"legs": legs, "seed": seed, "blocks": blocks, "groups": list(groups),
+            "variants": sorted({leg["group"] for leg in legs if leg["kind"] == "VARIANT"}),
             "leg_seconds": state["leg_seconds"], "settle_seconds": settle_seconds,
             "fwq_seconds": fwq_seconds, "setup_seconds": setup_seconds,
             "projected_seconds": total, "max_hours": max_hours, "fit_steps": fit_steps,

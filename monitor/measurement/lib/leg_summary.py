@@ -397,6 +397,11 @@ def summarize_leg(leg_dir: Path) -> dict[str, Any]:
         "verified_types": meta.get("verified_types", []),
         "missing_types": meta.get("missing_types", []),
         "extra_types": extra,
+        # VARIANT legs: the knob is proven by its journal marker, recomputed from raw/.
+        "base": meta.get("base"), "env": meta.get("env"),
+        "marker_seen": (None if not meta.get("marker") else
+                        (leg_dir / "journal.txt").is_file()
+                        and meta["marker"] in (leg_dir / "journal.txt").read_text(errors="replace")),
         "process": proc, "node": node, "fwq": fwq_summary, "perf": perf,
         "n_samples": len(samples), "n_quiet": len(quiet),
     }

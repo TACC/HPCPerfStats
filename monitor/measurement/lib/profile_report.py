@@ -13,7 +13,15 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from . import collector_matrix, fwq, leg_summary, profiler_lines, stats
+from . import (
+    collector_matrix,
+    driver_map,
+    fwq,
+    leg_summary,
+    profiler_lines,
+    schema_capture,
+    stats,
+)
 
 PROFILE_SCHEMA_VERSION = 1
 NOT_MEASURED = "NOT_MEASURED"
@@ -85,6 +93,18 @@ def measured(value: float, unit: str, source: str, ci: dict[str, Any] | None = N
 
 def not_measured(reason: str) -> dict[str, Any]:
     return {"status": NOT_MEASURED, "reason": reason}
+
+
+def _schema_keys(run_dir: Path) -> dict[str, Any]:
+    """Emitted keys per type from the legs' ``schema.txt`` (drained from <queue>_measure)."""
+    files = sorted((run_dir / "raw" / "legs").glob("*/schema.txt"))
+    if not files:
+        return {"status": "NOT_MEASURED",
+                "reason": "no leg captured a schema message (harness before schema capture, or "
+                          "management API unreachable: see raw/legs/*/meta.json schema_capture)"}
+    return {"status": "ok", "n_legs": len(files),
+            "types": schema_capture.merge_leg_keys(
+                schema_capture.parse_schema_keys(f.read_text(errors="replace")) for f in files)}
 
 
 def _load_legs(run_dir: Path) -> list[dict[str, Any]]:
@@ -339,6 +359,7 @@ def build_profile(run_dir: Path) -> dict[str, Any]:
         "baseline_drift": drift,
         "metrics": _metrics(legs, flags, host.get("gpus") or []),
         "collector_matrix": matrix,
+        "schema_keys": _schema_keys(run_dir),
         "collector_profile": _collector_profile(
             run_dir, legs, run.get("planned_leg_ids", []),
             ((prov.get("build") or {}).get("build_capabilities"))),
@@ -346,7 +367,8 @@ def build_profile(run_dir: Path) -> dict[str, Any]:
         "active_types": run.get("active_types"),
         "groups": groups,
         "legs": [{**{k: leg.get(k) for k in ("leg_id", "kind", "block", "group", "status",
-                                              "contaminated", "verified_types", "missing_types")},
+                                              "contaminated", "verified_types", "missing_types",
+                                              "base", "env", "marker_seen")},
                   "thread_top": (leg.get("process") or {}).get("thread_top")} for leg in legs],
         "provenance": prov,
     }
@@ -398,6 +420,21 @@ def _md(profile: dict[str, Any]) -> str:
                      f"{num(r.get('broker_bytes_per_h_delta'))} | {num(r.get('wakeups_per_s_delta'))} | "
                      f"{num(r.get('perf_event_fds_delta'))} | {num(r.get('init_cpu_s_delta'))} | "
                      f"{'; '.join(r['notes'])} |")
+    if mx.get("variants"):
+        lines += ["", "## Paired variants (SOLO(base) − VARIANT, same block)", "",
+                  "| Variant | Base | Removes | CPU core-s/h [95% CI] | perf FDs Δ | USS Δ MiB | Notes |",
+                  "| --- | --- | --- | --- | --- | --- | --- |"]
+        for r in mx["variants"]:
+            what = driver_map.VARIANTS.get(r["variant"], {}).get("label", "")
+            if r["status"] != "ok":
+                lines.append(f"| {r['variant']} | {r.get('base')} | {what} | "
+                             f"NOT_MEASURED ({r.get('reason')}) | | | |")
+                continue
+            c = r["cpu_core_s_per_h"]
+            ci = f" [{c['lo']:.4g}, {c['hi']:.4g}]" if c.get("lo") is not None else ""
+            lines.append(f"| {r['variant']} | {r.get('base')} | {what} | {c['mean']:.4g}{ci} | "
+                         f"{num(r.get('perf_event_fds_delta'))} | {num(r.get('uss_mib_delta'))} | "
+                         f"{'; '.join(r['notes'])} |")
     fw = mx.get("framework") or {}
     lines.append("")
     lines.append("Framework (NONE): " + (f"{fw['cpu_core_s_per_h']['mean']:.4g} core-s/h"

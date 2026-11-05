@@ -48,9 +48,25 @@ Applies to `monitor/measurement/**` (harness, sampler, FWQ, report) and the
 8. **Driver groups, not types** (`dcgm_cpu` and `dcgm_gpu` are separate groups). A type in an `Enabled types:` line with no group in
    `lib/driver_map.py` fails preflight; `test_driver_map_covers_all_st_names` fails when a new
    `.st_name` lands unmapped. Add the type to the map in the same change as the collector.
+   A type that only works with another group's backend goes **in that group**: on Grace
+   overlay builds (`configure.likwid_overlay`) `arm_aarch64_imc` is in `dcgm_cpu`, because alone
+   it only waits for the LIKWID overlay (c122-018 2026-11-05: its SOLO leg logged `waiting for
+   the LIKWID overlay group` and measured ~0, not the SCF cost).
 9. **Restore on every exit path**: drop-in removed, measure queue deleted, site conf and
    service active/enabled state restored; `restore.sh` is written before the first change.
    The measured package stays installed (reserved node).
+10. **Cost a feature inside a group with a VARIANT leg, never a SOLO subtraction across groups.**
+   `driver_map.VARIANTS` runs the base group with one measurement-only daemon knob in the same
+   runtime drop-in (`dcgm_cpu_noscf`: `host_cpu_hw` with `HPCPERFSTATS_LIKWID_GRACE_SCF=0`), is
+   shuffled with the SOLO legs, and is paired with **SOLO(base) in the same block**
+   (`collector_matrix.variants`; excluded from the interaction residual). The pair counts only
+   when the leg journal contains the variant's `marker` (the daemon's log that the knob took
+   effect) — otherwise `NOT_MEASURED`, so a daemon without the knob cannot report a false 0.
+11. **Emitted keys are captured, not assumed.** After every leg on `<queue>_measure` the harness
+   drains that queue (management API, guarded to `_measure` only, after the sampler stops) and
+   keeps the last `$` schema message as `raw/legs/<id>/schema.txt`; `profile.json`
+   `schema_keys` holds keys per type (`NOT_MEASURED` when nothing was captured) and
+   `bin/compare_schema_keys.py BASE CAND [--type nvidia_gpu]` exits 1 when a key was removed.
 
 ## Tests
 

@@ -43,6 +43,21 @@ static void test_grace_scf_eventset_extends_cyc_ins(void)
   assert(strstr(es, "GMEM") == NULL); /* GPU memory traffic is not DRAM */
 }
 
+/* The overhead harness costs SCF by pairing dcgm_cpu legs with and without the SCF counters
+ * (c122-018 2026-11-05: SCF rode inside dcgm_cpu and could not be isolated). Only an exact
+ * "0" drops SCF; unset or any other value keeps the production SCF-first ladder. */
+static void test_grace_first_rung_honors_scf_knob(void)
+{
+  const char *scf = likwid_arch_eventset_grace_scf();
+
+  assert(likwid_arch_eventset_grace_first(NULL) == scf);
+  assert(likwid_arch_eventset_grace_first("1") == scf);
+  assert(likwid_arch_eventset_grace_first("") == scf);
+  assert(likwid_arch_eventset_grace_first("00") == scf);
+  assert(likwid_arch_eventset_grace_first("0") == likwid_arch_eventset_grace());
+  assert(strstr(likwid_arch_eventset_grace_first("0"), "SCF") == NULL);
+}
+
 static void test_processor_arm_grace_uses_full_eventset(void)
 {
   const char *es = likwid_arch_eventset_for_processor(ARM_GRACE, 6);
@@ -56,6 +71,7 @@ int main(void)
   test_grace_cyc_ins_eventset();
   test_grace_cyc_only_fallback();
   test_grace_scf_eventset_extends_cyc_ins();
+  test_grace_first_rung_honors_scf_knob();
   test_processor_arm_grace_uses_full_eventset();
   printf("test_likwid_arch_map_grace passed\n");
   return 0;

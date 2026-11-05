@@ -81,7 +81,9 @@ void cpu_counter_metrics_likwid_overlay_cleanup(void)
 
 int cpu_counter_metrics_likwid_overlay_begin(struct stats_type *type)
 {
-  const char *eventset = likwid_arch_eventset_grace_scf();
+  /* HPCPERFSTATS_LIKWID_GRACE_SCF=0 (overhead harness only) starts at CYC+INS: dcgm_cpu
+   * without the SCF counters, paired against the default leg to cost SCF on its own. */
+  const char *eventset = likwid_arch_eventset_grace_first(getenv("HPCPERFSTATS_LIKWID_GRACE_SCF"));
   int init_rc;
   int setup_rc;
 
@@ -99,10 +101,12 @@ int cpu_counter_metrics_likwid_overlay_begin(struct stats_type *type)
   }
   /* CYC+INS+SCF first (Grace DRAM CAS for arm_aarch64_imc), then CYC+INS, then CYC only. */
   setup_rc = likwid_pmc_adapter_setup_events(eventset);
-  g_overlay_scf = (setup_rc == 0);
+  g_overlay_scf = (setup_rc == 0 && eventset == likwid_arch_eventset_grace_scf());
+  if (!g_overlay_scf)
+    monitor_log_info("host_cpu_hw: LIKWID SCF uncore events %s; "
+                     "arm_aarch64_imc uses the perf dmc/imc scan\n",
+                     setup_rc == 0 ? "off (HPCPERFSTATS_LIKWID_GRACE_SCF=0)" : "unavailable");
   if (setup_rc != 0) {
-    monitor_log_info("host_cpu_hw: LIKWID SCF uncore events unavailable; "
-                     "arm_aarch64_imc uses the perf dmc/imc scan\n");
     eventset = likwid_arch_eventset_grace();
     setup_rc = likwid_pmc_adapter_setup_events(eventset);
   }

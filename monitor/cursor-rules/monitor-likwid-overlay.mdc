@@ -32,7 +32,7 @@ alwaysApply: false
 
 ## Runtime
 
-- Eventset ladder: `likwid_arch_eventset_grace_scf()`, then `likwid_arch_eventset_grace()`, then `likwid_arch_eventset_grace_cyc_only()` on setup failure. `cpu_counter_metrics_likwid_ready()` on DCGM builds stays the stub `0` — Grace SCF does not go through `likwid_uncore_adapter`.
+- Eventset ladder: `likwid_arch_eventset_grace_scf()`, then `likwid_arch_eventset_grace()`, then `likwid_arch_eventset_grace_cyc_only()` on setup failure. The first rung comes from `likwid_arch_eventset_grace_first(getenv("HPCPERFSTATS_LIKWID_GRACE_SCF"))`: exactly `"0"` starts at CYC+INS (no SCF; `has_scf()` 0; logs `SCF uncore events off (HPCPERFSTATS_LIKWID_GRACE_SCF=0)`). That knob is **measurement-only** — the overhead harness's `dcgm_cpu_noscf` VARIANT leg sets it in its runtime drop-in to cost SCF (`monitor-overhead-measurement.mdc` law 10); never set it in the shipped unit, sysconfig or site conf, and keep the log text in sync with `driver_map.VARIANTS` (`test_overlay_build_groups_imc_with_dcgm_cpu_and_offers_noscf_variant`). `cpu_counter_metrics_likwid_ready()` on DCGM builds stays the stub `0` — Grace SCF does not go through `likwid_uncore_adapter`.
 - Overlay init fail: **do not** disable `host_cpu_hw`; DCGM util/power stays. Exclusive ARM LIKWID still fail-closes the type (no DCGM fallback).
 - **Lifetime vs DCGM soft-fail:** overlay must **survive** DCGM `UpdateAllFields` soft-reset. Tear down DCGM only; do **not** `HPMfinalize` / `cpu_counter_metrics_likwid_overlay_cleanup()` when only the DCGM session is torn down.
 - Collect: one `prepare_collect` + `read_group` per tick; per-CPU `read_cpu_cycles_instr` must not re-`readGroupCounters`.

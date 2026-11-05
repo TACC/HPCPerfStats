@@ -88,6 +88,12 @@ const char *likwid_arch_eventset_grace_scf(void)
   return "CPU_CYCLES:PMC0,INST_RETIRED:PMC1,CMEM_RD_DATA:SCF0,CMEM_WR_TOTAL_BYTES:SCF1";
 }
 
+const char *likwid_arch_eventset_grace_first(const char *scf_env)
+{
+  return (scf_env != NULL && strcmp(scf_env, "0") == 0) ? likwid_arch_eventset_grace()
+                                                        : likwid_arch_eventset_grace_scf();
+}
+
 const char *likwid_arch_eventset_grace_cyc_only(void)
 {
   return "CPU_CYCLES:PMC0";
