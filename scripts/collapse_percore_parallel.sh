@@ -73,6 +73,7 @@ REPAIR_SESSIONS="datname = current_database() AND pid <> pg_backend_pid() AND st
   'SELECT host, type, event, time, value, delta FROM host_data %',
   'INSERT INTO host_data (time, host, jid, type, dev, event, unit, value, delta, arc) VALUES %',
   'DELETE FROM host_data WHERE host = ANY%',
+  'DELETE FROM %.%_chunk WHERE host = ANY%',
   'DELETE FROM host_data hd WHERE hd.host = ANY%',
   'WITH RECURSIVE h AS (%'])"
 # Host-file content for a job that runs without --host (a compressed day).
@@ -82,13 +83,15 @@ POLICY_NOTE="$RUN/compression_policy_paused"
 # before they are repaired, and compress_chunk blocks the repair); note its
 # job id so resume-policy turns it back on. A paused or absent policy is left.
 pause_compression_policy() {
-  local row
-  row=$(psql_q -c "SELECT job_id || ' ' || scheduled FROM timescaledb_information.jobs
-    WHERE hypertable_name = 'host_data' AND proc_name = 'policy_compression' LIMIT 1;")
-  [ "${row#* }" = "t" ] || return 0
-  psql_q -c "SELECT alter_job(${row%% *}, scheduled => false);" > /dev/null || die "could not pause compression policy ${row%% *}"
-  mkdir -p "$RUN" && echo "${row%% *}" > "$POLICY_NOTE"
-  echo "paused compression policy job ${row%% *} for the repair; turn it back on with: $0 resume-policy"
+  # Only a scheduled policy's id: `job_id || ' ' || scheduled` printed
+  # "1003 true", never "t", so the policy was never paused (hpcperfstats04).
+  local job
+  job=$(psql_q -c "SELECT job_id FROM timescaledb_information.jobs WHERE hypertable_name = 'host_data'
+    AND proc_name = 'policy_compression' AND scheduled LIMIT 1;") || die "psql failed"
+  [ -n "$job" ] || return 0
+  psql_q -c "SELECT alter_job($job, scheduled => false);" > /dev/null || die "could not pause compression policy $job"
+  mkdir -p "$RUN" && echo "$job" > "$POLICY_NOTE"
+  echo "paused compression policy job $job for the repair; turn it back on with: $0 resume-policy"
 }
 resume_policy() {
   [ -s "$POLICY_NOTE" ] || { echo "no compression policy was paused by this script"; return 0; }

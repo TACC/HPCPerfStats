@@ -207,3 +207,59 @@ def test_locked_window_is_deferred_then_repaired_once_the_lock_is_gone():
   assert "RETRY pass=1" in text and released
   devs = {r[2] for r in _rows() if r[1] == "cpu"}
   assert devs == {""}
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_lock_on_another_days_chunk_does_not_block_the_window():
+  """Regression: hpcperfstats04 2026-11-05, every window LOCKED while the
+  compression policy held ExclusiveLock on an unrelated old chunk, because
+  the hypertable DELETE locks every chunk while planning. The DELETE now
+  names the window's chunk, so only that chunk's locks matter.
+  """
+  from unittest import mock
+
+  from django.db import connections
+
+  from hpcperfstats.site.lib.machine.management.commands import (
+    collapse_percore_host_data as cmd_mod,
+  )
+
+  rows = []
+  for t, vals in ((T0, (1.0, 4.0)), (T1, (2.0, 6.0))):
+    for dev, value in zip(("0", "1"), vals, strict=True):
+      rows.append((t, HOST, "77", "cpu", dev, "user", "cs", value, 1.0, 1.0))
+  old = T0 - dt.timedelta(days=5)
+  rows.append((old, HOST, "77", "cpu", "", "user", "cs", 1.0, 0, 0))
+  _insert(rows)
+  with connection.cursor() as cur:
+    cur.execute(
+      "SELECT format('%%I.%%I', chunk_schema, chunk_name) "
+      "FROM timescaledb_information.chunks WHERE hypertable_name = "
+      "'host_data' AND range_start <= %s AND range_end > %s",
+      [old, old],
+    )
+    (old_chunk,) = cur.fetchone()
+  other = connections.create_connection("default")
+  other.set_autocommit(False)
+  try:
+    with other.cursor() as cur:
+      cur.execute(f"LOCK TABLE {old_chunk} IN EXCLUSIVE MODE")
+    out = io.StringIO()
+    # A deferred window would sleep before its retry pass: fail instead.
+    with mock.patch.object(
+      cmd_mod.time, "sleep", side_effect=AssertionError("window deferred")
+    ):
+      call_command(
+        "collapse_percore_host_data",
+        since="2026-10-24",
+        until="2026-10-24",
+        host=[HOST],
+        apply=True,
+        lock_timeout_seconds=1,
+        stdout=out,
+      )
+  finally:
+    other.rollback()
+    other.close()
+  assert "LOCKED" not in out.getvalue()
+  assert {r[2] for r in _rows() if r[1] == "cpu"} == {""}

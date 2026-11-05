@@ -63,7 +63,10 @@ fi
       if [ -n "${FAKE_PCT_NONE:-}" ]; then echo has_percore=false; else echo has_percore=true; fi;;
     *"bool_or(is_compressed)"*)
       if [[ " ${FAKE_COMP:-} " == *" $day "* ]]; then echo t; else echo f; fi;;
-    *"proc_name = 'policy_compression' LIMIT 1"*) echo "${FAKE_POLICY:-}";;
+    *"|| scheduled"*"proc_name = 'policy_compression'"*)
+      [ -n "${FAKE_POLICY:-}" ] && echo "$FAKE_POLICY true";;
+    *"proc_name = 'policy_compression' AND scheduled LIMIT 1"*)
+      echo "${FAKE_POLICY:-}";;
     *alter_job*) echo "$SQL" >> $ST/alter.log; echo done;;
     *pg_replication_slots*) echo "${FAKE_SLOTS:-0}";;
     *"SHOW archive_mode"*) echo "${FAKE_ARCH:-off}";;
@@ -313,8 +316,13 @@ def test_compressed_days_are_repaired_in_place_not_refused(env):
 
 
 def test_start_pauses_an_enabled_policy_and_resume_policy_restores_it(env):
+  """Regression: start never paused the policy on hpcperfstats04 because it
+  compared ``job_id || ' ' || scheduled`` (Postgres prints ``1003 true``) to
+  ``t``. FAKE_POLICY is the id of a scheduled policy; the fake answers that
+  old query the way Postgres does.
+  """
   alter = Path(env["FAKE_STATE"]) / "alter.log"
-  out = _run(env, "start", "2026-10-24", FAKE_POLICY="1003 t")
+  out = _run(env, "start", "2026-10-24", FAKE_POLICY="1003")
   assert out.returncode == 0, out.stderr
   assert "paused compression policy job 1003" in out.stdout
   assert "alter_job(1003, scheduled => false)" in alter.read_text()
@@ -326,7 +334,8 @@ def test_start_pauses_an_enabled_policy_and_resume_policy_restores_it(env):
 
 
 def test_start_leaves_a_paused_policy_alone(env):
-  assert _run(env, "start", "2026-10-24", FAKE_POLICY="1003 f").returncode == 0
+  # A paused policy is not ``scheduled``: the query returns no row.
+  assert _run(env, "start", "2026-10-24", FAKE_POLICY="").returncode == 0
   assert not (Path(env["FAKE_STATE"]) / "alter.log").exists()
 
 
@@ -375,8 +384,16 @@ def test_stop_cancels_only_the_repair_commands_own_statements():
   # Each repair window lifts Timescale's DML decompression cap (compressed
   # days are repaired in place).
   assert cmd_mod._DML_DECOMPRESS_SQL in sqls
-  sqls += [cmd_mod._INSERT_SQL, cmd_mod._DELETE_SQL, cmd_mod._DISCOVER_DAYS_SQL]
+  sqls += [cmd_mod._INSERT_SQL, cmd_mod._DISCOVER_DAYS_SQL]
+  # The DELETE names the chunk; the hypertable form is what jobs started
+  # before the per-chunk DELETE still run, and stop must cancel those too.
+  chunk = "_timescaledb_internal._hyper_1_217_chunk"
+  deletes = [
+    cmd_mod._DELETE_SQL.format(chunk=chunk),
+    cmd_mod._DELETE_SQL.format(chunk="host_data"),
+  ]
   statements = [s.replace("%%", "%") for s in sqls if "host_data" in s]
+  statements += [s.replace("%%", "%") for s in deletes]
   pats = _like_patterns()
   for sql in statements:
     assert any(p.fullmatch(sql) for p in pats), sql

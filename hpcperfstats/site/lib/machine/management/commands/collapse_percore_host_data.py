@@ -18,6 +18,11 @@ Attributes:
     and checked, so it needs no per-row probe for one (that probe read every
     device row of a (host, time) per deleted row and made a window take
     tens of minutes on hpcperfstats01). The row count must match the plan.
+    It targets each chunk (``{chunk}``) rather than the hypertable: a
+    hypertable DELETE locks every chunk while planning, so compression of
+    any other day made every window time out (hpcperfstats04, 2026-11-05).
+  _WINDOW_CHUNKS_SQL: Qualified names of the ``host_data`` chunks that
+    overlap the window, for ``_DELETE_SQL``.
   _DISCOVER_DAYS_SQL: Distinct UTC days that hold per-core rows
     (``_PERCORE_WHERE``), found over the whole table.
   _NO_TIMEOUT_SQL: Disables the statement timeout for the current transaction;
@@ -69,8 +74,13 @@ _INSERT_SQL = (
   f"VALUES ({', '.join(['%s'] * len(_COLUMNS))}) ON CONFLICT DO NOTHING"
 )
 _DELETE_SQL = (
-  "DELETE FROM host_data WHERE host = ANY(%s) AND time >= %s AND time < %s "
+  "DELETE FROM {chunk} WHERE host = ANY(%s) AND time >= %s AND time < %s "
   f"AND {_PERCORE_WHERE}"
+)
+_WINDOW_CHUNKS_SQL = (
+  "SELECT format('%%I.%%I', chunk_schema, chunk_name) "
+  "FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data' "
+  "AND range_start < %s AND range_end > %s"
 )
 _DISCOVER_DAYS_SQL = (
   "SELECT DISTINCT date_trunc('day', time AT TIME ZONE 'UTC') FROM host_data "
@@ -539,10 +549,15 @@ class Command(BaseCommand):
       if len(plan.new_rows):
         cursor.executemany(_INSERT_SQL, _records(plan.new_rows))
         self._verify(cursor, plan.new_rows, hosts, start, end, gpu)
-      cursor.execute(_DELETE_SQL, [hosts, start, end, gpu])
-      if cursor.rowcount != plan.percore_rows:
+      cursor.execute(_WINDOW_CHUNKS_SQL, [end, start])
+      deleted = 0
+      for (chunk,) in cursor.fetchall():
+        sql = _DELETE_SQL.format(chunk=chunk)
+        cursor.execute(sql, [hosts, start, end, gpu])
+        deleted += cursor.rowcount
+      if deleted != plan.percore_rows:
         raise CommandError(
-          f"{start:%Y-%m-%d %H:%M}: deleted {cursor.rowcount} per-core rows but "
+          f"{start:%Y-%m-%d %H:%M}: deleted {deleted} per-core rows but "
           f"summed {plan.percore_rows}; rolling back this window"
         )
     return plan
