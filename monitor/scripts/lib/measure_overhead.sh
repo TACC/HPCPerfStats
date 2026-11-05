@@ -6,6 +6,25 @@
 # Tools the release build + measurement need on the reserved node (plan decision 6).
 MEASURE_OVERHEAD_TOOLS="gcc make autoreconf rpmbuild curl"
 
+# Variables prepare_rpmbuild_dirs.sh exports for its own deps build and make dist configure.
+MEASURE_OVERHEAD_PREPARE_ENV="PREFIX SRCDIR HPC_BUNDLE_RELEASE_BUILD CPPFLAGS LDFLAGS PKG_CONFIG_PATH LIBS"
+
+# measure_overhead_caller_env -> env(1) arguments that restore the caller's values of
+# MEASURE_OVERHEAD_PREPARE_ENV (VAR=value when set, -u VAR when unset). Capture them before
+# prepare's exports and run rpmbuild as `env <these> rpmbuild ...`, so %build sees the same
+# environment as the printed rpmbuild run from the operator's shell. c122-018: prepare's LIBS
+# leaked into %build, put -lm inside the -Wl,-Bstatic group, and the link failed (no libm.a).
+measure_overhead_caller_env() {
+  local v
+  for v in ${MEASURE_OVERHEAD_PREPARE_ENV}; do
+    if test "${!v+set}" = set; then
+      printf '%q ' "${v}=${!v}"
+    else
+      printf -- '-u %s ' "${v}"
+    fi
+  done
+}
+
 measure_overhead_harness() {
   printf '%s\n' "$1/measurement/bin/run_overhead_profile.sh"
 }

@@ -90,6 +90,23 @@ grep -q '^  echo "Build binary and source RPMs with:"$' "${PREP}" || fail "relea
 grep -q '^  echo "  ${release_rpmbuild}"$' "${PREP}" || fail "release footer command changed"
 grep -q '^release_rpmbuild="rpmbuild -ba --define \\"_topdir ${topdir}\\" \\"${specs_dir}/hpcperfstats.spec\\""$' "${PREP}" \
   || fail "release rpmbuild string changed"
-grep -q 'eval "${release_rpmbuild}"' "${PREP}" || fail "--measure-overhead must run the printed release rpmbuild"
+grep -q 'eval "env ${measure_caller_env}${release_rpmbuild}"' "${PREP}" \
+  || fail "--measure-overhead must run the printed release rpmbuild under the caller's environment"
+
+# 6. c122-018 regression: --measure-overhead ran rpmbuild with prepare's exported LIBS, which put
+# -lm inside %build's -Wl,-Bstatic group (ld: cannot find -lm). rpmbuild must see the caller's
+# values: set ones restored (spaces intact), unset ones removed.
+got="$(LIBS='-lcaller x' bash -c '
+  unset CPPFLAGS PREFIX
+  . ./scripts/lib/measure_overhead.sh
+  e="$(measure_overhead_caller_env)"
+  export LIBS="-Wl,--start-group -llikwid -Wl,--end-group -lm" CPPFLAGS=-Ileaked PREFIX=/leaked
+  eval "env ${e}sh -c '\''printf \"%s|%s|%s\" \"\$LIBS\" \"\${CPPFLAGS-unset}\" \"\${PREFIX-unset}\"'\''"')"
+test "${got}" = "-lcaller x|unset|unset" || fail "caller env not restored for rpmbuild: ${got}"
+# Every variable prepare exports must be in the restore list.
+for v in $(sed -n 's/^export \([A-Z_][A-Z0-9_]*\)=.*/\1/p' "${PREP}"); do
+  bash -c ". ./scripts/lib/measure_overhead.sh; case \" \${MEASURE_OVERHEAD_PREPARE_ENV} \" in *\" ${v} \"*) ;; *) exit 1;; esac" \
+    || fail "prepare exports ${v} but MEASURE_OVERHEAD_PREPARE_ENV does not restore it"
+done
 
 echo "test_prepare_rpmbuild_measure_flag passed"

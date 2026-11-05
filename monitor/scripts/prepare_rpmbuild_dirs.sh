@@ -99,6 +99,7 @@ if test "${#measure_args[@]}" -gt 0 && test "${measure_overhead}" != "1"; then
 fi
 if test "${measure_overhead}" = "1"; then
   measure_overhead_preflight "${MONITOR_DIR}" "${measure_args[@]}" || exit 1
+  measure_caller_env="$(measure_overhead_caller_env)"
 fi
 
 monitor_spec_field() {
@@ -333,9 +334,9 @@ elif test "${measure_overhead}" = "1"; then
       exit 1
       ;;
   esac
-  echo "Building the release RPM:"
+  echo "Building the release RPM (caller's environment, not prepare's deps-build exports):"
   echo "  ${release_rpmbuild}"
-  eval "${release_rpmbuild}"
+  eval "env ${measure_caller_env}${release_rpmbuild}"
   rpm_path="$(measure_overhead_find_rpm "${topdir}" "${ver}")" || exit 1
   measure_cmd="$(measure_overhead_command "${MONITOR_DIR}" "${rpm_path}" "${topdir}/build-info" "${measure_args[@]}")"
   echo "Measuring ${rpm_path}:"
