@@ -169,10 +169,12 @@ Stage 2 ships in a **separate image** that includes migration `0032_host_data_un
 **db — confirm decompress gate still zero and constraint shape:**
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout = 0; SELECT count(*) FILTER (WHERE is_compressed) AS compressed_chunks FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data';" -c "SELECT c.conname, c.contype, ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum ORDER BY k.ordinality) AS columns FROM pg_constraint c WHERE c.conrelid = 'public.host_data'::regclass AND c.contype IN ('p', 'u') ORDER BY c.contype, c.conname;" -c "SELECT count(*) AS null_dev_rows FROM host_data WHERE dev IS NULL;"
+docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout = 0; SELECT count(*) FILTER (WHERE is_compressed) AS compressed_chunks FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data';" -c "SELECT c.conname, c.contype, ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality) JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum ORDER BY k.ordinality) AS columns FROM pg_constraint c WHERE c.conrelid = 'public.host_data'::regclass AND c.contype IN ('p', 'u') ORDER BY c.contype, c.conname;" -c "SELECT col_description('public.host_data'::regclass, (SELECT attnum FROM pg_attribute WHERE attrelid = 'public.host_data'::regclass AND attname = 'dev')) AS null_dev_marker;"
 ```
 
-Expect: `compressed_chunks = 0`; one 4-column UNIQUE on `(time, host, type, event)`; **no** primary-key row (especially on 02); `null_dev_rows` ideally `0`. If `null_dev_rows` is huge, backfill **before** migrate.
+Expect: `compressed_chunks = 0`; one 4-column UNIQUE on `(time, host, type, event)`; **no** primary-key row (especially on 02); `null_dev_marker = hpcperfstats:null-dev-backfill-complete`. If the marker is empty, run the backfill below **before** migrate.
+
+**`0032` fails closed without the marker.** On a non-empty `host_data` it raises (migrate errors, `0032` stays unapplied) unless the backfill wrote the marker. NULLs are distinct in a UNIQUE, so a leftover NULL row would sit beside a re-ingested `''` row as a duplicate, and proving "no NULL rows" any other way scans every chunk (no index on `dev`). `0032` no longer runs `UPDATE host_data SET dev = ''` itself: even a no-op UPDATE scanned the whole table, most of a day on large sites.
 
 ### Parallel NULL → `''` backfill (multi-CPU)
 
@@ -188,21 +190,36 @@ A single `UPDATE host_data SET dev = '' WHERE dev IS NULL` runs in **one** Postg
 ./scripts/backfill_host_data_null_dev.sh 16
 ```
 
-First argument is worker concurrency (default **30**). Other knobs (optional env): `HPCPERFSTATS_NULL_DEV_VACUUM_EVERY`, `HPCPERFSTATS_NULL_DEV_VACUUM_PARALLEL` (default `8`), `HPCPERFSTATS_NULL_DEV_STALL_LIMIT` (default `5`).
+First argument is worker concurrency (default **30**). Other knobs (optional env): `HPCPERFSTATS_NULL_DEV_VACUUM_EVERY` (`0` disables the per-chunk VACUUM), `HPCPERFSTATS_NULL_DEV_VACUUM_PARALLEL` (default `8`), `HPCPERFSTATS_NULL_DEV_STALL_LIMIT` (default `5`), `HPCPERFSTATS_NULL_DEV_FROM` (resume, below).
 
-Optional post-run verify:
+**Completion marker.** The script clears the `host_data.dev` column comment at start and writes `hpcperfstats:null-dev-backfill-complete` only when every chunk succeeded and none is compressed. Otherwise it prints `INCOMPLETE …` with the failed chunks and exits **1**; re-run it (resume from the earliest failed chunk) until it prints `done`.
+
+**Resume.** Chunks run oldest first. After stopping a run, restart with `HPCPERFSTATS_NULL_DEV_FROM=<range_start of the earliest chunk that was in flight or failed>` to skip finished chunks instead of re-scanning them. Chunks before that date are assumed done by the earlier run, so use the earliest unfinished one.
+
+#### Large sites (multi-TB `host_data`, e.g. hpcperfstats03)
+
+Each rewritten row adds an entry to every index. On 03 the host/jid indexes (~3.5 TB) take random inserts that miss cache at high concurrency, so each one-day chunk took ~3.5 days with 15 workers. Drop them for the backfill and rebuild once afterwards; with **pipeline and web stopped** nothing else needs them. The 4-column UNIQUE can go too: `0032` drops it anyway and builds the 5-column UNIQUE once on clean data (its loop tolerates the 4-column one being gone).
+
+1. Stop the script, cancel its UPDATE and VACUUM backends, and wait until none is running.
+2. Drop the indexes (needs an exclusive lock, so nothing may be running):
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost -U hpcperfstats -c "SELECT count(*) AS null_dev_rows FROM host_data WHERE dev IS NULL;"
+docker compose -p hpcperfstats -f docker-compose.yaml exec -T db psql -h localhost -U hpcperfstats -X -v ON_ERROR_STOP=1 -c "SET lock_timeout = '60s';" -c "DROP INDEX IF EXISTS host_data_jid_type_ev_time_idx, host_data_host_eda1c8_idx, host_data_host_time_desc_idx, host_data_jid_9e84c4_idx, host_data_jid_time_desc_idx;" -c "ALTER TABLE public.host_data DROP CONSTRAINT IF EXISTS host_data_time_host_type_event_9d723a86_uniq;" -c "SELECT indexname FROM pg_indexes WHERE tablename = 'host_data';"
 ```
 
-Expect `null_dev_rows = 0` before running Stage 2 migrate.
-
-Serial one-shot (small sites only):
+3. Restart with low concurrency, no per-chunk VACUUM, resuming at the earliest unfinished chunk (expect only `host_data_time_idx` above):
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost -U hpcperfstats -c "SET statement_timeout = 0; UPDATE host_data SET dev = '' WHERE dev IS NULL;"
+HPCPERFSTATS_NULL_DEV_VACUUM_EVERY=0 HPCPERFSTATS_NULL_DEV_FROM=2026-05-14 nohup ./scripts/backfill_host_data_null_dev.sh 6 > backfill_null_dev.log 2>&1 &
 ```
+
+4. After `0032` (and `0045`) are applied, recreate the three secondary indexes. Cheapest after the compression policy has caught up, since index creation then only builds on uncompressed chunks; sooner if web needs host/jid queries back. `0038` creates `host_data_dev_j_prefix_idx` itself.
+
+```bash
+docker compose -p hpcperfstats -f docker-compose.yaml exec -T db psql -h localhost -U hpcperfstats -X -v ON_ERROR_STOP=1 -c "SET statement_timeout = 0;" -c "CREATE INDEX IF NOT EXISTS host_data_host_time_desc_idx ON public.host_data (host, \"time\" DESC);" -c "CREATE INDEX IF NOT EXISTS host_data_jid_time_desc_idx ON public.host_data (jid, \"time\" DESC);" -c "CREATE INDEX IF NOT EXISTS host_data_jid_type_ev_time_idx ON public.host_data (jid, type, event, \"time\");"
+```
+
+`0045` removed `host_data (host, time)` and `(jid, time)` from the model (they duplicated the DESC pair), so do not recreate those two.
 
 
 ### Deploy and one-shot migrate (avoid `web` crash-loop)
@@ -228,7 +245,13 @@ docker compose -p hpcperfstats -f docker-compose.yaml run --rm web bash -lc 'pyt
 docker compose -p hpcperfstats -f docker-compose.yaml up -d --no-deps web pipeline
 ```
 
-If you accidentally start `web` before the gates pass, `0032` is written to **soft-skip** (NOTICE + success) when compressed chunks remain or a multi-column PK is still present — uniqueness will not change until you fix the gate and re-run migrate (one-shot again).
+If you accidentally start `web` before the gates pass, `0032` is written to **soft-skip** (NOTICE + success) when compressed chunks remain or a multi-column PK is still present — uniqueness will not change until you fix the gate and re-run migrate (one-shot again). A missing NULL-backfill marker is different: `0032` **raises** and stays unapplied, so a started `web` crash-loops until the backfill finishes. Keep `web` stopped until the marker is present.
+
+### `0045` duplicate-index drop
+
+`0045_drop_duplicate_indexes` drops `host_data_host_eda1c8_idx` and `host_data_jid_9e84c4_idx` (duplicates of the `(host, time DESC)` / `(jid, time DESC)` pair), `job_data_end_time_idx` and `api_keys_username_idx`. Dropping a `host_data` index needs an exclusive lock on the hypertable. Each attempt waits at most 5 s, so queued reads and ingest are never held up for long. A busy lock prints `0045_drop_duplicate_indexes: host_data lock busy, retry N/12`; after 12 attempts (about 2 minutes) migrate **fails** and `0045` stays unapplied, so the next migrate retries it. It never records `0045` as applied with the duplicates still present. At startup that means `web` restarts until the lock frees; on a site with long-running `host_data` work (compression job, backfill), stop `web` and run the one-shot migrate from "Deploy and one-shot migrate" once it is quiet.
+
+hpcperfstats01 also carries a hand-made `metrics_data_jid_idx` (duplicate of `metrics_data_jid_d251aeb6`, not in any migration); drop it by hand there with `DROP INDEX CONCURRENTLY IF EXISTS metrics_data_jid_idx;`.
 
 ### Post-check
 
