@@ -307,7 +307,7 @@ def test_postgres_tcp_wait_stays_raw_connect(monkeypatch):
       opened.append("closed")
 
   monkeypatch.setattr(
-    dbwait.socket, "create_connection", lambda addr, timeout: _Sock()
+    dbwait.socket, "create_connection", lambda *_a, **_kw: _Sock()
   )
   assert dbwait._postgres_accepts_connection("db", "5432", 2) is True
   assert opened == ["closed"]
