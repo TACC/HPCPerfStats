@@ -140,6 +140,10 @@ capture_live_frontend_fingerprint() {
     fingerprint_in_container web "${CONTAINER_STATIC_ROOT_FRONTEND}/machine/index.html"
   )"
   echo "Live STATIC_ROOT fingerprint (pre-rebuild): ${LIVE_FRONTEND_FINGERPRINT}"
+  [[ "${LIVE_FRONTEND_FINGERPRINT}" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "rebuild_pipeline.sh: cannot fingerprint live frontend; drift restore would be a no-op" >&2
+    exit 1
+  }
 }
 
 verify_live_frontend_ready() {

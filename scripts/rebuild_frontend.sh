@@ -236,7 +236,7 @@ deploy_to_compose() {
   trap - ERR
 
   echo "Frontend deploy complete. Use proxy host ports ${HPCPERFSTATS_HTTP_PORT:-80}/${HPCPERFSTATS_HTTPS_PORT:-443}, not web:8000 — Gunicorn does not serve /machine/."
-  echo "Hard-refresh the browser and confirm the deploy fingerprint above matches page-*.js in DevTools Network."
+  echo "Deploy fingerprints above are sha256 of machine/index.html; host build, web and proxy must match. Hard-refresh the browser."
 }
 
 main() {

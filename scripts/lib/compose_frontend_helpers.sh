@@ -109,19 +109,12 @@ file_sha256() {
   fi
 }
 
+# SPA deploy fingerprint: sha256 of machine/index.html (same value as
+# spa_static_root_heal.spa_shell_fingerprint), or "unknown" when missing.
+# Never grep chunk names: Next/Turbopack chunk naming changes across releases.
 frontend_build_fingerprint() {
   local index_html="$1"
-  if [[ ! -f "${index_html}" ]]; then
-    echo "unknown"
-    return
-  fi
-  local fingerprint
-  fingerprint="$(grep -oE 'page-[0-9a-f]+\.js' "${index_html}" | head -n 1 || true)"
-  if [[ -n "${fingerprint}" ]]; then
-    echo "${fingerprint}"
-    return
-  fi
-  grep -oE '<!--[^>]{8,}-->' "${index_html}" | head -n 1 | tr -d '<!->' || echo "unknown"
+  [[ -f "${index_html}" ]] && file_sha256 "${index_html}" || echo "unknown"
 }
 
 print_deploy_fingerprint() {
@@ -136,7 +129,7 @@ fingerprint_in_container() {
   local service="$1"
   local container_path="$2"
   "${PODMAN_COMPOSE[@]}" exec -T "${service}" sh -lc \
-    "grep -oE 'page-[0-9a-f]+\\.js' '${container_path}' 2>/dev/null | head -n 1 || echo unknown"
+    "sha256sum '${container_path}' 2>/dev/null | cut -d ' ' -f 1 | grep . || echo unknown"
 }
 
 print_container_deploy_fingerprint() {
@@ -295,10 +288,7 @@ verify_container_extract_fingerprint() {
   local host_fp container_fp probe="${dest}/machine/index.html"
 
   host_fp="$(frontend_build_fingerprint "${expected_index_html}")"
-  container_fp="$(
-    "${PODMAN_COMPOSE[@]}" exec -T web bash -lc \
-      "grep -oE 'page-[0-9a-f]+\\.js' '${probe}' 2>/dev/null | head -n 1 || echo unknown"
-  )"
+  container_fp="$(fingerprint_in_container web "${probe}")"
 
   if [[ "${host_fp}" != "${container_fp}" ]]; then
     echo "${label} fingerprint mismatch after extract" >&2
