@@ -167,8 +167,16 @@ def _postgres_accepts_connection(
     port (str): PostgreSQL port.
     connect_timeout_seconds (float): Timeout for this connect attempt.
 
+  A rejected login (bad password/user, no ``pg_hba`` entry) is not a
+  startup state: the superuser and its password exist from ``initdb``,
+  before even the init server starts, so waiting can never fix it. libpq
+  reports it with no SQLSTATE on connect, so the message text decides.
+
   Returns:
     bool: True when the server accepted the connection, else False.
+
+  Raises:
+    RuntimeError: The server answered but rejected the configured login.
 
   Examples:
     >>> _postgres_accepts_connection("/nonexistent-dir", "5432", 0.1)
@@ -192,6 +200,19 @@ def _postgres_accepts_connection(
     ) as conn:
       sql = "SELECT current_setting('listen_addresses')"
       return conn.execute(sql).fetchone()[0] != ""
+  except psycopg.OperationalError as exc:
+    rejected = (
+      "password authentication failed",
+      "no password supplied",
+      "no pg_hba.conf entry",
+      'role "',
+    )
+    if any(marker in str(exc) for marker in rejected):
+      raise RuntimeError(
+        f"PostgreSQL at {host}:{port} rejected the login; fix [DEFAULT] "
+        f"username/password in hpcperfstats.ini ({exc})"
+      ) from exc
+    return False
   except OSError, psycopg.Error:
     return False
 
@@ -210,7 +231,7 @@ def wait_for_postgres_available(
   A TCP host first waits (bounded) for name resolution, since Compose DNS
   lags on container start. A socket directory skips that step. The connect
   loop then waits, unbounded like the old ``nc -z`` loop, until the server
-  listens.
+  listens. A rejected login ends the wait with an error instead.
 
   Args:
     host (str): PostgreSQL host name, or socket directory when it starts
@@ -222,6 +243,10 @@ def wait_for_postgres_available(
 
   Returns:
     None
+
+  Raises:
+    RuntimeError: Propagated from ``_postgres_accepts_connection`` when the
+      server rejects the configured login.
 
   Examples:
     >>> wait_for_postgres_available("/run/postgresql", "5432")  # doctest: +SKIP

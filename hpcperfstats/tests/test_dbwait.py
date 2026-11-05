@@ -317,16 +317,79 @@ def test_postgres_socket_real_server_is_ready(tmp_path, monkeypatch):
   assert conn.sql == ["SELECT current_setting('listen_addresses')"]
 
 
-def test_postgres_socket_connect_error_is_not_ready(tmp_path, monkeypatch):
-  """Auth/db-missing/shutdown errors mid-init mean retry, not crash."""
+_SOCK = 'connection to server on socket "/run/postgresql/.s.PGSQL.5432" failed'
+
+
+@pytest.mark.parametrize(
+  "message",
+  [
+    "FATAL:  the database system is starting up",
+    "FATAL:  the database system is shutting down",
+    'FATAL:  database "hpcperfstats" does not exist',
+    "No such file or directory",
+    "Connection refused",
+  ],
+)
+def test_postgres_socket_transient_error_is_not_ready(
+  tmp_path, monkeypatch, message
+):
+  """Startup/init states that clear on their own mean retry, not crash."""
   import psycopg
 
   from hpcperfstats.dbload.lib import dbwait
 
   _patch_socket_connect(
-    monkeypatch, psycopg.OperationalError("the database system is starting up")
+    monkeypatch, psycopg.OperationalError(f"{_SOCK}: {message}")
   )
   assert dbwait._postgres_accepts_connection(str(tmp_path), "5432", 2) is False
+
+
+@pytest.mark.parametrize(
+  "message",
+  [
+    'FATAL:  password authentication failed for user "hpcperfstats"',
+    "fe_sendauth: no password supplied",
+    'FATAL:  no pg_hba.conf entry for host "[local]", user "x", database "y"',
+    'FATAL:  role "nosuchuser" does not exist',
+  ],
+)
+def test_postgres_socket_login_rejected_raises(tmp_path, monkeypatch, message):
+  """Regression (compose DB pytest hung 4h, 2026-11-04): a rejected login.
+
+  Bad credentials never become good by waiting; retrying them looped
+  ``wait_for_postgres_available`` forever with no output. Messages are the
+  real libpq texts (psycopg sets no SQLSTATE on connect failures).
+  """
+  import psycopg
+
+  from hpcperfstats.dbload.lib import dbwait
+
+  _patch_socket_connect(
+    monkeypatch, psycopg.OperationalError(f"{_SOCK}: {message}")
+  )
+  with pytest.raises(RuntimeError, match="rejected the login") as exc:
+    dbwait._postgres_accepts_connection(str(tmp_path), "5432", 2)
+  assert "pw" not in str(exc.value)  # never echo the password
+  assert "hpcperfstats.ini" in str(exc.value)
+
+
+def test_wait_for_postgres_available_raises_on_login_rejected(
+  tmp_path, monkeypatch
+):
+  """The wait loop surfaces a rejected login instead of spinning."""
+  import psycopg
+
+  from hpcperfstats.dbload.lib import dbwait
+
+  _patch_socket_connect(
+    monkeypatch,
+    psycopg.OperationalError(
+      f"{_SOCK}: FATAL:  password authentication failed"
+    ),
+  )
+  monkeypatch.setattr(dbwait.time, "sleep", lambda _s: None)
+  with pytest.raises(RuntimeError, match="rejected the login"):
+    dbwait.wait_for_postgres_available(str(tmp_path), "5432")
 
 
 def test_postgres_tcp_wait_stays_raw_connect(monkeypatch):
