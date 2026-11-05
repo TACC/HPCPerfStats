@@ -417,6 +417,16 @@ def test_triggered_rules_staticfiles_ram_publish_dispatches_nginx_static():
   assert "frontend-static-prod-serve-only.mdc" in rules
 
 
+def test_triggered_rules_root_urlconf_dispatches_nginx_allowlist_sync():
+  """New Django root routes must load the nginx allowlist + method-gate rule."""
+  for path in (
+    "hpcperfstats/site/hpcperfstats_site/urls.py",
+    "hpcperfstats/site/hpcperfstats_site/api_urls.py",
+  ):
+    rules = triggered_rules_for_paths([path])
+    assert "nginx-django-route-allowlist-sync.mdc" in rules, path
+
+
 def test_triggered_rules_sync_timedb_lib_helper_path():
   rules = triggered_rules_for_paths(
     ["hpcperfstats/dbload/lib/sync_timedb_day_close_manifest.py"],

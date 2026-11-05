@@ -262,6 +262,99 @@ def test_nginx_static_files_conf_allowlists_django_prefixes_and_default_404():
   assert "return 404;" in api_catch
 
 
+# A bare ``return`` logs only the access line; ``limit_except``/``deny`` also
+# wrote an [error] "access forbidden by rule" line per scanner probe.
+_GET_ONLY_GATE = "if ($request_method !~ ^(GET|HEAD)$) { return 405; }"
+
+# Django views that only answer GET: nginx 403s other methods at the edge so
+# scanner POSTs never reach Gunicorn (they used to trip Django CSRF 403s).
+_GET_ONLY_DJANGO_LOCATIONS = (
+  "location = / {",
+  "location ^~ /api-key/ {",
+  "location ^~ /admin_monitor/ {",
+  "location ^~ /login/ {",
+  "location = /login_prompt {",
+  "location ^~ /logout/ {",
+  "location ^~ /oauth_callback/ {",
+)
+
+# Routes that legitimately accept POST must stay ungated.
+_POST_DJANGO_LOCATIONS = (
+  "location ^~ /csp-report/ {",
+  "location ^~ /test-login/ {",
+)
+
+
+def _nginx_location_body(conf, head):
+  """Return the text of one top-level nginx location block (head to ``}``)."""
+  assert conf.count(f"\n{head}\n") == 1, head
+  return conf.split(f"\n{head}\n", 1)[1].split("\n}\n", 1)[0]
+
+
+def test_nginx_get_only_django_locations_reject_other_methods_at_edge():
+  """Regression: POST / from scanners reached Django and logged CSRF 403s."""
+  conf = (_SERVICES / "nginx-static-files.conf").read_text(encoding="utf-8")
+  for head in _GET_ONLY_DJANGO_LOCATIONS:
+    body = _nginx_location_body(conf, head)
+    assert _GET_ONLY_GATE in body, head
+    assert "proxy_pass http://django_server;" in body, head
+  for head in _POST_DJANGO_LOCATIONS:
+    body = _nginx_location_body(conf, head)
+    assert "$request_method" not in body, head
+  allowlist = (_SERVICES / "nginx-api-route-allowlist.inc").read_text(
+    encoding="utf-8"
+  )
+  assert "$request_method" not in allowlist
+  active = [
+    ln
+    for ln in (conf + allowlist).splitlines()
+    if not ln.strip().startswith("#")
+  ]
+  assert not [ln for ln in active if "limit_except" in ln]
+  # Every gated, proxied location is enumerated above (no silent extras).
+  assert conf.count(_GET_ONLY_GATE) == len(_GET_ONLY_DJANGO_LOCATIONS)
+
+
+def _nginx_location_head_for_root_route(route):
+  """Map a root ``urlpatterns`` route string to its nginx location header."""
+  if route == "":
+    return "location = / {"
+  if route.endswith("/"):
+    return f"location ^~ /{route} {{"
+  return f"location = /{route} {{"
+
+
+def test_every_root_django_route_has_an_nginx_method_decision():
+  """New root routes are not gated automatically: force a GET-only/POST choice.
+
+  Add the route's nginx location to ``_GET_ONLY_DJANGO_LOCATIONS`` (with
+  ``limit_except GET { deny all; }``) or ``_POST_DJANGO_LOCATIONS``.
+  Nested ``api/`` is covered by the generated allowlist and stays ungated.
+  """
+  from django.urls import get_resolver
+
+  classified = set(_GET_ONLY_DJANGO_LOCATIONS) | set(_POST_DJANGO_LOCATIONS)
+  assert not set(_GET_ONLY_DJANGO_LOCATIONS) & set(_POST_DJANGO_LOCATIONS)
+  routes = [str(p.pattern) for p in get_resolver().url_patterns]
+  assert "api/" in routes
+  heads = {
+    _nginx_location_head_for_root_route(r) for r in routes if r != "api/"
+  }
+  missing = sorted(heads - classified)
+  stale = sorted(classified - heads)
+  assert not missing, f"classify as GET-only or POST in this file: {missing}"
+  assert not stale, f"remove locations for deleted Django routes: {stale}"
+
+
+def test_get_only_django_views_have_no_post_handling():
+  """The gated views must not read POST data, or the edge gate breaks them."""
+  oauth2 = (
+    _REPO_ROOT / "hpcperfstats" / "site" / "lib" / "machine" / "oauth2.py"
+  ).read_text(encoding="utf-8")
+  assert "request.POST" not in oauth2
+  assert "request.method" not in oauth2
+
+
 def test_nginx_django_proxy_common_hides_upstream_security_headers():
   """Nginx is the public security-header authority; hide duplicate Django headers."""
   common = (_SERVICES / "nginx-django-proxy-common.inc").read_text(
@@ -311,6 +404,21 @@ def test_nginx_main_conf_http_tunables_and_rejects_hardcoded_workers():
   assert "worker_processes 20" not in main
   assert "api;" not in main
   assert "client_body_early_read" not in main
+
+
+def test_nginx_logs_go_to_container_console_not_files():
+  """Regression: access/error logs went to unrotated files podman never saw."""
+  main = (_SERVICES / "nginx-main.conf").read_text(encoding="utf-8")
+  directives = [
+    ln.strip() for ln in main.splitlines() if not ln.strip().startswith("#")
+  ]
+  assert "error_log /dev/stderr warn;" in directives
+  assert "access_log /dev/stdout combined;" in directives
+  for name in ("nginx-main.conf", "nginx.conf", "nginx-static-files.conf"):
+    text = (_SERVICES / name).read_text(encoding="utf-8")
+    assert "/var/log/nginx" not in "\n".join(
+      ln for ln in text.splitlines() if not ln.strip().startswith("#")
+    ), name
 
 
 def test_nginx_vhost_enables_http2_and_ssl_session_cache():

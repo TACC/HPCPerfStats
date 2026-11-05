@@ -268,6 +268,7 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     "rules": [
       "api-breaking-change-contract.mdc",
       "pipeline-endpoint-matrix-drift-guard.mdc",
+      "nginx-django-route-allowlist-sync.mdc",
     ],
   },
   {

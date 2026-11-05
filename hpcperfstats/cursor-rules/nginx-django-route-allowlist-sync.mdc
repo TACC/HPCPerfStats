@@ -1,7 +1,7 @@
 ---
 description: Keep nginx Gunicorn allowlist synced with Django root URLconf (proxy-only paths)
 alwaysApply: false
-globs: services-conf/nginx*
+globs: services-conf/nginx*,hpcperfstats/site/hpcperfstats_site/urls.py,hpcperfstats/site/hpcperfstats_site/api_urls.py
 ---
 
 # Nginx Django Route Allowlist Sync
@@ -29,12 +29,18 @@ This allowlist must stay aligned with **top-level routes intended to hit Django/
 1. **`services-conf/nginx-static-files.conf`**
    - For each **root** Django segment that must reach Gunicorn via **`proxy`**, add or adjust a **`location`** (exact-match **`location = ...`** for paths like **`/login_prompt`**; prefix **`location ^~ ...`** for paths like **`/oauth_callback/`**). Paths answered only from nginx static files (for example **`/robots.txt`**) must **not** use **`proxy_pass`**.
    - If you **remove** a root route from Django, remove the corresponding **`location`** (or stale probes keep forwarding useless traffic).
+   - **HTTP method gate (decide for every new root route):** new proxied locations are **not** gated automatically, so whoever adds one must decide whether the view is GET-only.
+     - **GET-only** (redirects, OAuth entry/callback, logout, anything that never reads `request.POST` / `request.method`): add **`if ($request_method !~ ^(GET|HEAD)$) { return 405; }`** as the first line inside the `location`, so scanner POST/PUT/OPTIONS get **405 at the edge** instead of reaching Gunicorn and logging Django CSRF failures (`Referer checking failed - no Referer`, seen from a UT watchTowr scanner, 2026-11-05). Do **not** use `limit_except GET { deny all; }`: `deny` writes an `[error] access forbidden by rule` line to the container log for every probe; a bare `return` inside `if` (the documented-safe `if` use) logs only the access line.
+     - **Accepts POST** (browser CSP reports, HTML form targets such as `/test-login/`): no gate.
+     - Register the location in **`_GET_ONLY_DJANGO_LOCATIONS`** or **`_POST_DJANGO_LOCATIONS`** in `test_nginx_static_wsgi_contract.py`. **`test_every_root_django_route_has_an_nginx_method_decision`** fails when a root `urlpatterns` entry is in neither list.
+     - Nested **`/api/`** locations (generated allowlist) are **never** gated; DRF owns method handling there.
 2. **Nested `/api/` (same task as catalog / `api_urls` changes)**
    - Update **`hpcperfstats/tests/urlconf_route_catalog.py`** **`EXPECTED_ROUTE_TEMPLATES`** (see **`pipeline-endpoint-matrix-drift-guard.mdc`**).
    - Regenerate **`services-conf/nginx-api-route-allowlist.inc`** with **`services-conf/write_nginx_api_route_allowlist_include.py`** (or fail **`test_write_nginx_api_route_allowlist_include.py`** drift).
    - Do **not** restore a blanket **`location ^~ /api/`** proxy.
 3. **`hpcperfstats/site/hpcperfstats_site/tests/test_nginx_static_wsgi_contract.py`**
    - Extend or shrink **`test_nginx_static_files_conf_allowlists_django_prefixes_and_default_404`** string markers so the test continues to lock the allowlist contract whenever prefixes change (include path + catch-all **`/api/`** 404).
+   - Classify the location in **`_GET_ONLY_DJANGO_LOCATIONS`** / **`_POST_DJANGO_LOCATIONS`** (method gate above).
 4. **`docker-compose.defaults.yaml`**
    - If introducing a **new** included snippet path for nginx, add the matching **`proxy`** **`volumes`** mount (today **`nginx-static-files.conf`**, **`nginx-api-route-allowlist.inc`**, **`nginx-django-proxy-common.inc`**, **`nginx-compress-proxy.inc`**, **`nginx-compress-static.inc`**, **`nginx-edge-security-headers.inc`**, **`nginx-csp-no-active.inc`**, and **`nginx-csp-django-html.inc`** are mounted; SPA hash CSP includes arrive via the **`staticfiles_data`** volume). Do **not** also **`COPY`** those mount-only snippets in **`proxy.Dockerfile`**. Never place nginx config under **`/srv/static`**.
 
