@@ -68,7 +68,8 @@ fi
     *pg_replication_slots*) echo "${FAKE_SLOTS:-0}";;
     *"SHOW archive_mode"*) echo "${FAKE_ARCH:-off}";;
     *pg_locks*) printf '%s\n' ${FAKE_MERGE_DAYS:-}; cat $ST/merge_days 2>/dev/null || true;;
-    *"WITH RECURSIVE"*)
+    "WITH RECURSIVE"*)
+      echo "$day" >> $ST/host_walk.log
       n=5; [ "$day" = 2026-10-09 ] && n=0
       for i in $(seq 1 $n); do echo "c$i-$day.example"; done;;
     *reltuples*) case "$SQL" in *2026-10-25*) echo 350;; *) echo 120;; esac;;
@@ -288,12 +289,23 @@ _CMD = "site/lib/machine/management/commands/collapse_percore_host_data.py"
 
 
 def test_compressed_days_are_repaired_in_place_not_refused(env):
-  """The user wants compressed days repaired even if slow (hpcperfstats04)."""
-  out = _run(env, "start", "2026-10-24", FAKE_COMP="2026-10-24")
+  """The user wants compressed days repaired even if slow (hpcperfstats04).
+
+  Regression: start's host walk unpacked a compressed chunk once per host and
+  sat for hours (01, 04); a compressed day now gets one job without --host
+  (the command finds each window's per-core hosts) and no host walk.
+  """
+  out = _run(env, "start", "2026-10-24", "2026-10-25", FAKE_COMP="2026-10-24")
   assert out.returncode == 0, out.stderr
-  _wait_finished(env, 2)
-  assert all("--since 2026-10-24" in c for c in _calls(env))
-  assert len(_calls(env)) == 2
+  assert "2026-10-24 compressed: one job, hosts found per window" in out.stdout
+  _wait_finished(env, 5)  # 10-24: 1 job; 10-25: 4 host shards
+  walked = (Path(env["FAKE_STATE"]) / "host_walk.log").read_text().split()
+  assert walked == ["2026-10-25"]
+  day24 = [c for c in _calls(env) if "--since 2026-10-24" in c]
+  assert len(day24) == 1 and "--host" not in day24[0]
+  assert "--apply" in day24[0]
+  day25 = [c for c in _calls(env) if "--since 2026-10-25" in c]
+  assert len(day25) == 4 and all("--host c" in c for c in day25)
 
 
 def test_start_pauses_an_enabled_policy_and_resume_policy_restores_it(env):

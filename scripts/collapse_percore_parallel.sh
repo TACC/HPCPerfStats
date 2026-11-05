@@ -73,7 +73,10 @@ REPAIR_SESSIONS="datname = current_database() AND pid <> pg_backend_pid() AND st
   'SELECT host, type, event, time, value, delta FROM host_data %',
   'INSERT INTO host_data (time, host, jid, type, dev, event, unit, value, delta, arc) VALUES %',
   'DELETE FROM host_data WHERE host = ANY%',
-  'DELETE FROM host_data hd WHERE hd.host = ANY%'])"
+  'DELETE FROM host_data hd WHERE hd.host = ANY%',
+  'WITH RECURSIVE h AS (%'])"
+# Host-file content for a job that runs without --host (a compressed day).
+ALL_HOSTS="__ALL_HOSTS_FOUND_PER_WINDOW__"
 POLICY_NOTE="$RUN/compression_policy_paused"
 # Pause an enabled compression policy for the repair (it would compress days
 # before they are repaired, and compress_chunk blocks the repair); note its
@@ -103,10 +106,12 @@ job() {
     echo "REFUSED day=[$day] file=[$file]" >> "$RUN/refused.log"
     return 0
   fi
-  while IFS= read -r host; do
-    [[ "$host" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "REFUSED bad host [$host] in $file" >> "$RUN/refused.log"; return 0; }
-    args+=(--host "$host")
-  done < "$file"
+  if [ "$(cat "$file")" != "$ALL_HOSTS" ]; then
+    while IFS= read -r host; do
+      [[ "$host" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "REFUSED bad host [$host] in $file" >> "$RUN/refused.log"; return 0; }
+      args+=(--host "$host")
+    done < "$file"
+  fi
   log="$(dirname "$file")/logs/$(basename "$file").log"
   echo "start $(date -u +%FT%TZ) day=$day hosts=${#args[@]}" > "$log"
   # --skip-checks: Django's model field checks connect to every configured
@@ -171,6 +176,17 @@ start() {
   mkdir -p "$dir/logs" || die "cannot create $dir"
   : > "$dir/jobs"
   for day in "$@"; do
+    # A compressed chunk has no usable (host, time) index, so the host walk
+    # below unpacks the chunk once per host (hours per day). Give the day one
+    # job without --host instead: the command finds each window's per-core
+    # hosts itself with a window-bounded query, which unpacks only that hour.
+    if [ "$(psql_q -c "SELECT coalesce(bool_or(is_compressed), false) FROM timescaledb_information.chunks
+        WHERE hypertable_name = 'host_data' AND range_start = '$day 00:00+00';")" = "t" ]; then
+      echo "$ALL_HOSTS" > "$dir/shard_${day}_all"
+      echo "0 $day $dir/shard_${day}_all" >> "$dir/jobs"
+      echo "$day compressed: one job, hosts found per window"
+      continue
+    fi
     psql_q > "$dir/hosts_$day.txt" <<SQL || die "host list query failed for $day"
 WITH RECURSIVE h AS (
   (SELECT host FROM host_data WHERE time >= '$day 00:00+00' AND time < '$day 00:00+00'::timestamptz + interval '1 day'
