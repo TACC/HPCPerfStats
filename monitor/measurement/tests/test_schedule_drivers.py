@@ -17,7 +17,7 @@ def _kinds(plan):
 
 
 def test_schedule_blocks_and_autofit():
-    groups = ["filesystem", "likwid", "ib_mad", "dcgm_cpu"]
+    groups = ["filesystem", "likwid", "ib_mad", "arm_cpu"]
     plan = schedule.build_schedule(groups, blocks=2, seed=42)
     kinds = _kinds(plan)
     assert kinds[0] == ("OFF", None) and kinds[1] == ("NONE", None) and kinds[2] == ("ALL", None)
@@ -106,10 +106,10 @@ def test_driver_map_covers_all_st_names():
 def test_driver_map_backend_resolution():
     x86 = {"arch": "x86_64", "configure": {"cpu_backend": "likwid", "ib_mad_dlopen": True,
                                             "infiniband": True}}
-    arm = {"arch": "aarch64", "configure": {"cpu_backend": "dcgm", "ib_mad_dlopen": False,
+    arm = {"arch": "aarch64", "configure": {"cpu_backend": "arm", "ib_mad_dlopen": False,
                                              "infiniband": False}}
     assert driver_map.group_for_type("host_cpu_hw", x86) == "likwid"
-    assert driver_map.group_for_type("host_cpu_hw", arm) == "dcgm_cpu"
+    assert driver_map.group_for_type("host_cpu_hw", arm) == "arm_cpu"
     assert driver_map.group_for_type("host_ib", x86) == "ib_mad"
     assert driver_map.group_for_type("host_ib", arm) == "filesystem"
     assert driver_map.group_for_type("host_proc", x86) == "filesystem"
@@ -121,21 +121,38 @@ def test_driver_map_backend_resolution():
     assert groups == {"filesystem": ["host_cpu"], "likwid": ["host_cpu_hw", "intel_x86_rapl"]}
 
 
-def test_driver_map_dcgm_split_cpu_from_gpu():
+def test_driver_map_arm_cpu_split_from_gpu():
     """Round 1 of the CPU-seconds plan: on Grace the DCGM CPU backend (sysmon module, ~157
     core-s/h on c122-018) and the GPU collector shared one SOLO leg, so their costs could not
     be told apart. They are separate driver groups now."""
-    arm = {"arch": "aarch64", "configure": {"cpu_backend": "dcgm"}}
+    arm = {"arch": "aarch64", "configure": {"cpu_backend": "arm"}}
     x86 = {"arch": "x86_64", "configure": {"cpu_backend": "likwid"}}
-    assert driver_map.group_for_type("host_cpu_hw", arm) == "dcgm_cpu"
+    assert driver_map.group_for_type("host_cpu_hw", arm) == "arm_cpu"
     assert driver_map.group_for_type("host_cpu_hw", None) == "likwid"
-    assert driver_map.group_for_type("host_cpu_hw", {"arch": "aarch64"}) == "dcgm_cpu"
+    assert driver_map.group_for_type("host_cpu_hw", {"arch": "aarch64"}) == "arm_cpu"
     assert driver_map.group_for_type("nvidia_gpu", x86) == "dcgm_gpu"
     assert "dcgm" not in driver_map.DRIVER_GROUPS
-    assert {"dcgm_cpu", "dcgm_gpu"} <= set(driver_map.DRIVER_GROUPS)
+    assert {"arm_cpu", "dcgm_gpu"} <= set(driver_map.DRIVER_GROUPS)
     groups = driver_map.groups_for_enabled(["host_cpu_hw", "nvidia_gpu", "host_mem"], arm)
-    assert groups == {"dcgm_cpu": ["host_cpu_hw"], "dcgm_gpu": ["nvidia_gpu"],
+    assert groups == {"arm_cpu": ["host_cpu_hw"], "dcgm_gpu": ["nvidia_gpu"],
                       "filesystem": ["host_mem"]}
+
+
+def test_driver_map_host_power_socket_and_legacy_dcgm_backend():
+    """Round 2 (D10, D31): the aarch64 CPU backend is `arm` (no DCGM) and Grace socket power is
+    its own type, host_power_socket, read from hwmon with its own fds, so it gets its own
+    `hwmon_power` SOLO leg. Old build-info (round-1 baseline RPM 3.0-8, D24) still says
+    cpu_backend `dcgm`: the same backend, so it must resolve to the same groups."""
+    arm = {"arch": "aarch64", "configure": {"cpu_backend": "arm", "likwid_overlay": True}}
+    legacy = {"arch": "aarch64", "configure": {"cpu_backend": "dcgm", "likwid_overlay": True}}
+    types = ["host_cpu_hw", "arm_aarch64_imc", "host_power_socket", "nvidia_gpu", "host_mem"]
+    expect = {"arm_cpu": ["arm_aarch64_imc", "host_cpu_hw"], "dcgm_gpu": ["nvidia_gpu"],
+              "filesystem": ["host_mem"], "hwmon_power": ["host_power_socket"]}
+    assert driver_map.groups_for_enabled(types, arm) == expect
+    assert driver_map.groups_for_enabled(types, legacy) == expect
+    assert driver_map.group_for_type("host_power_socket", None) == "hwmon_power"
+    assert "hwmon_power" in driver_map.DRIVER_GROUPS and "dcgm_cpu" not in driver_map.DRIVER_GROUPS
+    assert list(driver_map.variants_for(expect, legacy)) == ["arm_cpu_noscf"]
 
 
 def test_disable_csv_for_legs():

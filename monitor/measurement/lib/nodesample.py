@@ -1,9 +1,11 @@
-"""Node-wide /proc sampling: CPU busy split, interrupts, softirqs, PSI, memory, load."""
+"""Node-wide /proc sampling: CPU busy split, interrupts, softirqs, PSI, memory, load, clocks."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+
+from . import cpufreq
 
 _CPU_FIELDS = ("user", "nice", "system", "idle", "iowait", "irq", "softirq", "steal")
 
@@ -100,9 +102,12 @@ def parse_cpu_list(text: str) -> list[int]:
 class NodeSampler:
     """Reads node files each call; PSI absent (kernel without CONFIG_PSI) gives ``psi: None``."""
 
-    def __init__(self, proc_root: Path | str = "/proc", sys_root: Path | str = "/sys"):
+    def __init__(self, proc_root: Path | str = "/proc", sys_root: Path | str = "/sys",
+                 cpufreq_root: Path | str | None = None):
         self.proc = Path(proc_root)
         self.sys = Path(sys_root)
+        # Globbed once: per-CPU scaling_cur_freq (min/p50/max per sample, D13).
+        self.freq_files = cpufreq.cur_freq_files(cpufreq_root or self.sys / "devices" / "system" / "cpu")
 
     def sample(self) -> dict[str, Any]:
         stat = parse_proc_stat(_read(self.proc / "stat") or "")
@@ -131,4 +136,5 @@ class NodeSampler:
             "mem_total_kib": mem.get("MemTotal"),
             "mem_available_kib": mem.get("MemAvailable"),
             "cached_kib": mem.get("Cached"),
+            "cur_freq_mhz": cpufreq.sample_freq(self.freq_files),
         }

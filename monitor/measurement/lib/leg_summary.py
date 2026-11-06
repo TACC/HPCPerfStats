@@ -102,33 +102,70 @@ def _rate(segs: list[list[dict[str, Any]]], getter, per: float) -> float | None:
 THREAD_TOP_N = 8
 
 
-def _per_tid_ns(segs: list[list[dict[str, Any]]]) -> dict[str, tuple[str, float]]:
-    """tid → (comm, on-CPU ns) between the first and last sample of each same-PID segment."""
-    out: dict[str, tuple[str, float]] = {}
+_TID_COUNTERS = ("run_ns", "utime", "stime", "vol_ctxt", "invol_ctxt")
+
+
+def _per_tid(segs: list[list[dict[str, Any]]]) -> dict[str, dict[str, Any]]:
+    """tid → counter deltas summed over consecutive same-PID sample pairs (one loop).
+
+    Keys: ``comm``, ``run_ns``, ``utime``, ``stime``, ``ctxt`` (voluntary + nonvoluntary),
+    ``active`` (1 s windows with run time > 0) and ``windows`` (pairs with run_ns on both
+    sides). A counter missing from the raw samples (harness before per-thread stat/status)
+    stays None, so the report prints ``null`` rather than 0.
+    """
+    out: dict[str, dict[str, Any]] = {}
     for seg in segs:
-        first, last = seg[0]["proc"].get("threads") or {}, seg[-1]["proc"].get("threads") or {}
-        for tid, t1 in last.items():
-            t0 = first.get(tid)
-            if t0 and t0.get("run_ns") is not None and t1.get("run_ns") is not None:
-                key = str(tid)
-                out[key] = (t1["comm"], out.get(key, ("", 0.0))[1] + t1["run_ns"] - t0["run_ns"])
+        for a, b in _pairs(seg):
+            ta, tb = a["proc"].get("threads") or {}, b["proc"].get("threads") or {}
+            for tid, t1 in tb.items():
+                t0 = ta.get(tid)
+                if not t0:
+                    continue
+                row = out.setdefault(str(tid), {"comm": t1.get("comm"), "active": 0, "windows": 0,
+                                                **dict.fromkeys((*_TID_COUNTERS, "ctxt"))})
+                row["comm"] = t1.get("comm")
+                d = {k: (t1[k] - t0[k] if t0.get(k) is not None and t1.get(k) is not None else None)
+                     for k in _TID_COUNTERS}
+                for k, v in d.items():
+                    if v is not None:
+                        row[k] = (row[k] or 0) + v
+                if d["vol_ctxt"] is not None or d["invol_ctxt"] is not None:
+                    row["ctxt"] = (row["ctxt"] or 0) + (d["vol_ctxt"] or 0) + (d["invol_ctxt"] or 0)
+                if d["run_ns"] is not None:
+                    row["windows"] += 1
+                    row["active"] += d["run_ns"] > 0
     return out
 
 
-def thread_top(segs: list[list[dict[str, Any]]],
-               per_tid: dict[str, tuple[str, float]] | None = None) -> list[dict[str, Any]] | None:
-    """The THREAD_TOP_N hottest daemon threads as {tid, comm, core_s_per_h}, hottest first.
+def _seg_seconds(segs: list[list[dict[str, Any]]]) -> float:
+    return sum(seg[-1]["wall"] - seg[0]["wall"] for seg in segs if len(seg) >= 2)
 
-    Worker threads of embedded libraries (DCGM, NVML) inherit the daemon's comm, so the tid is
-    what ties a row to a stack trace. None when the samples carry no per-thread data.
+
+def thread_top(segs: list[list[dict[str, Any]]],
+               per_tid: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]] | None:
+    """The THREAD_TOP_N hottest daemon threads, hottest first.
+
+    Each row: ``tid``, ``comm``, ``core_s_per_h``, ``user_s_h``, ``system_s_h``, ``wakeups_s``
+    (voluntary + nonvoluntary context switches per second) and ``active_share`` (share of 1 s
+    windows with run time > 0: ~1 for a steady loop, small for a burst thread). Fields the raw
+    samples lack are None. Worker threads of embedded libraries (DCGM, NVML) inherit the
+    daemon's comm, so the tid is what ties a row to a stack trace. None when the samples carry
+    no per-thread run time.
     """
-    per_tid = _per_tid_ns(segs) if per_tid is None else per_tid
-    secs = sum(seg[-1]["wall"] - seg[0]["wall"] for seg in segs if len(seg) >= 2)
-    if not per_tid or secs <= 0:
+    per_tid = _per_tid(segs) if per_tid is None else per_tid
+    secs = _seg_seconds(segs)
+    rows = [(tid, r) for tid, r in per_tid.items() if r["run_ns"] is not None]
+    if not rows or secs <= 0:
         return None
-    rows = sorted(per_tid.items(), key=lambda kv: -kv[1][1])[:THREAD_TOP_N]
-    return [{"tid": tid, "comm": comm, "core_s_per_h": ns / 1e9 / secs * 3600.0}
-            for tid, (comm, ns) in rows]
+    rows = sorted(rows, key=lambda kv: -kv[1]["run_ns"])[:THREAD_TOP_N]
+
+    def per_h(jiffies: float | None) -> float | None:
+        return None if jiffies is None else jiffies / CLK_TCK / secs * 3600.0
+    return [{"tid": tid, "comm": r["comm"], "core_s_per_h": r["run_ns"] / 1e9 / secs * 3600.0,
+             "user_s_h": per_h(r["utime"]), "system_s_h": per_h(r["stime"]),
+             "wakeups_s": None if r["ctxt"] is None else r["ctxt"] / secs,
+             "active_share": r["active"] / r["windows"] if r["windows"] else None}
+            for tid, r in rows]
 
 
 def _median(xs: list[float]) -> float | None:
@@ -223,13 +260,25 @@ def _process_summary(meta: dict[str, Any], settle: list[dict[str, Any]],
     def io(key: str):
         return lambda s: (s["proc"].get("io") or {}).get(key)
 
-    per_tid = _per_tid_ns(segs)
+    per_tid = _per_tid(segs)
     thread_cpu: dict[str, float] = {}
-    for comm, ns in per_tid.values():
-        thread_cpu[comm] = thread_cpu.get(comm, 0) + ns
+    for row in per_tid.values():
+        if row["run_ns"] is not None:
+            thread_cpu[row["comm"]] = thread_cpu.get(row["comm"], 0) + row["run_ns"]
     tot = sum(thread_cpu.values())
     vol = _rate(segs, lambda s: s["proc"].get("vol_ctxt"), 1.0)
     invol = _rate(segs, lambda s: s["proc"].get("invol_ctxt"), 1.0)
+    # Headline wakeups/s (finding 18, D13): every thread's vol + invol context switches.
+    # /proc/<pid>/status is the leader only; raw from older harnesses has nothing else, so
+    # that fallback is labelled main_thread.
+    tid_ctxt = [r["ctxt"] for r in per_tid.values() if r["ctxt"] is not None]
+    secs = _seg_seconds(segs)
+    if tid_ctxt and secs > 0:
+        wakeups, wakeups_scope = sum(tid_ctxt) / secs, "all_threads"
+    elif vol is not None or invol is not None:
+        wakeups, wakeups_scope = (vol or 0) + (invol or 0), "main_thread"
+    else:
+        wakeups, wakeups_scope = None, None
     tcp_segs = [[s for s in seg if s.get("tcp")] for seg in segs]
     acked_h = _rate(tcp_segs, lambda s: s["tcp"].get("bytes_acked"), 3600.0)
     send_freq = cad.get("send_freq") or 300.0
@@ -258,7 +307,8 @@ def _process_summary(meta: dict[str, Any], settle: list[dict[str, Any]],
         "burst_counts": {k: model[k] for k in ("n_fast", "n_full", "n_send")},
         "thread_split": {k: v / tot for k, v in sorted(thread_cpu.items())} if tot else None,
         "thread_top": thread_top(segs, per_tid),
-        "wakeups_per_s": (vol or 0) + (invol or 0) if vol is not None or invol is not None else None,
+        "wakeups_per_s": wakeups,
+        "wakeups_scope": wakeups_scope,
         "vol_ctxt_per_s": vol,
         "invol_ctxt_per_s": invol,
         "minflt_per_s": _rate(segs, lambda s: s["proc"].get("minflt"), 1.0),
@@ -357,7 +407,17 @@ def _node_summary(quiet: list[dict[str, Any]], proc: dict[str, Any] | None) -> d
         "harness_cpu_s_per_h": harness,
         "non_daemon_busy_cores": non_daemon,
         "loadavg1_max": max((s["node"].get("loadavg1") or 0) for s in nodes),
+        "cur_freq_mhz": _freq_window(nodes),
     }
+
+
+def _freq_window(nodes: list[dict[str, Any]]) -> dict[str, float] | None:
+    """Per-CPU clock over the window: min of minima, median of per-sample p50, max of maxima."""
+    snaps = [s["node"]["cur_freq_mhz"] for s in nodes if s["node"].get("cur_freq_mhz")]
+    if not snaps:
+        return None
+    return {"min": min(f["min"] for f in snaps), "p50": _median([f["p50"] for f in snaps]),
+            "max": max(f["max"] for f in snaps), "n_samples": len(snaps)}
 
 
 def summarize_leg(leg_dir: Path) -> dict[str, Any]:
@@ -390,6 +450,7 @@ def summarize_leg(leg_dir: Path) -> dict[str, Any]:
                 "seconds": meta.get("perf_seconds")}
     return {
         "leg_id": meta["leg_id"], "kind": meta["kind"], "block": meta["block"],
+        "governor": meta.get("governor"), "governor_observed": meta.get("governor_observed"),
         "group": meta.get("group"), "brackets": meta.get("brackets"),
         "sample_freq": meta.get("sample_freq"), "status": status,
         "contaminated": contaminated,

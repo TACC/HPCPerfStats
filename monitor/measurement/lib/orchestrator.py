@@ -11,6 +11,13 @@ under /run (gone on reboot, removed by the restore path):
   VARIANT(V)      as SOLO(base) with one measurement-only daemon knob (driver_map.VARIANTS,
                   e.g. HPCPERFSTATS_LIKWID_GRACE_SCF=0); paired with SOLO(base) per block
 
+Governor leg sets (D13, D25): ``--governors performance,dynamic`` (default) repeats the whole
+block schedule once per governor; before each set every CPU's ``scaling_governor`` is written
+(``dynamic`` resolves per cpufreq driver, lib/cpufreq.py) and the cleanup path writes every
+CPU's original governor back. A governor the driver does not offer fails preflight before any
+change. Preflight also refuses a node whose CPUs are busy outside the daemon (> 1 core) unless
+``--allow-busy-node``.
+
 After every leg that publishes to ``<queue>_measure`` the queue is drained through the
 management API and the last ``$`` schema message is kept as ``raw/legs/<id>/schema.txt``, so
 the run records each type's emitted keys (lib/schema_capture.py).
@@ -42,6 +49,7 @@ from pathlib import Path
 from typing import Any
 
 from . import (
+    cpufreq,
     driver_map,
     fwq,
     journal_types,
@@ -51,8 +59,9 @@ from . import (
     schedule,
     schema_capture,
 )
-from .nodesample import parse_cpu_list
+from .nodesample import parse_cpu_list, parse_proc_stat
 from .perfstat import DEFAULT_EVENTS
+from .procsample import CLK_TCK, cpu_delta, sample_process
 
 HARNESS_VERSION = "1.0.0"
 UNIT = "hpcperfstats"
@@ -77,6 +86,11 @@ UNIT_PROPS = ("ExecStart", "Nice", "IOSchedulingClass", "IOSchedulingPriority", 
 PROFILER_BINARY = MEASURE_DIR + "/hpcperfstatsd-profiler"
 DISCOVERY_SECONDS = 120
 TYPES_WAIT_SECONDS = 120
+SYSFS_CPU = cpufreq.SYSFS_CPU
+PROC_ROOT = "/proc"
+# Preflight busy-node probe: node busy cores minus the daemon's own CPU over this window.
+BUSY_PROBE_SECONDS = 5
+BUSY_NODE_CORES = 1.0
 
 
 class PreflightError(RuntimeError):
@@ -220,12 +234,36 @@ def idle_flags(forced: bool, problems: list[str]) -> dict[str, Any]:
     return {"not_idle": "smoke only", "not_idle_reasons": list(problems)}
 
 
+def check_busy_node(busy: float | None, allow: bool) -> dict[str, Any]:
+    """Refuse a node busy outside the daemon (> BUSY_NODE_CORES) unless ``--allow-busy-node``.
+
+    Args:
+        busy: Node busy cores minus the daemon's CPU over the probe window (None: unreadable).
+        allow: ``--allow-busy-node`` was given.
+
+    Returns:
+        Flags for run.json (``busy_node`` when allowed through, else empty).
+
+    Raises:
+        PreflightError: busy and not allowed.
+    """
+    if busy is None or busy <= BUSY_NODE_CORES:
+        return {}
+    if not allow:
+        raise PreflightError(f"node busy: {busy:.2f} cores in use outside the daemon (limit "
+                             f"{BUSY_NODE_CORES:g}); free the node or pass --allow-busy-node")
+    return {"busy_node": {"busy_cores": busy, "limit": BUSY_NODE_CORES}}
+
+
 def restore_script_text(saved_conf: Path | None, was_active: bool, was_enabled: bool,
-                        measure_queue: str, mgmt_hint: str | None = None) -> str:
+                        measure_queue: str, mgmt_hint: str | None = None,
+                        governor_lines: list[str] | None = None) -> str:
     lines = ["#!/usr/bin/env bash", "# Restore written by run_overhead_profile.sh before any change.",
              "# The measured package stays installed (reserved node, plan decision 1).",
              "set -u", f"rm -f {DROPIN_PATH}", f"rmdir {DROPIN_DIR} 2>/dev/null",
              f"rm -rf {MEASURE_DIR}", "systemctl daemon-reload"]
+    if governor_lines:
+        lines += ["# Original cpufreq governors:", *governor_lines]
     if saved_conf is not None:
         lines.append(f"install -m 0600 {saved_conf} {SITE_CONF}")
     lines.append(f"systemctl {'enable' if was_enabled else 'disable'} {UNIT}")
@@ -278,6 +316,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--harness-cpu", type=int, help="CPU for the sampler (default: last online)")
     p.add_argument("--amqp-port", type=int, help="broker port (default: conf `port` or 5672)")
     p.add_argument("--rmq-mgmt-port", type=int, default=rmq_cleanup.DEFAULT_MGMT_PORT)
+    p.add_argument("--governors", default=cpufreq.DEFAULT_GOVERNORS,
+                   help="comma list; one full leg set per governor (default performance,dynamic; "
+                        "dynamic = ondemand on cppc_cpufreq/acpi-cpufreq, powersave on "
+                        "intel_pstate/amd-pstate-epp; `none` leaves the governor alone)")
+    p.add_argument("--allow-busy-node", action="store_true",
+                   help="run although > 1 core is busy outside the daemon (flagged busy_node)")
     p.add_argument("--force", action="store_true",
                    help="run on a non-idle node; results are flagged `not_idle: smoke only`")
     p.add_argument("--allocation-user",
@@ -289,14 +333,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _schedule(args: argparse.Namespace, groups: dict[str, list[str]], seed: int,
-              caps: dict[str, Any] | None) -> dict[str, Any]:
+              caps: dict[str, Any] | None, governors: list[str] | None = None) -> dict[str, Any]:
     sweep = [float(x) for x in args.cadence_sweep.split(",")] if args.cadence_sweep else []
     variants = driver_map.variants_for(groups, caps)
     plan = schedule.build_schedule(
         list(groups), blocks=args.blocks, seed=seed, leg_seconds=args.leg_seconds,
         settle_seconds=args.settle_seconds, fwq_seconds=args.fwq_seconds,
         max_hours=args.max_hours, off_legs=not args.no_off_legs, cadence_sweep=sweep,
-        profile_collectors=args.profile_collectors, variants=variants)
+        profile_collectors=args.profile_collectors, variants=variants, governors=governors or [])
     plan["variant_specs"] = variants
     return plan
 
@@ -315,7 +359,8 @@ def _load_caps(build_info: Path | None) -> dict[str, Any] | None:
 def _leg_line(i: int, leg: dict[str, Any], plan: dict[str, Any], active: list[str],
               groups: dict[str, list[str]]) -> str:
     dur = plan["leg_seconds"] + plan["settle_seconds"] + (plan["fwq_seconds"] if leg["fwq"] else 0)
-    label = leg["kind"]
+    label = f"[{leg['governor']}] " if leg.get("governor") else ""
+    label += leg["kind"]
     if leg["kind"] in ("SOLO", "VARIANT"):
         label += f" {leg['group']}"
     if leg["kind"] == "CADENCE":
@@ -328,7 +373,7 @@ def _leg_line(i: int, leg: dict[str, Any], plan: dict[str, Any], active: list[st
         extra = "service stopped"
     if leg["kind"] == "PROFILE":
         extra = "instrumented build (--enable-metric-profiler), not a headline number"
-    return (f"  {i:3d}  {label:<28} block {leg['block']}  {dur // 60:4d} min  "
+    return (f"  {i:3d}  {label:<40} block {leg['block']}  {dur // 60:4d} min  "
             f"{'FWQ ' if leg['fwq'] else '    '}{extra}")
 
 
@@ -341,6 +386,10 @@ def print_plan(args: argparse.Namespace, active: list[str], groups: dict[str, li
     out("Driver groups: " + "; ".join(f"{g}: {','.join(t)}" for g, t in groups.items()))
     for name, v in (plan.get("variant_specs") or {}).items():
         out(f"Variant {name}: {','.join(v['types'])} vs SOLO {v['base']} ({v['label']})")
+    govs = plan.get("governors") or []
+    out("Governor leg sets: " + (", ".join(govs) + " (scaling_governor written for every CPU "
+                                 "before each set; originals restored on exit)" if govs
+                                 else "none (governor left as is)"))
     steps = ", ".join(f"{s['step']}" for s in plan["fit_steps"]) or "none"
     out(f"Schedule (seed {plan['seed']}, blocks {plan['blocks']}, leg {plan['leg_seconds']} s, "
         f"settle {plan['settle_seconds']} s, fwq {plan['fwq_seconds']} s, fit steps: {steps}):")
@@ -357,8 +406,9 @@ def print_plan(args: argparse.Namespace, active: list[str], groups: dict[str, li
         "systemctl restart|stop hpcperfstats; 1 Hz sampler (pinned); perf stat -p PID (ON legs); "
         "FWQ on headline legs; summarize_profile.py")
     out("Restore trap: remove the drop-in and " + MEASURE_DIR + ", daemon-reload, delete "
-        "<queue>_measure via the management API, restore the site conf and the service's "
-        "active/enabled state. The measured package stays installed.")
+        "<queue>_measure via the management API, restore the site conf, the service's "
+        "active/enabled state and every CPU's original governor. The measured package stays "
+        "installed.")
 
 
 # ----------------------------------------------------------------------------- real run
@@ -405,6 +455,9 @@ class Run:
         self.started = time.time()
         self.cleanup_done = False
         self.state: dict[str, Any] = {}
+        self.governors: list[str] = []
+        self.saved_governors: dict[int, str | None] = {}
+        self.current_governor: str | None = None
 
     # -- small systemd/journal helpers
     def systemctl(self, *argv: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -443,6 +496,17 @@ class Run:
     # -- preflight / install
     def preflight(self) -> None:
         a = self.args
+        # Governors first: an unsupported one fails before anything (governor included) changes.
+        try:
+            gplan = cpufreq.plan_governors(a.governors, SYSFS_CPU)
+        except cpufreq.GovernorError as err:
+            raise PreflightError(str(err)) from None
+        self.governors = gplan["governors"]
+        self.saved_governors = gplan["state"]["governors"] if self.governors else {}
+        self.state["cpufreq"] = {"driver": gplan["state"]["driver"],
+                                 "available": gplan["state"]["available"],
+                                 "original": gplan["state"]["governors"],
+                                 "requested": a.governors, "governors": self.governors}
         if a.conf is None and not Path(SITE_CONF).is_file():
             raise PreflightError(f"no site conf at {SITE_CONF} (fresh install); pass --conf PATH "
                                  "with the site server/queue")
@@ -476,6 +540,9 @@ class Run:
         if msg:
             problems.append(msg)
         self.flags = idle_flags(a.force, problems)
+        busy = self.probe_busy_cores()
+        self.state["preflight_busy_cores"] = busy
+        self.flags.update(check_busy_node(busy, a.allow_busy_node))
         if a.no_off_legs:
             self.flags["off_legs_skipped"] = True
         free = shutil.disk_usage(self.out).free
@@ -487,6 +554,28 @@ class Run:
         self.fwq_cpus = (parse_cpu_list(a.fwq_cpus) if a.fwq_cpus
                          else default_fwq_cpus(self.online, self.harness_cpu))
         self.perf_events = self.probe_perf()
+
+    def probe_busy_cores(self) -> float | None:
+        """Node busy cores minus the daemon's own CPU over BUSY_PROBE_SECONDS (OFF-state load)."""
+        def snap() -> tuple[float, dict[str, int], dict[str, Any] | None]:
+            stat = Path(PROC_ROOT, "stat").read_text()
+            pid = self.main_pid()
+            return time.time(), parse_proc_stat(stat)["cpu"], (
+                sample_process(pid, PROC_ROOT) if pid else None)
+        t0, c0, p0 = snap()
+        time.sleep(BUSY_PROBE_SECONDS)
+        t1, c1, p1 = snap()
+        busy = cpufreq.busy_cores(c0, c1, t1 - t0, CLK_TCK)
+        if busy is not None and p0 and p1 and p0["pid"] == p1["pid"]:
+            busy -= cpu_delta(p0, p1)["cpu_s"] / (t1 - t0)
+        return busy
+
+    def apply_governor(self, governor: str) -> None:
+        cpus = cpufreq.set_all(governor, SYSFS_CPU)
+        self.current_governor = governor
+        self.state.setdefault("governor_changes", []).append(
+            {"governor": governor, "cpus": len(cpus), "t": time.time()})
+        print(f"[{time.strftime('%H:%M:%S')}] governor {governor} on {len(cpus)} CPUs", flush=True)
 
     def probe_perf(self) -> list[str]:
         if shutil.which("perf") is None:
@@ -514,8 +603,9 @@ class Run:
             self.saved_conf = self.raw / "site_conf.saved"
             _write_private(self.saved_conf, Path(SITE_CONF).read_text())
         restore = self.out / "restore.sh"
-        restore.write_text(restore_script_text(self.saved_conf, self.was_active, self.was_enabled,
-                                               self.measure_queue))
+        restore.write_text(restore_script_text(
+            self.saved_conf, self.was_active, self.was_enabled, self.measure_queue,
+            governor_lines=cpufreq.restore_lines(self.saved_governors, SYSFS_CPU)))
         restore.chmod(0o700)
         self.state.update(prior_nvra=self.prior_nvra, was_active=self.was_active,
                           was_enabled=self.was_enabled)
@@ -557,7 +647,7 @@ class Run:
         cmd = ["taskset", "-c", str(self.harness_cpu), sys.executable,
                str(MEASUREMENT_ROOT / "bin" / "sample_proc.py"), "--out", str(path),
                "--duration", str(seconds), "--comm", "hpcperfstatsd", "--amqp-port",
-               str(self.amqp_port)]
+               str(self.amqp_port), "--cpufreq-root", str(SYSFS_CPU)]
         if shutil.which("taskset") is None:
             cmd = cmd[3:]
         return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=open(path.with_suffix(".err"), "w"))
@@ -603,7 +693,7 @@ class Run:
             groups = driver_map.groups_for_enabled(types, _load_caps(self.args.build_info))
         except driver_map.UnmappedTypeError:
             return  # the new build may map it; discovery decides
-        _schedule(self.args, groups, seed, _load_caps(self.args.build_info))
+        _schedule(self.args, groups, seed, _load_caps(self.args.build_info), self.governors)
 
     def discover(self) -> list[str]:
         self.set_dropin(None)
@@ -625,8 +715,10 @@ class Run:
         load = plan["fwq_seconds"] if leg["fwq"] else 0
         meta: dict[str, Any] = {k: leg.get(k) for k in ("leg_id", "kind", "block", "group",
                                                          "brackets", "sample_freq", "base", "env",
-                                                         "marker")}
+                                                         "marker", "governor")}
         meta["status"] = "ok"
+        meta["governor_observed"] = sorted({g for g in cpufreq.read_state(SYSFS_CPU)["governors"]
+                                            .values() if g})
         cad = provenance.parse_monitor_conf(self.conf_text)
         if leg["kind"] == "CADENCE":
             cad["sample_freq"] = leg["sample_freq"]
@@ -729,6 +821,8 @@ class Run:
         self.cleanup_done = True
         res: dict[str, Any] = {}
         for step, fn in (
+            ("governor", lambda: "; ".join(cpufreq.restore(self.saved_governors, SYSFS_CPU))
+             or ("ok" if self.saved_governors else "not changed (--governors none)")),
             ("dropin", lambda: (Path(DROPIN_PATH).unlink(missing_ok=True),
                                 _rmdir_if_empty(Path(DROPIN_DIR)),
                                 shutil.rmtree(MEASURE_DIR, ignore_errors=True),
@@ -801,10 +895,13 @@ class Run:
             self.fwq_work = int(cal.stdout.strip())
             self.active = self.discover()
             self.groups = driver_map.groups_for_enabled(self.active, self.caps)
-            self.plan = _schedule(a, self.groups, seed, self.caps)
+            self.plan = _schedule(a, self.groups, seed, self.caps, self.governors)
             self.write_run_json()
             print_plan(a, self.active, self.groups, self.plan, out=lambda s: print(s, flush=True))
+            self.current_governor = None
             for leg in self.plan["legs"]:
+                if leg.get("governor") and leg["governor"] != self.current_governor:
+                    self.apply_governor(leg["governor"])
                 print(f"[{time.strftime('%H:%M:%S')}] leg {leg['leg_id']}", flush=True)
                 self.run_leg(leg, self.plan)
                 self.summarize()
@@ -831,6 +928,15 @@ class Run:
         return 0
 
 
+def dry_run_governors(spec: str, out: Callable[[str], None] = print) -> list[str]:
+    """Governors as this host would resolve them; on a host that cannot, the names as given."""
+    try:
+        return cpufreq.plan_governors(spec, SYSFS_CPU)["governors"]
+    except cpufreq.GovernorError as err:
+        out(f"WARNING: {err} (the real run would stop at preflight on this host)")
+        return cpufreq.parse_spec(spec)
+
+
 def _install_signal_handlers() -> None:
     def handler(signum, _frame):
         raise SystemExit(128 + signum)
@@ -847,7 +953,8 @@ def main(argv: list[str] | None = None) -> int:
             caps = _load_caps(args.build_info)
             groups = driver_map.groups_for_enabled(types, caps)
             seed = args.seed if args.seed is not None else int(time.time()) % 1_000_000
-            print_plan(args, sorted(types), groups, _schedule(args, groups, seed, caps))
+            governors = dry_run_governors(args.governors)
+            print_plan(args, sorted(types), groups, _schedule(args, groups, seed, caps, governors))
             return 0
         if os.geteuid() != 0:
             print("ERROR: the measurement must run as root (sudo); use --dry-run to preview",
@@ -858,6 +965,6 @@ def main(argv: list[str] | None = None) -> int:
     except schedule.ScheduleDoesNotFit as err:
         print(f"ERROR: {err}", file=sys.stderr)
         return 3
-    except (PreflightError, driver_map.UnmappedTypeError) as err:
+    except (PreflightError, driver_map.UnmappedTypeError, cpufreq.GovernorError) as err:
         print(f"ERROR: preflight: {err}", file=sys.stderr)
         return 4

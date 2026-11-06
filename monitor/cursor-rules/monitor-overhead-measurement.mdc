@@ -45,19 +45,23 @@ Applies to `monitor/measurement/**` (harness, sampler, FWQ, report) and the
    versions, harness and schema versions. Every reported number must be recomputable from
    `raw/` (`bin/summarize_profile.py`).
 7. **A cadence sweep measures; it does not change defaults** (`monitor-jitter-and-fidelity-priority.mdc`).
-8. **Driver groups, not types** (`dcgm_cpu` and `dcgm_gpu` are separate groups). A type in an `Enabled types:` line with no group in
+8. **Driver groups, not types** (`arm_cpu`, `dcgm_gpu` and `hwmon_power` are separate groups).
+   A type in an `Enabled types:` line with no group in
    `lib/driver_map.py` fails preflight; `test_driver_map_covers_all_st_names` fails when a new
    `.st_name` lands unmapped. Add the type to the map in the same change as the collector.
    A type that only works with another group's backend goes **in that group**: on Grace
-   overlay builds (`configure.likwid_overlay`) `arm_aarch64_imc` is in `dcgm_cpu`, because alone
+   overlay builds (`configure.likwid_overlay`) `arm_aarch64_imc` is in `arm_cpu`, because alone
    it only waits for the LIKWID overlay (c122-018 2026-11-05: its SOLO leg logged `waiting for
-   the LIKWID overlay group` and measured ~0, not the SCF cost).
+   the LIKWID overlay group` and measured ~0, not the SCF cost). A type with its own fds gets
+   its own group (`host_power_socket` → `hwmon_power`). Build-info `cpu_backend` `dcgm` (RPMs
+   before the `arm` rename) resolves like `arm`, so a baseline RPM and a candidate get the same
+   groups.
 9. **Restore on every exit path**: drop-in removed, measure queue deleted, site conf and
    service active/enabled state restored; `restore.sh` is written before the first change.
    The measured package stays installed (reserved node).
 10. **Cost a feature inside a group with a VARIANT leg, never a SOLO subtraction across groups.**
    `driver_map.VARIANTS` runs the base group with one measurement-only daemon knob in the same
-   runtime drop-in (`dcgm_cpu_noscf`: `host_cpu_hw` with `HPCPERFSTATS_LIKWID_GRACE_SCF=0`), is
+   runtime drop-in (`arm_cpu_noscf`: `host_cpu_hw` with `HPCPERFSTATS_LIKWID_GRACE_SCF=0`), is
    shuffled with the SOLO legs, and is paired with **SOLO(base) in the same block**
    (`collector_matrix.variants`; excluded from the interaction residual). The pair counts only
    when the leg journal contains the variant's `marker` (the daemon's log that the knob took
@@ -67,6 +71,29 @@ Applies to `monitor/measurement/**` (harness, sampler, FWQ, report) and the
    keeps the last `$` schema message as `raw/legs/<id>/schema.txt`; `profile.json`
    `schema_keys` holds keys per type (`NOT_MEASURED` when nothing was captured) and
    `bin/compare_schema_keys.py BASE CAND [--type nvidia_gpu]` exits 1 when a key was removed.
+12. **Every profile names its governor and runs per governor** (D13, D25). The same daemon used
+   ~8 core-s/h under `performance` and ~109 under `ondemand` at the same ~620 wakeups/s
+   (c122-018, finding 18). `--governors performance,dynamic` (default) runs one full leg set
+   per governor; `dynamic` = `ondemand` on `cppc_cpufreq` / `acpi-cpufreq` / passive
+   `amd-pstate`, `powersave` on `intel_pstate` / `amd-pstate-epp` (`lib/cpufreq.py`). The
+   harness writes `scaling_governor` for every CPU before each set and restores every CPU's
+   original governor on every exit path (and in `restore.sh`); a governor the driver does not
+   offer fails preflight before any change. Each leg records governor, `scaling_cur_freq`
+   min/p50/max and node busy cores. Never quote core-s/h without its governor; never compare
+   core-s/h across governors.
+13. **Wakeups/s is the headline metric** — voluntary + nonvoluntary context switches of
+   **every** daemon thread per second (per-tid `status`; `/proc/<pid>/status` is the leader
+   only). It does not depend on the governor, so it is the cross-architecture number;
+   `report.md` puts it next to core-s/h per governor. Old raw without per-thread counters
+   falls back to the leader and is labelled `main_thread`; new per-thread columns are `null`,
+   never 0.
+14. **Refuse a busy node.** Preflight measures node busy cores minus the daemon's CPU (the
+   OFF-state load) and refuses above 1 core unless `--allow-busy-node` (flagged `busy_node`).
+   Round 1 ran with ~17 busy cores in every leg, OFF included (finding 13).
+15. **A/B a tool on the live PID before blaming it for a CPU gap.** perf, the 1 Hz sampler and
+   the build were each suspected and each ruled out by an A/B on the live daemon before the
+   governor was found (findings 10, 12, 18). Compare RPMs only as two harness runs on the same
+   node with the same `--governors` (D24), never against an older harness run.
 
 ## Tests
 

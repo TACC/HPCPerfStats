@@ -50,7 +50,7 @@ def main() -> int:
                          capture_output=True, text=True)
     assert res.returncode == 0, res.stderr
     out = res.stdout
-    expect_cpu = "likwid" if caps["configure"]["cpu_backend"] == "likwid" else "dcgm_cpu"
+    expect_cpu = "likwid" if caps["configure"]["cpu_backend"] == "likwid" else "arm_cpu"
     assert f"{expect_cpu}: host_cpu_hw" in out.replace(",intel_x86_rapl", "") or \
         f"{expect_cpu}: host_cpu_hw,intel_x86_rapl" in out, out
     for needle in ("Schedule (seed 11", "Projected end:", f"rpm -Uvh --replacepkgs {rpm}",

@@ -8,7 +8,8 @@ and the hardware-error **catalog** (coverage vs reviewer classes — not a new c
 
 | Piece | Role |
 |---|---|
-| `bin/run_overhead_profile.sh` → `lib/orchestrator.py` | preflight, install, discovery, OFF/NONE/ALL/SOLO blocks, restore |
+| `bin/run_overhead_profile.sh` → `lib/orchestrator.py` | preflight (incl. busy-node refusal), install, discovery, OFF/NONE/ALL/SOLO blocks per governor (`--governors`, default `performance,dynamic`), restore |
+| `lib/cpufreq.py` | governor resolution per cpufreq driver, set/restore of `scaling_governor`, `scaling_cur_freq` summary |
 | `bin/sample_proc.py` (`lib/procsample.py`, `nodesample.py`, `tcpinfo.py`, `rapl.py`) | 1 Hz daemon + node sampler |
 | `src/fwq.c`, `lib/fwq.py` | Fixed Work Quanta OS-noise probe (compiled at run time) |
 | `lib/profiler_lines.py` | `metric-profiler:` journal parser for the optional `--profile-collectors` leg |

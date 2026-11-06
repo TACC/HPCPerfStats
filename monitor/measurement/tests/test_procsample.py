@@ -34,6 +34,11 @@ def _fake_proc(tmp_path: Path, pid: int, *, run_ns: int, utime: int, stime: int,
         tdir = pdir / "task" / str(tid)
         tdir.mkdir(exist_ok=True)
         (tdir / "comm").write_text(comm + "\n")
+        tstat = list(stat)
+        tstat[0], tstat[1] = str(tid), f"({comm})"
+        tstat[13], tstat[14] = str(utime + tid), str(stime + tid)  # distinct per thread
+        (tdir / "stat").write_text(" ".join(tstat) + "\n")
+        (tdir / "status").write_text((FIX / "proc_status_ctxt.txt").read_text())
         if schedstat:
             (tdir / "schedstat").write_text(f"{tns} 0 1\n")
     for i, target in enumerate(fds):
@@ -116,3 +121,18 @@ def test_find_pid_by_comm(tmp_path):
     (other / "comm").write_text("bash\n")
     assert procsample.find_pid_by_comm("hpcperfstatsd", proc_root=root) == 4242
     assert procsample.find_pid_by_comm("nothing", proc_root=root) is None
+
+
+def test_procsample_threads_keep_user_system_and_ctxt(tmp_path):
+    """Approach B: each thread's own stat (utime/stime) and status (vol/invol ctxt) are kept
+    beside run_ns, so the leg summary can show per-thread user/system and wakeups/s."""
+    root = _fake_proc(tmp_path, 100, run_ns=5, utime=10, stime=5,
+                      threads={100: ("hpcperfstatsd", 3), 101: ("dcgm worker", 2)})
+    s = procsample.sample_process(100, proc_root=root)
+    t = s["threads"]
+    assert t[101]["comm"] == "dcgm worker" and t[101]["run_ns"] == 2
+    assert t[101]["utime"] == 111 and t[101]["stime"] == 106
+    assert t[100]["vol_ctxt"] == 11 and t[100]["invol_ctxt"] == 3
+    # A tid whose stat vanished (exited between listdir and read) is skipped, not half-filled.
+    (root / "100" / "task" / "101" / "stat").unlink()
+    assert list(procsample.sample_process(100, proc_root=root)["threads"]) == [100]

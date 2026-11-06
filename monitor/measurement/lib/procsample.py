@@ -3,7 +3,9 @@
 CPU time comes from schedstat (nanoseconds, the only resolution fine enough for small
 per-driver deltas), summed over ``/proc/<pid>/task/*/schedstat``: ``/proc/<pid>/schedstat``
 alone is the main thread only (``process_run_ns_delta``). The user/system split comes from
-``stat`` jiffies, which already cover every thread. When the
+``stat`` jiffies, which already cover every thread. Per thread the sampler keeps schedstat,
+``stat`` utime/stime and ``status`` voluntary/nonvoluntary context switches, so daemon
+wakeups/s is the sum over all threads (``/proc/<pid>/status`` alone is the leader). When the
 kernel has no schedstat, CPU falls back to jiffies and the delta says ``cpu_resolution:
 jiffies``. Memory and I/O reuse the ``procfs`` parsers.
 """
@@ -83,8 +85,16 @@ def _threads(pdir: Path) -> dict[int, dict[str, Any]]:
         return out
     for tid in tids:
         tdir = pdir / "task" / tid
-        comm = (_read(tdir / "comm") or "?").strip()
-        out[int(tid)] = {"comm": comm, "run_ns": parse_schedstat(_read(tdir / "schedstat"))}
+        stat_text = _read(tdir / "stat")
+        if stat_text is None:
+            continue  # exited between listdir and read
+        # One stat read per tid gives comm and the user/system split (Approach B); status gives
+        # this thread's own context switches (/proc/<pid>/status counts the leader only).
+        st = parse_pid_stat(stat_text)
+        vol, invol = _status_ctxt(_read(tdir / "status") or "")
+        out[int(tid)] = {"comm": st["comm"], "run_ns": parse_schedstat(_read(tdir / "schedstat")),
+                         "utime": st["utime"], "stime": st["stime"],
+                         "vol_ctxt": vol, "invol_ctxt": invol}
     return out
 
 

@@ -1,7 +1,10 @@
 """Build ``profile.json`` (schema v1), ``report.md`` and ``profile_row.csv`` for one run.
 
 Every metric slot is ``{value, unit, ci95, n, source}`` or ``{status: NOT_MEASURED, reason}``
-— never 0 and never an estimate. One table, ``HEADLINE_METRICS``, names every key so the JSON,
+— never 0 and never an estimate. A run with governor leg sets (D13) gets one
+``governor_sets`` entry per governor (metrics, per-driver matrix, drift computed only from that
+set's legs); the top-level ``metrics`` / ``collector_matrix`` are the first set's, so readers of
+older profiles keep working. Results without the governor dimension are one unnamed set. One table, ``HEADLINE_METRICS``, names every key so the JSON,
 the Markdown, the CSV row, and ``aggregate_profiles.py`` stay consistent.
 """
 
@@ -281,8 +284,22 @@ def _metrics(legs: list[dict[str, Any]], flags: dict[str, Any], gpus: list[Any])
     return m
 
 
+def governor_partition(legs: list[dict[str, Any]],
+                       order: list[str] | None = None) -> list[tuple[str | None, list[dict[str, Any]]]]:
+    """Legs split by ``governor`` in schedule order; legs without one form one unnamed set."""
+    sets: dict[str | None, list[dict[str, Any]]] = {g: [] for g in (order or [])}
+    for leg in legs:
+        sets.setdefault(leg.get("governor"), []).append(leg)
+    return [(g, ls) for g, ls in sets.items() if ls]
+
+
 def _attach_frac_above(legs: list[dict[str, Any]], run_dir: Path) -> None:
-    """Fraction of ALL quanta above the run's pooled OFF p99 (needs the raw quanta)."""
+    """Fraction of ALL quanta above the pooled OFF p99 of the same governor set."""
+    for _gov, set_legs in governor_partition(legs):
+        _attach_frac_above_set(set_legs, run_dir)
+
+
+def _attach_frac_above_set(legs: list[dict[str, Any]], run_dir: Path) -> None:
     off = [leg for leg in legs if leg["kind"] == "OFF" and leg.get("fwq")]
     if not off:
         return
@@ -325,6 +342,41 @@ def _collector_profile(run_dir: Path, legs: list[dict[str, Any]], planned: list[
             "source": f"raw/legs/{leg['leg_id']}/journal.txt"}
 
 
+def _mean(ci: Any) -> float | None:
+    return ci.get("mean") if isinstance(ci, dict) else ci
+
+
+def _leg_node_cols(leg: dict[str, Any]) -> dict[str, Any]:
+    """Per-leg governor context: node busy cores, clock min/p50/max, daemon wakeups/s."""
+    node, proc = leg.get("node") or {}, leg.get("process") or {}
+    return {"busy_cores": _mean(node.get("busy_cores")), "cur_freq_mhz": node.get("cur_freq_mhz"),
+            "wakeups_per_s": proc.get("wakeups_per_s"), "wakeups_scope": proc.get("wakeups_scope")}
+
+
+def _governor_headline(legs: list[dict[str, Any]]) -> dict[str, Any]:
+    """Wakeups/s next to core-s/h (ALL legs), with the clock and the OFF node load of the set."""
+    all_legs = [leg for leg in legs if leg["kind"] == "ALL" and _usable(leg) and leg.get("process")]
+    off_legs = [leg for leg in legs if leg["kind"] == "OFF" and _usable(leg)]
+
+    def slot(ci: dict[str, Any] | None, unit: str, reason: str, src: str) -> dict[str, Any]:
+        if ci is None or ci.get("mean") is None:
+            return not_measured(reason)
+        return measured(ci["mean"], unit, src, ci, ci.get("n"))
+    scopes = sorted({(leg.get("process") or {}).get("wakeups_scope") for leg in all_legs} - {None})
+    return {
+        "wakeups_per_s": slot(_combine(all_legs, _proc("wakeups_per_s")), "/s", "no usable ALL leg",
+                              "raw/legs/*ALL*/samples.jsonl (per-thread status ctxt)"),
+        "wakeups_scope": scopes[0] if len(scopes) == 1 else (scopes or None),
+        "cpu_core_s_per_h": slot(_combine(all_legs, _proc("cpu_core_s_per_h")), "core-s/h",
+                                 "no usable ALL leg", "raw/legs/*ALL*/samples.jsonl"),
+        "cur_freq_p50_mhz": slot(_combine(all_legs, lambda leg: ((leg.get("node") or {}).get(
+            "cur_freq_mhz") or {}).get("p50")), "MHz", "no scaling_cur_freq in ALL legs",
+            "sysfs scaling_cur_freq"),
+        "off_busy_cores": slot(_combine(off_legs, _node("busy_cores")), "cores", "no usable OFF leg",
+                               "raw/legs/*OFF*/samples.jsonl"),
+    }
+
+
 def build_profile(run_dir: Path) -> dict[str, Any]:
     run_dir = Path(run_dir)
     raw = run_dir / "raw"
@@ -340,13 +392,25 @@ def build_profile(run_dir: Path) -> dict[str, Any]:
         for leg in legs:
             leg["smoke_run"] = True
     groups = run.get("groups") or {}
-    matrix = collector_matrix.build_matrix(legs, groups, run.get("active_types") or [],
-                                           interrupted=bool(missing))
-    drift = {}
-    for kind in ("OFF", "NONE", "ALL"):
-        getter = _node("busy_cores") if kind == "OFF" else _proc("cpu_core_s_per_h")
-        drift[kind] = bool(_drift(legs, kind, getter))
     host = prov.get("host") or {}
+    gsets = []
+    for gov, set_legs in governor_partition(legs, (run.get("schedule") or {}).get("governors")):
+        drift = {}
+        for kind in ("OFF", "NONE", "ALL"):
+            getter = _node("busy_cores") if kind == "OFF" else _proc("cpu_core_s_per_h")
+            drift[kind] = bool(_drift(set_legs, kind, getter))
+        gsets.append({"governor": gov, "headline": _governor_headline(set_legs),
+                      "metrics": _metrics(set_legs, flags, host.get("gpus") or []),
+                      "collector_matrix": collector_matrix.build_matrix(
+                          set_legs, groups, run.get("active_types") or [], interrupted=bool(missing)),
+                      "baseline_drift": drift})
+    if not gsets:
+        gsets.append({"governor": None, "headline": _governor_headline([]),
+                      "metrics": _metrics([], flags, host.get("gpus") or []),
+                      "collector_matrix": collector_matrix.build_matrix(
+                          [], groups, run.get("active_types") or [], interrupted=bool(missing)),
+                      "baseline_drift": dict.fromkeys(("OFF", "NONE", "ALL"), False)})
+    first = gsets[0]
     profile = {
         "schema_version": PROFILE_SCHEMA_VERSION,
         "harness_version": run.get("harness_version"),
@@ -356,9 +420,11 @@ def build_profile(run_dir: Path) -> dict[str, Any]:
         "not_idle": flags.get("not_idle"),
         "run_complete": not missing and bool(run.get("planned_leg_ids")),
         "legs_missing": missing,
-        "baseline_drift": drift,
-        "metrics": _metrics(legs, flags, host.get("gpus") or []),
-        "collector_matrix": matrix,
+        "baseline_drift": first["baseline_drift"],
+        "metrics": first["metrics"],
+        "metrics_governor": first["governor"],
+        "collector_matrix": first["collector_matrix"],
+        "governor_sets": gsets,
         "schema_keys": _schema_keys(run_dir),
         "collector_profile": _collector_profile(
             run_dir, legs, run.get("planned_leg_ids", []),
@@ -368,7 +434,9 @@ def build_profile(run_dir: Path) -> dict[str, Any]:
         "groups": groups,
         "legs": [{**{k: leg.get(k) for k in ("leg_id", "kind", "block", "group", "status",
                                               "contaminated", "verified_types", "missing_types",
-                                              "base", "env", "marker_seen")},
+                                              "base", "env", "marker_seen", "governor",
+                                              "governor_observed")},
+                  **_leg_node_cols(leg),
                   "thread_top": (leg.get("process") or {}).get("thread_top")} for leg in legs],
         "provenance": prov,
     }
@@ -385,28 +453,49 @@ def _fmt(slot: dict[str, Any]) -> str:
     return f"{txt} {slot['unit']}"
 
 
-def _md(profile: dict[str, Any]) -> str:
-    host = profile.get("host") or {}
-    lines = [f"# hpcperfstatsd overhead profile — {host.get('short', '?')} ({host.get('arch', '?')}, "
-             f"{host.get('cpu_model', '?')})", ""]
-    if profile.get("not_idle"):
-        lines += [f"> **not_idle: {profile['not_idle']}** — do not cite these numbers.", ""]
-    if not profile.get("run_complete"):
-        lines += [f"> Partial run; missing legs: {', '.join(profile.get('legs_missing') or []) or 'n/a'}", ""]
-    drift = [k for k, v in (profile.get("baseline_drift") or {}).items() if v]
+def _num(v: Any) -> str:
+    return "—" if v is None else f"{v:.4g}"
+
+
+def _set_suffix(gov: str | None) -> str:
+    return f" — governor `{gov}`" if gov else ""
+
+
+def governor_headline_lines(profile: dict[str, Any]) -> list[str]:
+    """Headline: daemon wakeups/s (all threads) next to core-s/h, one row per governor set."""
+    lines = ["## Headline: daemon wakeups/s and CPU per governor", "",
+             "Wakeups/s (voluntary + nonvoluntary context switches of every daemon thread) does not "
+             "depend on the governor; core-s/h does (finding 18), so it is only comparable under "
+             "the same governor.", "",
+             "| Governor | Daemon wakeups/s (ALL) | Daemon CPU core-s/h (ALL) | Clock p50 MHz (ALL) "
+             "| Node busy cores (OFF) |", "| --- | --- | --- | --- | --- |"]
+    for gs in profile.get("governor_sets") or []:
+        h = gs.get("headline") or {}
+        scope = h.get("wakeups_scope")
+        note = f" ({scope})" if scope and scope != "all_threads" else ""
+        lines.append(f"| {gs.get('governor') or '(not set)'} | {_fmt(h.get('wakeups_per_s') or {})}{note} | "
+                     f"{_fmt(h.get('cpu_core_s_per_h') or {})} | {_fmt(h.get('cur_freq_p50_mhz') or {})} | "
+                     f"{_fmt(h.get('off_busy_cores') or {})} |")
+    return lines
+
+
+def _set_lines(gs: dict[str, Any]) -> list[str]:
+    """Headline table, per-driver table, variants, framework and residual of one governor set."""
+    suffix = _set_suffix(gs.get("governor"))
+    lines: list[str] = []
+    drift = [k for k, v in (gs.get("baseline_drift") or {}).items() if v]
     if drift:
-        lines += [f"> baseline_drift for {', '.join(drift)}: comparisons involving them are not citable.", ""]
-    lines += ["## Headline metrics", "", "| Metric | Value |", "| --- | --- |"]
+        lines += [f"> baseline_drift{suffix} for {', '.join(drift)}: comparisons involving them are "
+                  "not citable.", ""]
+    lines += [f"## Headline metrics{suffix}", "", "| Metric | Value |", "| --- | --- |"]
     for key, label, _unit in HEADLINE_METRICS:
-        lines.append(f"| {label} (`{key}`) | {_fmt(profile['metrics'][key])} |")
-    mx = profile.get("collector_matrix") or {}
-    lines += ["", "## Per-driver cost (SOLO − NONE, paired within block)", "",
+        lines.append(f"| {label} (`{key}`) | {_fmt(gs['metrics'][key])} |")
+    mx = gs.get("collector_matrix") or {}
+    lines += ["", f"## Per-driver cost (SOLO − NONE, paired within block){suffix}", "",
               "| Driver group | Types | CPU core-s/h [95% CI] | Share of ALL | ms/fast | ms/full | "
               "USS Δ MiB | Broker Δ B/h | Wakeups Δ/s | perf FDs Δ | Init Δ CPU-s | Notes |",
               "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
-
-    def num(v: Any) -> str:
-        return "—" if v is None else f"{v:.4g}"
+    num = _num
     for r in mx.get("rows", []):
         if r["status"] != "ok":
             lines.append(f"| {r['group']} | {', '.join(r['types'])} | NOT_MEASURED ({r.get('reason')}) "
@@ -421,7 +510,7 @@ def _md(profile: dict[str, Any]) -> str:
                      f"{num(r.get('perf_event_fds_delta'))} | {num(r.get('init_cpu_s_delta'))} | "
                      f"{'; '.join(r['notes'])} |")
     if mx.get("variants"):
-        lines += ["", "## Paired variants (SOLO(base) − VARIANT, same block)", "",
+        lines += ["", f"## Paired variants (SOLO(base) − VARIANT, same block){suffix}", "",
                   "| Variant | Base | Removes | CPU core-s/h [95% CI] | perf FDs Δ | USS Δ MiB | Notes |",
                   "| --- | --- | --- | --- | --- | --- | --- |"]
         for r in mx["variants"]:
@@ -445,7 +534,30 @@ def _md(profile: dict[str, Any]) -> str:
                      + (" — large: cite per-driver numbers as approximate" if res.get("large") else ""))
     else:
         lines.append(f"Interaction residual: NOT_MEASURED ({res.get('reason')})")
-    lines += ["", "Groups include each type's incidental /proc reads (decision 11). Bursts that "
+    return [*lines, ""]
+
+
+def _md(profile: dict[str, Any]) -> str:
+    host = profile.get("host") or {}
+    lines = [f"# hpcperfstatsd overhead profile — {host.get('short', '?')} ({host.get('arch', '?')}, "
+             f"{host.get('cpu_model', '?')})", ""]
+    if profile.get("not_idle"):
+        lines += [f"> **not_idle: {profile['not_idle']}** — do not cite these numbers.", ""]
+    if (profile.get("flags") or {}).get("busy_node"):
+        bn = profile["flags"]["busy_node"]
+        lines += [f"> **busy node** ({bn.get('busy_cores'):.3g} cores busy outside the daemon at "
+                  "preflight, run with --allow-busy-node): node deltas are noisier.", ""]
+    if not profile.get("run_complete"):
+        lines += [f"> Partial run; missing legs: {', '.join(profile.get('legs_missing') or []) or 'n/a'}", ""]
+    gsets = profile.get("governor_sets") or [{
+        "governor": None, "metrics": profile["metrics"],
+        "collector_matrix": profile.get("collector_matrix"),
+        "baseline_drift": profile.get("baseline_drift")}]
+    if profile.get("governor_sets"):
+        lines += [*governor_headline_lines(profile), ""]
+    for gs in gsets:
+        lines += _set_lines(gs)
+    lines += ["Groups include each type's incidental /proc reads (decision 11). Bursts that "
               "coincide with a sample are counted as that sample, so CPU per send covers only "
               "unaligned sends.", ""]
     cp = profile.get("collector_profile") or {}
@@ -460,27 +572,40 @@ def _md(profile: dict[str, Any]) -> str:
     else:
         lines.append(f"NOT_MEASURED ({cp.get('reason')})")
     lines += [""] + thread_top_lines(profile)
-    lines += ["", "## Legs", "", "| Leg | Status | Contaminated | Verified types |",
-              "| --- | --- | --- | --- |"]
+    lines += ["", "## Legs", "",
+              "| Leg | Governor | Status | Contaminated | Node busy cores | Clock MHz min/p50/max | "
+              "Wakeups/s | Verified types |", "| --- | --- | --- | --- | --- | --- | --- | --- |"]
     for leg in profile.get("legs", []):
-        lines.append(f"| {leg['leg_id']} | {leg['status']} | {leg['contaminated']} | "
-                     f"{', '.join(leg.get('verified_types') or [])} |")
+        f = leg.get("cur_freq_mhz") or {}
+        clock = f"{_num(f.get('min'))}/{_num(f.get('p50'))}/{_num(f.get('max'))}" if f else "—"
+        lines.append(f"| {leg['leg_id']} | {leg.get('governor') or '—'} | {leg['status']} | "
+                     f"{leg['contaminated']} | {_num(leg.get('busy_cores'))} | {clock} | "
+                     f"{_num(leg.get('wakeups_per_s'))} | {', '.join(leg.get('verified_types') or [])} |")
     lines.append("")
     return "\n".join(lines)
 
 
 def thread_top_lines(profile: dict[str, Any]) -> list[str]:
-    """Markdown table of the hottest daemon threads from the first usable ALL leg."""
-    lines = ["## Daemon threads (hottest, first usable ALL leg)", ""]
-    leg = next((lg for lg in profile.get("legs", []) if lg.get("kind") == "ALL" and _usable(lg)
-                and lg.get("thread_top")), None)
-    if leg is None:
-        return lines + ["NOT_MEASURED (no ALL leg with per-thread samples)"]
-    lines += [f"Leg {leg['leg_id']}. Embedded DCGM/NVML workers inherit the daemon's name; match "
-              "a tid to its library with `gdb -p PID -batch -ex 'thread apply all bt'`.", "",
-              "| tid | comm | core-s/h |", "| --- | --- | --- |"]
-    lines += [f"| {t['tid']} | {t['comm']} | {t['core_s_per_h']:.4g} |" for t in leg["thread_top"]]
-    return lines
+    """Hottest daemon threads from the first usable ALL leg of each governor set."""
+    lines: list[str] = []
+    for gov, legs in governor_partition(profile.get("legs", [])) or [(None, [])]:
+        lines += [f"## Daemon threads (hottest, first usable ALL leg){_set_suffix(gov)}", ""]
+        leg = next((lg for lg in legs if lg.get("kind") == "ALL" and _usable(lg)
+                    and lg.get("thread_top")), None)
+        if leg is None:
+            lines += ["NOT_MEASURED (no ALL leg with per-thread samples)", ""]
+            continue
+        lines += [f"Leg {leg['leg_id']}. Embedded DCGM/NVML workers inherit the daemon's name; match "
+                  "a tid to its library with `gdb -p PID -batch -ex 'thread apply all bt'`. "
+                  "Active = share of 1 s windows with run time > 0 (steady loop ~1, burst small); "
+                  "— = not in this harness version's raw samples.", "",
+                  "| tid | comm | core-s/h | user s/h | system s/h | wakeups/s | active |",
+                  "| --- | --- | --- | --- | --- | --- | --- |"]
+        lines += [f"| {t['tid']} | {t['comm']} | {t['core_s_per_h']:.4g} | {_num(t.get('user_s_h'))} | "
+                  f"{_num(t.get('system_s_h'))} | {_num(t.get('wakeups_s'))} | "
+                  f"{_num(t.get('active_share'))} |" for t in leg["thread_top"]]
+        lines.append("")
+    return lines[:-1] if lines and lines[-1] == "" else lines
 
 
 def profile_row(profile: dict[str, Any]) -> dict[str, Any]:

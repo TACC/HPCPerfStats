@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from lib import leg_summary, procsample
 
 
@@ -113,3 +114,63 @@ def test_leg_with_types_the_daemon_kept_is_type_mismatch(tmp_path):
     _write_leg(tmp_path / "b1-SOLO-x", intended=["host_mem"], verified=["host_mem"], kind="SOLO")
     ok = leg_summary.summarize_leg(tmp_path / "b1-SOLO-x")
     assert ok["status"] == "ok" and ok["extra_types"] == []
+
+
+def _thread_leg(leg_dir: Path, *, with_new_fields: bool) -> None:
+    """Two threads, 61 samples: tid 8 a steady loop (runs every second, 100 switches/s), tid 9
+    a burst thread (runs in every 10th second only, 1 switch per burst)."""
+    leg_dir.mkdir(parents=True)
+    rows = []
+    for i in range(61):
+        t8 = {"comm": "hpcperfstatsd", "run_ns": i * 5_000_000}
+        t9 = {"comm": "hpcperfstatsd", "run_ns": (i // 10) * 20_000_000}
+        if with_new_fields:
+            t8.update(utime=i * 3, stime=i * 1, vol_ctxt=i * 90, invol_ctxt=i * 10)
+            t9.update(utime=(i // 10) * 2, stime=0, vol_ctxt=i // 10, invol_ctxt=0)
+        proc = {"pid": 7, "starttime": 1, "run_ns": 0, "utime": i * 5, "stime": i, "rss_kib": 1024,
+                "num_threads": 2, "vol_ctxt": i * 2, "invol_ctxt": 0, "threads": {"8": t8, "9": t9}}
+        node = {"online_cpus": 4, "interrupts": {}, "cpu": {"user": i * 7, "system": 0, "idle": i * 393},
+                "cur_freq_mhz": {"min": 81.0, "p50": 81.0 + i % 2, "max": 3375.0, "n": 4}}
+        rows.append(json.dumps({"t": i, "wall": 1000.0 + i, "proc": proc, "node": node, "tcp": None}))
+    (leg_dir / "samples.jsonl").write_text("\n".join(rows) + "\n")
+    meta = {"leg_id": leg_dir.name, "kind": "ALL", "block": 1, "status": "ok", "governor": "ondemand",
+            "phases": {"settle_end": 1000.0, "quiet_end": 1060.5},
+            "intended_types": [], "verified_types": [], "missing_types": []}
+    (leg_dir / "meta.json").write_text(json.dumps(meta))
+
+
+def test_thread_top_user_system_wakeups_active_share(tmp_path):
+    """Approach B: per-thread user/system split, wakeups/s and steady-vs-burst share, and the
+    headline wakeups/s summed over every thread (finding 18 counts all threads, not the leader)."""
+    _thread_leg(tmp_path / "ondemand-b1-ALL-first", with_new_fields=True)
+    s = leg_summary.summarize_leg(tmp_path / "ondemand-b1-ALL-first")
+    proc = s["process"]
+    top = {t["tid"]: t for t in proc["thread_top"]}
+    clk = procsample.CLK_TCK
+    assert top["8"]["user_s_h"] == pytest.approx(3 / clk * 3600)
+    assert top["8"]["system_s_h"] == pytest.approx(1 / clk * 3600)
+    assert top["8"]["wakeups_s"] == pytest.approx(100.0)
+    assert top["8"]["active_share"] == 1.0
+    assert top["9"]["active_share"] == pytest.approx(6 / 60)
+    assert top["9"]["wakeups_s"] == pytest.approx(0.1)
+    assert proc["wakeups_per_s"] == pytest.approx(100.1) and proc["wakeups_scope"] == "all_threads"
+    assert s["governor"] == "ondemand"
+    assert s["node"]["cur_freq_mhz"] == {"min": 81.0, "p50": 81.0, "max": 3375.0, "n_samples": 61}
+
+
+def test_thread_top_old_raw_gives_null_columns(tmp_path):
+    """Raw from the harness before Approach B has run_ns only: new columns are None (null in
+    profile.json, — in report.md), never 0; wakeups/s falls back to the leader, labelled."""
+    _thread_leg(tmp_path / "b1-ALL-first", with_new_fields=False)
+    proc = leg_summary.summarize_leg(tmp_path / "b1-ALL-first")["process"]
+    for row in proc["thread_top"]:
+        assert row["user_s_h"] is None and row["system_s_h"] is None and row["wakeups_s"] is None
+        assert row["active_share"] is not None  # derived from run_ns, which old raw has
+    assert proc["wakeups_scope"] == "main_thread" and proc["wakeups_per_s"] == pytest.approx(2.0)
+    from lib import profile_report
+
+    md = "\n".join(profile_report.thread_top_lines(
+        {"legs": [{"leg_id": "b1-ALL-first", "kind": "ALL", "status": "ok", "contaminated": False,
+                   "thread_top": proc["thread_top"]}]}))
+    assert "| user s/h | system s/h | wakeups/s | active |" in md
+    assert "| 8 | hpcperfstatsd | 18 | — | — | — | 1 |" in md

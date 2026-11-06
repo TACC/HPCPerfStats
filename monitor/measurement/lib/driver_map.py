@@ -12,10 +12,15 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-# DCGM is split: on Grace the CPU backend (sysmon module) and the GPU collector have very
-# different costs, and one shared SOLO leg could not tell them apart.
-DRIVER_GROUPS = ("filesystem", "likwid", "dcgm_cpu", "dcgm_gpu", "perf_event", "ib_mad", "amd_gpu",
-                 "intel_gpu")
+# aarch64 CPU backend ``arm`` (round 2, D10: /proc/stat util, cpufreq clock, LIKWID overlay;
+# no DCGM) and the DCGM/NVML GPU collector are separate groups, so one SOLO leg never mixes
+# their costs. ``hwmon_power`` is host_power_socket (per-socket ACPI power meters, D31): its
+# own fds, independent of host_cpu_hw, so it gets its own SOLO leg.
+DRIVER_GROUPS = ("filesystem", "likwid", "arm_cpu", "dcgm_gpu", "hwmon_power", "perf_event",
+                 "ib_mad", "amd_gpu", "intel_gpu")
+# Build-info ``cpu_backend`` values: ``arm`` from round 2 on; ``dcgm`` is the same aarch64
+# backend in older RPMs (e.g. the 3.0-8 round-1 baseline, D24), so both resolve to arm_cpu.
+ARM_BACKENDS = ("arm", "dcgm")
 
 _FILESYSTEM = (
     "host_cpu", "host_mem", "host_mem_job", "host_vm", "host_numa", "host_block", "host_net",
@@ -35,6 +40,7 @@ STATIC_GROUP: dict[str, str] = {
     **dict.fromkeys(_LIKWID, "likwid"),
     "nvidia_gpu": "dcgm_gpu",
     "host_opa": "ib_mad",
+    "host_power_socket": "hwmon_power",
     "amd_gpu": "amd_gpu",
     "intel_gpu": "intel_gpu",
 }
@@ -43,12 +49,12 @@ BACKEND_TYPES = ("host_cpu_hw", "host_ib", "arm_aarch64_imc")
 # Paired variant legs (run like SOLO, compared against their base group in the same block,
 # not against NONE). Grace overlay builds: the overlay programs the SCF counters inside
 # host_cpu_hw's group whether or not arm_aarch64_imc is enabled, so SCF cost is only visible
-# as dcgm_cpu (SCF on + arm_aarch64_imc) minus dcgm_cpu with HPCPERFSTATS_LIKWID_GRACE_SCF=0.
+# as arm_cpu (SCF on + arm_aarch64_imc) minus arm_cpu with HPCPERFSTATS_LIKWID_GRACE_SCF=0.
 # ``marker`` must appear in the leg's journal or the pair is NOT_MEASURED (a daemon without
 # the knob would run two identical legs and report a false zero).
 VARIANTS: dict[str, dict[str, Any]] = {
-    "dcgm_cpu_noscf": {
-        "base": "dcgm_cpu",
+    "arm_cpu_noscf": {
+        "base": "arm_cpu",
         "drop": ("arm_aarch64_imc",),
         "env": {"HPCPERFSTATS_LIKWID_GRACE_SCF": "0"},
         "marker": "SCF uncore events off (HPCPERFSTATS_LIKWID_GRACE_SCF=0)",
@@ -61,10 +67,12 @@ KNOWN_TYPES = tuple(sorted({*STATIC_GROUP, *BACKEND_TYPES}))
 CAPABILITY_VARIANTS = (
     {"arch": "x86_64", "configure": {"cpu_backend": "likwid", "ib_mad_dlopen": True, "infiniband": True}},
     {"arch": "x86_64", "configure": {"cpu_backend": "likwid", "ib_mad_dlopen": False, "infiniband": False}},
-    {"arch": "aarch64", "configure": {"cpu_backend": "dcgm", "ib_mad_dlopen": True, "infiniband": True}},
+    {"arch": "aarch64", "configure": {"cpu_backend": "arm", "ib_mad_dlopen": True, "infiniband": True}},
+    {"arch": "aarch64", "configure": {"cpu_backend": "arm", "likwid_overlay": True,
+                                      "ib_mad_dlopen": True, "infiniband": True}},
+    {"arch": "aarch64", "configure": {"cpu_backend": "arm", "ib_mad_dlopen": False, "infiniband": False}},
     {"arch": "aarch64", "configure": {"cpu_backend": "dcgm", "likwid_overlay": True,
                                       "ib_mad_dlopen": True, "infiniband": True}},
-    {"arch": "aarch64", "configure": {"cpu_backend": "dcgm", "ib_mad_dlopen": False, "infiniband": False}},
 )
 
 
@@ -75,9 +83,11 @@ class UnmappedTypeError(ValueError):
 def _cpu_backend(caps: dict[str, Any] | None) -> str:
     cfg = (caps or {}).get("configure") or {}
     backend = (cfg.get("cpu_backend") or "").lower()
-    if backend in ("likwid", "dcgm"):
+    if backend in ARM_BACKENDS:
+        return "arm"
+    if backend == "likwid":
         return backend
-    return "dcgm" if (caps or {}).get("arch") == "aarch64" else "likwid"
+    return "arm" if (caps or {}).get("arch") == "aarch64" else "likwid"
 
 
 def _ib_mad(caps: dict[str, Any] | None) -> bool:
@@ -96,9 +106,9 @@ def group_for_type(name: str, caps: dict[str, Any] | None) -> str:
     """Driver group for one collector type under a given build."""
     if name == "arm_aarch64_imc":
         # Overlay builds read SCF through host_cpu_hw's LIKWID group; alone it only waits.
-        return "dcgm_cpu" if _likwid_overlay(caps) and _cpu_backend(caps) == "dcgm" else "perf_event"
+        return "arm_cpu" if _likwid_overlay(caps) and _cpu_backend(caps) == "arm" else "perf_event"
     if name == "host_cpu_hw":
-        return "dcgm_cpu" if _cpu_backend(caps) == "dcgm" else "likwid"
+        return "arm_cpu" if _cpu_backend(caps) == "arm" else "likwid"
     if name == "host_ib":
         return "ib_mad" if _ib_mad(caps) else "filesystem"
     try:

@@ -7,6 +7,11 @@ exceeds ``max_hours``, reductions apply in a fixed order and each is recorded in
 ``fit_steps``: (1) shorten legs 1800 → 1200 → 600 s, (2) drop the second ALL leg per block,
 (3) run SOLO legs only in the first block. If it still does not fit, ScheduleDoesNotFit carries
 the minimum hours so the operator can raise ``--max-hours``.
+
+Governor dimension (D13): with ``governors`` the whole block set repeats once per governor
+(same seed, so the SOLO order matches across sets); every leg carries ``governor`` and its id
+gets a ``<governor>-`` prefix. CADENCE / PROFILE legs run once, at the end of the first set.
+Without governors (``--governors none``) legs and ids are unchanged.
 """
 
 from __future__ import annotations
@@ -39,7 +44,26 @@ def _leg(kind: str, block: int, group: str | None = None, **extra: Any) -> dict[
 def _legs(groups: Sequence[str], blocks: int, seed: int, off_legs: bool, second_all: bool,
           solo_blocks: int, cadence_sweep: Sequence[float],
           profile_collectors: bool = False,
-          variants: Mapping[str, Mapping[str, Any]] | None = None) -> list[dict[str, Any]]:
+          variants: Mapping[str, Mapping[str, Any]] | None = None,
+          governors: Sequence[str] = ()) -> list[dict[str, Any]]:
+    """Every governor's leg set in order (one unnamed set when ``governors`` is empty)."""
+    legs: list[dict[str, Any]] = []
+    for i, gov in enumerate(governors or [None]):
+        legs_g = _block_legs(groups, blocks, seed, off_legs, second_all, solo_blocks,
+                             cadence_sweep if i == 0 else (), profile_collectors and i == 0,
+                             variants)
+        for leg in legs_g:
+            leg["governor"] = gov
+            if gov:
+                leg["leg_id"] = f"{gov}-{leg['leg_id']}"
+        legs += legs_g
+    return legs
+
+
+def _block_legs(groups: Sequence[str], blocks: int, seed: int, off_legs: bool, second_all: bool,
+                solo_blocks: int, cadence_sweep: Sequence[float],
+                profile_collectors: bool = False,
+                variants: Mapping[str, Mapping[str, Any]] | None = None) -> list[dict[str, Any]]:
     variants = variants or {}
     rng = random.Random(seed)
     legs: list[dict[str, Any]] = []
@@ -80,8 +104,9 @@ def build_schedule(groups: Sequence[str], blocks: int = 2, seed: int = 0,
                    max_hours: float = 12.0, off_legs: bool = True,
                    cadence_sweep: Sequence[float] = (), setup_seconds: int = 1800,
                    profile_collectors: bool = False,
-                   variants: Mapping[str, Mapping[str, Any]] | None = None) -> dict[str, Any]:
-    """Return ``{legs, leg_seconds, projected_seconds, fit_steps, seed, ...}``."""
+                   variants: Mapping[str, Mapping[str, Any]] | None = None,
+                   governors: Sequence[str] = ()) -> dict[str, Any]:
+    """Return ``{legs, leg_seconds, projected_seconds, fit_steps, seed, governors, ...}``."""
     budget = max_hours * 3600
     if profile_collectors:
         setup_seconds += PROFILER_BUILD_SECONDS
@@ -90,7 +115,7 @@ def build_schedule(groups: Sequence[str], blocks: int = 2, seed: int = 0,
 
     def plan() -> tuple[list[dict[str, Any]], int]:
         legs = _legs(groups, blocks, seed, off_legs, state["second_all"], state["solo_blocks"],
-                     cadence_sweep, profile_collectors, variants)
+                     cadence_sweep, profile_collectors, variants, governors)
         return legs, _project(legs, state["leg_seconds"], settle_seconds, fwq_seconds,
                               setup_seconds)
 
@@ -112,4 +137,4 @@ def build_schedule(groups: Sequence[str], blocks: int = 2, seed: int = 0,
             "leg_seconds": state["leg_seconds"], "settle_seconds": settle_seconds,
             "fwq_seconds": fwq_seconds, "setup_seconds": setup_seconds,
             "projected_seconds": total, "max_hours": max_hours, "fit_steps": fit_steps,
-            "off_legs": off_legs}
+            "off_legs": off_legs, "governors": list(governors)}

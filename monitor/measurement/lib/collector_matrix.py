@@ -4,7 +4,7 @@ framework           = NONE                        (daemon with zero collectors)
 driver D            = SOLO_b(D) − NONE_b          (same block, so slow drift cancels)
 interaction residual = ALL_b − [NONE_b + Σ_D (SOLO_b(D) − NONE_b)]
 variant V of D       = SOLO_b(D) − VARIANT_b(V)  (same block; V is D with one change, e.g.
-                                                 dcgm_cpu without the Grace SCF counters)
+                                                 arm_cpu without the Grace SCF counters)
 share of ALL        = (SOLO − NONE) / ALL         (process metrics: the OFF daemon cost is 0)
 
 Replicate blocks are combined with ``stats.combine_replicates``. When a block's NONE leg did

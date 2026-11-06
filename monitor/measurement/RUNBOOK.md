@@ -45,6 +45,23 @@ sudo ./measurement/bin/run_overhead_profile.sh --rpm rpmbuild/RPMS/x86_64/hpcper
   --build-info rpmbuild/build-info
 ```
 
+The RPM to measure is **only** the `--rpm` path (installed with `rpm -Uvh --replacepkgs`, so
+an older RPM is a downgrade and works); `--build-info` must be the `rpmbuild/build-info` dir
+written by the build of **that** RPM (`monitor-build-capabilities.json`: CPU backend, LIKWID
+overlay, IB MAD). Without it the driver groups fall back to x86 defaults.
+
+**Governors (D13, D25).** The per-hour cost depends on the cpufreq governor: on c122-018 the
+same daemon used ~8 core-s/h under `performance` and ~109 under `ondemand` at the same ~620
+wakeups/s (finding 18). So every profile runs **one full leg set per governor**:
+`--governors performance,dynamic` (default). `dynamic` resolves per `scaling_driver`:
+`ondemand` on `cppc_cpufreq` (Grace), `acpi-cpufreq` and passive `amd-pstate`; `powersave` on
+`intel_pstate` and `amd-pstate-epp` (amd-pstate active mode), whose `powersave` is the dynamic
+HWP/EPP policy. Explicit names work too (`--governors performance,schedutil`); `--governors
+none` leaves the governor alone (one unnamed set; only for nodes without cpufreq). The
+harness writes `scaling_governor` for every CPU before each set and writes each CPU's
+original governor back on every exit path; `restore.sh` has the same lines. With the default
+`--max-hours 12` both sets fit by shortening legs to 600 s; `--max-hours 24` keeps 1800 s legs.
+
 ### What it does
 
 1. **Preflight** (fails closed): root; no other user's Slurm job on the node (your own
@@ -55,20 +72,30 @@ sudo ./measurement/bin/run_overhead_profile.sh --rpm rpmbuild/RPMS/x86_64/hpcper
    `HPCPERFSTATS_DISABLE_TYPES` / `HPCPERFSTATS_COLLECTION_PROFILE` (so ALL really is
    all); `<queue>_measure` must not exist with a consumer. perf, RAPL and PSI are probed
    and missing ones become `NOT_MEASURED`. `--force` lets a busy node run, flagged
-   `not_idle: smoke only` (excluded from `aggregate_profiles.py`).
+   `not_idle: smoke only` (excluded from `aggregate_profiles.py`). Every requested governor
+   must be in every CPU's `scaling_available_governors` (and `dynamic` needs a known driver),
+   otherwise the run stops here with the governor untouched. **Busy node:** node busy cores
+   minus the daemon's own CPU over 5 s (the OFF-state load) above 1 core refuses the run
+   (round 1 ran with ~17 cores busy in every leg, OFF included, finding 13);
+   `--allow-busy-node` runs anyway and the report carries a `busy node` banner.
 2. **Install**: saves the site conf, `rpm -Uvh --replacepkgs`, writes the site conf back
    (the spec lists it without `%config`, so the RPM overwrites it), checks `server`/`queue`.
    `restore.sh` is written to the result dir before any change. A fresh node needs
    `--conf PATH`. The measured package stays installed afterwards (reserved node).
 3. **Discovery**: one 2-minute ALL start; the daemon's `Enabled types:` journal line is the
    active collector list. Each type maps to a **driver group** (`filesystem`, `likwid`,
-   `dcgm_cpu` (Grace `host_cpu_hw`), `dcgm_gpu` (`nvidia_gpu`), `perf_event`, `ib_mad`, …;
-   `lib/driver_map.py`); an unmapped type fails.
+   `arm_cpu` (Grace `host_cpu_hw` on the `arm` backend; older build-info saying `dcgm` maps
+   the same), `dcgm_gpu` (`nvidia_gpu`), `hwmon_power` (`host_power_socket`), `perf_event`,
+   `ib_mad`, …; `lib/driver_map.py`); an unmapped type fails.
 4. **Blocks** (default 2): OFF → NONE → ALL → SOLO(each group, seeded random order) → ALL →
    OFF (shared with the next block). Legs are `--leg-seconds` (1800) after a 60 s settle;
    OFF/NONE/ALL add a `--fwq-seconds` (300) FWQ phase on every CPU but the sampler's. The
    schedule auto-fits `--max-hours` (12) by shortening legs, dropping the second ALL, then
-   single-block SOLOs; `--dry-run` prints the legs and projected end.
+   single-block SOLOs; `--dry-run` prints the legs and projected end. The whole block set
+   repeats per governor (leg ids `<governor>-b1-OFF-` …; `--cadence-sweep` and
+   `--profile-collectors` legs run once, in the first set). Each leg records its governor, the
+   governors actually read at leg start, `scaling_cur_freq` min/p50/max (1 Hz) and node busy
+   cores.
 5. **Collector sets** come only from a runtime drop-in
    `/run/systemd/system/hpcperfstats.service.d/90-measure.conf`. ALL and OFF use the
    production unit and queue unchanged. NONE / SOLO / `--cadence-sweep` legs point
@@ -85,30 +112,53 @@ sudo ./measurement/bin/run_overhead_profile.sh --rpm rpmbuild/RPMS/x86_64/hpcper
 6. **Restore** (every exit path, including SIGINT/SIGTERM/SIGHUP): remove the drop-in,
    delete `<queue>_measure` through the management API (port 15672, conf credentials; if
    that fails it prints `rabbitmqctl delete_queue -p / <queue>_measure` and records
-   `measure_queue_left: true`), restore the site conf and the service's active/enabled
-   state. If the harness is killed with SIGKILL, run `restore.sh` from the result dir.
+   `measure_queue_left: true`), restore the site conf, the service's active/enabled
+   state and every CPU's original `scaling_governor`. If the harness is killed with SIGKILL,
+   run `restore.sh` from the result dir.
 
 ### Output: `results/<host>_<arch>_<cpu>_<UTC>/`
 
 | File | Content |
 |---|---|
-| `profile.json` | schema v1; every metric `{value, unit, ci95, n, source}` or `{status: NOT_MEASURED, reason}`; `collector_matrix.variants` (paired VARIANT rows) and `schema_keys` (emitted keys per type) |
-| `report.md` | headline table, per-driver table (SOLO − NONE paired within block, share of ALL, interaction residual), hottest daemon threads (`thread_top`: tid, comm, core-s/h from the first usable ALL leg; embedded DCGM/NVML workers share the daemon's name, so match tids with `gdb -p PID -batch -ex 'thread apply all bt'`), legs |
+| `profile.json` | schema v1; every metric `{value, unit, ci95, n, source}` or `{status: NOT_MEASURED, reason}`; `governor_sets` (per governor: `headline`, `metrics`, `collector_matrix`, `baseline_drift`, from that set's legs only); top-level `metrics` / `collector_matrix` are the first set's (`metrics_governor`); `collector_matrix.variants` (paired VARIANT rows) and `schema_keys` (emitted keys per type) |
+| `report.md` | **headline: daemon wakeups/s (voluntary + nonvoluntary context switches of every thread) next to core-s/h, one row per governor**, with the ALL-leg clock p50 and the OFF-leg node busy cores; then per governor the headline table and per-driver table (SOLO − NONE paired within block, share of ALL, interaction residual); hottest daemon threads per governor (`thread_top`: tid, comm, core-s/h, user s/h, system s/h, wakeups/s, active = share of 1 s windows with run time > 0; `—` where older raw lacks the field; embedded DCGM/NVML workers share the daemon's name, so match tids with `gdb -p PID -batch -ex 'thread apply all bt'`); legs with governor, busy cores, clock min/p50/max, wakeups/s |
 | `profile_row.csv` | one row of headline metrics |
 | `raw/` | `samples.jsonl` per leg (1 Hz), FWQ quanta, `perf.csv`, journal excerpts, `schema.txt` (last `$` schema message drained from `<queue>_measure` on NONE/SOLO/VARIANT/CADENCE legs), `provenance.json`, `run.json`, `commands.log` |
 
 `bin/summarize_profile.py RESULT_DIR` rebuilds every output from `raw/` (it also runs after
-each leg, so an interrupted run still has a valid partial report). Merge architectures:
+each leg, so an interrupted run still has a valid partial report). Results from before the
+governor dimension rebuild as one unnamed set; their wakeups/s is the main thread only and is
+labelled `main_thread`. Merge architectures:
 
 ```bash
 python3 bin/aggregate_profiles.py --out results/cross_arch results/*/profile.json
 # profiles.csv, profiles.md, profiles.tex (booktabs fragment)
 ```
 
-**Grace SCF cost (overlay builds).** `arm_aarch64_imc` sits in `dcgm_cpu`, and each block adds
-a `VARIANT dcgm_cpu_noscf` leg: `host_cpu_hw` alone with `HPCPERFSTATS_LIKWID_GRACE_SCF=0` in
+**Baseline RPM vs candidate RPM (D24).** Compare two RPMs only through two runs of this
+harness on the same node with the same `--governors`, never against an older harness run or a
+live A/B. Run the baseline first, then the candidate, each with its own build-info:
+
+```bash
+# root shell, from HPCPerfStats/monitor/ on the reserved node
+./measurement/bin/run_overhead_profile.sh --rpm /path/to/hpcperfstatsd-BASELINE.aarch64.rpm \
+  --build-info /path/to/BASELINE/rpmbuild/build-info --out measurement/results/baseline_$(date -u +%Y%m%dT%H%MZ)
+./measurement/bin/run_overhead_profile.sh --rpm rpmbuild/RPMS/aarch64/hpcperfstatsd-CANDIDATE.aarch64.rpm \
+  --build-info rpmbuild/build-info --out measurement/results/candidate_$(date -u +%Y%m%dT%H%MZ)
+python3 measurement/bin/compare_schema_keys.py measurement/results/baseline_*/profile.json \
+  measurement/results/candidate_*/profile.json
+```
+
+Read each `report.md` headline table row by row: wakeups/s compares across governors and
+architectures, core-s/h only under the same governor. Before blaming a tool (perf, the 1 Hz
+sampler, a build flag) for a CPU gap between two runs, A/B that tool on the live PID: perf, the
+sampler and the build were each ruled out that way before the governor was found (findings 10,
+12, 18).
+
+**Grace SCF cost (overlay builds).** `arm_aarch64_imc` sits in `arm_cpu`, and each block adds
+a `VARIANT arm_cpu_noscf` leg: `host_cpu_hw` alone with `HPCPERFSTATS_LIKWID_GRACE_SCF=0` in
 the runtime drop-in (the overlay starts at CYC+INS, no SCF counters). `report.md` → *Paired
-variants* gives SCF counters + `arm_aarch64_imc` = SOLO(`dcgm_cpu`) − VARIANT in the same block,
+variants* gives SCF counters + `arm_aarch64_imc` = SOLO(`arm_cpu`) − VARIANT in the same block,
 with perf FDs Δ (expect 4 on a 2-socket Grace). `NOT_MEASURED (... marker)` means the daemon did
 not log `SCF uncore events off` — the RPM predates the knob, so the pair would be two identical
 legs. Both RPMs of a comparison need the knob for a variant row in each.
@@ -122,10 +172,13 @@ python3 bin/compare_schema_keys.py results/BASE/profile.json results/CAND/profil
 
 ### Per-architecture checklist
 
-- [ ] Node reserved (your own allocation only), idle, CPU-only class.
+- [ ] Node reserved (your own allocation only), idle (preflight refuses > 1 busy core without `--allow-busy-node`).
+- [ ] `--dry-run` shows the governor leg sets you expect (`performance` + the driver's dynamic governor).
 - [ ] Site conf has no `disable_types` / non-default `collection_profile`.
 - [ ] `--dry-run` projected end fits the reservation.
-- [ ] Run finished: `report.md` has no `baseline_drift` warning and no contaminated legs.
+- [ ] Run finished: `report.md` has no `baseline_drift` warning and no contaminated legs;
+      cite wakeups/s, and core-s/h only with its governor.
+- [ ] `raw/run.json` `state.cleanup.governor` is `ok` (every CPU back on its original governor).
 - [ ] `measure_queue_left` is false (or the broker admin ran the printed command).
 - [ ] Copy `profile.json` to `tests/site_measurement/results/` (it feeds the
       `overhead.*_collector_delta_cpu_pct` slots) and commit the profile under

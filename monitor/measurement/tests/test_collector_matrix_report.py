@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from lib import collector_matrix, leg_summary, profile_report
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -257,3 +258,43 @@ def test_collector_profile_section(tmp_path):
     (jdir / "journal.txt").write_text("Enabled types: host_cpu\n")
     cp = profile_report.build_profile(run)["collector_profile"]
     assert cp["status"] == "NOT_MEASURED" and "no metric-profiler report" in cp["reason"]
+
+
+def test_report_per_governor_sets_and_old_results_unnamed(tmp_path):
+    """D13: each governor's legs give their own metrics and per-driver matrix (an ondemand ALL
+    leg never pairs with a performance NONE leg); wakeups/s is the headline next to core-s/h.
+    Results without the governor dimension render as one unnamed set, as before."""
+    legs = []
+    for gov, scale in (("performance", 1.0), ("ondemand", 13.0)):
+        for leg in _legs():
+            leg = json.loads(json.dumps(leg))
+            leg["governor"], leg["leg_id"] = gov, f"{gov}-{leg['leg_id']}"
+            if leg["process"]:
+                leg["process"]["cpu_core_s_per_h"] = _ci(leg["process"]["cpu_core_s_per_h"]["mean"] * scale)
+                leg["process"]["wakeups_per_s"] = 620.0
+                leg["process"]["wakeups_scope"] = "all_threads"
+            legs.append(leg)
+    meta = dict(RUN_META, schedule={"governors": ["performance", "ondemand"]})
+    run = _write_run(tmp_path / "gov", legs, meta)
+    profile_report.write_outputs(run)
+    profile = json.loads((run / "profile.json").read_text())
+    sets = {gs["governor"]: gs for gs in profile["governor_sets"]}
+    assert list(sets) == ["performance", "ondemand"]
+    assert sets["performance"]["headline"]["cpu_core_s_per_h"]["value"] == pytest.approx(10.0)
+    assert sets["ondemand"]["headline"]["cpu_core_s_per_h"]["value"] == pytest.approx(130.0)
+    assert sets["ondemand"]["headline"]["wakeups_per_s"]["value"] == pytest.approx(620.0)
+    rows = {r["group"]: r for r in sets["ondemand"]["collector_matrix"]["rows"]}
+    assert rows["likwid"]["cpu_core_s_per_h"]["mean"] == pytest.approx(65.0)  # 13 x 5, same set only
+    assert profile["metrics_governor"] == "performance"
+    assert profile["metrics"]["daemon_cpu_core_s_per_h"]["value"] == pytest.approx(10.0)
+    md = (run / "report.md").read_text()
+    assert "## Headline: daemon wakeups/s and CPU per governor" in md
+    assert "| ondemand | 620 [620, 620] /s | 130 [" in md
+    assert "## Per-driver cost (SOLO − NONE, paired within block) — governor `ondemand`" in md
+
+    old = _write_run(tmp_path / "old", _legs(), RUN_META)
+    profile_report.write_outputs(old)
+    oprof = json.loads((old / "profile.json").read_text())
+    assert [gs["governor"] for gs in oprof["governor_sets"]] == [None]
+    omd = (old / "report.md").read_text()
+    assert "## Headline metrics\n" in omd and "— governor" not in omd

@@ -39,9 +39,11 @@ def main() -> int:
     parser.add_argument("--pid", type=int, help="follow this PID instead of looking up --comm")
     parser.add_argument("--amqp-port", type=int, default=5672)
     parser.add_argument("--no-tcp", action="store_true")
+    parser.add_argument("--cpufreq-root", default="/sys/devices/system/cpu",
+                        help="cpufreq sysfs root for scaling_cur_freq (tests pass a fake tree)")
     args = parser.parse_args()
 
-    node = NodeSampler()
+    node = NodeSampler(cpufreq_root=args.cpufreq_root)
     pid = args.pid
     start = time.monotonic()
     deadline = start
