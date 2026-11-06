@@ -7,8 +7,10 @@
 extern "C" {
 #endif
 
-/* Watch FieldGroupCreate attempt ids: 0=full 1=core 2=basic 3=basic-no-board-power. */
-#define NVIDIA_GPU_WATCH_PROFILE_NR 4
+/* Watch FieldGroupCreate attempt ids: 0=full 1=core 2=basic. The former 3=basic-no-board-power
+ * (basic minus soft-defined 1132/1133 for DCGM <= 3.1.x) went away with those fields (round 2,
+ * D33): board power is the per-socket host_power_socket type now. */
+#define NVIDIA_GPU_WATCH_PROFILE_NR 3
 
 /*
  * Fill order[0..n) with profile attempt ids. Sticky last_profile (0..NR-1) is tried

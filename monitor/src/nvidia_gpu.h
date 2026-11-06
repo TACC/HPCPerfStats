@@ -3,16 +3,11 @@
 
 #include <stdint.h>
 
-#define NVIDIA_GPU_NFIELDS 26
+#define NVIDIA_GPU_NFIELDS 24
 /* DCGM field-group size without optional tensor IMMA/HMMA/DFMA split (older host engines). */
-#define NVIDIA_GPU_DCGM_NCORE 23
+#define NVIDIA_GPU_DCGM_NCORE 21
 /* Minimal non-PROF list for stacks where DCGM profiling watches are not permissioned/supported. */
-#define NVIDIA_GPU_DCGM_NBASIC 12
-/*
- * Last-resort basic list without soft-defined board-power fields 1132/1133 (DCGM ≤3.1.x
- * FieldGroupCreate BADPARAM). Preferred full/core/basic profiles still include those IDs.
- */
-#define NVIDIA_GPU_DCGM_NBASIC_NO_BOARD_POWER (NVIDIA_GPU_DCGM_NBASIC - 2)
+#define NVIDIA_GPU_DCGM_NBASIC 10
 
 #define KEYS                                                                                       \
   X(gpu_util, "", "GPU utilization in %"), X(gpu_mem_util, "", "Memory utilization in %"),         \
@@ -20,14 +15,7 @@
       X(gpu_mem_used_mb, "U=MB", "Used GPU framebuffer memory (device-reported MB)"),              \
       X(gpu_mem_free_mb, "U=MB", "Free GPU framebuffer memory (device-reported MB)"),              \
       X(gpu_sm_clock, "", "SM clock from DCGM (device-reported units)"),                           \
-      X(power_usage, "U=W", "Power draw in Watts"),                                                \
-      X(sysio_power_usage, "U=W",                                                                  \
-        "DCGM SysIO instantaneous power (W) when exposed; do not sum with power_usage/module "     \
-        "without vendor guidance"),                                                                \
-      X(module_power_usage, "U=W",                                                                 \
-        "DCGM module-scope power (W) on superchips when exposed; may overlap GPU+Grace "           \
-        "readings—avoid double-counting in totals"),                                               \
-      X(temperature, "U=C", "GPU temperature in C"),                                               \
+      X(power_usage, "U=W", "Power draw in Watts"), X(temperature, "U=C", "GPU temperature in C"), \
       X(fp64_active, "", "Ratio of cycles fp64 pipes are active (in %)"),                          \
       X(sm_active, "", "Ratio of cycles an SM has at least one warp assigned (in %)"),             \
       X(sm_occupancy, "", "Ratio of resident warps on an SM (in %)"),                              \
@@ -72,8 +60,6 @@ typedef struct dcgm_data {
   int64_t pcie_replay_counter;
   int64_t clocks_event_reasons;
   double power_usage;
-  double sysio_power_usage;
-  double module_power_usage;
   double tensor_active;
   double tensor_imma_active;
   double tensor_hmma_active;

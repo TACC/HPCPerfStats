@@ -28,9 +28,7 @@ static const unsigned short g_dcgm_field_ids_core[NVIDIA_GPU_DCGM_NCORE] = {
     DCGM_FI_PROF_PCIE_TX_BYTES,
     DCGM_FI_PROF_PCIE_RX_BYTES,
     DCGM_FI_PROF_NVLINK_TX_BYTES,
-    DCGM_FI_PROF_NVLINK_RX_BYTES,
-    DCGM_FI_DEV_SYSIO_POWER_UTIL_CURRENT,
-    DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT};
+    DCGM_FI_PROF_NVLINK_RX_BYTES};
 
 /*
  * Non-PROF fallback for nodes where DCGM profiling watches are unsupported/permissioned off.
@@ -46,27 +44,7 @@ static const unsigned short g_dcgm_field_ids_basic[NVIDIA_GPU_DCGM_NBASIC] = {
     DCGM_FI_DEV_FB_FREE,
     DCGM_FI_DEV_SM_CLOCK,
     DCGM_FI_DEV_PCIE_REPLAY_COUNTER,
-    DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
-    DCGM_FI_DEV_SYSIO_POWER_UTIL_CURRENT,
-    DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT};
-
-/*
- * Last-resort basic list for older DCGM (e.g. 3.1.8) that rejects soft-defined
- * board-power field IDs 1132/1133 at FieldGroupCreate. Preferred profiles keep
- * those IDs for Grace/Hopper stacks that accept them.
- */
-static const unsigned short
-    g_dcgm_field_ids_basic_no_board_power[NVIDIA_GPU_DCGM_NBASIC_NO_BOARD_POWER] = {
-        DCGM_FI_DEV_POWER_USAGE,
-        DCGM_FI_DEV_GPU_TEMP,
-        DCGM_FI_DEV_MEM_COPY_UTIL,
-        DCGM_FI_DEV_GPU_UTIL,
-        DCGM_FI_DEV_FB_TOTAL,
-        DCGM_FI_DEV_FB_USED,
-        DCGM_FI_DEV_FB_FREE,
-        DCGM_FI_DEV_SM_CLOCK,
-        DCGM_FI_DEV_PCIE_REPLAY_COUNTER,
-        DCGM_FI_DEV_CLOCK_THROTTLE_REASONS};
+    DCGM_FI_DEV_CLOCK_THROTTLE_REASONS};
 
 static const unsigned short g_dcgm_field_ids[NVIDIA_GPU_NFIELDS] = {
     DCGM_FI_DEV_POWER_USAGE,
@@ -92,9 +70,7 @@ static const unsigned short g_dcgm_field_ids[NVIDIA_GPU_NFIELDS] = {
     DCGM_FI_PROF_PCIE_TX_BYTES,
     DCGM_FI_PROF_PCIE_RX_BYTES,
     DCGM_FI_PROF_NVLINK_TX_BYTES,
-    DCGM_FI_PROF_NVLINK_RX_BYTES,
-    DCGM_FI_DEV_SYSIO_POWER_UTIL_CURRENT,
-    DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT};
+    DCGM_FI_PROF_NVLINK_RX_BYTES};
 
 _Static_assert(sizeof(g_dcgm_field_ids) / sizeof(g_dcgm_field_ids[0]) == NVIDIA_GPU_NFIELDS,
                "g_dcgm_field_ids length must match NVIDIA_GPU_NFIELDS");
@@ -104,13 +80,6 @@ _Static_assert(sizeof(g_dcgm_field_ids_core) / sizeof(g_dcgm_field_ids_core[0]) 
 _Static_assert(sizeof(g_dcgm_field_ids_basic) / sizeof(g_dcgm_field_ids_basic[0]) ==
                    NVIDIA_GPU_DCGM_NBASIC,
                "g_dcgm_field_ids_basic length must match NVIDIA_GPU_DCGM_NBASIC");
-_Static_assert(sizeof(g_dcgm_field_ids_basic_no_board_power) /
-                       sizeof(g_dcgm_field_ids_basic_no_board_power[0]) ==
-                   NVIDIA_GPU_DCGM_NBASIC_NO_BOARD_POWER,
-               "g_dcgm_field_ids_basic_no_board_power length must match "
-               "NVIDIA_GPU_DCGM_NBASIC_NO_BOARD_POWER");
-_Static_assert(NVIDIA_GPU_DCGM_NBASIC_NO_BOARD_POWER == NVIDIA_GPU_DCGM_NBASIC - 2,
-               "basic-no-board-power must be basic minus two board-power fields");
 
 int nvidia_gpu_watch_attempt_order(int order[NVIDIA_GPU_WATCH_PROFILE_NR], int last_profile)
 {
@@ -157,12 +126,6 @@ int nvidia_gpu_watch_profile_select(int attempt, const unsigned short **fid_out,
     *nf_out = (unsigned int)NVIDIA_GPU_DCGM_NBASIC;
     *fid_out = g_dcgm_field_ids_basic;
     *name_out = "basic-nonprof";
-    return 0;
-  }
-  if (attempt == 3) {
-    *nf_out = (unsigned int)NVIDIA_GPU_DCGM_NBASIC_NO_BOARD_POWER;
-    *fid_out = g_dcgm_field_ids_basic_no_board_power;
-    *name_out = "basic-no-board-power";
     return 0;
   }
   return -1;

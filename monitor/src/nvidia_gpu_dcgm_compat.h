@@ -24,17 +24,6 @@
 #ifndef DCGM_FI_PROF_NVLINK_RX_BYTES
 #define DCGM_FI_PROF_NVLINK_RX_BYTES 1012
 #endif
-/*
- * Soft-defined Grace/board-power field IDs (absent from older dcgm_fields.h). Prefer them
- * in full/core/basic FieldGroupCreate profiles for newer DCGM; the last-resort
- * basic-no-board-power profile must omit them (DCGM 3.1.8 returns BADPARAM otherwise).
- */
-#ifndef DCGM_FI_DEV_SYSIO_POWER_UTIL_CURRENT
-#define DCGM_FI_DEV_SYSIO_POWER_UTIL_CURRENT 1132
-#endif
-#ifndef DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT
-#define DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT 1133
-#endif
 #ifndef DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE
 #define DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE 1013
 #endif

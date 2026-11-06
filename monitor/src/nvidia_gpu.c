@@ -93,12 +93,6 @@ static int list_field_values(unsigned int gpu_id, dcgmFieldValue_v1 *values, int
     case DCGM_FI_DEV_POWER_USAGE:
       nvidia_gpu_dcgm_field_watts(&values[i], &data[gpu_id].power_usage);
       break;
-    case DCGM_FI_DEV_SYSIO_POWER_UTIL_CURRENT:
-      nvidia_gpu_dcgm_field_watts(&values[i], &data[gpu_id].sysio_power_usage);
-      break;
-    case DCGM_FI_DEV_MODULE_POWER_UTIL_CURRENT:
-      nvidia_gpu_dcgm_field_watts(&values[i], &data[gpu_id].module_power_usage);
-      break;
     case DCGM_FI_DEV_GPU_UTIL:
       (void)nvidia_gpu_dcgm_field_apply_i64(values[i].value.i64, &data[gpu_id].gpu_util);
       break;
@@ -220,8 +214,6 @@ static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row, u
   stats_set(stats, "gpu_mem_free_mb", I64_TO_LLU(row->fb_free_mb));
   stats_set(stats, "gpu_sm_clock", I64_TO_LLU(row->sm_clock));
   stats_set(stats, "power_usage", DBL_TO_LLU(row->power_usage));
-  stats_set(stats, "sysio_power_usage", DBL_TO_LLU(row->sysio_power_usage));
-  stats_set(stats, "module_power_usage", DBL_TO_LLU(row->module_power_usage));
   stats_set(stats, "fp64_active", DBL_TO_LLU_PERCENT(row->fp64_active));
   stats_set(stats, "fp32_active", DBL_TO_LLU_PERCENT(row->fp32_active));
   stats_set(stats, "fp16_active", DBL_TO_LLU_PERCENT(row->fp16_active));
