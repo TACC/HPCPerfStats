@@ -83,18 +83,14 @@ call_command("migrate", verbosity=1)
 with connection.cursor() as cur:
     cur.execute("SELECT version()")
     print("server", cur.fetchone()[0])
-    cur.execute("SELECT count(*) FROM host_data")
-    print("host_data_n", cur.fetchone()[0])
-    cur.execute("SELECT compression_enabled FROM timescaledb_information.hypertables WHERE hypertable_name = %s", ["host_data"])
-    print("compression_enabled", cur.fetchone()[0])
-    cur.execute("SELECT remove_compression_policy(%s, if_exists => true)", ["host_data"])
-    cur.execute("SELECT count(*) FROM timescaledb_information.jobs WHERE hypertable_name = %s AND proc_name LIKE %s", ["host_data", "%compression%"])
-    print("compression_jobs", cur.fetchone()[0])
 print("migrate_ok")
 '
+podman-compose -p hpcperfstats --profile pg18-migrate exec -T db_pg18 psql -h localhost -U hpcperfstats -d hpcperfstats -XtA -v ON_ERROR_STOP=1 -c "SELECT 'host_data_n=' || count(*) FROM host_data" -c "SELECT 'compression_enabled=' || compression_enabled FROM timescaledb_information.hypertables WHERE hypertable_name = 'host_data'" -c "SELECT remove_compression_policy('host_data', if_exists => true)" -c "SELECT 'compression_jobs=' || count(*) FROM timescaledb_information.jobs WHERE hypertable_name = 'host_data' AND proc_name LIKE '%compression%'"
 ```
 
-**Fail closed:** `server` is PostgreSQL 18, `host_data_n 0`, `compression_enabled True`, `compression_jobs 0`, `migrate_ok`. If you see `create_hypertable … does not exist`, the `web` image predates the `0001` extension fix; redeploy, then rerun.
+Checks run in `psql`, not through Django's cursor: on hpcperfstats02 (2026-11-06) the `web` image rejected parameterized `cursor.execute(sql, params)` with `the query has 1 placeholders but 2 parameters were passed`. Rerunning this block is safe (`migrate` is idempotent; the policy removal uses `if_exists`).
+
+**Fail closed:** `server` is PostgreSQL 18, `migrate_ok`, `host_data_n=0`, `compression_enabled=true`, `compression_jobs=0`. If you see `create_hypertable … does not exist`, the `web` image predates the `0001` extension fix; redeploy, then rerun.
 
 ---
 
@@ -179,14 +175,16 @@ from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 ensure_django()
 from django.db import connection
 with connection.cursor() as cur:
-    cur.execute("SELECT version(), current_setting(%s), inet_server_addr()", ["io_method"])
+    cur.execute("SELECT version(), inet_server_addr()")
     print("django_db", cur.fetchone())
+    cur.execute("SHOW io_method")
+    print("io_method", cur.fetchone()[0])
     cur.execute("SELECT count(*) FROM job_data")
     print("job_data_n", cur.fetchone()[0])
 '
 ```
 
-**Fail closed:** the `include:` list shows `docker-compose.pg18-primary.yaml` right after `docker-compose.defaults.yaml`; `config --services` lists `db_pg18` and **not** `db`; `ps` shows `db_pg18`, `web`, `pipeline`, `proxy`, `valkey` and `rabbitmq` up. `django_db` shows PostgreSQL 18, `io_uring` and `None` (Unix socket); `job_data_n` matches the D4 `pg18:` count. If `db_pg18` logs `lock file "/run/postgresql/.s.PGSQL.5432.lock" already exists`, PG15 did not shut down cleanly: run `podman-compose -p hpcperfstats up -d --force-recreate db_pg18 web pipeline`.
+**Fail closed:** the `include:` list shows `docker-compose.pg18-primary.yaml` right after `docker-compose.defaults.yaml`; `config --services` lists `db_pg18` and **not** `db`; `ps` shows `db_pg18`, `web`, `pipeline`, `proxy`, `valkey` and `rabbitmq` up. `django_db` shows PostgreSQL 18 and `None` (Unix socket), `io_method` is `io_uring`; `job_data_n` matches the D4 `pg18:` count. If `db_pg18` logs `lock file "/run/postgresql/.s.PGSQL.5432.lock" already exists`, PG15 did not shut down cleanly: run `podman-compose -p hpcperfstats up -d --force-recreate db_pg18 web pipeline`.
 
 ### E2 — rollback (only if E1 fails; PG18 writes after cutover are lost)
 

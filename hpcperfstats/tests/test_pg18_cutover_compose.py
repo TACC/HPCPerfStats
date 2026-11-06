@@ -158,3 +158,18 @@ def test_runbook_up_commands_name_their_services() -> None:
       words = [w for w in cmd.split(" up -d", 1)[1].split() if w]
       services = [w for w in words if not w.startswith("-")]
       assert services, f"bare up: {cmd}"
+
+
+def test_runbook_python_blocks_avoid_parameterized_django_sql() -> None:
+  """Regression (02, 2026-11-06): web cursor rejected execute(sql, params).
+
+  Phase B checks failed with "the query has 1 placeholders but 2 parameters
+  were passed"; verification SQL belongs in psql inside db_pg18.
+  """
+  text = RUNBOOK.read_text()
+  for block in re.findall(r"```bash\n(.*?)```", text, flags=re.S):
+    if "/usr/local/bin/python3" in block and "execute(" in block:
+      assert not re.search(r'execute\("[^"]*",\s*[\[(]', block), block[:200]
+  phase_b = text.split("## Phase B", 1)[1].split("## Phase C", 1)[0]
+  assert "remove_compression_policy('host_data', if_exists => true)" in phase_b
+  assert "compression_jobs=" in phase_b and "host_data_n=" in phase_b
