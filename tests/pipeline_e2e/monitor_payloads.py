@@ -61,7 +61,7 @@ $uptime 1
 !host_lnet tx_bytes,E,U=B rx_bytes,E,U=B
 !host_opa PortXmitData,E PortRcvData,E PortXmitPkts,E PortRcvPkts,E PortXmitWait,E SwPortCongestion,E PortRcvFECN,E PortRcvBECN,E
 !host_nfs read_ops,E write_ops,E
-!nvidia_gpu gpu_util,E tensor_active,E tensor_imma_active,E tensor_hmma_active,E tensor_dfma_active,E fp16_active,E fp32_active,E fp64_active,E gpu_mem_bw_bytes_rate,E power_usage,E gpu_io_link_total_bytes,E clocks_event_reasons,E module_power_usage,E gpu_count,E gpu_mem_util,E,R=S gpu_mem_used_mb,E,R=S
+!nvidia_gpu gpu_util,E tensor_active,E tensor_imma_active,E tensor_hmma_active,E tensor_dfma_active,E fp16_active,E fp32_active,E fp64_active,E gpu_mem_bw_bytes_rate,E power_usage,E gpu_io_link_total_bytes,E clocks_event_reasons,E gpu_count,E gpu_mem_util,E,R=S gpu_mem_used_mb,E,R=S
 !amd_gpu gpu_util,E tensor_active,E gpu_mem_bw_bytes_rate,E power_usage,E gpu_count,E
 !intel_x86_pmc_gpr8 {intel_pmc_schema}
 !intel_x86_uncore_imc_skx dram_cas_reads,E dram_cas_writes,E
@@ -69,6 +69,7 @@ $uptime 1
 !amd_x86_uncore_df MBW_CHANNEL_0,E MBW_CHANNEL_1,E MBW_CHANNEL_2,E MBW_CHANNEL_3,E MBW_CHANNEL_4,E MBW_CHANNEL_5,E MBW_CHANNEL_6,E MBW_CHANNEL_7,E
 !arm_aarch64_imc dram_cas_reads,E dram_cas_writes,E
 !intel_x86_rapl pkg_energy,E,U=J
+!host_power_socket cpu_power_w,U=W socket_power_w,U=W sysio_power_w,U=W module_power_w,U=W
 """.format(
       fqdn=fqdn,
       llite=llite_schema,
@@ -150,7 +151,7 @@ def _nvidia_fast_line(scale: int) -> str:
   """Fast-tier GPU sample (slow mem counters omitted)."""
   return (
       "nvidia_gpu 0 @fast "
-      "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.2f %.1f %.0f %d %.1f 1\n"
+      "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.2f %.1f %.0f %d 1\n"
       % (
           55.0 + (scale % 20),  # gpu_util
           12.0 + (scale % 5),  # tensor_active
@@ -164,7 +165,6 @@ def _nvidia_fast_line(scale: int) -> str:
           180.0 + scale,  # power_usage
           1e8 + scale * 1e6,  # gpu_io_link_total_bytes
           3 + (scale % 4),  # clocks_event_reasons
-          95.0 + (scale % 10),  # module_power_usage
       )
   )
 
@@ -173,7 +173,7 @@ def _nvidia_full_line(scale: int) -> str:
   """Full-tier GPU sample including slow-tier memory counters."""
   return (
       "nvidia_gpu 0 @full "
-      "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.2f %.1f %.0f %d %.1f 1 %.1f %.0f\n"
+      "%.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.2f %.1f %.0f %d 1 %.1f %.0f\n"
       % (
           55.0 + (scale % 20),
           12.0 + (scale % 5),
@@ -187,7 +187,6 @@ def _nvidia_full_line(scale: int) -> str:
           180.0 + scale,
           1e8 + scale * 1e6,
           3 + (scale % 4),
-          95.0 + (scale % 10),
           62.0 + (scale % 15),
           12000.0 + scale * 50,
       )
@@ -247,6 +246,13 @@ def _arm_imc_line(scale: int) -> str:
   return "arm_aarch64_imc imc %d %d\n" % (reads, writes)
 
 
+def _power_socket_lines(scale: int) -> str:
+  """Two equal Grace sockets (GB200 shape: CPU, Grace, SysIO; module 0)."""
+  cpu = 45 + (scale % 3)
+  sock = 90 + (scale % 3)
+  return "".join(f"host_power_socket {s} {cpu} {sock} 6 0\n" for s in (0, 1))
+
+
 def full_stats_snapshot(epoch: float, jid: str, fqdn: str, scale: int) -> str:
   """One timestamp block with rows for every schema type we declare."""
   parts = [
@@ -270,6 +276,7 @@ def full_stats_snapshot(epoch: float, jid: str, fqdn: str, scale: int) -> str:
       _amd64_df_line(scale),
       _arm_imc_line(scale),
       _intel_rapl_line(scale),
+      _power_socket_lines(scale),
   ]
   return "".join(parts)
 

@@ -99,7 +99,7 @@ def test_discover_days_binds_the_gpu_types():
   ):
     assert cmd_mod.Command()._discover_days() == []
   cursor.execute.assert_any_call(
-    cmd_mod._DISCOVER_DAYS_SQL, [list(cmd_mod.GPU_TYPES)]
+    cmd_mod._DISCOVER_DAYS_SQL, [list(cmd_mod.KEEP_DEV_TYPES)]
   )
 
 

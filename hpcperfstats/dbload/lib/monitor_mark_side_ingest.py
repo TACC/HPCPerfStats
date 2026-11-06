@@ -7,7 +7,9 @@ are unchanged.
 
 Attributes:
   log: Logger for skipped side-table writes.
-  _GPU_TYPES: Stats types that keep a hardware ``dev`` token.
+  _GPU_TYPES: Stats types that keep a hardware ``dev`` token (the canonical
+    ``GPU_STATS_TYPES``; ``host_power_socket`` is node-wide and never on a
+    jid payload, D38).
 """
 
 from __future__ import annotations
@@ -16,9 +18,11 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from hpcperfstats.dbload.lib.monitor_naming.canonical import GPU_STATS_TYPES
+
 log = logging.getLogger(__name__)
 
-_GPU_TYPES = frozenset({"nvidia_gpu", "amd_gpu", "intel_gpu"})
+_GPU_TYPES = GPU_STATS_TYPES
 
 
 def parse_jobs_jids(line: str) -> list[str]:

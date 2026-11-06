@@ -28,9 +28,11 @@ Attributes:
   _COUNTER_GROUP_COLS: Attribute.
   _DCGM_CPU_POWER_SOCKET_GAUGE_EVENTS: Attribute.
   _EMPTY_DELTA_ARC_COLUMNS: Attribute.
-  _GPU_STATS_TYPES: Attribute.
+  _GPU_STATS_TYPES: Canonical GPU type set (``canonical.GPU_STATS_TYPES``).
   _HOST_CPU_HW_TYPES: Attribute.
   _HOST_MEM_JOB_TYPE: Attribute.
+  _KEEP_DEV_NON_GPU_TYPES: Keep-``dev`` collapse types that are not GPUs
+    (``host_power_socket``); summed per ``dev``.
   _JOB_STAMP_DEV_SEP: Separator between a shared ``j:<jid>`` stamp and the
     hardware ``dev`` it carries until collapse, so deltas stay per device.
   _NVIDIA_GPU_KNOWN_EVENTS: Attribute.
@@ -79,7 +81,9 @@ from hpcperfstats.dbload.lib.file_locking import (
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
   DCGM_CPU_POWER_LIMIT_W,
   DCGM_CPU_POWER_UTIL_W,
+  GPU_STATS_TYPES,
   HOST_CPU_HW_TYPE,
+  KEEP_DEV_COLLAPSE_TYPES,
 )
 from hpcperfstats.dbload.lib.monitor_naming.legacy import (
   LEGACY_HOST_CPU_HW_TYPE,
@@ -844,7 +848,11 @@ _DCGM_CPU_POWER_SOCKET_GAUGE_EVENTS = frozenset(
 )
 
 _HOST_CPU_HW_TYPES = frozenset({HOST_CPU_HW_TYPE, LEGACY_HOST_CPU_HW_TYPE})
-_GPU_STATS_TYPES = frozenset({"nvidia_gpu", "amd_gpu", "intel_gpu"})
+# Canonical sets live in ``monitor_naming.canonical`` (D34).
+_GPU_STATS_TYPES = GPU_STATS_TYPES
+# Non-GPU keep-``dev`` types (``host_power_socket``): grouped with ``dev`` by
+# plain sum, never through the NVIDIA MAX/MEAN/OR classes.
+_KEEP_DEV_NON_GPU_TYPES = KEEP_DEV_COLLAPSE_TYPES - GPU_STATS_TYPES
 # Job-scoped cgroup memory (monitor ``host_mem_job``); always ``dev=j:<jid>``.
 _HOST_MEM_JOB_TYPE = "host_mem_job"
 # Shared-node stamps carry the hardware ``dev`` (``j:<jid>\x1f<dev>``) through
@@ -3563,9 +3571,11 @@ def _partition_job_stamped_rows(stats_df: Any) -> tuple[Any, Any]:
 
 def _collapse_stats_with_deltas(stats_df: Any) -> Any:
   """
-  Collapse multi-row samples. GPU types and ``j:`` job stamps keep ``dev``.
+  Collapse multi-row samples; keep-``dev`` types and ``j:`` stamps keep dev.
 
-  Whole-node (unstamped) non-GPU rows sum across devices to ``dev=''``.
+  Keep-``dev`` types are ``KEEP_DEV_COLLAPSE_TYPES`` (GPUs plus
+  ``host_power_socket``, which sums per socket). Whole-node (unstamped)
+  rows of every other type sum across devices to ``dev=''``.
 
   Args:
     stats_df (Any): Stats df passed to this helper.
@@ -3598,6 +3608,11 @@ def _collapse_stats_with_deltas(stats_df: Any) -> Any:
       # Multi-dev host paths always duplicate gcols (dev dropped); skip
       # identity probe and category-cast before groupby (E8 non-transfer).
       # ``j:`` stamps stay on ``gcols_gpu`` so two jobs at one second do not merge.
+      keep_dev = rest_plain["type"].isin(_KEEP_DEV_NON_GPU_TYPES)
+      if bool(keep_dev.any()):
+        # ``host_power_socket``: one row per socket, summed only within dev.
+        parts.append(_groupby_sum_min_count(rest_plain[keep_dev], gcols_gpu))
+        rest_plain = rest_plain[~keep_dev]
       if not rest_plain.empty:
         collapsed_rest = _groupby_sum_min_count(
           rest_plain,

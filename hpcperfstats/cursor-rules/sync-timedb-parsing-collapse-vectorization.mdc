@@ -4,6 +4,12 @@ alwaysApply: false
 globs:
   - hpcperfstats/dbload/lib/sync_timedb_parsing.py
   - hpcperfstats/tests/test_sync_timedb.py
+  - hpcperfstats/dbload/lib/monitor_naming/canonical.py
+  - hpcperfstats/dbload/codon/feed_collapse.py
+  - hpcperfstats/dbload/lib/monitor_mark_side_ingest.py
+  - hpcperfstats/dbload/lib/host_data_percore_collapse.py
+  - hpcperfstats/site/lib/machine/management/commands/collapse_percore_host_data.py
+  - hpcperfstats/tests/test_keep_dev_type_set_parity.py
 ---
 
 # sync_timedb Parsing Collapse Vectorization
@@ -36,7 +42,7 @@ Multi-`dev` metric collapse in ingest parse (`_collapse_stats_with_deltas` and h
 | Collapse need | Required approach |
 |---------------|-------------------|
 | Sum across devs (`min_count=1`) | `_groupby_sum_min_count` |
-| **GPU types** (`nvidia_gpu` / `amd_gpu` / `intel_gpu`) | Collapse group cols **include `dev`** (`_COLLAPSE_GROUP_COLS_WITH_DEV`) — keep per-device rows; sum/mean/max/OR only within a device. Non-GPU types on whole-node (unstamped) jobs use `_COLLAPSE_GROUP_COLS` (no `dev`) and set `dev=''` on output (CPU, CCM, host rows sum across devices), **except** shared-node stamps `dev` starting with `j:`: those group with `dev` and keep the stamp so two jobs at one second do not merge. The Codon port (`collapse_full_cols`) blanks `dev` for non-GPU, non-`j:` rows before grouping to match. |
+| **Keep-`dev` types** (`KEEP_DEV_COLLAPSE_TYPES`: GPU `nvidia_gpu` / `amd_gpu` / `intel_gpu` plus `host_power_socket`) | Collapse group cols **include `dev`** (`_COLLAPSE_GROUP_COLS_WITH_DEV`) — keep per-device rows; GPUs sum/mean/max/OR only within a device, `host_power_socket` (`_KEEP_DEV_NON_GPU_TYPES`) is a plain per-socket `_groupby_sum_min_count` (never the NVIDIA kinds). Every other type on whole-node (unstamped) jobs uses `_COLLAPSE_GROUP_COLS` (no `dev`) and sets `dev=''` on output (CPU, CCM, host rows sum across devices), **except** shared-node stamps `dev` starting with `j:`: those group with `dev` and keep the stamp so two jobs at one second do not merge. The Codon port (`collapse_full_cols`) cuts `j:` stamps first, keeps `dev` for `KEEP_DEV_TYPES`, and blanks the rest before grouping to match. |
 | Event-dispatched standard reducers (sum/max/mean) | Partition by event class → `groupby.agg` with native reducers |
 | Bitwise OR (`clocks_event_reasons`) | Duplicate keys: `_nvidia_bitwise_or_values` (`numpy.bitwise_or.reduce`) on the OR slice only. Unique keys: one column mask (NaN or DCGM blank → 0.0; finite → uint64 bit pattern) with no per-group call |
 | Custom reducer (DCGM cluster-mean, dynamic gap) | `_collapse_dcg_cpu_power_vectorized` — explicit `for key, group in grouped` + NumPy `_cluster_mean_sum_sorted` (`reduceat`), **not** `apply` |
@@ -46,6 +52,19 @@ Multi-`dev` metric collapse in ingest parse (`_collapse_stats_with_deltas` and h
 | Streaming resume offset | Feed every line from offset 0 through `feed_line` / `feed_lines`; gate emission with parser `start_idx` (same as `parse_stats_lines`). Physical `readline` skip is forbidden. |
 
 Arc continuity (`_ARC_GROUP_COLS`) includes ``dev`` so multi-GPU rates stay per-device. Node-level summary plots still sum across devices in ``get_aggregate_df``.
+
+## Keep-`dev` type sets (D34, monitor round 2)
+
+"Which stats types keep their hardware `dev`" used to live in four hand copies of the GPU list (`sync_timedb_parsing.py`, `codon/feed_collapse.py`, `monitor_mark_side_ingest.py`, `host_data_percore_collapse.py`). There is now **one** canonical module, `hpcperfstats/dbload/lib/monitor_naming/canonical.py`, with two sets:
+
+| Set | Members | Used by |
+|-----|---------|---------|
+| `GPU_STATS_TYPES` | `nvidia_gpu`, `amd_gpu`, `intel_gpu` | shared-node stamping only (`_shared_row_dev`, `shared_dev_for_row`), DCGM blank filters, job-scoped GPU allowlist (`job_table._GPU_TYPES`, `job_host_data_scope._GPU_HOST_DATA_TYPES`) |
+| `KEEP_DEV_COLLAPSE_TYPES` | GPU set + `host_power_socket` | collapse split (`_collapse_stats_with_deltas`), Codon `collapse_full_cols`, per-core repair (`percore_mask`, `collapse_percore_host_data`) |
+
+- The Codon compile unit cannot import Python modules: `feed_collapse.py` keeps **literal mirrors** `GPU_TYPES` and `KEEP_DEV_TYPES`, locked by `hpcperfstats/tests/test_keep_dev_type_set_parity.py` (set equality, every Python copy `is` the canonical object, all three collapse sites keep `host_power_socket` `dev`, stamping still matches GPUs only, a `-` payload keeps socket `dev` with no `j:` stamp).
+- **A new keep-`dev` type** updates, in the same task: `KEEP_DEV_COLLAPSE_TYPES`, the Codon `KEEP_DEV_TYPES` mirror, the parity test, and the collapse branch (plain sum vs NVIDIA kinds). Never add a type-name literal set to any other module; import the canonical set.
+- Adding a type to `KEEP_DEV_COLLAPSE_TYPES` does **not** make it a GPU for shared-node stamping. Whether a type rides per-jid payloads is decided by the monitor's `job_emit_filter.c` (`is_gpu_type` / `is_cpu_type` / `host_mem_job`); every unlisted type goes to the node-wide `-` payload (D38), so a node-wide keep-`dev` type (`host_power_socket`) is never `j:` stamped. Consumers sum keep-`dev` rows by `dev` per (host, time), never value-dedup.
 
 ## Resume state integrity (RC-0)
 

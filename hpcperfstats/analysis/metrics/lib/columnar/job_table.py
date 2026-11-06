@@ -39,6 +39,7 @@ from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
   is_job_scoped_host_data_type,
   sane_counter_abs_limit,
 )
+from hpcperfstats.dbload.lib.monitor_naming.canonical import GPU_STATS_TYPES
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
   canonical_event_name_for_type,
   events_probe_names,
@@ -46,7 +47,7 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
 )
 from hpcperfstats.lib.dcgm_blank import is_dcgm_numeric_blank
 
-_GPU_TYPES = frozenset({"nvidia_gpu", "amd_gpu", "intel_gpu"})
+_GPU_TYPES = GPU_STATS_TYPES
 _JOB_ARC_SQL_FIRST = (MODE_SQL, MODE_ORM)
 
 

@@ -10,7 +10,8 @@ already has a ``dev=''`` row keeps it; only its per-core copies are deleted.
 Dry run by default.
 
 Attributes:
-  _PERCORE_WHERE: SQL predicate selecting per-core rows (non-GPU, hardware dev).
+  _PERCORE_WHERE: SQL predicate selecting per-core rows (hardware dev, type
+    not in the keep-``dev`` set of GPUs and ``host_power_socket``).
   _COLUMNS: ``host_data`` columns read for planning and written on insert.
   _INSERT_SQL: Insert of one planned whole-node row; an existing row wins.
   _DELETE_SQL: Delete of the window's per-core rows, with the same predicate
@@ -48,7 +49,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import OperationalError, connection, transaction
 
 from hpcperfstats.dbload.lib.host_data_percore_collapse import (
-  GPU_TYPES,
+  KEEP_DEV_TYPES,
   KEY_COLS,
   plan_collapse,
 )
@@ -444,7 +445,7 @@ class Command(BaseCommand):
     """
     with transaction.atomic(), connection.cursor() as cursor:
       cursor.execute(_NO_TIMEOUT_SQL)
-      cursor.execute(_DISCOVER_DAYS_SQL, [list(GPU_TYPES)])
+      cursor.execute(_DISCOVER_DAYS_SQL, [list(KEEP_DEV_TYPES)])
       return sorted(row[0].replace(tzinfo=dt.UTC) for row in cursor.fetchall())
 
   def _percore_hosts(
@@ -475,7 +476,7 @@ class Command(BaseCommand):
       cursor.execute(
         "SELECT DISTINCT host FROM host_data WHERE time >= %s AND time < %s "
         f"AND host IS NOT NULL AND {_PERCORE_WHERE}",
-        [start, end, list(GPU_TYPES)],
+        [start, end, list(KEEP_DEV_TYPES)],
       )
       return sorted(row[0] for row in cursor.fetchall())
 
@@ -512,7 +513,7 @@ class Command(BaseCommand):
       >>> Command._migrate  # doctest: +SKIP
     """
     lookback = dt.timedelta(minutes=options["lookback_minutes"])
-    gpu = list(GPU_TYPES)
+    gpu = list(KEEP_DEV_TYPES)
     with transaction.atomic(), connection.cursor() as cursor:
       cursor.execute(_NO_TIMEOUT_SQL)
       cursor.execute(_DML_DECOMPRESS_SQL)
@@ -579,7 +580,8 @@ class Command(BaseCommand):
       hosts (list[str]): Host batch.
       start (dt.datetime): Window start (inclusive).
       end (dt.datetime): Window end (exclusive).
-      gpu (list[str]): GPU types to exclude.
+      gpu (list[str]): Keep-``dev`` types to exclude (GPUs and
+        ``host_power_socket``).
 
     Returns:
       None

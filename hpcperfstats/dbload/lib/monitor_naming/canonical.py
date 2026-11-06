@@ -20,6 +20,8 @@ Attributes:
   DRAM_CHAN_BYTES_EVENTS: Attribute.
   FP_OPS_RETIRED: Attribute.
   GRACE_FP_ARITH_SCALAR_DOUBLE: Attribute.
+  GPU_STATS_TYPES: GPU ``host_data.type`` names (keep hardware ``dev``;
+    shared-node stamping skips them).
   GRACE_FP_ARITH_SCALAR_SINGLE: Attribute.
   HBM_CAS_READS: Attribute.
   HBM_CAS_WRITES: Attribute.
@@ -35,6 +37,8 @@ Attributes:
   HOST_NFS_TYPE: Attribute.
   HOST_NUMA_TYPE: Attribute.
   HOST_OPA_TYPE: Attribute.
+  HOST_POWER_SOCKET_EVENTS: ``host_power_socket`` keys (all watts).
+  HOST_POWER_SOCKET_TYPE: Per-socket power type (``dev`` = socket id).
   HOST_ROOFLINE_PEAK_TYPE: Attribute.
   INSTR_RETIRED: Attribute.
   INTEL_CORE_PMC_TYPES_ORDERED: Attribute.
@@ -44,6 +48,8 @@ Attributes:
   INTEL_IMC_STATS_TYPES: Attribute.
   INTEL_LEGACY_SSE_FLOP_EVENTS: Attribute.
   INTEL_RAPL_STATS_TYPES: Attribute.
+  KEEP_DEV_COLLAPSE_TYPES: Types whose ingest collapse keeps ``dev`` (GPU
+    types plus ``host_power_socket``).
   LUSTRE_LLITE_TYPE: Attribute.
   MEM_FREE: Attribute.
   MEM_TOTAL: Attribute.
@@ -51,6 +57,14 @@ Attributes:
   MPERF: Attribute.
   PKG_ENERGY: Attribute.
   PMC_TYPENAME_PRIORITY: Attribute.
+  RETIRED_HOST_CPU_HW_POWER_EVENTS: ``host_cpu_hw`` power keys retired in
+    monitor round 2 (history only).
+  RETIRED_NVIDIA_GPU_POWER_EVENTS: ``nvidia_gpu`` module/SysIO power keys
+    retired in monitor round 2 (history only).
+  SOCKET_CPU_POWER_W: ``host_power_socket`` CPU core rail watts.
+  SOCKET_MODULE_POWER_W: ``host_power_socket`` GH200 module watts.
+  SOCKET_POWER_W: ``host_power_socket`` whole-socket watts.
+  SOCKET_SYSIO_POWER_W: ``host_power_socket`` SoC (SysIO) rail watts.
   _PMC_FREQ_BY_TYPENAME: Attribute.
 """
 
@@ -150,6 +164,36 @@ MEM_USED = "mem_used"
 MEM_FREE = "mem_free"
 
 HOST_CPU_TYPE = "host_cpu"
+# Per-socket power (monitor round 2, D31/D32): one row per CPU socket,
+# ``dev`` = socket id, unit W. Node-wide data (D38): never ``j:`` stamped.
+HOST_POWER_SOCKET_TYPE = "host_power_socket"
+SOCKET_CPU_POWER_W = "cpu_power_w"
+SOCKET_POWER_W = "socket_power_w"
+SOCKET_SYSIO_POWER_W = "sysio_power_w"
+SOCKET_MODULE_POWER_W = "module_power_w"
+HOST_POWER_SOCKET_EVENTS = (
+  SOCKET_CPU_POWER_W,
+  SOCKET_POWER_W,
+  SOCKET_SYSIO_POWER_W,
+  SOCKET_MODULE_POWER_W,
+)
+# Retired monitor power keys (D33/D36): no longer emitted, still in archive
+# history; analysis dual-reads them for old rows only.
+RETIRED_HOST_CPU_HW_POWER_EVENTS = (
+  DCGM_CPU_POWER_UTIL_W,
+  DCGM_CPU_POWER_LIMIT_W,
+)
+RETIRED_NVIDIA_GPU_POWER_EVENTS = ("module_power_usage", "sysio_power_usage")
+# GPU stats types keep their hardware ``dev`` in ingest collapse, shared-node
+# stamping and the per-core repair. Only Python copy (D34); the Codon compile
+# unit mirrors it as a literal (``codon/feed_collapse.py`` ``GPU_TYPES``),
+# locked by ``hpcperfstats/tests/test_keep_dev_type_set_parity.py``.
+GPU_STATS_TYPES = frozenset({"nvidia_gpu", "amd_gpu", "intel_gpu"})
+# Types whose ingest collapse keeps ``dev`` (per-device rows in host_data):
+# GPU types plus ``host_power_socket``; consumers sum them by ``dev``.
+# Shared-node stamping still keys on ``GPU_STATS_TYPES`` only (D38). Codon
+# mirror: ``feed_collapse.KEEP_DEV_TYPES`` (same parity test).
+KEEP_DEV_COLLAPSE_TYPES = GPU_STATS_TYPES | frozenset({HOST_POWER_SOCKET_TYPE})
 HOST_MEM_TYPE = "host_mem"
 # Job-scoped cgroup memory (shared-node); not NUMA host_mem dual-read.
 HOST_MEM_JOB_TYPE = "host_mem_job"

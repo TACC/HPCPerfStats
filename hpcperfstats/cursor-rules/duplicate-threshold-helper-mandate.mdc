@@ -20,6 +20,10 @@ alwaysApply: false
 - **Generated or vendored** code paths.
 - Code under `HPCPerfStats/monitor/` remains read-only per `workspace-guardrails.mdc` unless the user explicitly approves edits there.
 
+## Example: stats-type sets (D34, 2026-11-05)
+
+The GPU type list was hand-copied in four ingest modules (and two analysis modules). It is now one canonical module (`monitor_naming/canonical.py`: `GPU_STATS_TYPES`, `KEEP_DEV_COLLAPSE_TYPES`). Where a compile unit cannot import it (Codon `dbload/codon/feed_collapse.py`), keep a **literal mirror plus a parity test** (`test_keep_dev_type_set_parity.py`) instead of a silent copy. See `sync-timedb-parsing-collapse-vectorization.mdc` → *Keep-`dev` type sets*.
+
 ## How to extract
 
 Follow **`refactor-dedup-priorities.mdc`** for **how** to dedupe (less code first, avoid pointless abstraction). This rule only mandates **that** you dedupe at the threshold; it does not relax tests, security, or layer-specific rules.

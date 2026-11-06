@@ -146,6 +146,14 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     "patterns": [
       "hpcperfstats/dbload/lib/sync_timedb_parsing.py",
       "hpcperfstats/tests/test_sync_timedb.py",
+      # Keep-dev type sets (D34): canonical sets, Codon mirror, the other
+      # consumers of the sets, and the parity test.
+      "hpcperfstats/dbload/lib/monitor_naming/canonical.py",
+      "hpcperfstats/dbload/codon/feed_collapse.py",
+      "hpcperfstats/dbload/lib/monitor_mark_side_ingest.py",
+      "hpcperfstats/dbload/lib/host_data_percore_collapse.py",
+      "hpcperfstats/site/lib/machine/management/commands/collapse_percore_host_data.py",
+      "hpcperfstats/tests/test_keep_dev_type_set_parity.py",
     ],
     "rules": [
       "sync-timedb-parsing-collapse-vectorization.mdc",

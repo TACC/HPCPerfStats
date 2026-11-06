@@ -26,7 +26,12 @@ REPS = 80
 # datetime stop at year 9999 (sync_timedb_parsing.MAX_SAMPLE_TIME_S).
 MAX_SAMPLE_TIME_S = 253402300800.0
 
+# Literal mirrors of ``monitor_naming.canonical`` (this compile unit cannot
+# import Python modules). ``test_keep_dev_type_set_parity.py`` locks both:
+# GPU_TYPES == GPU_STATS_TYPES (shared-node stamping skips them) and
+# KEEP_DEV_TYPES == KEEP_DEV_COLLAPSE_TYPES (collapse keeps their ``dev``).
 GPU_TYPES = ["nvidia_gpu", "amd_gpu", "intel_gpu"]
+KEEP_DEV_TYPES = ["nvidia_gpu", "amd_gpu", "intel_gpu", "host_power_socket"]
 # Shared stamps carry the hardware dev (``j:<jid>\x1f<dev>``) through the
 # counter-delta step; collapse cuts it back to ``j:<jid>`` (parity with
 # ``sync_timedb_parsing._JOB_STAMP_DEV_SEP``).
@@ -867,8 +872,8 @@ def _counter_key(host: str, typ: str, dev: str, event: str) -> str:
   return host + "\0" + typ + "\0" + d + "\0" + event
 
 
-def _is_gpu_type(typ: str) -> bool:
-  return any(typ == g for g in GPU_TYPES)
+def _is_keep_dev_type(typ: str) -> bool:
+  return any(typ == g for g in KEEP_DEV_TYPES)
 
 
 def _is_finite_val(v: float) -> bool:
@@ -1196,9 +1201,11 @@ def collapse_full_cols(
 ]:
   """Columnar port of ``_collapse_stats_with_deltas``.
 
-  GPU types keep hardware ``dev`` in the group key and ``j:`` shared-node
-  stamps stay distinct the same way. Every other (whole-node) row has ``dev``
-  blanked first, so CPU/CCM/host rows sum across devices to ``dev=''``.
+  Keep-``dev`` types (``KEEP_DEV_TYPES``: GPUs and ``host_power_socket``)
+  keep hardware ``dev`` in the group key and ``j:`` shared-node stamps stay
+  distinct the same way. Every other (whole-node) row has ``dev`` blanked
+  first, so CPU/CCM/host rows sum across devices to ``dev=''``;
+  ``host_power_socket`` sums per socket (plain ``_KIND_SUM``).
   Host-sum groups use ``sum(min_count=1)`` NaN semantics (all-NaN -> NaN).
   CCM power gauges (``host_cpu_hw``/``cpu_counter_metrics`` x DCGM CPU power
   events) use the cluster-mean-sum port. ``nvidia_gpu`` rows nan-out DCGM
@@ -1229,11 +1236,13 @@ def collapse_full_cols(
       out_delta,
     )
 
+  # ``j:`` first: a stamped keep-dev row (never GPU, ``_shared_row_dev``)
+  # groups on its job like CPython's ``_partition_job_stamped_rows``.
   devs = [
-    devs[i]
-    if _is_gpu_type(types[i])
-    else devs[i].split(JOB_STAMP_DEV_SEP)[0]
+    devs[i].split(JOB_STAMP_DEV_SEP)[0]
     if devs[i].startswith("j:")
+    else devs[i]
+    if _is_keep_dev_type(types[i])
     else ""
     for i in range(n)
   ]
@@ -2111,7 +2120,7 @@ def feed_and_collapse(lines: list[str]) -> tuple[int, int, float, float]:
     stats_unit,
     proc_count,
   ) = feed_lines(lines, 0)
-  gpu = ["nvidia_gpu", "amd_gpu", "intel_gpu"]
+  gpu = GPU_TYPES
   oh, _ot, _oe, _ou, _oti, vals = collapse_plain_host_sum(
     stats_host,
     stats_type,

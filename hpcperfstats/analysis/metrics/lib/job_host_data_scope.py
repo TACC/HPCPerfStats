@@ -36,6 +36,8 @@ from typing import Any
 
 from django.db.models import Q
 
+from hpcperfstats.dbload.lib.monitor_naming.canonical import GPU_STATS_TYPES
+
 _logger: logging.Logger = logging.getLogger(__name__)
 
 SHARED_HOST_WIDE_HELP_FOOTER: str = (
@@ -46,9 +48,7 @@ SHARED_HOST_WIDE_HELP_FOOTER: str = (
 
 HOST_WIDE_RESIDUAL_CACHE_REV: int = 1
 
-_GPU_HOST_DATA_TYPES: frozenset[str] = frozenset(
-  {"nvidia_gpu", "amd_gpu", "intel_gpu"}
-)
+_GPU_HOST_DATA_TYPES: frozenset[str] = GPU_STATS_TYPES
 
 
 def job_dev_token(jid: str) -> str:

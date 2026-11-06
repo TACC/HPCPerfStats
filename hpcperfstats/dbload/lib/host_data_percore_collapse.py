@@ -7,7 +7,8 @@ it sums the per-core rows with the same collapse function ingest uses, keeps a
 ``dev=''`` row that already exists, and computes ``arc`` the way ingest does.
 
 Attributes:
-  GPU_TYPES: Types that legitimately keep a hardware ``dev``.
+  KEEP_DEV_TYPES: Types that legitimately keep a hardware ``dev`` (the
+    canonical keep-``dev`` collapse set: GPUs and ``host_power_socket``).
   KEY_COLS: Columns that identify one whole-node row (its ``dev`` is ``''``).
   OUTPUT_COLS: Column order of the planned rows.
   _SERIES_COLS: Columns that identify one metric series (all samples of it).
@@ -21,12 +22,14 @@ from typing import Any, NamedTuple
 import numpy as np
 import pandas as pd
 
+from hpcperfstats.dbload.lib.monitor_naming.canonical import (
+  KEEP_DEV_COLLAPSE_TYPES,
+)
 from hpcperfstats.dbload.lib.sync_timedb_parsing import (
-  _GPU_STATS_TYPES,
   _collapse_stats_with_deltas,
 )
 
-GPU_TYPES = tuple(sorted(_GPU_STATS_TYPES))
+KEEP_DEV_TYPES = tuple(sorted(KEEP_DEV_COLLAPSE_TYPES))
 KEY_COLS = ["host", "type", "event", "time"]
 OUTPUT_COLS = [
   "time",
@@ -64,10 +67,11 @@ class CollapsePlan(NamedTuple):
 
 
 def percore_mask(frame: Any) -> Any:
-  """Mark rows that are per-core copies of a whole-node (non-GPU) metric.
+  """Mark rows that are per-core copies of a whole-node metric.
 
-  A row qualifies when its type is not a GPU type and its ``dev`` is neither
-  empty nor a shared-node ``j:<jid>`` stamp.
+  A row qualifies when its type is not a keep-``dev`` type (GPUs,
+  ``host_power_socket``) and its ``dev`` is neither empty nor a shared-node
+  ``j:<jid>`` stamp.
 
   Args:
     frame (Any): Frame with ``type`` and ``dev`` columns.
@@ -79,16 +83,18 @@ def percore_mask(frame: Any) -> Any:
     >>> import pandas as pd
     >>> df = pd.DataFrame(
     ...   {
-    ...     "type": ["cpu", "cpu", "cpu", "nvidia_gpu"],
-    ...     "dev": ["0", "", "j:9", "0"],
+    ...     "type": ["cpu", "cpu", "cpu", "nvidia_gpu", "host_power_socket"],
+    ...     "dev": ["0", "", "j:9", "0", "1"],
     ...   }
     ... )
     >>> percore_mask(df).tolist()
-    [True, False, False, False]
+    [True, False, False, False, False]
   """
   dev = frame["dev"].fillna("").astype(str)
   return (
-    (dev != "") & ~dev.str.startswith("j:") & ~frame["type"].isin(GPU_TYPES)
+    (dev != "")
+    & ~dev.str.startswith("j:")
+    & ~frame["type"].isin(KEEP_DEV_TYPES)
   )
 
 

@@ -4,6 +4,22 @@ types:
   mem: host_mem
   # Additive identity: job-scoped cgroup mem (not an alias of host_mem).
   host_mem_job: host_mem_job
+  # Additive identity (monitor round 2, D31/D32): per-socket power, one row per
+  # CPU socket with dev = socket id; keys cpu_power_w (ACPI "CPU Power Socket
+  # N"), socket_power_w ("Grace Power Socket N"), sysio_power_w ("SysIO Power
+  # Socket N"), module_power_w ("Module Power Socket N", GH200; 0 where absent),
+  # unit W. Ingest keeps dev (KEEP_DEV_COLLAPSE_TYPES); consumers sum by dev.
+  # Node-wide data: on a shared-node tick only in the "-" payload, never j:
+  # stamped (D38). Grace nodes only (GB200, GH200, Grace/Grace); none on x86.
+  # Retired in the same release (D33/D36), history only, no rename:
+  # host_cpu_hw dcgm_cpu_power_util_w / dcgm_cpu_power_limit_w and nvidia_gpu
+  # module_power_usage / sysio_power_usage. Consumer note (D35): the node power
+  # estimate is now sum(module_power_w) if > 0, else sum(socket_power_w) + GPU
+  # power (socket sum alone on GPU-less nodes). Horizon GB200 CPU power read 0
+  # before this release, and GB200 and Grace/Grace estimates rise by the SoC +
+  # memory share (~40 W/socket GB200, ~22 W/socket Grace/Grace). Rows with
+  # only the retired keys keep the old formula.
+  host_power_socket: host_power_socket
   vm: host_vm
   ps: host_ps
   numa: host_numa
