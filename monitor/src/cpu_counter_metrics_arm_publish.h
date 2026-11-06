@@ -1,0 +1,20 @@
+#ifndef CPU_COUNTER_METRICS_ARM_PUBLISH_H_
+#define CPU_COUNTER_METRICS_ARM_PUBLISH_H_
+
+struct stats;
+
+/* One logical CPU over one collect interval: util percent from /proc/stat, clock from cpufreq. */
+struct arm_cpu_sample {
+  double util_total;
+  double util_user;
+  double util_nice;
+  double util_sys;
+  double util_irq;
+  double clock_khz;
+};
+
+void arm_accumulate_from_util_sample(int i, const struct arm_cpu_sample *sample,
+                                     long long delta_us);
+void publish_arm_cpu_stats(struct stats *stats, int i);
+
+#endif

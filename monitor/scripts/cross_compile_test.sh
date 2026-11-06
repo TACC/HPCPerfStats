@@ -1075,9 +1075,9 @@ foreign_monitor_cfg_args() {
   if is_x86_triplet "${target}"; then
     args+=(--with-monitor-arch=intel --with-cpu-counter-backend=auto)
   else
-    # Sysroot usually lacks libdcgm; exclusive LIKWID still compiles the Grace overlay
-    # eventset and adapter (DCGM hybrid needs native aarch64 + libdcgm).
-    args+=(--with-cpu-counter-backend=likwid)
+    # auto -> arm: the production Grace backend (/proc/stat util, cpufreq clock, LIKWID overlay,
+    # host_power_socket). It needs no libdcgm, so the foreign sysroot builds the real config.
+    args+=(--with-cpu-counter-backend=auto)
   fi
   printf '%s\n' "${args[@]}"
 }

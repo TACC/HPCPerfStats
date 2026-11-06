@@ -48,10 +48,11 @@ check_PROGRAMS = test_assert_live test_cpuid_signature test_amd_cpuid_match test
 if INFINIBAND
 check_PROGRAMS += test_ib_mad_backoff test_ib_mad_decode test_ib_mad_sw_swap
 endif
-# Pure DCGM util/publish math must run on LIKWID hosts too (blank watts, util@clock=0).
-check_PROGRAMS += test_dcgm_pkg_uniq test_cpu_counter_dcgm_util test_cpu_counter_dcgm_publish \
-	test_cpu_counter_dcgm_publish_likwid \
-	test_cpu_counter_metrics_likwid_ready_dcgm
+# Pure arm-backend util/publish math and host_power_socket run on every host (portable C).
+check_PROGRAMS += test_cpu_counter_arm_util test_cpu_counter_arm_publish \
+	test_cpu_counter_arm_publish_likwid \
+	test_cpu_counter_metrics_likwid_ready_arm \
+	test_arm_power_hwmon test_arm_power_socket
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli test_ring_buffer test_stats_buffer_collect test_stats_buffer_debug_shm test_debug_shm_emit_golden test_debug_shm_schema_mirror test_monitor_timing
 endif
@@ -299,37 +300,43 @@ test_collect_str_SOURCES = \
 	$(top_srcdir)/src/path_read.c \
 	$(top_srcdir)/src/path_open_fail_once.c
 
-test_cpu_counter_dcgm_util_SOURCES = \
-	test_cpu_counter_dcgm_util.c \
-	$(top_srcdir)/src/cpu_counter_metrics_dcgm_util.c
-test_cpu_counter_dcgm_util_CPPFLAGS = $(AM_CPPFLAGS) -DMONITOR_CPU_BACKEND_DCGM
+test_cpu_counter_arm_util_SOURCES = \
+	test_cpu_counter_arm_util.c \
+	$(top_srcdir)/src/cpu_counter_metrics_arm_util.c
 
-# Horizon DCGM+HAVE_LIKWID: ready() must be declared and stub to 0 (no implicit-decl).
-test_cpu_counter_metrics_likwid_ready_dcgm_SOURCES = \
-	test_cpu_counter_metrics_likwid_ready_dcgm.c \
+# Horizon arm+HAVE_LIKWID: ready() must be declared and stub to 0 (no implicit-decl).
+test_cpu_counter_metrics_likwid_ready_arm_SOURCES = \
+	test_cpu_counter_metrics_likwid_ready_arm.c \
 	$(top_srcdir)/src/cpu_counter_metrics_likwid_begin.c
-test_cpu_counter_metrics_likwid_ready_dcgm_CPPFLAGS = $(AM_CPPFLAGS) \
-	-DMONITOR_CPU_BACKEND_DCGM
-test_cpu_counter_metrics_likwid_ready_dcgm_CFLAGS = $(AM_CFLAGS) \
+test_cpu_counter_metrics_likwid_ready_arm_CPPFLAGS = $(AM_CPPFLAGS) \
+	-UMONITOR_CPU_BACKEND_LIKWID -DMONITOR_CPU_BACKEND_ARM
+test_cpu_counter_metrics_likwid_ready_arm_CFLAGS = $(AM_CFLAGS) \
 	-Werror=implicit-function-declaration
 
-test_cpu_counter_dcgm_publish_SOURCES = \
-	test_cpu_counter_dcgm_publish.c \
+test_cpu_counter_arm_publish_SOURCES = \
+	test_cpu_counter_arm_publish.c \
 	test_stats_stub.c \
-	$(top_srcdir)/src/cpu_counter_metrics_dcgm_publish.c \
-	$(top_srcdir)/src/cpu_counter_metrics_dcgm_util.c
-# Force DCGM backend define for pure publish math; no -ldcgm / vendor headers required.
-test_cpu_counter_dcgm_publish_CPPFLAGS = $(AM_CPPFLAGS) -DMONITOR_CPU_BACKEND_DCGM
+	$(top_srcdir)/src/cpu_counter_metrics_arm_publish.c
 
 # Same sources with LIKWID overlay gate — locks util×freq cycle fail-soft.
-test_cpu_counter_dcgm_publish_likwid_SOURCES = \
-	test_cpu_counter_dcgm_publish.c \
+test_cpu_counter_arm_publish_likwid_SOURCES = \
+	test_cpu_counter_arm_publish.c \
 	test_stats_stub.c \
-	$(top_srcdir)/src/cpu_counter_metrics_dcgm_publish.c \
-	$(top_srcdir)/src/cpu_counter_metrics_dcgm_util.c
-test_cpu_counter_dcgm_publish_likwid_CPPFLAGS = $(AM_CPPFLAGS) -DMONITOR_CPU_BACKEND_DCGM \
-	-DMONITOR_CPU_LIKWID_OVERLAY
-test_cpu_counter_dcgm_publish_likwid_CFLAGS = $(AM_CFLAGS)
+	$(top_srcdir)/src/cpu_counter_metrics_arm_publish.c
+test_cpu_counter_arm_publish_likwid_CPPFLAGS = $(AM_CPPFLAGS) -DMONITOR_CPU_LIKWID_OVERLAY
+test_cpu_counter_arm_publish_likwid_CFLAGS = $(AM_CFLAGS)
+
+test_arm_power_hwmon_SOURCES = \
+	test_arm_power_hwmon.c \
+	$(top_srcdir)/src/arm_power_hwmon.c \
+	$(top_srcdir)/src/monitor_log.c
+
+test_arm_power_socket_SOURCES = \
+	test_arm_power_socket.c \
+	test_stats_stub.c \
+	$(top_srcdir)/src/arm_power_socket.c \
+	$(top_srcdir)/src/arm_power_hwmon.c \
+	$(top_srcdir)/src/monitor_log.c
 
 test_likwid_overlay_map_SOURCES = \
 	test_likwid_overlay_map.c \
@@ -437,12 +444,6 @@ test_gpu_schema_contract_SOURCES = \
 # Regression: built with -DNDEBUG like a release build; fails if assert() is compiled out.
 test_assert_live_SOURCES = test_assert_live.c test_assert_live.h
 test_assert_live_CPPFLAGS = $(AM_CPPFLAGS) -DNDEBUG
-
-test_dcgm_pkg_uniq_SOURCES = \
-	test_dcgm_pkg_uniq.c \
-	$(top_srcdir)/src/cpu_counter_metrics_dcgm_util.c
-# Regression: helper was declared only under MONITOR_CPU_BACKEND_DCGM (implicit declaration elsewhere).
-test_dcgm_pkg_uniq_CFLAGS = $(AM_CFLAGS) -Werror=implicit-function-declaration
 
 test_cpu_counter_metrics_schema_SOURCES = test_cpu_counter_metrics_schema.c
 
@@ -698,7 +699,7 @@ test_stats_runtime_likwid_begin_order_SOURCES = \
 # LIKWID backend, so drop it to model Horizon aarch64).
 test_stats_runtime_overlay_begin_order_SOURCES = $(test_stats_runtime_likwid_begin_order_SOURCES)
 test_stats_runtime_overlay_begin_order_CPPFLAGS = $(AM_CPPFLAGS) -DMONITOR_WITH_HARDWARE \
-	-UMONITOR_CPU_BACKEND_LIKWID -DMONITOR_CPU_BACKEND_DCGM -DMONITOR_CPU_LIKWID_OVERLAY
+	-UMONITOR_CPU_BACKEND_LIKWID -DMONITOR_CPU_BACKEND_ARM -DMONITOR_CPU_LIKWID_OVERLAY
 test_stats_runtime_overlay_begin_order_LDADD = $(LDADD) -lm
 
 test_stats_runtime_collect_SOURCES = \
@@ -716,8 +717,7 @@ test_nvidia_gpu_estimate_SOURCES = \
 
 test_nvidia_gpu_dcgm_field_SOURCES = \
 	test_nvidia_gpu_dcgm_field.c \
-	$(top_srcdir)/src/nvidia_gpu_dcgm_field.c \
-	$(top_srcdir)/src/cpu_counter_metrics_dcgm_util.c
+	$(top_srcdir)/src/nvidia_gpu_dcgm_field.c
 test_nvidia_gpu_dcgm_field_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/third_party/nvidia-dcgm
 
 test_nvidia_gpu_dcgm_profiles_SOURCES = \
@@ -864,10 +864,12 @@ test_proc_status_order_LDADD = $(LDADD)
 test_schema_emit_LDADD = $(LDADD)
 test_procfile_kv_LDADD = $(LDADD)
 test_collect_str_LDADD = $(LDADD)
-test_cpu_counter_dcgm_util_LDADD = $(LDADD)
-test_cpu_counter_metrics_likwid_ready_dcgm_LDADD = $(LDADD)
-test_cpu_counter_dcgm_publish_LDADD = $(LDADD)
-test_cpu_counter_dcgm_publish_likwid_LDADD = $(LDADD)
+test_cpu_counter_arm_util_LDADD = $(LDADD)
+test_cpu_counter_metrics_likwid_ready_arm_LDADD = $(LDADD)
+test_cpu_counter_arm_publish_LDADD = $(LDADD)
+test_cpu_counter_arm_publish_likwid_LDADD = $(LDADD)
+test_arm_power_hwmon_LDADD = $(LDADD)
+test_arm_power_socket_LDADD = $(LDADD)
 test_likwid_overlay_map_LDADD = $(LDADD)
 test_likwid_arch_map_grace_LDADD = $(LDADD)
 test_string1_LDADD = $(LDADD)
@@ -899,7 +901,6 @@ test_stats_file_format_LDADD = $(LDADD)
 test_stats_file_format_extra_LDADD = $(LDADD)
 test_stats_text_format_LDADD = $(LDADD)
 test_gpu_schema_contract_LDADD = $(LDADD)
-test_dcgm_pkg_uniq_LDADD = $(LDADD)
 test_cpu_counter_metrics_schema_LDADD = $(LDADD)
 test_roofline_hw_peak_schema_LDADD = $(LDADD)
 test_roofline_hw_peak_changeover_LDADD = $(LDADD) -ldl -lm

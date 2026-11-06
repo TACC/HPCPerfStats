@@ -1,4 +1,4 @@
-/* LIKWID overlay on DCGM host_cpu_hw (aarch64). Fail-soft: never disable the type. */
+/* LIKWID overlay on the arm host_cpu_hw backend (aarch64). Fail-soft: never disable the type. */
 #ifdef MONITOR_CPU_LIKWID_OVERLAY
 
 #include "cpu_counter_metrics_likwid_overlay.h"
@@ -81,7 +81,7 @@ void cpu_counter_metrics_likwid_overlay_cleanup(void)
 
 int cpu_counter_metrics_likwid_overlay_begin(struct stats_type *type)
 {
-  /* HPCPERFSTATS_LIKWID_GRACE_SCF=0 (overhead harness only) starts at CYC+INS: dcgm_cpu
+  /* HPCPERFSTATS_LIKWID_GRACE_SCF=0 (overhead harness only) starts at CYC+INS: arm_cpu
    * without the SCF counters, paired against the default leg to cost SCF on its own. */
   const char *eventset = likwid_arch_eventset_grace_first(getenv("HPCPERFSTATS_LIKWID_GRACE_SCF"));
   int init_rc;
@@ -93,7 +93,7 @@ int cpu_counter_metrics_likwid_overlay_begin(struct stats_type *type)
 
   init_rc = likwid_pmc_adapter_init(nr_cpus);
   if (init_rc != 0) {
-    monitor_log_warn("host_cpu_hw: LIKWID overlay init failed (nr_cpus=%d); DCGM util/power only\n",
+    monitor_log_warn("host_cpu_hw: LIKWID overlay init failed (nr_cpus=%d); /proc/stat util only\n",
                      nr_cpus);
     likwid_pmc_adapter_finalize();
     g_overlay_ready = 0;
@@ -116,7 +116,7 @@ int cpu_counter_metrics_likwid_overlay_begin(struct stats_type *type)
   }
   if (setup_rc != 0) {
     monitor_log_warn("host_cpu_hw: LIKWID overlay eventset failed (events=`%s`); "
-                     "DCGM util/power only\n",
+                     "/proc/stat util only\n",
                      eventset != NULL ? eventset : "(null)");
     likwid_pmc_adapter_finalize();
     g_overlay_ready = 0;
@@ -124,7 +124,7 @@ int cpu_counter_metrics_likwid_overlay_begin(struct stats_type *type)
   }
   if (overlay_lifetime_alloc(nr_cpus) != 0) {
     monitor_log_warn("host_cpu_hw: LIKWID overlay lifetime alloc failed (nr_cpus=%d); "
-                     "DCGM util/power only\n",
+                     "/proc/stat util only\n",
                      nr_cpus);
     likwid_pmc_adapter_finalize();
     g_overlay_ready = 0;

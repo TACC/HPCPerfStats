@@ -423,7 +423,7 @@ static void arm_aarch64_imc_collect(struct stats_type *type)
   if (type == NULL)
     return;
 #ifdef MONITOR_CPU_LIKWID_OVERLAY
-  /* The overlay begins with the DCGM backend, possibly after this type began: attach late. */
+  /* The overlay begins with the arm backend, possibly after this type began: attach late. */
   if (g_arm_aarch64_imc_mode == ARM_IMC_MODE_PENDING) {
     g_arm_aarch64_imc_mode = arm_imc_scf_collect_mode(g_arm_aarch64_imc_mode,
                                                       cpu_counter_metrics_likwid_overlay_has_scf(),

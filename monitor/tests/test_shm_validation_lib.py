@@ -1145,7 +1145,7 @@ class PapiShmValidateTests(unittest.TestCase):
         }
         if hybrid:
             doc["compile_capabilities"] = {
-                "configure": {"likwid_overlay": True, "cpu_backend": "dcgm"}
+                "configure": {"likwid_overlay": True, "cpu_backend": "arm"}
             }
         return doc
 
@@ -1425,11 +1425,11 @@ class EmitBuildCapabilitiesFleetTests(unittest.TestCase):
             src = td / "src"
             src.mkdir()
             (src / "Makefile").write_text(
-                "DEFS = -DMONITOR_CPU_BACKEND_DCGM -DMONITOR_CPU_LIKWID_OVERLAY\n",
+                "DEFS = -DMONITOR_CPU_BACKEND_ARM -DMONITOR_CPU_LIKWID_OVERLAY\n",
                 encoding="utf-8",
             )
             _f, cpu, _d, _i, _o, overlay, shared = ebc._parse_src_makefile(td)
-            self.assertEqual(cpu, "dcgm")
+            self.assertEqual(cpu, "arm")
             self.assertTrue(overlay)
             self.assertFalse(shared)
 

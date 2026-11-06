@@ -26,16 +26,19 @@ extern struct stats_type amd_gpu_stats_type;
 extern struct stats_type intel_gpu_stats_type;
 #endif
 
-#if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_DCGM) &&                         \
+#if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_ARM) &&                          \
     defined(MONITOR_HOST_IS_ARM)
 extern struct stats_type arm_imc_stats_type;
 #endif
+
+/* host_power_socket: portable sysfs (ACPI power meters); disables itself on nodes without them. */
+extern struct stats_type arm_power_socket_stats_type;
 
 extern struct stats_type block_stats_type;
 extern struct stats_type cpu_stats_type;
 
 #if defined(MONITOR_WITH_HARDWARE) &&                                                              \
-    (defined(MONITOR_CPU_BACKEND_LIKWID) || defined(MONITOR_CPU_BACKEND_DCGM))
+    (defined(MONITOR_CPU_BACKEND_LIKWID) || defined(MONITOR_CPU_BACKEND_ARM))
 extern struct stats_type cpu_counter_metrics_stats_type;
 #endif
 
@@ -87,17 +90,18 @@ struct stats_type *const stats_type_table[] = {
 #if defined(MONITOR_WITH_AMD_GPU)
     &amd_gpu_stats_type,
 #endif
-#if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_DCGM) &&                         \
+#if defined(MONITOR_WITH_HARDWARE) && defined(MONITOR_CPU_BACKEND_ARM) &&                          \
     defined(MONITOR_HOST_IS_ARM)
     &arm_imc_stats_type,
 #endif
+    &arm_power_socket_stats_type,
 #if defined(MONITOR_WITH_BEEGFS)
     &beegfs_stats_type,
 #endif
     &block_stats_type,
     &cpu_stats_type,
 #if defined(MONITOR_WITH_HARDWARE) &&                                                              \
-    (defined(MONITOR_CPU_BACKEND_LIKWID) || defined(MONITOR_CPU_BACKEND_DCGM))
+    (defined(MONITOR_CPU_BACKEND_LIKWID) || defined(MONITOR_CPU_BACKEND_ARM))
     &cpu_counter_metrics_stats_type,
 #endif
     &ib_stats_type,

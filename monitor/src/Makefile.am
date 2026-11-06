@@ -205,6 +205,8 @@ hpcperfstatsd_SOURCES += \
 endif
 
 TYPES 	= \
+	arm_power_hwmon.c \
+	arm_power_socket.c \
 	block.c \
 	cpu.c \
 	ib.c \
@@ -240,9 +242,6 @@ hpcperfstatsd_SOURCES += \
 if CPU_BACKEND_LIKWID
 TYPES 	+= \
 	cpu_counter_metrics.c \
-	cpu_counter_metrics_dcgm_publish.c \
-	cpu_counter_metrics_dcgm_publish.h \
-	cpu_counter_metrics_dcgm_state.h \
 	cpu_counter_metrics_likwid_begin.c \
 	cpu_counter_metrics_likwid_begin.h \
 	amd64_rapl.c \
@@ -259,17 +258,17 @@ hpcperfstatsd_SOURCES += \
 	rapl_likwid_stats.h \
 	rapl_likwid_stats.c
 endif
-if CPU_BACKEND_DCGM
+if CPU_BACKEND_ARM
 TYPES += \
 	cpu_counter_metrics.c \
-	cpu_counter_metrics_dcgm_publish.c \
-	cpu_counter_metrics_dcgm_publish.h \
-	cpu_counter_metrics_dcgm_state.h \
-	cpu_counter_metrics_dcgm_util.c \
-	cpu_counter_metrics_dcgm_util.h
+	cpu_counter_metrics_arm_publish.c \
+	cpu_counter_metrics_arm_publish.h \
+	cpu_counter_metrics_arm_state.h \
+	cpu_counter_metrics_arm_util.c \
+	cpu_counter_metrics_arm_util.h
 if LIKWID
 # likwid_uncore_adapter.c (built under `if LIKWID`) calls cpu_counter_metrics_likwid_ready();
-# its DCGM stub is the #else branch of this file.
+# its arm-backend stub is the #else branch of this file.
 hpcperfstatsd_SOURCES += \
 	cpu_counter_metrics_likwid_begin.c \
 	cpu_counter_metrics_likwid_begin.h
@@ -390,6 +389,8 @@ TYPES += \
 endif
 
 hpcperfstatsd_SOURCES += \
+	arm_power_hwmon.h \
+	arm_power_socket.h \
 	ib.h \
 	ib_common.h \
 	ib_port_state.h \
@@ -423,12 +424,6 @@ hpcperfstatsd_SOURCES += \
 	nvidia_gpu_estimate.c \
 	nvidia_gpu_estimate.h \
 	nvidia_gpu_dcgm_field.h
-if CPU_BACKEND_DCGM
-else
-hpcperfstatsd_SOURCES += \
-	cpu_counter_metrics_dcgm_util.c \
-	cpu_counter_metrics_dcgm_util.h
-endif
 endif
 
 if AMD_GPU

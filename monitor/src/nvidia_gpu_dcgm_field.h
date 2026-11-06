@@ -6,6 +6,11 @@
 #include "dcgm_fields.h"
 #include "dcgm_structs.h"
 
+/* True for NVIDIA DCGM_FP64_BLANK and blank-family sentinels (>= blank). */
+int dcgm_fp64_value_is_blank(double v);
+/* True for NVIDIA DCGM_INT64_BLANK and blank-family sentinels (>= blank). */
+int dcgm_int64_value_is_blank(long long v);
+
 /* Blank-aware DCGM field normalize for nvidia_gpu assign path (blank → 0). */
 void nvidia_gpu_dcgm_field_watts(const dcgmFieldValue_v1 *v, double *out);
 void nvidia_gpu_dcgm_field_u64(const dcgmFieldValue_v1 *v, uint64_t *out);

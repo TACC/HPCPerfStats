@@ -21,8 +21,8 @@ int main(void)
   assert(strcmp(CPU_COUNTER_METRICS_ST_NAME, "host_cpu_hw") == 0);
   assert(strstr(cpu_counter_schema_def, " instr_retired,") != NULL);
   assert(strstr(cpu_counter_schema_def, " aperf,") != NULL);
-  assert(strstr(cpu_counter_schema_def, " dcgm_cpu_power_util_w,U=W") != NULL);
-  assert(strstr(cpu_counter_schema_def, " dcgm_cpu_power_limit_w,U=W") != NULL);
+  /* Retired in round 2 (D33/D36): socket power is the per-socket host_power_socket type. */
+  assert(strstr(cpu_counter_schema_def, "dcgm_cpu_power") == NULL);
   assert(strstr(cpu_counter_schema_def, " arm_int8_ops,") != NULL);
   assert(strstr(cpu_counter_schema_def, " arm_int16_ops,") != NULL);
   assert_forbidden_legacy_keys_absent(cpu_counter_schema_def);

@@ -96,12 +96,12 @@ esac],
 AM_CONDITIONAL([HARDWARE], [test x$hardware = xtrue])
 
 AC_ARG_WITH([cpu-counter-backend],
-[AS_HELP_STRING([--with-cpu-counter-backend={auto|likwid|dcgm}], [CPU counter backend selection (default: auto)])],
+[AS_HELP_STRING([--with-cpu-counter-backend={auto|likwid|arm}], [CPU counter backend selection (default: auto; aarch64 auto = arm: /proc/stat util, cpufreq clock, LIKWID overlay; no DCGM)])],
 [cpu_counter_backend="$withval"],
 [cpu_counter_backend="auto"])
 
 case "$cpu_counter_backend" in
-  auto|likwid|dcgm) ;;
+  auto|likwid|arm) ;;
   *) AC_MSG_ERROR([bad value ${cpu_counter_backend} for --with-cpu-counter-backend]) ;;
 esac
 
@@ -124,7 +124,7 @@ if test "x$cpu_counter_backend" = "xauto"; then
   if test "x$is_x86" = "xtrue"; then
     cpu_counter_backend="likwid"
   else
-    cpu_counter_backend="dcgm"
+    cpu_counter_backend="arm"
   fi
 fi
 
@@ -132,7 +132,7 @@ need_likwid=false
 if test "x$cpu_counter_backend" = "xlikwid"; then
   need_likwid=true
 fi
-if test "x$cpu_counter_backend" = "xdcgm" && test "x$is_x86" != "xtrue"; then
+if test "x$cpu_counter_backend" = "xarm" && test "x$is_x86" != "xtrue"; then
   need_likwid=true
   cpu_likwid_overlay=true
 fi
@@ -165,34 +165,14 @@ if test "x$need_likwid" = "xtrue"; then
   fi
 fi
 
-if test "x$cpu_counter_backend" = "xdcgm"; then
-  if test "x$enable_all_static" = xyes; then
-    save_LIBS=$LIBS
-    LIBS=
-    AC_SEARCH_LIBS([dcgmInit], [dcgm],
-      [MONITOR_SHARED_LIBS="$MONITOR_SHARED_LIBS $LIBS"
-       have_dcgm=yes
-       LIBS=$save_LIBS],
-      [LIBS=$save_LIBS
-       AC_MSG_ERROR([Unable to find libdcgm (required for DCGM CPU backend)])])
-  else
-    AC_SEARCH_LIBS([dcgmInit], [dcgm], [have_dcgm=yes],
-      [AC_MSG_ERROR([Unable to find libdcgm (required for DCGM CPU backend)])])
-  fi
-  if test "x${have_dcgm}" = xyes; then
-    save_CPPFLAGS=$CPPFLAGS
-    CPPFLAGS="-I${srcdir}/third_party/nvidia-dcgm ${CPPFLAGS}"
-    AC_CHECK_HEADERS([dcgm_agent.h dcgm_structs.h], [dcgm_headers=true],
-      [AC_MSG_ERROR([Unable to find dcgm_agent.h/dcgm_structs.h for DCGM CPU backend (see third_party/nvidia-dcgm/README)])])
-    CPPFLAGS=$save_CPPFLAGS
-  fi
-  dcgm_checked=true
-  CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_DCGM"
+if test "x$cpu_counter_backend" = "xarm"; then
+  dnl arm backend: kernel sources only (/proc/stat, cpufreq); socket power is host_power_socket.
+  CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_ARM"
   MONITOR_ARCH_CPPFLAG=""
-  dnl Grace / aarch64 hybrid: DCGM util+power + LIKWID overlay for cycles/inst.
+  dnl Grace / aarch64 hybrid: arm util/clock + LIKWID overlay for cycles/inst.
   if test "x$cpu_likwid_overlay" = "xtrue"; then
     CPU_COUNTER_BACKEND_CPPFLAG="${CPU_COUNTER_BACKEND_CPPFLAG} -DMONITOR_CPU_LIKWID_OVERLAY"
-    AC_MSG_NOTICE([CPU counter hybrid: DCGM util/power + LIKWID overlay])
+    AC_MSG_NOTICE([CPU counter hybrid: arm util/clock + LIKWID overlay])
   fi
 elif test "x$cpu_counter_backend" = "xlikwid"; then
   CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_LIKWID"
@@ -251,10 +231,10 @@ AM_CONDITIONAL([MONITOR_ARCH_ARM], [test x$monitor_arch_arm = xtrue])
 AM_CONDITIONAL([LIKWID], [test x$likwid = xtrue])
 AM_CONDITIONAL([CPU_BACKEND_LIKWID],
   [test x$hardware = xtrue -a x$cpu_counter_backend = xlikwid])
-AM_CONDITIONAL([CPU_BACKEND_DCGM],
-  [test x$hardware = xtrue -a x$cpu_counter_backend = xdcgm])
+AM_CONDITIONAL([CPU_BACKEND_ARM],
+  [test x$hardware = xtrue -a x$cpu_counter_backend = xarm])
 AM_CONDITIONAL([CPU_LIKWID_OVERLAY],
-  [test x$hardware = xtrue -a x$cpu_counter_backend = xdcgm -a x$cpu_likwid_overlay = xtrue])
+  [test x$hardware = xtrue -a x$cpu_counter_backend = xarm -a x$cpu_likwid_overlay = xtrue])
 
 AC_ARG_ENABLE([infiniband],
 [  --enable-infiniband	Enable InfiniBand MAD support (default is true; use --enable-ib-mad-dlopen for fleet)],
@@ -425,7 +405,7 @@ fi
 AM_CONDITIONAL([GPU], [test x$gpu = xtrue])
 AM_CONDITIONAL([GPU_DLOPEN], [test x$gpu = xtrue -a x$gpu_dlopen = xtrue])
 AM_CONDITIONAL([MONITOR_USE_DCGM_VENDOR_INCLUDES],
-  [test "x$cpu_counter_backend" = "xdcgm" -o "x$gpu" = "xtrue"])
+  [test "x$gpu" = "xtrue"])
 
 amd_gpu_user_requested=no
 AC_ARG_ENABLE([amd-gpu],

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Regression: non-x86 DCGM CPU backend uses LIKWID overlay (configure.ac + static bundle).
+# Regression: non-x86 `arm` CPU backend uses LIKWID overlay (configure.ac + static bundle).
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -11,9 +11,22 @@ prepare="${ROOT}/scripts/prepare_rpmbuild_dirs.sh"
 cross="${ROOT}/scripts/cross_compile_test.sh"
 
 grep -q 'MONITOR_CPU_LIKWID_OVERLAY' "${ac}" \
-  || { echo "configure.ac must define MONITOR_CPU_LIKWID_OVERLAY for DCGM+LIKWID hybrid" >&2; exit 1; }
+  || { echo "configure.ac must define MONITOR_CPU_LIKWID_OVERLAY for arm+LIKWID hybrid" >&2; exit 1; }
 grep -q 'CPU_LIKWID_OVERLAY' "${ac}" \
   || { echo "configure.ac must AM_CONDITIONAL CPU_LIKWID_OVERLAY" >&2; exit 1; }
+
+# Round 2 (D10): the aarch64 CPU backend is `arm` (no DCGM); the `dcgm` value is gone, no alias.
+grep -q 'auto|likwid|arm) ;;' "${ac}" \
+  || { echo "configure.ac must accept --with-cpu-counter-backend=auto|likwid|arm" >&2; exit 1; }
+grep -q -- '--with-cpu-counter-backend={auto|likwid|arm}' "${ac}" \
+  || { echo "configure.ac help must list {auto|likwid|arm}" >&2; exit 1; }
+grep -q 'cpu_counter_backend="arm"' "${ac}" \
+  || { echo "configure.ac auto must resolve to arm on non-x86" >&2; exit 1; }
+if grep -n -E 'auto\|likwid\|dcgm|xdcgm|MONITOR_CPU_BACKEND_DCGM|CPU_BACKEND_DCGM|required for DCGM CPU backend' \
+  "${ac}" "${ROOT}/src/Makefile.am" "${ROOT}/tests/Makefile.am" "${ROOT}"/src/*.c "${ROOT}"/src/*.h; then
+  echo "dcgm CPU backend leftovers (MONITOR_CPU_BACKEND_DCGM / backend=dcgm) must be gone" >&2
+  exit 1
+fi
 # Exclusive LIKWID is allowed on ARM (no longer a configure error).
 if grep -q 'LIKWID CPU backend is supported on x86 only' "${ac}"; then
   echo "configure.ac must not reject LIKWID on non-x86" >&2
@@ -29,19 +42,19 @@ if grep -q 'MONITOR_CPU_PAPI_FLOPS' "${ac}"; then
   exit 1
 fi
 
-# Regression (c122-018 native bundle, 2026-11-03): DCGM builds compile likwid_uncore_adapter.c
+# Regression (c122-018 native bundle, 2026-11-03): arm-backend builds compile likwid_uncore_adapter.c
 # under `if LIKWID` (the Grace overlay links LIKWID), and it calls cpu_counter_metrics_likwid_ready().
-# The DCGM stub lives in cpu_counter_metrics_likwid_begin.c, so the CPU_BACKEND_DCGM block must
+# The arm stub lives in cpu_counter_metrics_likwid_begin.c, so the CPU_BACKEND_ARM block must
 # compile it; only --gc-sections release links hid the undefined reference.
 am="${ROOT}/src/Makefile.am"
 awk '
-  /^if CPU_BACKEND_DCGM$/ { inblk = 1; depth = 0; next }
+  /^if CPU_BACKEND_ARM$/ { inblk = 1; depth = 0; next }
   inblk && /^if / { depth++ }
   inblk && /^endif/ { if (depth == 0) { inblk = 0 } else { depth-- } }
   inblk && /cpu_counter_metrics_likwid_begin\.c/ { found = 1 }
   END { exit found ? 0 : 1 }
 ' "${am}" \
-  || { echo "src/Makefile.am CPU_BACKEND_DCGM must compile cpu_counter_metrics_likwid_begin.c (DCGM likwid_ready stub)" >&2; exit 1; }
+  || { echo "src/Makefile.am CPU_BACKEND_ARM must compile cpu_counter_metrics_likwid_begin.c (arm likwid_ready stub)" >&2; exit 1; }
 
 grep -q 'build_likwid' "${bundle}" \
   || { echo "build_static_bundle.sh must define build_likwid" >&2; exit 1; }

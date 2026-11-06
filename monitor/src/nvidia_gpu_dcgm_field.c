@@ -2,8 +2,21 @@
 #include <limits.h>
 #include <stddef.h>
 
-#include "cpu_counter_metrics_dcgm_util.h"
 #include "nvidia_gpu_dcgm_field.h"
+
+/* Match third_party/nvidia-dcgm/dcgm_structs.h DCGM_FP64_BLANK / DCGM_INT64_BLANK (IS_BLANK). */
+#define NVIDIA_GPU_DCGM_FP64_BLANK 140737488355328.0
+#define NVIDIA_GPU_DCGM_INT64_BLANK 0x7ffffffffffffff0LL
+
+int dcgm_fp64_value_is_blank(double v)
+{
+  return (v >= NVIDIA_GPU_DCGM_FP64_BLANK) ? 1 : 0;
+}
+
+int dcgm_int64_value_is_blank(long long v)
+{
+  return (v >= NVIDIA_GPU_DCGM_INT64_BLANK) ? 1 : 0;
+}
 
 static unsigned long long clamp_double_to_ull(double v)
 {

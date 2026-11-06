@@ -114,8 +114,20 @@ static void test_ratio_blank_and_bounds(void)
   assert(nvidia_gpu_dcgm_field_ratio(-0.1, &out) == -1);
 }
 
+static void test_blank_sentinels(void)
+{
+  assert(dcgm_fp64_value_is_blank(140737488355328.0));
+  assert(dcgm_fp64_value_is_blank(140737488355329.0));
+  assert(!dcgm_fp64_value_is_blank(500.0));
+  assert(dcgm_int64_value_is_blank(0x7ffffffffffffff0LL));
+  assert(dcgm_int64_value_is_blank(0x7ffffffffffffff3LL));
+  assert(!dcgm_int64_value_is_blank(0LL));
+  assert(!dcgm_int64_value_is_blank(-1LL));
+}
+
 int main(void)
 {
+  test_blank_sentinels();
   test_watts_blank_and_real();
   test_u64_blank_and_real();
   test_apply_i64_util_throttle();

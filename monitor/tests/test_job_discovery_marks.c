@@ -192,6 +192,11 @@ static void test_job_shared_emit_sole_partial_splits_remainder(void)
   assert(keep(&jid_ctx, "nvidia_gpu", "1") == 1 && keep(&rem_ctx, "nvidia_gpu", "1") == 0);
   assert(keep(&jid_ctx, "nvidia_gpu", "3") == 0 && keep(&rem_ctx, "nvidia_gpu", "3") == 1);
   assert(keep(&rem_ctx, "ib", "mlx5_0.1") == 1);
+  /* D38: per-socket power is node-wide; only the '-' payload carries it, with its socket dev. */
+  assert(keep(&rem_ctx, "host_power_socket", "0") == 1);
+  assert(keep(&rem_ctx, "host_power_socket", "1") == 1);
+  assert(keep(&jid_ctx, "host_power_socket", "0") == 0);
+  assert(keep(&jid_ctx, "host_power_socket", "1") == 0);
   assert(keep(&rem_ctx, "host_mem_job", "j:72352") == 0);
   assert(keep(&rem_ctx, "host_proc", "a.out/6001/f/1") == 0);
   /* Unknown inventory: '-' carries no GPU rows. */
@@ -305,6 +310,7 @@ static void test_job_shared_emit_env_named_multi_keeps_split(void)
   assert(keep(&c, "host_proc", "a.out/6001/f/1") == 1);
   assert(keep(&c, "host_proc", "a.out/7/f/1") == 0);
   assert(keep(&c, "ib", "mlx5_0.1") == 0);
+  assert(keep(&c, "host_power_socket", "0") == 0); /* D38: never in a jid payload */
   assert(keep(&c, "host_mem_job", "j:111") == 1);
   assert(job_emit_entry_emits_affinity(NULL) == 0);
 }

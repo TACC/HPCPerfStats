@@ -112,7 +112,7 @@ static void stats_runtime_begin_one_type(struct stats_type *type)
 }
 
 /*! Registry iteration is sorted by st_name; AMD DF/RAPL and arm_aarch64_imc sort before
- *  host_cpu_hw. LIKWID HPMinit (exclusive backend or the Grace DCGM overlay, whose group carries
+ *  host_cpu_hw. LIKWID HPMinit (exclusive backend or the Grace arm-backend overlay, whose group carries
  *  the SCF DRAM events arm_aarch64_imc reads) runs in host_cpu_hw begin, so begin it first. */
 #if defined(MONITOR_WITH_HARDWARE) &&                                                              \
     (defined(MONITOR_CPU_BACKEND_LIKWID) || defined(MONITOR_CPU_LIKWID_OVERLAY))

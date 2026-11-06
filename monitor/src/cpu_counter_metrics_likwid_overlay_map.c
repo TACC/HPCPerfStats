@@ -71,7 +71,7 @@ void likwid_overlay_map_to_host_cpu_hw(struct stats *stats, const struct likwid_
   stats_set(stats, "fp_arith_inst_retired_256b_packed_single", 0);
   stats_set(stats, "fp_arith_inst_retired_512b_packed_single", 0);
 
-  /* Leave DCGM util×freq estimate when LIKWID returns 0 (sparse PERF). */
+  /* Leave the util×freq estimate when LIKWID returns 0 (sparse PERF). */
   if (likwid_overlay_should_overwrite_cycle_keys(cycles)) {
     stats_set(stats, "aperf", cycles);
     stats_set(stats, "mperf", cycles);
