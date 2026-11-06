@@ -45,6 +45,11 @@ GOLDEN_SCALE_DEFECTS = {
   "nv_gpu_mem_bw_gbs": 1e9 / 1024**3,
 }
 
+# Metric rows the pandas path stored as NULL ("No host_data samples ...")
+# because scheduler refs carried no ncores/nhosts; 4be445d4 reads them from
+# job_data (METRICS_CONTRACT_VERSION 6), so a golden NULL may now be a value.
+GOLDEN_NULL_DEFECTS = frozenset({"avg_cpuusage"})
+
 _REPO = Path(__file__).resolve().parents[4]
 _DEVIATION_REPORT = _REPO / "test_runs" / "columnar_golden_deviation.json"
 
@@ -281,7 +286,10 @@ def test_metrics_rows_match_golden(jid, golden_jobs, monkeypatch):
     lambda job: (gm["telemetry_first_time"], gm["telemetry_last_time"]),
   )
   job = SimpleNamespace(
-    jid=jid, nhosts=golden["job"].get("nhosts"), artifact_only=False
+    jid=jid,
+    nhosts=golden["job"].get("nhosts"),
+    ncores=golden["job"].get("ncores"),
+    artifact_only=False,
   )
   payload = metrics_mod.Metrics().compute_metrics(job)
   rows = payload["rows"]
@@ -311,6 +319,13 @@ def test_metrics_rows_match_golden(jid, golden_jobs, monkeypatch):
   for key in sorted(exp):
     g, b = exp[key], got[key]
     assert str(b["units"]) == str(g["units"]), f"jid={jid} {key} units"
+    if (
+      key[1] in GOLDEN_NULL_DEFECTS
+      and g["value"] is None
+      and b["value"] is not None
+    ):
+      _record_deviation("metrics_golden_null_defect", key[1], 1.0)
+      continue
     assert b.get("no_data_reason") == g.get("no_data_reason"), (
       f"jid={jid} {key} reason"
     )
