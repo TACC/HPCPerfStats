@@ -96,3 +96,22 @@ def test_supervisord_has_no_pipeline_interpreter_resolver():
   assert "listend_interpreter" not in text
   assert "sync_timedb_interpreter" not in text
   assert "update_metrics_interpreter" not in text
+
+
+def test_ingest_coverage_sweeper_program_contract():
+  """FT interpreter; a clean exit (switch off) is not restarted."""
+  text = _supervisord_text()
+  command = _program_command(text, "ingest_coverage_sweeper")
+  assert (
+    "/opt/python3.14t/bin/python -m hpcperfstats.dbload.ingest_coverage_sweeper"
+    in (command)
+  )
+  block = re.search(
+    r"^\[program:ingest_coverage_sweeper\]\n(?:.*\n)*?(?=^\[|\Z)",
+    text,
+    re.MULTILINE,
+  ).group(0)
+  assert "autorestart=unexpected" in block
+  assert "exitcodes=0" in block
+  assert "user=hpcperfstats" in block
+  assert "background_thread:true" in block

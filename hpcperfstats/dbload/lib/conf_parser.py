@@ -98,6 +98,10 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "metrics_persist_statement_timeout_ms"),
   ("PIPELINE", "metrics_persist_lock_timeout_ms"),
   ("PIPELINE", "metrics_proxy_reject_jid_batch_size"),
+  ("PIPELINE", "ingest_coverage_sweep_enabled"),
+  ("PIPELINE", "ingest_coverage_sweep_interval_s"),
+  ("PIPELINE", "ingest_coverage_window_minutes"),
+  ("PIPELINE", "ingest_coverage_query_timeout_ms"),
   ("PIPELINE", "metrics_compute_batch_max_window_s"),
   ("PIPELINE", "metrics_compute_batch_max_single_job_s"),
   ("PIPELINE", "metrics_compute_batch_unknown_runtime_s"),
@@ -289,6 +293,10 @@ INI_OPTION_DEFAULTS = {
   "metrics_persist_statement_timeout_ms": "120000",
   "metrics_persist_lock_timeout_ms": "10000",
   "metrics_proxy_reject_jid_batch_size": "48",
+  "ingest_coverage_sweep_enabled": "yes",
+  "ingest_coverage_sweep_interval_s": "3600",
+  "ingest_coverage_window_minutes": "60",
+  "ingest_coverage_query_timeout_ms": "60000",
   "metrics_compute_batch_max_window_s": "0.0",
   "metrics_compute_batch_max_single_job_s": "0.0",
   "metrics_compute_batch_unknown_runtime_s": "172800.0",
@@ -3783,6 +3791,76 @@ def get_plot_aggregate_max_host_time_points() -> Any:
     )
   except TypeError, ValueError, OverflowError:
     return 1_000_000
+
+
+def get_ingest_coverage_sweep_enabled() -> bool:
+  """
+  Whether the ``ingest_coverage_sweeper`` program scans ``host_data``.
+
+  With ``no`` the program exits 0 at start (no DB queries, no Valkey
+  writes) and the Admin Monitor coverage section reports
+  ``sweep_disabled``. Web and pipeline read the same baked INI.
+
+  Returns:
+    bool: True unless ``[PIPELINE] ingest_coverage_sweep_enabled`` is a
+    false value (default ``yes``).
+
+  Examples:
+    >>> get_ingest_coverage_sweep_enabled()  # doctest: +SKIP
+    True
+  """
+  _ensure_cfg_loaded()
+  return _pipeline_get("ingest_coverage_sweep_enabled").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+  )
+
+
+def get_ingest_coverage_sweep_interval_s() -> int:
+  """
+  Seconds between coverage sweep starts (also the per-sweep budget).
+
+  Returns:
+    int: Interval seconds, floor 60 (default 3600).
+
+  Examples:
+    >>> get_ingest_coverage_sweep_interval_s()  # doctest: +SKIP
+    3600
+  """
+  _ensure_cfg_loaded()
+  return max(60, _pipeline_getint("ingest_coverage_sweep_interval_s"))
+
+
+def get_ingest_coverage_window_minutes() -> int:
+  """
+  Per-host ``host_data`` window ending at that host's newest sample.
+
+  Returns:
+    int: Window minutes, clamped to [1, 1440] (default 60).
+
+  Examples:
+    >>> get_ingest_coverage_window_minutes()  # doctest: +SKIP
+    60
+  """
+  _ensure_cfg_loaded()
+  return min(1440, max(1, _pipeline_getint("ingest_coverage_window_minutes")))
+
+
+def get_ingest_coverage_query_timeout_ms() -> int:
+  """
+  ``SET LOCAL statement_timeout`` for each per-host coverage query.
+
+  Returns:
+    int: Milliseconds, floor 1000 (default 60000).
+
+  Examples:
+    >>> get_ingest_coverage_query_timeout_ms()  # doctest: +SKIP
+    60000
+  """
+  _ensure_cfg_loaded()
+  return max(1000, _pipeline_getint("ingest_coverage_query_timeout_ms"))
 
 
 def get_metrics_proxy_reject_jid_batch_size() -> Any:

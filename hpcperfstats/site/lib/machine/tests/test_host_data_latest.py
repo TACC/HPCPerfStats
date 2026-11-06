@@ -176,3 +176,58 @@ def test_list_recent_host_fqdns_from_valkey_filters_fqdns(monkeypatch):
 def test_list_recent_host_fqdns_from_valkey_empty_without_client(monkeypatch):
   monkeypatch.setattr(host_data_latest, "get_valkey_client", lambda: None)
   assert host_data_latest.list_recent_host_fqdns_from_valkey() == []
+
+
+def _capture_lateral_sql(monkeypatch, **kwargs):
+  exec_log = []
+  monkeypatch.setattr(
+    host_data_latest.transaction,
+    "atomic",
+    lambda using=None: contextlib.nullcontext(),
+  )
+
+  class FakeCursor:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args, **kwargs):
+      return False
+
+    def execute(self, sql, params=None):
+      exec_log.append((sql, params))
+      self._rows = []
+
+    def fetchall(self):
+      return self._rows
+
+  fake_conn = MagicMock()
+  fake_conn.vendor = "postgresql"
+  fake_conn.alias = "default"
+  fake_conn.ops = MagicMock()
+  fake_conn.ops.quote_name = lambda name: f'"{name}"'
+  fake_conn.cursor = lambda: FakeCursor()
+  handler = MagicMock()
+  handler.__getitem__ = lambda self, name: fake_conn
+  monkeypatch.setattr(host_data_latest, "connections", handler)
+  host_data_latest.latest_sample_time_by_host(["a.example"], **kwargs)
+  return [e for e in exec_log if "LATERAL" in e[0]]
+
+
+@pytest.mark.machine_unit_mock
+def test_latest_sample_time_by_host_since(monkeypatch):
+  """since= bounds the LATERAL probe; omitting it keeps the SQL unchanged."""
+  unbounded = _capture_lateral_sql(monkeypatch)
+  assert unbounded == [
+    (
+      'SELECT h.host_val, m."time" FROM unnest(%s::text[]) AS h(host_val) '
+      'LEFT JOIN LATERAL ( SELECT d."time" FROM "host_data" d '
+      'WHERE d."host" = h.host_val  ORDER BY d."time" DESC LIMIT 1'
+      ") AS m ON TRUE",
+      [["a.example"]],
+    )
+  ]
+  since = datetime(2026, 10, 29, tzinfo=UTC)
+  bounded = _capture_lateral_sql(monkeypatch, since=since)
+  sql, params = bounded[0]
+  assert 'WHERE d."host" = h.host_val AND d."time" >= %s  ORDER BY' in sql
+  assert params == [["a.example"], since]

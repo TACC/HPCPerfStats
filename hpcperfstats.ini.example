@@ -177,6 +177,18 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 # Max jids per proxy host_data readiness batch on PostgreSQL (default 48).
 # metrics_proxy_reject_jid_batch_size = 48
 
+# Admin Monitor ingest coverage sweeper program; no = it exits at start and never scans host_data (default yes).
+# ingest_coverage_sweep_enabled = yes
+
+# Seconds between coverage sweeps; a sweep stops at this boundary and resumes with unreached hosts (default 3600).
+# ingest_coverage_sweep_interval_s = 3600
+
+# Per-host host_data window in minutes, ending at that host's newest sample (default 60).
+# ingest_coverage_window_minutes = 60
+
+# statement_timeout ms for each per-host coverage query; a timeout marks that host incomplete (default 60000).
+# ingest_coverage_query_timeout_ms = 60000
+
 # Max sum of job window seconds per compute batch; 0 disables (default 0).
 # metrics_compute_batch_max_window_s = 0
 

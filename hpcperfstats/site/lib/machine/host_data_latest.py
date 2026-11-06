@@ -87,6 +87,7 @@ def latest_sample_time_by_host(
   hosts: Any,
   *,
   batch_size: Any | None = None,
+  since: datetime | None = None,
 ) -> Any:
   """
   Map host -> max(host_data.time) for ``hosts``, using bounded batches.
@@ -98,6 +99,11 @@ def latest_sample_time_by_host(
   Args:
     hosts (Any): Hosts passed to this helper.
     batch_size (Any | None): One of ``Any``, ``None``.
+    since (datetime | None): Lower time bound applied inside each per-host
+      probe (``time >= since``); hosts without a sample since then are
+      absent from the result. None keeps the unbounded probe (existing
+      callers). The ingest coverage sweeper passes ``now - 7 days`` so a
+      long-idle host never walks into compressed chunks.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -121,11 +127,12 @@ def latest_sample_time_by_host(
     col_time = ops.quote_name("time")
     # DISTINCT ON + ORDER BY over many hypertable chunks can still trigger
     # huge parallel sorts. One backward index scan per host stays bounded.
+    bound = f"AND d.{col_time} >= %s " if since is not None else ""
     sql = (
       f"SELECT h.host_val, m.{col_time} FROM unnest(%s::text[]) AS h(host_val) "
       "LEFT JOIN LATERAL ("
       f" SELECT d.{col_time} FROM {tbl} d WHERE d.{col_host} = h.host_val "
-      f" ORDER BY d.{col_time} DESC LIMIT 1"
+      f"{bound} ORDER BY d.{col_time} DESC LIMIT 1"
       ") AS m ON TRUE"
     )
     using = getattr(conn, "alias", None) or "default"
@@ -133,7 +140,7 @@ def latest_sample_time_by_host(
       chunk = host_list[i : i + batch]
       with transaction.atomic(using=using), conn.cursor() as cursor:
         cursor.execute("SET LOCAL max_parallel_workers_per_gather = 0")
-        cursor.execute(sql, [chunk])
+        cursor.execute(sql, [chunk] if since is None else [chunk, since])
         for row_host, row_time in cursor.fetchall():
           if row_time is not None:
             latest_by_host[row_host] = row_time
@@ -141,11 +148,10 @@ def latest_sample_time_by_host(
 
   for i in range(0, len(host_list), batch):
     chunk = host_list[i : i + batch]
-    qs = (
-      host_data.objects.filter(host__in=chunk)
-      .values("host")
-      .annotate(last_time=Max("time"))
-    )
+    base = host_data.objects.filter(host__in=chunk)
+    if since is not None:
+      base = base.filter(time__gte=since)
+    qs = base.values("host").annotate(last_time=Max("time"))
     for row in qs:
       latest_by_host[row.get("host")] = row.get("last_time")
   return latest_by_host
