@@ -740,6 +740,25 @@ The **`hpcperfstats-base`** image ( **`pipeline`**, **`web`**, and siblings buil
 
 **Anti-pattern — assume `py-spy` is on PATH (hpcperfstats02 2026-09-13):** `sh: py-spy: not found` on this pipeline image. **Corrected:** classify with `ps`/`wchan`/`pcpu` first; treat `py-spy` as optional only when `command -v py-spy` succeeds.
 
+**Anti-pattern — per-thread CPU snapshot `join` with comm in both files (monitor node c122-018, 2026-11-05):** two `tid comm utime stime run_ns` snapshots joined on tid give `tid comm0 u0 s0 r0 comm1 u1 s1 r1`; the awk used `$6-$3` / `$7-$4` / `$8-$5` (comm minus utime, …), so every rate was negative, the "hot" list was the idlest threads, and gdb/perf/strace targeted idle tids. `perf report … 2>/dev/null` then printed nothing with no reason shown. Same class applies to any host root shell or container. **Corrected:** keep comm out of the joined files (it may also contain spaces), read utime/stime after the `) ` of `stat` (fields 12/13 there), add comm after the join, and keep perf stderr:
+
+```bash
+snap() { for t in /proc/$PID/task/*; do echo "$(basename $t) $(sed 's/^.*) //' $t/stat | cut -d' ' -f12,13) $(cut -d' ' -f1 $t/schedstat)"; done; }
+snap > "$OUT/t0.txt"; sleep 60; snap > "$OUT/t1.txt"
+join <(sort "$OUT/t0.txt") <(sort "$OUT/t1.txt") | awk '{printf "%s utime_s_h=%.1f stime_s_h=%.1f run_s_h=%.1f\n", $1, ($5-$2)*0.6, ($6-$3)*0.6, ($7-$4)*6e-8}' | while read tid rest; do echo "$tid $(cat /proc/$PID/task/$tid/comm) $rest"; done | sort -t= -k4 -nr
+```
+
+**Anti-pattern — `perf report --sort tid` (perf on c122-018 EL10, 2026-11-05):** `Unknown --sort key: 'tid'`. **Corrected:** `--sort pid,dso,sym` (perf's `pid` key is per thread).
+
+**Anti-pattern — blaming a measurement tool for a CPU gap without an A/B (c122-018, 2026-11-05):** a ~15× gap between a harness leg and a live process was blamed on `perf stat -p` and written into this rule. The A/B/A paste (120 s clean / 120 s with the same 8-event `perf stat -p` / 120 s clean: 8.7 / 9.3 / 8.1 core-s/h) disproved it. **Corrected:** before attributing overhead to an attached tool, run clean / attached / clean windows of equal length on the same PID and compare schedstat sums:
+
+```bash
+run() { cat /proc/$PID/task/*/schedstat | awk '{s+=$1} END {printf "%.0f\n", s}'; }
+r0=$(run); sleep 120; r1=$(run); awk -v a=$r0 -v b=$r1 'BEGIN {printf "core_s_h=%.2f\n", (b-a)/1e9*30}'
+```
+
+**Anti-pattern — `nvidia-smi --query-gpu=…,clocks.sm` and `cpuinfo_cur_freq` on Grace (c122-018, 2026-11-05):** `clocks.sm` → `ERROR: Option clocks.sm is not recognized` and the whole query prints nothing; `cpuinfo_cur_freq` read 6,282,000 kHz on a 3.33 GHz part (CPPC feedback glitch), while `scaling_cur_freq` matched DCGM field 1120 exactly. **Corrected:** `nvidia-smi --query-gpu=index,power.draw,utilization.gpu,clocks.current.sm --format=csv`; use `scaling_cur_freq` for Grace core clock.
+
 **Anti-pattern — treat bake `Failed to copy Py_Version` Permission denied as missing 3.14t support (hpcperfstats01 2026-09-14):** podman/buildah **`RUN`** seccomp blocks `process_vm_readv`, so dump can find `Py_Version` then fail **`Failed to copy Py_Version symbol` / Permission denied**. That is **not** `Failed to find python version` and **not** proof the cargo pin is absent. **Corrected:** pin proof is **`sha256sum -c`** of the cargo tarball; bake dump skip **`PYSPY_BUILD_PTRACE_UNAVAILABLE`** is expected under buildah seccomp. Dump as **container root** after `up` (runtime ptrace). Never `2>/dev/null` under stacks.
 
 **Anti-pattern — bake `grep -aF libpython3.14t` on stripped `/opt/python3.14/bin/py-spy` (hpcperfstats01 2026-09-14):** python-build prune `strip --strip-unneeded` runs before dump smoke. Exact `grep -aF` of that token on the stripped cargo binary can exit 1 with **no dump output** (STEP 27 silent fail). That is **not** missing PR #860. **Corrected:** do not fail-closed on binary `grep`; prove the pin with tarball **`sha256sum`**; prove attach after `up` as container root.
