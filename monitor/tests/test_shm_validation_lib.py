@@ -211,6 +211,30 @@ class HostLiveProbeTests(unittest.TestCase):
             with patch("lib.host_live_probes.Path", side_effect=fake_path):
                 self.assertEqual(probe_opa_devices(), ["hfi1_0/2"])
 
+    def test_probe_power_socket_matches_hwmon_meters(self) -> None:
+        import tempfile
+
+        from lib.host_live_probes import probe_power_socket_devices
+
+        with tempfile.TemporaryDirectory() as tmp:
+            hw = Path(tmp) / "class" / "hwmon"
+            meters = [
+                ("hwmon9", "", "CPU Power Socket 0"),
+                ("hwmon3", "", "Grace Power Socket 1"),
+                ("hwmon4", "device", "SysIO Power Socket 1"),
+                ("hwmon5", "", "Vera Power Socket 3"),
+            ]
+            for name, sub, label in meters:
+                d = hw / name / sub if sub else hw / name
+                d.mkdir(parents=True)
+                (d / "power1_oem_info").write_text(label + "\n")
+                (d / "power1_average").write_text("45000000\n")
+            nolabel = hw / "hwmon0"
+            nolabel.mkdir()
+            (nolabel / "name").write_text("coretemp\n")
+            self.assertEqual(probe_power_socket_devices(tmp), ["0", "1"])
+            self.assertEqual(probe_power_socket_devices(str(Path(tmp) / "missing")), [])
+
     def test_probe_net_includes_up_lo(self) -> None:
         import tempfile
         from unittest.mock import patch

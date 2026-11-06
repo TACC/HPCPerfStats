@@ -330,6 +330,39 @@ def probe_nvidia_gpu_devices() -> list[str]:
     return devs
 
 
+_POWER_SOCKET_LABEL_RE = re.compile(r"^(CPU|Grace|SysIO|Module) Power Socket (\d+)\s*$")
+
+
+def probe_power_socket_devices(sysfs_root: str = "/sys") -> list[str]:
+    """host_power_socket row ids "0".."N-1" (arm_power_hwmon.c / arm_power_socket.c).
+
+    Mirrors the C scan: every ``class/hwmon/hwmonN`` (EL10) or ``hwmonN/device`` (EL9) whose
+    ``power1_oem_info`` (or ``power1_label``) reads ``<CPU|Grace|SysIO|Module> Power Socket
+    <N>`` and whose ``power1_average`` exists counts; rows are 0..max(N). No meter -> [].
+    """
+    nsock = 0
+    base = Path(sysfs_root) / "class" / "hwmon"
+    try:
+        entries = sorted(p for p in base.iterdir() if p.name.startswith("hwmon"))
+    except OSError:
+        return []
+    for hw in entries:
+        for d in (hw, hw / "device"):
+            label = None
+            for attr in ("power1_oem_info", "power1_label"):
+                lines = _read_lines(str(d / attr))
+                if lines:
+                    label = lines[0]
+                    break
+            if label is None:
+                continue
+            m = _POWER_SOCKET_LABEL_RE.match(label.strip())
+            if m and (d / "power1_average").is_file() and int(m.group(2)) < 16:
+                nsock = max(nsock, int(m.group(2)) + 1)
+            break
+    return [str(i) for i in range(nsock)]
+
+
 def probe_intel_gpu_devices() -> list[str]:
     """intel_gpu device ids as decimal strings; count Stampede3 PVC lspci lines.
 
@@ -487,6 +520,9 @@ def default_devices_for_type(type_name: str) -> list[str] | None:
         return devs if devs else None
     if type_name == "intel_gpu":
         devs = probe_intel_gpu_devices()
+        return devs if devs else None
+    if type_name == "host_power_socket":
+        devs = probe_power_socket_devices()
         return devs if devs else None
     if type_name in (
         "intel_x86_uncore_imc_spr",
