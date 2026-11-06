@@ -139,3 +139,125 @@ def test_current_hardlink_cache_skips_scandir_on_same_inode(
     )
     is True
   )
+
+
+class _RotPipe:
+  def __init__(self, sink, fail=False):
+    self.sink = sink
+    self.fail = fail
+
+  def lpush(self, key, value):
+    self.sink.append(("lpush", key, value))
+
+  def ltrim(self, key, start, end):
+    self.sink.append(("ltrim", key, start, end))
+
+  def expire(self, key, ttl):
+    self.sink.append(("expire", key, ttl))
+
+  def execute(self):
+    if self.fail:
+      raise ConnectionError("valkey down")
+    return []
+
+
+class _RotClient:
+  def __init__(self, fail=False):
+    self.ops = []
+    self.fail = fail
+
+  def pipeline(self, transaction=False):
+    return _RotPipe(self.ops, self.fail)
+
+
+def _dollar(host, ts):
+  return (
+    f"$\n1 {host}\n$hpcperfstats 3.0\n!host_cpu user,E\n"
+    f"{ts}.0 1 {host}\nhost_cpu 0 5\n"
+  )
+
+
+def test_listend_dollar_records_rotation(tmp_path, monkeypatch):
+  """A $ that closes a segment queues one rotation; samples queue nothing."""
+  import json
+
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as helpers
+
+  monkeypatch.setattr(ld.cfg, "get_archive_dir_path", lambda: str(tmp_path))
+  queued = []
+  monkeypatch.setattr(ld, "_enqueue_rotation_record", queued.append)
+  monkeypatch.setattr(ld, "_enqueue_monitor_identity_update", lambda i: None)
+  monkeypatch.setattr(ld, "_enqueue_recent_host_update", lambda h: None)
+  real_tail = helpers.read_stats_file_tail_identity
+
+  def _no_tail_on_consume(path):
+    raise AssertionError("tail read must run in the writer thread")
+
+  monkeypatch.setattr(
+    helpers, "read_stats_file_tail_identity", _no_tail_on_consume
+  )
+  host = "n010.demo.cluster.local"
+  _release_sticky_archive_writer()
+  ld.append_monitor_payload_to_archive(_dollar(host, 1700000000))
+  assert queued == [], "the first $ closes nothing"
+  ld.append_monitor_payload_to_archive(f"1700000060.0 1 {host}\nhost_cpu 0 6\n")
+  assert queued == [], "sample messages never record a rotation"
+  closed_size = (tmp_path / host / "current").stat().st_size
+  ld.append_monitor_payload_to_archive(_dollar(host, 1700000120))
+  _release_sticky_archive_writer()
+  assert len(queued) == 1
+  rec = queued[0]
+  assert rec.fqdn == host
+  assert rec.closed_bytes == closed_size
+  assert os.path.basename(rec.closed_path) == str(rec.closed_epoch)
+  assert os.path.isfile(rec.closed_path)
+  assert rec.new_epoch == 1700000120
+  assert rec.new_epoch != rec.closed_epoch
+
+  monkeypatch.setattr(helpers, "read_stats_file_tail_identity", real_tail)
+  client = _RotClient()
+  ld._write_rotation_record(client, rec)
+  ops = [op[0] for op in client.ops]
+  assert ops == ["lpush", "ltrim", "expire"]
+  assert client.ops[0][1] == f"ingest_rotation:v1:{host}"
+  assert client.ops[1][2:] == (0, 7)
+  assert client.ops[2][2] == ld.RECENT_HOST_TTL_SECONDS
+  doc = json.loads(client.ops[0][2])
+  _h, tail_ts = real_tail(rec.closed_path)
+  assert doc["closed_last_sample_at"] == int(tail_ts.timestamp()) == 1700000060
+  assert doc["closed_bytes"] == closed_size
+  assert doc["new_epoch"] == 1700000120
+  assert doc["rotated_at"] == rec.rotated_at
+
+
+def test_listend_rotation_tail_failure_stores_null(monkeypatch):
+  import json
+
+  client = _RotClient()
+  rec = ld._RotationRecord("a.example.com", "/no/such/1700", 5, 1700, 10, 1800)
+  ld._write_rotation_record(client, rec)
+  assert json.loads(client.ops[0][2])["closed_last_sample_at"] is None
+
+
+def test_listend_rotation_valkey_error_is_swallowed(monkeypatch):
+  """The writer thread logs and keeps going when Valkey fails."""
+  client = _RotClient(fail=True)
+  monkeypatch.setattr(ld, "_get_recent_host_valkey_client", lambda: client)
+  items = [ld._RotationRecord("a.example.com", "/no/1", 5, 1, 0, 2)]
+  done = []
+
+  def _get(timeout=1.0):
+    if items:
+      return items.pop(0)
+    ld._recent_host_worker_stop_event.set()
+    raise ld.queue.Empty
+
+  monkeypatch.setattr(ld._recent_host_queue, "get", _get)
+  monkeypatch.setattr(
+    ld._recent_host_queue, "task_done", lambda: done.append(1)
+  )
+  ld._recent_host_worker_stop_event.clear()
+  ld._recent_host_worker()
+  ld._recent_host_worker_stop_event.clear()
+  assert done == [1]
+  assert client.ops[0][0] == "lpush"

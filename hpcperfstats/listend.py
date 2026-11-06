@@ -97,6 +97,7 @@ from hpcperfstats.dbload.lib.file_locking import (
 )
 from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.shutdown_utils import send_sigchld_to_parent
+from hpcperfstats.lib.ingest_rotation import push_rotation_record
 from hpcperfstats.lib.monitor_identity import (
   parse_monitor_identity_from_dollar_message,
   set_monitor_identity,
@@ -234,6 +235,32 @@ _idle_monitor_stop_event = Event()
 _recent_host_worker_thread_started = False
 _recent_host_worker_stop_event = Event()
 _recent_host_queue = queue.Queue(maxsize=100000)
+
+
+class _RotationRecord(NamedTuple):
+  """
+  One closed ``$`` segment queued for the ``ingest_rotation:v1`` record.
+
+  The writer thread tails ``closed_path`` for ``closed_last_sample_at``, so
+  the archive thread does no extra file I/O.
+
+  Attributes:
+    fqdn: Host FQDN.
+    closed_path: Digit-epoch path of the closed segment.
+    rotated_at: listend wall-clock seconds when the ``$`` arrived.
+    closed_epoch: Closed segment's digit-epoch name as int.
+    closed_bytes: Size of the closed segment at unlink.
+    new_epoch: Digit-epoch name of the new ``current``.
+  """
+
+  fqdn: str
+  closed_path: str
+  rotated_at: int
+  closed_epoch: int | None
+  closed_bytes: int
+  new_epoch: int
+
+
 _recent_host_valkey_client = None
 # Set when on_message stops consume for live-DB queue backpressure.
 _db_backpressure_pause = False
@@ -656,12 +683,83 @@ def _enqueue_monitor_identity_update(identity: Any) -> None:
       )
 
 
+def _enqueue_rotation_record(record: _RotationRecord) -> None:
+  """
+  Queue a best-effort ``ingest_rotation:v1:{fqdn}`` LPUSH for one ``$``.
+
+  Rides the recent-host writer thread like ``monitor_identity``; ack, pause,
+  archive and DB-gate behavior do not change. ``queue.Full`` drops it.
+
+  Args:
+    record (_RotationRecord): Closed-segment facts from the ``$`` branch.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _enqueue_rotation_record(
+    ...   _RotationRecord("a.example.com", "/no/1", 5, 1, 0, 2)
+    ... )  # doctest: +SKIP
+  """
+  if not record.fqdn or "." not in record.fqdn:
+    return
+  try:
+    _recent_host_queue.put_nowait(record)
+  except queue.Full:
+    if DEBUG:
+      log_print(
+        f"Recent-host Valkey queue is full; dropping rotation for {record.fqdn}"
+      )
+
+
+def _write_rotation_record(valkey_client: Any, record: _RotationRecord) -> None:
+  """
+  Tail the closed segment and LPUSH the rotation entry (writer thread).
+
+  ``closed_last_sample_at`` is the closed file's last sample second, or None
+  when the tail read fails (file gone after day-close, unreadable tail).
+
+  Args:
+    valkey_client (Any): valkey-py client.
+    record (_RotationRecord): Queued rotation.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _write_rotation_record(
+    ...   None, _RotationRecord("a.example.com", "/no/1", 5, 1, 0, 2)
+    ... )  # doctest: +SKIP
+  """
+  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
+    read_stats_file_tail_identity,
+  )
+
+  try:
+    _host, last = read_stats_file_tail_identity(record.closed_path)
+  except Exception:
+    last = None
+  push_rotation_record(
+    valkey_client,
+    record.fqdn,
+    {
+      "rotated_at": int(record.rotated_at),
+      "closed_epoch": record.closed_epoch,
+      "closed_bytes": int(record.closed_bytes),
+      "new_epoch": int(record.new_epoch),
+      "closed_last_sample_at": int(last.timestamp()) if last else None,
+    },
+    ttl_seconds=RECENT_HOST_TTL_SECONDS,
+  )
+
+
 def _recent_host_worker() -> None:
   """
   Background worker that writes recent-host and monitor-identity keys to Valkey.
 
-  Queue items are either an FQDN ``str`` (``recent_host`` timestamp) or an
-  identity ``dict`` (``monitor_identity`` JSON). Valkey-only; no DB writes,
+  Queue items are an FQDN ``str`` (``recent_host`` timestamp), an identity
+  ``dict`` (``monitor_identity`` JSON) or a ``_RotationRecord``
+  (``ingest_rotation:v1`` LPUSH after a tail read of the closed segment). Valkey-only; no DB writes,
   pause/ack, or archive-gate changes.
 
   Returns:
@@ -684,7 +782,9 @@ def _recent_host_worker() -> None:
     try:
       valkey_client = _get_recent_host_valkey_client()
       if valkey_client is not None:
-        if isinstance(item, dict):
+        if isinstance(item, _RotationRecord):
+          _write_rotation_record(valkey_client, item)
+        elif isinstance(item, dict):
           set_monitor_identity(
             valkey_client,
             item,
@@ -694,7 +794,13 @@ def _recent_host_worker() -> None:
           _set_recent_host_timestamp(valkey_client, item)
     except Exception as e:
       if DEBUG:
-        label = item.get("fqdn") if isinstance(item, dict) else item
+        label = (
+          item.fqdn
+          if isinstance(item, _RotationRecord)
+          else item.get("fqdn")
+          if isinstance(item, dict)
+          else item
+        )
         log_print(
           f"Failed to update recent-host/monitor_identity Valkey for {label}: {e}"
         )
@@ -946,8 +1052,8 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
   is_dollar = payload_bytes.startswith(b"$")
 
   # `$`-prefixed messages are *schema/header* dumps from `hpcperfstatsd`:
-  # they are emitted when `rotate_timer_cb()` runs (immediately at daemon
-  # start, then every 86400s). Regular sampling messages do not include
+  # they are emitted on every schema rotation (daemon start, config reload,
+  # job end, and the `MONITOR_DAEMON_SCHEMA_ROTATE_SEC` timer, every 6 h). Regular sampling messages do not include
   # these `$` lines; if sending fails during a rotate, the same `$` payload
   # is later resent from the in-memory ring buffer or dumpfile.
   host_dir = os.path.join(cfg.get_archive_dir_path(), host)
@@ -956,6 +1062,8 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
   write_offset = 0
   unlinked_current = False
   closed_unlink_bytes = 0
+  rotation: _RotationRecord | None = None
+  closed_path = ""
   if is_dollar:
     _release_sticky_archive_writer(unlink_sidecar=True)
     os.makedirs(host_dir, exist_ok=True)
@@ -974,6 +1082,8 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
               "current is not hardlinked to a digit epoch before unlink"
             )
 
+        with _digit_epoch_link_cache_lock:
+          closed_path = (_digit_epoch_link_cache.get(host_dir) or ("",))[0]
         closed_unlink_bytes = os.path.getsize(current_path)
         os.unlink(current_path)
         unlinked_current = True
@@ -986,9 +1096,19 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
         current_path,
         fallback_ts=rotate_wall_ts,
       )
-      _link_current_to_unique_digit_epoch(
+      new_epoch = _link_current_to_unique_digit_epoch(
         host_dir, current_path, epoch_ts, step=1
       )
+      if unlinked_current and closed_path:
+        name = os.path.basename(closed_path)
+        rotation = _RotationRecord(
+          fqdn=host,
+          closed_path=closed_path,
+          rotated_at=rotate_wall_ts,
+          closed_epoch=int(name) if name.isdigit() else None,
+          closed_bytes=closed_unlink_bytes,
+          new_epoch=int(new_epoch),
+        )
       # Epoch name and current share an inode until the next ``$`` rotation.
       # sync_timedb skips epoch files same-inode-as-current to avoid read races.
   else:
@@ -1011,6 +1131,10 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
       identity = None
     if identity is not None:
       _enqueue_monitor_identity_update(identity)
+    # Valkey-only rotation record for Admin Monitor ingest freshness; the
+    # writer thread tails the closed file (raw-segment-rotation-freshness).
+    if rotation is not None:
+      _enqueue_rotation_record(rotation)
 
   now = time.time()
   with _timestamps_lock:
