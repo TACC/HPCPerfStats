@@ -1,0 +1,38 @@
+---
+description: Monitor $ rotation, listend segment close + ingest_rotation record, sync_timedb active-segment skip and host_data freshness derivation change together
+alwaysApply: false
+globs: hpcperfstats/listend.py,hpcperfstats/lib/ingest_rotation.py,hpcperfstats/dbload/lib/ingest_coverage.py,hpcperfstats/dbload/ingest_coverage_sweeper.py,hpcperfstats/site/lib/machine/admin_monitor_ingest_coverage*.py,hpcperfstats/dbload/lib/sync_timedb_archive_helpers.py
+---
+
+# Raw segment rotation ↔ freshness contract
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+## Chain (producer → consumer)
+
+1. **Monitor `$` rotation** — the only event that closes a host's raw segment. It fires on daemon start (`monitor.c`), config reload (`monitor_daemon.c`), job end and the `MONITOR_DAEMON_SCHEMA_ROTATE_SEC` timer (6 h, `monitor/src/monitor_daemon.h`). The next rotation time is **not predictable** from the consumer side.
+2. **listend** (`append_monitor_payload_to_archive`, `$` branch) unlinks `current`, keeps the closed digit-epoch file, links a new epoch, and queues one `ingest_rotation:v1:{fqdn}` entry on the recent-host writer thread (`hpcperfstats/lib/ingest_rotation.py`): `{rotated_at, closed_epoch, closed_bytes, new_epoch, closed_last_sample_at}`, `LTRIM 0 7`, TTL `RECENT_HOST_TTL_SECONDS`. `closed_last_sample_at` comes from `read_stats_file_tail_identity` on the closed file **in the writer thread**, never on the consume / archive path. A failed tail read stores `null`. Ack, pause, archive and DB-gate behavior are unchanged (`listend-live-db-ingest-contract.mdc`).
+3. **sync_timedb** skips the active segment (`stats_file_is_active_segment` in `sync_timedb_archive_helpers.py`; state machine in `docs/SYNC_TIMEDB_STATE_MACHINE.md`), so `host_data` can only reach the newest **closed** segment. A lag of up to one rotation period is by design.
+4. **Freshness consumers** (Admin Monitor ingest coverage in `hpcperfstats/dbload/lib/ingest_coverage.py::derive_host_status`, future readiness checks) derive freshness **only** from that record:
+   - `closed_until` = newest `rotated_at`; `open_segment_age_s` = now − `closed_until` (shown, never flagged — no `monitor_quiet` status);
+   - `ingest_backlog_s` = `closed_last_sample_at` − newest `host_data.time` (floor 0, whole seconds, both monitor sample clocks);
+   - `current` at backlog 0; `ingest_behind` only when two consecutive sweeps see a backlog for the **same** `closed_last_sample_at`; `unknown` without a usable record.
+
+## Law
+
+- A change to the rotation interval or triggers, listend's close/epoch logic, the `ingest_rotation:v1` record shape, or the active-segment skip **must** update the freshness derivation and its tests in the same change — and the reverse.
+- **Forbidden:** judging `host_data` freshness from a fixed hours INI setting, from `now()`, or by comparing listend's receive clock (`rotated_at`) with sample times (normal send lag and RabbitMQ buffering would flag healthy hosts).
+- Every coverage-sweeper read of `host_data` stays inside the last **7 days** (`RECENT_DATA_DAYS`; `compress_after => INTERVAL '8d'`, migration `0032`). If `compress_after` is ever lowered below 7 days, lower this bound in the same change.
+- Bump the `v1` key version when the record shape changes incompatibly.
+
+## Tests
+
+- `hpcperfstats/tests/test_listend_archive.py` — `test_listend_dollar_records_rotation` and the tail-failure / Valkey-error cases.
+- `hpcperfstats/tests/test_ingest_coverage_sweeper.py` — `test_derive_host_status` matrix (send lag, buffered monitor, 20 h open segment, two-sweep `ingest_behind`, null-tail fallback, whole-second compare) and the 7-day bound.
+
+## Overlap
+
+- **`listend-live-db-ingest-contract.mdc`** — `$` rotate hardlinks, ack/archive ordering, queued Valkey writer.
+- **`sync-timedb-state-machine-contract.mdc`** + **`docs/SYNC_TIMEDB_STATE_MACHINE.md`** — active-segment skip.
+- **`update-metrics-columnar-codon-contract.mdc`** — the consumed side of the same Admin Monitor section (`FrameIndex._select`).
+- Monitor side: `monitor/cursor-rules/monitor-consumer-side-plan.mdc` cross-links here for `monitor_daemon` rotation edits.

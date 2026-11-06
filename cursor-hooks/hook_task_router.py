@@ -105,6 +105,18 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     ],
   },
   {
+    "id": "raw_segment_rotation_freshness",
+    "patterns": [
+      "hpcperfstats/listend.py",
+      "hpcperfstats/lib/ingest_rotation.py",
+      "hpcperfstats/dbload/lib/ingest_coverage.py",
+      "hpcperfstats/dbload/ingest_coverage_sweeper.py",
+      "hpcperfstats/site/lib/machine/admin_monitor_ingest_coverage*.py",
+      "hpcperfstats/dbload/lib/sync_timedb_archive_helpers.py",
+    ],
+    "rules": ["raw-segment-rotation-freshness-contract.mdc"],
+  },
+  {
     "id": "shared_node_affinity_consumer",
     "patterns": [
       "hpcperfstats/dbload/lib/monitor_mark_side_ingest.py",
