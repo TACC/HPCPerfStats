@@ -5,6 +5,8 @@ macros.
 
 Attributes:
   DESC: Attribute.
+  EXTRA_EVENT_NAMES: Consumer-known events always listed (``host_power_socket``
+    keys), independent of the checked-out monitor tree.
   HISTORICAL_EVENT_NAMES: Attribute.
   MARKERS: Attribute.
   MONITOR_SRC: Attribute.
@@ -36,6 +38,21 @@ RETIRED_EVENT_NAMES = frozenset(
 HISTORICAL_EVENT_NAMES = frozenset(
   {
     "vl15_dropped",
+    # Retired in monitor round 2 (D33/D36); archive history only.
+    "dcgm_cpu_power_util_w",
+    "dcgm_cpu_power_limit_w",
+    "module_power_usage",
+    "sysio_power_usage",
+  }
+)
+# Consumer-known events listed even before a monitor tree with their KEYS is
+# checked out (host_power_socket, monitor round 2 D31/D32).
+EXTRA_EVENT_NAMES = frozenset(
+  {
+    "cpu_power_w",
+    "socket_power_w",
+    "sysio_power_w",
+    "module_power_w",
   }
 )
 
@@ -247,10 +264,36 @@ DESC: dict[str, str] = {
   ),
   "power_usage": "GPU power draw (watts). DCGM on `nvidia_gpu`; device-reported path on `amd_gpu` when available.",
   "sysio_power_usage": (
-    "NVIDIA-only (`nvidia_gpu` / DCGM): SysIO instantaneous power (watts). Not present in the slimmer `amd_gpu` monitor schema."
+    "Retired `nvidia_gpu` SysIO power (watts, DCGM), present only in data from monitors before round 2; "
+    "SysIO power is now `sysio_power_w` on `host_power_socket`."
   ),
   "module_power_usage": (
-    "NVIDIA-only (`nvidia_gpu` / DCGM): module-scope power (watts) on integrated packages. Omitted from `amd_gpu` KEYS."
+    "Retired `nvidia_gpu` module power (watts, DCGM), present only in data from monitors before round 2; "
+    "module power is now `module_power_w` on `host_power_socket` and older rows still feed the node power estimate."
+  ),
+  "dcgm_cpu_power_util_w": (
+    "Retired Grace `host_cpu_hw` socket power copied onto every CPU (watts), present only in data from monitors "
+    "before round 2 (it read 0 on Horizon GB200); socket power is now `host_power_socket`."
+  ),
+  "dcgm_cpu_power_limit_w": (
+    "Retired Grace `host_cpu_hw` CPU power limit (watts), always 0 because Grace does not expose the limit; "
+    "present only in data from monitors before round 2."
+  ),
+  # host_power_socket (monitor round 2): one row per CPU socket, dev = socket id.
+  "cpu_power_w": (
+    "Per-socket CPU core rail power in watts from the ACPI `CPU Power Socket N` meter (`host_power_socket`, "
+    "one row per socket; 0 when the node has no such meter)."
+  ),
+  "socket_power_w": (
+    "Per-socket whole-socket power in watts from the ACPI `Grace Power Socket N` meter (`host_power_socket`); "
+    "summed over sockets for the node power estimate when no module meter is present."
+  ),
+  "sysio_power_w": (
+    "Per-socket SoC (SysIO) rail power in watts from the ACPI `SysIO Power Socket N` meter (`host_power_socket`)."
+  ),
+  "module_power_w": (
+    "Per-socket whole-module power in watts from the ACPI `Module Power Socket N` meter on GH200 "
+    "(`host_power_socket`; 0 where absent); when above 0 it is the node power estimate by itself."
   ),
   "temperature": "GPU temperature (degrees C). DCGM on `nvidia_gpu`; `amd_gpu` when GPUPerfAPI supplies it.",
   "fp64_active": (
@@ -643,7 +686,7 @@ def main() -> int:
     print("monitor/src not found at", MONITOR_SRC, file=sys.stderr)
     return 1
   names = {n for n in collect_all_names() if n not in RETIRED_EVENT_NAMES}
-  names |= HISTORICAL_EVENT_NAMES
+  names |= HISTORICAL_EVENT_NAMES | EXTRA_EVENT_NAMES
   lines = [
     "/**",
     " * Monitor `host_data.event` names: definitions align with HPCPerfStats/monitor schema KEYS.",

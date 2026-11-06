@@ -164,7 +164,7 @@ On the page, rows are grouped under source subsections in fixed order **CPU → 
 | `max_opa_congestion_rate` | Peak Omni-Path congestion event rate | Peak OPA congestion-related counter rate | OPA-specific network contention indicator. |
 | `max_numa_remote_rate` | Peak non-local NUMA memory access rate | Peak NUMA remote-access rate | High values indicate locality/memory placement issues<sup>[4](#ref-4)</sup>. |
 | `max_gpu_power` | Maximum GPU power draw | Peak GPU power draw | Detects power-cap proximity or thermal stress windows. |
-| `max_node_power_est_w` | Peak estimated node power | Peak estimated node power | Useful for peak power envelope checks and cooling stress. |
+| `max_node_power_est_w` | Peak estimated node power | Peak estimated node power: Intel/AMD RAPL plus GPU on x86; on Grace, GH200 module power, else per-socket power summed over sockets plus GPU | Useful for peak power envelope checks and cooling stress. |
 | `avg_node_power_est_w` | Mean estimated node power | Mean estimated node power | Energy-to-solution comparisons across runs/configurations. |
 | `max_gpu_link_gbps` | Peak GPU PCIe and NVLink data rate | Peak GPU link bandwidth (PCIe/NVLink aggregate path) | Host-device/device-device transfer pressure indicator. |
 | `max_gpu_clock_event_reasons` | Peak GPU clock throttling reasons | DCGM clock-event bitmask (Job Detail shows decoded flag names; API/search stay numeric) | Named flags (power cap, thermal, sync boost, …) explain why clocks were limited; correlate with power/temp traces. |
@@ -346,5 +346,6 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-09-08 | Job list: after **Project**, columns are **nodes**, **cores**, then **runtime** as **HH:MM:SS** (not seconds). |
 | 2026-10-19 | Shared-node jobs: metrics/plots job-scoped; `mem_hwm`/Summary mem prefer `host_mem_job`; red host-wide `?` footer when shared. |
 | 2026-10-20 | Shared-node `?` footer: CPU/GPU/job memory job-scoped when affinity/cgroup present; residual counters may still be host-wide. |
+| 2026-11-05 | Node power estimate on Grace nodes reads per-socket power meters (`host_power_socket`): GH200 module power when present, otherwise whole-socket power summed over sockets plus GPU power (socket power alone on GPU-less Grace/Grace and Vera nodes). Horizon GB200 CPU power read 0 before this monitor release, and GB200 and Grace/Grace estimates are now higher by the SoC and memory share. The retired per-CPU / per-GPU power copies only appear in older jobs, which keep the old estimate. |
 
 

@@ -468,9 +468,14 @@ This section is a strict `host_data.type` inventory for variables actively wired
 - **Figures/metrics/displays:** Job Detail Metrics (`max_numa_remote_rate`), Summary (`numa_remote_refs`)
 
 ### `nvidia_gpu`
-- **Used variables:** `gpu_util`, `tensor_active`, `fp16_active`, `fp32_active`, `fp64_active`, `gpu_mem_bw_bytes_rate`, `power_usage`, `sysio_power_usage`, `module_power_usage`, `clocks_event_reasons`, `gpu_io_link_total_bytes`, `mem_used_mb`, `mem_util`, `sm_occupancy`, `gpu_count`, `gpu_flops`, `gpu_mem_read_bytes`, `gpu_mem_write_bytes`, `gpu_mem_total_bytes`
+- **Used variables:** `gpu_util`, `tensor_active`, `fp16_active`, `fp32_active`, `fp64_active`, `gpu_mem_bw_bytes_rate`, `power_usage`, `module_power_usage` (retired in monitor round 2; history rows only), `clocks_event_reasons`, `gpu_io_link_total_bytes`, `mem_used_mb`, `mem_util`, `sm_occupancy`, `gpu_count`, `gpu_flops`, `gpu_mem_read_bytes`, `gpu_mem_write_bytes`, `gpu_mem_total_bytes`
 - **Where used in code:** `hpcperfstats/analysis/metrics/lib/metrics.py`, `hpcperfstats/analysis/metrics/lib/gpu_job_detail_summary.py`, summary and roofline plot builders
 - **Figures/metrics/displays:** Job Detail Metrics (`avg_gpuutil`, precision/tensor/GPU-link/GPU-power metrics, `detail_gpu_*`, GPU imbalance metrics), Summary GPU panels (`nv_*`), GPU roofline and GPU multiprecision
+
+### `host_power_socket`
+- **Used variables:** `socket_power_w`, `module_power_w` (`cpu_power_w`, `sysio_power_w` ingested, not in metrics)
+- **Where used in code:** `hpcperfstats/analysis/metrics/lib/columnar/summary_series.py` (`add_node_power_est_column`), `hpcperfstats/analysis/metrics/lib/columnar/detail_series.py` (`node_power_est_frame`); summed over socket `dev` rows
+- **Figures/metrics/displays:** Job Detail Metrics (`max_node_power_est_w`, `avg_node_power_est_w`, `job_cpu_gpu_watt_hours`), Summary (`node_power_est_w`)
 
 ### `opa`
 - **Used variables:** `PortXmitData`, `PortRcvData`, `PortXmitPkts`, `PortRcvPkts`, `PortXmitWait`, `SwPortCongestion`, `PortRcvFECN`, `PortRcvBECN`

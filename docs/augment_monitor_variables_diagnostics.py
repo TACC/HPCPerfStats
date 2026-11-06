@@ -374,6 +374,27 @@ def diagnostic_for_key(key: str, definition: str) -> str:
             "on the same socket to relate package-level behavior to memory or cache events."
         )
 
+    # --- Retired power keys (monitor round 2, history only) ---
+    if k in (
+        "dcgm_cpu_power_limit_w",
+        "sysio_power_usage",
+        "DCGM_CPU_POWER_LIMIT_W",
+    ):
+        return (
+            "Retired in monitor round 2; present only in data from older monitors. Use "
+            "`host_power_socket` (`cpu_power_w`, `socket_power_w`, `sysio_power_w`, "
+            "`module_power_w`, one row per socket) for current power diagnosis."
+        )
+
+    # --- Per-socket power rails not in the node estimate ---
+    if k in ("cpu_power_w", "sysio_power_w"):
+        return (
+            "Per-socket power rail on `host_power_socket` (`dev` = socket id): compare the "
+            "core rail (`cpu_power_w`) and SoC rail (`sysio_power_w`) with `socket_power_w` "
+            "to see how much of a socket's power is cores versus memory and I/O; sum by `dev` "
+            "for a node total."
+        )
+
     # --- GPU (not all wired to summary) ---
     if k in (
         "gpu_flops_rate",
@@ -381,7 +402,6 @@ def diagnostic_for_key(key: str, definition: str) -> str:
         "gpu_mem_read_bytes",
         "gpu_mem_write_bytes",
         "gpu_mem_total_bytes",
-        "sysio_power_usage",
         "clocks_event_reasons",
         "gpu_io_link_total_bytes",
     ) or (

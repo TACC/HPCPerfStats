@@ -173,8 +173,6 @@ def _domain(k: str) -> str:
         "tensor_active",
         "mem_util",
         "power_usage",
-        "sysio_power_usage",
-        "module_power_usage",
         "temperature",
         "fp64_active",
         "fp32_active",
@@ -319,6 +317,15 @@ def _domain(k: str) -> str:
         return "tmpfs"
     if k in ("mem_used", "segs_used"):
         return "SysV shared memory"
+    if k in ("cpu_power_w", "socket_power_w", "sysio_power_w", "module_power_w"):
+        return "host_power_socket (Grace / Vera per-socket ACPI power meters)"
+    if k in (
+        "dcgm_cpu_power_util_w",
+        "dcgm_cpu_power_limit_w",
+        "module_power_usage",
+        "sysio_power_usage",
+    ):
+        return "Retired power keys (history only; monitor round 2)"
     if k in ("DCGM_CPU_POWER_UTIL_W", "DCGM_CPU_POWER_LIMIT_W", "ARM_DRAM_BW_BYTES"):
         return "cpu_counter_metrics (Grace / DCGM / synthetic)"
     if k == "ARM_EST_FLOPS":
@@ -466,7 +473,7 @@ Exact `st_name` values are in `HPCPerfStats/monitor/src/*.c` (grep `.st_name`). 
 - **Local disk:** `block` — `rd_sectors`, `wr_sectors`, …
 - **Shared filesystem:** `llite`, `mdc`, `osc`, `nfs` — bytes, ops, Lustre `mds_*` / `ost_*`
 - **Memory & NUMA:** `mem`, NUMA meminfo fields on `mem`, `numa`, `vm`
-- **Power:** `intel_rapl`, `amd64_rapl`, `cpu_counter_metrics` (`DCGM_CPU_POWER_*`), GPU power fields
+- **Power:** `intel_rapl`, `amd64_rapl`, `host_power_socket` (per-socket `cpu_power_w` / `socket_power_w` / `sysio_power_w` / `module_power_w`, `dev` = socket), GPU `power_usage`. Retired in monitor round 2 (history only): `host_cpu_hw` `dcgm_cpu_power_util_w` / `dcgm_cpu_power_limit_w` and `nvidia_gpu` `module_power_usage` / `sysio_power_usage`. Node power estimate: Σ `module_power_w` when > 0, else Σ `socket_power_w` + GPU power (Horizon GB200 CPU power read 0 before this release; GB200 and Grace/Grace estimates rise by the SoC + memory share)
 - **Process footprint:** `proc` — `VmRSS`, `VmHWM`, …
 
 ---
