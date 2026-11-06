@@ -118,8 +118,8 @@ grep -q 'is-active hpcperfstats.service' "${verify}" \
 grep -q 'refusing shm validate' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must refuse validate when service not active" >&2; exit 1; }
 
-grep -Eq 'field group creation failed|basic-no-board-power|stage=6' "${verify}" \
-  || { echo "rpm_debug_shm_verify.sh must hint FieldGroupCreate / basic-no-board-power on validate fail" >&2; exit 1; }
+grep -Eq 'field group creation failed|nvidia_gpu: source|stage=6' "${verify}" \
+  || { echo "rpm_debug_shm_verify.sh must hint NVML/DCGM source and FieldGroupCreate on validate fail" >&2; exit 1; }
 
 grep -Eq 'Driver/stack probe|libdcgm' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must mention Driver/stack probe libdcgm on validate fail" >&2; exit 1; }

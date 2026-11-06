@@ -39,8 +39,8 @@ def validate_devices_in_payload(
             hint = ""
             if type_name == "nvidia_gpu":
                 hint = (
-                    "; check journal for 'field group creation failed' / stage=6 "
-                    "(board-power field IDs) or Driver/stack probe libdcgm="
+                    "; check journal for 'nvidia_gpu: source' (NVML+GPM vs DCGM), "
+                    "'field group creation failed' / stage=6 or Driver/stack probe libdcgm="
                 )
             raise ValueError(f"type {type_name!r}: no rows in payload (expected devices){hint}")
         if type_name == "host_cpu" and len(seen[type_name]) != len(devices):

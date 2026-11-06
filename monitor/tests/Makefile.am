@@ -49,6 +49,7 @@ if INFINIBAND
 check_PROGRAMS += test_ib_mad_backoff test_ib_mad_decode test_ib_mad_sw_swap
 endif
 # Pure arm-backend util/publish math and host_power_socket run on every host (portable C).
+check_PROGRAMS += test_nvidia_gpu_nvml_convert test_nvidia_gpu_nvml
 check_PROGRAMS += test_cpu_counter_arm_util test_cpu_counter_arm_publish \
 	test_cpu_counter_arm_publish_likwid \
 	test_cpu_counter_metrics_likwid_ready_arm \
@@ -719,6 +720,20 @@ test_nvidia_gpu_dcgm_field_SOURCES = \
 	test_nvidia_gpu_dcgm_field.c \
 	$(top_srcdir)/src/nvidia_gpu_dcgm_field.c
 test_nvidia_gpu_dcgm_field_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/third_party/nvidia-dcgm
+
+test_nvidia_gpu_nvml_convert_SOURCES = \
+	test_nvidia_gpu_nvml_convert.c \
+	$(top_srcdir)/src/nvidia_gpu_nvml_convert.c
+test_nvidia_gpu_nvml_convert_LDADD = $(LDADD) -lm
+
+# NVML + GPM source with a stubbed API table (no driver); vendored nvml.h for struct layouts.
+test_nvidia_gpu_nvml_SOURCES = \
+	test_nvidia_gpu_nvml.c \
+	$(top_srcdir)/src/nvidia_gpu_nvml.c \
+	$(top_srcdir)/src/nvidia_gpu_nvml_convert.c \
+	$(top_srcdir)/src/dyn_lib_path.c
+test_nvidia_gpu_nvml_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/third_party/nvidia-nvml
+test_nvidia_gpu_nvml_LDADD = $(LDADD) -ldl -lm
 
 test_nvidia_gpu_dcgm_profiles_SOURCES = \
 	test_nvidia_gpu_dcgm_profiles.c \

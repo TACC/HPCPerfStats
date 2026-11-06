@@ -68,23 +68,10 @@ EOF
   for tool in ${MEASURE_OVERHEAD_TOOLS}; do
     command -v "${tool}" >/dev/null 2>&1 || missing+=("${tool}")
   done
-  if test "$(uname -m)" = "aarch64" && ! measure_overhead_have_libdcgm; then
-    missing+=("libdcgm (datacenter-gpu-manager-4-devel or libdcgm-devel)")
-  fi
   if test "${#missing[@]}" -gt 0; then
     echo "--measure-overhead: missing build prerequisites: ${missing[*]}" >&2
     return 1
   fi
-}
-
-measure_overhead_have_libdcgm() {
-  local d
-  for d in /usr/lib64 /usr/lib /usr/lib/aarch64-linux-gnu; do
-    if compgen -G "${d}/libdcgm.so*" >/dev/null; then
-      return 0
-    fi
-  done
-  return 1
 }
 
 # measure_overhead_find_rpm TOPDIR VERSION -> the single hpcperfstatsd-VERSION-*.rpm for uname -m.

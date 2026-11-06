@@ -1,4 +1,4 @@
-/* NVIDIA GPU DCGM collect and schema emission. */
+/* NVIDIA GPU collect and schema emission: NVML + GPM on GPM-capable GPUs, DCGM otherwise. */
 #include <inttypes.h>
 #include <limits.h>
 #include <stdint.h>
@@ -14,6 +14,7 @@
 #include "nvidia_gpu.h"
 #include "nvidia_gpu_dcgm_field.h"
 #include "nvidia_gpu_estimate.h"
+#include "nvidia_gpu_nvml.h"
 #include "monitor_log.h"
 #include "stats.h"
 #include "trace.h"
@@ -32,6 +33,10 @@ static uint64_t g_io_prev_nvlink_tx[DCGM_MAX_NUM_DEVICES];
 static uint64_t g_io_prev_nvlink_rx[DCGM_MAX_NUM_DEVICES];
 static unsigned char g_io_link_baseln[DCGM_MAX_NUM_DEVICES];
 static long long g_gpu_prev_collect_us = 0;
+/* 1 while the NVML+GPM source serves every GPU; set by begin, cleared for good by a mid-run
+ * NVML failure (round 2 J2, D14: the DCGM path takes over on the next collect). */
+static int g_gpu_nvml_active;
+static int g_gpu_nvml_given_up;
 
 static unsigned long long clamp_double_to_ull(double v)
 {
@@ -241,22 +246,82 @@ static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row, u
   return 0;
 }
 
+/* One collect on the NVML path. Returns rows emitted, or -1 when NVML failed (caller falls back). */
+static int nvidia_gpu_collect_nvml(struct stats_type *type, long long now_us, long long delta_us)
+{
+  int ndev = nvidia_gpu_nvml_ndev();
+  int i, nr = 0;
+
+  if (ndev > DCGM_MAX_NUM_DEVICES)
+    ndev = DCGM_MAX_NUM_DEVICES;
+  g_nvidia_gpu_runtime_ndev = ndev; /* shared-node GPU rows (job_shared_emit.c) */
+  for (i = 0; i < ndev; i++) {
+    dcgm_data_t row;
+    struct stats *stats;
+    char dev[16];
+
+    memset(&row, 0, sizeof(row));
+    if (nvidia_gpu_nvml_fill(i, now_us, &row) != 0)
+      return -1;
+    snprintf(dev, sizeof(dev), "%d", i);
+    stats = get_current_stats(type, dev);
+    if (stats == NULL) {
+      g_nvidia_gpu_stats_alloc_skips++;
+      continue;
+    }
+    if (nvidia_gpu_collect_dev(stats, &row, (unsigned int)i, ndev, delta_us) == 0)
+      nr++;
+  }
+  return nr;
+}
+
+static int nvidia_gpu_begin(struct stats_type *type)
+{
+  (void)type;
+  if (g_gpu_nvml_active || g_gpu_nvml_given_up)
+    return 0;
+  if (nvidia_gpu_nvml_prepare() == 0) {
+    g_gpu_nvml_active = 1;
+    monitor_log_info("nvidia_gpu: source NVML+GPM (%d GPUs)\n", nvidia_gpu_nvml_ndev());
+  } else {
+    monitor_log_info("nvidia_gpu: source DCGM (NVML+GPM unavailable: %s)\n",
+                     nvidia_gpu_nvml_last_error());
+  }
+  return 0;
+}
+
 static void nvidia_gpu_collect(struct stats_type *type)
 {
   int i;
   int nr = 0;
   long long delta_us = 0;
+  long long now_us = 0;
   dcgmReturn_t rc = DCGM_ST_OK;
   dcgm_data_t *dcgm_data = NULL;
   int fail_stage = NVIDIA_GPU_FAIL_NONE;
   {
     struct timespec mono;
     if (clock_gettime(CLOCK_MONOTONIC, &mono) == 0) {
-      long long now_us = (long long)mono.tv_sec * 1000000LL + (long long)mono.tv_nsec / 1000LL;
+      now_us = (long long)mono.tv_sec * 1000000LL + (long long)mono.tv_nsec / 1000LL;
       if (g_gpu_prev_collect_us > 0 && now_us > g_gpu_prev_collect_us)
         delta_us = now_us - g_gpu_prev_collect_us;
       g_gpu_prev_collect_us = now_us;
     }
+  }
+
+  if (g_gpu_nvml_active) {
+    nr = nvidia_gpu_collect_nvml(type, now_us, delta_us);
+    if (nr >= 0)
+      goto out;
+    monitor_log_warn("nvidia_gpu: NVML+GPM failed (%s); switching to DCGM\n",
+                     nvidia_gpu_nvml_last_error());
+    nvidia_gpu_nvml_cleanup();
+    g_gpu_nvml_active = 0;
+    g_gpu_nvml_given_up = 1;
+    g_nvidia_gpu_runtime_ndev = 0;
+    nr = 0;
+    fail_stage = NVIDIA_GPU_FAIL_FETCH;
+    goto out;
   }
 
   if (nvidia_gpu_runtime_prepare(&fail_stage) < 0)
@@ -340,6 +405,7 @@ out:
 //! Definition of stats entry for this type
 struct stats_type nvidia_gpu_stats_type = {
     .st_name = "nvidia_gpu",
+    .st_begin = &nvidia_gpu_begin,
     .st_collect = &nvidia_gpu_collect,
 #define X SCHEMA_DEF
     .st_schema_def = JOIN(KEYS),

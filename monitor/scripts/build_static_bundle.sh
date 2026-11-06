@@ -31,14 +31,14 @@
 #                   configure --enable-debug (DEBUG macro, /dev/shm payload mirror).
 #                   Set by hpcperfstats.spec when rpmbuild uses hpc_debug_build 1.
 #
-# Optional stacks (InfiniBand MAD, NVIDIA DCGM GPU, AMD GPUPerfAPI): this script probes the
-# build host and passes --disable-* when development libs/headers are missing so configure
-# does not fail (configure defaults IB on; GPU/AMD use auto + lspci and then hard-require
-# libdcgm / GPUPerfAPI headers when hardware matches). Extra CONFIGURE_ARGS still override
-# or extend (e.g. --disable-lustre).
+# Optional stacks (InfiniBand MAD, AMD GPUPerfAPI): this script probes the build host and
+# passes --disable-* when development libs/headers are missing so configure does not fail
+# (configure defaults IB on; AMD uses auto + lspci). NVIDIA GPU needs nothing on the build
+# host: libdcgm and libnvidia-ml are dlopen()ed at runtime against vendored headers. Extra
+# CONFIGURE_ARGS still override or extend (e.g. --disable-lustre).
 #
 # CPU counters: configure uses --with-cpu-counter-backend=auto (x86 -> LIKWID,
-# else DCGM + LIKWID overlay). Non-x86 still needs system libdcgm for util/power.
+# else arm: /proc/stat util, cpufreq clock, LIKWID overlay; no DCGM).
 #
 # Pinned versions: edit STATIC_PIN_* below. Runtime overrides: LIBEV_VER,
 # RABBITMQ_VER, LIKWID_TAG, and *_URL_FMT for mirrors.
@@ -46,9 +46,9 @@
 # Architecture (deps + configure):
 #   All arches: build LIKWID static libs (ACCESSMODE=perf_event).
 #   x86_64 / i686: configure auto-selects exclusive LIKWID CPU backend.
-#   Other (e.g. aarch64): configure auto-selects DCGM + LIKWID overlay.
-#   DCGM GPU/CPU headers are vendored under monitor/third_party/nvidia-dcgm; linking still
-#   needs libdcgm from the NVIDIA DCGM package when those paths are enabled.
+#   Other (e.g. aarch64): configure auto-selects the arm backend + LIKWID overlay.
+#   DCGM and NVML headers are vendored under monitor/third_party/nvidia-{dcgm,nvml}; both
+#   libraries are loaded at runtime on every arch (nothing to link).
 #
 set -euo pipefail
 
@@ -67,7 +67,7 @@ STATIC_PIN_RABBITMQ_C_VERSION="0.17.0"
 # LIKWID: Git tag name without a leading "v" (archive is .../tags/v${VER}.tar.gz).
 STATIC_PIN_LIKWID_VERSION="5.5.2"
 STATIC_PIN_LIBBPF_VERSION="1.7.0"
-# LIKWID is the PMU library on x86 and aarch64 (DCGM+LIKWID overlay on Grace).
+# LIKWID is the PMU library on x86 and aarch64 (arm backend + LIKWID overlay on Grace).
 # Optional: override tarball base URLs (must contain a single %s for version where used).
 STATIC_PIN_LIBEV_URL_FMT="http://dist.schmorp.de/libev/libev-%s.tar.gz"
 # rabbitmq-c: source-of-truth repo is alanxz/rabbitmq-c; github.com/rabbitmq/rabbitmq-c archive URLs return 404.
@@ -81,7 +81,6 @@ SRCDIR="${SRCDIR:-${REPO_ROOT}/.build/src-static}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 SKIP_DEPS="${SKIP_DEPS:-0}"
 SKIP_CLEAN="${SKIP_CLEAN:-0}"
-HPCS_BUNDLE_REQUIRE_DCGM_GPU="${HPCS_BUNDLE_REQUIRE_DCGM_GPU:-0}"
 
 # Populated by static_bundle_print_detection_summary(); used by build_monitor (no second probe pass).
 STATIC_BUNDLE_FEAT_FLAGS=()
@@ -275,12 +274,6 @@ monitor_probe_opa_oib_utils() {
 int main(void){return 0;}' -loib_utils -libmad -libumad -libverbs -lpublic -lpthread
 }
 
-monitor_probe_dcgm_vendor_link() {
-  local inc="-I${MONITOR_DIR}/third_party/nvidia-dcgm"
-  monitor_link_probe '#include <dcgm_agent.h>
-int main(void){(void)dcgmInit();return 0;}' ${inc} -ldcgm -ldl
-}
-
 monitor_probe_amd_gpup_perfapi_sdk() {
   test -f /usr/include/gpu_performance_api/gpu_perf_api.h \
     || test -f /usr/local/include/gpu_performance_api/gpu_perf_api.h
@@ -322,8 +315,8 @@ static_bundle_print_detection_summary() {
     cpu_backend="LIKWID"
     likwid_build="yes (this run compiles LIKWID into PREFIX unless SKIP_DEPS=1)"
   else
-    cpu_backend="DCGM+LIKWID overlay"
-    likwid_build="yes (aarch64 overlay; DCGM still required for util/power)"
+    cpu_backend="arm+LIKWID overlay"
+    likwid_build="yes (aarch64 overlay; no DCGM)"
   fi
 
   if command -v lspci >/dev/null 2>&1; then
@@ -382,24 +375,12 @@ static_bundle_print_detection_summary() {
     fi
   fi
 
-  if monitor_probe_dcgm_vendor_link; then
-    dcgm_ok=detected
+  if test -f "${MONITOR_DIR}/third_party/nvidia-dcgm/dcgm_agent.h" \
+    && test -f "${MONITOR_DIR}/third_party/nvidia-nvml/nvml.h"; then
+    dcgm_ok="runtime-dlopen (NVML+GPM, DCGM fallback; vendored headers)"
   else
-    if is_x86_build_host; then
-      dcgm_ok="runtime-dlopen (x86 LIKWID GPU; no link-time libdcgm required)"
-    else
-      dcgm_ok="not detected"
-      if test "${HPCS_BUNDLE_REQUIRE_DCGM_GPU}" = "1"; then
-        cat <<EOF >&2
-ERROR: DCGM link probe failed but HPCS_BUNDLE_REQUIRE_DCGM_GPU=1.
-Refusing to auto-disable nvidia_gpu in this build.
-Install libdcgm development package for this build root (and ensure linker visibility),
-or unset HPCS_BUNDLE_REQUIRE_DCGM_GPU if this build intentionally omits NVIDIA GPU support.
-EOF
-        exit 1
-      fi
-      STATIC_BUNDLE_FEAT_FLAGS+=(--disable-gpu)
-    fi
+    dcgm_ok="vendored headers missing"
+    STATIC_BUNDLE_FEAT_FLAGS+=(--disable-gpu)
   fi
 
   # Intel GPU: vendored XPUM headers + arch/fleet/opt-in gate (see intel_gpu_bundle_auto_enable).
@@ -441,7 +422,7 @@ EOF
   printf '%-36s %s\n' "PCI class hint (Intel DC GPU):" "${pci_intel}"
   printf '%-36s %s\n' "InfiniBand MAD:" "${ib_ok}"
   printf '%-36s %s\n' "Omni-Path STL MAD:" "${opa_ok}"
-  printf '%-36s %s\n' "NVIDIA DCGM link (libdcgm + vendored hdr):" "${dcgm_ok}"
+  printf '%-36s %s\n' "NVIDIA GPU (NVML/DCGM):" "${dcgm_ok}"
   printf '%-36s %s\n' "AMD GPUPerfAPI header (gpu_perf_api.h):" "${amd_ok}"
   printf '%-36s %s\n' "Intel XPUM (vendored hdr / dlopen):" "${intel_ok}"
   if test "${#STATIC_BUNDLE_FEAT_FLAGS[@]}" -gt 0; then
@@ -707,20 +688,17 @@ EOF
   else
     cat <<'EOF'
 - On non-x86, this path links rabbitmq-c, libev, and LIKWID statically. The CPU counter
-  backend is DCGM (system libdcgm) for util/power plus a LIKWID overlay for cycles/inst.
-  C headers for DCGM ship under third_party/nvidia-dcgm; you still need libdcgm from NVIDIA
-  DCGM. Match header and library generations when possible.
+  backend is arm (/proc/stat util, cpufreq clock) plus a LIKWID overlay for cycles/inst; no
+  DCGM. NVIDIA GPU code loads libnvidia-ml / libdcgm at runtime (vendored headers).
 EOF
   fi
   cat <<'EOF'
-- This script probes the build host for InfiniBand (libibmad + headers), NVIDIA
-  DCGM (libdcgm + vendored dcgm_agent.h on link-time paths), and AMD GPUPerfAPI
-  headers; missing IB/AMD pieces become --disable-infiniband / --disable-amd-gpu.
-  On x86 LIKWID builds, NVIDIA GPU uses runtime dlopen of libdcgm (no --disable-gpu
-  when libdcgm is absent at build time). aarch64 / HPCS_BUNDLE_REQUIRE_DCGM_GPU=1
-  still require link-time libdcgm. Configure routes shared-only stacks after
-  -Wl,-Bdynamic when using --enable-all-static: DCGM (non-x86 GPU or DCGM CPU),
-  Infiniband (libibmad), Omni-Path / OPA; AMD GPUPerfAPI is dlopen'd at runtime.
+- This script probes the build host for InfiniBand (libibmad + headers) and AMD
+  GPUPerfAPI headers; missing pieces become --disable-infiniband / --disable-amd-gpu.
+  NVIDIA GPU uses runtime dlopen of libnvidia-ml and libdcgm on every arch (no build-time
+  DCGM; --disable-gpu only when the vendored headers are missing). Configure routes
+  shared-only stacks after -Wl,-Bdynamic when using --enable-all-static: Infiniband
+  (libibmad), Omni-Path / OPA; AMD GPUPerfAPI is dlopen'd at runtime.
 - A fully static executable (including glibc) needs musl or careful NSS
   handling; partial static linking (this script) avoids installing the
   third-party deps system-wide while still using the system C library.

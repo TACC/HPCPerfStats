@@ -90,8 +90,8 @@ Notes:
   - Foreign LIKWID make passes COMPILER=GCCARMv8 (aarch64) / GCCPOWER (POWER) / GCC (x86).
     LIKWID config.mk defaults to GCC (x86); omitting COMPILER compiles rdpmc on ARM.
   - For deterministic foreign smoke, monitor configure is passed:
-      --disable-gpu --disable-amd-gpu --disable-infiniband --disable-opa
-      --disable-lustre
+      --disable-amd-gpu --disable-infiniband --disable-opa
+      --disable-lustre (nvidia_gpu stays on: DCGM/NVML are dlopen()ed at runtime)
 EOF
   exit "${1:-0}"
 }
@@ -1064,7 +1064,6 @@ foreign_monitor_cfg_args() {
   local args=(
     --disable-all-static
     --with-systemduserunitdir=no
-    --disable-gpu
     --disable-amd-gpu
     --disable-infiniband
     --disable-opa

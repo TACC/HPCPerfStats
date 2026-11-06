@@ -13,7 +13,7 @@
 Summary: Job-level Monitoring Client
 Name: hpcperfstatsd
 Version: 3.0
-Release: 7%{?dist}
+Release: 9%{?dist}
 License: GPL
 Vendor: Texas Advanced Computing Center
 Group: System Environment/Base
@@ -49,12 +49,9 @@ BuildRequires: pciutils
 # RuntimeRequires (PVC nodes): xpumanager providing libxpum.so — not a BuildRequires (dlopen).
 BuildRequires: rdma-core-devel
 
-# Non-x86: configure auto-selects DCGM CPU backend (libdcgm). EL9 + NVIDIA repos ship
-# DCGM 4 as datacenter-gpu-manager-4-devel (there is no bare "datacenter-gpu-manager" RPM).
-# Older stacks may only offer libdcgm-devel.
-%ifarch aarch64
-BuildRequires: (datacenter-gpu-manager-4-devel or libdcgm-devel)
-%endif
+# No DCGM / NVML build dependency on any arch: libdcgm and libnvidia-ml are dlopen()ed at
+# runtime against vendored headers (third_party/nvidia-dcgm, third_party/nvidia-nvml), so the
+# RPM has no automatic Requires on them and runs on Grace-only nodes without DCGM.
 
 %{?systemd_requires}
 
@@ -70,10 +67,10 @@ prepare_rpmbuild_dirs.sh, so the RPM does not depend on those distro packages at
 runtime. Shared-only stacks (DCGM, optional IB, etc.) remain dynamic per
 configure flags.
 
-Optional features and branch highlights: LIKWID (x86) or DCGM (aarch64) CPU
-counters, shared DCGM attach (embedded or loopback nv-hostengine), bundled
-third_party/nvidia-dcgm API headers, stats buffer/file handling, and RabbitMQ
-robustness.
+Optional features and branch highlights: LIKWID (x86) or the arm backend
+(/proc/stat, cpufreq, LIKWID overlay; aarch64) CPU counters, per-socket hwmon power
+(host_power_socket), NVIDIA GPUs through NVML+GPM with a DCGM fallback (both loaded at
+runtime), stats buffer/file handling, and RabbitMQ robustness.
 
 %prep
 %setup -q -n %{srcname}-%{version}
@@ -95,10 +92,6 @@ export CXXFLAGS="${CFLAGS}"
 export LDFLAGS="${LDFLAGS:-} -Wl,--build-id=sha1"
 %else
 export HPC_BUNDLE_RELEASE_BUILD=1
-%endif
-%ifarch aarch64
-# Grace Hopper packaging: fail the build if DCGM probing would silently disable nvidia_gpu.
-export HPCS_BUNDLE_REQUIRE_DCGM_GPU=1
 %endif
 # Third-party .a archives come from the tarball; only hpcperfstatsd is compiled here.
 ./scripts/build_static_bundle.sh
@@ -173,6 +166,14 @@ fi
 %systemd_postun_with_restart hpcperfstats.service
 
 %changelog
+* Thu Nov 05 2026 sharrell@tacc.utexas.edu - 3.0-9
+- Monitor CPU seconds round 2: aarch64 CPU backend renamed dcgm -> arm and taken off DCGM
+  (/proc/stat util, cpufreq clock); new per-socket host_power_socket type from ACPI hwmon
+  meters; dcgm_cpu_power_* and nvidia_gpu module/sysio power keys retired.
+- nvidia_gpu reads GPM-capable GPUs through NVML+GPM (no DCGM timer loops), DCGM fallback.
+- DCGM loaded at runtime on aarch64 too: drop the DCGM BuildRequires and
+  HPCS_BUNDLE_REQUIRE_DCGM_GPU. Release 8 was a local c122-018 build of the 3.0-7 sources.
+
 * Mon Nov 02 2026 sharrell@tacc.utexas.edu - 3.0-7
 - %%install: stash monitor-build-capabilities.json under %%{_topdir}/build-info for all builds
   (outside the buildroot; payload unchanged) so prepare_rpmbuild_dirs.sh --measure-overhead

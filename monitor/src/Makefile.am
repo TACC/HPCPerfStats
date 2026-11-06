@@ -47,7 +47,8 @@ hpcperfstatsd_CPPFLAGS = \
 
 if MONITOR_USE_DCGM_VENDOR_INCLUDES
 hpcperfstatsd_CPPFLAGS += \
-	-I$(top_srcdir)/third_party/nvidia-dcgm
+	-I$(top_srcdir)/third_party/nvidia-dcgm \
+	-I$(top_srcdir)/third_party/nvidia-nvml
 endif
 
 if DEBUG
@@ -412,7 +413,9 @@ TYPES += \
 	nvidia_gpu_dcgm_profiles.c \
 	nvidia_gpu_dcgm_profiles.h \
 	nvidia_gpu_dcgm_compat.h \
-	nvidia_gpu_dcgm_field.c
+	nvidia_gpu_dcgm_field.c \
+	nvidia_gpu_nvml.c \
+	nvidia_gpu_nvml_convert.c
 if GPU_DLOPEN
 hpcperfstatsd_SOURCES += \
 	dcgm_gpu_dyn.c \
@@ -423,7 +426,9 @@ hpcperfstatsd_SOURCES += \
 	nvidia_gpu.h \
 	nvidia_gpu_estimate.c \
 	nvidia_gpu_estimate.h \
-	nvidia_gpu_dcgm_field.h
+	nvidia_gpu_dcgm_field.h \
+	nvidia_gpu_nvml.h \
+	nvidia_gpu_nvml_convert.h
 endif
 
 if AMD_GPU

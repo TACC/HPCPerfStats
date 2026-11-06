@@ -1,0 +1,30 @@
+NVIDIA Management Library (NVML) C API header, vendored so nvidia_gpu can read GPM-capable GPUs
+through NVML + GPM without a CUDA toolkit on the build host (round 2, D28). The monitor never
+links libnvidia-ml: src/nvidia_gpu_nvml.c dlopen()s libnvidia-ml.so.1 at runtime (override with
+HPCPERFSTATS_NVML_LIB, gated by dyn_lib_path_allowed) and only uses this header for types and
+constants.
+
+Source package: cuda-nvml-devel-13-2-13.2.86-1 (NVIDIA CUDA 13.2 repository)
+Installed path: /usr/local/cuda-13.2/include/nvml.h
+NVML_API_VERSION: 13
+
+File copied unmodified:
+
+  nvml.h  sha256 c3fa30735a7148b9c1019b6b10032001a8833e18a5a891c3ff793db98255829a
+
+Verify:
+
+  echo 'c3fa30735a7148b9c1019b6b10032001a8833e18a5a891c3ff793db98255829a  nvml.h' | sha256sum -c
+
+License: nonexclusive, royalty-free license to use the code in individual and commercial
+software (header comment). That license requires the NVIDIA Disclaimer and U.S. Government End
+Users Notice from the top of nvml.h to appear in the user documentation and in internal comments
+of code that uses it; src/nvidia_gpu_nvml.c carries it, and this README points to it:
+
+  NVML header (c) 1993-2026 NVIDIA Corporation. NVIDIA MAKES NO REPRESENTATION ABOUT THE
+  SUITABILITY OF THIS SOURCE CODE FOR ANY PURPOSE. IT IS PROVIDED "AS IS" WITHOUT EXPRESS OR
+  IMPLIED WARRANTY OF ANY KIND. See the full Disclaimer and U.S. Government End Users Notice at
+  the top of nvml.h.
+
+Runtime: the GPM APIs (nvmlGpm*) need a driver with GPM support (R520+ on Hopper and newer).
+When libnvidia-ml is missing, too old, or any GPU lacks GPM, nvidia_gpu uses the DCGM path.

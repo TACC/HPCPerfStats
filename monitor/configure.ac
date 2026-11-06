@@ -111,7 +111,6 @@ case "$host_cpu" in
 esac
 
 likwid=false
-dcgm_checked=false
 cpu_likwid_overlay=false
 CPU_COUNTER_BACKEND_CPPFLAG=""
 MONITOR_ARCH_CPPFLAG=""
@@ -298,107 +297,33 @@ AC_ARG_ENABLE([gpu],
 esac],
 [gpu=auto])
 
-gpu_dlopen=false
-if test "x$is_x86" = "xtrue" && test "x$cpu_counter_backend" = "xlikwid"; then
-  gpu_dlopen=true
-fi
-
+dnl Round 2 (D19): libdcgm and libnvidia-ml are dlopen()ed at runtime on every arch (vendored
+dnl third_party/nvidia-dcgm and third_party/nvidia-nvml headers), so one RPM runs on CPU-only,
+dnl Grace-only and GPU nodes and the build host needs neither DCGM nor an NVIDIA GPU. No
+dnl build-time lspci autodetect: nvidia_gpu probes at runtime and disables itself without GPUs.
+gpu_dlopen=true
 gpu_autodetect_result="not-run"
 if test "x$gpu" = "xauto"; then
-  if test "x$gpu_dlopen" = "xtrue"; then
-    gpu=true
-    gpu_autodetect_result="x86-runtime-dlopen"
-  else
-    gpu=false
-    gpu_autodetect_result="no-nvidia"
-    if test -f "${srcdir}/scripts/gpu_lspci_probe.sh"; then
-      if sh "${srcdir}/scripts/gpu_lspci_probe.sh" nvidia; then
-        gpu=true
-        gpu_autodetect_result="nvidia-found"
-      fi
-    else
-      AC_PATH_PROG([LSPCI], [lspci], [no])
-      if test "x$LSPCI" != "xno"; then
-        if $LSPCI -nn 2>/dev/null | awk -v vendor=nvidia -f "${srcdir}/scripts/gpu_lspci_detect.awk"; then
-          gpu=true
-          gpu_autodetect_result="nvidia-found"
-        fi
-      else
-        gpu_autodetect_result="lspci-missing"
-      fi
-    fi
-  fi
+  gpu=true
+  gpu_autodetect_result="runtime-dlopen"
 fi
 
 if test "x$gpu" = "xtrue"; then
-  if test "x$dcgm_checked" = "xfalse"; then
-    if test "x$gpu_dlopen" = "xtrue"; then
-      save_CPPFLAGS=$CPPFLAGS
-      CPPFLAGS="-I${srcdir}/third_party/nvidia-dcgm ${CPPFLAGS}"
-      have_gpu=no
-      AC_CHECK_HEADERS([dcgm_agent.h dcgm_structs.h], [have_gpu=yes],
-        [if test "x$gpu_user_requested" = "xyes"; then
-           AC_MSG_ERROR([Unable to find dcgm_agent.h/dcgm_structs.h (see third_party/nvidia-dcgm/README)])
-         else
-           gpu=false
-           gpu_autodetect_result="${gpu_autodetect_result}-no-hdr"
-           AC_MSG_NOTICE([NVIDIA GPU enabled but DCGM headers are missing; disabling gpu])
-         fi])
-      CPPFLAGS=$save_CPPFLAGS
-      if test "x$gpu" = "xtrue"; then
-        gpu_autodetect_result="${gpu_autodetect_result}-vendored-hdr"
-      fi
-    else
-    if test "x$enable_all_static" = xyes; then
-      save_LIBS=$LIBS
-      LIBS=
-      AC_SEARCH_LIBS([dcgmInit], [dcgm],
-        [MONITOR_SHARED_LIBS="$MONITOR_SHARED_LIBS $LIBS"
-         have_gpu=yes
-         LIBS=$save_LIBS],
-        [LIBS=$save_LIBS
-         if test "x$gpu_user_requested" = "xyes"; then
-           AC_MSG_ERROR([Unable to find libdcgm!])
-         else
-           gpu=false
-           gpu_autodetect_result="${gpu_autodetect_result}-no-sdk"
-           AC_MSG_NOTICE([NVIDIA GPU hardware detected but libdcgm is missing; disabling gpu])
-         fi])
-    else
-      AC_SEARCH_LIBS([dcgmInit], [dcgm], [have_gpu=yes],
-        [if test "x$gpu_user_requested" = "xyes"; then
-           AC_MSG_ERROR([Unable to find libdcgm!])
-         else
-           gpu=false
-           gpu_autodetect_result="${gpu_autodetect_result}-no-sdk"
-           AC_MSG_NOTICE([NVIDIA GPU hardware detected but libdcgm is missing; disabling gpu])
-         fi])
-    fi
-    if test "x${have_gpu}" = xyes; then
-      save_CPPFLAGS=$CPPFLAGS
-      CPPFLAGS="-I${srcdir}/third_party/nvidia-dcgm ${CPPFLAGS}"
-      AC_CHECK_HEADERS([dcgm_agent.h dcgm_structs.h], [gpu=true],
-        [if test "x$gpu_user_requested" = "xyes"; then
-           AC_MSG_ERROR([Unable to find dcgm_agent.h/dcgm_structs.h (see third_party/nvidia-dcgm/README)])
-         else
-           gpu=false
-           gpu_autodetect_result="${gpu_autodetect_result}-no-sdk"
-           AC_MSG_NOTICE([NVIDIA GPU enabled but DCGM headers are missing; disabling gpu])
-         fi])
-      CPPFLAGS=$save_CPPFLAGS
-    fi
-    fi
-  else
-    gpu=true
-  fi
+  save_CPPFLAGS=$CPPFLAGS
+  CPPFLAGS="-I${srcdir}/third_party/nvidia-dcgm -I${srcdir}/third_party/nvidia-nvml ${CPPFLAGS}"
+  AC_CHECK_HEADERS([dcgm_agent.h dcgm_structs.h nvml.h], [],
+    [if test "x$gpu_user_requested" = "xyes"; then
+       AC_MSG_ERROR([Unable to find vendored dcgm_agent.h/dcgm_structs.h/nvml.h (see third_party/nvidia-dcgm/README, third_party/nvidia-nvml/README)])
+     else
+       gpu=false
+       gpu_autodetect_result="${gpu_autodetect_result}-no-hdr"
+       AC_MSG_NOTICE([NVIDIA GPU enabled but vendored DCGM/NVML headers are missing; disabling gpu])
+     fi])
+  CPPFLAGS=$save_CPPFLAGS
 fi
 
 if test "x$gpu" = "xtrue"; then
-  if test "x$gpu_dlopen" = "xtrue"; then
-    AC_MSG_NOTICE([GPU summary: enabled (runtime dcgm dlopen on x86 LIKWID); detect=${gpu_autodetect_result}])
-  else
-    AC_MSG_NOTICE([GPU summary: enabled (DCGM link-time); detect=${gpu_autodetect_result}])
-  fi
+  AC_MSG_NOTICE([GPU summary: enabled (runtime dlopen: NVML+GPM, DCGM fallback); detect=${gpu_autodetect_result}])
 else
   AC_MSG_NOTICE([GPU summary: disabled; detect=${gpu_autodetect_result}])
 fi
