@@ -300,6 +300,16 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     "rules": [
       "django-migration-numbering.mdc",
       "startup-migration-bounded-work.mdc",
+      "migration-fail-closed-gates.mdc",
+    ],
+  },
+  {
+    "id": "migration_compression_schedule",
+    "patterns": [
+      "hpcperfstats/site/lib/machine/compression_schedule.py",
+    ],
+    "rules": [
+      "migration-fail-closed-gates.mdc",
     ],
   },
   {

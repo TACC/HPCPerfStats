@@ -1,0 +1,49 @@
+---
+description: Migrations never NOTICE-and-skip required work; unmet gates raise so the migration stays unapplied and retries
+alwaysApply: false
+globs: hpcperfstats/site/lib/machine/migrations/**,hpcperfstats/site/lib/machine/compression_schedule.py
+---
+
+# Migration Fail-Closed Gates
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+Django records a migration as applied as soon as its operations return without an error. A migration that hits an unmet precondition, prints a NOTICE and returns is recorded as done with its work missing, and **no later `migrate` ever retries it**.
+
+## Incident (hpcperfstats03, 2026-11)
+
+`0032` met compressed chunks during an early startup migrate, did `RAISE NOTICE … skipping; RETURN;`, and was recorded applied. Weeks later 03 had **no UNIQUE constraint and no compression policy**, and `0040`'s schedule pin (`compression_schedule.pin_compression_schedule`) found no policy and silently did nothing too. The fix needed hand-run SQL, because Django would not re-run either migration.
+
+## Law
+
+1. **An unmet gate raises.** If a migration cannot do its required work yet (data not ready, lock busy, prerequisite missing), it must `RAISE EXCEPTION` (SQL) or raise (Python) with a message naming the gate, that the migration **stays unapplied**, and the operator doc to follow. Never `RAISE NOTICE` + `RETURN`, never `EXCEPTION WHEN … THEN RAISE NOTICE` that swallows the failure, never an early `return` in a `RunPython` step (or a helper it calls) for a missing prerequisite.
+2. **Lock contention: bounded retry, then raise.** For DDL that needs an exclusive lock on a busy table (hypertable `DROP INDEX`, `ALTER TABLE`), set a short `lock_timeout` per attempt, retry a bounded number of times with a pause, then raise (pattern: `0045_drop_duplicate_indexes`). Constants are named at the top of the migration; the worst case stays within a few minutes for startup migrate.
+3. **Cheap proof of prerequisites.** A gate check must be cheap: catalog queries, a marker written by the operator tool that did the work (`0032` reads the `host_data.dev` column comment written by `scripts/backfill_host_data_null_dev.sh`), or `EXISTS` on a small table. Never prove "no rows match" with a scan of a large hypertable; `EXISTS` that finds nothing still scans everything.
+4. **Raising is the startup trade-off.** Under `restart: always` a raising migration restarts `web` until the gate is fixed. That is the intended, visible signal; long or gated migrations use the operator one-shot `migrate` with `web` stopped (`startup-migration-bounded-work.mdc`).
+
+## What may skip
+
+Skipping is fine only when **there is no work to do on this database**, not when the work is blocked:
+
+| Allowed | Example |
+|---------|---------|
+| Object already in the target state (idempotent re-run) | `CREATE … IF NOT EXISTS` on non-concurrent builds; `EXCEPTION WHEN duplicate_object THEN NULL` for role creation (`0002`); rows already converted (`0016`); columns already present (`0043`) |
+| The feature does not exist on this database | no Timescale extension or a non-PostgreSQL vendor (`compression_schedule`); no `host_data` table |
+| Historical migration whose work the current design no longer wants | `0013` / `0020` skip the composite PK when compression is enabled; the `0032` design drops that PK |
+
+Concurrent index builds still never use `IF NOT EXISTS`: a cancelled build leaves an INVALID index that it would keep (`0044`).
+
+## Already recorded as applied
+
+When a site recorded a migration applied without its work (an older soft-skip), repair it by running that migration's SQL by hand (gates included) plus any `RunPython` step it implies, and document the repair in that migration's operator doc. **Never `migrate <app> <earlier> --fake`**: that unrecords every later migration too, and re-running them is not guaranteed safe.
+
+## Regression coverage
+
+- `test_migrations.py::test_no_migration_soft_skips_required_work` scans every migration for `RAISE NOTICE …; RETURN;` and `EXCEPTION WHEN … THEN RAISE NOTICE`.
+- `test_migrations.py::test_0032_gates_fail_closed_never_soft_skip`, `::test_0032_fails_closed_without_null_dev_backfill_marker`, `::test_0045_drops_duplicate_indexes_retrying_lock_then_raising`, `::test_compression_schedule_pin_raises_when_policy_missing`.
+
+## Overlap
+
+- **`startup-migration-bounded-work.mdc`**: bounded startup migrate; long work is operator-side. This rule covers what a migration does when it cannot do its work.
+- **`django-migration-numbering.mdc`**: numbering and dependencies.
+- **`bugfix-and-perf-change-playbook.mdc`**: explicit error branches over silent failures.

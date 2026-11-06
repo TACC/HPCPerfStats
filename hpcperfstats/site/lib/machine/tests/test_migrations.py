@@ -1,6 +1,7 @@
 """Regression tests for migration SQL/contracts that are easy to break silently."""
 
 import importlib
+import re
 
 import pytest
 from django.db import migrations, models
@@ -781,3 +782,55 @@ def test_0045_drops_duplicate_indexes_retrying_lock_then_raising():
   assert all(
     "CREATE INDEX IF NOT EXISTS" in s for s in run_sql.reverse_sql[1:-1]
   )
+
+
+# Guard patterns for migration-fail-closed-gates.mdc. NOTICE messages often
+# contain ';' themselves, so the first pattern skips quoted strings.
+_NOTICE_THEN_RETURN = re.compile(
+  r"RAISE\s+NOTICE(?:'(?:[^']|'')*'|[^;'])*;\s*RETURN\s*;", re.IGNORECASE
+)
+_EXCEPTION_SWALLOWED_BY_NOTICE = re.compile(
+  r"EXCEPTION\s+WHEN\s+[\w\s]+?\s+THEN\s+RAISE\s+NOTICE", re.IGNORECASE
+)
+# Verbatim gate from 0032 before the fail-closed fix (commit 7dd5ecbc): the
+# soft-skip that left hpcperfstats03 without a UNIQUE or compression policy.
+_OLD_0032_SOFT_SKIP = """
+            IF COALESCE(compressed_n, 0) > 0 THEN
+              RAISE NOTICE
+                '0032_host_data_unique_include_dev_db: skipping — % compressed host_data chunk(s); decompress first (see docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md)',
+                compressed_n;
+              RETURN;
+            END IF;
+"""
+
+
+def test_soft_skip_guard_patterns_catch_known_bad_shapes():
+  """The guard must fail on the real 0032 soft-skip (message with ';') and
+  on an exception handler that only prints a NOTICE (old 0045 draft), and
+  must not flag the idempotent duplicate_object handler in 0002."""
+  assert _NOTICE_THEN_RETURN.search(_OLD_0032_SOFT_SKIP)
+  assert _EXCEPTION_SWALLOWED_BY_NOTICE.search(
+    "EXCEPTION WHEN lock_not_available THEN\n  RAISE NOTICE 'skip %', idx;"
+  )
+  assert not _EXCEPTION_SWALLOWED_BY_NOTICE.search(
+    "EXCEPTION WHEN duplicate_object THEN NULL; END"
+  )
+  fixed = _0032_sql()
+  assert not _NOTICE_THEN_RETURN.search(fixed)
+
+
+def test_no_migration_soft_skips_required_work():
+  """Guard for migration-fail-closed-gates.mdc: a NOTICE followed by RETURN,
+  or an exception handler that only prints a NOTICE, lets Django record the
+  migration applied with its work missing (hpcperfstats03 0032). Unmet gates
+  must RAISE EXCEPTION so the migration stays unapplied and retries."""
+  from pathlib import Path
+
+  mig_dir = Path(_migration_module("0001_initial").__file__).parent
+  offenders = [
+    f"{path.name}: {pat.pattern}"
+    for path in sorted(mig_dir.glob("0*.py"))
+    for pat in (_NOTICE_THEN_RETURN, _EXCEPTION_SWALLOWED_BY_NOTICE)
+    if pat.search(path.read_text(encoding="utf-8"))
+  ]
+  assert offenders == [], offenders

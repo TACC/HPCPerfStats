@@ -69,7 +69,8 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 | `job_plot_artifacts.py`, `job_detail_artifacts.py`, `artifact_readiness_expressions.py`, Job Detail plots / host_plot | `host-data-read-boundary.mdc`, `job-plot-artifacts-caching.mdc` |
 | `hpcperfstats/site/lib/machine/job_list_filter_summary.py` | `design-focused-spa-ux.mdc` |
 | API routes, status bands, auth | `api-breaking-change-contract.mdc`, `pipeline-endpoint-matrix-drift-guard.mdc` |
-| Migrations | `django-migration-numbering.mdc`, `startup-migration-bounded-work.mdc` |
+| Migrations | `django-migration-numbering.mdc`, `startup-migration-bounded-work.mdc`, `migration-fail-closed-gates.mdc` |
+| `hpcperfstats/site/lib/machine/compression_schedule.py` (migration `RunPython` helper) | `migration-fail-closed-gates.mdc` |
 | `services-conf/django_startup.sh` | `startup-migration-bounded-work.mdc`, `readme-installation-sync.mdc` |
 | `hpcperfstats.ini`, compose image config | `immutable-image-ini-policy.mdc`, `hpcperfstats-ini-format.mdc`, `no-production-env-for-ini-config.mdc` |
 
