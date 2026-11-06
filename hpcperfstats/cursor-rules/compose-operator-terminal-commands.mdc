@@ -661,6 +661,49 @@ print(\"discover\", store.queued_count(\"discover\"), \"day_close\", store.queue
 
 **Anti-pattern — fragile nested `manage.py shell -c` pastes:** multi-line `python … manage.py shell -c "…"` with nested escaped quotes through podman-compose often **mangles trailing queries** on paste (hpcperfstats03, 2026-07-23). Prefer a **short script file** in the container, or **one** `su hpcperfstats -c 'python3 -c "…"'` with minimal nesting (see **Podman-compose sites** nested-quoting rows).
 
+**Anti-pattern — `host_data` recent-window probe anchored on `now()` (hpcperfstats04 2026-11-05):** `… WHERE time > now() - interval '5 minutes'` returned **0 hosts / 0 rows** while Valkey listed 981 recent hosts. `host_data` was about **8 min** behind real time (`now()` 21:28:55, newest sample 21:20:59), so the window was empty. An empty result there means the window is too short for the ingest lag, not "no data". **Corrected:** first print the lag with `SELECT now(), (SELECT time FROM host_data WHERE time > now() - interval '7 days' ORDER BY time DESC LIMIT 1)` (99 ms on 04), then anchor windows on that newest sample.
+
+**Anti-pattern — per-host `GROUP BY host, type, event` with hosts/bounds from a CTE (hpcperfstats04 2026-11-05):** a `psql` probe that picked 8 hosts with a fleet-wide `GROUP BY host` over 5 min and passed the window bounds and host array from `WITH t AS (…), h AS (…)` CTE columns hit **`canceling statement due to statement timeout` at 60 s**. The same 8-host 1 h aggregate with **literal** client-side parameters and hosts from Valkey finished in **< 0.05 s** (1 host 15 min: 214 pairs; 8 hosts 60 min: 649 host-pair rows). Do not pick hosts by scanning `host_data` fleet-wide, and do not feed bounds through CTE/JOIN columns; take hosts from Valkey `recent_host:*` and pass literal bounds. **Corrected (pipeline, Django client-side params):**
+
+```bash
+podman-compose -p hpcperfstats exec -u hpcperfstats pipeline python3 -c '
+from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
+ensure_django()
+import time, datetime
+from django.db import connection
+from hpcperfstats.site.lib.machine import host_data_latest as hl
+f = sorted(set(hl.list_recent_host_fqdns_from_valkey()))
+h = f[:: max(1, len(f) // 8)][:8]
+print("fqdns", len(f), h)
+c = connection.cursor()
+c.execute("SET statement_timeout = 120000")
+c.execute("SET max_parallel_workers_per_gather = 0")
+c.execute("SELECT time FROM host_data"
+          " WHERE time > now() - make_interval(days => 7)"
+          " ORDER BY time DESC LIMIT 1")
+t1 = c.fetchone()[0]
+print("latest", t1)
+q = ("SELECT count(*), count(DISTINCT (type, event))"
+     " FROM (SELECT host, type, event FROM host_data"
+     " WHERE host = ANY(%s) AND time >= %s AND time <= %s"
+     " GROUP BY host, type, event) x")
+td = datetime.timedelta
+for hosts, mins in ((h[:1], 15), (h[:1], 60), (h, 15), (h, 60)):
+    s = time.monotonic()
+    try:
+        c.execute(q, [hosts, t1 - td(minutes=mins), t1])
+        dt = round(time.monotonic() - s, 1)
+        print(len(hosts), mins, c.fetchone(), dt)
+    except Exception as e:
+        dt = round(time.monotonic() - s, 1)
+        print(len(hosts), mins, "ERR", type(e).__name__, dt)
+'
+```
+
+(Every line ≤ 70 chars: longer lines lost their middle on paste, see the long-line row under **Podman-compose sites**.)
+
+`exec -u hpcperfstats … python3 -c '…'` with a single-quoted outer string keeps the inner double quotes intact (no nested `su`/`sh`). Keep the Python free of single quotes: use `make_interval(days => 7)` instead of `interval '7 days'`.
+
 ## Container introspection tools (pipeline / web image)
 
 The **`hpcperfstats-base`** image ( **`pipeline`**, **`web`**, and siblings built from **`services-conf/pipeline_web.Dockerfile`**) ships these **read-only diagnostic** tools. Prefer them over asking the operator to install packages on the host.
@@ -899,7 +942,7 @@ Some production hosts use **podman-compose** with project name `-p hpcperfstats`
 | Nested `sh -lc` + `awk "/[s]ync_timedb.py \\[main\\]/"` + `for … done` census | **`syntax error near unexpected token \`done'`** through podman-compose (hpcperfstats03 2026-08-26 post-boot silence) — bracket/`done` quoting breaks the outer shell | **One** `su hpcperfstats -c 'python3 -c "…"'` that runs `ps` via `subprocess`, selects ingest/populate-pool parents, and calls `py-spy dump` (same shape as the Good ingest-pool-parent block). No nested `sh -lc` / `awk` / `for done` |
 | `grep -o "day_skip.: *{.kind.: *…"` (or any grep that assumes JSON field **insertion** order) on sync_timedb sidecars | **Empty histogram** (hpcperfstats01 2026-10-25 members census): `save_persistence_document` defaults to `compact=True` → `json.dump(…, separators=(",", ":"), sort_keys=True)`, so keys are **alphabetical with no spaces** (`"day_skip":{"detail":…,"kind":…}`; dead-letter entries `attempt, identity, kind, reason, recorded_at`) | Match the whole object, e.g. `grep -ho "day_skip.:{[^}]*}" "$A"/.sync_timedb_archive_members/*.json \| cut -c1-240 \| sort \| uniq -c`, or anchor on **alphabetical** neighbours (`identity.:.[^,]*,.kind.:.ingest.,.reason.:.X`). Never assume code insertion order for sidecar JSON |
 | Bucketing queue dead-letter **ingest** identities with `grep -o "/[0-9]\{9,\}[\|]"` (assuming `path\|size\|mtime`) | **Empty** ingest-by-day buckets on hpcperfstats01/02 (2026-10-25) while append buckets worked: `ingest_identity()` returns the **bare normalized path** (`sync_timedb_job_store.py`), the same as append | Anchor on the alphabetical neighbour instead: `grep -o "/[0-9]\{9,\}.,.kind.:.ingest.,.reason.:.[A-Za-z_]*" "$DL" \| sed "s/^.\([0-9]*\).*reason.:.\(.*\)$/\1 \2/" \| while read e r; do echo "$(date -d @$e +%F) $r"; done \| sort \| uniq -c` |
-| Very long **single-line** `sh -c '…'` census (1300+ chars) copied from chat or a plan into a terminal | The copy path **hard-wrapped** the line mid-token: `date` became `da` / `te` → **`sh: 1: da: not found`** (hpcperfstats02 + hpcperfstats04 2026-10-25 dead-letter `recorded_at` section) | Put each `echo == section` statement on **its own physical line inside the single-quoted `sh -c` script** (newlines are legal inside `'…'`), keeping every line short (< ~200 chars). Never rely on one giant line surviving copy/paste |
+| Very long **single-line** `sh -c '…'` census (1300+ chars) copied from chat or a plan into a terminal | The copy path **hard-wrapped** the line mid-token: `date` became `da` / `te` → **`sh: 1: da: not found`** (hpcperfstats02 + hpcperfstats04 2026-10-25 dead-letter `recorded_at` section) | Put each `echo == section` statement on **its own physical line inside the single-quoted `sh -c` script** (newlines are legal inside `'…'`), keeping every line short (< ~200 chars). Never rely on one giant line surviving copy/paste. **Multi-line `python3 -c '…'` too (hpcperfstats04 2026-11-05):** every line longer than ~80 chars lost its **middle** on paste (`make_interval(days => 2) ORDER BY time` → `make_inme DESC`; `round(time.monotonic() - s0, 1))` cut off) → `SyntaxError` at the first damaged line. Keep **every** line of a pasted script **≤ 70 chars**: split SQL into adjacent string literals in parentheses, alias long imports (`import … as hl`), name intermediates instead of nesting calls |
 | Host-side `grep daily_archive_dir /home/hpcperfstats/hpcperfstats.ini` | The INI exists **only inside the container** (`HPCPERFSTATS_INI`) → `No such file`, empty `DAILY`, every later path empty (hpcperfstats01 2026-11-01 append-throughput) | `podman exec hpcperfstats_pipeline_1 python3 -c "import hpcperfstats.dbload.lib.conf_parser as c; print(c.get_daily_archive_dir_path())"` (unlabeled print), captured into a host var |
 | Container→host path via `podman inspect` mounts with `s=$1 substr(p,length($2)+1)` | Mount destination is **`/hpcperfstats/`** (trailing slash) → host path glued as **`…/_dataarchive`** (hpcperfstats01 2026-11-01); `df`/`ls`/`findmnt` then hit a nonexistent path | Strip trailing slashes from **both** source and destination and match on `d` or `d"/"` prefix (see **Good — container path to host path** below) |
 | `iostat -xm` / `cat /proc/pressure/io` for device busy on the host | `iostat` (sysstat) not installed and PSI disabled on the EL9 kernel → **no output** (hpcperfstats01 2026-11-01) | Two `/proc/diskstats` samples 10 s apart; per-device read/write MB/s and `io_ticks` util% (see **Good — device busy from `/proc/diskstats`** below) |
