@@ -54,7 +54,7 @@ Test **behavior**, not static helper names.
 - Save/restore **errno** when asserting failure paths.
 - Fixtures under **`TMPDIR`** / `mkstemp`; always clean up.
 - Stub **`stats_set`** via `test_stats_stub.c` or local recorder when linking units that emit stats without full `stats.c`.
-- Guard optional-backend tests with `#ifdef MONITOR_CPU_BACKEND_DCGM` / `LIKWID` / `RABBITMQ`; document skips in `tests/README.md`.
+- Guard optional-backend tests with `#ifdef MONITOR_CPU_BACKEND_ARM` / `LIKWID` / `RABBITMQ` (prefer portable helpers that build everywhere, like `cpu_counter_metrics_arm_util.c`); document skips in `tests/README.md`.
 
 ## Naming
 

@@ -957,11 +957,25 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
     "patterns": [
       "HPCPerfStats/monitor/src/*dcgm*",
       "HPCPerfStats/monitor/src/*gpu*",
+      "HPCPerfStats/monitor/third_party/nvidia-nvml/**",
       "monitor/src/*dcgm*",
       "monitor/src/*gpu*",
+      "monitor/third_party/nvidia-nvml/**",
     ],
     "rules": [
       "monitor-dcgm-integration.mdc",
+    ],
+  },
+  {
+    "id": "monitor_power_socket",
+    "patterns": [
+      "HPCPerfStats/monitor/src/arm_power_*",
+      "monitor/src/arm_power_*",
+    ],
+    "rules": [
+      "monitor-dcgm-integration.mdc",
+      "monitor-schema-keys-headers.mdc",
+      "monitor-emitted-variable-naming.mdc",
     ],
   },
   {

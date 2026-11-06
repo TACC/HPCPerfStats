@@ -24,9 +24,12 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_schema_emit.c` | `stats_format_emit_*` banner/schema/mark helpers |
 | `test_procfile_kv.c` | `proc_kv_into_stats` (header-only) |
 | `test_collect_str.c` | `str_collect_key_list` / `str_collect_prefix_key_list` |
-| `test_cpu_counter_dcgm_util.c` | DCGM CPU util math (`cpu_counter_metrics_dcgm_util.c`; **DCGM backend only**) |
-| `test_cpu_counter_dcgm_publish.c` | DCGM publish/accumulate helpers (**DCGM backend only**; also built as `test_cpu_counter_dcgm_publish_likwid` with `-DMONITOR_CPU_LIKWID_OVERLAY`) |
-| `test_likwid_overlay_map.c` | DCGM+LIKWID overlay key mapping (overwrite cycles only if > 0) |
+| `test_cpu_counter_arm_util.c` | `arm` backend helpers (`cpu_counter_metrics_arm_util.c`, portable): jiffy util, `/proc/stat` line parse, cpufreq clock (`scaling_cur_freq` via pread, nominal chain, never `cpuinfo_cur_freq`) over fixture sysfs trees |
+| `test_cpu_counter_arm_publish.c` | `arm` publish/accumulate (util µs, util×freq cycles; no `dcgm_cpu_power_*` keys, D33/D36); also built as `test_cpu_counter_arm_publish_likwid` with `-DMONITOR_CPU_LIKWID_OVERLAY` |
+| `test_cpu_counter_metrics_likwid_ready_arm.c` | `cpu_counter_metrics_likwid_ready()` stays declared and stubbed to 0 on the `arm` backend (`-Werror=implicit-function-declaration`) |
+| `test_arm_power_hwmon.c` | ACPI `<Name> Power Socket <N>` meter index: label parse, EL10 `hwmonN/` and EL9 `hwmonN/device/` layouts, GB200 / GH200 / Grace-Grace label sets, shuffled hwmon numbers, unknown label, missing / garbage value, duplicates |
+| `test_arm_power_socket.c` | `host_power_socket` schema keys and per-socket publish (µW → rounded W, absent meter → 0, equal sockets both kept) |
+| `test_likwid_overlay_map.c` | arm+LIKWID overlay key mapping (overwrite cycles only if > 0) |
 | `test_likwid_arch_map_grace.c` | Grace CYC+INS / CYC-only eventset goldens; CYC+INS+SCF (`CMEM_RD_DATA:SCF0,CMEM_WR_TOTAL_BYTES:SCF1`, no `GMEM`) |
 | `test_ib_schema_contract.c` | `ib.h` KEYS rename contract |
 | `test_host_schema_contract.c` | Host collector schema token contract |
@@ -86,12 +89,13 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_ib_mad_backoff.c` | `ib_mad_*_collect_cycle_ok` fresh-state allowance (Infiniband build) |
 | `test_ib_mad_decode.c` | `ib_mad_ext_decode_counters` with synthetic MAD buffer (Infiniband build) |
 | `test_hwdetect_lspci.c` | `hwdetect_invalidate_probe_cache` + probe smoke |
-| `test_cpu_counter_metrics_schema.c` | `CPU_COUNTER_METRICS_KEYS` includes Grace DCGM power schema tokens |
-| `test_dcgm_pkg_uniq.c` | Sorted package-id unique-count logic (maps to DCGM_FE_CPU pairing) |
+| `test_cpu_counter_metrics_schema.c` | `CPU_COUNTER_METRICS_KEYS` schema tokens; retired `dcgm_cpu_power_*` keys absent |
 | `test_gpu_schema_contract.c` | NVIDIA/AMD GPU schema substrings (incl. module/sysio power keys) |
 | `test_nvidia_gpu_estimate.c` | `nvidia_gpu_estimate_rates` FLOP/memory-bandwidth math |
-| `test_nvidia_gpu_dcgm_field.c` | DCGM blank-family reject on GPU watts/util/u64/ratio converters |
-| `test_nvidia_gpu_dcgm_profiles.c` | FieldGroupCreate profile ladder: preferred keep 1132/1133; last-resort omits; attempt order |
+| `test_nvidia_gpu_dcgm_field.c` | DCGM blank sentinels and blank-family reject on GPU watts/util/u64/ratio converters |
+| `test_nvidia_gpu_dcgm_profiles.c` | FieldGroupCreate profile ladder (full / core / basic); no profile watches 1132/1133; attempt order |
+| `test_nvidia_gpu_nvml_convert.c` | NVML / GPM converters: percent × 0.01, MiB/s × 1048576, mW → W, bytes → MiB (values from the GB200 load check) |
+| `test_nvidia_gpu_nvml.c` | NVML + GPM source with a stubbed NVML table: all-GPM → NVML, any non-GPM GPU / init failure / no GPU → DCGM, GPM pair and short-gap handling, per-metric failure, mid-run GPM failure, `HPCPERFSTATS_NVML_LIB` allowlist |
 | `test_roofline_hw_peak_schema.c` | Roofline peak schema contract strings |
 | `test_roofline_hw_peak_changeover.c` | Roofline changeover / mode gating with `HPCPERFSTATS_SKIP_HW_PROBE` |
 | `test_roofline_detect_fixture.c` | `roofline_hw_peak_detect_fill_cache` fixture when `HPCPERFSTATS_SKIP_HW_PROBE=1` |
@@ -211,7 +215,7 @@ Some drivers are omitted or skipped depending on the configured build:
 
 | Condition | Affected tests |
 |-----------|----------------|
-| (always) | `test_cpu_counter_dcgm_util`, `test_cpu_counter_dcgm_publish`, `test_dcgm_pkg_uniq` (pure DCGM util math; no libdcgm, runs on LIKWID hosts too) |
+| (always) | `test_cpu_counter_arm_util`, `test_cpu_counter_arm_publish`, `test_arm_power_hwmon`, `test_arm_power_socket` (portable arm-backend / hwmon code; runs on x86 hosts too) |
 | (always) | `test_likwid_rapl_support` links production `likwid_rapl.c` (PWR collect stubs allowed; support asserts do not require live LIKWID) |
 | `RABBITMQ` | `test_monitor_cli`, `test_ring_buffer`, `test_stats_buffer_collect`, `test_stats_buffer_debug_shm`, `test_debug_shm_emit_golden`, `test_monitor_timing` |
 | `DEBUG` | `test_stats_buffer_debug_shm`, `test_debug_shm_emit_golden` (meaningful assertions; otherwise skipped) |

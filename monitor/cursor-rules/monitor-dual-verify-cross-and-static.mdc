@@ -33,7 +33,7 @@ When foreign smoke **is** required:
 
 ## 3. Architecture scope (classify the entire diff)
 
-x86 never uses the DCGM **CPU** backend. DCGM **GPU** is multi-architecture. LIKWID is **not** x86-only: core adapters and the Grace overlay compile on aarch64.
+x86 never uses the `arm` **CPU** backend. DCGM/NVML **GPU** is multi-architecture (runtime `dlopen` on every arch). LIKWID is **not** x86-only: core adapters and the Grace overlay compile on aarch64.
 
 | Entire diff is only… | Verify on | Skip |
 |----------------------|-----------|------|
@@ -41,9 +41,9 @@ x86 never uses the DCGM **CPU** backend. DCGM **GPU** is multi-architecture. LIK
 | **DCGM GPU** — `nvidia_gpu*`, `dcgm_gpu_*`, GPU field groups/watch (x86 `dlopen` **and** aarch64 link) | Same as portable (native + foreign) | Do **not** treat GPU as x86-only |
 | **x86-only LIKWID** — Intel/AMD uncore, RAPL-via-LIKWID, x86 CPUID maps (no shared adapter / overlay / bundle change) | **x86_64 only** (native on x86; else `TARGETS=x86_64-linux-gnu`) | **aarch64** — those tables do not compile on ARM |
 | **Shared LIKWID** — `likwid_pmc_adapter*`, `likwid_arch_map.c`, overlay, bundle/configure that builds LIKWID on both families | **x86_64 and aarch64** | — |
-| **DCGM CPU** — Grace/`MONITOR_CPU_BACKEND_DCGM` util/power CPU path only (not GPU) | **aarch64 only** (native on ARM; else `TARGETS=aarch64-linux-gnu`) | **x86_64** — not an x86 CPU backend |
-| **LIKWID overlay** — `MONITOR_CPU_LIKWID_OVERLAY` / `cpu_counter_metrics_likwid_overlay*` without portable files | **aarch64 only** (same as DCGM CPU) | **x86_64** |
-| **Mixed families** (shared LIKWID + GPU, DCGM CPU + portable, …) | **Union** of the rows above | Skip only families none of the slices use |
+| **`arm` CPU backend** — Grace/`MONITOR_CPU_BACKEND_ARM` util/clock CPU path only (not GPU, not `host_power_socket`) | **aarch64 only** (native on ARM; else `TARGETS=aarch64-linux-gnu`; the foreign sysroot builds it, no libdcgm needed) | **x86_64** — not an x86 CPU backend |
+| **LIKWID overlay** — `MONITOR_CPU_LIKWID_OVERLAY` / `cpu_counter_metrics_likwid_overlay*` without portable files | **aarch64 only** (same as `arm` CPU) | **x86_64** |
+| **Mixed families** (shared LIKWID + GPU, `arm` CPU + portable such as `host_power_socket`, …) | **Union** of the rows above | Skip only families none of the slices use |
 
 **Shared DCGM session** (`dcgm_session.c` and similar) is **not** CPU-only if GPU still compiles it — use the DCGM GPU / portable row.
 
