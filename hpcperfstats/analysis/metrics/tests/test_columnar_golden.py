@@ -47,8 +47,58 @@ GOLDEN_SCALE_DEFECTS = {
 
 # Metric rows the pandas path stored as NULL ("No host_data samples ...")
 # because scheduler refs carried no ncores/nhosts; 4be445d4 reads them from
-# job_data (METRICS_CONTRACT_VERSION 6), so a golden NULL may now be a value.
+# job_data (METRICS_CONTRACT_VERSION 6). Where the golden row is NULL the
+# value is checked against an independent pandas oracle of the documented
+# formula instead (``_avg_cpuusage_oracle``), never skipped.
 GOLDEN_NULL_DEFECTS = frozenset({"avg_cpuusage"})
+_CPU_BUSY_EVENTS = ("user", "system", "nice")
+_CPU_IDLE_EVENTS = ("idle", "iowait", "irq", "softirq")
+
+
+def _avg_cpuusage_oracle(table, ncores, nhosts):
+  """
+  Independent pandas reference for ``avg_cpuusage`` (allocated busy cores).
+
+  Per (host, time): ``busy`` / ``idle`` = Coalesce(SUM(arc)) over the busy /
+  idle-family events of ``host_cpu``; ``util = clip(busy / (busy + idle))``
+  (0 when the sum is 0) times ``ncores / nhosts``; then 5-minute bucket
+  means, drop each host's first bucket when it has more than one, per-host
+  mean, sum across hosts. Only row scoping is shared with the product
+  (``FrameIndex.scoped_rows``); the arithmetic is written here from scratch.
+  Returns None when there are no busy rows; the idle-less fallback is not
+  modelled (the caller asserts it does not occur).
+  """
+  import pandas as pd
+
+  f, idx = table.frame, table.index
+
+  def _sums(events):
+    sids = [
+      i for i, (t, e) in enumerate(f.series) if t == "host_cpu" and e in events
+    ]
+    rows = idx.scoped_rows("host_cpu", idx.rows_for_series(sids))
+    d = pd.DataFrame(
+      {"h": f.host_id[rows], "t": f.time_us[rows], "v": f.arc[rows]}
+    )
+    return d.groupby(["h", "t"])["v"].sum()
+
+  busy = _sums(_CPU_BUSY_EVENTS)
+  if busy.empty:
+    return None
+  idle = _sums(_CPU_IDLE_EVENTS)
+  assert not idle.empty, "oracle does not model the idle-less fallback"
+  j = busy.to_frame("b").join(idle.rename("i"), how="left").fillna(0.0)
+  denom = j["b"] + j["i"]
+  util = (j["b"] / denom.where(denom > 0)).fillna(0.0).clip(0.0, 1.0)
+  d = (util * (float(ncores) / float(nhosts))).rename("u").reset_index()
+  d["bucket"] = d["t"] // (5 * 60 * 1_000_000)
+  buckets = d.groupby(["h", "bucket"])["u"].mean().reset_index()
+  keep = []
+  for _h, g in buckets.groupby("h"):
+    keep.append(g.iloc[1:] if len(g) > 1 else g)
+  per_host = pd.concat(keep).groupby("h")["u"].mean()
+  return float(per_host.sum())
+
 
 _REPO = Path(__file__).resolve().parents[4]
 _DEVIATION_REPORT = _REPO / "test_runs" / "columnar_golden_deviation.json"
@@ -324,6 +374,14 @@ def test_metrics_rows_match_golden(jid, golden_jobs, monkeypatch):
       and g["value"] is None
       and b["value"] is not None
     ):
+      oracle = _avg_cpuusage_oracle(
+        table, golden["job"]["ncores"], golden["job"]["nhosts"]
+      )
+      assert oracle is not None, f"jid={jid} {key}: oracle found no rows"
+      assert b.get("no_data_reason") is None, f"jid={jid} {key} reason"
+      assert float(b["value"]) == pytest.approx(oracle, rel=1e-9), (
+        f"jid={jid} {key}: {b['value']} vs oracle {oracle}"
+      )
       _record_deviation("metrics_golden_null_defect", key[1], 1.0)
       continue
     assert b.get("no_data_reason") == g.get("no_data_reason"), (
@@ -674,3 +732,55 @@ def test_roofline_peaks_match_golden(jid, golden_jobs):
         )
         _record_deviation("roofline_peaks", name, rel)
         assert rel <= SQL_SUM_RTOL, f"jid={jid} {name} peaks {mine} vs {theirs}"
+
+
+def test_avg_cpuusage_golden_null_rows_checked_against_oracle(
+  golden_jobs, monkeypatch
+):
+  """
+  The GOLDEN_NULL_DEFECTS path is exercised (not vacuous) and discriminates:
+  at least one corpus job has a NULL golden avg_cpuusage, the columnar value
+  equals the independent oracle, and a 1% error would fail the same check.
+  """
+  from types import SimpleNamespace
+
+  from hpcperfstats.analysis.metrics.lib import metrics as metrics_mod
+
+  if not golden_jobs:
+    pytest.skip("golden corpus absent")
+  checked = []
+  for jid, (table, golden) in sorted(golden_jobs.items()):
+    gm = golden["metrics"]
+    gold = {r["metric"]: r for r in gm["rows"]}
+    if gold.get("avg_cpuusage", {}).get("value") is not None:
+      continue
+    monkeypatch.setattr(
+      metrics_mod, "open_job_table", lambda job, _t=table, **_kw: _t
+    )
+    monkeypatch.setattr(
+      metrics_mod,
+      "_in_window_telemetry_bounds_for_job",
+      lambda job, _g=gm: (
+        _g["telemetry_first_time"],
+        _g["telemetry_last_time"],
+      ),
+    )
+    job = SimpleNamespace(
+      jid=jid,
+      nhosts=golden["job"]["nhosts"],
+      ncores=golden["job"]["ncores"],
+      artifact_only=False,
+    )
+    rows = metrics_mod.Metrics().compute_metrics(job)["rows"]
+    value = {r["metric"]: r for r in rows}["avg_cpuusage"]["value"]
+    if value is None:
+      continue
+    oracle = _avg_cpuusage_oracle(
+      table, golden["job"]["ncores"], golden["job"]["nhosts"]
+    )
+    assert float(value) == pytest.approx(oracle, rel=1e-9), jid
+    wrong = float(value) * 1.01 + 0.01
+    assert wrong != pytest.approx(oracle, rel=1e-9), jid
+    checked.append((jid, float(value)))
+  assert checked, "no corpus job exercises the avg_cpuusage oracle path"
+  assert any(v > 0 for _j, v in checked), "only zero-valued jobs checked"
