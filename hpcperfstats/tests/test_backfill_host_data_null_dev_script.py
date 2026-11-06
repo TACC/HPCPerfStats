@@ -133,3 +133,102 @@ def test_backfill_host_data_null_dev_finish_fails_closed_on_skipped_chunks():
   # Stale marker from an earlier run is cleared before any UPDATE starts.
   clear = code_only.index("COMMENT ON COLUMN public.host_data.dev IS NULL;")
   assert clear < code_only.index("while true; do")
+
+
+# Fake `docker compose ... exec -T db psql ...` for end-to-end runs of the
+# script: answers the chunk catalog queries from a fixed chunk list, sleeps
+# on UPDATEs so several stay in flight, and records COMMENT / UPDATE calls.
+_FAKE_DOCKER = r"""#!/usr/bin/env python3
+import os, re, sys, time
+state = os.environ["FAKE_DB_STATE"]
+chunks = [f"_timescaledb_internal._hyper_1_{i}_chunk" for i in range(1, 7)]
+args = sys.argv[1:]
+sqls = [args[i + 1] for i, a in enumerate(args) if a in ("-c", "-Atc")]
+def log(line):
+  with open(os.path.join(state, "calls.log"), "a") as fh:
+    fh.write(line + "\n")
+for sql in sqls:
+  excl = set(re.findall(r"'(_timescaledb_internal\.[^']+)'", sql))
+  left = [c for c in chunks if c not in excl]
+  if "FILTER (WHERE is_compressed)" in sql:
+    print(0)
+  elif "SELECT count(*)" in sql:
+    print(len(left))
+  elif "range_start" in sql and "LIMIT 1" in sql:
+    if left:
+      i = chunks.index(left[0]) + 1
+      print(f"{left[0]}|2026-01-{i:02d} 00:00:00+00|2026-01-{i + 1:02d} 00:00:00+00")
+  elif "UPDATE host_data" in sql:
+    day = re.search(r"time >= '2026-01-(\d\d)", sql).group(1)
+    time.sleep(0.3 + 0.1 * (int(day) % 3))
+    if os.environ.get("FAKE_FAIL_DAY") == day:
+      log(f"UPDATE-FAIL {day}")
+      sys.exit(1)
+    log(f"UPDATE {day}")
+    print("UPDATE 1")
+  elif sql.startswith("COMMENT ON COLUMN"):
+    log(sql)
+    print("COMMENT")
+"""
+
+
+def _run_with_fake_db(tmp_path, fail_day=None):
+  bindir = tmp_path / "bin"
+  bindir.mkdir()
+  fake = bindir / "docker"
+  fake.write_text(_FAKE_DOCKER, encoding="utf-8")
+  fake.chmod(0o755)
+  env = {
+    "PATH": f"{bindir}:/usr/bin:/bin",
+    "FAKE_DB_STATE": str(tmp_path),
+    "TMPDIR": str(tmp_path),
+    "HPCPERFSTATS_NULL_DEV_VACUUM_EVERY": "0",
+    "HPCPERFSTATS_NULL_DEV_STALL_LIMIT": "2",
+  }
+  if fail_day:
+    env["FAKE_FAIL_DAY"] = fail_day
+  completed = subprocess.run(
+    [str(SCRIPT), "4"],
+    check=False,
+    capture_output=True,
+    text=True,
+    cwd=tmp_path,
+    env=env,
+    timeout=60,
+  )
+  calls = (tmp_path / "calls.log").read_text(encoding="utf-8").splitlines()
+  return completed, calls
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_host_data_null_dev_tail_drain_finishes_and_writes_marker(
+  tmp_path,
+):
+  """Regression (hpcperfstats03 2026-11-06): with every chunk started,
+  remaining_chunks stays 0 while the last in-flight UPDATEs succeed; each
+  success counted as "no progress", so the run hit STALL_LIMIT, printed
+  "aborting: remaining_chunks stuck at 0", exited 1 and never wrote the
+  marker. Successful completions are progress; the run must finish."""
+  completed, calls = _run_with_fake_db(tmp_path)
+  assert completed.returncode == 0, completed.stdout + completed.stderr
+  assert "aborting" not in completed.stderr
+  updates = sorted(c for c in calls if c.startswith("UPDATE "))
+  assert updates == [f"UPDATE {d:02d}" for d in range(1, 7)]
+  comments = [c for c in calls if c.startswith("COMMENT")]
+  assert comments[0].endswith("IS NULL;")
+  assert comments[-1].endswith("IS 'hpcperfstats:null-dev-backfill-complete';")
+  assert "wrote host_data.dev marker" in completed.stdout
+
+
+@pytest.mark.machine_unit_mock
+def test_backfill_host_data_null_dev_failed_chunk_exits_1_without_marker(
+  tmp_path,
+):
+  """A failed chunk must still end the run with exit 1 and no marker, so
+  0032 refuses until the operator re-runs from that chunk."""
+  completed, calls = _run_with_fake_db(tmp_path, fail_day="03")
+  assert completed.returncode == 1, completed.stdout + completed.stderr
+  assert "UPDATE-FAIL 03" in calls
+  assert "INCOMPLETE" in completed.stderr
+  assert "_hyper_1_3_chunk" in completed.stderr
+  assert not [c for c in calls if "null-dev-backfill-complete" in c]

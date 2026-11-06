@@ -382,8 +382,10 @@ while true; do
   fi
   echo "remaining_chunks=${left} (after ${DONE_CHUNK})"
 
+  # A successful UPDATE is progress even when no chunk is left to start (the
+  # tail drains in-flight work at remaining_chunks=0); only failures stall.
   if [[ "$left" =~ ^[0-9]+$ && -n "$prev_left" ]]; then
-    if [[ "$left" -ge "$prev_left" ]]; then
+    if [[ "${DONE_RC}" -ne 0 && "$left" -ge "$prev_left" ]]; then
       stall=$((stall + 1))
       echo "warning: no progress (${stall}/${STALL_LIMIT}) — still ${left} chunk(s) remaining" >&2
       if [[ "$stall" -ge "$STALL_LIMIT" ]]; then
