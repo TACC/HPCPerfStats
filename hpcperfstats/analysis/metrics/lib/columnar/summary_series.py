@@ -11,7 +11,11 @@ first-win tries, order keys, hardware-error counters) stay in
 
 Attributes:
   WATT_UNIQUE_ROUND_DECIMALS: Rounding before the unique-watt collapse
-    (``dcgm_cpu_power_agg``).
+    (``dcgm_cpu_power_agg``; history rows of the retired per-CPU key only).
+  NODE_POWER_MODULE_COLUMNS: Module-power columns for the node estimate,
+    first > 0 per row wins (new ``host_power_socket`` sum, then history).
+  NODE_POWER_CPU_COLUMNS: CPU-power columns for the node estimate, first
+    present per row wins (socket sum, retired DCGM key, Intel/AMD RAPL).
   FREQ_GHZ_SCALE: ``freq = FREQ_GHZ_SCALE * acycles / mcycles``.
   FREQ_PLOT_MIN_MAX: ``freq`` is plotted only when its maximum exceeds this.
 """
@@ -48,6 +52,15 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
 )
 
 WATT_UNIQUE_ROUND_DECIMALS = 3
+# Node power estimate inputs, in priority order (D35; first two of each are
+# ``host_power_socket`` sums, the next the retired keys kept for history).
+NODE_POWER_MODULE_COLUMNS = ("sock_module_power_w", "nv_module_power_w")
+NODE_POWER_CPU_COLUMNS = (
+  "sock_power_w",
+  "dcg_cpu_power_w",
+  "watts",
+  "amd_pkg_w",
+)
 FREQ_GHZ_SCALE = 2.7
 FREQ_PLOT_MIN_MAX = 500.0
 
@@ -507,8 +520,15 @@ def _merge_opa_fabric_if_no_ib(frame: SeriesFrame, jt: Any) -> None:
 
 def add_node_power_est_column(frame: SeriesFrame) -> None:
   """
-  ``_add_node_power_est_column``: module-only when ``nv_module_power_w`` >
-  0, else CPU (DCGM, Intel RAPL, AMD RAPL first-present) + GPU power.
+  ``_add_node_power_est_column``: per row, a module reading > 0 alone, else
+  CPU + GPU power (D35).
+
+  Module: ``sock_module_power_w`` (Σ ``host_power_socket``
+  ``module_power_w``, GH200), else the retired ``nv_module_power_w``
+  (history). CPU, first present per row: ``sock_power_w`` (Σ
+  ``socket_power_w`` over sockets: GB200, Grace/Grace, Vera), the retired
+  ``dcg_cpu_power_w`` (history), Intel RAPL ``watts``, AMD RAPL
+  ``amd_pkg_w``. GPU-less nodes get the CPU term alone.
 
   Args:
     frame (SeriesFrame): Target frame (adds ``node_power_est_w``).
@@ -524,17 +544,25 @@ def add_node_power_est_column(frame: SeriesFrame) -> None:
     >>> add_node_power_est_column(f)
     >>> f.columns["node_power_est_w"].tolist()
     [150.0, 20.0]
+    >>> g = SeriesFrame.from_base(np.array([0]), np.array([1]), ["h"])
+    >>> g.set("sock_power_w", np.array([90.0]))
+    >>> add_node_power_est_column(g)
+    >>> g.columns["node_power_est_w"].tolist()
+    [90.0]
   """
   n = len(frame)
   out = np.full(n, np.nan, dtype=np.float64)
   use_mod = np.zeros(n, dtype=bool)
-  mod = frame.columns.get("nv_module_power_w")
-  if mod is not None:
-    use_mod = (~np.isnan(mod)) & (mod > 0.0)
-    out = np.where(use_mod, mod, out)
+  for col_name in NODE_POWER_MODULE_COLUMNS:
+    mod = frame.columns.get(col_name)
+    if mod is None:
+      continue
+    take = (~np.isnan(mod)) & (mod > 0.0) & (~use_mod)
+    out = np.where(take, mod, out)
+    use_mod |= take
   cpu = np.full(n, np.nan, dtype=np.float64)
   filled = np.zeros(n, dtype=bool)
-  for col_name in ("dcg_cpu_power_w", "watts", "amd_pkg_w"):
+  for col_name in NODE_POWER_CPU_COLUMNS:
     col = frame.columns.get(col_name)
     if col is None:
       continue

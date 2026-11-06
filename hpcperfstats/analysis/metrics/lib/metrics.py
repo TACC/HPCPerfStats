@@ -645,7 +645,12 @@ INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
 # (jid 79282: its one unmarked 4-GPU node showed no GPU metrics).
 # 6 (2026-11-05): avg_cpuusage reads ncores/nhosts from job_data when the
 # scheduler's jid-only ref lacks them (it was NULL on every scheduled job).
-METRICS_CONTRACT_VERSION = 6
+# 7 (2026-11-05): node power estimate reads the per-socket
+# ``host_power_socket`` type (module sum if > 0, else socket sum + GPU;
+# monitor round 2, D35). Rows with only the retired keys keep the old
+# formula, so history values are unchanged; jobs ingested from a round-2
+# monitor before this consumer had no CPU term and are recomputed.
+METRICS_CONTRACT_VERSION = 7
 # ``no_data_reason`` written for catalog rows a backfill job never produced
 # after it exhausted the failure-memory backoff (daily step); the job is
 # stamped with the current version so the sweep does not spin on it.

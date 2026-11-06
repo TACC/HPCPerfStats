@@ -115,8 +115,9 @@ SUMMARY_METRIC_DESCRIPTIONS: dict[str, str] = {
     "GPU board power draw summed across GPUs (DCGM power_usage), in watts."
   ),
   "node_power_est_w": (
-    "Estimated on-node power: DCGM module power when that branch applies, "
-    "otherwise CPU package (RAPL or Grace DCGM) plus summed GPU draw."
+    "Estimated on-node power: module power when a module meter reads above "
+    "zero, otherwise CPU power (RAPL, or Grace per-socket power summed over "
+    "sockets) plus summed GPU draw."
   ),
   "nv_gpu_link_gbs": (
     "PCIe plus NVLink byte rate from DCGM gpu_io_link_total_bytes, in GB/s."

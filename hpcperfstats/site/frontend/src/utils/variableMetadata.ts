@@ -379,7 +379,7 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   max_node_power_est_w: {
     description:
-      "Peak estimated on-node power (watts) from telemetry: Intel/AMD RAPL or Grace DCGM CPU plus GPU draw, or DCGM module power alone when that branch applies—not BMC or PDU.",
+      "Peak estimated on-node power (watts) from telemetry: Intel/AMD RAPL or Grace per-socket power summed over sockets, plus GPU draw, or module power alone when a module meter reads above zero—not BMC or PDU.",
     researcherUse:
       "Energy-to-solution comparisons across algorithms when estimates are meaningful.",
   },
@@ -720,7 +720,7 @@ const SUMMARY_PLOT_METRIC_METADATA = {
   },
   node_power_est_w: {
     description:
-      "Estimated on-node power: DCGM module power when that branch applies, otherwise CPU package (RAPL or Grace DCGM) plus summed GPU draw.",
+      "Estimated on-node power: module power when a module meter reads above zero, otherwise CPU power (RAPL, or Grace per-socket power summed over sockets) plus summed GPU draw.",
     researcherUse:
       "Blended node power for energy-to-solution comparisons when fragments allow an estimate.",
   },

@@ -56,6 +56,32 @@ SCALE_DEFECT_COLUMNS = frozenset({"nv_gpu_mem_bw_gbs", "nv_gpu_link_gbs"})
 PLAIN_DECIMAL_ATOL = 0.011
 # Document fields that legitimately differ between captures.
 VOLATILE_DOC_KEYS = frozenset({"version", "target_id", "root_id"})
+# Help prose changed on purpose after the pandas-path capture: new text ->
+# golden text, substituted inside strings of the new document before diffing.
+# D35 (monitor round 2): the node power estimate reads host_power_socket.
+GOLDEN_PROSE_UPDATES = {
+  (
+    "Estimated on-node power: module power when a module meter reads above "
+    "zero, otherwise CPU power (RAPL, or Grace per-socket power summed over "
+    "sockets) plus summed GPU draw."
+  ): (
+    "Estimated on-node power: DCGM module power when that branch applies, "
+    "otherwise CPU package (RAPL or Grace DCGM) plus summed GPU draw."
+  ),
+}
+
+
+def apply_golden_prose_updates(node: Any) -> Any:
+  """Map intentionally updated help prose back to the golden wording."""
+  if isinstance(node, str):
+    for new, old in GOLDEN_PROSE_UPDATES.items():
+      node = node.replace(new, old)
+    return node
+  if isinstance(node, dict):
+    return {k: apply_golden_prose_updates(v) for k, v in node.items()}
+  if isinstance(node, list):
+    return [apply_golden_prose_updates(v) for v in node]
+  return node
 
 
 def _corpus_dir() -> Path | None:
@@ -682,6 +708,7 @@ def test_plot_json_matches_golden_after_id_normalization(
   if want_item is None:
     return
   got, want = normalize_bokeh_doc(got_item), normalize_bokeh_doc(want_item)
+  got = apply_golden_prose_updates(got)
   if kind == "summary_plot":
     diffs = compare_summary_grid(jt, golden, got, want)
   else:

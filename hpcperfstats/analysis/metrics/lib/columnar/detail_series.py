@@ -4,7 +4,9 @@ GPU utilisation summary / inventory, and the node power estimate.
 
 Ports ``job_detail_fsio``, ``gpu_job_detail_summary`` and
 ``gen.node_power_est`` reads; the reduction rules (count > 2 devices,
-DCGM blank rejection, module-only power) are unchanged.
+DCGM blank rejection, module-only power) are unchanged. The node power
+estimate reads ``host_power_socket`` sums first and the retired per-CPU /
+per-GPU power keys only for history (D35).
 
 Attributes:
   GPU_TYPE_PRECEDENCE: Vendor order for GPU summary fields.
@@ -31,6 +33,7 @@ from hpcperfstats.analysis.metrics.lib.columnar import segments as sg
 from hpcperfstats.analysis.metrics.lib.columnar.kernels import AggTable
 from hpcperfstats.analysis.metrics.lib.columnar.series_frame import SeriesFrame
 from hpcperfstats.analysis.metrics.lib.columnar.summary_series import (
+  NODE_POWER_CPU_COLUMNS,
   add_node_power_est_column,
   agg_if_feasible,
   dcgm_cpu_power_util_agg,
@@ -429,8 +432,18 @@ def node_power_est_frame(jt: Any) -> SeriesFrame:
     ("intel_x86_rapl", "arc", ["pkg_energy"], "watts", 0.00001526),
     ("amd_x86_rapl", "arc", ["pkg_energy"], "amd_pkg_w", 0.00001526),
     ("nvidia_gpu", "value", ["power_usage"], "nv_power_w", 1.0),
+    # Retired monitor keys (D33): history rows only.
     ("nvidia_gpu", "value", ["module_power_usage"], "nv_module_power_w", 1.0),
     ("host_cpu_hw", "value", ["dcgm_cpu_power_util_w"], "dcg_cpu_power_w", 1.0),
+    # Per-socket power (D35): summed over socket ``dev`` rows, no dedup.
+    ("host_power_socket", "value", ["socket_power_w"], "sock_power_w", 1.0),
+    (
+      "host_power_socket",
+      "value",
+      ["module_power_w"],
+      "sock_module_power_w",
+      1.0,
+    ),
   )
   for typ, val, events, name, conv in rows:
     if name == "dcg_cpu_power_w":
@@ -506,7 +519,7 @@ def job_cpu_gpu_watt_hours(jt: Any) -> float | None:
     return None
   cpu_ok = any(
     name in frame.columns and np.isfinite(frame.columns[name]).any()
-    for name in ("dcg_cpu_power_w", "watts", "amd_pkg_w")
+    for name in NODE_POWER_CPU_COLUMNS
   )
   if not cpu_ok:
     return None

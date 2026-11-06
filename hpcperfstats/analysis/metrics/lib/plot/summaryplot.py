@@ -487,6 +487,7 @@ _SUMMARY_SINGLE_SPECS = [
     1.0,
     "GPU module [W]",
   ),
+  # Retired monitor keys (D33): history only, dual-read for the estimate.
   (
     "host_cpu_hw",
     "value",
@@ -494,6 +495,23 @@ _SUMMARY_SINGLE_SPECS = [
     "dcg_cpu_power_w",
     1.0,
     "CPU power [W]",
+  ),
+  # Per-socket power (D31/D35): summed over socket ``dev`` rows per sample.
+  (
+    "host_power_socket",
+    "value",
+    ["socket_power_w"],
+    "sock_power_w",
+    1.0,
+    "Socket power [W]",
+  ),
+  (
+    "host_power_socket",
+    "value",
+    ["module_power_w"],
+    "sock_module_power_w",
+    1.0,
+    "Module power [W]",
   ),
   (
     "nvidia_gpu",
@@ -534,6 +552,8 @@ _SUMMARY_ALLOW_PARTIAL_NULL = frozenset(
     "nv_power_w",
     "nv_module_power_w",
     "dcg_cpu_power_w",
+    "sock_power_w",
+    "sock_module_power_w",
     "watts",
     "amd_pkg_w",
     "node_power_est_w",
@@ -562,6 +582,8 @@ _SUMMARY_SKIP_PLOT_METRICS = frozenset(
     "nv_gpu_count",
     "nv_module_power_w",
     "dcg_cpu_power_w",
+    "sock_power_w",
+    "sock_module_power_w",
     "amd_pkg_w",
   }
 )

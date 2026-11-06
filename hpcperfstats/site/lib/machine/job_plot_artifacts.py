@@ -214,7 +214,8 @@ PAYLOAD_ENCODING_GZIP_JSON = "gzip_json"
 
 # Bump when plot artifact semantics change (independent of Bokeh version).
 # See hpcperfstats/cursor-rules/job-plot-artifacts-caching.mdc and machine/tests/test_job_plot_artifacts.py.
-APP_PLOT_ARTIFACT_SCHEMA_VERSION = 22
+# 23 (2026-11-05): Summary node power estimate reads host_power_socket (D35).
+APP_PLOT_ARTIFACT_SCHEMA_VERSION = 23
 
 JOB_PLOT_JSON_KEYS: dict[str, tuple[str, str]] = {
   kind: (spec.json_item_key, spec.unavailable_reason_key)

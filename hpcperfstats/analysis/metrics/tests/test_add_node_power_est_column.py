@@ -28,12 +28,17 @@ def _loop_reference(columns: dict[str, list[float]]) -> np.ndarray:
   n = len(next(iter(columns.values()))) if columns else 0
   out = np.full(n, np.nan, dtype=np.float64)
   for i in range(n):
-    modv = columns.get("nv_module_power_w", [np.nan] * n)[i]
-    if not math.isnan(modv) and modv > 0.0:
+    modv = float("nan")
+    for name in ("sock_module_power_w", "nv_module_power_w"):
+      v = columns.get(name, [np.nan] * n)[i]
+      if not math.isnan(v) and v > 0.0:
+        modv = v
+        break
+    if not math.isnan(modv):
       out[i] = modv
       continue
     cpu = float("nan")
-    for name in ("dcg_cpu_power_w", "watts", "amd_pkg_w"):
+    for name in ("sock_power_w", "dcg_cpu_power_w", "watts", "amd_pkg_w"):
       if (
         name in columns and math.isnan(cpu) and not math.isnan(columns[name][i])
       ):
@@ -61,6 +66,27 @@ def test_add_node_power_est_column_matches_iloc_priority() -> None:
   np.testing.assert_allclose(
     f.columns["node_power_est_w"], _loop_reference(columns), equal_nan=True
   )
+
+
+@pytest.mark.machine_unit_mock
+def test_add_node_power_est_column_socket_power_priority_d35() -> None:
+  """D35: socket module > 0 wins; socket sum + GPU; history rows unchanged."""
+  nan = np.nan
+  columns = {
+    # rows: GH200 module, GB200 sockets+GPU, Grace/Grace sockets only,
+    # history GH200 module, history GB200 (0 W DCGM CPU), x86 RAPL+GPU
+    "sock_module_power_w": [900.0, 0.0, nan, nan, nan, nan],
+    "sock_power_w": [180.0, 90.0, 180.0, nan, nan, nan],
+    "nv_module_power_w": [nan, nan, nan, 700.0, 0.0, nan],
+    "dcg_cpu_power_w": [nan, nan, nan, 45.0, 0.0, nan],
+    "watts": [nan, nan, nan, nan, nan, 80.0],
+    "nv_power_w": [600.0, 320.0, nan, 500.0, 320.0, 30.0],
+  }
+  f = _frame(columns)
+  add_node_power_est_column(f)
+  got = f.columns["node_power_est_w"]
+  np.testing.assert_allclose(got, [900.0, 410.0, 180.0, 700.0, 320.0, 110.0])
+  np.testing.assert_allclose(got, _loop_reference(columns), equal_nan=True)
 
 
 @pytest.mark.machine_unit_mock
