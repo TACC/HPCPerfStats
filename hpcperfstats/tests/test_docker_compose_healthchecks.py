@@ -1245,11 +1245,15 @@ def test_docker_compose_postgres_unix_socket_shared_with_password_auth():
   ini_example = (repo_root / "hpcperfstats.ini.example").read_text()
   hba = (repo_root / "services-conf" / "postgres_pg_hba.conf").read_text()
 
-  # db + web + pipeline share the socket dir; db_pg18 must not (same port).
+  # db + web + pipeline share the socket dir; dual-run db_pg18 must not mount
+  # it (same port -> socket lock clash). The PG18 cutover overlay
+  # (docker-compose.pg18-primary.yaml) adds the mount once db is parked.
   assert content.count("postgres_runtime:/run/postgresql") == 3
   pg18 = content.split("  db_pg18:\n", 1)[1].split("\n  rabbitmq:\n", 1)[0]
-  assert "postgres_runtime" not in pg18
-  assert "hba_file" not in pg18
+  assert "- postgres_runtime:" not in pg18
+  # PG18 enforces the same committed client auth as db before and after cutover.
+  assert "      - hba_file=/etc/postgresql/pg_hba.conf\n" in pg18
+  assert "postgres_pg_hba.conf:/etc/postgresql/pg_hba.conf:ro" in pg18
   assert "  postgres_runtime:\n    driver: local\n" in content
   assert "      type: tmpfs\n" in content
   assert "postgres_runtime:" not in example

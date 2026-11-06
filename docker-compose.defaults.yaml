@@ -304,8 +304,10 @@ services:
       - statement_timeout=120000
       - -c
       - idle_in_transaction_session_timeout=300000
+      # Same as db: this service becomes the production db at cutover
+      # (docker-compose.pg18-primary.yaml), and that file cannot override command:.
       - -c
-      - shared_buffers=12GB
+      - shared_buffers=64GB
       - -c
       - work_mem=8MB
       - -c
@@ -348,6 +350,12 @@ services:
       - timescaledb.max_tuples_decompressed_per_dml_transaction=1000000
       - -c
       - io_method=io_uring
+      # Same committed client auth as db (socket = scram-sha-256). The shared
+      # postgres_runtime socket dir is mounted only at cutover by
+      # docker-compose.pg18-primary.yaml: two servers in one dir collide on
+      # .s.PGSQL.5432.lock during dual-run.
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
     restart: always
     healthcheck:
       test:
@@ -361,6 +369,7 @@ services:
     # PG18 docker-library prefers VOLUME /var/lib/postgresql (not .../data only).
     volumes:
       - postgres_data_pg18:/var/lib/postgresql
+      - ./services-conf/postgres_pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
     environment:
       - POSTGRES_USER=hpcperfstats
       - POSTGRES_PASSWORD=hpcperfstats

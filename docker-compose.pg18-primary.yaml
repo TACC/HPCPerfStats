@@ -1,0 +1,27 @@
+# PG18 cutover overlay (docs/OPERATOR_PG18_MIGRATION.md Phase E).
+#
+# Activated per site by adding this file to the include: list in the site
+# docker-compose.yaml, right after docker-compose.defaults.yaml. Because the
+# site file always loads, the cutover holds with or without
+# `podman-compose -f docker-compose.yaml` (a docker-compose.override.yaml
+# would be skipped by -f and silently bring PG15 back as `db`).
+# Rollback = delete that include line (PG15 bind is untouched).
+#
+# Effect: Hub PG15 `db` is parked under profile pg15-retired (never started by
+# a plain `up`); homemade PG18 `db_pg18` starts with the normal stack, answers
+# to hostname `db` (db18 kept), and owns the shared /run/postgresql socket
+# that web and pipeline use ([DEFAULT] host = /run/postgresql).
+
+services:
+  db:
+    profiles:
+      - pg15-retired
+
+  db_pg18:
+    profiles: !reset []
+    volumes:
+      - postgres_runtime:/run/postgresql
+    networks:
+      hpcperfstats_net:
+        aliases:
+          - db

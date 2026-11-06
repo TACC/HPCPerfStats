@@ -258,10 +258,26 @@ wait_for_compose_service_running() {
   return 1
 }
 
+# Hub PG15 `db` until docker-compose.pg18-primary.yaml (PG18 cutover) parks it
+# under profile pg15-retired; then the live database service is db_pg18.
+compose_primary_db_service() {
+  local services
+  services="$("${PODMAN_COMPOSE[@]}" config --services 2>/dev/null)" || return 1
+  if grep -qx db <<<"${services}"; then
+    echo db
+  elif grep -qx "${PG18_SERVICE}" <<<"${services}"; then
+    echo "${PG18_SERVICE}"
+  else
+    echo "rebuild_full_site.sh: neither db nor ${PG18_SERVICE} is in the default compose stack" >&2
+    return 1
+  fi
+}
+
 verify_default_stack_running() {
-  local svc
-  # Hub PG15 (db) stays live; db_pg18 (profile pg18-migrate) is intentionally not started.
-  local -a required=(web pipeline valkey proxy db rabbitmq)
+  local svc db_svc
+  # Before cutover db_pg18 (profile pg18-migrate) is intentionally not started.
+  db_svc="$(compose_primary_db_service)" || return 1
+  local -a required=(web pipeline valkey proxy "${db_svc}" rabbitmq)
   for svc in "${required[@]}"; do
     if ! compose_service_container_exists "${svc}"; then
       echo "rebuild_full_site.sh: required service container missing: ${svc}" >&2

@@ -1,159 +1,75 @@
-# Operator guide: PostgreSQL 15 → homemade PG18 + Timescale logical migrate
+# Operator guide: PostgreSQL 15 → homemade PG18 + Timescale (logical migrate)
 
-**Audience:** site operators cutting over from Hub `timescale/timescaledb:2.28.3-pg15` to the homemade `hpcperfstats-db` image (PostgreSQL 18 + TimescaleDB 2.30.x on Alpine 3.24 musl with jemalloc, ICU, liburing, lz4, zstd).
+**Audience:** site operators moving from Hub `timescale/timescaledb:2.28.3-pg15` (service `db`) to the homemade `hpcperfstats-db` image (PostgreSQL 18 + TimescaleDB 2.31.x on Alpine musl; service `db_pg18`).
 
-**Do not use `pg_upgrade`.** Timescale 2.29 drops PG15; do **not** restore `_timescaledb_catalog` from PG15. Create a fresh hypertable via Django migrations on PG18, then **COPY rows**.
+**Do not use `pg_upgrade`.** Timescale 2.29+ drops PG15 and musl/glibc collations differ. PG18 gets a fresh Django-migrated schema, then rows are copied with binary `COPY`. Never restore `_timescaledb_catalog` from PG15.
 
 Contract rule: `hpcperfstats/cursor-rules/postgres-custom-image-and-migrate-contract.mdc`.
 
-Run compose from the checkout that contains `docker-compose.yaml` (typically `HPCPerfStats/`). Do not prefix paste blocks with host `cd`.
+Run every block as root from the checkout that contains `docker-compose.yaml`. Use **`podman-compose -p hpcperfstats …` without `-f`** throughout.
 
-**Single-host PG18-primary cutover** (retire Hub PG15, PG18 already holds production `host_data`): merge **`docs/snippets/docker-compose-pg18-primary-site.yaml.example`** into site `docker-compose.yaml` — do **not** change tracked `docker-compose.defaults.yaml` for one site while others dual-run.
+## Timeline and downtime
 
----
+| Phase | Stack state | Cost |
+|-------|-------------|------|
+| 0 Preflight, A build/start, B schema | Live on PG15 | Minutes (A: image bake) |
+| C Bulk copy (`host_data`) | Live on PG15 | Hours–days; rerun until clean |
+| D1 Catch-up pass | Live on PG15 | Minutes |
+| **D2–D3** Pipeline stopped, freeze pass | **Ingest paused** (RabbitMQ buffers monitor data) | Changed slices only |
+| **D4** Web + proxy stopped, relational copy | **Site down** | Parallel dump/restore of relational tables |
+| **E** Cutover | **Site down** until E3 | Container restarts |
 
-## PG18 data safety — what mutates the PG18 volume
+How the copy keeps the window short (`scripts/pg18_host_data_chunk_copy.py`):
 
-Use this before re-running migrate steps when **`db_pg18` already contains terabytes of `host_data`** (PG15 truncated or lagging). **`pg18` bind data survives container recreate**; these steps do **not** wipe the host directory by themselves:
+- **State file.** Every verified chunk records `{rows, sig}`. The signature (`sig`) is the chunk's PG15 `pg_stat` insert, update and delete counters. With `--changed-only`, chunks whose signature hasn't moved are skipped without a single query.
+- **Slice resync.** A changed chunk that has only *gained* rows since it was last verified is compared in 60-minute slices. Only the mismatched slices are deleted and re-copied, so the hot chunk costs minutes of data, not a full day. Any UPDATE or DELETE (operator repair tools) forces a whole-chunk copy.
+- **Compression during the copy.** Copied chunks older than 8 days are compressed on PG18 right away, so PG18 never holds the full history uncompressed and there is no compression backlog after cutover.
+- **Binary COPY.** It uses an explicit, type-checked column list and fails closed if the PG15 and PG18 `host_data` layouts differ.
+- **`--verify` (freeze only).** Each copied chunk is recounted on both sides, and the run exits non-zero on any mismatch. The `verified_rows=` total replaces a full `count(*)` of `host_data`.
+- **Per-chunk failures.** A failed chunk is logged and dropped from state; the run continues and exits 1. Rerun the same command.
 
-| Step / command | Touches PG18? | Deletes or overwrites PG18 data? |
-|----------------|---------------|----------------------------------|
-| Prerequisites `mkdir` / `chown` on **`pg18`** | Host dir only | **No** (idempotent on existing tree) |
-| `build` / `up -d` / `up -d --force-recreate db_pg18` | Container only | **No** — same bind mount keeps files |
-| Phase A `CREATE DATABASE` (if missing) | Catalog only | **No** — skips when DB exists |
-| Phase A health / `pg_isready` / `SHOW io_method` | Read-only | **No** |
-| Phase B Django **`migrate`** on **`db18`** | DDL / migrations | **Risk** if re-applied on a populated DB — **skip** when `django_migrations` and hypertable already match production |
-| Phase B block expecting **`host_data_n = 0`** | Read | **N/A** — **do not use as gate** when PG18 already has rows |
-| Phase B **`remove_compression_policy`** | Policy only | **No row delete** (safe; stops background compression jobs) |
-| Phase C / D5 **`pg18_host_data_chunk_copy.py`** (no `--list-only`) | **`host_data` ranges** | **Yes** — on count mismatch or **`--force`**, **deletes target time range on PG18 then COPY from PG15**. **Forbidden** when PG18 is authoritative and PG15 is stale/smaller |
-| Phase C / D5 **`--list-only`** | Read PG15 (+ logs) | **No** |
-| Phase D8 **`TRUNCATE … CASCADE`** on PG18 | Relational tables | **Yes** — **wipes listed public tables on PG18** (not `host_data`) |
-| Phase D9 **`pg_dump` from PG15 → psql PG18** | Relational **`INSERT`** | **Overwrites / duplicates** unless tables empty or you handle conflicts — **does not** include `host_data` |
-| Phase D10 **`add_compression_policy`** | Policy only | **No row delete** |
-| Phase E cutover (alias **`db`**, stop PG15) | Network / which container runs | **No** — PG15 volume untouched if service stopped |
-| Deleting **`/data/.../pg18`** on the host | Everything | **Yes** — **forbidden** without snapshot |
-
-**Additive path when PG18 already holds more `host_data` than PG15:** verify PG18 → optional relational sync (**D9 without D8** if PG18 relational tables are empty or you accept merge work) → **Phase E** only. **Skip** Phase B (empty-schema migrate), Phase C, D5, and D8. **Never** run chunk copy **`--force`** toward PG18 while PG15 is the smaller source.
+Freeze precondition: **no `host_data` UPDATE/DELETE tools** (`repair_jstamp_deltas`, `backfill_host_data_null_dev.sh`, `collapse_percore_parallel.sh`) may run on PG15 between D1 and D3. If they do, the affected chunks fall back to whole-chunk copies (correct, just slower).
 
 ---
 
-## Path — PG18 authoritative (early cutover)
+## Phase 0 — host preflight (read-only; paste output)
 
-For sites where **`pg_database_size` on `db_pg18` ≫ PG15** and chunk/time bounds on PG18 cover production history (PG15 may only retain a recent window):
+PG18 compresses as it copies, so its steady-state size ≈ PG15 `db_size` (plus in-flight uncompressed chunks and up to `max_wal_size=64GB` WAL). **Fail closed:** free space on the `pg18` filesystem ≥ **1.2 × PG15 db_size + 80 GB**; `kernel.io_uring_disabled` prints `1` with `io_uring_group = 70` (or `disabled = 0`); the `postgres_data_pg18` bind device exists in `docker-compose.yaml`.
 
-1. **Verify PG18** (read-only; raise `statement_timeout`):
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec db_pg18 \
-  psql -h localhost -U hpcperfstats -d hpcperfstats -X -v ON_ERROR_STOP=1 -c "
-SET statement_timeout = 0;
-SELECT pg_size_pretty(pg_database_size(current_database())) AS db_size;
-SELECT count(*) AS chunks, min(range_start) AS min_start, max(range_end) AS max_end
-FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data';
-SELECT (SELECT time FROM host_data ORDER BY time ASC LIMIT 1) AS oldest;
-SELECT (SELECT time FROM host_data ORDER BY time DESC LIMIT 1) AS newest;
-"
-```
-
-2. **Optional — relational data from PG15 without truncating PG18:** only if PG18 **`job_data` / `metrics_data` / …** are empty or you have a merge plan. **Do not run Phase D8.** Pipe **D9** as written (data-only, excludes `host_data` and `django_migrations`). If **`psql` fails on duplicate keys**, stop — do not TRUNCATE PG18 to “fix” without a backup.
-
-3. **Optional — compression policy on PG18** after verification: Phase **D10** only (`ANALYZE` + `add_compression_policy`).
-
-4. **Cutover:** Phase **E** (compose + stop PG15 + start stack on alias **`db`**). Site-local compose merge: **`docs/snippets/docker-compose-pg18-primary-site.yaml.example`**.
-
-5. **Rollback window:** keep **`postgres_data` / `pg15`** bind and **`db`** service under profile **`pg15-retired`** (snippet) — do not delete **`pg15`** until soak completes.
-
----
-
-## Prerequisites
-
-1. Host free disk ≈ **2×** current `host_data` size (dual volumes until PG15 retirement).
-2. Settings include `postgres_data_pg18` bind (`/data/hpcperfstats_db/pg18` in the example).
-3. Create the host directory and give it to Alpine **postgres uid/gid 70** before starting `db_pg18`. A bind mount **replaces** the image’s `1777` ownership; empty `root:root` (or NFS `root_squash`) yields `mkdir: can't create directory '/var/lib/postgresql/18/': Permission denied`.
+Both servers set `shared_buffers=64GB`. Bulk `COPY`, counts and compression go through PostgreSQL's small ring buffers, so PG18 does not fill its 64 GB during dual-run.
 
 ```bash
-sudo mkdir -p /data/hpcperfstats_db/pg18
-sudo chown -R 70:70 /data/hpcperfstats_db/pg18
-```
-
-4. Host **io_uring** for `db_pg18` (`-c io_method=io_uring`). Postgres runs as Alpine **uid/gid 70**. Preferred locked-down compromise: **`kernel.io_uring_disabled=1`** plus **`kernel.io_uring_group=70`**. With `disabled=1` and the default unset group (`-1`), uid 70 gets **EPERM** even when compose has `seccomp=unconfined`. **Forbidden:** `kernel.io_uring_disabled=2`. Alternative (fully open): `kernel.io_uring_disabled=0`.
-
-### host — apply io_uring sysctl now (paste output)
-
-```bash
-sudo sysctl -w kernel.io_uring_disabled=1
-sudo sysctl -w kernel.io_uring_group=70
+hostname; git log -1 --oneline; free -g | head -2
+grep -n -A5 -E '^  postgres_data(_pg18)?:' docker-compose.yaml | grep -E 'postgres_data|device'
+df -h /data/hpcperfstats_db 2>&1 | tail -1
 sysctl kernel.io_uring_disabled kernel.io_uring_group
+podman-compose -p hpcperfstats exec -T db psql -h localhost -U hpcperfstats -d hpcperfstats -X -c "SET statement_timeout = 0" -c "SELECT pg_size_pretty(pg_database_size(current_database())) AS pg15_db_size" -c "SELECT pg_size_pretty(sum(before_compression_total_bytes)) AS before, pg_size_pretty(sum(after_compression_total_bytes)) AS after FROM hypertable_compression_stats('host_data')" -c "SELECT count(*) AS chunks, count(*) FILTER (WHERE is_compressed) AS compressed, min(range_start)::date AS oldest, max(range_end)::date AS newest FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data'" -c "SELECT c.relname, pg_size_pretty(pg_total_relation_size(c.oid)) AS size FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname <> 'host_data' ORDER BY pg_total_relation_size(c.oid) DESC LIMIT 8"
 ```
-
-**Fail closed:** printed values are `kernel.io_uring_disabled = 1` and `kernel.io_uring_group = 70`.
-
-### host — persist io_uring sysctl across reboot (paste output)
-
-```bash
-printf '%s\n' 'kernel.io_uring_disabled = 1' 'kernel.io_uring_group = 70' | sudo tee /etc/sysctl.d/99-hpcperfstats-io-uring.conf
-sudo sysctl --system
-sysctl kernel.io_uring_disabled kernel.io_uring_group
-```
-
-Then start (or recreate) `db_pg18`:
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate up -d --force-recreate db_pg18
-```
-
-**Existing `pg18` data:** `--force-recreate` replaces the **container**, not the bind-mounted cluster under **`postgres_data_pg18`**. Do **not** re-run Phase B empty-schema migrate or chunk copy from PG15 when PG18 already holds production `host_data` (see **PG18 data safety** above).
-
-5. Build on the **production CPU** (`-march=native`). Do not ship an aarch64 / non-prod-CPU bake to x86_64 production.
 
 ---
 
-## Phase A — Build and start PG18 beside PG15
+## Phase A — host prerequisites, build and start PG18 beside PG15
 
-Hub `db` (alias `db`) stays the live writer. PG18 uses profile `pg18-migrate` and alias `db18`. Host io_uring sysctl from Prerequisites step 4 must already be applied.
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate build db_pg18 && docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate up -d db_pg18
-```
-
-### db_pg18 — wait until accepting connections (paste output)
+Hub `db` (alias `db`) stays the live writer; PG18 is profile `pg18-migrate`, alias `db18`, bind `postgres_data_pg18` (Alpine postgres **uid/gid 70**: a bind replaces image ownership, so `root:root` gives `mkdir … /18/: Permission denied`). io_uring: `kernel.io_uring_disabled=1` + `kernel.io_uring_group=70` (with group unset, uid 70 gets EPERM even under `seccomp=unconfined`); **forbidden** `disabled=2`. Bake on the production CPU (`-march=native`).
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec db_pg18 sh -lc 'pg_isready -U hpcperfstats -d postgres -h 127.0.0.1'
+mkdir -p /data/hpcperfstats_db/pg18 && chown -R 70:70 /data/hpcperfstats_db/pg18 && ls -ld /data/hpcperfstats_db/pg18
+printf '%s\n' 'kernel.io_uring_disabled = 1' 'kernel.io_uring_group = 70' > /etc/sysctl.d/99-hpcperfstats-io-uring.conf && sysctl -p /etc/sysctl.d/99-hpcperfstats-io-uring.conf
+podman build -f services-conf/db.Dockerfile -t hpcperfstats-db services-conf && podman-compose -p hpcperfstats --profile pg18-migrate up -d --no-build db_pg18
+for i in $(seq 1 60); do podman-compose -p hpcperfstats --profile pg18-migrate exec -T db_pg18 pg_isready -h 127.0.0.1 -U hpcperfstats -d postgres -q && break; sleep 5; done
+podman-compose -p hpcperfstats --profile pg18-migrate exec -T db_pg18 sh -c 'psql -h localhost -U hpcperfstats -d postgres -XtAc "SELECT 1 FROM pg_database WHERE datname = '\''hpcperfstats'\''" | grep -q 1 || psql -h localhost -U hpcperfstats -d postgres -X -v ON_ERROR_STOP=1 -c "CREATE DATABASE hpcperfstats OWNER hpcperfstats"; psql -h localhost -U hpcperfstats -d hpcperfstats -X -c "SELECT version()" -c "SHOW io_method" -c "SHOW shared_buffers" -c "SHOW hba_file" -c "SELECT default_version FROM pg_available_extensions WHERE name = '\''timescaledb'\''"'
 ```
 
-### db_pg18 — create database `hpcperfstats` if missing (paste output)
-
-Init may have been skipped during an early crash loop even when compose sets `POSTGRES_DB=hpcperfstats`. Always run this against the maintenance DB **`postgres`** before Phase B migrate. Idempotent if the DB already exists.
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec db_pg18 sh -lc 'psql -h localhost -U hpcperfstats -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '\''hpcperfstats'\''" | grep -q 1 || psql -h localhost -U hpcperfstats -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE hpcperfstats OWNER hpcperfstats;" ; psql -h localhost -U hpcperfstats -d postgres -c "SELECT datname FROM pg_database WHERE datname = '\''hpcperfstats'\'';"'
-```
-
-**Fail closed:** printed `datname` is `hpcperfstats`.
-
-### db_pg18 — paste health + io_uring + Timescale
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec db_pg18 sh -lc 'pg_isready -U hpcperfstats -d hpcperfstats -h 127.0.0.1 && psql -h localhost -U hpcperfstats -d hpcperfstats -c "SELECT version();" -c "SHOW shared_preload_libraries;" -c "SHOW io_method;" -c "SELECT default_version FROM pg_available_extensions WHERE name = '\''timescaledb'\'';"'
-```
-
-**Fail closed:** `SHOW io_method` must be `io_uring`. If not: re-run Prerequisites host sysctl (`disabled=1` + `group=70`, or `disabled=0`); confirm `db_pg18` still has `security_opt: [seccomp=unconfined, label=disable]` and `cap_add: [SYS_ADMIN]`; then `up -d --force-recreate db_pg18`.
+**Fail closed:** `ls -ld` shows owner `70 70`; `version()` is PostgreSQL 18; `io_method` is `io_uring` (otherwise re-check sysctl, then `podman-compose -p hpcperfstats --profile pg18-migrate up -d --force-recreate db_pg18`); `hba_file` is `/etc/postgresql/pg_hba.conf`. The database create step is idempotent; init can be skipped after an early crash loop.
 
 ---
 
-## Phase B — Empty schema on PG18 (Django migrate)
+## Phase B — empty schema on PG18 (Django migrate)
 
-`db_pg18` must already be healthy (Phase A). Do **not** point the long-running **`web`** service at `db18` yet — Hub PG15 stays on alias **`db`**.
-
-`machine.0001_initial` runs `CREATE EXTENSION IF NOT EXISTS timescaledb` before `create_hypertable` (required on fresh PG18: preload alone does not install the extension). Use a checkout / `web` image that includes that `0001` fix. One-shot migrate with Django `HOST=db18`, then disable compression for backfill.
-
-### web — migrate empty schema onto db18 (paste output)
-
-Requires profile **`pg18-migrate`** so hostname **`db18`** resolves. `--no-deps` assumes **`db_pg18`** is already up.
+The deployed `web` image must carry the current migrations (`machine.0001_initial` creates the timescaledb extension before `create_hypertable`). The long-running `web` keeps using PG15. This one-shot points Django at `db18`, migrates, verifies an empty `host_data` hypertable, and removes the compression policy so the copy script owns compression until cutover.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate run --rm --no-deps --entrypoint /usr/local/bin/python3 web -c '
+podman-compose -p hpcperfstats --profile pg18-migrate run --rm --no-deps --entrypoint /usr/local/bin/python3 web -c '
 import os
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "hpcperfstats.site.hpcperfstats_site.settings")
 import django
@@ -162,212 +78,129 @@ from django.conf import settings
 from django.db import connection, connections
 connections.close_all()
 settings.DATABASES["default"]["HOST"] = "db18"
-connection.ensure_connection()
-print("connected_host", settings.DATABASES["default"]["HOST"])
+from django.core.management import call_command
+call_command("migrate", verbosity=1)
 with connection.cursor() as cur:
     cur.execute("SELECT version()")
     print("server", cur.fetchone()[0])
-from django.core.management import call_command
-call_command("migrate", verbosity=1)
+    cur.execute("SELECT count(*) FROM host_data")
+    print("host_data_n", cur.fetchone()[0])
+    cur.execute("SELECT compression_enabled FROM timescaledb_information.hypertables WHERE hypertable_name = %s", ["host_data"])
+    print("compression_enabled", cur.fetchone()[0])
+    cur.execute("SELECT remove_compression_policy(%s, if_exists => true)", ["host_data"])
+    cur.execute("SELECT count(*) FROM timescaledb_information.jobs WHERE hypertable_name = %s AND proc_name LIKE %s", ["host_data", "%compression%"])
+    print("compression_jobs", cur.fetchone()[0])
 print("migrate_ok")
 '
 ```
 
-**Fail closed:** printed `connected_host` is `db18`; migrate finishes without error. If you see `create_hypertable … does not exist`, the `web` image still has an old `0001` without `CREATE EXTENSION` — rebuild/sync the image, or once: `psql … -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"` then re-run migrate.
-
-### db_pg18 — verify empty host_data hypertable + disable compression (paste output)
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec db_pg18 sh -lc 'psql -h localhost -U hpcperfstats -d hpcperfstats -v ON_ERROR_STOP=1 -c "SELECT version();" -c "SELECT extversion FROM pg_extension WHERE extname = '\''timescaledb'\'';" -c "SELECT hypertable_name, compression_enabled FROM timescaledb_information.hypertables WHERE hypertable_name = '\''host_data'\'';" -c "SELECT count(*) AS host_data_n FROM host_data;" -c "SELECT remove_compression_policy('\''host_data'\'', if_exists => true);" -c "SELECT job_id, proc_name, scheduled FROM timescaledb_information.jobs WHERE hypertable_name = '\''host_data'\'' AND proc_name LIKE '\''%policy_compression%'\'';"'
-```
-
-**Fail closed:** `host_data` hypertable exists; `host_data_n` is **0**; compression policy job row is empty / removed. Re-enable compression only after Phase D verification (site change log should record the `add_compression_policy` you restore — typically `compress_after => INTERVAL '8d'` per migration `0023` / `0032`).
+**Fail closed:** `server` is PostgreSQL 18, `host_data_n 0`, `compression_enabled True`, `compression_jobs 0`, `migrate_ok`. If you see `create_hypertable … does not exist`, the `web` image predates the `0001` extension fix; redeploy, then rerun.
 
 ---
 
-## Phase C — Live chunk copy (writers stay on PG15)
+## Phase C — bulk `host_data` copy (live, rerunnable)
 
-Watermark default: chunks with `range_end < now() - 3 days`. Ingest can still write into older ranges — this is **best-effort**, not a freeze. Requires profile **`pg18-migrate`** so `db18` resolves.
+The copy runs detached in a one-shot `web` container using the checkout's script. State persists in `/hpcperfstats/pg18_migrate/state.json` (the `hpcperfstatsdata` bind), so reruns resume. `--watermark-days -7` selects every chunk including today's, and slice resync makes repeat passes over hot chunks cheap. `--workers 4` is the starting point; lower it if PG15 ingest latency suffers.
 
-Script path inside the image is **`/home/hpcperfstats/scripts/…`** (Dockerfile `COPY . .` into `WORKDIR /home/hpcperfstats`). There is **no** nested `…/HPCPerfStats/scripts/` in the container. If `ls` fails after a rebuild, the file was missing from the **host** build context — confirm it exists next to `docker-compose.yaml` on the build host, then rebuild `web`.
-
-The script uses **psycopg** (bundled in `web`); it does **not** need a `psql` binary on PATH. Set `-e PGPASSWORD=…` as in the paste blocks below.
-
-### web — list chunks selected by default 3-day watermark (paste output)
+### web — start the copy (paste output)
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate run --rm --no-deps -e PGPASSWORD=hpcperfstats web python3 /home/hpcperfstats/scripts/pg18_host_data_chunk_copy.py --source-host db --target-host db18 --list-only -v
+podman rm -f hpcperfstats_pg18_copy 2>/dev/null; podman-compose -p hpcperfstats --profile pg18-migrate run -d --no-deps --name hpcperfstats_pg18_copy -e PGPASSWORD=hpcperfstats -v "$PWD/scripts:/migrate:ro" --entrypoint /usr/local/bin/python3 web -u /migrate/pg18_host_data_chunk_copy.py --source-host db --target-host db18 --watermark-days -7 --changed-only --state-file /hpcperfstats/pg18_migrate/state.json --workers 4
 ```
 
-### web — copy those chunks (omit `--list-only`; paste progress / exit code)
+### host — progress, then result when it exits (paste output)
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate run --rm --no-deps -e PGPASSWORD=hpcperfstats web python3 /home/hpcperfstats/scripts/pg18_host_data_chunk_copy.py --source-host db --target-host db18 -v
+podman logs hpcperfstats_pg18_copy 2>&1 | grep -c -E 'INFO (copy|skip) chunk'; podman logs hpcperfstats_pg18_copy 2>&1 | grep -E 'source_chunks=|ERROR|INFO done' | tail -5; podman inspect hpcperfstats_pg18_copy --format 'status={{.State.Status}} exit={{.State.ExitCode}}'
 ```
 
-Optional audit/resume files (path must be writable inside `web`):
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate run --rm --no-deps -e PGPASSWORD=hpcperfstats web python3 /home/hpcperfstats/scripts/pg18_host_data_chunk_copy.py --source-host db --target-host db18 --dump-dir /tmp/pg18_chunk_dumps -v
-```
-
-Per chunk the tool compares ``count(*)`` on the source chunk to ``count(*)`` on target ``host_data`` for that time range: **matching counts are skipped** (resume-friendly). Mismatches (or ``--force``) **delete the target range then COPY**. Skip-check counts disable ``statement_timeout``, set ``max_parallel_workers_per_gather=0``, and **retry** transient PG18 ``Operation canceled`` / ``QueryCanceled``; if counts still fail they return unsynced (``-1``) and the chunk is **re-copied** instead of aborting the job. Default **`--workers 2`** runs two chunk copies at once (`--workers 1` for serial; prefer ≤2 under heavy I/O cancel noise). It never COPY's the empty parent `host_data`.
+**Done when** `status=exited exit=0` and the `INFO done` line shows `failed=0`. On `exit=1`, read the `ERROR chunk failed` lines and rerun the start block; failed chunks are retried and verified chunks are skipped. Rerun the start block a few times as convenient: each pass only touches chunks written since the last.
 
 ---
 
-## Phase D — Freeze and final dump (fail-closed order)
+## Phase D — freeze (downtime) and relational copy
 
-Writers must be stopped before the final host_data pass and relational dump. Do **not** cut alias `db` yet (that is Phase E). Run from the checkout that contains `docker-compose.yaml`.
+Schedule D1–E back to back.
 
-### D1 — stop pipeline (paste exit / status)
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml stop pipeline && docker compose -p hpcperfstats -f docker-compose.yaml ps pipeline
-```
-
-### D2 — stop web + proxy (paste exit / status)
+### D1 + D2 — catch-up pass while live, then stop the pipeline (paste output)
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml stop web proxy && docker compose -p hpcperfstats -f docker-compose.yaml ps web proxy
+podman rm -f hpcperfstats_pg18_copy 2>/dev/null; podman-compose -p hpcperfstats --profile pg18-migrate run --rm --no-deps -e PGPASSWORD=hpcperfstats -v "$PWD/scripts:/migrate:ro" --entrypoint /usr/local/bin/python3 web -u /migrate/pg18_host_data_chunk_copy.py --source-host db --target-host db18 --watermark-days -7 --changed-only --state-file /hpcperfstats/pg18_migrate/state.json --workers 4 2>&1 | grep -E 'ERROR|INFO done'
+podman-compose -p hpcperfstats stop pipeline; podman-compose -p hpcperfstats ps pipeline
+podman-compose -p hpcperfstats exec -T db psql -h localhost -U hpcperfstats -d hpcperfstats -X -c "SELECT pid, application_name, client_addr, state, left(query, 80) AS query FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND (query ILIKE '%host_data%' OR state <> 'idle') ORDER BY pid"
 ```
 
-### D3 — db — confirm no app backends (paste `pg_stat_activity`)
+**Fail closed:** the catch-up shows `failed=0`; pipeline is stopped; no `INSERT`/`COPY` into `host_data` remains in `pg_stat_activity` (web read queries are fine).
 
-**Fail closed:** only idle/`autovacuum`/your own `psql` rows — no `listend`, `sync_timedb`, gunicorn, or long `INSERT`/`COPY` from the app.
+### D3 — freeze pass with verification (paste output)
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost -U hpcperfstats -d hpcperfstats -c "SELECT pid, usename, application_name, client_addr, state, left(query, 120) AS query FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() ORDER BY pid;"
+podman-compose -p hpcperfstats --profile pg18-migrate run --rm --no-deps -e PGPASSWORD=hpcperfstats -v "$PWD/scripts:/migrate:ro" --entrypoint /usr/local/bin/python3 web -u /migrate/pg18_host_data_chunk_copy.py --source-host db --target-host db18 --watermark-days -7 --changed-only --verify --state-file /hpcperfstats/pg18_migrate/state.json --workers 4 2>&1 | grep -E 'slice resync|ERROR|INFO done'; echo "freeze_exit=${PIPESTATUS[0]}"
 ```
 
-### D4 — web — list **all** chunks for freeze (`--watermark-days -7`) (paste output)
+**Fail closed:** `freeze_exit=0` and `failed=0`. Record `verified_rows=` for the change log. On failure, rerun D3 (only the failed chunks are examined).
 
-Negative days push the watermark into the future so open/hot 1-day chunks are included (`range_end < now() + 7 days`).
+### D4 — stop web + proxy, copy relational tables (paste output)
+
+`scripts/pg18_relational_copy.sh` runs inside `db_pg18` and fails closed. It checks that both sides have the same table set, then:
+
+1. parallel `pg_dump -Fd` from `db`;
+2. `TRUNCATE … RESTART IDENTITY CASCADE` on PG18;
+3. parallel `pg_restore --data-only --disable-triggers`;
+4. exact per-table row counts (must match), then `ANALYZE`.
+
+`host_data` and `django_migrations` are excluded.
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate run --rm --no-deps -e PGPASSWORD=hpcperfstats web python3 /home/hpcperfstats/scripts/pg18_host_data_chunk_copy.py --source-host db --target-host db18 --watermark-days -7 --list-only -v
+podman-compose -p hpcperfstats stop web proxy; podman-compose -p hpcperfstats ps web proxy
+podman-compose -p hpcperfstats --profile pg18-migrate exec -T db_pg18 sh -s < scripts/pg18_relational_copy.sh; echo "relational_exit=$?"
 ```
 
-### D5 — web — freeze re-copy every selected chunk (paste progress / exit code)
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate run --rm --no-deps -e PGPASSWORD=hpcperfstats web python3 /home/hpcperfstats/scripts/pg18_host_data_chunk_copy.py --source-host db --target-host db18 --watermark-days -7 -v
-```
-
-### D6 — db — source totals + last-14-day daily counts (paste output)
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost -U hpcperfstats -d hpcperfstats -v ON_ERROR_STOP=1 -c "SELECT count(*) AS host_data_n, max(time) AS host_data_max FROM host_data;" -c "SELECT count(*) AS job_data_n FROM job_data;" -c "SELECT count(*) AS metrics_data_n FROM metrics_data;" -c "SELECT count(*) AS proc_data_n FROM proc_data;" -c "SELECT date_trunc('day', time) AS day, count(*) AS n FROM host_data WHERE time >= now() - interval '14 days' GROUP BY 1 ORDER BY 1;"
-```
-
-### D7 — db_pg18 — target totals + last-14-day daily counts (paste output)
-
-**Fail closed:** `host_data_n`, `host_data_max`, and each of the 14 daily `n` values must match D6. Mismatch → re-run **D5**, then D6/D7 again. Do **not** proceed to relational dump until host_data matches.
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec db_pg18 psql -h localhost -U hpcperfstats -d hpcperfstats -v ON_ERROR_STOP=1 -c "SELECT count(*) AS host_data_n, max(time) AS host_data_max FROM host_data;" -c "SELECT count(*) AS job_data_n FROM job_data;" -c "SELECT count(*) AS metrics_data_n FROM metrics_data;" -c "SELECT count(*) AS proc_data_n FROM proc_data;" -c "SELECT date_trunc('day', time) AS day, count(*) AS n FROM host_data WHERE time >= now() - interval '14 days' GROUP BY 1 ORDER BY 1;"
-```
-
-### D8 — db_pg18 — truncate relational tables before restore (keep `host_data` + `django_migrations`)
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec db_pg18 psql -h localhost -U hpcperfstats -d hpcperfstats -v ON_ERROR_STOP=1 -c "TRUNCATE TABLE job_data, metrics_data, proc_data, job_plot_artifact, job_detail_artifact, public_metrics_artifact, api_keys, test_login_user, xalt_run, xalt_object, xalt_link, join_run_object, join_link_object, auth_user, auth_group, auth_permission, auth_user_groups, auth_user_user_permissions, auth_group_permissions, django_content_type, django_session, django_site RESTART IDENTITY CASCADE;"
-```
-
-### D9 — host — `pg_dump` public data from PG15 → restore on PG18 (paste exit; **forbidden:** `-t host_data` alone)
-
-Pipes Hub `pg_dump` into `db_pg18` `psql`. Excludes **`host_data`** (already copied) and **`django_migrations`** (already applied in Phase B).
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec -T db pg_dump -h localhost -U hpcperfstats -d hpcperfstats --no-owner --no-acl --data-only --schema=public --exclude-table-data=host_data --exclude-table-data=django_migrations | docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec -T db_pg18 psql -h localhost -U hpcperfstats -d hpcperfstats -v ON_ERROR_STOP=1
-```
-
-### D10 — db_pg18 — `ANALYZE` + re-enable compression policy (`compress_after` 8d)
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec db_pg18 psql -h localhost -U hpcperfstats -d hpcperfstats -v ON_ERROR_STOP=1 -c "ANALYZE;" -c "SELECT add_compression_policy('host_data', compress_after => INTERVAL '8d', if_not_exists => true);" -c "SELECT job_id, proc_name, schedule_interval, config FROM timescaledb_information.jobs WHERE hypertable_name = 'host_data' AND proc_name LIKE '%policy_compression%';"
-```
-
-### D11 — db — final verification counts (paste output)
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost -U hpcperfstats -d hpcperfstats -c "SELECT count(*) AS host_data_n, max(time) AS host_data_max FROM host_data;" -c "SELECT count(*) AS job_data_n FROM job_data;" -c "SELECT count(*) AS metrics_data_n FROM metrics_data;" -c "SELECT count(*) AS proc_data_n FROM proc_data;" -c "SELECT count(*) AS job_plot_artifact_n FROM job_plot_artifact;" -c "SELECT count(*) AS api_keys_n FROM api_keys;"
-```
-
-### D12 — db_pg18 — final verification counts + Timescale/io_uring (paste output)
-
-**Fail closed:** row counts in D11 and D12 match for every table listed; `io_method` is `io_uring`; `timescaledb` extension is present. Treat any `host_data` mismatch after freeze as **fail** — do not enter Phase E.
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml --profile pg18-migrate exec db_pg18 psql -h localhost -U hpcperfstats -d hpcperfstats -c "SELECT count(*) AS host_data_n, max(time) AS host_data_max FROM host_data;" -c "SELECT count(*) AS job_data_n FROM job_data;" -c "SELECT count(*) AS metrics_data_n FROM metrics_data;" -c "SELECT count(*) AS proc_data_n FROM proc_data;" -c "SELECT count(*) AS job_plot_artifact_n FROM job_plot_artifact;" -c "SELECT count(*) AS api_keys_n FROM api_keys;" -c "SELECT extversion FROM pg_extension WHERE extname = 'timescaledb';" -c "SHOW shared_preload_libraries;" -c "SHOW io_method;"
-```
+**Fail closed:** the output ends with `RELATIONAL_COPY_OK` and `relational_exit=0`. On `RELATIONAL_COPY_FAILED`, fix the cause and rerun D4 (it truncates and restores again).
 
 ---
 
-## Phase E — Cutover and rollback
+## Phase E — cutover (site down until E1 completes)
 
-Leave the Hub PG15 **volume intact** for the rollback window. Do not delete `/data/hpcperfstats_db/pg15` until soak is complete.
+`docker-compose.pg18-primary.yaml` (tracked) parks PG15 `db` under profile `pg15-retired`, starts `db_pg18` with the normal stack, gives it hostname `db`, and mounts the shared `/run/postgresql` socket that `web` and `pipeline` use. It is activated by adding it to the **site** `docker-compose.yaml` `include:` list. The site file is always loaded, so the cutover also holds for any `-f docker-compose.yaml` command. Do **not** use a `docker-compose.override.yaml` for this: `-f` skips it and would bring PG15 back as `db`.
 
-### E1 — edit `docker-compose.yaml` on the host (not a compose command)
-
-**Recommended (one site, others still dual-run):** merge **`docs/snippets/docker-compose-pg18-primary-site.yaml.example`** into site `docker-compose.yaml` (keeps tracked **`docker-compose.defaults.yaml`** unchanged).
-
-**Manual equivalent:**
-
-1. Service **`db`** (Hub PG15): add profile **`pg15-retired`** (or alias `db` → `db15`) so the name **`db`** is free on the network.
-2. Service **`db_pg18`**: set aliases to include **`db`** (keep `db18` if you want); **remove** `profiles: [pg18-migrate]` so PG18 starts with the normal stack (`profiles: !reset []` where Compose supports it).
-3. Save the file.
-
-### E2 — stop Hub PG15 (volume stays; paste status)
+### E1 — switch, start, verify (paste output)
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml stop db && docker compose -p hpcperfstats -f docker-compose.yaml ps db
-```
-
-### E3 — start PG18 as hostname `db` (paste status)
-
-After E1, the service may still be named `db_pg18` but must own alias **`db`**:
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml up -d db_pg18 && docker compose -p hpcperfstats -f docker-compose.yaml ps db_pg18
-```
-
-### E4 — start app stack against alias `db` (paste status)
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml up -d valkey rabbitmq web pipeline proxy && docker compose -p hpcperfstats -f docker-compose.yaml ps
-```
-
-### E5 — web — confirm Django talks to PG18 (paste output)
-
-```bash
-docker compose -p hpcperfstats -f docker-compose.yaml exec web /usr/local/bin/python3 -c '
-import os
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "hpcperfstats.site.hpcperfstats_site.settings")
-import django
-django.setup()
+podman-compose -p hpcperfstats stop db
+grep -qx '  - docker-compose.pg18-primary.yaml' docker-compose.yaml || sed -i '/^  - docker-compose.defaults.yaml$/a\  - docker-compose.pg18-primary.yaml' docker-compose.yaml
+grep -n -A3 '^include:' docker-compose.yaml; podman-compose -p hpcperfstats config --services | tr '\n' ' '; echo
+podman-compose -p hpcperfstats up -d --force-recreate db_pg18
+for i in $(seq 1 60); do podman-compose -p hpcperfstats exec -T db_pg18 pg_isready -h 127.0.0.1 -U hpcperfstats -d hpcperfstats -q && break; sleep 5; done
+podman-compose -p hpcperfstats exec -T db_pg18 psql -h localhost -U hpcperfstats -d hpcperfstats -X -c "SELECT add_compression_policy('host_data', compress_after => INTERVAL '8d', if_not_exists => true)"
+podman-compose -p hpcperfstats up -d web pipeline proxy; podman-compose -p hpcperfstats ps
+podman-compose -p hpcperfstats exec -T web /usr/local/bin/python3 -c '
+from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
+ensure_django()
 from django.db import connection
 with connection.cursor() as cur:
-    cur.execute("SELECT version(), current_setting('\''io_method'\'', true)")
-    print(cur.fetchone())
-    cur.execute("SELECT count(*) FROM host_data")
-    print("host_data_n", cur.fetchone()[0])
+    cur.execute("SELECT version(), current_setting(%s), inet_server_addr()", ["io_method"])
+    print("django_db", cur.fetchone())
+    cur.execute("SELECT count(*) FROM job_data")
+    print("job_data_n", cur.fetchone()[0])
 '
 ```
 
-**Fail closed:** `version()` shows PostgreSQL **18**; `host_data_n` matches Phase D.
+**Fail closed:** the `include:` list shows `docker-compose.pg18-primary.yaml` right after `docker-compose.defaults.yaml`; `config --services` lists `db_pg18` and **not** `db`; `ps` shows `db_pg18`, `web`, `pipeline`, `proxy`, `valkey` and `rabbitmq` up. `django_db` shows PostgreSQL 18, `io_uring` and `None` (Unix socket); `job_data_n` matches the D4 `pg18:` count. If `db_pg18` logs `lock file "/run/postgresql/.s.PGSQL.5432.lock" already exists`, PG15 did not shut down cleanly: run `podman-compose -p hpcperfstats up -d --force-recreate db_pg18 web pipeline`.
 
-### E6 — rollback (only if cutover fails)
-
-1. Edit compose: put alias **`db`** back on Hub service **`db`**; remove **`db`** from `db_pg18` (restore `db18` + profile if desired).
-2. Then:
+### E2 — rollback (only if E1 fails; PG18 writes after cutover are lost)
 
 ```bash
-docker compose -p hpcperfstats -f docker-compose.yaml stop web pipeline proxy db_pg18
-docker compose -p hpcperfstats -f docker-compose.yaml up -d db
-docker compose -p hpcperfstats -f docker-compose.yaml up -d valkey rabbitmq web pipeline proxy
+podman-compose -p hpcperfstats stop web pipeline proxy db_pg18
+sed -i '/^  - docker-compose.pg18-primary.yaml$/d' docker-compose.yaml
+podman-compose -p hpcperfstats up -d db web pipeline proxy; podman-compose -p hpcperfstats ps
 ```
 
-After a successful soak, operators may archive/delete `/data/hpcperfstats_db/pg15` — **not automatic**.
+Name services on every `up` during migration and cutover. After any compose-file change, a bare `podman-compose up -d` recreates **every** project container (stale config hash), including `rabbitmq` (10-minute stop grace) and `valkey`; a service list limits that to the named services.
+
+### After soak
+
+Keep `/data/hpcperfstats_db/pg15` and the parked `db` container until the soak completes; deleting them is manual, never automatic. `./scripts/rebuild_full_site.sh` keeps working after cutover: it requires `db_pg18` instead of `db` once the overlay is included. The state file `/hpcperfstats/pg18_migrate/state.json` may be deleted after cutover.
 
 ---
 
@@ -375,22 +208,17 @@ After a successful soak, operators may archive/delete `/data/hpcperfstats_db/pg1
 
 | Item | Contract |
 |------|----------|
-| Base | `alpine:3.24.3` (not `latest`) |
-| Postgres | 18.x SHA-pinned in `services-conf/db.Dockerfile` |
-| Timescale | 2.30.x (not `APACHE_ONLY`; no external lz4/zstd DT_NEEDED on `timescaledb.so`) |
-| `/opt` | Bake order (slowest independent pin first): jemalloc, lz4, icu, liburing, **zlib-ng**, zstd. zstd after lz4+zlib-ng (link). rpath on **postgres** + zstd CLI (`HAVE_ZLIB=1` + `HAVE_LZ4=1`; no apk `zlib`) |
-| CFLAGS (PG + Timescale) | `-O3 -march=native -mprefer-vector-width=512 -mtune=native -flto=auto -g0` |
-| CFLAGS (`/opt` libs) | `-O3 -march=native -mtune=native -flto=auto -g0`; LZ4 also `-DLZ4_HEAPMODE=0` |
+| Base | `alpine:3.24.x` pinned in `services-conf/db.Dockerfile` (not `latest`) |
+| Postgres / Timescale | PostgreSQL 18.x and TimescaleDB 2.31.x SHA-pinned (`ARG PG_VERSION`, `ARG TIMESCALEDB_VERSION`); not `APACHE_ONLY` |
+| `/opt` | Source-built jemalloc, zlib-ng, ICU, liburing, lz4, zstd; rpath on `postgres` and the zstd CLI |
+| Toolchain | Clang 22 ThinLTO, `-march=native` (`services-conf/bake_clang_flags.sh`); bake on the production CPU |
 | Volume | `/var/lib/postgresql` (PG18 layout) |
-| Seccomp | `seccomp=unconfined` + `label=disable` + `cap_add: SYS_ADMIN` on `db_pg18` for `io_method=io_uring` |
-| Host io_uring | Preferred: `kernel.io_uring_disabled=1` + `kernel.io_uring_group=70`; forbidden: `disabled=2` |
+| io_uring | `seccomp=unconfined` + `label=disable` + `cap_add: SYS_ADMIN` on `db_pg18`; host `kernel.io_uring_disabled=1` + `kernel.io_uring_group=70`; forbidden `disabled=2` |
+| Runtime GUCs | `db_pg18` matches `db` (`shared_buffers=64GB`, WAL/bgwriter, committed `hba_file`) plus `io_method=io_uring` |
 
----
+## Related
 
-## Related docs
-
-- `docs/snippets/docker-compose-pg18-primary-site.yaml.example` (single-host PG18-primary merge; does not replace `docker-compose.defaults.yaml`)
-- `docs/upgrade.md` (PG18 bind mkdir, io_uring sysctl, dual-run note); fresh PG15 bind mkdir stays in `README.md` Installation
+- `docker-compose.pg18-primary.yaml` (cutover overlay; include-listed per site)
+- `scripts/pg18_host_data_chunk_copy.py`, `scripts/pg18_relational_copy.sh`
+- `docs/upgrade.md` (dual-run note, PG18 bind and io_uring prerequisites)
 - `docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md` (stay on 2.28.x while on PG15)
-- `docs/TESTING.md` (test overlay still uses Hub `db` until cutover)
-- `scripts/pg18_host_data_chunk_copy.py`
