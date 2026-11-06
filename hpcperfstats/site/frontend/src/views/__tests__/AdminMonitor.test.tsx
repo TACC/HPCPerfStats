@@ -71,7 +71,9 @@ function mockSectionQuery(
                     ? { xalt_stats: fixture.data }
                     : section === "telemetry_health"
                       ? { telemetry_health: fixture.data }
-                      : {};
+                      : section === "ingest_coverage"
+                        ? { ingest_coverage: fixture.data }
+                        : {};
       return {
         data: pickResponse(raw as never),
         error: fixture.error ?? null,
@@ -551,5 +553,165 @@ describe("AdminMonitor", () => {
       expect(screen.getByText("host_cpu")).toBeInTheDocument();
     });
     expect(await axeSeriousViolations(view.container)).toEqual([]);
+  });
+
+  describe("ingest vs Job Detail coverage", () => {
+    const BASE = {
+      window_minutes: 60,
+      consumed_fresh_days: 7,
+      group_by: "signature",
+      group_by_modes: ["signature", "rack", "schema", "slug"],
+      sweeper_state: "ok",
+      sweep: { finished_at: 1800000000, hosts_done: 2, hosts_total: 2 },
+      last_sweep_at: 1800000000,
+      hosts_total: 2,
+      hosts_grouped: 2,
+      incomplete: false,
+      errors: [],
+      status_counts: { current: 2, ingest_behind: 0 },
+      consumer_registry_empty: false,
+      groups_total: 1,
+      markdown: "## Ingest vs Job Detail coverage\n",
+      groups: [
+        {
+          key: "abc123",
+          hosts: 2,
+          is_baseline: true,
+          baseline_share: 1,
+          gap_count: 1,
+          slugs: { "slug-a": 2 },
+          host_prefixes: { c101: 2 },
+          schema_variants: { v1: 2 },
+          class_counts: { unused: 1, derived: 1 },
+          pairs: [
+            { type: "host_opa", event: "rx_bytes", class: "unused", host_fraction: 1 },
+            {
+              type: "host_cpu",
+              event: "user",
+              class: "derived",
+              host_fraction: 1,
+              stages: ["metrics"],
+              last_consumed_at: 1800000000,
+            },
+          ],
+          pairs_total: 2,
+          host_rows: [
+            {
+              fqdn: "c101-001.example.com",
+              status: "current",
+              ingest_backlog_s: 0,
+              open_segment_age_s: 14400,
+              scanned_at: 1799999000,
+              stale: false,
+            },
+          ],
+        },
+      ],
+    };
+
+    function openCoverage() {
+      fireEvent.click(
+        screen.getByRole("button", { name: /Ingest vs Job Detail coverage/i }),
+      );
+    }
+
+    it("fetches only when opened and passes the group-by mode", async () => {
+      mockSectionQuery({ ingest_coverage: { data: BASE } });
+      renderWithProviders(<AdminMonitor />);
+      const coverageCalls = () =>
+        vi
+          .mocked(useAdminMonitorSectionQuery)
+          .mock.calls.filter(([opts]) => opts.section === "ingest_coverage");
+      expect(coverageCalls().every(([opts]) => opts.enabled === false)).toBe(true);
+      openCoverage();
+      await waitFor(() => {
+        expect(screen.getByTestId("ingest-coverage-panel")).toBeInTheDocument();
+      });
+      expect(coverageCalls().at(-1)?.[0].groupBy).toBe("signature");
+      fireEvent.click(screen.getByRole("button", { name: "Rack" }));
+      await waitFor(() => {
+        expect(coverageCalls().at(-1)?.[0].groupBy).toBe("rack");
+      });
+      expect(screen.getByText(/Last sweep finished/)).toBeInTheDocument();
+    });
+
+    it("shows gap pairs by default and toggles class filters", async () => {
+      mockSectionQuery({ ingest_coverage: { data: BASE } });
+      renderWithProviders(<AdminMonitor />);
+      openCoverage();
+      fireEvent.click(await screen.findByRole("button", { name: /abc123/ }));
+      expect(screen.getByText("rx_bytes")).toBeInTheDocument();
+      expect(screen.queryByText("user")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Used by metrics / plots" }));
+      expect(screen.getByText("user")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Unused" }));
+      expect(screen.queryByText("rx_bytes")).not.toBeInTheDocument();
+      expect(screen.getByText("c101-001.example.com")).toBeInTheDocument();
+      expect(screen.getByText("4h 0m")).toBeInTheDocument();
+    });
+
+    it("copies the markdown summary", async () => {
+      mockSectionQuery({ ingest_coverage: { data: BASE } });
+      renderWithProviders(<AdminMonitor />);
+      openCoverage();
+      fireEvent.click(await screen.findByRole("button", { name: "Copy as markdown" }));
+      await waitFor(() => {
+        expect(copyToClipboard).toHaveBeenCalledWith(BASE.markdown);
+      });
+    });
+
+    it.each([
+      [
+        "incomplete scan",
+        { incomplete: true, errors: ["Valkey unavailable."] },
+        /Scan incomplete; results are not a healthy signal/,
+      ],
+      [
+        "empty registry",
+        { consumer_registry_empty: true, groups: [] },
+        /update_metrics has not recorded reads yet/,
+      ],
+      [
+        "sweep disabled",
+        { sweeper_state: "sweep_disabled", groups: [] },
+        /Coverage sweep disabled on this site/,
+      ],
+      ["sweeping", { sweeper_state: "sweeping" }, /Sweep in progress: 2 \/ 2 hosts/],
+    ])("shows the %s banner", async (_name, patch, text) => {
+      mockSectionQuery({ ingest_coverage: { data: { ...BASE, ...patch } } });
+      renderWithProviders(<AdminMonitor />);
+      openCoverage();
+      expect(await screen.findByText(text)).toBeInTheDocument();
+    });
+
+    it("greys stale host rows when the sweeper is not running", async () => {
+      const staleGroup = {
+        ...BASE.groups[0],
+        host_rows: [{ ...BASE.groups[0].host_rows[0], stale: true }],
+      };
+      mockSectionQuery({
+        ingest_coverage: {
+          data: { ...BASE, sweeper_state: "sweeper_stale", groups: [staleGroup] },
+        },
+      });
+      renderWithProviders(<AdminMonitor />);
+      openCoverage();
+      expect(
+        await screen.findByText(/Coverage sweeper not running/),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /abc123/ }));
+      const row = screen.getByText("c101-001.example.com").closest("tr");
+      expect(row).toHaveAttribute("data-stale", "true");
+      expect(row).toHaveTextContent("(stale)");
+      expect(row).toHaveTextContent("2027-01-15 07:43 UTC");
+    });
+
+    it("has no serious axe violations with coverage expanded", async () => {
+      mockSectionQuery({ ingest_coverage: { data: BASE } });
+      const view = renderWithProviders(<AdminMonitor />);
+      openCoverage();
+      fireEvent.click(await screen.findByRole("button", { name: /abc123/ }));
+      expect(await axeSeriousViolations(view.container)).toEqual([]);
+    });
   });
 });

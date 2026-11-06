@@ -5,7 +5,10 @@ import { useAdminMonitorSectionQuery } from "@/hooks/use-admin-monitor-section";
 import { ChevronRight } from "lucide-react";
 import type {
   AdminMonitorHostRow,
+  AdminMonitorIngestCoverage,
+  AdminMonitorIngestCoverageGroup,
   AdminMonitorSectionResponse,
+  IngestCoveragePairClass,
   AdminMonitorTelemetryHealth,
   AdminMonitorXaltStats,
   FreshnessBucket,
@@ -184,6 +187,427 @@ function compareAdminMonitorHostRows(
   return 0;
 }
 
+const INGEST_COVERAGE_GROUP_BY_LABELS: Record<string, string> = {
+  signature: "Gap set",
+  rack: "Rack",
+  schema: "Schema variant",
+  slug: "Capability slug",
+};
+
+const INGEST_COVERAGE_CLASS_LABELS: Record<IngestCoveragePairClass, string> = {
+  unused: "Unused",
+  type_detail_dropped: "Dropped from type panel",
+  type_detail_only: "Type panel only",
+  derived: "Used by metrics / plots",
+};
+
+const INGEST_COVERAGE_CLASS_ORDER: IngestCoveragePairClass[] = [
+  "unused",
+  "type_detail_dropped",
+  "type_detail_only",
+  "derived",
+];
+
+const INGEST_COVERAGE_DEFAULT_CLASSES: IngestCoveragePairClass[] = [
+  "unused",
+  "type_detail_dropped",
+];
+
+const INGEST_COVERAGE_STATUS_LABELS: Record<string, string> = {
+  current: "Current",
+  ingest_behind: "Ingest behind",
+  unknown: "Unknown",
+  incomplete: "Scan incomplete",
+  no_recent_data: "No data in 7 days",
+  not_scanned: "Not scanned",
+};
+
+const OPEN_SEGMENT_TOOLTIP =
+  "Data still in the open segment is not ingestible until the monitor " +
+  "rotates; this is normal.";
+
+function formatEpochUtc(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return `${new Date(value * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+function formatSecondsCompact(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const total = Math.max(0, Math.round(value));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m`;
+  return `${total}s`;
+}
+
+function formatMix(mix: Record<string, number> | undefined): string {
+  const entries = Object.entries(mix ?? {}).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) return "—";
+  const shown = entries.slice(0, 3).map(([k, v]) => `${k} (${v})`);
+  return entries.length > 3 ? `${shown.join(", ")}, +${entries.length - 3}` : shown.join(", ");
+}
+
+function formatFraction(value: number | undefined): string {
+  return `${Math.round((value ?? 0) * 100)}%`;
+}
+
+function IngestCoveragePanel({
+  coverage,
+  busy,
+  groupBy,
+  onGroupByChange,
+}: {
+  coverage: AdminMonitorIngestCoverage;
+  busy: boolean;
+  groupBy: string;
+  onGroupByChange: (mode: string) => void;
+}) {
+  const [classFilter, setClassFilter] = useState<IngestCoveragePairClass[]>(
+    INGEST_COVERAGE_DEFAULT_CLASSES,
+  );
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const state = coverage.sweeper_state ?? "sweeper_stale";
+  const stale = state === "sweeper_stale";
+  const groups: AdminMonitorIngestCoverageGroup[] = coverage.groups ?? [];
+  const modes = coverage.group_by_modes ?? Object.keys(INGEST_COVERAGE_GROUP_BY_LABELS);
+
+  const toggleClass = (cls: IngestCoveragePairClass) =>
+    setClassFilter((cur) =>
+      cur.includes(cls) ? cur.filter((c) => c !== cls) : [...cur, cls],
+    );
+
+  const handleCopyMarkdown = async () => {
+    if (!coverage.markdown) return;
+    const ok = await copyToClipboard(coverage.markdown);
+    if (!ok) console.error("Failed to copy ingest coverage markdown");
+  };
+
+  return (
+    <div
+      className={cn("space-y-3", busy && "opacity-70")}
+      aria-busy={busy || undefined}
+      data-testid="ingest-coverage-panel"
+    >
+      <div className="flex flex-wrap items-start gap-2">
+        <p className="text-sm text-muted-foreground flex-1 min-w-[16rem]">
+          Compares the <code>(type, event)</code> pairs each host writes to{" "}
+          <code>host_data</code> (last {coverage.window_minutes ?? 60} minutes
+          before that host&apos;s newest sample, scanned in the background by{" "}
+          <code>ingest_coverage_sweeper</code>) with the pairs update_metrics
+          read for Job Detail in the last {coverage.consumed_fresh_days ?? 7}{" "}
+          days.
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="ms-auto"
+          disabled={!coverage.markdown}
+          onClick={handleCopyMarkdown}
+        >
+          Copy as markdown
+        </Button>
+      </div>
+
+      {state === "sweep_disabled" ? (
+        <BannerErrorMessage
+          variant="inline"
+          message="Coverage sweep disabled on this site (ingest_coverage_sweep_enabled = no). No gap data is shown."
+        />
+      ) : null}
+      {stale ? (
+        <BannerErrorMessage
+          variant="inline"
+          message={`Coverage sweeper not running (last sweep finished ${formatEpochUtc(
+            coverage.sweep?.finished_at,
+          )}). Host rows below are stale.`}
+        />
+      ) : null}
+      {state === "sweeping" ? (
+        <p className="text-sm" role="status">
+          Sweep in progress: {coverage.sweep?.hosts_done ?? 0} /{" "}
+          {coverage.sweep?.hosts_total ?? 0} hosts.
+        </p>
+      ) : null}
+      {state === "ok" ? (
+        <p className="text-sm text-muted-foreground">
+          Last sweep finished {formatEpochUtc(coverage.last_sweep_at)}.
+        </p>
+      ) : null}
+      {coverage.incomplete ? (
+        <BannerErrorMessage
+          variant="inline"
+          message={`Scan incomplete; results are not a healthy signal.${
+            (coverage.errors ?? []).length > 0
+              ? ` ${(coverage.errors ?? []).slice(0, 3).join(" ")}`
+              : ""
+          }`}
+        />
+      ) : null}
+      {coverage.consumer_registry_empty && state !== "sweep_disabled" ? (
+        <BannerErrorMessage
+          variant="inline"
+          message="update_metrics has not recorded reads yet; no gaps are listed."
+        />
+      ) : null}
+
+      <dl className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-label="Host status counts">
+        {Object.entries(coverage.status_counts ?? {}).map(([key, count]) => (
+          <div key={key} className="flex gap-1">
+            <dt className="text-muted-foreground">
+              {INGEST_COVERAGE_STATUS_LABELS[key] ?? key}:
+            </dt>
+            <dd className="font-medium">{count}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Group hosts by">
+        <span className="text-sm font-medium">Group by:</span>
+        {modes.map((mode) => (
+          <Button
+            key={mode}
+            type="button"
+            size="sm"
+            variant={groupBy === mode ? "default" : "outline"}
+            aria-pressed={groupBy === mode}
+            onClick={() => onGroupByChange(mode)}
+          >
+            {INGEST_COVERAGE_GROUP_BY_LABELS[mode] ?? mode}
+          </Button>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Pair classes shown">
+        <span className="text-sm font-medium">Show:</span>
+        {INGEST_COVERAGE_CLASS_ORDER.map((cls) => (
+          <Button
+            key={cls}
+            type="button"
+            size="sm"
+            variant={classFilter.includes(cls) ? "default" : "outline"}
+            aria-pressed={classFilter.includes(cls)}
+            onClick={() => toggleClass(cls)}
+          >
+            {INGEST_COVERAGE_CLASS_LABELS[cls]}
+          </Button>
+        ))}
+      </div>
+
+      <Table className="border text-sm">
+        <TableCaption>
+          Host groups ({groups.length} of {coverage.groups_total ?? groups.length}
+          ; {coverage.hosts_grouped ?? 0} hosts grouped of{" "}
+          {coverage.hosts_total ?? 0}). The largest group is the baseline.
+        </TableCaption>
+        <TableHeader>
+          <TableRow>
+            <TableHead scope="col">Group</TableHead>
+            <TableHead scope="col">Hosts</TableHead>
+            <TableHead scope="col">Slug / rack / schema mix</TableHead>
+            <TableHead scope="col">Gaps</TableHead>
+            <TableHead scope="col">Classes</TableHead>
+            <TableHead scope="col">On baseline gap set</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {groups.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={6} className="text-muted-foreground">
+                No host groups to show.
+              </TableCell>
+            </TableRow>
+          ) : (
+            groups.map((group) => {
+              const open = openGroup === group.key;
+              return (
+                <TableRow key={group.key}>
+                  <TableCell>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-expanded={open}
+                      onClick={() => setOpenGroup(open ? null : group.key)}
+                    >
+                      <ChevronRight
+                        className={cn("size-3 transition-transform", open && "rotate-90")}
+                        aria-hidden
+                      />
+                      <code>{group.key.slice(0, 16)}</code>
+                      {group.is_baseline ? (
+                        <Badge variant="secondary" className="ms-1">
+                          baseline
+                        </Badge>
+                      ) : null}
+                    </Button>
+                  </TableCell>
+                  <TableCell>{group.hosts}</TableCell>
+                  <TableCell>
+                    {formatMix(group.slugs)} / {formatMix(group.host_prefixes)} /{" "}
+                    {formatMix(group.schema_variants)}
+                  </TableCell>
+                  <TableCell>{group.gap_count ?? 0}</TableCell>
+                  <TableCell>
+                    {INGEST_COVERAGE_CLASS_ORDER.map(
+                      (cls) => `${INGEST_COVERAGE_CLASS_LABELS[cls]} ${group.class_counts?.[cls] ?? 0}`,
+                    ).join(" · ")}
+                  </TableCell>
+                  <TableCell>{formatFraction(group.baseline_share)}</TableCell>
+                </TableRow>
+              );
+            })
+          )}
+        </TableBody>
+      </Table>
+
+      {groups
+        .filter((group) => group.key === openGroup)
+        .map((group) => {
+          const pairs = (group.pairs ?? []).filter((p) => classFilter.includes(p.class));
+          return (
+            <section
+              key={group.key}
+              className="space-y-3 rounded-[var(--radius)] border border-border p-3"
+              aria-label={`Ingest coverage group ${group.key}`}
+            >
+              <Table className="border text-sm">
+                <TableCaption>
+                  Pairs in this group ({pairs.length} shown of{" "}
+                  {group.pairs_total ?? pairs.length}).
+                </TableCaption>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead scope="col">Type</TableHead>
+                    <TableHead scope="col">Event</TableHead>
+                    <TableHead scope="col">Class</TableHead>
+                    <TableHead scope="col">Hosts</TableHead>
+                    <TableHead scope="col">Stages</TableHead>
+                    <TableHead scope="col">Last consumed</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pairs.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-muted-foreground">
+                        No pairs in the selected classes.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    pairs.map((pair) => (
+                      <TableRow key={`${pair.type}\0${pair.event}`}>
+                        <TableCell>{pair.type}</TableCell>
+                        <TableCell>{pair.event}</TableCell>
+                        <TableCell>
+                          <Badge variant={pair.class === "derived" ? "secondary" : "outline"}>
+                            {INGEST_COVERAGE_CLASS_LABELS[pair.class] ?? pair.class}
+                          </Badge>
+                          {(pair.all_zero_fraction ?? 0) > 0 ? (
+                            <span className="ms-1 text-muted-foreground">
+                              (all-zero on {formatFraction(pair.all_zero_fraction)})
+                            </span>
+                          ) : null}
+                        </TableCell>
+                        <TableCell>{formatFraction(pair.host_fraction)}</TableCell>
+                        <TableCell>{(pair.stages ?? []).join(", ") || "—"}</TableCell>
+                        <TableCell>{formatEpochUtc(pair.last_consumed_at)}</TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+              {(group.diff_vs_baseline ?? []).length > 0 ? (
+                <Table className="border text-sm">
+                  <TableCaption>Pairs that differ from the baseline group.</TableCaption>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead scope="col">Type</TableHead>
+                      <TableHead scope="col">Event</TableHead>
+                      <TableHead scope="col">This group</TableHead>
+                      <TableHead scope="col">Baseline</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(group.diff_vs_baseline ?? []).map((d) => (
+                      <TableRow key={`${d.type}\0${d.event}`}>
+                        <TableCell>{d.type}</TableCell>
+                        <TableCell>{d.event}</TableCell>
+                        <TableCell>{formatFraction(d.host_fraction)}</TableCell>
+                        <TableCell>{formatFraction(d.baseline_fraction)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : null}
+              {(group.consumed_not_ingested ?? []).length > 0 ? (
+                <p className="text-sm">
+                  <span className="font-medium">Read by update_metrics, not sent here: </span>
+                  {(group.consumed_not_ingested ?? [])
+                    .map(([t, e]) => `${t}/${e}`)
+                    .join(", ")}
+                </p>
+              ) : null}
+              {(group.outlier_hosts ?? []).length > 0 ? (
+                <div className="text-sm space-y-1">
+                  <p className="font-medium">Outlier hosts</p>
+                  <ul className="list-disc pl-5 space-y-1">
+                    {(group.outlier_hosts ?? []).map((o) => (
+                      <li key={o.fqdn}>
+                        <code>{o.fqdn}</code>
+                        {(o.missing_vs_group ?? []).length > 0
+                          ? ` — missing ${(o.missing_vs_group ?? []).map(([t, e]) => `${t}/${e}`).join(", ")}`
+                          : ""}
+                        {(o.extra_gaps ?? []).length > 0
+                          ? ` — extra gaps ${(o.extra_gaps ?? []).map(([t, e]) => `${t}/${e}`).join(", ")}`
+                          : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              <Table className="border text-sm">
+                <TableCaption>Hosts in this group (capped).</TableCaption>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead scope="col">Host</TableHead>
+                    <TableHead scope="col">Status</TableHead>
+                    <TableHead scope="col">Newest sample</TableHead>
+                    <TableHead scope="col">Ingest backlog</TableHead>
+                    <TableHead scope="col">
+                      <span title={OPEN_SEGMENT_TOOLTIP}>Open segment age</span>
+                    </TableHead>
+                    <TableHead scope="col">Scanned</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(group.host_rows ?? []).map((row) => (
+                    <TableRow
+                      key={row.fqdn ?? ""}
+                      className={cn(row.stale && "text-muted-foreground opacity-60")}
+                      data-stale={row.stale ? "true" : undefined}
+                    >
+                      <TableCell>{row.fqdn}</TableCell>
+                      <TableCell>
+                        {INGEST_COVERAGE_STATUS_LABELS[row.status ?? ""] ?? row.status}
+                        {row.stale ? " (stale)" : ""}
+                      </TableCell>
+                      <TableCell>{formatEpochUtc(row.newest_sample)}</TableCell>
+                      <TableCell>{formatSecondsCompact(row.ingest_backlog_s)}</TableCell>
+                      <TableCell title={OPEN_SEGMENT_TOOLTIP}>
+                        {formatSecondsCompact(row.open_segment_age_s)}
+                      </TableCell>
+                      <TableCell>{formatEpochUtc(row.scanned_at)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </section>
+          );
+        })}
+    </div>
+  );
+}
+
 export default function AdminMonitor() {
   useDocumentTitle("HPCPerfStats Monitor");
 
@@ -202,6 +626,9 @@ export default function AdminMonitor() {
   const [timescaledbRefreshSeq, setTimescaledbRefreshSeq] = useState(0);
   const [xaltRefreshSeq, setXaltRefreshSeq] = useState(0);
   const [telemetryHealthRefreshSeq, setTelemetryHealthRefreshSeq] = useState(0);
+  const [ingestCoverageExpanded, setIngestCoverageExpanded] = useState(false);
+  const [ingestCoverageRefreshSeq, setIngestCoverageRefreshSeq] = useState(0);
+  const [ingestCoverageGroupBy, setIngestCoverageGroupBy] = useState("signature");
   const [hostTablePage, setHostTablePage] = useState(1);
   const [rabbitHostTablePage, setRabbitHostTablePage] = useState(1);
   const { sort: hostSort, onSort: handleHostSort } = useTableSort("host", "asc", "asc");
@@ -303,6 +730,35 @@ export default function AdminMonitor() {
       (res.telemetry_health as AdminMonitorTelemetryHealth | null | undefined) ||
       null,
   });
+
+  const {
+    data: ingestCoverage,
+    error: ingestCoverageError,
+    initialLoading: ingestCoverageInitialLoading,
+    sectionBusy: ingestCoverageSectionBusy,
+  } = useAdminMonitorSectionQuery({
+    section: "ingest_coverage",
+    enabled: ingestCoverageExpanded,
+    refreshSeq: ingestCoverageRefreshSeq,
+    groupBy: ingestCoverageGroupBy,
+    pickResponse: (res: AdminMonitorSectionResponse) =>
+      (res.ingest_coverage as AdminMonitorIngestCoverage | null | undefined) || null,
+  });
+
+  const ingestCoverageTitle = useMemo(() => {
+    if (!ingestCoverage) return "Ingest vs Job Detail coverage";
+    if (ingestCoverage.sweeper_state === "sweep_disabled") {
+      return "Ingest vs Job Detail coverage — sweep disabled";
+    }
+    if (ingestCoverage.sweeper_state === "sweeper_stale") {
+      return "Ingest vs Job Detail coverage — sweeper not running";
+    }
+    const gaps = (ingestCoverage.groups ?? []).reduce(
+      (sum, g) => sum + (g.gap_count ?? 0),
+      0,
+    );
+    return `Ingest vs Job Detail coverage — ${ingestCoverage.groups?.length ?? 0} groups, ${gaps} gap pairs`;
+  }, [ingestCoverage]);
 
   const telemetryHealthTitle = useMemo(() => {
     if (!telemetryHealth) {
@@ -1441,6 +1897,40 @@ export default function AdminMonitor() {
               No telemetry health data available.
             </div>
           )}
+      </AdminMonitorCollapsibleSection>
+
+      <AdminMonitorCollapsibleSection
+        open={ingestCoverageExpanded}
+        onOpenChange={setIngestCoverageExpanded}
+        panelId="admin-monitor-ingest-coverage"
+        ariaLabel="Ingest versus Job Detail coverage"
+        title={ingestCoverageTitle}
+      >
+        <AdminMonitorSectionRefreshButton
+          initialLoading={ingestCoverageInitialLoading}
+          sectionBusy={ingestCoverageSectionBusy}
+          onRefresh={() => setIngestCoverageRefreshSeq((s) => s + 1)}
+        />
+        {ingestCoverageInitialLoading && (
+          <LoadingMessage message="Loading ingest coverage…" />
+        )}
+        {ingestCoverageError && !ingestCoverageInitialLoading && (
+          <BannerErrorMessage
+            variant="inline"
+            message={`Error loading ingest coverage: ${ingestCoverageError}`}
+          />
+        )}
+        {!ingestCoverageInitialLoading && !ingestCoverageError && ingestCoverage && (
+          <IngestCoveragePanel
+            coverage={ingestCoverage}
+            busy={ingestCoverageSectionBusy}
+            groupBy={ingestCoverageGroupBy}
+            onGroupByChange={setIngestCoverageGroupBy}
+          />
+        )}
+        {!ingestCoverageInitialLoading && !ingestCoverageError && !ingestCoverage && (
+          <div className="text-muted-foreground">No ingest coverage data available.</div>
+        )}
       </AdminMonitorCollapsibleSection>
     </>
   );

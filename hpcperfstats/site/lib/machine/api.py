@@ -122,6 +122,10 @@ from hpcperfstats.dbload.sync_acct import (
   sync_acct_from_content,
 )
 
+from .admin_monitor_ingest_coverage import (
+  all_cache_keys as ingest_coverage_cache_keys,
+  compute_ingest_coverage,
+)
 from .admin_monitor_telemetry_health import compute_telemetry_health
 from .bokeh_embed import new_spa_embedded_figure
 from .bokeh_plot_layout import _apply_zoom_layout_to_json_item
@@ -4536,6 +4540,9 @@ def admin_monitor(request: Any) -> Any:
   - ?section=timescaledb -> {"timescaledb_stats": {...}}
   - ?section=xalt      -> {"xalt_stats": {...}}
   - ?section=telemetry_health -> {"telemetry_health": {...}}
+  - ?section=ingest_coverage[&group_by=signature|rack|schema|slug] ->
+    {"ingest_coverage": {...}} (Valkey reads only; the scan runs in the
+    ingest_coverage_sweeper program; never part of the full bundle)
   - omitted/other       -> {"host_stats": [...], "rabbitmq_host_stats": [...],
                             "cache_stats": {...},
                               "rabbitmq_stats":
@@ -4616,6 +4623,7 @@ def admin_monitor(request: Any) -> Any:
       "timescaledb": [KEY_ADMIN_TIMESCALE_STATS],
       "xalt": [KEY_ADMIN_XALT_STATS],
       "telemetry_health": [KEY_ADMIN_TELEMETRY_HEALTH],
+      "ingest_coverage": ingest_coverage_cache_keys(),
     }
     keys_to_clear = []
     if section in keys_by_section:
@@ -4645,6 +4653,14 @@ def admin_monitor(request: Any) -> Any:
   if section == "telemetry_health":
     return Response(
       {"telemetry_health": compute_telemetry_health(force_refresh=refresh)}
+    )
+  if section == "ingest_coverage":
+    return Response(
+      {
+        "ingest_coverage": compute_ingest_coverage(
+          force_refresh=refresh, group_by=request.GET.get("group_by")
+        )
+      }
     )
 
   host_stats = cached_orm(

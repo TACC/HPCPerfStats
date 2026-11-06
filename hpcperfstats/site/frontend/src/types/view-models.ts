@@ -135,3 +135,95 @@ export type PubDashboardBundle = Record<string, unknown> & {
     expansion_factor?: PubDashboardExpansionFactorSection;
   };
 };
+
+/** ``section=ingest_coverage`` pair row (``admin_monitor_ingest_coverage``). */
+export type IngestCoveragePairClass =
+  | "derived"
+  | "type_detail_only"
+  | "type_detail_dropped"
+  | "unused";
+
+export type AdminMonitorIngestCoveragePair = {
+  type: string;
+  event: string;
+  class: IngestCoveragePairClass;
+  host_fraction: number;
+  all_zero_fraction?: number;
+  stages?: string[];
+  last_consumed_at?: number | null;
+};
+
+export type AdminMonitorIngestCoverageDiff = {
+  type: string;
+  event: string;
+  class: IngestCoveragePairClass | "not_sent";
+  host_fraction: number;
+  baseline_fraction: number;
+};
+
+export type AdminMonitorIngestCoverageHostRow = {
+  fqdn?: string | null;
+  status?: string;
+  status_reason?: string | null;
+  newest_sample?: number | null;
+  lag_vs_fleet_s?: number | null;
+  ingest_backlog_s?: number | null;
+  open_segment_age_s?: number | null;
+  scanned_at?: number | null;
+  signature?: string | null;
+  pair_count?: number | null;
+  stale?: boolean;
+};
+
+export type AdminMonitorIngestCoverageGroup = {
+  key: string;
+  hosts: number;
+  gap_signature?: string;
+  baseline_share?: number;
+  is_baseline?: boolean;
+  slugs?: Record<string, number>;
+  host_prefixes?: Record<string, number>;
+  schema_variants?: Record<string, number>;
+  class_counts?: Partial<Record<IngestCoveragePairClass, number>>;
+  gap_count?: number;
+  pairs?: AdminMonitorIngestCoveragePair[];
+  pairs_total?: number;
+  diff_vs_baseline?: AdminMonitorIngestCoverageDiff[];
+  outlier_hosts?: {
+    fqdn: string;
+    extra_gaps?: string[][];
+    missing_vs_group?: string[][];
+  }[];
+  host_rows?: AdminMonitorIngestCoverageHostRow[];
+  consumed_not_ingested?: string[][];
+};
+
+export type AdminMonitorIngestCoverage = {
+  computed_at?: number;
+  window_minutes?: number;
+  consumed_fresh_days?: number;
+  group_by?: string;
+  group_by_modes?: string[];
+  sweeper_state?: "ok" | "sweeping" | "sweeper_stale" | "sweep_disabled";
+  sweep?: {
+    started_at?: number | null;
+    finished_at?: number | null;
+    hosts_done?: number | null;
+    hosts_total?: number | null;
+    interval_s?: number | null;
+    last_error?: string | null;
+  };
+  last_sweep_at?: number | null;
+  hosts_total?: number;
+  hosts_scanned?: number;
+  hosts_grouped?: number;
+  incomplete?: boolean;
+  errors?: string[];
+  status_counts?: Record<string, number>;
+  consumer_registry_empty?: boolean;
+  consumed_pairs_fresh?: number;
+  excluded_ingest_behind?: AdminMonitorIngestCoverageHostRow[];
+  groups?: AdminMonitorIngestCoverageGroup[];
+  groups_total?: number;
+  markdown?: string;
+};

@@ -194,6 +194,45 @@ ADMIN_MONITOR_HOSTS_WIRE = {
   ],
 }
 
+
+def _ingest_coverage_wire() -> dict:
+  """Real builder output (pure, no I/O) for the ingest_coverage section."""
+  from hpcperfstats.dbload.lib.ingest_coverage import pair_set_signature
+  from hpcperfstats.site.lib.machine.admin_monitor_ingest_coverage import (
+    build_ingest_coverage_payload,
+  )
+
+  pairs = [["host_cpu", "user"], ["host_opa", "rx_bytes"]]
+  sig = pair_set_signature(pairs)
+  return {
+    "ingest_coverage": build_ingest_coverage_payload(
+      fqdns=["c101-001.cluster.example"],
+      host_records={
+        "c101-001.cluster.example": {
+          "fqdn": "c101-001.cluster.example",
+          "sig": sig,
+          "status": "current",
+          "scanned_at": 1800000000,
+          "newest_sample": 1799999700,
+          "ingest_backlog_s": 0,
+          "open_segment_age_s": 3600,
+          "all_zero_pairs": [],
+        }
+      },
+      sig_pairs={sig: pairs},
+      consumed={("host_cpu", "user"): {"metrics": 1799990000}},
+      identities={},
+      beat={"started_at": 1799999000, "finished_at": 1799999500},
+      enabled=True,
+      interval_s=3600,
+      window_minutes=60,
+      now=1800000000,
+    )
+  }
+
+
+ADMIN_MONITOR_INGEST_COVERAGE_WIRE = _ingest_coverage_wire()
+
 ADMIN_MONITOR_TELEMETRY_HEALTH_WIRE = {
   "telemetry_health": {
     "window_hours": 12,
@@ -312,6 +351,7 @@ def test_openapi_hard_fail_wire_examples_match_serializers(
   [
     (AdminMonitorResponseSerializer, ADMIN_MONITOR_HOSTS_WIRE),
     (AdminMonitorResponseSerializer, ADMIN_MONITOR_TELEMETRY_HEALTH_WIRE),
+    (AdminMonitorResponseSerializer, ADMIN_MONITOR_INGEST_COVERAGE_WIRE),
     (JobPlotsResponseSerializer, JOB_PLOTS_WIRE),
     (JobListHistogramResponseSerializer, JOB_LIST_HISTOGRAM_WIRE),
     (TypeDetailResponseSerializer, TYPE_DETAIL_WIRE),

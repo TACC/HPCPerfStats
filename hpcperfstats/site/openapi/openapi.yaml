@@ -20,6 +20,9 @@ paths:
         - ?section=timescaledb -> {"timescaledb_stats": {...}}
         - ?section=xalt      -> {"xalt_stats": {...}}
         - ?section=telemetry_health -> {"telemetry_health": {...}}
+        - ?section=ingest_coverage[&group_by=signature|rack|schema|slug] ->
+          {"ingest_coverage": {...}} (Valkey reads only; the scan runs in the
+          ingest_coverage_sweeper program; never part of the full bundle)
         - omitted/other       -> {"host_stats": [...], "rabbitmq_host_stats": [...],
                                   "cache_stats": {...},
                                     "rabbitmq_stats":
@@ -37,6 +40,12 @@ paths:
         Examples:
           >>> admin_monitor(None)  # doctest: +SKIP
       parameters:
+      - in: query
+        name: group_by
+        schema:
+          type: string
+        description: 'section=ingest_coverage only: signature (default), rack, schema
+          or slug'
       - in: query
         name: refresh
         schema:
@@ -1554,6 +1563,9 @@ components:
           type: object
           additionalProperties: {}
         telemetry_health:
+          type: object
+          additionalProperties: {}
+        ingest_coverage:
           type: object
           additionalProperties: {}
     DropStaffResponse:

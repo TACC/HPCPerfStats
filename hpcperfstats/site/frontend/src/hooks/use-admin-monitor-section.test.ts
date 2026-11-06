@@ -159,4 +159,33 @@ describe("useAdminMonitorSectionQuery", () => {
     expect(result.current.data).toBe(null);
     expect(result.current.loading).toBe(false);
   });
+
+  it("passes group_by and keys the query by it (ingest_coverage)", () => {
+    vi.mocked(useAdminMonitorRetrieve).mockReturnValue({
+      data: { ingest_coverage: { group_by: "rack" } },
+      error: null,
+      isLoading: false,
+      isFetching: false,
+      refetch: vi.fn(),
+    } as ReturnType<typeof useAdminMonitorRetrieve>);
+
+    renderHook(() =>
+      useAdminMonitorSectionQuery({
+        section: "ingest_coverage",
+        enabled: true,
+        refreshSeq: 2,
+        groupBy: "rack",
+        pickResponse: (res) => res.ingest_coverage,
+      }),
+    );
+
+    expect(useAdminMonitorRetrieve).toHaveBeenLastCalledWith(
+      { section: "ingest_coverage", refresh: "1", group_by: "rack" },
+      expect.objectContaining({
+        query: expect.objectContaining({
+          queryKey: ["adminMonitor", "ingest_coverage", 2, "rack"],
+        }),
+      }),
+    );
+  });
 });

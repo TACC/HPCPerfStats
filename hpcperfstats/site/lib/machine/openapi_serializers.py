@@ -678,6 +678,7 @@ class AdminMonitorResponseSerializer(serializers.Serializer):
   timescaledb_stats = serializers.DictField(required=False)
   xalt_stats = serializers.DictField(required=False)
   telemetry_health = serializers.DictField(required=False)
+  ingest_coverage = serializers.DictField(required=False)
 
 
 class JobMonitorRowSerializer(serializers.Serializer):

@@ -12,6 +12,8 @@ Attributes:
   KEY_ADMIN_RMQ_SNAPSHOT: Attribute.
   KEY_ADMIN_RMQ_STATS: Attribute.
   KEY_ADMIN_TELEMETRY_HEALTH: Attribute.
+  KEY_ADMIN_INGEST_COVERAGE: Django cache key prefix for the Admin Monitor
+    ingest coverage payload (one entry per group-by mode).
   KEY_ADMIN_TIMESCALE_STATS: Attribute.
   KEY_ADMIN_XALT_STATS: Attribute.
   KEY_AGG_DF: Attribute.
@@ -50,6 +52,8 @@ Attributes:
     the ingest dirty stamp; equals ``DEFAULT_METRICS_RANGE_DAYS``.
   SITE_NEWEST_END_META_TTL_SECONDS: Attribute.
   TIMEOUT_ADMIN_STATS: Attribute.
+  TIMEOUT_ADMIN_INGEST_COVERAGE: Cache seconds for the ingest coverage
+    payload (Valkey reads only, so 60 s is cheap to recompute).
   _CACHE_MISS: Attribute.
   _INVALID_SITE_NEWEST_END_PROBE: Attribute.
 """
@@ -871,10 +875,13 @@ KEY_ADMIN_TIMESCALE_STATS = "admin_monitor_timescaledb_stats"
 KEY_ADMIN_HOST_STATS = "admin_monitor_host_stats"
 KEY_ADMIN_XALT_STATS = "admin_monitor_xalt_stats"
 KEY_ADMIN_TELEMETRY_HEALTH = "admin_monitor_telemetry_health"
+KEY_ADMIN_INGEST_COVERAGE = "admin_monitor_ingest_coverage"
 KEY_JOB_PLOT_KEYSET = "job_plot_keyset"
 
 # HPCPerfStats Monitor Valkey/RabbitMQ stats: short TTL to avoid hammering backends
 TIMEOUT_ADMIN_STATS = 10
+# Ingest coverage section reads Valkey only (sweeper does the scan).
+TIMEOUT_ADMIN_INGEST_COVERAGE = 60
 
 
 def make_cache_key(prefix: str, *parts: Any) -> str:

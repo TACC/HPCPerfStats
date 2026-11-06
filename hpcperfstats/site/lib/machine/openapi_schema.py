@@ -410,6 +410,15 @@ ADMIN_MONITOR_SCHEMA = extend_schema(
       required=True,
     ),
     OpenApiParameter(name="refresh", type=str, location=OpenApiParameter.QUERY),
+    OpenApiParameter(
+      name="group_by",
+      type=str,
+      location=OpenApiParameter.QUERY,
+      description=(
+        "section=ingest_coverage only: signature (default), rack, schema "
+        "or slug"
+      ),
+    ),
   ],
   responses={
     200: os.AdminMonitorResponseSerializer,

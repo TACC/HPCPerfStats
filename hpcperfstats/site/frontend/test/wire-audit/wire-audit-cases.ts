@@ -188,6 +188,63 @@ export const WIRE_AUDIT_CASES: WireAuditCase[] = [
   {
     method: "GET",
     path: "/api/admin_monitor/",
+    label: "admin_monitor section=ingest_coverage",
+    wire: {
+      ingest_coverage: {
+        computed_at: 1800000000,
+        window_minutes: 60,
+        consumed_fresh_days: 7,
+        group_by: "signature",
+        group_by_modes: ["signature", "rack", "schema", "slug"],
+        sweeper_state: "ok",
+        sweep: {
+          started_at: 1799999000,
+          finished_at: 1799999500,
+          hosts_done: null,
+          hosts_total: null,
+          interval_s: 3600,
+          last_error: null,
+        },
+        last_sweep_at: 1799999500,
+        hosts_total: 1,
+        hosts_scanned: 1,
+        hosts_grouped: 1,
+        incomplete: false,
+        errors: [],
+        status_counts: { current: 1, ingest_behind: 0, unknown: 0, incomplete: 0, no_recent_data: 0, not_scanned: 0 },
+        consumer_registry_empty: false,
+        consumed_pairs_fresh: 1,
+        excluded_ingest_behind: [],
+        groups: [
+          {
+            key: "0f3a",
+            hosts: 1,
+            gap_signature: "0f3a",
+            baseline_share: 1,
+            is_baseline: true,
+            slugs: { unknown: 1 },
+            host_prefixes: { c101: 1 },
+            schema_variants: { unknown: 1 },
+            class_counts: { unused: 1, type_detail_dropped: 0, type_detail_only: 0, derived: 1 },
+            gap_count: 1,
+            pairs: [
+              { type: "host_opa", event: "rx_bytes", class: "unused", host_fraction: 1, all_zero_fraction: 0, stages: [], last_consumed_at: null },
+            ],
+            pairs_total: 2,
+            diff_vs_baseline: [],
+            outlier_hosts: [],
+            host_rows: [],
+            consumed_not_ingested: [],
+          },
+        ],
+        groups_total: 1,
+        markdown: "## Ingest vs Job Detail coverage\n",
+      },
+    },
+  },
+  {
+    method: "GET",
+    path: "/api/admin_monitor/",
     wire: {
       host_stats: [
         {

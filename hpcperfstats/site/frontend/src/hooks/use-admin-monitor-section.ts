@@ -8,6 +8,8 @@ export type UseAdminMonitorSectionQueryOptions<T> = {
   section: string;
   enabled: boolean;
   refreshSeq?: number;
+  /** ``group_by`` query value (``section=ingest_coverage`` only). */
+  groupBy?: string;
   pickResponse: (res: AdminMonitorSectionResponse) => T;
 };
 
@@ -16,17 +18,21 @@ export function useAdminMonitorSectionQuery<T>({
   section,
   enabled,
   refreshSeq = 0,
+  groupBy,
   pickResponse,
 }: UseAdminMonitorSectionQueryOptions<T>) {
   const { data, error, isLoading, isFetching, refetch } = useAdminMonitorRetrieve(
     {
       section,
       refresh: refreshSeq > 0 ? "1" : undefined,
+      ...(groupBy ? { group_by: groupBy } : {}),
     },
     {
       query: {
         enabled,
-        queryKey: ["adminMonitor", section, refreshSeq],
+        queryKey: groupBy
+          ? ["adminMonitor", section, refreshSeq, groupBy]
+          : ["adminMonitor", section, refreshSeq],
         select: selectOrvalData,
         placeholderData: keepPreviousData,
       },
