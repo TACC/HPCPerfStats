@@ -40,6 +40,9 @@ from django.db.models.base import ModelState
 
 import hpcperfstats.analysis.metrics.lib.plot as plots
 from hpcperfstats.analysis.metrics.lib import phase_profile
+from hpcperfstats.analysis.metrics.lib.columnar.consumed_series import (
+  consumer_stage,
+)
 from hpcperfstats.analysis.metrics.lib.columnar.detail_series import fsio_totals
 from hpcperfstats.analysis.metrics.lib.columnar.job_table import (
   HANDOFF,
@@ -1007,15 +1010,16 @@ def persist_job_detail_artifacts_for_jid(
     stored_fps.get((ARTIFACT_KIND_JOB_DETAIL, "")) == fingerprint
     and stored_fps.get((ARTIFACT_KIND_MULTIPRECISION_MIX, "")) == fingerprint
   ):
-    retry_parts = _persist_job_detail_and_mix(
-      jid,
-      job,
-      jt,
-      schema,
-      fingerprint,
-      telemetry,
-      stored_fps.get((ARTIFACT_KIND_JOB_DETAIL, "")),
-    )
+    with consumer_stage("job_detail"):
+      retry_parts = _persist_job_detail_and_mix(
+        jid,
+        job,
+        jt,
+        schema,
+        fingerprint,
+        telemetry,
+        stored_fps.get((ARTIFACT_KIND_JOB_DETAIL, "")),
+      )
 
   for type_name in sorted((schema or {}).keys()):
     if type_detail_fps.get(type_name) == fingerprint:
@@ -1023,7 +1027,7 @@ def persist_job_detail_artifacts_for_jid(
     try:
       events_units = events_units_for_first_host(jt, type_name, jt.units)
       type_list = type_list_for_first_host(jt, type_name)
-      with phase_profile.phase("plot_series"):
+      with phase_profile.phase("plot_series"), consumer_stage("type_detail"):
         series = build_type_detail_series(
           jt, type_name, events_units, type_list
         )

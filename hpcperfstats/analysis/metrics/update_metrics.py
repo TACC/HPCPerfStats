@@ -167,7 +167,10 @@ from django.utils import timezone as django_timezone
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.analysis.metrics.lib import metrics, phase_profile
-from hpcperfstats.analysis.metrics.lib.columnar import codon_bridge
+from hpcperfstats.analysis.metrics.lib.columnar import (
+  codon_bridge,
+  consumed_series,
+)
 from hpcperfstats.analysis.metrics.lib.columnar.job_table import HANDOFF
 from hpcperfstats.analysis.metrics.lib.db_retry import run_with_db_retry
 from hpcperfstats.analysis.metrics.lib.metrics import (
@@ -1841,6 +1844,8 @@ class _PrewarmPipeline:
       ) or HANDOFF.pop(jid)
       with phase_profile.job_scope(jid, "prewarm"):
         result = pool.run(jid, table)
+      # Reads made in the worker process come back with the result.
+      consumed_series.merge(jid, result.get("consumed"))
       return float(result["detail_s"]), float(result["plots_s"])
     close_old_connections()
     with phase_profile.job_scope(jid, "prewarm"):
@@ -7196,6 +7201,9 @@ def _compute_and_prewarm_jid(
     >>> _compute_and_prewarm_jid(None, None, None, None)  # doctest: +SKIP
   """
   context = PerJidComputeContext(jid=job_ref.jid)
+  # Record the (type, event) pairs this job reads; flushed to Valkey once on
+  # success, dropped on every failure path (Admin Monitor ingest coverage).
+  consumed_series.begin(context.jid)
   telemetry = _new_jid_telemetry()
   context.artifact_context["_telemetry"] = telemetry
   artifact_only = bool(getattr(job_ref, "artifact_only", False))
@@ -7221,6 +7229,7 @@ def _compute_and_prewarm_jid(
         flush=True,
       )
       HANDOFF.discard(context.jid)
+      consumed_series.discard(context.jid)
       return {
         "ok": False,
         "jid": context.jid,
@@ -7261,6 +7270,7 @@ def _compute_and_prewarm_jid(
       flush=True,
     )
     HANDOFF.discard(context.jid)
+    consumed_series.discard(context.jid)
     return {
       "ok": False,
       "jid": context.jid,
@@ -7291,6 +7301,10 @@ def _compute_and_prewarm_jid(
   prewarm_elapsed = time.monotonic() - t_prewarm_start
   # The prewarm pops the table; drop it when prewarm never reached that point.
   HANDOFF.discard(context.jid)
+  if prewarm_exc is None:
+    consumed_series.flush(context.jid)
+  else:
+    consumed_series.discard(context.jid)
   if prewarm_timing is not None:
     total_s = metrics_elapsed + float(prewarm_timing["prewarm_total_s"])
     if prewarm_timing.get("undivided"):

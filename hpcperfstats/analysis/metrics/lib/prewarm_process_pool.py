@@ -112,15 +112,18 @@ def run_prewarm_in_child(jid: str, table: Any) -> dict[str, Any]:
       None (the persisters then open the table from PostgreSQL).
 
   Returns:
-    dict[str, Any]: ``{"ok": True, "detail_s", "plots_s"}`` or
-    ``{"ok": False, "db_error": bool, "error": str}``; database errors are
-    flagged so the parent keeps its transient-error retry.
+    dict[str, Any]: ``{"ok": True, "detail_s", "plots_s", "consumed"}``
+    (``consumed`` is the ``consumed_series.take`` record of this job's
+    reads, merged by the parent) or ``{"ok": False, "db_error": bool,
+    "error": str}``; database errors are flagged so the parent keeps its
+    transient-error retry.
 
   Examples:
     >>> run_prewarm_in_child("1", None)  # doctest: +SKIP
   """
   from django.db import InterfaceError, close_old_connections
 
+  from hpcperfstats.analysis.metrics.lib.columnar import consumed_series
   from hpcperfstats.analysis.metrics.lib.columnar.job_table import HANDOFF
   from hpcperfstats.site.lib.machine.job_detail_artifacts import (
     persist_job_detail_artifacts_for_jid,
@@ -133,12 +136,18 @@ def run_prewarm_in_child(jid: str, table: Any) -> dict[str, Any]:
   if table is not None:
     HANDOFF.put(table)
   shared: dict[str, Any] = {}
+  consumed_series.begin(jid)
   try:
     t0 = time.monotonic()
     persist_job_detail_artifacts_for_jid(jid, context=shared)
     t1 = time.monotonic()
     persist_job_plot_artifacts_for_jid(jid, context=shared)
-    return {"ok": True, "detail_s": t1 - t0, "plots_s": time.monotonic() - t1}
+    return {
+      "ok": True,
+      "detail_s": t1 - t0,
+      "plots_s": time.monotonic() - t1,
+      "consumed": consumed_series.take(jid),
+    }
   except (DatabaseError, InterfaceError) as exc:
     return {
       "ok": False,
@@ -153,6 +162,7 @@ def run_prewarm_in_child(jid: str, table: Any) -> dict[str, Any]:
     }
   finally:
     HANDOFF.discard(jid)
+    consumed_series.discard(jid)
 
 
 def _worker_main(

@@ -53,7 +53,10 @@ from hpcperfstats.analysis.metrics.lib import phase_profile
 from hpcperfstats.analysis.metrics.lib.beegfs_metadata_iops_events import (
   BEEGFS_METADATA_IOPS_EVENTS,
 )
-from hpcperfstats.analysis.metrics.lib.columnar import segments as _columnar_sg
+from hpcperfstats.analysis.metrics.lib.columnar import (
+  consumed_series,
+  segments as _columnar_sg,
+)
 from hpcperfstats.analysis.metrics.lib.columnar.detail_series import (
   gpu_summary_tuple,
   job_cpu_gpu_watt_hours,
@@ -1248,6 +1251,7 @@ def _unwrap(args: Any) -> Any:
       with (
         _pg_session_statement_timeout_for_metrics_worker(),
         phase_profile.phase("metrics_compute"),
+        consumed_series.consumer_stage("metrics"),
       ):
         return metrics_obj.compute_metrics(job)
 

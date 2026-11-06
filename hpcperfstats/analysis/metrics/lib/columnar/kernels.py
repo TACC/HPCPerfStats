@@ -34,7 +34,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from hpcperfstats.analysis.metrics.lib.columnar import segments as sg
+from hpcperfstats.analysis.metrics.lib.columnar import (
+  consumed_series,
+  segments as sg,
+)
 from hpcperfstats.analysis.metrics.lib.columnar.jobframe import JobFrame
 from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
   MAX_SANE_COUNTER_DELTA,
@@ -278,6 +281,35 @@ class FrameIndex:
       for i, (t, e) in enumerate(self.frame.series)
       if t == typ and e in wanted
     ]
+
+  def _select(self, typ: str, events: Sequence[str] | None) -> list[int]:
+    """
+    Series ids for a reduction, recorded as consumed for the frame's jid.
+
+    Every public reduction selects series through here, so the runtime
+    record of consumed ``(type, event)`` pairs (``consumed_series``) stays
+    complete by construction. Recording is a no-op unless update_metrics
+    opened the jid.
+
+    Args:
+      typ (str): Type name.
+      events (Sequence[str] | None): Event names or None for all events.
+
+    Returns:
+      list[int]: Matching series ids (same as :meth:`series_ids`).
+
+    Examples:
+      >>> f = JobFrame.from_records(
+      ...   "1", [(1, "h", "cpu", "user", None, 1, 1.0, None, None)]
+      ... )
+      >>> FrameIndex(f)._select("cpu", None)
+      [0]
+    """
+    sids = self.series_ids(typ, events)
+    if sids:
+      series = self.frame.series
+      consumed_series.record(self.frame.jid, [series[s] for s in sids])
+    return sids
 
   def type_id(self, typ: str) -> int | None:
     """
@@ -530,7 +562,7 @@ class FrameIndex:
     """
     if mode not in (MODE_SQL, MODE_ORM):
       raise ValueError(mode)
-    sids = self.series_ids(typ, events)
+    sids = self._select(typ, events)
     rows = self.scoped_rows(typ, self.rows_for_series(sids))
     if rows.size == 0:
       return AggTable.zero(by_dev=by_dev)
@@ -665,7 +697,7 @@ class FrameIndex:
       [50.0]
     """
     rows = self.scoped_rows(
-      typ, self.rows_for_series(self.series_ids(typ, events))
+      typ, self.rows_for_series(self._select(typ, events))
     )
     return (
       self.frame.host_id[rows].astype(np.int64),
@@ -707,7 +739,7 @@ class FrameIndex:
     """
     out: dict[str, float] = {}
     f = self.frame
-    for sid in self.series_ids(typ, events):
+    for sid in self._select(typ, events):
       rows = self.scoped_rows(typ, self.rows_for_series([sid]))
       if rows.size == 0:
         continue
@@ -768,7 +800,7 @@ class FrameIndex:
     """
     f = self.frame
     rows = self.scoped_rows(
-      typ, self.rows_for_series(self.series_ids(typ, events)), job_only=True
+      typ, self.rows_for_series(self._select(typ, events)), job_only=True
     )
     if rows.size:
       vals = f.value[rows]
@@ -855,9 +887,7 @@ class FrameIndex:
     n_t = axis_us.shape[0]
     n_e = len(events)
     ev_pos = {e: i for i, e in enumerate(events)}
-    sids = [
-      s for s in self.frame.series_ids_for_type(typ) if f.series[s][1] in ev_pos
-    ]
+    sids = self._select(typ, list(ev_pos))
     rows = self.scoped_rows(typ, self.rows_for_series(sids), job_only=True)
     empty_grid = np.full((n_t, n_e), np.nan, dtype=np.float64)
     if rows.size == 0 or n_t == 0:

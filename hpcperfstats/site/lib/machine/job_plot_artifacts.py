@@ -34,6 +34,9 @@ from django.utils import timezone as dj_tz
 import hpcperfstats.analysis.metrics.lib.plot as plots
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.analysis.metrics.lib import phase_profile
+from hpcperfstats.analysis.metrics.lib.columnar.consumed_series import (
+  consumer_stage,
+)
 from hpcperfstats.analysis.metrics.lib.columnar.job_table import (
   HANDOFF,
   open_job_table,
@@ -871,9 +874,10 @@ def persist_job_plot_artifacts_for_jid(
         continue
       row_fp = fp
       try:
-        plot_item, reason, bw_axis = compute_plot_item_for_kind(
-          plot_jt, kind, zoom_mode
-        )
+        with consumer_stage("summary_plot"):
+          plot_item, reason, bw_axis = compute_plot_item_for_kind(
+            plot_jt, kind, zoom_mode
+          )
       except Exception as exc:
         logger.warning(
           "plot prewarm failed jid=%s kind=%s layout=%s",

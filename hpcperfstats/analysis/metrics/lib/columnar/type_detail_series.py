@@ -21,7 +21,10 @@ from typing import Any
 
 import numpy as np
 
-from hpcperfstats.analysis.metrics.lib.columnar import segments as sg
+from hpcperfstats.analysis.metrics.lib.columnar import (
+  consumed_series,
+  segments as sg,
+)
 from hpcperfstats.analysis.metrics.lib.columnar.kernels import MODE_ORM
 from hpcperfstats.analysis.metrics.lib.columnar.series_frame import SeriesFrame
 
@@ -155,7 +158,9 @@ def build_type_detail_series(
 ) -> TypeDetailSeries:
   """
   ``DevPlot.plot`` data: per-event ``Coalesce(SUM, 0)`` per sample joined on
-  the type's ``(host, time)`` base; events with any missing cell are dropped.
+  the type's ``(host, time)`` base; events with any missing cell are dropped
+  and recorded as ``type_detail_dropped``, kept events under the caller's
+  stage (``consumed_series``).
 
   Args:
     jt (Any): ColumnarJobTable.
@@ -182,13 +187,17 @@ def build_type_detail_series(
   metric = (
     "value" if types and any(t in types for t in _VALUE_METRIC_TYPES) else "arc"
   )
+  stage = consumed_series.current_stage()
   for event, _unit in events_units:
-    agg = jt.index.sum_per_sample(type_name, [event], metric, mode=MODE_ORM)
+    with consumed_series.recording_paused():
+      agg = jt.index.sum_per_sample(type_name, [event], metric, mode=MODE_ORM)
     vals = (
       frame.join_values(agg) if not agg.empty else np.full(len(frame), np.nan)
     )
     if np.isnan(vals).any():
+      consumed_series.record_dropped(jt.frame.jid, type_name, event)
       continue
+    consumed_series.record(jt.frame.jid, [(type_name, event)], stage=stage)
     frame.set(event, vals)
   return TypeDetailSeries(type_name, frame, list(events_units), metric)
 
