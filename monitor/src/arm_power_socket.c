@@ -36,7 +36,8 @@ static int arm_power_socket_begin(struct stats_type *type)
 
   arm_power_hwmon_close(&g_arm_power);
   if (arm_power_hwmon_open(&g_arm_power, ARM_POWER_HWMON_SYSFS_ROOT) <= 0) {
-    monitor_log_info("host_power_socket: no ACPI '<Name> Power Socket <N>' meters; disabled\n");
+    /* Every x86 node lands here; the startup summary already lists the type as disabled. */
+    monitor_log_debug("host_power_socket: no ACPI '<Name> Power Socket <N>' meters; disabled\n");
     type->st_enabled = 0;
     return 0;
   }
