@@ -160,7 +160,7 @@ Catalog upgrade is **independent** of Stage 1 decompress / Stage 2 `0032`; do it
 
 Stage 2 ships in a **separate image** that includes migration `0032_host_data_unique_include_dev_db`. It replaces the live 4-column UNIQUE with `UNIQUE (time, host, type, event, dev)` and restores `add_compression_policy('host_data', compress_after => INTERVAL '8d')`. Migration `0032` also pins the restored policy to the daily 01:00 fixed schedule (INI `timezone`, no `max_runtime`) via `hpcperfstats.site.lib.machine.compression_schedule`, the same schedule as `0040`; expect `next_start` at 01:00 local, not a floating 12 hour interval.
 
-**Do not run Stage 2 until** that site’s Stage 1 done gate is green (`compressed_chunks = 0`) and, on **hpcperfstats02**, the PK normalize block above has left only the 4-column UNIQUE (no `contype = p`). Migration `0032` does **not** drop or rewrite primary keys; if a multi-column PK remains, migrate soft-skips with a NOTICE and leaves uniqueness unchanged.
+**Do not run Stage 2 until** that site’s Stage 1 done gate is green (`compressed_chunks = 0`) and, on **hpcperfstats02**, the PK normalize block above has left only the 4-column UNIQUE (no `contype = p`). Migration `0032` does **not** drop or rewrite primary keys; if a multi-column PK remains, migrate fails and `0032` stays unapplied until the operator normalizes it.
 
 **Compose cwd (prose only):** same as Stage 1 — checkout with `docker-compose.yaml`. Do not prefix paste blocks with `cd`.
 
@@ -245,7 +245,9 @@ docker compose -p hpcperfstats -f docker-compose.yaml run --rm web bash -lc 'pyt
 docker compose -p hpcperfstats -f docker-compose.yaml up -d --no-deps web pipeline
 ```
 
-If you accidentally start `web` before the gates pass, `0032` is written to **soft-skip** (NOTICE + success) when compressed chunks remain or a multi-column PK is still present — uniqueness will not change until you fix the gate and re-run migrate (one-shot again). A missing NULL-backfill marker is different: `0032` **raises** and stays unapplied, so a started `web` crash-loops until the backfill finishes. Keep `web` stopped until the marker is present.
+Every `0032` gate fails closed: compressed chunks remaining, a multi-column PK still present, or a missing NULL-backfill marker makes migrate **raise**, and `0032` stays unapplied so the next migrate retries it. A started `web` therefore restarts until the gate is fixed; keep `web` stopped until all gates pass.
+
+**Sites that applied an older `0032`.** Before this change the compressed-chunk and PK gates printed a NOTICE and returned, so Django recorded `0032` as applied with no 5-column UNIQUE and no compression policy (hpcperfstats03). `0040`'s schedule pin then found no policy and did nothing either. Check with the post-check below: if the 5-column UNIQUE is missing while `django_migrations` lists `0032`, run `0032`'s SQL by hand (gates included) and re-pin the schedule; do not `migrate --fake` backwards, which would unrecord every later migration too.
 
 ### `0045` duplicate-index drop
 

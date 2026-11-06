@@ -220,12 +220,25 @@ def test_0032_sets_statement_timeout_zero():
   assert "SET statement_timeout = 0" in sql
 
 
-def test_0032_skips_when_compressed_chunks_present():
-  sql = _0032_sql().lower()
-  assert "is_compressed" in sql
-  assert "raise notice" in sql
-  assert "skipping" in sql
-  assert "compressed" in sql
+def test_0032_gates_fail_closed_never_soft_skip():
+  """Regression (hpcperfstats03): the compressed-chunk and multi-column PK
+  gates did RAISE NOTICE + RETURN, so Django recorded 0032 applied with no
+  5-col UNIQUE and no compression policy, and no later migrate retried it.
+  Every gate must RAISE EXCEPTION so 0032 stays unapplied."""
+  sql = _0032_sql()
+  for gate in (
+    "IF COALESCE(compressed_n, 0) > 0 THEN",
+    "IF multi_col_pk THEN",
+  ):
+    body = sql[sql.index(gate) : sql.index("END IF;", sql.index(gate))]
+    assert "RAISE EXCEPTION" in body, gate
+    assert "RETURN" not in body, gate
+    assert "stays unapplied" in body, gate
+  assert "skipping" not in sql
+  # The only early RETURN left is the no-host_data-table case (fresh DB).
+  assert sql.count("RETURN;") == 1
+  first = sql.index("RETURN;")
+  assert "table_name = 'host_data'" in sql[first - 200 : first]
 
 
 def test_0032_does_not_drop_primary_key():
@@ -505,18 +518,33 @@ def test_compression_schedule_job_lookup_param_is_a_valid_array_literal():
   assert b"policy_compression" in literal
 
 
-def test_compression_schedule_soft_skips_without_extension_policy_or_pg(
+def test_compression_schedule_skips_only_without_timescale_or_pg(
   monkeypatch,
 ):
   mod = _compression_schedule_module()
   monkeypatch.setattr(mod.cfg, "get_timezone", lambda: "UTC")
   for cursor, vendor in (
     (_FakeCursor(extension=False), "postgresql"),
-    (_FakeCursor(job_id=None), "postgresql"),
     (_FakeCursor(), "sqlite"),
   ):
     mod.pin_compression_schedule(None, _FakeEditor(cursor, vendor))
     assert not [e for e in cursor.executed if "alter_job" in e[0]]
+
+
+def test_compression_schedule_pin_raises_when_policy_missing(monkeypatch):
+  """Regression (hpcperfstats03): 0032 soft-skipped, so 0040's pin found no
+  policy, did nothing and was recorded applied with the schedule unpinned.
+  With Timescale present a missing policy must raise; the reverse step
+  stays tolerant."""
+  mod = _compression_schedule_module()
+  monkeypatch.setattr(mod.cfg, "get_timezone", lambda: "UTC")
+  cursor = _FakeCursor(job_id=None)
+  with pytest.raises(RuntimeError, match="compression policy missing"):
+    mod.pin_compression_schedule(None, _FakeEditor(cursor))
+  assert not [e for e in cursor.executed if "alter_job" in e[0]]
+  restore = _FakeCursor(job_id=None)
+  mod.restore_compression_schedule(None, _FakeEditor(restore))
+  assert not [e for e in restore.executed if "alter_job" in e[0]]
 
 
 def test_compression_schedule_restore_is_floating_12_hours():

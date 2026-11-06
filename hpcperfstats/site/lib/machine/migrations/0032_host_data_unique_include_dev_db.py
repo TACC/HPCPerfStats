@@ -5,10 +5,13 @@ This migration applies the matching DB UNIQUE after operators decompress all
 ``host_data`` chunks (and, on hpcperfstats02-class sites, drop the aberrant
 4-column PK outside migrate — see ``docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md``).
 
-Soft-skips (NOTICE + success) when compressed chunks remain or a multi-column
-PRIMARY KEY is still present so accidental startup migrate under
-``restart: always`` does not crash-loop ``web``. Long UNIQUE builds should use
-the operator one-shot migrate path with ``web`` stopped.
+Raises (migrate fails, 0032 stays unapplied) when compressed chunks remain, a
+multi-column PRIMARY KEY is still present, or the NULL ``dev`` backfill marker
+is missing. These gates used to soft-skip with a NOTICE, which let Django
+record 0032 applied with no UNIQUE and no compression policy, and no later
+migrate retried it (hpcperfstats03). A started ``web`` now restarts until the
+gate is fixed; long UNIQUE builds should use the operator one-shot migrate
+path with ``web`` stopped.
 """
 from django.db import migrations
 
@@ -53,10 +56,9 @@ class Migration(migrations.Migration):
              WHERE hypertable_name = 'host_data';
 
             IF COALESCE(compressed_n, 0) > 0 THEN
-              RAISE NOTICE
-                '0032_host_data_unique_include_dev_db: skipping — % compressed host_data chunk(s); decompress first (see docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md)',
+              RAISE EXCEPTION
+                '0032_host_data_unique_include_dev_db: % compressed host_data chunk(s); decompress first, 0032 stays unapplied (docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md)',
                 compressed_n;
-              RETURN;
             END IF;
 
             SELECT EXISTS (
@@ -68,9 +70,8 @@ class Migration(migrations.Migration):
             ) INTO multi_col_pk;
 
             IF multi_col_pk THEN
-              RAISE NOTICE
-                '0032_host_data_unique_include_dev_db: skipping — multi-column PRIMARY KEY still on host_data; operator must normalize (hpcperfstats02 path in docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md)';
-              RETURN;
+              RAISE EXCEPTION
+                '0032_host_data_unique_include_dev_db: multi-column PRIMARY KEY still on host_data; normalize first, 0032 stays unapplied (hpcperfstats02 path in docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md)';
             END IF;
 
             -- NULL dev -> '' is the operator backfill
@@ -79,8 +80,7 @@ class Migration(migrations.Migration):
             -- scans every chunk, hours to a day on large sites. NULLs are
             -- distinct in a UNIQUE, so a leftover NULL row would sit beside a
             -- re-ingested '' row. The script writes this column comment only
-            -- after every chunk succeeded; fail closed (not a soft-skip, which
-            -- would record 0032 as applied) so migrate retries after backfill.
+            -- after every chunk succeeded.
             IF EXISTS (SELECT 1 FROM host_data)
                AND col_description(
                      'public.host_data'::regclass,

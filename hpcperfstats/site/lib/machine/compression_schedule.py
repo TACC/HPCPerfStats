@@ -7,7 +7,10 @@ fixed schedule at 01:00 in the INI ``timezone`` (DST-safe) with no
 back.
 
 Bounded catalog change only (``alter_job``): no chunk is compressed or touched,
-and it soft-skips when the extension or the policy is absent. Shared by
+and it skips only without Timescale. With Timescale but no policy the pin
+raises, so the migration stays unapplied instead of being recorded with the
+schedule unpinned (hpcperfstats03: 0032 had skipped, so 0040 found no policy
+and silently did nothing). Shared by
 migration ``0040`` and the ``0032`` Phase 2 policy restore so a re-added policy
 gets the same schedule.
 
@@ -59,24 +62,35 @@ SELECT alter_job(
 """
 
 
-def _policy_job_id(cursor: Any) -> int | None:
+def _policy_job_id(cursor: Any, *, required: bool = False) -> int | None:
   """
-  Return the host_data compression policy job id, or None when absent.
+  Return the host_data compression policy job id.
 
   Args:
     cursor (Any): Open database cursor.
+    required (bool): Raise instead of returning None when Timescale is
+      installed but the policy is missing (the forward pin needs it).
 
   Returns:
-    int | None: Policy job id; None without Timescale or the policy.
+    int | None: Policy job id; None without Timescale, or without the policy
+      when ``required`` is False.
+
+  Raises:
+    RuntimeError: ``required`` and Timescale has no host_data policy job.
 
   Examples:
-    >>> _policy_job_id(None)  # doctest: +SKIP
+    >>> _policy_job_id(None, required=True)  # doctest: +SKIP
   """
   cursor.execute("SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'")
   if cursor.fetchone() is None:
     return None
   cursor.execute(FIND_POLICY_JOB, [list(COMPRESSION_PROCS)])
   row = cursor.fetchone()
+  if row is None and required:
+    raise RuntimeError(
+      "host_data compression policy missing; 0032 did not really run, so "
+      "this migration stays unapplied (docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md)"
+    )
   return None if row is None else int(row[0])
 
 
@@ -91,6 +105,11 @@ def pin_compression_schedule(apps: Any, schema_editor: Any) -> None:
   Returns:
     None
 
+  Raises:
+    RuntimeError: Timescale is installed but host_data has no compression
+      policy, so there is nothing to pin and the migration must not be
+      recorded as applied.
+
   Examples:
     >>> pin_compression_schedule(None, None)  # doctest: +SKIP
   """
@@ -100,7 +119,7 @@ def pin_compression_schedule(apps: Any, schema_editor: Any) -> None:
     return
   tz = str(cfg.get_timezone())
   with conn.cursor() as cursor:
-    job_id = _policy_job_id(cursor)
+    job_id = _policy_job_id(cursor, required=True)
     if job_id is not None:
       cursor.execute(PIN_DAILY_SCHEDULE, [job_id, tz, tz, tz])
 
