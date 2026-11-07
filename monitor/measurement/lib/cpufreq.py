@@ -2,8 +2,9 @@
 
 The same daemon costs ~8 core-s/h under ``performance`` and ~109 under ``ondemand`` on
 c122-018 (finding 18): the per-hour cost is a property of the governor, while wakeups/s is
-not. So the harness runs one full leg set per governor and restores every CPU's original
-governor on exit.
+not. So the harness pins the governor for each leg set and restores every CPU's original
+governor on exit. The default is ``performance`` only (one leg set); ``dynamic`` and other
+names are opt-in for a cross-governor comparison.
 
 ``dynamic`` names the driver's demand-based governor (D25):
 
@@ -27,7 +28,7 @@ from typing import Any
 SYSFS_CPU = "/sys/devices/system/cpu"
 DYNAMIC = "dynamic"
 NONE = "none"
-DEFAULT_GOVERNORS = "performance,dynamic"
+DEFAULT_GOVERNORS = "performance"
 DYNAMIC_BY_DRIVER = {
     "cppc_cpufreq": "ondemand",
     "acpi-cpufreq": "ondemand",

@@ -145,7 +145,8 @@ def test_execute_full_run_on_fake_host(fake_host):
     args = orchestrator.build_parser().parse_args([
         "--rpm", str(fake_host["rpm"]), "--out", str(fake_host["run"]), "--leg-seconds", "3",
         "--settle-seconds", "2", "--fwq-seconds", "1", "--blocks", "1", "--seed", "5",
-        "--fwq-quantum-us", "200", "--force", "--rmq-mgmt-port", "1", "--fwq-cpus", "0"])
+        "--fwq-quantum-us", "200", "--force", "--rmq-mgmt-port", "1", "--fwq-cpus", "0",
+        "--governors", "performance,dynamic"])
     run_obj = orchestrator.Run(args)
     applied = []
     real_set = orchestrator.cpufreq.set_all

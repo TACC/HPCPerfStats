@@ -50,6 +50,17 @@ def test_run_overhead_profile_dry_run():
     assert "CADENCE sample_freq=60" in sweep.stdout
 
 
+def test_dry_run_default_is_one_performance_leg_set():
+    """Default --governors is performance only: one leg set, no ondemand/powersave legs."""
+    res = _dry("--seed", "7")
+    assert res.returncode == 0, res.stderr
+    line = next(ln for ln in res.stdout.splitlines() if ln.startswith("Governor leg sets:"))
+    assert line.startswith("Governor leg sets: performance (")
+    assert "ondemand" not in res.stdout and "powersave" not in res.stdout
+    legs = [ln for ln in res.stdout.splitlines() if " OFF" in ln or " ALL" in ln]
+    assert legs and not any("dynamic" in ln for ln in legs)
+
+
 def test_dry_run_unfittable_aborts_with_min_hours():
     res = _dry("--max-hours", "1")
     assert res.returncode != 0

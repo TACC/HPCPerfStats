@@ -11,8 +11,9 @@ under /run (gone on reboot, removed by the restore path):
   VARIANT(V)      as SOLO(base) with one measurement-only daemon knob (driver_map.VARIANTS,
                   e.g. HPCPERFSTATS_LIKWID_GRACE_SCF=0); paired with SOLO(base) per block
 
-Governor leg sets (D13, D25): ``--governors performance,dynamic`` (default) repeats the whole
-block schedule once per governor; before each set every CPU's ``scaling_governor`` is written
+Governor leg sets (D13, D25): ``--governors performance`` (default) runs one block schedule with
+every CPU pinned to ``performance``; a comma list (e.g. ``performance,dynamic``) repeats the
+whole schedule once per governor; before each set every CPU's ``scaling_governor`` is written
 (``dynamic`` resolves per cpufreq driver, lib/cpufreq.py) and the cleanup path writes every
 CPU's original governor back. A governor the driver does not offer fails preflight before any
 change. Preflight also refuses a node whose CPUs are busy outside the daemon (> 1 core) unless
@@ -317,7 +318,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--amqp-port", type=int, help="broker port (default: conf `port` or 5672)")
     p.add_argument("--rmq-mgmt-port", type=int, default=rmq_cleanup.DEFAULT_MGMT_PORT)
     p.add_argument("--governors", default=cpufreq.DEFAULT_GOVERNORS,
-                   help="comma list; one full leg set per governor (default performance,dynamic; "
+                   help="comma list; one full leg set per governor (default performance; "
                         "dynamic = ondemand on cppc_cpufreq/acpi-cpufreq, powersave on "
                         "intel_pstate/amd-pstate-epp; `none` leaves the governor alone)")
     p.add_argument("--allow-busy-node", action="store_true",

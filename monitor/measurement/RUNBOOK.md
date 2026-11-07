@@ -52,15 +52,19 @@ overlay, IB MAD). Without it the driver groups fall back to x86 defaults.
 
 **Governors (D13, D25).** The per-hour cost depends on the cpufreq governor: on c122-018 the
 same daemon used ~8 core-s/h under `performance` and ~109 under `ondemand` at the same ~620
-wakeups/s (finding 18). So every profile runs **one full leg set per governor**:
-`--governors performance,dynamic` (default). `dynamic` resolves per `scaling_driver`:
+wakeups/s (finding 18). So every profile pins the governor: the default `--governors
+performance` runs **one leg set** with every CPU at `performance` (the low-clock `ondemand`
+cost was measured once in finding 18 and is not re-sampled by default). A comma list runs one
+full leg set per governor, e.g. `--governors performance,dynamic`. `dynamic` resolves per
+`scaling_driver`:
 `ondemand` on `cppc_cpufreq` (Grace), `acpi-cpufreq` and passive `amd-pstate`; `powersave` on
 `intel_pstate` and `amd-pstate-epp` (amd-pstate active mode), whose `powersave` is the dynamic
 HWP/EPP policy. Explicit names work too (`--governors performance,schedutil`); `--governors
 none` leaves the governor alone (one unnamed set; only for nodes without cpufreq). The
 harness writes `scaling_governor` for every CPU before each set and writes each CPU's
-original governor back on every exit path; `restore.sh` has the same lines. With the default
-`--max-hours 12` both sets fit by shortening legs to 600 s; `--max-hours 24` keeps 1800 s legs.
+original governor back on every exit path; `restore.sh` has the same lines. With two sets
+and the default `--max-hours 12` both fit by shortening legs to 600 s; `--max-hours 24` keeps
+1800 s legs.
 
 ### What it does
 

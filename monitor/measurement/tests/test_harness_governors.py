@@ -35,7 +35,7 @@ def test_dynamic_resolves_per_driver(driver, dynamic):
 def test_dynamic_unknown_driver_and_spec_parsing():
     with pytest.raises(cpufreq.GovernorError, match="no dynamic governor known"):
         cpufreq.resolve(["dynamic"], "weird_cpufreq")
-    assert cpufreq.parse_spec(None) == ["performance", "dynamic"]
+    assert cpufreq.parse_spec(None) == ["performance"]
     assert cpufreq.parse_spec(" Performance , performance,schedutil") == ["performance", "schedutil"]
     assert cpufreq.parse_spec("none") == []
     with pytest.raises(cpufreq.GovernorError):
@@ -45,7 +45,9 @@ def test_dynamic_unknown_driver_and_spec_parsing():
 def test_plan_governors_checks_every_cpu_offers_it(tmp_path):
     root = fake_cpufreq(tmp_path / "intel", driver="intel_pstate", governor="powersave",
                         available="performance powersave")
-    assert cpufreq.plan_governors(None, root)["governors"] == ["performance", "powersave"]
+    assert cpufreq.plan_governors(None, root)["governors"] == ["performance"]
+    assert cpufreq.plan_governors("performance,dynamic", root)["governors"] == [
+        "performance", "powersave"]
     with pytest.raises(cpufreq.GovernorError, match="ondemand not offered by cpufreq driver intel_pstate"):
         cpufreq.plan_governors("performance,ondemand", root)
     with pytest.raises(cpufreq.GovernorError, match="--governors none"):

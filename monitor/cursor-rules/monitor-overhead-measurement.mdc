@@ -73,8 +73,10 @@ Applies to `monitor/measurement/**` (harness, sampler, FWQ, report) and the
    `bin/compare_schema_keys.py BASE CAND [--type nvidia_gpu]` exits 1 when a key was removed.
 12. **Every profile names its governor and runs per governor** (D13, D25). The same daemon used
    ~8 core-s/h under `performance` and ~109 under `ondemand` at the same ~620 wakeups/s
-   (c122-018, finding 18). `--governors performance,dynamic` (default) runs one full leg set
-   per governor; `dynamic` = `ondemand` on `cppc_cpufreq` / `acpi-cpufreq` / passive
+   (c122-018, finding 18). The default `--governors performance` runs one leg set with every
+   CPU pinned to `performance` (user decision 2026-11-06: no low-MHz `ondemand` re-sampling by
+   default). A comma list (`performance,dynamic`) runs one full leg set per governor;
+   `dynamic` = `ondemand` on `cppc_cpufreq` / `acpi-cpufreq` / passive
    `amd-pstate`, `powersave` on `intel_pstate` / `amd-pstate-epp` (`lib/cpufreq.py`). The
    harness writes `scaling_governor` for every CPU before each set and restores every CPU's
    original governor on every exit path (and in `restore.sh`); a governor the driver does not
