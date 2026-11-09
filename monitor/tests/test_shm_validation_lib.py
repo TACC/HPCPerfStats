@@ -1088,20 +1088,47 @@ class Round2ShmChecksTests(unittest.TestCase):
 
     def test_live_power_socket_matches_hwmon(self) -> None:
         schema = {"host_power_socket": PSOCK_KEYS}
-        good = "NOW 0 h\nhost_power_socket 0 @full 44 88 6 0\n"
+        good = "NOW - h\nhost_power_socket 0 @full 44 88 6 0\n"
         self.assertEqual(self._live(schema, good), [])
-        off = self._live(schema, "NOW 0 h\nhost_power_socket 0 @full 90 88 6 0\n")
+        off = self._live(schema, "NOW - h\nhost_power_socket 0 @full 90 88 6 0\n")
         self.assertTrue(any("cpu_power_w: emitted=90 W live=44.0 W" in w for w in off), off)
-        ghost = self._live(schema, "NOW 0 h\nhost_power_socket 0 @full 44 88 6 40\n")
+        ghost = self._live(schema, "NOW - h\nhost_power_socket 0 @full 44 88 6 40\n")
         self.assertTrue(any("module_power_w=40 W but no live meter" in w for w in ghost), ghost)
         short = self._live(schema, good, sockets=("0", "1"))
         self.assertTrue(any("rows ['0'] != live devices ['0', '1']" in w for w in short), short)
-        missing = self._live({}, "NOW 0 h\n")
+        missing = self._live({}, "NOW - h\n")
         self.assertTrue(any("host_power_socket missing from schema" in w for w in missing))
+
+    def test_live_required_types_skip_per_job_full_payload(self) -> None:
+        """Shared node with jobs: `full` holds a jid payload, node-wide rows live in `-`."""
+        self.assertEqual(self._live({}, "NOW job42 h\n", gpus=("0",)), [])
+        self.assertTrue(self._live({}, "NOW - h\n", gpus=("0",)))
+
+    def test_conditional_types_absent_without_mount_or_job(self) -> None:
+        """c122-018 2026-11-09: no Lustre/BeeGFS mount, no job -> not 'missing from full payload'."""
+        cond = ["beegfs_client", "lustre_llite", "lustre_mdc", "lustre_osc", "host_mem_job",
+                "host_proc", "host_nfs", "host_tmpfs"]
+        schema = {t: ["x"] for t in cond}
+        schema["host_vm"] = ["x"]
+        manifest = _round2_manifest(schema)
+        body = "1234567890.0 - h\nhost_vm - @full 1\n"
+
+        def warns(m):
+            return check_plausibility(m, schema, full_body=body, fast_body=None,
+                                      schema_body=None, no_freshness=True, strict=False)[1]
+
+        self.assertEqual(warns(manifest), [])
+        manifest["types"]["lustre_osc"]["devices"] = ["/scratch"]
+        self.assertEqual(warns(manifest), ["WARN plausibility type 'lustre_osc' missing from full payload"])
+        manifest["types"]["lustre_osc"].pop("devices")
+        no_vm = "1234567890.0 - h\n"
+        got = check_plausibility(manifest, schema, full_body=no_vm, fast_body=None,
+                                 schema_body=None, no_freshness=True, strict=False)[1]
+        self.assertEqual(got, ["WARN plausibility type 'host_vm' missing from full payload"])
 
     def test_live_nvidia_gpu_rows_and_mem_total(self) -> None:
         schema = {"nvidia_gpu": GPU_KEYS}
-        body = "NOW 0 h\nnvidia_gpu 0 @full 0 189471 600 188300\n"
+        body = "NOW - h\nnvidia_gpu 0 @full 0 189471 600 188300\n"
         self.assertEqual(self._live(schema, body, sockets=(), gpus=("0",),
                                     smi={"0": 189471}), [])
         wrong = self._live(schema, body, sockets=(), gpus=("0",), smi={"0": 97871})
@@ -1109,9 +1136,9 @@ class Round2ShmChecksTests(unittest.TestCase):
                             for w in wrong), wrong)
         two = self._live(schema, body, sockets=(), gpus=("0", "1"), smi={"0": 189471})
         self.assertTrue(any("nvidia_gpu rows ['0'] != live devices" in w for w in two), two)
-        absent = self._live({}, "NOW 0 h\n", sockets=(), gpus=("0",))
+        absent = self._live({}, "NOW - h\n", sockets=(), gpus=("0",))
         self.assertTrue(any("nvidia_gpu missing from schema" in w for w in absent), absent)
-        self.assertEqual(self._live({}, "NOW 0 h\n", sockets=(), gpus=("0",),
+        self.assertEqual(self._live({}, "NOW - h\n", sockets=(), gpus=("0",),
                                     gpu_built=False), [])
 
 

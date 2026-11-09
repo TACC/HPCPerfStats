@@ -21,6 +21,11 @@ NVIDIA_GPU_PERCENT_KEYS = (
     "fp16_active", "tensor_active", "tensor_imma_active", "tensor_hmma_active",
     "tensor_dfma_active", "gpu_dram_active",
 )
+# Rows only exist with /tmp on tmpfs, a Lustre/BeeGFS/NFS mount, or a running job.
+CONDITIONAL_TYPES = frozenset({
+    "host_tmpfs", "host_nfs", "beegfs_client", "lustre_llite", "lustre_mdc", "lustre_osc",
+    "host_mem_job", "host_proc",
+})
 POWER_SOCKET_MAX_W = 2000
 POWER_SOCKET_SLACK_W = 2  # meters average over different windows
 
@@ -114,17 +119,10 @@ def check_plausibility(
             allowed_tier="@full" if enable_slow else None,
         )
         for type_name in schema_by_type:
-            if type_name not in full_rows:
-                # host_tmpfs only emits when /tmp is tmpfs (tmpfs.c). Schema may
-                # still list the type when compiled in; skip presence WARN unless
-                # manifest devices (from probe_tmpfs_devices) expect /tmp.
-                if type_name == "host_tmpfs":
-                    devices = (
-                        manifest.get("types", {}).get("host_tmpfs", {}).get("devices")
-                        or []
-                    )
-                    if not devices:
-                        continue
+            # Mount- or job-scoped types emit no rows without a mount/job; warn only when
+            # the manifest's probed devices expect some.
+            devices = manifest.get("types", {}).get(type_name, {}).get("devices")
+            if type_name not in full_rows and not (type_name in CONDITIONAL_TYPES and not devices):
                 warn(f"type {type_name!r} missing from full payload")
 
         for type_name, rows in full_rows.items():

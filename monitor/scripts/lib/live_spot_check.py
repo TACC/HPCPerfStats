@@ -102,10 +102,13 @@ def run_live_spot_checks(
 
     # Types the hardware says must be there (not derived from the schema under test).
     # host_power_socket is compiled into every build; nvidia_gpu only with configure gpu.
+    # Shared nodes mirror a per-job payload into `full` while jobs run; node-wide rows
+    # (host_power_socket, D38) and unassigned GPUs only appear in the `-` payload.
     built_gpu = manifest.get("compile_capabilities", {}).get("configure", {}).get("gpu", True)
+    node_wide = (full_body.lstrip().split("\n", 1)[0].split()[1:2] or [""])[0] == "-"
     for type_name, probe, built in (
-        ("host_power_socket", probe_power_socket_devices, True),
-        ("nvidia_gpu", probe_nvidia_gpu_devices, built_gpu),
+        ("host_power_socket", probe_power_socket_devices, node_wide),
+        ("nvidia_gpu", probe_nvidia_gpu_devices, built_gpu and node_wide),
     ):
         devs = probe() if built else []
         if not devs:

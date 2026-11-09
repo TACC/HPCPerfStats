@@ -322,7 +322,12 @@ PY
       echo "WARN: golden opted in but no matching shm_*_${slug} files under tests/expected (or GOLDEN_DIR)"
     fi
   fi
-  if ! "${py}" "${monitor_dir}/scripts/validate_shm_messages.py" "${validate_args[@]}"; then
+  validate_out="$(mktemp)"
+  if ! "${py}" "${monitor_dir}/scripts/validate_shm_messages.py" "${validate_args[@]}" 2>&1 \
+    | tee "${validate_out}"; then
+    # GPU hint only when the failure names nvidia_gpu (any validator failure used to print it).
+    grep -q nvidia_gpu "${validate_out}" || { rm -f "${validate_out}"; return 1; }
+    rm -f "${validate_out}"
     echo "HINT: nvidia_gpu expected devices but no rows: check the journal for 'nvidia_gpu: source'" >&2
     echo "      (NVML+GPM vs DCGM and why), then on the DCGM path 'field group creation failed' /" >&2
     echo "      stage=6 and Driver/stack probe libdcgm=." >&2
@@ -334,6 +339,7 @@ PY
     return 1
   fi
 
+  rm -f "${validate_out}"
   echo "PASS: validate_shm_messages (slug=${slug})"
 }
 
