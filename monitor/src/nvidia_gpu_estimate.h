@@ -14,7 +14,9 @@ struct nvidia_gpu_estimate_input {
 void nvidia_gpu_estimate_rates(const struct nvidia_gpu_estimate_input *in, double *flops_rate_out,
                                double *mem_bw_rate_out);
 
-/* Monotonic DCGM link-byte delta; resets baseline when counter decreases. */
-unsigned long long nvidia_gpu_link_u64_delta(uint64_t cur, uint64_t *prev);
+/* DCGM PROF 1009-1012 and GPM PCIe/NvLink are byte RATES (B/s), not counters: add
+ * rate x delta_us into *acc (saturating) and return the bytes added; 0 when delta_us <= 0. */
+unsigned long long nvidia_gpu_link_rate_integrate(uint64_t rate_bps, long long delta_us,
+                                                  unsigned long long *acc);
 
 #endif

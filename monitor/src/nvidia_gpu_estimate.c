@@ -1,20 +1,21 @@
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #include "nvidia_gpu_estimate.h"
 
-unsigned long long nvidia_gpu_link_u64_delta(uint64_t cur, uint64_t *prev)
+unsigned long long nvidia_gpu_link_rate_integrate(uint64_t rate_bps, long long delta_us,
+                                                  unsigned long long *acc)
 {
-  if (prev == NULL)
-    return 0;
-  if (cur >= *prev) {
-    unsigned long long d = (unsigned long long)(cur - *prev);
+  double add;
+  unsigned long long bytes;
 
-    *prev = cur;
-    return d;
-  }
-  *prev = cur;
-  return (unsigned long long)cur;
+  if (acc == NULL || delta_us <= 0)
+    return 0ULL;
+  add = (double)rate_bps * ((double)delta_us / 1000000.0);
+  bytes = (add >= (double)ULLONG_MAX) ? ULLONG_MAX : (unsigned long long)(add + 0.5);
+  *acc = (ULLONG_MAX - *acc < bytes) ? ULLONG_MAX : *acc + bytes;
+  return bytes;
 }
 
 #define NVIDIA_GPU_APPROX_PEAK_FLOPS_PER_S 60000000000000.0

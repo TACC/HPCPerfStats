@@ -27,11 +27,15 @@ static unsigned long long g_gpu_est_mem_read_bytes[DCGM_MAX_NUM_DEVICES];
 static unsigned long long g_gpu_est_mem_write_bytes[DCGM_MAX_NUM_DEVICES];
 static unsigned long long g_gpu_est_mem_total_bytes[DCGM_MAX_NUM_DEVICES];
 static unsigned long long g_gpu_io_link_total_bytes[DCGM_MAX_NUM_DEVICES];
-static uint64_t g_io_prev_pcie_tx[DCGM_MAX_NUM_DEVICES];
-static uint64_t g_io_prev_pcie_rx[DCGM_MAX_NUM_DEVICES];
-static uint64_t g_io_prev_nvlink_tx[DCGM_MAX_NUM_DEVICES];
-static uint64_t g_io_prev_nvlink_rx[DCGM_MAX_NUM_DEVICES];
-static unsigned char g_io_link_baseln[DCGM_MAX_NUM_DEVICES];
+/* Integrated link bytes per GPU, in NVIDIA_GPU_LINK_* order (published as the E counters). */
+enum {
+  NVIDIA_GPU_LINK_PCIE_TX,
+  NVIDIA_GPU_LINK_PCIE_RX,
+  NVIDIA_GPU_LINK_NVLINK_TX,
+  NVIDIA_GPU_LINK_NVLINK_RX,
+  NVIDIA_GPU_LINK_COUNT
+};
+static unsigned long long g_gpu_link_bytes[DCGM_MAX_NUM_DEVICES][NVIDIA_GPU_LINK_COUNT];
 static long long g_gpu_prev_collect_us = 0;
 /* 1 while the NVML+GPM source serves every GPU; set by begin, cleared for good by a mid-run
  * NVML failure (round 2 J2, D14: the DCGM path takes over on the next collect). */
@@ -52,32 +56,20 @@ static unsigned long long ull_add_sat(unsigned long long a, unsigned long long b
   return (ULLONG_MAX - a < b) ? ULLONG_MAX : (a + b);
 }
 
-static void nvidia_gpu_io_link_accumulate(unsigned int gid, const dcgm_data_t *row)
+static void nvidia_gpu_io_link_accumulate(unsigned int gid, const dcgm_data_t *row,
+                                          long long delta_us)
 {
+  const uint64_t rates[NVIDIA_GPU_LINK_COUNT] = {row->prof_pcie_tx_bytes, row->prof_pcie_rx_bytes,
+                                                 row->prof_nvlink_tx_bytes,
+                                                 row->prof_nvlink_rx_bytes};
+  int k;
+
   if (gid >= DCGM_MAX_NUM_DEVICES)
     return;
-
-  if (!g_io_link_baseln[gid]) {
-    g_io_prev_pcie_tx[gid] = row->prof_pcie_tx_bytes;
-    g_io_prev_pcie_rx[gid] = row->prof_pcie_rx_bytes;
-    g_io_prev_nvlink_tx[gid] = row->prof_nvlink_tx_bytes;
-    g_io_prev_nvlink_rx[gid] = row->prof_nvlink_rx_bytes;
-    g_io_link_baseln[gid] = 1;
-    return;
-  }
-
-  g_gpu_io_link_total_bytes[gid] =
-      ull_add_sat(g_gpu_io_link_total_bytes[gid],
-                  nvidia_gpu_link_u64_delta(row->prof_pcie_tx_bytes, &g_io_prev_pcie_tx[gid]));
-  g_gpu_io_link_total_bytes[gid] =
-      ull_add_sat(g_gpu_io_link_total_bytes[gid],
-                  nvidia_gpu_link_u64_delta(row->prof_pcie_rx_bytes, &g_io_prev_pcie_rx[gid]));
-  g_gpu_io_link_total_bytes[gid] =
-      ull_add_sat(g_gpu_io_link_total_bytes[gid],
-                  nvidia_gpu_link_u64_delta(row->prof_nvlink_tx_bytes, &g_io_prev_nvlink_tx[gid]));
-  g_gpu_io_link_total_bytes[gid] =
-      ull_add_sat(g_gpu_io_link_total_bytes[gid],
-                  nvidia_gpu_link_u64_delta(row->prof_nvlink_rx_bytes, &g_io_prev_nvlink_rx[gid]));
+  for (k = 0; k < NVIDIA_GPU_LINK_COUNT; k++)
+    g_gpu_io_link_total_bytes[gid] =
+        ull_add_sat(g_gpu_io_link_total_bytes[gid],
+                    nvidia_gpu_link_rate_integrate(rates[k], delta_us, &g_gpu_link_bytes[gid][k]));
 }
 
 static int list_field_values(unsigned int gpu_id, dcgmFieldValue_v1 *values, int num_values,
@@ -195,7 +187,7 @@ static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row, u
   est_in.mem_util = row->mem_util;
   nvidia_gpu_estimate_rates(&est_in, &flops_rate, &mem_bw_rate);
 
-  nvidia_gpu_io_link_accumulate(gid, row);
+  nvidia_gpu_io_link_accumulate(gid, row, delta_us);
 
   if (delta_us > 0) {
     double dt_sec = (double)delta_us / 1000000.0;
@@ -229,10 +221,10 @@ static int nvidia_gpu_collect_dev(struct stats *stats, const dcgm_data_t *row, u
   stats_set(stats, "tensor_hmma_active", DBL_TO_LLU_PERCENT(row->tensor_hmma_active));
   stats_set(stats, "tensor_dfma_active", DBL_TO_LLU_PERCENT(row->tensor_dfma_active));
   stats_set(stats, "gpu_dram_active", DBL_TO_LLU_PERCENT(row->dram_active));
-  stats_set(stats, "gpu_pcie_tx_bytes", row->prof_pcie_tx_bytes);
-  stats_set(stats, "gpu_pcie_rx_bytes", row->prof_pcie_rx_bytes);
-  stats_set(stats, "gpu_nvlink_tx_bytes", row->prof_nvlink_tx_bytes);
-  stats_set(stats, "gpu_nvlink_rx_bytes", row->prof_nvlink_rx_bytes);
+  stats_set(stats, "gpu_pcie_tx_bytes", g_gpu_link_bytes[gid][NVIDIA_GPU_LINK_PCIE_TX]);
+  stats_set(stats, "gpu_pcie_rx_bytes", g_gpu_link_bytes[gid][NVIDIA_GPU_LINK_PCIE_RX]);
+  stats_set(stats, "gpu_nvlink_tx_bytes", g_gpu_link_bytes[gid][NVIDIA_GPU_LINK_NVLINK_TX]);
+  stats_set(stats, "gpu_nvlink_rx_bytes", g_gpu_link_bytes[gid][NVIDIA_GPU_LINK_NVLINK_RX]);
   stats_set(stats, "gpu_pcie_replay_counter", I64_TO_LLU(row->pcie_replay_counter));
   stats_set(stats, "clocks_event_reasons", I64_TO_LLU(row->clocks_event_reasons));
   stats_set(stats, "gpu_flops_rate", clamp_double_to_ull(flops_rate));

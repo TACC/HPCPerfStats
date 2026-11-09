@@ -32,10 +32,10 @@
         "DCGM tensor DFMA pipe duty cycle (in %); FP64 tensor path — excluded from gpu_flops "     \
         "fp_mix"),                                                                                 \
       X(gpu_dram_active, "", "Ratio of cycles device memory interface is active (in %)"),          \
-      X(gpu_pcie_tx_bytes, "E,W=64,U=B", "DCGM PROF PCIe transmit byte counter (monotonic)"),      \
-      X(gpu_pcie_rx_bytes, "E,W=64,U=B", "DCGM PROF PCIe receive byte counter (monotonic)"),       \
-      X(gpu_nvlink_tx_bytes, "E,W=64,U=B", "DCGM PROF NvLink transmit byte counter (monotonic)"),  \
-      X(gpu_nvlink_rx_bytes, "E,W=64,U=B", "DCGM PROF NvLink receive byte counter (monotonic)"),   \
+      X(gpu_pcie_tx_bytes, "E,W=64,U=B", "PCIe transmit bytes (integrated rate, monotonic)"),      \
+      X(gpu_pcie_rx_bytes, "E,W=64,U=B", "PCIe receive bytes (integrated rate, monotonic)"),       \
+      X(gpu_nvlink_tx_bytes, "E,W=64,U=B", "NvLink transmit bytes (integrated rate, monotonic)"),  \
+      X(gpu_nvlink_rx_bytes, "E,W=64,U=B", "NvLink receive bytes (integrated rate, monotonic)"),   \
       X(gpu_pcie_replay_counter, "E,W=64", "DCGM PCIe replay counter (monotonic)"),                \
       X(clocks_event_reasons, "", "Bitmask of GPU clock slowdown reasons"),                        \
       X(gpu_flops_rate, "U=FLOP/s", "Estimated GPU floating-point rate (FLOP/s)"),                 \

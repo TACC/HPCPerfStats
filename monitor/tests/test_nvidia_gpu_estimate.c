@@ -1,5 +1,6 @@
-/* nvidia_gpu_estimate_rates: approximate FLOP and memory-bandwidth rates. */
+/* nvidia_gpu_estimate_rates / nvidia_gpu_link_rate_integrate. */
 #include <assert.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 
@@ -49,26 +50,39 @@ static void test_mem_util_scales_bandwidth(void)
   assert(fabs(mem_bw - 0.5 * 1000000000000.0) < 1.0);
 }
 
-static void test_link_u64_delta_monotonic(void)
+static void test_link_rate_integrate_accumulates(void)
 {
-  uint64_t prev = 100ULL;
+  unsigned long long acc = 0ULL;
 
-  assert(nvidia_gpu_link_u64_delta(250ULL, &prev) == 150ULL);
-  assert(prev == 250ULL);
-  assert(nvidia_gpu_link_u64_delta(300ULL, &prev) == 50ULL);
+  /* c122-018 idle PCIe TX 175 B/s over a 60 s collect = 10500 B. */
+  assert(nvidia_gpu_link_rate_integrate(175ULL, 60000000LL, &acc) == 10500ULL);
+  /* The rate dropped (175 -> 157) but the counter still grows (was "decreased"). */
+  assert(nvidia_gpu_link_rate_integrate(157ULL, 60000000LL, &acc) == 9420ULL);
+  assert(acc == 19920ULL);
+  /* 2.653e11 B/s NvLink for 0.5 s. */
+  acc = 0ULL;
+  assert(nvidia_gpu_link_rate_integrate(265333528373ULL, 500000LL, &acc) == 132666764187ULL);
 }
 
-static void test_link_u64_delta_reset(void)
+static void test_link_rate_integrate_first_collect_and_null(void)
 {
-  uint64_t prev = 500ULL;
+  unsigned long long acc = 42ULL;
 
-  assert(nvidia_gpu_link_u64_delta(100ULL, &prev) == 100ULL);
-  assert(prev == 100ULL);
+  assert(nvidia_gpu_link_rate_integrate(1000ULL, 0LL, &acc) == 0ULL);
+  assert(nvidia_gpu_link_rate_integrate(1000ULL, -5LL, &acc) == 0ULL);
+  assert(acc == 42ULL);
+  assert(nvidia_gpu_link_rate_integrate(1000ULL, 1000000LL, NULL) == 0ULL);
 }
 
-static void test_link_u64_delta_null_prev(void)
+static void test_link_rate_integrate_saturates(void)
 {
-  assert(nvidia_gpu_link_u64_delta(100ULL, NULL) == 0ULL);
+  unsigned long long acc = ULLONG_MAX - 10ULL;
+
+  assert(nvidia_gpu_link_rate_integrate(100ULL, 1000000LL, &acc) == 100ULL);
+  assert(acc == ULLONG_MAX);
+  acc = 0ULL;
+  assert(nvidia_gpu_link_rate_integrate(UINT64_MAX, 3600000000LL, &acc) == ULLONG_MAX);
+  assert(acc == ULLONG_MAX);
 }
 
 static void test_over_one_mix_clamped(void)
@@ -94,9 +108,9 @@ int main(void)
   test_fp_mix_clamped_and_scaled();
   test_mem_util_scales_bandwidth();
   test_over_one_mix_clamped();
-  test_link_u64_delta_monotonic();
-  test_link_u64_delta_reset();
-  test_link_u64_delta_null_prev();
+  test_link_rate_integrate_accumulates();
+  test_link_rate_integrate_first_collect_and_null();
+  test_link_rate_integrate_saturates();
   printf("test_nvidia_gpu_estimate passed\n");
   return 0;
 }
