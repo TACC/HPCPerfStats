@@ -9,6 +9,10 @@ from .host_live_probes import (
     probe_loadavg_scaled,
     probe_net_stat,
     probe_numa_mem_kb,
+    probe_nvidia_gpu_devices,
+    probe_nvidia_smi_mem_total_mib,
+    probe_power_socket_devices,
+    probe_power_socket_watts,
 )
 from .message_parse import schema_key_name
 from .payload_parse import metric_value_at_key, rows_by_type, sample_header_timestamp
@@ -95,6 +99,51 @@ def run_live_spot_checks(
                 live = probe_net_stat(row.dev, stat)
                 if emitted is not None and live is not None and live < emitted:
                     warn(f"host_net {row.dev} {key}: live={live} < emitted={emitted}")
+
+    # Types the hardware says must be there (not derived from the schema under test).
+    # host_power_socket is compiled into every build; nvidia_gpu only with configure gpu.
+    built_gpu = manifest.get("compile_capabilities", {}).get("configure", {}).get("gpu", True)
+    for type_name, probe, built in (
+        ("host_power_socket", probe_power_socket_devices, True),
+        ("nvidia_gpu", probe_nvidia_gpu_devices, built_gpu),
+    ):
+        devs = probe() if built else []
+        if not devs:
+            continue
+        if type_name not in schema_by_type:
+            warn(f"{type_name} missing from schema although the host has {len(devs)} devices")
+        elif sorted(r.dev for r in full_rows.get(type_name, [])) != sorted(devs):
+            got = sorted(r.dev for r in full_rows.get(type_name, []))
+            warn(f"{type_name} rows {got} != live devices {sorted(devs)}")
+
+    def _rows_with_keys(type_name: str):
+        names = manifest.get("types", {}).get(type_name, {}).get("schema_key_names") or [
+            schema_key_name(k) for k in schema_by_type.get(type_name, [])
+        ]
+        return names, full_rows.get(type_name, [])
+
+    if "host_power_socket" in full_rows and sample_fresh:
+        live_w = probe_power_socket_watts()
+        names, rows = _rows_with_keys("host_power_socket")
+        for row in rows:
+            for key in names:
+                live = live_w.get((row.dev, key))
+                emitted = metric_value_at_key(row.values, names, key)
+                if live is None:
+                    if emitted:
+                        warn(f"host_power_socket/{row.dev} {key}={emitted} W but no live meter")
+                    continue
+                if emitted is not None and abs(emitted - live) > max(15.0, 0.25 * live):
+                    warn(f"host_power_socket/{row.dev} {key}: emitted={emitted} W live={live:.1f} W")
+
+    if "nvidia_gpu" in full_rows:
+        smi = probe_nvidia_smi_mem_total_mib()
+        names, rows = _rows_with_keys("nvidia_gpu")
+        for row in rows:
+            emitted = metric_value_at_key(row.values, names, "gpu_mem_total_mb")
+            live = smi.get(row.dev)
+            if emitted is not None and live and abs(emitted - live) > max(64, live // 50):
+                warn(f"nvidia_gpu/{row.dev} gpu_mem_total_mb: emitted={emitted} nvidia-smi={live}")
 
     notes.append("PASS live_spot checks")
     return notes, warnings, errors

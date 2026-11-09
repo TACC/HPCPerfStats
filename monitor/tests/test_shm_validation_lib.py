@@ -977,6 +977,144 @@ class CrossSampleTests(unittest.TestCase):
             self.assertIn("1030.0", body)
 
 
+PSOCK_KEYS = ["cpu_power_w,U=W", "socket_power_w,U=W", "sysio_power_w,U=W", "module_power_w,U=W"]
+GPU_KEYS = ["gpu_util", "gpu_mem_total_mb,U=MB", "gpu_mem_used_mb,U=MB", "gpu_mem_free_mb,U=MB"]
+
+
+def _round2_manifest(schema: dict[str, list[str]], *, gpu_built: bool = True) -> dict:
+    return {
+        "enable_slow_tier": True,
+        "host_fqdn": "",
+        "compile_capabilities": {"configure": {"gpu": gpu_built}},
+        "types": {t: {"schema_keys": k, "schema_key_names": [x.split(",")[0] for x in k]}
+                  for t, k in schema.items()},
+    }
+
+
+class Round2ShmChecksTests(unittest.TestCase):
+    """host_power_socket / nvidia_gpu NVML / retired-key checks added for round 2."""
+
+    def test_probe_power_socket_watts_reads_meters(self) -> None:
+        from lib.host_live_probes import probe_power_socket_watts
+
+        with tempfile.TemporaryDirectory() as tmp:
+            hw = Path(tmp) / "class" / "hwmon"
+            for name, sub, label, uw in (
+                ("hwmon9", "", "CPU Power Socket 0", "44200000"),
+                ("hwmon2", "device", "Grace Power Socket 0", "88000000"),
+                ("hwmon3", "", "SysIO Power Socket 1", "garbage"),
+                ("hwmon4", "", "Vera Power Socket 1", "1000000"),
+            ):
+                d = hw / name / sub if sub else hw / name
+                d.mkdir(parents=True)
+                (d / "power1_oem_info").write_text(label + "\n")
+                (d / "power1_average").write_text(uw + "\n")
+            self.assertEqual(
+                probe_power_socket_watts(tmp),
+                {("0", "cpu_power_w"): 44.2, ("0", "socket_power_w"): 88.0},
+            )
+            self.assertEqual(probe_power_socket_watts(str(Path(tmp) / "none")), {})
+
+    def test_schema_contract_flags_retired_and_wrong_keys(self) -> None:
+        from lib.value_plausibility import check_schema_contract
+
+        bad = check_schema_contract({
+            "host_cpu_hw": ["cpu_util_total_accum_us,E,W=64", "dcgm_cpu_power_util_w,U=W"],
+            "nvidia_gpu": ["gpu_util", "sysio_power_usage,U=W"],
+            "host_power_socket": ["cpu_power_w,U=W", "socket_power_w,U=W"],
+        })
+        self.assertEqual(len(bad), 3, bad)
+        self.assertTrue(any("dcgm_cpu_power_util_w" in m for m in bad))
+        self.assertTrue(any("sysio_power_usage" in m for m in bad))
+        self.assertEqual(check_schema_contract({"host_power_socket": PSOCK_KEYS,
+                                                "nvidia_gpu": GPU_KEYS}), [])
+
+    def test_power_socket_row_invariants(self) -> None:
+        from lib.value_plausibility import check_row_invariants
+
+        def run(cpu, sock, sysio, mod):
+            return check_row_invariants("host_power_socket", "0", {
+                "cpu_power_w": cpu, "socket_power_w": sock, "sysio_power_w": sysio,
+                "module_power_w": mod})
+
+        self.assertEqual(run(44, 88, 6, 0), [])  # GB200: no Module meter
+        self.assertEqual(run(44, 46, 1, 130), [])  # GH200 shape
+        self.assertTrue(any("cpu_power_w=95 > socket_power_w=88" in m for m in run(95, 88, 6, 0)))
+        self.assertTrue(any("every meter reads 0 W" in m for m in run(0, 0, 0, 0)))
+        self.assertTrue(any("> 2000" in m for m in run(44, 88, 6, 5000)))
+
+    def test_nvidia_gpu_row_invariants(self) -> None:
+        from lib.value_plausibility import check_row_invariants
+
+        ok = {"sm_active": 95, "gpu_util": 100, "gpu_mem_total_mb": 189471,
+              "gpu_mem_used_mb": 600, "gpu_mem_free_mb": 188300, "temperature": 34}
+        self.assertEqual(check_row_invariants("nvidia_gpu", "0", ok), [])
+        bad = check_row_invariants("nvidia_gpu", "0", {**ok, "sm_active": 9545,
+                                                       "gpu_mem_used_mb": 9000, "temperature": 300})
+        self.assertEqual(len(bad), 3, bad)
+
+    def test_check_plausibility_wires_round2_checks(self) -> None:
+        schema = {"host_power_socket": PSOCK_KEYS, "host_cpu_hw": ["dcgm_cpu_power_util_w,U=W"]}
+        body = ("1234567890.0 0 h\nhost_power_socket 0 @full 95 88 6 0\n"
+                "host_cpu_hw 0 @full 0\n")
+        _, warnings, errors = check_plausibility(
+            _round2_manifest(schema), schema, full_body=body, fast_body=None,
+            schema_body=None, no_freshness=True, strict=True)
+        self.assertEqual(warnings, [])
+        self.assertTrue(any("cpu_power_w=95" in e for e in errors), errors)
+        self.assertTrue(any("retired key 'dcgm_cpu_power_util_w'" in e for e in errors), errors)
+
+    def _live(self, schema, body, *, sockets=("0",), watts=None, gpus=(), smi=None,
+              gpu_built=True):
+        import time as _time
+
+        from lib import live_spot_check as lsc
+
+        watts = watts if watts is not None else {
+            ("0", "cpu_power_w"): 44.0, ("0", "socket_power_w"): 88.0,
+            ("0", "sysio_power_w"): 6.0}
+        body = body.replace("NOW", f"{_time.time():.1f}")
+        with patch.object(lsc, "probe_power_socket_devices", return_value=list(sockets)), \
+                patch.object(lsc, "probe_power_socket_watts", return_value=watts), \
+                patch.object(lsc, "probe_nvidia_gpu_devices", return_value=list(gpus)), \
+                patch.object(lsc, "probe_nvidia_smi_mem_total_mib", return_value=smi or {}), \
+                patch.object(lsc, "probe_cpu_devices", return_value=[]), \
+                patch.object(lsc, "probe_loadavg_scaled", return_value={}), \
+                patch.object(lsc, "probe_host_fqdn", return_value=""):
+            _, warnings, _ = lsc.run_live_spot_checks(
+                _round2_manifest(schema, gpu_built=gpu_built), schema, full_body=body,
+                max_age_sec=300, strict=False)
+        return warnings
+
+    def test_live_power_socket_matches_hwmon(self) -> None:
+        schema = {"host_power_socket": PSOCK_KEYS}
+        good = "NOW 0 h\nhost_power_socket 0 @full 44 88 6 0\n"
+        self.assertEqual(self._live(schema, good), [])
+        off = self._live(schema, "NOW 0 h\nhost_power_socket 0 @full 90 88 6 0\n")
+        self.assertTrue(any("cpu_power_w: emitted=90 W live=44.0 W" in w for w in off), off)
+        ghost = self._live(schema, "NOW 0 h\nhost_power_socket 0 @full 44 88 6 40\n")
+        self.assertTrue(any("module_power_w=40 W but no live meter" in w for w in ghost), ghost)
+        short = self._live(schema, good, sockets=("0", "1"))
+        self.assertTrue(any("rows ['0'] != live devices ['0', '1']" in w for w in short), short)
+        missing = self._live({}, "NOW 0 h\n")
+        self.assertTrue(any("host_power_socket missing from schema" in w for w in missing))
+
+    def test_live_nvidia_gpu_rows_and_mem_total(self) -> None:
+        schema = {"nvidia_gpu": GPU_KEYS}
+        body = "NOW 0 h\nnvidia_gpu 0 @full 0 189471 600 188300\n"
+        self.assertEqual(self._live(schema, body, sockets=(), gpus=("0",),
+                                    smi={"0": 189471}), [])
+        wrong = self._live(schema, body, sockets=(), gpus=("0",), smi={"0": 97871})
+        self.assertTrue(any("gpu_mem_total_mb: emitted=189471 nvidia-smi=97871" in w
+                            for w in wrong), wrong)
+        two = self._live(schema, body, sockets=(), gpus=("0", "1"), smi={"0": 189471})
+        self.assertTrue(any("nvidia_gpu rows ['0'] != live devices" in w for w in two), two)
+        absent = self._live({}, "NOW 0 h\n", sockets=(), gpus=("0",))
+        self.assertTrue(any("nvidia_gpu missing from schema" in w for w in absent), absent)
+        self.assertEqual(self._live({}, "NOW 0 h\n", sockets=(), gpus=("0",),
+                                    gpu_built=False), [])
+
+
 class GoldenDiffTests(unittest.TestCase):
     def test_golden_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

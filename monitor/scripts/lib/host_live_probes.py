@@ -331,21 +331,28 @@ def probe_nvidia_gpu_devices() -> list[str]:
 
 
 _POWER_SOCKET_LABEL_RE = re.compile(r"^(CPU|Grace|SysIO|Module) Power Socket (\d+)\s*$")
+# ACPI meter label word -> host_power_socket key (arm_power_socket.h ARM_POWER_SOCKET_KEYS).
+POWER_SOCKET_KEY_BY_LABEL = {
+    "CPU": "cpu_power_w",
+    "Grace": "socket_power_w",
+    "SysIO": "sysio_power_w",
+    "Module": "module_power_w",
+}
 
 
-def probe_power_socket_devices(sysfs_root: str = "/sys") -> list[str]:
-    """host_power_socket row ids "0".."N-1" (arm_power_hwmon.c / arm_power_socket.c).
+def _power_socket_meters(sysfs_root: str) -> list[tuple[str, int, Path]]:
+    """(label word, socket, meter dir) for every ACPI ``<Name> Power Socket <N>`` meter.
 
-    Mirrors the C scan: every ``class/hwmon/hwmonN`` (EL10) or ``hwmonN/device`` (EL9) whose
-    ``power1_oem_info`` (or ``power1_label``) reads ``<CPU|Grace|SysIO|Module> Power Socket
-    <N>`` and whose ``power1_average`` exists counts; rows are 0..max(N). No meter -> [].
+    Mirrors arm_power_hwmon.c: every ``class/hwmon/hwmonN`` (EL10) or ``hwmonN/device`` (EL9)
+    whose ``power1_oem_info`` (or ``power1_label``) matches and whose ``power1_average``
+    exists; sockets >= 16 are ignored like the C table.
     """
-    nsock = 0
     base = Path(sysfs_root) / "class" / "hwmon"
     try:
         entries = sorted(p for p in base.iterdir() if p.name.startswith("hwmon"))
     except OSError:
         return []
+    meters: list[tuple[str, int, Path]] = []
     for hw in entries:
         for d in (hw, hw / "device"):
             label = None
@@ -358,9 +365,46 @@ def probe_power_socket_devices(sysfs_root: str = "/sys") -> list[str]:
                 continue
             m = _POWER_SOCKET_LABEL_RE.match(label.strip())
             if m and (d / "power1_average").is_file() and int(m.group(2)) < 16:
-                nsock = max(nsock, int(m.group(2)) + 1)
+                meters.append((m.group(1), int(m.group(2)), d))
             break
+    return meters
+
+
+def probe_power_socket_devices(sysfs_root: str = "/sys") -> list[str]:
+    """host_power_socket row ids "0".."N-1" (arm_power_socket.c); no meter -> []."""
+    nsock = max((sock + 1 for _, sock, _ in _power_socket_meters(sysfs_root)), default=0)
     return [str(i) for i in range(nsock)]
+
+
+def probe_power_socket_watts(sysfs_root: str = "/sys") -> dict[tuple[str, str], float]:
+    """Live ``power1_average`` (µW) per meter as watts, keyed (socket dev, host_power_socket key)."""
+    out: dict[tuple[str, str], float] = {}
+    for word, sock, d in _power_socket_meters(sysfs_root):
+        lines = _read_lines(str(d / "power1_average"))
+        try:
+            out[(str(sock), POWER_SOCKET_KEY_BY_LABEL[word])] = int(lines[0]) / 1e6
+        except (IndexError, ValueError):
+            continue
+    return out
+
+
+def probe_nvidia_smi_mem_total_mib(timeout_s: float = 10.0) -> dict[str, int]:
+    """GPU index -> framebuffer total MiB from nvidia-smi ({} when nvidia-smi is unavailable)."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=timeout_s, check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    res: dict[str, int] = {}
+    for line in out.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            res[parts[0]] = int(parts[1])
+    return res
 
 
 def probe_intel_gpu_devices() -> list[str]:
