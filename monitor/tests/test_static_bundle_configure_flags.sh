@@ -45,30 +45,19 @@ if echo "${fleet_flags}" | grep -q -- '--disable-infiniband'; then
   exit 1
 fi
 
-# Without fleet env and without stampede3/ls6/horizon.force, do not apply MAD dlopen matrix.
-if test -f ./scripts/fleet/stampede3.force; then
-  echo "scripts/fleet/stampede3.force must not be present for default-flag regression" >&2
-  exit 1
-fi
-if test -f ./scripts/fleet/ls6.force; then
-  echo "scripts/fleet/ls6.force must not be present for default-flag regression" >&2
-  exit 1
-fi
-if test -f ./scripts/fleet/horizon.force; then
-  echo "scripts/fleet/horizon.force must not be present for default-flag regression" >&2
-  exit 1
-fi
-if echo "${flags}" | grep -q -- '--enable-ib-mad-dlopen'; then
-  echo "default prepare must not pass --enable-ib-mad-dlopen without fleet" >&2
-  exit 1
-fi
-if echo "${flags}" | grep -q -- '--enable-opa-mad-dlopen'; then
-  echo "default prepare must not pass --enable-opa-mad-dlopen without fleet" >&2
-  exit 1
-fi
-if echo "${flags}" | grep -q -- '--enable-shared-node-multi-jid'; then
-  echo "default prepare must not pass --enable-shared-node-multi-jid without fleet" >&2
-  exit 1
+# Without fleet env and without a fleet marker, do not apply MAD dlopen matrix. A fleet build node
+# keeps scripts/fleet/<fleet>.force (prepare_rpmbuild_<fleet>.sh) so its default flags are the
+# fleet's: skip only these no-fleet asserts there (c122-018 2026-11-09 make check rc 2).
+fleet_markers="$(ls "${FLEET_MARKER_DIR:-./scripts/fleet}"/*.force 2>/dev/null || true)"
+if test -n "${fleet_markers}"; then
+  echo "SKIP default-flag regression (fleet build tree): ${fleet_markers}"
+else
+  for opt in --enable-ib-mad-dlopen --enable-opa-mad-dlopen --enable-shared-node-multi-jid; do
+    if echo "${flags}" | grep -q -- "${opt}"; then
+      echo "default prepare must not pass ${opt} without fleet" >&2
+      exit 1
+    fi
+  done
 fi
 
 # Lonestar6 fleet: IB MAD dlopen, no OPA MAD, disable amd+intel GPU.
@@ -153,6 +142,18 @@ if awk '/^build_likwid\(\)/{p=1} p&&/^}$/{print; exit} p' ./scripts/build_static
   | grep -E '[[:space:]]ACCESSMODE=direct([[:space:]]|$)' >/dev/null; then
   echo "build_likwid must not use ACCESSMODE=direct (ENODEV under runtime PERF)" >&2
   exit 1
+fi
+
+
+# Regression (c122-018 2026-11-09): a fleet marker must skip the no-fleet asserts, not fail.
+if test -z "${FLEET_MARKER_SELFTEST:-}"; then
+  marker_dir="$(mktemp -d)"
+  : > "${marker_dir}/horizon.force"
+  marker_out="$(FLEET_MARKER_SELFTEST=1 FLEET_MARKER_DIR="${marker_dir}" sh "$0" 2>&1)" \
+    || { rm -rf "${marker_dir}"; echo "fleet-marker run failed: ${marker_out}" >&2; exit 1; }
+  rm -rf "${marker_dir}"
+  echo "${marker_out}" | grep -q 'SKIP default-flag regression' \
+    || { echo "fleet marker must skip the default-flag asserts" >&2; exit 1; }
 fi
 
 echo "test_static_bundle_configure_flags passed"
