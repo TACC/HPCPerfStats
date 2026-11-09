@@ -88,6 +88,13 @@ chmod -R 0600  /home/hpcperfstats/.ssh/*
 #mkdir -p /var/lib/hpcperfstats-syslog
 #/usr/local/bin/python3 -m hpcperfstats.render_syslog_ng_generated || exit 1
 
+# Make the pipeline the host OOM killer's first choice so a memory spike kills
+# an ingest daemon (supervisord restarts it) instead of a Postgres backend
+# (hpcperfstats03 2026-11-08: three db crash-recoveries while sync_timedb held
+# 54-119 GB). Raising oom_score_adj needs no privilege; supervisord and every
+# program it starts inherit it. podman-compose ignores compose oom_score_adj.
+echo 500 > /proc/self/oom_score_adj || echo "warning: could not set pipeline oom_score_adj" >&2
+
 supervisord_pid=
 trap 'kill -TERM "${supervisord_pid}" 2>/dev/null || true' TERM INT
 /usr/bin/supervisord -c /home/hpcperfstats/services-conf/supervisord.conf &

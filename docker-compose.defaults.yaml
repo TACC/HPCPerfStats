@@ -54,8 +54,11 @@ services:
     pull_policy: never
     restart: always
     logging: *hpc-logging
-    # cgroup memory.max for sync_timedb / supervisord (Podman/Docker --memory).
-    # Tune from host MemTotal minus db, web, valkey; 128g fits ~192 GiB hosts with no swap.
+    # cgroup memory.max for sync_timedb / supervisord: set mem_limit/memswap_limit
+    # per site in docker-compose.yaml (commented in .example; 128g fits ~192-251 GiB
+    # hosts with no swap). Without it memory.max is `max` and ingest has no budget.
+    # OOM preference (+500, inherited by every daemon) is set by supervisor_startup.sh;
+    # podman-compose ignores a compose oom_score_adj key.
     stop_grace_period: ${HPCPERFSTATS_PIPELINE_STOP_GRACE:-480s}
     depends_on:
       - web

@@ -339,3 +339,41 @@ def test_supervisord_and_rsync_scripts_not_gitignored():
       check=False,
     )
     assert proc.returncode != 0, f"{rel} must not be gitignored"
+
+
+def test_supervisor_startup_sets_pipeline_oom_score_adj_before_supervisord():
+  """Regression (hpcperfstats03 2026-11-08): with no OOM preference the host
+  OOM killer took Postgres backends (60 GB shared memory counts toward their
+  score) three times while sync_timedb held 54-119 GB. supervisor_startup.sh
+  must raise its own oom_score_adj to +500 before launching supervisord so
+  every pipeline daemon inherits it; podman-compose ignores compose
+  oom_score_adj, so the startup script is the only working place."""
+  script = (_repo_root() / "services-conf" / "supervisor_startup.sh").read_text(
+    encoding="utf-8"
+  )
+  code = "\n".join(ln.split("#", 1)[0] for ln in script.splitlines())
+  set_adj = code.index("echo 500 > /proc/self/oom_score_adj")
+  assert set_adj < code.index("/usr/bin/supervisord -c")
+  # A failed write must warn, not abort startup.
+  line = next(ln for ln in code.splitlines() if "oom_score_adj" in ln)
+  assert "||" in line and "warning" in line
+
+
+def test_pipeline_oom_score_adj_line_is_inherited_by_children():
+  """Run the exact startup line in a shell and confirm a child process sees
+  +500 (raising one's own score needs no privilege)."""
+  script = (_repo_root() / "services-conf" / "supervisor_startup.sh").read_text(
+    encoding="utf-8"
+  )
+  line = next(
+    ln.split("#", 1)[0]
+    for ln in script.splitlines()
+    if ln.startswith("echo 500 > /proc/self/oom_score_adj")
+  )
+  out = subprocess.run(
+    ["sh", "-c", f"{line}\ncat /proc/self/oom_score_adj"],
+    check=True,
+    capture_output=True,
+    text=True,
+  ).stdout.split()
+  assert out[-1] == "500"
