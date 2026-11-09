@@ -780,6 +780,45 @@ class CrossSampleTests(unittest.TestCase):
         self.assertTrue(any("all E-keys flat at 0" in w for w in warnings))
         self.assertFalse(any("cycles: flat" in w for w in warnings))
 
+    def _idle_pair_warnings(self, types: dict, body_a: str, body_b: str) -> list[str]:
+        from lib.cross_sample_validate import run_cross_sample_checks
+        from lib.daemon_conf import DaemonTiming
+        from lib.shm_snapshot import SnapshotPair
+
+        manifest = {"enable_slow_tier": True, "types": {
+            t: {"schema_keys": k, "schema_key_names": [x.split(",")[0] for x in k]}
+            for t, k in types.items()}}
+        pair = SnapshotPair(kind="full", ts_a=1000.0, ts_b=1060.0,
+                            body_a="1000.0 - h\n" + body_a, body_b="1060.0 - h\n" + body_b)
+        _, warnings, errors = run_cross_sample_checks(
+            manifest, types, timing=DaemonTiming(30.0, 60.0, 300.0, True), fast_pair=None,
+            full_pair=pair, strict=False, active_conf_note="test")
+        self.assertFalse(errors)
+        return warnings
+
+    def test_idle_cpu_without_user_time_silences_pmu_flats(self) -> None:
+        """c122-018 2026-11-09 CPU 99: sys +10118 us, user flat -> instr/mperf flat expected."""
+        keys = {"host_cpu_hw": ["cpu_util_total_accum_us,E", "cpu_util_user_accum_us,E",
+                                "cpu_util_sys_accum_us,E", "instr_retired,E", "mperf,E"]}
+        a = "host_cpu_hw 99 @full 58769178 58769178 0 177508607436 54937145200\n"
+        b = "host_cpu_hw 99 @full 58779296 58769178 10118 177508607436 54937145200\n"
+        self.assertEqual(self._idle_pair_warnings(keys, a, b), [])
+        busy = "host_cpu_hw 99 @full 58779296 58779178 100 177508607436 54937145200\n"
+        got = self._idle_pair_warnings(keys, a, busy)
+        self.assertTrue(any("host_cpu_hw/99 instr_retired: flat" in w for w in got), got)
+
+    def test_idle_gpu_and_unused_numa_silence_flats(self) -> None:
+        keys = {"nvidia_gpu": ["gpu_util", "gpu_nvlink_tx_bytes,E,W=64,U=B", "gpu_flops,E,W=64"],
+                "host_numa": ["numa_hit,E", "numa_miss,E"]}
+        a = "nvidia_gpu 0 @full 0 157 437\nhost_numa 8 @full 5 7\n"
+        self.assertEqual(self._idle_pair_warnings(keys, a, a), [])
+        busy = "nvidia_gpu 0 @full 40 157 437\nhost_numa 8 @full 5 7\n"
+        got = self._idle_pair_warnings(keys, a, busy)
+        self.assertTrue(any("nvidia_gpu/0 gpu_nvlink_tx_bytes: flat" in w for w in got), got)
+        half = "nvidia_gpu 0 @full 0 157 437\nhost_numa 8 @full 6 7\n"
+        got = self._idle_pair_warnings(keys, a, half)
+        self.assertTrue(any("host_numa/8 numa_miss: flat" in w for w in got), got)
+
     def test_host_cpu_nonzero_flat_still_warns(self) -> None:
         from lib.cross_sample_validate import run_cross_sample_checks
         from lib.daemon_conf import DaemonTiming

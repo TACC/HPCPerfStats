@@ -121,7 +121,7 @@ grep -q 'refusing shm validate' "${verify}" \
 grep -Eq 'field group creation failed|nvidia_gpu: source|stage=6' "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must hint NVML/DCGM source and FieldGroupCreate on validate fail" >&2; exit 1; }
 
-grep -q 'grep -q nvidia_gpu "${validate_out}"' "${verify}" \
+grep -qF "grep -qF \"type 'nvidia_gpu': no rows\"" "${verify}" \
   || { echo "rpm_debug_shm_verify.sh must print the nvidia_gpu HINT only when the failure names nvidia_gpu" >&2; exit 1; }
 
 grep -Eq 'Driver/stack probe|libdcgm' "${verify}" \

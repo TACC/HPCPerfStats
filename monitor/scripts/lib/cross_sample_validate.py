@@ -46,6 +46,47 @@ def allow_flat(type_name: str, metric: str) -> bool:
     return (type_name, metric) in _ALLOW_FLAT
 
 
+def idle_devices(
+    map_a: dict[tuple[str, str, str], int],
+    map_b: dict[tuple[str, str, str], int],
+    gpu_util: dict[str, int],
+) -> set[tuple[str, str]]:
+    """Devices whose flat E counters are expected on an idle node (c122-018 2026-11-09).
+
+    host_cpu_hw: no user time in the window (the LIKWID overlay counts user mode, so a core
+    that only ran kernel code keeps instr/cycles flat). nvidia_gpu: gpu_util 0 (idle GPU).
+    host_numa: no counter moved at all (memory-only or unused node).
+    """
+    idle: set[tuple[str, str]] = set()
+    moved: dict[tuple[str, str], bool] = {}
+    for (t, d, m), va in map_a.items():
+        vb = map_b.get((t, d, m))
+        if vb is None:
+            continue
+        if t == "host_cpu_hw" and m == "cpu_util_user_accum_us" and va == vb:
+            idle.add((t, d))
+        if t == "host_numa":
+            moved[(t, d)] = moved.get((t, d), False) or va != vb
+    idle.update(k for k, m in moved.items() if not m)
+    idle.update(("nvidia_gpu", d) for d, u in gpu_util.items() if u == 0)
+    return idle
+
+
+def _gauge_by_dev(body: str, manifest: dict, schema_by_type: dict[str, list[str]],
+                  type_name: str, key: str, **tier) -> dict[str, int]:
+    rows = rows_by_type(body, schema_by_type, **tier).get(type_name, [])
+    info = manifest.get("types", {}).get(type_name, {})
+    names = info.get("schema_key_names") or [
+        schema_key_name(k) for k in schema_by_type.get(type_name, [])
+    ]
+    out: dict[str, int] = {}
+    for row in rows:
+        val = metric_value_at_key(row.values, names, key)
+        if val is not None:
+            out[row.dev] = val
+    return out
+
+
 def _event_key_names(schema_keys: list[str]) -> list[str]:
     return [schema_key_name(k) for k in schema_keys if schema_token_is_event_counter(k)]
 
@@ -150,6 +191,10 @@ def _check_monotonic_pair(
     )
     delta = pair.ts_b - pair.ts_a
     common = set(map_a.keys()) & set(map_b.keys())
+    idle = idle_devices(map_a, map_b, _gauge_by_dev(
+        pair.body_b, manifest, schema_by_type, "nvidia_gpu", "gpu_util",
+        require_tier=require_tier, allowed_tier=allowed))
+    silenced_idle: set[tuple[str, str]] = set()
     checked = 0
     silenced_zero = 0
     silenced_types: set[str] = set()
@@ -166,6 +211,9 @@ def _check_monotonic_pair(
             )
             continue
         if vb != va or delta < sample_freq:
+            continue
+        if (type_name, dev) in idle:
+            silenced_idle.add((type_name, dev))
             continue
         # Flat over a full sample interval.
         if type_name == "host_cpu_hw":
@@ -199,6 +247,11 @@ def _check_monotonic_pair(
             _t, _d, metric = key
             warn(f"{type_name}/{dev} {metric}: flat at {va} over Δt={delta:.1f}s")
 
+    if silenced_idle:
+        notes.append(
+            "NOTE cross_sample idle devices: flat keys silenced on "
+            + ", ".join(f"{t}/{d}" for t, d in sorted(silenced_idle))
+        )
     if silenced_zero:
         notes.append(
             "NOTE cross_sample allow-flat-zero: silenced "
