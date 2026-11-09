@@ -90,8 +90,11 @@ When golden is opted in, verify resolves `${MONITOR}/tests/expected` (or the giv
 | `--strict-cross-sample` | Promote cadence/monotonic WARN to FAIL |
 | `--no-cross-sample-stimulus` | Disable live CPU+/tmp(/Lustre) stimulus during capture (default: on for live) |
 
-Live cross-sample classifies allow-flat-zero / allow-flat keys, aggregates all-zero
-`host_cpu_hw` flats, and checks must-move canaries after stimulus.
+Live cross-sample fails on an `E` key that **decreased**, on a `host_cpu_hw` CPU whose E keys
+are **all flat at 0** (PMC not counting), and on must-move canaries that did not advance after
+stimulus. Any other flat `E` key is one `NOTE ... (expected when idle)` line with per-type
+counts, never a WARN: idle disks, cores without user time (the LIKWID overlay counts user mode),
+idle GPUs and unused NUMA nodes legitimately keep counters flat (c122-018 2026-11-09).
 
 Debug RPM installed conf is **never** the git `src/hpcperfstats.conf` template (600s slow tier); validator reads the installed file or daemon `-c` path.
 

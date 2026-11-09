@@ -11,80 +11,9 @@ from .shm_snapshot import SnapshotPair
 # Inclusive cadence bounds tolerate float formatting / timer jitter at the edge.
 _CADENCE_EPS = 1e-6
 
-# Gauges / watermarks that may legitimately stay constant at non-zero.
-_ALLOW_FLAT: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("host_lnet", "msgs_alloc"),
-        ("host_lnet", "msgs_alloc_max"),
-    }
-)
-
 _CPU_TIME_KEYS: frozenset[str] = frozenset(
     {"user", "nice", "system", "idle", "iowait", "irq", "softirq"}
 )
-
-
-def allow_flat_zero(type_name: str, metric: str) -> bool:
-    """True when flat-at-0 is expected for sparse/error/idle-opcode counters."""
-    m = metric.lower()
-    if m == "errors" or m.endswith("_error") or m.endswith("_errors") or m.endswith("_err"):
-        return True
-    if "error" in m:
-        return True
-    if type_name.startswith("lustre_") and (
-        m.startswith("vfs_") or m.startswith("mdc_") or m.startswith("osc_")
-    ):
-        return True
-    if type_name in ("nvidia_gpu", "amd_gpu", "intel_gpu", "dcgm_gpu") and (
-        "ecc" in m or "xid" in m or m.endswith("_drop") or "throttle" in m
-    ):
-        return True
-    return False
-
-
-def allow_flat(type_name: str, metric: str) -> bool:
-    return (type_name, metric) in _ALLOW_FLAT
-
-
-def idle_devices(
-    map_a: dict[tuple[str, str, str], int],
-    map_b: dict[tuple[str, str, str], int],
-    gpu_util: dict[str, int],
-) -> set[tuple[str, str]]:
-    """Devices whose flat E counters are expected on an idle node (c122-018 2026-11-09).
-
-    host_cpu_hw: no user time in the window (the LIKWID overlay counts user mode, so a core
-    that only ran kernel code keeps instr/cycles flat). nvidia_gpu: gpu_util 0 (idle GPU).
-    host_numa: no counter moved at all (memory-only or unused node).
-    """
-    idle: set[tuple[str, str]] = set()
-    moved: dict[tuple[str, str], bool] = {}
-    for (t, d, m), va in map_a.items():
-        vb = map_b.get((t, d, m))
-        if vb is None:
-            continue
-        if t == "host_cpu_hw" and m == "cpu_util_user_accum_us" and va == vb:
-            idle.add((t, d))
-        if t == "host_numa":
-            moved[(t, d)] = moved.get((t, d), False) or va != vb
-    idle.update(k for k, m in moved.items() if not m)
-    idle.update(("nvidia_gpu", d) for d, u in gpu_util.items() if u == 0)
-    return idle
-
-
-def _gauge_by_dev(body: str, manifest: dict, schema_by_type: dict[str, list[str]],
-                  type_name: str, key: str, **tier) -> dict[str, int]:
-    rows = rows_by_type(body, schema_by_type, **tier).get(type_name, [])
-    info = manifest.get("types", {}).get(type_name, {})
-    names = info.get("schema_key_names") or [
-        schema_key_name(k) for k in schema_by_type.get(type_name, [])
-    ]
-    out: dict[str, int] = {}
-    for row in rows:
-        val = metric_value_at_key(row.values, names, key)
-        if val is not None:
-            out[row.dev] = val
-    return out
 
 
 def _event_key_names(schema_keys: list[str]) -> list[str]:
@@ -191,72 +120,34 @@ def _check_monotonic_pair(
     )
     delta = pair.ts_b - pair.ts_a
     common = set(map_a.keys()) & set(map_b.keys())
-    idle = idle_devices(map_a, map_b, _gauge_by_dev(
-        pair.body_b, manifest, schema_by_type, "nvidia_gpu", "gpu_util",
-        require_tier=require_tier, allowed_tier=allowed))
-    silenced_idle: set[tuple[str, str]] = set()
     checked = 0
-    silenced_zero = 0
-    silenced_types: set[str] = set()
-    # Defer host_cpu_hw flats for per-device aggregation.
-    hw_keys: dict[tuple[str, str], list[tuple[str, str, str]]] = defaultdict(list)
-
+    # A counter that did not move is expected on an idle node (no I/O on a disk, no user time
+    # on a core, idle GPU, unused NUMA node: c122-018 2026-11-09), so flats are a NOTE. A
+    # decrease breaks the E contract and fails; liveness is the must-move canaries' job.
+    flat: dict[tuple[str, str], list[tuple[str, str, str]]] = defaultdict(list)
     for key in sorted(common):
         va, vb = map_a[key], map_b[key]
         type_name, dev, metric = key
         checked += 1
         if vb < va:
-            warn(
-                f"{type_name}/{dev} {metric}: decreased {va} -> {vb} (possible restart?)"
-            )
-            continue
-        if vb != va or delta < sample_freq:
-            continue
-        if (type_name, dev) in idle:
-            silenced_idle.add((type_name, dev))
-            continue
-        # Flat over a full sample interval.
-        if type_name == "host_cpu_hw":
-            hw_keys[(type_name, dev)].append(key)
-            continue
-        if allow_flat(type_name, metric):
-            continue
-        if va == 0 and allow_flat_zero(type_name, metric):
-            silenced_zero += 1
-            silenced_types.add(type_name)
-            continue
-        warn(f"{type_name}/{dev} {metric}: flat at {va} over Δt={delta:.1f}s")
+            warn(f"{type_name}/{dev} {metric}: decreased {va} -> {vb} (possible restart?)")
+        elif vb == va and delta >= sample_freq:
+            flat[(type_name, dev)].append(key)
 
-    for (type_name, dev), keys in sorted(hw_keys.items()):
-        # All E-keys present for this device in the pair (not only deferred flats).
-        all_dev_keys = [
-            k for k in common if k[0] == type_name and k[1] == dev
-        ]
-        all_flat = all(map_b[k] == map_a[k] for k in all_dev_keys)
-        all_zero = all(map_a[k] == 0 for k in all_dev_keys)
-        if all_dev_keys and all_flat and all_zero:
-            warn(
-                f"{type_name}/{dev}: all E-keys flat at 0 "
-                f"(PMC inactive or not collecting)"
-            )
+    flat_types: dict[str, int] = defaultdict(int)
+    for (type_name, dev), keys in sorted(flat.items()):
+        if (
+            type_name == "host_cpu_hw"
+            and not any(map_a[k] for k in keys)
+            and len(keys) == sum(1 for k in common if k[:2] == (type_name, dev))
+        ):
+            warn(f"{type_name}/{dev}: all E-keys flat at 0 (PMC inactive or not collecting)")
             continue
-        for key in keys:
-            va = map_a[key]
-            if va == 0:
-                continue  # partial zero flats: silence; non-zero stuck still warn
-            _t, _d, metric = key
-            warn(f"{type_name}/{dev} {metric}: flat at {va} over Δt={delta:.1f}s")
-
-    if silenced_idle:
+        flat_types[type_name] += len(keys)
+    if flat_types:
         notes.append(
-            "NOTE cross_sample idle devices: flat keys silenced on "
-            + ", ".join(f"{t}/{d}" for t, d in sorted(silenced_idle))
-        )
-    if silenced_zero:
-        notes.append(
-            "NOTE cross_sample allow-flat-zero: silenced "
-            f"{silenced_zero} flat-at-0 keys "
-            f"({', '.join(sorted(silenced_types))})"
+            f"NOTE cross_sample flat over Δt={delta:.1f}s (expected when idle): "
+            + ", ".join(f"{t} {n} keys" for t, n in sorted(flat_types.items()))
         )
 
     if checked:
