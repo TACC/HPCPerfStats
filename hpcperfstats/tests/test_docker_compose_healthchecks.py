@@ -510,11 +510,11 @@ def _compose_service_block(content: str, service: str) -> str:
 
 
 def test_docker_compose_rabbitmq_stop_grace_period_is_30m():
-  """RabbitMQ and db stop_grace_period stay 30m for orderly shutdown."""
+  """RabbitMQ, db and db_pg18 stop_grace_period stay 30m (orderly shutdown)."""
   repo_root = Path(__file__).resolve().parents[2]
   content = (repo_root / "docker-compose.defaults.yaml").read_text()
 
-  for service in ("rabbitmq", "db"):
+  for service in ("rabbitmq", "db", "db_pg18"):
     block = _compose_service_block(content, service)
     assert "stop_grace_period: 30m" in block, service
   readme = (repo_root / "README.md").read_text()

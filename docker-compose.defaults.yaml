@@ -368,7 +368,7 @@ services:
       timeout: 3s
       retries: 10
     stop_signal: SIGINT
-    stop_grace_period: 10m
+    stop_grace_period: 30m
     # PG18 docker-library prefers VOLUME /var/lib/postgresql (not .../data only).
     volumes:
       - postgres_data_pg18:/var/lib/postgresql
