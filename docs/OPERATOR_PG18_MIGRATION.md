@@ -194,7 +194,7 @@ sed -i '/^  - docker-compose.pg18-primary.yaml$/d' docker-compose.yaml
 podman-compose -p hpcperfstats up -d db web pipeline proxy; podman-compose -p hpcperfstats ps
 ```
 
-Name services on every `up` during migration and cutover. After any compose-file change, a bare `podman-compose up -d` recreates **every** project container (stale config hash), including `rabbitmq` (10-minute stop grace) and `valkey`; a service list limits that to the named services.
+Name services on every `up` during migration and cutover. After any compose-file change, a bare `podman-compose up -d` recreates **every** project container (stale config hash), including `db` and `rabbitmq` (30-minute stop grace each) and `valkey`; a service list limits that to the named services.
 
 ### After soak
 

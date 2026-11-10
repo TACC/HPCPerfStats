@@ -499,19 +499,27 @@ def test_docker_compose_rabbitmq_disables_crash_dumps():
   assert "ERL_CRASH_DUMP_SECONDS" in upgrade
 
 
-def test_docker_compose_rabbitmq_stop_grace_period_is_10m():
-  """RabbitMQ stop_grace_period must stay 10m for orderly broker shutdown."""
-  repo_root = Path(__file__).resolve().parents[2]
-  compose_path = repo_root / "docker-compose.defaults.yaml"
-  content = compose_path.read_text()
-  rabbitmq_block = content.split("  rabbitmq:\n", 1)[1].split("\nvolumes:", 1)[
-    0
-  ]
+def _compose_service_block(content: str, service: str) -> str:
+  match = re.search(
+    rf"^  {re.escape(service)}:\n(.*?)(?=^  [A-Za-z0-9_]+:\n|^\S|\Z)",
+    content,
+    flags=re.MULTILINE | re.DOTALL,
+  )
+  assert match, f"service {service} not found"
+  return match.group(1)
 
-  assert "stop_grace_period: 10m" in rabbitmq_block
-  assert "stop_grace_period: 2m" not in rabbitmq_block
+
+def test_docker_compose_rabbitmq_stop_grace_period_is_30m():
+  """RabbitMQ and db stop_grace_period stay 30m for orderly shutdown."""
+  repo_root = Path(__file__).resolve().parents[2]
+  content = (repo_root / "docker-compose.defaults.yaml").read_text()
+
+  for service in ("rabbitmq", "db"):
+    block = _compose_service_block(content, service)
+    assert "stop_grace_period: 30m" in block, service
   readme = (repo_root / "README.md").read_text()
-  assert "stop_grace_period" in readme and "10m" in readme
+  assert "**`stop_grace_period: 30m`** gives the broker" in readme
+  assert "**`db`** gets **30m**" in readme
 
 
 def test_operator_rabbitmq_recovery_runbook_exists():
