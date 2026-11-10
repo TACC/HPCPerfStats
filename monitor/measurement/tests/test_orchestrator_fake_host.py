@@ -119,7 +119,8 @@ def fake_host(tmp_path, monkeypatch):
              "PROFILER_BINARY": str(tmp_path / "measure" / "hpcperfstatsd-profiler"),
              "DISCOVERY_SECONDS": 1, "TYPES_WAIT_SECONDS": 10,
              "SYSFS_CPU": str(fake_cpufreq(tmp_path / "sys_cpu")),
-             "PROC_ROOT": str(tmp_path / "proc"), "BUSY_PROBE_SECONDS": 0.05}
+             "PROC_ROOT": str(tmp_path / "proc"), "BUSY_PROBE_SECONDS": 0.05,
+             "SYS_PLATFORM_DEVICES": str(tmp_path / "platform")}
     (tmp_path / "proc").mkdir()
     (tmp_path / "proc" / "stat").write_text(IDLE_STAT)
     for key, value in paths.items():

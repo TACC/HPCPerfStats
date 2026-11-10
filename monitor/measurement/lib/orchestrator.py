@@ -89,6 +89,9 @@ DISCOVERY_SECONDS = 120
 TYPES_WAIT_SECONDS = 120
 SYSFS_CPU = cpufreq.SYSFS_CPU
 PROC_ROOT = "/proc"
+# CoreSight uncore PMUs (Grace SCF via nvidia_cspmu); an unbound one silently drops a collector.
+SYS_PLATFORM_DEVICES = "/sys/bus/platform/devices"
+CS_PMU_PREFIX = "arm-cs-arch-pmu."
 # Preflight busy-node probe: node busy cores minus the daemon's own CPU over this window.
 BUSY_PROBE_SECONDS = 5
 BUSY_NODE_CORES = 1.0
@@ -256,6 +259,35 @@ def check_busy_node(busy: float | None, allow: bool) -> dict[str, Any]:
     return {"busy_node": {"busy_cores": busy, "limit": BUSY_NODE_CORES}}
 
 
+def check_cs_pmus(devices_dir: str, allow: bool) -> dict[str, Any]:
+    """Refuse a node whose CoreSight uncore PMU devices are not bound to a driver.
+
+    c642-041 2026-11-09: firmware APMT listed 5 ``arm-cs-arch-pmu.N`` devices, the driver
+    rejected them (``No cpu associated with the PMU``), no ``nvidia_scf_pmu_*`` existed, and
+    ``arm_aarch64_imc`` disabled itself, so that node's legs lacked a collector the others had.
+
+    Args:
+        devices_dir: Platform device directory (``/sys/bus/platform/devices``).
+        allow: ``--allow-unbound-pmu`` was given.
+
+    Returns:
+        Flags for run.json (``unbound_pmu`` when allowed through, else empty).
+
+    Raises:
+        PreflightError: an unbound PMU device and not allowed.
+    """
+    root = Path(devices_dir)
+    devs = sorted(root.glob(CS_PMU_PREFIX + "*")) if root.is_dir() else []
+    unbound = [d.name for d in devs if not (d / "driver").exists()]
+    if not unbound:
+        return {}
+    if not allow:
+        raise PreflightError(f"{len(unbound)} of {len(devs)} CoreSight PMU devices have no driver "
+                             f"({', '.join(unbound)}); uncore collectors would be missing. Check "
+                             "`dmesg | grep arm-cs`; reboot or pass --allow-unbound-pmu")
+    return {"unbound_pmu": {"unbound": unbound, "devices": len(devs)}}
+
+
 def restore_script_text(saved_conf: Path | None, was_active: bool, was_enabled: bool,
                         measure_queue: str, mgmt_hint: str | None = None,
                         governor_lines: list[str] | None = None) -> str:
@@ -321,6 +353,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="comma list; one full leg set per governor (default performance; "
                         "dynamic = ondemand on cppc_cpufreq/acpi-cpufreq, powersave on "
                         "intel_pstate/amd-pstate-epp; `none` leaves the governor alone)")
+    p.add_argument("--allow-fit", action="store_true",
+                   help="let the harness shorten legs / drop legs to fit --max-hours (default: "
+                        "refuse, so every leg keeps --leg-seconds and runs compare per leg)")
+    p.add_argument("--allow-unbound-pmu", action="store_true",
+                   help="run although CoreSight uncore PMU devices are unbound (flagged "
+                        "unbound_pmu; that node misses uncore collectors)")
     p.add_argument("--allow-busy-node", action="store_true",
                    help="run although > 1 core is busy outside the daemon (flagged busy_node)")
     p.add_argument("--force", action="store_true",
@@ -341,7 +379,8 @@ def _schedule(args: argparse.Namespace, groups: dict[str, list[str]], seed: int,
         list(groups), blocks=args.blocks, seed=seed, leg_seconds=args.leg_seconds,
         settle_seconds=args.settle_seconds, fwq_seconds=args.fwq_seconds,
         max_hours=args.max_hours, off_legs=not args.no_off_legs, cadence_sweep=sweep,
-        profile_collectors=args.profile_collectors, variants=variants, governors=governors or [])
+        profile_collectors=args.profile_collectors, variants=variants, governors=governors or [],
+        allow_fit=args.allow_fit)
     plan["variant_specs"] = variants
     return plan
 
@@ -544,6 +583,7 @@ class Run:
         busy = self.probe_busy_cores()
         self.state["preflight_busy_cores"] = busy
         self.flags.update(check_busy_node(busy, a.allow_busy_node))
+        self.flags.update(check_cs_pmus(SYS_PLATFORM_DEVICES, a.allow_unbound_pmu))
         if a.no_off_legs:
             self.flags["off_legs_skipped"] = True
         free = shutil.disk_usage(self.out).free

@@ -62,8 +62,8 @@ full leg set per governor, e.g. `--governors performance,dynamic`. `dynamic` res
 HWP/EPP policy. Explicit names work too (`--governors performance,schedutil`); `--governors
 none` leaves the governor alone (one unnamed set; only for nodes without cpufreq). The
 harness writes `scaling_governor` for every CPU before each set and writes each CPU's
-original governor back on every exit path; `restore.sh` has the same lines. With two sets
-and the default `--max-hours 12` both fit by shortening legs to 600 s; `--max-hours 24` keeps
+original governor back on every exit path; `restore.sh` has the same lines. Legs are never
+shortened to fit (see step 4): with two sets raise `--max-hours` (about 24) so both keep
 1800 s legs.
 
 ### What it does
@@ -82,6 +82,11 @@ and the default `--max-hours 12` both fit by shortening legs to 600 s; `--max-ho
    minus the daemon's own CPU over 5 s (the OFF-state load) above 1 core refuses the run
    (round 1 ran with ~17 cores busy in every leg, OFF included, finding 13);
    `--allow-busy-node` runs anyway and the report carries a `busy node` banner.
+   **Unbound uncore PMUs:** every `/sys/bus/platform/devices/arm-cs-arch-pmu.*` device must
+   have a `driver` link. On c642-041 (2026-11-09) all 5 were unbound (`dmesg`:
+   `No cpu associated with the PMU`, firmware APMT), so no `nvidia_scf_pmu_*` existed and
+   `arm_aarch64_imc` silently disabled itself; preflight now refuses that node.
+   `--allow-unbound-pmu` runs anyway, flagged `unbound_pmu`.
 2. **Install**: saves the site conf, `rpm -Uvh --replacepkgs`, writes the site conf back
    (the spec lists it without `%config`, so the RPM overwrites it), checks `server`/`queue`.
    `restore.sh` is written to the result dir before any change. A fresh node needs
@@ -93,9 +98,12 @@ and the default `--max-hours 12` both fit by shortening legs to 600 s; `--max-ho
    `ib_mad`, …; `lib/driver_map.py`); an unmapped type fails.
 4. **Blocks** (default 2): OFF → NONE → ALL → SOLO(each group, seeded random order) → ALL →
    OFF (shared with the next block). Legs are `--leg-seconds` (1800) after a 60 s settle;
-   OFF/NONE/ALL add a `--fwq-seconds` (300) FWQ phase on every CPU but the sampler's. The
-   schedule auto-fits `--max-hours` (12) by shortening legs, dropping the second ALL, then
-   single-block SOLOs; `--dry-run` prints the legs and projected end. The whole block set
+   OFF/NONE/ALL add a `--fwq-seconds` (300) FWQ phase on every CPU but the sampler's. A
+   schedule over `--max-hours` (12) **stops with the minimum hours** instead of shortening
+   legs (2026-11-09: c122-018's legs were cut to 1200 s while Vista ran 1800 s, so no leg
+   compared). `--allow-fit` restores the old auto-fit (shorten legs, drop the second ALL, then
+   single-block SOLOs, each recorded in `fit_steps`); never use it for a campaign.
+   `--dry-run` prints the legs and projected end. The whole block set
    repeats per governor (leg ids `<governor>-b1-OFF-` …; `--cadence-sweep` and
    `--profile-collectors` legs run once, in the first set). Each leg records its governor, the
    governors actually read at leg start, `scaling_cur_freq` min/p50/max (1 Hz) and node busy
@@ -174,12 +182,28 @@ python3 bin/compare_schema_keys.py results/BASE/profile.json results/CAND/profil
 # SCHEMA_KEYS_OK (exit 0) / SCHEMA_KEYS_REMOVED (exit 1) / NOT_MEASURED (exit 2: a run had no capture)
 ```
 
+**Runs meant to be compared per leg** (a campaign across nodes or clusters):
+
+```bash
+python3 bin/compare_runs.py results/RUN_A results/RUN_B results/RUN_C --out results/compare.md
+# exit 0: COMPARABLE (leg length, settle, FWQ, blocks, governor, daemon conf except the broker
+#         connection all identical; no fit_steps) / exit 1: NOT COMPARABLE (DIFF rows) / 2: bad dir
+```
+
+Fleet build, OS, hardware and the collector groups/legs that follow from them are listed as
+intended differences, never failures. Give every node the same harness-built `--conf` (only
+`server`/`queue`/`user`/`password` per site) and the same `--blocks`/`--leg-seconds`.
+
 ### Per-architecture checklist
 
 - [ ] Node reserved (your own allocation only), idle (preflight refuses > 1 busy core without `--allow-busy-node`).
 - [ ] `--dry-run` shows the governor leg sets you expect (`performance` + the driver's dynamic governor).
 - [ ] Site conf has no `disable_types` / non-default `collection_profile`.
-- [ ] `--dry-run` projected end fits the reservation.
+- [ ] `--dry-run` projected end fits the reservation (raise `--max-hours`; never `--allow-fit`
+      for a campaign).
+- [ ] Every Grace node lists `nvidia_scf_pmu_*` (preflight refuses unbound CoreSight PMUs).
+- [ ] Campaign: `bin/compare_runs.py` over all runs exits 0; commit its `compare.md` with the
+      profiles.
 - [ ] Run finished: `report.md` has no `baseline_drift` warning and no contaminated legs;
       cite wakeups/s, and core-s/h only with its governor.
 - [ ] `raw/run.json` `state.cleanup.governor` is `ok` (every CPU back on its original governor).

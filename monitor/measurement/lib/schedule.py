@@ -6,7 +6,9 @@ with one change and is paired with that base group's SOLO leg in the same block.
 exceeds ``max_hours``, reductions apply in a fixed order and each is recorded in
 ``fit_steps``: (1) shorten legs 1800 → 1200 → 600 s, (2) drop the second ALL leg per block,
 (3) run SOLO legs only in the first block. If it still does not fit, ScheduleDoesNotFit carries
-the minimum hours so the operator can raise ``--max-hours``.
+the minimum hours so the operator can raise ``--max-hours``. With ``allow_fit=False`` (the
+harness default since 2026-11-09: c122-018's legs were silently cut to 1200 s while Vista ran
+1800 s, so legs no longer compared) no reduction applies and an over-budget plan raises.
 
 Governor dimension (D13): with ``governors`` the whole block set repeats once per governor
 (same seed, so the SOLO order matches across sets); every leg carries ``governor`` and its id
@@ -29,8 +31,9 @@ FIT_ORDER = ("shorten_legs", "drop_second_all", "solo_single_block")
 class ScheduleDoesNotFit(ValueError):
     def __init__(self, min_hours: float, max_hours: float):
         self.min_hours = min_hours
-        super().__init__(f"schedule needs at least {min_hours:.2f} h (minimum after every fit "
-                         f"step) but --max-hours is {max_hours:g}; raise --max-hours")
+        super().__init__(f"schedule needs at least {min_hours:.2f} h (minimum after every allowed "
+                         f"fit step) but --max-hours is {max_hours:g}; raise --max-hours (legs are "
+                         f"never shortened unless --allow-fit)")
 
 
 def _leg(kind: str, block: int, group: str | None = None, **extra: Any) -> dict[str, Any]:
@@ -105,7 +108,7 @@ def build_schedule(groups: Sequence[str], blocks: int = 2, seed: int = 0,
                    cadence_sweep: Sequence[float] = (), setup_seconds: int = 1800,
                    profile_collectors: bool = False,
                    variants: Mapping[str, Mapping[str, Any]] | None = None,
-                   governors: Sequence[str] = ()) -> dict[str, Any]:
+                   governors: Sequence[str] = (), allow_fit: bool = True) -> dict[str, Any]:
     """Return ``{legs, leg_seconds, projected_seconds, fit_steps, seed, governors, ...}``."""
     budget = max_hours * 3600
     if profile_collectors:
@@ -124,7 +127,7 @@ def build_schedule(groups: Sequence[str], blocks: int = 2, seed: int = 0,
     steps.append(("drop_second_all", {"second_all": False}))
     if blocks > 1:
         steps.append(("solo_single_block", {"solo_blocks": 1}))
-    for name, change in steps:
+    for name, change in steps if allow_fit else ():
         if total <= budget:
             break
         state.update(change)
