@@ -834,9 +834,10 @@ def test_proxy_dockerfile_source_builds_nginx_with_pinned_deps():
   assert "make -j" in zlib_run and "libz.a" in zlib_run
   assert "hpcperfstats_strip_lto" in zlib_run
   assert "hpcperfstats_bake_cflags proxy/zlib-ng" not in zlib_run
-  assert "-DZLIB_COMPAT" in zlib_run, (
-    "proxy zlib-ng make must not drop configure --zlib-compat (CFLAGS= override)"
-  )
+  # --zlib-compat reaches configure argv; make must not override CFLAGS
+  # (that dropped -DWITH_OPTIM/-DX86_SSE2: test_proxy_dockerfile_zlib_ng.py).
+  assert "./configure --zlib-compat" in zlib_run
+  assert 'make -j"$(nproc)" libz.a CC=clang\n' in zlib_run
   assert "hpcperfstats_bake_cflags proxy/nginx" in nginx_run
   assert 'make -j"$(nproc)" CFLAGS="${nginx_bake_cflags}"' in nginx_run
   assert 'make install CFLAGS="${nginx_bake_cflags}"' in nginx_run

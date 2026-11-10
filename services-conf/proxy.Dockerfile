@@ -120,7 +120,6 @@ RUN \
   /bin/bash -o pipefail -s <<'BASH'
 set -eux
 _cf_cfg="$(hpcperfstats_strip_lto "$(hpcperfstats_native_base_cflags)")"
-_cf_bake="$(hpcperfstats_native_base_cflags)"
 curl -fsSL "https://github.com/zlib-ng/zlib-ng/archive/refs/tags/${ZLIB_NG_VERSION}.tar.gz" \
   -o /tmp/zlib-ng.tar.gz
 echo "${ZLIB_NG_SHA256}  /tmp/zlib-ng.tar.gz" | sha256sum -c -
@@ -139,14 +138,15 @@ printf '%s\n' \
   '    *) new_cflags="${new_cflags:+$new_cflags }$arg" ;;' \
   '  esac' \
   'done' \
-  'export CFLAGS="$new_cflags"' \
+  "export CFLAGS=\"${_cf_cfg}\${new_cflags:+ \$new_cflags}\"" \
   'exec ./configure.zlib-ng --zlib-compat "$@" $extra' \
   > configure
 chmod +x configure
 CFLAGS="${_cf_cfg}" CC=clang ./configure --zlib-compat
 test -f Makefile
-# make … CFLAGS= overrides Makefile flags; keep -DZLIB_COMPAT from ./configure --zlib-compat.
-make -j"$(nproc)" libz.a CC=clang CFLAGS="${_cf_bake} -DZLIB_COMPAT"
+# Never pass CFLAGS= to zlib-ng make: it replaces configure's -DWITH_OPTIM/-DX86_SSE2/...,
+# leaving NULL functable entries ("Zlib-ng functable failed initialization!", deflateInit2 -6).
+make -j"$(nproc)" libz.a CC=clang
 test -f libz.a
 rm -f /tmp/zlib-ng.tar.gz
 BASH
@@ -324,12 +324,13 @@ nginx_bake_cflags="${_cflags} -I/opt/zstd/include -I/opt/pcre2/include -DZLIB_CO
   --with-zlib-opt="--zlib-compat"
 # objs/Makefile builds ../openssl-* and ../zlib-ng in parallel; zlib-ng distclean races
 # zlib-ng.h generation. OpenSSL tests/apps/fuzz add hundreds of ThinLTO links.
+# zlib-ng gets its own make with no CFLAGS= (MAKEFLAGS would override its configure defines).
 _lto_ld="$(hpcperfstats_alpine_thinlto_ldflags)"
 export AR=/usr/lib/llvm22/bin/llvm-ar RANLIB=/usr/lib/llvm22/bin/llvm-ranlib
 hpcperfstats_alpine_jemalloc_export_link_toolchain
+make -f objs/Makefile -j1 ../zlib-ng/libz.a
 make -f objs/Makefile -j1 \
   "../openssl-${OPENSSL_VERSION}/.openssl/include/openssl/ssl.h" \
-  ../zlib-ng/libz.a \
   CFLAGS="${nginx_bake_cflags}" LDFLAGS="${_lto_ld}" EXTRA_LDFLAGS="${_lto_ld}"
 make -j"$(nproc)" CFLAGS="${nginx_bake_cflags}"
 make install CFLAGS="${nginx_bake_cflags}"
@@ -346,6 +347,12 @@ else
   echo "mime.types missing after make install"; ls -la /etc/nginx /opt/nginx/conf || true; exit 1
 fi
 test -f /opt/nginx/conf/mime.types
+# Regression 2026-11-10: the libz.a nginx linked must initialize its functable (deflateInit2 == Z_OK).
+printf '%s\n' '#include <string.h>' '#include "zlib.h"' \
+  'int main(void){z_stream s;memset(&s,0,sizeof s);return deflateInit2(&s,1,Z_DEFLATED,31,8,Z_DEFAULT_STRATEGY)!=Z_OK;}' \
+  > /tmp/zlib_ng_probe.c
+clang -I../zlib-ng /tmp/zlib_ng_probe.c ../zlib-ng/libz.a -o /tmp/zlib_ng_probe
+/tmp/zlib_ng_probe
 nginx -V 2>&1 | tee /tmp/nginx-V.txt
 grep -F "nginx/${NGINX_VERSION}" /tmp/nginx-V.txt
 grep -F -- "-mtune=native" /tmp/nginx-V.txt
@@ -367,7 +374,7 @@ if grep -E '=> (/usr)?/lib/libpcre2' /tmp/nginx-ldd.txt; then
 fi
 # llvm22-dev pulls zstd apk in proxy-build; runtime stage enforces no apk zstd.
 grep -F /opt/jemalloc /tmp/nginx-ldd.txt
-rm -rf /usr/src /tmp/nginx.tar.gz /tmp/nginx-V.txt /tmp/nginx-ldd.txt
+rm -rf /usr/src /tmp/nginx.tar.gz /tmp/nginx-V.txt /tmp/nginx-ldd.txt /tmp/zlib_ng_probe.c /tmp/zlib_ng_probe
 if [ -e /usr/src ]; then echo "leftover /usr/src"; exit 1; fi
 BASH
 
