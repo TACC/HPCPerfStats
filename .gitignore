@@ -122,6 +122,7 @@ tmp/
 test_runs/*
 !test_runs/README.md
 hpcperfstats/test_runs/
+monitor/test_runs/
 # -----------------------------------------------------------------------------
 # Frontend build output (Next.js export → copy-next-export.mjs → static/frontend).
 # Orval client under hpcperfstats/site/frontend/src/api/generated/ is gitignored
