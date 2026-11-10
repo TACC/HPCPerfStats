@@ -96,6 +96,25 @@ Applies to `monitor/measurement/**` (harness, sampler, FWQ, report) and the
    the build were each suspected and each ruled out by an A/B on the live daemon before the
    governor was found (findings 10, 12, 18). Compare RPMs only as two harness runs on the same
    node with the same `--governors` (D24), never against an older harness run.
+16. **Campaigns compare per leg: never shorten legs, one generated conf everywhere.** Every leg
+   of every node uses the same `--leg-seconds` (1800), settle, FWQ, `--blocks` and governor;
+   total time, leg count and collector set may differ by architecture. The harness refuses an
+   over-budget plan (raise `--max-hours`); `--allow-fit` is never used for a campaign
+   (2026-11-09: c122-018's legs were auto-cut to 1200 s while Vista ran 1800 s). Each node gets
+   a harness-built `--conf`, identical except `server`/`queue`/`user`/`password`
+   (`buffer_hours 6`, `sample_freq 30`, `sample_freq_slow 600`, `send_freq 300`,
+   `enable_slow_tier 1`, no `jobid_file`); never a site conf (buffer 48 h / 4096 / 6 h and
+   different `jobid_file` made the 2026-11-09 runs incomparable). Each cluster keeps its own
+   fleet build; that difference is intended and recorded.
+17. **Every Grace node has bound CoreSight PMUs before a run.** Preflight refuses an
+   `arm-cs-arch-pmu.*` device without a `driver` link (c642-041 2026-11-09: firmware APMT gave
+   `No cpu associated with the PMU`, no `nvidia_scf_pmu_*`, so `arm_aarch64_imc` disabled
+   itself). `--allow-unbound-pmu` only for diagnosis, flagged `unbound_pmu`; such a node is
+   not part of a campaign.
+18. **A campaign is published only with a passing `bin/compare_runs.py`.** Run it over all the
+   campaign's run directories; exit 0 (`COMPARABLE`: every must-match row identical, no
+   `fit_steps`) is required, and its `compare.md` is committed with the profiles. Intended
+   differences (fleet build, OS, hardware, collector groups) are listed, never failures.
 
 ## Tests
 
