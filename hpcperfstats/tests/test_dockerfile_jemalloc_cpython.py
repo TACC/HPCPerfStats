@@ -105,12 +105,12 @@ def test_dockerfile_uses_debian_trixie_builder_and_slim_runtime():
   ).read_text()
   assert "FROM python:3.14.7-trixie" not in dockerfile
   assert re.search(
-    r"^FROM debian:trixie AS python-build\s*$",
+    r"^FROM debian:trixie-20261104 AS python-build\s*$",
     dockerfile,
     flags=re.MULTILINE,
   )
   assert re.search(
-    r"^FROM debian:trixie-slim AS hpcperfstats-base\s*$",
+    r"^FROM debian:trixie-20261104-slim AS hpcperfstats-base\s*$",
     dockerfile,
     flags=re.MULTILINE,
   )

@@ -167,6 +167,14 @@ Compose mounts `services-conf/rabbitmq_default_queue_type.conf` (`default_queue_
 
 Compose **`mem_limit` / `memswap_limit` 96g** plus `services-conf/rabbitmq_vm_memory.conf` (`vm_memory_high_watermark.absolute = 64GiB` headroom). Compose **`ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512`** tunes Erlang binary/heap carriers (recreate after changing that env). Console logging is **`warning`** with connection/channel **`error`** (`services-conf/rabbitmq_logging.conf` — not **`info`**). Crash dumps off: **`ERL_CRASH_DUMP_SECONDS=0`** + **`ulimits.core: 0`**. Recreate `rabbitmq` after changing mem limits, watermark, **`ERL_FLAGS`**, logging, crash-dump knobs, or **`services-conf/rabbitmq_frame_max.conf`** (`frame_max = 131072`; `docker compose up -d --force-recreate rabbitmq pipeline`). On hosts with less than 96 GiB RAM, lower **both** `mem_limit`/`memswap_limit` and the absolute watermark together. Inspect: `docker compose exec rabbitmq rabbitmqctl status` (Alarms + watermark; do **not** use `rabbitmqctl list_alarms` — absent on 4.3.x). Preserve/extract recovery: **[OPERATOR_RABBITMQ_RECOVERY.md](OPERATOR_RABBITMQ_RECOVERY.md)**.
 
+**RabbitMQ minor upgrade (4.3.x → 4.4.x image bump):** a node refuses to boot on a new minor unless every stable feature flag was enabled on the old version, so enable them on the **running 4.3.x** broker, confirm none is left `disabled`, then recreate only `rabbitmq` (and `pipeline`, so listend reconnects) on the new image. Queues and messages stay on the `rabbitmq_messages` volume.
+
+```bash
+podman-compose -p hpcperfstats exec rabbitmq rabbitmqctl enable_feature_flag all ; podman-compose -p hpcperfstats exec rabbitmq rabbitmqctl list_feature_flags name state 2>&1 | grep -c -w disabled ; podman-compose -p hpcperfstats pull rabbitmq && podman-compose -p hpcperfstats up -d --no-build --no-deps --force-recreate rabbitmq pipeline ; podman-compose -p hpcperfstats exec rabbitmq rabbitmqctl status 2>&1 | grep -E 'RabbitMQ version|Alarms' -A1
+```
+
+The `grep -c` must print **`0`** before the recreate is safe; `status` should report the new version and `(none)` under Alarms.
+
 ---
 
 ## PostgreSQL 18 dual-run migrate (optional)

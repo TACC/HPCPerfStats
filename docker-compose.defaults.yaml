@@ -385,7 +385,7 @@ services:
 
   rabbitmq:
     # Management plugin (HTTP API on 15672) for Admin Monitor stats.
-    image: docker.io/library/rabbitmq:4.3.7-management-alpine
+    image: docker.io/library/rabbitmq:4.4.0-management-alpine
     restart: always
     logging: *hpc-logging
     hostname: rabbitmq-prod

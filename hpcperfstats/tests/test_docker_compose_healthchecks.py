@@ -122,7 +122,7 @@ def test_docker_compose_registry_images_are_fully_qualified_for_podman():
 
   assert "image: docker.io/valkey/valkey:9.1.3-alpine3.24" in content
   assert "image: docker.io/timescale/timescaledb:2.28.3-pg15" in content
-  assert "image: docker.io/library/rabbitmq:4.3.7-management-alpine" in content
+  assert "image: docker.io/library/rabbitmq:4.4.0-management-alpine" in content
 
 
 def test_docker_compose_network_name_is_parameterized_with_production_default():

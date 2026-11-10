@@ -57,7 +57,7 @@ RUN /bin/bash -o pipefail -c "\
 # GIL: --without-mimalloc so jemalloc owns process + object-arena malloc.
 # FT: keep mimalloc for objects; still force-link jemalloc for side allocation.
 # Jemalloc both ways: DT_NEEDED here + runtime LD_PRELOAD + /etc/ld.so.preload for wheels.
-FROM debian:trixie AS python-build
+FROM debian:trixie-20261104 AS python-build
 ENV PYTHON_VERSION=3.14.10 \
     MAKEFLAGS=-j40 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -784,7 +784,7 @@ RUN chmod +x /tmp/codon-metrics-src/build_codon_metrics_ext.sh \
   && rm -rf /tmp/codon-metrics-src /opt/codon
 
 # Slim runtime: COPY only /opt install prefixes (never /usr/src or cmake build dirs).
-FROM debian:trixie-slim AS hpcperfstats-base
+FROM debian:trixie-20261104-slim AS hpcperfstats-base
 
 RUN /bin/bash -o pipefail -c "useradd -u 901860 -ms /bin/bash hpcperfstats \
     && mkdir -p /hpcperfstats /home/hpcperfstats/.ssh \

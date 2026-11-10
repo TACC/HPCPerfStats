@@ -299,12 +299,12 @@ def test_dockerfile_pins_dual_cpython_prefixes_from_python_build():
   assert stages[-1] == "hpcperfstats-full"
 
   assert re.search(
-    r"^FROM debian:trixie AS python-build\s*$",
+    r"^FROM debian:trixie-20261104 AS python-build\s*$",
     dockerfile,
     flags=re.MULTILINE,
   )
   assert re.search(
-    r"^FROM debian:trixie-slim AS hpcperfstats-base\s*$",
+    r"^FROM debian:trixie-20261104-slim AS hpcperfstats-base\s*$",
     dockerfile,
     flags=re.MULTILINE,
   )
