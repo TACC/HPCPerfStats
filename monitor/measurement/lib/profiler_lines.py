@@ -45,7 +45,12 @@ def parse_last_report(text: str) -> dict[str, Any] | None:
         if m:
             metrics.append({"metric": m.group(1), **_per_call(*(int(x) for x in m.groups()[1:]))})
     ordered = dict(sorted(types.items(), key=lambda kv: -kv[1]["cpu_ns"]))
-    return {"cycles": cycles, "types": ordered, "metrics_top": metrics}
+    # Every enabled type is collected once per cycle. Shared-node daemons before the
+    # job_shared_emit fix never counted their cycles (c122-018 2026-11-09: cycles=1 after 47
+    # collects), so the most-called type is the collect count when the header is lower.
+    calls = max((t["calls"] for t in types.values()), default=0)
+    return {"cycles": max(cycles, calls), "cycles_reported": cycles, "types": ordered,
+            "metrics_top": metrics}
 
 
 def group_rollup(report: dict[str, Any], caps: dict[str, Any] | None) -> dict[str, dict[str, Any]]:

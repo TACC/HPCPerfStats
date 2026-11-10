@@ -224,8 +224,9 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
   stats_buffer_set_frozen_time(&now);
   stats_buffer_debug_shm_burst_begin();
 
-  /* One metrics collect for the whole burst (host_mem_job collect clears devices). */
-  stats_runtime_collect_enabled_metrics(0);
+  /* One metrics collect for the whole burst (host_mem_job collect clears devices); through the
+   * cycle wrapper so --enable-metric-profiler counts the cycle (c122-018 reported cycles=1). */
+  (void)stats_runtime_collect_cycle(monitor_log_get_stream(), NULL, NULL, 0);
   populate_host_mem_job(&disc);
 
   if (disc.n == 0) {

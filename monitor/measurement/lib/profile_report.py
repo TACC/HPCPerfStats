@@ -337,7 +337,7 @@ def _collector_profile(run_dir: Path, legs: list[dict[str, Any]], planned: list[
                             f"(raw/legs/{leg['leg_id']}/journal.txt)")
     caps = caps if isinstance(caps, dict) and "configure" in caps else None
     return {"status": "ok", "label": PROFILE_LABEL, "cycles": report["cycles"],
-            "types": report["types"], "groups": profiler_lines.group_rollup(report, caps),
+            "cycles_reported": report["cycles_reported"], "types": report["types"], "groups": profiler_lines.group_rollup(report, caps),
             "metrics_top": report["metrics_top"],
             "source": f"raw/legs/{leg['leg_id']}/journal.txt"}
 
@@ -563,7 +563,10 @@ def _md(profile: dict[str, Any]) -> str:
     cp = profile.get("collector_profile") or {}
     lines += ["## Instrumented collector profile", ""]
     if cp.get("status") == "ok":
-        lines += [f"> {cp['label']}", "", f"Cycles: {cp['cycles']}", "",
+        reported = cp.get("cycles_reported", cp["cycles"])
+        note = f" (daemon header said {reported}; counted from type calls)" \
+            if reported != cp["cycles"] else ""
+        lines += [f"> {cp['label']}", "", f"Cycles: {cp['cycles']}{note}", "",
                   "| Type | Calls | CPU ms/call | Wall ms/call | Wait ms/call |",
                   "| --- | --- | --- | --- | --- |"]
         for name, ty in cp["types"].items():

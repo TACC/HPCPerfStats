@@ -21,6 +21,21 @@ def test_last_cumulative_report_wins():
     assert rep["metrics_top"] == []  # the last report carried no metric= lines
 
 
+def test_undercounted_cycle_header_uses_type_calls():
+    """c122-018 2026-11-09: shared-node daemon printed cycles=1 after 47 collects."""
+    text = ("x hpcperfstatsd-profiler[1]: metric-profiler: cycles=1 tracked_metrics=1 "
+            "tracked_types=2 overflow=0\n"
+            "x hpcperfstatsd-profiler[1]: metric-profiler:type=host_cpu calls=47 "
+            "wall_ns=94000000 cpu_ns=47000000 wait_ns=47000000 avg_wall_ns=2000000\n"
+            "x hpcperfstatsd-profiler[1]: metric-profiler:type=host_mem calls=47 "
+            "wall_ns=4700000 cpu_ns=4700000 wait_ns=0 avg_wall_ns=100000\n")
+    rep = profiler_lines.parse_last_report(text)
+    assert rep["cycles"] == 47 and rep["cycles_reported"] == 1
+    caps = {"arch": "x86_64", "configure": {"cpu_backend": "likwid", "infiniband": False}}
+    fs = profiler_lines.group_rollup(rep, caps)["filesystem"]
+    assert abs(fs["cpu_ms_per_cycle"] - (47.0 + 4.7) / 47) < 1e-9  # not 47x inflated
+
+
 def test_no_report_and_group_rollup():
     assert profiler_lines.parse_last_report("Enabled types: host_cpu\n") is None
     rep = profiler_lines.parse_last_report((FIX / "journal_metric_profiler.txt").read_text())

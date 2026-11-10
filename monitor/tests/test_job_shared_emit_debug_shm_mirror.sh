@@ -46,6 +46,22 @@ grep -q 'stats_buffer_debug_shm_burst_commit' "${SRC}" \
     exit 1
   }
 
+# Every collect must go through stats_runtime_collect_cycle so the metric profiler counts the
+# cycle (c122-018 2026-11-09: shared-node burst called the collectors directly, report said
+# cycles=1 after 47 collects). Only main.c (wraps cycle_begin/end itself) and stats_runtime.c
+# may call stats_runtime_collect_enabled_metrics.
+grep -q 'stats_runtime_collect_cycle(' "${SRC}" \
+  || {
+    echo "job_shared_emit burst must collect via stats_runtime_collect_cycle" >&2
+    exit 1
+  }
+bad="$(grep -l 'stats_runtime_collect_enabled_metrics(' "${ROOT}"/src/*.c \
+  | grep -vE '/(stats_runtime|main)\.c$' || true)"
+if test -n "${bad}"; then
+  echo "collect bypasses the profiler cycle count in: ${bad}" >&2
+  exit 1
+fi
+
 # Idle '-' (no jids) is the whole-node remainder; c122-018 2026-11-05 dropped all GPU rows.
 grep -q 'job_emit_remainder_ctx(&available, NULL, available.inventory_known' "${SRC}" \
   || {
