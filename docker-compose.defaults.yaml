@@ -249,7 +249,7 @@ services:
       timeout: 3s
       retries: 10
     stop_signal: SIGINT  # Preferred for faster, yet still graceful, shutdowns
-    stop_grace_period: 10m
+    stop_grace_period: 30m
     volumes:
       - postgres_data:/var/lib/postgresql/data/
       # unix_socket_directories default; web/pipeline mount the same tmpfs at
