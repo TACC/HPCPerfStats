@@ -106,7 +106,7 @@ RUN /bin/bash -o pipefail -c '\
 
 ENV CC=clang-22 CXX=clang++-22 \
     AR=llvm-ar-22 RANLIB=llvm-ranlib-22 NM=llvm-nm-22 \
-    HPC_CLANG_LD_PATH=--ld-path=/usr/lib/llvm-22/bin/ld.lld
+    HPC_CLANG_LD_PATH="--ld-path=/usr/lib/llvm-22/bin/ld.lld -Wno-unused-command-line-argument"
 
 # Print out compiler platform detection (services-conf/clang_march_native_probe.sh).
 RUN CC=clang-22 /bin/bash /usr/local/lib/hpcperfstats/clang_march_native_probe.sh

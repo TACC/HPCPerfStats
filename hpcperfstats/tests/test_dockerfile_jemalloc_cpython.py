@@ -28,7 +28,7 @@ def test_python_build_uses_clang_22_from_trixie() -> None:
   assert "clang-22" in build
   assert "llvm-22" in build
   assert "lld-22" in build
-  assert "HPC_CLANG_LD_PATH=--ld-path=/usr/lib/llvm-22/bin/ld.lld" in build
+  assert 'HPC_CLANG_LD_PATH="--ld-path=/usr/lib/llvm-22/bin/ld.lld' in build
   assert "AR=llvm-ar-22" in build
   assert "RANLIB=llvm-ranlib-22" in build
   assert "update-alternatives --install /usr/bin/llvm-ar llvm-ar" in build

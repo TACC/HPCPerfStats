@@ -55,7 +55,7 @@ ENV NGINX_VERSION=${NGINX_VERSION} \
     ZSTD_NGINX_MODULE_VERSION=${ZSTD_NGINX_MODULE_VERSION} \
     ZSTD_NGINX_MODULE_SHA256=${ZSTD_NGINX_MODULE_SHA256}
 
-ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin --ld-path=/usr/bin/ld.lld -g0"
+ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin --ld-path=/usr/bin/ld.lld -Wno-unused-command-line-argument -g0"
 
 RUN apk add --no-cache \
     bash \

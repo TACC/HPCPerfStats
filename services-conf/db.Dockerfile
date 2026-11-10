@@ -16,8 +16,8 @@ RUN chmod +x /usr/local/lib/hpcperfstats/bake_clang_flags.sh /usr/local/lib/hpcp
 
 # LLVM major matches docker-library postgres 18/alpine3.24.
 ENV DOCKER_PG_LLVM_DEPS="llvm22-dev clang22"
-ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin --ld-path=/usr/bin/ld.lld -g0"
-ENV OPT_CFLAGS_PG="-O2 -march=native -mprefer-vector-width=512 -mtune=native -flto=thin --ld-path=/usr/bin/ld.lld -g0"
+ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin --ld-path=/usr/bin/ld.lld -Wno-unused-command-line-argument -g0"
+ENV OPT_CFLAGS_PG="-O2 -march=native -mprefer-vector-width=512 -mtune=native -flto=thin --ld-path=/usr/bin/ld.lld -Wno-unused-command-line-argument -g0"
 
 RUN set -eux; \
   apk add --no-cache \

@@ -35,12 +35,16 @@ hpcperfstats_strip_lto() {
      s/[[:space:]]+/ /g; s/^ //; s/ $//'
 }
 
+# Link-only flags (-fuse-ld / --ld-path) ride along in CC/CFLAGS so every link
+# uses lld; this silences clang's per-compile "argument unused" warning for them.
+HPC_NO_UNUSED_ARG_WARN="-Wno-unused-command-line-argument"
+
 # variant: libs (Alpine default), pg (PostgreSQL vector width), debian-lib (Debian web).
 hpcperfstats_native_base_cflags() {
   local variant="${1:-libs}"
   case "${variant}" in
     pg)
-      printf '%s' "-O2 -march=native -mprefer-vector-width=512 -mtune=native -flto=thin --ld-path=$(hpcperfstats_alpine_ld_lld_path) -g0"
+      printf '%s' "-O2 -march=native -mprefer-vector-width=512 -mtune=native -flto=thin --ld-path=$(hpcperfstats_alpine_ld_lld_path) ${HPC_NO_UNUSED_ARG_WARN} -g0"
       ;;
     debian-lib)
       printf '%s' "-O2 -march=native -mtune=native -flto=thin -g0"
@@ -58,7 +62,7 @@ hpcperfstats_alpine_ld_lld_path() {
 hpcperfstats_alpine_thinlto_ldflags() {
   local lld
   lld="$(hpcperfstats_alpine_ld_lld_path)"
-  printf '%s' "-flto=thin -fuse-ld=lld --ld-path=${lld}"
+  printf '%s' "-flto=thin -fuse-ld=lld --ld-path=${lld} ${HPC_NO_UNUSED_ARG_WARN}"
 }
 
 hpcperfstats_alpine_export_llvm_binutils() {
@@ -77,8 +81,8 @@ hpcperfstats_alpine_export_clang_link_toolchain() {
   local lld
   hpcperfstats_alpine_export_llvm_binutils
   lld="$(hpcperfstats_alpine_ld_lld_path)"
-  export CC="clang -fuse-ld=lld --ld-path=${lld}"
-  export CXX="clang++ -fuse-ld=lld --ld-path=${lld}"
+  export CC="clang -fuse-ld=lld --ld-path=${lld} ${HPC_NO_UNUSED_ARG_WARN}"
+  export CXX="clang++ -fuse-ld=lld --ld-path=${lld} ${HPC_NO_UNUSED_ARG_WARN}"
 }
 
 hpcperfstats_alpine_jemalloc_export_link_toolchain() {

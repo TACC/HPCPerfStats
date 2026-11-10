@@ -226,7 +226,7 @@ def test_db_dockerfile_libs_mtune_and_lz4_heapmode() -> None:
   """OPT_CFLAGS_LIBS include -mtune=native; lz4 bake sets -DLZ4_HEAPMODE=0."""
   text = _dockerfile()
   assert (
-    'ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin --ld-path=/usr/bin/ld.lld -g0"'
+    'ENV OPT_CFLAGS_LIBS="-O2 -march=native -mtune=native -flto=thin --ld-path=/usr/bin/ld.lld -Wno-unused-command-line-argument -g0"'
     in text
   )
   assert "-mtune=native" in text
