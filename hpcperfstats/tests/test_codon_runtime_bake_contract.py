@@ -70,7 +70,7 @@ def test_dockerfile_codon_build_stage_copies_to_runtime() -> None:
   text = _DOCKERFILE.read_text(encoding="utf-8")
   codon = _stage_body(text, "codon-build")
   assert "FROM python-build AS codon-build" in text or "AS codon-build" in text
-  assert "CODON_VERSION=0.20.4" in codon
+  assert "CODON_VERSION=0.20.6" in codon
   assert "CODON_TARBALL_SHA256=" in codon
   assert "sha256sum -c" in codon
   assert "build_codon_ext.sh" in codon

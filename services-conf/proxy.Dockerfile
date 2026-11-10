@@ -5,7 +5,7 @@
 # via resolve_proxy_ssl_certs_dir.py in proxy_entrypoint.sh (not baked at build).
 # Do not apk-install nginx / nginx-mod-http-brotli.
 
-ARG ALPINE_VERSION=3.24.3
+ARG ALPINE_VERSION=3.24.4
 
 FROM alpine:${ALPINE_VERSION} AS proxy-build
 

@@ -652,7 +652,7 @@ def test_proxy_dockerfile_uses_clang22_apk_toolchain() -> None:
   repo_root = Path(__file__).resolve().parents[2]
   dockerfile = (repo_root / "services-conf" / "proxy.Dockerfile").read_text()
   first_from = dockerfile.index("FROM ")
-  alpine_arg = dockerfile.index("ARG ALPINE_VERSION=3.24.3")
+  alpine_arg = dockerfile.index("ARG ALPINE_VERSION=3.24.4")
   assert alpine_arg < first_from, (
     "ALPINE_VERSION must be declared before first FROM"
   )

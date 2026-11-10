@@ -6,15 +6,15 @@ This tree keeps A/B harnesses, inventory, and microbenches only.
 
 ## Toolchain (experiments / A/B only)
 
-- **Codon:** pinned **0.20.4** (prod image downloads the same tarball in `codon-build`)
+- **Codon:** pinned **0.20.6** (prod image downloads the same tarball in `codon-build`)
 - Host install (optional, for inventory / codon-run spikes):
 
 ```bash
-mkdir -p /data/user/$USER/codon-0.20.4
-curl -fsSL -o /tmp/codon-0.20.4.tar.gz \
-  https://github.com/exaloop/codon/releases/download/v0.20.4/codon-linux-x86_64.tar.gz
-tar -xzf /tmp/codon-0.20.4.tar.gz -C /data/user/$USER/codon-0.20.4 --strip-components=1
-export CODON_HOME=/data/user/$USER/codon-0.20.4
+mkdir -p /data/user/$USER/codon-0.20.6
+curl -fsSL -o /tmp/codon-0.20.6.tar.gz \
+  https://github.com/exaloop/codon/releases/download/v0.20.6/codon-linux-x86_64.tar.gz
+tar -xzf /tmp/codon-0.20.6.tar.gz -C /data/user/$USER/codon-0.20.6 --strip-components=1
+export CODON_HOME=/data/user/$USER/codon-0.20.6
 ```
 
 ## Layout

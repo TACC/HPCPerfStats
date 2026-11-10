@@ -2,10 +2,10 @@
 # Path: services-conf/pipeline_web.Dockerfile — build context must stay repo root (./).
 # Build frontend assets in a dedicated node stage.
 # COPY is scoped to frontend inputs so Python/backend changes do not bust npm layers.
-FROM node:26.12.1-alpine3.24 AS frontend-builder
+FROM node:26.13.0-alpine3.24 AS frontend-builder
 # Pin npm 12+ before package install: dependency lifecycle scripts are opt-in
 # (allowScripts) so wormed preinstall hooks cannot run by default.
-ARG NPM_VERSION=12.2.1
+ARG NPM_VERSION=12.2.2
 RUN apk add --no-cache bash git \
     && npm install -g "npm@${NPM_VERSION}" \
     && npm --version
@@ -740,8 +740,8 @@ RUN /bin/bash -o pipefail -c '\
 # bundle Codon runtime next to $ORIGIN. Runtime copies only /opt/hpcperfstats/codon_parse
 # (no /opt/codon in the slim image).
 FROM python-build AS codon-build
-ENV CODON_VERSION=0.20.4 \
-    CODON_TARBALL_SHA256=490d2263e2a543b7786e8f5898eb767dd6a67945238c90fe8be130b4331eb8c9
+ENV CODON_VERSION=0.20.6 \
+    CODON_TARBALL_SHA256=688772b279465e6d6ad7269741844f17dc5834eef4333f8a7851b6446f7143b6
 RUN /bin/bash -o pipefail -c '\
   set -euo pipefail; \
   apt-get update -y; \

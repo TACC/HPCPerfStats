@@ -4,7 +4,7 @@
 # Do not use a floating Alpine tag. Do not copy docker-library --disable-rpath.
 
 # syntax=docker/dockerfile:1
-ARG ALPINE_VERSION=3.24.3
+ARG ALPINE_VERSION=3.24.4
 
 FROM alpine:${ALPINE_VERSION} AS db-build
 
@@ -77,8 +77,8 @@ set -eux
 curl -fsSL "https://github.com/jemalloc/jemalloc/releases/download/${JEMALLOC_VERSION}/jemalloc-${JEMALLOC_VERSION}.tar.bz2" -o /tmp/jemalloc.tar.bz2; echo "${JEMALLOC_SHA256}  /tmp/jemalloc.tar.bz2" | sha256sum -c -; mkdir -p /usr/src/jemalloc; tar -xjf /tmp/jemalloc.tar.bz2 -C /usr/src/jemalloc --strip-components=1; cd /usr/src/jemalloc; _cf_cfg="$(hpcperfstats_configure_cflags db/jemalloc)"; _cf_bake="$(hpcperfstats_bake_cflags db/jemalloc)"; _lto_ld="$(hpcperfstats_alpine_thinlto_ldflags)"; hpcperfstats_alpine_jemalloc_export_link_toolchain; AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" CC="${CC}" CXX="${CXX}" CPPFLAGS="-D_GNU_SOURCE" CFLAGS="${_cf_cfg}" CXXFLAGS="${_cf_cfg}" ./configure --prefix=/opt/jemalloc; make -j"$(nproc)" CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_lto_ld}" EXTRA_LDFLAGS="${_lto_ld}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}"; make install CC="${CC}" CXX="${CXX}" CFLAGS="${_cf_bake}" CXXFLAGS="${_cf_bake}" LDFLAGS="${_lto_ld}" EXTRA_LDFLAGS="${_lto_ld}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}"; rm -rf /usr/src/jemalloc /tmp/jemalloc.tar.bz2
 BASH
 
-ARG LZ4_VERSION=1.10.0
-ARG LZ4_SHA256=537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b
+ARG LZ4_VERSION=1.11.1
+ARG LZ4_SHA256=683fed08a844ad012196381e40badf80c0bbe4962959761416d41c9e67d77ec7
 ENV LZ4_VERSION=${LZ4_VERSION} LZ4_SHA256=${LZ4_SHA256}
 # --- lz4 ---
 RUN \

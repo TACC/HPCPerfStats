@@ -34,10 +34,10 @@ def test_db_dockerfile_uses_clang22_apk_toolchain() -> None:
 
 def test_db_dockerfile_pins_alpine_3_24_not_latest_or_trixie() -> None:
   text = _dockerfile()
-  assert "ARG ALPINE_VERSION=3.24.3" in text
+  assert "ARG ALPINE_VERSION=3.24.4" in text
   assert "FROM alpine:${ALPINE_VERSION}" in text
   first_from = text.index("FROM ")
-  alpine_arg = text.index("ARG ALPINE_VERSION=3.24.3")
+  alpine_arg = text.index("ARG ALPINE_VERSION=3.24.4")
   assert alpine_arg < first_from, (
     "ALPINE_VERSION must be declared before first FROM"
   )
@@ -80,9 +80,9 @@ def test_db_dockerfile_pins_jemalloc_icu_liburing_lz4_zlib_ng_zstd() -> None:
   assert (
     "8d052f2622dcb3678cbaee5ff582a87572672a6c0a56533cdda5b65cb636120a" in text
   )
-  assert "ARG LZ4_VERSION=1.10.0" in text
+  assert "ARG LZ4_VERSION=1.11.1" in text
   assert (
-    "537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b" in text
+    "683fed08a844ad012196381e40badf80c0bbe4962959761416d41c9e67d77ec7" in text
   )
   assert "ARG ZLIB_NG_VERSION=2.3.3" in text
   assert (

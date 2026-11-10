@@ -6,7 +6,7 @@ set -euo pipefail
 
 GIT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 WORKSPACE_ROOT="$(cd "$GIT_ROOT/.." && pwd)"
-CODON_HOME="${CODON_HOME:-/data/user/${USER}/codon-0.20.4}"
+CODON_HOME="${CODON_HOME:-/data/user/${USER}/codon-0.20.6}"
 LOG_DIR="${HPCPERFSTATS_TEST_RUNS:-${WORKSPACE_ROOT}/test_runs}"
 STAMP="$(date +%Y%m%dT%H%M%S)"
 B_ONLY="${HPCPERFSTATS_CODON_AB_B_ONLY:-0}"
