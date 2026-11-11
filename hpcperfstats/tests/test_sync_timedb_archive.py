@@ -12184,7 +12184,10 @@ def test_space_admit_denies_reseal_below_reserve(tmp_path, monkeypatch):
   import hpcperfstats.dbload.lib.sync_timedb_archive_helpers as helpers
 
   tar_p, zst_p, _raw = _a14_day(tmp_path)
-  free = helpers.free_bytes_for_path(tar_p)
+  # Pinned: parallel test workers freeing /tmp between two real reads let
+  # the seal through (flaky under pytest -n).
+  free = 1 << 40
+  monkeypatch.setattr(helpers, "free_bytes_for_path", lambda _p: free)
   monkeypatch.setattr(
     helpers.cfg, "get_sync_archive_min_free_bytes", lambda: free + 1
   )

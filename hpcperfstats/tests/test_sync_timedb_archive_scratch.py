@@ -452,3 +452,73 @@ def test_old_journal_write_temp_is_removed_and_corrupt_journal_kept(tmp_path):
   kept = _file(tmp_path, f"{DAY}.tar.append_journal.corrupt.1730000000")
   assert _sweep(tmp_path) == 1
   assert not temp.exists() and kept.exists()
+
+
+# --- boot sweep (hpcperfstats01 2026-11-11) -------------------------------
+# A restart kills in-flight seals; their ``<day>.tar.zst.tmp`` (219 GB on 01)
+# were minutes old, so the 24 h idle rule kept them for a day on a full disk.
+# At boot this process holds the orchestrator's archive-dir flock, so no
+# earlier sync_timedb is writing them: day-scoped scratch goes now (its day
+# locks still required); day-less temps keep the idle age.
+
+
+def _boot_sweep(daily, logs=None):
+  sink = logs if logs is not None else []
+  return scratch.sweep_dead_archive_scratch(
+    str(daily), log_fn=lambda msg, **_k: sink.append(msg), boot=True
+  )
+
+
+@pytest.mark.parametrize(
+  "suffix", ["merge.tmp", "dedupe.tmp", "repair.tmp", "decomp.tmp", "zst.tmp"]
+)
+def test_boot_sweep_removes_fresh_day_scratch(tmp_path, suffix):
+  path = _file(tmp_path, f"{DAY}.tar.{suffix}", age_s=60)
+  assert _sweep(tmp_path) == 0  # the idle pass keeps it
+  assert _boot_sweep(tmp_path) == 1
+  assert not path.exists()
+
+
+def test_boot_sweep_still_needs_the_day_locks(tmp_path):
+  path = _file(tmp_path, f"{DAY}.tar.zst.tmp", age_s=60)
+  with file_write_lock(str(tmp_path / f"{DAY}.tar")):
+    assert _boot_sweep(tmp_path) == 0
+  assert path.exists()
+
+
+@pytest.mark.parametrize(
+  "name",
+  [".atomic.abcd1234state.json", "x.json.tmp", "hps_tar_repair_abcd1234"],
+)
+def test_boot_sweep_keeps_fresh_day_less_temps(tmp_path, name):
+  path = tmp_path / name
+  if name.startswith("hps_"):
+    path.mkdir()
+  else:
+    path.write_bytes(b"x")
+  assert _boot_sweep(tmp_path) == 0
+  assert path.exists()
+
+
+def test_boot_sweep_honours_disabled_and_report_mode(tmp_path, monkeypatch):
+  path = _file(tmp_path, f"{DAY}.tar.zst.tmp", age_s=60)
+  monkeypatch.setattr(cfg, "get_sync_archive_scratch_max_idle_hours", lambda: 0)
+  assert _boot_sweep(tmp_path) == 0
+  monkeypatch.setattr(
+    cfg, "get_sync_archive_scratch_max_idle_hours", lambda: 24
+  )
+  monkeypatch.setattr(scratch, "effective_remediation_mode", lambda: "report")
+  logs: list[str] = []
+  assert _boot_sweep(tmp_path, logs) == 0
+  assert path.exists()
+  assert any("archive scratch would remove" in m for m in logs)
+
+
+def test_orchestrator_startup_runs_the_boot_sweep_after_journal_recovery():
+  import inspect
+
+  src = inspect.getsource(qo.run_sync_timedb_queue_orchestrator)
+  recover = src.index("recover_all_interrupted_appends(tgz_archive_dir")
+  sweep = src.index("sweep_dead_archive_scratch(")
+  assert recover < sweep < src.index("populate.start(")
+  assert "boot=True" in src[sweep : sweep + 200]

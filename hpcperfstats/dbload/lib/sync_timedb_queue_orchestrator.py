@@ -2801,7 +2801,6 @@ def _run_day_close_job(
       """
       nonlocal stage
       stage = name
-      space.note_day_close_stage(identity, name)
       _log(
         f"queue_orchestrator day_close stage_enter day={day_token} stage={name}",
         log_fn=log_fn,
@@ -3165,15 +3164,10 @@ def _run_day_close_job(
     if os.path.isfile(tar_path + ".zst"):
       _stage_enter("raw_delete_pre_seal")
       released = int(coord.apply_batch_delete(tar_path) or 0)
-      if released:
-        space.note_space_freed()
       _stage_exit(
         "raw_delete_pre_seal", result="ok", reason=f"deleted={released}"
       )
     _stage_enter("seal")
-    # The checks below yield more often than they seal: appends under space
-    # pressure wait only once the seal itself runs (FINISHING_STAGES).
-    space.note_day_close_stage(identity, "seal_check")
     # The seal only sees raw the manifest and queues know; until the boot
     # whole-archive walk ends, undiscovered raw for this day can still exist
     # and would force a full reseal (04 2026-10-29: 09-22..10-06 resealed).
@@ -3250,8 +3244,6 @@ def _run_day_close_job(
       _stage_exit("seal", result="yielded", reason="seal_slot_busy")
       return "yielded"
     try:
-      space.note_day_close_stage(identity, "seal")
-      tar_before = os.path.isfile(tar_path)
       sealed_before = archive_identity(tar_path + ".zst")
       seal_failed = (
         []
@@ -3278,8 +3270,6 @@ def _run_day_close_job(
       note_fn = getattr(day_state, "note_sealed_archive_changed", None)
       if callable(note_fn):
         note_fn()
-    if tar_before and not os.path.isfile(tar_path):
-      space.note_space_freed()  # sealed without keeping the open tar
     if tar_path in (seal_failed or ()):
       _stage_exit("seal", result="fail", reason="seal_failed")
     else:
@@ -3346,7 +3336,6 @@ def _run_day_close_job(
     remaining_raw = _closed_raw_remains()
     if deleted > 0:
       progress.record(day_token, "raw_delete", 1)
-      space.note_space_freed()
     _stage_exit("raw_delete", result="ok")
     zst_path = tar_path + ".zst"
     if (
@@ -3430,7 +3419,6 @@ def _run_day_close_job(
           if tar_dropped:
             remaining_raw = False
             progress.record(day_token, "tar_delete", 1)
-            space.note_space_freed()
             _log(
               f"queue_orchestrator day_close tar_drop day={day_token}",
               log_fn=log_fn,
@@ -5958,11 +5946,7 @@ def get_total_completed_for_tests() -> int:
 _SELECT_APPEND_DAY_HERE = object()
 
 
-def _select_append_day(
-  inflight: dict[str, AsyncResult],
-  tgz_archive_dir: str,
-  batch_size: int,
-) -> Any:
+def _select_append_day(tgz_archive_dir: str) -> Any:
   """
   Return which days may get append batches now (space pressure gate).
 
@@ -5974,17 +5958,14 @@ def _select_append_day(
   held ~1.7T of expanded sealed days on a 125T volume with 0.3T free).
 
   Args:
-    inflight (dict[str, AsyncResult]): Daily tar -> in-flight append batch
-      (unused; kept for the caller's interface).
     tgz_archive_dir (str): Daily archive directory.
-    batch_size (int): Max paths per append job (unused).
 
   Returns:
     Any: ``space.ALL_DAYS`` without pressure; else a frozenset of the
     allowed days (empty: none yet, keep claiming).
 
   Examples:
-    >>> _select_append_day({}, "/d", 1) is not None
+    >>> _select_append_day("/d") is not None
     True
   """
 
@@ -6122,7 +6103,7 @@ def _try_submit_pending_append_days(
   """
   submitted = 0
   if allowed_day is _SELECT_APPEND_DAY_HERE:
-    allowed_day = _select_append_day(inflight, tgz_archive_dir, batch_size)
+    allowed_day = _select_append_day(tgz_archive_dir)
   for day in _APPEND_DAY_LISTS.day_keys():
     if len(inflight) >= cap:
       break
@@ -6155,13 +6136,6 @@ def _try_submit_pending_append_days(
     take = min(batch_size, pending_n)
     need = _append_batch_need(day, tar_path, take)
     if need is None:
-      continue
-    # A batch that restores a sealed day takes the restore slot atomically
-    # (a day-close restore may race it); the reservation under the tar key
-    # holds it until _drain_append_ready releases the batch.
-    if space.restore_bytes_estimate(
-      tar_path
-    ) > 0 and not space.try_claim_restore_slot(tar_path, tar_path, need):
       continue
     batch_claims = _APPEND_DAY_LISTS.pop_batch(day, take)
     if not batch_claims:
@@ -6261,7 +6235,7 @@ def _fill_append_slots(
       return 0
     fill_cap = min(2, max(1, fill_cap))
     _emit_mem_telem_event("admit_alone", None, alone_progress=True)
-  allowed_day = _select_append_day(inflight, tgz_archive_dir, batch_size)
+  allowed_day = _select_append_day(tgz_archive_dir)
   while len(inflight) < fill_cap:
     submitted += _try_submit_pending_append_days(
       client=client,
@@ -6869,7 +6843,6 @@ def _drain_day_close_ready(
         log_fn=log_fn,
       )
     day_tok = progress.day_token_from_day_close_identity(identity)
-    space.clear_day_close(identity)
     vacate_outcome = failure or outcome
     _day_close_log_vacate_if_allowed(
       day_tok,
@@ -8268,6 +8241,13 @@ def run_sync_timedb_queue_orchestrator(
     # A clone append killed with the previous process left its journal; undo
     # each uncommitted append before any append, seal or restore can run.
     recover_all_interrupted_appends(tgz_archive_dir, log_fn=log_fn or log_print)
+    # Scratch the killed process left (a restart strands every in-flight
+    # seal's .zst.tmp) goes now, not after the 24 h idle age; after journal
+    # recovery so a journal is applied, never swept.
+    with contextlib.suppress(Exception):
+      sweep_dead_archive_scratch(
+        tgz_archive_dir, archive_dir=directory, log_fn=log_fn, boot=True
+      )
     install_cooperative_shutdown_handlers(log_fn=log_fn)
     try:
       stolen = jq.steal_dead_owner_leases(client)

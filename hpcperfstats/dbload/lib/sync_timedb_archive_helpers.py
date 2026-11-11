@@ -6262,10 +6262,8 @@ def ensure_daily_tar_restored_for_append(
     return True
   if not sp.admit_restore(tar_path, space_gate):
     return sp.SPACE_DENIED
-  # The append path ("off") holds its own reservation from dispatch. Any
-  # other admitted restore already holds a provisional ``restore:<tar>``
-  # reservation (the restore slot); ``reserving`` takes it over with the
-  # same key immediately, so an exception below cannot strand the slot.
+  # The append path ("off") holds its own reservation from dispatch; any
+  # other admitted restore reserves its bytes here for the decompress.
   need = 0 if space_gate == "off" else sp.restore_bytes_estimate(tar_path)
   with sp.reserving(f"restore:{tar_path}", need, tar_path=tar_path):
     zst_path, gz_path = compressed_sibling_paths(tar_path)

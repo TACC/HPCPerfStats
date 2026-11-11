@@ -6,8 +6,7 @@ Under pressure nothing grows the disk but a seal and a reflink clone append
 that cannot grow the filesystem (open tar or new tar): appends that would
 restore a sealed day or copy raw bytes stay parked, every restore (append,
 day close, ingest) is refused, and dedupe, union rebuild, salvage and repair
-wait. The one-sealed-day restore slot no longer binds: restores run only
-without pressure, where the slot never applied.
+wait. Without pressure restores and appends keep the hard reserve.
 """
 
 from __future__ import annotations
@@ -117,7 +116,7 @@ def test_default_pressure_threshold_is_one_tib():
 def test_gate_off_never_pressure(monkeypatch):
   _set(monkeypatch, threshold=0, free=0)
   assert not sp.under_pressure("/d")
-  assert sp.select_append_day(["2026-09-01"], set()) is sp.ALL_DAYS
+  assert qo._select_append_day("/d") is sp.ALL_DAYS
   assert sp.census_token("/d") == ""
 
 
@@ -163,184 +162,6 @@ def test_missing_archive_dir_is_not_measured_on_a_parent(monkeypatch, tmp_path):
   assert sp._free_bytes(str(missing)) is None
   missing.mkdir(parents=True)
   assert sp._free_bytes(str(missing / "2026-09-07.tar")) > 0
-
-
-def test_no_appends_while_a_day_close_finishes_a_day(monkeypatch):
-  _set(monkeypatch, threshold=TIB, free=TIB // 2)
-  sp.note_day_close_stage("2026-09-07", "seal")
-  assert sp.select_append_day(["2026-09-01"], set()) is None
-
-
-def test_day_close_checks_alone_do_not_block_appends(monkeypatch):
-  _set(monkeypatch, threshold=TIB, free=TIB // 2)
-  sp.note_day_close_stage("2026-09-07", "disk_remaining_raw")
-  sp.note_day_close_stage("2026-09-08", "wait_on_ingest")
-  assert sp.select_append_day(["2026-09-03", "2026-09-01"], set()) == (
-    "2026-09-01"
-  )
-
-
-def test_one_day_at_a_time_then_hold_for_its_day_close(monkeypatch):
-  _set(monkeypatch, threshold=TIB, free=TIB // 2)
-  t = [1000.0]
-  monkeypatch.setattr(sp.time, "monotonic", lambda: t[0])
-  assert sp.select_append_day(["2026-09-01", "2026-09-02"], set()) == (
-    "2026-09-01"
-  )
-  # The chosen day keeps the slot while it has parked or in-flight appends,
-  # even when an older day shows up.
-  assert sp.select_append_day(["2026-08-30", "2026-09-01"], set()) == (
-    "2026-09-01"
-  )
-  assert sp.select_append_day(["2026-09-02"], {"2026-09-01"}) == "2026-09-01"
-  # Its appends are done: hold so its day close can start.
-  assert sp.select_append_day(["2026-09-02"], set()) is None
-  # Its day close gives space back; once that ends, the next day starts.
-  sp.note_day_close_stage("2026-09-01", "seal")
-  sp.note_space_freed()
-  assert sp.select_append_day(["2026-09-02"], set()) is None
-  sp.clear_day_close("2026-09-01")
-  assert sp.select_append_day(["2026-09-02"], set()) == "2026-09-02"
-
-
-def test_a_day_close_that_frees_nothing_does_not_end_the_hold(monkeypatch):
-  """F1: reconcile then yield used to release the hold on stage entry."""
-  _set(monkeypatch, threshold=TIB, free=TIB // 2)
-  t = [1000.0]
-  monkeypatch.setattr(sp.time, "monotonic", lambda: t[0])
-  assert sp.select_append_day(["2026-09-01"], set()) == "2026-09-01"
-  assert sp.select_append_day(["2026-09-02"], set()) is None
-  for stage in ("reconcile_merge", "dedupe", "seal"):
-    sp.note_day_close_stage("2026-09-01", stage)
-  sp.clear_day_close("2026-09-01")
-  assert sp.select_append_day(["2026-09-02"], set()) is None
-  t[0] += sp.DAY_CLOSE_START_GRACE_S + 1
-  assert sp.select_append_day(["2026-09-02"], set()) == "2026-09-02"
-
-
-def test_space_freed_before_the_hold_does_not_end_it(monkeypatch):
-  """A free from an earlier day close does not count for this hold."""
-  _set(monkeypatch, threshold=TIB, free=TIB // 2)
-  sp.note_space_freed()
-  assert sp.select_append_day(["2026-09-01"], set()) == "2026-09-01"
-  assert sp.select_append_day(["2026-09-02"], set()) is None
-
-
-def test_drain_clears_only_its_own_job_for_a_shared_day(monkeypatch):
-  """F3: the tar-path job ending must not clear the bare-day job's seal."""
-  from concurrent.futures import Future
-
-  _set(monkeypatch, threshold=TIB, free=TIB // 2)
-  done = Future()
-  done.set_result("yielded")
-  sp.note_day_close_stage("2026-09-07", "seal")
-  qo._drain_day_close_ready(
-    SyncTimedbJobStore(""),
-    inflight={"/d/2026-09-07.tar": done},
-    leases={},
-  )
-  assert sp.select_append_day(["2026-09-01"], set()) is None
-  qo._drain_day_close_ready(
-    SyncTimedbJobStore(""), inflight={"2026-09-07": done}, leases={}
-  )
-  assert sp.select_append_day(["2026-09-01"], set()) == "2026-09-01"
-
-
-def test_seal_yield_checks_do_not_hold_appends(monkeypatch):
-  """F2: only the seal itself counts, not its unarchived/discover checks."""
-  _set(monkeypatch, threshold=TIB, free=TIB // 2)
-  sp.note_day_close_stage("2026-09-07", "seal_check")
-  assert sp.select_append_day(["2026-09-01"], set()) == "2026-09-01"
-
-
-def _seal_claim_stages(tmp_path, monkeypatch, *, found):
-  from hpcperfstats.tests.test_sync_timedb_seal_after_full_discover import (
-    _seal_harness,
-  )
-
-  claim, calls, _logs = _seal_harness(tmp_path, monkeypatch)
-  monkeypatch.setattr(qo, "_closed_raw_not_archived", lambda *a: found)
-  monkeypatch.setattr(
-    qo, "_handoff_retryable_paths_to_ingest", lambda *a, **k: 0
-  )
-  seen = []
-  monkeypatch.setattr(
-    sp, "note_day_close_stage", lambda _d, stage: seen.append(stage)
-  )
-  return claim, calls, seen
-
-
-def test_day_close_yielding_at_seal_never_reaches_a_finishing_stage(
-  tmp_path, monkeypatch
-):
-  claim, calls, seen = _seal_claim_stages(
-    tmp_path, monkeypatch, found=["/late"]
-  )
-  assert claim() == "yielded"
-  assert calls == []
-  assert seen[-1] == "seal_check"
-  assert "seal" not in seen[seen.index("seal_check") :]
-
-
-def test_day_close_that_seals_marks_the_seal_finishing(tmp_path, monkeypatch):
-  claim, calls, seen = _seal_claim_stages(tmp_path, monkeypatch, found=[])
-  claim()
-  assert calls == [False]
-  assert "seal" in seen[seen.index("seal_check") :]
-
-
-def test_day_close_publishes_stages_under_its_job_identity(
-  tmp_path, monkeypatch
-):
-  from hpcperfstats.tests.test_sync_timedb_seal_after_full_discover import (
-    _seal_harness,
-  )
-
-  claim, _calls, _logs = _seal_harness(tmp_path, monkeypatch)
-  monkeypatch.setattr(qo, "_closed_raw_not_archived", lambda *a: [])
-  keys = set()
-  monkeypatch.setattr(
-    sp, "note_day_close_stage", lambda job, _stage: keys.add(job)
-  )
-  claim()  # identity "2020-01-10"
-  tar = str(tmp_path / "daily" / "2020-01-10.tar")
-  qo._run_day_close_job(
-    tar,
-    tgz_archive_dir=str(tmp_path / "daily"),
-    archive_data_dir=str(tmp_path / "archive"),
-    log_fn=lambda *_a, **_k: None,
-  )
-  assert keys == {"2020-01-10", tar}
-
-
-def test_raw_delete_notes_space_freed(tmp_path, monkeypatch):
-  from hpcperfstats.dbload.lib import sync_timedb_day_raw_removal as drr
-
-  claim, _calls, _seen = _seal_claim_stages(tmp_path, monkeypatch, found=[])
-  monkeypatch.setattr(
-    drr.DayRawRemovalCoordinator, "apply_batch_delete", lambda _s, _t: 3
-  )
-  freed = []
-  monkeypatch.setattr(sp, "note_space_freed", lambda: freed.append(1))
-  claim()
-  assert freed
-
-
-def test_hold_expires_when_no_day_close_ever_starts(monkeypatch):
-  _set(monkeypatch, threshold=TIB, free=TIB // 2)
-  t = [1000.0]
-  monkeypatch.setattr(sp.time, "monotonic", lambda: t[0])
-  assert sp.select_append_day(["2026-09-01"], set()) == "2026-09-01"
-  assert sp.select_append_day(["2026-09-02"], set()) is None
-  t[0] += sp.DAY_CLOSE_START_GRACE_S + 1
-  assert sp.select_append_day(["2026-09-02"], set()) == "2026-09-02"
-
-
-def test_nothing_parked_keeps_claiming_instead_of_blocking(monkeypatch):
-  """None would stop the fill from claiming, so no day could ever park."""
-  _set(monkeypatch, threshold=TIB, free=TIB // 2)
-  assert sp.select_append_day([], set()) == ""
-  assert sp.select_append_day(["2026-09-04"], set()) == "2026-09-04"
 
 
 def test_fill_under_pressure_claims_then_submits_every_clone_day(
@@ -389,43 +210,6 @@ def test_fill_under_pressure_claims_then_submits_every_clone_day(
   assert sorted(submitted) == ["2026-09-01.tar", "2026-09-02.tar"]
 
 
-def test_pressure_end_resumes_all_days(monkeypatch):
-  _set(monkeypatch, threshold=TIB, free=TIB // 2)
-  assert sp.select_append_day(["2026-09-01"], set()) == "2026-09-01"
-  _set(monkeypatch, threshold=TIB, free=2 * TIB)
-  assert sp.select_append_day(["2026-09-02"], set()) is sp.ALL_DAYS
-
-
-def test_pressure_ending_mid_selection_leaves_no_append_day(monkeypatch):
-  """F5: a census under_pressure() that ends pressure while ``fits`` runs."""
-  _set(monkeypatch, threshold=TIB, free=TIB // 2)
-
-  def fits_then_pressure_ends(_day):
-    _set(monkeypatch, threshold=TIB, free=2 * TIB)
-    sp.under_pressure("/d")
-    return True
-
-  got = sp.select_append_day(["2026-09-01"], set(), fits_then_pressure_ends)
-  assert got is sp.ALL_DAYS
-  assert sp._STATE["append_day"] is None
-  assert sp._STATE["hold_since"] is None
-
-
-def test_pressure_ending_before_the_hold_write_sets_no_hold(monkeypatch):
-  _set(monkeypatch, threshold=TIB, free=TIB // 2)
-  assert sp.select_append_day(["2026-09-01"], set()) == "2026-09-01"
-
-  def fits_then_pressure_ends(_day):
-    _set(monkeypatch, threshold=TIB, free=2 * TIB)
-    sp.under_pressure("/d")
-    return False
-
-  # 09-01 still parked but no longer fits: the slot check calls ``fits``.
-  got = sp.select_append_day(["2026-09-01"], set(), fits_then_pressure_ends)
-  assert got is sp.ALL_DAYS
-  assert sp._STATE["hold_since"] is None
-
-
 def test_hard_reserve_check_leaves_room_for_the_reseal(monkeypatch):
   _set(monkeypatch, threshold=TIB, free=100 * GIB)
   # 100G - (40G restore + 10G raw) - 20G (reseal of the restore) = 30G.
@@ -437,17 +221,13 @@ def test_census_token(monkeypatch):
   _set(monkeypatch, threshold=TIB, free=int(3.2 * TIB))
   assert sp.census_token("/d") == " space=ok free=3.2T pressure_below=1.0T"
   _set(monkeypatch, threshold=4 * TIB, free=int(3.2 * TIB))
-  sp.select_append_day(["2026-09-13"], set())
-  assert sp.census_token("/d") == (
-    " space=pressure free=3.2T resume_at=8.0T append_day=2026-09-13"
-    " restore_slot=none"
-  )
+  assert sp.census_token("/d") == " space=pressure free=3.2T resume_at=8.0T"
 
 
 # --- reflink era: only sealed-day restores and copies are gated ----------
 
 
-def _parked_days(monkeypatch, tmp_path, *, days, finishing=False):
+def _parked_days(monkeypatch, tmp_path, *, days):
   """Park one raw file per day; ``days`` maps day -> 'open'|'sealed'|'new'."""
   qo.reset_append_day_lists_for_tests()
   daily = tmp_path / "daily"
@@ -471,14 +251,10 @@ def _parked_days(monkeypatch, tmp_path, *, days, finishing=False):
     "restore_bytes_estimate",
     lambda t: 0 if os.path.isfile(t) or not os.path.isfile(t + ".zst") else GIB,
   )
-  if finishing:
-    sp.note_day_close_stage("/d/2026-08-01.tar", "seal")
   return str(daily)
 
 
-def test_clone_days_append_while_a_day_close_is_finishing(
-  monkeypatch, tmp_path
-):
+def test_clone_days_append_under_pressure(monkeypatch, tmp_path):
   """Under pressure a clone append to an open tar never waits (cannot grow)."""
   _set(monkeypatch, threshold=TIB, free=TIB // 2)
   monkeypatch.setattr(qo.tca, "clone_capable", lambda *_a, **_k: True)
@@ -486,9 +262,8 @@ def test_clone_days_append_while_a_day_close_is_finishing(
     monkeypatch,
     tmp_path,
     days={"2026-09-01": "open", "2026-09-02": "new", "2026-09-03": "sealed"},
-    finishing=True,
   )
-  got = qo._select_append_day({}, daily, 256)
+  got = qo._select_append_day(daily)
   assert got == frozenset({"2026-09-01", "2026-09-02"})  # sealed day waits
   qo.reset_append_day_lists_for_tests()
 
@@ -496,40 +271,8 @@ def test_clone_days_append_while_a_day_close_is_finishing(
 def test_no_pressure_allows_every_day(monkeypatch, tmp_path):
   _set(monkeypatch, threshold=TIB, free=3 * TIB)
   daily = _parked_days(monkeypatch, tmp_path, days={"2026-09-03": "sealed"})
-  assert qo._select_append_day({}, daily, 256) is sp.ALL_DAYS
+  assert qo._select_append_day(daily) is sp.ALL_DAYS
   qo.reset_append_day_lists_for_tests()
-
-
-def test_one_sealed_day_expanded_at_a_time(monkeypatch, tmp_path):
-  """The restore slot: a second sealed day waits while the first's tar lives."""
-  _set(monkeypatch, threshold=TIB, free=TIB // 2)
-  first = tmp_path / "2026-09-03.tar"
-  second = str(tmp_path / "2026-09-04.tar")
-  sp.note_expansion(str(first))
-  sp.reserve(str(first), GIB, tar_path=str(first))  # restore in flight
-  assert not sp.restore_slot_free(second)
-  assert sp.restore_slot_free(str(first))  # its own further appends
-  sp.release(str(first))
-  first.write_bytes(b"t")  # restored tar on disk: still holds the slot
-  assert not sp.restore_slot_free(second)
-  assert "restore_slot=2026-09-03" in sp.census_token(str(tmp_path))
-  first.unlink()  # sealed away / dropped
-  assert sp.restore_slot_free(second)
-  assert "restore_slot=none" in sp.census_token(str(tmp_path))
-
-
-def test_failed_restore_frees_the_slot(monkeypatch, tmp_path):
-  _set(monkeypatch, threshold=TIB, free=TIB // 2)
-  sp.note_expansion(str(tmp_path / "2026-09-03.tar"))  # no tar, no reservation
-  assert sp.restore_slot_free(str(tmp_path / "2026-09-04.tar"))
-
-
-def test_slot_is_ignored_without_pressure(monkeypatch, tmp_path):
-  _set(monkeypatch, threshold=TIB, free=3 * TIB)
-  held = tmp_path / "2026-09-03.tar"
-  held.write_bytes(b"t")
-  sp.note_expansion(str(held))
-  assert sp.restore_slot_free(str(tmp_path / "2026-09-04.tar"))
 
 
 def test_append_restore_waits_for_pressure_to_end(monkeypatch, tmp_path):
@@ -749,15 +492,6 @@ def test_submit_under_pressure_feeds_no_copying_day(monkeypatch, tmp_path):
   assert qo._APPEND_DAY_LISTS.peek_len("2026-09-02") == 1
 
 
-def test_submit_under_pressure_waits_for_finishing_day_close(
-  monkeypatch, tmp_path
-):
-  sp.note_day_close_stage("2026-08-30", "post_seal_verify")
-  got = _submit(monkeypatch, tmp_path, ["2026-09-01"], free=TIB // 2)
-  assert got == []
-  assert qo._APPEND_DAY_LISTS.peek_len("2026-09-01") == 1
-
-
 def test_submit_skips_day_whose_restore_breaks_hard_reserve(
   monkeypatch, tmp_path
 ):
@@ -766,23 +500,6 @@ def test_submit_skips_day_whose_restore_breaks_hard_reserve(
   )
   assert got == []
   assert qo._APPEND_DAY_LISTS.peek_len("2026-09-01") == 1
-
-
-def test_select_skips_days_that_do_not_fit(monkeypatch):
-  _set(monkeypatch, threshold=TIB, free=TIB // 2)
-  fits = {"2026-09-01": False, "2026-09-02": True}.get
-  assert sp.select_append_day(["2026-09-02", "2026-09-01"], set(), fits) == (
-    "2026-09-02"
-  )
-  sp.reset_for_tests()
-  assert sp.select_append_day(["2026-09-01"], set(), lambda _d: False) == ""
-
-
-def test_pre_seal_verify_alone_does_not_hold_appends(monkeypatch):
-  """Review #2: verify batches yield every claim; they are not finishing."""
-  _set(monkeypatch, threshold=TIB, free=TIB // 2)
-  sp.note_day_close_stage("2026-09-07", "pre_seal_verify")
-  assert sp.select_append_day(["2026-09-01"], set()) == "2026-09-01"
 
 
 @pytest.mark.parametrize(
@@ -964,7 +681,7 @@ def test_try_submit_none_means_blocked(monkeypatch, tmp_path):
 # --- Freeze under pressure (hpcperfstats01 2026-11-11) ---------------------
 # Clearing 2T ended pressure (2X), parallel append restores expanded eight
 # sealed days (~1.7T) within hours, and pressure came back with every append
-# refused restore_slot_busy. Under pressure nothing may grow the disk but a
+# refused (restore slot busy). Under pressure nothing may grow the disk but a
 # seal and a reflink clone append into a tar that already exists.
 
 
@@ -985,14 +702,11 @@ def test_pressure_refuses_every_day_close_and_ingest_restore(
   monkeypatch.setattr(sp, "restore_bytes_estimate", lambda _t: GIB)
   tar = str(tmp_path / "2026-09-04.tar")
   assert sp.admit_restore(tar, mode) is False
-  assert sp.restore_slot_free(tar)  # nothing was claimed
   _set(monkeypatch, threshold=TIB, free=3 * TIB)  # pressure over
   assert sp.admit_restore(tar, mode) is True
 
 
-def test_pressure_refuses_append_restore_even_with_a_free_slot(
-  monkeypatch, tmp_path
-):
+def test_pressure_refuses_every_append_restore(monkeypatch, tmp_path):
   _set(monkeypatch, threshold=TIB, free=TIB // 2)
   monkeypatch.setattr(sp, "restore_bytes_estimate", lambda _t: GIB)
   qo.reset_append_day_lists_for_tests()
@@ -1000,7 +714,6 @@ def test_pressure_refuses_append_restore_even_with_a_free_slot(
   raw.write_bytes(b"r")
   qo._APPEND_DAY_LISTS.add("2026-09-04", _claim(str(raw)))
   tar = str(tmp_path / "2026-09-04.tar")
-  assert sp.restore_slot_free(tar)
   assert qo._append_batch_need("2026-09-04", tar, 1) is None
   qo.reset_append_day_lists_for_tests()
 
@@ -1013,11 +726,6 @@ def test_pressure_selects_only_clone_appends_to_existing_tars(
   monkeypatch.setattr(
     qo.tca, "clone_capable", lambda tar, raw: "09-01" in tar or "09-02" in tar
   )
-  monkeypatch.setattr(
-    sp,
-    "select_append_day",
-    lambda *a, **k: pytest.fail("gated days must not be selected"),
-  )
   daily = _parked_days(
     monkeypatch,
     tmp_path,
@@ -1028,9 +736,7 @@ def test_pressure_selects_only_clone_appends_to_existing_tars(
       "2026-09-04": "open",  # copying site: refused
     },
   )
-  assert qo._select_append_day({}, daily, 256) == frozenset(
-    {"2026-09-01", "2026-09-02"}
-  )
+  assert qo._select_append_day(daily) == frozenset({"2026-09-01", "2026-09-02"})
   qo.reset_append_day_lists_for_tests()
 
 
@@ -1039,7 +745,7 @@ def test_pressure_with_only_gated_days_claims_nothing_new_to_submit(
 ):
   _set(monkeypatch, threshold=TIB, free=TIB // 2)
   daily = _parked_days(monkeypatch, tmp_path, days={"2026-09-03": "sealed"})
-  assert qo._select_append_day({}, daily, 256) == frozenset()
+  assert qo._select_append_day(daily) == frozenset()
   qo.reset_append_day_lists_for_tests()
 
 

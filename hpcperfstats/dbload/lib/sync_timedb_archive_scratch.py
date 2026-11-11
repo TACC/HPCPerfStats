@@ -162,6 +162,7 @@ def sweep_dead_archive_scratch(
   archive_dir: str = "",
   log_fn: Any = log_print,
   now: float | None = None,
+  boot: bool = False,
 ) -> int:
   """
   Remove scratch files and staging directories that no writer can still use.
@@ -177,13 +178,20 @@ def sweep_dead_archive_scratch(
   ``JOURNAL_NAME_RE`` append journal is applied with
   ``recover_interrupted_append`` (never plainly deleted) as soon as the
   day's guards and both locks allow, whatever its age.
-  ``sync_dead_end_remediation_mode = report`` only logs what would go.
+  With ``boot`` (orchestrator startup, which holds the exclusive
+  archive-dir flock, so no earlier sync_timedb writer is alive) a
+  ``SCRATCH_NAME_RE`` file needs no idle age, only the day guards and
+  locks: seals killed by the restart left fresh ``.zst.tmp`` files
+  (hpcperfstats01 2026-11-11: 219 GB on a full volume). Day-less temps keep
+  the idle age either way. ``sync_dead_end_remediation_mode = report`` only
+  logs what would go.
 
   Args:
     daily_dir (str): Daily archive directory.
     archive_dir (str): Archive root holding the sidecars; empty skips it.
     log_fn (Any): Logger callable; ``None`` uses ``log_print``.
     now (float | None): Epoch seconds override for tests; ``None`` is now.
+    boot (bool): Startup sweep: day-scoped scratch needs no idle age.
 
   Returns:
     int: Files and directories removed plus append journals applied (0 in
@@ -212,9 +220,11 @@ def sweep_dead_archive_scratch(
       if match is None and not is_dir and not WRITE_TEMP_RE.match(name):
         continue
       path = os.path.join(directory, name)
+      # At boot nothing of ours can own a day's scratch; its locks still do.
+      idle_s = 0.0 if boot and match and not journal else max_idle_s
       if (
         not journal
-        and _dead_scratch_idle_and_bytes(path, now_s, max_idle_s) is None
+        and _dead_scratch_idle_and_bytes(path, now_s, idle_s) is None
       ):
         continue
       day = match.group(1) if match else ""
@@ -245,7 +255,7 @@ def sweep_dead_archive_scratch(
               flush=True,
             )
             continue
-          dead = _dead_scratch_idle_and_bytes(path, now_s, max_idle_s)
+          dead = _dead_scratch_idle_and_bytes(path, now_s, idle_s)
           if dead is None:
             continue
           detail = f"path={path} bytes={dead[1]} idle_h={dead[0] / 3600:.1f}"
