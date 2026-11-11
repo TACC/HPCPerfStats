@@ -5966,51 +5966,27 @@ def _select_append_day(
   """
   Return which days may get append batches now (space pressure gate).
 
-  Under pressure each parked day is classified by its next batch: a clone
-  append that cannot grow the filesystem (its open ``.tar`` exists or it
-  has no archive yet, and ``clone_capable`` for its raw) may always go; the
-  rest (a restore from the sealed copy, or a copying append) go through
-  ``space.select_append_day`` (one day at a time, waiting on finishing day
-  closes).
+  Under pressure only a parked day whose next batch cannot grow the
+  filesystem may go: a reflink clone append (its open ``.tar`` exists or it
+  has no archive yet, and ``clone_capable`` for its raw). A day that would
+  restore its sealed copy or copy raw bytes waits, parked, until pressure
+  ends (hpcperfstats01 2026-11-11: restores admitted one at a time still
+  held ~1.7T of expanded sealed days on a 125T volume with 0.3T free).
 
   Args:
-    inflight (dict[str, AsyncResult]): Daily tar -> in-flight append batch.
+    inflight (dict[str, AsyncResult]): Daily tar -> in-flight append batch
+      (unused; kept for the caller's interface).
     tgz_archive_dir (str): Daily archive directory.
-    batch_size (int): Max paths per append job.
+    batch_size (int): Max paths per append job (unused).
 
   Returns:
-    Any: ``space.ALL_DAYS`` without pressure; else a frozenset of allowed
-    days (empty: none yet, keep claiming); or None (nothing may go: claim
-    nothing).
+    Any: ``space.ALL_DAYS`` without pressure; else a frozenset of the
+    allowed days (empty: none yet, keep claiming).
 
   Examples:
-    >>> _select_append_day({}, "/d", 1) is not None or True
+    >>> _select_append_day({}, "/d", 1) is not None
     True
   """
-
-  def _fits(day: str) -> bool:
-    """
-    Return True when ``day``'s next parked batch fits on disk.
-
-    Args:
-      day (str): Calendar day ``YYYY-MM-DD``.
-
-    Returns:
-      bool: True when ``_append_batch_need`` admits the batch.
-
-    Examples:
-      >>> # nested predicate for space.select_append_day
-      >>> None is None
-      True
-    """
-    first = _APPEND_DAY_LISTS.peek_first(day)
-    tar_path = daily_tar_path_for_stats_path(
-      getattr(first, "identity", ""), tgz_archive_dir
-    )
-    take = min(batch_size, _APPEND_DAY_LISTS.peek_len(day))
-    return (
-      bool(tar_path) and _append_batch_need(day, tar_path, take) is not None
-    )
 
   def _cannot_grow(day: str) -> bool:
     """
@@ -6036,19 +6012,9 @@ def _select_append_day(
       and tca.clone_capable(tar_path, sample)
     )
 
-  busy = {os.path.basename(str(tar))[:10] for tar in inflight}
-  parked = _APPEND_DAY_LISTS.day_keys()
   if not space.under_pressure(tgz_archive_dir):
     return space.ALL_DAYS
-  free = {day for day in parked if _cannot_grow(day)}
-  gated = space.select_append_day(
-    [d for d in parked if d not in free], busy - free, _fits
-  )
-  if gated is space.ALL_DAYS:
-    return space.ALL_DAYS
-  if gated is None and not free:
-    return None
-  return frozenset(free | ({gated} if gated else set()))
+  return frozenset(d for d in _APPEND_DAY_LISTS.day_keys() if _cannot_grow(d))
 
 
 def _append_batch_need(day: str, tar_path: str, take: int) -> int | None:
@@ -6079,8 +6045,8 @@ def _append_batch_need(day: str, tar_path: str, take: int) -> int | None:
   if take <= 0 or cfg.get_sync_archive_space_pressure_free_bytes() <= 0:
     return 0
   restore = space.restore_bytes_estimate(tar_path)
-  if restore > 0 and not space.restore_slot_free(tar_path):
-    space.log_deny("append", tar_path, restore, reason="restore_slot_busy")
+  if restore > 0 and space.under_pressure(tar_path):
+    space.log_deny("append", tar_path, restore, reason="space_pressure")
     return None
   first = _APPEND_DAY_LISTS.peek_first(day)
   sample = str(getattr(first, "identity", "") or "") or None
@@ -6112,11 +6078,11 @@ def _try_submit_pending_append_days(
 
   With ``sync_archive_space_pressure_free_bytes`` set, only the days
   ``_select_append_day`` allows get a batch (every day without pressure;
-  under pressure every clone-only day plus at most one restore/copy day),
-  a day whose tar this process is sealing stays parked until the seal ends,
-  and a batch is submitted only when its new bytes plus any restore of a
-  sealed day keep the hard reserve and, for a restore, the restore slot is
-  free; the rest stay parked.
+  under pressure only clone appends that need no restore), a day whose tar
+  this process is sealing stays parked until the seal ends, and a batch is
+  submitted only when its new bytes plus any restore of a sealed day keep
+  the hard reserve (a restore never runs under pressure); the rest stay
+  parked.
 
   Args:
     client (Any): Job store used to requeue popped claims on submit fail.
@@ -6296,10 +6262,6 @@ def _fill_append_slots(
     fill_cap = min(2, max(1, fill_cap))
     _emit_mem_telem_event("admit_alone", None, alone_progress=True)
   allowed_day = _select_append_day(inflight, tgz_archive_dir, batch_size)
-  if allowed_day is None:
-    # Space pressure: a day close is finishing a day, or the last append
-    # day waits for its close. Claims stay in the job store meanwhile.
-    return 0
   while len(inflight) < fill_cap:
     submitted += _try_submit_pending_append_days(
       client=client,

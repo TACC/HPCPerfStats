@@ -1,44 +1,32 @@
 """
-Archive free-space pressure for sync_timedb: growth yields to day close.
+Archive free-space pressure for sync_timedb: growth freezes until day close.
 
 ``sync_archive_space_pressure_free_bytes`` (X, default 1T; 0 = off). Pressure
 starts when the daily archive filesystem has less than X free and lasts until
-it has 2X free. Under pressure:
+it has 2X free. Under pressure nothing grows the disk but a seal and a
+reflink clone append that cannot grow the filesystem (2026-11-11):
 
-- appends that cannot grow the filesystem do not wait: a reflink clone
-  append to a day whose open ``.tar`` already exists (or a new tar) writes
-  only headers (``sync_timedb_tar_clone_append``); the orchestrator
-  classifies each parked day and only passes the rest (days that need a
-  restore from their sealed copy, or whose data would be copied) to
-  ``select_append_day``;
-- at most one sealed day is expanded at a time (the **restore slot**): an
-  append restore or a ``growth`` / ``finish`` restore is refused while
-  another day's restore is in flight or its restored ``.tar`` is still on
-  disk (``note_expansion``; the slot clears when that tar is sealed away
-  or dropped, or the restore failed);
-- gated appends (restore or copy) wait while any day close is finishing a day (a stage in
-  ``FINISHING_STAGES``; the checks, pre-seal verify batches and the seal's
-  own yield checks do not count);
-- otherwise one day at a time (the oldest parked day whose next batch fits)
-  gets appends; once that day has no parked or in-flight appends, the next
-  day waits until a day close gives space back (``note_space_freed``: raw
-  deleted, tar sealed away or dropped; or
-  ``DAY_CLOSE_START_GRACE_S`` passes with none starting, so a day that cannot
-  close yet does not stop appends);
-- restores through ``space_gate="growth"`` (the default of
-  ``ensure_daily_tar_restored_for_append``) are denied; no production caller
-  uses it today (ingest prewarm passes no restore days). Day close and
-  repair restores (``finish``) and appends keep the hard reserve
-  (``sync_archive_min_free_bytes``) plus room for the later reseal, net of
-  the bytes other admitted work has reserved (``reserve`` / ``reserving``).
+- only clone appends run: a day whose open ``.tar`` already exists (or a
+  new tar) and whose raw ``clone_capable`` reflinks writes only headers
+  (``sync_timedb_tar_clone_append``); the orchestrator keeps every other
+  parked day (a restore from its sealed copy, or a copying append) parked;
+- every restore is refused: ``admit_restore`` denies ``growth`` and
+  ``finish`` (day-close verify, open-tar repair, salvage) alike and returns
+  ``SPACE_DENIED``; the append dispatch refuses a batch that would restore;
+- ``archive_space_admit`` (archive helpers) refuses every op but ``seal``:
+  union rebuild, salvage, corrupt-tar restore, repair and the dedupe copy;
+- seal, raw delete and tar drop are never gated here (they give space back).
 
-INV-NEG: a held append day clears when a day close gives space back,
-retries after ``DAY_CLOSE_START_GRACE_S`` without one, and pressure itself ends at 2X
-free (day close frees space and is never gated here). A busy restore slot
-clears when the expanded day's tar is sealed away or dropped (its own day
-close, never gated here: its appends are clone appends once the tar
-exists) or its restore fails; a refused restore defers (``SPACE_DENIED`` /
-parked claims), never fails.
+Without pressure appends and restores keep the hard reserve
+(``sync_archive_min_free_bytes``) plus room for the later reseal, net of the
+bytes other admitted work has reserved (``reserve`` / ``reserving``). The
+restore slot (``try_claim_restore_slot``) and the one-day append hold
+(``select_append_day``, ``FINISHING_STAGES``, ``note_space_freed``) only ever
+bound under pressure, where nothing they admit runs now; they are inert.
+
+INV-NEG: pressure ends at 2X free, and day close, which frees the space, is
+never gated here; a refused restore, repair or rewrite defers
+(``SPACE_DENIED`` / ``env:ENOSPC`` / parked claims), never fails.
 
 Attributes:
   ALL_DAYS: Sentinel from ``select_append_day``: no pressure, every day.
@@ -666,9 +654,10 @@ def admit_restore(tar_path: str, mode: str) -> bool:
 
   Args:
     tar_path (str): Daily tar the restore would write.
-    mode (str): ``growth`` (denied under pressure, else hard reserve),
-      ``finish`` (day close: hard reserve, and under pressure the restore
-      slot) or ``off`` (the append dispatch already gated it).
+    mode (str): ``growth`` (ingest prewarm) or ``finish`` (day close:
+      verify, open-tar repair, salvage): both denied under pressure, else
+      the hard reserve and the restore slot; ``off``: the append dispatch
+      already gated it.
 
   Returns:
     bool: True when the restore may run (and then holds the restore slot).
@@ -680,7 +669,7 @@ def admit_restore(tar_path: str, mode: str) -> bool:
   if mode == "off":
     return True
   need = restore_bytes_estimate(tar_path)
-  if mode != "finish" and need > 0 and under_pressure(tar_path):
+  if need > 0 and under_pressure(tar_path):
     reason = "space_pressure"
   elif not fits_hard_reserve(tar_path, need, restore_need=need):
     reason = "hard_reserve"

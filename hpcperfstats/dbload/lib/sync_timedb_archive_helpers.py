@@ -69,6 +69,7 @@ Attributes:
 from __future__ import annotations
 
 import contextlib
+import errno
 import os
 import re
 import shutil
@@ -525,9 +526,11 @@ def archive_space_admit(
   before the old one can go; a short write at ``ENOSPC`` mid-append is the
   leading cause of 01's truncated tars. An operation is admitted only when the
   archive filesystem keeps ``sync_archive_min_free_bytes`` free *after*
-  ``bytes_needed``. A denial is an environment condition (``env:ENOSPC``): the
-  caller defers, never fails, repairs, or sets ``day_skip``. Space-releasing
-  steps (raw delete against the sealed copy, tar drop) never call this.
+  ``bytes_needed``. Under space pressure every op but ``seal`` is refused
+  outright: the seal is what gives space back. A denial is an environment
+  condition (``env:ENOSPC``): the caller defers, never fails, repairs, or
+  sets ``day_skip``. Space-releasing steps (raw delete against the sealed
+  copy, tar drop) never call this.
 
   Args:
     path (str): Path on the archive filesystem (the file being rewritten).
@@ -542,6 +545,13 @@ def archive_space_admit(
     >>> archive_space_admit("/", 0, op="probe", log_fn=None) in (True, False)
     True
   """
+  from hpcperfstats.dbload.lib import sync_timedb_space_pressure as sp
+
+  # Under space pressure only the seal may write (it is what frees space);
+  # rebuilds, repairs, dedupe copies and restores wait for 2X free.
+  if op != "seal" and int(bytes_needed) > 0 and sp.under_pressure(path):
+    sp.log_deny(op, path, int(bytes_needed), reason="space_pressure")
+    return False
   free = free_bytes_for_path(path)
   reserve = int(cfg.get_sync_archive_min_free_bytes())
   if free - max(0, int(bytes_needed)) >= reserve:
@@ -8685,6 +8695,8 @@ def _rewrite_daily_tar_largest_member_wins(
 
   Raises:
     DayCloseYieldError: When day-close cooperative yield is requested.
+    OSError: ``ENOSPC`` when ``archive_space_admit`` refuses the copy
+      (space pressure, or the copy would break the hard reserve).
 
   Examples:
     >>> _rewrite_daily_tar_largest_member_wins("x", "y")  # doctest: +SKIP
@@ -8718,6 +8730,10 @@ def _rewrite_daily_tar_largest_member_wins(
         file_keep[member.name] = (member.size, idx)
   if skip_without_duplicates and file_n == len(file_keep):
     return False
+  # The rewrite is a full second copy of the tar (A16; refused under space
+  # pressure): callers treat the OSError as a failed rewrite, tar unchanged.
+  if not archive_space_admit(tar_path, os.path.getsize(tar_path), op="dedupe"):
+    raise OSError(errno.ENOSPC, "dedupe rewrite space denied", tar_path)
   with tarfile.open(tar_path, "r") as tin:
     with tarfile.open(tmp_path, "w") as tout:
       for idx, member in enumerate(_iter_tar_members(tin)):
@@ -9007,6 +9023,13 @@ def ensure_open_daily_tar_readable(
       readable=False,
       transient=True,
       transient_reason="tar_verify_timeout",
+    )
+  # Salvage, in-place repair and sealed restore all write a second copy:
+  # under space pressure the corrupt tar waits, untouched, for 2X free.
+  if sp.under_pressure(tar_norm):
+    sp.log_deny("repair", tar_norm, sp._size(tar_norm), reason="space_pressure")
+    return OpenDailyTarEnsureResult(
+      readable=False, transient=True, transient_reason="env:ENOSPC"
     )
   if log_fn and caller.startswith("append"):
     log_fn(
