@@ -13,6 +13,9 @@ Attributes:
   RECONSTRUCT_CHECKPOINT_BASENAME: Checkpoint sidecar name (not reconstruct
     SoT).
   RECONSTRUCT_SOURCES: Documented reconstruct sources of truth.
+  _DISCOVER_UNREADABLE_TARS: Open daily tar path -> ``(st_size,
+    st_mtime_ns)`` whose GNU ``tvf`` failed in discover; that identity is
+    answered "needs append" without listing it again.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from hpcperfstats.dbload.lib import sync_timedb_job_store as jq
+from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.sync_timedb_append_day_lists import (
   note_day_remainder,
   remainder_day_for_identity,
@@ -37,6 +41,7 @@ RECONSTRUCT_CHECKPOINT_BASENAME = ".sync_timedb_state.json"
 RECONSTRUCT_SOURCES = frozenset({"disk", "timescale", "marks"})
 DAY_CLOSE_MIN_AGE_HOURS_DEFAULT = 32.0
 DEFAULT_INGEST_HOT_DAYS = 8
+_DISCOVER_UNREADABLE_TARS: dict[str, tuple[int, int]] = {}
 
 
 def empty_job_queues_mean_caught_up() -> bool:
@@ -276,7 +281,9 @@ def discover_raw_needs_tar_append(
   Open mutable ``.tar`` and warm members store ``HGET`` may still skip enqueue. Cold
   a cold members store (sealed-only day) returns ``True`` so discover
   enqueues append (at-least-once). A tar this process is sealing returns
-  ``False`` without reading it (``tar_seal_in_progress``). Workers keep
+  ``False`` without reading it (``tar_seal_in_progress``). An open tar GNU
+  ``tvf`` cannot list (truncated) returns ``True`` so the append worker
+  repairs it; each tar identity is listed once. Workers keep
   :func:`raw_stats_path_needs_tar_append` / ``populate_and_wait``.
 
   Args:
@@ -331,10 +338,23 @@ def discover_raw_needs_tar_append(
     # closed raw file of the day is in the tar or its sealed copy, so the day
     # needs no append; reading it would wait 60 s per file and, timed out,
     # queue one anyway (hpcperfstats01 2026-11-02: 647 waits on 07-31).
-    return not tar_seal_in_progress(tar_path) and (
-      get_mutable_tar_authority_member_map(tar_path).get(member_name)
-      != expected_size
-    )
+    if tar_seal_in_progress(tar_path):
+      return False
+    # A tar tvf cannot list (truncated) is queued for the append worker's
+    # repair, once per tar identity, never raised: the raise killed every
+    # whole-archive walk at that day (hpcperfstats01 2026-11-11: 10-14.tar).
+    try:
+      st = os.stat(tar_path)
+      ident = (st.st_size, st.st_mtime_ns)
+      if _DISCOVER_UNREADABLE_TARS.get(tar_path) != ident:
+        members = get_mutable_tar_authority_member_map(tar_path)
+        return members.get(member_name) != expected_size
+    except OSError:
+      return True
+    except RuntimeError as exc:
+      _DISCOVER_UNREADABLE_TARS[tar_path] = ident
+      log_print(f"WARN: discover open tar unreadable tar={tar_path} err={exc}")
+    return True
   if not daily_archive_populate_source_exists(canonical):
     return True
   members = _lookup_daily_archive_members_cache(compressed_path)
