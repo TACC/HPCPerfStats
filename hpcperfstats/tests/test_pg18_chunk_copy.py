@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -182,6 +183,7 @@ def _opts(mod: object, **kw: object) -> object:
 def _patch_side_effects(mod: object, monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setattr(mod, "fetch_chunk_signatures", lambda *_a, **_k: {})
   monkeypatch.setattr(mod, "decompress_target_range", lambda *_a, **_k: None)
+  monkeypatch.setattr(mod, "precreate_target_chunks", lambda *_a: False)
   monkeypatch.setattr(mod, "compress_target_range", lambda *_a, **_k: 0)
 
 
@@ -746,6 +748,9 @@ def test_copy_one_chunk_orders_sig_decompress_delete_copy_compress(
     lambda *_a: log.append("COUNT_TGT") or next(counts),
   )
   monkeypatch.setattr(
+    mod, "precreate_target_chunks", lambda *_a: log.append("PRECREATE")
+  )
+  monkeypatch.setattr(
     mod, "decompress_target_range", lambda *_a: log.append("DECOMPRESS")
   )
   monkeypatch.setattr(
@@ -757,13 +762,15 @@ def test_copy_one_chunk_orders_sig_decompress_delete_copy_compress(
   order = [
     x if x.isupper() and " " not in x else x.split()[0]
     for x in log
-    if x in {"SIG", "COUNT_SRC", "COUNT_TGT", "DECOMPRESS", "COMPRESS"}
+    if x
+    in {"SIG", "COUNT_SRC", "COUNT_TGT", "PRECREATE", "DECOMPRESS", "COMPRESS"}
     or x.startswith(("DELETE", "COPY"))
   ]
   assert order == [
     "SIG",
     "COUNT_SRC",
     "COUNT_TGT",
+    "PRECREATE",
     "DECOMPRESS",
     "DELETE",
     "COPY",
@@ -924,6 +931,7 @@ def test_copy_one_chunk_slice_resync_copies_only_mismatched_slices(
     mod, "fetch_chunk_signatures", lambda *_a: {c.regclass: (15, 0, 0, 0, 0, 0)}
   )
   monkeypatch.setattr(mod, "decompress_target_range", lambda *_a: None)
+  monkeypatch.setattr(mod, "precreate_target_chunks", lambda *_a: False)
   monkeypatch.setattr(mod, "compress_target_range", lambda *_a: 0)
   monkeypatch.setattr(mod, "count_source_chunk_rows", lambda *_a: 15)
   tgt = iter([10, 15])
@@ -959,6 +967,7 @@ def test_copy_one_chunk_full_copy_when_rows_were_updated(
     mod, "fetch_chunk_signatures", lambda *_a: {c.regclass: (10, 4, 0, 0, 0, 0)}
   )
   monkeypatch.setattr(mod, "decompress_target_range", lambda *_a: None)
+  monkeypatch.setattr(mod, "precreate_target_chunks", lambda *_a: False)
   monkeypatch.setattr(mod, "compress_target_range", lambda *_a: 0)
   monkeypatch.setattr(
     mod,
@@ -986,6 +995,7 @@ def test_copy_one_chunk_full_copy_when_slice_count_canceled(
     mod, "fetch_chunk_signatures", lambda *_a: {c.regclass: (15, 0, 0, 0, 0, 0)}
   )
   monkeypatch.setattr(mod, "decompress_target_range", lambda *_a: None)
+  monkeypatch.setattr(mod, "precreate_target_chunks", lambda *_a: False)
   monkeypatch.setattr(mod, "compress_target_range", lambda *_a: 0)
   monkeypatch.setattr(mod, "fetch_slice_counts", lambda *_a, **_k: None)
   monkeypatch.setattr(mod, "count_source_chunk_rows", lambda *_a: 15)
@@ -996,3 +1006,193 @@ def test_copy_one_chunk_full_copy_when_slice_count_canceled(
   )
   outs = [x for x in log if x.startswith("COPY (SELECT")]
   assert len(outs) == 1 and " WHERE " not in outs[0]
+
+
+class _SqlCursor:
+  def __init__(self, log: list, rows: list | None = None) -> None:
+    self.log, self.rows = log, rows or []
+
+  def __enter__(self) -> _SqlCursor:
+    return self
+
+  def __exit__(self, *_a: object) -> None:
+    return None
+
+  def execute(self, sql: str, params: object = None) -> None:
+    self.log.append((sql, params))
+
+  def fetchall(self) -> list:
+    return self.rows
+
+  def fetchone(self) -> tuple:
+    return (0,)
+
+
+class _SqlConn:
+  def __init__(self, log: list, rows: list | None = None) -> None:
+    self.log, self.rows = log, rows
+
+  def cursor(self) -> _SqlCursor:
+    return _SqlCursor(self.log, self.rows)
+
+
+def test_precreate_creates_chunks_in_own_statements_then_cleans_up(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  """Regression (04, 2026-11-11): chunk creation inside a long COPY held
+  ShareUpdateExclusiveLock on host_data for 31 h and serialized all workers."""
+  mod = _load_mod()
+  c = _chunk(mod, 1)
+  log: list = []
+  monkeypatch.setattr(mod, "_target_chunks_overlapping", lambda *_a: [])
+  assert mod.precreate_target_chunks(_SqlConn(log), c) is True
+  (ins, ins_p), (dele, del_p) = log
+  assert ins.startswith("INSERT INTO host_data") and "generate_series" in ins
+  assert dele.startswith("DELETE FROM host_data WHERE host = %s")
+  assert ins_p == (mod._PRECREATE_HOST, c.range_start, c.range_end)
+  assert del_p == (mod._PRECREATE_HOST, c.range_start, c.range_end)
+  for sql in (mod._PRECREATE_SQL, mod._PRECREATE_CLEANUP_SQL):
+    assert sql.count("%") == sql.count("%s")  # psycopg placeholder-safe
+
+
+def test_precreate_skipped_when_target_chunk_exists(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  """Existing (possibly partly synced) chunks get no placeholder rows."""
+  mod = _load_mod()
+  log: list = []
+  monkeypatch.setattr(
+    mod, "_target_chunks_overlapping", lambda *_a: [("t.c", False, 0, 0)]
+  )
+  assert mod.precreate_target_chunks(_SqlConn(log), _chunk(mod, 1)) is False
+  assert log == []
+
+
+def test_restore_index_sql_per_chunk_option_placement() -> None:
+  mod = _load_mod()
+  partial = (
+    "CREATE INDEX a ON public.host_data USING btree (dev) "
+    "WHERE ((dev)::text ~~ 'j:%'::text)"
+  )
+  assert mod.restore_index_sql(partial, False) == (
+    "CREATE INDEX a ON public.host_data USING btree (dev) "
+    "WITH (timescaledb.transaction_per_chunk) "
+    "WHERE ((dev)::text ~~ 'j:%'::text)"
+  )
+  plain = 'CREATE INDEX b ON public.host_data USING btree ("time" DESC)'
+  assert mod.restore_index_sql(plain, False).endswith(
+    " WITH (timescaledb.transaction_per_chunk)"
+  )
+  # TimescaleDB rejects transaction_per_chunk for UNIQUE (tested on 2.31).
+  uniq = 'CREATE UNIQUE INDEX u ON public.host_data USING btree ("time")'
+  assert mod.restore_index_sql(uniq, True) == uniq
+
+
+def test_drop_target_indexes_saves_before_drop_and_keeps_existing_file(
+  tmp_path: Path,
+) -> None:
+  mod = _load_mod()
+  rows = [
+    ("host_data_time_idx", "CREATE INDEX host_data_time_idx ON x", False),
+    ("host_data_uniq", "CREATE UNIQUE INDEX host_data_uniq ON x", True),
+  ]
+  index_file = str(tmp_path / "state.indexes.json")
+  log: list = []
+  assert mod.drop_target_indexes(_SqlConn(log, rows), index_file) == 2
+  saved = json.loads(Path(index_file).read_text())
+  assert [i["name"] for i in saved] == ["host_data_time_idx", "host_data_uniq"]
+  assert saved[1]["unique"] is True
+  drops = [sql for sql, _ in log if sql.startswith("DROP INDEX")]
+  assert drops == [
+    'DROP INDEX IF EXISTS public."host_data_time_idx"',
+    'DROP INDEX IF EXISTS public."host_data_uniq"',
+  ]
+  # Rerun after the drop sees no indexes: the saved definitions must survive.
+  mod.drop_target_indexes(_SqlConn([], []), index_file)
+  assert json.loads(Path(index_file).read_text()) == saved
+
+
+def test_restore_target_indexes_creates_only_missing(tmp_path: Path) -> None:
+  mod = _load_mod()
+  index_file = tmp_path / "state.indexes.json"
+  index_file.write_text(
+    json.dumps(
+      [
+        {"name": "have", "def": "CREATE INDEX have ON x", "unique": False},
+        {"name": "miss", "def": "CREATE INDEX miss ON x", "unique": False},
+      ]
+    )
+  )
+  log: list = []
+  n = mod.restore_target_indexes(
+    _SqlConn(log, [("have", "", False)]), str(index_file), "2GB"
+  )
+  assert n == 1
+  creates = [sql for sql, _ in log if sql.startswith("CREATE")]
+  assert creates == [
+    "CREATE INDEX miss ON x WITH (timescaledb.transaction_per_chunk)"
+  ]
+  # Only the missing one is dropped first (clears an invalid leftover).
+  drops = [sql for sql, _ in log if sql.startswith("DROP INDEX")]
+  assert drops == ['DROP INDEX IF EXISTS public."miss"']
+  assert (
+    "SELECT set_config('maintenance_work_mem', %s, false)",
+    ("2GB",),
+  ) in log
+
+
+def test_restore_target_indexes_rebuilds_invalid_leftover(
+  tmp_path: Path,
+) -> None:
+  """An interrupted unique build leaves an invalid index of the same name;
+  the valid-name check must treat it as missing (else reruns never fix it)."""
+  mod = _load_mod()
+  assert "indisvalid" in mod._VALID_TARGET_INDEX_NAMES_SQL
+  index_file = tmp_path / "state.indexes.json"
+  index_file.write_text(
+    json.dumps(
+      [{"name": "u", "def": "CREATE UNIQUE INDEX u ON x", "unique": True}]
+    )
+  )
+  log: list = []
+  # Valid-name query returns nothing: the existing "u" is invalid.
+  assert (
+    mod.restore_target_indexes(_SqlConn(log, []), str(index_file), "1GB") == 1
+  )
+  ordered = [sql for sql, _ in log if sql.startswith(("DROP", "CREATE"))]
+  assert ordered == [
+    'DROP INDEX IF EXISTS public."u"',
+    "CREATE UNIQUE INDEX u ON x",
+  ]
+  assert (
+    "SELECT set_config('maintenance_work_mem', %s, false)",
+    ("1GB",),
+  ) in log
+
+
+def test_restore_target_indexes_fails_closed_on_invalid_index(
+  tmp_path: Path,
+) -> None:
+  mod = _load_mod()
+  index_file = tmp_path / "state.indexes.json"
+  index_file.write_text("[]")
+
+  class _Invalid(_SqlCursor):
+    def fetchone(self) -> tuple:
+      return (1,)
+
+  class _Conn(_SqlConn):
+    def cursor(self) -> _Invalid:
+      return _Invalid(self.log, self.rows)
+
+  with pytest.raises(RuntimeError, match="invalid host_data index"):
+    mod.restore_target_indexes(_Conn([]), str(index_file), "2GB")
+
+
+@pytest.mark.parametrize(
+  "flag", ["--drop-target-indexes", "--restore-target-indexes"]
+)
+def test_index_modes_require_state_file(flag: str) -> None:
+  mod = _load_mod()
+  assert mod.main([flag]) == 2
+  assert mod.index_file_for("/a/state.json") == "/a/state.indexes.json"

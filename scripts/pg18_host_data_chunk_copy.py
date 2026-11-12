@@ -28,6 +28,11 @@ Attributes:
   _COUNT_ATTEMPTS: Retry count for source/target row-count queries.
   _NON_INSERT_SIG_SLOTS: Signature indexes that move only on UPDATE/DELETE.
   _STATE_VERSION: Schema version written into ``--state-file`` JSON.
+  _PRECREATE_HOST: Placeholder ``host`` of the rows that pre-create chunks.
+  _PRECREATE_SQL: Insert placeholder rows that create the target chunks.
+  _PRECREATE_CLEANUP_SQL: Delete those placeholder rows again.
+  _TARGET_INDEXES_SQL: List droppable ``host_data`` indexes on the target.
+  _VALID_TARGET_INDEX_NAMES_SQL: Names of valid ``host_data`` target indexes.
   _ZSTD_DUMP_ARGS: ``zstd`` argv for optional ``--dump-dir`` audit files.
 """
 
@@ -53,6 +58,31 @@ LOG = logging.getLogger("pg18_host_data_chunk_copy")
 _COUNT_ATTEMPTS = 5
 _STATE_VERSION = 1
 _ZSTD_DUMP_ARGS = ("zstd", "-T4", "-3")
+_PRECREATE_HOST = "__pg18_chunk_precreate__"
+# One row per target chunk interval inside the range, in its own committed
+# statement: TimescaleDB holds ShareUpdateExclusiveLock on the hypertable from
+# chunk creation until the creating transaction ends, so a chunk created
+# inside a long COPY blocks every other worker that needs a new chunk.
+_PRECREATE_SQL = (
+  'INSERT INTO host_data ("time", host) SELECT g, %s FROM generate_series('
+  "%s::timestamptz, %s::timestamptz - interval '1 microsecond', "
+  "(SELECT time_interval FROM timescaledb_information.dimensions "
+  "WHERE hypertable_name = 'host_data' AND column_name = 'time')) AS g"
+)
+_PRECREATE_CLEANUP_SQL = (
+  'DELETE FROM host_data WHERE host = %s AND "time" >= %s AND "time" < %s'
+)
+_TARGET_INDEXES_SQL = (
+  "SELECT i.relname, pg_get_indexdef(i.oid), x.indisunique "
+  "FROM pg_index x JOIN pg_class i ON i.oid = x.indexrelid "
+  "WHERE x.indrelid = 'public.host_data'::regclass AND NOT EXISTS "
+  "(SELECT 1 FROM pg_constraint c WHERE c.conindid = x.indexrelid) "
+  "ORDER BY i.relname"
+)
+_VALID_TARGET_INDEX_NAMES_SQL = (
+  "SELECT i.relname FROM pg_index x JOIN pg_class i ON i.oid = x.indexrelid "
+  "WHERE x.indrelid = 'public.host_data'::regclass AND x.indisvalid"
+)
 
 
 @dataclass(frozen=True)
@@ -1164,6 +1194,39 @@ def _target_chunks_overlapping(
     ]
 
 
+def precreate_target_chunks(conn: Connection, chunk: ChunkRow) -> bool:
+  """
+  Create the target chunk(s) for ``chunk`` in short committed statements.
+
+  Skipped when any target chunk already overlaps the range. Otherwise one
+  placeholder row per target chunk interval is inserted (autocommit, so the
+  hypertable chunk-creation lock is released at once) and deleted again, so
+  the following COPY only inserts into existing chunks.
+
+  Args:
+    conn (Connection): Open autocommit target connection.
+    chunk (ChunkRow): Source chunk whose range will be copied.
+
+  Returns:
+    bool: True when chunks were pre-created, False when they existed.
+
+  Examples:
+    >>> precreate_target_chunks(tgt, chunk)  # doctest: +SKIP
+    True
+  """
+  if _target_chunks_overlapping(conn, chunk):
+    return False
+  with conn.cursor() as cur:
+    cur.execute(
+      _PRECREATE_SQL, (_PRECREATE_HOST, chunk.range_start, chunk.range_end)
+    )
+    cur.execute(
+      _PRECREATE_CLEANUP_SQL,
+      (_PRECREATE_HOST, chunk.range_start, chunk.range_end),
+    )
+  return True
+
+
 def decompress_target_range(conn: Connection, chunk: ChunkRow) -> None:
   """
   Decompress compressed target chunks overlapping ``chunk`` before a delete.
@@ -1357,6 +1420,7 @@ def copy_one_chunk(
       src_n,
       tgt_n,
     )
+    precreate_target_chunks(tgt, chunk)
     decompress_target_range(tgt, chunk)
     windows = _resync_windows(src, tgt, chunk, opts, prior, sig, tgt_n)
     for start, end in windows:
@@ -1541,6 +1605,145 @@ def split_unchanged(
   return examine, same
 
 
+def index_file_for(state_path: str) -> str:
+  """
+  Return the sidecar JSON path that holds saved target index definitions.
+
+  Args:
+    state_path (str): ``--state-file`` path.
+
+  Returns:
+    str: ``<state stem>.indexes.json`` next to the state file.
+
+  Examples:
+    >>> index_file_for("/hpcperfstats/pg18_migrate/state.json")
+    '/hpcperfstats/pg18_migrate/state.indexes.json'
+  """
+  return str(Path(state_path).with_suffix(".indexes.json"))
+
+
+def restore_index_sql(indexdef: str, unique: bool) -> str:
+  """
+  Turn a saved ``pg_get_indexdef`` into the statement that rebuilds it.
+
+  Non-unique indexes are built one chunk per transaction
+  (``timescaledb.transaction_per_chunk``, placed before any ``WHERE``);
+  TimescaleDB refuses that option for UNIQUE, so those run as saved.
+
+  Args:
+    indexdef (str): ``CREATE [UNIQUE] INDEX ...`` text from the target.
+    unique (bool): True when the index is UNIQUE.
+
+  Returns:
+    str: Executable ``CREATE INDEX`` statement.
+
+  Examples:
+    >>> restore_index_sql(
+    ...   "CREATE INDEX a ON public.host_data USING btree (dev) "
+    ...   "WHERE ((dev)::text ~~ 'j:%'::text)",
+    ...   False,
+    ... ).split(" WHERE ")[0].endswith(
+    ...   "WITH (timescaledb.transaction_per_chunk)"
+    ... )
+    True
+  """
+  if unique or " WITH (" in indexdef:
+    return indexdef
+  head, sep, tail = indexdef.partition(" WHERE ")
+  return f"{head} WITH (timescaledb.transaction_per_chunk){sep}{tail}"
+
+
+def drop_target_indexes(conn: Connection, index_file: str) -> int:
+  """
+  Save the target ``host_data`` index definitions, then drop the indexes.
+
+  Bulk COPY then skips per-row index maintenance (random reads on large
+  chunks). An existing ``index_file`` is kept, so a rerun after a partial
+  drop never loses definitions. Constraint-backed indexes are left alone.
+
+  Args:
+    conn (Connection): Open autocommit target connection.
+    index_file (str): JSON sidecar written before any index is dropped.
+
+  Returns:
+    int: Number of indexes dropped.
+
+  Examples:
+    >>> drop_target_indexes(tgt, "/tmp/state.indexes.json")  # doctest: +SKIP
+    6
+  """
+  with conn.cursor() as cur:
+    cur.execute(_TARGET_INDEXES_SQL)
+    live = [(str(n), str(d), bool(u)) for n, d, u in cur.fetchall()]
+  if not os.path.isfile(index_file):
+    Path(index_file).parent.mkdir(parents=True, exist_ok=True)
+    with open(f"{index_file}.tmp", "w", encoding="utf-8") as fh:
+      json.dump([{"name": n, "def": d, "unique": u} for n, d, u in live], fh)
+    os.replace(f"{index_file}.tmp", index_file)
+  with conn.cursor() as cur:
+    cur.execute("SET statement_timeout = 0")
+    for name, _def, _unique in live:
+      cur.execute(f"DROP INDEX IF EXISTS public.{quote_ident(name)}")
+      LOG.info("dropped target index %s", name)
+  return len(live)
+
+
+def restore_target_indexes(
+  conn: Connection, index_file: str, maintenance_work_mem: str
+) -> int:
+  """
+  Recreate every saved target index that is missing or invalid, then check.
+
+  An interrupted earlier build leaves an invalid index under the saved name;
+  it is dropped and rebuilt, so a rerun always converges.
+
+  Args:
+    conn (Connection): Open autocommit target connection.
+    index_file (str): JSON sidecar from :func:`drop_target_indexes`.
+    maintenance_work_mem (str): Per-build memory (e.g. ``"2GB"``).
+
+  Returns:
+    int: Number of indexes created.
+
+  Raises:
+    RuntimeError: Raised when an index on ``host_data`` is invalid after
+      the rebuild.
+
+  Examples:
+    >>> restore_target_indexes(  # doctest: +SKIP
+    ...   tgt, "/tmp/state.indexes.json", "2GB"
+    ... )
+    6
+  """
+  with open(index_file, encoding="utf-8") as fh:
+    saved = json.load(fh)
+  created = 0
+  with conn.cursor() as cur:
+    cur.execute("SET statement_timeout = 0")
+    cur.execute(
+      "SELECT set_config('maintenance_work_mem', %s, false)",
+      (maintenance_work_mem,),
+    )
+    cur.execute(_VALID_TARGET_INDEX_NAMES_SQL)
+    valid = {str(r[0]) for r in cur.fetchall()}
+    for item in saved:
+      if item["name"] in valid:
+        continue
+      LOG.info("creating target index %s", item["name"])
+      # An interrupted build leaves an invalid index of the same name.
+      cur.execute(f"DROP INDEX IF EXISTS public.{quote_ident(item['name'])}")
+      cur.execute(restore_index_sql(item["def"], bool(item["unique"])))
+      created += 1
+    cur.execute(
+      "SELECT count(*) FROM pg_index WHERE NOT indisvalid AND indrelid = "
+      "'public.host_data'::regclass"
+    )
+    row = cur.fetchone()
+  if row and int(row[0]):
+    raise RuntimeError("invalid host_data index after restore")
+  return created
+
+
 def main(argv: Sequence[str] | None = None) -> int:
   """
   CLI entry: list or copy watermarked ``host_data`` chunks.
@@ -1619,6 +1822,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     help="Insert-only resync granularity for partly synced chunks "
     "(default 60; 0 = always re-copy whole chunks)",
   )
+  indexes = parser.add_mutually_exclusive_group()
+  indexes.add_argument(
+    "--drop-target-indexes",
+    action="store_true",
+    help="Save target host_data index definitions next to --state-file, "
+    "drop them for the bulk copy, and exit",
+  )
+  indexes.add_argument(
+    "--restore-target-indexes",
+    action="store_true",
+    help="Recreate the saved target indexes (before the freeze) and exit",
+  )
+  parser.add_argument(
+    "--maintenance-work-mem",
+    default="2GB",
+    help="maintenance_work_mem for --restore-target-indexes (default 2GB)",
+  )
   parser.add_argument("-v", "--verbose", action="store_true")
   args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -1626,9 +1846,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     level=logging.DEBUG if args.verbose else logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
   )
-  if args.changed_only and not args.state_file:
-    LOG.error("--changed-only requires --state-file")
+  needs_state = (
+    args.changed_only or args.drop_target_indexes or args.restore_target_indexes
+  )
+  if needs_state and not args.state_file:
+    LOG.error("--changed-only / --*-target-indexes require --state-file")
     return 2
+  if args.drop_target_indexes or args.restore_target_indexes:
+    index_file = index_file_for(args.state_file)
+    with connect_pg(
+      host=args.target_host,
+      port=args.port,
+      user=args.user,
+      database=args.database,
+    ) as tgt:
+      if args.drop_target_indexes:
+        n = drop_target_indexes(tgt, index_file)
+      else:
+        n = restore_target_indexes(tgt, index_file, args.maintenance_work_mem)
+    LOG.info(
+      "target indexes %s=%s file=%s",
+      "dropped" if args.drop_target_indexes else "created",
+      n,
+      index_file,
+    )
+    return 0
 
   wm = watermark_from_now(days=args.watermark_days)
   chunks = fetch_source_chunks(

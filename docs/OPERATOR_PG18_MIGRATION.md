@@ -13,7 +13,8 @@ Run every block as root from the checkout that contains `docker-compose.yaml`. U
 | Phase | Stack state | Cost |
 |-------|-------------|------|
 | 0 Preflight, A build/start, B schema | Live on PG15 | Minutes (A: image bake) |
-| C Bulk copy (`host_data`) | Live on PG15 | Hours–days; rerun until clean |
+| C Bulk copy (`host_data`, PG18 indexes dropped) | Live on PG15 | Hours–days; rerun until clean |
+| C2 Restore PG18 indexes | Live on PG15 | Minutes–hours (uncompressed recent chunks only) |
 | D1 Catch-up pass | Live on PG15 | Minutes |
 | **D2–D3** Pipeline stopped, freeze pass | **Ingest paused** (RabbitMQ buffers monitor data) | Changed slices only |
 | **D4** Web + proxy stopped, relational copy | **Site down** | Parallel dump/restore of relational tables |
@@ -27,6 +28,8 @@ How the copy keeps the window short (`scripts/pg18_host_data_chunk_copy.py`):
 - **Binary COPY.** It uses an explicit, type-checked column list and fails closed if the PG15 and PG18 `host_data` layouts differ.
 - **`--verify` (freeze only).** Each copied chunk is recounted on both sides, and the run exits non-zero on any mismatch. The `verified_rows=` total replaces a full `count(*)` of `host_data`.
 - **Per-chunk failures.** A failed chunk is logged and dropped from state; the run continues and exits 1. Rerun the same command.
+- **Chunks pre-created outside the COPY.** TimescaleDB holds `ShareUpdateExclusiveLock` on `host_data` from chunk creation until the creating transaction ends. When the day's PG18 chunk was created inside its COPY, every other worker queued behind the longest COPY (hpcperfstats04, 2026-11-11: three workers blocked 31 h behind one). Each chunk is now created by a committed placeholder insert/delete before its COPY.
+- **No PG18 index maintenance during the bulk copy.** Phase B saves and drops the six `host_data` indexes (`--drop-target-indexes`). On 04's 400–700M-row days, maintaining them meant random index reads at about 1,600 rows/s. C2 rebuilds them before the freeze; on compressed chunks the heap is empty, so only the recent uncompressed chunks cost real build time.
 
 Freeze precondition: **no `host_data` UPDATE/DELETE tools** (`repair_jstamp_deltas`, `backfill_host_data_null_dev.sh`, `collapse_percore_parallel.sh`) may run on PG15 between D1 and D3. If they do, the affected chunks fall back to whole-chunk copies (correct, just slower).
 
@@ -86,11 +89,14 @@ with connection.cursor() as cur:
 print("migrate_ok")
 '
 podman-compose -p hpcperfstats --profile pg18-migrate exec -T db_pg18 psql -h localhost -U hpcperfstats -d hpcperfstats -XtA -v ON_ERROR_STOP=1 -c "SELECT 'host_data_n=' || count(*) FROM host_data" -c "SELECT 'compression_enabled=' || compression_enabled FROM timescaledb_information.hypertables WHERE hypertable_name = 'host_data'" -c "SELECT remove_compression_policy('host_data', if_exists => true)" -c "SELECT 'compression_jobs=' || count(*) FROM timescaledb_information.jobs WHERE hypertable_name = 'host_data' AND proc_name LIKE '%compression%'"
+podman-compose -p hpcperfstats --profile pg18-migrate run --rm --no-deps -T -e PGPASSWORD=hpcperfstats -v "$PWD/scripts:/migrate:ro" --entrypoint /usr/local/bin/python3 web -u /migrate/pg18_host_data_chunk_copy.py --target-host db18 --state-file /hpcperfstats/pg18_migrate/state.json --drop-target-indexes 2>&1 | grep -E 'dropped|ERROR|Error'
 ```
+
+The last line saves PG18's `host_data` index definitions to `/hpcperfstats/pg18_migrate/state.indexes.json` before dropping them; C2 rebuilds them from that file. A rerun never overwrites the saved file.
 
 Checks run in `psql`, not through Django's cursor: on hpcperfstats02 (2026-11-06) the `web` image rejected parameterized `cursor.execute(sql, params)` with `the query has 1 placeholders but 2 parameters were passed`. Rerunning this block is safe (`migrate` is idempotent; the policy removal uses `if_exists`).
 
-**Fail closed:** `server` is PostgreSQL 18, `migrate_ok`, `host_data_n=0`, `compression_enabled=true`, `compression_jobs=0`. If you see `create_hypertable … does not exist`, the `web` image predates the `0001` extension fix; redeploy, then rerun.
+**Fail closed:** `server` is PostgreSQL 18, `migrate_ok`, `host_data_n=0`, `compression_enabled=true`, `compression_jobs=0`, and `target indexes dropped=6`. If you see `create_hypertable … does not exist`, the `web` image predates the `0001` extension fix; redeploy, then rerun.
 
 ---
 
@@ -104,13 +110,29 @@ The copy runs detached in a one-shot `web` container using the checkout's script
 podman rm -f hpcperfstats_pg18_copy 2>/dev/null; podman-compose -p hpcperfstats --profile pg18-migrate run -d --no-deps --name hpcperfstats_pg18_copy -e PGPASSWORD=hpcperfstats -v "$PWD/scripts:/migrate:ro" --entrypoint /usr/local/bin/python3 web -u /migrate/pg18_host_data_chunk_copy.py --source-host db --target-host db18 --watermark-days -7 --changed-only --state-file /hpcperfstats/pg18_migrate/state.json --workers 4
 ```
 
-### host — progress, then result when it exits (paste output)
+### host — watch progress (one line a minute; Ctrl-C stops watching, not the copy)
+
+Rows = PG18 committed inserts (they only move when a chunk's COPY commits) plus in-flight PG15 `COPY TO` rows. `update_metrics` also runs `COPY TO` on PG15, so it is excluded.
 
 ```bash
-podman logs hpcperfstats_pg18_copy 2>&1 | grep -c -E 'INFO (copy|skip) chunk'; podman logs hpcperfstats_pg18_copy 2>&1 | grep -E 'source_chunks=|ERROR|INFO done' | tail -5; podman inspect hpcperfstats_pg18_copy --format 'status={{.State.Status}} exit={{.State.ExitCode}}'
+total=$(podman-compose -p hpcperfstats exec -T db psql -h localhost -U hpcperfstats -d hpcperfstats -XtAc "SET statement_timeout = 0; SELECT approximate_row_count('host_data')" | tail -1); t0=""; while true; do t=$(podman-compose -p hpcperfstats --profile pg18-migrate exec -T db_pg18 psql -h localhost -U hpcperfstats -d hpcperfstats -XtAc "SELECT tup_inserted FROM pg_stat_database WHERE datname = current_database()"); s=$(podman-compose -p hpcperfstats exec -T db psql -h localhost -U hpcperfstats -d hpcperfstats -XtAc "SELECT coalesce(sum(p.tuples_processed), 0) || ' ' || count(*) FROM pg_stat_progress_copy p JOIN pg_stat_activity a USING (pid) WHERE p.command = 'COPY TO' AND a.application_name NOT LIKE 'update_metrics%'"); now=$(date +%s); rows=$(( t + ${s% *} )); [ -z "$t0" ] && { t0=$now; r0=$rows; }; el=$(( now - t0 )); rate=0; [ "$el" -gt 0 ] && [ "$rows" -gt "$r0" ] && rate=$(( (rows - r0) / el )); if [ "$rate" -gt 0 ]; then eta="$(( (total - rows) / rate / 3600 ))h"; else eta=-; fi; echo "$(date +%T) rows=$rows/$total ($(( rows * 100 / total ))%) copies_in_flight=${s#* } rows_per_s=$rate eta=$eta $(podman inspect hpcperfstats_pg18_copy --format 'status={{.State.Status}} exit={{.State.ExitCode}}')"; sleep 60; done
 ```
 
+`podman logs -f hpcperfstats_pg18_copy` follows each chunk as it starts (`INFO copy chunk`), plus any `ERROR chunk failed` and the final `INFO done`.
+
 **Done when** `status=exited exit=0` and the `INFO done` line shows `failed=0`. On `exit=1`, read the `ERROR chunk failed` lines and rerun the start block; failed chunks are retried and verified chunks are skipped. Rerun the start block a few times as convenient: each pass only touches chunks written since the last.
+
+**If `copies_in_flight` stays at `1` while `--workers` is higher,** check PG18 for `Lock:relation` waits on `host_data`. That is the chunk-creation lock this script avoids; it means an older script without chunk pre-creation is running.
+
+### C2 — restore PG18 indexes (live; before D1)
+
+Run after the bulk copy has exited cleanly and **before** D1; the copy must not be running (the rebuild locks `host_data`). The five non-unique indexes are built one chunk per transaction. TimescaleDB refuses that for UNIQUE, so the unique index is one transaction. `--maintenance-work-mem 2GB` bounds memory per build (16 GB × 8 workers OOM-killed Postgres on hpcperfstats03, 2026-11-08).
+
+```bash
+podman rm -f hpcperfstats_pg18_indexes 2>/dev/null; podman-compose -p hpcperfstats --profile pg18-migrate run -d --no-deps --name hpcperfstats_pg18_indexes -e PGPASSWORD=hpcperfstats -v "$PWD/scripts:/migrate:ro" --entrypoint /usr/local/bin/python3 web -u /migrate/pg18_host_data_chunk_copy.py --target-host db18 --state-file /hpcperfstats/pg18_migrate/state.json --restore-target-indexes --maintenance-work-mem 2GB && podman logs -f hpcperfstats_pg18_indexes
+```
+
+**Fail closed:** the log ends with `target indexes created=…`, and `podman inspect hpcperfstats_pg18_indexes --format '{{.State.ExitCode}}'` prints `0`. A rerun only creates indexes that are still missing. `RuntimeError: invalid host_data index after restore` means a build was interrupted: rerun this block.
 
 ---
 
