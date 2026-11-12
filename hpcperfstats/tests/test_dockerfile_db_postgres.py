@@ -66,15 +66,11 @@ def test_db_dockerfile_pins_postgres_18_sha_and_timescale() -> None:
   )
 
 
-def test_db_dockerfile_pins_jemalloc_icu_liburing_lz4_zlib_ng_zstd() -> None:
+def test_db_dockerfile_pins_jemalloc_liburing_lz4_zlib_ng_zstd() -> None:
   text = _dockerfile()
   assert "ARG JEMALLOC_VERSION=5.4.0" in text
   assert (
     "200776fac271093e7c2f21edd6d62657ecd2be578d9328633f2a86bfa6ef4f1d" in text
-  )
-  assert "ARG ICU_VERSION=78.3" in text
-  assert (
-    "3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0" in text
   )
   assert "ARG LIBURING_VERSION=2.15" in text
   assert (
@@ -169,20 +165,17 @@ def test_db_dockerfile_postgres_and_timescale_heredocs_avoid_inline_hash_comment
   assert "./bootstrap -DCMAKE_BUILD_TYPE=Release" in ts_run
 
 
-def test_db_dockerfile_links_opt_icu_liburing_lz4_zstd_into_postgres() -> None:
+def test_db_dockerfile_links_opt_liburing_lz4_zstd_into_postgres() -> None:
   text = _dockerfile()
-  assert "--with-icu" in text
   assert "--with-liburing" in text
   assert "--with-lz4" in text
   assert "--with-zstd" in text
   assert "--with-llvm" in text
-  assert "/opt/icu" in text
   assert "/opt/liburing" in text
   assert "/opt/lz4" in text
   assert "/opt/zstd" in text
   assert "/opt/jemalloc" in text
   assert "/opt/zlib-ng" in text
-  assert "-Wl,-rpath,/opt/icu/lib" in text
   assert "-Wl,-rpath,/opt/liburing/lib" in text
   assert "-Wl,-rpath,/opt/lz4/lib" in text
   assert "-Wl,-rpath,/opt/zstd/lib" in text
@@ -230,7 +223,7 @@ def test_db_dockerfile_libs_mtune_and_lz4_heapmode() -> None:
     in text
   )
   assert "-mtune=native" in text
-  lz4_run = text[text.index("# --- lz4 ---") : text.index("# --- ICU")]
+  lz4_run = text[text.index("# --- lz4 ---") : text.index("# --- liburing")]
   assert "-DLZ4_HEAPMODE=0" in lz4_run
   assert "hpcperfstats_bake_cflags db/lz4" in lz4_run
   assert 'AR="${AR}"' in lz4_run and 'NM="${NM}"' in lz4_run
@@ -243,8 +236,6 @@ def test_db_dockerfile_opt_libs_use_llvm_binutils_not_gnu() -> None:
   zlib_run = text[text.index("# --- zlib-ng") : text.index("# --- zstd")]
   assert "CMAKE_AR=" in zlib_run and "CMAKE_NM=" in zlib_run
   assert "CMAKE_EXE_LINKER_FLAGS=" in zlib_run
-  icu_run = text[text.index("# --- ICU") : text.index("# --- liburing")]
-  assert 'NM="${NM}"' in icu_run
   zstd_run = text[text.index("# --- zstd") : text.index("ENV PKG_CONFIG_PATH=")]
   assert "HPC_THINLTO_LDFLAGS" in zstd_run
   assert 'AR="${AR}"' in zstd_run
@@ -263,7 +254,7 @@ def test_db_dockerfile_opt_lib_bake_order_cache_and_deps() -> None:
   """Slowest-changing independent /opt pins first; zstd after lz4 + zlib-ng.
 
   Docker layer cache is linear: bumping a fast pin (zlib-ng) must not
-  rebuild jemalloc/lz4/icu/liburing. zstd DT_NEEDED those two codecs, so
+  rebuild jemalloc/lz4/liburing. zstd DT_NEEDED those two codecs, so
   its RUN stays after both even though zstd itself ships ~yearly.
   """
   text = _dockerfile()
@@ -271,7 +262,6 @@ def test_db_dockerfile_opt_lib_bake_order_cache_and_deps() -> None:
     "ARG ALPINE_VERSION=",
     "ARG JEMALLOC_VERSION=",
     "ARG LZ4_VERSION=",
-    "ARG ICU_VERSION=",
     "ARG LIBURING_VERSION=",
     "ARG ZLIB_NG_VERSION=",
     "ARG ZSTD_VERSION=",
@@ -281,14 +271,13 @@ def test_db_dockerfile_opt_lib_bake_order_cache_and_deps() -> None:
   idxs = [text.index(m) for m in markers]
   assert idxs == sorted(idxs), (
     "db.Dockerfile /opt bake order must be Alpine, jemalloc, lz4, "
-    "ICU, liburing, zlib-ng, zstd, Postgres, Timescale"
+    "liburing, zlib-ng, zstd, Postgres, Timescale"
   )
   assert text.index("# --- lz4 ---") < text.index("# --- zstd")
   assert text.index("# --- zlib-ng") < text.index("# --- zstd")
   runtime_copies = [
     "COPY --from=db-build /opt/jemalloc",
     "COPY --from=db-build /opt/lz4",
-    "COPY --from=db-build /opt/icu",
     "COPY --from=db-build /opt/liburing",
     "COPY --from=db-build /opt/zlib-ng",
     "COPY --from=db-build /opt/zstd",
@@ -405,3 +394,22 @@ def test_db_entrypoint_scripts_shipped() -> None:
   ignore = (_repo_root() / ".gitignore").read_text()
   assert "!services-conf/db-docker-entrypoint.sh" in ignore
   assert "!services-conf/db-docker-ensure-initdb.sh" in ignore
+
+
+def test_db_dockerfile_builds_postgres_without_icu() -> None:
+  """ICU removed 2026-11-11: every db_pg18 database uses libc, no ICU columns/indexes.
+
+  ICU majors change collator versions twice a year (REINDEX risk) for no
+  feature we use. Keep it out of configure, /opt, and the runtime apk set.
+  """
+  text = _dockerfile()
+  assert "--without-icu" in text
+  assert "--with-icu " not in text
+  assert "/opt/icu" not in text
+  assert "ICU_VERSION" not in text
+  assert "icu-data-full" not in text
+  assert "hpcperfstats_bake_cflags db/icu" not in text
+  pg_run = text[
+    text.index("# --- PostgreSQL") : text.index("# --- TimescaleDB")
+  ]
+  assert "if grep -E 'libicu' /tmp/postgres.ldd; then" in pg_run

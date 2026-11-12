@@ -240,7 +240,7 @@ Keep `/data/hpcperfstats_db/pg15` and the parked `db` container until the soak c
 |------|----------|
 | Base | `alpine:3.24.x` pinned in `services-conf/db.Dockerfile` (not `latest`) |
 | Postgres / Timescale | PostgreSQL 18.x and TimescaleDB 2.31.x SHA-pinned (`ARG PG_VERSION`, `ARG TIMESCALEDB_VERSION`); not `APACHE_ONLY` |
-| `/opt` | Source-built jemalloc, zlib-ng, ICU, liburing, lz4, zstd; rpath on `postgres` and the zstd CLI |
+| `/opt` | Source-built jemalloc, zlib-ng, liburing, lz4, zstd (PostgreSQL built `--without-icu`); rpath on `postgres` and the zstd CLI |
 | Toolchain | Clang 22 ThinLTO, `-march=native` (`services-conf/bake_clang_flags.sh`); bake on the production CPU |
 | Volume | `/var/lib/postgresql` (PG18 layout) |
 | io_uring | `seccomp=unconfined` + `label=disable` + `cap_add: SYS_ADMIN` on `db_pg18`; host `kernel.io_uring_disabled=1` + `kernel.io_uring_group=70`; forbidden `disabled=2` |

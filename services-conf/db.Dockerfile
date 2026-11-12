@@ -87,16 +87,6 @@ set -eux
 _cflags="$(hpcperfstats_bake_cflags db/lz4) -DLZ4_HEAPMODE=0"; curl -fsSL "https://github.com/lz4/lz4/archive/refs/tags/v${LZ4_VERSION}.tar.gz" -o /tmp/lz4.tar.gz; echo "${LZ4_SHA256}  /tmp/lz4.tar.gz" | sha256sum -c -; mkdir -p /usr/src/lz4; tar -xzf /tmp/lz4.tar.gz -C /usr/src/lz4 --strip-components=1; cd /usr/src/lz4; make -j"$(nproc)" CC="${CC}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" LDFLAGS="${HPC_THINLTO_LDFLAGS}" CFLAGS="${_cflags}" PREFIX=/opt/lz4; make install CC="${CC}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" LDFLAGS="${HPC_THINLTO_LDFLAGS}" PREFIX=/opt/lz4; rm -rf /usr/src/lz4 /tmp/lz4.tar.gz
 BASH
 
-ARG ICU_VERSION=78.3
-ARG ICU_SHA256=3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0
-ENV ICU_VERSION=${ICU_VERSION} ICU_SHA256=${ICU_SHA256}
-# --- ICU (source under /opt/icu; not apk icu-dev as linked ABI) ---
-RUN \
-  /bin/bash -o pipefail -s <<'BASH'
-set -eux
-_cflags="$(hpcperfstats_bake_cflags db/icu)"; curl -fsSL "https://github.com/unicode-org/icu/releases/download/release-${ICU_VERSION}/icu4c-${ICU_VERSION}-sources.tgz" -o /tmp/icu.tgz; echo "${ICU_SHA256}  /tmp/icu.tgz" | sha256sum -c -; mkdir -p /usr/src/icu; tar -xzf /tmp/icu.tgz -C /usr/src/icu; cd /usr/src/icu/icu/source; CC="${CC}" CXX="${CXX}" CFLAGS="${_cflags}" CXXFLAGS="${_cflags}" LDFLAGS="${HPC_THINLTO_LDFLAGS}" ./configure --prefix=/opt/icu --enable-static --disable-samples --disable-tests; make -j"$(nproc)" CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" LDFLAGS="${HPC_THINLTO_LDFLAGS}"; make install CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" LDFLAGS="${HPC_THINLTO_LDFLAGS}"; rm -rf /usr/src/icu /tmp/icu.tgz
-BASH
-
 ARG LIBURING_VERSION=2.15
 ARG LIBURING_SHA256=8d052f2622dcb3678cbaee5ff582a87572672a6c0a56533cdda5b65cb636120a
 ENV LIBURING_VERSION=${LIBURING_VERSION} LIBURING_SHA256=${LIBURING_SHA256}
@@ -127,10 +117,10 @@ set -eux
 hpcperfstats_ensure_db_zstd_upstream; _cflags="$(hpcperfstats_bake_cflags db/zstd)"; curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" -o /tmp/zstd.tar.gz; echo "${ZSTD_SHA256}  /tmp/zstd.tar.gz" | sha256sum -c -; mkdir -p /usr/src/zstd; tar -xzf /tmp/zstd.tar.gz -C /usr/src/zstd --strip-components=1; cd /usr/src/zstd; export PKG_CONFIG_PATH="/opt/lz4/lib/pkgconfig:/opt/zlib-ng/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; export CPPFLAGS="-I/opt/lz4/include -I/opt/zlib-ng/include${CPPFLAGS:+ $CPPFLAGS}"; export LDFLAGS="${HPC_THINLTO_LDFLAGS} -L/opt/lz4/lib -Wl,-rpath,/opt/lz4/lib -L/opt/zlib-ng/lib -Wl,-rpath,/opt/zlib-ng/lib"; make -j"$(nproc)" CC="${CC}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" PREFIX=/opt/zstd HAVE_ZLIB=1 HAVE_LZ4=1 MOREFLAGS="${_cflags}"; make install CC="${CC}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" PREFIX=/opt/zstd; ldd /opt/zstd/bin/zstd | tee /tmp/zstd.ldd; grep -E '/opt/zlib-ng/.+libz' /tmp/zstd.ldd; grep -E '/opt/lz4/.+liblz4' /tmp/zstd.ldd; if grep -E '[[:space:]](/lib/libz\.|/usr/lib/libz\.|/usr/lib/liblz4)' /tmp/zstd.ldd; then echo "zstd linked apk zlib/lz4 instead of /opt" >&2; exit 1; fi; rm -rf /usr/src/zstd /tmp/zstd.tar.gz
 BASH
 
-ENV PKG_CONFIG_PATH="/opt/zlib-ng/lib/pkgconfig:/opt/icu/lib/pkgconfig:/opt/liburing/lib/pkgconfig:/opt/lz4/lib/pkgconfig:/opt/zstd/lib/pkgconfig" \
+ENV PKG_CONFIG_PATH="/opt/zlib-ng/lib/pkgconfig:/opt/liburing/lib/pkgconfig:/opt/lz4/lib/pkgconfig:/opt/zstd/lib/pkgconfig" \
   PATH="/opt/jemalloc/bin:/opt/zstd/bin:/usr/local/bin:${PATH}" \
-  LDFLAGS="-L/opt/jemalloc/lib -L/opt/zlib-ng/lib -L/opt/icu/lib -L/opt/liburing/lib -L/opt/lz4/lib -L/opt/zstd/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/icu/lib -Wl,-rpath,/opt/liburing/lib -Wl,-rpath,/opt/lz4/lib -Wl,-rpath,/opt/zstd/lib -Wl,--no-as-needed -ljemalloc -lstdc++" \
-  CPPFLAGS="-I/opt/jemalloc/include -I/opt/zlib-ng/include -I/opt/icu/include -I/opt/liburing/include -I/opt/lz4/include -I/opt/zstd/include" \
+  LDFLAGS="-L/opt/jemalloc/lib -L/opt/zlib-ng/lib -L/opt/liburing/lib -L/opt/lz4/lib -L/opt/zstd/lib -Wl,-rpath,/opt/jemalloc/lib -Wl,-rpath,/opt/zlib-ng/lib -Wl,-rpath,/opt/liburing/lib -Wl,-rpath,/opt/lz4/lib -Wl,-rpath,/opt/zstd/lib -Wl,--no-as-needed -ljemalloc -lstdc++" \
+  CPPFLAGS="-I/opt/jemalloc/include -I/opt/zlib-ng/include -I/opt/liburing/include -I/opt/lz4/include -I/opt/zstd/include" \
   CFLAGS="${OPT_CFLAGS_PG}" \
   CXXFLAGS="${OPT_CFLAGS_PG}"
 
@@ -159,7 +149,7 @@ export LDFLAGS="${LDFLAGS} ${HPC_THINLTO_LDFLAGS}"
 export CFLAGS="${_pg_cflags}"
 export CXXFLAGS="${_pg_cflags}"
 # Intentionally omit docker-library --disable-rpath so /opt rpaths stick.
-CC="${CC}" CXX="${CXX}" ./configure --enable-option-checking=fatal --build="$gnuArch" --enable-integer-datetimes --with-uuid=e2fs --with-pgport=5432 --with-system-tzdata=/usr/share/zoneinfo --prefix=/usr/local --with-includes=/usr/local/include --with-libraries=/usr/local/lib --with-icu --with-liburing --with-libxml --with-libxslt --with-llvm --with-lz4 --with-openssl --with-zstd
+CC="${CC}" CXX="${CXX}" ./configure --enable-option-checking=fatal --build="$gnuArch" --enable-integer-datetimes --with-uuid=e2fs --with-pgport=5432 --with-system-tzdata=/usr/share/zoneinfo --prefix=/usr/local --with-includes=/usr/local/include --with-libraries=/usr/local/lib --without-icu --with-liburing --with-libxml --with-libxslt --with-llvm --with-lz4 --with-openssl --with-zstd
 if grep -q -- '--disable-rpath' config.status; then echo "postgres configure must not use --disable-rpath" >&2; exit 1; fi
 make -j"$(nproc)" CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}" world-bin
 make install-world-bin CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM="${NM}"
@@ -167,11 +157,11 @@ make -C contrib install CC="${CC}" CXX="${CXX}" AR="${AR}" RANLIB="${RANLIB}" NM
 ldd /usr/local/bin/postgres | tee /tmp/postgres.ldd
 grep -E '/opt/jemalloc/.+libjemalloc' /tmp/postgres.ldd
 grep -E '/opt/zlib-ng/.+libz' /tmp/postgres.ldd
-grep -E '/opt/icu/.+libicu' /tmp/postgres.ldd
 grep -E '/opt/liburing/.+liburing' /tmp/postgres.ldd
 grep -E '/opt/lz4/.+liblz4' /tmp/postgres.ldd
 grep -E '/opt/zstd/.+libzstd' /tmp/postgres.ldd
-if grep -E '[[:space:]](/lib/libz\.|/usr/lib/libz\.|/usr/lib/liblz4|/usr/lib/libzstd|/usr/lib/libicu|/usr/lib/liburing)' /tmp/postgres.ldd; then echo "postgres linked apk libs instead of /opt" >&2; exit 1; fi
+if grep -E '[[:space:]](/lib/libz\.|/usr/lib/libz\.|/usr/lib/liblz4|/usr/lib/libzstd|/usr/lib/liburing)' /tmp/postgres.ldd; then echo "postgres linked apk libs instead of /opt" >&2; exit 1; fi
+if grep -E 'libicu' /tmp/postgres.ldd; then echo "postgres must be built --without-icu" >&2; exit 1; fi
 
 strip --strip-unneeded /usr/local/bin/postgres /usr/local/bin/psql || true
 postgres --version
@@ -259,7 +249,6 @@ RUN mkdir /docker-entrypoint-initdb.d
 
 COPY --from=db-build /opt/jemalloc /opt/jemalloc
 COPY --from=db-build /opt/lz4 /opt/lz4
-COPY --from=db-build /opt/icu /opt/icu
 COPY --from=db-build /opt/liburing /opt/liburing
 COPY --from=db-build /opt/zlib-ng /opt/zlib-ng
 COPY --from=db-build /opt/zstd /opt/zstd
@@ -273,10 +262,8 @@ RUN set -eux; \
     libxslt \
     openssl \
     tzdata \
-    # ICU data files for collations (source ICU may still need full locale data).
     # Do not apk-add zlib: postgres/zstd must link /opt/zlib-ng. openssl/libxml2
     # may still pull apk zlib transitively — that is OK; gate via ldd below.
-    icu-data-full \
   ; \
   # Transitive shared objects that scanelf would normally pull from apk for
   # non-/opt deps (libssl, libcrypto already via openssl).
@@ -287,7 +274,6 @@ RUN set -eux; \
       | awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } \
              system("[ -e /opt/jemalloc/lib/" $1 " ]") == 0 { next } \
              system("[ -e /opt/zlib-ng/lib/" $1 " ]") == 0 { next } \
-             system("[ -e /opt/icu/lib/" $1 " ]") == 0 { next } \
              system("[ -e /opt/liburing/lib/" $1 " ]") == 0 { next } \
              system("[ -e /opt/lz4/lib/" $1 " ]") == 0 { next } \
              system("[ -e /opt/zstd/lib/" $1 " ]") == 0 { next } \
@@ -303,7 +289,6 @@ RUN set -eux; \
   ldd /usr/local/bin/postgres | tee /tmp/postgres.ldd; \
   grep -E '/opt/jemalloc/.+libjemalloc' /tmp/postgres.ldd; \
   grep -E '/opt/zlib-ng/.+libz' /tmp/postgres.ldd; \
-  grep -E '/opt/icu/.+libicu' /tmp/postgres.ldd; \
   grep -E '/opt/liburing/.+liburing' /tmp/postgres.ldd; \
   grep -E '/opt/lz4/.+liblz4' /tmp/postgres.ldd; \
   grep -E '/opt/zstd/.+libzstd' /tmp/postgres.ldd; \

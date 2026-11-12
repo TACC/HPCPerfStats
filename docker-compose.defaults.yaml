@@ -265,7 +265,7 @@ services:
         aliases:
           - db
 
-  # Homegrown PG18 + Timescale (jemalloc/ICU/liburing/lz4/zstd). Dual-run only
+  # Homegrown PG18 + Timescale (jemalloc/liburing/lz4/zstd). Dual-run only
   # during logical migrate — see docs/OPERATOR_PG18_MIGRATION.md. Hostname `db`
   # stays on Hub PG15 until cutover. Start with:
   #   docker compose --profile pg18-migrate up -d db_pg18
