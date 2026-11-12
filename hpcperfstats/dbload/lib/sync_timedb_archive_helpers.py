@@ -5499,6 +5499,9 @@ def classify_sealed_archive_stream_failure(
       return SKIP_KIND_TAR_TRUNCATED, detail
     except subprocess.CalledProcessError as exc:
       zst_err = (getattr(exc, "stderr", None) or str(exc)).strip()[:500]
+      # A signal-killed zstd -t never judged the frames (DE-29: transient).
+      if exc.returncode < 0:
+        return SKIP_KIND_READ_ERROR, zst_err
       return SKIP_KIND_ZST_FRAME_INVALID, zst_err
     except Exception as exc:
       return SKIP_KIND_READ_ERROR, str(exc)[:500]
@@ -5666,7 +5669,10 @@ def mark_archive_day_ingest_skip_and_raise(
     is_environment_error(stream_error)
     or stderr_reports_environment_error(detail)
     or (
-      sealed_path
+      # zst_frame_invalid: zstd -t already read the whole file and failed, so
+      # a re-probe would only decompress it again to fail the same way.
+      kind != SKIP_KIND_ZST_FRAME_INVALID
+      and sealed_path
       and os.path.isfile(sealed_path)
       and probe_tar_archive_readability(sealed_path) in (READABLE, TRANSIENT)
     )
@@ -7152,16 +7158,42 @@ def _populate_members_from_sealed_scan(
     tar_path = daily_tar_path_from_compressed(canonical)
   zst_path, gz_path = compressed_sibling_paths(tar_path)
 
-  _scan_fn = lambda on_member: (
-    lambda packed: (packed[0], packed[2], packed[3])
-  )(
-    _stream_compressed_archive_members(
+  def _scan_fn(on_member: Any) -> tuple[bool, bool, Any]:
+    """
+    Feed the day's sealed members to ``on_member``, decompressing only on a miss.
+
+    The sealed member map (T0, keyed by the zst identity, written only after a
+    full decode) answers without reading the archive. A miss streams it once
+    (T2) and saves the map so the next populate of that file is T0.
+
+    Args:
+      on_member (Any): ``on_member(name, size)`` callback, or None.
+
+    Returns:
+      tuple[bool, bool, Any]: ``(readable, saw_duplicates, stream_error)``.
+
+    Examples:
+      >>> _scan_fn(None)  # doctest: +SKIP
+      (True, False, None)
+    """
+    mapped = sealed_members_lookup(sealed_path, request_rebuild=False)
+    if mapped is not None:
+      for name, size in mapped.items():
+        if on_member is not None:
+          on_member(name, size)
+      return True, False, None
+    before = archive_identity(sealed_path)
+    readable, streamed, dups, err = _stream_compressed_archive_members(
       sealed_path,
       on_member,
       archive_threads=False,
       defer_on_member=True,
     )
-  )
+    if readable and str(sealed_path).endswith(DAILY_ARCHIVE_ZST_SUFFIX):
+      write_sealed_member_map(
+        sealed_path, dict(streamed), source="rebuild", identity=before
+      )
+    return readable, dups, err
 
   members = None
   try:
@@ -11869,16 +11901,8 @@ def _seal_skip_existing_zst_equivalent(
   """
   if not os.path.isfile(zst_path):
     return False, None
-  try:
-    zstd_test(zst_path, num_threads)
-  except OSError, subprocess.CalledProcessError, RuntimeError:
-    return False, None
   if not os.path.isfile(tar_path):
-    if log_fn:
-      log_fn(
-        f"Seal skipped: sealed archive valid and uncompressed tar absent: {zst_path}",
-        flush=True,
-      )
+    # Nothing to seal; saying so needs no decompress of the sealed file.
     return True, None
   existing_ok, existing_members = _sealed_archive_members_via_store_or_scan(
     zst_path,
@@ -11887,14 +11911,22 @@ def _seal_skip_existing_zst_equivalent(
     return False, None
   zst_members = dict(existing_members)
   tar_members = get_existing_archive_members(tar_path)
-  if archive_member_maps_equivalent(zst_members, tar_members):
-    if log_fn:
-      log_fn(
-        f"Seal skipped: tar and zst already equivalent (members={len(tar_members)}): {zst_path}",
-        flush=True,
-      )
-    return True, zst_members
-  return False, zst_members
+  if not archive_member_maps_equivalent(zst_members, tar_members):
+    # A changed tar is resealed and the new file gets its own zstd -t, so
+    # testing the old one first only cost a full read (hpcperfstats01
+    # 2026-11-11: restored-and-appended days, 100-200 GB zst each).
+    return False, zst_members
+  # Skipping keeps the old file as the sealed copy a tar drop relies on.
+  try:
+    zstd_test(zst_path, num_threads)
+  except OSError, subprocess.CalledProcessError, RuntimeError:
+    return False, None
+  if log_fn:
+    log_fn(
+      f"Seal skipped: tar and zst already equivalent (members={len(tar_members)}): {zst_path}",
+      flush=True,
+    )
+  return True, zst_members
 
 
 def atomic_seal_tar_to_zst(
@@ -11943,10 +11975,6 @@ def atomic_seal_tar_to_zst(
     >>> atomic_seal_tar_to_zst(0)  # doctest: +SKIP
   """
   if not os.path.isfile(tar_path):
-    if os.path.isfile(zst_path):
-      _seal_skip_existing_zst_equivalent(
-        tar_path, zst_path, num_threads, log_fn
-      )
     return None
   if not shutil.which("zstd"):
     raise RuntimeError("zstd executable not found on PATH")
