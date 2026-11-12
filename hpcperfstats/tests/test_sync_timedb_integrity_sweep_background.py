@@ -10,6 +10,7 @@ ending the second the integrity census recorded the day).
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 
@@ -113,9 +114,13 @@ def test_sweep_error_is_logged_not_swallowed(monkeypatch):
   )
 
 
-def test_integrity_sweep_zstd_test_uses_archive_thread_count(
-  monkeypatch, tmp_path
-):
+def test_integrity_sweep_reads_the_archive_once(monkeypatch, tmp_path):
+  """The member stream verifies every zstd frame; no separate zstd -t pass.
+
+  ``zstd -d -c | tar tvf`` fails on a bad checksum, truncation or trailing
+  garbage exactly like ``zstd -t`` (rc=1 when zstd exits non-zero), so the
+  second full read only doubled each multi-TB check.
+  """
   from hpcperfstats.dbload.lib import (
     sync_timedb_archive_helpers as ah,
     sync_timedb_sealed_member_map as smm,
@@ -123,18 +128,32 @@ def test_integrity_sweep_zstd_test_uses_archive_thread_count(
   )
 
   (tmp_path / "2026-08-02.tar.zst").write_bytes(b"x")
-  seen: list[int] = []
+  (tmp_path / "2026-08-03.tar.zst").write_bytes(b"y")
   monkeypatch.setattr(
-    zstd_cli, "zstd_test", lambda path, threads: seen.append(threads)
+    zstd_cli,
+    "zstd_test",
+    lambda *a, **k: pytest.fail("integrity sweep must not run zstd -t"),
   )
-  monkeypatch.setattr(ah, "get_archive_zstd_thread_count", lambda: 4)
-  monkeypatch.setattr(
-    ah,
-    "_scan_compressed_archive_members_and_readable",
-    lambda path: (True, {"h/1": 1}),
-  )
+  streams: list[str] = []
+
+  def _stream(path, *a, **k):
+    streams.append(os.path.basename(path))
+    if path.endswith("2026-08-03.tar.zst"):
+      return (
+        False,
+        {},
+        False,
+        RuntimeError("zstd: Restored data doesn't match checksum"),
+      )
+    return True, {"h/1": 1}, False, None
+
+  monkeypatch.setattr(ah, "_stream_compressed_archive_members", _stream)
   monkeypatch.setattr(smm, "sealed_members_lookup", lambda *a, **k: None)
   monkeypatch.setattr(smm, "write_sealed_member_map", lambda *a, **k: None)
-  result = smm.sealed_integrity_sweep_once(str(tmp_path), log_fn=None)
-  assert result["status"] == "ok"
-  assert seen == [4]
+  logs: list[str] = []
+  monkeypatch.setattr(smm, "log_print", lambda msg, **_k: logs.append(msg))
+  assert smm.sealed_integrity_sweep_once(str(tmp_path))["status"] == "ok"
+  bad = smm.sealed_integrity_sweep_once(str(tmp_path))
+  assert bad["status"] == "failed"
+  assert streams == ["2026-08-02.tar.zst", "2026-08-03.tar.zst"]
+  assert any("doesn't match checksum" in m for m in logs)

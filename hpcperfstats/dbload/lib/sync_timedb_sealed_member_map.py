@@ -451,8 +451,9 @@ def sealed_integrity_sweep_once(
   Check one sealed daily archive end to end (A18; the routine T2 consumer).
 
   Oldest unchecked (or changed) ``.tar.zst`` first, one per call, so the
-  cost is bounded per idle reconstruct pass. ``zstd -t`` plus a full member
-  stream; a pass refreshes the sealed member map. A failure **never** deletes
+  cost is bounded per idle reconstruct pass. One full member stream
+  (``zstd -d -c | tar tvf``, which verifies every frame checksum); a pass
+  refreshes the sealed member map. A failure **never** deletes
   or rewrites the sealed file: it is recorded in
   ``{daily_dir}/.sync_timedb_sealed_integrity.json`` with the readable member
   count, the expected count (from the map when present), whether an open tar
@@ -470,11 +471,7 @@ def sealed_integrity_sweep_once(
     >>> sealed_integrity_sweep_once("/nonexistent") is None
     True
   """
-  from hpcperfstats.dbload.lib import zstd_cli
-  from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
-    _scan_compressed_archive_members_and_readable,
-    get_archive_zstd_thread_count,
-  )
+  from hpcperfstats.dbload.lib import sync_timedb_archive_helpers as ah
 
   census_path = os.path.join(daily_dir, SEALED_INTEGRITY_CENSUS_BASENAME)
   census = _load_integrity_census(census_path)
@@ -489,13 +486,13 @@ def sealed_integrity_sweep_once(
     if live is None or (census.get(day) or {}).get("zst_identity") == live:
       continue
     expected = sealed_members_lookup(sealed, request_rebuild=False)
-    try:
-      zstd_cli.zstd_test(sealed, get_archive_zstd_thread_count())
-      frame_ok = True
-    except Exception:
-      frame_ok = False
-    readable, members = _scan_compressed_archive_members_and_readable(sealed)
-    ok = frame_ok and readable and (expected is None or members == expected)
+    # One read: zstd -d -c verifies every frame checksum and a non-zero zstd
+    # exit makes the stream unreadable, so a separate zstd -t only doubled
+    # the I/O of each multi-TB check.
+    readable, members, _dups, err = ah._stream_compressed_archive_members(
+      sealed
+    )
+    ok = readable and (expected is None or members == expected)
     tar_path = sealed[: -len(".zst")]
     result = {
       "zst_identity": live,
@@ -517,9 +514,10 @@ def sealed_integrity_sweep_once(
       )
       log_print(
         f"ERROR: sealed integrity sweep failed path={sealed} "
-        f"frame_ok={frame_ok} readable_members={result['readable_members']} "
+        f"readable_members={result['readable_members']} "
         f"expected_members={result['expected_members']} "
-        f"action={result['action']} (file left untouched)",
+        f"action={result['action']} err={str(err or '')[:300]!r} "
+        "(file left untouched)",
         flush=True,
       )
     census[day] = result
