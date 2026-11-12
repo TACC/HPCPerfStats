@@ -17,7 +17,6 @@ Attributes:
   STAT_PRINTF_FORMAT: Attribute.
   STAT_SORT_PRINTF_FORMAT: One tab-separated NUL record per file, so GNU
     ``sort -z`` can order whole records.
-  _FNCTL_LOCK_ENOENT_RE: Attribute.
   _host_fp_cache: Attribute.
   _path_fp_cache: Attribute.
 """
@@ -27,7 +26,6 @@ from __future__ import annotations
 import contextlib
 import functools
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -49,12 +47,6 @@ STAT_SORT_PRINTF_FORMAT = "%n\\t%Y\\t%s\\t%i\\0"
 STAT_CURRENT_INODE_PRINTF = "%n\\0%i\\0"
 FD_THREADS = 4
 FD_THREADS_WHOLE_ARCHIVE = 16
-
-_FNCTL_LOCK_ENOENT_RE = re.compile(
-  r"No such file or directory.*\.fnctl\.lock|"
-  r"\.fnctl\.lock.*No such file or directory",
-  re.I,
-)
 
 # Last successful find scan -> fingerprint caches for maint hints (C9).
 _path_fp_cache: dict[str, tuple[int, int]] = {}
@@ -523,29 +515,34 @@ def parse_current_inode_records(data: bytes) -> dict[str, int]:
 
 def _stderr_is_only_fnctl_races(stderr: str) -> bool:
   """
-  Internal helper to handle stderr is only fnctl races.
+  Return True when every walker stderr line is a benign walk race.
+
+  A walk race is a file that vanished between fd's listing and GNU ``stat``
+  (any ``No such file or directory`` line: day close deletes raw, quarantine
+  moves it, lock sidecars come and go) or a ``*.fnctl.lock`` sidecar error.
+  The vanished file is gone, which is what a walk a moment later would see.
+  Any other line (permission denied, I/O error) fails the walk closed.
 
   Args:
-    stderr (str): String for stderr.
+    stderr (str): Walker stderr text (empty means no errors).
 
   Returns:
-    bool: True or False for this check.
+    bool: True when the exit-1 walk is still a complete listing.
 
   Examples:
-    >>> _stderr_is_only_fnctl_races("x")  # doctest: +SKIP
+    >>> _stderr_is_only_fnctl_races(
+    ...   "stat: cannot statx '/a/h/1': No such file or directory"
+    ... )
+    True
+    >>> _stderr_is_only_fnctl_races("stat: cannot statx '/a/h/1': I/O error")
+    False
   """
   lines = [ln.strip() for ln in (stderr or "").splitlines() if ln.strip()]
-  if not lines:
-    return True
-  for line in lines:
-    if "fnctl.lock" in line and (
-      "No such file or directory" in line or "cannot" in line.lower()
-    ):
-      continue
-    if _FNCTL_LOCK_ENOENT_RE.search(line):
-      continue
-    return False
-  return True
+  return all(
+    "no such file or directory" in line.lower()
+    or ("fnctl.lock" in line and "cannot" in line.lower())
+    for line in lines
+  )
 
 
 def _resolve_named_binary(candidate: str, *, kind: str) -> str:

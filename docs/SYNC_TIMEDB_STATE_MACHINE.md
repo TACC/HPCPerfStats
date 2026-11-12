@@ -272,8 +272,13 @@ tokens `dead_letter readmit n=`, `noprogress escalate`, `day_remainder rebuilt`,
 The `queue_orchestrator census` line carries `raw_stats_files_on_disk=N`: the
 closed raw files discover would walk (lock sidecars and dot-prefixed sidecar
 directories excluded), re-counted by the same fd walk at most every
-`RAW_STATS_COUNT_INTERVAL_S` (600 s); a failed walk keeps the last value and
-the token is absent until the first count succeeds. It also carries
+`RAW_STATS_COUNT_INTERVAL_S` (600 s); a file deleted mid-walk (GNU `stat`
+`No such file or directory`) is not a failure; a failed walk keeps the last
+value and logs `WARN: raw_stats_files_on_disk count failed … err=`, and the
+token is absent until the first count succeeds. The A18 integrity sweep runs
+on its own single-flight `integrity-sweep` daemon thread (a sweep error logs
+`WARN: sealed integrity sweep error`), so a multi-hour check never delays the
+census. It also carries
 `last_ingested_backfill_day=YYYY-MM-DD`: the calendar day of the most recent
 backfill (non-hot) ingest ACK (`ingested` or `db_skip`), held in
 `_LAST_INGESTED_BACKFILL_DAY` and overwritten without a lock; hot files do not

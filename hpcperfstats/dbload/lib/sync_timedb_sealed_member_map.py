@@ -470,10 +470,11 @@ def sealed_integrity_sweep_once(
     >>> sealed_integrity_sweep_once("/nonexistent") is None
     True
   """
+  from hpcperfstats.dbload.lib import zstd_cli
   from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
     _scan_compressed_archive_members_and_readable,
+    get_archive_zstd_thread_count,
   )
-  from hpcperfstats.dbload.lib.zstd_cli import zstd_test
 
   census_path = os.path.join(daily_dir, SEALED_INTEGRITY_CENSUS_BASENAME)
   census = _load_integrity_census(census_path)
@@ -489,7 +490,7 @@ def sealed_integrity_sweep_once(
       continue
     expected = sealed_members_lookup(sealed, request_rebuild=False)
     try:
-      zstd_test(sealed, 1)
+      zstd_cli.zstd_test(sealed, get_archive_zstd_thread_count())
       frame_ok = True
     except Exception:
       frame_ok = False

@@ -80,6 +80,9 @@ Attributes:
   _discover_bg_executor: Single-worker executor for idle fd -X GNU stat (P1-10).
   _discover_bg_future: In-flight background discover future, or ``None``.
   _discover_bg_lock: Serializes submit/shutdown of background discover.
+  _integrity_sweep_lock: Serializes starting the A18 integrity sweep thread.
+  _integrity_sweep_thread: Last A18 sealed integrity sweep daemon thread
+    (single-flight; None until the first idle pass).
   _last_idle_reconstruct_mono: Monotonic timestamp of last idle reconstruct.
   PROGRESS_REPORT_INTERVAL_S: Alias of progress module 600s emit interval.
   _TOTAL_INGESTED: Process-lifetime successful ingest ACK count.
@@ -247,6 +250,8 @@ _last_full_rediscover_mono = 0.0
 _discover_bg_lock = threading.Lock()
 _discover_bg_executor: ThreadPoolExecutor | None = None
 _discover_bg_future: Future | None = None
+_integrity_sweep_lock = threading.Lock()
+_integrity_sweep_thread: threading.Thread | None = None
 
 
 class AtomicPoolRef:
@@ -1818,9 +1823,12 @@ def _idle_reconstruct_pass(
   )
   # A2: re-admit dead letters whose cooldown elapsed (bounded batch).
   work += _readmit_due_dead_letters(client, archive_dir, log_fn=log_fn)
-  # A18: one sealed archive per pass gets a full integrity check.
-  with contextlib.suppress(Exception):
-    sealed_integrity_sweep_once(tgz_archive_dir, log_fn=log_fn)
+  # A18: one sealed archive per pass gets a full integrity check, on its own
+  # thread (a multi-TB check took 5.6 h inline; hpcperfstats01 2026-11-11).
+  # run_once (force) waits so its pass is complete.
+  sweep = _start_background_integrity_sweep(tgz_archive_dir, log_fn)
+  if force:
+    sweep.join()
   # Scratch files, staging dirs and sidecar write temps stranded by killed
   # writers are swept here.
   with contextlib.suppress(Exception):
@@ -1828,6 +1836,69 @@ def _idle_reconstruct_pass(
       tgz_archive_dir, archive_dir=archive_dir, log_fn=log_fn
     )
   return work
+
+
+def _run_integrity_sweep(
+  tgz_archive_dir: str, log_fn: Callable[..., None] | None
+) -> None:
+  """
+  Thread body: run one A18 sealed integrity check and log any error.
+
+  Args:
+    tgz_archive_dir (str): Daily archive directory.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    None
+
+  Examples:
+    >>> _run_integrity_sweep("/nonexistent", None)
+  """
+  set_daemon_thread_title(
+    "integrity-sweep", script_name="sync_timedb.py", role="integrity-sweep"
+  )
+  try:
+    sealed_integrity_sweep_once(tgz_archive_dir, log_fn=log_fn)
+  except Exception as exc:
+    _log(
+      f"WARN: sealed integrity sweep error daily_dir={tgz_archive_dir} "
+      f"err={type(exc).__name__}: {exc}",
+      log_fn=log_fn,
+    )
+
+
+def _start_background_integrity_sweep(
+  tgz_archive_dir: str, log_fn: Callable[..., None] | None
+) -> threading.Thread:
+  """
+  Start the A18 integrity check on a daemon thread unless one is running.
+
+  At most one check runs at a time; a pass that finds one still running
+  leaves it alone. Daemon so a multi-hour check never holds process exit.
+
+  Args:
+    tgz_archive_dir (str): Daily archive directory.
+    log_fn (Callable[..., None] | None): Optional logger.
+
+  Returns:
+    threading.Thread: The running (new or already running) sweep thread.
+
+  Examples:
+    >>> _start_background_integrity_sweep("/nonexistent", None).join()
+  """
+  global _integrity_sweep_thread
+  with _integrity_sweep_lock:
+    thr = _integrity_sweep_thread
+    if thr is None or not thr.is_alive():
+      thr = threading.Thread(
+        target=_run_integrity_sweep,
+        args=(tgz_archive_dir, log_fn),
+        name="integrity-sweep",
+        daemon=True,
+      )
+      _integrity_sweep_thread = thr
+      thr.start()
+    return thr
 
 
 def _ingest_parse_worker(path: str, emit: str = "") -> Any:
@@ -7963,9 +8034,15 @@ def _raw_stats_files_on_disk_token(
   last = _RAW_STATS_COUNT["at"]
   if last is None or now_s - last >= RAW_STATS_COUNT_INTERVAL_S:
     _RAW_STATS_COUNT["at"] = now_s
-    with contextlib.suppress(Exception):
-      counter = count_fn or _count_raw_stats_files_on_disk
+    counter = count_fn or _count_raw_stats_files_on_disk
+    try:
       _RAW_STATS_COUNT["n"] = int(counter(archive_dir))
+    except Exception as exc:
+      log_print(
+        "WARN: raw_stats_files_on_disk count failed, keeping last value "
+        f"err={type(exc).__name__}: {str(exc)[:300]}",
+        flush=True,
+      )
   n = _RAW_STATS_COUNT["n"]
   return "" if n is None else f" raw_stats_files_on_disk={n}"
 
