@@ -2,7 +2,7 @@
 # Path: services-conf/pipeline_web.Dockerfile — build context must stay repo root (./).
 # Build frontend assets in a dedicated node stage.
 # COPY is scoped to frontend inputs so Python/backend changes do not bust npm layers.
-FROM node:26.13.0-alpine3.24 AS frontend-builder
+FROM node:26.13.1-alpine3.24 AS frontend-builder
 # Pin npm 12+ before package install: dependency lifecycle scripts are opt-in
 # (allowScripts) so wormed preinstall hooks cannot run by default.
 ARG NPM_VERSION=12.2.2

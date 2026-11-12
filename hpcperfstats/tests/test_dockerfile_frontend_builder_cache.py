@@ -288,3 +288,19 @@ def test_build_prod_runs_write_site_identity_hook():
   )
   scripts = package_json.get("scripts") or {}
   assert scripts.get("prebuild:prod") == "npm run write-site-identity"
+
+
+def test_rebuild_frontend_node_image_matches_frontend_builder():
+  """SPA hot path (rebuild_frontend.sh) must build with the image's Node pin."""
+  root = _repo_root()
+  dockerfile = (root / "services-conf" / "pipeline_web.Dockerfile").read_text()
+  script = (root / "scripts" / "rebuild_frontend.sh").read_text()
+  from_match = re.search(
+    r"^FROM (node:\S+) AS frontend-builder$", dockerfile, flags=re.MULTILINE
+  )
+  script_match = re.search(
+    r'^NODE_IMAGE="(node:\S+)"$', script, flags=re.MULTILINE
+  )
+  assert from_match and script_match
+  assert re.fullmatch(r"node:\d+\.\d+\.\d+-alpine\d+\.\d+", from_match.group(1))
+  assert script_match.group(1) == from_match.group(1)

@@ -238,7 +238,7 @@ RUN set -eux; \
   adduser -u 70 -S -D -G postgres -H -h /var/lib/postgresql -s /bin/sh postgres; \
   install --verbose --directory --owner postgres --group postgres --mode 1777 /var/lib/postgresql
 
-ENV GOSU_VERSION=1.19
+ENV GOSU_VERSION=1.20
 RUN set -eux; \
   apk add --no-cache --virtual .gosu-deps ca-certificates dpkg gnupg; \
   dpkgArch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
