@@ -776,8 +776,8 @@ def test_copy_one_chunk_orders_sig_decompress_delete_copy_compress(
     "COPY",
     "COPY",
     "COUNT_TGT",
-    "COMPRESS",
   ]
+  assert "COMPRESS" not in log  # handed to the background pool instead
   copies = [x for x in log if x.startswith("COPY")]
   assert all("FORMAT binary" in x for x in copies)
 
@@ -1196,3 +1196,364 @@ def test_index_modes_require_state_file(flag: str) -> None:
   mod = _load_mod()
   assert mod.main([flag]) == 2
   assert mod.index_file_for("/a/state.json") == "/a/state.indexes.json"
+
+
+def test_progress_line_matches_operator_watch_format() -> None:
+  """Same line the runbook loop printed (02, 2026-11-11)."""
+  mod = _load_mod()
+  assert mod.format_progress_line(
+    "20:20:20", 21322417399, 24032037960, 4, 45376
+  ) == (
+    "20:20:20 rows=21322417399/24032037960 (88%) copies_in_flight=4 "
+    "rows_per_s=45376 eta=16h"
+  )
+  assert mod.format_progress_line("00:00:01", 7, 0, 0, 0) == (
+    "00:00:01 rows=7/0 (0%) copies_in_flight=0 rows_per_s=- eta=-"
+  )
+  # Overshoot (approximate total) must not print a negative ETA.
+  assert mod.format_progress_line("x", 11, 10, 1, 1).endswith("eta=0h")
+
+
+def test_progress_reporter_counts_base_finished_and_in_flight(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  mod = _load_mod()
+  seen: list = []
+
+  class _Cur(_SqlCursor):
+    def fetchone(self) -> tuple:
+      return (300, 3)
+
+  class _Conn(_SqlConn):
+    def __enter__(self) -> _Conn:
+      return self
+
+    def __exit__(self, *_a: object) -> None:
+      return None
+
+    def cursor(self) -> _Cur:
+      return _Cur(seen)
+
+  monkeypatch.setattr(mod, "connect_pg", lambda **_kw: _Conn([]))
+  rep = mod.ProgressReporter(
+    _opts(mod), total=10_000, base_rows=1000, interval=60
+  )
+  rep.add(500)
+  rep.add(-1)  # failed count sentinel never lowers progress
+  line = rep.line()
+  assert " rows=1800/10000 (18%) copies_in_flight=3 " in line
+  assert seen == [(mod._INFLIGHT_SQL, (mod.APP_NAME,))]
+  assert "update_metrics" not in mod._INFLIGHT_SQL  # filtered by our own tag
+
+
+def test_progress_reporter_survives_in_flight_query_failure(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  mod = _load_mod()
+
+  def _boom(**_kw: object) -> None:
+    raise RuntimeError("db down")
+
+  monkeypatch.setattr(mod, "connect_pg", _boom)
+  rep = mod.ProgressReporter(_opts(mod), total=100, base_rows=40, interval=60)
+  assert " rows=40/100 (40%) copies_in_flight=0 " in rep.line()
+
+
+def test_connections_carry_application_name(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  """Progress filters COPY TO sessions by this tag (update_metrics also COPYs)."""
+  mod = _load_mod()
+  got: dict = {}
+  monkeypatch.setattr(mod.psycopg, "connect", lambda **kw: got.update(kw))
+  mod.connect_pg(host="db", port=5432, user="u", database="d")
+  assert got["application_name"] == mod.APP_NAME == "pg18_chunk_copy"
+
+
+def test_run_chunk_copies_reports_finished_chunk_rows_only(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  mod = _load_mod()
+  good, bad = _chunk(mod, 1, "good"), _chunk(mod, 2, "bad")
+
+  def _fake(chunk: object, **_kw: object) -> object:
+    if chunk.chunk_name == "bad":  # type: ignore[attr-defined]
+      raise RuntimeError("boom")
+    return mod.ChunkResult("copied", 42, (42,))
+
+  added: list[int] = []
+
+  class _Rep:
+    def add(self, rows: int) -> None:
+      added.append(rows)
+
+  monkeypatch.setattr(mod, "copy_one_chunk", _fake)
+  mod.run_chunk_copies([good, bad], opts=_opts(mod), workers=2, progress=_Rep())
+  assert added == [42]
+
+
+class _ReadyCursor(_SqlCursor):
+  def __init__(self, log: list, valid: list, unique_n: int) -> None:
+    super().__init__(log, [(n,) for n in valid])
+    self.unique_n = unique_n
+
+  def fetchone(self) -> tuple:
+    return (self.unique_n,)
+
+
+class _ReadyConn:
+  def __init__(self, valid: list, unique_n: int) -> None:
+    self.valid, self.unique_n = valid, unique_n
+
+  def cursor(self) -> _ReadyCursor:
+    return _ReadyCursor([], self.valid, self.unique_n)
+
+
+def test_missing_target_indexes_reports_unrestored_and_no_unique(
+  tmp_path: Path,
+) -> None:
+  """Side-agent catch (2026-11-11): dropped indexes must be back (UNIQUE for
+  ingest ON CONFLICT) before the freeze; otherwise cutover breaks ingest."""
+  mod = _load_mod()
+  index_file = tmp_path / "state.indexes.json"
+  index_file.write_text(
+    json.dumps(
+      [
+        {"name": "host_data_time_idx", "def": "x", "unique": False},
+        {"name": "host_data_uniq", "def": "y", "unique": True},
+      ]
+    )
+  )
+  # Nothing restored yet.
+  got = mod.missing_target_indexes(_ReadyConn([], 0), str(index_file))
+  assert got == [
+    "host_data_time_idx",
+    "host_data_uniq",
+    "<no valid UNIQUE index on host_data>",
+  ]
+  # Fully restored.
+  ready = _ReadyConn(["host_data_time_idx", "host_data_uniq"], 1)
+  assert mod.missing_target_indexes(ready, str(index_file)) == []
+  # Never dropped (no sidecar) but no UNIQUE index either: still not ready.
+  assert mod.missing_target_indexes(
+    _ReadyConn([], 0), str(tmp_path / "absent.json")
+  ) == ["<no valid UNIQUE index on host_data>"]
+
+
+def test_verify_refuses_before_copy_when_indexes_missing(
+  monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+  mod = _load_mod()
+
+  class _Ctx:
+    def __enter__(self) -> _Ctx:
+      return self
+
+    def __exit__(self, *_a: object) -> None:
+      return None
+
+  monkeypatch.setattr(mod, "fetch_source_chunks", lambda **_k: [_chunk(mod, 1)])
+  monkeypatch.setattr(mod, "_connect", lambda *_a: _Ctx())
+  monkeypatch.setattr(mod, "fetch_column_layout", lambda _c: [("time", "t")])
+  monkeypatch.setattr(mod, "fetch_chunk_signatures", lambda _c: {})
+  monkeypatch.setattr(
+    mod, "missing_target_indexes", lambda *_a: ["host_data_uniq"]
+  )
+  monkeypatch.setattr(
+    mod,
+    "run_chunk_copies",
+    lambda *_a, **_k: pytest.fail("must not copy without indexes"),
+  )
+  rc = mod.main(
+    [
+      "--watermark-days",
+      "-7",
+      "--changed-only",
+      "--verify",
+      "--state-file",
+      str(tmp_path / "state.json"),
+      "--progress-seconds",
+      "0",
+    ]
+  )
+  assert rc == 2
+
+
+def test_compress_aged_target_chunks_compresses_each_aged_chunk() -> None:
+  """Rerun after a long gap: days copied while young get compressed later."""
+  mod = _load_mod()
+  log: list = []
+  conn = _SqlConn(log, [("t.c1",), ("t.c2",)])
+  cutoff = datetime(2026, 11, 1, tzinfo=UTC)
+  assert mod.compress_aged_target_chunks(conn, cutoff) == 2
+  sel_sql, sel_params = log[0]
+  assert "NOT is_compressed" in sel_sql and sel_params == (cutoff,)
+  compresses = [p for sql, p in log if "compress_chunk" in sql]
+  assert compresses == [("t.c1",), ("t.c2",)]
+  assert mod.compress_aged_target_chunks(_SqlConn([]), None) == 0
+
+
+@pytest.mark.parametrize(("verify", "expect_calls"), [(False, 1), (True, 0)])
+def test_main_compresses_aged_chunks_only_outside_freeze(
+  monkeypatch: pytest.MonkeyPatch,
+  tmp_path: Path,
+  verify: bool,
+  expect_calls: int,
+) -> None:
+  mod = _load_mod()
+
+  class _Ctx:
+    def __enter__(self) -> _Ctx:
+      return self
+
+    def __exit__(self, *_a: object) -> None:
+      return None
+
+  calls: list = []
+  monkeypatch.setattr(mod, "fetch_source_chunks", lambda **_k: [_chunk(mod, 1)])
+  monkeypatch.setattr(mod, "_connect", lambda *_a: _Ctx())
+  monkeypatch.setattr(mod, "fetch_column_layout", lambda _c: [("time", "t")])
+  monkeypatch.setattr(mod, "fetch_chunk_signatures", lambda _c: {})
+  monkeypatch.setattr(mod, "missing_target_indexes", lambda *_a: [])
+  monkeypatch.setattr(mod, "precreate_all_target_chunks", lambda *_a: 0)
+  seen_opts: list = []
+
+  def _run(*_a: object, **kw: object) -> object:
+    seen_opts.append(kw["opts"])
+    return mod.RunSummary(0, 1, 0, 0, 1)
+
+  monkeypatch.setattr(mod, "run_chunk_copies", _run)
+  monkeypatch.setattr(
+    mod, "compress_aged_target_chunks", lambda *a: calls.append(a) or 0
+  )
+  argv = ["--watermark-days", "-7", "--state-file", str(tmp_path / "s.json")]
+  argv += ["--progress-seconds", "0"] + (["--verify"] if verify else [])
+  assert mod.main(argv) == 0
+  assert len(calls) == expect_calls
+  # The freeze (--verify) never compresses, not even in the background pool.
+  assert (seen_opts[0].compress_before is None) is verify
+
+
+def test_run_chunk_copies_hands_compression_off_and_keeps_copying(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  """User ask (2026-11-11): kick compression off and move on to the next
+  chunk; the copy worker must not wait for compress_chunk."""
+  import threading
+
+  mod = _load_mod()
+  old1, old2, young = (
+    _chunk(mod, 1, "o1"),
+    _chunk(mod, 2, "o2"),
+    _chunk(mod, 20, "y"),
+  )
+  release = threading.Event()
+  copied: list[str] = []
+  compressed: list[str] = []
+
+  def _fake_copy(chunk: object, **_kw: object) -> object:
+    copied.append(chunk.chunk_name)  # type: ignore[attr-defined]
+    return mod.ChunkResult("copied", 1, ())
+
+  def _fake_compress(_opts: object, chunk: object) -> int:
+    if chunk.chunk_name == "o1":  # type: ignore[attr-defined]
+      assert release.wait(5), "copies never finished while compress blocked"
+    compressed.append(chunk.chunk_name)  # type: ignore[attr-defined]
+    return 1
+
+  def _copy_then_release(chunk: object, **kw: object) -> object:
+    out = _fake_copy(chunk, **kw)
+    if len(copied) == 3:
+      release.set()  # all copies done while o1 compression still blocked
+    return out
+
+  monkeypatch.setattr(mod, "copy_one_chunk", _copy_then_release)
+  monkeypatch.setattr(mod, "_compress_job", _fake_compress)
+  opts = _opts(mod, compress_before=datetime(2026, 8, 10, tzinfo=UTC))
+  summary = mod.run_chunk_copies(
+    [old1, old2, young], opts=opts, workers=1, compress_workers=1
+  )
+  assert summary.copied == 3 and summary.failed == 0
+  assert sorted(compressed) == ["o1", "o2"]  # young chunk (Aug 20) not eligible
+
+
+def test_run_chunk_copies_compress_failure_does_not_fail_chunk(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  mod = _load_mod()
+  monkeypatch.setattr(
+    mod, "copy_one_chunk", lambda *_a, **_k: mod.ChunkResult("copied", 5, ())
+  )
+
+  def _boom(*_a: object) -> int:
+    raise RuntimeError("compress failed")
+
+  monkeypatch.setattr(mod, "_compress_job", _boom)
+  opts = _opts(mod, compress_before=datetime(2026, 9, 1, tzinfo=UTC))
+  summary = mod.run_chunk_copies([_chunk(mod, 1)], opts=opts, workers=1)
+  assert (summary.copied, summary.failed, summary.rows_total) == (1, 0, 5)
+
+
+def test_run_chunk_copies_no_compression_when_disabled(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  mod = _load_mod()
+  monkeypatch.setattr(
+    mod, "copy_one_chunk", lambda *_a, **_k: mod.ChunkResult("copied", 1, ())
+  )
+  monkeypatch.setattr(
+    mod, "_compress_job", lambda *_a: pytest.fail("compression disabled")
+  )
+  mod.run_chunk_copies([_chunk(mod, 1)], opts=_opts(mod), workers=1)
+  opts = _opts(mod, compress_before=datetime(2026, 9, 1, tzinfo=UTC))
+  mod.run_chunk_copies(
+    [_chunk(mod, 1)], opts=opts, workers=1, compress_workers=0
+  )
+
+
+def test_precreate_all_target_chunks_only_missing_ranges() -> None:
+  """compress_chunk blocks chunk creation (TS 2.31: insert into a new chunk
+  waited out a 29 s compress), so all chunks are created before any compress."""
+  mod = _load_mod()
+  have, missing = _chunk(mod, 1), _chunk(mod, 2)
+  log: list = []
+  conn = _SqlConn(log, [(have.range_start, have.range_end)])
+  assert mod.precreate_all_target_chunks(conn, [have, missing]) == 1
+  inserts = [p for sql, p in log if sql.startswith("INSERT INTO host_data")]
+  assert inserts == [
+    (mod._PRECREATE_HOST, missing.range_start, missing.range_end)
+  ]
+  deletes = [p for sql, p in log if sql.startswith("DELETE FROM host_data")]
+  assert deletes == inserts
+
+
+def test_progress_rows_never_go_backwards(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  """Smoke 2026-11-11: rows dipped 12.1M -> 10.0M when a source COPY ended
+  before its worker recorded the chunk; the reported count must not drop."""
+  mod = _load_mod()
+  in_flight = iter([(900, 2), (0, 0)])
+
+  class _Cur(_SqlCursor):
+    def fetchone(self) -> tuple:
+      return next(in_flight)
+
+  class _Conn(_SqlConn):
+    def __enter__(self) -> _Conn:
+      return self
+
+    def __exit__(self, *_a: object) -> None:
+      return None
+
+    def cursor(self) -> _Cur:
+      return _Cur([])
+
+  monkeypatch.setattr(mod, "connect_pg", lambda **_kw: _Conn([]))
+  rep = mod.ProgressReporter(
+    _opts(mod), total=10_000, base_rows=100, interval=60
+  )
+  assert " rows=1000/" in rep.line()  # 100 base + 900 in flight
+  assert " rows=1000/" in rep.line()  # COPY ended, chunk not yet added
+  rep.add(950)
+  assert " rows=1050/" in rep.line()

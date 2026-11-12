@@ -29,10 +29,13 @@ Attributes:
   _NON_INSERT_SIG_SLOTS: Signature indexes that move only on UPDATE/DELETE.
   _STATE_VERSION: Schema version written into ``--state-file`` JSON.
   _PRECREATE_HOST: Placeholder ``host`` of the rows that pre-create chunks.
+  APP_NAME: ``application_name`` on every connection (progress filter).
+  _INFLIGHT_SQL: In-flight source ``COPY TO`` rows/sessions of this script.
   _PRECREATE_SQL: Insert placeholder rows that create the target chunks.
   _PRECREATE_CLEANUP_SQL: Delete those placeholder rows again.
   _TARGET_INDEXES_SQL: List droppable ``host_data`` indexes on the target.
   _VALID_TARGET_INDEX_NAMES_SQL: Names of valid ``host_data`` target indexes.
+  _VALID_UNIQUE_COUNT_SQL: Count of valid UNIQUE ``host_data`` indexes.
   _ZSTD_DUMP_ARGS: ``zstd`` argv for optional ``--dump-dir`` audit files.
 """
 
@@ -44,6 +47,7 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -59,6 +63,12 @@ _COUNT_ATTEMPTS = 5
 _STATE_VERSION = 1
 _ZSTD_DUMP_ARGS = ("zstd", "-T4", "-3")
 _PRECREATE_HOST = "__pg18_chunk_precreate__"
+APP_NAME = "pg18_chunk_copy"
+_INFLIGHT_SQL = (
+  "SELECT coalesce(sum(p.tuples_processed), 0), count(*) "
+  "FROM pg_stat_progress_copy p JOIN pg_stat_activity a USING (pid) "
+  "WHERE p.command = 'COPY TO' AND a.application_name = %s"
+)
 # One row per target chunk interval inside the range, in its own committed
 # statement: TimescaleDB holds ShareUpdateExclusiveLock on the hypertable from
 # chunk creation until the creating transaction ends, so a chunk created
@@ -82,6 +92,10 @@ _TARGET_INDEXES_SQL = (
 _VALID_TARGET_INDEX_NAMES_SQL = (
   "SELECT i.relname FROM pg_index x JOIN pg_class i ON i.oid = x.indexrelid "
   "WHERE x.indrelid = 'public.host_data'::regclass AND x.indisvalid"
+)
+_VALID_UNIQUE_COUNT_SQL = (
+  "SELECT count(*) FROM pg_index WHERE indrelid = 'public.host_data'::regclass "
+  "AND indisunique AND indisvalid"
 )
 
 
@@ -694,6 +708,7 @@ def connect_pg(
     dbname=database,
     password=os.environ.get("PGPASSWORD") or "",
     autocommit=True,
+    application_name=APP_NAME,
   )
 
 
@@ -1227,6 +1242,49 @@ def precreate_target_chunks(conn: Connection, chunk: ChunkRow) -> bool:
   return True
 
 
+def precreate_all_target_chunks(
+  conn: Connection, chunks: Sequence[ChunkRow]
+) -> int:
+  """
+  Pre-create the target chunks for every ``chunks`` range up front.
+
+  ``compress_chunk`` blocks chunk creation on the hypertable while it runs
+  (PG18 + TimescaleDB 2.31: a new-chunk insert waited out a 29 s compress),
+  so with background compression no chunk may be created mid-run. One
+  catalog read finds existing target ranges; only missing ones get the
+  placeholder insert/delete of :func:`precreate_target_chunks`.
+
+  Args:
+    conn (Connection): Open autocommit target connection.
+    chunks (Sequence[ChunkRow]): Source chunks this run will examine.
+
+  Returns:
+    int: Number of source ranges whose target chunks were created.
+
+  Examples:
+    >>> precreate_all_target_chunks(tgt, examine)  # doctest: +SKIP
+    112
+  """
+  with conn.cursor() as cur:
+    cur.execute(
+      "SELECT range_start, range_end FROM timescaledb_information.chunks "
+      "WHERE hypertable_name = 'host_data'"
+    )
+    have = [
+      (_as_utc_datetime(a), _as_utc_datetime(b)) for a, b in cur.fetchall()
+    ]
+    created = 0
+    for c in chunks:
+      if any(a < c.range_end and b > c.range_start for a, b in have):
+        continue
+      cur.execute(_PRECREATE_SQL, (_PRECREATE_HOST, c.range_start, c.range_end))
+      cur.execute(
+        _PRECREATE_CLEANUP_SQL, (_PRECREATE_HOST, c.range_start, c.range_end)
+      )
+      created += 1
+  return created
+
+
 def decompress_target_range(conn: Connection, chunk: ChunkRow) -> None:
   """
   Decompress compressed target chunks overlapping ``chunk`` before a delete.
@@ -1297,6 +1355,49 @@ def compress_target_range(
       )
     done += 1
   return done
+
+
+def compress_aged_target_chunks(
+  conn: Connection, compress_before: datetime | None
+) -> int:
+  """
+  Compress uncompressed target chunks whose ``range_end`` is old enough.
+
+  Chunks copied while still younger than the cut-off stay uncompressed, and
+  later ``--changed-only`` reruns skip them without a query. Running this
+  after each non-freeze pass keeps a long-lived PG18 from accumulating
+  uncompressed days between bulk copy and cutover.
+
+  Args:
+    conn (Connection): Open autocommit target connection.
+    compress_before (datetime | None): Age cut-off; ``None`` disables.
+
+  Returns:
+    int: Number of target chunks compressed.
+
+  Examples:
+    >>> compress_aged_target_chunks(tgt, None)  # doctest: +SKIP
+    0
+  """
+  if compress_before is None:
+    return 0
+  with conn.cursor() as cur:
+    cur.execute(
+      "SELECT quote_ident(chunk_schema) || '.' || quote_ident(chunk_name) "
+      "FROM timescaledb_information.chunks WHERE hypertable_name = "
+      "'host_data' AND NOT is_compressed AND range_end <= %s "
+      "ORDER BY range_start",
+      (compress_before,),
+    )
+    aged = [str(r[0]) for r in cur.fetchall()]
+    cur.execute("SET statement_timeout = 0")
+    for regclass in aged:
+      LOG.info("compress aged target chunk %s", regclass)
+      cur.execute(
+        "SELECT compress_chunk(%s::regclass, if_not_compressed => true)",
+        (regclass,),
+      )
+  return len(aged)
 
 
 def _stream_chunk(
@@ -1376,8 +1477,9 @@ def copy_one_chunk(
   The source signature is read **first**, so any write after it shows up as a
   changed signature on the next ``--changed-only`` pass. After a copy the
   target range is recounted; with ``opts.verify`` (writers stopped) the source
-  is recounted too and any difference or unknown count raises. Eligible
-  target chunks are compressed afterwards.
+  is recounted too and any difference or unknown count raises. Compression
+  is not done here: :func:`run_chunk_copies` hands finished chunks to a
+  separate pool so this worker moves straight on to the next chunk.
 
   When ``prior`` proves the chunk was verified and has only gained rows since
   (:func:`inserts_only_since`), only slices whose counts differ are deleted and
@@ -1408,7 +1510,6 @@ def copy_one_chunk(
     tgt_n = count_target_range_rows(tgt, chunk)
     if not opts.force and chunk_row_counts_match(src_n, tgt_n):
       LOG.info("skip chunk=%s rows=%s (already synced)", chunk.regclass, src_n)
-      compress_target_range(tgt, chunk, opts.compress_before)
       return ChunkResult("skipped", src_n, sig)
 
     LOG.info(
@@ -1440,7 +1541,6 @@ def copy_one_chunk(
       raise RuntimeError(
         f"post-copy target count failed chunk={chunk.regclass}"
       )
-    compress_target_range(tgt, chunk, opts.compress_before)
   return ChunkResult("copied", rows, sig)
 
 
@@ -1499,6 +1599,225 @@ def _resync_windows(
   return windows
 
 
+def fetch_source_total_rows(opts: CopyOptions) -> int:
+  """
+  Return TimescaleDB's approximate ``host_data`` row count on the source.
+
+  Args:
+    opts (CopyOptions): Connection settings (source host is queried).
+
+  Returns:
+    int: ``approximate_row_count('host_data')``, or ``0`` if unavailable.
+
+  Examples:
+    >>> fetch_source_total_rows(opts)  # doctest: +SKIP
+    24032037960
+  """
+  try:
+    with _connect(opts, opts.source_host) as src, src.cursor() as cur:
+      cur.execute("SET statement_timeout = 0")
+      cur.execute("SELECT approximate_row_count('host_data')")
+      row = cur.fetchone()
+    return int(row[0]) if row and row[0] is not None else 0
+  except Exception as exc:
+    LOG.warning("approximate_row_count failed: %s", exc)
+    return 0
+
+
+def format_progress_line(
+  clock: str, rows: int, total: int, in_flight: int, rate: int
+) -> str:
+  """
+  Render one progress line (same shape as the runbook's watch loop).
+
+  Args:
+    clock (str): Wall-clock ``HH:MM:SS``.
+    rows (int): Verified plus in-flight rows so far.
+    total (int): Approximate source ``host_data`` rows.
+    in_flight (int): Source ``COPY TO`` sessions of this script.
+    rate (int): Rows per second since the run started (``0`` = unknown).
+
+  Returns:
+    str: ``HH:MM:SS rows=X/T (P%) copies_in_flight=N rows_per_s=R eta=Eh``.
+
+  Examples:
+    >>> format_progress_line("20:20:20", 21322417399, 24032037960, 4, 45376)
+    '20:20:20 rows=21322417399/24032037960 (88%) copies_in_flight=4 rows_per_s=45376 eta=16h'
+    >>> format_progress_line("00:00:01", 5, 0, 0, 0)
+    '00:00:01 rows=5/0 (0%) copies_in_flight=0 rows_per_s=- eta=-'
+  """
+  pct = rows * 100 // total if total > 0 else 0
+  if rate > 0:
+    eta = f"{max(total - rows, 0) // rate // 3600}h"
+    shown = str(rate)
+  else:
+    eta = shown = "-"
+  return (
+    f"{clock} rows={rows}/{total} ({pct}%) copies_in_flight={in_flight} "
+    f"rows_per_s={shown} eta={eta}"
+  )
+
+
+class ProgressReporter:
+  """
+  Background thread printing one progress line every ``interval`` seconds.
+
+  Rows are the verified rows known at start (``base_rows``) plus rows of
+  chunks finished in this run (:meth:`add`) plus rows the source is
+  streaming right now (``pg_stat_progress_copy`` for :data:`APP_NAME`).
+
+  Attributes:
+    _opts: Connection settings (source host is queried).
+    _total: Approximate source ``host_data`` rows.
+    _interval: Seconds between lines.
+    _done: Verified rows so far (guarded by ``_lock``).
+    _lock: Guards ``_done`` against the main thread's :meth:`add`.
+    _stop: Set to end the thread.
+    _thread: The daemon reporting thread.
+    _t0: Monotonic start time.
+    _rows0: Row count at start (rate baseline).
+    _shown: Highest row count reported so far (lines never go backwards).
+  """
+
+  def __init__(
+    self, opts: CopyOptions, total: int, base_rows: int, interval: float
+  ) -> None:
+    """
+    Prepare (not start) a reporter for one copy run.
+
+    Args:
+      opts (CopyOptions): Connection settings; the source is queried.
+      total (int): Approximate source ``host_data`` rows.
+      base_rows (int): Rows already verified before this run.
+      interval (float): Seconds between progress lines.
+
+    Returns:
+      None
+
+    Examples:
+      >>> ProgressReporter(  # doctest: +SKIP
+      ...   opts, total=24032037960, base_rows=0, interval=60
+      ... ).start()
+    """
+    self._opts, self._total, self._interval = opts, total, interval
+    self._done = base_rows
+    self._lock = threading.Lock()
+    self._stop = threading.Event()
+    self._thread = threading.Thread(target=self._run, daemon=True)
+    self._t0 = time.monotonic()
+    self._rows0 = base_rows
+    self._shown = base_rows
+
+  def add(self, rows: int) -> None:
+    """
+    Count the verified rows of a chunk that just finished.
+
+    Args:
+      rows (int): Target rows recorded for that chunk.
+
+    Returns:
+      None
+
+    Examples:
+      >>> r = ProgressReporter(
+      ...   CopyOptions("db", "db18", 5432, "u", "d", ()), 10, 0, 60
+      ... )
+      >>> r.add(5) or r._done
+      5
+    """
+    with self._lock:
+      self._done += max(rows, 0)
+
+  def line(self) -> str:
+    """
+    Build the current progress line (queries the source once).
+
+    Returns:
+      str: Output of :func:`format_progress_line`.
+
+    Examples:
+      >>> reporter.line()  # doctest: +SKIP
+      '20:20:20 rows=... copies_in_flight=4 rows_per_s=45376 eta=16h'
+    """
+    in_rows = in_n = 0
+    try:
+      with (
+        _connect(self._opts, self._opts.source_host) as src,
+        src.cursor() as cur,
+      ):
+        cur.execute(_INFLIGHT_SQL, (APP_NAME,))
+        row = cur.fetchone()
+      in_rows, in_n = (int(row[0]), int(row[1])) if row else (0, 0)
+    except Exception as exc:
+      LOG.warning("progress in-flight query failed: %s", exc)
+    with self._lock:
+      # A chunk's source COPY ends a moment before its worker records the
+      # finished rows; never report that gap as progress going backwards.
+      rows = self._shown = max(self._done + in_rows, self._shown)
+    elapsed = time.monotonic() - self._t0
+    rate = int((rows - self._rows0) / elapsed) if elapsed > 0 else 0
+    clock = datetime.now().strftime("%H:%M:%S")
+    return format_progress_line(clock, rows, self._total, in_n, rate)
+
+  def _run(self) -> None:
+    """
+    Print a line every ``interval`` seconds until :meth:`stop`.
+
+    Returns:
+      None
+
+    Examples:
+      >>> reporter._run()  # doctest: +SKIP
+    """
+    while not self._stop.wait(self._interval):
+      print(self.line(), flush=True)
+
+  def start(self) -> None:
+    """
+    Start the reporting thread.
+
+    Returns:
+      None
+
+    Examples:
+      >>> reporter.start()  # doctest: +SKIP
+    """
+    self._thread.start()
+
+  def stop(self) -> None:
+    """
+    Stop the thread and print one final line.
+
+    Returns:
+      None
+
+    Examples:
+      >>> reporter.stop()  # doctest: +SKIP
+    """
+    self._stop.set()
+    self._thread.join(timeout=5)
+    print(self.line(), flush=True)
+
+
+def _compress_job(opts: CopyOptions, chunk: ChunkRow) -> int:
+  """
+  Compress the eligible target chunks of one finished chunk (pool job).
+
+  Args:
+    opts (CopyOptions): Connection settings and ``compress_before``.
+    chunk (ChunkRow): Source chunk whose target range was just verified.
+
+  Returns:
+    int: Number of target chunks compressed.
+
+  Examples:
+    >>> _compress_job(opts, chunk)  # doctest: +SKIP
+    1
+  """
+  with _connect(opts, opts.target_host) as tgt:
+    return compress_target_range(tgt, chunk, opts.compress_before)
+
+
 def run_chunk_copies(
   chunks: Sequence[ChunkRow],
   *,
@@ -1507,6 +1826,8 @@ def run_chunk_copies(
   state: dict[str, dict[str, object]] | None = None,
   state_path: str | None = None,
   unchanged: int = 0,
+  progress: ProgressReporter | None = None,
+  compress_workers: int = 2,
 ) -> RunSummary:
   """
   Copy or skip selected chunks with up to ``workers`` concurrent threads.
@@ -1523,6 +1844,9 @@ def run_chunk_copies(
     state (dict[str, dict[str, object]] | None): Mutable state records.
     state_path (str | None): Where to persist ``state`` after each chunk.
     unchanged (int): Chunks already skipped by ``--changed-only``.
+    progress (ProgressReporter | None): Told each finished chunk's rows.
+    compress_workers (int): Size of the background compression pool; each
+      finished chunk is handed to it and the copy worker moves on.
 
   Returns:
     RunSummary: Totals; ``rows_total`` covers examined chunks only.
@@ -1544,6 +1868,9 @@ def run_chunk_copies(
   rows_total = 0
   if not chunks:
     return RunSummary(unchanged, 0, 0, 0, 0)
+  compress_on = opts.compress_before is not None and compress_workers > 0
+  zpool = ThreadPoolExecutor(max_workers=max(compress_workers, 1))
+  zjobs: dict = {}
   with ThreadPoolExecutor(max_workers=workers) as pool:
     known = state or {}
     futures = {
@@ -1561,6 +1888,10 @@ def run_chunk_copies(
       if result is not None:
         counts[result.outcome] += 1
         rows_total += result.rows
+        if progress is not None:
+          progress.add(result.rows)
+        if compress_on and chunk.range_end <= opts.compress_before:
+          zjobs[zpool.submit(_compress_job, opts, chunk)] = chunk
       if state is None:
         continue
       if result is None:
@@ -1569,6 +1900,12 @@ def run_chunk_copies(
         state[chunk.regclass] = state_entry(chunk, result)
       if state_path:
         save_state(state_path, state)
+  for zfut in as_completed(zjobs):
+    try:
+      zfut.result()
+    except Exception:
+      LOG.exception("compress failed chunk=%s", zjobs[zfut].regclass)
+  zpool.shutdown(wait=True)
   return RunSummary(
     unchanged, counts["skipped"], counts["copied"], counts["failed"], rows_total
   )
@@ -1744,6 +2081,43 @@ def restore_target_indexes(
   return created
 
 
+def missing_target_indexes(conn: Connection, index_file: str) -> list[str]:
+  """
+  Return what keeps the target from taking ingest: unrestored indexes.
+
+  Every name saved by :func:`drop_target_indexes` must exist and be valid,
+  and ``host_data`` must have at least one valid UNIQUE index (ingest uses
+  ``ON CONFLICT (time, host, type, event, dev) DO NOTHING``; without it every
+  write fails with "no unique or exclusion constraint matching").
+
+  Args:
+    conn (Connection): Open target connection.
+    index_file (str): Sidecar from :func:`drop_target_indexes` (may be
+      absent when indexes were never dropped).
+
+  Returns:
+    list[str]: Missing/invalid index names, plus a marker when no valid
+      UNIQUE index exists; empty when the target is ready.
+
+  Examples:
+    >>> missing_target_indexes(tgt, "/tmp/state.indexes.json")  # doctest: +SKIP
+    []
+  """
+  saved: list[str] = []
+  if os.path.isfile(index_file):
+    with open(index_file, encoding="utf-8") as fh:
+      saved = [str(item["name"]) for item in json.load(fh)]
+  with conn.cursor() as cur:
+    cur.execute(_VALID_TARGET_INDEX_NAMES_SQL)
+    valid = {str(r[0]) for r in cur.fetchall()}
+    cur.execute(_VALID_UNIQUE_COUNT_SQL)
+    row = cur.fetchone()
+  missing = [name for name in saved if name not in valid]
+  if not (row and int(row[0])):
+    missing.append("<no valid UNIQUE index on host_data>")
+  return missing
+
+
 def main(argv: Sequence[str] | None = None) -> int:
   """
   CLI entry: list or copy watermarked ``host_data`` chunks.
@@ -1821,6 +2195,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     default=60,
     help="Insert-only resync granularity for partly synced chunks "
     "(default 60; 0 = always re-copy whole chunks)",
+  )
+  parser.add_argument(
+    "--compress-workers",
+    type=int,
+    default=2,
+    help="Background compression threads; a finished chunk is handed off "
+    "and its copy worker moves on (default 2; 0 disables)",
+  )
+  parser.add_argument(
+    "--progress-seconds",
+    type=float,
+    default=60.0,
+    help="Print 'rows=X/T (P%%) copies_in_flight=N rows_per_s=R eta=Eh' "
+    "every N seconds (default 60; 0 disables)",
   )
   indexes = parser.add_mutually_exclusive_group()
   indexes.add_argument(
@@ -1906,9 +2294,21 @@ def main(argv: Sequence[str] | None = None) -> int:
       fetch_column_layout(src), fetch_column_layout(tgt)
     )
     sigs = fetch_chunk_signatures(src) if args.changed_only else {}
+    missing = (
+      missing_target_indexes(tgt, index_file_for(args.state_file))
+      if args.verify and args.state_file
+      else []
+    )
+  if missing:
+    LOG.error(
+      "refusing --verify: target host_data indexes not restored (%s); run "
+      "--restore-target-indexes (runbook C2) first",
+      ", ".join(missing),
+    )
+    return 2
   compress_before = (
     None
-    if args.compress_older_than_days < 0
+    if args.verify or args.compress_older_than_days < 0
     else watermark_from_now(days=args.compress_older_than_days)
   )
   opts = CopyOptions(
@@ -1930,15 +2330,36 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.changed_only
     else (list(selected), [])
   )
-  summary = run_chunk_copies(
-    examine,
-    opts=opts,
-    workers=args.workers,
-    state=state,
-    state_path=args.state_file,
-    unchanged=len(same),
-  )
   unchanged_rows = sum(int(state[c.regclass]["rows"]) for c in same)
+  if examine:
+    with _connect(opts, opts.target_host) as tgt:
+      made = precreate_all_target_chunks(tgt, examine)
+    LOG.info("pre-created target chunks for %s ranges", made)
+  progress = None
+  if args.progress_seconds > 0:
+    progress = ProgressReporter(
+      opts, fetch_source_total_rows(opts), unchanged_rows, args.progress_seconds
+    )
+    progress.start()
+  try:
+    summary = run_chunk_copies(
+      examine,
+      opts=opts,
+      workers=args.workers,
+      state=state,
+      state_path=args.state_file,
+      unchanged=len(same),
+      progress=progress,
+      compress_workers=args.compress_workers,
+    )
+  finally:
+    if progress is not None:
+      progress.stop()
+  if not args.verify:  # never add work to the freeze window
+    with _connect(opts, opts.target_host) as tgt:
+      aged = compress_aged_target_chunks(tgt, compress_before)
+    if aged:
+      LOG.info("compressed aged target chunks=%s", aged)
   LOG.info(
     "done unchanged=%s skipped=%s copied=%s failed=%s verified_rows=%s "
     "force=%s verify=%s workers=%s",

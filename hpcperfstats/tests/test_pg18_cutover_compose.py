@@ -173,3 +173,18 @@ def test_runbook_python_blocks_avoid_parameterized_django_sql() -> None:
   phase_b = text.split("## Phase B", 1)[1].split("## Phase C", 1)[0]
   assert "remove_compression_policy('host_data', if_exists => true)" in phase_b
   assert "compression_jobs=" in phase_b and "host_data_n=" in phase_b
+
+
+def test_cutover_gated_on_restored_unique_index() -> None:
+  """Side-agent catch (2026-11-11): Phase B drops the PG18 indexes; E1 must
+  not stop PG15 unless a valid UNIQUE index is back (ingest ON CONFLICT)."""
+  text = RUNBOOK.read_text()
+  e1 = text.split("### E1", 1)[1].split("### E2", 1)[0]
+  block = re.findall(r"```bash\n(.*?)```", e1, flags=re.S)[0]
+  gate = block.index("indisunique AND indisvalid")
+  assert gate < block.index("stop db") < block.index("CUTOVER_BLOCKED")
+  assert 'if [ "${uniq:-0}" -ge 1 ] && [ "$bad" = "0" ]; then' in block
+  # C2 restores before D1; D3 surfaces the script's --verify refusal.
+  assert text.index("### C2") < text.index("### D1")
+  d3 = text.split("### D3", 1)[1].split("### D4", 1)[0]
+  assert "refusing" in d3 and "--verify" in d3

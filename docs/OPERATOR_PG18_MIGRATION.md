@@ -24,7 +24,8 @@ How the copy keeps the window short (`scripts/pg18_host_data_chunk_copy.py`):
 
 - **State file.** Every verified chunk records `{rows, sig}`. The signature (`sig`) is the chunk's PG15 `pg_stat` insert, update and delete counters. With `--changed-only`, chunks whose signature hasn't moved are skipped without a single query.
 - **Slice resync.** A changed chunk that has only *gained* rows since it was last verified is compared in 60-minute slices. Only the mismatched slices are deleted and re-copied, so the hot chunk costs minutes of data, not a full day. Any UPDATE or DELETE (operator repair tools) forces a whole-chunk copy.
-- **Compression during the copy.** Copied chunks older than 8 days are compressed on PG18 right away, so PG18 never holds the full history uncompressed and there is no compression backlog after cutover.
+- **Compression during the copy, off the copy workers.** A finished chunk older than 8 days is handed to a background compression pool (`--compress-workers`, default 2), and its copy worker moves straight on to the next chunk. PG18 never holds the full history uncompressed, and there is no compression backlog after cutover. Each run also compresses PG18 chunks that have since aged past 8 days. The freeze pass (`--verify`) never compresses; the policy does that after cutover.
+- **All target chunks created up front.** `compress_chunk` blocks *creating* a chunk on `host_data` while it runs (TimescaleDB 2.31: a new-chunk insert waited out a 29 s compress). Each run therefore creates every missing PG18 chunk it will need before copying starts. Background compression then never stalls a copy worker; COPY into an existing chunk and concurrent compressions don't conflict.
 - **Binary COPY.** It uses an explicit, type-checked column list and fails closed if the PG15 and PG18 `host_data` layouts differ.
 - **`--verify` (freeze only).** Each copied chunk is recounted on both sides, and the run exits non-zero on any mismatch. The `verified_rows=` total replaces a full `count(*)` of `host_data`.
 - **Per-chunk failures.** A failed chunk is logged and dropped from state; the run continues and exits 1. Rerun the same command.
@@ -110,17 +111,19 @@ The copy runs detached in a one-shot `web` container using the checkout's script
 podman rm -f hpcperfstats_pg18_copy 2>/dev/null; podman-compose -p hpcperfstats --profile pg18-migrate run -d --no-deps --name hpcperfstats_pg18_copy -e PGPASSWORD=hpcperfstats -v "$PWD/scripts:/migrate:ro" --entrypoint /usr/local/bin/python3 web -u /migrate/pg18_host_data_chunk_copy.py --source-host db --target-host db18 --watermark-days -7 --changed-only --state-file /hpcperfstats/pg18_migrate/state.json --workers 4
 ```
 
-### host — watch progress (one line a minute; Ctrl-C stops watching, not the copy)
+### host — watch progress (Ctrl-C stops watching, not the copy)
 
-Rows = PG18 committed inserts (they only move when a chunk's COPY commits) plus in-flight PG15 `COPY TO` rows. `update_metrics` also runs `COPY TO` on PG15, so it is excluded.
+The script prints a progress line every 60 s (`--progress-seconds`): `HH:MM:SS rows=X/T (P%) copies_in_flight=N rows_per_s=R eta=Eh`. `rows` = rows already verified in the state file (so it survives restarts) + rows of chunks finished this run + rows its PG15 `COPY TO` sessions are streaming now. Those sessions are identified by `application_name=pg18_chunk_copy`, so `update_metrics`' own `COPY TO` is never counted. `T` is PG15 `approximate_row_count('host_data')`; the rate and ETA are since the run started.
 
 ```bash
-total=$(podman-compose -p hpcperfstats exec -T db psql -h localhost -U hpcperfstats -d hpcperfstats -XtAc "SET statement_timeout = 0; SELECT approximate_row_count('host_data')" | tail -1); t0=""; while true; do t=$(podman-compose -p hpcperfstats --profile pg18-migrate exec -T db_pg18 psql -h localhost -U hpcperfstats -d hpcperfstats -XtAc "SELECT tup_inserted FROM pg_stat_database WHERE datname = current_database()"); s=$(podman-compose -p hpcperfstats exec -T db psql -h localhost -U hpcperfstats -d hpcperfstats -XtAc "SELECT coalesce(sum(p.tuples_processed), 0) || ' ' || count(*) FROM pg_stat_progress_copy p JOIN pg_stat_activity a USING (pid) WHERE p.command = 'COPY TO' AND a.application_name NOT LIKE 'update_metrics%'"); now=$(date +%s); rows=$(( t + ${s% *} )); [ -z "$t0" ] && { t0=$now; r0=$rows; }; el=$(( now - t0 )); rate=0; [ "$el" -gt 0 ] && [ "$rows" -gt "$r0" ] && rate=$(( (rows - r0) / el )); if [ "$rate" -gt 0 ]; then eta="$(( (total - rows) / rate / 3600 ))h"; else eta=-; fi; echo "$(date +%T) rows=$rows/$total ($(( rows * 100 / total ))%) copies_in_flight=${s#* } rows_per_s=$rate eta=$eta $(podman inspect hpcperfstats_pg18_copy --format 'status={{.State.Status}} exit={{.State.ExitCode}}')"; sleep 60; done
+podman logs -f hpcperfstats_pg18_copy 2>&1 | grep --line-buffered -E ' rows=|ERROR|INFO done'
 ```
 
-`podman logs -f hpcperfstats_pg18_copy` follows each chunk as it starts (`INFO copy chunk`), plus any `ERROR chunk failed` and the final `INFO done`.
+Drop the `grep` to also see each chunk as it starts (`INFO copy chunk`).
 
 **Done when** `status=exited exit=0` and the `INFO done` line shows `failed=0`. On `exit=1`, read the `ERROR chunk failed` lines and rerun the start block; failed chunks are retried and verified chunks are skipped. Rerun the start block a few times as convenient: each pass only touches chunks written since the last.
+
+**Syncing newer days later.** Rerun the same start block any time, even days or weeks after the bulk copy finished. New PG15 day chunks aren't in the state file, so they get copied. Verified chunks whose PG15 change signature hasn't moved are skipped without a query. Older days that picked up late rows are resynced slice by slice, and days that have aged past 8 days are compressed. If C2 already restored the indexes and many large days have piled up, drop them again first (`--drop-target-indexes` keeps the saved definitions), rerun, then repeat C2. The freeze pass refuses to start until the indexes are back.
 
 **If `copies_in_flight` stays at `1` while `--workers` is higher,** check PG18 for `Lock:relation` waits on `host_data`. That is the chunk-creation lock this script avoids; it means an older script without chunk pre-creation is running.
 
@@ -153,8 +156,10 @@ podman-compose -p hpcperfstats exec -T db psql -h localhost -U hpcperfstats -d h
 ### D3 — freeze pass with verification (paste output)
 
 ```bash
-podman-compose -p hpcperfstats --profile pg18-migrate run --rm --no-deps -e PGPASSWORD=hpcperfstats -v "$PWD/scripts:/migrate:ro" --entrypoint /usr/local/bin/python3 web -u /migrate/pg18_host_data_chunk_copy.py --source-host db --target-host db18 --watermark-days -7 --changed-only --verify --state-file /hpcperfstats/pg18_migrate/state.json --workers 4 2>&1 | grep -E 'slice resync|ERROR|INFO done'; echo "freeze_exit=${PIPESTATUS[0]}"
+podman-compose -p hpcperfstats --profile pg18-migrate run --rm --no-deps -e PGPASSWORD=hpcperfstats -v "$PWD/scripts:/migrate:ro" --entrypoint /usr/local/bin/python3 web -u /migrate/pg18_host_data_chunk_copy.py --source-host db --target-host db18 --watermark-days -7 --changed-only --verify --state-file /hpcperfstats/pg18_migrate/state.json --workers 4 --progress-seconds 0 2>&1 | grep -E 'slice resync|refusing|ERROR|INFO done'; echo "freeze_exit=${PIPESTATUS[0]}"
 ```
+
+`--verify` refuses to start (exit 2, `refusing --verify: target host_data indexes not restored`) unless every index saved in Phase B is back and valid and `host_data` has a valid UNIQUE index. Ingest writes `ON CONFLICT (time, host, type, event, dev) DO NOTHING`, which fails outright without it. If you see it, run C2, then D3 again.
 
 **Fail closed:** `freeze_exit=0` and `failed=0`. Record `verified_rows=` for the change log. On failure, rerun D3 (only the failed chunks are examined).
 
@@ -185,6 +190,8 @@ podman-compose -p hpcperfstats --profile pg18-migrate exec -T db_pg18 sh -s < sc
 ### E1 — switch, start, verify (paste output)
 
 ```bash
+uniq=$(podman-compose -p hpcperfstats --profile pg18-migrate exec -T db_pg18 psql -h localhost -U hpcperfstats -d hpcperfstats -XtAc "SELECT count(*) FROM pg_index WHERE indrelid = 'public.host_data'::regclass AND indisunique AND indisvalid"); bad=$(podman-compose -p hpcperfstats --profile pg18-migrate exec -T db_pg18 psql -h localhost -U hpcperfstats -d hpcperfstats -XtAc "SELECT count(*) FROM pg_index WHERE indrelid = 'public.host_data'::regclass AND NOT indisvalid"); echo "pg18_host_data_unique_indexes=$uniq invalid_indexes=$bad"
+if [ "${uniq:-0}" -ge 1 ] && [ "$bad" = "0" ]; then
 podman-compose -p hpcperfstats stop db
 grep -qx '  - docker-compose.pg18-primary.yaml' docker-compose.yaml || sed -i '/^  - docker-compose.defaults.yaml$/a\  - docker-compose.pg18-primary.yaml' docker-compose.yaml
 grep -n -A3 '^include:' docker-compose.yaml; podman-compose -p hpcperfstats config --services | tr '\n' ' '; echo
@@ -204,7 +211,10 @@ with connection.cursor() as cur:
     cur.execute("SELECT count(*) FROM job_data")
     print("job_data_n", cur.fetchone()[0])
 '
+else echo "CUTOVER_BLOCKED: PG18 host_data has no valid UNIQUE index or has invalid indexes; run C2 (--restore-target-indexes) first. PG15 is untouched."; fi
 ```
+
+The first line is the cutover gate: nothing is stopped or switched unless `pg18_host_data_unique_indexes` ≥ 1 and `invalid_indexes=0`. Ingest's `ON CONFLICT` needs the UNIQUE index.
 
 **Fail closed:** the `include:` list shows `docker-compose.pg18-primary.yaml` right after `docker-compose.defaults.yaml`; `config --services` lists `db_pg18` and **not** `db`; `ps` shows `db_pg18`, `web`, `pipeline`, `proxy`, `valkey` and `rabbitmq` up. `django_db` shows PostgreSQL 18 and `None` (Unix socket), `io_method` is `io_uring`; `job_data_n` matches the D4 `pg18:` count. If `db_pg18` logs `lock file "/run/postgresql/.s.PGSQL.5432.lock" already exists`, PG15 did not shut down cleanly: run `podman-compose -p hpcperfstats up -d --force-recreate db_pg18 web pipeline`.
 
