@@ -649,6 +649,27 @@ node at 1 Hz, runs the FWQ noise probe, and writes `profile.json`, `report.md` a
 `monitor-build-capabilities.json` under `rpmbuild/build-info/` for provenance. Full procedure:
 [measurement/RUNBOOK.md](measurement/RUNBOOK.md) section 0.
 
+## Canary GEMM load (`scripts/canary_gemm_load.sh`)
+
+Steady, known-precision CPU load for node canaries: the 3.1 Grace rate check against
+`perf stat`, the power / clock A/B, and the DGEMM / SGEMM / HGEMM precision slices. It builds a
+small self-contained OpenMP GEMM (no BLAS or module needed) in double, single and half precision
+under `--prefix` (default `$HOME/hpcperfstats-gemm-load`) and runs it in the background with a
+pidfile. Half precision needs a compiler with `_Float16` (aarch64 GCC 11 has it; x86 GCC 11
+does not, so `hp` is skipped there).
+
+```bash
+./scripts/canary_gemm_load.sh install                       # module load gcc first if cc lacks OpenMP
+./scripts/canary_gemm_load.sh start --precision dp          # all online CPUs until stopped
+./scripts/canary_gemm_load.sh status                        # pid, settings, last GFLOP/s line
+./scripts/canary_gemm_load.sh stop
+./scripts/canary_gemm_load.sh run --precision sp --seconds 600   # foreground, e.g. in an sbatch script
+```
+
+Load started from a shell outside Slurm is measured by the node-level checks but is not
+attributed to any job; to see the CPU Multiprecision Mix pie for it, run it with `run` inside a
+Slurm job. Regression: `tests/test_canary_gemm_load.sh` (`check-local`, skips without OpenMP).
+
 ## Profiling `hpcperfstatsd`
 
 Use these steps on a **representative host** (same kernel, privilege level, and enabled collectors as production). Run as the same user as the daemon when attaching with `strace`/`perf`, unless you use `sudo` and account for `ptrace` scope (`/proc/sys/kernel/yama/ptrace_scope` on many Linux distros).

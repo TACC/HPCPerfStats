@@ -114,6 +114,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_likwid_read_group_counters.sh` | Regression (via `check-local`): PMC/uncore adapters call `perfmon_readGroupCounters` only (not bare `perfmon_readCounters`, which follows stolen `activeGroup`) |
 | `test_likwid_static_pin.sh` | Regression (via `check-local`): `build_static_bundle.sh` and `cross_compile_test.sh` pin LIKWID **5.5.2** (not a `5.5.2rc*` prerelease) |
 | `test_likwid_on_aarch64_configure.sh` | Regression (via `check-local`, 3.1): non-x86 `auto` is the `arm` backend with no LIKWID overlay; `--with-cpu-counter-backend=likwid` is rejected on non-x86; bundle / prepare / cross build LIKWID for x86 only |
+| `test_canary_gemm_load.sh` | `check-local` (skips with 77 without a C compiler with OpenMP): `scripts/canary_gemm_load.sh` rejects bad options before building, builds dp/sp, a bounded foreground run reports GFLOP/s with a finite check value, background start / refused second start / status / stop / idle stop |
 | `Makefile.am` | Automake `check_PROGRAMS` / `TESTS`; **keep `monitor_unit_cppflags` in sync** with `src/Makefile.am` `hpcperfstatsd_CPPFLAGS` for `-D` flags |
 | `run_tests.sh` | Convenience wrapper around `make check` in a build directory |
 | `../scripts/profile_hpcperfstatsd_example.sh` | Prints `perf record` / `perf stat` recipes for CPU baseline comparisons |
