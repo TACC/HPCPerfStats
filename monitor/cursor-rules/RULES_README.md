@@ -34,7 +34,7 @@ Notable contracts (see filename in `HPCPerfStats/monitor/cursor-rules/`):
 - **`monitor-runtime-path-coherence.mdc`** — default path synchronization across CLI, startup permissions, systemd, RPM, docs, and tests
 - **`monitor-roofline-peak-detect.mdc`** — `host_roofline_peak` NVML/smi/DRM/EDAC gaps + allowlisted GB200/Grace identity
 - **`monitor-xpum-integration.mdc`** — Intel PVC / XPU Manager (`intel_gpu`, vendored headers, libxpum dlopen)
-- **`monitor-likwid-overlay.mdc`** — aarch64 DCGM+LIKWID hybrid: LIKWID overlay cycles/inst on `host_cpu_hw` (fail-soft; CYC+INS eventset)
+- **`monitor-arm-direct-perf.mdc`** — Grace / aarch64 `host_cpu_hw` and `arm_aarch64_imc` by direct perf (3.1+, no LIKWID): enabled/running scaling, never pinned, sysfs names then MIDR table, D1 keys, W=48 modulo emit (replaces the retired `monitor-likwid-overlay.mdc`)
 - **`monitor-amd-epyc-likwid.mdc`** — Intel + EPYC LIKWID-only core/DF/RAPL; PERF-only HPM (no DIRECT MSR / `power_read`); no gpr4/8 fallback; family DF `st_name`s
 - **`monitor-likwid-rapl-refactor.mdc`** — RAPL via LIKWID PWR* + powercap; init order before RAPL collect; no Variorum
 - **`monitor-debug-vs-symbols.mdc`** — `--enable-debug` vs `-g`; release quiet logging (startup + hourly + first-fail RMQ)

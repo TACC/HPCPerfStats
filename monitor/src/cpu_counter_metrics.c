@@ -17,9 +17,7 @@
 #include "cpu_counter_metrics_arm_state.h"
 #include "cpu_counter_metrics_arm_publish.h"
 #include "cpu_counter_metrics_arm_util.h"
-#ifdef MONITOR_CPU_LIKWID_OVERLAY
-#include "cpu_counter_metrics_likwid_overlay.h"
-#endif
+#include "arm_core_perf.h"
 #else
 #include "likwid_pmc_adapter.h"
 #include "likwid_arch_map.h"
@@ -30,8 +28,9 @@
 #ifdef MONITOR_CPU_BACKEND_ARM
 /*
  * `arm` backend (aarch64 / Grace): util from /proc/stat jiffies over the daemon's own collect
- * interval, clock from cpufreq scaling_cur_freq (nominal chain fallback), optional LIKWID overlay
- * for measured cycles / instructions. No DCGM: the embedded DCGM engine ran five 100-200 Hz timer
+ * interval, clock from cpufreq scaling_cur_freq (nominal chain fallback), and the measured core
+ * counters (cycles, instructions, FP / SVE INT) from arm_core_perf (direct perf, scaled by
+ * enabled/running; no LIKWID on aarch64). No DCGM: the embedded DCGM engine ran five 100-200 Hz timer
  * loops whatever the watch cadence (round 2 findings 7, 10, 18). Socket power is host_power_socket.
  */
 unsigned long long *g_arm_ctr0 = NULL;
@@ -40,19 +39,9 @@ unsigned long long *g_arm_ctr2 = NULL;
 unsigned long long *g_arm_ctr3 = NULL;
 unsigned long long *g_arm_ctr4 = NULL;
 unsigned long long *g_arm_ctr5 = NULL;
-unsigned long long *g_arm_inst = NULL;
 unsigned long long *g_arm_aperf = NULL;
 unsigned long long *g_arm_mperf = NULL;
-unsigned long long *g_arm_est_flops = NULL;
 unsigned long long *g_arm_dram_bytes = NULL;
-unsigned long long *g_arm_fp_sca_d = NULL;
-unsigned long long *g_arm_fp_128_d = NULL;
-unsigned long long *g_arm_fp_256_d = NULL;
-unsigned long long *g_arm_fp_512_d = NULL;
-unsigned long long *g_arm_fp_sca_s = NULL;
-unsigned long long *g_arm_fp_128_s = NULL;
-unsigned long long *g_arm_fp_256_s = NULL;
-unsigned long long *g_arm_fp_512_s = NULL;
 
 static int g_arm_ready = 0;
 static int g_arm_ncpus = 0;
@@ -65,11 +54,9 @@ static double *g_arm_nominal_khz = NULL;
 static long long g_arm_mono_prev_us = 0;
 
 /* Every per-CPU u64 accumulator, so alloc / free / reset stay one loop. */
-static unsigned long long **const g_arm_ctrs[] = {
-    &g_arm_ctr0,       &g_arm_ctr1,     &g_arm_ctr2,     &g_arm_ctr3,     &g_arm_ctr4,
-    &g_arm_ctr5,       &g_arm_inst,     &g_arm_aperf,    &g_arm_mperf,    &g_arm_est_flops,
-    &g_arm_dram_bytes, &g_arm_fp_sca_d, &g_arm_fp_128_d, &g_arm_fp_256_d, &g_arm_fp_512_d,
-    &g_arm_fp_sca_s,   &g_arm_fp_128_s, &g_arm_fp_256_s, &g_arm_fp_512_s};
+static unsigned long long **const g_arm_ctrs[] = {&g_arm_ctr0,  &g_arm_ctr1,  &g_arm_ctr2,
+                                                  &g_arm_ctr3,  &g_arm_ctr4,  &g_arm_ctr5,
+                                                  &g_arm_aperf, &g_arm_mperf, &g_arm_dram_bytes};
 #define ARM_NCTRS (sizeof(g_arm_ctrs) / sizeof(g_arm_ctrs[0]))
 
 static int arm_proc_stat_read_cpus(struct arm_cpu_jifs *out, int ncpus)
@@ -106,9 +93,7 @@ static void arm_backend_cleanup(void)
   size_t k;
   int i;
 
-#ifdef MONITOR_CPU_LIKWID_OVERLAY
-  cpu_counter_metrics_likwid_overlay_cleanup();
-#endif
+  arm_core_perf_cleanup();
   for (k = 0; k < ARM_NCTRS; k++) {
     free(*g_arm_ctrs[k]);
     *g_arm_ctrs[k] = NULL;
@@ -175,10 +160,9 @@ static int arm_backend_begin(struct stats_type *type)
     type->st_enabled = 0;
     return 0;
   }
-#ifdef MONITOR_CPU_LIKWID_OVERLAY
-  if (cpu_counter_metrics_likwid_overlay_begin(type) != 0)
-    TRACE("LIKWID overlay begin returned error; continuing with /proc/stat util only\n");
-#endif
+  /* Fail-soft: without core counters the type keeps /proc/stat util and util x freq cycles. */
+  if (arm_core_perf_begin(nr_cpus, NULL) != 0)
+    TRACE("arm core perf unavailable; /proc/stat util only\n");
   g_arm_ready = 1;
   type->st_enabled = 1;
   return 0;
@@ -212,6 +196,12 @@ static void arm_collect_cpu(struct stats *stats, int i, int proc_stat_ok, long l
     sample.clock_khz = g_arm_nominal_khz[i];
   arm_accumulate_from_util_sample(i, &sample, delta_us);
   publish_arm_cpu_stats(stats, i);
+  if (arm_core_perf_ready()) {
+    struct arm_core_counts counts;
+
+    arm_core_perf_collect_cpu(i, &counts);
+    publish_arm_measured_stats(stats, &counts);
+  }
 }
 #endif
 
@@ -230,16 +220,10 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
 
 #ifdef MONITOR_CPU_BACKEND_ARM
   int proc_stat_ok;
-  int overlay_ready = 0;
   long long delta_us;
 
   if (!g_arm_ready)
     return;
-#ifdef MONITOR_CPU_LIKWID_OVERLAY
-  overlay_ready = cpu_counter_metrics_likwid_overlay_ready();
-  if (overlay_ready && cpu_counter_metrics_likwid_overlay_prepare_collect() != 0)
-    overlay_ready = 0;
-#endif
   proc_stat_ok = (arm_proc_stat_read_cpus(g_arm_jifs_cur, g_arm_ncpus) == 0);
   delta_us = arm_collect_delta_us();
   for (i = 0; i < g_arm_ncpus && i < nr_cpus; i++) {
@@ -251,12 +235,7 @@ static void cpu_counter_metrics_collect(struct stats_type *type)
     if (stats == NULL)
       continue;
     arm_collect_cpu(stats, i, proc_stat_ok, delta_us);
-#ifdef MONITOR_CPU_LIKWID_OVERLAY
-    if (overlay_ready)
-      cpu_counter_metrics_likwid_overlay_collect_cpu(stats, i);
-#endif
   }
-  (void)overlay_ready;
   if (proc_stat_ok) {
     memcpy(g_arm_jifs_prev, g_arm_jifs_cur, (size_t)g_arm_ncpus * sizeof(*g_arm_jifs_prev));
     g_arm_stat_seeded = 1;

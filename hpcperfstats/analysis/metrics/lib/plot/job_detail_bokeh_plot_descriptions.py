@@ -36,12 +36,16 @@ JOB_DETAIL_BOKEH_HELP: dict[str, HelpPair] = {
     "interconnect-limited phases relative to the matching roof.",
   ),
   "jobDetailPlot_multiprecision_cpu": (
-    "CPU multiprecision mix: wedge areas show each width's share of busy arithmetic "
-    "rates only (idle excluded), from avg_flops64b / avg_flops32b (Intel FP_ARITH or "
-    "host_cpu_hw scalar FP) and avg_arm_int16_ops / avg_arm_int8_ops when present. "
-    "INT ops and FLOPS are mixed as relative busy-ops shares, not identical units.",
-    "Compare FP64 versus FP32 (and INT16/INT8) busy-ops mix when tuning "
-    "numerical precision; vectorization width metrics remain separate.",
+    "CPU multiprecision mix: wedge areas show each precision's share of busy "
+    "FP instructions (FP64, FP32, FP16) plus SVE INT16/INT8 instructions, "
+    "from avg_fp64_instr / avg_fp32_instr / avg_fp16_instr and "
+    "avg_arm_int16_ops / avg_arm_int8_ops (Ginstr/s; idle excluded). On Grace"
+    " these are speculative instruction counts, which slightly over-count "
+    "retired work. A vector instruction counts once whatever its width, so "
+    "wedges are FP instruction shares, not FLOP shares.",
+    "Compare FP64 versus FP32 and FP16 instruction share (and INT16/INT8) "
+    "when tuning numerical precision; use avg_flops and the CPU roofline for "
+    "FLOP/s.",
   ),
   "jobDetailPlot_multiprecision_gpu": (
     "GPU multiprecision mix: wedge areas show each active pipe's share of busy GPU "

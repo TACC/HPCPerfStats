@@ -1,8 +1,8 @@
 #ifndef CPU_COUNTER_METRICS_LIKWID_BEGIN_H_
 #define CPU_COUNTER_METRICS_LIKWID_BEGIN_H_
 
-/* Always visible: uncore/RAPL call this under HAVE_LIKWID even when the CPU
- * backend is arm (Horizon / Vista aarch64). arm builds provide a stub that returns 0.
+/* Exclusive LIKWID backend session ready (x86 uncore / RAPL begin require it). aarch64 builds
+ * no LIKWID, so the `arm` backend never links this unit.
  */
 int cpu_counter_metrics_likwid_ready(void);
 

@@ -12,8 +12,8 @@
 # Output RPM/SRPM names use %%{name} = hpcperfstatsd.
 Summary: Job-level Monitoring Client
 Name: hpcperfstatsd
-Version: 3.0
-Release: 9%{?dist}
+Version: 3.1
+Release: 1%{?dist}
 License: GPL
 Vendor: Texas Advanced Computing Center
 Group: System Environment/Base
@@ -68,7 +68,7 @@ runtime. Shared-only stacks (DCGM, optional IB, etc.) remain dynamic per
 configure flags.
 
 Optional features and branch highlights: LIKWID (x86) or the arm backend
-(/proc/stat, cpufreq, LIKWID overlay; aarch64) CPU counters, per-socket hwmon power
+(/proc/stat, cpufreq, direct perf core and Grace SCF counters; aarch64, no LIKWID) CPU counters, per-socket hwmon power
 (host_power_socket), NVIDIA GPUs through NVML+GPM with a DCGM fallback (both loaded at
 runtime), stats buffer/file handling, and RabbitMQ robustness.
 
@@ -166,6 +166,18 @@ fi
 %systemd_postun_with_restart hpcperfstats.service
 
 %changelog
+* Fri Nov 13 2026 sharrell@tacc.utexas.edu - 3.1-1
+- aarch64 / Grace: LIKWID is no longer built or linked. host_cpu_hw reads nine core events per
+  CPU (CYC, INS, FP_DP/SP/HP_SPEC, FP_FIXED/SCALE_OPS_SPEC, ASE_SVE_INT8/16_SPEC) by direct
+  perf_event, scaled by time_enabled / time_running (nvidia-powerd shares the PMU); sysfs event
+  names first, Neoverse V2 raw codes by MIDR otherwise.
+- New host_cpu_hw keys arm_fp_dp_spec / arm_fp_sp_spec / arm_fp_hp_spec (E,W=64);
+  arm_est_flops is now measured FLOPs (FP_FIXED_OPS_SPEC + FP_SCALE_OPS_SPEC). The /proc/stat
+  synthetic instr/FLOP estimate is removed. Grace instr_retired and cycle rates rise (scaled).
+- arm_aarch64_imc reads nvidia_scf_pmu_N cmem_rd_data / cmem_wr_total_bytes by direct perf on
+  1 or 2 sockets and re-scans when the PMUs bind after start.
+- configure: --with-cpu-counter-backend=likwid is x86-only.
+
 * Thu Nov 05 2026 sharrell@tacc.utexas.edu - 3.0-9
 - Monitor CPU seconds round 2: aarch64 CPU backend renamed dcgm -> arm and taken off DCGM
   (/proc/stat util, cpufreq clock); new per-socket host_power_socket type from ACPI hwmon

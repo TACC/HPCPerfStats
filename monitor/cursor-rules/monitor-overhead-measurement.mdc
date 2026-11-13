@@ -49,11 +49,12 @@ Applies to `monitor/measurement/**` (harness, sampler, FWQ, report) and the
    A type in an `Enabled types:` line with no group in
    `lib/driver_map.py` fails preflight; `test_driver_map_covers_all_st_names` fails when a new
    `.st_name` lands unmapped. Add the type to the map in the same change as the collector.
-   A type that only works with another group's backend goes **in that group**: on Grace
+   A type that only works with another group's backend goes **in that group**: on pre-3.1 Grace
    overlay builds (`configure.likwid_overlay`) `arm_aarch64_imc` is in `arm_cpu`, because alone
    it only waits for the LIKWID overlay (c122-018 2026-11-05: its SOLO leg logged `waiting for
    the LIKWID overlay group` and measured ~0, not the SCF cost). A type with its own fds gets
-   its own group (`host_power_socket` → `hwmon_power`). Build-info `cpu_backend` `dcgm` (RPMs
+   its own group (`host_power_socket` → `hwmon_power`; on 3.1+ builds `arm_aarch64_imc` reads
+   SCF on its own perf fds and is the `perf_event` group). Build-info `cpu_backend` `dcgm` (RPMs
    before the `arm` rename) resolves like `arm`, so a baseline RPM and a candidate get the same
    groups.
 9. **Restore on every exit path**: drop-in removed, measure queue deleted, site conf and
@@ -66,6 +67,9 @@ Applies to `monitor/measurement/**` (harness, sampler, FWQ, report) and the
    (`collector_matrix.variants`; excluded from the interaction residual). The pair counts only
    when the leg journal contains the variant's `marker` (the daemon's log that the knob took
    effect) — otherwise `NOT_MEASURED`, so a daemon without the knob cannot report a false 0.
+   `arm_cpu_noscf` exists only for pre-3.1 overlay baselines; 3.1 builds have no knob and get
+   no variant (SCF cost is the `perf_event` SOLO leg). The marker is pinned in
+   `test_grace_scf_variant_and_schema.py`.
 11. **Emitted keys are captured, not assumed.** After every leg on `<queue>_measure` the harness
    drains that queue (management API, guarded to `_measure` only, after the sampler stops) and
    keeps the last `$` schema message as `raw/legs/<id>/schema.txt`; `profile.json`

@@ -9,14 +9,7 @@
 
 const char *likwid_arch_eventset(void);
 const char *likwid_arch_eventset_for_processor(processor_t p, int n_pmcs);
-/* Grace/Neoverse: CYC+INS only (do not arm SP/DP/SVE INT system-wide). */
-const char *likwid_arch_eventset_grace(void);
-const char *likwid_arch_eventset_grace_cyc_only(void);
-/* Grace eventset plus SCF0/SCF1 DRAM read beats / write bytes (tried first by the overlay). */
-const char *likwid_arch_eventset_grace_scf(void);
-/* First rung of the overlay ladder: the SCF eventset, or plain CYC+INS when scf_env (the
- * measurement-only HPCPERFSTATS_LIKWID_GRACE_SCF) is "0", so the overhead harness can pair
- * dcgm_cpu with and without the SCF counters. */
-const char *likwid_arch_eventset_grace_first(const char *scf_env);
+/* Grace / aarch64 does not use LIKWID: its core and SCF counters are read by direct perf
+ * (arm_core_perf.c, arm_imc_scf.c). */
 
 #endif

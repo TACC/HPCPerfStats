@@ -146,8 +146,10 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | Area | Files (under `src/`) |
 |------|----------------------|
 | Stats type registry (`st_name` table for lookup / iteration; ordered by legacy variable names, so `stats_type_get` scans linearly) | `stats_registry.c`, `stats_registry.h` (optional modules guarded by configure **`MONITOR_WITH_*`** / backend macros — keep aligned with `Makefile.am` **`TYPES`**). |
-| Grace DRAM CAS (`arm_aarch64_imc`): SCF0/SCF1 in the LIKWID overlay group, one `scf<N>` device per socket; perf `dmc`/`imc` scan as fallback | `arm_imc.c`, `arm_imc_scf.c`, `arm_imc_scf.h` (`likwid_arch_eventset_grace_scf`, `likwid_pmc_adapter_read_event`). |
-| `host_cpu_hw` on aarch64 (`arm` backend): `/proc/stat` jiffy util, cpufreq `scaling_cur_freq` clock (nominal chain fallback), LIKWID overlay; no DCGM | `cpu_counter_metrics.c`, `cpu_counter_metrics_arm_{publish,util}.{c,h}`, `cpu_counter_metrics_arm_state.h`. |
+| Direct perf helpers for the aarch64 readers (portable; unit-tested on every host): open, raw / sysfs attrs, per-boot PMU `type`, `cpumask`, `{value, time_enabled, time_running}` read scaled by Δenabled / Δrunning; never pinned | `arm_perf_util.c`, `arm_perf_util.h`. |
+| `host_cpu_hw` core counters on Grace: nine events per CPU (CYC, INS, FP DP/SP/HP, FIXED, SCALE, SVE INT8/INT16), one fd each on `armv8_pmuv3*`; sysfs event names first, then a MIDR-keyed raw-code table (Neoverse V2) | `arm_core_perf.c`, `arm_core_perf.h`; key mapping in `publish_arm_measured_stats` (`cpu_counter_metrics_arm_publish.c`). |
+| Grace DRAM CAS (`arm_aarch64_imc`): one `scf<N>` device per `nvidia_scf_pmu_<N>` (1 on GH200, 2 on GB200 / Grace-Grace), `cmem_rd_data` + `cmem_wr_total_bytes` by direct perf; perf `dmc`/`imc` scan as fallback; re-scans every 10 ticks while no memory PMU is bound | `arm_imc.c`, `arm_imc_scf.c`, `arm_imc_scf.h`. |
+| `host_cpu_hw` on aarch64 (`arm` backend): `/proc/stat` jiffy util, cpufreq `scaling_cur_freq` clock (nominal chain fallback), measured counters from `arm_core_perf`; no DCGM, no LIKWID (3.1+) | `cpu_counter_metrics.c`, `cpu_counter_metrics_arm_{publish,util}.{c,h}`, `cpu_counter_metrics_arm_state.h`. |
 | `host_power_socket`: ACPI `<Name> Power Socket <N>` meters (CPU, Grace/socket, SysIO, Module), one row per socket; disabled where no meter exists | `arm_power_hwmon.{c,h}` (label index, EL10 `hwmonN/` and EL9 `hwmonN/device/` layouts, one fd per meter), `arm_power_socket.{c,h}`. |
 | `nvidia_gpu` source: NVML + GPM on GPM-capable GPUs (dlopen `libnvidia-ml`, `HPCPERFSTATS_NVML_LIB`), DCGM otherwise | `nvidia_gpu_nvml.{c,h}`, `nvidia_gpu_nvml_convert.{c,h}`, vendored `third_party/nvidia-nvml/nvml.h`; DCGM: `nvidia_gpu_dcgm_watch.c`, `dcgm_gpu_dyn.c` (runtime `dlopen` on every arch). |
 | DCGM watch cadence: `dcgmWatchFields` refresh = collect interval (`sample_freq`, set on conf load/SIGHUP), history = 2 refreshes; batch client keeps each caller's fallback | `dcgm_watch_policy.c`, `dcgm_watch_policy.h` (used by `nvidia_gpu_dcgm_watch.c`). `dcgm_session.c` starts the embedded engine with the NVSwitch module denied (`DcgmModuleIdNvSwitch`) and logs which start path ran. |
@@ -171,6 +173,7 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | IB vs HFI routing | `ib_common.c` (`ib_hca_is_opa_hfi`), `ib_family.c` |
 
 Intel PMU collection uses **LIKWID only** on x86 (see [LIKWID_MIGRATION.md](LIKWID_MIGRATION.md)).
+aarch64 builds no LIKWID since 3.1: Grace counters are direct perf (see the 3.1 migration note below).
 Legacy `intel_x86_pmc_gpr4` / `gpr8` MSR collectors and `fallback_fill` are **removed**.
 If LIKWID setup fails, `host_cpu_hw` is disabled (no MSR fallback).
 **AMD EPYC** (Rome → Turin) is also **LIKWID-only**: core via `host_cpu_hw`, DF via
@@ -179,7 +182,7 @@ If LIKWID setup fails, `host_cpu_hw` is disabled (no MSR fallback).
 
 **`host_cpu_hw` on Intel LIKWID (SKX → SRF):** Leading util / clock /
 arm-backend columns stay **0** by design (those keys are filled only by the
-Grace `arm` backend + LIKWID overlay). Core FIXC fields (`instr_retired_any`,
+Grace `arm` backend). Core FIXC fields (`instr_retired_any`,
 `cycles_unhalted_core`, `cycles_unhalted_ref`, and mirrored
 `instr_retired` / `aperf` / `mperf`) advance when that logical CPU runs work.
 **Sparse all-zero FIXC rows after warm-up are expected on idle CPUs** (common
@@ -376,6 +379,30 @@ c122-018: DCGM user time was 100.04x `/proc/stat` user time on loaded CPUs). Key
 `E` schema are unchanged; archives span a 100x step at the upgrade. No `hpcperfstats/` code
 reads these keys today; anything that derived seconds from them divided by 1e6 and must now
 not also divide by 100.
+
+### Grace `host_cpu_hw` counters (3.1: direct perf, no LIKWID on aarch64)
+
+3.1 replaces the aarch64 LIKWID overlay with direct `perf_event` readers (`arm_core_perf`,
+`arm_imc_scf`). Every read is scaled by time_enabled / time_running, like `perf stat`.
+On GB200 / GH200 `nvidia-powerd` holds most Grace core PMCs, so the kernel multiplexes the
+monitor's events and the unscaled LIKWID reads of 3.0 were low by the time-sharing factor
+(estimated up to about 4×; not yet measured, see the rate-step note below). Grace-Grace nodes
+run no `nvidia-powerd`, so their counters were not shared and their rates should barely change.
+
+| Before (≤ 3.0) | From 3.1 | Notes |
+|----------------|----------|-------|
+| `instr_retired`, `aperf` / `mperf` / `cpu_clock_est_cycles` (measured part) from LIKWID, unscaled | same keys, scaled direct perf | **Rate step on GPU nodes (GB200 / GH200):** Grace instructions and cycles rise at the upgrade by the old time-sharing factor, estimated up to about 4× (expected, not a workload change; the Phase 1 canary measures it against `perf stat`). Grace-Grace nodes (no `nvidia-powerd`) should see little or no change. No backfill; older jobs keep the old values. Widths unchanged: W=48 keys carry the lifetime modulo 2^48, `cpu_clock_est_cycles` is W=64. |
+| — | `arm_fp_dp_spec`, `arm_fp_sp_spec`, `arm_fp_hp_spec` (`E,W=64`) | FP **instructions** by precision (all vector widths; `FP_*_SPEC`). |
+| `arm_est_flops` = scalar SP + DP (always 0: never programmed) | `arm_est_flops` = `FP_FIXED_OPS_SPEC` + `FP_SCALE_OPS_SPEC` | Measured FLOPs. |
+| `arm_int8_ops`, `arm_int16_ops` (always 0) | `ASE_SVE_INT8_SPEC`, `ASE_SVE_INT16_SPEC` | SVE integer instructions, W=48. |
+| `fp_arith_inst_retired_scalar_{single,double}` | stay 0 on Grace | Intel event names. |
+| `arm_aarch64_imc` via SCF counters in the LIKWID group (`PENDING` until the overlay was up) | own perf fds per `nvidia_scf_pmu_<N>`; re-scan while no memory PMU is bound | Same keys and units (64-byte CAS). GH200 nodes report one socket. |
+
+FP and SVE events are resolved from sysfs names first, then from a MIDR-keyed raw-code table with
+one row (Arm Neoverse V2, MIDR `0x410fd4f0`). Another core logs its MIDR once and leaves those keys
+at 0 until a verified row is added. A key whose event is not open is not published. The analysis
+side reads the new keys as `avg_fp{64,32,16}_instr`; see
+`HPCPerfStats/docs/monitor_variable_rename_map.yaml`.
 
 ### Lustre collectors (`lustre_mdc` / `lustre_osc` / `lustre_llite`)
 
@@ -577,7 +604,7 @@ estimates by the SoC + memory share of the socket. History with only the old key
 formula. See `HPCPerfStats/docs/monitor_variable_rename_map.yaml`.
 
 
-- **`cpu_counter_metrics` (`arm` backend + LIKWID overlay on Grace)**: util accumulators from `/proc/stat` jiffies over the daemon's collect interval; the clock comes from cpufreq **`scaling_cur_freq`** (never `cpuinfo_cur_freq`, which reports bogus CPPC values on Grace), falling back to `base_frequency` / `cpuinfo_max_freq` / `scaling_max_freq`. **Fail-soft cycle keys** (always accumulated from util + `clock_khz` when LIKWID cycles are sparse): **`mperf`** = reference cycles (`ref = clock_khz × Δt_us / 1000`), **`aperf`** = active cycles (`act = ref × (util_total / 100)`), **`cpu_clock_est_cycles`** = same as **`aperf`** under fail-soft. Statically linked **LIKWID** (pin **5.5.2**, `ACCESSMODE=perf_event`) may overwrite those three when measured cycles are nonzero, and fills **`instr_retired`** from `INST_RETIRED`. Production Grace eventset is **CYC+INS only** (`CPU_CYCLES:PMC0,INST_RETIRED:PMC1`); SP/DP/`arm_est_flops`/`arm_int8_ops`/`arm_int16_ops` stay 0 unless a later eventset maps them. Synthetic FLOPs (and non-cycle synthetic counters) are disabled when the overlay is compiled in. The backend uses no DCGM: embedded DCGM ran five 100–200 Hz timer loops (~615 wakeups/s) whatever the watch cadence, ≈ 8 core-s/h under the `performance` governor and ≈ 109 under `ondemand`.
+- **`cpu_counter_metrics` (`arm` backend on Grace)**: util accumulators from `/proc/stat` jiffies over the daemon's collect interval; the clock comes from cpufreq **`scaling_cur_freq`** (never `cpuinfo_cur_freq`, which reports bogus CPPC values on Grace), falling back to `base_frequency` / `cpuinfo_max_freq` / `scaling_max_freq`. **Fail-soft cycle keys** (accumulated from util + `clock_khz`): **`mperf`** = reference cycles (`ref = clock_khz × Δt_us / 1000`), **`aperf`** = active cycles (`act = ref × (util_total / 100)`), **`cpu_clock_est_cycles`** = same as **`aperf`**. When the direct-perf CYC event (`arm_core_perf`) is open and its scaled lifetime is > 0, all three carry measured cycles instead. `instr_retired`, `arm_fp_{dp,sp,hp}_spec`, `arm_est_flops` (FIXED + SCALE) and `arm_int8_ops` / `arm_int16_ops` come only from measured events; nothing synthesizes instructions or FLOPs from util. The backend uses no DCGM: embedded DCGM ran five 100–200 Hz timer loops (~615 wakeups/s) whatever the watch cadence, ≈ 8 core-s/h under the `performance` governor and ≈ 109 under `ondemand`.
 - **`host_power_socket`**: one row per socket from the ACPI power meters (`acpi_power_meter` hwmon, `power1_average` µW → W): `cpu_power_w`, `socket_power_w`, `sysio_power_w`, `module_power_w`; a missing meter publishes 0 and unknown `<Name> Power Socket <N>` labels are logged once. `socket_power_w` already contains `cpu_power_w` and `sysio_power_w`; `module_power_w` (GH200) contains the GPU — do not add them together.
 - **`nvidia_gpu`**: **`power_usage`** is the per-GPU draw. On GPM-capable GPUs (Hopper and newer) every key comes from **NVML + GPM** (`libnvidia-ml` loaded at runtime, override **`HPCPERFSTATS_NVML_LIB`**, allowlisted like the DCGM override): GPM percent × 0.01 = the DCGM ratio, GPM MiB/s × 1048576 = DCGM PROF bytes/s (checked against DCGM under load on GB200). NVML+GPM runs no background threads (embedded DCGM ran ~400 wakeups/s for the same fields). GPUs without GPM, or a node without a usable `libnvidia-ml`, use the DCGM path; an NVML failure mid-run switches to DCGM for the rest of the process (logged once). `dev` = NVML index, which equals the DCGM GPU id order on GB200 and GH200.
 - **`nvidia_gpu` profiling splits**: when the DCGM stack supports them, **`tensor_imma_active`**, **`tensor_hmma_active`**, and **`tensor_dfma_active`** mirror **`DCGM_FI_PROF_PIPE_TENSOR_IMMA_ACTIVE` / `TENSOR_HMMA_ACTIVE` / `TENSOR_DFMA_ACTIVE`** (tensor pipe duty cycles, 0–100). IMMA is a **low-precision tensor / FP8-adjacent signal only**, not a dedicated FP8 FLOP counter. **`gpu_flops_rate`** / **`fp_mix`** still use **`tensor_active`** plus FP64/32/16 pipes only, so IMMA/HMMA/DFMA are **not** folded into the lumped FLOP estimate (avoids double-counting with legacy **`tensor_active`**). If **`dcgmWatchFields`** rejects optional tensor split field IDs (common on older embedded DCGM builds), the monitor automatically retries with the smaller core PROF field set so **`nvidia_gpu`** rows still publish on GH/Hopper clusters.
@@ -585,7 +612,7 @@ formula. See `HPCPerfStats/docs/monitor_variable_rename_map.yaml`.
 - **DCGM watch fallback ladder** for `nvidia_gpu` (DCGM path only): `full-prof` (IMMA/HMMA/DFMA) → `core-prof` (legacy FP/SM/tensor/DRAM pipes) → `basic-nonprof` (power/temp/util/fb/clock/replay). Board-power fields 1132/1133 left every profile with the round-2 key retirement, so DCGM 3.1.x (LS6 A100) accepts the preferred profiles again.
 - **Hardware sniff (`lspci`) gaps**: optional **`nvidia_gpu`** stays enabled when **`lspci`** is unavailable (prior behavior). When **`lspci`** is present but omits vendor prose, **`/proc/driver/nvidia/version`**, **`/dev/nvidia0`**, or **`lspci -nn`** lines matching **`[10de:`** plus usual GPU PCI classes still defeat disabling **`nvidia_gpu`** before DCGM runs. PCI class/vendor heuristics are shared between runtime (`src/gpu_pci_detect.c` / `hwdetect.c`) and build/configure probes (`scripts/gpu_lspci_probe.sh`); **`tests/test_gpu_lspci_detect_parity.sh`** guards parity on fixture lines.
 - Runtime override: set **`HPCPERFSTATS_FORCE_NVIDIA_GPU=1`** to keep `nvidia_gpu` enabled even if runtime hardware sniffing misses NVIDIA.
-- **DCGM loaded at runtime on every arch**: the monitor is built with vendored DCGM headers and **loads `libdcgm` at runtime** (`dlopen`) only when `nvidia_gpu` needs the DCGM path — CPU-only and Grace-only nodes do not need DCGM installed, and the binary links neither `libdcgm` nor `libnvidia-ml` (`readelf -d` shows neither in `NEEDED`). GPU nodes on the DCGM path need a compatible **`libdcgm.so`** (override with **`HPCPERFSTATS_DCGM_LIB`**). aarch64 / Grace builds statically link **LIKWID** (`liblikwid.a` from the static bundle) for the cycles/inst overlay.
+- **DCGM loaded at runtime on every arch**: the monitor is built with vendored DCGM headers and **loads `libdcgm` at runtime** (`dlopen`) only when `nvidia_gpu` needs the DCGM path — CPU-only and Grace-only nodes do not need DCGM installed, and the binary links neither `libdcgm` nor `libnvidia-ml` (`readelf -d` shows neither in `NEEDED`). GPU nodes on the DCGM path need a compatible **`libdcgm.so`** (override with **`HPCPERFSTATS_DCGM_LIB`**). aarch64 / Grace builds link no LIKWID (3.1+; counters are direct perf).
 - **DCGM session**: `nvidia_gpu` is the only DCGM user (`monitor_dcgm_session_acquire` / `release` stay refcounted for teardown safety).
 - **`libdcgm` + `lshw` (mlx5 MCIA dmesg)**: `libdcgm` may run **`lshw -json`** for serial discovery via absolute **`/usr/bin/lshw`** then **`/usr/sbin/lshw`** (minimal child env — **`PATH` cannot intercept**). On nodes with empty-module Ethernet mlx ports (Horizon), that spam `mlx5_query_module_id` / `query_mcia_reg failed: status: 0x3`. The RPM installs a no-op stub at **`/usr/libexec/hpcperfstats/stubs/lshw`**; **`hpcperfstats.service`** bind-mounts it over those absolute paths in the unit namespace (`BindReadOnlyPaths=`). The unit still prepends the stub dir on **`PATH`** for bare `lshw` only. For manual/foreground runs use **`systemd-run`** with the same binds, e.g. `systemd-run --wait --collect -p BindReadOnlyPaths=-/usr/libexec/hpcperfstats/stubs/lshw:/usr/bin/lshw -p BindReadOnlyPaths=-/usr/libexec/hpcperfstats/stubs/lshw:/usr/sbin/lshw /usr/sbin/hpcperfstatsd ...` (PATH alone still hits real `lshw`). If binds fail to start the unit: drop-in `InaccessiblePaths=-/usr/bin/lshw -/usr/sbin/lshw`.
 - **`roofline_hw_peak` in daemon payloads**: emitted **only** when **`stats_wr_hdr()`** runs (`write_hdr=1`): same buffered payload as the **`$`** property banner / **`!`** schema lines from **`stats_wr_hdr`**, followed by the first **`stats_buffer_collect`** timestamp block (`roofline_hw_peak_collect` is gated by **`stats_collect_on_changeover`**). **SIGHUP** reload triggers an immediate header/sample collect so schema changes are visible without waiting for the periodic rotate timer.
@@ -740,7 +767,7 @@ Foreign prerequisites:
 1. Install host build tooling: `make`, `cmake`, `pkg-config`, plus downloader (`curl` or `wget`).
    QEMU source bootstrap may also install Python `tomli` and `ninja` in user space via `python3 -m pip --user`.
 2. Provide a sysroot per target triplet, or allow script auto-generation via Rocky rootfs tarball download.
-3. For non-x86 targets, native/static builds need static **LIKWID** from the bundle (`liblikwid.a`); no DCGM at build time (`libdcgm` is loaded at runtime). Foreign cross smoke builds the production `arm` backend (`--with-cpu-counter-backend=auto`).
+3. Non-x86 targets build no LIKWID (3.1+) and no DCGM at build time (`libdcgm` is loaded at runtime); the static bundle needs only libev and rabbitmq-c there. Foreign cross smoke builds the production `arm` backend (`--with-cpu-counter-backend=auto`); x86 targets still build static LIKWID.
 4. Export one of:
    - `SYSROOT_<TRIPLET_SLUG>` (preferred), e.g. `SYSROOT_AARCH64_LINUX_GNU=/opt/sysroots/aarch64`
    - `SYSROOT` as a fallback for all foreign targets.

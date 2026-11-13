@@ -44,15 +44,15 @@ endif
 # Keep assert() live under release -DNDEBUG (drivers put required calls inside asserts).
 AM_CPPFLAGS = -include $(srcdir)/test_assert_live.h -I$(top_builddir)/src -I$(top_srcdir)/src $(monitor_unit_cppflags)
 
-check_PROGRAMS = test_assert_live test_cpuid_signature test_amd_cpuid_match test_amd_df_likwid_profiles test_amd_x86_uncore_df_schema test_likwid_rapl_support test_likwid_rapl_pwr_events test_rapl_powercap test_amd64_rapl_likwid_ready test_intel_rapl_likwid_ready test_likwid_pmc_force_env test_likwid_pmc_access_mode test_likwid_pmc_schema_map test_likwid_arch_map_spr test_likwid_arch_map_grace test_likwid_uncore_profiles test_likwid_uncore_adapter test_host_edac_mem_topology test_intel_skx_imc_schema test_intel_icx_imc_schema test_intel_spr_imc_schema test_intel_emr_imc_schema test_intel_gnr_imc_schema test_intel_srf_imc_schema test_string1 test_secure_path test_dyn_lib_path test_stats_buffer_data_append test_stats_buffer_uts test_stats_buffer_rows test_stats_buffer_rmq_policy test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_monitor_log test_monitor_release_logging test_monitor_options_kv test_pscanf test_schema_parse test_stats_file_format test_stats_file_format_extra test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_likwid_overlay_map test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_roofline_detect_fixture test_roofline_hw_peak_identity test_nfs_schema_subset test_ib_schema_contract test_host_schema_contract test_lustre_schema_contract test_lustre_proc_stats test_beegfs_schema_contract test_beegfs_ctl_parse test_opa_schema_contract test_opa_sysfs_map test_opa_mad_backoff test_ib_hca_is_opa_hfi test_opa_lspci_match test_lnet_schema_contract test_arm_aarch64_imc_schema test_arm_imc_scf test_metric_profiler test_hwdetect_policy test_hwdetect_lspci test_gpu_pci_detect test_intel_gpu_schema_contract test_intel_gpu_publish test_intel_gpu_xpumcli_parse test_xpum_gpu_dyn test_dcgm_gpu_dyn test_dcgm_session test_ib_mad_dyn test_opa_mad_dyn test_ib_port_state test_ib_port_collectible test_ib_foreach_hca_port test_ib_family test_stats_runtime_type_controls test_stats_runtime_likwid_begin_order test_stats_runtime_overlay_begin_order test_stats_runtime_collect test_collect_tier_table test_collect_phase test_collect_tier_gate test_stats_set_tier_gate test_stats_type_get test_dcgm_watch_policy test_dict test_host_key_alias test_proc_status_order test_schema_emit test_procfile_kv test_collect_str test_nvidia_gpu_estimate test_nvidia_gpu_dcgm_field test_nvidia_gpu_dcgm_profiles test_daemonize test_proc_filter test_job_proc_discover test_job_gpu_assign test_job_sched_affinity test_job_discovery_marks test_job_cgroup_mem test_host_mem_job_schema_contract
+check_PROGRAMS = test_assert_live test_cpuid_signature test_amd_cpuid_match test_amd_df_likwid_profiles test_amd_x86_uncore_df_schema test_likwid_rapl_support test_likwid_rapl_pwr_events test_rapl_powercap test_amd64_rapl_likwid_ready test_intel_rapl_likwid_ready test_likwid_pmc_force_env test_likwid_pmc_access_mode test_likwid_pmc_schema_map test_likwid_arch_map_spr test_likwid_uncore_profiles test_likwid_uncore_adapter test_host_edac_mem_topology test_intel_skx_imc_schema test_intel_icx_imc_schema test_intel_spr_imc_schema test_intel_emr_imc_schema test_intel_gnr_imc_schema test_intel_srf_imc_schema test_string1 test_secure_path test_dyn_lib_path test_stats_buffer_data_append test_stats_buffer_uts test_stats_buffer_rows test_stats_buffer_rmq_policy test_path_collect test_path_open_fail_once test_path_read test_sys_iter test_procfile_parse test_monitor_log test_monitor_release_logging test_monitor_options_kv test_pscanf test_schema_parse test_stats_file_format test_stats_file_format_extra test_stats_text_format test_gpu_schema_contract test_cpu_counter_metrics_schema test_cpu_counter_metrics_schema_arm test_roofline_hw_peak_schema test_roofline_hw_peak_changeover test_roofline_detect_fixture test_roofline_hw_peak_identity test_nfs_schema_subset test_ib_schema_contract test_host_schema_contract test_lustre_schema_contract test_lustre_proc_stats test_beegfs_schema_contract test_beegfs_ctl_parse test_opa_schema_contract test_opa_sysfs_map test_opa_mad_backoff test_ib_hca_is_opa_hfi test_opa_lspci_match test_lnet_schema_contract test_arm_aarch64_imc_schema test_arm_imc_scf test_metric_profiler test_hwdetect_policy test_hwdetect_lspci test_gpu_pci_detect test_intel_gpu_schema_contract test_intel_gpu_publish test_intel_gpu_xpumcli_parse test_xpum_gpu_dyn test_dcgm_gpu_dyn test_dcgm_session test_ib_mad_dyn test_opa_mad_dyn test_ib_port_state test_ib_port_collectible test_ib_foreach_hca_port test_ib_family test_stats_runtime_type_controls test_stats_runtime_likwid_begin_order test_stats_runtime_arm_begin_order test_stats_runtime_collect test_collect_tier_table test_collect_phase test_collect_tier_gate test_stats_set_tier_gate test_stats_type_get test_dcgm_watch_policy test_dict test_host_key_alias test_proc_status_order test_schema_emit test_procfile_kv test_collect_str test_nvidia_gpu_estimate test_nvidia_gpu_dcgm_field test_nvidia_gpu_dcgm_profiles test_daemonize test_proc_filter test_job_proc_discover test_job_gpu_assign test_job_sched_affinity test_job_discovery_marks test_job_cgroup_mem test_host_mem_job_schema_contract
 if INFINIBAND
 check_PROGRAMS += test_ib_mad_backoff test_ib_mad_decode test_ib_mad_sw_swap
 endif
-# Pure arm-backend util/publish math and host_power_socket run on every host (portable C).
+# Pure arm-backend util/publish math, the direct-perf readers (fake sysfs + pipe fds) and
+# host_power_socket run on every host (portable C).
 check_PROGRAMS += test_nvidia_gpu_nvml_convert test_nvidia_gpu_nvml
 check_PROGRAMS += test_cpu_counter_arm_util test_cpu_counter_arm_publish \
-	test_cpu_counter_arm_publish_likwid \
-	test_cpu_counter_metrics_likwid_ready_arm \
+	test_arm_perf_util test_arm_core_perf \
 	test_arm_power_hwmon test_arm_power_socket
 if RABBITMQ
 check_PROGRAMS += test_monitor_cli test_ring_buffer test_stats_buffer_collect test_stats_buffer_debug_shm test_debug_shm_emit_golden test_debug_shm_schema_mirror test_monitor_timing
@@ -159,10 +159,6 @@ test_likwid_pmc_schema_map_SOURCES = \
 
 test_likwid_arch_map_spr_SOURCES = \
 	test_likwid_arch_map_spr.c \
-	$(top_srcdir)/src/likwid_arch_map.c
-
-test_likwid_arch_map_grace_SOURCES = \
-	test_likwid_arch_map_grace.c \
 	$(top_srcdir)/src/likwid_arch_map.c
 
 test_cpuid_signature_SOURCES = \
@@ -305,27 +301,24 @@ test_cpu_counter_arm_util_SOURCES = \
 	test_cpu_counter_arm_util.c \
 	$(top_srcdir)/src/cpu_counter_metrics_arm_util.c
 
-# Horizon arm+HAVE_LIKWID: ready() must be declared and stub to 0 (no implicit-decl).
-test_cpu_counter_metrics_likwid_ready_arm_SOURCES = \
-	test_cpu_counter_metrics_likwid_ready_arm.c \
-	$(top_srcdir)/src/cpu_counter_metrics_likwid_begin.c
-test_cpu_counter_metrics_likwid_ready_arm_CPPFLAGS = $(AM_CPPFLAGS) \
-	-UMONITOR_CPU_BACKEND_LIKWID -DMONITOR_CPU_BACKEND_ARM
-test_cpu_counter_metrics_likwid_ready_arm_CFLAGS = $(AM_CFLAGS) \
-	-Werror=implicit-function-declaration
-
 test_cpu_counter_arm_publish_SOURCES = \
 	test_cpu_counter_arm_publish.c \
 	test_stats_stub.c \
 	$(top_srcdir)/src/cpu_counter_metrics_arm_publish.c
 
-# Same sources with LIKWID overlay gate — locks util×freq cycle fail-soft.
-test_cpu_counter_arm_publish_likwid_SOURCES = \
-	test_cpu_counter_arm_publish.c \
-	test_stats_stub.c \
-	$(top_srcdir)/src/cpu_counter_metrics_arm_publish.c
-test_cpu_counter_arm_publish_likwid_CPPFLAGS = $(AM_CPPFLAGS) -DMONITOR_CPU_LIKWID_OVERLAY
-test_cpu_counter_arm_publish_likwid_CFLAGS = $(AM_CFLAGS)
+test_arm_perf_util_SOURCES = \
+	test_arm_perf_util.c \
+	test_fake_perf.c \
+	test_fake_perf.h \
+	$(top_srcdir)/src/arm_perf_util.c
+
+test_arm_core_perf_SOURCES = \
+	test_arm_core_perf.c \
+	test_fake_perf.c \
+	test_fake_perf.h \
+	$(top_srcdir)/src/arm_core_perf.c \
+	$(top_srcdir)/src/arm_perf_util.c \
+	$(top_srcdir)/src/monitor_log.c
 
 test_arm_power_hwmon_SOURCES = \
 	test_arm_power_hwmon.c \
@@ -338,11 +331,6 @@ test_arm_power_socket_SOURCES = \
 	$(top_srcdir)/src/arm_power_socket.c \
 	$(top_srcdir)/src/arm_power_hwmon.c \
 	$(top_srcdir)/src/monitor_log.c
-
-test_likwid_overlay_map_SOURCES = \
-	test_likwid_overlay_map.c \
-	test_stats_stub.c \
-	$(top_srcdir)/src/cpu_counter_metrics_likwid_overlay_map.c
 
 test_string1_SOURCES = test_string1.c
 
@@ -447,6 +435,10 @@ test_assert_live_SOURCES = test_assert_live.c test_assert_live.h
 test_assert_live_CPPFLAGS = $(AM_CPPFLAGS) -DNDEBUG
 
 test_cpu_counter_metrics_schema_SOURCES = test_cpu_counter_metrics_schema.c
+# Same contract with the Grace `arm` schema (D1 keys at W=64) on every host.
+test_cpu_counter_metrics_schema_arm_SOURCES = test_cpu_counter_metrics_schema.c
+test_cpu_counter_metrics_schema_arm_CPPFLAGS = $(AM_CPPFLAGS) \
+	-UMONITOR_CPU_BACKEND_LIKWID -DMONITOR_CPU_BACKEND_ARM
 
 test_roofline_hw_peak_schema_SOURCES = \
 	test_roofline_hw_peak_schema.c
@@ -525,7 +517,11 @@ test_lnet_schema_contract_SOURCES = test_lnet_schema_contract.c
 test_arm_aarch64_imc_schema_SOURCES = test_arm_aarch64_imc_schema.c
 test_arm_imc_scf_SOURCES = \
 	test_arm_imc_scf.c \
-	$(top_srcdir)/src/arm_imc_scf.c
+	test_fake_perf.c \
+	test_fake_perf.h \
+	$(top_srcdir)/src/arm_imc_scf.c \
+	$(top_srcdir)/src/arm_perf_util.c \
+	$(top_srcdir)/src/monitor_log.c
 
 test_metric_profiler_SOURCES = \
 	test_metric_profiler.c \
@@ -696,12 +692,12 @@ test_stats_runtime_likwid_begin_order_SOURCES = \
 	$(top_srcdir)/src/monitor_timing.c \
 	$(top_srcdir)/src/dict.c
 
-# Grace DCGM+LIKWID overlay configuration of the same driver (x86 hosts define the exclusive
-# LIKWID backend, so drop it to model Horizon aarch64).
-test_stats_runtime_overlay_begin_order_SOURCES = $(test_stats_runtime_likwid_begin_order_SOURCES)
-test_stats_runtime_overlay_begin_order_CPPFLAGS = $(AM_CPPFLAGS) -DMONITOR_WITH_HARDWARE \
-	-UMONITOR_CPU_BACKEND_LIKWID -DMONITOR_CPU_BACKEND_ARM -DMONITOR_CPU_LIKWID_OVERLAY
-test_stats_runtime_overlay_begin_order_LDADD = $(LDADD) -lm
+# Grace `arm` backend configuration of the same driver (x86 hosts define the exclusive LIKWID
+# backend, so drop it to model aarch64): no begin-order special case since 3.1.
+test_stats_runtime_arm_begin_order_SOURCES = $(test_stats_runtime_likwid_begin_order_SOURCES)
+test_stats_runtime_arm_begin_order_CPPFLAGS = $(AM_CPPFLAGS) -DMONITOR_WITH_HARDWARE \
+	-UMONITOR_CPU_BACKEND_LIKWID -DMONITOR_CPU_BACKEND_ARM
+test_stats_runtime_arm_begin_order_LDADD = $(LDADD) -lm
 
 test_stats_runtime_collect_SOURCES = \
 	test_stats_runtime_collect.c \
@@ -880,13 +876,11 @@ test_schema_emit_LDADD = $(LDADD)
 test_procfile_kv_LDADD = $(LDADD)
 test_collect_str_LDADD = $(LDADD)
 test_cpu_counter_arm_util_LDADD = $(LDADD)
-test_cpu_counter_metrics_likwid_ready_arm_LDADD = $(LDADD)
 test_cpu_counter_arm_publish_LDADD = $(LDADD)
-test_cpu_counter_arm_publish_likwid_LDADD = $(LDADD)
+test_arm_perf_util_LDADD = $(LDADD)
+test_arm_core_perf_LDADD = $(LDADD)
 test_arm_power_hwmon_LDADD = $(LDADD)
 test_arm_power_socket_LDADD = $(LDADD)
-test_likwid_overlay_map_LDADD = $(LDADD)
-test_likwid_arch_map_grace_LDADD = $(LDADD)
 test_string1_LDADD = $(LDADD)
 
 test_secure_path_SOURCES = \
@@ -917,6 +911,7 @@ test_stats_file_format_extra_LDADD = $(LDADD)
 test_stats_text_format_LDADD = $(LDADD)
 test_gpu_schema_contract_LDADD = $(LDADD)
 test_cpu_counter_metrics_schema_LDADD = $(LDADD)
+test_cpu_counter_metrics_schema_arm_LDADD = $(LDADD)
 test_roofline_hw_peak_schema_LDADD = $(LDADD)
 test_roofline_hw_peak_changeover_LDADD = $(LDADD) -ldl -lm
 test_roofline_detect_fixture_LDADD = $(LDADD) -ldl -lm

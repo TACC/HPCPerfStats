@@ -20,6 +20,28 @@ def _event_key_names(schema_keys: list[str]) -> list[str]:
     return [schema_key_name(k) for k in schema_keys if schema_token_is_event_counter(k)]
 
 
+def _event_widths(manifest: dict, schema_by_type: dict[str, list[str]]) -> dict[tuple[str, str], int]:
+    """(type, key) -> counter width from the schema ``W=`` token (64 when absent)."""
+    out: dict[tuple[str, str], int] = {}
+    for type_name in set(schema_by_type) | set(manifest.get("types", {})):
+        info = manifest.get("types", {}).get(type_name, {})
+        for tok in info.get("schema_keys") or schema_by_type.get(type_name, []):
+            if schema_token_is_event_counter(tok):
+                w = [p.strip()[2:] for p in tok.split(",")[1:] if p.strip().startswith("W=")]
+                out[(type_name, schema_key_name(tok))] = int(w[0]) if w else 64
+    return out
+
+
+def _advance(va: int, vb: int, width: int) -> int:
+    """Forward distance an E counter moved; negative for a real decrease.
+
+    The daemon emits W<64 keys modulo 2^W (Grace aperf/mperf wrap 2^48 after ~26 h per core),
+    so a drop whose forward distance is under half the range is a wrap, not a restart.
+    """
+    fwd = (vb - va) % (1 << width)
+    return fwd if vb >= va or fwd < (1 << (width - 1)) else vb - va
+
+
 def _build_event_map(
     body: str,
     manifest: dict,
@@ -125,13 +147,15 @@ def _check_monotonic_pair(
     # on a core, idle GPU, unused NUMA node: c122-018 2026-11-09), so flats are a NOTE. A
     # decrease breaks the E contract and fails; liveness is the must-move canaries' job.
     flat: dict[tuple[str, str], list[tuple[str, str, str]]] = defaultdict(list)
+    widths = _event_widths(manifest, schema_by_type)
     for key in sorted(common):
         va, vb = map_a[key], map_b[key]
         type_name, dev, metric = key
         checked += 1
-        if vb < va:
+        moved = _advance(va, vb, widths.get((type_name, metric), 64))
+        if moved < 0:
             warn(f"{type_name}/{dev} {metric}: decreased {va} -> {vb} (possible restart?)")
-        elif vb == va and delta >= sample_freq:
+        elif moved == 0 and delta >= sample_freq:
             flat[(type_name, dev)].append(key)
 
     flat_types: dict[str, int] = defaultdict(int)
@@ -158,6 +182,7 @@ def _check_monotonic_pair(
 def _any_advanced(
     map_a: dict[tuple[str, str, str], int],
     map_b: dict[tuple[str, str, str], int],
+    widths: dict[tuple[str, str], int],
     *,
     type_names: set[str] | None = None,
     metrics: set[str] | None = None,
@@ -169,7 +194,7 @@ def _any_advanced(
             continue
         if metrics is not None and metric not in metrics:
             continue
-        if map_b[key] > map_a[key]:
+        if _advance(map_a[key], map_b[key], widths.get((type_name, metric), 64)) > 0:
             return True
     return False
 
@@ -222,10 +247,11 @@ def _check_must_move_canaries(
         return
 
     map_a, map_b = _merge_event_maps(pairs, manifest, schema_by_type)
+    widths = _event_widths(manifest, schema_by_type)
     present = set(schema_by_type)
 
     if "host_cpu" in present:
-        if _any_advanced(map_a, map_b, type_names={"host_cpu"}, metrics=set(_CPU_TIME_KEYS)):
+        if _any_advanced(map_a, map_b, widths, type_names={"host_cpu"}, metrics=set(_CPU_TIME_KEYS)):
             notes.append("PASS cross_sample canary host_cpu")
         else:
             warn("canary host_cpu: no E-key advanced after stimulus")
@@ -238,14 +264,14 @@ def _check_must_move_canaries(
             types.add("host_vm")
         if has_block:
             types.add("host_block")
-        if _any_advanced(map_a, map_b, type_names=types):
+        if _any_advanced(map_a, map_b, widths, type_names=types):
             notes.append("PASS cross_sample canary host_vm/host_block")
         else:
             warn("canary host_vm/host_block: no E-key advanced after stimulus")
 
     if touched_lustre and "lustre_llite" in present:
         lustre_types = {t for t in present if t.startswith("lustre_")}
-        if _any_advanced(map_a, map_b, type_names=lustre_types):
+        if _any_advanced(map_a, map_b, widths, type_names=lustre_types):
             notes.append("PASS cross_sample canary lustre")
         else:
             warn("canary lustre: no E-key advanced after stimulus")

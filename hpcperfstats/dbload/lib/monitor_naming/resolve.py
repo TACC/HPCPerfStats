@@ -703,6 +703,57 @@ def arm_int16_ops_event_names() -> tuple[str, ...]:
   )
 
 
+def arm_fp_dp_spec_event_names() -> tuple[str, ...]:
+  """
+  Grace ``host_cpu_hw`` FP64 FP instruction count event (monitor 3.1).
+
+  ``arm_fp_dp_spec`` is a new canonical key with no legacy alias, so the probe
+  list holds the canonical name only.
+
+  Returns:
+    tuple[str, ...]: ``host_data.event`` probe order (one name).
+
+  Examples:
+    >>> arm_fp_dp_spec_event_names()
+    ('arm_fp_dp_spec',)
+  """
+  return (canon.ARM_FP_DP_SPEC,)
+
+
+def arm_fp_sp_spec_event_names() -> tuple[str, ...]:
+  """
+  Grace ``host_cpu_hw`` FP32 FP instruction count event (monitor 3.1).
+
+  ``arm_fp_sp_spec`` is a new canonical key with no legacy alias, so the probe
+  list holds the canonical name only.
+
+  Returns:
+    tuple[str, ...]: ``host_data.event`` probe order (one name).
+
+  Examples:
+    >>> arm_fp_sp_spec_event_names()
+    ('arm_fp_sp_spec',)
+  """
+  return (canon.ARM_FP_SP_SPEC,)
+
+
+def arm_fp_hp_spec_event_names() -> tuple[str, ...]:
+  """
+  Grace ``host_cpu_hw`` FP16 FP instruction count event (monitor 3.1).
+
+  ``arm_fp_hp_spec`` is a new canonical key with no legacy alias, so the probe
+  list holds the canonical name only.
+
+  Returns:
+    tuple[str, ...]: ``host_data.event`` probe order (one name).
+
+  Examples:
+    >>> arm_fp_hp_spec_event_names()
+    ('arm_fp_hp_spec',)
+  """
+  return (canon.ARM_FP_HP_SPEC,)
+
+
 def grace_fp_scalar_double_event_names() -> tuple[str, ...]:
   """
   Grace host_cpu_hw scalar FP64 event (canonical only; no Intel uppercase).

@@ -102,6 +102,9 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
   amd_pmc_type_names,
   arm_dram_bw_event_names,
   arm_est_flops_event_names,
+  arm_fp_dp_spec_event_names,
+  arm_fp_hp_spec_event_names,
+  arm_fp_sp_spec_event_names,
   arm_imc_types_probe_order,
   arm_int8_ops_event_names,
   arm_int16_ops_event_names,
@@ -650,7 +653,14 @@ INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
 # monitor round 2, D35). Rows with only the retired keys keep the old
 # formula, so history values are unchanged; jobs ingested from a round-2
 # monitor before this consumer had no CPU term and are recomputed.
-METRICS_CONTRACT_VERSION = 7
+# 8 (2026-11-13): CPU precision metrics are FP instruction rates (O10):
+# new avg_fp64_instr / avg_fp32_instr / avg_fp16_instr (Ginstr/s) from Grace
+# host_cpu_hw arm_fp_dp_spec / arm_fp_sp_spec / arm_fp_hp_spec (monitor 3.1),
+# avg_arm_int8_ops / avg_arm_int16_ops units Gops -> Ginstr/s. A sampled 0 is
+# stored as 0 with no no_data_reason (idle); only never-sampled keys keep
+# NO_SIMPLE_SAMPLES_MSG (C4). avg_flops64b/32b stay for history but no
+# longer feed the CPU Multiprecision Mix pie.
+METRICS_CONTRACT_VERSION = 8
 # ``no_data_reason`` written for catalog rows a backfill job never produced
 # after it exhausted the failure-memory backoff (daily step); the job is
 # stamped with the current version so the sweep does not spin on it.
@@ -1968,17 +1978,38 @@ class Metrics:
         "conv": 1e-9,
         "units": "GF",
       },
+      # FP instruction rates by width (CPU Multiprecision Mix pie, O10).
+      # Generic job_arc path: a sampled 0 stays 0 (idle), a key the job's
+      # schema never carried is None (NO_SIMPLE_SAMPLES_MSG).
+      "avg_fp64_instr": {
+        "typename": HOST_CPU_HW_TYPE,
+        "events": [arm_fp_dp_spec_event_names()[0]],
+        "conv": 1e-9,
+        "units": "Ginstr/s",
+      },
+      "avg_fp32_instr": {
+        "typename": HOST_CPU_HW_TYPE,
+        "events": [arm_fp_sp_spec_event_names()[0]],
+        "conv": 1e-9,
+        "units": "Ginstr/s",
+      },
+      "avg_fp16_instr": {
+        "typename": HOST_CPU_HW_TYPE,
+        "events": [arm_fp_hp_spec_event_names()[0]],
+        "conv": 1e-9,
+        "units": "Ginstr/s",
+      },
       "avg_arm_int8_ops": {
         "typename": HOST_CPU_HW_TYPE,
         "events": [arm_int8_ops_event_names()[0]],
         "conv": 1e-9,
-        "units": "Gops",
+        "units": "Ginstr/s",
       },
       "avg_arm_int16_ops": {
         "typename": HOST_CPU_HW_TYPE,
         "events": [arm_int16_ops_event_names()[0]],
         "conv": 1e-9,
-        "units": "Gops",
+        "units": "Ginstr/s",
       },
       "avg_gpu_mem_bw_gbps": {
         "typename": "nvidia_gpu",

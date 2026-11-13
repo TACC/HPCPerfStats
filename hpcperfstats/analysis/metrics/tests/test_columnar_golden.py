@@ -51,6 +51,22 @@ GOLDEN_SCALE_DEFECTS = {
 # value is checked against an independent pandas oracle of the documented
 # formula instead (``_avg_cpuusage_oracle``), never skipped.
 GOLDEN_NULL_DEFECTS = frozenset({"avg_cpuusage"})
+
+# Catalog rows added after the capture (METRICS_CONTRACT_VERSION 8,
+# cpu-precision Phase 1 O10): metric -> host_cpu_hw event. The golden has no
+# row for them; each computed row is checked against ``job_arc`` on that event
+# (a key the job never sampled must be NULL with a no-data reason).
+POST_GOLDEN_METRIC_EVENTS = {
+  "avg_fp64_instr": "arm_fp_dp_spec",
+  "avg_fp32_instr": "arm_fp_sp_spec",
+  "avg_fp16_instr": "arm_fp_hp_spec",
+}
+# Units text changed on purpose after the capture (contract 8, O10):
+# (metric, golden units) -> current units. Values are never mapped.
+GOLDEN_UNITS_UPDATES = {
+  ("avg_arm_int8_ops", "Gops"): "Ginstr/s",
+  ("avg_arm_int16_ops", "Gops"): "Ginstr/s",
+}
 _CPU_BUSY_EVENTS = ("user", "system", "nice")
 _CPU_IDLE_EVENTS = ("idle", "iowait", "irq", "softirq")
 
@@ -361,6 +377,26 @@ def test_metrics_rows_match_golden(jid, golden_jobs, monkeypatch):
       )
     return rounded_rows[key]["value"]
 
+  post_golden = sorted(set(got) - set(exp))
+  assert {k[1] for k in post_golden} == set(POST_GOLDEN_METRIC_EVENTS), (
+    f"jid={jid} unexpected post-golden rows {post_golden}"
+  )
+  for key in post_golden:
+    row = got.pop(key)
+    oracle = metrics_mod.Metrics().job_arc(
+      table,
+      typename="host_cpu_hw",
+      events=[POST_GOLDEN_METRIC_EVENTS[key[1]]],
+      conv=1e-9,
+    )
+    assert row["value"] == oracle, f"jid={jid} {key}: {row['value']!r}"
+    if oracle is None:
+      # No time-series job: every catalog row carries NO_TIME_SERIES_MSG.
+      assert row["no_data_reason"] in (
+        metrics_mod.NO_SIMPLE_SAMPLES_MSG,
+        metrics_mod.NO_TIME_SERIES_MSG,
+      ), f"jid={jid} {key} reason"
+    _record_deviation("metrics_post_golden_catalog", key[1], 1.0)
   assert sorted(got) == sorted(exp), f"jid={jid} metric row keys differ"
   assert int(payload["distinct_time_count"]) == int(
     gm["distinct_time_count"] or 0
@@ -368,7 +404,10 @@ def test_metrics_rows_match_golden(jid, golden_jobs, monkeypatch):
   assert payload["host_data_schema"] == gm["host_data_schema"]
   for key in sorted(exp):
     g, b = exp[key], got[key]
-    assert str(b["units"]) == str(g["units"]), f"jid={jid} {key} units"
+    want_units = GOLDEN_UNITS_UPDATES.get(
+      (key[1], str(g["units"])), str(g["units"])
+    )
+    assert str(b["units"]) == want_units, f"jid={jid} {key} units"
     if (
       key[1] in GOLDEN_NULL_DEFECTS
       and g["value"] is None

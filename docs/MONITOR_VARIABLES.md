@@ -289,7 +289,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 
 ### `aperf`
 
-- **Definition:** Active cycles (util-scaled). Grace DCGM fail-soft: act = mperf * (util_total / 100); LIKWID overlay overwrites with measured active cycles when measured > 0; on x86, MSR/FIXED actual/unhalted cycle counters rename to this key.
+- **Definition:** Active cycles (util-scaled). Grace fail-soft: act = mperf * (util_total / 100); measured core cycles replace it when the cycle counter is open (monitor 3.1, emitted modulo 2^48); on x86, MSR/FIXED actual/unhalted cycle counters rename to this key.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
@@ -307,28 +307,57 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 
 ### `arm_est_flops`
 
-- **Definition:** Grace host_cpu_hw: estimated floating-point operations per interval as SP+DP scalar only (does not include arm_int8_ops / arm_int16_ops).
+- **Definition:** Grace host_cpu_hw: measured floating-point operations (FP_FIXED_OPS_SPEC + FP_SCALE_OPS_SPEC) since monitor 3.1; older rows are 0. Does not include arm_int8_ops / arm_int16_ops.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
 - **Application / library code:** hpcperfstats/dbload/lib/monitor_naming/canonical.py
 - **Tests:** hpcperfstats/analysis/metrics/tests/test_roofline_jid_table.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
+### `arm_fp_dp_spec`
+
+- **Definition:** Grace host_cpu_hw: speculatively executed FP64 instructions (FP_DP_SPEC, scaled for counter sharing; monitor 3.1).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Application / library code:** hpcperfstats/dbload/lib/monitor_naming/canonical.py; hpcperfstats/dbload/lib/monitor_naming/resolve.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_columnar_golden.py; hpcperfstats/analysis/metrics/tests/test_cpu_precision_instr_metrics.py
+
+### `arm_fp_hp_spec`
+
+- **Definition:** Grace host_cpu_hw: speculatively executed FP16 instructions (FP_HP_SPEC, scaled for counter sharing; monitor 3.1).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Application / library code:** hpcperfstats/dbload/lib/monitor_naming/canonical.py; hpcperfstats/dbload/lib/monitor_naming/resolve.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_columnar_golden.py; hpcperfstats/analysis/metrics/tests/test_cpu_precision_instr_metrics.py
+
+### `arm_fp_sp_spec`
+
+- **Definition:** Grace host_cpu_hw: speculatively executed FP32 instructions (FP_SP_SPEC, scaled for counter sharing; monitor 3.1).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Application / library code:** hpcperfstats/dbload/lib/monitor_naming/canonical.py; hpcperfstats/dbload/lib/monitor_naming/resolve.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_columnar_golden.py; hpcperfstats/analysis/metrics/tests/test_cpu_precision_instr_metrics.py
+
 ### `arm_int16_ops`
 
-- **Definition:** Grace host_cpu_hw: INT16 arithmetic operations from ASE_SVE_INT16_SPEC (overlay/eventset may report zero).
+- **Definition:** Grace host_cpu_hw: INT16 SVE instructions from ASE_SVE_INT16_SPEC (real counts since monitor 3.1; older rows are 0).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
 - **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_cpu_precision_instr_metrics.py
 
 ### `arm_int8_ops`
 
-- **Definition:** Grace host_cpu_hw: INT8 arithmetic operations from ASE_SVE_INT8_SPEC (overlay/eventset may report zero).
+- **Definition:** Grace host_cpu_hw: INT8 SVE instructions from ASE_SVE_INT8_SPEC (real counts since monitor 3.1; older rows are 0).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
 - **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_cpu_precision_instr_metrics.py
 
 ### `bounce`
 
@@ -380,7 +409,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 
 ### `cpu_clock_est_cycles`
 
-- **Definition:** Active cycles (same as aperf under Grace DCGM fail-soft util-scaled estimate). LIKWID overlay overwrites with measured cycles when measured > 0.
+- **Definition:** Active cycles (same as aperf under the Grace util-scaled fail-soft estimate); measured core cycles replace it when the cycle counter is open (monitor 3.1, 64-bit).
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
@@ -714,7 +743,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
 - **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
-- **Tests:** hpcperfstats/site/lib/machine/tests/test_metrics.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_cpu_precision_instr_metrics.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `fp_arith_inst_retired_scalar_single`
 
@@ -723,7 +752,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
 - **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
-- **Tests:** hpcperfstats/site/lib/machine/tests/test_metrics.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_cpu_precision_instr_metrics.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
 
 ### `fs_bytes_avail`
 
@@ -1013,7 +1042,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** Host CPU time (/proc/stat style)
 - **Typical `host_data.type` values:** `cpu`
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py; hpcperfstats/analysis/metrics/update_metrics.py; hpcperfstats/dbload/lib/sync_timedb_progress_report.py; hpcperfstats/site/lib/machine/management/commands/pg_connection_stats.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_columnar_golden.py; hpcperfstats/analysis/metrics/tests/test_columnar_kernels.py; hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py; hpcperfstats/analysis/metrics/tests/test_metrics_telemetry_bounds.py; hpcperfstats/site/lib/machine/tests/test_admin_monitor_ingest_coverage.py; hpcperfstats/site/lib/machine/tests/test_metrics.py; hpcperfstats/site/lib/machine/tests/test_update_metrics.py; hpcperfstats/site/lib/machine/tests/test_update_metrics_telemetry_coverage_compose.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_columnar_golden.py; hpcperfstats/analysis/metrics/tests/test_columnar_kernels.py; hpcperfstats/analysis/metrics/tests/test_job_for_metrics.py; hpcperfstats/analysis/metrics/tests/test_metrics_telemetry_bounds.py; hpcperfstats/site/lib/machine/tests/test_admin_monitor_ingest_coverage.py; hpcperfstats/site/lib/machine/tests/test_cpu_precision_mix_artifact.py; hpcperfstats/site/lib/machine/tests/test_metrics.py; hpcperfstats/site/lib/machine/tests/test_update_metrics.py; hpcperfstats/site/lib/machine/tests/test_update_metrics_telemetry_coverage_compose.py
 
 ### `in_flight`
 
@@ -1046,7 +1075,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/analysis/metrics/tests/test_utils_get_type.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_cpu_precision_instr_metrics.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/analysis/metrics/tests/test_utils_get_type.py
 
 ### `instr_retired_any`
 
@@ -1311,7 +1340,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 
 ### `mperf`
 
-- **Definition:** Reference cycles (wall/TSC-like). Grace DCGM fail-soft: ref = clock_khz * delta_t_us / 1000; LIKWID overlay overwrites with measured lifetime cycles when measured > 0; on x86, MSR/FIXED reference cycle counters rename to this key.
+- **Definition:** Reference cycles (wall/TSC-like). Grace fail-soft: ref = clock_khz * delta_t_us / 1000; measured core cycles replace it when the cycle counter is open (monitor 3.1, emitted modulo 2^48); on x86, MSR/FIXED reference cycle counters rename to this key.
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.

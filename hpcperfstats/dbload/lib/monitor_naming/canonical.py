@@ -9,6 +9,12 @@ Attributes:
   APERF: Attribute.
   ARM_DRAM_BW_BYTES: Attribute.
   ARM_EST_FLOPS: Attribute.
+  ARM_FP_DP_SPEC: Grace ``host_cpu_hw`` FP64 speculative instruction count
+    (lifetime, monitor 3.1).
+  ARM_FP_HP_SPEC: Grace ``host_cpu_hw`` FP16 speculative instruction count
+    (lifetime, monitor 3.1).
+  ARM_FP_SP_SPEC: Grace ``host_cpu_hw`` FP32 speculative instruction count
+    (lifetime, monitor 3.1).
   ARM_IMC_STATS_TYPES: Attribute.
   ARM_INT16_OPS: Attribute.
   ARM_INT8_OPS: Attribute.
@@ -153,6 +159,12 @@ DCGM_CPU_POWER_LIMIT_W = "dcgm_cpu_power_limit_w"
 ARM_EST_FLOPS = "arm_est_flops"
 ARM_INT8_OPS = "arm_int8_ops"
 ARM_INT16_OPS = "arm_int16_ops"
+# Grace host_cpu_hw FP instruction counts by width (monitor 3.1, direct perf
+# FP_DP_SPEC / FP_SP_SPEC / FP_HP_SPEC, scaled, E,W=64). Since 3.1
+# arm_est_flops is measured FLOPs (FP_FIXED_OPS_SPEC + FP_SCALE_OPS_SPEC).
+ARM_FP_DP_SPEC = "arm_fp_dp_spec"
+ARM_FP_SP_SPEC = "arm_fp_sp_spec"
+ARM_FP_HP_SPEC = "arm_fp_hp_spec"
 # Grace host_cpu_hw PAPI scalars (lowercase; Intel FP_ARITH_* stay uppercase).
 GRACE_FP_ARITH_SCALAR_DOUBLE = "fp_arith_inst_retired_scalar_double"
 GRACE_FP_ARITH_SCALAR_SINGLE = "fp_arith_inst_retired_scalar_single"

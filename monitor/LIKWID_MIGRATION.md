@@ -24,7 +24,7 @@ EPYC-only CPUID allowlists live in `amd_cpuid_match.c` (Naples / Ryzen models ou
 On SKX / CLX / ICX / SPR / EMR / GNR / SRF, LIKWID owns core PMCs. **Deleted:** `intel_4pmc3` /
 `intel_8pmc3` (`intel_x86_pmc_gpr4` / `gpr8`), `msr_io`, and `fallback_fill`.
 If LIKWID setup fails, `host_cpu_hw` is **disabled** (same fail-closed policy
-as EPYC). Util/clock columns in `host_cpu_hw` stay 0 (Grace/DCGM only). FIXC
+as EPYC). Util/clock columns in `host_cpu_hw` stay 0 (Grace `arm` backend only). FIXC
 may be all-zero on **idle** logical CPUs after warm-up; waking the CPU
 (affinity busyloop) makes FIXC advance. Debug shm census: CPU id is `$2` when
 the row includes `@full`; FIXC are `$10–$12`.
@@ -108,14 +108,22 @@ alphabetically. **`stats_runtime.c`** therefore uses a two-phase begin: init all
 enabled types, then call `host_cpu_hw` `st_begin` before every other type's begin.
 Intel IMC types already sort after `host_cpu_hw` and are unchanged.
 
-## aarch64 Grace — DCGM + LIKWID overlay (no PAPI)
+## aarch64 Grace — no LIKWID since 3.1 (direct perf)
 
-`auto` on non-x86 stays `--with-cpu-counter-backend=dcgm`. Configure adds
-`-DMONITOR_CPU_LIKWID_OVERLAY` and links the same static LIKWID archives as
-x86. Overlay eventset is `CPU_CYCLES:PMC0,INST_RETIRED:PMC1` (CYC-only
-fallback). DCGM owns util/power and fail-soft cycle estimates; LIKWID
-overwrites `aperf`/`mperf`/`cpu_clock_est_cycles` only when measured cycles
-are nonzero. Overlay init failure does **not** disable `host_cpu_hw`.
-DCGM `UpdateAllFields` soft-reset must not `HPMfinalize`. Exclusive
-`--with-cpu-counter-backend=likwid` is allowed on ARM and loses DCGM
-watts/util (fail-closed). Keep `arm_imc.c` for DRAM CAS. PAPI is removed.
+**3.1:** aarch64 builds and links no LIKWID. `auto` on non-x86 is
+`--with-cpu-counter-backend=arm` (`/proc/stat` util, cpufreq clock), and
+`--with-cpu-counter-backend=likwid` is rejected on non-x86 by `configure.ac`.
+Core counters (`arm_core_perf.c`) and Grace SCF DRAM traffic (`arm_imc_scf.c`)
+are read by direct `perf_event_open` through `arm_perf_util.c`, scaled by
+time_enabled / time_running and never pinned (`nvidia-powerd` shares the PMU).
+The bundle, RPM prepare and cross scripts build LIKWID for x86 targets only.
+Contract: `cursor-rules/monitor-arm-direct-perf.mdc`; key migration (the Grace instr/cycle
+step on GPU nodes, new `arm_fp_*_spec` keys): `README.md`.
+
+**History (≤ 3.0):** a LIKWID overlay (`MONITOR_CPU_LIKWID_OVERLAY`) ran
+`CPU_CYCLES:PMC0,INST_RETIRED:PMC1` (plus SCF `CMEM_*` on SCF0/SCF1 in the same
+group) next to the util/clock backend and overwrote the cycle keys when
+measured cycles were nonzero. LIKWID read those counts without enabled/running
+scaling, so on GB200 / GH200 (where `nvidia-powerd` shares the PMU) they were low
+by the time-sharing factor, estimated up to about 4× and not yet measured.
+Grace-Grace nodes run no `nvidia-powerd`. PAPI was removed earlier.

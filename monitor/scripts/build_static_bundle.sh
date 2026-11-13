@@ -38,15 +38,16 @@
 # CONFIGURE_ARGS still override or extend (e.g. --disable-lustre).
 #
 # CPU counters: configure uses --with-cpu-counter-backend=auto (x86 -> LIKWID,
-# else arm: /proc/stat util, cpufreq clock, LIKWID overlay; no DCGM).
+# else arm: /proc/stat util, cpufreq clock, direct perf core + Grace SCF counters; no LIKWID,
+# no DCGM).
 #
 # Pinned versions: edit STATIC_PIN_* below. Runtime overrides: LIBEV_VER,
 # RABBITMQ_VER, LIKWID_TAG, and *_URL_FMT for mirrors.
 #
 # Architecture (deps + configure):
-#   All arches: build LIKWID static libs (ACCESSMODE=perf_event).
-#   x86_64 / i686: configure auto-selects exclusive LIKWID CPU backend.
-#   Other (e.g. aarch64): configure auto-selects the arm backend + LIKWID overlay.
+#   x86_64 / i686: build LIKWID static libs (ACCESSMODE=perf_event); configure auto-selects
+#   the exclusive LIKWID CPU backend.
+#   Other (e.g. aarch64): no LIKWID build; configure auto-selects the arm backend (direct perf).
 #   DCGM and NVML headers are vendored under monitor/third_party/nvidia-{dcgm,nvml}; both
 #   libraries are loaded at runtime on every arch (nothing to link).
 #
@@ -67,7 +68,7 @@ STATIC_PIN_RABBITMQ_C_VERSION="0.17.0"
 # LIKWID: Git tag name without a leading "v" (archive is .../tags/v${VER}.tar.gz).
 STATIC_PIN_LIKWID_VERSION="5.5.2"
 STATIC_PIN_LIBBPF_VERSION="1.7.0"
-# LIKWID is the PMU library on x86 and aarch64 (arm backend + LIKWID overlay on Grace).
+# LIKWID is the PMU library on x86 only (aarch64 reads Grace counters by direct perf).
 # Optional: override tarball base URLs (must contain a single %s for version where used).
 STATIC_PIN_LIBEV_URL_FMT="http://dist.schmorp.de/libev/libev-%s.tar.gz"
 # rabbitmq-c: source-of-truth repo is alanxz/rabbitmq-c; github.com/rabbitmq/rabbitmq-c archive URLs return 404.
@@ -315,8 +316,8 @@ static_bundle_print_detection_summary() {
     cpu_backend="LIKWID"
     likwid_build="yes (this run compiles LIKWID into PREFIX unless SKIP_DEPS=1)"
   else
-    cpu_backend="arm+LIKWID overlay"
-    likwid_build="yes (aarch64 overlay; no DCGM)"
+    cpu_backend="arm (direct perf core + SCF counters)"
+    likwid_build="no (x86 only; aarch64 uses direct perf)"
   fi
 
   if command -v lspci >/dev/null 2>&1; then
@@ -687,9 +688,10 @@ EOF
 EOF
   else
     cat <<'EOF'
-- On non-x86, this path links rabbitmq-c, libev, and LIKWID statically. The CPU counter
-  backend is arm (/proc/stat util, cpufreq clock) plus a LIKWID overlay for cycles/inst; no
-  DCGM. NVIDIA GPU code loads libnvidia-ml / libdcgm at runtime (vendored headers).
+- On non-x86, this path links rabbitmq-c and libev statically; LIKWID is not built. The CPU
+  counter backend is arm (/proc/stat util, cpufreq clock) plus direct perf core and Grace SCF
+  counters scaled by enabled/running; no DCGM. NVIDIA GPU code loads libnvidia-ml / libdcgm at
+  runtime (vendored headers).
 EOF
   fi
   cat <<'EOF'
@@ -715,8 +717,10 @@ build_static_dependencies() {
     echo "Pinned static deps: libev=${LIBEV_VER} rabbitmq-c=${RABBITMQ_VER}"
     build_libev
     build_rabbitmq_c
-    echo "Pinned static deps: likwid=${LIKWID_TAG}"
-    build_likwid
+    if is_x86_build_host; then
+      echo "Pinned static deps: likwid=${LIKWID_TAG}"
+      build_likwid
+    fi
     if test "${WANT_METRIC_PROFILER_EBPF}" = "1"; then
       echo "Pinned static deps (metric profiler ebpf): libbpf=${LIBBPF_VER}"
       build_libbpf
@@ -728,7 +732,7 @@ usage_exit() {
   cat <<EOF
 Usage: $(basename "$0") [--deps-only] [--print-configure-flags] [--release] [CONFIGURE_ARGS...]
 
-  --deps-only   Build and install static archives (libev, rabbitmq-c, LIKWID) into PREFIX
+  --deps-only   Build and install static archives (libev, rabbitmq-c, LIKWID on x86) into PREFIX
                 only. Use this when monitor configure
                 --enable-all-static fails at link time with missing static .a
                 archives.
@@ -797,7 +801,11 @@ main() {
   if test "${deps_only}" = "1"; then
     echo ""
     echo "Static dependency install complete: PREFIX=${PREFIX}"
-    echo "Expected archives include: libev.a librabbitmq.a liblikwid.a liblikwid-hwloc.a liblikwid-lua.a"
+    if is_x86_build_host; then
+      echo "Expected archives include: libev.a librabbitmq.a liblikwid.a liblikwid-hwloc.a liblikwid-lua.a"
+    else
+      echo "Expected archives include: libev.a librabbitmq.a (no LIKWID on non-x86)"
+    fi
     if test "${WANT_METRIC_PROFILER_EBPF}" = "1"; then
       echo "Expected archives include: libbpf.a (metric profiler eBPF backend selected)."
     fi

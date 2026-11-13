@@ -1,100 +1,81 @@
 #!/bin/sh
-# Regression: non-x86 `arm` CPU backend uses LIKWID overlay (configure.ac + static bundle).
+# Regression (3.1, cpu-precision Phase 1 A3): aarch64 builds no LIKWID. `auto` on non-x86 is the
+# `arm` backend (direct perf core + Grace SCF counters, no MONITOR_CPU_LIKWID_OVERLAY), the
+# exclusive LIKWID backend is rejected on non-x86 with a clear configure error, and the static
+# bundle / RPM prepare / cross scripts build LIKWID for x86 only. x86 keeps exclusive LIKWID.
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${ROOT}"
 
 ac="${ROOT}/configure.ac"
+am="${ROOT}/src/Makefile.am"
 bundle="${ROOT}/scripts/build_static_bundle.sh"
 prepare="${ROOT}/scripts/prepare_rpmbuild_dirs.sh"
 cross="${ROOT}/scripts/cross_compile_test.sh"
 
-grep -q 'MONITOR_CPU_LIKWID_OVERLAY' "${ac}" \
-  || { echo "configure.ac must define MONITOR_CPU_LIKWID_OVERLAY for arm+LIKWID hybrid" >&2; exit 1; }
-grep -q 'CPU_LIKWID_OVERLAY' "${ac}" \
-  || { echo "configure.ac must AM_CONDITIONAL CPU_LIKWID_OVERLAY" >&2; exit 1; }
+fail() {
+  echo "test_likwid_on_aarch64_configure: $*" >&2
+  exit 1
+}
 
-# Round 2 (D10): the aarch64 CPU backend is `arm` (no DCGM); the `dcgm` value is gone, no alias.
-grep -q 'auto|likwid|arm) ;;' "${ac}" \
-  || { echo "configure.ac must accept --with-cpu-counter-backend=auto|likwid|arm" >&2; exit 1; }
-grep -q -- '--with-cpu-counter-backend={auto|likwid|arm}' "${ac}" \
-  || { echo "configure.ac help must list {auto|likwid|arm}" >&2; exit 1; }
-grep -q 'cpu_counter_backend="arm"' "${ac}" \
-  || { echo "configure.ac auto must resolve to arm on non-x86" >&2; exit 1; }
-if grep -n -E 'auto\|likwid\|dcgm|xdcgm|MONITOR_CPU_BACKEND_DCGM|CPU_BACKEND_DCGM|required for DCGM CPU backend' \
-  "${ac}" "${ROOT}/src/Makefile.am" "${ROOT}/tests/Makefile.am" "${ROOT}"/src/*.c "${ROOT}"/src/*.h; then
-  echo "dcgm CPU backend leftovers (MONITOR_CPU_BACKEND_DCGM / backend=dcgm) must be gone" >&2
-  exit 1
+# The overlay layer is gone (configure, Makefile.am, sources) and cannot come back silently.
+if grep -n -E 'MONITOR_CPU_LIKWID_OVERLAY|cpu_likwid_overlay|CPU_LIKWID_OVERLAY' "${ac}" "${am}"; then
+  fail "configure.ac / src/Makefile.am must not define the aarch64 LIKWID overlay"
 fi
-# Exclusive LIKWID is allowed on ARM (no longer a configure error).
-if grep -q 'LIKWID CPU backend is supported on x86 only' "${ac}"; then
-  echo "configure.ac must not reject LIKWID on non-x86" >&2
-  exit 1
-fi
-# PAPI must be gone from Autotools.
-if grep -q 'PAPI_library_init' "${ac}"; then
-  echo "configure.ac must not probe PAPI_library_init" >&2
-  exit 1
-fi
-if grep -q 'MONITOR_CPU_PAPI_FLOPS' "${ac}"; then
-  echo "configure.ac must not define MONITOR_CPU_PAPI_FLOPS" >&2
-  exit 1
+for f in cpu_counter_metrics_likwid_overlay.c cpu_counter_metrics_likwid_overlay.h \
+  cpu_counter_metrics_likwid_overlay_map.c cpu_counter_metrics_likwid_overlay_map.h; do
+  test ! -e "${ROOT}/src/${f}" || fail "src/${f} must be deleted (overlay removed in 3.1)"
+done
+if grep -n 'MONITOR_CPU_LIKWID_OVERLAY' "${ROOT}"/src/*.c "${ROOT}"/src/*.h; then
+  fail "no source may test MONITOR_CPU_LIKWID_OVERLAY (O15: it must never revive synthetic FLOPs)"
 fi
 
-# Regression (c122-018 native bundle, 2026-11-03): arm-backend builds compile likwid_uncore_adapter.c
-# under `if LIKWID` (the Grace overlay links LIKWID), and it calls cpu_counter_metrics_likwid_ready().
-# The arm stub lives in cpu_counter_metrics_likwid_begin.c, so the CPU_BACKEND_ARM block must
-# compile it; only --gc-sections release links hid the undefined reference.
-am="${ROOT}/src/Makefile.am"
-awk '
-  /^if CPU_BACKEND_ARM$/ { inblk = 1; depth = 0; next }
-  inblk && /^if / { depth++ }
-  inblk && /^endif/ { if (depth == 0) { inblk = 0 } else { depth-- } }
-  inblk && /cpu_counter_metrics_likwid_begin\.c/ { found = 1 }
-  END { exit found ? 0 : 1 }
-' "${am}" \
-  || { echo "src/Makefile.am CPU_BACKEND_ARM must compile cpu_counter_metrics_likwid_begin.c (arm likwid_ready stub)" >&2; exit 1; }
+# Backend selection: auto|likwid|arm; auto resolves arm on non-x86; likwid only needs LIKWID.
+grep -q 'auto|likwid|arm) ;;' "${ac}" || fail "configure.ac must accept auto|likwid|arm"
+grep -q -- '--with-cpu-counter-backend={auto|likwid|arm}' "${ac}" || fail "help must list {auto|likwid|arm}"
+grep -q 'cpu_counter_backend="arm"' "${ac}" || fail "auto must resolve to arm on non-x86"
+grep -q 'CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_LIKWID"' "${ac}" \
+  || fail "x86 likwid backend CPPFLAG must stay"
+grep -q 'is x86-only' "${ac}" || fail "configure.ac must reject --with-cpu-counter-backend=likwid on non-x86"
+if grep -n -E 'auto\|likwid\|dcgm|xdcgm|MONITOR_CPU_BACKEND_DCGM|CPU_BACKEND_DCGM' "${ac}" "${am}"; then
+  fail "dcgm CPU backend leftovers must stay gone"
+fi
+if grep -q -E 'PAPI_library_init|MONITOR_CPU_PAPI_FLOPS' "${ac}"; then
+  fail "configure.ac must not probe PAPI"
+fi
 
-grep -q 'build_likwid' "${bundle}" \
-  || { echo "build_static_bundle.sh must define build_likwid" >&2; exit 1; }
-if grep -q 'build_papi' "${bundle}"; then
-  echo "build_static_bundle.sh must not define build_papi" >&2
-  exit 1
-fi
-if grep -q 'STATIC_PIN_PAPI' "${bundle}"; then
-  echo "build_static_bundle.sh must not pin PAPI" >&2
-  exit 1
-fi
-if grep -q 'libpapi.a' "${prepare}"; then
-  echo "prepare_rpmbuild_dirs.sh must not require libpapi.a" >&2
-  exit 1
-fi
-grep -q 'liblikwid.a' "${prepare}" \
-  || { echo "prepare_rpmbuild_dirs.sh must require liblikwid.a on all arches" >&2; exit 1; }
+# New direct-perf sources are built on the arm backend.
+grep -q 'arm_perf_util.c' "${am}" || fail "src/Makefile.am must build arm_perf_util.c"
+grep -q 'arm_core_perf.c' "${am}" || fail "src/Makefile.am must build arm_core_perf.c"
 
-if grep -q 'build_foreign_papi' "${cross}"; then
-  echo "cross_compile_test.sh must not build PAPI" >&2
-  exit 1
+# Scripts: LIKWID is built for x86 only.
+grep -q 'build_likwid' "${bundle}" || fail "build_static_bundle.sh must keep build_likwid (x86)"
+awk '/is_x86_build_host; then/ { gate = NR } /^ *build_likwid$/ { if (gate && NR - gate <= 2) ok = 1 }
+  END { exit ok ? 0 : 1 }' "${bundle}" || fail "build_static_bundle.sh must call build_likwid only on x86"
+grep -q 'host_builds_likwid' "${prepare}" || fail "prepare_rpmbuild_dirs.sh must require liblikwid.a on x86 only"
+grep -q 'liblikwid.a' "${prepare}" || fail "prepare_rpmbuild_dirs.sh must still check liblikwid.a on x86"
+awk 'index($0, "if is_x86_triplet \"${target}\"; then") { gate = NR }
+  index($0, "build_foreign_likwid \"${target}\"") { if (gate && NR - gate <= 1) ok = 1 }
+  END { exit ok ? 0 : 1 }' "${cross}" || fail "cross_compile_test.sh must build LIKWID for x86 targets only"
+grep -q 'GCCARMv8' "${cross}" || fail "cross_compile_test.sh keeps the LIKWID COMPILER map"
+if grep -q -E 'build_papi|STATIC_PIN_PAPI' "${bundle}" || grep -q 'libpapi.a' "${prepare}"; then
+  fail "PAPI must stay gone from the bundle and prepare scripts"
 fi
-grep -q 'build_foreign_likwid' "${cross}" \
-  || { echo "cross_compile_test.sh must build LIKWID on foreign targets" >&2; exit 1; }
-# LIKWID config.mk defaults to COMPILER=GCC (x86). Foreign/native non-x86 must
-# pass GCCARMv8 / GCCPOWER or the archive compiles rdpmc / .intel_syntax.
-grep -q 'GCCARMv8' "${cross}" \
-  || { echo "cross_compile_test.sh must set LIKWID COMPILER=GCCARMv8 for aarch64" >&2; exit 1; }
-grep -q 'likwid_compiler_for_target' "${cross}" \
-  || { echo "cross_compile_test.sh must map target CPU to LIKWID COMPILER" >&2; exit 1; }
-grep -q 'GCCARMv8' "${bundle}" \
-  || { echo "build_static_bundle.sh must set LIKWID COMPILER=GCCARMv8 on aarch64" >&2; exit 1; }
-grep -q 'likwid_compiler_for_host' "${bundle}" \
-  || { echo "build_static_bundle.sh must map host CPU to LIKWID COMPILER" >&2; exit 1; }
 
-grep -q 'cpu_counter_metrics_likwid_overlay' "${ROOT}/src/Makefile.am" \
-  || { echo "src/Makefile.am must include LIKWID overlay sources under CPU_LIKWID_OVERLAY" >&2; exit 1; }
-if grep -q 'cpu_counter_metrics_papi' "${ROOT}/src/Makefile.am"; then
-  echo "src/Makefile.am must not include PAPI sources" >&2
-  exit 1
+# Functional: a non-x86 host with --with-cpu-counter-backend=likwid stops in configure with the
+# x86-only message (host gcc stands in for the cross compiler; it fails before any library probe).
+if test -x "${ROOT}/configure" && command -v "${CC:-cc}" >/dev/null 2>&1; then
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/hps_aarch64_cfg.XXXXXX")"
+  rc=0
+  (cd "${tmp}" && "${ROOT}/configure" --host=aarch64-linux-gnu --build="$("${ROOT}/config.guess")" \
+    CC="${CC:-cc}" --with-cpu-counter-backend=likwid >"${tmp}/out.log" 2>&1) || rc=$?
+  if test "${rc}" -eq 0 || ! grep -q 'likwid is x86-only' "${tmp}/out.log"; then
+    tail -20 "${tmp}/out.log" >&2
+    rm -rf "${tmp}"
+    fail "configure --host=aarch64 --with-cpu-counter-backend=likwid must fail with the x86-only error"
+  fi
+  rm -rf "${tmp}"
 fi
 
 echo "test_likwid_on_aarch64_configure passed"

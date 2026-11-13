@@ -701,6 +701,64 @@ class CrossSampleTests(unittest.TestCase):
         )
         self.assertTrue(any("decreased" in w for w in warnings))
 
+    def _w48_pair(self, va: int, vb: int, wide_a: int, wide_b: int):
+        """host_cpu_hw row with one W=48 key (aperf) and one W=64 key (cycles)."""
+        from lib.shm_snapshot import SnapshotPair
+
+        manifest = {
+            "enable_slow_tier": True,
+            "types": {
+                "host_cpu_hw": {
+                    "schema_keys": ["aperf,E,W=48", "cpu_clock_est_cycles,E,W=64"],
+                    "schema_key_names": ["aperf", "cpu_clock_est_cycles"],
+                }
+            },
+        }
+        schema = {k: v["schema_keys"] for k, v in manifest["types"].items()}
+        pair = SnapshotPair(
+            kind="full",
+            ts_a=1000.0,
+            ts_b=1060.0,
+            body_a=f"1000.0 job h\nhost_cpu_hw 0 @full {va} {wide_a}\n",
+            body_b=f"1060.0 job h\nhost_cpu_hw 0 @full {vb} {wide_b}\n",
+        )
+        return manifest, schema, pair
+
+    def _run_strict_full(self, manifest, schema, pair):
+        from lib.cross_sample_validate import run_cross_sample_checks
+        from lib.daemon_conf import DaemonTiming
+
+        return run_cross_sample_checks(
+            manifest,
+            schema,
+            timing=DaemonTiming(30.0, 60.0, 300.0, True),
+            fast_pair=None,
+            full_pair=pair,
+            strict=True,
+            active_conf_note="test",
+        )
+
+    def test_w48_wrap_is_an_advance_not_a_decrease(self) -> None:
+        """3.1 emits Grace aperf modulo 2^48; a wrap (~26 h per core) must not fail strict L5."""
+        top = (1 << 48) - 1000
+        wide = (1 << 48) - 1000
+        manifest, schema, pair = self._w48_pair(top, 500, wide, wide + 1500)
+        notes, warnings, errors = self._run_strict_full(manifest, schema, pair)
+        self.assertEqual([e for e in errors if "decreased" in e], [], errors)
+        self.assertFalse(any("decreased" in w for w in warnings))
+        self.assertTrue(any("monotonic full (2 E keys)" in n for n in notes), notes)
+
+    def test_w48_real_drop_still_fails(self) -> None:
+        """A drop larger than half the 48-bit range is a restart, not a wrap."""
+        manifest, schema, pair = self._w48_pair(10**12, 10**9, 5, 6)
+        _, _, errors = self._run_strict_full(manifest, schema, pair)
+        self.assertTrue(any("aperf: decreased" in e for e in errors), errors)
+
+    def test_w64_drop_is_never_a_wrap(self) -> None:
+        manifest, schema, pair = self._w48_pair(5, 6, (1 << 63), 7)
+        _, _, errors = self._run_strict_full(manifest, schema, pair)
+        self.assertTrue(any("cpu_clock_est_cycles: decreased" in e for e in errors), errors)
+
     def test_flat_counters_are_a_note_not_a_warning(self) -> None:
         from lib.cross_sample_validate import run_cross_sample_checks
         from lib.daemon_conf import DaemonTiming
@@ -1356,6 +1414,8 @@ class PapiShmValidateTests(unittest.TestCase):
             "arm_int8_ops",
             "arm_int16_ops",
         ]
+        if hybrid:
+            required += ["arm_fp_dp_spec", "arm_fp_sp_spec", "arm_fp_hp_spec"]
         names = keys if keys is not None else required
         doc: dict = {
             "capability_slug": "test",
@@ -1369,9 +1429,7 @@ class PapiShmValidateTests(unittest.TestCase):
             },
         }
         if hybrid:
-            doc["compile_capabilities"] = {
-                "configure": {"likwid_overlay": True, "cpu_backend": "arm"}
-            }
+            doc["compile_capabilities"] = {"configure": {"cpu_backend": "arm"}}
         return doc
 
     def test_schema_contract_pass(self) -> None:
@@ -1406,6 +1464,32 @@ class PapiShmValidateTests(unittest.TestCase):
         _, errors = check_papi_schema_contract(man)
         self.assertTrue(any("missing type" in e for e in errors))
 
+    def test_arm_backend_requires_measured_fp_keys(self) -> None:
+        """3.1 Grace (D1): an arm-backend schema without arm_fp_*_spec fails."""
+        from lib.papi_shm_validate import check_papi_schema_contract
+
+        man = self._papi_manifest()
+        names = [k for k in man["types"]["host_cpu_hw"]["schema_key_names"] if k != "arm_fp_dp_spec"]
+        man["types"]["host_cpu_hw"]["schema_key_names"] = names
+        _, errors = check_papi_schema_contract(man)
+        self.assertTrue(any("arm_fp_dp_spec" in e for e in errors))
+
+    def test_x86_schema_does_not_need_arm_fp_keys(self) -> None:
+        from lib.papi_shm_validate import check_papi_schema_contract
+
+        man = self._papi_manifest(hybrid=False)
+        man["compile_capabilities"] = {"configure": {"cpu_backend": "likwid"}}
+        notes, errors = check_papi_schema_contract(man)
+        self.assertEqual(errors, [])
+        self.assertTrue(any("PASS papi schema" in n for n in notes))
+
+    def test_legacy_overlay_flag_still_means_arm(self) -> None:
+        from lib.papi_shm_validate import caps_indicate_papi_hybrid
+
+        self.assertTrue(caps_indicate_papi_hybrid({"configure": {"likwid_overlay": True}}))
+        self.assertTrue(caps_indicate_papi_hybrid({"configure": {"cpu_backend": "arm"}}))
+        self.assertFalse(caps_indicate_papi_hybrid({"configure": {"cpu_backend": "likwid"}}))
+
     def test_legacy_papi_hybrid_alias_still_accepted(self) -> None:
         from lib.papi_shm_validate import check_papi_schema_contract
 
@@ -1415,19 +1499,44 @@ class PapiShmValidateTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertTrue(any("PASS papi schema" in n for n in notes))
 
-    def test_flops_invariant_warn(self) -> None:
+    def test_flops_not_checked_against_scalar_keys(self) -> None:
+        """arm_est_flops is measured FIXED+SCALE FLOPs since 3.1, not scalar SP+DP (O15/D1)."""
         from lib.papi_shm_validate import check_papi_row_invariants
 
         warns = check_papi_row_invariants(
             {
-                "fp_arith_inst_retired_scalar_single": 10,
-                "fp_arith_inst_retired_scalar_double": 20,
+                "fp_arith_inst_retired_scalar_single": 0,
+                "fp_arith_inst_retired_scalar_double": 0,
                 "arm_est_flops": 99,
             },
             type_name="host_cpu_hw",
             dev="0",
         )
-        self.assertTrue(any("arm_est_flops" in w for w in warns))
+        self.assertFalse(any("arm_est_flops" in w for w in warns))
+
+    def test_negative_measured_fp_key_warns(self) -> None:
+        from lib.papi_shm_validate import check_papi_row_invariants
+
+        warns = check_papi_row_invariants(
+            {"arm_fp_dp_spec": -1}, type_name="host_cpu_hw", dev="0"
+        )
+        self.assertTrue(any("arm_fp_dp_spec" in w for w in warns))
+
+    def test_aperf_compared_to_cycles_modulo_2_48(self) -> None:
+        """aperf is W=48, cpu_clock_est_cycles W=64: equal mod 2^48 is consistent (3.1 Grace)."""
+        from lib.papi_shm_validate import check_papi_row_invariants
+
+        cycles = (1 << 48) + 77
+        ok = check_papi_row_invariants(
+            {"aperf": 77, "mperf": 77, "cpu_clock_est_cycles": cycles},
+            type_name="host_cpu_hw",
+            dev="0",
+        )
+        self.assertFalse(any("cpu_clock_est_cycles" in w for w in ok), ok)
+        bad = check_papi_row_invariants(
+            {"aperf": 78, "cpu_clock_est_cycles": cycles}, type_name="host_cpu_hw", dev="0"
+        )
+        self.assertTrue(any("cpu_clock_est_cycles" in w for w in bad), bad)
 
     def test_flops_invariant_ok(self) -> None:
         from lib.papi_shm_validate import check_papi_row_invariants
@@ -1456,10 +1565,10 @@ class PapiShmValidateTests(unittest.TestCase):
         ):
             self.assertEqual(default_devices_for_type("host_cpu_hw"), ["0", "1", "2"])
 
-    def test_plausibility_flags_papi_flops_mismatch(self) -> None:
+    def test_plausibility_accepts_measured_flops_without_scalar_keys(self) -> None:
         man = self._papi_manifest()
         schema = {"host_cpu_hw": man["types"]["host_cpu_hw"]["schema_keys"]}
-        vals = ["5", "5", "5", "10", "20", "99", "1", "2"]
+        vals = ["5", "5", "5", "0", "0", "99", "1", "2", "7", "8", "9"]
         body = (
             "1234567890.0 0 golden_host\n"
             f"host_cpu_hw 0 @full {' '.join(vals)}\n"
@@ -1473,7 +1582,7 @@ class PapiShmValidateTests(unittest.TestCase):
             no_freshness=True,
             strict=False,
         )
-        self.assertTrue(any("arm_est_flops" in w for w in warnings))
+        self.assertFalse(any("arm_est_flops" in w for w in warnings))
 
 
 class EmitBuildCapabilitiesFleetTests(unittest.TestCase):

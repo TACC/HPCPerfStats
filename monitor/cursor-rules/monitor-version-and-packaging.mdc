@@ -29,6 +29,16 @@ Commit the updated `configure`, `Makefile.in`, and related generated files if yo
   - **`Release:`** is the **packaging** iteration (`1%{?dist}`, `2%{?dist}`, …). Increment **Release** for spec-only or rebuild changes **without** changing upstream `Version`. When **`Version`** changes, reset **`Release`** to **`1%{?dist}`** unless your distro policy says otherwise.
   - **`%changelog`**: add a top entry for every **Version** or meaningful packaging change (static build path, BuildRequires, install paths, etc.).
 
+## Release numbers are per cluster and not committed
+
+The committed **`Release:`** in `hpcperfstats.spec` is a **baseline only**. The user bumps **Release locally on each cluster** when building test or deploy RPMs (many iterative builds per cluster, e.g. Vista reached `3.0-15.el9` while the repo spec says `Release: 9`), and those bumps are **not committed** (user, 2026-11-13).
+
+- **Do not** treat a deployed release higher than the repo spec as drift, a missing commit, or a packaging bug, and do not "fix" it by committing a Release bump.
+- **Do not** bump `Release:` in the repo as part of a code change unless the user asks.
+- **Before an install** on a cluster, check `rpm -q hpcperfstatsd` on that cluster's target node and build with a local release **above** it. Otherwise `dnf` / `rpm -U` keeps the installed build. After the install, confirm with `rpm -q` again.
+- **To tell which code a deployed binary has,** use its **Build Date** (`rpm -qi`) or `strings` markers against `git log` dates, not the release number (release numbers are not comparable across clusters).
+- **`Version:`** changes still follow `AC_INIT` and are committed (sections above).
+
 ## Docs that embed the RPM filename
 
 If **`HPCPerfStats/README.md`** (or other docs) mention a concrete RPM like `hpcperfstats-3.0-1.el9.x86_64.rpm`, update that string when **`Version`** or the example **Release** changes so examples stay accurate.

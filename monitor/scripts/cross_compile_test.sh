@@ -87,8 +87,8 @@ Notes:
   - Foreign mode uses host make/cmake/pkg-config with qemu-wrapped target tools.
   - Foreign monitor builds use --disable-all-static (dynamic libc/libm from sysroot); native path still uses the static bundle.
   - Foreign x86 installs static LIKWID (.a only); configure probes perfmon_init with -llikwid-hwloc -llikwid-lua -lm first (see configure.ac).
-  - Foreign LIKWID make passes COMPILER=GCCARMv8 (aarch64) / GCCPOWER (POWER) / GCC (x86).
-    LIKWID config.mk defaults to GCC (x86); omitting COMPILER compiles rdpmc on ARM.
+  - LIKWID is built for x86 targets only (aarch64 / POWER use the arm backend: direct perf,
+    no LIKWID). likwid_compiler_for_target still maps GCCARMv8 / GCCPOWER for manual builds.
   - For deterministic foreign smoke, monitor configure is passed:
       --disable-amd-gpu --disable-infiniband --disable-opa
       --disable-lustre (nvidia_gpu stays on: DCGM/NVML are dlopen()ed at runtime)
@@ -1051,7 +1051,9 @@ build_foreign_deps() {
   echo "Foreign ${target}: building static deps into ${prefix}"
   build_foreign_libev "${target}" "${sysroot}" || return $?
   build_foreign_rabbitmq_c "${target}" "${sysroot}" || return $?
-  build_foreign_likwid "${target}" "${sysroot}" || return $?
+  if is_x86_triplet "${target}"; then
+    build_foreign_likwid "${target}" "${sysroot}" || return $?
+  fi
   if test "${WANT_METRIC_PROFILER_EBPF}" = "1"; then
     build_foreign_libbpf "${target}" "${sysroot}" || return $?
   fi
@@ -1074,8 +1076,9 @@ foreign_monitor_cfg_args() {
   if is_x86_triplet "${target}"; then
     args+=(--with-monitor-arch=intel --with-cpu-counter-backend=auto)
   else
-    # auto -> arm: the production Grace backend (/proc/stat util, cpufreq clock, LIKWID overlay,
-    # host_power_socket). It needs no libdcgm, so the foreign sysroot builds the real config.
+    # auto -> arm: the production Grace backend (/proc/stat util, cpufreq clock, direct perf core
+    # and SCF counters, host_power_socket). No LIKWID or libdcgm, so the foreign sysroot builds
+    # the real config.
     args+=(--with-cpu-counter-backend=auto)
   fi
   printf '%s\n' "${args[@]}"

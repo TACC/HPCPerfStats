@@ -18,6 +18,12 @@ describe("getJobMetricShortLabel", () => {
     expect(getJobMetricShortLabel("avg_arm_int16_ops")).toBe("Average CPU INT16 operation rate");
   });
 
+  it("labels CPU FP instruction-rate metrics by precision width", () => {
+    expect(getJobMetricShortLabel("avg_fp64_instr")).toBe("Average CPU FP64 instruction rate");
+    expect(getJobMetricShortLabel("avg_fp32_instr")).toBe("Average CPU FP32 instruction rate");
+    expect(getJobMetricShortLabel("avg_fp16_instr")).toBe("Average CPU FP16 instruction rate");
+  });
+
   it("labels vector share metrics with percent wording", () => {
     expect(getJobMetricShortLabel("vecpercent_64b")).toMatch(/%/);
     expect(getJobMetricShortLabel("vecpercent_32b")).toMatch(/%/);

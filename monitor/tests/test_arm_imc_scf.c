@@ -1,69 +1,48 @@
-/* arm_imc_scf: Grace SCF uncore helpers for arm_aarch64_imc (socket lead CPUs, CAS units).
+/* arm_imc_scf: Grace SCF DRAM traffic for arm_aarch64_imc via direct perf.
  *
- * Horizon c122-018 (GB200, 2 Grace sockets) exposes nvidia_scf_pmu_0 (cpumask 0) and
- * nvidia_scf_pmu_1 (cpumask 72) but no dmc/imc PMU, so arm_aarch64_imc disabled itself.
- */
+ * Findings #6 / #9 / #11: Horizon GB200 has nvidia_scf_pmu_0 (type 25, cpumask 0) and _1
+ * (type 15, cpumask 72); Vista Grace-Grace the same with types 24 / 16; Vista GH200 (BIOS F33) one
+ * PMU, type 38 cpumask 0, and before F33 none at all. Type numbers are per boot and not ordered by
+ * socket, so sockets come from the PMU name index. O17: the PMUs can bind after the daemon
+ * started, so a type with no PMU re-scans and attaches later (c642-041 kept the type disabled). */
 #include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include "arm_imc_scf.h"
+#include "test_fake_perf.h"
 
-static char g_root[256];
+static char g_root[512];
+static char g_dev[600];
 
-static void mkpmu(const char *name, const char *cpumask)
+static void reset_tree(void)
 {
-  char path[512];
-  FILE *f;
-
-  snprintf(path, sizeof(path), "%s/%s", g_root, name);
-  assert(mkdir(path, 0700) == 0);
-  if (cpumask == NULL)
-    return;
-  snprintf(path, sizeof(path), "%s/%s/cpumask", g_root, name);
-  f = fopen(path, "w");
-  assert(f != NULL);
-  fputs(cpumask, f);
-  fclose(f);
+  fake_sysfs_rm(g_root);
+  fake_sysfs_init(g_root, sizeof(g_root));
+  snprintf(g_dev, sizeof(g_dev), "%s/devices", g_root);
+  fake_sysfs_mkdir(g_root, "devices/armv8_pmuv3_0");
+  fake_sysfs_mkdir(g_root, "devices/nvidia_pcie_pmu_0"); /* other NVIDIA uncore PMUs ignored */
+  fake_perf_reset();
 }
 
-static void rm_tree(void)
+static void add_scf_pmu(int sock, int type, const char *cpumask)
 {
-  char cmd[600];
+  char rel[128];
+  char val[32];
 
-  snprintf(cmd, sizeof(cmd), "rm -rf '%s'", g_root);
-  assert(system(cmd) == 0);
-}
-
-static void test_lead_cpus_ordered_by_socket_index(void)
-{
-  int cpus[4] = {-1, -1, -1, -1};
-
-  mkpmu("nvidia_scf_pmu_1", "72\n");
-  mkpmu("nvidia_scf_pmu_0", "0\n");
-  mkpmu("nvidia_pcie_pmu_0", "0\n"); /* other NVIDIA uncore PMUs are ignored */
-  mkpmu("armv8_pmuv3_0", NULL);
-  assert(arm_imc_scf_lead_cpus(g_root, cpus, 4) == 2);
-  assert(cpus[0] == 0 && cpus[1] == 72);
-  assert(arm_imc_scf_lead_cpus(g_root, cpus, 1) == 1); /* bounded by cap */
-  assert(cpus[0] == 0);
-}
-
-static void test_lead_cpus_rejects_bad_inputs(void)
-{
-  int cpus[2];
-
-  mkpmu("nvidia_scf_pmu_2", NULL);        /* no cpumask: skipped */
-  mkpmu("nvidia_scf_pmu_x", "5\n");       /* non-numeric socket: skipped */
-  mkpmu("nvidia_scf_pmu_3", "garbage\n"); /* unparsable cpumask: skipped */
-  assert(arm_imc_scf_lead_cpus(g_root, cpus, 2) == 2);
-  assert(arm_imc_scf_lead_cpus("/nonexistent/hpcperfstats", cpus, 2) == 0);
-  assert(arm_imc_scf_lead_cpus(NULL, cpus, 2) == 0);
-  assert(arm_imc_scf_lead_cpus(g_root, NULL, 2) == 0);
-  assert(arm_imc_scf_lead_cpus(g_root, cpus, 0) == 0);
+  snprintf(rel, sizeof(rel), "devices/nvidia_scf_pmu_%d/type", sock);
+  snprintf(val, sizeof(val), "%d\n", type);
+  fake_sysfs_write(g_root, rel, val);
+  snprintf(rel, sizeof(rel), "devices/nvidia_scf_pmu_%d/format/event", sock);
+  fake_sysfs_write(g_root, rel, "config:0-31\n");
+  snprintf(rel, sizeof(rel), "devices/nvidia_scf_pmu_%d/events/cmem_rd_data", sock);
+  fake_sysfs_write(g_root, rel, "event=0x1a5\n");
+  snprintf(rel, sizeof(rel), "devices/nvidia_scf_pmu_%d/events/cmem_wr_total_bytes", sock);
+  fake_sysfs_write(g_root, rel, "event=0x1db\n");
+  if (cpumask != NULL) {
+    snprintf(rel, sizeof(rel), "devices/nvidia_scf_pmu_%d/cpumask", sock);
+    fake_sysfs_write(g_root, rel, cpumask);
+  }
 }
 
 static void test_cas_units(void)
@@ -78,43 +57,151 @@ static void test_cas_units(void)
   assert(arm_imc_scf_wr_bytes_to_cas(6400) == 100);
 }
 
-static void test_begin_mode_pending_until_overlay_has_scf(void)
+static void test_begin_mode_has_no_pending_state(void)
 {
-  /* c122-018 regression: arm_aarch64_imc began before the DCGM-deferred overlay was up, saw no
-   * SCF and no dmc/imc PMU, and disabled itself for the whole run. */
-  assert(arm_imc_scf_begin_mode(1, 0, 2, 0) == ARM_IMC_MODE_PENDING);
-  assert(arm_imc_scf_begin_mode(1, 1, 2, 0) == ARM_IMC_MODE_SCF);
-  assert(arm_imc_scf_begin_mode(1, 1, 2, 3) == ARM_IMC_MODE_SCF); /* SCF wins over perf */
-  assert(arm_imc_scf_begin_mode(1, 0, 2, 3) == ARM_IMC_MODE_PERF);
-  assert(arm_imc_scf_begin_mode(0, 0, 0, 3) == ARM_IMC_MODE_PERF);
-  /* No overlay build or no SCF PMU: nothing can attach later. */
-  assert(arm_imc_scf_begin_mode(0, 0, 2, 0) == ARM_IMC_MODE_DISABLED);
-  assert(arm_imc_scf_begin_mode(1, 1, 0, 0) == ARM_IMC_MODE_DISABLED);
-  assert(arm_imc_scf_begin_mode(1, 0, 0, 0) == ARM_IMC_MODE_DISABLED);
+  assert(arm_imc_scf_begin_mode(2, 0) == ARM_IMC_MODE_SCF);
+  assert(arm_imc_scf_begin_mode(1, 3) == ARM_IMC_MODE_SCF); /* SCF wins over dmc/imc */
+  assert(arm_imc_scf_begin_mode(0, 3) == ARM_IMC_MODE_PERF);
+  /* Nothing yet: stay enabled and re-scan (never disabled for the whole run). */
+  assert(arm_imc_scf_begin_mode(0, 0) == ARM_IMC_MODE_RESCAN);
 }
 
-static void test_collect_mode_attaches_once_overlay_ready(void)
+/* Two sockets with the given (per-boot) type numbers: sockets by name index, CPU by cpumask. */
+static void check_two_sockets(int type0, int type1)
 {
-  assert(arm_imc_scf_collect_mode(ARM_IMC_MODE_PENDING, 0, 2) == ARM_IMC_MODE_PENDING);
-  assert(arm_imc_scf_collect_mode(ARM_IMC_MODE_PENDING, 1, 2) == ARM_IMC_MODE_SCF);
-  assert(arm_imc_scf_collect_mode(ARM_IMC_MODE_PENDING, 1, 0) == ARM_IMC_MODE_PENDING);
-  /* Settled modes never change in collect. */
-  assert(arm_imc_scf_collect_mode(ARM_IMC_MODE_PERF, 1, 2) == ARM_IMC_MODE_PERF);
-  assert(arm_imc_scf_collect_mode(ARM_IMC_MODE_SCF, 0, 2) == ARM_IMC_MODE_SCF);
-  assert(arm_imc_scf_collect_mode(ARM_IMC_MODE_DISABLED, 1, 2) == ARM_IMC_MODE_DISABLED);
+  struct arm_imc_scf s;
+
+  reset_tree();
+  add_scf_pmu(1, type1, "72\n");
+  add_scf_pmu(0, type0, "0\n");
+  arm_imc_scf_init(&s, g_dev, fake_perf_open);
+  assert(arm_imc_scf_count_pmus(g_dev) == 2);
+  assert(arm_imc_scf_attach(&s) == 2);
+  assert(s.dev[0].socket == 0 && s.dev[0].cpu == 0);
+  assert(s.dev[1].socket == 1 && s.dev[1].cpu == 72);
+  assert(fake_perf_find((uint32_t)type0, 0x1a5, 0) >= 0);
+  assert(fake_perf_find((uint32_t)type0, 0x1db, 0) >= 0);
+  assert(fake_perf_find((uint32_t)type1, 0x1a5, 72) >= 0);
+  assert(fake_perf_find((uint32_t)type1, 0x1db, 72) >= 0);
+  assert(g_fake_perf_n == 4);
+  arm_imc_scf_close(&s);
+  assert(s.n == 0);
+}
+
+static void test_two_sockets_horizon_and_vista(void)
+{
+  check_two_sockets(25, 15); /* Horizon c122-018 */
+  check_two_sockets(24, 16); /* Vista i618-141 */
+}
+
+static void test_read_scaled_cas(void)
+{
+  struct arm_imc_scf s;
+  unsigned long long rd = 0, wr = 0;
+  int ird, iwr;
+
+  reset_tree();
+  add_scf_pmu(0, 38, "0\n");
+  arm_imc_scf_init(&s, g_dev, fake_perf_open);
+  assert(arm_imc_scf_attach(&s) == 1);
+  ird = fake_perf_find(38, 0x1a5, 0);
+  iwr = fake_perf_find(38, 0x1db, 0);
+  fake_perf_push(ird, 0, 0, 0);
+  fake_perf_push(iwr, 0, 0, 0);
+  assert(arm_imc_scf_read(&s.dev[0], &rd, &wr) == 0 && rd == 0 && wr == 0);
+  /* 1000 beats running 1/3 of the time -> 3000 beats -> 1500 CAS; 6400 bytes -> 100 CAS. */
+  fake_perf_push(ird, 1000, 300, 100);
+  fake_perf_push(iwr, 6400, 300, 300);
+  assert(arm_imc_scf_read(&s.dev[0], &rd, &wr) == 0);
+  assert(rd == 1500 && wr == 100);
+  /* No new sample this tick: the lifetime holds. */
+  assert(arm_imc_scf_read(&s.dev[0], &rd, &wr) == 0 && rd == 1500 && wr == 100);
+  assert(arm_imc_scf_read(NULL, &rd, &wr) == -1);
+  assert(arm_imc_scf_read(&s.dev[0], NULL, &wr) == -1);
+  arm_imc_scf_close(&s);
+  assert(fake_perf_closed(ird) && fake_perf_closed(iwr));
+}
+
+static void test_single_socket_gh200(void)
+{
+  struct arm_imc_scf s;
+
+  reset_tree();
+  add_scf_pmu(0, 38, "0\n"); /* finding #11: one PMU, never assume two */
+  arm_imc_scf_init(&s, g_dev, fake_perf_open);
+  assert(arm_imc_scf_attach(&s) == 1);
+  assert(s.dev[0].socket == 0 && s.dev[0].cpu == 0);
+  arm_imc_scf_close(&s);
+}
+
+static void test_no_scf_pmu_rescans_then_attaches(void)
+{
+  struct arm_imc_scf s;
+  int tick;
+
+  /* GH200 before the F33 firmware: no SCF PMU, no error, caller falls back to dmc/imc. */
+  reset_tree();
+  arm_imc_scf_init(&s, g_dev, fake_perf_open);
+  assert(arm_imc_scf_count_pmus(g_dev) == 0);
+  assert(arm_imc_scf_attach(&s) == 0);
+  assert(arm_imc_scf_begin_mode(s.n, 0) == ARM_IMC_MODE_RESCAN);
+  /* O17: nvidia_cspmu binds later; the cheap re-scan picks it up on the Nth tick only. */
+  for (tick = 1; tick < ARM_IMC_SCF_RESCAN_TICKS / 2; tick++)
+    assert(arm_imc_scf_tick(&s) == 0);
+  add_scf_pmu(0, 38, "0\n");
+  for (; tick < ARM_IMC_SCF_RESCAN_TICKS; tick++)
+    assert(arm_imc_scf_tick(&s) == 0);
+  assert(g_fake_perf_n == 0); /* no open before the re-scan tick */
+  assert(arm_imc_scf_tick(&s) == 1);
+  assert(s.dev[0].socket == 0);
+  assert(arm_imc_scf_tick(&s) == 1); /* attached: no more scans */
+  assert(g_fake_perf_n == 2);
+  arm_imc_scf_close(&s);
+  assert(arm_imc_scf_tick(NULL) == 0);
+}
+
+static void test_bad_entries_and_open_failure_skip_socket(void)
+{
+  struct arm_imc_scf s;
+
+  reset_tree();
+  add_scf_pmu(0, 25, "0\n");
+  add_scf_pmu(1, 15, "72\n");
+  add_scf_pmu(2, 30, NULL);                              /* no cpumask: skipped */
+  add_scf_pmu(3, 31, "garbage\n");                       /* unparsable cpumask: skipped */
+  fake_sysfs_mkdir(g_root, "devices/nvidia_scf_pmu_x");  /* non-numeric: ignored */
+  fake_sysfs_mkdir(g_root, "devices/nvidia_scf_pmu_99"); /* out of range: ignored */
+  fake_perf_fail(0x1db, 72); /* socket 1's write counter cannot open (e.g. offline CPU) */
+  arm_imc_scf_init(&s, g_dev, fake_perf_open);
+  assert(arm_imc_scf_count_pmus(g_dev) == 4);
+  assert(arm_imc_scf_attach(&s) == 1);
+  assert(s.dev[0].socket == 0);
+  /* Socket 1's read fd was opened then closed when the write failed. */
+  assert(fake_perf_closed(fake_perf_find(15, 0x1a5, 72)));
+  assert(!fake_perf_closed(fake_perf_find(25, 0x1a5, 0))); /* socket 0 stays open */
+  arm_imc_scf_close(&s);
+  /* Bad inputs. */
+  assert(arm_imc_scf_count_pmus("/nonexistent/hpcperfstats") == 0);
+  assert(arm_imc_scf_count_pmus(NULL) == 0);
+  arm_imc_scf_init(&s, NULL, NULL);
+  assert(arm_imc_scf_attach(&s) == 0);
+  assert(arm_imc_scf_attach(NULL) == 0);
+  arm_imc_scf_init(NULL, g_dev, NULL);
+  arm_imc_scf_close(NULL);
 }
 
 int main(void)
 {
-  snprintf(g_root, sizeof(g_root), "%s/test_arm_imc_scf.XXXXXX",
-           getenv("TMPDIR") != NULL ? getenv("TMPDIR") : "/tmp");
-  assert(mkdtemp(g_root) != NULL);
-  test_lead_cpus_ordered_by_socket_index();
-  test_lead_cpus_rejects_bad_inputs();
+  fake_sysfs_init(g_root, sizeof(g_root));
   test_cas_units();
-  test_begin_mode_pending_until_overlay_has_scf();
-  test_collect_mode_attaches_once_overlay_ready();
-  rm_tree();
+  test_begin_mode_has_no_pending_state();
+  test_two_sockets_horizon_and_vista();
+  test_read_scaled_cas();
+  test_single_socket_gh200();
+  test_no_scf_pmu_rescans_then_attaches();
+  test_bad_entries_and_open_failure_skip_socket();
+  fake_sysfs_rm(g_root);
+  fake_perf_reset();
   printf("test_arm_imc_scf: ok\n");
   return 0;
 }

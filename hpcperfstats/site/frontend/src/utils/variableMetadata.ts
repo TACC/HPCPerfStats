@@ -188,25 +188,43 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
     description:
       "Average double-precision floating-point throughput (GFLOP/s) from Intel FP_ARITH double events, or Grace host_cpu_hw scalar double when Intel FP is absent (same basis as summary flops64b).",
     researcherUse:
-      "Use with avg_flops32b and the Multiprecision Mix pie to see FP64 share of busy arithmetic.",
+      "Historical FP64 rate kept for older jobs; the CPU Multiprecision Mix pie now uses avg_fp64_instr.",
   },
   avg_flops32b: {
     description:
       "Average single-precision floating-point throughput (GFLOP/s) from Intel FP_ARITH single events, or Grace host_cpu_hw scalar single when Intel FP is absent (same basis as summary flops32b).",
     researcherUse:
-      "Use with avg_flops64b and the Multiprecision Mix pie to see FP32 share of busy arithmetic.",
+      "Historical FP32 rate kept for older jobs; the CPU Multiprecision Mix pie now uses avg_fp32_instr.",
+  },
+  avg_fp64_instr: {
+    description:
+      "Average CPU FP64 instruction rate (Ginstr/s) from host_cpu_hw arm_fp_dp_spec (Grace FP_DP_SPEC speculative count). Counts instructions, not FLOPs: a vector instruction counts once.",
+    researcherUse:
+      "FP64 wedge of the CPU Multiprecision Mix; a DGEMM-like code is FP64-dominant.",
+  },
+  avg_fp32_instr: {
+    description:
+      "Average CPU FP32 instruction rate (Ginstr/s) from host_cpu_hw arm_fp_sp_spec (Grace FP_SP_SPEC speculative count). Counts instructions, not FLOPs: a vector instruction counts once.",
+    researcherUse:
+      "FP32 wedge of the CPU Multiprecision Mix; compare with FP64 when testing reduced precision.",
+  },
+  avg_fp16_instr: {
+    description:
+      "Average CPU FP16 instruction rate (Ginstr/s) from host_cpu_hw arm_fp_hp_spec (Grace FP_HP_SPEC speculative count). Counts instructions, not FLOPs: a vector instruction counts once.",
+    researcherUse:
+      "FP16 wedge of the CPU Multiprecision Mix; shows half-precision work such as CPU-side ML inference.",
   },
   avg_arm_int8_ops: {
     description:
-      "Average CPU INT8 arithmetic operation rate (Gops/s) from host_cpu_hw arm_int8_ops (ASE_SVE_INT8_SPEC). Not included in arm_est_flops / avg_flops.",
+      "Average CPU INT8 SVE instruction rate (Ginstr/s) from host_cpu_hw arm_int8_ops (ASE_SVE_INT8_SPEC). Not included in arm_est_flops / avg_flops.",
     researcherUse:
-      "INT8 wedge of the CPU Multiprecision Mix; compare with FP64/FP32 busy-ops shares.",
+      "INT8 wedge of the CPU Multiprecision Mix; compare with the FP64/FP32/FP16 instruction shares.",
   },
   avg_arm_int16_ops: {
     description:
-      "Average CPU INT16 arithmetic operation rate (Gops/s) from host_cpu_hw arm_int16_ops (ASE_SVE_INT16_SPEC). Not included in arm_est_flops / avg_flops.",
+      "Average CPU INT16 SVE instruction rate (Ginstr/s) from host_cpu_hw arm_int16_ops (ASE_SVE_INT16_SPEC). Not included in arm_est_flops / avg_flops.",
     researcherUse:
-      "INT16 wedge of the CPU Multiprecision Mix; compare with FP64/FP32 busy-ops shares.",
+      "INT16 wedge of the CPU Multiprecision Mix; compare with the FP64/FP32/FP16 instruction shares.",
   },
   avg_mbw: {
     description:
@@ -825,9 +843,9 @@ const JOB_DETAIL_BOKEH_PLOT_METADATA = {
   },
   jobDetailPlot_multiprecision_cpu: {
     description:
-      "CPU multiprecision mix: wedge areas show each width's share of busy arithmetic rates only (idle excluded), from avg_flops64b / avg_flops32b (Intel FP_ARITH or host_cpu_hw scalar FP) and avg_arm_int16_ops / avg_arm_int8_ops when present. INT ops and FLOPS are mixed as relative busy-ops shares, not identical units.",
+      "CPU multiprecision mix: wedge areas show each precision's share of busy FP instructions (FP64, FP32, FP16) plus SVE INT16/INT8 instructions, from avg_fp64_instr / avg_fp32_instr / avg_fp16_instr and avg_arm_int16_ops / avg_arm_int8_ops (Ginstr/s; idle excluded). On Grace these are speculative instruction counts, which slightly over-count retired work. A vector instruction counts once whatever its width, so wedges are FP instruction shares, not FLOP shares.",
     researcherUse:
-      "Compare FP64 versus FP32 (and INT16/INT8) busy-ops mix when tuning numerical precision; vectorization width metrics remain separate.",
+      "Compare FP64 versus FP32 and FP16 instruction share (and INT16/INT8) when tuning numerical precision; use avg_flops and the CPU roofline for FLOP/s.",
   },
   jobDetailPlot_multiprecision_gpu: {
     description:

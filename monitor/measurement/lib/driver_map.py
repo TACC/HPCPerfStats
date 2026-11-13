@@ -47,9 +47,11 @@ STATIC_GROUP: dict[str, str] = {
 BACKEND_TYPES = ("host_cpu_hw", "host_ib", "arm_aarch64_imc")
 
 # Paired variant legs (run like SOLO, compared against their base group in the same block,
-# not against NONE). Grace overlay builds: the overlay programs the SCF counters inside
-# host_cpu_hw's group whether or not arm_aarch64_imc is enabled, so SCF cost is only visible
-# as arm_cpu (SCF on + arm_aarch64_imc) minus arm_cpu with HPCPERFSTATS_LIKWID_GRACE_SCF=0.
+# not against NONE). Grace overlay builds (3.0 and earlier; 3.1 removed the overlay, reads SCF
+# through arm_aarch64_imc's own perf fds and gets no variant): the overlay programs the SCF
+# counters inside host_cpu_hw's group whether or not arm_aarch64_imc is enabled, so SCF cost is
+# only visible as arm_cpu (SCF on + arm_aarch64_imc) minus arm_cpu with
+# HPCPERFSTATS_LIKWID_GRACE_SCF=0.
 # ``marker`` must appear in the leg's journal or the pair is NOT_MEASURED (a daemon without
 # the knob would run two identical legs and report a false zero).
 VARIANTS: dict[str, dict[str, Any]] = {

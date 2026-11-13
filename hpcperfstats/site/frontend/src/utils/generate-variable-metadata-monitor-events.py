@@ -6,7 +6,8 @@ macros.
 Attributes:
   DESC: Attribute.
   EXTRA_EVENT_NAMES: Consumer-known events always listed (``host_power_socket``
-    keys), independent of the checked-out monitor tree.
+    keys, monitor 3.1 Grace ``arm_fp_*_spec`` keys), independent of the
+    checked-out monitor tree.
   HISTORICAL_EVENT_NAMES: Attribute.
   MARKERS: Attribute.
   MONITOR_SRC: Attribute.
@@ -53,6 +54,10 @@ EXTRA_EVENT_NAMES = frozenset(
     "socket_power_w",
     "sysio_power_w",
     "module_power_w",
+    # Grace host_cpu_hw FP instruction counts (monitor 3.1, cpu-precision D1).
+    "arm_fp_dp_spec",
+    "arm_fp_sp_spec",
+    "arm_fp_hp_spec",
   }
 )
 
@@ -520,32 +525,46 @@ DESC: dict[str, str] = {
   "tx_fifo_errors": "Linux netdev: transmit FIFO errors (underrun/overrun, driver dependent).",
   "tx_heartbeat_errors": "Linux netdev: heartbeat / half-duplex loss-of-carrier style errors.",
   "tx_window_errors": "Linux netdev: classic transmitter window errors on outbound frames.",
-  # Grace / ARM host_cpu_hw: DCGM fail-soft cycles + LIKWID overlay when measured > 0.
+  # Grace / ARM host_cpu_hw: util x clock fail-soft cycles; measured direct-perf
+  # cycles (monitor 3.1, scaled) replace them when the counter is open.
   "mperf": (
-    "Reference cycles (wall/TSC-like). Grace DCGM fail-soft: ref = clock_khz * delta_t_us / 1000; "
-    "LIKWID overlay overwrites with measured lifetime cycles when measured > 0; "
+    "Reference cycles (wall/TSC-like). Grace fail-soft: ref = clock_khz * delta_t_us / 1000; "
+    "measured core cycles replace it when the cycle counter is open (monitor 3.1, emitted modulo 2^48); "
     "on x86, MSR/FIXED reference cycle counters rename to this key."
   ),
   "aperf": (
-    "Active cycles (util-scaled). Grace DCGM fail-soft: act = mperf * (util_total / 100); "
-    "LIKWID overlay overwrites with measured active cycles when measured > 0; "
+    "Active cycles (util-scaled). Grace fail-soft: act = mperf * (util_total / 100); "
+    "measured core cycles replace it when the cycle counter is open (monitor 3.1, emitted modulo 2^48); "
     "on x86, MSR/FIXED actual/unhalted cycle counters rename to this key."
   ),
   "cpu_clock_est_cycles": (
-    "Active cycles (same as aperf under Grace DCGM fail-soft util-scaled estimate). "
-    "LIKWID overlay overwrites with measured cycles when measured > 0."
+    "Active cycles (same as aperf under the Grace util-scaled fail-soft estimate); "
+    "measured core cycles replace it when the cycle counter is open (monitor 3.1, 64-bit)."
   ),
   "arm_est_flops": (
-    "Grace host_cpu_hw: estimated floating-point operations per interval as SP+DP scalar "
-    "only (does not include arm_int8_ops / arm_int16_ops)."
+    "Grace host_cpu_hw: measured floating-point operations (FP_FIXED_OPS_SPEC + "
+    "FP_SCALE_OPS_SPEC) since monitor 3.1; older rows are 0. Does not include "
+    "arm_int8_ops / arm_int16_ops."
   ),
   "arm_int8_ops": (
-    "Grace host_cpu_hw: INT8 arithmetic operations from ASE_SVE_INT8_SPEC "
-    "(overlay/eventset may report zero)."
+    "Grace host_cpu_hw: INT8 SVE instructions from ASE_SVE_INT8_SPEC (real "
+    "counts since monitor 3.1; older rows are 0)."
   ),
   "arm_int16_ops": (
-    "Grace host_cpu_hw: INT16 arithmetic operations from ASE_SVE_INT16_SPEC "
-    "(overlay/eventset may report zero)."
+    "Grace host_cpu_hw: INT16 SVE instructions from ASE_SVE_INT16_SPEC (real "
+    "counts since monitor 3.1; older rows are 0)."
+  ),
+  "arm_fp_dp_spec": (
+    "Grace host_cpu_hw: speculatively executed FP64 instructions (FP_DP_SPEC, "
+    "scaled for counter sharing; monitor 3.1)."
+  ),
+  "arm_fp_sp_spec": (
+    "Grace host_cpu_hw: speculatively executed FP32 instructions (FP_SP_SPEC, "
+    "scaled for counter sharing; monitor 3.1)."
+  ),
+  "arm_fp_hp_spec": (
+    "Grace host_cpu_hw: speculatively executed FP16 instructions (FP_HP_SPEC, "
+    "scaled for counter sharing; monitor 3.1)."
   ),
   "fp_arith_inst_retired_scalar_double": (
     "Grace host_cpu_hw: retired scalar double-precision FP arithmetic instructions."

@@ -1,7 +1,7 @@
-/* host_cpu_hw begins before every other type when LIKWID runs in it: the exclusive x86/ARM
- * backend (HPMinit before AMD DF/RAPL) and the Grace DCGM+LIKWID overlay (built again as
- * test_stats_runtime_overlay_begin_order). c122-018 regression: on the overlay build types began
- * in name order, so arm_aarch64_imc began before the overlay group carried the SCF events. */
+/* host_cpu_hw begins before every other type when the exclusive LIKWID backend runs in it
+ * (HPMinit before AMD DF/RAPL). Built again as test_stats_runtime_arm_begin_order: since 3.1 the
+ * aarch64 `arm` backend has no LIKWID and arm_aarch64_imc reads SCF on its own perf fds, so
+ * types begin in plain registry order there (the old overlay begin-order case is gone). */
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -167,8 +167,7 @@ static void test_daemon_prepare_begins_host_cpu_hw_first(void)
   int host_idx;
   int df_idx;
 
-#if !defined(MONITOR_WITH_HARDWARE) ||                                                             \
-    !(defined(MONITOR_CPU_BACKEND_LIKWID) || defined(MONITOR_CPU_LIKWID_OVERLAY))
+#if !defined(MONITOR_WITH_HARDWARE) || !defined(MONITOR_CPU_BACKEND_LIKWID)
   return;
 #endif
 
@@ -198,8 +197,7 @@ static void test_main_prepare_begins_host_cpu_hw_first(void)
   };
   int host_idx;
 
-#if !defined(MONITOR_WITH_HARDWARE) ||                                                             \
-    !(defined(MONITOR_CPU_BACKEND_LIKWID) || defined(MONITOR_CPU_LIKWID_OVERLAY))
+#if !defined(MONITOR_WITH_HARDWARE) || !defined(MONITOR_CPU_BACKEND_LIKWID)
   return;
 #endif
 
@@ -215,10 +213,29 @@ static void test_main_prepare_begins_host_cpu_hw_first(void)
   stats_runtime_daemon_reset_types();
 }
 
+static void test_arm_backend_begins_in_registry_order(void)
+{
+  int i;
+
+#if !defined(MONITOR_WITH_HARDWARE) || !defined(MONITOR_CPU_BACKEND_ARM)
+  return;
+#endif
+
+  reset_state();
+  stats_runtime_daemon_prepare_types();
+
+  assert(g_begin_order_len == N_TYPES);
+  for (i = 0; i < N_TYPES; i++)
+    assert(g_begin_order[i] == i);
+
+  stats_runtime_daemon_reset_types();
+}
+
 int main(void)
 {
   test_daemon_prepare_begins_host_cpu_hw_first();
   test_main_prepare_begins_host_cpu_hw_first();
+  test_arm_backend_begins_in_registry_order();
   printf("test_stats_runtime_likwid_begin_order passed\n");
   return 0;
 }

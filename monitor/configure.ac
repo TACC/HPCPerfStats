@@ -1,8 +1,15 @@
-AC_INIT([hpcperfstats], [3.0], [sharrell@tacc.utexas.edu])
+AC_INIT([hpcperfstats], [3.1], [sharrell@tacc.utexas.edu])
 AM_INIT_AUTOMAKE([foreign -Wall -Werror -Wno-portability])
 AC_CANONICAL_HOST
 AC_PROG_CC
 AM_PROG_CC_C_O
+
+dnl aarch64 builds no LIKWID (the arm backend reads core and Grace SCF counters by direct perf).
+dnl Reject the exclusive LIKWID backend on non-x86 before any library probe (silent on x86).
+case "${with_cpu_counter_backend}:${host_cpu}" in
+  likwid:x86_64|likwid:i?86) ;;
+  likwid:*) AC_MSG_ERROR([--with-cpu-counter-backend=likwid is x86-only (host_cpu=${host_cpu}); non-x86 uses --with-cpu-counter-backend=arm (direct perf core and SCF counters, no LIKWID)]) ;;
+esac
 
 AC_ARG_ENABLE([all-static],
 [AS_HELP_STRING([--enable-all-static], [Link most third-party libraries as static archives (linker groups) (default: yes). Use --disable-all-static for dynamic linking where available. Requires static .a for ev, rabbitmq-c, and likwid (+ likwid-hwloc, likwid-lua for the static liblikwid link); for workspace .build/prefix run monitor/scripts/ensure_dotbuild_prefix_static.sh. Vendor stacks usually shipped as shared only (DCGM, RDMA/OPA, libibmad) are linked after -Wl,-Bdynamic. See monitor/scripts/build_static_bundle.sh.])],
@@ -96,7 +103,7 @@ esac],
 AM_CONDITIONAL([HARDWARE], [test x$hardware = xtrue])
 
 AC_ARG_WITH([cpu-counter-backend],
-[AS_HELP_STRING([--with-cpu-counter-backend={auto|likwid|arm}], [CPU counter backend selection (default: auto; aarch64 auto = arm: /proc/stat util, cpufreq clock, LIKWID overlay; no DCGM)])],
+[AS_HELP_STRING([--with-cpu-counter-backend={auto|likwid|arm}], [CPU counter backend selection (default: auto; x86 auto = likwid; aarch64 auto = arm: /proc/stat util, cpufreq clock, direct perf core and Grace SCF counters; no LIKWID, no DCGM; likwid is x86 only)])],
 [cpu_counter_backend="$withval"],
 [cpu_counter_backend="auto"])
 
@@ -111,7 +118,6 @@ case "$host_cpu" in
 esac
 
 likwid=false
-cpu_likwid_overlay=false
 CPU_COUNTER_BACKEND_CPPFLAG=""
 MONITOR_ARCH_CPPFLAG=""
 
@@ -130,10 +136,6 @@ fi
 need_likwid=false
 if test "x$cpu_counter_backend" = "xlikwid"; then
   need_likwid=true
-fi
-if test "x$cpu_counter_backend" = "xarm" && test "x$is_x86" != "xtrue"; then
-  need_likwid=true
-  cpu_likwid_overlay=true
 fi
 
 if test "x$need_likwid" = "xtrue"; then
@@ -165,14 +167,10 @@ if test "x$need_likwid" = "xtrue"; then
 fi
 
 if test "x$cpu_counter_backend" = "xarm"; then
-  dnl arm backend: kernel sources only (/proc/stat, cpufreq); socket power is host_power_socket.
+  dnl arm backend: kernel sources only (/proc/stat, cpufreq, perf_event core and SCF counters
+  dnl via arm_perf_util); socket power is host_power_socket.
   CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_ARM"
   MONITOR_ARCH_CPPFLAG=""
-  dnl Grace / aarch64 hybrid: arm util/clock + LIKWID overlay for cycles/inst.
-  if test "x$cpu_likwid_overlay" = "xtrue"; then
-    CPU_COUNTER_BACKEND_CPPFLAG="${CPU_COUNTER_BACKEND_CPPFLAG} -DMONITOR_CPU_LIKWID_OVERLAY"
-    AC_MSG_NOTICE([CPU counter hybrid: arm util/clock + LIKWID overlay])
-  fi
 elif test "x$cpu_counter_backend" = "xlikwid"; then
   CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_LIKWID"
 fi
@@ -232,8 +230,6 @@ AM_CONDITIONAL([CPU_BACKEND_LIKWID],
   [test x$hardware = xtrue -a x$cpu_counter_backend = xlikwid])
 AM_CONDITIONAL([CPU_BACKEND_ARM],
   [test x$hardware = xtrue -a x$cpu_counter_backend = xarm])
-AM_CONDITIONAL([CPU_LIKWID_OVERLAY],
-  [test x$hardware = xtrue -a x$cpu_counter_backend = xarm -a x$cpu_likwid_overlay = xtrue])
 
 AC_ARG_ENABLE([infiniband],
 [  --enable-infiniband	Enable InfiniBand MAD support (default is true; use --enable-ib-mad-dlopen for fleet)],

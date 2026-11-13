@@ -245,8 +245,8 @@ def test_persist_job_detail_records_type_detail_failure_as_fresh_unavailable(
 def test_persist_job_detail_prewarms_multiprecision_mix_payload(monkeypatch):
   job = _mk_job("detail-multiprecision-mix")
   for metric_name, metric_type, value, units in (
-    ("avg_flops64b", "pmc", 40.0, "GF"),
-    ("avg_flops32b", "pmc", 60.0, "GF"),
+    ("avg_fp64_instr", "host_cpu_hw", 40.0, "Ginstr/s"),
+    ("avg_fp32_instr", "host_cpu_hw", 60.0, "Ginstr/s"),
     ("avg_tensor_active", "nvidia_gpu", 25.0, "%"),
     ("avg_fp16_active", "nvidia_gpu", 25.0, "%"),
     ("avg_fp32_active", "nvidia_gpu", 30.0, "%"),
@@ -295,8 +295,8 @@ def test_persist_job_detail_multiprecision_gpu_uses_available_widths_only(
   """GPU pie should render with whichever precision widths are present for the job."""
   job = _mk_job("detail-multiprecision-dynamic-widths")
   for metric_name, metric_type, value in (
-    ("avg_flops64b", "pmc", 55.0),
-    ("avg_flops32b", "pmc", 45.0),
+    ("avg_fp64_instr", "host_cpu_hw", 55.0),
+    ("avg_fp32_instr", "host_cpu_hw", 45.0),
     ("avg_tensor_active", "nvidia_gpu", 70.0),
     ("avg_fp16_active", "nvidia_gpu", 30.0),
   ):
@@ -342,14 +342,14 @@ def test_persist_job_detail_multiprecision_gpu_unavailable_without_metrics(
   (no host_data fallback)."""
   job = _mk_job("detail-multiprecision-no-gpu-metrics")
   for metric_name in (
-    "avg_flops64b",
-    "avg_flops32b",
+    "avg_fp64_instr",
+    "avg_fp32_instr",
   ):
     metrics_data.objects.create(
       jid=job,
-      type="pmc",
+      type="host_cpu_hw",
       metric=metric_name,
-      units="GF",
+      units="Ginstr/s",
       value=50.0,
       no_data_reason=None,
     )

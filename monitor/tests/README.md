@@ -11,7 +11,10 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_assert_live.c` | Built with `-DNDEBUG`; fails if `assert()` is compiled out (see `test_assert_live.h`) |
 | `test_dict.c` | `dict_*` hash table (init/set/ref/remv/for_each; null/zero/corrupt-table guards) |
 | `test_dcgm_session.c` | DCGM session refcount (single Init, shutdown on last release); embedded start denies the NVSwitch module and falls back to v1 when v2 fails |
-| `test_arm_imc_scf.c` | Grace SCF helpers for `arm_aarch64_imc`: socket lead CPUs from `nvidia_scf_pmu_<N>/cpumask` (ordered, bounded, bad entries skipped) and CAS units (reads = 32 B beats / 2, writes = bytes / 64) |
+| `test_arm_imc_scf.c` | Grace SCF for `arm_aarch64_imc` by direct perf (fake perf layer): CAS units (reads = 32 B beats / 2, writes = bytes / 64), two sockets (Horizon / Vista Grace-Grace) and one (GH200), scaled reads, no PENDING mode, no-PMU re-scan then attach, bad entries / open failure skip one socket |
+| `test_arm_perf_util.c` | `arm_perf_util`: sysfs PMU `type` / `events/` / `format/` parse, `cpumask` first CPU, enabled/running scaling (seed, Δrunning 0, drop re-seeds), short reads (finding #5: unscaled reads were ~4× low) |
+| `test_arm_core_perf.c` | `arm_core_perf`: MIDR from sysfs / `/proc/cpuinfo`, sysfs names first then the Neoverse V2 raw table, unknown MIDR skips FP events, per-CPU scaled lifetimes, failed opens log once (finding #8) |
+| `test_fake_perf.c`, `test_fake_perf.h` | Shared test layer: TMPDIR sysfs tree plus a fake `perf_event_open` whose fds are pipes fed `{value, enabled, running}` samples |
 | `test_dcgm_watch_policy.c` | `dcgm_watch_policy_*`: refresh follows the collect interval (60 s → 60,000,000 µs, keep 120 s / 2 samples), clamps 1 s–1 h, fallback when unset/invalid, NULL out |
 | `test_stats_type_get.c` | `stats_type_get` finds every `st_name` in registry (legacy variable-name) order, so `disable_types` works for renamed types; unknown/NULL return NULL |
 | `test_host_key_alias.c` | `host_key_alias_lookup` / `host_key_alias_emit` |
@@ -25,12 +28,9 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_procfile_kv.c` | `proc_kv_into_stats` (header-only) |
 | `test_collect_str.c` | `str_collect_key_list` / `str_collect_prefix_key_list` |
 | `test_cpu_counter_arm_util.c` | `arm` backend helpers (`cpu_counter_metrics_arm_util.c`, portable): jiffy util, `/proc/stat` line parse, cpufreq clock (`scaling_cur_freq` via pread, nominal chain, never `cpuinfo_cur_freq`) over fixture sysfs trees |
-| `test_cpu_counter_arm_publish.c` | `arm` publish/accumulate (util µs, util×freq cycles; no `dcgm_cpu_power_*` keys, D33/D36); also built as `test_cpu_counter_arm_publish_likwid` with `-DMONITOR_CPU_LIKWID_OVERLAY` |
-| `test_cpu_counter_metrics_likwid_ready_arm.c` | `cpu_counter_metrics_likwid_ready()` stays declared and stubbed to 0 on the `arm` backend (`-Werror=implicit-function-declaration`) |
+| `test_cpu_counter_arm_publish.c` | `arm` publish/accumulate (util µs, util×freq cycles; no `dcgm_cpu_power_*` keys, D33/D36); never synthesizes instr / FLOPs (O15); measured CYC overwrites the three cycle keys only when > 0 (O16); D1 keys, W=48 modulo emit, `arm_est_flops` = FIXED + SCALE |
 | `test_arm_power_hwmon.c` | ACPI `<Name> Power Socket <N>` meter index: label parse, EL10 `hwmonN/` and EL9 `hwmonN/device/` layouts, GB200 / GH200 / Grace-Grace label sets, shuffled hwmon numbers, unknown label, missing / garbage value, duplicates |
 | `test_arm_power_socket.c` | `host_power_socket` schema keys and per-socket publish (µW → rounded W, absent meter → 0, equal sockets both kept) |
-| `test_likwid_overlay_map.c` | arm+LIKWID overlay key mapping (overwrite cycles only if > 0) |
-| `test_likwid_arch_map_grace.c` | Grace CYC+INS / CYC-only eventset goldens; CYC+INS+SCF (`CMEM_RD_DATA:SCF0,CMEM_WR_TOTAL_BYTES:SCF1`, no `GMEM`) |
 | `test_ib_schema_contract.c` | `ib.h` KEYS rename contract |
 | `test_host_schema_contract.c` | Host collector schema token contract |
 | `test_lustre_schema_contract.c` | Lustre collector schema token contract |
@@ -89,7 +89,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_ib_mad_backoff.c` | `ib_mad_*_collect_cycle_ok` fresh-state allowance (Infiniband build) |
 | `test_ib_mad_decode.c` | `ib_mad_ext_decode_counters` with synthetic MAD buffer (Infiniband build) |
 | `test_hwdetect_lspci.c` | `hwdetect_invalidate_probe_cache` + probe smoke |
-| `test_cpu_counter_metrics_schema.c` | `CPU_COUNTER_METRICS_KEYS` schema tokens; retired `dcgm_cpu_power_*` keys absent |
+| `test_cpu_counter_metrics_schema.c` | `CPU_COUNTER_METRICS_KEYS` schema tokens; retired `dcgm_cpu_power_*` keys absent; `arm_fp_{dp,sp,hp}_spec` `E,W=64` on arm builds only |
 | `test_gpu_schema_contract.c` | NVIDIA/AMD GPU schema substrings (incl. module/sysio power keys) |
 | `test_nvidia_gpu_estimate.c` | `nvidia_gpu_estimate_rates` FLOP/memory-bandwidth math |
 | `test_nvidia_gpu_dcgm_field.c` | DCGM blank sentinels and blank-family reject on GPU watts/util/u64/ratio converters |
@@ -113,7 +113,7 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_monitor_configure_help.sh.in` | Regression (via `check-local`): `configure --help` mentions `--enable-all-static`, `--enable-metric-profiler`, and `--with-metric-profiler-backend`; must **not** mention `--enable-legacy-pmcs` |
 | `test_likwid_read_group_counters.sh` | Regression (via `check-local`): PMC/uncore adapters call `perfmon_readGroupCounters` only (not bare `perfmon_readCounters`, which follows stolen `activeGroup`) |
 | `test_likwid_static_pin.sh` | Regression (via `check-local`): `build_static_bundle.sh` and `cross_compile_test.sh` pin LIKWID **5.5.2** (not a `5.5.2rc*` prerelease) |
-| `test_likwid_on_aarch64_configure.sh` | Regression (via `check-local`): non-x86 uses LIKWID overlay, not PAPI; bundle/cross pass `COMPILER=GCCARMv8` on aarch64 |
+| `test_likwid_on_aarch64_configure.sh` | Regression (via `check-local`, 3.1): non-x86 `auto` is the `arm` backend with no LIKWID overlay; `--with-cpu-counter-backend=likwid` is rejected on non-x86; bundle / prepare / cross build LIKWID for x86 only |
 | `Makefile.am` | Automake `check_PROGRAMS` / `TESTS`; **keep `monitor_unit_cppflags` in sync** with `src/Makefile.am` `hpcperfstatsd_CPPFLAGS` for `-D` flags |
 | `run_tests.sh` | Convenience wrapper around `make check` in a build directory |
 | `../scripts/profile_hpcperfstatsd_example.sh` | Prints `perf record` / `perf stat` recipes for CPU baseline comparisons |

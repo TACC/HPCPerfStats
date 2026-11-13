@@ -266,22 +266,11 @@ TYPES += \
 	cpu_counter_metrics_arm_publish.h \
 	cpu_counter_metrics_arm_state.h \
 	cpu_counter_metrics_arm_util.c \
-	cpu_counter_metrics_arm_util.h
-if LIKWID
-# likwid_uncore_adapter.c (built under `if LIKWID`) calls cpu_counter_metrics_likwid_ready();
-# its arm-backend stub is the #else branch of this file.
-hpcperfstatsd_SOURCES += \
-	cpu_counter_metrics_likwid_begin.c \
-	cpu_counter_metrics_likwid_begin.h
-endif
-if CPU_LIKWID_OVERLAY
-TYPES += \
-	cpu_counter_metrics_likwid_overlay.c \
-	cpu_counter_metrics_likwid_overlay_map.c
-hpcperfstatsd_SOURCES += \
-	cpu_counter_metrics_likwid_overlay.h \
-	cpu_counter_metrics_likwid_overlay_map.h
-endif
+	cpu_counter_metrics_arm_util.h \
+	arm_perf_util.c \
+	arm_perf_util.h \
+	arm_core_perf.c \
+	arm_core_perf.h
 if MONITOR_ARCH_ARM
 TYPES += \
 	arm_imc.c \

@@ -86,6 +86,18 @@ events:
   ARM_DRAM_BW_BYTES: arm_dram_bw_bytes
   ARM_INT8_OPS: arm_int8_ops
   ARM_INT16_OPS: arm_int16_ops
+  # Additive identity (monitor 3.1, cpu-precision Phase 1 D1): Grace host_cpu_hw
+  # FP instruction counts by width from direct perf FP_DP_SPEC / FP_SP_SPEC /
+  # FP_HP_SPEC, enabled/running scaled, lifetime E counters W=64 (O11). New keys,
+  # no legacy alias; analysis avg_fp64_instr / avg_fp32_instr / avg_fp16_instr
+  # (Ginstr/s). Same release: arm_int8_ops / arm_int16_ops keep their names but
+  # become real ASE_SVE_INT8/16_SPEC counts, and arm_est_flops changes meaning
+  # from an SP+DP instruction count to measured FLOPs (FP_FIXED_OPS_SPEC +
+  # FP_SCALE_OPS_SPEC); historical rows of all three are 0. Grace
+  # fp_arith_inst_retired_scalar_{double,single} carry no data (0 or absent).
+  arm_fp_dp_spec: arm_fp_dp_spec
+  arm_fp_sp_spec: arm_fp_sp_spec
+  arm_fp_hp_spec: arm_fp_hp_spec
   Active: active
   AnonHugePages: anon_huge_pages
   AnonPages: anon_pages

@@ -35,3 +35,11 @@ def test_job_watt_hours_labels_omit_gpu_when_absent():
     job_metric_display_labels.get_job_watt_hours_resources_title(True)
     == "CPU+GPU Watt Hours for Job"
   )
+
+
+def test_cpu_fp_instruction_metrics_have_width_labels_matching_frontend():
+  """New CPU precision metrics get short labels (same text as the TS map)."""
+  labels = job_metric_display_labels.JOB_METRIC_SHORT_LABELS
+  assert labels["avg_fp64_instr"] == "Average CPU FP64 instruction rate"
+  assert labels["avg_fp32_instr"] == "Average CPU FP32 instruction rate"
+  assert labels["avg_fp16_instr"] == "Average CPU FP16 instruction rate"

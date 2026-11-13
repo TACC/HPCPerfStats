@@ -7,10 +7,14 @@ Attributes:
   ARTIFACT_KIND_MULTIPRECISION_MIX: Attribute.
   ARTIFACT_KIND_TYPE_DETAIL: Attribute.
   PAYLOAD_ENCODING_GZIP_JSON: Attribute.
+  _CPU_MULTIPRECISION_MIX_IDLE_REASON: Blank CPU pie reason when its inputs
+    were sampled but every value is 0 (idle job).
   _CPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON: Attribute.
   _CPU_PRECISION_LABEL_ORDER: Attribute.
   _CPU_PRECISION_METRIC_TO_LABEL: Attribute.
   _FSIO_FINGERPRINT_METRIC_NAMES: Attribute.
+  _GPU_MULTIPRECISION_MIX_IDLE_REASON: Blank GPU pie reason when its inputs
+    were sampled but every value is 0 (idle GPUs).
   _GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON: Attribute.
   _GPU_PRECISION_LABEL_ORDER: Attribute.
   _GPU_PRECISION_METRIC_TO_LABEL: Attribute.
@@ -89,14 +93,25 @@ ARTIFACT_KIND_MULTIPRECISION_MIX = "multiprecision_mix"
 # Staff-visible unavailable reasons (API detail); align phrasing with summary/roofline plot builders.
 _CPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON = (
   "Missing CPU busy-ops mix metrics in job metrics "
-  "(need positive avg_flops64b / avg_flops32b / avg_arm_int16_ops / "
-  "avg_arm_int8_ops shares)."
+  "(need positive avg_fp64_instr / avg_fp32_instr / avg_fp16_instr / "
+  "avg_arm_int16_ops / avg_arm_int8_ops shares)."
+)
+_CPU_MULTIPRECISION_MIX_IDLE_REASON = (
+  "CPU precision telemetry present but idle: every FP and SVE integer "
+  "instruction rate in job metrics is 0 (avg_fp64_instr / avg_fp32_instr / "
+  "avg_fp16_instr / avg_arm_int16_ops / avg_arm_int8_ops)."
 )
 _GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON = (
   "Missing GPU precision-width mix metrics in job metrics "
   "(need positive avg_*_active shares)."
 )
-APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 14
+_GPU_MULTIPRECISION_MIX_IDLE_REASON = (
+  "GPU precision telemetry present but idle: every avg_*_active pipe "
+  "activity in job metrics is 0."
+)
+# 15 (2026-11-13): CPU pie from avg_fp*_instr with an FP16 slice; blank-pie
+# reasons distinguish idle (inputs all 0) from missing (inputs absent).
+APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 15
 
 _FSIO_FINGERPRINT_METRIC_NAMES = tuple(
   sorted(name for name, _t, _u in fsio_job_detail_catalog())
@@ -475,9 +490,12 @@ def _gpu_detail_from_metric_values(
   }
 
 
+# Share of FP instructions by precision plus SVE INT16/INT8 (plan O10/O8);
+# avg_flops64b/32b are history-only and do not feed the pie.
 _CPU_PRECISION_METRIC_TO_LABEL = {
-  "avg_flops64b": "FP64",
-  "avg_flops32b": "FP32",
+  "avg_fp64_instr": "FP64",
+  "avg_fp32_instr": "FP32",
+  "avg_fp16_instr": "FP16",
   "avg_arm_int16_ops": "INT16",
   "avg_arm_int8_ops": "INT8",
 }
@@ -498,7 +516,7 @@ _GPU_PRECISION_METRIC_TO_LABEL = {
   "avg_fp64_active": "FP64",
 }
 
-_CPU_PRECISION_LABEL_ORDER = ("FP64", "FP32", "INT16", "INT8")
+_CPU_PRECISION_LABEL_ORDER = ("FP64", "FP32", "FP16", "INT16", "INT8")
 _GPU_PRECISION_LABEL_ORDER = (
   "Tensor IMMA (INT8/INT4)",
   "Tensor HMMA (FP16/BF16)",
@@ -584,6 +602,48 @@ def _precision_mix_from_metric_values(
     if value > 0.0:
       out[label] = value
   return out
+
+
+def _blank_pie_reason(
+  metric_values: dict[str, float | None],
+  metric_to_label: dict[str, str],
+  *,
+  missing_reason: str,
+  idle_reason: str,
+) -> str:
+  """
+  Pick the blank-pie reason: idle when any input was sampled, else missing.
+
+  A pie is blank when no input is positive. If at least one input metric has
+  a numeric value (a measured 0 from ``metrics_data``), the telemetry was
+  present and the job was idle; if every input is absent or NULL
+  (``no_data_reason`` rows), the telemetry is missing.
+
+  Args:
+    metric_values (dict[str, float | None]): Persisted metric name to value
+      (None for rows stored with a ``no_data_reason``).
+    metric_to_label (dict[str, str]): The pie's input metric names (keys).
+    missing_reason (str): Text when no input has a value.
+    idle_reason (str): Text when some input has a value but none is > 0.
+
+  Returns:
+    str: ``idle_reason`` or ``missing_reason``.
+
+  Examples:
+    >>> _blank_pie_reason(
+    ...   {"a": 0.0}, {"a": "A"}, missing_reason="m", idle_reason="i"
+    ... )
+    'i'
+    >>> _blank_pie_reason({}, {"a": "A"}, missing_reason="m", idle_reason="i")
+    'm'
+  """
+  for metric_name in metric_to_label:
+    try:
+      float(metric_values.get(metric_name))
+    except TypeError, ValueError:
+      continue
+    return idle_reason
+  return missing_reason
 
 
 def _gpu_precision_mix_from_metric_values(
@@ -752,7 +812,12 @@ def _multiprecision_mix_payload(
   cpu_plot_item, cpu_reason = _pie_item_from_precision_mix(
     precision_mix=cpu_mix,
     title="CPU Multiprecision Mix",
-    empty_reason=_CPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON,
+    empty_reason=_blank_pie_reason(
+      metric_values,
+      _CPU_PRECISION_METRIC_TO_LABEL,
+      missing_reason=_CPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON,
+      idle_reason=_CPU_MULTIPRECISION_MIX_IDLE_REASON,
+    ),
     help_plot_key="jobDetailPlot_multiprecision_cpu",
     label_order=_CPU_PRECISION_LABEL_ORDER,
     is_shared_node=is_shared_node,
@@ -760,7 +825,12 @@ def _multiprecision_mix_payload(
   gpu_plot_item, gpu_reason = _pie_item_from_precision_mix(
     precision_mix=gpu_mix,
     title="GPU Multiprecision Mix",
-    empty_reason=_GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON,
+    empty_reason=_blank_pie_reason(
+      metric_values,
+      _GPU_PRECISION_METRIC_TO_LABEL,
+      missing_reason=_GPU_MULTIPRECISION_MIX_UNAVAILABLE_REASON,
+      idle_reason=_GPU_MULTIPRECISION_MIX_IDLE_REASON,
+    ),
     help_plot_key="jobDetailPlot_multiprecision_gpu",
     label_order=_GPU_PRECISION_LABEL_ORDER,
     is_shared_node=is_shared_node,

@@ -131,10 +131,13 @@ On the page, rows are grouped under source subsections in fixed order **CPU → 
 | `avg_gpu_mem_bw_gbps` | Average GPU memory bandwidth | Mean GPU memory-bandwidth rate | High with moderate utilization can indicate memory-bound kernels. |
 | `avg_fabric_mb_per_avg_tensor` | Fabric bandwidth per tensor activity | Fabric MB per average tensor activity | Communication intensity normalized by tensor activity for GPU+MPI workloads. |
 | `avg_flops` | Average floating-point throughput | Mean achieved FLOP rate | Baseline compute throughput for CPU-side arithmetic. |
-| `avg_flops64b` | Average double-precision FLOP rate | Mean FP64 GFLOP/s from Intel FP_ARITH doubles, or Grace scalar double when Intel absent | FP64 share of busy ops in Multiprecision Mix. |
-| `avg_flops32b` | Average single-precision FLOP rate | Mean FP32 GFLOP/s from Intel FP_ARITH singles, or Grace scalar single when Intel absent | FP32 share of busy ops in Multiprecision Mix. |
-| `avg_arm_int8_ops` | Average CPU INT8 operation rate | Mean INT8 Gops/s from host_cpu_hw `arm_int8_ops` | INT8 busy-ops share on CPU Multiprecision Mix (not in `avg_flops`). |
-| `avg_arm_int16_ops` | Average CPU INT16 operation rate | Mean INT16 Gops/s from host_cpu_hw `arm_int16_ops` | INT16 busy-ops share on CPU Multiprecision Mix (not in `avg_flops`). |
+| `avg_flops64b` | Average double-precision FLOP rate | Mean FP64 instruction rate from Intel floating-point counters (older jobs) | Kept for comparing older jobs; no longer feeds the Multiprecision Mix pie. |
+| `avg_flops32b` | Average single-precision FLOP rate | Mean FP32 instruction rate from Intel floating-point counters (older jobs) | Kept for comparing older jobs; no longer feeds the Multiprecision Mix pie. |
+| `avg_fp64_instr` | Average CPU FP64 instruction rate | Mean double-precision floating-point instructions per second (Ginstr/s), all vector widths; Grace nodes today | FP64 share of the CPU Multiprecision Mix pie; a large share on code meant to run in lower precision points at a precision-policy or library-choice problem. |
+| `avg_fp32_instr` | Average CPU FP32 instruction rate | Mean single-precision floating-point instructions per second (Ginstr/s), all vector widths; Grace nodes today | FP32 share of the CPU pie; confirms single-precision paths are actually running. |
+| `avg_fp16_instr` | Average CPU FP16 instruction rate | Mean half-precision floating-point instructions per second (Ginstr/s), all vector widths; Grace nodes today | FP16 share of the CPU pie; shows whether mixed-precision CPU kernels use half precision as intended. |
+| `avg_arm_int8_ops` | Average CPU INT8 operation rate | Mean INT8 vector instructions per second (Ginstr/s) | INT8 share of the CPU Multiprecision Mix pie (not in `avg_flops`); useful for quantized inference on the CPU. |
+| `avg_arm_int16_ops` | Average CPU INT16 operation rate | Mean INT16 vector instructions per second (Ginstr/s) | INT16 share of the CPU Multiprecision Mix pie (not in `avg_flops`). |
 | `avg_mbw` | Average DRAM memory bandwidth | Mean DRAM bandwidth | High with low FLOPs suggests memory-bound CPU phases. |
 | `avg_freq` | Average effective CPU frequency | Mean CPU frequency | Drops may indicate power/thermal policy or throttling. |
 | `avg_ethbw` | Average Ethernet bandwidth | Mean Ethernet bandwidth | Useful for TCP/object-store workflows that bypass IB paths<sup>[16](#ref-16)</sup>. |
@@ -209,7 +212,8 @@ This section covers job-detail surfaces beyond scalar metrics.
 ### 6.3 Multiprecision Mix tab (CPU and GPU)
 
 - Diagnostic use: quantify mixed-precision path composition (DP/SP/tensor, and CPU INT16/INT8 when present) as a share of **busy** arithmetic rates only (no idle wedge)<sup>[6](#ref-6)</sup>.
-- CPU pie: wedges come from rate-weighted FP64/FP32 (`avg_flops64b` / `avg_flops32b`, Intel or ARM scalar) plus INT16/INT8 (`avg_arm_int16_ops` / `avg_arm_int8_ops`) when positive — a busy-ops mix, not identical physical units; not vectorization-within-width percentages.
+- CPU pie: the share of floating-point and vector-integer instructions by precision: FP64 / FP32 / FP16 (`avg_fp64_instr` / `avg_fp32_instr` / `avg_fp16_instr`) plus INT16 / INT8 (`avg_arm_int16_ops` / `avg_arm_int8_ops`). It counts instructions, not FLOPs (one vector instruction counts once), so it shows which precisions the code uses, not how much arithmetic each one did.
+- When the CPU or GPU counters were collected but every rate is 0 (an idle job), the pie says the telemetry is present but idle, which is different from counters that were never collected.
 - GPU pie: hover shows share of busy percent; wedges label Tensor IMMA (INT8/INT4), Tensor HMMA (FP16/BF16), and Tensor DFMA (FP64) when those splits are present (preferred over lumped tensor activity). CPU half/bf16/tf32/fp8 appear only when the monitor emits them.
 - Width behavior: each pie includes the precision widths that have usable positive metrics for that job/architecture; missing widths are omitted rather than treated as errors.
 - Recommendation: when model/code changes precision policy, compare this tab first, then check throughput/utilization deltas.
@@ -346,6 +350,7 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-09-08 | Job list: after **Project**, columns are **nodes**, **cores**, then **runtime** as **HH:MM:SS** (not seconds). |
 | 2026-10-19 | Shared-node jobs: metrics/plots job-scoped; `mem_hwm`/Summary mem prefer `host_mem_job`; red host-wide `?` footer when shared. |
 | 2026-10-20 | Shared-node `?` footer: CPU/GPU/job memory job-scoped when affinity/cgroup present; residual counters may still be host-wide. |
+| 2026-11-13 | CPU Multiprecision Mix pie shows the share of FP64 / FP32 / FP16 / INT16 / INT8 instructions (new `avg_fp64_instr`, `avg_fp32_instr`, `avg_fp16_instr`; INT rates now in Ginstr/s); `avg_flops64b` / `avg_flops32b` stay for older jobs only. Idle jobs say the telemetry is present but idle instead of missing. From monitor 3.1 on, instruction and cycle rates on Grace nodes that also have NVIDIA GPUs can be up to about 4× higher, because earlier releases under-counted them there; CPU-only Grace nodes should look about the same. |
 | 2026-11-05 | Node power estimate on Grace nodes reads per-socket power meters (`host_power_socket`): GH200 module power when present, otherwise whole-socket power summed over sockets plus GPU power (socket power alone on GPU-less Grace/Grace and Vera nodes). Horizon GB200 CPU power read 0 before this monitor release, and GB200 and Grace/Grace estimates are now higher by the SoC and memory share. The retired per-CPU / per-GPU power copies only appear in older jobs, which keep the old estimate. |
 
 

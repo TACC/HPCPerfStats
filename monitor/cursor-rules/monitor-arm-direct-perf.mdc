@@ -1,0 +1,89 @@
+---
+description: Grace / aarch64 direct perf_event readers (arm_perf_util, arm_core_perf, arm_imc SCF) — scaled reads, never pinned, sysfs names first, D1 keys and widths
+globs:
+  - HPCPerfStats/monitor/src/arm_perf_util.*
+  - HPCPerfStats/monitor/src/arm_core_perf.*
+  - HPCPerfStats/monitor/src/arm_imc*
+  - HPCPerfStats/monitor/src/cpu_counter_metrics.c
+  - HPCPerfStats/monitor/src/cpu_counter_metrics_arm_*
+alwaysApply: false
+---
+
+# Monitor: Grace direct perf (aarch64 `arm` backend)
+
+**Activation:** `alwaysApply: false` — when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+Since **3.1** (cpu-precision Phase 1) aarch64 builds **no LIKWID**. The `arm` CPU backend
+(`MONITOR_CPU_BACKEND_ARM`, aarch64 `auto`) keeps `/proc/stat` util and the cpufreq clock
+(`monitor-dcgm-integration.mdc`) and reads every Grace hardware counter by direct
+`perf_event_open`. The retired LIKWID overlay (`MONITOR_CPU_LIKWID_OVERLAY`,
+`cpu_counter_metrics_likwid_overlay*`, CYC+INS eventset, SCF-in-group, PENDING attach,
+`HPCPERFSTATS_LIKWID_GRACE_SCF`) must not come back.
+
+## Modules
+
+| Module | Role |
+|--------|------|
+| `arm_perf_util.{c,h}` | Portable helpers: open (`pid -1`, `CLOEXEC`), raw/sysfs attrs, per-boot PMU `type`, `cpumask` first CPU, scaled read. Builds and unit-tests on every host. |
+| `arm_core_perf.{c,h}` | `host_cpu_hw` core events: nine per CPU, one fd each (no groups) on the `armv8_pmuv3*` PMU type from sysfs. Opened at begin / SIGHUP only. |
+| `arm_imc.c`, `arm_imc_scf.{c,h}` | `arm_aarch64_imc`: one `scf<N>` device per `nvidia_scf_pmu_<N>`, `cmem_rd_data` + `cmem_wr_total_bytes` on that PMU's `cpumask` CPU; perf `dmc`/`imc` scan as fallback. |
+| `cpu_counter_metrics_arm_publish.{c,h}` | `publish_arm_measured_stats`: maps core lifetimes to schema keys. |
+
+## Laws
+
+1. **Scaled reads only.** Every counter uses `read_format = PERF_FORMAT_TOTAL_TIME_ENABLED |
+   PERF_FORMAT_TOTAL_TIME_RUNNING` and goes through `arm_perf_read_scaled` /
+   `arm_perf_scale_sample` (delta = Δvalue × Δenabled / Δrunning; first sample seeds; Δrunning
+   0 adds 0; a drop re-seeds). `nvidia-powerd` holds ~22 core-PMU fds per CPU on GB200 / GH200,
+   so unscaled counts read low by the time-sharing factor (finding #5; estimated up to ~4×,
+   unmeasured until the Phase 1 canary's `perf stat` comparison, O3; the reason LIKWID was
+   dropped). Grace-Grace has no `nvidia-powerd`; never document a fleet-wide factor.
+2. **Never `pinned` or `exclusive`.** The PMU is shared with `nvidia-powerd`; let the kernel
+   multiplex. No explicit rotation on Grace (rotation is the x86 plan, Phase 2).
+3. **Names from sysfs first.** Core events resolve as: sysfs `events/<name>` → MIDR-keyed raw
+   table in `arm_core_perf.c` (one row: Neoverse V2 `0x410fd4f0`: `fp_dp_spec 0x801C`,
+   `fp_sp_spec 0x8018`, `fp_hp_spec 0x8014`, `fp_fixed_ops_spec 0x80C1`,
+   `fp_scale_ops_spec 0x80C0`, `ase_sve_int8_spec 0x80E3`, `ase_sve_int16_spec 0x80E7`) → skip with one
+   journal line naming the MIDR. A new core (Vera, …) needs a row **verified on that
+   hardware**; never guess codes. SCF events come only from the PMU's own `events/` files.
+4. **PMU `type` is per boot.** Read `<pmu>/type` every begin (Horizon 25/15, Vista 24/16,
+   c642-041 38); never hard-code. Socket number = `<N>` of `nvidia_scf_pmu_<N>`, never the type.
+   Enumerate what exists: 1 SCF PMU on GH200, 2 on GB200 / Grace-Grace.
+5. **Late SCF binding re-scans (O17).** No SCF and no dmc/imc PMU at begin → `ARM_IMC_MODE_RESCAN`:
+   the type stays enabled with 0 devices and re-scans (one `opendir`) every
+   `ARM_IMC_SCF_RESCAN_TICKS` ticks; attach logs once. No begin-order dependency on
+   `host_cpu_hw` (`STATS_RUNTIME_BEGIN_CPU_HW_FIRST` is LIKWID-backend only).
+6. **Keys and widths (D1, O11).**
+   - New keys are `E,W=64` lifetimes: `arm_fp_dp_spec`, `arm_fp_sp_spec`, `arm_fp_hp_spec`
+     (FP **instructions** by precision, all vector widths) and `cpu_clock_est_cycles`.
+   - `arm_est_flops` = FIXED + SCALE lifetimes (measured FLOPs), published only when both are
+     open; INT8 / INT16 are never folded in.
+   - Shared `W=48` keys (`instr_retired`, `aperf`, `mperf`, `arm_int8_ops`, `arm_int16_ops`)
+     carry the lifetime **modulo 2^48** so consumer wrap logic and `WRAP48_EVENTS` stay valid.
+   - `fp_arith_inst_retired_scalar_*` stay 0 on Grace (Intel names).
+7. **Measured cycles overwrite fail-soft (O16).** `aperf`, `mperf`, `cpu_clock_est_cycles` keep
+   the util × freq estimate unless the CYC event is open and its lifetime > 0; then all three
+   carry measured cycles. A key whose event is not open is not published (stays 0).
+8. **No synthetic instr / FLOPs (O15).** `publish_arm_cpu_stats` never emits `instr_retired`,
+   `fp_arith_inst_retired_*` or `arm_est_flops`; only the measured reader does
+   (`test_publish_never_synthesizes_instr_or_flops`). `arm_dram_bw_bytes` (util × freq) stays as
+   the second DRAM source (user decision 2026-11-03).
+9. **Fail soft, never fail closed.** A missing PMU or failed open logs once per event (not per
+   CPU) and leaves that key 0; `host_cpu_hw` util keeps publishing. Opens happen at begin /
+   SIGHUP, never in collect; collect is one bounded `read` per open fd
+   (`monitor-jitter-and-fidelity-priority.mdc`). The unit's `LimitNOFILE` covers ~1,300 fds.
+10. **Tests use the fake perf layer.** `tests/test_fake_perf.{c,h}` (TMPDIR sysfs tree + pipe
+    fds) drive `test_arm_perf_util`, `test_arm_core_perf`, `test_arm_imc_scf` and
+    `test_cpu_counter_arm_publish` on every host; aarch64 still needs the `arm` backend build
+    (`monitor-dual-verify-cross-and-static.mdc`). Validator key lists live in
+    `scripts/lib/papi_shm_validate.py`; W=48 wrap is width-aware in
+    `scripts/lib/cross_sample_validate.py`.
+
+## Overlap
+
+- **`monitor-dcgm-integration.mdc`** — Grace util / cpufreq clock, `host_power_socket`, GPU path.
+- **`monitor-amd-epyc-likwid.mdc`** — x86 LIKWID (Intel / AMD); not used on aarch64.
+- **`monitor-overhead-measurement.mdc`** — `arm_aarch64_imc` is its own `perf_event` group on 3.1 builds.
+- **`monitor-shm-message-correctness.mdc`** — Grace key checks in `papi_shm_validate.py`.
+- **`monitor-emitted-variable-naming.mdc`**, **`monitor-schema-keys-headers.mdc`** — key names and `E,W=` tokens.
+- **`monitor-consumer-schema-migration.mdc`** — the 3.1 Grace rate step (README migration note, O9).

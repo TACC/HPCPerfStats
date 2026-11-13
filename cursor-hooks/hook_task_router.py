@@ -989,15 +989,21 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
     ],
   },
   {
-    "id": "monitor_likwid_overlay",
+    "id": "monitor_arm_direct_perf",
     "patterns": [
-      "HPCPerfStats/monitor/src/*likwid_overlay*",
-      "HPCPerfStats/monitor/src/cpu_counter_metrics*",
-      "monitor/src/*likwid_overlay*",
-      "monitor/src/cpu_counter_metrics*",
+      "HPCPerfStats/monitor/src/arm_perf_util*",
+      "HPCPerfStats/monitor/src/arm_core_perf*",
+      "HPCPerfStats/monitor/src/arm_imc*",
+      "HPCPerfStats/monitor/src/cpu_counter_metrics.c",
+      "HPCPerfStats/monitor/src/cpu_counter_metrics_arm_*",
+      "monitor/src/arm_perf_util*",
+      "monitor/src/arm_core_perf*",
+      "monitor/src/arm_imc*",
+      "monitor/src/cpu_counter_metrics.c",
+      "monitor/src/cpu_counter_metrics_arm_*",
     ],
     "rules": [
-      "monitor-likwid-overlay.mdc",
+      "monitor-arm-direct-perf.mdc",
     ],
   },
   {

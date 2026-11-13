@@ -45,9 +45,8 @@ def test_overlay_build_groups_imc_with_arm_cpu_and_offers_noscf_variant():
     v = variants["arm_cpu_noscf"]
     assert v["base"] == "arm_cpu" and v["types"] == ["host_cpu_hw"]
     assert v["env"] == {"HPCPERFSTATS_LIKWID_GRACE_SCF": "0"}
-    # Must match the daemon's log line (cpu_counter_metrics_likwid_overlay.c).
-    src = (ROOT.parent / "src" / "cpu_counter_metrics_likwid_overlay.c").read_text()
-    assert '"off (HPCPERFSTATS_LIKWID_GRACE_SCF=0)"' in src and "SCF uncore events %s" in src
+    # Pinned: the 3.0 overlay daemon logged "SCF uncore events %s" with this suffix. 3.1 removed
+    # the overlay (and the knob), so baseline 3.0 RPMs are the only builds that emit it.
     assert MARKER == "SCF uncore events off (HPCPERFSTATS_LIKWID_GRACE_SCF=0)"
 
 
