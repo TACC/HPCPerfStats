@@ -119,6 +119,16 @@ Applies to `monitor/measurement/**` (harness, sampler, FWQ, report) and the
    campaign's run directories; exit 0 (`COMPARABLE`: every must-match row identical, no
    `fit_steps`) is required, and its `compare.md` is committed with the profiles. Intended
    differences (fleet build, OS, hardware, collector groups) are listed, never failures.
+19. **The cluster manager must not replace the measured package.** TACC cluster managers push
+   the site's `hpcperfstatsd` RPM onto compute nodes, even mid-run, when the installed package
+   is **older** than theirs **or not installed at all** (i618-141 2026-11-10: the site pushed
+   `3.0-15` at 16:22 CST over the measured `3.0-9`, so the CADENCE leg ran the site binary).
+   Before building a measured RPM, check the node's / cluster manager's version
+   (`rpm -q hpcperfstatsd`) and build with a local `Release` **above** it (per cluster, never
+   committed; `monitor-version-and-packaging.mdc`). Never leave a measurement node without our
+   package, including between runs. The harness records the daemon's sha256 after install and
+   aborts when it changes before or during any leg (`check_daemon_binary`); after every run
+   check `rpm -qa --last | grep hpcperf` and drop legs that ran after a foreign install.
 
 ## Tests
 
