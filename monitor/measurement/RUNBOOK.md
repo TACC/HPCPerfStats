@@ -87,6 +87,10 @@ shortened to fit (see step 4): with two sets raise `--max-hours` (about 24) so b
    `No cpu associated with the PMU`, firmware APMT), so no `nvidia_scf_pmu_*` existed and
    `arm_aarch64_imc` silently disabled itself; preflight now refuses that node.
    `--allow-unbound-pmu` runs anyway, flagged `unbound_pmu`.
+   **Binary identity:** the installed daemon's sha256 is recorded after install and checked
+   before and after every leg; a change (i618-141 2026-11-10: the site pushed its own
+   `hpcperfstatsd-3.0-15` RPM mid-run, and the next leg started that older binary) aborts the
+   run naming the leg. Keep config management from reinstalling the package on a reserved node.
 2. **Install**: saves the site conf, `rpm -Uvh --replacepkgs`, writes the site conf back
    (the spec lists it without `%config`, so the RPM overwrites it), checks `server`/`queue`.
    `restore.sh` is written to the result dir before any change. A fresh node needs

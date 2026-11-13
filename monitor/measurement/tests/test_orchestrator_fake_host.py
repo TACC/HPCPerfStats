@@ -291,3 +291,30 @@ def test_execute_profile_collectors_leg_on_fake_host(fake_host):
     prof_leg = next(leg for leg in profile["legs"] if leg["kind"] == "PROFILE")
     assert prof_leg["status"] == "ok" and prof_leg["leg_id"] == "b1-PROFILE-"
     assert not Path(fake_host["paths"]["DROPIN_PATH"]).exists()
+
+
+def test_daemon_binary_swapped_mid_run_aborts(fake_host, monkeypatch):
+    """i618-141 2026-11-10: the site's 3.0-15 RPM replaced the measured binary mid-run."""
+    daemon = fake_host["state"] / "installed-hpcperfstatsd"
+    daemon.write_bytes(b"measured build")
+    monkeypatch.setattr(orchestrator, "DAEMON", str(daemon))
+    args = orchestrator.build_parser().parse_args([
+        "--rpm", str(fake_host["rpm"]), "--out", str(fake_host["run"]), "--leg-seconds", "2",
+        "--settle-seconds", "1", "--fwq-seconds", "1", "--blocks", "1", "--seed", "5",
+        "--fwq-quantum-us", "200", "--force", "--rmq-mgmt-port", "1", "--fwq-cpus", "0",
+        "--governors", "performance"])
+    run_obj = orchestrator.Run(args)
+    real_run_leg, ran = run_obj.run_leg, []
+
+    def run_leg_then_swap(leg, plan):
+        ran.append(leg["leg_id"])
+        out = real_run_leg(leg, plan)
+        if len(ran) == 2:
+            daemon.write_bytes(b"site 3.0-15 build")  # package pushed during leg 2
+        return out
+    run_obj.run_leg = run_leg_then_swap
+    with pytest.raises(orchestrator.PreflightError) as err:
+        run_obj.execute()
+    assert len(ran) == 2, ran
+    assert f"changed during leg {ran[1]}" in str(err.value) and "rpm -qa --last" in str(err.value)
+    assert fake_host["site"].read_text() == SITE  # restore still ran

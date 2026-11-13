@@ -259,6 +259,31 @@ def check_busy_node(busy: float | None, allow: bool) -> dict[str, Any]:
     return {"busy_node": {"busy_cores": busy, "limit": BUSY_NODE_CORES}}
 
 
+def check_daemon_binary(path: str, expected: str | None, leg_id: str, when: str) -> None:
+    """Abort when the installed daemon binary is no longer the one this run measures.
+
+    i618-141 2026-11-10: the site pushed ``hpcperfstatsd-3.0-15`` at 16:22 CST, during
+    ``b3-OFF-end``; the next leg (CADENCE) started that older binary, which has no
+    ``host_power_socket`` and enabled ``nvidia_gpu``/``host_opa``, and only the type check
+    caught it. Every leg must run the RPM the run installed.
+
+    Args:
+        path: Installed daemon binary.
+        expected: Its sha256 recorded after install (None: unreadable then, check skipped).
+        leg_id: Leg about to start or just finished.
+        when: ``before`` or ``during``.
+
+    Raises:
+        PreflightError: the binary's sha256 changed.
+    """
+    current = provenance.sha256_file(Path(path))
+    if expected is None or current == expected:
+        return
+    raise PreflightError(f"daemon binary {path} changed {when} leg {leg_id} (sha256 "
+                         f"{expected[:12]} -> {(current or 'missing')[:12]}): a package was "
+                         "installed outside the harness (check `rpm -qa --last`); aborting")
+
+
 def check_cs_pmus(devices_dir: str, allow: bool) -> dict[str, Any]:
     """Refuse a node whose CoreSight uncore PMU devices are not bound to a driver.
 
@@ -930,6 +955,7 @@ class Run:
         try:
             self.install()
             self.provenance()
+            self.daemon_sha256 = provenance.sha256_file(Path(DAEMON))
             self.fwq_exe = fwq.build(self.raw / "bin")
             cal = self.host.run([str(self.fwq_exe), "--calibrate", str(a.fwq_quantum_us), "-c",
                                  str(self.fwq_cpus[0])])
@@ -944,8 +970,10 @@ class Run:
                 if leg.get("governor") and leg["governor"] != self.current_governor:
                     self.apply_governor(leg["governor"])
                 print(f"[{time.strftime('%H:%M:%S')}] leg {leg['leg_id']}", flush=True)
+                check_daemon_binary(DAEMON, self.daemon_sha256, leg["leg_id"], "before")
                 self.run_leg(leg, self.plan)
                 self.summarize()
+                check_daemon_binary(DAEMON, self.daemon_sha256, leg["leg_id"], "during")
                 summary = json.loads((self.raw / "legs" / leg["leg_id"] / "summary.json").read_text())
                 if summary.get("extra_types"):
                     raise PreflightError(f"leg {leg['leg_id']}: the daemon kept types it was told to "

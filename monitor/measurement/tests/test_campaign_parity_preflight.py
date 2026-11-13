@@ -62,3 +62,25 @@ def test_unbound_cs_pmu_allowed_is_flagged(tmp_path):
 def test_bound_or_absent_cs_pmus_pass(tmp_path):
     assert orchestrator.check_cs_pmus(str(_pmu_tree(tmp_path / "p", 10, 0)), allow=False) == {}
     assert orchestrator.check_cs_pmus(str(tmp_path / "missing"), allow=False) == {}
+
+
+def test_daemon_binary_check_passes_unchanged_and_skips_unknown(tmp_path):
+    binary = tmp_path / "hpcperfstatsd"
+    binary.write_bytes(b"v1")
+    sha = orchestrator.provenance.sha256_file(binary)
+    orchestrator.check_daemon_binary(str(binary), sha, "b1-ALL-first", "before")
+    orchestrator.check_daemon_binary(str(binary), None, "b1-ALL-first", "before")
+
+
+def test_daemon_binary_check_refuses_swapped_or_missing_binary(tmp_path):
+    binary = tmp_path / "hpcperfstatsd"
+    binary.write_bytes(b"v1")
+    sha = orchestrator.provenance.sha256_file(binary)
+    binary.write_bytes(b"v2")
+    with pytest.raises(orchestrator.PreflightError) as err:
+        orchestrator.check_daemon_binary(str(binary), sha, "b3-CADENCE-60.0", "before")
+    assert "changed before leg b3-CADENCE-60.0" in str(err.value)
+    binary.unlink()
+    with pytest.raises(orchestrator.PreflightError) as err:
+        orchestrator.check_daemon_binary(str(binary), sha, "b3-CADENCE-60.0", "before")
+    assert "missing" in str(err.value)
