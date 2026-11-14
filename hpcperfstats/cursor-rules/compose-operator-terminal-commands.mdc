@@ -1100,6 +1100,37 @@ podman-compose -p hpcperfstats -f docker-compose.yaml exec pipeline \
 
 **Anti-pattern — write telem on but no write-phase tokens on `ingest file` lines (04 overnight plan 2026-09-25):** INI `sync_ingest_telemetry=yes` (or a pre-fix image that claimed telem-on) with outcome lines missing `orm_materialize_s=` / `db_execute_s=` / `copy_s=` means the image predates log-plumbing (phases lived in meta only) — **not** “forgot a second env”. **Corrected:** redeploy CODE that promotes `INGEST_WRITE_LOG_KEYS` onto the outcome log; confirm with a fresh ingested line. Do not treat flat files/s as proof the write path is unchanged. Do not document dual PARSE/WRITE env as the production enable path (`no-production-env-for-ini-config.mdc`).
 
+**Anti-pattern — obsolete `tail -N` with several files (monitor canary c122-018 / c642-041 / i618-141, 2026-11-13):** `tail -3 /tmp/p1-prep.log /tmp/p1-rpmbuild.log` prints only `tail: option used in invalid context -- 3` on GNU coreutils 9 (EL9 / EL10): the `-N` shorthand is accepted only for a single file. The failed `prepare_rpmbuild_horizon.sh` log on c122-018 was therefore never shown and the step needed a second round trip. **Corrected:** always spell the count as `-n N` in pasted blocks.
+
+```bash
+tail -n 20 /tmp/p1-prep.log /tmp/p1-rpmbuild.log
+```
+
+**Anti-pattern — monitor debug-shm header read as line 1, or rates from `full` (monitor canary c122-018 / c642-041 / i618-141, 2026-11-13):** every monitor sample payload starts with a newline (`stats_buffer.c` writes `"\n%f %s %s\n"`), so line 1 of `/dev/shm/hpcperfstatsd-debug/fast` / `full` is **blank**. Reading the timestamp with `FNR==1` / `head -n 1` gave an empty string: rates hit `awk: division by zero`, and an unbounded "wait for a new timestamp" loop compared two empty strings and hung for 2 h with the GEMM load still running. Separately, `full` is rewritten only every `sample_freq_slow` and `fast` only on the other ticks: README default 600 s / 30 s, but the canary nodes run `sample_freq_slow 60`, so each file refreshes every 60 s there. Read the installed `/etc/hpcperfstats/hpcperfstats.conf` (`sample_freq`, `sample_freq_slow`, `enable_slow_tier`) before assuming a cadence. **Corrected:** take the header from the **first non-blank line**, read `fast`, index only schema keys without `,R=S`, **bound every wait** and say when it timed out, and guard Δt = 0; stop any background load before Ctrl-C leaves it running:
+
+```bash
+SHM=/dev/shm/hpcperfstatsd-debug
+fast_ts() { awk 'NF { print $1; exit }' "$SHM/fast"; }
+wait_new() {
+  t=$(fast_ts); i=0
+  while [ "$(fast_ts)" = "$t" ] && [ $i -lt 120 ]; do
+    sleep 1; i=$((i+1))
+  done
+  [ $i -lt 120 ] || echo "fast unchanged for 120 s (ts $t)"
+}
+snap() {
+  awk -v want="$1" '
+    FNR==NR { if ($1=="!host_cpu_hw") { n=0
+                for (i=2;i<=NF;i++) { if ($i ~ /,R=S/) continue
+                  n++; split($i,a,","); if (a[1]==want) k=n } }
+              next }
+    !h && NF { print "TS", $1; h=1; next }
+    $1=="host_cpu_hw" && $3=="@fast" && k { print $2, $(3+k) }
+  ' "$SHM/schema" "$SHM/fast"
+}
+wait_new; snap instr_retired
+```
+
 ## Overlap
 
 - **`podman-runtime.mdc`** — rootless runtime, `/data` storage, project

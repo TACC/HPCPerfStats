@@ -670,6 +670,31 @@ Load started from a shell outside Slurm is measured by the node-level checks but
 attributed to any job; to see the CPU Multiprecision Mix pie for it, run it with `run` inside a
 Slurm job. Regression: `tests/test_canary_gemm_load.sh` (`check-local`, skips without OpenMP).
 
+## Grace counter check (`scripts/canary_counter_check.sh`)
+
+One command for the 3.1 Grace counter canary, run as root from the monitor checkout on a node
+with the debug RPM installed (it reads the `/dev/shm/hpcperfstatsd-debug` mirror). For each of
+`dp sp hp idle` it starts the GEMM load, measures the monitor's `host_cpu_hw` rates from the
+`fast` file and `perf stat -a` over the same window (default 120 s after 60 s warm-up, about
+5 min per precision), then prints a summary:
+
+- **O3** — monitor `instr_retired` / perf `instructions` within 5%.
+- **slice** — under each load only that precision's `arm_fp_*_spec` counts.
+- **accuracy** — GEMM GFLOP/s over the window ÷ monitor FP rate must not exceed the 128-bit SVE
+  FMA ceiling (4 / 8 / 16 FLOPs per dp / sp / hp operation). The monitor and perf both scale by
+  enabled/running time, so their agreement cannot show a count that reads low when another
+  program (for example `nvidia-powerd`) holds most counters; this check can.
+
+```bash
+./scripts/canary_counter_check.sh                        # dp sp hp idle, exit 0 only on RESULT: PASS
+./scripts/canary_counter_check.sh --precisions dp --window 60 --warm 30
+```
+
+It never reads the terminal, bounds every wait and external command with a timeout, and stops
+the GEMM load on any exit including Ctrl-C. Output is also written to
+`$HOME/hpcperfstats-counter-check/<host>-<epoch>.log`. Regression:
+`tests/test_canary_counter_check.sh` (fake shm writer / perf / load; `check-local`).
+
 ## Profiling `hpcperfstatsd`
 
 Use these steps on a **representative host** (same kernel, privilege level, and enabled collectors as production). Run as the same user as the daemon when attaching with `strace`/`perf`, unless you use `sudo` and account for `ptrace` scope (`/proc/sys/kernel/yama/ptrace_scope` on many Linux distros).
