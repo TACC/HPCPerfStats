@@ -2671,6 +2671,8 @@ class ArchiveAppendOutcome:
     soft_requeue: Attribute.
     gate_skipped: Attribute.
     ingest_pending_paths: Attribute.
+    space_deferred: The soft requeue is a space-gate refusal (parks under
+      pressure instead of counting toward ``env_defer``).
   """
 
   ok: bool = True
@@ -2684,6 +2686,7 @@ class ArchiveAppendOutcome:
   gate_skipped: bool = False
   # Mixed batch: paths the DB gate rejected while others appended.
   ingest_pending_paths: tuple = ()
+  space_deferred: bool = False
 
   def __bool__(self) -> Any:
     """
@@ -6306,11 +6309,24 @@ def _archive_stats_files_body(archive_info: Any) -> Any:
         zstd_threads=cfg.get_archive_zstd_threads(),
       )
       if pre_repair.transient:
+        # A deferral, not a batch failure (bare False burned the per-tar
+        # attempts and dead-lettered 256 paths per batch, 01 2026-11-13).
+        from hpcperfstats.dbload.lib import (
+          sync_timedb_space_pressure as space_pressure,
+        )
+
+        job_outcome = "soft_skip"
         log_print(
-          f"WARNING: defer append until daily tar readable: {archive_tar_fname}",
+          f"WARNING: defer append until daily tar readable: {archive_tar_fname}"
+          f" reason={pre_repair.transient_reason}",
           flush=True,
         )
-        return False
+        return ArchiveAppendOutcome(
+          ok=False,
+          soft_requeue=True,
+          space_deferred=pre_repair.transient_reason
+          == space_pressure.SPACE_DEFER_REASON,
+        )
       if not pre_repair.readable:
         log_print(
           f"ERROR: could not restore daily tar before append; leaving raw stats files in place: {archive_fname}",

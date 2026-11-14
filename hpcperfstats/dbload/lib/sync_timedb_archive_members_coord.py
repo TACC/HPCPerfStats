@@ -92,6 +92,16 @@ class ArchiveMembersPopulateStalledError(ArchiveMembersStoreUnavailableError):
   """Raised when populate does not finish within populate_max_seconds."""
 
 
+class ArchiveSpaceDeferredError(ArchiveMembersStoreUnavailableError):
+  """
+  Raised when the space gate refused the open-tar repair an ingest needs.
+
+  A transient ``ArchiveMembersStoreUnavailableError`` (environment class) whose
+  type tells the drain the refusal lasts until space pressure ends, so under
+  pressure the claim parks instead of burning its ``env_defer`` counter.
+  """
+
+
 class IngestArchiveLookupBudgetExceededError(TimeoutError):
   """Raised when an ingest archive lookup exceeds its per-file budget."""
 

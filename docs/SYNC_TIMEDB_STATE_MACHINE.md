@@ -106,7 +106,7 @@ Salvage manifest statuses: `backed_up`, `salvaged`, `restored`,
 
 Entry: `kind`, `identity`, `attempt`, `reason`, `recorded_at`,
 `first_recorded_at`, `cycle`, `env`, `readmit_at`, `terminal`,
-`readmitted_at`. Upserted per kind+identity; `readmit_at = now +
+`readmitted_at`, `space` (DE-34; absent on older entries = false). Upserted per kind+identity; `readmit_at = now +
 backoff[cycle-1]` (`sync_dead_letter_readmit_backoff_s`, env errors use
 `sync_dead_letter_env_backoff_s`); past the last cooldown `terminal=true` and
 ingest/append raw is quarantined (`failure_class` `exhausted`, `code_fault` or
@@ -114,6 +114,28 @@ ingest/append raw is quarantined (`failure_class` `exhausted`, `code_fault` or
 ACKs remove the entry. Legacy entries normalize to cycle 1; fill-skip reasons
 (`skip_cgroup_headroom`, `skip_budget_bytes`, `skip_file_cache_pressure`,
 `skip_fp`, `fp_refresh`) re-admit immediately (DE-21).
+
+**Space parks (DE-34, 2026-11-14).** A `space=true` entry
+(`reason=env:ENOSPC`, `sync_timedb_space_pressure.SPACE_DEFER_REASON`) records
+work the space gate refused while pressure is on: an ingest whose open-tar
+repair raised `ArchiveSpaceDeferredError`, or an append batch whose
+pre-append repair deferred (`ArchiveAppendOutcome(soft_requeue=True,
+space_deferred=True)`). Both drains park on the **first** such defer
+(`_dead_letter_claim(space=True)`) instead of spinning the G1 `env_defer`
+counter. A park keeps the prior `cycle`, is never `terminal` (so never
+quarantined), sets `readmit_at = now`, and is blocked
+(`dead_letter_blocked`) and held from readmission
+(`due_dead_letter_readmissions`) exactly while `under_pressure()`; when
+pressure ends the readmit pass re-enqueues it and a success ACK removes it.
+Without pressure the same defer takes the G1 path. The census line carries
+`parked_space=N` while any park exists. **Cap:** past `max_entries` (5000)
+only terminal entries are trimmed; live entries are kept and
+`WARN: queue dead letter over cap` is logged at most every 300 s. Before
+this the trim kept the newest 5000 entries, and on hpcperfstats01 2026-11-13
+40,118 append dead letters (unreadable 10-18/10-23 tars whose repair the
+pressure gate refused, returned as a bare `False` batch failure) evicted live
+ingest cooldowns: 647 already-ingested files had no mark, queue entry or dead
+letter until the next whole-archive walk.
 
 ### Quarantine (A3)
 
@@ -202,6 +224,7 @@ stateDiagram-v2
 | DE-27/32 | per-day append signal; one day function; boot rebuild | `test_wait_on_ingest_uses_per_day_append_remainder`, `test_day_remainder_rebuilt_from_job_store_at_boot` |
 | DE-28 | stage failure counter | `test_reconcile_failure_counts_toward_noprogress` |
 | DE-33 | `zadd_ingest` discover cap (`sync_ingest_queue_max_size`) no longer refuses day-close handoff or dead-letter readmit (`over_cap=True`); found on hpcperfstats04 2026-10-27 (3000 cap vs 387k queued: 1,999 raw files of 2026-08-24 never queued, `ingest_handoff` counted them) | `test_zadd_ingest_over_cap_admits_handoff_catchup` |
+| DE-34 | space-gate refusals park (`space=true` dead letter: no cycle, never terminal, held while pressure lasts) instead of burning G1 / per-tar batch attempts; append pre-repair deferral is a soft requeue, not a bare `False`; the dead-letter cap never evicts live entries (hpcperfstats01 2026-11-13: 40,118 append dead letters evicted 647 live ingest cooldowns) | `test_sync_timedb_space_park.py` (`test_dead_letter_cap_never_evicts_live_entries`, `test_space_entry_blocked_and_held_until_pressure_clears`, `test_ingest_space_defer_parks_on_first_defer`, `test_append_space_deferral_parks_every_job_under_pressure`, `test_append_unreadable_tar_space_deferral_is_soft_requeue`) |
 | DE-29/30 | readability tri-state; space admission | `test_transient_oserror_is_not_corrupt_and_sets_no_day_skip`, `test_space_admit_denies_reseal_below_reserve` |
 | DL-1/2/3/5/8/12 | sealed-prefix restore gate, sealed-map delete gate, rewrite superset check, yield guard, gz containment | `test_restore_from_sealed_refused_when_tar_prefix_has_members_not_in_zst`, `test_raw_delete_requires_member_in_sealed_zst`, `test_rewrite_aborts_when_source_tar_changed_under_lock`, `test_migrate_refuses_unlink_when_new_zst_missing_members` |
 
@@ -253,6 +276,8 @@ Every requeue / ACK / dead-letter / sticky-flag / quarantine invocation in
 | `sync_timedb_queue_orchestrator.py:_drain_day_close_ready:_retry_or_dead_letter` | `verify_failed` / `error` / exception | yes | A2 (day terminal = ERROR) |
 | `sync_timedb_queue_orchestrator.py:_drain_ingest_ready:_requeue_bounded_without_attempt_bump` | environment error, timeout, mark failure | G1 counters | A2 env cooldown |
 | `sync_timedb_queue_orchestrator.py:_requeue_bounded_without_attempt_bump:_dead_letter_claim` | G1 cap reached | n/a | A2 |
+| `sync_timedb_queue_orchestrator.py:_drain_ingest_ready:_dead_letter_claim` | `ArchiveSpaceDeferredError` under space pressure | no (no cycle) | DE-34 space park: blocked while pressure lasts, readmitted when it ends; never terminal |
+| `sync_timedb_queue_orchestrator.py:_drain_append_ready:_dead_letter_claim` | `soft_requeue` with `space_deferred` under space pressure | no (no cycle, no `env_defer`) | DE-34 space park, as above |
 | `sync_timedb_queue_orchestrator.py:_retry_or_dead_letter:_dead_letter_claim` | attempts exhausted | n/a | A2 |
 | `sync_timedb_queue_orchestrator.py:_fail_append_batch:_dead_letter_claim` | per-tar cap reached | n/a | A2 |
 | `sync_timedb_queue_orchestrator.py:_dead_letter_claim:upsert_queue_dead_letter` | record cooldown entry | n/a | readmit / terminal |
@@ -405,12 +430,12 @@ passthrough of an upstream literal listed above or a diagnostic string.
 | `sync_timedb_queue_orchestrator.py:_dead_letter_claim` kind | `kind` |
 | `sync_timedb_queue_orchestrator.py:_dead_letter_claim` reason | `reason` |
 | `sync_timedb_queue_orchestrator.py:_drain_append_ready` kind | `jq.JOB_KIND_APPEND` |
-| `sync_timedb_queue_orchestrator.py:_drain_append_ready` reason | `f'append_failed:{type(exc).__name__}'` |
+| `sync_timedb_queue_orchestrator.py:_drain_append_ready` reason | `f'append_failed:{type(exc).__name__}'`; `space.SPACE_DEFER_REASON` |
 | `sync_timedb_queue_orchestrator.py:_drain_day_close_ready` kind | `jq.JOB_KIND_DAY_CLOSE` |
 | `sync_timedb_queue_orchestrator.py:_drain_day_close_ready` reason | `failure or outcome` |
 | `sync_timedb_queue_orchestrator.py:_drain_ingest_ready` kind | `jq.JOB_KIND_APPEND`; `jq.JOB_KIND_INGEST` |
 | `sync_timedb_queue_orchestrator.py:_drain_ingest_ready` outcome | `outcome or 'timeout'` |
-| `sync_timedb_queue_orchestrator.py:_drain_ingest_ready` reason | `environment_error_tag(exc)`; `f'env:{outcome}'`; `f'timeout:{outcome}'`; `outcome or 'ingest_incomplete'`; `type(exc).__name__` |
+| `sync_timedb_queue_orchestrator.py:_drain_ingest_ready` reason | `environment_error_tag(exc)`; `f'env:{outcome}'`; `f'timeout:{outcome}'`; `outcome or 'ingest_incomplete'`; `space.SPACE_DEFER_REASON`; `type(exc).__name__` |
 | `sync_timedb_queue_orchestrator.py:_fail_append_batch` kind | `jq.JOB_KIND_APPEND` |
 | `sync_timedb_queue_orchestrator.py:_fail_append_batch` reason | `reason` |
 | `sync_timedb_queue_orchestrator.py:_fill_append_slots` kind | `jq.JOB_KIND_APPEND` |

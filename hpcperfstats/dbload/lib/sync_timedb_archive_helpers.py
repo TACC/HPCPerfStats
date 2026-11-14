@@ -9013,7 +9013,7 @@ def ensure_open_daily_tar_readable(
     )
     if restored is sp.SPACE_DENIED:
       return OpenDailyTarEnsureResult(
-        readable=False, transient=True, transient_reason="env:ENOSPC"
+        readable=False, transient=True, transient_reason=sp.SPACE_DEFER_REASON
       )
     if not restored:
       _log_daily_tar_repair_outcome(
@@ -9059,7 +9059,7 @@ def ensure_open_daily_tar_readable(
   if sp.under_pressure(tar_norm):
     sp.log_deny("repair", tar_norm, sp._size(tar_norm), reason="space_pressure")
     return OpenDailyTarEnsureResult(
-      readable=False, transient=True, transient_reason="env:ENOSPC"
+      readable=False, transient=True, transient_reason=sp.SPACE_DEFER_REASON
     )
   if log_fn and caller.startswith("append"):
     log_fn(
@@ -9219,7 +9219,7 @@ def _salvage_open_tar_for_ensure(
     return OpenDailyTarEnsureResult(readable=True)
   if result.status == "space_denied":
     return OpenDailyTarEnsureResult(
-      readable=False, transient=True, transient_reason="env:ENOSPC"
+      readable=False, transient=True, transient_reason=sp.SPACE_DEFER_REASON
     )
   if result.status == "renamed_corrupt":
     sealed = any(os.path.isfile(p) for p in compressed_sibling_paths(tar_path))
@@ -9233,7 +9233,7 @@ def _salvage_open_tar_for_ensure(
     return OpenDailyTarEnsureResult(
       readable=bool(restored),
       transient=denied,
-      transient_reason="env:ENOSPC" if denied else "",
+      transient_reason=sp.SPACE_DEFER_REASON if denied else "",
     )
   return OpenDailyTarEnsureResult(readable=False)
 
@@ -9257,6 +9257,7 @@ def _ensure_open_tar_readable_for_ingest_lookup(
 
   Raises:
     ArchiveMembersStoreUnavailableError: Transient defer.
+    ArchiveSpaceDeferredError: The space gate refused the repair.
     ArchiveDayIngestSkipError: Sticky day skip when unrecoverable.
     skip_exc: Same as ``ArchiveDayIngestSkipError`` after skip state is recorded.
 
@@ -9265,9 +9266,11 @@ def _ensure_open_tar_readable_for_ingest_lookup(
     ...   "x", caller="t", compressed_canonical="x"
     ... )  # doctest: +SKIP
   """
+  from hpcperfstats.dbload.lib import sync_timedb_space_pressure as sp
   from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
     ArchiveDayIngestSkipError,
     ArchiveMembersStoreUnavailableError,
+    ArchiveSpaceDeferredError,
     archive_append_inflight_for_day,
     build_archive_members_keys,
     set_archive_day_ingest_skip,
@@ -9297,9 +9300,10 @@ def _ensure_open_tar_readable_for_ingest_lookup(
       f"transient day_close yield during open-tar repair day={day_token}",
     ) from exc
   if result.transient:
-    raise ArchiveMembersStoreUnavailableError(
-      result.transient_reason or "transient open-tar repair defer",
-    )
+    reason = result.transient_reason or "transient open-tar repair defer"
+    if reason == sp.SPACE_DEFER_REASON:
+      raise ArchiveSpaceDeferredError(reason)
+    raise ArchiveMembersStoreUnavailableError(reason)
   if result.readable:
     return
   cache_key = _daily_archive_members_cache_key(compressed_canonical)

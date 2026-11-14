@@ -31,6 +31,7 @@ Attributes:
     per-path dead-letter predicate.
   _DEAD_LETTER_LOCK: Guards ``_DEAD_LETTER_INDEX_CACHE``.
   _DEAD_LETTER_WRITE_LOCK: Serializes dead-letter sidecar writers.
+  _DEAD_LETTER_CAP_WARN: Last ``over cap`` WARN time (one per 300 s).
   QUEUE_MAX_MEMBERS_FLOOR: Minimum accepted queue capacity bound.
   SCORE_STRIDE: Day/tie-break stride inside a band score range.
   SyncTimedbJobStore: Thread-safe in-process store.
@@ -54,6 +55,7 @@ from itertools import islice
 from typing import Any
 
 from hpcperfstats.dbload.lib import conf_parser as cfg
+from hpcperfstats.dbload.lib.print_utils import log_print
 from hpcperfstats.dbload.lib.sync_timedb_persistence import (
   artifact_path,
   load_persistence_document,
@@ -2589,6 +2591,7 @@ _DEAD_LETTER_LOCK = threading.Lock()
 # Serializes load-modify-save of the dead-letter sidecar across the ingest,
 # append and day_close coordinator threads (no lost updates).
 _DEAD_LETTER_WRITE_LOCK = threading.RLock()
+_DEAD_LETTER_CAP_WARN: dict[str, float] = {"at": 0.0}
 
 
 def _dead_letter_schedule(entry: dict[str, Any]) -> list[float]:
@@ -2749,6 +2752,7 @@ def upsert_queue_dead_letter(
   env: bool = False,
   now: float | None = None,
   max_entries: int = 5000,
+  space: bool = False,
 ) -> dict[str, Any] | None:
   """
   Record (or advance) a job that exhausted its retries: cooldown, then terminal.
@@ -2756,8 +2760,11 @@ def upsert_queue_dead_letter(
   One entry per kind+identity (DE-1): each give-up bumps ``cycle`` and sets
   ``readmit_at = now + backoff[cycle-1]``; past the last cooldown the entry is
   ``terminal`` and the caller resolves it (quarantine the raw file, or an ERROR
-  for a day). The FIFO trim drops terminal entries first so a live cooldown is
-  never evicted silently.
+  for a day). A ``space`` park (work the space gate refused under pressure)
+  keeps the prior ``cycle``, is never terminal and stays blocked until
+  pressure ends. Past ``max_entries`` only terminal entries are trimmed; live
+  entries are kept and a WARN is logged (hpcperfstats01 2026-11-14: the old
+  newest-N trim dropped 647 live ingest cooldowns).
 
   Args:
     archive_data_dir (str): Archive data directory root.
@@ -2767,7 +2774,8 @@ def upsert_queue_dead_letter(
     reason (str): Short failure reason (``env:*`` for environment errors).
     env (bool): Use the environment cooldown schedule.
     now (float | None): Clock override (tests).
-    max_entries (int): Cap on retained entries.
+    max_entries (int): Size above which terminal entries are trimmed.
+    space (bool): Park a space-pressure refusal (no cycle, never terminal).
 
   Returns:
     dict[str, Any] | None: The stored entry, or None when the write failed.
@@ -2793,6 +2801,7 @@ def upsert_queue_dead_letter(
       bool(env),
       ts,
       int(max_entries),
+      bool(space),
     )
 
 
@@ -2805,6 +2814,7 @@ def _upsert_queue_dead_letter_locked(
   env: bool,
   ts: float,
   max_entries: int,
+  space: bool = False,
 ) -> dict[str, Any] | None:
   """
   Body of ``upsert_queue_dead_letter`` (caller holds the write lock).
@@ -2817,7 +2827,8 @@ def _upsert_queue_dead_letter_locked(
     reason (str): Failure reason.
     env (bool): Use the environment cooldown schedule.
     ts (float): Current time.
-    max_entries (int): Cap on retained entries.
+    max_entries (int): Size above which terminal entries are trimmed.
+    space (bool): Park a space-pressure refusal (no cycle, never terminal).
 
   Returns:
     dict[str, Any] | None: Stored entry, or None when the write failed.
@@ -2842,13 +2853,16 @@ def _upsert_queue_dead_letter_locked(
     "first_recorded_at": (prior or {}).get("first_recorded_at")
     or (prior or {}).get("recorded_at")
     or ts,
-    "cycle": int((prior or {}).get("cycle") or 0) + 1,
+    "cycle": int((prior or {}).get("cycle") or 0) + (0 if space else 1),
     "env": bool(env or str(reason).startswith("env:")),
+    "space": bool(space),
   }
   schedule = _dead_letter_schedule(entry)
-  entry["terminal"] = entry["cycle"] > len(schedule)
+  entry["terminal"] = not space and entry["cycle"] > len(schedule)
   entry["readmit_at"] = (
-    None if entry["terminal"] else ts + schedule[entry["cycle"] - 1]
+    None
+    if entry["terminal"]
+    else ts + (0.0 if space else schedule[entry["cycle"] - 1])
   )
   entries.append(entry)
   if len(entries) > max_entries:
@@ -2856,8 +2870,13 @@ def _upsert_queue_dead_letter_locked(
     terminal_old = [e for e in entries if e.get("terminal")][:overflow]
     drop = {id(e) for e in terminal_old}
     entries = [e for e in entries if id(e) not in drop]
-    if len(entries) > max_entries:
-      entries = entries[-max_entries:]
+    if len(entries) > max_entries and ts - _DEAD_LETTER_CAP_WARN["at"] >= 300:
+      _DEAD_LETTER_CAP_WARN["at"] = ts
+      log_print(
+        f"WARN: queue dead letter over cap n={len(entries)} cap={max_entries} "
+        "live entries kept",
+        flush=True,
+      )
   if not _save_dead_letter_entries(archive_data_dir, entries):
     return None
   return entry
@@ -2921,6 +2940,7 @@ def dead_letter_blocked(
 
   Replaces the permanent "ever dead-lettered" check (DE-1): once
   ``readmit_at`` passes, reconstruct and handoff may enqueue the path again.
+  A ``space`` park is blocked exactly while space pressure lasts.
 
   Args:
     archive_data_dir (str): Archive data directory root.
@@ -2942,6 +2962,10 @@ def dead_letter_blocked(
     return False
   if entry.get("terminal"):
     return True
+  if entry.get("space"):
+    from hpcperfstats.dbload.lib import sync_timedb_space_pressure as sp
+
+    return sp.under_pressure()
   ts = time.time() if now is None else float(now)
   return ts < float(entry.get("readmit_at") or 0.0)
 
@@ -2992,6 +3016,8 @@ def due_dead_letter_readmissions(
   """
   Return non-terminal entries whose cooldown elapsed and were not re-admitted.
 
+  ``space`` parks are held back while space pressure lasts.
+
   Args:
     archive_data_dir (str): Archive data directory root.
     now (float | None): Clock override (tests).
@@ -3006,17 +3032,44 @@ def due_dead_letter_readmissions(
   """
   if not archive_data_dir:
     return []
+  from hpcperfstats.dbload.lib import sync_timedb_space_pressure as sp
+
   ts = time.time() if now is None else float(now)
+  index = _dead_letter_index(archive_data_dir)
+  held = any(e.get("space") for e in index.values()) and sp.under_pressure()
   due = [
     e
-    for e in _dead_letter_index(archive_data_dir).values()
+    for e in index.values()
     if not e.get("terminal")
+    and not (held and e.get("space"))
     and float(e.get("readmit_at") or 0.0) <= ts
     and float(e.get("readmitted_at") or -1.0)
     < float(e.get("readmit_at") or 0.0)
   ]
   due.sort(key=lambda e: float(e.get("readmit_at") or 0.0))
   return due[: max(0, int(limit))]
+
+
+def space_parked_census_token(archive_data_dir: str) -> str:
+  """
+  Return the census token counting space-parked dead letters, or ``""``.
+
+  Args:
+    archive_data_dir (str): Archive data directory root.
+
+  Returns:
+    str: `` parked_space=N`` when N > 0, else an empty string.
+
+  Examples:
+    >>> space_parked_census_token("/nope")
+    ''
+  """
+  if not archive_data_dir:
+    return ""
+  n = sum(
+    1 for e in _dead_letter_index(archive_data_dir).values() if e.get("space")
+  )
+  return f" parked_space={n}" if n else ""
 
 
 def mark_dead_letters_readmitted(

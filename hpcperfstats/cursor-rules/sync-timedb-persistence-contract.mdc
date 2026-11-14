@@ -72,7 +72,7 @@ Add or extend `test_sync_timedb_persistence.py` and `test_sync_timedb_persistenc
 
 Added without bumping `SYNC_TIMEDB_PERSISTENCE_CONTRACT_VERSION` (a bump would wipe live dead letters, marks and the job snapshot); every change is schema-compatible and migrates in place behind the A17 snapshot (`.sync_timedb_migration_backup/dead-ends-v1/`, sha256-verified) and `sync_dead_end_remediation_mode = report | apply`.
 
-- **Queue dead letter** entries: `kind`, `identity`, `attempt`, `reason`, `recorded_at`, `first_recorded_at`, `cycle`, `env`, `readmit_at`, `terminal`, `readmitted_at`. Legacy entries normalize to cycle 1 (`readmit_at = recorded_at + backoff[0]`); fill-skip reasons re-admit immediately. Trim drops terminal entries first.
+- **Queue dead letter** entries: `kind`, `identity`, `attempt`, `reason`, `recorded_at`, `first_recorded_at`, `cycle`, `env`, `readmit_at`, `terminal`, `readmitted_at`, `space` (2026-11-14, DE-34: a space-pressure park keeps its cycle, is never terminal and is blocked/held while pressure lasts; absent = false, no contract bump). Legacy entries normalize to cycle 1 (`readmit_at = recorded_at + backoff[0]`); fill-skip reasons re-admit immediately. Trim drops **only** terminal entries; past the cap live entries are kept with a rate-limited `WARN: queue dead letter over cap` (the old newest-N trim evicted 647 live ingest cooldowns on hpcperfstats01).
 - **Quarantine manifest** entries add `failure_class`.
 - **Day-removal manifest** adds `reverify_cycles` and `verified_tar_identity`; only `skipped_quarantine` is terminal (`REPAIR_REQUIRED_STATUSES` block `phase=done`).
 - **Members `day_skip`** adds `set_at` (G3 re-validation age).

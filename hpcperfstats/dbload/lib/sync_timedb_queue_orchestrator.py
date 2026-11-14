@@ -157,6 +157,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   try_claim_seal_slot,
 )
 from hpcperfstats.dbload.lib.sync_timedb_archive_members_coord import (
+  ArchiveSpaceDeferredError,
   _rate_limited_day_info_log,
   is_transient_ingest_archive_coordination_error,
 )
@@ -3643,9 +3644,13 @@ def _dead_letter_claim(
   reason: str,
   attempt: int,
   log_fn: Callable[..., None] | None = None,
+  space: bool = False,
 ) -> str:
   """
   Dead-letter one claim now: record the cooldown entry, ACK, resolve terminal.
+
+  With ``space`` the claim is parked until space pressure ends instead
+  (no cycle, never terminal; see ``upsert_queue_dead_letter``).
 
   Args:
     client (Any): Job store.
@@ -3655,6 +3660,7 @@ def _dead_letter_claim(
     reason (str): Failure reason (``env:*`` selects the env schedule).
     attempt (int): Attempt count recorded on the entry.
     log_fn (Callable[..., None] | None): Optional logger.
+    space (bool): Park a space-pressure refusal.
 
   Returns:
     str: ``dead_letter`` or ``dead_letter_terminal``.
@@ -3683,6 +3689,7 @@ def _dead_letter_claim(
       identity=identity,
       attempt=attempt,
       reason=reason,
+      space=space,
     )
   jq.ack_job(
     client,
@@ -5761,6 +5768,23 @@ def _drain_ingest_ready(
           f"queue_orchestrator ingest defer identity={identity} err={type(exc).__name__} detail={exc}",
           log_fn=log_fn,
         )
+        # Space refusals last until pressure ends: park, do not spin G1.
+        if (
+          claim is not None
+          and isinstance(exc, ArchiveSpaceDeferredError)
+          and space.under_pressure()
+        ):
+          _dead_letter_claim(
+            client,
+            kind=jq.JOB_KIND_INGEST,
+            claim=claim,
+            archive_data_dir=archive_data_dir,
+            reason=space.SPACE_DEFER_REASON,
+            attempt=0,
+            space=True,
+            log_fn=log_fn,
+          )
+          continue
         _requeue_bounded_without_attempt_bump(
           client,
           kind=jq.JOB_KIND_INGEST,
@@ -6553,8 +6577,24 @@ def _drain_append_ready(
       progress.record(day_tok, "soft_requeue", 1)
       progress.record(day_tok, "requeue_noprogress", 1)
       # INV-NEG: a lock holder (restore, seal) ends, but a soft requeue that
-      # never clears must still escalate instead of cycling forever.
+      # never clears must still escalate instead of cycling forever. A space
+      # refusal under pressure parks until pressure ends (no G1 counter).
+      park = bool(getattr(result, "space_deferred", False)) and (
+        space.under_pressure()
+      )
       for job in jobs:
+        if park:
+          _dead_letter_claim(
+            client,
+            kind=jq.JOB_KIND_APPEND,
+            claim=job,
+            archive_data_dir=archive_data_dir,
+            reason=space.SPACE_DEFER_REASON,
+            attempt=0,
+            space=True,
+            log_fn=log_fn,
+          )
+          continue
         _requeue_bounded_without_attempt_bump(
           client,
           kind=jq.JOB_KIND_APPEND,
@@ -8172,6 +8212,7 @@ def _reconstruct_coordinator_loop(
               f" last_ingested_backfill_day={_LAST_INGESTED_BACKFILL_DAY}"
             )
           raw_tok += space.census_token(cfg.get_daily_archive_dir_path())
+          raw_tok += jq.space_parked_census_token(directory)
           _log(
             f"queue_orchestrator census {jq.format_queue_census(census)} total_ingested={total_ingested} total_completed={total_completed}{' ' + busy_tok if busy_tok else ''}{mem_tok} {writers_tok}{put_tok}{codon_tok}{raw_tok}{census_tok}",
             log_fn=log_fn,

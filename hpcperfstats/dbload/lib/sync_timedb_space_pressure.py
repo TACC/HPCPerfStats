@@ -27,6 +27,8 @@ never gated here; a refused restore, repair or rewrite defers
 Attributes:
   ALL_DAYS: Sentinel from ``_select_append_day``: no pressure, every day.
   SPACE_DENIED: Falsy restore result when ``admit_restore`` refused it.
+  SPACE_DEFER_REASON: ``transient_reason`` of a repair or restore the space
+    gate refused; ingest raises ``ArchiveSpaceDeferredError`` for it.
   UNKNOWN_RATIO: Restore size multiple of a sealed file with no size header.
   _DENY_LOG_STATE: Rate-limit state for ``space_pressure deny`` lines.
   _LOCK: Guards ``_STATE`` across append, day-close and census threads.
@@ -86,6 +88,7 @@ class _SpaceDenied:
 
 
 SPACE_DENIED = _SpaceDenied()
+SPACE_DEFER_REASON = "env:ENOSPC"
 _LOCK = threading.Lock()
 _STATE: dict[str, Any] = {}
 _DENY_LOG_STATE: dict[str, dict[str, float]] = {}
