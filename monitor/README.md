@@ -688,7 +688,14 @@ with the debug RPM installed (it reads the `/dev/shm/hpcperfstatsd-debug` mirror
 ```bash
 ./scripts/canary_counter_check.sh                        # dp sp hp idle, exit 0 only on RESULT: PASS
 ./scripts/canary_counter_check.sh --precisions dp --window 60 --warm 30
+./scripts/canary_counter_check.sh --scf                  # SCF memory counters (see below)
 ```
+
+`--scf` checks the `arm_aarch64_imc` SCF reader instead: it runs a DRAM-bound dp GEMM
+(`--size 4096`, matrices larger than L3) and compares `dram_cas_reads` / `dram_cas_writes`
+(64-byte transfers, summed over every `scf<N>` row) with `perf stat -a` on every
+`nvidia_scf_pmu_<N>` (`cmem_rd_data` 32-byte beats, `cmem_wr_total_bytes`) over the same
+window. PASS needs read and write within 5% and at least 1 GB/s of reads.
 
 It never reads the terminal, bounds every wait and external command with a timeout, and stops
 the GEMM load on any exit including Ctrl-C. Output is also written to

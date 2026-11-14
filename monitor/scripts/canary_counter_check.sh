@@ -11,12 +11,19 @@
 # every wait and external command is time-limited, and the GEMM load is stopped on any exit
 # (including Ctrl-C).
 #
+# --scf instead checks the Grace SCF memory counters: it runs a DRAM-bound dp GEMM
+# (--size 4096, matrices larger than L3) and compares the monitor's arm_aarch64_imc
+# dram_cas_reads / dram_cas_writes (64-byte transfers, summed over every scf<N> row) with
+# `perf stat -a` on every nvidia_scf_pmu_<N> (cmem_rd_data 32-byte beats, cmem_wr_total_bytes)
+# over the same window; PASS when both agree within 5% and reads exceed 1 GB/s.
+#
 # Usage:
 #   ./scripts/canary_counter_check.sh [--precisions "dp sp hp idle"] [--window S] [--warm S]
+#   ./scripts/canary_counter_check.sh --scf [--window S] [--warm S]
 #
 # Output goes to the terminal and to $HOME/hpcperfstats-counter-check/<host>-<epoch>.log.
 # Test overrides (env): CANARY_SHM, CANARY_PERF, CANARY_LOAD, CANARY_WAIT_MAX, CANARY_LOG_DIR,
-# CANARY_GEMM_LOG.
+# CANARY_GEMM_LOG, CANARY_PMU_DIR, CANARY_SCF_SIZE.
 set -uo pipefail
 exec </dev/null
 
@@ -34,6 +41,10 @@ KEYS="instr_retired arm_fp_dp_spec arm_fp_sp_spec arm_fp_hp_spec"
 # perf events in the same order as KEYS (instructions, FP_DP_SPEC, FP_SP_SPEC, FP_HP_SPEC).
 PMU="armv8_pmuv3_0"
 EVENTS="instructions,${PMU}/event=0x801c/,${PMU}/event=0x8018/,${PMU}/event=0x8014/"
+SCF=0
+PMU_DIR="${CANARY_PMU_DIR:-/sys/bus/event_source/devices}"
+SCF_SIZE="${CANARY_SCF_SIZE:-4096}"
+IMC_KEYS="dram_cas_reads dram_cas_writes"
 
 die() {
   echo "canary_counter_check: $*" >&2
@@ -48,6 +59,7 @@ while [ $# -gt 0 ]; do
   --precisions) PRECISIONS="${2:-}"; shift 2 ;;
   --window) WINDOW="${2:-}"; shift 2 ;;
   --warm) WARM="${2:-}"; shift 2 ;;
+  --scf) SCF=1; shift ;;
   -h | --help) awk 'NR>2 && /^#/ { sub(/^# ?/, ""); print; next } NR>2 { exit }' "$0"; exit 0 ;;
   *) die "unknown option '$1'" ;;
   esac
@@ -93,24 +105,25 @@ wait_new() {
   [ "${i}" -lt "${WAIT_MAX}" ] || say "WARN: fast unchanged for ${WAIT_MAX} s (ts ${t})"
 }
 
-# Per-CPU values of every KEY from the fast payload (fast keys only: skip ,R=S schema tokens).
-# Output: "TS <ts>" then "<cpu> <v1> <v2> <v3> <v4>".
+# snap TYPE "KEYS": per-device values of KEYS for TYPE rows in the fast payload (fast keys
+# only: skip ,R=S schema tokens). Output: "TS <ts>" then "<dev> <v1> ... <vN>".
 snap() {
-  timeout 30 awk -v keys="${KEYS}" '
+  timeout 30 awk -v type="$1" -v keys="$2" '
     BEGIN { nk = split(keys, want, " ") }
-    FNR==NR { if ($1=="!host_cpu_hw") { n=0
+    FNR==NR { if ($1==("!" type)) { n=0
                 for (i=2;i<=NF;i++) { if ($i ~ /,R=S/) continue
                   n++; split($i,a,","); for (j=1;j<=nk;j++) if (a[1]==want[j]) col[j]=n } }
               next }
     !h && NF { print "TS", $1; h=1; next }
-    $1=="host_cpu_hw" && $3=="@fast" {
+    $1==type && $3=="@fast" {
       line=$2; for (j=1;j<=nk;j++) line=line " " (col[j] ? $(3+col[j]) : "NA"); print line }
   ' "${SHM}/schema" "${SHM}/fast"
 }
 
-# Rates per KEY between two snaps; 48-bit wrap aware. Output: "<key> <rate|NA> <dt> <ncpu>".
+# rates A B "KEYS": per-KEY rates between two snaps, summed over devices; 48-bit wrap aware.
+# Output: "<key> <rate|NA> <dt> <ndev>".
 rates() {
-  awk -v keys="${KEYS}" '
+  awk -v keys="$3" '
     BEGIN { nk = split(keys, k, " ") }
     FNR==NR { if ($1=="TS") t0=$2; else for (j=1;j<=nk;j++) a[$1,j]=$(j+1); next }
     $1=="TS" { t1=$2; next }
@@ -146,6 +159,74 @@ say "log ${LOG}; precisions: ${PRECISIONS}; about $((WARM + WINDOW + 2 * 60))" \
   "s each"
 stop_load
 
+# SCF memory counters: monitor arm_aarch64_imc vs perf nvidia_scf_pmu_<N> over one window.
+scf_check() {
+  local d ev="" n=0 prc
+  for d in "${PMU_DIR}"/nvidia_scf_pmu_*; do
+    [ -e "${d}" ] || continue
+    ev="${ev:+${ev},}${d##*/}/cmem_rd_data/,${d##*/}/cmem_wr_total_bytes/"
+    n=$((n + 1))
+  done
+  if [ "${n}" -eq 0 ]; then
+    say "FAIL: no nvidia_scf_pmu_* under ${PMU_DIR}"
+    echo "RESULT: FAIL"
+    return 1
+  fi
+  say "===== scf (${n} SCF PMU(s), dp load --size ${SCF_SIZE})"
+  if ! timeout 120 "${LOAD}" start --precision dp --size "${SCF_SIZE}"; then
+    say "FAIL: load start"
+    echo "RESULT: FAIL"
+    return 1
+  fi
+  sleep "${WARM}"
+  wait_new
+  snap arm_aarch64_imc "${IMC_KEYS}" >"${WORK}/a"
+  timeout $((WINDOW + 60)) "${PERF}" stat -a -x, -e "${ev}" -- sleep "${WINDOW}" \
+    2>"${WORK}/perf" >/dev/null
+  prc=$?
+  [ "${prc}" -eq 0 ] || say "WARN: perf exit ${prc}"
+  wait_new
+  snap arm_aarch64_imc "${IMC_KEYS}" >"${WORK}/b"
+  stop_load
+  rates "${WORK}/a" "${WORK}/b" "${IMC_KEYS}" >"${WORK}/m"
+  # perf lines alternate rd (32-byte beats), wr (bytes) per PMU; sum each, keep any unit.
+  awk -F, -v win="${WINDOW}" '
+    NF>4 { n++; ok = ($1 ~ /^[0-9.]+$/); if (!ok) bad=1
+           if (n % 2) { rd += $1; ru = $2 } else { wr += $1; wu = $2 } }
+    END { if (bad || n == 0 || n % 2) print "NA NA - -"
+          else printf "%.6g %.6g %s %s\n", rd/win, wr/win, (ru=="" ? "-" : ru),
+                      (wu=="" ? "-" : wu) }
+  ' "${WORK}/perf" >"${WORK}/p"
+  awk '
+    FNR==NR { if ($1=="dram_cas_reads") mr=$2; if ($1=="dram_cas_writes") mw=$2
+              dt=$3; nd=$4; next }
+    { pr=$1; pw=$2; ru=$3; wu=$4 }
+    END {
+      if (ru != "-" || wu != "-") printf "  WARN: perf applied a unit (%s / %s)\n", ru, wu
+      if (mr=="NA" || mw=="NA" || pr=="NA" || pr<=0 || pw<=0) {
+        printf "  monitor rd %s wr %s cas/s, perf rd %s beats/s wr %s B/s (%s s, %s rows)\n",
+          mr, mw, pr, pw, dt, nd
+        print "RESULT: FAIL"; exit 1 }
+      mrb = mr*64; prb = pr*32; mwb = mw*64; pwb = pw
+      rr = mrb/prb; wr = mwb/pwb
+      printf "  read  monitor %.2f GB/s perf %.2f GB/s mon/perf %.3f (%s s, %s scf rows)\n",
+        mrb/1e9, prb/1e9, rr, dt, nd
+      printf "  write monitor %.2f GB/s perf %.2f GB/s mon/perf %.3f\n", mwb/1e9, pwb/1e9, wr
+      okr = (rr>=0.95 && rr<=1.05); okw = (wr>=0.95 && wr<=1.05); bw = (prb >= 1e9)
+      printf "scf read  %s (limit 5%%)\n", okr ? "PASS" : "FAIL"
+      printf "scf write %s (limit 5%%)\n", okw ? "PASS" : "FAIL"
+      printf "scf load  %s (read %.2f GB/s, need >= 1)\n", bw ? "PASS" : "FAIL", prb/1e9
+      if (okr && okw && bw) { print "RESULT: PASS"; exit 0 }
+      print "RESULT: FAIL"; exit 1 }
+  ' "${WORK}/m" "${WORK}/p"
+}
+if [ "${SCF}" -eq 1 ]; then
+  scf_check
+  rc=$?
+  say "done; log ${LOG}"
+  exit "${rc}"
+fi
+
 SUMMARY="${WORK}/summary"
 : >"${SUMMARY}"
 for p in ${PRECISIONS}; do
@@ -159,7 +240,7 @@ for p in ${PRECISIONS}; do
   fi
   sleep "${WARM}"
   wait_new
-  snap >"${WORK}/a"
+  snap host_cpu_hw "${KEYS}" >"${WORK}/a"
   g0=$(wc -l <"${GEMM_LOG}" 2>/dev/null || echo 0)
   timeout $((WINDOW + 60)) "${PERF}" stat -a -x, -e "${EVENTS}" -- sleep "${WINDOW}" \
     2>"${WORK}/perf" >/dev/null
@@ -173,8 +254,8 @@ for p in ${PRECISIONS}; do
         END { if (n) printf "%.6g", s/n; else print "NA" }')
   fi
   wait_new
-  snap >"${WORK}/b"
-  rates "${WORK}/a" "${WORK}/b" >"${WORK}/m"
+  snap host_cpu_hw "${KEYS}" >"${WORK}/b"
+  rates "${WORK}/a" "${WORK}/b" "${KEYS}" >"${WORK}/m"
   perf_rates "${WORK}/perf" "${WINDOW}" >"${WORK}/p"
   paste -d' ' "${WORK}/m" "${WORK}/p" >"${WORK}/j"
   awk -v p="${p}" -v out="${SUMMARY}" '

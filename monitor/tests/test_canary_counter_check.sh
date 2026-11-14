@@ -29,19 +29,24 @@ echo idle >"${T}/mode"
 : >"${T}/gemm.log"
 
 # Fake daemon: rewrites fast every second; per CPU, instr +1000/s and the mode's FP key
-# +100/s (2 CPUs: 2000 and 200 per second).
+# +100/s (2 CPUs: 2000 and 200 per second); per SCF socket under dp load, dram_cas_reads
+# +2e7/s and dram_cas_writes +1e7/s (64-byte transfers: 2 sockets = 2.56 / 1.28 GB/s).
 cat >"${T}/writer.sh" <<'EOF'
 #!/usr/bin/env bash
-D=$1; t=1000; i=0; d=0; s=0; h=0
-printf '$x\n!host_cpu_hw cpu_util_total_accum_us,E,R=S instr_retired,E,W=48 arm_fp_dp_spec,E,W=48 arm_fp_sp_spec,E,W=48 arm_fp_hp_spec,E,W=48\n' >"$D/schema"
+D=$1; t=1000; i=0; d=0; s=0; h=0; r=0; w=0
+{ printf '$x\n!host_cpu_hw cpu_util_total_accum_us,E,R=S instr_retired,E,W=48 arm_fp_dp_spec,E,W=48 arm_fp_sp_spec,E,W=48 arm_fp_hp_spec,E,W=48\n'
+  printf '!arm_aarch64_imc dram_cas_reads,E,W=48 dram_cas_writes,E,W=48\n'; } >"$D/schema"
 while :; do
   m=$(cat "$D/../mode" 2>/dev/null || echo idle)
   i=$((i + 1000))
-  case $m in dp) d=$((d + 100)) ;; sp) s=$((s + 100)) ;; hp) h=$((h + 100)) ;; esac
+  case $m in dp) d=$((d + 100)); r=$((r + 20000000)); w=$((w + 10000000)) ;;
+    sp) s=$((s + 100)) ;; hp) h=$((h + 100)) ;; esac
   t=$((t + 1))
   { printf '\n%d.000000 job host\n' "$t"
     printf 'host_cpu_hw 0 @fast %d %d %d %d\n' "$i" "$d" "$s" "$h"
     printf 'host_cpu_hw 1 @fast %d %d %d %d\n' "$i" "$d" "$s" "$h"
+    printf 'arm_aarch64_imc scf0 @fast %d %d\n' "$r" "$w"
+    printf 'arm_aarch64_imc scf1 @fast %d %d\n' "$r" "$w"
   } >"$D/fast.tmp" && mv "$D/fast.tmp" "$D/fast"
   sleep 1
 done
@@ -58,6 +63,18 @@ for _ in $(seq "$w"); do
   [ "$m" = idle ] || echo "gemm_load $m GFLOP/s=${FAKE_GFLOPS:-7e-7} elapsed=1s check=1.000" \
     >>"$(dirname "$0")/gemm.log"
 done
+case "$*" in
+*cmem_rd_data*)
+  # SCF: per PMU, read beats (2 per 64-byte transfer) and write bytes; FAKE_SCF_SKEW scales
+  # the read count to model a monitor/perf mismatch.
+  rd=$(awk -v w="$w" -v k="${FAKE_SCF_SKEW:-1}" 'BEGIN { printf "%.0f", 40000000 * w * k }')
+  for p in $(echo "$*" | grep -o 'nvidia_scf_pmu_[0-9]*/cmem_rd_data' | cut -d/ -f1); do
+    echo "${rd},,${p}/cmem_rd_data/,100,100.00,," >&2
+    echo "$((640000000 * w)),,${p}/cmem_wr_total_bytes/,100,100.00,," >&2
+  done
+  exit 0
+  ;;
+esac
 dp=0; sp=0; hp=0
 case $m in dp) dp=$((200 * w)) ;; sp) sp=$((200 * w)) ;; hp) hp=$((200 * w)) ;; esac
 ins=$((2000 * w)); [ "${FAKE_NOT_COUNTED:-0}" = 1 ] && ins="<not counted>"
@@ -76,6 +93,8 @@ status) cat "$F" ;;
 esac
 EOF
 chmod +x "${T}/writer.sh" "${T}/perf" "${T}/load"
+mkdir -p "${T}/pmu/nvidia_scf_pmu_0" "${T}/pmu/nvidia_scf_pmu_1" "${T}/nopmu"
+export CANARY_PMU_DIR="${T}/pmu"
 export CANARY_SHM="${T}/shm" CANARY_PERF="${T}/perf" CANARY_LOAD="${T}/load"
 export CANARY_LOG_DIR="${T}/log" CANARY_WAIT_MAX=5 CANARY_GEMM_LOG="${T}/gemm.log"
 
@@ -119,6 +138,21 @@ FAKE_GFLOPS=9e-7 run 1 --warm 0 --window 2 --precisions dp
 echo "${out}" | grep -q '^accuracy dp .*> 4: monitor FP count at least 11.1% low FAIL' ||
   fail "low count not reported: ${out}"
 echo "${out}" | grep -q '^O3 dp .*PASS' || fail "O3 should still pass when both scale alike"
+
+# SCF: monitor arm_aarch64_imc (both sockets) matches perf on both nvidia_scf_pmu_<N>.
+run 0 --scf --warm 0 --window 2
+echo "${out}" | grep -q '2 SCF PMU(s)' || fail "SCF PMUs not counted: ${out}"
+echo "${out}" | grep -q 'read  monitor 2.56 GB/s perf 2.56 GB/s mon/perf 1.000' ||
+  fail "SCF read bandwidth wrong: ${out}"
+echo "${out}" | grep -q 'write monitor 1.28 GB/s perf 1.28 GB/s mon/perf 1.000' ||
+  fail "SCF write bandwidth wrong: ${out}"
+echo "${out}" | grep -q '^RESULT: PASS' || fail "SCF run did not PASS: ${out}"
+[ "$(cat "${T}/mode")" = idle ] || fail "load still running after SCF run"
+# A 20% read mismatch fails; no SCF PMU fails without starting a load.
+FAKE_SCF_SKEW=1.2 run 1 --scf --warm 0 --window 2
+echo "${out}" | grep -q '^scf read  FAIL' || fail "SCF mismatch not caught: ${out}"
+CANARY_PMU_DIR="${T}/nopmu" run 1 --scf --warm 0 --window 1
+echo "${out}" | grep -q 'FAIL: no nvidia_scf_pmu_' || fail "missing SCF PMU not reported"
 
 # perf "<not counted>" keeps its slot: instructions NA, FP events still compared.
 FAKE_NOT_COUNTED=1 run 1 --warm 0 --window 2 --precisions dp
