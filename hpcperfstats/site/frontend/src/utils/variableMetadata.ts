@@ -236,7 +236,7 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
     description:
       "Share of the expected counter time that other programs took (%), 1 - pmu_running_time / pmu_solo_running_time on host_cpu_hw (Grace, monitor 3.1 Phase 1b builds). 0% means only the monitor used the counters; on GB200 nodes nvidia-powerd typically takes a large share.",
     researcherUse:
-      "Explains node-to-node differences in counter coverage; the instruction and FLOP rates stay corrected by scaling, but higher values mean coarser estimates for short bursts.",
+      "Explains node-to-node differences in counter coverage: a steady high value on every job of a node type comes from a node service (Horizon GB200 nodes run a GPU power service, about 60–80%), while a value clearly above other jobs on the same node type points at a tool in your job, such as a profiler.",
   },
   avg_mbw: {
     description:

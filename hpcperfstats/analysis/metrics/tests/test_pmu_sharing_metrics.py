@@ -198,3 +198,22 @@ def test_monitor_naming_resolves_pmu_sharing_keys():
   renames = load_map.event_renames()
   for key in pmu_sharing_event_names():
     assert renames[key] == key
+
+
+def test_sharing_metrics_are_staff_only_but_stay_in_the_catalog():
+  """Both sharing metrics are computed for every job but shown to staff only."""
+  catalog = {e["metric"] for e in metrics.job_metrics_catalog_entries()}
+  assert {
+    "avg_pmu_running_pct",
+    "avg_pmu_outside_pct",
+  } == metrics.STAFF_ONLY_JOB_METRICS
+  assert catalog >= metrics.STAFF_ONLY_JOB_METRICS
+  rows = [
+    {"metric": "avg_flops"},
+    {"metric": "avg_pmu_running_pct"},
+    {"metric": "avg_pmu_outside_pct"},
+  ]
+  assert metrics.filter_staff_only_job_metrics(rows, True) is rows
+  assert [
+    r["metric"] for r in metrics.filter_staff_only_job_metrics(rows, False)
+  ] == ["avg_flops"]

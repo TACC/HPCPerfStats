@@ -113,7 +113,9 @@ from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
   job_is_shared_node,
 )
 from hpcperfstats.analysis.metrics.lib.metrics import (
+  STAFF_ONLY_JOB_METRICS,
   build_job_metrics_display_list,
+  filter_staff_only_job_metrics,
   job_metrics_catalog_entries,
 )
 from hpcperfstats.dbload.sync_acct import (
@@ -908,6 +910,51 @@ def _require_csrf_for_session_post(request: Any) -> Any:
   return None
 
 
+def _request_session(request: Any) -> Any:
+  """
+  Return the session mapping of a DRF or Django request, or None.
+
+  DRF ``Request`` objects proxy ``session`` to the wrapped ``_request``;
+  unit tests often build requests without a session.
+
+  Args:
+    request (Any): DRF ``Request``, Django ``HttpRequest``, or None.
+
+  Returns:
+    Any: The session mapping (``SessionBase`` or a test dict), or None when
+      the request has no session.
+
+  Examples:
+    >>> _request_session(None) is None
+    True
+  """
+  session = getattr(request, "session", None)
+  if session is None:
+    session = getattr(getattr(request, "_request", None), "session", None)
+  return session
+
+
+def _hide_staff_only_metrics(request: Any) -> bool:
+  """
+  True when the viewer is a non-staff session (``STAFF_ONLY_JOB_METRICS``).
+
+  A request without a session keeps today's behavior and sees everything,
+  like ``_apply_non_staff_job_visibility``.
+
+  Args:
+    request (Any): DRF ``Request``, Django ``HttpRequest``, or None.
+
+  Returns:
+    bool: True to hide staff-only metrics from this viewer.
+
+  Examples:
+    >>> _hide_staff_only_metrics(None)
+    False
+  """
+  session = _request_session(request)
+  return session is not None and not session.get("is_staff", False)
+
+
 def _apply_non_staff_job_visibility(queryset: Any, request: Any) -> Any:
   """
   Restrict non-staff visibility to own jobs and jobs in own-used accounts.
@@ -922,10 +969,7 @@ def _apply_non_staff_job_visibility(queryset: Any, request: Any) -> Any:
   Examples:
     >>> _apply_non_staff_job_visibility(None, None)  # doctest: +SKIP
   """
-  session = getattr(request, "session", None)
-  if session is None:
-    raw_req = getattr(request, "_request", None)
-    session = getattr(raw_req, "session", None)
+  session = _request_session(request)
   if session is None:
     # Keep behavior unchanged for call-sites/tests that do not attach session.
     return queryset
@@ -1162,8 +1206,18 @@ def _build_job_list_queryset_from_request(
     queryset = annotate_job_list_performance_fields(queryset)
   queryset = _apply_job_list_performance_sort_rank_filter(queryset, fields)
   queryset = _apply_job_list_major_state_filter(queryset, fields)
+  # Staff-only metrics (STAFF_ONLY_JOB_METRICS) cannot be filtered on by
+  # non-staff; this also keeps them out of the job-list histograms, which only
+  # plot filter columns.
+  hide_staff_only = _hide_staff_only_metrics(request)
   cur_metrics = {
-    k.split("_", 1)[1]: v for k, v in fields.items() if k.startswith("metrics_")
+    k.split("_", 1)[1]: v
+    for k, v in fields.items()
+    if k.startswith("metrics_")
+    and not (
+      hide_staff_only
+      and k.split("_", 1)[1].split("__", 1)[0] in STAFF_ONLY_JOB_METRICS
+    )
   }
   queryset = _apply_job_list_metric_filters(queryset, cur_metrics)
   if ignore_order_by:
@@ -2507,7 +2561,11 @@ def home_options(request: Any) -> Any:
       "machine_name": str(cfg.get_host_name_ext() or ""),
       "year_list": year_list,
       "date_list": sorted(month_dict.items(), reverse=True),
-      "metrics": _normalize_home_metrics(metrics),
+      "metrics": _normalize_home_metrics(
+        filter_staff_only_job_metrics(
+          list(metrics or []), not _hide_staff_only_metrics(request)
+        )
+      ),
       "queues": _normalize_home_string_list(queues),
       "states": _normalize_home_string_list(states),
     }
@@ -3881,7 +3939,9 @@ def job_detail(request: Any, pk: Any) -> Any:
     + "&display.prefs.events.count=50"
   )
 
-  metrics_list = build_job_metrics_display_list(job)
+  metrics_list = filter_staff_only_job_metrics(
+    build_job_metrics_display_list(job), not _hide_staff_only_metrics(request)
+  )
 
   payload = {
     "job_data": JobListSerializer(

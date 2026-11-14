@@ -18,6 +18,8 @@ Attributes:
   NO_SIMPLE_SAMPLES_MSG: Attribute.
   NO_TIME_SERIES_MSG: Attribute.
   NUMEXPR_MIN_ARRAY_SIZE: Attribute.
+  STAFF_ONLY_JOB_METRICS: Catalog metrics computed for every job but shown
+    to staff sessions only (Grace PMU sharing diagnostics).
   _COMPLEX_NO_DATA_REASONS: Attribute.
   _COMPLEX_PLACEHOLDER_TYPE_UNITS: Attribute.
   _GPU_JOB_DETAIL_CATALOG: Attribute.
@@ -3603,6 +3605,46 @@ def expected_job_metric_row_count() -> Any:
     >>> expected_job_metric_row_count()  # doctest: +SKIP
   """
   return len(job_metrics_catalog_entries())
+
+
+# Counter-coverage diagnostics (Grace PMU sharing, cpu-precision Phase 1b):
+# computed and persisted for every job, shown to staff only (user decision
+# 2026-11-14) because a node service (Horizon GB200 GPU power service) keeps
+# them high on every job and researchers would misread them.
+STAFF_ONLY_JOB_METRICS: frozenset[str] = frozenset(
+  {"avg_pmu_running_pct", "avg_pmu_outside_pct"}
+)
+
+
+def filter_staff_only_job_metrics(
+  rows: list[dict[str, Any]], is_staff: bool
+) -> list[dict[str, Any]]:
+  """
+  Drop staff-only metric rows unless the viewer is staff.
+
+  Used by every user-facing metrics surface (Job Detail ``metrics_list``,
+  Extended Search metric options) so the persisted catalog stays complete
+  while ``STAFF_ONLY_JOB_METRICS`` reach staff sessions only.
+
+  Args:
+    rows (list[dict[str, Any]]): Metric rows that carry a ``metric`` key
+      (catalog entries or ``build_job_metrics_display_list`` rows).
+    is_staff (bool): True when the viewing session is staff.
+
+  Returns:
+    list[dict[str, Any]]: ``rows`` unchanged for staff; otherwise a new list
+      without the staff-only metrics, order preserved.
+
+  Examples:
+    >>> rows = [{"metric": "avg_flops"}, {"metric": "avg_pmu_outside_pct"}]
+    >>> [r["metric"] for r in filter_staff_only_job_metrics(rows, False)]
+    ['avg_flops']
+    >>> len(filter_staff_only_job_metrics(rows, True))
+    2
+  """
+  if is_staff:
+    return rows
+  return [r for r in rows if r.get("metric") not in STAFF_ONLY_JOB_METRICS]
 
 
 def build_job_metrics_display_list(job: Any) -> Any:
