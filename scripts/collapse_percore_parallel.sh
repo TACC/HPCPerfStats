@@ -277,11 +277,10 @@ restart() {
   local q days
   q="$(current)/queue"; [ -s "$q" ] || q="$RUN/queue"
   [ -s "$q" ] || die "no run to restart (no queue in $RUN)"
-  days=$(awk '{print $1}' "$q" | sort -u | tr '\n' ' ')
-  echo "== restarting days: $days"
+  read -r -d '' -a days < <(awk '{print $1}' "$q" | sort -u) || :
+  echo "== restarting days: ${days[*]}"
   stop
-  # shellcheck disable=SC2086  # days is a word list
-  start $days
+  start "${days[@]}"
 }
 
 # One status line for the current run: jobs finished, failed, running, and
@@ -318,7 +317,7 @@ wait_for_run() {
 # retried after each run until none is left; any other start failure ends auto.
 # Returns once the last run has finished; prints a status line while waiting.
 auto() {
-  local out days rc
+  local out days day_args rc
   out=$(survey "${1:-2026-09-15}") || die "survey failed"
   echo "$out"
   days=$(awk -F'|' '($2 == "f" && $5 ~ /^[0-9.]+$/ && $5 + 0 > 0) || ($2 == "t" && $5 ~ /^has_percore=(true|unknown)/) {print $1}' <<< "$out" | sort -u | tr '\n' ' ')
@@ -326,8 +325,8 @@ auto() {
   echo "== repairing every day with per-core rows: $days"
   stop
   while [ -n "${days// /}" ]; do
-    # shellcheck disable=SC2086  # days is a word list
-    out=$(start $days 2>&1); rc=$?
+    read -r -d '' -a day_args <<<"$days" || :
+    out=$(start "${day_args[@]}" 2>&1); rc=$?
     echo "$out"
     if [ $rc -ne 0 ] && ! grep -q 'the merge is writing to every requested day' <<< "$out"; then
       die "start failed; auto stops (see the error above)"

@@ -302,8 +302,9 @@ has_required_target_gcc_runtime() {
 }
 
 rpm_toolchain_packages_fp() {
-  # shellcheck disable=SC2086  # package list is split into words on purpose
-  printf '%s\n' ${ROCKY9_RPM_TOOLCHAIN_PACKAGES} | LC_ALL=C sort | sha256sum | awk '{print $1}'
+  local pkgs
+  read -r -d '' -a pkgs <<<"${ROCKY9_RPM_TOOLCHAIN_PACKAGES}" || :
+  printf '%s\n' "${pkgs[@]}" | LC_ALL=C sort | sha256sum | awk '{print $1}'
 }
 
 ensure_rocky9_toolchain_layer() {

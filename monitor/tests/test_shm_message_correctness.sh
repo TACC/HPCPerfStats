@@ -19,9 +19,8 @@ run_validate() {
   local manifest="$2"
   local fixture="$3"
   local label="$4"
-  local extra="${5:-}"
+  shift 4
   echo "=== validate_shm_messages (${label}) ==="
-  # shellcheck disable=SC2086  # extra holds optional flags, split on purpose
   "${VENV_PY}" "${VALIDATOR}" \
     --capabilities "${caps}" \
     --manifest "${manifest}" \
@@ -29,7 +28,7 @@ run_validate() {
     --fixture-dir "${fixture}" \
     --no-live-spot-check \
     --no-freshness \
-    ${extra}
+    "$@"
 }
 
 # Always exercise Python validator on committed synthetic fixture.
@@ -93,5 +92,5 @@ trap 'rm -rf "${FIXTURE_TMP}"' EXIT
 [[ -f "${GOLDEN_FULL}" ]] && cp "${GOLDEN_FULL}" "${FIXTURE_TMP}/full"
 
 run_validate "${CAPS_JSON}" "${MANIFEST}" "${FIXTURE_TMP}" "slug=${SLUG}" \
-  "--golden-dir ${EXPECTED_DIR}"
+  --golden-dir "${EXPECTED_DIR}"
 echo "test_shm_message_correctness.sh: OK (synthetic + slug ${SLUG})"

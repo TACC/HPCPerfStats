@@ -124,14 +124,18 @@ host_builds_likwid() {
 }
 
 verify_likwid_static_link_probe() {
-  local tbase out rc
+  local tbase out rc cc cppflags ldflags libs
   tbase="$(mktemp "${TMPDIR:-/tmp}/hps_likwid_probe.XXXXXX")"
   out="${tbase}.out"
   printf '%s\n' '#include <likwid.h>' 'int main(void){ return perfmon_init(0, (int*)0); }' > "${tbase}.c"
   rc=0
   # LIBS from the caller must already include -lpthread -ldl (same as configure env).
-  # shellcheck disable=SC2086  # CC and flag variables are word lists
-  if ! ${CC:-gcc} ${CPPFLAGS:-} ${LDFLAGS:-} "${tbase}.c" ${LIBS:-} -o "${out}" >/dev/null 2>&1; then
+  # CC and the flag variables are whitespace-separated word lists (split, never globbed).
+  read -r -d '' -a cc <<<"${CC:-gcc}" || :
+  read -r -d '' -a cppflags <<<"${CPPFLAGS:-}" || :
+  read -r -d '' -a ldflags <<<"${LDFLAGS:-}" || :
+  read -r -d '' -a libs <<<"${LIBS:-}" || :
+  if ! "${cc[@]}" "${cppflags[@]}" "${ldflags[@]}" "${tbase}.c" "${libs[@]}" -o "${out}" >/dev/null 2>&1; then
     rc=1
   fi
   rm -f "${tbase}.c" "${out}"

@@ -178,11 +178,12 @@ static_bundle_sanitize_compiler_flags() {
 static_bundle_apply_release_build_flags() {
   static_bundle_release_build_enabled || return 0
   local base="-O3 -pipe -DNDEBUG -ffunction-sections -fdata-sections"
-  local c_rest cxx_rest ld_extra
-  # shellcheck disable=SC2086  # flag lists are split into words on purpose
-  c_rest="$(static_bundle_sanitize_compiler_flags ${CFLAGS-})"
-  # shellcheck disable=SC2086  # flag lists are split into words on purpose
-  cxx_rest="$(static_bundle_sanitize_compiler_flags ${CXXFLAGS-})"
+  local c_rest cxx_rest ld_extra cflags cxxflags
+  # Flag lists are whitespace-separated words (split, never globbed).
+  read -r -d '' -a cflags <<<"${CFLAGS-}" || :
+  read -r -d '' -a cxxflags <<<"${CXXFLAGS-}" || :
+  c_rest="$(static_bundle_sanitize_compiler_flags "${cflags[@]}")"
+  cxx_rest="$(static_bundle_sanitize_compiler_flags "${cxxflags[@]}")"
   export CFLAGS="${base}${c_rest:+ }${c_rest}"
   export CXXFLAGS="${base}${cxx_rest:+ }${cxx_rest}"
   ld_extra="-Wl,-O1 -Wl,--as-needed -Wl,--gc-sections"
