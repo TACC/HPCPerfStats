@@ -159,6 +159,24 @@ sleep 2
 run 0 --warm 0 --window 2 --precisions dp
 echo "${out}" | grep -q '^sharing dp .*not published (daemon without the Phase 1b keys)' ||
   fail "pre-Phase-1b daemon not reported: ${out}"
+# --sharing-only needs the keys: a daemon without them FAILs (exit 1).
+run 1 --sharing-only --window 2
+echo "${out}" | grep -q '^sharing quiet not published' || fail "sharing-only w/o keys: ${out}"
+echo solo >"${T}/sharing"
+sleep 2
+
+# --sharing-only: no load and no perf (CANARY_PERF points nowhere), just the D6 keys over
+# the window; the quiet node reads running == solo-expected with no outside share.
+CANARY_PERF="${T}/no-such-perf" run 0 --sharing-only --window 2
+echo "${out}" | grep -q '^sharing quiet running 77.8% solo-expected 77.8% outside 0.0% PASS' ||
+  fail "sharing-only quiet line wrong: ${out}"
+echo "${out}" | grep -q '^RESULT: PASS' || fail "sharing-only did not PASS: ${out}"
+[ "$(cat "${T}/mode")" = idle ] || fail "sharing-only started a load"
+echo outside >"${T}/sharing"
+sleep 2
+CANARY_PERF="${T}/no-such-perf" run 0 --sharing-only --window 2
+echo "${out}" | grep -q '^sharing quiet running 27.8% solo-expected 77.8% outside 64.3% PASS' ||
+  fail "sharing-only outside line wrong: ${out}"
 echo solo >"${T}/sharing"
 sleep 2
 

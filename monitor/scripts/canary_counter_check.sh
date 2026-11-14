@@ -20,9 +20,15 @@
 # `perf stat -a` on every nvidia_scf_pmu_<N> (cmem_rd_data 32-byte beats, cmem_wr_total_bytes)
 # over the same window; PASS when both agree within 5% and reads exceed 1 GB/s.
 #
+# --sharing-only reads just the D6 sharing keys over one --window with no load and no perf,
+# so this script holds no counters: on a quiet node running == solo-expected (77.8% on
+# Neoverse V2) and outside ~ 0; a higher outside share is another PMU user (nvidia-powerd,
+# a profiler). FAILs when the daemon has no Phase 1b keys.
+#
 # Usage:
 #   ./scripts/canary_counter_check.sh [--precisions "dp sp hp idle"] [--window S] [--warm S]
 #   ./scripts/canary_counter_check.sh --scf [--window S] [--warm S]
+#   ./scripts/canary_counter_check.sh --sharing-only [--window S]
 #
 # Output goes to the terminal and to $HOME/hpcperfstats-counter-check/<host>-<epoch>.log.
 # Test overrides (env): CANARY_SHM, CANARY_PERF, CANARY_LOAD, CANARY_WAIT_MAX, CANARY_LOG_DIR,
@@ -45,6 +51,7 @@ KEYS="instr_retired arm_fp_dp_spec arm_fp_sp_spec arm_fp_hp_spec"
 PMU="armv8_pmuv3_0"
 EVENTS="instructions,${PMU}/event=0x801c/,${PMU}/event=0x8018/,${PMU}/event=0x8014/"
 SCF=0
+SHARING_ONLY=0
 PMU_DIR="${CANARY_PMU_DIR:-/sys/bus/event_source/devices}"
 SCF_SIZE="${CANARY_SCF_SIZE:-4096}"
 IMC_KEYS="dram_cas_reads dram_cas_writes"
@@ -64,6 +71,7 @@ while [ $# -gt 0 ]; do
   --window) WINDOW="${2:-}"; shift 2 ;;
   --warm) WARM="${2:-}"; shift 2 ;;
   --scf) SCF=1; shift ;;
+  --sharing-only) SHARING_ONLY=1; shift ;;
   -h | --help) awk 'NR>2 && /^#/ { sub(/^# ?/, ""); print; next } NR>2 { exit }' "$0"; exit 0 ;;
   *) die "unknown option '$1'" ;;
   esac
@@ -233,6 +241,49 @@ fi
 
 SUMMARY="${WORK}/summary"
 : >"${SUMMARY}"
+
+# sharing_line LABEL: D6 sharing (Phase 1b keys) between the sa / sb snapshots: share of
+# enabled time the core events ran, the share expected with no other PMU user, and the
+# outside share (another program holding counters). Appends "LABEL sharing ..." to SUMMARY.
+sharing_line() {
+  rates "${WORK}/sa" "${WORK}/sb" "${SHARE_KEYS}" | awk -v p="$1" -v out="${SUMMARY}" '
+    { r[$1]=$2 }
+    END { en=r["pmu_enabled_time"]; run=r["pmu_running_time"]; solo=r["pmu_solo_running_time"]
+          if (en=="NA" || run=="NA" || en<=0) {
+            print "  sharing not published (daemon without the Phase 1b keys)"
+            print p, "sharing", "NA" >> out; exit }
+          rp=100*run/en; sp=(solo=="NA") ? "NA" : sprintf("%.1f", 100*solo/en)
+          op=(solo=="NA" || solo<=0) ? "NA" : sprintf("%.1f", 100*(1-run/solo))
+          printf "  sharing running %.1f%% solo-expected %s%% outside %s%%\n", rp, sp, op
+          print p, "sharing", sprintf("%.1f", rp), sp, op >> out }'
+}
+
+# --sharing-only: no load and no perf, so nothing from this script holds counters; reads the
+# D6 keys over one window. On a quiet node running == solo-expected and outside ~ 0; anything
+# else is another PMU user (nvidia-powerd, a profiler, perf).
+if [ "${SHARING_ONLY}" -eq 1 ]; then
+  say "===== sharing-only (no load, no perf; ${WINDOW} s window)"
+  if command -v systemctl >/dev/null 2>&1; then
+    say "nvidia-powerd $(timeout 5 systemctl is-active nvidia-powerd 2>/dev/null || true)"
+  fi
+  wait_new
+  snap host_cpu_hw "${SHARE_KEYS}" >"${WORK}/sa"
+  sleep "${WINDOW}"
+  wait_new
+  snap host_cpu_hw "${SHARE_KEYS}" >"${WORK}/sb"
+  sharing_line quiet
+  awk '
+    $3=="NA" { print "sharing quiet not published (daemon without the Phase 1b keys)"; bad=1
+               next }
+    { v=($3<=100.5 && ($4=="NA" || $4<=100.5))?"PASS":"FAIL"; if (v=="FAIL") bad=1
+      printf "sharing quiet running %s%% solo-expected %s%% outside %s%% %s\n", $3, $4, $5, v }
+    END { print (bad ? "RESULT: FAIL" : "RESULT: PASS"); exit bad }
+  ' "${SUMMARY}"
+  rc=$?
+  say "done; log ${LOG}"
+  exit "${rc}"
+fi
+
 for p in ${PRECISIONS}; do
   say "===== ${p}"
   if [ "${p}" != idle ]; then
@@ -262,18 +313,7 @@ for p in ${PRECISIONS}; do
   snap host_cpu_hw "${KEYS}" >"${WORK}/b"
   snap host_cpu_hw "${SHARE_KEYS}" >"${WORK}/sb"
   rates "${WORK}/a" "${WORK}/b" "${KEYS}" >"${WORK}/m"
-  # D6 sharing (Phase 1b keys): share of enabled time the core events ran, the share expected
-  # with no other PMU user, and the outside share (another program holding counters).
-  rates "${WORK}/sa" "${WORK}/sb" "${SHARE_KEYS}" | awk -v p="${p}" -v out="${SUMMARY}" '
-    { r[$1]=$2 }
-    END { en=r["pmu_enabled_time"]; run=r["pmu_running_time"]; solo=r["pmu_solo_running_time"]
-          if (en=="NA" || run=="NA" || en<=0) {
-            print "  sharing not published (daemon without the Phase 1b keys)"
-            print p, "sharing", "NA" >> out; exit }
-          rp=100*run/en; sp=(solo=="NA") ? "NA" : sprintf("%.1f", 100*solo/en)
-          op=(solo=="NA" || solo<=0) ? "NA" : sprintf("%.1f", 100*(1-run/solo))
-          printf "  sharing running %.1f%% solo-expected %s%% outside %s%%\n", rp, sp, op
-          print p, "sharing", sprintf("%.1f", rp), sp, op >> out }'
+  sharing_line "${p}"
   perf_rates "${WORK}/perf" "${WINDOW}" >"${WORK}/p"
   paste -d' ' "${WORK}/m" "${WORK}/p" >"${WORK}/j"
   awk -v p="${p}" -v out="${SUMMARY}" '
