@@ -385,13 +385,16 @@ not also divide by 100.
 3.1 replaces the aarch64 LIKWID overlay with direct `perf_event` readers (`arm_core_perf`,
 `arm_imc_scf`). Every read is scaled by time_enabled / time_running, like `perf stat`.
 On GB200 / GH200 `nvidia-powerd` holds most Grace core PMCs, so the kernel multiplexes the
-monitor's events and the unscaled LIKWID reads of 3.0 were low by the time-sharing factor
-(estimated up to about 4×; not yet measured, see the rate-step note below). Grace-Grace nodes
-run no `nvidia-powerd`, so their counters were not shared and their rates should barely change.
+monitor's events and the unscaled LIKWID reads of 3.0 were low by the time-sharing factor:
+measured about 3.3× (3.2–3.5×) on a GB200 node with `nvidia-powerd` (c122-018; see the
+rate-step note below). The 3.1 scaled counts themselves are accurate to about 1–2% even when
+`nvidia-powerd` leaves the monitor 17% of the counter time (`scripts/canary_counter_check.sh`
+against `perf stat` and the GEMM's own FLOP rate). GH200 and Grace-Grace steps are not
+measured; do not assume nodes without `nvidia-powerd` are unchanged.
 
 | Before (≤ 3.0) | From 3.1 | Notes |
 |----------------|----------|-------|
-| `instr_retired`, `aperf` / `mperf` / `cpu_clock_est_cycles` (measured part) from LIKWID, unscaled | same keys, scaled direct perf | **Rate step on GPU nodes (GB200 / GH200):** Grace instructions and cycles rise at the upgrade by the old time-sharing factor, estimated up to about 4× (expected, not a workload change; the Phase 1 canary measures it against `perf stat`). Grace-Grace nodes (no `nvidia-powerd`) should see little or no change. No backfill; older jobs keep the old values. Widths unchanged: W=48 keys carry the lifetime modulo 2^48, `cpu_clock_est_cycles` is W=64. |
+| `instr_retired`, `aperf` / `mperf` / `cpu_clock_est_cycles` (measured part) from LIKWID, unscaled | same keys, scaled direct perf | **Rate step at the upgrade:** Grace instructions and cycles rise by the old time-sharing factor, measured about 3.3× (3.2–3.5×) on GB200 with `nvidia-powerd` (expected, not a workload change). GH200 and Grace-Grace are not measured; the few GH200 3.0 samples without `nvidia-powerd` also rose (roughly 1.4–1.8×). No backfill; older jobs keep the old values. Widths unchanged: W=48 keys carry the lifetime modulo 2^48, `cpu_clock_est_cycles` is W=64. |
 | — | `arm_fp_dp_spec`, `arm_fp_sp_spec`, `arm_fp_hp_spec` (`E,W=64`) | FP **instructions** by precision (all vector widths; `FP_*_SPEC`). |
 | `arm_est_flops` = scalar SP + DP (always 0: never programmed) | `arm_est_flops` = `FP_FIXED_OPS_SPEC` + `FP_SCALE_OPS_SPEC` | Measured FLOPs. |
 | `arm_int8_ops`, `arm_int16_ops` (always 0) | `ASE_SVE_INT8_SPEC`, `ASE_SVE_INT16_SPEC` | SVE integer instructions, W=48. |

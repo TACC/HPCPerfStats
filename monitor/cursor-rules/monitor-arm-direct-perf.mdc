@@ -35,9 +35,11 @@ Since **3.1** (cpu-precision Phase 1) aarch64 builds **no LIKWID**. The `arm` CP
    PERF_FORMAT_TOTAL_TIME_RUNNING` and goes through `arm_perf_read_scaled` /
    `arm_perf_scale_sample` (delta = Δvalue × Δenabled / Δrunning; first sample seeds; Δrunning
    0 adds 0; a drop re-seeds). `nvidia-powerd` holds ~22 core-PMU fds per CPU on GB200 / GH200,
-   so unscaled counts read low by the time-sharing factor (finding #5; estimated up to ~4×,
-   unmeasured until the Phase 1 canary's `perf stat` comparison, O3; the reason LIKWID was
-   dropped). Grace-Grace has no `nvidia-powerd`; never document a fleet-wide factor.
+   so unscaled counts read low by the time-sharing factor (finding #5; the reason LIKWID was
+   dropped). Measured 3.0 → 3.1 step: about 3.3× (3.2–3.5×) on GB200 with `nvidia-powerd`
+   (c122-018); GH200 / Grace-Grace not measured. The scaled 3.1 counts match `perf stat` and
+   the GEMM FLOP-per-op ceiling within ~1–2% at 17% counter time (Phase 1 canary,
+   `scripts/canary_counter_check.sh`). Never document a fleet-wide factor.
 2. **Never `pinned` or `exclusive`.** The PMU is shared with `nvidia-powerd`; let the kernel
    multiplex. No explicit rotation on Grace (rotation is the x86 plan, Phase 2).
 3. **Names from sysfs first.** Core events resolve as: sysfs `events/<name>` → MIDR-keyed raw

@@ -125,5 +125,8 @@ step on GPU nodes, new `arm_fp_*_spec` keys): `README.md`.
 group) next to the util/clock backend and overwrote the cycle keys when
 measured cycles were nonzero. LIKWID read those counts without enabled/running
 scaling, so on GB200 / GH200 (where `nvidia-powerd` shares the PMU) they were low
-by the time-sharing factor, estimated up to about 4× and not yet measured.
-Grace-Grace nodes run no `nvidia-powerd`. PAPI was removed earlier.
+by the time-sharing factor: measured about 3.3× (3.2–3.5×) on a GB200 node with
+`nvidia-powerd` (c122-018, 3.0 vs 3.1 under the same DGEMM, normalised by GFLOP/s).
+GH200 and Grace-Grace nodes are not measured; the few 3.0 samples from a GH200 node
+without `nvidia-powerd` also rose (roughly 1.4–1.8×), so do not assume no change there.
+PAPI was removed earlier.
