@@ -30,6 +30,10 @@
 #   HPC_BUNDLE_ENABLE_DEBUG   When 1 (or yes/true) and release build is off, pass
 #                   configure --enable-debug (DEBUG macro, /dev/shm payload mirror).
 #                   Set by hpcperfstats.spec when rpmbuild uses hpc_debug_build 1.
+#   HPC_BUNDLE_CCACHE / HPC_BUNDLE_MOLD  auto (default) | 0 | 1: optional ccache and
+#                   mold for the hpcperfstatsd build, used only when installed and a probe
+#                   succeeds (release builds keep the system linker unless MOLD=1). See
+#                   scripts/lib/build_accel.sh.
 #
 # Optional stacks (InfiniBand MAD, AMD GPUPerfAPI): this script probes the build host and
 # passes --disable-* when development libs/headers are missing so configure does not fail
@@ -57,6 +61,8 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck source=lib/monitor_tree_clean.sh
 source "${SCRIPT_DIR}/lib/monitor_tree_clean.sh"
+# shellcheck source=lib/build_accel.sh
+source "${SCRIPT_DIR}/lib/build_accel.sh"
 readonly REPO_ROOT="$(cd "${MONITOR_DIR}/../.." && pwd)"
 
 # =============================================================================
@@ -624,6 +630,8 @@ build_monitor() {
   fi
   export CPPFLAGS="-I${PREFIX}/include ${CPPFLAGS:-}"
   export LDFLAGS="-L${PREFIX}/lib -L${PREFIX}/lib64 ${LDFLAGS:-}"
+  # Optional ccache / mold (after host probes, which run "${CC}" as one word).
+  build_accel_apply
   # SKIP_DEPS=1 (RPM %build) must not reach configure without core static archives.
   require_prefix_core_static_archives
   # Prefer static archives from our tree (no RPATH to PREFIX for runtime).

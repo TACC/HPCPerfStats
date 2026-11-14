@@ -762,6 +762,8 @@ Use these steps on a **representative host** (same kernel, privilege level, and 
    ./scripts/build_static_bundle.sh
    ```
 
+   **Optional accelerators:** when **`ccache`** and/or **`mold`** are installed and a one-line probe works, `build_static_bundle.sh` and `run_valgrind_check.sh` compile `hpcperfstatsd` through ccache and link with mold (`-B<prefix>/libexec/mold`, which works on EL9 GCC 11 and Clang). Without them the build is unchanged. Release builds (`--release` / RPM) keep the system linker unless **`HPC_BUNDLE_MOLD=1`**; ccache stays on because its output is identical. Turn either off with **`HPC_BUNDLE_CCACHE=0`** / **`HPC_BUNDLE_MOLD=0`**. Logic: `scripts/lib/build_accel.sh`; test: `tests/test_build_accel.sh`. Third-party deps (`--deps-only`) do not use them.
+
 2. **Tests** (from the **configured build tree root**, e.g. `.build-static`):
 
    ```bash

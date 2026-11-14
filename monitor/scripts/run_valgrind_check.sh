@@ -12,6 +12,7 @@
 #   SKIP_DISTCLEAN  If 1, leave .build-valgrind after success (default: distclean)
 #   JOBS            Parallel make jobs (default: nproc)
 #   VALGRIND_LOG    Override log path (default: <workspace>/test_runs/valgrind-check-YYYY-MM-DD.log)
+#   HPC_BUNDLE_CCACHE / HPC_BUNDLE_MOLD  optional ccache / mold (scripts/lib/build_accel.sh)
 #
 # Configure uses --enable-all-static (same as canonical static bundle) with -g -O1.
 # check_PROGRAMS run under Valgrind via Automake LOG_COMPILER; check-local is unwrapped.
@@ -24,6 +25,8 @@ readonly MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly REPO_ROOT="$(cd "${MONITOR_DIR}/../.." && pwd)"
 # shellcheck source=lib/monitor_tree_clean.sh
 source "${SCRIPT_DIR}/lib/monitor_tree_clean.sh"
+# shellcheck source=lib/build_accel.sh
+source "${SCRIPT_DIR}/lib/build_accel.sh"
 
 PREFIX="${PREFIX:-${REPO_ROOT}/.build/prefix-static}"
 SKIP_DEPS="${SKIP_DEPS:-0}"
@@ -114,6 +117,9 @@ export CPPFLAGS="-I${PREFIX}/include ${CPPFLAGS:-}"
 export LDFLAGS="-L${PREFIX}/lib -L${PREFIX}/lib64 ${LDFLAGS:-}"
 export CFLAGS="-g -O1 ${CFLAGS:-}"
 export CXXFLAGS="-g -O1 ${CXXFLAGS:-}"
+# Not piped: a pipeline would run it in a subshell and drop the CC/LDFLAGS exports.
+build_accel_apply 2>>"${VALGRIND_LOG}"
+log "Build accel: CC=${CC:-cc} LDFLAGS=${LDFLAGS}"
 
 mapfile -t FEAT_FLAGS < <(collect_feat_flags || true)
 CFG=(
