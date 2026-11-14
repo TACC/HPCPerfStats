@@ -120,6 +120,7 @@ from hpcperfstats.dbload.lib.monitor_naming.resolve import (
   host_mem_job_type_names,
   host_mem_type_names,
   imc_types_probe_order,
+  pmu_sharing_event_names,
   resolve_get_type,
   type_probe_names,
 )
@@ -660,7 +661,12 @@ INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
 # stored as 0 with no no_data_reason (idle); only never-sampled keys keep
 # NO_SIMPLE_SAMPLES_MSG (C4). avg_flops64b/32b stay for history but no
 # longer feed the CPU Multiprecision Mix pie.
-METRICS_CONTRACT_VERSION = 8
+# 9 (2026-11-14): Grace PMU sharing (D6, monitor 3.1 Phase 1b): new avg_pmu_running_pct
+# (100 x rate(pmu_running_time) / rate(pmu_enabled_time)) and
+# avg_pmu_outside_pct (100 x (1 - running / pmu_solo_running_time), clamped
+# 0-100) on host_cpu_hw. Jobs without the keys (monitor 3.1 and older) store
+# NO_SIMPLE_SAMPLES_MSG for both.
+METRICS_CONTRACT_VERSION = 9
 # ``no_data_reason`` written for catalog rows a backfill job never produced
 # after it exhausted the failure-memory backoff (daily step); the job is
 # stamped with the current version so the sweep does not spin on it.
@@ -2011,6 +2017,20 @@ class Metrics:
         "conv": 1e-9,
         "units": "Ginstr/s",
       },
+      # Grace PMU sharing (D6, monitor 3.1 Phase 1b): ratios of counter-time rates,
+      # computed by _job_pmu_sharing_pct (events list the keys each needs).
+      "avg_pmu_running_pct": {
+        "typename": HOST_CPU_HW_TYPE,
+        "events": list(pmu_sharing_event_names()[:2]),
+        "conv": 1.0,
+        "units": "%",
+      },
+      "avg_pmu_outside_pct": {
+        "typename": HOST_CPU_HW_TYPE,
+        "events": list(pmu_sharing_event_names()[1:]),
+        "conv": 1.0,
+        "units": "%",
+      },
       "avg_gpu_mem_bw_gbps": {
         "typename": "nvidia_gpu",
         "events": ["gpu_mem_bw_bytes_rate"],
@@ -2562,6 +2582,51 @@ class Metrics:
     if cache is not None:
       cache[cache_key] = value
     return value
+
+  def _job_pmu_sharing_pct(
+    self,
+    jt: Any,
+    metric_name: str,
+    cache: Any | None = None,
+  ) -> float | None:
+    """
+    Grace PMU sharing percentage from counter-time rates (D6, monitor 3.1 Phase 1b).
+
+    ``avg_pmu_running_pct`` is 100 x rate(running) / rate(enabled): the share
+    of enabled time the core events spent on a counter (~78% is normal on
+    Grace with only the monitor on the PMU). ``avg_pmu_outside_pct`` is
+    100 x (1 - rate(running) / rate(solo)), clamped to 0-100: the share of the
+    expected counter time that other programs (for example nvidia-powerd)
+    took. Rates come from ``job_arc`` (host_cpu_hw rows are summed across
+    CPUs at ingest, so the ratio is the pooled share, not a mean of
+    percentages).
+
+    Args:
+      jt (Any): ``ColumnarJobTable`` of the job.
+      metric_name (str): ``avg_pmu_running_pct`` or ``avg_pmu_outside_pct``.
+      cache (Any | None): Per-job memo dict shared with ``job_arc``.
+
+    Returns:
+      float | None: Percentage, or None when a needed key was never sampled
+      or the denominator rate is not positive.
+
+    Examples:
+      >>> Metrics()._job_pmu_sharing_pct(None, "avg_pmu_running_pct")
+    """
+    enabled_ev, running_ev, solo_ev = pmu_sharing_event_names()
+    denom_ev = enabled_ev if metric_name == "avg_pmu_running_pct" else solo_ev
+    running = self.job_arc(
+      jt, typename=HOST_CPU_HW_TYPE, events=[running_ev], conv=1.0, cache=cache
+    )
+    denom = self.job_arc(
+      jt, typename=HOST_CPU_HW_TYPE, events=[denom_ev], conv=1.0, cache=cache
+    )
+    if running is None or denom is None or not float(denom) > 0.0:
+      return None
+    share = float(running) / float(denom)
+    if metric_name == "avg_pmu_running_pct":
+      return 100.0 * share
+    return 100.0 * min(1.0, max(0.0, 1.0 - share))
 
   def _job_arc_avg_flops_precision(
     self,
@@ -3299,6 +3364,11 @@ class Metrics:
           else:
             value = None
             row_type = fabric_typename or metric_obj["typename"]
+        elif metric_name in ("avg_pmu_running_pct", "avg_pmu_outside_pct"):
+          value = self._job_pmu_sharing_pct(
+            jt, metric_name, cache=simple_metric_cache
+          )
+          row_type = metric_obj["typename"]
         else:
           value = self.job_arc(
             jt,

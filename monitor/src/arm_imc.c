@@ -27,6 +27,8 @@ struct arm_aarch64_imc_dev {
   struct arm_perf_prev prev_write;
   unsigned long long acc_read;
   unsigned long long acc_write;
+  unsigned long long life_enabled_ns; /* D6: counter time lifetimes, both events */
+  unsigned long long life_running_ns;
 };
 
 static struct arm_aarch64_imc_dev g_arm_aarch64_imc[ARM_AARCH64_IMC_MAX_DEVS];
@@ -156,6 +158,8 @@ static void arm_aarch64_imc_collect_scf(struct stats_type *type)
       continue;
     stats_set(s, "dram_cas_reads", rd);
     stats_set(s, "dram_cas_writes", wr);
+    stats_set(s, "pmu_enabled_time", dev->life_enabled_ns);
+    stats_set(s, "pmu_running_time", dev->life_running_ns);
   }
 }
 
@@ -165,19 +169,24 @@ static void arm_aarch64_imc_collect_dmc(struct stats_type *type)
 
   for (i = 0; i < g_arm_aarch64_imc_n; i++) {
     struct arm_aarch64_imc_dev *dev = &g_arm_aarch64_imc[i];
+    struct arm_perf_times t_r, t_w;
     double d_r = 0.0, d_w = 0.0;
     struct stats *s;
 
-    if (arm_perf_read_scaled(dev->fd_read, &dev->prev_read, &d_r) != 0 ||
-        arm_perf_read_scaled(dev->fd_write, &dev->prev_write, &d_w) != 0)
+    if (arm_perf_read_scaled(dev->fd_read, &dev->prev_read, &d_r, &t_r) != 0 ||
+        arm_perf_read_scaled(dev->fd_write, &dev->prev_write, &d_w, &t_w) != 0)
       continue;
     dev->acc_read += (unsigned long long)(d_r + 0.5) / 64ULL;
     dev->acc_write += (unsigned long long)(d_w + 0.5) / 64ULL;
+    dev->life_enabled_ns += t_r.enabled + t_w.enabled;
+    dev->life_running_ns += t_r.running + t_w.running;
     s = get_current_stats(type, dev->name);
     if (s == NULL)
       continue;
     stats_set(s, "dram_cas_reads", dev->acc_read);
     stats_set(s, "dram_cas_writes", dev->acc_write);
+    stats_set(s, "pmu_enabled_time", dev->life_enabled_ns);
+    stats_set(s, "pmu_running_time", dev->life_running_ns);
   }
 }
 

@@ -26,7 +26,11 @@ from .constants import (
     PIPELINE_E2E_JID,
     PIPELINE_E2E_USERNAME,
 )
-from .monitor_payloads import pipeline_e2e_publish_bodies_multihost
+from .monitor_payloads import (
+    PMU_SHARING_E2E_OUTSIDE_PCT,
+    PMU_SHARING_E2E_RUNNING_PCT,
+    pipeline_e2e_publish_bodies_multihost,
+)
 
 
 @pytest.mark.django_db(transaction=True)
@@ -148,6 +152,17 @@ def test_full_rabbitmq_ingest_metrics_pipeline():
   assert not half_baked, "metrics_data rows need value or no_data_reason: %r" % (
       [(x.metric, x.value, x.no_data_reason) for x in half_baked],
   )
+  # Grace PMU sharing (monitor 3.1 Phase 1b, D6): ratios of summed host_cpu_hw rates.
+  by_metric = {r.metric: r.value for r in rows}
+  for metric, want in (
+      ("avg_pmu_running_pct", PMU_SHARING_E2E_RUNNING_PCT),
+      ("avg_pmu_outside_pct", PMU_SHARING_E2E_OUTSIDE_PCT),
+  ):
+    got = by_metric.get(metric)
+    assert got is not None and abs(float(got) - want) < 0.5, (
+        "%s: expected ~%.1f from synthetic PMU counters, got %r"
+        % (metric, want, got)
+    )
   numeric = sum(1 for r in rows if r.value is not None)
   # NFS detail + a few ratio/imbalance metrics may stay ``None`` with reasons.
   assert numeric >= 35, (

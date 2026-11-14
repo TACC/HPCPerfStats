@@ -197,8 +197,8 @@ def test_flops_precision_metrics_stay_in_catalog_for_history():
 
 
 def test_metrics_contract_version_bumped_for_precision_semantics():
-  """O13: the precision change recomputes older jobs (contract 8)."""
-  assert metrics.METRICS_CONTRACT_VERSION == 8
+  """O13: the precision change recomputes older jobs (contract 8 or later)."""
+  assert metrics.METRICS_CONTRACT_VERSION >= 8
 
 
 def test_monitor_naming_resolves_new_grace_fp_spec_keys():

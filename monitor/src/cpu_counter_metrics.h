@@ -4,11 +4,14 @@
 #define CPU_COUNTER_METRICS_ST_NAME "host_cpu_hw"
 
 /* Grace measured FP instruction counts (D1, arm_core_perf): scaled software lifetimes, so W=64
- * (O11). Declared on `arm` builds only, so the x86 host_cpu_hw schema is unchanged. */
+ * (O11). D6 PMU sharing (Phase 1b): enabled / running / solo-expected counter time lifetimes in
+ * ns, summed over the CPU's open events (arm_core_counts). Declared on `arm` builds only, so the
+ * x86 host_cpu_hw schema is unchanged. */
 #ifdef MONITOR_CPU_BACKEND_ARM
 #define CPU_COUNTER_METRICS_ARM_FP_KEYS                                                            \
   , X(arm_fp_dp_spec, "E,W=64", ""), X(arm_fp_sp_spec, "E,W=64", ""),                              \
-      X(arm_fp_hp_spec, "E,W=64", "")
+      X(arm_fp_hp_spec, "E,W=64", ""), X(pmu_enabled_time, "E,W=64,U=ns", ""),                     \
+      X(pmu_running_time, "E,W=64,U=ns", ""), X(pmu_solo_running_time, "E,W=64,U=ns", "")
 #else
 #define CPU_COUNTER_METRICS_ARM_FP_KEYS
 #endif

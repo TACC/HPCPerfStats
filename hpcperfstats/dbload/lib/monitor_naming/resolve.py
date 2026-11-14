@@ -754,6 +754,30 @@ def arm_fp_hp_spec_event_names() -> tuple[str, ...]:
   return (canon.ARM_FP_HP_SPEC,)
 
 
+def pmu_sharing_event_names() -> tuple[str, str, str]:
+  """
+  Grace PMU sharing counter-time events (monitor 3.1, Phase 1b D6).
+
+  New canonical keys with no legacy alias, in the order (enabled, running,
+  solo). Ingest sums ``host_cpu_hw`` rows across CPUs, so a host's running
+  share is d(running) / d(enabled) and the share lost to other PMU users is
+  1 - d(running) / d(solo).
+
+  Returns:
+    tuple[str, str, str]: ``host_data.event`` names for enabled, running and
+    solo-expected counter time.
+
+  Examples:
+    >>> pmu_sharing_event_names()
+    ('pmu_enabled_time', 'pmu_running_time', 'pmu_solo_running_time')
+  """
+  return (
+    canon.PMU_ENABLED_TIME,
+    canon.PMU_RUNNING_TIME,
+    canon.PMU_SOLO_RUNNING_TIME,
+  )
+
+
 def grace_fp_scalar_double_event_names() -> tuple[str, ...]:
   """
   Grace host_cpu_hw scalar FP64 event (canonical only; no Intel uppercase).

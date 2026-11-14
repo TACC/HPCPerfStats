@@ -263,12 +263,49 @@ static void test_measured_keys_and_widths(void)
   test_stats_stub_unbind();
 }
 
+/* D6 (Phase 1b): the PMU time lifetimes are W=64 counters published whenever the CPU has an
+ * open event; the solo-expected time only when the core's counter count is known. A CPU with
+ * nothing open publishes none of them. */
+static void test_publish_sharing_keys(void)
+{
+  struct test_stats_stub stub;
+  struct arm_core_counts m;
+  unsigned long long val;
+
+  memset(&m, 0, sizeof(m));
+  m.have_times = 1;
+  m.have_solo = 1;
+  m.pmu_enabled_ns = W48 + 9000ULL;
+  m.pmu_running_ns = 2500ULL;
+  m.pmu_solo_ns = 7000ULL;
+  publish_fail_soft_then(&m, &stub);
+  assert(test_stats_stub_find(&stub, "pmu_enabled_time", &val) && val == W48 + 9000ULL);
+  assert(test_stats_stub_find(&stub, "pmu_running_time", &val) && val == 2500ULL);
+  assert(test_stats_stub_find(&stub, "pmu_solo_running_time", &val) && val == 7000ULL);
+
+  /* Unknown counter count: no guessed baseline. */
+  m.have_solo = 0;
+  publish_fail_soft_then(&m, &stub);
+  assert(test_stats_stub_find(&stub, "pmu_running_time", &val));
+  assert(!test_stats_stub_find(&stub, "pmu_solo_running_time", &val));
+
+  /* Nothing open: no sharing keys at all. */
+  m.have_times = 0;
+  m.have_solo = 1;
+  publish_fail_soft_then(&m, &stub);
+  assert(!test_stats_stub_find(&stub, "pmu_enabled_time", &val));
+  assert(!test_stats_stub_find(&stub, "pmu_running_time", &val));
+  assert(!test_stats_stub_find(&stub, "pmu_solo_running_time", &val));
+  test_stats_stub_unbind();
+}
+
 int main(void)
 {
   test_accumulate_from_util_sample();
   test_publish_never_synthesizes_instr_or_flops();
   test_measured_cycles_overwrite_or_fail_soft();
   test_measured_keys_and_widths();
+  test_publish_sharing_keys();
   printf("test_cpu_counter_arm_publish passed\n");
   return 0;
 }

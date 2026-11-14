@@ -22,10 +22,21 @@ enum arm_core_event {
   ARM_CORE_NEVENTS
 };
 
-/** Scaled lifetime per event for one CPU; have[e] is 1 when event e is open on that CPU. */
+/** Scaled lifetime per event for one CPU; have[e] is 1 when event e is open on that CPU.
+ *
+ * D6 PMU sharing (Phase 1b), lifetimes in ns summed over the CPU's open events: enabled time,
+ * running time (on a counter), and solo time = enabled x the share each event would run if the
+ * monitor were the only PMU user (cycle event on the dedicated counter: all of it; general events:
+ * min(1, general counters / open general events)). running < solo means another program holds
+ * counters. have_times: any event open; have_solo: the core's counter count is known (MIDR row). */
 struct arm_core_counts {
   unsigned long long life[ARM_CORE_NEVENTS];
   unsigned char have[ARM_CORE_NEVENTS];
+  unsigned long long pmu_enabled_ns;
+  unsigned long long pmu_running_ns;
+  unsigned long long pmu_solo_ns;
+  unsigned char have_times;
+  unsigned char have_solo;
 };
 
 /** Injectable paths and open function; NULL fields (or a NULL cfg) use the real system. */

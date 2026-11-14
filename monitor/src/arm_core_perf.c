@@ -23,17 +23,25 @@ static const char *const g_event_names[ARM_CORE_NEVENTS] = {
     "fp_sp_spec",        "fp_hp_spec",        "fp_fixed_ops_spec",
     "fp_scale_ops_spec", "ase_sve_int8_spec", "ase_sve_int16_spec"};
 
+/* Architectural CPU_CYCLES: the kernel places it on the dedicated cycle counter (PMCCNTR). */
+#define ARM_CORE_CPU_CYCLES_EVENT 0x11ULL
+
 /* Raw codes used when the kernel does not name an event (finding #8: Grace names only
- * cpu_cycles / inst_retired). 0 = no code. A new core needs a row verified on that hardware. */
+ * cpu_cycles / inst_retired). 0 = no code. gp_counters = general-purpose event counters per core
+ * besides the cycle counter (D6 solo baseline); 0 = unknown. A new core needs a row verified on
+ * that hardware. */
 struct arm_core_midr_row {
   unsigned int implementer;
   unsigned int part;
   unsigned int code[ARM_CORE_NEVENTS];
+  unsigned int gp_counters;
 };
 
 static const struct arm_core_midr_row g_midr_rows[] = {
-    /* Arm Neoverse V2 (NVIDIA Grace, MIDR 0x410fd4f0); LIKWID nvidia_grace + perf r<code>. */
-    {0x41, 0xd4f, {0, 0, 0x801C, 0x8018, 0x8014, 0x80C1, 0x80C0, 0x80E3, 0x80E7}},
+    /* Arm Neoverse V2 (NVIDIA Grace, MIDR 0x410fd4f0); LIKWID nvidia_grace + perf r<code>.
+     * 6 general counters: canary finding #18, 12 general events ran exactly 50% with no other
+     * PMU user on both Vista nodes. */
+    {0x41, 0xd4f, {0, 0, 0x801C, 0x8018, 0x8014, 0x80C1, 0x80C0, 0x80E3, 0x80E7}, 6},
 };
 
 struct arm_core_slot {
@@ -42,7 +50,18 @@ struct arm_core_slot {
   unsigned long long life;
 };
 
-static struct arm_core_slot *g_slots; /* ncpus x ARM_CORE_NEVENTS */
+/* Per-CPU D6 time lifetimes (ns) and the solo share of each open general event. */
+struct arm_core_cpu_times {
+  unsigned long long enabled;
+  unsigned long long running;
+  double solo;
+  double gp_share; /* min(1, gp_counters / open general events); 0 when gp_counters unknown */
+};
+
+static struct arm_core_slot *g_slots;      /* ncpus x ARM_CORE_NEVENTS */
+static struct arm_core_cpu_times *g_times; /* ncpus */
+static unsigned char g_on_cycle_counter[ARM_CORE_NEVENTS];
+static int g_have_solo;
 static int g_ncpus;
 static int g_ready;
 
@@ -203,7 +222,11 @@ void arm_core_perf_cleanup(void)
       close(g_slots[i].fd);
   }
   free(g_slots);
+  free(g_times);
   g_slots = NULL;
+  g_times = NULL;
+  g_have_solo = 0;
+  memset(g_on_cycle_counter, 0, sizeof(g_on_cycle_counter));
   g_ncpus = 0;
   g_ready = 0;
 }
@@ -243,12 +266,32 @@ static int open_event_all_cpus(const struct arm_core_perf_cfg *c, int e,
   return opened;
 }
 
+/* D6 solo baseline per CPU: share each general event would get with only the monitor on the
+ * PMU. The cycle event runs on its own counter and is not counted against the general ones. */
+static void init_solo_shares(unsigned int gp_counters)
+{
+  int cpu, e;
+
+  g_have_solo = gp_counters > 0;
+  for (cpu = 0; cpu < g_ncpus; cpu++) {
+    int n_gp = 0;
+
+    for (e = 0; e < ARM_CORE_NEVENTS; e++)
+      n_gp += g_slots[cpu * ARM_CORE_NEVENTS + e].fd >= 0 && !g_on_cycle_counter[e];
+    g_times[cpu].gp_share =
+        (!g_have_solo || n_gp == 0)
+            ? 0.0
+            : ((unsigned int)n_gp <= gp_counters ? 1.0 : (double)gp_counters / (double)n_gp);
+  }
+}
+
 int arm_core_perf_begin(int ncpus, const struct arm_core_perf_cfg *cfg)
 {
   struct arm_core_perf_cfg c;
   struct perf_event_attr attrs[ARM_CORE_NEVENTS];
   int ok[ARM_CORE_NEVENTS];
   unsigned long long midr = 0;
+  const struct arm_core_midr_row *row;
   int e, i, n_events = 0;
 
   arm_core_perf_cleanup();
@@ -261,12 +304,16 @@ int arm_core_perf_begin(int ncpus, const struct arm_core_perf_cfg *cfg)
   }
   log_unresolved(ok, midr);
   g_slots = (struct arm_core_slot *)calloc((size_t)ncpus * ARM_CORE_NEVENTS, sizeof(*g_slots));
-  if (g_slots == NULL)
+  g_times = (struct arm_core_cpu_times *)calloc((size_t)ncpus, sizeof(*g_times));
+  if (g_slots == NULL || g_times == NULL) {
+    arm_core_perf_cleanup();
     return -1;
+  }
   g_ncpus = ncpus;
   for (i = 0; i < ncpus * ARM_CORE_NEVENTS; i++)
     g_slots[i].fd = -1;
   for (e = 0; e < ARM_CORE_NEVENTS; e++) {
+    g_on_cycle_counter[e] = ok[e] && attrs[e].config == ARM_CORE_CPU_CYCLES_EVENT;
     if (ok[e] && open_event_all_cpus(&c, e, &attrs[e]) > 0)
       n_events++;
   }
@@ -274,9 +321,12 @@ int arm_core_perf_begin(int ncpus, const struct arm_core_perf_cfg *cfg)
     arm_core_perf_cleanup();
     return -1;
   }
+  row = midr_row(midr);
+  init_solo_shares(row != NULL ? row->gp_counters : 0);
   monitor_log_info("arm_core_perf: %d of %d core events open on %d CPU(s), MIDR 0x%llx "
-                   "(scaled by enabled/running)\n",
-                   n_events, ARM_CORE_NEVENTS, ncpus, midr);
+                   "(scaled by enabled/running; %u general counters%s)\n",
+                   n_events, ARM_CORE_NEVENTS, ncpus, midr, row != NULL ? row->gp_counters : 0,
+                   g_have_solo ? "" : ", unknown: no solo baseline");
   g_ready = 1;
   return 0;
 }
@@ -288,6 +338,7 @@ int arm_core_perf_ready(void)
 
 void arm_core_perf_collect_cpu(int cpu, struct arm_core_counts *out)
 {
+  struct arm_core_cpu_times *t;
   int e;
 
   if (out == NULL)
@@ -295,15 +346,25 @@ void arm_core_perf_collect_cpu(int cpu, struct arm_core_counts *out)
   memset(out, 0, sizeof(*out));
   if (!g_ready || cpu < 0 || cpu >= g_ncpus)
     return;
+  t = &g_times[cpu];
   for (e = 0; e < ARM_CORE_NEVENTS; e++) {
     struct arm_core_slot *s = &g_slots[cpu * ARM_CORE_NEVENTS + e];
+    struct arm_perf_times dt;
     double delta = 0.0;
 
     if (s->fd < 0)
       continue;
-    if (arm_perf_read_scaled(s->fd, &s->prev, &delta) == 0 && delta > 0.0)
+    if (arm_perf_read_scaled(s->fd, &s->prev, &delta, &dt) == 0 && delta > 0.0)
       s->life += (unsigned long long)(delta + 0.5);
+    t->enabled += dt.enabled;
+    t->running += dt.running;
+    t->solo += (double)dt.enabled * (g_on_cycle_counter[e] ? 1.0 : t->gp_share);
     out->life[e] = s->life;
     out->have[e] = 1;
+    out->have_times = 1;
   }
+  out->pmu_enabled_ns = t->enabled;
+  out->pmu_running_ns = t->running;
+  out->have_solo = (unsigned char)(out->have_times && g_have_solo);
+  out->pmu_solo_ns = out->have_solo ? (unsigned long long)(t->solo + 0.5) : 0ULL;
 }

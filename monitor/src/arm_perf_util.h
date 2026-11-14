@@ -42,15 +42,25 @@ int arm_perf_attr_from_sysfs(const char *pmu_dir, const char *event, struct perf
 /** First CPU of a sysfs cpulist such as "72" or "0-3,8"; -1 when missing or unparsable. */
 int arm_perf_cpumask_first(const char *path);
 
+/** Time deltas of one sample in ns (D6 sharing keys): how long the event was enabled and how
+ * long it actually ran on a counter. Both 0 when the sample seeded or re-seeded. */
+struct arm_perf_times {
+  uint64_t enabled;
+  uint64_t running;
+};
+
 /**
  * Scaled delta from one {value, enabled, running} sample:
  * delta = dvalue x denabled / drunning. The first sample seeds and gives 0; drunning == 0
- * gives 0; a value (or time) going down re-seeds without adding.
+ * gives 0; a value (or time) going down re-seeds without adding. @p times_out (may be NULL)
+ * receives {denabled, drunning}, also when drunning == 0 (enabled but never scheduled).
  */
-void arm_perf_scale_sample(struct arm_perf_prev *prev, const uint64_t sample[3], double *delta_out);
+void arm_perf_scale_sample(struct arm_perf_prev *prev, const uint64_t sample[3], double *delta_out,
+                           struct arm_perf_times *times_out);
 
 /** Reads {value, enabled, running} from @p fd and applies arm_perf_scale_sample.
- * @return 0 on success, -1 on a short or failed read (*delta_out = 0, prev unchanged). */
-int arm_perf_read_scaled(int fd, struct arm_perf_prev *prev, double *delta_out);
+ * @return 0 on success, -1 on a short or failed read (*delta_out = 0, times 0, prev unchanged). */
+int arm_perf_read_scaled(int fd, struct arm_perf_prev *prev, double *delta_out,
+                         struct arm_perf_times *times_out);
 
 #endif

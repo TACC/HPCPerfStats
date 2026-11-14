@@ -226,6 +226,18 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
     researcherUse:
       "INT16 wedge of the CPU Multiprecision Mix; compare with the FP64/FP32/FP16 instruction shares.",
   },
+  avg_pmu_running_pct: {
+    description:
+      "Share of enabled time the CPU hardware-counter events actually ran on a counter (%), from host_cpu_hw pmu_running_time / pmu_enabled_time (Grace, monitor 3.1 Phase 1b builds). Below 100% the counts are scaled estimates; on Grace the monitor alone runs about 78% because it uses more events than the core has counters.",
+    researcherUse:
+      "How directly the CPU counters were measured; read it with avg_pmu_outside_pct, which separates other programs from the monitor's own sharing.",
+  },
+  avg_pmu_outside_pct: {
+    description:
+      "Share of the expected counter time that other programs took (%), 1 - pmu_running_time / pmu_solo_running_time on host_cpu_hw (Grace, monitor 3.1 Phase 1b builds). 0% means only the monitor used the counters; on GB200 nodes nvidia-powerd typically takes a large share.",
+    researcherUse:
+      "Explains node-to-node differences in counter coverage; the instruction and FLOP rates stay corrected by scaling, but higher values mean coarser estimates for short bursts.",
+  },
   avg_mbw: {
     description:
       "Average DRAM memory bandwidth (GB/s) from AMD Data Fabric channels, Intel IMC CAS counters, ARM IMC, or synthetic ARM/DCGM bytes.",

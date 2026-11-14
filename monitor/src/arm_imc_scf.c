@@ -143,14 +143,17 @@ int arm_imc_scf_tick(struct arm_imc_scf *s)
 int arm_imc_scf_read(struct arm_imc_scf_dev *d, unsigned long long *cas_rd,
                      unsigned long long *cas_wr)
 {
+  struct arm_perf_times t_rd, t_wr;
   double rd = 0.0, wr = 0.0;
 
   if (d == NULL || cas_rd == NULL || cas_wr == NULL)
     return -1;
-  if (arm_perf_read_scaled(d->fd_rd, &d->prev_rd, &rd) == 0 && rd > 0.0)
+  if (arm_perf_read_scaled(d->fd_rd, &d->prev_rd, &rd, &t_rd) == 0 && rd > 0.0)
     d->life_rd_beats += (unsigned long long)(rd + 0.5);
-  if (arm_perf_read_scaled(d->fd_wr, &d->prev_wr, &wr) == 0 && wr > 0.0)
+  if (arm_perf_read_scaled(d->fd_wr, &d->prev_wr, &wr, &t_wr) == 0 && wr > 0.0)
     d->life_wr_bytes += (unsigned long long)(wr + 0.5);
+  d->life_enabled_ns += t_rd.enabled + t_wr.enabled; /* times are 0 on a failed read */
+  d->life_running_ns += t_rd.running + t_wr.running;
   *cas_rd = arm_imc_scf_rd_beats_to_cas(d->life_rd_beats);
   *cas_wr = arm_imc_scf_wr_bytes_to_cas(d->life_wr_bytes);
   return 0;

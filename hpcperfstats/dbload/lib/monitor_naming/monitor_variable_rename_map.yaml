@@ -98,6 +98,17 @@ events:
   arm_fp_dp_spec: arm_fp_dp_spec
   arm_fp_sp_spec: arm_fp_sp_spec
   arm_fp_hp_spec: arm_fp_hp_spec
+  # Additive identity (monitor 3.1, cpu-precision Phase 1b D6): Grace PMU sharing
+  # counter-time lifetimes in ns (E,W=64,U=ns) from each scaled read's own
+  # enabled / running times. host_cpu_hw: pmu_enabled_time, pmu_running_time,
+  # pmu_solo_running_time (time the events would run with no other PMU user);
+  # arm_aarch64_imc: pmu_enabled_time, pmu_running_time. Counters, not a percent
+  # gauge, because ingest sums host_cpu_hw rows across CPUs. Analysis
+  # avg_pmu_running_pct = d(running)/d(enabled), avg_pmu_outside_pct =
+  # 1 - d(running)/d(solo). New keys, no legacy alias; older rows have none.
+  pmu_enabled_time: pmu_enabled_time
+  pmu_running_time: pmu_running_time
+  pmu_solo_running_time: pmu_solo_running_time
   Active: active
   AnonHugePages: anon_huge_pages
   AnonPages: anon_pages

@@ -21,8 +21,10 @@ struct arm_imc_scf_dev {
   int fd_wr;
   struct arm_perf_prev prev_rd;
   struct arm_perf_prev prev_wr;
-  unsigned long long life_rd_beats; /* scaled lifetime, 32-byte read beats */
-  unsigned long long life_wr_bytes; /* scaled lifetime, bytes written */
+  unsigned long long life_rd_beats;   /* scaled lifetime, 32-byte read beats */
+  unsigned long long life_wr_bytes;   /* scaled lifetime, bytes written */
+  unsigned long long life_enabled_ns; /* D6: enabled time lifetime, both events */
+  unsigned long long life_running_ns; /* D6: running time lifetime, both events */
 };
 
 struct arm_imc_scf {

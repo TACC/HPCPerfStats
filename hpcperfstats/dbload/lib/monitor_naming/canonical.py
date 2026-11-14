@@ -63,6 +63,12 @@ Attributes:
   MPERF: Attribute.
   PKG_ENERGY: Attribute.
   PMC_TYPENAME_PRIORITY: Attribute.
+  PMU_ENABLED_TIME: Grace PMU enabled-time lifetime in ns (``host_cpu_hw`` and
+    ``arm_aarch64_imc``, monitor 3.1 Phase 1b).
+  PMU_RUNNING_TIME: Grace PMU running-time lifetime in ns (``host_cpu_hw`` and
+    ``arm_aarch64_imc``, monitor 3.1 Phase 1b).
+  PMU_SOLO_RUNNING_TIME: Grace ``host_cpu_hw`` time the core events would run
+    with no other PMU user, in ns (monitor 3.1 Phase 1b).
   RETIRED_HOST_CPU_HW_POWER_EVENTS: ``host_cpu_hw`` power keys retired in
     monitor round 2 (history only).
   RETIRED_NVIDIA_GPU_POWER_EVENTS: ``nvidia_gpu`` module/SysIO power keys
@@ -165,6 +171,11 @@ ARM_INT16_OPS = "arm_int16_ops"
 ARM_FP_DP_SPEC = "arm_fp_dp_spec"
 ARM_FP_SP_SPEC = "arm_fp_sp_spec"
 ARM_FP_HP_SPEC = "arm_fp_hp_spec"
+# Grace PMU sharing counter-time lifetimes in ns (monitor 3.1, Phase 1b D6,
+# E,W=64,U=ns). host_cpu_hw carries all three; arm_aarch64_imc the first two.
+PMU_ENABLED_TIME = "pmu_enabled_time"
+PMU_RUNNING_TIME = "pmu_running_time"
+PMU_SOLO_RUNNING_TIME = "pmu_solo_running_time"
 # Grace host_cpu_hw PAPI scalars (lowercase; Intel FP_ARITH_* stay uppercase).
 GRACE_FP_ARITH_SCALAR_DOUBLE = "fp_arith_inst_retired_scalar_double"
 GRACE_FP_ARITH_SCALAR_SINGLE = "fp_arith_inst_retired_scalar_single"

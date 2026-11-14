@@ -189,6 +189,120 @@ static void test_one_event_failing_leaves_others(void)
   fake_perf_reset();
 }
 
+/* Seeds every open counter, then pushes one tick of 1000 ns enabled: the cycle event (0x11, on
+ * the dedicated cycle counter) runs @p cyc_run ns, every other event @p gen_run ns. */
+static void push_sharing_tick(uint64_t cyc_run, uint64_t gen_run)
+{
+  int i;
+
+  for (i = 0; i < g_fake_perf_n; i++)
+    fake_perf_push(i, 0, 0, 0);
+  for (i = 0; i < g_fake_perf_n; i++)
+    fake_perf_push(i, 10, 1000, g_fake_perf_calls[i].config == 0x11 ? cyc_run : gen_run);
+}
+
+/* D6 (Phase 1b) design correction: the monitor alone oversubscribes Grace's 6 general counters
+ * with 8 events (CYC sits on the cycle counter), so its events run ~75% with no other program.
+ * That must read as "no outside sharing": running time equals the solo-expected time. */
+static void test_sharing_own_oversubscription_only(void)
+{
+  struct arm_core_perf_cfg c;
+  struct arm_core_counts m;
+
+  make_tree("0x00000000410fd4f0\n"); /* Neoverse V2: 6 general counters */
+  fake_perf_reset();
+  c = cfg();
+  assert(arm_core_perf_begin(1, &c) == 0);
+  push_sharing_tick(1000, 750);
+  arm_core_perf_collect_cpu(0, &m); /* seed */
+  arm_core_perf_collect_cpu(0, &m);
+  assert(m.have_times && m.have_solo);
+  assert(m.pmu_enabled_ns == 9000ULL);           /* 9 events x 1000 ns */
+  assert(m.pmu_running_ns == 1000ULL + 8 * 750); /* 7000 */
+  assert(m.pmu_solo_ns == 1000ULL + 8 * 750);    /* CYC 1000 + 8 x 1000 x 6/8 */
+  arm_core_perf_cleanup();
+  fake_perf_reset();
+  /* Seven general events open (FP_SP failed): solo share 6/7, so 857 of every 1000 ns. */
+  fake_perf_fail(0x8018, -1);
+  assert(arm_core_perf_begin(1, &c) == 0);
+  push_sharing_tick(1000, 857);
+  arm_core_perf_collect_cpu(0, &m);
+  arm_core_perf_collect_cpu(0, &m);
+  assert(m.pmu_enabled_ns == 8000ULL && m.pmu_running_ns == 1000ULL + 7 * 857);
+  assert(m.pmu_solo_ns == 1000ULL + 6000ULL); /* 7 x 1000 x 6/7 */
+  arm_core_perf_cleanup();
+  fake_perf_reset();
+}
+
+/* An outside holder (nvidia-powerd on GB200) leaves the general events 25% and the cycle event
+ * 50%: running time falls below the solo-expected time by the outside share. */
+static void test_sharing_outside_holder(void)
+{
+  struct arm_core_perf_cfg c;
+  struct arm_core_counts m;
+
+  make_tree("0x00000000410fd4f0\n");
+  fake_perf_reset();
+  c = cfg();
+  assert(arm_core_perf_begin(2, &c) == 0);
+  push_sharing_tick(500, 250);
+  arm_core_perf_collect_cpu(1, &m);
+  arm_core_perf_collect_cpu(1, &m);
+  assert(m.pmu_enabled_ns == 9000ULL);
+  assert(m.pmu_running_ns == 500ULL + 8 * 250); /* 2500 */
+  assert(m.pmu_solo_ns == 7000ULL);
+  assert(m.pmu_running_ns < m.pmu_solo_ns);
+  /* Lifetimes accumulate across ticks. */
+  push_sharing_tick(500, 250);
+  arm_core_perf_collect_cpu(1, &m); /* the push re-seeds at 0: no time added */
+  arm_core_perf_collect_cpu(1, &m);
+  assert(m.pmu_enabled_ns == 18000ULL && m.pmu_running_ns == 5000ULL && m.pmu_solo_ns == 14000ULL);
+  arm_core_perf_cleanup();
+  fake_perf_reset();
+}
+
+/* A core without a verified MIDR row has no known general-counter count: report enabled and
+ * running time, but never a guessed solo baseline. */
+static void test_sharing_unknown_midr_no_solo(void)
+{
+  struct arm_core_perf_cfg c;
+  struct arm_core_counts m;
+
+  make_tree("0x00000000410fd400\n"); /* part 0xd40: no table row, only CYC / INS named */
+  fake_perf_reset();
+  c = cfg();
+  assert(arm_core_perf_begin(1, &c) == 0);
+  push_sharing_tick(1000, 400);
+  arm_core_perf_collect_cpu(0, &m);
+  arm_core_perf_collect_cpu(0, &m);
+  assert(m.have_times && !m.have_solo);
+  assert(m.pmu_enabled_ns == 2000ULL && m.pmu_running_ns == 1400ULL && m.pmu_solo_ns == 0);
+  arm_core_perf_cleanup();
+  fake_perf_reset();
+}
+
+/* The first read only seeds: times stay 0 (the consumer sees no enabled time yet, so it
+ * computes no share), and a CPU with no open event reports no times at all. */
+static void test_sharing_no_enabled_time_publishes_nothing(void)
+{
+  struct arm_core_perf_cfg c;
+  struct arm_core_counts m;
+
+  make_tree("0x00000000410fd4f0\n");
+  fake_perf_reset();
+  c = cfg();
+  assert(arm_core_perf_begin(1, &c) == 0);
+  push_sharing_tick(1000, 750);
+  arm_core_perf_collect_cpu(0, &m);
+  assert(m.have_times && m.pmu_enabled_ns == 0 && m.pmu_running_ns == 0 && m.pmu_solo_ns == 0);
+  arm_core_perf_collect_cpu(3, &m); /* out of range */
+  assert(!m.have_times && !m.have_solo && m.pmu_enabled_ns == 0);
+  arm_core_perf_cleanup();
+  arm_core_perf_collect_cpu(0, &m); /* not ready */
+  assert(!m.have_times);
+  fake_perf_reset();
+}
+
 static void test_unknown_midr_counts_only_cyc_ins(void)
 {
   struct arm_core_perf_cfg c;
@@ -245,6 +359,10 @@ int main(void)
   test_resolve_unknown_midr_only_named_events();
   test_begin_collect_scaled_lifetimes();
   test_one_event_failing_leaves_others();
+  test_sharing_own_oversubscription_only();
+  test_sharing_outside_holder();
+  test_sharing_unknown_midr_no_solo();
+  test_sharing_no_enabled_time_publishes_nothing();
   test_unknown_midr_counts_only_cyc_ins();
   test_begin_fails_soft();
   fake_sysfs_rm(g_root);

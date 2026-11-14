@@ -1075,7 +1075,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Diagnostic guidance:** Raw monitor field: derive rates from `delta`/`arc` in `host_data`, compare hosts and time windows, and correlate with job scheduler steps or known I/O phases.
 - **Application / library code:** hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_cpu_precision_instr_metrics.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/analysis/metrics/tests/test_utils_get_type.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_cpu_precision_instr_metrics.py; hpcperfstats/analysis/metrics/tests/test_pmu_sharing_metrics.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/analysis/metrics/tests/test_utils_get_type.py
 
 ### `instr_retired_any`
 
@@ -1650,6 +1650,33 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/columnar/detail_series.py; hpcperfstats/dbload/lib/monitor_naming/canonical.py
 - **Tests:** hpcperfstats/analysis/metrics/tests/test_dcgm_cpu_power_agg.py; hpcperfstats/analysis/metrics/tests/test_node_power_est.py; hpcperfstats/analysis/metrics/tests/test_summaryplot_jid_table.py; hpcperfstats/site/lib/machine/tests/test_metrics.py
+
+### `pmu_enabled_time`
+
+- **Definition:** Grace host_cpu_hw / arm_aarch64_imc: nanoseconds the hardware-counter events were enabled, summed over events (monitor 3.1 Phase 1b).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Application / library code:** hpcperfstats/dbload/lib/monitor_naming/canonical.py; hpcperfstats/dbload/lib/monitor_naming/resolve.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_columnar_golden.py; hpcperfstats/analysis/metrics/tests/test_pmu_sharing_metrics.py
+
+### `pmu_running_time`
+
+- **Definition:** Grace host_cpu_hw / arm_aarch64_imc: nanoseconds the hardware-counter events actually ran on a counter; below pmu_enabled_time the counts were scaled (monitor 3.1 Phase 1b).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Application / library code:** hpcperfstats/dbload/lib/monitor_naming/canonical.py; hpcperfstats/dbload/lib/monitor_naming/resolve.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_columnar_golden.py; hpcperfstats/analysis/metrics/tests/test_pmu_sharing_metrics.py
+
+### `pmu_solo_running_time`
+
+- **Definition:** Grace host_cpu_hw: nanoseconds the core events would run if the monitor were the only counter user; pmu_running_time below it means another program held counters (monitor 3.1 Phase 1b).
+- **Domain:** General / multi-type (see monitor `host_data.type`)
+- **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
+- **Diagnostic guidance:** Derive time-series rates from `delta` or `arc` in `host_data`, compare across hosts for imbalance, and correlate peaks with application logs or known I/O/communication phases. Type-detail and ad-hoc queries expose this signal even when job-level metrics omit it.
+- **Application / library code:** hpcperfstats/dbload/lib/monitor_naming/canonical.py; hpcperfstats/dbload/lib/monitor_naming/resolve.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_columnar_golden.py; hpcperfstats/analysis/metrics/tests/test_pmu_sharing_metrics.py
 
 ### `port_error_counter_summary`
 

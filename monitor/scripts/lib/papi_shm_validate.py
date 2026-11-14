@@ -3,8 +3,9 @@
 Every host_cpu_hw schema must carry the portable cycle / FLOP / integer keys. Builds on the
 aarch64 ``arm`` CPU backend (capabilities configure.cpu_backend == "arm", or the legacy
 configure.likwid_overlay / configure.papi_hybrid flags of pre-3.1 Grace builds) must also carry
-the measured Grace FP instruction keys arm_fp_dp_spec / arm_fp_sp_spec / arm_fp_hp_spec (D1),
-which the x86 schema does not declare. Module and function names keep the historical "papi"
+the measured Grace FP instruction keys arm_fp_dp_spec / arm_fp_sp_spec / arm_fp_hp_spec (D1)
+and the PMU sharing time lifetimes pmu_enabled_time / pmu_running_time / pmu_solo_running_time
+(D6), which the x86 schema does not declare. Module and function names keep the historical "papi"
 prefix so callers and reports stay stable.
 """
 from __future__ import annotations
@@ -23,12 +24,16 @@ HOST_CPU_HW_PAPI_REQUIRED_KEYS: frozenset[str] = frozenset(
     }
 )
 
-# Added on the aarch64 arm backend: measured FP instruction counts by precision (D1, W=64).
+# Added on the aarch64 arm backend: measured FP instruction counts by precision (D1, W=64) and
+# the D6 PMU sharing time lifetimes in ns (Phase 1b, W=64).
 HOST_CPU_HW_ARM_REQUIRED_KEYS: frozenset[str] = HOST_CPU_HW_PAPI_REQUIRED_KEYS | frozenset(
     {
         "arm_fp_dp_spec",
         "arm_fp_sp_spec",
         "arm_fp_hp_spec",
+        "pmu_enabled_time",
+        "pmu_running_time",
+        "pmu_solo_running_time",
     }
 )
 
@@ -132,4 +137,9 @@ def check_papi_row_invariants(
     for key in ("arm_int8_ops", "arm_int16_ops", "arm_fp_dp_spec", "arm_fp_sp_spec", "arm_fp_hp_spec"):
         if key in vals and vals[key] < 0:
             warns.append(f"{type_name}/{dev}: {key}={vals[key]} is negative")
+    # D6: an event cannot run (or be expected to run) longer than it was enabled.
+    enabled = vals.get("pmu_enabled_time")
+    for key in ("pmu_running_time", "pmu_solo_running_time"):
+        if enabled is not None and key in vals and vals[key] > enabled:
+            warns.append(f"{type_name}/{dev}: {key}={vals[key]} > pmu_enabled_time={enabled}")
     return warns

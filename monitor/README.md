@@ -407,6 +407,25 @@ at 0 until a verified row is added. A key whose event is not open is not publish
 side reads the new keys as `avg_fp{64,32,16}_instr`; see
 `HPCPerfStats/docs/monitor_variable_rename_map.yaml`.
 
+### Grace PMU sharing keys (3.1 Phase 1b, D6)
+
+Phase 1b (still version 3.1) publishes how much of the time the Grace counters actually ran, so a scaled count can be told
+from a directly counted one. The keys come from each scaled read's own enabled / running times (no
+process-name checks, no extra syscalls):
+
+| Type | Key | Meaning |
+|------|-----|---------|
+| `host_cpu_hw` | `pmu_enabled_time` (`E,W=64,U=ns`) | Time the CPU's open core events were enabled, summed over events. |
+| `host_cpu_hw` | `pmu_running_time` (`E,W=64,U=ns`) | Time they actually ran on a counter. |
+| `host_cpu_hw` | `pmu_solo_running_time` (`E,W=64,U=ns`) | Time they would run if the monitor were the only PMU user: the cycle event on the dedicated cycle counter runs all the time; general events get min(1, general counters ÷ open general events). Published only for a core with a verified MIDR row (Neoverse V2: 6 general counters, so the monitor's 8 general events run ~75% on an otherwise idle PMU). |
+| `arm_aarch64_imc` | `pmu_enabled_time`, `pmu_running_time` (`E,W=64,U=ns`) | Same for each SCF device's read and write events (no solo baseline for uncore). |
+
+They are counters rather than a percent gauge because ingest sums `host_cpu_hw` rows across a
+host's CPUs: the host's share is Δrunning ÷ Δenabled, and the share lost to other programs (for
+example `nvidia-powerd` on GB200) is 1 − Δrunning ÷ Δsolo. Analysis reports these as
+`avg_pmu_running_pct` and `avg_pmu_outside_pct` (`METRICS_CONTRACT_VERSION` 9). Deploy the analysis
+before the RPM build that carries these keys. `scripts/canary_counter_check.sh` prints the three shares per load.
+
 ### Lustre collectors (`lustre_mdc` / `lustre_osc` / `lustre_llite`)
 
 | Topic | Behavior |

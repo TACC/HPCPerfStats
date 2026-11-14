@@ -68,6 +68,7 @@ $uptime 1
 !amd_x86_pmc fp_ops_retired,E fp_ops_merge,E instr_retired,E aperf,E mperf,E
 !amd_x86_uncore_df MBW_CHANNEL_0,E MBW_CHANNEL_1,E MBW_CHANNEL_2,E MBW_CHANNEL_3,E MBW_CHANNEL_4,E MBW_CHANNEL_5,E MBW_CHANNEL_6,E MBW_CHANNEL_7,E
 !arm_aarch64_imc dram_cas_reads,E dram_cas_writes,E
+!host_cpu_hw pmu_enabled_time,E,W=64,U=ns pmu_running_time,E,W=64,U=ns pmu_solo_running_time,E,W=64,U=ns
 !intel_x86_rapl pkg_energy,E,U=J
 !host_power_socket cpu_power_w,U=W socket_power_w,U=W sysio_power_w,U=W module_power_w,U=W
 """.format(
@@ -246,6 +247,24 @@ def _arm_imc_line(scale: int) -> str:
   return "arm_aarch64_imc imc %d %d\n" % (reads, writes)
 
 
+# Grace PMU sharing counters (monitor 3.1 Phase 1b, D6): per-step deltas give running
+# 70% of enabled against a solo baseline of 77.8%, so the job shows 10% of
+# counter time taken by other programs. Pipeline asserts read these ratios.
+PMU_SHARING_E2E_RUNNING_PCT = 70.0
+PMU_SHARING_E2E_OUTSIDE_PCT = 10.0
+
+
+def _grace_pmu_sharing_lines(scale: int) -> str:
+  """Per-CPU ``host_cpu_hw`` PMU enabled/running/solo lifetime ns (Grace, 3.1 Phase 1b)."""
+  lines = []
+  for cpu, base in (("60", 0), ("61", 500_000)):
+    enabled = 10_000_000 + base + scale * 9_000
+    running = 7_000_000 + base + scale * 6_300
+    solo = 7_700_000 + base + scale * 7_000
+    lines.append("host_cpu_hw %s %d %d %d\n" % (cpu, enabled, running, solo))
+  return "".join(lines)
+
+
 def _power_socket_lines(scale: int) -> str:
   """Two equal Grace sockets (GB200 shape: CPU, Grace, SysIO; module 0)."""
   cpu = 45 + (scale % 3)
@@ -275,6 +294,7 @@ def full_stats_snapshot(epoch: float, jid: str, fqdn: str, scale: int) -> str:
       _amd64_pmc_line(scale),
       _amd64_df_line(scale),
       _arm_imc_line(scale),
+      _grace_pmu_sharing_lines(scale),
       _intel_rapl_line(scale),
       _power_socket_lines(scale),
   ]

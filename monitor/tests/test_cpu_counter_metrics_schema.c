@@ -38,10 +38,16 @@ static void assert_d1_keys(const char *schema)
   assert(strstr(schema, " arm_fp_dp_spec,E,W=64") != NULL);
   assert(strstr(schema, " arm_fp_sp_spec,E,W=64") != NULL);
   assert(strstr(schema, " arm_fp_hp_spec,E,W=64") != NULL);
+  /* D6 (Phase 1b): PMU sharing time lifetimes (nanoseconds), arm builds only. */
+  assert(strstr(schema, " pmu_enabled_time,E,W=64,U=ns") != NULL);
+  assert(strstr(schema, " pmu_running_time,E,W=64,U=ns") != NULL);
+  assert(strstr(schema, " pmu_solo_running_time,E,W=64,U=ns") != NULL);
 #else
   assert(strstr(schema, "arm_fp_dp_spec") == NULL);
   assert(strstr(schema, "arm_fp_sp_spec") == NULL);
   assert(strstr(schema, "arm_fp_hp_spec") == NULL);
+  assert(strstr(schema, "pmu_enabled_time") == NULL);
+  assert(strstr(schema, "pmu_running_time") == NULL);
 #endif
 }
 

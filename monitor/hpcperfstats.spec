@@ -167,6 +167,14 @@ fi
 
 %changelog
 * Fri Nov 13 2026 sharrell@tacc.utexas.edu - 3.1-1
+- aarch64 / Grace (Phase 1b, D6, added 2026-11-14; version stays 3.1 for the whole
+  cpu-precision plan): PMU sharing keys. host_cpu_hw adds pmu_enabled_time,
+  pmu_running_time and pmu_solo_running_time, arm_aarch64_imc adds pmu_enabled_time and
+  pmu_running_time (E,W=64,U=ns): counter time lifetimes from each scaled read's own
+  enabled/running times. Solo time is what the events would run with no other PMU user
+  (Neoverse V2: 6 general counters); running below solo means another program (for example
+  nvidia-powerd) holds counters. Counters, not a gauge, because ingest sums host_cpu_hw rows
+  across CPUs. x86 schema unchanged.
 - aarch64 / Grace: LIKWID is no longer built or linked. host_cpu_hw reads nine core events per
   CPU (CYC, INS, FP_DP/SP/HP_SPEC, FP_FIXED/SCALE_OPS_SPEC, ASE_SVE_INT8/16_SPEC) by direct
   perf_event, scaled by time_enabled / time_running (nvidia-powerd shares the PMU); sysfs event

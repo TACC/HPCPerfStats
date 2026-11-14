@@ -6,7 +6,10 @@
 # PASS/FAIL line. monitor/perf agreement cannot prove absolute accuracy (both scale by
 # enabled/running), so it also divides the GEMM's own GFLOP/s over the same window by the
 # monitor FP rate: a 128-bit SVE FMA is at most 4 / 8 / 16 FLOPs per dp / sp / hp operation,
-# and a ratio above that ceiling means the scaled count reads low. Run as root on a node with
+# and a ratio above that ceiling means the scaled count reads low. On builds with the Phase 1b keys it also
+# prints the D6 sharing keys per load: the share of enabled time the core events ran, the share
+# expected with no other PMU user (solo), and the outside share; running above 100% fails, and a
+# daemon built before Phase 1b (keys absent) is reported, not failed. Run as root on a node with
 # the 3.1 debug RPM installed, from the monitor checkout. Nothing here reads the terminal,
 # every wait and external command is time-limited, and the GEMM load is stopped on any exit
 # (including Ctrl-C).
@@ -45,6 +48,7 @@ SCF=0
 PMU_DIR="${CANARY_PMU_DIR:-/sys/bus/event_source/devices}"
 SCF_SIZE="${CANARY_SCF_SIZE:-4096}"
 IMC_KEYS="dram_cas_reads dram_cas_writes"
+SHARE_KEYS="pmu_enabled_time pmu_running_time pmu_solo_running_time"
 
 die() {
   echo "canary_counter_check: $*" >&2
@@ -241,6 +245,7 @@ for p in ${PRECISIONS}; do
   sleep "${WARM}"
   wait_new
   snap host_cpu_hw "${KEYS}" >"${WORK}/a"
+  snap host_cpu_hw "${SHARE_KEYS}" >"${WORK}/sa"
   g0=$(wc -l <"${GEMM_LOG}" 2>/dev/null || echo 0)
   timeout $((WINDOW + 60)) "${PERF}" stat -a -x, -e "${EVENTS}" -- sleep "${WINDOW}" \
     2>"${WORK}/perf" >/dev/null
@@ -255,7 +260,20 @@ for p in ${PRECISIONS}; do
   fi
   wait_new
   snap host_cpu_hw "${KEYS}" >"${WORK}/b"
+  snap host_cpu_hw "${SHARE_KEYS}" >"${WORK}/sb"
   rates "${WORK}/a" "${WORK}/b" "${KEYS}" >"${WORK}/m"
+  # D6 sharing (Phase 1b keys): share of enabled time the core events ran, the share expected
+  # with no other PMU user, and the outside share (another program holding counters).
+  rates "${WORK}/sa" "${WORK}/sb" "${SHARE_KEYS}" | awk -v p="${p}" -v out="${SUMMARY}" '
+    { r[$1]=$2 }
+    END { en=r["pmu_enabled_time"]; run=r["pmu_running_time"]; solo=r["pmu_solo_running_time"]
+          if (en=="NA" || run=="NA" || en<=0) {
+            print "  sharing not published (daemon without the Phase 1b keys)"
+            print p, "sharing", "NA" >> out; exit }
+          rp=100*run/en; sp=(solo=="NA") ? "NA" : sprintf("%.1f", 100*solo/en)
+          op=(solo=="NA" || solo<=0) ? "NA" : sprintf("%.1f", 100*(1-run/solo))
+          printf "  sharing running %.1f%% solo-expected %s%% outside %s%%\n", rp, sp, op
+          print p, "sharing", sprintf("%.1f", rp), sp, op >> out }'
   perf_rates "${WORK}/perf" "${WINDOW}" >"${WORK}/p"
   paste -d' ' "${WORK}/m" "${WORK}/p" >"${WORK}/j"
   awk -v p="${p}" -v out="${SUMMARY}" '
@@ -300,6 +318,12 @@ awk '
       $1, $3, $4, low, v
     next }
   $2=="gemm" { print "accuracy " $1 " not measured (no GEMM log lines)"; next }
+  $2=="sharing" && $3=="NA" { printf "sharing %-4s not published (daemon without the Phase 1b keys)\n", $1
+    next }
+  $2=="sharing" {
+    v=($3<=100.5 && ($4=="NA" || $4<=100.5))?"PASS":"FAIL"; if (v=="FAIL") bad=1
+    printf "sharing %-4s running %s%% solo-expected %s%% outside %s%% %s\n", $1, $3, $4, $5, v
+    next }
   $2!="instr_retired" && $1!="idle" && $3!="NA" { s[$1,$2]=$3 }
   $2=="load-start-failed" { bad=1; print "FAIL: " $1 " load did not start" }
   END {

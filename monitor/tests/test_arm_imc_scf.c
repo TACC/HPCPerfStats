@@ -122,6 +122,35 @@ static void test_read_scaled_cas(void)
   assert(fake_perf_closed(ird) && fake_perf_closed(iwr));
 }
 
+/* D6 (Phase 1b): each SCF device keeps enabled / running time lifetimes summed over its two
+ * events (the arm_aarch64_imc pmu_enabled_time / pmu_running_time keys). */
+static void test_scf_sharing_times(void)
+{
+  struct arm_imc_scf s;
+  unsigned long long rd = 0, wr = 0;
+  int ird, iwr;
+
+  reset_tree();
+  add_scf_pmu(0, 25, "0\n");
+  arm_imc_scf_init(&s, g_dev, fake_perf_open);
+  assert(arm_imc_scf_attach(&s) == 1);
+  assert(s.dev[0].life_enabled_ns == 0 && s.dev[0].life_running_ns == 0);
+  ird = fake_perf_find(25, 0x1a5, 0);
+  iwr = fake_perf_find(25, 0x1db, 0);
+  fake_perf_push(ird, 0, 0, 0);
+  fake_perf_push(iwr, 0, 0, 0);
+  assert(arm_imc_scf_read(&s.dev[0], &rd, &wr) == 0); /* seed: no time yet */
+  assert(s.dev[0].life_enabled_ns == 0 && s.dev[0].life_running_ns == 0);
+  fake_perf_push(ird, 1000, 300, 100); /* read event ran a third of the time */
+  fake_perf_push(iwr, 6400, 300, 300);
+  assert(arm_imc_scf_read(&s.dev[0], &rd, &wr) == 0);
+  assert(s.dev[0].life_enabled_ns == 600ULL && s.dev[0].life_running_ns == 400ULL);
+  /* No new sample: the lifetimes hold. */
+  assert(arm_imc_scf_read(&s.dev[0], &rd, &wr) == 0);
+  assert(s.dev[0].life_enabled_ns == 600ULL && s.dev[0].life_running_ns == 400ULL);
+  arm_imc_scf_close(&s);
+}
+
 static void test_single_socket_gh200(void)
 {
   struct arm_imc_scf s;
@@ -197,6 +226,7 @@ int main(void)
   test_begin_mode_has_no_pending_state();
   test_two_sockets_horizon_and_vista();
   test_read_scaled_cas();
+  test_scf_sharing_times();
   test_single_socket_gh200();
   test_no_scf_pmu_rescans_then_attaches();
   test_bad_entries_and_open_failure_skip_socket();

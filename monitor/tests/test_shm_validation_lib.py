@@ -1416,6 +1416,7 @@ class PapiShmValidateTests(unittest.TestCase):
         ]
         if hybrid:
             required += ["arm_fp_dp_spec", "arm_fp_sp_spec", "arm_fp_hp_spec"]
+            required += ["pmu_enabled_time", "pmu_running_time", "pmu_solo_running_time"]
         names = keys if keys is not None else required
         doc: dict = {
             "capability_slug": "test",
@@ -1473,6 +1474,35 @@ class PapiShmValidateTests(unittest.TestCase):
         man["types"]["host_cpu_hw"]["schema_key_names"] = names
         _, errors = check_papi_schema_contract(man)
         self.assertTrue(any("arm_fp_dp_spec" in e for e in errors))
+
+    def test_arm_backend_requires_pmu_sharing_keys(self) -> None:
+        """Phase 1b (D6): an arm-backend schema without the PMU sharing time keys fails."""
+        from lib.papi_shm_validate import check_papi_schema_contract
+
+        for missing in ("pmu_enabled_time", "pmu_running_time", "pmu_solo_running_time"):
+            man = self._papi_manifest()
+            names = [k for k in man["types"]["host_cpu_hw"]["schema_key_names"] if k != missing]
+            man["types"]["host_cpu_hw"]["schema_key_names"] = names
+            _, errors = check_papi_schema_contract(man)
+            self.assertTrue(any(missing in e for e in errors), missing)
+
+    def test_pmu_running_above_enabled_warns(self) -> None:
+        """D6: running or solo time above enabled time is impossible; equal is fine."""
+        from lib.papi_shm_validate import check_papi_row_invariants
+
+        ok = check_papi_row_invariants(
+            {"pmu_enabled_time": 9000, "pmu_running_time": 9000, "pmu_solo_running_time": 7000},
+            type_name="host_cpu_hw",
+            dev="0",
+        )
+        self.assertFalse(any("pmu_" in w for w in ok))
+        bad = check_papi_row_invariants(
+            {"pmu_enabled_time": 9000, "pmu_running_time": 9001, "pmu_solo_running_time": 9500},
+            type_name="host_cpu_hw",
+            dev="0",
+        )
+        self.assertTrue(any("pmu_running_time=9001" in w for w in bad))
+        self.assertTrue(any("pmu_solo_running_time=9500" in w for w in bad))
 
     def test_x86_schema_does_not_need_arm_fp_keys(self) -> None:
         from lib.papi_shm_validate import check_papi_schema_contract
@@ -1568,7 +1598,8 @@ class PapiShmValidateTests(unittest.TestCase):
     def test_plausibility_accepts_measured_flops_without_scalar_keys(self) -> None:
         man = self._papi_manifest()
         schema = {"host_cpu_hw": man["types"]["host_cpu_hw"]["schema_keys"]}
-        vals = ["5", "5", "5", "0", "0", "99", "1", "2", "7", "8", "9"]
+        # ... arm_fp_{dp,sp,hp}_spec, then pmu_enabled / running / solo time (D6).
+        vals = ["5", "5", "5", "0", "0", "99", "1", "2", "7", "8", "9", "9000", "7000", "7000"]
         body = (
             "1234567890.0 0 golden_host\n"
             f"host_cpu_hw 0 @full {' '.join(vals)}\n"

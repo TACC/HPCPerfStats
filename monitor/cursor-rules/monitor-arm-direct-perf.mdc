@@ -74,6 +74,17 @@ Since **3.1** (cpu-precision Phase 1) aarch64 builds **no LIKWID**. The `arm` CP
    CPU) and leaves that key 0; `host_cpu_hw` util keeps publishing. Opens happen at begin /
    SIGHUP, never in collect; collect is one bounded `read` per open fd
    (`monitor-jitter-and-fidelity-priority.mdc`). The unit's `LimitNOFILE` covers ~1,300 fds.
+11. **PMU sharing keys (D6, 3.1 Phase 1b; the version stays 3.1).** Every PMU-backed Grace row publishes counter time lifetimes
+    computed from the scaled read's own Δenabled / Δrunning (`arm_perf_times`), never from
+    process names or extra syscalls: `host_cpu_hw` `pmu_enabled_time`, `pmu_running_time` and
+    `pmu_solo_running_time`; `arm_aarch64_imc` `pmu_enabled_time` and `pmu_running_time`
+    (`E,W=64,U=ns`). They are counters, not a percent gauge, because ingest sums `host_cpu_hw`
+    rows across CPUs. Solo time uses the MIDR row's `gp_counters` (Neoverse V2: 6) and treats
+    `cpu_cycles` (0x11) as running on the dedicated cycle counter; a core without a verified row
+    publishes no solo key (never a guessed baseline). The monitor alone oversubscribes Grace
+    (8 general events on 6 counters), so ~75% running with running == solo is normal; only
+    running below solo means another PMU user. Tests: `test_sharing_*` in `test_arm_core_perf.c`,
+    `test_scale_sample_reports_times`, `test_scf_sharing_times`, `test_publish_sharing_keys`.
 10. **Tests use the fake perf layer.** `tests/test_fake_perf.{c,h}` (TMPDIR sysfs tree + pipe
     fds) drive `test_arm_perf_util`, `test_arm_core_perf`, `test_arm_imc_scf` and
     `test_cpu_counter_arm_publish` on every host; aarch64 still needs the `arm` backend build

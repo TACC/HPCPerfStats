@@ -18,7 +18,41 @@ static void sample(struct arm_perf_prev *p, uint64_t v, uint64_t en, uint64_t ru
 {
   const uint64_t s[3] = {v, en, run};
 
-  arm_perf_scale_sample(p, s, d);
+  arm_perf_scale_sample(p, s, d, NULL);
+}
+
+static void sample_t(struct arm_perf_prev *p, uint64_t v, uint64_t en, uint64_t run, double *d,
+                     struct arm_perf_times *t)
+{
+  const uint64_t s[3] = {v, en, run};
+
+  arm_perf_scale_sample(p, s, d, t);
+}
+
+/* D6 (Phase 1b): the scaled read also reports the sample's own d_enabled / d_running, the input
+ * of the PMU sharing keys; a seeding or reseeding sample reports 0 / 0. */
+static void test_scale_sample_reports_times(void)
+{
+  struct arm_perf_prev p;
+  struct arm_perf_times t;
+  const uint64_t one[3] = {1, 1, 1};
+  double d;
+
+  memset(&p, 0, sizeof(p));
+  t.enabled = t.running = 99;
+  sample_t(&p, 0, 0, 0, &d, &t); /* first sample seeds */
+  assert(t.enabled == 0 && t.running == 0);
+  sample_t(&p, 1000, 400, 100, &d, &t); /* running 25% of the enabled time */
+  assert(d == 4000.0 && t.enabled == 400 && t.running == 100);
+  sample_t(&p, 1000, 500, 100, &d, &t); /* enabled but never scheduled: time still reported */
+  assert(d == 0.0 && t.enabled == 100 && t.running == 0);
+  sample_t(&p, 10, 600, 200, &d, &t); /* value went down: reseed, no times */
+  assert(d == 0.0 && t.enabled == 0 && t.running == 0);
+  sample_t(&p, 20, 700, 300, &d, NULL); /* times are optional */
+  assert(d == 10.0);
+  t.enabled = t.running = 5;
+  arm_perf_scale_sample(NULL, one, &d, &t); /* bad input clears the times too */
+  assert(t.enabled == 0 && t.running == 0);
 }
 
 static void test_scale_first_sample_seeds(void)
@@ -84,16 +118,17 @@ static void test_scale_null_inputs(void)
   double d = 7.0;
 
   memset(&p, 0, sizeof(p));
-  arm_perf_scale_sample(NULL, s, &d);
+  arm_perf_scale_sample(NULL, s, &d, NULL);
   assert(d == 0.0);
-  arm_perf_scale_sample(&p, NULL, &d);
-  arm_perf_scale_sample(&p, s, NULL);
+  arm_perf_scale_sample(&p, NULL, &d, NULL);
+  arm_perf_scale_sample(&p, s, NULL, NULL);
   assert(!p.seeded);
 }
 
 static void test_read_scaled_from_fd(void)
 {
   struct arm_perf_prev p;
+  struct arm_perf_times t;
   double d = -1.0;
   int fds[2];
   uint64_t rec[3] = {100, 1000, 1000};
@@ -103,16 +138,20 @@ static void test_read_scaled_from_fd(void)
   assert(pipe(fds) == 0);
   assert(write(fds[1], rec, sizeof(rec)) == (ssize_t)sizeof(rec));
   assert(write(fds[1], rec2, sizeof(rec2)) == (ssize_t)sizeof(rec2));
-  assert(arm_perf_read_scaled(fds[0], &p, &d) == 0 && d == 0.0);
-  assert(arm_perf_read_scaled(fds[0], &p, &d) == 0 && d == 400.0); /* 200 x 1000 / 500 */
-  /* Short read (8 of 24 bytes): error, prev unchanged. */
+  assert(arm_perf_read_scaled(fds[0], &p, &d, &t) == 0 && d == 0.0);
+  assert(t.enabled == 0 && t.running == 0);
+  assert(arm_perf_read_scaled(fds[0], &p, &d, &t) == 0 && d == 400.0); /* 200 x 1000 / 500 */
+  assert(t.enabled == 1000 && t.running == 500);
+  /* Short read (8 of 24 bytes): error, prev unchanged, no times. */
   assert(write(fds[1], rec, 8) == 8);
   close(fds[1]);
-  assert(arm_perf_read_scaled(fds[0], &p, &d) == -1 && d == 0.0);
+  t.enabled = t.running = 7;
+  assert(arm_perf_read_scaled(fds[0], &p, &d, &t) == -1 && d == 0.0);
+  assert(t.enabled == 0 && t.running == 0);
   assert(p.value == 300);
   close(fds[0]);
-  assert(arm_perf_read_scaled(-1, &p, &d) == -1);
-  assert(arm_perf_read_scaled(fds[0], NULL, &d) == -1);
+  assert(arm_perf_read_scaled(-1, &p, &d, NULL) == -1);
+  assert(arm_perf_read_scaled(fds[0], NULL, &d, NULL) == -1);
 }
 
 static void test_attr_raw_scaled_not_pinned(void)
@@ -207,6 +246,7 @@ int main(void)
   test_scale_not_running_adds_nothing();
   test_scale_counter_reset_reseeds();
   test_scale_null_inputs();
+  test_scale_sample_reports_times();
   test_read_scaled_from_fd();
   test_attr_raw_scaled_not_pinned();
   test_attr_from_sysfs_scf_encoding();

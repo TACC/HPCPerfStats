@@ -58,6 +58,10 @@ EXTRA_EVENT_NAMES = frozenset(
     "arm_fp_dp_spec",
     "arm_fp_sp_spec",
     "arm_fp_hp_spec",
+    # Grace PMU sharing counter-time lifetimes (monitor 3.1, Phase 1b D6).
+    "pmu_enabled_time",
+    "pmu_running_time",
+    "pmu_solo_running_time",
   }
 )
 
@@ -565,6 +569,20 @@ DESC: dict[str, str] = {
   "arm_fp_hp_spec": (
     "Grace host_cpu_hw: speculatively executed FP16 instructions (FP_HP_SPEC, "
     "scaled for counter sharing; monitor 3.1)."
+  ),
+  "pmu_enabled_time": (
+    "Grace host_cpu_hw / arm_aarch64_imc: nanoseconds the hardware-counter "
+    "events were enabled, summed over events (monitor 3.1 Phase 1b)."
+  ),
+  "pmu_running_time": (
+    "Grace host_cpu_hw / arm_aarch64_imc: nanoseconds the hardware-counter "
+    "events actually ran on a counter; below pmu_enabled_time the counts "
+    "were scaled (monitor 3.1 Phase 1b)."
+  ),
+  "pmu_solo_running_time": (
+    "Grace host_cpu_hw: nanoseconds the core events would run if the monitor "
+    "were the only counter user; pmu_running_time below it means another "
+    "program held counters (monitor 3.1 Phase 1b)."
   ),
   "fp_arith_inst_retired_scalar_double": (
     "Grace host_cpu_hw: retired scalar double-precision FP arithmetic instructions."

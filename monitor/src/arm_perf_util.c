@@ -158,12 +158,15 @@ int arm_perf_cpumask_first(const char *path)
   return (int)cpu;
 }
 
-void arm_perf_scale_sample(struct arm_perf_prev *prev, const uint64_t sample[3], double *delta_out)
+void arm_perf_scale_sample(struct arm_perf_prev *prev, const uint64_t sample[3], double *delta_out,
+                           struct arm_perf_times *times_out)
 {
   int reseed;
 
   if (delta_out != NULL)
     *delta_out = 0.0;
+  if (times_out != NULL)
+    times_out->enabled = times_out->running = 0;
   if (prev == NULL || sample == NULL || delta_out == NULL)
     return;
   reseed = !prev->seeded || sample[0] < prev->value || sample[1] < prev->enabled ||
@@ -171,22 +174,29 @@ void arm_perf_scale_sample(struct arm_perf_prev *prev, const uint64_t sample[3],
   if (!reseed && sample[2] > prev->running)
     *delta_out = (double)(sample[0] - prev->value) * (double)(sample[1] - prev->enabled) /
                  (double)(sample[2] - prev->running);
+  if (!reseed && times_out != NULL) {
+    times_out->enabled = sample[1] - prev->enabled;
+    times_out->running = sample[2] - prev->running;
+  }
   prev->value = sample[0];
   prev->enabled = sample[1];
   prev->running = sample[2];
   prev->seeded = 1;
 }
 
-int arm_perf_read_scaled(int fd, struct arm_perf_prev *prev, double *delta_out)
+int arm_perf_read_scaled(int fd, struct arm_perf_prev *prev, double *delta_out,
+                         struct arm_perf_times *times_out)
 {
   uint64_t sample[3];
 
   if (delta_out != NULL)
     *delta_out = 0.0;
+  if (times_out != NULL)
+    times_out->enabled = times_out->running = 0;
   if (fd < 0 || prev == NULL || delta_out == NULL)
     return -1;
   if (read(fd, sample, sizeof(sample)) != (ssize_t)sizeof(sample))
     return -1;
-  arm_perf_scale_sample(prev, sample, delta_out);
+  arm_perf_scale_sample(prev, sample, delta_out, times_out);
   return 0;
 }

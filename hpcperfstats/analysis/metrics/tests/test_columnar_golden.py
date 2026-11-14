@@ -61,12 +61,37 @@ POST_GOLDEN_METRIC_EVENTS = {
   "avg_fp32_instr": "arm_fp_sp_spec",
   "avg_fp16_instr": "arm_fp_hp_spec",
 }
+# Ratio rows added after the capture (METRICS_CONTRACT_VERSION 9, Phase 1b
+# D6): metric -> (numerator, denominator) host_cpu_hw counter-time events,
+# checked against an independent job_arc ratio (``_pmu_sharing_oracle``).
+POST_GOLDEN_SHARING_METRICS = {
+  "avg_pmu_running_pct": ("pmu_running_time", "pmu_enabled_time"),
+  "avg_pmu_outside_pct": ("pmu_running_time", "pmu_solo_running_time"),
+}
 # Units text changed on purpose after the capture (contract 8, O10):
 # (metric, golden units) -> current units. Values are never mapped.
 GOLDEN_UNITS_UPDATES = {
   ("avg_arm_int8_ops", "Gops"): "Ginstr/s",
   ("avg_arm_int16_ops", "Gops"): "Ginstr/s",
 }
+
+
+def _pmu_sharing_oracle(table, metric):
+  """Independent D6 ratio: running % of enabled, or outside % of solo."""
+  from hpcperfstats.analysis.metrics.lib import metrics as metrics_mod
+
+  num_ev, den_ev = POST_GOLDEN_SHARING_METRICS[metric]
+  m = metrics_mod.Metrics()
+  num = m.job_arc(table, typename="host_cpu_hw", events=[num_ev], conv=1.0)
+  den = m.job_arc(table, typename="host_cpu_hw", events=[den_ev], conv=1.0)
+  if num is None or den is None or den <= 0:
+    return None
+  ratio = num / den
+  if metric == "avg_pmu_running_pct":
+    return 100.0 * ratio
+  return 100.0 * min(1.0, max(0.0, 1.0 - ratio))
+
+
 _CPU_BUSY_EVENTS = ("user", "system", "nice")
 _CPU_IDLE_EVENTS = ("idle", "iowait", "irq", "softirq")
 
@@ -378,17 +403,20 @@ def test_metrics_rows_match_golden(jid, golden_jobs, monkeypatch):
     return rounded_rows[key]["value"]
 
   post_golden = sorted(set(got) - set(exp))
-  assert {k[1] for k in post_golden} == set(POST_GOLDEN_METRIC_EVENTS), (
-    f"jid={jid} unexpected post-golden rows {post_golden}"
-  )
+  assert {k[1] for k in post_golden} == set(POST_GOLDEN_METRIC_EVENTS) | set(
+    POST_GOLDEN_SHARING_METRICS
+  ), f"jid={jid} unexpected post-golden rows {post_golden}"
   for key in post_golden:
     row = got.pop(key)
-    oracle = metrics_mod.Metrics().job_arc(
-      table,
-      typename="host_cpu_hw",
-      events=[POST_GOLDEN_METRIC_EVENTS[key[1]]],
-      conv=1e-9,
-    )
+    if key[1] in POST_GOLDEN_SHARING_METRICS:
+      oracle = _pmu_sharing_oracle(table, key[1])
+    else:
+      oracle = metrics_mod.Metrics().job_arc(
+        table,
+        typename="host_cpu_hw",
+        events=[POST_GOLDEN_METRIC_EVENTS[key[1]]],
+        conv=1e-9,
+      )
     assert row["value"] == oracle, f"jid={jid} {key}: {row['value']!r}"
     if oracle is None:
       # No time-series job: every catalog row carries NO_TIME_SERIES_MSG.

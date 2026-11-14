@@ -22,7 +22,9 @@ void arm_accumulate_from_util_sample(int i, const struct arm_cpu_sample *sample,
 void publish_arm_cpu_stats(struct stats *stats, int i);
 /* Measured arm_core_perf lifetimes: CYC > 0 overwrites the three cycle keys (O16); D1 keys
  * (W=64), instr_retired / arm_int8_ops / arm_int16_ops modulo 2^48 (O11); arm_est_flops =
- * FP_FIXED_OPS_SPEC + FP_SCALE_OPS_SPEC. Events not counted leave their keys untouched. */
+ * FP_FIXED_OPS_SPEC + FP_SCALE_OPS_SPEC. Events not counted leave their keys untouched.
+ * D6: pmu_enabled_time / pmu_running_time (ns, W=64) when any event is open, plus
+ * pmu_solo_running_time when the core's counter count is known. */
 void publish_arm_measured_stats(struct stats *stats, const struct arm_core_counts *m);
 
 #endif

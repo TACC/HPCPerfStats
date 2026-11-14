@@ -12,7 +12,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HELPER="${ROOT}/scripts/lib/build_accel.sh"
 REAL_CC="${TEST_CC:-cc}"
-command -v "${REAL_CC}" >/dev/null 2>&1 || { echo "skip: no C compiler (${REAL_CC})"; exit 77; }
+# Skip unless REAL_CC compiles here: foreign cross runs put the target's as/ld first on PATH,
+# so host cc exists but cannot assemble ("unrecognized option '--64'") and every probe fails.
+printf 'int main(void) { return 0; }\n' | "${REAL_CC}" -x c -c -o /dev/null - >/dev/null 2>&1 ||
+  { echo "skip: ${REAL_CC} cannot compile in this environment"; exit 77; }
 REAL_LD="$(command -v ld.bfd || command -v ld)" || { echo "skip: no ld"; exit 77; }
 
 fail() {

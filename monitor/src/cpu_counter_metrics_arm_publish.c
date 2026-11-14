@@ -62,6 +62,15 @@ void publish_arm_measured_stats(struct stats *stats, const struct arm_core_count
     stats_set(stats, "arm_int8_ops", life[ARM_CORE_SVE_INT8] & ARM_W48_MASK);
   if (m->have[ARM_CORE_SVE_INT16])
     stats_set(stats, "arm_int16_ops", life[ARM_CORE_SVE_INT16] & ARM_W48_MASK);
+  /* D6 PMU sharing: W=64 time lifetimes (ns). Ingest sums host_cpu_hw rows across CPUs, so the
+   * consumer derives the host share as d(running) / d(enabled); outside sharing as running
+   * below solo. No solo key without a known counter count. */
+  if (m->have_times) {
+    stats_set(stats, "pmu_enabled_time", m->pmu_enabled_ns);
+    stats_set(stats, "pmu_running_time", m->pmu_running_ns);
+  }
+  if (m->have_times && m->have_solo)
+    stats_set(stats, "pmu_solo_running_time", m->pmu_solo_ns);
 }
 
 void arm_accumulate_from_util_sample(int i, const struct arm_cpu_sample *sample, long long delta_us)

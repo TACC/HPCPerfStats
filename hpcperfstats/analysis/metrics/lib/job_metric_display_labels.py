@@ -36,6 +36,8 @@ JOB_METRIC_SHORT_LABELS: dict[str, str] = {
   "avg_fp16_instr": "Average CPU FP16 instruction rate",
   "avg_arm_int8_ops": "Average CPU INT8 operation rate",
   "avg_arm_int16_ops": "Average CPU INT16 operation rate",
+  "avg_pmu_running_pct": "CPU counters running share",
+  "avg_pmu_outside_pct": "CPU counter time taken by other programs",
   "avg_mbw": "Average DRAM memory bandwidth",
   "avg_freq": "Average effective CPU frequency",
   "avg_ethbw": "Average Ethernet bandwidth",

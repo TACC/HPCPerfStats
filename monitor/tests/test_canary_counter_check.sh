@@ -31,20 +31,32 @@ echo idle >"${T}/mode"
 # Fake daemon: rewrites fast every second; per CPU, instr +1000/s and the mode's FP key
 # +100/s (2 CPUs: 2000 and 200 per second); per SCF socket under dp load, dram_cas_reads
 # +2e7/s and dram_cas_writes +1e7/s (64-byte transfers: 2 sockets = 2.56 / 1.28 GB/s).
+# ../sharing selects the D6 keys (monitor 3.1 Phase 1b): "solo" = enabled 9000, running 7000, solo 7000
+# per CPU per second (own oversubscription only); "outside" = running 2500 (another PMU user);
+# "none" = a daemon built before Phase 1b (no keys).
 cat >"${T}/writer.sh" <<'EOF'
 #!/usr/bin/env bash
-D=$1; t=1000; i=0; d=0; s=0; h=0; r=0; w=0
-{ printf '$x\n!host_cpu_hw cpu_util_total_accum_us,E,R=S instr_retired,E,W=48 arm_fp_dp_spec,E,W=48 arm_fp_sp_spec,E,W=48 arm_fp_hp_spec,E,W=48\n'
-  printf '!arm_aarch64_imc dram_cas_reads,E,W=48 dram_cas_writes,E,W=48\n'; } >"$D/schema"
+D=$1; t=1000; i=0; d=0; s=0; h=0; r=0; w=0; en=0; run=0; solo=0
 while :; do
   m=$(cat "$D/../mode" 2>/dev/null || echo idle)
+  sh_mode=$(cat "$D/../sharing" 2>/dev/null || echo solo)
+  hw='!host_cpu_hw cpu_util_total_accum_us,E,R=S instr_retired,E,W=48 arm_fp_dp_spec,E,W=48 arm_fp_sp_spec,E,W=48 arm_fp_hp_spec,E,W=48'
+  [ "$sh_mode" = none ] ||
+    hw="$hw pmu_enabled_time,E,W=64,U=ns pmu_running_time,E,W=64,U=ns pmu_solo_running_time,E,W=64,U=ns"
+  { printf '$x\n%s\n' "$hw"
+    printf '!arm_aarch64_imc dram_cas_reads,E,W=48 dram_cas_writes,E,W=48\n'; } >"$D/schema.tmp" &&
+    mv "$D/schema.tmp" "$D/schema"
   i=$((i + 1000))
   case $m in dp) d=$((d + 100)); r=$((r + 20000000)); w=$((w + 10000000)) ;;
     sp) s=$((s + 100)) ;; hp) h=$((h + 100)) ;; esac
+  en=$((en + 9000)); solo=$((solo + 7000))
+  if [ "$sh_mode" = outside ]; then run=$((run + 2500)); else run=$((run + 7000)); fi
+  extra=""
+  [ "$sh_mode" = none ] || extra=" $en $run $solo"
   t=$((t + 1))
   { printf '\n%d.000000 job host\n' "$t"
-    printf 'host_cpu_hw 0 @fast %d %d %d %d\n' "$i" "$d" "$s" "$h"
-    printf 'host_cpu_hw 1 @fast %d %d %d %d\n' "$i" "$d" "$s" "$h"
+    printf 'host_cpu_hw 0 @fast %d %d %d %d%s\n' "$i" "$d" "$s" "$h" "$extra"
+    printf 'host_cpu_hw 1 @fast %d %d %d %d%s\n' "$i" "$d" "$s" "$h" "$extra"
     printf 'arm_aarch64_imc scf0 @fast %d %d\n' "$r" "$w"
     printf 'arm_aarch64_imc scf1 @fast %d %d\n' "$r" "$w"
   } >"$D/fast.tmp" && mv "$D/fast.tmp" "$D/fast"
@@ -129,9 +141,26 @@ for p in dp sp hp; do
   echo "${out}" | grep -q "^O3 ${p} .*1.000 PASS" || fail "O3 ${p} not 1.000 PASS"
   echo "${out}" | grep -q "^slice ${p} .*PASS" || fail "slice ${p} not PASS"
   echo "${out}" | grep -q "^accuracy ${p} .*PASS" || fail "accuracy ${p} not PASS: ${out}"
+  # D6: own oversubscription only: running == solo-expected (7000 / 9000), no outside share.
+  echo "${out}" | grep -q "^sharing ${p} .*running 77.8% solo-expected 77.8% outside 0.0% PASS" ||
+    fail "sharing ${p} not 77.8 / 77.8 / 0.0: ${out}"
 done
 [ "$(cat "${T}/mode")" = idle ] || fail "load still running after pass run"
 ls "${T}/log"/*.log >/dev/null 2>&1 || fail "no log file written"
+
+# D6: another PMU user leaves the events 2500 of 9000 ns: outside share 1 - 2500/7000 = 64.3%.
+echo outside >"${T}/sharing"
+run 0 --warm 0 --window 2 --precisions dp
+echo "${out}" | grep -q '^sharing dp .*running 27.8% solo-expected 77.8% outside 64.3% PASS' ||
+  fail "outside sharing not reported: ${out}"
+# A daemon built before Phase 1b has no sharing keys: reported, not failed.
+echo none >"${T}/sharing"
+sleep 2
+run 0 --warm 0 --window 2 --precisions dp
+echo "${out}" | grep -q '^sharing dp .*not published (daemon without the Phase 1b keys)' ||
+  fail "pre-Phase-1b daemon not reported: ${out}"
+echo solo >"${T}/sharing"
+sleep 2
 
 # Count reads low against the GEMM (4.5 flops per dp op > 4): FAIL with the shortfall.
 FAKE_GFLOPS=9e-7 run 1 --warm 0 --window 2 --precisions dp
