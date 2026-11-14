@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016  # '$ORIGIN' is a literal rpath token for the loader
 # In-image Codon FT pyext bake (pipeline_web.Dockerfile codon-build stage).
 # Produces /opt/hpcperfstats/codon_parse with:
 #   libhpcperfstats_codon_kernel.so  — Codon --lib (@export C entry)

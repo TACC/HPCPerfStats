@@ -61,6 +61,7 @@ save_daemon_evidence() { # copy the shm mirror and a filtered daemon log into OU
   grep -vE "${NOISE}" "${DAEMON_LOG}" > "${OUT}/daemon_journal_filtered.txt" 2>/dev/null
   [ -d "${SHM}" ] && cp -a "${SHM}" "${OUT}/shm" 2>/dev/null
 }
+# shellcheck disable=SC2317  # invoked via trap
 cleanup() {
   systemctl stop "${UNIT}" >/dev/null 2>&1
   systemctl reset-failed "${UNIT}" >/dev/null 2>&1
@@ -193,10 +194,16 @@ fi
 # ---- C. round-1 checks on the same daemon --------------------------------------------------
 save_daemon_evidence
 PID=$(systemctl show -p MainPID --value "${UNIT}")
-grep -aq 'Grace SCF DRAM CAS via LIKWID on [0-9]* socket' "${DAEMON_LOG}" \
-  && say "PASS journal arm_aarch64_imc uses LIKWID SCF" || { say "FAIL journal has no 'Grace SCF DRAM CAS via LIKWID' line"; FAILS=$((FAILS + 1)); }
-grep -aq 'DCGM embedded engine started (v2, NVSwitch module denied)' "${DAEMON_LOG}" \
-  && say "PASS journal DCGM v2 start with NVSwitch denied" || { say "FAIL journal has no NVSwitch-denied DCGM start line"; FAILS=$((FAILS + 1)); }
+if grep -aq 'Grace SCF DRAM CAS via LIKWID on [0-9]* socket' "${DAEMON_LOG}"; then
+  say "PASS journal arm_aarch64_imc uses LIKWID SCF"
+else
+  say "FAIL journal has no 'Grace SCF DRAM CAS via LIKWID' line"; FAILS=$((FAILS + 1))
+fi
+if grep -aq 'DCGM embedded engine started (v2, NVSwitch module denied)' "${DAEMON_LOG}"; then
+  say "PASS journal DCGM v2 start with NVSwitch denied"
+else
+  say "FAIL journal has no NVSwitch-denied DCGM start line"; FAILS=$((FAILS + 1))
+fi
 if [ -n "${PID}" ] && [ "${PID}" != 0 ]; then
   if grep -q libdcgmmodulenvswitch "/proc/${PID}/maps"; then say "FAIL libdcgmmodulenvswitch mapped"; FAILS=$((FAILS + 1)); else say "PASS libdcgmmodulenvswitch not mapped"; fi
 fi

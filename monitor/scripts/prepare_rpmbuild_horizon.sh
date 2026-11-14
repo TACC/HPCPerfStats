@@ -15,8 +15,10 @@
 #   Deploy listend (consumer) before Horizon shared-node monitor RPMs.
 #
 set -euo pipefail
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly MONITOR_DIR
 readonly FLEET_MARKER="${MONITOR_DIR}/scripts/fleet/horizon.force"
 
 if test ! -f "${FLEET_MARKER}"; then

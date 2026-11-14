@@ -30,13 +30,13 @@ bad="$(awk '
 ' "${ROOT}"/src/*.c)"
 
 if [ -n "${bad}" ]; then
-  echo "ERROR/TRACE format without trailing \\n:" >&2
+  printf '%s\n' 'ERROR/TRACE format without trailing \n:' >&2
   echo "${bad}" >&2
   exit 1
 fi
 
 # Positive control: the matcher must see the known TRACE in proc_filter.c.
 grep -qE 'TRACE\("Do not include this proc entry %s\\n"' "${ROOT}/src/proc_filter.c" \
-  || { echo "proc_filter.c TRACE not found or still missing \\n" >&2; exit 1; }
+  || { printf '%s\n' 'proc_filter.c TRACE not found or still missing \n' >&2; exit 1; }
 
 echo "test_debug_log_newline_contract passed"

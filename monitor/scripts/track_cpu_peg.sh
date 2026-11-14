@@ -79,7 +79,7 @@ mkdir -p "${OUT_DIR}"
 SAMPLES=$((DURATION_MINUTES * 60 / 5))
 [ "${SAMPLES}" -lt 1 ] && SAMPLES=1
 
-RUN_BIN="$(readlink -f /proc/${PID}/exe 2>/dev/null || true)"
+RUN_BIN="$(readlink -f "/proc/${PID}/exe" 2>/dev/null || true)"
 if [ -z "${RUN_BIN}" ]; then
   RUN_BIN="/usr/sbin/hpcperfstatsd"
 fi

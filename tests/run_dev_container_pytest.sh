@@ -42,7 +42,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --ft) PY=/opt/python3.14t/bin/python; shift ;;
     --shell) MODE=shell; shift ;;
-    --exec) MODE=exec; shift ;;
+    --exec) MODE='exec'; shift ;;
     --mount)
       [[ $# -ge 2 ]] || { echo "--mount needs SRC:DST" >&2; exit 2; }
       EXTRA_MOUNTS+=(-v "$2")

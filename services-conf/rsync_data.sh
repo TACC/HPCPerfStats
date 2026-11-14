@@ -5,6 +5,7 @@ sleep 43200
 echo "rsync not yet configured"
 exit
 
+# shellcheck disable=SC2317  # loop is parked behind the exit above until rsync is configured
 while true
 do
 # The first command copies the accounting files into the container.

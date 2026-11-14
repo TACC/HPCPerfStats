@@ -59,11 +59,13 @@ if ! grep -q -- '--detach --no-deps' "${HELPERS}"; then
   exit 1
 fi
 
+# shellcheck disable=SC2016  # literal $ text matched in script source
 if ! grep -q '${HPCPERFSTATS_COMPOSE_PROJECT}_${service}_1' "${HELPERS}"; then
   echo "service container names must derive from the selected compose project" >&2
   exit 1
 fi
 
+# shellcheck disable=SC2016  # literal $ text matched in script source
 if ! grep -q '${HPCPERFSTATS_COMPOSE_PROJECT}_${service}_tmp' "${HELPERS}"; then
   echo "temporary container prefixes must derive from the selected compose project" >&2
   exit 1

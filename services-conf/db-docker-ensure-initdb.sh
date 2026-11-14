@@ -13,6 +13,7 @@ set -Eeuo pipefail
 #       (error if database is already initialized)
 #
 
+# shellcheck source=db-docker-entrypoint.sh
 source /usr/local/bin/docker-entrypoint.sh
 
 # arguments to this script are assumed to be arguments to the "postgres" server (same as "docker-entrypoint.sh"), and most "docker-entrypoint.sh" functions assume "postgres" is the first argument (see "_main" over there)
@@ -27,6 +28,7 @@ docker_setup_env
 docker_create_db_directories
 if [ "$(id -u)" = '0' ]; then
 	# then restart script as postgres user
+	# shellcheck disable=SC2128  # upstream docker-library idiom
 	exec gosu postgres "$BASH_SOURCE" "$@"
 fi
 

@@ -21,6 +21,7 @@ run_validate() {
   local label="$4"
   local extra="${5:-}"
   echo "=== validate_shm_messages (${label}) ==="
+  # shellcheck disable=SC2086  # extra holds optional flags, split on purpose
   "${VENV_PY}" "${VALIDATOR}" \
     --capabilities "${caps}" \
     --manifest "${manifest}" \

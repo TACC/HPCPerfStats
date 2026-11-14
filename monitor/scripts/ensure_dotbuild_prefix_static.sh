@@ -6,9 +6,12 @@
 # missing. See build_static_bundle.sh for pins and env overrides.
 #
 set -euo pipefail
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-readonly REPO_ROOT="$(cd "${MONITOR_DIR}/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly MONITOR_DIR
+REPO_ROOT="$(cd "${MONITOR_DIR}/../.." && pwd)"
+readonly REPO_ROOT
 
 export PREFIX="${PREFIX:-${REPO_ROOT}/.build/prefix}"
 export SRCDIR="${SRCDIR:-${REPO_ROOT}/.build/src}"

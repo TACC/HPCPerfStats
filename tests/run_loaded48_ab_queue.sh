@@ -5,7 +5,7 @@
 set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT_DIR"
+cd "$ROOT_DIR" || exit
 
 OUT_DIR="${ROOT_DIR}/test_runs/sync_timedb_bench"
 PATCH_DIR="${ROOT_DIR}/test_runs/campaign_patches"
@@ -24,7 +24,8 @@ ts() { date +%Y%m%dT%H%M%S; }
 run_loaded48() {
   local label="$1"
   local hours="$2"
-  local log="${QUEUE_LOG_DIR}/loaded48-queue-${label}-$(ts).log"
+  local log
+  log="${QUEUE_LOG_DIR}/loaded48-queue-${label}-$(ts).log"
   echo "=== loaded48 ${label} hours=${hours} log=${log} ==="
   set +e
   HPCPERFSTATS_LOADED48_HOURS="$hours" \
@@ -37,6 +38,7 @@ run_loaded48() {
 }
 
 latest_baseline() {
+  # shellcheck disable=SC2012  # fixed-pattern names; newest first
   ls -t "$OUT_DIR"/loaded48_arm_baseline_*.json 2>/dev/null | head -1 || true
 }
 
@@ -175,7 +177,8 @@ PY
       fi
       write_ab_from_baselines "$wave" "$H1_BASE" "$after" "$ab_prefix"
       local ab
-      ab="$(ls -t "$OUT_DIR"/${ab_prefix}_*.json | head -1)"
+      # shellcheck disable=SC2012  # fixed-pattern names; newest first
+      ab="$(ls -t "$OUT_DIR"/"${ab_prefix}"_*.json | head -1)"
       local retain
       retain="$(/data/HPCPerfStats/.venv/bin/python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['retain'])" "$ab")"
       if [[ "$retain" != "True" ]]; then

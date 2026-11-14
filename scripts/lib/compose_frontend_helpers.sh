@@ -11,6 +11,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/podman_runtime.sh"
 : "${TMPDIR:?podman_runtime.sh must set TMPDIR}"
 if [[ "${HPCPERFSTATS_LOCAL_DATA_CONTRACT:-0}" == "1" && "${TMPDIR}" != /data/* ]]; then
   echo "compose_frontend_helpers: TMPDIR must be under /data for project ${HPCPERFSTATS_COMPOSE_PROJECT}" >&2
+  # shellcheck disable=SC2317  # exit runs only when executed instead of sourced
   return 73 2>/dev/null || exit 73
 fi
 : "${CONTAINER_STATIC_ROOT:=/home/hpcperfstats/staticfiles}"
@@ -52,7 +53,7 @@ build_web_image_with_target() {
   local target="$1"
   local image_name dockerfile git_commit
 
-  cd "${REPO_ROOT}"
+  cd "${REPO_ROOT}" || return
   image_name="$(compose_web_image_name)"
   dockerfile="${REPO_ROOT}/services-conf/pipeline_web.Dockerfile"
   if [[ ! -f "${dockerfile}" ]]; then
@@ -88,7 +89,7 @@ podman_cli_available() {
 }
 
 web_service_running() {
-  cd "${REPO_ROOT}"
+  cd "${REPO_ROOT}" || return
   "${PODMAN_COMPOSE[@]}" exec -T web true >/dev/null 2>&1
 }
 
@@ -234,7 +235,7 @@ copy_host_tar_into_web() {
   local container_tar="$2"
   local container_ref="$3"
 
-  cd "${REPO_ROOT}"
+  cd "${REPO_ROOT}" || return
   if ! podman_cli_available; then
     echo "podman not found on PATH" >&2
     return 1
@@ -329,7 +330,7 @@ extract_container_dir_to_host() {
   mkdir -p "${host_dest}"
   rm -rf "${host_dest:?}/"*
 
-  cd "${REPO_ROOT}"
+  cd "${REPO_ROOT}" || return
   container_ref="$(web_container_ref)"
 
   if ! podman_cli_available; then
@@ -440,7 +441,7 @@ COMPOSE_PROXY_WAS_RUNNING="${COMPOSE_PROXY_WAS_RUNNING:-0}"
 compose_service_running() {
   local service="$1"
   local name="${HPCPERFSTATS_COMPOSE_PROJECT}_${service}_1"
-  cd "${REPO_ROOT}"
+  cd "${REPO_ROOT}" || return
   [[ "$("${PODMAN[@]}" inspect --format '{{.State.Running}}' "${name}" 2>/dev/null)" == "true" ]]
 }
 
@@ -450,7 +451,7 @@ compose_service_running() {
 compose_service_container_exists() {
   local service="$1"
   local name="${HPCPERFSTATS_COMPOSE_PROJECT}_${service}_1"
-  cd "${REPO_ROOT}"
+  cd "${REPO_ROOT}" || return
   "${PODMAN[@]}" container exists "${name}" >/dev/null 2>&1
 }
 
@@ -480,7 +481,7 @@ EOF
 # fixed project service names. Also wipe ``*_tmp*`` collision leftovers.
 compose_podman_rm_service_containers() {
   local service tmp service_name tmp_prefix
-  cd "${REPO_ROOT}"
+  cd "${REPO_ROOT}" || return
   for service in "$@"; do
     service_name="${HPCPERFSTATS_COMPOSE_PROJECT}_${service}_1"
     tmp_prefix="${HPCPERFSTATS_COMPOSE_PROJECT}_${service}_tmp"
@@ -498,13 +499,13 @@ compose_podman_rm_service_containers() {
 compose_up_service_detached() {
   local service="${1:?compose_up_service_detached requires service}"
   shift
-  cd "${REPO_ROOT}"
+  cd "${REPO_ROOT}" || return
   echo "Starting ${service} detached (--detach --no-deps; will not attach logs) ..."
   "${PODMAN_COMPOSE[@]}" up --detach --no-deps "$@" "${service}"
 }
 
 compose_recreate_web_after_image_refresh() {
-  cd "${REPO_ROOT}"
+  cd "${REPO_ROOT}" || return
   if [[ "${HPCPERFSTATS_SCRIPT_DRY_RUN:-0}" -eq 1 ]]; then
     echo "[dry-run] podman: rm proxy (depend); podman rm -f web (+ web_tmp*); podman-compose up --detach --no-deps web"
     return 0
@@ -525,7 +526,7 @@ compose_recreate_web_after_image_refresh() {
 }
 
 compose_recreate_pipeline_after_image_refresh() {
-  cd "${REPO_ROOT}"
+  cd "${REPO_ROOT}" || return
   if [[ "${HPCPERFSTATS_SCRIPT_DRY_RUN:-0}" -eq 1 ]]; then
     echo "[dry-run] podman: podman rm -f pipeline (+ pipeline_tmp*); podman-compose up --detach --no-deps pipeline"
     return 0
@@ -583,7 +584,7 @@ compose_restore_proxy_if_was_running() {
   if [[ "${COMPOSE_PROXY_WAS_RUNNING:-0}" -ne 1 ]]; then
     return 0
   fi
-  cd "${REPO_ROOT}"
+  cd "${REPO_ROOT}" || return
   if [[ "${HPCPERFSTATS_SCRIPT_DRY_RUN:-0}" -eq 1 ]]; then
     echo "[dry-run] would start proxy (was running before web recreate)"
     return 0

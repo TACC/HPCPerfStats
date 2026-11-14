@@ -43,6 +43,7 @@ compose_ensure_compose_yaml() {
 }
 
 # Backward-compatible alias for workflow scripts.
+# shellcheck disable=SC2120  # optional pass-through arguments
 compose_ensure_settings_yaml() {
   compose_ensure_compose_yaml "$@"
 }

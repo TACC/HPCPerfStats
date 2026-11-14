@@ -31,8 +31,10 @@
 #              set to 0 to override.
 #
 set -euo pipefail
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly MONITOR_DIR
 # shellcheck source=lib/monitor_tree_clean.sh
 source "${SCRIPT_DIR}/lib/monitor_tree_clean.sh"
 # shellcheck source=lib/measure_overhead.sh
@@ -128,6 +130,7 @@ verify_likwid_static_link_probe() {
   printf '%s\n' '#include <likwid.h>' 'int main(void){ return perfmon_init(0, (int*)0); }' > "${tbase}.c"
   rc=0
   # LIBS from the caller must already include -lpthread -ldl (same as configure env).
+  # shellcheck disable=SC2086  # CC and flag variables are word lists
   if ! ${CC:-gcc} ${CPPFLAGS:-} ${LDFLAGS:-} "${tbase}.c" ${LIBS:-} -o "${out}" >/dev/null 2>&1; then
     rc=1
   fi

@@ -116,7 +116,7 @@ main() {
     ;;
   esac
 
-  local monitor_dir ws py build_dir enable_slow tier expectations report_dir slug
+  local monitor_dir ws py build_dir enable_slow expectations report_dir slug
   monitor_dir="$(cd "${MONITOR_DIR}" && pwd)"
   ws="${WORKSPACE_ROOT:-$(resolve_workspace_root "${monitor_dir}")}"
   py="$(resolve_python "${ws}")"

@@ -16,6 +16,7 @@ fail=0
 checked=0
 # Rows "<program>:<links stats_runtime.c 0|1>:<links stats.c 0|1>" for programs that link a
 # hook-calling source without src/metric_profiler.c.
+# shellcheck disable=SC2013  # rows contain no whitespace
 for row in $(awk '
   /_SOURCES[ \t]*\+?=/ { name = $1; sub(/_SOURCES$/, "", name) }
   name != "" && /src\/stats_runtime\.c/ { rt[name] = 1; any[name] = 1 }

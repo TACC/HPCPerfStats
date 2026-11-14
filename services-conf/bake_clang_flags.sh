@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Native ThinLTO bake flags for db/proxy/web image builds (no custom Clang host profiles).
 # Source from Dockerfile RUN via BASH_ENV or `. /usr/local/lib/hpcperfstats/bake_clang_flags.sh`.
 # CPython always uses upstream --enable-optimizations + plain make/altinstall.

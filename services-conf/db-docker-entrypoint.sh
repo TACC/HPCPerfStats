@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Vendored docker-library/postgres entrypoint: keep its idioms so it stays diffable upstream.
+# shellcheck disable=SC1007,SC2034,SC2097,SC2098,SC2128
 set -Eeo pipefail
 # TODO swap to -Eeuo pipefail above (after handling all potentially-unset variables)
 
@@ -200,6 +202,7 @@ docker_process_init_files() {
 					"$f"
 				else
 					printf '%s: sourcing %s\n' "$0" "$f"
+					# shellcheck source=/dev/null
 					. "$f"
 				fi
 				;;

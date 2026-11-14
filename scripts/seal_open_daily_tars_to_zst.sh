@@ -345,7 +345,7 @@ seal_day() {
   [ -f "$zst" ] && note="$note replaces_existing_zst"
   if [ "$APPLY" -eq 0 ]; then
     log "WOULD SEAL $day $(gib "$size")GiB $note"
-    result done "$size" "$((pending > 0))"; return
+    result "done" "$size" "$((pending > 0))"; return
   fi
 
   tmp="$tar.zst.tmp"
@@ -377,7 +377,7 @@ seal_day() {
   mark_freed "$day"
   zsize=$(stat -c %s "$zst")
   log "DONE $day tar=$(gib "$size")GiB zst=$(gib "$zsize")GiB"
-  result done "$((size - zsize))" "$((pending > 0))"
+  result "done" "$((size - zsize))" "$((pending > 0))"
   rm -rf "${W:?}"
 }
 

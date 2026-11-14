@@ -43,7 +43,8 @@ current() { readlink -f "$RUN/current" 2>/dev/null; }
 # to it reaches the jobs with a git pull instead of an image rebuild.
 CMD_REL=site/lib/machine/management/commands/collapse_percore_host_data.py
 sync_command() {
-  local src="$(dirname "$SELF")/../hpcperfstats/$CMD_REL"
+  local src
+  src="$(dirname "$SELF")/../hpcperfstats/$CMD_REL"
   local dst="${MANAGE%/site/manage.py}/$CMD_REL"
   [ -f "$src" ] || { echo "no repair command at $src" >&2; return 1; }
   podman cp "$src" "$PIPE:$dst" || return 1
@@ -137,8 +138,8 @@ stop() {
   echo "== cancelling repair DB sessions (only the repair command's own statements)"
   psql_q -c "SELECT pid, now()-query_start, left(query, 80), pg_cancel_backend(pid)
     FROM pg_stat_activity WHERE $REPAIR_SESSIONS;"
-  local i left
-  for i in $(seq 1 12); do
+  local left
+  for _ in $(seq 1 12); do
     left=$(psql_q -c "SELECT count(*) FROM pg_stat_activity WHERE $REPAIR_SESSIONS;")
     [ "$left" = "0" ] && break
     sleep 5
@@ -154,6 +155,7 @@ start() {
   local slots arch merge_days
   slots=$(psql_q -c "SELECT count(*) FROM pg_replication_slots;") || die "psql failed"
   arch=$(psql_q -c "SHOW archive_mode;") || die "psql failed"
+  # shellcheck disable=SC2015  # die runs when either check fails, as intended
   [ "$slots" = "0" ] && [ "$arch" = "off" ] || die "replication_slots=$slots archive_mode=$arch (WAL would pile up)"
   local fix; fix=$(fix_state)
   [ "$fix" = "FIXED" ] || die "pipeline code state is $fix; deploy dbcabf0e or later before repairing"
@@ -234,6 +236,7 @@ status() {
   grep -h '^TOTAL' "$dir"/logs/*.log 2>/dev/null \
     | awk '{for (i = 2; i <= NF; i++) {split($i, a, "="); s[a[1]] += a[2]}} END {for (k in s) printf "%s=%d ", k, s[k]; print ""}'
   echo "== running jobs (last line)"
+  # shellcheck disable=SC2013  # log paths contain no whitespace
   for f in $(grep -L '^rc=' "$dir"/logs/*.log 2>/dev/null); do
     printf '%s  %s\n' "$(basename "$f" .log)" "$(tail -1 "$f" | cut -c1-110)"
   done
@@ -277,6 +280,7 @@ restart() {
   days=$(awk '{print $1}' "$q" | sort -u | tr '\n' ' ')
   echo "== restarting days: $days"
   stop
+  # shellcheck disable=SC2086  # days is a word list
   start $days
 }
 
@@ -322,6 +326,7 @@ auto() {
   echo "== repairing every day with per-core rows: $days"
   stop
   while [ -n "${days// /}" ]; do
+    # shellcheck disable=SC2086  # days is a word list
     out=$(start $days 2>&1); rc=$?
     echo "$out"
     if [ $rc -ne 0 ] && ! grep -q 'the merge is writing to every requested day' <<< "$out"; then

@@ -8,6 +8,7 @@ cross="${ROOT}/scripts/cross_compile_test.sh"
 
 grep -q 'STATIC_PIN_LIKWID_VERSION="5.5.2"' "${bundle}" \
   || { echo "build_static_bundle.sh must pin STATIC_PIN_LIKWID_VERSION=5.5.2" >&2; exit 1; }
+# shellcheck disable=SC2016  # literal $ text matched in script source
 grep -q 'LIKWID_TAG="${LIKWID_TAG:-5.5.2}"' "${cross}" \
   || { echo "cross_compile_test.sh default LIKWID_TAG must match STATIC_PIN_LIKWID_VERSION" >&2; exit 1; }
 grep -q '5\.5\.2rc' "${bundle}" "${cross}" \

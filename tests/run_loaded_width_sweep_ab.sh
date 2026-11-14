@@ -6,7 +6,7 @@
 set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT_DIR"
+cd "$ROOT_DIR" || exit
 
 OUT_DIR="${ROOT_DIR}/test_runs/sync_timedb_bench"
 QUEUE_LOG_DIR="${ROOT_DIR}/../test_runs"
@@ -30,7 +30,8 @@ run_loaded48() {
   local label="$1"
   local width="$2"
   local hours="$3"
-  local log="${QUEUE_LOG_DIR}/loaded-width-sweep-w${width}-${label}-$(ts).log"
+  local log
+  log="${QUEUE_LOG_DIR}/loaded-width-sweep-w${width}-${label}-$(ts).log"
   echo "=== width_sweep ${label} width=${width} hours=${hours} log=${log} ==="
   set +e
   HPCPERFSTATS_LOADED48_HOURS="$hours" \
@@ -44,6 +45,7 @@ run_loaded48() {
 }
 
 latest_baseline() {
+  # shellcheck disable=SC2012  # fixed-pattern names; newest first
   ls -t "$OUT_DIR"/loaded48_arm_baseline_*.json 2>/dev/null | head -1 || true
 }
 

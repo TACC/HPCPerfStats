@@ -110,5 +110,5 @@ fi
 # gunicorn is the django web server
 /usr/local/bin/gunicorn hpcperfstats.site.hpcperfstats_site.wsgi --bind 0.0.0.0:8000  \
   --env DJANGO_SETTINGS_MODULE=hpcperfstats.site.hpcperfstats_site.settings -u hpcperfstats \
-  --workers=${WORKERS} --timeout 600 --preload --max-requests 100 --access-logfile - --error-logfile - 
+  "--workers=${WORKERS}" --timeout 600 --preload --max-requests 100 --access-logfile - --error-logfile - 
 

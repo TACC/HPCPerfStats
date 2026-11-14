@@ -5,9 +5,12 @@
 # - No podman/docker/conmon/runc/binfmt setup is used.
 set -euo pipefail
 
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-readonly REPO_ROOT="$(cd "${MONITOR_DIR}/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly MONITOR_DIR
+REPO_ROOT="$(cd "${MONITOR_DIR}/../.." && pwd)"
+readonly REPO_ROOT
 
 # Keep pins aligned with scripts/build_static_bundle.sh where applicable.
 LIBEV_VER="${LIBEV_VER:-4.33}"
@@ -273,6 +276,7 @@ ensure_rocky9_rootfs_tarball() {
   arch="$(triplet_arch_for_pkgmgr "${target}")"
   test -n "${arch}" || fail "Unsupported target arch for Rocky rootfs generation: ${target}"
   mkdir -p "$(dirname "${tarball}")"
+  # shellcheck disable=SC2059  # *_FMT / *_MIRROR_BASE is the printf format
   url="$(printf "${ROCKY9_ROOTFS_URL_FMT}" "${ROCKY9_RELEASEVER}" "${arch}" "${ROCKY9_RELEASEVER}" "${arch}")"
   echo "Downloading Rocky ${ROCKY9_RELEASEVER} rootfs tarball for ${target}: ${url}"
   fetch_url "${url}" "${tarball}"
@@ -298,6 +302,7 @@ has_required_target_gcc_runtime() {
 }
 
 rpm_toolchain_packages_fp() {
+  # shellcheck disable=SC2086  # package list is split into words on purpose
   printf '%s\n' ${ROCKY9_RPM_TOOLCHAIN_PACKAGES} | LC_ALL=C sort | sha256sum | awk '{print $1}'
 }
 
@@ -311,6 +316,7 @@ ensure_rocky9_toolchain_layer() {
   test -n "${arch}" || fail "Unsupported target arch for Rocky toolchain layer: ${target}"
   mkdir -p "${ROCKY9_ROOTFS_TARBALL_ROOT}" "${sysroot}"
   layer_tarball="${ROCKY9_ROOTFS_TARBALL_ROOT}/rocky${ROCKY9_RELEASEVER}-container-toolbox-${arch}.tar.xz"
+  # shellcheck disable=SC2059  # *_FMT / *_MIRROR_BASE is the printf format
   layer_url="$(printf "${ROCKY9_TOOLCHAIN_LAYER_URL_FMT}" "${ROCKY9_RELEASEVER}" "${arch}" "${ROCKY9_RELEASEVER}" "${arch}")"
   marker="${sysroot}/.hpc_toolchain_layer_from"
   if test -f "${marker}" && test "$(cat "${marker}")" = "${layer_tarball}" && has_required_target_toolchain "${sysroot}" && has_required_target_gcc_runtime "${sysroot}"; then
@@ -411,6 +417,7 @@ ensure_rocky9_rpm_toolchain_layer() {
   local arch mirror cache marker rpm_fp
   arch="$(triplet_arch_for_pkgmgr "${target}")"
   test -n "${arch}" || fail "Unsupported target arch for Rocky RPM toolchain layer: ${target}"
+  # shellcheck disable=SC2059  # *_FMT / *_MIRROR_BASE is the printf format
   mirror="$(printf "${ROCKY9_RPM_MIRROR_BASE}" "${ROCKY9_RELEASEVER}")"
   cache="${ROCKY9_ROOTFS_TARBALL_ROOT}/rpms-${arch}"
   marker="${sysroot}/.hpc_rpm_toolchain_layer_done"
@@ -628,7 +635,7 @@ ensure_rocky9_sysroot() {
 detect_qemu_bin_for_target() {
   case "$(triplet_cpu "$1")" in
     aarch64) echo "qemu-aarch64-static" ;;
-    arm*|armhf|armel) echo "qemu-arm-static" ;;
+    arm*) echo "qemu-arm-static" ;;
     x86_64) echo "qemu-x86_64-static" ;;
     i?86) echo "qemu-i386-static" ;;
     ppc64le) echo "qemu-ppc64le-static" ;;
@@ -759,6 +766,7 @@ ensure_local_qemu_user() {
   mkdir -p "${srcroot}" "${bldroot}" "${LOCAL_QEMU_ROOT}"
 
   if test ! -d "${srcdir}"; then
+    # shellcheck disable=SC2059  # *_FMT / *_MIRROR_BASE is the printf format
     fetch_url "$(printf "${QEMU_URL_FMT}" "${QEMU_VER}")" "${tarball}"
     tar -C "${srcroot}" -xf "${tarball}"
   fi
@@ -952,6 +960,7 @@ build_foreign_libev() {
 
   mkdir -p "${srcroot}"
   if test ! -d "${d}"; then
+    # shellcheck disable=SC2059  # *_FMT / *_MIRROR_BASE is the printf format
     fetch_url "$(printf "${LIBEV_URL_FMT}" "${LIBEV_VER}")" "${t}"
     extract_tar_if_missing_dir "${t}" "${d}" "${srcroot}"
   fi
@@ -973,6 +982,7 @@ build_foreign_rabbitmq_c() {
 
   mkdir -p "${srcroot}"
   if test ! -d "${d}"; then
+    # shellcheck disable=SC2059  # *_FMT / *_MIRROR_BASE is the printf format
     fetch_url "$(printf "${RABBITMQ_C_URL_FMT}" "${RABBITMQ_VER}")" "${t}"
     extract_tar_if_missing_dir "${t}" "${d}" "${srcroot}"
   fi
@@ -997,6 +1007,7 @@ build_foreign_likwid() {
 
   mkdir -p "${srcroot}"
   if test ! -d "${d}"; then
+    # shellcheck disable=SC2059  # *_FMT / *_MIRROR_BASE is the printf format
     fetch_url "$(printf "${LIKWID_URL_FMT}" "${LIKWID_TAG}")" "${t}"
     tar -C "${srcroot}" -xzf "${t}"
     if test ! -d "${d}" && test -d "${srcroot}/likwid-${LIKWID_TAG#v}"; then
@@ -1028,6 +1039,7 @@ build_foreign_libbpf() {
 
   mkdir -p "${srcroot}"
   if test ! -d "${d}"; then
+    # shellcheck disable=SC2059  # *_FMT / *_MIRROR_BASE is the printf format
     fetch_url "$(printf "${LIBBPF_URL_FMT}" "${LIBBPF_VER}")" "${t}"
     extract_tar_if_missing_dir "${t}" "${d}" "${srcroot}"
   fi

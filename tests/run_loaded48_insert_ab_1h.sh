@@ -5,7 +5,7 @@
 set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT_DIR"
+cd "$ROOT_DIR" || exit
 
 OUT_DIR="${ROOT_DIR}/test_runs/sync_timedb_bench"
 WS_LOG_DIR="${ROOT_DIR}/../test_runs"
@@ -22,7 +22,8 @@ ts() { date +%Y%m%dT%H%M%S; }
 
 run_arm() {
   local arm="$1"
-  local log="${WS_LOG_DIR}/loaded48-insert-${arm}-w${WIDTH}-${HOURS}h-$(ts).log"
+  local log
+  log="${WS_LOG_DIR}/loaded48-insert-${arm}-w${WIDTH}-${HOURS}h-$(ts).log"
   echo "=== loaded48 insert-arm=${arm} width=${WIDTH} hours=${HOURS} log=${log} ==="
   set +e
   HPCPERFSTATS_LOADED48_HOURS="$HOURS" \
@@ -41,6 +42,7 @@ run_arm() {
 
 latest_arm() {
   local arm="$1"
+  # shellcheck disable=SC2012  # fixed-pattern names; newest first
   ls -t "$OUT_DIR"/loaded48_arm_"${arm}"_*.json 2>/dev/null | head -1 || true
 }
 

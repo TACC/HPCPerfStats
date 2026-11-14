@@ -14,6 +14,7 @@ set -euo pipefail
 
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
   echo "rebuild_full_site.sh: run ./scripts/rebuild_full_site.sh — do not source (.) this file; exit would close your shell" >&2
+  # shellcheck disable=SC2317  # exit runs only when executed instead of sourced
   return 2 2>/dev/null || exit 2
 fi
 

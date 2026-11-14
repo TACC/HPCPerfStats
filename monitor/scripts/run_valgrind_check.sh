@@ -20,9 +20,12 @@
 #
 set -euo pipefail
 
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-readonly REPO_ROOT="$(cd "${MONITOR_DIR}/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly MONITOR_DIR
+REPO_ROOT="$(cd "${MONITOR_DIR}/../.." && pwd)"
+readonly REPO_ROOT
 # shellcheck source=lib/monitor_tree_clean.sh
 source "${SCRIPT_DIR}/lib/monitor_tree_clean.sh"
 # shellcheck source=lib/build_accel.sh

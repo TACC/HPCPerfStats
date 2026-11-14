@@ -1,0 +1,5 @@
+# ShellCheck defaults for every script in the repo (pre-commit hook `shellcheck`).
+# Follow `source`/`.` targets; resolve relative `# shellcheck source=` paths from
+# the sourcing script's directory.
+external-sources=true
+source-path=SCRIPTDIR

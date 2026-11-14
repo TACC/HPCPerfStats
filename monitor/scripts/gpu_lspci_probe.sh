@@ -16,5 +16,5 @@ if ! command -v lspci >/dev/null 2>&1; then
   exit 1
 fi
 
-script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 exec lspci -nn 2>/dev/null | awk -v vendor="${vendor}" -f "${script_dir}/gpu_lspci_detect.awk"

@@ -87,9 +87,12 @@ test "${rc}" -ne 0 || fail "two RPMs must fail"
 
 # 5. Default (no flag) footer is unchanged.
 grep -q '^  echo "Build binary and source RPMs with:"$' "${PREP}" || fail "release footer header changed"
+# shellcheck disable=SC2016  # literal $ text matched in script source
 grep -q '^  echo "  ${release_rpmbuild}"$' "${PREP}" || fail "release footer command changed"
+# shellcheck disable=SC2016  # literal $ text matched in script source
 grep -q '^release_rpmbuild="rpmbuild -ba --define \\"_topdir ${topdir}\\" \\"${specs_dir}/hpcperfstats.spec\\""$' "${PREP}" \
   || fail "release rpmbuild string changed"
+# shellcheck disable=SC2016  # literal $ text matched in script source
 grep -q 'eval "env ${measure_caller_env}${release_rpmbuild}"' "${PREP}" \
   || fail "--measure-overhead must run the printed release rpmbuild under the caller's environment"
 
@@ -108,6 +111,7 @@ got="$(bash -c '
   eval "env ${e}sh -c '\''printf \"%s|%s|%s|%s\" \"\$LIBS\" \"\${CPPFLAGS-unset}\" \"\${PREFIX-unset}\" \"\${LDFLAGS-unset}\"'\''"')"
 test "${got}" = "-lcaller x|unset|/caller|unset" || fail "caller env not restored for rpmbuild: ${got}"
 # Every variable prepare exports must be in the restore list.
+# shellcheck disable=SC2013  # exported names contain no whitespace
 for v in $(sed -n 's/^export \([A-Z_][A-Z0-9_]*\)=.*/\1/p' "${PREP}"); do
   bash -c ". ./scripts/lib/measure_overhead.sh; case \" \${MEASURE_OVERHEAD_PREPARE_ENV} \" in *\" ${v} \"*) ;; *) exit 1;; esac" \
     || fail "prepare exports ${v} but MEASURE_OVERHEAD_PREPARE_ENV does not restore it"

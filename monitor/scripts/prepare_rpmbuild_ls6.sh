@@ -12,8 +12,10 @@
 #   Do not commit ls6.force; default prepare_rpmbuild_dirs.sh does not ship it.
 #
 set -euo pipefail
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly MONITOR_DIR
 readonly FLEET_MARKER="${MONITOR_DIR}/scripts/fleet/ls6.force"
 
 if test ! -f "${FLEET_MARKER}"; then

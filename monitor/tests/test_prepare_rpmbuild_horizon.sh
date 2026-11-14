@@ -51,6 +51,7 @@ echo "${horizon_flags}" | grep -q -- '--enable-shared-node-multi-jid' \
   || { echo "horizon fleet must pass --enable-shared-node-multi-jid" >&2; exit 1; }
 
 # --measure-overhead / --measure-arg reach prepare_rpmbuild_dirs.sh unchanged via "$@".
+# shellcheck disable=SC2016  # literal $ text matched in script source
 grep -q 'exec "${SCRIPT_DIR}/prepare_rpmbuild_dirs.sh" "\$@"' ./scripts/prepare_rpmbuild_horizon.sh \
   || { echo "prepare_rpmbuild_horizon.sh must exec prepare_rpmbuild_dirs.sh with \"\$@\"" >&2; exit 1; }
 grep -q -- '--measure-overhead)' ./scripts/prepare_rpmbuild_dirs.sh \

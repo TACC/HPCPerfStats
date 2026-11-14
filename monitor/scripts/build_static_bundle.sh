@@ -57,13 +57,16 @@
 #
 set -euo pipefail
 
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+MONITOR_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly MONITOR_DIR
 # shellcheck source=lib/monitor_tree_clean.sh
 source "${SCRIPT_DIR}/lib/monitor_tree_clean.sh"
 # shellcheck source=lib/build_accel.sh
 source "${SCRIPT_DIR}/lib/build_accel.sh"
-readonly REPO_ROOT="$(cd "${MONITOR_DIR}/../.." && pwd)"
+REPO_ROOT="$(cd "${MONITOR_DIR}/../.." && pwd)"
+readonly REPO_ROOT
 
 # =============================================================================
 # Pinned dependency versions / refs (single place to edit)
@@ -176,7 +179,9 @@ static_bundle_apply_release_build_flags() {
   static_bundle_release_build_enabled || return 0
   local base="-O3 -pipe -DNDEBUG -ffunction-sections -fdata-sections"
   local c_rest cxx_rest ld_extra
+  # shellcheck disable=SC2086  # flag lists are split into words on purpose
   c_rest="$(static_bundle_sanitize_compiler_flags ${CFLAGS-})"
+  # shellcheck disable=SC2086  # flag lists are split into words on purpose
   cxx_rest="$(static_bundle_sanitize_compiler_flags ${CXXFLAGS-})"
   export CFLAGS="${base}${c_rest:+ }${c_rest}"
   export CXXFLAGS="${base}${cxx_rest:+ }${cxx_rest}"
@@ -488,6 +493,7 @@ build_libev() {
   local t="${SRCDIR}/libev-${LIBEV_VER}.tar.gz"
   local ev_cflags
   if test ! -d "$d"; then
+    # shellcheck disable=SC2059  # *_URL_FMT is the printf format
     fetch_url "$(printf "${LIBEV_URL_FMT}" "${LIBEV_VER}")" "$t"
     tar -C "${SRCDIR}" -xzf "$t"
   fi
@@ -505,6 +511,7 @@ build_rabbitmq_c() {
   local t="${SRCDIR}/rabbitmq-c-${RABBITMQ_VER}.tar.gz"
   local cmake_c_flags cmake_cxx_flags
   if test ! -d "$d"; then
+    # shellcheck disable=SC2059  # *_URL_FMT is the printf format
     fetch_url "$(printf "${RABBITMQ_C_URL_FMT}" "${RABBITMQ_VER}")" "$t"
     tar -C "${SRCDIR}" -xzf "$t"
   fi
@@ -548,6 +555,7 @@ build_likwid() {
     exit 1
   fi
   if test ! -d "$d"; then
+    # shellcheck disable=SC2059  # *_URL_FMT is the printf format
     fetch_url "$(printf "${LIKWID_URL_FMT}" "${LIKWID_TAG}")" "$t"
     tar -C "${SRCDIR}" -xzf "$t"
     if test ! -d "$d"; then
@@ -593,6 +601,7 @@ build_libbpf() {
   local d="${SRCDIR}/libbpf-${LIBBPF_VER}"
   local t="${SRCDIR}/libbpf-${LIBBPF_VER}.tar.gz"
   if test ! -d "$d"; then
+    # shellcheck disable=SC2059  # *_URL_FMT is the printf format
     fetch_url "$(printf "${LIBBPF_URL_FMT}" "${LIBBPF_VER}")" "$t"
     tar -C "${SRCDIR}" -xzf "$t"
   fi

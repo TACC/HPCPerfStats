@@ -30,7 +30,7 @@ podman_compose_teardown() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  cd "$_podman_teardown_repo_root"
+  cd "$_podman_teardown_repo_root" || exit
   overlay="tests/docker-compose.test-overlay.yaml.example"
   if [[ -f "tests/docker-compose.test-overlay.yaml" ]]; then
     overlay="tests/docker-compose.test-overlay.yaml"

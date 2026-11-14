@@ -5,6 +5,7 @@
 
 if [[ -z "${BASH_VERSION:-}" ]]; then
   echo "podman_runtime.sh requires /bin/bash" >&2
+  # shellcheck disable=SC2317  # exit runs only when executed instead of sourced
   return 2 2>/dev/null || exit 2
 fi
 
@@ -26,6 +27,7 @@ case "$HPCPERFSTATS_COMPOSE_PROJECT" in
     ;;
   *)
     echo "Unsupported Compose project: ${HPCPERFSTATS_COMPOSE_PROJECT}" >&2
+    # shellcheck disable=SC2317  # exit runs only when executed instead of sourced
     return 64 2>/dev/null || exit 64
     ;;
 esac

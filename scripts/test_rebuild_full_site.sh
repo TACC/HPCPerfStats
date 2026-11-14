@@ -50,6 +50,7 @@ if ! bash -n "${BIND_GUARD}"; then
   echo "bash -n failed for compose_bind_volume_guard.sh" >&2
   exit 1
 fi
+# shellcheck disable=SC2016  # literal $ text matched in script source
 if ! grep -q 'source "${SCRIPT_DIR}/lib/compose_bind_volume_guard.sh"' "${FULL_SITE_SCRIPT}"; then
   echo "rebuild_full_site.sh must source compose_bind_volume_guard.sh" >&2
   exit 1

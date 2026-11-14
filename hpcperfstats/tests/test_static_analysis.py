@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import tomllib
 from pathlib import Path
@@ -98,6 +99,37 @@ def test_pre_commit_config_includes_ruff_format_hook():
   text = (_REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
   assert "id: ruff-format" in text
   assert "ruff format" in text
+
+
+def test_pre_commit_config_includes_shellcheck_hook():
+  text = (_REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+  assert "shellcheck-py/shellcheck-py" in text
+  assert "id: shellcheck" in text
+  rc = (_REPO_ROOT / ".shellcheckrc").read_text(encoding="utf-8")
+  assert "external-sources=true" in rc
+
+
+def _tracked_shell_scripts() -> list[str]:
+  """Tracked files pre-commit's ``types: [shell]`` selects (ext or shebang)."""
+  identify = pytest.importorskip("identify.identify")
+  out = _run(["git", "ls-files", "-z"]).stdout.split("\0")
+  return [
+    p
+    for p in out
+    if p
+    and (_REPO_ROOT / p).is_file()
+    and "shell" in identify.tags_from_path(str(_REPO_ROOT / p))
+  ]
+
+
+@pytest.mark.skipif(
+  shutil.which("shellcheck") is None, reason="shellcheck not installed"
+)
+def test_shellcheck_clean_on_all_tracked_scripts():
+  scripts = _tracked_shell_scripts()
+  assert len(scripts) > 100, scripts
+  proc = _run(["shellcheck", "-f", "gcc", *scripts])
+  assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
 def test_pre_commit_config_uses_full_ruff_check_not_f401_only():

@@ -27,8 +27,6 @@ set -euo pipefail
 #   RABBITMQ_ARCHIVE_SHA256
 #   SKIP_DOWNLOAD=1
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 ACTION="${1:-}"
 if [[ -z "${ACTION}" ]]; then
   echo "usage: $0 <start|stop>" >&2
@@ -84,8 +82,7 @@ run_rmqctl() {
 }
 
 await_startup_with_retry() {
-  local i
-  for i in $(seq 1 60); do
+  for _ in $(seq 1 60); do
     if timeout 5 "${RABBITMQ_HOME}/sbin/rabbitmqctl" await_startup >/dev/null 2>&1; then
       return 0
     fi
@@ -208,7 +205,8 @@ EOF
   export RABBITMQ_MNESIA_BASE="${RMQ_DATA_DIR}"
   export RABBITMQ_NODENAME="${RMQ_NODE_NAME}"
   export RABBITMQ_DIST_PORT="${RMQ_DIST_PORT}"
-  export RABBITMQ_ERLANG_COOKIE="$(rmq_cookie)"
+  RABBITMQ_ERLANG_COOKIE="$(rmq_cookie)"
+  export RABBITMQ_ERLANG_COOKIE
   export RABBITMQ_PID_FILE="${RMQ_DATA_DIR}/rabbitmq.pid"
   export PATH="${ERLANG_HOME}/bin:${RABBITMQ_HOME}/sbin:${PATH}"
 
@@ -243,7 +241,8 @@ stop_rabbitmq() {
   fi
   export RABBITMQ_HOME
   export RABBITMQ_NODENAME="${RMQ_NODE_NAME:-rabbit@localhost}"
-  export RABBITMQ_ERLANG_COOKIE="$(rmq_cookie)"
+  RABBITMQ_ERLANG_COOKIE="$(rmq_cookie)"
+  export RABBITMQ_ERLANG_COOKIE
   export PATH="${ERLANG_HOME:-${ERLANG_PREFIX}}/bin:${RABBITMQ_HOME}/sbin:${PATH}"
   timeout 30 "${RABBITMQ_HOME}/sbin/rabbitmqctl" shutdown || true
 }

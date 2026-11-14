@@ -5,6 +5,7 @@
 
 if [[ -z "${BASH_VERSION:-}" ]]; then
   echo "compose_pipeline_memory_high.sh requires bash" >&2
+  # shellcheck disable=SC2317  # exit runs only when executed instead of sourced
   return 2 2>/dev/null || exit 2
 fi
 
@@ -43,7 +44,7 @@ _read_pipeline_cgroup_file() {
   local file_name="$1"
   local dir name
   if dir="$(pipeline_cgroup_dir_on_host 2>/dev/null)"; then
-    cat "${dir}/${file_name}" 2>/dev/null | tr -d '[:space:]'
+    tr -d '[:space:]' 2>/dev/null <"${dir}/${file_name}"
     return 0
   fi
   name="$(pipeline_container_name)"
@@ -77,6 +78,7 @@ _format_bytes_mib() {
   echo $((bytes / 1048576))
 }
 
+# shellcheck disable=SC2120  # optional timeout argument
 wait_for_pipeline_container_running() {
   local timeout="${1:-${PIPELINE_MEMORY_HIGH_WAIT_TIMEOUT:-300}}"
   local name elapsed=0

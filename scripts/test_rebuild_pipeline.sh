@@ -65,14 +65,17 @@ if grep -Eq 'HPCPERFSTATS_COMPOSE_PROJECT:=hpcperfstats-(dev|test)' "${HELPERS}"
   echo "rebuild helpers must not default to isolated -dev/-test projects" >&2
   exit 1
 fi
+# shellcheck disable=SC2016  # literal $ text matched in script source
 if ! grep -q '"${PODMAN_COMPOSE\[@\]}"' "${HELPERS}"; then
   echo "compose_frontend_helpers.sh must use the adapter PODMAN_COMPOSE command" >&2
   exit 1
 fi
+# shellcheck disable=SC2016  # literal $ text matched in script source
 if ! grep -q '${HPCPERFSTATS_COMPOSE_PROJECT}_${service}_1' "${HELPERS}"; then
   echo "container cleanup names must follow the selected compose project" >&2
   exit 1
 fi
+# shellcheck disable=SC2016  # literal $ text matched in script source
 if ! grep -q '${HPCPERFSTATS_COMPOSE_PROJECT}_${service}_tmp' "${HELPERS}"; then
   echo "temporary container cleanup names must follow the selected compose project" >&2
   exit 1
@@ -216,6 +219,7 @@ if ! grep -q 'wait_for_web_http "http://web:8000/"' "${PIPELINE_SCRIPT}"; then
 fi
 
 # Default stop grace for pipeline/web is 30s (matches compose stop_grace_period).
+# shellcheck disable=SC2016  # literal $ text matched in script source
 if ! grep -q 'PIPELINE_STOP_TIMEOUT="${HPCPERFSTATS_PIPELINE_STOP_TIMEOUT:-480}"' "${PIPELINE_SCRIPT}"; then
   echo "rebuild_pipeline.sh default PIPELINE_STOP_TIMEOUT must be 480" >&2
   exit 1
@@ -234,6 +238,7 @@ if [[ "${shutdown_before_stop}" != "yes" ]]; then
   echo "stop_and_remove_web_pipeline must call pipeline_supervisor_shutdown before stop -t pipeline" >&2
   exit 1
 fi
+# shellcheck disable=SC2016  # literal $ text matched in script source
 if ! grep -q 'WEB_STOP_TIMEOUT="${HPCPERFSTATS_WEB_STOP_TIMEOUT:-30}"' "${PIPELINE_SCRIPT}"; then
   echo "rebuild_pipeline.sh default WEB_STOP_TIMEOUT must be 30" >&2
   exit 1
