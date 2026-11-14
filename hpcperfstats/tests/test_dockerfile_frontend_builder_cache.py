@@ -187,6 +187,30 @@ def test_minimatch_override_meets_dependabot_122_floor():
   )
 
 
+def test_hono_override_meets_dependabot_125_129_floor():
+  """Dependabot #125-#129: hono <= 4.13.15 (csrf ping, mount, css, form, router).
+
+  Dev-only via shadcn -> @modelcontextprotocol/sdk; fixed in 4.13.16.
+  """
+  _assert_npm_override_floor(
+    "hono",
+    (4, 13, 16),
+    reason="GHSA-46wx-v44x-9hh2 et al. / Dependabot #125-#129",
+  )
+
+
+def test_hono_node_server_override_meets_dependabot_123_floor():
+  """Dependabot #123 / GHSA-jpvv-r467-5p4w: @hono/node-server < 2.1.6.
+
+  Backslash in the request path parsed as a separator (proxy ACL bypass).
+  """
+  _assert_npm_override_floor(
+    "@hono/node-server",
+    (2, 1, 6),
+    reason="GHSA-jpvv-r467-5p4w / Dependabot #123",
+  )
+
+
 def test_fast_uri_override_meets_dependabot_113_116_floor():
   """fast-uri <= 4.2.2 is vulnerable (Dependabot #113-#116 plus 2026-10 GHSA host/scheme)."""
   _assert_npm_override_floor(
