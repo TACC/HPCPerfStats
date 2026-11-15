@@ -329,6 +329,58 @@ docker_temp_server_stop() {
 	pg_ctl -D "$PGDATA" -m fast -w stop
 }
 
+# HPCPerfStats: bring the timescaledb catalog up to the image's version on start.
+# A new image ships only the new timescaledb-<ver>.so, so an existing database is
+# unusable until `ALTER EXTENSION timescaledb UPDATE` runs. Run it on the socket-
+# only temp server (no TCP, so no client can connect and the healthcheck stays
+# red) with Timescale background workers off, once per database that has the
+# extension. A failed or impossible update (installed newer than the image, e.g.
+# after an image rollback) is logged and the server still starts so an operator
+# can get in; it never blocks startup or crash-loops under restart: always.
+hpc_timescaledb_auto_update() {
+	local dbs db have want action
+	export PGPASSWORD="${PGPASSWORD:-$POSTGRES_PASSWORD}"
+	docker_temp_server_start "$@" -c timescaledb.max_background_workers=0
+	if ! dbs="$(POSTGRES_DB= docker_process_sql --dbname postgres --tuples-only --no-align \
+		-c 'SELECT datname FROM pg_database WHERE datallowconn ORDER BY datname')"; then
+		printf >&2 'timescaledb auto-update: cannot list databases; skipping\n'
+		dbs=''
+	fi
+	for db in $dbs; do
+		# Compare numerically in SQL (2.31.10 > 2.31.9); suffixes like -dev are dropped.
+		# disable_load: with an old catalog every statement otherwise fails with
+		# 'could not access file "timescaledb-<old>"' (that .so is not in the image).
+		if ! read -r have want action < <(PGOPTIONS='-c timescaledb.disable_load=on' \
+			POSTGRES_DB= docker_process_sql --dbname "$db" \
+			--tuples-only --no-align --field-separator=' ' -c "
+			SELECT e.extversion, a.default_version,
+			  CASE WHEN e.extversion = a.default_version THEN 'same'
+			       WHEN string_to_array(regexp_replace(e.extversion, '-.*$', ''), '.')::int[]
+			          < string_to_array(regexp_replace(a.default_version, '-.*$', ''), '.')::int[]
+			       THEN 'update' ELSE 'newer' END
+			FROM pg_extension e JOIN pg_available_extensions a ON a.name = e.extname
+			WHERE e.extname = 'timescaledb'"); then
+			continue  # no timescaledb in this database (or the query failed)
+		fi
+		case "$action" in
+			same) printf 'timescaledb auto-update: %s already at %s\n' "$db" "$have" ;;
+			update)
+				printf 'timescaledb auto-update: %s %s -> %s\n' "$db" "$have" "$want"
+				# Must be the first statement of a fresh session (Timescale requirement).
+				if ! POSTGRES_DB= docker_process_sql --dbname "$db" \
+					-c 'ALTER EXTENSION timescaledb UPDATE;'; then
+					printf >&2 'timescaledb auto-update: FAILED in %s (%s -> %s); run ALTER EXTENSION timescaledb UPDATE by hand\n' \
+						"$db" "$have" "$want"
+				fi
+				;;
+			*) printf >&2 'timescaledb auto-update: WARNING %s catalog %s is newer than image %s; not touched\n' \
+				"$db" "$have" "$want" ;;
+		esac
+	done
+	docker_temp_server_stop
+	unset PGPASSWORD
+}
+
 # check arguments for an option that would cause postgres to stop
 # return true if there is one
 _pg_want_help() {
@@ -394,6 +446,7 @@ _main() {
 				PostgreSQL Database directory appears to contain a database; Skipping initialization
 
 			EOM
+			hpc_timescaledb_auto_update "$@"
 		fi
 
 		unset "${!POSTGRES_@}"

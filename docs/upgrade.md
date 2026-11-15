@@ -191,7 +191,7 @@ sudo mkdir -p /data/hpcperfstats_db/pg18 && sudo chown -R 70:70 /data/hpcperfsta
 
 PG18 does its I/O with **`io_method=worker`** (PostgreSQL 18's default I/O worker pool): no host sysctl, seccomp or capability changes are needed for **`db_pg18`**.
 
-Timescale catalog hops while still on PG15: **`docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md`**. Stay on the **2.28.x** line on PostgreSQL 15 — Timescale **2.29+ drops PG15**.
+On **`db_pg18`** the Timescale catalog updates itself: after a rebuild with a newer Timescale, the container runs `ALTER EXTENSION timescaledb UPDATE` at start (log lines `timescaledb auto-update:`; details in **`docs/OPERATOR_PG18_MIGRATION.md`** → Image bake notes). Timescale catalog hops while still on PG15 (Hub image, manual): **`docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md`**. Stay on the **2.28.x** line on PostgreSQL 15 — Timescale **2.29+ drops PG15**.
 
 ---
 

@@ -243,6 +243,7 @@ Keep `/data/hpcperfstats_db/pg15` and the parked `db` container until the soak c
 | `/opt` | Source-built jemalloc, zlib-ng, lz4, zstd (PostgreSQL built `--without-icu --without-liburing`); rpath on `postgres` and the zstd CLI |
 | Toolchain | Clang 22 ThinLTO, `-march=native` (`services-conf/bake_clang_flags.sh`); bake on the production CPU |
 | Volume | `/var/lib/postgresql` (PG18 layout) |
+| Timescale catalog | Automatic. On every start of an existing data dir, `services-conf/db-docker-entrypoint.sh` runs `ALTER EXTENSION timescaledb UPDATE` in each database whose catalog is older than the image (socket-only temp server, Timescale background workers off, healthcheck red until done). Bumping `ARG TIMESCALEDB_VERSION` = rebuild `db_pg18` + recreate it; no manual ALTER. Check: `podman-compose -p hpcperfstats logs db_pg18 2>&1 \| grep 'timescaledb auto-update'`. A `FAILED` line (no update path in the image) or `newer than image` line (image rolled back) leaves the catalog alone and Postgres still starts: fix by hand. |
 | Runtime GUCs | `db_pg18` matches `db` (`shared_buffers=64GB`, WAL/bgwriter, committed `hba_file`) plus `io_method=worker`, `io_workers=8` |
 
 ## Related

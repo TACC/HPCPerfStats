@@ -415,3 +415,153 @@ def test_db_dockerfile_builds_without_liburing() -> None:
   for gone in ("LIBURING_VERSION", "/opt/liburing", "axboe/liburing"):
     assert gone not in text, gone
   assert "if grep -E 'liburing' /tmp/postgres.ldd; then" in text
+
+
+_TS_AUTO_UPDATE_PSQL_STUB = r"""#!/usr/bin/env bash
+# Stub psql: answers from $STUB_DIR/<db>.ext, logs ALTERs to $STUB_DIR/calls.
+db=''; sql=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --dbname) db="$2"; shift ;;
+    -c) sql="$2"; shift ;;
+  esac
+  shift
+done
+case "$sql" in
+  *pg_database*) cat "$STUB_DIR/dbs" ;;
+  *pg_extension*)
+    # Real loader: with an old catalog every query fails to load the missing
+    # timescaledb-<old>.so unless the session sets disable_load (2026-11-15).
+    case "${PGOPTIONS-}" in
+      *timescaledb.disable_load=on*) ;;
+      *) echo 'ERROR:  could not access file "timescaledb-old"' >&2; exit 1 ;;
+    esac
+    [ -f "$STUB_DIR/$db.ext" ] && cat "$STUB_DIR/$db.ext" ;;
+  *'ALTER EXTENSION'*)
+    echo "alter $db" >> "$STUB_DIR/calls"
+    [ -f "$STUB_DIR/$db.fail" ] && exit 3 ;;
+esac
+exit 0
+"""
+
+
+def _run_ts_auto_update(
+  tmp_path: Path, dbs: dict[str, str | None], fail: tuple[str, ...] = ()
+) -> tuple[str, str, int]:
+  """Run hpc_timescaledb_auto_update from the real entrypoint with stubs.
+
+  Args:
+    tmp_path (Path): Scratch dir for the psql stub and its fixtures.
+    dbs (dict[str, str | None]): Database name -> stub extension row
+      (``"<have> <want> <action>"``) or ``None`` for no timescaledb.
+    fail (tuple[str, ...]): Databases whose ALTER exits non-zero.
+
+  Returns:
+    tuple[str, str, int]: (ALTER/temp-server call log, stderr, exit code).
+  """
+  import os
+  import subprocess
+
+  bindir = tmp_path / "bin"
+  bindir.mkdir()
+  stub = bindir / "psql"
+  stub.write_text(_TS_AUTO_UPDATE_PSQL_STUB)
+  stub.chmod(0o755)
+  (tmp_path / "dbs").write_text("".join(f"{d}\n" for d in dbs))
+  for name, row in dbs.items():
+    if row is not None:
+      (tmp_path / f"{name}.ext").write_text(row + "\n")
+  for name in fail:
+    (tmp_path / f"{name}.fail").write_text("")
+  entry = _repo_root() / "services-conf" / "db-docker-entrypoint.sh"
+  script = (
+    f"source '{entry}'\n"
+    'docker_temp_server_start() { echo "start $*" >> "$STUB_DIR/calls"; }\n'
+    'docker_temp_server_stop() { echo stop >> "$STUB_DIR/calls"; }\n'
+    "hpc_timescaledb_auto_update postgres -c max_connections=500\n"
+    'echo "pgpassword=${PGPASSWORD-unset}" >> "$STUB_DIR/calls"\n'
+  )
+  env = {
+    **os.environ,
+    "PATH": f"{bindir}:{os.environ['PATH']}",
+    "STUB_DIR": str(tmp_path),
+    "POSTGRES_USER": "hpcperfstats",
+    "POSTGRES_PASSWORD": "pw",
+    "POSTGRES_DB": "hpcperfstats",
+  }
+  env.pop("PGPASSWORD", None)
+  proc = subprocess.run(
+    ["bash", "-c", script],
+    env=env,
+    capture_output=True,
+    text=True,
+    check=False,
+    timeout=30,
+  )
+  calls = (tmp_path / "calls").read_text()
+  return calls, proc.stderr, proc.returncode
+
+
+def test_db_entrypoint_timescaledb_auto_update_only_older_catalogs(
+  tmp_path: Path,
+) -> None:
+  """Image bump: ALTER runs only where the catalog is older than the image.
+
+  Same version and no-extension databases are untouched; a catalog newer
+  than the image (image rollback) is warned about and never ALTERed.
+  """
+  calls, err, rc = _run_ts_auto_update(
+    tmp_path,
+    {
+      "hpcperfstats": "2.31.0 2.31.1 update",
+      "other": "2.31.1 2.31.1 same",
+      "postgres": None,
+      "rolledback": "2.32.0 2.31.1 newer",
+    },
+  )
+  assert rc == 0, err
+  lines = calls.splitlines()
+  assert lines[0] == (
+    "start postgres -c max_connections=500 "
+    "-c timescaledb.max_background_workers=0"
+  )
+  assert [ln for ln in lines if ln.startswith("alter")] == [
+    "alter hpcperfstats"
+  ]
+  assert lines[-2:] == ["stop", "pgpassword=unset"]
+  assert "rolledback catalog 2.32.0 is newer than image 2.31.1" in err
+
+
+def test_db_entrypoint_timescaledb_auto_update_failure_does_not_block_start(
+  tmp_path: Path,
+) -> None:
+  """A failed ALTER is logged; later databases still update and the temp
+  server is stopped so the real postgres can start (no crash loop)."""
+  calls, err, rc = _run_ts_auto_update(
+    tmp_path,
+    {
+      "a": "2.30.0 2.31.1 update",
+      "b": "2.31.0 2.31.1 update",
+    },
+    fail=("a",),
+  )
+  assert rc == 0, err
+  assert [ln for ln in calls.splitlines() if ln.startswith("alter")] == [
+    "alter a",
+    "alter b",
+  ]
+  assert calls.splitlines()[-2] == "stop"
+  assert "FAILED in a (2.30.0 -> 2.31.1)" in err
+
+
+def test_db_entrypoint_runs_timescaledb_auto_update_on_existing_db() -> None:
+  """Only the existing-database branch updates (fresh initdb creates the
+  extension at the image version via Django migrate)."""
+  text = (
+    _repo_root() / "services-conf" / "db-docker-entrypoint.sh"
+  ).read_text()
+  branch = text[
+    text.index("Skipping initialization") : text.index('unset "${!POSTGRES_@}"')
+  ]
+  assert 'hpc_timescaledb_auto_update "$@"' in branch
+  assert text.count('hpc_timescaledb_auto_update "$@"') == 1
