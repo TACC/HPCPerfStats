@@ -715,6 +715,7 @@ def test_0032_fails_closed_without_null_dev_backfill_marker():
   script = (
     importlib.import_module("pathlib").Path(__file__).resolve().parents[5]
     / "scripts"
+    / "retired"
     / "backfill_host_data_null_dev.sh"
   ).read_text(encoding="utf-8")
   assert 'NULL_DEV_MARKER="hpcperfstats:null-dev-backfill-complete"' in script

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# RETIRED (2026-11): the host_data dev-uniqueness migration (0032) is complete
+# fleet-wide. Kept only for a new site or a 0032 repair; see
+# docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md.
 # Parallel host_data decompress for Stage 1 (OPERATOR_HOST_DATA_DEV_UNIQUENESS.md).
 #
 # Keeps up to N decompressions in flight. When any one finishes, rechecks
@@ -11,9 +14,9 @@
 # completions.
 #
 # Usage (from checkout with docker-compose.yaml):
-#   ./scripts/decompress_host_data_chunks.sh           # concurrency 10
-#   ./scripts/decompress_host_data_chunks.sh 20         # hpcperfstats02-class
-#   ./scripts/decompress_host_data_chunks.sh 2          # hpcperfstats03 (tight disk)
+#   ./scripts/retired/decompress_host_data_chunks.sh           # concurrency 10
+#   ./scripts/retired/decompress_host_data_chunks.sh 20         # hpcperfstats02-class
+#   ./scripts/retired/decompress_host_data_chunks.sh 2          # hpcperfstats03 (tight disk)
 #
 # Watch free space (especially site 03):
 #   docker compose -p hpcperfstats -f docker-compose.yaml \

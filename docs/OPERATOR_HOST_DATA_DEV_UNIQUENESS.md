@@ -1,6 +1,8 @@
 # Operator: host_data 5-column uniqueness (Phase 1 decompress)
 
 > **Status: completed fleet-wide (2026-11).** hpcperfstats01–04 all run the 5-column `UNIQUE (time, host, type, event, dev)` (`0032`), have the duplicate indexes dropped (`0045`), and have the compression policy restored and pinned to 01:00. The rest of this page is reference for a **new site** (a fresh install needs none of it: `0032` passes on an empty `host_data`) or for repairing a site that recorded an older `0032` without its work (see *Sites that applied an older `0032`* below). hpcperfstats03 took the large-site path: backfill with the host/jid indexes and the 4-column UNIQUE dropped, `0032` SQL run by hand (it had recorded the old soft-skip), then the nightly policy compressed every chunk older than 8 days (8.5 TB → 171 GB) and the three secondary indexes were rebuilt on the remaining uncompressed chunks.
+>
+> **Retired scripts.** The helpers below moved to `scripts/retired/` (`decompress_host_data_chunks.sh`, `backfill_host_data_null_dev.sh`) and are listed under *Retired* in the README. They still work for a new site or a repair; the current fleet does not need them.
 
 Phase 1 of the multi-GPU `dev` uniqueness rollout:
 
@@ -51,7 +53,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml exec db psql -h localhost 
 A single `SELECT decompress_chunk(…) FROM … LIMIT N` runs **serially** inside one Postgres session. Prefer the parallel helper: keeps up to *N* decompressions in flight; when any one finishes it rechecks `compressed_chunks` and starts another immediately (sliding pool).
 
 ```bash
-./scripts/decompress_host_data_chunks.sh 10
+./scripts/retired/decompress_host_data_chunks.sh 10
 ```
 
 Pass concurrency as the first argument (default **10**). Suggested starts: **02 → 10–20**, **01/04 → 5–10**, **03 → 2** (disk cushion; each chunk expands ~34 GB). Abort if `df` free space drops below remaining projected expansion. Per-chunk failures are skipped for the rest of the run; the script aborts only on stall or when nothing left can be started.
@@ -189,7 +191,7 @@ A single `UPDATE host_data SET dev = '' WHERE dev IS NULL` runs in **one** Postg
 **Compose cwd (prose only):** checkout with `docker-compose.yaml`. Prefer **pipeline/web stopped** so ingest is not fighting the rewrite. Stage 1 should already show `compressed_chunks = 0`; compressed chunks are not in the worklist.
 
 ```bash
-./scripts/backfill_host_data_null_dev.sh 16
+./scripts/retired/backfill_host_data_null_dev.sh 16
 ```
 
 First argument is worker concurrency (default **30**). Other knobs (optional env): `HPCPERFSTATS_NULL_DEV_VACUUM_EVERY` (`0` disables the per-chunk VACUUM), `HPCPERFSTATS_NULL_DEV_VACUUM_PARALLEL` (default `8`), `HPCPERFSTATS_NULL_DEV_STALL_LIMIT` (default `5`), `HPCPERFSTATS_NULL_DEV_FROM` (resume, below).
@@ -212,7 +214,7 @@ docker compose -p hpcperfstats -f docker-compose.yaml exec -T db psql -h localho
 3. Restart with low concurrency, no per-chunk VACUUM, resuming at the earliest unfinished chunk (expect only `host_data_time_idx` above):
 
 ```bash
-HPCPERFSTATS_NULL_DEV_VACUUM_EVERY=0 HPCPERFSTATS_NULL_DEV_FROM=2026-05-14 nohup ./scripts/backfill_host_data_null_dev.sh 6 > backfill_null_dev.log 2>&1 &
+HPCPERFSTATS_NULL_DEV_VACUUM_EVERY=0 HPCPERFSTATS_NULL_DEV_FROM=2026-05-14 nohup ./scripts/retired/backfill_host_data_null_dev.sh 6 > backfill_null_dev.log 2>&1 &
 ```
 
 4. After `0032` (and `0045`) are applied, recreate the three secondary indexes. Cheapest after the compression policy has caught up, since index creation then only builds on uncompressed chunks; sooner if web needs host/jid queries back. `0038` creates `host_data_dev_j_prefix_idx` itself.

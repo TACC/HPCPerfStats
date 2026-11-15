@@ -75,8 +75,8 @@ class Migration(migrations.Migration):
             END IF;
 
             -- NULL dev -> '' is the operator backfill
-            -- (scripts/backfill_host_data_null_dev.sh), not migrate: with no
-            -- index on dev, even a no-op UPDATE (or EXISTS proving no NULLs)
+            -- (scripts/retired/backfill_host_data_null_dev.sh), not migrate:
+            -- with no index on dev, even a no-op UPDATE (or EXISTS proving no NULLs)
             -- scans every chunk, hours to a day on large sites. NULLs are
             -- distinct in a UNIQUE, so a leftover NULL row would sit beside a
             -- re-ingested '' row. The script writes this column comment only
@@ -90,7 +90,7 @@ class Migration(migrations.Migration):
                    ) IS DISTINCT FROM 'hpcperfstats:null-dev-backfill-complete'
             THEN
               RAISE EXCEPTION
-                '0032_host_data_unique_include_dev_db: host_data.dev NULL backfill not marked complete; run scripts/backfill_host_data_null_dev.sh until it prints done (docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md)';
+                '0032_host_data_unique_include_dev_db: host_data.dev NULL backfill not marked complete; run scripts/retired/backfill_host_data_null_dev.sh until it prints done (docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md)';
             END IF;
 
             FOR con IN

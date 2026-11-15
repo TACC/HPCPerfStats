@@ -1,4 +1,4 @@
-"""Smoke tests for scripts/backfill_host_data_null_dev.sh operator helper."""
+"""Smoke tests for the retired scripts/retired/backfill_host_data_null_dev.sh."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / "scripts" / "backfill_host_data_null_dev.sh"
+SCRIPT = REPO_ROOT / "scripts" / "retired" / "backfill_host_data_null_dev.sh"
 THROTTLE = (
   REPO_ROOT / "scripts" / "lib" / "backfill_host_data_null_dev_throttle.sh"
 )
@@ -19,6 +19,18 @@ def test_backfill_host_data_null_dev_script_exists_and_executable():
   assert SCRIPT.is_file(), SCRIPT
   assert SCRIPT.stat().st_mode & 0o111, "script must be executable"
   assert not THROTTLE.exists(), "adaptive throttle helper must be removed"
+
+
+@pytest.mark.machine_unit_mock
+def test_retired_0032_helpers_live_only_under_scripts_retired():
+  """0032 is complete fleet-wide; its helpers moved to scripts/retired/."""
+  for name in (
+    "backfill_host_data_null_dev.sh",
+    "decompress_host_data_chunks.sh",
+  ):
+    retired = REPO_ROOT / "scripts" / "retired" / name
+    assert retired.is_file() and retired.stat().st_mode & 0o111, retired
+    assert not (REPO_ROOT / "scripts" / name).exists(), name
 
 
 @pytest.mark.machine_unit_mock

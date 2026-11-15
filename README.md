@@ -26,9 +26,16 @@ The **hpcperfstats** package is split into two parts:
 | [**using-the-website-as-a-researcher.md**](docs/using-the-website-as-a-researcher.md) | How to read the Django/React job UI—plots, metrics, and diagnostic themes—for HPC users and researchers. |
 | [**TESTING.md**](docs/TESTING.md) | Test commands, CI, compose-backed workflows, Playwright/Vitest, and host vs container pytest notes. |
 | [**upgrade.md**](docs/upgrade.md) | Existing stacks only: image rebuilds, Valkey/INI/volume layout, RabbitMQ recreate, PG18 dual-run. |
-| [**OPERATOR_HOST_DATA_DEV_UNIQUENESS.md**](docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md) | `host_data` 5-col uniqueness: Stage 1 decompress (+ 02 PK normalize) and Stage 2 one-shot migrate for `0032` / compress_after 8d. |
 
 **Maintaining `MONITOR_VARIABLES.md`:** the catalog is generated and augmented by maintainer scripts in the same folder: [`regenerate_monitor_variables_catalog.py`](docs/regenerate_monitor_variables_catalog.py), [`augment_monitor_variables_diagnostics.py`](docs/augment_monitor_variables_diagnostics.py).
+
+#### Retired (completed migrations)
+
+Kept for a new site or a repair only; nothing here needs to run on the current fleet. Helper scripts live under [`scripts/retired/`](scripts/retired/).
+
+| Document | Status | Retired scripts |
+|----------|--------|-----------------|
+| [**OPERATOR_HOST_DATA_DEV_UNIQUENESS.md**](docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md) | **Complete fleet-wide (2026-11).** `host_data` 5-col uniqueness: Stage 1 decompress (+ 02 PK normalize), NULL `dev` backfill, Stage 2 one-shot migrate for `0032` / compress_after 8d, `0045` duplicate-index drop. | `scripts/retired/decompress_host_data_chunks.sh`, `scripts/retired/backfill_host_data_null_dev.sh` |
 
 **REST API note:** `GET /api/jobs/{jid}/{type_name}/` (type detail) returns a Bokeh **`tplot_item`** (`json_item` payload) plus `stats_data` / `schema`. Legacy **`tscript`** / **`tdiv`** fields were removed; clients should embed only `tplot_item` via Bokeh `embed_item`.
 

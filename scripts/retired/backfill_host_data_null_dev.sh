@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# RETIRED (2026-11): the host_data dev-uniqueness migration (0032) is complete
+# fleet-wide. Kept only for a new site or a 0032 repair; see
+# docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md.
 # Parallel host_data.dev NULL → '' backfill before Stage 2 UNIQUE (0032).
 # See docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md.
 #
@@ -12,10 +15,10 @@
 # worklist. Prefer pipeline/web stopped so ingest is not fighting the rewrite.
 #
 # Usage (from checkout with docker-compose.yaml):
-#   ./scripts/backfill_host_data_null_dev.sh           # concurrency 30
-#   ./scripts/backfill_host_data_null_dev.sh 16
-#   ./scripts/backfill_host_data_null_dev.sh 8
-#   HPCPERFSTATS_NULL_DEV_FROM=2026-05-14 ./scripts/backfill_host_data_null_dev.sh 6
+#   ./scripts/retired/backfill_host_data_null_dev.sh           # concurrency 30
+#   ./scripts/retired/backfill_host_data_null_dev.sh 16
+#   ./scripts/retired/backfill_host_data_null_dev.sh 8
+#   HPCPERFSTATS_NULL_DEV_FROM=2026-05-14 ./scripts/retired/backfill_host_data_null_dev.sh 6
 #
 # Resume: HPCPERFSTATS_NULL_DEV_FROM=<date or timestamptz> skips chunks whose
 # range_start is earlier (chunks run oldest first, so the earliest in-flight
