@@ -441,10 +441,10 @@ def test_count_source_chunk_rows_disables_statement_timeout_first() -> None:
   assert any("count(*)" in s.lower() for s in executed)
 
 
-def test_count_target_retries_operation_canceled_then_succeeds(
+def test_count_target_retries_statement_timeout_then_succeeds(
   monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-  """Regression: PG18 io_uring 'Operation canceled' on skip-check must retry."""
+  """A statement-timeout cancel on a skip-check count is retried."""
   from psycopg import errors as pg_errors
 
   mod = _load_mod()
@@ -463,9 +463,8 @@ def test_count_target_retries_operation_canceled_then_succeeds(
       if "count(*)" in sql.lower():
         calls["n"] += 1
         if calls["n"] < 3:
-          raise pg_errors.InternalError_(
-            "could not read blocks 143..158 in file "
-            '"base/16388/39111": Operation canceled'
+          raise pg_errors.QueryCanceled(
+            "canceling statement due to statement timeout"
           )
 
     def fetchone(self) -> tuple[int]:
@@ -482,7 +481,7 @@ def test_count_target_retries_operation_canceled_then_succeeds(
 def test_count_target_gives_up_as_minus_one(
   monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-  """Persistent Operation canceled returns -1 so copy falls through (no abort)."""
+  """Persistent timeout cancels return -1 so copy falls through (no abort)."""
   from psycopg import errors as pg_errors
 
   mod = _load_mod()
@@ -498,8 +497,8 @@ def test_count_target_gives_up_as_minus_one(
 
     def execute(self, sql: str, _params: object = None) -> None:
       if "count(*)" in sql.lower():
-        raise pg_errors.InternalError_(
-          "could not read blocks 143..158: Operation canceled"
+        raise pg_errors.QueryCanceled(
+          "canceling statement due to statement timeout"
         )
 
     def fetchone(self) -> tuple[int]:
@@ -1557,3 +1556,16 @@ def test_progress_rows_never_go_backwards(
   assert " rows=1000/" in rep.line()  # COPY ended, chunk not yet added
   rep.add(950)
   assert " rows=1050/" in rep.line()
+
+
+def test_read_errors_are_not_retried_as_cancels() -> None:
+  """PG18 runs io_method=worker now; an "Operation canceled" read error
+  (the io_uring failure, BUG #19725) must surface, not be retried away."""
+  from psycopg import errors as pg_errors
+
+  mod = _load_mod()
+  read_err = pg_errors.InternalError_(
+    'could not read blocks 4623..4638 in file "base/16384/1": Operation canceled'
+  )
+  assert mod._is_retryable_count_error(read_err) is False
+  assert mod._is_retryable_count_error(pg_errors.QueryCanceled("timeout"))

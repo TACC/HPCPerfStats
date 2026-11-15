@@ -189,17 +189,7 @@ Create the PG18 bind (Alpine postgres uid/gid **70**) before starting the profil
 sudo mkdir -p /data/hpcperfstats_db/pg18 && sudo chown -R 70:70 /data/hpcperfstats_db/pg18
 ```
 
-**Host io_uring for `db_pg18` (preferred: `disabled=1` + gid 70):** Postgres in the homemade image runs as Alpine **uid/gid 70**. Apply before starting profile `pg18-migrate`. Do **not** use `kernel.io_uring_disabled=2`. For **`io_method=io_uring`**, set host sysctl to the locked-down compromise **`kernel.io_uring_disabled=1`** and **`kernel.io_uring_group=70`**, or fully open with **`disabled=0`**; never **`disabled=2`**. Compose already sets **`security_opt: [seccomp=unconfined, label=disable]`** and **`cap_add: [SYS_ADMIN]`** on **`db_pg18`**.
-
-```bash
-sudo sysctl -w kernel.io_uring_disabled=1
-sudo sysctl -w kernel.io_uring_group=70
-printf '%s\n' 'kernel.io_uring_disabled = 1' 'kernel.io_uring_group = 70' | sudo tee /etc/sysctl.d/99-hpcperfstats-io-uring.conf
-sudo sysctl --system
-sysctl kernel.io_uring_disabled kernel.io_uring_group
-```
-
-Alternative (fully open): `sudo sysctl -w kernel.io_uring_disabled=0`.
+PG18 does its I/O with **`io_method=worker`** (PostgreSQL 18's default I/O worker pool): no host sysctl, seccomp or capability changes are needed for **`db_pg18`**.
 
 Timescale catalog hops while still on PG15: **`docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md`**. Stay on the **2.28.x** line on PostgreSQL 15 — Timescale **2.29+ drops PG15**.
 

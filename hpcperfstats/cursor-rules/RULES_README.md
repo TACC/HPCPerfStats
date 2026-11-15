@@ -22,7 +22,7 @@ Notable contracts (see filename in `hpcperfstats/cursor-rules/`):
 - **`frontend-stack-wiring-contract.mdc`** — SPA routing, thin hooks, `response-schema-registry.ts`, and test mock layers must stay wired; see view → hook → API map and drift guards.
 - **`interactive-ready-controls.mdc`** — hide or skeleton until ready; shown controls must be immediately interactive (`initialLoading`, `tableBusy`, lazy sections).
 - **`rabbitmq-memory-cgroup-contract.mdc`** — compose `mem_limit` 96g + watermark absolute **strictly below** cgroup (64GiB); **`ERL_FLAGS=+MBas aobf +MBlmbcs 512 +MHlmbcs 512`**; recreate rabbitmq; never classic-queue “fix”; dual-registered with `agent-discipline-core.mdc` + `hook_task_router.py`.
-- **`postgres-custom-image-and-migrate-contract.mdc`** — homemade Alpine PG18 + Timescale bake, `io_uring`, logical migrate (not `pg_upgrade`); dual-registered with `agent-discipline-core.mdc` + `hook_task_router.py`.
+- **`postgres-custom-image-and-migrate-contract.mdc`** — homemade Alpine PG18 + Timescale bake, `io_method=worker`, logical migrate (not `pg_upgrade`); dual-registered with `agent-discipline-core.mdc` + `hook_task_router.py`.
 - **`podman-runtime.mdc`** — rootless `podman`/`podman-compose`, isolated
   test/development projects, project-scoped cleanup, and mandatory `/data`
   storage for non-DNF caches/tools/temp and container state; dual-registered

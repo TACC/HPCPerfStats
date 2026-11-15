@@ -1042,7 +1042,7 @@ def save_state(path: str, chunks: dict[str, dict[str, object]]) -> None:
 
 def _is_retryable_count_error(exc: BaseException) -> bool:
   """
-  Return True for transient count failures (timeout / PG18 I/O cancel).
+  Return True for transient count failures (statement timeout cancel).
 
   Args:
     exc (BaseException): Exception raised during ``count(*)``.
@@ -1054,11 +1054,7 @@ def _is_retryable_count_error(exc: BaseException) -> bool:
     >>> _is_retryable_count_error(RuntimeError("x"))
     False
   """
-  if isinstance(exc, pg_errors.QueryCanceled):
-    return True
-  if isinstance(exc, pg_errors.InternalError_):
-    return "operation canceled" in str(exc).lower()
-  return False
+  return isinstance(exc, pg_errors.QueryCanceled)
 
 
 def _count_with_retry(
@@ -1152,9 +1148,8 @@ def count_target_range_rows(conn: Connection, chunk: ChunkRow) -> int:
   """
   Count target ``host_data`` rows in ``[range_start, range_end)``.
 
-  Retries transient cancels (statement timeout / PG18 ``Operation canceled``
-  under parallel workers); returns ``-1`` if they persist so the caller
-  re-copies instead of aborting the migrate.
+  Retries statement-timeout cancels; returns ``-1`` if they persist so the
+  caller re-copies instead of aborting the migrate.
 
   Args:
     conn (Connection): Open target connection.

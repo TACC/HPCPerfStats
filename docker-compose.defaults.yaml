@@ -265,7 +265,7 @@ services:
         aliases:
           - db
 
-  # Homegrown PG18 + Timescale (jemalloc/liburing/lz4/zstd). Dual-run only
+  # Homegrown PG18 + Timescale (jemalloc/zlib-ng/lz4/zstd). Dual-run only
   # during logical migrate — see docs/OPERATOR_PG18_MIGRATION.md. Hostname `db`
   # stays on Hub PG15 until cutover. Start with:
   #   docker compose --profile pg18-migrate up -d db_pg18
@@ -280,26 +280,6 @@ services:
     pull_policy: never
     logging: *hpc-logging
     shm_size: "16gb"
-    # io_uring (PG18 -c io_method=io_uring):
-    # Host kernel (required). Postgres gosu's to Alpine uid/gid 70, so either:
-    #   A) Recommended locked-down compromise — only gid 70 (and CAP_SYS_ADMIN) may create rings:
-    #        sudo sysctl -w kernel.io_uring_disabled=1
-    #        sudo sysctl -w kernel.io_uring_group=70
-    #        printf '%s\n' 'kernel.io_uring_disabled = 1' 'kernel.io_uring_group = 70' \
-    #          | sudo tee /etc/sysctl.d/99-hpcperfstats-io-uring.conf && sudo sysctl --system
-    #   B) Fully open (less preferred): kernel.io_uring_disabled=0
-    #   Forbidden for this service: kernel.io_uring_disabled=2 (always EPERM).
-    # With disabled=1 and default io_uring_group=-1 (unset), uid 70 gets EPERM even with
-    # seccomp=unconfined — you must set io_uring_group=70 (or use disabled=0).
-    # Seccomp: Docker/Podman default blocks io_uring_*; use unconfined.
-    # SELinux: often AVCs create on anon_inode [io_uring]; label=disable for this service.
-    # Recreate after changing security_opt: compose up -d --force-recreate db_pg18
-    # See README Installation + docs/OPERATOR_PG18_MIGRATION.md.
-    security_opt:
-      - seccomp=unconfined
-      - label=disable
-    cap_add:
-      - SYS_ADMIN
     command:
       - -c
       - max_connections=500
@@ -351,8 +331,12 @@ services:
       - max_parallel_maintenance_workers=2
       - -c
       - timescaledb.max_tuples_decompressed_per_dml_transaction=1000000
+      # PG18 asynchronous I/O through a pool of I/O worker processes (the PG18
+      # default); why no other method: postgres-custom-image-and-migrate-contract.mdc.
       - -c
-      - io_method=io_uring
+      - io_method=worker
+      - -c
+      - io_workers=8
       # Same committed client auth as db (socket = scram-sha-256). The shared
       # postgres_runtime socket dir is mounted only at cutover by
       # docker-compose.pg18-primary.yaml: two servers in one dir collide on

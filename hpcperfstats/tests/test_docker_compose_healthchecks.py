@@ -332,7 +332,7 @@ def test_readme_install_is_fresh_only_and_upgrade_doc_holds_existing_stack():
     "Migrating from the old layout",
     "PostgreSQL 18 migrate",
     "profile pg18-migrate",
-    "kernel.io_uring_disabled",
+    "io_uring",
     "./scripts/rebuild_frontend.sh",
     "./scripts/rebuild_pipeline.sh",
     "podman-compose -p hpcperfstats pull valkey",
@@ -344,11 +344,12 @@ def test_readme_install_is_fresh_only_and_upgrade_doc_holds_existing_stack():
     "Upgrading from an older ini layout",
     "docker-compose.app.yaml",
     "pg18-migrate",
-    "kernel.io_uring_disabled",
     "./scripts/rebuild_frontend.sh",
     "./scripts/rebuild_pipeline.sh",
     "OPERATOR_PG18_MIGRATION.md",
   )
+  # PG18 runs io_method=worker; no io_uring sysctl/seccomp steps remain.
+  assert "io_uring" not in upgrade
   for phrase in required_in_upgrade:
     assert phrase in upgrade, phrase
 
@@ -1028,14 +1029,14 @@ def test_docker_compose_staticfiles_ram_and_media_ram_tmpfs_not_null_stub():
 
 
 def test_docker_compose_db_pg18_dual_run_beside_hub_pg15():
-  """Hub PG15 keeps alias db; homemade PG18 is profile-gated with db18 + io_uring."""
+  """Hub PG15 keeps alias db; homemade PG18 is profile-gated with db18 + worker I/O."""
   repo_root = Path(__file__).resolve().parents[2]
   content = (repo_root / "docker-compose.defaults.yaml").read_text()
   db_m = re.search(r"(?ms)^  db:\n(.*?)(?=^  [a-z].*:|\Z)", content)
   assert db_m, "db service not found"
   db_block = db_m.group(0)
   assert "timescale/timescaledb:2.28.3-pg15" in db_block
-  assert "io_method=io_uring" not in db_block
+  assert "io_method" not in db_block
   assert 'shm_size: "16gb"' in db_block
 
   pg18_m = re.search(r"(?ms)^  db_pg18:\n(.*?)(?=^  [a-z].*:|\Z)", content)
@@ -1048,12 +1049,11 @@ def test_docker_compose_db_pg18_dual_run_beside_hub_pg15():
   assert "pg18-migrate" in pg18
   assert "POSTGRES_DB=hpcperfstats" in pg18
   assert "pg_isready -U hpcperfstats -d postgres" in pg18
-  assert "io_method=io_uring" in pg18
-  assert "seccomp=unconfined" in pg18
-  assert "label=disable" in pg18
-  assert "SYS_ADMIN" in pg18
-  assert "kernel.io_uring_disabled=1" in pg18
-  assert "kernel.io_uring_group=70" in pg18
+  # io_method=worker (PG18 default); io_uring and its host/container
+  # loosening are gone (PG 18.6 io_uring read cancels, BUG #19725).
+  assert "io_method=worker" in pg18
+  for gone in ("io_uring", "seccomp=unconfined", "label=disable", "SYS_ADMIN"):
+    assert gone not in pg18, gone
   assert 'shm_size: "16gb"' in pg18
   assert "postgres_data_pg18:/var/lib/postgresql" in pg18
   assert "- db18" in pg18

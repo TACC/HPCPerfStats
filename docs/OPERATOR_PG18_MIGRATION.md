@@ -38,7 +38,7 @@ Freeze precondition: **no `host_data` UPDATE/DELETE tools** (`repair_jstamp_delt
 
 ## Phase 0 — host preflight (read-only; paste output)
 
-PG18 compresses as it copies, so its steady-state size ≈ PG15 `db_size` (plus in-flight uncompressed chunks and up to `max_wal_size=64GB` WAL). **Fail closed:** free space on the `pg18` filesystem ≥ **1.2 × PG15 db_size + 80 GB**; `kernel.io_uring_disabled` prints `1` with `io_uring_group = 70` (or `disabled = 0`); the `postgres_data_pg18` bind device exists in `docker-compose.yaml`.
+PG18 compresses as it copies, so its steady-state size ≈ PG15 `db_size` (plus in-flight uncompressed chunks and up to `max_wal_size=64GB` WAL). **Fail closed:** free space on the `pg18` filesystem ≥ **1.2 × PG15 db_size + 80 GB**; the `postgres_data_pg18` bind device exists in `docker-compose.yaml`.
 
 Both servers set `shared_buffers=64GB`. Bulk `COPY`, counts and compression go through PostgreSQL's small ring buffers, so PG18 does not fill its 64 GB during dual-run.
 
@@ -46,7 +46,6 @@ Both servers set `shared_buffers=64GB`. Bulk `COPY`, counts and compression go t
 hostname; git log -1 --oneline; free -g | head -2
 grep -n -A5 -E '^  postgres_data(_pg18)?:' docker-compose.yaml | grep -E 'postgres_data|device'
 df -h /data/hpcperfstats_db 2>&1 | tail -1
-sysctl kernel.io_uring_disabled kernel.io_uring_group
 podman-compose -p hpcperfstats exec -T db psql -h localhost -U hpcperfstats -d hpcperfstats -X -c "SET statement_timeout = 0" -c "SELECT pg_size_pretty(pg_database_size(current_database())) AS pg15_db_size" -c "SELECT pg_size_pretty(sum(before_compression_total_bytes)) AS before, pg_size_pretty(sum(after_compression_total_bytes)) AS after FROM hypertable_compression_stats('host_data')" -c "SELECT count(*) AS chunks, count(*) FILTER (WHERE is_compressed) AS compressed, min(range_start)::date AS oldest, max(range_end)::date AS newest FROM timescaledb_information.chunks WHERE hypertable_name = 'host_data'" -c "SELECT c.relname, pg_size_pretty(pg_total_relation_size(c.oid)) AS size FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname <> 'host_data' ORDER BY pg_total_relation_size(c.oid) DESC LIMIT 8"
 ```
 
@@ -54,17 +53,16 @@ podman-compose -p hpcperfstats exec -T db psql -h localhost -U hpcperfstats -d h
 
 ## Phase A — host prerequisites, build and start PG18 beside PG15
 
-Hub `db` (alias `db`) stays the live writer; PG18 is profile `pg18-migrate`, alias `db18`, bind `postgres_data_pg18` (Alpine postgres **uid/gid 70**: a bind replaces image ownership, so `root:root` gives `mkdir … /18/: Permission denied`). io_uring: `kernel.io_uring_disabled=1` + `kernel.io_uring_group=70` (with group unset, uid 70 gets EPERM even under `seccomp=unconfined`); **forbidden** `disabled=2`. Bake on the production CPU (`-march=native`).
+Hub `db` (alias `db`) stays the live writer; PG18 is profile `pg18-migrate`, alias `db18`, bind `postgres_data_pg18` (Alpine postgres **uid/gid 70**: a bind replaces image ownership, so `root:root` gives `mkdir … /18/: Permission denied`). PG18 does its I/O with `io_method=worker` (PostgreSQL 18's I/O worker pool), so no host sysctl or extra container privileges are needed. Bake on the production CPU (`-march=native`).
 
 ```bash
 mkdir -p /data/hpcperfstats_db/pg18 && chown -R 70:70 /data/hpcperfstats_db/pg18 && ls -ld /data/hpcperfstats_db/pg18
-printf '%s\n' 'kernel.io_uring_disabled = 1' 'kernel.io_uring_group = 70' > /etc/sysctl.d/99-hpcperfstats-io-uring.conf && sysctl -p /etc/sysctl.d/99-hpcperfstats-io-uring.conf
 podman build -f services-conf/db.Dockerfile -t hpcperfstats-db services-conf && podman-compose -p hpcperfstats --profile pg18-migrate up -d --no-build db_pg18
 for i in $(seq 1 60); do podman-compose -p hpcperfstats --profile pg18-migrate exec -T db_pg18 pg_isready -h 127.0.0.1 -U hpcperfstats -d postgres -q && break; sleep 5; done
 podman-compose -p hpcperfstats --profile pg18-migrate exec -T db_pg18 sh -c 'psql -h localhost -U hpcperfstats -d postgres -XtAc "SELECT 1 FROM pg_database WHERE datname = '\''hpcperfstats'\''" | grep -q 1 || psql -h localhost -U hpcperfstats -d postgres -X -v ON_ERROR_STOP=1 -c "CREATE DATABASE hpcperfstats OWNER hpcperfstats"; psql -h localhost -U hpcperfstats -d hpcperfstats -X -c "SELECT version()" -c "SHOW io_method" -c "SHOW shared_buffers" -c "SHOW hba_file" -c "SELECT default_version FROM pg_available_extensions WHERE name = '\''timescaledb'\''"'
 ```
 
-**Fail closed:** `ls -ld` shows owner `70 70`; `version()` is PostgreSQL 18; `io_method` is `io_uring` (otherwise re-check sysctl, then `podman-compose -p hpcperfstats --profile pg18-migrate up -d --force-recreate db_pg18`); `hba_file` is `/etc/postgresql/pg_hba.conf`. The database create step is idempotent; init can be skipped after an early crash loop.
+**Fail closed:** `ls -ld` shows owner `70 70`; `version()` is PostgreSQL 18; `io_method` is `worker` (otherwise the container runs an older compose file: pull, then `podman-compose -p hpcperfstats --profile pg18-migrate up -d --force-recreate --no-build db_pg18`); `hba_file` is `/etc/postgresql/pg_hba.conf`. The database create step is idempotent; init can be skipped after an early crash loop.
 
 ---
 
@@ -216,7 +214,7 @@ else echo "CUTOVER_BLOCKED: PG18 host_data has no valid UNIQUE index or has inva
 
 The first line is the cutover gate: nothing is stopped or switched unless `pg18_host_data_unique_indexes` ≥ 1 and `invalid_indexes=0`. Ingest's `ON CONFLICT` needs the UNIQUE index.
 
-**Fail closed:** the `include:` list shows `docker-compose.pg18-primary.yaml` right after `docker-compose.defaults.yaml`; `config --services` lists `db_pg18` and **not** `db`; `ps` shows `db_pg18`, `web`, `pipeline`, `proxy`, `valkey` and `rabbitmq` up. `django_db` shows PostgreSQL 18 and `None` (Unix socket), `io_method` is `io_uring`; `job_data_n` matches the D4 `pg18:` count. If `db_pg18` logs `lock file "/run/postgresql/.s.PGSQL.5432.lock" already exists`, PG15 did not shut down cleanly: run `podman-compose -p hpcperfstats up -d --force-recreate db_pg18 web pipeline`.
+**Fail closed:** the `include:` list shows `docker-compose.pg18-primary.yaml` right after `docker-compose.defaults.yaml`; `config --services` lists `db_pg18` and **not** `db`; `ps` shows `db_pg18`, `web`, `pipeline`, `proxy`, `valkey` and `rabbitmq` up. `django_db` shows PostgreSQL 18 and `None` (Unix socket), `io_method` is `worker`; `job_data_n` matches the D4 `pg18:` count. If `db_pg18` logs `lock file "/run/postgresql/.s.PGSQL.5432.lock" already exists`, PG15 did not shut down cleanly: run `podman-compose -p hpcperfstats up -d --force-recreate db_pg18 web pipeline`.
 
 ### E2 — rollback (only if E1 fails; PG18 writes after cutover are lost)
 
@@ -240,15 +238,14 @@ Keep `/data/hpcperfstats_db/pg15` and the parked `db` container until the soak c
 |------|----------|
 | Base | `alpine:3.24.x` pinned in `services-conf/db.Dockerfile` (not `latest`) |
 | Postgres / Timescale | PostgreSQL 18.x and TimescaleDB 2.31.x SHA-pinned (`ARG PG_VERSION`, `ARG TIMESCALEDB_VERSION`); not `APACHE_ONLY` |
-| `/opt` | Source-built jemalloc, zlib-ng, liburing, lz4, zstd (PostgreSQL built `--without-icu`); rpath on `postgres` and the zstd CLI |
+| `/opt` | Source-built jemalloc, zlib-ng, lz4, zstd (PostgreSQL built `--without-icu --without-liburing`); rpath on `postgres` and the zstd CLI |
 | Toolchain | Clang 22 ThinLTO, `-march=native` (`services-conf/bake_clang_flags.sh`); bake on the production CPU |
 | Volume | `/var/lib/postgresql` (PG18 layout) |
-| io_uring | `seccomp=unconfined` + `label=disable` + `cap_add: SYS_ADMIN` on `db_pg18`; host `kernel.io_uring_disabled=1` + `kernel.io_uring_group=70`; forbidden `disabled=2` |
-| Runtime GUCs | `db_pg18` matches `db` (`shared_buffers=64GB`, WAL/bgwriter, committed `hba_file`) plus `io_method=io_uring` |
+| Runtime GUCs | `db_pg18` matches `db` (`shared_buffers=64GB`, WAL/bgwriter, committed `hba_file`) plus `io_method=worker`, `io_workers=8` |
 
 ## Related
 
 - `docker-compose.pg18-primary.yaml` (cutover overlay; include-listed per site)
 - `scripts/pg18_host_data_chunk_copy.py`, `scripts/pg18_relational_copy.sh`
-- `docs/upgrade.md` (dual-run note, PG18 bind and io_uring prerequisites)
+- `docs/upgrade.md` (dual-run note, PG18 bind prerequisite)
 - `docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md` (stay on 2.28.x while on PG15)

@@ -66,15 +66,11 @@ def test_db_dockerfile_pins_postgres_18_sha_and_timescale() -> None:
   )
 
 
-def test_db_dockerfile_pins_jemalloc_liburing_lz4_zlib_ng_zstd() -> None:
+def test_db_dockerfile_pins_jemalloc_lz4_zlib_ng_zstd() -> None:
   text = _dockerfile()
   assert "ARG JEMALLOC_VERSION=5.4.0" in text
   assert (
     "200776fac271093e7c2f21edd6d62657ecd2be578d9328633f2a86bfa6ef4f1d" in text
-  )
-  assert "ARG LIBURING_VERSION=2.15" in text
-  assert (
-    "8d052f2622dcb3678cbaee5ff582a87572672a6c0a56533cdda5b65cb636120a" in text
   )
   assert "ARG LZ4_VERSION=1.11.1" in text
   assert (
@@ -165,18 +161,15 @@ def test_db_dockerfile_postgres_and_timescale_heredocs_avoid_inline_hash_comment
   assert "./bootstrap -DCMAKE_BUILD_TYPE=Release" in ts_run
 
 
-def test_db_dockerfile_links_opt_liburing_lz4_zstd_into_postgres() -> None:
+def test_db_dockerfile_links_opt_lz4_zstd_into_postgres() -> None:
   text = _dockerfile()
-  assert "--with-liburing" in text
   assert "--with-lz4" in text
   assert "--with-zstd" in text
   assert "--with-llvm" in text
-  assert "/opt/liburing" in text
   assert "/opt/lz4" in text
   assert "/opt/zstd" in text
   assert "/opt/jemalloc" in text
   assert "/opt/zlib-ng" in text
-  assert "-Wl,-rpath,/opt/liburing/lib" in text
   assert "-Wl,-rpath,/opt/lz4/lib" in text
   assert "-Wl,-rpath,/opt/zstd/lib" in text
   assert "-Wl,-rpath,/opt/zlib-ng/lib" in text
@@ -223,7 +216,7 @@ def test_db_dockerfile_libs_mtune_and_lz4_heapmode() -> None:
     in text
   )
   assert "-mtune=native" in text
-  lz4_run = text[text.index("# --- lz4 ---") : text.index("# --- liburing")]
+  lz4_run = text[text.index("# --- lz4 ---") : text.index("# --- zlib-ng")]
   assert "-DLZ4_HEAPMODE=0" in lz4_run
   assert "hpcperfstats_bake_cflags db/lz4" in lz4_run
   assert 'AR="${AR}"' in lz4_run and 'NM="${NM}"' in lz4_run
@@ -254,7 +247,7 @@ def test_db_dockerfile_opt_lib_bake_order_cache_and_deps() -> None:
   """Slowest-changing independent /opt pins first; zstd after lz4 + zlib-ng.
 
   Docker layer cache is linear: bumping a fast pin (zlib-ng) must not
-  rebuild jemalloc/lz4/liburing. zstd DT_NEEDED those two codecs, so
+  rebuild jemalloc/lz4. zstd DT_NEEDED those two codecs, so
   its RUN stays after both even though zstd itself ships ~yearly.
   """
   text = _dockerfile()
@@ -262,7 +255,6 @@ def test_db_dockerfile_opt_lib_bake_order_cache_and_deps() -> None:
     "ARG ALPINE_VERSION=",
     "ARG JEMALLOC_VERSION=",
     "ARG LZ4_VERSION=",
-    "ARG LIBURING_VERSION=",
     "ARG ZLIB_NG_VERSION=",
     "ARG ZSTD_VERSION=",
     "ARG PG_VERSION=",
@@ -271,14 +263,13 @@ def test_db_dockerfile_opt_lib_bake_order_cache_and_deps() -> None:
   idxs = [text.index(m) for m in markers]
   assert idxs == sorted(idxs), (
     "db.Dockerfile /opt bake order must be Alpine, jemalloc, lz4, "
-    "liburing, zlib-ng, zstd, Postgres, Timescale"
+    "zlib-ng, zstd, Postgres, Timescale"
   )
   assert text.index("# --- lz4 ---") < text.index("# --- zstd")
   assert text.index("# --- zlib-ng") < text.index("# --- zstd")
   runtime_copies = [
     "COPY --from=db-build /opt/jemalloc",
     "COPY --from=db-build /opt/lz4",
-    "COPY --from=db-build /opt/liburing",
     "COPY --from=db-build /opt/zlib-ng",
     "COPY --from=db-build /opt/zstd",
     "COPY --from=db-build /usr/local",
@@ -348,7 +339,6 @@ def test_db_dockerfile_jemalloc_ld_preload_and_fail_closed_ldd() -> None:
   assert "LD_PRELOAD=/opt/jemalloc/lib/libjemalloc.so.2" in text
   assert "ldd /usr/local/bin/postgres" in text
   assert "/opt/jemalloc/.+libjemalloc" in text
-  assert "/opt/liburing/.+liburing" in text
   assert "/opt/zlib-ng/.+libz" in text
   # Linked ABI is gated by ldd (apk zlib may exist as openssl transitive dep).
   assert "runtime postgres linked apk zlib" in text
@@ -413,3 +403,15 @@ def test_db_dockerfile_builds_postgres_without_icu() -> None:
     text.index("# --- PostgreSQL") : text.index("# --- TimescaleDB")
   ]
   assert "if grep -E 'libicu' /tmp/postgres.ldd; then" in pg_run
+
+
+def test_db_dockerfile_builds_without_liburing() -> None:
+  """PG18 runs io_method=worker: PG 18.6 io_uring reads failed with
+  "Operation canceled" (BUG #19725; hpcperfstats02 and 04, 2026-11). The
+  image must not build or link liburing, and fails closed if it does."""
+  text = _dockerfile()
+  assert "--without-liburing" in text
+  assert "--with-liburing" not in text
+  for gone in ("LIBURING_VERSION", "/opt/liburing", "axboe/liburing"):
+    assert gone not in text, gone
+  assert "if grep -E 'liburing' /tmp/postgres.ldd; then" in text

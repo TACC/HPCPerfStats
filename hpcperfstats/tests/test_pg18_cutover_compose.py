@@ -61,9 +61,10 @@ def test_pg18_runtime_gucs_match_pg15_db(guc: str) -> None:
   )
 
 
-def test_pg18_command_keeps_io_uring_and_committed_hba() -> None:
+def test_pg18_command_uses_worker_io_and_committed_hba() -> None:
   cmd = _service_command("db_pg18")
-  assert _guc(cmd, "io_method") == "io_uring"
+  assert _guc(cmd, "io_method") == "worker"
+  assert int(_guc(cmd, "io_workers") or 0) >= 1
   assert _guc(cmd, "hba_file") == "/etc/postgresql/pg_hba.conf"
 
 
