@@ -82,8 +82,11 @@ Since **3.1** (cpu-precision Phase 1) aarch64 builds **no LIKWID**. The `arm` CP
     rows across CPUs. Solo time uses the MIDR row's `gp_counters` (Neoverse V2: 6) and treats
     `cpu_cycles` (0x11) as running on the dedicated cycle counter; a core without a verified row
     publishes no solo key (never a guessed baseline). The monitor alone oversubscribes Grace
-    (8 general events on 6 counters), so ~75% running with running == solo is normal; only
-    running below solo means another PMU user. Tests: `test_sharing_*` in `test_arm_core_perf.c`,
+    (8 general events on 6 counters), so ~75% running is normal: measured 75.3% running /
+    3.2% outside on quiet Vista nodes (solo 77.8%; the residual is kernel counter rotation),
+    and 20.5% / 73.6% on Horizon GB200 with `nvidia-powerd` (2026-11-14,
+    `canary_counter_check.sh --sharing-only`). Only an outside share clearly above ~3% means
+    another PMU user. Tests: `test_sharing_*` in `test_arm_core_perf.c`,
     `test_scale_sample_reports_times`, `test_scf_sharing_times`, `test_publish_sharing_keys`.
 10. **Tests use the fake perf layer.** `tests/test_fake_perf.{c,h}` (TMPDIR sysfs tree + pipe
     fds) drive `test_arm_perf_util`, `test_arm_core_perf`, `test_arm_imc_scf` and

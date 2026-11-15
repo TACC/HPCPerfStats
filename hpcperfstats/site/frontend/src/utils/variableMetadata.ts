@@ -228,15 +228,15 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
   avg_pmu_running_pct: {
     description:
-      "Share of enabled time the CPU hardware-counter events actually ran on a counter (%), from host_cpu_hw pmu_running_time / pmu_enabled_time (Grace, monitor 3.1 Phase 1b builds). Below 100% the counts are scaled estimates; on Grace the monitor alone runs about 78% because it uses more events than the core has counters.",
+      "Share of enabled time the CPU hardware-counter events actually ran on a counter (%), from host_cpu_hw pmu_running_time / pmu_enabled_time (Grace, monitor 3.1 Phase 1b builds). Below 100% the counts are scaled estimates; on a quiet Grace node the monitor alone runs about 75% (measured 75.3%; the ideal is 77.8%) because it uses more events than the core has counters.",
     researcherUse:
       "How directly the CPU counters were measured; read it with avg_pmu_outside_pct, which separates other programs from the monitor's own sharing.",
   },
   avg_pmu_outside_pct: {
     description:
-      "Share of the expected counter time that other programs took (%), 1 - pmu_running_time / pmu_solo_running_time on host_cpu_hw (Grace, monitor 3.1 Phase 1b builds). 0% means only the monitor used the counters; on GB200 nodes nvidia-powerd typically takes a large share.",
+      "Share of the expected counter time that other programs took (%), 1 - pmu_running_time / pmu_solo_running_time on host_cpu_hw (Grace, monitor 3.1 Phase 1b builds). A quiet node reads about 3% (kernel counter rotation, measured 3.2% on Vista); Horizon GB200 nodes read about 74% because nvidia-powerd holds counters (measured 73.6%).",
     researcherUse:
-      "Explains node-to-node differences in counter coverage: a steady high value on every job of a node type comes from a node service (Horizon GB200 nodes run a GPU power service, about 60–80%), while a value clearly above other jobs on the same node type points at a tool in your job, such as a profiler.",
+      "Explains node-to-node differences in counter coverage: a steady high value on every job of a node type comes from a node service (Horizon GB200 nodes run a GPU power service, about 74%), while a value clearly above other jobs on the same node type points at a tool in your job, such as a profiler.",
   },
   avg_mbw: {
     description:

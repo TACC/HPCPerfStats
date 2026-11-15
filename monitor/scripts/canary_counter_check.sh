@@ -21,9 +21,10 @@
 # over the same window; PASS when both agree within 5% and reads exceed 1 GB/s.
 #
 # --sharing-only reads just the D6 sharing keys over one --window with no load and no perf,
-# so this script holds no counters: on a quiet node running == solo-expected (77.8% on
-# Neoverse V2) and outside ~ 0; a higher outside share is another PMU user (nvidia-powerd,
-# a profiler). FAILs when the daemon has no Phase 1b keys.
+# so this script holds no counters: a quiet Neoverse V2 node reads running ~75% against
+# solo-expected 77.8%, outside ~3% (kernel counter rotation; measured 75.3 / 3.2 on Vista,
+# 2026-11-14); a clearly higher outside share is another PMU user (nvidia-powerd: 73.6% on
+# Horizon GB200, a profiler). FAILs when the daemon has no Phase 1b keys.
 #
 # Usage:
 #   ./scripts/canary_counter_check.sh [--precisions "dp sp hp idle"] [--window S] [--warm S]

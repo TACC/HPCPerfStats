@@ -1193,6 +1193,40 @@ class Round2ShmChecksTests(unittest.TestCase):
         missing = self._live({}, "NOW - h\n")
         self.assertTrue(any("host_power_socket missing from schema" in w for w in missing))
 
+    def test_live_power_value_mismatch_is_warning_even_strict(self) -> None:
+        """c122-018 2026-11-14: a host_power_socket sample (up to sample_freq_slow old) vs
+        the live meter read while the validator itself runs (ondemand governor wakes the
+        socket: emitted 10 W, live 36 W) must not fail strict runs; structural problems
+        (a value with no live meter) still do."""
+        import time as _time
+
+        from lib import live_spot_check as lsc
+
+        schema = {"host_power_socket": PSOCK_KEYS}
+        watts = {("0", "cpu_power_w"): 44.0, ("0", "socket_power_w"): 88.0,
+                 ("0", "sysio_power_w"): 6.0}
+
+        def strict_run(body):
+            body = body.replace("NOW", f"{_time.time():.1f}")
+            with patch.object(lsc, "probe_power_socket_devices", return_value=["0"]), \
+                    patch.object(lsc, "probe_power_socket_watts", return_value=watts), \
+                    patch.object(lsc, "probe_nvidia_gpu_devices", return_value=[]), \
+                    patch.object(lsc, "probe_nvidia_smi_mem_total_mib", return_value={}), \
+                    patch.object(lsc, "probe_cpu_devices", return_value=[]), \
+                    patch.object(lsc, "probe_loadavg_scaled", return_value={}), \
+                    patch.object(lsc, "probe_host_fqdn", return_value=""):
+                return lsc.run_live_spot_checks(
+                    _round2_manifest(schema), schema, full_body=body, max_age_sec=300,
+                    strict=True)
+
+        _, warnings, errors = strict_run("NOW - h\nhost_power_socket 0 @full 10 55 6 0\n")
+        self.assertEqual(errors, [])
+        self.assertTrue(any("cpu_power_w: emitted=10 W live=44.0 W" in w for w in warnings),
+                        warnings)
+        _, _, errors = strict_run("NOW - h\nhost_power_socket 0 @full 44 88 6 40\n")
+        self.assertTrue(any("module_power_w=40 W but no live meter" in e for e in errors),
+                        errors)
+
     def test_live_required_types_skip_per_job_full_payload(self) -> None:
         """Shared node with jobs: `full` holds a jid payload, node-wide rows live in `-`."""
         self.assertEqual(self._live({}, "NOW job42 h\n", gpus=("0",)), [])

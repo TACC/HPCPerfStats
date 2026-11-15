@@ -136,8 +136,11 @@ def run_live_spot_checks(
                     if emitted:
                         warn(f"host_power_socket/{row.dev} {key}={emitted} W but no live meter")
                     continue
+                # Gauge vs a sample up to sample_freq_slow old: socket power moves within
+                # seconds (ondemand governor, the validator's own load), so never strict.
                 if emitted is not None and abs(emitted - live) > max(15.0, 0.25 * live):
-                    warn(f"host_power_socket/{row.dev} {key}: emitted={emitted} W live={live:.1f} W")
+                    warnings.append(f"WARN live_spot host_power_socket/{row.dev} {key}: "
+                                    f"emitted={emitted} W live={live:.1f} W")
 
     if "nvidia_gpu" in full_rows:
         smi = probe_nvidia_smi_mem_total_mib()
