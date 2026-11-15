@@ -36,6 +36,7 @@ Kept for a new site or a repair only; nothing here needs to run on the current f
 | Document | Status | Retired scripts |
 |----------|--------|-----------------|
 | [**OPERATOR_HOST_DATA_DEV_UNIQUENESS.md**](docs/OPERATOR_HOST_DATA_DEV_UNIQUENESS.md) | **Complete fleet-wide (2026-11).** `host_data` 5-col uniqueness: Stage 1 decompress (+ 02 PK normalize), NULL `dev` backfill, Stage 2 one-shot migrate for `0032` / compress_after 8d, `0045` duplicate-index drop. | `scripts/retired/decompress_host_data_chunks.sh`, `scripts/retired/backfill_host_data_null_dev.sh` |
+| Per-core `host_data` repair (no separate doc; usage in the script header) | **Complete (2026-11).** Sums per-core non-GPU rows written between regression `ce8f834f` and fix `dbcabf0e` into one `dev=''` row per metric. The `manage.py collapse_percore_host_data` command stays in place for a site that ingested with the regression. | `scripts/retired/collapse_percore_parallel.sh` |
 
 **REST API note:** `GET /api/jobs/{jid}/{type_name}/` (type detail) returns a Bokeh **`tplot_item`** (`json_item` payload) plus `stats_data` / `schema`. Legacy **`tscript`** / **`tdiv`** fields were removed; clients should embed only `tplot_item` via Bokeh `embed_item`.
 

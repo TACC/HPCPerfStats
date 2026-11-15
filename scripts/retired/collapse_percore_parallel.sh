@@ -1,4 +1,7 @@
 #!/bin/bash
+# RETIRED (2026-11): the per-core host_data repair (regression ce8f834f,
+# fixed dbcabf0e) is complete. Kept only to repair a site that ingested with
+# the regression; uses manage.py collapse_percore_host_data.
 # Parallel repair of per-core host_data rows (collapse_percore_host_data --apply, sharded by host).
 #   collapse_percore_parallel.sh auto [SINCE_DAY]     stop any run, survey, repair every day with per-core rows,
 #                                                     retry days the merge holds; stays open, status every 5 min
@@ -44,7 +47,7 @@ current() { readlink -f "$RUN/current" 2>/dev/null; }
 CMD_REL=site/lib/machine/management/commands/collapse_percore_host_data.py
 sync_command() {
   local src
-  src="$(dirname "$SELF")/../hpcperfstats/$CMD_REL"
+  src="$(dirname "$SELF")/../../hpcperfstats/$CMD_REL"
   local dst="${MANAGE%/site/manage.py}/$CMD_REL"
   [ -f "$src" ] || { echo "no repair command at $src" >&2; return 1; }
   podman cp "$src" "$PIPE:$dst" || return 1

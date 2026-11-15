@@ -9,6 +9,11 @@ only then deletes the per-core rows that now have a ``dev=''`` row. A key that
 already has a ``dev=''`` row keeps it; only its per-core copies are deleted.
 Dry run by default.
 
+Retired (2026-11): the fleet repair is complete. The command stays here
+(Django discovers commands only under ``management/commands``) for a site
+that ingested with the regression; its driver is
+``scripts/retired/collapse_percore_parallel.sh``.
+
 Attributes:
   _PERCORE_WHERE: SQL predicate selecting per-core rows (hardware dev, type
     not in the keep-``dev`` set of GPUs and ``host_power_socket``).

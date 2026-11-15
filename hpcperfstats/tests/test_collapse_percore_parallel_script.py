@@ -1,4 +1,4 @@
-"""scripts/collapse_percore_parallel.sh against a fake podman (no DB)."""
+"""scripts/retired/collapse_percore_parallel.sh against a fake podman (no DB)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / "scripts" / "collapse_percore_parallel.sh"
+SCRIPT = REPO_ROOT / "scripts" / "retired" / "collapse_percore_parallel.sh"
 
 # Stands in for `podman exec` into the db and pipeline containers. In the db
 # container the command runs as given (the script's sh -c wrapper included),
@@ -141,6 +141,11 @@ def test_script_is_executable_and_parses():
   assert SCRIPT.stat().st_mode & 0o111
   done = subprocess.run(["bash", "-n", str(SCRIPT)], capture_output=True)
   assert done.returncode == 0, done.stderr
+
+
+def test_script_is_retired_and_old_path_is_gone():
+  """Repair complete (2026-11): the driver lives only in scripts/retired/."""
+  assert not (REPO_ROOT / "scripts" / "collapse_percore_parallel.sh").exists()
 
 
 def test_start_runs_every_shard_once_with_a_day_and_its_hosts(env):
