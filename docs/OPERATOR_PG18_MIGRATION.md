@@ -106,7 +106,7 @@ The copy runs detached in a one-shot `web` container using the checkout's script
 ### web — start the copy (paste output)
 
 ```bash
-podman rm -f hpcperfstats_pg18_copy 2>/dev/null; podman-compose -p hpcperfstats --profile pg18-migrate run -d --no-deps --name hpcperfstats_pg18_copy -e PGPASSWORD=hpcperfstats -v "$PWD/scripts:/migrate:ro" --entrypoint /usr/local/bin/python3 web -u /migrate/pg18_host_data_chunk_copy.py --source-host db --target-host db18 --watermark-days -7 --changed-only --state-file /hpcperfstats/pg18_migrate/state.json --workers 4
+podman rm -f hpcperfstats_pg18_copy 2>/dev/null; podman-compose -p hpcperfstats --profile pg18-migrate run -d --no-deps --name hpcperfstats_pg18_copy -e PGPASSWORD=hpcperfstats -v "$PWD/scripts:/migrate:ro" --entrypoint /usr/local/bin/python3 web -u /migrate/pg18_host_data_chunk_copy.py --source-host db --target-host db18 --watermark-days -7 --changed-only --state-file /hpcperfstats/pg18_migrate/state.json --workers 4 && podman update --restart=no hpcperfstats_pg18_copy
 ```
 
 ### host — watch progress (Ctrl-C stops watching, not the copy)
@@ -119,6 +119,8 @@ podman logs -f hpcperfstats_pg18_copy 2>&1 | grep --line-buffered -E ' rows=|ERR
 
 Drop the `grep` to also see each chunk as it starts (`INFO copy chunk`).
 
+One-shot `run -d` containers inherit `restart: always` from `web`: without `podman update --restart=no` a finished copy (even `exit 0`) starts another full pass, and a failing C2 retries in a loop. Every detached start below turns it off; a copy started from an older block can be fixed in place with `podman update --restart=no hpcperfstats_pg18_copy`, and must be removed (`podman rm -f hpcperfstats_pg18_copy`) before C2.
+
 **Done when** `status=exited exit=0` and the `INFO done` line shows `failed=0`. On `exit=1`, read the `ERROR chunk failed` lines and rerun the start block; failed chunks are retried and verified chunks are skipped. Rerun the start block a few times as convenient: each pass only touches chunks written since the last.
 
 **Syncing newer days later.** Rerun the same start block any time, even days or weeks after the bulk copy finished. New PG15 day chunks aren't in the state file, so they get copied. Verified chunks whose PG15 change signature hasn't moved are skipped without a query. Older days that picked up late rows are resynced slice by slice, and days that have aged past 8 days are compressed. If C2 already restored the indexes and many large days have piled up, drop them again first (`--drop-target-indexes` keeps the saved definitions), rerun, then repeat C2. The freeze pass refuses to start until the indexes are back.
@@ -130,7 +132,7 @@ Drop the `grep` to also see each chunk as it starts (`INFO copy chunk`).
 Run after the bulk copy has exited cleanly and **before** D1; the copy must not be running (the rebuild locks `host_data`). The five non-unique indexes are built one chunk per transaction. TimescaleDB refuses that for UNIQUE, so the unique index is one transaction. `--maintenance-work-mem 2GB` bounds memory per build (16 GB × 8 workers OOM-killed Postgres on hpcperfstats03, 2026-11-08).
 
 ```bash
-podman rm -f hpcperfstats_pg18_indexes 2>/dev/null; podman-compose -p hpcperfstats --profile pg18-migrate run -d --no-deps --name hpcperfstats_pg18_indexes -e PGPASSWORD=hpcperfstats -v "$PWD/scripts:/migrate:ro" --entrypoint /usr/local/bin/python3 web -u /migrate/pg18_host_data_chunk_copy.py --target-host db18 --state-file /hpcperfstats/pg18_migrate/state.json --restore-target-indexes --maintenance-work-mem 2GB && podman logs -f hpcperfstats_pg18_indexes
+podman rm -f hpcperfstats_pg18_indexes 2>/dev/null; podman-compose -p hpcperfstats --profile pg18-migrate run -d --no-deps --name hpcperfstats_pg18_indexes -e PGPASSWORD=hpcperfstats -v "$PWD/scripts:/migrate:ro" --entrypoint /usr/local/bin/python3 web -u /migrate/pg18_host_data_chunk_copy.py --target-host db18 --state-file /hpcperfstats/pg18_migrate/state.json --restore-target-indexes --maintenance-work-mem 2GB && podman update --restart=no hpcperfstats_pg18_indexes && podman logs -f hpcperfstats_pg18_indexes
 ```
 
 **Fail closed:** the log ends with `target indexes created=…`, and `podman inspect hpcperfstats_pg18_indexes --format '{{.State.ExitCode}}'` prints `0`. A rerun only creates indexes that are still missing. `RuntimeError: invalid host_data index after restore` means a build was interrupted: rerun this block.

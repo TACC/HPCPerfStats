@@ -189,3 +189,15 @@ def test_cutover_gated_on_restored_unique_index() -> None:
   assert text.index("### C2") < text.index("### D1")
   d3 = text.split("### D3", 1)[1].split("### D4", 1)[0]
   assert "refusing" in d3 and "--verify" in d3
+
+
+def test_runbook_detached_runs_disable_inherited_restart() -> None:
+  """Side-agent catch (2026-11-15): one-shot `run -d` containers inherit
+  web's restart: always, so a finished copy restarted another full pass and
+  a failing C2 looped on hpcperfstats02. Every detached start must turn it off."""
+  text = RUNBOOK.read_text()
+  starts = re.findall(r"run -d [^\n]*?--name (\S+)[^\n]*", text)
+  assert starts, "no detached runs found"
+  for line in re.findall(r"[^\n]*run -d [^\n]*--name \S+[^\n]*", text):
+    name = re.search(r"--name (\S+)", line).group(1)
+    assert f"podman update --restart=no {name}" in line, name
