@@ -4446,11 +4446,27 @@ def test_skip_fp_refresh_admits_mismatched_head(monkeypatch, tmp_path):
 def test_fill_block_persists_until_store_hlen_recovers():
   """RC9: clear fill_block only when store HLEN reaches pool-1, not on submit."""
   src = inspect.getsource(qo._ingest_coordinator_loop)
-  assert "store_hlen_after >= ingest_pool_size - 1" in src
+  assert "zcard == 0 or store_hlen_after >= ingest_pool_size - 1" in src
   assert "set_fill_block(None)" in src
   assert "store_hlen=" in src
   assert "hot_used=" in src
   assert "catch_used=" in src
+
+
+def test_census_fill_tokens_clear_when_ingest_queue_is_empty():
+  """Stale census tokens clear once nothing is queued (2026-11-15).
+
+  hpcperfstats census showed ``ingest=60/0 ... fill_block=claim_none``: the
+  token is only refreshed while ingest is queued, so it kept the reason from
+  the tick that drained the queue. ``ingest_mem_blocked`` had the same shape
+  while the queue is empty or the pool is full (fill never runs to clear it).
+  """
+  src = inspect.getsource(qo._ingest_coordinator_loop)
+  assert "zcard == 0 or store_hlen_after >= ingest_pool_size - 1" in src
+  assert "zcard == 0 or len(ingest_inflight) >= ingest_pool_size" in src
+  clear_at = src.find('_INGEST_MEM_BLOCK_STATE["blocked"] = False')
+  assert clear_at > src.find("store_hlen_after = _store_ingest_hlen(client)")
+  assert "elif zcard > 0 and len(ingest_inflight)" not in src
 
 
 def test_ingest_coordinator_uses_runtime_steal_on_fill_empty():

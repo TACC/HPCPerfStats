@@ -7668,9 +7668,12 @@ def _ingest_coordinator_loop(
         )
         store_hlen_after = _store_ingest_hlen(client)
         hot_used, catch_used = _count_ingest_band_inflight(ingest_leases)
-        if store_hlen_after >= ingest_pool_size - 1:
+        # Nothing queued or no free slot: no fill can be memory-blocked.
+        if zcard == 0 or len(ingest_inflight) >= ingest_pool_size:
+          _INGEST_MEM_BLOCK_STATE["blocked"] = False
+        if zcard == 0 or store_hlen_after >= ingest_pool_size - 1:
           progress.get_progress_state().set_fill_block(None)
-        elif zcard > 0 and len(ingest_inflight) < ingest_pool_size:
+        elif len(ingest_inflight) < ingest_pool_size:
           fill_block = _dominant_ingest_fill_block(fill_stats)
           if fill_block:
             progress.get_progress_state().set_fill_block(fill_block)
