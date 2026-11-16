@@ -39,7 +39,7 @@ from typing import Any
 import hpcperfstats.dbload.lib.conf_parser as cfg
 from hpcperfstats.dbload.lib.print_utils import log_print
 
-# Module constants (not INI) — connection / idle hygiene.
+# Module constants (not INI) for connection / idle hygiene.
 _QUEUE_GET_TIMEOUT_S = 30.0
 _MIN_QUEUED_PAYLOAD_BYTES = 256
 _SHUTDOWN_JOIN_TIMEOUT_S = 15.0
@@ -967,8 +967,8 @@ def _worker_main(
     True
   """
   del per_worker_budget  # tracked on put; kept for future diagnostics
-  # Cap BLAS/OpenMP before any numpy/pandas import (32 threads × default
-  # OpenBLAS threads exhausts pthread resources → EAGAIN).
+  # Cap BLAS/OpenMP before any numpy/pandas import (32 threads x default
+  # OpenBLAS threads exhausts pthread resources: EAGAIN).
   from hpcperfstats.dbload.lib.blas_thread_env import (
     configure_blas_thread_env,
   )
@@ -1192,7 +1192,7 @@ def _worker_main(
       )
       message = None  # drop payload ref after parse
       if getattr(stats_df, "empty", True) and getattr(proc_df, "empty", True):
-        # Covered schema but unusable / incomplete → treat as schema_miss class skip.
+        # Covered schema but unusable / incomplete: count as a schema_miss skip.
         _inc_counter(counters, "schema_miss")
         continue
       if not getattr(stats_df, "empty", True):

@@ -356,23 +356,6 @@ def persist_monitor_marks(marks: list[dict[str, Any]]) -> None:
     log.warning("monitor mark side ingest skipped", exc_info=True)
 
 
-def persist_marks_from_lines(lines: Any) -> None:
-  """
-  Collect marks from stats text and write side tables.
-
-  Args:
-    lines (Any): Payload string or line iterable.
-
-  Returns:
-    None
-
-  Examples:
-    >>> persist_marks_from_lines("") is None
-    True
-  """
-  persist_monitor_marks(collect_marks(lines))
-
-
 def flush_parser_side_marks(parser: Any) -> None:
   """
   Write marks the parser has already bound to a sample header.
