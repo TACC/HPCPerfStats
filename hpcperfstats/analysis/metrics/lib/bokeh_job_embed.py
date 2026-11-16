@@ -15,11 +15,8 @@ from typing import Any
 
 def figure_embed_kw(height: Any, **kwargs: Any) -> Any:
   """
-  Merge sizing_mode/height with caller figure() kwargs (caller wins on.
-
-    duplicate.
-
-    keys).
+  Merge sizing_mode/height with caller figure() kwargs (caller wins on
+  duplicate keys).
 
   Args:
     height (Any): Height passed to this helper.

@@ -107,9 +107,8 @@ _BYTES_TO_GB = 1 / (1024**3)
 
 def _cpu_peak_memory_bw_gb_from_host_data(jt: Any) -> float | None:
   """
-  DDR + HBM peak bytes/s from host_roofline_peak (HBM omitted when absent or.
-
-    zero).
+  DDR + HBM peak GiB/s from host_roofline_peak (HBM omitted when absent or
+  zero).
 
   Args:
     jt (Any): Jt passed to this helper.
@@ -203,10 +202,10 @@ def infer_gpu_roofline_peak_flops_and_bw_gbps(
 
   peak_flops_gf = _max_converted_sum_val(jt, "gpu_peak_fp64_flops_per_s", 1e-9)
   mem_bw = _max_converted_sum_val(
-    jt, "gpu_peak_mem_bw_bytes_per_s", 1 / (1024**3)
+    jt, "gpu_peak_mem_bw_bytes_per_s", _BYTES_TO_GB
   )
   io_bw = _max_converted_sum_val(
-    jt, "gpu_peak_io_link_bw_bytes_per_s", 1 / (1024**3)
+    jt, "gpu_peak_io_link_bw_bytes_per_s", _BYTES_TO_GB
   )
   if bw_axis == "memory_bw":
     peak_bw_gb = mem_bw if mem_bw is not None else io_bw

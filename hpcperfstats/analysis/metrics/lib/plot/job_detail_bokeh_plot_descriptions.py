@@ -85,7 +85,7 @@ JOB_DETAIL_BOKEH_HELP: dict[str, HelpPair] = {
 
 def description_for_job_detail_bokeh_plot(plot_key: str) -> str:
   """
-  Return primary help text for ``plot_key`` or a short fallback.
+  Return primary help text for ``plot_key``, or "" when the key is unknown.
 
   Args:
     plot_key (str): String for plot key.

@@ -8,8 +8,8 @@ curve and scatter of (AI, perf) points. The sample selection lives in
 unchanged); this module owns the Bokeh figure.
 
 AMD path requires amd64_df MBW channels (monitor enables these on AMD family
-17h/19h only). Intel memory side tries IMC types in INTEL_IMC_STATS_TYPES (SNB
-through SKX). Intel FLOPS use FP_ARITH when present, else SNB/IVB-style SSE/AVX
+17h/19h only). Intel memory side tries IMC types in ``imc_types_probe_order()``
+(canonical, then legacy aliases). Intel FLOPS use FP_ARITH when present, else SNB/IVB-style SSE/AVX
 double counter proxies.
 
 Attributes:
@@ -19,9 +19,6 @@ Attributes:
   GPU_ROOFLINE_BW_AXIS_LINK: GPU bandwidth axis tag (PCIe / NVLink).
   GPU_ROOFLINE_TITLE_MEMORY: GPU figure title for the HBM axis.
   GPU_ROOFLINE_TITLE_LINK: GPU figure title for the link axis.
-  _GPU_BYTES_TO_GIB: GiB/s conversion.
-  _NVIDIA_GPU_LINK_DIRECTIONAL_EVENTS: NVIDIA directional link byte arcs.
-  _INTEL_GPU_LINK_EVENTS: Intel PCIe + Xe Link byte arcs.
   ROOFLINE_NOMINAL_PEAKS_INVALID_REASON: Unavailable reason for bad peaks.
 """
 
@@ -69,26 +66,6 @@ GPU_ROOFLINE_TITLE_MEMORY = "GPU Roofline (Memory BW)"
 GPU_ROOFLINE_TITLE_LINK = "GPU Roofline (PCIe/NvLink)"
 
 
-# Match link-arc and host_roofline_peak conversions (GiB/s, not decimal GB/s).
-_GPU_BYTES_TO_GIB = 1 / (1024**3)
-
-
-_NVIDIA_GPU_LINK_DIRECTIONAL_EVENTS = (
-  "gpu_pcie_tx_bytes",
-  "gpu_pcie_rx_bytes",
-  "gpu_nvlink_tx_bytes",
-  "gpu_nvlink_rx_bytes",
-)
-
-
-_INTEL_GPU_LINK_EVENTS = (
-  "gpu_pcie_tx_bytes",
-  "gpu_pcie_rx_bytes",
-  "gpu_xe_link_tx_bytes",
-  "gpu_xe_link_rx_bytes",
-)
-
-
 ROOFLINE_NOMINAL_PEAKS_INVALID_REASON = (
   "Roofline nominal peaks (GFLOP/s or GB/s) are non-finite or non-positive; "
   "cannot render log-scaled roofline."
@@ -97,9 +74,8 @@ ROOFLINE_NOMINAL_PEAKS_INVALID_REASON = (
 
 def _nominal_roofline_peaks_valid(peak_flops_gf: Any, peak_bw_gb: Any) -> Any:
   """
-  True when nominal peaks are finite and strictly positive (ridge AI is log-.
-
-    scaled).
+  True when nominal peaks are finite and strictly positive (ridge AI is
+  log-scaled).
 
   Args:
     peak_flops_gf (Any): Peak flops gf passed to this helper.

@@ -1,9 +1,9 @@
 """
 Shared Bokeh help marker (blue ``?`` + HTML hover) for Job Detail figures.
 
-Uses a **screen-space** Label for the glyph so it does not compete with data
-coordinates, and an invisible **rect** hit target sized in **screen pixels**
-with its center placed just inside the data-area corner (linear or log ranges).
+The glyph is a data-space Label and the hover target an invisible rect sized
+in screen pixels, both centered just inside the top-right data-area corner
+(linear or log ranges).
 """
 
 from __future__ import annotations
@@ -115,9 +115,7 @@ def add_job_detail_bokeh_help_marker(
   is_shared_node: bool = False,
 ) -> None:
   """
-  Add a top-right ``?`` with HTML hover; safe to call with empty.
-
-    ``description``.
+  Add a top-right ``?`` with HTML hover; no-op for an empty ``description``.
 
   Args:
     plot (Any): Plot passed to this helper.

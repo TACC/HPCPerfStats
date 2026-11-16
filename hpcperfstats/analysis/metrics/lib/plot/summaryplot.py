@@ -81,13 +81,10 @@ from hpcperfstats.dbload.lib.monitor_naming.canonical import (
 from hpcperfstats.dbload.lib.monitor_naming.resolve import (
   aperf_event_names,
   core_pmc_types_probe_order,
-  dram_cas_read_write_pairs,
   events_probe_names,
   grace_fp_scalar_double_event_names,
   grace_fp_scalar_single_event_names,
-  hbm_cas_read_write_pairs,
   host_cpu_hw_type_names,
-  imc_types_probe_order,
   instr_retired_event_names,
   mperf_event_names,
   pkg_energy_event_names,
@@ -162,9 +159,8 @@ _CHA_ARC_EVENTS = (
 
 def _summary_type_events_feasible(schema: Any, typ: Any, events: Any) -> Any:
   """
-  Return False when schema is known and no requested event exists for typ (skip.
-
-    ORM work).
+  Return False when schema is known and no requested event exists for typ
+  (skip the aggregate work).
 
   Args:
     schema (Any): Schema passed to this helper.
@@ -532,8 +528,8 @@ _SUMMARY_SINGLE_SPECS = [
 ]
 
 
-# Metrics that may be sampled on a sparse (host, time) grid vs the union grid from
-# get_host_time_df(); do not drop the column when a left-merge leaves NaN gaps.
+# Metrics that may be sampled on a sparser (host, time) grid than the series
+# base; keep the column even when it has NaN gaps.
 _SUMMARY_ALLOW_PARTIAL_NULL = frozenset(
   {
     "mem",
@@ -638,77 +634,13 @@ _SUMMARY_FIRST_WIN_SPECS = (
 )
 
 
-def _summary_intel_imc_bw_tries() -> Any:
-  """
-  Diagnostic tries: dram CAS pairs then hbm CAS pairs per IMC type.
-
-  Returns:
-    Any: Open return polymorphism from ``_summary_intel_imc_bw_tries``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-
-  Examples:
-    >>> _summary_intel_imc_bw_tries()  # doctest: +SKIP
-  """
-  tries = []
-  for imc_typ in imc_types_probe_order():
-    for read_ev, write_ev in dram_cas_read_write_pairs():
-      tries.append((imc_typ, [read_ev, write_ev], _CAS_BW_CONV))
-    for read_ev, write_ev in hbm_cas_read_write_pairs():
-      tries.append((imc_typ, [read_ev, write_ev], _CAS_BW_CONV))
-  return tries
-
-
 # Keep in sync with ``metrics._MAX_SANE_GPU_LINK_GBPS`` (avoid circular import).
 _MAX_SANE_GPU_LINK_GBPS = 1.0e5
 
 
-def iter_summary_aggregate_attempts() -> Iterator[Any]:
-  """
-  Flat (typ, val_col, events, name, conv, label) for diagnostics.
-
-  Yields:
-    Iterator[Any]: Open return polymorphism from
-    ``iter_summary_aggregate_attempts``: concrete type depends on inputs and
-    branch (mapping, scalar, handle, or ``None``-like empty).
-
-  Examples:
-    >>> iter_summary_aggregate_attempts()  # doctest: +SKIP
-  """
-  for typ, val, events, name, conv, label in _SUMMARY_SINGLE_SPECS:
-    if name == "nv_gpu_util":
-      yield "nvidia_gpu", "value", ["gpu_util"], name, conv, label
-      yield "nvidia_gpu", "value", ["utilization"], name, conv, label
-      continue
-    yield typ, val, events, name, conv, label
-  yield (
-    "host_mem_job",
-    "value",
-    ["mem_used"],
-    "mem",
-    1 / (1024 * 1024),
-    "CPU mem [GB]",
-  )
-  yield (
-    "host_mem",
-    "value",
-    ["mem_used"],
-    "mem",
-    1 / (1024 * 1024),
-    "CPU mem [GB]",
-  )
-  for fw in _SUMMARY_FIRST_WIN_SPECS:
-    for typ, events, conv in fw["tries"]:
-      yield typ, fw["val_col"], events, fw["name"], conv, fw["label"]
-  for imc_typ, events, conv in _summary_intel_imc_bw_tries():
-    yield imc_typ, "arc", events, "mbw", conv, "CPU DRAMBW[GB/s]"
-
-
 def _summary_metric_specs() -> Any:
   """
-  Ordered (typ, val, events, name, conv, label) for plot() second pass (plot.
-
-    columns only).
+  Ordered (typ, val, events, name, conv, label) for the plotted columns.
 
   Returns:
     Any: Open return polymorphism from ``_summary_metric_specs``: concrete
@@ -752,7 +684,8 @@ def _summary_plot_order_key(metric_name: Any) -> Any:
   7) GPU other (power, PCIe/NVLink)
   8) Lustre client (llite): read / write / metadata IOPS
   9) NFS client: read / write / IOPS
-  10) Network: InfiniBand/OPA bytes, fabric/compute ratios, OPA quality counters
+  10) BeeGFS client: read / write / IOPS
+  11) Network: InfiniBand bytes, OPA quality counters
 
   Args:
     metric_name (Any): Metric name passed to this helper.
@@ -764,14 +697,11 @@ def _summary_plot_order_key(metric_name: Any) -> Any:
     >>> _summary_plot_order_key(None)  # doctest: +SKIP
   """
   priority = {
-    # --- 1) CPU usage ---
     "cpu": 100,
-    # --- 2) CPU memory ---
     "mem": 200,
     "numa_remote_refs": 210,
     "mbw": 220,
     "amd_mbw": 230,
-    # --- 3) CPU flops / cycles / power / uncore ---
     "amd_flops": 300,
     "flops64b": 310,
     "flops32b": 320,
@@ -784,12 +714,9 @@ def _summary_plot_order_key(metric_name: Any) -> Any:
     "freq": 370,
     "watts": 380,
     "cha_counter_arc_sum": 390,
-    # --- 4) GPU usage ---
     "nv_gpu_util": 500,
-    # --- 5) GPU memory ---
     "nv_mem_used_mb": 510,
     "nv_mem_util_pct": 520,
-    # --- 6) GPU FLOPS / tensors ---
     "nv_tensor_imma_active": 600,
     "nv_tensor_hmma_active": 605,
     "nv_tensor_dfma_active": 610,
@@ -798,23 +725,18 @@ def _summary_plot_order_key(metric_name: Any) -> Any:
     "nv_fp16_active": 620,
     "nv_fp32_active": 630,
     "nv_gpu_mem_bw_gbs": 640,
-    # --- 7) GPU other ---
     "nv_power_w": 700,
     "node_power_est_w": 710,
     "nv_gpu_link_gbs": 720,
-    # --- 8) Lustre (llite) ---
     "lustre_read_mb_s": 800,
     "lustre_write_mb_s": 803,
     "liops": 806,
-    # --- 9) NFS ---
     "nfs_read_mb_s": 810,
     "nfs_write_mb_s": 813,
     "nfs_iops": 816,
-    # --- 10) BeeGFS ---
     "beegfs_read_mb_s": 820,
     "beegfs_write_mb_s": 823,
     "beegfs_iops": 826,
-    # --- 11) Network ---
     "ibbw": 900,
     "opa_wait_cong": 930,
     "opa_ecn": 940,
@@ -933,9 +855,7 @@ def _error_series_frame(
     [0.0]
   """
   frame = SeriesFrame.from_base(host_id, time_us, hosts)
-  order = np.lexsort((frame.time_us, frame.host_id))  # from_base reorders rows
-  del order
-  # Re-align the rates with the sorted base.
+  # from_base reorders rows; re-align the rates with the sorted base.
   key_in = list(
     zip(np.asarray(host_id).tolist(), np.asarray(time_us).tolist(), strict=True)
   )
@@ -961,7 +881,7 @@ def plot_hardware_error_rate_figures(
   Build one per-host Summary subplot per non-zero hardware-error counter.
 
   Each figure uses ``SummaryPlot.plot_metric`` (host multi_line + scatter hover +
-  screen-space ``?`` help). Counters absent from schema, empty, or all-zero are
+  ``?`` help marker). Counters absent from schema, empty, or all-zero are
   skipped. Returns an empty list when no error panels qualify.
 
   Args:

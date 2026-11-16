@@ -7,8 +7,8 @@ Keep ``SUMMARY_METRIC_DESCRIPTIONS`` aligned with ``description`` strings in
 prose).
 
 Keep ``SUMMARY_METRIC_RESEARCHER_USE`` aligned with ``researcherUse`` in the
-same JS object (HPC / AI / diagnostic reasoning from ``docs/using-the-website-
-as-a- researcher.md``).
+same JS object (HPC / AI / diagnostic reasoning from
+``docs/using-the-website-as-a-researcher.md``).
 
 Attributes:
   SUMMARY_METRIC_DESCRIPTIONS: Attribute.
@@ -326,9 +326,7 @@ def description_for_summary_metric(metric: str) -> str:
 
 def researcher_use_for_summary_metric(metric: str) -> str | None:
   """
-  Optional researcher-facing guidance (same keys as.
-
-    ``SUMMARY_METRIC_RESEARCHER_USE``).
+  Return researcher-facing guidance from ``SUMMARY_METRIC_RESEARCHER_USE``.
 
   Args:
     metric (str): String for metric.
