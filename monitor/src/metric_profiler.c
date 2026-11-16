@@ -1,4 +1,4 @@
-/* metric_profiler.c — aggregate collect timing and top metrics (debug builds). */
+/* metric_profiler.c - aggregate collect timing and top metrics (--enable-metric-profiler). */
 #include "metric_profiler.h"
 
 #ifdef MONITOR_METRIC_PROFILER
@@ -216,8 +216,7 @@ void metric_profiler_record_metric(const char *type_name, const char *dev, const
                                    unsigned long long wall_ns, unsigned long long cpu_ns)
 {
   struct metric_entry *entry;
-  unsigned long long wait_ns;
-  wait_ns = clamp_wait(wall_ns, cpu_ns);
+  unsigned long long wait_ns = clamp_wait(wall_ns, cpu_ns);
 
   entry = find_or_add_metric(type_name, dev, key);
   if (entry == NULL)
