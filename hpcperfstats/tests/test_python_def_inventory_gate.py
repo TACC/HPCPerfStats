@@ -119,6 +119,17 @@ def test_codon_compile_unit_path_excluded(inv):
   assert bridge is None
 
 
+def test_iter_python_files_skips_setuptools_build_copies(inv, tmp_path: Path):
+  """Gitignored ``build/`` package copies must not double the inventory."""
+  (tmp_path / "pkg").mkdir()
+  (tmp_path / "pkg" / "mod.py").write_text("x = 1\n")
+  for copy in ("build/lib/pkg", "tools/build/lib/pkg"):
+    (tmp_path / copy).mkdir(parents=True)
+    (tmp_path / copy / "mod.py").write_text("x = 1\n")
+  found = [p.relative_to(tmp_path) for p in inv.iter_python_files(tmp_path)]
+  assert found == [Path("pkg/mod.py")]
+
+
 def test_checker_fails_on_missing_args_or_hints(inv, tmp_path: Path):
   """Deliberately incomplete def fails signature and docstring checks."""
   pkg = tmp_path / "hpcperfstats" / "lib"

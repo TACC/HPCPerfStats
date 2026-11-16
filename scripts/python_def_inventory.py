@@ -34,6 +34,7 @@ SKIP_DIR_NAMES = frozenset(
     ".git",
     ".venv",
     "__pycache__",
+    "build",
     ".pytest_cache",
     ".ruff_cache",
     "node_modules",
