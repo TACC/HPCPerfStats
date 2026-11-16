@@ -284,18 +284,12 @@ def inject_csp_meta_into_frontend_tree(frontend_root: Path) -> int:
     raw = path.read_text(encoding="utf-8")
     without_meta = CSP_META_RE.sub("", raw)
     hashes = extract_inline_csp_hashes_from_html(without_meta)
-    try:
-      rel = path.relative_to(frontend_root).as_posix()
-    except ValueError:
-      rel = path.name
-    allow_eval = (
-      rel == "machine" or rel.startswith(("machine/", "pub/")) or rel == "pub"
-    )
-    allow_bokeh_style = allow_eval
+    rel = path.relative_to(frontend_root).as_posix()
+    allow_bokeh = rel.startswith(("machine/", "pub/"))
     policy = build_csp_policy(
       **hashes,
-      allow_unsafe_eval=allow_eval,
-      allow_bokeh_style_inline=allow_bokeh_style,
+      allow_unsafe_eval=allow_bokeh,
+      allow_bokeh_style_inline=allow_bokeh,
     )
     next_html = inject_csp_meta_into_html(without_meta, policy)
     if next_html != raw:
@@ -322,8 +316,9 @@ def write_spa_csp_includes(
     FileNotFoundError: When ``machine/`` or ``pub/`` HTML trees are missing/empty.
 
   Examples:
-    >>> True
-    True
+    >>> write_spa_csp_includes(  # doctest: +SKIP
+    ...   Path("/home/hpcperfstats/staticfiles/frontend"), Path("/etc/nginx")
+    ... )
   """
   machine_dir = frontend_root / "machine"
   pub_dir = frontend_root / "pub"

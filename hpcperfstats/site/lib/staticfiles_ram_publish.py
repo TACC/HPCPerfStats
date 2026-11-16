@@ -106,9 +106,7 @@ def _ignore_staging_names(
     ['.publish-1', '.bak-1']
   """
   del directory
-  return [
-    name for name in names if name.startswith((_STAGING_PREFIX, _BACKUP_PREFIX))
-  ]
+  return [name for name in names if _is_reserved_dest_name(name)]
 
 
 def _is_reserved_dest_name(name: str) -> bool:

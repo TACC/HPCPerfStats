@@ -11,8 +11,9 @@ Volumes can also retain an older Next export whose shells exist but whose
 from-scratch Docker rebuild. Compare sha256 fingerprints and replace on drift.
 
 Attributes:
-  REQUIRED_SPA_SHELLS: Attribute.
-  _MACHINE_SHELL: Attribute.
+  REQUIRED_SPA_SHELLS: Frontend-relative SPA shells that must exist after
+    collectstatic.
+  _MACHINE_SHELL: Shell whose sha256 decides package/volume drift.
 """
 
 from __future__ import annotations
@@ -88,17 +89,18 @@ def missing_required_shells(
   required: Sequence[str] = REQUIRED_SPA_SHELLS,
 ) -> list[str]:
   """
-  Missing required shells.
+  Return absolute paths of ``required`` shells absent under ``frontend_root``.
 
   Args:
-    frontend_root (str | Path): One of ``str``, ``Path``.
-    required (Sequence[str]): Sequence for required.
+    frontend_root (str | Path): SPA frontend tree to inspect.
+    required (Sequence[str]): Shell paths relative to ``frontend_root``.
 
   Returns:
-    list[str]: list[str] produced by this call.
+    list[str]: Missing shell paths, in ``required`` order.
 
   Examples:
-    >>> missing_required_shells("x", [])  # doctest: +SKIP
+    >>> missing_required_shells("/no/such/frontend", ["machine/index.html"])
+    ['/no/such/frontend/machine/index.html']
   """
   root = Path(frontend_root)
   return [str(root / rel) for rel in required if not (root / rel).is_file()]
@@ -109,17 +111,18 @@ def package_has_required_shells(
   required: Sequence[str] = REQUIRED_SPA_SHELLS,
 ) -> bool:
   """
-  Package has required shells.
+  Return True when every ``required`` shell exists under the package frontend.
 
   Args:
-    package_frontend (str | Path): One of ``str``, ``Path``.
-    required (Sequence[str]): Sequence for required.
+    package_frontend (str | Path): Image package ``static/frontend`` tree.
+    required (Sequence[str]): Shell paths relative to ``package_frontend``.
 
   Returns:
-    bool: True or False for this check.
+    bool: True when no required shell is missing.
 
   Examples:
-    >>> package_has_required_shells("x", [])  # doctest: +SKIP
+    >>> package_has_required_shells("/no/such/frontend", ["pub/index.html"])
+    False
   """
   return not missing_required_shells(package_frontend, required)
 
@@ -129,13 +132,14 @@ def spa_shell_fingerprint(frontend_root: str | Path) -> str:
   Return sha256 hex of ``machine/index.html``, or ``""`` if missing.
 
   Args:
-    frontend_root (str | Path): One of ``str``, ``Path``.
+    frontend_root (str | Path): SPA frontend tree holding the shell.
 
   Returns:
-    str: str produced by this call.
+    str: Lowercase hex digest, or ``""`` when the shell is absent.
 
   Examples:
-    >>> spa_shell_fingerprint("x")  # doctest: +SKIP
+    >>> spa_shell_fingerprint("/no/such/frontend")
+    ''
   """
   path = Path(frontend_root) / _MACHINE_SHELL
   if not path.is_file():
@@ -152,19 +156,23 @@ def resolve_package_frontend_dir(
   Locate package ``.../static/frontend`` from Django settings paths.
 
   Args:
-    staticfiles_dirs (Sequence[str | Path] | None): One of ``Sequence[str |
-    Path]``, ``None``.
-    settings_dir (str | Path | None): One of ``str``, ``Path``, ``None``.
+    staticfiles_dirs (Sequence[str | Path] | None): Django
+      ``STATICFILES_DIRS``; only the first entry is checked.
+    settings_dir (str | Path | None): Settings package directory, used as
+      ``<dir>/static/frontend`` fallback.
 
   Returns:
-    Path: Path produced by this call.
+    Path: First existing package frontend directory.
 
   Raises:
-    FileNotFoundError: Raised when ``resolve_package_frontend_dir`` hits a
-    ``FileNotFoundError`` failure path.
+    FileNotFoundError: Raised when neither candidate directory exists.
 
   Examples:
-    >>> resolve_package_frontend_dir(None, None)  # doctest: +SKIP
+    >>> try:
+    ...   resolve_package_frontend_dir(settings_dir="/no/such/site")
+    ... except FileNotFoundError:
+    ...   print("missing")
+    missing
   """
   if staticfiles_dirs:
     candidate = Path(staticfiles_dirs[0]) / "frontend"
@@ -182,16 +190,18 @@ def resolve_package_frontend_dir(
 
 def _vite_volume_markers(frontend_root: Path) -> list[str]:
   """
-  Internal helper to handle vite volume markers.
+  List leftovers showing ``frontend_root`` still holds a Vite-era export.
 
   Args:
-    frontend_root (Path): String for frontend root.
+    frontend_root (Path): ``STATIC_ROOT/frontend`` on the volume.
 
   Returns:
-    list[str]: list[str] produced by this call.
+    list[str]: ``.vite`` and/or a root ``index.html`` without a machine
+    shell.
 
   Examples:
-    >>> _vite_volume_markers("x")  # doctest: +SKIP
+    >>> _vite_volume_markers(Path("/no/such/frontend"))
+    []
   """
   markers: list[str] = []
   if (frontend_root / ".vite").exists():
@@ -210,21 +220,23 @@ def _atomic_replace_frontend(
   dest_frontend: Path,
 ) -> None:
   """
-  Internal helper to handle atomic replace frontend.
+  Replace ``dest_frontend`` with a copy of ``package_frontend``.
+
+  Copies into a sibling staging dir, swaps it in by rename, and restores
+  the previous tree if the copy or swap fails.
 
   Args:
-    package_frontend (Path): String for package frontend.
-    dest_frontend (Path): String for dest frontend.
+    package_frontend (Path): Image package ``static/frontend`` tree.
+    dest_frontend (Path): ``STATIC_ROOT/frontend`` to replace.
 
   Returns:
     None
 
   Raises:
-    Exception: Raised when ``_atomic_replace_frontend`` hits a ``Exception``
-    failure path.
+    Exception: Re-raises any copy or rename failure after rollback.
 
   Examples:
-    >>> _atomic_replace_frontend("x", "x")  # doctest: +SKIP
+    >>> _atomic_replace_frontend(pkg, dest)  # doctest: +SKIP
   """
   parent = dest_frontend.parent
   parent.mkdir(parents=True, exist_ok=True)
@@ -260,24 +272,34 @@ def _fail_missing_shells(
   err_stream: TextIO,
 ) -> None:
   """
-  Internal helper to handle fail missing shells.
+  Report shells the volume and package both lack, then exit 1.
 
   Args:
-    dest_frontend (Path): String for dest frontend.
-    package (Path): String for package.
-    missing (list[str]): Sequence for missing.
-    required (Sequence[str]): Sequence for required.
-    err_stream (TextIO): Err stream.
+    dest_frontend (Path): ``STATIC_ROOT/frontend`` on the volume.
+    package (Path): Image package ``static/frontend`` tree.
+    missing (list[str]): Shell paths missing (or drifted) on the volume.
+    required (Sequence[str]): Shell paths relative to a frontend root.
+    err_stream (TextIO): Stream receiving the diagnostics.
 
   Returns:
     None
 
   Raises:
-    SystemExit: Raised when ``_fail_missing_shells`` hits a ``SystemExit``
-    failure path.
+    SystemExit: Always raised with code 1.
 
   Examples:
-    >>> _fail_missing_shells("x", "x", [], [], None)  # doctest: +SKIP
+    >>> import io
+    >>> try:
+    ...   _fail_missing_shells(
+    ...     dest_frontend=Path("/no/vol"),
+    ...     package=Path("/no/pkg"),
+    ...     missing=["/no/vol/machine/index.html"],
+    ...     required=REQUIRED_SPA_SHELLS,
+    ...     err_stream=io.StringIO(),
+    ...   )
+    ... except SystemExit as exc:
+    ...   exc.code
+    1
   """
   print(
     "ERROR: collectstatic did not produce required SPA shell(s):",
@@ -315,25 +337,32 @@ def _heal_and_verify(
   err_stream: TextIO,
 ) -> None:
   """
-  Internal helper to handle heal and verify.
+  Replace the volume frontend from package static and re-check the shells.
 
   Args:
-    package (Path): String for package.
-    dest_frontend (Path): String for dest frontend.
-    required (Sequence[str]): Sequence for required.
-    reason (str): String for reason.
-    out_stream (TextIO): Out stream.
-    err_stream (TextIO): Err stream.
+    package (Path): Image package ``static/frontend`` tree.
+    dest_frontend (Path): ``STATIC_ROOT/frontend`` to replace.
+    required (Sequence[str]): Shell paths relative to a frontend root.
+    reason (str): Why the heal ran, echoed in the log line.
+    out_stream (TextIO): Stream receiving progress lines.
+    err_stream (TextIO): Stream receiving failure diagnostics.
 
   Returns:
     None
 
   Raises:
-    SystemExit: Raised when ``_heal_and_verify`` hits a ``SystemExit`` failure
-    path.
+    SystemExit: Raised with code 1 when shells are still missing after
+      the replace.
 
   Examples:
-    >>> _heal_and_verify("x", "x", [], "x", None, None)  # doctest: +SKIP
+    >>> _heal_and_verify(  # doctest: +SKIP
+    ...   package=pkg,
+    ...   dest_frontend=static_root / "frontend",
+    ...   required=REQUIRED_SPA_SHELLS,
+    ...   reason="stale volume",
+    ...   out_stream=sys.stdout,
+    ...   err_stream=sys.stderr,
+    ... )
   """
   print(
     f"SPA frontend auto-healed from package static ({reason}): "
@@ -371,17 +400,22 @@ def ensure_spa_shells_in_static_root(
   (or when the package frontend lacks required shells).
 
   Args:
-    static_root (str | Path): One of ``str``, ``Path``.
-    package_frontend (str | Path): One of ``str``, ``Path``.
-    required (Sequence[str]): Sequence for required.
-    err (TextIO | None): One of ``TextIO``, ``None``.
-    out (TextIO | None): One of ``TextIO``, ``None``.
+    static_root (str | Path): Django ``STATIC_ROOT``.
+    package_frontend (str | Path): Image package ``static/frontend`` tree.
+    required (Sequence[str]): Shell paths relative to a frontend root.
+    err (TextIO | None): Diagnostics stream; ``None`` means stderr.
+    out (TextIO | None): Progress stream; ``None`` means stdout.
 
   Returns:
     None
 
+  Raises:
+    SystemExit: Raised with code 1 when the shells cannot be healed.
+
   Examples:
-    >>> ensure_spa_shells_in_static_root("x", "x", [], None, None)
+    >>> ensure_spa_shells_in_static_root(  # doctest: +SKIP
+    ...   static_root=settings.STATIC_ROOT, package_frontend=pkg
+    ... )
   """
   err_stream = err if err is not None else sys.stderr
   out_stream = out if out is not None else sys.stdout
@@ -407,7 +441,7 @@ def ensure_spa_shells_in_static_root(
       _fail_missing_shells(
         dest_frontend=dest_frontend,
         package=package,
-        missing=list(missing) or [str(dest_frontend / _MACHINE_SHELL)],
+        missing=[str(dest_frontend / _MACHINE_SHELL)],
         required=required,
         err_stream=err_stream,
       )
@@ -453,8 +487,8 @@ def ensure_spa_shells_from_django_settings() -> None:
     None
 
   Raises:
-    SystemExit: Raised when ``ensure_spa_shells_from_django_settings`` hits a
-    ``SystemExit`` failure path.
+    SystemExit: Raised with code 1 when the package frontend is missing or
+      the shells cannot be healed.
 
   Examples:
     >>> ensure_spa_shells_from_django_settings()  # doctest: +SKIP
