@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import sys
 import time
 from datetime import UTC, datetime, timedelta
@@ -706,33 +707,26 @@ def _sync_acct_dataframe(df: Any, jobs_in_db: Any) -> Any:
   df = df[~df["jid"].isin(jobs_in_db)]
   df["jid"] = df["jid"].apply(str)
 
-  restricted_queue_keywords = cfg.get_restricted_queue_keywords()
+  # The ini value is a Python-list literal (``['secure', 'secret']``) or a
+  # bare/comma-separated word list; take the words, never its characters.
+  restricted_queue_keywords = re.findall(
+    r"[\w.-]+", cfg.get_restricted_queue_keywords() or ""
+  )
+  # Empty/missing Partition is pandas NaN; it cannot match a keyword.
+  restricted = (
+    df["queue"]
+    .map(
+      lambda cell: (
+        isinstance(cell, str)
+        and any(q in cell for q in restricted_queue_keywords)
+      )
+    )
+    .astype(bool)
+  )
+  restricted_job_ids = df.loc[restricted, "jid"].tolist()
+  df = df[~restricted]
 
-  df_len = len(df)
-  queue_col_index = df.columns.get_loc("queue")
-  job_id_col_index = df.columns.get_loc("jid")
-
-  restricted_job_ids = []
-
-  restricted_df_indices = []
-
-  for i in range(df_len):
-    if not restricted_queue_keywords:
-      break
-    cell = df.iloc[i, queue_col_index]
-    # Empty/missing Partition is pandas NaN; it cannot match a keyword.
-    if not isinstance(cell, str):
-      continue
-    for q in restricted_queue_keywords:
-      if q in cell and settings.DEBUG:
-        restricted_job_ids.append(df.iloc[i, job_id_col_index])
-        restricted_df_indices.append(i)
-
-  if restricted_df_indices:
-    # restricted_df_indices are positional; convert to index labels before dropping
-    df = df.drop(index=df.index[restricted_df_indices])
-
-  if len(restricted_job_ids) > 0:
+  if restricted_job_ids:
     log_print(
       "The following jobs are restricted and will be skipped: "
       + str(restricted_job_ids)

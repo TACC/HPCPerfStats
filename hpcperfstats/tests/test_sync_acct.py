@@ -103,10 +103,9 @@ def test_sync_acct_from_content_bulk_fallback(
   mock_notify.assert_called_once()
 
 
-@override_settings(DEBUG=True)
 @patch(
   "hpcperfstats.dbload.sync_acct.cfg.get_restricted_queue_keywords",
-  return_value=["secret"],
+  return_value="secret",
 )
 @patch("hpcperfstats.dbload.sync_acct._notify_job_cache_after_acct_ingest")
 @patch("hpcperfstats.dbload.sync_acct.job_data")
@@ -131,6 +130,36 @@ def test_sync_acct_filters_restricted_queue(mock_jd, _notify, _keywords):
   created = mock_jd.objects.bulk_create.call_args[0][0]
   assert len(created) == 1
   assert created[0].jid == "602"
+
+
+@pytest.mark.parametrize("debug", [False, True])
+@patch(
+  "hpcperfstats.dbload.sync_acct.cfg.get_restricted_queue_keywords",
+  return_value="['secure', 'secret']",
+)
+@patch("hpcperfstats.dbload.sync_acct._notify_job_cache_after_acct_ingest")
+@patch("hpcperfstats.dbload.sync_acct.job_data")
+def test_sync_acct_restricted_queue_ini_list_filters_regardless_of_debug(
+  mock_jd, _notify, _keywords, debug
+):
+  """The ini value (Python list syntax) filters whole keywords, DEBUG or not."""
+  from hpcperfstats.dbload.sync_acct import sync_acct_from_content
+
+  content = _sacct_content(
+    _sacct_row(jid="611", queue="secret-batch"),
+    _sacct_row(jid="612", queue="normal"),
+    _sacct_row(jid="613", queue="secure"),
+  )
+  filter_qs = MagicMock()
+  filter_qs.values_list.side_effect = [[], ["612"]]
+  mock_jd.objects.filter.return_value = filter_qs
+
+  with override_settings(DEBUG=debug):
+    inserted = sync_acct_from_content(content, jobs_in_db=set())
+
+  assert inserted == 1
+  created = mock_jd.objects.bulk_create.call_args[0][0]
+  assert [obj.jid for obj in created] == ["612"]
 
 
 @patch(
@@ -481,12 +510,11 @@ def test_sync_acct_from_content_bad_timestamp_reason():
   _assert_load_reason(content, "could not parse Start, End, or Submit")
 
 
-@override_settings(DEBUG=True)
 @patch("hpcperfstats.dbload.sync_acct._notify_job_cache_after_acct_ingest")
 @patch("hpcperfstats.dbload.sync_acct.job_data")
 @patch(
   "hpcperfstats.dbload.sync_acct.cfg.get_restricted_queue_keywords",
-  return_value=["secret"],
+  return_value="secret",
 )
 def test_sync_acct_restricted_queue_nan_partition_still_inserts(
   _keywords, mock_jd, _notify
@@ -512,7 +540,7 @@ def test_sync_acct_restricted_queue_nan_partition_still_inserts(
 @patch("hpcperfstats.dbload.sync_acct.job_data")
 @patch(
   "hpcperfstats.dbload.sync_acct.cfg.get_restricted_queue_keywords",
-  return_value=[],
+  return_value="",
 )
 def test_sync_acct_empty_keywords_allow_non_text_queue(
   _keywords, mock_jd, _notify

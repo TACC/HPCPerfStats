@@ -359,7 +359,7 @@ This is a container orchestration with Django/PostgreSQL, ingest/archival tools,
    - `machine` — cluster name  
    - `host_name_ext` — FQDN of the cluster  
    - `server` — FQDN of the host running the containers
-   - `restricted_queue_keywords` - queues you want to filter out and prevent jobs in them from being displayed 
+   - `restricted_queue_keywords` - queue-name substrings whose jobs are skipped at accounting ingest (never displayed), e.g. `['secure', 'secret']` or `secure, secret`
    - `staff_email_domain` - the email domain of the institution/organization so authorized staff can see all jobs
    - `timezone` - your machine's local timezone
    - `total_cores` - CPU budget for app parallelism (omit to use code default **40**; see `docs/DEPLOY_CONCURRENCY_AND_NUMA.md`)
