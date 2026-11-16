@@ -201,7 +201,7 @@ def test_checker_accepts_short_dunder_template(inv, tmp_path: Path):
   assert all(r.ok for r in in_scope), [r.issues for r in in_scope if not r.ok]
 
 
-def test_inventory_script_main_check_on_fixture(inv, tmp_path: Path, capsys):
+def test_inventory_script_main_check_on_fixture(inv, tmp_path: Path):
   """main(--check) returns 1 when fixtures have gaps and 0 when clean."""
   pkg = tmp_path / "hpcperfstats" / "lib"
   pkg.mkdir(parents=True)

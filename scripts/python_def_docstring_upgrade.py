@@ -915,11 +915,10 @@ def _default_behavior_summary(name: str, *, trivial: bool) -> str:
   }
 
   if trivial:
-    result = TRIVIAL_DUNDER_SUMMARIES.get(
+    return TRIVIAL_DUNDER_SUMMARIES.get(
       name,
       f"Implement the ``{name}`` protocol",
     )
-    return result
   if name in short_methods:
     return short_methods[name]
   if name == "handle":
@@ -1767,8 +1766,6 @@ def _replace_leading_docstring(
   source: str,
   node: ast.AST,
   new_doc_block: str,
-  *,
-  base_indent: str,
 ) -> str | None:
   """
   Replace or insert a docstring immediately under ``node``.
@@ -1777,13 +1774,12 @@ def _replace_leading_docstring(
     source (str): String for source.
     node (ast.AST): Node.
     new_doc_block (str): String for new doc block.
-    base_indent (str): String for base indent.
 
   Returns:
     str | None: One of ``str``, ``None`` depending on inputs/branch.
 
   Examples:
-    >>> _replace_leading_docstring("x", None, "x", "x")  # doctest: +SKIP
+    >>> _replace_leading_docstring("x", None, "x")  # doctest: +SKIP
   """
   lines = source.splitlines(keepends=True)
   body = getattr(node, "body", None)
@@ -2144,9 +2140,7 @@ def upgrade_source(
       body_indent,
       line_length=line_length,
     )
-    replaced = _replace_leading_docstring(
-      updated, cls, doc_block, base_indent=base_indent
-    )
+    replaced = _replace_leading_docstring(updated, cls, doc_block)
     if replaced and replaced != updated:
       updated = replaced
       touched += 1
@@ -2163,9 +2157,7 @@ def upgrade_source(
       "",
       line_length=line_length,
     )
-    replaced = _replace_leading_docstring(
-      updated, tree3, doc_block, base_indent=""
-    )
+    replaced = _replace_leading_docstring(updated, tree3, doc_block)
     if replaced and replaced != updated:
       updated = replaced
       touched += 1

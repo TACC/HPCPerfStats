@@ -124,29 +124,26 @@ class _FakeProc:
   Attributes:
     pid: Fake OS process id.
     _alive: Whether ``is_alive`` reports the worker as running.
-    _rss_kb: Unused size hint kept for parity with unit-test fakes.
   """
 
-  def __init__(self, pid: int, alive: bool = True, rss_kb: int = 1024) -> None:
+  def __init__(self, pid: int, alive: bool = True) -> None:
     """
     Store fake pid and liveness for pool RSS helpers.
 
     Args:
       pid (int): Fake process id passed to ``read_process_rss_bytes``.
       alive (bool): Value returned by ``is_alive``.
-      rss_kb (int): Unused size hint (parity with unit-test fakes).
 
     Returns:
       None
 
     Examples:
-      >>> p = _FakeProc(100, alive=True, rss_kb=2048)
+      >>> p = _FakeProc(100, alive=True)
       >>> p.is_alive()
       True
     """
     self.pid = pid
     self._alive = alive
-    self._rss_kb = rss_kb
 
   def is_alive(self) -> bool:
     """
@@ -292,8 +289,8 @@ def prepare_curated_workloads() -> None:
   pm.read_process_rss_bytes = _fake_rss  # type: ignore[assignment]
   _PROCESS_MEMORY_POOL = SimpleNamespace(
     _pool=[
-      _FakeProc(100, alive=True, rss_kb=2048),
-      _FakeProc(101, alive=False, rss_kb=4096),
+      _FakeProc(100, alive=True),
+      _FakeProc(101, alive=False),
     ],
   )
 
