@@ -1,7 +1,6 @@
-/* host_power_socket — per-socket ACPI power meters (Grace: CPU, Grace/socket, SysIO, Module).
+/* host_power_socket - per-socket ACPI power meters (Grace: CPU, Grace/socket, SysIO, Module).
  * Begin scans hwmon once and keeps one fd per meter; collect is one pread per meter. */
 #include <stdio.h>
-#include <string.h>
 
 #include "stats.h"
 #include "monitor_log.h"

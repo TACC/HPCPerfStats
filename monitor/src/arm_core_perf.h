@@ -1,4 +1,4 @@
-/* arm_core_perf — Grace / aarch64 core PMU reader for host_cpu_hw (direct perf, scaled).
+/* arm_core_perf - Grace / aarch64 core PMU reader for host_cpu_hw (direct perf, scaled).
  *
  * Nine events per CPU, each its own fd (no groups) on the armv8_pmuv3 PMU type read from sysfs.
  * Resolution per event (O12): sysfs events/<name> first, then a MIDR-keyed raw-code table (one

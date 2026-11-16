@@ -82,7 +82,7 @@ void arm_accumulate_from_util_sample(int i, const struct arm_cpu_sample *sample,
   if (delta_us <= 0 || sample == NULL)
     return;
 
-  /* Util accumulators always from /proc/stat — do not require clock_khz. util_* are percent;
+  /* Util accumulators always from /proc/stat; do not require clock_khz. util_* are percent;
    * *_accum_us are CPU microseconds, so scale by delta_us / 100. */
   us_per_pct = (double)delta_us / 100.0;
   g_arm_ctr0[i] += (unsigned long long)((sample->util_total * us_per_pct) + 0.5);

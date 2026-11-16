@@ -1,17 +1,15 @@
-/* arm_aarch64_imc — ARM64 DRAM CAS counters via direct perf_event.
+/* arm_aarch64_imc - ARM64 DRAM CAS counters via direct perf_event.
  *
  * Grace: one `scf<N>` device per nvidia_scf_pmu_<N> (arm_imc_scf.c), cmem_rd_data /
  * cmem_wr_total_bytes read scaled. Other aarch64: perf PMUs whose name contains dmc/imc.
  * When neither exists at begin the type stays enabled with 0 devices and re-scans every
  * ARM_IMC_SCF_RESCAN_TICKS ticks (nvidia_cspmu can bind after the daemon starts). */
 #include <dirent.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
 #include "stats.h"
-#include "trace.h"
 #include "arm_imc.h"
 #include "arm_imc_scf.h"
 #include "perf_util.h"

@@ -1,4 +1,4 @@
-/* arm_imc_scf — Grace SCF uncore DRAM traffic for arm_aarch64_imc via direct perf (no LIKWID).
+/* arm_imc_scf - Grace SCF uncore DRAM traffic for arm_aarch64_imc via direct perf (no LIKWID).
  *
  * One device per nvidia_scf_pmu_<N> (one per Grace socket: 1 on GH200, 2 on GB200 /
  * Grace-Grace; never assume two). Each opens cmem_rd_data and cmem_wr_total_bytes from the PMU's

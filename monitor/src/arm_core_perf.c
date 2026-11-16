@@ -1,4 +1,4 @@
-/* arm_core_perf — Grace / aarch64 core PMU reader for host_cpu_hw (direct perf, scaled).
+/* arm_core_perf - Grace / aarch64 core PMU reader for host_cpu_hw (direct perf, scaled).
  * Portable C (no #ifdef aarch64): the daemon links it only on the `arm` backend, while the
  * unit tests drive it on every host through an injected sysfs tree and open function. */
 #include <dirent.h>
