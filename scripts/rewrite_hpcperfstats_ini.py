@@ -14,9 +14,6 @@ the site's own settings filled in:
   pipeline or portal tuning under ``[DEFAULT]``) moves to the example's
   section; when it is set in several sections, the one the pre-2026-11
   ``conf_parser`` fallbacks read wins (``_read_order``);
-* a key set only in a section that parser never read it from (a pipeline
-  key under ``[PORTAL]``) never took effect: it is dropped, not moved, and
-  listed in a bold ``NOT MIGRATED`` warning so it can be moved by hand;
 * a renamed key (``RENAMED_OPTIONS``, e.g. ``[CACHE] redis_location`` ->
   ``valkey_location``, ``archive_zstd_drop_page_cache`` ->
   ``sync_pipeline_drop_page_cache``) is migrated first, its value mapped
@@ -109,16 +106,12 @@ class RewriteResult:
     text (str): The rewritten ini text.
     dropped (list[tuple[str, str]]): ``(section, option)`` site keys the
       example does not document; not written.
-    unread (list[tuple[str, str, str]]): ``(section, option, value)``
-      registry keys set only in a section the pre-2026-11 ``conf_parser``
-      never read them from, so they never took effect; not written.
     missing_required (list[tuple[str, str]]): Required keys (no code
       default) the site file lacks; the example's placeholder line is kept.
   """
 
   text: str
   dropped: list[tuple[str, str]] = field(default_factory=list)
-  unread: list[tuple[str, str, str]] = field(default_factory=list)
   missing_required: list[tuple[str, str]] = field(default_factory=list)
 
 
@@ -322,54 +315,44 @@ def _registry() -> dict[str, tuple[str, str | None]]:
 def _site_values(
   site: configparser.ConfigParser,
   registry: dict[str, tuple[str, str | None]],
-) -> tuple[dict[str, str], list[tuple[str, str]], list[tuple[str, str, str]]]:
+) -> tuple[dict[str, str], list[tuple[str, str]]]:
   """
-  Collect the site's value for each registry option from the sections read.
+  Collect the site's value for each registry option, from any section.
 
-  When the key appears in more than one ``_read_order`` section, the earliest
-  wins (the value the pre-2026-11 ``conf_parser`` used). A registry key in a
-  section that parser never read for it (a pipeline key under ``[PORTAL]``)
-  never took effect, so it is not migrated but reported as unread.
+  When the key appears in more than one section, the one earliest in
+  ``_read_order`` wins (the value the pre-2026-11 ``conf_parser`` used); a
+  key only in some other section is taken from the first such section.
 
   Args:
     site (configparser.ConfigParser): Site ini from ``parse_ini_text``.
     registry (dict[str, tuple[str, str | None]]): From ``_registry``.
 
   Returns:
-    tuple[dict[str, str], list[tuple[str, str]], list[tuple[str, str, str]]]:
-    Option to raw value; the ``(section, option)`` pairs that are not
-    registry options; and the ``(section, option, value)`` registry keys
-    found only where the old parser never read them.
+    tuple[dict[str, str], list[tuple[str, str]]]: Option to raw value, and
+    the ``(section, option)`` pairs that are not registry options.
 
   Examples:
     >>> _site_values(parse_ini_text("[PORTAL]\\nhost = db\\n"), _registry())
-    ({'host': 'db'}, [], [])
+    ({'host': 'db'}, [])
     >>> _site_values(
     ...   parse_ini_text("[PORTAL]\\nport = 1\\n[DEFAULT]\\nport = 2\\n"),
     ...   _registry(),
     ... )
-    ({'port': '2'}, [], [])
-    >>> _site_values(
-    ...   parse_ini_text("[PORTAL]\\nsync_ingest_pool_processes = 48\\n"),
-    ...   _registry(),
-    ... )
-    ({}, [], [('PORTAL', 'sync_ingest_pool_processes', '48')])
+    ({'port': '2'}, [])
   """
   values: dict[str, str] = {}
   ranks: dict[str, int] = {}
   dropped: list[tuple[str, str]] = []
-  unread: list[tuple[str, str, str]] = []
   for section in site.sections():
     for option, value in site.items(section):
       if option not in registry:
         dropped.append((section, option))
         continue
       order = _read_order(site, option, registry[option][0])
-      if section not in order:
-        unread.append((section, option, value))
-      elif order.index(section) < ranks.get(option, len(order)):
-        values[option], ranks[option] = value, order.index(section)
-  return values, dropped, unread
+      rank = order.index(section) if section in order else len(order)
+      if rank < ranks.get(option, len(order) + 1):
+        values[option], ranks[option] = value, rank
+  return values, dropped
 
 
 def _format_option(option: str, value: str) -> str:
@@ -410,8 +393,7 @@ def rewrite_from_example(
     example_text (str): Contents of ``hpcperfstats.ini.example``.
 
   Returns:
-    RewriteResult: Rewritten text plus dropped, unread and missing-required
-    keys.
+    RewriteResult: Rewritten text plus dropped and missing-required keys.
 
   Examples:
     >>> site = parse_ini_text("[DEFAULT]\\nmachine = m\\n")
@@ -420,8 +402,8 @@ def rewrite_from_example(
     '[DEFAULT]\\n# Port.\\n# port = 5432\\n'
   """
   registry = _registry()
-  values, dropped, unread = _site_values(site, registry)
-  result = RewriteResult(text="", dropped=dropped, unread=unread)
+  values, dropped = _site_values(site, registry)
+  result = RewriteResult(text="", dropped=dropped)
   out: list[str] = []
   done: set[str] = set()
   skipping_continuation = False
@@ -477,7 +459,7 @@ def effective_values(site: configparser.ConfigParser) -> dict[str, str | None]:
     'db'
   """
   registry = _registry()
-  values, _dropped, _unread = _site_values(site, registry)
+  values, _dropped = _site_values(site, registry)
   effective: dict[str, str | None] = {}
   for option, (_section, default) in registry.items():
     value = values.get(option)
@@ -571,53 +553,6 @@ def changed_effective_values(
   return sorted(k for k in before if before[k] != after[k] and k not in missing)
 
 
-def unread_warning(unread: list[tuple[str, str, str]], bold: bool) -> str:
-  """
-  Return the banner listing keys the old parser never read, or ``""``.
-
-  Such a key never took effect, so the rewrite drops it; the banner names
-  each one so the operator can move it by hand if it was meant to apply.
-
-  Args:
-    unread (list[tuple[str, str, str]]): ``RewriteResult.unread``.
-    bold (bool): Wrap the banner in ANSI bold (terminal output).
-
-  Returns:
-    str: Multi-line banner, empty when *unread* is empty.
-
-  Examples:
-    >>> print(
-    ...   unread_warning(
-    ...     [("PORTAL", "sync_ingest_pool_processes", "48")], bold=False
-    ...   )
-    ... )  # doctest: +NORMALIZE_WHITESPACE
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    !!! WARNING: keys in the wrong section were NOT MIGRATED (dropped).
-    !!! conf_parser never read them there, so they never took effect.
-    !!! If a value was meant to apply, add it under its own section by hand:
-    !!!   [PORTAL] sync_ingest_pool_processes = 48  (belongs in [PIPELINE])
-    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  """
-  if not unread:
-    return ""
-  registry = _registry()
-  rule = "!" * 74
-  lines = [
-    rule,
-    "!!! WARNING: keys in the wrong section were NOT MIGRATED (dropped).",
-    "!!! conf_parser never read them there, so they never took effect.",
-    "!!! If a value was meant to apply, add it under its own section by hand:",
-    *(
-      f"!!!   [{section}] {option} = {value}"
-      f"  (belongs in [{registry[option][0]}])"
-      for section, option, value in unread
-    ),
-    rule,
-  ]
-  text = "\n".join(lines)
-  return f"\x1b[1m{text}\x1b[0m" if bold else text
-
-
 def main(argv: list[str] | None = None) -> int:
   """
   CLI entry: rewrite (or with ``--dry-run`` diff) a site ini onto the example.
@@ -663,12 +598,6 @@ def main(argv: list[str] | None = None) -> int:
     print(f"dropped (not in example): [{section}] {option}")
   for section, option in result.missing_required:
     print(f"WARNING: required [{section}] {option} missing; example line kept")
-  # Printed last on both paths so a long dry-run diff cannot scroll it away.
-  banner = unread_warning(
-    result.unread,
-    bold=sys.stdout.isatty()
-    or os.environ.get("HPCPERFSTATS_REWRITE_COLOR") == "1",
-  )
 
   target = args.output or args.ini
   if args.dry_run:
@@ -680,8 +609,6 @@ def main(argv: list[str] | None = None) -> int:
         tofile=str(target),
       )
     )
-    if banner:
-      print(banner)
     return 0
   ini_stat = os.stat(args.ini)
   if target == args.ini:
@@ -696,8 +623,6 @@ def main(argv: list[str] | None = None) -> int:
     f"wrote: {target} mode={stat.S_IMODE(ini_stat.st_mode):04o} "
     f"owner={ini_stat.st_uid}:{ini_stat.st_gid}"
   )
-  if banner:
-    print(banner)
   return 0
 
 
