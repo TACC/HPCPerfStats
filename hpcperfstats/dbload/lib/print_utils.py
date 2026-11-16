@@ -213,11 +213,8 @@ def ingest_logging() -> Iterator[Any]:
 
 def _script_prefix() -> Any:
   """
-  Return [scriptname] for the original entry point (__main__), not the.
-
-    immediate.
-
-    caller.
+  Return [scriptname] for the original entry point (__main__), not the
+  immediate caller.
 
   Returns:
     Any: Open return polymorphism from ``_script_prefix``: concrete type
@@ -402,7 +399,7 @@ def log_print(*args: Any, **kwargs: Any) -> None:
   Accepts the same keyword surface as ``print`` (``sep``, ``end``, ``file``,
   ``flush``). Podman ``json-file``/``k8s-file`` treats each ``write()`` as a
   separate log event and prefixes it for ``compose logs``; CPython ``print``
-  writes prefix, separator, body, and newline separately, which mashs lines.
+  writes prefix, separator, body, and newline separately, which mashes lines.
   This helper joins once and writes the complete record (including ``end``).
 
   Optional oneshot kwargs (not forwarded to the stream):

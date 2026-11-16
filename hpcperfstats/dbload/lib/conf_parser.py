@@ -1,6 +1,7 @@
 """
 Configuration parser for HPCPerfStats. Reads hpcperfstats.ini and exposes
-getters for portal, RMQ, XALT, and OAuth2 settings.
+getters for every section (DEFAULT, PORTAL, PIPELINE, OAUTH2, RMQ, SYSLOG,
+CACHE, XALT), with env overrides where a getter documents one.
 
 Attributes:
   INI_OPTION_DEFAULTS: Attribute.
@@ -46,9 +47,9 @@ _DEFAULT_TOTAL_CORES = "40"
 cfg = None
 _ACTIVE_CONFIG_PATH = None
 
-# Canonical (section, option, default) tuples for hpcperfstats.ini.
-# *default* is a str code fallback, or None when the key is required / has no
-# code default. Used by drift guards; keep in sync when adding getters.
+# Canonical (section, option) pairs for hpcperfstats.ini; INI_OPTION_DEFAULTS
+# holds each option's str code fallback, or None when the key is required / has
+# no code default. Used by drift guards; keep in sync when adding getters.
 _INI_OPTION_REGISTRY_KEYS = (
   # [DEFAULT] - install, site-wide, PostgreSQL connection, cpuset pinning (last in example)
   ("DEFAULT", "machine"),
@@ -279,7 +280,7 @@ INI_OPTION_DEFAULTS = {
   "metrics_prewarm_max_tasks_per_child": "100",
   # Hostxtime SQL chunk wall seconds (1h @ 1-min sample); design 5000x48x60.
   "metrics_plot_aggregate_time_slice_s": "3600",
-  # Max hostxtime rows materialised per plot aggregate DF (not 14.4M).
+  # Max hostxtime rows materialized per plot aggregate DF (not 14.4M).
   "metrics_plot_aggregate_max_host_time_points": "1000000",
   "metrics_run_poll_timeout_s": "5",
   "metrics_run_stall_timeout_s": "900",
@@ -1187,11 +1188,8 @@ def get_archive_keep_uncompressed_tar() -> Any:
 
 def get_archive_today_uncompressed_tar_grace_hours() -> Any:
   """
-  Hours after local midnight to retain today's uncompressed ``.tar`` when.
-
-    global.
-
-    keep is off.
+  Hours after local midnight to retain today's uncompressed ``.tar`` when
+  the global ``archive_keep_uncompressed_tar`` is off.
 
   Returns:
     Any: Open return polymorphism from
@@ -1401,9 +1399,8 @@ def get_server_name() -> Any:
 
 def get_cors_origin_scheme() -> Any:
   """
-  Return ``http`` or ``https`` when building CORS origins from ``[DEFAULT].
-
-    server``.
+  Return ``http`` or ``https`` when building CORS origins from
+  ``[DEFAULT] server``.
 
   Optional ``[PORTAL] cors_origin_scheme`` may be set to ``http`` or ``https``
   (legacy: ``[DEFAULT]``). When omitted, defaults to ``https``.
@@ -2042,19 +2039,15 @@ def get_metrics_pool_processes() -> Any:
 
 def get_parallel_db_prefetch_max() -> Any:
   """
-  Max threads for parallel ORM prefetch (summary plots) and default API.
-
-    executor.
-
-    size.
+  Max threads for parallel ORM prefetch (summary plots) and default API
+  executor size.
 
   Default **4** (INI ``parallel_db_prefetch_max``); summary aggregate prefetch
-    also applies a
-  hard cap in ``summaryplot`` so nested pools do not multiply against the API
-    executor.
+  also applies a hard cap in ``summaryplot`` so nested pools do not multiply
+  against the API executor.
 
   Override with ``[PORTAL] parallel_db_prefetch_max`` or env
-    ``PARALLEL_DB_PREFETCH_MAX``.
+  ``PARALLEL_DB_PREFETCH_MAX``.
 
   Returns:
     Any: Open return polymorphism from ``get_parallel_db_prefetch_max``:
@@ -2163,9 +2156,8 @@ def get_db_statement_timeout_ms() -> Any:
 
 def get_db_idle_in_transaction_session_timeout_ms() -> Any:
   """
-  ``idle_in_transaction_session_timeout`` in ms; ``0`` = omit. Default.
-
-    **300000** (5 min).
+  ``idle_in_transaction_session_timeout`` in ms; ``0`` = omit. Default
+  **300000** (5 min).
 
   Returns:
     Any: Open return polymorphism from
@@ -2221,9 +2213,8 @@ def build_postgres_connection_options() -> Any:
 
 def get_worker_process_count(divisor: int = 4) -> Any:
   """
-  Return worker process count as ``effective_cores / divisor``, clamped to at.
-
-    least 1.
+  Return worker process count as ``effective_cores / divisor``, clamped to at
+  least 1.
 
   Args:
     divisor (int): Integer value for divisor.
@@ -2390,9 +2381,8 @@ def get_sync_archive_pool_processes() -> Any:
 
 def get_sync_timedb_archive_max_concurrent_sealed_days() -> Any:
   """
-  Max concurrent sealed-day stream workers in ``sync_timedb_archive`` (default.
-
-    1).
+  Max concurrent sealed-day stream workers in ``sync_timedb_archive``
+  (default 1).
 
   Returns:
     Any: Open return polymorphism from
@@ -2729,11 +2719,8 @@ def get_metrics_compute_watchdog_s() -> Any:
 
 def get_metrics_compute_total_watchdog_s() -> Any:
   """
-  Watchdog on full batch wall (metrics + prewarm submit/drain). 0 = use.
-
-    metrics-.
-
-    only.
+  Watchdog on full batch wall (metrics + prewarm submit/drain). 0 = use
+  metrics-only.
 
   When 0, only ``get_metrics_compute_watchdog_s`` applies to the metrics
   slice; total batch time is logged but does not downshift batch cap.
@@ -2878,9 +2865,8 @@ def get_metrics_deferred_not_ready_quarantine_s() -> Any:
 
 def get_metrics_readiness_require_window_coverage() -> Any:
   """
-  When True, defer metrics until in-window host_data covers start and end.
-
-    margins.
+  When True, defer metrics until in-window host_data covers start and end
+  margins.
 
   Returns:
     Any: Open return polymorphism from
@@ -2898,9 +2884,8 @@ def get_metrics_readiness_require_window_coverage() -> Any:
 
 def get_metrics_readiness_start_margin_seconds() -> Any:
   """
-  Seconds after job start_time; first in-window sample must be at or before.
-
-    this.
+  Seconds after job start_time; first in-window sample must be at or before
+  this.
 
   Returns:
     Any: Open return polymorphism from
@@ -3116,9 +3101,8 @@ def get_metrics_public_ef_interval_s() -> float:
 
 def get_metrics_run_poll_timeout_s() -> Any:
   """
-  Seconds for one ``imap_unordered`` poll in ``Metrics.run`` (host-side stall.
-
-    detection).
+  Seconds for one ``imap_unordered`` poll in ``Metrics.run`` (host-side stall
+  detection).
 
   Returns:
     Any: Open return polymorphism from ``get_metrics_run_poll_timeout_s``:
@@ -3176,9 +3160,8 @@ def get_sync_archive_validation_max_workers() -> Any:
 
 def get_sync_pool_worker_recycle_grace_polls() -> Any:
   """
-  Polls to tolerate dead workers with exitcode 0 during maxtasksperchild.
-
-    recycle.
+  Polls to tolerate dead workers with exitcode 0 during maxtasksperchild
+  recycle.
 
   Returns:
     Any: Open return polymorphism from
@@ -3200,9 +3183,8 @@ def get_sync_pool_worker_recycle_grace_polls() -> Any:
 
 def get_sync_pool_worker_recycle_grace_seconds() -> Any:
   """
-  Wall-clock seconds before WARN on slow maxtasksperchild replacement per dead.
-
-    PID.
+  Wall-clock seconds before WARN on slow maxtasksperchild replacement per dead
+  PID.
 
   Returns:
     Any: Open return polymorphism from
@@ -3298,9 +3280,8 @@ def get_sync_pool_poll_timeout_s() -> Any:
 
 def get_sync_pool_stall_defer_log_interval_s() -> Any:
   """
-  Minimum wall seconds between repeated pool imap stall defer WARN lines (0 =.
-
-    every poll).
+  Minimum wall seconds between repeated pool imap stall defer WARN lines
+  (0 = every poll).
 
   Returns:
     Any: Open return polymorphism from
@@ -3322,9 +3303,8 @@ def get_sync_pool_stall_defer_log_interval_s() -> Any:
 
 def get_sync_archive_members_cache_enabled() -> Any:
   """
-  Whether ingest/archive workers cache daily tar member maps per archive.
-
-    identity.
+  Whether ingest/archive workers cache daily tar member maps per archive
+  identity.
 
   Returns:
     Any: Open return polymorphism from
@@ -3512,8 +3492,8 @@ def get_sync_ingest_stall_idle_s() -> Any:
     return 1800.0
 
 
-# 30 GiB x per_mib + historical floor-900 slope reaches max at default slope.
-# Floor default (0 = wall B off); keep per_mib anchored to (86400-900)/30720.
+# Default per-MiB slope: the historical 900 s floor plus the reference size
+# times the slope reaches the per-file max exactly.
 _SYNC_INGEST_PER_FILE_TIMEOUT_REFERENCE_MIB = 30720  # 30 GiB
 _SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT = 86400.0  # 24h at reference size
 _SYNC_INGEST_PER_FILE_TIMEOUT_SLOPE_FLOOR_S = 900.0  # historical slope anchor
@@ -3881,9 +3861,8 @@ def get_metrics_proxy_reject_jid_batch_size() -> Any:
 
 def get_sync_ingest_queue_max_size() -> Any:
   """
-  Bound for in-memory ingest work queue (default 50000; no-supplement process.
-
-    queue).
+  Bound for in-memory ingest work queue (default 50000; no-supplement process
+  queue).
 
   Returns:
     Any: Open return polymorphism from ``get_sync_ingest_queue_max_size``:
@@ -4296,9 +4275,8 @@ def get_sync_archive_retry_backoff_max_seconds() -> Any:
 
 def get_sync_checkpoint_flush_batch_size() -> Any:
   """
-  Number of processed-file state transitions between checkpoint writes (default.
-
-    100).
+  Number of processed-file state transitions between checkpoint writes
+  (default 100).
 
   Returns:
     Any: Open return polymorphism from
@@ -4330,9 +4308,8 @@ def get_sync_timedb_tar_append_batch_size() -> Any:
 
 def get_sync_host_itimes_cache_max_timestamps_per_entry() -> Any:
   """
-  Max distinct DB timestamps cached per host window in sync_timedb (default.
-
-    100000).
+  Max distinct DB timestamps cached per host window in sync_timedb
+  (default 100000).
 
   Returns:
     Any: Open return polymorphism from
@@ -4474,10 +4451,9 @@ def get_sync_ingest_pool_maxtasksperchild() -> Any:
 
 def get_sync_ingest_malloc_trim_after_file() -> Any:
   """
-  After each ingest pool task on Linux, gc.collect() and malloc_trim(0).
-
-    (default no; set yes on sites whose tree RSS roof is too small for
-    release-off ingest memory).
+  After each ingest pool task on Linux, gc.collect() and malloc_trim(0)
+  (default no; set yes on sites whose tree RSS roof is too small for
+  release-off ingest memory).
 
   Returns:
     Any: Open return polymorphism from
@@ -4495,9 +4471,8 @@ def get_sync_ingest_malloc_trim_after_file() -> Any:
 
 def get_sync_ingest_worker_memory_telemetry() -> Any:
   """
-  Log one worker_memory batch_summary line per ingest chunk when yes (default.
-
-    no).
+  Log one worker_memory batch_summary line per ingest chunk when yes
+  (default no).
 
   Returns:
     Any: Open return polymorphism from
@@ -5096,9 +5071,8 @@ def get_sync_day_close_max_inflight() -> Any:
 
 def get_sync_day_close_manifest_stale_seconds() -> Any:
   """
-  Recover stale day-close manifest entries on coordinator init (default 7200;.
-
-    0=off).
+  Recover stale day-close manifest entries on coordinator init (default 7200;
+  0=off).
 
   Returns:
     Any: Open return polymorphism from
@@ -5436,13 +5410,11 @@ def get_valkey_location() -> str:
 
 def get_large_job_host_data_row_threshold() -> Any:
   """
-  When host_data row count for a job window exceeds this, sample times in.
-
-    jid_table.
+  When host_data row count for a job window exceeds this, sample times in
+  jid_table.
 
   Env ``HPCPERFSTATS_LARGE_JOB_HOST_DATA_ROWS`` overrides (minimum 1000).
-    Default
-  1_500_000 keeps interactive metrics/plots bounded on huge jobs.
+  Default 1_500_000 keeps interactive metrics/plots bounded on huge jobs.
 
   Returns:
     Any: Open return polymorphism from
@@ -5487,9 +5459,8 @@ def get_large_job_time_buckets() -> Any:
 
 def get_large_job_window_row_count_cache_ttl() -> Any:
   """
-  TTL (seconds) for caching ``COUNT(*)`` over job window in ``jid_table``; 0.
-
-    disables.
+  TTL (seconds) for caching ``COUNT(*)`` over job window in ``jid_table``; 0
+  disables.
 
   Reduces repeated full-window counts when the same job is opened multiple times
   shortly after ingest. Invalidate via ``invalidate_jid_derived_cache_keys``.

@@ -29,7 +29,7 @@ def configure_blas_thread_env(*, default: str = "1") -> None:
     None
 
   Examples:
-    >>> configure_blas_thread_env("x")  # doctest: +SKIP
+    >>> configure_blas_thread_env(default="1")  # doctest: +SKIP
   """
   value = str(default)
   for key in BLAS_THREAD_ENV_KEYS:

@@ -97,9 +97,10 @@ def parse_start_end_dates(
 
 def log_date_range(kind: Any, start: Any, end: Any) -> None:
   """
-  Print the standard date-range log line. kind e.g. 'stats files to ingest',.
+  Print the standard date-range log line.
 
-    'job files to ingest', 'metrics to update'.
+  ``kind`` names what is ranged, e.g. 'stats files to ingest', 'job files to
+  ingest', 'metrics to update'.
 
   Args:
     kind (Any): Mode or kind token selecting a code path.

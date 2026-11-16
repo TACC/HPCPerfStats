@@ -26,8 +26,6 @@ def _dev_str_from_stats_row(row: Any) -> str:
     >>> _dev_str_from_stats_row(None)  # doctest: +SKIP
   """
   dev_val = getattr(row, "dev", None)
-  if dev_val is None or (isinstance(dev_val, float) and pd.isna(dev_val)):
-    return ""
   if pd.isna(dev_val):
     return ""
   s = str(dev_val).strip()
