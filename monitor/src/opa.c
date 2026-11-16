@@ -1,4 +1,4 @@
-/* host_opa — Omni-Path / Cornelis HFI port counters (STL MAD + sysfs fallback). */
+/* host_opa - Omni-Path / Cornelis HFI port counters (STL MAD + sysfs fallback). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -21,9 +21,7 @@
 #if defined(MONITOR_OPA_MAD_DLOPEN)
 #include "opa_mad_dyn.h"
 #endif
-#endif
 
-#if defined(MONITOR_WITH_OPA)
 uint64_t g_transactID = 0xffffffff12340000;
 #define RESP_WAIT_TIME 1000
 
@@ -133,7 +131,7 @@ static void opa_publish_port_counters(struct stats *stats, STL_DATA_PORT_COUNTER
 {
   if (stats == NULL || rsp == NULL)
     return;
-  /* KEYS expands to comma-separated X(...) — X must be an expression, not a statement. */
+  /* KEYS expands to comma-separated X(...); X must be an expression, not a statement. */
 #define X(n, r...) stats_set(stats, #n, rsp->Port[0].n)
   KEYS;
 #undef X

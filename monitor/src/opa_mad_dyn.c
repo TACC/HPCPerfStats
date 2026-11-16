@@ -1,4 +1,4 @@
-/* opa_mad_dyn — runtime dlopen of liboib_utils for host_opa STL MAD. */
+/* opa_mad_dyn - runtime dlopen of liboib_utils for host_opa STL MAD. */
 #include "opa_mad_dyn.h"
 
 #include "dyn_lib_path.h"
@@ -27,7 +27,6 @@ static char g_oib_last_error[256];
 
 struct opa_mad_dyn_test_hooks g_opa_mad_test_hooks_storage;
 static struct opa_mad_dyn_test_hooks *g_opa_mad_test_hooks;
-static int g_opa_mad_test_hooks_active;
 
 static void opa_mad_dyn_set_error(const char *msg)
 {
@@ -88,11 +87,9 @@ void opa_mad_dyn_test_set_hooks(const struct opa_mad_dyn_test_hooks *hooks)
 {
   memset(&g_opa_mad_test_hooks_storage, 0, sizeof(g_opa_mad_test_hooks_storage));
   g_opa_mad_test_hooks = NULL;
-  g_opa_mad_test_hooks_active = 0;
   if (hooks != NULL) {
     g_opa_mad_test_hooks_storage = *hooks;
     g_opa_mad_test_hooks = &g_opa_mad_test_hooks_storage;
-    g_opa_mad_test_hooks_active = 1;
   }
 }
 
@@ -165,7 +162,6 @@ void opa_mad_dyn_unload(void)
   }
   g_oib_loaded = 0;
   g_oib_load_failed = 0;
-  g_opa_mad_test_hooks_active = 0;
   g_opa_mad_test_hooks = NULL;
 #define X(name) p_##name = NULL;
   OPA_MAD_DYN_SYM_LIST
@@ -174,8 +170,7 @@ void opa_mad_dyn_unload(void)
 
 int opa_mad_dyn_oib_open_port_by_num(struct oib_port **port, uint8 hfi, uint32 port_num)
 {
-  if (g_opa_mad_test_hooks_active && g_opa_mad_test_hooks != NULL &&
-      g_opa_mad_test_hooks->oib_open_port_by_num != NULL)
+  if (g_opa_mad_test_hooks != NULL && g_opa_mad_test_hooks->oib_open_port_by_num != NULL)
     return g_opa_mad_test_hooks->oib_open_port_by_num(port, hfi, port_num);
   if (!g_oib_loaded && opa_mad_dyn_load() < 0)
     return -1;
@@ -186,8 +181,7 @@ int opa_mad_dyn_oib_open_port_by_num(struct oib_port **port, uint8 hfi, uint32 p
 
 void opa_mad_dyn_oib_close_port(struct oib_port *port)
 {
-  if (g_opa_mad_test_hooks_active && g_opa_mad_test_hooks != NULL &&
-      g_opa_mad_test_hooks->oib_close_port != NULL) {
+  if (g_opa_mad_test_hooks != NULL && g_opa_mad_test_hooks->oib_close_port != NULL) {
     g_opa_mad_test_hooks->oib_close_port(port);
     return;
   }
@@ -197,8 +191,7 @@ void opa_mad_dyn_oib_close_port(struct oib_port *port)
 
 int opa_mad_dyn_oib_get_port_state(struct oib_port *port)
 {
-  if (g_opa_mad_test_hooks_active && g_opa_mad_test_hooks != NULL &&
-      g_opa_mad_test_hooks->oib_get_port_state != NULL)
+  if (g_opa_mad_test_hooks != NULL && g_opa_mad_test_hooks->oib_get_port_state != NULL)
     return g_opa_mad_test_hooks->oib_get_port_state(port);
   if (!g_oib_loaded && opa_mad_dyn_load() < 0)
     return 0;
@@ -209,8 +202,7 @@ int opa_mad_dyn_oib_get_port_state(struct oib_port *port)
 
 IB_LID opa_mad_dyn_oib_get_port_lid(struct oib_port *port)
 {
-  if (g_opa_mad_test_hooks_active && g_opa_mad_test_hooks != NULL &&
-      g_opa_mad_test_hooks->oib_get_port_lid != NULL)
+  if (g_opa_mad_test_hooks != NULL && g_opa_mad_test_hooks->oib_get_port_lid != NULL)
     return g_opa_mad_test_hooks->oib_get_port_lid(port);
   if (!g_oib_loaded && opa_mad_dyn_load() < 0)
     return 0;
@@ -221,8 +213,7 @@ IB_LID opa_mad_dyn_oib_get_port_lid(struct oib_port *port)
 
 uint16_t opa_mad_dyn_oib_get_mgmt_pkey(struct oib_port *port, IB_LID lid, uint8_t hop)
 {
-  if (g_opa_mad_test_hooks_active && g_opa_mad_test_hooks != NULL &&
-      g_opa_mad_test_hooks->oib_get_mgmt_pkey != NULL)
+  if (g_opa_mad_test_hooks != NULL && g_opa_mad_test_hooks->oib_get_mgmt_pkey != NULL)
     return g_opa_mad_test_hooks->oib_get_mgmt_pkey(port, lid, hop);
   if (!g_oib_loaded && opa_mad_dyn_load() < 0)
     return 0;
@@ -236,8 +227,7 @@ int opa_mad_dyn_oib_send_recv_mad_no_alloc(struct oib_port *port, uint8_t *send_
                                            uint8_t *recv_buf, size_t *recv_size,
                                            unsigned timeout_ms, unsigned flags)
 {
-  if (g_opa_mad_test_hooks_active && g_opa_mad_test_hooks != NULL &&
-      g_opa_mad_test_hooks->oib_send_recv_mad_no_alloc != NULL)
+  if (g_opa_mad_test_hooks != NULL && g_opa_mad_test_hooks->oib_send_recv_mad_no_alloc != NULL)
     return g_opa_mad_test_hooks->oib_send_recv_mad_no_alloc(port, send_buf, send_size, addr,
                                                             recv_buf, recv_size, timeout_ms, flags);
   if (!g_oib_loaded && opa_mad_dyn_load() < 0)

@@ -101,7 +101,6 @@ static void test_decode_populates_counter_fields(void)
   assert(test_stats_stub_find(&g_stub, "port_rcv_pkts", &v) == 1);
   assert(v == 20ULL);
 
-  /* NULL guards */
   ib_mad_ext_decode_counters(NULL, mad_buf);
   ib_mad_ext_decode_counters(stats, NULL);
 

@@ -1,4 +1,4 @@
-/* ib_hca_is_opa_hfi — HFI vs IB HCA classification; opa_hfi_unit_from_name. */
+/* ib_hca_is_opa_hfi - HFI vs IB HCA classification; opa_hfi_unit_from_name. */
 #include <assert.h>
 #include <stdio.h>
 

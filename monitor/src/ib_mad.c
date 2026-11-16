@@ -1,6 +1,5 @@
-/* host_ib — MAD extended port and switch-port counter collection. */
+/* host_ib - MAD extended port and switch-port counter collection. */
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdarg.h>

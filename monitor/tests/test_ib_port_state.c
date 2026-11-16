@@ -6,7 +6,6 @@
 
 static void test_ib_port_logic_active_cases(void)
 {
-  /* Arrange / Act / Assert: numeric ACTIVE (4). */
   assert(ib_port_logic_active("4") == 1);
   assert(ib_port_logic_active("4: ACTIVE") == 1);
 

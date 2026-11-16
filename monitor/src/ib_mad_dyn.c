@@ -1,4 +1,4 @@
-/* ib_mad_dyn — runtime dlopen of libibmad for host_ib MAD (no link-time -libmad). */
+/* ib_mad_dyn - runtime dlopen of libibmad for host_ib MAD (no link-time -libmad). */
 #include "ib_mad_dyn.h"
 
 #include <dlfcn.h>
@@ -25,7 +25,6 @@ static char g_ibmad_last_error[256];
 
 struct ib_mad_dyn_test_hooks g_ib_mad_test_hooks_storage;
 static struct ib_mad_dyn_test_hooks *g_ib_mad_test_hooks;
-static int g_ib_mad_test_hooks_active;
 
 static void ib_mad_dyn_set_error(const char *msg)
 {
@@ -86,11 +85,9 @@ void ib_mad_dyn_test_set_hooks(const struct ib_mad_dyn_test_hooks *hooks)
 {
   memset(&g_ib_mad_test_hooks_storage, 0, sizeof(g_ib_mad_test_hooks_storage));
   g_ib_mad_test_hooks = NULL;
-  g_ib_mad_test_hooks_active = 0;
   if (hooks != NULL) {
     g_ib_mad_test_hooks_storage = *hooks;
     g_ib_mad_test_hooks = &g_ib_mad_test_hooks_storage;
-    g_ib_mad_test_hooks_active = 1;
   }
 }
 
@@ -144,7 +141,6 @@ void ib_mad_dyn_unload(void)
     g_ibmad_handle = NULL;
   }
   g_ibmad_loaded = 0;
-  g_ib_mad_test_hooks_active = 0;
   g_ib_mad_test_hooks = NULL;
 #define X(name) p_##name = NULL;
   IB_MAD_DYN_SYM_LIST
@@ -154,8 +150,7 @@ void ib_mad_dyn_unload(void)
 struct ibmad_port *ib_mad_dyn_mad_rpc_open_port(char *dev_name, int dev_port, int *mgmt_classes,
                                                 int num_classes)
 {
-  if (g_ib_mad_test_hooks_active && g_ib_mad_test_hooks != NULL &&
-      g_ib_mad_test_hooks->mad_rpc_open_port != NULL)
+  if (g_ib_mad_test_hooks != NULL && g_ib_mad_test_hooks->mad_rpc_open_port != NULL)
     return g_ib_mad_test_hooks->mad_rpc_open_port(dev_name, dev_port, mgmt_classes, num_classes);
   if (!g_ibmad_loaded && ib_mad_dyn_load() < 0)
     return NULL;
@@ -166,8 +161,7 @@ struct ibmad_port *ib_mad_dyn_mad_rpc_open_port(char *dev_name, int dev_port, in
 
 void ib_mad_dyn_mad_rpc_close_port(struct ibmad_port *srcport)
 {
-  if (g_ib_mad_test_hooks_active && g_ib_mad_test_hooks != NULL &&
-      g_ib_mad_test_hooks->mad_rpc_close_port != NULL) {
+  if (g_ib_mad_test_hooks != NULL && g_ib_mad_test_hooks->mad_rpc_close_port != NULL) {
     g_ib_mad_test_hooks->mad_rpc_close_port(srcport);
     return;
   }
@@ -178,8 +172,7 @@ void ib_mad_dyn_mad_rpc_close_port(struct ibmad_port *srcport)
 uint8_t *ib_mad_dyn_pma_query_via(void *rcvbuf, ib_portid_t *dest, int port, unsigned timeout,
                                   unsigned id, const struct ibmad_port *srcport)
 {
-  if (g_ib_mad_test_hooks_active && g_ib_mad_test_hooks != NULL &&
-      g_ib_mad_test_hooks->pma_query_via != NULL)
+  if (g_ib_mad_test_hooks != NULL && g_ib_mad_test_hooks->pma_query_via != NULL)
     return g_ib_mad_test_hooks->pma_query_via(rcvbuf, dest, port, timeout, id, srcport);
   if (!g_ibmad_loaded && ib_mad_dyn_load() < 0)
     return NULL;
@@ -191,8 +184,7 @@ uint8_t *ib_mad_dyn_pma_query_via(void *rcvbuf, ib_portid_t *dest, int port, uns
 uint8_t *ib_mad_dyn_smp_query_via(void *buf, ib_portid_t *id, unsigned attrid, unsigned mod,
                                   unsigned timeout, const struct ibmad_port *srcport)
 {
-  if (g_ib_mad_test_hooks_active && g_ib_mad_test_hooks != NULL &&
-      g_ib_mad_test_hooks->smp_query_via != NULL)
+  if (g_ib_mad_test_hooks != NULL && g_ib_mad_test_hooks->smp_query_via != NULL)
     return g_ib_mad_test_hooks->smp_query_via(buf, id, attrid, mod, timeout, srcport);
   if (!g_ibmad_loaded && ib_mad_dyn_load() < 0)
     return NULL;
@@ -203,8 +195,7 @@ uint8_t *ib_mad_dyn_smp_query_via(void *buf, ib_portid_t *id, unsigned attrid, u
 
 void ib_mad_dyn_mad_decode_field(uint8_t *buf, enum MAD_FIELDS field, void *val)
 {
-  if (g_ib_mad_test_hooks_active && g_ib_mad_test_hooks != NULL &&
-      g_ib_mad_test_hooks->mad_decode_field != NULL) {
+  if (g_ib_mad_test_hooks != NULL && g_ib_mad_test_hooks->mad_decode_field != NULL) {
     g_ib_mad_test_hooks->mad_decode_field(buf, field, val);
     return;
   }

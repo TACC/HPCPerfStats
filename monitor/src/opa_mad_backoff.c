@@ -1,4 +1,4 @@
-/* host_opa MAD failure backoff — always compiled (usable without liboib_utils). */
+/* host_opa MAD failure backoff - always compiled (usable without liboib_utils). */
 #include <time.h>
 
 #include "opa_mad_backoff.h"

@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #include "opa_sysfs.h"
 #include "stats.h"
@@ -197,7 +196,7 @@ static void test_collect_classic_miss_uses_hw(void)
   mkdir_p(path);
   snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2", root);
   mkdir_p(path);
-  /* Classic counters dir empty / missing files → n_ok==0 (CN5000 EINVAL case). */
+  /* Empty classic counters dir: classic collect sets nothing (CN5000 EINVAL case). */
   snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/counters", root);
   mkdir_p(path);
   snprintf(path, sizeof(path), "%s/class/infiniband/hfi1_0/ports/2/hw_counters", root);

@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
 #include <limits.h>
 #include <dirent.h>
 
@@ -15,7 +14,7 @@ int ib_hca_is_opa_hfi(const char *hca)
 {
   if (hca == NULL || hca[0] == '\0')
     return 0;
-  /* Linux hfi1 driver: hfi1_0, hfi1_1, … (Cornelis CN5000 and Intel OPA 100). */
+  /* Linux hfi1 driver: hfi1_0, hfi1_1, ... (Cornelis CN5000 and Intel OPA 100). */
   if (strncmp(hca, "hfi1", 4) != 0)
     return 0;
   return hca[4] == '\0' || hca[4] == '_';
@@ -80,25 +79,18 @@ int ib_port_collectible(const char *hca, int port)
 {
   char path[160];
   char buf[96];
-  int state_or_phys_up = 0;
 
   if (hca == NULL)
     return 0;
 
   snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/state", hca, port);
-  if (ib_port_read_state_file(path, buf, sizeof(buf)) && ib_port_logic_active(buf))
-    state_or_phys_up = 1;
-  else {
+  if (!ib_port_read_state_file(path, buf, sizeof(buf)) || !ib_port_logic_active(buf)) {
     snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/phys_state", hca, port);
     if (!ib_port_read_state_file(path, buf, sizeof(buf)))
       return 0;
     if (!ib_port_phys_link_up(buf))
       return 0;
-    state_or_phys_up = 1;
   }
-
-  if (!state_or_phys_up)
-    return 0;
 
   /* Missing link_layer: allow (legacy / HFI). Present: require InfiniBand. */
   snprintf(path, sizeof(path), "/sys/class/infiniband/%s/ports/%d/link_layer", hca, port);

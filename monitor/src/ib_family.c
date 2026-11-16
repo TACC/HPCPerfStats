@@ -1,4 +1,4 @@
-/* host_ib family — one sysfs walk per cycle for sysfs and MAD collectors. */
+/* host_ib family - one sysfs walk per cycle for sysfs and MAD collectors. */
 #include <stdio.h>
 
 #include "collect.h"

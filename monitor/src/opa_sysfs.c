@@ -1,4 +1,4 @@
-/* host_opa sysfs fallback — map hfi1 ports/N/counters (+ hw_counters) to KEYS. */
+/* host_opa sysfs fallback - map hfi1 ports/N/counters (+ hw_counters) to KEYS. */
 #include <stdio.h>
 #include <string.h>
 
@@ -13,7 +13,7 @@ struct opa_sysfs_map_entry {
 
 /*
  * Classic IB-style filenames under ports/N/counters (Stampede3 OPA100).
- * Schema uses *_pkts not *_packets. Multicast files may be absent — skipped.
+ * Schema uses *_pkts not *_packets. Multicast files may be absent (skipped).
  * On Cornelis CN5000 NDR, these files often exist but read EINVAL; then
  * opa_sysfs_collect_port falls back to hw_counters (see opa_sysfs_hw_map).
  */
