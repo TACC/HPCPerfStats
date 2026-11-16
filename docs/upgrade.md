@@ -128,7 +128,16 @@ The ini argument defaults to `hpcperfstats.ini`; `--output PATH` writes elsewher
 
 ## INI layout (legacy sections)
 
-**Upgrading from an older ini layout:** PostgreSQL keys moved from **`[PORTAL]`** to **`[DEFAULT]`**; ingest/archive/metrics keys moved from **`[DEFAULT]`** / **`[PORTAL]`** to **`[PIPELINE]`**. Existing deployments keep working via legacy section fallbacks in `conf_parser` until you migrate keys into the new sections. Compare production INI to **`hpcperfstats.ini.example`** on the next image bake (immutable-image policy: bake INI into the image; do not bind-mount a mutable INI over production).
+**Upgrading from an older ini layout:** PostgreSQL keys moved from **`[PORTAL]`** to **`[DEFAULT]`**; ingest/archive/metrics keys moved from **`[DEFAULT]`** / **`[PORTAL]`** to **`[PIPELINE]`**. `conf_parser` reads each key only from its own section (2026-11; the old-section fallbacks are removed), so a key left in an old section reads as its code default. Move them first with **`scripts/rewrite_hpcperfstats_ini.sh`** (above), which places every key in the example's section, then bake the INI into the image (immutable-image policy: do not bind-mount a mutable INI over production).
+
+Keys no longer honored in their old section:
+
+| Old section | Keys | Now read only from |
+| --- | --- | --- |
+| `[PORTAL]` | `dbname`, `engine_name`, `username`, `password`, `host`, `port` | `[DEFAULT]` |
+| `[PORTAL]` | `archive_dir`, `acct_path`, `daily_archive_dir`, `archive_keep_uncompressed_tar`, `archive_zstd_level`, `archive_zstd_threads`, `ingest_zstd_threads`, `archive_seal_parallel_workers` | `[PIPELINE]` |
+
+`[DEFAULT]` values are still visible from every other section that exists (configparser inheritance), so pipeline or portal tuning left in `[DEFAULT]` keeps working while the ini has a `[PIPELINE]` / `[PORTAL]` section; with that section missing it reads as the code default.
 
 ### Process-tree roof: absolute MiB → cgroup percentage (breaking)
 

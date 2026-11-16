@@ -54,19 +54,19 @@ def test_path_defaults_interpolate_the_ini_data_dir(tmp_path, monkeypatch):
   assert cfg.get_accounting_path() == "/srv/hps/accounting"
 
 
-def test_ini_values_and_legacy_sections_beat_defaults(tmp_path, monkeypatch):
+def test_ini_values_beat_defaults(tmp_path, monkeypatch):
   cfg = _load(
     tmp_path,
     monkeypatch,
-    "[DEFAULT]\nmachine = c1\ndebug = yes\n"
-    "[PORTAL]\nhost = legacy-db\narchive_dir = /legacy/archive\n"
+    "[DEFAULT]\nmachine = c1\ndebug = yes\nhost = db.example\n"
+    "[PIPELINE]\narchive_dir = /srv/archive\n"
     "[RMQ]\nrmq_server = mq.example\n"
     "[CACHE]\nvalkey_location = valkey://valkey:6379/1\n",
   )
 
   assert cfg.get_debug() is True
-  assert cfg.get_host() == "legacy-db"
-  assert cfg.get_archive_dir_path() == "/legacy/archive"
+  assert cfg.get_host() == "db.example"
+  assert cfg.get_archive_dir_path() == "/srv/archive"
   assert cfg.get_rmq_server() == "mq.example"
   assert cfg.get_valkey_location() == "valkey://valkey:6379/1"
 

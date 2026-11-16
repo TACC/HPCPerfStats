@@ -124,11 +124,14 @@ def test_absolute_concurrency_ini_overrides(temp_ini, monkeypatch):
     "total_cores = 4\n"
     "sync_ingest_pool_processes = 3\n"
     "metrics_pool_processes = 5\n"
-    "gunicorn_workers = 9\n"
-    "summary_aggregate_prefetch_max_threads = 1\n"
     "listend_db_ingest_pool_processes = 11\n"
     "listend_db_ingest_backpressure = pause\n"
     "metrics_plot_prewarm_mode = inline\n",
+  )
+  content += (
+    "\n[PORTAL]\n"
+    "gunicorn_workers = 9\n"
+    "summary_aggregate_prefetch_max_threads = 1\n"
   )
   with open(temp_ini, "w") as f:
     f.write(content)
@@ -657,12 +660,12 @@ def test_fallback_to_cwd_hpcperfstats_ini(monkeypatch, tmp_path):
     "staff_email_domain = local\n"
     "timezone = UTC\n"
     "total_cores = 4\n"
-    "[PORTAL]\n"
     "dbname = test\n"
     "username = u\n"
     "password = p\n"
     "port = 5432\n"
     "host = localhost\n"
+    "[PIPELINE]\n"
     "archive_dir = /tmp\n"
     "acct_path = /tmp\n"
     "daily_archive_dir = /tmp\n"
@@ -722,10 +725,7 @@ def test_parallel_db_prefetch_and_api_defaults(temp_ini, monkeypatch):
 def test_api_small_executor_override(temp_ini, monkeypatch):
   with open(temp_ini) as f:
     content = f.read()
-  content = content.replace(
-    "total_cores = 4",
-    "total_cores = 4\napi_small_executor_max_workers = 3",
-  )
+  content += "\n[PORTAL]\napi_small_executor_max_workers = 3\n"
   with open(temp_ini, "w") as f:
     f.write(content)
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
@@ -1306,10 +1306,8 @@ def test_format_cors_allowed_origins_multiple_hosts(temp_ini, monkeypatch):
 def test_format_cors_allowed_origins_respects_scheme_ini(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   with open(temp_ini) as f:
-    content = f.read().replace(
-      "server = test\n",
-      "server = legacy.example\ncors_origin_scheme = http\n",
-    )
+    content = f.read().replace("server = test\n", "server = legacy.example\n")
+  content += "\n[PORTAL]\ncors_origin_scheme = http\n"
   with open(temp_ini, "w") as f:
     f.write(content)
   import importlib
@@ -1344,7 +1342,8 @@ def test_format_cors_allowed_origins_preserves_full_url_token(
   )
 
 
-def test_legacy_portal_fallback_for_dbname(tmp_path, monkeypatch):
+def test_db_keys_only_under_portal_are_not_read(tmp_path, monkeypatch):
+  """The [PORTAL] fallback for [DEFAULT] PostgreSQL keys is gone."""
   ini = tmp_path / "legacy-portal-db.ini"
   ini.write_text(
     "[DEFAULT]\n"
@@ -1369,11 +1368,12 @@ def test_legacy_portal_fallback_for_dbname(tmp_path, monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
-  assert cfg.get_db_name() == "legacydb"
-  assert cfg.get_host() == "legacy-host"
+  assert cfg.get_db_name() == cfg.INI_OPTION_DEFAULTS["dbname"]
+  assert cfg.get_host() == cfg.INI_OPTION_DEFAULTS["host"]
 
 
-def test_legacy_default_fallback_for_moved_pipeline_key(tmp_path, monkeypatch):
+def test_default_section_value_inherits_into_pipeline(tmp_path, monkeypatch):
+  """configparser [DEFAULT] inheritance still reaches an existing [PIPELINE]."""
   ini = tmp_path / "legacy-default-pipeline.ini"
   ini.write_text(
     "[DEFAULT]\n"
@@ -1399,6 +1399,24 @@ def test_legacy_default_fallback_for_moved_pipeline_key(tmp_path, monkeypatch):
 
   importlib.reload(cfg)
   assert cfg.get_sync_archive_require_db_ingest() is False
+
+
+def test_default_section_pipeline_key_without_pipeline_section_is_not_read(
+  tmp_path, monkeypatch
+):
+  """With no [PIPELINE] section a [DEFAULT] pipeline key reads as default."""
+  ini = tmp_path / "no-pipeline-section.ini"
+  ini.write_text(
+    "[DEFAULT]\nmachine = test\nsync_archive_require_db_ingest = no\n",
+    encoding="utf-8",
+  )
+  monkeypatch.setenv("HPCPERFSTATS_INI", str(ini))
+  import importlib
+
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  importlib.reload(cfg)
+  assert cfg.get_sync_archive_require_db_ingest() is True
 
 
 def test_process_tree_rss_absolute_mb_getters_removed(temp_ini, monkeypatch):
@@ -1499,7 +1517,10 @@ def test_unread_ini_keys_and_dead_helpers_are_removed():
     assert not hasattr(cfg, name), name
 
 
-def test_legacy_portal_fallback_for_archive_dir(tmp_path, monkeypatch):
+def test_archive_paths_only_under_portal_read_as_defaults(
+  tmp_path, monkeypatch
+):
+  """The [PORTAL] fallback for [PIPELINE] path keys is gone."""
   ini = tmp_path / "legacy-portal-archive.ini"
   ini.write_text(
     "[DEFAULT]\n"
@@ -1524,9 +1545,9 @@ def test_legacy_portal_fallback_for_archive_dir(tmp_path, monkeypatch):
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
-  assert cfg.get_archive_dir_path() == "/legacy/archive"
-  assert cfg.get_accounting_path() == "/legacy/acct"
-  assert cfg.get_daily_archive_dir_path() == "/legacy/daily"
+  assert cfg.get_archive_dir_path() == "/tmp/archive"
+  assert cfg.get_accounting_path() == "/tmp/accounting"
+  assert cfg.get_daily_archive_dir_path() == "/tmp/daily_archive"
 
 
 def test_get_separate_test_login_defaults_false(temp_ini, monkeypatch):

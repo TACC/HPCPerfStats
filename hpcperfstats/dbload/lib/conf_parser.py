@@ -11,8 +11,6 @@ Attributes:
   _INI_FALLBACK_SENTINEL: Attribute.
   _INI_OPTION_REGISTRY_KEYS: Attribute.
   _INI_REGISTRY_DEFAULT_BY_OPTION: Attribute.
-  _PIPELINE_ARCHIVE_LEGACY: Attribute.
-  _PIPELINE_LEGACY: Attribute.
   _SPACE_PRESSURE_BAD_VALUES_LOGGED: Bad pressure INI values already warned.
   _SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT: Per-file lease ceiling in
     seconds used when ``sync_ingest_per_file_timeout_max_s`` is unparsable.
@@ -461,16 +459,12 @@ def _ini_registry_default_str(option: Any) -> Any:
   return str(default)
 
 
-def _ini_get_from_registry(
-  primary_section: Any,
-  option: Any,
-  *,
-  legacy_sections: tuple[Any, ...] = (),
-) -> Any:
+def _ini_get_from_registry(primary_section: Any, option: Any) -> Any:
   """
   Read *option* from the ini, else interpolate its ``INI_OPTION_DEFAULTS`` value.
 
-  The ini wins (primary section, then legacy sections). A default containing
+  The ini wins (*primary_section*, which also sees ``[DEFAULT]`` values
+  through configparser inheritance). A default containing
   ``%(name)s`` is interpolated against the ini like a written value, with
   each referenced option the ini lacks filled from its own registry default,
   so the ``archive_dir`` default ``%(data_dir)s/archive`` works with no
@@ -480,8 +474,6 @@ def _ini_get_from_registry(
   Args:
     primary_section (Any): Section the option belongs in (``"PIPELINE"``).
     option (Any): Ini option name (``"archive_dir"``).
-    legacy_sections (tuple[Any, ...]): Older sections still read when the
-      primary section lacks the option (``("PORTAL",)``).
 
   Returns:
     Any: The option's ``str`` value from the ini or the interpolated default.
@@ -495,9 +487,8 @@ def _ini_get_from_registry(
     '/hpcperfstats//archive'
   """
   _ensure_cfg_loaded()
-  for section in (primary_section, *legacy_sections):
-    if _ini_has_option(section, option):
-      return cfg.get(section, option)
+  if _ini_has_option(primary_section, option):
+    return cfg.get(primary_section, option)
   default = _ini_registry_default_str(option)
   context = primary_section if cfg.has_section(primary_section) else "DEFAULT"
   extra = {option: default}
@@ -646,18 +637,13 @@ def _ini_has_option(section: Any, option: Any) -> Any:
   return cfg.has_section(section) and cfg.has_option(section, option)
 
 
-def _ini_option(
-  primary_section: Any,
-  option: Any,
-  legacy_sections: tuple[Any, ...] = (),
-) -> Any:
+def _ini_option(primary_section: Any, option: Any) -> Any:
   """
-  Read *option* from *primary_section*, then legacy sections in order.
+  Read *option* from *primary_section*, raising when it is not set.
 
   Args:
     primary_section (Any): Primary section passed to this helper.
     option (Any): Option passed to this helper.
-    legacy_sections (tuple[Any, ...]): Sequence for legacy sections.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -669,14 +655,11 @@ def _ini_option(
     ``configparser.NoSectionError`` failure path.
 
   Examples:
-    >>> _ini_option(None, None, [])  # doctest: +SKIP
+    >>> _ini_option("DEFAULT", "machine")  # doctest: +SKIP
   """
   _ensure_cfg_loaded()
   if _ini_has_option(primary_section, option):
     return cfg.get(primary_section, option)
-  for legacy in legacy_sections:
-    if _ini_has_option(legacy, option):
-      return cfg.get(legacy, option)
   if not cfg.has_section(primary_section) and primary_section != "DEFAULT":
     raise configparser.NoSectionError(
       f"Missing section '{primary_section}' in {_ACTIVE_CONFIG_PATH}"
@@ -689,60 +672,27 @@ def _ini_get(
   option: Any,
   *,
   fallback: Any | None = None,
-  legacy_sections: tuple[Any, ...] = (),
 ) -> Any:
   """
-  Like ``_ini_option`` but returns *fallback* when absent everywhere.
+  Like ``_ini_option`` but returns *fallback* when the option is not set.
 
   Args:
     primary_section (Any): Primary section passed to this helper.
     option (Any): Option passed to this helper.
     fallback (Any | None): One of ``Any``, ``None``.
-    legacy_sections (tuple[Any, ...]): Sequence for legacy sections.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
 
   Examples:
-    >>> _ini_get(None, None, None, [])  # doctest: +SKIP
+    >>> _ini_get("PIPELINE", "acct_path", fallback="/x")  # doctest: +SKIP
   """
   _ensure_cfg_loaded()
   if _ini_has_option(primary_section, option):
     return cfg.get(primary_section, option)
-  for legacy in legacy_sections:
-    if _ini_has_option(legacy, option):
-      return cfg.get(legacy, option)
   if fallback is not None:
     return str(fallback)
-  return _ini_option(primary_section, option, legacy_sections=legacy_sections)
-
-
-def _ini_has_option_any(
-  primary_section: Any,
-  option: Any,
-  legacy_sections: tuple[Any, ...] = (),
-) -> Any:
-  """
-  Internal helper to handle ini has option any.
-
-  Args:
-    primary_section (Any): Primary section passed to this helper.
-    option (Any): Option passed to this helper.
-    legacy_sections (tuple[Any, ...]): Sequence for legacy sections.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _ini_has_option_any(None, None, [])  # doctest: +SKIP
-  """
-  if _ini_has_option(primary_section, option):
-    return True
-  return any(_ini_has_option(legacy, option) for legacy in legacy_sections)
-
-
-_PIPELINE_LEGACY = ("DEFAULT",)
-_PIPELINE_ARCHIVE_LEGACY = ("PORTAL",)
+  return _ini_option(primary_section, option)
 
 
 def _pipeline_get(
@@ -751,7 +701,7 @@ def _pipeline_get(
   fallback: Any = _INI_FALLBACK_SENTINEL,
 ) -> Any:
   """
-  Read a PIPELINE option with DEFAULT legacy fallback.
+  Read a ``[PIPELINE]`` option, else its registry default.
 
   Args:
     option (Any): Option passed to this helper.
@@ -765,12 +715,7 @@ def _pipeline_get(
   """
   if fallback is _INI_FALLBACK_SENTINEL:
     fallback = _ini_registry_default_str(option)
-  return _ini_get(
-    "PIPELINE",
-    option,
-    fallback=str(fallback),
-    legacy_sections=_PIPELINE_LEGACY,
-  )
+  return _ini_get("PIPELINE", option, fallback=str(fallback))
 
 
 def _pipeline_getint(
@@ -844,7 +789,6 @@ def _env_or_cfg_int(
   section: Any,
   option: Any,
   fallback: Any = _INI_FALLBACK_SENTINEL,
-  legacy_sections: tuple[Any, ...] = (),
 ) -> Any:
   """
   Internal helper to handle env or config int.
@@ -854,13 +798,12 @@ def _env_or_cfg_int(
     section (Any): Section passed to this helper.
     option (Any): Option passed to this helper.
     fallback (Any): Fallback passed to this helper.
-    legacy_sections (tuple[Any, ...]): Sequence for legacy sections.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
 
   Examples:
-    >>> _env_or_cfg_int(None, None, None, None, [])  # doctest: +SKIP
+    >>> _env_or_cfg_int(None, None, None, None)  # doctest: +SKIP
   """
   env = os.environ.get(env_key, "").strip()
   if env:
@@ -868,19 +811,12 @@ def _env_or_cfg_int(
   _ensure_cfg_loaded()
   if fallback is _INI_FALLBACK_SENTINEL:
     fallback = _ini_registry_default_str(option)
-  return int(
-    _ini_get(
-      section,
-      option,
-      fallback=str(fallback),
-      legacy_sections=legacy_sections,
-    )
-  )
+  return int(_ini_get(section, option, fallback=str(fallback)))
 
 
 def get_db_name() -> Any:
   """
-  Return the database name from DEFAULT config (legacy: PORTAL).
+  Return the database name from DEFAULT config.
 
   Returns:
     Any: Open return polymorphism from ``get_db_name``: concrete type depends
@@ -889,9 +825,7 @@ def get_db_name() -> Any:
   Examples:
     >>> get_db_name()  # doctest: +SKIP
   """
-  return _ini_get_from_registry(
-    "DEFAULT", "dbname", legacy_sections=("PORTAL",)
-  )
+  return _ini_get_from_registry("DEFAULT", "dbname")
 
 
 def get_debug() -> Any:
@@ -939,7 +873,7 @@ def get_secret_key() -> Any:
 
 def get_archive_dir_path() -> Any:
   """
-  Return the archive directory path from PIPELINE config (legacy: PORTAL).
+  Return the archive directory path from PIPELINE config.
 
   Returns:
     Any: Open return polymorphism from ``get_archive_dir_path``: concrete type
@@ -949,9 +883,7 @@ def get_archive_dir_path() -> Any:
   Examples:
     >>> get_archive_dir_path()  # doctest: +SKIP
   """
-  raw = _ini_get_from_registry(
-    "PIPELINE", "archive_dir", legacy_sections=("PORTAL",)
-  ).strip()
+  raw = _ini_get_from_registry("PIPELINE", "archive_dir").strip()
   return os.path.normpath(raw) if raw else raw
 
 
@@ -987,7 +919,7 @@ def get_restricted_queue_keywords() -> Any:
 
 def get_accounting_path() -> Any:
   """
-  Return the accounting (sacct) file path from PIPELINE config (legacy: PORTAL).
+  Return the accounting (sacct) file path from PIPELINE config.
 
   Returns:
     Any: Open return polymorphism from ``get_accounting_path``: concrete type
@@ -997,14 +929,12 @@ def get_accounting_path() -> Any:
   Examples:
     >>> get_accounting_path()  # doctest: +SKIP
   """
-  return _ini_get_from_registry(
-    "PIPELINE", "acct_path", legacy_sections=("PORTAL",)
-  )
+  return _ini_get_from_registry("PIPELINE", "acct_path")
 
 
 def get_daily_archive_dir_path() -> Any:
   """
-  Return the daily archive directory path from PIPELINE config (legacy: PORTAL).
+  Return the daily archive directory path from PIPELINE config.
 
   Returns:
     Any: Open return polymorphism from ``get_daily_archive_dir_path``:
@@ -1017,7 +947,6 @@ def get_daily_archive_dir_path() -> Any:
   raw = _ini_get_from_registry(
     "PIPELINE",
     "daily_archive_dir",
-    legacy_sections=("PORTAL",),
   ).strip()
   return os.path.normpath(raw) if raw else raw
 
@@ -1041,7 +970,6 @@ def get_archive_keep_uncompressed_tar() -> Any:
   raw = _ini_get_from_registry(
     "PIPELINE",
     "archive_keep_uncompressed_tar",
-    legacy_sections=("PORTAL",),
   )
   return raw.lower() in ("yes", "true", "1")
 
@@ -1085,7 +1013,6 @@ def get_archive_zstd_level() -> Any:
   raw = _ini_get_from_registry(
     "PIPELINE",
     "archive_zstd_level",
-    legacy_sections=("PORTAL",),
   )
   level = int(raw)
   return max(1, min(19, level))
@@ -1109,7 +1036,6 @@ def get_archive_zstd_threads() -> Any:
   raw = _ini_get_from_registry(
     "PIPELINE",
     "archive_zstd_threads",
-    legacy_sections=("PORTAL",),
   )
   return max(0, int(raw))
 
@@ -1130,7 +1056,6 @@ def get_ingest_zstd_threads() -> Any:
   raw = _ini_get_from_registry(
     "PIPELINE",
     "ingest_zstd_threads",
-    legacy_sections=("PORTAL",),
   )
   return max(0, int(raw))
 
@@ -1188,7 +1113,6 @@ def get_archive_seal_parallel_workers() -> Any:
   raw = _ini_get_from_registry(
     "PIPELINE",
     "archive_seal_parallel_workers",
-    legacy_sections=("PORTAL",),
   )
   return max(1, int(raw))
 
@@ -1244,7 +1168,7 @@ def get_cors_origin_scheme() -> Any:
   ``[DEFAULT] server``.
 
   Optional ``[PORTAL] cors_origin_scheme`` may be set to ``http`` or ``https``
-  (legacy: ``[DEFAULT]``). When omitted, defaults to ``https``.
+  When omitted, defaults to ``https``.
 
   Returns:
     Any: Open return polymorphism from ``get_cors_origin_scheme``: concrete
@@ -1259,7 +1183,6 @@ def get_cors_origin_scheme() -> Any:
     _ini_get_from_registry(
       "PORTAL",
       "cors_origin_scheme",
-      legacy_sections=("DEFAULT",),
     )
     .strip()
     .lower()
@@ -1497,7 +1420,7 @@ def get_syslog_generated_config_path() -> Any:
 
 def get_engine_name() -> Any:
   """
-  Return the Django database engine name from DEFAULT config (legacy: PORTAL).
+  Return the Django database engine name from DEFAULT config.
 
   Returns:
     Any: Open return polymorphism from ``get_engine_name``: concrete type
@@ -1507,14 +1430,12 @@ def get_engine_name() -> Any:
   Examples:
     >>> get_engine_name()  # doctest: +SKIP
   """
-  return _ini_get_from_registry(
-    "DEFAULT", "engine_name", legacy_sections=("PORTAL",)
-  )
+  return _ini_get_from_registry("DEFAULT", "engine_name")
 
 
 def get_username() -> Any:
   """
-  Return the portal DB username from DEFAULT config (legacy: PORTAL).
+  Return the portal DB username from DEFAULT config.
 
   Returns:
     Any: Open return polymorphism from ``get_username``: concrete type depends
@@ -1523,14 +1444,12 @@ def get_username() -> Any:
   Examples:
     >>> get_username()  # doctest: +SKIP
   """
-  return _ini_get_from_registry(
-    "DEFAULT", "username", legacy_sections=("PORTAL",)
-  )
+  return _ini_get_from_registry("DEFAULT", "username")
 
 
 def get_password() -> Any:
   """
-  Return the portal DB password from DEFAULT config (legacy: PORTAL).
+  Return the portal DB password from DEFAULT config.
 
   Returns:
     Any: Open return polymorphism from ``get_password``: concrete type depends
@@ -1539,14 +1458,12 @@ def get_password() -> Any:
   Examples:
     >>> get_password()  # doctest: +SKIP
   """
-  return _ini_get_from_registry(
-    "DEFAULT", "password", legacy_sections=("PORTAL",)
-  )
+  return _ini_get_from_registry("DEFAULT", "password")
 
 
 def get_host() -> Any:
   """
-  Return the portal DB host from DEFAULT config (legacy: PORTAL).
+  Return the portal DB host from DEFAULT config.
 
   Returns:
     Any: Open return polymorphism from ``get_host``: concrete type depends on
@@ -1555,12 +1472,12 @@ def get_host() -> Any:
   Examples:
     >>> get_host()  # doctest: +SKIP
   """
-  return _ini_get_from_registry("DEFAULT", "host", legacy_sections=("PORTAL",))
+  return _ini_get_from_registry("DEFAULT", "host")
 
 
 def get_port() -> Any:
   """
-  Return the portal DB port from DEFAULT config (legacy: PORTAL).
+  Return the portal DB port from DEFAULT config.
 
   Returns:
     Any: Open return polymorphism from ``get_port``: concrete type depends on
@@ -1569,7 +1486,7 @@ def get_port() -> Any:
   Examples:
     >>> get_port()  # doctest: +SKIP
   """
-  return _ini_get_from_registry("DEFAULT", "port", legacy_sections=("PORTAL",))
+  return _ini_get_from_registry("DEFAULT", "port")
 
 
 def get_xalt_engine() -> Any:
@@ -1829,7 +1746,6 @@ def get_summary_aggregate_prefetch_max_threads() -> Any:
       _ini_get_from_registry(
         "PORTAL",
         "summary_aggregate_prefetch_max_threads",
-        legacy_sections=("DEFAULT",),
       )
     ),
   )
@@ -1855,7 +1771,6 @@ def get_gunicorn_workers() -> Any:
       _ini_get_from_registry(
         "PORTAL",
         "gunicorn_workers",
-        legacy_sections=("DEFAULT",),
       )
     ),
   )
@@ -1908,7 +1823,6 @@ def get_parallel_db_prefetch_max() -> Any:
       _ini_get_from_registry(
         "PORTAL",
         "parallel_db_prefetch_max",
-        legacy_sections=("DEFAULT",),
       )
     ),
   )
@@ -1930,21 +1844,8 @@ def get_api_small_executor_max_workers() -> Any:
     >>> get_api_small_executor_max_workers()  # doctest: +SKIP
   """
   _ensure_cfg_loaded()
-  if _ini_has_option_any(
-    "PORTAL",
-    "api_small_executor_max_workers",
-    ("DEFAULT",),
-  ):
-    return max(
-      1,
-      int(
-        _ini_get(
-          "PORTAL",
-          "api_small_executor_max_workers",
-          legacy_sections=("DEFAULT",),
-        )
-      ),
-    )
+  if _ini_has_option("PORTAL", "api_small_executor_max_workers"):
+    return max(1, int(_ini_option("PORTAL", "api_small_executor_max_workers")))
   return get_parallel_db_prefetch_max()
 
 
@@ -1966,7 +1867,6 @@ def get_db_conn_max_age() -> Any:
     "DJANGO_CONN_MAX_AGE",
     "PORTAL",
     "db_conn_max_age",
-    legacy_sections=("DEFAULT",),
   )
 
 
@@ -1991,7 +1891,6 @@ def get_db_statement_timeout_ms() -> Any:
     "DJANGO_DB_STATEMENT_TIMEOUT_MS",
     "PORTAL",
     "db_statement_timeout_ms",
-    legacy_sections=("DEFAULT",),
   )
 
 
@@ -2012,7 +1911,6 @@ def get_db_idle_in_transaction_session_timeout_ms() -> Any:
     "DJANGO_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS",
     "PORTAL",
     "db_idle_in_transaction_session_timeout_ms",
-    legacy_sections=("DEFAULT",),
   )
 
 
