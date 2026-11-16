@@ -159,11 +159,6 @@ def seed_update_metrics_diagnosis_jobs():
   _delete_diagnosis_jobs([jid_small, jid_large])
 
   t0 = _utc_now()
-  # Small job window
-  n_rows_small = small_hosts * small_steps
-  if not (100 <= n_rows_small <= 300):
-    # Keep defaults inside band; allow env override outside for experiments.
-    pass
   delta = timedelta(seconds=interval_sec)
   t_last_s = t0 + delta * (small_steps - 1)
   end_s = t_last_s + timedelta(seconds=margin_sec)
@@ -236,10 +231,8 @@ def seed_update_metrics_diagnosis_jobs():
   )
 
   # update_metrics filters end_time__date; use latest end date in local TZ
-  from django.utils import timezone
-
   latest_end = max(end_s, end_l)
-  metrics_date = timezone.localtime(latest_end).replace(
+  metrics_date = django_tz.localtime(latest_end).replace(
     hour=0, minute=0, second=0, microsecond=0
   )
 

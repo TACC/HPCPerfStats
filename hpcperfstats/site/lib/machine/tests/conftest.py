@@ -141,7 +141,7 @@ def skipped_off_compose_network(item) -> bool:
 
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config, items):
-  """Dropped default-database marks on tests already skipped off the compose network.
+  """Drop default-database marks on tests already skipped off the compose network.
 
   Root conftest adds ``django_db`` and then ``skip``. pytest-django still
   creates that database for every collected item, so a host run that also

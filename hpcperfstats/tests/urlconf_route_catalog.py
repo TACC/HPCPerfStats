@@ -111,7 +111,7 @@ def build_pipeline_http_endpoint_specs(
     by_template.setdefault(spec.route_template, []).append(spec)
     specs.append(spec)
 
-  # --- Playwright page navigation (HTML / redirects) ---
+  # Playwright page navigation (HTML / redirects)
   add(PipelineHttpEndpointSpec("", "GET", "/", 200, 399, None, True))
   add(
     PipelineHttpEndpointSpec(
@@ -156,7 +156,7 @@ def build_pipeline_http_endpoint_specs(
     )
   )
 
-  # --- APIRequestContext (JSON / API) ---
+  # APIRequestContext (JSON / API)
   add(
     PipelineHttpEndpointSpec(
       "api/home/",

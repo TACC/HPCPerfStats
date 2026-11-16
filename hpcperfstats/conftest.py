@@ -48,7 +48,6 @@ def pytest_configure(config):
 
 def pytest_unconfigure(config):
   """Remove default INI file."""
-  global _DEFAULT_INI
   if _DEFAULT_INI and os.path.exists(_DEFAULT_INI):
     with contextlib.suppress(Exception):
       os.unlink(_DEFAULT_INI)
