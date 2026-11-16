@@ -1,6 +1,6 @@
 /*! \file amd_x86_uncore_df.c
  *  AMD EPYC Data Fabric DRAM channels via LIKWID (family-named types).
- *  Legacy MSR amd_x86_uncore_df / amd64_df programming removed — no fallback.
+ *  No MSR fallback.
  */
 
 #include "stats.h"
