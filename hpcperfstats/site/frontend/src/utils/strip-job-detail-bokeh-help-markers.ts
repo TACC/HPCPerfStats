@@ -179,7 +179,7 @@ export function jsonItemHasHelpQuestionLabel(item: unknown): boolean {
   return labelIds.size > 0;
 }
 
-/** Exported for tests — id of a GlyphRenderer recognized as the help hit target. */
+/** Exported for tests: ids of GlyphRenderers recognized as the help hit target. */
 export function jsonItemHelpHitRendererIds(item: unknown): string[] {
   const labelIds = new Set<string>();
   const rendererIds = new Set<string>();

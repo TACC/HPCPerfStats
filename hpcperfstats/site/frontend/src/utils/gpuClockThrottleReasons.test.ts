@@ -32,7 +32,7 @@ describe("formatGpuClockThrottleReasons", () => {
   });
 
   it("returns empty for DCGM blank family (FP64 base and INT64-scale)", () => {
-    // FP64 blank base (exact). INT64 blank (~2**63) is not a safe JS literal —
+    // FP64 blank base (exact). INT64 blank (~2**63) is not a safe JS literal;
     // use 2**63 (exact IEEE754) as the float-scale stand-in.
     expect(formatGpuClockThrottleReasons(140737488355328)).toBe("");
     expect(formatGpuClockThrottleReasons(2 ** 63)).toBe("");

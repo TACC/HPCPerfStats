@@ -1,4 +1,4 @@
-/** Presentation-only query keys — must not drive secondary refetch or reset enlarge/popovers. */
+/** Presentation-only query keys; they must not drive secondary refetch or reset enlarge/popovers. */
 export const URL_PRESENTATION_PARAM_KEYS = new Set([
   "page",
   "order_by",
@@ -21,7 +21,7 @@ export function stripPresentationParams(
 
 /**
  * Stable filter-identity key from URLSearchParams (sorted, presentation keys omitted).
- * Use for enlarge/popover reset effects — not full `searchParams.toString()`.
+ * Use for enlarge/popover reset effects instead of full `searchParams.toString()`.
  */
 export function filterIdentitySearchParamsKey(
   searchParams: URLSearchParams,

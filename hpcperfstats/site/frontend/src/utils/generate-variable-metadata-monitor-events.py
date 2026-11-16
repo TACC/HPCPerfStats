@@ -141,14 +141,10 @@ def collect_all_names() -> set[str]:
     >>> collect_all_names()  # doctest: +SKIP
   """
   names: set[str] = set()
-  for path in sorted(MONITOR_SRC.glob("*.c")):
-    text_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    for i, line in enumerate(text_lines):
-      st = line.strip()
-      if not any(st.startswith(m) for m in MARKERS):
-        continue
-      names |= extract_x_keys(macro_block(text_lines, i))
-  for path in sorted(MONITOR_SRC.glob("*.h")):
+  for path in [
+    *sorted(MONITOR_SRC.glob("*.c")),
+    *sorted(MONITOR_SRC.glob("*.h")),
+  ]:
     text_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     for i, line in enumerate(text_lines):
       st = line.strip()
@@ -161,12 +157,7 @@ def collect_all_names() -> set[str]:
   for i in range(8):
     names.add(f"MBW_CHANNEL_{i}")
   # Intel legacy FP proxy events (analysis/utils.py); may appear in host_data when programmed.
-  for legacy in (
-    "SSE_DOUBLE_SCALAR",
-    "SSE_DOUBLE_PACKED",
-    "SIMD_DOUBLE_256",
-  ):
-    names.add(legacy)
+  names.update(("SSE_DOUBLE_SCALAR", "SSE_DOUBLE_PACKED", "SIMD_DOUBLE_256"))
   return names
 
 

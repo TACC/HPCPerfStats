@@ -5,9 +5,6 @@ import {
   type ExtendedSearchMetricOption,
 } from "./extended-search-schema";
 
-/**
- * Validates extended search form values (Zod-backed; replaces legacy imperative checks).
- */
 export function validateExtendedSearchForm(
   params: ExtendedSearchFormValues,
   options: { metrics?: ExtendedSearchMetricOption[] } = {},

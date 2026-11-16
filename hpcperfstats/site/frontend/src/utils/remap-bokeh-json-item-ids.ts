@@ -1,26 +1,23 @@
 import type { BokehJsonItem } from "@/types/bokeh";
 import { stripJobDetailBokehHelpMarkersInPlace } from "./strip-job-detail-bokeh-help-markers";
 
-/**
- * Bokeh json_item payloads use string ids like "p1006". Multiple SPA requests may be
- * served by different app workers that each reset the id counter, so several plots on
- * one page can carry the same ids. BokehJS keeps a global model registry → collisions
- * cause errors such as proxy [[OwnPropertyKeys]] duplicate property reports.
- *
- * Remap every `p` + digits id in the cloned tree consistently so each embed is isolated.
- */
 const BOKEH_NUMERIC_ID = /^p\d+$/;
 
 /** Monotonic block allocator so concurrent embeds never reuse the same id range. */
 let nextBokehRemapBase = 200_000_000;
-
-type JsonTree = Record<string, unknown> | unknown[];
 
 export type PrepareBokehJsonItemForEmbedOptions = {
   /** Print prep: drop in-plot ``?`` help Labels / hit HoverTools before embed. */
   stripHelpMarkers?: boolean;
 };
 
+/**
+ * Bokeh json_item payloads use string ids like "p1006". Different app workers each reset
+ * the id counter, so several plots on one page can carry the same ids, and BokehJS keeps a
+ * global model registry, so collisions cause errors such as proxy [[OwnPropertyKeys]]
+ * duplicate property reports. Clone the item and remap every `p` + digits id consistently
+ * so each embed is isolated.
+ */
 export function prepareBokehJsonItemForEmbed(
   item: BokehJsonItem | null | undefined,
   options?: PrepareBokehJsonItemForEmbedOptions,
@@ -103,6 +100,6 @@ export function prepareBokehJsonItemForEmbed(
     );
   }
 
-  replaceIds(clone as JsonTree);
+  replaceIds(clone);
   return clone;
 }

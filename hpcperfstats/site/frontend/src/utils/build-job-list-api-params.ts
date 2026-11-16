@@ -27,10 +27,7 @@ export function buildJobListApiParams(
   return params;
 }
 
-/**
- * Filter-identity params for histogram batch — omit page/order_by/tab chrome
- * so sort/pagination does not refetch or clear distributions.
- */
+/** Histogram batch params omit presentation keys so sort/pagination does not refetch or clear distributions. */
 export function buildJobListHistogramApiParams(
   searchParams: URLSearchParams,
   routeParams: Record<string, string | string[] | undefined>,

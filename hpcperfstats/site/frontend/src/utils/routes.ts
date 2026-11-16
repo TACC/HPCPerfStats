@@ -1,4 +1,3 @@
-/** Machine SPA base path (replaces React Router basename `/machine`). */
 const MACHINE_BASE = "/machine";
 
 export function machineHref(path: string): string {

@@ -3,7 +3,6 @@ import {
   EXTENDED_SEARCH_ALLOWED_PARAM_NAMES,
   EXTENDED_SEARCH_DATE_RANGE_PAIRS,
   EXTENDED_SEARCH_NUMERIC_RANGE_PAIRS,
-  getExtendedSearchParameterDefinition,
 } from "./extended-search-parameters";
 
 const METRIC_FILTER_KEY = /^metrics_[a-zA-Z0-9_.-]+__(?:gte|lte)$/;
@@ -47,11 +46,10 @@ export function buildExtendedSearchZodSchema(metrics: ExtendedSearchMetricOption
         if (raw == null || String(raw).trim() === "") continue;
         if (EXTENDED_SEARCH_ALLOWED_PARAM_NAMES.includes(key)) continue;
         if (METRIC_FILTER_KEY.test(key)) continue;
-        const def = getExtendedSearchParameterDefinition(key);
         ctx.addIssue({
           code: "custom",
           message: `Unknown search field: ${key}`,
-          path: [def?.htmlId ?? key],
+          path: [key],
         });
       }
 
@@ -115,7 +113,7 @@ export function buildExtendedSearchZodSchema(metrics: ExtendedSearchMetricOption
     });
 }
 
-/** Map Zod issues to legacy validateExtendedSearchForm shape for tests. */
+/** Map Zod issues to the validateExtendedSearchForm result shape. */
 export function zodIssuesToValidationResult(
   issues: z.ZodIssue[],
 ): { ok: boolean; invalidHtmlIds: Set<string>; messages: string[] } {

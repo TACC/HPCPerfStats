@@ -1,4 +1,3 @@
-/** @param {readonly string[]} allowPrefixes */
 export function formatRobotsTxtBody(allowPrefixes: readonly string[]): string {
   const lines = ["User-agent: *"];
   for (const prefix of allowPrefixes) {

@@ -3,7 +3,6 @@
  * (dcgm_fields.h DCGM_CLOCKS_THROTTLE_REASON_* / field 112).
  *
  * Persisted metric max_gpu_clock_event_reasons stays numeric; this is display-only.
- * Blank-family and no-known-bit garbage masks return "" (never "unknown (0x…)").
  */
 
 /**
@@ -12,11 +11,6 @@
  * (eslint no-loss-of-precision), so SPA blank checks use this threshold only.
  */
 const DCGM_FP64_BLANK = 140737488355328;
-
-function isDcgmNumericBlank(mask: number): boolean {
-  if (!Number.isFinite(mask)) return false;
-  return mask >= DCGM_FP64_BLANK;
-}
 
 export const DCGM_CLOCK_THROTTLE_REASON_FLAGS: ReadonlyArray<{
   bit: number;
@@ -39,7 +33,7 @@ export const DCGM_CLOCK_THROTTLE_REASON_FLAGS: ReadonlyArray<{
  */
 export function formatGpuClockThrottleReasons(mask: number): string {
   if (!Number.isFinite(mask)) return "";
-  if (isDcgmNumericBlank(mask)) return "";
+  if (mask >= DCGM_FP64_BLANK) return "";
   const intMask = Math.trunc(mask);
   if (intMask === 0) return "";
 
@@ -48,6 +42,6 @@ export function formatGpuClockThrottleReasons(mask: number): string {
   for (const { bit, label } of DCGM_CLOCK_THROTTLE_REASON_FLAGS) {
     if (unsigned & bit) parts.push(label);
   }
-  // Fail closed: never emit unknown (0x…) for residual garbage bits.
+  // Residual unknown bits are dropped, never shown as a raw hex mask.
   return parts.join(", ");
 }
