@@ -63,7 +63,7 @@ int roofline_nvidia_sm_count_from_name(const char *name)
 {
   if (name == NULL)
     return 0;
-  /* Match order: GH200 → GB200/B200 → RTX PRO 6000/GB202 → H100 → A100 */
+  /* Match order: GH200, GB200/B200, RTX PRO 6000/GB202, H100, A100 */
   if (strstr(name, "GH200") != NULL)
     return ROOFLINE_GH200_SM_COUNT;
   if (strstr(name, "GB200") != NULL || strstr(name, "B200") != NULL)
@@ -182,7 +182,7 @@ double roofline_pcie_gen_lane_bytes_per_s(int gen)
 
 double roofline_nvidia_fp64_ratio_from_cc(int major, int minor, const char *name)
 {
-  /* RTX PRO / GeForce-class: reduced FP64 even on CC ≥ 9. */
+  /* RTX PRO / GeForce-class: reduced FP64 even on CC >= 9. */
   if (name != NULL && strstr(name, "RTX") != NULL)
     return 1.0 / 64.0;
   if (major >= 9)

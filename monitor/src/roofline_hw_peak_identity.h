@@ -5,8 +5,8 @@
 
 #include "cpuid.h"
 
-/* Published peaks (NVIDIA / TACC / Intel / AMD datasheets); allowlisted identity only —
- * no soft invent. */
+/* Published peaks (NVIDIA / TACC / Intel / AMD datasheets); allowlisted identity only, no
+ * soft invent. */
 
 /* Horizon / Vista GPU + Grace */
 #define ROOFLINE_GB200_HBM_BW_BYTES_PER_S 8000000000000.0 /* 8 TB/s HBM3e per GPU */
@@ -29,17 +29,17 @@
 #define ROOFLINE_RTX_PRO_6000_GDDR_BW_BYTES_PER_S 1597000000000.0
 
 /* Node-level CPU DRAM/HBM when EDAC dimm_mem_speed sum is 0 (CPUID processor_t). */
-#define ROOFLINE_SKYLAKE_X_DRAM_BW_BYTES_PER_S 256000000000.0 /* TACC S3 SKX DDR4-2666 6ch×2 */
+#define ROOFLINE_SKYLAKE_X_DRAM_BW_BYTES_PER_S 256000000000.0 /* TACC S3 SKX DDR4-2666 2x6ch */
 #define ROOFLINE_CASCADE_LAKE_DRAM_BW_BYTES_PER_S                                                  \
-  282000000000.0 /* DDR4-2933 6ch×2 (Frontera/Cornell CLX class) */
-#define ROOFLINE_ICELAKE_SERVER_DRAM_BW_BYTES_PER_S 409600000000.0 /* TACC S3 ICX DDR4-3200 8ch×2 */
-#define ROOFLINE_SAPPHIRE_RAPIDS_DDR_BW_BYTES_PER_S 614400000000.0 /* 8468-class DDR5-4800 8ch×2 */
+  282000000000.0 /* DDR4-2933 2x6ch (Frontera/Cornell CLX class) */
+#define ROOFLINE_ICELAKE_SERVER_DRAM_BW_BYTES_PER_S 409600000000.0 /* TACC S3 ICX DDR4-3200 2x8ch */
+#define ROOFLINE_SAPPHIRE_RAPIDS_DDR_BW_BYTES_PER_S 614400000000.0 /* 8468-class DDR5-4800 2x8ch */
 #define ROOFLINE_SAPPHIRE_RAPIDS_MAX_HBM_BW_BYTES_PER_S                                            \
-  3276800000000.0 /* Xeon Max 9480: 2×1638.4 GB/s HBM2e (McCalpin) */
-#define ROOFLINE_AMD_MILAN_DRAM_BW_BYTES_PER_S 409600000000.0 /* LS6 2×7763 DDR4-3200 8ch */
-#define ROOFLINE_AMD_GENOA_DRAM_BW_BYTES_PER_S 921600000000.0 /* 2×9454 DDR5-4800 12ch */
+  3276800000000.0 /* Xeon Max 9480: 2x 1638.4 GB/s HBM2e (McCalpin) */
+#define ROOFLINE_AMD_MILAN_DRAM_BW_BYTES_PER_S 409600000000.0 /* LS6 2x 7763 DDR4-3200 8ch */
+#define ROOFLINE_AMD_GENOA_DRAM_BW_BYTES_PER_S 921600000000.0 /* 2x 9454 DDR5-4800 12ch */
 #define ROOFLINE_AMD_TURIN_DRAM_BW_BYTES_PER_S                                                     \
-  1228000000000.0 /* 2×9555 614 GB/s/socket (AMD product brief) */
+  1228000000000.0 /* 2x 9555 614 GB/s/socket (AMD product brief) */
 
 /* GPU peak source enum (emitted as gpu_peak_source). */
 enum {
@@ -59,7 +59,8 @@ enum {
 
 int roofline_nvidia_sm_count_from_name(const char *name);
 double roofline_nvidia_hbm_bw_from_name(const char *name);
-/* HBM class for GH200 uses memory.total MiB (≥140000 → HBM3e); GB200 ignores mem. */
+/* GH200 HBM class comes from memory.total MiB (HBM3e at or above the MEM_MIB_MIN floor); GB200
+ * ignores mem. */
 double roofline_nvidia_hbm_bw_from_name_mem(const char *name, double mem_total_mib);
 double roofline_nvidia_c2c_bw_from_name(const char *name);
 double roofline_grace_dram_bw_from_cpu_part(unsigned int cpu_part);

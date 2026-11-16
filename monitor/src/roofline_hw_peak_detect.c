@@ -6,7 +6,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include "stats.h"
 #include "cpuid.h"
 #include "host_edac_mem_topology.h"
@@ -219,40 +218,17 @@ static void detect_cpu_peak_edac_bw_bytes_per_s(double *ddr_bw, double *hbm_bw)
   (void)host_edac_foreach_dimm(sum_edac_dimm_bw, &ctx);
 }
 
-static double parse_max_mhz_from_dpm_table(const char *path)
-{
-  FILE *f = fopen(path, "re");
-  char line[256];
-  double max_mhz = 0.0;
-  if (f == NULL)
-    return 0.0;
-  while (fgets(line, sizeof(line), f) != NULL) {
-    char *p = line;
-    while (*p != '\0' && !isdigit((unsigned char)*p))
-      p++;
-    if (isdigit((unsigned char)*p)) {
-      double mhz = strtod(p, NULL);
-      if (mhz > max_mhz)
-        max_mhz = mhz;
-    }
-  }
-  fclose(f);
-  return max_mhz;
-}
-
-static void detect_gpu_peaks_from_sysfs(double *flops, double *mem_bw, double *io_bw)
+static void detect_gpu_peaks_from_sysfs(double *mem_bw, double *io_bw)
 {
   DIR *dir = opendir("/sys/class/drm");
   struct dirent *ent;
   if (dir == NULL)
     return;
   while ((ent = readdir(dir)) != NULL) {
-    char speed_path[256], width_path[256], speed_line[128], width_line[128], bw_path[256],
-        mclk_path[256];
+    char speed_path[256], width_path[256], speed_line[128], width_line[128], bw_path[256];
     double gtps;
     int width;
     long long mem_bw_attr = 0;
-    double mclk_mhz = 0.0;
     if (strncmp(ent->d_name, "card", 4) != 0 || strchr(ent->d_name, '-') != NULL)
       continue;
     if (roofline_path_join3(speed_path, sizeof(speed_path), "/sys/class/drm", ent->d_name,
@@ -264,18 +240,9 @@ static void detect_gpu_peaks_from_sysfs(double *flops, double *mem_bw, double *i
     if (roofline_path_join3(bw_path, sizeof(bw_path), "/sys/class/drm", ent->d_name,
                             "device/mem_info_max_bandwidth") != 0)
       continue;
-    if (roofline_path_join3(mclk_path, sizeof(mclk_path), "/sys/class/drm", ent->d_name,
-                            "device/pp_dpm_mclk") != 0)
-      continue;
 
     if (read_long_long_from_file(bw_path, &mem_bw_attr) == 0 && mem_bw_attr > 0)
       *mem_bw += (double)mem_bw_attr;
-    else {
-      mclk_mhz = parse_max_mhz_from_dpm_table(mclk_path);
-      if (mclk_mhz > 0.0) {
-        /* If bus-width is unavailable, keep probe-driven estimate conservative at 0. */
-      }
-    }
 
     if (read_first_line(speed_path, speed_line, sizeof(speed_line)) != 0)
       continue;
@@ -287,7 +254,6 @@ static void detect_gpu_peaks_from_sysfs(double *flops, double *mem_bw, double *i
       *io_bw += pcie_lane_bytes_per_s(gtps) * (double)width;
   }
   closedir(dir);
-  (void)flops;
 }
 
 static unsigned int detect_cpu_part_from_proc(void)
@@ -411,7 +377,7 @@ static double detect_nvidia_fp64_peak_via_nvidia_smi(void)
 }
 
 /*
- * SMI mem/PCIe: allowlisted HBM × GPU count, PCIe gen×width, and GH200 C2C sum.
+ * Sums allowlisted HBM per GPU, PCIe gen x width, and GH200 C2C from nvidia-smi.
  * c2c_bw is separate so detect can prefer C2C over misleading DRM PCIe x1.
  */
 static void detect_nvidia_mem_io_via_smi(double *mem_bw, double *io_bw, double *c2c_bw,
@@ -650,6 +616,7 @@ void roofline_hw_peak_detect_fill_cache(struct roofline_cached_peaks *cache)
   double gpu_io_bw = 0.0;
   unsigned long long gpu_source = ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN;
   unsigned long long cpu_source = ROOFLINE_CPU_PEAK_SOURCE_FAIL_OPEN;
+  unsigned long long vendor_src = ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN;
   int used_identity_mem = 0;
 
   if (cache == NULL)
@@ -665,17 +632,12 @@ void roofline_hw_peak_detect_fill_cache(struct roofline_cached_peaks *cache)
     if (cpu_bw > 0.0 || cpu_hbm_bw > 0.0 || cpu_flops > 0.0)
       cpu_source = ROOFLINE_CPU_PEAK_SOURCE_PROBED;
     apply_cpu_mem_identity_fallback(&cpu_bw, &cpu_hbm_bw, &cpu_source);
-    detect_gpu_peaks_from_sysfs(&gpu_flops, &gpu_mem_bw, &gpu_io_bw);
+    detect_gpu_peaks_from_sysfs(&gpu_mem_bw, &gpu_io_bw);
     if (gpu_mem_bw > 0.0 || gpu_io_bw > 0.0)
       gpu_source = ROOFLINE_GPU_PEAK_SOURCE_PROBED;
-    if (gpu_flops <= 0.0) {
-      unsigned long long vendor_src = ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN;
-      gpu_flops = detect_gpu_fp64_peak_vendor_runtime(&vendor_src);
-      if (gpu_flops > 0.0 && vendor_src != ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN &&
-          (gpu_source == ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN ||
-           gpu_source == ROOFLINE_GPU_PEAK_SOURCE_PROBED))
-        gpu_source = vendor_src;
-    }
+    gpu_flops = detect_gpu_fp64_peak_vendor_runtime(&vendor_src);
+    if (gpu_flops > 0.0 && vendor_src != ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN)
+      gpu_source = vendor_src;
     {
       double smi_mem = 0.0;
       double smi_io = 0.0;
@@ -689,7 +651,7 @@ void roofline_hw_peak_detect_fill_cache(struct roofline_cached_peaks *cache)
         if (gpu_source == ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN)
           gpu_source = ROOFLINE_GPU_PEAK_SOURCE_VENDOR_SMI;
       }
-      /* GH200: published C2C beats misleading DRM/smi PCIe x1. */
+      /* GH200 DRM/smi report PCIe x1; the published C2C bandwidth is the real link. */
       if (smi_c2c > gpu_io_bw) {
         gpu_io_bw = smi_c2c;
         if (gpu_source == ROOFLINE_GPU_PEAK_SOURCE_FAIL_OPEN ||
