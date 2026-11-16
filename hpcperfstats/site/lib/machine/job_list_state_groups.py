@@ -49,9 +49,8 @@ def _state_base_token(raw: Any) -> Any:
 
 def classify_job_state(raw: Any) -> Any:
   """
-  Map a raw Slurm state string to a major group key, or None if not.
-
-    filterable.
+  Map a raw Slurm state string to a major group key, or None if not
+  filterable.
 
   Args:
     raw (Any): Raw passed to this helper.

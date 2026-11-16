@@ -215,7 +215,8 @@ def summarize_performance(
       "aria_label": aria_label_for(label),
       "sort_rank": 5,
     }
-  # No metrics rows; runtime null, == 600, or > 600 - not yet through update_metrics.
+  # No metrics rows and runtime null or not under the short threshold:
+  # update_metrics has not processed the job yet.
   label = LABEL_NOT_YET_COMPLETED
   return {
     "label": label,

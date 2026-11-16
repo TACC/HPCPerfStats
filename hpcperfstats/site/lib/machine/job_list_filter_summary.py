@@ -60,8 +60,6 @@ def _multi_value_summary_line(label: Any, raw: Any) -> Any:
   values = parse_job_list_multi_value_field(raw)
   if not values:
     return None
-  if len(values) == 1:
-    return f"{label}: {values[0]}"
   return f"{label}: {', '.join(values)}"
 
 
@@ -70,7 +68,7 @@ def build_job_list_qname_and_filter_summary(fields: Any) -> Any:
   Return (qname, filter_summary) for job_list API responses.
 
   filter_summary is a list of short human-readable filter lines (may be
-    empty).
+  empty).
 
   Args:
     fields (Any): Fields passed to this helper.
@@ -101,19 +99,13 @@ def build_job_list_qname_and_filter_summary(fields: Any) -> Any:
   state_keys = parse_major_state_filter_keys(fields.get("state"))
   if state_keys:
     labels = [major_state_label(key) for key in state_keys]
-    if len(labels) == 1:
-      lines.append(f"Status: {labels[0]}")
-    else:
-      lines.append(f"Status: {', '.join(labels)}")
+    lines.append(f"Status: {', '.join(labels)}")
   perf_ranks = parse_job_list_performance_sort_ranks(
     fields.get("performance_sort_rank")
   )
   if perf_ranks:
     labels = [performance_status_label(rank) for rank in perf_ranks]
-    if len(labels) == 1:
-      lines.append(f"Performance: {labels[0]}")
-    else:
-      lines.append(f"Performance: {', '.join(labels)}")
+    lines.append(f"Performance: {', '.join(labels)}")
 
   end_gte = fields.get("end_time__gte")
   end_lte = fields.get("end_time__lte")
@@ -143,7 +135,6 @@ def build_job_list_qname_and_filter_summary(fields: Any) -> Any:
 
   lines.extend(_metric_lines_from_fields(fields))
 
-  date_param = (fields.get("end_time__date") or "").strip()
   queue_values = parse_job_list_multi_value_field(fields.get("queue"))
   if date_param and len(date_param) == 4 and date_param.isdigit():
     qname = f"Jobs for year {date_param}"

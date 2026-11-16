@@ -1,6 +1,6 @@
 """
 Queue wait (start_time - submit_time) contract for job list SQL aggregates and
-  histograms.
+histograms.
 """
 
 from __future__ import annotations
@@ -14,9 +14,7 @@ from django.db.models.functions import Extract
 
 def filter_queue_wait_eligible(queryset: QuerySet) -> QuerySet:
   """
-  Restrict to rows with a non-negative scheduling delay (start_time >=.
-
-    submit_time).
+  Restrict to rows with a non-negative scheduling delay (start >= submit).
 
   Args:
     queryset (QuerySet): Queryset.
@@ -70,13 +68,12 @@ def queue_wait_hours_series(
   submit_time: pd.Series,
 ) -> pd.Series:
   """
-  Per-row queue wait in hours; NaN where timestamps are missing or start <.
+  Per-row queue wait in hours; NaN where timestamps are missing or start <
+  submit.
 
-    submit.
-
-  Aligns with :func:`filter_queue_wait_eligible` +
-    ``queue_wait_seconds_expression`` /
-  3600 so histograms and SQL aggregates describe the same quantity.
+  Matches :func:`filter_queue_wait_eligible` plus
+  ``queue_wait_seconds_expression`` / 3600, so histograms and SQL aggregates
+  describe the same quantity.
 
   Args:
     start_time (pd.Series): pandas Series.

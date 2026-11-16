@@ -75,8 +75,6 @@ def list_recent_host_fqdns_from_valkey() -> list[str]:
   return hosts
 
 
-# PostgreSQL uses a per-host LATERAL + LIMIT 1 (index probe on (host, time))
-# inside a short transaction with parallel workers disabled for the probe.
 HOST_LAST_TIME_LOOKUP_BATCH = 64
 
 # Site-wide / fallback window for Admin Monitor freshness (not 8 days).
@@ -162,8 +160,7 @@ def latest_sample_time_by_host_in_window(window: Any | None = None) -> Any:
   Map host -> max(time) for hosts with samples in ``window`` (default 3h).
 
   Last-resort Admin Monitor path when Valkey ``recent_host`` inventory is
-    empty.
-  Never use multi-day (e.g. 8d) windows here.
+  empty. Never use multi-day (e.g. 8d) windows here.
 
   Args:
     window (Any | None): One of ``Any``, ``None``.
