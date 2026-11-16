@@ -9,7 +9,7 @@ export const JOB_DETAIL_PRINT_READY_TIMEOUT_MS = 20_000;
 /** Safety clear of print layout if afterprint never fires. */
 export const JOB_DETAIL_PRINT_AFTERPRINT_FALLBACK_MS = 60_000;
 
-/** Copy for ranks that cannot print (2–6 / missing). */
+/** Copy for ranks that cannot print (2-6 / missing). */
 export const JOB_DETAIL_PRINT_NO_DATA_MESSAGE = "There is no data to print.";
 
 export type JobDetailPrintPlotKey =
@@ -26,7 +26,7 @@ export type JobDetailPrintClickAction =
 
 /**
  * Decide Print click behavior from Performance Data sort_rank.
- * Rank 0: metrics + plots; rank 1: metrics only; 2–6 / missing: no-data dialog.
+ * Rank 0: metrics + plots; rank 1: metrics only; 2-6 / missing: no-data dialog.
  */
 export function jobDetailPrintClickAction(
   sortRank: number | null,
@@ -80,16 +80,9 @@ export function isJobDetailPrintReady(input: JobDetailPrintReadinessInput): bool
     return false;
   }
   if (!input.multiprecisionSettled) return false;
-  if (input.plotsFetchFailed) {
-    return input.multiprecisionSettled;
-  }
+  if (input.plotsFetchFailed) return true;
   if (input.plotsLoading) return false;
-  return (
-    input.summarySettled &&
-    input.rooflineSettled &&
-    input.gpuRooflineSettled &&
-    input.multiprecisionSettled
-  );
+  return input.summarySettled && input.rooflineSettled && input.gpuRooflineSettled;
 }
 
 /** Multiprecision is settled when detail is not busy fetching it, or both sides have item/reason. */

@@ -1,11 +1,11 @@
 /**
  * Capture Job Detail print-scoped Bokeh canvases as PNG data URLs for React-owned
  * ``<img>`` rendering before ``window.print`` (avoids print-dialog canvas OOM and
- * React wiping imperative DOM). Native canvas only — no html2canvas / jspdf.
+ * React wiping imperative DOM). Native canvas only; no html2canvas / jspdf.
  *
  * Bokeh 3.x nests ``canvas.bk-layer`` inside open shadow roots
  * (``DOMComponentView.attachShadow`` + ``CanvasView.shadow_el``), so capture must
- * traverse ``shadowRoot`` — plain ``querySelectorAll("canvas")`` finds nothing.
+ * traverse ``shadowRoot``; plain ``querySelectorAll("canvas")`` finds nothing.
  */
 
 type BokehIndexedView = {
@@ -140,7 +140,7 @@ export function collectBokehCanvases(root: Element): HTMLCanvasElement[] {
 /**
  * Composite visible shadow canvases under ``targetEl`` into a PNG data URL.
  * Does **not** mutate ``targetEl`` (React owns the embed node).
- * Misses dual-renderer HTML legend text — prefer ``export`` when available.
+ * Misses dual-renderer HTML legend text; prefer ``export`` when available.
  *
  * @returns data URL, or null when there is nothing to capture.
  */
@@ -216,9 +216,8 @@ export function targetHasPrintableBokehCanvases(targetEl: HTMLElement): boolean 
 }
 
 export type WaitForPrintBokehCanvasesOptions = {
-  /** Total poll budget (default 2500 ms). */
+  /** Total poll budget. */
   timeoutMs?: number;
-  /** Poll interval (default 50 ms). */
   pollMs?: number;
   signal?: AbortSignal;
 };
@@ -255,7 +254,7 @@ export async function waitForPrintBokehCanvases(
   }
 }
 
-/** Capture every existing print-scoped Bokeh target for ``pk`` (id → dataUrl). */
+/** Capture every existing print-scoped Bokeh target for ``pk``, keyed by target id. */
 export function captureJobDetailPrintBokehSnapshots(pk: string): Record<string, string> {
   const out: Record<string, string> = {};
   if (!pk || typeof document === "undefined") return out;

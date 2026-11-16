@@ -1,7 +1,7 @@
 /**
  * Short table labels for job-level metrics (Job detail).
  * Keys must match `job_metrics_catalog_entries()` in metrics.py.
- * Full explanations stay in variableMetadata.js (tooltip via VariableInfoLabel).
+ * Full explanations stay in variableMetadata.ts (tooltip via VariableInfoLabel).
  * Units appear only in the bracket suffix from API metrics_list, not in these labels.
  */
 

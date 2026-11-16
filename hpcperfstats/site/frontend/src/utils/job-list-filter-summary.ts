@@ -31,7 +31,7 @@ function formatMetricFilterLine(metricKey: string, op: string, value: string) {
 }
 
 function isYearToken(value: string): boolean {
-  return value.length === 4 && /^\d{4}$/.test(value);
+  return /^\d{4}$/.test(value);
 }
 
 function formatEndTimeDateLine(value: string): string {
@@ -47,7 +47,6 @@ function formatMultiValueLine(label: string, raw: string): string {
     .map((part) => part.trim())
     .filter(Boolean);
   if (!values.length) return "";
-  if (values.length === 1) return `${label}: ${values[0]}`;
   return `${label}: ${values.join(", ")}`;
 }
 

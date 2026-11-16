@@ -71,15 +71,7 @@ function applyTimeSnapshot(snapshot: Map<string, string>, target: URLSearchParam
 }
 
 function pathnameUsesRouteFilters(pathname: string): boolean {
-  return ROUTE_FILTER_KEYS.some((key) => {
-    if (key === "year") return pathname.startsWith("/machine/year/");
-    if (key === "date") return pathname.startsWith("/machine/date/");
-    if (key === "username") return pathname.startsWith("/machine/username/");
-    if (key === "account") return pathname.startsWith("/machine/account/");
-    if (key === "queue") return pathname.startsWith("/machine/queue/");
-    if (key === "host") return pathname.startsWith("/machine/host/");
-    return false;
-  });
+  return ROUTE_FILTER_KEYS.some((key) => pathname.startsWith(`/machine/${key}/`));
 }
 
 export function parseHeaderFilterSet(
@@ -87,16 +79,13 @@ export function parseHeaderFilterSet(
   key: JobListHeaderFilterKey,
 ): Set<string> {
   const raw = searchParams.get(key);
-  if (!raw) return new Set();
-  const seen = new Set<string>();
-  const out: string[] = [];
+  const out = new Set<string>();
+  if (!raw) return out;
   for (const part of raw.split(",")) {
     const token = part.trim();
-    if (!token || seen.has(token)) continue;
-    seen.add(token);
-    out.push(token);
+    if (token) out.add(token);
   }
-  return new Set(out);
+  return out;
 }
 
 /** Merge URL param set with browse-route segment value when query param is absent. */

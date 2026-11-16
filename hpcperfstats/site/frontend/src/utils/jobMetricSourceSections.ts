@@ -1,5 +1,5 @@
 /**
- * Map job-detail metrics_list rows to source subsections (CPU → GPU → File System → Network → Misc).
+ * Map job-detail metrics_list rows to source subsections (CPU, GPU, File System, Network, Misc).
  * Grouping uses each row's API `type` (host_data / catalog lineage); unknown types fall through to Misc.
  */
 
@@ -41,7 +41,7 @@ export const JOB_METRIC_SOURCE_SECTION_LABELS: Record<JobMetricSourceSectionId, 
   misc: "Misc",
 };
 
-/** Exact catalog / monitor type → section (non-prefix). */
+/** Exact catalog / monitor type to section (non-prefix). */
 const EXACT_TYPE_SECTION: Record<string, JobMetricSourceSectionId> = {
   host_cpu: "cpu",
   host_cpu_hw: "cpu",
@@ -108,7 +108,6 @@ function sectionFromMetricNameFallback(metric: string): JobMetricSourceSectionId
   if (metric === "mem_hwm" || metric === "max_numa_remote_rate") return "cpu";
   if (
     metric.startsWith("avg_vector_width_") ||
-    metric === "avg_vector_width_combined" ||
     metric.startsWith("vecpercent_")
   ) {
     return "cpu";
@@ -133,14 +132,12 @@ export function jobMetricSourceSectionId(
   }
   const fromMetric = sectionFromMetricNameFallback(row.metric);
   if (fromMetric) return fromMetric;
-  if (rawType) return "misc";
   return "misc";
 }
 
 /**
  * Group metrics into ordered subsections.
- * Always includes Network (possibly empty). Omits empty GPU / File System / Misc.
- * Always includes CPU when it has rows; omits empty CPU as well (same as GPU/FS/Misc).
+ * Network is always included (possibly empty); every other section is omitted when empty.
  */
 export function groupJobMetricsBySourceSection<T extends JobMetricSourceSectionRow>(
   metrics: readonly T[],

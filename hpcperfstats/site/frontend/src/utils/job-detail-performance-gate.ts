@@ -25,7 +25,7 @@ export function jobDetailPlotPerformanceSortRank(
   return rank;
 }
 
-/** Rank 0 = Metrics & Plots available — only then load plot payloads. */
+/** Rank 0 = Metrics & Plots available; only then load plot payloads. */
 export function isJobDetailPlotsPerformanceReady(rank: number | null): boolean {
   return rank === 0;
 }
@@ -35,7 +35,7 @@ export function isJobDetailPlotPerformanceTransitional(rank: number | null): boo
   return rank === 1 || rank === 6;
 }
 
-/** Ranks 2–5 or missing: terminal — no plot fetch. */
+/** Ranks 2-5 or missing are terminal: no plot fetch. */
 export function isJobDetailPlotPerformanceTerminalUnavailable(
   rank: number | null,
 ): boolean {

@@ -13,7 +13,7 @@ import {
   PRINT_SNAPSHOT_FALLBACK_PNG,
 } from "./job-detail-print-snapshot";
 
-/** Nest a canvas like Bokeh 3.x: figure → shadow → canvas host → shadow → canvas.bk-layer. */
+/** Nest a canvas like Bokeh 3.x: figure > shadow > canvas host > shadow > canvas.bk-layer. */
 function appendBokehShadowCanvas(
   target: HTMLElement,
   opts: { width?: number; height?: number } = {},
