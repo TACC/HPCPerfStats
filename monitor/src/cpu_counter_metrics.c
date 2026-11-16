@@ -2,11 +2,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <limits.h>
 #include <string.h>
-#include <ctype.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <unistd.h>
 #include <time.h>
 #include "stats.h"
@@ -20,7 +17,6 @@
 #include "arm_core_perf.h"
 #else
 #include "likwid_pmc_adapter.h"
-#include "likwid_arch_map.h"
 #include "cpu_counter_metrics_likwid_begin.h"
 #endif
 #include "cpu_counter_metrics.h"
@@ -31,7 +27,7 @@
  * interval, clock from cpufreq scaling_cur_freq (nominal chain fallback), and the measured core
  * counters (cycles, instructions, FP / SVE INT) from arm_core_perf (direct perf, scaled by
  * enabled/running; no LIKWID on aarch64). No DCGM: the embedded DCGM engine ran five 100-200 Hz timer
- * loops whatever the watch cadence (round 2 findings 7, 10, 18). Socket power is host_power_socket.
+ * loops whatever the watch cadence. Socket power is host_power_socket.
  */
 unsigned long long *g_arm_ctr0 = NULL;
 unsigned long long *g_arm_ctr1 = NULL;

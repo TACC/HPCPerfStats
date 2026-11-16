@@ -240,7 +240,7 @@ int likwid_rapl_pwr_begin(int amd_path)
     if (probed != NULL && likwid_rapl_pwr_try_eventset(probed, &group) == 0) {
       chosen = probed;
     } else {
-      /* No/partial sysfs: prefer pkg+dram then pkg — never try full first (PP spam). */
+      /* No/partial sysfs: prefer pkg+dram then pkg; never try full first (PP spam). */
       if (likwid_rapl_pwr_try_eventset(k_intel_pwr_pkg_dram, &group) == 0)
         chosen = k_intel_pwr_pkg_dram;
       else if (likwid_rapl_pwr_try_eventset(k_intel_pwr_pkg, &group) == 0)

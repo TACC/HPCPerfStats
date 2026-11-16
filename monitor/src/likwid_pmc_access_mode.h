@@ -1,5 +1,5 @@
 /*! \file likwid_pmc_access_mode.h
- *  HPCPERFSTATS_LIKWID_ACCESS → LIKWID HPM access mode (PERF only).
+ *  HPCPERFSTATS_LIKWID_ACCESS to LIKWID HPM access mode (PERF only).
  */
 
 #ifndef _LIKWID_PMC_ACCESS_MODE_H_

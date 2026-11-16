@@ -3,9 +3,6 @@
  */
 
 #include <stddef.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <stdint.h>
 #include "monitor_log.h"
 #include "stats.h"
 #include "trace.h"
@@ -43,7 +40,7 @@ int likwid_rapl_is_supported_processor(void)
 
 int likwid_rapl_collect_path(void)
 {
-  /* Prefer AMD when processor is EPYC — even if binary was built with MONITOR_ARCH_INTEL. */
+  /* Prefer AMD when processor is EPYC, even if binary was built with MONITOR_ARCH_INTEL. */
   if (likwid_rapl_is_supported_amd_processor())
     return LIKWID_RAPL_PATH_AMD;
   if (likwid_rapl_is_supported_intel_processor())

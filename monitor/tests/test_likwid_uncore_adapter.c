@@ -94,7 +94,7 @@ static void test_likwid_result_to_ull(void)
 
   assert(likwid_result_to_ull(1.0, LIKWID_RESULT_U48_MAX, NULL) < 0);
 
-  /* Classic NaN→ull poison bit pattern must never be produced by the helper. */
+  /* Classic NaN-to-ull poison bit pattern must never be produced by the helper. */
   assert(likwid_result_to_ull(NAN, ~(unsigned long long)0, &out) < 0);
 }
 

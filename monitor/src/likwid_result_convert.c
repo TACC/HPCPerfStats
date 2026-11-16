@@ -1,5 +1,5 @@
 /*! \file likwid_result_convert.c
- *  Safe conversion of LIKWID perfmon doubles (reject NaN → 2^63 poison).
+ *  Safe conversion of LIKWID perfmon doubles (reject NaN, which casts to the 2^63 poison).
  */
 
 #include "likwid_result_convert.h"

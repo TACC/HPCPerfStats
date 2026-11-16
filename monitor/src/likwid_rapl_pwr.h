@@ -7,7 +7,7 @@
 
 #include <stdint.h>
 
-/* Intel SPR/SKX-class catalog (max): pkg + pp0 + pp1 + dram (LIKWID PWR0–PWR3). */
+/* Intel SPR/SKX-class catalog (max): pkg + pp0 + pp1 + dram (LIKWID PWR0-PWR3). */
 const char *likwid_rapl_pwr_intel_eventset(void);
 
 /*
@@ -26,9 +26,8 @@ void likwid_rapl_pwr_probe_power_domains(int *has_pkg, int *has_dram, int *has_p
 const char *likwid_rapl_pwr_amd_eventset(void);
 
 /*
- * Map LIKWID event name to schema key.
- * amd_path nonzero → PWR_PP0 maps to core_energy; else pp0_energy.
- * Returns NULL when the event is not a RAPL energy counter.
+ * Map LIKWID event name to schema key; PWR_PP0 maps to core_energy when amd_path is nonzero,
+ * else pp0_energy. NULL when the event is not a RAPL energy counter.
  */
 const char *likwid_rapl_pwr_schema_key_from_event(const char *event_name, int amd_path);
 

@@ -74,7 +74,7 @@ static void test_eventset_nonempty(void)
   assert(strstr(likwid_spr_imc_eventset_string(LIKWID_SPR_IMC_EVT_HBM_ONLY), "HBM0C0") != NULL);
   assert(strstr(likwid_spr_imc_eventset_string(LIKWID_SPR_IMC_EVT_DDR_ONLY), "HBM0C0") == NULL);
 
-  /* LIKWID SPR table is MBOX0–11 only — must not request MBOX12+. */
+  /* LIKWID SPR table is MBOX0-11 only; must not request MBOX12+. */
   ddr_only = likwid_spr_imc_eventset_string(LIKWID_SPR_IMC_EVT_DDR_ONLY);
   ddr_hbm = likwid_spr_imc_eventset_string(LIKWID_SPR_IMC_EVT_DDR_HBM);
   assert(strstr(ddr_only, "MBOX11C0") != NULL);

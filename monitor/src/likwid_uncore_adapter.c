@@ -48,7 +48,16 @@ static void likwid_uncore_restore_stderr(int saved_stderr, int null_fd)
 }
 
 #ifdef HAVE_LIKWID
-/* setupCounters programs the group; startCounters may already be running from host_cpu_hw. */
+static void likwid_uncore_unquiet(int *quiet, int *saved_stderr, int *null_fd)
+{
+  if (!*quiet)
+    return;
+  likwid_uncore_restore_stderr(*saved_stderr, *null_fd);
+  *saved_stderr = -1;
+  *null_fd = -1;
+  *quiet = 0;
+}
+
 static int likwid_uncore_finish_group(int group)
 {
   if (perfmon_setupCounters(group) < 0)
@@ -110,7 +119,7 @@ static int likwid_uncore_spr_enable(likwid_uncore_profile_t profile, int group, 
 }
 
 /*
- * After setup, reject eventsets whose MBOX counters are all non-finite (NaN →
+ * After setup, reject eventsets whose MBOX counters are all non-finite (NaN ->
  * 2^63 poison). HBM-only sets have no MBOX and always pass.
  * Returns 0 if acceptable, -1 if all MBOX results are unusable.
  */
@@ -180,21 +189,12 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type, likwid_uncor
     int group = -1;
     int last = (try_idx == total_tries - 1);
 
-    if (!last && !quiet)
+    if (!last)
       quiet = likwid_uncore_quiet_stderr(&saved_stderr, &null_fd);
-    if (last && quiet) {
-      likwid_uncore_restore_stderr(saved_stderr, null_fd);
-      saved_stderr = -1;
-      null_fd = -1;
-      quiet = 0;
-    }
 
     if (likwid_uncore_try_eventset(events, &group, &fail_step, &fail_errno) == 0) {
       if (likwid_uncore_spr_mbox_results_ok(group) == 0) {
-        if (quiet) {
-          likwid_uncore_restore_stderr(saved_stderr, null_fd);
-          quiet = 0;
-        }
+        likwid_uncore_unquiet(&quiet, &saved_stderr, &null_fd);
         return likwid_uncore_spr_enable(profile, group, label, try_idx, st_name);
       }
       fail_step = "mboxResults";
@@ -202,21 +202,11 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type, likwid_uncor
       monitor_log_warn("%s: eventset %s failed at %s "
                        "(all MBOX results non-finite)\n",
                        st_name, label, fail_step);
-      if (quiet) {
-        likwid_uncore_restore_stderr(saved_stderr, null_fd);
-        saved_stderr = -1;
-        null_fd = -1;
-        quiet = 0;
-      }
+      likwid_uncore_unquiet(&quiet, &saved_stderr, &null_fd);
       try_idx++;
       continue;
     }
-    if (quiet) {
-      likwid_uncore_restore_stderr(saved_stderr, null_fd);
-      saved_stderr = -1;
-      null_fd = -1;
-      quiet = 0;
-    }
+    likwid_uncore_unquiet(&quiet, &saved_stderr, &null_fd);
     monitor_log_warn("%s: eventset %s failed at %s (errno=%d)\n", st_name, label,
                      fail_step != NULL ? fail_step : "unknown", fail_errno);
     try_idx++;
@@ -231,36 +221,20 @@ static int likwid_uncore_adapter_begin_spr(struct stats_type *type, likwid_uncor
     int last = (try_idx == total_tries - 1);
 
     snprintf(label, sizeof(label), "HBM%d", hbm_sizes[i]);
-    if (!last && !quiet)
+    if (!last)
       quiet = likwid_uncore_quiet_stderr(&saved_stderr, &null_fd);
-    if (last && quiet) {
-      likwid_uncore_restore_stderr(saved_stderr, null_fd);
-      saved_stderr = -1;
-      null_fd = -1;
-      quiet = 0;
-    }
 
     if (likwid_uncore_try_eventset(events, &group, &fail_step, &fail_errno) == 0) {
       /* HBM ladder has no MBOX; mbox gate is a no-op pass. */
-      if (quiet) {
-        likwid_uncore_restore_stderr(saved_stderr, null_fd);
-        quiet = 0;
-      }
+      likwid_uncore_unquiet(&quiet, &saved_stderr, &null_fd);
       return likwid_uncore_spr_enable(profile, group, label, try_idx, st_name);
     }
-    if (quiet) {
-      likwid_uncore_restore_stderr(saved_stderr, null_fd);
-      saved_stderr = -1;
-      null_fd = -1;
-      quiet = 0;
-    }
+    likwid_uncore_unquiet(&quiet, &saved_stderr, &null_fd);
     monitor_log_warn("%s: eventset %s failed at %s (errno=%d)\n", st_name, label,
                      fail_step != NULL ? fail_step : "unknown", fail_errno);
     try_idx++;
   }
 
-  if (quiet)
-    likwid_uncore_restore_stderr(saved_stderr, null_fd);
   monitor_log_error("%s: all LIKWID eventset variants failed "
                     "(has_ddr=%d has_hbm=%d); disabling type\n",
                     st_name, has_ddr, has_hbm);
@@ -294,35 +268,19 @@ static int likwid_uncore_adapter_begin_icx(struct stats_type *type, likwid_uncor
     int group = -1;
     int last = (i == n_order - 1);
 
-    if (!last && !quiet)
+    if (!last)
       quiet = likwid_uncore_quiet_stderr(&saved_stderr, &null_fd);
-    if (last && quiet) {
-      likwid_uncore_restore_stderr(saved_stderr, null_fd);
-      saved_stderr = -1;
-      null_fd = -1;
-      quiet = 0;
-    }
 
     if (likwid_uncore_try_eventset(events, &group, &fail_step, &fail_errno) == 0) {
-      if (quiet) {
-        likwid_uncore_restore_stderr(saved_stderr, null_fd);
-        quiet = 0;
-      }
+      likwid_uncore_unquiet(&quiet, &saved_stderr, &null_fd);
       return likwid_uncore_spr_enable(profile, group, label, i, st_name);
     }
-    if (quiet) {
-      likwid_uncore_restore_stderr(saved_stderr, null_fd);
-      saved_stderr = -1;
-      null_fd = -1;
-      quiet = 0;
-    }
+    likwid_uncore_unquiet(&quiet, &saved_stderr, &null_fd);
     monitor_log_warn("%s: eventset %s (`%s`) failed at %s (errno=%d)\n", st_name, label,
                      events != NULL ? events : "", fail_step != NULL ? fail_step : "unknown",
                      fail_errno);
   }
 
-  if (quiet)
-    likwid_uncore_restore_stderr(saved_stderr, null_fd);
   monitor_log_error("%s: all LIKWID ICX IMC eventset variants failed; disabling type\n", st_name);
   type->st_enabled = 0;
   return -1;

@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include "likwid_uncore_profiles.h"
 #include "intel_processor.h"
@@ -22,7 +21,7 @@
                    "CAS_COUNT_RD:MBOX4C0,CAS_COUNT_WR:MBOX4C1,"                                    \
                    "CAS_COUNT_RD:MBOX5C0,CAS_COUNT_WR:MBOX5C1"
 
-/* LIKWID 5.5.2 SPR counters.h defines MBOX0–11 only (not MBOX12–15). */
+/* LIKWID 5.5.2 SPR counters.h defines MBOX0-11 only (not MBOX12-15). */
 #define MBOX12_IMC_EVENTS                                                                          \
   MBOX6_IMC_EVENTS ","                                                                             \
                    "CAS_COUNT_RD:MBOX6C0,CAS_COUNT_WR:MBOX6C1,"                                    \
@@ -31,8 +30,6 @@
                    "CAS_COUNT_RD:MBOX9C0,CAS_COUNT_WR:MBOX9C1,"                                    \
                    "CAS_COUNT_RD:MBOX10C0,CAS_COUNT_WR:MBOX10C1,"                                  \
                    "CAS_COUNT_RD:MBOX11C0,CAS_COUNT_WR:MBOX11C1"
-
-/* Legacy DDR_*:MDEV* removed — Stampede3 ICX PERF uses CAS_COUNT MBOX* (see MBOX12). */
 
 #define HBM1_EVENTS "CAS_COUNT_RD:HBM0C0,CAS_COUNT_WR:HBM0C1"
 
@@ -82,7 +79,7 @@
 /* LIKWID Zen2 MEM: only DRAM_CHANNEL_0/1 on DFC. */
 #define DF_ROME_EVENTS "DRAM_CHANNEL_0:DFC0,DRAM_CHANNEL_1:DFC1"
 
-/* LIKWID Zen3 MEM1: DRAM_CHANNEL_0–3 on DFC. */
+/* LIKWID Zen3 MEM1: DRAM_CHANNEL_0-3 on DFC. */
 #define DF_MILAN_EVENTS                                                                            \
   "DRAM_CHANNEL_0:DFC0,DRAM_CHANNEL_1:DFC1,DRAM_CHANNEL_2:DFC2,DRAM_CHANNEL_3:DFC3"
 
@@ -91,12 +88,12 @@
   "DRAM_READS_LOCAL_CHANNEL_0:DFC0,DRAM_READS_LOCAL_CHANNEL_1:DFC1,"                               \
   "DRAM_READS_LOCAL_CHANNEL_2:DFC2,DRAM_READS_LOCAL_CHANNEL_3:DFC3"
 
-/* LIKWID Zen5 MEM: UMC CAS reads (first four channels) → dram_chan*_bytes. */
+/* LIKWID Zen5 MEM: UMC CAS reads (first four channels) as dram_chan*_bytes. */
 #define DF_TURIN_EVENTS "CAS_CMD_RD:UMC0C0,CAS_CMD_RD:UMC1C0,CAS_CMD_RD:UMC2C0,CAS_CMD_RD:UMC3C0"
 
 static const char *const profile_events[LIKWID_UNCORE_PROFILE_COUNT] = {
     [LIKWID_UNCORE_PROFILE_IMC_SKX] = MBOX6_IMC_EVENTS,
-    /* Stampede3 ICX PERF: cas_count_* on uncore_imc_0..11 — not DDR_*:MDEV*. */
+    /* Stampede3 ICX PERF: cas_count_* on uncore_imc_0..11, not DDR_*:MDEV*. */
     [LIKWID_UNCORE_PROFILE_IMC_ICX] = MBOX12_IMC_EVENTS,
     [LIKWID_UNCORE_PROFILE_IMC_SPR] = SPR_DDR_HBM_EVENTS,
     [LIKWID_UNCORE_PROFILE_IMC_EMR] = SPR_DDR_HBM_EVENTS,
@@ -319,6 +316,8 @@ static int map_mbox_hbm_mdev(const char *counter_name, char *dev_out, size_t dev
 
 static int map_amd_df(const char *counter_name, char *dev_out, size_t dev_len, const char **key_out)
 {
+  static const char *const chan_keys[] = {"dram_chan0_bytes", "dram_chan1_bytes",
+                                          "dram_chan2_bytes", "dram_chan3_bytes"};
   unsigned int idx = 0;
 
   if (counter_name == NULL || dev_out == NULL || key_out == NULL)
@@ -326,26 +325,13 @@ static int map_amd_df(const char *counter_name, char *dev_out, size_t dev_len, c
 
   snprintf(dev_out, dev_len, "df");
 
-  if (sscanf(counter_name, "DFC%u", &idx) == 1) {
-    static const char *const dfc_keys[] = {"dram_chan0_bytes", "dram_chan1_bytes",
-                                           "dram_chan2_bytes", "dram_chan3_bytes"};
-    if (idx >= 4)
-      return -1;
-    *key_out = dfc_keys[idx];
-    return 0;
-  }
-
-  /* Turin UMC CAS_CMD_RD on UMC{N}C0 → dram_chanN_bytes. */
-  if (sscanf(counter_name, "UMC%uC0", &idx) == 1) {
-    static const char *const umc_keys[] = {"dram_chan0_bytes", "dram_chan1_bytes",
-                                           "dram_chan2_bytes", "dram_chan3_bytes"};
-    if (idx >= 4)
-      return -1;
-    *key_out = umc_keys[idx];
-    return 0;
-  }
-
-  return -1;
+  /* DFC{N} (Zen2-4) and Turin UMC{N}C0 (CAS_CMD_RD) both map to dram_chanN_bytes. */
+  if (sscanf(counter_name, "DFC%u", &idx) != 1 && sscanf(counter_name, "UMC%uC0", &idx) != 1)
+    return -1;
+  if (idx >= 4)
+    return -1;
+  *key_out = chan_keys[idx];
+  return 0;
 }
 
 int likwid_uncore_profile_map_counter(likwid_uncore_profile_t profile, const char *counter_name,

@@ -31,8 +31,7 @@ static int likwid_env_setup_quiet(void)
   const char *v = getenv("HPCPERFSTATS_LIKWID_SETUP_QUIET");
   if (v == NULL || *v == '\0')
     return 1;
-  if (strcmp(v, "0") == 0 || strcmp(v, "false") == 0 || strcmp(v, "false") == 0 ||
-      strcmp(v, "no") == 0 || strcmp(v, "no") == 0)
+  if (strcmp(v, "0") == 0 || strcmp(v, "false") == 0 || strcmp(v, "no") == 0)
     return 0;
   return 1;
 }
@@ -99,7 +98,7 @@ int likwid_pmc_adapter_init(int nr_threads)
   /* Default to quiet LIKWID logs; override with HPCPERFSTATS_LIKWID_VERBOSITY. */
   perfmon_setVerbosity(likwid_env_verbosity());
   /* Always ACCESSMODE_PERF: avoids userspace IA32_PERF_GLOBAL_CTRL (MSR 0x38f)
-   * on kernel ≥5.9 with msr.allow_writes=default. DIRECT MSR is removed. */
+   * on kernel >= 5.9 with msr.allow_writes=default. DIRECT MSR is removed. */
   access_mode = likwid_pmc_access_mode_from_env(&access_env_status);
   if (access_env_status == LIKWID_PMC_ACCESS_ENV_DIRECT_REMOVED)
     monitor_log_error("HPCPERFSTATS_LIKWID_ACCESS=direct is removed; using perf only (valid: "
@@ -234,8 +233,7 @@ static void likwid_pmc_adapter_apply_one_event(struct stats *stats, const char *
                                                const char *event_name, unsigned long long val,
                                                unsigned long long *inst_retired,
                                                unsigned long long *aperf, unsigned long long *mperf,
-                                               int *have_inst, int *have_aperf, int *have_mperf,
-                                               int *have_fixed0, int *have_fixed1, int *have_fixed2)
+                                               int *have_inst, int *have_aperf, int *have_mperf)
 {
   char keybuf[128];
   const char *schema_key;
@@ -248,15 +246,12 @@ static void likwid_pmc_adapter_apply_one_event(struct stats *stats, const char *
   fixc = likwid_pmc_fixc_index(counter_name);
   if (fixc == 0) {
     *inst_retired = val;
-    *have_fixed0 = 1;
     *have_inst = 1;
   } else if (fixc == 1) {
     *aperf = val;
-    *have_fixed1 = 1;
     *have_aperf = 1;
   } else if (fixc == 2) {
     *mperf = val;
-    *have_fixed2 = 1;
     *have_mperf = 1;
   }
   if (event_name == NULL)
@@ -280,24 +275,14 @@ static void likwid_pmc_adapter_apply_one_event(struct stats *stats, const char *
 
 static void likwid_pmc_adapter_publish_semantic_counters(
     struct stats *stats, unsigned long long inst, unsigned long long aperf_val,
-    unsigned long long mperf_val, int have_inst, int have_aperf, int have_mperf, int have_fixed0,
-    int have_fixed1, int have_fixed2)
+    unsigned long long mperf_val, int have_inst, int have_aperf, int have_mperf)
 {
-  if (have_inst) {
+  if (have_inst)
     stats_set(stats, "instr_retired", inst);
-    if (!have_fixed0)
-      stats_set(stats, "instr_retired", inst);
-  }
-  if (have_aperf) {
+  if (have_aperf)
     stats_set(stats, "aperf", aperf_val);
-    if (!have_fixed1)
-      stats_set(stats, "aperf", aperf_val);
-  }
-  if (have_mperf) {
+  if (have_mperf)
     stats_set(stats, "mperf", mperf_val);
-    if (!have_fixed2)
-      stats_set(stats, "mperf", mperf_val);
-  }
 }
 #endif /* HAVE_LIKWID */
 
@@ -322,7 +307,7 @@ int likwid_pmc_adapter_prepare_collect(void)
 
     /*
      * DF/IMC/RAPL call perfmon_setupCounters on later groups and leave the core
-     * PERF programming inactive. setup alone is not enough on Turin/SPR — match
+     * PERF programming inactive. setup alone is not enough on Turin/SPR; match
      * uncore finish: setupCounters then startCounters (ignore start failure if
      * the session is already running).
      */
@@ -357,9 +342,6 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events, 
   unsigned long long inst_retired = 0;
   unsigned long long aperf = 0;
   unsigned long long mperf = 0;
-  int have_fixed0 = 0;
-  int have_fixed1 = 0;
-  int have_fixed2 = 0;
   int have_inst = 0;
   int have_aperf = 0;
   int have_mperf = 0;
@@ -383,13 +365,11 @@ int likwid_pmc_adapter_read_cpu(struct stats *stats, int cpu, uint64_t *events, 
     if (likwid_result_to_ull(raw, ~(unsigned long long)0, &val) < 0)
       continue;
     likwid_pmc_adapter_apply_one_event(stats, counter_name, event_name, val, &inst_retired, &aperf,
-                                       &mperf, &have_inst, &have_aperf, &have_mperf, &have_fixed0,
-                                       &have_fixed1, &have_fixed2);
+                                       &mperf, &have_inst, &have_aperf, &have_mperf);
   }
   /* No MSR fallback: LIKWID-only (Intel and AMD). */
   likwid_pmc_adapter_publish_semantic_counters(stats, inst_retired, aperf, mperf, have_inst,
-                                               have_aperf, have_mperf, have_fixed0, have_fixed1,
-                                               have_fixed2);
+                                               have_aperf, have_mperf);
   return 0;
 #else
   (void)stats;

@@ -1,12 +1,5 @@
 /* LIKWID CPU counter backend begin. */
 #include <stddef.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <limits.h>
-#include <string.h>
-#include <errno.h>
-#include <unistd.h>
 #include "stats.h"
 #include "trace.h"
 #include "monitor_log.h"

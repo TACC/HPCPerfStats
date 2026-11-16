@@ -1,5 +1,5 @@
 /*! \file likwid_pmc_schema_map.h
- *  Pure LIKWID → host_cpu_hw schema key helpers (unit-testable).
+ *  Pure LIKWID to host_cpu_hw schema key helpers (unit-testable).
  */
 
 #ifndef _LIKWID_PMC_SCHEMA_MAP_H_

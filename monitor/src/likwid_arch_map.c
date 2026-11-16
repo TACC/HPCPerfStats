@@ -13,7 +13,7 @@ static const char *intel_eventset(void)
 
 static const char *amd_eventset(void)
 {
-  /* LIKWID Zen2–Zen5 tables expose LS_DISPATCH_* umasks only (no bare LS_DISPATCH).
+  /* LIKWID Zen2-Zen5 tables expose LS_DISPATCH_* umasks only (no bare LS_DISPATCH).
    * Bare LS_DISPATCH fails perfmon_addEventSet on Turin (Zen5) and disables host_cpu_hw. */
   return "RETIRED_INSTRUCTIONS:PMC0,RETIRED_BRANCH_INSTR:PMC1,RETIRED_MISP_BRANCH_INSTR:PMC2,"
          "LS_DISPATCH_ALL:PMC3";
@@ -24,14 +24,6 @@ static const char *intel_icx_eventset(void)
   return "INSTR_RETIRED_ANY:FIXC0,CPU_CLK_UNHALTED_CORE:FIXC1,CPU_CLK_UNHALTED_REF:FIXC2,"
          "MEM_INST_RETIRED_ALL_LOADS:PMC0,L1D_REPLACEMENT:PMC1,"
          "MEM_INST_RETIRED_ALL_STORES:PMC2";
-}
-
-static const char *intel_spr_eventset(int n_pmcs)
-{
-  /* SPR/EMR/GNR: use ICX-validated LIKWID names. SKX-era MEM_LOAD_UOPS_RETIRED_*
-   * are missing on SPR in LIKWID 5.5.x; extra FP PMCs often hit "in use". */
-  (void)n_pmcs;
-  return intel_icx_eventset();
 }
 
 static const char *intel_srf_eventset(void)
@@ -45,18 +37,20 @@ static const char *intel_srf_eventset(void)
 
 const char *likwid_arch_eventset_for_processor(processor_t p, int n_pmcs)
 {
+  (void)n_pmcs;
   switch (p) {
   case AMD_ROME:
   case AMD_MILAN:
   case AMD_GENOA:
   case AMD_TURIN:
     return amd_eventset();
-  case ICELAKE_SERVER:
-    return intel_icx_eventset();
+  /* SPR/EMR/GNR use the ICX names: SKX-era MEM_LOAD_UOPS_RETIRED_* are missing on SPR in
+   * LIKWID 5.5.x, and extra FP PMCs often hit "in use". */
   case SAPPHIRE_RAPIDS:
   case EMERALD_RAPIDS:
   case GRANITE_RAPIDS:
-    return intel_spr_eventset(n_pmcs);
+  case ICELAKE_SERVER:
+    return intel_icx_eventset();
   case SIERRA_FOREST:
     return intel_srf_eventset();
   case SKYLAKE:
@@ -64,7 +58,6 @@ const char *likwid_arch_eventset_for_processor(processor_t p, int n_pmcs)
   case CASCADE_LAKE:
   case NEHALEM:
   case WESTMERE:
-    return intel_eventset();
   default:
     return intel_eventset();
   }

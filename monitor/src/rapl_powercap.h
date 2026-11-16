@@ -9,19 +9,15 @@
 
 #define RAPL_POWERCAP_DEFAULT_ROOT "/sys/class/powercap"
 
-/* energy_uj → schema millijoules (round nearest). */
+/* energy_uj to schema millijoules (round nearest). */
 unsigned long long rapl_powercap_uj_to_mj(unsigned long long uj);
 
-/*
- * Parse powercap domain name "package-N" → socket id.
- * Returns 0 on success, -1 if not a package name.
- */
+/* Parse powercap domain name "package-N" into its socket id; -1 if not a package name. */
 int rapl_powercap_parse_package_id(const char *name, unsigned *socket_out);
 
 /*
- * Map child domain name to schema key: core→pp0/core, dram→dram, uncore ignored.
- * amd_path nonzero → core maps to core_energy; else pp0_energy.
- * Returns NULL when the name is not a mapped energy domain.
+ * Map a child domain name to its schema key: core/cores to core_energy (amd_path) or pp0_energy,
+ * dram/ram to dram_energy. NULL for anything else (uncore included).
  */
 const char *rapl_powercap_schema_key_from_name(const char *name, int amd_path);
 
