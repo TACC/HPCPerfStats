@@ -198,6 +198,7 @@ double roofline_nvidia_fp64_ratio_from_cc(int major, int minor, const char *name
 
 int roofline_nvidia_cuda_cores_per_sm(int major, int minor, const char *name)
 {
+  (void)name;
   if (major >= 9)
     return 128;
   if (major == 8) {
@@ -212,8 +213,6 @@ int roofline_nvidia_cuda_cores_per_sm(int major, int minor, const char *name)
   if (major == 5)
     return 128;
   if (major == 3)
-    return 192;
-  if (name != NULL && strstr(name, "Tesla K80") != NULL)
     return 192;
   return 128;
 }

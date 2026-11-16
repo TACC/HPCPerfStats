@@ -129,6 +129,22 @@ static void test_parse_smi_flops_vista_gh200(void)
   assert(fabs(flops - 33454080000000.0) < 1.0);
 }
 
+static void test_cuda_cores_per_sm_tesla_k80(void)
+{
+  char name[64];
+  double sm_mhz = 0.0;
+  int maj = 0, min = 0;
+
+  assert(roofline_parse_smi_flops_line("Tesla K80, 875, 3.7", name, sizeof(name), &sm_mhz, &maj,
+                                       &min) == 0);
+  assert(maj == 3 && min == 7);
+  assert(roofline_nvidia_cuda_cores_per_sm(maj, min, name) == 192);
+  assert(roofline_nvidia_cuda_cores_per_sm(3, 5, "Tesla K40m") == 192);
+  assert(roofline_nvidia_cuda_cores_per_sm(3, 7, NULL) == 192);
+  /* The name never overrides the compute-capability dispatch. */
+  assert(roofline_nvidia_cuda_cores_per_sm(2, 0, "Tesla K80") == 128);
+}
+
 static void test_parse_smi_mem_pcie_horizon(void)
 {
   char name[64];
@@ -193,6 +209,7 @@ int main(void)
   test_cpu_dram_cpuid_identity();
   test_parse_smi_flops_horizon();
   test_parse_smi_flops_vista_gh200();
+  test_cuda_cores_per_sm_tesla_k80();
   test_parse_smi_mem_pcie_horizon();
   test_parse_smi_mem_pcie_vista_gh200();
   test_unknown_gpu_no_invent();
