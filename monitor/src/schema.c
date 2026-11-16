@@ -1,5 +1,4 @@
 /* Build and tear down schema tables from whitespace-separated entry definitions. */
-#include <malloc.h>
 #include <stdlib.h>
 #include <string.h>
 

@@ -1,4 +1,4 @@
-/* Central registry of struct stats_type pointers sorted by st_name. */
+/* Central registry of struct stats_type pointers, ordered by variable name. */
 #include "stats_registry.h"
 
 #include "stats.h"

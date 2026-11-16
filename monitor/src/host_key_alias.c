@@ -49,24 +49,14 @@ static const char *lookup_table(const struct host_key_alias_entry *table, const 
   return NULL;
 }
 
-static const char *host_mem_key_alias(const char *kernel_key)
-{
-  return lookup_table(g_mem_aliases, kernel_key);
-}
-
-static const char *host_proc_key_alias(const char *kernel_key)
-{
-  return lookup_table(g_proc_aliases, kernel_key);
-}
-
 const char *host_key_alias_lookup(const char *kernel_key)
 {
   const char *emit;
 
-  emit = host_mem_key_alias(kernel_key);
+  emit = lookup_table(g_mem_aliases, kernel_key);
   if (emit != NULL)
     return emit;
-  return host_proc_key_alias(kernel_key);
+  return lookup_table(g_proc_aliases, kernel_key);
 }
 
 void host_key_alias_emit(struct stats *stats, const char *kernel_key, unsigned long long val)

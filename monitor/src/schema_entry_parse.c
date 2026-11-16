@@ -1,11 +1,10 @@
 /* Parse one schema entry string: key,opt1[=arg],opt2,... */
 #include <ctype.h>
-#include <malloc.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "schema.h"
-#include "string1.h"
 #include "trace.h"
 
 static void schema_apply_one_option(struct schema_entry *se, char *opt)

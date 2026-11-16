@@ -1,9 +1,5 @@
-/* Two-tier collection: slow-key table, enable flag, and runtime phase.
- *
- * Slow keys are assigned from a static (type,key) table plus an auto-rule for
- * any key ending in `_error`/`_errors`. The whole mechanism is inert unless
- * `enable_slow_tier` is on (default). Set `enable_slow_tier 0` to restore
- * legacy single-tier behavior. */
+/* Two-tier collection: slow keys come from a static (type,key) table plus an
+ * auto-rule for keys ending in `_error`/`_errors`. */
 #include "collect_tier.h"
 
 #include <stddef.h>
@@ -14,9 +10,7 @@
 static int g_slow_tier_enabled;
 static enum collect_phase g_collect_phase = COLLECT_FULL;
 
-/* Static slow-tier assignments, keyed by emitted (st_name, se_key). Keys ending
- * in `_error`/`_errors` are handled by collect_tier_key_has_error_suffix() and
- * need not be listed here. */
+/* Keyed by emitted (st_name, se_key); `_error`/`_errors` keys need no entry. */
 static const struct {
   const char *type;
   const char *key;
