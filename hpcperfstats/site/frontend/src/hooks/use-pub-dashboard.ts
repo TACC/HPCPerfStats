@@ -16,7 +16,7 @@ export function usePubDashboard() {
     error: error ? getErrorMessage(error, "Unable to load cluster dashboard.") : null,
     initialLoading: isLoading && !data,
     refetchBusy: isFetching && !isLoading,
-    /** @deprecated Prefer initialLoading — kept for gradual migration */
+    /** @deprecated Prefer initialLoading */
     loading: isLoading && !data,
     refetch,
   };

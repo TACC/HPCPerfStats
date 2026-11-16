@@ -18,8 +18,8 @@ import {
 /** Progressive job plots polling via Orval `jobsPlotsRetrieve`. */
 export function useJobPlotsQuery(pk: string, enabled: boolean) {
   const [plots, setPlots] = useState<JobPlotsState | null>(null);
-  // Fail-closed: do not report loading until ``enabled`` starts a fetch (avoids
-  // Metrics-tab "Loading job plots…" when the query is gated off).
+  // Not loading until `enabled` starts a fetch, so a gated-off query never shows
+  // the plot loading message on the Metrics tab.
   const [plotsLoading, setPlotsLoading] = useState(false);
   const [plotsFetchFailed, setPlotsFetchFailed] = useState(false);
   const plotsFetchGenRef = useRef(0);

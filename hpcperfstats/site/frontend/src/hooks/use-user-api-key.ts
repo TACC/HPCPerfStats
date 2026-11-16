@@ -11,7 +11,7 @@ import { orvalResponseData, selectOrvalData } from "@/api/orval-response";
 /**
  * API key status + rotate mutation.
  *
- * The server returns ``raw_key`` exactly once (on first GET that mints a key, or
+ * The server returns ``raw_key`` exactly once (on first GET that creates a key, or
  * on rotate); every later GET returns ``raw_key: null``. The revealed key is
  * therefore latched in local state so a refetch (explicit, window focus, or
  * remount of the query) cannot erase it before the user copies it.

@@ -133,7 +133,7 @@ describe("useJobPlotsQuery", () => {
 
     const { result } = renderHook(() => useJobPlotsQuery("111", true));
 
-    // scheduleJobPlotsRetry floors delay at 250ms; need ~61 attempts to hit the cap.
+    // scheduleJobPlotsRetry floors the retry delay, so step past that floor until attempts exceed the cap.
     for (let i = 0; i < 70; i += 1) {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(300);

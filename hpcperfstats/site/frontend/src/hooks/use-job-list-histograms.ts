@@ -17,7 +17,7 @@ export type JobListHistogramSampleMeta = {
   histogramSampled: boolean;
 };
 
-/** Stable default metric list — do not pass inline arrays from views (refetch loop). */
+/** Stable default metric list; inline arrays from views would cause a refetch loop. */
 export const JOB_LIST_HISTOGRAM_METRICS: readonly MetricName[] = [
   "runtime",
   "nhosts",
@@ -76,7 +76,7 @@ function serializeJobListApiParams(params: Record<string, string>): string {
 }
 
 /** Compact fingerprint so identical batch payloads keep prior React item refs. */
-export function fingerprintJobListHistogramEntries(
+function fingerprintJobListHistogramEntries(
   entries: JobListHistogramEntry[] | null,
 ): string {
   if (!entries?.length) return "";
@@ -99,7 +99,7 @@ export function useJobListHistograms(
   enabled = true,
   jobsFetching = false,
 ) {
-  // Defense in depth: strip presentation keys even if a caller passes listApiParams.
+  // Strip presentation keys here too, in case a caller passes the full listApiParams.
   const filterIdentityParams = stripPresentationParams(listApiParams);
   const paramsKey = serializeJobListApiParams(filterIdentityParams);
   const listApiParamsRef = useRef(filterIdentityParams);
@@ -252,7 +252,7 @@ export function useJobListHistograms(
       if (idlePollTimer) clearTimeout(idlePollTimer);
       controller.abort();
     };
-    // jobsFetching is read via jobsFetchingRef — do not re-run on isFetching toggles.
+    // jobsFetching is read via jobsFetchingRef so isFetching toggles do not re-run the effect.
   }, [paramsKey, reloadKey, enabled]);
 
   return {

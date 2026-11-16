@@ -129,7 +129,7 @@ describe("useJobListHistograms", () => {
     await advanceDebounce();
     expect(jobsHistogramsBatchRetrieve).not.toHaveBeenCalled();
 
-    // Idle wait uses a ref + poll — flipping jobsFetching must not re-run the effect.
+    // Idle wait uses a ref + poll, so flipping jobsFetching must not re-run the effect.
     rerender({ jobsFetching: false });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(JOB_LIST_HISTOGRAM_JOBS_IDLE_POLL_MS);
@@ -410,7 +410,7 @@ describe("useJobListHistograms", () => {
       expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
     });
 
-    // Same filter identity — page/order_by must not be in hist params.
+    // Same filter identity; page/order_by must not be in hist params.
     rerender({ params: { ...filterOnly } });
     await advanceDebounce();
     expect(jobsHistogramsBatchRetrieve).toHaveBeenCalledTimes(1);
