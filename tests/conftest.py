@@ -1,4 +1,5 @@
 """Parent conftest for ``tests/`` (outside default ``hpcperfstats`` testpaths)."""
+
 import importlib.util
 import os
 
@@ -13,8 +14,8 @@ def pytest_configure(config):
   if importlib.util.find_spec("pytest_django") is not None:
     return
   os.environ.setdefault(
-      "DJANGO_SETTINGS_MODULE",
-      "hpcperfstats.site.hpcperfstats_site.settings",
+    "DJANGO_SETTINGS_MODULE",
+    "hpcperfstats.site.hpcperfstats_site.settings",
   )
   import django
 

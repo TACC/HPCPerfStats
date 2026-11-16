@@ -10,12 +10,7 @@ export HPCPERFSTATS_STRESS_HOST_DATA_ROWS="${HPCPERFSTATS_STRESS_HOST_DATA_ROWS:
 export HPCPERFSTATS_STRESS_REPORT_DIR="${HPCPERFSTATS_STRESS_REPORT_DIR:-/home/hpcperfstats/test_runs/stress}"
 mkdir -p "${HPCPERFSTATS_STRESS_REPORT_DIR}"
 
-# Prefer editable install (matches local dev). Cloud-sync bind mounts can make
-# egg-info writes fail (Errno 35). Then use repo root on PYTHONPATH and only
-# install test extras (no writes under the project tree).
 compose_inner_pip_install
-
-cd /home/hpcperfstats
 
 python3 hpcperfstats/site/manage.py migrate --noinput
 

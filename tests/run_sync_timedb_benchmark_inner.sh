@@ -12,7 +12,7 @@ if [[ ! -x "$PYT" ]]; then
 fi
 
 echo "Installing editable test deps into 3.14t (or PYTHONPATH fallback)..."
-# Always keep Codon pyext dir first — pip fallback must not hide the bake path.
+# Always keep Codon pyext dir first - pip fallback must not hide the bake path.
 export PYTHONPATH="/opt/hpcperfstats/codon_parse:/home/hpcperfstats${PYTHONPATH:+:$PYTHONPATH}"
 if ! "$PYT" -m pip install -q -e ".[test]"; then
   echo "3.14t pip install -e failed; using PYTHONPATH + pytest fallback."

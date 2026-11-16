@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Loaded width-sweep A/B: 48 → 64 → 96 (0.1h smoke + 3h soak each).
+# Loaded width-sweep A/B: 48 -> 64 -> 96 (0.1h smoke + 3h soak each).
 # Baseline = this-run 3h@48; compare 64/96 report-only (never revert).
 # See .cursor/plans/width-sweep-ab-3h.plan.md.
-# Launch detached: nohup setsid -f bash tests/run_loaded_width_sweep_ab.sh …
+# Launch detached: nohup setsid -f bash tests/run_loaded_width_sweep_ab.sh ...
 set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

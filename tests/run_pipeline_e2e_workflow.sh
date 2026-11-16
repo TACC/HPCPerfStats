@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pipeline ingest E2E (RabbitMQ → archive → sync_timedb → update_metrics).
+# Pipeline ingest E2E (RabbitMQ -> archive -> sync_timedb -> update_metrics).
 # Browser/navigation phase is included unless explicitly skipped.
 set -euo pipefail
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Consolidated sync_timedb stall-regression battery (queue-orchestrator cutover).
-# Host pytest only — no compose DB required for this -k filter scope.
+# Host pytest only - no compose DB required for this -k filter scope.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

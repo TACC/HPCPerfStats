@@ -304,7 +304,7 @@ compose_run_inner_script() {
     web -s
 }
 
-# Set by compose_prepare_bind_mount; callers must invoke it before compose_run_inner_script.
+# Set by compose_run_inner_script_prepare_env; callers must invoke it before compose_run_inner_script.
 compose_run_inner_script_bind_mount_env=()
 
 compose_run_inner_script_prepare_env() {
