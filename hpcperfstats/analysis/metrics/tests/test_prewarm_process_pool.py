@@ -300,8 +300,24 @@ def test_worker_start_passes_parent_database_name(monkeypatch):
   assert seen["args"][-1] == "test_parent"
 
 
-def test_child_initializer_uses_parent_database_name(monkeypatch):
-  """The child connects to the parent's database, not the INI default."""
+@pytest.fixture(autouse=True)
+def _database_name_restored(monkeypatch):
+  """Regression (DB suite, 2026-11-16): a test running the real
+  ``_child_initializer`` tail left its ``db_name`` in the settings, and
+  every later DB test in that worker failed ``database "test_parent" does
+  not exist``. Undoes the test's patches first (a conftest autouse fixture
+  already holds ``monkeypatch``, so its teardown runs after this one).
+  """
+  from django.db import connections
+
+  name = connections.databases["default"]["NAME"]
+  yield
+  monkeypatch.undo()
+  assert connections.databases["default"]["NAME"] == name
+
+
+def _stub_child_init(monkeypatch):
+  """Stub the child's process-global setup; restore the DB name afterwards."""
   from django.db import connections
 
   import hpcperfstats.dbload.lib.blas_thread_env as blas
@@ -310,18 +326,18 @@ def test_child_initializer_uses_parent_database_name(monkeypatch):
   monkeypatch.setattr(ppp, "apply_pool_worker_process_title", lambda *_a: None)
   monkeypatch.setattr(blas, "configure_blas_thread_env", lambda: None)
   monkeypatch.setattr(boot, "ensure_django", lambda: None)
+  default = connections.databases["default"]
+  monkeypatch.setitem(default, "NAME", default["NAME"])
+
+
+def test_child_initializer_uses_parent_database_name(monkeypatch):
+  """The child connects to the parent's database, not the INI default."""
+  from django.db import connections
+
+  _stub_child_init(monkeypatch)
   monkeypatch.setitem(connections.databases["default"], "NAME", "from_ini")
   ppp._child_initializer("update_metrics.py", "prewarm-pool", "test_parent")
   assert connections.databases["default"]["NAME"] == "test_parent"
-
-
-def _stub_child_init(monkeypatch):
-  import hpcperfstats.dbload.lib.blas_thread_env as blas
-  import hpcperfstats.dbload.lib.django_bootstrap as boot
-
-  monkeypatch.setattr(ppp, "apply_pool_worker_process_title", lambda *_a: None)
-  monkeypatch.setattr(blas, "configure_blas_thread_env", lambda: None)
-  monkeypatch.setattr(boot, "ensure_django", lambda: None)
 
 
 def test_child_initializer_requires_codon_metrics(monkeypatch):

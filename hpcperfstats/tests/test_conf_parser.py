@@ -2,6 +2,17 @@
 
 import pytest
 
+from hpcperfstats.conftest import conf_parser_state_restored
+
+
+@pytest.fixture(autouse=True)
+def _conf_parser_restored():
+  """Put conf_parser back on the session INI after tests that reload it
+  onto their own ``tmp_path`` INI without ``temp_ini``.
+  """
+  with conf_parser_state_restored():
+    yield
+
 
 def test_config_path_from_env(temp_ini, monkeypatch):
   """Config is read from HPCPERFSTATS_INI when set."""

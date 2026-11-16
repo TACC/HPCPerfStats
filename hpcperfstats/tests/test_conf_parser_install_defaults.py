@@ -10,6 +10,15 @@ import os
 
 import pytest
 
+from hpcperfstats.conftest import conf_parser_state_restored
+
+
+@pytest.fixture(autouse=True)
+def _conf_parser_restored():
+  """Put conf_parser back on the session INI after each reload below."""
+  with conf_parser_state_restored():
+    yield
+
 
 def _load(tmp_path, monkeypatch, text):
   ini = tmp_path / "hpcperfstats.ini"
