@@ -30,11 +30,11 @@ static void mk_pid(int pid, uid_t uid, const char *cgroup, const char *environ_b
   char path[512];
   char status[256];
 
-  snprintf(dir, sizeof(dir), "%s/%d", g_root, pid);
+  assert(snprintf(dir, sizeof(dir), "%s/%d", g_root, pid) < (int)sizeof(dir));
   assert(mkdir(dir, 0755) == 0);
-  snprintf(path, sizeof(path), "%s/cgroup", dir);
+  assert(snprintf(path, sizeof(path), "%s/cgroup", dir) < (int)sizeof(path));
   write_file(path, cgroup);
-  snprintf(path, sizeof(path), "%s/environ", dir);
+  assert(snprintf(path, sizeof(path), "%s/environ", dir) < (int)sizeof(path));
   {
     FILE *f = fopen(path, "we");
 
@@ -44,7 +44,7 @@ static void mk_pid(int pid, uid_t uid, const char *cgroup, const char *environ_b
     fclose(f);
   }
   snprintf(status, sizeof(status), "Name:\ttask\nUid:\t%u\t%u\t%u\t%u\n", uid, uid, uid, uid);
-  snprintf(path, sizeof(path), "%s/status", dir);
+  assert(snprintf(path, sizeof(path), "%s/status", dir) < (int)sizeof(path));
   write_file(path, status);
   /* Filter uses st_uid of the process directory (stat) and skips root-owned dirs. As root
    * every fixture dir would be root-owned, so give each one its intended owner (make check
@@ -113,7 +113,7 @@ static void test_rejects_root_and_bad_jid(void)
 
   setenv("HPCPERFSTATS_PROC_ROOT", g_root, 1);
   /* Fresh root */
-  snprintf(g_root, sizeof(g_root), "%s/proc_disc2_XXXXXX", g_parent);
+  assert(snprintf(g_root, sizeof(g_root), "%s/proc_disc2_XXXXXX", g_parent) < (int)sizeof(g_root));
   assert(mkdtemp(g_root) != NULL);
   setenv("HPCPERFSTATS_PROC_ROOT", g_root, 1);
 
@@ -139,9 +139,10 @@ static char g_cg_root[256];
 
 static void fresh_roots(void)
 {
-  snprintf(g_root, sizeof(g_root), "%s/proc_title_XXXXXX", g_parent);
+  assert(snprintf(g_root, sizeof(g_root), "%s/proc_title_XXXXXX", g_parent) < (int)sizeof(g_root));
   assert(mkdtemp(g_root) != NULL);
-  snprintf(g_cg_root, sizeof(g_cg_root), "%s/cg_title_XXXXXX", g_parent);
+  assert(snprintf(g_cg_root, sizeof(g_cg_root), "%s/cg_title_XXXXXX", g_parent) <
+         (int)sizeof(g_cg_root));
   assert(mkdtemp(g_cg_root) != NULL);
   setenv("HPCPERFSTATS_PROC_ROOT", g_root, 1);
   setenv("HPCPERFSTATS_CGROUP_ROOT", g_cg_root, 1);
@@ -185,7 +186,7 @@ static void mk_stepd(int pid, const char *title, size_t title_len)
   char path[600];
   FILE *f;
 
-  snprintf(dir, sizeof(dir), "%s/%d", g_root, pid);
+  assert(snprintf(dir, sizeof(dir), "%s/%d", g_root, pid) < (int)sizeof(dir));
   assert(mkdir(dir, 0755) == 0);
   snprintf(path, sizeof(path), "%s/cmdline", dir);
   f = fopen(path, "we");
@@ -369,10 +370,11 @@ int main(void)
   snprintf(g_parent, sizeof(g_parent), "%s/job_proc_disc_XXXXXX",
            tmpdir && tmpdir[0] ? tmpdir : "/tmp");
   assert(mkdtemp(g_parent) != NULL);
-  snprintf(g_root, sizeof(g_root), "%s/proc_disc_XXXXXX", g_parent);
+  assert(snprintf(g_root, sizeof(g_root), "%s/proc_disc_XXXXXX", g_parent) < (int)sizeof(g_root));
   assert(mkdtemp(g_root) != NULL);
   /* Point the cgroup root at an empty dir so the host's real cgroupfs is never read. */
-  snprintf(g_cg_root, sizeof(g_cg_root), "%s/cg_disc_XXXXXX", g_parent);
+  assert(snprintf(g_cg_root, sizeof(g_cg_root), "%s/cg_disc_XXXXXX", g_parent) <
+         (int)sizeof(g_cg_root));
   assert(mkdtemp(g_cg_root) != NULL);
   setenv("HPCPERFSTATS_CGROUP_ROOT", g_cg_root, 1);
 

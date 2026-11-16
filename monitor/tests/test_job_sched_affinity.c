@@ -1,5 +1,7 @@
 /* Phase 3: affinity union + full-resource predicate helpers. */
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <assert.h>
 #include <sched.h>
 #include <stdio.h>

@@ -640,14 +640,12 @@ static int rmq_publish_text_payload(amqp_connection_state_t conn, struct stats_b
   return 0;
 }
 
+int stats_buffer_send_payload(struct stats_buffer *sf)
+{
 #ifdef STATS_BUFFER_TEST_SEND_HOOK
-int stats_buffer_send_payload(struct stats_buffer *sf)
-{
+  /* Tests stop here; the broker path below still compiles (no unused static helpers). */
   return stats_buffer_test_send_hook(sf);
-}
-#else
-int stats_buffer_send_payload(struct stats_buffer *sf)
-{
+#endif
   if (rmq_ensure_connected(sf) < 0) {
     rmq_connect_failures++;
     rmq_note_send_failure("RMQ connect/attach failed", rmq_connect_failures,
@@ -678,7 +676,7 @@ int stats_buffer_send_payload(struct stats_buffer *sf)
   rmq_note_publish_success();
   return 0;
 }
-#endif
+
 void stats_buffer_rmq_shutdown(void)
 {
   rmq_soft_disconnect();

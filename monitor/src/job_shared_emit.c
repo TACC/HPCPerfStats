@@ -299,8 +299,10 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
       struct job_gpu_set in_use;
       struct job_gpu_set g_union;
       char jobs_mark[256];
-      char aff_mark[768];
       char gpus_wire[256];
+      /* Fits the longest jid + cpu list + gpu list, so %affinity is never cut short. */
+      char aff_mark[sizeof("affinity jid= cpus= gpus= cg=sched") + JOB_PROC_JID_MAX +
+                    sizeof(cpu_lists[0]) + sizeof(gpus_wire)];
       struct job_emit_filter_ctx ctx;
 
       memset(&g_union, 0, sizeof(g_union));
@@ -313,8 +315,8 @@ void job_shared_emit_sample_burst(struct sf_ring_buffer *w)
       snprintf(jobs_mark, sizeof(jobs_mark), "jobs jids=%s", jobs_csv);
       job_gpu_set_format_wire(&g_union, gpus_wire, sizeof(gpus_wire));
       if (cpu_lists[i][0])
-        snprintf(aff_mark, sizeof(aff_mark), "affinity jid=%s cpus=%s gpus=%s cg=sched",
-                 disc.entries[i].jid, cpu_lists[i], gpus_wire);
+        snprintf(aff_mark, sizeof(aff_mark), "affinity jid=%s cpus=%.*s gpus=%s cg=sched",
+                 disc.entries[i].jid, (int)sizeof(cpu_lists[0]) - 1, cpu_lists[i], gpus_wire);
       else
         aff_mark[0] = '\0';
       stats_buffer_set_row_filter(job_emit_row_filter, &ctx);

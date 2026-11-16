@@ -540,6 +540,9 @@ int ring_buffer_load_file(FILE *sf_file, struct sf_ring_buffer *w, const char *h
   size_t line_buf_size = 0;
 
   struct stats_buffer *sf;
+
+  /* Replay inserts with no cap (ring_buffer_insert(..., -1, ...)); the limit is unused. */
+  (void)max_buffer_size;
   sf = (struct stats_buffer *)malloc(sizeof(*sf));
   if (sf == NULL) {
     rc = -1;

@@ -1,5 +1,7 @@
 /* Phase 4: wire mark strings + jid/gpu helpers for shared-node payloads. */
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <assert.h>
 #include <errno.h>
 #include <sched.h>

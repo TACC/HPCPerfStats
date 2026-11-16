@@ -34,13 +34,6 @@ static int read_first_line(const char *path, char *buf, size_t cap)
   return 0;
 }
 
-static int roofline_path_join2(char *dst, size_t cap, const char *a, const char *b)
-{
-  int n;
-  n = snprintf(dst, cap, "%s/%s", a, b);
-  return (n > 0 && (size_t)n < cap) ? 0 : -1;
-}
-
 static int roofline_path_join3(char *dst, size_t cap, const char *a, const char *b, const char *c)
 {
   int n;
@@ -224,16 +217,6 @@ static void detect_cpu_peak_edac_bw_bytes_per_s(double *ddr_bw, double *hbm_bw)
   ctx.ddr_bw = ddr_bw;
   ctx.hbm_bw = hbm_bw;
   (void)host_edac_foreach_dimm(sum_edac_dimm_bw, &ctx);
-}
-
-static double detect_cpu_peak_dram_bw_bytes_per_s(void)
-{
-  double ddr_bw = 0.0;
-  double hbm_bw = 0.0;
-
-  detect_cpu_peak_edac_bw_bytes_per_s(&ddr_bw, &hbm_bw);
-  (void)hbm_bw;
-  return ddr_bw;
 }
 
 static double parse_max_mhz_from_dpm_table(const char *path)

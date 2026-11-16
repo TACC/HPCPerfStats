@@ -37,15 +37,6 @@ static struct stats *make_test_stats(struct stats_type *type, const char *dev,
   return s;
 }
 
-static void free_test_stats(struct stats *s)
-{
-  if (s == NULL)
-    return;
-  free(s->s_val);
-  free(s->s_val_present);
-  free(s);
-}
-
 struct stats_type *stats_type_for_each(size_t *i)
 {
   if (*i != 0)

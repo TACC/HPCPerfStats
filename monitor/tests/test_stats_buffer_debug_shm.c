@@ -25,6 +25,8 @@ int stats_buffer_test_send_hook(struct stats_buffer *sf)
   return 0;
 }
 
+#ifdef DEBUG
+
 static char g_shm_base[256];
 
 static int setup_shm_dir(void)
@@ -77,8 +79,6 @@ static void build_collect_payload(struct stats_buffer *sf, enum collect_phase ph
   sf->sf_data_len = 0;
   assert(stats_buffer_collect(sf) == 0);
 }
-
-#ifdef DEBUG
 
 static void test_fast_writes_fast_only(void)
 {

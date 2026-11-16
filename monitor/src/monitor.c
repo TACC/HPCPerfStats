@@ -165,6 +165,7 @@ static void monitor_fill_driver_probe(int *has_nvidia_gpu, int *has_amd_gpu, int
           : 0;
 }
 
+#ifdef DEBUG
 static void monitor_log_optional_driver_probe(void)
 {
   int has_nvidia_gpu = 0;
@@ -185,7 +186,7 @@ static void monitor_log_optional_driver_probe(void)
                    has_intel_gpu ? "detected" : "not detected",
                    has_ib ? "detected" : "not detected", has_opa ? "detected" : "not detected");
 }
-
+#else
 static void monitor_log_release_startup_summary(void)
 {
   char types_buf[2048];
@@ -219,6 +220,7 @@ static void monitor_log_release_startup_summary(void)
       has_nvidia_gpu ? "yes" : "no", has_amd_gpu ? "yes" : "no", has_intel_gpu ? "yes" : "no",
       has_ib ? "yes" : "no", has_opa ? "yes" : "no");
 }
+#endif /* DEBUG */
 
 int main(int argc, char *argv[])
 {

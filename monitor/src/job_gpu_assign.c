@@ -63,7 +63,6 @@ static enum job_gpu_autodetect parse_autodetect_token(const char *v)
 static void resolve_gres_conf_path(char *out, size_t out_cap)
 {
   const char *slurm_conf;
-  char dir[PATH_MAX];
 
   if (g_gres_conf_override != NULL) {
     snprintf(out, out_cap, "%s", g_gres_conf_override);
@@ -73,21 +72,18 @@ static void resolve_gres_conf_path(char *out, size_t out_cap)
   if (slurm_conf != NULL && slurm_conf[0] == '/') {
     const char *slash = strrchr(slurm_conf, '/');
 
-    if (slash != NULL && (size_t)(slash - slurm_conf) < sizeof(dir)) {
-      size_t dlen = (size_t)(slash - slurm_conf);
-
-      memcpy(dir, slurm_conf, dlen);
-      dir[dlen] = '\0';
-      snprintf(out, out_cap, "%s/gres.conf", dir);
+    /* A truncated path would name the wrong file: fall back to the default instead. */
+    if (slash != NULL && slash - slurm_conf < INT_MAX &&
+        snprintf(out, out_cap, "%.*s/gres.conf", (int)(slash - slurm_conf), slurm_conf) <
+            (int)out_cap)
       return;
-    }
   }
   snprintf(out, out_cap, "/etc/slurm/gres.conf");
 }
 
 static void short_hostname(char *out, size_t out_cap)
 {
-  char host[256];
+  char host[HOST_NAME_MAX + 1];
   char *dot;
 
   if (gethostname(host, sizeof(host)) != 0) {
@@ -249,7 +245,8 @@ int job_gpu_assign_map_grant(const char *slurm_job_gpus, struct job_gpu_set *gra
       break;
     errno = 0;
     v = strtol(p, &end, 10);
-    if (end == p || errno != 0 || v < 0) {
+    /* v > INT_MAX would not fit a JOB_GPU_DEV_STR slot: skip, do not truncate. */
+    if (end == p || errno != 0 || v < 0 || v > INT_MAX) {
       /* skip non-decimal token */
       while (*p && *p != ',')
         p++;
@@ -265,10 +262,10 @@ int job_gpu_assign_map_grant(const char *slurm_job_gpus, struct job_gpu_set *gra
         continue;
       }
     } else if (ad == JOB_GPU_AD_RSMI) {
-      snprintf(dev, sizeof(dev), "%ld", v);
+      snprintf(dev, sizeof(dev), "%d", (int)v);
     } else if (ad == JOB_GPU_AD_ONEAPI) {
       /* Without PCI table, emit decimal V as placeholder; tests inject via grant string. */
-      snprintf(dev, sizeof(dev), "%ld", v);
+      snprintf(dev, sizeof(dev), "%d", (int)v);
     } else {
       continue;
     }

@@ -46,18 +46,18 @@ static void write_mem_tree_under(const char *root, const char *rel_dir, const ch
   char dir[512];
   char path[512];
 
-  snprintf(dir, sizeof(dir), "%s%s", root, rel_dir);
+  assert(snprintf(dir, sizeof(dir), "%s%s", root, rel_dir) < (int)sizeof(dir));
   mkdirs_p(dir);
   if (current != NULL) {
-    snprintf(path, sizeof(path), "%s/memory.current", dir);
+    assert(snprintf(path, sizeof(path), "%s/memory.current", dir) < (int)sizeof(path));
     write_file(path, current);
   }
   if (peak != NULL) {
-    snprintf(path, sizeof(path), "%s/memory.peak", dir);
+    assert(snprintf(path, sizeof(path), "%s/memory.peak", dir) < (int)sizeof(path));
     write_file(path, peak);
   }
   if (stat != NULL) {
-    snprintf(path, sizeof(path), "%s/memory.stat", dir);
+    assert(snprintf(path, sizeof(path), "%s/memory.stat", dir) < (int)sizeof(path));
     write_file(path, stat);
   }
 }

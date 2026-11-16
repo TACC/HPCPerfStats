@@ -109,7 +109,8 @@ static int dict_resize(struct dict *dict, size_t new_table_len)
 
 void dict_shrink(struct dict *dict, size_t hint)
 {
-  /* TODO */
+  /* TODO: size the shrunken table from hint. */
+  (void)hint;
 
   if (dict->d_count == 0 && dict->d_load > dict->d_table_len / 3) {
     memset(dict->d_table, 0, dict->d_table_len * sizeof(struct dict_entry));

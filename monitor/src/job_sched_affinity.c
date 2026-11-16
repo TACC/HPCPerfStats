@@ -1,5 +1,7 @@
 /* Read-only CPU affinity union for shared-node %affinity / full-resource path. */
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <errno.h>
 #include <sched.h>
 #include <stdio.h>

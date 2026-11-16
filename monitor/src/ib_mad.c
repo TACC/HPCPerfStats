@@ -113,8 +113,10 @@ static void ib_mad_ext_query_lid_port(struct stats *stats, char *hca, int lid, i
   ib_portid_t portid = {.lid = lid};
   uint8_t mad_buf[1024];
   int timeout = 0;
+#ifndef DEBUG
   int saved_stderr = -1;
   int null_fd = -1;
+#endif
 
   if (stats == NULL || hca == NULL)
     return;
@@ -240,8 +242,10 @@ void ib_mad_sw_collect_port(struct stats *stats, const char *hca, int port)
   uint64_t sw_rx_packets = 0;
   uint64_t sw_tx_bytes = 0;
   uint64_t sw_tx_packets = 0;
+#ifndef DEBUG
   int saved_stderr = -1;
   int null_fd = -1;
+#endif
 
   if (stats == NULL || hca == NULL)
     return;

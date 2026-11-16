@@ -28,6 +28,8 @@ int stats_buffer_test_send_hook(struct stats_buffer *sf)
   return 0;
 }
 
+#ifdef DEBUG
+
 static char g_shm_base[256];
 
 static int setup_shm_dir(void)
@@ -218,8 +220,6 @@ out:
   stats_buffer_close(&sf);
   return rc;
 }
-
-#ifdef DEBUG
 
 static int run_golden_checks(void)
 {

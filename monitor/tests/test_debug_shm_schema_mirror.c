@@ -11,6 +11,7 @@
 #include "stats_buffer.h"
 #include "stats_buffer_debug_shm.h"
 
+#ifdef DEBUG
 static char g_shm_base[256];
 
 static int setup_shm_dir(void)
@@ -28,6 +29,7 @@ static int setup_shm_dir(void)
   stats_buffer_debug_shm_init();
   return 0;
 }
+#endif /* DEBUG */
 
 static void test_schema_wanted_gate(void)
 {

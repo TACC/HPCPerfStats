@@ -71,6 +71,29 @@ repos:
         stages: [pre-push]
         pass_filenames: false
 
+  # Monitor C: -Wall -Wextra -Werror build (monitor/scripts/run_warning_gate.sh).
+  # SKIPS (exit 0 with a bold banner) on hosts without Linux/gcc/autoreconf or the
+  # static prefix <workspace>/.build/prefix-static -- e.g. macOS checkouts and fresh
+  # clones -- so those commits are NOT warning-checked. HPC_WARN_GATE_REQUIRE=1 fails
+  # instead. verbose: true keeps the banner visible even when the hook passes.
+  - repo: local
+    hooks:
+      - id: monitor-warning-gate
+        name: monitor C -Wall -Wextra -Werror (daemon)
+        entry: monitor/scripts/run_warning_gate.sh --commit
+        language: system
+        files: ^monitor/((src|tests)/.*\.[ch]|configure\.ac|(.*/)?Makefile\.am|scripts/run_warning_gate\.sh)$
+        pass_filenames: false
+        verbose: true
+      - id: monitor-warning-gate-push
+        name: monitor C warnings (DEBUG+shared-node, tests) + unreachable functions (pre-push)
+        entry: monitor/scripts/run_warning_gate.sh --push
+        language: system
+        stages: [pre-push]
+        files: ^monitor/((src|tests)/.*\.[ch]|configure\.ac|(.*/)?Makefile\.am|scripts/(run_warning_gate\.sh|unreachable_functions\.allowlist))$
+        pass_filenames: false
+        verbose: true
+
   - repo: local
     hooks:
       - id: vulture-pre-push

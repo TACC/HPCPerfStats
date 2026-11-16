@@ -1,0 +1,63 @@
+# Non-static monitor functions the daemon (default static-bundle config, x86_64) never
+# reaches, per `ld --gc-sections --print-gc-sections` (scripts/run_warning_gate.sh --push).
+#
+# Each name here is accepted; any NEW unreachable non-static function fails the pre-push
+# gate. Typical legitimate entries: test hooks (*_test_*), pure parsers/helpers called only
+# from tests/, and paths only another configure option or architecture links in.
+#
+# Baseline captured 2026-11-15. Entries not yet triaged; candidates for deletion include
+# dict_remv / dict_entry_remv / dict_shrink, stats_buffer_write, ring_buffer_resend.
+# When you delete a function or start calling it, remove its line (the gate prints stale
+# entries as a note).
+collect_tier_effective_phase
+dcgm_gpu_dyn_loaded
+dcgm_gpu_dyn_test_set_hooks
+dcgm_gpu_dyn_unload
+dcgm_watch_policy_interval_s
+dict_entry_remv
+dict_remv
+dict_shrink
+hwdetect_reset_nvidia_disable_state
+ib_mad_test_reset_backoff
+ib_mad_test_set_ext_fail_streak
+ib_mad_test_set_sw_fail_streak
+intel_processor_is_intel
+likwid_arch_eventset
+likwid_pmc_adapter_read_cpu_cycles_instr
+likwid_pmc_adapter_read_event
+likwid_pmc_adapter_read_group
+likwid_rapl_collect_path
+likwid_rapl_is_supported_processor
+likwid_rapl_pwr_amd_eventset
+likwid_rapl_pwr_intel_eventset
+lustre_parse_kv_ull
+monitor_cli_print_usage
+monitor_dcgm_attach_for_process
+monitor_release_fail_reset_for_test
+nvidia_gpu_nvml_test_set_api
+nvidia_gpu_watch_profile_has_field
+opa_hfi_unit_from_name
+opa_mad_collect_cycle_ok
+opa_mad_note_failure
+opa_mad_note_success
+opa_mad_test_reset_backoff
+opa_mad_test_set_fail_streak
+opa_sysfs_hw_schema_key_for_file
+opa_sysfs_schema_key_for_file
+opa_sysfs_test_set_root
+path_collect_key_list_filtered
+ring_buffer_resend
+roofline_nvidia_hbm_bw_from_name
+stats_buffer_set_frozen_time
+stats_buffer_set_row_filter
+stats_buffer_write
+stats_clear_present
+stats_format_fprint_stats_row
+stats_format_snprintf_stats_row
+stats_runtime_effective_collect_phase
+stats_runtime_main_prepare_types
+stats_schema_key_active_this_phase
+str_collect_prefix_key_list
+xpum_gpu_dyn_loaded
+xpum_gpu_dyn_test_set_hooks
+xpum_gpu_dyn_unload

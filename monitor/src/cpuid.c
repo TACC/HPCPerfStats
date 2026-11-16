@@ -128,16 +128,16 @@ int cpuid_read_cpu_topology(char *cpu, int *pkg_id, int *core_id, int *smt_id, i
       if (((buf[2] >> 8) & 0xFF) == 1) {
         nr_smt = buf[1];
         SMT_Mask_Width = buf[0] & 0xF;
-        SMT_Select_Mask = ~((-1) << SMT_Mask_Width);
+        SMT_Select_Mask = ~(~0U << SMT_Mask_Width);
         *smt_id = x2APIC_ID & SMT_Select_Mask;
       }
       /* Core level type from EC[16:8] = 2 */
       else if (((buf[2] >> 8) & 0xFF) == 2) {
         *nr_core = buf[1] / nr_smt;
         CorePlus_Mask_Width = buf[0] & 0xF;
-        CoreOnly_Select_Mask = ~((-1) << CorePlus_Mask_Width) ^ SMT_Select_Mask;
+        CoreOnly_Select_Mask = ~(~0U << CorePlus_Mask_Width) ^ SMT_Select_Mask;
         *core_id = (x2APIC_ID & CoreOnly_Select_Mask) >> SMT_Mask_Width;
-        Pkg_Select_Mask = (-1) << CorePlus_Mask_Width;
+        Pkg_Select_Mask = ~0U << CorePlus_Mask_Width;
         *pkg_id = (x2APIC_ID & Pkg_Select_Mask) >> CorePlus_Mask_Width;
         rc = 1;
         break;

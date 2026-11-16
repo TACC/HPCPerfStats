@@ -131,7 +131,9 @@ static void proc_collect_pid(struct stats_type *type, const char *pid)
     /* Kernel status order: Uid, Vm*, and Threads before affinity masks. Defer
      * until Name+masks create the row, then flush pending (see proc_status.c). */
     if (stats == NULL && name_ready && cmask_ready && mmask_ready) {
-      snprintf(process, sizeof(process), "%s/%s/%s/%s", name, pid, cmask, mmask);
+      /* Cutting a long dev at 511 bytes is intended: consumer proc_data.device is varchar(512). */
+      if (snprintf(process, sizeof(process), "%s/%s/%s/%s", name, pid, cmask, mmask) < 0)
+        goto out;
       stats = get_current_stats(type, process);
       if (stats != NULL)
         proc_status_pending_flush(&pending, stats);
