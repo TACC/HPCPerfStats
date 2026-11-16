@@ -852,6 +852,16 @@ See **monitor-static-build-verification**, **monitor-dual-verify-cross-and-stati
 
    Install clang tools into the workspace `.venv` when needed: `pip install -r tests/requirements-cpp-linter.txt` (after loading the matching Python module on TACC). Logs land under workspace `test_runs/valgrind-check-*.log` and `test_runs/cpp-linter-*.log`.
 
+5. **Compiler-warning gate** (git hooks in the repo `.pre-commit-config.yaml`; also runnable by hand):
+
+   ```bash
+   ./scripts/run_warning_gate.sh            # pre-commit: default config, daemon, -O2 -Wall -Wextra -Werror
+   ./scripts/run_warning_gate.sh --push     # pre-push: + DEBUG/shared-node config, all make-check programs,
+                                            #   and non-static functions the daemon never reaches
+   ```
+
+   Builds live in cached `.build-warn/<variant>/` trees (gitignored, never `.build-static`), rebuilt when `configure.ac`, a `Makefile.am`, the flags or the prefix change. Vendored and prefix headers are `-isystem`. The unreachable-function check links with `--gc-sections --print-gc-sections` and fails on any name not in `scripts/unreachable_functions.allowlist` (test-only hooks, other-config paths); remove a name when you delete or start calling that function. **The gate SKIPS (exit 0, bold yellow banner) without Linux, gcc, autoreconf or the static prefix `.build/prefix-static`, so commits from such hosts (macOS checkouts, fresh clones) are not warning-checked;** set `HPC_WARN_GATE_REQUIRE=1` to fail instead. Test: `tests/test_run_warning_gate.sh`.
+
 ## Cross-compile smoke (qemu-user)
 
 Use `scripts/cross_compile_test.sh` when one machine should compile+test a **CPU family that actually builds the changed code**. Do not run aarch64 smoke for LIKWID-only work, and do not run x86_64 smoke for `arm` **CPU**-backend-only work. DCGM **GPU** is multi-architecture — GPU DCGM diffs still need a foreign family. Policy: **monitor-dual-verify-cross-and-static**.

@@ -44,10 +44,19 @@ case "${out}" in
   *"MONITOR WARNING GATE SKIPPED -- C CODE WAS NOT CHECKED"*) ;;
   *) fail "skip banner missing: ${out}" ;;
 esac
+# The first failing prerequisite names the reason (non-Linux / no gcc / no autoreconf on
+# some build hosts); on a full dev host it is the missing prefix.
 case "${out}" in
-  *"missing under PREFIX=${WORK}/no-such-prefix"*) ;;
+  *"##  reason: "*) ;;
   *) fail "skip reason missing: ${out}" ;;
 esac
+if test "$(uname -s)" = "Linux" && command -v gcc >/dev/null 2>&1 \
+  && command -v autoreconf >/dev/null 2>&1; then
+  case "${out}" in
+    *"missing under PREFIX=${WORK}/no-such-prefix"*) ;;
+    *) fail "expected missing-prefix reason: ${out}" ;;
+  esac
+fi
 
 # --- HPC_WARN_GATE_REQUIRE=1 fails instead ---
 set +e
