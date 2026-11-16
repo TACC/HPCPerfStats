@@ -248,7 +248,7 @@ def load_monitor_identities_for_hosts(
       raw = raw.decode("utf-8", "replace")
     try:
       doc = json.loads(raw)
-    except TypeError, ValueError, json.JSONDecodeError:
+    except TypeError, ValueError:
       continue
     if not isinstance(doc, dict):
       continue

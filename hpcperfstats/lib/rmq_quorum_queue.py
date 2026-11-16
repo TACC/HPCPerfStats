@@ -245,8 +245,7 @@ def listend_amqp_connection_parameters(host: str) -> pika.ConnectionParameters:
   Build BlockingConnection parameters with heartbeat, blocked timeout, and
   ``frame_max``.
 
-  ``LISTEND_AMQP_FRAME_MAX`` is RabbitMQ's default 131072. Bodies larger
-  than that split across content frames; do not raise
+  Bodies larger than ``frame_max`` split across content frames; do not raise
   ``pika.spec.FRAME_MAX_SIZE``.
 
   Args:
@@ -368,8 +367,8 @@ def next_amqp_reconnect_backoff_seconds(current: int) -> int:
   Double reconnect sleep, capped at ``AMQP_RECONNECT_BACKOFF_CAP_SECONDS``.
 
   Args:
-    current (int): Previous sleep seconds (typically 5 after a successful
-      consume attach).
+    current (int): Previous sleep seconds (typically
+      ``AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS`` after a consume attach).
 
   Returns:
     int: Next sleep duration in seconds.
