@@ -2,11 +2,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <ctype.h>
-#include <limits.h>
 #include <stdarg.h>
-#include <errno.h>
 #include <time.h>
 #include <search.h>
 #include <stdint.h>
@@ -14,7 +11,6 @@
 #include "stats.h"
 #include "collect.h"
 #include "collect_tier.h"
-#include "fileio.h"
 #include "path_open_fail_once.h"
 #include "stats_buffer.h"
 #include "stats_buffer_data_append.h"
@@ -71,8 +67,6 @@ void stats_buffer_runtime_caches_reset(void)
   net_stats_invalidate_iface_cache();
 }
 
-static int stats_buffer_is_schema_payload(const struct stats_buffer *sf);
-
 static int stats_buffer_is_schema_payload(const struct stats_buffer *sf)
 {
   const char *p;
@@ -116,7 +110,6 @@ int stats_wr_hdr(struct stats_buffer *sf)
 int stats_buffer_open(struct stats_buffer *sf, const char *host, const char *port,
                       const char *queue, const char *user, const char *password)
 {
-  int rc = 0;
   memset(sf, 0, sizeof(*sf));
   if (host == NULL || port == NULL || queue == NULL || user == NULL || password == NULL)
     return -1;
@@ -145,14 +138,11 @@ int stats_buffer_open(struct stats_buffer *sf, const char *host, const char *por
     stats_buffer_close(sf);
     return -1;
   }
-
-  return rc;
+  return 0;
 }
 
 int stats_buffer_close(struct stats_buffer *sf)
 {
-  int rc = 0;
-
   free(sf->sf_data);
   free(sf->sf_host);
   free(sf->sf_port);
@@ -161,7 +151,7 @@ int stats_buffer_close(struct stats_buffer *sf)
   free(sf->sf_password);
   free(sf->sf_mark);
   memset(sf, 0, sizeof(*sf));
-  return rc;
+  return 0;
 }
 
 int stats_buffer_mark(struct stats_buffer *sf, const char *fmt, ...)
@@ -181,15 +171,7 @@ static void stats_buffer_append_mark_lines(struct stats_buffer *sf)
   stats_format_emit_mark_multiline(stats_buf_emit, sf, SF_MARK_CHAR, sf->sf_mark);
 }
 
-/* Choose the sample-row tier for this payload. The `$`-always-full rule is
- * enforced via stats_buffer_is_schema_payload() so schema/rotation messages
- * never go sparse. */
-static enum stats_row_tier stats_buffer_collect_row_tier(const struct stats_buffer *sf)
-{
-  return stats_buffer_row_tier_decide(stats_buffer_is_schema_payload(sf), collect_tier_enabled(),
-                                      (int)collect_tier_get_phase());
-}
-
+/* Schema/rotation (`$`) payloads always get full rows so they never go sparse. */
 enum stats_row_tier stats_buffer_payload_row_tier(const struct stats_buffer *sf)
 {
   return stats_buffer_row_tier_decide(stats_buffer_is_schema_payload(sf), collect_tier_enabled(),
@@ -239,14 +221,9 @@ int stats_buffer_collect(struct stats_buffer *sf)
   }
 
   stats_buffer_append_mark_lines(sf);
-  stats_buffer_append_enabled_type_rows(sf, stats_buffer_collect_row_tier(sf));
+  stats_buffer_append_enabled_type_rows(sf, stats_buffer_payload_row_tier(sf));
 out:
   return rc;
-}
-
-int stats_buffer_resend(struct stats_buffer *sf)
-{
-  return stats_buffer_send_payload(sf);
 }
 
 int ring_buffer_insert(struct stats_buffer *sf, struct sf_ring_buffer *w, int max_buffer_size,
@@ -256,7 +233,7 @@ int ring_buffer_insert(struct stats_buffer *sf, struct sf_ring_buffer *w, int ma
   struct sf_queue *q_new;
   struct sf_queue *victim = NULL;
 
-  /* Case 1: Empty buffer */
+  /* Empty ring: node links to itself. */
   if (w->q_count == 0) {
     q_new = (struct sf_queue *)calloc(1, sizeof(struct sf_queue));
     if (q_new == NULL) {
@@ -273,7 +250,7 @@ int ring_buffer_insert(struct stats_buffer *sf, struct sf_ring_buffer *w, int ma
     goto out;
   }
 
-  /* Case 2: Full buffer */
+  /* Full ring: overwrite the oldest non-schema entry; schema payloads are never dropped. */
   if (w->q_count >= max_buffer_size && max_buffer_size != -1) {
     if (!allow_ring_buffer_overwrite) {
       rc = -1;
@@ -312,7 +289,6 @@ int ring_buffer_insert(struct stats_buffer *sf, struct sf_ring_buffer *w, int ma
     goto out;
   }
 
-  /* Case 3: Otherwise */
   q_new = (struct sf_queue *)calloc(1, sizeof(struct sf_queue));
   if (q_new == NULL) {
     rc = -1;
@@ -412,7 +388,7 @@ void ring_buffer_resend_limited(struct sf_ring_buffer *w, int max_batches, long 
 
     /* Keep schema/header payloads isolated: listend.py treats `$` specially. */
     if (stats_buffer_is_schema_payload(head->sf)) {
-      w->status = stats_buffer_resend(head->sf);
+      w->status = stats_buffer_send_payload(head->sf);
       if (w->status != 0)
         break;
       w->r_count++;
@@ -443,7 +419,7 @@ void ring_buffer_resend_limited(struct sf_ring_buffer *w, int max_batches, long 
       break;
 
     if (batch_count == 1) {
-      w->status = stats_buffer_resend(head->sf);
+      w->status = stats_buffer_send_payload(head->sf);
     } else {
       char *merged = (char *)malloc(batch_len);
       struct stats_buffer merged_sf;

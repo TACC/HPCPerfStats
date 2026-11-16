@@ -1,4 +1,4 @@
-/* stats_buffer_debug_shm.h — DEBUG-only latest full payload dump under /dev/shm. */
+/* DEBUG-only latest full payload dump under /dev/shm. */
 #ifndef STATS_BUFFER_DEBUG_SHM_H
 #define STATS_BUFFER_DEBUG_SHM_H
 

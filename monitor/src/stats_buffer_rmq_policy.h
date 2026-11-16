@@ -6,11 +6,11 @@
 
 #include <stddef.h>
 
-/* Floor reconnect delay; exponential starts here (2 → 4 → 8 …). */
+/* Floor reconnect delay; exponential doubling starts here. */
 #define STATS_BUFFER_RMQ_BACKOFF_MIN_SEC 2
-/* Absolute cap for min(send_freq, cap); was hardcoded 30 before hardening. */
+/* Absolute cap for min(send_freq, cap). */
 #define STATS_BUFFER_RMQ_BACKOFF_CAP_ABS_SEC 60
-/* Require this many seconds connected + ≥1 publish before clearing fail streak. */
+/* Require this many seconds connected + at least one publish before clearing fail streak. */
 #define STATS_BUFFER_RMQ_STABLE_WINDOW_SEC 30
 /* Jitter adds 0..this percent of the base delay (hostname hash). */
 #define STATS_BUFFER_RMQ_JITTER_PCT 25
@@ -23,10 +23,10 @@
 #define STATS_BUFFER_RMQ_RESEND_RECOVERY_MAX_BATCHES 16
 #define STATS_BUFFER_RMQ_RESEND_RECOVERY_RUNTIME_US 8000L
 
-/*! Cap = clamp(send_freq, MIN..CAP_ABS). send_freq≤0 treated as MIN. */
+/*! Cap = clamp(send_freq, MIN..CAP_ABS). send_freq <= 0 treated as MIN. */
 double stats_buffer_rmq_backoff_cap_sec(double send_freq);
 
-/*! Exponential base delay from consecutive_failures (1 → 2s, 2 → 4s, …) capped. */
+/*! Exponential base delay from consecutive_failures (1 -> MIN, doubling per failure), capped. */
 double stats_buffer_rmq_backoff_base_delay_sec(unsigned consecutive_failures, double send_freq);
 
 /*! delay * (1 + (jitter_seed % (JITTER_PCT+1)) / 100). */

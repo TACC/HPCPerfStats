@@ -1,7 +1,6 @@
-/* stats_buffer_debug_shm.c — overwrite latest schema/@fast/@full payloads in shm (DEBUG). */
+/* Overwrite latest schema/@fast/@full payloads in shm (DEBUG). */
 #ifdef DEBUG
 
-#include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
@@ -244,11 +243,7 @@ void stats_buffer_debug_shm_burst_commit(enum stats_row_tier tier)
   const char *name;
   const char trunc_note[] = "\n#---burst-truncated---\n";
 
-  if (!g_burst_open) {
-    stats_buffer_debug_shm_burst_clear();
-    return;
-  }
-  if (g_burst_len == 0) {
+  if (!g_burst_open || g_burst_len == 0) {
     stats_buffer_debug_shm_burst_clear();
     return;
   }

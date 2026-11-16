@@ -4,7 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <limits.h>
 
 #include "stats_buffer_data_append.h"
 

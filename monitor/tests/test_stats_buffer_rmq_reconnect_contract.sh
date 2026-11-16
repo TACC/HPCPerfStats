@@ -1,5 +1,5 @@
 #!/bin/sh
-# Contract: RMQ reconnect hardening — exp backoff, passive declare, recovery resend.
+# Contract: RMQ reconnect hardening - exp backoff, passive declare, recovery resend.
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 rmq="${ROOT}/src/stats_buffer_rmq.c"

@@ -1,5 +1,5 @@
 /*
- * Ring buffer / stats_buffer integration tests (STATS_BUFFER_TEST_SEND_HOOK in stats_buffer.c).
+ * Ring buffer / stats_buffer integration tests (STATS_BUFFER_TEST_SEND_HOOK in stats_buffer_rmq.c).
  * Exercises ring_buffer_insert, ring_buffer_resend, ring_buffer_load_file without a live broker.
  */
 #include <assert.h>
@@ -242,7 +242,7 @@ static void test_resend_soft_max_splits_multi_message(void)
 {
   struct sf_ring_buffer w;
   /* Each payload is 20 bytes; soft max 35 allows one sample per message (1+20<=35,
-   * 1+20+20>35) so three samples → three publishes in one unlimited resend. */
+   * 1+20+20>35) so three samples -> three publishes in one unlimited resend. */
   const char *p1 = "aaaaaaaaaaaaaaaaaaa\n"; /* 20 */
   const char *p2 = "bbbbbbbbbbbbbbbbbbb\n";
   const char *p3 = "ccccccccccccccccccc\n";
@@ -269,7 +269,7 @@ static void test_resend_soft_max_allows_merge_under_cap(void)
 
   memset(&w, 0, sizeof(w));
   reset_hook();
-  /* 1+20+20 = 41 <= 50 → one merged publish. */
+  /* 1+20+20 = 41 <= 50 -> one merged publish. */
   stats_buffer_rmq_test_set_soft_max_bytes(50);
   assert(ring_buffer_insert(make_payload_buf(p1), &w, -1, 1) == 0);
   assert(ring_buffer_insert(make_payload_buf(p2), &w, -1, 1) == 0);

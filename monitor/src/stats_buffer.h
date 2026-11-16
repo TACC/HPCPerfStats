@@ -53,7 +53,6 @@ int stats_buffer_collect(struct stats_buffer *sf);
 void stats_buffer_set_frozen_time(const struct timespec *ts);
 enum stats_row_tier stats_buffer_payload_row_tier(const struct stats_buffer *sf);
 int stats_wr_hdr(struct stats_buffer *sf);
-int stats_buffer_resend(struct stats_buffer *sf);
 int stats_buffer_write_file(struct stats_buffer *sf, char *path);
 
 void ring_buffer_resend(struct sf_ring_buffer *w);

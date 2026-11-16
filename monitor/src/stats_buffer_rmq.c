@@ -18,8 +18,7 @@
 #include "trace.h"
 #include "monitor_release_log.h"
 
-/* RMQ send interval from monitor_daemon.c; reconnect backoff uses send_freq via policy helpers.
- * Heartbeat negotiation uses max(30, ceil(send_freq * 2)); backoff cap uses min(send_freq, 60). */
+/* RMQ send interval from monitor_daemon.c; sizes the AMQP heartbeat and the reconnect backoff cap. */
 extern double send_freq;
 
 #define RMQ_EXCHANGE "amq.direct"
@@ -34,11 +33,9 @@ extern double send_freq;
 #define RMQ_AMQP_HEARTBEAT_MIN_SEC 30
 
 static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buffer *sf,
-                                  amqp_socket_t **socket_out, int *channel_opened_out);
+                                  int *channel_opened_out);
 static int rmq_declare_queue_and_bind_to_exchange(amqp_connection_state_t conn,
                                                   struct stats_buffer *sf);
-static int rmq_active_declare_and_bind(amqp_connection_state_t conn, struct stats_buffer *sf);
-static int rmq_reopen_channel(amqp_connection_state_t conn);
 
 #ifdef DEBUG
 /* Decode rabbitmq-c failures for DEBUG builds (ERROR -> stdout when RABBITMQ+DEBUG). */
@@ -105,9 +102,9 @@ static void rmq_debug_log_rpc_reply(const char *ctx, amqp_rpc_reply_t r)
 #endif /* DEBUG */
 
 /* One AMQP connection per process (libev single-threaded). Reconnect on credential mismatch or I/O failure.
- * When the broker is down, TCP reconnect uses exponential delay (2→4→8…, cap min(send_freq,60), floor 2s)
+ * When the broker is down, TCP reconnect uses capped exponential delay (stats_buffer_rmq_policy.h)
  * plus hostname-hash jitter so fleet nodes do not align. Fail streak resets only after a stable publish
- * window (STATS_BUFFER_RMQ_STABLE_WINDOW_SEC of connected time and ≥1 successful publish). */
+ * window (STATS_BUFFER_RMQ_STABLE_WINDOW_SEC of connected time and at least one successful publish). */
 static amqp_connection_state_t rmq_conn;
 static int rmq_channel_open;
 static struct timespec rmq_backoff_until;
@@ -165,14 +162,9 @@ static unsigned rmq_hostname_jitter_seed(void)
   return rmq_host_jitter_seed;
 }
 
-static int rmq_failure_log_first_only(void)
-{
-  return monitor_release_log_first_only();
-}
-
 static void rmq_note_send_failure(const char *msg, unsigned long count, int *latched)
 {
-  if (monitor_release_log_should_emit(latched, rmq_failure_log_first_only()))
+  if (monitor_release_log_should_emit(latched, monitor_release_log_first_only()))
     ERROR("%s (count=%lu)\n", msg, count);
 }
 
@@ -226,7 +218,6 @@ static void rmq_arm_connect_backoff(void)
   rmq_backoff_until_valid = 1;
 }
 
-/* Reset fail streak only after stable window (connected ≥30s and ≥1 publish). */
 static void rmq_note_publish_success(void)
 {
   struct timespec now;
@@ -381,8 +372,7 @@ static int rmq_ensure_connected(struct stats_buffer *sf)
     return -1;
   }
 
-  amqp_socket_t *sock = NULL;
-  if (rmq_open_tcp_and_login(rmq_conn, sf, &sock, &rmq_channel_open) < 0) {
+  if (rmq_open_tcp_and_login(rmq_conn, sf, &rmq_channel_open) < 0) {
     close_rmq_connection(rmq_conn, rmq_channel_open);
     rmq_conn = NULL;
     rmq_channel_open = 0;
@@ -426,7 +416,7 @@ static int rmq_ensure_queue(struct stats_buffer *sf)
 }
 
 static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buffer *sf,
-                                  amqp_socket_t **socket_out, int *channel_opened_out)
+                                  int *channel_opened_out)
 {
   amqp_socket_t *socket = amqp_tcp_socket_new(conn);
   struct timeval connect_tv;
@@ -436,7 +426,6 @@ static int rmq_open_tcp_and_login(amqp_connection_state_t conn, struct stats_buf
   int heartbeat_sec = RMQ_AMQP_HEARTBEAT_MIN_SEC;
 
   *channel_opened_out = 0;
-  *socket_out = socket;
   if (!socket) {
 #ifdef DEBUG
     ERROR("RMQ: amqp_tcp_socket_new failed\n");
