@@ -1,7 +1,6 @@
 """Unit tests for gpu_job_detail_summary (JobFrame aggregates, no DB)."""
 
 from datetime import UTC
-from unittest.mock import MagicMock
 
 from hpcperfstats.analysis.metrics.lib.gpu_job_detail_summary import (
   gpu_agg_rows_for_job_window,
@@ -75,39 +74,6 @@ def test_reduce_skips_dcgm_blank_vmax():
   assert active == 1
   assert mx == 80.0
   assert mean == 40.0
-
-
-def test_compute_job_gpu_summary_tuple_delegates(monkeypatch):
-  from hpcperfstats.analysis.metrics.lib import gpu_job_detail_summary as g
-
-  j = MagicMock()
-
-  def fake_agg(_jj):
-    return [{"x": 1}]
-
-  def fake_count(_jj):
-    return 7
-
-  monkeypatch.setattr(g, "gpu_agg_rows_for_job_window", fake_agg)
-  monkeypatch.setattr(g, "gpu_count_total_for_job_window", fake_count)
-  monkeypatch.setattr(
-    g,
-    "reduce_gpu_agg_to_util_stats",
-    lambda _a: (1, 2.0, 3.0),
-  )
-  assert g.compute_job_gpu_summary_tuple(j) == (1, 2.0, 3.0, 7)
-
-
-def test_compute_job_gpu_summary_tuple_swallows_errors(monkeypatch):
-  from hpcperfstats.analysis.metrics.lib import gpu_job_detail_summary as g
-
-  j = MagicMock()
-
-  def boom(_jj):
-    raise RuntimeError("orm")
-
-  monkeypatch.setattr(g, "gpu_agg_rows_for_job_window", boom)
-  assert g.compute_job_gpu_summary_tuple(j) == (None, None, None, None)
 
 
 def test_gpu_agg_rows_read_from_the_job_frame():

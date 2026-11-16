@@ -2,12 +2,12 @@
 Short UI labels for job-level metrics in the Job detail table.
 
 Keys must match ``job_metrics_catalog_entries()`` in ``metrics.py``. Mirror of
-``hpcperfstats/site/frontend/src/utils/jobMetricDisplayLabels.js``. Long-form
-help text lives in the SPA ``variableMetadata.js`` (tooltips). Units appear only
+``hpcperfstats/site/frontend/src/utils/jobMetricDisplayLabels.ts``. Long-form
+help text lives in the SPA ``variableMetadata.ts`` (tooltips). Units appear only
 in the bracket suffix from API metrics_list, not in these labels.
 
 Attributes:
-  JOB_METRIC_SHORT_LABELS: ``JOB_METRIC_SHORT_LABELS``.
+  JOB_METRIC_SHORT_LABELS: Metric name to short Job detail table label.
 """
 
 from __future__ import annotations
@@ -113,10 +113,10 @@ def get_job_watt_hours_short_label(has_gpu: bool) -> str:
   Metrics-table short label: omit +GPU when the job has no GPUs.
 
   Args:
-    has_gpu (bool): Whether to enable has gpu.
+    has_gpu (bool): Whether the job has GPUs.
 
   Returns:
-    str: str produced by this call.
+    str: Short watt-hours label.
 
   Examples:
     >>> get_job_watt_hours_short_label(True)  # doctest: +SKIP
@@ -131,10 +131,10 @@ def get_job_watt_hours_resources_title(has_gpu: bool) -> str:
   Resources card title: omit +GPU when the job has no GPUs.
 
   Args:
-    has_gpu (bool): Whether to enable has gpu.
+    has_gpu (bool): Whether the job has GPUs.
 
   Returns:
-    str: str produced by this call.
+    str: Resources card watt-hours title.
 
   Examples:
     >>> get_job_watt_hours_resources_title(True)  # doctest: +SKIP

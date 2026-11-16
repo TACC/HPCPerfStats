@@ -1,26 +1,24 @@
 """
-Job-detail FSIO totals (Lustre llite, NFS, BeeGFS) for metrics_data; mirrors.
-
-job_detail artifact ``fsio``.
+Job-detail FSIO totals (Lustre llite, NFS, BeeGFS) for metrics_data; mirrors
+the job_detail artifact ``fsio``.
 
 Attributes:
-  NO_FSIO_BEEGFS_DATA: ``NO_FSIO_BEEGFS_DATA``.
-  NO_FSIO_BEEGFS_PEAK_IOPS: ``NO_FSIO_BEEGFS_PEAK_IOPS``.
-  NO_FSIO_BEEGFS_PEAK_MB_S: ``NO_FSIO_BEEGFS_PEAK_MB_S``.
-  NO_FSIO_LLITE_DATA: ``NO_FSIO_LLITE_DATA``.
-  NO_FSIO_LLITE_PEAK_IOPS: ``NO_FSIO_LLITE_PEAK_IOPS``.
-  NO_FSIO_LLITE_PEAK_MB_S: ``NO_FSIO_LLITE_PEAK_MB_S``.
-  NO_FSIO_NFS_DATA: ``NO_FSIO_NFS_DATA``.
-  NO_FSIO_NFS_PEAK_IOPS: ``NO_FSIO_NFS_PEAK_IOPS``.
-  NO_FSIO_NFS_PEAK_MB_S: ``NO_FSIO_NFS_PEAK_MB_S``.
-  NO_FSIO_NFS_WHEN_LLITE: ``NO_FSIO_NFS_WHEN_LLITE``.
-  _FSIO_METRICS: ``_FSIO_METRICS``.
-  logger: ``logger``.
+  NO_FSIO_BEEGFS_DATA: ``no_data_reason`` when BeeGFS has no byte deltas.
+  NO_FSIO_BEEGFS_PEAK_IOPS: ``no_data_reason`` for a missing BeeGFS IOPS peak.
+  NO_FSIO_BEEGFS_PEAK_MB_S: ``no_data_reason`` for a missing BeeGFS MB/s peak.
+  NO_FSIO_LLITE_DATA: ``no_data_reason`` when llite has no byte deltas.
+  NO_FSIO_LLITE_PEAK_IOPS: ``no_data_reason`` for a missing llite IOPS peak.
+  NO_FSIO_LLITE_PEAK_MB_S: ``no_data_reason`` for a missing llite MB/s peak.
+  NO_FSIO_NFS_DATA: ``no_data_reason`` when NFS has no byte deltas.
+  NO_FSIO_NFS_PEAK_IOPS: ``no_data_reason`` for a missing NFS IOPS peak.
+  NO_FSIO_NFS_PEAK_MB_S: ``no_data_reason`` for a missing NFS MB/s peak.
+  _FSIO_METRICS: ``(metric, family, units)`` catalog, in persisted row order.
+  _FSIO_FAMILY_REASONS: Per family ``(no data, no peak MB/s, no peak IOPS)``
+    reasons, in ``fsio_peaks`` call order.
 """
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from hpcperfstats.analysis.metrics.lib.columnar.detail_series import (
@@ -28,16 +26,10 @@ from hpcperfstats.analysis.metrics.lib.columnar.detail_series import (
   fsio_totals,
 )
 
-logger = logging.getLogger(__name__)
-
 # Messages align with persisted ``no_data_reason`` for detail_fsio_* rows.
 NO_FSIO_LLITE_DATA = "No Lustre llite read/write byte deltas for this job"
 NO_FSIO_NFS_DATA = "No NFS client byte deltas for this job"
 NO_FSIO_BEEGFS_DATA = "No BeeGFS client read/write byte deltas for this job"
-# Retained for older persisted rows / tests that may still reference the string.
-NO_FSIO_NFS_WHEN_LLITE = (
-  "NFS totals omitted when Lustre llite data is used for job detail FSIO"
-)
 NO_FSIO_LLITE_PEAK_MB_S = (
   "No Lustre llite byte counter time series for peak MB/s"
 )
@@ -67,6 +59,20 @@ _FSIO_METRICS: tuple[tuple[str, str, str], ...] = (
   ("detail_fsio_beegfs_peak_mb_s", "beegfs", "MB/s"),
   ("detail_fsio_beegfs_peak_iops", "beegfs", "#/s"),
 )
+
+_FSIO_FAMILY_REASONS: dict[str, tuple[str, str, str]] = {
+  "llite": (
+    NO_FSIO_LLITE_DATA,
+    NO_FSIO_LLITE_PEAK_MB_S,
+    NO_FSIO_LLITE_PEAK_IOPS,
+  ),
+  "nfs": (NO_FSIO_NFS_DATA, NO_FSIO_NFS_PEAK_MB_S, NO_FSIO_NFS_PEAK_IOPS),
+  "beegfs": (
+    NO_FSIO_BEEGFS_DATA,
+    NO_FSIO_BEEGFS_PEAK_MB_S,
+    NO_FSIO_BEEGFS_PEAK_IOPS,
+  ),
+}
 
 
 def fsio_job_detail_catalog() -> tuple[tuple[str, str, str], ...]:
@@ -98,137 +104,33 @@ def compute_job_detail_fsio_metric_rows(jt: Any) -> list[dict[str, Any]]:
     >>> compute_job_detail_fsio_metric_rows(None)  # doctest: +SKIP
   """
   totals = fsio_totals(jt)
-  llite_read, llite_write = totals.get("llite", (None, None))
-  nfs_read, nfs_write = totals.get("nfs", (None, None))
-  beegfs_read, beegfs_write = totals.get("beegfs", (None, None))
+  # Per family: metric suffix -> (value, no_data_reason when value is None);
+  # None when the family has no read+write byte deltas.
+  family_values: dict[str, dict[str, tuple[float | None, str]] | None] = {}
+  for family, (_, no_peak_mb_s, no_peak_iops) in _FSIO_FAMILY_REASONS.items():
+    read_mb, write_mb = totals.get(family, (None, None))
+    if read_mb is None or write_mb is None:
+      family_values[family] = None
+      continue
+    peak_mb_s, peak_iops = fsio_peaks(jt, family)
+    family_values[family] = {
+      "read_mb": (float(read_mb), ""),
+      "write_mb": (float(write_mb), ""),
+      "peak_mb_s": (peak_mb_s, no_peak_mb_s),
+      "peak_iops": (peak_iops, no_peak_iops),
+    }
 
   rows: list[dict[str, Any]] = []
-  llite_ok = llite_read is not None and llite_write is not None
-  nfs_ok = nfs_read is not None and nfs_write is not None
-  beegfs_ok = beegfs_read is not None and beegfs_write is not None
-
-  llite_peak_mb, llite_peak_iops = (
-    fsio_peaks(jt, "llite") if llite_ok else (None, None)
-  )
-  nfs_peak_mb, nfs_peak_iops = fsio_peaks(jt, "nfs") if nfs_ok else (None, None)
-  beegfs_peak_mb, beegfs_peak_iops = (
-    fsio_peaks(jt, "beegfs") if beegfs_ok else (None, None)
-  )
-
-  for metric_name, row_type, units in _FSIO_METRICS:
-    if metric_name.startswith("detail_fsio_llite_"):
-      if not llite_ok:
-        rows.append(
-          _row(metric_name, row_type, units, None, NO_FSIO_LLITE_DATA)
-        )
-        continue
-      if metric_name == "detail_fsio_llite_read_mb":
-        rows.append(_row(metric_name, row_type, units, float(llite_read), None))
-      elif metric_name == "detail_fsio_llite_write_mb":
-        rows.append(
-          _row(metric_name, row_type, units, float(llite_write), None)
-        )
-      elif metric_name == "detail_fsio_llite_peak_mb_s":
-        if llite_peak_mb is not None:
-          rows.append(_row(metric_name, row_type, units, llite_peak_mb, None))
-        else:
-          rows.append(
-            _row(
-              metric_name,
-              row_type,
-              units,
-              None,
-              NO_FSIO_LLITE_PEAK_MB_S,
-            )
-          )
-      else:
-        if llite_peak_iops is not None:
-          rows.append(_row(metric_name, row_type, units, llite_peak_iops, None))
-        else:
-          rows.append(
-            _row(
-              metric_name,
-              row_type,
-              units,
-              None,
-              NO_FSIO_LLITE_PEAK_IOPS,
-            )
-          )
-    elif metric_name.startswith("detail_fsio_nfs_"):
-      if not nfs_ok:
-        rows.append(_row(metric_name, row_type, units, None, NO_FSIO_NFS_DATA))
-      elif metric_name == "detail_fsio_nfs_read_mb":
-        rows.append(_row(metric_name, row_type, units, float(nfs_read), None))
-      elif metric_name == "detail_fsio_nfs_write_mb":
-        rows.append(_row(metric_name, row_type, units, float(nfs_write), None))
-      elif metric_name == "detail_fsio_nfs_peak_mb_s":
-        if nfs_peak_mb is not None:
-          rows.append(_row(metric_name, row_type, units, nfs_peak_mb, None))
-        else:
-          rows.append(
-            _row(
-              metric_name,
-              row_type,
-              units,
-              None,
-              NO_FSIO_NFS_PEAK_MB_S,
-            )
-          )
-      else:
-        if nfs_peak_iops is not None:
-          rows.append(_row(metric_name, row_type, units, nfs_peak_iops, None))
-        else:
-          rows.append(
-            _row(
-              metric_name,
-              row_type,
-              units,
-              None,
-              NO_FSIO_NFS_PEAK_IOPS,
-            )
-          )
-    else:
-      if not beegfs_ok:
-        rows.append(
-          _row(metric_name, row_type, units, None, NO_FSIO_BEEGFS_DATA)
-        )
-      elif metric_name == "detail_fsio_beegfs_read_mb":
-        rows.append(
-          _row(metric_name, row_type, units, float(beegfs_read), None)
-        )
-      elif metric_name == "detail_fsio_beegfs_write_mb":
-        rows.append(
-          _row(metric_name, row_type, units, float(beegfs_write), None)
-        )
-      elif metric_name == "detail_fsio_beegfs_peak_mb_s":
-        if beegfs_peak_mb is not None:
-          rows.append(_row(metric_name, row_type, units, beegfs_peak_mb, None))
-        else:
-          rows.append(
-            _row(
-              metric_name,
-              row_type,
-              units,
-              None,
-              NO_FSIO_BEEGFS_PEAK_MB_S,
-            )
-          )
-      else:
-        if beegfs_peak_iops is not None:
-          rows.append(
-            _row(metric_name, row_type, units, beegfs_peak_iops, None)
-          )
-        else:
-          rows.append(
-            _row(
-              metric_name,
-              row_type,
-              units,
-              None,
-              NO_FSIO_BEEGFS_PEAK_IOPS,
-            )
-          )
-
+  for metric_name, family, units in _FSIO_METRICS:
+    values = family_values[family]
+    if values is None:
+      no_data = _FSIO_FAMILY_REASONS[family][0]
+      rows.append(_row(metric_name, family, units, None, no_data))
+      continue
+    suffix = metric_name.removeprefix(f"detail_fsio_{family}_")
+    val, missing_reason = values[suffix]
+    reason = None if val is not None else missing_reason
+    rows.append(_row(metric_name, family, units, val, reason))
   return rows
 
 

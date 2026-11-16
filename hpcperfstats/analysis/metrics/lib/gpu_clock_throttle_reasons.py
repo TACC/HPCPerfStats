@@ -8,8 +8,7 @@ Blank-family and no-known-bit garbage masks return ``""`` (never ``unknown
 (0x...)``).
 
 Attributes:
-  DCGM_CLOCK_THROTTLE_REASON_FLAGS: ``DCGM_CLOCK_THROTTLE_REASON_FLAGS``.
-  _KNOWN_BITS_MASK: ``_KNOWN_BITS_MASK``.
+  DCGM_CLOCK_THROTTLE_REASON_FLAGS: ``(bit, label)`` pairs in display order.
 """
 
 from __future__ import annotations
@@ -28,10 +27,6 @@ DCGM_CLOCK_THROTTLE_REASON_FLAGS: tuple[tuple[int, str], ...] = (
   (0x100, "Display clocks setting"),
 )
 
-_KNOWN_BITS_MASK = 0
-for _bit, _ in DCGM_CLOCK_THROTTLE_REASON_FLAGS:
-  _KNOWN_BITS_MASK |= _bit
-
 
 def format_gpu_clock_throttle_reasons(mask: float | int | None) -> str:
   """
@@ -41,10 +36,10 @@ def format_gpu_clock_throttle_reasons(mask: float | int | None) -> str:
   Known bits only - residual garbage hex is never shown.
 
   Args:
-    mask (float | int | None): One of ``float``, ``int``, ``None``.
+    mask (float | int | None): DCGM bitmask; may be missing, NaN or blank.
 
   Returns:
-    str: str produced by this call.
+    str: Comma-separated known flag labels, or ``""``.
 
   Examples:
     >>> format_gpu_clock_throttle_reasons(None)  # doctest: +SKIP
@@ -69,5 +64,4 @@ def format_gpu_clock_throttle_reasons(mask: float | int | None) -> str:
   for bit, label in DCGM_CLOCK_THROTTLE_REASON_FLAGS:
     if unsigned & bit:
       parts.append(label)
-  # Fail closed: unknown residual alone or with known bits is omitted.
   return ", ".join(parts)

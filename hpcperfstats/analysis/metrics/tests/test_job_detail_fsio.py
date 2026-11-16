@@ -178,6 +178,71 @@ def test_compute_triple_llite_nfs_beegfs_when_all_present():
   assert by_m["detail_fsio_beegfs_peak_iops"]["value"] == 40.0
 
 
+def test_compute_rows_pin_values_and_no_data_reasons(monkeypatch):
+  """Missing family -> family reason; missing peak -> that peak's reason."""
+  from hpcperfstats.analysis.metrics.lib import job_detail_fsio as jdf
+
+  monkeypatch.setattr(
+    jdf, "fsio_totals", lambda _jt: {"llite": (1.0, 2.0), "nfs": (3.0, 4.0)}
+  )
+  peaks = {"llite": (5.0, None), "nfs": (None, 6.0)}
+  monkeypatch.setattr(jdf, "fsio_peaks", lambda _jt, key: peaks[key])
+  got = [
+    (r["metric"], r["type"], r["units"], r["value"], r["no_data_reason"])
+    for r in jdf.compute_job_detail_fsio_metric_rows(object())
+  ]
+  assert got == [
+    ("detail_fsio_llite_read_mb", "llite", "MB", 1.0, None),
+    ("detail_fsio_llite_write_mb", "llite", "MB", 2.0, None),
+    ("detail_fsio_llite_peak_mb_s", "llite", "MB/s", 5.0, None),
+    (
+      "detail_fsio_llite_peak_iops",
+      "llite",
+      "#/s",
+      None,
+      jdf.NO_FSIO_LLITE_PEAK_IOPS,
+    ),
+    ("detail_fsio_nfs_read_mb", "nfs", "MB", 3.0, None),
+    ("detail_fsio_nfs_write_mb", "nfs", "MB", 4.0, None),
+    (
+      "detail_fsio_nfs_peak_mb_s",
+      "nfs",
+      "MB/s",
+      None,
+      jdf.NO_FSIO_NFS_PEAK_MB_S,
+    ),
+    ("detail_fsio_nfs_peak_iops", "nfs", "#/s", 6.0, None),
+    (
+      "detail_fsio_beegfs_read_mb",
+      "beegfs",
+      "MB",
+      None,
+      jdf.NO_FSIO_BEEGFS_DATA,
+    ),
+    (
+      "detail_fsio_beegfs_write_mb",
+      "beegfs",
+      "MB",
+      None,
+      jdf.NO_FSIO_BEEGFS_DATA,
+    ),
+    (
+      "detail_fsio_beegfs_peak_mb_s",
+      "beegfs",
+      "MB/s",
+      None,
+      jdf.NO_FSIO_BEEGFS_DATA,
+    ),
+    (
+      "detail_fsio_beegfs_peak_iops",
+      "beegfs",
+      "#/s",
+      None,
+      jdf.NO_FSIO_BEEGFS_DATA,
+    ),
+  ]
+
+
 def test_extend_fsio_payload_lists_with_peaks_fills_legacy_two_tuple():
   fsio = {"llite": [1.0, 2.0]}
   extend_fsio_payload_lists_with_peaks(

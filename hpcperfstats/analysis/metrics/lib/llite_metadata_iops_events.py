@@ -8,9 +8,9 @@ for historical archives. Kept in one module so summary plots, tests, and FSIO
 peak logic stay aligned.
 
 Attributes:
-  LLITE_METADATA_IOPS_EVENTS: Attribute.
-  LLITE_READ_BYTES_EVENTS: Attribute.
-  LLITE_WRITE_BYTES_EVENTS: Attribute.
+  LLITE_METADATA_IOPS_EVENTS: llite ``vfs_*_ops`` used for peak / avg IOPS.
+  LLITE_READ_BYTES_EVENTS: Canonical llite read-byte counter event names.
+  LLITE_WRITE_BYTES_EVENTS: Canonical llite write-byte counter event names.
 """
 
 from __future__ import annotations
