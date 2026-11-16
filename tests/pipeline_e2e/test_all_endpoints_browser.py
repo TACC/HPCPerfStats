@@ -1,4 +1,4 @@
-"""Phase 2: every resolver template → Playwright (goto or API) + status/Content-Type."""
+"""Phase 2: every resolver template -> Playwright (goto or API) + status/Content-Type."""
 from __future__ import annotations
 
 import os

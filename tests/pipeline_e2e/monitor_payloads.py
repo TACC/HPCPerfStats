@@ -84,7 +84,7 @@ def _block_line(scale: int) -> str:
   return "host_block sda %d %d\n" % (b, w)
 
 
-def _cpu_lines(jid: str, fqdn: str, scale: int) -> str:
+def _cpu_lines(scale: int) -> str:
   u0 = 1782420 + scale
   u1 = 2000652 + scale
   return (
@@ -277,7 +277,7 @@ def full_stats_snapshot(epoch: float, jid: str, fqdn: str, scale: int) -> str:
   parts = [
       "%.6f %s %s\n" % (epoch, jid, fqdn),
       _block_line(scale),
-      _cpu_lines(jid, fqdn, scale),
+      _cpu_lines(scale),
       _mem_line(scale),
       _net_line(scale),
       _numa_line(scale),
@@ -304,20 +304,6 @@ def full_stats_snapshot(epoch: float, jid: str, fqdn: str, scale: int) -> str:
 def rotation_dollar_schema(fqdn: str) -> str:
   """Final ``$`` rotate message (same header as initial schema)."""
   return monitor_schema_header(fqdn)
-
-
-def pipeline_e2e_publish_bodies(
-    *,
-    fqdn: str,
-    jid: str,
-    epoch_samples: list[float],
-) -> list[str]:
-  """Ordered RabbitMQ bodies: schema → one stats blob per epoch → rotate."""
-  bodies = [monitor_schema_header(fqdn)]
-  for i, ep in enumerate(epoch_samples):
-    bodies.append(full_stats_snapshot(ep, jid, fqdn, i * 800))
-  bodies.append(rotation_dollar_schema(fqdn))
-  return bodies
 
 
 def pipeline_e2e_publish_bodies_multihost(

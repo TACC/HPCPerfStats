@@ -1,7 +1,4 @@
-"""Legacy cpuset budget bench removed — absolute INI pool sizes.
-
-Use conf_parser absolute getters instead of derive_pipeline_cpuset_priority_budget.
-"""
+"""Print absolute INI pool sizes from conf_parser for operator comparison."""
 from __future__ import annotations
 
 import hpcperfstats.dbload.lib.conf_parser as cfg

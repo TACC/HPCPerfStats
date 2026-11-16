@@ -11,6 +11,8 @@ def pytest_collection_modifyitems(items):
           "yes",
           "true",
       )
+  if enabled:
+    return
   skip = pytest.mark.skip(
       reason=(
           "Pipeline E2E (Docker Compose). Export HPCPERFSTATS_PIPELINE_E2E=1 "
@@ -18,8 +20,5 @@ def pytest_collection_modifyitems(items):
       ),
   )
   for item in items:
-    path = str(item.fspath).replace("\\", "/")
-    if "/pipeline_e2e/" not in path:
-      continue
-    if not enabled:
+    if "/pipeline_e2e/" in str(item.fspath).replace("\\", "/"):
       item.add_marker(skip)

@@ -1,4 +1,4 @@
-"""Phase 1: RabbitMQ → listend_drain → sync_timedb once → update_metrics."""
+"""Phase 1: RabbitMQ -> listend_drain -> sync_timedb once -> update_metrics."""
 from __future__ import annotations
 
 import os
