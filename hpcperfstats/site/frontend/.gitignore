@@ -4,7 +4,7 @@ coverage/
 # Build-time cluster identity from hpcperfstats.ini (scripts/write-site-identity.mjs).
 src/config/site-identity.ts
 
-# Stock Bokeh UMD synced from node_modules (@bokeh/bokehjs) — scripts/sync-bokeh-vendor.mjs
+# Stock Bokeh UMD synced from node_modules (@bokeh/bokehjs) - scripts/sync-bokeh-vendor.mjs
 public/vendor/bokeh.min.js
 
 # Orval client (npm run generate:api). Hand-written: orval.config.ts,
@@ -14,7 +14,7 @@ src/api/generated/**
 src/api/generated-zod/**
 !src/api/generated-zod/.gitignore
 
-# Next.js build and static export (npm run build → out/, then copy-next-export.mjs)
+# Next.js build and static export (npm run build -> out/, then copy-next-export.mjs)
 .next/
 out/
 

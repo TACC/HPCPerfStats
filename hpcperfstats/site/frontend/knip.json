@@ -3,9 +3,6 @@
   "entry": [
     "app/**/*.{ts,tsx}",
     "scripts/*.{mjs,mts,cjs}",
-    "vitest.config.ts",
-    "orval.config.ts",
-    "src/api.test.ts",
     "src/**/*.test.{ts,tsx}",
     "test/**/*.test.{ts,tsx}"
   ],

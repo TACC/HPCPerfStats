@@ -4,6 +4,9 @@ import tseslint from "typescript-eslint";
 import unusedImports from "eslint-plugin-unused-imports";
 import reactHooks from "eslint-plugin-react-hooks";
 
+const sourceFiles = ["app/**/*.{ts,tsx}", "src/**/*.{ts,tsx}", "scripts/**/*.{ts,mts,js,mjs}"];
+const testFiles = ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx"];
+
 const testImportRestriction = {
   "no-restricted-imports": [
     "error",
@@ -35,7 +38,7 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["app/**/*.{ts,tsx}", "src/**/*.{ts,tsx}", "scripts/**/*.{ts,mts,js,mjs}"],
+    files: sourceFiles,
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",
@@ -76,29 +79,12 @@ export default tseslint.config(
     },
   },
   {
-    files: [
-      "app/**/*.{ts,tsx}",
-      "src/**/*.{ts,tsx}",
-      "scripts/**/*.{ts,mts,js,mjs}",
-    ],
-    ignores: [
-      "**/*.test.ts",
-      "**/*.test.tsx",
-      "**/*.spec.ts",
-      "**/*.spec.tsx",
-      "scripts/audit-wire-drift.mts",
-    ],
+    files: sourceFiles,
+    ignores: [...testFiles, "scripts/audit-wire-drift.mts"],
     rules: testImportRestriction,
   },
   {
-    files: [
-      "**/*.test.ts",
-      "**/*.test.tsx",
-      "**/*.spec.ts",
-      "**/*.spec.tsx",
-      "test/**/*.{ts,tsx}",
-      "scripts/audit-wire-drift.mts",
-    ],
+    files: [...testFiles, "test/**/*.{ts,tsx}", "scripts/audit-wire-drift.mts"],
     rules: {
       "no-restricted-imports": "off",
     },
