@@ -4,7 +4,6 @@
 
 #include <stdint.h>
 #include <string.h>
-#include <inttypes.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -12,10 +11,6 @@ extern "C" {
 
 #ifndef MemoryClear
 #define MemoryClear(p, n) memset((p), 0, (n))
-#endif
-
-#ifndef pr_iu64
-#define pr_iu64 PRIu64
 #endif
 
 typedef uint64_t uint64;
