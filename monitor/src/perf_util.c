@@ -1,4 +1,4 @@
-/* perf_util — shared direct perf_event helpers (open, sysfs PMU parse, scaled read). */
+/* Shared direct perf_event helpers (open, sysfs PMU parse, scaled read). */
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>

@@ -81,7 +81,7 @@ void proc_status_emit_or_defer_kv(struct stats *stats, struct proc_status_pendin
 
 int proc_status_skip_process_name(const char *name)
 {
-  /* Exact match on /proc/<pid>/status Name: (kernel TASK_COMM_LEN, ≤15 chars). */
+  /* Exact match on /proc/<pid>/status Name: (kernel TASK_COMM_LEN, <= 15 chars). */
   static const char *const deny[] = {
       "bash",
       "ssh",

@@ -64,7 +64,6 @@ int main(void)
   assert(strcmp(vl.names[1], "beta") == 0);
   assert(strcmp(vl.names[2], "gamma") == 0);
 
-  /* cleanup */
   char path[512];
 
   snprintf(path, sizeof(path), "%s/alpha", root);

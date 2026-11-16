@@ -3,13 +3,8 @@
 
 #include <stddef.h>
 
-/* Shared file-read primitives used by the collect.c and pscanf.c paths. The
- * two historical readers (collect_read_small / collect_slurp_file in
- * collect.c, path_read_small / path_slurp in pscanf.c) duplicated almost the
- * same open/read/close + grow-buffer logic, differing only in how they
- * reported failures and whether they integrated path_open_fail_once. This
- * module unifies both behaviours behind one primitive with explicit options.
- */
+/* Shared file-read primitives for collect.c and pscanf.c; the options select
+ * error reporting and path_open_fail_once integration. */
 
 struct path_read_opts {
   /* Honour path_open_fail_once skip list before open() and record failure

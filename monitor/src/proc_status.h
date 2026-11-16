@@ -6,7 +6,7 @@
 
 /* /proc/<pid>/status emits Uid, Vm*, and Threads before Cpus/Mems_allowed_list.
  * host_proc only creates the stats row after Name+masks, so those early fields
- * must be deferred (cap matches KEYS count with headroom). */
+ * must be deferred (cap is the host_key_alias proc key count plus headroom). */
 #define PROC_STATUS_PENDING_MAX 16
 
 struct proc_status_pending_entry {

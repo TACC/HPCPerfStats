@@ -1,4 +1,4 @@
-/* perf_util — shared direct perf_event helpers for the aarch64 readers (arm_core_perf,
+/* Shared direct perf_event helpers for the aarch64 readers (arm_core_perf,
  * arm_imc SCF and dmc/imc). Portable C: builds and unit-tests on every host.
  *
  * Every counter is opened with PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING

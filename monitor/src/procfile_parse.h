@@ -3,16 +3,8 @@
 
 #include <stddef.h>
 
-/* Shared helpers for /proc and /sys text files.
- *
- * Many TYPE drivers (mem, ps, sysv_shm, llite, mdc, lnet, etc.) repeated the
- * same open / setvbuf / getline / fclose dance. procfile_for_each_line
- * centralises that pattern; the caller-supplied callback receives one line
- * with the trailing newline stripped and is responsible for parsing it.
- *
- * proc_kv_into_stats is provided in <procfile_kv.h> so this header can be
- * used by callers (and tests) that do not want to link against stats.c.
- */
+/* Line iteration over /proc and /sys text files. proc_kv_into_stats lives in
+ * <procfile_kv.h> so this header can be used without linking stats.c. */
 
 /* Callback: returns 0 to continue, non-zero to stop iteration. */
 typedef int (*procfile_line_fn)(char *line, void *ctx);

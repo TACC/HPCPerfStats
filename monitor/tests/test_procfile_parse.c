@@ -67,13 +67,8 @@ int main(void)
 
   /* Returning non-zero from callback stops iteration. */
   p = write_tmp("a\nb\nc\nd\n");
-  ll.n = 0;
-  /* line_log capacity is 8 so storage will not stop us; force stop after 2. */
-  size_t cap_orig = sizeof(ll.lines) / sizeof(ll.lines[0]);
-  (void)cap_orig;
-
   struct line_log ll2 = {0};
-  /* Use the existing callback pattern but simulate small buffer. */
+  /* Start two slots short of full so the callback stops after two lines. */
   ll2.n = sizeof(ll2.lines) / sizeof(ll2.lines[0]) - 2;
   assert(procfile_for_each_line(p, collect_line_cb, &ll2) == 0);
   /* Should have written the last 2 slots and then returned 1 to stop. */

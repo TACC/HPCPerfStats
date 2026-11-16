@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "fileio.h"
 #include "path_open_fail_once.h"
 
 #define PROCFILE_IO_BUF 4096

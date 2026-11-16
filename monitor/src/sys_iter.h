@@ -1,23 +1,8 @@
 #ifndef _SYS_ITER_H_
 #define _SYS_ITER_H_
 
-/* Shared iteration helper for /sys/class/<x> and /sys/block style trees.
- *
- * Many TYPE drivers (block, net, ib family, opa, numa, llite, mdc)
- * repeated the same pattern:
- *
- *   dir = path_opendir_or_record_fail(base);
- *   if (dir == NULL) goto out;
- *   while ((ent = readdir(dir)) != NULL) {
- *     if (ent->d_name[0] == '.') continue;
- *     ... per-entry work using ent->d_name ...
- *   }
- *   closedir(dir);
- *
- * sys_iter_for_each centralises that loop. The callback decides whether to
- * skip an entry (e.g. ignore "ram*" / "loop*" devices). Entries whose name
- * starts with '.' are skipped automatically.
- */
+/* Directory iteration for /sys/class/<x> and /sys/block style trees. Entries
+ * starting with '.' are skipped; the callback filters the rest (e.g. "ram*"). */
 
 typedef void (*sys_iter_cb_fn)(const char *base, const char *name, void *ctx);
 
