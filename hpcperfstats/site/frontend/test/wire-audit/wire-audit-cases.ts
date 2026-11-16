@@ -8,7 +8,7 @@ export type WireAuditCase = {
   method: "GET" | "POST";
   path: string;
   wire: unknown;
-  /** Human label for audit output (optional). */
+  /** Human label for audit output. */
   label?: string;
 };
 

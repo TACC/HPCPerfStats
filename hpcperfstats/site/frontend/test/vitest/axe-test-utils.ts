@@ -1,7 +1,7 @@
 import { axe } from "jest-axe";
 
 /** Matches `hpcperfstats.tests.playwright_axe` WCAG tag scope. */
-export const AXE_WCAG_RUN_OPTIONS = {
+const AXE_WCAG_RUN_OPTIONS = {
   runOnly: {
     type: "tag",
     values: ["wcag2a", "wcag2aa", "wcag21aa"],
