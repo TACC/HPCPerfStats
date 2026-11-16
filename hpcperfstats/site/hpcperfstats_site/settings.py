@@ -1,5 +1,5 @@
 """
-settings.
+Django settings for hpcperfstats_site, read from conf_parser and the environment.
 
 Attributes:
   ADMINS: Attribute.
@@ -65,8 +65,6 @@ Attributes:
 
 from __future__ import annotations
 
-# Django settings for hpcperfstats_site project. Database, auth, templates, static, and app config from conf_parser and env.
-#
 import os
 import re
 import sys
@@ -300,7 +298,6 @@ SECURE_REFERRER_POLICY = "same-origin"
 CSRF_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SAMESITE = "Lax"
 
-# Give a name that is unique for the computing platform
 # CONN_MAX_AGE: persistent connections per worker/thread (see conf_parser.get_db_conn_max_age).
 # Default 90s returns idle backends sooner under load; override via DJANGO_CONN_MAX_AGE or ini.
 # CONN_HEALTH_CHECKS: verify connection before reuse (Django 4.1+).
@@ -323,9 +320,7 @@ if _default_engine == "django.db.backends.postgresql":
     _default_db["OPTIONS"] = _pg_opts
 DATABASES = {
   "default": _default_db,
-  # Uncomment this portion if an xalt database exists
   "xalt": {
-    #'ENGINE' : 'mysql.connector.django',
     "ENGINE": cfg.get_xalt_engine(),
     "NAME": cfg.get_xalt_name(),
     "USER": cfg.get_xalt_user(),
@@ -365,57 +360,31 @@ if "*" not in ALLOWED_HOSTS:
     if _loopback_host not in ALLOWED_HOSTS:
       ALLOWED_HOSTS = [*list(ALLOWED_HOSTS), _loopback_host]
 
-# Local time zone for this installation. Choices can be found here:
-# http://en.wikipedia.org/wiki/List_of_tz_zones_by_name
-# although not all choices may be available on all operating systems.
-# In a Windows environment this must be set to your system time zone.
-# Value comes from hpcperfstats.ini [DEFAULT] timezone.
+# From hpcperfstats.ini [DEFAULT] timezone.
 TIME_ZONE = cfg.get_timezone()
 
-# Language code for this installation. All choices can be found here:
-# http://www.i18nguy.com/unicode/language-identifiers.html
 LANGUAGE_CODE = "en-us"
 
 SITE_ID = 1
 
-# If you set this to False, Django will make some optimizations so as not
-# to load the internationalization machinery.
 USE_I18N = True
 
-# If you set this to False, Django will not format dates, numbers and
-# calendars according to the current locale.
-
-# If you set this to False, Django will not use timezone-aware datetimes.
 USE_TZ = True
 
-# Absolute filesystem path to the directory that will hold user-uploaded files.
-# Example: "/var/www/example.com/media/"
 MEDIA_ROOT = os.path.join(DIR, "media/")
 
-# URL that handles the media served from MEDIA_ROOT. Make sure to use a
-# trailing slash.
-# Examples: "http://example.com/media/", "http://media.example.com/"
 MEDIA_URL = "/media/"
 
-# Absolute path to the directory static files should be collected to.
-# Don't put anything in this directory yourself; store your static files
-# in apps' "static/" subdirectories and in STATICFILES_DIRS.
-# Example: "/var/www/example.com/static/"
+# collectstatic target; nginx serves STATIC_URL from the published copy.
 STATIC_ROOT = os.environ.get("STATIC_ROOT") or "/home/hpcperfstats/staticfiles"
 
-# URL prefix for static files.
-# Example: "http://example.com/static/", "http://static.example.com/"
 STATIC_URL = "/static/"
 
-# Additional locations of static files.
-# In some packaged/containerized installs this app-level static directory may
-# not exist as a real filesystem path, so only include existing directories to
-# avoid Django staticfiles.W004 warnings at startup.
+# Packaged/containerized installs may lack the app-level static dir; listing a
+# missing path triggers Django staticfiles.W004 at startup.
 _static_dir = os.path.join(DIR, "static")
 STATICFILES_DIRS = (_static_dir,) if os.path.isdir(_static_dir) else ()
 
-# List of finder classes that know how to find static files in
-# various locations.
 STATICFILES_FINDERS = (
   "django.contrib.staticfiles.finders.FileSystemFinder",
   "django.contrib.staticfiles.finders.AppDirectoriesFinder",
@@ -435,15 +404,10 @@ elif not SECRET_KEY:
 TEMPLATES = [
   {
     "BACKEND": "django.template.backends.django.DjangoTemplates",
-    "DIRS": [
-      # insert your TEMPLATE_DIRS here
-      #    'hpcperfstats_site/templates',
-    ],
+    "DIRS": [],
     "APP_DIRS": True,
     "OPTIONS": {
       "context_processors": [
-        # Insert your TEMPLATE_CONTEXT_PROCESSORS here or use this
-        # list if you haven't customized them:
         "django.template.context_processors.debug",
         "django.template.context_processors.request",
         "django.contrib.auth.context_processors.auth",
@@ -488,9 +452,8 @@ _use_live_valkey_cache = os.environ.get(
 
 def _running_under_pytest() -> Any:
   """
-  Detect pytest including ``python -m pytest`` (argv does not end with.
-
-    ``pytest``).
+  Detect pytest, including ``python -m pytest`` where argv does not end with
+  ``pytest``.
 
   Returns:
     Any: Open return polymorphism from ``_running_under_pytest``: concrete

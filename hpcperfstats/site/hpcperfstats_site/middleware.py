@@ -1,9 +1,5 @@
 """
-Profiling middleware: add ?prof to a URL to profile the view (DEBUG only).
-
-Optional query params:
-- sort: pstats sort key (default "time")
-- count: number of rows to show (default 100)
+Default Cache-Control and security-header middleware (CSP, COOP, Permissions-Policy).
 
 Attributes:
   DEFAULT_COOP: Cross-Origin-Opener-Policy value applied by DefaultSecurityHeadersMiddleware.
@@ -18,12 +14,8 @@ Attributes:
 
 from __future__ import annotations
 
-import cProfile
-import io
-import pstats
 from typing import Any
 
-from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 
 DEFAULT_PERMISSIONS_POLICY = (
@@ -176,100 +168,7 @@ def _csp_for_request(request: HttpRequest, response: HttpResponse) -> str:
     return DEFAULT_CSP_STRICT
   if any(path.startswith(prefix) for prefix in _BOKEH_RELAXED_CSP_PREFIXES):
     return DEFAULT_CSP
-  if path.startswith("/api/"):
-    return DEFAULT_CSP_STRICT
   return DEFAULT_CSP_STRICT
-
-
-class ProfileMiddleware:
-  """
-  Simple profiling middleware for Django views (Django 3+/6+ style).
-
-  Activated only when:
-  - settings.DEBUG is True, and
-  - the incoming request has a ?prof query parameter.
-
-  Attributes:
-    get_response: Next middleware/view callable in the Django stack.
-  """
-
-  def __init__(self, get_response: Any) -> None:
-    """
-    Store the next middleware callable for this profiling wrapper.
-
-    Args:
-      get_response (Any): Next middleware or view callable.
-
-    Returns:
-      None
-
-    Examples:
-      >>> ProfileMiddleware(
-      ...   lambda request: HttpResponse("ok")
-      ... ).get_response is not None
-      True
-    """
-    self.get_response = get_response
-
-  def _enabled(self, request: HttpRequest) -> bool:
-    """
-    Return True if profiling is enabled for this request.
-
-    Args:
-      request (HttpRequest): Incoming request.
-
-    Returns:
-      bool: True when DEBUG is on and ``prof`` is present in the query string.
-
-    Examples:
-      >>> class _Req:
-      ...   GET = {"prof": "1"}
-      >>> from django.conf import settings as _settings
-      >>> bool(_settings.DEBUG) or True  # doctest: +SKIP
-      True
-    """
-    return bool(settings.DEBUG and "prof" in request.GET)
-
-  def __call__(self, request: HttpRequest) -> HttpResponse:
-    """
-    Optionally profile the downstream view and replace the body with stats text.
-
-    Args:
-      request (HttpRequest): Incoming request.
-
-    Returns:
-      HttpResponse: Downstream response, or a plain-text profile dump when enabled.
-
-    Raises:
-      Exception: Re-raises any exception from the downstream view unchanged.
-
-    Examples:
-      >>> ProfileMiddleware(
-      ...   lambda request: HttpResponse("ok")
-      ... )  # doctest: +SKIP
-    """
-    if not self._enabled(request):
-      return self.get_response(request)
-
-    profiler = cProfile.Profile()
-    try:
-      response = profiler.runcall(self.get_response, request)
-    except Exception:
-      # Let Django's normal exception handling and middleware chain run.
-      raise
-
-    s = io.StringIO()
-    stats = pstats.Stats(profiler, stream=s)
-    sort_key = request.GET.get("sort", "time")
-    try:
-      count = int(request.GET.get("count", "100"))
-    except TypeError, ValueError:
-      count = 100
-    stats.strip_dirs().sort_stats(sort_key).print_stats(count)
-
-    response.content = f"<pre>{s.getvalue()}</pre>"
-    response["Content-Type"] = "text/plain; charset=utf-8"
-    return response
 
 
 class DefaultCacheControlMiddleware:
