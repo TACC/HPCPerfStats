@@ -370,54 +370,6 @@ def measure_worker_rss_after_release(stats_file: str) -> Any:
   }
 
 
-def resolve_worker_pid_from_meta_or_registry(
-  meta: Any,
-  registry: Any,
-  path: str,
-) -> Any:
-  """
-  Resolve worker PID from outcome meta or diagnostics registry.
-
-  Args:
-    meta (Any): Meta passed to this helper.
-    registry (Any): Registry passed to this helper.
-    path (str): String for path.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> resolve_worker_pid_from_meta_or_registry(None, None, "x")
-  """
-  if isinstance(meta, dict):
-    worker_pid = meta.get("worker_pid")
-    if worker_pid is not None:
-      try:
-        return int(worker_pid)
-      except TypeError, ValueError:
-        pass
-  if registry is None or not path:
-    return None
-  norm_path = os.path.normpath(str(path))
-  try:
-    items = list(registry.items())
-  except Exception:
-    return None
-  for pid, raw in items:
-    pid_s = str(pid)
-    if pid_s.startswith("dispatch:"):
-      continue
-    if not isinstance(raw, dict):
-      continue
-    entry_path = raw.get("path")
-    if entry_path and os.path.normpath(str(entry_path)) == norm_path:
-      try:
-        return int(pid_s)
-      except ValueError:
-        continue
-  return None
-
-
 def _rss_threshold_and_mib(meta: Any) -> Any:
   """
   Internal helper to handle rss threshold and mib.

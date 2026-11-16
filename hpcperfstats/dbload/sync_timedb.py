@@ -21,9 +21,7 @@ start and connections.close_all() at task end. Uniqueness is Postgres unique
 indexes plus ``ON CONFLICT`` / ``ignore_conflicts``.
 
 Attributes:
-  ARCHIVE_RESTORE_SOFT_REQUEUE_BACKOFF_S: Attribute.
   DEBUG: Attribute.
-  DEFER_SYNC_PREWARM_INVALIDATION_REASONS: Attribute.
   EMPTY_QUEUE_DAY_CLOSE_POLL_SECONDS: Attribute.
   EMPTY_QUEUE_RESCAN_SLEEP_SECONDS: Attribute.
   FINALIZE_POLL_TIMEOUT_SECONDS: Attribute.
@@ -37,7 +35,6 @@ Attributes:
   PENDING_RECONCILE_UNPROCESSED_TTL_S: Attribute.
   SYNC_TIMEDB_CHECKPOINT_BASENAME: Attribute.
   SYNC_TIMEDB_CHECKPOINT_FLUSH_EVERY_FILES: Attribute.
-  SYNC_TIMEDB_DEAD_LETTER_BASENAME: Attribute.
   SYNC_TIMEDB_PROCESS_TITLE: Attribute.
   _ARCHIVE_SKIP_FROM_OUTCOME: Attribute.
   _DB_COMPLETE_REASON_TO_SKIP: Attribute.
@@ -100,7 +97,6 @@ import sys
 import tarfile
 import time
 import warnings
-from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, date as date_cls, datetime, timedelta
 
@@ -164,8 +160,7 @@ from hpcperfstats.dbload.lib.sync_timedb_archive_helpers import (
   INGEST_PARSE_FAILED_QUARANTINE_REASON,
   build_tar_append_member_map,
   calendar_date_from_daily_tar_path,
-  checkpoint_entries_snapshot,
-  clear_daily_archive_members_cache,
+  clear_daily_archive_members_cache,  # noqa: F401
   consume_archive_members_populate_source,
   day_skip_blocks_tar_write,
   ensure_daily_tar_restored_for_append,
@@ -534,39 +529,6 @@ def _log_ingest_archive_lookup_budget_exceeded(exc: Any) -> None:
     f"ERROR: ingest archive lookup budget exceeded: {exc}",
     flush=True,
   )
-
-
-def _paths_all_db_complete_for_prewarm_skip(paths: Any) -> Any:
-  """
-  True when every chunk path would db-complete skip (no tar restore/prewarm).
-
-  Args:
-    paths (Any): Iterable of filesystem paths as strings.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _paths_all_db_complete_for_prewarm_skip(None)  # doctest: +SKIP
-  """
-  if not paths:
-    return False
-  for stats_file in paths:
-    if not stats_file or not os.path.isfile(stats_file):
-      return False
-    t, _jid, host = parse_first_timestamp_line_streaming(stats_file)
-    if t is None or not host:
-      return False
-    host = str(host).strip()
-    timestamp_utc = datetime.fromtimestamp(int(float(t)), tz=UTC)
-    if not head_timestamp_present_in_db(host, timestamp_utc):
-      return False
-    if (
-      _try_db_complete_head_tail_fast_path(stats_file, host, timestamp_utc)
-      is None
-    ):
-      return False
-  return True
 
 
 def _signal_ingest_hot_for_populate(
@@ -1150,26 +1112,6 @@ def _ingest_stall_defer_long_budget(
   return False, ""
 
 
-def _sample_looks_like_sealed_archives(sample: Any) -> Any:
-  """
-  Internal helper to handle sample looks like sealed archives.
-
-  Args:
-    sample (Any): Sample passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _sample_looks_like_sealed_archives(None)  # doctest: +SKIP
-  """
-  for path in sample or ():
-    base = os.path.basename(str(path))
-    if base.endswith((".tar.zst", ".tar.gz")):
-      return True
-  return False
-
-
 def _ingest_stall_defer_state(
   day_hint: Any,
   progress_state: Any,
@@ -1682,20 +1624,6 @@ def _clear_ingest_worker_file_caches() -> None:
     >>> _clear_ingest_worker_file_caches()  # doctest: +SKIP
   """
   sync_timedb_host_itimes.reset_host_itimes_caches()
-
-
-def _clear_ingest_worker_memory_caches() -> None:
-  """
-  Full per-task cache sweep including daily archive member L1.
-
-  Returns:
-    None
-
-  Examples:
-    >>> _clear_ingest_worker_memory_caches()  # doctest: +SKIP
-  """
-  _clear_ingest_worker_file_caches()
-  clear_daily_archive_members_cache()
 
 
 # Mid-chunk heap release cadence (gc.collect + malloc_trim). End-of-file
@@ -2702,19 +2630,6 @@ class ArchiveAppendOutcome:
     return self.ok
 
 
-# Invalidation reasons that must not sync-re-prewarm while a hold blocks waiters.
-DEFER_SYNC_PREWARM_INVALIDATION_REASONS = frozenset(
-  {
-    "archive_finalize",
-    "tar_restore_pre",
-    "tar_restore",
-  }
-)
-
-# Match former dispatch restore-skip backoff constant.
-ARCHIVE_RESTORE_SOFT_REQUEUE_BACKOFF_S = 15.0
-
-
 def _archive_append_outcome_is_soft_requeue(result: Any) -> Any:
   """
   Internal helper to archive the append outcome is soft requeue.
@@ -2747,24 +2662,6 @@ def _archive_append_outcome_is_gate_skip(result: Any) -> Any:
   return isinstance(result, ArchiveAppendOutcome) and bool(result.gate_skipped)
 
 
-def _archive_finalize_skip_invalidate_log_reason(result: Any) -> Any:
-  """
-  Internal helper to archive the finalize skip invalidate log reason.
-
-  Args:
-    result (Any): Result passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _archive_finalize_skip_invalidate_log_reason(None)  # doctest: +SKIP
-  """
-  if isinstance(result, ArchiveAppendOutcome) and result.store_merge_ok:
-    return "store_merge_warm"
-  return "no_tar_mutation_or_worker_invalidated"
-
-
 def _handle_pool_worker_exit_fatal(
   exc: Any,
   *,
@@ -2787,9 +2684,6 @@ def _handle_pool_worker_exit_fatal(
   """
   del ingest_pool, archive_pool
   hard_exit_pool_worker_error(exc)
-
-
-SYNC_TIMEDB_DEAD_LETTER_BASENAME = ".sync_timedb_dead_letter.json"
 
 
 def _host_recent_timestamps_cached(
@@ -5425,67 +5319,6 @@ def _add_processed_path(
       file_states.pop(old_path, None)
   while len(checkpoint_entries) > processed_files_max_size:
     checkpoint_entries.popleft()
-  return True
-
-
-def _remove_processed_path(
-  path: str,
-  processed_files: Any,
-  processed_files_order: Any,
-  checkpoint_entries: Any,
-  checkpoint_path: str,
-  *,
-  file_states: Any | None = None,
-  host_scan_hints: Any | None = None,
-  persist: bool = True,
-) -> Any:
-  """
-  Undo checkpoint/processed markers so a path re-enters the ingest loop.
-
-  Args:
-    path (str): String for path.
-    processed_files (Any): Iterable of filesystem paths as strings.
-    processed_files_order (Any): Processed files order passed to this helper.
-    checkpoint_entries (Any): Checkpoint entries passed to this helper.
-    checkpoint_path (str): String for checkpoint path.
-    file_states (Any | None): One of ``Any``, ``None``.
-    host_scan_hints (Any | None): One of ``Any``, ``None``.
-    persist (bool): Boolean flag for persist.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _remove_processed_path("x", None, None, None, "x", None, None, True)
-  """
-  path = str(path)
-  processed_files.discard(path)
-  with suppress(ValueError):
-    processed_files_order.remove(path)
-  fp = _path_fingerprint(path)
-  snapshot = checkpoint_entries_snapshot(checkpoint_entries)
-  if fp is not None:
-    kept = deque()
-    for entry in snapshot:
-      if (
-        entry.get("path") == path
-        and entry.get("size") == fp["size"]
-        and entry.get("mtime") == fp["mtime"]
-      ):
-        continue
-      kept.append(entry)
-    checkpoint_entries.clear()
-    checkpoint_entries.extend(kept)
-  else:
-    kept = deque(entry for entry in snapshot if entry.get("path") != path)
-    checkpoint_entries.clear()
-    checkpoint_entries.extend(kept)
-  if file_states is not None:
-    file_states.pop(path, None)
-  if isinstance(host_scan_hints, dict):
-    host_scan_hints.pop(path, None)
-  if persist and checkpoint_path:
-    _save_sync_checkpoint(checkpoint_path, checkpoint_entries)
   return True
 
 

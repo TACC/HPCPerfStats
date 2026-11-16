@@ -311,21 +311,3 @@ def _populate_pool_worker_entry(
 
       release_spawn_pool_worker_memory()
       time.sleep(0)
-
-
-def shutdown_populate_pool_controller(*, force: bool = False) -> None:
-  """
-  Stop the process-wide populate controller when one is installed.
-
-  Args:
-    force (bool): Forwarded to ``PopulatePoolController.stop``.
-
-  Returns:
-    None
-
-  Examples:
-    >>> shutdown_populate_pool_controller(True)
-  """
-  controller = get_populate_pool_controller()
-  if controller is not None:
-    controller.stop(force=force)

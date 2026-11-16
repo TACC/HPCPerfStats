@@ -364,31 +364,6 @@ def format_orphan_inflight(
   return f"orphan_inflight={','.join(parts)}"
 
 
-def format_queue_ratio_token(name: str, inflight: int, queued: int) -> str:
-  """
-  Format one ``name=current/queued`` token; omit when both zero.
-
-  Args:
-    name (str): Token label (e.g. ``ingest_hot``).
-    inflight (int): Current (in-flight) count.
-    queued (int): Queued depth.
-
-  Returns:
-    str: Token or empty string.
-
-  Examples:
-    >>> format_queue_ratio_token("append", 2, 120)
-    'append=2/120'
-    >>> format_queue_ratio_token("append", 0, 0)
-    ''
-  """
-  i = int(inflight or 0)
-  q = int(queued or 0)
-  if i == 0 and q == 0:
-    return ""
-  return f"{name}={i}/{q}"
-
-
 def format_positive_meter(name: str, value: float) -> str:
   """
   Format one omit-zero supervisor meter token.

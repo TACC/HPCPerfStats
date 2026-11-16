@@ -4850,32 +4850,6 @@ def _release_ingest_inflight_size(
     inflight_sizes.pop(str(identity), None)
 
 
-def _merge_ingest_fill_stats(
-  base: dict[str, int],
-  extra: dict[str, int],
-) -> dict[str, int]:
-  """
-  Merge two fill-stat maps in place and return ``base``.
-
-  Args:
-    base (dict[str, int]): Accumulator.
-    extra (dict[str, int]): Delta counters.
-
-  Returns:
-    dict[str, int]: ``base`` after merge.
-
-  Examples:
-    >>> _merge_ingest_fill_stats({"claim_none": 1}, {"claim_none": 2})[
-    ...   "claim_none"
-    ... ]
-    3
-  """
-  for key, n in extra.items():
-    if key in base:
-      base[key] += int(n or 0)
-  return base
-
-
 def _dominant_ingest_fill_block(stats: dict[str, int]) -> str | None:
   """
   Pick the highest-count fill-block reason for status telemetry.
@@ -8417,8 +8391,6 @@ def run_sync_timedb_queue_orchestrator(
       (jq.JOB_KIND_APPEND, append_leases),
       (jq.JOB_KIND_DAY_CLOSE, day_leases),
     )
-    last_census_mono = 0.0
-    last_reap_mono = time.monotonic()
     drain_deadline = 0.0
     try:
       rescan_mtime_days = int(cfg.get_sync_ingest_rescan_mtime_days())

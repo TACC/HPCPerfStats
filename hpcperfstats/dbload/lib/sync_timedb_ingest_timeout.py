@@ -6,24 +6,13 @@ Internal wall soft-kill names are deleted. Idle stall plus Postgres
 retained for job-store lease EX only.
 
 Attributes:
-  GIANT_SUPPLEMENT_LARGE_MAX_BYTES: Attribute.
-  GIANT_SUPPLEMENT_MAX_BYTES: Attribute.
-  GIANT_SUPPLEMENT_TRIGGER_BUDGET_S: Attribute.
   _TYPICAL_SEALED_MEMBER_BYTES: Attribute.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
-# Former B giant-supplement thresholds (INI keys retired). Used only to label
-# oversized paths for worker-memory telemetry - not a coordinator supplement path.
-GIANT_SUPPLEMENT_TRIGGER_BUDGET_S = 6600.0
-GIANT_SUPPLEMENT_MAX_BYTES = 1024 * 1024 * 1024
-GIANT_SUPPLEMENT_LARGE_MAX_BYTES = 8 * 1024 * 1024 * 1024
-
-
 import os
+from typing import Any
 
 import hpcperfstats.dbload.lib.conf_parser as cfg
 

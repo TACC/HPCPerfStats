@@ -40,19 +40,6 @@ def set_worker_diagnostics_registry(registry: Any) -> None:
   _registry = registry
 
 
-def get_worker_diagnostics_registry() -> Any:
-  """
-  Return the worker diagnostics registry.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> get_worker_diagnostics_registry()  # doctest: +SKIP
-  """
-  return _resolve_registry()
-
-
 def _resolve_registry() -> Any:
   """
   Internal helper to resolve the registry.
