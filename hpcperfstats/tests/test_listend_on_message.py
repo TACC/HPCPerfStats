@@ -267,7 +267,6 @@ def test_on_message_archives_previous_current_on_dollar_switch(
   )
   monkeypatch.setattr(listend.time, "time", _fake_time)
 
-  # Reset globals that could be affected by previous tests.
   with listend._timestamps_lock:
     listend._message_timestamps.clear()
     listend._unlink_events.clear()
@@ -297,8 +296,6 @@ def test_on_message_archives_previous_current_on_dollar_switch(
   assert len(epoch_files) == 2
   epoch_contents = [p.read_bytes() for p in epoch_files]
 
-  # After the second '$', 'current' should contain only the second segment,
-  # while the first segment should remain archived under its epoch filename.
   assert current_contents == msg2
   assert msg1 in epoch_contents
   assert msg2 in epoch_contents
@@ -327,7 +324,6 @@ def test_on_message_counts_current_unlink_on_dollar_switch(
   channel = _FakeChannel()
   host = "myhost"
 
-  # '$' messages must contain a newline and a host line whose 2nd token is the host.
   msg1 = b"$\n1 " + host.encode("ascii") + b"\nfirst-segment\n"
   msg2 = b"$\n1 " + host.encode("ascii") + b"\nsecond-segment\n"
 
@@ -337,7 +333,6 @@ def test_on_message_counts_current_unlink_on_dollar_switch(
   method_frame2 = _FakeMethodFrame(delivery_tag=2)
   listend.on_message(channel, method_frame2, None, msg2)
 
-  # The second '$' should unlink the existing `current` file before rotating.
   assert len(listend._unlink_events) == 1
   unlink_ts, unlink_bytes = listend._unlink_events[0]
   assert unlink_ts > 1000.0
@@ -391,16 +386,12 @@ def test_on_message_hardlinks_missing_epoch_before_unlink(
   assert channel.acked == [3]
   assert channel.nacked == []
 
-  # The old `current` inode must now be reachable under `first_ts_sec`.
   assert (host_dir / str(first_ts_sec)).read_bytes() == old_current.encode()
-
-  # After unlink+rotate, `current` must contain only the new segment.
   assert (host_dir / "current").read_bytes() == msg
 
   # Schema-only `$` has no sample ts -> fallback digit name is wall-clock cutoff.
   assert (host_dir / str(cutoff_epoch_ts)).read_bytes() == msg
 
-  # Confirm listend counted exactly one unlink during rotation.
   assert len(listend._unlink_events) == 1
   unlink_ts, unlink_bytes = listend._unlink_events[0]
   assert unlink_ts > cutoff_epoch_ts

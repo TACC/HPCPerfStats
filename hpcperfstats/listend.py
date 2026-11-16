@@ -1,26 +1,32 @@
 """
 RabbitMQ listener daemon. Consumes messages from the configured queue and
-appends payloads to per-host files under the archive directory. Single- instance
+appends payloads to per-host files under the archive directory. Single-instance
 via file lock.
 
 Attributes:
-  DEBUG: Attribute.
-  IDLE_CHECK_INTERVAL: Attribute.
-  MESSAGE_WINDOW_SECONDS: Attribute.
-  RECENT_HOST_TTL_SECONDS: Attribute.
+  DEBUG: ``[DEFAULT] debug`` flag; gates best-effort failure logging.
+  IDLE_CHECK_INTERVAL: Seconds between idle-monitor wakeups.
+  MESSAGE_WINDOW_SECONDS: Idle-monitor report window and log cadence.
+  RECENT_HOST_TTL_SECONDS: Valkey TTL for recent-host, identity and
+    rotation keys.
   ArchiveAppendResult: Result of a durable archive append (host + byte range).
-  _idle_monitor_stop_event: Attribute.
-  _idle_thread_started: Attribute.
-  _last_idle_report_time: Attribute.
-  _last_message_time: Attribute.
+  _idle_monitor_stop_event: Set on shutdown; stops the idle monitor and
+    consume threads.
+  _idle_thread_started: Whether the idle-monitor thread was started.
+  _last_idle_report_time: Unix time of the last idle-monitor line.
+  _last_message_time: Unix time of the last durable archive append.
   _message_timestamps: In-window unix timestamps for the 10-minute
     idle-monitor consume count.
-  _db_backpressure_pause: Attribute.
-  _amqp_reconnect_requested: Attribute.
+  _db_backpressure_pause: Set when ``on_message`` stops consume for live-DB
+    queue backpressure.
+  _amqp_reconnect_requested: Process-global (N=1) request for a full
+    BlockingConnection rebuild by the outer reconnect loop.
   _amqp_connection_generation: Consume-session id; stale ack/nack callbacks
     no-op after ``set_amqp_connection`` so leftover tags cannot 406.
-  _amqp_reconnect_backoff_seconds: Attribute.
-  _consume_attach_monotonic: Attribute.
+  _amqp_reconnect_backoff_seconds: Outer-loop reconnect sleep after 541 or
+    connection failure; reset after a stable consume.
+  _consume_attach_monotonic: Monotonic start of the current (N=1) consume
+    session.
   _amqp_connection: Current BlockingConnection for threadsafe ack/nack.
   _amqp_channel: Current consume channel (ack/nack via connection callbacks).
   _archive_queues: Host-affine threading.Queue list for archive workers.
@@ -29,12 +35,12 @@ Attributes:
   _archive_pool_started: Whether the archive thread pool is running.
   _archive_pool_n: Number of archive worker threads.
   _archive_pool_lock: Guard for start/stop of the archive pool.
-  _recent_host_queue: Attribute.
-  _recent_host_valkey_client: Attribute.
-  _recent_host_worker_stop_event: Attribute.
-  _recent_host_worker_thread_started: Attribute.
-  _timestamps_lock: Attribute.
-  _unlink_events: Attribute.
+  _recent_host_queue: Bounded queue feeding the Valkey writer thread.
+  _recent_host_valkey_client: Lazily created Valkey client, or None.
+  _recent_host_worker_stop_event: Set on shutdown to stop the Valkey writer.
+  _recent_host_worker_thread_started: Whether the Valkey writer was started.
+  _timestamps_lock: Guard for ``_message_timestamps`` and ``_unlink_events``.
+  _unlink_events: In-window ``(unix time, closed bytes)`` per ``$`` unlink.
   _MIN_PLAUSIBLE_UNIX_SECONDS: Lowest unix seconds accepted as a stats
     timestamp (schema host line ``1 <fqdn>`` is below this).
   _DIGIT_EPOCH_NAME_MAX_ATTEMPTS: Max digit names to probe when finding a
@@ -262,22 +268,13 @@ class _RotationRecord(NamedTuple):
 
 
 _recent_host_valkey_client = None
-# Set when on_message stops consume for live-DB queue backpressure.
 _db_backpressure_pause = False
-# Set when on_message detects a dead AMQP channel/connection and requests
-# a full BlockingConnection restart via the outer reconnect loop.
 _amqp_reconnect_requested = False
-# Outer-loop reconnect sleep after 541 / connection failure (reset on consume).
 _amqp_reconnect_backoff_seconds = AMQP_RECONNECT_BACKOFF_INITIAL_SECONDS
-# Monotonic time when the current consume session started (Begining Consume).
 _consume_attach_monotonic: float | None = None
-# Consume BlockingConnection / channel for archive-thread threadsafe ack/nack.
 _amqp_connection: Any = None
 _amqp_channel: Any = None
-# Bumped on every ``set_amqp_connection`` so deferred acks from a prior
-# BlockingConnection cannot ``basic_ack`` an unknown delivery tag (406).
 _amqp_connection_generation = 0
-# Host-affine archive thread pool (off AMQP callback thread).
 _archive_queues: list = []
 _archive_threads: list = []
 _archive_pool_stop = Event()
@@ -543,7 +540,7 @@ def _ensure_current_hardlinked_to_timestamp(
         ...
     RuntimeError: Unable to find timestamp in current file
   """
-  # Called from on_message() while holding write lock for current_path.
+  # The caller holds the write lock for current_path.
   first_ts_sec = _get_first_timestamp_seconds(current_path, use_lock=False)
   if first_ts_sec is None:
     raise RuntimeError("Unable to find timestamp in current file")
@@ -586,10 +583,10 @@ def _get_recent_host_valkey_client() -> Any:
   """
   Get or create the Valkey client used for recent-host timestamps.
 
+  A failed ``from_url`` leaves the cache empty so the next call retries.
+
   Returns:
-    Any: Open return polymorphism from ``_get_recent_host_valkey_client``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
+    Any: Cached ``valkey.Valkey`` client, or ``None`` when creation failed.
 
   Examples:
     >>> _get_recent_host_valkey_client()  # doctest: +SKIP
@@ -608,11 +605,11 @@ def _get_recent_host_valkey_client() -> Any:
 
 def _set_recent_host_timestamp(valkey_client: Any, host: Any) -> None:
   """
-  Set `recent_host:<fqdn>` to current epoch seconds.
+  Set ``recent_host:<fqdn>`` to current epoch seconds (non-FQDN skipped).
 
   Args:
-    valkey_client (Any): Valkey client passed to this helper.
-    host (Any): Host passed to this helper.
+    valkey_client (Any): valkey-py client.
+    host (Any): Host FQDN string.
 
   Returns:
     None
@@ -881,12 +878,8 @@ def _release_sticky_archive_writer(*, unlink_sidecar: bool = True) -> None:
     with contextlib.suppress(OSError):
       lock_fd.close()
   if unlink_sidecar and lock_path:
-    try:
+    with contextlib.suppress(OSError):
       os.remove(lock_path)
-    except FileNotFoundError:
-      pass
-    except OSError:
-      pass
 
 
 def _sticky_append_sample_bytes(
@@ -1051,11 +1044,9 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
   host = parse_host_from_monitor_payload(payload_bytes)
   is_dollar = payload_bytes.startswith(b"$")
 
-  # `$`-prefixed messages are *schema/header* dumps from `hpcperfstatsd`:
-  # they are emitted on every schema rotation (daemon start, config reload,
-  # job end, and the `MONITOR_DAEMON_SCHEMA_ROTATE_SEC` timer, every 6 h). Regular sampling messages do not include
-  # these `$` lines; if sending fails during a rotate, the same `$` payload
-  # is later resent from the in-memory ring buffer or dumpfile.
+  # A `$` payload is the monitor schema dump sent on every schema rotation
+  # (daemon start, config reload, job end, MONITOR_DAEMON_SCHEMA_ROTATE_SEC).
+  # A failed send is later resent from the ring buffer or dumpfile.
   host_dir = os.path.join(cfg.get_archive_dir_path(), host)
   current_path = os.path.join(host_dir, "current")
   payload_len = len(payload_bytes)
@@ -1119,8 +1110,6 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
       payload_bytes,
     )
   _enqueue_recent_host_update(host)
-  # Valkey-only identity snapshot on ``$`` rotation (tolerant if ``$build``
-  # absent). Does not change ack, pause/resume, or archive/DB gate semantics.
   if is_dollar:
     try:
       identity = parse_monitor_identity_from_dollar_message(
@@ -1131,8 +1120,6 @@ def append_monitor_payload_to_archive(message: Any) -> ArchiveAppendResult:
       identity = None
     if identity is not None:
       _enqueue_monitor_identity_update(identity)
-    # Valkey-only rotation record for Admin Monitor ingest freshness; the
-    # writer thread tails the closed file (raw-segment-rotation-freshness).
     if rotation is not None:
       _enqueue_rotation_record(rotation)
 
@@ -2623,7 +2610,6 @@ def on_message(
     >>> callable(on_message)
     True
   """
-  global _db_backpressure_pause
   delivery_tag = getattr(method_frame, "delivery_tag", None)
   try:
     payload = (
@@ -2682,12 +2668,10 @@ def on_message(
       if DEBUG:
         log_print(f"listend db ingest submit error: {submit_err}")
   except Exception as e:
-    # Critical behavior: do not acknowledge on failure.
+    # Never ack on failure. A dead channel cannot nack; reconnect instead.
     if _is_amqp_channel_or_connection_dead(e, channel):
-      # Dead channel: stop consume + close connection once; skip futile nack.
       _request_amqp_full_reconnect(channel, str(e))
       return
-    # Requeue so the message remains on the server for later retry.
     log_print(f"Error processing message; leaving on server: {e}")
     try:
       if hasattr(channel, "basic_nack") and delivery_tag is not None:
@@ -2760,8 +2744,6 @@ def _emit_idle_monitor_report(now: float) -> None:
     else 0
   )
 
-  # Queue depth via a dedicated connection (see
-  # ``_get_rmq_queue_depth_for_monitor``).
   queue_depth = _get_rmq_queue_depth_for_monitor()
 
   db_suffix = ""
@@ -3053,30 +3035,24 @@ def main() -> None:
   )
   global _idle_thread_started
   global _recent_host_worker_thread_started
-  global _amqp_reconnect_requested
-  global _amqp_reconnect_backoff_seconds
-  global _consume_attach_monotonic
   global _amqp_consumer_count
   global _amqp_consumer_threads
   global _amqp_sessions
-  # Use a mutable container so the SIGTERM handler can update state without
-  # relying on `nonlocal` (which is only valid for enclosing function scopes).
   sigterm_received = {"value": False}
 
   def _sigterm_handler(signum: Any, frame: Any) -> None:
     """
-    Internal helper to handle sigterm handler.
+    Record SIGTERM, stop the idle monitor and consumers, and exit 143.
 
     Args:
-      signum (Any): Signum passed to this helper.
-      frame (Any): Frame passed to this helper.
+      signum (Any): Signal number (``signal.signal`` handler contract).
+      frame (Any): Interrupted stack frame (unused).
 
     Returns:
       None
 
     Raises:
-      SystemExit: Raised when ``_sigterm_handler`` hits a ``SystemExit``
-      failure path.
+      SystemExit: Always, with code 143.
 
     Examples:
       >>> _sigterm_handler(None, None)  # doctest: +SKIP
@@ -3098,8 +3074,6 @@ def main() -> None:
         log_print("listend is already running")
         sys.exit()
 
-      # Ensure the idle monitor thread is started exactly once for the lifetime
-      # of the process so that it can continue reporting even across reconnects.
       if not _idle_thread_started:
         idle_thread = Thread(target=_idle_monitor, daemon=True)
         idle_thread.start()

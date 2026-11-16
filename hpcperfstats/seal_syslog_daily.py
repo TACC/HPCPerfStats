@@ -22,10 +22,10 @@ from hpcperfstats.dbload.lib import conf_parser as cfg
 
 def _sleep_seconds() -> Any:
   """
-  Internal helper to sleep for the seconds.
+  Return the run-loop poll interval from the environment (floor 60s).
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: ``int`` seconds from ``HPCPERFSTATS_SYSLOG_SEAL_POLL_SECONDS``.
 
   Examples:
     >>> _sleep_seconds()  # doctest: +SKIP
@@ -37,10 +37,10 @@ def _sleep_seconds() -> Any:
 
 def _seal_after_local_hour() -> Any:
   """
-  Internal helper to seal the after local hour.
+  Return the local hour after which yesterday's logs may be sealed.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: ``int`` hour from ``HPCPERFSTATS_SYSLOG_SEAL_AFTER_HOUR``.
 
   Examples:
     >>> _seal_after_local_hour()  # doctest: +SKIP
@@ -50,10 +50,10 @@ def _seal_after_local_hour() -> Any:
 
 def _seal_after_local_minute() -> Any:
   """
-  Internal helper to seal the after local minute.
+  Return the minute within the seal hour after which sealing may run.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: ``int`` minute from ``HPCPERFSTATS_SYSLOG_SEAL_AFTER_MINUTE``.
 
   Examples:
     >>> _seal_after_local_minute()  # doctest: +SKIP
@@ -63,30 +63,31 @@ def _seal_after_local_minute() -> Any:
 
 def _yyyymmdd(d: date) -> str:
   """
-  Internal helper to handle yyyymmdd.
+  Format ``d`` as the separator-free date syslog-ng puts in filenames.
 
   Args:
-    d (date): D.
+    d (date): Calendar day.
 
   Returns:
-    str: str produced by this call.
+    str: ``YYYYMMDD``.
 
   Examples:
-    >>> _yyyymmdd(None)  # doctest: +SKIP
+    >>> _yyyymmdd(date(2026, 1, 2))
+    '20260102'
   """
   return f"{d.year:04}{d.month:02}{d.day:02}"
 
 
 def _paths_for_day(current_dir: str, day: date) -> Any:
   """
-  Internal helper to handle paths for day.
+  List per-host ``*.YYYYMMDD.log`` files for ``day`` in ``current_dir``.
 
   Args:
-    current_dir (str): String for current dir.
-    day (date): Day.
+    current_dir (str): Live syslog directory (``logs/current``).
+    day (date): Calendar day to match.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: Sorted ``list[str]`` of absolute paths.
 
   Examples:
     >>> _paths_for_day("x", None)  # doctest: +SKIP
@@ -103,12 +104,15 @@ def seal_day(day: date, *, log_fn: Any = print) -> bool:
   """
   Build ``log_archive/{day}-syslog.tar.gz`` from per-host logs for ``day``.
 
+  Removes the sealed source logs. A valid existing archive only clears
+  leftovers; an unreadable one is rebuilt.
+
   Args:
-    day (date): Day.
-    log_fn (Any): Callable invoked by this helper.
+    day (date): Calendar day to seal.
+    log_fn (Any): ``print``-like callable for status lines.
 
   Returns:
-    bool: True or False for this check.
+    bool: False only when writing the archive failed.
 
   Examples:
     >>> seal_day(None, None)  # doctest: +SKIP
@@ -159,10 +163,10 @@ def seal_day(day: date, *, log_fn: Any = print) -> bool:
 
 def _local_now() -> Any:
   """
-  Internal helper to handle local now.
+  Return the current time in the configured ``[DEFAULT] timezone``.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: Timezone-aware ``datetime``.
 
   Examples:
     >>> _local_now()  # doctest: +SKIP
@@ -172,13 +176,13 @@ def _local_now() -> Any:
 
 def _should_run_seal_for_yesterday(now: datetime) -> bool:
   """
-  Internal helper to check whether we should run seal for yesterday.
+  Return True once ``now`` is past the configured local seal hour:minute.
 
   Args:
-    now (datetime): Now.
+    now (datetime): Current local time.
 
   Returns:
-    bool: True or False for this check.
+    bool: True when yesterday may be sealed.
 
   Examples:
     >>> _should_run_seal_for_yesterday(None)  # doctest: +SKIP
@@ -192,10 +196,13 @@ def _should_run_seal_for_yesterday(now: datetime) -> bool:
 
 def run_loop(*, log_fn: Any = print) -> None:
   """
-  Run the loop.
+  Poll forever, sealing yesterday once per day.
+
+  ``log_archive/.last_seal_yyyymmdd`` records the last sealed day so a
+  restart does not reseal it.
 
   Args:
-    log_fn (Any): Callable invoked by this helper.
+    log_fn (Any): ``print``-like callable for status lines.
 
   Returns:
     None
@@ -227,16 +234,16 @@ def run_loop(*, log_fn: Any = print) -> None:
 
 def main(argv: Any | None = None) -> Any:
   """
-  Run this module's command-line entrypoint.
+  Seal one day with ``--date YYYY-MM-DD``, else run the polling loop.
 
   Args:
-    argv (Any | None): One of ``Any``, ``None``.
+    argv (Any | None): Argument list, or ``None`` for ``sys.argv``.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: ``int`` exit status (1 when a ``--date`` seal failed).
 
   Examples:
-    >>> main(None)  # doctest: +SKIP
+    >>> main(["seal_syslog_daily", "--date", "2026-01-02"])  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.process_title import set_script_process_title
 

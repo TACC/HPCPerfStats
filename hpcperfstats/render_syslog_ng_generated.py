@@ -17,16 +17,15 @@ from hpcperfstats.dbload.lib import conf_parser as cfg
 
 def render_syslog_ng_generated_text() -> Any:
   """
-  Return syslog-ng configuration snippet text.
+  Return the ``s_net`` source and allowlist filter as syslog-ng text.
+
+  An empty ``allow_from`` list renders ``netmask(0.0.0.0/0)`` (allow all).
 
   Returns:
-    Any: Open return polymorphism from ``render_syslog_ng_generated_text``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
+    Any: ``str`` configuration fragment.
 
   Raises:
-    RuntimeError: Raised when ``render_syslog_ng_generated_text`` hits a
-    ``RuntimeError`` failure path.
+    RuntimeError: ``listen_tcp`` and ``listen_udp`` are both off.
 
   Examples:
     >>> render_syslog_ng_generated_text()  # doctest: +SKIP
@@ -64,16 +63,17 @@ def render_syslog_ng_generated_text() -> Any:
 
 def main(argv: Any | None = None) -> Any:
   """
-  Run this module's command-line entrypoint.
+  Atomically write the fragment to the configured generated-config path.
 
   Args:
-    argv (Any | None): One of ``Any``, ``None``.
+    argv (Any | None): Argument list, or ``None`` for ``sys.argv``;
+      ``--print-path`` also prints the output path.
 
   Returns:
-    Any: Value produced by this call (type depends on inputs).
+    Any: ``int`` exit status 0.
 
   Examples:
-    >>> main(None)  # doctest: +SKIP
+    >>> main(["render", "--print-path"])  # doctest: +SKIP
   """
   from hpcperfstats.dbload.lib.process_title import set_script_process_title
 
