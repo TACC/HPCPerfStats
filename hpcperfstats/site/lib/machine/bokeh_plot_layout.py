@@ -12,9 +12,8 @@ from typing import Any
 
 def _apply_zoom_layout_to_bokeh_model(root_model: Any) -> None:
   """
-  Best-effort layout so zoom plots stretch to overlay width with intrinsic.
-
-    height (scroll).
+  Best-effort layout so zoom plots stretch to overlay width with intrinsic
+  height (scroll).
 
   Args:
     root_model (Any): Root model passed to this helper.

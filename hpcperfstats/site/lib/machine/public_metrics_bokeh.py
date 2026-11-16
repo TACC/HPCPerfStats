@@ -49,11 +49,8 @@ def build_public_expansion_factor_histogram_json_item(
   counts: Sequence[int],
 ) -> dict[str, Any] | None:
   """
-  Return a Bokeh ``json_item`` dict for the expansion-factor count histogram,.
-
-    or.
-
-    ``None``.
+  Return a Bokeh ``json_item`` dict for the expansion-factor count histogram,
+  or ``None``.
 
   Args:
     period_key (str): String for period key.

@@ -17,7 +17,6 @@ task) and **completes** that pass before starting job-based metrics.
 Attributes:
   APP_PUBLIC_METRICS_SCHEMA_VERSION: Attribute.
   EF_HIST_BIN_EDGES: Attribute.
-  HOST_PLOT_MAX_WINDOW_DAYS: Attribute.
   PAYLOAD_ENCODING_GZIP_JSON: Attribute.
   PUBLIC_EF_MONTH_DAILY: Attribute.
   PUBLIC_EF_YEAR_WEEKLY: Attribute.
@@ -858,9 +857,6 @@ def refresh_public_expansion_factor_artifacts_safe() -> None:
     logger.info("public metrics artifacts refreshed: %s", stats)
   except Exception:
     logger.exception("public metrics artifact refresh failed")
-
-
-HOST_PLOT_MAX_WINDOW_DAYS = 7
 
 
 def assemble_public_dashboard_meta_bundle() -> dict[str, Any]:

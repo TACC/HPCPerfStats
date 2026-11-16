@@ -160,13 +160,9 @@ class JobPlotKindSpec(NamedTuple):
   Subclasses ``NamedTuple``, extending that type with this class's fields and
   behavior.
 
-  Subclasses ``NamedTuple``, extending that type with this class's fields and
-  behavior.
-
   Attributes:
     empty_fallback: ``empty_fallback``.
     json_item_key: ``json_item_key``.
-    log_fail_action: ``log_fail_action``.
     plot_fn: ``plot_fn``.
     unavailable_reason_key: ``unavailable_reason_key``.
     wall_time: ``wall_time``.
@@ -176,7 +172,6 @@ class JobPlotKindSpec(NamedTuple):
   empty_fallback: str
   json_item_key: str
   unavailable_reason_key: str
-  log_fail_action: str
   wall_time: bool = False
 
 
@@ -186,7 +181,6 @@ JOB_PLOT_KIND_SPECS: dict[str, JobPlotKindSpec] = {
     empty_fallback=plots.MSG_NO_METRIC_DATA,
     json_item_key="mplot_item",
     unavailable_reason_key="mplot_unavailable_reason",
-    log_fail_action="generate summary plot",
     wall_time=True,
   ),
   "roofline": JobPlotKindSpec(
@@ -194,14 +188,12 @@ JOB_PLOT_KIND_SPECS: dict[str, JobPlotKindSpec] = {
     empty_fallback=plots.MSG_NO_ROOFLINE_DATA,
     json_item_key="rplot_item",
     unavailable_reason_key="rplot_unavailable_reason",
-    log_fail_action="generate roofline",
   ),
   "gpu_roofline": JobPlotKindSpec(
     plot_fn=plots.plot_and_reason_gpu_roofline_from_jid_table,
     empty_fallback=plots.MSG_NO_ROOFLINE_DATA,
     json_item_key="grplot_item",
     unavailable_reason_key="grplot_unavailable_reason",
-    log_fail_action="generate gpu roofline",
   ),
 }
 
@@ -221,9 +213,6 @@ JOB_PLOT_JSON_KEYS: dict[str, tuple[str, str]] = {
   kind: (spec.json_item_key, spec.unavailable_reason_key)
   for kind, spec in JOB_PLOT_KIND_SPECS.items()
 }
-
-# Shared aggregate bundle for common roofline probes to reduce repeated
-# per-kind aggregate misses while preserving plot-specific fallback behavior.
 
 
 def get_job_plot_valkey_max_bytes() -> int:
