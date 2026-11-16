@@ -1,10 +1,5 @@
 #include "intel_processor.h"
 
-int intel_processor_is_intel(processor_t p)
-{
-  return p >= NEHALEM && p <= SIERRA_FOREST;
-}
-
 int intel_processor_is_skx_server(processor_t p)
 {
   return p == SKYLAKE_X || p == CASCADE_LAKE;

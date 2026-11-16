@@ -288,11 +288,6 @@ void stats_runtime_set_collect_phase(enum collect_phase phase)
   collect_tier_set_phase(phase);
 }
 
-enum collect_phase stats_runtime_effective_collect_phase(int write_hdr)
-{
-  return collect_tier_effective_phase(write_hdr);
-}
-
 int stats_schema_key_active_this_phase(const struct stats_type *type, int idx)
 {
   return collect_tier_key_active(type, idx);

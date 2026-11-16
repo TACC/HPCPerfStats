@@ -40,7 +40,6 @@ int stats_runtime_collect_cycle(FILE *profiler_stream, void *opaque,
 
 /* Two-tier collect phase control (thin wrappers over collect_tier). */
 void stats_runtime_set_collect_phase(enum collect_phase phase);
-enum collect_phase stats_runtime_effective_collect_phase(int write_hdr);
 int stats_schema_key_active_this_phase(const struct stats_type *type, int idx);
 
 /*! Decide and apply the collect phase for one fast-timer tick. Updates

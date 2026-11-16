@@ -162,13 +162,6 @@ static void stats_destroy(struct stats *stats)
   free(stats);
 }
 
-void stats_clear_present(struct stats *stats)
-{
-  if (stats == NULL || stats->s_val_present == NULL)
-    return;
-  memset(stats->s_val_present, 0, stats->s_type->st_schema.sc_len * sizeof(*stats->s_val_present));
-}
-
 struct stats *get_current_stats(struct stats_type *type, const char *dev)
 {
   struct stats *stats = NULL;

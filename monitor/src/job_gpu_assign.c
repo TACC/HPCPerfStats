@@ -403,18 +403,6 @@ void job_gpu_set_diff(const struct job_gpu_set *universe, const struct job_gpu_s
   set_sort_unique(out);
 }
 
-int job_gpu_assign_available(struct job_gpu_set *available)
-{
-  if (available == NULL)
-    return -1;
-  memset(available, 0, sizeof(*available));
-  /* Without live collector enumeration in unit tests, inventory stays unknown
-   * unless hooks populate via map_grant identity. Production wiring fills from
-   * nvidia_gpu runtime count when DCGM is up — see job_shared_emit. */
-  available->inventory_known = 0;
-  return 0;
-}
-
 void job_gpu_set_format_wire(const struct job_gpu_set *set, char *out, size_t out_cap)
 {
   size_t i;

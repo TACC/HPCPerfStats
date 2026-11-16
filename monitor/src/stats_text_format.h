@@ -46,6 +46,4 @@ int stats_format_snprintf_stats_row(char *buf, size_t cap, struct stats_type *ty
 int stats_format_snprintf_stats_row_tier(char *buf, size_t cap, struct stats_type *type,
                                          struct stats *stats, enum stats_row_tier tier);
 
-void stats_format_fprint_stats_row(FILE *f, struct stats_type *type, struct stats *stats);
-
 #endif

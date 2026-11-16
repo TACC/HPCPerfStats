@@ -17,9 +17,6 @@
 dcgmReturn_t monitor_dcgm_session_acquire(dcgmHandle_t *outh, int *use_disconnect);
 void monitor_dcgm_session_release(void);
 
-/* Legacy name: same as monitor_dcgm_session_acquire. */
-dcgmReturn_t monitor_dcgm_attach_for_process(dcgmHandle_t *outh, int *use_disconnect);
-
 #ifdef DCGM_SESSION_TEST
 /* Force-clear shared state between unit-test cases (not for production). */
 void monitor_dcgm_session_test_reset(void);

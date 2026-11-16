@@ -87,10 +87,9 @@ if test "x${have_rabbitmq}" != xyes; then
     [AC_MSG_ERROR([Unable to find librabbitmq!])])
 fi
 if test "x${have_rabbitmq}" = xyes; then
-   AC_CHECK_HEADERS([rabbitmq-c/amqp.h], [rabbitmq=true],
+   AC_CHECK_HEADERS([rabbitmq-c/amqp.h], [],
    [AC_MSG_ERROR([Unable to find rabbitmq-c/amqp.h (rabbitmq-c development headers)!])])
 fi
-AM_CONDITIONAL([RABBITMQ], [test x$rabbitmq = xtrue])
 
 AC_ARG_ENABLE([hardware],
 [  --enable-hardware	Enable processor hardware counter support (default is true)],

@@ -134,11 +134,6 @@ void monitor_dcgm_session_release(void)
   g_dcgm_session_use_disconnect = 0;
 }
 
-dcgmReturn_t monitor_dcgm_attach_for_process(dcgmHandle_t *outh, int *use_disconnect)
-{
-  return monitor_dcgm_session_acquire(outh, use_disconnect);
-}
-
 #ifdef DCGM_SESSION_TEST
 void monitor_dcgm_session_test_reset(void)
 {

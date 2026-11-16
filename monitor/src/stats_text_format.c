@@ -244,23 +244,3 @@ int stats_format_snprintf_stats_row(char *buf, size_t cap, struct stats_type *ty
 {
   return stats_format_snprintf_stats_row_tier(buf, cap, type, stats, STATS_ROW_LEGACY);
 }
-
-void stats_format_fprint_stats_row(FILE *f, struct stats_type *type, struct stats *stats)
-{
-  char stackbuf[4096];
-  int n;
-
-  if (f == NULL || type == NULL || stats == NULL)
-    return;
-
-  n = stats_format_snprintf_stats_row(stackbuf, sizeof(stackbuf), type, stats);
-  if (n >= 0 && (size_t)n < sizeof(stackbuf)) {
-    fprintf(f, "%s\n", stackbuf);
-    return;
-  }
-
-  fprintf(f, "%s %s", type->st_name, stats->s_dev);
-  for (size_t k = 0; k < type->st_schema.sc_len; k++)
-    fprintf(f, " %llu", (unsigned long long)stats->s_val[k]);
-  fprintf(f, "\n");
-}

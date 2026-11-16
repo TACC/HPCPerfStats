@@ -46,9 +46,6 @@ void job_gpu_set_union(const struct job_gpu_set *a, const struct job_gpu_set *b,
 void job_gpu_set_diff(const struct job_gpu_set *universe, const struct job_gpu_set *subtract,
                       struct job_gpu_set *out);
 
-/*! Build G_available from collector inventory (nvidia/amd/intel). Sets inventory_known. */
-int job_gpu_assign_available(struct job_gpu_set *available);
-
 /*! Format gpus= csv or "-" into out. */
 void job_gpu_set_format_wire(const struct job_gpu_set *set, char *out, size_t out_cap);
 

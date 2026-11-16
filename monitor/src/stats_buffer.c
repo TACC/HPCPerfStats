@@ -244,15 +244,6 @@ out:
   return rc;
 }
 
-int stats_buffer_write(struct stats_buffer *sf)
-{
-  int rc = stats_buffer_collect(sf);
-  if (rc < 0)
-    return rc;
-  rc = stats_buffer_send_payload(sf);
-  return rc;
-}
-
 int stats_buffer_resend(struct stats_buffer *sf)
 {
   return stats_buffer_send_payload(sf);

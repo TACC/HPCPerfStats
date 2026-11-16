@@ -143,7 +143,6 @@ hpcperfstatsd_SOURCES += \
 	metric_profiler_ebpf.c
 endif
 
-if RABBITMQ
 hpcperfstatsd_SOURCES += \
 	monitor.c \
 	monitor_cli.c \
@@ -190,14 +189,6 @@ endif
 hpcperfstatsd_CPPFLAGS += \
 	-DRABBITMQ \
 	$(MONITOR_AMQP_TIMEOUT_CPPFLAGS)
-else
-hpcperfstatsd_SOURCES += \
-	main.c \
-	stats_file_format.c \
-	stats_file_format.h \
-	stats_file.c \
-	stats_file.h
-endif
 
 if MONITOR_USE_DCGM_VENDOR_INCLUDES
 hpcperfstatsd_SOURCES += \

@@ -7,7 +7,6 @@
 
 #include "cpuid.h"
 
-const char *likwid_arch_eventset(void);
 const char *likwid_arch_eventset_for_processor(processor_t p, int n_pmcs);
 /* Grace / aarch64 does not use LIKWID: its core and SCF counters are read by direct perf
  * (arm_core_perf.c, arm_imc_scf.c). */

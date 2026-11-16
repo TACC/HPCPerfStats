@@ -79,8 +79,6 @@ Production sources stay in `../src/`; tests are small drivers that compile and l
 | `test_monitor_options_kv.c` | `monitor_options_apply_daemon_conf_kv` (NULL/unknown/empty keys) |
 | `test_pscanf.c` | `pscanf` (`open`/`read` + `vsscanf`) and `file_fopen_read` |
 | `test_schema_parse.c` | `parse_schema_entry`, `schema_init` / `schema_destroy` (links `schema.c`, `dict.c`) |
-| `test_stats_file_format.c` | `stats_file_validate_program_header`, schema suffix formatting |
-| `test_stats_file_format_extra.c` | Extended `stats_file_format` NULL/temp-file coverage |
 | `test_stats_text_format.c` | Schema suffix helpers + **`stats_format_append_mark_va`** (mark concatenation) |
 | `test_ib_port_state.c` | `ib_port_logic_active` / `ib_port_phys_link_up` sysfs line parsers |
 | `test_ib_port_collectible.c` | `ib_port_collectible` NULL guard (sysfs path hardcoded) |

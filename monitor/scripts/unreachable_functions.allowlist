@@ -56,18 +56,6 @@ xpum_gpu_dyn_loaded
 xpum_gpu_dyn_test_set_hooks
 xpum_gpu_dyn_unload
 
-# --- Nothing calls these: not the daemon in any configuration, not tests ---
-# Dead-code candidates (baseline 2026-11-15); delete or start calling them.
+# Reached from tests only through dict_remv (above).
 dict_entry_remv
 dict_shrink
-intel_processor_is_intel
-job_gpu_assign_available
-likwid_arch_eventset
-likwid_pmc_adapter_read_cpu_cycles_instr
-likwid_pmc_adapter_read_event
-likwid_pmc_adapter_read_group
-monitor_dcgm_attach_for_process
-stats_buffer_write
-stats_clear_present
-stats_format_fprint_stats_row
-stats_runtime_effective_collect_phase
