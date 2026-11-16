@@ -1,4 +1,4 @@
-/* dcgm_gpu_dyn — runtime dlopen of libdcgm for x86 NVIDIA GPU path only. */
+/* dcgm_gpu_dyn - runtime dlopen of libdcgm for the DCGM NVIDIA GPU path. */
 #include "dcgm_gpu_dyn.h"
 
 #include "dcgm_agent.h"

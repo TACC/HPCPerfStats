@@ -5,8 +5,8 @@
  * nvidia_gpu source on GPM-capable GPUs (Hopper and newer): NVML getters plus one GPM sample
  * pair per GPU per collect, loaded with dlopen (libnvidia-ml.so.1, override
  * HPCPERFSTATS_NVML_LIB gated by dyn_lib_path_allowed). No background threads: embedded DCGM ran
- * three timer loops at ~400 wakeups/s for the same fields, NVML+GPM ran 0 (round 2, finding 19).
- * GPUs without GPM, or a node without libnvidia-ml, keep the DCGM path (D14).
+ * three timer loops at ~400 wakeups/s for the same fields, NVML+GPM ran 0.
+ * GPUs without GPM, or a node without libnvidia-ml, keep the DCGM path.
  */
 
 #include <stdint.h>
@@ -46,7 +46,7 @@ struct nvidia_gpu_nvml_api {
 /* Load NVML (or the injected test API), init, and require GPM on every GPU; takes the first GPM
  * sample of each GPU. Returns 0 when the NVML path is ready, -1 otherwise (DCGM path). */
 int nvidia_gpu_nvml_prepare(void);
-/* GPUs on the NVML path (NVML index order = DCGM GPU id order, findings 26/27). */
+/* GPUs on the NVML path (NVML index order = DCGM GPU id order on GB200 and GH200). */
 int nvidia_gpu_nvml_ndev(void);
 /* Fill row for NVML index idx at monotonic time now_us. Returns 0, or -1 when the GPM sample
  * failed (caller drops NVML and falls back to DCGM). Absent getters leave their fields 0. */

@@ -136,8 +136,8 @@ static void test_release_when_idle_is_noop(void)
   assert(g_stop_calls == 0);
 }
 
-/* Plan monitor-cpu-seconds-reduction, Approach G: on c122-018 the embedded engine's NVSwitch
- * module used 28 core-s/h although no monitor field reads NVSwitch entities. */
+/* On c122-018 the embedded engine's NVSwitch module used 28 core-s/h although no monitor field
+ * reads NVSwitch entities. */
 static void test_embedded_start_denies_nvswitch_module(void)
 {
   dcgmHandle_t h = (dcgmHandle_t)0;

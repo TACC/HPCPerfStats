@@ -1,5 +1,4 @@
-/* NVML / GPM converters (round 2 J2). Values from finding 21 (GB200 GPU 0 under
- * dcgmproftester): GPM percent = DCGM ratio x 100; GPM MiB/s x 1048576 = DCGM bytes/s. */
+/* NVML / GPM converters. Values from GB200 GPU 0 under dcgmproftester: GPM percent = DCGM ratio x 100; GPM MiB/s x 1048576 = DCGM bytes/s. */
 #include <assert.h>
 #include <math.h>
 #include <stdint.h>
@@ -21,7 +20,7 @@ static void test_pct_to_ratio_finding21(void)
   assert(nvidia_gpu_nvml_pct_to_ratio(87.47, &r) == 0 && near(r, 0.8747)); /* tensor */
   assert(nvidia_gpu_nvml_pct_to_ratio(80.39, &r) == 0 && near(r, 0.8039)); /* DRAM */
   assert(nvidia_gpu_nvml_pct_to_ratio(94.05, &r) == 0 && near(r, 0.9405)); /* FP64 / DFMA */
-  assert(nvidia_gpu_nvml_pct_to_ratio(0.0, &r) == 0 && r == 0.0);          /* IMMA idle (D17) */
+  assert(nvidia_gpu_nvml_pct_to_ratio(0.0, &r) == 0 && r == 0.0);          /* IMMA idle */
   assert(nvidia_gpu_nvml_pct_to_ratio(100.0, &r) == 0 && r == 1.0);
 }
 

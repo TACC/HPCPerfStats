@@ -1,4 +1,4 @@
-/* dcgm_watch_policy — dcgmWatchFields cadence tied to the daemon's collect interval.
+/* dcgm_watch_policy - dcgmWatchFields cadence tied to the daemon's collect interval.
  *
  * The daemon reads DCGM values once per sample (dcgmGetLatestValues), so DCGM refreshing
  * fields faster than sample_freq, or keeping an hour of history, is pure overhead. Pure C,

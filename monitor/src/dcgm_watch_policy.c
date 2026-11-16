@@ -1,4 +1,4 @@
-/* dcgm_watch_policy — dcgmWatchFields cadence tied to the daemon's collect interval. */
+/* dcgm_watch_policy - dcgmWatchFields cadence tied to the daemon's collect interval. */
 #include <math.h>
 #include <stddef.h>
 

@@ -226,7 +226,7 @@ static void test_all_gpm_takes_nvml_path_and_fills_row(void)
   assert(row.fb_total_mb == 184320 && row.fb_used_mb == 600);
   assert(row.clocks_event_reasons == 4);
   assert(row.pcie_replay_counter == 0);
-  /* GPM pair -> DCGM units (finding 21). */
+  /* GPM pair -> DCGM units. */
   assert(fabs(row.sm_active - 0.9544) < 1e-9);
   assert(fabs(row.tensor_active - 0.8747) < 1e-9);
   assert(fabs(row.fp64_active - 0.9405) < 1e-9);
@@ -277,7 +277,7 @@ static void test_failed_metric_leaves_field_zero(void)
 static void test_any_gpu_without_gpm_uses_dcgm(void)
 {
   reset_stub(4);
-  S.gpm_supported[3] = 0; /* e.g. a mixed node; D14: whole node stays on DCGM */
+  S.gpm_supported[3] = 0; /* e.g. a mixed node: whole node stays on DCGM */
   assert(nvidia_gpu_nvml_prepare() == -1);
   assert(nvidia_gpu_nvml_ndev() == 0);
   assert(strstr(nvidia_gpu_nvml_last_error(), "GPU 3 has no GPM") != NULL);

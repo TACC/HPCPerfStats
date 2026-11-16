@@ -28,7 +28,7 @@ static void assert_common_gpu_roofline_keys(const char *schema_def)
 
 int main(void)
 {
-  /* Retired in round 2 (D33): the meters are per-socket host_power_socket keys now. */
+  /* Retired in round 2: the meters are per-socket host_power_socket keys now. */
   assert(strstr(nvidia_schema_def, "module_power_usage") == NULL);
   assert(strstr(nvidia_schema_def, "sysio_power_usage") == NULL);
   assert(strstr(nvidia_schema_def, "tensor_imma_active") != NULL);

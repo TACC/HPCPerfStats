@@ -1,4 +1,4 @@
-/* dcgm_session — process-wide refcounted DCGM host-engine handle. */
+/* dcgm_session - process-wide refcounted DCGM host-engine handle. */
 #include <string.h>
 #include "dcgm_gpu_api.h"
 #include "dcgm_session.h"
@@ -37,7 +37,6 @@ static dcgmReturn_t monitor_dcgm_try_embedded(dcgmHandle_t *outh)
 
 static dcgmReturn_t monitor_dcgm_connect_loopback(dcgmHandle_t *outh)
 {
-  dcgmReturn_t rc;
   dcgmConnectV2Params_v2 cp;
   char localhost[] = "127.0.0.1";
 
@@ -48,8 +47,7 @@ static dcgmReturn_t monitor_dcgm_connect_loopback(dcgmHandle_t *outh)
   cp.persistAfterDisconnect = 0;
   cp.timeoutMs = 10000;
   cp.addressIsUnixSocket = 0;
-  rc = dcgmConnect_v2(localhost, &cp, outh);
-  return rc;
+  return dcgmConnect_v2(localhost, &cp, outh);
 }
 
 static dcgmReturn_t monitor_dcgm_session_attach_new(dcgmHandle_t *outh, int *use_disconnect)

@@ -6,7 +6,7 @@
 #include "nvidia_gpu_dcgm_compat.h"
 #include "nvidia_gpu_dcgm_profiles.h"
 
-/* D33: DCGM 1132 (SysIO) / 1133 (module) power left every profile; the meters are the per-socket
+/* DCGM 1132 (SysIO) / 1133 (module) power left every profile; the meters are the per-socket
  * host_power_socket type, and the basic-no-board-power fallback for DCGM <= 3.1.x went with them. */
 static void test_no_profile_watches_board_power(void)
 {

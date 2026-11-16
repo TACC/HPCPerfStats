@@ -1,25 +1,17 @@
 /* NVIDIA GPU DCGM watch/setup (groups, field profiles, warmup). */
-#include <inttypes.h>
-#include <limits.h>
-#include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <time.h>
 #include <unistd.h>
-#include "collect.h"
 #include "dcgm_gpu_api.h"
 #include "dcgm_session.h"
 #include "dcgm_watch_policy.h"
 #include "nvidia_gpu.h"
 #include "monitor_log.h"
-#include "stats.h"
+#include "trace.h"
 #include "nvidia_gpu_dcgm_compat.h"
 #include "nvidia_gpu_dcgm_profiles.h"
 #include "nvidia_gpu_dcgm_watch.h"
-
-#define dcgm_err nvidia_gpu_dcgm_err
 
 static int g_last_watch_profile = -1;
 
@@ -32,7 +24,6 @@ static int g_nvidia_gpu_runtime_ready;
 static int g_nvidia_gpu_runtime_remote;
 static int g_nvidia_gpu_session_held;
 int g_nvidia_gpu_runtime_ndev;
-static int g_nvidia_gpu_runtime_watch_profile = -1;
 dcgmHandle_t g_nvidia_gpu_runtime_handle = (dcgmHandle_t)0;
 dcgmGpuGrp_t g_nvidia_gpu_runtime_group = (dcgmGpuGrp_t)NULL;
 dcgmFieldGrp_t g_nvidia_gpu_runtime_field_group = (dcgmFieldGrp_t)NULL;
@@ -99,15 +90,12 @@ static int env_int_or_default(const char *name, int fallback)
   return (int)parsed;
 }
 
-static int nvidia_gpu_warmup_wait_latest_values(dcgmHandle_t dcgm_handle, dcgmGpuGrp_t group_id,
-                                                dcgmFieldGrp_t field_group_id)
+static int nvidia_gpu_warmup_wait_latest_values(dcgmHandle_t dcgm_handle)
 {
   int wait_ms = env_int_or_default("HPCPERFSTATS_DCGM_WARMUP_MS", 10000);
   int step_ms = 250;
   dcgmReturn_t rc = DCGM_ST_OK;
   int elapsed;
-  (void)group_id;
-  (void)field_group_id;
   if (wait_ms <= 0)
     return 0;
   for (elapsed = 0; elapsed < wait_ms; elapsed += step_ms) {
@@ -116,16 +104,15 @@ static int nvidia_gpu_warmup_wait_latest_values(dcgmHandle_t dcgm_handle, dcgmGp
       return 0;
     usleep((useconds_t)step_ms * 1000U);
   }
-  ERROR("DCGM warmup wait exhausted (%dms): %s\n", wait_ms, dcgm_err(rc));
+  ERROR("DCGM warmup wait exhausted (%dms): %s\n", wait_ms, nvidia_gpu_dcgm_err(rc));
   return -1;
 }
 
-static int nvidia_gpu_maybe_warmup(dcgmHandle_t dcgm_handle, dcgmGpuGrp_t group_id,
-                                   dcgmFieldGrp_t field_group_id, int watch_profile)
+static int nvidia_gpu_maybe_warmup(dcgmHandle_t dcgm_handle, int watch_profile)
 {
   if (g_nvidia_gpu_warmup_done && g_nvidia_gpu_warmup_profile == watch_profile)
     return 0;
-  if (nvidia_gpu_warmup_wait_latest_values(dcgm_handle, group_id, field_group_id) < 0)
+  if (nvidia_gpu_warmup_wait_latest_values(dcgm_handle) < 0)
     return -1;
   g_nvidia_gpu_warmup_done = 1;
   g_nvidia_gpu_warmup_profile = watch_profile;
@@ -149,7 +136,6 @@ void nvidia_gpu_runtime_cleanup(void)
   g_nvidia_gpu_runtime_handle = (dcgmHandle_t)0;
   g_nvidia_gpu_runtime_remote = 0;
   g_nvidia_gpu_runtime_ndev = 0;
-  g_nvidia_gpu_runtime_watch_profile = -1;
   g_nvidia_gpu_runtime_ready = 0;
   g_nvidia_gpu_warmup_done = 0;
   g_nvidia_gpu_warmup_profile = -1;
@@ -176,7 +162,7 @@ int nvidia_gpu_runtime_prepare(int *fail_stage)
   rc = monitor_dcgm_session_acquire(&g_nvidia_gpu_runtime_handle, &g_nvidia_gpu_runtime_remote);
   if (rc != DCGM_ST_OK || g_nvidia_gpu_runtime_handle == (dcgmHandle_t)0) {
     *fail_stage = NVIDIA_GPU_FAIL_ATTACH;
-    ERROR("DCGM attach failed (embedded or 127.0.0.1 hostengine): %s%s\n", dcgm_err(rc),
+    ERROR("DCGM attach failed (embedded or 127.0.0.1 hostengine): %s%s\n", nvidia_gpu_dcgm_err(rc),
           rc == DCGM_ST_CONNECTION_NOT_VALID ? " (start nv-hostengine on this node?)" : "");
     g_nvidia_gpu_session_held = 0;
     nvidia_gpu_runtime_cleanup();
@@ -187,7 +173,7 @@ int nvidia_gpu_runtime_prepare(int *fail_stage)
                                    &g_nvidia_gpu_runtime_ndev);
   if (rc != DCGM_ST_OK) {
     *fail_stage = NVIDIA_GPU_FAIL_DISCOVERY;
-    ERROR("DCGM list devices failed: %s\n", dcgm_err(rc));
+    ERROR("DCGM list devices failed: %s\n", nvidia_gpu_dcgm_err(rc));
     nvidia_gpu_runtime_cleanup();
     return -1;
   }
@@ -201,7 +187,7 @@ int nvidia_gpu_runtime_prepare(int *fail_stage)
                        &g_nvidia_gpu_runtime_group);
   if (rc != DCGM_ST_OK) {
     *fail_stage = NVIDIA_GPU_FAIL_GROUP_CREATE;
-    ERROR("DCGM group creation failed: %s\n", dcgm_err(rc));
+    ERROR("DCGM group creation failed: %s\n", nvidia_gpu_dcgm_err(rc));
     nvidia_gpu_runtime_cleanup();
     return -1;
   }
@@ -211,7 +197,7 @@ int nvidia_gpu_runtime_prepare(int *fail_stage)
     if (rc != DCGM_ST_OK) {
       *fail_stage = NVIDIA_GPU_FAIL_GROUP_ADD_DEVICE;
       ERROR("DCGM group add device gpu_id=%u failed: %s\n", g_nvidia_gpu_runtime_gpu_ids[i],
-            dcgm_err(rc));
+            nvidia_gpu_dcgm_err(rc));
       nvidia_gpu_runtime_cleanup();
       return -1;
     }
@@ -239,10 +225,10 @@ int nvidia_gpu_runtime_prepare(int *fail_stage)
       if (rc != DCGM_ST_OK) {
         *fail_stage = NVIDIA_GPU_FAIL_FIELD_GROUP_CREATE;
         if (attempt == last_attempt)
-          ERROR("DCGM field group creation failed: %s\n", dcgm_err(rc));
+          ERROR("DCGM field group creation failed: %s\n", nvidia_gpu_dcgm_err(rc));
         else
           TRACE("DCGM field group creation failed for %s (will retry fallback): %s\n", profile_name,
-                dcgm_err(rc));
+                nvidia_gpu_dcgm_err(rc));
         continue;
       }
 
@@ -254,10 +240,10 @@ int nvidia_gpu_runtime_prepare(int *fail_stage)
       if (rc != DCGM_ST_OK) {
         *fail_stage = NVIDIA_GPU_FAIL_WATCH_FIELDS;
         if (attempt == last_attempt)
-          ERROR("DCGM watch fields failed: %s\n", dcgm_err(rc));
+          ERROR("DCGM watch fields failed: %s\n", nvidia_gpu_dcgm_err(rc));
         else
           TRACE("DCGM watch fields failed for %s (will retry fallback): %s\n", profile_name,
-                dcgm_err(rc));
+                nvidia_gpu_dcgm_err(rc));
         (void)dcgmFieldGroupDestroy(g_nvidia_gpu_runtime_handle, g_nvidia_gpu_runtime_field_group);
         g_nvidia_gpu_runtime_field_group = (dcgmFieldGrp_t)NULL;
         continue;
@@ -278,12 +264,10 @@ int nvidia_gpu_runtime_prepare(int *fail_stage)
     (void)nvidia_gpu_watch_profile_select(watch_profile, &fid, &nf, &profile_name);
     monitor_log_warn("nvidia_gpu: using DCGM fallback watch profile %s\n", profile_name);
   }
-  if (nvidia_gpu_maybe_warmup(g_nvidia_gpu_runtime_handle, g_nvidia_gpu_runtime_group,
-                              g_nvidia_gpu_runtime_field_group, watch_profile) < 0) {
+  if (nvidia_gpu_maybe_warmup(g_nvidia_gpu_runtime_handle, watch_profile) < 0) {
     nvidia_gpu_runtime_cleanup();
     return -1;
   }
-  g_nvidia_gpu_runtime_watch_profile = watch_profile;
   g_nvidia_gpu_runtime_ready = 1;
   return 0;
 }

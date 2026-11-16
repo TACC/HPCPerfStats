@@ -1,6 +1,6 @@
 /* dcgm_watch_policy: DCGM dcgmWatchFields cadence follows the daemon's collect interval.
  *
- * Plan monitor-cpu-seconds-reduction round 1: on Horizon c122-018 (sample_freq 60 s) the DCGM
+ * On Horizon c122-018 (sample_freq 60 s) the DCGM
  * CPU watches refreshed every 1 s and kept 3600 samples per field, costing ~157 core-s/h in the
  * sysmon module while the daemon only read the latest value once per sample.
  */
@@ -21,7 +21,7 @@ static void test_dcgm_watch_policy_follows_interval(void)
   assert(p.keep_samples == DCGM_WATCH_KEEP_SAMPLES);
   assert(dcgm_watch_policy_interval_s() == 60.0);
 
-  /* GPU and CPU callers get the same cadence once the interval is known (decision D2). */
+  /* GPU and CPU callers get the same cadence once the interval is known. */
   assert(dcgm_watch_policy_get(10000000LL, &p) == 0);
   assert(p.update_us == 60000000LL);
 }

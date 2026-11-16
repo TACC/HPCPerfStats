@@ -1,5 +1,4 @@
 /* NVIDIA GPU collect and schema emission: NVML + GPM on GPM-capable GPUs, DCGM otherwise. */
-#include <inttypes.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -7,10 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
-#include "collect.h"
 #include "dcgm_gpu_api.h"
-#include "dcgm_session.h"
 #include "nvidia_gpu.h"
 #include "nvidia_gpu_dcgm_field.h"
 #include "nvidia_gpu_estimate.h"
@@ -38,7 +34,7 @@ enum {
 static unsigned long long g_gpu_link_bytes[DCGM_MAX_NUM_DEVICES][NVIDIA_GPU_LINK_COUNT];
 static long long g_gpu_prev_collect_us = 0;
 /* 1 while the NVML+GPM source serves every GPU; set by begin, cleared for good by a mid-run
- * NVML failure (round 2 J2, D14: the DCGM path takes over on the next collect). */
+ * NVML failure (the DCGM path takes over on the next collect). */
 static int g_gpu_nvml_active;
 static int g_gpu_nvml_given_up;
 
@@ -394,7 +390,6 @@ out:
   }
 }
 
-//! Definition of stats entry for this type
 struct stats_type nvidia_gpu_stats_type = {
     .st_name = "nvidia_gpu",
     .st_begin = &nvidia_gpu_begin,

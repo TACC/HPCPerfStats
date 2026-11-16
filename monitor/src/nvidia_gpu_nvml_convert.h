@@ -2,11 +2,11 @@
 #define NVIDIA_GPU_NVML_CONVERT_H_
 
 /*
- * Pure NVML / GPM -> dcgm_data_t unit conversions for nvidia_gpu (round 2, Approach J2). The
- * NVML path fills the same row the DCGM path fills, so publish and the estimate code stay
- * unchanged. Factors verified against embedded DCGM under dcgmproftester load on GB200
- * (finding 21): GPM ratios are percent (DCGM ratio x 100), GPM PCIe / NvLink are MiB/s
- * (DCGM bytes/s / 1048576). IMMA uses the same x0.01 by convention (D17).
+ * Pure NVML / GPM -> dcgm_data_t unit conversions for nvidia_gpu. The NVML path fills the same
+ * row the DCGM path fills, so publish and the estimate code stay unchanged. Factors verified
+ * against embedded DCGM under dcgmproftester load on GB200: GPM ratios are percent (DCGM ratio
+ * x 100), GPM PCIe / NvLink are MiB/s (DCGM bytes/s / 1048576). IMMA uses the same x0.01 by
+ * convention.
  */
 
 #include <stdint.h>

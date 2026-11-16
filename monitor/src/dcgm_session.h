@@ -8,7 +8,7 @@
  *
  * After the first successful acquire: dcgmInit + embedded or loopback host-engine.
  * Later acquires return the same handle. Only the last release may StopEmbedded /
- * Disconnect and dcgmShutdown — never tear down while another consumer still holds
+ * Disconnect and dcgmShutdown - never tear down while another consumer still holds
  * a ref (avoids NVRM free_os_event races and repeated libdcgm lshw -json spawns).
  *
  * Sets *use_disconnect when the session used dcgmConnect_v2 (informational for
