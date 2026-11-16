@@ -176,9 +176,23 @@ static void test_schema_init_aborts_cleanly_on_second_invalid_token(void)
   schema_destroy(&sc);
 }
 
+/* key_to_schema_entry maps the dict key (se_key) back to its entry (offsetof, not
+ * NULL-pointer subtraction; clang -Wnull-pointer-subtraction). */
+static void test_key_to_schema_entry_round_trip(void)
+{
+  char *line = strdup("  mem_used,E");
+  struct schema_entry *se = parse_schema_entry(line);
+
+  free(line);
+  assert(se != NULL);
+  assert(key_to_schema_entry(se->se_key) == se);
+  free_entry(se);
+}
+
 int main(void)
 {
   test_schema_init_aborts_cleanly_on_second_invalid_token();
+  test_key_to_schema_entry_round_trip();
   test_parse_event_unit_width();
   test_parse_control();
   test_parse_empty_key_returns_null();

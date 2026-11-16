@@ -74,8 +74,10 @@ repos:
   # Monitor C: -Wall -Wextra -Werror build (monitor/scripts/run_warning_gate.sh).
   # SKIPS (exit 0 with a bold banner) on hosts without Linux/gcc/autoreconf or the
   # static prefix <workspace>/.build/prefix-static -- e.g. macOS checkouts and fresh
-  # clones -- so those commits are NOT warning-checked. HPC_WARN_GATE_REQUIRE=1 fails
-  # instead. verbose: true keeps the banner visible even when the hook passes.
+  # clones -- so those commits are NOT warning-checked. Pre-push without clang, ld.lld or
+  # the aarch64 sysroot/prefix still runs the x86 variants and skips only the aarch64 and
+  # unreachable-function checks (same banner). HPC_WARN_GATE_REQUIRE=1 fails instead.
+  # verbose: true keeps the banner visible even when the hook passes.
   - repo: local
     hooks:
       - id: monitor-warning-gate
@@ -86,7 +88,7 @@ repos:
         pass_filenames: false
         verbose: true
       - id: monitor-warning-gate-push
-        name: monitor C warnings (DEBUG+shared-node, tests) + unreachable functions (pre-push)
+        name: monitor C warnings (x86 default + DEBUG/shared-node + aarch64) + unreachable functions (pre-push)
         entry: monitor/scripts/run_warning_gate.sh --push
         language: system
         stages: [pre-push]

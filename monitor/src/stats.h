@@ -48,8 +48,8 @@ struct stats {
 
 static inline struct stats *key_to_stats(const char *key)
 {
-  size_t s_dev_offset = ((struct stats *)NULL)->s_dev - (char *)NULL;
-  return (struct stats *)(key - s_dev_offset);
+  /* offsetof, not NULL-pointer subtraction (undefined behavior). */
+  return (struct stats *)(key - offsetof(struct stats, s_dev));
 }
 
 int stats_type_init(struct stats_type *type);

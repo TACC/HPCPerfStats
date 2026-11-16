@@ -135,8 +135,20 @@ static void test_skips_disabled_type(void)
   teardown_type();
 }
 
+/* key_to_stats maps the dict key (s_dev) back to its stats (offsetof, not NULL-pointer
+ * subtraction; clang -Wnull-pointer-subtraction). */
+static void test_key_to_stats_round_trip(void)
+{
+  _Alignas(struct stats) char buf[sizeof(struct stats) + 16];
+  struct stats *s = (struct stats *)buf;
+
+  snprintf(s->s_dev, 16, "%s", "dev7");
+  assert(key_to_stats(s->s_dev) == s);
+}
+
 int main(void)
 {
+  test_key_to_stats_round_trip();
   test_append_fast_tier_rows();
   test_append_full_tier_rows();
   test_skips_disabled_type();

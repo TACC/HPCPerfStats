@@ -34,9 +34,9 @@ struct schema {
 
 static inline struct schema_entry *key_to_schema_entry(const char *key)
 {
-  /* Cannot use sizeof(*se): flexible se_key offset varies by alignment (e.g. gcc 3.4.6). */
-  size_t se_key_offset = (((struct schema_entry *)NULL)->se_key) - (char *)NULL;
-  return (struct schema_entry *)(key - se_key_offset);
+  /* Cannot use sizeof(*se): flexible se_key offset varies by alignment (e.g. gcc 3.4.6).
+   * offsetof, not NULL-pointer subtraction (undefined behavior). */
+  return (struct schema_entry *)(key - offsetof(struct schema_entry, se_key));
 }
 
 struct schema_entry *parse_schema_entry(char *str);

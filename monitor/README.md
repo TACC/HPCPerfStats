@@ -855,12 +855,13 @@ See **monitor-static-build-verification**, **monitor-dual-verify-cross-and-stati
 5. **Compiler-warning gate** (git hooks in the repo `.pre-commit-config.yaml`; also runnable by hand):
 
    ```bash
-   ./scripts/run_warning_gate.sh            # pre-commit: default config, daemon, -O2 -Wall -Wextra -Werror
-   ./scripts/run_warning_gate.sh --push     # pre-push: + DEBUG/shared-node config, all make-check programs,
-                                            #   and non-static functions the daemon never reaches
+   ./scripts/run_warning_gate.sh            # pre-commit: default x86 config, daemon, -O2 -Wall -Wextra -Werror
+   ./scripts/run_warning_gate.sh --push     # pre-push: three configurations + unreachable functions
    ```
 
-   Builds live in cached `.build-warn/<variant>/` trees (gitignored, never `.build-static`), rebuilt when `configure.ac`, a `Makefile.am`, the flags or the prefix change. Vendored and prefix headers are `-isystem`. The unreachable-function check links with `--gc-sections --print-gc-sections` and fails on any name not in `scripts/unreachable_functions.allowlist` (test-only hooks, other-config paths); remove a name when you delete or start calling that function. **The gate SKIPS (exit 0, bold yellow banner) without Linux, gcc, autoreconf or the static prefix `.build/prefix-static`, so commits from such hosts (macOS checkouts, fresh clones) are not warning-checked;** set `HPC_WARN_GATE_REQUIRE=1` to fail instead. Test: `tests/test_run_warning_gate.sh`.
+   `--push` compiles with `-Wall -Wextra -Werror`: the default x86 config (daemon + all make-check programs), x86 with `--enable-debug --enable-shared-node-multi-jid` (daemon + make-check programs), and the aarch64 Grace config (arm backend, shared node, `--enable-ib-mad-dlopen`; daemon only, built with clang `--target=aarch64-linux-gnu` + `ld.lld` against the `cross_compile_test.sh` sysroot and aarch64 prefix; nothing runs). It then links each configuration at `-O0 -ffunction-sections` with `--gc-sections --print-gc-sections` and fails on any non-static function that is **unreachable in every configuration that compiles it** and not in `scripts/unreachable_functions.allowlist`. A helper only ARM, DEBUG or shared-node code calls counts as reached. The allowlist has two sections: functions only tests call, and functions nothing calls (dead-code candidates). The gate prints entries some configuration reaches, or none defines, as stale; remove a name when you delete or start calling that function.
+
+   Builds live in cached `.build-warn/<variant>/` trees (gitignored, never `.build-static`), rebuilt when `configure.ac`, a `Makefile.am`, the compiler, the flags or a prefix change; do not run `make` there by hand (objects built without the gate's flags look up to date to it). Vendored and prefix headers are `-isystem`. **The gate SKIPS (exit 0, bold yellow banner) without Linux, gcc, autoreconf or the static prefix `.build/prefix-static`, so commits from such hosts (macOS checkouts, fresh clones) are not warning-checked.** Without clang, `ld.lld`, the aarch64 sysroot or prefix, `--push` still runs the x86 variants and skips only the aarch64 variant and the unreachable-function check, behind the same banner. Set `HPC_WARN_GATE_REQUIRE=1` to fail instead of skipping. Override paths with `PREFIX`, `ARM_SYSROOT`, `ARM_PREFIX`. Test: `tests/test_run_warning_gate.sh`.
 
 ## Cross-compile smoke (qemu-user)
 

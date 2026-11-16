@@ -1,38 +1,38 @@
-# Non-static monitor functions the daemon (default static-bundle config, x86_64) never
-# reaches, per `ld --gc-sections --print-gc-sections` (scripts/run_warning_gate.sh --push).
+# Non-static monitor functions that are unreachable from main() in EVERY configuration the
+# pre-push gate links (scripts/run_warning_gate.sh --push: default x86, DEBUG + shared-node
+# x86, aarch64 Grace). A name here is accepted; any new name fails the gate. A function only
+# ARM, DEBUG or shared-node code calls is reachable and never belongs here.
 #
-# Each name here is accepted; any NEW unreachable non-static function fails the pre-push
-# gate. Typical legitimate entries: test hooks (*_test_*), pure parsers/helpers called only
-# from tests/, and paths only another configure option or architecture links in.
-#
-# Baseline captured 2026-11-15. Entries not yet triaged; candidates for deletion include
-# dict_remv / dict_entry_remv / dict_shrink, stats_buffer_write, ring_buffer_resend.
-# When you delete a function or start calling it, remove its line (the gate prints stale
-# entries as a note).
+# The gate prints entries that some configuration reaches, or that no configuration defines,
+# as stale: remove them. Remove a name when you delete or start calling that function.
+
+# --- Only tests call these (test hooks, parsers and helpers exercised by tests/) ---
+arm_core_perf_event_name
 collect_tier_effective_phase
 dcgm_gpu_dyn_loaded
 dcgm_gpu_dyn_test_set_hooks
 dcgm_gpu_dyn_unload
 dcgm_watch_policy_interval_s
-dict_entry_remv
 dict_remv
-dict_shrink
 hwdetect_reset_nvidia_disable_state
+ib_mad_dyn_last_error
+ib_mad_dyn_loaded
+ib_mad_dyn_test_set_hooks
+ib_mad_dyn_unload
 ib_mad_test_reset_backoff
 ib_mad_test_set_ext_fail_streak
 ib_mad_test_set_sw_fail_streak
-intel_processor_is_intel
-likwid_arch_eventset
-likwid_pmc_adapter_read_cpu_cycles_instr
-likwid_pmc_adapter_read_event
-likwid_pmc_adapter_read_group
+job_gpu_assign_reset_autodetect_cache
+job_gpu_assign_set_gres_conf_path
+job_gpu_assign_set_nvml_hooks
+job_gpu_set_exact_equal
+job_sched_affinity_set_inject
 likwid_rapl_collect_path
 likwid_rapl_is_supported_processor
 likwid_rapl_pwr_amd_eventset
 likwid_rapl_pwr_intel_eventset
 lustre_parse_kv_ull
 monitor_cli_print_usage
-monitor_dcgm_attach_for_process
 monitor_release_fail_reset_for_test
 nvidia_gpu_nvml_test_set_api
 nvidia_gpu_watch_profile_has_field
@@ -48,16 +48,26 @@ opa_sysfs_test_set_root
 path_collect_key_list_filtered
 ring_buffer_resend
 roofline_nvidia_hbm_bw_from_name
-stats_buffer_set_frozen_time
-stats_buffer_set_row_filter
-stats_buffer_write
-stats_clear_present
-stats_format_fprint_stats_row
 stats_format_snprintf_stats_row
-stats_runtime_effective_collect_phase
 stats_runtime_main_prepare_types
 stats_schema_key_active_this_phase
 str_collect_prefix_key_list
 xpum_gpu_dyn_loaded
 xpum_gpu_dyn_test_set_hooks
 xpum_gpu_dyn_unload
+
+# --- Nothing calls these: not the daemon in any configuration, not tests ---
+# Dead-code candidates (baseline 2026-11-15); delete or start calling them.
+dict_entry_remv
+dict_shrink
+intel_processor_is_intel
+job_gpu_assign_available
+likwid_arch_eventset
+likwid_pmc_adapter_read_cpu_cycles_instr
+likwid_pmc_adapter_read_event
+likwid_pmc_adapter_read_group
+monitor_dcgm_attach_for_process
+stats_buffer_write
+stats_clear_present
+stats_format_fprint_stats_row
+stats_runtime_effective_collect_phase

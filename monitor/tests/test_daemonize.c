@@ -58,7 +58,9 @@ static void test_daemonize_writes_pid_lock_file(void)
     long gp = 0;
     int attempt;
 
-    for (attempt = 0; attempt < 50 && f == NULL; attempt++) {
+    /* Up to 10 s for the grandchild to write the PID file: 1 s was too short under
+     * qemu-user on a loaded host (cross_compile_test.sh). Exits as soon as it appears. */
+    for (attempt = 0; attempt < 500 && f == NULL; attempt++) {
       usleep(20000);
       f = fopen(tmpl, "r");
     }
