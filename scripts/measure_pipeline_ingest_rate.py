@@ -852,22 +852,6 @@ def _find_ingest_start_cutoff(lines: Iterable[str]) -> int | None:
   return last_gate
 
 
-def _find_boot_cutoff(lines: Iterable[str]) -> int | None:
-  """
-  Alias for :func:`_find_ingest_start_cutoff` (historical name).
-
-  Args:
-    lines (Iterable[str]): Lines.
-
-  Returns:
-    Optional[int]: Optional[int] - the result, or None when unavailable.
-
-  Examples:
-    >>> _find_boot_cutoff(None)  # doctest: +SKIP
-  """
-  return _find_ingest_start_cutoff(lines)
-
-
 def _iter_filtered_lines(
   lines: Iterable[str],
   *,
@@ -1253,31 +1237,6 @@ def _nonoverlapping_listend_window_totals(
       kept_bytes += int(nbytes)
       last_kept = ts
   return kept_count, kept_bytes
-
-
-def _nonoverlapping_listend_unlink_sum(
-  samples: list[tuple[datetime | None, int, int]],
-  *,
-  window_minutes: float = LISTEND_REPORT_WINDOW_MINUTES,
-) -> int:
-  """
-  Sum rolling listend unlink counts without double-counting overlaps.
-
-  Args:
-    samples (list[tuple[Optional[datetime], int, int]]): Ordered samples.
-    window_minutes (float): Rolling report window length in minutes.
-
-  Returns:
-    int: Non-overlapping unlink count sum.
-
-  Examples:
-    >>> _nonoverlapping_listend_unlink_sum([])  # doctest: +SKIP
-  """
-  count_sum, _bytes_sum = _nonoverlapping_listend_window_totals(
-    samples,
-    window_minutes=window_minutes,
-  )
-  return count_sum
 
 
 def _eta_hours(backlog: int | None, drain_per_min: float) -> str:

@@ -150,8 +150,7 @@ def _shift_epoch_token(token: str, epoch_offset: int) -> str:
   shifted = original + epoch_offset
   if "." in token:
     frac_digits = len(token.split(".", 1)[1])
-    formatted = f"{shifted:.{frac_digits}f}"
-    return formatted
+    return f"{shifted:.{frac_digits}f}"
   if shifted.is_integer():
     return str(int(shifted))
   return str(shifted)

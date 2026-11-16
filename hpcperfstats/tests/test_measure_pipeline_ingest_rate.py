@@ -196,7 +196,7 @@ def test_winning_verdict_and_eta(mod):
     "eta_hours_empirical",
     "eta_hours_full_ingest",
   )
-  # Local stamp: YYYY-MM-DD HH:MM:SS ±HHMM
+  # Local stamp: YYYY-MM-DD HH:MM:SS +-HHMM
   assert re.match(
     r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{4}$",
     outcomes["estimated_finish_local"],
