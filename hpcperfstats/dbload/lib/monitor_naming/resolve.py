@@ -34,6 +34,23 @@ def _names_canonical_then_legacy(
   return (canonical, legacy)
 
 
+def _ordered_unique(*groups: tuple[str, ...]) -> tuple[str, ...]:
+  """
+  Concatenate name tuples in order, keeping the first occurrence of each name.
+
+  Args:
+    *groups (tuple[str, ...]): Name tuples in probe order (canonical first).
+
+  Returns:
+    tuple[str, ...]: De-duplicated names in first-seen order.
+
+  Examples:
+    >>> _ordered_unique(("a", "b"), ("b", "c"))
+    ('a', 'b', 'c')
+  """
+  return tuple(dict.fromkeys(name for group in groups for name in group))
+
+
 def imc_types_probe_order() -> tuple[str, ...]:
   """
   Intel IMC typenames to try (canonical first, then legacy aliases).
@@ -44,17 +61,10 @@ def imc_types_probe_order() -> tuple[str, ...]:
   Examples:
     >>> imc_types_probe_order()  # doctest: +SKIP
   """
-  seen: set[str] = set()
-  out: list[str] = []
-  for name in canon.INTEL_IMC_STATS_TYPES:
-    if name not in seen:
-      seen.add(name)
-      out.append(name)
-  for name in leg.LEGACY_INTEL_IMC_STATS_TYPES:
-    if name not in seen:
-      seen.add(name)
-      out.append(name)
-  return tuple(out)
+  return _ordered_unique(
+    canon.INTEL_IMC_STATS_TYPES,
+    leg.LEGACY_INTEL_IMC_STATS_TYPES,
+  )
 
 
 def arm_imc_types_probe_order() -> tuple[str, ...]:
@@ -67,17 +77,10 @@ def arm_imc_types_probe_order() -> tuple[str, ...]:
   Examples:
     >>> arm_imc_types_probe_order()  # doctest: +SKIP
   """
-  seen: set[str] = set()
-  out: list[str] = []
-  for c in canon.ARM_IMC_STATS_TYPES:
-    if c not in seen:
-      seen.add(c)
-      out.append(c)
-  for lg in leg.LEGACY_ARM_IMC_STATS_TYPES:
-    if lg not in seen:
-      seen.add(lg)
-      out.append(lg)
-  return tuple(out)
+  return _ordered_unique(
+    canon.ARM_IMC_STATS_TYPES,
+    leg.LEGACY_ARM_IMC_STATS_TYPES,
+  )
 
 
 def dram_cas_event_names() -> tuple[str, ...]:
@@ -90,18 +93,14 @@ def dram_cas_event_names() -> tuple[str, ...]:
   Examples:
     >>> dram_cas_event_names()  # doctest: +SKIP
   """
-  seen: set[str] = set()
-  out: list[str] = []
-  for name in (
-    canon.DRAM_CAS_READS,
-    leg.LEGACY_DRAM_CAS_READS,
-    canon.DRAM_CAS_WRITES,
-    leg.LEGACY_DRAM_CAS_WRITES,
-  ):
-    if name not in seen:
-      seen.add(name)
-      out.append(name)
-  return tuple(out)
+  return _ordered_unique(
+    (
+      canon.DRAM_CAS_READS,
+      leg.LEGACY_DRAM_CAS_READS,
+      canon.DRAM_CAS_WRITES,
+      leg.LEGACY_DRAM_CAS_WRITES,
+    ),
+  )
 
 
 def dram_cas_read_write_pairs() -> tuple[tuple[str, str], ...]:
@@ -220,17 +219,10 @@ def core_pmc_types_probe_order() -> tuple[str, ...]:
   Examples:
     >>> core_pmc_types_probe_order()  # doctest: +SKIP
   """
-  seen: set[str] = set()
-  out: list[str] = []
-  for name in canon.INTEL_CORE_PMC_TYPES_ORDERED:
-    if name not in seen:
-      seen.add(name)
-      out.append(name)
-  for name in leg.LEGACY_INTEL_CORE_PMC_TYPES_ORDERED:
-    if name not in seen:
-      seen.add(name)
-      out.append(name)
-  return tuple(out)
+  return _ordered_unique(
+    canon.INTEL_CORE_PMC_TYPES_ORDERED,
+    leg.LEGACY_INTEL_CORE_PMC_TYPES_ORDERED,
+  )
 
 
 def pmc_typename_priority() -> tuple[str, ...]:
@@ -243,17 +235,10 @@ def pmc_typename_priority() -> tuple[str, ...]:
   Examples:
     >>> pmc_typename_priority()  # doctest: +SKIP
   """
-  seen: set[str] = set()
-  out: list[str] = []
-  for name in canon.PMC_TYPENAME_PRIORITY:
-    if name not in seen:
-      seen.add(name)
-      out.append(name)
-  for name in leg.LEGACY_PMC_TYPENAME_PRIORITY:
-    if name not in seen:
-      seen.add(name)
-      out.append(name)
-  return tuple(out)
+  return _ordered_unique(
+    canon.PMC_TYPENAME_PRIORITY,
+    leg.LEGACY_PMC_TYPENAME_PRIORITY,
+  )
 
 
 def cha_typename_priority() -> tuple[str, ...]:
@@ -266,17 +251,10 @@ def cha_typename_priority() -> tuple[str, ...]:
   Examples:
     >>> cha_typename_priority()  # doctest: +SKIP
   """
-  seen: set[str] = set()
-  out: list[str] = []
-  for name in canon.CHA_TYPENAME_PRIORITY:
-    if name not in seen:
-      seen.add(name)
-      out.append(name)
-  for name in leg.LEGACY_CHA_TYPENAME_PRIORITY:
-    if name not in seen:
-      seen.add(name)
-      out.append(name)
-  return tuple(out)
+  return _ordered_unique(
+    canon.CHA_TYPENAME_PRIORITY,
+    leg.LEGACY_CHA_TYPENAME_PRIORITY,
+  )
 
 
 def amd_pmc_type_names() -> tuple[str, ...]:
@@ -304,17 +282,10 @@ def amd_df_types_probe_order() -> tuple[str, ...]:
   Examples:
     >>> amd_df_types_probe_order()  # doctest: +SKIP
   """
-  seen: set[str] = set()
-  out: list[str] = []
-  for name in canon.AMD_DF_STATS_TYPES:
-    if name not in seen:
-      seen.add(name)
-      out.append(name)
-  for name in (canon.AMD_DF_TYPE, leg.LEGACY_AMD_DF_TYPE):
-    if name not in seen:
-      seen.add(name)
-      out.append(name)
-  return tuple(out)
+  return _ordered_unique(
+    canon.AMD_DF_STATS_TYPES,
+    (canon.AMD_DF_TYPE, leg.LEGACY_AMD_DF_TYPE),
+  )
 
 
 def amd_df_type_names() -> tuple[str, ...]:
@@ -357,19 +328,10 @@ def rapl_types_probe_order() -> tuple[str, ...]:
   Examples:
     >>> rapl_types_probe_order()  # doctest: +SKIP
   """
-  seen: set[str] = set()
-  out: list[str] = []
-  for name in canon.INTEL_RAPL_STATS_TYPES + canon.AMD_RAPL_STATS_TYPES:
-    if name not in seen:
-      seen.add(name)
-      out.append(name)
-  for name in (
-    leg.LEGACY_INTEL_RAPL_STATS_TYPES + leg.LEGACY_AMD_RAPL_STATS_TYPES
-  ):
-    if name not in seen:
-      seen.add(name)
-      out.append(name)
-  return tuple(out)
+  return _ordered_unique(
+    canon.INTEL_RAPL_STATS_TYPES + canon.AMD_RAPL_STATS_TYPES,
+    leg.LEGACY_INTEL_RAPL_STATS_TYPES + leg.LEGACY_AMD_RAPL_STATS_TYPES,
+  )
 
 
 def host_cpu_hw_type_names() -> tuple[str, ...]:
@@ -446,197 +408,6 @@ def host_cpu_type_names() -> tuple[str, ...]:
   """
   return _names_canonical_then_legacy(
     canon.HOST_CPU_TYPE, leg.LEGACY_HOST_CPU_TYPE
-  )
-
-
-def host_ib_fabric_type_names() -> tuple[str, ...]:
-  """
-  InfiniBand fabric typenames (unified host_ib first, then retired.
-
-    collectors).
-
-  Returns:
-    tuple[str, ...]: tuple[str, ...] produced by this call.
-
-  Examples:
-    >>> host_ib_fabric_type_names()  # doctest: +SKIP
-  """
-  return type_probe_names(canon.HOST_IB_TYPE)
-
-
-def host_ib_ext_type_names() -> tuple[str, ...]:
-  """
-  Host ib ext type names.
-
-  Returns:
-    tuple[str, ...]: tuple[str, ...] produced by this call.
-
-  Examples:
-    >>> host_ib_ext_type_names()  # doctest: +SKIP
-  """
-  return host_ib_fabric_type_names()
-
-
-def host_lnet_type_names() -> tuple[str, ...]:
-  """
-  Host lnet type names.
-
-  Returns:
-    tuple[str, ...]: tuple[str, ...] produced by this call.
-
-  Examples:
-    >>> host_lnet_type_names()  # doctest: +SKIP
-  """
-  return _names_canonical_then_legacy(
-    canon.HOST_LNET_TYPE, leg.LEGACY_HOST_LNET_TYPE
-  )
-
-
-def host_opa_type_names() -> tuple[str, ...]:
-  """
-  Host opa type names.
-
-  Returns:
-    tuple[str, ...]: tuple[str, ...] produced by this call.
-
-  Examples:
-    >>> host_opa_type_names()  # doctest: +SKIP
-  """
-  return _names_canonical_then_legacy(
-    canon.HOST_OPA_TYPE, leg.LEGACY_HOST_OPA_TYPE
-  )
-
-
-def host_numa_type_names() -> tuple[str, ...]:
-  """
-  Host numa type names.
-
-  Returns:
-    tuple[str, ...]: tuple[str, ...] produced by this call.
-
-  Examples:
-    >>> host_numa_type_names()  # doctest: +SKIP
-  """
-  return _names_canonical_then_legacy(
-    canon.HOST_NUMA_TYPE, leg.LEGACY_HOST_NUMA_TYPE
-  )
-
-
-def host_nfs_type_names() -> tuple[str, ...]:
-  """
-  Host nfs type names.
-
-  Returns:
-    tuple[str, ...]: tuple[str, ...] produced by this call.
-
-  Examples:
-    >>> host_nfs_type_names()  # doctest: +SKIP
-  """
-  return _names_canonical_then_legacy(
-    canon.HOST_NFS_TYPE, leg.LEGACY_HOST_NFS_TYPE
-  )
-
-
-def lustre_llite_type_names() -> tuple[str, ...]:
-  """
-  Lustre llite type names.
-
-  Returns:
-    tuple[str, ...]: tuple[str, ...] produced by this call.
-
-  Examples:
-    >>> lustre_llite_type_names()  # doctest: +SKIP
-  """
-  return _names_canonical_then_legacy(
-    canon.LUSTRE_LLITE_TYPE, leg.LEGACY_LUSTRE_LLITE_TYPE
-  )
-
-
-def host_block_type_names() -> tuple[str, ...]:
-  """
-  Host block type names.
-
-  Returns:
-    tuple[str, ...]: tuple[str, ...] produced by this call.
-
-  Examples:
-    >>> host_block_type_names()  # doctest: +SKIP
-  """
-  return _names_canonical_then_legacy(
-    canon.HOST_BLOCK_TYPE, leg.LEGACY_HOST_BLOCK_TYPE
-  )
-
-
-def host_net_type_names() -> tuple[str, ...]:
-  """
-  Host net type names.
-
-  Returns:
-    tuple[str, ...]: tuple[str, ...] produced by this call.
-
-  Examples:
-    >>> host_net_type_names()  # doctest: +SKIP
-  """
-  return _names_canonical_then_legacy(
-    canon.HOST_NET_TYPE, leg.LEGACY_HOST_NET_TYPE
-  )
-
-
-def mem_total_event_names() -> tuple[str, ...]:
-  """
-  Mem total event names.
-
-  Returns:
-    tuple[str, ...]: tuple[str, ...] produced by this call.
-
-  Examples:
-    >>> mem_total_event_names()  # doctest: +SKIP
-  """
-  return _names_canonical_then_legacy(canon.MEM_TOTAL, leg.LEGACY_MEM_TOTAL)
-
-
-def mem_used_event_names() -> tuple[str, ...]:
-  """
-  Mem used event names.
-
-  Returns:
-    tuple[str, ...]: tuple[str, ...] produced by this call.
-
-  Examples:
-    >>> mem_used_event_names()  # doctest: +SKIP
-  """
-  return _names_canonical_then_legacy(canon.MEM_USED, leg.LEGACY_MEM_USED)
-
-
-def dcg_cpu_power_util_events() -> tuple[str, ...]:
-  """
-  Dcg cpu power util events.
-
-  Returns:
-    tuple[str, ...]: tuple[str, ...] produced by this call.
-
-  Examples:
-    >>> dcg_cpu_power_util_events()  # doctest: +SKIP
-  """
-  return _names_canonical_then_legacy(
-    canon.DCGM_CPU_POWER_UTIL_W,
-    leg.LEGACY_DCGM_CPU_POWER_UTIL_W,
-  )
-
-
-def dcg_cpu_power_limit_events() -> tuple[str, ...]:
-  """
-  Dcg cpu power limit events.
-
-  Returns:
-    tuple[str, ...]: tuple[str, ...] produced by this call.
-
-  Examples:
-    >>> dcg_cpu_power_limit_events()  # doctest: +SKIP
-  """
-  return _names_canonical_then_legacy(
-    canon.DCGM_CPU_POWER_LIMIT_W,
-    leg.LEGACY_DCGM_CPU_POWER_LIMIT_W,
   )
 
 
