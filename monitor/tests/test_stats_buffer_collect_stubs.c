@@ -8,11 +8,7 @@
 #include "dict.h"
 #include "schema.h"
 #include "stats.h"
-
-struct stats_buffer_collect_fixture {
-  struct stats_type type;
-  struct stats *stats;
-};
+#include "test_stats_buffer_collect_stubs.h"
 
 struct stats_buffer_collect_fixture *g_stats_buffer_collect_fixture;
 

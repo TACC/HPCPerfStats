@@ -1,5 +1,3 @@
-#include <stdarg.h>
-
 #include "stats.h"
 #include "test_stats_stub.h"
 

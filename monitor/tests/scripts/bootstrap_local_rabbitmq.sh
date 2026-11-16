@@ -154,7 +154,6 @@ install_rabbitmq_if_needed() {
   sha256_verify_or_die "${RABBITMQ_TGZ}" "${RABBITMQ_ARCHIVE_SHA256:-}"
 
   rm -rf "${RABBITMQ_EXTRACT_DIR}"
-  mkdir -p "${INSTALL_ROOT}"
   tar -xJf "${RABBITMQ_TGZ}" -C "${INSTALL_ROOT}"
   RABBITMQ_HOME="${RABBITMQ_PREFIX}"
 }

@@ -10,8 +10,7 @@
 #include "dict.h"
 #include "schema.h"
 #include "stats.h"
-
-void test_debug_shm_emit_fixture_teardown(void);
+#include "test_debug_shm_emit_fixture.h"
 
 #define EMIT_FIXTURE_N_TYPES 6
 
@@ -139,7 +138,6 @@ void test_debug_shm_emit_fixture_teardown(void)
   for (i = 0; i < EMIT_FIXTURE_N_TYPES; i++) {
     schema_destroy(&g_emit_types[i].type.st_schema);
     dict_destroy(&g_emit_types[i].type.st_current_dict, emit_fixture_free_dict_key);
-    g_emit_types[i].stats = NULL;
     memset(&g_emit_types[i], 0, sizeof(g_emit_types[i]));
   }
 }

@@ -105,12 +105,6 @@ def validate_sample_rows_against_schema(message, schema_counts):
             raise ValueError(
                 f"row for type {type_name!r} too short for expected {expected} values: {line!r}"
             )
-        value_tokens = fields[-expected:] if expected > 0 else []
-        value_count = len(value_tokens)
-        if value_count != expected:
-            raise ValueError(
-                f"row for type {type_name!r} has {value_count} values, expected {expected}: {line!r}"
-            )
         validated_rows += 1
 
     if unknown_types:
@@ -207,6 +201,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"validation failed: {exc}", file=sys.stderr)
         sys.exit(1)
