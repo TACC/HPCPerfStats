@@ -49,7 +49,7 @@ def validate_schema_listend_contract(body: str, manifest: dict) -> None:
                     raise ValueError(f"schema version {parts[1]!r} != manifest {ver!r}")
                 break
 
-    # Optional `$build` — consumer-tolerant when absent; when present must match slug.
+    # Optional `$build`: consumer-tolerant when absent; when present must match slug.
     want_slug = manifest.get("capability_slug") or ""
     if want_slug:
         got_slug = listend_capability_slug_from_schema(body)

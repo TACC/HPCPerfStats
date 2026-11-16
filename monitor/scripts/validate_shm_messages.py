@@ -24,7 +24,6 @@ from lib.live_spot_check import run_live_spot_checks  # noqa: E402
 from lib.message_parse import parse_schema_counts  # noqa: E402
 from lib.shm_snapshot import capture_pair, load_fixture_pair, save_snapshot_pair  # noqa: E402
 from lib.row_validate import (  # noqa: E402
-    validate_sample_header,
     validate_sample_payload,
     validate_schema_tail_rows,
 )

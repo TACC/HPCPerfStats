@@ -33,13 +33,11 @@ def wait_for_timestamp_advance(
     poll_interval_sec: float = 0.5,
 ) -> tuple[float, str]:
     deadline = time.time() + timeout_sec
-    last_body = ""
     while time.time() < deadline:
         if not path.is_file():
             time.sleep(poll_interval_sec)
             continue
         ts, body, _ = read_shm_sample(path)
-        last_body = body
         if ts is not None and ts > prev_ts:
             return ts, body
         time.sleep(poll_interval_sec)

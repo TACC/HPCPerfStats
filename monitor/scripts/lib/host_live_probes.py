@@ -129,7 +129,7 @@ def _ib_port_phys_link_up(phys_line: str | None) -> bool:
 
 
 def _ib_port_link_layer_is_infiniband(link_line: str | None) -> bool:
-    """Match ib_port_link_layer_is_infiniband() — InfiniBand only (case-insensitive)."""
+    """Match ib_port_link_layer_is_infiniband(): InfiniBand only (case-insensitive)."""
     if link_line is None:
         return False
     token = link_line.strip()
@@ -139,7 +139,7 @@ def _ib_port_link_layer_is_infiniband(link_line: str | None) -> bool:
 
 
 def _ib_port_collectible(hca_ports: Path, port_name: str) -> bool:
-    """Match ib_port_collectible() — ACTIVE/LinkUp, then InfiniBand link_layer if present."""
+    """Match ib_port_collectible(): ACTIVE/LinkUp, then InfiniBand link_layer if present."""
     port_dir = hca_ports / port_name
     try:
         state = (port_dir / "state").read_text(encoding="utf-8", errors="replace")
@@ -377,7 +377,7 @@ def probe_power_socket_devices(sysfs_root: str = "/sys") -> list[str]:
 
 
 def probe_power_socket_watts(sysfs_root: str = "/sys") -> dict[tuple[str, str], float]:
-    """Live ``power1_average`` (µW) per meter as watts, keyed (socket dev, host_power_socket key)."""
+    """Live ``power1_average`` (uW) per meter as watts, keyed (socket dev, host_power_socket key)."""
     out: dict[tuple[str, str], float] = {}
     for word, sock, d in _power_socket_meters(sysfs_root):
         lines = _read_lines(str(d / "power1_average"))
@@ -595,7 +595,7 @@ def default_devices_for_type(type_name: str) -> list[str] | None:
 
 
 def probe_loadavg_scaled() -> dict[str, int]:
-    """Monitor host_ps stores load ×100 (see ps.c)."""
+    """Monitor host_ps stores load x100 (see ps.c)."""
     for line in _read_lines("/proc/loadavg"):
         parts = line.split()
         if len(parts) < 3:
@@ -631,22 +631,3 @@ def probe_net_stat(iface: str, stat: str) -> int | None:
     except (OSError, ValueError):
         return None
 
-
-def probe_uptime_seconds() -> float | None:
-    for line in _read_lines("/proc/uptime"):
-        parts = line.split()
-        if parts:
-            try:
-                return float(parts[0])
-            except ValueError:
-                return None
-    return None
-
-
-def probe_machine_arch() -> str | None:
-    try:
-        return Path("/proc/sys/kernel/arch").read_text(encoding="utf-8").strip()
-    except OSError:
-        import platform
-
-        return platform.machine() or None

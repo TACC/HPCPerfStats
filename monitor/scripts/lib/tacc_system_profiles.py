@@ -13,7 +13,7 @@ FIXTURES = MONITOR / "tests" / "fixtures"
 STAMPEDE3 = "stampede3"
 VISTA = "vista"
 
-# Strict Stampede3 type contracts (plan matrix).
+# Strict Stampede3 type contracts.
 _STAMPEDE3_CONTRACTS: dict[str, dict[str, set[str]]] = {
     "skx": {
         "require": {"host_opa"},
@@ -173,7 +173,3 @@ def check_profile_type_contract(
             f"FAIL profile-contract {profile}: forbidden types present {forbidden}"
         )
     return errors
-
-
-def is_stampede3_profile(profile: str) -> bool:
-    return profile in stampede3_profiles()

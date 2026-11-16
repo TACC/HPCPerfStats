@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 
-from .message_parse import fast_schema_keys, schema_key_name
+from .message_parse import fast_schema_keys
 
 _TIER_MARKERS = frozenset({"@fast", "@full"})
 _DRIVER_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")

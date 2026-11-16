@@ -1,7 +1,7 @@
 """Validate metric row device IDs against manifest probes."""
 from __future__ import annotations
 
-from .payload_parse import MetricRow, iter_metric_rows
+from .payload_parse import iter_metric_rows
 
 
 def validate_devices_in_payload(
