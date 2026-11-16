@@ -267,16 +267,21 @@ def test_owner_that_cannot_be_restored_is_reported(tmp_path, capsys):
   assert "could not restore owner" in capsys.readouterr().err
 
 
-def _migrate_site(tmp_path, capsys, cache_lines):
-  """Rewrite _SITE plus a [CACHE] block via main(); return (stdout, text)."""
+def _rewrite_text(tmp_path, capsys, site_text):
+  """Rewrite *site_text* via main(); return (stdout, rewritten text)."""
   cli = _load_cli()
   ini = tmp_path / "hpcperfstats.ini"
-  ini.write_text(_SITE + "\n[CACHE]\n" + cache_lines)
+  ini.write_text(site_text)
   out = tmp_path / "out.ini"
   assert (
     cli.main([str(ini), "--example", str(_EXAMPLE), "--output", str(out)]) == 0
   )
   return capsys.readouterr().out, out.read_text()
+
+
+def _migrate_site(tmp_path, capsys, cache_lines):
+  """Rewrite _SITE plus a [CACHE] block via main(); return (stdout, text)."""
+  return _rewrite_text(tmp_path, capsys, _SITE + "\n[CACHE]\n" + cache_lines)
 
 
 def test_redis_location_compose_socket_becomes_commented_valkey_default(
@@ -340,3 +345,336 @@ def test_site_without_cache_section_reports_no_rename(tmp_path, capsys):
   cli = _load_cli()
   site = cli.parse_ini_text(_SITE)
   assert cli.migrate_renamed_options(site) == []
+
+
+_PAGE_CACHE_RENAMED = (
+  "renamed: [{}] archive_zstd_drop_page_cache -> sync_pipeline_drop_page_cache"
+)
+
+
+def _site_with(section, lines):
+  """Return _SITE with *lines* added at the top of its [*section*] block."""
+  return _SITE.replace(f"[{section}]\n", f"[{section}]\n{lines}", 1)
+
+
+@pytest.mark.parametrize("section", ["PIPELINE", "DEFAULT"])
+def test_page_cache_alias_opt_out_becomes_new_key(tmp_path, capsys, section):
+  """A site that turned the hints off keeps them off (no silent re-enable)."""
+  stdout, text = _rewrite_text(
+    tmp_path,
+    capsys,
+    _site_with(section, "archive_zstd_drop_page_cache = no\n"),
+  )
+  assert _PAGE_CACHE_RENAMED.format(section) in stdout
+  assert "archive_zstd_drop_page_cache" not in text
+  out = _load_cli().parse_ini_text(text)
+  assert out.get("PIPELINE", "sync_pipeline_drop_page_cache") == "no"
+  assert not out.has_option("DEFAULT", "sync_pipeline_drop_page_cache")
+
+
+def test_page_cache_alias_default_value_stays_commented(tmp_path, capsys):
+  stdout, text = _rewrite_text(
+    tmp_path,
+    capsys,
+    _site_with("PIPELINE", "archive_zstd_drop_page_cache = yes\n"),
+  )
+  assert _PAGE_CACHE_RENAMED.format("PIPELINE") in stdout
+  assert "archive_zstd_drop_page_cache" not in text
+  assert "# sync_pipeline_drop_page_cache = yes" in _lines(text)
+  assert not any(
+    line.startswith("sync_pipeline_drop_page_cache") for line in _lines(text)
+  )
+
+
+@pytest.mark.parametrize("old_section", ["PIPELINE", "DEFAULT"])
+def test_page_cache_new_key_wins_over_alias(tmp_path, capsys, old_section):
+  site = _site_with(old_section, "archive_zstd_drop_page_cache = yes\n")
+  stdout, text = _rewrite_text(
+    tmp_path,
+    capsys,
+    site.replace(
+      "[PIPELINE]\n", "[PIPELINE]\nsync_pipeline_drop_page_cache = no\n", 1
+    ),
+  )
+  assert "renamed:" not in stdout
+  assert (
+    f"dropped (not in example): [{old_section}] archive_zstd_drop_page_cache"
+    in stdout
+  )
+  assert "sync_pipeline_drop_page_cache = no" in _lines(text)
+  assert "archive_zstd_drop_page_cache" not in text
+
+
+_OLD_LAYOUT_BASE = """\
+[DEFAULT]
+machine = m
+data_dir = /hpcperfstats/
+secret_key = s3cr3t
+"""
+
+# (old section, home section, key, site value, getter, getter result)
+_PORTAL_DB_KEYS = [
+  ("PORTAL", "DEFAULT", "dbname", "statsdb", "get_db_name", "statsdb"),
+  ("PORTAL", "DEFAULT", "engine_name", "x.backend", "get_engine_name", None),
+  ("PORTAL", "DEFAULT", "username", "statsuser", "get_username", None),
+  ("PORTAL", "DEFAULT", "password", "hunter2", "get_password", None),
+  ("PORTAL", "DEFAULT", "host", "db.example.org", "get_host", None),
+  ("PORTAL", "DEFAULT", "port", "5433", "get_port", None),
+]
+_PORTAL_ARCHIVE_KEYS = [
+  ("PORTAL", "PIPELINE", "archive_dir", "/big/archive", "get_archive_dir_path"),
+  ("PORTAL", "PIPELINE", "acct_path", "/acct/sacct", "get_accounting_path"),
+  (
+    "PORTAL",
+    "PIPELINE",
+    "daily_archive_dir",
+    "/big/daily",
+    "get_daily_archive_dir_path",
+  ),
+  (
+    "PORTAL",
+    "PIPELINE",
+    "archive_keep_uncompressed_tar",
+    "yes",
+    "get_archive_keep_uncompressed_tar",
+    True,
+  ),
+  (
+    "PORTAL",
+    "PIPELINE",
+    "archive_zstd_level",
+    "12",
+    "get_archive_zstd_level",
+    12,
+  ),
+  (
+    "PORTAL",
+    "PIPELINE",
+    "archive_zstd_threads",
+    "8",
+    "get_archive_zstd_threads",
+    8,
+  ),
+  (
+    "PORTAL",
+    "PIPELINE",
+    "ingest_zstd_threads",
+    "6",
+    "get_ingest_zstd_threads",
+    6,
+  ),
+  (
+    "PORTAL",
+    "PIPELINE",
+    "archive_seal_parallel_workers",
+    "3",
+    "get_archive_seal_parallel_workers",
+    3,
+  ),
+]
+_DEFAULT_PIPELINE_KEYS = [
+  (
+    "DEFAULT",
+    "PIPELINE",
+    "sync_ingest_pool_processes",
+    "48",
+    "get_sync_ingest_pool_processes",
+    48,
+  ),
+  (
+    "DEFAULT",
+    "PIPELINE",
+    "metrics_pool_processes",
+    "16",
+    "get_metrics_pool_processes",
+    16,
+  ),
+]
+_DEFAULT_PORTAL_KEYS = [
+  ("DEFAULT", "PORTAL", "gunicorn_workers", "12", "get_gunicorn_workers", 12),
+  ("DEFAULT", "PORTAL", "db_conn_max_age", "30", "get_db_conn_max_age", 30),
+  (
+    "DEFAULT",
+    "PORTAL",
+    "db_statement_timeout_ms",
+    "60000",
+    "get_db_statement_timeout_ms",
+    60000,
+  ),
+  (
+    "DEFAULT",
+    "PORTAL",
+    "db_idle_in_transaction_session_timeout_ms",
+    "100000",
+    "get_db_idle_in_transaction_session_timeout_ms",
+    100000,
+  ),
+  (
+    "DEFAULT",
+    "PORTAL",
+    "cors_origin_scheme",
+    "http",
+    "get_cors_origin_scheme",
+    "http",
+  ),
+  (
+    "DEFAULT",
+    "PORTAL",
+    "summary_aggregate_prefetch_max_threads",
+    "3",
+    "get_summary_aggregate_prefetch_max_threads",
+    3,
+  ),
+  (
+    "DEFAULT",
+    "PORTAL",
+    "parallel_db_prefetch_max",
+    "6",
+    "get_parallel_db_prefetch_max",
+    6,
+  ),
+  (
+    "DEFAULT",
+    "PORTAL",
+    "api_small_executor_max_workers",
+    "5",
+    "get_api_small_executor_max_workers",
+    5,
+  ),
+]
+_GETTER_ENV_OVERRIDES = (
+  "DJANGO_CONN_MAX_AGE",
+  "DJANGO_DB_STATEMENT_TIMEOUT_MS",
+  "DJANGO_DB_IDLE_IN_TRANSACTION_TIMEOUT_MS",
+  "PARALLEL_DB_PREFETCH_MAX",
+)
+
+
+def _old_layout_site(rows):
+  """Old-layout ini text with each row's key under its old section."""
+  blocks = {}
+  for old, _home, key, value, *_getter in rows:
+    blocks.setdefault(old, []).append(f"{key} = {value}\n")
+  text = _OLD_LAYOUT_BASE + "".join(blocks.pop("DEFAULT", []))
+  return text + "".join(
+    f"\n[{section}]\n" + "".join(lines) for section, lines in blocks.items()
+  )
+
+
+def _assert_moved_and_read_back(monkeypatch, tmp_path, text, rows):
+  """Each row's key sits only in its home section; conf_parser reads it."""
+  from hpcperfstats.dbload.lib import conf_parser
+
+  out = _load_cli().parse_ini_text(text)
+  rewritten = tmp_path / "rewritten.ini"
+  rewritten.write_text(text)
+  for name in _GETTER_ENV_OVERRIDES:
+    monkeypatch.delenv(name, raising=False)
+  monkeypatch.setenv("HPCPERFSTATS_INI", str(rewritten))
+  monkeypatch.setattr(conf_parser, "cfg", None)
+  for old, home, key, value, getter, *expected in rows:
+    assert out.get(home, key) == value, key
+    assert not out.has_option(old, key) or old == home, key
+    assert conf_parser._ini_get_from_registry(home, key) == value, key
+    want = expected[0] if expected and expected[0] is not None else value
+    assert getattr(conf_parser, getter)() == want, key
+
+
+@pytest.mark.parametrize(
+  "rows",
+  [
+    _PORTAL_DB_KEYS,
+    _PORTAL_ARCHIVE_KEYS,
+    _DEFAULT_PIPELINE_KEYS,
+    _DEFAULT_PORTAL_KEYS,
+  ],
+  ids=["portal-db", "portal-archive", "default-pipeline", "default-portal"],
+)
+def test_old_layout_keys_move_to_their_section(
+  tmp_path, capsys, monkeypatch, rows
+):
+  """Keys conf_parser stopped reading in old sections keep their value."""
+  site_text = _old_layout_site(rows)
+  cli = _load_cli()
+  site = cli.parse_ini_text(site_text)
+  for _old, _home, key, value, *_getter in rows:
+    assert cli.effective_values(site)[key] == value, key
+  _stdout, text = _rewrite_text(tmp_path, capsys, site_text)
+  _assert_moved_and_read_back(monkeypatch, tmp_path, text, rows)
+
+
+def test_old_layout_site_with_every_legacy_case(tmp_path, capsys, monkeypatch):
+  """No [PIPELINE]; DB/archive keys in [PORTAL]; tuning in [DEFAULT]."""
+  rows = [
+    *_PORTAL_DB_KEYS,
+    *_PORTAL_ARCHIVE_KEYS,
+    *_DEFAULT_PIPELINE_KEYS,
+    *_DEFAULT_PORTAL_KEYS,
+  ]
+  site_text = _old_layout_site(rows).replace(
+    "secret_key = s3cr3t\n",
+    "secret_key = s3cr3t\narchive_zstd_drop_page_cache = no\n",
+  )
+  assert "[PIPELINE]" not in site_text
+  cli = _load_cli()
+  site = cli.parse_ini_text(site_text)
+  cli.migrate_renamed_options(site)
+  effective = cli.effective_values(site)
+  for _old, _home, key, value, *_getter in rows:
+    assert effective[key] == value, key
+  assert effective["sync_pipeline_drop_page_cache"] == "no"
+  stdout, text = _rewrite_text(tmp_path, capsys, site_text)
+  assert _PAGE_CACHE_RENAMED.format("DEFAULT") in stdout
+  assert "archive_zstd_drop_page_cache" not in text
+  page_cache_row = (
+    "DEFAULT",
+    "PIPELINE",
+    "sync_pipeline_drop_page_cache",
+    "no",
+    "get_sync_pipeline_drop_page_cache",
+    False,
+  )
+  _assert_moved_and_read_back(
+    monkeypatch, tmp_path, text, [*rows, page_cache_row]
+  )
+
+
+@pytest.mark.parametrize(
+  ("site_text", "key", "value"),
+  [
+    # [DEFAULT] is the DB keys' own section; [PORTAL] was only a fallback.
+    ("[PORTAL]\nport = 1\n[DEFAULT]\nport = 2\n", "port", "2"),
+    # With [PIPELINE] present, [PIPELINE] inherited [DEFAULT] first.
+    (
+      "[PORTAL]\narchive_zstd_level = 5\n[DEFAULT]\narchive_zstd_level = 7\n"
+      "[PIPELINE]\n",
+      "archive_zstd_level",
+      "7",
+    ),
+    # Without [PIPELINE], the [PORTAL] fallback (own value) came first.
+    (
+      "[DEFAULT]\narchive_zstd_level = 7\n[PORTAL]\narchive_zstd_level = 5\n",
+      "archive_zstd_level",
+      "5",
+    ),
+    # [PORTAL] tuning beats the [DEFAULT] fallback.
+    (
+      "[DEFAULT]\ngunicorn_workers = 8\n[PORTAL]\ngunicorn_workers = 4\n",
+      "gunicorn_workers",
+      "4",
+    ),
+  ],
+  ids=["db-key", "pipeline-present", "pipeline-absent", "portal-key"],
+)
+def test_duplicate_old_layout_key_takes_the_old_parser_value(
+  site_text, key, value
+):
+  """The effective-value check compares against the old fallback order."""
+  cli = _load_cli()
+  site = cli.parse_ini_text(site_text)
+  result = cli.rewrite_from_example(site, _EXAMPLE.read_text())
+  assert cli.effective_values(site)[key] == value
+  assert (
+    cli.parse_ini_text(result.text).get(cli._registry()[key][0], key) == value
+  )
+  assert cli.changed_effective_values(site, result) == []

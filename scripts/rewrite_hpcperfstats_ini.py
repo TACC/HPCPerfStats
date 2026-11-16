@@ -10,11 +10,14 @@ the site's own settings filled in:
 * a site value that differs from a default goes on an active ``key = value``
   line directly below that commented default, so the default stays visible;
 * a required key (no code default) replaces the example's placeholder line;
-* a key the site file sets in an old section (``host`` under ``[PORTAL]``)
-  moves to the example's section;
+* a key the site file sets in an old section (``host`` under ``[PORTAL]``,
+  pipeline or portal tuning under ``[DEFAULT]``) moves to the example's
+  section; when it is set in several sections, the one the pre-2026-11
+  ``conf_parser`` fallbacks read wins (``_read_order``);
 * a renamed key (``RENAMED_OPTIONS``, e.g. ``[CACHE] redis_location`` ->
-  ``valkey_location``) is migrated first, its value mapped onto the new
-  names, and reported as ``renamed: …`` on stdout;
+  ``valkey_location``, ``archive_zstd_drop_page_cache`` ->
+  ``sync_pipeline_drop_page_cache``) is migrated first, its value mapped
+  onto the new names, and reported as ``renamed: ...`` on stdout;
 * site keys the example no longer documents are dropped and listed on stdout;
 * the ini's owner, group and mode are captured first and applied to the
   rewritten file (also to ``--output``) and to the backup.
@@ -39,10 +42,14 @@ Attributes:
   ACTIVE_OPTION_RE: Matches an uncommented ``key = value`` line.
   COMMENTED_OPTION_RE: Matches a commented ``# key = value`` line.
   SECTION_RE: Matches a ``[SECTION]`` header line.
+  PORTAL_FALLBACK_OPTIONS: Options the pre-2026-11 ``conf_parser`` still
+    read from ``[PORTAL]`` when their own section lacked them (PostgreSQL
+    keys and the archive paths and tuning).
   RENAMED_OPTIONS: ``(section, old option)`` -> ``(new option, value
     mapper)`` for keys a release renamed. One-shot migration table for
-    site files; runtime ``conf_parser`` never reads the old names. Delete an
-    entry once every site has been rewritten past that release.
+    site files; runtime ``conf_parser`` never reads the old names. The old
+    key is also found in ``[DEFAULT]`` (old-layout files). Delete an entry
+    once every site has been rewritten past that release.
 """
 
 from __future__ import annotations
@@ -70,6 +77,24 @@ NO_DEFAULT_SECTION = "__hpcperfstats_no_default_section__"
 ACTIVE_OPTION_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=")
 COMMENTED_OPTION_RE = re.compile(r"^#\s*([A-Za-z_][A-Za-z0-9_]*)\s*=")
 SECTION_RE = re.compile(r"^\[([^\]]+)\]\s*$")
+PORTAL_FALLBACK_OPTIONS = frozenset(
+  {
+    "dbname",
+    "engine_name",
+    "username",
+    "password",
+    "host",
+    "port",
+    "archive_dir",
+    "acct_path",
+    "daily_archive_dir",
+    "archive_keep_uncompressed_tar",
+    "archive_zstd_level",
+    "archive_zstd_threads",
+    "ingest_zstd_threads",
+    "archive_seal_parallel_workers",
+  }
+)
 
 
 @dataclass
@@ -155,7 +180,45 @@ def _valkey_url(url: str) -> str:
 
 RENAMED_OPTIONS: dict[tuple[str, str], tuple[str, Callable[[str], str]]] = {
   ("CACHE", "redis_location"): ("valkey_location", _valkey_url),
+  ("PIPELINE", "archive_zstd_drop_page_cache"): (
+    "sync_pipeline_drop_page_cache",
+    str.strip,
+  ),
 }
+
+
+def _read_order(
+  site: configparser.ConfigParser, option: str, home: str
+) -> list[str]:
+  """
+  Return the sections the pre-2026-11 ``conf_parser`` read *option* from.
+
+  Best first: the *home* section, then ``[DEFAULT]`` (explicit fallback or
+  configparser inheritance), then ``[PORTAL]`` for
+  ``PORTAL_FALLBACK_OPTIONS``. With no *home* section in the file the home
+  lookup could not inherit ``[DEFAULT]``, so ``[PORTAL]`` came first.
+
+  Args:
+    site (configparser.ConfigParser): Site ini from ``parse_ini_text``.
+    option (str): Registry option name.
+    home (str): The option's registry section.
+
+  Returns:
+    list[str]: Section names, most preferred first.
+
+  Examples:
+    >>> _read_order(parse_ini_text("[PIPELINE]\\n"), "archive_dir", "PIPELINE")
+    ['PIPELINE', 'DEFAULT', 'PORTAL']
+    >>> _read_order(parse_ini_text("[PORTAL]\\n"), "archive_dir", "PIPELINE")
+    ['PIPELINE', 'PORTAL', 'DEFAULT']
+    >>> _read_order(parse_ini_text(""), "host", "DEFAULT")
+    ['DEFAULT', 'PORTAL']
+  """
+  order = list(dict.fromkeys([home, "DEFAULT"]))
+  if option in PORTAL_FALLBACK_OPTIONS:
+    portal_first = home != "DEFAULT" and not site.has_section(home)
+    order.insert(1 if portal_first else len(order), "PORTAL")
+  return order
 
 
 def migrate_renamed_options(site: configparser.ConfigParser) -> list[str]:
@@ -163,9 +226,12 @@ def migrate_renamed_options(site: configparser.ConfigParser) -> list[str]:
   Rename old keys in *site* in place, mapping their values to the new names.
 
   Runs before the rewrite and the effective-value check, so both see the
-  migrated file. A key is moved only when its new name is absent from that
-  section; when both are set the new one wins and the old one is left for
-  the ``dropped`` report.
+  migrated file. The old key is looked up in the sections ``_read_order``
+  gives for the new one (its own section, then ``[DEFAULT]``) and renamed
+  where it is found; the rewrite then moves it to the example's section. A
+  key is moved only when its new name is absent from those sections; when
+  both are set the new one wins and the old one is left for the
+  ``dropped`` report.
 
   Args:
     site (configparser.ConfigParser): Site ini from ``parse_ini_text``.
@@ -179,14 +245,23 @@ def migrate_renamed_options(site: configparser.ConfigParser) -> list[str]:
     ['renamed: [CACHE] redis_location -> valkey_location']
     >>> site.get("CACHE", "valkey_location")
     'valkey://valkey/1'
+    >>> site = parse_ini_text(
+    ...   "[DEFAULT]\\narchive_zstd_drop_page_cache = no\\n"
+    ... )
+    >>> [line.split()[1] for line in migrate_renamed_options(site)]
+    ['[DEFAULT]']
+    >>> site.get("DEFAULT", "sync_pipeline_drop_page_cache")
+    'no'
   """
   report: list[str] = []
   for (section, old), (new, convert) in RENAMED_OPTIONS.items():
-    if not site.has_option(section, old) or site.has_option(section, new):
+    order = _read_order(site, new, section)
+    found = [s for s in order if site.has_option(s, old)]
+    if not found or any(site.has_option(s, new) for s in order):
       continue
-    site.set(section, new, convert(site.get(section, old)))
-    site.remove_option(section, old)
-    report.append(f"renamed: [{section}] {old} -> {new}")
+    site.set(found[0], new, convert(site.get(found[0], old)))
+    site.remove_option(found[0], old)
+    report.append(f"renamed: [{found[0]}] {old} -> {new}")
   return report
 
 
@@ -244,8 +319,9 @@ def _site_values(
   """
   Collect the site's value for each registry option, from any section.
 
-  The registry section wins when the key appears in more than one section;
-  otherwise the key is taken from whichever (legacy) section has it.
+  When the key appears in more than one section, the one earliest in
+  ``_read_order`` wins (the value the pre-2026-11 ``conf_parser`` used); a
+  key only in some other section is taken from the first such section.
 
   Args:
     site (configparser.ConfigParser): Site ini from ``parse_ini_text``.
@@ -258,15 +334,24 @@ def _site_values(
   Examples:
     >>> _site_values(parse_ini_text("[PORTAL]\\nhost = db\\n"), _registry())
     ({'host': 'db'}, [])
+    >>> _site_values(
+    ...   parse_ini_text("[PORTAL]\\nport = 1\\n[DEFAULT]\\nport = 2\\n"),
+    ...   _registry(),
+    ... )
+    ({'port': '2'}, [])
   """
   values: dict[str, str] = {}
+  ranks: dict[str, int] = {}
   dropped: list[tuple[str, str]] = []
   for section in site.sections():
     for option, value in site.items(section):
       if option not in registry:
         dropped.append((section, option))
-      elif option not in values or registry[option][0] == section:
-        values[option] = value
+        continue
+      order = _read_order(site, option, registry[option][0])
+      rank = order.index(section) if section in order else len(order)
+      if rank < ranks.get(option, len(order) + 1):
+        values[option], ranks[option] = value, rank
   return values, dropped
 
 
