@@ -176,6 +176,7 @@ These keys had no reader left and are gone from `conf_parser` and the example. A
 | `sync_enable_ingest_first_durability_mode` | |
 | `sync_day_close_manifest_stale_seconds` | |
 | `sync_archive_worker_stall_seconds` | |
+| `metrics_scheduler_mode = global_fifo` (value) | Ran the same scheduler as `global_priority`; now reads as `global_priority` |
 | `archive_zstd_drop_page_cache` | Replaced by `sync_pipeline_drop_page_cache` (default `yes`). A site that set `archive_zstd_drop_page_cache = no` must set `sync_pipeline_drop_page_cache = no` instead, or the hints turn back on |
 
 ---

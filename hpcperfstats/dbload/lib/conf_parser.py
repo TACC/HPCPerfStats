@@ -2083,26 +2083,28 @@ def get_sync_timedb_archive_max_concurrent_sealed_days() -> Any:
 
 def get_metrics_scheduler_mode() -> Any:
   """
-  Metrics scheduler mode: strict_date, global_fifo, or global_priority.
+  Metrics scheduler mode: ``strict_date`` or ``global_priority``.
+
+  ``update_metrics`` branches only on ``strict_date``; every other value,
+  including the retired ``global_fifo``, reads as ``global_priority``. A
+  ``HPCPERFSTATS_METRICS_SCHEDULER_MODE`` env value of either mode wins
+  over the INI.
 
   Returns:
-    Any: Open return polymorphism from ``get_metrics_scheduler_mode``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
+    str: ``"strict_date"`` or ``"global_priority"``.
 
   Examples:
     >>> get_metrics_scheduler_mode()  # doctest: +SKIP
+    'global_priority'
   """
+  modes = ("strict_date", "global_priority")
   env = (
     os.environ.get("HPCPERFSTATS_METRICS_SCHEDULER_MODE", "").strip().lower()
   )
-  if env in ("strict_date", "global_fifo", "global_priority"):
+  if env in modes:
     return env
-  _ensure_cfg_loaded()
   mode = _pipeline_get("metrics_scheduler_mode").strip().lower()
-  if mode in ("strict_date", "global_fifo", "global_priority"):
-    return mode
-  return "global_priority"
+  return mode if mode in modes else "global_priority"
 
 
 def get_metrics_scheduler_ready_queue_target() -> Any:

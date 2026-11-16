@@ -958,7 +958,7 @@ def test_metrics_scheduler_tunables_without_prewarm_pool_keys(
   content = content.replace(
     "total_cores = 4",
     "total_cores = 4\n"
-    "metrics_scheduler_mode = global_fifo\n"
+    "metrics_scheduler_mode = strict_date\n"
     "metrics_scheduler_ready_queue_target = 111\n"
     "metrics_plot_prewarm_mode = inline\n"
     "metrics_run_poll_timeout_s = 1.5\n"
@@ -973,7 +973,7 @@ def test_metrics_scheduler_tunables_without_prewarm_pool_keys(
   with open(temp_ini, "w") as f:
     f.write(content)
   importlib.reload(cfg)
-  assert cfg.get_metrics_scheduler_mode() == "global_fifo"
+  assert cfg.get_metrics_scheduler_mode() == "strict_date"
   assert cfg.get_metrics_scheduler_ready_queue_target() == 111
   assert cfg.get_metrics_plot_prewarm_mode() == "inline"
   assert cfg.get_metrics_run_poll_timeout_s() == 1.5
@@ -1484,6 +1484,31 @@ def test_day_close_max_inflight_default_8(temp_ini, monkeypatch):
 
   importlib.reload(cfg)
   assert cfg.get_sync_day_close_max_inflight() == 8
+
+
+@pytest.mark.parametrize("raw", ["global_fifo", "bogus"])
+def test_metrics_scheduler_mode_unknown_value_reads_as_global_priority(
+  temp_ini, monkeypatch, raw
+):
+  """global_fifo is retired; it and any other value read as the default."""
+  monkeypatch.delenv("HPCPERFSTATS_METRICS_SCHEDULER_MODE", raising=False)
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+    "daily_archive_dir = /tmp",
+    f"daily_archive_dir = /tmp\nmetrics_scheduler_mode = {raw}",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  importlib.reload(cfg)
+  assert cfg.get_metrics_scheduler_mode() == "global_priority"
+  monkeypatch.setenv("HPCPERFSTATS_METRICS_SCHEDULER_MODE", "global_fifo")
+  assert cfg.get_metrics_scheduler_mode() == "global_priority"
 
 
 def test_unread_ini_keys_and_dead_helpers_are_removed():

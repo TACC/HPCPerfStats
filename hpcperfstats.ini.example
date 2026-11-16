@@ -120,7 +120,7 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 # Absolute update_metrics + plot/detail prewarm thread pool size (default 32).
 # metrics_pool_processes = 32
 
-# Metrics scheduler: strict_date, global_fifo, or global_priority (default global_priority).
+# Metrics scheduler: strict_date or global_priority (default global_priority; any other value reads as global_priority).
 # metrics_scheduler_mode = global_priority
 
 # Ready-jid queue depth target before compute (default 100; sole ready-queue depth).
