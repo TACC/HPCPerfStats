@@ -71,10 +71,18 @@ if ! podman image exists "${IMAGE}"; then
   exit 1
 fi
 
+# The container's stdout is a pipe, so tell the script when ours is a terminal
+# and its "NOT MIGRATED" warning should be bold.
+color=0
+if [ -t 1 ]; then
+  color=1
+fi
+
 # Container root maps to the invoking user (rootless) or root (rootful), so the
 # rewritten ini keeps the checkout's ownership. label=disable avoids relabeling
 # the whole checkout under SELinux.
 exec podman run --rm --network none --security-opt label=disable \
+  -e "HPCPERFSTATS_REWRITE_COLOR=${color}" \
   -v "${REPO_ROOT}:/work" -w "/work${rel}" \
   --entrypoint /usr/local/bin/python3 "${IMAGE}" \
   /work/scripts/rewrite_hpcperfstats_ini.py "${args[@]}"
