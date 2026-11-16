@@ -3,11 +3,11 @@
  * Nine events per CPU, each its own fd (no groups) on the armv8_pmuv3 PMU type read from sysfs.
  * Resolution per event (O12): sysfs events/<name> first, then a MIDR-keyed raw-code table (one
  * row today: Arm Neoverse V2), else skipped with one journal line naming the MIDR. Reads use
- * arm_perf_read_scaled (enabled/running scaling; nvidia-powerd shares the PMU). */
+ * perf_read_scaled (enabled/running scaling; nvidia-powerd shares the PMU). */
 #ifndef ARM_CORE_PERF_H
 #define ARM_CORE_PERF_H
 
-#include "arm_perf_util.h"
+#include "perf_util.h"
 
 enum arm_core_event {
   ARM_CORE_CYC = 0,
@@ -44,7 +44,7 @@ struct arm_core_perf_cfg {
   const char *devices_dir;  /* /sys/bus/event_source/devices */
   const char *midr_path;    /* /sys/devices/system/cpu/cpu0/regs/identification/midr_el1 */
   const char *cpuinfo_path; /* /proc/cpuinfo ("CPU implementer" / "CPU part" fallback) */
-  arm_perf_open_fn open_fn; /* arm_perf_open_cpu */
+  perf_open_fn open_fn;     /* perf_open_cpu */
 };
 
 /** sysfs event name of @p ev (e.g. "fp_dp_spec"); NULL when out of range. */

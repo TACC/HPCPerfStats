@@ -112,7 +112,8 @@ write_source() {
   mkdir -p "${PREFIX}/src"
   cat >"${PREFIX}/src/gemm_load.c" <<'EOF'
 /* gemm_load: C = A x B in a loop on all threads (OpenMP), element type T from -DGEMM_T.
- * Prints achieved GFLOP/s every ~5 s; runs for argv[3] seconds (0 = until killed). */
+ * Prints achieved GFLOP/s every ~5 s; runs for argv[3] seconds (0 = until killed), then
+ * prints the exact FLOP total of the run. */
 #include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -150,7 +151,7 @@ int main(int argc, char **argv)
   }
   printf("gemm_load %s n=%ld threads=%d seconds=%g started\n", GEMM_NAME, n, threads, seconds);
   fflush(stdout);
-  double t0 = omp_get_wtime(), last = t0, flops = 0.0;
+  double t0 = omp_get_wtime(), last = t0, flops = 0.0, total = 0.0;
   for (;;) {
 #pragma omp parallel for schedule(static)
     for (long i = 0; i < n; i++) {
@@ -164,6 +165,7 @@ int main(int argc, char **argv)
       }
     }
     flops += 2.0 * (double)n * (double)n * (double)n;
+    total += 2.0 * (double)n * (double)n * (double)n;
     double now = omp_get_wtime();
     if (now - last >= 5.0 || (seconds > 0 && now - t0 >= seconds)) {
       printf("gemm_load %s GFLOP/s=%.2f elapsed=%.0fs check=%.3f\n", GEMM_NAME,
@@ -172,8 +174,11 @@ int main(int argc, char **argv)
       flops = 0.0;
       last = now;
     }
-    if (seconds > 0 && now - t0 >= seconds)
+    if (seconds > 0 && now - t0 >= seconds) {
+      /* Exact GEMM FLOPs of the bounded run (perf_raw_flops_check.sh compares counters to it). */
+      printf("gemm_load %s done total_flops=%.0f elapsed=%.3fs\n", GEMM_NAME, total, now - t0);
       break;
+    }
   }
   free(a);
   free(b);

@@ -168,7 +168,7 @@ fi
 
 if test "x$cpu_counter_backend" = "xarm"; then
   dnl arm backend: kernel sources only (/proc/stat, cpufreq, perf_event core and SCF counters
-  dnl via arm_perf_util); socket power is host_power_socket.
+  dnl via perf_util); socket power is host_power_socket.
   CPU_COUNTER_BACKEND_CPPFLAG="-DMONITOR_CPU_BACKEND_ARM"
   MONITOR_ARCH_CPPFLAG=""
 elif test "x$cpu_counter_backend" = "xlikwid"; then

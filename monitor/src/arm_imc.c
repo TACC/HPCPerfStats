@@ -14,7 +14,7 @@
 #include "trace.h"
 #include "arm_imc.h"
 #include "arm_imc_scf.h"
-#include "arm_perf_util.h"
+#include "perf_util.h"
 #include "monitor_log.h"
 
 #define ARM_AARCH64_IMC_MAX_DEVS 32
@@ -23,8 +23,8 @@ struct arm_aarch64_imc_dev {
   char name[64];
   int fd_read;
   int fd_write;
-  struct arm_perf_prev prev_read;
-  struct arm_perf_prev prev_write;
+  struct perf_prev prev_read;
+  struct perf_prev prev_write;
   unsigned long long acc_read;
   unsigned long long acc_write;
   unsigned long long life_enabled_ns; /* D6: counter time lifetimes, both events */
@@ -60,13 +60,13 @@ static int open_arm_aarch64_imc_counter(const char *pmu_dir, const char *const *
   int cpu, i, fd;
 
   snprintf(cpumask, sizeof(cpumask), "%s/cpumask", pmu_dir);
-  cpu = arm_perf_cpumask_first(cpumask);
+  cpu = perf_cpumask_first(cpumask);
   if (cpu < 0)
     return -1;
   for (i = 0; aliases[i] != NULL; i++) {
-    if (arm_perf_attr_from_sysfs(pmu_dir, aliases[i], &attr) != 0)
+    if (perf_attr_from_sysfs(pmu_dir, aliases[i], &attr) != 0)
       continue;
-    fd = arm_perf_open_cpu(&attr, cpu);
+    fd = perf_open_cpu(&attr, cpu);
     if (fd >= 0)
       return fd;
   }
@@ -88,7 +88,7 @@ static void arm_aarch64_imc_register_pmu(const char *pmu_name)
   struct arm_aarch64_imc_dev *dev;
   int fd_r, fd_w;
 
-  if (snprintf(pmu_dir, sizeof(pmu_dir), "%s/%s", ARM_PERF_DEVICES_DIR, pmu_name) >=
+  if (snprintf(pmu_dir, sizeof(pmu_dir), "%s/%s", PERF_DEVICES_DIR, pmu_name) >=
       (int)sizeof(pmu_dir))
     return;
   fd_r = open_arm_aarch64_imc_counter(pmu_dir, read_aliases);
@@ -110,7 +110,7 @@ static void arm_aarch64_imc_register_pmu(const char *pmu_name)
 /* Non-Grace fallback: every perf PMU named *dmc* / *imc*. */
 static void arm_aarch64_imc_scan_dmc(void)
 {
-  DIR *d = opendir(ARM_PERF_DEVICES_DIR);
+  DIR *d = opendir(PERF_DEVICES_DIR);
   struct dirent *de;
 
   while (d != NULL && (de = readdir(d)) != NULL && g_arm_aarch64_imc_n < ARM_AARCH64_IMC_MAX_DEVS) {
@@ -126,7 +126,7 @@ static int arm_aarch64_imc_begin(struct stats_type *type)
   if (type == NULL)
     return -1;
   arm_aarch64_imc_cleanup();
-  arm_imc_scf_init(&g_arm_aarch64_imc_scf, ARM_PERF_DEVICES_DIR, NULL);
+  arm_imc_scf_init(&g_arm_aarch64_imc_scf, PERF_DEVICES_DIR, NULL);
   if (arm_imc_scf_attach(&g_arm_aarch64_imc_scf) == 0)
     arm_aarch64_imc_scan_dmc();
   g_arm_aarch64_imc_mode = arm_imc_scf_begin_mode(g_arm_aarch64_imc_scf.n, g_arm_aarch64_imc_n);
@@ -169,12 +169,12 @@ static void arm_aarch64_imc_collect_dmc(struct stats_type *type)
 
   for (i = 0; i < g_arm_aarch64_imc_n; i++) {
     struct arm_aarch64_imc_dev *dev = &g_arm_aarch64_imc[i];
-    struct arm_perf_times t_r, t_w;
+    struct perf_times t_r, t_w;
     double d_r = 0.0, d_w = 0.0;
     struct stats *s;
 
-    if (arm_perf_read_scaled(dev->fd_read, &dev->prev_read, &d_r, &t_r) != 0 ||
-        arm_perf_read_scaled(dev->fd_write, &dev->prev_write, &d_w, &t_w) != 0)
+    if (perf_read_scaled(dev->fd_read, &dev->prev_read, &d_r, &t_r) != 0 ||
+        perf_read_scaled(dev->fd_write, &dev->prev_write, &d_w, &t_w) != 0)
       continue;
     dev->acc_read += (unsigned long long)(d_r + 0.5) / 64ULL;
     dev->acc_write += (unsigned long long)(d_w + 0.5) / 64ULL;

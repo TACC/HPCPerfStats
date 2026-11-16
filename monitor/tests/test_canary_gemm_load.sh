@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regression (via check-local): scripts/canary_gemm_load.sh builds the GEMM load, runs it in
-# the foreground for a bounded time, starts / refuses a second start / reports / stops a
+# the foreground for a bounded time (ending with its exact FLOP total), starts / refuses a second start / reports / stops a
 # background run, and rejects bad options. Skips (77) when no C compiler with OpenMP exists.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -54,6 +54,12 @@ grep -q "GEMM_T" "${PREFIX}/src/gemm_load.c" || fail "source not written"
 out="$("${SCRIPT}" run --prefix "${PREFIX}" --precision sp --seconds 1 --size 64 --threads 2)"
 echo "${out}" | grep -q "gemm_load sp n=64 threads=2 seconds=1 started" || fail "no start line: ${out}"
 echo "${out}" | grep -Eq "GFLOP/s=[0-9]*\.[0-9]+ .*check=1\.000" || fail "no rate/check line: ${out}"
+# A bounded run ends with its exact FLOP total (2 n^3 per GEMM; perf_raw_flops_check.sh needs it).
+total="$(echo "${out}" | sed -n 's/^gemm_load sp done total_flops=\([0-9]*\) elapsed=.*/\1/p')"
+[ -n "${total}" ] || fail "no done total_flops line: ${out}"
+if [ "${total}" -le 0 ] || [ $((total % (2 * 64 * 64 * 64))) -ne 0 ]; then
+  fail "total_flops ${total} is not a positive multiple of 2*64^3"
+fi
 
 # Background lifecycle: start, a second start is refused, status, stop, status after stop.
 "${SCRIPT}" start --prefix "${PREFIX}" --precision dp --size 64 --threads 1 >"${PREFIX}/start.out" ||

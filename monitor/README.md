@@ -146,7 +146,7 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | Area | Files (under `src/`) |
 |------|----------------------|
 | Stats type registry (`st_name` table for lookup / iteration; ordered by legacy variable names, so `stats_type_get` scans linearly) | `stats_registry.c`, `stats_registry.h` (optional modules guarded by configure **`MONITOR_WITH_*`** / backend macros — keep aligned with `Makefile.am` **`TYPES`**). |
-| Direct perf helpers for the aarch64 readers (portable; unit-tested on every host): open, raw / sysfs attrs, per-boot PMU `type`, `cpumask`, `{value, time_enabled, time_running}` read scaled by Δenabled / Δrunning; never pinned | `arm_perf_util.c`, `arm_perf_util.h`. |
+| Direct perf helpers for the aarch64 readers (portable; unit-tested on every host): open, raw / sysfs attrs, per-boot PMU `type`, `cpumask`, `{value, time_enabled, time_running}` read scaled by Δenabled / Δrunning; never pinned | `perf_util.c`, `perf_util.h`. |
 | `host_cpu_hw` core counters on Grace: nine events per CPU (CYC, INS, FP DP/SP/HP, FIXED, SCALE, SVE INT8/INT16), one fd each on `armv8_pmuv3*`; sysfs event names first, then a MIDR-keyed raw-code table (Neoverse V2) | `arm_core_perf.c`, `arm_core_perf.h`; key mapping in `publish_arm_measured_stats` (`cpu_counter_metrics_arm_publish.c`). |
 | Grace DRAM CAS (`arm_aarch64_imc`): one `scf<N>` device per `nvidia_scf_pmu_<N>` (1 on GH200, 2 on GB200 / Grace-Grace), `cmem_rd_data` + `cmem_wr_total_bytes` by direct perf; perf `dmc`/`imc` scan as fallback; re-scans every 10 ticks while no memory PMU is bound | `arm_imc.c`, `arm_imc_scf.c`, `arm_imc_scf.h`. |
 | `host_cpu_hw` on aarch64 (`arm` backend): `/proc/stat` jiffy util, cpufreq `scaling_cur_freq` clock (nominal chain fallback), measured counters from `arm_core_perf`; no DCGM, no LIKWID (3.1+) | `cpu_counter_metrics.c`, `cpu_counter_metrics_arm_{publish,util}.{c,h}`, `cpu_counter_metrics_arm_state.h`. |
@@ -723,6 +723,37 @@ It never reads the terminal, bounds every wait and external command with a timeo
 the GEMM load on any exit including Ctrl-C. Output is also written to
 `$HOME/hpcperfstats-counter-check/<host>-<epoch>.log`. Regression:
 `tests/test_canary_counter_check.sh` (fake shm writer / perf / load; `check-local`).
+
+## x86 FLOP counter check (`scripts/perf_raw_flops_check.sh`)
+
+Phase 2 (x86 counters by direct perf) needs a verified event table before any x86 FLOP code
+ships: every event is either a name from the node's perf event list or a raw
+`cpu/event=0xNN,umask=0xMM/` spec from vendor docs, never a guessed code. This script checks
+them on the hardware. It uses perf only: perf opens each event through `perf_event_open`, the
+kernel programs the counters, and nothing touches an MSR.
+
+For each precision it rebuilds the GEMM load, runs a bounded GEMM under `perf stat`, and compares
+the sum of weight × count with the GEMM's exact FLOP total (the `done total_flops=` line):
+
+- **ratio** — FLOPs counted by that precision's events (plus `all` events) ÷ GEMM FLOPs, within
+  `--tolerance` (default 10%) of 1.00. An undercount on AMD can mean a missing MERGE pairing.
+- **leak** — FLOPs counted by the other precision's events ÷ GEMM FLOPs, below 2%.
+
+Default events: on Intel the eight `fp_arith_inst_retired.*` widths (weights 1/2/4/8 dp,
+1/4/8/16 sp; FMA counts twice); on AMD `fp_ret_sse_avx_ops.all` (total FLOPs only, as on Zen3
+per D10). Events this perf cannot open are reported and skipped. A running share below 100%
+means multiplexing (other counter users, the NMI watchdog), so the result is scaled.
+
+```bash
+./scripts/perf_raw_flops_check.sh --list                 # CPU, perf version, FP events + encodings
+./scripts/perf_raw_flops_check.sh                        # dp then sp, 20 s each, exit 0 only on RESULT: PASS
+./scripts/perf_raw_flops_check.sh --precisions dp --event 'dp-512:8:cpu/event=0xc7,umask=0x40/'
+```
+
+`--event CLASS-LABEL:WEIGHT:EVENT` (repeatable) replaces the defaults: CLASS is `dp`, `sp` or
+`all`, WEIGHT is FLOPs per count. Run it as root on an otherwise idle node; `module load gcc`
+first if `cc` lacks OpenMP. Logs go to `$HOME/hpcperfstats-gemm-load/perf_raw_flops/`.
+Regression: `tests/test_perf_raw_flops_check.sh` (fake perf / load / cpuinfo; `check-local`).
 
 ## Profiling `hpcperfstatsd`
 

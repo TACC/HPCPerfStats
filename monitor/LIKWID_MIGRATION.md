@@ -114,7 +114,7 @@ Intel IMC types already sort after `host_cpu_hw` and are unchanged.
 `--with-cpu-counter-backend=arm` (`/proc/stat` util, cpufreq clock), and
 `--with-cpu-counter-backend=likwid` is rejected on non-x86 by `configure.ac`.
 Core counters (`arm_core_perf.c`) and Grace SCF DRAM traffic (`arm_imc_scf.c`)
-are read by direct `perf_event_open` through `arm_perf_util.c`, scaled by
+are read by direct `perf_event_open` through `perf_util.c`, scaled by
 time_enabled / time_running and never pinned (`nvidia-powerd` shares the PMU).
 The bundle, RPM prepare and cross scripts build LIKWID for x86 targets only.
 Contract: `cursor-rules/monitor-arm-direct-perf.mdc`; key migration (the Grace instr/cycle

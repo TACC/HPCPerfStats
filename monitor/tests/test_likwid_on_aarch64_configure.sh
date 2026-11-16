@@ -46,7 +46,7 @@ if grep -q -E 'PAPI_library_init|MONITOR_CPU_PAPI_FLOPS' "${ac}"; then
 fi
 
 # New direct-perf sources are built on the arm backend.
-grep -q 'arm_perf_util.c' "${am}" || fail "src/Makefile.am must build arm_perf_util.c"
+grep -q 'perf_util.c' "${am}" || fail "src/Makefile.am must build perf_util.c"
 grep -q 'arm_core_perf.c' "${am}" || fail "src/Makefile.am must build arm_core_perf.c"
 
 # Scripts: LIKWID is built for x86 only.

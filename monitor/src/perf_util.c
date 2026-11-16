@@ -1,4 +1,4 @@
-/* arm_perf_util — shared direct perf_event helpers (open, sysfs PMU parse, scaled read). */
+/* perf_util — shared direct perf_event helpers (open, sysfs PMU parse, scaled read). */
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -8,15 +8,15 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "arm_perf_util.h"
+#include "perf_util.h"
 
 #ifndef PERF_FLAG_FD_CLOEXEC
 #define PERF_FLAG_FD_CLOEXEC (1UL << 3)
 #endif
 
-#define ARM_PERF_READ_FORMAT (PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING)
+#define PERF_READ_FORMAT (PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING)
 
-int arm_perf_open_cpu(const struct perf_event_attr *attr, int cpu)
+int perf_open_cpu(const struct perf_event_attr *attr, int cpu)
 {
   if (attr == NULL || cpu < 0) {
     errno = EINVAL;
@@ -25,7 +25,7 @@ int arm_perf_open_cpu(const struct perf_event_attr *attr, int cpu)
   return (int)syscall(__NR_perf_event_open, attr, (pid_t)-1, cpu, -1, PERF_FLAG_FD_CLOEXEC);
 }
 
-void arm_perf_attr_raw(struct perf_event_attr *attr, uint32_t type, uint64_t config)
+void perf_attr_raw(struct perf_event_attr *attr, uint32_t type, uint64_t config)
 {
   if (attr == NULL)
     return;
@@ -33,7 +33,7 @@ void arm_perf_attr_raw(struct perf_event_attr *attr, uint32_t type, uint64_t con
   attr->size = sizeof(*attr);
   attr->type = type;
   attr->config = config;
-  attr->read_format = ARM_PERF_READ_FORMAT;
+  attr->read_format = PERF_READ_FORMAT;
 }
 
 /* Reads a small sysfs file into @p buf (NUL-terminated); -1 when missing or empty. */
@@ -98,7 +98,7 @@ static int apply_event_term(const char *pmu_dir, struct perf_event_attr *attr, c
   return 0;
 }
 
-int arm_perf_pmu_type(const char *pmu_dir, uint32_t *type)
+int perf_pmu_type(const char *pmu_dir, uint32_t *type)
 {
   char path[512];
   char buf[64];
@@ -117,7 +117,7 @@ int arm_perf_pmu_type(const char *pmu_dir, uint32_t *type)
   return 0;
 }
 
-int arm_perf_attr_from_sysfs(const char *pmu_dir, const char *event, struct perf_event_attr *attr)
+int perf_attr_from_sysfs(const char *pmu_dir, const char *event, struct perf_event_attr *attr)
 {
   char path[512];
   char buf[256];
@@ -125,9 +125,9 @@ int arm_perf_attr_from_sysfs(const char *pmu_dir, const char *event, struct perf
   char *save = NULL;
   uint32_t type;
 
-  if (event == NULL || attr == NULL || arm_perf_pmu_type(pmu_dir, &type) != 0)
+  if (event == NULL || attr == NULL || perf_pmu_type(pmu_dir, &type) != 0)
     return -1;
-  arm_perf_attr_raw(attr, type, 0);
+  perf_attr_raw(attr, type, 0);
   if (snprintf(path, sizeof(path), "%s/events/%s", pmu_dir, event) >= (int)sizeof(path) ||
       read_small_file(path, buf, sizeof(buf)) != 0)
     return -1;
@@ -144,7 +144,7 @@ int arm_perf_attr_from_sysfs(const char *pmu_dir, const char *event, struct perf
   return 0;
 }
 
-int arm_perf_cpumask_first(const char *path)
+int perf_cpumask_first(const char *path)
 {
   char buf[256];
   char *end = NULL;
@@ -158,8 +158,8 @@ int arm_perf_cpumask_first(const char *path)
   return (int)cpu;
 }
 
-void arm_perf_scale_sample(struct arm_perf_prev *prev, const uint64_t sample[3], double *delta_out,
-                           struct arm_perf_times *times_out)
+void perf_scale_sample(struct perf_prev *prev, const uint64_t sample[3], double *delta_out,
+                       struct perf_times *times_out)
 {
   int reseed;
 
@@ -184,8 +184,8 @@ void arm_perf_scale_sample(struct arm_perf_prev *prev, const uint64_t sample[3],
   prev->seeded = 1;
 }
 
-int arm_perf_read_scaled(int fd, struct arm_perf_prev *prev, double *delta_out,
-                         struct arm_perf_times *times_out)
+int perf_read_scaled(int fd, struct perf_prev *prev, double *delta_out,
+                     struct perf_times *times_out)
 {
   uint64_t sample[3];
 
@@ -197,6 +197,6 @@ int arm_perf_read_scaled(int fd, struct arm_perf_prev *prev, double *delta_out,
     return -1;
   if (read(fd, sample, sizeof(sample)) != (ssize_t)sizeof(sample))
     return -1;
-  arm_perf_scale_sample(prev, sample, delta_out, times_out);
+  perf_scale_sample(prev, sample, delta_out, times_out);
   return 0;
 }

@@ -1,7 +1,7 @@
 ---
-description: Grace / aarch64 direct perf_event readers (arm_perf_util, arm_core_perf, arm_imc SCF) — scaled reads, never pinned, sysfs names first, D1 keys and widths
+description: Grace / aarch64 direct perf_event readers (perf_util, arm_core_perf, arm_imc SCF) — scaled reads, never pinned, sysfs names first, D1 keys and widths
 globs:
-  - HPCPerfStats/monitor/src/arm_perf_util.*
+  - HPCPerfStats/monitor/src/perf_util.*
   - HPCPerfStats/monitor/src/arm_core_perf.*
   - HPCPerfStats/monitor/src/arm_imc*
   - HPCPerfStats/monitor/src/cpu_counter_metrics.c
@@ -24,7 +24,7 @@ Since **3.1** (cpu-precision Phase 1) aarch64 builds **no LIKWID**. The `arm` CP
 
 | Module | Role |
 |--------|------|
-| `arm_perf_util.{c,h}` | Portable helpers: open (`pid -1`, `CLOEXEC`), raw/sysfs attrs, per-boot PMU `type`, `cpumask` first CPU, scaled read. Builds and unit-tests on every host. |
+| `perf_util.{c,h}` | Portable helpers: open (`pid -1`, `CLOEXEC`), raw/sysfs attrs, per-boot PMU `type`, `cpumask` first CPU, scaled read. Builds and unit-tests on every host. |
 | `arm_core_perf.{c,h}` | `host_cpu_hw` core events: nine per CPU, one fd each (no groups) on the `armv8_pmuv3*` PMU type from sysfs. Opened at begin / SIGHUP only. |
 | `arm_imc.c`, `arm_imc_scf.{c,h}` | `arm_aarch64_imc`: one `scf<N>` device per `nvidia_scf_pmu_<N>`, `cmem_rd_data` + `cmem_wr_total_bytes` on that PMU's `cpumask` CPU; perf `dmc`/`imc` scan as fallback. |
 | `cpu_counter_metrics_arm_publish.{c,h}` | `publish_arm_measured_stats`: maps core lifetimes to schema keys. |
@@ -32,8 +32,8 @@ Since **3.1** (cpu-precision Phase 1) aarch64 builds **no LIKWID**. The `arm` CP
 ## Laws
 
 1. **Scaled reads only.** Every counter uses `read_format = PERF_FORMAT_TOTAL_TIME_ENABLED |
-   PERF_FORMAT_TOTAL_TIME_RUNNING` and goes through `arm_perf_read_scaled` /
-   `arm_perf_scale_sample` (delta = Δvalue × Δenabled / Δrunning; first sample seeds; Δrunning
+   PERF_FORMAT_TOTAL_TIME_RUNNING` and goes through `perf_read_scaled` /
+   `perf_scale_sample` (delta = Δvalue × Δenabled / Δrunning; first sample seeds; Δrunning
    0 adds 0; a drop re-seeds). `nvidia-powerd` holds ~22 core-PMU fds per CPU on GB200 / GH200,
    so unscaled counts read low by the time-sharing factor (finding #5; the reason LIKWID was
    dropped). Measured 3.0 → 3.1 step: about 3.3× (3.2–3.5×) on GB200 with `nvidia-powerd`
@@ -75,7 +75,7 @@ Since **3.1** (cpu-precision Phase 1) aarch64 builds **no LIKWID**. The `arm` CP
    SIGHUP, never in collect; collect is one bounded `read` per open fd
    (`monitor-jitter-and-fidelity-priority.mdc`). The unit's `LimitNOFILE` covers ~1,300 fds.
 11. **PMU sharing keys (D6, 3.1 Phase 1b; the version stays 3.1).** Every PMU-backed Grace row publishes counter time lifetimes
-    computed from the scaled read's own Δenabled / Δrunning (`arm_perf_times`), never from
+    computed from the scaled read's own Δenabled / Δrunning (`perf_times`), never from
     process names or extra syscalls: `host_cpu_hw` `pmu_enabled_time`, `pmu_running_time` and
     `pmu_solo_running_time`; `arm_aarch64_imc` `pmu_enabled_time` and `pmu_running_time`
     (`E,W=64,U=ns`). They are counters, not a percent gauge, because ingest sums `host_cpu_hw`
@@ -89,7 +89,7 @@ Since **3.1** (cpu-precision Phase 1) aarch64 builds **no LIKWID**. The `arm` CP
     another PMU user. Tests: `test_sharing_*` in `test_arm_core_perf.c`,
     `test_scale_sample_reports_times`, `test_scf_sharing_times`, `test_publish_sharing_keys`.
 10. **Tests use the fake perf layer.** `tests/test_fake_perf.{c,h}` (TMPDIR sysfs tree + pipe
-    fds) drive `test_arm_perf_util`, `test_arm_core_perf`, `test_arm_imc_scf` and
+    fds) drive `test_perf_util`, `test_arm_core_perf`, `test_arm_imc_scf` and
     `test_cpu_counter_arm_publish` on every host; aarch64 still needs the `arm` backend build
     (`monitor-dual-verify-cross-and-static.mdc`). Validator key lists live in
     `scripts/lib/papi_shm_validate.py`; W=48 wrap is width-aware in

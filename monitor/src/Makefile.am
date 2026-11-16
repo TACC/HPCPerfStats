@@ -267,8 +267,8 @@ TYPES += \
 	cpu_counter_metrics_arm_state.h \
 	cpu_counter_metrics_arm_util.c \
 	cpu_counter_metrics_arm_util.h \
-	arm_perf_util.c \
-	arm_perf_util.h \
+	perf_util.c \
+	perf_util.h \
 	arm_core_perf.c \
 	arm_core_perf.h
 if MONITOR_ARCH_ARM

@@ -46,7 +46,7 @@ static const struct arm_core_midr_row g_midr_rows[] = {
 
 struct arm_core_slot {
   int fd;
-  struct arm_perf_prev prev;
+  struct perf_prev prev;
   unsigned long long life;
 };
 
@@ -166,13 +166,13 @@ static void cfg_defaults(const struct arm_core_perf_cfg *in, struct arm_core_per
   if (in != NULL)
     *out = *in;
   if (out->devices_dir == NULL)
-    out->devices_dir = ARM_PERF_DEVICES_DIR;
+    out->devices_dir = PERF_DEVICES_DIR;
   if (out->midr_path == NULL)
     out->midr_path = ARM_CORE_MIDR_PATH;
   if (out->cpuinfo_path == NULL)
     out->cpuinfo_path = ARM_CORE_CPUINFO_PATH;
   if (out->open_fn == NULL)
-    out->open_fn = arm_perf_open_cpu;
+    out->open_fn = perf_open_cpu;
 }
 
 int arm_core_perf_resolve(const struct arm_core_perf_cfg *cfg,
@@ -195,17 +195,17 @@ int arm_core_perf_resolve(const struct arm_core_perf_cfg *cfg,
     *midr_out = 0;
   if (find_core_pmu(c.devices_dir, pmu_dir, sizeof(pmu_dir)) != 0)
     return -1;
-  have_type = (arm_perf_pmu_type(pmu_dir, &type) == 0); /* raw codes go on this PMU type */
+  have_type = (perf_pmu_type(pmu_dir, &type) == 0); /* raw codes go on this PMU type */
   if (arm_core_perf_read_midr(c.midr_path, c.cpuinfo_path, &midr) != 0)
     midr = 0;
   if (midr_out != NULL)
     *midr_out = midr;
   row = midr_row(midr);
   for (e = 0; e < ARM_CORE_NEVENTS; e++) {
-    if (arm_perf_attr_from_sysfs(pmu_dir, g_event_names[e], &attrs[e]) == 0)
+    if (perf_attr_from_sysfs(pmu_dir, g_event_names[e], &attrs[e]) == 0)
       ok[e] = 1;
     else if (row != NULL && row->code[e] != 0 && have_type) {
-      arm_perf_attr_raw(&attrs[e], type, row->code[e]);
+      perf_attr_raw(&attrs[e], type, row->code[e]);
       ok[e] = 1;
     }
     n += ok[e];
@@ -349,12 +349,12 @@ void arm_core_perf_collect_cpu(int cpu, struct arm_core_counts *out)
   t = &g_times[cpu];
   for (e = 0; e < ARM_CORE_NEVENTS; e++) {
     struct arm_core_slot *s = &g_slots[cpu * ARM_CORE_NEVENTS + e];
-    struct arm_perf_times dt;
+    struct perf_times dt;
     double delta = 0.0;
 
     if (s->fd < 0)
       continue;
-    if (arm_perf_read_scaled(s->fd, &s->prev, &delta, &dt) == 0 && delta > 0.0)
+    if (perf_read_scaled(s->fd, &s->prev, &delta, &dt) == 0 && delta > 0.0)
       s->life += (unsigned long long)(delta + 0.5);
     t->enabled += dt.enabled;
     t->running += dt.running;

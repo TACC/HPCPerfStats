@@ -3,11 +3,11 @@
  * One device per nvidia_scf_pmu_<N> (one per Grace socket: 1 on GH200, 2 on GB200 /
  * Grace-Grace; never assume two). Each opens cmem_rd_data and cmem_wr_total_bytes from the PMU's
  * sysfs `events/` on its `cpumask` CPU, with the per-boot `type` read from sysfs, and reads them
- * scaled through arm_perf_util. Socket number = <N> from the PMU name, never the type number. */
+ * scaled through perf_util. Socket number = <N> from the PMU name, never the type number. */
 #ifndef ARM_IMC_SCF_H
 #define ARM_IMC_SCF_H
 
-#include "arm_perf_util.h"
+#include "perf_util.h"
 
 #define ARM_IMC_SCF_PMU_PREFIX "nvidia_scf_pmu_"
 #define ARM_IMC_SCF_MAX_SOCKETS 16
@@ -19,8 +19,8 @@ struct arm_imc_scf_dev {
   int cpu;    /* first CPU of that PMU's cpumask */
   int fd_rd;
   int fd_wr;
-  struct arm_perf_prev prev_rd;
-  struct arm_perf_prev prev_wr;
+  struct perf_prev prev_rd;
+  struct perf_prev prev_wr;
   unsigned long long life_rd_beats;   /* scaled lifetime, 32-byte read beats */
   unsigned long long life_wr_bytes;   /* scaled lifetime, bytes written */
   unsigned long long life_enabled_ns; /* D6: enabled time lifetime, both events */
@@ -29,7 +29,7 @@ struct arm_imc_scf_dev {
 
 struct arm_imc_scf {
   const char *devices_dir;
-  arm_perf_open_fn open_fn;
+  perf_open_fn open_fn;
   struct arm_imc_scf_dev dev[ARM_IMC_SCF_MAX_SOCKETS];
   int n;
   int ticks_since_scan;
@@ -47,8 +47,8 @@ enum arm_imc_mode {
 /** SCF when any SCF device attached, else the perf dmc/imc devices, else RESCAN. */
 int arm_imc_scf_begin_mode(int n_scf, int n_perf);
 
-/** Resets @p s (no fds) for @p devices_dir; NULL open_fn uses arm_perf_open_cpu. */
-void arm_imc_scf_init(struct arm_imc_scf *s, const char *devices_dir, arm_perf_open_fn open_fn);
+/** Resets @p s (no fds) for @p devices_dir; NULL open_fn uses perf_open_cpu. */
+void arm_imc_scf_init(struct arm_imc_scf *s, const char *devices_dir, perf_open_fn open_fn);
 
 /** Number of nvidia_scf_pmu_<N> entries under @p devices_dir (one opendir; 0 when none). */
 int arm_imc_scf_count_pmus(const char *devices_dir);

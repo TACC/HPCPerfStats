@@ -1,4 +1,4 @@
-/* arm_perf_util: sysfs PMU parse and the enabled/running scaled read.
+/* perf_util: sysfs PMU parse and the enabled/running scaled read.
  *
  * Regression for finding #5 (c122-018, 2026-11-13): nvidia-powerd holds most Grace core PMCs, so
  * events run ~25% of the time; LIKWID read bare counts without time_enabled/time_running and the
@@ -9,32 +9,32 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "arm_perf_util.h"
+#include "perf_util.h"
 #include "test_fake_perf.h"
 
 static char g_root[512];
 
-static void sample(struct arm_perf_prev *p, uint64_t v, uint64_t en, uint64_t run, double *d)
+static void sample(struct perf_prev *p, uint64_t v, uint64_t en, uint64_t run, double *d)
 {
   const uint64_t s[3] = {v, en, run};
 
-  arm_perf_scale_sample(p, s, d, NULL);
+  perf_scale_sample(p, s, d, NULL);
 }
 
-static void sample_t(struct arm_perf_prev *p, uint64_t v, uint64_t en, uint64_t run, double *d,
-                     struct arm_perf_times *t)
+static void sample_t(struct perf_prev *p, uint64_t v, uint64_t en, uint64_t run, double *d,
+                     struct perf_times *t)
 {
   const uint64_t s[3] = {v, en, run};
 
-  arm_perf_scale_sample(p, s, d, t);
+  perf_scale_sample(p, s, d, t);
 }
 
 /* D6 (Phase 1b): the scaled read also reports the sample's own d_enabled / d_running, the input
  * of the PMU sharing keys; a seeding or reseeding sample reports 0 / 0. */
 static void test_scale_sample_reports_times(void)
 {
-  struct arm_perf_prev p;
-  struct arm_perf_times t;
+  struct perf_prev p;
+  struct perf_times t;
   const uint64_t one[3] = {1, 1, 1};
   double d;
 
@@ -51,13 +51,13 @@ static void test_scale_sample_reports_times(void)
   sample_t(&p, 20, 700, 300, &d, NULL); /* times are optional */
   assert(d == 10.0);
   t.enabled = t.running = 5;
-  arm_perf_scale_sample(NULL, one, &d, &t); /* bad input clears the times too */
+  perf_scale_sample(NULL, one, &d, &t); /* bad input clears the times too */
   assert(t.enabled == 0 && t.running == 0);
 }
 
 static void test_scale_first_sample_seeds(void)
 {
-  struct arm_perf_prev p;
+  struct perf_prev p;
   double d = -1.0;
 
   memset(&p, 0, sizeof(p));
@@ -68,7 +68,7 @@ static void test_scale_first_sample_seeds(void)
 
 static void test_scale_multiplexed_delta(void)
 {
-  struct arm_perf_prev p;
+  struct perf_prev p;
   double d;
 
   memset(&p, 0, sizeof(p));
@@ -83,7 +83,7 @@ static void test_scale_multiplexed_delta(void)
 
 static void test_scale_not_running_adds_nothing(void)
 {
-  struct arm_perf_prev p;
+  struct perf_prev p;
   double d;
 
   memset(&p, 0, sizeof(p));
@@ -97,7 +97,7 @@ static void test_scale_not_running_adds_nothing(void)
 
 static void test_scale_counter_reset_reseeds(void)
 {
-  struct arm_perf_prev p;
+  struct perf_prev p;
   double d;
 
   memset(&p, 0, sizeof(p));
@@ -113,22 +113,22 @@ static void test_scale_counter_reset_reseeds(void)
 
 static void test_scale_null_inputs(void)
 {
-  struct arm_perf_prev p;
+  struct perf_prev p;
   const uint64_t s[3] = {1, 1, 1};
   double d = 7.0;
 
   memset(&p, 0, sizeof(p));
-  arm_perf_scale_sample(NULL, s, &d, NULL);
+  perf_scale_sample(NULL, s, &d, NULL);
   assert(d == 0.0);
-  arm_perf_scale_sample(&p, NULL, &d, NULL);
-  arm_perf_scale_sample(&p, s, NULL, NULL);
+  perf_scale_sample(&p, NULL, &d, NULL);
+  perf_scale_sample(&p, s, NULL, NULL);
   assert(!p.seeded);
 }
 
 static void test_read_scaled_from_fd(void)
 {
-  struct arm_perf_prev p;
-  struct arm_perf_times t;
+  struct perf_prev p;
+  struct perf_times t;
   double d = -1.0;
   int fds[2];
   uint64_t rec[3] = {100, 1000, 1000};
@@ -138,31 +138,31 @@ static void test_read_scaled_from_fd(void)
   assert(pipe(fds) == 0);
   assert(write(fds[1], rec, sizeof(rec)) == (ssize_t)sizeof(rec));
   assert(write(fds[1], rec2, sizeof(rec2)) == (ssize_t)sizeof(rec2));
-  assert(arm_perf_read_scaled(fds[0], &p, &d, &t) == 0 && d == 0.0);
+  assert(perf_read_scaled(fds[0], &p, &d, &t) == 0 && d == 0.0);
   assert(t.enabled == 0 && t.running == 0);
-  assert(arm_perf_read_scaled(fds[0], &p, &d, &t) == 0 && d == 400.0); /* 200 x 1000 / 500 */
+  assert(perf_read_scaled(fds[0], &p, &d, &t) == 0 && d == 400.0); /* 200 x 1000 / 500 */
   assert(t.enabled == 1000 && t.running == 500);
   /* Short read (8 of 24 bytes): error, prev unchanged, no times. */
   assert(write(fds[1], rec, 8) == 8);
   close(fds[1]);
   t.enabled = t.running = 7;
-  assert(arm_perf_read_scaled(fds[0], &p, &d, &t) == -1 && d == 0.0);
+  assert(perf_read_scaled(fds[0], &p, &d, &t) == -1 && d == 0.0);
   assert(t.enabled == 0 && t.running == 0);
   assert(p.value == 300);
   close(fds[0]);
-  assert(arm_perf_read_scaled(-1, &p, &d, NULL) == -1);
-  assert(arm_perf_read_scaled(fds[0], NULL, &d, NULL) == -1);
+  assert(perf_read_scaled(-1, &p, &d, NULL) == -1);
+  assert(perf_read_scaled(fds[0], NULL, &d, NULL) == -1);
 }
 
 static void test_attr_raw_scaled_not_pinned(void)
 {
   struct perf_event_attr a;
 
-  arm_perf_attr_raw(&a, 8, 0x801C);
+  perf_attr_raw(&a, 8, 0x801C);
   assert(a.type == 8 && a.config == 0x801C && a.size == sizeof(a));
   assert(a.read_format == (PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING));
   assert(a.pinned == 0 && a.exclusive == 0 && a.disabled == 0);
-  arm_perf_attr_raw(NULL, 1, 1); /* no crash */
+  perf_attr_raw(NULL, 1, 1); /* no crash */
 }
 
 static void test_attr_from_sysfs_scf_encoding(void)
@@ -180,18 +180,18 @@ static void test_attr_from_sysfs_scf_encoding(void)
   fake_sysfs_write(g_root, "nvidia_scf_pmu_0/events/badterm", "nosuch=0x1\n");
   snprintf(pmu, sizeof(pmu), "%s/nvidia_scf_pmu_0", g_root);
   memset(&a, 0xff, sizeof(a));
-  assert(arm_perf_attr_from_sysfs(pmu, "cmem_rd_data", &a) == 0);
+  assert(perf_attr_from_sysfs(pmu, "cmem_rd_data", &a) == 0);
   assert(a.type == 25 && a.config == 0x1a5 && a.config1 == 0);
   assert(a.read_format == (PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING));
   assert(a.pinned == 0 && a.exclusive == 0);
-  assert(arm_perf_attr_from_sysfs(pmu, "multi", &a) == 0);
+  assert(perf_attr_from_sysfs(pmu, "multi", &a) == 0);
   assert(a.config == (0x3ULL | (0x2ULL << 32)) && a.config1 == 7);
   /* Missing event, unknown format term, missing PMU: errors. */
-  assert(arm_perf_attr_from_sysfs(pmu, "cmem_nosuch", &a) == -1);
-  assert(arm_perf_attr_from_sysfs(pmu, "badterm", &a) == -1);
-  assert(arm_perf_attr_from_sysfs("/nonexistent/hps", "cmem_rd_data", &a) == -1);
-  assert(arm_perf_attr_from_sysfs(NULL, "cmem_rd_data", &a) == -1);
-  assert(arm_perf_attr_from_sysfs(pmu, NULL, &a) == -1);
+  assert(perf_attr_from_sysfs(pmu, "cmem_nosuch", &a) == -1);
+  assert(perf_attr_from_sysfs(pmu, "badterm", &a) == -1);
+  assert(perf_attr_from_sysfs("/nonexistent/hps", "cmem_rd_data", &a) == -1);
+  assert(perf_attr_from_sysfs(NULL, "cmem_rd_data", &a) == -1);
+  assert(perf_attr_from_sysfs(pmu, NULL, &a) == -1);
 }
 
 static void test_pmu_type(void)
@@ -202,11 +202,11 @@ static void test_pmu_type(void)
   fake_sysfs_write(g_root, "nvidia_scf_pmu_1/type", "15\n");
   fake_sysfs_write(g_root, "bad_pmu/type", "x\n");
   snprintf(pmu, sizeof(pmu), "%s/nvidia_scf_pmu_1", g_root);
-  assert(arm_perf_pmu_type(pmu, &t) == 0 && t == 15);
+  assert(perf_pmu_type(pmu, &t) == 0 && t == 15);
   snprintf(pmu, sizeof(pmu), "%s/bad_pmu", g_root);
-  assert(arm_perf_pmu_type(pmu, &t) == -1);
-  assert(arm_perf_pmu_type(NULL, &t) == -1);
-  assert(arm_perf_pmu_type(pmu, NULL) == -1);
+  assert(perf_pmu_type(pmu, &t) == -1);
+  assert(perf_pmu_type(NULL, &t) == -1);
+  assert(perf_pmu_type(pmu, NULL) == -1);
 }
 
 static void test_cpumask_first(void)
@@ -217,25 +217,25 @@ static void test_cpumask_first(void)
   fake_sysfs_write(g_root, "m2", "0-3,8\n");
   fake_sysfs_write(g_root, "m3", "garbage\n");
   snprintf(path, sizeof(path), "%s/m1", g_root);
-  assert(arm_perf_cpumask_first(path) == 72);
+  assert(perf_cpumask_first(path) == 72);
   snprintf(path, sizeof(path), "%s/m2", g_root);
-  assert(arm_perf_cpumask_first(path) == 0);
+  assert(perf_cpumask_first(path) == 0);
   snprintf(path, sizeof(path), "%s/m3", g_root);
-  assert(arm_perf_cpumask_first(path) == -1);
+  assert(perf_cpumask_first(path) == -1);
   snprintf(path, sizeof(path), "%s/missing", g_root);
-  assert(arm_perf_cpumask_first(path) == -1);
-  assert(arm_perf_cpumask_first(NULL) == -1);
+  assert(perf_cpumask_first(path) == -1);
+  assert(perf_cpumask_first(NULL) == -1);
 }
 
 static void test_open_cpu_rejects_bad_input(void)
 {
   struct perf_event_attr a;
 
-  arm_perf_attr_raw(&a, 1, 0);
+  perf_attr_raw(&a, 1, 0);
   errno = 0;
-  assert(arm_perf_open_cpu(NULL, 0) == -1 && errno == EINVAL);
+  assert(perf_open_cpu(NULL, 0) == -1 && errno == EINVAL);
   errno = 0;
-  assert(arm_perf_open_cpu(&a, -1) == -1 && errno == EINVAL);
+  assert(perf_open_cpu(&a, -1) == -1 && errno == EINVAL);
 }
 
 int main(void)
@@ -254,6 +254,6 @@ int main(void)
   test_cpumask_first();
   test_open_cpu_rejects_bad_input();
   fake_sysfs_rm(g_root);
-  printf("test_arm_perf_util passed\n");
+  printf("test_perf_util passed\n");
   return 0;
 }

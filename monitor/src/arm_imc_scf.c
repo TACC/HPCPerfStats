@@ -19,7 +19,7 @@ int arm_imc_scf_begin_mode(int n_scf, int n_perf)
   return (n_perf > 0) ? ARM_IMC_MODE_PERF : ARM_IMC_MODE_RESCAN;
 }
 
-void arm_imc_scf_init(struct arm_imc_scf *s, const char *devices_dir, arm_perf_open_fn open_fn)
+void arm_imc_scf_init(struct arm_imc_scf *s, const char *devices_dir, perf_open_fn open_fn)
 {
   int i;
 
@@ -27,7 +27,7 @@ void arm_imc_scf_init(struct arm_imc_scf *s, const char *devices_dir, arm_perf_o
     return;
   memset(s, 0, sizeof(*s));
   s->devices_dir = devices_dir;
-  s->open_fn = (open_fn != NULL) ? open_fn : arm_perf_open_cpu;
+  s->open_fn = (open_fn != NULL) ? open_fn : perf_open_cpu;
   for (i = 0; i < ARM_IMC_SCF_MAX_SOCKETS; i++) {
     s->dev[i].fd_rd = -1;
     s->dev[i].fd_wr = -1;
@@ -91,11 +91,11 @@ static int scf_open_socket(struct arm_imc_scf *s, int sock, struct arm_imc_scf_d
   d->fd_rd = d->fd_wr = -1;
   snprintf(pmu_dir, sizeof(pmu_dir), "%s/" ARM_IMC_SCF_PMU_PREFIX "%d", s->devices_dir, sock);
   snprintf(path, sizeof(path), "%s/cpumask", pmu_dir);
-  d->cpu = arm_perf_cpumask_first(path);
+  d->cpu = perf_cpumask_first(path);
   if (d->cpu < 0)
     why = "cpumask unreadable";
-  else if (arm_perf_attr_from_sysfs(pmu_dir, ARM_IMC_SCF_RD_EVENT, &rd) == 0 &&
-           arm_perf_attr_from_sysfs(pmu_dir, ARM_IMC_SCF_WR_EVENT, &wr) == 0) {
+  else if (perf_attr_from_sysfs(pmu_dir, ARM_IMC_SCF_RD_EVENT, &rd) == 0 &&
+           perf_attr_from_sysfs(pmu_dir, ARM_IMC_SCF_WR_EVENT, &wr) == 0) {
     errno = 0;
     d->fd_rd = s->open_fn(&rd, d->cpu);
     d->fd_wr = (d->fd_rd >= 0) ? s->open_fn(&wr, d->cpu) : -1;
@@ -143,14 +143,14 @@ int arm_imc_scf_tick(struct arm_imc_scf *s)
 int arm_imc_scf_read(struct arm_imc_scf_dev *d, unsigned long long *cas_rd,
                      unsigned long long *cas_wr)
 {
-  struct arm_perf_times t_rd, t_wr;
+  struct perf_times t_rd, t_wr;
   double rd = 0.0, wr = 0.0;
 
   if (d == NULL || cas_rd == NULL || cas_wr == NULL)
     return -1;
-  if (arm_perf_read_scaled(d->fd_rd, &d->prev_rd, &rd, &t_rd) == 0 && rd > 0.0)
+  if (perf_read_scaled(d->fd_rd, &d->prev_rd, &rd, &t_rd) == 0 && rd > 0.0)
     d->life_rd_beats += (unsigned long long)(rd + 0.5);
-  if (arm_perf_read_scaled(d->fd_wr, &d->prev_wr, &wr, &t_wr) == 0 && wr > 0.0)
+  if (perf_read_scaled(d->fd_wr, &d->prev_wr, &wr, &t_wr) == 0 && wr > 0.0)
     d->life_wr_bytes += (unsigned long long)(wr + 0.5);
   d->life_enabled_ns += t_rd.enabled + t_wr.enabled; /* times are 0 on a failed read */
   d->life_running_ns += t_rd.running + t_wr.running;

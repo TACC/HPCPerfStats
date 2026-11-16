@@ -31,7 +31,7 @@ void fake_sysfs_mkdir(const char *root, const char *rel);
 /** Removes the whole tree. */
 void fake_sysfs_rm(const char *root);
 
-/** arm_perf_open_fn: records the call and returns a pipe read end, or fails (errno ENOENT) when
+/** perf_open_fn: records the call and returns a pipe read end, or fails (errno ENOENT) when
  * the attr config matches fake_perf_fail(). */
 int fake_perf_open(const struct perf_event_attr *attr, int cpu);
 /** Fail opens with @p config on @p cpu (-1 = every CPU). */

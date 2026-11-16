@@ -991,12 +991,12 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
   {
     "id": "monitor_arm_direct_perf",
     "patterns": [
-      "HPCPerfStats/monitor/src/arm_perf_util*",
+      "HPCPerfStats/monitor/src/perf_util*",
       "HPCPerfStats/monitor/src/arm_core_perf*",
       "HPCPerfStats/monitor/src/arm_imc*",
       "HPCPerfStats/monitor/src/cpu_counter_metrics.c",
       "HPCPerfStats/monitor/src/cpu_counter_metrics_arm_*",
-      "monitor/src/arm_perf_util*",
+      "monitor/src/perf_util*",
       "monitor/src/arm_core_perf*",
       "monitor/src/arm_imc*",
       "monitor/src/cpu_counter_metrics.c",

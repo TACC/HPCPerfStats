@@ -50,7 +50,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 | `HPCPerfStats/monitor/src/amd*.c`, `amd_cpuid_match*`, `amd_processor*`, `amd_x86_uncore_df*`, `cpu_counter_metrics*`, `cpu_counter_metrics_likwid_begin*`, `likwid_pmc_adapter*`, `likwid_rapl*`, `likwid_uncore_profiles*`, `likwid_arch_map.c`, `cpuid.*`, `stats_registry.c`, `configure.ac` (LIKWID-only PMU / RAPL path) | `monitor-amd-epyc-likwid.mdc`, `monitor-likwid-rapl-refactor.mdc` |
 | `HPCPerfStats/monitor/src/*ib*.c`, `opa.c` / `opa_sysfs.*`, IB sysfs parsers | `monitor-ib-sysfs-parsing.mdc` |
 | `HPCPerfStats/monitor/src/*dcgm*`, `*gpu*` (incl. `nvidia_gpu_nvml*`), `third_party/nvidia-nvml/**` | `monitor-dcgm-integration.mdc` |
-| `HPCPerfStats/monitor/src/arm_perf_util*`, `arm_core_perf*`, `arm_imc*`, `cpu_counter_metrics.c`, `cpu_counter_metrics_arm_*` (Grace direct perf: scaled reads, D1 keys / widths, SCF re-scan) | `monitor-arm-direct-perf.mdc` |
+| `HPCPerfStats/monitor/src/perf_util*`, `arm_core_perf*`, `arm_imc*`, `cpu_counter_metrics.c`, `cpu_counter_metrics_arm_*` (Grace direct perf: scaled reads, D1 keys / widths, SCF re-scan) | `monitor-arm-direct-perf.mdc` |
 | `HPCPerfStats/monitor/src/arm_power_*` (`host_power_socket`, hwmon power meters) | `monitor-dcgm-integration.mdc`, `monitor-schema-keys-headers.mdc`, `monitor-emitted-variable-naming.mdc` |
 | `HPCPerfStats/monitor/src/*intel_gpu*`, `*xpum*`, `third_party/intel-xpum/**` | `monitor-xpum-integration.mdc` |
 | DEBUG shm mirror paths | `monitor-debug-shm.mdc` |
