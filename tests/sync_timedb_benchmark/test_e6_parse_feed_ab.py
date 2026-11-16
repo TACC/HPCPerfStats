@@ -61,7 +61,7 @@ def _legacy_feed_lines_slow(parser, lines) -> None:
 
   with _held_parse_stage("feed_s"):
     for line in lines:
-      # Intentional redundant list()/dict lookups — E6 baseline tax.
+      # Intentional redundant list()/dict lookups - E6 baseline tax.
       _ = list(
           parser.schema.get("host_proc")
           or parser.schema.get("proc")

@@ -14,8 +14,6 @@ from pathlib import Path
 import pytest
 
 from tests.sync_timedb_benchmark.screening_runner import (
-  DEFAULT_LOADED48_MIN_FULL_FRAC,
-  DEFAULT_LOADED48_SAMPLE_S,
   DEFAULT_LOADED48_WARMUP_S,
   build_loaded48_manifest,
   corpus_hosts,
@@ -92,7 +90,6 @@ def test_loaded48_continuous_fill_soak(monkeypatch):
   wall_s = float(hours) * 3600.0
   # Short smokes need a short warm-up so occupancy is measured on the loaded window.
   warmup_s = min(DEFAULT_LOADED48_WARMUP_S, max(15.0, wall_s * 0.15))
-  sample_s = min(DEFAULT_LOADED48_SAMPLE_S, max(5.0, wall_s / 20.0))
   min_full_frac = 0.50 if hours <= 0.25 else 0.70
   # Short smokes: count near-full seconds (>=75% width). Longer soaks: >=90%.
   full_threshold = (
@@ -157,7 +154,7 @@ def test_loaded48_continuous_fill_soak(monkeypatch):
   archive_dir.mkdir(parents=True, exist_ok=True)
   _wipe_daily_archive()
   # Cap seed size; plant only under fresh epochs (see padding helper).
-  # Skip plant_corpus epoch names entirely — empty hosts then pad.
+  # Skip plant_corpus epoch names entirely - empty hosts then pad.
   reset_screening_state(
       corpus_dir=corpus_dir,
       archive_dir=archive_dir,
@@ -280,7 +277,7 @@ def test_loaded48_continuous_fill_soak(monkeypatch):
           % peak
       )
     if child.poll() is None:
-      # Cooperative drain via SIGTERM (handlers → request_shutdown).
+      # Cooperative drain via SIGTERM (handlers -> request_shutdown).
       child.send_signal(signal.SIGTERM)
       try:
         child.wait(timeout=180.0)

@@ -72,7 +72,7 @@ def test_e7_proc_build_ab_arm():
   for _ in range(replicates):
     reset_parse_stage_timing(enabled=True)
     t0 = time.perf_counter()
-    # Baseline: ordinary list → timed dedupe + DataFrame(list).
+    # Baseline: ordinary list -> timed dedupe + DataFrame(list).
     build_stats_dataframes([], list(raw_rows))
     wall = time.perf_counter() - t0
     snap = snapshot_parse_stage_campaign_timing()
@@ -86,7 +86,7 @@ def test_e7_proc_build_ab_arm():
     wall = time.perf_counter() - t0
     snap = snapshot_parse_stage_campaign_timing()
     reset_parse_stage_timing(enabled=False)
-    # OnlineMerged skips timed dedupe; merge hold may be ~0 — still gate it.
+    # OnlineMerged skips timed dedupe; merge hold may be ~0 - still gate it.
     cand_merge.append(float(snap.get("proc_merge_s") or 0.0))
     cand_build.append(float(snap.get("build_df_s") or wall))
 

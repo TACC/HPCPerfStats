@@ -147,7 +147,7 @@ def main() -> int:
     Path(done_path).write_text(f"rc={rc}\n", encoding="utf-8")
   if _stack_fh is not None:
     _stack_fh.flush()
-  # Hard exit — skip FT interpreter teardown with Codon/.so mapped.
+  # Hard exit - skip FT interpreter teardown with Codon/.so mapped.
   os._exit(rc)
 
 

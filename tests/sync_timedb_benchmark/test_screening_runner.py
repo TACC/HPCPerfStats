@@ -582,7 +582,7 @@ def test_run_width_matrix_times_out_when_ingest_hangs():
     )
 
 
-def test_run_width_matrix_records_files_per_s(tmp_path):
+def test_run_width_matrix_records_files_per_s():
   calls: list[int] = []
 
   def set_width(n: int) -> None:
@@ -715,14 +715,12 @@ def test_knobs_mode_defaults_and_winner(monkeypatch):
       DEFAULT_KNOBS_REPLICATES,
       DEFAULT_KNOBS_WIDTH,
       KNOB_SWEEPS,
-      build_knobs_manifest,
       knobs_fixed_width,
       knobs_mode_enabled,
       knob_getter_name,
       parse_replicates_env,
       select_knob_winner,
       summarize_knob_replicates,
-      write_screening_artifact,
   )
 
   monkeypatch.setenv("HPCPERFSTATS_SYNC_TIMEDB_KNOBS", "1")

@@ -33,7 +33,6 @@ DEFAULT_CONTENTION_REPLICATES = 5
 DEFAULT_LOADED48_WIDTH = 48
 DEFAULT_LOADED48_HOURS = 6.0
 DEFAULT_LOADED48_WARMUP_S = 300.0
-DEFAULT_LOADED48_SAMPLE_S = 30.0
 DEFAULT_LOADED48_MIN_FULL_FRAC = 0.95
 CONTENTION_WAVES: tuple[str, ...] = (
     "caches",
@@ -226,7 +225,6 @@ def e6_retain_candidate(
   return cand_lo >= base_mean and cand_lo >= base_lo * 1.05
 
 
-DEFAULT_E8_WIDTH = 48
 DEFAULT_E8_REPLICATES = 5
 
 
@@ -605,8 +603,6 @@ def build_host_insert_ab_manifest(
 
 
 DEFAULT_WIDTH_SWEEP_WIDTHS: tuple[int, ...] = (48, 64, 96)
-DEFAULT_WIDTH_SWEEP_HOURS = 3.0
-DEFAULT_WIDTH_SWEEP_SMOKE_HOURS = 0.1
 
 
 def width_sweep_gate_would_retain(
@@ -2355,7 +2351,7 @@ def plant_loaded48_queue_padding(
         break
       dst_host = archive_dir / host
       dst_host.mkdir(parents=True, exist_ok=True)
-      # Fresh epoch basename — never reuse template epoch (day-close delete).
+      # Fresh epoch basename - never reuse template epoch (day-close delete).
       dst = dst_host / ("%d" % (now + origin + i))
       if dst.exists():
         dst = dst_host / ("%d_%d" % (now, i))

@@ -218,7 +218,7 @@ def test_e2_closed_book_mid_size(monkeypatch):
   out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
   assert out.is_file()
   assert "residual_frac" in payload
-  # residual_ok records the ≤5% contract; unmet residual is ledger evidence,
+  # residual_ok records the <=5% contract; unmet residual is ledger evidence,
   # not a hard pytest failure (some wall may remain outside instrumented holds).
   assert isinstance(residual_ok, bool)
   assert isinstance(phases, dict)
