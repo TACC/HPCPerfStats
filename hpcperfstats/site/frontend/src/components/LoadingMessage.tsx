@@ -2,9 +2,6 @@ export type LoadingMessageProps = {
   message?: string;
 };
 
-/**
- * Shared loading indicator for AJAX/data requests.
- */
 export default function LoadingMessage({ message = "Loading…" }: LoadingMessageProps) {
   return (
     <div

@@ -173,12 +173,12 @@ function HistogramThumbnail({
       window.cancelAnimationFrame(raf1);
       if (raf2 != null) window.cancelAnimationFrame(raf2);
     };
-    // Measure shell size only — do not reset on plotItemThumb identity changes
+    // Measure shell size only; do not reset on plotItemThumb identity changes
     // (that unmounts Bokeh to LoadingMessage and causes remount flicker).
   }, [isMobile]);
 
   /* Mobile: full histogram only, no popover, container sized for viewport.
-     Chart title lives inside the Bokeh figure — do not duplicate it outside. */
+     Chart title lives inside the Bokeh figure; do not duplicate it outside. */
   if (isMobile) {
     return (
       <div className="flex w-full max-w-full flex-col justify-stretch">

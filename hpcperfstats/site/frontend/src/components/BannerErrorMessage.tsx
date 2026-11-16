@@ -9,7 +9,7 @@ export type BannerErrorMessageProps = {
   variant?: "page" | "inline";
 };
 
-/** Page-level `Error: …` banner, or `variant="inline"` for section errors. */
+/** Page-level `Error: ...` banner, or `variant="inline"` for section errors. */
 export default function BannerErrorMessage({
   message,
   className,

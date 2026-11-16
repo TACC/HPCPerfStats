@@ -2,7 +2,7 @@
 
 /**
  * Trust boundary: plot json_item payloads are structural-validated (parseBokehJsonItem) before
- * Bokeh.embed — not HTML-sanitized. Treat as trusted server content over HTTPS with session auth;
+ * Bokeh.embed, not HTML-sanitized. Treat as trusted server content over HTTPS with session auth;
  * pub plots are anonymous read-only embeds from the same origin API.
  */
 
@@ -101,22 +101,22 @@ function whenBokehReady(timeoutMs = 10000, options: WhenBokehReadyOptions = {}) 
   });
 }
 
-/**
- * Run one Bokeh embed pipeline after any in-flight pipeline finishes.
- *
- * BokehJS can throw when layout runs too early—for example ``CanvasPanelView``
- * reading ``bbox.is_valid`` before ``bbox`` exists, or Bokeh 3.9 ``AxisView``
- * reading ``range.is_valid`` when ``ranges`` are not wired yet after a forced
- * ``resize``. Mitigations: serialize ``embed_item`` across targets, wait for a
- * non-zero layout box before embed, wait for ``Document`` idle after
- * ``embed_item`` resolves, and defer synthetic ``resize`` (see
- * ``maximizeEmbeddedPlot``).
- */
 const bokehEmbedChains: Promise<void>[] = Array.from(
   { length: BOKEH_EMBED_LOCK_SHARDS },
   () => Promise.resolve(),
 );
 
+/**
+ * Run one Bokeh embed pipeline after any in-flight pipeline on the same lock shard finishes.
+ *
+ * BokehJS can throw when layout runs too early, for example ``CanvasPanelView``
+ * reading ``bbox.is_valid`` before ``bbox`` exists, or Bokeh 3.9 ``AxisView``
+ * reading ``range.is_valid`` when ``ranges`` are not wired yet after a forced
+ * ``resize``. Mitigations: serialize ``embed_item`` per shard, wait for a
+ * non-zero layout box before embed, wait for ``Document`` idle after
+ * ``embed_item`` resolves, and defer synthetic ``resize`` (see
+ * ``maximizeEmbeddedPlot``).
+ */
 function withBokehEmbedLock(embedId: string, run: () => void | Promise<void>) {
   const shard = bokehEmbedLockShard(embedId);
   const next = bokehEmbedChains[shard].then(
@@ -223,9 +223,7 @@ function waitForNonZeroBokehCanvas(
 /**
  * Bokeh measures the embed target's box; if it or an ancestor is not laid out
  * (e.g. HTML `hidden` / `display:none`), width and height are 0 and embed_item
- * can throw inside CanvasPanelView (`bbox` undefined → `is_valid` access).
- *
- * @returns {Promise<{ ok: boolean, reason?: "abort"|"timeout"|"no-el" }>}
+ * can throw inside CanvasPanelView (`bbox` undefined -> `is_valid` access).
  */
 function waitForNonZeroLayout(el: HTMLElement | null, options: LayoutWaitOptions = {}) {
   const { timeoutMs = 15000, signal } = options;
@@ -277,10 +275,7 @@ type MaximizeEmbeddedPlotOptions = {
   broadcastResize?: boolean;
 };
 
-/**
- * @param {string} targetId
- * @param {"stretch_both" | "stretch_width"} mode stretch_width: full width, intrinsic height (scrollable zoom)
- */
+/** `stretch_width` mode fills width with intrinsic height (scrollable zoom). */
 function maximizeEmbeddedPlot(
   targetId: string,
   mode: "stretch_both" | "stretch_width" = "stretch_both",
@@ -347,7 +342,7 @@ function maximizeEmbeddedPlot(
 
   if (broadcastResize && typeof window !== "undefined") {
     // Defer past layout: an immediate resize can run Bokeh measure before nested
-    // Figure/Axis views finish building (Bokeh 3.9 → `is_valid` on undefined ranges).
+    // Figure/Axis views finish building (Bokeh 3.9 -> `is_valid` on undefined ranges).
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         window.dispatchEvent(new Event("resize"));
@@ -359,6 +354,11 @@ function maximizeEmbeddedPlot(
 const PLACEHOLDER_CLASS =
   "bokeh-plot-unavailable flex min-h-[120px] flex-col items-center justify-center rounded border border-dashed border-border bg-muted p-3 text-center text-muted-foreground";
 
+/**
+ * Bokeh measures the target element during embed_item. If the plot div uses
+ * display:none, layout width/height are zero and the canvas often stays blank.
+ * Keep the target in normal flow and cover it with this overlay until ready.
+ */
 const PLACEHOLDER_OVERLAY_CLASS = cn(
   PLACEHOLDER_CLASS,
   "absolute inset-0 z-[1] box-border min-h-full",
@@ -368,24 +368,18 @@ const PLACEHOLDER_OVERLAY_CLASS = cn(
 const BOKEH_EMBED_MIN_HEIGHT_PX = 280;
 
 /**
- * Bokeh measures the target element during embed_item. If the plot div uses
- * display:none, layout width/height are zero and the canvas often stays blank.
- * Keep the target in normal flow and cover it with a placeholder overlay until ready.
- */
-
-/**
  * Injects Bokeh plot from API.
  * Accepts only Bokeh `json_item` payloads to avoid executing untrusted HTML/JS.
  * Shows an explicit unavailable status plus "Data not available." when there is no data or
  * when the plot fails to load (text status, not color alone).
- * @param {boolean | "width"} maximizeInContainer true = fill container; "width" = stretch width, natural height (zoom scroll)
- * @param {number} [embedMinHeightPx=280] Min height for the plot slot while loading; use the thumbnail box height for job-list thumbs (e.g. 200) so Bokeh measures a box that matches the visible clip.
- * @param {boolean} [deferEmbedUntilVisible] When true (default in production), wait for the wrapper to intersect the viewport before starting embed. Vitest omits this unless explicitly set to true (for IO mocks).
- * @param {string} [intersectionRootMargin] Passed to IntersectionObserver (default `100px 0px`).
- * @param {number} [intersectionThreshold] Passed to IntersectionObserver (default 0.01).
- * @param {number} [embedSettleAfterIdleMs] After Bokeh document idle, delay this many ms before releasing the global embed lock (default 24 in production, 0 in Vitest).
- * @param {boolean} [previewMode] List/dashboard preview: pointer-events none on plot root; skip global resize reflow and continuous maximize-on-resize.
- * @param {boolean} [printCaptureLayout] Job Detail print: with previewMode, one-shot maximize+resize and wait for canvases before ready (no continuous resize listener).
+ * @param maximizeInContainer true = fill container; "width" = stretch width, natural height (zoom scroll)
+ * @param embedMinHeightPx Min height for the plot slot while loading; use the thumbnail box height for job-list thumbs so Bokeh measures a box that matches the visible clip.
+ * @param deferEmbedUntilVisible Wait for the wrapper to intersect the viewport before starting embed (production default). Vitest omits this unless explicitly set to true (for IO mocks).
+ * @param intersectionRootMargin Passed to IntersectionObserver.
+ * @param intersectionThreshold Passed to IntersectionObserver.
+ * @param embedSettleAfterIdleMs After Bokeh document idle, delay this many ms before releasing the embed lock shard.
+ * @param previewMode List/dashboard preview: pointer-events none on plot root; skip global resize reflow and continuous maximize-on-resize.
+ * @param printCaptureLayout Job Detail print: with previewMode, one-shot maximize+resize and wait for canvases before ready (no continuous resize listener).
  */
 export default function BokehEmbed({
   item,
@@ -428,9 +422,9 @@ export default function BokehEmbed({
   const [errorDetailsOpen, setErrorDetailsOpen] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
   const errorDetailsPanelId = `${id}-plot-error-details`;
-  // Keep callback identity out of remount/embed effect deps — parents often pass
+  // Keep callback identity out of remount/embed effect deps; parents often pass
   // inline onPlotReadyChange that setState on ready and would otherwise loop
-  // dispose → re-embed_item (Job Detail flicker).
+  // dispose -> re-embed_item (Job Detail flicker).
   const onPlotReadyChangeRef = useRef(onPlotReadyChange);
   onPlotReadyChangeRef.current = onPlotReadyChange;
   const failEmbed = useCallback((reason: string) => {
