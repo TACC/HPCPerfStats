@@ -53558,21 +53558,6 @@
       "is_trivial_dunder": false,
       "issues": [],
       "kind": "function",
-      "lineno": 984,
-      "name": "_job_times_as_local",
-      "path": "hpcperfstats/site/lib/machine/api.py",
-      "qualname": "_job_times_as_local",
-      "repo": "HPCPerfStats",
-      "sig_annotated": true
-    },
-    {
-      "doc_ok": true,
-      "excluded": false,
-      "excluded_reason": "",
-      "has_docstring": true,
-      "is_trivial_dunder": false,
-      "issues": [],
-      "kind": "function",
       "lineno": 1007,
       "name": "_apply_job_list_metric_filters",
       "path": "hpcperfstats/site/lib/machine/api.py",
@@ -68667,10 +68652,10 @@
       "test_module": 9764,
       "test_tree": 235
     },
-    "in_scope": 4576,
+    "in_scope": 4575,
     "in_scope_failed": 0,
-    "in_scope_ok": 4576,
-    "total_defs": 15662
+    "in_scope_ok": 4575,
+    "total_defs": 15661
   },
   "version": 1
 }

@@ -1029,29 +1029,6 @@ def _get_visible_job_or_error_response(
   return job, None
 
 
-def _job_times_as_local(start_time: Any, end_time: Any) -> Any:
-  """
-  Return start/end as timezone-aware datetimes in local timezone.
-
-  Args:
-    start_time (Any): Start time passed to this helper.
-    end_time (Any): End time passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _job_times_as_local(None, None)  # doctest: +SKIP
-  """
-  if start_time.tzinfo is None:
-    start_time = timezone.make_aware(start_time, UTC)
-  if end_time.tzinfo is None:
-    end_time = timezone.make_aware(end_time, UTC)
-  return start_time.astimezone(local_timezone), end_time.astimezone(
-    local_timezone
-  )
-
-
 def _apply_job_list_metric_filters(queryset: Any, cur_metrics: Any) -> Any:
   """
   Apply derived-metric filters without JOIN row inflation (EXISTS per metric).
@@ -3899,11 +3876,6 @@ def job_detail(request: Any, pk: Any) -> Any:
   }
 
   # Build client/server log URLs with explicit timestamp format expected by Scribe.
-  start_time, end_time = _job_times_as_local(job.start_time, job.end_time)
-  time_format = "%Y-%m-%dT%H:%M:%S%:z"
-  start_time.strftime(time_format)
-  end_time.strftime(time_format)
-
   urlstring = (
     "https://scribe.tacc.utexas.edu/en-US/app/search/search?q=search%20"
   )

@@ -178,25 +178,6 @@ class TestMergeQueueBarRows:
       api._merge_queue_bar_rows([], metric="bad")
 
 
-class TestJobTimesAsLocal:
-  def test_naive_datetimes_assumed_utc_then_localized(self):
-    from hpcperfstats.site.lib.machine import api
-
-    start = datetime(2024, 6, 1, 12, 0, 0)
-    end = datetime(2024, 6, 1, 13, 0, 0)
-    loc_start, loc_end = api._job_times_as_local(start, end)
-    assert loc_start.tzinfo is not None
-    assert loc_end.tzinfo is not None
-
-  def test_aware_datetimes_converted(self):
-    from hpcperfstats.site.lib.machine import api
-
-    start = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
-    end = datetime(2024, 6, 1, 13, 0, 0, tzinfo=UTC)
-    loc_start, loc_end = api._job_times_as_local(start, end)
-    assert loc_start.hour == loc_end.hour - 1 or loc_start != loc_end
-
-
 class TestRequireAuthAndStaff:
   def test_require_auth_session_ok(self):
     from hpcperfstats.site.lib.machine import api

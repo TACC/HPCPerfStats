@@ -22,7 +22,9 @@ from hpcperfstats.site.lib.machine import (
 pytestmark = pytest.mark.django_db(databases=[])
 
 
-def _patch_job_detail_context(api_module, jid, gpu_agg, gpu_count_cached=None):
+def _patch_job_detail_context(
+  api_module, jid, gpu_agg, gpu_count_cached=None, job_times=None
+):
   """Return context manager that stubs job_detail dependencies (no ORM)."""
   mock_j = MagicMock()
   mock_j.acct_host_list = ["n1.example.com"]
@@ -35,8 +37,7 @@ def _patch_job_detail_context(api_module, jid, gpu_agg, gpu_count_cached=None):
   job_mock = MagicMock()
   job_mock.jid = jid
   job_mock.username = "u1"
-  job_mock.start_time = t0
-  job_mock.end_time = t0
+  job_mock.start_time, job_mock.end_time = job_times or (t0, t0)
   # Empty metrics so job_detail falls back to host_data aggregate cache path.
   job_mock.metrics_data_set.all.return_value = []
 
@@ -172,6 +173,32 @@ def test_job_detail_gpu_stats_none_when_two_or_fewer_samples():
   assert response.data["gpu_utilization_max"] is None
   assert response.data["gpu_utilization_mean"] is None
   assert response.data["gpu_count"] is None
+
+
+def test_job_detail_log_urls_tolerate_missing_job_times():
+  """job_detail must not raise when start_time/end_time are None.
+
+  Regression: a dead ``_job_times_as_local(...).strftime`` block before the
+  Scribe log URL builder raised AttributeError on None job times."""
+  from hpcperfstats.site.lib.machine import api
+
+  jid = "test-log-url-none-times"
+  request = RequestFactory().get(f"/api/jobs/{jid}/")
+  request.session = {"username": "u1", "is_staff": False}
+  ctx = _patch_job_detail_context(api, jid, None, job_times=(None, None))
+
+  with ThreadPoolExecutor(max_workers=4) as executor, ExitStack() as stack:
+    stack.enter_context(
+      patch.object(api, "_get_small_executor", return_value=executor)
+    )
+    for cm in ctx:
+      stack.enter_context(cm)
+    response = api.job_detail(request, jid)
+
+  assert response.status_code == 200
+  assert "&earliest=None&latest=None" in response.data["client_url"]
+  assert "&earliest=None&latest=None" in response.data["server_url"]
+  assert not hasattr(api, "_job_times_as_local")
 
 
 def test_compute_job_gpu_stats_helper_matches_job_detail_gpu_logic():
