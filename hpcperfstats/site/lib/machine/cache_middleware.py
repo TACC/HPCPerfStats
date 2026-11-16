@@ -12,7 +12,11 @@ from django.utils.decorators import decorator_from_middleware_with_args
 
 class DynamicTimeoutCacheMiddleware(CacheMiddleware):
   """
-  CacheMiddleware that resolves ``page_timeout`` per response via.
+  CacheMiddleware that resolves ``page_timeout`` per response.
+
+  Django's CacheMiddleware caches responses for a fixed timeout; this subclass
+  sets ``page_timeout`` from ``timeout_resolver(request)`` before storing
+  (None when the resolver raises).
 
   Attributes:
     _timeout_resolver: Attribute.
@@ -78,9 +82,7 @@ def dynamic_cache_page(
   key_prefix: Any | None = None,
 ) -> Any:
   """
-  Like Django's cache_page but ``timeout_resolver(request)`` sets TTL each.
-
-    response.
+  Like Django's cache_page but ``timeout_resolver(request)`` sets each TTL.
 
   Args:
     timeout_resolver (Any): Timeout resolver passed to this helper.

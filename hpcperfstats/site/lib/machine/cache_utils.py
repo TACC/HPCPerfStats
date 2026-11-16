@@ -16,35 +16,24 @@ Attributes:
     ingest coverage payload (one entry per group-by mode).
   KEY_ADMIN_TIMESCALE_STATS: Attribute.
   KEY_ADMIN_XALT_STATS: Attribute.
-  KEY_AGG_DF: Attribute.
   KEY_DATES: Attribute.
   KEY_GPU_AGG: Attribute.
   KEY_GPU_COUNT: Attribute.
-  KEY_HOST_DATA_DF: Attribute.
   KEY_HOST_PLOT: Attribute.
-  KEY_HOST_SCHEMA: Attribute.
-  KEY_HOST_TIME_DF: Attribute.
   KEY_HOST_WIDE_RESIDUAL_HT: Attribute.
   KEY_JID_HOST_WINDOW_ROW_COUNT: Attribute.
   KEY_JOB: Attribute.
   KEY_JOB_CACHE_VERSION: Attribute.
-  KEY_JOB_DICT: Attribute.
   KEY_JOB_HOST_LIST: Attribute.
   KEY_JOB_JID_TABLE_WINDOW: Attribute.
   KEY_JOB_PLOT_KEYSET: Attribute.
   KEY_JOB_SCHEMA: Attribute.
-  KEY_BEEGFS_DELTA: Attribute.
-  KEY_LLITE_DELTA: Attribute.
   KEY_METRICS_DISTINCT: Attribute.
-  KEY_NFS_FSIO: Attribute.
   KEY_NONSTAFF_ACCOUNTS: Attribute.
   KEY_PROC_LIST: Attribute.
   KEY_QUEUES: Attribute.
   KEY_SITE_NEWEST_JOB_END: Attribute.
   KEY_STATES: Attribute.
-  KEY_TYPE_DETAIL_AGG: Attribute.
-  KEY_TYPE_DETAIL_HOSTS: Attribute.
-  KEY_TYPE_DETAIL_HOST_TIME: Attribute.
   KEY_XALT: Attribute.
   SITE_CACHE_TTL_FRESH_SECONDS: Attribute.
   SITE_FRESHNESS_WINDOW_DAYS: Attribute.
@@ -95,11 +84,9 @@ _INVALID_SITE_NEWEST_END_PROBE = object()
 
 def _coerce_site_newest_job_end_time(m: Any) -> Any:
   """
-  Normalize DB or cache probe to timezone-aware datetime, or None. _INVALID_*.
+  Normalize a DB or cache probe to an aware datetime or None.
 
-    if.
-
-    unusable.
+  Returns ``_INVALID_SITE_NEWEST_END_PROBE`` when the value is unusable.
 
   Args:
     m (Any): M passed to this helper.
@@ -161,9 +148,9 @@ def cached_orm(cache_key: Any, timeout: int, query_fn: Any) -> Any:
   query_fn is a callable that takes no arguments and returns the value to cache.
   The value must be picklable (e.g. list of dicts from .values(), or None).
   None is stored as a wrapped tuple so we can distinguish "missing key" from
-    "cached None".
+  "cached None".
   If the cache backend is unavailable (e.g. Valkey down), query_fn() is used and
-    the result is not cached.
+  the result is not cached.
   When DEBUG or HPCPERF_CACHE_DEBUG is enabled, log basic hit/miss and timing
   information for visibility into heavy ORM/cache usage.
 
@@ -200,11 +187,7 @@ def cached_orm(cache_key: Any, timeout: int, query_fn: Any) -> Any:
         cache_key,
         (time.time() - start) * 1000.0,
       )
-    return (
-      wrapped[0]
-      if isinstance(wrapped, tuple) and len(wrapped) == 1
-      else wrapped
-    )
+    return _unwrap_meta_value(wrapped)
 
   value = query_fn()
   try:
@@ -227,7 +210,7 @@ def cached_orm(cache_key: Any, timeout: int, query_fn: Any) -> Any:
 
 def _unwrap_meta_value(wrapped: Any) -> Any:
   """
-  Internal helper to handle unwrap meta value.
+  Unwrap the ``(value,)`` tuple that stands in for a cached None.
 
   Args:
     wrapped (Any): Wrapped passed to this helper.
@@ -304,12 +287,11 @@ def get_site_newest_job_end_time() -> Any:
 
 def get_site_content_cache_timeout() -> Any:
   """
-  TTL for workload/reference cache entries: 1h if DB is fresh, else None (LRU.
+  TTL for workload/reference cache entries: fresh TTL or None (LRU only).
 
-    only).
-
-  Empty DB (no end_time) uses the fresh TTL so new deployments do not stick
-    forever.
+  The fresh TTL applies while the newest job ended inside the freshness
+  window. Empty DB (no end_time) uses the fresh TTL so new deployments do not
+  stick forever.
 
   Returns:
     Any: Open return polymorphism from ``get_site_content_cache_timeout``:
@@ -332,9 +314,7 @@ def get_site_content_cache_timeout() -> Any:
 
 def invalidate_home_options_query_cache() -> None:
   """
-  Drop cached_orm keys and site newest probe used by GET /api/home/.
-
-    (home_options).
+  Drop cached_orm keys and the site newest probe used by GET /api/home/.
 
   Returns:
     None
@@ -357,13 +337,10 @@ def invalidate_after_job_data_ingest(
   inserted_jids: Any | None = None,
 ) -> None:
   """
-  Drop site freshness probe and home_options reference keys after new job_data.
-
-    rows.
+  Drop site freshness probe and home_options reference keys after job ingest.
 
   When *inserted_jids* is provided, only expansion-factor dashboard artifacts
-    for
-  those jobs' calendar periods are marked for rebuild (see
+  for those jobs' calendar periods are marked for rebuild (see
   :func:`invalidate_public_metrics_artifacts_for_jids`). Otherwise falls back
   to marking every prewarmed /pub row stale - avoid that in hot paths where
   *inserted_jids* is knowable (e.g. accounting ingest).
@@ -397,9 +374,7 @@ def invalidate_after_job_data_ingest(
 
 def make_job_detail_cache_key(jid: Any) -> Any:
   """
-  Valkey key for cached job_data rows used by job detail (versioned for prefetch.
-
-    shape).
+  Valkey key for cached job_data rows used by job detail (shape-versioned).
 
   Args:
     jid (Any): Jid passed to this helper.
@@ -478,9 +453,7 @@ def cached_non_staff_visible_accounts(username: Any, timeout: int) -> Any:
 
 def warm_job_cache_entries(job_instances: Any, timeout: int) -> None:
   """
-  Seed versioned KEY_JOB cache rows from in-memory job_data (e.g. post.
-
-    bulk_create).
+  Seed versioned KEY_JOB cache rows from in-memory job_data (post bulk_create).
 
   Args:
     job_instances (Any): Job instances passed to this helper.
@@ -847,24 +820,13 @@ KEY_METRICS_DISTINCT = "metrics_distinct_v2"
 KEY_DATES = "dates"
 KEY_QUEUES = "queues"
 KEY_STATES = "states"
-KEY_LLITE_DELTA = "llite_delta"
-KEY_BEEGFS_DELTA = "beegfs_delta"
-KEY_NFS_FSIO = "nfs_fsio"
 # Aggregate GPU stats (Count/Max/Avg) cache namespace.
 KEY_GPU_AGG = "gpu_agg"
 # Per-job sum of per-host max(nvidia_gpu/amd_gpu gpu_count) in the accounting window.
 KEY_GPU_COUNT = "gpu_count"
 KEY_XALT = "xalt"
-KEY_TYPE_DETAIL_HOSTS = "type_detail_hosts"
-KEY_HOST_DATA_DF = "host_data_df"
-KEY_AGG_DF = "agg_df"
-KEY_HOST_TIME_DF = "host_time_df"
 KEY_PROC_LIST = "proc_list"
 KEY_HOST_PLOT = "host_plot"
-KEY_JOB_DICT = "job_dict"
-KEY_TYPE_DETAIL_HOST_TIME = "type_detail_host_time"
-KEY_TYPE_DETAIL_AGG = "type_detail_agg"
-KEY_HOST_SCHEMA = "host_schema"
 # Shared-node residual host-by-time day frames (no jid in key).
 KEY_HOST_WIDE_RESIDUAL_HT = "host_wide_residual_ht"
 KEY_ADMIN_CACHE_STATS = "admin_monitor_cache_stats"

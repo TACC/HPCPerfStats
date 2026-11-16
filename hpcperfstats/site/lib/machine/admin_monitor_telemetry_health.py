@@ -251,7 +251,7 @@ def _format_monitor_handoff_markdown(
     f
     for f in findings
     if str(f.get("kind") or "")
-    in ACTIONABLE_FINDING_KINDS | {"signature_absent", "incomplete_scan"}
+    in ACTIONABLE_FINDING_KINDS | {"signature_absent"}
   ]
 
   lines.extend(["", "## Actionable findings", ""])
@@ -376,7 +376,7 @@ def build_telemetry_health_payload(
     ...       "has_nonzero": False,
     ...     },
     ...   ],
-    ...   computed_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+    ...   computed_at=datetime(2024, 1, 1, tzinfo=UTC),
     ...   hosts_sampled=8,
     ...   hosts_sampled_fqdns=["a.example.com"],
     ...   expected_core_types=("host_cpu", "host_mem"),
@@ -443,23 +443,11 @@ def build_telemetry_health_payload(
     return summary
 
   if timed_out:
-    findings = [
-      _finding(
-        kind="incomplete_scan",
-        severity="high",
-        message=(
-          error
-          or (
-            "Telemetry health query timed out; results are "
-            "incomplete (not a healthy signal)."
-          )
-        ),
-      )
-    ]
     err = error or (
       "Telemetry health query timed out; results are incomplete "
       "(not a healthy signal)."
     )
+    findings = [_finding(kind="incomplete_scan", severity="high", message=err)]
     md = _format_monitor_handoff_markdown(
       computed_at_iso=when.isoformat(),
       window_hours=hours,
@@ -606,7 +594,7 @@ def build_telemetry_health_payload(
   actionable_findings = [
     f for f in findings if str(f.get("kind") or "") in ACTIONABLE_FINDING_KINDS
   ]
-  healthy = not timed_out and not actionable_findings and nonzero_pairs > 0
+  healthy = not actionable_findings and nonzero_pairs > 0
   sample_suffix = ""
   sampled_n = (
     hosts_sampled
@@ -918,17 +906,11 @@ def compute_telemetry_health(*, force_refresh: bool = False) -> dict[str, Any]:
     )
   except Exception as exc:
     timed_out = _is_statement_timeout(exc)
-    if timed_out:
-      logger.warning(
-        "admin_monitor telemetry_health query failed: %s",
-        exc,
-      )
-    else:
-      logger.warning(
-        "admin_monitor telemetry_health query failed: %s",
-        exc,
-        exc_info=True,
-      )
+    logger.warning(
+      "admin_monitor telemetry_health query failed: %s",
+      exc,
+      exc_info=not timed_out,
+    )
     payload = build_telemetry_health_payload(
       [],
       computed_at=computed_at,
@@ -957,7 +939,7 @@ def expected_core_types() -> tuple[str, ...]:
   Return the expected core monitor type names for missing-type checks.
 
   Returns:
-    tuple[str, ...]: Copy of ``EXPECTED_CORE_TYPES``.
+    tuple[str, ...]: The immutable ``EXPECTED_CORE_TYPES`` tuple.
 
   Examples:
     >>> "host_cpu" in expected_core_types()

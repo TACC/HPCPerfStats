@@ -14,12 +14,12 @@ never as "nothing missing".
 
 Pair classes (union over every recent job, ``CONSUMED_FRESH_DAYS``):
 
-* ``derived`` — read by ``metrics``, ``summary_plot``, ``job_detail`` or an
+* ``derived`` - read by ``metrics``, ``summary_plot``, ``job_detail`` or an
   untagged path (``other``);
-* ``type_detail_only`` — read only by the per-type panel;
-* ``type_detail_dropped`` — last seen dropped from the per-type panel (a
+* ``type_detail_only`` - read only by the per-type panel;
+* ``type_detail_dropped`` - last seen dropped from the per-type panel (a
   sample was missing) and never derived;
-* ``unused`` — never read.
+* ``unused`` - never read.
 
 Attributes:
   CONSUMED_FRESH_DAYS: Freshness window for consumed pairs (user, 7 days).
@@ -405,7 +405,7 @@ def build_ingest_coverage_payload(
     errors (Sequence[str]): Read errors to surface.
 
   Returns:
-    dict[str, Any]: Section payload (see the plan's payload shape).
+    dict[str, Any]: Section payload.
 
   Examples:
     >>> p = build_ingest_coverage_payload(
@@ -811,7 +811,7 @@ def compute_ingest_coverage(
   *, force_refresh: bool = False, group_by: Any = None
 ) -> dict[str, Any]:
   """
-  Build (and cache for 60 s) the section payload from Valkey only.
+  Build (and briefly cache) the section payload from Valkey only.
 
   Soft-fails to an ``incomplete`` payload when Valkey is unavailable or a
   read fails; never raises to the view.

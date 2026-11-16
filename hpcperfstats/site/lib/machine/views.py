@@ -137,8 +137,6 @@ def job_hist(
   hist_max = float(np.max(hist)) if len(hist) > 0 else 0.0
   y_min = 0.0
   y_max = (hist_max * 1.05) if hist_max > 0 else 1.0
-  if y_max <= y_min:
-    y_max = 1.0
 
   plot = new_spa_embedded_figure(
     title=title if title is not None else metric,
