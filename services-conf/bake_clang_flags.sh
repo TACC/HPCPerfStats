@@ -8,8 +8,7 @@ hpcperfstats_bake_die() {
   exit 1
 }
 
-# Historical call sites expected raw profile dirs; custom host profiling is gone — no-ops.
-hpcperfstats_ensure_web_shared_link_dirs() { :; }
+# Historical call sites expected raw profile dirs; custom host profiling is gone, so these are no-ops.
 hpcperfstats_ensure_web_gil_cpython_link_dirs() { :; }
 hpcperfstats_ensure_web_ft_cpython_link_dirs() { :; }
 hpcperfstats_ensure_web_gil_optimization_stack_link_dirs() { :; }

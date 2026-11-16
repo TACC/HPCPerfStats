@@ -83,7 +83,7 @@ PY
 /usr/local/bin/python3 -m hpcperfstats.site.lib.staticfiles_ram_publish --kind static
 /usr/local/bin/python3 -m hpcperfstats.site.lib.staticfiles_ram_publish --kind media
 
-# Gunicorn workers: WEB_CONCURRENCY overrides; else absolute [PORTAL] gunicorn_workers (default 32).
+# Gunicorn workers: WEB_CONCURRENCY overrides; else absolute [PORTAL] gunicorn_workers.
 WORKERS=$(/usr/local/bin/python3 -c "
 import os
 from hpcperfstats.dbload.lib import conf_parser as cfg
@@ -107,7 +107,6 @@ if [ -z "${CORS_ALLOWED_ORIGINS:-}" ]; then
   fi
 fi
 
-# gunicorn is the django web server
 /usr/local/bin/gunicorn hpcperfstats.site.hpcperfstats_site.wsgi --bind 0.0.0.0:8000  \
   --env DJANGO_SETTINGS_MODULE=hpcperfstats.site.hpcperfstats_site.settings -u hpcperfstats \
   "--workers=${WORKERS}" --timeout 600 --preload --max-requests 100 --access-logfile - --error-logfile - 
