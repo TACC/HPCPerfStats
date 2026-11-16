@@ -125,8 +125,7 @@ def _lock_path(target_path: str) -> Any:
   Examples:
     >>> _lock_path("x")  # doctest: +SKIP
   """
-  # Collapse repeated trailing occurrences, e.g.:
-  #   /tmp/x.fnctl.lock.fnctl.lock  -> /tmp/x.fnctl.lock
+  # Idempotent: /tmp/x.fnctl.lock.fnctl.lock maps to /tmp/x.fnctl.lock.
   base = target_path
   while base.endswith(LOCK_SUFFIX):
     base = base[: -len(LOCK_SUFFIX)]

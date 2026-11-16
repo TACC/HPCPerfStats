@@ -1059,7 +1059,7 @@ def describe_dead_pool_workers(
   tree = format_tree_rss_breakdown_mb(ingest_pool, archive_pool)
   likely_cause = _infer_likely_cause(dead_workers, cgroup_events)
 
-  diagnostics = {
+  return {
     "dead_workers": dead_workers,
     "alive_workers": alive,
     "total_workers": total,
@@ -1075,7 +1075,6 @@ def describe_dead_pool_workers(
     "in_flight_sample": in_flight_sample,
     "likely_cause": likely_cause,
   }
-  return diagnostics
 
 
 def _format_pool_worker_death_diagnostics(
@@ -1673,25 +1672,6 @@ def _read_proc_stat_fields(pid: int) -> Any:
   return state, ppid
 
 
-def _process_stat_is_zombie(pid: int) -> Any:
-  """
-  Return True when ``/proc/<pid>/stat`` reports state ``Z``.
-
-  Args:
-    pid (int): Integer value for pid.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _process_stat_is_zombie(0)  # doctest: +SKIP
-  """
-  fields = _read_proc_stat_fields(pid)
-  if fields is None:
-    return False
-  return fields[0] == "Z"
-
-
 def _iter_zombie_child_pids() -> Iterator[Any]:
   """
   Yield PIDs of direct children of this process that are zombies.
@@ -1752,27 +1732,6 @@ def reap_zombie_children_of_self(*, context: str = "") -> Any:
 
 
 _INGEST_POOL_WORKER_CMDLINE_MARK = "[worker:ingest-pool]"
-
-
-def pool_worker_cmdline_mark_for_kind(pool_kind: str) -> str:
-  """
-  Build the ``ps``/cmdline mark for a pool worker title.
-
-  Matches ``apply_pool_worker_process_title`` output
-  ``{script} [worker:{pool_kind}]``.
-
-  Args:
-    pool_kind (str): Stable pool label (e.g. ``ingest-pool``,
-      ``metrics-pool``).
-
-  Returns:
-    str: Substring used for PPID census matching.
-
-  Examples:
-    >>> pool_worker_cmdline_mark_for_kind("metrics-pool")
-    '[worker:metrics-pool]'
-  """
-  return f"[worker:{str(pool_kind or '').strip()}]"
 
 
 def _read_proc_cmdline(pid: int) -> Any:
