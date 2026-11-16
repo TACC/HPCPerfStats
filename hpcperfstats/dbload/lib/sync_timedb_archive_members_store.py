@@ -1669,7 +1669,7 @@ class SyncTimedbArchiveMembersStore:
     """
     return self.complete_identity_count(day_token) > 0
 
-  # --- Test/compat aggregators (flat (day, identity) views) ---
+  # Test/compat aggregators: flat (day, identity) views.
 
   @property
   def _events(self) -> dict[tuple[str, str], threading.Event]:

@@ -487,7 +487,7 @@ class JanitorDeferTracker:
       if reason == "write_lock_contended":
         streak = int(entry.get("write_lock_streak", 0)) + 1
         entry["write_lock_streak"] = streak
-        # 30s, 60s, 120s, 240s, then cap at WRITE_LOCK_BACKOFF_MAX_S
+        # Doubles per contended attempt, then caps at WRITE_LOCK_BACKOFF_MAX_S.
         exp = min(max(0, streak - 1), 4)
         delay = min(
           WRITE_LOCK_BACKOFF_MAX_S,

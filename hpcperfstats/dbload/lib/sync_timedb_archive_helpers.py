@@ -1557,12 +1557,10 @@ def classify_day_close_candidates(
     # Checkpoint-complete leftover = aligned remaining_raw on disk that is not
     # also in the unprocessed set (avoids double-counting when remaining_raw
     # includes checkpoint-incomplete closed raw).
-    remaining_aligned_n, processed_cross_day_n = (
-      remaining_raw_on_disk_counts_for_tar(
-        remaining_raw_by_gz,
-        tar_norm,
-        tgz_archive_dir=tgz_archive_dir,
-      )
+    _, processed_cross_day_n = remaining_raw_on_disk_counts_for_tar(
+      remaining_raw_by_gz,
+      tar_norm,
+      tgz_archive_dir=tgz_archive_dir,
     )
     remaining_aligned_paths = remaining_raw_aligned_paths_for_tar(
       remaining_raw_by_gz,
@@ -1578,9 +1576,6 @@ def classify_day_close_candidates(
     )
     # Total aligned closed-raw on disk = unprocessed + checkpoint leftover.
     on_disk_total = unprocessed_count + processed_but_on_disk
-    # Prefer remaining∪unprocessed when remaining missed some unprocessed paths
-    # already counted above; keep invariant on_disk == unprocessed + processed.
-    _ = remaining_aligned_n  # census diagnostic only; decision uses partition
     if unprocessed_count == 0:
       reasons.discard("checkpoint_incomplete")
     from hpcperfstats.dbload.lib.sync_timedb_manifest_contract import (
@@ -3986,9 +3981,8 @@ def _is_lock_file_name(name: Any) -> Any:
   Examples:
     >>> _is_lock_file_name(None)  # doctest: +SKIP
   """
-  # We intentionally skip generic *.lock too, because different lock
-  # implementations may exist on the filesystem (and we don't want them
-  # mistaken for stats data files during archive discovery).
+  # Generic *.lock too: other lock implementations must not be mistaken for
+  # stats data files during archive discovery.
   return name.endswith((LOCK_SUFFIX, ".lock"))
 
 
@@ -5662,7 +5656,7 @@ def mark_archive_day_ingest_skip_and_raise(
     raise ArchiveMembersStoreUnavailableError(
       f"transient fnctl read lock timeout during sealed populate day={keys.day_token} path={sealed_path or ''}",
     )
-  # DE-6b / DE-31: an environment errno (EAGAIN spawning zstd, ENOSPC…) or a
+  # DE-6b / DE-31: an environment errno (EAGAIN spawning zstd, ENOSPC...) or a
   # read that raced a sealed rewrite is not a day defect; re-probe once and
   # never persist a sticky day_skip for it.
   if (
@@ -5690,12 +5684,12 @@ def mark_archive_day_ingest_skip_and_raise(
       if daily_dir:
         tar_path = os.path.join(daily_dir, f"{day_token}.tar")
     sealed_sibling = _resolve_sealed_path_for_day_token(day_token)
-    # True append (or non-self hot) → transient Unavailable; preserve no day-skip.
+    # True append (or non-self hot) is transient Unavailable; no day-skip.
     if day_token and archive_append_inflight_for_day(day_token):
       raise ArchiveMembersStoreUnavailableError(
         f"transient tar populate EOF during hot/append activity day={day_token}",
       )
-    # Self-hot alone + sealed sibling → prefer sealed populate (not forever-transient).
+    # Self-hot alone + sealed sibling: prefer sealed populate (not forever-transient).
     if day_token and sealed_sibling and os.path.isfile(sealed_sibling):
       raise ArchiveMembersStoreUnavailableError(
         f"tar populate EOF prefer sealed fallback day={day_token}",
@@ -8237,7 +8231,7 @@ def build_remaining_raw_for_daily_tar(
     )
     if filtered or allow_full_snapshot:
       return filtered
-    # Snapshot published but this tar has no remaining entries — day-scoped
+    # Snapshot published but this tar has no remaining entries: day-scoped
     # refresh so unmanifested closed raw is not silently omitted (R2).
     return build_day_scoped_closed_raw_by_gz(
       archive_data_dir,
@@ -12499,9 +12493,8 @@ def _migrate_one_daily_legacy_gz_locked(
     return _seal_and_drop()
 
   if os.path.isfile(gz_path):
-    # We already hold a write lock on gz_path in migrate_one_daily_legacy_gz().
-    # Avoid re-locking gz_path inside decompress_compressed_to_tar(remove_compressed=True),
-    # which can fail under non-reentrant advisory lock semantics.
+    # The caller already holds the gz_path write lock; the advisory lock is not
+    # reentrant, so decompress must not take it again via remove_compressed.
     temp_tar_path = tar_path
     remove_temp_tar_after = False
     if decompress_tmp_dir:
