@@ -24,11 +24,11 @@ int job_sched_affinity_union_cpulist(const int *pids, size_t npids, int sample_l
 int job_sched_affinity_cpu_dev_in_list(const char *cpulist, const char *cpu_dev);
 
 /*! Subtract claimed cpulists from online_list; write remainder cpulist to out.
- *  Pure string helper for tests; empty claimed → copy of online_list. */
+ *  Pure string helper for tests; empty claimed -> copy of online_list. */
 int job_sched_affinity_cpulist_subtract(const char *online_list, const char *const *claimed,
                                         size_t nclaimed, char *out, size_t out_cap);
 
-/*! online CPUs minus union of claimed job cpulists → out (node-wide remainder). */
+/*! online CPUs minus union of claimed job cpulists -> out (node-wide remainder). */
 int job_sched_affinity_remainder_cpulist(const char *const *claimed, size_t nclaimed, char *out,
                                          size_t out_cap);
 

@@ -1,4 +1,4 @@
-/* Phase 4: wire mark strings + jid/gpu helpers for shared-node payloads. */
+/* Wire mark strings + jid/gpu helpers for shared-node payloads. */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif

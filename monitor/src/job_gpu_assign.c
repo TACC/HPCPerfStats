@@ -6,7 +6,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include "job_gpu_assign.h"
@@ -247,7 +246,6 @@ int job_gpu_assign_map_grant(const char *slurm_job_gpus, struct job_gpu_set *gra
     v = strtol(p, &end, 10);
     /* v > INT_MAX would not fit a JOB_GPU_DEV_STR slot: skip, do not truncate. */
     if (end == p || errno != 0 || v < 0 || v > INT_MAX) {
-      /* skip non-decimal token */
       while (*p && *p != ',')
         p++;
       continue;
@@ -319,6 +317,7 @@ int job_gpu_assign_scan_fds(const int *pids, size_t npids, struct job_gpu_set *i
       ssize_t got;
       int minor;
       char *end;
+      const char *num;
       char dev[JOB_GPU_DEV_STR];
 
       if (de->d_name[0] == '.')
@@ -336,18 +335,15 @@ int job_gpu_assign_scan_fds(const int *pids, size_t npids, struct job_gpu_set *i
           strcmp(target, "/dev/nvidia-modeset") == 0 ||
           strncmp(target, "/dev/nvidia-nvswitch", 19) == 0)
         continue;
-      if (strncmp(target, "/dev/nvidia", 11) == 0) {
-        const char *num = target + 11;
-
-        if (!isdigit((unsigned char)*num))
-          continue;
-        errno = 0;
-        minor = (int)strtol(num, &end, 10);
-        if (end == num || *end != '\0' || errno)
-          continue;
-        if (minor_to_dev(minor, dev, sizeof(dev)) == 0)
-          set_add_dev(in_use, dev);
-      }
+      num = target + 11;
+      if (!isdigit((unsigned char)*num))
+        continue;
+      errno = 0;
+      minor = (int)strtol(num, &end, 10);
+      if (end == num || *end != '\0' || errno)
+        continue;
+      if (minor_to_dev(minor, dev, sizeof(dev)) == 0)
+        set_add_dev(in_use, dev);
     }
     closedir(d);
   }

@@ -1,4 +1,4 @@
-/* Phase 1: job_proc_discover fixtures (c122-018 cgroup shapes). */
+/* job_proc_discover fixtures (c122-018 cgroup shapes). */
 #include <assert.h>
 #include <errno.h>
 #include <ftw.h>

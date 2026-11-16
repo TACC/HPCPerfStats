@@ -37,7 +37,7 @@ struct job_proc_discover_result {
  *  Ignored unless absolute and free of ".." path segments. */
 const char *job_proc_discover_proc_root(void);
 
-/*! Validate jid token for host_data.jid (≤32, not 0/-/blank/whitespace). */
+/*! Validate jid token for host_data.jid (<=32, not 0/-/blank/whitespace). */
 int job_proc_jid_acceptable(const char *jid);
 
 /*! Parse the jid from a slurmstepd process title (/proc/<pid>/cmdline bytes):

@@ -24,7 +24,7 @@ int job_emit_row_filter(const char *st_name, const char *dev, void *ctx);
  *  holding every online CPU of known GPU inventory (Slurm cannot start a second job on a node
  *  with no free CPU, so its GPU grant does not matter). Returns 0 for the marked path (GPU
  *  filter = g_union; the caller then emits the per-jid / '-' remainder split).
- *  NULL entry, available or out → 0. */
+ *  NULL entry, available or out -> 0. */
 int job_emit_sole_ctx(const struct job_proc_jid_entry *e, enum job_cpu_coverage cov,
                       const struct job_gpu_set *g_union, const struct job_gpu_set *available,
                       struct job_emit_filter_ctx *out);

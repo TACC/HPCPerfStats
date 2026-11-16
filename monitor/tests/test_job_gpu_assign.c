@@ -1,4 +1,4 @@
-/* Phase 2: AutoDetect grant mapping + c122-018 minor permutation. */
+/* AutoDetect grant mapping + c122-018 minor permutation. */
 #include <assert.h>
 #include <limits.h>
 #include <stdio.h>
@@ -55,7 +55,7 @@ static void test_nvml_grant_and_off(void)
   assert(granted.n == 1);
   assert(strcmp(granted.devs[0], "2") == 0);
 
-  /* CUDA_VISIBLE_DEVICES must not be consulted — grant still 2 */
+  /* CUDA_VISIBLE_DEVICES must not be consulted: grant still 2 */
   setenv("CUDA_VISIBLE_DEVICES", "0", 1);
   assert(job_gpu_assign_map_grant("0,1,2,3", &granted) == 0);
   assert(granted.n == 4);

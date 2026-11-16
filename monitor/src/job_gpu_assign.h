@@ -42,7 +42,7 @@ int job_gpu_assign_scan_fds(const int *pids, size_t npids, struct job_gpu_set *i
 void job_gpu_set_union(const struct job_gpu_set *a, const struct job_gpu_set *b,
                        struct job_gpu_set *out);
 
-/*! Set difference: universe devices not in subtract → *out (unscheduled GPUs). */
+/*! Set difference: universe devices not in subtract -> *out (unscheduled GPUs). */
 void job_gpu_set_diff(const struct job_gpu_set *universe, const struct job_gpu_set *subtract,
                       struct job_gpu_set *out);
 

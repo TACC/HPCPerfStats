@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #include "job_cgroup_mem.h"
 
@@ -105,7 +104,7 @@ static void test_missing_token_failopen(void)
   snprintf(root2, sizeof(root2), "%s/cg2_XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
   assert(mkdtemp(root2) != NULL);
   setenv("HPCPERFSTATS_CGROUP_ROOT", root2, 1);
-  /* Leaf only — no token-dir memory.current */
+  /* Leaf only, no token-dir memory.current */
   write_mem_tree_under(root2, "/system.slice/slurmstepd.scope/TOK/step_batch/user/task_0", "100\n",
                        NULL, NULL);
   assert(job_cgroup_mem_read("/system.slice/slurmstepd.scope/TOK/step_batch/user/task_0", &kb) ==
@@ -117,7 +116,7 @@ static void test_bad_root(void)
   struct job_cgroup_mem_kb kb;
 
   setenv("HPCPERFSTATS_CGROUP_ROOT", "/tmp/../etc", 1);
-  /* Falls back to /sys/fs/cgroup — empty relpath fails */
+  /* Falls back to /sys/fs/cgroup; empty relpath fails */
   assert(job_cgroup_mem_read("", &kb) == -1);
   assert(job_cgroup_mem_read(NULL, &kb) == -1);
 }

@@ -3,14 +3,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include "job_cgroup_mem.h"
 #include "job_proc_discover.h"
 #include "path_read.h"
 
 #define JOB_CGROUP_PATH_MAX 768
+
+static const struct path_read_opts g_quiet_read_opts = {
+    .skip_known_bad = 0,
+    .report_errors = 0,
+    .detect_overflow = 0,
+};
 
 static int path_has_dotdot(const char *p)
 {
@@ -46,15 +50,10 @@ static int read_ull_file(const char *path, unsigned long long *out)
   size_t len = 0;
   char *end = NULL;
   unsigned long long v;
-  static const struct path_read_opts opts = {
-      .skip_known_bad = 0,
-      .report_errors = 0,
-      .detect_overflow = 0,
-  };
 
   if (path == NULL || out == NULL)
     return -1;
-  if (path_read_small(path, buf, sizeof(buf), &len, &opts) != 0)
+  if (path_read_small(path, buf, sizeof(buf), &len, &g_quiet_read_opts) != 0)
     return -1;
   errno = 0;
   v = strtoull(buf, &end, 10);
@@ -104,9 +103,9 @@ static int resolve_token_dir(const char *root, const char *relpath, char *out, s
     memcpy(parent, cur, (size_t)(slash - cur));
     parent[slash - cur] = '\0';
     if (basename_is(parent, "slurmstepd.scope")) {
-      /* cur is .../slurmstepd.scope/<token> — job scope. */
+      /* cur is .../slurmstepd.scope/<token>, the job scope. */
       if (basename_is(cur, "slurmstepd.scope"))
-        return -1; /* bare aggregate — never */
+        return -1; /* never the bare aggregate */
       if (strlen(cur) + 1 > out_cap)
         return -1;
       memcpy(out, cur, strlen(cur) + 1);
@@ -167,11 +166,6 @@ int job_cgroup_mem_read(const char *cgroup_relpath, struct job_cgroup_mem_kb *ou
   unsigned long long peak_bytes = 0;
   char stat_buf[4096];
   size_t stat_len = 0;
-  static const struct path_read_opts opts = {
-      .skip_known_bad = 0,
-      .report_errors = 0,
-      .detect_overflow = 0,
-  };
 
   if (out == NULL)
     return -1;
@@ -196,7 +190,7 @@ int job_cgroup_mem_read(const char *cgroup_relpath, struct job_cgroup_mem_kb *ou
 
   if (snprintf(path, sizeof(path), "%s/memory.stat", token_dir) >= 0 &&
       (size_t)strlen(path) < sizeof(path) &&
-      path_read_small(path, stat_buf, sizeof(stat_buf), &stat_len, &opts) == 0)
+      path_read_small(path, stat_buf, sizeof(stat_buf), &stat_len, &g_quiet_read_opts) == 0)
     parse_memory_stat(stat_buf, out);
 
   return 0;

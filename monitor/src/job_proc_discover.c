@@ -6,9 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <sys/types.h>
-#include <unistd.h>
 
 #include "job_cgroup_mem.h"
 #include "job_proc_discover.h"
@@ -47,10 +45,7 @@ static int path_has_dotdot(const char *p)
   while (*s) {
     if (s[0] == '.' && s[1] == '.' && (s[2] == '/' || s[2] == '\0'))
       return 1;
-    if (*s == '/')
-      s++;
-    else
-      s++;
+    s++;
   }
   return 0;
 }
@@ -591,7 +586,7 @@ int job_proc_discover(struct job_proc_discover_result *out, int require_step_id,
     goto oom;
 
   if (!any_scope) {
-    /* Fallback: no slurmstepd.scope on node — per-pid environ SLURM_JOB_ID. */
+    /* Fallback: no slurmstepd.scope on node, so per-pid environ SLURM_JOB_ID. */
     for (i = 0; i < n && walked < pid_cap * 2; i++) {
       struct dirent *de = namelist[i];
       int pid;

@@ -84,8 +84,6 @@ int job_sched_affinity_read_online(cpu_set_t **out_set, size_t *out_size, size_t
   fclose(f);
 
   ncpus = (size_t)sysconf(_SC_NPROCESSORS_CONF);
-  if (ncpus < 1)
-    ncpus = 1024;
   /* online list may reference higher indices than CONF on some kernels */
   if (ncpus < 1024)
     ncpus = 1024;
@@ -282,24 +280,10 @@ int job_sched_affinity_cpu_dev_in_list(const char *cpulist, const char *cpu_dev)
   return 0;
 }
 
-int job_sched_affinity_cpulist_subtract(const char *online_list, const char *const *claimed,
-                                        size_t nclaimed, char *out, size_t out_cap)
+static long cpulist_max_index(const char *list, long max_cpu)
 {
-  cpu_set_t *online = NULL;
-  cpu_set_t *claim = NULL;
-  size_t ncpus = 1024;
-  size_t i;
-  long max_cpu = -1;
-  const char *p;
+  const char *p = list;
 
-  if (out == NULL || out_cap == 0)
-    return -1;
-  out[0] = '\0';
-  if (online_list == NULL || online_list[0] == '\0')
-    return -1;
-
-  /* Bound ncpus from the highest index referenced in any list. */
-  p = online_list;
   while (*p) {
     char *e = NULL;
     long v;
@@ -315,26 +299,30 @@ int job_sched_affinity_cpulist_subtract(const char *online_list, const char *con
       max_cpu = v;
     p = e;
   }
+  return max_cpu;
+}
+
+int job_sched_affinity_cpulist_subtract(const char *online_list, const char *const *claimed,
+                                        size_t nclaimed, char *out, size_t out_cap)
+{
+  cpu_set_t *online = NULL;
+  cpu_set_t *claim = NULL;
+  size_t ncpus = 1024;
+  size_t i;
+  long max_cpu = -1;
+
+  if (out == NULL || out_cap == 0)
+    return -1;
+  out[0] = '\0';
+  if (online_list == NULL || online_list[0] == '\0')
+    return -1;
+
+  /* Bound ncpus from the highest index referenced in any list. */
+  max_cpu = cpulist_max_index(online_list, max_cpu);
   if (claimed != NULL) {
     for (i = 0; i < nclaimed; i++) {
-      if (claimed[i] == NULL)
-        continue;
-      p = claimed[i];
-      while (*p) {
-        char *e = NULL;
-        long v;
-
-        while (*p == ',' || *p == ' ' || *p == '-' || *p == '\t' || *p == '\n')
-          p++;
-        if (*p == '\0')
-          break;
-        v = strtol(p, &e, 10);
-        if (e == p)
-          break;
-        if (v > max_cpu)
-          max_cpu = v;
-        p = e;
-      }
+      if (claimed[i] != NULL)
+        max_cpu = cpulist_max_index(claimed[i], max_cpu);
     }
   }
   if (max_cpu >= 0 && (size_t)max_cpu + 1 > ncpus)
