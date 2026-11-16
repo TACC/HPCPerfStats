@@ -6,7 +6,6 @@ patch
 .coverage
 htmlcov/
 .pytest*
-.pytest*/
 .env.dev
 .venv/
 .ruff*/
@@ -18,8 +17,6 @@ tests/docker-compose.test-overlay.yaml
 dist/
 hpcperfstats/site/hpcperfstats_site/edge_nginx/
 rabbitmq-c/
-tacc_stats.egg-info/
-*.pyc
 *.o
 *.sh
 !scripts/*.sh
@@ -85,36 +82,8 @@ sys_path_append.py
 analyze_conf.py
 *.out.*
 *.err.*
-analysis/*.sh
-tacc_stats/version.py
-tacc_stats/cfg.py
 *egg*
-#*
 *.swp
-tacc_stats/taccstats
-Makefile.in
-/ar-lib
-/mdate-sh
-/py-compile
-/test-driver
-/ylwrap
-/autom4te.cache
-/autoscan.log
-/autoscan-*.log
-/aclocal.m4
-/compile
-/config.guess
-/config.h.in
-/config.sub
-/configure
-/configure.scan
-/depcomp
-/install-sh
-/missing
-/stamp-h1
-/ltmain.sh
-/texinfo.tex
-tacc_stats/pickler/*lock
 
 # Diagnosis workflow optional JSON (see docs/TESTING.md, HPCPERFSTATS_UM_DIAG_JSON_OUT)
 tmp/
@@ -123,13 +92,12 @@ test_runs/*
 !test_runs/README.md
 hpcperfstats/test_runs/
 monitor/test_runs/
-# -----------------------------------------------------------------------------
+
 # Frontend build output (Next.js export → copy-next-export.mjs → static/frontend).
 # Orval client under hpcperfstats/site/frontend/src/api/generated/ is gitignored
 # (run npm run generate:api before typecheck/test/build). Never commit static tree.
 # Produce locally: cd hpcperfstats/site/frontend && npm ci && npm run build
 # Docker: pipeline_web.Dockerfile frontend-builder runs npm run build into the image.
-# -----------------------------------------------------------------------------
 hpcperfstats/site/hpcperfstats_site/static/frontend/
 scripts/unlazy*
 GATES.md

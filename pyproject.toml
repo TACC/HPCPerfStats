@@ -254,22 +254,6 @@ combine-as-imports = true
 "hpcperfstats/site/lib/machine/public_api.py" = ["RUF012"]
 "hpcperfstats/site/hpcperfstats_site/staticfiles_config.py" = ["RUF012"]
 # Test doubles: mutable class attrs; pragmatic lint debt on large archive/metrics tests.
-"**/tests/*" = [
-  "RUF012",
-  "SIM115",
-  "SIM117",
-  "SIM102",
-  "E741",
-  "RUF043",
-  "UP045",
-  "RUF003",
-  "S101",
-  "S105",
-  "S106",
-  "S107",
-  "S103",
-  "S102",
-]
 "**/tests/**" = [
   "RUF012",
   "SIM115",
@@ -282,8 +266,10 @@ combine-as-imports = true
   "S101",  # pytest asserts
   "S105",  # test fixture secrets / dummy tokens
   "S106",  # test credential placeholders
+  "S107",
+  "S103",
+  "S102",
 ]
-"hpcperfstats/tests/test_*.py" = ["S102", "S103"]
 "scripts/**" = ["S101"]
 
 [tool.ruff.format]
