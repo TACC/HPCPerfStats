@@ -16,7 +16,6 @@ over mutable lists/dicts; ``HOST_PROC_KEYS`` stays module-level only.
 """
 
 import math
-from typing import Any
 
 import numpy as np
 
@@ -882,33 +881,6 @@ def _is_finite_val(v: float) -> bool:
   return not (v == float("inf") or v == float("-inf"))
 
 
-def _cluster_mean_sum(values: list[float], gap_threshold: float) -> float:
-  """Port of ``_cluster_mean_sum_sorted``: mean-of-cluster, summed across clusters."""
-  finite: list[float] = []
-  for v in values:
-    if _is_finite_val(v) and v < DCGM_BLANK:
-      finite.append(v)
-  if not finite:
-    return float("nan")
-  finite.sort()
-  n = len(finite)
-  if n == 1:
-    return finite[0]
-  total = 0.0
-  cluster_sum = finite[0]
-  cluster_count = 1
-  for i in range(1, n):
-    if finite[i] - finite[i - 1] > gap_threshold:
-      total += cluster_sum / float(cluster_count)
-      cluster_sum = finite[i]
-      cluster_count = 1
-    else:
-      cluster_sum += finite[i]
-      cluster_count += 1
-  total += cluster_sum / float(cluster_count)
-  return total
-
-
 def _dcg_delta_gap_threshold(dvals: list[float]) -> float:
   """Port of ``_dcg_delta_gap_threshold``: dynamic ``0.05*max(|delta|)`` gap."""
   d_gap = 1e-6
@@ -955,19 +927,6 @@ def _mean_skipna(values: list[float]) -> float:
   if count == 0:
     return float("nan")
   return total / float(count)
-
-
-def _sum_min_count1(values: list[float]) -> float:
-  """Sum ignoring NaN; all-NaN group stays NaN (pandas ``sum(min_count=1)``)."""
-  total = 0.0
-  any_valid = False
-  for v in values:
-    if not math.isnan(v):
-      total += v
-      any_valid = True
-  if not any_valid:
-    return float("nan")
-  return total
 
 
 def _collapse_kind(typ: str, event: str) -> int:
@@ -1482,43 +1441,6 @@ def apply_arc_cols(
   )
 
 
-HOST_COPY_CONFLICT_COLS = ["time", "host", "type", "event", "dev"]
-
-HOST_PROC_PEAK_KEYS = (
-  "vm_peak",
-  "vm_hwm",
-  "vm_stk",
-  "vm_exe",
-  "vm_lib",
-)
-
-
-def _float_is_nan(value) -> bool:
-  return bool(type(value) is float and math.isnan(value))
-
-
-def _host_conflict_cell(col: str, value: Any) -> Any:
-  """Conflict-key cell for DB ON CONFLICT (time, host, type, event, dev)."""
-  if col == "time":
-    if value is None:
-      return None
-    if type(value) is float:
-      if math.isnan(value):
-        return None
-      return value
-    if type(value) is int:
-      return float(value)
-    return None
-  if col == "dev":
-    if value is None or _float_is_nan(value):
-      return ""
-    text = str(value).strip()
-    if not text or text.lower() == "nan":
-      return ""
-    return text
-  return value
-
-
 def collapse_host_finished_copy_unique(
   time: list[float],
   host: list[str],
@@ -1614,67 +1536,6 @@ def collapse_host_finished_copy_unique(
   )
 
 
-def _nullable_int_max(left: Any, right: Any) -> Any:
-  if type(left) is int and type(right) is int:
-    return left if left >= right else right
-  if type(left) is int:
-    return left
-  if type(right) is int:
-    return right
-  return right
-
-
-def merge_proc_row_dicts_codon(
-  earlier: dict[str, int],
-  later: dict[str, int],
-) -> dict[str, int]:
-  """Peak-merge two host_proc rows (``dedupe_proc_stats_peak_merge`` semantics)."""
-  for key, val in later.items():
-    if type(val) is not int:
-      continue
-    if key in HOST_PROC_PEAK_KEYS:
-      prev = earlier.get(key)
-      if type(prev) is int and prev >= val:
-        earlier[key] = prev
-      else:
-        earlier[key] = val
-    else:
-      earlier[key] = val
-  return earlier
-
-
-def _copy_dev_text(value: str) -> str:
-  """Blank device for COPY (matches ``_copy_dev_text`` in host insert)."""
-  if value is None:
-    return ""
-  text = value.strip()
-  if not text or text == "nan" or text == "NaN":
-    return ""
-  return text
-
-
-def _host_emit_copy_cell(col: str, value: Any) -> Any:
-  """Per-cell COPY coercion (matches ``_host_frame_cell`` except ``time`` stays unix float)."""
-  if col == "time":
-    if value is None or _float_is_nan(value):
-      return None
-    return float(value)
-  if col == "jid":
-    if value is None:
-      return None
-    text = str(value)
-    if text == "-":
-      return None
-    return text
-  if col == "dev":
-    return _copy_dev_text(value)
-  if col in ("value", "delta", "arc"):
-    if value is None or _float_is_nan(value):
-      return None
-    return float(value)
-  return value
-
-
 def normalize_host_finished_for_copy(
   time: list[float],
   host: list[str],
@@ -1761,19 +1622,6 @@ def normalize_host_finished_for_copy(
     out_delta,
     out_arc,
   )
-
-
-def _proc_emit_copy_scalar(value: Any) -> Any:
-  """Metric cell for proc COPY (matches ``_proc_copy_scalar``)."""
-  if value is None:
-    return None
-  if type(value) is int:
-    return value
-  if isinstance(value, float):
-    if math.isnan(value):
-      return None
-    return int(value)
-  return None
 
 
 def normalize_proc_finished_for_copy(
