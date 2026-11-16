@@ -484,9 +484,6 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 # Linux-only: posix_fadvise SEQUENTIAL/DONTNEED on pipeline file I/O (ingest, archive, zstd). Default yes when omitted; set no only for A/B tuning or debugging.
 # sync_pipeline_drop_page_cache = yes
 
-# Legacy name for sync_pipeline_drop_page_cache (used when the new key is omitted).
-# archive_zstd_drop_page_cache = yes
-
 # Max raw paths processed per day_close batch (default 1000; renamed from archive_janitor_raw_paths_per_tick).
 # sync_day_close_raw_paths_per_batch = 1000
 

@@ -185,7 +185,6 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "archive_zstd_threads"),
   ("PIPELINE", "ingest_zstd_threads"),
   ("PIPELINE", "archive_zstd_level"),
-  ("PIPELINE", "archive_zstd_drop_page_cache"),
   ("PIPELINE", "sync_pipeline_drop_page_cache"),
   ("PIPELINE", "archive_seal_parallel_workers"),
   ("PIPELINE", "sync_day_close_raw_paths_per_batch"),
@@ -375,7 +374,6 @@ INI_OPTION_DEFAULTS = {
   "archive_zstd_threads": "4",
   "ingest_zstd_threads": "4",
   "archive_zstd_level": "9",
-  "archive_zstd_drop_page_cache": "yes",
   "sync_pipeline_drop_page_cache": "yes",
   "archive_seal_parallel_workers": "2",
   "sync_day_close_raw_paths_per_batch": "1000",
@@ -1064,32 +1062,13 @@ def get_sync_pipeline_drop_page_cache() -> Any:
   """
   Linux posix_fadvise hints for pipeline file I/O (ingest, archive, zstd).
 
-  When ``sync_pipeline_drop_page_cache`` is unset, reads legacy
-  ``archive_zstd_drop_page_cache``.
-
   Returns:
-    Any: Parsed boolean (default on).
+    Any: Parsed ``sync_pipeline_drop_page_cache`` boolean (default on).
 
   Examples:
     >>> get_sync_pipeline_drop_page_cache()  # doctest: +SKIP
   """
-  _ensure_cfg_loaded()
-  if _ini_has_option("PIPELINE", "sync_pipeline_drop_page_cache"):
-    return _parse_bool(_pipeline_get("sync_pipeline_drop_page_cache"))
-  return _parse_bool(_pipeline_get("archive_zstd_drop_page_cache"))
-
-
-def get_archive_zstd_drop_page_cache() -> Any:
-  """
-  Deprecated alias for :func:`get_sync_pipeline_drop_page_cache`.
-
-  Returns:
-    Any: Same as ``get_sync_pipeline_drop_page_cache``.
-
-  Examples:
-    >>> get_archive_zstd_drop_page_cache()  # doctest: +SKIP
-  """
-  return get_sync_pipeline_drop_page_cache()
+  return _parse_bool(_pipeline_get("sync_pipeline_drop_page_cache"))
 
 
 def get_archive_seal_parallel_workers() -> Any:

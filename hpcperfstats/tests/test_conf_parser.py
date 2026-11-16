@@ -284,17 +284,36 @@ def test_archive_zstd_nice_ionice_keys_are_retired(temp_ini, monkeypatch):
   # Two seals at a time by default (2026-11-03); saturated shared volumes
   # set 1 so each tar's space comes back soonest (hpcperfstats01 2026-11-02).
   assert cfg.get_archive_seal_parallel_workers() == 2
-  assert cfg.get_archive_zstd_drop_page_cache() is True
+  assert cfg.get_sync_pipeline_drop_page_cache() is True
 
 
-def test_get_archive_zstd_drop_page_cache_opt_out(temp_ini, monkeypatch):
+def test_get_sync_pipeline_drop_page_cache_opt_out(temp_ini, monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
   import importlib
 
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
-  assert cfg.get_archive_zstd_drop_page_cache() is True
+  assert cfg.get_sync_pipeline_drop_page_cache() is True
+
+  with open(temp_ini) as f:
+    content = f.read()
+  content = content.replace(
+    "daily_archive_dir = /tmp",
+    "daily_archive_dir = /tmp\nsync_pipeline_drop_page_cache = no",
+  )
+  with open(temp_ini, "w") as f:
+    f.write(content)
+  importlib.reload(cfg)
+  assert cfg.get_sync_pipeline_drop_page_cache() is False
+
+
+def test_archive_zstd_drop_page_cache_alias_is_not_read(temp_ini, monkeypatch):
+  """The removed legacy key no longer turns the page-cache hints off."""
+  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
+  import importlib
+
+  import hpcperfstats.dbload.lib.conf_parser as cfg
 
   with open(temp_ini) as f:
     content = f.read()
@@ -305,29 +324,9 @@ def test_get_archive_zstd_drop_page_cache_opt_out(temp_ini, monkeypatch):
   with open(temp_ini, "w") as f:
     f.write(content)
   importlib.reload(cfg)
-  assert cfg.get_archive_zstd_drop_page_cache() is False
-
-
-def test_get_sync_pipeline_drop_page_cache_new_key_wins(temp_ini, monkeypatch):
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-
-  importlib.reload(cfg)
-  with open(temp_ini) as f:
-    content = f.read()
-  content = content.replace(
-    "daily_archive_dir = /tmp",
-    "daily_archive_dir = /tmp\n"
-    "archive_zstd_drop_page_cache = yes\n"
-    "sync_pipeline_drop_page_cache = no",
-  )
-  with open(temp_ini, "w") as f:
-    f.write(content)
-  importlib.reload(cfg)
-  assert cfg.get_sync_pipeline_drop_page_cache() is False
-  assert cfg.get_archive_zstd_drop_page_cache() is False
+  assert cfg.get_sync_pipeline_drop_page_cache() is True
+  assert "archive_zstd_drop_page_cache" not in cfg.INI_OPTION_DEFAULTS
+  assert not hasattr(cfg, "get_archive_zstd_drop_page_cache")
 
 
 def test_get_archive_zstd_threads_default_and_override(temp_ini, monkeypatch):
