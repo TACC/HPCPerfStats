@@ -18,8 +18,6 @@ const DELETE_AFTER = new Set([
   "AppPub.test.jsx",
 ]);
 
-const PUB_PATH_PREFIXES = ["/cluster-dashboard"];
-
 function walk(dir, files = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
@@ -49,44 +47,6 @@ function rewriteImports(content) {
       return stripped === specifier ? match : `from ${quote}${stripped}${quote}`;
     },
   );
-}
-
-function _prefixMachinePath(pathExpr) {
-  const trimmed = pathExpr.trim();
-  if (
-    trimmed.startsWith("/machine") ||
-    trimmed.startsWith("/pub") ||
-    trimmed.startsWith("/login") ||
-    trimmed.startsWith("http") ||
-    trimmed.includes("${")
-  ) {
-    return trimmed;
-  }
-  if (trimmed === "/" || trimmed === '"/"' || trimmed === "'/'") {
-    return "/machine/";
-  }
-  if (trimmed.startsWith("`")) {
-    if (trimmed.includes("/machine") || trimmed.includes("/pub")) return trimmed;
-    if (trimmed.startsWith("`/")) {
-      return trimmed.replace(/^`(\/[^`?]*)/, (m, p) => {
-        if (PUB_PATH_PREFIXES.some((pp) => p === pp || p.startsWith(`${pp}/`))) {
-          return `\`/pub${p === "/cluster-dashboard" ? "/cluster-dashboard" : p}`;
-        }
-        const suffix = p.endsWith("/") ? p : `${p}/`;
-        return `\`/machine${suffix}`;
-      });
-    }
-    return trimmed;
-  }
-  if ((trimmed.startsWith('"') || trimmed.startsWith("'")) && trimmed.startsWith("'/") || trimmed.startsWith('"/')) {
-    const inner = trimmed.slice(1, -1);
-    if (PUB_PATH_PREFIXES.some((pp) => inner === pp || inner.startsWith(`${pp}/`))) {
-      return `"/pub${inner === "/cluster-dashboard" ? "/cluster-dashboard/" : inner.endsWith("/") ? inner : `${inner}/`}"`;
-    }
-    const suffix = inner.includes("?") ? inner : inner.endsWith("/") ? inner : `${inner}/`;
-    return `"/machine${suffix.startsWith("/") ? suffix : `/${suffix}`}"`;
-  }
-  return trimmed;
 }
 
 function rewriteRouterImports(content, isPubFile) {
@@ -176,13 +136,6 @@ function convertFile(filePath) {
   let content = fs.readFileSync(filePath, "utf8");
   content = rewriteImports(content);
   content = rewriteRouterImports(content, isPubFile);
-
-  if (base.endsWith(".jsx")) {
-    content = content.replace(
-      /^(import\s+[^;]+;\s*)+/,
-      (block) => block,
-    );
-  }
 
   const newPath = filePath.replace(/\.jsx$/, ".tsx").replace(/\.js$/, ".ts");
   fs.writeFileSync(newPath, content, "utf8");

@@ -1,5 +1,5 @@
 /**
- * One-off audit: compare realistic Django wire payloads vs Orval Zod schemas
+ * Audit: compare realistic Django wire payloads vs Orval Zod schemas
  * registered in response-schema-registry.ts. Run: npx tsx scripts/audit-wire-drift.mts
  */
 import { resolveResponseSchema } from "../src/api/response-schema-registry";

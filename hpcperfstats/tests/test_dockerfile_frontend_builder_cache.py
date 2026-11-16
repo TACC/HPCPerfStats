@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 
 def _repo_root() -> Path:
   return Path(__file__).resolve().parents[2]
+
+
+def _frontend_json(name: str) -> dict:
+  return json.loads(
+    (_repo_root() / "hpcperfstats/site/frontend" / name).read_text(
+      encoding="utf-8"
+    )
+  )
 
 
 def _frontend_builder_stage(dockerfile: str) -> str:
@@ -66,13 +75,7 @@ _FRONTEND_DEV_ONLY_PACKAGES = frozenset(
 
 def test_frontend_build_tooling_lives_in_dev_dependencies():
   """CLI, PostCSS/Tailwind, and Bokeh vendor copy are build-time — not runtime deps."""
-  import json
-
-  package_json = json.loads(
-    (_repo_root() / "hpcperfstats/site/frontend/package.json").read_text(
-      encoding="utf-8"
-    ),
-  )
+  package_json = _frontend_json("package.json")
   deps = set((package_json.get("dependencies") or {}).keys())
   dev_deps = set((package_json.get("devDependencies") or {}).keys())
   assert not _FRONTEND_DEV_ONLY_PACKAGES & deps, (
@@ -85,27 +88,14 @@ def test_frontend_build_tooling_lives_in_dev_dependencies():
 
 def test_frontend_package_json_allowscripts_covers_esbuild():
   """npm 12 blocks dependency install scripts unless allowScripts opts in."""
-  import json
-
-  package_json = json.loads(
-    (_repo_root() / "hpcperfstats/site/frontend/package.json").read_text(
-      encoding="utf-8"
-    ),
-  )
+  package_json = _frontend_json("package.json")
   allow = package_json.get("allowScripts") or {}
   assert allow.get("esbuild@0.28.2") is True
 
 
 def test_js_yaml_override_stays_on_v4_for_orval_default_import():
   """Orval does `import jsYaml from "js-yaml"`; js-yaml 5 has no default export."""
-  import json
-  import re
-
-  package_json = json.loads(
-    (_repo_root() / "hpcperfstats/site/frontend/package.json").read_text(
-      encoding="utf-8"
-    ),
-  )
+  package_json = _frontend_json("package.json")
   override = (package_json.get("overrides") or {}).get("js-yaml")
   assert override is not None, (
     "js-yaml override required (GHSA-h67p-54hq-rp68 floor)"
@@ -129,24 +119,14 @@ def _assert_npm_override_floor(
   reason: str,
 ) -> None:
   """Require package.json override + lockfile version at or above min_version."""
-  import json
-
-  package_json = json.loads(
-    (_repo_root() / "hpcperfstats/site/frontend/package.json").read_text(
-      encoding="utf-8"
-    ),
-  )
+  package_json = _frontend_json("package.json")
   override = (package_json.get("overrides") or {}).get(package)
   assert override is not None, f"{package} override required ({reason})"
   assert _semver_triple(override) >= min_version, (
     f"{package} override must be >= {min_version[0]}.{min_version[1]}."
     f"{min_version[2]} ({reason}); got {override!r}"
   )
-  lock = json.loads(
-    (_repo_root() / "hpcperfstats/site/frontend/package-lock.json").read_text(
-      encoding="utf-8",
-    )
-  )
+  lock = _frontend_json("package-lock.json")
   locked = (lock.get("packages") or {}).get(f"node_modules/{package}") or {}
   locked_version = locked.get("version")
   assert locked_version, f"package-lock.json missing node_modules/{package}"
@@ -249,13 +229,7 @@ def test_xmldom_override_meets_dependabot_110_floor():
 
 def test_mcp_sdk_lock_meets_dependabot_119_floor():
   """Dependabot #119 / GHSA-6qxp-vccf-f47h: MCP SDK < 1.31.0 is vulnerable."""
-  import json
-
-  lock = json.loads(
-    (_repo_root() / "hpcperfstats/site/frontend/package-lock.json").read_text(
-      encoding="utf-8",
-    )
-  )
+  lock = _frontend_json("package-lock.json")
   versions = [
     pkg.get("version")
     for name, pkg in (lock.get("packages") or {}).items()
@@ -276,12 +250,8 @@ def test_deepmerge_stays_dev_only_for_dependabot_121():
   bokehjs -> choices.js) and the vendored Bokeh bundle is ``bokeh.min.js``, not
   ``bokeh-widgets*.js`` (which inlines choices.js + deepmerge).
   """
-  import json
-
   frontend = _repo_root() / "hpcperfstats/site/frontend"
-  lock = json.loads(
-    (frontend / "package-lock.json").read_text(encoding="utf-8")
-  )
+  lock = _frontend_json("package-lock.json")
   entries = {
     name: pkg
     for name, pkg in (lock.get("packages") or {}).items()
@@ -303,13 +273,7 @@ def test_deepmerge_stays_dev_only_for_dependabot_121():
 
 def test_build_prod_runs_write_site_identity_hook():
   """build:prod must generate gitignored site-identity.ts (Docker uses build:prod, not build)."""
-  import json
-
-  package_json = json.loads(
-    (_repo_root() / "hpcperfstats/site/frontend/package.json").read_text(
-      encoding="utf-8"
-    ),
-  )
+  package_json = _frontend_json("package.json")
   scripts = package_json.get("scripts") or {}
   assert scripts.get("prebuild:prod") == "npm run write-site-identity"
 

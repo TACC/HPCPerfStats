@@ -197,41 +197,26 @@ export function injectCspMetaIntoHtml(html, policy) {
  * @returns {number}
  */
 export function injectCspMetaIntoFrontendTree(frontendRoot) {
-  if (!fs.existsSync(frontendRoot)) {
-    return 0;
-  }
   let updated = 0;
-  const stack = [frontendRoot];
-  while (stack.length) {
-    const current = stack.pop();
-    if (!current) continue;
-    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-      const full = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(full);
-        continue;
-      }
-      if (!entry.isFile() || !entry.name.endsWith(".html")) continue;
-      const raw = fs.readFileSync(full, "utf8");
-      const withoutMeta = raw.replace(CSP_META_RE, "");
-      const hashes = extractInlineCspHashesFromHtml(withoutMeta);
-      const rel = path.relative(frontendRoot, full).split(path.sep).join("/");
-      const allowUnsafeEval =
-        rel === "machine" ||
-        rel.startsWith("machine/") ||
-        rel === "pub" ||
-        rel.startsWith("pub/");
-      const allowBokehStyleInline = allowUnsafeEval;
-      const policy = buildCspPolicy({
-        ...hashes,
-        allowUnsafeEval,
-        allowBokehStyleInline,
-      });
-      const next = injectCspMetaIntoHtml(withoutMeta, policy);
-      if (next !== raw) {
-        fs.writeFileSync(full, next, "utf8");
-        updated += 1;
-      }
+  for (const full of listHtmlFiles(frontendRoot)) {
+    const raw = fs.readFileSync(full, "utf8");
+    const withoutMeta = raw.replace(CSP_META_RE, "");
+    const hashes = extractInlineCspHashesFromHtml(withoutMeta);
+    const rel = path.relative(frontendRoot, full).split(path.sep).join("/");
+    const allowUnsafeEval =
+      rel === "machine" ||
+      rel.startsWith("machine/") ||
+      rel === "pub" ||
+      rel.startsWith("pub/");
+    const policy = buildCspPolicy({
+      ...hashes,
+      allowUnsafeEval,
+      allowBokehStyleInline: allowUnsafeEval,
+    });
+    const next = injectCspMetaIntoHtml(withoutMeta, policy);
+    if (next !== raw) {
+      fs.writeFileSync(full, next, "utf8");
+      updated += 1;
     }
   }
   return updated;
@@ -265,7 +250,7 @@ export function writeNginxCspIncludes(htmlRoot, outDir = htmlRoot) {
   );
 }
 
-/** Private CSP artifact dir beside Django static/ — never under STATIC_URL. */
+/** Private CSP artifact dir beside Django static/, never under STATIC_URL. */
 export function defaultEdgeNginxCspDir(staticFrontendTarget = targetDir) {
   return path.resolve(staticFrontendTarget, "..", "..", "edge_nginx");
 }

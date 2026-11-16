@@ -35,29 +35,21 @@ const pubPages = [
   },
 ];
 
-function writePage(relPath, component, importPath) {
+function writePage(relPath, body) {
   const full = path.join(appRoot, relPath);
   fs.mkdirSync(path.dirname(full), { recursive: true });
-  const body = `"use client";\n\nimport ${component} from "${importPath}";\n\nexport default function Page() {\n  return <${component} />;\n}\n`;
   fs.writeFileSync(full, body, "utf8");
   console.log(`wrote ${relPath}`);
 }
 
 for (const page of machinePages) {
-  if (page.isNotFound) {
-    const full = path.join(appRoot, page.route);
-    fs.mkdirSync(path.dirname(full), { recursive: true });
-    const body = `"use client";\n\nimport ${page.component} from "${page.importPath}";\n\nexport default function NotFound() {\n  return <${page.component} />;\n}\n`;
-    fs.writeFileSync(full, body, "utf8");
-    console.log(`wrote ${page.route}`);
-  } else {
-    writePage(page.route, page.component, page.importPath);
-  }
+  const fnName = page.isNotFound ? "NotFound" : "Page";
+  writePage(
+    page.route,
+    `"use client";\n\nimport ${page.component} from "${page.importPath}";\n\nexport default function ${fnName}() {\n  return <${page.component} />;\n}\n`,
+  );
 }
 
 for (const page of pubPages) {
-  const full = path.join(appRoot, page.route);
-  fs.mkdirSync(path.dirname(full), { recursive: true });
-  fs.writeFileSync(full, page.content, "utf8");
-  console.log(`wrote ${page.route}`);
+  writePage(page.route, page.content);
 }

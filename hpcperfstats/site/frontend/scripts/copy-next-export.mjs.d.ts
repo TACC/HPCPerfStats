@@ -19,6 +19,7 @@ export declare function buildNginxCspInclude(options?: {
   styleHashes?: string[];
   styleAttrHashes?: string[];
   allowUnsafeEval?: boolean;
+  allowBokehStyleInline?: boolean;
 }): string;
 
 /** Write CSP includes to outDir (private). Never use the public static/frontend tree. */
