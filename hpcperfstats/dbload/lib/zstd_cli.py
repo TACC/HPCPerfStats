@@ -2,7 +2,7 @@
 Run zstd for daily archive compress/decompress (native .zst and --format=gzip).
 
 Attributes:
-  _GZIP_FORMAT: Attribute.
+  _GZIP_FORMAT: zstd argv that selects legacy gzip input.
 """
 
 from __future__ import annotations
@@ -96,8 +96,6 @@ def _advise_sequential_read(path: str) -> None:
   Examples:
     >>> _advise_sequential_read("x")  # doctest: +SKIP
   """
-  if not _page_cache_hints_enabled():
-    return
   _advise_path(path, os.POSIX_FADV_SEQUENTIAL)
 
 
@@ -114,8 +112,6 @@ def _advise_drop_cache(path: str) -> None:
   Examples:
     >>> _advise_drop_cache("x")  # doctest: +SKIP
   """
-  if not _page_cache_hints_enabled():
-    return
   _advise_path(path, os.POSIX_FADV_DONTNEED)
 
 
@@ -347,9 +343,8 @@ def zstd_compressed_archive_pipe_readable(
   thread_count: int,
 ) -> bool:
   """
-  Return True when ``zstd -d -c | tar tf -`` succeeds for a sealed daily.
-
-    archive.
+  Return True when ``zstd -d -c | tar tf -`` succeeds for a sealed daily
+  archive.
 
   Args:
     compressed_path (str): String for compressed path.
@@ -386,7 +381,7 @@ def zstd_compressed_archive_pipe_readable(
     cmd = [
       zstd_executable(),
       "-d",
-      "--format=gzip",
+      *_GZIP_FORMAT,
       "-c",
       *_thread_args(thread_count),
       "-q",
@@ -707,26 +702,20 @@ def decompress_compressed_to_tar(
       )
       renew_thread.start()
     tmp_path = f"{tar_path}.decomp.tmp"
-    try:
+    with contextlib.suppress(OSError):
       if os.path.exists(tmp_path):
         os.remove(tmp_path)
-    except OSError:
-      pass
     try:
       _decompress_to_path(compressed_path, tmp_path, thread_count)
     except OSError, subprocess.CalledProcessError, ValueError, RuntimeError:
-      try:
+      with contextlib.suppress(OSError):
         if os.path.exists(tmp_path):
           os.remove(tmp_path)
-      except OSError:
-        pass
       return False
     if not _verify_uncompressed_tar_readable(tmp_path):
-      try:
+      with contextlib.suppress(OSError):
         if os.path.exists(tmp_path):
           os.remove(tmp_path)
-      except OSError:
-        pass
       return False
     # Sealed membership maps are untrusted; drop pre-identity L1/store before
     # replace so warm sealed+tar=None keys cannot skip post-restore populate.
@@ -746,11 +735,9 @@ def decompress_compressed_to_tar(
           recover_interrupted_append(tar_path, log_fn=log_print)
           os.replace(tmp_path, tar_path)
     except OSError, TimeoutError:
-      try:
+      with contextlib.suppress(OSError):
         if os.path.exists(tmp_path):
           os.remove(tmp_path)
-      except OSError:
-        pass
       return False
     drop_page_cache_for_paths(compressed_path, tar_path)
     remove_ok = True
@@ -986,9 +973,8 @@ def zstd_gzip_decompress_verbose(
   thread_count: int,
 ) -> subprocess.CompletedProcess:
   """
-  Restore sibling ``.tar`` from legacy ``.tar.gz`` using the safe decompress.
-
-    helper.
+  Restore sibling ``.tar`` from legacy ``.tar.gz`` using the safe decompress
+  helper.
 
   Args:
     gz_path (str): String for gz path.
@@ -1263,7 +1249,6 @@ def zstd_compress_tar_to_file(
       start_new_session=True,
     )
     last_poll = time.monotonic()
-    last_size = 0
     try:
       last_size = (
         int(os.path.getsize(zst_path)) if os.path.isfile(zst_path) else 0

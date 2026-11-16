@@ -2,9 +2,9 @@
 Daily archive path suffixes and helpers (no Django).
 
 Attributes:
-  DAILY_ARCHIVE_GZ_SUFFIX: Attribute.
-  DAILY_ARCHIVE_TAR_SUFFIX: Attribute.
-  DAILY_ARCHIVE_ZST_SUFFIX: Attribute.
+  DAILY_ARCHIVE_GZ_SUFFIX: Legacy sealed daily archive suffix.
+  DAILY_ARCHIVE_TAR_SUFFIX: Open (mutable) daily archive suffix.
+  DAILY_ARCHIVE_ZST_SUFFIX: Canonical sealed daily archive suffix.
 """
 
 from __future__ import annotations
@@ -53,8 +53,6 @@ def daily_tar_path_from_compressed(path: str) -> str:
     return path[: -len(DAILY_ARCHIVE_ZST_SUFFIX)] + DAILY_ARCHIVE_TAR_SUFFIX
   if path.endswith(DAILY_ARCHIVE_GZ_SUFFIX):
     return path[: -len(DAILY_ARCHIVE_GZ_SUFFIX)] + DAILY_ARCHIVE_TAR_SUFFIX
-  if path.endswith(DAILY_ARCHIVE_TAR_SUFFIX):
-    return path
   return path
 
 
@@ -121,12 +119,12 @@ def archive_member_maps_union(
 
   Examples:
     >>> archive_member_maps_union({"a": 10, "b": 5}, {"a": 20, "c": 3})
-    {'a': 20, 'b': 5, 'c': 3}
+    {'a': 20, 'c': 3, 'b': 5}
   """
   union: dict[str, int] = dict(zst_members or {})
   for name, tar_size in (tar_members or {}).items():
     prev = union.get(name)
-    if prev is None or tar_size > prev or tar_size == prev:
+    if prev is None or tar_size >= prev:
       union[name] = int(tar_size)
   return union
 
