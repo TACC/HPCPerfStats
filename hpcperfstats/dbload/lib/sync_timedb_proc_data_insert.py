@@ -47,7 +47,7 @@ CREATE TEMP TABLE IF NOT EXISTS proc_data_ingest_stage (
   jid varchar(32) NULL,
   host varchar(64) NULL,
   proc varchar(512) NULL,
-  device varchar(512) NULL,
+  device varchar NULL,
   uid bigint NULL,
   vm_peak bigint NULL,
   vm_size bigint NULL,

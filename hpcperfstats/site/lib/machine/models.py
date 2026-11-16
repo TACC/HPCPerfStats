@@ -377,7 +377,8 @@ class proc_data(models.Model):
   jid = models.CharField(max_length=32, blank=True, null=True)
   host = models.CharField(max_length=64, blank=True, null=True)
   proc = models.CharField(max_length=512, blank=True, null=True)
-  device = models.CharField(max_length=512, blank=True, null=True)
+  # Unbounded varchar: the monitor emits the full name/pid/cpus/mems token.
+  device = models.CharField(max_length=None, blank=True, null=True)
   uid = models.BigIntegerField(blank=True, null=True)
   vm_peak = models.BigIntegerField(blank=True, null=True)
   vm_size = models.BigIntegerField(blank=True, null=True)

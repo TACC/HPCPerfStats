@@ -76,15 +76,16 @@ static void proc_collect_pid(struct stats_type *type, const char *pid)
 {
   struct stats *stats = NULL;
   struct proc_status_pending pending;
-  char path[32];
-  char process[512];
+  char path[PROC_STATUS_PID_MAX];
   FILE *file = NULL;
   char file_buf[4096];
   char *line = NULL;
   size_t line_size = 0;
-  char name[16];
-  char cmask[512];
-  char mmask[32];
+  char name[PROC_STATUS_NAME_MAX];
+  /* Kernel-maximum mask lists: a long list must not drop the process. */
+  char cmask[PROC_STATUS_CPULIST_MAX];
+  char mmask[PROC_STATUS_MEMLIST_MAX];
+  char process[PROC_STATUS_DEVICE_MAX];
   int name_ready = 0;
   int cmask_ready = 0;
   int mmask_ready = 0;
@@ -131,8 +132,7 @@ static void proc_collect_pid(struct stats_type *type, const char *pid)
     /* Kernel status order: Uid, Vm*, and Threads before affinity masks. Defer
      * until Name+masks create the row, then flush pending (see proc_status.c). */
     if (stats == NULL && name_ready && cmask_ready && mmask_ready) {
-      /* Cutting a long dev at 511 bytes is intended: consumer proc_data.device is varchar(512). */
-      if (snprintf(process, sizeof(process), "%s/%s/%s/%s", name, pid, cmask, mmask) < 0)
+      if (proc_status_format_device(process, sizeof(process), name, pid, cmask, mmask) < 0)
         goto out;
       stats = get_current_stats(type, process);
       if (stats != NULL)

@@ -182,9 +182,56 @@ static void test_skip_process_name_deny_list(void)
   assert(proc_status_skip_process_name("systemd-tmpfiles") == 0);
 }
 
+/* Worst-case Cpus_allowed_list on an NR_CPUS=8192 kernel: every other CPU. */
+static size_t build_worst_case_cpulist(char *buf, size_t cap)
+{
+  size_t len = 0;
+  int cpu;
+
+  buf[0] = '\0';
+  for (cpu = 0; cpu < 8192; cpu += 2) {
+    int n = snprintf(buf + len, cap - len, cpu == 0 ? "%d" : ",%d", cpu);
+
+    assert(n > 0 && (size_t)n < cap - len);
+    len += (size_t)n;
+  }
+  return len;
+}
+
+/* Regression: a long Cpus_allowed_list used to drop the process (cmask[512]) and the
+ * device was cut at 511 bytes for proc_data.device varchar(512). */
+static void test_format_device_full_length(void)
+{
+  static char cpus[PROC_STATUS_CPULIST_MAX];
+  static char dev[PROC_STATUS_DEVICE_MAX];
+  char small[64];
+  size_t cpus_len;
+
+  /* Arrange */
+  cpus_len = build_worst_case_cpulist(cpus, sizeof(cpus));
+  assert(cpus_len > 511);
+  assert(cpus_len < PROC_STATUS_CPULIST_MAX);
+
+  /* Act + Assert: full token, nothing cut */
+  assert(proc_status_format_device(dev, sizeof(dev), "python3", "4194304", cpus, "0-3") == 0);
+  assert(strncmp(dev, "python3/4194304/0,2,4,", 22) == 0);
+  assert(strlen(dev) == strlen("python3/4194304/") + cpus_len + strlen("/0-3"));
+  assert(strcmp(dev + strlen(dev) - strlen(",8190/0-3"), ",8190/0-3") == 0);
+
+  /* Does not fit: fail, never a truncated token */
+  assert(proc_status_format_device(small, sizeof(small), "python3", "1", cpus, "0") == -1);
+
+  /* Invalid input */
+  assert(proc_status_format_device(NULL, sizeof(dev), "a", "1", "0", "0") == -1);
+  assert(proc_status_format_device(dev, 0, "a", "1", "0", "0") == -1);
+  assert(proc_status_format_device(dev, sizeof(dev), NULL, "1", "0", "0") == -1);
+  assert(proc_status_format_device(dev, sizeof(dev), "a", "1", "0", NULL) == -1);
+}
+
 int main(void)
 {
   test_pending_push_flush();
+  test_format_device_full_length();
   test_pending_cap();
   test_realistic_status_order();
   test_emit_when_ready_no_defer();

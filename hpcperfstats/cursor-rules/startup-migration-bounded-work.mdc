@@ -19,6 +19,14 @@ globs: services-conf/django_startup.sh,hpcperfstats/site/lib/machine/migrations/
 2. **Long I/O is operator-side** — decompress, backfill, and constraint swaps that need hours or terabytes of free space belong in operator docs / management commands, not in `django_startup.sh` migrate.
 3. **Never `makemigrations` in production startup** — schema changes ship as **reviewed, committed** migration files. Autogenerating at container start writes ephemeral files into the pip-installed package (`site-packages`) and can apply unreviewed DDL under `restart: always`.
 
+## Startup order: migrate runs alone (user, 2026-11-15)
+
+Migrations always run against a database with no other client. `web` runs `manage.py migrate` in `services-conf/django_startup.sh` **before** it starts gunicorn, and every DB-touching service (`pipeline`: sync_timedb, update_metrics, listend, ...) is gated on gunicorn answering: `services-conf/supervisor_startup.sh` polls `http://web:8000` before it starts supervisord. So:
+
+- Plain DDL is fine in a migration (`AlterField`, `ALTER TABLE`): nothing queues behind its lock. Do **not** add `lock_timeout` retry loops, `atomic = False` or `SeparateDatabaseAndState` just to dodge ingest/read contention; there is none at migrate time.
+- Keep each migration bounded (Law above): running alone does not make a multi-hour rewrite safe under `restart: always`.
+- Keep this order: never start a DB-touching service before gunicorn is up, and never run migrate from the pipeline container.
+
 ## Required patterns
 
 | Concern | Do | Don't |

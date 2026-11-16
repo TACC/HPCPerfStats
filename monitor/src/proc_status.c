@@ -1,5 +1,6 @@
 /* Deferred /proc/<pid>/status field emit for host_proc (Uid, Vm*, Threads). */
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -120,4 +121,15 @@ int proc_status_skip_process_name(const char *name)
       return 1;
   }
   return 0;
+}
+
+int proc_status_format_device(char *out, size_t cap, const char *name, const char *pid,
+                              const char *cpus, const char *mems)
+{
+  int n;
+
+  if (out == NULL || cap == 0 || name == NULL || pid == NULL || cpus == NULL || mems == NULL)
+    return -1;
+  n = snprintf(out, cap, "%s/%s/%s/%s", name, pid, cpus, mems);
+  return (n < 0 || (size_t)n >= cap) ? -1 : 0;
 }
