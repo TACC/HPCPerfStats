@@ -66,6 +66,6 @@ Use these during **plan**, **implement**, **self-review**, and **verification** 
 2. **Plan** — per **`plan-creation-contract.mdc`** / **`PLAN_TEMPLATE.md`** for non-trivial work.
 3. **Implement** — match conventions; Read triggered domain rules before editing.
 4. **Verify** — per **`global-testing-discipline.mdc`** and monitor dual-verify rules.
-5. **Close** — per **`plan-completion-gate.mdc`** (Agent rule dispatch → Final code review → Post-implementation review).
+5. **Close** — per **`plan-completion-gate.mdc`** (Agent rule dispatch → Code cleanup pass with the `awesome-code-cleanup` skill → Final code review → Post-implementation review).
 
 If the monitor plan implies consumer changes, add **Consumer follow-up plan** per **monitor-consumer-side-plan** (even when implementing monitor-only in this session).

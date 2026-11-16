@@ -5,13 +5,14 @@ alwaysApply: true
 
 # Plan Completion Gate
 
-Part of the always-on set in **`agent-discipline-core.mdc`** (pre-close checklist item 1–2). Applies to **every non-trivial code change**—bugfixes, hotfixes, refactors, and plan-driven work—not only when the user asks to **implement a plan**. Treat the **close sequence** as a deliverable, not optional prose after tests pass.
+Part of the always-on set in **`agent-discipline-core.mdc`** (pre-close checklist items 1–2 and 10). Applies to **every non-trivial code change**—bugfixes, hotfixes, refactors, and plan-driven work—not only when the user asks to **implement a plan**. Treat the **close sequence** as a deliverable, not optional prose after tests pass.
 
 **Hard gate:** **Do not mark the task, plan, or any todo done** until:
 
-1. **Final code review** (senior-engineer pass on the diff and affected workflows) finds no unfixed gaps,
-2. **Structured chat self-review** (step 2 below) is written in the **same final turn**, and
-3. **When implementing a plan:** plan YAML todos synced (`status: completed` for every finished step; see **Plan YAML todo sync** below) and the **`post-implementation-review`** todo is complete.
+1. **Code cleanup pass** (step 1 below) ran the **`awesome-code-cleanup`** skill over the change's diff and the change's tests were re-run afterwards,
+2. **Final code review** (senior-engineer pass on the diff and affected workflows) finds no unfixed gaps,
+3. **Structured chat self-review** (step 3 below) is written in the **same final turn**, and
+4. **When implementing a plan:** plan YAML todos synced (`status: completed` for every finished step; see **Plan YAML todo sync** below), the **`code-cleanup`** todo is complete, and the **`post-implementation-review`** todo is complete.
 
 See **`plan-template-enforcement.mdc`** for request phrasing and PLAN_TEMPLATE alignment.
 
@@ -20,7 +21,7 @@ See **`plan-template-enforcement.mdc`** for request phrasing and PLAN_TEMPLATE a
 Before any final message that reports work **done**, **fixed**, **ready**, or **complete**, the agent **must** include these sections **in order**:
 
 1. **`## Agent rule dispatch`** — Pre-close checklist **#5** in **`agent-discipline-core.mdc`**: list every triggered **`HPCPerfStats/monitor/cursor-rules/*.mdc`** file you **Read** (tool) **before the first edit** in the turn, or **`N/A`** only when edited paths did not trigger domain rules. The Cursor **`stop`** hook auto-detects triggered rules from edited paths (via **`hook_task_router.py`**), rejects invalid **`N/A`**, requires dispatch listing, verifies **Read** tool calls (always-on rules exempt), and requires **≥3** edge-case bullets.
-2. **`## Final code review (senior engineer pass)`** — Senior Software Engineer review of the **full diff** and **every workflow touched**; checklist-style findings; **fix gaps before close**.
+2. **`## Final code review (senior engineer pass)`** — Senior Software Engineer review of the **full diff** and **every workflow touched**; checklist-style findings, including a **`Code cleanup pass:`** line (close-sequence step 1); **fix gaps before close**.
 3. **`## Post-implementation review`** with subsections **`### Why it works`**, **`### Edge cases`** (≥3 realistic failure modes), **`### Convention check`**.
 
 **Forbidden without all sections above:** marking todos completed; phrases like “done”, “complete”, “ready to ship”, “fix is in tree”, “task is finished”.
@@ -52,7 +53,20 @@ Same content as **Blocking close gate** above, expanded. Run all steps in the **
 
 Per **`agent-discipline-core.mdc`** task router: for each triggered domain rule, confirm you **Read** it before editing. In chat, under **`## Agent rule dispatch`**, list basenames (for example `monitor-c-conventions.mdc`) or state **`N/A`** when the diff touched no router trigger paths. The Cursor **`stop`** hook rejects an empty dispatch section and emits **`Rule not read: <name>`** when a listed domain rule has no **Read** tool call on that `.mdc` in the transcript for this turn.
 
-### 1. Final code review (senior engineer pass)
+### 1. Code cleanup pass
+
+After the implementation and its tests pass (`make check` and the arch-scoped verify), and **before** the senior review, run the **`awesome-code-cleanup`** skill over the change's diff (Claude Code: `Skill` tool, skill `awesome-code-cleanup`; Cursor: follow `.cursor/skills/awesome-code-cleanup/SKILL.md`). Required for every non-trivial code change, plan-driven or not.
+
+- **Scope:** only the files and hunks this change touched, not a whole-repo sweep. Files that were already dirty before the change stay out.
+- **Behavior-preserving only:** an edit that changes behavior (including emitted keys, schema text, or log strings a consumer or test parses) is a failed pass; revert it.
+- **Bug fixes:** stay inside the root-cause block; the pass must not expand the patch (`grok-surgical-bug-fix-mandate.mdc` wins over the skill).
+- **Leave untouched:** vendored `third_party/**` headers and text that contract tests grep (*Keep* list in `monitor-no-dead-code-or-stale-comments.mdc`).
+- **Re-test:** re-run the change's tests (`make check` in the build tree used) after the cleanup edits.
+- **Report:** a `Code cleanup pass:` line in `## Final code review (senior engineer pass)` naming what was removed or condensed, or `no findings`.
+
+The **Narrow exceptions** below (answer-only, typo/comment-only) skip this step.
+
+### 2. Final code review (senior engineer pass)
 
 Act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches**—callers, tests, static bundle + **arch-scoped** cross-compile verification (`monitor-dual-verify-cross-and-static.mdc`), consumer contract (`listend.py`), config and docs sync—not only the files edited.
 
@@ -65,11 +79,11 @@ Look for:
 - **new or re-triggered domain rules** dual-registered in the **same task** — every `HPCPerfStats/monitor/cursor-rules/*.mdc` you added or whose triggers changed must appear in **both** `agent-discipline-core.mdc` (task router table) and `cursor-hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES`); then **`cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json`**; a rule in only one file is **orphaned** and hooks will not dispatch it (see **`agent-discipline-core.mdc`** → *Creating or changing domain rules*)
 - anything else a senior reviewer would block on merge
 
-**Fix anything found** and re-run relevant tests. Do not proceed to step 2 or mark todos complete while open review items remain.
+**Fix anything found** and re-run relevant tests. Do not proceed to step 3 or mark todos complete while open review items remain.
 
 Aligns with **`plan-creation-contract.mdc`** step 6 and **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`** → *Final code review*. When a plan has **N distinct changes**, that template requires **N Approach groups** (one Target File / compression / minimally invasive block per change).
 
-### 2. Structured chat self-review
+### 3. Structured chat self-review
 
 After the senior pass is clean, write these three headings in chat (per **`implementation-review-workflow.mdc`**):
 
@@ -77,19 +91,22 @@ After the senior pass is clean, write these three headings in chat (per **`imple
 2. **Edge cases** — at least **three** realistic failure modes still possible (collector stall, schema drift, cross-compile gap, consumer mis-parse, operator misconfig).
 3. **Convention check** — naming, module layout, test placement, docs/`test_runs/` logging, every **triggered** workspace rule (cite rule names when non-obvious), and confirmation that the senior review pass found no unfixed gaps.
 
-If writing the chat sections surfaces a new gap, return to step 1, fix, re-test, then update the chat sections.
+If writing the chat sections surfaces a new gap, return to step 2, fix, re-test, then update the chat sections.
 
-## Plan todos (mandatory last item)
+## Plan todos (mandatory closing items)
 
-Every implementation plan YAML must include a final todo:
+Every implementation plan YAML must include these closing todos in this order (`code-cleanup` -> **`post-implementation-review` last**):
 
 ```yaml
+- id: code-cleanup
+  content: "Run the awesome-code-cleanup skill on the plan's diff (touched hunks only, behavior-preserving; bug fixes stay in the root-cause block); re-run the change's tests"
+  status: pending
 - id: post-implementation-review
   content: "Final senior code review (diff + workflow) clean; structured self-review in chat (why it works, edge cases, convention check)"
   status: pending
 ```
 
-Do not mark this todo **completed** until **both** close-sequence steps above are done (or a narrow exception below applies).
+Do not mark **`code-cleanup`** completed until close-sequence step 1 is done and the tests pass again. Do not mark **`post-implementation-review`** **completed** until close-sequence steps 1-3 above are done (or a narrow exception below applies).
 
 ## Runtime logic changes
 
@@ -110,7 +127,8 @@ When behavior changes, also run **`logic-change-checklist.mdc`** mentally and co
 ## Overlap
 
 - **`plan-template-enforcement.mdc`** — plan-only reminder: PLAN_TEMPLATE shape, request phrasing, no close before **`post-implementation-review`**.
-- **`plan-creation-contract.mdc`** — plan authoring structure and **`PLAN_TEMPLATE.md`**; step 6 *Final code review* is implemented here as close-sequence step 1.
-- **`implementation-review-workflow.mdc`** — pre-code plan + post-code review content; close-sequence step 2 matches its three chat sections.
+- **`plan-creation-contract.mdc`** — plan authoring structure and **`PLAN_TEMPLATE.md`**; step 6 *Final code review* is implemented here as close-sequence step 2.
+- **`implementation-review-workflow.mdc`** — pre-code plan + post-code review content; close-sequence step 3 matches its three chat sections.
+- **`monitor-no-dead-code-or-stale-comments.mdc`** — patterns to avoid while writing; close-sequence step 1 runs the `awesome-code-cleanup` skill to catch what slipped into the diff.
 - **`every-error-regression-test.mdc`** — fixes require a regression test before close.
 - **`grok-surgical-bug-fix-mandate.mdc`** — bug plans: zero-expansion compression of the failing block; metric block on `PLAN_TEMPLATE.md`.

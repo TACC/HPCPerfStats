@@ -35,6 +35,7 @@ Answer **YES** or **N/A (one-line reason)** for each row. If any row is **NO**, 
 | 7 | **Valgrind + cpp-linter** run when plan implementation touched monitor C/tests/scripts (`monitor-valgrind-cpp-linter-gate.mdc`: `run_valgrind_check.sh` + `run_cpp_linter.sh`; log under `test_runs/`) |
 | 8 | **Plan YAML** todos synced if implementing a plan (`plan-completion-gate.mdc`) |
 | 9 | **New/re-triggered domain rules** dual-registered in **both** this file (task router) and `cursor-hooks/hook_task_router.py` (`MONITOR_ROUTER_ENTRIES`), then **`cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json`** — verify in **Final code review** when the diff touches `cursor-rules/*.mdc` |
+| 10 | **Code cleanup pass** — after tests pass and before the senior review, the **`awesome-code-cleanup`** skill ran over this change's diff (touched hunks only, behavior-preserving, bug fixes stay in the root-cause block), tests re-run, and a `Code cleanup pass:` line is in **Final code review** (`plan-completion-gate.mdc` close-sequence step 1) |
 
 User may reply **`Close gate incomplete`** — redo the full close sequence without argument.
 
@@ -108,7 +109,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 
 | Trigger | Read |
 |---------|------|
-| User asks for a plan / Cursor Plan / `docs/plans/` / `.cursor/plans/` | `plan-creation-contract.mdc`, `plan-live-disk-sync.mdc`, `plan-template-enforcement.mdc`, `HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md` — live plans at **`<workspace_root>/.cursor/plans/*.plan.md`** |
+| User asks for a plan / Cursor Plan / `docs/plans/` / `.cursor/plans/` | `plan-creation-contract.mdc`, `plan-live-disk-sync.mdc`, `plan-template-enforcement.mdc`, `HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md` — live plans at **`<workspace_root>/.cursor/plans/*.plan.md`**; plan close requires **`code-cleanup`** (awesome-code-cleanup skill on the diff) before **`post-implementation-review`** |
 | Pre-code planning | `implementation-review-workflow.mdc` |
 
 ### Authorized non-monitor edits
@@ -124,6 +125,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 - **Test-first** for behavior changes: `test-first-discipline.mdc`, `monitor-c-testing-standards.mdc`
 - **Canonical verify** for monitor C: `build_static_bundle.sh` + `make check` on arches that compile the change; `cross_compile_test.sh` only for portable / multi-arch diffs per **`monitor-dual-verify-cross-and-static.mdc`** (shared LIKWID adapters and both-arch bundle scripts need **x86 and aarch64**; skip ARM only for x86-only uncore/RAPL/CPUID); on plan close also **`run_valgrind_check.sh`** + **`run_cpp_linter.sh`** per **`monitor-valgrind-cpp-linter-gate.mdc`**
 - **Surgical bug-fixes:** zero-expansion repair of the root-cause block (compress, do not append nested conditionals; no unrelated adjacent cleanup) — Read `grok-surgical-bug-fix-mandate.mdc` and `refactor-dedup-priorities.mdc` before the first product-code patch
+- **Code cleanup pass** on every non-trivial change — run the `awesome-code-cleanup` skill over the diff before the senior review (pre-close checklist #10, `plan-completion-gate.mdc` close-sequence step 1)
 - **Consumer contract** — read `listend.py` before changing emit shape; attach **Consumer follow-up plan** when needed (`monitor-consumer-side-plan.mdc`)
 - **Scope** — default monitor-only; explicit user override required for `hpcperfstats/` edits
 

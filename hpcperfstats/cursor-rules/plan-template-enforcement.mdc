@@ -24,9 +24,12 @@ Per **`plan-live-disk-sync.mdc`**:
 1. All required sections in order per **`plan-creation-contract.mdc`** (Plan disk file → Problem and facts → Operator discovery when needed → Approach → Testing → Implementation → Cursor rules → Final code review). Bug/hotfix/regression plans must include **Root Cause Analysis** in Problem and facts, and Approach subsections **Target File & Line Numbers**, **Fix compression sequence**, **Minimally Invasive Fix**, and **Compression metric block** (`PLAN_TEMPLATE.md`). When the plan has **N distinct changes**, write **N Approach groups** (one Target File / compression / minimally invasive block per change).
 2. **`Final code review (mandatory before implementation close)`** per **`PLAN_TEMPLATE.md`**.
 3. **`Post-implementation review (required before close)`** per **`PLAN_TEMPLATE.md`**.
-4. Closing YAML todos (order fixed; **`post-implementation-review` last**):
+4. Closing YAML todos (order fixed: `code-cleanup` -> `git-hooks-pre-close` -> **`post-implementation-review` last**):
 
 ```yaml
+- id: code-cleanup
+  content: "Run the awesome-code-cleanup skill on the plan's diff (touched hunks only, behavior-preserving; bug fixes stay in the root-cause block); re-run the change's tests"
+  status: pending
 - id: git-hooks-pre-close
   content: "Run all commit-stage and push-stage git hooks green (pre-commit run --all-files; pre-commit run --hook-stage pre-push --all-files); fix failures before close"
   status: pending
@@ -62,11 +65,12 @@ Per **`plan-completion-gate.mdc`** → *Blocking close gate*, every **non-trivia
 **Close sequence order:**
 
 1. **Agent rule dispatch** — list triggered **`*.mdc`** rules Read (or **N/A** with reason); see **`agent-discipline-core.mdc`** task router.
-2. **Git hooks (plan work)** — when implementing a plan, run **all commit-stage and push-stage** hooks green (`git-hooks-pre-close`) before claiming done — `pre-commit run --all-files` and `pre-commit run --hook-stage pre-push --all-files` from `HPCPerfStats/` (`plan-creation-contract.mdc`).
-3. **Final code review (senior engineer pass)** — review the full diff and every workflow the change touches; when `cursor-rules/*.mdc` changed, confirm dual registration in `agent-discipline-core.mdc` and `hook_task_router.py`; fix anything a senior reviewer would block on merge; re-run relevant tests.
-4. **Structured chat self-review** — after step 3 is clean, write **Why it works**, **Edge cases** (≥3 realistic failure modes), and **Convention check** (tests, triggered rules, layer wiring, **`test_runs/`** logging; confirm senior pass had no unfixed gaps).
+2. **Code cleanup pass** — after the change's tests pass, run the **`awesome-code-cleanup`** skill over the diff (touched hunks only, behavior-preserving; bug fixes stay in the root-cause block; generated/vendored files and test-grepped text untouched), re-run the tests, and report a `Code cleanup pass:` line in the senior review (`plan-completion-gate.mdc` close-sequence step 1; plan todo `code-cleanup`).
+3. **Git hooks (plan work)** — when implementing a plan, run **all commit-stage and push-stage** hooks green (`git-hooks-pre-close`) before claiming done — `pre-commit run --all-files` and `pre-commit run --hook-stage pre-push --all-files` from `HPCPerfStats/` (`plan-creation-contract.mdc`).
+4. **Final code review (senior engineer pass)** — review the full diff and every workflow the change touches; when `cursor-rules/*.mdc` changed, confirm dual registration in `agent-discipline-core.mdc` and `hook_task_router.py`; fix anything a senior reviewer would block on merge; re-run relevant tests.
+5. **Structured chat self-review** — after step 4 is clean, write **Why it works**, **Edge cases** (≥3 realistic failure modes), and **Convention check** (tests, triggered rules, layer wiring, **`test_runs/`** logging; confirm senior pass had no unfixed gaps).
 
-**Do not mark the task, plan, or todos done** until all close steps are complete (and, when a plan is active, plan YAML todos are synced, **`git-hooks-pre-close`** is green, and **`post-implementation-review`** is complete). If step 4 surfaces a new gap, return to step 3 before close.
+**Do not mark the task, plan, or todos done** until all close steps are complete (and, when a plan is active, plan YAML todos are synced, **`code-cleanup`** is complete, **`git-hooks-pre-close`** is green, and **`post-implementation-review`** is complete). If step 5 surfaces a new gap, return to step 4 before close.
 
 ## Recommended Cursor User Rule (paste in Settings → Rules → User Rules)
 

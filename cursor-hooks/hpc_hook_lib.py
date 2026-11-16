@@ -106,6 +106,10 @@ PLAN_CONTENT_SECTIONS = (
     "## Post-implementation review (required before close)",
   ),
   (
+    re.compile(r"id:\s*code-cleanup\b", re.I),
+    "code-cleanup todo",
+  ),
+  (
     re.compile(r"id:\s*git-hooks-pre-close\b", re.I),
     "git-hooks-pre-close todo",
   ),
@@ -113,6 +117,12 @@ PLAN_CONTENT_SECTIONS = (
     re.compile(r"id:\s*post-implementation-review\b", re.I),
     "post-implementation-review todo",
   ),
+)
+
+PLAN_CLOSING_TODO_ORDER = (
+  "code-cleanup",
+  "git-hooks-pre-close",
+  "post-implementation-review",
 )
 
 PLAN_CLOSE_RE = re.compile(
@@ -1711,7 +1721,25 @@ def plan_content_issues(plan_markdown: str) -> list[str]:
       missing.append(label)
   missing.extend(operator_discovery_issues(plan_markdown))
   missing.extend(sync_timedb_plan_todo_issues(plan_markdown))
+  missing.extend(closing_todo_order_issues(plan_markdown))
   return missing
+
+
+def closing_todo_order_issues(plan_markdown: str) -> list[str]:
+  matches = [
+    re.search(rf"id:\s*{re.escape(todo_id)}\b", plan_markdown, re.I)
+    for todo_id in PLAN_CLOSING_TODO_ORDER
+  ]
+  if None in matches:
+    return []
+  starts = [match.start() for match in matches]
+  if starts == sorted(starts):
+    return []
+  return [
+    "closing todos out of order (need "
+    + " -> ".join(PLAN_CLOSING_TODO_ORDER)
+    + "; plan-completion-gate.mdc)",
+  ]
 
 
 def domain_rule_read_issues(

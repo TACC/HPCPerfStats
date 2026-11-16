@@ -7,7 +7,7 @@ Loaded every agent turn. Keep these short; do not add more `alwaysApply: true` f
 | File | Role |
 |------|------|
 | `agent-discipline-core.mdc` | **Control plane** — pre-close checklist, task router, when to Read domain rules |
-| `plan-completion-gate.mdc` | Close sequence (senior review + self-review) |
+| `plan-completion-gate.mdc` | Close sequence (awesome-code-cleanup pass + senior review + self-review) |
 | `every-error-regression-test.mdc` | Regression test law for fixes |
 | `monitor-workspace-contract.mdc` | Monitor-only scope (container edits allowed when `.cursor/workspace-profile` = `dual`); RabbitMQ/listend message contract |
 | `python-venv-enforcement.mdc` | `.venv` path |

@@ -7,7 +7,7 @@ Loaded every agent turn. Keep these short; do not add more `alwaysApply: true` f
 | File | Role |
 |------|------|
 | `agent-discipline-core.mdc` | **Control plane** — pre-close checklist, task router, when to Read domain rules |
-| `plan-completion-gate.mdc` | Close sequence (senior review + self-review) |
+| `plan-completion-gate.mdc` | Close sequence (awesome-code-cleanup pass + senior review + self-review) |
 | `every-error-regression-test.mdc` | Regression test law for fixes |
 | `workspace-guardrails.mdc` | `monitor/` read-only (unless `.cursor/workspace-profile` = `dual`), compose wiring, fail-closed unique-copy unlink |
 | `workspace-layout-and-python-env.mdc` | `.venv` path, rules directory |
@@ -70,7 +70,7 @@ Adding a new domain rule (same task, non-optional):
 Committed under `HPCPerfStats/cursor-hooks/` (workspace `.cursor/hooks` symlinks there). Workspace **`.cursor/hooks.json`** must be a **real file copy** of `HPCPerfStats/cursor-hooks/hooks.json` (Cursor refuses a symlinked project hooks config). See `cursor-hooks/README.md`.
 
 - **`preToolUse`** — `check-pre-create-plan-reads.py` denies **`CreatePlan`** until plan-authoring `*.mdc` + `PLAN_TEMPLATE.md` Read; `check-block-until-plan-disk.py` blocks other tools until live plan disk write
-- **`stop`** — close-gate headings after file edits **or `CreatePlan`**, auto-triggered rule dispatch, **Read before first edit/plan**, **rule dual-registration** when `cursor-rules/*.mdc` edited, **PLAN_TEMPLATE** + **operator-discovery command shape** + required todos (`git-hooks-pre-close`, `post-implementation-review`) in the **live disk plan file** when `CreatePlan` was used (not CreatePlan tool body alone), invalid-N/A rejection, ≥3 edge-case bullets (`loop_limit: 3`)
+- **`stop`** — close-gate headings after file edits **or `CreatePlan`**, auto-triggered rule dispatch, **Read before first edit/plan**, **rule dual-registration** when `cursor-rules/*.mdc` edited, **PLAN_TEMPLATE** + **operator-discovery command shape** + required todos in order (`code-cleanup` -> `git-hooks-pre-close` -> `post-implementation-review`) in the **live disk plan file** when `CreatePlan` was used (not CreatePlan tool body alone), invalid-N/A rejection, ≥3 edge-case bullets (`loop_limit: 3`)
 - **`postToolUse`** — `check-edit-triggered-rules.py` warns mid-turn when an edit or **`CreatePlan`** triggers unread domain rules or missing `plan-creation-contract.mdc` / `PLAN_TEMPLATE.md` reads
 - **`postToolUse`** — `check-new-rule-router.py` enforces dual registration (`agent-discipline-core.mdc` + `hook_task_router.py`) for new/edited `cursor-rules/*.mdc`
 

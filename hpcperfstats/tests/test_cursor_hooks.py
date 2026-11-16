@@ -574,6 +574,9 @@ def _minimal_plan_markdown() -> str:
     "## Post-implementation review (required before close)\n\nreview\n"
     "---\n"
     "todos:\n"
+    "  - id: code-cleanup\n"
+    "    content: run awesome-code-cleanup on the diff\n"
+    "    status: pending\n"
     "  - id: git-hooks-pre-close\n"
     "    content: run commit and push hooks\n"
     "    status: pending\n"
@@ -609,10 +612,44 @@ def test_plan_content_issues_detects_missing_sections():
   assert any("Problem and facts" in item for item in issues)
   assert any("post-implementation-review todo" in item for item in issues)
   assert any("git-hooks-pre-close todo" in item for item in issues)
+  assert any("code-cleanup todo" in item for item in issues)
 
 
 def test_plan_content_issues_accepts_minimal_plan():
   assert lib.plan_content_issues(_minimal_plan_markdown()) == []
+
+
+def test_plan_content_issues_requires_code_cleanup_todo():
+  body = _minimal_plan_markdown().replace("  - id: code-cleanup\n", "")
+  issues = lib.plan_content_issues(body)
+  assert any("code-cleanup todo" in item for item in issues)
+
+
+def test_plan_content_issues_rejects_code_cleanup_after_git_hooks():
+  cleanup = (
+    "  - id: code-cleanup\n"
+    "    content: run awesome-code-cleanup on the diff\n"
+    "    status: pending\n"
+  )
+  review = "  - id: post-implementation-review\n"
+  body = _minimal_plan_markdown().replace(cleanup, "")
+  body = body.replace(review, cleanup + review)
+  issues = lib.plan_content_issues(body)
+  assert any("closing todos out of order" in item for item in issues)
+
+
+def test_plan_templates_order_closing_todos():
+  """Both PLAN_TEMPLATE.md files list code-cleanup before the later todos."""
+  repo_root = Path(__file__).resolve().parents[2]
+  container = repo_root / "docs" / "plans" / "PLAN_TEMPLATE.md"
+  monitor = repo_root / "monitor" / "docs" / "plans" / "PLAN_TEMPLATE.md"
+  assert lib.closing_todo_order_issues(container.read_text("utf-8")) == []
+  for template in (container, monitor):
+    text = template.read_text(encoding="utf-8")
+    assert "awesome-code-cleanup" in text, template
+    assert text.index("id: code-cleanup") < text.index(
+      "id: post-implementation-review"
+    ), template
 
 
 def test_plan_template_includes_root_cause_surgical_fix_block():

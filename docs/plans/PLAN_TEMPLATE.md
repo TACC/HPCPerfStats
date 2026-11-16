@@ -20,9 +20,9 @@ Use any of these when you want the agent to follow this template and the close g
 - **“Include final code review per plan-creation-contract”**
 - **“Implement this plan”** (with attached plan or Cursor Plan todos)
 
-The agent must read this file, **Write the plan to** `.cursor/plans/<name>.plan.md` (chat and CreatePlan alone do not count — `plan-live-disk-sync.mdc`), include **Plan disk file**, **Final code review**, and **Post-implementation review** sections, add closing todos `git-hooks-pre-close` then `post-implementation-review`, and for bug/hotfix/regression plans fill **Root Cause Analysis** (Problem and facts) plus Approach subsections **Target File & Line Numbers**, **Minimally Invasive Fix**, **Fix compression sequence**, and **Compression metric block**. See `plan-template-enforcement.mdc`, `plan-completion-gate.mdc`, and `grok-surgical-bug-fix-mandate.mdc`.
+The agent must read this file, **Write the plan to** `.cursor/plans/<name>.plan.md` (chat and CreatePlan alone do not count — `plan-live-disk-sync.mdc`), include **Plan disk file**, **Final code review**, and **Post-implementation review** sections, add closing todos `code-cleanup`, then `git-hooks-pre-close`, then `post-implementation-review`, and for bug/hotfix/regression plans fill **Root Cause Analysis** (Problem and facts) plus Approach subsections **Target File & Line Numbers**, **Minimally Invasive Fix**, **Fix compression sequence**, and **Compression metric block**. See `plan-template-enforcement.mdc`, `plan-completion-gate.mdc`, and `grok-surgical-bug-fix-mandate.mdc`.
 
-**Do not mark implementation done** until the **close sequence** is complete (see `plan-completion-gate.mdc` → *Blocking close gate*): (1) **Agent rule dispatch** — list triggered `*.mdc` rules Read or N/A, (2) **all commit + push git hooks** green (`git-hooks-pre-close` — **required**), (3) senior final code review on the diff and affected workflows finds no unfixed gaps, and (4) structured chat self-review is delivered (**Why it works**, **Edge cases**, **Convention check**). This applies to **all non-trivial code changes**, not only plan-driven work. **When implementing a plan:** also sync plan YAML todos (`status: completed` for every finished step—status-only plan edits are allowed even when plan prose must not change) and complete `git-hooks-pre-close` then `post-implementation-review`.
+**Do not mark implementation done** until the **close sequence** is complete (see `plan-completion-gate.mdc` → *Blocking close gate*): (1) **Agent rule dispatch** — list triggered `*.mdc` rules Read or N/A, (2) **code cleanup pass** — run the `awesome-code-cleanup` skill over the change's diff after its tests pass (touched hunks only, behavior-preserving), then re-run the tests (`code-cleanup`), (3) **all commit + push git hooks** green (`git-hooks-pre-close` — **required**), (4) senior final code review on the diff and affected workflows finds no unfixed gaps, and (5) structured chat self-review is delivered (**Why it works**, **Edge cases**, **Convention check**). This applies to **all non-trivial code changes**, not only plan-driven work. **When implementing a plan:** also sync plan YAML todos (`status: completed` for every finished step—status-only plan edits are allowed even when plan prose must not change) and complete `code-cleanup`, then `git-hooks-pre-close`, then `post-implementation-review`.
 
 ### Recommended Cursor User Rule (paste first in Settings → Rules → User Rules)
 
@@ -45,6 +45,9 @@ todos:
     content: "First implementation step"
     status: pending
   # … one todo per major step …
+  - id: code-cleanup
+    content: "Run the awesome-code-cleanup skill on the plan's diff (touched hunks only, behavior-preserving; bug fixes stay in the root-cause block); re-run the change's tests"
+    status: pending
   - id: git-hooks-pre-close
     content: "Run all commit-stage and push-stage git hooks green (pre-commit run --all-files; pre-commit run --hook-stage pre-push --all-files); fix failures before close"
     status: pending
@@ -226,6 +229,8 @@ pre-commit run --hook-stage pre-push --all-files
 
 Install hooks if missing: `./scripts/install-git-hooks.sh`. Log results under `test_runs/`. Fix failures in the same task before `git-hooks-pre-close` / `post-implementation-review`.
 
+**Code cleanup pass before git hooks (required)** — per `plan-completion-gate.mdc` close-sequence step 1: once the change's tests pass, run the `awesome-code-cleanup` skill over the plan's diff (touched files and hunks only; behavior-preserving; bug fixes stay inside the Target File range; generated/vendored files and test-grepped text untouched), then re-run the tests. Mark `code-cleanup` completed before starting `git-hooks-pre-close`.
+
 ## 4. Implementation
 
 
@@ -291,12 +296,13 @@ State in the monitor summary: **consumer plan attached** or **no consumer change
 
 ## Final code review (mandatory before implementation close)
 
-Per `plan-creation-contract.mdc` step 6 and `plan-completion-gate.mdc` close-sequence **step 1** — act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches** (callers, tests, compose runners, config and docs sync, cross-layer wiring—not only files edited).
+Per `plan-creation-contract.mdc` step 6 and `plan-completion-gate.mdc` close-sequence **step 2** — act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches** (callers, tests, compose runners, config and docs sync, cross-layer wiring—not only files edited).
 
 - [ ] Correctness and behavior regressions
 - [ ] Performance regressions
 - [ ] Missing components (tests, docs, registry or drift guards, API client or tools updates, nginx or route sync when applicable)
 - [ ] Edge cases not covered by tests
+- [ ] `Code cleanup pass:` line — what the `awesome-code-cleanup` skill removed or condensed in the diff, or `no findings` (close-sequence step 1)
 - [ ] New or re-triggered `cursor-rules/*.mdc` files dual-registered in **both** `agent-discipline-core.mdc` (task router) and `cursor-hooks/hook_task_router.py` (`ROUTER_ENTRIES`)
 - [ ] Anything else a senior reviewer would block on merge
 
@@ -304,7 +310,7 @@ Per `plan-creation-contract.mdc` step 6 and `plan-completion-gate.mdc` close-seq
 
 ## Post-implementation review (required before close)
 
-Per `plan-completion-gate.mdc` close-sequence **step 2** and `implementation-review-workflow.mdc` — **after** final code review is clean.
+Per `plan-completion-gate.mdc` close-sequence **step 3** and `implementation-review-workflow.mdc` — **after** final code review is clean.
 
 The implementing agent writes these **in chat** when closing the task (not only checkboxes here):
 
@@ -314,12 +320,13 @@ The implementing agent writes these **in chat** when closing the task (not only 
 
 Additional gates:
 
+- [ ] **Code cleanup pass** — `awesome-code-cleanup` skill ran on the plan's diff after tests passed; tests re-run (`code-cleanup`)
 - [ ] **Git hooks** — commit-stage + push-stage green (`git-hooks-pre-close`; `pre-commit run --all-files` and `pre-commit run --hook-stage pre-push --all-files`)
 - [ ] Regression tests for any fixed/discovered errors (`every-error-regression-test.mdc`)
 - [ ] Test run logged under `test_runs/` when tests executed (`test-runs-output-directory.mdc`)
 - [ ] Runtime logic: `logic-change-checklist.mdc` satisfied (if applicable)
-- [ ] `git-hooks-pre-close` completed **before** `post-implementation-review`
-- [ ] `post-implementation-review` todo completed **last** (both close-sequence steps done; hooks green)
+- [ ] `code-cleanup` completed **before** `git-hooks-pre-close`, and `git-hooks-pre-close` completed **before** `post-implementation-review`
+- [ ] `post-implementation-review` todo completed **last** (close-sequence steps 1-3 done; hooks green)
 
 If chat self-review surfaces a new gap, return to final code review, fix, re-test, then update the chat sections.
 
@@ -330,9 +337,10 @@ Work described by this plan is **not complete** until:
 - Tests added or extended and **executed** (or blockers documented per `test-first-discipline.mdc`)
 - Cursor rules step done (rule added/updated, or explicit no-rule rationale)
 - Plan YAML todos synced (`status: completed` for every finished step, or explicit deferral documented)
+- **Code cleanup pass** — `awesome-code-cleanup` skill run on the plan's diff, tests re-run (`code-cleanup`)
 - **All commit-stage and push-stage git hooks** run and green (`git-hooks-pre-close` — **required**)
 - **Final code review** (senior-engineer pass on diff and affected workflows) done with no unfixed findings
-- Structured chat self-review delivered (`plan-completion-gate.mdc` step 2)
+- Structured chat self-review delivered (`plan-completion-gate.mdc` step 3)
 - Conclusions trace to **verified facts**
 
 

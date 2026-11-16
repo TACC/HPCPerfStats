@@ -25,11 +25,15 @@ Narrow exceptions: one-line typo/format fixes, pure documentation edits with no 
 
 In the **same final turn** that reports implementation done, run this close sequence **before** marking the task done (full detail in **`plan-completion-gate.mdc`** when implementing a plan; same spirit for all non-trivial implementation):
 
-### 1. Final code review (senior engineer pass)
+### 1. Code cleanup pass
 
-Act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches**—callers, tests, static bundle + **arch-scoped** cross-compile per **`monitor-dual-verify-cross-and-static.mdc`**, consumer contract, config and docs sync—not only the files edited. Look for regressions, performance issues (jitter), missing components, untested edge cases, and anything else you would block on merge. When the diff adds or re-triggers a `cursor-rules/*.mdc` file, confirm **dual registration** in the same task: a task-router row in **`agent-discipline-core.mdc`** and a matching **`MONITOR_ROUTER_ENTRIES`** row in **`cursor-hooks/hook_task_router.py`**. **Fix anything found** and re-run relevant tests. Do not proceed to step 2 while open review items remain.
+After the change's tests pass, run the **`awesome-code-cleanup`** skill over the diff (touched hunks only, behavior-preserving; bug fixes stay in the root-cause block), then re-run the tests. Full constraints: **`plan-completion-gate.mdc`** close-sequence step 1.
 
-### 2. Structured self-review in chat
+### 2. Final code review (senior engineer pass)
+
+Act as a **Senior Software Engineer**. Review the **full diff** and every **workflow the change touches**—callers, tests, static bundle + **arch-scoped** cross-compile per **`monitor-dual-verify-cross-and-static.mdc`**, consumer contract, config and docs sync—not only the files edited. Look for regressions, performance issues (jitter), missing components, untested edge cases, and anything else you would block on merge. When the diff adds or re-triggers a `cursor-rules/*.mdc` file, confirm **dual registration** in the same task: a task-router row in **`agent-discipline-core.mdc`** and a matching **`MONITOR_ROUTER_ENTRIES`** row in **`cursor-hooks/hook_task_router.py`**. **Fix anything found** and re-run relevant tests. Do not proceed to step 3 while open review items remain.
+
+### 3. Structured self-review in chat
 
 After the senior pass is clean, write:
 
@@ -37,12 +41,12 @@ After the senior pass is clean, write:
 2. **Edge cases** — name realistic failure modes the code may still miss (collector stall, schema drift, cross-compile gap, consumer mis-parse, etc.); at least **three** when closing a plan per **`plan-completion-gate.mdc`**.
 3. **Convention check** — confirm naming, module layout, test placement, layer wiring, and triggered workspace rules; confirm the senior review pass had no unfixed gaps.
 
-If step 2 surfaces a new gap, return to step 1, fix, re-test, then update the chat sections.
+If step 3 surfaces a new gap, return to step 2, fix, re-test, then update the chat sections.
 
 ## Overlap
 
 - **`plan-template-enforcement.mdc`** — use **`PLAN_TEMPLATE.md`**, no task close before **`post-implementation-review`**.
-- **`plan-completion-gate.mdc`** — when implementing a plan, close-sequence steps 1 and 2 above are mandatory; **`post-implementation-review`** todo must be last.
+- **`plan-completion-gate.mdc`** — when implementing a plan, close-sequence steps 1-3 above are mandatory; **`post-implementation-review`** todo must be last.
 - **`plan-creation-contract.mdc`** — mandatory plan structure (facts, best practices, tests, final code review as last step).
 - **`logic-change-checklist.mdc`** — deeper contract/invariant/failure-mode checklist for runtime logic changes.
 - **`traceback-fix-discipline.mdc`** — root-cause-first defaults for tracebacks and test failures.

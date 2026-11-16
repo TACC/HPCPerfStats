@@ -32,6 +32,7 @@ Answer **YES** or **N/A (one-line reason)** for each row. If any row is **NO**, 
 | 6 | **Compose workflows** run with rootless Podman when DB/Valkey/RabbitMQ/ingest semantics changed (`compose-required-for-data-services-changes.mdc`, `podman-runtime.mdc`) |
 | 7 | **Plan YAML** todos synced if implementing a plan (`plan-completion-gate.mdc`) |
 | 8 | **New/re-triggered domain rules** dual-registered in **both** this file (task router) and `cursor-hooks/hook_task_router.py` (`ROUTER_ENTRIES`), then **`cp HPCPerfStats/cursor-hooks/hooks.json .cursor/hooks.json`** — verify in **Final code review** when the diff touches `cursor-rules/*.mdc` |
+| 9 | **Code cleanup pass** — after tests pass and before git hooks / senior review, the **`awesome-code-cleanup`** skill ran over this change's diff (touched hunks only, behavior-preserving, bug fixes stay in the root-cause block), tests re-run, and a `Code cleanup pass:` line is in **Final code review** (`plan-completion-gate.mdc` close-sequence step 1) |
 
 User may reply **`Close gate incomplete`** — redo the full close sequence without argument.
 
@@ -126,7 +127,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 
 | Trigger | Read |
 |---------|------|
-| User asks for a plan / Cursor Plan / `.cursor/plans/` | `plan-creation-contract.mdc`, `plan-live-disk-sync.mdc`, `plan-template-enforcement.mdc`, `compose-operator-terminal-commands.mdc`, `deploy-ini-with-code-no-phase-zero.mdc`, `operator-command-lessons-learned.mdc`, `docs/plans/PLAN_TEMPLATE.md` — write live plans to **`<workspace_root>/.cursor/plans/*.plan.md`**, not `docs/plans/`; **disk before Plan UI**; plan close requires **`git-hooks-pre-close`** (all commit + push hooks green) before **`post-implementation-review`** |
+| User asks for a plan / Cursor Plan / `.cursor/plans/` | `plan-creation-contract.mdc`, `plan-live-disk-sync.mdc`, `plan-template-enforcement.mdc`, `compose-operator-terminal-commands.mdc`, `deploy-ini-with-code-no-phase-zero.mdc`, `operator-command-lessons-learned.mdc`, `docs/plans/PLAN_TEMPLATE.md` — write live plans to **`<workspace_root>/.cursor/plans/*.plan.md`**, not `docs/plans/`; **disk before Plan UI**; plan close requires **`code-cleanup`** (awesome-code-cleanup skill on the diff), then **`git-hooks-pre-close`** (all commit + push hooks green), then **`post-implementation-review`** |
 | `hpcperfstats.ini.example`, `docs/DEPLOY*.md` (INI redeploy guidance) | `deploy-ini-with-code-no-phase-zero.mdc`, `immutable-image-ini-policy.mdc`, `hpcperfstats-ini-format.mdc` |
 | Pre-code planning | `implementation-review-workflow.mdc` |
 | Plan or change blocked — operator must run terminal commands for facts | `compose-operator-terminal-commands.mdc`, `operator-command-lessons-learned.mdc` (when pastes fail) |
@@ -139,6 +140,7 @@ Use the **Read** tool on the listed `hpcperfstats/cursor-rules/<file>.mdc` when 
 - **Surgical bug-fixes:** zero-expansion repair of the root-cause block (compress, do not append nested conditionals; no unrelated adjacent cleanup) — Read `grok-surgical-bug-fix-mandate.mdc` and `refactor-dedup-priorities.mdc` before the first product-code patch
 - **3+ duplicate logic** → shared helper: `duplicate-threshold-helper-mandate.mdc` (how: `refactor-dedup-priorities.mdc`)
 - **No dead code or stale comments** — delete what your change orphans; no alias wrappers, value-copying comments or planning IDs: `no-dead-code-or-stale-comments.mdc`
+- **Code cleanup pass** on every non-trivial change — run the `awesome-code-cleanup` skill over the diff before git hooks / senior review (pre-close checklist #9, `plan-completion-gate.mdc` close-sequence step 1)
 - **Multi-layer features** → wire all layers: `end-to-end-feature-wiring-contract.mdc`
 - **Container workflows:** use the committed Podman runners; keep test/dev projects isolated with `/data` layout per `podman-runtime.mdc` (production project `hpcperfstats` is exempt from `/data/user/$USER`)
 - **Operator terminal commands** (plans, blocked diagnostics): `compose-operator-terminal-commands.mdc` — INI paths first, filtered service-specific logs, one block per Compose service; on failure update rules per `operator-command-lessons-learned.mdc`
