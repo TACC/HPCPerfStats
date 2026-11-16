@@ -61,9 +61,6 @@ def section_needs_diagnostic(body: str) -> bool:
         paths = [p.strip() for p in m.group(1).split(";") if p.strip()]
     if paths:
         return not any(path_is_analysis_wired(p) for p in paths)
-    # Only Tests or only Additional none-case already handled
-    if "**Application / library code:**" not in body:
-        return True
     return True
 
 

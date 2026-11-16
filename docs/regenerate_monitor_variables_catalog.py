@@ -119,7 +119,6 @@ def _scan_refs(keys: list[str]) -> dict[str, list[str]]:
         for k in keys:
             if f'"{k}"' in text or f"'{k}'" in text:
                 refs[k].append(r)
-    # normalize to hpcperfstats/ prefix
     out = {}
     for k in keys:
         out[k] = sorted(set(refs[k]))

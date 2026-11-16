@@ -7,7 +7,6 @@ Run from HPCPerfStats/:
 from __future__ import annotations
 
 import re
-import sys
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
@@ -500,9 +499,6 @@ def main() -> int:
             "",
         ]
     )
-
-    all_emitted = set().union(*emitted_by_type.values())
-    global_used_events = global_used & all_emitted
 
     for typ in sorted(emitted_by_type):
         unused = sorted(emitted_by_type[typ] - global_used)
