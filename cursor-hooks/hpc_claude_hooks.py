@@ -42,7 +42,6 @@ from hpc_hook_lib import (
   rule_listed_in_router,
 )
 
-EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 LEDGER_DIR = Path(tempfile.gettempdir()) / "hpc_claude_hooks"
 
 

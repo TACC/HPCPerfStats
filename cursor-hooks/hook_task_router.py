@@ -1441,12 +1441,6 @@ def profile_rules_dir_label(profile: str) -> str:
   return "hpcperfstats/cursor-rules"
 
 
-def router_entries_for_profile(profile: str) -> list[RouterEntry]:
-  if profile == "monitor":
-    return MONITOR_ROUTER_ENTRIES
-  return HPCPERFSTATS_ROUTER_ENTRIES
-
-
 def required_docs_for_paths(paths: Iterable[str]) -> list[str]:
   """Checkout-relative docs (``RouterEntry["docs"]``) the paths require Read."""
   seen: dict[str, str] = {}

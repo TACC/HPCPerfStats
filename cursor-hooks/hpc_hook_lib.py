@@ -654,13 +654,6 @@ def iter_tool_parts(rows: list[dict]) -> Iterable[tuple[int, dict]]:
         yield event_idx, part
 
 
-def first_edit_event_index(rows: list[dict]) -> int | None:
-  for event_idx, part in iter_tool_parts(rows):
-    if is_edit_tool_part(part):
-      return event_idx
-  return None
-
-
 def first_closeable_event_index(rows: list[dict]) -> int | None:
   first: int | None = None
   for event_idx, part in iter_tool_parts(rows):
@@ -1267,8 +1260,7 @@ def is_cursor_rule_read_path(path: str) -> bool:
   )
 
 
-# --- Turn-activity ledger ---------------------------------------------------
-# Cursor writes the live turn's tool calls to ``transcript_path`` only after the
+# Turn-activity ledger. Cursor writes the live turn's tool calls to ``transcript_path`` only after the
 # turn ends, so mid-turn ``preToolUse`` / early ``stop`` cannot see this turn's
 # Read / CreatePlan / live-plan Write parts in the transcript alone. A
 # ``preToolUse`` recorder persists those events under ``fcntl.flock`` so gates
