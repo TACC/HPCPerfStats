@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, Suspense } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { getSessionRetrieveQueryKey } from "@/api/generated/session/session";
+import {
+  getSessionRetrieveQueryKey,
+  useSessionRetrieve,
+} from "@/api/generated/session/session";
 import { applyBokehResizeObserverDeferral } from "@/patch-resize-observer-for-bokeh";
-import { useSessionRetrieve } from "@/api/generated/session/session";
 import Layout from "@/Layout";
 import LoadingMessage from "@/components/LoadingMessage";
 import { SessionContext, type SessionData } from "@/session-context";
@@ -15,25 +17,13 @@ import { sessionFromApi } from "@/utils/session-from-api";
 
 applyBokehResizeObserverDeferral();
 
-const PLACEHOLDER_SESSION: SessionData = {
-  logged_in: true,
-  username: "",
-  is_staff: false,
-  machine_name: SITE_MACHINE_NAME,
-  separate_test_login: false,
-};
-
 export default function MachineLayout({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
-  const { data: sessionData, isLoading, isError } = useSessionRetrieve({
+  const { data: sessionData, isLoading } = useSessionRetrieve({
     query: { select: selectOrvalData },
   });
 
-  const session: SessionData | null = sessionData
-    ? sessionFromApi(sessionData)
-    : isError
-      ? null
-      : null;
+  const session: SessionData | null = sessionData ? sessionFromApi(sessionData) : null;
 
   const handleSessionChange = useCallback(
     (next: SessionData | null) => {
@@ -63,14 +53,6 @@ export default function MachineLayout({ children }: { children: React.ReactNode 
     isLoading ? loadingTitle : !session?.logged_in ? "Redirecting to sign in" : " ",
   );
 
-  if (!isLoading && !session?.logged_in) {
-    return (
-      <main id="main-content" tabIndex={-1}>
-        <LoadingMessage message="Redirecting to sign in…" />
-      </main>
-    );
-  }
-
   if (isLoading) {
     return (
       <main id="main-content" tabIndex={-1}>
@@ -79,11 +61,17 @@ export default function MachineLayout({ children }: { children: React.ReactNode 
     );
   }
 
-  const layoutSession = session ?? PLACEHOLDER_SESSION;
+  if (!session?.logged_in) {
+    return (
+      <main id="main-content" tabIndex={-1}>
+        <LoadingMessage message="Redirecting to sign in…" />
+      </main>
+    );
+  }
 
   return (
-    <SessionContext.Provider value={layoutSession}>
-      <Layout session={layoutSession} onSessionChange={handleSessionChange}>
+    <SessionContext.Provider value={session}>
+      <Layout session={session} onSessionChange={handleSessionChange}>
         <Suspense
           fallback={
             <span className="sr-only" role="status" aria-live="polite">

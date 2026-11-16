@@ -38,7 +38,7 @@ const VIEW_COMPONENTS: Record<MachineRouteView, ComponentType> = {
 
 /**
  * After the first lazy view resolves, Suspense fallback is null so query-only
- * presentation nav (sort/page/tab) does not flash "Loading page…".
+ * presentation nav (sort/page/tab) does not flash the loading message.
  */
 function MachineViewSuspense({ children }: { children: ReactNode }) {
   const [hasResolvedOnce, setHasResolvedOnce] = useState(false);

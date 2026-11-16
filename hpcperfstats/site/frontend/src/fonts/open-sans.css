@@ -1,6 +1,6 @@
 /**
  * Self-hosted Open Sans (latin, woff2 only) for Bootswatch Spacelab.
- * Next static export emits woff2 under /static/frontend/_next/static/media/ — same origin (no font CDN).
+ * Next static export emits woff2 under /static/frontend/_next/static/media/ - same origin (no font CDN).
  * @see hpcperfstats/cursor-rules/no-cdn-in-production.mdc
  */
 @font-face {
