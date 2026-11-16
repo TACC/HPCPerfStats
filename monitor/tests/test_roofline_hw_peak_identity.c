@@ -145,6 +145,27 @@ static void test_cuda_cores_per_sm_tesla_k80(void)
   assert(roofline_nvidia_cuda_cores_per_sm(2, 0, "Tesla K80") == 128);
 }
 
+/* GK110/GK210 (Tesla, Quadro, GeForce TITAN) run FP64 at 1/3; other Kepler parts at 1/24. */
+static void test_fp64_ratio_kepler(void)
+{
+  const double third = 1.0 / 3.0;
+  const double k40m_spec = 1.43e12;
+  double flops;
+
+  assert(fabs(roofline_nvidia_fp64_ratio_from_cc(3, 5, "Tesla K40m") - third) < 1e-12);
+  assert(fabs(roofline_nvidia_fp64_ratio_from_cc(3, 7, "Tesla K80") - third) < 1e-12);
+  assert(fabs(roofline_nvidia_fp64_ratio_from_cc(3, 5, "Tesla K20Xm") - third) < 1e-12);
+  assert(fabs(roofline_nvidia_fp64_ratio_from_cc(3, 5, NULL) - third) < 1e-12);
+  assert(fabs(roofline_nvidia_fp64_ratio_from_cc(3, 5, "NVIDIA GeForce GTX TITAN") - third) <
+         1e-12);
+  assert(fabs(roofline_nvidia_fp64_ratio_from_cc(3, 5, "NVIDIA GeForce GTX 780") - (1.0 / 24.0)) <
+         1e-12);
+  assert(fabs(roofline_nvidia_fp64_ratio_from_cc(3, 0, "Tesla K10.G1.8GB") - (1.0 / 24.0)) < 1e-12);
+  flops = roofline_nvidia_fp64_flops_from_sm(
+      15, 192, 745.0, roofline_nvidia_fp64_ratio_from_cc(3, 5, "Tesla K40m"));
+  assert(fabs(flops - k40m_spec) / k40m_spec < 0.005);
+}
+
 static void test_parse_smi_mem_pcie_horizon(void)
 {
   char name[64];
@@ -210,6 +231,7 @@ int main(void)
   test_parse_smi_flops_horizon();
   test_parse_smi_flops_vista_gh200();
   test_cuda_cores_per_sm_tesla_k80();
+  test_fp64_ratio_kepler();
   test_parse_smi_mem_pcie_horizon();
   test_parse_smi_mem_pcie_vista_gh200();
   test_unknown_gpu_no_invent();

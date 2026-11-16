@@ -274,7 +274,10 @@ Inventory fixtures under `tests/fixtures/{stampede3,ls6,vista,horizon}_lspci_pro
 
 FLOPS path: NVML-first (SM count + SM clock); smi fallback uses confirmed fields
 `name,clocks.max.sm,compute_cap` plus the SM identity table — **never** invalid
-`cuda.cores` / `multiprocessor.count` on this driver stack. When DRM mem attrs are
+`cuda.cores` / `multiprocessor.count` on this driver stack. The FP64:FP32 ratio
+comes from compute capability (`roofline_nvidia_fp64_ratio_from_cc`): Kepler CC 3.5/3.7
+non-GeForce parts and GeForce TITAN use 1/3, other Kepler 1/24, so on K20/K40/K80 hosts
+`gpu_peak_fp64_flops_per_s` is ~10.7x higher than from monitors that applied 1/32. When DRM mem attrs are
 empty, mem BW uses allowlisted HBM/GDDR tables. For **GH200**, DRM may
 expose misleading **PCIe x1** while C2C is the real CPU–GPU link — published C2C
 replaces weaker PCIe-derived IO. Do **not** infer HBM3e from marketing substrings

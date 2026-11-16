@@ -193,6 +193,12 @@ double roofline_nvidia_fp64_ratio_from_cc(int major, int minor, const char *name
     return (minor == 0) ? 0.5 : (1.0 / 32.0);
   if (major == 6)
     return (minor == 0) ? 0.5 : (1.0 / 32.0);
+  /* Kepler: GK110/GK210 (Tesla, Quadro, GeForce TITAN) vs GeForce and GK10x/GK208. */
+  if (major == 3)
+    return (minor >= 5 &&
+            (name == NULL || strstr(name, "GeForce") == NULL || strstr(name, "TITAN") != NULL))
+               ? (1.0 / 3.0)
+               : (1.0 / 24.0);
   return 1.0 / 32.0;
 }
 
