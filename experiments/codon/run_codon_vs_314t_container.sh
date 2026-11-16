@@ -39,7 +39,7 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 # Runtime image has no C++ toolchain; prefer Clang (pipeline bake uses Clang).
-# Codon still execs argv "g++" — shim that name to clang++.
+# Codon still execs argv "g++" - shim that name to clang++.
 apt-get install -y -qq clang >/tmp/apt-clang.log
 CLANGXX="$(command -v clang++-19 || command -v clang++ || true)"
 if [[ -z "$CLANGXX" ]]; then
@@ -117,16 +117,13 @@ import pathlib
 import re
 import sys
 
-# Parent shell tees stdout; read from a small marker file written by codon + ft
-# We parse the combined transcript from env passed via files:
+# The real gate runs host-side over the teed log after podman exits.
 print("gate_compute=deferred_to_host_parser")
 PY
 '
-
-  # Host-side gate from this log after podman exits — parse below
 } 2>&1 | tee "$LOG"
 
-# Compute Codon ≥1.25× vs 3.14t Incremental from the log
+# The gate passes when Codon is >= 1.25x faster than 3.14t IncrementalStatsParser.
 /data/HPCPerfStats/.venv/bin/python3 - << PY
 import pathlib
 import re

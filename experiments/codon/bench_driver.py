@@ -9,7 +9,6 @@ N_SAMPLES = 400
 REPS = 80
 
 lines = build_e6_payload_lines(N_SAMPLES)
-# Warmup
 warm = FeedKernel(0)
 warm.feed_lines(lines)
 
