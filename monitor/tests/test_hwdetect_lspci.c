@@ -1,7 +1,6 @@
 /* hwdetect probe-cache invalidation and optional-stack probe smoke tests. */
 #include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
 
 #include "hwdetect.h"
 #include "stats.h"

@@ -1,4 +1,4 @@
-/* gpu_pci_detect — shared lspci GPU vendor heuristics for runtime and build probes. */
+/* gpu_pci_detect - shared lspci GPU vendor heuristics for runtime and build probes. */
 #include <string.h>
 
 #include "gpu_pci_detect.h"

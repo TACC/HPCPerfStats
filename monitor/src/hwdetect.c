@@ -1,4 +1,4 @@
-/* hwdetect — optional hardware stack probe via lspci; disables absent types. */
+/* hwdetect - optional hardware stack probe via lspci; disables absent types. */
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
@@ -27,7 +27,7 @@ static void to_lower_ascii(char *s)
   }
 }
 
-/* Non-OPA HCAs only — hfi1_* is host_opa, not host_ib (Stampede3 OPA-only nodes). */
+/* Non-OPA HCAs only - hfi1_* is host_opa, not host_ib (Stampede3 OPA-only nodes). */
 static int infiniband_sysfs_has_devices(void)
 {
   DIR *d;
@@ -67,8 +67,7 @@ static int env_truthy(const char *name)
   const char *v = getenv(name);
   if (v == NULL)
     return 0;
-  return strcmp(v, "1") == 0 || strcmp(v, "true") == 0 || strcmp(v, "true") == 0 ||
-         strcmp(v, "yes") == 0 || strcmp(v, "yes") == 0 || strcmp(v, "on") == 0 ||
+  return strcmp(v, "1") == 0 || strcmp(v, "true") == 0 || strcmp(v, "yes") == 0 ||
          strcmp(v, "on") == 0;
 }
 

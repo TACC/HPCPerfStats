@@ -1,5 +1,3 @@
-/* Currently only used for intel chips after Nehalem - x2APIC chips */
-/* nhm, wtm, snb, ivb, hsw, bdw, skx are classified correctly */
 #ifndef _CPUID_H_
 #define _CPUID_H_
 

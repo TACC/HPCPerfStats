@@ -1,6 +1,4 @@
-/* Currently only used for intel chips after Nehalem - x2APIC chips */
-/* nhm, wtm, snb, ivb, hsw are classified correctly */
-/* Will autoset AMD to 4 counters */
+/* CPUID processor classification (Intel and AMD EPYC) and x2APIC topology via /dev/cpu/N/cpuid. */
 #include <stdio.h>
 #include <unistd.h>
 #include <stdint.h>
@@ -43,7 +41,6 @@ processor_t signature(int *n_pmcs)
   snprintf(sig, sizeof(sig), "%02x_%x", extended_family_code | family_code, extended_model | model);
   TRACE("sig %s stepping %d\n", sig, stepping);
 
-  /* Determine Processor Family and Model */
   if (strncmp(vendor, "GenuineIntel", 12) == 0) {
     cpuid(0x0A, eax, ebx, ecx, edx);
     *n_pmcs = (eax >> 8) & 0xFF;
@@ -80,7 +77,6 @@ int cpuid_read_cpu_topology(char *cpu, int *pkg_id, int *core_id, int *smt_id, i
   int Pkg_Select_Mask = 0;
   int nr_smt = 0;
 
-  /* Open /dev/cpuid/CPU/cpuid. */
   snprintf(cpuid_path, sizeof(cpuid_path), "/dev/cpu/%s/cpuid", cpu);
   if (path_open_is_skipped(cpuid_path))
     goto out;
@@ -97,7 +93,6 @@ int cpuid_read_cpu_topology(char *cpu, int *pkg_id, int *core_id, int *smt_id, i
     goto out;
   }
 
-  // Get cpuid_level
   max_leaf = buf[0];
   if (max_leaf < 0xB)
     goto out;
@@ -145,9 +140,7 @@ int cpuid_read_cpu_topology(char *cpu, int *pkg_id, int *core_id, int *smt_id, i
     }
   }
   TRACE("Number of threads/physical cores %d/%d\n", nr_smt, *nr_core);
-  //printf("Number of threads/physical cores %d/%d\n", nr_smt, *nr_core);
   TRACE("Pkg_ID Core_ID SMT_ID %d %d %d\n", *pkg_id, *core_id, *smt_id);
-  //printf("Pkg_ID Core_ID SMT_ID %d %d %d\n", *pkg_id, *core_id, *smt_id);
 out:
   if (cpuid_fd >= 0)
     close(cpuid_fd);

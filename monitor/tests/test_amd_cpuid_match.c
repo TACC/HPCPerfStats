@@ -1,6 +1,5 @@
 #include <assert.h>
 #include <stdio.h>
-#include <string.h>
 
 #include "amd_cpuid_match.h"
 
@@ -22,7 +21,7 @@ static void test_epyc_signatures(void)
 
 static void test_non_epyc_rejected(void)
 {
-  /* Naples Fam17h Models 00h-0Fh — not Rome. */
+  /* Naples Fam17h Models 00h-0Fh, not Rome. */
   assert(amd_cpuid_sig_to_processor("AuthenticAMD", "8f_1") == (processor_t)-1);
   assert(amd_cpuid_sig_to_processor("AuthenticAMD", "8f_0") == (processor_t)-1);
   /* Ryzen-like Fam17h outside 30h-3Fh. */
