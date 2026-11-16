@@ -40,15 +40,26 @@ def test_staticfiles_dirs_only_contains_existing_directories():
 
 
 def test_manage_check_uses_test_ini_without_staticfiles_w004(temp_ini):
-  """manage.py check succeeds with test INI and no staticfiles.W004 warning."""
+  """manage.py check succeeds with test INI and no staticfiles.W004 warning.
+
+  The test INI names relative sqlite files (``test``, ``xalt``) that model
+  checks open, so run from the INI's tmp dir: never the checkout (it is
+  bind-mounted under compose, so they leaked to the host tree).
+  """
   repo_root = Path(__file__).resolve().parents[5]
+  strays = [
+    p for p in (repo_root / "test", repo_root / "xalt") if not p.exists()
+  ]
   env = os.environ.copy()
   env["HPCPERFSTATS_INI"] = temp_ini
+  env["PYTHONPATH"] = os.pathsep.join(
+    filter(None, (str(repo_root), env.get("PYTHONPATH")))
+  )
   env.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
 
   result = subprocess.run(
     [sys.executable, "-m", "hpcperfstats.site.manage", "check"],
-    cwd=str(repo_root),
+    cwd=os.path.dirname(temp_ini),
     env=env,
     capture_output=True,
     text=True,
@@ -58,3 +69,4 @@ def test_manage_check_uses_test_ini_without_staticfiles_w004(temp_ini):
   output = f"{result.stdout}\n{result.stderr}"
   assert result.returncode == 0, output
   assert "staticfiles.W004" not in output
+  assert [p for p in strays if p.exists()] == []
