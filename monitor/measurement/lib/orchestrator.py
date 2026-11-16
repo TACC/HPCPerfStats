@@ -101,7 +101,6 @@ class PreflightError(RuntimeError):
     """A condition that makes the run invalid; never overridden by --force."""
 
 
-# ----------------------------------------------------------------------------- pure helpers
 def parse_conf(text: str) -> dict[str, str]:
     """Key/value view of an hpcperfstats.conf (separators as the daemon: space, :, tab, =)."""
     out: dict[str, str] = {}
@@ -346,7 +345,6 @@ def fmt_cpus(cpus: list[int]) -> str:
     return ",".join(str(c) for c in cpus)
 
 
-# ----------------------------------------------------------------------------- argument parsing
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="run_overhead_profile.sh",
@@ -476,7 +474,6 @@ def print_plan(args: argparse.Namespace, active: list[str], groups: dict[str, li
         "installed.")
 
 
-# ----------------------------------------------------------------------------- real run
 class Host:
     """Command runner that logs every command, exit status and duration to raw/commands.log."""
 
@@ -524,7 +521,6 @@ class Run:
         self.saved_governors: dict[int, str | None] = {}
         self.current_governor: str | None = None
 
-    # -- small systemd/journal helpers
     def systemctl(self, *argv: str, check: bool = True) -> subprocess.CompletedProcess:
         return self.host.run(["systemctl", *argv], check=check)
 
@@ -558,7 +554,6 @@ class Run:
             time.sleep(1)
         return None, None, text
 
-    # -- preflight / install
     def preflight(self) -> None:
         a = self.args
         # Governors first: an unsupported one fails before anything (governor included) changes.
@@ -699,7 +694,6 @@ class Run:
                             "fwq_cpus": self.fwq_cpus, "perf_events": self.perf_events}}
         (self.raw / "provenance.json").write_text(json.dumps(prov, indent=2, default=str) + "\n")
 
-    # -- legs
     def set_dropin(self, text: str | None, sample_freq: float | None = None) -> None:
         if text is None:
             Path(DROPIN_PATH).unlink(missing_ok=True)
@@ -880,7 +874,6 @@ class Run:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    # -- cleanup
     def cleanup(self) -> None:
         if self.cleanup_done or not getattr(self, "installed", False):
             return
@@ -931,7 +924,6 @@ class Run:
         except Exception as err:  # a report bug must not stop the measurement
             print(f"WARN: summarize failed: {err}", file=sys.stderr)
 
-    # -- main
     def execute(self) -> int:
         a = self.args
         if not self.rpm.is_file():

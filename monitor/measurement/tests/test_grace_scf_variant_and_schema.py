@@ -123,8 +123,8 @@ def test_matrix_scf_cost_is_solo_minus_variant_and_residual_ignores_variants():
     assert v["variant"] == "arm_cpu_noscf" and v["base"] == "arm_cpu" and v["status"] == "ok"
     assert abs(v["cpu_core_s_per_h"]["mean"] - 0.6) < 1e-9
     assert v["cpu_core_s_per_h"]["n_blocks"] == 2
-    assert v["perf_event_fds_delta"] == 4  # the 4 SCF counters (2 events × 2 sockets)
-    # Residual = ALL − [NONE + (SOLO − NONE)] uses driver groups only, never the variant.
+    assert v["perf_event_fds_delta"] == 4  # the 4 SCF counters (2 events x 2 sockets)
+    # Residual = ALL - [NONE + (SOLO - NONE)] uses driver groups only, never the variant.
     assert abs(m["residual"]["cpu_core_s_per_h"]["mean"] - (130.0 - 123.0)) < 1e-9
 
 

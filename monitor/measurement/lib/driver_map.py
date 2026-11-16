@@ -65,7 +65,7 @@ VARIANTS: dict[str, dict[str, Any]] = {
 }
 KNOWN_TYPES = tuple(sorted({*STATIC_GROUP, *BACKEND_TYPES}))
 
-# Every build shape the map must resolve (CPU backend × IB MAD), used by the drift test.
+# Every build shape the map must resolve (CPU backend x IB MAD), used by the drift test.
 CAPABILITY_VARIANTS = (
     {"arch": "x86_64", "configure": {"cpu_backend": "likwid", "ib_mad_dlopen": True, "infiniband": True}},
     {"arch": "x86_64", "configure": {"cpu_backend": "likwid", "ib_mad_dlopen": False, "infiniband": False}},

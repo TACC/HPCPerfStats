@@ -19,8 +19,6 @@ import re
 import sys
 from typing import Any
 
-NUM = re.compile(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
-
 
 def perf_stat_value(text: str, event: str) -> float | None:
     """Count for ``event`` from ``perf stat -x,`` output.

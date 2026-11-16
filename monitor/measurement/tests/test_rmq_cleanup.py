@@ -49,13 +49,13 @@ def server():
     srv.shutdown()
 
 
-def _conf(port):
+def _conf():
     return {"server": "127.0.0.1", "queue": "stampede3", "user": "monitor", "password": "pw"}
 
 
 def test_measure_queue_cleanup(server):
     port = server.server_address[1]
-    res = rmq_cleanup.delete_measure_queue(_conf(port), mgmt_port=port)
+    res = rmq_cleanup.delete_measure_queue(_conf(), mgmt_port=port)
     assert res["deleted"] is True and res["measure_queue_left"] is False
     method, path, auth = _Handler.calls[-1]
     assert method == "DELETE" and path == "/api/queues/%2F/stampede3_measure"
@@ -64,13 +64,13 @@ def test_measure_queue_cleanup(server):
 
 def test_measure_queue_cleanup_unauthorized_prints_rabbitmqctl(server):
     _Handler.status = 401
-    res = rmq_cleanup.delete_measure_queue(_conf(0), mgmt_port=server.server_address[1])
+    res = rmq_cleanup.delete_measure_queue(_conf(), mgmt_port=server.server_address[1])
     assert res["measure_queue_left"] is True
     assert res["admin_command"] == "rabbitmqctl delete_queue -p / stampede3_measure"
 
 
 def test_measure_queue_cleanup_connection_refused():
-    res = rmq_cleanup.delete_measure_queue(_conf(0), mgmt_port=1, timeout=2)
+    res = rmq_cleanup.delete_measure_queue(_conf(), mgmt_port=1, timeout=2)
     assert res["measure_queue_left"] is True and "rabbitmqctl delete_queue" in res["admin_command"]
 
 
@@ -86,9 +86,9 @@ def test_production_queue_never_deleted(server):
 
 def test_preflight_refuses_consumed_measure_queue(server):
     port = server.server_address[1]
-    assert rmq_cleanup.measure_queue_preflight(_conf(port), mgmt_port=port)["ok"] is True
+    assert rmq_cleanup.measure_queue_preflight(_conf(), mgmt_port=port)["ok"] is True
     _Handler.queue_doc = {"name": "stampede3_measure", "consumers": 1}
-    res = rmq_cleanup.measure_queue_preflight(_conf(port), mgmt_port=port)
+    res = rmq_cleanup.measure_queue_preflight(_conf(), mgmt_port=port)
     assert res["ok"] is False and "consumer" in res["reason"]
     _Handler.queue_doc = {"name": "stampede3_measure", "consumers": 0}
-    assert rmq_cleanup.measure_queue_preflight(_conf(port), mgmt_port=port)["ok"] is True
+    assert rmq_cleanup.measure_queue_preflight(_conf(), mgmt_port=port)["ok"] is True

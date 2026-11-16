@@ -109,10 +109,6 @@ def _all_ci(block: dict[str, Any], key: str) -> dict[str, Any] | None:
     return stats.combine_replicates([v for v in vals if v is not None])
 
 
-def _point(ci: dict[str, Any] | None) -> float | None:
-    return None if ci is None else ci["mean"]
-
-
 def build_matrix(legs: list[dict[str, Any]], groups: dict[str, list[str]],
                  active: list[str], interrupted: bool = False) -> dict[str, Any]:
     blocks = _blocks(legs)

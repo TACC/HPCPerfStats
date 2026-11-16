@@ -95,7 +95,7 @@ def test_leg_thread_top_is_bounded():
     assert top[0]["tid"] == "19" and top[-1]["tid"] == "12"
 
 
-def test_report_renders_thread_top_table(tmp_path):
+def test_report_renders_thread_top_table():
     from lib import profile_report
 
     profile = {"legs": [{"leg_id": "b1-ALL-first", "kind": "ALL", "status": "ok", "contaminated": False,

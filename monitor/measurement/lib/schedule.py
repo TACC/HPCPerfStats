@@ -25,7 +25,6 @@ from typing import Any
 LEG_SHORTENINGS = (1200, 600)
 # --profile-collectors: build the --enable-metric-profiler binary from the dist tarball.
 PROFILER_BUILD_SECONDS = 900
-FIT_ORDER = ("shorten_legs", "drop_second_all", "solo_single_block")
 
 
 class ScheduleDoesNotFit(ValueError):
