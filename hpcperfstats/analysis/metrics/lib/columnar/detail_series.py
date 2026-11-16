@@ -53,9 +53,6 @@ _NFS_IOPS_EVENTS = ("READ_ops", "WRITE_ops")
 _BYTES_TO_MB = 1 / (1024 * 1024)
 
 
-# -- FSIO --------------------------------------------------------------------
-
-
 def _sum_by_time(agg: AggTable) -> tuple[np.ndarray, np.ndarray]:
   """
   ``df.groupby("time")["sum_val"].sum()``.
@@ -273,9 +270,6 @@ def fsio_peaks(jt: Any, key: str) -> tuple[float | None, float | None]:
   )
 
 
-# -- GPU ---------------------------------------------------------------------
-
-
 def gpu_agg_rows(jt: Any) -> list[dict[str, Any]]:
   """
   ``gpu_agg_rows_for_job_window``: util Count/Max/Avg rows of the first
@@ -405,9 +399,6 @@ def gpu_summary_tuple(
     return active, vmax, vmean, gpu_count_total(jt)
   except Exception:
     return None, None, None, None
-
-
-# -- node power estimate -------------------------------------------------------
 
 
 def node_power_est_frame(jt: Any) -> SeriesFrame:

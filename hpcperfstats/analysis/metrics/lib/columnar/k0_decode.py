@@ -16,7 +16,6 @@ speed and stays pandas-free.
 Attributes:
   COPY_SIGNATURE: Bytes every binary COPY stream starts with.
   PG_EPOCH_OFFSET_US: Microseconds between the Unix and PostgreSQL epochs.
-  FETCH_COLUMNS: Column names in stream order (without ``owned``).
   _H: Big-endian int16 struct (field count / trailer).
   _I: Big-endian int32 struct (lengths, flags, ``owned``).
   _Q: Big-endian int64 struct (timestamptz microseconds).
@@ -41,16 +40,6 @@ from hpcperfstats.analysis.metrics.lib.columnar.jobframe import (
 
 COPY_SIGNATURE = b"PGCOPY\n\xff\r\n\x00"
 PG_EPOCH_OFFSET_US = 946_684_800_000_000
-FETCH_COLUMNS: tuple[str, ...] = (
-  "time",
-  "host",
-  "type",
-  "event",
-  "dev",
-  "value",
-  "arc",
-  "delta",
-)
 
 _H = struct.Struct(">h")
 _I = struct.Struct(">i")
@@ -350,7 +339,7 @@ def decode_copy_binary_reference(
       break
     if nf != expected_fields:
       raise ValueError(f"unexpected field count {nf}")
-    # time (int64 µs since 2000-01-01)
+    # time (int64 us since 2000-01-01)
     ln = _I.unpack_from(buf, off)[0]
     off += 4
     if ln != 8:

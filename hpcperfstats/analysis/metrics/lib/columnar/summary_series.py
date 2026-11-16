@@ -282,24 +282,6 @@ def combine_bw(dram: AggTable | None, hbm: AggTable | None) -> AggTable | None:
   return d if d is not None else h
 
 
-def _merge_column(frame: SeriesFrame, name: str, agg: AggTable) -> None:
-  """
-  ``df.merge(agg, how="left")`` then ``df[name] = sum_val``.
-
-  Args:
-    frame (SeriesFrame): Target frame.
-    name (str): Column name.
-    agg (AggTable): Aggregate rows.
-
-  Returns:
-    None
-
-  Examples:
-    >>> _merge_column(frame, "cpu", agg)  # doctest: +SKIP
-  """
-  frame.set(name, frame.join_values(agg))
-
-
 def _merge_first_full_coverage(
   frame: SeriesFrame, jt: Any, name: str, val_col: str, tries: Sequence[Any]
 ) -> None:

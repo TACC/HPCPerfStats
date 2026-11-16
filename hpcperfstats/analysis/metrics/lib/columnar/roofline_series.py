@@ -206,27 +206,6 @@ def _agg_arc(
   return jt.get_aggregate(typ, "arc", list(events), conv), "arc"
 
 
-def _agg_value(
-  jt: Any, typ: str, events: Sequence[str], conv: float
-) -> tuple[AggTable, str]:
-  """
-  ``roofline._aggregate_value``.
-
-  Args:
-    jt (Any): ColumnarJobTable.
-    typ (str): Type.
-    events (Sequence[str]): Events.
-    conv (float): Multiplier.
-
-  Returns:
-    tuple[AggTable, str]: Table and source tag.
-
-  Examples:
-    >>> _agg_value(jt, "nvidia_gpu", ["gpu_flops_rate"], 1e-9)  # doctest: +SKIP
-  """
-  return jt.get_aggregate(typ, "value", list(events), conv), "value"
-
-
 def _agg_arc_by_dev(
   jt: Any, typ: str, events: Sequence[str], conv: float
 ) -> tuple[AggTable, str]:

@@ -260,25 +260,6 @@ class SeriesFrame:
         raise KeyError(n)
       del self.columns[n]
 
-  def has_null(self, name: str) -> bool:
-    """
-    ``df[name].isnull().values.any()``.
-
-    Args:
-      name (str): Column.
-
-    Returns:
-      bool: Any NaN.
-
-    Examples:
-      >>> import numpy as np
-      >>> f = SeriesFrame.from_base(np.array([0]), np.array([1]), ["h"])
-      >>> f.set("x", np.array([np.nan]))
-      >>> f.has_null("x")
-      True
-    """
-    return bool(np.isnan(self.columns[name]).any())
-
   def any_finite(self, name: str) -> bool:
     """
     ``df[name].notna().any()``.

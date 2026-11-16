@@ -24,7 +24,6 @@ Attributes:
   CODON_METRICS_DISABLE_ENV: Test-only switch that ignores the kernel.
   PIPELINE_INTERPRETER_PREFIX: Interpreter prefix that requires the kernel.
   MODULE_NAME: Import name of the pyext.
-  KERNEL_SO: File name of the ``--lib`` kernel next to the pyext.
   PYEXT_SO: File name of the pyext.
   _KERNEL_METHODS: Methods the pyext must export to count as loaded.
   RADIX_BUCKETS: Count-array length the kernel's radix sort needs in scratch.
@@ -53,7 +52,6 @@ CODON_METRICS_REQUIRED_ENV = "HPCPERFSTATS_CODON_METRICS_REQUIRED"
 CODON_METRICS_DISABLE_ENV = "HPCPERFSTATS_CODON_METRICS_DISABLE"
 PIPELINE_INTERPRETER_PREFIX = "/opt/python3.14t/"
 MODULE_NAME = "hpcperfstats_codon_metrics"
-KERNEL_SO = "libhpcperfstats_codon_metrics_kernel.so"
 PYEXT_SO = "hpcperfstats_codon_metrics.so"
 
 _KERNEL_METHODS = (
@@ -324,20 +322,6 @@ def kernels() -> Any | None:
     with _load_lock:
       _probe_locked()
   return _state.module or None
-
-
-def codon_metrics_available() -> bool:
-  """
-  Whether the Codon kernels are loaded.
-
-  Returns:
-    bool: True when :func:`kernels` returns a module.
-
-  Examples:
-    >>> isinstance(codon_metrics_available(), bool)
-    True
-  """
-  return kernels() is not None
 
 
 def reset_for_tests() -> None:

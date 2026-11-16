@@ -309,8 +309,6 @@ class ColumnarJobTable:
     self.delta_scale = float(delta_scale)
     self._agg_memo: dict[tuple[Any, ...], AggTable] = {}
 
-  # -- construction -------------------------------------------------------
-
   @classmethod
   def from_jid_table(
     cls, jt: Any, frame: JobFrame | None = None
@@ -382,8 +380,6 @@ class ColumnarJobTable:
       gpu_affinity_devs=meta.get("gpu_affinity_devs"),
     )
 
-  # -- context manager (jid_table parity) ---------------------------------
-
   def __enter__(self) -> ColumnarJobTable:
     """
     Context-manager entry (no resources to acquire).
@@ -428,8 +424,6 @@ class ColumnarJobTable:
       ... ).__exit__(None, None, None)
     """
     return None
-
-  # -- basic reads --------------------------------------------------------
 
   def has_host_data(self) -> bool:
     """
@@ -500,8 +494,6 @@ class ColumnarJobTable:
       0
     """
     return self.index.distinct_time_count_per_host_sum()
-
-  # -- aggregates ---------------------------------------------------------
 
   def get_aggregate(
     self,
@@ -747,8 +739,6 @@ class ColumnarJobTable:
       return e, e.copy(), np.empty(0, dtype=np.float64)
     return self.index.raw_rows(typ, list(events), col)
 
-  # -- FSIO deltas ---------------------------------------------------------
-
   def _delta_by_event(
     self, alias: str, events: Sequence[str]
   ) -> dict[str, float]:
@@ -870,8 +860,6 @@ class ColumnarJobTable:
     if read_total == 0.0 and write_total == 0.0:
       return None
     return [read_total / (1024 * 1024), write_total / (1024 * 1024)]
-
-  # -- GPU aggregates -------------------------------------------------------
 
   def gpu_util_rows(
     self, gpu_typ: str, events: Sequence[str]
@@ -1039,8 +1027,6 @@ class ColumnarJobTable:
       if inventory > 0:
         return total + inventory
     return total if scoped else None
-
-  # -- metrics view -------------------------------------------------------
 
   def metrics_view(self) -> Any:
     """

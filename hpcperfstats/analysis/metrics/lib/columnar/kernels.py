@@ -252,8 +252,6 @@ class FrameIndex:
     self._time_axis = frame.time_axis()
     self._time_index = frame.time_index().astype(np.int64)
 
-  # -- lookup -------------------------------------------------------------
-
   def series_ids(self, typ: str, events: Sequence[str] | None) -> list[int]:
     """
     Series ids for ``typ`` restricted to ``events`` (all events when None).
@@ -442,8 +440,6 @@ class FrameIndex:
     if name not in _COLUMNS:
       raise ValueError(name)
     return getattr(self.frame, name)
-
-  # -- reductions -----------------------------------------------------------
 
   def host_time_keys(self) -> tuple[np.ndarray, np.ndarray]:
     """
