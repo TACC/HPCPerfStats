@@ -1,8 +1,6 @@
 /* RabbitMQ daemon core: ring buffer, dumpfiles, timers, jobid transitions, config reload. */
 #include <dirent.h>
 #include <errno.h>
-#include <malloc.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +13,6 @@
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/syslog.h>
 #include <ev.h>
 
 #include "daemonize.h"
@@ -84,22 +81,8 @@ int n_pmcs;
 processor_t processor = (processor_t)0;
 
 static void send_dumpfile_stats(struct sf_ring_buffer *w);
-static void monitor_daemon_jobid_assign(char *dest, size_t dest_len, const char *src);
 static void monitor_daemon_free_dumpfile_paths(char **file_list, int n_files);
-static int monitor_daemon_replay_one_dumpfile(const char *path, struct sf_ring_buffer *w);
 static int save_file_stats_buffer(struct stats_buffer *sf);
-static long monitor_daemon_monotonic_us(void);
-static void monitor_daemon_log_resend_stats(int q_before, int processed_entries, long elapsed_us,
-                                            int had_error, int queue_remaining);
-static void monitor_daemon_log_timer_drift(const char *name, double now_s, double expected_period_s,
-                                           double *last_fire_s);
-
-/* Tier B: rate-limit repetitive operational logs on hot paths (ring/dumpfile resend). */
-#ifdef DEBUG
-#define MONITOR_HOT_LOG_EVERY 1u
-#else
-#define MONITOR_HOT_LOG_EVERY 32u
-#endif
 
 enum {
   MONITOR_DUMPFILE_MAX_FILES_PER_CALL = 2,
@@ -120,12 +103,7 @@ static void monitor_daemon_log_resend_stats(int q_before, int processed_entries,
                                             int had_error, int queue_remaining)
 {
 #ifdef DEBUG
-  static unsigned long tick;
-
   if (!had_error && q_before <= 0)
-    return;
-  if (!had_error && elapsed_us < 20000L && processed_entries < 32 && queue_remaining <= 0 &&
-      ((tick++ % 1u) != 0u))
     return;
 
   monitor_log_info("ring resend: before=%d processed=%d left=%d elapsed_us=%ld status=%d\n",
@@ -166,9 +144,6 @@ static void monitor_daemon_log_timer_drift(const char *name, double now_s, doubl
 static void monitor_daemon_log_ring_resend_line(void)
 {
 #ifdef DEBUG
-  static unsigned seq;
-  if (MONITOR_HOT_LOG_EVERY > 1u && (++seq % MONITOR_HOT_LOG_EVERY) != 1u)
-    return;
   monitor_log_info("Resending stats in the ring buffer\n");
 #else
   /* Silent in release; hourly rollup covers send progress. */
@@ -178,9 +153,6 @@ static void monitor_daemon_log_ring_resend_line(void)
 static void monitor_daemon_log_dumpfile_resend_line(void)
 {
 #ifdef DEBUG
-  static unsigned seq;
-  if (MONITOR_HOT_LOG_EVERY > 1u && (++seq % MONITOR_HOT_LOG_EVERY) != 1u)
-    return;
   monitor_log_info("Resending stats in the dumpfile\n");
 #else
   /* Silent in release. */
@@ -350,7 +322,6 @@ void monitor_daemon_finalize_runtime_settings(void)
 int read_conf_file(void)
 {
   FILE *conf_file_fd = NULL;
-  int ret = 0;
 
   if (conf_file_name == NULL) {
     monitor_daemon_finalize_runtime_settings();
@@ -381,11 +352,10 @@ int read_conf_file(void)
       continue;
     monitor_options_apply_daemon_conf_kv(key, line);
   }
-  if (line_buf)
-    free(line_buf);
+  free(line_buf);
   fclose(conf_file_fd);
   monitor_daemon_finalize_runtime_settings();
-  return ret;
+  return 0;
 }
 
 void monitor_daemon_prime_file_mode_from_dumpdir(void)
@@ -428,10 +398,10 @@ static void monitor_daemon_collect_to_ring(struct sf_ring_buffer *w, int write_h
     return;
   /* `$`/schema and job-boundary payloads must be complete: force a full collect
    * so every key (fast + slow) is present and emitted as @full. */
-  if (write_hdr)
+  if (write_hdr) {
     stats_runtime_set_collect_phase(COLLECT_FULL);
-  if (write_hdr)
     stats_wr_hdr(sf);
+  }
   if (mark_line != NULL)
     stats_buffer_mark(sf, "%s", mark_line);
   w->b_count++;
@@ -588,7 +558,7 @@ static int save_file_ring_buffer(struct sf_ring_buffer *w)
   char *file_path;
   struct sf_queue *sfq;
 
-  /* Nothing buffered (common on SIGINT/SIGTERM after successful sends) — not an error. */
+  /* Nothing buffered (common on SIGINT/SIGTERM after successful sends) is not an error. */
   if (w->q_count == 0)
     return 0;
 
@@ -706,11 +676,6 @@ void monitor_daemon_replay_dumpfiles_if_present(struct sf_ring_buffer *w)
 static void print_buffer_status(struct sf_ring_buffer *w)
 {
 #ifdef DEBUG
-  const unsigned status_every = 1u;
-  static unsigned long status_tick;
-  if (status_every > 1u && (status_tick++ % status_every) != 0u)
-    return;
-
   /* One fprintf: fewer lock/syscall round-trips than seven separate prints. */
   monitor_log_info(
       "status = %d, allow_overwrite = %d, file_mode = %d, #succ_send = %d/%d\n"
@@ -782,7 +747,7 @@ void monitor_daemon_rotate_collect_flush(struct sf_ring_buffer *w)
 {
   monitor_daemon_collect_to_ring(w, 1, NULL);
   /*
-   * Schema/`$` payloads must reach RabbitMQ promptly — otherwise archives stay stale until the first
+   * Schema/`$` payloads must reach RabbitMQ promptly, or archives stay stale until the first
    * send_timer tick (send_freq can be hundreds of seconds) after daemon restart or periodic rotate.
    */
   monitor_daemon_resend_ring_buffer_if_nonempty(w);
@@ -854,15 +819,14 @@ static void monitor_daemon_fd_apply_jobid_change(struct sf_ring_buffer *w, const
     /*
      * Idle (`-`) must keep the same sampling cadence as a cold start with no job.
      * Historic code used 3600s here; that left q_count at 0 for up to an hour while send_timer
-     * still ran, so archives looked “stalled” and broker traffic was only from other hosts.
+     * still ran, so archives looked "stalled" and broker traffic was only from other hosts.
      */
     sample_timer_period = sample_freq;
     write_hdr = 1;
   }
   monitor_daemon_reanchor_sample_timer(EV_DEFAULT, sample_timer_period);
   monitor_daemon_collect_to_ring(w, write_hdr, mark_line);
-  if (mark_line != NULL)
-    free(mark_line);
+  free(mark_line);
   monitor_daemon_maybe_send_dumpfiles_after_jobid_cleared(w, new_jobid);
 }
 

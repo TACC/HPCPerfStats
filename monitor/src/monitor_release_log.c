@@ -1,4 +1,4 @@
-/* Release (!DEBUG) logging policy helpers — first-fail latch, named counters, stderr quiet. */
+/* Release (!DEBUG) logging policy helpers: first-fail latch, named counters, stderr quiet. */
 #include "monitor_release_log.h"
 
 #include <fcntl.h>

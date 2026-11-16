@@ -1,12 +1,9 @@
 /* RabbitMQ daemon entry: libev timers, schema rotation, jobid watcher bootstrap. */
-#include <errno.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 #include <ev.h>
 
 #include "daemonize.h"
@@ -18,7 +15,6 @@
 #include "stats_buffer.h"
 #include "stats_buffer_debug_shm.h"
 #include "stats_runtime.h"
-#include "string1.h"
 #include "stats.h"
 #include "trace.h"
 #include "pscanf.h"

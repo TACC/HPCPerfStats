@@ -3,7 +3,6 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -14,17 +13,12 @@ char *pid_file_name;
 
 #define DAEMON_PID_BUF 32
 
-static void daemonize_exit_on_failure(void)
-{
-  exit(EXIT_FAILURE);
-}
-
 static void daemonize_first_fork(void)
 {
   pid_t pid = fork();
 
   if (pid < 0)
-    daemonize_exit_on_failure();
+    exit(EXIT_FAILURE);
   if (pid > 0)
     exit(EXIT_SUCCESS);
 }
@@ -32,7 +26,7 @@ static void daemonize_first_fork(void)
 static void daemonize_setup_session(void)
 {
   if (setsid() < 0)
-    daemonize_exit_on_failure();
+    exit(EXIT_FAILURE);
   signal(SIGCHLD, SIG_IGN);
 }
 
@@ -49,7 +43,7 @@ static int daemonize_open_devnull(int flags)
   int n = open("/dev/null", flags);
 
   if (n < 0)
-    daemonize_exit_on_failure();
+    exit(EXIT_FAILURE);
   return n;
 }
 
@@ -60,17 +54,17 @@ static void daemonize_reopen_stdio(void)
   n = daemonize_open_devnull(O_RDONLY);
   stdin = fdopen(n, "r");
   if (stdin == NULL)
-    daemonize_exit_on_failure();
+    exit(EXIT_FAILURE);
 
   n = daemonize_open_devnull(O_RDWR);
   stdout = fdopen(n, "w+");
   if (stdout == NULL)
-    daemonize_exit_on_failure();
+    exit(EXIT_FAILURE);
 
   n = daemonize_open_devnull(O_RDWR);
   stderr = fdopen(n, "w+");
   if (stderr == NULL)
-    daemonize_exit_on_failure();
+    exit(EXIT_FAILURE);
 }
 
 static void daemonize_write_pid_lock(void)
@@ -84,19 +78,19 @@ static void daemonize_write_pid_lock(void)
   monitor_log_info("%s\n", pid_file_name);
   pid_fd = open(pid_file_name, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0640);
   if (pid_fd < 0)
-    daemonize_exit_on_failure();
+    exit(EXIT_FAILURE);
   if (lockf(pid_fd, F_TLOCK, 0) < 0) {
     monitor_log_error("%s already found. Abort second instance.\n", pid_file_name);
-    daemonize_exit_on_failure();
+    exit(EXIT_FAILURE);
   }
   if (ftruncate(pid_fd, 0) != 0)
-    daemonize_exit_on_failure();
+    exit(EXIT_FAILURE);
 
   len = snprintf(pidbuf, sizeof(pidbuf), "%ld\n", (long)getpid());
   if (len < 0 || (size_t)len >= sizeof(pidbuf))
-    daemonize_exit_on_failure();
+    exit(EXIT_FAILURE);
   if (write(pid_fd, pidbuf, (size_t)len) != (ssize_t)len)
-    daemonize_exit_on_failure();
+    exit(EXIT_FAILURE);
 }
 
 void daemonize(void)
@@ -107,7 +101,7 @@ void daemonize(void)
 
   umask(0077);
   if (chdir("/") != 0)
-    daemonize_exit_on_failure();
+    exit(EXIT_FAILURE);
 
   daemonize_close_fds();
   daemonize_reopen_stdio();

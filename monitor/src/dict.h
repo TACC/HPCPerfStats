@@ -17,16 +17,10 @@ struct dict {
   size_t d_count;
 };
 
-#define DEFINE_DICT(d)                                                                             \
-  struct dict d = {                                                                                \
-      .d_table = NULL,                                                                             \
-  }
-
 /* The count argument is only a hint. */
 int dict_init(struct dict *dict, size_t count);
 
-/* dict_destory() is valid for dicts defined by DEFINE_DICT() or
-   initialized by dict_init().  It does not free entry keys. */
+/* Valid for zero-initialized dicts or ones from dict_init(). Frees keys only via key_dtor. */
 void dict_destroy(struct dict *dict, void (*key_dtor)(void *));
 
 struct dict_entry *dict_entry_ref(struct dict *dict, hash_t hash, const char *key);

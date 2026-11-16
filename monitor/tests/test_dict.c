@@ -146,7 +146,7 @@ static void test_entry_ref_bounded_corrupt_full_table(void)
     d.d_table[i].d_key = (char *)"fill";
     d.d_table[i].d_hash = want ^ (hash_t)(i + 1);
   }
-  /* No empty slot and no matching key — must return NULL, not hang/SEGV. */
+  /* No empty slot and no matching key: must return NULL, not hang/SEGV. */
   assert(dict_entry_ref(&d, want, "probe-miss") == NULL);
   assert(dict_ref(&d, "probe-miss") == NULL);
   dict_destroy(&d, NULL);

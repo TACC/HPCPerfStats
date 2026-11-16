@@ -3,8 +3,6 @@
 #include <stdarg.h>
 #include <errno.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <syslog.h>
 
 static FILE *g_monitor_stream;
@@ -18,17 +16,6 @@ void monitor_log_set_stream(FILE *stream)
 {
   g_monitor_stream = stream;
 }
-
-#ifdef DEBUG
-static void monitor_log_va_diag(const char *fmt, va_list ap)
-{
-#ifdef RABBITMQ
-  vfprintf(stdout, fmt, ap);
-#else
-  vfprintf(stderr, fmt, ap);
-#endif
-}
-#endif
 
 void monitor_log_info(const char *fmt, ...)
 {
@@ -108,7 +95,11 @@ void monitor_log_debug(const char *fmt, ...)
   va_list ap;
 
   va_start(ap, fmt);
-  monitor_log_va_diag(fmt, ap);
+#ifdef RABBITMQ
+  vfprintf(stdout, fmt, ap);
+#else
+  vfprintf(stderr, fmt, ap);
+#endif
   va_end(ap);
 }
 #endif

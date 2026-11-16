@@ -86,7 +86,6 @@ static int dict_resize(struct dict *dict, size_t new_table_len)
     hash_t hash = old_table[j].d_hash;
     char *key = old_table[j].d_key;
 
-    /* Do we need to check hash here? */
     if (key == NULL || (hash & DICT_HASH_DUMMY))
       continue;
 

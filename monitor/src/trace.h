@@ -25,10 +25,4 @@ static inline void TRACE(const char *fmt, ...)
 #endif
 #endif
 
-#define FATAL(fmt, ...)                                                                            \
-  do {                                                                                             \
-    ERROR(fmt, ##__VA_ARGS__);                                                                     \
-    exit(1);                                                                                       \
-  } while (0)
-
 #endif

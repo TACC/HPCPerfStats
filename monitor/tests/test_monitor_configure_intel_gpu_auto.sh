@@ -1,5 +1,5 @@
 #!/bin/sh
-# Regression: --enable-intel-gpu=auto without PVC PCI → off; --enable-intel-gpu=yes compiles with vendored headers.
+# Regression: --enable-intel-gpu=auto without PVC PCI -> off; --enable-intel-gpu=yes compiles with vendored headers.
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -41,7 +41,7 @@ export LDFLAGS="-L${PREFIX}/lib -L${PREFIX}/lib64 ${LDFLAGS:-}"
 mkdir -p "${TMP}/bin"
 cat > "${TMP}/bin/lspci" <<'EOF'
 #!/bin/sh
-# No Intel Data Center GPU lines — auto should leave intel_gpu disabled.
+# No Intel Data Center GPU lines: auto should leave intel_gpu disabled.
 echo '00:00.0 VGA compatible controller [0300]: Matrox Electronics Systems Ltd. Device [102b:0532]'
 EOF
 chmod +x "${TMP}/bin/lspci"

@@ -10,7 +10,7 @@
  * Policy summary:
  *   monitor_log_info: vfprintf to monitor_log stream if set, else stderr.
  *   monitor_log_warn / monitor_log_error: match trace.h ERROR backend
- *     (DEBUG+RABBITMQ → stdout, else syslog(RMQ,!DEBUG) or stderr).
+ *     (DEBUG+RABBITMQ -> stdout, else syslog(RMQ,!DEBUG) or stderr).
  *   monitor_log_debug: DEBUG builds only; same sink as TRACE-style chatter.
  */
 

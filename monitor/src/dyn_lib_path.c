@@ -14,16 +14,15 @@ int dyn_lib_path_allowed(const char *path)
   };
   struct stat st;
   size_t i;
+  size_t n;
 
   if (path == NULL || path[0] != '/')
     return 0;
   if (strstr(path, "/../") != NULL)
     return 0;
-  if (strlen(path) >= 3) {
-    size_t n = strlen(path);
-    if (n >= 3 && strcmp(path + n - 3, "/..") == 0)
-      return 0;
-  }
+  n = strlen(path);
+  if (n >= 3 && strcmp(path + n - 3, "/..") == 0)
+    return 0;
   for (i = 0; prefixes[i] != NULL; i++) {
     size_t plen = strlen(prefixes[i]);
     if (strncmp(path, prefixes[i], plen) == 0)
