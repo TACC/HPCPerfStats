@@ -35,9 +35,7 @@ static int mkdir_p(const char *path)
     if (buf[i] != '/')
       continue;
     buf[i] = '\0';
-    if (mkdir(buf, 0755) != 0 && buf[0] != '\0') {
-      /* exists is ok */
-    }
+    (void)mkdir(buf, 0755); /* EEXIST is fine */
     buf[i] = '/';
   }
   return mkdir(buf, 0755);

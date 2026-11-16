@@ -1,6 +1,4 @@
 /* host_mem_job — per-jid cgroup memory; devices filled from job_shared_emit. */
-#include <string.h>
-
 #include "dict.h"
 #include "host_mem_job.h"
 #include "stats.h"

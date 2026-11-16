@@ -1,12 +1,10 @@
 /* host_numa — NUMA hit/miss counters from /sys/.../nodeN/numastat. */
 #include <stddef.h>
-#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include "stats.h"
 #include "collect.h"
 #include "sys_iter.h"
-#include "trace.h"
 
 // # cat /sys/devices/system/node/node0/numastat
 // numa_hit 24972369

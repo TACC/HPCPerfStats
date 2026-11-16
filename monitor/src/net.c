@@ -3,10 +3,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <dirent.h>
-#include <errno.h>
-#include <malloc.h>
-#include <ctype.h>
 #include <time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -15,7 +11,6 @@
 #include "collect.h"
 #include "pscanf.h"
 #include "trace.h"
-#include "path_open_fail_once.h"
 #include "sys_iter.h"
 #include "monitor_log.h"
 #include "host_net.h"

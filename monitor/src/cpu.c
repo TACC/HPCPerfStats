@@ -2,14 +2,11 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <errno.h>
-#include <malloc.h>
 #include <ctype.h>
 #include "stats.h"
 #include "collect.h"
 #include "fileio.h"
 #include "path_open_fail_once.h"
-#include "trace.h"
 #include "string1.h"
 #include "host_cpu.h"
 
@@ -25,10 +22,8 @@ void cpu_stats_invalidate_file_caches(void)
   }
 }
 
-/* The /proc manpage says units are units of 1/sysconf(_SC_CLK_TCK)
-   seconds.  sysconf(_SC_CLK_TCK) seems to always be 100. */
-
-/* We ignore steal and guest. */
+/* Units are 1/sysconf(_SC_CLK_TCK) s per proc(5), in practice always 100.
+   Steal and guest are not collected. */
 
 static void cpu_collect(struct stats_type *type)
 {

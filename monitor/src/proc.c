@@ -1,17 +1,11 @@
-/* host_proc — per-user process VM stats from /proc/<pid>/status. */
+/* host_proc — per-process VM stats from /proc/<pid>/status. */
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <dirent.h>
-#include <fnmatch.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#include <pwd.h>
 #include <time.h>
 #include "stats.h"
-#include "fileio.h"
 #include "path_open_fail_once.h"
 #include "trace.h"
 #include "string1.h"

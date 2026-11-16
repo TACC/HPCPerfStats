@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include "stats.h"
 #include "procfile_parse.h"
-#include "trace.h"
 
 // From ipc/shm.c
 // # cat /proc/sysvipc/shm

@@ -3,10 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 #include "stats.h"
-#include "collect.h"
 #include "procfile_parse.h"
 #include "sys_iter.h"
-#include "trace.h"
 #include "host_key_alias.h"
 #include "host_mem.h"
 

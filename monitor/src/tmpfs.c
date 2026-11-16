@@ -1,9 +1,7 @@
 /* host_tmpfs — /tmp tmpfs space and inode usage from /proc/mounts + statfs. */
 #include <stddef.h>
-#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <errno.h>
 #include <mntent.h>
 #include <sys/statfs.h>
 #include "stats.h"

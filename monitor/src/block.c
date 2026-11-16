@@ -3,13 +3,9 @@
 #include <string.h>
 #include "stats.h"
 #include "collect.h"
-#include "trace.h"
 #include "sys_iter.h"
 
-/* Need to account for units.  According to block/stat.txt, in
-   /sys/block/DEV/stat sector means 512B (as opposed to real sector
-   size of device). */
-/* All X_ticks members and time_in_queue are in ms. */
+/* Per block/stat.txt a sector in /sys/block/DEV/stat is 512B, not the device sector size. */
 
 #define KEYS                                                                                       \
   X(rd_ios, "e", "read requests processed"),                                                       \
