@@ -10,7 +10,7 @@ from typing import Any
 from rest_framework import serializers
 
 from .job_list_performance import summarize_performance
-from .models import job_data, metrics_data
+from .models import job_data
 
 
 class JobListSerializer(serializers.ModelSerializer):
@@ -111,17 +111,3 @@ class JobListSerializer(serializers.ModelSerializer):
       >>> JobListSerializer().get_sample_count(None)  # doctest: +SKIP
     """
     return obj.metrics_distinct_time_count
-
-
-class MetricsDataSerializer(serializers.ModelSerializer):
-  """
-  Metrics data fields (type, metric, units, value) for embedding in job.
-  """
-
-  class Meta:
-    """
-    Django model metadata for the enclosing model.
-    """
-
-    model = metrics_data
-    fields = ["type", "metric", "units", "value"]

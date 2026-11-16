@@ -1440,7 +1440,6 @@ def _get_cache_stats() -> Any:
       if maxmemory_human is not None:
         stats["total_cache_usable_human"] = maxmemory_human
 
-      # Cache hit/miss counters.
       hits = info.get("keyspace_hits")
       misses = info.get("keyspace_misses")
       if hits is not None:
@@ -1453,8 +1452,8 @@ def _get_cache_stats() -> Any:
       db_index = client.connection_pool.connection_kwargs.get("db", 0)
       stats["keys"] = (info.get(f"db{db_index}") or {}).get("keys", 0)
 
-      # Attempt to identify the most memory-heavy cached keys.
-      # This uses SCAN and MEMORY USAGE to avoid blocking Valkey too long.
+      # SCAN + MEMORY USAGE (not KEYS) so sampling the heaviest keys does not
+      # block Valkey.
       try:
         top_keys = []
         total_sampled_bytes = 0
@@ -1519,7 +1518,6 @@ def _get_timescaledb_stats() -> Any:
 
   try:
     with connection.cursor() as cur:
-      # Basic database/server info.
       try:
         cur.execute("SELECT current_database(), version()")
         row = cur.fetchone()
@@ -3901,7 +3899,6 @@ def job_detail(request: Any, pk: Any) -> Any:
   }
 
   # Build client/server log URLs with explicit timestamp format expected by Scribe.
-  # Format: %Y-%m-%dT%H:%M:%S %Z%:z
   start_time, end_time = _job_times_as_local(job.start_time, job.end_time)
   time_format = "%Y-%m-%dT%H:%M:%S%:z"
   start_time.strftime(time_format)
@@ -4777,7 +4774,6 @@ def job_monitor(request: Any) -> Any:
   if err is not None:
     return err
 
-  # Parse and clamp days window from query params.
   try:
     days_param = int(request.GET.get("days", "") or 30)
   except TypeError, ValueError:

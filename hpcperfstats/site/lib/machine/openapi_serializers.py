@@ -161,24 +161,6 @@ class HomeMetricOptionSerializer(serializers.Serializer):
   units = serializers.CharField()
 
 
-class HomeDateDayPairSerializer(serializers.Serializer):
-  """
-  One [iso_date, day_of_month] pair from home date_list.
-  """
-
-  date = serializers.CharField()
-  day = serializers.CharField()
-
-
-class HomeDateMonthEntrySerializer(serializers.Serializer):
-  """
-  One month bucket: month key plus day pairs (serialized from API tuple).
-  """
-
-  month = serializers.CharField()
-  days = HomeDateDayPairSerializer(many=True)
-
-
 class HomeOptionsSerializer(serializers.Serializer):
   """
   Hold HomeOptionsSerializer state and behavior.

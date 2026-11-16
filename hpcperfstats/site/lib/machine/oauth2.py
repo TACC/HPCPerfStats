@@ -179,7 +179,7 @@ def oauth_callback(request: Any) -> Any:
     )
     request.session["username"] = user_data["result"]["username"]
 
-    # For now we determine whether a user is staff by seeing if hey have a specific email domain set in ini
+    # Staff status comes from the email domain matching staff_email_domain in the ini.
     request.session["email"] = user_data["result"]["email"]
     request.session["is_staff"] = (
       user_data["result"]["email"].split("@")[-1] == staff_email_domain
