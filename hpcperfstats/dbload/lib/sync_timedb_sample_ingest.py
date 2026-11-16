@@ -128,31 +128,50 @@ def ingest_monitor_sample_text(
   if not schema_covers_measurement_types(schema, types):
     return empty
 
-  parser = IncrementalStatsParser(0)
-  parser.schema = dict(schema)
-  parser.schema_fast = dict(schema_fast)
-  parser.compile_injected_schema()
-  try:
-    parser.feed_lines(message.splitlines())
-    from hpcperfstats.dbload.lib.monitor_mark_side_ingest import (
-      flush_parser_side_marks,
-    )
+  from hpcperfstats.dbload.lib.sync_timedb_codon_bridge import (
+    codon_ingest_parse_enabled,
+    try_codon_parse_collapse,
+  )
 
-    flush_parser_side_marks(parser)
-    stats_cols = parser.take_stats_columns()
-    proc_list = parser.proc_stats
+  local_carry = carry if carry is not None else DeltaCarryState()
+  # Codon finishes delta/collapse/arc (and persists marks) when enabled at
+  # boot; the cached schema travels as ``!`` lines ahead of the sample.
+  codon = codon_ingest_parse_enabled()
+  try:
+    if codon:
+      bang = [f"!{typ} {' '.join(tokens)}" for typ, tokens in schema.items()]
+      stats_cols, proc_list = try_codon_parse_collapse(
+        bang + message.splitlines(), carry=local_carry
+      )
+    else:
+      parser = IncrementalStatsParser(0)
+      parser.schema = dict(schema)
+      parser.schema_fast = dict(schema_fast)
+      parser.compile_injected_schema()
+      parser.feed_lines(message.splitlines())
+      from hpcperfstats.dbload.lib.monitor_mark_side_ingest import (
+        flush_parser_side_marks,
+      )
+
+      flush_parser_side_marks(parser)
+      stats_cols = parser.take_stats_columns()
+      proc_list = parser.proc_stats
   except Exception:
     return empty
 
+  proc_n = (
+    len(next(iter(proc_list.values()), ()))
+    if isinstance(proc_list, dict)
+    else len(proc_list or ())
+  )
   non_proc = [t for t in types if t not in ("proc", "host_proc")]
   if non_proc and stats_payload_row_count(stats_cols) == 0:
     return empty
-  if stats_payload_row_count(stats_cols) == 0 and not proc_list:
+  if stats_payload_row_count(stats_cols) == 0 and not proc_n:
     return empty
 
   stats_df, proc_df = build_stats_dataframes(stats_cols, proc_list)
   del stats_cols, proc_list
-  if not stats_df.empty:
-    local_carry = carry if carry is not None else DeltaCarryState()
+  if not stats_df.empty and not codon:
     stats_df = compute_deltas_and_arc_chunk(stats_df, carry=local_carry)
   return stats_df, proc_df

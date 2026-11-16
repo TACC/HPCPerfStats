@@ -275,7 +275,7 @@ def test_codon_ipc_binary_roundtrip_no_pickle() -> None:
     assert "import pickle" not in text
     assert "pickle." not in text
     assert "import msgpack" not in text
-  assert worker.PROTO_VER == 5
+  assert worker.PROTO_VER == 6
   req = worker.encode_request("parse", ["a", "b"])
   assert worker.decode_request(req) == (
     "parse",
@@ -432,6 +432,7 @@ def test_codon_no_silent_cpython_fallback(
     on_chunk: Any,
     exclude: Any = None,
     coalesce_rows: int = 1,
+    start_idx: int = 0,
   ) -> None:
     raise RuntimeError("codon worker exploded")
 
@@ -501,6 +502,7 @@ def test_streaming_incremental_diverts_flush_to_codon(
     on_chunk: Any,
     exclude: Any = None,
     coalesce_rows: int = 1,
+    start_idx: int = 0,
   ) -> None:
     from hpcperfstats.dbload.lib.codon_process_worker import (
       codon_worker_parse_file_frames,
@@ -795,24 +797,30 @@ def test_codon_ipc_normalizes_scalars_before_wire() -> None:
   assert b"\t-\t" not in copy_bytes
 
 
-def test_divert_off_still_incremental_when_emission_start(
+def test_resume_emission_start_enters_codon_file_parse_with_gate(
   tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-  """emission_start>0 never enters Codon-primary file parse."""
+  """emission_start>0 runs the Codon file parse with the resume gate."""
   from hpcperfstats.dbload.lib.sync_timedb_parsing import (
     parse_stats_file_streaming_incremental,
   )
 
-  calls: list[str] = []
+  calls: list[int] = []
 
-  def _boom(*_a, **_k):
-    calls.append("codon")
-    raise AssertionError("codon must not run")
+  def _record(*_a, start_idx: int = 0, **_k):
+    calls.append(start_idx)
+
+  def _cpython_must_not_run(*_a, **_k):
+    raise AssertionError("IncrementalStatsParser must not run")
 
   monkeypatch.setattr(
     "hpcperfstats.dbload.lib.sync_timedb_codon_bridge."
     "try_codon_parse_file_stream",
-    _boom,
+    _record,
+  )
+  monkeypatch.setattr(
+    "hpcperfstats.dbload.lib.sync_timedb_parsing.IncrementalStatsParser.feed_line",
+    _cpython_must_not_run,
   )
   monkeypatch.setattr(
     "hpcperfstats.dbload.lib.sync_timedb_codon_bridge."
@@ -831,8 +839,7 @@ def test_divert_off_still_incremental_when_emission_start(
     flush_rows=1,
     on_chunk=lambda s, p: chunks.append((s, p)),
   )
-  assert not calls
-  assert chunks
+  assert calls == [1]
 
 
 def test_worker_parse_file_frames_requires_kernel_file_api(

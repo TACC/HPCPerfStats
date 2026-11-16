@@ -53,6 +53,7 @@ Notable contracts (see filename in `hpcperfstats/cursor-rules/`):
 - **`syslog-cluster-ingest.mdc`** — cluster syslog under `data_dir/logs/`; **not** supervisord programs; manual root enable + render; dual-registered with `agent-discipline-core.mdc` + `hook_task_router.py`.
 - **`python-image-interpreter-contract.mdc`** — GIL `/opt/python3.14` (`/usr/local`) for web; baked `/opt/python3.14t` for `listend`/`sync_timedb`/`update_metrics`; jemalloc both ways; no INI ABI switch; dual-registered with `agent-discipline-core.mdc` + `hook_task_router.py`.
 - **`shared-node-affinity-consumer-contract.mdc`** — `%jobs` / `%affinity` side tables and `dev=j:<jid>` stamp; no `host_data` UNIQUE migration; dual-registered with `agent-discipline-core.mdc` + `hook_task_router.py`.
+- **`codon-python-parity-contract.mdc`** — Codon canonical for sync_timedb/listend parse and update_metrics reductions; same-task CPython/NumPy twin parity, `PARITY_FEATURES` registry + drift guards (`test_codon_parity_registry.py`); dual-registered with `agent-discipline-core.mdc` + `hook_task_router.py`.
 - **`codon-sync-timedb-parse-contract.mdc`** — Codon-NumPy parse+collapse hot path, 3.14t pyext, A/B ≥1.25× vs Incremental, fail-closed CPython bridge; dual-registered with `agent-discipline-core.mdc` + `hook_task_router.py`.
 
 Adding a new domain rule (same task, non-optional):

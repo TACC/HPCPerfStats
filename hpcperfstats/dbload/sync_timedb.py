@@ -4995,8 +4995,11 @@ def _parse_stats_file_payload_impl(
           _parse_elapsed(),
           error_detail="empty stats and proc_stats",
         )
-      update_worker_substage("parse:deltas_arc")
-      stats = compute_deltas_and_arc(stats)
+      # Codon-finished rows already carry delta/arc; recomputing would diff
+      # collapsed values.
+      if "arc" not in stats.columns:
+        update_worker_substage("parse:deltas_arc")
+        stats = compute_deltas_and_arc(stats)
       parse_elapsed = _parse_elapsed()
       meta = _ingest_outcome_meta(
         outcome="ingested",

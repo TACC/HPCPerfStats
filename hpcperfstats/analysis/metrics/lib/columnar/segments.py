@@ -5,13 +5,14 @@ kernels).
 Every pandas ``groupby`` / SQL ``GROUP BY`` on the update_metrics path maps to
 one of these primitives:
 
-* :func:`group_sum` — sum of a column per integer key (SQL
-  ``SUM … GROUP BY``), with optional NULL/ceiling/sign filters and the
-  shared-node "hardware SUM else ``j:`` MAX" collapse;
-* :func:`group_mean` / :func:`group_stats` — mean, count, max per key;
-* :func:`bucket_host_means` — the 5-minute bucket mean, first-bucket drop
+* :func:`group_sum` - sum of a column per integer key (SQL
+  ``SUM ... GROUP BY``), with optional NULL/ceiling/sign filters;
+* :func:`collapse_residual_copies` - the shared-node "hardware SUM else
+  ``j:`` MAX" collapse;
+* :func:`group_mean` / :func:`group_stats` - mean, count, max per key;
+* :func:`bucket_host_means` - the 5-minute bucket mean, first-bucket drop
   and per-host mean behind ``job_arc`` / ``job_value_mean``;
-* :func:`composite_key` / :func:`join_keys` — the (host, time) joins behind
+* :func:`composite_key` / :func:`join_keys` - the (host, time) joins behind
   the plot merges.
 
 Keys are int64 composites so the Codon port can keep the exact same shape
@@ -228,6 +229,52 @@ def group_stats(
   return group_reduce(keys, values, mask)
 
 
+def _np_residual_collapse(
+  group_keys: np.ndarray,
+  dev_id: np.ndarray,
+  values: np.ndarray,
+  mask: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+  """
+  NumPy reference of the Codon ``residual_collapse`` kernel.
+
+  Per key over masked rows: the row-order SUM of hardware rows
+  (``dev_id >= 0``) when the key has one, else the MAX of its ``j:`` rows
+  (``dev_id < 0``; a NaN poisons it like ``np.maximum.at``).
+
+  Args:
+    group_keys (np.ndarray): int64 key per row (any order).
+    dev_id (np.ndarray): Signed device ids (negative = ``j:`` copy).
+    values (np.ndarray): float64 values.
+    mask (np.ndarray): Rows that take part.
+
+  Returns:
+    tuple[np.ndarray, np.ndarray]: ``(unique_keys, reduced)`` sorted by key;
+    keys with no masked row are absent.
+
+  Examples:
+    >>> import numpy as np
+    >>> k, v = _np_residual_collapse(
+    ...   np.array([2, 1, 1]),
+    ...   np.array([-1, 0, -1]),
+    ...   np.array([4.0, 1.0, 9.0]),
+    ...   np.ones(3, dtype=bool),
+    ... )
+    >>> k.tolist(), v.tolist()
+    ([1, 2], [1.0, 4.0])
+  """
+  keys = np.asarray(group_keys, dtype=np.int64)
+  dev = np.asarray(dev_id, dtype=np.int64)
+  mask = np.asarray(mask, dtype=bool)
+  hw_keys, _c, hw_sums, _m = _np_group_reduce(keys, values, mask & (dev >= 0))
+  j_keys, _c, _s, j_max = _np_group_reduce(keys, values, mask & (dev < 0))
+  only_j = ~np.isin(j_keys, hw_keys)
+  out_keys = np.concatenate([hw_keys, j_keys[only_j]])
+  out_vals = np.concatenate([hw_sums, j_max[only_j]])
+  order = np.argsort(out_keys, kind="stable")
+  return out_keys[order], out_vals[order]
+
+
 def collapse_residual_copies(
   group_keys: np.ndarray,
   dev_id: np.ndarray,
@@ -236,7 +283,8 @@ def collapse_residual_copies(
 ) -> tuple[np.ndarray, np.ndarray]:
   """
   Per key: SUM over hardware devices when any exist, else MAX over ``j:``
-  copies (``_reduced_event_value_sql`` / ``collapse_residual_sample_copies``).
+  copies (``_reduced_event_value_sql`` / ``collapse_residual_sample_copies``);
+  the Codon kernel when baked, else :func:`_np_residual_collapse`.
 
   Args:
     group_keys (np.ndarray): int64 key per row (for example host, time,
@@ -260,15 +308,9 @@ def collapse_residual_copies(
     >>> k.tolist(), v.tolist()
     ([1, 2], [3.0, 7.0])
   """
-  hw_mask = mask & (dev_id >= 0)
-  j_mask = mask & (dev_id < 0)
-  hw_keys, hw_sums, _ = group_sum(group_keys, values, hw_mask)
-  j_keys, _c, _s, j_max = group_stats(group_keys, values, j_mask)
-  only_j = ~np.isin(j_keys, hw_keys)
-  keys = np.concatenate([hw_keys, j_keys[only_j]])
-  vals = np.concatenate([hw_sums, j_max[only_j]])
-  order = np.argsort(keys, kind="stable")
-  return keys[order], vals[order]
+  if codon_bridge.kernels() is not None:
+    return codon_bridge.residual_collapse(group_keys, dev_id, values, mask)
+  return _np_residual_collapse(group_keys, dev_id, values, mask)
 
 
 def bucket_host_means(

@@ -26,6 +26,7 @@ from feed_collapse import (
   fill_reuse_bank,
   stats_file_decode_line,
   stats_file_line_starts_time_sample,
+  trailing_jobs_arm,
 )
 
 MAX_CODON_SLOTS = 128
@@ -55,6 +56,8 @@ _cache_carry_raw_keys: list[list[str]] = []
 _cache_carry_arc_keys: list[list[str]] = []
 _cache_marks: list[list[dict[str, str]]] = []
 _cache_exclude: list[list[str]] = []
+# Resume gate (line index): set by the file open or codon_start_idx_set_c.
+_cache_start_idx: list[int] = []
 _fs_active: list[int] = []
 _fs_flush_bytes: list[int] = []
 _fs_schema: list[list[str]] = []
@@ -66,6 +69,9 @@ _fs_read_batch: list[int] = []
 _fs_eof: list[int] = []
 _fs_fd: list = []
 _fs_read_buf: list = []
+# Window lines below the resume gate, and the %jobs arm the last window ended with.
+_fs_below: list[int] = []
+_fs_arm: list[int] = []
 # Last exception text per slot ("" = none); read by codon_last_error_c.
 _cache_err: list[str] = []
 _banks_ready: int = 0
@@ -124,6 +130,9 @@ def _ensure_slot_banks() -> None:
   global _cache_carry_arc_keys
   global _cache_marks
   global _cache_exclude
+  global _cache_start_idx
+  global _fs_below
+  global _fs_arm
   global _fs_active
   global _fs_flush_bytes
   global _fs_schema
@@ -165,6 +174,9 @@ def _ensure_slot_banks() -> None:
   _cache_carry_arc_keys = []
   _cache_marks = []
   _cache_exclude = []
+  _cache_start_idx = []
+  _fs_below = []
+  _fs_arm = []
   i = 0
   while i < MAX_CODON_SLOTS:
     empty_f: list[float | None] = []
@@ -227,6 +239,9 @@ def _ensure_slot_banks() -> None:
     _fs_eof.append(0)
     _fs_fd.append(0)
     _fs_read_buf.append("")
+    _cache_start_idx.append(0)
+    _fs_below.append(0)
+    _fs_arm.append(0)
     _cache_err.append("")
     i += 1
   _banks_ready = 1
@@ -259,7 +274,9 @@ def _fill_proc_flat(slot: int, fields: list[dict[str, int]], n: int) -> None:
     i += 1
 
 
-def _apply_lines_to_slot(slot: int, lines: list[str]) -> None:
+def _apply_lines_to_slot(
+  slot: int, lines: list[str], start_idx: int, arm_shared_in: bool
+) -> None:
   """Run feed_delta_collapse_arc for one window; update slot banks and carry."""
   global _cache_time
   global _cache_host
@@ -290,8 +307,9 @@ def _apply_lines_to_slot(slot: int, lines: list[str]) -> None:
       lines,
       _cache_carry_raw[slot],
       _cache_carry_arc[slot],
-      0,
+      start_idx,
       _cache_exclude[slot],
+      arm_shared_in,
     )
   )
   _cache_marks[slot] = marks
@@ -357,6 +375,8 @@ def stats_file_session_close_c(slot: int) -> None:
   _fs_window_start[slot] = 0
   _fs_line_index[slot] = 0
   _fs_pending_flush[slot] = 0
+  _fs_below[slot] = 0
+  _fs_arm[slot] = 0
 
 
 @export
@@ -382,15 +402,19 @@ def parse_stats_file_codon_open_c(
   slot: int,
   path_ptr: Ptr[UInt[8]],
   flush_max_bytes: int,
-  resume_byte: int,
+  start_idx: int,
 ) -> int:
-  """Open ``path`` for Codon-owned read/batch on ``slot``. Returns 1 on success."""
+  """Open ``path`` for Codon-owned read/batch on ``slot``. Returns 1 on success.
+
+  ``start_idx`` is the resume gate (line index): the whole file is read so the
+  ``!`` schema accumulates, and samples below the gate emit nothing.
+  """
   _ensure_slot_banks()
   if slot < 0 or slot >= MAX_CODON_SLOTS:
     return 0
   _cache_err[slot] = ""
   try:
-    return _file_open_body(slot, path_ptr, flush_max_bytes, resume_byte)
+    return _file_open_body(slot, path_ptr, flush_max_bytes, start_idx)
   except Exception as e:
     stats_file_session_close_c(slot)
     _record_kernel_error(slot, e)
@@ -401,7 +425,7 @@ def _file_open_body(
   slot: int,
   path_ptr: Ptr[UInt[8]],
   flush_max_bytes: int,
-  resume_byte: int,
+  start_idx: int,
 ) -> int:
   stats_file_session_close_c(slot)
   path = str.from_ptr(path_ptr)
@@ -409,9 +433,8 @@ def _file_open_body(
   if flush_n < 1:
     flush_n = 1
   fd = os.open(path, os.O_RDONLY)
-  if resume_byte > 0:
-    os.lseek(fd, int(resume_byte), os.SEEK_SET)
   codon_carry_clear_c(slot)
+  _cache_start_idx[slot] = start_idx
   _fs_fd[slot] = fd
   _fs_read_buf[slot] = ""
   _fs_active[slot] = 1
@@ -466,9 +489,10 @@ def _file_next_body(
     out_eof[0] = 1
     return
   flush_bytes_n = _fs_flush_bytes[slot]
-  emission_start = 0
   batch_n = _fs_read_batch[slot]
   bundled: list[str] = []
+  rel_start = 0
+  arm_in = False
   while len(bundled) == 0:
     raw_batch: list[str] = []
     bi = 0
@@ -480,72 +504,84 @@ def _file_next_body(
       bi += 1
     if len(raw_batch) == 0:
       if len(_fs_window[slot]) > 0:
-        bundled = _fs_schema[slot] + _fs_window[slot]
-        empty_win: list[str] = []
-        _fs_window[slot] = empty_win
+        bundled, rel_start, arm_in = _fs_cut_window(slot)
       _fs_eof[slot] = 1
       stats_file_session_close_c(slot)
       break
     batch_end = _stats_file_fd_tell(slot)
-    ri = 0
-    while ri < len(raw_batch):
-      raw = raw_batch[ri]
+    for raw in raw_batch:
       line = stats_file_decode_line(raw)
-      over_threshold = (batch_end - _fs_window_start[slot]) >= flush_bytes_n
-      starts = stats_file_line_starts_time_sample(
-        line, _fs_line_index[slot], emission_start
-      )
+      # The next sample's header triggers the flush and opens the new window
+      # (skipping it once orphaned that sample's lines). One flush per call.
       if (
-        starts
-        and (_fs_pending_flush[slot] == 1 or over_threshold)
+        len(bundled) == 0
         and len(_fs_window[slot]) > 0
+        and stats_file_line_starts_time_sample(
+          line, _fs_line_index[slot], _cache_start_idx[slot]
+        )
+        and (
+          _fs_pending_flush[slot] == 1
+          or (batch_end - _fs_window_start[slot]) >= flush_bytes_n
+        )
       ):
-        bundled = _fs_schema[slot] + _fs_window[slot]
+        bundled, rel_start, arm_in = _fs_cut_window(slot)
         _fs_window_start[slot] = batch_end
         _fs_pending_flush[slot] = 0
-        # The next sample's header triggered this flush, so it opens the new
-        # window; skipping it orphaned that sample's lines and dropped them.
-        next_win: list[str] = [line]
-        _fs_window[slot] = next_win
-        _fs_line_index[slot] += 1
-        ri += 1
-        while ri < len(raw_batch):
-          raw2 = raw_batch[ri]
-          line2 = stats_file_decode_line(raw2)
-          if line2.startswith("!"):
-            _fs_schema[slot].append(line2)
-          else:
-            _fs_window[slot].append(line2)
-          if stats_file_line_starts_time_sample(
-            line2, _fs_line_index[slot], emission_start
-          ):
-            pass
-          _fs_line_index[slot] += 1
-          over_after2 = (batch_end - _fs_window_start[slot]) >= flush_bytes_n
-          if over_after2:
-            _fs_pending_flush[slot] = 1
-          ri += 1
-        break
-      if line.startswith("!"):
-        _fs_schema[slot].append(line)
-      else:
-        _fs_window[slot].append(line)
-      if starts:
-        pass
-      _fs_line_index[slot] += 1
-      over_after = (batch_end - _fs_window_start[slot]) >= flush_bytes_n
-      if over_after:
+      _fs_take_line(slot, line)
+      if (batch_end - _fs_window_start[slot]) >= flush_bytes_n:
         _fs_pending_flush[slot] = 1
-      ri += 1
   if len(bundled) == 0:
     out_eof[0] = 1
     return
-  _apply_lines_to_slot(slot, bundled)
+  _apply_lines_to_slot(slot, bundled, rel_start, arm_in)
   out_has_frame[0] = 1
   out_ns[0] = _cache_host_n[slot]
   out_np[0] = _cache_proc_n[slot]
   if _fs_eof[slot] == 1:
     out_eof[0] = 1
+
+
+def _fs_take_line(slot: int, line: str) -> None:
+  """Buffer one file line into the slot's window, honouring the resume gate.
+
+  Below the gate only the last sample header and the ``%`` lines after it are
+  kept: they carry the ``%jobs`` arm into the first emitted sample, and the
+  kernel drops their marks (that prefix was ingested already).
+  """
+  li = _fs_line_index[slot]
+  _fs_line_index[slot] = li + 1
+  if line.startswith("!"):
+    _fs_schema[slot].append(line)
+    return
+  if li >= _cache_start_idx[slot]:
+    _fs_window[slot].append(line)
+    return
+  s = line.lstrip()
+  if len(s) > 0 and s[0].isdigit():
+    head: list[str] = [line]
+    _fs_window[slot] = head
+    _fs_below[slot] = 1
+  elif len(s) > 0 and s[0] == "%":
+    _fs_window[slot].append(line)
+    _fs_below[slot] += 1
+
+
+def _fs_cut_window(slot: int) -> tuple[list[str], int, bool]:
+  """Detach the window as ``(schema + window, rel_start, arm_in)``.
+
+  ``rel_start`` is the resume gate relative to the bundle; ``arm_in`` is the
+  ``%jobs`` arm the previous window ended with, and this window's trailing arm
+  is kept for the next one.
+  """
+  window = _fs_window[slot]
+  bundled = _fs_schema[slot] + window
+  rel_start = len(_fs_schema[slot]) + _fs_below[slot]
+  arm_in = _fs_arm[slot] == 1
+  _fs_arm[slot] = 1 if trailing_jobs_arm(window) else 0
+  _fs_below[slot] = 0
+  empty_win: list[str] = []
+  _fs_window[slot] = empty_win
+  return bundled, rel_start, arm_in
 
 
 def _lines_from_ptr(n: int, ptr: Ptr[cobj]) -> list[str]:
@@ -569,6 +605,15 @@ def codon_exclude_set_c(slot: int, n: int, ptr: Ptr[cobj]) -> None:
   if slot < 0 or slot >= MAX_CODON_SLOTS:
     return
   _cache_exclude[slot] = _lines_from_ptr(n, ptr)
+
+
+@export
+def codon_start_idx_set_c(slot: int, start_idx: int) -> None:
+  """Set the line-batch resume gate for ``slot`` (the pyext sets it every call)."""
+  _ensure_slot_banks()
+  if slot < 0 or slot >= MAX_CODON_SLOTS:
+    return
+  _cache_start_idx[slot] = start_idx
 
 
 @export
@@ -683,7 +728,9 @@ def parse_stats_lines_codon_run_c(
     return
   _cache_err[slot] = ""
   try:
-    _apply_lines_to_slot(slot, _lines_from_ptr(n, ptr))
+    _apply_lines_to_slot(
+      slot, _lines_from_ptr(n, ptr), _cache_start_idx[slot], False
+    )
   except Exception as e:
     _record_kernel_error(slot, e)
     return

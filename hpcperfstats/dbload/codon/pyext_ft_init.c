@@ -43,6 +43,8 @@ extern void feed_and_collapse_fingerprint_c(
 
 extern void codon_exclude_set_c(long slot, long n, char **ptr);
 
+extern void codon_start_idx_set_c(long slot, long start_idx);
+
 extern void parse_stats_lines_codon_run_c(
   long slot,
   long n,
@@ -55,7 +57,7 @@ extern long parse_stats_file_codon_open_c(
   long slot,
   char *path,
   long flush_max_bytes,
-  long resume_byte
+  long start_idx
 );
 
 extern void parse_stats_file_codon_next_c(
@@ -1460,16 +1462,18 @@ static PyObject *
 parse_stats_lines_codon_py(PyObject *self, PyObject *args, PyObject *kwargs)
 {
   static char *kwlist[] = {
-    "lines", "slot", "carry_raw", "carry_arc", "exclude", NULL
+    "lines", "slot", "carry_raw", "carry_arc", "exclude", "start_idx", NULL
   };
   PyObject *list_obj = NULL;
   long slot = 0;
   PyObject *carry_raw = NULL;
   PyObject *carry_arc = NULL;
   PyObject *exclude = NULL;
+  long start_idx = 0;
   if (!PyArg_ParseTupleAndKeywords(
-        args, kwargs, "O!|lOOO", kwlist,
-        &PyList_Type, &list_obj, &slot, &carry_raw, &carry_arc, &exclude
+        args, kwargs, "O!|lOOOl", kwlist,
+        &PyList_Type, &list_obj, &slot, &carry_raw, &carry_arc, &exclude,
+        &start_idx
       )) {
     return NULL;
   }
@@ -1481,6 +1485,8 @@ parse_stats_lines_codon_py(PyObject *self, PyObject *args, PyObject *kwargs)
   if (apply_exclude_list(slot, exclude) < 0) {
     return NULL;
   }
+  /* Resume gate (line index); absent means 0 so a sticky slot never keeps it. */
+  codon_start_idx_set_c(slot, start_idx);
   /* Codon slot carry never leaks across unrelated calls; caller supplies
    * the full carry state to seed (empty dict/None for a fresh start). */
   codon_carry_clear_c(slot);
@@ -1510,16 +1516,16 @@ static PyObject *
 parse_stats_file_codon_open_py(PyObject *self, PyObject *args, PyObject *kwargs)
 {
   static char *kwlist[] = {
-    "path", "flush_max_bytes", "resume_byte", "slot", "exclude", NULL
+    "path", "flush_max_bytes", "start_idx", "slot", "exclude", NULL
   };
   PyObject *path_obj = NULL;
   long flush_max_bytes = 0;
-  long resume_byte = 0;
+  long start_idx = 0;
   long slot = 0;
   PyObject *exclude = NULL;
   if (!PyArg_ParseTupleAndKeywords(
         args, kwargs, "O!|lllO", kwlist,
-        &PyUnicode_Type, &path_obj, &flush_max_bytes, &resume_byte, &slot,
+        &PyUnicode_Type, &path_obj, &flush_max_bytes, &start_idx, &slot,
         &exclude
       )) {
     return NULL;
@@ -1536,7 +1542,7 @@ parse_stats_file_codon_open_py(PyObject *self, PyObject *args, PyObject *kwargs)
     return NULL;
   }
   const long ok = parse_stats_file_codon_open_c(
-    slot, path_owned, flush_max_bytes, resume_byte
+    slot, path_owned, flush_max_bytes, start_idx
   );
   PyMem_Free(path_owned);
   if (raise_if_kernel_error(slot) < 0) {

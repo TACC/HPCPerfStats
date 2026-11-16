@@ -20,6 +20,9 @@ Exports (C ABI, all ``int`` results are row/group counts or negative codes):
 * ``group_reduce_c`` — count / sum / max per int64 key over masked rows,
   groups sorted by key (stable LSD radix sort in caller scratch), summation
   in row order (``np.unique`` + ``np.add.at`` parity).
+* ``residual_collapse_c`` - shared-node residual collapse per int64 key:
+  row-order SUM of hardware-device rows, else MAX of ``j:`` rows
+  (``segments._np_residual_collapse`` parity).
 * ``grid_mean_c`` — mean per dense cell, NaN where no finite sample.
 * ``join_sorted_c`` — inner join of two sorted unique key arrays.
 """
@@ -337,26 +340,18 @@ def _radix_sort_pairs(
   return where
 
 
-@export
-def group_reduce_c(
+def _sort_masked_rows(
   n: int,
   keys: Ptr[int],
-  values: Ptr[float],
   has_mask: int,
   mask: Ptr[u8],
   scratch: Ptr[int],
-  out_keys: Ptr[int],
-  out_cnt: Ptr[int],
-  out_sum: Ptr[float],
-  out_max: Ptr[float],
-) -> int:
-  """Count / sum / max per key over rows with ``mask != 0`` (or all rows).
+) -> Tuple[int, int]:
+  """Stable radix sort of the masked rows' ``(key, row)`` pairs in scratch.
 
-  Groups come out sorted by key; within a group values are added in row
-  order so sums match ``np.add.at`` bit for bit and a NaN value poisons the
-  group's sum and max like ``np.maximum.at``. Output buffers need ``n``
-  entries; ``scratch`` needs ``4 * n + RADIX_BUCKETS`` entries. Returns the
-  group count.
+  ``scratch`` needs ``4 * n + RADIX_BUCKETS`` entries. Returns ``(m, where)``:
+  the masked row count and which half (0: ``scratch[0:2n]``, 1:
+  ``scratch[2n:4n]``) holds the sorted keys then row indexes.
   """
   k = Ptr[u64](scratch.as_byte())
   v = scratch + n
@@ -374,13 +369,39 @@ def group_reduce_c(
       v[m] = i
       m += 1
   if m == 0:
-    return 0
+    return 0, 0
   if negative:
     for i in range(m):
       k[i] = k[i] ^ SIGN_FLIP
-  where = _radix_sort_pairs(m, k, v, kt, vt, cnt)
-  sk = k if where == 0 else kt
-  sv = v if where == 0 else vt
+  return m, _radix_sort_pairs(m, k, v, kt, vt, cnt)
+
+
+@export
+def group_reduce_c(
+  n: int,
+  keys: Ptr[int],
+  values: Ptr[float],
+  has_mask: int,
+  mask: Ptr[u8],
+  scratch: Ptr[int],
+  out_keys: Ptr[int],
+  out_cnt: Ptr[int],
+  out_sum: Ptr[float],
+  out_max: Ptr[float],
+) -> int:
+  """Count / sum / max per key over rows with ``mask != 0`` (or all rows).
+
+  Groups come out sorted by key; within a group values are added in row
+  order from ``0.0`` so sums match ``np.add.at`` bit for bit (a lone
+  ``-0.0`` sums to ``+0.0``) and a NaN value poisons the group's sum and
+  max like ``np.maximum.at``. Output buffers need ``n`` entries;
+  ``scratch`` needs ``4 * n + RADIX_BUCKETS`` entries. Returns the group
+  count.
+  """
+  m, where = _sort_masked_rows(n, keys, has_mask, mask, scratch)
+  half = scratch + 2 * n * where
+  sk = Ptr[u64](half.as_byte())
+  sv = half + n
   g = -1
   cur = u64(0)
   for j in range(m):
@@ -392,7 +413,7 @@ def group_reduce_c(
       cur = ku
       out_keys[g] = keys[r]
       out_cnt[g] = 1
-      out_sum[g] = val
+      out_sum[g] = 0.0 + val
       out_max[g] = val
     else:
       out_cnt[g] += 1
@@ -401,6 +422,61 @@ def group_reduce_c(
       # np.maximum.at parity: NaN poisons the group maximum.
       if val != val or (mx == mx and val > mx):
         out_max[g] = val
+  return g + 1
+
+
+@export
+def residual_collapse_c(
+  n: int,
+  keys: Ptr[int],
+  dev: Ptr[int],
+  values: Ptr[float],
+  mask: Ptr[u8],
+  scratch: Ptr[int],
+  out_keys: Ptr[int],
+  out_val: Ptr[float],
+) -> int:
+  """Per key over rows with ``mask != 0``: hardware SUM else ``j:`` MAX.
+
+  Rows with ``dev >= 0`` are hardware devices; their values are added in
+  row order from ``0.0`` (``np.add.at`` parity). A key without a hardware
+  row takes the maximum of its ``dev < 0`` (``j:``) rows, NaN poisoning it
+  like ``np.maximum.at``. Keys come out sorted. Output buffers need ``n``
+  entries; ``scratch`` needs ``4 * n + RADIX_BUCKETS`` entries. Returns the
+  key count.
+  """
+  m, where = _sort_masked_rows(n, keys, 1, mask, scratch)
+  half = scratch + 2 * n * where
+  sk = Ptr[u64](half.as_byte())
+  sv = half + n
+  g = -1
+  cur = u64(0)
+  hw_seen = False
+  j_seen = False
+  hw_sum = 0.0
+  j_max = 0.0
+  for j in range(m + 1):
+    if j == m or g < 0 or sk[j] != cur:
+      if g >= 0:
+        out_val[g] = hw_sum if hw_seen else j_max
+      if j == m:
+        break
+      g += 1
+      cur = sk[j]
+      out_keys[g] = keys[sv[j]]
+      hw_seen = False
+      j_seen = False
+      hw_sum = 0.0
+    r = sv[j]
+    val = values[r]
+    if dev[r] >= 0:
+      hw_seen = True
+      hw_sum += val
+    elif not j_seen:
+      j_seen = True
+      j_max = val
+    elif val != val or (j_max == j_max and val > j_max):
+      j_max = val
   return g + 1
 
 

@@ -184,3 +184,122 @@ def test_disable_env_is_test_only_switch(monkeypatch):
   monkeypatch.setenv(codon_bridge.CODON_METRICS_DISABLE_ENV, "1")
   assert codon_bridge.kernels() is None
   assert codon_bridge._state.reason == codon_bridge.CODON_METRICS_DISABLE_ENV
+
+
+def _abi_group_reduce(calls):
+  """Fake ``group_reduce`` with the pyext ABI, backed by the NumPy reference."""
+
+  def group_reduce(n, keys, values, has_mask, mask, scratch, ok, oc, os_, om):
+    calls.append("group_reduce")
+    m = mask.view(bool) if has_mask else None
+    k, c, s, x = sg._np_group_reduce(keys[:n], values[:n], m)
+    g = k.shape[0]
+    ok[:g], oc[:g], os_[:g], om[:g] = k, c, s, x
+    return g
+
+  return group_reduce
+
+
+def _abi_residual_collapse(calls):
+  """Fake ``residual_collapse`` with the pyext ABI (NumPy reference)."""
+
+  def residual_collapse(n, keys, dev, values, mask, scratch, ok, ov):
+    calls.append("residual_collapse")
+    assert keys.dtype == dev.dtype == np.int64 and mask.dtype == np.uint8
+    assert scratch.shape[0] >= 4 * n + codon_bridge.RADIX_BUCKETS
+    k, v = sg._np_residual_collapse(keys, dev, values, mask.view(bool))
+    g = k.shape[0]
+    ok[:g], ov[:g] = k, v
+    return g
+
+  return residual_collapse
+
+
+def test_frame_reductions_route_through_kernel_abi(monkeypatch):
+  from hpcperfstats.analysis.metrics.lib.columnar import kernels as kn
+  from hpcperfstats.analysis.metrics.lib.columnar.jobframe import JobFrame
+  from hpcperfstats.analysis.metrics.tests.test_columnar_kernels import (
+    _random_records,
+  )
+
+  frame = JobFrame.from_records("1", _random_records(4, shared=True, n=600))
+
+  def snapshot():
+    idx = kn.FrameIndex(frame, shared=True, residual_types=["host_mem", "nfs"])
+    sql = idx.sum_per_sample("host_mem", ["mem_used"], "value")
+    orm = idx.sum_per_sample(
+      "host_cpu", None, "arc", mode=kn.MODE_ORM, coalesce_zero=False
+    )
+    return (
+      sql.sum_val,
+      orm.sum_val,
+      idx.delta_sum_by_event("nfs", ["normal_read"]),
+      idx.delta_sum_by_event("host_cpu", ["user", "nice"]),
+    )
+
+  monkeypatch.setenv(codon_bridge.CODON_METRICS_DISABLE_ENV, "1")
+  want = snapshot()
+  calls = []
+  _install_fake(
+    monkeypatch,
+    group_reduce=_abi_group_reduce(calls),
+    residual_collapse=_abi_residual_collapse(calls),
+    join_sorted=lambda nl, left, nr, right, li, ri: _abi_join(
+      left, right, li, ri
+    ),
+  )
+  got = snapshot()
+  assert {"group_reduce", "residual_collapse"} <= set(calls)
+  for g, w in zip(got[:2], want[:2], strict=True):
+    assert np.array_equal(g, w, equal_nan=True)
+  assert got[2:] == want[2:]
+
+
+def _abi_join(left, right, li, ri):
+  a, b = sg._np_join_keys(left, right)
+  li[: a.shape[0]], ri[: b.shape[0]] = a, b
+  return a.shape[0]
+
+
+def test_residual_collapse_kernel_error_does_not_fall_back(monkeypatch):
+  def boom(*_a):
+    raise RuntimeError("bad buffer")
+
+  _install_fake(monkeypatch, residual_collapse=boom)
+  calls = []
+  real = sg._np_residual_collapse
+  monkeypatch.setattr(
+    sg,
+    "_np_residual_collapse",
+    lambda *a, **k: calls.append(1) or real(*a, **k),
+  )
+  with pytest.raises(codon_bridge.CodonKernelError, match="residual_collapse"):
+    sg.collapse_residual_copies(
+      np.array([1, 1]),
+      np.array([0, -1]),
+      np.array([1.0, 2.0]),
+      np.ones(2, dtype=bool),
+    )
+  assert calls == []
+
+
+def test_missing_residual_collapse_export_disables_kernel(
+  monkeypatch, tmp_path
+):
+  assert "residual_collapse" in codon_bridge._KERNEL_METHODS
+  (tmp_path / codon_bridge.PYEXT_SO).write_bytes(b"")
+  monkeypatch.setenv(codon_bridge.CODON_METRICS_DIR_ENV, str(tmp_path))
+  fake = SimpleNamespace(
+    **{
+      n: (lambda *a: 0)
+      for n in codon_bridge._KERNEL_METHODS
+      if n != "residual_collapse"
+    }
+  )
+  monkeypatch.setattr(
+    codon_bridge.importlib, "import_module", lambda _name: fake
+  )
+  monkeypatch.setattr(codon_bridge, "_deepbind_libomp", lambda _d: None)
+  monkeypatch.setattr(sys, "path", list(sys.path))
+  assert codon_bridge.kernels() is None
+  assert codon_bridge._state.reason == "missing_methods residual_collapse"

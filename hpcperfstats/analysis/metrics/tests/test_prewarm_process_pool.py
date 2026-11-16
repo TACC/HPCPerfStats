@@ -313,3 +313,43 @@ def test_child_initializer_uses_parent_database_name(monkeypatch):
   monkeypatch.setitem(connections.databases["default"], "NAME", "from_ini")
   ppp._child_initializer("update_metrics.py", "prewarm-pool", "test_parent")
   assert connections.databases["default"]["NAME"] == "test_parent"
+
+
+def _stub_child_init(monkeypatch):
+  import hpcperfstats.dbload.lib.blas_thread_env as blas
+  import hpcperfstats.dbload.lib.django_bootstrap as boot
+
+  monkeypatch.setattr(ppp, "apply_pool_worker_process_title", lambda *_a: None)
+  monkeypatch.setattr(blas, "configure_blas_thread_env", lambda: None)
+  monkeypatch.setattr(boot, "ensure_django", lambda: None)
+
+
+def test_child_initializer_requires_codon_metrics(monkeypatch):
+  """A prewarm child checks the Codon kernel like the parent's ``main``."""
+  from hpcperfstats.analysis.metrics.lib.columnar import codon_bridge
+
+  _stub_child_init(monkeypatch)
+  calls = []
+  monkeypatch.setattr(
+    codon_bridge, "require_codon_metrics", lambda log: calls.append(log)
+  )
+  ppp._child_initializer("update_metrics.py", "prewarm-pool", "test_parent")
+  assert len(calls) == 1 and callable(calls[0])
+
+
+def test_child_without_required_kernel_exits_instead_of_numpy(
+  monkeypatch, tmp_path
+):
+  """Under ``/opt/python3.14t`` (or REQUIRED=1) a child with no ``.so`` dies."""
+  from hpcperfstats.analysis.metrics.lib.columnar import codon_bridge
+
+  _stub_child_init(monkeypatch)
+  monkeypatch.setenv(codon_bridge.CODON_METRICS_REQUIRED_ENV, "1")
+  monkeypatch.setenv(codon_bridge.CODON_METRICS_DIR_ENV, str(tmp_path))
+  monkeypatch.delenv(codon_bridge.CODON_METRICS_DISABLE_ENV, raising=False)
+  codon_bridge.reset_for_tests()
+  try:
+    with pytest.raises(SystemExit, match="Codon metrics kernel required"):
+      ppp._child_initializer("update_metrics.py", "prewarm-pool", "test_parent")
+  finally:
+    codon_bridge.reset_for_tests()

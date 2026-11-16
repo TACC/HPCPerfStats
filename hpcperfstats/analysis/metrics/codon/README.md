@@ -6,7 +6,7 @@ probe orders, name resolution and Bokeh; this unit holds the two hot loops:
 
 | Path | Role |
 |------|------|
-| `metrics_kernels.py` | Class-free Codon kernels over caller buffers: `copy_count_rows_c` / `copy_decode_c` (K0 binary COPY decode with chunk-local name tables), `group_reduce_c` (count/sum/max per int64 key, stable row-order sums), `grid_mean_c`, `join_sorted_c` |
+| `metrics_kernels.py` | Class-free Codon kernels over caller buffers: `copy_count_rows_c` / `copy_decode_c` (K0 binary COPY decode with chunk-local name tables), `group_reduce_c` (count/sum/max per int64 key, stable row-order sums), `residual_collapse_c` (shared-node hardware SUM else `j:` MAX per key), `grid_mean_c`, `join_sorted_c` |
 | `pyext_metrics_init.c` | Multi-phase `Py_MOD_GIL_NOT_USED` module `hpcperfstats_codon_metrics`; borrows NumPy buffers (buffer protocol), no state |
 | `build_codon_metrics_ext.sh` | In-image bake helper (Dockerfile `codon-build` stage only) |
 

@@ -148,6 +148,126 @@ def test_grid_mean_and_join_match_numpy_reference():
   assert li.shape == (0,) and ri.shape == (0,)
 
 
+@pytest.mark.parametrize("seed", [0, 1])
+@pytest.mark.usefixtures("kern")
+def test_residual_collapse_matches_numpy_reference_bit_exact(seed):
+  rng = np.random.default_rng(seed)
+  n = 40_000
+  keys = rng.integers(0, 3_000, size=n, dtype=np.int64) - 500
+  dev = rng.integers(-4, 4, size=n, dtype=np.int64)
+  values = rng.normal(size=n) * 10.0 ** rng.integers(-8, 12, size=n)
+  values[rng.random(n) < 0.02] = np.nan
+  values[rng.random(n) < 0.02] = -0.0
+  for mask in (rng.random(n) < 0.8, np.zeros(n, bool), np.ones(n, bool)):
+    gk, gv = codon_bridge.residual_collapse(keys, dev, values, mask)
+    wk, wv = sg._np_residual_collapse(keys, dev, values, mask)
+    assert gk.tolist() == wk.tolist()
+    assert np.array_equal(gv, wv, equal_nan=True)
+    assert np.signbit(gv).tolist() == np.signbit(wv).tolist()
+
+
+@pytest.mark.usefixtures("kern")
+def test_group_reduce_negative_zero_and_all_nan_groups():
+  keys = np.array([1, 2, 2, 3, 3, 4], dtype=np.int64)
+  values = np.array([-0.0, np.nan, np.nan, -0.0, -0.0, 5.0])
+  got = codon_bridge.group_reduce(keys, values, None)
+  want = sg._np_group_reduce(keys, values, None)
+  for g, w in zip(got, want, strict=True):
+    assert np.array_equal(g, w, equal_nan=True)
+  # Sums start from +0.0 like np.add.at; maxima keep the first -0.0.
+  assert np.signbit(got[2]).tolist() == np.signbit(want[2]).tolist()
+  assert np.signbit(got[3]).tolist() == np.signbit(want[3]).tolist()
+
+
+def _frame_index_snapshot():
+  from hpcperfstats.analysis.metrics.lib.columnar import kernels as kn
+  from hpcperfstats.analysis.metrics.lib.columnar.jobframe import JobFrame
+  from hpcperfstats.analysis.metrics.tests.test_columnar_kernels import (
+    _random_records,
+  )
+
+  out = {}
+  for seed in (1, 2, 3):
+    frame = JobFrame.from_records(
+      "1", _random_records(seed, shared=True, n=900)
+    )
+    for label, idx in (
+      ("job", kn.FrameIndex(frame)),
+      (
+        "shared",
+        kn.FrameIndex(frame, shared=True, residual_types=["host_mem", "nfs"]),
+      ),
+      ("affinity", kn.FrameIndex(frame, gpu_affinity_devs={"h1": ["1"]})),
+    ):
+      cases = {
+        "sql_arc": ("host_cpu", ["user", "nice"], "arc", {}),
+        "sql_delta": ("host_mem", ["mem_used"], "delta", {}),
+        "sql_nfs_delta": ("nfs", ["normal_read"], "delta", {}),
+        "orm": ("host_mem", ["mem_used"], "value", {"mode": kn.MODE_ORM}),
+        "orm_nan": (
+          "host_cpu",
+          None,
+          "arc",
+          {"mode": kn.MODE_ORM, "coalesce_zero": False},
+        ),
+        "orm_blank": (
+          "nvidia_gpu",
+          ["gpu_util", "gpu_count"],
+          "value",
+          {"mode": kn.MODE_ORM, "reject_dcgm_blank": True},
+        ),
+        "orm_by_dev": (
+          "nvidia_gpu",
+          ["gpu_util"],
+          "value",
+          {
+            "mode": kn.MODE_ORM,
+            "by_dev": True,
+            "dev_filter": True,
+            "coalesce_zero": False,
+          },
+        ),
+      }
+      for name, (typ, events, col, kw) in cases.items():
+        agg = idx.sum_per_sample(typ, events, col, **kw)
+        out[f"{seed}:{label}:{name}"] = (
+          agg.host_id.copy(),
+          agg.time_us.copy(),
+          agg.sum_val.copy(),
+          np.empty(0) if agg.dev_id is None else agg.dev_id.copy(),
+        )
+      for typ, events in (
+        ("nfs", ["normal_read"]),
+        ("host_mem", ["mem_used"]),
+        ("host_cpu", ["user", "nice", "idle"]),
+      ):
+        out[f"{seed}:{label}:delta:{typ}"] = idx.delta_sum_by_event(typ, events)
+      piv = idx.metrics_pivot("host_cpu", ["user", "ghost", "nice"])
+      out[f"{seed}:{label}:pivot"] = (
+        piv["per_host"].copy(),
+        piv["cluster_value"].copy(),
+        piv["cluster_arc"].copy(),
+      )
+  return out
+
+
+@pytest.mark.usefixtures("kern")
+def test_frame_index_reductions_codon_equal_numpy_bit_exact(monkeypatch):
+  with_codon = _frame_index_snapshot()
+  _numpy_only(monkeypatch)
+  with_numpy = _frame_index_snapshot()
+  assert set(with_codon) == set(with_numpy)
+  for key, a in with_codon.items():
+    b = with_numpy[key]
+    if isinstance(a, dict):
+      # Row-order sums: identical floats, not just within tolerance.
+      assert a == b, key
+      continue
+    for x, y in zip(a, b, strict=True):
+      assert x.shape == y.shape, key
+      assert np.array_equal(x, y, equal_nan=True), key
+
+
 def _random_rows(rng, n, *, hosts, with_owned):
   t0 = 1_700_000_000_000_000
   rows = []

@@ -52,7 +52,8 @@ codon build -release --mcpu=native --linker-flags "-flto=thin" \
   -o "${KERNEL}" \
   metrics_kernels.py
 
-for sym in copy_count_rows_c copy_decode_c group_reduce_c grid_mean_c join_sorted_c; do
+for sym in copy_count_rows_c copy_decode_c group_reduce_c residual_collapse_c \
+  grid_mean_c join_sorted_c; do
   if ! nm -D "${KERNEL}" | awk '{print $3}' | grep -qx "${sym}"; then
     echo "missing_export ${sym}" >&2
     nm -D "${KERNEL}" | head -40 >&2
@@ -150,6 +151,16 @@ g = m.group_reduce(4, keys, vals, True, mask, scratch, ok, oc, osum, omax)
 assert g == 2, g
 assert ok[:2].tolist() == [1, 2] and oc[:2].tolist() == [1, 2], (ok, oc)
 assert osum[:2].tolist() == [2.0, 4.0] and omax[:2].tolist() == [2.0, 3.0]
+
+# residual_collapse: key 1 has hardware rows (sum), key 2 only j: rows (max).
+rkeys = np.array([1, 2, 1, 2], dtype=np.int64)
+rdev = np.array([0, -1, 1, -2], dtype=np.int64)
+rvals = np.array([1.0, 5.0, 2.0, 7.0])
+rmask = np.ones(4, dtype=np.uint8)
+rv = np.empty(4, dtype=np.float64)
+g = m.residual_collapse(4, rkeys, rdev, rvals, rmask, scratch, ok, rv)
+assert g == 2 and ok[:2].tolist() == [1, 2], (g, ok)
+assert rv[:2].tolist() == [3.0, 7.0], rv
 
 # COPY decode: one tuple with a NULL arc and unicode host.
 sig = b"PGCOPY\n\xff\r\n\x00" + struct.pack(">ii", 0, 0)

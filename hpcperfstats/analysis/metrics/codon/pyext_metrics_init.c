@@ -52,6 +52,16 @@ extern long group_reduce_c(
   double *out_max
 );
 #define RADIX_BUCKETS 65536
+extern long residual_collapse_c(
+  long n,
+  const int64_t *keys,
+  const int64_t *dev,
+  const double *values,
+  const uint8_t *mask,
+  int64_t *scratch,
+  int64_t *out_keys,
+  double *out_val
+);
 extern long grid_mean_c(
   long n,
   const int64_t *cells,
@@ -277,6 +287,48 @@ group_reduce_py(PyObject *self, PyObject *args)
 }
 
 static PyObject *
+residual_collapse_py(PyObject *self, PyObject *args)
+{
+  PyObject *o_keys, *o_dev, *o_values, *o_mask, *o_scratch, *o_okeys, *o_oval;
+  Py_ssize_t n;
+  if (!PyArg_ParseTuple(
+        args,
+        "nOOOOOOO:residual_collapse",
+        &n,
+        &o_keys,
+        &o_dev,
+        &o_values,
+        &o_mask,
+        &o_scratch,
+        &o_okeys,
+        &o_oval
+      )) {
+    return NULL;
+  }
+  if (n < 0) {
+    PyErr_SetString(PyExc_ValueError, "n must be >= 0");
+    return NULL;
+  }
+  views vs = {.n = 0};
+  const int64_t *keys = take_buffer(&vs, o_keys, 0, n * 8, "keys");
+  const int64_t *dev = take_buffer(&vs, o_dev, 0, n * 8, "dev");
+  const double *values = take_buffer(&vs, o_values, 0, n * 8, "values");
+  const uint8_t *mask = take_buffer(&vs, o_mask, 0, n, "mask");
+  int64_t *scratch =
+    take_buffer(&vs, o_scratch, 1, (4 * n + RADIX_BUCKETS) * 8, "scratch");
+  int64_t *ok = take_buffer(&vs, o_okeys, 1, n * 8, "out_keys");
+  double *ov = take_buffer(&vs, o_oval, 1, n * 8, "out_val");
+  if (PyErr_Occurred()) {
+    release_views(&vs);
+    return NULL;
+  }
+  long rc =
+    residual_collapse_c((long)n, keys, dev, values, mask, scratch, ok, ov);
+  release_views(&vs);
+  return PyLong_FromLong(rc);
+}
+
+static PyObject *
 grid_mean_py(PyObject *self, PyObject *args)
 {
   PyObject *o_cells, *o_values, *o_cnt, *o_grid;
@@ -357,6 +409,14 @@ static PyMethodDef metrics_methods[] = {
     METH_VARARGS,
     "group_reduce(n, keys, values, has_mask, mask, scratch, out_keys, "
     "out_cnt, out_sum, out_max) -> group count (scratch: 4*n + 65536 int64)",
+  },
+  {
+    "residual_collapse",
+    residual_collapse_py,
+    METH_VARARGS,
+    "residual_collapse(n, keys, dev, values, mask, scratch, out_keys, "
+    "out_val) -> key count (hardware SUM else j: MAX; scratch as "
+    "group_reduce)",
   },
   {
     "grid_mean",

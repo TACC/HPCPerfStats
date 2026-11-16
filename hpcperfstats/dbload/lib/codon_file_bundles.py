@@ -57,42 +57,62 @@ def _line_starts_time_sample(
   return stripped[0].isdigit() and line_index >= start_idx
 
 
+def _rel_start(schema_lines: list[str], below: int) -> int:
+  """
+  Bundle-relative resume gate: ``0`` unless the window holds a gated prefix.
+
+  Args:
+    schema_lines (list[str]): ``!`` lines that lead the bundle.
+    below (int): Window lines that sit below the resume gate.
+
+  Returns:
+    int: Index of the first line past the prefix, or ``0`` without one.
+
+  Examples:
+    >>> _rel_start(["!cpu a"], 0), _rel_start(["!cpu a"], 2)
+    (0, 3)
+  """
+  return len(schema_lines) + below if below else 0
+
+
 def iter_codon_flush_line_bundles(
   stats_file: str,
   *,
   flush_max_bytes: int,
-  resume_byte: int = 0,
+  start_idx: int = 0,
   line_batch_size: int = 4096,
-) -> Iterator[list[str]]:
+) -> Iterator[tuple[list[str], int]]:
   """
-  Yield schema-inclusive line bundles at byte/sample flush boundaries.
+  Yield schema-inclusive line bundles at the kernel's flush boundaries.
+
+  Mirrors ``feed_collapse_capi`` (``_fs_take_line`` / ``_fs_cut_window``):
+  below the resume gate only the last sample header and the ``%`` lines
+  after it are kept, and each bundle reports the gate relative to itself.
 
   Args:
     stats_file (str): Absolute stats path (already visible under caller lock).
     flush_max_bytes (int): Soft max raw bytes per window.
-    resume_byte (int): Seek offset before reading.
+    start_idx (int): Resume gate: first line index whose samples emit rows.
     line_batch_size (int): Read batch size.
 
   Yields:
-    list[str]: ``schema_lines + window_lines`` for one flush window.
+    tuple[list[str], int]: ``(schema_lines + window_lines, rel_start)``.
 
   Examples:
-    >>> list(iter_codon_flush_line_bundles("/missing"))  # doctest: +SKIP
+    >>> list(iter_codon_flush_line_bundles("/missing", flush_max_bytes=1))
     []
   """
-  emission_start = 0
   flush_bytes_n = max(1, int(flush_max_bytes))
+  gate = int(start_idx)
   schema_lines: list[str] = []
   window_lines: list[str] = []
-  window_sample_n = 0
+  below = 0
   line_index = 0
   pending_flush = False
 
   try:
     with open(stats_file, "rb") as fd:
-      if resume_byte > 0:
-        fd.seek(int(resume_byte))
-      window_start = int(fd.tell())
+      window_start = 0
       while True:
         raw_batch: list[bytes] = []
         for _ in range(int(line_batch_size)):
@@ -106,24 +126,27 @@ def iter_codon_flush_line_bundles(
         for raw in raw_batch:
           line = _decode_stats_line(raw)
           over_threshold = (batch_end - window_start) >= flush_bytes_n
-          starts = _line_starts_time_sample(line, line_index, emission_start)
+          starts = _line_starts_time_sample(line, line_index, gate)
           if starts and (pending_flush or over_threshold) and window_lines:
-            yield schema_lines + window_lines
+            yield schema_lines + window_lines, _rel_start(schema_lines, below)
             window_start = batch_end
             pending_flush = False
             window_lines = []
-            window_sample_n = 0
+            below = 0
+          stripped = line.lstrip()
           if line.startswith("!"):
             schema_lines.append(line)
-          else:
+          elif line_index >= gate:
             window_lines.append(line)
-          if starts:
-            window_sample_n += 1
+          elif stripped[:1].isdigit():
+            window_lines, below = [line], 1
+          elif stripped[:1] == "%":
+            window_lines.append(line)
+            below += 1
           line_index += 1
-          over_after = (batch_end - window_start) >= flush_bytes_n
-          if over_after:
+          if (batch_end - window_start) >= flush_bytes_n:
             pending_flush = True
     if window_lines:
-      yield schema_lines + window_lines
+      yield schema_lines + window_lines, _rel_start(schema_lines, below)
   except FileNotFoundError:
     return

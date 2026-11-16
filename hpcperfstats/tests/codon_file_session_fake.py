@@ -22,7 +22,7 @@ def attach_parse_stats_file_codon_fake(
   def parse_stats_file_codon_open(
     path: str,
     flush_max_bytes: int,
-    resume_byte: int = 0,
+    start_idx: int = 0,
     slot: int = 0,
     exclude: list[str] | None = None,
   ) -> bool:
@@ -35,7 +35,7 @@ def attach_parse_stats_file_codon_fake(
         iter_codon_flush_line_bundles(
           path,
           flush_max_bytes=int(flush_max_bytes),
-          resume_byte=int(resume_byte),
+          start_idx=int(start_idx),
         )
       )
     except FileNotFoundError:
@@ -57,14 +57,18 @@ def attach_parse_stats_file_codon_fake(
     if state is None:
       return None
     try:
-      lines = next(state["it"])
+      lines, rel_start = next(state["it"])
     except StopIteration:
       return None
+    # Fakes predating the resume gate take no ``start_idx``; pass it only
+    # when the bundle has a resume prefix.
+    gate = {"start_idx": rel_start} if rel_start else {}
     out = parse_stats_lines_codon(
       lines,
       int(slot),
       state["carry_raw"],
       state["carry_arc"],
+      **gate,
     )
     state["carry_raw"] = dict(out.get("carry_raw") or {})
     state["carry_arc"] = dict(out.get("carry_arc") or {})

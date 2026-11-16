@@ -414,6 +414,22 @@ they skip there). To run them for real, bake with
 `test_runs/codon_exclude/pyext_smoke.py` under `/opt/python3.14t/bin/python3` with `PYEXT=<dir>`
 (prints `pyext_exclude_smoke=pass gil=off`).
 
+Codon / CPython parity (`codon-python-parity-contract.mdc`): `hpcperfstats/tests/test_codon_parity_registry.py`
+lists every twin implementation and its parity tests, and fails on an unregistered Codon export,
+a NumPy reference without a twin, or a new direct CPython-parser call site.
+`test_codon_canonical_parity.py` and `test_listend_codon_divert.py` compare the kernel source with
+`IncrementalStatsParser` on the host for:
+- legacy CTL/CTR decode;
+- the resume `start_idx` gate (rows, marks, stamps);
+- the `%jobs` arm across file-session windows;
+- `proc`/`host_proc` rows;
+- listend samples.
+
+Its real-pyext cases run against a bake built from this tree:
+`podman build --target codon-build -t localhost/hpcperfstats-codon-build:parity -f services-conf/pipeline_web.Dockerfile .`,
+`podman cp` `/opt/hpcperfstats/codon_parse/.` into `test_runs/codon_parity/codon_parse`, then
+`HPCPERFSTATS_CODON_PYEXT_DIR=/home/hpcperfstats/test_runs/codon_parity/codon_parse tests/run_dev_container_pytest.sh --ft hpcperfstats/tests/test_codon_canonical_parity.py hpcperfstats/tests/test_codon_exclude_parity.py -q`.
+
 Codon process-pool soaks: the worker count equals the ingest width (`HPCPERFSTATS_SYNC_TIMEDB_LOADED48_WIDTH`; with 1 MiB windows N=32
 peaks at ~26 GiB combined worker RSS, ~52 GiB cgroup; with 16 MiB windows N=24 hit the 100g cap and OOM-killed a worker).
 Workers log `codon_worker_mem` lines (RSS split, Boehm heap/free/unmapped, GC count, frame sizes) when ingest

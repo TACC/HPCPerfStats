@@ -54,12 +54,15 @@ def test_copy_frame_wire_roundtrip() -> None:
   assert out["parsed_host_rows"] == 7
 
 
-def test_proto_ver_5_carries_parsed_host_rows_and_rejects_v4() -> None:
-  """The sidecar gained ``parsed_host_rows``; an old peer must fail closed."""
-  assert w.PROTO_VER == 5
+def test_proto_ver_6_sends_start_idx_and_rejects_v5() -> None:
+  """v6 parse-file requests carry the ``start_idx`` gate; an old peer fails closed."""
+  assert w.PROTO_VER == 6
+  kind, env = w.decode_request(w.encode_parse_file_request("/x", 1024, 17))
+  assert (kind, env["start_idx"]) == ("parse_file", 17)
+  assert "resume_byte" not in env
   frame = bytearray(w.encode_response_ok("parse", {"stats": [], "procs": []}))
   assert w.decode_response("parse", bytes(frame))["parsed_host_rows"] is None
-  frame[0] = 4
+  frame[0] = 5
   with pytest.raises(RuntimeError, match="version mismatch"):
     w.decode_response("parse", bytes(frame))
 
@@ -234,7 +237,7 @@ def test_codon_file_stream_flush_window_is_capped(
   monkeypatch.setattr(
     bridge,
     "try_codon_parse_file_stream",
-    lambda path, flush, carry, on_chunk, exclude=None, coalesce_rows=1: (
+    lambda path, flush, carry, on_chunk, exclude=None, coalesce_rows=1, start_idx=0: (
       seen.append((flush, coalesce_rows))
     ),
   )

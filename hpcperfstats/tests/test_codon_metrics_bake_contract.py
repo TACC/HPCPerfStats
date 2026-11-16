@@ -33,11 +33,12 @@ def test_compile_unit_is_class_free_and_buffer_only() -> None:
     "def copy_count_rows_c(",
     "def copy_decode_c(",
     "def group_reduce_c(",
+    "def residual_collapse_c(",
     "def grid_mean_c(",
     "def join_sorted_c(",
   ):
     assert sym in src, sym
-  assert src.count("\n@export\ndef ") == 5
+  assert src.count("\n@export\ndef ") == 6
 
 
 def test_pyext_declares_gil_not_used_and_keeps_no_state() -> None:
@@ -66,6 +67,7 @@ def test_build_script_bakes_native_thinlto_with_ft_smoke_gate() -> None:
     "copy_count_rows_c",
     "copy_decode_c",
     "group_reduce_c",
+    "residual_collapse_c",
     "grid_mean_c",
     "join_sorted_c",
   ):

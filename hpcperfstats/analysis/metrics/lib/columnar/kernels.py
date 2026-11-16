@@ -1,5 +1,5 @@
 """
-NumPy reference kernels over one JobFrame (Stage 4 of the columnar plan).
+Columnar reductions over one JobFrame (``segments`` kernels: Codon or NumPy).
 
 Each function reproduces one ``host_data`` read of the pandas path, with the
 same scope rule, NULL handling and sane ceilings, but from the in-memory
@@ -594,19 +594,17 @@ class FrameIndex:
       contrib_key, contrib_val = ht_of, v_e
     else:
       contrib_key, contrib_val = group_key[valid], vals[valid]
-    keys = np.unique(contrib_key if mode == MODE_SQL else group_key)
+    # Row-order sums of the contributing samples; ORM groups also exist for
+    # every scoped sample key and fill with 0 (Coalesce) or NaN.
+    keys, _c, sums, _m = sg.group_reduce(contrib_key, contrib_val)
+    if mode == MODE_ORM:
+      contrib_keys, contrib_sums = keys, sums
+      keys = sg.group_reduce(group_key, np.zeros(group_key.shape[0]))[0]
+      sums = np.full(keys.shape[0], 0.0 if coalesce_zero else np.nan)
+      li, ri = sg.join_keys(keys, contrib_keys)
+      sums[li] = contrib_sums[ri]
     if keys.size == 0:
       return AggTable.zero(by_dev=by_dev)
-    sums = np.zeros(keys.shape[0], dtype=np.float64)
-    if contrib_key.size:
-      pos = np.searchsorted(keys, contrib_key)
-      np.add.at(sums, pos, contrib_val)
-      if not coalesce_zero:
-        touched = np.zeros(keys.shape[0], dtype=bool)
-        touched[pos] = True
-        sums[~touched] = np.nan
-    elif not coalesce_zero:
-      sums[:] = np.nan
     if by_dev:
       return self._agg_from_keys_dev(keys, sums, conv)
     return self._agg_from_keys(keys, sums, conv)
@@ -712,7 +710,9 @@ class FrameIndex:
     Residual types on shared jobs collapse each ``(host, time, event)`` to
     the hardware SUM else ``j:`` MAX over samples with
     ``abs(delta) < MAX_SANE_COUNTER_DELTA``; other reads keep scoped samples
-    strictly inside ``(-limit, limit)`` and sum them.
+    strictly inside ``(-limit, limit)`` and sum them. Totals are summed in
+    row order (``segments.group_reduce``), so the Codon kernel and the NumPy
+    reference agree bit for bit.
 
     Args:
       typ (str): Type name.
@@ -733,31 +733,31 @@ class FrameIndex:
       >>> FrameIndex(f).delta_sum_by_event("nfs", ["r", "w"])
       {'r': 10.0}
     """
-    out: dict[str, float] = {}
     f = self.frame
-    for sid in self._select(typ, events):
-      rows = self.scoped_rows(typ, self.rows_for_series([sid]))
-      if rows.size == 0:
-        continue
-      vals = f.delta[rows]
-      if self.host_wide(typ):
-        mask = sg.finite_mask(vals, limit=MAX_SANE_COUNTER_DELTA)
-        key = sg.composite_key(
-          f.host_id[rows].astype(np.int64), self._time_index[rows]
-        )
-        _k, v = sg.collapse_residual_copies(
-          key, f.dev_id[rows].astype(np.int64), vals, mask
-        )
-        if v.size == 0:
-          continue
-        out[f.series[sid][1]] = float(v.sum())
-      else:
-        mask = ~np.isnan(vals) & (vals > -MAX_SANE_COUNTER_DELTA)
-        mask &= vals < MAX_SANE_COUNTER_DELTA
-        if not mask.any():
-          continue
-        out[f.series[sid][1]] = float(vals[mask].sum())
-    return out
+    rows = self.scoped_rows(
+      typ, self.rows_for_series(self._select(typ, events))
+    )
+    vals = f.delta[rows]
+    sid = f.series_id[rows].astype(np.int64)
+    if self.host_wide(typ):
+      mask = sg.finite_mask(vals, limit=MAX_SANE_COUNTER_DELTA)
+      key = sg.composite_key(
+        sid, f.host_id[rows].astype(np.int64), self._time_index[rows]
+      )
+      k, vals = sg.collapse_residual_copies(
+        key, f.dev_id[rows].astype(np.int64), vals, mask
+      )
+      sid = k >> (sg.TIME_BITS + 16)
+      mask = None
+    else:
+      mask = ~np.isnan(vals) & (vals > -MAX_SANE_COUNTER_DELTA)
+      mask &= vals < MAX_SANE_COUNTER_DELTA
+    # Row-order totals per series (series id order = ``_select`` order).
+    sids, _c, totals, _m = sg.group_reduce(sid, vals, mask)
+    return {
+      f.series[s][1]: float(t)
+      for s, t in zip(sids.tolist(), totals.tolist(), strict=True)
+    }
 
   def gpu_group_stats(
     self,
@@ -895,9 +895,10 @@ class FrameIndex:
         "cluster_arc": empty_grid.copy(),
       }
     tix = np.searchsorted(axis_us, f.time_us[rows]).astype(np.int64)
-    eix = np.array(
-      [ev_pos[f.series[s][1]] for s in f.series_id[rows]], dtype=np.int64
-    )
+    event_of_series = np.zeros(len(f.series), dtype=np.int64)
+    for s in sids:
+      event_of_series[s] = ev_pos[f.series[s][1]]
+    eix = event_of_series[f.series_id[rows]]
     host = f.host_id[rows].astype(np.int64)
     host_ids, hinv = np.unique(host, return_inverse=True)
     n_h = host_ids.shape[0]

@@ -200,13 +200,19 @@ def _configure_slot_pool(n: int) -> None:
     _shutdown_codon_pool()
 
 
-def configure_codon_context_pool_from_ini() -> int:
+def configure_codon_context_pool_from_ini(
+  parse_threads: int | None = None,
+) -> int:
   """
   Configure Codon slot count from ``sync_ingest_pool_processes``.
 
-  One slot and one Codon worker process per ingest thread.
+  One slot and one Codon worker process per ingest thread. ``parse_threads``
+  overrides the INI width for daemons with their own parse pool (listend).
   ``sync_codon_context_pool_fraction`` is not applied. The count is capped at
   ``MAX_CODON_SLOTS``.
+
+  Args:
+    parse_threads (int | None): Parse-thread count to size the pool to.
 
   Returns:
     int: Configured slot count ``N``.
@@ -215,6 +221,10 @@ def configure_codon_context_pool_from_ini() -> int:
     >>> configure_codon_context_pool_from_ini() >= 1  # doctest: +SKIP
     True
   """
+  if parse_threads is not None:
+    n = min(MAX_CODON_SLOTS, max(1, int(parse_threads)))
+    _configure_slot_pool(n)
+    return n
   try:
     from hpcperfstats.dbload.lib import conf_parser as cfg
 
@@ -630,7 +640,7 @@ def _worker_rss_over_limit(proc: subprocess.Popen[bytes]) -> bool:
 def _popen_parse_file_frames(
   path: str,
   flush_max_bytes: int,
-  resume_byte: int,
+  start_idx: int,
   exclude: list[str] | None,
   emit_insert: int,
 ) -> Any:
@@ -644,7 +654,7 @@ def _popen_parse_file_frames(
   Args:
     path (str): Absolute stats path.
     flush_max_bytes (int): Soft max bytes per window.
-    resume_byte (int): Byte offset before reading.
+    start_idx (int): Resume gate: first line index whose samples emit rows.
     exclude (list[str] | None): Event types to skip.
     emit_insert (int): ``1`` for per-row INSERT frames, ``0`` for COPY bytes.
 
@@ -670,7 +680,7 @@ def _popen_parse_file_frames(
       proc = worker["proc"]
       proc.stdin.write(
         encode_parse_file_request(
-          path, flush_max_bytes, resume_byte, exclude, emit_insert
+          path, flush_max_bytes, start_idx, exclude, emit_insert
         )
       )
       proc.stdin.flush()
@@ -1240,6 +1250,7 @@ def _invoke_parse_mod_fn(
   carry_raw: dict[str, list[float]],
   carry_arc: dict[str, float],
   exclude: list[str] | None = None,
+  start_idx: int = 0,
 ) -> Any:
   """
   Call ``mod.parse_stats_lines_codon`` with carry kwargs; fall back for fakes.
@@ -1256,6 +1267,9 @@ def _invoke_parse_mod_fn(
     carry_arc (dict[str, float]): Cross-flush arc-rate carry to seed.
     exclude (list[str] | None): Event types to skip. Passed as ``exclude=``
       only when non-empty (the pyext clears the slot list when absent).
+    start_idx (int): Resume gate line index. Passed only when non-zero (the
+      pyext resets the slot gate to 0 when absent); a fake without the
+      keyword raises ``TypeError`` instead of silently ignoring it.
 
   Returns:
     Any: Callable return value — a finished-contract dict (real module) or
@@ -1270,16 +1284,18 @@ def _invoke_parse_mod_fn(
     (['x'], [])
   """
   fn = mod.parse_stats_lines_codon
+  opt: dict[str, Any] = {}
+  if exclude:
+    opt["exclude"] = list(exclude)
+  if start_idx:
+    opt["start_idx"] = int(start_idx)
+    return fn(
+      list(lines), slot, carry_raw=carry_raw, carry_arc=carry_arc, **opt
+    )
   try:
-    if exclude:
-      return fn(
-        list(lines),
-        slot,
-        carry_raw=carry_raw,
-        carry_arc=carry_arc,
-        exclude=list(exclude),
-      )
-    return fn(list(lines), slot, carry_raw=carry_raw, carry_arc=carry_arc)
+    return fn(
+      list(lines), slot, carry_raw=carry_raw, carry_arc=carry_arc, **opt
+    )
   except TypeError:
     pass
   try:
@@ -1466,6 +1482,7 @@ def try_codon_parse_collapse(
   lines: list[str],
   carry: Any | None = None,
   exclude: list[str] | None = None,
+  start_idx: int = 0,
 ) -> tuple[Any, Any] | None:
   """
   Prefer Codon feed+delta+collapse+arc when the extension exposes full parse.
@@ -1486,12 +1503,15 @@ def try_codon_parse_collapse(
       ``.arc`` dict attributes to seed and update, or None.
     exclude (list[str] | None): Event types to skip (the caller's
       ``exclude_types_list`` as a list); ``None``/empty skips nothing.
+    start_idx (int): Resume gate: samples before this line index emit no
+      rows (schema and ``%jobs`` state still accumulate from them).
 
   Returns:
     tuple[Any, Any] | None: ``(stats_records, proc_rows)``, or None only
     when the Codon extension (or its full parse API) is unavailable.
 
   Raises:
+    RuntimeError: When ``start_idx`` is set on the test-only process pool.
     Exception: Re-raises any error from the loaded Codon extension call
       (process-pool RPC or in-process invocation).
 
@@ -1515,6 +1535,10 @@ def try_codon_parse_collapse(
   )
   try:
     if _use_codon_process_pool():
+      if start_idx:
+        raise RuntimeError(
+          "codon start_idx needs the in-process line batch (test process pool)"
+        )
       result = _call_via_codon_process_pool(
         "parse",
         lines,
@@ -1525,7 +1549,7 @@ def try_codon_parse_collapse(
     else:
       result = _call_with_slot_lock(
         lambda *, slot: _invoke_parse_mod_fn(
-          mod, lines, slot, carry_raw, carry_arc, exclude
+          mod, lines, slot, carry_raw, carry_arc, exclude, start_idx
         )
       )
   except Exception:
@@ -1535,13 +1559,28 @@ def try_codon_parse_collapse(
       exc_info=True,
     )
     raise
-  return _finish_codon_parse_result(result, carry)
+  finished = _finish_codon_parse_result(result, carry)
+  # Same side-table write as CPython ``flush_parser_side_marks``.
+  marks = (
+    _normalize_codon_marks(result.get("marks"))
+    if isinstance(result, dict)
+    else []
+  )
+  if marks:
+    from hpcperfstats.dbload.lib.monitor_mark_side_ingest import (
+      persist_monitor_marks,
+    )
+
+    persist_monitor_marks(marks)
+    if carry is not None:
+      carry.codon_marks = []
+  return finished
 
 
 def _iter_codon_parse_file_frames(
   path: str,
   flush_max_bytes: int,
-  resume_byte: int = 0,
+  start_idx: int = 0,
   exclude: list[str] | None = None,
 ) -> Any:
   """
@@ -1554,7 +1593,7 @@ def _iter_codon_parse_file_frames(
   Args:
     path (str): Absolute stats path.
     flush_max_bytes (int): Soft max bytes per window.
-    resume_byte (int): Byte offset before reading.
+    start_idx (int): Resume gate: first line index whose samples emit rows.
     exclude (list[str] | None): Event types to skip for this session.
 
   Yields:
@@ -1570,7 +1609,7 @@ def _iter_codon_parse_file_frames(
     yield from _popen_parse_file_frames(
       path,
       int(flush_max_bytes),
-      int(resume_byte),
+      int(start_idx),
       exclude,
       1 if current_ingest_emit() == "insert" else 0,
     )
@@ -1597,7 +1636,7 @@ def _iter_codon_parse_file_frames(
     yield from codon_worker_parse_file_frames(
       path,
       int(flush_max_bytes),
-      int(resume_byte),
+      int(start_idx),
       slot=slot,
       exclude=exclude,
     )
@@ -1693,6 +1732,7 @@ def try_codon_parse_file_stream(
   on_chunk: Callable[[Any, Any], None],
   exclude: list[str] | None = None,
   coalesce_rows: int = 1,
+  start_idx: int = 0,
 ) -> None:
   """
   File-owned Codon parse: stream SoA frames to ``on_chunk``.
@@ -1706,6 +1746,8 @@ def try_codon_parse_file_stream(
       ``exclude_types_list`` as a list); ``None``/empty skips nothing.
     coalesce_rows (int): Host rows per ``on_chunk`` payload (see
       :func:`_coalesce_host_rows`); ``1`` disables merging.
+    start_idx (int): Resume gate: the kernel reads the whole file (schema,
+      ``%jobs`` arm) and emits rows only for samples at or past this line.
 
   Returns:
     None
@@ -1729,7 +1771,7 @@ def try_codon_parse_file_stream(
   try:
     for result in _coalesce_host_rows(
       _iter_codon_parse_file_frames(
-        path, int(flush_max_bytes), exclude=exclude
+        path, int(flush_max_bytes), int(start_idx), exclude=exclude
       ),
       int(coalesce_rows),
     ):

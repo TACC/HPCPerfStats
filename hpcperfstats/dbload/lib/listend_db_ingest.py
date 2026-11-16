@@ -1378,6 +1378,12 @@ class ListendDbIngestPool:
 
     configure_blas_thread_env()
     ensure_django()
+    from hpcperfstats.dbload.lib.sync_timedb_codon_bridge import (
+      configure_codon_context_pool_from_ini,
+    )
+
+    # One Codon slot per parse thread (the default is one shared slot).
+    configure_codon_context_pool_from_ini(self.pool_processes)
     from hpcperfstats.dbload.lib.sync_timedb_ingest_write_stage import (
       start_ingest_write_stage,
     )

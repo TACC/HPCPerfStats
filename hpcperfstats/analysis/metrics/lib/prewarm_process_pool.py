@@ -68,7 +68,13 @@ class PrewarmChildError(RuntimeError):
 
 def _child_initializer(script_name: str, pool_kind: str, db_name: str) -> None:
   """
-  Worker start: title, Bokeh shim, BLAS caps, Django, no inherited sockets.
+  Worker start: title, Bokeh shim, BLAS caps, Codon check, Django, no
+  inherited sockets.
+
+  ``codon_bridge.require_codon_metrics`` repeats the parent's startup check
+  in the child, so a child that cannot load a required kernel exits (the
+  parent replaces the dead worker and fails that job) instead of building
+  plot series with the NumPy reference.
 
   ``ensure_django`` reads the database from ``hpcperfstats.ini``; the child
   then switches to ``db_name``, the parent's live database, so a parent on a
@@ -83,6 +89,9 @@ def _child_initializer(script_name: str, pool_kind: str, db_name: str) -> None:
   Returns:
     None
 
+  Raises:
+    SystemExit: The Codon metrics kernel is required and unavailable.
+
   Examples:
     >>> _child_initializer(
     ...   "update_metrics.py", "prewarm-pool", "hpcperfstats"
@@ -93,6 +102,10 @@ def _child_initializer(script_name: str, pool_kind: str, db_name: str) -> None:
   from hpcperfstats.dbload.lib.blas_thread_env import configure_blas_thread_env
 
   configure_blas_thread_env()
+  from hpcperfstats.analysis.metrics.lib.columnar import codon_bridge
+  from hpcperfstats.dbload.lib.print_utils import log_print
+
+  codon_bridge.require_codon_metrics(lambda line: log_print(line, flush=True))
   from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 
   ensure_django()

@@ -20,7 +20,8 @@ may still round-trip ``carry_*`` in the sidecar.
 Attributes:
   CODON_PARSE_DIR: Baked pyext directory (``/opt/hpcperfstats/codon_parse``).
   PROTO_VER: Wire-protocol version (mismatch fail-closed; 3 = columnar
-    SoA parse response + JSON sidecar; 5 = sidecar ``parsed_host_rows``).
+    SoA parse response + JSON sidecar; 5 = sidecar ``parsed_host_rows``;
+    6 = ``KIND_PARSE_FILE`` ``start_idx`` resume gate replaces ``resume_byte``).
   KIND_FP: Request kind for fingerprint.
   KIND_PARSE: Request kind for full parse.
   STATUS_OK: Response status success.
@@ -60,7 +61,7 @@ from hpcperfstats.dbload.lib.date_utils import to_pydatetime_or_none
 
 CODON_PARSE_DIR = "/opt/hpcperfstats/codon_parse"
 CODON_EXT_ENV = "HPCPERFSTATS_CODON_PARSE_MODULE"
-PROTO_VER = 5
+PROTO_VER = 6
 KIND_FP = 1
 KIND_PARSE = 2
 KIND_PARSE_FILE = 3
@@ -325,7 +326,7 @@ def decode_request(frame: bytes) -> tuple[str, Any]:
     return "parse", envelope
   if kind_b == KIND_PARSE_FILE:
     envelope = (
-      {"path": "", "flush_max_bytes": 0, "resume_byte": 0}
+      {"path": "", "flush_max_bytes": 0, "start_idx": 0}
       if n == 0
       else json.loads(body.decode("utf-8"))
     )
@@ -651,12 +652,12 @@ def decode_proc_soa_bytes(blob: bytes) -> dict[str, list[Any]]:
 def encode_parse_file_request(
   path: str,
   flush_max_bytes: int,
-  resume_byte: int = 0,
+  start_idx: int = 0,
   exclude: list[str] | None = None,
   emit_insert: int = 0,
 ) -> bytes:
   """
-  Encode a PROTO 4 file-owned parse request (no ``lines`` array).
+  Encode a file-owned parse request (no ``lines`` array).
 
   Counter/arc carry stays in the Codon worker for the whole session; it is
   not sent on the request.
@@ -664,7 +665,7 @@ def encode_parse_file_request(
   Args:
     path (str): Absolute stats file path.
     flush_max_bytes (int): Soft max bytes per flush window.
-    resume_byte (int): Byte offset to resume reading.
+    start_idx (int): Resume gate: first line index whose samples emit rows.
     exclude (list[str] | None): Event types to skip; key omitted when empty.
     emit_insert (int): ``1`` asks for per-row INSERT frames (default COPY
       bytes); key omitted when ``0``.
@@ -674,12 +675,12 @@ def encode_parse_file_request(
 
   Examples:
     >>> encode_parse_file_request("/x", 1024)[:2]
-    b'\\x04\\x03'
+    b'\\x06\\x03'
   """
   envelope = {
     "path": str(path),
     "flush_max_bytes": int(flush_max_bytes),
-    "resume_byte": int(resume_byte),
+    "start_idx": int(start_idx),
   }
   if exclude:
     envelope["exclude"] = list(exclude)
@@ -1016,7 +1017,7 @@ def format_worker_mem_line(tag: str, **extra: Any) -> str:
 def codon_worker_parse_file_frames(
   path: str,
   flush_max_bytes: int,
-  resume_byte: int = 0,
+  start_idx: int = 0,
   *,
   slot: int = 0,
   exclude: list[str] | None = None,
@@ -1031,7 +1032,7 @@ def codon_worker_parse_file_frames(
   Args:
     path (str): Absolute stats file path.
     flush_max_bytes (int): Soft max bytes per window.
-    resume_byte (int): Byte offset before reading.
+    start_idx (int): Resume gate: first line index whose samples emit rows.
     slot (int): Codon pyext stripe slot.
     exclude (list[str] | None): Event types to skip (``None``/empty = none);
       replaces the slot's previous list on every call.
@@ -1059,7 +1060,7 @@ def codon_worker_parse_file_frames(
   opened = open_fn(
     path,
     int(flush_max_bytes),
-    int(resume_byte),
+    int(start_idx),
     int(slot),
     list(exclude) if exclude else None,
   )
@@ -1175,7 +1176,7 @@ def main() -> int:
         for frame in codon_worker_parse_file_frames(
           str(payload.get("path") or ""),
           int(payload.get("flush_max_bytes") or 1),
-          int(payload.get("resume_byte") or 0),
+          int(payload.get("start_idx") or 0),
           slot=0,
           exclude=payload.get("exclude") or None,
           emit_insert=int(payload.get("emit_insert") or 0),

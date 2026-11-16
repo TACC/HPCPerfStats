@@ -58,6 +58,7 @@ _KERNEL_METHODS = (
   "copy_count_rows",
   "copy_decode",
   "group_reduce",
+  "residual_collapse",
   "grid_mean",
   "join_sorted",
 )
@@ -453,7 +454,8 @@ _bank = threading.local()
 
 class _ScratchBank:
   """
-  Per-thread reusable buffers for ``group_reduce`` (grow-only).
+  Per-thread reusable buffers for ``group_reduce`` and
+  ``residual_collapse`` (grow-only).
 
   Fresh 8 MB-class arrays on every call made eight metrics threads meet in
   the kernel's page-fault path; reusing one bank per thread keeps the
@@ -539,13 +541,7 @@ def group_reduce(
   if mask is None:
     has_mask, m = False, bank.empty_u8
   else:
-    m_bool = np.ascontiguousarray(mask)
-    m = (
-      m_bool.view(np.uint8)
-      if m_bool.dtype == np.bool_
-      else _c(m_bool, np.uint8)
-    )
-    has_mask = True
+    has_mask, m = True, _mask_u8(mask)
   g = int(
     call(
       "group_reduce",
@@ -567,6 +563,66 @@ def group_reduce(
     bank.out_f[0, :g].copy(),
     bank.out_f[1, :g].copy(),
   )
+
+
+def _mask_u8(mask: np.ndarray) -> np.ndarray:
+  """
+  Row mask as a contiguous uint8 buffer (a bool array is viewed, not copied).
+
+  Args:
+    mask (np.ndarray): Boolean or integer row mask.
+
+  Returns:
+    np.ndarray: uint8 mask (non-zero keeps the row).
+
+  Examples:
+    >>> _mask_u8(np.array([True, False])).tolist()
+    [1, 0]
+  """
+  m = np.ascontiguousarray(mask)
+  return m.view(np.uint8) if m.dtype == np.bool_ else _c(m, np.uint8)
+
+
+def residual_collapse(
+  keys: np.ndarray,
+  dev_id: np.ndarray,
+  values: np.ndarray,
+  mask: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+  """
+  Codon ``residual_collapse``: hardware SUM else ``j:`` MAX per key.
+
+  Args:
+    keys (np.ndarray): int64 key per row.
+    dev_id (np.ndarray): Signed device ids (negative = ``j:`` copy).
+    values (np.ndarray): float64 values.
+    mask (np.ndarray): Rows that take part.
+
+  Returns:
+    tuple[np.ndarray, np.ndarray]: Sorted keys with a masked row and their
+    collapsed value (fresh arrays of the group count).
+
+  Examples:
+    >>> residual_collapse(
+    ...   np.array([1]), np.array([0]), np.array([2.0]), np.array([True])
+    ... )  # doctest: +SKIP
+  """
+  n = int(keys.shape[0])
+  bank = _thread_bank(n)
+  g = int(
+    call(
+      "residual_collapse",
+      n,
+      _c(keys, np.int64),
+      _c(dev_id, np.int64),
+      _c(values, np.float64),
+      _mask_u8(mask),
+      bank.scratch,
+      bank.out_i[0],
+      bank.out_f[0],
+    )
+  )
+  return bank.out_i[0, :g].copy(), bank.out_f[0, :g].copy()
 
 
 def grid_mean(cells: np.ndarray, values: np.ndarray, size: int) -> np.ndarray:

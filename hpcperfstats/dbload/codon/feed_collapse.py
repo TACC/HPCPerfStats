@@ -52,6 +52,148 @@ HOST_PROC_KEYS = [
   "threads",
 ]
 
+# Legacy CTL/CTR archives (mirror sync_timedb_parsing_legacy + monitor_naming.legacy;
+# locked by test_codon_legacy_decode_parity.py). Int keys are hex event codes
+# read from CTL values; str keys are FIXED_CTR schema tokens.
+LEGACY_EVENTMAP_INT: dict[str, dict[int, str]] = {
+  "amd64_pmc": {
+    0x43FF03: "FLOPS,W=48",
+    0x4300C2: "BRANCH_INST_RETIRED,W=48",
+    0x4300C3: "BRANCH_INST_RETIRED_MISS,W=48",
+    0x4308AF: "DISPATCH_STALL_CYCLES1,W=48",
+    0x43FFAE: "DISPATCH_STALL_CYCLES0,W=48",
+  },
+  "amd64_df": {
+    0x403807: "MBW_CHANNEL_0,W=48,U=64B",
+    0x403847: "MBW_CHANNEL_1,W=48,U=64B",
+    0x403887: "MBW_CHANNEL_2,W=48,U=64B",
+    0x4038C7: "MBW_CHANNEL_3,W=48,U=64B",
+    0x433907: "MBW_CHANNEL_4,W=48,U=64B",
+    0x433947: "MBW_CHANNEL_5,W=48,U=64B",
+    0x433987: "MBW_CHANNEL_6,W=48,U=64B",
+    0x4339C7: "MBW_CHANNEL_7,W=48,U=64B",
+  },
+  "intel_8pmc3": {
+    0x4301C7: "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE,W=48,U=1",
+    0x4302C7: "FP_ARITH_INST_RETIRED_SCALAR_SINGLE,W=48,U=1",
+    0x4304C7: "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE,W=48,U=2",
+    0x4308C7: "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE,W=48,U=4",
+    0x4310C7: "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE,W=48,U=4",
+    0x4320C7: "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE,W=48,U=8",
+    0x4340C7: "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE,W=48,U=8",
+    0x4380C7: "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE,W=48,U=16",
+    0x438010: "SSE_DOUBLE_SCALAR,W=48,U=1",
+    0x431010: "SSE_DOUBLE_PACKED,W=48,U=2",
+    0x430211: "SIMD_DOUBLE_256,W=48,U=4",
+    0x439010: "SSE_DOUBLE_ALL,W=48,U=1",
+  },
+  "intel_4pmc3": {
+    0x4301C7: "FP_ARITH_INST_RETIRED_SCALAR_DOUBLE,W=48,U=1",
+    0x4302C7: "FP_ARITH_INST_RETIRED_SCALAR_SINGLE,W=48,U=1",
+    0x4304C7: "FP_ARITH_INST_RETIRED_128B_PACKED_DOUBLE,W=48,U=2",
+    0x4308C7: "FP_ARITH_INST_RETIRED_128B_PACKED_SINGLE,W=48,U=4",
+    0x4310C7: "FP_ARITH_INST_RETIRED_256B_PACKED_DOUBLE,W=48,U=4",
+    0x4320C7: "FP_ARITH_INST_RETIRED_256B_PACKED_SINGLE,W=48,U=8",
+    0x4340C7: "FP_ARITH_INST_RETIRED_512B_PACKED_DOUBLE,W=48,U=8",
+    0x4380C7: "FP_ARITH_INST_RETIRED_512B_PACKED_SINGLE,W=48,U=16",
+    0x438010: "SSE_DOUBLE_SCALAR,W=48,U=1",
+    0x431010: "SSE_DOUBLE_PACKED,W=48,U=2",
+    0x430211: "SIMD_DOUBLE_256,W=48,U=4",
+    0x439010: "SSE_DOUBLE_ALL,W=48,U=1",
+  },
+  "intel_snb_imc": {
+    0x400304: "CAS_READS,W=48",
+    0x400B04: "CAS_WRITES,W=48",
+  },
+  "intel_ivb_imc": {
+    0x400304: "CAS_READS,W=48",
+    0x400B04: "CAS_WRITES,W=48",
+  },
+  "intel_hsw_imc": {
+    0x400304: "CAS_READS,W=48",
+    0x400B04: "CAS_WRITES,W=48",
+  },
+  "intel_bdw_imc": {
+    0x400304: "CAS_READS,W=48",
+    0x400B04: "CAS_WRITES,W=48",
+  },
+  "intel_knl_mc_dclk": {
+    0x300301: "CAS_READS,W=48",
+    0x300309: "CAS_WRITES,W=48",
+  },
+  "intel_knl_mc": {
+    0x300301: "CAS_READS,W=48",
+    0x300309: "CAS_WRITES,W=48",
+  },
+  "intel_skx_imc": {
+    0x400304: "CAS_READS,W=48",
+    0x400C04: "CAS_WRITES,W=48",
+    0x400B01: "ACT_COUNT,W=48",
+    0x400102: "PRE_COUNT_MISS,W=48",
+  },
+}
+LEGACY_EVENTMAP_STR: dict[str, dict[str, str]] = {
+  "intel_8pmc3": {
+    "FIXED_CTR0": "INST_RETIRED,W=48",
+    "FIXED_CTR1": "APERF,W=48",
+    "FIXED_CTR2": "MPERF,W=48",
+  },
+  "intel_4pmc3": {
+    "FIXED_CTR0": "INST_RETIRED,W=48",
+    "FIXED_CTR1": "APERF,W=48",
+    "FIXED_CTR2": "MPERF,W=48",
+  },
+}
+LEGACY_TYPE_NORMALIZE: dict[str, str] = {
+  "intel_knl_mc": "intel_knl_mc_dclk",
+}
+LEGACY_REMOVED_SYMBOLS = [
+  "CTL0",
+  "CTL1",
+  "CTL2",
+  "CTL3",
+  "CTL4",
+  "CTL5",
+  "CTL6",
+  "CTL7",
+  "CTR0",
+  "CTR1",
+  "CTR2",
+  "CTR3",
+  "CTR4",
+  "CTR5",
+  "CTR6",
+  "CTR7",
+  "FIXED_CTR",
+  "FIXED_CTR0",
+  "FIXED_CTR1",
+  "FIXED_CTR2",
+  "amd_x86_pmc",
+  "amd_x86_uncore_df",
+  "host_ib_ext",
+  "host_ib_sw",
+  "host_mic",
+  "intel_knl",
+  "intel_knl_edc",
+  "intel_knl_mc",
+  "intel_x86_pmc_knl",
+  "intel_x86_uncore_edc_knl",
+  "intel_x86_uncore_mc_knl",
+]
+LEGACY_HARDWARE_DECODE_TYPES = [
+  "amd64_df",
+  "amd64_pmc",
+  "intel_4pmc3",
+  "intel_8pmc3",
+  "intel_bdw_imc",
+  "intel_hsw_imc",
+  "intel_ivb_imc",
+  "intel_knl_mc",
+  "intel_knl_mc_dclk",
+  "intel_skx_imc",
+  "intel_snb_imc",
+]
+
 # SchemaCols: (events, wids, mults, units)
 SchemaCols = tuple[list[str], list[int], list[float], list[str]]
 
@@ -174,6 +316,98 @@ def _compile_schema_tokens(tokens: list[str]) -> SchemaCols:
   return (events, wids, mults, units)
 
 
+def schema_needs_legacy_decode(typ: str, tokens: list[str]) -> bool:
+  """Mirror ``monitor_naming.resolve.schema_needs_legacy_hardware_decode``."""
+  for token in tokens:
+    base = token.split(",")[0]
+    if base in LEGACY_REMOVED_SYMBOLS:
+      return True
+    if "CTL" in base or "CTR" in base:
+      return True
+  return typ in LEGACY_HARDWARE_DECODE_TYPES
+
+
+def legacy_decode_tokens(
+  typ: str, tokens: list[str], vals: list[str]
+) -> tuple[list[str], list[str]]:
+  """Port of ``map_hardware_counter_vals`` plus its event->value dict.
+
+  CTL values pick event names from the type's hex eventmap (``OTHER`` when
+  unknown), CTRs take the name their CTL picked, FIXED_CTRs map by token,
+  other tokens keep only their base name. A repeated name keeps its first
+  position with the last value (dict semantics). A FIXED_CTR or CTR with no
+  mapping raises ``KeyError`` like CPython.
+  """
+  codes = LEGACY_EVENTMAP_INT[typ]
+  by_ctl: dict[str, str] = {}
+  names: list[str] = []
+  rm_idx: list[int] = []
+  for idx in range(len(tokens)):
+    eve = tokens[idx].split(",")[0]
+    if "CTL" in eve:
+      name = "OTHER"
+      if idx < len(vals):
+        try:
+          name = codes.get(int(vals[idx]), "OTHER")
+        except ValueError:
+          name = "OTHER"
+      by_ctl[eve.lstrip("CTL")] = name
+      rm_idx.append(idx)
+    elif "FIXED_CTR" in eve:
+      if typ not in LEGACY_EVENTMAP_STR or eve not in LEGACY_EVENTMAP_STR[typ]:
+        raise KeyError(eve)
+      names.append(LEGACY_EVENTMAP_STR[typ][eve])
+    elif "CTR" in eve:
+      ctr = eve.lstrip("CTR")
+      if ctr not in by_ctl:
+        raise KeyError(ctr)
+      names.append(by_ctl[ctr])
+    else:
+      names.append(eve)
+  kept = list(vals)
+  for j in range(len(rm_idx) - 1, -1, -1):
+    if rm_idx[j] >= len(kept):
+      raise IndexError("legacy CTL index past the value list")
+    del kept[rm_idx[j]]
+  out_names: list[str] = []
+  out_vals: list[str] = []
+  for i in range(min(len(names), len(kept))):
+    pos = -1
+    for k in range(len(out_names)):
+      if out_names[k] == names[i]:
+        pos = k
+        break
+    if pos >= 0:
+      out_vals[pos] = kept[i]
+    else:
+      out_names.append(names[i])
+      out_vals.append(kept[i])
+  return out_names, out_vals
+
+
+def _jobs_line_arms(line: str) -> bool:
+  return (
+    len(line) >= 5 and line[0:5] == "%jobs" and len(_parse_jobs_jids(line)) > 0
+  )
+
+
+def trailing_jobs_arm(lines: list[str]) -> bool:
+  """True when a ``%jobs`` line follows the last sample header in ``lines``.
+
+  The file session flushes on the next sample's header, so that ``%jobs``
+  stays in the closing window; the next window starts armed with it.
+  """
+  for i in range(len(lines) - 1, -1, -1):
+    s = lines[i].lstrip()
+    if not s:
+      continue
+    if s[0].isdigit():
+      return False
+    if _jobs_line_arms(s):
+      return True
+  return False
+
+
 def _cpu_e6_schema_tokens() -> list[str]:
   # Keep in sync with experiments/codon/e6_corpus.py @full cpu schema.
   return [
@@ -271,15 +505,16 @@ def _append_stats(
 ) -> None:
   events, wids, mults, units = compiled
   n = len(events)
-  m = len(vals)
-  use = n if n < m else m
-  # A non-numeric token drops the line (as IncrementalStatsParser does); an
-  # uncaught ValueError in an @export entry aborts the whole worker process.
+  # A value count that differs from the schema, or a non-numeric token, drops
+  # the line (as IncrementalStatsParser does); an uncaught ValueError in an
+  # @export entry aborts the whole worker process.
+  if len(vals) != n:
+    return
   try:
-    fvals = [float(vals[i]) for i in range(use)]
+    fvals = [float(v) for v in vals]
   except ValueError:
     return
-  for i in range(use):
+  for i in range(n):
     stats_time.append(tag_time)
     stats_host.append(tag_host)
     stats_jid.append(tag_jid)
@@ -299,6 +534,7 @@ def _merge_proc(
   proc: str,
   device: str,
   fields: dict[str, int],
+  nulls: list[str],
   proc_jid: list[str],
   proc_host: list[str],
   proc_proc: list[str],
@@ -306,7 +542,11 @@ def _merge_proc(
   proc_fields: list[dict[str, int]],
   proc_by_key: dict[str, int],
 ) -> None:
-  """Online ``(jid, host, proc)`` merge: peaks max, other fields last-write."""
+  """Online ``(jid, host, proc)`` merge: peaks max, other fields last-write.
+
+  ``nulls`` are non-numeric fields (CPython ``None``): a null peak never
+  wins, a null non-peak overwrites to absent (COPY writes absent as NULL).
+  """
   key = jid + "\0" + host + "\0" + proc
   idx = proc_by_key.get(key, -1)
   if idx < 0:
@@ -320,17 +560,24 @@ def _merge_proc(
   proc_device[idx] = device
   old = proc_fields[idx]
   for metric, nv in fields.items():
-    if (
-      metric == "vm_peak"
-      or metric == "vm_hwm"
-      or metric == "vm_stk"
-      or metric == "vm_exe"
-      or metric == "vm_lib"
-    ):
+    if _is_proc_peak_key(metric):
       if metric not in old or nv > old[metric]:
         old[metric] = nv
     else:
       old[metric] = nv
+  for metric in nulls:
+    if not _is_proc_peak_key(metric) and metric in old:
+      del old[metric]
+
+
+def _is_proc_peak_key(metric: str) -> bool:
+  return (
+    metric == "vm_peak"
+    or metric == "vm_hwm"
+    or metric == "vm_stk"
+    or metric == "vm_exe"
+    or metric == "vm_lib"
+  )
 
 
 def feed_lines(
@@ -387,6 +634,7 @@ def feed_lines_full(
   lines: list[str],
   start_idx: int = 0,
   exclude_types: list[str] = [],  # noqa: B006 (Codon: never mutated)
+  arm_shared_in: bool = False,
 ) -> tuple[
   list[float],
   list[str],
@@ -413,6 +661,10 @@ def feed_lines_full(
 
   ``exclude_types`` mirrors ``IncrementalStatsParser.exclude_types_list``: a
   data line whose first token is listed is skipped before any host/proc work.
+  ``start_idx`` is the resume gate: sample headers at line indexes below it
+  open no sample (schema and ``%jobs`` arm state still accumulate, marks bound
+  to those samples are dropped). ``arm_shared_in`` seeds the ``%jobs`` arm a
+  previous file-session window ended with (``trailing_jobs_arm``).
   """
   excl: set[str] = set()
   for et in exclude_types:
@@ -422,14 +674,16 @@ def feed_lines_full(
   tag_time = 0.0
   tag_jid = ""
   tag_host = ""
-  arm_shared = False
+  arm_shared = arm_shared_in
   sample_shared = False
+  below_gate = False
   schema: dict[str, list[str]] = {}
   schema_fast: dict[str, list[str]] = {}
   schema_compiled: dict[str, SchemaCols] = {}
   schema_fast_compiled: dict[str, SchemaCols] = {}
   schema_bare: dict[str, list[str]] = {}
   schema_fast_bare: dict[str, list[str]] = {}
+  schema_legacy: dict[str, bool] = {}
   stats_time: list[float] = []
   stats_host: list[str] = []
   stats_jid: list[str] = []
@@ -449,36 +703,34 @@ def feed_lines_full(
   marks: list[dict[str, str]] = []
   pending_marks: list[dict[str, str]] = []
 
-  for s in lines:
-    if not s:
+  line_index = -1
+  for raw in lines:
+    line_index += 1
+    if not raw:
       continue
+    s = raw
+    if s[0].isspace():
+      s = s.lstrip()
+      if not s:
+        continue
     if s[0] == "%":
-      if len(s) >= 5 and s[0:5] == "%jobs":
-        jids = _parse_jobs_jids(s)
-        if jids:
-          arm_shared = True
-          jids_csv = ",".join(jids)
-          rec_j: dict[str, str] = {
-            "kind": "jobs",
-            "jids": jids_csv,
-            "jid": "",
-            "cpus": "",
-            "gpus": "",
-            "cg": "",
-            "time": "",
-            "host": "",
-          }
-          if has_tags:
-            rec_j["time"] = str(tag_time)
-            rec_j["host"] = tag_host
-            marks.append(rec_j)
-          else:
-            pending_marks.append(rec_j)
-            marks.append(rec_j)
+      rec: dict[str, str] = {}
+      if _jobs_line_arms(s):
+        arm_shared = True
+        rec = {
+          "kind": "jobs",
+          "jids": ",".join(_parse_jobs_jids(s)),
+          "jid": "",
+          "cpus": "",
+          "gpus": "",
+          "cg": "",
+          "time": "",
+          "host": "",
+        }
       elif len(s) >= 9 and s[0:9] == "%affinity":
         aff = _parse_affinity_mark(s)
         if aff["jid"] != "":
-          rec_a: dict[str, str] = {
+          rec = {
             "kind": "affinity",
             "jids": "",
             "jid": aff["jid"],
@@ -488,56 +740,64 @@ def feed_lines_full(
             "time": "",
             "host": "",
           }
-          if has_tags:
-            rec_a["time"] = str(tag_time)
-            rec_a["host"] = tag_host
-            marks.append(rec_a)
-          else:
-            pending_marks.append(rec_a)
-            marks.append(rec_a)
+      # Marks of a sample below the resume gate were ingested with it.
+      if len(rec) == 0 or below_gate:
+        continue
+      if has_tags:
+        rec["time"] = str(tag_time)
+        rec["host"] = tag_host
+        if rec["kind"] == "jobs":
+          sample_shared = tag_jid != "-" and tag_jid != "0" and tag_jid != ""
+      else:
+        pending_marks.append(rec)
+      marks.append(rec)
       continue
-    if insert and has_tags and (s[0].isalpha() or s[0] == "_"):
+    if insert and has_tags and s[0].isalpha():
       parts = s.split()
-      if len(parts) < 2:
+      if len(parts) < 3:
         continue
       typ = parts[0]
       if typ in excl:
         continue
-      rest = parts[1:]
-      if not rest:
-        continue
-      dev = rest[0]
-      vals = rest[1:]
-      if typ == "host_proc":
-        if not vals:
-          continue
-        tier = ""
-        if vals[0] == "@fast" or vals[0] == "@full":
-          tier = vals[0]
-          vals = vals[1:]
-        bare_keys = schema_bare.get("host_proc", HOST_PROC_KEYS)
-        if tier == "@fast":
-          bare_keys = schema_fast_bare.get("host_proc", bare_keys)
+      dev = parts[1]
+      vals = parts[2:]
+      tier = ""
+      if vals[0] == "@fast" or vals[0] == "@full":
+        tier = vals[0]
+        vals = vals[1:]
+      if typ == "host_proc" or typ == "proc":
+        src = ""
+        for alias in (typ, "host_proc", "proc"):
+          if src == "" and alias in schema_bare:
+            src = alias
+        bare_keys = HOST_PROC_KEYS
+        if src != "":
+          bare_keys = (
+            schema_fast_bare[src] if tier == "@fast" else schema_bare[src]
+          )
         fields: dict[str, int] = {}
-        for bi in range(len(bare_keys)):
-          if bi >= len(vals):
-            break
+        nulls: list[str] = []
+        for bi in range(min(len(bare_keys), len(vals))):
           bare = bare_keys[bi]
-          try:
-            parsed = int(float(vals[bi]))
-          except Exception:
+          if bare not in HOST_PROC_KEYS:
             continue
-          fields[bare] = parsed
-        proc_name = dev
+          try:
+            fv = float(vals[bi])
+          except ValueError:
+            nulls.append(bare)
+            continue
+          if math.isnan(fv) or math.isinf(fv):
+            nulls.append(bare)
+            continue
+          fields[bare] = int(fv)
         slash = dev.find("/")
-        if slash >= 0:
-          proc_name = dev[:slash]
         _merge_proc(
           tag_jid,
           tag_host,
-          proc_name,
+          dev[:slash] if slash >= 0 else dev,
           dev,
           fields,
+          nulls,
           proc_jid,
           proc_host,
           proc_proc,
@@ -548,23 +808,25 @@ def feed_lines_full(
         continue
       if typ not in schema:
         continue
-      tier_marker = ""
-      if vals and (vals[0] == "@fast" or vals[0] == "@full"):
-        tier_marker = vals[0]
-        vals = vals[1:]
-      if not has_tags:
-        continue
-      if tier_marker == "@fast":
+      out_typ = typ
+      if schema_legacy[typ]:
+        if tier == "@fast":
+          continue
+        if typ not in LEGACY_EVENTMAP_INT:
+          continue
+        names, vals = legacy_decode_tokens(typ, schema[typ], vals)
+        compiled = _compile_schema_tokens(names)
+        out_typ = LEGACY_TYPE_NORMALIZE.get(typ, typ)
+      elif tier == "@fast":
         compiled = schema_fast_compiled[typ]
       else:
         compiled = schema_compiled[typ]
-      stamped = _shared_row_dev(dev, typ, tag_jid, sample_shared)
       _append_stats(
         tag_time,
         tag_host,
         tag_jid,
-        typ,
-        stamped,
+        out_typ,
+        _shared_row_dev(dev, out_typ, tag_jid, sample_shared),
         compiled,
         vals,
         stats_time,
@@ -580,10 +842,24 @@ def feed_lines_full(
       )
       continue
 
-    if start_idx >= 0 and s[0].isdigit():
+    if s[0].isdigit():
       parts = s.split()
       if len(parts) < 3:
         continue
+      if line_index < start_idx:
+        # Below the resume gate: close the sample and drop marks waiting on
+        # it; a later %jobs still arms the first emitted sample.
+        insert = False
+        below_gate = True
+        arm_shared = False
+        bound: list[dict[str, str]] = []
+        for m in marks:
+          if m["time"] != "":
+            bound.append(m)
+        marks = bound
+        pending_marks = []
+        continue
+      below_gate = False
       try:
         tag_time = float(parts[0])
       except ValueError:
@@ -615,6 +891,7 @@ def feed_lines_full(
       schema_fast[typ] = _fast_schema_keys(ev_list)
       schema_compiled[typ] = _compile_schema_tokens(ev_list)
       schema_fast_compiled[typ] = _compile_schema_tokens(schema_fast[typ])
+      schema_legacy[typ] = schema_needs_legacy_decode(typ, ev_list)
       bare: list[str] = []
       for tok in ev_list:
         bare.append(schema_key_basename(tok))
@@ -1805,6 +2082,7 @@ def feed_delta_collapse_arc(
   carry_arc: dict[str, float],
   start_idx: int = 0,
   exclude_types: list[str] = [],  # noqa: B006 (Codon: never mutated)
+  arm_shared_in: bool = False,
 ) -> tuple[
   tuple[
     list[float | None],
@@ -1861,7 +2139,7 @@ def feed_delta_collapse_arc(
     proc_fields,
     proc_device,
     marks,
-  ) = feed_lines_full(lines, start_idx, exclude_types)
+  ) = feed_lines_full(lines, start_idx, exclude_types, arm_shared_in)
 
   (
     d_time,

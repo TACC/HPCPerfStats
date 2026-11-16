@@ -187,7 +187,7 @@ def test_parse_stats_lines_gate_passes_exclude_to_codon(
 
   seen: dict[str, Any] = {}
 
-  def fake(lines, carry=None, exclude=None):
+  def fake(lines, carry=None, exclude=None, start_idx=0):
     seen["exclude"] = exclude
     return ("stats", "procs")
 

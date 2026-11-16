@@ -160,6 +160,31 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     ],
   },
   {
+    "id": "codon_python_parity",
+    "patterns": [
+      "hpcperfstats/dbload/codon/**",
+      "hpcperfstats/analysis/metrics/codon/**",
+      "hpcperfstats/dbload/lib/sync_timedb_parsing.py",
+      "hpcperfstats/dbload/lib/sync_timedb_parsing_legacy.py",
+      "hpcperfstats/dbload/lib/sync_timedb_codon_bridge.py",
+      "hpcperfstats/dbload/lib/sync_timedb_sample_ingest.py",
+      "hpcperfstats/dbload/lib/codon_process_worker.py",
+      "hpcperfstats/dbload/lib/codon_file_bundles.py",
+      "hpcperfstats/dbload/lib/monitor_mark_side_ingest.py",
+      "hpcperfstats/dbload/lib/monitor_naming/legacy.py",
+      "hpcperfstats/dbload/lib/monitor_naming/canonical.py",
+      "hpcperfstats/analysis/metrics/lib/columnar/segments.py",
+      "hpcperfstats/analysis/metrics/lib/columnar/k0_decode.py",
+      "hpcperfstats/analysis/metrics/lib/columnar/kernels.py",
+      "hpcperfstats/analysis/metrics/lib/columnar/codon_bridge.py",
+      "hpcperfstats/tests/test_codon_parity_registry.py",
+      "hpcperfstats/tests/test_codon_canonical_parity.py",
+    ],
+    "rules": [
+      "codon-python-parity-contract.mdc",
+    ],
+  },
+  {
     "id": "codon_sync_timedb_parse",
     "patterns": [
       "hpcperfstats/dbload/lib/sync_timedb_codon_bridge.py",
