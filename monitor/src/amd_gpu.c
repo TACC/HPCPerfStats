@@ -1,4 +1,4 @@
-/* amd_gpu — AMD GPU metrics via GPUPerfAPI (schema-compatible stub when unavailable). */
+/* amd_gpu - AMD GPU metrics via GPUPerfAPI (schema-compatible stub when unavailable). */
 #include <dlfcn.h>
 #include <stddef.h>
 #include "amd_gpu.h"

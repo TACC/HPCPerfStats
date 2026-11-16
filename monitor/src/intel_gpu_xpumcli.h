@@ -1,4 +1,4 @@
-/* intel_gpu_xpumcli — short-lived xpumcli child for PVC intel_gpu (no in-process xpumInit). */
+/* intel_gpu_xpumcli - short-lived xpumcli child for PVC intel_gpu (no in-process xpumInit). */
 #ifndef INTEL_GPU_XPUMCLI_H
 #define INTEL_GPU_XPUMCLI_H
 

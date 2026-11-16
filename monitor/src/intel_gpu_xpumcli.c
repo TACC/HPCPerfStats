@@ -1,4 +1,4 @@
-/* intel_gpu_xpumcli — fork/exec xpumcli for intel_gpu without lasting libxpum/GEM maps. */
+/* intel_gpu_xpumcli - fork/exec xpumcli for intel_gpu without lasting libxpum/GEM maps. */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -17,7 +17,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "monitor_log.h"
 #include "stats.h"
 #include "trace.h"
 
@@ -294,7 +293,6 @@ int intel_gpu_xpumcli_parse_dump_csv(const char *text, struct intel_gpu_xpumcli_
         break;
       continue;
     }
-    /* data row */
     {
       char *row = strdup(line);
       char *fields[64];
@@ -367,14 +365,8 @@ int intel_gpu_xpumcli_parse_dump_csv(const char *text, struct intel_gpu_xpumcli_
       }
       if (col_throttle >= 0 && col_throttle < nf &&
           !intel_gpu_xpumcli_field_is_na(fields[col_throttle])) {
-        /* textual throttle; store 1 if not "Not Throttled" */
-        if (strcasestr(fields[col_throttle], "Not Throttled") == NULL) {
-          s->has_throttle = 1;
-          s->throttle_flags = 1;
-        } else {
-          s->has_throttle = 1;
-          s->throttle_flags = 0;
-        }
+        s->has_throttle = 1;
+        s->throttle_flags = strcasestr(fields[col_throttle], "Not Throttled") == NULL ? 1 : 0;
       }
       nsamples++;
       free(row);
@@ -454,7 +446,6 @@ int intel_gpu_xpumcli_collect(struct stats_type *type)
     return -1;
   }
 
-  pos = 0;
   for (i = 0; i < ndev; i++) {
     int n =
         snprintf(dev_csv + pos, sizeof(dev_csv) - pos, "%s%d", i == 0 ? "" : ",", device_ids[i]);

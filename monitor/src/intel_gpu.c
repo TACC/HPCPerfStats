@@ -1,4 +1,4 @@
-/* intel_gpu — Intel Data Center GPU (PVC) counters via xpumcli (default) or libxpum. */
+/* intel_gpu - Intel Data Center GPU (PVC) counters via xpumcli (default) or libxpum. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,9 +47,9 @@ static int intel_gpu_use_libxpum(void)
 
 static void intel_gpu_env_prepare(void)
 {
-  /* On-demand pulls only — avoid XPUM background sampler jitter on HPC nodes. */
+  /* On-demand pulls only, to avoid XPUM background sampler jitter on HPC nodes. */
   setenv("XPUM_DISABLE_PERIODIC_METRIC_MONITOR", "1", 1);
-  /* XPUM 1.2.33: metric IDs 0–36 only (37/38 rejected). Include memory temp (30). */
+  /* XPUM 1.2.33: metric IDs 0-36 only (37/38 rejected). Include memory temp (30). */
   setenv("XPUM_METRICS", "0,1,4,6-10,30,34,35,36", 1);
 }
 
@@ -210,7 +210,6 @@ static int intel_gpu_collect_one_rt(xpum_device_id_t id, xpum_device_realtime_me
 
   if (out_row == NULL)
     return -1;
-  count = 0;
   if (xpum_gpu_dyn_xpumGetRealtimeMetrics(id, NULL, &count) != XPUM_OK && count == 0)
     return -1;
   if (count == 0)
@@ -224,7 +223,7 @@ static int intel_gpu_collect_one_rt(xpum_device_id_t id, xpum_device_realtime_me
   *out_row = rows[best];
   if (!intel_gpu_row_is_usable(out_row))
     intel_gpu_merge_tile_rows(rows, count, out_row);
-  /* Always resolve package POWER (device-level or sum of tiles) — do not publish one tile. */
+  /* Always resolve package POWER (device-level or sum of tiles); never publish one tile. */
   intel_gpu_apply_package_power(rows, count, out_row);
   return 0;
 }
@@ -266,7 +265,6 @@ static int intel_gpu_collect_one_stats_fallback(xpum_device_id_t id,
   if (out_row == NULL)
     return -1;
   memset(out_row, 0, sizeof(*out_row));
-  count = 0;
   if (xpum_gpu_dyn_xpumGetStats(id, NULL, &count, &begin, &end, 0) != XPUM_OK && count == 0)
     return -1;
   if (count == 0)
@@ -308,7 +306,6 @@ static int intel_gpu_runtime_prepare(void)
     ERROR("intel_gpu: xpumInit failed\n");
     return -1;
   }
-  count = 0;
   if (xpum_gpu_dyn_xpumGetDeviceList(NULL, &count) != XPUM_OK && count <= 0) {
     ERROR("intel_gpu: xpumGetDeviceList count failed\n");
     (void)xpum_gpu_dyn_xpumShutdown();

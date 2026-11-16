@@ -24,7 +24,7 @@ void intel_gpu_merge_tile_rows(const xpum_device_realtime_metrics_t *rows, uint3
 /*
  * Package power for multi-tile PVC (Max 1550): prefer device-level POWER when present;
  * else sum tile POWERS. When both exist, take the larger (device may be average while
- * xpumcli dump reports package ≈ sum of tiles).
+ * xpumcli dump reports package ~= sum of tiles).
  * Returns < 0 when no POWER metric is present.
  */
 double intel_gpu_package_power_watts(const xpum_device_realtime_metrics_t *rows, uint32_t count);

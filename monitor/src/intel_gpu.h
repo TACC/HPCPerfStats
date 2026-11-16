@@ -1,4 +1,4 @@
-/* intel_gpu.h — schema keys for Intel Data Center GPU (PVC) via XPU Manager. */
+/* intel_gpu.h - schema keys for Intel Data Center GPU (PVC) via XPU Manager. */
 #ifndef _INTEL_GPU_H_
 #define _INTEL_GPU_H_
 

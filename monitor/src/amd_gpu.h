@@ -1,4 +1,4 @@
-/* amd_gpu.h — schema keys for AMD GPU stats (GPUPerfAPI backend). */
+/* amd_gpu.h - schema keys for AMD GPU stats (GPUPerfAPI backend). */
 #ifndef _AMD_GPU_H_
 #define _AMD_GPU_H_
 

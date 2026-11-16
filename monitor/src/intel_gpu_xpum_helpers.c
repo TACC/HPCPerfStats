@@ -116,7 +116,7 @@ double intel_gpu_package_power_watts(const xpum_device_realtime_metrics_t *rows,
   }
 
   if (device_power >= 0.0 && n_tile_power > 0) {
-    /* Device may be average; xpumcli dump package ≈ sum of tiles on Max 1550. */
+    /* Device may be average; xpumcli dump package ~= sum of tiles on Max 1550. */
     return device_power >= tile_sum ? device_power : tile_sum;
   }
   if (device_power >= 0.0)

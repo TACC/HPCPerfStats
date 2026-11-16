@@ -15,7 +15,7 @@
 void intel_gpu_test_reset(void);
 #endif
 
-/* Linked from intel_gpu.c; default NULL → xpumcli; tests force libxpum via env. */
+/* Linked from intel_gpu.c; default NULL selects xpumcli; tests force libxpum via env. */
 char *intel_gpu_backend = NULL;
 
 static struct test_stats_stub g_stub;
@@ -115,7 +115,7 @@ static void fill_mem_temp_rt_row(xpum_device_realtime_metrics_t rows[], uint32_t
   *count = 1;
 }
 
-/* Two tiles each ~147 W — package must be sum (294), not one tile. */
+/* Two tiles each ~147 W; package must be sum (294), not one tile. */
 static void fill_tile_power_sum_rows(xpum_device_realtime_metrics_t rows[], uint32_t *count)
 {
   rows[0].deviceId = 0;

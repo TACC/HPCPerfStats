@@ -1,4 +1,4 @@
-/* xpum_gpu_dyn — runtime dlopen of libxpum for intel_gpu (no link-time -lxpum). */
+/* xpum_gpu_dyn - runtime dlopen of libxpum for intel_gpu (no link-time -lxpum). */
 #include "xpum_gpu_dyn.h"
 
 #include "dyn_lib_path.h"
