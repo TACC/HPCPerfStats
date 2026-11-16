@@ -48,10 +48,7 @@ def run_update_xalt_for_range(
       "jid", flat=True
     )
     for jid in jobs_on_date:
-      runs = list(run.objects.using("xalt").filter(job_id=jid))
-      if not runs:
-        continue
-      for r in runs:
+      for r in run.objects.using("xalt").filter(job_id=jid):
         if "usr" in r.exec_path.split("/"):
           continue
         log_fn(f"  jid={jid} exec_path={r.exec_path}")

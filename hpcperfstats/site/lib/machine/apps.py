@@ -1,5 +1,5 @@
 """
-apps.
+Django app configuration for the machine app.
 """
 
 from __future__ import annotations
@@ -9,13 +9,10 @@ from django.apps import AppConfig
 
 class MachineConfig(AppConfig):
   """
-  Hold MachineConfig state and behavior.
+  Register the machine Django app under the stable ``machine`` label.
 
-  Subclasses ``AppConfig``, extending that type with this class's fields and
-  behavior.
-
-  Subclasses ``AppConfig``, extending that type with this class's fields and
-  behavior.
+  Subclasses ``AppConfig``, which Django uses to configure an installed app;
+  this class sets the app path, label, and default auto field.
   """
 
   default_auto_field = "django.db.models.BigAutoField"

@@ -23,7 +23,6 @@ class RealField(models.FloatField):
   Django field that uses PostgreSQL real (32-bit float) instead of double.
   """
 
-  # Make type in order to use 32 bit floats (reals) instead of 64 bit floats
   def db_type(self, connection: Any) -> Any:
     """
     Return PostgreSQL type name 'real'.
@@ -40,12 +39,9 @@ class RealField(models.FloatField):
     return "real"
 
 
-# manage.py inspectdb
-
-
 class job_data(models.Model):
   """
-  Slurm job accounting record: jid, times, runtime, user, account, queue,.
+  Slurm job accounting record plus persisted metrics bookkeeping per jid.
   """
 
   jid = models.CharField(primary_key=True, max_length=512)
@@ -139,9 +135,7 @@ class job_data(models.Model):
 
   def color(self) -> Any:
     """
-    Return hex color for state: E1EDFA completed, FFB2B2 failed, silver.
-
-      otherwise.
+    Return the row color for this job state (COMPLETED, FAILED, or other).
 
     Returns:
       Any: Open return polymorphism from ``color``: concrete type depends on
@@ -202,7 +196,7 @@ class metrics_scheduler_state(models.Model):
 
 class metrics_data(models.Model):
   """
-  Derived metric value per job and (type, metric). Unique on (jid, type,.
+  Derived metric value per job and (type, metric), unique per triple.
   """
 
   jid = models.ForeignKey(
@@ -265,54 +259,6 @@ class metrics_data(models.Model):
     )
 
 
-# Old Table SQL
-"""
-    query_create_hostdata_table = CREATE TABLE IF NOT EXISTS host_data (
-                                               time  TIMESTAMPTZ NOT NULL,
-                                               host  VARCHAR(64),
-                                               type  VARCHAR(32),
-                                               dev   VARCHAR(64),
-                                               event VARCHAR(64),
-                                               unit  VARCHAR(16),
-                                               value real,
-                                               delta real,
-                                               arc   real,
-                                               UNIQUE (time, host, type, event)
-                                               );
-
-                                          CREATE INDEX ON host_data (host, time DESC);
-
-    SELECT create_hypertable('host_data', by_range('time', 86400000000));
-    query_create_compression = ALTER TABLE host_data SET \
-                                  (timescaledb.compress, timescaledb.compress_orderby = 'time DESC', timescaledb.compress_segmentby = 'host,type,event');
-                                  SELECT add_compression_policy('host_data', INTERVAL '12h', if_not_exists => true);
-
-
-    query_create_process_table = CREATE TABLE IF NOT EXISTS proc_data (
-    jid         VARCHAR(32) NOT NULL,
-    host        VARCHAR(64),
-    proc        VARCHAR(512),
-    device      VARCHAR(512),
-    uid         BIGINT,
-    vm_peak     BIGINT,
-    vm_size     BIGINT,
-    vm_lck      BIGINT,
-    vm_hwm      BIGINT,
-    vm_rss      BIGINT,
-    vm_data     BIGINT,
-    vm_stk      BIGINT,
-    vm_exe      BIGINT,
-    vm_lib      BIGINT,
-    vm_pte      BIGINT,
-    vm_swap     BIGINT,
-    threads     INTEGER,
-    UNIQUE(jid, host, proc)
-    );
-
-    query_create_process_index = "CREATE INDEX ON proc_data (jid);"
-"""
-
-
 class host_data(models.Model):
   """
   TimescaleDB hypertable: per (time, host, type, event, dev) value/delta/arc.
@@ -321,7 +267,7 @@ class host_data(models.Model):
   and job_data.host_list (FQDNs) as the primary path. ``jid`` is filled from the
   monitor sample-header jobid on live listend and archive sync_timedb ingest
   (idle ``-`` stored as NULL) and supports jid-scoped live-distinct / ad-hoc
-  queries.   ``dev`` is the monitor device id for GPU types (``""`` when absent);
+  queries. ``dev`` is the monitor device id for GPU types (``""`` when absent);
   uniqueness includes ``dev`` so multi-GPU samples at the same timestamp are
   insertable. Shared-node non-GPU rows use ``dev=j:<jid>`` (ingest convention,
   not hardware) so two jobs can share a host second. Table: host_data.
@@ -467,7 +413,7 @@ class job_plot_artifact(models.Model):
   Persisted Bokeh json_item payloads for job-level plots (gzip-compressed JSON).
 
   One row per (job, plot_kind, layout). Invalidated when host_data changes for
-    the job.
+  the job.
   """
 
   jid = models.ForeignKey(
@@ -565,7 +511,7 @@ class job_detail_artifact(models.Model):
 
 class public_metrics_artifact(models.Model):
   """
-  Prewarmed gzip-compressed JSON for anonymous public dashboards (see.
+  Prewarmed gzip-compressed JSON for anonymous public dashboards.
   """
 
   scope = models.CharField(max_length=64, db_index=True)
@@ -611,7 +557,7 @@ class ApiKey(models.Model):
 
   Keys are created via an OAuth-protected web page and then used by external
   tools (e.g. hpcperfstats-jobstats, hpcperfstats-sacct-gen) via the
-    Authorization: Api-Key header.
+  Authorization: Api-Key header.
   """
 
   key = models.CharField(max_length=64, primary_key=True)
