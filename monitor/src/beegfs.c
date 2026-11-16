@@ -1,6 +1,5 @@
-/* beegfs_client — BeeGFS mount detection, statvfs capacity, bounded beegfs-ctl I/O. */
+/* beegfs_client - BeeGFS mount detection, statvfs capacity, bounded beegfs-ctl I/O. */
 #include <arpa/inet.h>
-#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <ifaddrs.h>
@@ -282,7 +281,7 @@ static int beegfs_resolve_cfgfile(const char *mnt_opts, char *out, size_t out_sz
   return beegfs_path_is_safe(out) ? 0 : -1;
 }
 
-static int beegfs_refresh_ctl_for_mount(struct stats *stats, const char *mnt, const char *cfgfile,
+static int beegfs_refresh_ctl_for_mount(struct stats *stats, const char *cfgfile,
                                         const char *const *ident_ptrs, size_t n_idents)
 {
   char *buf;
@@ -290,7 +289,6 @@ static int beegfs_refresh_ctl_for_mount(struct stats *stats, const char *mnt, co
   struct beegfs_ctl_counters meta;
   int ok = 0;
 
-  (void)mnt;
   buf = malloc(BEEGFS_CTL_OUT_MAX);
   if (buf == NULL)
     return -1;
@@ -311,7 +309,7 @@ static int beegfs_refresh_ctl_for_mount(struct stats *stats, const char *mnt, co
   if (!ok)
     return -1;
 
-  /* Prefer meta close/trunc when both present (plan). Storage fills bytes/ops. */
+  /* Meta is applied last so its close/trunc counts win; storage fills bytes/ops. */
   beegfs_apply_counters(stats, &storage);
   beegfs_apply_counters(stats, &meta);
   return 0;
@@ -370,8 +368,7 @@ static void beegfs_collect(struct stats_type *type)
 
         if (beegfs_resolve_cfgfile(me.mnt_opts, cfgfile, sizeof(cfgfile)) != 0) {
           beegfs_note_ctl_failure(me.mnt_dir, "missing or unsafe cfgFile");
-        } else if (beegfs_refresh_ctl_for_mount(stats, me.mnt_dir, cfgfile, ident_ptrs, n_idents) !=
-                   0) {
+        } else if (beegfs_refresh_ctl_for_mount(stats, cfgfile, ident_ptrs, n_idents) != 0) {
           beegfs_note_ctl_failure(me.mnt_dir, "missing ctl, timeout, or no local line");
         } else {
           g_beegfs_ctl_fail_latched = 0;

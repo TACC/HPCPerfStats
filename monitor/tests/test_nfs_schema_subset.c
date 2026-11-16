@@ -1,5 +1,4 @@
 #include <assert.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -10,14 +9,6 @@ int str_collect_key_list(const char *str, struct stats *stats, ...)
 {
   (void)str;
   (void)stats;
-  return 0;
-}
-
-int str_collect_prefix_key_list(const char *str, struct stats *stats, const char *prefix, ...)
-{
-  (void)str;
-  (void)stats;
-  (void)prefix;
   return 0;
 }
 

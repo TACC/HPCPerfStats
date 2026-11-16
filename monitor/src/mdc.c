@@ -1,16 +1,13 @@
-/* lustre_mdc — Lustre metadata client stats from /proc/fs/lustre/mdc. */
+/* lustre_mdc - Lustre metadata client stats from /proc/fs/lustre/mdc. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dirent.h>
 #include "stats.h"
-#include "fileio.h"
 #include "trace.h"
 #include "string1.h"
 #include "lustre_obd_to_mnt.h"
 #include "lustre_proc_stats.h"
 #include "lustre_mdc.h"
-#include "path_open_fail_once.h"
 #include "sys_iter.h"
 
 #define MDC_DIR_PATH "/proc/fs/lustre/mdc"

@@ -1,8 +1,7 @@
-/* host_lnet — Lustre LNET router/client counters from /proc/sys/lnet/stats. */
+/* host_lnet - Lustre LNET router/client counters from /proc/sys/lnet/stats. */
 #include <stddef.h>
 #include "stats.h"
 #include "collect.h"
-#include "trace.h"
 
 /* Field order matches lustre lnet/router_proc.c; see kernel comment in tree. */
 

@@ -1,8 +1,7 @@
-/* lustre_llite — VFS client opcodes (proc) + capacity gauges (sysfs). */
+/* lustre_llite - VFS client opcodes (proc) + capacity gauges (sysfs). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dirent.h>
 #include "stats.h"
 #include "fileio.h"
 #include "trace.h"
@@ -10,7 +9,6 @@
 #include "lustre_obd_to_mnt.h"
 #include "lustre_proc_stats.h"
 #include "lustre_llite.h"
-#include "path_open_fail_once.h"
 #include "pscanf.h"
 #include "sys_iter.h"
 

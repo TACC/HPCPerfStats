@@ -59,7 +59,6 @@ static void test_sum_never_selected(void)
   assert(beegfs_ctl_line_is_sum("Sum: 1 [ops-rd]") == 1);
   assert(beegfs_ctl_line_is_sum("  Sum: 1 [ops-rd]") == 1);
   assert(beegfs_ctl_select_local_line(text, idents, 1, &c) == 1);
-  /* Local MiB-rd 80 → bytes */
   assert(c.have_vfs_read_bytes == 1);
   assert(c.vfs_read_bytes == 80ULL * BEEGFS_CTL_MIB_TO_BYTES);
   assert(c.vfs_write_bytes == 4ULL * BEEGFS_CTL_MIB_TO_BYTES);

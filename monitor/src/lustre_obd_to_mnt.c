@@ -1,16 +1,10 @@
-/* lustre_obd_to_mnt — map Lustre OBD names to mount points via /proc/fs/lustre/lov. */
+/* lustre_obd_to_mnt - map Lustre OBD names to mount points via /proc/fs/lustre/lov. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>
 #include <dirent.h>
-#include <mntent.h>
-#include <unistd.h>
-#include <sys/ioctl.h>
-#include "stats.h"
 #include "trace.h"
 #include "dict.h"
-#include "string1.h"
 #include "lustre_obd_to_mnt.h"
 #include "path_open_fail_once.h"
 

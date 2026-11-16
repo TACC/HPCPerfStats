@@ -1,9 +1,7 @@
-/* host_nfs — NFS client mountstats from /proc/self/mountstats. */
+/* host_nfs - NFS client mountstats from /proc/self/mountstats. */
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <ctype.h>
-#include <unistd.h>
 #include "collect.h"
 #include "fileio.h"
 #include "stats.h"
@@ -44,7 +42,7 @@ static void nfs_collect_mnt_bytes(struct stats *stats, char *str)
  * and xs_udp_print_stats() from net/sunrpc/xprtsock.c, and
  * include/linux/sunrpc/xprt.h.
  *
- * Divide xprt_req_u / xprt_sends to get averge number of requests in
+ * Divide xprt_req_u / xprt_sends to get average number of requests in
  * flight, see xprt_transmit().  Similarly for xprt_bklog_u to get
  * average backlog queue length. */
 
@@ -129,8 +127,7 @@ static void nfs_collect_mnt_op(struct stats *stats, const char *op, char *str)
 
 #define KEYS EVENT_KEYS, BYTE_KEYS, XPRT_KEYS, OP_KEYS
 
-/* Return 0 if nfs_collect() should re-read *p_line, -1 on EOF / parse error. */
-
+/* 1 at the per-op header, 0 if *p_line already holds the next mount header, -1 on EOF. */
 static int nfs_collect_mnt_read_events_xprt_section(struct stats *stats, FILE *file, char **p_line,
                                                     size_t *p_line_size)
 {
@@ -147,8 +144,6 @@ static int nfs_collect_mnt_read_events_xprt_section(struct stats *stats, FILE *f
       break;
 
     char *tag = wsep(&rest);
-
-    /* events: ... bytes: ... xprt: ... */
 
     if (strcmp(tag, "events:") == 0)
       nfs_collect_mnt_events(stats, rest);
@@ -204,8 +199,7 @@ static inline int strip_crud(char **str, const char *crud)
 }
 
 /* Parse one mountstats header line; return stats row or NULL to skip. */
-static struct stats *nfs_collect_mount_stats(struct stats_type *type, char *line, char **dev_out,
-                                             char **mnt_out)
+static struct stats *nfs_collect_mount_stats(struct stats_type *type, char *line)
 {
   char *rest;
   char *dev;
@@ -238,10 +232,6 @@ static struct stats *nfs_collect_mount_stats(struct stats_type *type, char *line
   }
 
   TRACE("dev `%s', mnt `%s', ver `%s'\n", dev, mnt, ver);
-  if (dev_out != NULL)
-    *dev_out = dev;
-  if (mnt_out != NULL)
-    *mnt_out = mnt;
   return get_current_stats(type, mnt);
 }
 
@@ -272,7 +262,7 @@ static void nfs_collect(struct stats_type *type)
     struct stats *stats;
 
   skip_getline:
-    stats = nfs_collect_mount_stats(type, line, NULL, NULL);
+    stats = nfs_collect_mount_stats(type, line);
     if (stats == NULL)
       continue;
 
