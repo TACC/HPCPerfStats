@@ -25,16 +25,13 @@ class Command(BaseCommand):
   )
 
   def handle(self, *args: Any, **options: Any) -> None:
-    """Run the command body (override of ``BaseCommand.handle``).
+    """Print the totals, then one line per ``application_name``.
 
-    ``BaseCommand.handle`` is the hook Django calls after parsing options;
-    subclasses must implement it to perform the command work.
+    ``BaseCommand.handle`` is the hook Django calls after parsing options.
 
     Args:
       *args (Any): Unused; Django may pass positional leftovers.
-      **options (Any): Standard ``BaseCommand`` options (``verbosity``,
-        ``settings``, ``pythonpath``, ``traceback``, ``no_color``,
-        ``force_color``, ``skip_checks``). This override does not read them.
+      **options (Any): Standard ``BaseCommand`` options; none are read.
 
     Returns:
       None

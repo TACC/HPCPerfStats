@@ -20,13 +20,12 @@ Attributes:
   _COLUMNS: ``host_data`` columns read for planning and written on insert.
   _INSERT_SQL: Insert of one planned whole-node row; an existing row wins.
   _DELETE_SQL: Delete of the window's per-core rows, with the same predicate
-    the plan read them by. It runs after every key was given a ``dev=''`` row
-    and checked, so it needs no per-row probe for one (that probe read every
-    device row of a (host, time) per deleted row and made a window take
-    tens of minutes on hpcperfstats01). The row count must match the plan.
-    It targets each chunk (``{chunk}``) rather than the hypertable: a
-    hypertable DELETE locks every chunk while planning, so compression of
-    any other day made every window time out (hpcperfstats04, 2026-11-05).
+    the plan read them by. It runs only after every key has a checked
+    ``dev=''`` row, so it needs no per-row probe (that probe made a window
+    take tens of minutes on hpcperfstats01). The row count must match the
+    plan. It targets each chunk (``{chunk}``): a hypertable DELETE locks
+    every chunk while planning, so compression of any other day made every
+    window time out (hpcperfstats04, 2026-11-05).
   _WINDOW_CHUNKS_SQL: Qualified names of the ``host_data`` chunks that
     overlap the window, for ``_DELETE_SQL``.
   _DISCOVER_DAYS_SQL: Distinct UTC days that hold per-core rows
