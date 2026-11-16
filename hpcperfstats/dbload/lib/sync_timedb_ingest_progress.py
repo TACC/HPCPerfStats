@@ -1,8 +1,8 @@
 """
 Ingest worker progress heartbeat and idle-stall helpers.
 
-When ``sync_ingest_per_file_timeout_s`` is 0 (wall-clock B demoted), soft-kill
-uses ``sync_ingest_stall_idle_s``: no parse/write progress for that window raises
+Soft-kill uses ``sync_ingest_stall_idle_s``: no parse/write progress for that
+window raises
 ``TimeoutError`` with ``stage=idle_stall`` for coordinator soft-requeue.
 
 Attributes:

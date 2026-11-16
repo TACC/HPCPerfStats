@@ -153,6 +153,21 @@ Effective MiB = ``process_memory.effective_cgroup_admit_max_file_cache_mib()`` (
 
 **192g pipeline cgroup (`mem_limit` 192G):** at default **60%**, effective file-cache admit cap **≈117965 MiB** — parallel ingest at full pool width can still pin **`skip_cgroup_headroom`** when page cache exceeds that tripwire. Primary relief is **`sync_pipeline_drop_page_cache=yes`** (Linux **`posix_fadvise`** on ingest/archive paths; legacy **`archive_zstd_drop_page_cache`** when the new key is omitted) plus P0 restart after deploy — **not** lowering **`sync_ingest_pool_processes`**. See **`docs/DEPLOY_CONCURRENCY_AND_NUMA.md`** § pipeline memory.
 
+### Removed INI keys (2026-11)
+
+These keys had no reader left and are gone from `conf_parser` and the example. A leftover line in a site INI has no effect; `scripts/rewrite_hpcperfstats_ini.sh` drops it (`dropped (not in example): …`). There is no replacement unless one is named.
+
+| Removed key | Notes |
+| --- | --- |
+| `metrics_scheduler_prefetch_chunks` | |
+| `sync_codon_context_pool_fraction` | Codon slot count is `sync_ingest_pool_processes` |
+| `sync_archive_queue_max_size` | |
+| `sync_archive_retry_backoff_base_seconds`, `sync_archive_retry_backoff_max_seconds` | |
+| `sync_supervisor_rss_limit_mb` | Memory roof is `sync_process_tree_rss_limit_cgroup_pct` |
+| `sync_enable_ingest_first_durability_mode` | |
+| `sync_day_close_manifest_stale_seconds` | |
+| `sync_archive_worker_stall_seconds` | |
+
 ---
 
 ## Cluster syslog volume layout

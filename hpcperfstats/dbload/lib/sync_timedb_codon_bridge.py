@@ -156,7 +156,8 @@ def derive_codon_context_pool_size(
 
   Args:
     parse_pool (int): ``sync_ingest_pool_processes`` (or test override).
-    fraction (float): ``sync_codon_context_pool_fraction`` (default 1.0).
+    fraction (float): Share of ``parse_pool`` to use as slots
+      (``DEFAULT_CONTEXT_POOL_FRACTION`` gives one slot per parse thread).
 
   Returns:
     int: ``N`` in ``[1, MAX_CODON_SLOTS]``.
@@ -208,8 +209,7 @@ def configure_codon_context_pool_from_ini(
 
   One slot and one Codon worker process per ingest thread. ``parse_threads``
   overrides the INI width for daemons with their own parse pool (listend).
-  ``sync_codon_context_pool_fraction`` is not applied. The count is capped at
-  ``MAX_CODON_SLOTS``.
+  The count is capped at ``MAX_CODON_SLOTS``.
 
   Args:
     parse_threads (int | None): Parse-thread count to size the pool to.

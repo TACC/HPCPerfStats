@@ -197,10 +197,10 @@ def test_listend_db_ingest_backpressure_unknown_falls_back_to_drop(
   assert cfg.get_listend_db_ingest_backpressure() == "drop"
 
 
-def test_listend_db_ingest_queue_max_gb_ini_12_clamped_to_8(
+def test_listend_db_ingest_queue_max_gb_raw_reads_ini_unclamped(
   temp_ini, monkeypatch
 ):
-  """INI 12 must not recreate a 12 GiB live-DB copy budget."""
+  """The raw reader returns INI 12; the 8 GiB cap is the budget helper's."""
   with open(temp_ini) as f:
     content = f.read()
   content = content.replace(
@@ -215,7 +215,7 @@ def test_listend_db_ingest_queue_max_gb_ini_12_clamped_to_8(
   import hpcperfstats.dbload.lib.conf_parser as cfg
 
   importlib.reload(cfg)
-  assert cfg.get_listend_db_ingest_queue_max_gb() == 8.0
+  assert cfg._listend_db_ingest_queue_max_gb_raw() == 12.0
 
 
 def test_get_listend_amqp_consumer_count_default_8(temp_ini, monkeypatch):
@@ -261,21 +261,6 @@ def test_get_listend_amqp_consumer_count_default_8(temp_ini, monkeypatch):
     f.write(content)
   importlib.reload(cfg)
   assert cfg.get_listend_amqp_consumer_count() == 99
-
-
-def test_get_worker_process_count(temp_ini, monkeypatch):
-  """get_worker_process_count uses effective_cores // divisor, clamped to at least 1."""
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-
-  importlib.reload(cfg)
-  monkeypatch.setattr(cfg.os, "cpu_count", lambda: 64)
-  # temp_ini has total_cores = 4 -> effective 4
-  assert cfg.get_worker_process_count(4) == 1
-  assert cfg.get_worker_process_count(2) == 2
-  assert cfg.get_worker_process_count(8) == 1  # 4//8 = 0 -> clamped to 1
 
 
 def test_archive_zstd_nice_ionice_keys_are_retired(temp_ini, monkeypatch):
@@ -943,7 +928,6 @@ def test_metrics_scheduler_tunables_without_prewarm_pool_keys(
 
   importlib.reload(cfg)
   assert cfg.get_metrics_scheduler_mode() == "global_priority"
-  assert cfg.get_metrics_scheduler_prefetch_chunks() == 8
   assert cfg.get_metrics_scheduler_ready_queue_target() == 100
   assert cfg.get_metrics_idle_slot_supplement_enabled() is True
   assert cfg.get_metrics_supplement_sample_soft_max() == 10000
@@ -976,7 +960,6 @@ def test_metrics_scheduler_tunables_without_prewarm_pool_keys(
     "total_cores = 4",
     "total_cores = 4\n"
     "metrics_scheduler_mode = global_fifo\n"
-    "metrics_scheduler_prefetch_chunks = 3\n"
     "metrics_scheduler_ready_queue_target = 111\n"
     "metrics_plot_prewarm_mode = inline\n"
     "metrics_run_poll_timeout_s = 1.5\n"
@@ -992,7 +975,6 @@ def test_metrics_scheduler_tunables_without_prewarm_pool_keys(
     f.write(content)
   importlib.reload(cfg)
   assert cfg.get_metrics_scheduler_mode() == "global_fifo"
-  assert cfg.get_metrics_scheduler_prefetch_chunks() == 3
   assert cfg.get_metrics_scheduler_ready_queue_target() == 111
   assert cfg.get_metrics_plot_prewarm_mode() == "inline"
   assert cfg.get_metrics_run_poll_timeout_s() == 1.5
@@ -1083,10 +1065,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_queue_max_size() == 50000
   assert cfg.get_sync_ingest_rescan_mtime_days() == 1
-  assert cfg.get_sync_archive_queue_max_size() == 1000
   assert cfg.get_sync_archive_retry_max_attempts() == 5
-  assert cfg.get_sync_archive_retry_backoff_base_seconds() == 1.0
-  assert cfg.get_sync_archive_retry_backoff_max_seconds() == 60.0
   assert cfg.get_sync_checkpoint_flush_batch_size() == 100
   assert cfg.get_sync_timedb_tar_append_batch_size() == 256
   assert cfg.get_sync_ingest_write_pool_processes() == 32
@@ -1111,10 +1090,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
     "total_cores = 4\n"
     "sync_ingest_queue_max_size = 111\n"
     "sync_ingest_rescan_mtime_days = 3\n"
-    "sync_archive_queue_max_size = 222\n"
     "sync_archive_retry_max_attempts = 7\n"
-    "sync_archive_retry_backoff_base_seconds = 2.5\n"
-    "sync_archive_retry_backoff_max_seconds = 12.5\n"
     "sync_checkpoint_flush_batch_size = 42\n"
     "sync_timedb_tar_append_batch_size = 2048\n"
     "sync_pool_stall_abort_after_timeouts = 90\n"
@@ -1135,10 +1111,7 @@ def test_sync_pipeline_tunable_defaults_and_overrides(temp_ini, monkeypatch):
   importlib.reload(cfg)
   assert cfg.get_sync_ingest_queue_max_size() == 111
   assert cfg.get_sync_ingest_rescan_mtime_days() == 3
-  assert cfg.get_sync_archive_queue_max_size() == 222
   assert cfg.get_sync_archive_retry_max_attempts() == 7
-  assert cfg.get_sync_archive_retry_backoff_base_seconds() == 2.5
-  assert cfg.get_sync_archive_retry_backoff_max_seconds() == 12.5
   assert cfg.get_sync_checkpoint_flush_batch_size() == 42
   assert cfg.get_sync_timedb_tar_append_batch_size() == 2048
   assert cfg.get_sync_pool_poll_timeout_s() == 2.5
@@ -1204,20 +1177,6 @@ def test_sync_phase2_feature_flags(temp_ini, monkeypatch):
 
   importlib.reload(cfg)
   monkeypatch.setattr(cfg.os, "cpu_count", lambda: 16)
-  # Ingest-first durability is on by default (fallback=yes in conf_parser).
-  assert cfg.get_sync_enable_ingest_first_durability_mode() is True
-
-  with open(temp_ini) as f:
-    content = f.read()
-  content = content.replace(
-    "total_cores = 4",
-    "total_cores = 4\nsync_enable_ingest_first_durability_mode = true",
-  )
-  with open(temp_ini, "w") as f:
-    f.write(content)
-  importlib.reload(cfg)
-  assert cfg.get_sync_enable_ingest_first_durability_mode() is True
-
   assert cfg.get_sync_process_tree_rss_limit_cgroup_pct() == 40
   assert cfg.get_sync_process_tree_rss_exit_cgroup_pct() == 0
 
@@ -1479,12 +1438,9 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   # Thrown B janitor keys: hard-coded stubs; NEW day_close keys remain live.
   assert cfg.get_sync_day_close_raw_paths_per_batch() == 1000
   assert cfg.get_sync_day_close_max_inflight() == 8
-  assert cfg.get_sync_day_close_manifest_stale_seconds() == 7200.0
   assert cfg.get_sync_day_close_raw_removal_max_deletes_per_pass() == 0
   assert cfg.get_archive_keep_uncompressed_tar() is False
   assert cfg.get_archive_today_uncompressed_tar_grace_hours() == 24.0
-  assert cfg.get_sync_archive_worker_stall_seconds() == 600.0
-  assert cfg.get_sync_enable_ingest_first_durability_mode() is True
   assert not hasattr(cfg, "get_archive_janitor_days_per_tick")
   assert not hasattr(cfg, "get_archive_janitor_raw_paths_per_tick")
   assert not hasattr(cfg, "get_archive_janitor_budget_seconds")
@@ -1500,7 +1456,6 @@ def test_archive_janitor_and_dispatch_defaults(temp_ini, monkeypatch):
   assert not hasattr(cfg, "get_metrics_scheduler_compute_threads")
   assert not hasattr(cfg, "get_db_connection_string")
   assert not hasattr(cfg, "get_machine_name")
-  assert cfg.get_sync_day_close_manifest_stale_seconds() == 7200.0
   assert cfg.get_sync_ingest_pool_processes() == 64
   assert not hasattr(cfg, "get_sync_archive_pool_process_cap")
 
@@ -1512,6 +1467,36 @@ def test_day_close_max_inflight_default_8(temp_ini, monkeypatch):
 
   importlib.reload(cfg)
   assert cfg.get_sync_day_close_max_inflight() == 8
+
+
+def test_unread_ini_keys_and_dead_helpers_are_removed():
+  """Keys with no reader are gone from the registry, defaults and getters."""
+  import hpcperfstats.dbload.lib.conf_parser as cfg
+
+  removed_keys = (
+    "metrics_scheduler_prefetch_chunks",
+    "sync_codon_context_pool_fraction",
+    "sync_archive_queue_max_size",
+    "sync_archive_retry_backoff_base_seconds",
+    "sync_archive_retry_backoff_max_seconds",
+    "sync_supervisor_rss_limit_mb",
+    "sync_enable_ingest_first_durability_mode",
+    "sync_day_close_manifest_stale_seconds",
+    "sync_archive_worker_stall_seconds",
+  )
+  registry_opts = {opt for _sec, opt, _default in cfg.INI_OPTION_REGISTRY}
+  for key in removed_keys:
+    assert key not in registry_opts, key
+    assert key not in cfg.INI_OPTION_DEFAULTS, key
+    assert not hasattr(cfg, f"get_{key}"), key
+  for name in (
+    "collect_sync_timedb_non_default_settings",
+    "format_sync_timedb_non_default_settings_line",
+    "ini_option_registry_pairs",
+    "get_listend_db_ingest_queue_max_gb",
+    "get_worker_process_count",
+  ):
+    assert not hasattr(cfg, name), name
 
 
 def test_legacy_portal_fallback_for_archive_dir(tmp_path, monkeypatch):
@@ -1542,43 +1527,6 @@ def test_legacy_portal_fallback_for_archive_dir(tmp_path, monkeypatch):
   assert cfg.get_archive_dir_path() == "/legacy/archive"
   assert cfg.get_accounting_path() == "/legacy/acct"
   assert cfg.get_daily_archive_dir_path() == "/legacy/daily"
-
-
-def test_collect_sync_timedb_non_default_settings_reports_ini_overrides(
-  temp_ini,
-  monkeypatch,
-):
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-
-  importlib.reload(cfg)
-  with open(temp_ini) as f:
-    content = f.read()
-  content = content.replace(
-    "total_cores = 4",
-    "total_cores = 4\nsync_ingest_queue_max_size = 111",
-  )
-  with open(temp_ini, "w") as f:
-    f.write(content)
-  importlib.reload(cfg)
-
-  entries = dict(cfg.collect_sync_timedb_non_default_settings())
-  assert entries["sync_ingest_queue_max_size"] == 111
-  assert entries["total_cores"] == 4
-
-
-def test_format_sync_timedb_non_default_settings_line(temp_ini, monkeypatch):
-  monkeypatch.setenv("HPCPERFSTATS_INI", temp_ini)
-  import importlib
-
-  import hpcperfstats.dbload.lib.conf_parser as cfg
-
-  importlib.reload(cfg)
-  line = cfg.format_sync_timedb_non_default_settings_line()
-  assert line.startswith("sync_timedb: non-default settings:")
-  assert "total_cores=4" in line
 
 
 def test_get_separate_test_login_defaults_false(temp_ini, monkeypatch):

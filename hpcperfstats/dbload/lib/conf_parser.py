@@ -12,33 +12,19 @@ Attributes:
   _INI_OPTION_REGISTRY_KEYS: Attribute.
   _INI_REGISTRY_DEFAULT_BY_OPTION: Attribute.
   _PIPELINE_ARCHIVE_LEGACY: Attribute.
-  _PIPELINE_DERIVED_AUDIT_SKIP: Attribute.
   _PIPELINE_LEGACY: Attribute.
-  _PIPELINE_PATH_OPTIONS: Attribute.
   _SPACE_PRESSURE_BAD_VALUES_LOGGED: Bad pressure INI values already warned.
-  _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES_DEFAULT: Attribute.
-  _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES_DEFAULT: Attribute.
-  _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_QUEUE_MULTIPLIER_DEFAULT: Attribute.
-  _SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S_DEFAULT: Attribute.
-  _SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT: Attribute.
-  _SYNC_INGEST_PER_FILE_TIMEOUT_REFERENCE_MIB: Attribute.
-  _SYNC_INGEST_PER_FILE_TIMEOUT_SLOPE_FLOOR_S: Attribute.
-  _SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT: Attribute.
-  _SYNC_TIMEDB_CONFIG_AUDIT_ENV_KEYS: Attribute.
-  _SYNC_TIMEDB_CONFIG_BASELINE_PARSER: Attribute.
-  _SYNC_TIMEDB_CONFIG_BASELINE_PATH: Attribute.
+  _SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT: Per-file lease ceiling in
+    seconds used when ``sync_ingest_per_file_timeout_max_s`` is unparsable.
   cfg: Attribute.
 """
 
 from __future__ import annotations
 
 import configparser
-import inspect
 import ipaddress
 import os
 import re
-from collections.abc import Iterator
-from contextlib import contextmanager
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -81,7 +67,6 @@ _INI_OPTION_REGISTRY_KEYS = (
   # [PIPELINE] - sync_timedb, update_metrics, sync_acct, archive paths/tuning
   ("PIPELINE", "metrics_pool_processes"),
   ("PIPELINE", "metrics_scheduler_mode"),
-  ("PIPELINE", "metrics_scheduler_prefetch_chunks"),
   ("PIPELINE", "metrics_scheduler_ready_queue_target"),
   ("PIPELINE", "metrics_idle_slot_supplement_enabled"),
   ("PIPELINE", "metrics_supplement_sample_soft_max"),
@@ -124,18 +109,14 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "metrics_scheduler_pass_interval_s"),
   ("PIPELINE", "metrics_public_ef_interval_s"),
   ("PIPELINE", "sync_ingest_pool_processes"),
-  ("PIPELINE", "sync_codon_context_pool_fraction"),
   ("PIPELINE", "sync_codon_worker_recycle_rss_mib"),
   ("PIPELINE", "sync_archive_pool_processes"),
   ("PIPELINE", "sync_ingest_queue_max_size"),
   ("PIPELINE", "sync_ingest_rescan_mtime_days"),
   ("PIPELINE", "sync_ingest_full_rescan_interval_hours"),
-  ("PIPELINE", "sync_archive_queue_max_size"),
   ("PIPELINE", "sync_job_queue_max_members"),
   ("PIPELINE", "sync_timedb_archive_max_concurrent_sealed_days"),
   ("PIPELINE", "sync_archive_retry_max_attempts"),
-  ("PIPELINE", "sync_archive_retry_backoff_base_seconds"),
-  ("PIPELINE", "sync_archive_retry_backoff_max_seconds"),
   ("PIPELINE", "sync_dead_letter_readmit_backoff_s"),
   ("PIPELINE", "sync_dead_letter_env_backoff_s"),
   ("PIPELINE", "sync_noprogress_escalate_after"),
@@ -169,7 +150,6 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "sync_ingest_parse_queue_max"),
   ("PIPELINE", "sync_ingest_parse_flush_max_mib"),
   ("PIPELINE", "sync_codon_parse_flush_max_mib"),
-  ("PIPELINE", "sync_supervisor_rss_limit_mb"),
   ("PIPELINE", "sync_process_tree_rss_limit_cgroup_pct"),
   ("PIPELINE", "sync_process_tree_rss_exit_cgroup_pct"),
   ("PIPELINE", "sync_ingest_max_file_read_bytes"),
@@ -187,7 +167,6 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "sync_ingest_recycle_worker_on_failure"),
   ("PIPELINE", "sync_ingest_cooperative_recycle_rss_fraction"),
   ("PIPELINE", "sync_ingest_rss_recheck_delay_ms"),
-  ("PIPELINE", "sync_enable_ingest_first_durability_mode"),
   ("PIPELINE", "sync_archive_require_db_ingest"),
   ("PIPELINE", "listend_db_ingest_enabled"),
   ("PIPELINE", "listend_db_ingest_backpressure"),
@@ -215,10 +194,8 @@ _INI_OPTION_REGISTRY_KEYS = (
   ("PIPELINE", "sync_day_close_min_age_hours"),
   ("PIPELINE", "sync_ingest_hot_days"),
   ("PIPELINE", "sync_day_close_max_inflight"),
-  ("PIPELINE", "sync_day_close_manifest_stale_seconds"),
   ("PIPELINE", "sync_day_close_raw_removal_max_deletes_per_pass"),
   ("PIPELINE", "sync_archive_validation_max_workers"),
-  ("PIPELINE", "sync_archive_worker_stall_seconds"),
   # [OAUTH2]
   ("OAUTH2", "client_id"),
   ("OAUTH2", "client_key"),
@@ -268,7 +245,6 @@ INI_OPTION_DEFAULTS = {
   "separate_test_login": "no",
   "metrics_pool_processes": "32",
   "metrics_scheduler_mode": "global_priority",
-  "metrics_scheduler_prefetch_chunks": "8",
   "metrics_scheduler_ready_queue_target": "100",
   "metrics_idle_slot_supplement_enabled": "yes",
   "metrics_supplement_sample_soft_max": "10000",
@@ -323,7 +299,6 @@ INI_OPTION_DEFAULTS = {
   "metrics_scheduler_pass_interval_s": "60",
   "metrics_public_ef_interval_s": "3600",
   "sync_ingest_pool_processes": "64",
-  "sync_codon_context_pool_fraction": "1.0",
   "sync_codon_worker_recycle_rss_mib": "1536",
   "sync_ingest_write_pool_processes": "0",
   "sync_ingest_parse_queue_max": "0",
@@ -333,12 +308,9 @@ INI_OPTION_DEFAULTS = {
   "sync_ingest_queue_max_size": "50000",
   "sync_ingest_rescan_mtime_days": "1",
   "sync_ingest_full_rescan_interval_hours": "6",
-  "sync_archive_queue_max_size": "1000",
   "sync_job_queue_max_members": "2000000",
   "sync_timedb_archive_max_concurrent_sealed_days": "1",
   "sync_archive_retry_max_attempts": "5",
-  "sync_archive_retry_backoff_base_seconds": "1",
-  "sync_archive_retry_backoff_max_seconds": "60",
   "sync_dead_letter_readmit_backoff_s": "3600,21600,86400",
   "sync_dead_letter_env_backoff_s": "21600,86400,259200",
   "sync_noprogress_escalate_after": "50",
@@ -368,7 +340,6 @@ INI_OPTION_DEFAULTS = {
   "sync_archive_members_fnctl_read_lock_timeout_seconds": "180",
   "sync_archive_members_wait_poll_seconds": "0.25",
   "sync_archive_members_populate_pool_processes": "4",
-  "sync_supervisor_rss_limit_mb": "0",
   "sync_process_tree_rss_limit_cgroup_pct": "40",
   "sync_process_tree_rss_exit_cgroup_pct": "0",
   "sync_ingest_max_file_read_bytes": "536870912",
@@ -386,7 +357,6 @@ INI_OPTION_DEFAULTS = {
   "sync_ingest_recycle_worker_on_failure": "yes",
   "sync_ingest_cooperative_recycle_rss_fraction": "0.5",
   "sync_ingest_rss_recheck_delay_ms": "50",
-  "sync_enable_ingest_first_durability_mode": "yes",
   "sync_archive_require_db_ingest": "yes",
   "listend_db_ingest_enabled": "no",
   "listend_db_ingest_backpressure": "drop",
@@ -414,10 +384,8 @@ INI_OPTION_DEFAULTS = {
   "sync_day_close_min_age_hours": "32",
   "sync_ingest_hot_days": "3",
   "sync_day_close_max_inflight": "8",
-  "sync_day_close_manifest_stale_seconds": "7200",
   "sync_day_close_raw_removal_max_deletes_per_pass": "0",
   "sync_archive_validation_max_workers": "2",
-  "sync_archive_worker_stall_seconds": "600",
   "client_id": None,
   "client_key": None,
   "oauth_base_url": None,
@@ -537,23 +505,6 @@ def _ini_get_from_registry(
     if not cfg.has_option(context, name) and ini_registry_default(name):
       extra[name] = str(ini_registry_default(name))
   return cfg.get(context, option, vars=extra)
-
-
-def ini_option_registry_pairs() -> Any:
-  """
-  Return list of (section, option) from INI_OPTION_REGISTRY.
-
-  Returns:
-    Any: Open return polymorphism from ``ini_option_registry_pairs``: concrete
-    type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-
-  Examples:
-    >>> ini_option_registry_pairs()  # doctest: +SKIP
-  """
-  return [
-    (section, option) for section, option, _default in INI_OPTION_REGISTRY
-  ]
 
 
 def ini_option_registry_set() -> Any:
@@ -766,31 +717,6 @@ def _ini_get(
   return _ini_option(primary_section, option, legacy_sections=legacy_sections)
 
 
-def _ini_getint(
-  primary_section: Any,
-  option: Any,
-  *,
-  legacy_sections: tuple[Any, ...] = (),
-) -> Any:
-  """
-  Internal helper to handle ini getint.
-
-  Args:
-    primary_section (Any): Primary section passed to this helper.
-    option (Any): Option passed to this helper.
-    legacy_sections (tuple[Any, ...]): Sequence for legacy sections.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _ini_getint(None, None, [])  # doctest: +SKIP
-  """
-  return int(
-    _ini_option(primary_section, option, legacy_sections=legacy_sections)
-  )
-
-
 def _ini_has_option_any(
   primary_section: Any,
   option: Any,
@@ -845,22 +771,6 @@ def _pipeline_get(
     fallback=str(fallback),
     legacy_sections=_PIPELINE_LEGACY,
   )
-
-
-def _pipeline_has_option(option: Any) -> Any:
-  """
-  Internal helper to handle pipeline has option.
-
-  Args:
-    option (Any): Option passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _pipeline_has_option(None)  # doctest: +SKIP
-  """
-  return _ini_has_option_any("PIPELINE", option, _PIPELINE_LEGACY)
 
 
 def _pipeline_getint(
@@ -965,56 +875,6 @@ def _env_or_cfg_int(
       fallback=str(fallback),
       legacy_sections=legacy_sections,
     )
-  )
-
-
-def _env_or_cfg_bounded_float(
-  env_key: Any,
-  section: Any,
-  option: Any,
-  fallback: Any = _INI_FALLBACK_SENTINEL,
-  *,
-  lower: Any,
-  upper: Any,
-  legacy_sections: tuple[Any, ...] = (),
-) -> Any:
-  """
-  Internal helper to handle env or config bounded float.
-
-  Args:
-    env_key (Any): Env key passed to this helper.
-    section (Any): Section passed to this helper.
-    option (Any): Option passed to this helper.
-    fallback (Any): Fallback passed to this helper.
-    lower (Any): Lower passed to this helper.
-    upper (Any): Upper passed to this helper.
-    legacy_sections (tuple[Any, ...]): Sequence for legacy sections.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _env_or_cfg_bounded_float(None, None, None, None, None, None, [])
-  """
-  env = os.environ.get(env_key, "").strip()
-  if env:
-    return max(lower, min(upper, float(env)))
-  _ensure_cfg_loaded()
-  if fallback is _INI_FALLBACK_SENTINEL:
-    fallback = _ini_registry_default_str(option)
-  return max(
-    lower,
-    min(
-      upper,
-      float(
-        _ini_get(
-          section,
-          option,
-          fallback=str(fallback),
-          legacy_sections=legacy_sections,
-        )
-      ),
-    ),
   )
 
 
@@ -1204,25 +1064,6 @@ def get_archive_today_uncompressed_tar_grace_hours() -> Any:
     0.0,
     _pipeline_getfloat("archive_today_uncompressed_tar_grace_hours"),
   )
-
-
-def _ini_bool(value: Any, default: bool = False) -> Any:
-  """
-  Internal helper to handle ini bool.
-
-  Args:
-    value (Any): Value to inspect (typically a numeric scalar).
-    default (bool): Boolean flag for default.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _ini_bool(None, True)  # doctest: +SKIP
-  """
-  if value is None:
-    return default
-  return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
 def get_archive_zstd_level() -> Any:
@@ -2211,23 +2052,6 @@ def build_postgres_connection_options() -> Any:
   return result
 
 
-def get_worker_process_count(divisor: int = 4) -> Any:
-  """
-  Return worker process count as ``effective_cores / divisor``, clamped to at
-  least 1.
-
-  Args:
-    divisor (int): Integer value for divisor.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> get_worker_process_count(0)  # doctest: +SKIP
-  """
-  return max(1, get_effective_cores() // divisor)
-
-
 def get_sync_ingest_pool_processes() -> Any:
   """
   Absolute ``sync_timedb`` ingest **parse** pool size (threads on 3.14t).
@@ -2244,25 +2068,6 @@ def get_sync_ingest_pool_processes() -> Any:
   """
   _ensure_cfg_loaded()
   return max(1, _pipeline_getint("sync_ingest_pool_processes"))
-
-
-def get_sync_codon_context_pool_fraction() -> Any:
-  """
-  Legacy fraction key. Codon slot count is ``sync_ingest_pool_processes``
-  (capped at 128). This getter is not used to size the slot pool.
-
-  Returns:
-    float: Stored fraction. Non-positive values return ``0.5``. Slot
-    count does not read this value.
-
-  Examples:
-    >>> get_sync_codon_context_pool_fraction()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  raw = float(_pipeline_getfloat("sync_codon_context_pool_fraction"))
-  if raw <= 0.0:
-    return 0.5
-  return raw
 
 
 def get_sync_ingest_write_pool_processes() -> Any:
@@ -2421,22 +2226,6 @@ def get_metrics_scheduler_mode() -> Any:
   if mode in ("strict_date", "global_fifo", "global_priority"):
     return mode
   return "global_priority"
-
-
-def get_metrics_scheduler_prefetch_chunks() -> Any:
-  """
-  Max chunk descriptors prefetched ahead for global scheduler.
-
-  Returns:
-    Any: Open return polymorphism from
-    ``get_metrics_scheduler_prefetch_chunks``: concrete type depends on inputs
-    and branch (mapping, scalar, handle, or ``None``-like empty).
-
-  Examples:
-    >>> get_metrics_scheduler_prefetch_chunks()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("metrics_scheduler_prefetch_chunks"))
 
 
 def get_metrics_scheduler_ready_queue_target() -> Any:
@@ -3492,23 +3281,7 @@ def get_sync_ingest_stall_idle_s() -> Any:
     return 1800.0
 
 
-# Default per-MiB slope: the historical 900 s floor plus the reference size
-# times the slope reaches the per-file max exactly.
-_SYNC_INGEST_PER_FILE_TIMEOUT_REFERENCE_MIB = 30720  # 30 GiB
-_SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT = 86400.0  # 24h at reference size
-_SYNC_INGEST_PER_FILE_TIMEOUT_SLOPE_FLOOR_S = 900.0  # historical slope anchor
-_SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT = (
-  _SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT
-  - _SYNC_INGEST_PER_FILE_TIMEOUT_SLOPE_FLOOR_S
-) / _SYNC_INGEST_PER_FILE_TIMEOUT_REFERENCE_MIB
-# 2 GiB ingest budget at default slope (giant pool supplement trigger).
-_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S_DEFAULT = (
-  _SYNC_INGEST_PER_FILE_TIMEOUT_SLOPE_FLOOR_S
-  + 2048.0 * _SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB_DEFAULT
-)
-_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES_DEFAULT = 1073741824  # 1 GiB
-_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES_DEFAULT = 8589934592  # 8 GiB
-_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_QUEUE_MULTIPLIER_DEFAULT = 2
+_SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S_DEFAULT = 86400.0
 
 
 def get_sync_ingest_per_file_timeout_max_s() -> Any:
@@ -3913,22 +3686,6 @@ def get_sync_ingest_full_rescan_interval_hours() -> int:
   return max(0, _pipeline_getint("sync_ingest_full_rescan_interval_hours"))
 
 
-def get_sync_archive_queue_max_size() -> Any:
-  """
-  Bound for in-memory archive work queue (default 1000).
-
-  Returns:
-    Any: Open return polymorphism from ``get_sync_archive_queue_max_size``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-
-  Examples:
-    >>> get_sync_archive_queue_max_size()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return max(1, _pipeline_getint("sync_archive_queue_max_size"))
-
-
 def get_sync_job_queue_max_members() -> Any:
   """
   Capacity bound per durable ``job:v1`` queue key (default 2000000).
@@ -4237,42 +3994,6 @@ def get_sync_dead_end_migration_batch() -> int:
   return max(1, _pipeline_getint("sync_dead_end_migration_batch"))
 
 
-def get_sync_archive_retry_backoff_base_seconds() -> Any:
-  """
-  Base archive retry backoff in seconds (default 1).
-
-  Returns:
-    Any: Open return polymorphism from
-    ``get_sync_archive_retry_backoff_base_seconds``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-
-  Examples:
-    >>> get_sync_archive_retry_backoff_base_seconds()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return max(
-    0.0, float(_pipeline_get("sync_archive_retry_backoff_base_seconds"))
-  )
-
-
-def get_sync_archive_retry_backoff_max_seconds() -> Any:
-  """
-  Ceiling archive retry backoff in seconds (default 60).
-
-  Returns:
-    Any: Open return polymorphism from
-    ``get_sync_archive_retry_backoff_max_seconds``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-
-  Examples:
-    >>> get_sync_archive_retry_backoff_max_seconds()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return max(
-    0.0, float(_pipeline_get("sync_archive_retry_backoff_max_seconds"))
-  )
-
-
 def get_sync_checkpoint_flush_batch_size() -> Any:
   """
   Number of processed-file state transitions between checkpoint writes
@@ -4325,22 +4046,6 @@ def get_sync_host_itimes_cache_max_timestamps_per_entry() -> Any:
     1,
     _pipeline_getint("sync_host_itimes_cache_max_timestamps_per_entry"),
   )
-
-
-def get_sync_supervisor_rss_limit_mb() -> Any:
-  """
-  Supervisor RSS limit in MiB; 0 disables fail-fast exit (default 0).
-
-  Returns:
-    Any: Open return polymorphism from ``get_sync_supervisor_rss_limit_mb``:
-    concrete type depends on inputs and branch (mapping, scalar, handle, or
-    ``None``-like empty).
-
-  Examples:
-    >>> get_sync_supervisor_rss_limit_mb()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return max(0, _pipeline_getint("sync_supervisor_rss_limit_mb"))
 
 
 def get_sync_process_tree_rss_limit_cgroup_pct() -> Any:
@@ -4673,314 +4378,6 @@ def get_sync_ingest_rss_recheck_delay_ms() -> Any:
   return max(0, _pipeline_getint("sync_ingest_rss_recheck_delay_ms"))
 
 
-_SYNC_TIMEDB_CONFIG_BASELINE_PATH = "<sync_timedb_config_baseline>"
-_SYNC_TIMEDB_CONFIG_BASELINE_PARSER = None
-
-_PIPELINE_PATH_OPTIONS = frozenset(
-  {
-    "acct_path",
-    "archive_dir",
-    "daily_archive_dir",
-  }
-)
-
-_PIPELINE_DERIVED_AUDIT_SKIP = frozenset()
-
-_SYNC_TIMEDB_CONFIG_AUDIT_ENV_KEYS = (
-  "HPCPERFSTATS_METRICS_COMPUTE_BATCH_MAX_SINGLE_JOB_S",
-  "HPCPERFSTATS_METRICS_COMPUTE_BATCH_MAX_WINDOW_S",
-  "HPCPERFSTATS_METRICS_COMPUTE_BATCH_UNKNOWN_RUNTIME_S",
-  "HPCPERFSTATS_METRICS_COMPUTE_TOTAL_WATCHDOG_S",
-  "HPCPERFSTATS_METRICS_COMPUTE_WATCHDOG_S",
-  "HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_MAX_AGE_S",
-  "HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_MAX_RETRIES",
-  "HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_QUARANTINE_S",
-  "HPCPERFSTATS_METRICS_DEFERRED_NOT_READY_RETRY_S",
-  "HPCPERFSTATS_METRICS_PERSIST_LOCK_TIMEOUT_MS",
-  "HPCPERFSTATS_METRICS_PERSIST_STATEMENT_TIMEOUT_MS",
-  "HPCPERFSTATS_METRICS_PLOT_PREWARM_MODE",
-  "HPCPERFSTATS_METRICS_PREWARM_BACKLOG_CAP",
-  "HPCPERFSTATS_METRICS_PREWARM_BACKPRESSURE_WAIT_S",
-  "HPCPERFSTATS_METRICS_PREWARM_DRAIN_BATCH_BUDGET_MAX_S",
-  "HPCPERFSTATS_METRICS_PREWARM_DRAIN_BATCH_BUDGET_S",
-  "HPCPERFSTATS_METRICS_PREWARM_DRAIN_PER_JOB_S",
-  "HPCPERFSTATS_METRICS_RUN_PER_JOB_TIMEOUT_S",
-  "HPCPERFSTATS_METRICS_RUN_POLL_TIMEOUT_S",
-  "HPCPERFSTATS_METRICS_RUN_STALL_TIMEOUT_S",
-  "HPCPERFSTATS_METRICS_SCHEDULER_MODE",
-  "HPCPERFSTATS_PIPELINE_OVERLAP_MODE",
-  "HPCPERFSTATS_SYNC_ARCHIVE_VALIDATION_MAX_WORKERS",
-  "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_ENABLED",
-  "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_MAX_BYTES",
-  "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_LARGE_MAX_BYTES",
-  "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_QUEUE_MULTIPLIER",
-  "HPCPERFSTATS_SYNC_INGEST_GIANT_POOL_SUPPLEMENT_TRIGGER_BUDGET_S",
-  "HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_MAX_S",
-  "HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_S",
-  "HPCPERFSTATS_SYNC_INGEST_PER_FILE_TIMEOUT_S_PER_MIB",
-  "HPCPERFSTATS_SYNC_POOL_POLL_TIMEOUT_S",
-  "HPCPERFSTATS_SYNC_POOL_STALL_ABORT_AFTER_TIMEOUTS",
-  "METRICS_POOL_PROCESS_CAP",
-  "SYNC_DB_WRITER_POOL_CAP",
-  "SYNC_ENABLE_CPUSET_PRIORITY_BUDGET",
-  "SYNC_ENABLE_OVERPROVISION_MODE",
-  "SYNC_POOL_PROCESS_CAP",
-  "SYNC_WRITE_LOCK_SHARDS",
-)
-
-
-def _sync_timedb_config_baseline_parser() -> Any:
-  """
-  Minimal ini with only install paths; all tunables use getter fallbacks.
-
-  Returns:
-    Any: Open return polymorphism from
-    ``_sync_timedb_config_baseline_parser``: concrete type depends on inputs
-    and branch (mapping, scalar, handle, or ``None``-like empty).
-
-  Examples:
-    >>> _sync_timedb_config_baseline_parser()  # doctest: +SKIP
-  """
-  global _SYNC_TIMEDB_CONFIG_BASELINE_PARSER
-  if _SYNC_TIMEDB_CONFIG_BASELINE_PARSER is not None:
-    return _SYNC_TIMEDB_CONFIG_BASELINE_PARSER
-  parser = configparser.ConfigParser()
-  parser.read_dict(
-    {
-      "DEFAULT": {
-        "machine": "baseline",
-        "host_name_ext": "baseline.example",
-        "data_dir": "/data",
-        "server": "baseline",
-        "debug": "no",
-        "secret_key": "baseline",
-        "staff_email_domain": "example",
-        "timezone": "UTC",
-        "total_cores": _DEFAULT_TOTAL_CORES,
-        "engine_name": "django.db.backends.postgresql",
-        "dbname": "baseline",
-        "username": "u",
-        "password": "p",
-        "host": "localhost",
-        "port": "5432",
-      },
-      "PIPELINE": {
-        "acct_path": "/data/accounting",
-        "archive_dir": "/data/archive",
-        "daily_archive_dir": "/data/daily_archive",
-      },
-      "RMQ": {
-        "rmq_server": "localhost",
-        "rmq_queue": "baseline",
-      },
-      "OAUTH2": {
-        "client_id": "id",
-        "client_key": "key",
-        "authorize_url": "http://localhost",
-        "oauth_base_url": "http://localhost",
-      },
-      "XALT": {
-        "xalt_engine": "django.db.backends.postgresql",
-        "xalt_name": "xalt",
-        "xalt_user": "u",
-        "xalt_password": "p",
-        "xalt_host": "localhost",
-      },
-    }
-  )
-  _SYNC_TIMEDB_CONFIG_BASELINE_PARSER = parser
-  return parser
-
-
-@contextmanager
-def _cfg_audit_context(parser: Any, path: str) -> Iterator[Any]:
-  """
-  Internal helper to handle config audit context.
-
-  Args:
-    parser (Any): Parser passed to this helper.
-    path (str): String for path.
-
-  Yields:
-    Iterator[Any]: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _cfg_audit_context(None, "x")  # doctest: +SKIP
-  """
-  global cfg, _ACTIVE_CONFIG_PATH
-  saved_cfg, saved_path = cfg, _ACTIVE_CONFIG_PATH
-  cfg, _ACTIVE_CONFIG_PATH = parser, path
-  try:
-    yield
-  finally:
-    cfg, _ACTIVE_CONFIG_PATH = saved_cfg, saved_path
-
-
-@contextmanager
-def _cleared_sync_timedb_config_audit_env() -> Iterator[Any]:
-  """
-  Internal helper to handle cleared sync timedb config audit env.
-
-  Yields:
-    Iterator[Any]: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _cleared_sync_timedb_config_audit_env()  # doctest: +SKIP
-  """
-  saved = {
-    key: os.environ.pop(key)
-    for key in _SYNC_TIMEDB_CONFIG_AUDIT_ENV_KEYS
-    if key in os.environ
-  }
-  try:
-    yield
-  finally:
-    for key, value in saved.items():
-      os.environ[key] = value
-
-
-def _audit_values_equal(current: Any, baseline: Any) -> Any:
-  """
-  Internal helper to handle audit values equal.
-
-  Args:
-    current (Any): Current passed to this helper.
-    baseline (Any): Baseline passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _audit_values_equal(None, None)  # doctest: +SKIP
-  """
-  if current is None or baseline is None:
-    return current is baseline
-  if isinstance(current, bool) or isinstance(baseline, bool):
-    return bool(current) == bool(baseline)
-  if isinstance(current, (int, float)) or isinstance(baseline, (int, float)):
-    return abs(float(current) - float(baseline)) < 1e-6
-  return str(current) == str(baseline)
-
-
-def _format_sync_timedb_audit_value(value: Any) -> Any:
-  """
-  Internal helper to format the sync timedb audit value.
-
-  Args:
-    value (Any): Value to inspect (typically a numeric scalar).
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _format_sync_timedb_audit_value(None)  # doctest: +SKIP
-  """
-  if value is None:
-    return "(unset)"
-  if isinstance(value, bool):
-    return "yes" if value else "no"
-  if isinstance(value, float):
-    if value == int(value):
-      return str(int(value))
-    return format(value, ".9g")
-  return str(value)
-
-
-def _iter_sync_timedb_config_audit_getters() -> Iterator[Any]:
-  """
-  Internal helper to iterate over the sync timedb config audit getters.
-
-  Yields:
-    Iterator[Any]: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _iter_sync_timedb_config_audit_getters()  # doctest: +SKIP
-  """
-  yield ("total_cores", get_ini_total_cores_int)
-  yield ("effective_cores", get_effective_cores)
-  for _section, option, _default in INI_OPTION_REGISTRY:
-    if _section != "PIPELINE":
-      continue
-    if (
-      option in _PIPELINE_PATH_OPTIONS or option in _PIPELINE_DERIVED_AUDIT_SKIP
-    ):
-      continue
-    getter_name = f"get_{option}"
-    getter = globals().get(getter_name)
-    if getter is None or not callable(getter):
-      continue
-    if inspect.signature(getter).parameters:
-      continue
-    yield (option, getter)
-
-
-def collect_sync_timedb_non_default_settings() -> Any:
-  """
-  Return sorted ``(name, effective_value)`` pairs differing from code defaults.
-
-  Returns:
-    Any: Open return polymorphism from
-    ``collect_sync_timedb_non_default_settings``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-
-  Examples:
-    >>> collect_sync_timedb_non_default_settings()  # doctest: +SKIP
-  """
-  baseline = _sync_timedb_config_baseline_parser()
-  non_default = []
-  for name, getter in _iter_sync_timedb_config_audit_getters():
-    current = getter()
-    with (
-      _cleared_sync_timedb_config_audit_env(),
-      _cfg_audit_context(baseline, _SYNC_TIMEDB_CONFIG_BASELINE_PATH),
-    ):
-      default = getter()
-    if not _audit_values_equal(current, default):
-      non_default.append((name, current))
-  non_default.sort(key=lambda item: item[0])
-  return non_default
-
-
-def format_sync_timedb_non_default_settings_line() -> Any:
-  """
-  One-line operator summary for sync_timedb startup logging.
-
-  Returns:
-    Any: Open return polymorphism from
-    ``format_sync_timedb_non_default_settings_line``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-
-  Examples:
-    >>> format_sync_timedb_non_default_settings_line()  # doctest: +SKIP
-  """
-  entries = collect_sync_timedb_non_default_settings()
-  if not entries:
-    return "sync_timedb: non-default settings: (none)"
-  parts = [
-    f"{name}={_format_sync_timedb_audit_value(value)}"
-    for name, value in entries
-  ]
-  return "sync_timedb: non-default settings: " + " ".join(parts)
-
-
-def get_sync_enable_ingest_first_durability_mode() -> Any:
-  """
-  Checkpoint after DB write even when tar append fails (default on).
-
-  Returns:
-    Any: Open return polymorphism from
-    ``get_sync_enable_ingest_first_durability_mode``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-
-  Examples:
-    >>> get_sync_enable_ingest_first_durability_mode()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return _parse_bool(
-    _pipeline_get("sync_enable_ingest_first_durability_mode"),
-  )
-
-
 def get_sync_day_close_raw_paths_per_batch() -> Any:
   """
   Max raw paths processed per day_close batch (default 1000).
@@ -5069,46 +4466,6 @@ def get_sync_day_close_max_inflight() -> Any:
     return 8
 
 
-def get_sync_day_close_manifest_stale_seconds() -> Any:
-  """
-  Recover stale day-close manifest entries on coordinator init (default 7200;
-  0=off).
-
-  Returns:
-    Any: Open return polymorphism from
-    ``get_sync_day_close_manifest_stale_seconds``: concrete type depends on
-    inputs and branch (mapping, scalar, handle, or ``None``-like empty).
-
-  Examples:
-    >>> get_sync_day_close_manifest_stale_seconds()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  raw = _pipeline_get("sync_day_close_manifest_stale_seconds")
-  try:
-    return max(0.0, float(raw))
-  except TypeError, ValueError:
-    return 7200.0
-
-
-def get_sync_archive_worker_stall_seconds() -> Any:
-  """
-  Seconds before treating an archive pool job as stalled (default 600).
-
-  Returns:
-    Any: Open return polymorphism from
-    ``get_sync_archive_worker_stall_seconds``: concrete type depends on inputs
-    and branch (mapping, scalar, handle, or ``None``-like empty).
-
-  Examples:
-    >>> get_sync_archive_worker_stall_seconds()  # doctest: +SKIP
-  """
-  _ensure_cfg_loaded()
-  return max(
-    60.0,
-    float(_pipeline_get("sync_archive_worker_stall_seconds")),
-  )
-
-
 def get_sync_archive_require_db_ingest() -> Any:
   """
   Require head+tail DB ingest readiness before tar append or raw removal.
@@ -5193,8 +4550,8 @@ def _listend_db_ingest_queue_max_gb_raw() -> float:
   """
   Return the unclamped ``listend_db_ingest_queue_max_gb`` INI value.
 
-  Floor is 0.001 GiB. The public getter and budget helper still hard-cap
-  at 8.0 GiB so a site INI of 12 cannot recreate a 12 GiB copy heap.
+  Floor is 0.001 GiB. The listend budget helper hard-caps it at 8.0 GiB
+  so a site INI of 12 cannot recreate a 12 GiB copy heap.
 
   Returns:
     float: INI GiB budget before the 8 GiB hard cap.
@@ -5205,23 +4562,6 @@ def _listend_db_ingest_queue_max_gb_raw() -> float:
   """
   _ensure_cfg_loaded()
   return max(0.001, float(_pipeline_getfloat("listend_db_ingest_queue_max_gb")))
-
-
-def get_listend_db_ingest_queue_max_gb() -> Any:
-  """
-  Total in-flight listend DB-queue memory budget in GiB across workers.
-
-  Default is 8. Values above 8.0 are clipped to 8.0 so INI 12 cannot
-  pin a 12 GiB live-DB copy budget.
-
-  Returns:
-    float: Clipped GiB budget, never below 0.001 and never above 8.0.
-
-  Examples:
-    >>> get_listend_db_ingest_queue_max_gb() <= 8.0
-    True
-  """
-  return min(8.0, _listend_db_ingest_queue_max_gb_raw())
 
 
 def get_listend_db_ingest_batch_samples() -> Any:

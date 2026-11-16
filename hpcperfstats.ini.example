@@ -123,9 +123,6 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 # Metrics scheduler: strict_date, global_fifo, or global_priority (default global_priority).
 # metrics_scheduler_mode = global_priority
 
-# Prefetch chunk descriptors for global scheduler (default 8).
-# metrics_scheduler_prefetch_chunks = 8
-
 # Ready-jid queue depth target before compute (default 100; sole ready-queue depth).
 # metrics_scheduler_ready_queue_target = 100
 
@@ -252,9 +249,6 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 # Ingest parse pool size and Codon worker process count (default 64; capped at 128 Codon workers).
 # sync_ingest_pool_processes = 64
 
-# Codon stripe slots as fraction of parse pool (default 1.0; legacy 0.5 was retired).
-# sync_codon_context_pool_fraction = 1.0
-
 # Codon worker RSS in MiB above which the worker is replaced between files (default 1536). Boehm's heap only grows; this bounds total worker memory.
 # sync_codon_worker_recycle_rss_mib = 1536
 
@@ -285,20 +279,11 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 # Hours between whole-archive discover walks from the idle pass (default 6; 0 disables; a walk that dropped files at the queue cap is repeated once the queue drains).
 # sync_ingest_full_rescan_interval_hours = 6
 
-# Max in-memory archive work queue size (default 1000).
-# sync_archive_queue_max_size = 1000
-
 # Capacity bound per in-process job:v1 queue (default 2000000).
 # sync_job_queue_max_members = 2000000
 
 # Archive task retries before dead-letter behavior (default 5).
 # sync_archive_retry_max_attempts = 5
-
-# Base archive retry backoff seconds (default 1).
-# sync_archive_retry_backoff_base_seconds = 1
-
-# Max archive retry backoff seconds (default 60).
-# sync_archive_retry_backoff_max_seconds = 60
 
 # Dead-end remediation (sync_timedb state machine). Dead letters re-admit after each cooldown (comma list, seconds); after the last one the raw file is quarantined (restorable) so its day can close.
 # sync_dead_letter_readmit_backoff_s = 3600,21600,86400
@@ -387,9 +372,6 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 # Dedicated threads that stream sealed/tar archives into the in-process member store (default 4).
 # sync_archive_members_populate_pool_processes = 4
 
-# Supervisor RSS limit MiB; 0 disables fail-fast exit (default 0).
-# sync_supervisor_rss_limit_mb = 0
-
 # Process-tree defer roof as percent of pipeline cgroup memory.max (default 40; 0 off).
 # sync_process_tree_rss_limit_cgroup_pct = 40
 
@@ -440,9 +422,6 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 
 # Delay ms before re-checking worker RSS for cooperative recycle (default 50).
 # sync_ingest_rss_recheck_delay_ms = 50
-
-# Ingest-first durability semantics: checkpoint after DB even if append fails (default yes).
-# sync_enable_ingest_first_durability_mode = yes
 
 # Require head+tail DB ingest readiness before tar append or raw delete (default yes). When yes, first and last digit-leading timestamp seconds must exist in host_data. When listend live DB ingest is on, archive/delete also requires a sync_timedb file-complete mark.
 # sync_archive_require_db_ingest = yes
@@ -520,14 +499,8 @@ authorize_url = %(oauth_base_url)s/oauth2/authorize?client_id=%(client_id)s&redi
 # DAY_CLOSE pipeline occupancy and parallel worker count (default 8).
 # sync_day_close_max_inflight = 8
 
-# Recover stale day-close manifest entries on coordinator init (default 7200s; 0 = off).
-# sync_day_close_manifest_stale_seconds = 7200
-
 # Max deletes per day-close delete loop iteration; 0 = unlimited per iteration (default 0).
 # sync_day_close_raw_removal_max_deletes_per_pass = 0
-
-# Seconds before logging an archive pool job as stalled (default 600).
-# sync_archive_worker_stall_seconds = 600
 
 [CACHE]
 # Valkey URL for Django/listend cache (compose default is the shared Unix socket).

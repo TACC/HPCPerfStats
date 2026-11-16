@@ -169,7 +169,6 @@ def _space_pressure_off_by_default(monkeypatch):
 _CONF_PARSER_STATE = (
   "cfg",
   "_ACTIVE_CONFIG_PATH",
-  "_SYNC_TIMEDB_CONFIG_BASELINE_PARSER",
 )
 
 

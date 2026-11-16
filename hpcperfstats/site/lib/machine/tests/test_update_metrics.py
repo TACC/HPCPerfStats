@@ -68,9 +68,6 @@ def _patch_scheduler_defaults(monkeypatch):
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "strict_date"
   )
   monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 2
-  )
-  monkeypatch.setattr(
     update_metrics.cfg,
     "get_metrics_scheduler_ready_queue_target",
     lambda: 4,
@@ -2714,9 +2711,6 @@ def test_update_metrics_for_dates_global_scheduler_interleaves_dates(
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
   )
   monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 10
-  )
-  monkeypatch.setattr(
     update_metrics.cfg,
     "get_metrics_scheduler_ready_queue_target",
     lambda: 8,
@@ -2801,9 +2795,6 @@ def test_update_metrics_for_dates_exhausts_when_readiness_filters_all(
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
   )
   monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 2
-  )
-  monkeypatch.setattr(
     update_metrics.cfg,
     "get_metrics_scheduler_ready_queue_target",
     lambda: 8,
@@ -2879,9 +2870,6 @@ def test_update_metrics_exits_on_compute_all_failed(monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS", "1")
   monkeypatch.setattr(
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
-  )
-  monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1
   )
   monkeypatch.setattr(
     update_metrics.cfg,
@@ -3016,9 +3004,6 @@ def test_update_metrics_for_dates_ends_pass_cleanly_when_only_not_ready_left(
   monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS", "1")
   monkeypatch.setattr(
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
-  )
-  monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1
   )
   monkeypatch.setattr(
     update_metrics.cfg,
@@ -3187,9 +3172,6 @@ def test_producer_stall_skips_while_inflight_or_ready_queue(monkeypatch):
     lambda: "global_priority",
   )
   monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1
-  )
-  monkeypatch.setattr(
     update_metrics.cfg,
     "get_metrics_scheduler_ready_queue_target",
     lambda: 4,
@@ -3348,9 +3330,6 @@ def test_producer_stall_still_fires_on_true_starvation(monkeypatch):
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
   )
   monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 2
-  )
-  monkeypatch.setattr(
     update_metrics.cfg,
     "get_metrics_scheduler_ready_queue_target",
     lambda: 8,
@@ -3464,9 +3443,6 @@ def test_stall_exit_survives_closed_connection_on_timeout_restore(monkeypatch):
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
   )
   monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1
-  )
-  monkeypatch.setattr(
     update_metrics.cfg,
     "get_metrics_scheduler_ready_queue_target",
     lambda: 4,
@@ -3572,9 +3548,6 @@ def test_update_metrics_for_dates_records_queue_and_attempt_counters(
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
   )
   monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1
-  )
-  monkeypatch.setattr(
     update_metrics.cfg,
     "get_metrics_scheduler_ready_queue_target",
     lambda: 4,
@@ -3660,9 +3633,6 @@ def test_update_metrics_for_dates_records_explicit_worker_and_parent_persist_fai
   monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS", "1")
   monkeypatch.setattr(
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
-  )
-  monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1
   )
   monkeypatch.setattr(
     update_metrics.cfg,
@@ -3790,9 +3760,6 @@ def test_update_metrics_for_dates_rescan_picks_up_new_mid_run_jid(monkeypatch):
   """Background rescan candidates should be merged without interrupting ready work."""
   monkeypatch.setattr(
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
-  )
-  monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 2
   )
   monkeypatch.setattr(
     update_metrics.cfg,
@@ -3930,9 +3897,6 @@ def test_update_metrics_refreshes_pub_dashboards_before_first_compute(
 ):
   monkeypatch.setattr(
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
-  )
-  monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1
   )
   monkeypatch.setattr(
     update_metrics.cfg,
@@ -4133,9 +4097,6 @@ def _run_deferred_recheck_flow(monkeypatch, *, ready_target=4):
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
   )
   monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1
-  )
-  monkeypatch.setattr(
     update_metrics.cfg,
     "get_metrics_scheduler_ready_queue_target",
     lambda: ready_target,
@@ -4249,9 +4210,6 @@ def test_update_metrics_pub_parallel_once_then_safe_in_finally(monkeypatch):
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
   )
   monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1
-  )
-  monkeypatch.setattr(
     update_metrics.cfg,
     "get_metrics_scheduler_ready_queue_target",
     lambda: 4,
@@ -4352,9 +4310,6 @@ def test_update_metrics_scheduler_runs_real_detail_prewarm_with_jid_table_stub(
   """Integration-style scheduler check: real detail prewarm path must execute without NameError."""
   monkeypatch.setattr(
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
-  )
-  monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1
   )
   monkeypatch.setattr(
     update_metrics.cfg,
@@ -4555,9 +4510,6 @@ def test_update_metrics_for_dates_per_jid_failure_does_not_stop_progress(
   )
   monkeypatch.setattr(
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
-  )
-  monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 1
   )
   monkeypatch.setattr(
     update_metrics.cfg,
@@ -5971,9 +5923,6 @@ def test_compute_watchdog_downshifts_on_batch_wall_not_metrics_only(
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
   )
   monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 4
-  )
-  monkeypatch.setattr(
     update_metrics.cfg,
     "get_metrics_scheduler_ready_queue_target",
     lambda: 48,
@@ -6155,9 +6104,6 @@ def test_ready_queue_cap_uses_ini_target_not_chunks_product(monkeypatch):
   """prefetch_ready_cap equals ready_queue_target; ignores chunksxCHUNK_SIZE."""
   monkeypatch.setattr(
     update_metrics.cfg, "get_metrics_scheduler_mode", lambda: "global_fifo"
-  )
-  monkeypatch.setattr(
-    update_metrics.cfg, "get_metrics_scheduler_prefetch_chunks", lambda: 8
   )
   monkeypatch.setattr(
     update_metrics.cfg,
@@ -7074,7 +7020,6 @@ def test_scheduler_runs_one_continuous_sliding_session(monkeypatch):
   monkeypatch.setenv("HPCPERFSTATS_UPDATE_METRICS_RETURN_DIAGNOSTICS", "1")
   for name, value in (
     ("get_metrics_scheduler_mode", "global_fifo"),
-    ("get_metrics_scheduler_prefetch_chunks", 1),
     ("get_metrics_scheduler_ready_queue_target", 2),
     ("get_metrics_plot_prewarm_mode", "inline"),
     ("get_metrics_idle_slot_supplement_enabled", True),

@@ -227,13 +227,10 @@ def test_codon_kernel_max_slots_matches_bridge() -> None:
 def test_configure_codon_slots_equal_ingest_threads(
   monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-  """Slot count is the INI ingest pool, not the legacy fraction."""
+  """Slot count is the INI ingest pool width, capped at MAX_CODON_SLOTS."""
   from hpcperfstats.dbload.lib import conf_parser as cfg
 
   monkeypatch.setattr(cfg, "get_sync_ingest_pool_processes", lambda: 48)
-  monkeypatch.setattr(
-    cfg, "get_sync_codon_context_pool_fraction", lambda: 0.125
-  )
   n = bridge.configure_codon_context_pool_from_ini()
   assert n == 48
   assert bridge.codon_context_pool_size() == 48
