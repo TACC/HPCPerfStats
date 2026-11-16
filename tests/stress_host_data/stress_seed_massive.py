@@ -1,12 +1,12 @@
-"""Bulk INSERT for stress jobs: parametric hosts × time steps × metric pairs.
+"""Bulk INSERT for stress jobs: parametric hosts x time steps x metric pairs.
 
-**Legacy row target:** ``HPCPERFSTATS_STRESS_HOST_DATA_ROWS`` (multiple of 40 × N hosts)
+**Legacy row target:** ``HPCPERFSTATS_STRESS_HOST_DATA_ROWS`` (multiple of 40 x N hosts)
 with ``HPCPERFSTATS_STRESS_INTERVAL_SEC`` default **1** (1 Hz).
 
 **Time-rectangle mode:** set ``HPCPERFSTATS_STRESS_USE_TIME_SCALE=1`` and use
 ``HPCPERFSTATS_STRESS_N_HOSTS``, ``HPCPERFSTATS_STRESS_INTERVAL_SEC`` (e.g. 30),
 ``HPCPERFSTATS_STRESS_DURATION_SEC`` to size the grid; row count is
-``n_hosts × n_steps × len(metric_pairs)``.
+``n_hosts x n_steps x len(metric_pairs)``.
 
 The main series ends within the configured readiness end margin. Post-``end_time``
 **readiness probes** (one row per host) are inserted separately so both dual-edge
@@ -17,14 +17,15 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, timedelta
+
 from django.db import connection
 from django.utils import timezone as django_tz
 
 from hpcperfstats.dbload.lib.monitor_naming.canonical import (
-    INTEL_FP_ARITH_ALL_EVENTS,
-    INTEL_FP_ARITH_DOUBLE_EVENTS,
-    INTEL_FP_ARITH_SINGLE_EVENTS,
+  INTEL_FP_ARITH_ALL_EVENTS,
+  INTEL_FP_ARITH_DOUBLE_EVENTS,
+  INTEL_FP_ARITH_SINGLE_EVENTS,
 )
 from hpcperfstats.site.lib.machine.models import host_data, job_data
 
@@ -66,8 +67,7 @@ def metric_pairs():
       ("nvidia_gpu", "gpu_util"),
       ("nvidia_gpu", "utilization"),
   ]
-  _i4 = list(INTEL_FP_ARITH_DOUBLE_EVENTS) + list(INTEL_FP_ARITH_SINGLE_EVENTS)
-  for ev in _i4:
+  for ev in (*INTEL_FP_ARITH_DOUBLE_EVENTS, *INTEL_FP_ARITH_SINGLE_EVENTS):
     pairs.append(("intel_4pmc3", ev))
   pairs += [
       ("intel_hsw_imc", "CAS_READS"),
@@ -153,9 +153,7 @@ def delete_stress_job(jid: str) -> None:
 def _utc_now():
   t0 = django_tz.now()
   if t0.tzinfo is None:
-    from datetime import timezone as py_utc
-
-    t0 = t0.replace(tzinfo=py_utc.utc)
+    t0 = t0.replace(tzinfo=UTC)
   return t0
 
 

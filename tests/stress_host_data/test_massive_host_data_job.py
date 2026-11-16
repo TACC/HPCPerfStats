@@ -24,22 +24,22 @@ seed inserts one post-``end_time`` row per host so update-metrics dual-edge
 readiness passes.
 
 **Date passed to ``update_metrics``:** uses ``timezone.localtime(job.end_time)`` so
-``end_time__date`` in ``_jobs_queryset`` matches Django’s configured timezone (UTC
+``end_time__date`` in ``_jobs_queryset`` matches Django's configured timezone (UTC
 ``job.end_time`` alone can cross a local calendar day for long windows and yield
 an empty queryset).
 
 **Report:** ``stress_report_<utc>.json`` under ``HPCPERFSTATS_STRESS_REPORT_DIR``
 (default ``test_runs/stress/``). Includes **R_ref** from
 ``monitor_sample_density.analyze_monitor_sample_density`` and extrapolated
-``6000 × 8640 × R_max`` row estimate.
+``6000 x 8640 x R_max`` row estimate.
 
 **Optional**
 
-- ``HPCPERFSTATS_STRESS_PLOT_SEC`` — when ``HPCPERFSTATS_STRESS_MANUAL_PLOT_SANITY=1``,
+- ``HPCPERFSTATS_STRESS_PLOT_SEC`` - when ``HPCPERFSTATS_STRESS_MANUAL_PLOT_SANITY=1``,
   fail if any single manual plot exceeds this many seconds.
-- ``HPCPERFSTATS_STRESS_EXPLAIN=1`` — attach one ``EXPLAIN (FORMAT JSON)`` snapshot
+- ``HPCPERFSTATS_STRESS_EXPLAIN=1`` - attach one ``EXPLAIN (FORMAT JSON)`` snapshot
   (representative host-in + time range query).
-- ``HPCPERFSTATS_LARGE_JOB_HOST_DATA_ROWS`` / ``HPCPERFSTATS_LARGE_JOB_TIME_BUCKETS`` —
+- ``HPCPERFSTATS_LARGE_JOB_HOST_DATA_ROWS`` / ``HPCPERFSTATS_LARGE_JOB_TIME_BUCKETS`` -
   jid_table sampling (see ``conf_parser``).
 
 Profiling lines are printed as ``stress_timing: ...``; the JSON report lists phases.
@@ -132,7 +132,6 @@ def test_massive_host_data_stress_full_pipeline():
       },
   )
 
-  report_path = None
   old_timeout = None
   with connection.cursor() as cursor:
     cursor.execute("SHOW statement_timeout")

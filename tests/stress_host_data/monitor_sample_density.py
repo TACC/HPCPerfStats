@@ -1,12 +1,12 @@
 """Reference row density **R_ref** from the checked-in monitor sample file.
 
-Uses the same parse path as ingest: ``parse_stats_lines`` → ``build_stats_dataframes``
-→ ``compute_deltas_and_arc`` (see ``hpcperfstats.dbload.lib.sync_timedb_parsing``).
+Uses the same parse path as ingest: ``parse_stats_lines`` -> ``build_stats_dataframes``
+-> ``compute_deltas_and_arc`` (see ``hpcperfstats.dbload.lib.sync_timedb_parsing``).
 
 **R_ref** is the number of ``host_data``-shaped rows per (host, time) snapshot after
 collapse (groupby), i.e. one row per distinct (type, dev, event) after transforms.
 Use **median** / **max** per snapshot to extrapolate full-scale row counts in stress
-reports (e.g. ``6000 × 8640 × R_max`` order-of-magnitude).
+reports (e.g. ``6000 x 8640 x R_max`` order-of-magnitude).
 """
 from __future__ import annotations
 
@@ -93,6 +93,6 @@ def analyze_monitor_sample_density(
       "r_max": int(grp.max()),
       "r_min": int(grp.min()),
       "n_groups": int(grp.shape[0]),
-      "n_rows_collapsed": int(len(collapsed)),
+      "n_rows_collapsed": len(collapsed),
       "by_type_top": by_type_top,
   }

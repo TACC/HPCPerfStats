@@ -4,9 +4,10 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import date, datetime, time as datetime_time, timezone
+from collections.abc import Callable
+from datetime import UTC, date, datetime, time as datetime_time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from django.db import connection
 
@@ -176,7 +177,7 @@ class StressProfiler:
 
   def build_report(self) -> dict[str, Any]:
     return _json_safe({
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "generated_at_utc": datetime.now(UTC).isoformat(),
         "metadata": self.metadata,
         "counts": self.counts,
         "phases": self.phases,
@@ -184,7 +185,7 @@ class StressProfiler:
     })
 
   def write_report(self) -> Path:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     path = self.report_dir / "stress_report_{}.json".format(stamp)
     path.write_text(
         json.dumps(self.build_report(), indent=2, sort_keys=True) + "\n",
