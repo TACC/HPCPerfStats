@@ -137,14 +137,14 @@ def _get_json(
   api_key: str | None,
 ) -> tuple[dict[str, object] | None, int]:
   """
-  Internal helper to return the json.
+  GET path and print a user-facing message for any failure.
 
   Args:
     client (ApiClient): Client.
     base_url (str): String for base url.
     path (str): String for path.
-    verify (bool): Boolean flag for verify.
-    api_key (Optional[str]): Api key, or None when absent.
+    verify (bool): Unused; kept for call compatibility.
+    api_key (Optional[str]): Unused; never echoed in failure output.
 
   Returns:
     Tuple[Optional[Dict[str, object]], int]: Tuple[Optional[Dict[str, object]], int]
@@ -219,7 +219,7 @@ def print_jobstats(
     print(f"No job found with id {jid}")
     return 1
 
-  # At this point authentication to the API succeeded; persist URL->key mapping.
+  # Authentication succeeded; persist the URL->key mapping.
   if api_key:
     save_cached_api_key(api_url, api_key)
 
@@ -346,7 +346,6 @@ Files:
   parser.add_argument("jid", help="Job id to summarize")
   args = parser.parse_args(argv)
   verify_tls = not args.insecure
-  # Determine API key (CLI or cache) and cache if provided explicitly.
   api_key = args.api_key
   if api_key:
     save_cached_api_key(args.api_url, api_key)

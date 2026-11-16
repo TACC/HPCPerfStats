@@ -16,13 +16,13 @@ from .api_auth import apply_api_key_header
 @dataclass
 class ApiResult:
   """
-  Hold ApiResult state and behavior.
+  Outcome of one API request.
 
   Attributes:
-    data: ``data``.
-    error: ``error``.
-    ok: ``ok``.
-    status_code: ``status_code``.
+    data: Decoded JSON body, or None when the body was not JSON.
+    error: Error text for failed requests, else None.
+    ok: True when the request succeeded with a 2xx/3xx status.
+    status_code: HTTP status, or 0 when the request never reached the server.
   """
 
   ok: bool
@@ -104,32 +104,10 @@ class ApiClient:
     """
     return urljoin(self.base_url, path.lstrip("/"))
 
-  @staticmethod
-  def _default_port_for_scheme(scheme: str) -> int:
-    """
-    Internal helper to handle default port for scheme.
-
-    Args:
-      scheme (str): String for scheme.
-
-    Returns:
-      int: int produced by this call.
-
-    Examples:
-      >>> ApiClient()._default_port_for_scheme("x")  # doctest: +SKIP
-    """
-    if scheme == "https":
-      return 443
-    if scheme == "http":
-      return 80
-    return 0
-
   @classmethod
   def _origin_parts(cls, url: str) -> tuple[str, str, int]:
     """
-    Return (scheme_lower, hostname_lower, port) with default ports filled for.
-
-      http/https.
+    Return (scheme_lower, hostname_lower, port), filling default http/https ports.
 
     Args:
       url (str): String for url.
@@ -144,10 +122,8 @@ class ApiClient:
     scheme = (p.scheme or "").lower()
     host = (p.hostname or "").lower().rstrip(".")
     port = p.port
-    if port is None and scheme in ("http", "https"):
-      port = cls._default_port_for_scheme(scheme)
-    elif port is None:
-      port = 0
+    if port is None:
+      port = {"http": 80, "https": 443}.get(scheme, 0)
     return (scheme, host, port)
 
   @classmethod

@@ -48,9 +48,7 @@ def get_job_full_dataframe(
   verify_tls: bool = True,
 ) -> pd.DataFrame:
   """
-  Return an API-derived DataFrame with all available per-type samples +.
-
-    metadata.
+  Return an API-derived DataFrame with all per-type samples plus job metadata.
 
   Data is assembled from:
   - `/jobs/{jid}/` for job metadata and available type schema
@@ -63,11 +61,11 @@ def get_job_full_dataframe(
     verify_tls (bool): Boolean flag for verify tls.
 
   Returns:
-    pd.DataFrame: Result DataFrame, or None when nothing usable remains.
+    pd.DataFrame: One row per sample; empty (with the key columns) when no
+    type returned usable rows.
 
   Raises:
-    RuntimeError: Raised when ``get_job_full_dataframe`` hits a ``RuntimeError``
-    failure path.
+    RuntimeError: When the job detail request fails or is not a JSON object.
 
   Examples:
     >>> get_job_full_dataframe("x", None, None, True)  # doctest: +SKIP

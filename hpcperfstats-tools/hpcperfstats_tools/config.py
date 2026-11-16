@@ -1,26 +1,18 @@
 """
-config.
+Configuration helpers for the hpcperfstats-tools package.
+
+The tools read the API base URL from the INI file named by the
+HPCPERFSTATS_TOOLS_INI environment variable (no default path), e.g.::
+
+    [API]
+    base_url = http://localhost:8000/api/
 
 Attributes:
-  _CONFIG_PATH: Attribute.
-  _cfg: Attribute.
+  _CONFIG_PATH: INI path that was loaded at import, or None.
+  _cfg: Parser holding the loaded INI contents.
 """
 
 from __future__ import annotations
-
-"""Configuration helpers for the hpcperfstats-tools package.
-
-The tools read the API base URL from an INI file. The config file path is
-given by the HPCPERFSTATS_TOOLS_INI environment variable (no default path).
-
-Example INI file:
-
-    [API]
-    # Base URL for the HPCPerfStats REST API used by hpcperfstats-tools.
-    # For a local development instance this might be:
-    #   http://localhost:8000/api/
-    base_url = http://localhost:8000/api/
-"""
 
 import configparser
 import os

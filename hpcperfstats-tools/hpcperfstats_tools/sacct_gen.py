@@ -70,9 +70,7 @@ SACCT_FIELDS = (
 
 def run_sacct_for_date(single_date: Any) -> Any:
   """
-  Run sacct for a single day; return (date_str, stdout_bytes) or (date_str,.
-
-    None) on failure.
+  Run sacct for a single day; return (date_str, stdout_bytes or None on failure).
 
   Args:
     single_date (Any): Single date passed to this helper.
@@ -137,11 +135,9 @@ def write_accounting_daily_file(outdir: str, date_str: str, body: str) -> str:
   """
   Write pipe-delimited sacct body to ``{outdir}/{date_str}.txt``.
 
-  Matches the naming used by the sacct ingest API /
-    ``persist_accounting_daily_file``
-  (``YYYY-MM-DD.txt``). Uses a temp file + ``os.replace`` for an atomic
-    overwrite.
-  Returns the final path written.
+  Matches the ``YYYY-MM-DD.txt`` naming of the sacct ingest API
+  (``persist_accounting_daily_file``). Uses a temp file + ``os.replace`` for
+  an atomic overwrite.
 
   Args:
     outdir (str): String for outdir.
@@ -149,7 +145,7 @@ def write_accounting_daily_file(outdir: str, date_str: str, body: str) -> str:
     body (str): String for body.
 
   Returns:
-    str: str produced by this call.
+    str: The final path written.
 
   Examples:
     >>> write_accounting_daily_file("x", "x", "x")  # doctest: +SKIP
@@ -166,20 +162,15 @@ def send_to_api(base_url: Any, api_key: Any, date_str: Any, body: Any) -> Any:
   """
   POST sacct output to the ingest endpoint. Return (success, message).
 
-  Some deployments may issue an HTTP redirect (for example, HTTP->HTTPS or
-  path normalization). The Python requests library may convert a POST into a
-  GET when following a 301/302 redirect, which would cause Django to return
-  "405 Method Not Allowed" on the ingest view (which only allows POST).
-
-  To avoid this, we first send the request with redirects disabled and, if
-  we receive a redirect status with a Location header, we re-POST once to
-  the redirected URL while preserving the HTTP method and body.
+  ``ApiClient.post_text`` re-POSTs one same-origin redirect itself, because
+  requests turns a redirected POST into a GET that the ingest view rejects
+  with 405.
 
   Args:
     base_url (Any): Base url passed to this helper.
     api_key (Any): Api key passed to this helper.
     date_str (Any): Date str passed to this helper.
-    body (Any): Value to inspect (typically a numeric scalar).
+    body (Any): Pipe-delimited ``sacct -P`` text for that day.
 
   Returns:
     Any: Value produced by this call (type depends on inputs).
@@ -280,7 +271,7 @@ def _run_api_mode(args: Any, start_date: datetime, end_date: datetime) -> None:
   Examples:
     >>> _run_api_mode(None, None, None)  # doctest: +SKIP
   """
-  base_url = get_api_base_url(default=None) or None
+  base_url = get_api_base_url(default=None)
   if not base_url:
     print(
       "Error: API base URL not set. Set [API] base_url in "

@@ -41,7 +41,6 @@ def load_cached_api_key(api_url: str) -> str | None:
   lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
   if not lines:
     return None
-  # Single-key mode
   if len(lines) == 1 and " " not in lines[0]:
     return lines[0]
   base = api_url.rstrip("/")
@@ -104,8 +103,8 @@ def api_key_help_url(api_url: str) -> str:
   """
   Best-effort URL of the browsable page where the user can create an API key.
 
-  Prefer env override HPCPERF_API_KEY_URL; otherwise strip /api/ and point to
-    /api-key/.
+  Prefer env override HPCPERF_API_KEY_URL; otherwise strip /api/ and point
+  to /api-key/.
 
   Args:
     api_url (str): String for api url.

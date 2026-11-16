@@ -23,6 +23,5 @@ def apply_api_key_header(
     >>> apply_api_key_header({}, None)  # doctest: +SKIP
   """
   if api_key:
-    # Use explicit API-key header accepted by the server's newest auth flow.
     headers["X-API-Key"] = api_key
   return headers
