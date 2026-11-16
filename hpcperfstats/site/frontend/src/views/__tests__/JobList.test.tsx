@@ -1199,7 +1199,7 @@ describe("JobList", () => {
   });
 
   it("keeps pagination chrome on URL page while keepPreviousData still reports old page/sort", async () => {
-    // Simulates sort→page under placeholderData: URL already advanced, response lags.
+    // Simulates sort then page under placeholderData: URL already advanced, response lags.
     setJobListQueryMock({
       data: {
         job_list: [],

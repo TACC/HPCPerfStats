@@ -45,8 +45,7 @@ export default function HostDetail() {
 
   const plotParams = useMemo(
     () => buildHostPlotParamsFromSearch(host, searchParamsKey),
-    // identityKey encodes host + end_time only
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- scoped identity
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- identityKey covers host + end_time only
     [identityKey],
   );
 

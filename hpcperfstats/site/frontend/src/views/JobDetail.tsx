@@ -220,7 +220,7 @@ type PlotPanelProps = {
   embedStaggerIndex?: number;
 };
 
-/** Stagger indices for rank-0 print-mounted embeds (Summary → Roofline → GPU → MP). */
+/** Stagger indices for rank-0 print-mounted embeds. */
 const PRINT_EMBED_STAGGER: Record<JobDetailPrintPlotKey, number> = {
   summary_plot: 0,
   roofline: 1,
@@ -486,7 +486,7 @@ export default function JobDetail() {
   const [printFrozenMp, setPrintFrozenMp] = useState<PrintMultiprecisionFreeze | null>(
     null,
   );
-  /** React-owned PNG data URLs for print (id → dataUrl); never mutate embed divs. */
+  /** React-owned PNG data URLs for print, keyed by embed id; never mutate embed divs. */
   const [printPlotSnapshots, setPrintPlotSnapshots] = useState<Record<string, string>>(
     {},
   );
@@ -1112,7 +1112,7 @@ export default function JobDetail() {
     const panel = plotPanels.find((p) => p.key === config.panelKey);
     if (!panel) return null;
 
-    // Print: hide unavailable plots; snapshot → img; capture miss → keep live embed.
+    // Print hides unavailable plots and shows snapshots as img, keeping the live embed when capture missed.
     if (printLayoutActive && printIncludesPlots) {
       if (panel.unavailableReason || !panel.item) {
         return null;

@@ -796,8 +796,6 @@ export default function AdminMonitor() {
     [rabbitHostStats],
   );
 
-  // Build comma-separated list of FQDNs not seen in the past 36 hours when the
-  // host section is open and hostStats are available.
   useEffect(() => {
     if (!hostTimeExpanded || hostInitialLoading || hostError) return;
     const cutoffMs = Date.now() - 36 * 60 * 60 * 1000;

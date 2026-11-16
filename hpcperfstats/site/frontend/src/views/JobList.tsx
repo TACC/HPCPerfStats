@@ -360,7 +360,7 @@ export default function JobList() {
     return acc;
   }, {} as Record<SortField, SortDirection>);
 
-  // Sort: all columns except name. order_by from URL/response: e.g. "-end_time" (desc) or "username" (asc).
+  // order_by comes from the URL or response: "-end_time" sorts desc, "username" asc.
   const sortColumn = orderBy.startsWith("-") ? orderBy.slice(1) : orderBy;
   const sortDirection = orderBy.startsWith("-") ? "desc" : "asc";
   const sortQuery = (orderByValue: string) =>
@@ -393,7 +393,6 @@ export default function JobList() {
   const allMetricHistsDone = JOB_LIST_HISTOGRAM_METRICS.every(
     (m) => !metricHistStatus[m]?.loading,
   );
-  const histogramsFinishedLoading = allMetricHistsDone;
   const failedHistogramLabels: string[] = [];
   const labelMap: Record<MetricName, string> = {
     runtime: "Runtime",
@@ -431,8 +430,7 @@ export default function JobList() {
   // Embed when the Distributions panel is open (default). Avoid zero-size embeds.
   const distributionPlotsVisible = distributionsOpen;
 
-  // Single source of truth for the pagination control; rendered above and below
-  // the job table so users can navigate from either end of long lists.
+  // Rendered above and below the job table so long lists can be paged from either end.
   const renderPaginationNav = (positionId: "top" | "bottom") => {
     if (!(num_pages > 1)) return null;
     const pageItems = buildPaginationItems(page, num_pages);
@@ -575,7 +573,7 @@ export default function JobList() {
             </div>
           );
         })}
-        {histogramsFinishedLoading && failedHistogramLabels.length > 0 ? (
+        {allMetricHistsDone && failedHistogramLabels.length > 0 ? (
           <Alert
             className="mx-auto mt-2 max-w-[520px] border-amber-200 bg-amber-50 text-left text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
             role="status"
@@ -602,7 +600,7 @@ export default function JobList() {
             </AlertDescription>
           </Alert>
         ) : null}
-        {distributionPlotsVisible && histogramsFinishedLoading && histograms?.length === 0 ? (
+        {distributionPlotsVisible && allMetricHistsDone &&histograms?.length === 0 ? (
           <p className="text-sm text-muted-foreground">No distribution data for this selection.</p>
         ) : null}
         {distributionPlotsVisible ? (

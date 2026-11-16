@@ -80,7 +80,7 @@ export default function PageApiKey() {
     setCopyStatus("");
     try {
       // Do not refetch here: GET returns raw_key=null once a key exists, which
-      // would hide the newly minted key. The hook latches it from the response.
+      // would hide the newly created key. The hook latches it from the response.
       await rotate();
     } catch (e: unknown) {
       setActionError(e instanceof Error ? e.message : "Unable to rotate API key.");
