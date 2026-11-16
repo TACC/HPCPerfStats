@@ -11,7 +11,7 @@ export function parseApiResponse<T>(
   const schema = resolveResponseSchema(method, url);
   if (!schema) return payload as T;
   const parsed = schema.safeParse(payload);
-    if (!parsed.success) {
+  if (!parsed.success) {
     const routeLabel = `${method.toUpperCase()} ${normalizeApiPath(url)}`;
     const firstIssue = parsed.error.issues[0];
     const detail = firstIssue

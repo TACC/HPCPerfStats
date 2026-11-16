@@ -20,27 +20,11 @@ export const bokehJsonItemSchema = z
     if (Array.isArray(rootIds) && rootIds.length > 0) return true;
     const roots = doc.roots;
     if (!Array.isArray(roots) || roots.length === 0) return false;
-    const rootIdSet = new Set(
-      roots
-        .map((node) => {
-          if (!node || typeof node !== "object") return "";
-          const id = (node as Record<string, unknown>).id;
-          if (typeof id === "string") return id.trim();
-          if (typeof id === "number" && Number.isFinite(id)) return String(id);
-          return "";
-        })
-        .filter((id) => id.length > 0),
-    );
     return roots.some((node) => {
       if (!node || typeof node !== "object") return false;
       const id = (node as Record<string, unknown>).id;
-      const key =
-        typeof id === "string"
-          ? id.trim()
-          : typeof id === "number" && Number.isFinite(id)
-            ? String(id)
-            : "";
-      return key.length > 0 && rootIdSet.has(key);
+      if (typeof id === "string") return id.trim().length > 0;
+      return typeof id === "number" && Number.isFinite(id);
     });
   },
   { message: "Invalid Bokeh json_item document" },

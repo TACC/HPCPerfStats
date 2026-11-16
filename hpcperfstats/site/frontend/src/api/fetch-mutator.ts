@@ -1,6 +1,6 @@
 /**
- * Orval mutator: session cookie auth, CSRF header, 401 → login_prompt redirect.
- * Orval 8 signature: (url, RequestInit) → { status, data, headers }.
+ * Orval mutator: session cookie auth, CSRF header, 401 -> login_prompt redirect.
+ * Orval 8 signature: (url, RequestInit) -> { status, data, headers }.
  */
 
 import { ApiError, parseApiErrorBody } from "./api-error";
@@ -84,7 +84,7 @@ export async function customFetch<T>(
   } as T;
 }
 
-/** Anonymous public cluster dashboard — credentials omitted. */
+/** Anonymous public cluster dashboard; credentials omitted. */
 export async function fetchPubClusterDashboard<T = unknown>(
   params?: Record<string, unknown>,
 ): Promise<T> {

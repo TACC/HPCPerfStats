@@ -1,8 +1,8 @@
 /**
  * Defense against hollow Orval Zod Bokeh schemas that strip ``type`` / ``attributes``
- * from ``doc.roots[]`` (BokehJS then reports ``reference p… isn't known`` after id remap).
+ * from ``doc.roots[]`` (BokehJS then reports ``reference p... isn't known`` after id remap).
  *
- * Prefer opaque OpenAPI ``JSONField`` → ``zod.unknown()``. This merge restores plot
+ * Prefer opaque OpenAPI ``JSONField`` -> ``zod.unknown()``. This merge restores plot
  * fields from the raw HTTP JSON when the parsed tree is hollow.
  */
 

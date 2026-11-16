@@ -23,17 +23,12 @@ export function orvalResponseData<T>(
   return response.data as T;
 }
 
+type OrvalOkData<T> = Extract<T, { status: 200 }> extends { data: infer D } ? D : never;
+
 /** React Query `select`: unwrap a 200 Orval envelope to its body. */
 export function selectOrvalData<T extends { status: number; data: unknown }>(
   response: T,
-): Extract<T, { status: 200 }> extends { data: infer D } ? D : never {
-  if (response.status !== 200) {
-    return undefined as Extract<T, { status: 200 }> extends { data: infer D } ? D : never;
-  }
-  return (response as Extract<T, { status: 200 }>).data as Extract<
-    T,
-    { status: 200 }
-  > extends { data: infer D }
-    ? D
-    : never;
+): OrvalOkData<T> {
+  if (response.status !== 200) return undefined as OrvalOkData<T>;
+  return (response as Extract<T, { status: 200 }>).data as OrvalOkData<T>;
 }
