@@ -30,12 +30,11 @@ validate_csp_include() {
     return 1
   fi
   # Bokeh SPA policies use style-src 'unsafe-inline' (path-justified). Never allow
-  # script-src 'unsafe-inline' — that would undo the hash-based script contract.
+  # script-src 'unsafe-inline' - that would undo the hash-based script contract.
   if grep -E "script-src[^;]*unsafe-inline" "${path}" >/dev/null 2>&1; then
     echo "proxy_entrypoint: ${label} CSP include allows script-src unsafe-inline: ${path}" >&2
     return 1
   fi
-  # Refuse policies that still point browsers at a public static path.
   case "${path}" in
     /srv/static/*|/home/*/staticfiles/*)
       echo "proxy_entrypoint: refusing CSP include under public static tree: ${path}" >&2
@@ -59,7 +58,6 @@ if [ ! -f "${MACHINE_HTML}" ] || [ ! -f "${PUB_HTML}" ]; then
   exit 1
 fi
 
-# Hash CSP from HTML → private /etc/nginx only. Never write nginx config into /srv/static.
 python3 /usr/local/lib/hpcperfstats-proxy/write_nginx_spa_csp_includes.py \
   --frontend-root "${FRONTEND_STATIC_ROOT}" \
   --out-dir "${CSP_OUT_DIR}"

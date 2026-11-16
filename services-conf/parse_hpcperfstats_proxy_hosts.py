@@ -2,7 +2,7 @@
 Parse [DEFAULT] server= hostnames from hpcperfstats.ini for the TLS proxy.
 
 Attributes:
-  _SERVER_NAME_PART_RE: Attribute.
+  _SERVER_NAME_PART_RE: Characters nginx accepts in one ``server_name`` entry.
 """
 
 from __future__ import annotations
@@ -19,10 +19,10 @@ def load_allowed_server_names(ini_path: Path) -> list[str]:
   Return trimmed hostnames from ``[DEFAULT] server=`` (comma-separated).
 
   Args:
-    ini_path (Path): String for ini path.
+    ini_path (Path): Path to hpcperfstats.ini.
 
   Returns:
-    list[str]: list[str] produced by this call.
+    list[str]: Hostnames in ``server=`` order.
 
   Raises:
     ValueError: Raised when ``load_allowed_server_names`` hits a

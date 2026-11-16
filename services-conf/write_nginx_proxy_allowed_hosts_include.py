@@ -3,7 +3,7 @@
 Write nginx snippet ``hps-proxy-allowed-hosts.inc`` from hpcperfstats.ini.
 
 Attributes:
-  GENERATED_HEADER: Attribute.
+  GENERATED_HEADER: Comment line written at the top of the include.
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ def write_allowed_hosts_include(*, ini_path: Path, out_path: Path) -> None:
   Write the allowed hosts include.
 
   Args:
-    ini_path (Path): String for ini path.
-    out_path (Path): String for out path.
+    ini_path (Path): Path to hpcperfstats.ini.
+    out_path (Path): Destination include path.
 
   Returns:
     None
@@ -45,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
     argv (list[str] | None): One of ``list[str]``, ``None``.
 
   Returns:
-    int: int produced by this call.
+    int: ``0`` on success, ``1`` when the ini is invalid.
 
   Examples:
     >>> main(None)  # doctest: +SKIP

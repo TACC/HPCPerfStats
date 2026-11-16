@@ -148,8 +148,8 @@ def resolve_source_certs_dir(
     >>> td = Path(tempfile.mkdtemp())
     >>> mount = td / "mount"
     >>> mount.mkdir()
-    >>> (mount / "fullchain.pem").write_text("c", encoding="utf-8")
-    >>> (mount / "privkey.pem").write_text("k", encoding="utf-8")
+    >>> _ = (mount / "fullchain.pem").write_text("c", encoding="utf-8")
+    >>> _ = (mount / "privkey.pem").write_text("k", encoding="utf-8")
     >>> resolve_source_certs_dir(mount) == mount.resolve()
     True
   """
@@ -298,7 +298,7 @@ def copy_pems_preserving_meta(
     >>> from pathlib import Path
     >>> fix = fixture_ssl_certs_dir()
     >>> td = Path(tempfile.mkdtemp()) / "out"
-    >>> copy_pems_preserving_meta(fix, td)
+    >>> _ = copy_pems_preserving_meta(fix, td)
     >>> (td / "fullchain.pem").is_file()
     True
   """

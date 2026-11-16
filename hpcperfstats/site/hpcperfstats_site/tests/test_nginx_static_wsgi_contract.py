@@ -266,7 +266,7 @@ def test_nginx_static_files_conf_allowlists_django_prefixes_and_default_404():
 # wrote an [error] "access forbidden by rule" line per scanner probe.
 _GET_ONLY_GATE = "if ($request_method !~ ^(GET|HEAD)$) { return 405; }"
 
-# Django views that only answer GET: nginx 403s other methods at the edge so
+# Django views that only answer GET: nginx 405s other methods at the edge so
 # scanner POSTs never reach Gunicorn (they used to trip Django CSRF 403s).
 _GET_ONLY_DJANGO_LOCATIONS = (
   "location = / {",

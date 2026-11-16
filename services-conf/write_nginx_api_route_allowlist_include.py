@@ -105,7 +105,7 @@ def render_nginx_api_route_allowlist(prefixes: Iterable[str]) -> str:
     str: Full include file text including the generated header.
 
   Raises:
-    ValueError: If ``prefixes`` is empty (fail closed — never emit a blank
+    ValueError: If ``prefixes`` is empty (fail closed - never emit a blank
       allowlist).
 
   Examples:
