@@ -1,0 +1,57 @@
+---
+description: Do not add or leave dead code, pass-through aliases, redundant branches, value-copying or stale comments, planning-ID pointers, non-ASCII comment glyphs, or generated-snapshot drift (Python, TS/JS, shell, config)
+globs: hpcperfstats/**/*.py,scripts/**,services-conf/**,tests/**/*.sh,hpcperfstats/site/frontend/src/**,hpcperfstats/site/frontend/app/**,hpcperfstats/site/frontend/scripts/**,hpcperfstats/site/frontend/test/**,hpcperfstats-tools/**/*.py,cursor-hooks/*.py,experiments/**/*.py,docs/**/*.md,.gitignore,pyproject.toml
+alwaysApply: false
+---
+
+# No Dead Code Or Stale Comments
+
+**Activation:** `alwaysApply: false` - when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+Every pattern below was removed by hand in the 2026-11 repo-wide cleanup (`git log dbf1ffbf..`, commits "chore(cleanup): compact <CHUNK>"). Do not reintroduce them. Applies to code you add **and** to code your change orphans (a removed caller, a renamed file, a changed constant). It is not a licence for unrelated cleanup inside a bug patch (`grok-surgical-bug-fix-mandate.mdc`). Monitor C has its own copy: `monitor/cursor-rules/monitor-no-dead-code-or-stale-comments.mdc`.
+
+## Code
+
+| # | Don't | Do instead | Removed example |
+|---|-------|------------|-----------------|
+| 1 | Keep a function, constant, class, serializer or shell function with no callers "for back-compat" or "in case" | Delete it in the change that removes its last caller, together with its `Attributes:` entry, doctest and dedicated test | alias `sampled_identities_ready_in_db` (sync_timedb write path); 11 `KEY_*` constants in `site/lib/machine/cache_utils.py`; `ProfileMiddleware` (unwired since 2016); 13 dual-read helpers in `monitor_naming/resolve.py`; no-op shell aliases `up_default_stack` / `up_db_pg18` in `rebuild_full_site.sh` |
+| 2 | Add a one-line pass-through wrapper, a local alias of another name, or a type alias that only renames a type | Call / reference the target directly (single-use helper inlining: `refactor-dedup-priorities.mdc`) | `_find_boot_cutoff` alias in `measure_pipeline_ingest_rate.py`; `ApiClient._default_port_for_scheme`; `columns_to_read` alias in `sync_acct.py`; `BokehRuntime` in `bokehInit.ts`; `histogramsFinishedLoading` in `JobList` |
+| 3 | Write a branch whose arms are identical, a guard that an earlier guard or type already implies, or a fallback that cannot run | Before adding a guard, check what the preceding code and types already guarantee; delete the subsumed one | `isError ? null : null` and unreachable `PLACEHOLDER_SESSION` in `app/machine/layout.tsx`; `if ...: return True; return True` in the docgen `is_unwired` check; always-true `not timed_out` in `telemetry_health`; unreachable `y_max <= y_min` in `views.job_hist`; `except (ValueError, json.JSONDecodeError)` (superclass already caught) in `monitor_identity`; `/api/` branch returning the fall-through value in `_csp_for_request` |
+| 4 | Leave unused imports, unused params of private functions, write-only locals, `_ = x` keep-alives, no-op `global` / `del`, unused fixtures | Remove them; for a public signature, keep the param and say why in the docstring | unused `jid`/`fqdn` of `_cpu_lines` (e2e); `remaining_aligned_n` + `_ = remaining_aligned_n` (sync_timedb archive); 4 no-op `global`s in `listend.py`; `del log_fn`; unused `tmp_path` / `capsys` fixtures |
+| 5 | Paste the same block a 3rd time | Shared helper, same task (`duplicate-threshold-helper-mandate.mdc`) | 8 ordered-dedupe loops in `resolve.py` -> `_ordered_unique`; 7 package.json loaders in `test_dockerfile_frontend_builder_cache.py` -> `_frontend_json`; llite/nfs/beegfs rows in `compute_job_detail_fsio_metric_rows` -> one table loop |
+| 6 | Duplicate config entries (ignore patterns, lint globs, per-file-ignores, knip entries) | One entry; let a broader pattern subsume narrower ones | `.gitignore` `*.pyc` twice; ruff per-file-ignores `**/tests/*` plus `hpcperfstats/tests/test_*.py`; source/test glob lists written twice in `eslint.config.js` |
+
+## Comments and docstrings
+
+| # | Don't | Do instead | Removed example |
+|---|-------|------------|-----------------|
+| 7 | Copy a constant's value into prose ("600s", "64 MiB", "6 h", "(default 32)") | Name the constant; the value lives in one place | `rabbitmq_max_message_size.conf` said 64 MiB while the value was 128 MiB; "600s" in `job_list_performance`; "6 h" copy of `MONITOR_DAEMON_SCHEMA_ROTATE_SEC` in `listend.py` |
+| 8 | Leave a comment or docstring that your change made false (wrong caller, path, algorithm, removed feature) | In the same change, grep comments and docstrings for the old name, path and behavior you changed | `nginx-static-files.conf` claimed `proxy_entrypoint` strips leftovers (removed); sitemeas percentile docstring said nearest-rank (code interpolates); `jid_table` module docstring named nonexistent `TypeDetailDataProvider`; `compose_test_cmd.sh` named the wrong function |
+| 9 | Reference planning IDs or history ("D3", "(C9)", "finding 19", "(plan)", "plan matrix", "INFO flood removed", a `test_runs/` artifact id) | State the fact the label stood for; history goes in the commit message | `D3` in `jid_table`, `(C9)` in `stats_find`, history notes in `sync_timedb_ingest_readiness.py` |
+| 10 | Section rulers (`#####`, `# ---- name ----`, `// =====`) and comments that narrate the next line | A plain comment, only when it adds a fact the code does not show | 12 rulers in columnar `job_table` / `detail_series` / `kernels`; `# Warmup` above a variable named `warm` |
+| 11 | Non-ASCII glyphs in comments and docstrings (em/en dash, arrows, ellipsis, multiplication sign, `>=` sign, micro, unicode minus) | ASCII: `-`, `->`, `...`, `x`, `>=`, `us` | normalized in about 40 chunks; user-facing string literals are out of scope |
+| 12 | Placeholder or garbled docstrings: `Attribute.`, `String for ini path`, `list[str] produced by this call`, `__init__.` name echo, summaries split mid-sentence by a bulk reflow | Real prose per `python-docstring-and-typing-contract.mdc`; after `python_def_docstring_upgrade.py`, read the diff for broken sentences | 22 split summaries in `conf_parser`; `Attribute.` in `listend.py`, `dcgm_blank`, `spa_static_root_heal` |
+| 13 | Doc or comment pointers to renamed or deleted files | On rename or delete, `grep -rn <old basename>` across code, docs and `cursor-rules/` | `variableMetadata.js` (now `.ts`) in frontend utils and job_detail docstrings; `docs/TESTING.md` link to a deleted plan |
+
+## Generated snapshots
+
+14. **Don't** delete or rename a def and leave `docs/python_def_inventory.json` listing it. **Do** regenerate in the same commit: `../.venv/bin/python3 scripts/python_def_inventory.py --write docs/python_def_inventory.json`. Six cleanup chunks left removed defs in that snapshot. Same for any other `--write` artifact you invalidate (variable metadata, OpenAPI / Orval output).
+
+## Proving something is dead
+
+- Unlimited whole-word grep over the **whole checkout** (Python, TS, shell, YAML, docs, `cursor-rules/`, hooks): `grep -rnw --exclude-dir=node_modules <name> .`. Hits only in the def, its own doctest/test, or the generated inventory mean dead.
+- `vulture --min-confidence 80` (pre-push) misses unused functions (reported at 60%); `ruff` F/ARG/RET/SIM, `tsc --noUnusedLocals --noUnusedParameters` and `npm run lint:dead` (knip) cover the rest.
+
+## Keep (load-bearing, verified in the cleanup)
+
+- Text a test greps or slices: `# --- <name>` slice anchors in `services-conf/db.Dockerfile` (`test_dockerfile_db_postgres.py`).
+- Names and labels cited by rules, docs or tests (`ROUTER_ENTRIES`, `D34`), public signatures and exports that tests use, framework-mandated params (`*args, **options` on `BaseCommand.handle`).
+- Generated or vendored files (`src/components/ui/*` shadcn, `src/api/generated/**`, `variableMetadataMonitorEvents.ts`): regenerate, never hand-edit.
+- A no-op with a side effect (a config getter that raises on a missing section): leave it and say why.
+
+## Overlap
+
+- **`refactor-dedup-priorities.mdc`** / **`duplicate-threshold-helper-mandate.mdc`** - how and when to dedupe; this rule names the dead-code and comment patterns.
+- **`python-docstring-and-typing-contract.mdc`** - docstring shape and inventory gate (rows 12 and 14).
+- **`feature-removal-doc-sweep.mdc`** - doc sweep when a user-visible feature goes away.
+- **`grok-surgical-bug-fix-mandate.mdc`** - bug patches stay inside the root-cause block.

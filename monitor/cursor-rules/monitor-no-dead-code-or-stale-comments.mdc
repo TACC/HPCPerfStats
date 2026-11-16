@@ -1,0 +1,56 @@
+---
+description: Monitor C - no dead statics/macros, wrapper or alias macros, unused includes/params, write-only state, duplicate conditions, stale or value-copying comments, planning IDs, or non-ASCII comment glyphs
+globs:
+  - HPCPerfStats/monitor/src/**
+  - HPCPerfStats/monitor/tests/**
+  - HPCPerfStats/monitor/measurement/**
+  - HPCPerfStats/monitor/scripts/**/*.py
+alwaysApply: false
+---
+
+# Monitor: no dead code or stale comments
+
+**Activation:** `alwaysApply: false` - when triggers in `agent-discipline-core.mdc` match, **Read this file before editing**. Triggered rules are mandatory, not optional.
+
+Every pattern below was removed by hand in the 2026-11 cleanup (`git log dbf1ffbf..`, commits "chore(cleanup): compact C-<CHUNK>"). Do not reintroduce them, and clean up what your own change orphans. Bug patches still stay inside the root-cause block (`grok-surgical-bug-fix-mandate.mdc`). Container counterpart (Python/TS/shell): `hpcperfstats/cursor-rules/no-dead-code-or-stale-comments.mdc`; it also governs Python under `monitor/measurement/` and `monitor/scripts/` (removed there: `collector_matrix._point`, `schedule.FIT_ORDER`, `probe_uptime_seconds`, `is_stampede3_profile`).
+
+## Code
+
+| # | Don't | Do instead | Removed example |
+|---|-------|------------|-----------------|
+| 1 | Keep a static function, macro or stub with no users | Delete it with its last caller | `FATAL` (`trace.h`), `DEFINE_DICT` (`dict.h`), `pr_iu64` + its `<inttypes.h>` (`stl_shim.h`), `parse_max_mhz_from_dpm_table` (`roofline_hw_peak_detect.c`), `str_collect_prefix_key_list` link stub (`test_nfs_schema_subset.c`) |
+| 2 | Add a one-line wrapper, an alias `#define` for a function/macro, or a redundant forward declaration | Call the target; order statics so no prototype is needed | `stats_buffer_resend`, `ib_collect` (`st_collect` now points at `ib_family_collect`), `intel_spr_eventset`, `daemonize_exit_on_failure`, `dcgm_err` alias macro, static wrappers in `host_key_alias.c`, forward decls `is_schema_payload` / `rmq_reopen_channel` |
+| 3 | Leave an `#include` whose symbols the file does not use, or one its own module header already supplies | Include what the file uses; drop an include when its last use goes | `<stdint.h>` + `"trace.h"` in `arm_imc.c`; `<sys/stat.h>`, `<unistd.h>` across `job_*.c`; `limits.h` / `errno.h` / `fileio.h` in `stats_buffer.c` |
+| 4 | Unused params of static functions, write-only statics/locals, flags that mirror a pointer, always-zero `rc`, NULL-guarded `free()`, re-zeroing already-zeroed fields | Remove them | `socket_out` of `rmq_open_tcp_and_login`; `flops` of `detect_gpu_peaks_from_sysfs`; `g_nvidia_gpu_runtime_watch_profile`; `*_test_hooks_active` (always `hooks != NULL`) in `ib_mad_dyn.c` / `opa_mad_dyn.c`; `rc` in `stats_buffer_open/close` |
+| 5 | Duplicate operands, identical if/else arms, guards that are always true, duplicate early returns | Collapse to the one real condition | `strcmp` of true/yes/on twice in `hwdetect` `env_truthy` and `likwid_pmc_adapter.c`; `s++` in both arms of `path_has_dotdot`; always-true `gpu_flops <= 0` guards in `roofline_hw_peak_detect.c`; duplicated `has_throttle` branches |
+| 6 | Paste a block a 3rd time | One `static` helper (`refactor-dedup-priorities.mdc`) | 9 stderr-restore blocks in `likwid_uncore_adapter.c`; max-CPU scan in `job_sched_affinity.c` -> `cpulist_max_index`; identical DFC/UMC key tables in `likwid_uncore_profiles.c` |
+| 7 | Commented-out code (`// printf(...)`) | Delete; git keeps history | two commented `printf` lines in `cpuid.c` |
+
+## Comments
+
+| # | Don't | Do instead | Removed example |
+|---|-------|------------|-----------------|
+| 8 | Comments the code contradicts (algorithm, arch scope, counts, build flag, function name) | Re-read header and banner comments of every function and file you change | `stats_registry` "sorted / binary search" (it scans linearly); `STATS_TYPE_NAME_MAX` "longest is 12 chars" (24); `cpuid.c` "Intel-only, AMD 4 counters" (EPYC has 6); `metric_profiler.c` "debug builds" (`--enable-metric-profiler`); `dcgm_gpu_dyn.c` "x86 only"; `dict_destory` |
+| 9 | Copy literal values of a macro or constant into prose | Name the macro | literal-value echoes in RMQ comments (`stats_buffer_rmq.c`); comment restating `#define INTEL_EMR_IMC_KEYS INTEL_SPR_IMC_KEYS` |
+| 10 | Planning IDs and history ("D14", "finding N", "Approach J2", "(plan)", "Phase N:", "Case N") | State the fact; history goes in the commit | `D14/D17/D2/D33` in `nvidia_gpu_dcgm_watch.c`; `(plan)` in FS collectors; `Phase N:` test banners in `test_job_*` |
+| 11 | Section rulers, narrating comments (`/* cleanup */`), long history narratives in headers | Short fact-only comment | `path_read.h`, `procfile_parse.h`, `sys_iter.h` headers condensed; `/* cleanup */` in `test_sys_iter.c` |
+| 12 | Non-ASCII glyphs in comments (em/en dash, arrows, ellipsis, multiplication sign, `<=`/`>=` signs, approx) | ASCII `-`, `->`, `...`, `x`, `<=`, `>=`, `~` | normalized in almost every C chunk |
+
+## Proving something is dead
+
+- `grep -rnw <name> monitor/src monitor/tests monitor/scripts monitor/measurement docs` (plus `hpcperfstats/` for names the consumer might parse). A declaration in a public `.h` that tests use stays (`lustre_parse_kv_ull`).
+- Build with the warning gate (`monitor/scripts/run_warning_gate.sh`, `-Wall -Wextra -Werror`) and `run_cpp_linter.sh`; then `make check` per **`monitor-static-build-verification.mdc`**. Code under `#if MONITOR_WITH_OPA` etc. that the bundle does not compile needs a manual `-D...` syntax check.
+
+## Keep (load-bearing, verified in the cleanup)
+
+- Text a contract test greps: `passive=1` in `stats_buffer_rmq.c` (`test_stats_buffer_rmq_reconnect_contract.sh`).
+- `KEYS` macros, KEYS aliases and the per-test `#undef <X>_KEYS` pattern (**`monitor-schema-keys-headers.mdc`**); emitted `st_name` / event names (**`monitor-emitted-variable-naming.mdc`**).
+- Design labels that a rule or `tests/README.md` defines (`D1`, `D6`, `O11`-`O17` in **`monitor-arm-direct-perf.mdc`**).
+- Vendored third-party headers (`third_party/**`: `mad.h`, `xpum_*`, `dcgm_*`, `nvml.h`).
+- Behavior changes disguised as cleanup (e.g. enabling the never-defined `GCC_VERSION` sentinel in `collect.h`): flag, do not change.
+
+## Overlap
+
+- **`monitor-c-refactor-standards.mdc`** / **`monitor-c-conventions.mdc`** - safety, structure and style; this rule names the dead-code and comment patterns.
+- **`refactor-dedup-priorities.mdc`** - how to dedupe (monitor copy).
+- **`monitor-valgrind-cpp-linter-gate.mdc`** - linter/valgrind gate at plan close.

@@ -399,6 +399,41 @@ def test_triggered_rules_product_python_dispatches_surgical_bug_fix():
   assert "refactor-dedup-priorities.mdc" in fe_rules
 
 
+def test_triggered_rules_dispatch_no_dead_code_rule_by_tree():
+  """Container code gets the container rule; monitor C gets the monitor copy."""
+  for path in (
+    "hpcperfstats/listend.py",
+    "hpcperfstats/site/frontend/src/views/JobDetail.tsx",
+    "services-conf/supervisor_startup.sh",
+    "docs/TESTING.md",
+  ):
+    rules = triggered_rules_for_paths([path])
+    assert "no-dead-code-or-stale-comments.mdc" in rules, path
+    assert "monitor-no-dead-code-or-stale-comments.mdc" not in rules, path
+  for path in (
+    "HPCPerfStats/monitor/src/stats_buffer.c",
+    "HPCPerfStats/monitor/tests/test_sys_iter.c",
+    "monitor/measurement/orchestrator.py",
+  ):
+    rules = triggered_rules_for_paths([path])
+    assert "monitor-no-dead-code-or-stale-comments.mdc" in rules, path
+    assert "no-dead-code-or-stale-comments.mdc" not in rules, path
+
+
+def test_no_dead_code_rules_are_dual_registered():
+  monitor_rule = (
+    RULES_DIR.parents[1]
+    / "monitor"
+    / "cursor-rules"
+    / "monitor-no-dead-code-or-stale-comments.mdc"
+  )
+  for path in (
+    RULES_DIR / "no-dead-code-or-stale-comments.mdc",
+    monitor_rule,
+  ):
+    assert lib.rule_dual_registration_issues([str(path)]) == [], path
+
+
 def test_triggered_rules_for_cursor_hooks_path():
   rules = triggered_rules_for_paths([HOOK_LIB_PATH])
   assert "testing-best-practices.mdc" in rules

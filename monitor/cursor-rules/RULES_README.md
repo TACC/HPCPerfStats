@@ -14,7 +14,7 @@ Loaded every agent turn. Keep these short; do not add more `alwaysApply: true` f
 | `workspace-single-cursor-directory.mdc` | Exactly one `<workspace_root>/.cursor/`; no nested `.cursor/` under git paths |
 | `out-of-monitor-hpcperfstats-rules.mdc` | Authorized non-monitor work loads `hpcperfstats/cursor-rules/` |
 
-## Domain rules (55 files — `alwaysApply: false`)
+## Domain rules (57 files — `alwaysApply: false`)
 
 **Mandatory when triggered**, not optional. Agents must use the **Read** tool on matching rules from the router in `agent-discipline-core.mdc` before editing trigger paths.
 
@@ -41,6 +41,7 @@ Notable contracts (see filename in `HPCPerfStats/monitor/cursor-rules/`):
 - **`plan-creation-contract.mdc`** / **`plan-template-enforcement.mdc`** — plan authoring; template at **`HPCPerfStats/monitor/docs/plans/PLAN_TEMPLATE.md`** (bug plans: RCA + Target File + Fix compression sequence + Minimally Invasive Fix + Compression metric block)
 - **`grok-surgical-bug-fix-mandate.mdc`** — bug-fix / ticket / error-refactor patches are zero-expansion repairs of the root-cause block (compress that block; do not append nested conditionals; no unrelated adjacent cleanup; no new helpers unless 3+ copies or the user asks); RCA + compression metrics in chat (or PLAN_TEMPLATE metric block) before the first product-code edit; **not** always-on (description + globs + router)
 - **`refactor-dedup-priorities.mdc`** — less code first, simplicity, branch reduction; bug-fix Boy Scout compresses only the failing ~30-line block
+- **`monitor-no-dead-code-or-stale-comments.mdc`** — C patterns the 2026-11 cleanup removed (dead statics/macros, wrapper and alias macros, unused includes/params, write-only state, duplicate conditions, stale / value-copying / planning-ID comments, non-ASCII comment glyphs) plus what to keep (contract-grepped text, KEYS, vendored headers)
 
 Adding a new domain rule (same task, non-optional):
 

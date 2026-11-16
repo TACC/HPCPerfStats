@@ -745,6 +745,29 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     ],
   },
   {
+    "id": "no_dead_code_stale_comments",
+    "patterns": [
+      "hpcperfstats/*.py",
+      "hpcperfstats/**/*.py",
+      "scripts/**",
+      "services-conf/**",
+      "tests/*.sh",
+      "hpcperfstats/site/frontend/src/**",
+      "hpcperfstats/site/frontend/app/**",
+      "hpcperfstats/site/frontend/scripts/**",
+      "hpcperfstats/site/frontend/test/**",
+      "hpcperfstats-tools/**/*.py",
+      "cursor-hooks/*.py",
+      "experiments/**/*.py",
+      "docs/*.md",
+      ".gitignore",
+      "pyproject.toml",
+    ],
+    "rules": [
+      "no-dead-code-or-stale-comments.mdc",
+    ],
+  },
+  {
     "id": "package_lib_colocation",
     "patterns": [
       "hpcperfstats/**/lib/**",
@@ -783,6 +806,22 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
       "monitor-jitter-and-fidelity-priority.mdc",
       "monitor-c-refactor-standards.mdc",
       "monitor-valgrind-cpp-linter-gate.mdc",
+    ],
+  },
+  {
+    "id": "monitor_no_dead_code_stale_comments",
+    "patterns": [
+      "HPCPerfStats/monitor/src/**",
+      "HPCPerfStats/monitor/tests/**",
+      "HPCPerfStats/monitor/measurement/**",
+      "HPCPerfStats/monitor/scripts/**/*.py",
+      "monitor/src/**",
+      "monitor/tests/**",
+      "monitor/measurement/**",
+      "monitor/scripts/**/*.py",
+    ],
+    "rules": [
+      "monitor-no-dead-code-or-stale-comments.mdc",
     ],
   },
   {

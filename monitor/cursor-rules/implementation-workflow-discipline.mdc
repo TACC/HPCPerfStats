@@ -20,6 +20,7 @@ Use these during **plan**, **implement**, **self-review**, and **verification** 
 | [plan-template-enforcement.mdc](plan-template-enforcement.mdc) | PLAN_TEMPLATE alignment |
 | [grok-surgical-bug-fix-mandate.mdc](grok-surgical-bug-fix-mandate.mdc) | Zero-expansion bug patches; compress root-cause block |
 | [refactor-dedup-priorities.mdc](refactor-dedup-priorities.mdc) | Less code first; bug-fix compression order |
+| [monitor-no-dead-code-or-stale-comments.mdc](monitor-no-dead-code-or-stale-comments.mdc) | No dead statics/macros, alias wrappers, unused includes/params, stale or planning-ID comments, non-ASCII comment glyphs |
 | [implementation-review-workflow.mdc](implementation-review-workflow.mdc) | Pre-code plan + post-code self-review detail |
 | [every-error-regression-test.mdc](every-error-regression-test.mdc) | Regression test law for fixes |
 | [global-testing-discipline.mdc](global-testing-discipline.mdc) | After every implementation: run the right tests and builds |
