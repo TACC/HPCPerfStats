@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Full-tree clang-format + clang-tidy gate for monitor src/ and tests/.
-# No git hooks / pre-commit — invoke tools directly (prefer workspace .venv).
+# No git hooks / pre-commit: invoke tools directly (prefer workspace .venv).
 #
 # Usage:
 #   ./scripts/run_cpp_linter.sh

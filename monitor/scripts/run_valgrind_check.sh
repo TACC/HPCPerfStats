@@ -16,7 +16,7 @@
 #
 # Configure uses --enable-all-static (same as canonical static bundle) with -g -O1.
 # check_PROGRAMS run under Valgrind via Automake LOG_COMPILER; check-local is unwrapped.
-# On TACC: module load valgrind (after fixing MODULEPATH — tacc-lmod-build-environment).
+# On TACC: module load valgrind (after fixing MODULEPATH; see tacc-lmod-build-environment).
 #
 set -euo pipefail
 

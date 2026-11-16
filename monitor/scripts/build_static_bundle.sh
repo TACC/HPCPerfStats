@@ -577,7 +577,7 @@ build_likwid() {
   # GCC's pinlib link uses SHARED_LFLAGS + LIBS but not LFLAGS; without -pthread,
   # pthread_setaffinity_np is undefined on some hosts (seen on Lonestar6).
   # Command-line LIBS= replaces makefile LIBS; pinlib's `LIBS += -ldl` does NOT
-  # append (GNU make ignores += on cmdline vars without override) — keep -ldl here
+  # append (GNU make ignores += on cmdline vars without override) - keep -ldl here
   # or dlopen/dlsym fail on LS6 for pinlib and the lua helper binary.
   local -a likwid_mk=(
     COMPILER="${likwid_compiler}"
@@ -588,7 +588,7 @@ build_likwid() {
   make clean >/dev/null 2>&1 || true
   # Makefile ACCESSMODE=perf_event sets -DLIKWID_USE_PERFEVENT so runtime PERF
   # can call perfmon_init (cpu/power/uncore_imc sysfs). A DIRECT-built archive
-  # with runtime PERF leaves access_init NULL → ENODEV. Runtime is PERF-only
+  # with runtime PERF leaves access_init NULL -> ENODEV. Runtime is PERF-only
   # (HPCPERFSTATS_LIKWID_ACCESS=direct is rejected).
   make -j"${JOBS}" PREFIX="${PREFIX}" INSTALLED_PREFIX="${PREFIX}" \
     BUILDDAEMON=false BUILDFREQ=false BUILD_SYSFEATURES=false ACCESSMODE=perf_event \

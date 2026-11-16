@@ -2,8 +2,8 @@
 # Shared cleanup for monitor Autotools / build-script workspaces.
 # Sourced by prepare_rpmbuild_dirs.sh and build_static_bundle.sh (see monitor-build-clean-workspace).
 #
-# monitor_tree_clean_pre_dist  — before autoreconf/configure/compile in MONITOR_DIR
-# monitor_tree_clean_post_dist — after make dist + tarball copy (prepare only)
+# monitor_tree_clean_pre_dist runs before autoreconf/configure/compile in MONITOR_DIR;
+# monitor_tree_clean_post_dist runs after make dist + tarball copy (prepare only).
 
 monitor_tree_clean_pre_dist() {
   local monitor_dir="${1:?monitor_dir required}"
