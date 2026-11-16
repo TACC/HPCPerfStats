@@ -97,10 +97,6 @@ web_container_ref() {
   echo "${HPCPERFSTATS_COMPOSE_PROJECT}_web_1"
 }
 
-web_container_id() {
-  web_container_ref
-}
-
 file_sha256() {
   local path="$1"
   if command -v sha256sum >/dev/null 2>&1; then
@@ -225,11 +221,6 @@ count_files_in_proxy_container() {
   "${PODMAN_COMPOSE[@]}" exec -T proxy sh -lc "find '${container_dir}' -type f 2>/dev/null | wc -l | tr -d ' '"
 }
 
-reset_container_dir_via_compose() {
-  local target_dir="$1"
-  "${PODMAN_COMPOSE[@]}" exec -T web bash -lc "rm -rf '${target_dir}' && mkdir -p '${target_dir}'"
-}
-
 copy_host_tar_into_web() {
   local host_tar="$1"
   local container_tar="$2"
@@ -299,13 +290,6 @@ verify_container_extract_fingerprint() {
   fi
 
   echo "Verified extract fingerprint for ${label} (${container_fp})"
-}
-
-copy_tree_via_compose_cp_from_dir() {
-  local host_src_dir="$1"
-  local dest="$2"
-  reset_container_dir_via_compose "${dest}"
-  "${PODMAN[@]}" cp "${host_src_dir}/." "$(web_container_ref):${dest}/"
 }
 
 copy_tree_into_container_from_dir() {

@@ -121,10 +121,6 @@ copy_tree_via_staged_tar() {
     "${STATIC_FRONTEND}/machine/index.html"
 }
 
-copy_tree_via_compose_cp() {
-  copy_tree_via_compose_cp_from_dir "$1" "$2"
-}
-
 deploy_frontend_via_staged_volume() {
   echo "rebuild_frontend.sh: podman-compose — staged tar direct to nginx volume (staticfiles_data)"
   copy_tree_via_staged_tar "${CONTAINER_STATIC_ROOT_FRONTEND}"

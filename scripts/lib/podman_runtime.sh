@@ -138,10 +138,3 @@ podman_runtime_require() {
   fi
   _PODMAN_RUNTIME_VERIFIED=1
 }
-
-podman_container_health() {
-  local container_id="$1"
-  "${PODMAN[@]}" inspect \
-    --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' \
-    "$container_id"
-}

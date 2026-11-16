@@ -229,15 +229,6 @@ compose_up_project_stack() {
   run_cmd "${PODMAN_COMPOSE[@]}" up -d --no-build || return 1
 }
 
-# Legacy names kept for callers/tests; default-profile up never starts db_pg18.
-up_default_stack() {
-  compose_up_project_stack
-}
-
-up_db_pg18() {
-  :
-}
-
 compose_service_container_name() {
   printf '%s_%s_1' "${HPCPERFSTATS_COMPOSE_PROJECT}" "$1"
 }
