@@ -1992,26 +1992,6 @@ class _PrewarmPipeline:
     """
     return False
 
-  def drain_some(
-    self,
-    force: bool = False,
-    wait_timeout_s: float = 0.0,
-  ) -> None:
-    """
-    No-op retained for older callers that still invoke drain (no async futures).
-
-    Args:
-      force (bool): Unused.
-      wait_timeout_s (float): Unused.
-
-    Returns:
-      None
-
-    Examples:
-      >>> _PrewarmPipeline().drain_some(True, 0)  # doctest: +SKIP
-    """
-    return None
-
   def finish(self) -> None:
     """
     No-op - sync prewarm completes inside submit / run_for_jid / pool map.
@@ -2199,27 +2179,6 @@ class _CompletionReporter:
       and self._readiness_error_events[0][0] < cutoff
     ):
       self._readiness_error_events.popleft()
-
-  def record_completed(self, count: int) -> None:
-    """
-    Record completed.
-
-    Args:
-      count (int): Integer value for count.
-
-    Returns:
-      None
-
-    Examples:
-      >>> _CompletionReporter().record_completed(0)  # doctest: +SKIP
-    """
-    if count <= 0:
-      return
-    now = time.monotonic()
-    with self._lock:
-      self._completed_events.append((now, int(count)))
-      self._completed_total += int(count)
-      self._prune_locked(now)
 
   def completed_in_window(self) -> Any:
     """
@@ -7127,44 +7086,6 @@ def _start_readiness_producer(
   return producer
 
 
-def _compute_metrics_batch(
-  metrics_manager: Any,
-  job_refs: Any,
-  shared_pool: Any,
-) -> Any:
-  """
-  Run metrics per-jid and return (succeeded_jids, failed_count).
-
-  Args:
-    metrics_manager (Any): Metrics manager passed to this helper.
-    job_refs (Any): Job refs passed to this helper.
-    shared_pool (Any): Shared pool passed to this helper.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _compute_metrics_batch(None, None, None)  # doctest: +SKIP
-  """
-  if not job_refs:
-    return [], 0
-  succeeded = []
-  failed = 0
-  for job_ref in job_refs:
-    if shutdown_requested[0]:
-      break
-    try:
-      metrics_manager.run([job_ref], pool=metrics_manager.ensure_pool())
-      succeeded.append(job_ref.jid)
-    except Exception as job_exc:
-      failed += 1
-      log_print(
-        f"metrics scheduler: failed jid={job_ref.jid}; skipping and continuing: {job_exc}",
-        flush=True,
-      )
-  return succeeded, failed
-
-
 @dataclass
 class PerJidComputeContext:
   """
@@ -9777,14 +9698,8 @@ def main(argv: Any | None = None, sleep_after: Any | None = None) -> Any:
       .strip()
       .lower()
     )
-    if env_sleep_after in ("0", "no", "false"):
-      sleep_after = False
-    elif env_sleep_after in ("1", "yes", "true"):
-      sleep_after = True
-    else:
-      sleep_after = True
+    sleep_after = env_sleep_after not in ("0", "no", "false")
 
-  #################################################################
   default_start, default_end = _default_metrics_date_range()
   startdate, enddate = parse_start_end_dates(argv, default_start, default_end)
 
@@ -9801,7 +9716,6 @@ def main(argv: Any | None = None, sleep_after: Any | None = None) -> Any:
   _apply_metrics_gc_config()
 
   log_date_range("metrics to update", startdate, enddate)
-  #################################################################
 
   # Newest calendar day first (end of range / today before older days).
   all_dates = _newest_first_metrics_dates(startdate, enddate)

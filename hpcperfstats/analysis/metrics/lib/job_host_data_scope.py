@@ -591,62 +591,6 @@ def host_wide_residual_ht_cache_key(
   )
 
 
-def sorted_hosts_fingerprint(hosts: Any) -> str:
-  """
-  Stable fingerprint for a host list used in residual day-cache keys.
-
-  Args:
-    hosts (Any): Iterable of hostnames.
-
-  Returns:
-    str: Comma-joined sorted unique host strings (empty → ``-``).
-
-  Examples:
-    >>> sorted_hosts_fingerprint(["b", "a"])
-    'a,b'
-  """
-  vals = sorted({str(h) for h in (hosts or []) if h})
-  return ",".join(vals) if vals else "-"
-
-
-def calendar_days_covering(start: Any, end: Any) -> list[str]:
-  """
-  Inclusive calendar-day ISO strings covering ``[start, end]``.
-
-  Args:
-    start (Any): Datetime-like window start.
-    end (Any): Datetime-like window end.
-
-  Returns:
-    list[str]: ``YYYY-MM-DD`` days (empty when bounds missing).
-
-  Examples:
-    >>> from datetime import datetime, timezone
-    >>> calendar_days_covering(
-    ...   datetime(2026, 10, 21, 23, tzinfo=timezone.utc),
-    ...   datetime(2026, 10, 22, 1, tzinfo=timezone.utc),
-    ... )
-    ['2026-10-21', '2026-10-22']
-  """
-  if start is None or end is None:
-    return []
-  try:
-    from datetime import timedelta
-
-    d0 = start.date() if hasattr(start, "date") else start
-    d1 = end.date() if hasattr(end, "date") else end
-    if d1 < d0:
-      d0, d1 = d1, d0
-    out: list[str] = []
-    cur = d0
-    while cur <= d1:
-      out.append(cur.isoformat())
-      cur = cur + timedelta(days=1)
-    return out
-  except Exception:
-    return []
-
-
 # Per-sample ceilings. Below a uint64 wrap (~1e19) and above a single host.
 MAX_SANE_COUNTER_RATE = 1.0e13
 MAX_SANE_COUNTER_DELTA = 1.0e17
@@ -765,31 +709,6 @@ def apply_gpu_affinity_dev_filter(
   if devs is None:
     return qs
   return qs.filter(dev__in=list(devs))
-
-
-def job_is_shared_node_from_jobish(jobish: Any) -> bool:
-  """
-  Resolve ``is_shared_node`` from a job-like object with a ``jid`` attribute.
-
-  Args:
-    jobish (Any): Object or mapping with ``jid`` (``jid_table``, ``job_data``).
-
-  Returns:
-    bool: Shared-node signal when jid is a real string/int; else False.
-
-  Examples:
-    >>> job_is_shared_node_from_jobish(type("J", (), {"jid": ""})())
-    False
-  """
-  jid = getattr(jobish, "jid", None)
-  if jid is None and isinstance(jobish, dict):
-    jid = jobish.get("jid")
-  if not isinstance(jid, (str, int)):
-    return False
-  s = str(jid).strip()
-  if not s:
-    return False
-  return job_is_shared_node(s)
 
 
 def job_is_shared_node(jid: str) -> bool:

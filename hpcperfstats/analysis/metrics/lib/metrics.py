@@ -1066,29 +1066,6 @@ class _Host:
     self.stats = {}
 
 
-def _fqdn_hosts_for_job_model(job: Any) -> Any:
-  """
-  Internal helper to handle fqdn hosts for job model.
-
-  Args:
-    job (Any): Job record (Django ``job_data`` or job-like mapping).
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _fqdn_hosts_for_job_model(None)  # doctest: +SKIP
-  """
-  suffix = "." + cfg.get_host_name_ext()
-  hosts = []
-  for host in job.host_list or []:
-    h = str(host or "").strip()
-    if not h:
-      continue
-    hosts.append(h if "." in h else (h + suffix))
-  return hosts
-
-
 def _in_window_telemetry_bounds_for_job(job: Any) -> Any:
   """
   Return ``(telemetry_first_time, telemetry_last_time)`` for accounting hosts.
@@ -3860,9 +3837,7 @@ def persist_window_coverage_gate_failure(
   return True
 
 
-###########
-# Complex Metrics #
-###########
+# Complex metrics.
 
 
 class avg_freq:
