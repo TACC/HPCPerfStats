@@ -1,7 +1,7 @@
 """
-Shared utilities for analysis: job-like utils class (freq/imc/cha, get_type),.
-
-queryset_to_dataframe, clean_dataframe, and timezone-aware Bokeh tick formatter.
+Shared analysis utilities: the job-like ``utils`` class (pmc/imc/cha type
+resolution, ``get_type``), Bokeh axis/hover formatters in the cluster
+timezone, and plain-decimal number formatting.
 
 Attributes:
   jid_table: ``jid_table``.
@@ -99,9 +99,8 @@ def _pick_pmc_typename(schema_keys: Any) -> Any:
 
 class utils:
   """
-  Minimal job-like wrapper exposing host stats, schemas, times, and type.
-
-    resolution (pmc/imc/cha) for metrics and plots.
+  Minimal job-like wrapper exposing host stats, schemas, times, and type
+  resolution (pmc/imc/cha) for metrics and plots.
 
   Attributes:
     cha: ``cha``.
@@ -120,9 +119,7 @@ class utils:
 
   def __init__(self, job: Any) -> None:
     """
-    Initialize from a job object; set nhosts, hostnames, wayness, hours, t, nt,.
-
-      dt, and resolve pmc/imc/cha/freq from schemas.
+    Derive host/time fields from a job and resolve pmc/imc/cha/freq types.
 
     Args:
       job (Any): Job record (Django ``job_data`` or job-like mapping).
@@ -163,9 +160,10 @@ class utils:
 
   def get_type(self, typename: Any, aggregate: bool = True) -> Any:
     """
-    Return (schema, stats) for typename (e.g. pmc/imc/cha); stats is per-host.
+    Return (schema, stats) for typename (e.g. pmc/imc/cha).
 
-      aggregated or per-device dict. Returns (None, {}) if type not in job.
+    ``stats`` maps host to the device-summed series, or to a per-device dict
+    when ``aggregate`` is False. Returns (None, {}) if the type is absent.
 
     Args:
       typename (Any): Typename passed to this helper.
@@ -183,7 +181,7 @@ class utils:
       typename = self.pmc
     if typename == "cha":
       typename = self.cha
-    if not typename or typename is None:
+    if not typename:
       return None, {}
 
     resolved_typename = typename

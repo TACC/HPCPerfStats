@@ -1,24 +1,17 @@
 """
-Job-scoped host_data access via Django ORM. Provides jid_table,.
-
-TypeDetailDataProvider, and HostDataProvider for querying job/host metrics
-without raw SQL. Uses Valkey caching for heavy queries.
+Job-scoped host_data scope for one job: ``jid_table`` (accounting window,
+hosts, schema, large-job time slots) plus the host x time chunking and
+statement-timeout bisect helpers shared by metrics and plot reads. Heavy
+lookups are cached in Valkey.
 
 Attributes:
-  HOST_DATA_SUM_VAL_ALIAS: ``HOST_DATA_SUM_VAL_ALIAS``.
-  HOST_DATA_TIME_ALIAS: ``HOST_DATA_TIME_ALIAS``.
   JID_TABLE_HOST_QUERY_BATCH: ``JID_TABLE_HOST_QUERY_BATCH``.
   JID_TABLE_SCHEMA_PROBE_SLICE_S: Seconds read after the first scoped
     sample when building the jid_table schema.
   LARGE_JOB_SLOT_S: Seconds per large-job time slot (one sample per host).
-  TYPE_DETAIL_HOST_QUERY_BATCH: ``TYPE_DETAIL_HOST_QUERY_BATCH``.
-  _DENSE_PLOT_AGG_TYPES: NFS/llite type names that use the dense (8) host batch.
   _GPU_AFF_UNSET: Sentinel for unloaded ``job_affinity`` GPU cache.
   _STATEMENT_TIMEOUT_ERROR_MARKERS: ``_STATEMENT_TIMEOUT_ERROR_MARKERS``.
   _logger: ``_logger``.
-  _summary_agg_count: ``_summary_agg_count``.
-  _summary_agg_count_lock: ``_summary_agg_count_lock``.
-  _summary_agg_counting: ``_summary_agg_counting``.
   local_timezone: ``local_timezone``.
 """
 
@@ -93,34 +86,13 @@ _STATEMENT_TIMEOUT_ERROR_MARKERS = (
 )
 
 
-def is_metrics_compute_control_flow_error(exc: Any) -> Any:
-  """
-  True for timeout control flow that must never be swallowed by a fallback.
-
-  Thread workers rely on database statement timeouts and parent no-progress
-  detection. A timeout escaping a bounded query must propagate so an
-  ``except Exception`` fallback cannot start a slower unbounded path.
-
-  Args:
-    exc (Any): Exception instance being classified or logged.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> is_metrics_compute_control_flow_error(None)  # doctest: +SKIP
-  """
-  return isinstance(exc, TimeoutError)
-
-
 def _coerce_jid_table_host_query_batch_size(batch_size: int) -> Any:
   """
-  Parse optional per-chunk size for ``host__in`` batching; never raise on bad.
+  Parse optional ``host__in`` chunk size; never raise on bad input.
 
-    input.
-
-  batch size is expected; ``int("c641-092.vista.tacc.utexas.edu")`` would break
-  large-job row counting.
+  A hostname passed where a batch size is expected
+  (``int("c641-092.vista.tacc.utexas.edu")``) would break large-job row
+  counting.
 
   Args:
     batch_size (int): Integer value for batch size.
@@ -154,8 +126,7 @@ def _listify_acct_hosts(acct_hosts: Any) -> Any:
 
   ``job_data.host_list`` is normally a list of short names. A buggy import or
   serializer may store a **single FQDN string** (or comma-separated names) in
-    the
-  column. Using ``list("host.example.com")`` splits into characters, which
+  the column. Using ``list("host.example.com")`` splits into characters, which
   breaks ``host__in`` chunking and can trigger obscure driver errors (including
   ``invalid literal for int()`` on fragments).
 
@@ -185,12 +156,7 @@ def _listify_acct_hosts(acct_hosts: Any) -> Any:
     if x is None:
       return []
     if isinstance(x, bytes):
-      s = x.decode("utf-8", errors="replace").strip()
-      if not s:
-        return []
-      if "," in s:
-        return [p.strip() for p in s.split(",") if p.strip()]
-      return [s]
+      x = x.decode("utf-8", errors="replace")
     if isinstance(x, str):
       s = x.strip()
       if not s:
@@ -207,10 +173,7 @@ def _listify_acct_hosts(acct_hosts: Any) -> Any:
     cur = stack.pop()
     if cur is None:
       continue
-    if isinstance(cur, (str, bytes)):
-      out.extend(_norm_scalar(cur))
-      continue
-    if isinstance(cur, dict):
+    if isinstance(cur, (str, bytes, dict)):
       out.extend(_norm_scalar(cur))
       continue
     if isinstance(cur, (list, tuple, set, deque)):
@@ -792,10 +755,7 @@ def _coerce_nonnegative_window_row_count(value: Any) -> Any:
     return None
   cur = value
   for _ in range(24):
-    if isinstance(cur, (list, tuple)) and len(cur) == 1:
-      cur = cur[0]
-      continue
-    if isinstance(cur, deque) and len(cur) == 1:
+    if isinstance(cur, (list, tuple, deque)) and len(cur) == 1:
       cur = cur[0]
       continue
     # NumPy scalars / 0-d arrays, pandas Series (len 1), etc.: one logical element.
@@ -824,9 +784,7 @@ def _coerce_nonnegative_window_row_count(value: Any) -> Any:
 
 def _safe_positive_int_ttl_seconds(raw_ttl: Any, *, default: Any) -> Any:
   """
-  Cache timeout for row-count entries; never raises (misconfig / odd cache.
-
-    types).
+  Cache timeout for row-count entries; never raises on misconfig or odd types.
 
   Args:
     raw_ttl (Any): Raw ttl passed to this helper.
@@ -876,7 +834,7 @@ def _count_host_data_rows_for_window_cached(
   acct_hosts: Any,
 ) -> Any:
   """
-  Exact window COUNT(*) with optional short Django-cache TTL (see conf_parser).
+  Estimated window row count with an optional short Django-cache TTL.
 
   Args:
     jid (Any): Jid passed to this helper.
@@ -962,9 +920,7 @@ def _ensure_tz(dt: Any) -> Any:
 
 def _normalize_host_cell_for_host_data(value: Any) -> Any:
   """
-  Coerce ``host_data.host`` cell to a hashable hostname string (set/DISTINCT.
-
-    safe).
+  Coerce a ``host_data.host`` cell to a hashable (set/DISTINCT-safe) hostname.
 
   Bad payloads occasionally store nested sequences in ``host``; ``set.update``
   on queryset rows then raises ``unhashable type: 'list'``.
@@ -981,8 +937,7 @@ def _normalize_host_cell_for_host_data(value: Any) -> Any:
   if value is None:
     return None
   if isinstance(value, bytes):
-    s = value.decode("utf-8", errors="replace").strip()
-    return s if s else None
+    value = value.decode("utf-8", errors="replace")
   if isinstance(value, str):
     s = value.strip()
     return s if s else None
@@ -1004,9 +959,8 @@ def _normalize_job_accounting_host_list(raw: Any) -> Any:
 
   Defensive: corrupted cache/ORM values can surface as a non-list (e.g. a lone
   ``datetime``), which must not be iterated for FQDN construction. A single FQDN
-  string (or comma-separated short names) is accepted like
-    :func:`_listify_acct_hosts`.
-  Nested list payloads are flattened via :func:`_listify_acct_hosts`.
+  string (or comma-separated short names) is accepted, and nested list
+  payloads are flattened, via :func:`_listify_acct_hosts`.
 
   Args:
     raw (Any): Raw passed to this helper.
@@ -1017,13 +971,7 @@ def _normalize_job_accounting_host_list(raw: Any) -> Any:
   Examples:
     >>> _normalize_job_accounting_host_list(None)  # doctest: +SKIP
   """
-  if raw is None:
-    return []
-  if isinstance(raw, datetime):
-    return []
-  if isinstance(raw, (list, tuple, set, deque)):
-    return _listify_acct_hosts(raw)
-  if isinstance(raw, (str, bytes)):
+  if isinstance(raw, (list, tuple, set, deque, str, bytes)):
     return _listify_acct_hosts(raw)
   return []
 
@@ -1096,8 +1044,7 @@ def _unpack_cached_job_window_row(row: Any) -> Any:
   """
   Return ``(host_list, start_time, end_time)`` from a cached jid row.
 
-  Expects a ``values_list`` tuple of ``(host_list, start_time, end_time)``
-    (pickle-safe).
+  Expects a pickle-safe ``values_list`` tuple.
 
   Args:
     row (Any): Value to inspect (typically a numeric scalar).
@@ -1117,9 +1064,7 @@ def _unpack_cached_job_window_row(row: Any) -> Any:
 
 def gpu_acct_window_for_job_data(job: Any) -> Any:
   """
-  Return ``(start_time, end_time, acct_host_list)`` for GPU-style host_data.
-
-    queries.
+  Return ``(start_time, end_time, acct_host_list)`` for GPU host_data queries.
 
   Uses the same FQDN construction as :class:`jid_table` without distinct-host
   discovery, schema scans, or large-job time sampling (those are expensive and
@@ -1139,16 +1084,13 @@ def gpu_acct_window_for_job_data(job: Any) -> Any:
   st = _normalize_window_bound_datetime(getattr(job, "start_time", None))
   et = _normalize_window_bound_datetime(getattr(job, "end_time", None))
   if st is None and et is None:
-    return _ensure_tz(st), _ensure_tz(et), []
-  acct_host_list = list(_build_acct_host_fqdns(hl_raw))
-  return _ensure_tz(st), _ensure_tz(et), acct_host_list
+    return None, None, []
+  return _ensure_tz(st), _ensure_tz(et), _build_acct_host_fqdns(hl_raw)
 
 
 def _normalize_host_data_schema_label(value: Any) -> Any:
   """
-  Coerce ``host_data.type`` / ``event`` cell to a string safe for pandas.
-
-    ``.unique()``.
+  Coerce a ``host_data.type`` / ``event`` cell to a hashable string.
 
   Args:
     value (Any): Value to inspect (typically a numeric scalar).
@@ -1196,11 +1138,7 @@ class jid_table:
 
   def __init__(self, jid: Any) -> None:
     """
-    Build job-scoped filter from job_data and populate host_list and schema.
-
-      from.
-
-      host_data.
+    Build job-scoped filter from job_data; populate host_list and schema.
 
     Args:
       jid (Any): Jid passed to this helper.
@@ -1234,16 +1172,6 @@ class jid_table:
     except Exception:
       row = None
 
-    if row is None:
-      self.acct_host_list = []
-      self.host_list = []
-      self.schema = {}
-      self.units = {}
-      self.start_time = None
-      self.end_time = None
-      self._base_filter = {}
-      return
-
     hl_raw, st_raw, et_raw = _unpack_cached_job_window_row(row)
     st = _normalize_window_bound_datetime(st_raw)
     et = _normalize_window_bound_datetime(et_raw)
@@ -1257,13 +1185,12 @@ class jid_table:
       self._base_filter = {}
       return
 
-    # job_data host_list: use fqdn for host_data lookups (cast to str for varchar comparison)
     self.acct_host_list = _build_acct_host_fqdns(hl_raw)
     self.start_time = _ensure_tz(st)
     self.end_time = _ensure_tz(et)
     self._shared_node = job_is_shared_node(str(jid))
     # Hosts held by this job alone: their untagged (idle-allocation) rows
-    # count toward the job in every scoped read (D3; one job_data query).
+    # count toward the job in every scoped read (one job_data query).
     self._exclusive_hosts = _build_acct_host_fqdns(
       job_exclusive_hosts(
         str(jid),
@@ -1282,7 +1209,6 @@ class jid_table:
       "host__in": self.acct_host_list,
     }
 
-    # Distinct hosts that actually have host_data in range (cached)
     qtime = time.time()
 
     def _host_list_fn() -> Any:
@@ -1327,7 +1253,6 @@ class jid_table:
       self.units = {}
       return
 
-    # Schema: distinct (type, event) for one host (cached)
     etime = time.time()
 
     def _schema_fn() -> Any:
@@ -1375,7 +1300,7 @@ class jid_table:
         )
 
       rows = [tuple(r[:3]) for r in _near_bounds(str(self.jid)) if len(r) >= 3]
-      if getattr(self, "_shared_node", False):
+      if self._shared_node:
         host_wide_rows = _near_bounds(None)
         seen = {(r[0], r[1]) for r in rows}
         for r in host_wide_rows:
@@ -1571,11 +1496,10 @@ class jid_table:
 
   def __del__(self) -> None:
     """
-    Destructor; call close() if possible. Prefer using 'with jid_table(...)'.
+    Destructor; call close() if possible.
 
-    for guaranteed cleanup; __del__ is not guaranteed to run (e.g. at
-      interpreter
-    shutdown or with circular refs).
+    Prefer ``with jid_table(...)`` for guaranteed cleanup; __del__ may not
+    run at interpreter shutdown or with circular refs.
 
     Returns:
       None
