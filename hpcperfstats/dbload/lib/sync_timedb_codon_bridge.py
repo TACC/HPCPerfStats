@@ -994,14 +994,19 @@ def _ensure_codon_parse_dir_on_sys_path() -> None:
     sys.path.insert(0, CODON_PARSE_DIR)
 
 
-def _deepbind_codon_libomp() -> None:
+def _deepbind_codon_libomp(directory: str = CODON_PARSE_DIR) -> None:
   """
   Load bundled ``libomp.so`` with ``RTLD_DEEPBIND`` before the pyext import.
 
   NumPy/MKL pulls in ``libiomp5.so``. Codon's ``libomp.so`` then resolves
   ``__kmp_acquire_ticket_lock`` into that Intel runtime and spins forever in
-  ``__kmp_unregister_root_current_thread`` when a Codon-calling thread exits.
-  Deep-binding Codon's copy keeps its OpenMP locks inside that library.
+  ``__kmp_unregister_root_current_thread`` when a Codon-calling thread exits
+  (including interpreter exit after ``import numpy``). Deep-binding Codon's
+  copy keeps its OpenMP locks inside that library.
+
+  Args:
+    directory (str): Pyext directory holding the bundled ``libomp.so``
+      (tests pass an extracted bake).
 
   Returns:
     None
@@ -1010,7 +1015,7 @@ def _deepbind_codon_libomp() -> None:
     >>> callable(_deepbind_codon_libomp)
     True
   """
-  lib = os.path.join(CODON_PARSE_DIR, "libomp.so")
+  lib = os.path.join(directory, "libomp.so")
   if not os.path.isfile(lib):
     return
   mode = os.RTLD_NOW | os.RTLD_DEEPBIND | os.RTLD_GLOBAL

@@ -15,7 +15,6 @@ this tree and the interpreter is free-threaded 3.14t (see
 
 from __future__ import annotations
 
-import os
 import sys
 import warnings
 from pathlib import Path
@@ -99,23 +98,6 @@ def test_cpython_parser_skips_malformed_line(name: str) -> None:
 
 
 # ---- real baked pyext (skipped unless a bake from this tree is mounted) ----
-
-_PYEXT_DIR = os.environ.get("HPCPERFSTATS_CODON_PYEXT_DIR", "").strip()
-
-
-@pytest.fixture
-def pyext() -> Any:
-  if not (
-    Path(_PYEXT_DIR or "/nonexistent") / "hpcperfstats_codon_parse.so"
-  ).is_file():
-    pytest.skip("HPCPERFSTATS_CODON_PYEXT_DIR bake required")
-  sys.path.insert(0, _PYEXT_DIR)
-  try:
-    import hpcperfstats_codon_parse as mod
-  except ImportError as exc:  # pragma: no cover - env specific
-    pytest.skip(f"pyext import failed: {exc}")
-  yield mod
-  sys.path.remove(_PYEXT_DIR)
 
 
 @pytest.mark.parametrize("name", sorted(CASES))

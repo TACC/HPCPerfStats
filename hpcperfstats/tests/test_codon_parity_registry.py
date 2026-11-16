@@ -288,3 +288,14 @@ def test_cpython_parse_callers_are_allowlisted() -> None:
     "New CPython parse call sites must go Codon-first (or be added as an "
     f"exception in codon-python-parity-contract.mdc): {found - CPYTHON_PARSE_CALLERS}"
   )
+
+
+def test_tests_load_the_baked_pyext_only_through_the_conftest_fixture() -> None:
+  """A direct import skips the libomp deep-bind and hangs pytest at exit."""
+  direct = [
+    p.relative_to(ROOT).as_posix()
+    for p in (PKG / "tests").glob("*.py")
+    if p.name != "conftest.py"
+    and re.search(r"^\s*import hpcperfstats_codon_parse\b", p.read_text(), re.M)
+  ]
+  assert not direct, f"use the conftest ``pyext`` fixture instead: {direct}"

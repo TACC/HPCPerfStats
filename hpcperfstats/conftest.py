@@ -165,6 +165,33 @@ def _space_pressure_off_by_default(monkeypatch):
   space.reset_for_tests()
 
 
+# conf_parser module globals that hold the loaded INI.
+_CONF_PARSER_STATE = (
+  "cfg",
+  "_ACTIVE_CONFIG_PATH",
+  "_SYNC_TIMEDB_CONFIG_BASELINE_PARSER",
+)
+
+
+@contextlib.contextmanager
+def conf_parser_state_restored():
+  """Restore conf_parser's loaded INI on exit.
+
+  Tests point ``HPCPERFSTATS_INI`` at a temp file and ``importlib.reload`` the
+  module; monkeypatch restores only the env var, so without this the module
+  global parser stays on the temp INI and later tests in the same worker read
+  its values (``timezone = UTC`` shifted golden plot times by the UTC offset).
+  """
+  from hpcperfstats.dbload.lib import conf_parser
+
+  saved = {name: getattr(conf_parser, name) for name in _CONF_PARSER_STATE}
+  try:
+    yield
+  finally:
+    for name, value in saved.items():
+      setattr(conf_parser, name, value)
+
+
 @pytest.fixture
 def temp_ini(tmp_path):
   """Create a minimal hpcperfstats.ini for tests that need conf_parser."""
@@ -206,4 +233,5 @@ def temp_ini(tmp_path):
     "authorize_url = http://localhost\n"
     "oauth_base_url = http://localhost\n"
   )
-  return str(ini)
+  with conf_parser_state_restored():
+    yield str(ini)

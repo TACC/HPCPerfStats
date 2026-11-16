@@ -15,8 +15,6 @@ from __future__ import annotations
 
 import importlib.util
 import math
-import os
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -247,32 +245,10 @@ def test_ipc_envelopes_carry_exclude_only_when_set() -> None:
 
 # ---- real baked pyext (skipped unless a bake from this tree is mounted) ----
 
-_PYEXT_DIR = os.environ.get("HPCPERFSTATS_CODON_PYEXT_DIR", "").strip()
-
-
-def _pyext_ready() -> bool:
-  return (
-    bool(_PYEXT_DIR)
-    and (Path(_PYEXT_DIR) / "hpcperfstats_codon_parse.so").is_file()
-  )
-
 
 def _host_types(result: dict[str, Any]) -> set[str]:
   stats = result["stats"]
   return set(stats["type"]) if isinstance(stats, dict) else set()
-
-
-@pytest.fixture
-def pyext():
-  if not _pyext_ready():
-    pytest.skip("HPCPERFSTATS_CODON_PYEXT_DIR bake required")
-  sys.path.insert(0, _PYEXT_DIR)
-  try:
-    import hpcperfstats_codon_parse as mod
-  except ImportError as exc:  # pragma: no cover - env specific
-    pytest.skip(f"pyext import failed: {exc}")
-  yield mod
-  sys.path.remove(_PYEXT_DIR)
 
 
 def test_pyext_exclude_drops_types_and_does_not_leak(pyext) -> None:

@@ -8,8 +8,6 @@ source (``dbload/codon/feed_collapse.py``) runs under CPython here; the baked
 
 from __future__ import annotations
 
-import os
-import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -290,23 +288,6 @@ def test_leading_whitespace_and_non_alpha_types_match_cpython() -> None:
 
 
 # ---- real baked pyext (skipped unless a bake from this tree is mounted) ----
-
-_PYEXT_DIR = os.environ.get("HPCPERFSTATS_CODON_PYEXT_DIR", "").strip()
-
-
-@pytest.fixture
-def pyext() -> Any:
-  if not (
-    _PYEXT_DIR and (Path(_PYEXT_DIR) / "hpcperfstats_codon_parse.so").is_file()
-  ):
-    pytest.skip("HPCPERFSTATS_CODON_PYEXT_DIR bake required")
-  sys.path.insert(0, _PYEXT_DIR)
-  try:
-    import hpcperfstats_codon_parse as mod
-  except ImportError as exc:  # pragma: no cover - env specific
-    pytest.skip(f"pyext import failed: {exc}")
-  yield mod
-  sys.path.remove(_PYEXT_DIR)
 
 
 def _source_shape(lines: list[str], start_idx: int) -> Counter:
