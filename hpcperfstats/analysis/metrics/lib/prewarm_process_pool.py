@@ -71,10 +71,11 @@ def _child_initializer(script_name: str, pool_kind: str, db_name: str) -> None:
   Worker start: title, Bokeh shim, BLAS caps, Codon check, Django, no
   inherited sockets.
 
-  ``codon_bridge.require_codon_metrics`` repeats the parent's startup check
-  in the child, so a child that cannot load a required kernel exits (the
-  parent replaces the dead worker and fails that job) instead of building
-  plot series with the NumPy reference.
+  When the Codon kernel did not load, ``codon_bridge.require_codon_metrics``
+  repeats the parent's startup check, so a child that cannot load a required
+  kernel exits (the parent replaces the dead worker and fails that job)
+  instead of building plot series with the NumPy reference. A child whose
+  kernel loaded logs nothing; the parent already logged the status line.
 
   ``ensure_django`` reads the database from ``hpcperfstats.ini``; the child
   then switches to ``db_name``, the parent's live database, so a parent on a
@@ -105,7 +106,9 @@ def _child_initializer(script_name: str, pool_kind: str, db_name: str) -> None:
   from hpcperfstats.analysis.metrics.lib.columnar import codon_bridge
   from hpcperfstats.dbload.lib.print_utils import log_print
 
-  codon_bridge.require_codon_metrics(lambda line: log_print(line, flush=True))
+  # The parent logged the status line; a recycled healthy child stays quiet.
+  if codon_bridge.kernels() is None:
+    codon_bridge.require_codon_metrics(lambda line: log_print(line, flush=True))
   from hpcperfstats.dbload.lib.django_bootstrap import ensure_django
 
   ensure_django()

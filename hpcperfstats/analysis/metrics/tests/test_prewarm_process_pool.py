@@ -340,8 +340,10 @@ def test_child_initializer_uses_parent_database_name(monkeypatch):
   assert connections.databases["default"]["NAME"] == "test_parent"
 
 
-def test_child_initializer_requires_codon_metrics(monkeypatch):
-  """A prewarm child checks the Codon kernel like the parent's ``main``."""
+@pytest.mark.parametrize("loaded", [True, False])
+def test_child_initializer_requires_codon_metrics(monkeypatch, loaded):
+  """A child without the kernel runs the parent's require check; a healthy
+  child logs nothing (recycled workers repeated the status line)."""
   from hpcperfstats.analysis.metrics.lib.columnar import codon_bridge
 
   _stub_child_init(monkeypatch)
@@ -349,8 +351,12 @@ def test_child_initializer_requires_codon_metrics(monkeypatch):
   monkeypatch.setattr(
     codon_bridge, "require_codon_metrics", lambda log: calls.append(log)
   )
+  monkeypatch.setattr(
+    codon_bridge, "kernels", lambda: object() if loaded else None
+  )
   ppp._child_initializer("update_metrics.py", "prewarm-pool", "test_parent")
-  assert len(calls) == 1 and callable(calls[0])
+  assert len(calls) == (0 if loaded else 1)
+  assert all(callable(c) for c in calls)
 
 
 def test_child_without_required_kernel_exits_instead_of_numpy(
