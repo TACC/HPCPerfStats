@@ -45,9 +45,6 @@ def _on_disk(tmp_path: Path) -> dict:
   return _loader(str(tmp_path / "marks.json"))
 
 
-# --- WriteBehindWriter ------------------------------------------------------
-
-
 def test_writer_coalesces_dirty_notifications_into_one_write():
   calls = []
   writer = wb.WriteBehindWriter(
@@ -168,9 +165,6 @@ def test_writer_thread_is_named_and_daemon():
     writer.stop()
   assert seen["t"].name == "my-persist-thread"
   assert seen["t"].daemon is True
-
-
-# --- WriteBehindEntryStore --------------------------------------------------
 
 
 def test_set_does_no_disk_io_until_flush(tmp_path, monkeypatch):

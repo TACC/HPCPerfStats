@@ -43,9 +43,6 @@ def _classify(ingest_complete: bool, append_calls: list):
   )
 
 
-# --- A: no open-tar lookup for a file that still needs ingest ---------------
-
-
 def test_classify_skips_the_tar_lookup_while_ingest_is_incomplete():
   calls = []
   plan = _classify(False, calls)
@@ -58,9 +55,6 @@ def test_classify_checks_the_tar_once_ingest_is_complete():
   plan = _classify(True, calls)
   assert calls == [1]
   assert plan.kinds_to_enqueue() == ("append",)
-
-
-# --- B: discover reads the marks only ---------------------------------------
 
 
 @pytest.fixture
@@ -108,9 +102,6 @@ def test_boot_walk_uses_the_marks_only_ingest_check(monkeypatch):
     log_fn=lambda *a, **k: None,
   )
   assert seen["ingest_is_complete_fn"] is jr.discover_ingest_is_complete
-
-
-# --- B: a head/tail db_skip is marked when listend live ingest is off -------
 
 
 def _seg(tmp_path):

@@ -21,7 +21,6 @@ Attributes:
   _PATH_READY_CACHE_LOCK: FT-safe RLock for path-ready L1 cache.
   _PATH_READY_CACHE_MAX_ENTRIES: Attribute.
   _PATH_READY_CACHE_REFRESH_SECONDS: Attribute.
-  sampled_identities_ready_in_db: Attribute.
 """
 
 from __future__ import annotations
@@ -269,10 +268,6 @@ def gate_identities_ready_in_db(gate_by_host: Any) -> Any:
   return True
 
 
-# Back-compat alias for older call sites / tests.
-sampled_identities_ready_in_db = gate_identities_ready_in_db
-
-
 def archive_db_head_ingest_gate_enabled() -> Any:
   """
   Whether tar append and raw removal require DB ingest readiness.
@@ -286,19 +281,6 @@ def archive_db_head_ingest_gate_enabled() -> Any:
     >>> archive_db_head_ingest_gate_enabled()  # doctest: +SKIP
   """
   return bool(cfg.get_sync_archive_require_db_ingest())
-
-
-def _archive_gate_skip_label() -> Any:
-  """
-  Internal helper to archive the gate skip label.
-
-  Returns:
-    Any: Value produced by this call (type depends on inputs).
-
-  Examples:
-    >>> _archive_gate_skip_label()  # doctest: +SKIP
-  """
-  return "head/tail timestamps"
 
 
 def _log_gate_disabled_once(log_fn: Any) -> None:
@@ -575,8 +557,6 @@ def filter_paths_head_ingested(
     )
     ready = [p for p in paths if p in ready_set]
     skipped = [p for p in paths if p not in ready_set]
-    # INFO flood removed: day-line gate_skip=/ingest_handoff= owns visibility.
-    del log_fn
     return ready, skipped
 
   ready = []
@@ -586,5 +566,4 @@ def filter_paths_head_ingested(
       ready.append(path)
     else:
       skipped.append(path)
-  # INFO flood removed: day-line gate_skip=/ingest_handoff= owns visibility.
   return ready, skipped

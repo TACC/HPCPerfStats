@@ -214,8 +214,7 @@ def host_insert_arm() -> str:
   )
   if copy_flag in ("0", "false", "no", "baseline"):
     return "baseline"
-  # Default ON after Podman A/B retain (host_data_insert_ab_fde1031c...).
-  # Opt-out via HPCPERFSTATS_SYNC_HOST_DATA_COPY=0 or ARM=baseline.
+  # COPY is the default since the Podman A/B retain.
   return "candidate"
 
 

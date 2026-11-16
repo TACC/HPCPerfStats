@@ -137,7 +137,6 @@ def test_bounded_query_failure_returns_overflow(monkeypatch):
   ts_high = datetime(2026, 1, 1, 1, tzinfo=UTC)
   out = host_itimes.host_recent_timestamps_cached("h1", ts_low, ts_high)
   assert out is host_itimes.HOST_ITIMES_SET_OVERFLOW
-  # second call logs once
   out2 = host_itimes.host_recent_timestamps_cached("h1", ts_low, ts_high)
   assert out2 is host_itimes.HOST_ITIMES_SET_OVERFLOW
 

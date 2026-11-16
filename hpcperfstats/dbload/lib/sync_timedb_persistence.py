@@ -625,7 +625,7 @@ def _validate_envelope(raw: Any, *, kind: str, log_fn: LogFn = None) -> bool:
     if not isinstance(raw, dict):
       return False
     # Legacy on-disk hints used ``version`` 1 before the persistence
-    # envelope standardized on ``schema_version`` == expected (2).
+    # envelope standardized on ``schema_version`` == expected.
     return _persistence_schema_version_ok(
       raw,
       kind=kind,
