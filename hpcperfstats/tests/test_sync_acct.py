@@ -51,9 +51,6 @@ def test_sync_acct_from_content_skips_existing_jids(mock_jd, mock_notify):
 
   content = SACCT_HEADER + "\n" + _sacct_row(jid="999") + "\n"
   before_qs = MagicMock()
-  before_qs.values_list.return_value = []
-  after_qs = MagicMock()
-  after_qs.values_list.return_value = []
   mock_jd.objects.filter.return_value = before_qs
   before_qs.values_list.side_effect = [[], []]
 

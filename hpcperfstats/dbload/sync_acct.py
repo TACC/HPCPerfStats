@@ -626,9 +626,8 @@ def sync_acct_from_content(content: Any, jobs_in_db: Any) -> Any:
 
 def sync_acct(acct_file: str, jobs_in_db: Any) -> Any:
   """
-  Load accounting CSV from acct_file into job_data, skipping jobs already in.
-
-    jobs_in_db and those matching restricted_queue_keywords.
+  Load accounting CSV from acct_file into job_data, skipping jobs already in
+  jobs_in_db and those matching restricted_queue_keywords.
 
   Args:
     acct_file (str): String for acct file.
@@ -659,11 +658,9 @@ def sync_acct(acct_file: str, jobs_in_db: Any) -> Any:
 
 def _sync_acct_dataframe(df: Any, jobs_in_db: Any) -> Any:
   """
-  Apply column filter, renames, filters, and insert into job_data. Returns.
+  Apply column filter, renames, filters, and insert into job_data.
 
-    count.
-
-    of new entries.
+  Returns the count of new entries.
 
   Args:
     df (Any): Df passed to this helper.
@@ -683,10 +680,8 @@ def _sync_acct_dataframe(df: Any, jobs_in_db: Any) -> Any:
   if missing:
     _fail_acct_load("missing required sacct columns: " + ", ".join(missing))
 
-  columns_to_read = COLUMNS_TO_READ
-  # cycle through collumns so we can remove those we don't want to import.
   for c in df:
-    if c in columns_to_read:
+    if c in COLUMNS_TO_READ:
       continue
     df = df.drop(columns=c)
 
@@ -874,7 +869,6 @@ if __name__ == "__main__":
   from hpcperfstats.dbload.lib.process_title import set_daemon_process_title
 
   set_daemon_process_title(name="sync_acct.py", role="main")
-  #################################################################
   default_start = datetime.combine(datetime.today(), datetime.min.time())
   default_end = default_start + timedelta(days=1)
   dead_letter, argv = _sync_acct_cli_args(sys.argv)
@@ -883,9 +877,7 @@ if __name__ == "__main__":
     startdate, enddate = parse_start_end_dates(argv, default_start, default_end)
 
     log_date_range("job files to ingest", startdate, enddate)
-    #################################################################
 
-    # Parse and convert raw stats files to pandas dataframe
     start = time.time()
     directory = cfg.get_accounting_path()
 
@@ -926,6 +918,3 @@ if __name__ == "__main__":
   finally:
     if dead_letter:
       _log_dead_letter_summary(dead_lettered)
-  # Since this is no longer part of the main workflow we don't need this sleep
-  # as it was to wait for the supervisord restart.
-  # sleep_until_shutdown(900)
