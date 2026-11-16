@@ -31,7 +31,7 @@ export type HpcperfstatsBokehRuntime = {
 /**
  * Same-origin URL candidates for the vendored UMD file.
  * Static export + nginx serve ``public/`` under ``assetPrefix``; ``next dev``
- * may expose ``public/`` at the unprefixed ``/vendor/…`` path.
+ * may expose ``public/`` at the unprefixed ``/vendor/...`` path.
  */
 export const BOKEH_VENDOR_SCRIPT_CANDIDATES = [
   "/static/frontend/vendor/bokeh.min.js",

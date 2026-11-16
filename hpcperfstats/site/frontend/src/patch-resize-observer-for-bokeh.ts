@@ -2,18 +2,16 @@
  * Bokeh 3.9 attaches ResizeObserver in UIElementView.initialize() and observes
  * `el` immediately. Browsers may deliver the first resize callback synchronously
  * while nested views are still in build_view/lazy_initialize, so AxisView.get_size
- * runs before `ranges` exist → `can't access property "is_valid", e is undefined`
- * and "FigureView wasn't built properly".
+ * runs before `ranges` exist (`can't access property "is_valid", e is undefined`,
+ * "FigureView wasn't built properly").
  *
  * Two ``requestAnimationFrame`` hops are still too soon on some deployments
- * (e.g. Vista): Bokeh 3.9 finishes ``lazy_initialize`` / promise-linked view work
- * across more than two frames, so ``AxisView`` can read ``range.is_valid`` before
- * ``ranges`` exist (stack: patched RO → ``after_resize`` → ``is_renderable``).
- * Defer with **three** ``requestAnimationFrame`` hops, then **setTimeout(0)** so
- * the callback runs in a fresh macrotask after embed microtasks settle. When rAF
- * is missing, use ``setTimeout`` only.
+ * (e.g. Vista): Bokeh finishes ``lazy_initialize`` / promise-linked view work
+ * across more than two frames (stack: patched RO, ``after_resize``, ``is_renderable``).
+ * Defer with three rAF hops, then ``setTimeout(0)`` so the callback runs in a fresh
+ * macrotask after embed microtasks settle; without rAF, use ``setTimeout`` only.
  *
- * Applied once before dynamic import of @bokeh/bokehjs (see bokehInit.ts).
+ * Applied once before the Bokeh UMD loads (bokehInit.ts and the app layouts).
  */
 
 const PATCH_FLAG = "__hpcperfstatsResizeObserverDeferred";

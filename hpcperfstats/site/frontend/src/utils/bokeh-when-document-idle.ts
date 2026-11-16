@@ -3,7 +3,7 @@ import { delayMs } from "./bokeh-embed-defaults";
 /**
  * After `Bokeh.embed.embed_item` resolves, nested views may still be finishing layout.
  * Calling `maximizeEmbeddedPlot` (DOM/CSS + `resize`) too early triggers Bokeh 3.9
- * `AxisView` layout while `ranges` are undefined → `can't access property "is_valid", e is undefined`.
+ * `AxisView` layout while `ranges` are undefined (`can't access property "is_valid", e is undefined`.
  *
  * `Document.is_idle` / `document.idle` fire when the root has notified idle after paint.
  */
@@ -33,10 +33,7 @@ export function getBokehDocumentFromEmbedViews(
     const roots = (embedResult as { roots?: unknown }).roots;
     if (Array.isArray(roots) && roots.length > 0) {
       list = roots as BokehEmbedView[];
-    } else if (
-      (!Array.isArray(roots) || roots.length === 0) &&
-      typeof (embedResult as Iterable<BokehEmbedView>)[Symbol.iterator] === "function"
-    ) {
+    } else if (typeof (embedResult as Iterable<BokehEmbedView>)[Symbol.iterator] === "function") {
       try {
         list = [...(embedResult as Iterable<BokehEmbedView>)];
       } catch {
