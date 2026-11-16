@@ -1,20 +1,18 @@
 /**
  * Tooltip copy keyed by metric / event short name (before units in brackets).
  *
- * Merge order: monitor `host_data.event` names (see variableMetadataMonitorEvents.ts),
- * then job accounting / derived metrics / API-only fields (this file). Later entries win
- * on purpose so UI-specific wording overrides generic monitor text.
+ * VARIABLE_METADATA spreads legacy monitor events, then current monitor events, then the
+ * UI tables in this file; later entries win so UI wording overrides generic monitor text.
  *
- * Optional `researcherUse`: how researchers reason about HPC, AI, or failure diagnosis
- * (aligned with docs/using-the-website-as-a-researcher.md). Shown below the definition
- * in the job-detail help tooltip with a separator.
+ * Optional `researcherUse` (aligned with docs/using-the-website-as-a-researcher.md) is
+ * shown below the definition in the job-detail help tooltip.
  */
 
 import { MONITOR_EVENT_METADATA } from "./variableMetadataMonitorEvents";
 import { MONITOR_EVENT_METADATA_LEGACY } from "./variableMetadataMonitorEventsLegacy";
 
 const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
-  // ===== Job accounting fields (job_data model) =====
+  // Job accounting fields (job_data model).
   jid: {
     description: "Slurm job ID (unique identifier for the job).",
     researcherUse: "Cross-reference logs, support tickets, and reproducer scripts.",
@@ -87,7 +85,7 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
       "When current and DB differ, plots or detail payloads may still be stale until prewarm recomputes them; empty DB lists mean no non-null schema columns (Valkey or legacy null-schema rows may still serve payloads).",
   },
 
-  // ===== Job-level derived metrics (hpcperfstats/analysis/metrics/lib/metrics.py catalog) =====
+  // Job-level derived metrics (hpcperfstats/analysis/metrics/lib/metrics.py catalog).
   avg_blockbw: {
     description:
       "Average block-device throughput computed from read and write sectors over the job (GB/s).",
@@ -516,7 +514,7 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
       "SIMD width mix for reasoning about vectorization versus scalar-heavy regions.",
   },
 
-  // ===== Legacy / historical metric names (not in current catalog; may appear in older data) =====
+  // Legacy metric names not in the current catalog; may appear in older data.
   avg_flops_32b: {
     description:
       "Legacy single-precision FLOP rate label; prefer avg_flops plus vecpercent_32b from current pipelines.",
@@ -566,7 +564,7 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
       "Legacy average package power (RAPL or equivalent) in watts.",
   },
 
-  // ===== Job detail API / SPA (not always monitor-native event names) =====
+  // Job detail API / SPA names (not always monitor-native event names).
   utilization: {
     description: "GPU utilization percentage sampled during the job (job detail series).",
     researcherUse:
@@ -584,7 +582,7 @@ const JOB_ACCOUNTING_AND_DERIVED_METADATA = {
   },
 };
 
-/** Job summary Bokeh subplot column names — keep prose in sync with ``summary_metric_descriptions.py``. */
+/** Job summary Bokeh subplot column names; keep prose in sync with summary_metric_descriptions.py. */
 const SUMMARY_PLOT_METRIC_METADATA = {
   cpu: {
     description:
@@ -839,7 +837,7 @@ const SUMMARY_PLOT_METRIC_METADATA = {
   },
 };
 
-/** Job Detail Bokeh figures (roofline, multiprecision) — keep prose in sync with ``job_detail_bokeh_plot_descriptions.py``. */
+/** Job Detail Bokeh figures (roofline, multiprecision); keep prose in sync with job_detail_bokeh_plot_descriptions.py. */
 const JOB_DETAIL_BOKEH_PLOT_METADATA = {
   jobDetailPlot_roofline_cpu: {
     description:
@@ -897,19 +895,15 @@ export const VARIABLE_METADATA = {
   ...JOB_DETAIL_BOKEH_PLOT_METADATA,
 };
 
-/** First token before whitespace or bracket — matches stored metric names. */
+/** First token before whitespace or bracket, which matches stored metric names. */
 export function normalizeVariableKey(name: unknown): string {
-  if (name == null || typeof name !== "string") return "";
+  if (typeof name !== "string") return "";
   const t = name.trim();
   if (!t) return "";
   const head = t.split(/\s+/)[0];
   return head.split("[")[0].trim();
 }
 
-/**
- * @param {string} name
- * @returns {{ description: string, researcherUse: string | null } | null}
- */
 export function getVariableTooltipContent(name: unknown) {
   const key = normalizeVariableKey(name);
   if (!key) return null;
