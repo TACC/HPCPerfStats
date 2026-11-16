@@ -108,8 +108,7 @@ def normalize_job_host_list(raw: object) -> list[str]:
     text = (
       raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
     )
-    parts = [p.strip() for p in text.replace(",", " ").split() if p.strip()]
-    return parts
+    return [p.strip() for p in text.replace(",", " ").split() if p.strip()]
   if isinstance(raw, (list, tuple, set)):
     out: list[str] = []
     for item in raw:

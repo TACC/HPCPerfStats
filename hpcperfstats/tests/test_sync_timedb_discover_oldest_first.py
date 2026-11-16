@@ -101,7 +101,7 @@ def _queued_days(client: SyncTimedbJobStore) -> list[date]:
   )
 
 
-# --- walker: 16 threads on the whole archive, GNU sort oldest first ---------
+# Walker: whole-archive thread count, GNU sort oldest first.
 
 
 def _threads(argv: list[str]) -> str:
@@ -177,7 +177,7 @@ def test_boot_stream_discover_sorts_the_walk(monkeypatch):
   assert seen.get("sort_oldest_first") is True
 
 
-# --- discover: oldest first into the free room, then a frontier -------------
+# Discover: oldest first into the free room, then a frontier.
 
 
 @pytest.mark.usefixtures("cap2")
@@ -274,7 +274,7 @@ def test_discover_with_room_for_everything_sets_no_frontier(monkeypatch):
   assert _discover(SyncTimedbJobStore(""), records).frontier_day is None
 
 
-# --- orchestrator: the frontier follows whole walks; day close holds --------
+# Orchestrator: the frontier follows whole walks; day close holds.
 
 
 @pytest.fixture

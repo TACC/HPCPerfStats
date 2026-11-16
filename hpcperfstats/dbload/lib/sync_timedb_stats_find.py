@@ -48,7 +48,7 @@ STAT_CURRENT_INODE_PRINTF = "%n\\0%i\\0"
 FD_THREADS = 4
 FD_THREADS_WHOLE_ARCHIVE = 16
 
-# Last successful find scan -> fingerprint caches for maint hints (C9).
+# Last successful find scan -> fingerprint caches for maint hints.
 _path_fp_cache: dict[str, tuple[int, int]] = {}
 _host_fp_cache: dict[str, tuple[int, int]] = {}
 

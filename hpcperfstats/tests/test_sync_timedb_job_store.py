@@ -721,7 +721,7 @@ def test_reorder_list_marks_dirty(tmp_path):
   store.close()
 
 
-# --- A2 dead-letter cooldown / re-admission / terminal; A17 rollout safety ---
+# A2 dead-letter cooldown / re-admission / terminal; A17 rollout safety.
 
 
 def test_dead_letter_readmits_after_cooldown(tmp_path):
