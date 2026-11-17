@@ -95,6 +95,14 @@ repos:
         files: ^monitor/((src|tests)/.*\.[ch]|configure\.ac|(.*/)?Makefile\.am|scripts/(run_warning_gate\.sh|unreachable_functions\.allowlist))$
         pass_filenames: false
         verbose: true
+      # A failed read in a collector must emit a value sentinel, not 0 or a silent skip
+      # (monitor/cursor-rules/monitor-value-sentinel-contract.mdc).
+      - id: monitor-sentinel-error-paths
+        name: monitor collector failed reads emit value sentinels
+        entry: bash -c 'exec "$(cd .. && pwd -P)/.venv/bin/python3" -I monitor/scripts/check_sentinel_error_paths.py monitor/src'
+        language: system
+        files: ^monitor/(src/.*\.c|scripts/check_sentinel_error_paths\.(py|allowlist))$
+        pass_filenames: false
 
   - repo: local
     hooks:

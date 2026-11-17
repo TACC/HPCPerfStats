@@ -35,7 +35,7 @@ On the pipeline interpreter (`/opt/python3.14t` with the baked `.so`, `codon_par
 | sync_timedb contents path (`parse_stats_lines`, any `start_idx`) | line batch `parse_stats_lines_codon(start_idx=)` | same |
 | Legacy CTL/CTR archives | `legacy_decode_tokens` + literal eventmaps | `sync_timedb_parsing_legacy` |
 | listend live samples | line batch with the per-host carry | `ingest_monitor_sample_text` CPython branch |
-| update_metrics reductions | `group_reduce_c`, `residual_collapse_c`, `grid_mean_c`, `join_sorted_c`, `copy_*_c` | `segments._np_*`, `k0_decode.decode_copy_binary_reference` |
+| update_metrics reductions | `group_reduce_c`, `residual_collapse_c`, `grid_mean_c`, `join_sorted_c`, `copy_*_c`, `sentinel_samples_c`, `sentinel_fold_c`, `fill_interior_gaps_c` | `segments._np_*`, `k0_decode.decode_copy_binary_reference`, `sentinel_profile._np_*` |
 
 The twin is the **spec and the oracle**: it runs when Codon is disabled at boot (host `.venv`, missing `.so`), in tests, and nowhere else. A Codon failure mid-run hard-fails (`codon-sync-timedb-parse-contract.mdc` law 3, `update-metrics-columnar-codon-contract.mdc` law 4); it never routes to the twin.
 
@@ -45,7 +45,7 @@ The twin is the **spec and the oracle**: it runs when Codon is disabled at boot 
 2. **Registry row plus a parity test.** Every twin pair is a `PARITY_FEATURES` row in `hpcperfstats/tests/test_codon_parity_registry.py` (feature, CPython `module:qualname`, Codon function names, `path::test` nodes). Each test runs **both** sides on the **same input** and compares outputs (sync_timedb rows via `_assert_rows_match`, rel 1e-9; metrics at the base tolerance of `update-metrics-columnar-codon-contract.mdc` law 6, sums bit-exact). The drift guards fail when:
    - a row names a missing symbol or test;
    - a Codon `@export` is neither registered nor C-ABI plumbing (`_ABI_EXPORT`);
-   - a `segments._np_*` reference has no row;
+   - a `segments._np_*` or `sentinel_profile._np_*` reference has no row;
    - a production module outside `CPYTHON_PARSE_CALLERS` calls `IncrementalStatsParser(` / `compute_deltas_and_arc*` / `_collapse_stats_with_deltas` directly.
 3. **No Codon-skipping conditions.** Do not add a divert condition (`if start_idx == 0`, per-type or per-file-shape gating, size thresholds) that sends canonical work to the twin. A feature Codon lacks is a gap to port, not a reason to route around it. The CPython `IncrementalStatsParser` path in a Codon-first caller exists only for the boot-disabled case.
 4. **Literal mirrors are locked.** The Codon compile units cannot import Python, so these are literals with lock tests:
@@ -81,5 +81,6 @@ Headers at line indexes below `start_idx` open no sample. Marks waiting on them,
 - `codon-sync-timedb-parse-contract.mdc` — bake, ABI, process pool, IPC, hard-fail
 - `update-metrics-columnar-codon-contract.mdc` — metrics kernels, tolerances, golden corpus
 - `sync-timedb-parsing-collapse-vectorization.mdc` — collapse and carry laws on both sides
+- `host-data-value-sentinel-contract.mdc` — sentinel bridge/collapse/arc semantics on both sides; carry keys cross the C API with explicit length
 - `shared-node-affinity-consumer-contract.mdc` — `%jobs` / `j:` stamp semantics
 - `listend-live-db-ingest-contract.mdc` — listend parse/write stages

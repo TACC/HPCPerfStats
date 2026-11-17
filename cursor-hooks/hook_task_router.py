@@ -185,6 +185,28 @@ HPCPERFSTATS_ROUTER_ENTRIES: list[RouterEntry] = [
     ],
   },
   {
+    "id": "host_data_value_sentinel",
+    "patterns": [
+      "hpcperfstats/lib/monitor_sentinel.py",
+      "hpcperfstats/dbload/lib/sync_timedb_parsing.py",
+      "hpcperfstats/dbload/codon/feed_collapse.py",
+      "hpcperfstats/dbload/codon/feed_collapse_capi.py",
+      "hpcperfstats/dbload/codon/pyext_ft_init.c",
+      "hpcperfstats/dbload/lib/monitor_mark_side_ingest.py",
+      "hpcperfstats/dbload/lib/ingest_coverage.py",
+      "hpcperfstats/dbload/lib/host_data_jstamp_delta_repair.py",
+      "hpcperfstats/analysis/metrics/lib/columnar/jobframe.py",
+      "hpcperfstats/analysis/metrics/lib/sentinel_*.py",
+      "hpcperfstats/analysis/metrics/lib/metrics.py",
+      "hpcperfstats/site/lib/machine/admin_monitor_telemetry_health.py",
+      "hpcperfstats/tests/test_host_data_value_reader_sentinel_gate.py",
+      "hpcperfstats/tests/test_sentinel_parse_delta.py",
+    ],
+    "rules": [
+      "host-data-value-sentinel-contract.mdc",
+    ],
+  },
+  {
     "id": "codon_sync_timedb_parse",
     "patterns": [
       "hpcperfstats/dbload/lib/sync_timedb_codon_bridge.py",
@@ -1140,6 +1162,26 @@ MONITOR_ROUTER_ENTRIES: list[RouterEntry] = [
     ],
     "rules": [
       "monitor-roofline-peak-detect.mdc",
+    ],
+  },
+  {
+    "id": "monitor_value_sentinel",
+    "patterns": [
+      "HPCPerfStats/monitor/src/**",
+      "HPCPerfStats/monitor/scripts/check_sentinel_error_paths.*",
+      "HPCPerfStats/monitor/scripts/lib/sentinel_*.py",
+      "HPCPerfStats/monitor/tests/test_stats_sentinel_catalog.c",
+      "HPCPerfStats/monitor/tests/test_stats_set_missing.c",
+      "HPCPerfStats/monitor/tests/test_fault_inject_matrix.c",
+      "monitor/src/**",
+      "monitor/scripts/check_sentinel_error_paths.*",
+      "monitor/scripts/lib/sentinel_*.py",
+      "monitor/tests/test_stats_sentinel_catalog.c",
+      "monitor/tests/test_stats_set_missing.c",
+      "monitor/tests/test_fault_inject_matrix.c",
+    ],
+    "rules": [
+      "monitor-value-sentinel-contract.mdc",
     ],
   },
   {

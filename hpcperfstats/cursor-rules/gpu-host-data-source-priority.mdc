@@ -48,4 +48,5 @@ GPU-derived job-detail fields (including `gpu_count`, utilization summaries, and
 
 ## Overlap
 
+- `host-data-value-sentinel-contract.mdc` — monitor value sentinels (`value < 0`) are a separate, catalog-wide convention from the DCGM blank-family sentinels above; GPU readers apply both.
 - Complements `monitor-analysis-architecture-sync.mdc` (host_data type contracts) and `variable-metadata-monitor-contract.mdc` (counter/event naming contract).

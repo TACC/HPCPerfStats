@@ -24,7 +24,7 @@ alwaysApply: false
 
 - Bounded capture (BeeGFS-style pipe + timeout, ~8 s) of `xpumcli discovery` then `xpumcli dump -d <ids> -m 0,1,2,3,4,5,9,17,18,35 -i 1 -n 1`.
 - Parse CSV by header names; publish existing KEYS. Dump power ID **1** → `power_usage` (not API `XPUM_STATS_POWER` = 4). Dump memory used is already **MiB**.
-- PCIe / Xe Link stay **0** on xpumcli path (dump exposes throughput, not the cumulative counters used by libxpum).
+- PCIe / Xe Link emit the `NOT_BUILT` value sentinel on the xpumcli path (dump exposes throughput, not the cumulative counters used by libxpum); a metric the dump or XPUM did not return emits `NOT_PRESENT`, never 0 (`src/stats_sentinel.h`).
 - Miss-streak then `st_enabled=0`; never crash the daemon.
 
 ## Lifecycle (libxpum opt-in)

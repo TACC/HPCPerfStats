@@ -55,6 +55,7 @@ Use the **Read** tool on the listed `HPCPerfStats/monitor/cursor-rules/<file>.md
 | `HPCPerfStats/monitor/src/perf_util*`, `arm_core_perf*`, `arm_imc*`, `cpu_counter_metrics.c`, `cpu_counter_metrics_arm_*` (Grace direct perf: scaled reads, D1 keys / widths, SCF re-scan) | `monitor-arm-direct-perf.mdc` |
 | `HPCPerfStats/monitor/src/arm_power_*` (`host_power_socket`, hwmon power meters) | `monitor-dcgm-integration.mdc`, `monitor-schema-keys-headers.mdc`, `monitor-emitted-variable-naming.mdc` |
 | `HPCPerfStats/monitor/src/*intel_gpu*`, `*xpum*`, `third_party/intel-xpum/**` | `monitor-xpum-integration.mdc` |
+| `HPCPerfStats/monitor/src/**` (any collector read or failure branch), `scripts/check_sentinel_error_paths.*`, `scripts/lib/sentinel_*.py`, sentinel catalog / setter / fault-matrix tests | `monitor-value-sentinel-contract.mdc` |
 | DEBUG shm mirror paths | `monitor-debug-shm.mdc` |
 | Release vs DEBUG logging (`monitor.c`, `monitor_daemon*`, `monitor_options.c`, `monitor_log*`, `monitor_release_log*`, `stats_buffer_rmq.c`, `ib_mad.c`, `opa.c`, `opa_mad_*`, `nvidia_gpu.c`, `roofline_hw_peak.c`, `configure.ac`, `*.am`) | `monitor-debug-vs-symbols.mdc` |
 | Shm message correctness scripts, slug goldens | `monitor-shm-message-correctness.mdc` |

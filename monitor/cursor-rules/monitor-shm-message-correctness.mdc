@@ -76,8 +76,19 @@ Registry + type contracts: `scripts/lib/tacc_system_profiles.py`. Operator wrapp
 | Strict plausibility | on | `STRICT_PLAUSIBILITY=0` |
 | Strict cross-sample | on (with cross-sample) | `STRICT_CROSS_SAMPLE=0` |
 | Golden byte diff | **off** | `GOLDEN_DIR=/path`, `GOLDEN_DIR=auto`, or `GOLDEN_CHECK=1` |
+| Allowed-sentinel manifest | on (strict) | `STRICT_SENTINELS=0` |
+| Sentinel capability/probe consistency | on | `SENTINEL_PROBE_CHECK=0` |
+| Persistent `-1` (NOT_UPDATED in two captures) | on (FAIL, names the site) | none: an instrumentation gap is always a bug |
+| Independent-read cross-check | on | `INDEPENDENT_READ_CHECK=0` |
+| Sentinel bridge validity | on (with cross-sample) | follows `CROSS_SAMPLE_CHECK` |
+| Fault-injection matrix + site coverage | on in `rpm_debug_shm_verify.sh` (DEBUG RPM) | `FAULT_INJECT=0` |
+| Consumer-parse E2E | on when the repo `.venv` is present | `CONSUMER_PARSE_CHECK=0` |
 
 When golden is opted in, verify resolves `${MONITOR}/tests/expected` (or the given path) and passes `--golden-dir` only if matching `shm_*_<slug>[__profile].txt` files exist; otherwise prints WARN and continues.
+
+## Value sentinel layers
+
+Contract: **monitor-value-sentinel-contract**. `lib/row_validate.py` accepts `-n` only for a catalog code (`lib/sentinel_catalog.py` reads `src/stats_sentinel.h`); `payload_parse.metric_value_at_key` returns None for a sentinel and `metric_sentinel_at_key` returns the code, so value layers never see codes. Without a `$sentinels` banner (knob 0 / old daemon) the sentinel layers SKIP and any sentinel token FAILs (`lib/sentinel_validate.py`). The manifest's `allowed_sentinels` / `expect_not_built` come from `build_message_expectations.py`. Cross-sample skips the monotonic check across a non-bridgeable gap and FAILs a bridgeable gap whose next value dropped (mod 2^W); LIKWID `host_cpu_hw` without `x86perf` reports that as NOTE. `scripts/consumer_parse_check.py` runs a capture through the consumer's Python parse and, when the extension is built, Codon parity (SKIP otherwise). Slug goldens are checked by `tests/test_shm_message_golden.sh` (exit 77 without a golden).
 
 ## Cross-sample flags
 

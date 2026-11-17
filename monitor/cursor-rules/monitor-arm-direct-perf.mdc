@@ -62,17 +62,26 @@ Since **3.1** (cpu-precision Phase 1) aarch64 builds **no LIKWID**. The `arm` CP
      open; INT8 / INT16 are never folded in.
    - Shared `W=48` keys (`instr_retired`, `aperf`, `mperf`, `arm_int8_ops`, `arm_int16_ops`)
      carry the lifetime **modulo 2^48** so consumer wrap logic and `WRAP48_EVENTS` stay valid.
-   - `fp_arith_inst_retired_scalar_*` stay 0 on Grace (Intel names).
+   - `fp_arith_inst_retired_*` emit `NOT_PRESENT` on Grace (Intel names).
 7. **Measured cycles overwrite fail-soft (O16).** `aperf`, `mperf`, `cpu_clock_est_cycles` keep
-   the util × freq estimate unless the CYC event is open and its lifetime > 0; then all three
-   carry measured cycles. A key whose event is not open is not published (stays 0).
+   the util × freq estimate unless the CYC event measured this interval and its lifetime > 0;
+   then all three carry measured cycles. Any other key whose event is not open or did not
+   measure emits its sentinel (law 9).
 8. **No synthetic instr / FLOPs (O15).** `publish_arm_cpu_stats` never emits `instr_retired`,
    `fp_arith_inst_retired_*` or `arm_est_flops`; only the measured reader does
    (`test_publish_never_synthesizes_instr_or_flops`). `arm_dram_bw_bytes` (util × freq) stays as
    the second DRAM source (user decision 2026-11-03).
-9. **Fail soft, never fail closed.** A missing PMU or failed open logs once per event (not per
-   CPU) and leaves that key 0; `host_cpu_hw` util keeps publishing. Opens happen at begin /
-   SIGHUP, never in collect; collect is one bounded `read` per open fd
+9. **Fail soft, never fail closed: the key emits its sentinel.** A missing PMU or failed open
+   logs once per event (not per CPU) and that key emits its value sentinel instead of a value
+   (`monitor-value-sentinel-contract.mdc`; catalog `src/stats_sentinel.h`); `host_cpu_hw` util
+   keeps publishing. Open errno maps through `perf_open_sentinel`: `EACCES`/`EPERM`
+   `PERMISSION_DENIED`, `ENOENT`/`EINVAL`/`EOPNOTSUPP` (and an event with no sysfs name or MIDR
+   row) `NOT_PRESENT`, `EBUSY` `PMU_BUSY`. Each read reports its status through
+   `perf_read_scaled`'s out-param: a failed read is `READ_FAILED` (prev kept, so the next delta
+   spans the gap), `Δrunning == 0` with `Δenabled > 0` is `NOT_SCHEDULED`, a re-seed is
+   `COUNTER_RESET`, and partial multiplexing stays a scaled value with no sentinel. The software
+   lifetime never decreases. `dram_chan*` is `NOT_BUILT`; x86 keys are `NOT_PRESENT`. Opens
+   happen at begin / SIGHUP, never in collect; collect is one bounded `read` per open fd
    (`monitor-jitter-and-fidelity-priority.mdc`). The unit's `LimitNOFILE` covers ~1,300 fds.
 11. **PMU sharing keys (D6, 3.1 Phase 1b; the version stays 3.1).** Every PMU-backed Grace row publishes counter time lifetimes
     computed from the scaled read's own Δenabled / Δrunning (`perf_times`), never from

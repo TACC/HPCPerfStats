@@ -18,6 +18,8 @@ alwaysApply: false
   - **`full`** — latest `@full` (or legacy full-width) sample (single payload)
   - **`fast.burst` / `full.burst`** — all payloads from the latest sample tick
     (shared-node: every jid + node-wide `-`), parts separated by `#---burst-part---`
+  - **`sentinels`** — one line per key not OK this cycle: `type dev key code slug errno site first last count` (provenance from `src/stats_sentinel_debug.c`)
+  - **`sentinel_sites`** — every registered `stats_set_missing*` call site with its hit count (the live coverage source for `FAULT_INJECT`; **monitor-value-sentinel-contract**)
 - **Shared-node multi-jid:** `job_shared_emit` must not mirror the trailing
   node-wide `-` insert into `fast`/`full` (it would hide the last jid sample).
   Idle `-` (zero discovered jids) still mirrors. Burst files always include every
