@@ -263,6 +263,15 @@ PARITY_FEATURES: tuple[ParityFeature, ...] = (
       f"{_MT}::test_sentinel_fill_interior_gaps_boundaries_match_numpy_twin",
     ),
   ),
+  ParityFeature(
+    "metrics per-sample sums under sentinel sample states (gap, bridge, fill)",
+    f"{_SP}:sentinel_sample_mask",
+    ("sentinel_samples_c", "fill_interior_gaps_c"),
+    (
+      f"{_MT}::test_sentinel_series_sums_codon_equals_numpy",
+      f"{_MT}::test_sentinel_profile_end_to_end_codon_equals_numpy",
+    ),
+  ),
 )
 
 # Exports that move data across the C ABI (slot banks, carry, errors, setters,

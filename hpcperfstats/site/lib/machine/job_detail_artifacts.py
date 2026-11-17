@@ -111,7 +111,9 @@ _GPU_MULTIPRECISION_MIX_IDLE_REASON = (
 )
 # 15 (2026-11-13): CPU pie from avg_fp*_instr with an FP16 slice; blank-pie
 # reasons distinguish idle (inputs all 0) from missing (inputs absent).
-APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 15
+# 16 (2026-11-17): Type Detail and FSIO peaks follow the sentinel sample
+# states (no partial sums; Type Detail fills short interior gaps).
+APP_DETAIL_ARTIFACT_SCHEMA_VERSION = 16
 
 _FSIO_FINGERPRINT_METRIC_NAMES = tuple(
   sorted(name for name, _t, _u in fsio_job_detail_catalog())

@@ -34,6 +34,9 @@ from hpcperfstats.analysis.metrics.lib.columnar.job_table import (
 from hpcperfstats.analysis.metrics.lib.columnar.summary_series import (
   build_summary_series,
 )
+from hpcperfstats.analysis.metrics.lib.plot.job_detail_bokeh_plot_descriptions import (
+  SENTINEL_GAP_HELP,
+)
 from hpcperfstats.site.lib.machine.job_plot_artifacts import (
   compute_plot_item_for_kind,
 )
@@ -59,7 +62,9 @@ VOLATILE_DOC_KEYS = frozenset({"version", "target_id", "root_id"})
 # Help prose changed on purpose after the pandas-path capture: new text ->
 # golden text, substituted inside strings of the new document before diffing.
 # D35 (monitor round 2): the node power estimate reads host_power_socket.
+# The sentinel gap sentence was appended to every per-sample plot's help.
 GOLDEN_PROSE_UPDATES = {
+  " " + SENTINEL_GAP_HELP: "",
   (
     "Estimated on-node power: module power when a module meter reads above "
     "zero, otherwise CPU power (RAPL, or Grace per-socket power summed over "

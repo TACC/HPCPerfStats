@@ -28,9 +28,14 @@ interior fill) run in the baked Codon kernels when ``codon_metrics
 status=enabled``; the ``_np_*`` functions here are their NumPy twins (host
 ``.venv`` and parity tests, ``codon-python-parity-contract.mdc``).
 
-Peaks and other non-fold reductions never read this module, so they are
-never scaled or filled. Jobs without sentinel rows and without partial-device
-runs never reach it (the legacy fold runs unchanged).
+Per-sample sums outside the fold (plots, Type Detail, peaks, the
+``avg_cpuusage`` busy/idle sums) use the same sample states through
+:func:`sentinel_sample_mask`: a gap sample is missing, never a partial sum.
+Series readers interpolate its interior gaps with :func:`fill_sample_gaps`
+under the fold's fill limits; peaks are never filled, and nothing outside the
+fold is scaled by partial-device runs. Jobs without sentinel rows and without
+partial-device runs never reach this module (the legacy paths run
+unchanged).
 
 Attributes:
   CLEAN (str): Series without sentinel samples.
@@ -51,7 +56,10 @@ from typing import Any
 import numpy as np
 
 from hpcperfstats.analysis.metrics.lib.columnar import codon_bridge
-from hpcperfstats.analysis.metrics.lib.columnar.segments import FIVE_MIN_US
+from hpcperfstats.analysis.metrics.lib.columnar.segments import (
+  FIVE_MIN_US,
+  TIME_BITS,
+)
 from hpcperfstats.analysis.metrics.lib.sentinel_reasons import SentinelRun
 from hpcperfstats.lib.monitor_sentinel import lookup
 
@@ -694,33 +702,11 @@ def sentinel_samples(
     valid &= vals >= 0.0
   valid &= code == 0
   eff = np.where(valid, vals, 0.0)
-  bridged = np.zeros(rows.shape[0], dtype=bool)
-  if col == "arc" and code.any():
-    chain = (
-      (f.series_id[rows].astype(np.int64) << 40)
-      | (f.host_id[rows].astype(np.int64) << 20)
-      | (f.dev_id[rows].astype(np.int64) & 0xFFFFF)
-    )
-    pos = np.arange(rows.shape[0])
-    nxt = np.where(code == 0, pos, rows.shape[0])
-    nxt = np.minimum.accumulate(nxt[::-1])[::-1]
-    broken: dict[int, int] = {}
-    for i in np.flatnonzero(code != 0).tolist():
-      j = int(nxt[i])
-      if j >= rows.shape[0] or chain[j] != chain[i]:
-        continue
-      if valid[j] and lookup(int(code[i])).bridge:
-        bridged[i] = True
-        eff[i] = vals[j]
-      elif code[j] == 0:
-        # After a chain break the next row's interval is lost with the gap
-        # (ingest leaves its rate NULL), so it is a gap sample too: no
-        # partial sum there, and a code this consumer does not know never
-        # bridges even if a rate is present.
-        broken[j] = int(code[i])
-    for j, c in broken.items():
-      code[j] = c
-      valid[j] = False
+  bridged = (
+    _bridge_rows(f, rows, code, vals, valid, eff)
+    if col == "arc" and code.any()
+    else np.zeros(rows.shape[0], dtype=bool)
+  )
   partial_devices: dict[int, list[int]] = {}
   if partial:
     t = f.time_us[rows].astype(np.int64)
@@ -769,6 +755,243 @@ def sentinel_samples(
   )
   first, sums, status, scodes = reduce(key, valid, bridged, gap_row, code, eff)
   return (host[first], tus[first], sums, status, scodes), partial_devices
+
+
+def _bridge_rows(
+  f: Any,
+  rows: np.ndarray,
+  code: np.ndarray,
+  vals: np.ndarray,
+  valid: np.ndarray,
+  eff: np.ndarray,
+) -> np.ndarray:
+  """
+  Bridge sentinel rows to the next valid row of their counter chain.
+
+  ``rows`` are frame rows sorted by ``(series, host, dev, time)``. A
+  bridgeable code whose next chain row is valid takes that row's rate in
+  ``eff``. Otherwise the next row, when it is not a sentinel, lost its
+  interval with the gap and becomes a gap row too: ``code`` takes the
+  breaking code and ``valid`` turns False there (both updated in place).
+
+  Args:
+    f (Any): ``JobFrame`` the rows index.
+    rows (np.ndarray): Frame row positions.
+    code (np.ndarray): int64 sentinel code per row (updated in place).
+    vals (np.ndarray): ``arc`` per row.
+    valid (np.ndarray): Row is a measured value (updated in place).
+    eff (np.ndarray): Effective value per row (updated in place).
+
+  Returns:
+    np.ndarray: True where a sentinel row is bridged.
+
+  Examples:
+    >>> from hpcperfstats.analysis.metrics.lib.columnar.jobframe import (
+    ...   JobFrame,
+    ... )
+    >>> f = JobFrame.from_records(
+    ...   "1",
+    ...   [
+    ...     (1, "h", "t", "e", None, 1, -1.0, None, None),
+    ...     (2, "h", "t", "e", None, 1, 5.0, 3.0, None),
+    ...   ],
+    ... )
+    >>> eff = np.zeros(2)
+    >>> (
+    ...   _bridge_rows(
+    ...     f,
+    ...     np.arange(2),
+    ...     np.array([-1, 0]),
+    ...     f.arc,
+    ...     np.array([False, True]),
+    ...     eff,
+    ...   ).tolist(),
+    ...   eff.tolist(),
+    ... )
+    ([True, False], [3.0, 0.0])
+  """
+  n = rows.shape[0]
+  bridged = np.zeros(n, dtype=bool)
+  chain = (
+    (f.series_id[rows].astype(np.int64) << 40)
+    | (f.host_id[rows].astype(np.int64) << 20)
+    | (f.dev_id[rows].astype(np.int64) & 0xFFFFF)
+  )
+  nxt = np.where(code == 0, np.arange(n), n)
+  nxt = np.minimum.accumulate(nxt[::-1])[::-1]
+  broken: dict[int, int] = {}
+  for i in np.flatnonzero(code != 0).tolist():
+    j = int(nxt[i])
+    if j >= n or chain[j] != chain[i]:
+      continue
+    if valid[j] and lookup(int(code[i])).bridge:
+      bridged[i] = True
+      eff[i] = vals[j]
+    elif code[j] == 0:
+      # After a chain break the next row's interval is lost with the gap
+      # (ingest leaves its rate NULL), so it is a gap sample too: no
+      # partial sum there, and a code this consumer does not know never
+      # bridges even if a rate is present.
+      broken[j] = int(code[i])
+  for j, c in broken.items():
+    code[j] = c
+    valid[j] = False
+  return bridged
+
+
+def sentinel_sample_mask(
+  index: Any,
+  rows: np.ndarray,
+  sample_key: np.ndarray,
+  vals: np.ndarray,
+  valid: np.ndarray,
+  col: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+  """
+  Row view of the fold's sample states for a per-sample sum.
+
+  Rows of a static-kind code (counter not present, not built, permission
+  denied) are absent: the counter does not exist there, so the sum of the
+  other events is complete. Every other sentinel row is bridged (``arc``
+  only: it takes the next valid rate of its chain) or makes its whole
+  sample a gap, as does the valid row after a chain break, so one
+  unreadable event never leaves a partial sum (intersection mask, the same
+  states as :func:`sentinel_samples`).
+
+  Args:
+    index (Any): ``FrameIndex`` of the job.
+    rows (np.ndarray): Scoped frame rows of the sum, in frame order.
+    sample_key (np.ndarray): int64 sample key per row (``(host, time)``, or
+      ``(host, dev, time)`` for per-device sums).
+    vals (np.ndarray): Summed column per row.
+    valid (np.ndarray): Row contributes to its sample (NULL, ceiling and
+      sign filters already applied).
+    col (str): ``arc`` (bridges apply), ``value`` or ``delta``.
+
+  Returns:
+    tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: ``(keep, vals,
+    valid, gap_keys)``: rows to keep (no static row, no row of a gap
+    sample), values and validity with the bridged rates applied, and the
+    sorted keys of the gap samples.
+
+  Examples:
+    >>> from hpcperfstats.analysis.metrics.lib.columnar.jobframe import (
+    ...   JobFrame,
+    ... )
+    >>> from hpcperfstats.analysis.metrics.lib.columnar.kernels import (
+    ...   FrameIndex,
+    ... )
+    >>> f = JobFrame.from_records(
+    ...   "1",
+    ...   [
+    ...     (1, "h", "t", "a", None, 1, 1.0, 2.0, None),
+    ...     (1, "h", "t", "b", None, 1, -5.0, None, None),
+    ...   ],
+    ... )
+    >>> keep, _v, _ok, gaps = sentinel_sample_mask(
+    ...   FrameIndex(f),
+    ...   np.arange(2),
+    ...   np.array([7, 7]),
+    ...   f.arc,
+    ...   np.array([True, False]),
+    ...   "arc",
+    ... )
+    >>> keep.tolist(), gaps.tolist()
+    ([False, False], [7])
+  """
+  code = index.frame.sentinel[rows].astype(np.int64)
+  static_codes = [
+    c for c in np.unique(code[code != 0]).tolist() if lookup(c).kind == STATIC
+  ]
+  live = np.flatnonzero(~np.isin(code, static_codes))
+  key, code = sample_key[live], code[live]
+  vals_l, ok = vals[live], valid[live].copy()
+  eff = np.where(ok, vals_l, 0.0)
+  bridged = (
+    _bridge_rows(index.frame, rows[live], code, vals_l, ok, eff)
+    if col == "arc" and code.any()
+    else np.zeros(live.shape[0], dtype=bool)
+  )
+  reduce = (
+    _np_sentinel_samples
+    if codon_bridge.kernels() is None
+    else codon_bridge.sentinel_samples
+  )
+  first, _sums, status, _codes = reduce(
+    key, ok, bridged, (code != 0) & ~bridged, code, eff
+  )
+  gap_keys = key[first[status == SAMPLE_GAP]]
+  keep = np.zeros(rows.shape[0], dtype=bool)
+  keep[live[~np.isin(key, gap_keys)]] = True
+  out_vals, out_valid = vals.copy(), valid.copy()
+  out_vals[live] = np.where(bridged, eff, vals_l)
+  out_valid[live] = ok | bridged
+  return keep, out_vals, out_valid, gap_keys
+
+
+def fill_sample_gaps(
+  keys: np.ndarray,
+  sums: np.ndarray,
+  gap_keys: np.ndarray,
+  time_axis: np.ndarray,
+  config: SentinelConfig,
+) -> tuple[np.ndarray, np.ndarray, int]:
+  """
+  Interpolate the interior gap samples of per-sample sums (series readers).
+
+  ``keys`` are sorted ``segments.composite_key`` sample keys whose low
+  ``TIME_BITS`` index ``time_axis`` and whose high bits name the series
+  (host, or host and device). The gap samples are merged in as NaN and each
+  series is filled by :func:`fill_interior_gaps` with the fold's limits:
+  ``fill_max_gap_s`` converted to samples by the series' median spacing
+  and ``fill_max_frac`` of its samples. Gap samples left unfilled (edges,
+  long runs, too large a share) are dropped, so they stay missing.
+
+  Args:
+    keys (np.ndarray): Sorted int64 keys of the measured samples.
+    sums (np.ndarray): Sum per key.
+    gap_keys (np.ndarray): Keys of the gap samples (disjoint from
+      ``keys``).
+    time_axis (np.ndarray): int64 sample time (us) by time index.
+    config (SentinelConfig): ``fill_max_gap_s`` / ``fill_max_frac``.
+
+  Returns:
+    tuple[np.ndarray, np.ndarray, int]: ``(keys, sums, filled)`` with the
+    filled gap samples merged in, and their count.
+
+  Examples:
+    >>> k, s, n = fill_sample_gaps(
+    ...   np.array([0, 2]),
+    ...   np.array([1.0, 3.0]),
+    ...   np.array([1]),
+    ...   np.array([0, 60_000_000, 120_000_000]),
+    ...   SentinelConfig(fill_max_frac=0.5),
+    ... )
+    >>> k.tolist(), s.tolist(), n
+    ([0, 1, 2], [1.0, 2.0, 3.0], 1)
+  """
+  merged = np.concatenate([keys, gap_keys])
+  order = np.argsort(merged, kind="stable")
+  merged = merged[order]
+  vals = np.concatenate([sums, np.full(gap_keys.shape[0], np.nan)])[order]
+  gap = order >= keys.shape[0]
+  t_us = time_axis[merged & ((1 << TIME_BITS) - 1)].astype(np.float64)
+  series = merged >> TIME_BITS
+  cut = (np.flatnonzero(np.diff(series)) + 1).tolist()
+  filled = 0
+  for lo, hi in zip([0, *cut], [*cut, merged.shape[0]], strict=True):
+    if hi - lo < 3 or not gap[lo:hi].any():
+      continue
+    step = float(np.median(np.diff(t_us[lo:hi])))
+    max_run = int(config.fill_max_gap_s * 1e6 // step) if step > 0 else 0
+    if max_run < 1:
+      continue
+    vals[lo:hi], n = fill_interior_gaps(
+      vals[lo:hi], gap[lo:hi], max_run, config.fill_max_frac, t_us[lo:hi]
+    )
+    filled += n
+  keep = ~gap | ~np.isnan(vals)
+  return merged[keep], vals[keep], filled
 
 
 def _np_sentinel_samples(

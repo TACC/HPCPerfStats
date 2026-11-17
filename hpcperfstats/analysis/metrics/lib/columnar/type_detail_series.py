@@ -158,7 +158,8 @@ def build_type_detail_series(
 ) -> TypeDetailSeries:
   """
   ``DevPlot.plot`` data: per-event ``Coalesce(SUM, 0)`` per sample joined on
-  the type's ``(host, time)`` base; events with any missing cell are dropped
+  the type's ``(host, time)`` base, interior sentinel gaps interpolated
+  within the job's fill limits; events with any missing cell are dropped
   and recorded as ``type_detail_dropped``, kept events under the caller's
   stage (``consumed_series``).
 
@@ -190,7 +191,13 @@ def build_type_detail_series(
   stage = consumed_series.current_stage()
   for event, _unit in events_units:
     with consumed_series.recording_paused():
-      agg = jt.index.sum_per_sample(type_name, [event], metric, mode=MODE_ORM)
+      agg = jt.index.sum_per_sample(
+        type_name,
+        [event],
+        metric,
+        mode=MODE_ORM,
+        fill=jt.sentinel_settings(),
+      )
     vals = (
       frame.join_values(agg) if not agg.empty else np.full(len(frame), np.nan)
     )

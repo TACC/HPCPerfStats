@@ -98,8 +98,12 @@ def peak_combined_read_write_mb_s(
     ...   jt, "lustre_llite", ("vfs_read_bytes",), ("vfs_write_bytes",)
     ... )  # doctest: +SKIP
   """
-  rdf = jt.get_aggregate(typ, "arc", list(read_events), _BYTES_TO_MB)
-  wdf = jt.get_aggregate(typ, "arc", list(write_events), _BYTES_TO_MB)
+  rdf = jt.get_aggregate(
+    typ, "arc", list(read_events), _BYTES_TO_MB, fill=False
+  )
+  wdf = jt.get_aggregate(
+    typ, "arc", list(write_events), _BYTES_TO_MB, fill=False
+  )
   if rdf.empty and wdf.empty:
     return None
   rt, rs = (
@@ -142,7 +146,7 @@ def peak_arc_sum(
   Examples:
     >>> peak_arc_sum(jt, "lustre_llite", ("vfs_open_ops",))  # doctest: +SKIP
   """
-  df = jt.get_aggregate(typ, "arc", list(events), conv)
+  df = jt.get_aggregate(typ, "arc", list(events), conv, fill=False)
   if df.empty:
     return None
   _t, sums = _sum_by_time(df)

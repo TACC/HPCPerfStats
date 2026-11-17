@@ -67,6 +67,9 @@ from hpcperfstats.analysis.metrics.lib.plot.bokeh_job_detail_help_marker import 
 from hpcperfstats.analysis.metrics.lib.plot.hover_html import (
   hover_tooltip_html_host_time_value,
 )
+from hpcperfstats.analysis.metrics.lib.plot.job_detail_bokeh_plot_descriptions import (
+  SENTINEL_GAP_HELP,
+)
 from hpcperfstats.analysis.metrics.lib.plot.job_window import (
   job_window_bounds_local,
 )
@@ -1075,7 +1078,7 @@ class SummaryPlot:
       researcher_use = researcher_use_for_summary_metric(metric)
     help_body = (
       f"Time: sample timestamp (cluster timezone) on the X axis. "
-      f"Y ({label_text}): {doc_text}"
+      f"Y ({label_text}): {doc_text} {SENTINEL_GAP_HELP}"
     )
     from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
       is_job_scoped_host_data_type,

@@ -27,6 +27,7 @@ from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
   MAX_SANE_COUNTER_RATE,
 )
 from hpcperfstats.analysis.metrics.tests.test_columnar_kernels import (
+  _data_records,
   _random_records,
 )
 from hpcperfstats.lib.dcgm_blank import DCGM_FP64_BLANK
@@ -156,8 +157,8 @@ def _assert_agg_identical(got, want):
   assert np.array_equal(got.sum_val, want.sum_val, equal_nan=True)
 
 
-def _indexes(seed):
-  recs = _random_records(seed, shared=True, n=900)
+def _indexes(seed, records=_random_records):
+  recs = records(seed, shared=True, n=900)
   frame = JobFrame.from_records("1", recs)
   return [
     kn.FrameIndex(frame),
@@ -215,7 +216,8 @@ _CASES = [
 
 @pytest.mark.parametrize("seed", [1, 2, 3, 4])
 def test_sum_per_sample_matches_legacy_bit_for_bit(seed):
-  for idx in _indexes(seed):
+  # The legacy oracle predates sample states, so it gets sentinel-free rows.
+  for idx in _indexes(seed, _data_records):
     for typ, events, col, kw in _CASES:
       got = idx.sum_per_sample(typ, events, col, **kw)
       want = _legacy_sum_per_sample(idx, typ, events, col, **kw)

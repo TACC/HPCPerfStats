@@ -397,6 +397,7 @@ class MockJobTable:
     conv: float = 1.0,
     *,
     group_by_dev: bool = False,
+    fill: bool = True,
   ) -> Any:
     """
     ``AggTable`` from ``get_aggregate_df(...)`` (same call signature).
@@ -407,6 +408,8 @@ class MockJobTable:
       events (Sequence[str]): Events.
       conv (float): Multiplier (forwarded; the mock decides whether to apply).
       group_by_dev (bool): Per-device rows.
+      fill (bool): Accepted for signature parity; mock rows carry no
+        sentinel gaps to fill.
 
     Returns:
       Any: ``AggTable``.

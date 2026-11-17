@@ -219,10 +219,12 @@ def test_frame_reductions_route_through_kernel_abi(monkeypatch):
   from hpcperfstats.analysis.metrics.lib.columnar import kernels as kn
   from hpcperfstats.analysis.metrics.lib.columnar.jobframe import JobFrame
   from hpcperfstats.analysis.metrics.tests.test_columnar_kernels import (
-    _random_records,
+    _data_records,
   )
 
-  frame = JobFrame.from_records("1", _random_records(4, shared=True, n=600))
+  # The fake module carries only the reductions routed here, so the rows
+  # hold no sentinels (sentinel states have their own parity tests).
+  frame = JobFrame.from_records("1", _data_records(4, shared=True, n=600))
 
   def snapshot():
     idx = kn.FrameIndex(frame, shared=True, residual_types=["host_mem", "nfs"])

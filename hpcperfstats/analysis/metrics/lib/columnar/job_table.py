@@ -35,6 +35,7 @@ from hpcperfstats.analysis.metrics.lib.columnar.kernels import (
   FrameIndex,
   bucketed_job_value,
 )
+from hpcperfstats.analysis.metrics.lib.columnar.series_frame import inner_join
 from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
   is_job_scoped_host_data_type,
   sane_counter_abs_limit,
@@ -384,8 +385,7 @@ class ColumnarJobTable:
     """
     if not self._base_filter or self.index.host_wide(typ):
       return False, None
-    if self.sentinel_config is None:
-      self.sentinel_config = SentinelConfig.from_ini()
+    self.sentinel_settings()
 
     runs = self.sentinel_runs()
     common: dict[str, Any] = {
@@ -429,6 +429,32 @@ class ColumnarJobTable:
     quality.partial_devices = partial
     self.sentinel_sink.append(quality)
     return True, value
+
+  def sentinel_settings(self) -> SentinelConfig:
+    """
+    The job's ``[PIPELINE] metrics_sentinel_*`` tunables, read on first use
+    and kept so folds and series fills share one snapshot.
+
+    Returns:
+      SentinelConfig: Tunables (tests may preset ``sentinel_config``).
+
+    Examples:
+      >>> t = ColumnarJobTable(
+      ...   "1",
+      ...   JobFrame.from_records("1", []),
+      ...   host_list=[],
+      ...   acct_host_list=[],
+      ...   schema={},
+      ...   start_time=None,
+      ...   end_time=None,
+      ... )
+      >>> t.sentinel_config = SentinelConfig(fill_max_frac=0.2)
+      >>> t.sentinel_settings().fill_max_frac
+      0.2
+    """
+    if self.sentinel_config is None:
+      self.sentinel_config = SentinelConfig.from_ini()
+    return self.sentinel_config
 
   def sentinel_runs(self) -> list[SentinelRun]:
     """
@@ -653,6 +679,7 @@ class ColumnarJobTable:
     conv: float = 1.0,
     *,
     group_by_dev: bool = False,
+    fill: bool = True,
   ) -> AggTable:
     """
     ``jid_table.get_aggregate_df``: per-sample sums of ``val_col`` for the
@@ -669,7 +696,10 @@ class ColumnarJobTable:
     cumulative byte counters exceed 1e13). GPU types drop ``val_col >=
     DCGM_FP64_BLANK`` rows and never apply the ceiling; ``group_by_dev``
     keeps devices and applies the GPU affinity filter. Shared-node residual
-    types collapse hardware / ``j:`` copies per event.
+    types collapse hardware / ``j:`` copies per event. A sample with an
+    unreadable summed event is a gap, never a partial sum; series readers
+    (``fill``) get interior gaps interpolated within the fold's
+    ``metrics_sentinel_fill_*`` limits, peak readers pass ``fill=False``.
 
     Args:
       typ (str): Type name or alias.
@@ -677,6 +707,8 @@ class ColumnarJobTable:
       events (Sequence[str]): Event names (probe-expanded here).
       conv (float): Multiplier.
       group_by_dev (bool): Per-device rows.
+      fill (bool): Interpolate interior sentinel gaps (plot series); False
+        for peaks, which must be measured samples.
 
     Returns:
       AggTable: Sorted rows (empty when nothing matched).
@@ -700,6 +732,7 @@ class ColumnarJobTable:
       tuple(probed),
       round(float(conv), 12),
       bool(group_by_dev),
+      bool(fill),
     )
     hit = self._agg_memo.get(key)
     if hit is not None:
@@ -733,6 +766,7 @@ class ColumnarJobTable:
           dev_filter=group_by_dev,
           limit=limit,
           coalesce_zero=self.coalesce_zero,
+          fill=self.sentinel_settings() if fill else None,
         )
         if not agg.empty:
           out = agg
@@ -838,15 +872,22 @@ class ColumnarJobTable:
     col: str,
     *,
     nonnegative: bool = False,
+    align_events: Sequence[str] = (),
   ) -> AggTable:
     """
     ``_host_data_metric_rows_batched(sum_per_sample=True)``: ORM-engine sums.
+
+    With ``align_events`` (the other side of a ratio) and sentinel rows in
+    the frame, only samples that are not a gap over ``events`` plus
+    ``align_events`` are kept, so both sides cover the same samples.
 
     Args:
       typ (str): Concrete type name.
       events (Sequence[str]): Probe-expanded events.
       col (str): Column.
       nonnegative (bool): ``SUM FILTER (col >= 0)``.
+      align_events (Sequence[str]): Probe-expanded events whose sentinel
+        gaps are gaps here too.
 
     Returns:
       AggTable: Rows (empty when no scoped row exists).
@@ -865,9 +906,20 @@ class ColumnarJobTable:
     """
     if not self._base_filter or not self.acct_host_list:
       return AggTable.zero()
-    return self.index.sum_per_sample(
+    agg = self.index.sum_per_sample(
       typ, list(events), col, mode=MODE_ORM, nonnegative=nonnegative
     )
+    if not align_events or agg.empty or not self.frame.sentinel.any():
+      return agg
+    both = self.index.sum_per_sample(
+      typ,
+      [*events, *align_events],
+      col,
+      mode=MODE_ORM,
+      nonnegative=nonnegative,
+    )
+    li, _ri = inner_join(agg, both)
+    return AggTable(agg.host_id[li], agg.time_us[li], agg.sum_val[li])
 
   def raw_rows(
     self,

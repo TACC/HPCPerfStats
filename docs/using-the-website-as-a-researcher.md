@@ -1,7 +1,7 @@
 # Using HPCPerfStats on the Web — Guide for Researchers and HPC Users
 
 
-This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-10-19.
+This guide is for users and researchers working on clusters tracked by HPCPerfStats and focuses on using HPCPerfStats website data to understand application runtime performance and diagnostics; it was last updated on 2026-11-17.
 
 
 This document is ordered so the **most decision-relevant ideas come first**. Deeper catalog-style detail appears in later sections.
@@ -204,6 +204,7 @@ This section covers job-detail surfaces beyond scalar metrics.
 - Time axis and hover use the cluster timezone from site configuration (not raw UTC labels).
 - GPU tensor traces: when IMMA/HMMA/DFMA splits are present, Summary shows separate tensor-pipe subplots for those kinds (preferred over a single lumped tensor-pipe series). The lumped any-pipe tensor series appears only when those splits are absent.
 - Performance recommendation: always pair with Metrics tab; peaks in summary often explain extreme scalar maxima and telemetry behavior<sup>[12](#ref-12)</sup>.
+- Unreadable samples: when the monitor could not read one of the counters a line adds up at some time, that point is left out instead of being drawn too low. A short gap inside a host's line is filled by a straight line between the samples on either side<sup>[17](#ref-17)</sup>, the same way the job metrics treat it; a gap at the start or end of the job, or a long one, stays empty. The same rule applies to roofline points and Type Detail plots. Peak values (for example the file-system peak columns) only use samples that were actually read.
 
 ### 6.2 Roofline tab (CPU + GPU)
 
@@ -290,6 +291,7 @@ This section covers job-detail surfaces beyond scalar metrics.
 - Signals: gaps in expected plot/metric continuity.
 - Check: `Device data` event coverage for expected signal families and compare with similar jobs.
 - Check: a **Metrics** row reading "collector not found" or "counter not present (n/N hosts)" means that signal does not exist on those nodes; it is not a gap in your job.
+- Check: a straight segment over a few samples in a Summary or Type Detail line is a short read gap filled between its neighbors, not a measured plateau; if a plot is missing for one signal family, the gaps were too long or at the edge of the job to fill.
 
 ---
 
@@ -315,6 +317,7 @@ Use these numbered references when you want background on terms used throughout 
 | <span id="ref-14">[14]</span> | Out-of-memory conditions | Context for OOM-risk interpretation in memory-pressure diagnostics. | [Out of memory (Wikipedia)](https://en.wikipedia.org/wiki/Out_of_memory) |
 | <span id="ref-15">[15]</span> | InfiniBand | Background for IB/fabric metrics and communication-heavy scaling interpretation. | [InfiniBand (Wikipedia)](https://en.wikipedia.org/wiki/InfiniBand) |
 | <span id="ref-16">[16]</span> | Ethernet | Background for Ethernet bandwidth interpretation alongside IB paths. | [Ethernet (Wikipedia)](https://en.wikipedia.org/wiki/Ethernet) |
+| <span id="ref-17">[17]</span> | Linear interpolation | How short read gaps in plot lines are filled from the samples on either side. | [Linear interpolation (Wikipedia)](https://en.wikipedia.org/wiki/Linear_interpolation) |
 
 ---
 
@@ -361,3 +364,4 @@ Use these numbered references when you want background on terms used throughout 
 | 2026-11-13 | CPU Multiprecision Mix pie shows the share of FP64 / FP32 / FP16 / INT16 / INT8 instructions (new `avg_fp64_instr`, `avg_fp32_instr`, `avg_fp16_instr`; INT rates now in Ginstr/s); `avg_flops64b` / `avg_flops32b` stay for older jobs only. Idle jobs say the telemetry is present but idle instead of missing. From monitor 3.1 on, Grace instruction and cycle rates are higher than before for the same work, because earlier releases under-counted them: about 3.3× on GB200 nodes (measured). Other Grace nodes have not been measured and may also rise, so compare jobs from before and after the upgrade with care. |
 | 2026-11-16 | Metrics tab no-data rows: everyone sees "collector not found on this node's monitor" and "counter not present (n/N hosts)"; other missing-value causes stay **Data not available.**, and short monitor read gaps no longer lower or zero a value. |
 | 2026-11-05 | Node power estimate on Grace nodes reads per-socket power meters (`host_power_socket`): GH200 module power when present, otherwise whole-socket power summed over sockets plus GPU power (socket power alone on GPU-less Grace/Grace and Vera nodes). Horizon GB200 CPU power read 0 before this monitor release, and GB200 and Grace/Grace estimates are now higher by the SoC and memory share. The retired per-CPU / per-GPU power copies only appear in older jobs, which keep the old estimate. |
+| 2026-11-17 | Summary, roofline and Type Detail plots: a sample where one summed counter could not be read is left out instead of drawn as a partial value; short gaps inside a host's line are filled by straight-line interpolation (edge and long gaps stay empty); peak values use measured samples only; `avg_cpuusage` skips samples where a busy or idle counter could not be read. |

@@ -9,18 +9,27 @@ prose).
 Attributes:
   HelpPair: Attribute.
   JOB_DETAIL_BOKEH_HELP: Attribute.
+  SENTINEL_GAP_HELP (str): Sentence on unreadable samples shared by the
+    per-sample plots (Summary, rooflines, Type Detail rates).
 """
 
 from __future__ import annotations
 
 HelpPair = tuple[str, str | None]
 
+SENTINEL_GAP_HELP = (
+  "A sample where one of the summed counters could not be read is left out, "
+  "not shown as a partial sum; short gaps inside each host series are filled "
+  "by straight-line interpolation between the neighboring samples."
+)
+
 JOB_DETAIL_BOKEH_HELP: dict[str, HelpPair] = {
   "jobDetailPlot_roofline_cpu": (
     "CPU roofline: each point is one host and time sample. Horizontal axis is "
     "arithmetic intensity (GFLOP/s divided by GB/s memory bandwidth from the same "
     "sample). Vertical axis is achieved GFLOP/s. The navy curve is the theoretical "
-    "roofline for this job using inferred CPU peak FLOPS and memory bandwidth.",
+    "roofline for this job using inferred CPU peak FLOPS and memory bandwidth. "
+    + SENTINEL_GAP_HELP,
     "Points below the roof indicate memory-bound or imbalance behavior; points near "
     "the ridge show compute-bound phases.",
   ),
@@ -31,7 +40,7 @@ JOB_DETAIL_BOKEH_HELP: dict[str, HelpPair] = {
     "monitor's estimated GPU memory bandwidth (same source as Summary HBM BW); "
     "otherwise it is PCIe plus NVLink (or Intel Xe Link) byte rate. Vertical "
     "axis is GPU GFLOP/s. The navy curve uses inferred host-level peaks matched "
-    "to that bandwidth axis.",
+    "to that bandwidth axis. " + SENTINEL_GAP_HELP,
     "Use Memory BW mode for device-memory-bound phases and PCIe/NvLink mode for "
     "interconnect-limited phases relative to the matching roof.",
   ),
@@ -66,7 +75,7 @@ JOB_DETAIL_BOKEH_HELP: dict[str, HelpPair] = {
   "jobDetailPlot_type_detail_rates": (
     "On-device rates: each subplot is one monitor event for this type, with one "
     "line per host over the job window. Values are device-aggregated rates "
-    "(arc) or sampled values depending on the type.",
+    "(arc) or sampled values depending on the type. " + SENTINEL_GAP_HELP,
     "Use these to compare hosts and spot device-level imbalance or stalls for "
     "the selected type.",
   ),

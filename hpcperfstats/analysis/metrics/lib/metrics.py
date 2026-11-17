@@ -2610,12 +2610,15 @@ class Metrics:
         return cache[cache_key]
     schema = getattr(jt, "schema", None)
 
-    def _sum_arc_events(events: Any) -> Any:
+    def _sum_arc_events(events: Any, other: Any) -> Any:
       """
-      Per-sample ``arc`` sums for ``events`` from the first feasible type.
+      Per-sample ``arc`` sums for ``events`` from the first feasible type,
+      on the samples that are not a sentinel gap of ``events`` or
+      ``other`` (busy and idle cover the same samples).
 
       Args:
         events (Any): Event names.
+        other (Any): Event names of the other side of the ratio.
 
       Returns:
         Any: ``AggTable`` or None.
@@ -2629,17 +2632,22 @@ class Metrics:
         if not _metric_type_events_feasible(schema, typ, events):
           continue
         ev = _flatten_event_names_for_host_data_query(events, typ=typ)
-        rows = jt.sample_sums_orm(typ, ev, "arc")
+        rows = jt.sample_sums_orm(
+          typ,
+          ev,
+          "arc",
+          align_events=_flatten_event_names_for_host_data_query(other, typ=typ),
+        )
         if not rows.empty:
           return rows
       return None
 
-    busy = _sum_arc_events(busy_events)
+    busy = _sum_arc_events(busy_events, idle_events)
     if busy is None or busy.empty:
       if cache is not None:
         cache[cache_key] = None
       return None
-    idle = _sum_arc_events(idle_events)
+    idle = _sum_arc_events(idle_events, busy_events)
     if idle is None or idle.empty:
       value = self.job_arc(
         jt,

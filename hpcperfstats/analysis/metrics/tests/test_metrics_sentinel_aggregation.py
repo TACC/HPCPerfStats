@@ -337,3 +337,101 @@ def test_summary_falls_back_when_preferred_series_is_all_sentinel():
   cols = build_summary_series(_table(rows, hosts=("c1.x",))).frame.columns
   assert cols["mem"].tolist() == [1.0, 2.0, 3.0]
   assert cols["nv_gpu_util"].tolist() == [40.0, 41.0, 42.0]
+
+
+def _host_series(agg, jt, host):
+  """``{minute: value}`` of one host in an aggregate table."""
+  hid = jt.frame.hosts.index(host)
+  sel = agg.host_id == hid
+  t0 = to_time_us(_T0)
+  return dict(
+    zip(
+      ((agg.time_us[sel] - t0) // 60_000_000).tolist(),
+      agg.sum_val[sel].tolist(),
+      strict=True,
+    )
+  )
+
+
+def test_get_aggregate_fills_interior_transient_gap():
+  """Series readers interpolate interior gaps within ``fill_max_gap_s`` and
+  ``fill_max_frac``; edge, over-long and over-share gaps stay missing."""
+  jt = _ib_job(
+    overrides={
+      # A -5 at minute 20 breaks the chain: minutes 20 and 21 are gaps.
+      ("c1.x", "port_rcv_data"): {20: -5},
+      ("c2.x", "port_rcv_data"): {_MIN: -5},
+      ("c3.x", "port_rcv_data"): dict.fromkeys(range(10, 31), -5),
+      ("c4.x", "port_rcv_data"): dict.fromkeys((5, 15, 25, 35, 45), -5),
+    }
+  )
+  agg = jt.get_aggregate("host_ib", "arc", list(_IB), 1.0)
+  c1 = _host_series(agg, jt, "c1.x")
+  assert c1[20] == pytest.approx(20.0) and c1[21] == pytest.approx(20.0)
+  assert agg.filled == 2
+  assert _MIN not in _host_series(agg, jt, "c2.x")
+  c3 = _host_series(agg, jt, "c3.x")
+  assert not any(m in c3 for m in range(10, 32))
+  c4 = _host_series(agg, jt, "c4.x")
+  assert not any(m in c4 for m in (5, 6, 15, 16, 25, 26, 35, 36, 45, 46))
+  assert all(v == pytest.approx(20.0) for m, v in c1.items() if m)
+
+
+def test_peak_never_uses_filled_sample():
+  """Peaks read measured samples only: a gap sample is neither filled nor a
+  partial sum, so it cannot raise the job-wide maximum."""
+  from hpcperfstats.analysis.metrics.lib.columnar.detail_series import (
+    peak_arc_sum,
+  )
+
+  rows = []
+  for i in range(_MIN + 1):
+    t = _T0 + timedelta(minutes=i)
+    a_rate = 100.0 if i == 20 else 1.0
+    rows.append((t, "c1.x", "host_ib", "port_rcv_data", "-", 1.0, a_rate, None))
+    for ev in _IB:
+      gap = ev == "port_xmit_data" and i in (20, 21)
+      code = -5.0 if gap and i == 20 else 1.0
+      arc = None if gap else 25.0
+      rows.append((t, "c2.x", "host_ib", ev, "-", code, arc, None))
+  jt = _table(rows, hosts=("c1.x", "c2.x"))
+  assert peak_arc_sum(jt, "host_ib", _IB) == pytest.approx(100.0)
+  assert jt.get_aggregate("host_ib", "arc", list(_IB), 1.0).filled == 2
+
+
+def test_avg_cpuusage_partial_busy_sample():
+  """One unreadable busy (``nice``) or idle (``idle``) event makes the sample
+  a gap on both sides: no understated or overstated busy share."""
+  from types import SimpleNamespace
+
+  rates = {
+    "user": 50.0,
+    "system": 0.0,
+    "nice": 50.0,
+    "idle": 100.0,
+    "iowait": 0.0,
+    "irq": 0.0,
+    "softirq": 0.0,
+  }
+  gaps = {"nice": {20: -5}, "idle": {40: -5}}
+  rows = []
+  for ev, rate in rates.items():
+    rows += _counter("c1.x", "host_cpu", ev, rate, sentinels=gaps.get(ev))
+  jt = _table(rows, hosts=("c1.x",))
+  job = SimpleNamespace(ncores=8, nhosts=1)
+  value = metrics.Metrics()._job_avg_cpuusage_allocated(jt, job, None, None)
+  assert value == pytest.approx(4.0, rel=1e-12)
+
+
+def test_type_detail_series_fills_interior_gap():
+  """Type Detail keeps an event whose only gap is a short interior one."""
+  from hpcperfstats.analysis.metrics.lib.columnar.type_detail_series import (
+    build_type_detail_series,
+  )
+
+  jt = _ib_job(overrides={("c1.x", "port_rcv_data"): {20: -5}})
+  series = build_type_detail_series(
+    jt, "host_ib", [("port_rcv_data", "B/s")], type_list=["host_ib"]
+  )
+  vals = series.frame.columns["port_rcv_data"]
+  assert not any(v != v for v in vals.tolist())

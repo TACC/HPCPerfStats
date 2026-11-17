@@ -108,7 +108,7 @@ def test_multiprecision_cpu_pie_includes_grace_int_wedges():
     "INT16",
     "INT8",
   )
-  assert jda.APP_DETAIL_ARTIFACT_SCHEMA_VERSION == 15
+  assert jda.APP_DETAIL_ARTIFACT_SCHEMA_VERSION == 16
 
 
 def test_multiprecision_mix_payload_appends_shared_node_footer_to_both_pies():

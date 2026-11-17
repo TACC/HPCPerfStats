@@ -30,7 +30,7 @@ Attributes:
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -42,6 +42,11 @@ from hpcperfstats.analysis.metrics.lib.columnar.jobframe import JobFrame
 from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
   MAX_SANE_COUNTER_DELTA,
   MAX_SANE_COUNTER_RATE,
+)
+from hpcperfstats.analysis.metrics.lib.sentinel_profile import (
+  SentinelConfig,
+  fill_sample_gaps,
+  sentinel_sample_mask,
 )
 from hpcperfstats.lib.dcgm_blank import DCGM_FP64_BLANK
 
@@ -61,12 +66,14 @@ class AggTable:
     time_us: int64 sample time per row.
     sum_val: float64 aggregate per row (``conv`` already applied).
     dev_id: Signed dev id per row, or None when devices were summed.
+    filled: Rows interpolated over interior sentinel gaps (series readers).
   """
 
   host_id: np.ndarray
   time_us: np.ndarray
   sum_val: np.ndarray
   dev_id: np.ndarray | None = None
+  filled: int = 0
 
   def __len__(self) -> int:
     """
@@ -500,6 +507,7 @@ class FrameIndex:
     dev_filter: bool = False,
     limit: float | None = None,
     coalesce_zero: bool = True,
+    fill: SentinelConfig | None = None,
   ) -> AggTable:
     """
     Sum ``col`` over the selected events and devices per ``(host, time)``.
@@ -519,6 +527,14 @@ class FrameIndex:
     a group without a valid sample sums to ``0`` (``Coalesce``); the ceiling
     applies only when ``limit`` is given.
 
+    Monitor value sentinels follow the fold's sample states
+    (``sentinel_profile.sentinel_sample_mask``): a static-kind code is an
+    absent counter, a bridged code takes the next valid rate, and any other
+    code makes the whole sample a gap (missing), never a partial sum. With
+    ``fill`` the interior gap samples of each series are interpolated
+    (``sentinel_profile.fill_sample_gaps``); peaks and metric folds pass
+    none. Frames without sentinel rows skip all of this.
+
     Args:
       typ (str): Type name (already a concrete probe name).
       events (Sequence[str] | None): Event names, or None for every event.
@@ -534,9 +550,11 @@ class FrameIndex:
         ``sane_counter_abs_limit(col)``, ``orm`` to none.
       coalesce_zero (bool): ``orm`` only: a group without a valid sample
         sums to ``0`` (``Coalesce``); False keeps NaN (host plots).
+      fill (SentinelConfig | None): Interpolate interior gap samples with
+        these limits (series readers); None leaves gaps missing.
 
     Returns:
-      AggTable: Sorted aggregate rows.
+      AggTable: Sorted aggregate rows (``filled`` counts interpolated rows).
 
     Raises:
       ValueError: Unknown ``mode``.
@@ -569,14 +587,15 @@ class FrameIndex:
       limit = (
         MAX_SANE_COUNTER_DELTA if col == "delta" else MAX_SANE_COUNTER_RATE
       )
-    if mode == MODE_ORM:
-      keep = f.sentinel[rows] == 0
-      if reject_dcgm_blank:
-        keep &= ~np.isnan(vals) & (vals < DCGM_FP64_BLANK)
+    if mode == MODE_ORM and (reject_dcgm_blank or dev_filter):
+      # Sentinel rows pass the blank filter; the sample states decide them.
+      keep = (
+        (f.sentinel[rows] != 0) | (~np.isnan(vals) & (vals < DCGM_FP64_BLANK))
+        if reject_dcgm_blank
+        else np.ones(rows.shape[0], dtype=bool)
+      )
       if dev_filter:
         keep &= self._dev_allowed_mask(rows)
-      if not keep.any():
-        return AggTable.zero(by_dev=by_dev)
       rows, vals = rows[keep], vals[keep]
     valid = sg.finite_mask(vals, limit=limit, nonnegative=nonnegative)
     host = f.host_id[rows].astype(np.int64)
@@ -586,6 +605,16 @@ class FrameIndex:
       group_key = sg.composite_key(host, dev + (1 << 15), tix)
     else:
       group_key = sg.composite_key(host, tix)
+    gap_keys = None
+    if f.sentinel[rows].any():
+      keep, vals, valid, gap_keys = sentinel_sample_mask(
+        self, rows, group_key, vals, valid, col
+      )
+      rows, vals, valid = rows[keep], vals[keep], valid[keep]
+      host, tix, dev = host[keep], tix[keep], dev[keep]
+      group_key = group_key[keep]
+    if rows.size == 0:
+      return AggTable.zero(by_dev=by_dev)
     if self.host_wide(typ) and not by_dev:
       key_hte = sg.composite_key(host, f.series_id[rows].astype(np.int64), tix)
       k_e, v_e = sg.collapse_residual_copies(key_hte, dev, vals, valid)
@@ -604,11 +633,19 @@ class FrameIndex:
       sums = np.full(keys.shape[0], 0.0 if coalesce_zero else np.nan)
       li, ri = sg.join_keys(keys, contrib_keys)
       sums[li] = contrib_sums[ri]
+    filled = 0
+    if fill is not None and gap_keys is not None and gap_keys.size:
+      keys, sums, filled = fill_sample_gaps(
+        keys, sums, gap_keys, self._time_axis, fill
+      )
     if keys.size == 0:
       return AggTable.zero(by_dev=by_dev)
-    if by_dev:
-      return self._agg_from_keys_dev(keys, sums, conv)
-    return self._agg_from_keys(keys, sums, conv)
+    agg = (
+      self._agg_from_keys_dev(keys, sums, conv)
+      if by_dev
+      else self._agg_from_keys(keys, sums, conv)
+    )
+    return replace(agg, filled=filled) if filled else agg
 
   def _agg_from_keys(
     self, keys: np.ndarray, sums: np.ndarray, conv: float

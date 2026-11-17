@@ -8,6 +8,7 @@ from hpcperfstats.analysis.metrics.lib.columnar.jobframe import JobFrame
 from hpcperfstats.analysis.metrics.lib.job_host_data_scope import (
   MAX_SANE_COUNTER_RATE,
 )
+from hpcperfstats.analysis.metrics.lib.sentinel_profile import SentinelConfig
 from hpcperfstats.lib.dcgm_blank import DCGM_FP64_BLANK
 
 US = 1_000_000
@@ -68,6 +69,18 @@ def _random_records(seed: int, *, shared: bool = False, n: int = 600):
   return recs
 
 
+def _data_records(seed: int, **kw):
+  """``_random_records`` without value sentinels (negative values flipped).
+
+  The pandas oracle below is the legacy per-row rule; sentinel samples
+  follow the fold's sample states instead and have their own tests.
+  """
+  return [
+    (*r[:6], None if r[6] is None else abs(r[6]), *r[7:])
+    for r in _random_records(seed, **kw)
+  ]
+
+
 def _df(recs, frame):
   df = pd.DataFrame(
     recs,
@@ -117,7 +130,7 @@ def _sql_sum(df, typ, events, col, *, host_wide, nonneg=False):
 
 
 def test_sum_per_sample_sql_matches_pandas_owned_only():
-  recs = _random_records(3)
+  recs = _data_records(3)
   frame = JobFrame.from_records("1", recs)
   idx = kn.FrameIndex(frame)
   df = _df(recs, frame)
@@ -136,7 +149,7 @@ def test_sum_per_sample_sql_matches_pandas_owned_only():
 
 
 def test_sum_per_sample_sql_host_wide_collapse_rule():
-  recs = _random_records(5, shared=True)
+  recs = _data_records(5, shared=True)
   frame = JobFrame.from_records("1", recs)
   idx = kn.FrameIndex(frame, shared=True, residual_types=["host_mem", "nfs"])
   assert idx.host_wide("host_mem") and not idx.host_wide("host_cpu")
@@ -250,6 +263,98 @@ def test_sum_per_sample_orm_sentinel_rows_make_no_group():
   )
 
 
+def _cpu_arcs(per_event):
+  """``host_cpu`` arc rows at minutes 0-5; ``per_event`` maps event ->
+  ``(arc, {minute: sentinel code}, {minute: arc override})``."""
+  recs = []
+  for ev, (arc, codes, arcs) in per_event.items():
+    for m in range(6):
+      code = codes.get(m)
+      recs.append(
+        (
+          m * 60 * US,
+          "h1",
+          "host_cpu",
+          ev,
+          "",
+          1,
+          float(code) if code else 1.0,
+          None if code else arcs.get(m, arc),
+          None,
+        )
+      )
+  return kn.FrameIndex(JobFrame.from_records("1", recs))
+
+
+def _sample_sums(idx, events, mode=kn.MODE_ORM):
+  t = idx.sum_per_sample("host_cpu", events, "arc", mode=mode)
+  return dict(
+    zip((t.time_us // (60 * US)).tolist(), t.sum_val.tolist(), strict=True)
+  )
+
+
+def test_sum_per_sample_partial_transient_sentinel_is_gap():
+  """``nice`` unreadable (-5) at minute 2: minutes 2 and 3 (its chain break)
+  are gaps, never ``user`` alone."""
+  idx = _cpu_arcs({"user": (2.0, {}, {}), "nice": (3.0, {2: -5}, {3: None})})
+  for mode in (kn.MODE_ORM, kn.MODE_SQL):
+    assert _sample_sums(idx, ["user", "nice"], mode) == {
+      0: 5.0,
+      1: 5.0,
+      4: 5.0,
+      5: 5.0,
+    }
+
+
+def test_sum_per_sample_structural_sentinel_not_partial():
+  """``nice`` NOT_PRESENT (-2) everywhere is absent, not a gap: the sum is
+  ``user + system``; a transient ``system`` code still gaps minute 2."""
+  idx = _cpu_arcs(
+    {
+      "user": (2.0, {}, {}),
+      "system": (1.0, {2: -5}, {3: None}),
+      "nice": (3.0, dict.fromkeys(range(6), -2), {}),
+    }
+  )
+  assert _sample_sums(idx, ["user", "system", "nice"]) == {
+    0: 3.0,
+    1: 3.0,
+    4: 3.0,
+    5: 3.0,
+  }
+
+
+def test_sum_per_sample_bridged_arc_spreads_rate():
+  """NOT_UPDATED (-1) on ``nice`` at minute 2 is bridged: the next row's rate
+  covers minute 2, so the sample is complete."""
+  idx = _cpu_arcs({"user": (2.0, {}, {}), "nice": (3.0, {2: -1}, {3: 4.0})})
+  assert _sample_sums(idx, ["user", "nice"]) == {
+    0: 5.0,
+    1: 5.0,
+    2: 6.0,
+    3: 6.0,
+    4: 5.0,
+    5: 5.0,
+  }
+
+
+def test_no_sentinel_frame_unchanged():
+  """Without sentinel rows the fill request changes nothing, bit for bit
+  (golden-parity guard: the sample-state path never runs)."""
+  frame = JobFrame.from_records("1", _data_records(11, shared=True))
+  assert not frame.sentinel.any()
+  idx = kn.FrameIndex(frame, shared=True, residual_types=["host_mem", "nfs"])
+  for typ, events in (("host_cpu", ["user", "nice"]), ("nfs", None)):
+    for mode in (kn.MODE_SQL, kn.MODE_ORM):
+      a = idx.sum_per_sample(typ, events, "arc", mode=mode)
+      b = idx.sum_per_sample(
+        typ, events, "arc", mode=mode, fill=SentinelConfig()
+      )
+      assert a.time_us.tolist() == b.time_us.tolist()
+      assert a.sum_val.tobytes() == b.sum_val.tobytes()
+      assert b.filled == 0
+
+
 def test_host_time_keys_and_distinct_count_match_pandas():
   recs = _random_records(7, shared=True)
   frame = JobFrame.from_records("1", recs)
@@ -359,7 +464,7 @@ def test_metrics_pivot_matches_job_for_metrics_pandas():
 
 
 def test_bucketed_job_value_matches_job_arc_pandas():
-  recs = _random_records(19)
+  recs = _data_records(19)
   frame = JobFrame.from_records("1", recs)
   df = _df(recs, frame)
   idx = kn.FrameIndex(frame)

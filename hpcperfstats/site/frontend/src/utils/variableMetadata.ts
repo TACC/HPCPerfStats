@@ -841,13 +841,13 @@ const SUMMARY_PLOT_METRIC_METADATA = {
 const JOB_DETAIL_BOKEH_PLOT_METADATA = {
   jobDetailPlot_roofline_cpu: {
     description:
-      "CPU roofline: each point is one host and time sample. Horizontal axis is arithmetic intensity (GFLOP/s divided by GB/s memory bandwidth from the same sample). Vertical axis is achieved GFLOP/s. The navy curve is the theoretical roofline for this job using inferred CPU peak FLOPS and memory bandwidth.",
+      "CPU roofline: each point is one host and time sample. Horizontal axis is arithmetic intensity (GFLOP/s divided by GB/s memory bandwidth from the same sample). Vertical axis is achieved GFLOP/s. The navy curve is the theoretical roofline for this job using inferred CPU peak FLOPS and memory bandwidth. A sample where one of the summed counters could not be read is left out, not shown as a partial sum; short gaps inside each host series are filled by straight-line interpolation between the neighboring samples.",
     researcherUse:
       "Points below the roof indicate memory-bound or imbalance behavior; points near the ridge show compute-bound phases.",
   },
   jobDetailPlot_roofline_gpu: {
     description:
-      "GPU roofline: each point is one host, GPU device, and time sample. Horizontal axis is arithmetic intensity (GPU GFLOP/s divided by GB/s). When usable gpu_mem_bw_bytes_rate samples exist, bandwidth is the monitor's estimated GPU memory bandwidth (same source as Summary HBM BW); otherwise it is PCIe plus NVLink (or Intel Xe Link) byte rate. Vertical axis is GPU GFLOP/s. The navy curve uses inferred host-level peaks matched to that bandwidth axis.",
+      "GPU roofline: each point is one host, GPU device, and time sample. Horizontal axis is arithmetic intensity (GPU GFLOP/s divided by GB/s). When usable gpu_mem_bw_bytes_rate samples exist, bandwidth is the monitor's estimated GPU memory bandwidth (same source as Summary HBM BW); otherwise it is PCIe plus NVLink (or Intel Xe Link) byte rate. Vertical axis is GPU GFLOP/s. The navy curve uses inferred host-level peaks matched to that bandwidth axis. A sample where one of the summed counters could not be read is left out, not shown as a partial sum; short gaps inside each host series are filled by straight-line interpolation between the neighboring samples.",
     researcherUse:
       "Use Memory BW mode for device-memory-bound phases and PCIe/NvLink mode for interconnect-limited phases relative to the matching roof.",
   },
@@ -871,7 +871,7 @@ const JOB_DETAIL_BOKEH_PLOT_METADATA = {
   },
   jobDetailPlot_type_detail_rates: {
     description:
-      "On-device rates: each subplot is one monitor event for this type, with one line per host over the job window. Values are device-aggregated rates (arc) or sampled values depending on the type.",
+      "On-device rates: each subplot is one monitor event for this type, with one line per host over the job window. Values are device-aggregated rates (arc) or sampled values depending on the type. A sample where one of the summed counters could not be read is left out, not shown as a partial sum; short gaps inside each host series are filled by straight-line interpolation between the neighboring samples.",
     researcherUse:
       "Use these to compare hosts and spot device-level imbalance or stalls for the selected type.",
   },

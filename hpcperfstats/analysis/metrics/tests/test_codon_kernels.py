@@ -755,6 +755,55 @@ def test_sentinel_profile_end_to_end_codon_equals_numpy(monkeypatch):
   assert with_numpy["under_floor:mean"][0] is None
 
 
+def _sentinel_series_snapshot():
+  """Per-sample sums of the sentinel series scenarios (states and fill)."""
+  from types import SimpleNamespace
+
+  from hpcperfstats.analysis.metrics.lib import metrics
+  from hpcperfstats.analysis.metrics.tests import (
+    test_metrics_sentinel_aggregation as agg,
+  )
+
+  overrides = {
+    ("c1.x", "port_rcv_data"): {20: -5},
+    ("c2.x", "port_xmit_data"): {30: -3},
+    ("c3.x", "port_rcv_data"): dict.fromkeys(range(10, 31), -5),
+    ("c4.x", "port_rcv_data"): dict.fromkeys(range(agg._MIN + 1), -2),
+  }
+  jt = agg._ib_job(overrides=overrides)
+  out = {}
+  for fill in (True, False):
+    t = jt.get_aggregate("host_ib", "arc", list(agg._IB), 1.0, fill=fill)
+    out[f"aggregate:{fill}"] = (t.host_id, t.time_us, t.sum_val, t.filled)
+  for mode in ("sql", "orm"):
+    t = jt.index.sum_per_sample("host_ib", list(agg._IB), "arc", mode=mode)
+    out[f"sum_per_sample:{mode}"] = (t.host_id, t.time_us, t.sum_val)
+  rows = []
+  for ev, rate in (("user", 50.0), ("nice", 50.0), ("idle", 100.0)):
+    gaps = {"nice": {20: -5}, "idle": {40: -5}}.get(ev)
+    rows += agg._counter("c1.x", "host_cpu", ev, rate, sentinels=gaps)
+  out["avg_cpuusage"] = metrics.Metrics()._job_avg_cpuusage_allocated(
+    agg._table(rows, hosts=("c1.x",)),
+    SimpleNamespace(ncores=8, nhosts=1),
+    None,
+    None,
+  )
+  return out
+
+
+@pytest.mark.usefixtures("kern")
+def test_sentinel_series_sums_codon_equals_numpy(monkeypatch):
+  with_codon = _sentinel_series_snapshot()
+  _numpy_only(monkeypatch)
+  with_numpy = _sentinel_series_snapshot()
+  assert set(with_codon) == set(with_numpy)
+  for key, a in with_codon.items():
+    _assert_same_snapshot(a, with_numpy[key], key)
+  # The scenarios reach the gap, bridge and fill branches.
+  assert with_numpy["aggregate:True"][3] == 2
+  assert with_numpy["aggregate:False"][3] == 0
+
+
 # -- golden corpus -----------------------------------------------------------
 
 

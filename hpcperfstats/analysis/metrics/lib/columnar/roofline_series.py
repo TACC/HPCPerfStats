@@ -832,7 +832,9 @@ def max_converted_sum_val(jt: Any, event: str, conv: float) -> float | None:
   for value_column in ("value", "arc"):
     for peak_typ in host_roofline_peak_type_names():
       try:
-        agg = jt.get_aggregate(peak_typ, value_column, [event], conv)
+        agg = jt.get_aggregate(
+          peak_typ, value_column, [event], conv, fill=False
+        )
       except Exception:
         continue
       if agg.empty:
