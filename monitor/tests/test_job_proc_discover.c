@@ -1,7 +1,6 @@
 /* job_proc_discover fixtures (c122-018 cgroup shapes). */
 #include <assert.h>
 #include <errno.h>
-#include <ftw.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,6 +8,7 @@
 #include <unistd.h>
 
 #include "job_proc_discover.h"
+#include "test_rm_tree.h"
 
 static char g_root[256];
 /* Every fixture tree lives under one parent so main() can remove it all. */
@@ -355,14 +355,6 @@ static void test_require_step_skips_env_only(void)
   job_proc_discover_result_clear(&r);
 }
 
-static int rm_entry(const char *path, const struct stat *sb, int flag, struct FTW *ftw)
-{
-  (void)sb;
-  (void)flag;
-  (void)ftw;
-  return remove(path);
-}
-
 int main(void)
 {
   const char *tmpdir = getenv("TMPDIR");
@@ -387,7 +379,7 @@ int main(void)
   test_bad_title_stays_unnamed();
   test_vanished_root_pid_fails_open();
   test_require_step_skips_env_only();
-  assert(nftw(g_parent, rm_entry, 16, FTW_DEPTH | FTW_PHYS) == 0);
+  assert(test_rm_tree(g_parent) == 0);
   printf("test_job_proc_discover: ok\n");
   return 0;
 }

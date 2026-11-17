@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "rapl_powercap.h"
+#include "test_rm_tree.h"
 
 static void write_file(const char *path, const char *contents)
 {
@@ -125,12 +126,7 @@ static void test_collect_fixture(void)
     assert(has_pkg == 0 && has_core == 0 && has_dram == 0);
   }
 
-  /* Cleanup best-effort */
-  {
-    char cmd[384];
-    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
-    (void)system(cmd);
-  }
+  (void)test_rm_tree(root);
 }
 
 int main(void)

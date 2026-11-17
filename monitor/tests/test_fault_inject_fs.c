@@ -24,6 +24,7 @@
 #include "stats.h"
 #include "stats_registry.h"
 #include "stats_sentinel_debug.h"
+#include "test_rm_tree.h"
 
 extern struct stats_type proc_stats_type;
 extern struct stats_type net_stats_type;
@@ -171,8 +172,6 @@ static void test_amd_gpu(void)
 
 int main(void)
 {
-  char cmd[600];
-
   assert(mkdtemp(g_dir) != NULL);
   for (size_t i = 0; i < stats_type_nr; i++) {
     assert(stats_type_init(stats_type_table[i]) == 0);
@@ -189,8 +188,7 @@ int main(void)
 
   for (size_t i = 0; i < stats_type_nr; i++)
     stats_type_destroy(stats_type_table[i]);
-  snprintf(cmd, sizeof(cmd), "rm -rf '%s'", g_dir);
-  assert(system(cmd) == 0);
+  assert(test_rm_tree(g_dir) == 0);
   printf("test_fault_inject_fs passed\n");
   return 0;
 }

@@ -9,6 +9,7 @@
 #include "opa_sysfs.h"
 #include "stats.h"
 #include "test_stats_missing_stub.h"
+#include "test_rm_tree.h"
 
 #define MAX_REC 16
 
@@ -128,12 +129,9 @@ static char *make_fixture_root(void)
 
 static void rm_tree(const char *root)
 {
-  char cmd[512];
-
   if (root == NULL)
     return;
-  snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
-  (void)system(cmd);
+  (void)test_rm_tree(root);
 }
 
 static void test_collect_classic_success_skips_hw(void)

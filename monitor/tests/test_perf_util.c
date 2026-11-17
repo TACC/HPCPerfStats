@@ -5,8 +5,11 @@
  * monitor published ~4x low instr/cycles. Every read must scale by d_enabled / d_running. */
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "perf_util.h"
@@ -295,6 +298,41 @@ static void test_open_cpu_rejects_bad_input(void)
   assert(perf_open_cpu(&a, -1) == -1 && errno == EINVAL);
 }
 
+/* fake_sysfs_rm must not go through a shell: with system("rm -rf '<root>'") a quote in $TMPDIR
+ * ran the injected touch (CodeQL cpp/command-line-injection). The test runs from base, so an
+ * injected relative touch would land at base/injected. */
+static void test_fake_sysfs_rm_quoted_tmpdir(void)
+{
+  const char *tmp = getenv("TMPDIR");
+  char *saved = tmp != NULL ? strdup(tmp) : NULL;
+  int cwd = open(".", O_RDONLY | O_DIRECTORY);
+  char base[512];
+  char evil[600];
+  char root[700];
+
+  assert(cwd >= 0);
+  snprintf(base, sizeof(base), "%s/hps_rm_tree.XXXXXX", tmp != NULL ? tmp : "/tmp");
+  assert(mkdtemp(base) != NULL);
+  assert(chdir(base) == 0);
+  snprintf(evil, sizeof(evil), "%s/x';touch injected;'", base);
+  assert(mkdir(evil, 0700) == 0);
+  assert(setenv("TMPDIR", evil, 1) == 0);
+
+  fake_sysfs_init(root, sizeof(root));
+  fake_sysfs_write(root, "a/b/c", "1\n");
+  fake_sysfs_rm(root);
+
+  assert(access(root, F_OK) != 0 && errno == ENOENT);
+  assert(access("injected", F_OK) != 0);
+  assert(fchdir(cwd) == 0 && close(cwd) == 0);
+  assert(rmdir(evil) == 0 && rmdir(base) == 0);
+  if (saved != NULL)
+    assert(setenv("TMPDIR", saved, 1) == 0);
+  else
+    assert(unsetenv("TMPDIR") == 0);
+  free(saved);
+}
+
 int main(void)
 {
   fake_sysfs_init(g_root, sizeof(g_root));
@@ -313,6 +351,7 @@ int main(void)
   test_pmu_type();
   test_cpumask_first();
   test_open_cpu_rejects_bad_input();
+  test_fake_sysfs_rm_quoted_tmpdir();
   fake_sysfs_rm(g_root);
   printf("test_perf_util passed\n");
   return 0;

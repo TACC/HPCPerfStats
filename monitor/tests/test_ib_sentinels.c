@@ -13,6 +13,7 @@
 #include "stats.h"
 #include "stats_registry.h"
 #include "stats_sentinel.h"
+#include "test_rm_tree.h"
 
 #include "ib.h"
 #define X SCHEMA_DEF
@@ -217,8 +218,6 @@ static void init_type(struct stats_type *t, const char *name, char *def)
 
 int main(void)
 {
-  char cmd[512];
-
   assert(mkdtemp(g_root) != NULL);
   mk("class");
   mk("class/infiniband");
@@ -235,8 +234,7 @@ int main(void)
   ib_family_test_set_sysfs_root(NULL);
   stats_type_destroy(&g_ib);
   stats_type_destroy(&g_opa);
-  snprintf(cmd, sizeof(cmd), "rm -rf '%s'", g_root);
-  assert(system(cmd) == 0);
+  assert(test_rm_tree(g_root) == 0);
   printf("test_ib_sentinels passed\n");
   return 0;
 }

@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include "cpu_counter_metrics_arm_util.h"
+#include "test_rm_tree.h"
 
 static void test_clamp_percent(void)
 {
@@ -141,12 +142,7 @@ static void test_cpu_freq_scaling_cur_and_nominal_chain(void)
   assert(arm_cpu_nominal_freq_khz(root, 2) == 3375000.0);
   assert(arm_cpu_nominal_freq_khz(NULL, 0) == 0.0);
 
-  {
-    char cmd[600];
-
-    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
-    assert(system(cmd) == 0);
-  }
+  assert(test_rm_tree(root) == 0);
 }
 
 static void test_cpu_freq_garbage_reads_zero(void)
@@ -168,12 +164,7 @@ static void test_cpu_freq_garbage_reads_zero(void)
   close(fd);
   /* No chain file readable on cpu0: nominal 0. */
   assert(arm_cpu_nominal_freq_khz(root, 0) == 0.0);
-  {
-    char cmd[600];
-
-    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
-    assert(system(cmd) == 0);
-  }
+  assert(test_rm_tree(root) == 0);
 }
 
 int main(void)

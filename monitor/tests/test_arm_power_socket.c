@@ -11,6 +11,7 @@
 #include "stats.h"
 #include "test_stats_missing_stub.h"
 #include "test_stats_stub.h"
+#include "test_rm_tree.h"
 
 #define X SCHEMA_DEF
 static const char g_schema_def[] = JOIN(ARM_POWER_SOCKET_KEYS);
@@ -91,8 +92,6 @@ static void test_gb200_two_sockets(void)
   struct arm_power_hwmon h;
   struct test_stats_stub stub;
   int slots[ARM_POWER_KIND_COUNT];
-  char cmd[600];
-
   assert(mkdtemp(root) != NULL);
   add_meter(root, 3, "CPU Power Socket 0\n", 45000000);
   add_meter(root, 4, "CPU Power Socket 1\n", 45400000);
@@ -124,8 +123,7 @@ static void test_gb200_two_sockets(void)
   test_stats_stub_unbind();
 
   arm_power_hwmon_close(&h);
-  snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
-  assert(system(cmd) == 0);
+  assert(test_rm_tree(root) == 0);
 }
 
 /* GH200: module published from its own Module meter. */
@@ -135,8 +133,6 @@ static void test_gh200_module(void)
   struct arm_power_hwmon h;
   struct test_stats_stub stub;
   int slots[ARM_POWER_KIND_COUNT];
-  char cmd[600];
-
   assert(mkdtemp(root) != NULL);
   add_meter(root, 1, "Module Power Socket 0\n", 130300000);
   add_meter(root, 2, "Grace Power Socket 0\n", 46200000);
@@ -155,8 +151,7 @@ static void test_gh200_module(void)
   test_stats_stub_unbind();
 
   arm_power_hwmon_close(&h);
-  snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
-  assert(system(cmd) == 0);
+  assert(test_rm_tree(root) == 0);
 }
 
 static void test_null_guards(void)

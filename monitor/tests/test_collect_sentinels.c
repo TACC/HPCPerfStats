@@ -14,6 +14,7 @@
 #include "stats.h"
 #include "stats_registry.h"
 #include "stats_sentinel.h"
+#include "test_rm_tree.h"
 
 struct stats_type *const stats_type_table[] = {NULL};
 const size_t stats_type_nr = 0;
@@ -185,8 +186,6 @@ static void test_errno_mapping(void)
 
 int main(void)
 {
-  char cmd[512];
-
   assert(mkdtemp(g_tmpdir) != NULL);
   memset(&g_type, 0, sizeof(g_type));
   snprintf(g_type.st_name, sizeof(g_type.st_name), "%s", "host_tt");
@@ -206,8 +205,7 @@ int main(void)
   test_errno_mapping();
 
   stats_type_destroy(&g_type);
-  snprintf(cmd, sizeof(cmd), "rm -rf '%s'", g_tmpdir);
-  assert(system(cmd) == 0);
+  assert(test_rm_tree(g_tmpdir) == 0);
   printf("test_collect_sentinels passed\n");
   return 0;
 }

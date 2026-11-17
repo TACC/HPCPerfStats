@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "arm_power_hwmon.h"
+#include "test_rm_tree.h"
 
 #define PATH_SZ 512
 
@@ -68,10 +69,7 @@ static char *make_root(void)
 
 static void rm_root(const char *root)
 {
-  char cmd[PATH_SZ];
-
-  snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
-  assert(system(cmd) == 0);
+  assert(test_rm_tree(root) == 0);
 }
 
 /* Watts of one meter, or 0 when it reads a sentinel. */

@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "test_fake_perf.h"
+#include "test_rm_tree.h"
 
 struct fake_perf_call g_fake_perf_calls[FAKE_PERF_MAX];
 int g_fake_perf_n;
@@ -67,10 +68,7 @@ void fake_sysfs_write(const char *root, const char *rel, const char *content)
 
 void fake_sysfs_rm(const char *root)
 {
-  char cmd[1100];
-
-  snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
-  assert(system(cmd) == 0);
+  assert(test_rm_tree(root) == 0);
 }
 
 int fake_perf_open(const struct perf_event_attr *attr, int cpu)

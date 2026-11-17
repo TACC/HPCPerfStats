@@ -18,6 +18,7 @@
 #include "stats.h"
 #include "stats_registry.h"
 #include "stats_sentinel.h"
+#include "test_rm_tree.h"
 
 struct stats_type *const stats_type_table[] = {NULL};
 const size_t stats_type_nr = 0;
@@ -155,14 +156,11 @@ static void test_beegfs_zero_fill_and_gated_republish(void)
 
 int main(void)
 {
-  char cmd[600];
-
   assert(mkdtemp(g_dir) != NULL);
   test_mdc_zero_fills_omitted_ops();
   test_osc_zero_fills_omitted_ops();
   test_beegfs_zero_fill_and_gated_republish();
-  snprintf(cmd, sizeof(cmd), "rm -rf '%s'", g_dir);
-  assert(system(cmd) == 0);
+  assert(test_rm_tree(g_dir) == 0);
   printf("test_lustre_beegfs_zero_fill passed\n");
   return 0;
 }

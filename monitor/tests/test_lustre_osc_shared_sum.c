@@ -13,6 +13,7 @@
 #include "stats.h"
 #include "stats_registry.h"
 #include "stats_sentinel.h"
+#include "test_rm_tree.h"
 
 struct stats_type *const stats_type_table[] = {NULL};
 const size_t stats_type_nr = 0;
@@ -118,8 +119,6 @@ static void test_unreadable_osc_marks_the_mount_row(struct stats *row)
 int main(void)
 {
   struct stats *row;
-  char cmd[600];
-
   assert(mkdtemp(g_dir) != NULL);
   assert(stats_type_init(&osc_stats_type) == 0);
   row = get_current_stats(&osc_stats_type, "/scratch");
@@ -129,8 +128,7 @@ int main(void)
   test_unreadable_osc_marks_the_mount_row(row);
 
   stats_type_destroy(&osc_stats_type);
-  snprintf(cmd, sizeof(cmd), "rm -rf '%s'", g_dir);
-  assert(system(cmd) == 0);
+  assert(test_rm_tree(g_dir) == 0);
   printf("test_lustre_osc_shared_sum passed\n");
   return 0;
 }

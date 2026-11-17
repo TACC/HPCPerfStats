@@ -24,6 +24,7 @@
 #include "stats.h"
 #include "stats_registry.h"
 #include "stats_sentinel_debug.h"
+#include "test_rm_tree.h"
 
 extern struct stats_type cpu_stats_type;
 extern struct stats_type ps_stats_type;
@@ -209,8 +210,6 @@ static void test_lustre_obd(void)
 int main(void)
 {
   size_t never;
-  char cmd[600];
-
   assert(mkdtemp(g_dir) != NULL);
   snprintf(g_t.st_name, sizeof(g_t.st_name), "%s", "host_tt");
   g_t.st_schema_def = (char *)"a,E b,E c,E";
@@ -235,8 +234,7 @@ int main(void)
 
   for (size_t i = 0; i < stats_type_nr; i++)
     stats_type_destroy(stats_type_table[i]);
-  snprintf(cmd, sizeof(cmd), "rm -rf '%s'", g_dir);
-  assert(system(cmd) == 0);
+  assert(test_rm_tree(g_dir) == 0);
   printf("test_fault_inject_matrix passed\n");
   return 0;
 }
