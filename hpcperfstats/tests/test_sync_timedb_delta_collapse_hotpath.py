@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import itertools
+import statistics
 import time
 
 import numpy as np
@@ -16,10 +17,6 @@ from hpcperfstats.dbload.lib.sync_timedb_parsing import (
   _apply_counter_deltas,
   _collapse_stats_with_deltas,
   _groupby_sum_min_count,
-)
-from tests.sync_timedb_benchmark.screening_runner import (
-  e8_retain_hold_seconds,
-  summarize_hold_s_replicates,
 )
 
 
@@ -1079,43 +1076,37 @@ def test_apply_counter_deltas_pointer_codes_match_category_baseline():
       raised = True
     assert raised
 
-  def _paired_body_seconds(
+  def _paired_body_ratios(
     source: pd.DataFrame,
     *,
-    replicates: int = 5,
-  ) -> tuple[list[float], list[float]]:
-    """Time baseline and candidate on interleaved copies, GC outside."""
+    replicates: int = 9,
+  ) -> list[float]:
+    """Candidate/baseline seconds per adjacent pair, alternating which runs first."""
     _apply_counter_deltas_category_baseline(source.copy())
     _apply_counter_deltas(source.copy())
     gc.collect()
-    baseline_s: list[float] = []
-    candidate_s: list[float] = []
-    for _ in range(replicates):
-      base_work = source.copy()
-      cand_work = source.copy()
-      gc.collect()
-      gc.disable()
-      try:
-        started = time.perf_counter()
-        _apply_counter_deltas_category_baseline(base_work)
-        baseline_s.append(time.perf_counter() - started)
-        started = time.perf_counter()
-        _apply_counter_deltas(cand_work)
-        candidate_s.append(time.perf_counter() - started)
-      finally:
-        gc.enable()
-    return baseline_s, candidate_s
+    order = [_apply_counter_deltas_category_baseline, _apply_counter_deltas]
+    ratios: list[float] = []
+    for rep in range(replicates):
+      timed = {}
+      for fn in order if rep % 2 == 0 else order[::-1]:
+        work = source.copy()
+        gc.collect()
+        gc.disable()
+        try:
+          started = time.perf_counter()
+          fn(work)
+          timed[fn] = time.perf_counter() - started
+        finally:
+          gc.enable()
+      ratios.append(timed[order[1]] / timed[order[0]])
+    return ratios
 
-  baseline_s, candidate_s = _paired_body_seconds(frame)
-  baseline = summarize_hold_s_replicates(baseline_s)
-  candidate = summarize_hold_s_replicates(candidate_s)
-  assert e8_retain_hold_seconds(baseline=baseline, candidate=candidate), (
-    f"retain_delta_s false base={baseline} cand={candidate}"
+  # Load slows both halves of a pair alike, so the paired ratio holds and the
+  # median ignores the pair a scheduler stall hit.
+  ratios = _paired_body_ratios(frame)
+  median_ratio = statistics.median(ratios)
+  assert median_ratio <= 0.95, (
+    f"candidate not faster: median cand/base={median_ratio:.3f} ratios={ratios}"
   )
-  print(
-    "E18_DELTA_RETAIN_PASS"
-    f" base_mean={baseline['mean_s']:.4f}"
-    f" base_lo={baseline['lower_ci_s']:.4f}"
-    f" cand_mean={candidate['mean_s']:.4f}"
-    f" cand_hi={candidate['upper_ci_s']:.4f}",
-  )
+  print(f"E18_DELTA_RETAIN_PASS median_cand_over_base={median_ratio:.3f}")
