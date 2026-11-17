@@ -109,4 +109,46 @@ for inc in $(sed -n 's/^[[:space:]]*#[[:space:]]*include[[:space:]]*"\([^"/]*\)"
 done
 test "${missing_inc}" -eq 0 || exit 1
 
+# Regression: a src/ header pulled in by #include "..." must be listed in a Makefile.am, or make
+# dist omits it and the RPM %build (from the tarball) fails (src/host_nfs.h, included by nfs.c).
+missing_hdr=0
+# shellcheck disable=SC2013  # include names contain no whitespace
+for inc in $(sed -n 's/^[[:space:]]*#[[:space:]]*include[[:space:]]*"\([^"/]*\)".*/\1/p' src/*.c src/*.h tests/*.c tests/*.h | sort -u); do
+  test -f "src/${inc}" || continue
+  if ! grep -qE "(^|[[:space:]=/])${inc}([[:space:]\\\\]|$)" src/Makefile.am Makefile.am tests/Makefile.am; then
+    echo "FAIL: src/${inc} is #included but not listed in src/Makefile.am (SOURCES or EXTRA_DIST)" >&2
+    missing_hdr=1
+  fi
+done
+test "${missing_hdr}" -eq 0 || exit 1
+
+# Regression: every scripts/lib module a distributed Python file imports must be distributed too,
+# or the dist tarball's make check fails with ModuleNotFoundError (test_shm_validation_lib.py
+# imported scripts/lib/cross_sample_validate.py and shm_snapshot.py, neither in EXTRA_DIST).
+mk_files="Makefile.am src/Makefile.am tests/Makefile.am"
+missing_py=0
+for py in tests/*.py scripts/*.py scripts/lib/*.py; do
+  case "${py}" in
+    tests/*) listed="${py#tests/}" ;;
+    *) listed="${py}" ;;
+  esac
+  # shellcheck disable=SC2086  # word-split the Makefile list
+  grep -qE "(^|[[:space:]=/])${listed}([[:space:]\\\\]|$)" ${mk_files} || continue
+  mods=$(sed -n -e 's/^[[:space:]]*from[[:space:]]\{1,\}lib\.\([A-Za-z_][A-Za-z0-9_]*\).*/\1/p' \
+    -e 's/^[[:space:]]*import[[:space:]]\{1,\}lib\.\([A-Za-z_][A-Za-z0-9_]*\).*/\1/p' "${py}")
+  case "${py}" in
+    scripts/lib/*) mods="${mods} $(sed -n 's/^[[:space:]]*from[[:space:]]\{1,\}\.\([A-Za-z_][A-Za-z0-9_]*\).*/\1/p' "${py}")" ;;
+  esac
+  # shellcheck disable=SC2086  # word-split the module list
+  for mod in $(printf '%s\n' ${mods} | sort -u); do
+    test -f "scripts/lib/${mod}.py" || continue
+    # shellcheck disable=SC2086
+    if ! grep -qE "(^|[[:space:]=/])scripts/lib/${mod}\.py([[:space:]\\\\]|$)" ${mk_files}; then
+      echo "FAIL: scripts/lib/${mod}.py is imported by distributed ${py} but not in any EXTRA_DIST" >&2
+      missing_py=1
+    fi
+  done
+done
+test "${missing_py}" -eq 0 || exit 1
+
 echo "test_make_dist_extra_dist_prereqs passed"

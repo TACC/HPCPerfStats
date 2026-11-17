@@ -43,7 +43,7 @@ Ship `monitor_tree_clean.sh` via `src/Makefile.am` `EXTRA_DIST` so RPM tarballs 
 ## Tests
 
 - `tests/test_prepare_monitor_tree_clean.sh` — sources, grep contracts, functional pre_dist check.
-- `tests/test_make_dist_extra_dist_prereqs.sh` — `host_*.h` in `hpcperfstatsd_SOURCES` and prepare tarball guard.
+- `tests/test_make_dist_extra_dist_prereqs.sh` — `host_*.h` in `hpcperfstatsd_SOURCES` and prepare tarball guard; every `src/` header a source `#include`s is listed in a `Makefile.am`, and every `scripts/lib` module a distributed Python file imports is in `EXTRA_DIST`.
 
 ## New build scripts
 

@@ -229,6 +229,7 @@ TYPES 	= \
 	sysv_shm.c \
 	tmpfs.c \
 	host_tmpfs.h \
+	host_nfs.h \
 	vfs.c \
 	vm.c
 
