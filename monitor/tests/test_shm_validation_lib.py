@@ -379,9 +379,11 @@ class HostLiveProbeTests(unittest.TestCase):
             "device nfs-server:/export mounted on /home1 with fstype nfs statvers=1.0\n"
             "device nfs-server:/export mounted on /home2 with fstype nfs statvers=1.1\n"
             "device local:/srv mounted on /local with fstype nfs4 statvers=1.0\n"
+            "device odd:/x mounted on /odd with fstype nfs3x statvers=1.1\n"
+            "device nfsd mounted on /proc/fs/nfsd with fstype nfsd\n"
         )
         with patch("lib.host_live_probes._read_lines", return_value=mountstats.splitlines()):
-            self.assertEqual(probe_nfs_mount_devices(), ["/home1", "/home2"])
+            self.assertEqual(probe_nfs_mount_devices(), ["/home1", "/home2", "/local"])
 
     def test_probe_beegfs_mount_paths(self) -> None:
         from unittest.mock import patch

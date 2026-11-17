@@ -217,21 +217,22 @@ def probe_numa_node_devices() -> list[str]:
 
 
 def probe_nfs_mount_devices() -> list[str]:
-    """NFS client mount points from /proc/self/mountstats (nfs.c uses mnt as dev)."""
+    """NFS client mount points (fstype nfs or nfs4) from /proc/self/mountstats (nfs.c uses mnt as
+    dev)."""
     prefix = "device "
     mounted_on = " mounted on "
-    fstype = " with fstype nfs statvers="
+    fstype = re.compile(r" with fstype nfs4? statvers=(\S+)")
     devs: list[str] = []
     for line in _read_lines("/proc/self/mountstats"):
         s = line.strip()
-        if not s.startswith(prefix) or mounted_on not in s or fstype not in s:
+        m = fstype.search(s)
+        if not s.startswith(prefix) or mounted_on not in s or m is None:
             continue
         after_mounted = s.split(mounted_on, 1)[1]
         mnt = after_mounted.split()[0] if after_mounted else ""
         if not mnt:
             continue
-        ver = s.split(fstype, 1)[1].split()[0] if fstype in s else ""
-        if ver not in ("1.0", "1.1"):
+        if m.group(1) not in ("1.0", "1.1"):
             continue
         devs.append(mnt)
     return sorted(set(devs))

@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include "collect.h"
 #include "fileio.h"
+#include "host_nfs.h"
 #include "stats.h"
 #include "string1.h"
 #include "trace.h"
@@ -222,7 +223,11 @@ static struct stats *nfs_collect_mount_stats(struct stats_type *type, char *line
   if (mnt == NULL || rest == NULL)
     return NULL;
 
-  if (strip_crud(&rest, "with fstype nfs statvers=") < 0)
+  /* fstype nfs (v2/v3) or nfs4 (v4.x); nfsd, nfs3x and the rest fail the " statvers=" check. */
+  if (strip_crud(&rest, "with fstype nfs") < 0)
+    return NULL;
+  rest += (*rest == '4');
+  if (strip_crud(&rest, " statvers=") < 0)
     return NULL;
 
   ver = wsep(&rest);
@@ -235,9 +240,18 @@ static struct stats *nfs_collect_mount_stats(struct stats_type *type, char *line
   return get_current_stats(type, mnt);
 }
 
+#define NFS_MOUNTSTATS_PATH "/proc/self/mountstats"
+
+static const char *g_nfs_mountstats = NFS_MOUNTSTATS_PATH;
+
+void nfs_test_set_mountstats_path(const char *path)
+{
+  g_nfs_mountstats = (path != NULL && path[0] != '\0') ? path : NFS_MOUNTSTATS_PATH;
+}
+
 static void nfs_collect(struct stats_type *type)
 {
-  const char *path = "/proc/self/mountstats";
+  const char *path = g_nfs_mountstats;
   FILE *file = NULL;
   char file_buf[4096];
   char *line = NULL;
@@ -256,7 +270,7 @@ static void nfs_collect(struct stats_type *type)
   }
   setvbuf(file, file_buf, _IOFBF, sizeof(file_buf));
 
-  /* device HOST:EXPORT mounted on MNT with fstype nfs statvers=1.0 */
+  /* device HOST:EXPORT mounted on MNT with fstype nfs|nfs4 statvers=1.0 */
 
   while (getline(&line, &line_size, file) >= 0) {
     struct stats *stats;
