@@ -161,3 +161,31 @@ def test_monitor_keys_extractor_keeps_all_x_entries_on_one_line():
     assert key in collected, (
       f"collect_all_names missed {key} (multi-X KEYS parse bug)"
     )
+
+
+def test_augment_counts_all_metrics_lib_analysis_as_wired():
+  """Events read by any analysis/metrics/lib module (lib root, columnar/, gen/, plot/) are wired."""
+  import importlib.util
+
+  repo_root = Path(__file__).resolve().parents[2]
+  path = repo_root / "docs" / "augment_monitor_variables_diagnostics.py"
+  spec = importlib.util.spec_from_file_location("augment_mv", path)
+  assert spec is not None and spec.loader is not None
+  mod = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(mod)
+  wired = mod.path_is_analysis_wired
+  lib = "hpcperfstats/analysis/metrics/lib/"
+  for p in (
+    lib + "columnar/roofline_series.py",
+    lib + "llite_metadata_iops_events.py",
+    lib + "gen/imc_cas_bw.py",
+    lib + "plot/roofline.py",
+    lib + "metrics.py",
+  ):
+    assert wired(p), p
+  for p in (
+    "hpcperfstats/analysis/metrics/tests/test_columnar_kernels.py",
+    lib + "gen/tests/test_imc_cas_bw.py",
+    "hpcperfstats/dbload/lib/sync_timedb_parsing.py",
+  ):
+    assert not wired(p), p

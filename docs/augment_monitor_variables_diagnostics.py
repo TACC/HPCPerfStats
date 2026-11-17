@@ -27,13 +27,7 @@ def path_is_analysis_wired(p: str) -> bool:
     name = p.rsplit("/", 1)[-1]
     if name.startswith("test_"):
         return False
-    if "analysis/metrics/lib/metrics.py" in p:
-        return True
-    if "analysis/metrics/lib/gen/node_power_est.py" in p:
-        return True
-    if "analysis/metrics/lib/gen/utils.py" in p:
-        return True
-    if "analysis/metrics/lib/plot/" in p:
+    if "analysis/metrics/lib/" in p:
         return True
     if "site/lib/machine/api.py" in p:
         return True
