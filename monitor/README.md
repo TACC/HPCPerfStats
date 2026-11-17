@@ -800,8 +800,9 @@ with the debug RPM installed (it reads the `/dev/shm/hpcperfstatsd-debug` mirror
 window. PASS needs read and write within 5% and at least 1 GB/s of reads.
 
 It never reads the terminal, bounds every wait and external command with a timeout, and stops
-the GEMM load on any exit including Ctrl-C. Output is also written to
-`$HOME/hpcperfstats-counter-check/<host>-<epoch>.log`. Regression:
+the GEMM load on any exit including Ctrl-C (exit 130; the log `tee` ignores INT / TERM so the
+"interrupted" line is not lost when the signal reaches the whole process group). Output is also
+written to `$HOME/hpcperfstats-counter-check/<host>-<epoch>.log`. Regression:
 `tests/test_canary_counter_check.sh` (fake shm writer / perf / load; `check-local`).
 
 ## x86 FLOP counter check (`scripts/perf_raw_flops_check.sh`)

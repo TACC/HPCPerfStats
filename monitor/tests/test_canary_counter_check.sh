@@ -4,7 +4,8 @@
 # only; fake perf that also writes GEMM log lines; fake load). Locks: monitor/perf rates,
 # precision slices and the GEMM flops-per-op accuracy check PASS; a count that reads low
 # against the GEMM FAILs; a stale fast file ends with FAIL instead of hanging; Ctrl-C exits 130
-# and stops the load; a perf "<not counted>" event keeps its slot; bad options exit 2.
+# and stops the load (the "interrupted" line still reaches the output); a perf "<not counted>"
+# event keeps its slot; bad options exit 2.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="${ROOT}/scripts/canary_counter_check.sh"
@@ -19,6 +20,9 @@ fail() {
   echo "test_canary_counter_check: $*" >&2
   exit 1
 }
+# has PATTERN: grep the last run's output. A here-string, not echo | grep -q: grep -q exits on
+# the first match, and under pipefail the writer's SIGPIPE (141) would fail a passing check.
+has() { grep -q -- "$1" <<<"${out}"; }
 test -x "${SCRIPT}" || fail "missing or not executable: ${SCRIPT}"
 command -v timeout >/dev/null 2>&1 || {
   echo "SKIP: no timeout(1)"
@@ -127,7 +131,7 @@ for args in "--window 0" "--window x" "--warm -1" "--precisions xx" "--bogus"; d
 done
 CANARY_SHM="${T}/none" run 2
 run 0 --help
-echo "${out}" | grep -q 'flops per dp' || echo "${out}" | grep -q 'ceiling' ||
+has 'flops per dp' || has 'ceiling' ||
   fail "--help does not describe the accuracy check"
 
 "${T}/writer.sh" "${T}/shm" &
@@ -136,13 +140,13 @@ for _ in 1 2 3 4 5; do [ -s "${T}/shm/fast" ] && break; sleep 1; done
 
 # Pass path: ratios 1.000, slices clean, flops per op under the ceiling, load stopped.
 run 0 --warm 0 --window 2
-echo "${out}" | grep -q '^RESULT: PASS' || fail "no RESULT: PASS: ${out}"
+has '^RESULT: PASS' || fail "no RESULT: PASS: ${out}"
 for p in dp sp hp; do
-  echo "${out}" | grep -q "^O3 ${p} .*1.000 PASS" || fail "O3 ${p} not 1.000 PASS"
-  echo "${out}" | grep -q "^slice ${p} .*PASS" || fail "slice ${p} not PASS"
-  echo "${out}" | grep -q "^accuracy ${p} .*PASS" || fail "accuracy ${p} not PASS: ${out}"
+  has "^O3 ${p} .*1.000 PASS" || fail "O3 ${p} not 1.000 PASS"
+  has "^slice ${p} .*PASS" || fail "slice ${p} not PASS"
+  has "^accuracy ${p} .*PASS" || fail "accuracy ${p} not PASS: ${out}"
   # D6: own oversubscription only: running == solo-expected (7000 / 9000), no outside share.
-  echo "${out}" | grep -q "^sharing ${p} .*running 77.8% solo-expected 77.8% outside 0.0% PASS" ||
+  has "^sharing ${p} .*running 77.8% solo-expected 77.8% outside 0.0% PASS" ||
     fail "sharing ${p} not 77.8 / 77.8 / 0.0: ${out}"
 done
 [ "$(cat "${T}/mode")" = idle ] || fail "load still running after pass run"
@@ -151,59 +155,59 @@ ls "${T}/log"/*.log >/dev/null 2>&1 || fail "no log file written"
 # D6: another PMU user leaves the events 2500 of 9000 ns: outside share 1 - 2500/7000 = 64.3%.
 echo outside >"${T}/sharing"
 run 0 --warm 0 --window 2 --precisions dp
-echo "${out}" | grep -q '^sharing dp .*running 27.8% solo-expected 77.8% outside 64.3% PASS' ||
+has '^sharing dp .*running 27.8% solo-expected 77.8% outside 64.3% PASS' ||
   fail "outside sharing not reported: ${out}"
 # A daemon built before Phase 1b has no sharing keys: reported, not failed.
 echo none >"${T}/sharing"
 sleep 2
 run 0 --warm 0 --window 2 --precisions dp
-echo "${out}" | grep -q '^sharing dp .*not published (daemon without the Phase 1b keys)' ||
+has '^sharing dp .*not published (daemon without the Phase 1b keys)' ||
   fail "pre-Phase-1b daemon not reported: ${out}"
 # --sharing-only needs the keys: a daemon without them FAILs (exit 1).
 run 1 --sharing-only --window 2
-echo "${out}" | grep -q '^sharing quiet not published' || fail "sharing-only w/o keys: ${out}"
+has '^sharing quiet not published' || fail "sharing-only w/o keys: ${out}"
 echo solo >"${T}/sharing"
 sleep 2
 
 # --sharing-only: no load and no perf (CANARY_PERF points nowhere), just the D6 keys over
 # the window; the quiet node reads running == solo-expected with no outside share.
 CANARY_PERF="${T}/no-such-perf" run 0 --sharing-only --window 2
-echo "${out}" | grep -q '^sharing quiet running 77.8% solo-expected 77.8% outside 0.0% PASS' ||
+has '^sharing quiet running 77.8% solo-expected 77.8% outside 0.0% PASS' ||
   fail "sharing-only quiet line wrong: ${out}"
-echo "${out}" | grep -q '^RESULT: PASS' || fail "sharing-only did not PASS: ${out}"
+has '^RESULT: PASS' || fail "sharing-only did not PASS: ${out}"
 [ "$(cat "${T}/mode")" = idle ] || fail "sharing-only started a load"
 echo outside >"${T}/sharing"
 sleep 2
 CANARY_PERF="${T}/no-such-perf" run 0 --sharing-only --window 2
-echo "${out}" | grep -q '^sharing quiet running 27.8% solo-expected 77.8% outside 64.3% PASS' ||
+has '^sharing quiet running 27.8% solo-expected 77.8% outside 64.3% PASS' ||
   fail "sharing-only outside line wrong: ${out}"
 echo solo >"${T}/sharing"
 sleep 2
 
 # Count reads low against the GEMM (4.5 flops per dp op > 4): FAIL with the shortfall.
 FAKE_GFLOPS=9e-7 run 1 --warm 0 --window 2 --precisions dp
-echo "${out}" | grep -q '^accuracy dp .*> 4: monitor FP count at least 11.1% low FAIL' ||
+has '^accuracy dp .*> 4: monitor FP count at least 11.1% low FAIL' ||
   fail "low count not reported: ${out}"
-echo "${out}" | grep -q '^O3 dp .*PASS' || fail "O3 should still pass when both scale alike"
+has '^O3 dp .*PASS' || fail "O3 should still pass when both scale alike"
 
 # SCF: monitor arm_aarch64_imc (both sockets) matches perf on both nvidia_scf_pmu_<N>.
 run 0 --scf --warm 0 --window 2
-echo "${out}" | grep -q '2 SCF PMU(s)' || fail "SCF PMUs not counted: ${out}"
-echo "${out}" | grep -q 'read  monitor 2.56 GB/s perf 2.56 GB/s mon/perf 1.000' ||
+has '2 SCF PMU(s)' || fail "SCF PMUs not counted: ${out}"
+has 'read  monitor 2.56 GB/s perf 2.56 GB/s mon/perf 1.000' ||
   fail "SCF read bandwidth wrong: ${out}"
-echo "${out}" | grep -q 'write monitor 1.28 GB/s perf 1.28 GB/s mon/perf 1.000' ||
+has 'write monitor 1.28 GB/s perf 1.28 GB/s mon/perf 1.000' ||
   fail "SCF write bandwidth wrong: ${out}"
-echo "${out}" | grep -q '^RESULT: PASS' || fail "SCF run did not PASS: ${out}"
+has '^RESULT: PASS' || fail "SCF run did not PASS: ${out}"
 [ "$(cat "${T}/mode")" = idle ] || fail "load still running after SCF run"
 # A 20% read mismatch fails; no SCF PMU fails without starting a load.
 FAKE_SCF_SKEW=1.2 run 1 --scf --warm 0 --window 2
-echo "${out}" | grep -q '^scf read  FAIL' || fail "SCF mismatch not caught: ${out}"
+has '^scf read  FAIL' || fail "SCF mismatch not caught: ${out}"
 CANARY_PMU_DIR="${T}/nopmu" run 1 --scf --warm 0 --window 1
-echo "${out}" | grep -q 'FAIL: no nvidia_scf_pmu_' || fail "missing SCF PMU not reported"
+has 'FAIL: no nvidia_scf_pmu_' || fail "missing SCF PMU not reported"
 
 # perf "<not counted>" keeps its slot: instructions NA, FP events still compared.
 FAKE_NOT_COUNTED=1 run 1 --warm 0 --window 2 --precisions dp
-echo "${out}" | grep -q 'arm_fp_dp_spec  monitor 200 .*mon/perf 1.000' ||
+has 'arm_fp_dp_spec  monitor 200 .*mon/perf 1.000' ||
   fail "dp slot shifted after <not counted>: ${out}"
 
 # Ctrl-C: exit 130 and the load is stopped.
@@ -217,6 +221,8 @@ wait "${cpid}"
 rc=$?
 set -e
 [ "${rc}" -eq 130 ] || fail "SIGINT exit ${rc}, want 130"
+out="$(cat "${T}/int.out")"
+has '^interrupted$' || fail "Ctrl-C message lost (output tee killed by the SIGINT): ${out}"
 [ "$(cat "${T}/mode")" = idle ] || fail "load still running after SIGINT"
 
 # Stale fast file (writer stopped): bounded waits, FAIL, exit 1, no hang.
@@ -224,7 +230,7 @@ kill "${WPID}"
 wait "${WPID}" 2>/dev/null || true
 WPID=""
 run 1 --warm 0 --window 1 --precisions dp
-echo "${out}" | grep -q 'WARN: fast unchanged' || fail "no stale warning: ${out}"
-echo "${out}" | grep -q '^RESULT: FAIL' || fail "stale run did not FAIL"
+has 'WARN: fast unchanged' || fail "no stale warning: ${out}"
+has '^RESULT: FAIL' || fail "stale run did not FAIL"
 [ "$(cat "${T}/mode")" = idle ] || fail "load still running after stale run"
 echo "test_canary_counter_check: OK"

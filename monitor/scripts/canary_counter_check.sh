@@ -92,7 +92,10 @@ fi
 mkdir -p "${LOG_DIR}" || die "cannot create ${LOG_DIR}"
 LOG="${LOG_DIR}/$(hostname -s)-$(date +%s).log"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/canary-counter.XXXXXX")" || die "mktemp failed"
-exec > >(tee -a "${LOG}") 2>&1
+# The log tee ignores INT / TERM: timeout(1) signals its whole process group, and a tee that
+# died first made the INT trap's echo hit a closed pipe (SIGPIPE, exit 141 instead of 130). It
+# still exits on EOF when this script ends.
+exec > >(trap '' INT TERM; exec tee -a "${LOG}") 2>&1
 
 stop_load() { timeout 60 "${LOAD}" stop >/dev/null 2>&1 || true; }
 cleanup() {
