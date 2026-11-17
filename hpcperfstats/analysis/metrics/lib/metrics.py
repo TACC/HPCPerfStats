@@ -681,7 +681,8 @@ INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
 # explains itself from the host_sentinel_summary runs ("<type>: <reason>
 # (n/N hosts)") or, when the schema lacks the type, "collector not found";
 # the codes are stored in metrics_data.no_data_codes for the Job Detail
-# audience split.
+# audience split. mem_hwm on host_mem_job falls back to the sampled mem_used
+# maximum when mem_peak is absent or 0 (no memory.peak in the job cgroup).
 METRICS_CONTRACT_VERSION = 10
 # ``no_data_reason`` written for catalog rows a backfill job never produced
 # after it exhausted the failure-memory backoff (daily step); the job is
@@ -4590,22 +4591,17 @@ class mem_hwm:
     typ = resolved_typ or HOST_MEM_JOB_TYPE
     if schema is None or stats is None:
       return None
-    event_col = None
+    # mem_peak is NaN (NOT_PRESENT) or 0 (older monitors) without memory.peak,
+    # so the sampled mem_used maximum is the fallback.
     for candidate in ("mem_peak", "mem_used"):
-      if _schema_has_events_for_type(schema, typ, candidate):
-        event_col = candidate
-        break
-    if event_col is None:
-      return None
-    col_i = _schema_event_index(schema, typ, event_col)
-    max_memusage = 0.0
-    for _hostname, arr in stats.items():
-      peak = _finite_amax(arr[:, col_i])
-      if peak is not None:
-        max_memusage = max(max_memusage, peak)
-    if max_memusage == 0:
-      return None
-    return max_memusage / (1024.0**2), typ, "GiB"
+      if not _schema_has_events_for_type(schema, typ, candidate):
+        continue
+      col_i = _schema_event_index(schema, typ, candidate)
+      peaks = [_finite_amax(arr[:, col_i]) for arr in stats.values()]
+      max_memusage = max((p for p in peaks if p is not None), default=0.0)
+      if max_memusage > 0:
+        return max_memusage / (1024.0**2), typ, "GiB"
+    return None
 
   def _peak_host_mem_numa(self, u: Any) -> Any:
     """

@@ -102,3 +102,34 @@ def test_flatten_event_names_nested_once():
   assert metrics._flatten_event_names_for_host_data_query(
     [["rd_sectors", "wr_sectors"], "irq"]
   ) == ["rd_sectors", "wr_sectors", "irq"]
+
+
+def _host_mem_job(peak_col, used_col):
+  schema = metrics._Schema(["mem_used", "mem_peak"])
+  stats = np.column_stack([used_col, peak_col]).astype(np.float64)
+  return _StubUtils({"host_mem_job": (schema, {"n1": stats})})
+
+
+@pytest.mark.parametrize(
+  "peak_col",
+  [[np.nan, np.nan], [0.0, 0.0]],
+  ids=["sentinel_nan", "legacy_zero"],
+)
+def test_mem_hwm_falls_back_to_mem_used_when_mem_peak_unreadable(peak_col):
+  """No memory.peak: mem_peak is NaN (sentinel) or 0 (old monitor); use mem_used max."""
+  u = _host_mem_job(peak_col, [1_048_576.0, 2_097_152.0])
+  value, typename, units = metrics.mem_hwm().compute_metric(u)
+  assert (typename, units) == ("host_mem_job", "GiB")
+  assert value == pytest.approx(2.0)
+
+
+def test_mem_hwm_prefers_mem_peak_when_readable():
+  u = _host_mem_job([3_145_728.0, 3_145_728.0], [1_048_576.0, 2_097_152.0])
+  value, _typename, _units = metrics.mem_hwm().compute_metric(u)
+  assert value == pytest.approx(3.0)
+
+
+def test_mem_hwm_job_columns_empty_falls_back_to_numa():
+  u = _host_mem_job([np.nan, np.nan], [np.nan, np.nan])
+  value, typename, _units = metrics.mem_hwm().compute_metric(u)
+  assert value is None and typename == "host_mem"
