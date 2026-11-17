@@ -21,5 +21,6 @@ CI_COVERED_FILES = frozenset(
         # coverage twins of the collector sentinel tests
         "opa_sysfs.c", "intel_gpu.c", "intel_gpu_xpumcli.c", "likwid_pmc_adapter.c",
         "rapl_likwid_stats.c", "cpu_counter_metrics_arm_publish.c", "likwid_uncore_adapter.c",
+        "host_mem_job.c",
     }
 )

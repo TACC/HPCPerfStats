@@ -13,6 +13,7 @@ struct job_cgroup_mem_kb {
   unsigned long long dirty;
   unsigned long long writeback;
   unsigned long long page_tables;
+  int has_peak; /* memory.peak read (absent before kernel 5.19 unless backported) */
 };
 
 /*! Absolute cgroup fs root for tests; production uses /sys/fs/cgroup.
@@ -21,7 +22,7 @@ const char *job_cgroup_mem_cgroup_root(void);
 
 /*! Resolve leaf cgroup_relpath to slurmstepd.scope/<token>/ and read
  *  memory.current (required), memory.peak, and memory.stat overlap fields.
- *  Bytes converted to KB (/1024). Missing peak/stat keys -> 0.
+ *  Bytes converted to KB (/1024). Missing memory.peak -> has_peak 0; missing stat keys -> 0.
  *  Never reads task leaf or bare slurmstepd.scope aggregate.
  *  Returns 0 on success, -1 fail-open. */
 int job_cgroup_mem_read(const char *cgroup_relpath, struct job_cgroup_mem_kb *out);

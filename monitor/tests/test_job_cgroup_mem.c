@@ -1,4 +1,5 @@
-/* job_cgroup_mem: token-dir only, KB mapping, no leaf/aggregate fallback. */
+/* job_cgroup_mem: token-dir only, KB mapping, no leaf/aggregate fallback; a scope without
+ * memory.peak publishes host_mem_job mem_peak NOT_PRESENT, not 0 (real stats.c state bytes). */
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
@@ -6,9 +7,35 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include "collect_tier.h"
+#include "host_mem_job.h"
 #include "job_cgroup_mem.h"
+#include "schema.h"
+#include "stats.h"
+#include "stats_registry.h"
+#include "stats_sentinel.h"
+
+struct stats_type *const stats_type_table[] = {NULL};
+const size_t stats_type_nr = 0;
+extern struct stats_type host_mem_job_stats_type;
 
 static char g_root[256];
+
+static unsigned int state_of(struct stats *s, const char *key)
+{
+  int i = schema_ref(&s->s_type->st_schema, key);
+
+  assert(i >= 0);
+  return s->s_val_state[i];
+}
+
+static unsigned long long val_of(struct stats *s, const char *key)
+{
+  int i = schema_ref(&s->s_type->st_schema, key);
+
+  assert(i >= 0 && s->s_val_state[i] == STATS_SENTINEL_OK);
+  return s->s_val[i];
+}
 
 static void write_file(const char *path, const char *data)
 {
@@ -88,12 +115,44 @@ static void test_token_dir_only(void)
   assert(job_cgroup_mem_read(leaf, &kb) == 0);
   assert(kb.mem_used == 232521728ULL / 1024ULL);
   assert(kb.mem_peak == 405405696ULL / 1024ULL);
+  assert(kb.has_peak == 1);
   assert(kb.anon_pages == 2048ULL / 1024ULL);
   assert(kb.file_pages == 4096ULL / 1024ULL);
   assert(kb.mapped == 512ULL / 1024ULL);
   assert(kb.dirty == 256ULL / 1024ULL);
   assert(kb.writeback == 128ULL / 1024ULL);
   assert(kb.page_tables == 64ULL / 1024ULL);
+}
+
+/* Older kernels (no memory.peak in the job scope): has_peak 0, and the published row carries
+ * mem_peak NOT_PRESENT while every read key keeps its value. */
+static void test_missing_peak_not_present(void)
+{
+  const char *tok = "/system.slice/slurmstepd.scope/NOPEAK";
+  struct job_cgroup_mem_kb kb;
+  struct stats *st;
+
+  setenv("HPCPERFSTATS_CGROUP_ROOT", g_root, 1);
+  write_mem_tree(tok, "8192\n", NULL, "anon 4096\n");
+  assert(job_cgroup_mem_read(tok, &kb) == 0);
+  assert(kb.has_peak == 0 && kb.mem_peak == 0);
+  assert(kb.mem_used == 8 && kb.anon_pages == 4);
+
+  stats_type_mark_not_updated(&host_mem_job_stats_type);
+  st = get_current_stats(&host_mem_job_stats_type, "j:7");
+  assert(st != NULL);
+  host_mem_job_publish(st, &kb);
+  assert(state_of(st, "mem_peak") == STATS_SENTINEL_NOT_PRESENT);
+  assert(val_of(st, "mem_used") == 8);
+  assert(val_of(st, "anon_pages") == 4);
+  assert(val_of(st, "file_pages") == 0);
+
+  /* memory.peak present: emitted as a value. */
+  write_mem_tree(tok, "8192\n", "16384\n", "anon 4096\n");
+  assert(job_cgroup_mem_read(tok, &kb) == 0 && kb.has_peak == 1);
+  stats_type_mark_not_updated(&host_mem_job_stats_type);
+  host_mem_job_publish(st, &kb);
+  assert(val_of(st, "mem_peak") == 16);
 }
 
 static void test_missing_token_failopen(void)
@@ -145,10 +204,15 @@ int main(void)
   snprintf(g_root, sizeof(g_root), "%s/cg_mem_XXXXXX",
            getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
   assert(mkdtemp(g_root) != NULL);
+  assert(stats_type_init(&host_mem_job_stats_type) == 0);
+  collect_tier_set_enabled(0);
+  collect_tier_set_phase(COLLECT_FULL);
   test_token_dir_only();
+  test_missing_peak_not_present();
   test_missing_token_failopen();
   test_bad_root();
   test_emit_dev_filter_goldens();
+  stats_type_destroy(&host_mem_job_stats_type);
   printf("test_job_cgroup_mem: ok\n");
   return 0;
 }

@@ -1,6 +1,7 @@
 #ifndef HOST_MEM_JOB_H_
 #define HOST_MEM_JOB_H_
 
+#include "job_cgroup_mem.h"
 #include "stats.h"
 
 /* Job-scoped cgroup memory (overlap subset of host_mem KEYS + mem_peak).
@@ -14,5 +15,9 @@
       X(dirty, "U=KB", "cgroup memory.stat file_dirty"),                                           \
       X(writeback, "U=KB", "cgroup memory.stat file_writeback"),                                   \
       X(page_tables, "U=KB", "cgroup memory.stat pagetables")
+
+/* Publish one job scope's cgroup memory into its host_mem_job row; mem_peak is NOT_PRESENT when
+ * the scope has no memory.peak. */
+void host_mem_job_publish(struct stats *st, const struct job_cgroup_mem_kb *kb);
 
 #endif

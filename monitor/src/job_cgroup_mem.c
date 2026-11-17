@@ -185,8 +185,10 @@ int job_cgroup_mem_read(const char *cgroup_relpath, struct job_cgroup_mem_kb *ou
   out->mem_used = bytes_to_kb(cur_bytes);
 
   if (snprintf(path, sizeof(path), "%s/memory.peak", token_dir) >= 0 &&
-      (size_t)strlen(path) < sizeof(path) && read_ull_file(path, &peak_bytes) == 0)
+      (size_t)strlen(path) < sizeof(path) && read_ull_file(path, &peak_bytes) == 0) {
     out->mem_peak = bytes_to_kb(peak_bytes);
+    out->has_peak = 1;
+  }
 
   if (snprintf(path, sizeof(path), "%s/memory.stat", token_dir) >= 0 &&
       (size_t)strlen(path) < sizeof(path) &&

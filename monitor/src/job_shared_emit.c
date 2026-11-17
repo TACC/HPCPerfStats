@@ -4,6 +4,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "host_mem_job.h"
 #include "job_cgroup_mem.h"
 #include "job_emit_filter.h"
 #include "job_gpu_assign.h"
@@ -109,14 +110,7 @@ static void populate_host_mem_job(struct job_proc_discover_result *disc)
     st = get_current_stats(type, dev);
     if (st == NULL)
       continue;
-    stats_set(st, "mem_used", kb.mem_used);
-    stats_set(st, "mem_peak", kb.mem_peak);
-    stats_set(st, "anon_pages", kb.anon_pages);
-    stats_set(st, "file_pages", kb.file_pages);
-    stats_set(st, "mapped", kb.mapped);
-    stats_set(st, "dirty", kb.dirty);
-    stats_set(st, "writeback", kb.writeback);
-    stats_set(st, "page_tables", kb.page_tables);
+    host_mem_job_publish(st, &kb);
   }
 }
 
