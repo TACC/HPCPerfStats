@@ -788,7 +788,7 @@ def test_0045_drops_duplicate_indexes_retrying_lock_then_raising():
 # Guard patterns for migration-fail-closed-gates.mdc. NOTICE messages often
 # contain ';' themselves, so the first pattern skips quoted strings.
 _NOTICE_THEN_RETURN = re.compile(
-  r"RAISE\s+NOTICE(?:'(?:[^']|'')*'|[^;'])*;\s*RETURN\s*;", re.IGNORECASE
+  r"RAISE\s+NOTICE(?:'[^']*'|[^;'])*;\s*RETURN\s*;", re.IGNORECASE
 )
 _EXCEPTION_SWALLOWED_BY_NOTICE = re.compile(
   r"EXCEPTION\s+WHEN\s+[\w\s]+?\s+THEN\s+RAISE\s+NOTICE", re.IGNORECASE
@@ -818,6 +818,17 @@ def test_soft_skip_guard_patterns_catch_known_bad_shapes():
   )
   fixed = _0032_sql()
   assert not _NOTICE_THEN_RETURN.search(fixed)
+
+
+def test_notice_then_return_has_no_exponential_backtracking():
+  """An unterminated run of ``''`` must fail fast (CodeQL py/redos), and a
+  quoted message with an escaped quote and ';' must still be skipped.
+
+  The old ``'(?:[^']|'')*'`` could match each ``''`` as an escape or as
+  end+start quote, so the backtracking doubled with every pair."""
+  assert _NOTICE_THEN_RETURN.search("RAISE NOTICE 'it''s; skipped'; RETURN;")
+  hostile = "raise notice '" + "''" * 40
+  assert not _NOTICE_THEN_RETURN.search(hostile)
 
 
 def test_no_migration_soft_skips_required_work():
