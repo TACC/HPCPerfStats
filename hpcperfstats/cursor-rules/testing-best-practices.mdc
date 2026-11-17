@@ -63,6 +63,8 @@ Examples: `urlconf_route_catalog.py`, `extended-search-validation.test.js`, `job
 
 - Arrange–Act–Assert; one behavioral theme per test.
 - Deterministic: freeze time; no live network in unit tests.
+- **Shell tests under `set -o pipefail`:** check output with a here-string helper (`grep -q -- "$pat" <<<"$out"`), not `echo "$out" | grep -q`. When `grep -q` exits on its first match, `echo` takes SIGPIPE, `pipefail` turns that into a failure, and the test flakes under load. See `has()` in `monitor/tests/test_canary_counter_check.sh`, 68a54a22.
+- **Timing gates:** compare paired, order-alternating replicates and assert on the median of the per-pair ratios. Do not compare one candidate run with one baseline run, or the slowest candidate with the fastest baseline: one scheduler hiccup decides the result. Keep a mutation check that the gate still fails when the candidate is no faster. See `_paired_body_ratios` in `hpcperfstats/tests/test_sync_timedb_delta_collapse_hotpath.py`, 975e4bb6.
 - Prefer semantic queries (`getByRole`) in RTL.
 - Coverage is a **gap-discovery signal**, not a global CI quota—except **`api.py`** maintains a phased **100% line** goal via `test_api_view_matrix.py`, `test_api_helpers.py`, and related modules. **100% `api.py` line coverage on host mocks does not replace compose-backed tests** for DB semantics, throttles returning **429**, or sacct/filesystem integration.
 - When removing a throttled API view, migrate the **view-level** 429 regression to the replacement endpoint (`test_api_security_throttles.py` pattern).

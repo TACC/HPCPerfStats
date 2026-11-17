@@ -1333,7 +1333,7 @@ Many counters are ingested and visible in type-detail / raw `host_data` views bu
 - **Domain:** General / multi-type (see monitor `host_data.type`)
 - **Typical `host_data.type` values:** *(infer from job schema / monitor enablement)*
 - **Application / library code:** hpcperfstats/analysis/metrics/lib/metrics.py
-- **Tests:** hpcperfstats/analysis/metrics/tests/test_mem_hwm_host_mem_job.py
+- **Tests:** hpcperfstats/analysis/metrics/tests/test_mem_hwm_host_mem_job.py; hpcperfstats/analysis/metrics/tests/test_metrics_schema_guards.py
 
 ### `mem_total`
 

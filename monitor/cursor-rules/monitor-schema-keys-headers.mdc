@@ -35,4 +35,6 @@ static const char host_cpu_schema_def[] = JOIN(KEYS);
 
 Same change set: update header, registry if needed, contract test (automatic if including header), **`check_emitted_variable_names.py`**, and rename map if consumers need migration (**monitor-consumer-schema-migration**).
 
+**Positional kernel-text parsers.** Some collectors read their keys in order from a kernel text line through `str_collect_key_list` (`collect.c`), for example `/proc/self/mountstats` events, xprt and per-op lines (`nfs.c`). For these, removing a key from the KEYS list does not remove its field: every later key then reads an earlier field. This happened in 2469bc31, which shifted NFS `delay` and `xprt_bad_xids` until 6e37ac61. Skip such fields by the kernel's documented field index (the `nfs_skip_fields` pattern). Every KEYS removal or reorder needs a fixture test that asserts the named fields read the right values, as `tests/test_nfs_mountstats_parse.c` does with `tests/fixtures/nfs/`.
+
 Cross-links: **monitor-emitted-variable-naming**, **monitor-c-new-function-unittests**.
