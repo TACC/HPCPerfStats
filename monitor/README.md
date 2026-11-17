@@ -165,7 +165,7 @@ Small, testable units and daemons are split along these lines (non-exhaustive):
 | LIKWID core + uncore PMU | `likwid_pmc_adapter.c`, `likwid_uncore_adapter.c`, `likwid_uncore_profiles.c`, `likwid_result_convert.c` |
 | LIKWID RAPL (PWR + powercap) | `likwid_rapl.c`, `likwid_rapl_pwr.c`, `rapl_powercap.c` |
 | Omni-Path / Cornelis HFI (`host_opa`) | `opa.c`, `opa_sysfs.c`, `opa_mad_backoff.c`, `opa_mad_dyn.c`, `host_opa.h` (sysfs always; STL MAD via `--enable-opa-mad-dlopen` or link-time `--enable-opa`) |
-| NFS client (`host_nfs`) | `nfs.c`, `host_nfs.h` (`/proc/self/mountstats`; one row per `fstype nfs` or `nfs4` mount point) |
+| NFS client (`host_nfs`) | `nfs.c`, `host_nfs.h` (`/proc/self/mountstats`; one row per `fstype nfs` or `nfs4` mount point; positional `events:` / `xprt:` / per-op fields read by kernel field index) |
 | BeeGFS client (`beegfs_client`) | `beegfs.c`, `beegfs_client.h`, `beegfs_ctl_parse.c` (mounts + `statvfs`; I/O via bounded `beegfs-ctl`) |
 | Intel Data Center GPU / PVC (`intel_gpu`) | `intel_gpu.c`, `intel_gpu.h`, `xpum_gpu_dyn.c` (vendored `third_party/intel-xpum/`; runtime `libxpum` dlopen) |
 | IB MAD dlopen | `ib_mad.c`, `ib_mad_dyn.c`, `ib_mad_api.h` (vendored `third_party/ibmad-shim/` when `--enable-ib-mad-dlopen`) |

@@ -12,13 +12,28 @@
 /* Copyright 2011 Charng-Da Lu <charngda@ccr.buffalo.edu>
  * Revised 2011 John L. Hammond <jhammond@tacc.utexas.edu> */
 
+/* Step over n whitespace-separated fields; 0 when the line has fewer, so the caller sets
+ * nothing instead of shifted values. */
+static int nfs_skip_fields(char **str, int n)
+{
+  while (n-- > 0)
+    if (wsep(str) == NULL)
+      return 0;
+  return *str != NULL;
+}
+
 /* Event counters.  See fs/nfs/iostat.h and nfs_show_stats() in
  * fs/nfs/super.c. */
 
 #define EVENT_KEYS X(delay, "E", "")
 
+/* delay is field 24, after inoderevalidate ... shortwrite (enum nfs_stat_eventcounters). */
+#define NFS_EVENTS_BEFORE_DELAY 24
+
 static void nfs_collect_mnt_events(struct stats *stats, char *str)
 {
+  if (!nfs_skip_fields(&str, NFS_EVENTS_BEFORE_DELAY))
+    return;
 #define X(k, r...) #k
   str_collect_key_list(str, stats, EVENT_KEYS, NULL);
 #undef X
@@ -57,16 +72,10 @@ static void nfs_collect_mnt_xprt(struct stats *stats, char *str)
   if (sock_type == NULL || str == NULL)
     return;
 
-  /* For UDP, skip port and bind_count.  For TCP, skip those,
-   * connect_count, connect_time, and idle_time.  RDMA has all of the
-   * TCP counters followed by 10 of its own. */
-
-  int i, nr_to_skip = (strcmp(sock_type, "udp") == 0) ? 2 : 5;
-
-  for (i = 0; i < nr_to_skip; i++)
-    wsep(&str);
-
-  if (str == NULL)
+  /* UDP: skip port, bind_count, sends, recvs.  TCP: skip port, bind_count, connect_count,
+   * connect_time, idle_time, sends, recvs.  RDMA prints the TCP fields first, then its own.
+   * (AF_LOCAL "local" has no port; it never carries an NFS mount.) */
+  if (!nfs_skip_fields(&str, strcmp(sock_type, "udp") == 0 ? 4 : 7))
     return;
 
 #define X(k, r...) #k
@@ -119,7 +128,7 @@ static void nfs_collect_mnt_op(struct stats *stats, const char *op, char *str)
   snprintf(key, sizeof(key), "%s_timeouts", op_key);
   stats_set(stats, key, v[2]);
   snprintf(key, sizeof(key), "%s_ops", op_key);
-  stats_set(stats, key, v[1]);
+  stats_set(stats, key, v[0]);
   snprintf(key, sizeof(key), "%s_queue", op_key);
   stats_set(stats, key, v[5]);
   snprintf(key, sizeof(key), "%s_rtt", op_key);
