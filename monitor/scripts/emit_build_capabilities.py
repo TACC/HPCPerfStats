@@ -4,9 +4,10 @@
 Run from HPCPerfStats/monitor/:
   .build-static/../.venv/bin/python scripts/emit_build_capabilities.py --build-dir .build-static
   make -C .build-static capabilities
-"""
-from __future__ import annotations
 
+make / make dist run this with the build host's bare python3 (3.6 on EL8), so it
+must stay Python 3.6 compatible (tests/test_build_scripts_py36.py).
+"""
 import argparse
 import json
 import platform
@@ -14,6 +15,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple
 
 MONITOR = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = "monitor-build-capabilities.json"
@@ -39,9 +41,9 @@ def _read_text(path: Path) -> str:
         return ""
 
 
-def _parse_config_log(build_dir: Path) -> dict[str, bool]:
+def _parse_config_log(build_dir: Path) -> Dict[str, bool]:
     text = _read_text(build_dir / "config.log")
-    out: dict[str, bool] = {}
+    out: Dict[str, bool] = {}
     for m in _RE_CONFIG_LOG_BOOL.finditer(text):
         key = m.group(0).split("=")[0].strip().rstrip("'").split()[-1]
         if key.endswith("'"):
@@ -57,7 +59,7 @@ def _parse_config_log(build_dir: Path) -> dict[str, bool]:
 
 def _parse_src_makefile(
     build_dir: Path,
-) -> tuple[set[str], str | None, bool, bool, bool, bool, bool]:
+) -> Tuple[Set[str], Optional[str], bool, bool, bool, bool, bool]:
     # Automake writes a false conditional's lines with a leading `#`; they are not flags.
     text = "\n".join(
         line
@@ -126,14 +128,14 @@ def build_capability_slug(
     arch: str,
     version: str,
     debug: bool,
-    features: set[str],
-    cpu_backend: str | None,
+    features: Set[str],
+    cpu_backend: Optional[str],
     tier: str,
     ib_mad_dlopen: bool = False,
     opa_mad_dlopen: bool = False,
     sentinel_version: int = 1,
 ) -> str:
-    parts: list[str] = [arch, f"ver{version}"]
+    parts: List[str] = [arch, f"ver{version}"]
     if debug:
         parts.append("debug")
     if "HARDWARE" in features:
@@ -175,8 +177,8 @@ def _fleet_stampede3(
     *,
     ib_mad_dlopen: bool,
     opa_mad_dlopen: bool,
-    features: set[str],
-) -> str | None:
+    features: Set[str],
+) -> Optional[str]:
     """Return 'stampede3' when compiled matrix matches fleet signature."""
     if (
         ib_mad_dlopen
@@ -192,9 +194,9 @@ def _fleet_ls6(
     *,
     ib_mad_dlopen: bool,
     opa_mad_dlopen: bool,
-    features: set[str],
+    features: Set[str],
     shared_node: bool = False,
-) -> str | None:
+) -> Optional[str]:
     """Return 'ls6' when compiled matrix matches Lonestar6 fleet signature."""
     if shared_node:
         return None
@@ -213,9 +215,9 @@ def _fleet_horizon(
     *,
     ib_mad_dlopen: bool,
     opa_mad_dlopen: bool,
-    features: set[str],
+    features: Set[str],
     shared_node: bool,
-) -> str | None:
+) -> Optional[str]:
     """Return 'horizon' when compiled matrix matches Horizon shared-node fleet."""
     if (
         shared_node
