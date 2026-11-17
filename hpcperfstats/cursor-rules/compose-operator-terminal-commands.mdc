@@ -329,6 +329,65 @@ When backends are exhausted, `psql` itself is refused with **`FATAL: sorry, too 
 |----|-------|
 | `docker compose exec db sh -c "ps -eo args \| grep -c '^postgres: hpcperfstats'"` plus `docker compose exec pipeline hostname -i` / `docker compose exec web hostname -i` to attribute `postgres: … <ip>(…) idle` lines | `psql … -c "SELECT … FROM pg_stat_activity"` as the only census when slots are full |
 
+### Anti-pattern — heredoc SQL in a pasted block (hpcperfstats01 2026-11-17)
+
+A `psql -f - <<'SQL' … SQL` block pasted with leading spaces (terminal or chat indentation) never ends: the indented `  SQL` is not the terminator, the shell sits at `>`, the operator presses Ctrl-C, and nothing runs. One long `-c "…"` line instead breaks the 70-character paste limit (copy/paste hard-wraps it).
+
+| Do | Don't |
+|----|-------|
+| SQL in a single-quoted shell variable with short lines, `$$…$$` string literals (no nested quotes), `${Q//TT/$t}` substitution, one `psql -c "$Q"` per item | `psql -f - <<'SQL'` heredocs; one 400-character `-c` line |
+| Placeholder tokens that cannot occur in the substituted values (`XHOSTX`, `XSTARTX`, `XENDX`) | `T0`/`T1` tokens: an ISO time `…T18:00…` contains `T1`, so `${q//T1/$T1}` corrupts the start time |
+| When a block uses variables that the operator sets from another block's output (`H=… T0=… T1=…`), check they are set first: `if [ -z "$H" ] …; then echo STOP …; else …; fi` | Sending the query with empty values: `invalid input syntax for type timestamp with time zone: ""` (hpcperfstats02 2026-11-17, block run before the node output existed) |
+
+The query shape matters as much as the quoting. The same `Q=` block with a host picked by `WHERE type = … AND event = … ORDER BY time DESC LIMIT 1` over every host hit **`canceling statement due to statement timeout`** at 120 s (hpcperfstats01 2026-11-17): `host_data` has no index that leads with `type`/`event`. Pick the job (and its window) from `job_data`, which is small, then read `host_data` by **`host` + time window** (the `(host, time)` index). Do not key on `jid`: host rows often carry no accounting jid (see the `host_data.filter(jid=…)` GPU anti-pattern), so a jid lookup can come back empty with data present. `job_data.host_list` may hold short names while `host_data.host` stores the FQDN; add the suffix (taken here from one newest `host_data` row) before comparing.
+
+Corrected pattern (indentation-safe, every line ≤ 70 chars, indexed):
+
+```bash
+Q='SET statement_timeout = 120000;
+WITH sfx AS (
+  SELECT substring(host from $$\.(.*)$$) AS s FROM host_data
+  WHERE time > now() - make_interval(days => 7) LIMIT 1),
+j AS (
+  SELECT DISTINCT ON (queue) queue, jid, end_time,
+    greatest(start_time, end_time - make_interval(mins => 30))
+      AS t0,
+    CASE WHEN host_list[1] LIKE $$%.%$$ THEN host_list[1]
+      ELSE host_list[1] || $$.$$ || (SELECT s FROM sfx)
+    END AS host
+  FROM job_data
+  WHERE end_time > now() - make_interval(days => 2)
+    AND telemetry_last_time IS NOT NULL
+  ORDER BY queue, end_time DESC)
+SELECT j.queue, j.jid, d.host, d.type, d.dev, d.time,
+  d.value, d.delta,
+  round((d.arc / 1000.0)::numeric, 1) AS watts
+FROM j CROSS JOIN LATERAL (
+  SELECT * FROM host_data h
+  WHERE h.host = j.host
+    AND h.time BETWEEN j.t0 AND j.end_time
+    AND h.type IN ($$intel_x86_rapl$$, $$amd_x86_rapl$$)
+    AND h.event = $$pkg_energy$$
+  ORDER BY h.dev, h.time LIMIT 6) d
+ORDER BY 1, 5, 6 LIMIT 60;'
+podman-compose -p hpcperfstats exec -T db psql -h localhost \
+  -U hpcperfstats -P footer=off -c "$Q"
+```
+
+### Anti-pattern — monitor unit vs package vs binary name (LS6 c317-016 2026-11-17)
+
+`systemctl is-active` prints `inactive` for a unit that does not exist, so `systemctl is-active hpcperfstatsd` reads like a stopped monitor on every node. The names differ by object:
+
+| Object | Name | Source |
+|--------|------|--------|
+| systemd unit | `hpcperfstats` (`hpcperfstats.service`) | `monitor/hpcperfstats.spec:117` |
+| RPM package | `hpcperfstatsd` | `monitor/hpcperfstats.spec` `Name:` |
+| binary / process | `/usr/sbin/hpcperfstatsd` | `src/hpcperfstats.service` `ExecStart` |
+
+| Do | Don't |
+|----|-------|
+| `systemctl status hpcperfstats --no-pager`, `journalctl -u hpcperfstats`, `rpm -q hpcperfstatsd`, `ps … \| grep '[h]pcperfstatsd'` | `systemctl is-active hpcperfstatsd` (unit not found reads as `inactive`); `rpm -q hpcperfstats` |
+
 ### Anti-pattern — `rabbitmqctl … 2>/dev/null` hides failures (hpcperfstats04)
 
 Piping or redirecting **`rabbitmqctl` / `rabbitmq-plugins` stderr to `/dev/null`** yields empty pastes when the CLI fails (wrong user, node not ready, cookie mismatch) while **`ss`/`netstat` listeners still print**. Operators then cannot tell whether plugins/queues were queried.
