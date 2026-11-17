@@ -191,6 +191,22 @@ def test_hono_node_server_override_meets_dependabot_123_floor():
   )
 
 
+def test_next_meets_dependabot_130_floor():
+  """Dependabot #130 / GHSA-mfr8-8qww-v76h: next 16.3.0-16.4.4 leaks root
+  params across ``'use cache'`` calls made through ``unstable_cache()``.
+
+  ``next`` is a direct dependency, so the floor applies to the package.json
+  range and the locked version rather than an override.
+  """
+  floor = (16, 4, 5)
+  spec = _frontend_json("package.json")["dependencies"]["next"]
+  assert _semver_triple(spec) >= floor, f"next range {spec!r} below 16.4.5"
+  lock = _frontend_json("package-lock.json")["packages"]["node_modules/next"]
+  assert _semver_triple(lock["version"]) >= floor, (
+    f"lock next@{lock['version']} below 16.4.5 (Dependabot #130)"
+  )
+
+
 def test_fast_uri_override_meets_dependabot_113_116_floor():
   """fast-uri <= 4.2.2 is vulnerable (Dependabot #113-#116 plus 2026-10 GHSA host/scheme)."""
   _assert_npm_override_floor(
