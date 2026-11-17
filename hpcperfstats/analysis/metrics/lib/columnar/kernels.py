@@ -514,7 +514,8 @@ class FrameIndex:
     default and a group exists only when it has a valid sample.
 
     ``mode="orm"`` mirrors ``host_data_sum_val_per_sample_queryset``: a group
-    exists for every scoped row that passes the blank / device filters, and
+    exists for every scoped row that passes the blank / device filters and
+    is not a monitor value sentinel (``JobFrame.sentinel`` code 0), and
     a group without a valid sample sums to ``0`` (``Coalesce``); the ceiling
     applies only when ``limit`` is given.
 
@@ -569,7 +570,7 @@ class FrameIndex:
         MAX_SANE_COUNTER_DELTA if col == "delta" else MAX_SANE_COUNTER_RATE
       )
     if mode == MODE_ORM:
-      keep = np.ones(rows.shape[0], dtype=bool)
+      keep = f.sentinel[rows] == 0
       if reject_dcgm_blank:
         keep &= ~np.isnan(vals) & (vals < DCGM_FP64_BLANK)
       if dev_filter:
@@ -595,7 +596,7 @@ class FrameIndex:
     else:
       contrib_key, contrib_val = group_key[valid], vals[valid]
     # Row-order sums of the contributing samples; ORM groups also exist for
-    # every scoped sample key and fill with 0 (Coalesce) or NaN.
+    # every scoped non-sentinel sample key and fill with 0 (Coalesce) or NaN.
     keys, _c, sums, _m = sg.group_reduce(contrib_key, contrib_val)
     if mode == MODE_ORM:
       contrib_keys, contrib_sums = keys, sums

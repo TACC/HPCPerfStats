@@ -77,7 +77,7 @@ def _legacy_sum_per_sample(
   if mode == kn.MODE_SQL and limit is None:
     limit = MAX_SANE_COUNTER_DELTA if col == "delta" else MAX_SANE_COUNTER_RATE
   if mode == kn.MODE_ORM:
-    keep = np.ones(rows.shape[0], dtype=bool)
+    keep = f.sentinel[rows] == 0
     if reject_dcgm_blank:
       keep &= ~np.isnan(vals) & (vals < DCGM_FP64_BLANK)
     if dev_filter:

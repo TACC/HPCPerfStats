@@ -663,9 +663,9 @@ class ColumnarJobTable:
     group absent without a valid sample) for the last hourly chunk and the
     ORM ``Coalesce(SUM, 0)`` (no ceiling) for earlier chunks. The columnar
     path uses one rule for every sample: a group exists for every scoped
-    sample, NULL samples (and ``arc`` / ``delta`` samples at or above the
-    sane ceiling) do not contribute, and a group without a contribution
-    sums to ``0``. ``value`` is never ceiling-filtered (peak FLOP/s and
+    sample that is not a monitor value sentinel, NULL samples (and ``arc`` /
+    ``delta`` samples at or above the sane ceiling) do not contribute, and a
+    group without a contribution sums to ``0``. ``value`` is never ceiling-filtered (peak FLOP/s and
     cumulative byte counters exceed 1e13). GPU types drop ``val_col >=
     DCGM_FP64_BLANK`` rows and never apply the ceiling; ``group_by_dev``
     keeps devices and applies the GPU affinity filter. Shared-node residual

@@ -191,16 +191,15 @@ def test_sum_per_sample_orm_blank_filter_by_dev_and_coalesce_zero():
     "nvidia_gpu", ["gpu_util"], "value", mode=kn.MODE_ORM, by_dev=True
   )
   dev_names = [frame.devs[abs(i)] for i in d.dev_id]
+  # A sentinel row is not a scoped sample, so (3 s, dev 0) has no group.
   assert list(zip(d.time_us.tolist(), dev_names, strict=True)) == [
     (1 * US, "0"),
     (1 * US, "1"),
     (2 * US, "0"),
     (2 * US, "1"),
-    (3 * US, "0"),
     (3 * US, "1"),
   ]
-  # The sentinel-only (3 s, dev 0) group is empty: Coalesce 0, like NULL.
-  assert d.sum_val.tolist() == [10.0, DCGM_FP64_BLANK, 0.0, 5.0, 0.0, 6.0]
+  assert d.sum_val.tolist() == [10.0, DCGM_FP64_BLANK, 0.0, 5.0, 6.0]
   # Nonnegative FILTER keeps the group, sums only >= 0.
   nn = idx.sum_per_sample(
     "nvidia_gpu", ["gpu_util"], "value", mode=kn.MODE_ORM, nonnegative=True
@@ -221,6 +220,34 @@ def test_sum_per_sample_orm_blank_filter_by_dev_and_coalesce_zero():
   assert idx0.sum_per_sample(
     "nvidia_gpu", ["gpu_util"], "value", mode=kn.MODE_ORM, dev_filter=True
   ).empty
+
+
+def test_sum_per_sample_orm_sentinel_rows_make_no_group():
+  """A ``-2`` sample is missing, not 0: no ORM group, either coalesce rule."""
+  recs = [
+    (0, "h1", "host_mem_job", "mem_used", "j:1", 1, 100.0, None, None),
+    (60 * US, "h1", "host_mem_job", "mem_used", "j:1", 1, -2.0, None, None),
+    (120 * US, "h1", "host_mem_job", "mem_used", "j:1", 1, 120.0, None, None),
+  ]
+  frame = JobFrame.from_records("1", recs)
+  assert np.isnan(frame.value[1]) and frame.sentinel.tolist() == [0, -2, 0]
+  idx = kn.FrameIndex(frame)
+  for coalesce in (True, False):
+    t = idx.sum_per_sample(
+      "host_mem_job",
+      ["mem_used"],
+      "value",
+      mode=kn.MODE_ORM,
+      coalesce_zero=coalesce,
+    )
+    assert t.time_us.tolist() == [0, 120 * US]
+    assert t.sum_val.tolist() == [100.0, 120.0]
+  only = JobFrame.from_records("1", [(*r[:6], -2.0, *r[7:]) for r in recs])
+  assert (
+    kn.FrameIndex(only)
+    .sum_per_sample("host_mem_job", ["mem_used"], "value", mode=kn.MODE_ORM)
+    .empty
+  )
 
 
 def test_host_time_keys_and_distinct_count_match_pandas():

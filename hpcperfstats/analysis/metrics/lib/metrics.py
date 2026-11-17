@@ -683,7 +683,9 @@ INSUFFICIENT_DATA_FOR_METRICS_PROCESSING = (
 # the codes are stored in metrics_data.no_data_codes for the Job Detail
 # audience split. mem_hwm on host_mem_job falls back to the sampled mem_used
 # maximum when mem_peak is absent or 0 (no memory.peak in the job cgroup).
-METRICS_CONTRACT_VERSION = 10
+# 11 (2026-11-17): a sentinel sample opens no per-sample aggregate group, so
+# it no longer counts as a 0 in node power means and FSIO sums.
+METRICS_CONTRACT_VERSION = 11
 # ``no_data_reason`` written for catalog rows a backfill job never produced
 # after it exhausted the failure-memory backoff (daily step); the job is
 # stamped with the current version so the sweep does not spin on it.

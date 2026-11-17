@@ -306,3 +306,34 @@ def test_researcher_sees_partial_note_only_for_visible_codes():
     )[1]
   )
   assert not researcher_visible(mixed)
+
+
+def test_summary_falls_back_when_preferred_series_is_all_sentinel():
+  """An all ``-2`` ``host_mem_job`` / ``gpu_util`` series is no data, so the
+  Summary uses ``host_mem`` / ``utilization`` instead of plotting 0."""
+  from hpcperfstats.analysis.metrics.lib.columnar.summary_series import (
+    build_summary_series,
+  )
+
+  rows = []
+  for i in range(3):
+    t = _T0 + timedelta(minutes=i)
+    rows += [
+      (t, "c1.x", "host_cpu", "user", "", 1.0, 1.0, 1.0),
+      (t, "c1.x", "host_mem_job", "mem_used", "j:1", -2.0, None, None),
+      (
+        t,
+        "c1.x",
+        "host_mem",
+        "mem_used",
+        "0",
+        1024.0 * 1024 * (i + 1),
+        None,
+        None,
+      ),
+      (t, "c1.x", "nvidia_gpu", "gpu_util", "0", -2.0, None, None),
+      (t, "c1.x", "nvidia_gpu", "utilization", "0", 40.0 + i, None, None),
+    ]
+  cols = build_summary_series(_table(rows, hosts=("c1.x",))).frame.columns
+  assert cols["mem"].tolist() == [1.0, 2.0, 3.0]
+  assert cols["nv_gpu_util"].tolist() == [40.0, 41.0, 42.0]
